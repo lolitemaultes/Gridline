@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <map>
@@ -12,7 +13,9 @@
 #include "../core/Arrangements.h"
 #include "../core/Automation.h"
 #include "../core/MenuOpsExtra.h"
+#include "../core/MenuParity.h"
 #include "../core/PluginParams.h"
+#include "../engine/PlaylistTools.h"
 #include "../engine/Sample.h"
 #include "App.h"
 #include "../core/NoteTools.h"
@@ -31,9 +34,13 @@ using theme::pal;
 namespace {
 
 struct ClipGesture {
-  enum Kind { None, Move, Resize, Trim, Select, Paint, Erase, Scrub, TimeSel, AutoPoint, AutoTension, Mute, Slip, Play, Zoom } kind = None;
+  enum Kind { None, Move, Resize, Trim, Select, Paint, Erase, Scrub, TimeSel, AutoPoint, AutoTension, Mute, Slip, Play, Zoom, SliceLine } kind = None;
   int muteTo = -1;     // mute tool: state given to every touched clip
   Tick slipBase = 0;   // slip tool: the clip's offset at the start
+  // Paint: clips of `paintSrc` laid back to back from `paintAnchor`.
+  Tick paintAnchor = 0, paintLen = 0;
+  ClipKind paintKind = ClipKind::Pattern;
+  ObjectId paintId = kNoId;
   ImVec2 start;
   Tick startTick = 0;
   int startTrack = 0;
@@ -147,7 +154,6 @@ struct AudioMap {
   }
   double at(double t) const { return sync ? audioStart + (t - start) * syncScale : audioStart + (tm.secondsAt(t) - startSec) * speed; }
 };
-double audioSourceAt(const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, double t) { return AudioMap(s, ch, c, tm).at(t); }
 
 void drawWaveform(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
                   float pxPerTick, float visX0, float visX1, ImU32 col) {
@@ -350,6 +356,16 @@ void arrangementClipMenu(App& a, ObjectId id) {
   if (c->kind != ClipKind::Pattern) ImGui::TextDisabled("%s", clipName(s, *c).c_str());
   if (ImGui::MenuItem("Mute clip", nullptr, c->muted)) a.doc.editClip(id, "mute clip", [](Clip& x) { x.muted = !x.muted; });
   if (c->kind == ClipKind::Audio) {
+    if (const Channel* ch = s.channel(c->source); ch && ImGui::BeginMenu("Rename...")) {  // J-28: the clip's title (its channel's name)
+      static char buf[128];
+      if (ImGui::IsWindowAppearing()) std::snprintf(buf, sizeof buf, "%s", ch->name.c_str());
+      ImGui::SetNextItemWidth(180);
+      if (ImGui::InputText("##rn", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue)) {
+        a.doc.renameChannel(ch->id, buf);
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndMenu();
+    }
     if (const Channel* ch = s.channel(c->source); ch && ImGui::MenuItem("Edit in audio editor", nullptr, false, !ch->plugin.data.empty()))
       packs::openAudioEditor(a, ch->plugin.data, ch->id);  // J-7
     if (ImGui::MenuItem("Export clip as WAV...")) exportui::exportClipAudio(a, id);  // J-20
@@ -377,6 +393,15 @@ void arrangementClipMenu(App& a, ObjectId id) {
       a.doc.editClip(id, "follow tempo", [bpm](Clip& x) { x.syncBpm = x.syncBpm > 0 ? 0.0 : bpm; });
     }
     if (ImGui::MenuItem("Channel settings")) a.settingsChannel = c->source;
+    {  // J-28 (operations: J-27)
+      std::set<ObjectId> sel = a.playlist.selected;
+      if (!sel.count(id)) sel = {id};
+      if (ImGui::MenuItem("Make unique as sample")) {
+        if (ObjectId nch = ops::makeAudioClipUnique(a.doc, id)) a.settingsChannel = nch;
+      }
+      if (ImGui::MenuItem("Pitch a semitone up")) ops::pitchAudioClips(a.doc, sel, 100.0f);
+      if (ImGui::MenuItem("Pitch a semitone down")) ops::pitchAudioClips(a.doc, sel, -100.0f);
+    }
     a.doc.endGesture();
     ImGui::Separator();
     audioClipMenu(a, id);  // J-8: properties, takes, stretch, fit, normalize, slice, consolidate, bounce
@@ -404,6 +429,12 @@ void arrangementClipMenu(App& a, ObjectId id) {
             for (auto& p : q->points) p.tension = 0;
         });
       }
+      if (ImGui::MenuItem("Merge selected automation clips", nullptr, false, a.playlist.selected.size() >= 2)) {  // J-28 (op: J-27)
+        ObjectId nc = ops::mergeAutomationClips(a.doc, a.playlist.selected);
+        if (nc) a.playlist.selected = {nc};
+        else a.notify("Merging needs two automation clips of the same parameter");
+        return;  // the clip under the menu may be gone
+      }
       if (ImGui::MenuItem("Select all clips of this automation")) {
         a.playlist.selected.clear();
         for (const auto& k : s.playlist)
@@ -413,6 +444,95 @@ void arrangementClipMenu(App& a, ObjectId id) {
   } else {
     ImGui::Separator();
     clipContextMenu(a, id);
+  }
+}
+
+// ---- current clip source (J-28) ----
+struct ClipSrcPayload {
+  int kind;
+  ObjectId id;
+};
+
+bool isAudioSource(const Channel& ch) { return ch.plugin.type == "gl.sampler" && !ch.plugin.data.empty(); }
+
+pltools::Source currentSource(App& a) {
+  const PlaylistState& st = a.playlist;
+  if (st.srcKind != ClipKind::Pattern) {
+    pltools::Source s{st.srcKind, st.srcId};
+    if (pltools::sourceValid(a.doc.song(), s)) return s;
+  }
+  return {ClipKind::Pattern, a.curPattern};
+}
+
+void setSource(App& a, const pltools::Source& src) {
+  a.playlist.srcKind = src.kind;
+  a.playlist.srcId = src.id;
+  if (src.kind == ClipKind::Pattern) a.selectPattern(src.id);
+  if (src.kind == ClipKind::Audio) a.selectChannel(src.id);
+}
+
+void openSource(App& a, const pltools::Source& src) {
+  if (src.kind == ClipKind::Pattern) {
+    a.selectPattern(src.id);
+    a.showRack = true;
+    a.focusWindow = "Channel rack";
+  } else if (src.kind == ClipKind::Audio) {
+    a.settingsChannel = src.id;
+  } else {
+    openAutomationEditor(a, src.id);
+  }
+}
+
+std::string sourceName(const Song& s, const pltools::Source& src) {
+  if (src.kind == ClipKind::Audio) return s.channel(src.id) ? s.channel(src.id)->name : "Audio";
+  if (src.kind == ClipKind::Automation) return s.automation(src.id) ? s.automation(src.id)->name : "Automation";
+  return s.pattern(src.id) ? s.pattern(src.id)->name : "(none)";
+}
+
+// Pattern: step bars; audio: a wave; automation: a ramp with points.
+void drawKindGlyph(ImDrawList* dl, ClipKind kind, ImVec2 c, float size, ImU32 col) {
+  const float h = size * 0.5f;
+  if (kind == ClipKind::Audio) {
+    ui::drawIcon(dl, ui::Icon::Wave, c, size, col);
+  } else if (kind == ClipKind::Automation) {
+    const ImVec2 p0(c.x - h, c.y + h * 0.6f), p1(c.x - h * 0.2f, c.y - h * 0.5f), p2(c.x + h * 0.35f, c.y + h * 0.1f), p3(c.x + h, c.y - h * 0.7f);
+    dl->AddLine(p0, p1, col, 1.4f);
+    dl->AddLine(p1, p2, col, 1.4f);
+    dl->AddLine(p2, p3, col, 1.4f);
+    for (ImVec2 p : {p0, p1, p2, p3}) dl->AddCircleFilled(p, 1.8f, col);
+  } else {
+    for (int k = 0; k < 3; ++k) {
+      const float x = c.x - h + 1 + static_cast<float>(k) * (size - 2) / 3.0f;
+      dl->AddRectFilled(ImVec2(x, c.y - h * 0.7f), ImVec2(x + (size - 2) / 3.0f - 2, c.y + h * 0.7f), col, 1.0f);
+    }
+    dl->AddRectFilled(ImVec2(c.x - h, c.y + h * 0.7f), ImVec2(c.x + h, c.y + h * 0.7f + 1.5f), col);
+  }
+}
+
+// Breadcrumb menu: every clip source by kind.
+void sourceMenu(App& a) {
+  const Song& s = a.doc.song();
+  const pltools::Source cur = currentSource(a);
+  ImGui::SeparatorText("Patterns");
+  for (const auto& p : s.patterns) {
+    ImGui::PushID(static_cast<int>(p.id));
+    if (ImGui::MenuItem(p.name.c_str(), nullptr, cur == pltools::Source{ClipKind::Pattern, p.id})) setSource(a, {ClipKind::Pattern, p.id});
+    ImGui::PopID();
+  }
+  bool any = false;
+  for (const auto& ch : s.channels) {
+    if (!isAudioSource(ch)) continue;
+    if (!any) ImGui::SeparatorText("Audio");
+    any = true;
+    ImGui::PushID(static_cast<int>(ch.id));
+    if (ImGui::MenuItem(ch.name.c_str(), nullptr, cur == pltools::Source{ClipKind::Audio, ch.id})) setSource(a, {ClipKind::Audio, ch.id});
+    ImGui::PopID();
+  }
+  if (!s.automations.empty()) ImGui::SeparatorText("Automation");
+  for (const auto& ac : s.automations) {
+    ImGui::PushID(static_cast<int>(ac.id));
+    if (ImGui::MenuItem(ac.name.c_str(), nullptr, cur == pltools::Source{ClipKind::Automation, ac.id})) setSource(a, {ClipKind::Automation, ac.id});
+    ImGui::PopID();
   }
 }
 
@@ -437,120 +557,201 @@ void drawPlaylist(App& a) {
     tempoRev = a.doc.revision();
   }
 
-  // ---------------- toolbar ----------------
+  // ---------------- toolbar (FL order: options, snap, tools, breadcrumb) ----------------
   ui::BeginToolbar("##pltb");
   {
     const float fh = ImGui::GetFrameHeight();
-    menuButton("plmenu", "Playlist menu: edit, select, snap, view, tracks", [&a]() { playlistOptionsMenu(a); });
+    menuButton("plmenu", "Playlist options: edit, select, snap, view, picker panel, tracks", [&a]() { playlistOptionsMenu(a); });
+    ImGui::SameLine(0, 4);
+    // Magnet: the snap menu (right-click toggles snapping off / back on).
+    if (ui::IconButton("snapicon", ui::Icon::Magnet, st.snap != Snap::None, fh,
+                       "Snap: click for the grid menu, right-click toggles snapping (Alt while dragging bypasses it)",
+                       theme::rgb(theme::role::kSnap)))
+      ImGui::OpenPopup("##snapmenu");
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+      if (st.snap != Snap::None) st.lastSnap = st.snap, st.snap = Snap::None;
+      else st.snap = st.lastSnap == Snap::None ? Snap::Line : st.lastSnap;
+    }
+    if (ImGui::BeginPopup("##snapmenu")) {
+      ImGui::TextDisabled("Snap to");
+      for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i) {
+        std::string l = snapName(static_cast<Snap>(i));
+        if ((static_cast<Snap>(i) == Snap::Line || static_cast<Snap>(i) == Snap::Cell) && st.effGrid > 0 && st.snap == static_cast<Snap>(i))
+          l += "  (" + timeline::gridName(s, st.effGrid) + ")";
+        if (ImGui::MenuItem(l.c_str(), nullptr, st.snap == static_cast<Snap>(i))) {
+          st.snap = static_cast<Snap>(i);
+          if (st.snap != Snap::None) st.lastSnap = st.snap;
+        }
+      }
+      ImGui::EndPopup();
+    }
     ImGui::SameLine(0, 4);
     struct T { ui::Icon icon; Tool tool; const char* hint; uint32_t role; };
-    const T tools[] = {{ui::Icon::Draw, Tool::Draw, "Draw (P): click to place the selected pattern, drag to move, drag the ends to resize or trim, right-click deletes", theme::role::kDraw},
-                       {ui::Icon::Paint, Tool::Paint, "Paint (B): drag to place clips one after another", theme::role::kPaint},
-                       {ui::Icon::Erase, Tool::Erase, "Delete (D): click or drag over clips", theme::role::kDelete},
-                       {ui::Icon::Mute, Tool::Mute, "Mute (T): click or drag over clips to mute / unmute them", theme::role::kMute},
-                       {ui::Icon::Slip, Tool::Slip, "Slip (S): drag inside a clip to move its content without moving the clip", theme::role::kSlip},
-                       {ui::Icon::Slice, Tool::Slice, "Slice (C): click a clip to cut it there (Shift: every track)", theme::role::kSlice},
-                       {ui::Icon::Select, Tool::Select, "Select (E): drag a box (Ctrl+drag works with any tool)", theme::role::kSelect},
-                       {ui::Icon::Zoom, Tool::Zoom, "Zoom (Z): drag a range to fill the view, click to zoom in, right-click to zoom out", theme::role::kZoom},
-                       {ui::Icon::Play, Tool::Play, "Play (Y): hold to play the song from the pointer", theme::role::kPlay}};
+    const T tools[] = {
+        {ui::Icon::Draw, Tool::Draw, "Draw (P): click places the current clip source, drag moves, drag an edge to resize / trim, Shift+drag copies, right-click deletes", theme::role::kDraw},
+        {ui::Icon::Paint, Tool::Paint, "Paint (B): drag lays clips of the current source one after another", theme::role::kPaint},
+        {ui::Icon::Erase, Tool::Erase, "Delete (D): click or drag over clips to delete them", theme::role::kDelete},
+        {ui::Icon::Mute, Tool::Mute, "Mute (T): click or drag over clips to mute / unmute them", theme::role::kMute},
+        {ui::Icon::Slip, Tool::Slip, "Slip (S): drag inside a clip to move its content without moving the clip", theme::role::kSlip},
+        {ui::Icon::Slice, Tool::Slice, "Slice (C): click a clip to cut it, drag up / down to cut every clip the line crosses (Shift: all tracks)", theme::role::kSlice},
+        {ui::Icon::Select, Tool::Select, "Select (E): drag a box (Ctrl+drag selects with any tool, Shift adds)", theme::role::kSelect},
+        {ui::Icon::Zoom, Tool::Zoom, "Zoom (Z): drag a range to fill the view, click zooms in, right-click zooms out", theme::role::kZoom},
+        {ui::Icon::Play, Tool::Play, "Playback (Y): hold to play from the pointer, drag to scrub", theme::role::kPlay}};
     for (const auto& t : tools) {
       if (ui::IconButton(t.hint, t.icon, st.tool == t.tool, fh, t.hint, theme::rgb(t.role))) st.tool = t.tool;
       ImGui::SameLine(0, 2);
     }
-    // Groups right of the tools appear only when they fit (never clipped).
-    auto roomLeft = []() { return ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::GetItemRectMax().x; };
-    if (roomLeft() > fh + 2 + 128 + 18) {
-      ui::ToolbarDivider();
-      ui::IconButton("snapicon", ui::Icon::Magnet, st.snap != Snap::None, fh, "Snap to grid (hold Alt while dragging to bypass)",
-                     theme::rgb(theme::role::kSnap));
-      ImGui::SameLine(0, 2);
-      // Line / Cell show the grid they currently snap to, which follows the zoom.
-      std::string snapLabel = snapName(st.snap);
-      if ((st.snap == Snap::Line || st.snap == Snap::Cell) && st.effGrid > 0)
-        snapLabel += " \xC2\xB7 " + timeline::gridName(s, st.effGrid);
-      if (ui::BeginCombo("##snap", snapLabel.c_str(), 128)) {
-        for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
-          if (ImGui::Selectable(snapName(static_cast<Snap>(i)), st.snap == static_cast<Snap>(i))) st.snap = static_cast<Snap>(i);
-        ImGui::EndCombo();
-      }
-      ui::Hint("Snap: Line and Cell follow the zoom (free at the deepest zoom); hold Alt while dragging to invert snapping");
-    }
-    if (roomLeft() > fh * 3 + 4 + 18) {
-      ui::ToolbarDivider();
-      if (ui::IconButton("zout", ui::Icon::Minus, false, fh, "Zoom out (PgDn, Ctrl+wheel)")) st.zoomRequest /= 1.5f;
-      ImGui::SameLine(0, 2);
-      if (ui::IconButton("zin", ui::Icon::Plus, false, fh, "Zoom in (PgUp, Ctrl+wheel)")) st.zoomRequest *= 1.5f;
-      ImGui::SameLine(0, 2);
-      if (ui::IconButton("zfit", ui::Icon::Zoom, false, fh, "Zoom to fit the song (Home)", 0, theme::rgb(theme::role::kZoom, 0.85f))) st.fitRequest = true;
-    }
-    // Arrangement selector + live toggle when there is room (also in the playlist menu).
-    ImGui::SameLine(0, 0);
-    if (roomLeft() > 230) {
-      ui::ToolbarDivider();
-      arrangementSelector(a, winW >= 900 ? 150.0f : 110.0f);
-      ImGui::SameLine(0, 2);
-      const bool liveOn = a.engine.mode() == PlayMode::Live;
-      if (ui::TextButton("LIVE", liveOn, 0, "Live mode: click clips in the live area to launch them (see also View \xE2\x86\x92 Live pads)"))
-        a.engine.setMode(liveOn ? PlayMode::Song : PlayMode::Live);
-    }
-    // Right: the pattern that clicks place (colour chip + name), when there is room.
-    const Pattern* cur = s.pattern(a.curPattern);
-    ImGui::SameLine(0, theme::kS4);
-    float room = ImGui::GetContentRegionAvail().x;
-    if (room > 90) {
+    // Breadcrumb: Playlist > arrangement > current clip source (each opens its menu).
+    ImGui::SameLine(0, theme::kS3);
+    const pltools::Source src = currentSource(a);
+    const std::string arrName = arrangementName(s, s.arrangements.empty() ? 0 : s.currentArrangement);
+    const std::string srcName = pltools::sourceValid(s, src) ? sourceName(s, src) : std::string("(none)");
+    auto crumb = [&](const char* id, const std::string& text, bool clickable, ImU32 col, const char* hint) {
+      const float room = ImGui::GetContentRegionAvail().x;
+      const float tw = std::min(a.fontRegular->CalcTextSizeA(theme::kFontBody, 1e9f, 0, text.c_str()).x, 220.0f);
+      if (room < tw + 24) return false;
       ImVec2 p = ImGui::GetCursorScreenPos();
+      bool pressed = clickable ? ImGui::InvisibleButton(id, ImVec2(tw + 4, fh)) : (ImGui::Dummy(ImVec2(tw + 4, fh)), false);
+      const bool hov = clickable && ImGui::IsItemHovered();
       ImDrawList* tdl = ImGui::GetWindowDrawList();
-      float labelW = room > 190 ? a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, "Placing").x + 8 : 0;
-      float ty = std::round(p.y + (fh - theme::kFontCaption) * 0.5f) - 1;
-      if (labelW > 0) tdl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(p.x, ty), P.textFaint, "Placing");
-      if (cur) tdl->AddRectFilled(ImVec2(p.x + labelW, p.y + 6), ImVec2(p.x + labelW + 4, p.y + fh - 6), theme::rgb(cur->color), 2);
-      theme::textEllipsis(tdl, a.fontRegular, theme::kFontBody, ImVec2(p.x + labelW + 10, std::round(p.y + (fh - theme::kFontBody) * 0.5f) - 1),
-                          room - labelW - 12, P.text, cur ? cur->name.c_str() : "No pattern");
-      ImGui::Dummy(ImVec2(room - 1, fh));
-      ui::Hint("Clicking in the playlist places this pattern");
+      if (hov) tdl->AddRectFilled(p, ImVec2(p.x + tw + 4, p.y + fh), theme::withAlpha(P.paper, 0.06f), theme::kRadiusSm);
+      theme::textEllipsis(tdl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 2, std::round(p.y + (fh - theme::kFontBody) * 0.5f) - 1), tw + 1,
+                          hov ? P.text : col, text.c_str());
+      if (hint) ui::Hint(hint);
+      ImGui::SameLine(0, 0);
+      // Separator chevron.
+      ImVec2 q = ImGui::GetCursorScreenPos();
+      ImGui::Dummy(ImVec2(14, fh));
+      tdl->AddTriangleFilled(ImVec2(q.x + 5, q.y + fh * 0.5f - 4), ImVec2(q.x + 5, q.y + fh * 0.5f + 4), ImVec2(q.x + 9, q.y + fh * 0.5f), P.textFaint);
+      ImGui::SameLine(0, 0);
+      return pressed;
+    };
+    crumb("##crPl", "Playlist", false, P.textDim, nullptr);
+    if (crumb("##crArr", arrName, true, P.text, "Arrangement: switch, add, duplicate, rename or delete arrangements")) ImGui::OpenPopup("##arrmenu");
+    if (ImGui::BeginPopup("##arrmenu")) {
+      arrangementMenu(a);
+      ImGui::EndPopup();
     }
+    if (crumb("##crSrc", srcName, true, pltools::sourceValid(s, src) ? P.text : P.textFaint,
+              "Current clip source: what clicks with draw / paint place (pick one here or in the picker panel)"))
+      ImGui::OpenPopup("##srcmenu");
+    if (ImGui::BeginPopup("##srcmenu")) {
+      sourceMenu(a);
+      ImGui::EndPopup();
+    }
+    ImGui::Dummy(ImVec2(0, 0));
   }
   ui::EndToolbar();
 
-  // ---------------- pattern picker (hidden when the window is narrow) ----------------
-  const bool showPicker = winW >= 560;
+  // ---------------- clip source picker (patterns / audio / automation) ----------------
+  const bool showPicker = st.pickerOpen && winW >= 560;
   if (showPicker) {
-    const float pickerW = std::clamp(winW * 0.15f, 128.0f, 180.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, theme::kS2));
+    const float pickerW = std::clamp(winW * 0.14f, 124.0f, 172.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS1, theme::kS1));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(theme::kS2, 2));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface900));
     ImGui::BeginChild("##picker", ImVec2(pickerW, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleColor();
-    ui::Label("PATTERNS");
+    {  // three filter tabs
+      ImDrawList* pdl = ImGui::GetWindowDrawList();
+      const float tw = std::floor((ImGui::GetContentRegionAvail().x) / 3.0f), th = 24.0f;
+      static const char* const tabHints[] = {"Pattern clip sources", "Audio clip sources (sample channels)", "Automation clip sources"};
+      static const ClipKind tabKinds[] = {ClipKind::Pattern, ClipKind::Audio, ClipKind::Automation};
+      for (int k = 0; k < 3; ++k) {
+        ImGui::PushID(k);
+        ImVec2 q = ImGui::GetCursorScreenPos();
+        if (ImGui::InvisibleButton("##tab", ImVec2(tw, th))) st.pickerTab = k;
+        const bool hov = ImGui::IsItemHovered(), on = st.pickerTab == k;
+        ui::Hint(tabHints[k]);
+        if (hov) pdl->AddRectFilled(q, ImVec2(q.x + tw, q.y + th), theme::withAlpha(P.paper, 0.05f), theme::kRadiusSm);
+        drawKindGlyph(pdl, tabKinds[k], ImVec2(q.x + tw * 0.5f, q.y + th * 0.5f), 14, on ? P.paper : hov ? P.text : P.textFaint);
+        if (on) pdl->AddRectFilled(ImVec2(q.x + 6, q.y + th - 2), ImVec2(q.x + tw - 6, q.y + th), theme::rgb(theme::role::kMenu), 1);
+        ImGui::PopID();
+        if (k < 2) ImGui::SameLine(0, 0);
+      }
+    }
     ImGui::Dummy(ImVec2(0, 2));
     const float rowH = 22.0f;
-    for (const auto& p : s.patterns) {
-      ImGui::PushID(static_cast<int>(p.id));
+    // Rows: a mini clip (colour strip + name) like the clips they place.
+    auto pickerRow = [&](const pltools::Source& ps, const std::string& name, Rgb color, const char* hint, const std::function<void()>& menu) {
       ImVec2 q = ImGui::GetCursorScreenPos();
-      bool sel = p.id == a.curPattern;
+      const bool sel = currentSource(a) == ps;
       float w = ImGui::GetContentRegionAvail().x;
-      if (ImGui::InvisibleButton("##pp", ImVec2(w, rowH))) a.selectPattern(p.id);
-      bool hov = ImGui::IsItemHovered();
+      if (ImGui::InvisibleButton("##pp", ImVec2(w, rowH))) setSource(a, ps);
+      const bool hov = ImGui::IsItemHovered();
+      if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openSource(a, ps);
       if (ImGui::BeginDragDropSource()) {
-        ImGui::SetDragDropPayload("GL_PATTERN", &p.id, sizeof p.id);
-        ui::DragPreview(ui::Icon::Pattern, p.name.c_str(), theme::content(p.color));
+        const ClipSrcPayload pl{static_cast<int>(ps.kind), ps.id};
+        ImGui::SetDragDropPayload("GL_CLIPSRC", &pl, sizeof pl);
+        ui::DragPreview(ps.kind == ClipKind::Audio ? ui::Icon::Wave : ui::Icon::Pattern, name.c_str(), theme::content(color));
         ImGui::EndDragDropSource();
       }
       if (ImGui::BeginPopupContextItem("##pmenu")) {
-        patternContextMenu(a, p.id);
+        menu();
         ImGui::EndPopup();
       }
       ImDrawList* pdl = ImGui::GetWindowDrawList();
-      // Picker rows: a mini clip (colour strip + name) like the clips they place.
-      const ImU32 pc = theme::rgb(p.color);
+      const ImU32 pc = theme::rgb(color);
       pdl->AddRectFilled(q, ImVec2(q.x + w, q.y + rowH), sel ? theme::mix(P.surface700, pc, 0.18f) : hov ? P.surface700 : theme::withAlpha(P.surface800, 0.55f),
                          theme::kRadiusSm);
       pdl->AddRectFilled(q, ImVec2(q.x + 4, q.y + rowH), pc, theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
       if (sel) pdl->AddRect(q, ImVec2(q.x + w, q.y + rowH), theme::withAlpha(P.hot, 0.55f), theme::kRadiusSm);
-      theme::textEllipsis(pdl, a.fontRegular, theme::kFontCaption + 1, ImVec2(q.x + 12, std::round(q.y + (rowH - 13) * 0.5f) - 1),
-                          w - 18, sel && P.dark ? P.paper : P.text, p.name.c_str());
-      ui::Hint("Click to select \xC2\xB7 drag into the playlist \xC2\xB7 right-click to rename, recolour, clone or delete");
-      ImGui::PopID();
+      theme::textEllipsis(pdl, a.fontRegular, theme::kFontCaption + 1, ImVec2(q.x + 12, std::round(q.y + (rowH - 13) * 0.5f) - 1), w - 18,
+                          sel && P.dark ? P.paper : P.text, name.c_str());
+      ui::Hint(hint);
+    };
+    int shown = 0;
+    if (st.pickerTab == 0) {
+      for (const auto& p : s.patterns) {
+        ImGui::PushID(static_cast<int>(p.id));
+        const ObjectId pid = p.id;
+        pickerRow({ClipKind::Pattern, p.id}, p.name, p.color, "Click: current source \xC2\xB7 drag into the playlist \xC2\xB7 double-click: edit \xC2\xB7 right-click: menu",
+                  [&a, pid]() { patternContextMenu(a, pid); });
+        ImGui::PopID();
+        ++shown;
+      }
+    } else if (st.pickerTab == 1) {
+      for (const auto& ch : s.channels) {
+        if (!isAudioSource(ch)) continue;
+        ImGui::PushID(static_cast<int>(ch.id));
+        const ObjectId cid = ch.id;
+        pickerRow({ClipKind::Audio, ch.id}, ch.name, ch.color, "Click: current source \xC2\xB7 drag into the playlist \xC2\xB7 double-click: channel settings",
+                  [&a, cid]() {
+                    if (ImGui::MenuItem("Channel settings")) a.settingsChannel = cid;
+                    if (ImGui::MenuItem("Select its clips")) {
+                      a.playlist.selected.clear();
+                      for (const auto& k : a.doc.song().playlist)
+                        if (k.kind == ClipKind::Audio && k.source == cid) a.playlist.selected.insert(k.id);
+                    }
+                  });
+        ImGui::PopID();
+        ++shown;
+      }
+    } else {
+      for (const auto& ac : s.automations) {
+        ImGui::PushID(static_cast<int>(ac.id));
+        const ObjectId aid = ac.id;
+        pickerRow({ClipKind::Automation, ac.id}, ac.name, ac.color, "Click: current source \xC2\xB7 drag into the playlist \xC2\xB7 double-click: edit",
+                  [&a, aid]() {
+                    if (ImGui::MenuItem("Edit automation...")) openAutomationEditor(a, aid, kNoId);
+                    if (ImGui::MenuItem("Select its clips")) {
+                      a.playlist.selected.clear();
+                      for (const auto& k : a.doc.song().playlist)
+                        if (k.kind == ClipKind::Automation && k.source == aid) a.playlist.selected.insert(k.id);
+                    }
+                  });
+        ImGui::PopID();
+        ++shown;
+      }
+    }
+    if (shown == 0) {
+      ImGui::Dummy(ImVec2(0, 4));
+      ImGui::PushTextWrapPos(0);
+      ImGui::TextColored(theme::vec(P.textFaint), "%s",
+                         st.pickerTab == 1 ? "No audio yet: drop samples from the browser onto the playlist"
+                                           : st.pickerTab == 2 ? "No automation yet: right-click a control \xE2\x86\x92 Create automation clip"
+                                                               : "No patterns");
+      ImGui::PopTextWrapPos();
     }
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
@@ -568,7 +769,13 @@ void drawPlaylist(App& a) {
   ImGui::InvisibleButton("##arr", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
   const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  const float headW = std::clamp(avail.x * 0.16f, 104.0f, 168.0f), rulerH = 26.0f;
+  // Left to right: a slim vertical scroller, the track headers, the grid. Above
+  // the headers: two rows of view buttons (FL's header corner); above the grid:
+  // a slim horizontal scroller, then the ruler.
+  const float vbarW = 10.0f, hbarH = 14.0f;
+  const float headW = vbarW + (st.wideHeaders ? std::clamp(avail.x * 0.2f, 150.0f, 230.0f) : std::clamp(avail.x * 0.13f, 96.0f, 150.0f));
+  const float rulerH = hbarH + 26.0f;
+  const float rY = origin.y + hbarH;  // ruler top
   const ImVec2 gMin(origin.x + headW, origin.y + rulerH), gMax(origin.x + avail.x, origin.y + avail.y);
   const float trackH = st.trackHeight;
   const int nTracks = static_cast<int>(s.tracks.size());
@@ -617,6 +824,22 @@ void drawPlaylist(App& a) {
     st.pxPerTick = static_cast<float>(timeline::fitZoom(s, len + s.barTicks(), gridW));
     st.scrollX = 0;
     st.fitRequest = false;
+  }
+  if (st.quickZoom > 0) {  // J-28: quick zooms (FL Zoom menu): 4 / 16 / 64 bars across the view
+    const Tick bars = st.quickZoom == 1 ? 4 : st.quickZoom == 2 ? 16 : 64;
+    const float playTick = static_cast<float>(a.engine.position());
+    st.pxPerTick = static_cast<float>(timeline::fitZoom(s, bars * std::max<Tick>(1, s.barTicks()), gridW));
+    st.scrollX = std::max(0.0f, playTick * st.pxPerTick - gridW * 0.25f);
+    st.quickZoom = 0;
+  }
+  if (st.zoomSelRequest) {  // zoom on the time selection, else on the selected clips
+    std::pair<Tick, Tick> r{st.selStart, st.selEnd};
+    if (r.second <= r.first) r = ops::clipsTimeRange(s, st.selected);
+    if (r.second > r.first) {
+      st.pxPerTick = static_cast<float>(timeline::fitZoom(s, r.second - r.first, gridW));
+      st.scrollX = static_cast<float>(r.first) * st.pxPerTick;
+    }
+    st.zoomSelRequest = false;
   }
   if (st.zoomRequest != 1.0f) {
     timeline::zoomAt(s, st.pxPerTick, st.scrollX, st.zoomRequest, keyAnchor);
@@ -702,7 +925,7 @@ void drawPlaylist(App& a) {
   if (songLen > 0 && xOf(songLen) < gMax.x)
     dl->AddRectFilled(ImVec2(std::max(gMin.x, xOf(songLen)), gMin.y), gMax, theme::withAlpha(P.surface950, 0.35f));
   // Clips.
-  ObjectId hoverClip = kNoId;
+  ObjectId hoverClip = kNoId, hoverMenuGlyph = kNoId;
   bool hoverEdge = false, hoverLeftEdge = false, hoverBody = false;
   // Audio clip fade handles (J-8): 1 = fade in, 2 = fade out.
   static ObjectId fadeDragClip = kNoId;
@@ -739,8 +962,19 @@ void drawPlaylist(App& a) {
                   theme::withAlpha(P.accent, 0.35f + 0.65f * (0.5f + 0.5f * std::sin(static_cast<float>(a.now) * 8.0f))), theme::kRadiusSm, 0, 2.0f);
     dl->PushClipRect(ImVec2(std::max(a0.x, gMin.x), std::max(a0.y, gMin.y)), ImVec2(std::min(a1.x, gMax.x), std::min(a1.y, gMax.y)), true);
     const std::string mutedName = c.muted ? *ccache.name[ci] + "  (muted)" : std::string();
-    theme::textEllipsis(dl, a.fontBold, std::min(theme::kFontCaption, headH - 2), ImVec2(std::max(a0.x, gMin.x) + 6, a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f)),
-                        a1.x - std::max(a0.x, gMin.x) - 10, theme::contrastText(head), c.muted ? mutedName.c_str() : ccache.name[ci]->c_str());
+    const char* title = c.muted ? mutedName.c_str() : ccache.name[ci]->c_str();
+    // Title bar: menu glyph (click: clip menu, like FL's clip icon), then the name.
+    const float tx0 = std::max(a0.x, gMin.x);
+    const bool glyph = a1.x - tx0 > 34 && headH >= 9;
+    if (glyph) {
+      const float gx = tx0 + 7, gy = a0.y + headH * 0.5f;
+      const bool hotGlyph = hovered && std::fabs(io.MousePos.x - gx) < 7 && io.MousePos.y >= a0.y && io.MousePos.y < a0.y + headH;
+      if (hotGlyph) hoverMenuGlyph = c.id;
+      dl->AddTriangleFilled(ImVec2(gx - 3.5f, gy - 2), ImVec2(gx + 3.5f, gy - 2), ImVec2(gx, gy + 2.5f),
+                            hotGlyph ? P.hot : theme::withAlpha(theme::contrastText(head), 0.8f));
+    }
+    theme::textEllipsis(dl, a.fontBold, std::min(theme::kFontCaption, headH - 2), ImVec2(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f)),
+                        a1.x - tx0 - (glyph ? 19 : 10), theme::contrastText(head), title);
     const ImVec2 b0(a0.x + 3, a0.y + headH + 2), b1(a1.x - 3, a1.y - 3);
     // Clip content (notes, waveform, curve): lighter than the colour on dark
     // slate, darker than it on the light variant's pastel bodies.
@@ -768,7 +1002,7 @@ void drawPlaylist(App& a) {
         }
       }
       // Fade handles at the top corners of the body (drag sideways).
-      if ((inside || fadeDragClip == c.id) && b1.y - b0.y > 8 && a1.x - a0.x > 24) {
+      if (st.showFades && (inside || fadeDragClip == c.id) && b1.y - b0.y > 8 && a1.x - a0.x > 24) {
         const float hin = std::max(a0.x + 4, std::min(xAtSec(c.fadeIn), a1.x - 8));
         const float hout = std::min(a1.x - 4, std::max(xAtSec(dur - c.fadeOut), a0.x + 8));
         for (int k = 1; k <= 2; ++k) {
@@ -816,7 +1050,13 @@ void drawPlaylist(App& a) {
     dl->AddRectFilled(ImVec2(cg.start.x, gMin.y), ImVec2(io.MousePos.x, gMax.y), theme::withAlpha(zc, 0.10f));
     dl->AddRect(ImVec2(cg.start.x, gMin.y), ImVec2(io.MousePos.x, gMax.y), zc, 0, 0, 1.2f);
   }
-  if (st.tool == Tool::Slice && hovered && io.MousePos.x >= gMin.x && io.MousePos.y >= gMin.y && hoverClip != kNoId) {
+  if (cg.kind == ClipGesture::SliceLine && active) {  // the cut line, over the tracks dragged across
+    const float x = std::round(xOf(cg.startTick));
+    const int t0 = std::min(cg.startTrack, trackAt(io.MousePos.y)), t1 = std::max(cg.startTrack, trackAt(io.MousePos.y));
+    const float y0 = io.KeyShift ? gMin.y : yOf(t0), y1 = io.KeyShift ? gMax.y : yOf(t1) + hOf(t1);
+    dl->AddLine(ImVec2(x, y0), ImVec2(x, y1), theme::rgb(theme::role::kSlice), 2.0f);
+    dl->AddTriangleFilled(ImVec2(x - 4, y0), ImVec2(x + 4, y0), ImVec2(x, y0 + 5), theme::rgb(theme::role::kSlice));
+  } else if (st.tool == Tool::Slice && hovered && io.MousePos.x >= gMin.x && io.MousePos.y >= gMin.y && hoverClip != kNoId) {
     const Tick cut = timeline::snapTick(std::max<Tick>(0, tickAt(io.MousePos.x)), snapG, Snap::Line);
     const float x = std::round(xOf(cut));
     const Clip* sc = s.clip(hoverClip);
@@ -828,15 +1068,15 @@ void drawPlaylist(App& a) {
   // Ruler: bar numbers, beat ticks, markers, song end marker, playhead cap.
   dl->AddRectFilled(origin, ImVec2(gMax.x, gMin.y), P.dark ? P.field : P.surface950);
   dl->AddLine(ImVec2(origin.x, gMin.y - 1), ImVec2(gMax.x, gMin.y - 1), P.dark ? P.ink : P.lineStrong);
-  dl->PushClipRect(ImVec2(gMin.x, origin.y), ImVec2(gMax.x, gMin.y), true);
+  dl->PushClipRect(ImVec2(gMin.x, rY), ImVec2(gMax.x, gMin.y), true);
   int hoverMarker = -1;
   {
     // Time selection in the ruler.
     if (st.selEnd > st.selStart) {
       float sx0 = xOf(st.selStart), sx1 = xOf(st.selEnd);
-      dl->AddRectFilled(ImVec2(sx0, origin.y + 2), ImVec2(sx1, gMin.y - 1), theme::withAlpha(P.accent, 0.38f), 2);
-      dl->AddLine(ImVec2(sx0, origin.y + 2), ImVec2(sx0, gMin.y - 1), P.accent, 1.5f);
-      dl->AddLine(ImVec2(sx1, origin.y + 2), ImVec2(sx1, gMin.y - 1), P.accent, 1.5f);
+      dl->AddRectFilled(ImVec2(sx0, rY + 2), ImVec2(sx1, gMin.y - 1), theme::withAlpha(P.accent, 0.38f), 2);
+      dl->AddLine(ImVec2(sx0, rY + 2), ImVec2(sx0, gMin.y - 1), P.accent, 1.5f);
+      dl->AddLine(ImVec2(sx1, rY + 2), ImVec2(sx1, gMin.y - 1), P.accent, 1.5f);
     }
     // Minor ticks on the visible grid; labels on a coarser grid that leaves room for text.
     const Tick labelGrid = timeline::visibleGrid(s, st.pxPerTick, 64.0);
@@ -847,7 +1087,7 @@ void drawPlaylist(App& a) {
       dl->AddLine(ImVec2(x, gMin.y - len), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
       if (major) {
         std::string lbl = timeline::rulerLabel(s, t, labelGrid);
-        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, origin.y + 4), t % barT == 0 ? P.text : P.textFaint, lbl.c_str());
+        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rY + 4), t % barT == 0 ? P.text : P.textFaint, lbl.c_str());
       }
     }
     // Markers: a flag with the name (time signature markers show the meter).
@@ -861,19 +1101,19 @@ void drawPlaylist(App& a) {
       static const char* const acts[] = {"", "loop", "skip", "pause", "stop"};
       if (mk.action != MarkerAction::None) lbl += std::string("  \xC2\xB7 ") + acts[static_cast<int>(mk.action)];
       float tw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, lbl.c_str()).x;
-      ImVec2 f0(x, origin.y + 13), f1(x + tw + 8, gMin.y - 2);
-      bool hov = hovered && io.MousePos.x >= f0.x && io.MousePos.x < f1.x && io.MousePos.y >= origin.y && io.MousePos.y < gMin.y;
+      ImVec2 f0(x, rY + 13), f1(x + tw + 8, gMin.y - 2);
+      bool hov = hovered && io.MousePos.x >= f0.x && io.MousePos.x < f1.x && io.MousePos.y >= rY && io.MousePos.y < gMin.y;
       if (hov) hoverMarker = static_cast<int>(i);
       dl->AddRectFilled(f0, f1, hov ? P.surface600 : P.surface700, 2, ImDrawFlags_RoundCornersRight);
-      dl->AddLine(ImVec2(x, origin.y + 2), ImVec2(x, gMin.y - 1), mk.timeSigNum > 0 ? P.textDim : P.text, 1.5f);
+      dl->AddLine(ImVec2(x, rY + 2), ImVec2(x, gMin.y - 1), mk.timeSigNum > 0 ? P.textDim : P.text, 1.5f);
       dl->AddText(mk.timeSigNum > 0 ? a.fontMono : a.fontRegular, theme::kFontLabel, ImVec2(x + 4, f0.y), mk.timeSigNum > 0 ? P.textDim : P.text,
                   lbl.c_str());
     }
     if (s.live.areaEnd > 0) {
       float lx = std::round(xOf(s.live.areaEnd));
       if (lx > gMin.x - 60 && lx < gMax.x + 60) {
-        dl->AddLine(ImVec2(lx, origin.y + 2), ImVec2(lx, gMin.y - 1), P.lineStrong, 2.0f);
-        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(lx - 34, origin.y + 13), liveMode ? P.text : P.textFaint, "LIVE");
+        dl->AddLine(ImVec2(lx, rY + 2), ImVec2(lx, gMin.y - 1), P.lineStrong, 2.0f);
+        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(lx - 34, rY + 13), liveMode ? P.text : P.textFaint, "LIVE");
       }
     }
     if (songLen > 0) {
@@ -887,37 +1127,41 @@ void drawPlaylist(App& a) {
   }
   dl->PopClipRect();
 
-  // Track headers.
-  dl->PushClipRect(ImVec2(origin.x, gMin.y), ImVec2(gMin.x, gMax.y), true);
-  dl->AddRectFilled(ImVec2(origin.x, gMin.y), ImVec2(gMin.x, gMax.y), P.dark ? P.field : P.surface950);
+  // Track headers (FL layout): name top left, "..." handle bottom left (drag:
+  // reorder, click: track menu), round switch bottom right (mute; right-click:
+  // solo), colour strip, resize grip along the bottom edge.
+  const float headX0 = origin.x + vbarW;
+  dl->PushClipRect(ImVec2(headX0, gMin.y), ImVec2(gMin.x, gMax.y), true);
+  dl->AddRectFilled(ImVec2(headX0, gMin.y), ImVec2(gMin.x, gMax.y), P.dark ? P.field : P.surface950);
   dl->AddLine(ImVec2(gMin.x - 1, gMin.y), ImVec2(gMin.x - 1, gMax.y), P.dark ? P.ink : P.line);
   int headResize = -1;  // track whose header's bottom edge is under the pointer
+  int headHandle = -1;  // track whose "..." handle is under the pointer
+  int headLed = -1;     // track whose mute switch is under the pointer
   static int renaming = -1;
   static ObjectId menuClip = kNoId;
+  static int dragTrack = -1;  // header being dragged to a new place
   for (int tr = trackAt(gMin.y); tr < nTracks && yOf(tr) < gMax.y; ++tr) {
     float y = yOf(tr), th = hOf(tr);
     if (th < 1) continue;  // inside a folded group
     const PlaylistTrack& t = s.tracks[static_cast<size_t>(tr)];
     const float indent = 8.0f * static_cast<float>(std::min(groupDepth[static_cast<size_t>(tr)], 3));
-    bool hovHead = hovered && io.MousePos.x < gMin.x && io.MousePos.y >= y && io.MousePos.y < y + th && io.MousePos.y >= gMin.y;
-    // Header: raised slate face tinted by the track colour, colour strip, name,
-    // mute lamp (top right), resize grip along the bottom edge.
-    ImVec2 h0(origin.x + 2, y + 1), h1(gMin.x - 3, y + th - 1);
+    bool hovHead = hovered && io.MousePos.x >= headX0 && io.MousePos.x < gMin.x && io.MousePos.y >= y && io.MousePos.y < y + th &&
+                   io.MousePos.y >= gMin.y;
+    ImVec2 h0(headX0 + 2, y + 1), h1(gMin.x - 3, y + th - 1);
+    const bool coloured = t.color != PlaylistTrack{}.color;
     const ImU32 tc = theme::content(t.color);
-    ImU32 face = theme::mix(hovHead ? P.surface700 : P.surface800, tc, t.muted ? 0.04f : 0.12f);
+    ImU32 face = theme::mix(hovHead || dragTrack == tr ? P.surface700 : P.surface800, tc, t.muted ? 0.04f : coloured ? 0.16f : 0.06f);
     dl->AddRectFilled(h0, h1, theme::mix(face, P.ink, 0.35f), theme::kRadiusSm);
     dl->AddRectFilled(h0, ImVec2(h1.x, h1.y - 1), face, theme::kRadiusSm);
     dl->AddLine(ImVec2(h0.x + 6, h0.y + 0.5f), ImVec2(h1.x - 2, h0.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.10f : 0.5f));
-    dl->AddRectFilled(h0, ImVec2(h0.x + 5, h1.y), tc, theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
-    const bool nearEdge = hovered && io.MousePos.x < gMin.x && std::fabs(io.MousePos.y - (y + th)) < 3.5f && io.MousePos.y >= gMin.y;
+    if (coloured) dl->AddRectFilled(h0, ImVec2(h0.x + 4, h1.y), tc, theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
+    if (dragTrack == tr) dl->AddRect(h0, h1, theme::withAlpha(P.hot, 0.7f), theme::kRadiusSm, 0, 1.5f);
+    const bool nearEdge = hovered && io.MousePos.x >= headX0 && io.MousePos.x < gMin.x && std::fabs(io.MousePos.y - (y + th)) < 3.0f &&
+                          io.MousePos.y >= gMin.y;
     if (nearEdge) headResize = tr;
-    if (hovHead || nearEdge) {
-      const float gx = (h0.x + h1.x) * 0.5f;
-      for (int d = -2; d <= 2; ++d)
-        dl->AddCircleFilled(ImVec2(gx + static_cast<float>(d) * 4.0f, h1.y - 3), 1.0f, nearEdge ? P.hot : P.textFaint, 6);
-    }
-    float nameY = std::min(y + 7.0f, y + (th - theme::kFontCaption) * 0.5f - 1);
-    float nameX = h0.x + 12 + indent;
+    const bool roomy = th >= 30;  // two lines: name above, handle + switch below
+    float nameY = roomy ? y + 4.0f : y + (th - theme::kFontCaption) * 0.5f - 1;
+    float nameX = h0.x + 8 + indent;
     if (t.groupSize > 0) {  // group: fold arrow
       ImVec2 c(nameX + 4, nameY + 7);
       if (t.folded)
@@ -926,39 +1170,154 @@ void drawPlaylist(App& a) {
         dl->AddTriangleFilled(ImVec2(c.x - 4, c.y - 2), ImVec2(c.x + 4, c.y - 2), ImVec2(c.x, c.y + 3), P.textDim);
       nameX += 12;
     }
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(nameX, nameY), h1.x - nameX - (liveMode ? 36 : 22),
-                        t.muted ? P.textFaint : P.text, playlistTrackName(s, static_cast<size_t>(tr)).c_str());
+    const float lineY = roomy ? h1.y - 8.0f : nameY + 7.0f;  // handle / switch line
+    // Mute switch: lit in the track colour (the accent purple for uncoloured tracks).
+    const ImVec2 ledC(h1.x - 10, lineY);
+    const bool ledHot = hovHead && std::fabs(io.MousePos.x - ledC.x) < 8 && std::fabs(io.MousePos.y - ledC.y) < 8;
+    if (ledHot) headLed = tr;
+    const ImU32 ledCol = coloured ? theme::mix(tc, P.paper, 0.25f) : theme::rgb(theme::role::kStamp);
+    dl->AddCircleFilled(ledC, 5.0f, theme::mix(P.ink, face, 0.3f));
+    dl->AddCircle(ledC, 5.0f, ledHot ? P.hot : theme::withAlpha(ledCol, t.muted ? 0.45f : 0.9f), 16, 1.4f);
+    if (!t.muted) dl->AddCircleFilled(ledC, 2.6f, ledCol);
+    // "..." handle.
+    const ImVec2 hc0(h0.x + 6 + indent, lineY - 5);
+    const bool handleHot = hovHead && !ledHot && io.MousePos.x >= hc0.x - 2 && io.MousePos.x < hc0.x + 20 && std::fabs(io.MousePos.y - lineY) < 7;
+    if (handleHot) headHandle = tr;
+    if (roomy || th >= 22)
+      for (int d = 0; d < 3; ++d)
+        dl->AddCircleFilled(ImVec2(hc0.x + 4 + static_cast<float>(d) * 4.5f, lineY + 1), 1.2f, handleHot || dragTrack == tr ? P.hot : P.textFaint, 6);
+    const float nameRight = roomy ? h1.x - 6 : h1.x - 22;
+    if (roomy || th >= 18)
+      theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(roomy ? nameX : nameX + 18, nameY), nameRight - (roomy ? nameX : nameX + 18),
+                          t.muted ? P.textFaint : P.text, playlistTrackName(s, static_cast<size_t>(tr)).c_str());
     if (liveMode && a.engine.liveActive(tr) != kNoId)  // live: a clip plays on this track
-      dl->AddTriangleFilled(ImVec2(h1.x - 30, nameY + 3), ImVec2(h1.x - 30, nameY + 11), ImVec2(h1.x - 24, nameY + 7), P.accent);
-    ui::Led(dl, ImVec2(h1.x - 11, nameY + 7), 4.5f, !t.muted);
-    if (t.locked) ui::drawIcon(dl, ui::Icon::Lock, ImVec2(h1.x - (liveMode ? 40 : 26), nameY + 7), 11, P.textDim);
+      dl->AddTriangleFilled(ImVec2(h1.x - 30, lineY - 4), ImVec2(h1.x - 30, lineY + 4), ImVec2(h1.x - 24, lineY), P.accent);
+    if (t.locked) ui::drawIcon(dl, ui::Icon::Lock, ImVec2(h1.x - (liveMode ? 42 : 26), lineY), 11, P.textDim);
+    if (nearEdge) {
+      const float gx = (h0.x + h1.x) * 0.5f;
+      for (int d = -2; d <= 2; ++d) dl->AddCircleFilled(ImVec2(gx + static_cast<float>(d) * 4.0f, h1.y - 1.5f), 1.0f, P.hot, 6);
+    }
   }
   dl->PopClipRect();
-  // Corner above the headers.
+
+  // Vertical scroller (left of the headers) and horizontal scroller (above the ruler).
+  const float gridH = gMax.y - gMin.y;
+  const float contentW = std::max(static_cast<float>(songLen + 8 * std::max<Tick>(1, s.barTicks())) * st.pxPerTick, st.scrollX + gridW);
+  const ImVec2 vb0(origin.x, gMin.y), vb1(origin.x + vbarW - 2, gMax.y);
+  const ImVec2 hb0(gMin.x, origin.y + 1), hb1(gMax.x, rY - 1);
+  const float vThumbH = std::max(18.0f, (vb1.y - vb0.y) * std::min(1.0f, gridH / std::max(1.0f, totalH)));
+  const float vThumbY = vb0.y + (totalH > gridH ? (vb1.y - vb0.y - vThumbH) * st.scrollY / (totalH - gridH) : 0.0f);
+  const float hThumbW = std::max(24.0f, (hb1.x - hb0.x) * std::min(1.0f, gridW / std::max(1.0f, contentW)));
+  const float hThumbX = hb0.x + (contentW > gridW ? (hb1.x - hb0.x - hThumbW) * st.scrollX / (contentW - gridW) : 0.0f);
+  static int barDrag = 0;  // 1 vertical, 2 horizontal
+  static float barGrab = 0;
+  const bool overV = hovered && io.MousePos.x >= vb0.x && io.MousePos.x < vb1.x + 2 && io.MousePos.y >= vb0.y && io.MousePos.y < vb1.y;
+  const bool overH = hovered && io.MousePos.x >= hb0.x && io.MousePos.x < hb1.x && io.MousePos.y >= origin.y && io.MousePos.y < rY;
+  dl->AddRectFilled(ImVec2(origin.x, gMin.y), ImVec2(headX0, gMax.y), P.dark ? P.well : P.surface950);
+  dl->AddRectFilled(ImVec2(vb0.x + 2, vThumbY), ImVec2(vb1.x, vThumbY + vThumbH), barDrag == 1 || overV ? P.surface600 : P.surface700, 3);
+  dl->AddRectFilled(ImVec2(gMin.x, origin.y), ImVec2(gMax.x, rY), P.dark ? P.well : P.surface950);
+  dl->AddRectFilled(ImVec2(hThumbX, hb0.y + 2), ImVec2(hThumbX + hThumbW, hb1.y - 1), barDrag == 2 || overH ? P.surface600 : P.surface700, 3);
+  {  // song overview in the horizontal scroller: clip extents as thin marks
+    const float k = (hb1.x - hb0.x) / std::max(1.0f, contentW);
+    for (size_t ci = 0; ci < s.playlist.size() && ci < ccache.count; ++ci) {  // cached lengths / colours (J-25)
+      const Clip& c = s.playlist[ci];
+      const float x0 = hb0.x + static_cast<float>(c.start) * st.pxPerTick * k, x1 = hb0.x + static_cast<float>(c.start + ccache.len[ci]) * st.pxPerTick * k;
+      if (x0 > hb1.x || !ccache.valid[ci]) continue;
+      dl->AddRectFilled(ImVec2(x0, hb1.y - 3), ImVec2(std::max(x0 + 1, std::min(x1, hb1.x)), hb1.y - 1), theme::withAlpha(theme::rgb(ccache.color[ci]), 0.8f));
+    }
+  }
+
+  // Header corner: two rows of view buttons (FL's corner above the track headers).
   dl->AddRectFilled(origin, ImVec2(gMin.x, gMin.y), P.dark ? P.field : P.surface950);
   dl->AddLine(ImVec2(origin.x, gMin.y - 1), ImVec2(gMin.x, gMin.y - 1), P.dark ? P.ink : P.lineStrong);
-  dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(origin.x + 10, origin.y + 7), P.textFaint, "TRACKS");
+  struct CornerBtn {
+    int id;
+    ImVec2 c;
+    bool on;
+    const char* hint;
+  };
+  const float rowH2 = rulerH * 0.5f, bw = 20.0f;
+  const float cx0 = origin.x + vbarW + 2 + bw * 0.5f, cxR = gMin.x - 4 - bw * 0.5f;
+  const float r1y = origin.y + rowH2 * 0.5f, r2y = origin.y + rowH2 * 1.5f;
+  const CornerBtn corner[] = {
+      {0, ImVec2(cx0, r1y), st.stretchResize, "Stretch audio clips when resizing them (Shift+M)"},
+      {1, ImVec2(cx0 + bw, r1y), st.showFades, "Fade handles on audio clips (Shift+F)"},
+      {2, ImVec2(cx0 + 2 * bw, r1y), st.zeroCross, "Audio clip edges land on zero crossings (no clicks)"},
+      {3, ImVec2(cxR, r1y), st.pickerOpen, "Show / hide the clip source picker (Alt+P)"},
+      {4, ImVec2(cx0, r2y), false, "Add tracks"},
+      {5, ImVec2(cx0 + bw, r2y), false, "Clear the selection (clips and time)"},
+      {6, ImVec2(cxR, r2y), st.wideHeaders, "Track header width: narrow / wide"}};
+  int hoverCorner = -1;
+  for (const auto& b : corner) {
+    const bool hot = hovered && std::fabs(io.MousePos.x - b.c.x) < bw * 0.5f && std::fabs(io.MousePos.y - b.c.y) < rowH2 * 0.5f;
+    if (hot) hoverCorner = b.id;
+    if (b.id == 6 && cxR - cx0 < 3 * bw) continue;
+    if (b.id == 3 && cxR - cx0 < 3 * bw) continue;
+    if (hot) dl->AddRectFilled(ImVec2(b.c.x - bw * 0.5f, b.c.y - rowH2 * 0.5f + 1), ImVec2(b.c.x + bw * 0.5f, b.c.y + rowH2 * 0.5f - 1),
+                               theme::withAlpha(P.paper, 0.07f), theme::kRadiusSm);
+    const ImU32 col = b.on ? P.paper : hot ? P.text : P.textFaint;
+    const float g = 12.0f;
+    switch (b.id) {
+      case 0: drawKindGlyph(dl, ClipKind::Audio, b.c, g, col); break;
+      case 1: {  // fade: a ramp up and down
+        dl->AddLine(ImVec2(b.c.x - 6, b.c.y + 4), ImVec2(b.c.x - 2, b.c.y - 4), col, 1.4f);
+        dl->AddLine(ImVec2(b.c.x - 2, b.c.y - 4), ImVec2(b.c.x + 2, b.c.y - 4), col, 1.4f);
+        dl->AddLine(ImVec2(b.c.x + 2, b.c.y - 4), ImVec2(b.c.x + 6, b.c.y + 4), col, 1.4f);
+        break;
+      }
+      case 2: {  // zero crossing: a wave through a centre line
+        dl->AddLine(ImVec2(b.c.x - 6, b.c.y), ImVec2(b.c.x + 6, b.c.y), theme::withAlpha(col, 0.5f), 1.0f);
+        dl->AddBezierCubic(ImVec2(b.c.x - 6, b.c.y), ImVec2(b.c.x - 3, b.c.y - 7), ImVec2(b.c.x + 3, b.c.y + 7), ImVec2(b.c.x + 6, b.c.y), col, 1.4f);
+        break;
+      }
+      case 3: ui::drawIcon(dl, st.pickerOpen ? ui::Icon::Left : ui::Icon::Right, b.c, g, col); break;
+      case 4: ui::drawIcon(dl, ui::Icon::Plus, b.c, g, col); break;
+      case 5: ui::drawIcon(dl, ui::Icon::Close, b.c, g, col); break;
+      case 6: {  // <->
+        dl->AddLine(ImVec2(b.c.x - 6, b.c.y), ImVec2(b.c.x + 6, b.c.y), col, 1.4f);
+        dl->AddTriangleFilled(ImVec2(b.c.x - 7, b.c.y), ImVec2(b.c.x - 3, b.c.y - 3.5f), ImVec2(b.c.x - 3, b.c.y + 3.5f), col);
+        dl->AddTriangleFilled(ImVec2(b.c.x + 7, b.c.y), ImVec2(b.c.x + 3, b.c.y + 3.5f), ImVec2(b.c.x + 3, b.c.y - 3.5f), col);
+        break;
+      }
+      default: break;
+    }
+    if (b.on) dl->AddLine(ImVec2(b.c.x - 5, b.c.y + rowH2 * 0.5f - 2), ImVec2(b.c.x + 5, b.c.y + rowH2 * 0.5f - 2), theme::rgb(theme::role::kMenu), 1.5f);
+    if (hot) a.setHint(b.hint);
+  }
+  if (hoverCorner >= 0) ImGui::SetTooltip("%s", corner[hoverCorner].hint);
 
   // ---------------- interaction ----------------
   const ImVec2 m = io.MousePos;
   const bool inGrid = m.x >= gMin.x && m.x < gMax.x && m.y >= gMin.y && m.y < gMax.y;
-  const bool inRuler = m.y >= origin.y && m.y < gMin.y && m.x >= gMin.x;
-  const bool inHead = m.x >= origin.x && m.x < gMin.x && m.y >= gMin.y;
+  const bool inRuler = m.y >= rY && m.y < gMin.y && m.x >= gMin.x;
+  const bool inHead = m.x >= headX0 && m.x < gMin.x && m.y >= gMin.y;
   const Clip* hc = hoverClip != kNoId ? s.clip(hoverClip) : nullptr;
   const bool hoverAuto = hc && hc->kind == ClipKind::Automation && hoverBody;
+  const bool shiftDrag = io.KeyShift && !io.KeyCtrl;               // Draw: Shift+drag a clip copies it
+  const bool slipDrag = io.KeyCtrl && io.KeyShift;                 // Draw: Ctrl+Shift+drag slips the content
   if (hovered && inGrid) {
     if (hoverPoint >= 0 || hoverHandle >= 0)
       ImGui::SetMouseCursor(hoverHandle >= 0 ? ImGuiMouseCursor_ResizeNS : ImGuiMouseCursor_Hand);
+    else if (hoverMenuGlyph != kNoId)
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     else if (hoverClip != kNoId && st.tool == Tool::Draw)
       ImGui::SetMouseCursor(hoverEdge || hoverLeftEdge ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeAll);
+    else if (st.tool == Tool::Slip && hoverClip != kNoId)
+      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     std::string where = "Bar " + std::to_string(tickAt(m.x) / std::max<Tick>(1, s.barTicks()) + 1) + " · " +
                         playlistTrackName(s, static_cast<size_t>(trackAt(m.y)));
     if (liveMode && hc && inLiveArea(s, *hc))
       a.setHint(where + "   (live: click to launch on the track's launch grid \xC2\xB7 right-click to stop the track)");
     else if (hoverAuto)
       a.setHint(where + "   (drag a point · drag a ring: curve tension · double-click: add point · right-click a point: delete · double-click the title: editor)");
+    else if (hoverMenuGlyph != kNoId)
+      a.setHint(where + "   (click: clip menu)");
+    else if (hc && st.tool == Tool::Draw)
+      a.setHint(where + std::string("   (drag: move · edges: resize / trim") + (hc->kind == ClipKind::Audio ? (st.stretchResize ? " (stretching)" : "") : "") +
+                " · Shift+drag: copy · Ctrl+Shift+drag: slip content · double-click: " +
+                (hc->kind == ClipKind::Audio ? "channel settings" : hc->kind == ClipKind::Automation ? "edit" : "open") + " · right-click: delete)");
     else
-      a.setHint(where + "   (wheel: scroll · Shift+wheel: horizontal · Ctrl+wheel: zoom · Alt+wheel: track height · drag a clip's left edge: trim · double-click clip: edit)");
+      a.setHint(where + "   (wheel: scroll · Shift+wheel: horizontal · Ctrl+wheel: zoom · Alt+wheel: track height)");
   } else if (hovered && inRuler) {
     ImGui::SetMouseCursor(hoverMarker >= 0 ? ImGuiMouseCursor_Hand : ImGuiMouseCursor_ResizeEW);
     if (hoverMarker >= 0)
@@ -967,7 +1326,9 @@ void drawPlaylist(App& a) {
       a.setHint("Click or drag to move the song position (snaps to the grid, Alt = free)  \xC2\xB7  Ctrl+drag or right-drag: "
                 "time selection (loops playback)  \xC2\xB7  double-click: clear the selection");
   } else if (hovered && inHead) {
-    a.setHint("Click the dot to mute · double-click to rename · right-click for colour");
+    if (headLed >= 0) a.setHint("Click: mute / unmute the track \xC2\xB7 right-click: solo (mute every other track)");
+    else if (headHandle >= 0) a.setHint("Drag up / down to move the track \xC2\xB7 click: track menu");
+    else a.setHint("Double-click to rename \xC2\xB7 right-click: track menu \xC2\xB7 drag the bottom edge to resize");
   }
 
   // Automation point edits: one undo step per gesture.
@@ -980,9 +1341,51 @@ void drawPlaylist(App& a) {
       if (AutomationClip* q = x.automation(aid)) fn(*q);
     });
   };
+  auto group = [&](const char* label) {  // the gesture's edits become one undo step
+    if (!cg.grouped) {
+      a.doc.beginGroup(label);
+      cg.grouped = true;
+    }
+  };
 
   bool lClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
   bool rClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+  {  // scrollers: drag the thumbs, click the rail to page
+    if (barDrag != 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) barDrag = 0;
+    if (barDrag == 1 && totalH > gridH) {
+      const float t = (m.y - barGrab - vb0.y) / std::max(1.0f, vb1.y - vb0.y - vThumbH);
+      st.scrollY = std::clamp(t, 0.0f, 1.0f) * (totalH - gridH);
+    } else if (barDrag == 2 && contentW > gridW) {
+      const float t = (m.x - barGrab - hb0.x) / std::max(1.0f, hb1.x - hb0.x - hThumbW);
+      st.scrollX = std::clamp(t, 0.0f, 1.0f) * (contentW - gridW);
+    }
+    if (lClick && overV) {
+      if (m.y >= vThumbY && m.y < vThumbY + vThumbH) barDrag = 1, barGrab = m.y - vThumbY;
+      else st.scrollY += (m.y < vThumbY ? -gridH : gridH) * 0.9f;
+      lClick = false;
+    } else if (lClick && overH) {
+      if (m.x >= hThumbX && m.x < hThumbX + hThumbW) barDrag = 2, barGrab = m.x - hThumbX;
+      else st.scrollX = std::max(0.0f, st.scrollX + (m.x < hThumbX ? -gridW : gridW) * 0.9f);
+      lClick = false;
+    }
+    if (barDrag != 0) lClick = false;
+  }
+  if ((lClick || rClick) && hoverCorner >= 0) {  // header corner buttons
+    switch (hoverCorner) {
+      case 0: st.stretchResize = !st.stretchResize; break;
+      case 1: st.showFades = !st.showFades; break;
+      case 2: st.zeroCross = !st.zeroCross; break;
+      case 3: st.pickerOpen = !st.pickerOpen; break;
+      case 4: ImGui::OpenPopup("##addtracks"); break;
+      case 5:
+        st.selected.clear();
+        st.selStart = st.selEnd = 0;
+        break;
+      case 6: st.wideHeaders = !st.wideHeaders; break;
+      default: break;
+    }
+    lClick = rClick = false;
+  }
   {  // Track resize: drag the bottom edge of a track header (one undo step per drag).
     static int resizing = -1;
     static float resizeY0 = 0, resizeH0 = 1;
@@ -997,7 +1400,7 @@ void drawPlaylist(App& a) {
         resizing = -1;
       }
       lClick = false;
-    } else if (headResize >= 0) {
+    } else if (headResize >= 0 && headLed < 0) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
       a.setHint("Drag to resize the track");
       if (lClick) {
@@ -1008,6 +1411,47 @@ void drawPlaylist(App& a) {
         lClick = false;
       }
     }
+  }
+  {  // Track reorder: drag the "..." handle (one undo step); a click opens the track menu.
+    static bool dragMoved = false;
+    if (dragTrack >= 0) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+      if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const int to = trackAt(std::clamp(m.y, gMin.y, gMax.y - 1));
+        if (to != dragTrack && to >= 0 && to < nTracks) {
+          const int from = dragTrack;
+          a.doc.editSong("move playlist track", [from, to](Song& x) { pltools::moveTrack(x, from, to); });
+          dragTrack = to;
+          dragMoved = true;
+        }
+      } else {
+        a.doc.endGroup();
+        if (!dragMoved) {
+          renaming = dragTrack;
+          ImGui::OpenPopup("##trmenu");
+        }
+        dragTrack = -1;
+      }
+      lClick = false;
+    } else if (lClick && headHandle >= 0) {
+      dragTrack = headHandle;
+      dragMoved = false;
+      a.doc.beginGroup("move playlist track");
+      lClick = false;
+    }
+  }
+  if (inHead && headLed >= 0 && (lClick || rClick)) {  // mute switch; right-click: solo
+    if (lClick) {
+      a.doc.editPlaylistTrack(headLed, "mute playlist track", [](PlaylistTrack& t) { t.muted = !t.muted; });
+    } else {
+      bool solo = !s.tracks[static_cast<size_t>(headLed)].muted;
+      for (int k = 0; k < nTracks && solo; ++k) solo = k == headLed || s.tracks[static_cast<size_t>(k)].muted;
+      const int keep = headLed;
+      a.doc.editSong(solo ? "unsolo playlist track" : "solo playlist track", [keep, solo](Song& x) {
+        for (size_t k = 0; k < x.tracks.size(); ++k) x.tracks[k].muted = solo ? false : static_cast<int>(k) != keep;
+      });
+    }
+    lClick = rClick = false;
   }
   // Live mode: clicking a clip of the live area launches it (held = gate pads).
   static ObjectId liveHeld = kNoId;
@@ -1027,18 +1471,20 @@ void drawPlaylist(App& a) {
   if (lClick && inHead) {
     int tr = trackAt(m.y);
     const PlaylistTrack& t = s.tracks[static_cast<size_t>(tr)];
-    float ax = origin.x + 4 + 12 + 8.0f * static_cast<float>(std::min(groupDepth[static_cast<size_t>(tr)], 3));
-    if (t.groupSize > 0 && m.x >= ax - 4 && m.x < ax + 12) {
+    float ax = headX0 + 2 + 8 + 4 + 8.0f * static_cast<float>(std::min(groupDepth[static_cast<size_t>(tr)], 3));
+    if (t.groupSize > 0 && m.x >= ax - 6 && m.x < ax + 8 && m.y < yOf(tr) + 20) {
       a.doc.editPlaylistTrack(tr, "fold track group", [](PlaylistTrack& x) { x.folded = !x.folded; });
       lClick = false;
     }
   }
   // J-11: locked tracks keep their clips (only selection, play, zoom and menus work there).
-  auto trackLocked = [&](int tr) { return tr >= 0 && tr < nTracks && s.tracks[static_cast<size_t>(tr)].locked; };
+  std::vector<char> lockedTracks(static_cast<size_t>(nTracks), 0);
+  for (int k = 0; k < nTracks; ++k) lockedTracks[static_cast<size_t>(k)] = s.tracks[static_cast<size_t>(k)].locked ? 1 : 0;
+  auto trackLocked = [&](int tr) { return tr >= 0 && tr < nTracks && lockedTracks[static_cast<size_t>(tr)]; };
   const bool editTool = st.tool != Tool::Select && st.tool != Tool::Play && st.tool != Tool::Zoom && !io.KeyCtrl;
   if (inGrid && editTool && trackLocked(trackAt(m.y))) {
     if (hovered) a.setHint("This track is locked (track menu \xE2\x86\x92 Lock)");
-    if (lClick) lClick = false;
+    if (lClick && hoverMenuGlyph == kNoId) lClick = false;
     if (rClick && !(hc && m.y < yOf(hc->track) + std::min(16.0f, (hOf(hc->track) - 4) * 0.45f) + 2)) rClick = false;
   }
   // Fade handle drags (J-8): one undo step per drag.
@@ -1077,6 +1523,12 @@ void drawPlaylist(App& a) {
     ImGui::OpenPopup("##markmenu");
     rClick = false;
   }
+  if (inGrid && (lClick || rClick) && hoverMenuGlyph != kNoId) {  // the clip's title glyph: clip menu
+    menuClip = hoverMenuGlyph;
+    ImGui::OpenPopup("##clipmenu");
+    lClick = rClick = false;
+  }
+  const pltools::Source src = currentSource(a);
   if (lClick || rClick) {
     cg = ClipGesture{};
     cg.start = m;
@@ -1097,10 +1549,7 @@ void drawPlaylist(App& a) {
       cg.kind = ClipGesture::Scrub;  // the position follows the pointer until release
     } else if (inHead) {
       int tr = trackAt(m.y);
-      float y = yOf(tr);
-      if (lClick && m.x > gMin.x - 26 && m.y < y + 26) {
-        a.doc.editPlaylistTrack(tr, "mute playlist track", [](PlaylistTrack& t) { t.muted = !t.muted; });
-      } else if (lClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      if (lClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         renaming = tr;
         ImGui::OpenPopup("##trname");
       } else if (rClick) {
@@ -1118,32 +1567,23 @@ void drawPlaylist(App& a) {
           if (q && k >= 0 && static_cast<size_t>(k) < q->points.size()) q->points.erase(q->points.begin() + k);
         });
       }
-    } else if (inGrid && rClick && hc && m.y < yOf(hc->track) + std::min(16.0f, (hOf(hc->track) - 4) * 0.45f) + 2) {
+    } else if (inGrid && rClick && hc && m.y < yOf(hc->track) + std::min(16.0f, (hOf(hc->track) - 4) * 0.45f) + 2 && st.tool != Tool::Erase &&
+               st.tool != Tool::Paint) {
       menuClip = hoverClip;  // right-click on the clip's title bar: clip menu
       ImGui::OpenPopup("##clipmenu");
     } else if (inGrid && rClick && st.tool == Tool::Zoom) {
       st.zoomRequest /= 1.5f;
     } else if (inGrid && rClick) {
-      cg.kind = ClipGesture::Erase;
+      cg.kind = ClipGesture::Erase;  // right-drag deletes with every editing tool (like FL)
+      group("delete clips");
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Mute) {
       cg.kind = ClipGesture::Mute;
       if (hc) cg.muteTo = hc->muted ? 0 : 1;
-    } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Slip) {
-      if (hc && hc->kind != ClipKind::Audio) {
-        cg.kind = ClipGesture::Slip;
-        cg.slipBase = hc->offset;
-      } else if (hc) {
-        a.notify("Audio clips slide their content in the audio clip settings");
-      }
+    } else if (inGrid && lClick && hc && ((!io.KeyCtrl && st.tool == Tool::Slip) || (st.tool == Tool::Draw && slipDrag))) {
+      cg.kind = ClipGesture::Slip;  // every clip kind (audio: its sample position)
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Slice) {
-      const Tick cut = timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line);
-      if (io.KeyShift) {
-        ops::sliceAt(a.doc, cut, -1);
-      } else if (hc && hc->kind == ClipKind::Audio) {
-        a.notify("Audio clips are cut in the audio clip tools");
-      } else if (hc) {
-        if (ObjectId r = ops::sliceClip(a.doc, hc->id, cut)) st.selected = {r};
-      }
+      cg.kind = ClipGesture::SliceLine;  // cut on release: the clicked clip, or every clip the vertical line crossed
+      cg.startTick = std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Play) {
       a.engine.setMode(PlayMode::Song);
       a.engine.setPosition(std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line)));
@@ -1151,7 +1591,7 @@ void drawPlaylist(App& a) {
       cg.kind = ClipGesture::Play;
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Zoom) {
       cg.kind = ClipGesture::Zoom;
-    } else if (inGrid && lClick && hoverAuto && st.tool == Tool::Draw && !io.KeyCtrl && (hoverPoint >= 0 || hoverHandle >= 0)) {
+    } else if (inGrid && lClick && hoverAuto && st.tool == Tool::Draw && !io.KeyCtrl && !io.KeyShift && (hoverPoint >= 0 || hoverHandle >= 0)) {
       const AutomationClip* ac = s.automation(hc->source);
       cg.autoId = ac->id;
       if (hoverPoint >= 0) {
@@ -1183,7 +1623,7 @@ void drawPlaylist(App& a) {
           a.showRack = true;
           a.focusWindow = "Channel rack";
         } else if (hc->kind == ClipKind::Audio) {
-          a.settingsChannel = hc->source;  // the channel that plays the clip
+          a.settingsChannel = hc->source;  // the channel that plays the clip (its sample, stretch, ...)
         } else if (hc->kind == ClipKind::Automation) {
           openAutomationEditor(a, hc->source, hc->id);  // J-5: automation clip editor
         }
@@ -1192,22 +1632,61 @@ void drawPlaylist(App& a) {
         if (!io.KeyShift) st.selected.clear();
       } else if (st.tool == Tool::Erase) {
         cg.kind = ClipGesture::Erase;
+        group("delete clips");
       } else if (st.tool == Tool::Paint) {
-        cg.kind = ClipGesture::Paint;
+        if (hc) {  // painting starts from a clip: it becomes the source
+          setSource(a, pltools::sourceOf(*hc));
+        }
+        const pltools::Source ps = currentSource(a);
+        if (pltools::sourceValid(s, ps)) {
+          cg.kind = ClipGesture::Paint;
+          cg.paintKind = ps.kind;
+          cg.paintId = ps.id;
+          cg.paintLen = hc ? s.clipLength(*hc) : pltools::sourceLength(s, ps);
+          cg.paintAnchor = hc ? hc->start : std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
+          group("paint clips");
+        }
       } else if (hoverClip != kNoId) {
         if (!st.selected.count(hoverClip)) {
-          if (!io.KeyShift) st.selected.clear();
+          if (!io.KeyShift || shiftDrag) st.selected.clear();
           st.selected.insert(hoverClip);
         }
-        if (hc->kind == ClipKind::Pattern) a.selectPattern(hc->pattern);
+        setSource(a, pltools::sourceOf(*hc));  // clicking a clip makes its source current (FL)
         cg.kind = hoverEdge ? ClipGesture::Resize : hoverLeftEdge ? ClipGesture::Trim : ClipGesture::Move;
-      } else if (s.pattern(a.curPattern)) {
-        ObjectId id = a.doc.addClip(a.curPattern, trackAt(m.y), std::max<Tick>(0, snapDown(tickAt(m.x), snapG)));
+        if (cg.kind == ClipGesture::Move && shiftDrag && !trackLocked(hc->track)) {
+          // Shift+drag: copies of the selection are dragged, the originals stay.
+          group("copy clips");
+          std::vector<ObjectId> copies;
+          const std::set<ObjectId> selNow = st.selected;
+          a.doc.editSong("copy clips", [&](Song& x) { copies = pltools::cloneClips(x, selNow); });
+          std::set<ObjectId> cs(copies.begin(), copies.end());
+          // The anchor's copy is the one under the pointer.
+          size_t k = 0;
+          for (const auto& c : s.playlist)
+            if (selNow.count(c.id)) {
+              if (c.id == hoverClip && k < copies.size()) cg.anchor = copies[k];
+              ++k;
+            }
+          st.selected = cs;
+          cg.base = a.doc.song().playlist;
+          cg.moved = true;
+        }
+      } else if (pltools::sourceValid(s, src)) {
+        const Tick at = std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
+        const int tr = trackAt(m.y);
+        ObjectId id = kNoId;
+        group("add clip");
+        a.doc.editSong("add clip", [&](Song& x) {
+          Clip c = pltools::makeClip(x, src, tr, at);
+          c.id = x.allocateId();
+          x.playlist.push_back(c);
+          id = c.id;
+        });
         if (id) {
           st.selected = {id};
           cg.base = a.doc.song().playlist;
           cg.anchor = id;
-          cg.startTick = a.doc.song().clip(id)->start;
+          cg.startTick = at;
           cg.kind = ClipGesture::Move;
         }
       }
@@ -1227,6 +1706,11 @@ void drawPlaylist(App& a) {
       for (const auto& c : cg.base)
         if (c.id == cg.anchor) return &c;
       return nullptr;
+    };
+    auto applyClips = [&](const char* label, const std::vector<Clip>& after) {
+      a.doc.editClips(label, [&](std::vector<Clip>& cs) {
+        if (cs.size() == after.size()) cs = after;
+      }, cg.key);
     };
     switch (cg.kind) {
       case ClipGesture::Scrub: {
@@ -1249,81 +1733,31 @@ void drawPlaylist(App& a) {
         const Clip* an = baseClip();
         if (!an) break;
         Tick target = snapPos(an->start + (curTick - cg.startTick));
-        Tick dt = target - an->start;
-        int dtr = curTrack - cg.startTrack;
-        for (const auto& c : cg.base)
-          if (st.selected.count(c.id)) {
-            dt = std::max<Tick>(dt, -c.start);
-            dtr = std::clamp(dtr, -c.track, nTracks - 1 - c.track);
-          }
+        const Tick dt = target - an->start;
+        const int dtr = curTrack - cg.startTrack;
         if (dt == 0 && dtr == 0 && !cg.moved) break;
-        {
-          bool blocked = false;  // locked tracks neither give nor take clips
-          for (const auto& c : cg.base)
-            if (st.selected.count(c.id)) blocked = blocked || trackLocked(c.track) || trackLocked(c.track + dtr);
-          if (blocked) break;
-        }
         cg.moved = true;
-        auto sel = st.selected;
-        auto base = cg.base;
-        a.doc.editClips("move clips", [&](std::vector<Clip>& cs) {
-          for (size_t i = 0; i < cs.size() && i < base.size(); ++i)
-            if (sel.count(cs[i].id)) {
-              cs[i].start = base[i].start + dt;
-              cs[i].track = base[i].track + dtr;
-            }
-        }, cg.key);
+        applyClips("move clips", pltools::moveClips(cg.base, st.selected, dt, dtr, nTracks, lockedTracks));
         break;
       }
       case ClipGesture::Resize: {
         const Clip* an = baseClip();
         if (!an) break;
-        Tick oldLen = s.clipLength(*an);
-        Tick end = std::max(timeline::snapTick(curTick, snapG, Snap::Line), an->start + std::max<Tick>(snapG, 1));
-        Tick d = end - (an->start + oldLen);
-        auto sel = st.selected;
-        auto base = cg.base;
-        const Song& song = a.doc.song();
-        a.doc.editClips("resize clips", [&](std::vector<Clip>& cs) {
-          for (size_t i = 0; i < cs.size() && i < base.size(); ++i)
-            if (sel.count(cs[i].id)) cs[i].length = std::max<Tick>(1, song.clipLength(base[i]) + d);
-        }, cg.key);
-        break;
-      }
-      case ClipGesture::Trim: {  // left edge: later start, content shifts with it (offset)
-        const Clip* an = baseClip();
-        if (!an) break;
-        Tick newStart = timeline::snapTick(curTick, snapG, Snap::Line);
-        Tick d = newStart - an->start;
-        auto sel = st.selected;
-        auto base = cg.base;
-        const Song& song = a.doc.song();
-        // Every selected clip moves its start by d, limited by its content start and a minimum length.
-        for (const auto& c : base)
-          if (sel.count(c.id)) {
-            Tick len = song.clipLength(c);
-            d = std::min(d, len - 1);
-            d = std::max(d, -c.start);
-            if (c.kind != ClipKind::Audio) d = std::max(d, -c.offset);
-          }
+        const Tick oldEnd = an->start + s.clipLength(*an);
+        const Tick end = std::max(timeline::snapTick(curTick, snapG, Snap::Line), an->start + 1);
+        const Tick d = end - oldEnd;
         if (d == 0 && !cg.moved) break;
         cg.moved = true;
-        a.doc.editClips("trim clips", [&](std::vector<Clip>& cs) {
-          for (size_t i = 0; i < cs.size() && i < base.size(); ++i) {
-            if (!sel.count(cs[i].id)) continue;
-            const Clip& b = base[i];
-            Tick len = song.clipLength(b);
-            cs[i].start = b.start + d;
-            cs[i].length = len - d;
-            if (b.kind == ClipKind::Audio) {
-              const Channel* ch = song.channel(b.source);
-              double src = ch ? audioSourceAt(song, *ch, b, tempoMap, static_cast<double>(b.start + d)) : b.audioStart;
-              cs[i].audioStart = std::max(0.0, src);
-            } else {
-              cs[i].offset = std::max<Tick>(0, b.offset + d);
-            }
-          }
-        }, cg.key);
+        applyClips("resize clips", pltools::resizeEnds(a.doc.song(), cg.base, st.selected, d, st.stretchResize));
+        break;
+      }
+      case ClipGesture::Trim: {  // left edge: later start, content stays in place
+        const Clip* an = baseClip();
+        if (!an) break;
+        const Tick d = timeline::snapTick(curTick, snapG, Snap::Line) - an->start;
+        if (d == 0 && !cg.moved) break;
+        cg.moved = true;
+        applyClips("trim clips", pltools::trimStarts(a.doc.song(), tempoMap, cg.base, st.selected, d, st.stretchResize, st.zeroCross));
         break;
       }
       case ClipGesture::AutoPoint: {
@@ -1362,27 +1796,37 @@ void drawPlaylist(App& a) {
       }
       case ClipGesture::Select: {
         ImVec2 lo(std::min(cg.start.x, m.x), std::min(cg.start.y, m.y)), hi(std::max(cg.start.x, m.x), std::max(cg.start.y, m.y));
-        std::set<ObjectId> sel;
+        std::set<ObjectId> sel = io.KeyShift ? st.selected : std::set<ObjectId>{};
         for (const auto& c : s.playlist) {
           float x0 = xOf(c.start), x1 = xOf(c.start + s.clipLength(c)), y = yOf(c.track);
-          if (x1 >= lo.x && x0 <= hi.x && y + hOf(c.track) >= lo.y && y <= hi.y) sel.insert(c.id);
+          if (hOf(c.track) >= 1 && x1 >= lo.x && x0 <= hi.x && y + hOf(c.track) >= lo.y && y <= hi.y) sel.insert(c.id);
         }
         st.selected = sel;
         break;
       }
       case ClipGesture::Paint: {
-        const Pattern* p = s.pattern(a.curPattern);
-        if (!p) break;
-        Tick len = s.patternContentLength(*p);
-        Tick t = std::max<Tick>(0, snapDown(curTick, std::max(snapG, len > 0 ? std::min(len, s.barTicks()) : snapG)));
-        bool occupied = false;
-        for (const auto& c : s.playlist)
-          occupied = occupied || (c.track == curTrack && t < c.start + s.clipLength(c) && t + len > c.start);
-        if (!occupied) a.doc.addClip(p->id, curTrack, t);
+        const pltools::Source ps{cg.paintKind, cg.paintId};
+        if (!pltools::sourceValid(s, ps) || cg.paintLen <= 0 || trackLocked(curTrack)) break;
+        std::vector<Tick> todo;
+        for (Tick t : pltools::paintSlots(cg.paintAnchor, curTick, cg.paintLen))
+          if (!pltools::occupied(s, curTrack, t, cg.paintLen)) todo.push_back(t);
+        if (todo.empty()) break;
+        const Tick len = cg.paintLen;
+        a.doc.editSong("paint clips", [&](Song& x) {
+          for (Tick t : todo) {
+            Clip c = pltools::makeClip(x, ps, curTrack, t);
+            if (c.kind != ClipKind::Pattern || len != x.clipLength(c)) c.length = len;
+            c.id = x.allocateId();
+            x.playlist.push_back(c);
+          }
+        });
         break;
       }
       case ClipGesture::Erase:
-        if (hoverClip != kNoId && !trackLocked(s.clip(hoverClip)->track)) a.doc.removeClip(hoverClip);
+        if (hoverClip != kNoId && !trackLocked(s.clip(hoverClip)->track)) {
+          st.selected.erase(hoverClip);
+          a.doc.removeClip(hoverClip);
+        }
         break;
       case ClipGesture::Mute: {  // every touched clip gets the first clip's new state
         if (hoverClip == kNoId || trackLocked(s.clip(hoverClip)->track)) break;
@@ -1393,14 +1837,20 @@ void drawPlaylist(App& a) {
         a.doc.editClip(hoverClip, to ? "mute clips" : "unmute clips", [to](Clip& k) { k.muted = to; }, cg.key);
         break;
       }
-      case ClipGesture::Slip: {  // content moves inside the clip: later content = smaller offset
+      case ClipGesture::Slip: {  // content moves inside the clip (every kind)
         const Clip* an = baseClip();
-        if (!an) break;
-        Tick d = timeline::snapTick(curTick, snapG, Snap::Line) - timeline::snapTick(cg.startTick, snapG, Snap::Line);
-        Tick off = std::max<Tick>(0, cg.slipBase - d);
-        if (const Clip* live = s.clip(an->id); live && live->offset != off) {
-          a.doc.editClip(an->id, "slip clip content", [off](Clip& k) { k.offset = off; }, cg.key);
-          a.setHint("Content offset " + timeline::rulerLabel(s, off, std::max<Tick>(1, s.ppq / 4)));
+        if (!an || trackLocked(an->track)) break;
+        const Tick d = timeline::snapTick(curTick, snapG, Snap::Line) - timeline::snapTick(cg.startTick, snapG, Snap::Line);
+        const Clip after = pltools::slipClip(a.doc.song(), tempoMap, *an, d);
+        if (const Clip* live = s.clip(an->id); live && !(after == *live)) {
+          a.doc.editClip(an->id, "slip clip content", [&after](Clip& k) { k = after; }, cg.key);
+          if (after.kind == ClipKind::Audio) {
+            char b[64];
+            std::snprintf(b, sizeof b, "Audio starts at %.3f s", after.audioStart);
+            a.setHint(b);
+          } else {
+            a.setHint("Content offset " + timeline::rulerLabel(s, after.offset, std::max<Tick>(1, s.ppq / 4)));
+          }
         }
         break;
       }
@@ -1411,7 +1861,8 @@ void drawPlaylist(App& a) {
         }
         break;
       }
-      case ClipGesture::Zoom: break;  // applied on release
+      case ClipGesture::Zoom: break;       // applied on release
+      case ClipGesture::SliceLine: break;  // applied on release
       default: break;
     }
   }
@@ -1428,6 +1879,19 @@ void drawPlaylist(App& a) {
         }
       }
     }
+    if (cg.kind == ClipGesture::SliceLine) {
+      // Shift: the whole column; otherwise the tracks the line was dragged over.
+      const int t0 = io.KeyShift ? 0 : cg.startTrack, t1 = io.KeyShift ? nTracks - 1 : trackAt(m.y);
+      std::vector<ObjectId> ids;
+      for (ObjectId id : pltools::clipsAcross(s, cg.startTick, t0, t1))
+        if (!trackLocked(s.clip(id)->track)) ids.push_back(id);
+      if (!ids.empty()) {
+        std::vector<ObjectId> right;
+        const Tick at = cg.startTick;
+        a.doc.editSong(ids.size() > 1 ? "slice clips" : "slice clip", [&](Song& x) { right = pltools::sliceClips(x, ids, at); });
+        st.selected = std::set<ObjectId>(right.begin(), right.end());
+      }
+    }
     if (cg.kind == ClipGesture::Move && !cg.moved && cg.anchor != kNoId && !io.KeyShift) st.selected = {cg.anchor};
     if (cg.kind == ClipGesture::TimeSel) {
       if (st.selEnd > st.selStart) {
@@ -1442,12 +1906,29 @@ void drawPlaylist(App& a) {
     cg = ClipGesture{};
   }
 
-  // Drop a pattern from the picker.
+  // Drop a clip source from the picker (or a pattern from elsewhere).
   if (ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PATTERN")) {
       ObjectId pid = *static_cast<const ObjectId*>(pl->Data);
       ObjectId id = a.doc.addClip(pid, trackAt(m.y), std::max<Tick>(0, snapDown(tickAt(m.x), snapG)));
       if (id) st.selected = {id};
+    }
+    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_CLIPSRC")) {
+      const ClipSrcPayload ps = *static_cast<const ClipSrcPayload*>(pl->Data);
+      const pltools::Source dsrc{static_cast<ClipKind>(ps.kind), ps.id};
+      const int tr = trackAt(m.y);
+      const Tick at = std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
+      if (pltools::sourceValid(s, dsrc) && !trackLocked(tr)) {
+        ObjectId id = kNoId;
+        a.doc.editSong("add clip", [&](Song& x) {
+          Clip c = pltools::makeClip(x, dsrc, tr, at);
+          c.id = x.allocateId();
+          x.playlist.push_back(c);
+          id = c.id;
+        });
+        st.selected = {id};
+        setSource(a, dsrc);
+      }
     }
     // Browser files (J-16): samples become audio clips at the drop point.
     browserui::DropPlace place;
@@ -1461,6 +1942,14 @@ void drawPlaylist(App& a) {
     ImGui::EndDragDropTarget();
   }
 
+  // Add-tracks menu (header corner "+").
+  if (ImGui::BeginPopup("##addtracks")) {
+    const int n = nTracks;
+    if (ImGui::MenuItem("Add 1 track", nullptr, false, n < kMaxPlaylistTracks)) a.doc.setPlaylistTrackCount(n + 1);
+    if (ImGui::MenuItem("Add 8 tracks", nullptr, false, n + 8 <= kMaxPlaylistTracks)) a.doc.setPlaylistTrackCount(n + 8);
+    if (ImGui::MenuItem("Add 32 tracks", nullptr, false, n + 32 <= kMaxPlaylistTracks)) a.doc.setPlaylistTrackCount(n + 32);
+    ImGui::EndPopup();
+  }
   // Track popups.
   if (ImGui::BeginPopup("##trname")) {
     static char buf[128];
@@ -1551,8 +2040,23 @@ void drawPlaylist(App& a) {
     if (io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_T, false)) {  // marker at the song position
       ops::addMarker(a.doc, static_cast<Tick>(a.engine.position()), ops::nextMarkerName(s));
     }
+    // FL view toggles: Shift+M stretch on resize, Shift+F fade handles, Alt+P picker panel.
+    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_M, false)) {
+      st.stretchResize = !st.stretchResize;
+      a.notify(st.stretchResize ? "Resizing audio clips stretches them" : "Resizing audio clips trims them");
+    }
+    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_F, false)) st.showFades = !st.showFades;
+    if (io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P, false)) st.pickerOpen = !st.pickerOpen;
+    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_T, false) && st.selEnd > st.selStart)
+      ops::placeLoopMarkers(a.doc, st.selStart, st.selEnd);  // Shift+T: place loop (FL)
+    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt) {  // quick zooms (Shift+1..3) and zoom on selection (Shift+4)
+      if (ImGui::IsKeyPressed(ImGuiKey_1, false)) st.quickZoom = 1;
+      if (ImGui::IsKeyPressed(ImGuiKey_2, false)) st.quickZoom = 2;
+      if (ImGui::IsKeyPressed(ImGuiKey_3, false)) st.quickZoom = 3;
+      if (ImGui::IsKeyPressed(ImGuiKey_4, false)) st.zoomSelRequest = true;
+    }
     // M: mute / unmute the selected clips.
-    if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_M) && !st.selected.empty()) {
+    if (!io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_M) && !st.selected.empty()) {
       auto sel = st.selected;
       a.doc.editClips("mute clips", [&](std::vector<Clip>& cs) {
         for (auto& c : cs)

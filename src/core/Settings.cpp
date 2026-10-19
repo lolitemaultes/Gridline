@@ -41,6 +41,7 @@ Settings::Settings() {
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing
       {"ui.darkTheme", b(true)},
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide
+      {"ui.layoutVersion", Json::makeNumber(0)},  // J-28: default workspace version the saved layout.ini was built with
       // J-24: general, file, project defaults, backup / autosave, hints, debug, scripting.
       {"general.startup", Json::makeString("template")},   // "template" | "empty" | "last"
       {"general.defaultTemplate", Json::makeString("")},   // "<Category>/<Name>" ("" = built-in starter kit)

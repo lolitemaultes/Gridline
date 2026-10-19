@@ -83,6 +83,18 @@ struct PlaylistState {
   Tick selStart = 0, selEnd = 0; // time selection (selEnd <= selStart: none)
   std::set<ObjectId> selected;  // clip ids
   std::vector<Clip> clipboard;
+  // J-28: FL-style playlist controls.
+  ClipKind srcKind = ClipKind::Pattern;  // current clip source (what draw / paint place);
+  ObjectId srcId = kNoId;                //   patterns follow App::curPattern
+  int pickerTab = 0;                     // clip source picker: 0 patterns, 1 audio, 2 automation
+  bool pickerOpen = true;                // picker panel shown (Alt+P)
+  bool stretchResize = false;            // Shift+M: resizing audio clips stretches them
+  bool showFades = true;                 // Shift+F: fade handles on audio clips
+  bool zeroCross = false;                // audio clip edges land on zero crossings
+  bool wideHeaders = false;              // track headers: wide / narrow
+  Snap lastSnap = Snap::Line;            // snap the magnet restores
+  int quickZoom = 0;                     // pending quick zoom (1..3: 4 / 16 / 64 bars fill the view)
+  bool zoomSelRequest = false;           // pending zoom on the selection (time selection, else selected clips)
 };
 
 struct FileDialogState {

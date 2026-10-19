@@ -22,6 +22,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include <cfloat>
 #include "../core/Project.h"
+#include "../core/Workspace.h"
 #include "../packs/PacksUi.h"
 #include "ExportUi.h"
 #include "../core/MidiFile.h"
@@ -287,30 +288,39 @@ void writePpm(const char* path, int w, int h) {
   }
 }
 
-// FL-style default workspace: browser on the left, channel rack and playlist
-// side by side in the main area (piano roll as a tab behind the playlist),
-// mixer along the bottom. Sizes are picked in pixels for the window the layout
-// is built in; the playlist node is the central node and absorbs later resizes.
-void buildDefaultLayout(ImGuiID dockspace, ImVec2 size) {
+// FL-style default workspace (J-28, see core/Workspace.h): browser docked
+// left, the mixer as a thin column docked right, the playlist in the centre
+// (piano roll as a tab behind it) and the channel rack floating over the
+// centre-left of the playlist. Sizes are picked in pixels for the window the
+// layout is built in; the playlist node is the central node and absorbs later
+// resizes. Returns the rack's floating rectangle (dock space coordinates).
+workspace::Rect buildDefaultLayout(ImGuiID dockspace, ImVec2 size, int channels) {
   ImGui::DockBuilderRemoveNode(dockspace);
   ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
   ImGui::DockBuilderSetNodeSize(dockspace, size);
-  const float W = std::max(size.x, 400.0f), H = std::max(size.y, 300.0f);
-  const float browserW = std::clamp(W * 0.17f, 220.0f, 300.0f);
-  const float mixerH = std::clamp(H * 0.38f, 210.0f, 360.0f);
-  const float restW = W - browserW;
-  const float rackW = std::clamp(restW * 0.45f, std::min(430.0f, restW * 0.5f), 660.0f);
-  ImGuiID left, rest, top, bottom, rackNode, mainNode;
-  ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Left, browserW / W, &left, &rest);
-  ImGui::DockBuilderSplitNode(rest, ImGuiDir_Down, mixerH / H, &bottom, &top);
-  ImGui::DockBuilderSplitNode(top, ImGuiDir_Left, rackW / restW, &rackNode, &mainNode);
+  const workspace::Layout L = workspace::defaultLayout(size.x, size.y, channels);
+  ImGuiID left, rest, mixerNode, mainNode;
+  ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Left, L.browserFrac, &left, &rest);
+  ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, L.mixerFrac, &mixerNode, &mainNode);
   ImGui::DockBuilderDockWindow("Browser", left);
   ImGui::DockBuilderDockWindow("Undo history", left);
-  ImGui::DockBuilderDockWindow("Channel rack", rackNode);
   ImGui::DockBuilderDockWindow("Playlist", mainNode);
   ImGui::DockBuilderDockWindow("Piano roll", mainNode);
-  ImGui::DockBuilderDockWindow("Mixer", bottom);
+  ImGui::DockBuilderDockWindow("Mixer", mixerNode);
   ImGui::DockBuilderFinish(dockspace);
+  return L.rack;
+}
+
+// Floating windows (the rack) stay reachable when the main window shrinks:
+// their title bar and some of their width remain inside the dock space.
+void keepFloatingInView(const char* name, ImVec2 pos, ImVec2 size) {
+  ImGuiWindow* w = ImGui::FindWindowByName(name);
+  if (!w || w->DockIsActive || !w->WasActive || w->Hidden) return;
+  ImVec2 p = w->Pos;
+  const float keep = std::min(w->Size.x, 160.0f);
+  p.x = std::clamp(p.x, pos.x - (w->Size.x - keep), std::max(pos.x, pos.x + size.x - keep));
+  p.y = std::clamp(p.y, pos.y, std::max(pos.y, pos.y + size.y - 40.0f));
+  if (p.x != w->Pos.x || p.y != w->Pos.y) ImGui::SetWindowPos(w, p, ImGuiCond_Always);
 }
 
 // Keeps the docked workspace usable while the window is resized. ImGui keeps
@@ -377,6 +387,69 @@ struct HeldNote {
   int pitch;
   double startTick;
 };
+
+// J-28 dev check: scripted input for interaction checks (--dev-input file).
+// One command per line, "<frame> <command> <args>", in logical pixels:
+//   move x y · down b · up b · mod ctrl|shift|alt 0|1 · wheel dy · key <letter>
+//   audio <wav> <track> <bar> (browser drop path) · dump (playlist clips to stdout)
+struct DevInputLine {
+  int frame = 0;
+  std::string cmd, a0, a1, a2;
+};
+
+std::vector<DevInputLine> loadDevInput(const std::string& path) {
+  std::vector<DevInputLine> out;
+  FILE* f = std::fopen(path.c_str(), "r");
+  if (!f) return out;
+  char line[1024];
+  while (std::fgets(line, sizeof line, f)) {
+    char c[64] = "", x[512] = "", y[64] = "", z[64] = "";
+    int fr = 0;
+    if (line[0] == '#' || std::sscanf(line, "%d %63s %511s %63s %63s", &fr, c, x, y, z) < 2) continue;
+    out.push_back({fr, c, x, y, z});
+  }
+  std::fclose(f);
+  return out;
+}
+
+void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
+  ImGuiIO& io = ImGui::GetIO();
+  // The scripted pointer stays put between commands (the backend would
+  // otherwise report the real pointer whenever the window has focus).
+  static ImVec2 pointer(-FLT_MAX, -FLT_MAX);
+  if (pointer.x > -FLT_MAX) io.AddMousePosEvent(pointer.x, pointer.y);
+  for (const auto& l : script) {
+    if (l.frame != frame) continue;
+    if (l.cmd == "move") {
+      pointer = ImVec2(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
+      io.AddMousePosEvent(pointer.x, pointer.y);
+    }
+    else if (l.cmd == "down" || l.cmd == "up") io.AddMouseButtonEvent(std::atoi(l.a0.c_str()), l.cmd == "down");
+    else if (l.cmd == "wheel") io.AddMouseWheelEvent(0, std::strtof(l.a0.c_str(), nullptr));
+    else if (l.cmd == "mod") {
+      const bool on = std::atoi(l.a1.c_str()) != 0;
+      ImGuiKey k = l.a0 == "ctrl" ? ImGuiMod_Ctrl : l.a0 == "shift" ? ImGuiMod_Shift : ImGuiMod_Alt;
+      io.AddKeyEvent(k, on);
+    } else if (l.cmd == "key" && l.a0.size() == 1 && l.a0[0] >= 'a' && l.a0[0] <= 'z') {
+      ImGuiKey k = static_cast<ImGuiKey>(ImGuiKey_A + (l.a0[0] - 'a'));
+      io.AddKeyEvent(k, true);
+      io.AddKeyEvent(k, false);
+    } else if (l.cmd == "audio") {
+      browserui::DropPlace place;
+      place.track = std::atoi(l.a1.c_str());
+      place.tick = static_cast<Tick>(std::atoi(l.a2.c_str())) * app.doc.song().barTicks();
+      browserui::performDrop(app, l.a0, browse::DropTarget::Playlist, place);
+    } else if (l.cmd == "dump") {
+      const Song& s = app.doc.song();
+      std::printf("dump frame %d: %zu clips, %zu selected\n", frame, s.playlist.size(), app.playlist.selected.size());
+      for (const auto& c : s.playlist)
+        std::printf("  clip %u kind %d track %d start %lld len %lld offset %lld audioStart %.6f muted %d\n", static_cast<unsigned>(c.id),
+                    static_cast<int>(c.kind), c.track, static_cast<long long>(c.start), static_cast<long long>(s.clipLength(c)),
+                    static_cast<long long>(c.offset), c.audioStart, c.muted ? 1 : 0);
+      std::fflush(stdout);
+    }
+  }
+}
 
 }  // namespace
 
@@ -543,6 +616,7 @@ int main(int argc, char** argv) {
   bool devMixerOnly = false;              // --show mixer: the mixer fills the window
   float shotScale = 1.0f;                 // --scale F: framebuffer scale of an off-screen shot (HiDPI check)
   bool devHostedEditor = false;           // --hosted-editor: open the native editor of the --plugin target
+  std::vector<DevInputLine> devInput;     // --dev-input file: scripted mouse / key input (J-28)
   std::string profilePath;                // --profile-frames out.json: per-window UI CPU time per frame (J-25)
   int profileWarmup = 30;                 // --profile-warmup N: frames not recorded (layout, caches)
   for (int i = 1; i < argc; ++i) {
@@ -554,6 +628,7 @@ int main(int argc, char** argv) {
     else if (arg == "--menu" && i + 1 < argc) devMenu = argv[++i];
     else if (arg == "--tool" && i + 1 < argc) devTool = argv[++i];
     else if (arg == "--script" && i + 1 < argc) devScript = argv[++i];
+    else if (arg == "--dev-input" && i + 1 < argc) devInput = loadDevInput(argv[++i]);
     else if (arg == "--play") app.engine.play();
     else if (arg == "--fx" && i + 2 < argc) {
       size_t mi = static_cast<size_t>(std::atoi(argv[++i]));
@@ -724,6 +799,8 @@ int main(int argc, char** argv) {
     }
   }
   int frameNo = 0;
+  workspace::Rect rackPlacement;  // floating rack rectangle of the default layout (screen coordinates)
+  bool placeRack = false;
   if (!profilePath.empty()) {
     // Profiling: no vsync wait, the measured frames come after the warm-up.
     prof::enable(true);
@@ -888,6 +965,10 @@ int main(int argc, char** argv) {
           e.MousePos.PosY /= uiScale;
         }
       }
+      if (!devInput.empty()) {
+        runDevInput(app, devInput, frameNo);
+        lastScaledEvent = g.InputEventsNextEventId - 1;  // already in logical pixels
+      }
     }
     ImGui::NewFrame();
     {  // splash -> main window: the workspace fades in from the splash surface over the first frames
@@ -919,8 +1000,14 @@ int main(int argc, char** argv) {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking |
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoSavedSettings);
     ImGuiID dockId = ImGui::GetID("GridlineDock");
-    if (firstRun || app.resetLayout || !ImGui::DockBuilderGetNode(dockId)) {
-      buildDefaultLayout(dockId, dsize);
+    // J-28: saved layouts from before the current default are replaced once.
+    const bool migrate = static_cast<int>(app.settings.getNumber("ui.layoutVersion")) < workspace::kLayoutVersion;
+    if (firstRun || migrate || app.resetLayout || !ImGui::DockBuilderGetNode(dockId)) {
+      const ImVec2 inner(dsize.x - 8, dsize.y - 8);  // dock host padding
+      const workspace::Rect r = buildDefaultLayout(dockId, inner, static_cast<int>(app.doc.song().channels.size()));
+      rackPlacement = {dpos.x + 4 + r.x, dpos.y + 4 + r.y, r.w, r.h};
+      placeRack = true;
+      app.settings.set("ui.layoutVersion", workspace::kLayoutVersion);
       firstRun = false;
       app.resetLayout = false;
       app.showBrowser = app.showRack = app.showPiano = app.showPlaylist = app.showMixer = true;
@@ -962,7 +1049,16 @@ int main(int argc, char** argv) {
     }
     {
       prof::Scope ps("rack");
+      if (placeRack && app.showRack) ImGui::SetNextWindowDockID(0, ImGuiCond_Always);  // default layout: the rack floats
       drawChannelRack(app);
+      if (placeRack && app.showRack) {  // ... over the playlist's left part (once the window exists)
+        if (ImGuiWindow* rw = ImGui::FindWindowByName("Channel rack")) {
+          ImGui::SetWindowPos(rw, ImVec2(rackPlacement.x, rackPlacement.y), ImGuiCond_Always);
+          ImGui::SetWindowSize(rw, ImVec2(rackPlacement.w, rackPlacement.h), ImGuiCond_Always);
+          placeRack = false;
+        }
+      }
+      keepFloatingInView("Channel rack", dpos, dsize);
     }
     {
       prof::Scope ps("mixer");

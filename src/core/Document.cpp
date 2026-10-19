@@ -656,7 +656,15 @@ bool Document::editClips(const std::string& label, const std::function<void(std:
   fn(after);
   if (after.size() != song_.playlist.size()) return false;
   for (size_t i = 0; i < after.size(); ++i) {
-    if (after[i].id != song_.playlist[i].id || !song_.pattern(after[i].pattern)) return false;
+    // J-28: every clip kind is checked against its own source. (This used to
+    // require a pattern for every clip, so any song holding an audio or
+    // automation clip refused every move / resize / trim of all clips.)
+    const Clip& c = after[i];
+    const bool valid = c.kind == ClipKind::Audio        ? song_.channel(c.source) != nullptr
+                       : c.kind == ClipKind::Automation ? song_.automation(c.source) != nullptr
+                                                        : song_.pattern(c.pattern) != nullptr;
+    if (c.id != song_.playlist[i].id) return false;
+    if (!valid && !(c == song_.playlist[i])) return false;  // untouched dangling clips don't block the edit
     after[i].track = std::clamp(after[i].track, 0, static_cast<int>(song_.tracks.size()) - 1);
     after[i].start = std::max<Tick>(0, after[i].start);
     after[i].length = std::max<Tick>(0, after[i].length);

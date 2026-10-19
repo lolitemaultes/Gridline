@@ -1008,18 +1008,23 @@ static void mixerToolbar(App& a) {
   ui::BeginToolbar("##mixtb");
   menuButton("mixmenu", "Mixer menu: disk recording, delay compensation, view, tracks", [&a]() { mixerOptionsMenu(a); });
   ImGui::SameLine(0, 6);
-  static const char* layouts[] = {"Compact", "Normal", "Wide"};
-  static const char* layoutHints[] = {"Compact strips", "Normal strips", "Wide strips"};
-  if (ui::Segmented("##layout", layouts, 3, &v.layout, 0, 0, layoutHints)) a.settings.set("ui.mixerLayout", v.layout);
-  ui::Hint("Strip width: compact, wide or extra large");
-  ImGui::SameLine(0, 6);
-  static const char* rows[] = {"1", "2", "3", "4"};
-  int r = v.rows - 1;
-  if (ui::Segmented("##rows", rows, 4, &r, 22)) v.rows = r + 1;
-  ui::Hint("Rows of tracks: inserts wrap into this many rows");
-  ImGui::SameLine(0, 6);
-  ui::ToolbarDivider();
-  ImGui::SameLine(0, 6);
+  // J-28: as a thin column the strips are compact and wrap by themselves;
+  // strip width and rows stay in the mixer menu.
+  const bool column = ImGui::GetWindowWidth() < 520;
+  if (!column) {
+    static const char* layouts[] = {"Compact", "Normal", "Wide"};
+    static const char* layoutHints[] = {"Compact strips", "Normal strips", "Wide strips"};
+    if (ui::Segmented("##layout", layouts, 3, &v.layout, 0, 0, layoutHints)) a.settings.set("ui.mixerLayout", v.layout);
+    ui::Hint("Strip width: compact, wide or extra large");
+    ImGui::SameLine(0, 6);
+    static const char* rows[] = {"1", "2", "3", "4"};
+    int r = v.rows - 1;
+    if (ui::Segmented("##rows", rows, 4, &r, 22)) v.rows = r + 1;
+    ui::Hint("Rows of tracks: inserts wrap into this many rows");
+    ImGui::SameLine(0, 6);
+    ui::ToolbarDivider();
+    ImGui::SameLine(0, 6);
+  }
   if (ui::TextButton("Slots", v.extended, 0, "Show every effect slot (name and mix) on the strips")) v.extended = !v.extended;
   ImGui::SameLine(0, 4);
   if (ui::ToggleIcon("wave", ui::Icon::Wave, v.waveforms, ImGui::GetFrameHeight(), "Waveforms on the strips (Alt+W)")) v.waveforms = !v.waveforms;
@@ -1029,10 +1034,13 @@ static void mixerToolbar(App& a) {
   ui::Hint("Meters: peak, RMS (average level) or both");
   ImGui::SameLine(0, 4);
   if (ui::TextButton("Hold", v.peakHold, 0, "Meters hold their peaks for a moment")) v.peakHold = !v.peakHold;
-  ImGui::SameLine(0, 6);
-  ui::ToolbarDivider();
-  ImGui::SameLine(0, 6);
-  if (ui::TextButton("Routing", v.showRouting, 0, "Routing overview: every route between the tracks")) v.showRouting = !v.showRouting;
+  const float roomLeft = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetItemRectMax().x;
+  if (!column || roomLeft > 84) {
+    ImGui::SameLine(0, 6);
+    ui::ToolbarDivider();
+    ImGui::SameLine(0, 6);
+    if (ui::TextButton("Routing", v.showRouting, 0, "Routing overview: every route between the tracks")) v.showRouting = !v.showRouting;
+  }
   const auto selIds = mixerSelection(a);
   if (selIds.size() > 1) {
     ImGui::SameLine(0, 10);
@@ -1072,35 +1080,54 @@ void drawMixer(App& a) {
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_W, false)) v.waveforms = !v.waveforms;
   }
   mixerToolbar(a);
-  const float W = ImGui::GetContentRegionAvail().x;
-  const bool showInspector = W >= 520;
+  const float W = ImGui::GetContentRegionAvail().x, Hm = ImGui::GetContentRegionAvail().y;
+  // J-28: docked as a thin column (the default workspace) the mixer stacks:
+  // compact strips wrap into as many rows as needed (vertical scrolling, every
+  // strip whole and readable) and the inspector sits below them when the
+  // column is tall enough.
+  const bool column = W < 520;
+  const bool showInspector = !column || Hm >= 520;
   const float inspectorW = std::clamp(W * 0.27f, 240.0f, 320.0f);
+  const float inspectorH = column ? std::floor(std::clamp(Hm * 0.42f, 220.0f, 380.0f)) : 0.0f;
 
   // ---------------- strips ----------------
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, theme::kS2));
   ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 8.0f);
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.dark ? P.well : P.surface900));
-  ImGui::BeginChild("##strips", ImVec2(showInspector ? -inspectorW : 0, 0), ImGuiChildFlags_AlwaysUseWindowPadding,
-                    ImGuiWindowFlags_HorizontalScrollbar);
+  ImGui::BeginChild("##strips", ImVec2(showInspector && !column ? -inspectorW : 0, showInspector && column ? -inspectorH : 0),
+                    ImGuiChildFlags_AlwaysUseWindowPadding, column ? 0 : ImGuiWindowFlags_HorizontalScrollbar);
   ImGui::PopStyleColor();
   ImGui::PopStyleVar(2);
   {
     StripCtx ctx;
     ctx.focus = sel;
-    ctx.dims = stripDims(v.layout);
+    ctx.dims = stripDims(column ? static_cast<int>(MixerViewState::Compact) : v.layout);
     const float stripW = ctx.dims.w, masterW = stripW + 8 + (v.masterScale ? 16.0f : 0.0f), gap = 2.0f;
     const bool groups = !mixops::groupNames(s).empty();
     const float bandH = groups ? 14.0f : 0.0f;
-    const int rows = std::clamp(v.rows, 1, 4);
+    int rows = std::clamp(v.rows, 1, 4);
+    if (column) {  // as many rows as it takes to fit the column's width
+      size_t mids = 0, lefts = 0;
+      for (size_t i : mixops::displayOrder(s)) {
+        const int dock = i == 0 ? -1 : std::clamp(s.mixer[i].dock, -1, 1);
+        mids += dock >= 0;  // the right dock wraps with the middle in a column
+        lefts += dock < 0;
+      }
+      const float leftW = static_cast<float>(lefts) * (stripW + gap) + 8 + (v.masterScale ? 16.0f : 0.0f) + theme::kS3;
+      const float roomW = ImGui::GetContentRegionAvail().x - leftW - 44.0f;
+      const size_t perRow = std::max<size_t>(1, static_cast<size_t>(std::floor(roomW / (stripW + gap))));
+      rows = std::max(1, static_cast<int>((mids + perRow - 1) / perRow));
+    }
     const float avail = ImGui::GetContentRegionAvail().y - (ImGui::GetScrollMaxX() > 0 ? 8.0f : 0.0f);
-    const float rowH = std::max(minStripHeight(v), (avail - static_cast<float>(rows) * bandH - static_cast<float>(rows - 1) * 6.0f) / static_cast<float>(rows));
+    const float rowH = column ? minStripHeight(v)
+                              : std::max(minStripHeight(v), (avail - static_cast<float>(rows) * bandH - static_cast<float>(rows - 1) * 6.0f) / static_cast<float>(rows));
     const ImVec2 o = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     // Sections: left dock (master first), middle (wraps into rows), right dock.
     std::vector<size_t> left, middle, right;
     for (size_t i : mixops::displayOrder(s)) {
       const int dock = i == 0 ? -1 : std::clamp(s.mixer[i].dock, -1, 1);
-      (dock < 0 ? left : dock > 0 ? right : middle).push_back(i);
+      (dock < 0 ? left : dock > 0 && !column ? right : middle).push_back(i);
     }
     struct Placed {
       size_t i;
@@ -1170,9 +1197,12 @@ void drawMixer(App& a) {
 
   // ---------------- inspector ----------------
   if (showInspector) {
-    ImGui::SameLine(0, 0);
+    if (!column) ImGui::SameLine(0, 0);
     ImVec2 ip = ImGui::GetCursorScreenPos();
-    ImGui::GetWindowDrawList()->AddLine(ip, ImVec2(ip.x, ip.y + ImGui::GetContentRegionAvail().y), P.line);
+    if (column)
+      ImGui::GetWindowDrawList()->AddLine(ip, ImVec2(ip.x + ImGui::GetContentRegionAvail().x, ip.y), P.line);
+    else
+      ImGui::GetWindowDrawList()->AddLine(ip, ImVec2(ip.x, ip.y + ImGui::GetContentRegionAvail().y), P.line);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS3, theme::kS3));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(theme::kS1, theme::kS1));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface900));

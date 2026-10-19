@@ -1,0 +1,256 @@
+// Gridline — playlist editing gestures (J-28). See PlaylistTools.h.
+#include "PlaylistTools.h"
+#include <algorithm>
+#include <cmath>
+#include "ClipOps.h"
+#include "Sample.h"
+
+namespace gl::pltools {
+
+namespace {
+
+// Seconds of source the clip has from its source start to the end of the
+// audio (or its audioEnd), 0 when the sample is not available.
+double sourceSeconds(const Song& s, const Clip& c, double* total = nullptr) {
+  const Channel* ch = s.channel(c.source);
+  if (!ch) return 0;
+  SamplePtr smp = sampleCache().get(ch->plugin.data);
+  if (!smp || smp->frames() < 2) return 0;
+  if (total) *total = smp->seconds();
+  const double end = c.audioEnd > c.audioStart ? std::min(c.audioEnd, smp->seconds()) : smp->seconds();
+  return std::max(0.0, end - c.audioStart);
+}
+
+// Nearest zero crossing (mono sum) to `sec` within +-5 ms; `sec` when none.
+double nearestZeroCrossing(const Song& s, const Clip& c, double sec) {
+  const Channel* ch = s.channel(c.source);
+  SamplePtr smp = ch ? sampleCache().get(ch->plugin.data) : nullptr;
+  if (!smp || smp->frames() < 2) return sec;
+  const double sr = smp->sampleRate;
+  const long n = static_cast<long>(smp->frames());
+  const long at = std::clamp(static_cast<long>(std::llround(sec * sr)), 0L, n - 1);
+  const long reach = static_cast<long>(sr * 0.005);
+  auto v = [&](long i) { return smp->left[static_cast<size_t>(i)] + smp->right[static_cast<size_t>(i)]; };
+  for (long k = 0; k <= reach; ++k)
+    for (long i : {at - k, at + k}) {
+      if (i <= 0 || i >= n) continue;
+      if (v(i) == 0.0f || (v(i - 1) < 0.0f) != (v(i) < 0.0f)) return static_cast<double>(i) / sr;
+    }
+  return sec;
+}
+
+}  // namespace
+
+bool sourceValid(const Song& s, const Source& src) {
+  switch (src.kind) {
+    case ClipKind::Audio: return s.channel(src.id) != nullptr;
+    case ClipKind::Automation: return s.automation(src.id) != nullptr;
+    default: return s.pattern(src.id) != nullptr;
+  }
+}
+
+Source sourceOf(const Clip& c) { return {c.kind, c.kind == ClipKind::Pattern ? c.pattern : c.source}; }
+
+Clip makeClip(const Song& s, const Source& src, int track, Tick start) {
+  Clip c;
+  c.kind = src.kind;
+  c.track = track;
+  c.start = std::max<Tick>(0, start);
+  if (src.kind == ClipKind::Pattern) {
+    c.pattern = src.id;
+  } else {
+    c.source = src.id;
+  }
+  if (src.kind == ClipKind::Audio) c.length = sourceLength(s, src);
+  return c;
+}
+
+Tick sourceLength(const Song& s, const Source& src) {
+  if (!sourceValid(s, src)) return s.beatTicks();
+  Clip c;
+  c.kind = src.kind;
+  if (src.kind == ClipKind::Pattern) c.pattern = src.id;
+  else c.source = src.id;
+  if (src.kind == ClipKind::Audio) {
+    const Tick n = audioClipNaturalLength(s, c);
+    return n > 0 ? n : s.barTicks();
+  }
+  return std::max<Tick>(s.beatTicks(), s.clipLength(c));
+}
+
+std::vector<Clip> moveClips(const std::vector<Clip>& base, const std::set<ObjectId>& sel, Tick dt, int dtr, int trackCount,
+                            const std::vector<char>& locked) {
+  for (const auto& c : base)
+    if (sel.count(c.id)) {
+      dt = std::max<Tick>(dt, -c.start);
+      dtr = std::clamp(dtr, -c.track, std::max(0, trackCount - 1 - c.track));
+    }
+  auto isLocked = [&](int t) { return t >= 0 && t < static_cast<int>(locked.size()) && locked[static_cast<size_t>(t)]; };
+  for (const auto& c : base)
+    if (sel.count(c.id) && (isLocked(c.track) || isLocked(c.track + dtr))) return base;
+  std::vector<Clip> out = base;
+  for (auto& c : out)
+    if (sel.count(c.id)) {
+      c.start += dt;
+      c.track += dtr;
+    }
+  return out;
+}
+
+std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const std::set<ObjectId>& sel, Tick d, bool stretch) {
+  // Every clip keeps at least one tick; audio clips without stretch stop at
+  // the end of their audio.
+  for (const auto& c : base) {
+    if (!sel.count(c.id)) continue;
+    const Tick len = s.clipLength(c);
+    d = std::max<Tick>(d, 1 - len);
+    if (c.kind == ClipKind::Audio && !stretch) {
+      const Tick natural = audioClipNaturalLength(s, c);
+      if (natural > 0) d = std::min<Tick>(d, std::max<Tick>(0, natural - len));
+    }
+  }
+  std::vector<Clip> out = base;
+  for (auto& c : out) {
+    if (!sel.count(c.id)) continue;
+    const Tick len = s.clipLength(c), nl = std::max<Tick>(1, len + d);
+    if (c.kind == ClipKind::Audio && stretch && len > 0) c.stretch = std::clamp(c.stretch * static_cast<double>(nl) / static_cast<double>(len), 0.0625, 16.0);
+    c.length = nl;
+  }
+  return out;
+}
+
+std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vector<Clip>& base, const std::set<ObjectId>& sel, Tick d,
+                             bool stretch, bool zeroCross) {
+  for (const auto& c : base) {
+    if (!sel.count(c.id)) continue;
+    const Tick len = s.clipLength(c);
+    d = std::min<Tick>(d, len - 1);
+    d = std::max<Tick>(d, -c.start);
+    if (c.kind == ClipKind::Audio) {
+      if (stretch) continue;
+      // Content may not start before the audio's beginning: the earliest
+      // start whose source position is still >= 0 (the mapping is monotonic).
+      if (clipSourceAt(s, c, tm, static_cast<double>(c.start + d)) < -1e-9) {
+        Tick lo = d, hi = 0;  // source(lo) < 0 <= source(hi)
+        while (hi - lo > 1) {
+          const Tick mid = lo + (hi - lo) / 2;
+          (clipSourceAt(s, c, tm, static_cast<double>(c.start + mid)) < -1e-9 ? lo : hi) = mid;
+        }
+        d = hi;
+      }
+    } else {
+      d = std::max<Tick>(d, -c.offset);
+    }
+  }
+  std::vector<Clip> out = base;
+  for (auto& c : out) {
+    if (!sel.count(c.id)) continue;
+    const Clip b = c;
+    const Tick len = s.clipLength(b);
+    c.start = b.start + d;
+    c.length = len - d;
+    if (b.kind == ClipKind::Audio) {
+      if (stretch) {
+        c.stretch = std::clamp(b.stretch * static_cast<double>(len - d) / static_cast<double>(std::max<Tick>(1, len)), 0.0625, 16.0);
+      } else {
+        double src = std::max(0.0, clipSourceAt(s, b, tm, static_cast<double>(b.start + d)));
+        if (zeroCross) src = nearestZeroCrossing(s, b, src);
+        c.audioStart = src;
+      }
+    } else {
+      c.offset = std::max<Tick>(0, b.offset + d);
+    }
+  }
+  return out;
+}
+
+Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d) {
+  Clip c = base;
+  if (d == 0) return c;
+  if (base.kind == ClipKind::Audio) {
+    // Dragging right shows earlier audio: the source start moves back by the
+    // source time the drag spans.
+    const double span = std::fabs(clipSourceAt(s, base, tm, static_cast<double>(base.start + std::llabs(d))) - base.audioStart);
+    double total = 0;
+    sourceSeconds(s, base, &total);
+    double a = base.audioStart + (d > 0 ? -span : span);
+    a = std::max(0.0, a);
+    if (total > 0) a = std::min(a, std::max(0.0, total - 1e-3));
+    const double moved = a - base.audioStart;
+    c.audioStart = a;
+    if (base.audioEnd > base.audioStart) c.audioEnd = std::max(a, base.audioEnd + moved);
+    return c;
+  }
+  if (base.kind == ClipKind::Pattern) {
+    const Pattern* p = s.pattern(base.pattern);
+    const Tick patLen = p ? s.patternContentLength(*p) : 0;
+    if (patLen > 0) {
+      Tick off = (base.offset - d) % patLen;
+      c.offset = off < 0 ? off + patLen : off;
+      return c;
+    }
+  }
+  c.offset = std::max<Tick>(0, base.offset - d);
+  return c;
+}
+
+std::vector<ObjectId> clipsAcross(const Song& s, Tick at, int t0, int t1) {
+  if (t0 > t1) std::swap(t0, t1);
+  std::vector<ObjectId> out;
+  for (const auto& c : s.playlist)
+    if (c.track >= t0 && c.track <= t1 && at > c.start && at < c.start + s.clipLength(c)) out.push_back(c.id);
+  return out;
+}
+
+std::vector<ObjectId> sliceClips(Song& s, const std::vector<ObjectId>& ids, Tick at) {
+  std::vector<ObjectId> out;
+  for (ObjectId id : ids)
+    if (ObjectId r = splitClipAt(s, id, at); r != kNoId) out.push_back(r);
+  return out;
+}
+
+std::vector<Tick> paintSlots(Tick anchor, Tick to, Tick len) {
+  std::vector<Tick> out;
+  if (len <= 0) return out;
+  const Tick k = (to - anchor) >= 0 ? (to - anchor) / len : -((anchor - to + len - 1) / len);
+  const Tick lo = std::min<Tick>(0, k), hi = std::max<Tick>(0, k);
+  for (Tick i = lo; i <= hi; ++i)
+    if (anchor + i * len >= 0) out.push_back(anchor + i * len);
+  return out;
+}
+
+bool occupied(const Song& s, int track, Tick start, Tick len) {
+  for (const auto& c : s.playlist)
+    if (c.track == track && start < c.start + s.clipLength(c) && start + len > c.start) return true;
+  return false;
+}
+
+std::vector<ObjectId> cloneClips(Song& s, const std::set<ObjectId>& sel) {
+  std::vector<Clip> copies;
+  for (const auto& c : s.playlist)
+    if (sel.count(c.id)) copies.push_back(c);
+  std::vector<ObjectId> out;
+  for (Clip c : copies) {
+    c.id = s.allocateId();
+    c.takeGroup = kNoId;
+    out.push_back(c.id);
+    s.playlist.push_back(c);
+  }
+  return out;
+}
+
+bool moveTrack(Song& s, int from, int to) {
+  const int n = static_cast<int>(s.tracks.size());
+  if (from < 0 || from >= n || to < 0 || to >= n || from == to) return false;
+  PlaylistTrack t = s.tracks[static_cast<size_t>(from)];
+  s.tracks.erase(s.tracks.begin() + from);
+  s.tracks.insert(s.tracks.begin() + to, t);
+  for (auto& c : s.playlist) {
+    if (c.track == from) c.track = to;
+    else if (from < to && c.track > from && c.track <= to) --c.track;
+    else if (from > to && c.track >= to && c.track < from) ++c.track;
+  }
+  return true;
+}
+
+}  // namespace gl::pltools

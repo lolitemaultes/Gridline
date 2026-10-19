@@ -20,6 +20,8 @@
 #include "../core/Project.h"
 #include "../core/Presets.h"
 #include "../core/MixerOps.h"
+#include "../engine/PlaylistTools.h"
+#include "../core/MenuParity.h"
 #include "TrackIcons.h"
 #include "App.h"
 #include "EditTools.h"
@@ -1010,6 +1012,20 @@ void playlistTrackMenu(App& a, int track) {
     const int need = track - above;
     a.doc.editPlaylistTrack(above, "group playlist tracks", [need](PlaylistTrack& x) { x.groupSize = std::max(x.groupSize, need); });
   }
+  {  // J-28 (operations: J-27)
+    const bool grouped = ops::trackGroupOf(s, track).first >= 0;
+    if (ImGui::MenuItem("Auto colour group", nullptr, false, grouped)) ops::autoColorTrackGroup(a.doc, track);
+    if (ImGui::MenuItem("Collapse grouped tracks", nullptr, false, grouped)) {
+      const int head = ops::trackGroupOf(s, track).first;
+      a.doc.editPlaylistTrack(head, "fold track group", [](PlaylistTrack& x) { x.folded = !x.folded; });
+    }
+    const Pattern* cur = s.pattern(a.curPattern);
+    const std::string send = cur ? "Send \"" + cur->name + "\" clips here" : std::string("Send pattern clips here");
+    if (ImGui::MenuItem(send.c_str(), nullptr, false, cur != nullptr)) {
+      const int n2 = ops::sendPatternClipsToTrack(a.doc, a.curPattern, track);
+      if (n2 == 0) a.notify("No clips of this pattern to move");
+    }
+  }
   if (ImGui::MenuItem("Mute all clips")) ops::muteTrackClips(a.doc, track, true);
   if (ImGui::MenuItem("Unmute all clips")) ops::muteTrackClips(a.doc, track, false);
   if (ImGui::MenuItem("Merge pattern clips")) {
@@ -1122,7 +1138,25 @@ void playlistOptionsMenu(App& a) {
       if (ImGui::MenuItem("Every beat")) ops::chopClips(a.doc, a.playlist.selected, beat);
       ImGui::EndMenu();
     }
-    if (ImGui::MenuItem("Slice at the song position", nullptr, false, true)) ops::sliceAt(a.doc, static_cast<Tick>(a.engine.position()), -1);
+    if (ImGui::MenuItem("Slice at the song position", nullptr, false, true)) {  // J-28: every clip kind, audio included
+      const Tick at = static_cast<Tick>(a.engine.position());
+      const auto ids = pltools::clipsAcross(s, at, 0, static_cast<int>(s.tracks.size()) - 1);
+      if (!ids.empty()) a.doc.editSong("slice clips", [&](Song& x) { pltools::sliceClips(x, ids, at); });
+    }
+    {  // J-28: audio and automation clip items (operations from J-27)
+      bool audioSel = false, autoSel = false;
+      for (const auto& c : s.playlist)
+        if (a.playlist.selected.count(c.id)) audioSel = audioSel || c.kind == ClipKind::Audio, autoSel = autoSel || c.kind == ClipKind::Automation;
+      ImGui::Separator();
+      if (ImGui::MenuItem("Pitch selected audio clips a semitone up", nullptr, false, audioSel)) ops::pitchAudioClips(a.doc, a.playlist.selected, 100.0f);
+      if (ImGui::MenuItem("Pitch selected audio clips a semitone down", nullptr, false, audioSel)) ops::pitchAudioClips(a.doc, a.playlist.selected, -100.0f);
+      if (ImGui::MenuItem("Reverse selected audio clips", nullptr, false, audioSel)) ops::reverseAudioClips(a.doc, a.playlist.selected);
+      if (ImGui::MenuItem("Merge selected automation clips", nullptr, false, autoSel)) {
+        ObjectId nc = ops::mergeAutomationClips(a.doc, a.playlist.selected);
+        if (nc) a.playlist.selected = {nc};
+        else a.notify("Merging needs two automation clips of the same parameter");
+      }
+    }
     if (ImGui::MenuItem("Make selected clips unique", nullptr, false, any)) {
       a.doc.beginGroup("make clips unique");
       for (ObjectId id : a.playlist.selected) ops::makeClipUnique(a.doc, id);
@@ -1160,6 +1194,12 @@ void playlistOptionsMenu(App& a) {
     if (ImGui::MenuItem("Jump to next marker", nullptr, false, nx >= 0)) a.engine.setPosition(s.markers[static_cast<size_t>(nx)].pos);
     if (ImGui::MenuItem("Jump to previous marker", nullptr, false, pv >= 0)) a.engine.setPosition(s.markers[static_cast<size_t>(pv)].pos);
     const bool hasSel = a.playlist.selEnd > a.playlist.selStart;
+    {  // J-28: markers around the time selection (operations from J-27)
+      const Tick s0 = a.playlist.selStart, s1 = a.playlist.selEnd;
+      if (ImGui::MenuItem("Add two (selection start and end)", nullptr, false, s1 > s0)) ops::addMarkerPair(a.doc, s0, s1);
+      if (ImGui::MenuItem("Place loop", "Shift+T", false, s1 > s0)) ops::placeLoopMarkers(a.doc, s0, s1);
+      if (ImGui::MenuItem("Add jump to next bar")) ops::addJumpToNextBar(a.doc, pos);
+    }
     if (ImGui::MenuItem("Delete markers in the time selection", nullptr, false, hasSel))
       ops::removeMarkersIn(a.doc, a.playlist.selStart, a.playlist.selEnd);
     if (!s.markers.empty()) ImGui::SeparatorText("Markers");
@@ -1196,6 +1236,23 @@ void playlistOptionsMenu(App& a) {
         for (ObjectId k : ops::clipsOfSameSource(s, id)) out.insert(k);
       a.playlist.selected = out;
     }
+    {  // J-28: time selection from the clips / stepped by its own length (helpers from J-27)
+      ImGui::Separator();
+      if (ImGui::MenuItem("Time around the selected clips", nullptr, false, any)) {
+        const auto r = ops::clipsTimeRange(s, a.playlist.selected);
+        a.playlist.selStart = r.first, a.playlist.selEnd = r.second;
+      }
+      const bool hasSel = a.playlist.selEnd > a.playlist.selStart;
+      if (ImGui::MenuItem("Previous time", nullptr, false, hasSel && a.playlist.selStart > 0)) {
+        const auto r = ops::shiftTimeSelection(a.playlist.selStart, a.playlist.selEnd, -1);
+        a.playlist.selStart = r.first, a.playlist.selEnd = r.second;
+      }
+      if (ImGui::MenuItem("Next time", nullptr, false, hasSel)) {
+        const auto r = ops::shiftTimeSelection(a.playlist.selStart, a.playlist.selEnd, 1);
+        a.playlist.selStart = r.first, a.playlist.selEnd = r.second;
+      }
+      ImGui::Separator();
+    }
     if (ImGui::MenuItem("Muted clips")) {
       a.playlist.selected.clear();
       for (const auto& c : s.playlist)
@@ -1228,20 +1285,38 @@ void playlistOptionsMenu(App& a) {
       if (ImGui::MenuItem(t.name, t.key, a.playlist.tool == t.tool)) a.playlist.tool = t.tool;
     ImGui::EndMenu();
   }
+  if (ImGui::BeginMenu("Zoom")) {  // J-28: FL's zoom menu (quick zooms, selection, fit)
+    if (ImGui::MenuItem("Zoom in", "PgUp")) a.playlist.zoomRequest *= 1.5f;
+    if (ImGui::MenuItem("Zoom out", "PgDn")) a.playlist.zoomRequest /= 1.5f;
+    ImGui::Separator();
+    if (ImGui::MenuItem("Quick zoom 1 (4 bars)", "Shift+1")) a.playlist.quickZoom = 1;
+    if (ImGui::MenuItem("Quick zoom 2 (16 bars)", "Shift+2")) a.playlist.quickZoom = 2;
+    if (ImGui::MenuItem("Quick zoom 3 (64 bars)", "Shift+3")) a.playlist.quickZoom = 3;
+    if (ImGui::MenuItem("Zoom on selection", "Shift+4", false, any || a.playlist.selEnd > a.playlist.selStart)) a.playlist.zoomSelRequest = true;
+    if (ImGui::MenuItem("Whole song", "Home")) a.playlist.fitRequest = true;
+    ImGui::EndMenu();
+  }
   if (ImGui::BeginMenu("View")) {
-    if (ImGui::MenuItem("Zoom in")) a.playlist.pxPerTick = std::min(1.0f, a.playlist.pxPerTick * 1.25f);
-    if (ImGui::MenuItem("Zoom out")) a.playlist.pxPerTick = std::max(0.005f, a.playlist.pxPerTick / 1.25f);
     ImGui::Separator();
     for (int pct : {50, 75, 100, 150, 200}) {
       std::string l = "Track height " + std::to_string(pct) + "%";
       float h = 46.0f * pct / 100.0f;
       if (ImGui::MenuItem(l.c_str(), nullptr, std::fabs(a.playlist.trackHeight - h) < 0.5f)) a.playlist.trackHeight = std::clamp(h, 24.0f, 120.0f);
     }
+    // J-28: picker panel and audio clip editing aids (also in the header corner).
+    ImGui::Separator();
+    ImGui::MenuItem("Clip source picker", "Alt+P", &a.playlist.pickerOpen);
+    ImGui::MenuItem("Wide track headers", nullptr, &a.playlist.wideHeaders);
+    ImGui::MenuItem("Stretch audio clips when resizing", "Shift+M", &a.playlist.stretchResize);
+    ImGui::MenuItem("Fade handles on audio clips", "Shift+F", &a.playlist.showFades);
+    ImGui::MenuItem("Audio clip edges on zero crossings", nullptr, &a.playlist.zeroCross);
     ImGui::EndMenu();
   }
   ImGui::Separator();
   if (ImGui::MenuItem("Add 8 tracks", nullptr, false, static_cast<int>(s.tracks.size()) + 8 <= kMaxPlaylistTracks))
     a.doc.setPlaylistTrackCount(static_cast<int>(s.tracks.size()) + 8);
+  if (ImGui::MenuItem("Collapse all grouped tracks")) ops::setAllGroupsFolded(a.doc, true);   // J-28 (operation: J-27)
+  if (ImGui::MenuItem("Expand all grouped tracks")) ops::setAllGroupsFolded(a.doc, false);
   if (ImGui::MenuItem("Delete unused patterns")) {
     int n = ops::deleteUnusedPatterns(a.doc);
     a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
