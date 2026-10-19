@@ -1,0 +1,1213 @@
+{
+  "channels": [],
+  "format": "gridline-project",
+  "info": {
+    "author": "",
+    "comments": "",
+    "genre": "",
+    "title": "Empty project",
+    "url": ""
+  },
+  "links": [],
+  "masterPitch": 0,
+  "mixer": [
+    {
+      "color": 5264990,
+      "id": 2,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Master",
+      "pan": 0,
+      "sends": [],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 3,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 4,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 5,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 6,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 7,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 8,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 9,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 10,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 11,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 12,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 13,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 14,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 15,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 16,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 17,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 18,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    }
+  ],
+  "modLinks": [],
+  "nextId": 20,
+  "patterns": [
+    {
+      "bars": 1,
+      "color": 7249739,
+      "id": 19,
+      "name": "Pattern 1",
+      "notes": {},
+      "steps": {},
+      "stepsPerBar": 16
+    }
+  ],
+  "playlist": [],
+  "ppq": 96,
+  "swing": 0,
+  "tempo": 140,
+  "timeSigDen": 4,
+  "timeSigNum": 4,
+  "tracks": [
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    }
+  ],
+  "version": 6
+}
+

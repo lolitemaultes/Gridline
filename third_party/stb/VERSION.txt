@@ -1,0 +1,2 @@
+stb_vorbis.c v1.22 (https://github.com/nothings/stb), public domain / MIT (see end of file).
+Used by src/engine/AudioCodecs.cpp to decode Ogg Vorbis samples.

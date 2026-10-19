@@ -1,0 +1,369 @@
+// Gridline — "dynamics" pack: catalogue entries.
+#include "../Packs.h"
+#include "dynamics.h"
+
+namespace gl::packs::dynamics {
+
+namespace {
+
+ParamDesc lin(std::string n, const char* u, double mn, double mx, double d) {
+  return ParamDesc{std::move(n), u, mn, mx, d, ParamKind::Continuous, ParamScale::Linear, {}};
+}
+ParamDesc lg(std::string n, const char* u, double mn, double mx, double d) {
+  return ParamDesc{std::move(n), u, mn, mx, d, ParamKind::Continuous, ParamScale::Log, {}};
+}
+ParamDesc tog(std::string n, double d) { return ParamDesc{std::move(n), "", 0, 1, d, ParamKind::Toggle, ParamScale::Linear, {}}; }
+ParamDesc ch(std::string n, std::vector<std::string> c, double d) {
+  double mx = static_cast<double>(c.size() - 1);
+  return ParamDesc{std::move(n), "", 0, mx, d, ParamKind::Choice, ParamScale::Linear, std::move(c)};
+}
+
+using Vals = std::vector<std::pair<int, float>>;
+
+const std::vector<std::string> kOs = {"Off", "2x", "4x"};
+
+// ------------------------------------------------------------------ master
+void addMaster(std::vector<PluginInfo>& v) {
+  PluginInfo p{"gl.master", "Mastering Dynamics", "Dynamics", PluginKind::Effect, {}, false, {}};
+  p.params.resize(kMsCount);
+  p.params[MsLowFreq] = lg("Low / mid split", "Hz", 40, 1000, 160);
+  p.params[MsHighFreq] = lg("Mid / high split", "Hz", 800, 16000, 3500);
+  p.params[MsLowSlope] = ch("Low split slope", {"6 dB", "12 dB", "24 dB"}, 2);
+  p.params[MsHighSlope] = ch("High split slope", {"6 dB", "12 dB", "24 dB"}, 2);
+  p.params[MsLookahead] = lin("Look-ahead", "ms", 0, 10, 2);
+  p.params[MsBandMix] = lin("Band mix", "%", 0, 1, 1);
+  p.params[MsLowCut] = lg("Low cut", "Hz", 10, 300, 10);
+  p.params[MsSolo] = ch("Solo", {"Off", "Low", "Mid", "High"}, 0);
+  p.params[MsOversample] = ch("Oversampling", kOs, 1);
+  static const char* names[kMsBands] = {"Low", "Mid", "High", "Master"};
+  for (int b = 0; b < kMsBands; ++b) {
+    std::string n = names[b];
+    bool m = b == 3;
+    p.params[msParam(b, MbMode)] = ch(n + " mode", {"Bypass", "Active", "Mute"}, 1);
+    p.params[msParam(b, MbPre)] = lin(n + " pre gain", "dB", -24, 24, 0);
+    p.params[msParam(b, MbPost)] = lin(n + " post gain", "dB", -24, 24, 0);
+    p.params[msParam(b, MbAttack)] = lg(n + " attack", "ms", 0.1, 300, m ? 2 : 10);
+    p.params[msParam(b, MbRelease)] = lg(n + " release", "ms", 5, 3000, m ? 120 : 180);
+    p.params[msParam(b, MbThreshHi)] = lin(n + " threshold", "dB", -60, 0, m ? -3 : -14);
+    p.params[msParam(b, MbRatioHi)] = lg(n + " ratio", "x", 1, 30, m ? 10 : 2);
+    p.params[msParam(b, MbKnee)] = lin(n + " knee", "dB", 0, 24, 6);
+    p.params[msParam(b, MbThreshLo)] = lin(n + " low threshold", "dB", -80, 0, -60);
+    p.params[msParam(b, MbRatioLo)] = lg(n + " below ratio", "x", 0.25, 8, 1);
+    p.params[msParam(b, MbGate)] = lin(n + " gate", "dB", -90, -20, -90);
+    p.params[msParam(b, MbSatThresh)] = lin(n + " saturation", "dB", -24, 0, m ? -1.5 : 0);
+    p.params[msParam(b, MbSatCeil)] = lin(n + " ceiling", "dB", -24, 12, m ? -0.1 : 6);
+    p.params[msParam(b, MbStereo)] = lin(n + " stereo", "%", -1, 1, 0);
+    p.params[msParam(b, MbWindow)] = lin(n + " RMS window", "ms", 0, 100, 0);
+    // κ2 extension block (reference maximizer features).
+    p.params[msExt(b, MxRelease2)] = lin(n + " release 2", "ms", 0, 2000, 0);
+    p.params[msExt(b, MxAtkCurve)] = ch(n + " attack curve", {"1", "2", "3", "4", "5", "6", "7", "8"}, 1);
+    p.params[msExt(b, MxRelCurve)] = ch(n + " release curve", {"1", "2", "3", "4", "5", "6", "7", "8"}, 2);
+    p.params[msExt(b, MxEnvMode)] = ch(n + " detector", {"Peak window", "RMS window"}, 1);
+    p.params[msExt(b, MxSatMode)] = ch(n + " saturation mode", {"Off", "A", "B"}, 1);
+    p.params[msExt(b, MxCurveMode)] = ch(n + " engine", {"Parametric", "Drawn curve"}, 0);
+    p.params[msExt(b, MxPoints)] = lin(n + " curve points", "", 2, kMsCurvePts, 3);
+    const double defX[kMsCurvePts] = {0, 0.5, 1, 1, 1, 1, 1, 1}, defY[kMsCurvePts] = {0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
+    for (int k = 0; k < kMsCurvePts; ++k) {
+      std::string pn = n + " point " + std::to_string(k + 1);
+      p.params[msExt(b, MxPt0 + k * 3)] = lin(pn + " x", "", 0, 1, defX[k]);
+      p.params[msExt(b, MxPt0 + k * 3 + 1)] = lin(pn + " y", "", 0, 1, defY[k]);
+      p.params[msExt(b, MxPt0 + k * 3 + 2)] = lin(pn + " tension", "", -1, 1, 0);
+    }
+  }
+  auto B = [](int b, int k) { return msParam(b, k); };
+  p.presets = {
+      {"Gentle glue", {}},
+      {"Loud master",
+       {{B(0, MbPre), 3.f}, {B(1, MbPre), 3.f}, {B(2, MbPre), 3.f}, {B(0, MbRatioHi), 3.f}, {B(1, MbRatioHi), 3.f},
+        {B(2, MbRatioHi), 3.f}, {B(3, MbPre), 4.f}, {B(3, MbRatioHi), 30.f}, {B(3, MbThreshHi), -1.f}}},
+      {"De-esser",
+       {{MsHighFreq, 5500.f}, {B(0, MbMode), 0.f}, {B(1, MbMode), 0.f}, {B(2, MbThreshHi), -32.f}, {B(2, MbRatioHi), 8.f},
+        {B(2, MbAttack), 0.5f}, {B(2, MbRelease), 60.f}, {B(3, MbMode), 0.f}}},
+      {"Upward lift",
+       {{B(0, MbThreshLo), -40.f}, {B(1, MbThreshLo), -40.f}, {B(2, MbThreshLo), -40.f}, {B(0, MbRatioLo), 0.6f},
+        {B(1, MbRatioLo), 0.6f}, {B(2, MbRatioLo), 0.6f}}},
+      {"Tight low end",
+       {{MsLowCut, 30.f}, {B(0, MbThreshHi), -24.f}, {B(0, MbRatioHi), 5.f}, {B(0, MbAttack), 25.f}, {B(0, MbStereo), -1.f},
+        {B(0, MbGate), -55.f}}},
+  };
+  // κ2: presets for the drawn-curve engine (the curves are Gridline's own).
+  auto X = [](int b, int k) { return msExt(b, k); };
+  Vals soft;
+  for (int b = 0; b < kMsBands; ++b) soft.push_back({X(b, MxCurveMode), 1.f});
+  for (int b = 0; b < 3; ++b) {
+    soft.push_back({X(b, MxPoints), 4.f});
+    soft.push_back({X(b, MxPt0 + 3), 0.38f}), soft.push_back({X(b, MxPt0 + 4), 0.38f});
+    soft.push_back({X(b, MxPt0 + 6), 0.62f}), soft.push_back({X(b, MxPt0 + 7), 0.47f}), soft.push_back({X(b, MxPt0 + 8), 0.3f});
+    soft.push_back({X(b, MxPt0 + 9), 1.f}), soft.push_back({X(b, MxPt0 + 10), 0.5f});
+    soft.push_back({B(b, MbPre), 3.f});
+  }
+  p.presets.push_back({"Drawn: soft multiband glue", soft});
+  p.editorWidth = 860;
+  v.push_back(p);
+}
+
+// ------------------------------------------------------------------ loudness
+void addLoudness(std::vector<PluginInfo>& v) {
+  PluginInfo p{"gl.emphasis", "Loudness", "Dynamics", PluginKind::Effect, {}, false, {}};
+  p.params.resize(EmCount);
+  p.params[EmInput] = lin("Input gain", "dB", 0, 24, 0);
+  p.params[EmCeiling] = lin("Ceiling", "dB", -12, 0, -0.3);
+  p.params[EmRelease] = lg("Release", "ms", 10, 1000, 120);
+  p.params[EmCharacter] = ch("Character", {"Balanced", "Loud", "Punchy", "Smooth"}, 0);
+  p.params[EmLowEmph] = lin("Low emphasis", "dB", -6, 6, 0);
+  p.params[EmHighEmph] = lin("High emphasis", "dB", -6, 6, 0);
+  p.params[EmClip] = lin("Clipper share", "%", 0, 1, 0.3);
+  p.params[EmClipHard] = tog("Hard clip", 0);
+  p.params[EmLink] = lin("Stereo link", "%", 0, 1, 1);
+  p.params[EmStereoMode] = ch("Channels", {"L / R", "M / S"}, 0);
+  p.params[EmDcBlock] = tog("DC block", 1);
+  p.params[EmOversample] = ch("Oversampling", kOs, 1);
+  p.params[EmLevelMatch] = tog("Level match", 0);
+  p.params[EmDelta] = tog("Delta", 0);
+  p.presets = {
+      {"Transparent", {}},
+      {"Loud and clear", {{EmInput, 8.f}, {EmCharacter, 1.f}, {EmClip, 0.5f}}},
+      {"Keep the punch", {{EmInput, 5.f}, {EmCharacter, 2.f}, {EmLowEmph, 3.f}, {EmClip, 0.2f}}},
+      {"Soft top", {{EmInput, 6.f}, {EmHighEmph, -4.f}, {EmCharacter, 3.f}}},
+      {"Quick emphasis", {{EmInput, 4.f}, {EmLowEmph, 2.f}, {EmHighEmph, 2.f}, {EmClip, 0.6f}}},
+  };
+  p.editorWidth = 760;
+  v.push_back(p);
+}
+
+// ------------------------------------------------------------------ enhance
+void addEnhance(std::vector<PluginInfo>& v) {
+  PluginInfo p{"gl.enhance", "Enhance", "Dynamics", PluginKind::Effect, {}, false, {}};
+  p.params.resize(EnCount);
+  p.params[EnAmount] = lin("Amount", "%", 0, 1, 0.6);
+  p.params[EnMode] = ch("Voicing", {"A", "B", "C", "D"}, 0);
+  p.params[EnCustom] = ch("Program", {"Built-in voicing", "Imported program"}, 0);
+  // Embedded program: the Mastering Dynamics parameter block (same names, prefixed).
+  for (const PluginInfo& m : v)
+    if (m.type == "gl.master")
+      for (size_t k = 0; k < m.params.size() && static_cast<int>(k) < kMsCount; ++k) {
+        ParamDesc d = m.params[k];
+        d.name = "Program: " + d.name;
+        p.params[static_cast<size_t>(EnProg0) + k] = d;
+      }
+  p.presets = {{"Default", {}},
+               {"Subtle", {{EnAmount, 0.3f}}},
+               {"Punch", {{EnMode, 1.f}, {EnAmount, 0.7f}}},
+               {"Air", {{EnMode, 2.f}, {EnAmount, 0.6f}}},
+               {"Dense", {{EnMode, 3.f}, {EnAmount, 0.8f}}}};
+  p.editorWidth = 560;
+  v.push_back(p);
+}
+
+// ------------------------------------------------------------------ amp rack
+void slotVals(Vals& out, int slot, int type, bool on, float mix = 1.f, std::vector<std::pair<int, float>> knobs = {}) {
+  out.push_back({rkParam(slot, RsType), static_cast<float>(type)});
+  out.push_back({rkParam(slot, RsOn), on ? 1.f : 0.f});
+  out.push_back({rkParam(slot, RsMix), mix});
+  for (int k = 0; k < kRackKnobs; ++k) out.push_back({rkParam(slot, RsK0 + k), static_cast<float>(rackKnobDefault(type, k))});
+  for (auto& kv : knobs) out.push_back({rkParam(slot, RsK0 + kv.first), kv.second});
+}
+
+void addRack(std::vector<PluginInfo>& v) {
+  PluginInfo p{"gl.amprack", "Amp Rack", "Distortion", PluginKind::Effect, {}, false, {}};
+  p.params.resize(kRkCount);
+  p.params[RkInput] = lin("Input", "dB", -24, 24, 0);
+  p.params[RkOutput] = lin("Output", "dB", -24, 24, 0);
+  p.params[RkSoftClip] = tog("Soft clip output", 1);
+  p.params[RkOversample] = ch("Oversampling", kOs, 1);
+  std::vector<std::string> types;
+  for (int t = 0; t < RmCount; ++t) types.push_back(rackModuleName(t));
+  static const int defType[kRackSlots] = {RmOverdrive, RmAmp, RmEq, RmChorus, RmDelay, RmReverb};
+  static const bool defOn[kRackSlots] = {true, true, true, false, false, true};
+  for (int s = 0; s < kRackSlots; ++s) {
+    std::string n = "Slot " + std::to_string(s + 1);
+    p.params[rkParam(s, RsType)] = ch(n + " module", types, defType[s]);
+    p.params[rkParam(s, RsOn)] = tog(n + " on", defOn[s] ? 1 : 0);
+    for (int k = 0; k < kRackKnobs; ++k)
+      p.params[rkParam(s, RsK0 + k)] = lin(n + " knob " + std::to_string(k + 1), "%", 0, 1, rackKnobDefault(defType[s], k));
+    p.params[rkParam(s, RsMix)] = lin(n + " mix", "%", 0, 1, defType[s] == RmReverb ? 0.35 : 1);
+  }
+  Vals crunch, clean, fuzz, ambient, funk, surf;
+  slotVals(crunch, 0, RmGate, true);
+  slotVals(crunch, 1, RmOverdrive, true, 1, {{0, 0.65f}});
+  slotVals(crunch, 2, RmAmp, true, 1, {{0, 0.6f}, {2, 0.6f}, {4, 0.6f}});
+  slotVals(crunch, 3, RmEq, true);
+  slotVals(crunch, 4, RmDelay, false);
+  slotVals(crunch, 5, RmReverb, true, 0.25f);
+  slotVals(clean, 0, RmCompressor, true);
+  slotVals(clean, 1, RmAmp, true, 1, {{0, 0.15f}, {3, 0.6f}, {4, 0.3f}});
+  slotVals(clean, 2, RmChorus, true, 0.6f);
+  slotVals(clean, 3, RmEmpty, false);
+  slotVals(clean, 4, RmDelay, true, 0.3f);
+  slotVals(clean, 5, RmReverb, true, 0.3f);
+  slotVals(fuzz, 0, RmGate, true, 1, {{0, 0.45f}});
+  slotVals(fuzz, 1, RmFuzz, true, 1, {{0, 0.85f}});
+  slotVals(fuzz, 2, RmAmp, true, 1, {{0, 0.7f}, {4, 0.7f}});
+  slotVals(fuzz, 3, RmEq, true, 1, {{1, 0.65f}, {2, 0.35f}});
+  slotVals(fuzz, 4, RmEmpty, false);
+  slotVals(fuzz, 5, RmReverb, true, 0.2f);
+  slotVals(ambient, 0, RmCompressor, true);
+  slotVals(ambient, 1, RmOverdrive, true, 1, {{0, 0.3f}});
+  slotVals(ambient, 2, RmAmp, true, 1, {{0, 0.35f}});
+  slotVals(ambient, 3, RmPhaser, true, 0.5f);
+  slotVals(ambient, 4, RmDelay, true, 0.45f, {{1, 0.55f}, {4, 1.f}});
+  slotVals(ambient, 5, RmReverb, true, 0.5f, {{0, 0.85f}, {1, 0.7f}});
+  slotVals(funk, 0, RmCompressor, true, 1, {{0, 0.5f}, {1, 0.5f}});
+  slotVals(funk, 1, RmWah, true, 1, {{1, 0.7f}});
+  slotVals(funk, 2, RmAmp, true, 1, {{0, 0.25f}, {3, 0.65f}});
+  slotVals(funk, 3, RmEmpty, false);
+  slotVals(funk, 4, RmEmpty, false);
+  slotVals(funk, 5, RmReverb, true, 0.2f);
+  slotVals(surf, 0, RmAmp, true, 1, {{0, 0.3f}, {3, 0.7f}, {4, 0.1f}});
+  slotVals(surf, 1, RmTremolo, true, 1, {{0, 0.55f}, {1, 0.7f}});
+  slotVals(surf, 2, RmEmpty, false);
+  slotVals(surf, 3, RmEmpty, false);
+  slotVals(surf, 4, RmDelay, true, 0.25f, {{0, 0.3f}});
+  slotVals(surf, 5, RmReverb, true, 0.45f, {{0, 0.7f}, {2, 0.2f}});
+  p.presets = {{"Crunch stack", crunch}, {"Clean shimmer", clean}, {"Fuzz wall", fuzz},
+               {"Ambient lead", ambient}, {"Funk wah", funk},     {"Surf tremolo", surf}};
+  p.editorWidth = 1000;
+  v.push_back(p);
+}
+
+// ------------------------------------------------------------------ distortions
+void addDistortions(std::vector<PluginInfo>& v) {
+  {
+    PluginInfo p{"gl.overdrive", "Overdrive", "Distortion", PluginKind::Effect, {}, false, {}};
+    p.params.resize(OdCount);
+    p.params[OdPreBand] = lin("Pre band", "%", 0, 1, 0);
+    p.params[OdColor] = lin("Colour", "%", 0, 1, 0.5);
+    p.params[OdPreAmp] = lin("Pre amp", "%", 0, 1, 0.3);
+    p.params[OdBoost] = tog("x100 boost", 0);
+    p.params[OdPostFilter] = lin("Post filter", "%", 0, 1, 0);
+    p.params[OdPostGain] = lin("Post gain", "dB", -36, 6, -6);
+    p.params[OdOversample] = ch("Oversampling", kOs, 1);
+    p.presets = {{"Warm push", {}},
+                 {"Bite", {{OdPreBand, 0.5f}, {OdPreAmp, 0.6f}, {OdPostGain, -9.f}}},
+                 {"Fat and dark", {{OdPostFilter, 0.6f}, {OdColor, 0.75f}, {OdPreAmp, 0.5f}}},
+                 {"Screamer", {{OdBoost, 1.f}, {OdPreAmp, 0.4f}, {OdPostFilter, 0.4f}, {OdPreBand, 0.35f}, {OdPostGain, -12.f}}}};
+    p.editorWidth = 560;
+    v.push_back(p);
+  }
+  {
+    PluginInfo p{"gl.fastdist", "Clip Dist", "Distortion", PluginKind::Effect, {}, false, {}};
+    p.params.resize(FdCount);
+    p.params[FdPreAmp] = lin("Pre amp", "dB", -12, 24, 0);
+    p.params[FdThreshold] = lin("Threshold", "%", 0.05, 1, 1);
+    p.params[FdType] = ch("Type", {"A", "B"}, 0);  // reference A / B (legacy engine: clip / fold)
+    p.params[FdMix] = lin("Mix", "%", 0, 1, 1);
+    p.params[FdPost] = lin("Post gain", "dB", -24, 12, 0);
+    p.params[FdPreK] = lin("Pre amp", "%", 0.5, 1.5, 1);
+    p.params[FdDrive] = lin("Threshold", "", 1, 10, 10);
+    p.params[FdMixK] = lin("Mix", "%", 0, 1, 1);
+    p.params[FdPostK] = lin("Post gain", "%", 0, 1, 1);
+    p.params[FdClassic] = tog("Reference engine", 1);
+    p.presets = {{"Neutral", {}},
+                 {"Warm drive", {{FdPreK, 0.64f}, {FdDrive, 7.f}}},
+                 {"Fuzz", {{FdPreK, 1.5f}, {FdType, 1.f}, {FdPostK, 0.62f}}},
+                 {"Gentle squash", {{FdPreK, 1.4f}, {FdDrive, 3.f}, {FdMixK, 0.85f}, {FdPostK, 0.8f}}},
+                 {"Light clip", {{FdClassic, 0.f}, {FdThreshold, 0.6f}, {FdPreAmp, 4.f}}},
+                 {"Parallel grit", {{FdClassic, 0.f}, {FdMix, 0.4f}, {FdPreAmp, 15.f}, {FdThreshold, 0.2f}, {FdPost, 4.f}}}};
+    p.editorWidth = 520;
+    v.push_back(p);
+  }
+  {
+    PluginInfo p{"gl.squeeze", "Squeeze", "Distortion", PluginKind::Effect, {}, false, {}};
+    p.params.resize(SqCount);
+    p.params[SqGain] = lin("Gain", "dB", -24, 12, 0);
+    p.params[SqMix] = lin("Mix", "%", 0, 1, 1);
+    p.params[SqSquare] = lin("Squarize", "%", 0, 1, 0);
+    p.params[SqSteps] = lg("Steps", "", 2, 4096, 4096);
+    p.params[SqPunchAmount] = lin("Punch", "%", 0, 1, 0);
+    p.params[SqPreserve] = lg("Preserve", "ms", 0.1, 40, 2);
+    p.params[SqImpact] = lin("Impact", "ms", 0, 500, 0);
+    p.params[SqRelation] = ch("Relation", {"Flip", "Skip", "Half", "Root"}, 0);
+    p.params[SqRingFreq] = lg("Ring frequency", "Hz", 20, 5000, 440);
+    p.params[SqRingAmount] = lin("Ring amount", "%", 0, 1, 0);
+    p.params[SqRateDiv] = lin("Rate divide", "", 1, 32, 1);
+    p.params[SqFilterOn] = tog("Filter", 0);
+    p.params[SqFilterType] = ch("Filter type", {"Low pass", "High pass", "Band pass", "Notch", "Peak / LP-HP"}, 0);
+    p.params[SqCutoff] = lg("Cutoff", "Hz", 40, 18000, 2000);
+    p.params[SqResonance] = lin("Resonance", "%", 0, 1, 0.2);
+    p.params[SqFilterPos] = ch("Filter position", {"Pre", "Post"}, 1);
+    p.params[SqModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+    p.params[SqGainRef] = lin("Gain", "%", 0, 160.0 / 127.0, 1);
+    p.params[SqStepsRef] = lg("Steps", "", 1, 32768, 32768);
+    p.params[SqCutoffPos] = lin("Cutoff", "%", 0, 1, 0.5);
+    p.params[SqImpactMs] = lin("Impact", "ms", 0, 1000, 0);
+    p.params[SqPreserveMs] = lin("Preserve", "ms", 0, 1000, 0.117);
+    p.params[SqAmountRef] = lin("Amount", "%", 0, 1, 0);
+    p.legacyModelParam = SqModel;
+    p.presets = {{"Clean", {}},
+                 {"Step crunch", {{SqStepsRef, 24.f}, {SqMix, 0.85f}}},
+                 {"Gate punch", {{SqImpactMs, 4.f}, {SqPreserveMs, 9.f}, {SqAmountRef, 0.1f}}},
+                 {"Squeak", {{SqStepsRef, 6.f}, {SqFilterOn, 1.f}, {SqResonance, 0.7f}, {SqCutoffPos, 0.36f}, {SqMix, 0.5f}}},
+                 {"Ring radio", {{SqModel, 0.f}, {SqRingAmount, 0.7f}, {SqRingFreq, 900.f}, {SqFilterOn, 1.f}, {SqFilterType, 2.f}, {SqCutoff, 1500.f}}},
+                 {"Low rate", {{SqModel, 0.f}, {SqRateDiv, 8.f}, {SqFilterOn, 1.f}, {SqCutoff, 3000.f}}}};
+    p.editorWidth = 560;
+    v.push_back(p);
+  }
+}
+
+// ------------------------------------------------------------------ effector
+void addEffector(std::vector<PluginInfo>& v) {
+  PluginInfo p{"gl.effector", "Multi FX", "Misc", PluginKind::Effect, {}, false, {}};
+  p.params.resize(EfCount);
+  std::vector<std::string> kinds;
+  for (int k = 0; k < kEfKinds; ++k) kinds.push_back(effectorKindName(k));
+  p.params[EfKind] = ch("Effect", kinds, 0);
+  p.params[EfX] = lin("X", "%", 0, 1, 0.5);
+  p.params[EfY] = lin("Y", "%", 0, 1, 0.5);
+  p.params[EfModX] = lin("X modulation", "%", -1, 1, 0);
+  p.params[EfModY] = lin("Y modulation", "%", -1, 1, 0);
+  p.params[EfModShape] = ch("Mod shape", {"Sine", "Triangle", "Ramp", "Square", "Random", "Smooth"}, 0);
+  p.params[EfModRate] = ch("Mod rate", {"1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars", "8 bars"}, 4);
+  p.params[EfInput] = lin("Input", "dB", -24, 12, 0);
+  p.params[EfOutput] = lin("Output", "dB", -24, 12, 0);
+  p.params[EfMix] = lin("Wet", "%", 0, 1, 1);
+  p.params[EfBypass] = tog("Bypass effect", 0);
+  p.presets = {{"Grit", {}},
+               {"Filter sweep", {{EfKind, 4.f}, {EfX, 0.45f}, {EfY, 0.4f}, {EfModX, 0.8f}, {EfModRate, 5.f}}},
+               {"Phase drift", {{EfKind, 3.f}, {EfY, 0.6f}, {EfModX, 0.7f}, {EfModShape, 1.f}, {EfModRate, 6.f}}},
+               {"Stutter eighths", {{EfKind, 9.f}, {EfX, 0.45f}, {EfY, 0.5f}}},
+               {"Ring warble", {{EfKind, 7.f}, {EfX, 0.35f}, {EfModX, 0.3f}, {EfModShape, 5.f}, {EfModRate, 2.f}}},
+               {"Dub echo", {{EfKind, 5.f}, {EfX, 0.5f}, {EfY, 0.65f}, {EfMix, 0.5f}}}};
+  p.editorWidth = 560;
+  v.push_back(p);
+}
+
+// ------------------------------------------------------------------ transient split
+void addTransplit(std::vector<PluginInfo>& v) {
+  PluginInfo p{"gl.transplit", "Transient Split", "Dynamics", PluginKind::Effect, {}, false, {}};
+  p.params.resize(TsCount);
+  p.params[TsSplitFreq] = lg("Split", "Hz", 20, 16000, 20);
+  p.params[TsBalance] = lin("Split balance", "%", -1, 1, 0);
+  p.params[TsAttack] = lin("Attack", "%", -1, 1, 0.3);
+  p.params[TsAttackShape] = ch("Attack shape", {"Sharp", "Medium", "Soft"}, 1);
+  p.params[TsRelease] = lin("Sustain", "%", -1, 1, 0);
+  p.params[TsReleaseShape] = ch("Sustain shape", {"Short", "Medium", "Long"}, 1);
+  p.params[TsDrive] = lin("Drive", "%", 0, 1, 0);
+  p.params[TsMix] = lin("Mix", "%", 0, 1, 1);
+  p.params[TsGain] = lin("Gain", "dB", -18, 18, 0);
+  p.presets = {{"Snap", {}},
+               {"Tighten tails", {{TsAttack, 0.1f}, {TsRelease, -0.6f}}},
+               {"Soften hits", {{TsAttack, -0.5f}, {TsAttackShape, 2.f}}},
+               {"Crisp highs", {{TsSplitFreq, 2000.f}, {TsBalance, 1.f}, {TsAttack, 0.6f}}},
+               {"Fat drums", {{TsAttack, 0.4f}, {TsRelease, 0.3f}, {TsDrive, 0.3f}, {TsReleaseShape, 2.f}}}};
+  p.editorWidth = 600;
+  v.push_back(p);
+}
+
+}  // namespace
+
+void appendInfos(std::vector<PluginInfo>& v) {
+  addMaster(v);
+  addLoudness(v);
+  addEnhance(v);
+  addRack(v);
+  addDistortions(v);
+  addEffector(v);
+  addTransplit(v);
+}
+
+}  // namespace gl::packs::dynamics

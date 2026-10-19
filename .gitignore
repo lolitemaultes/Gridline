@@ -1,0 +1,8 @@
+# Build output
+build/
+build-*/
+*.ppm
+# Test scratch output
+gen2-slicers/
+Testing/
+.DS_Store

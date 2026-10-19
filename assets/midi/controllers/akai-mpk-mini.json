@@ -1,0 +1,8 @@
+{
+  "id": "akai-mpk-mini",
+  "name": "Akai MPK mini (factory program)",
+  "match": ["MPK mini", "MPKmini"],
+  "takeover": "jump",
+  "transport": {},
+  "knobs": {"cc": [70, 71, 72, 73, 74, 75, 76, 77], "encoder": "absolute"}
+}

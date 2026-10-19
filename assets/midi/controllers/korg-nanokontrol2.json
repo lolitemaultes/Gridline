@@ -1,0 +1,16 @@
+{
+  "id": "korg-nanokontrol2",
+  "name": "Korg nanoKONTROL2 (CC mode)",
+  "match": ["nanoKONTROL2"],
+  "takeover": "pickup",
+  "transport": {
+    "prevpattern": {"cc": 58},
+    "nextpattern": {"cc": 59},
+    "looprecord": {"cc": 46},
+    "play": {"cc": 41},
+    "stop": {"cc": 42},
+    "record": {"cc": 45}
+  },
+  "knobs": {"cc": [16, 17, 18, 19, 20, 21, 22, 23], "encoder": "absolute"},
+  "faders": {"cc": [0, 1, 2, 3, 4, 5, 6, 7]}
+}

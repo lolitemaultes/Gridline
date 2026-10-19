@@ -1,0 +1,1153 @@
+// Gridline — J-19 reference-family editors for the built-in effects: each
+// editor sits on its reference panel's grid (form units scaled to the window
+// width by skin::Form) with the reference palette roles, drawn with the
+// PluginSkin kit.
+#include <map>
+#include "../engine/FreqShiftRef.h"
+#include "../engine/Dsp.h"
+#include "../engine/Program.h"
+#include "PluginEditorsCommon.h"
+#include "PluginSkin.h"
+
+namespace gl {
+
+using namespace pp;
+
+namespace {
+
+using namespace ed;
+
+// ---------------------------------------------------------------- Flanger
+// Reference panel 500 × 205: four rows of three wheel modules (160 × 45).
+const skin::Skin& flangerSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x31373B, 0x3C4346, 0x464E51, 0xE5D4B3, 0x3F484D, 0xA2B0B7);
+    s.pillBg = skin::hex(0x444D53);
+    s.valueBg = skin::hex(0x656F74);
+    s.valueText = skin::hex(0xE5D4B3);
+    return s;
+  }();
+  return k;
+}
+
+void lfoPreview(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const skin::Skin& k, double rate, double depth, double shape, double stereo) {
+  skin::graphWell(dl, p0, p1, k);
+  const float w = p1.x - p0.x, h = p1.y - p0.y;
+  const double t0 = ImGui::GetTime();
+  for (int side = 0; side < 2; ++side) {
+    ImVec2 pts[64];
+    for (int i = 0; i < 64; ++i) {
+      double ph = i / 63.0 * 2.0 + side * stereo + t0 * rate * 0.25;
+      ph -= std::floor(ph);
+      double tri = ph < 0.25 ? ph * 4 : ph < 0.75 ? 2 - ph * 4 : ph * 4 - 4;
+      double y = std::sin(2 * dsp::kPi * ph) * (1 - shape) + tri * shape;
+      pts[i] = ImVec2(p0.x + 3 + (w - 6) * i / 63.0f, p0.y + h * 0.5f - static_cast<float>(y * std::max(0.05, depth)) * (h * 0.5f - 4));
+    }
+    dl->AddPolyline(pts, 64, side ? k.accent2C() : k.graphCurve, 0, 1.4f);
+  }
+}
+
+void editorFlangerFl(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = flangerSkin();
+  constexpr float kW = 500, kH = 205;
+  skin::Form F = skin::Form::fit(width, kW);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::panel(dl, F.o, F.p(kW, kH), K, 4);
+  skin::Scope scope(K);
+  const float c0 = 5, c1 = 170, c2 = 335, bw = 160, bh = 45;
+  skin::paramBox(a, t, FlgDelay, F, c0, 5, bw, bh, K, "DELAY");
+  skin::paramBox(a, t, FlgDepth, F, c1, 5, bw, bh, K, "DEPTH");
+  skin::paramBox(a, t, FlgRate, F, c2, 5, bw, bh, K, "RATE");
+  skin::paramBox(a, t, FlgPhase, F, c0, 55, bw, bh, K, "PHASE");
+  skin::paramBox(a, t, FlgDamp, F, c1, 55, bw, bh, K, "DAMP");
+  skin::paramBox(a, t, FlgShape, F, c2, 55, bw, bh, K, "SHAPE");
+  skin::paramBox(a, t, FlgFeedback, F, c0, 105, bw, bh, K, "FEED");
+  // Feedback polarity: the reference's separate invert-feedback module flips
+  // the sign of the (bipolar) feedback here.
+  {
+    skin::well(dl, F.p(c1, 105), F.p(c1 + bw, 105 + bh), K, 4 * F.s);
+    skin::pill(dl, F.p(c1 + 54, 105), F.p(c1 + bw, 121), K, "INV FEEDBACK", F.font(7.5f));
+    const double fb = val(st, FlgFeedback, 0.5f);
+    ImGui::PushID("invfb");
+    if (skin::button("##invfb", F.p(c1 + 6, 110), F.sz(40, 34), K, fb < 0 ? "-" : "+", fb < 0, F.font(12)))
+      pui::setParamValue(a, t, FlgFeedback, -fb);
+    if (ImGui::IsItemHovered()) a.setHint("Invert the feedback polarity (flips the sign of FEED)");
+    ImGui::PopID();
+    skin::valueStrip(dl, F.p(c1 + 55, 131), F.p(c1 + bw - 3, 145), K, fb < 0 ? "inverted" : "normal", F.font(8));
+  }
+  {
+    skin::well(dl, F.p(c2, 105), F.p(c2 + bw, 105 + bh), K, 4 * F.s);
+    skin::pill(dl, F.p(c2 + 54, 105), F.p(c2 + bw, 121), K, "INV WET", F.font(7.5f));
+    skin::toggle(a, t, FlgInvertWet, F.p(c2 + 6, 110), F.sz(40, 34), K, "INV", F.font(9));
+    skin::valueStrip(dl, F.p(c2 + 55, 131), F.p(c2 + bw - 3, 145), K, bval(st, FlgInvertWet) ? "inverted" : "normal", F.font(8));
+  }
+  // Bottom row: LFO preview (where the reference has its dry module), wet/dry mix, cross.
+  {
+    skin::well(dl, F.p(c0, 155), F.p(c0 + bw, 155 + bh), K, 4 * F.s);
+    lfoPreview(dl, F.p(c0 + 4, 159), F.p(c0 + bw - 4, 155 + bh - 4), K, val(st, FlgRate, 0.2f), val(st, FlgDepth, 0.6f), val(st, FlgShape),
+               val(st, FlgPhase, 90) / 360.0);
+  }
+  skin::paramBox(a, t, FlgMix, F, c1, 155, bw, bh, K, "WET");
+  skin::paramBox(a, t, FlgCross, F, c2, 155, bw, bh, K, "CROSS");
+  F.end(kW, kH);
+}
+
+// ================================================================ shared helpers
+// A reference panel placed at the cursor: scaled to the editor width but capped
+// at `maxScale` (small reference panels would otherwise grow huge) and centred;
+// the skin's panel fills the whole editor width behind it.
+struct Frame {
+  ImVec2 c;
+  float w = 0, formW = 0, formH = 0;
+  skin::Form F;
+  Frame(float width, float fw, float fh, float maxScale, const skin::Skin& k) : c(ImGui::GetCursorScreenPos()), w(width), formW(fw), formH(fh) {
+    float s = std::min(width / fw, maxScale);
+    F = skin::Form{ImVec2(std::round(c.x + (width - fw * s) * 0.5f), c.y), s};
+    skin::panel(ImGui::GetWindowDrawList(), c, ImVec2(c.x + w, c.y + fh * s), k, 4);
+  }
+  void end() const {
+    ImGui::SetCursorScreenPos(c);
+    ImGui::Dummy(ImVec2(w, formH * F.s));
+  }
+};
+
+// Small-caps label centred on a form x.
+void flabel(ImDrawList* dl, const skin::Form& F, float cx, float y, const skin::Skin& k, const char* text, float px = 8.0f) {
+  skin::label(dl, F.p(cx, 0).x, F.p(0, y).y, text, k.textDim, F.font(px));
+}
+
+// Wheel module with a value slider under the caption (the reference filter's
+// cells): well, wheel, caption pill carrying the live value, rail slider.
+void sliderBox(App& a, const PluginTarget& t, int param, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k,
+               const char* caption) {
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::well(dl, F.p(x, y), F.p(x + w, y + h), k, 4 * F.s);
+  skin::wheel(a, t, param, F.p(x + 2, y + 3), (h - 5) * F.s, k, skin::WheelBigLine);
+  auto d = describeParam(a.doc.song(), t.pid(param));
+  std::string cap = caption;
+  if (d) cap += "  " + d->format(pui::paramValue(a, t, param));
+  skin::pill(dl, F.p(x + 54, y), F.p(x + w, y + 16), k, cap.c_str(), F.font(8.0f));
+  skin::hslider(a, t, param, F.p(x + 51, y + 29), F.sz(w - 55, 14), k);
+}
+
+// Narrow module (77 wide): caption pill on the right of the top, control below.
+void miniWell(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k, const char* caption) {
+  skin::well(dl, F.p(x, y), F.p(x + w, y + h), k, 4 * F.s);
+  skin::pill(dl, F.p(x + 17, y), F.p(x + w, y + 16), k, caption, F.font(8.0f));
+}
+
+// Choice parameter laid out as a grid of cells (cols × rows), reference switch style.
+bool gridSel(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const skin::Skin& k, const char* const* labels, int count, int cols) {
+  auto d = describeParam(a.doc.song(), t.pid(param));
+  if (!d || count <= 0) return false;
+  int rows = (count + cols - 1) / cols;
+  int cur = std::clamp(static_cast<int>(std::lround(pui::paramValue(a, t, param) - d->min)), 0, count - 1);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImVec2 p1(tl.x + size.x, tl.y + size.y);
+  dl->AddRectFilled(tl, p1, k.lcdBg, 3);
+  dl->AddRect(tl, p1, skin::darken(k.panel, 0.6f), 3, 0, 1.0f);
+  float cw = size.x / cols, ch = size.y / rows;
+  bool changed = false;
+  ImGui::PushID(param + 91000);
+  for (int i = 0; i < count; ++i) {
+    ImVec2 c0(tl.x + (i % cols) * cw, tl.y + (i / cols) * ch), c1(c0.x + cw, c0.y + ch);
+    ImGui::SetCursorScreenPos(c0);
+    ImGui::PushID(i);
+    if (ImGui::InvisibleButton("##g", ImVec2(cw, ch)) && i != cur) {
+      pui::setParamValue(a, t, param, d->min + i);
+      cur = i, changed = true;
+    }
+    bool hov = ImGui::IsItemHovered();
+    if (hov) a.setHint(d->name + ": " + d->format(d->min + i));
+    ImGui::PopID();
+    bool on = i == cur;
+    if (on) dl->AddRectFilled(ImVec2(c0.x + 2, c0.y + 2), ImVec2(c1.x - 2, c1.y - 2), theme::withAlpha(k.select, 0.30f), 2);
+    else if (hov) dl->AddRectFilled(ImVec2(c0.x + 2, c0.y + 2), ImVec2(c1.x - 2, c1.y - 2), theme::withAlpha(k.text, 0.08f), 2);
+    ImGui::PushFont(app().fontMonoBold, std::clamp(ch * 0.55f, 8.0f, 12.0f));
+    ImVec2 ts = ImGui::CalcTextSize(labels[i]);
+    dl->PushClipRect(c0, c1, true);
+    dl->AddText(ImVec2(std::round((c0.x + c1.x - ts.x) * 0.5f), std::round((c0.y + c1.y - ts.y) * 0.5f)),
+                on ? skin::lighten(k.select, 0.35f) : k.textDim, labels[i]);
+    dl->PopClipRect();
+    ImGui::PopFont();
+  }
+  ImGui::PopID();
+  return changed;
+}
+
+std::string fmtHz(double hz) {
+  char b[32];
+  if (std::fabs(hz) >= 1000) std::snprintf(b, sizeof b, "%.2fk", hz / 1000);
+  else std::snprintf(b, sizeof b, "%.0f", hz);
+  return b;
+}
+
+// ================================================================ Phaser
+// Reference panel 500 × 155: three rows of three wheel modules; a fourth row
+// holds the sweep display and the LFO options Gridline adds.
+const skin::Skin& phaserSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x31373B, 0x3C4346, 0x464E51, 0xC4E5B3, 0x3F484D, 0xA2B0B7);
+    s.pillBg = skin::hex(0x444D53);
+    s.valueBg = skin::hex(0x656F74);
+    s.valueText = skin::hex(0xC4E5B3);
+    return s;
+  }();
+  return k;
+}
+
+void editorPhaserFl(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = phaserSkin();
+  constexpr float kW = 500, kH = 205;
+  Frame fr(width, kW, kH, 1.6f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  const float c0 = 5, c1 = 170, c2 = 335, bw = 160, bh = 45;
+  const bool mm = ival(st, PhsRangeMode) == 1;
+  skin::paramBox(a, t, PhsRate, F, c0, 5, bw, bh, K, "SWEEP FREQ");
+  skin::paramBox(a, t, mm ? PhsMinFreq : PhsCenter, F, c1, 5, bw, bh, K, mm ? "MIN FREQ" : "CENTRE");
+  skin::paramBox(a, t, mm ? PhsMaxFreq : PhsDepth, F, c2, 5, bw, bh, K, mm ? "MAX FREQ" : "DEPTH");
+  const double lo = mm ? val(st, PhsMinFreq, 200) : val(st, PhsCenter, 800) * std::pow(2.0, -2.0 * val(st, PhsDepth, 0.7f));
+  const double hi = mm ? val(st, PhsMaxFreq, 3000) : val(st, PhsCenter, 800) * std::pow(2.0, 2.0 * val(st, PhsDepth, 0.7f));
+  {  // Frequency range module: the range mode switch in place of the wheel.
+    skin::well(dl, F.p(c0, 55), F.p(c0 + bw, 55 + bh), K, 4 * F.s);
+    static const char* rm[2] = {"C+D", "MIN/MAX"};
+    skin::switchSel(a, t, PhsRangeMode, F.p(c0 + 3, 58), F.sz(48, 39), K, rm, 2);
+    skin::pill(dl, F.p(c0 + 54, 55), F.p(c0 + bw, 71), K, "FREQ RANGE", F.font(8.5f));
+    std::string r = fmtHz(lo) + " - " + fmtHz(hi) + " Hz";
+    skin::valueStrip(dl, F.p(c0 + 55, 81), F.p(c0 + bw - 3, 95), K, r.c_str(), F.font(8.5f));
+  }
+  skin::paramBox(a, t, PhsStereo, F, c1, 55, bw, bh, K, "STEREO");
+  skin::paramBox(a, t, PhsStages, F, c2, 55, bw, bh, K, "NR. STAGES");
+  skin::paramBox(a, t, PhsFeedback, F, c0, 105, bw, bh, K, "FEEDBACK");
+  skin::paramBox(a, t, PhsMix, F, c1, 105, bw, bh, K, "DRY-WET");
+  skin::paramBox(a, t, PhsOutGain, F, c2, 105, bw, bh, K, "OUT GAIN");
+  {  // Sweep display: the band the notches travel over, and the sweep position.
+    ImVec2 p0 = F.p(c0, 155), p1 = F.p(c1 + bw, 200);
+    skin::graphWell(dl, p0, p1, K);
+    pui::drawFreqGrid(dl, p0, p1, 24, false);
+    float x0 = pui::freqToX(lo, p0.x, p1.x - p0.x), x1 = pui::freqToX(hi, p0.x, p1.x - p0.x);
+    dl->AddRectFilled(ImVec2(x0, p0.y + 4), ImVec2(std::max(x0 + 2, x1), p1.y - 4), theme::withAlpha(K.fill, 0.18f), 2);
+    double ph = std::fmod(ImGui::GetTime() * val(st, PhsRate, 0.4f), 1.0);
+    double f = bval(st, PhsManual) ? lo : lo * std::pow(hi / std::max(1.0, lo), 0.5 + 0.5 * std::sin(2 * dsp::kPi * ph));
+    float xf = pui::freqToX(f, p0.x, p1.x - p0.x);
+    dl->AddLine(ImVec2(xf, p0.y + 3), ImVec2(xf, p1.y - 3), K.fill, 2);
+    skin::text(dl, ImVec2(p0.x + 5, p0.y + 3), K.graphText, "SWEEP", F.font(7.5f));
+  }
+  {
+    skin::well(dl, F.p(c2, 155), F.p(c2 + bw, 200), K, 4 * F.s);
+    skin::pill(dl, F.p(c2 + 4, 155), F.p(c2 + bw, 171), K, "LFO", F.font(8.5f));
+    static const char* shp[2] = {"SINE", "TRI"};
+    skin::switchSel(a, t, PhsShape, F.p(c2 + 4, 174), F.sz(78, 22), K, shp, 2, true);
+    skin::toggle(a, t, PhsManual, F.p(c2 + 86, 174), F.sz(70, 22), K, "MANUAL", F.font(8));
+  }
+  fr.end();
+}
+
+// ================================================================ Filter
+// Reference panel 500 × 105 (cutoff / resonance / low-pass, band-pass /
+// high-pass / x2 / centre); Gridline adds the mode row and a response graph.
+const skin::Skin& filterSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x31373B, 0x3C4346, 0x464E51, 0xB7E5B3, 0x3F484D, 0xA2B0B7);
+    s.pillBg = skin::hex(0x444D53);
+    s.valueBg = skin::hex(0x656F74);
+    s.valueText = skin::hex(0xB7E5B3);
+    s.handle = skin::hex(0x30373A);
+    return s;
+  }();
+  return k;
+}
+
+void filterGraph(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p, ImVec2 sz, const skin::Skin& K) {
+  const double sr = a.engine.sampleRate();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImGui::SetCursorScreenPos(p);
+  ImGui::InvisibleButton("##filtgraph", sz);
+  const bool act = ImGui::IsItemActive();
+  skin::graphWell(dl, p, ImVec2(p.x + sz.x, p.y + sz.y), K);
+  dl->PushClipRect(p, ImVec2(p.x + sz.x, p.y + sz.y), true);
+  pui::drawFreqGrid(dl, p, ImVec2(p.x + sz.x, p.y + sz.y), 24);
+  const int mode = ival(st, FltMode);
+  const double fc = val(st, FltCutoff, 20000), reso = val(st, FltReso), mix = val(st, FltMix, 1), gain = val(st, FltGain);
+  const bool steep = ival(st, FltSlope) == 1, blend = bval(st, FltBlend);
+  std::vector<ImVec2> pts;
+  for (int x = 0; x < static_cast<int>(sz.x); x += 2) {
+    double hz = pui::xToFreq(p.x + x, p.x, sz.x), db;
+    if (mode >= 4 && !blend) {
+      dsp::Biquad bq;
+      bq.set(mode == 4 ? dsp::Biquad::LowShelf : mode == 5 ? dsp::Biquad::Peak : dsp::Biquad::HighShelf, sr, fc, 0.5 + reso * 9.5, steep ? gain * 0.5 : gain);
+      double m = bq.magnitude(hz, sr);
+      db = dsp::gainToDb(steep ? m * m : m);
+    } else if (blend) {
+      double lo = dsp::dbToGain(svfResponseDb(0, fc, reso, hz, sr)), bp = dsp::dbToGain(svfResponseDb(1, fc, reso, hz, sr)),
+             hp = dsp::dbToGain(svfResponseDb(2, fc, reso, hz, sr));
+      db = dsp::gainToDb(std::fabs(val(st, FltLPLevel, 1) * lo + val(st, FltBPLevel) * bp + val(st, FltHPLevel) * hp));
+    } else {
+      db = svfResponseDb(mode, fc, steep ? reso * 0.75 : reso, hz, sr);
+      if (steep) db += svfResponseDb(mode, fc, 0.0, hz, sr);
+    }
+    db = dsp::gainToDb(1 - mix + mix * dsp::dbToGain(db));
+    pts.push_back(ImVec2(p.x + x, p.y + sz.y * 0.5f - static_cast<float>(std::clamp(db, -30.0, 30.0) / 24) * sz.y * 0.5f));
+  }
+  for (size_t i = 0; i + 1 < pts.size(); ++i) {
+    ImVec2 q[4] = {pts[i], pts[i + 1], ImVec2(pts[i + 1].x, p.y + sz.y), ImVec2(pts[i].x, p.y + sz.y)};
+    dl->AddConvexPolyFilled(q, 4, theme::withAlpha(K.fill, 0.10f));
+  }
+  dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), K.graphCurve, 0, 2.0f);
+  ImVec2 node(pui::freqToX(fc, p.x, sz.x), p.y + sz.y * (0.85f - static_cast<float>(reso) * 0.7f));
+  dl->AddCircleFilled(node, 6, act ? K.fillPressed : K.fill);
+  dl->AddCircle(node, 6, skin::lighten(K.fill, 0.4f), 16, 1.2f);
+  dl->PopClipRect();
+  if (act && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1)) {
+    ImGuiIO& io = ImGui::GetIO();
+    PluginState ns = st;
+    ns.params[FltCutoff] = static_cast<float>(pui::xToFreq(io.MousePos.x, p.x, sz.x));
+    ns.params[FltReso] = std::clamp((0.85f - (io.MousePos.y - p.y) / sz.y) / 0.7f, 0.0f, 1.0f);
+    setPluginState(a, t, ns, "move filter", 0x464C540000000000ull ^ t.key());
+  }
+  if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+  if (ImGui::IsItemHovered()) a.setHint("Drag: cutoff (left/right) and resonance (up/down)");
+}
+
+void editorFilterFl(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = filterSkin();
+  constexpr float kW = 500, kH = 262;
+  Frame fr(width, kW, kH, 1.6f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  const bool blend = bval(st, FltBlend);
+  sliderBox(a, t, FltCutoff, F, 5, 5, 160, 45, K, "CUTOFF");
+  sliderBox(a, t, FltReso, F, 170, 5, 160, 45, K, "RESO");
+  if (!blend) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.45f);
+  sliderBox(a, t, FltLPLevel, F, 335, 5, 160, 45, K, "LOW");
+  sliderBox(a, t, FltBPLevel, F, 5, 55, 160, 45, K, "BAND");
+  sliderBox(a, t, FltHPLevel, F, 170, 55, 160, 45, K, "HIGH");
+  if (!blend) ImGui::PopStyleVar();
+  {
+    miniWell(dl, F, 335, 55, 77, 45, K, "SLOPE");
+    static const char* sl[2] = {"12", "24"};
+    skin::switchSel(a, t, FltSlope, F.p(339, 73), F.sz(69, 25), K, sl, 2, true);
+    miniWell(dl, F, 417, 55, 77, 45, K, "CENTER");
+    skin::toggle(a, t, FltDcBlock, F.p(421, 73), F.sz(69, 25), K, "DC OFF", F.font(8));
+  }
+  {  // Mode row: filter type cells + blend switch, then gain and mix.
+    skin::well(dl, F.p(5, 105), F.p(330, 150), K, 4 * F.s);
+    skin::pill(dl, F.p(5, 105), F.p(330, 121), K, "MODE", F.font(8.5f));
+    static const char* modes[7] = {"LP", "BP", "HP", "NOTCH", "LO SH", "PEAK", "HI SH"};
+    skin::switchSel(a, t, FltMode, F.p(9, 124), F.sz(266, 23), K, modes, 7, true);
+    skin::toggle(a, t, FltBlend, F.p(279, 124), F.sz(47, 23), K, "BLEND", F.font(8));
+    miniWell(dl, F, 335, 105, 77, 45, K, "GAIN");
+    skin::wheel(a, t, FltGain, F.p(338, 108), 40 * F.s, K, skin::WheelBigLine);
+    auto dg = describeParam(a.doc.song(), t.pid(FltGain));
+    if (dg) skin::valueStrip(dl, F.p(380, 128), F.p(410, 144), K, dg->format(val(st, FltGain)).c_str(), F.font(7.5f));
+    miniWell(dl, F, 417, 105, 77, 45, K, "MIX");
+    skin::wheel(a, t, FltMix, F.p(420, 108), 40 * F.s, K, skin::WheelBigLine);
+    char b[16];
+    std::snprintf(b, sizeof b, "%.0f%%", val(st, FltMix, 1) * 100);
+    skin::valueStrip(dl, F.p(462, 128), F.p(492, 144), K, b, F.font(7.5f));
+  }
+  filterGraph(a, t, st, F.p(5, 156), F.sz(490, 101), K);
+  fr.end();
+}
+
+// ================================================================ Freq Shifter
+// Reference panel 460 × 220: big frequency wheel, carrier visual and read-out
+// on top, range / type selectors, carrier shape and mix wheels along the bottom.
+const skin::Skin& freqShiftSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x3A4050, 0x333846, 0x363636, 0x7DD2C9, 0x8A8A8A, 0xA0ADB4);
+    s.graphBg = skin::hex(0x2F2D2C);
+    s.lcdBg = skin::hex(0x363636);
+    s.lcdText = skin::hex(0x7DD2C9);
+    s.pillBg = skin::hex(0x7DD2C9);
+    s.pillText = skin::hex(0x292929);
+    return s;
+  }();
+  return k;
+}
+
+void editorFreqShiftFl(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = freqShiftSkin();
+  constexpr float kW = 460, kH = 220;
+  Frame fr(width, kW, kH, 1.65f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  const int range = ival(st, FsRange);
+  const bool ref = ival(st, FsModel) == 1;  // J-26 reference engine: knob positions
+  const int shiftParam = ref ? FsFreqPos : range == 1 ? FsShiftWide : range == 2 ? FsShiftBeats : FsShift;
+  skin::wheel(a, t, shiftParam, F.p(31, 21), 88 * F.s, K, skin::WheelBigLine | skin::WheelCentered);
+  flabel(dl, F, 75, 111, K, "FREQUENCY");
+  const double hz = ref ? fsref::shiftHz(val(st, FsFreqPos, 0.5f), ival(st, FsType), range, a.doc.song().tempo)
+                 : range == 1 ? val(st, FsShiftWide) : range == 2 ? val(st, FsShiftBeats, 1) * a.doc.song().tempo / 60.0 : val(st, FsShift, 50);
+  {  // Carrier visual.
+    ImVec2 p0 = F.p(128, 21), p1 = F.p(262, 82);
+    skin::graphWell(dl, p0, p1, K);
+    ImVec2 pts[120];
+    const double shp = val(st, FsShapeL, 1), shr = val(st, FsShapeR, 1);
+    for (int side = 0; side < 2; ++side) {
+      for (int i = 0; i < 120; ++i) {
+        double ph = i / 119.0 * 3 + ImGui::GetTime() * std::clamp(hz, -20.0, 20.0) * 0.2 + side * val(st, FsStereo, 0.25f);
+        double c = std::cos(2 * dsp::kPi * ph), s = side ? shr : shp;
+        if (ref) c *= 0.35 + 0.65 * std::fabs(2 * s - 1);  // sideband blend: 0.5 = both sidebands (beating)
+        else c = s >= 0.999 ? c : (c < 0 ? -1 : 1) * std::pow(std::fabs(c), std::max(0.05, s));
+        pts[i] = ImVec2(p0.x + 3 + (p1.x - p0.x - 6) * i / 119.0f, (p0.y + p1.y) * 0.5f - static_cast<float>(c) * (p1.y - p0.y) * 0.4f);
+      }
+      dl->AddPolyline(pts, 120, side ? theme::withAlpha(K.accent2C(), 0.8f) : K.graphCurve, 0, 1.4f);
+    }
+  }
+  {  // Read-out (filled pill) + plugin title.
+    char buf[40];
+    std::snprintf(buf, sizeof buf, "%+.2f Hz", hz);
+    skin::pill(dl, F.p(272, 37), F.p(445, 65), K, buf, F.font(13));
+    skin::text(dl, F.p(300, 12), K.textDim, "FREQ SHIFTER", F.font(9));
+    static const char* md[2] = {"LEGACY", "REF"};
+    skin::switchSel(a, t, FsModel, F.p(380, 9), F.sz(66, 14), K, md, 2);
+  }
+  {
+    static const char* rg[3] = {"FINE", "WIDE", "TEMPO"};
+    static const char* rgRef[3] = {"200 HZ", "20 KHZ", "TEMPO"};
+    skin::switchSel(a, t, FsRange, F.p(146, 88), F.sz(70, 45), K, ref ? rgRef : rg, 3);
+    flabel(dl, F, 181, 134, K, "RANGE");
+    static const char* ty[3] = {"SHIFTER", "SHIFTER HQ", "RING MOD"};
+    skin::switchSel(a, t, FsType, F.p(271, 80), F.sz(121, 51), K, ty, 3);
+    flabel(dl, F, 331, 132, K, "TYPE");
+  }
+  skin::labeledWheel(a, t, FsShapeL, F, 13, 140, 48, K, "SHAPE L");
+  skin::text(dl, F.p(70, 158), K.textDim, "L·R", F.font(8));
+  skin::labeledWheel(a, t, FsShapeR, F, 98, 140, 48, K, "SHAPE R");
+  skin::labeledWheel(a, t, ref ? FsStartRef : FsStartPhase, F, 168, 147, 38, K, "PHASE");
+  skin::labeledWheel(a, t, ref ? FsLrPhase : FsStereo, F, 222, 147, 38, K, "L/R");
+  skin::labeledWheel(a, t, ref ? FsFeedbackRef : FsFeedback, F, 285, 147, 38, K, "FEED");
+  skin::labeledWheel(a, t, ref ? FsMixRef : FsMix, F, 349, 147, 38, K, "MIX");
+  skin::labeledWheel(a, t, FsWidth, F, 405, 147, 38, K, "STEREO");
+  fr.end();
+}
+
+// ================================================================ Graphic EQ
+// Reference panel 340 × 150: seven level sliders with frequency tags; Gridline
+// adds the response strip above and the layout / width / mix / output column.
+const skin::Skin& geqSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x31373B, 0x3C4346, 0x656F74, 0xB3C4E5, 0x3F484D, 0xA2B0B7);
+    s.handle = skin::hex(0x30373A);
+    s.pillBg = skin::hex(0x656F74);
+    s.pillText = skin::hex(0x1B1B1B);
+    return s;
+  }();
+  return k;
+}
+
+void editorGeqFl(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = geqSkin();
+  constexpr float kW = 470, kH = 216;
+  Frame fr(width, kW, kH, 1.6f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  const bool classic = ival(st, GeqLayout) == 1;
+  const double* freqs = classic ? kGeqFreqsClassic : kGeqFreqs;
+  {  // Response strip.
+    ImVec2 p0 = F.p(5, 5), p1 = F.p(465, 60);
+    skin::graphWell(dl, p0, p1, K);
+    pui::drawFreqGrid(dl, p0, p1, 18, false);
+    const double sr = a.engine.sampleRate();
+    double oct = val(st, GeqBandwidth, 1.27f), qPeak = std::sqrt(std::pow(2.0, oct)) / (std::pow(2.0, oct) - 1.0), mix = val(st, GeqMix, 1);
+    dsp::Biquad f[kGeqBands];
+    for (int b = 0; b < kGeqBands; ++b)
+      f[b].set(b == 0 ? dsp::Biquad::LowShelf : b == kGeqBands - 1 ? dsp::Biquad::HighShelf : dsp::Biquad::Peak, sr, freqs[b],
+               b == 0 || b == kGeqBands - 1 ? 0.707 : qPeak, val(st, b));
+    const float w = p1.x - p0.x, h = p1.y - p0.y;
+    std::vector<ImVec2> pts;
+    for (int x = 0; x < static_cast<int>(w); x += 2) {
+      double hz = pui::xToFreq(p0.x + x, p0.x, w), m = 1;
+      for (auto& bq : f) m *= bq.magnitude(hz, sr);
+      double db = dsp::gainToDb(std::fabs(1 + (m - 1) * mix)) + val(st, GeqOutput);
+      pts.push_back(ImVec2(p0.x + x, p0.y + h * 0.5f - static_cast<float>(std::clamp(db, -24.0, 24.0) / 18.0) * h * 0.45f));
+    }
+    dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), K.graphCurve, 0, 1.8f);
+    for (int b = 0; b < kGeqBands; ++b)
+      dl->AddCircleFilled(ImVec2(pui::freqToX(freqs[b], p0.x, w), p0.y + h * 0.5f - val(st, b) / 18.0f * h * 0.45f), 3.0f, K.fill);
+  }
+  static const float xs[kGeqBands] = {15, 62, 110, 157, 205, 252, 300};
+  for (int b = 0; b < kGeqBands; ++b) {
+    skin::vslider(a, t, b, F.p(xs[b], 68), F.sz(29, 123), K);
+    char lbl[16];
+    std::snprintf(lbl, sizeof lbl, "%g", freqs[b]);
+    skin::pill(dl, F.p(xs[b] - 3, 195), F.p(xs[b] + 32, 209), K, lbl, F.font(7.5f));
+  }
+  {  // Options column.
+    skin::well(dl, F.p(345, 66), F.p(465, 210), K, 4 * F.s);
+    skin::Skin kp = K;
+    kp.pillBg = skin::hex(0x444D53);
+    kp.pillText = K.text;
+    skin::pill(dl, F.p(345, 66), F.p(465, 82), kp, "BANDS", F.font(8.5f));
+    static const char* lay[2] = {"WIDE", "CLASSIC"};
+    skin::switchSel(a, t, GeqLayout, F.p(350, 86), F.sz(110, 20), K, lay, 2, true);
+    skin::labeledWheel(a, t, GeqBandwidth, F, 353, 114, 34, K, "WIDTH");
+    skin::labeledWheel(a, t, GeqMix, F, 405, 114, 34, K, "MIX");
+    skin::labeledWheel(a, t, GeqOutput, F, 379, 162, 30, K, "OUTPUT");
+  }
+  fr.end();
+}
+
+// ================================================================ Tuner
+// Reference panel 300 × 360: the 300 × 300 display, then reference and
+// responsiveness wheels, the display-mode button and the window option.
+const skin::Skin& tunerSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x222222, 0x2B2F33, 0x2E3438, 0x8D989E, 0x3F484D, 0xA9B2B7);
+    s.graphBg = skin::hex(0x161819);
+    s.accent2 = skin::hex(0xFF8000);
+    return s;
+  }();
+  return k;
+}
+
+struct TunerState {
+  double shown = 0, cents = 0;
+};
+
+void editorTunerFl(App& a, const PluginTarget& t, float width) {
+  static std::map<uint64_t, TunerState> uiMap;
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = tunerSkin();
+  TunerState& ui = uiMap[t.key()];
+  const bool bass = bval(st, TnBassMode);
+  const size_t win = bass ? 8192 : 4096;
+  static std::vector<float> buf(8192);
+  double hz = 0;
+  if (const ScopeTap* tap = t.tap(a); tap && tap->read(buf.data(), win)) {
+    double sr = a.engine.sampleRate(), energy = 0;
+    for (size_t i = 0; i < win; ++i) energy += buf[i] * buf[i];
+    if (energy > 1e-3) {
+      int minLag = static_cast<int>(sr / 2000), maxLag = std::min(static_cast<int>(win / 2), static_cast<int>(sr / (bass ? 20 : 50)));
+      double best = 0;
+      int bestLag = 0;
+      for (int lag = minLag; lag < maxLag; ++lag) {
+        double c = 0;
+        for (size_t i = 0; i + static_cast<size_t>(lag) < win; i += 2) c += buf[i] * buf[i + static_cast<size_t>(lag)];
+        if (c > best) best = c, bestLag = lag;
+      }
+      if (bestLag > 0) hz = sr / bestLag;
+    }
+  }
+  const double k = 0.05 + 0.6 * val(st, TnReactivity, 0.5f);
+  ui.shown = hz > 0 ? (ui.shown > 0 ? ui.shown * (1 - k) + hz * k : hz) : ui.shown * 0.98;
+  const double ref = val(st, TnReference, 440);
+  const int disp = ival(st, TnDisplay);
+  constexpr float kW = 300, kH = 362;
+  Frame fr(width, kW, kH, 1.3f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  ImVec2 p0 = F.p(4, 4), p1 = F.p(296, 296);
+  skin::graphWell(dl, p0, p1, K);
+  const float cx = (p0.x + p1.x) * 0.5f, W = p1.x - p0.x;
+  const ImU32 good = K.fill, bad = K.accent2C();
+  if (ui.shown > 20) {
+    double note = 69 + 12 * std::log2(ui.shown / ref);
+    int n = static_cast<int>(std::lround(note));
+    ui.cents = ui.cents * (1 - k) + (note - n) * 100 * k;
+    const bool inTune = std::fabs(ui.cents) < 5;
+    std::string nm = noteName(n);
+    ImGui::PushFont(a.fontBold, 44.0f * F.s);
+    ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
+    if (disp == 2) {
+      float r = 100 * F.s, cy = F.p(0, 140).y;
+      dl->AddCircle(ImVec2(cx, cy), r, K.rail, 64, 4);
+      float an = static_cast<float>(-dsp::kPi / 2 + ui.cents / 50.0 * dsp::kPi);
+      dl->PathArcTo(ImVec2(cx, cy), r, static_cast<float>(-dsp::kPi / 2), an, 32);
+      dl->PathStroke(inTune ? good : bad, ImDrawFlags_None, 5.0f);
+      dl->AddText(ImVec2(cx - ts.x / 2, cy - ts.y / 2), inTune ? skin::lighten(K.text, 0.5f) : K.text, nm.c_str());
+    } else {
+      dl->AddText(ImVec2(cx - ts.x / 2, F.p(0, 30).y), inTune ? skin::lighten(K.text, 0.5f) : K.text, nm.c_str());
+      float y = F.p(0, 170).y;
+      if (disp == 1) {
+        for (int c = -50; c <= 50; c += 5) {
+          float x = cx + c / 50.0f * (W / 2 - 20);
+          float hh = (c % 25 == 0 ? 16.0f : 8.0f) * F.s;
+          dl->AddLine(ImVec2(x, y - hh), ImVec2(x, y + hh), c == 0 ? K.text : K.rail, c == 0 ? 2.f : 1.f);
+        }
+        float nx = cx + static_cast<float>(ui.cents / 50.0) * (W / 2 - 20);
+        dl->AddRectFilled(ImVec2(nx - 4, y - 22 * F.s), ImVec2(nx + 4, y + 22 * F.s), inTune ? good : bad, 2);
+      } else {
+        for (int c = -50; c <= 50; c += 10) {
+          float an = static_cast<float>(-dsp::kPi / 2 + c / 50.0 * 0.9);
+          ImVec2 pc(cx, F.p(0, 250).y);
+          float r0 = 150 * F.s, r1 = (c % 50 == 0 ? 165.0f : 158.0f) * F.s;
+          dl->AddLine(ImVec2(pc.x + std::cos(an) * r0, pc.y + std::sin(an) * r0), ImVec2(pc.x + std::cos(an) * r1, pc.y + std::sin(an) * r1),
+                      c == 0 ? K.text : K.textDim, c == 0 ? 2.f : 1.f);
+        }
+        ImVec2 pc(cx, F.p(0, 250).y);
+        float an = static_cast<float>(-dsp::kPi / 2 + std::clamp(ui.cents, -50.0, 50.0) / 50.0 * 0.9);
+        dl->AddLine(pc, ImVec2(pc.x + std::cos(an) * 160 * F.s, pc.y + std::sin(an) * 160 * F.s), inTune ? good : bad, 3);
+        dl->AddCircleFilled(pc, 6, K.text);
+      }
+    }
+    ImGui::PopFont();
+    char b2[64];
+    std::snprintf(b2, sizeof b2, "%+.0f cents  ·  %.1f Hz", ui.cents, ui.shown);
+    ImGui::PushFont(a.fontMono, F.font(9));
+    ImVec2 t2 = ImGui::CalcTextSize(b2);
+    dl->AddText(ImVec2(cx - t2.x / 2, p1.y - t2.y - 8), K.textDim, b2);
+    ImGui::PopFont();
+  } else {
+    ImGui::PushFont(a.fontMono, F.font(10));
+    const char* msg = "listening...";
+    ImVec2 ts = ImGui::CalcTextSize(msg);
+    dl->AddText(ImVec2(cx - ts.x / 2, (p0.y + p1.y) / 2 - ts.y / 2), K.textDim, msg);
+    ImGui::PopFont();
+  }
+  skin::labeledWheel(a, t, TnReference, F, 9, 302, 42, K, "REF");
+  skin::labeledWheel(a, t, TnReactivity, F, 61, 302, 42, K, "REACT");
+  static const char* dm[3] = {"NEEDLE", "STRIP", "RING"};
+  skin::switchSel(a, t, TnDisplay, F.p(112, 302), F.sz(182, 22), K, dm, 3, true);
+  skin::check(a, t, TnBassMode, F.p(112, 330), F.sz(80, 16), K, "BASS", K.accent2C());
+  {
+    char b[24];
+    std::snprintf(b, sizeof b, "A4 = %.1f Hz", ref);
+    skin::lcd(dl, F.p(196, 329), F.p(294, 347), K, b, F.font(8.5f));
+  }
+  fr.end();
+}
+
+// ================================================================ Gate
+// The reference limiter's gate page on its 626 × 300 panel: history visual on
+// top, caption bar, then the settings strip of 46 px wheels (threshold group,
+// envelope group in its own bevel, sidechain-key group).
+const skin::Skin& gateSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x5F686D, 0x566065, 0x3F484D, 0xCEA245, 0x3F484D, 0xC9D5D4);
+    s.graphBg = skin::hex(0x2B3136);
+    s.pillBg = skin::hex(0x2B3136);
+    s.pillText = skin::hex(0xC9D5D4);
+    s.lcdBg = skin::hex(0x31373B);
+    s.lcdText = skin::hex(0xCEA245);
+    s.accent2 = skin::hex(0x7D908C);
+    return s;
+  }();
+  return k;
+}
+
+void editorGateFl(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = gateSkin();
+  float gr = 0, in = -120, open = 0;
+  if (!t.isChannel())
+    if (auto rt = a.builder.effectRuntime(t.owner, t.slot)) gr = rt->meter.load(), in = rt->input.load(), open = rt->bands[0].load();
+  const uint64_t hk = t.key() ^ 0x4741544500000000ull;
+  pui::historyPush(hk, 1, in);
+  pui::historyPush(hk, 2, gr);
+  constexpr float kW = 626, kH = 300;
+  Frame fr(width, kW, kH, 1.5f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  dl->AddRectFilled(F.p(0, 0), F.p(kW, 160), K.graphBg, 3);
+  {  // Left strip: gate state LED.
+    dl->AddRectFilled(F.p(4, 3), F.p(25, 86), skin::hex(0x262626), 3, ImDrawFlags_RoundCornersBottom);
+    bool isOpen = open > 0.5f;
+    skin::ledDot(dl, F.p(14.5f, 20), 5 * F.s, isOpen, K);
+    skin::text(dl, F.p(6, 32), K.textDim, isOpen ? "ON" : "--", F.font(7));
+    skin::meter(dl, F.p(8, 92), F.p(21, 154), K, in, 80);
+  }
+  {  // History: input level (dim) and reduction; threshold line.
+    ImVec2 i0 = F.p(31, 4), i1 = F.p(622, 156);
+    pui::drawGrid(dl, i0, i1, 8, 4);
+    pui::historyDraw(dl, i0, i1, hk, -80, 0);
+    auto yOf = [&](double db) { return i1.y - static_cast<float>(std::clamp((db + 80) / 80, 0.0, 1.0)) * (i1.y - i0.y); };
+    float yt = yOf(val(st, GtThreshold, -40));
+    dl->AddLine(ImVec2(i0.x, yt), ImVec2(i1.x, yt), K.fill, 1.4f);
+    if (val(st, GtHysteresis) > 0.05f) {
+      float yh = yOf(val(st, GtThreshold, -40) - val(st, GtHysteresis));
+      dl->AddLine(ImVec2(i0.x, yh), ImVec2(i1.x, yh), theme::withAlpha(K.fill, 0.4f), 1.0f);
+    }
+    skin::text(dl, ImVec2(i0.x + 4, i0.y + 2), K.graphText, "INPUT · THRESHOLD", F.font(7.5f));
+  }
+  // Caption bar.
+  dl->AddRectFilled(F.p(0, 160), F.p(kW, 176), K.graphBg);
+  skin::label(dl, F.p(142, 0).x, F.p(0, 162).y, "GATE", K.text, F.font(8.5f));
+  skin::label(dl, F.p(372, 0).x, F.p(0, 162).y, "ENVELOPE", K.text, F.font(8.5f));
+  skin::label(dl, F.p(544, 0).x, F.p(0, 162).y, "SIDECHAIN KEY", K.text, F.font(8.5f));
+  skin::well(dl, F.p(284, 179), F.p(458, 296), K, 4 * F.s);
+  dl->AddRectFilled(F.p(284, 179), F.p(458, 296), skin::hex(0x3E474D), 4 * F.s);
+  auto w46 = [&](int param, float x, const char* lbl, ImU32 fill = 0) {
+    skin::wheel(a, t, param, F.p(x, 184), 46 * F.s, K, skin::WheelBigLine, fill);
+    skin::label(dl, F.p(x + 23, 0).x, F.p(0, 233).y, lbl, K.text, F.font(7.5f));
+  };
+  w46(GtThreshold, 8, "THRES");
+  w46(GtRange, 62, "RANGE");
+  w46(GtHysteresis, 122, "HYST");
+  const ImU32 envFill = skin::hex(0x7D908C);
+  w46(GtAttack, 290, "ATT", envFill);
+  w46(GtHold, 346, "HOLD", envFill);
+  w46(GtRelease, 402, "REL", envFill);
+  w46(GtLookahead, 466, "LOOK", envFill);
+  w46(GtKeyHpf, 520, "KEY HP", envFill);
+  w46(GtKeyLpf, 574, "KEY LP", envFill);
+  skin::toggle(a, t, GtFlip, F.p(178, 186), F.sz(98, 24), K, "DUCK", F.font(8.5f));
+  skin::text(dl, F.p(180, 213), K.textDim, "inverse gate", F.font(7));
+  {  // Level read-outs.
+    char b[32];
+    std::snprintf(b, sizeof b, "IN %5.1f dB", std::max(in, -99.0f));
+    skin::lcd(dl, F.p(8, 254), F.p(170, 271), K, b, F.font(8.5f));
+    std::snprintf(b, sizeof b, "GR %5.1f dB", gr);
+    skin::lcd(dl, F.p(8, 275), F.p(170, 292), K, b, F.font(8.5f));
+  }
+  {  // Envelope sketch: attack / hold / release proportions.
+    ImVec2 e0 = F.p(292, 250), e1 = F.p(450, 290);
+    skin::graphWell(dl, e0, e1, K);
+    auto d = [&](int p) { return static_cast<float>(describeParam(a.doc.song(), t.pid(p))->toNormalized(val(st, p))); };
+    float w = e1.x - e0.x - 8, at = d(GtAttack), ho = d(GtHold), re = d(GtRelease), tot = at + ho + re + 0.6f;
+    float x0 = e0.x + 4, yb = e1.y - 4, yt = e0.y + 5;
+    float x1 = x0 + w * 0.15f, x2 = x1 + w * at / tot, x3 = x2 + w * ho / tot + w * 0.15f, x4 = x3 + w * re / tot;
+    ImVec2 pts[6] = {ImVec2(x0, yb), ImVec2(x1, yb), ImVec2(x2, yt), ImVec2(x3, yt), ImVec2(x4, yb), ImVec2(e1.x - 4, yb)};
+    dl->AddPolyline(pts, 6, K.graphCurve, 0, 1.6f);
+  }
+  fr.end();
+}
+
+// ================================================================ Distortion
+// The reference overdrive's 420 × 180 panel (pre band / colour, big pre-amp
+// wheel with the x100 pad, post filter / gain) plus a Gridline column for the
+// shape modes, transfer curve, threshold, mix and oversampling.
+const skin::Skin& distSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x222222, 0x2A2A2A, 0x333333, 0xE32000, 0x444444, 0xB5B5B5);
+    s.graphBg = skin::hex(0x161616);
+    s.lcdBg = skin::hex(0x181818);
+    s.lcdText = skin::hex(0xFF5A3A);
+    s.select = skin::hex(0xE32000);
+    return s;
+  }();
+  return k;
+}
+
+void editorDistFl(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = distSkin();
+  constexpr float kW = 600, kH = 180;
+  Frame fr(width, kW, kH, 1.6f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  skin::wheel(a, t, DstPreBand, F.p(37, 7), 58 * F.s, K, skin::WheelBigLine);
+  flabel(dl, F, 66, 67, K, "PRE BAND");
+  skin::wheel(a, t, DstPreAmount, F.p(102, 14), 32 * F.s, K, skin::WheelBigLine);
+  flabel(dl, F, 118, 48, K, "AMT");
+  skin::wheel(a, t, DstColor, F.p(37, 95), 58 * F.s, K, skin::WheelBigLine);
+  flabel(dl, F, 66, 155, K, "COLOR");
+  skin::wheel(a, t, DstDrive, F.p(147, 27), 120 * F.s, K, skin::WheelBigLine);
+  flabel(dl, F, 207, 150, K, "DRIVE");
+  skin::toggle(a, t, DstExtreme, F.p(262, 153), F.sz(28, 18), K, "x100", F.font(7));
+  skin::wheel(a, t, DstTone, F.p(329, 6), 58 * F.s, K, skin::WheelBigLine);
+  flabel(dl, F, 358, 66, K, "TONE");
+  skin::wheel(a, t, DstOutput, F.p(329, 95), 58 * F.s, K, skin::WheelBigLine);
+  flabel(dl, F, 358, 155, K, "OUTPUT");
+  // Gridline column.
+  skin::well(dl, F.p(424, 4), F.p(596, 176), K, 4 * F.s);
+  static const char* modes[8] = {"SOFT", "HARD", "FOLD", "TUBE", "FAST A", "FAST B", "DRIVE", "RECT"};
+  gridSel(a, t, DstMode, F.p(430, 9), F.sz(160, 36), K, modes, 8, 4);
+  const int mode = ival(st, DstMode);
+  const double drive = dsp::dbToGain(val(st, DstDrive, 12) + (bval(st, DstExtreme) ? 40 : 0)), thr = dsp::dbToGain(val(st, DstThreshold));
+  const double bias = val(st, DstColor) * 0.3;
+  auto curve = [&](double x) {
+    double v = x * std::min(drive, 40.0) + bias;
+    switch (mode) {
+      case 1: return std::clamp(v, -thr, thr);
+      case 2: return thr * std::sin(v / thr);
+      case 3: return v >= 0 ? 1 - std::exp(-v) : -(1 - std::exp(v * 1.4)) / 1.2;
+      case 4: return thr * std::tanh(v / thr);
+      case 5: {
+        double av = std::fabs(v), f = std::fmod(av, 4 * thr), r = f < thr ? f : f < 3 * thr ? 2 * thr - f : f - 4 * thr;
+        return v < 0 ? -r : r;
+      }
+      case 6: return v >= 0 ? std::tanh(v * 1.2) : std::tanh(v * 0.6) * 0.8;
+      case 7: return std::fabs(v);
+      default: return std::tanh(v);
+    }
+  };
+  {
+    ImVec2 p0 = F.p(430, 50), p1 = F.p(512, 132);
+    skin::graphWell(dl, p0, p1, K);
+    ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+    dl->AddLine(ImVec2(p0.x + 2, c.y), ImVec2(p1.x - 2, c.y), K.graphGrid);
+    dl->AddLine(ImVec2(c.x, p0.y + 2), ImVec2(c.x, p1.y - 2), K.graphGrid);
+    ImVec2 pts[81];
+    for (int i = 0; i <= 80; ++i) {
+      double x = -1.2 + 2.4 * i / 80.0, y = std::clamp(curve(x), -1.2, 1.2);
+      pts[i] = ImVec2(p0.x + 3 + (p1.x - p0.x - 6) * static_cast<float>((x + 1.2) / 2.4), c.y - static_cast<float>(y / 1.2) * ((p1.y - p0.y) * 0.5f - 3));
+    }
+    dl->AddPolyline(pts, 81, K.fill, 0, 1.6f);
+  }
+  skin::labeledWheel(a, t, DstThreshold, F, 532, 50, 28, K, "THRES");
+  skin::labeledWheel(a, t, DstMix, F, 532, 92, 28, K, "MIX");
+  static const char* os[4] = {"1x", "2x", "4x", "8x"};
+  skin::switchSel(a, t, DstOversample, F.p(430, 140), F.sz(82, 30), K, os, 4, true);
+  skin::check(a, t, DstDcRemove, F.p(520, 138), F.sz(72, 15), K, "DC");
+  skin::check(a, t, DstSoftOut, F.p(520, 156), F.sz(72, 15), K, "SOFT OUT");
+  fr.end();
+}
+
+// ================================================================ Bitcrusher
+// The reference squeezer's 279 × 220 panel: squarize, puncher, filter, mix /
+// gain sliders; the lower right bevel carries the bit depth and rate divider.
+const skin::Skin& crushSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x595A5A, 0x767778, 0x3F484D, 0xF2F2F2, 0x595A5A, 0xEAEAEA);
+    s.fillPressed = skin::hex(0xFFA830);
+    s.pillBg = skin::hex(0x3D3D3D);
+    s.pillText = skin::hex(0xEAEAEA);
+    s.rail = skin::hex(0x3F484D);
+    s.handle = skin::hex(0x8B8E97);
+    s.lcdBg = skin::hex(0x2E2F30);
+    s.lcdText = skin::hex(0xFFA830);
+    s.select = skin::hex(0xFFA830);
+    s.graphBg = skin::hex(0x3A3B3C);
+    s.graphCurve = skin::hex(0xF2F2F2);
+    return s;
+  }();
+  return k;
+}
+
+void editorBitcrushFl(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = crushSkin();
+  constexpr float kW = 279, kH = 220;
+  Frame fr(width, kW, kH, 1.7f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  auto bev = [&](float x, float y, float w, float h) { dl->AddRectFilled(F.p(x, y), F.p(x + w, y + h), K.wellC(), 2); };
+  bev(5, 5, 98, 50);
+  bev(5, 60, 98, 155);
+  bev(108, 5, 98, 159);
+  bev(108, 169, 165, 46);
+  bev(211, 5, 62, 159);
+  auto rowLabel = [&](float y, const char* id, const char* s) { skin::button(id, F.p(9, y), F.sz(56, 24), K, s, false, F.font(7)); };
+  skin::pill(dl, F.p(9, 7), F.p(89, 21), K, "SQUARIZE", F.font(7.5f));
+  rowLabel(26, "##sqamt", "AMOUNT");
+  skin::wheel(a, t, BcSquarize, F.p(69, 23), 30 * F.s, K);
+  skin::pill(dl, F.p(9, 62), F.p(89, 76), K, "PUNCHER", F.font(7.5f));
+  rowLabel(87, "##pres", "PRESERVE");
+  skin::wheel(a, t, BcPreserve, F.p(69, 84), 30 * F.s, K);
+  rowLabel(120, "##imp", "IMPACT");
+  skin::wheel(a, t, BcImpact, F.p(69, 117), 30 * F.s, K);
+  rowLabel(153, "##puamt", "AMOUNT");
+  skin::wheel(a, t, BcPunch, F.p(69, 150), 30 * F.s, K);
+  {  // Crushed-sine preview.
+    ImVec2 p0 = F.p(9, 185), p1 = F.p(99, 211);
+    skin::graphWell(dl, p0, p1, K);
+    double bits = val(st, BcBits, 8), ds = std::max(1.0, static_cast<double>(val(st, BcDownsample, 4))), sq = val(st, BcSquarize);
+    double steps = std::pow(2.0, bits - 1), hold = 0, cnt = ds;
+    ImVec2 pts[120];
+    for (int i = 0; i < 120; ++i) {
+      double x = std::sin(i / 120.0 * 4 * dsp::kPi) * 0.9;
+      cnt += 0.25;
+      if (cnt >= ds * 0.25) {
+        cnt = 0;
+        double v = sq > 0 ? (x < 0 ? -1 : 1) * std::pow(std::fabs(x), 1 - 0.95 * sq) : x;
+        hold = std::round(v * steps) / steps;
+      }
+      pts[i] = ImVec2(p0.x + 2 + (p1.x - p0.x - 4) * i / 119.0f, (p0.y + p1.y) * 0.5f - static_cast<float>(hold) * ((p1.y - p0.y) * 0.5f - 2));
+    }
+    dl->AddPolyline(pts, 120, K.graphCurve, 0, 1.2f);
+  }
+  skin::check(a, t, BcFilterOn, F.p(113, 7), F.sz(71, 17), K, "FILTER", K.fillPressed);
+  skin::menuBox(a, t, BcFilterType, F.p(113, 28), F.sz(87, 22), K, F.font(8));
+  flabel(dl, F, 133, 68, K, "FREQ.", 7);
+  flabel(dl, F, 180, 68, K, "RES.", 7);
+  skin::wheel(a, t, BcFilterFreq, F.p(113, 81), 40 * F.s, K);
+  skin::wheel(a, t, BcFilterReso, F.p(160, 81), 40 * F.s, K);
+  static const char* pos[2] = {"PRE", "POST"};
+  skin::switchSel(a, t, BcFilterPos, F.p(113, 131), F.sz(87, 27), K, pos, 2, true);
+  skin::vslider(a, t, BcMix, F.p(216, 10), F.sz(22, 138), K, 0, false);
+  skin::vslider(a, t, BcOutput, F.p(245, 10), F.sz(22, 138), K, 0, false);
+  flabel(dl, F, 227, 151, K, "MIX", 7);
+  flabel(dl, F, 256, 151, K, "GAIN", 7);
+  flabel(dl, F, 149, 172, K, "BITS", 7);
+  flabel(dl, F, 231, 172, K, "RATE DIV", 7);
+  char b[24];
+  std::snprintf(b, sizeof b, "%.1f", val(st, BcBits, 8));
+  skin::digi(a, t, BcBits, F.p(113, 186), F.sz(72, 22), K, b, F.font(10));
+  std::snprintf(b, sizeof b, "/%.0f", val(st, BcDownsample, 4));
+  skin::digi(a, t, BcDownsample, F.p(194, 186), F.sz(74, 22), K, b, F.font(10));
+  fr.end();
+}
+
+// ================================================================ Low Lifter
+// Reference panel 680 × 280: band visual on top, settings strip below (pre
+// gain, multiband, slope + invert, diffuser, low band, crossover, high band,
+// low cut, mix). The visual's right end hosts Gridline's harmonics / boost.
+const skin::Skin& lowLiftSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x3E4244, 0x2C3338, 0x5C6266, 0xC0C0C0, 0x4E5356, 0xB0A4AC);
+    s.graphBg = skin::hex(0x23282C);
+    s.lcdBg = skin::hex(0x23282C);
+    s.accent2 = skin::hex(0x83EB43);
+    return s;
+  }();
+  return k;
+}
+
+void editorLowLiftFl(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = lowLiftSkin();
+  constexpr float kW = 680, kH = 280;
+  Frame fr(width, kW, kH, 1.4f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  {  // Band visual: spectrum, low-cut shade, low band, draggable crossover.
+    ImVec2 p = F.p(6, 6), q = F.p(560, 188);
+    ImVec2 sz(q.x - p.x, q.y - p.y);
+    ImGui::SetCursorScreenPos(p);
+    ImGui::InvisibleButton("##llvis", sz);
+    skin::graphWell(dl, p, q, K);
+    const int N = 160;
+    float db[N];
+    pui::spectrum(t.tap(a), t.key(), N, db, a.engine.sampleRate());
+    for (int i = 0; i < N; ++i) {
+      float x0 = p.x + sz.x * i / N, x1 = p.x + sz.x * (i + 1) / N;
+      float hh = std::clamp((db[i] + 90.0f) / 90.0f, 0.0f, 1.0f) * (sz.y - 4);
+      dl->AddRectFilled(ImVec2(x0, q.y - hh), ImVec2(x1, q.y), theme::withAlpha(K.text, 0.12f));
+    }
+    dl->PushClipRect(p, q, true);
+    pui::drawFreqGrid(dl, p, q, 24, true);
+    dl->PopClipRect();
+    float xo = pui::freqToX(val(st, LlCrossover, 120), p.x, sz.x), xc = pui::freqToX(val(st, LlLowCut, 25), p.x, sz.x);
+    dl->AddRectFilled(p, ImVec2(xc, q.y), theme::withAlpha(skin::hex(0x000000), 0.4f));
+    if (bval(st, LlMultiband, true)) dl->AddRectFilled(ImVec2(xc, p.y), ImVec2(xo, q.y), theme::withAlpha(skin::hex(0x912C2E), 0.25f));
+    dl->AddLine(ImVec2(xo, p.y), ImVec2(xo, q.y), K.text, 1.5f);
+    skin::text(dl, ImVec2(xo + 5, p.y + 5), K.text, "CROSSOVER", F.font(7.5f));
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1))
+      a.doc.setParam(t.pid(LlCrossover), pui::xToFreq(ImGui::GetIO().MousePos.x, p.x, sz.x), true);
+    if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+    if (ImGui::IsItemHovered()) a.setHint("Drag to move the crossover");
+  }
+  {  // Harmonics / bass boost column.
+    skin::well(dl, F.p(566, 6), F.p(674, 188), K, 4 * F.s);
+    skin::labeledWheel(a, t, LlHarmonics, F, 600, 12, 40, K, "HARMONICS");
+    skin::labeledWheel(a, t, LlBoost, F, 600, 72, 40, K, "BASS BOOST");
+    skin::labeledWheel(a, t, LlBoostFreq, F, 600, 132, 40, K, "BOOST FREQ");
+  }
+  const float y0 = 200;
+  dl->AddRectFilled(F.p(0, y0), F.p(kW, kH), K.wellC());
+  auto w = [&](int param, float x, float y, float s, const char* lbl, ImU32 fill = 0) {
+    skin::wheel(a, t, param, F.p(x, y0 + y), s * F.s, K, skin::WheelBigLine, fill);
+    skin::label(dl, F.p(x + s * 0.5f, 0).x, F.p(0, y0 + y + s + 1).y, lbl, K.textDim, F.font(7.5f));
+  };
+  w(LlDrive, 15, 22, 46, "PRE GAIN");
+  skin::check(a, t, LlMultiband, F.p(70, y0 + 30), F.sz(64, 15), K, "MULTI");
+  w(LlSlope, 136, 22, 46, "SLOPE");
+  skin::check(a, t, LlInvertHarm, F.p(186, y0 + 40), F.sz(60, 15), K, "INV");
+  w(LlDiffuseAmt, 253, 26, 40, "DIFF");
+  w(LlDiffuse, 305, 26, 40, "DIFF MIX");
+  skin::check(a, t, LlLowOn, F.p(352, y0 + 8), F.sz(28, 14), K, "", skin::hex(0xFF4E60));
+  w(LlLowGain, 382, 26, 40, "LOW", skin::hex(0xD23A48));
+  w(LlCrossover, 434, 26, 40, "XOVER");
+  w(LlHighGain, 487, 26, 40, "HIGH", skin::hex(0x83EB43));
+  skin::check(a, t, LlHighOn, F.p(529, y0 + 8), F.sz(28, 14), K, "", skin::hex(0x83EB43));
+  w(LlLowCut, 564, 26, 40, "LOW CUT");
+  w(LlMix, 625, 26, 40, "MIX");
+  skin::text(dl, F.p(348, y0 + 24), K.textDim, "ON", F.font(6.5f));
+  skin::text(dl, F.p(530, y0 + 24), K.textDim, "ON", F.font(6.5f));
+  fr.end();
+}
+
+// ================================================================ Analyzer
+// Reference visualiser family (592 × 315 panel): the visual fills the top,
+// settings sheets below — input (gain, hold pad), view (mode, update speed)
+// and spectrum (tilt, range, peaks, stereo).
+const skin::Skin& analyzerSkin() {
+  static const skin::Skin k = [] {
+    skin::Skin s = skin::Skin::fl(0x31373B, 0x363C40, 0x3B4144, 0x50A0FF, 0x42474A, 0xC1C7CB);
+    s.graphBg = skin::hex(0x101214);
+    s.lcdBg = skin::hex(0x262B2F);
+    s.lcdText = skin::hex(0x9FA8AD);
+    s.accent2 = skin::hex(0xFFA600);
+    s.graphCurve = skin::hex(0x7DB8FF);
+    return s;
+  }();
+  return k;
+}
+
+struct AnzState {
+  std::vector<float> sono, peaks, frozen;
+  int col = 0;
+};
+
+void editorAnalyzerFl(App& a, const PluginTarget& t, float width) {
+  static std::map<uint64_t, AnzState> uiMap;
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = analyzerSkin();
+  AnzState& ui = uiMap[t.key()];
+  constexpr float kW = 592, kH = 292;
+  Frame fr(width, kW, kH, 1.45f, K);
+  const skin::Form& F = fr.F;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::Scope scope(K);
+  const int mode = ival(st, AnzMode, 2);
+  const float gain = val(st, AnzGain), range = val(st, AnzRange, 96), tilt = val(st, AnzSlope);
+  const bool hold = bval(st, AnzHold);
+  constexpr int N = 200;
+  float db[N];
+  pui::spectrum(t.tap(a), t.key(), N, db, a.engine.sampleRate());
+  static const float smooth[3] = {0.0f, 0.5f, 0.85f};
+  if (static_cast<int>(ui.frozen.size()) != N) ui.frozen.assign(N, -120), ui.peaks.assign(N, -120);
+  const float sm = smooth[std::clamp(ival(st, AnzSmoothing, 1), 0, 2)];
+  for (int k = 0; k < N; ++k) {
+    double hz = 20.0 * std::pow(1000.0, (k + 0.5) / N);
+    float v = db[k] + gain + tilt * static_cast<float>(std::log2(hz / 1000.0));
+    size_t kk = static_cast<size_t>(k);
+    if (!hold) ui.frozen[kk] = ui.frozen[kk] * sm + v * (1 - sm);
+    ui.peaks[kk] = std::max(ui.peaks[kk] - 0.2f, ui.frozen[kk]);
+  }
+  const float top = 6;
+  auto Ydb = [&](float v, float y0, float hh) { return y0 + hh - std::clamp((v - top + range) / range, 0.0f, 1.0f) * hh; };
+  auto drawSpectrum = [&](ImVec2 p, ImVec2 sz) {
+    skin::graphWell(dl, p, ImVec2(p.x + sz.x, p.y + sz.y), K);
+    pui::drawFreqGrid(dl, p, ImVec2(p.x + sz.x, p.y + sz.y), range / 2, false);
+    ImVec2 pts[N];
+    for (int k = 0; k < N; ++k) pts[k] = ImVec2(p.x + sz.x * (k + 0.5f) / N, Ydb(ui.frozen[static_cast<size_t>(k)], p.y, sz.y));
+    for (int k = 0; k + 1 < N; ++k) {
+      ImVec2 q[4] = {pts[k], pts[k + 1], ImVec2(pts[k + 1].x, p.y + sz.y), ImVec2(pts[k].x, p.y + sz.y)};
+      dl->AddConvexPolyFilled(q, 4, theme::withAlpha(K.fill, 0.16f));
+    }
+    dl->AddPolyline(pts, N, K.graphCurve, 0, 1.5f);
+    if (bval(st, AnzPeaks, true)) {
+      for (int k = 0; k < N; ++k) pts[k].y = Ydb(ui.peaks[static_cast<size_t>(k)], p.y, sz.y);
+      dl->AddPolyline(pts, N, theme::withAlpha(K.accent2C(), 0.8f), 0, 1.0f);
+    }
+  };
+  auto drawScope = [&](ImVec2 p, ImVec2 sz) {
+    skin::graphWell(dl, p, ImVec2(p.x + sz.x, p.y + sz.y), K);
+    dl->AddLine(ImVec2(p.x, p.y + sz.y / 2), ImVec2(p.x + sz.x, p.y + sz.y / 2), K.graphGridStrong);
+    static std::vector<float> buf(2048);
+    if (const ScopeTap* tap = t.tap(a); tap && tap->read(buf.data(), buf.size())) {
+      size_t start = 0;
+      for (size_t i = 1; i < 1024; ++i)
+        if (buf[i - 1] < 0 && buf[i] >= 0) {
+          start = i;
+          break;
+        }
+      ImVec2 pts[1024];
+      float g = static_cast<float>(dsp::dbToGain(gain));
+      for (size_t i = 0; i < 1024; ++i)
+        pts[i] = ImVec2(p.x + sz.x * i / 1024.0f, p.y + sz.y / 2 - std::clamp(buf[start + i] * g, -1.0f, 1.0f) * sz.y * 0.45f);
+      dl->AddPolyline(pts, 1024, K.graphCurve, 0, 1.5f);
+    }
+  };
+  auto meterVal = [&](int k) {
+    if (t.isChannel()) return -120.0f;
+    if (auto rt = a.builder.effectRuntime(t.owner, t.slot)) return rt->bands[k].load();
+    return -120.0f;
+  };
+  const ImVec2 p0 = F.p(7, 7);
+  const float dw = F.u(578), H = F.u(204);
+  if (mode == 0) {
+    drawSpectrum(p0, ImVec2(dw, H));
+  } else if (mode == 1) {
+    drawScope(p0, ImVec2(dw, H));
+  } else if (mode == 2) {
+    drawSpectrum(p0, ImVec2(dw, H * 0.62f));
+    drawScope(ImVec2(p0.x, p0.y + H * 0.62f + 4), ImVec2(dw, H * 0.38f - 4));
+  } else if (mode == 3) {
+    const int cols = 120, rows = 64;
+    if (static_cast<int>(ui.sono.size()) != cols * rows) ui.sono.assign(static_cast<size_t>(cols * rows), -120.f);
+    if (!hold) {
+      ui.col = (ui.col + 1) % cols;
+      for (int r = 0; r < rows; ++r) ui.sono[static_cast<size_t>(ui.col * rows + r)] = ui.frozen[static_cast<size_t>(r * N / rows)];
+    }
+    skin::graphWell(dl, p0, ImVec2(p0.x + dw, p0.y + H), K);
+    float cw = (dw - 8) / cols, rh = (H - 8) / rows;
+    for (int c = 0; c < cols; ++c) {
+      int src = (ui.col + 1 + c) % cols;
+      for (int r = 0; r < rows; ++r) {
+        float v = std::clamp((ui.sono[static_cast<size_t>(src * rows + r)] - top + range) / range, 0.0f, 1.0f);
+        if (v < 0.05f) continue;
+        ImU32 col = v > 0.75f ? theme::mix(K.fill, K.accent2C(), (v - 0.75f) * 4) : theme::withAlpha(K.fill, v * 0.9f);
+        float x = p0.x + 4 + c * cw, y = p0.y + H - 4 - (r + 1) * rh;
+        dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw + 0.5f, y + rh + 0.5f), col);
+      }
+    }
+  } else if (mode == 4) {
+    skin::graphWell(dl, p0, ImVec2(p0.x + dw, p0.y + H), K);
+    const char* labels[3] = {"PEAK L", "PEAK R", "RMS"};
+    float vals[3] = {meterVal(0), meterVal(1), meterVal(3)};
+    for (int k = 0; k < 3; ++k) {
+      float x = p0.x + 40 + k * (dw - 80) / 3;
+      skin::meter(dl, ImVec2(x, p0.y + 14), ImVec2(x + 34, p0.y + H - 40), K, vals[k] + gain, range);
+      skin::text(dl, ImVec2(x, p0.y + H - 34), K.textDim, labels[k], 10);
+      char b[24];
+      std::snprintf(b, sizeof b, "%.1f dB", vals[k]);
+      skin::text(dl, ImVec2(x, p0.y + H - 20), K.text, b, 10);
+    }
+  } else {
+    skin::graphWell(dl, p0, ImVec2(p0.x + dw, p0.y + H), K);
+    float corr = meterVal(2), pl = meterVal(0), pr = meterVal(1);
+    float cx = p0.x + dw / 2, y = p0.y + H * 0.35f;
+    dl->AddLine(ImVec2(p0.x + 30, y), ImVec2(p0.x + dw - 30, y), K.graphGridStrong, 2);
+    dl->AddCircleFilled(ImVec2(cx + corr * (dw / 2 - 30), y), 8, corr < 0 ? skin::hex(0xE5484D) : K.fill);
+    skin::text(dl, ImVec2(p0.x + 30, y + 14), K.textDim, "-1  OUT OF PHASE", 10);
+    skin::text(dl, ImVec2(p0.x + dw - 110, y + 14), K.textDim, "MONO  +1", 10);
+    skin::text(dl, ImVec2(cx - 40, y - 30), K.text, "CORRELATION", 10);
+    float bal = std::clamp((pr - pl) / 12.0f, -1.0f, 1.0f), yb = p0.y + H * 0.72f;
+    dl->AddLine(ImVec2(p0.x + 30, yb), ImVec2(p0.x + dw - 30, yb), K.graphGridStrong, 2);
+    dl->AddCircleFilled(ImVec2(cx + bal * (dw / 2 - 30), yb), 7, K.accent2C());
+    skin::text(dl, ImVec2(cx - 26, yb - 26), K.text, "BALANCE", 10);
+  }
+  // Settings sheets.
+  auto sheet = [&](float x, float w, const char* cap) {
+    skin::well(dl, F.p(x, 219), F.p(x + w, 287), K, 4 * F.s);
+    skin::pill(dl, F.p(x + 3, 221), F.p(x + w - 3, 234), K, cap, F.font(7.5f));
+  };
+  sheet(7, 116, "INPUT");
+  skin::labeledWheel(a, t, AnzGain, F, 13, 238, 34, K, "GAIN");
+  skin::toggle(a, t, AnzHold, F.p(55, 239), F.sz(62, 42), K, "HOLD", F.font(9));
+  sheet(131, 238, "VIEW");
+  static const char* views[6] = {"SPEC", "SCOPE", "BOTH", "SONO", "METER", "STEREO"};
+  skin::switchSel(a, t, AnzMode, F.p(135, 238), F.sz(230, 20), K, views, 6, true);
+  static const char* sp[3] = {"FAST", "MED", "SLOW"};
+  skin::switchSel(a, t, AnzSmoothing, F.p(135, 262), F.sz(150, 19), K, sp, 3, true);
+  skin::text(dl, F.p(292, 266), K.textDim, "UPDATE", F.font(7.5f));
+  sheet(377, 208, "SPECTRUM");
+  skin::labeledWheel(a, t, AnzSlope, F, 383, 238, 32, K, "TILT");
+  skin::labeledWheel(a, t, AnzRange, F, 427, 238, 32, K, "RANGE");
+  skin::check(a, t, AnzPeaks, F.p(472, 242), F.sz(108, 15), K, "PEAKS", K.accent2C());
+  skin::check(a, t, AnzStereo, F.p(472, 262), F.sz(108, 15), K, "STEREO");
+  fr.end();
+}
+
+}  // namespace
+
+// Entry point (called before the older built-in editors).
+bool drawFlEditor(App& a, const PluginTarget& t, float width) {
+  const PluginState* st = t.state(a.doc.song());
+  if (!st) return false;
+  const std::string& ty = st->type;
+  if (ty == "gl.flanger") editorFlangerFl(a, t, width);
+  else if (ty == "gl.phaser") editorPhaserFl(a, t, width);
+  else if (ty == "gl.filter") editorFilterFl(a, t, width);
+  else if (ty == "gl.freqshift") editorFreqShiftFl(a, t, width);
+  else if (ty == "gl.geq") editorGeqFl(a, t, width);
+  else if (ty == "gl.tuner") editorTunerFl(a, t, width);
+  else if (ty == "gl.gate") editorGateFl(a, t, width);
+  else if (ty == "gl.dist") editorDistFl(a, t, width);
+  else if (ty == "gl.bitcrush") editorBitcrushFl(a, t, width);
+  else if (ty == "gl.lowlift") editorLowLiftFl(a, t, width);
+  else if (ty == "gl.analyzer") editorAnalyzerFl(a, t, width);
+  else return false;
+  return true;
+}
+
+}  // namespace gl

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Gridline
+GenericName=Digital Audio Workstation
+Comment=Pattern-based music production
+Exec=gridline-app %F
+Icon=gridline
+Terminal=false
+Categories=AudioVideo;Audio;Midi;Sequencer;Music;
+MimeType=application/x-gridline-project;
+Keywords=DAW;music;sequencer;beat;piano roll;

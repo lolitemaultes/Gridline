@@ -1,0 +1,9 @@
+{
+  "id": "novation-launch-control-xl",
+  "name": "Novation Launch Control XL (user template 1)",
+  "match": ["Launch Control XL"],
+  "takeover": "pickup",
+  "transport": {},
+  "knobs": {"cc": [13, 14, 15, 16, 17, 18, 19, 20, 29, 30, 31, 32, 33, 34, 35, 36], "encoder": "absolute"},
+  "faders": {"cc": [77, 78, 79, 80, 81, 82, 83, 84]}
+}

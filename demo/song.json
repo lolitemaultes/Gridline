@@ -1,0 +1,51 @@
+{
+  "format": "gridline-project",
+  "version": 1,
+  "title": "Gridline Demo — 4 bar groove",
+  "tempo": 128,
+  "timeSigNum": 4,
+  "timeSigDen": 4,
+  "channels": [
+    { "name": "Kick",  "generator": 1, "gain": 0.95, "pan": 0.0,  "muted": 0 },
+    { "name": "Hat",   "generator": 2, "gain": 0.45, "pan": 0.25, "muted": 0 },
+    { "name": "Bass",  "generator": 0, "gain": 0.70, "pan": -0.1, "muted": 0 }
+  ],
+  "patterns": [
+    {
+      "name": "Drums",
+      "stepsPerBar": 16,
+      "bars": 1,
+      "steps": {
+        "0": [127, 0, 0, 0, 127, 0, 0, 0, 127, 0, 0, 0, 127, 0, 0, 0],
+        "1": [0, 0, 90, 0, 0, 0, 90, 0, 0, 0, 90, 0, 0, 0, 90, 100]
+      },
+      "notes": {}
+    },
+    {
+      "name": "Bassline",
+      "stepsPerBar": 16,
+      "bars": 1,
+      "steps": {},
+      "notes": {
+        "2": [
+          { "start": 0,   "length": 48, "pitch": 36, "velocity": 112 },
+          { "start": 96,  "length": 48, "pitch": 36, "velocity": 100 },
+          { "start": 144, "length": 48, "pitch": 43, "velocity": 96 },
+          { "start": 192, "length": 48, "pitch": 36, "velocity": 112 },
+          { "start": 240, "length": 48, "pitch": 41, "velocity": 96 },
+          { "start": 288, "length": 48, "pitch": 43, "velocity": 104 },
+          { "start": 336, "length": 48, "pitch": 31, "velocity": 110 }
+        ]
+      }
+    }
+  ],
+  "playlist": [
+    { "pattern": 0, "track": 0, "start": 0,    "length": 0 },
+    { "pattern": 0, "track": 0, "start": 384,  "length": 0 },
+    { "pattern": 0, "track": 0, "start": 768,  "length": 0 },
+    { "pattern": 0, "track": 0, "start": 1152, "length": 0 },
+    { "pattern": 1, "track": 1, "start": 384,  "length": 0 },
+    { "pattern": 1, "track": 1, "start": 768,  "length": 0 },
+    { "pattern": 1, "track": 1, "start": 1152, "length": 0 }
+  ]
+}

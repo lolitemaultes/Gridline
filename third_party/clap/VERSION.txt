@@ -1,0 +1,1 @@
+CLAP 1.2.2 (https://github.com/free-audio/clap, commit 27f20f81dec40b930d79ef429fd35dcc2d45db5b), include/ only, unmodified. MIT, see LICENSE.

@@ -1,0 +1,1 @@
+Named, coloured inserts for drums, bass, music and vocals feeding three buses, plus reverb and delay returns with sends already set. The master has EQ, multiband compression and a limiter. Route your channels to the inserts and mix.

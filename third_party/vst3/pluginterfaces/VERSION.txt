@@ -1,0 +1,3 @@
+Steinberg VST 3 SDK interfaces (pluginterfaces), tag v3.8.1_build_84
+https://github.com/steinbergmedia/vst3_pluginterfaces (MIT, see LICENSE.txt)
+Unmodified copy of base/, vst/, gui/. Used by src/host/vst3 for VST3 hosting.

@@ -1,0 +1,2227 @@
+{
+  "channels": [
+    {
+      "color": 14186330,
+      "gain": 0.77999997138977051,
+      "id": 20,
+      "mixerTrack": 3,
+      "muted": false,
+      "name": "Kick",
+      "pan": 0,
+      "pitch": 0,
+      "plugin": {
+        "params": [
+          220,
+          48,
+          0.059999998658895493,
+          0.44999998807907104,
+          0.30000001192092896,
+          0.20000000298023224,
+          0.89999997615814209
+        ],
+        "type": "gl.kick"
+      }
+    },
+    {
+      "color": 13214780,
+      "gain": 0.77999997138977051,
+      "id": 21,
+      "mixerTrack": 4,
+      "muted": false,
+      "name": "Clap",
+      "pan": 0,
+      "pitch": 0,
+      "plugin": {
+        "params": [
+          0.25,
+          0.010999999940395355,
+          1300,
+          0.69999998807907104
+        ],
+        "type": "gl.clap"
+      }
+    },
+    {
+      "color": 5224624,
+      "gain": 0.60000002384185791,
+      "id": 22,
+      "mixerTrack": 5,
+      "muted": false,
+      "name": "Hat",
+      "pan": 0.15000000596046448,
+      "pitch": 0,
+      "plugin": {
+        "params": [
+          0.059999998658895493,
+          8000,
+          0,
+          0.5
+        ],
+        "type": "gl.hat"
+      }
+    },
+    {
+      "color": 5224624,
+      "gain": 0.55000001192092896,
+      "id": 23,
+      "mixerTrack": 6,
+      "muted": false,
+      "name": "Open hat",
+      "pan": -0.15000000596046448,
+      "pitch": 0,
+      "plugin": {
+        "params": [
+          0.11999999731779099,
+          8000,
+          1,
+          0.5
+        ],
+        "type": "gl.hat"
+      }
+    },
+    {
+      "color": 5935064,
+      "gain": 0.77999997138977051,
+      "id": 24,
+      "mixerTrack": 7,
+      "muted": false,
+      "name": "Snare",
+      "pan": 0,
+      "pitch": 0,
+      "plugin": {
+        "params": [
+          0.5,
+          0.60000002384185791,
+          0.11999999731779099,
+          0.20000000298023224,
+          190,
+          0.80000001192092896
+        ],
+        "type": "gl.snare"
+      }
+    },
+    {
+      "color": 10841304,
+      "gain": 0.77999997138977051,
+      "id": 25,
+      "mixerTrack": 8,
+      "muted": false,
+      "name": "Bass",
+      "pan": 0,
+      "pitch": 0,
+      "plugin": {
+        "params": [
+          2,
+          0.80000001192092896,
+          3,
+          0.5,
+          0,
+          6,
+          2,
+          0,
+          7,
+          -6,
+          0,
+          0.004999999888241291,
+          0.30000001192092896,
+          0.69999998807907104,
+          0.079999998211860657,
+          700,
+          0.20000000298023224,
+          0.60000002384185791,
+          0.18000000715255737,
+          0.0010000000474974513,
+          1,
+          0.69999998807907104
+        ],
+        "type": "gl.synth"
+      }
+    },
+    {
+      "color": 8024032,
+      "gain": 0.77999997138977051,
+      "id": 26,
+      "mixerTrack": 9,
+      "muted": false,
+      "name": "Chords",
+      "pan": 0,
+      "pitch": 0,
+      "plugin": {
+        "params": [
+          3.5,
+          0.25,
+          0.44999998807907104,
+          0,
+          9000,
+          4.5,
+          0.25,
+          0.5,
+          4,
+          0.10000000149011612,
+          0.69999998807907104,
+          0.80000001192092896
+        ],
+        "type": "gl.keys"
+      }
+    },
+    {
+      "color": 13214780,
+      "gain": 0.77999997138977051,
+      "id": 27,
+      "mixerTrack": 10,
+      "muted": false,
+      "name": "Perc",
+      "pan": 0,
+      "pitch": 0,
+      "plugin": {
+        "params": [
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          1,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          1,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          0,
+          0.80000001192092896,
+          0,
+          0,
+          0,
+          60,
+          0.80000001192092896,
+          0.80000001192092896
+        ],
+        "type": "gl.pads"
+      }
+    }
+  ],
+  "format": "gridline-project",
+  "info": {
+    "author": "Gridline",
+    "comments": "",
+    "genre": "House",
+    "title": "Gridline Demo",
+    "url": ""
+  },
+  "links": [],
+  "masterPitch": 0,
+  "mixer": [
+    {
+      "color": 5264990,
+      "id": 2,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Master",
+      "pan": 0,
+      "sends": [],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              -14,
+              2.5,
+              0.004999999888241291,
+              0.11999999731779099,
+              6,
+              0
+            ],
+            "type": "gl.comp"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              0,
+              -0.30000001192092896,
+              0.079999998211860657
+            ],
+            "type": "gl.limiter"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 14186330,
+      "id": 3,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Kick",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 13214780,
+      "id": 4,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Clap",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              10,
+              0.60000002384185791,
+              0.60000002384185791,
+              0.40000000596046448,
+              80,
+              9000,
+              1,
+              0.30000001192092896,
+              1,
+              0.2199999988079071
+            ],
+            "type": "gl.reverb"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5224624,
+      "id": 5,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Hat",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5224624,
+      "id": 6,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Open hat",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5935064,
+      "id": 7,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Snare",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 10841304,
+      "id": 8,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Bass",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              5,
+              60,
+              3,
+              0.7070000171661377,
+              0,
+              6,
+              150,
+              0,
+              1,
+              0,
+              6,
+              400,
+              0,
+              1,
+              0,
+              6,
+              1000,
+              0,
+              1,
+              0,
+              6,
+              2500,
+              0,
+              1,
+              0,
+              6,
+              6000,
+              0,
+              1,
+              0,
+              7,
+              12000,
+              0,
+              0.7070000171661377,
+              0,
+              0
+            ],
+            "type": "gl.eq"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 8024032,
+      "id": 9,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Chords",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              0.60000002384185791,
+              0.5,
+              12,
+              0.5
+            ],
+            "type": "gl.chorus"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              1,
+              8,
+              300,
+              0.40000000596046448,
+              1,
+              0,
+              7000,
+              60,
+              0.5,
+              0,
+              0,
+              1,
+              0.2199999988079071
+            ],
+            "type": "gl.delay"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              10,
+              0.60000002384185791,
+              0.60000002384185791,
+              0.40000000596046448,
+              80,
+              9000,
+              1,
+              0.30000001192092896,
+              1,
+              0.30000001192092896
+            ],
+            "type": "gl.reverb"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 13214780,
+      "id": 10,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Perc",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 11,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 12,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 13,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 14,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 15,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 16,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 17,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 18,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    }
+  ],
+  "nextId": 57,
+  "patterns": [
+    {
+      "bars": 1,
+      "color": 7249739,
+      "id": 19,
+      "name": "Beat",
+      "notes": {
+        "27": [
+          {
+            "length": 24,
+            "pitch": 67,
+            "start": 72,
+            "velocity": 70
+          },
+          {
+            "length": 24,
+            "pitch": 67,
+            "start": 168,
+            "velocity": 70
+          },
+          {
+            "length": 24,
+            "pitch": 67,
+            "start": 264,
+            "velocity": 70
+          },
+          {
+            "length": 24,
+            "pitch": 65,
+            "start": 312,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 66,
+            "start": 336,
+            "velocity": 90
+          }
+        ]
+      },
+      "steps": {
+        "20": [
+          120,
+          0,
+          0,
+          0,
+          120,
+          0,
+          0,
+          0,
+          120,
+          0,
+          0,
+          0,
+          120,
+          0,
+          0,
+          0
+        ],
+        "21": [
+          0,
+          0,
+          0,
+          0,
+          105,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          105,
+          0,
+          0,
+          0
+        ],
+        "22": [
+          70,
+          0,
+          70,
+          0,
+          70,
+          0,
+          70,
+          0,
+          70,
+          0,
+          70,
+          0,
+          70,
+          0,
+          70,
+          0
+        ],
+        "23": [
+          0,
+          0,
+          85,
+          0,
+          0,
+          0,
+          85,
+          0,
+          0,
+          0,
+          85,
+          0,
+          0,
+          0,
+          85,
+          0
+        ]
+      },
+      "stepsPerBar": 16
+    },
+    {
+      "bars": 1,
+      "color": 13214780,
+      "id": 28,
+      "name": "Fill",
+      "notes": {},
+      "steps": {
+        "20": [
+          120,
+          0,
+          0,
+          0,
+          120,
+          0,
+          0,
+          0,
+          120,
+          0,
+          0,
+          0,
+          120,
+          0,
+          0,
+          0
+        ],
+        "21": [
+          0,
+          0,
+          0,
+          0,
+          105,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          105,
+          0,
+          0,
+          0
+        ],
+        "22": [
+          70,
+          0,
+          70,
+          0,
+          70,
+          0,
+          70,
+          0,
+          70,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "24": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          95,
+          0,
+          0,
+          95,
+          95,
+          95
+        ]
+      },
+      "stepsPerBar": 16
+    },
+    {
+      "bars": 2,
+      "color": 10841304,
+      "id": 29,
+      "name": "Bassline",
+      "notes": {
+        "25": [
+          {
+            "length": 24,
+            "pitch": 33,
+            "start": 24,
+            "velocity": 110
+          },
+          {
+            "length": 24,
+            "pitch": 33,
+            "start": 72,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 45,
+            "start": 120,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 33,
+            "start": 168,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 36,
+            "start": 216,
+            "velocity": 110
+          },
+          {
+            "length": 24,
+            "pitch": 36,
+            "start": 264,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 48,
+            "start": 312,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 31,
+            "start": 360,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 33,
+            "start": 408,
+            "velocity": 110
+          },
+          {
+            "length": 24,
+            "pitch": 33,
+            "start": 456,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 45,
+            "start": 504,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 33,
+            "start": 552,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 36,
+            "start": 600,
+            "velocity": 110
+          },
+          {
+            "length": 24,
+            "pitch": 36,
+            "start": 648,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 48,
+            "start": 696,
+            "velocity": 90
+          },
+          {
+            "length": 24,
+            "pitch": 31,
+            "start": 744,
+            "velocity": 90
+          }
+        ]
+      },
+      "steps": {},
+      "stepsPerBar": 16
+    },
+    {
+      "bars": 2,
+      "color": 5224624,
+      "id": 30,
+      "name": "Chords",
+      "notes": {
+        "26": [
+          {
+            "length": 72,
+            "pitch": 57,
+            "start": 48,
+            "velocity": 85
+          },
+          {
+            "length": 72,
+            "pitch": 60,
+            "start": 48,
+            "velocity": 85
+          },
+          {
+            "length": 72,
+            "pitch": 64,
+            "start": 48,
+            "velocity": 85
+          },
+          {
+            "length": 48,
+            "pitch": 57,
+            "start": 144,
+            "velocity": 75
+          },
+          {
+            "length": 48,
+            "pitch": 60,
+            "start": 144,
+            "velocity": 75
+          },
+          {
+            "length": 48,
+            "pitch": 64,
+            "start": 144,
+            "velocity": 75
+          },
+          {
+            "length": 72,
+            "pitch": 57,
+            "start": 240,
+            "velocity": 85
+          },
+          {
+            "length": 72,
+            "pitch": 60,
+            "start": 240,
+            "velocity": 85
+          },
+          {
+            "length": 72,
+            "pitch": 64,
+            "start": 240,
+            "velocity": 85
+          },
+          {
+            "length": 48,
+            "pitch": 57,
+            "start": 336,
+            "velocity": 75
+          },
+          {
+            "length": 48,
+            "pitch": 60,
+            "start": 336,
+            "velocity": 75
+          },
+          {
+            "length": 48,
+            "pitch": 64,
+            "start": 336,
+            "velocity": 75
+          },
+          {
+            "length": 72,
+            "pitch": 55,
+            "start": 432,
+            "velocity": 85
+          },
+          {
+            "length": 72,
+            "pitch": 60,
+            "start": 432,
+            "velocity": 85
+          },
+          {
+            "length": 72,
+            "pitch": 64,
+            "start": 432,
+            "velocity": 85
+          },
+          {
+            "length": 48,
+            "pitch": 55,
+            "start": 528,
+            "velocity": 75
+          },
+          {
+            "length": 48,
+            "pitch": 60,
+            "start": 528,
+            "velocity": 75
+          },
+          {
+            "length": 48,
+            "pitch": 64,
+            "start": 528,
+            "velocity": 75
+          },
+          {
+            "length": 72,
+            "pitch": 53,
+            "start": 624,
+            "velocity": 85
+          },
+          {
+            "length": 72,
+            "pitch": 57,
+            "start": 624,
+            "velocity": 85
+          },
+          {
+            "length": 72,
+            "pitch": 60,
+            "start": 624,
+            "velocity": 85
+          },
+          {
+            "length": 48,
+            "pitch": 53,
+            "start": 720,
+            "velocity": 75
+          },
+          {
+            "length": 48,
+            "pitch": 57,
+            "start": 720,
+            "velocity": 75
+          },
+          {
+            "length": 48,
+            "pitch": 60,
+            "start": 720,
+            "velocity": 75
+          }
+        ]
+      },
+      "steps": {},
+      "stepsPerBar": 16
+    }
+  ],
+  "playlist": [
+    {
+      "id": 31,
+      "length": 0,
+      "pattern": 19,
+      "start": 0,
+      "track": 0
+    },
+    {
+      "id": 32,
+      "length": 0,
+      "pattern": 19,
+      "start": 384,
+      "track": 0
+    },
+    {
+      "id": 33,
+      "length": 0,
+      "pattern": 19,
+      "start": 768,
+      "track": 0
+    },
+    {
+      "id": 34,
+      "length": 0,
+      "pattern": 28,
+      "start": 1152,
+      "track": 0
+    },
+    {
+      "id": 35,
+      "length": 0,
+      "pattern": 19,
+      "start": 1536,
+      "track": 0
+    },
+    {
+      "id": 36,
+      "length": 0,
+      "pattern": 19,
+      "start": 1920,
+      "track": 0
+    },
+    {
+      "id": 37,
+      "length": 0,
+      "pattern": 19,
+      "start": 2304,
+      "track": 0
+    },
+    {
+      "id": 38,
+      "length": 0,
+      "pattern": 28,
+      "start": 2688,
+      "track": 0
+    },
+    {
+      "id": 39,
+      "length": 0,
+      "pattern": 19,
+      "start": 3072,
+      "track": 0
+    },
+    {
+      "id": 40,
+      "length": 0,
+      "pattern": 19,
+      "start": 3456,
+      "track": 0
+    },
+    {
+      "id": 41,
+      "length": 0,
+      "pattern": 19,
+      "start": 3840,
+      "track": 0
+    },
+    {
+      "id": 42,
+      "length": 0,
+      "pattern": 28,
+      "start": 4224,
+      "track": 0
+    },
+    {
+      "id": 43,
+      "length": 0,
+      "pattern": 19,
+      "start": 4608,
+      "track": 0
+    },
+    {
+      "id": 44,
+      "length": 0,
+      "pattern": 19,
+      "start": 4992,
+      "track": 0
+    },
+    {
+      "id": 45,
+      "length": 0,
+      "pattern": 19,
+      "start": 5376,
+      "track": 0
+    },
+    {
+      "id": 46,
+      "length": 0,
+      "pattern": 28,
+      "start": 5760,
+      "track": 0
+    },
+    {
+      "id": 47,
+      "length": 0,
+      "pattern": 29,
+      "start": 1536,
+      "track": 1
+    },
+    {
+      "id": 48,
+      "length": 0,
+      "pattern": 29,
+      "start": 2304,
+      "track": 1
+    },
+    {
+      "id": 49,
+      "length": 0,
+      "pattern": 29,
+      "start": 3072,
+      "track": 1
+    },
+    {
+      "id": 50,
+      "length": 0,
+      "pattern": 29,
+      "start": 3840,
+      "track": 1
+    },
+    {
+      "id": 51,
+      "length": 0,
+      "pattern": 29,
+      "start": 4608,
+      "track": 1
+    },
+    {
+      "id": 52,
+      "length": 0,
+      "pattern": 29,
+      "start": 5376,
+      "track": 1
+    },
+    {
+      "id": 53,
+      "length": 0,
+      "pattern": 30,
+      "start": 3072,
+      "track": 2
+    },
+    {
+      "id": 54,
+      "length": 0,
+      "pattern": 30,
+      "start": 3840,
+      "track": 2
+    },
+    {
+      "id": 55,
+      "length": 0,
+      "pattern": 30,
+      "start": 4608,
+      "track": 2
+    },
+    {
+      "id": 56,
+      "length": 0,
+      "pattern": 30,
+      "start": 5376,
+      "track": 2
+    }
+  ],
+  "ppq": 96,
+  "swing": 0.18000000715255737,
+  "tempo": 124,
+  "timeSigDen": 4,
+  "timeSigNum": 4,
+  "tracks": [
+    {
+      "color": 14186330,
+      "muted": false,
+      "name": "Drums"
+    },
+    {
+      "color": 10841304,
+      "muted": false,
+      "name": "Bass"
+    },
+    {
+      "color": 8024032,
+      "muted": false,
+      "name": "Chords"
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    }
+  ],
+  "version": 4
+}
+

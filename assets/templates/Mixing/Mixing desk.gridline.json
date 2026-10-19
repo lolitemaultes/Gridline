@@ -1,0 +1,1684 @@
+{
+  "channels": [],
+  "format": "gridline-project",
+  "info": {
+    "author": "",
+    "comments": "",
+    "genre": "",
+    "title": "Mixing desk",
+    "url": ""
+  },
+  "links": [],
+  "masterPitch": 0,
+  "mixer": [
+    {
+      "color": 5264990,
+      "id": 2,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Master",
+      "pan": 0,
+      "sends": [],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              5,
+              63.245552062988281,
+              0,
+              0.7070000171661377,
+              0,
+              6,
+              136.25840759277344,
+              0,
+              1,
+              0,
+              6,
+              293.55984497070312,
+              0,
+              1,
+              0,
+              6,
+              632.45550537109375,
+              0,
+              1,
+              0,
+              6,
+              1362.5841064453125,
+              0,
+              1,
+              0,
+              6,
+              2935.5986328125,
+              0,
+              1,
+              0,
+              7,
+              6324.55517578125,
+              0,
+              0.7070000171661377,
+              0,
+              0,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              0,
+              1,
+              0.61224365234375,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.61224365234375,
+              3,
+              0,
+              1,
+              1,
+              2,
+              1,
+              2,
+              2,
+              0,
+              1,
+              0,
+              0,
+              0
+            ],
+            "type": "gl.eq"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              300.29998779296875,
+              9236.7001953125,
+              -18,
+              2,
+              0,
+              -15.25,
+              2,
+              0,
+              -18,
+              2,
+              0,
+              0.0099999997764825821,
+              0.15000000596046448,
+              1,
+              1,
+              1,
+              6,
+              6,
+              6,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0.0099999997764825821,
+              0.0099999997764825821,
+              0.0099999997764825821,
+              0.10000000149011612,
+              0.10000000149011612,
+              0.10000000149011612,
+              0.80000001192092896,
+              0.80000001192092896,
+              0.80000001192092896,
+              300.29998779296875,
+              9236.7001953125,
+              0,
+              0
+            ],
+            "type": "gl.multiband"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              0,
+              0,
+              0.085500001907348633,
+              0.0020000000949949026,
+              0.0099999997764825821,
+              2,
+              2,
+              0,
+              0,
+              1,
+              0,
+              9.9999997473787516e-05,
+              0.24799999594688416,
+              0.0010000000474974513,
+              0,
+              -80,
+              0,
+              0.05000000074505806,
+              0,
+              0,
+              0,
+              0
+            ],
+            "type": "gl.limiter"
+          }
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 14186330,
+      "id": 3,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Kick",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 12
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 14186330,
+      "id": 4,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Snare",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 12
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 14186330,
+      "id": 5,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Hats",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 12
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 10841304,
+      "id": 6,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Bass",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 13
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5935064,
+      "id": 7,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Keys",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 13
+        },
+        {
+          "level": 0.20000000298023224,
+          "to": 16
+        },
+        {
+          "level": 0.11999999731779099,
+          "to": 17
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5935064,
+      "id": 8,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Lead",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 13
+        },
+        {
+          "level": 0.20000000298023224,
+          "to": 16
+        },
+        {
+          "level": 0.11999999731779099,
+          "to": 17
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5224624,
+      "id": 9,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Vocal",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 14
+        },
+        {
+          "level": 0.34999999403953552,
+          "to": 16
+        },
+        {
+          "level": 0.25,
+          "to": 17
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5224624,
+      "id": 10,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Vocal double",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 14
+        },
+        {
+          "level": 0.34999999403953552,
+          "to": 16
+        },
+        {
+          "level": 0.25,
+          "to": 17
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 11,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 14186330,
+      "id": 12,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Drum bus",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              -18,
+              4,
+              0.004999999888241291,
+              0.11999999731779099,
+              6,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              20,
+              0,
+              1,
+              0
+            ],
+            "type": "gl.comp"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              -2.1440000534057617,
+              0,
+              1,
+              0,
+              0,
+              1
+            ],
+            "type": "gl.clipper"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 10841304,
+      "id": 13,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Music bus",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              5,
+              63.245552062988281,
+              0,
+              0.7070000171661377,
+              0,
+              6,
+              136.25840759277344,
+              0,
+              1,
+              0,
+              6,
+              293.55984497070312,
+              0,
+              1,
+              0,
+              6,
+              632.45550537109375,
+              0,
+              1,
+              0,
+              6,
+              1362.5841064453125,
+              0,
+              1,
+              0,
+              6,
+              2935.5986328125,
+              0,
+              1,
+              0,
+              7,
+              6324.55517578125,
+              0,
+              0.7070000171661377,
+              0,
+              0,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              0,
+              1,
+              0.61224365234375,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.61224365234375,
+              3,
+              0,
+              1,
+              1,
+              2,
+              1,
+              2,
+              2,
+              0,
+              1,
+              0,
+              0,
+              0
+            ],
+            "type": "gl.eq"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5224624,
+      "id": 14,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Vocal bus",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              5,
+              63.245552062988281,
+              0,
+              0.7070000171661377,
+              0,
+              6,
+              136.25840759277344,
+              0,
+              1,
+              0,
+              6,
+              293.55984497070312,
+              0,
+              1,
+              0,
+              6,
+              632.45550537109375,
+              0,
+              1,
+              0,
+              6,
+              1362.5841064453125,
+              0,
+              1,
+              0,
+              6,
+              2935.5986328125,
+              0,
+              1,
+              0,
+              7,
+              6324.55517578125,
+              0,
+              0.7070000171661377,
+              0,
+              0,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              0,
+              1,
+              0.61224365234375,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.38775634765625,
+              3,
+              0.61224365234375,
+              3,
+              0,
+              1,
+              1,
+              2,
+              1,
+              2,
+              2,
+              0,
+              1,
+              0,
+              0,
+              0
+            ],
+            "type": "gl.eq"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              -18,
+              4,
+              0.004999999888241291,
+              0.11999999731779099,
+              6,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              20,
+              0,
+              1,
+              0
+            ],
+            "type": "gl.comp"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 15,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 13214780,
+      "id": 16,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Reverb",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              0,
+              0.5,
+              0.60000002384185791,
+              0,
+              75,
+              4000,
+              1,
+              1,
+              1,
+              0.54000002145767212,
+              1.5,
+              1,
+              1,
+              500,
+              0,
+              0.60000002384185791,
+              0,
+              0,
+              0,
+              0,
+              4000
+            ],
+            "type": "gl.reverb"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 13214780,
+      "id": 17,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "Delay",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1,
+          "plugin": {
+            "params": [
+              1,
+              8,
+              300,
+              0.625,
+              1,
+              0,
+              7000,
+              60,
+              0.5,
+              0,
+              0,
+              1,
+              1,
+              0,
+              0.30000001192092896,
+              0,
+              0.5,
+              2,
+              0,
+              0,
+              0,
+              16,
+              48000,
+              0,
+              500,
+              0,
+              1,
+              0,
+              1,
+              0,
+              1,
+              1,
+              192,
+              0,
+              1,
+              1.1385999917984009,
+              0,
+              22000,
+              48000
+            ],
+            "type": "gl.delay"
+          }
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    },
+    {
+      "color": 5264990,
+      "id": 18,
+      "invertPolarity": false,
+      "muted": false,
+      "name": "",
+      "pan": 0,
+      "sends": [
+        {
+          "level": 1,
+          "to": 2
+        }
+      ],
+      "slots": [
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        },
+        {
+          "enabled": true,
+          "mix": 1
+        }
+      ],
+      "solo": false,
+      "stereoSep": 0,
+      "swapLR": false,
+      "volume": 0.80000001192092896
+    }
+  ],
+  "modLinks": [],
+  "nextId": 20,
+  "patterns": [
+    {
+      "bars": 1,
+      "color": 7249739,
+      "id": 19,
+      "name": "Pattern 1",
+      "notes": {},
+      "steps": {},
+      "stepsPerBar": 16
+    }
+  ],
+  "playlist": [],
+  "ppq": 96,
+  "swing": 0,
+  "tempo": 140,
+  "timeSigDen": 4,
+  "timeSigNum": 4,
+  "tracks": [
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    },
+    {
+      "color": 5264990,
+      "muted": false,
+      "name": ""
+    }
+  ],
+  "version": 6
+}
+
