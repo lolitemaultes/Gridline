@@ -22,10 +22,11 @@ struct ChannelEcho {
   float pan = 0;            // -1..1
   int pitch = 0;            // cents per echo, -1200..1200
   bool pingPong = false;
+  float modX = 0, modY = 0;  // note mod X / Y change per echo, -1..1 (0.5 = half the range)
   bool active() const { return count > 0 && feedback > 0; }
   bool operator==(const ChannelEcho& o) const {
     return count == o.count && feedback == o.feedback && time == o.time && pan == o.pan && pitch == o.pitch &&
-           pingPong == o.pingPong;
+           pingPong == o.pingPong && modX == o.modX && modY == o.modY;
   }
 };
 

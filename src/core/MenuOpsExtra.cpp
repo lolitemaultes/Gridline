@@ -198,49 +198,6 @@ ObjectId createLayer(Document& d, const std::vector<ObjectId>& channels) {
   return out;
 }
 
-// ---------------------------------------------------------------- mixer ----
-
-int unrouteInputs(Document& d, ObjectId track) {
-  const Song& s0 = d.song();
-  if (!s0.mixerTrack(track) || track == s0.masterId()) return 0;
-  int n = 0;
-  for (const auto& t : s0.mixer)
-    for (const auto& snd : t.sends) n += snd.to == track;
-  if (!n) return 0;
-  int changed = 0;
-  d.editSong("unroute tracks routed here", [&](Song& s) {
-    const ObjectId m = s.masterId();
-    for (auto& t : s.mixer) {
-      const size_t before = t.sends.size();
-      t.sends.erase(std::remove_if(t.sends.begin(), t.sends.end(), [&](const Send& x) { return x.to == track; }), t.sends.end());
-      if (t.sends.size() == before) continue;
-      ++changed;
-      if (t.sends.empty() && t.id != m) t.sends.push_back({m, 1.0f, false});
-    }
-  });
-  return changed;
-}
-
-ObjectId createSubmix(Document& d, const std::vector<ObjectId>& tracks) {
-  const Song& s0 = d.song();
-  std::vector<ObjectId> src;
-  int last = -1;
-  for (ObjectId t : tracks)
-    if (s0.mixerTrack(t) && t != s0.masterId() && std::find(src.begin(), src.end(), t) == src.end()) {
-      src.push_back(t);
-      last = std::max(last, s0.mixerIndex(t));
-    }
-  if (src.empty() || static_cast<int>(s0.mixer.size()) > kMaxMixerInserts) return kNoId;
-  d.beginGroup("create submix");
-  ObjectId sub = insertMixerTrack(d, last + 1);
-  if (sub) {
-    d.editMixerTrack(sub, "name submix", [](MixerTrack& m) { m.name = "Submix"; });
-    for (ObjectId t : src) routeOnlyTo(d, t, sub);
-  }
-  d.endGroup();
-  return sub;
-}
-
 // ---------------------------------------------------------------- notes ----
 
 void discardLengths(std::vector<Note>& notes, NoteSel& sel, Tick len) {

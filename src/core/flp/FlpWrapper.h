@@ -52,6 +52,11 @@ struct WrapperMatch {
 };
 WrapperMatch matchWrapper(const WrapperInfo& w);
 
+// True for Image-Line's own plugins (or a wrapper with no vendor recorded):
+// only these may be converted to Gridline built-ins on import. Every other
+// vendor's plugin stays the real hosted plugin (or a placeholder for it).
+bool isImageLineVendor(const std::string& vendor);
+
 void registerWrapperDecoder(std::map<std::string, PluginDecoder>& d);
 
 }  // namespace gl::flp

@@ -319,6 +319,11 @@ int main() {
     for (int pass = 0; pass < 2; ++pass) {
       auto all = pass == 0 ? testfl::decodePresets("Harmor") : testfl::decodeProjects("Harmor");
       int total = 0, decoded = 0, finite = 0, sounding = 0, images = 0;
+      // Envelope segment tension: FL's positive tension starts fast, Resynth's
+      // positive tension starts slow; the decoder flips the sign. Falling
+      // envelope segments (decays / releases) are mostly drawn fast-start in
+      // FL, so after decoding they must mostly carry negative tension.
+      int fallFast = 0, fallSlow = 0, riseFast = 0, riseSlow = 0;
       for (const auto& d : all) {
         ++total;
         if (!d.ok || d.state.type != "gl.harmor") {
@@ -327,6 +332,18 @@ int main() {
         }
         ++decoded;
         testfl::maybeDump(d);
+        PatchData pd;
+        if (parsePatch(d.state.data, pd))
+          for (const auto& part : pd.part)
+            for (const auto& art : part.arts)
+              for (size_t i = 1; i < art.env.pts.size(); ++i) {
+                const Pt& p = art.env.pts[i];
+                if (p.kind != 0 || std::fabs(p.tension) < 0.05f) continue;
+                const float dy = p.y - art.env.pts[i - 1].y;
+                if (std::fabs(dy) < 1e-3f) continue;
+                const bool fast = p.tension < 0;  // Resynth: negative = fast start
+                (dy < 0 ? (fast ? fallFast : fallSlow) : (fast ? riseFast : riseSlow))++;
+              }
         images += d.state.data.find("\ni ") != std::string::npos || d.state.data.find("\nx ") != std::string::npos;
         Out o = render(d.state, {{0, true, 1, 60, 0.8f}, {8000, false, 1, 0, 0}}, 16000, 512);
         finite += o.finite && o.peak < 20;
@@ -336,6 +353,9 @@ int main() {
       }
       std::printf("# Harmor %s: %d states, %d decoded, %d finite, %d sounding, %d with images\n", pass ? "projects" : "presets", total, decoded,
                   finite, sounding, images);
+      std::printf("# Harmor %s envelope tension: falling %d fast-start / %d slow-start, rising %d fast / %d slow\n",
+                  pass ? "projects" : "presets", fallFast, fallSlow, riseFast, riseSlow);
+      expect(fallFast > 2 * fallSlow, "decoded decays mostly start fast (FL tension sign flipped)");
       expect(total > 0 && decoded == total, pass ? "every project state decodes" : "every shipped preset decodes");
       expect(finite == decoded, "every decoded state renders finite");
       expect(sounding >= decoded * 9 / 10, "decoded states sound");

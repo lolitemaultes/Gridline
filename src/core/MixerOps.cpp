@@ -140,7 +140,7 @@ ObjectId createSubmix(Document& d, const std::vector<ObjectId>& tracks, const st
   const Song& s = d.song();
   int last = 0;
   for (ObjectId id : tracks) last = std::max(last, s.mixerIndex(id));
-  if (last < 1) return kNoId;
+  if (last < 1 || static_cast<int>(s.mixer.size()) > kMaxMixerInserts) return kNoId;
   d.beginGroup("create submix");
   ObjectId sub = insertTracks(d, last + 1, 1).front();
   d.editMixerTrack(sub, "create submix", [&](MixerTrack& m) { m.name = name; });
@@ -174,6 +174,7 @@ int resetRouting(Document& d, const std::vector<ObjectId>& tracks) {
 
 int unrouteIncoming(Document& d, ObjectId dest) {
   const ObjectId m = d.song().masterId();
+  if (dest == m || !d.song().mixerTrack(dest)) return 0;  // the master's inputs are never unrouted
   std::vector<ObjectId> srcs = routedTo(d.song(), dest);
   int n = 0;
   d.beginGroup("unroute tracks");

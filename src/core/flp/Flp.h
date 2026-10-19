@@ -176,6 +176,24 @@ struct FlTarget {
 // FL target id (event 227 / pattern events; see FlpArrangement.cpp) → parameter.
 // Valid after importArrangement (needs the decoded plugins and audio channels).
 bool resolveFlTarget(Context& c, uint32_t target, FlTarget& out);
+// MIDI remote-control link (event 226, 20 bytes): u32 MIDI source
+// ((port + 1) << 22 | channel << 16 | control: 0..127 CC, 253 channel
+// aftertouch, 254 key aftertouch, 255 pitch bend, 256 + n note n; port 0 =
+// any), i32 pickup state (runtime), u32 target (the 227 target id; a channel
+// of 0xFFF / mixer base 0x3FC0 = "the focused channel / track"), u32 flags
+// (4 MIDI source, 8 internal controller, 2 smoothing, bits 8..15 note mode:
+// default, hold, latch, increment, stay), i32 smoothing time.
+struct FlRemoteLink {
+  int port = -1, channel = 0, control = 0;
+  uint32_t target = 0, flags = 0;
+  int noteMode = 0, smoothing = 0;
+  bool midi() const { return (flags & 4) != 0; }
+  bool focused() const { return (target < 0x10000000u && (target >> 16) == 0xFFF) || (target >> 22) == 0xFF; }
+};
+bool decodeRemoteLink(const Event& e, FlRemoteLink& out);
+// The link as a Gridline ControllerLink (owner / index from `t`); false when
+// the MIDI source has no Gridline equivalent.
+bool remoteLinkToController(const FlRemoteLink& r, const FlTarget& t, ControllerLink& out);
 // Pattern events (event 223) and notes on automation channels → pattern
 // automation (FlpPatternEvents.cpp). After importArrangement.
 void importPatternEvents(Context& c);

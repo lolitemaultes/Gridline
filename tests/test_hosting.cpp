@@ -738,6 +738,17 @@ void testWrapper() {
     evs[1].data = w6.data(), evs[1].size = static_cast<uint32_t>(w6.size());
     flp::PluginMapping pm3;
     expect((*dec)(ctx, evs, pm3) && pm3.glType == kClapSynth && pm3.state.data.empty(), "wrapper: other format matched by name");
+    // A third-party plugin is never swapped for a Gridline built-in, even when
+    // its name matches one of FL's own plugins: it stays the hosted plugin's type.
+    std::vector<uint8_t> w7 = wrapper(4, u32v(0x0DEFACED), {}, s2.b, "Fruity Reeverb 2", "Other Audio Co");
+    evs[1].data = w7.data(), evs[1].size = static_cast<uint32_t>(w7.size());
+    flp::PluginMapping pm4;
+    expect((*dec)(ctx, evs, pm4) && pm4.glType == "vst2:0DEFACED" && pm4.state.data.compare(0, 7, "vst2p1:") == 0,
+           "wrapper: third-party plugin named like an FL plugin stays a hosted placeholder");
+    expect(flp::isImageLineVendor("Image-Line") && flp::isImageLineVendor("image line software") && flp::isImageLineVendor(""),
+           "wrapper: Image-Line vendor recognised");
+    expect(!flp::isImageLineVendor("Dada Life") && !flp::isImageLineVendor("Apple") && !flp::isImageLineVendor("Kilohearts"),
+           "wrapper: other vendors are never converted to built-ins");
   }
 
 #if defined(__APPLE__)

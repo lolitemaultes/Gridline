@@ -176,9 +176,34 @@ double effectorRateBeats(int choice);
 double effectorShape(int shape, double phase, double randA, double randB);
 
 // ------------------------------------------------------------ gl.transplit
+// The input splits into a transient part and a sustain part (detector:
+// fast vs slow envelope, sensitivity, hold, release, detection speed); each
+// part has its own level, tilt and effect slot, then they are summed. The
+// band split / balance, drive, mix and gain act on the whole result.
+// TsAttack / TsRelease are the transient / sustain levels (-1 silent, 0 unity,
+// +1 = +12 dB); TsAttackShape is the detection speed, TsReleaseShape the
+// detector release. Indices 0..8 are the original layout; 9.. were appended.
 enum Ts {
-  TsSplitFreq = 0, TsBalance, TsAttack, TsAttackShape, TsRelease, TsReleaseShape, TsDrive, TsMix, TsGain, TsCount
+  TsSplitFreq = 0, TsBalance, TsAttack, TsAttackShape, TsRelease, TsReleaseShape, TsDrive, TsMix, TsGain,
+  TsSensitivity, TsHold, TsTransTilt, TsSusTilt,
+  TsTransFx, TsTransFxMix, TsTransFxA, TsTransFxB,
+  TsSusFx, TsSusFxMix, TsSusFxA, TsSusFxB,
+  TsLookahead, TsStereoLink, TsTransOn, TsSusOn, TsTransSync, TsSusSync,
+  TsCount
 };
+// Effect slot kinds (TsTransFx / TsSusFx). A / B per kind: saturate drive /
+// warmth, bounce time curve / amp curve, diffuse and blur depth / size, echo
+// feedback / time.
+enum TsFxKind { TsFxSaturate = 0, TsFxBounce, TsFxDiffuse, TsFxBlur, TsFxEcho, TsFxOff, TsFxCount };
+inline constexpr int kTsSlotStride = TsSusFx - TsTransFx;  // transient slot params + stride = sustain slot params
+// Transient / sustain level (-1..1) → linear gain.
+inline double tsLevelGain(double v) { return v >= 0 ? 1.0 + 3.0 * v : 1.0 + v; }
+// Echo time: free 1..1000 ms (log) or tempo-synced 1..768 ticks of 1/96 beat.
+inline double tsEchoSeconds(double b, bool sync, double tempo) {
+  b = b < 0 ? 0 : (b > 1 ? 1 : b);
+  if (sync) return (1.0 + std::round(b * 767.0)) / 96.0 * 60.0 / (tempo < 10 ? 10 : tempo);
+  return 0.001 * std::pow(1000.0, b);
+}
 
 // Runtimes, one factory per source file.
 std::unique_ptr<Effect> createMasterEffect(const std::string& type);  // master_dsp.cpp

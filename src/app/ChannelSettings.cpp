@@ -167,6 +167,10 @@ static void drawNoteSettings(App& a, ObjectId id) {
   knob("epan", c->echo.pan, desc("Pan", "pan", -1, 1, 0), true, [](Channel& ch, double v) { ch.echo.pan = static_cast<float>(v); });
   ImGui::SameLine(0, 0);
   knob("epitch", c->echo.pitch, desc("Pitch", "ct", -1200, 1200, 0), true, [](Channel& ch, double v) { ch.echo.pitch = static_cast<int>(std::lround(v)); });
+  ImGui::SameLine(0, 0);
+  knob("emodx", c->echo.modX, desc("Mod X per echo", "%", -1, 1, 0), true, [](Channel& ch, double v) { ch.echo.modX = static_cast<float>(v); });
+  ImGui::SameLine(0, 0);
+  knob("emody", c->echo.modY, desc("Mod Y per echo", "%", -1, 1, 0), true, [](Channel& ch, double v) { ch.echo.modY = static_cast<float>(v); });
   ImGui::SameLine(0, 4);
   toggle("Ping-pong", c->echo.pingPong, "Echoes alternate between the pan position and its mirror",
          [](Channel& ch) { ch.echo.pingPong = !ch.echo.pingPong; });

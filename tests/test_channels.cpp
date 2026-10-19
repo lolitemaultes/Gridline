@@ -16,6 +16,7 @@
 #include "core/flp/Flp.h"
 #include "engine/AudioEngine.h"
 #include "engine/Render.h"
+#include "engine/SamplePrecompute.h"
 
 using namespace gl;
 
@@ -156,7 +157,7 @@ int main() {
     s.patterns[0].notes[a] = {n, mk(96, 48, 62)};
     Channel& ca = s.channels[0];
     ca.fine = -12, ca.swingMix = 0.5f, ca.timeShift = 0.125f, ca.polyphony = 3, ca.mono = true, ca.porta = true, ca.portaTime = 0.3f;
-    ca.cutGroup = 2, ca.cutBy = 5, ca.echo.count = 3, ca.echo.feedback = 0.4f, ca.echo.time = 0.5f, ca.echo.pan = -0.5f;
+    ca.cutGroup = 2, ca.cutBy = 5, ca.echo.count = 3, ca.echo.feedback = 0.4f, ca.echo.time = 0.5f, ca.echo.pan = -0.5f, ca.echo.modX = 0.25f, ca.echo.modY = -0.5f;
     ca.echo.pitch = 100, ca.echo.pingPong = true, ca.layer = {b}, ca.layerMode = 1, ca.group = 1;
     s.channelGroups = {"Drums", "Synths"};
     Json j;
@@ -399,8 +400,11 @@ int main() {
     B.d(132, 0x00020001);  // cut 1, cut by 2
     B.data(209, i32s({6400, 6400 + 3200, 100, 3, 48}));  // 50 % feedback, pan right half, +100 ct, 3 echoes, 48 ticks
     B.d(135, 72);
-    B.w(70, 2);            // reverse
+    B.w(70, 2 | 4 | 1);    // reverse, boost clip, stereo fade
     B.w(76, 256), B.w(75, 512);
+    // Precomputed effects: tilt, cutoff, boost, resonance, stereo delay, warp, ring, echo mod, reverb.
+    B.w(69, 192), B.w(71, 512), B.w(74, 64), B.w(83, 320), B.w(85, 2048 + 441), B.w(86, 128);
+    B.d(131, (24u << 16) | 128u), B.d(138, (192u << 16) | 64u), B.d(139, (0u << 16) | 64u);
     B.w(97, 64), B.w(89, 512);
     B.data(221, {0, 0, 0, 0, 0, 4, 0, 0, 3});  // mono + porta, porta 1024
     {
@@ -428,6 +432,10 @@ int main() {
     B.w(94, 0), B.w(94, 1), B.d(144, 1);
     // Channel 3: another sampler (default settings).
     B.w(64, 3), B.b(21, 0), B.text(192, "Plain");
+    // Remote-control links: CC 7 on MIDI channel 3, port 2 → channel 0 volume (note mode latch);
+    // pitch bend → the focused channel's pitch (not imported).
+    B.data(226, i32s({static_cast<int32_t>((3u << 22) | (2u << 16) | 7u), 0, 0x00000000, 4 | (2 << 8), 469}));
+    B.data(226, i32s({255, 255, 0x0FFF0004, 4, -512}));
     std::string path = "test_channels.flp";
     if (FILE* fp = std::fopen(path.c_str(), "wb")) {
       auto bytes = B.file(96);
@@ -453,9 +461,38 @@ int main() {
     expect(hat.mono && hat.porta && hat.portaTime > 0.4f, "polyphony: mono + porta + porta time");
     const auto& sp = hat.plugin.params;
     std::printf("# hat: oneshot %g hold %g sus %g ftype %g reso %g\n", sp[pp::SmpOneShot], sp[pp::SmpEnvHold], sp[pp::SmpSustain], sp[pp::SmpFilterType], sp[pp::SmpReso]);
-    expect(hat.plugin.type == "gl.sampler" && sp[pp::SmpRoot] == 72 && sp[pp::SmpReverse] == 1 && std::fabs(sp[pp::SmpFadeIn] - 0.25f) < 1e-4f &&
-               std::fabs(sp[pp::SmpFadeOut] - 0.5f) < 1e-4f,
-           "sampler: root note, reverse, fades");
+    expect(hat.plugin.type == "gl.sampler" && sp[pp::SmpRoot] == 72 && sp[pp::SmpReverse] == 1 && std::fabs(sp[pp::SmpPreRampIn] - 1.0f) < 1e-4f &&
+               std::fabs(sp[pp::SmpPreRampOut] - 2.0f) < 1e-4f && sp[pp::SmpFadeIn] == 0 && sp[pp::SmpFadeOut] == 0,
+           "sampler: root note, reverse, quick fades (whole-sample ramps)");
+    expect(sp[pp::SmpPreClip] == 1 && sp[pp::SmpPreFadeStereo] == 1 && std::fabs(sp[pp::SmpPreTilt] - 0.5f) < 1e-4f &&
+               std::fabs(sp[pp::SmpPreCutoff] - 0.5f) < 1e-4f && std::fabs(sp[pp::SmpPreBoost] - 0.25f) < 1e-4f &&
+               std::fabs(sp[pp::SmpPreReso] - 0.5f) < 1e-4f && std::fabs(sp[pp::SmpPreStereoDelay] - 10.0f) < 1e-3f &&
+               std::fabs(sp[pp::SmpPreWarp] + 0.5f) < 1e-4f,
+           "sampler: precomputed tilt, cutoff, boost, resonance, stereo delay, warp, clip, stereo fade");
+    expect(std::fabs(sp[pp::SmpPreRingMix] - 0.5f) < 1e-4f && std::fabs(sp[pp::SmpPreRingFreq] - 32 * 44100.0f / 5760) < 1e-2f &&
+               std::fabs(sp[pp::SmpPreReverbMix] - 0.25f) < 1e-4f && sp[pp::SmpPreReverbType] == 0,
+           "sampler: precomputed ring modulation and reverb");
+    expect(s.links.size() == 1 && s.links[0].source == RemoteSource::CC && s.links[0].cc == 7 && s.links[0].midiChannel == 2 &&
+               s.links[0].port == 2 && s.links[0].owner == hat.id && s.links[0].button == RemoteButton::Toggle &&
+               s.links[0].max < 0.81f && s.links[0].max > 0.79f,
+           "remote links: fixed-target link imported (source, channel, port, note mode, volume range); focused-channel link skipped");
+    {
+      flp::Event e;
+      std::vector<uint8_t> raw = i32s({256 + 60, 0, 0x70071F01, 4, 469});
+      e.id = 226, e.data = raw.data(), e.size = static_cast<uint32_t>(raw.size());
+      flp::FlRemoteLink r;
+      flp::FlTarget t;
+      t.id = {hat.id, 3};
+      ControllerLink l;
+      expect(flp::decodeRemoteLink(e, r) && r.port == -1 && r.control == 316 && r.target == 0x70071F01u && !r.focused() &&
+                 flp::remoteLinkToController(r, t, l) && l.source == RemoteSource::Note && l.cc == 60 && l.port == -1,
+             "remote links: note source, any port, mixer target");
+      r.control = 200;
+      expect(!flp::remoteLinkToController(r, t, l), "remote links: unknown control refused");
+      r.target = 0x3FC71F01;
+      expect(r.focused(), "remote links: focused mixer track target recognised");
+    }
+    expect(std::fabs(hat.echo.modX + 0.5f) < 1e-4f && std::fabs(hat.echo.modY - 0.5f) < 1e-4f, "echo: mod X / Y per echo");
     expect(sp[pp::SmpOneShot] == 0 && sp[pp::SmpEnvHold] > 5 && sp[pp::SmpSustain] < 1e-4f && sp[pp::SmpFilterType] == 4 &&
                std::fabs(sp[pp::SmpReso] - 0.25f) < 1e-3f,
            "sampler: volume envelope gates the note; channel filter (high pass)");
@@ -479,5 +516,77 @@ int main() {
   }
   std::remove(a441.c_str());
   std::remove(a2.c_str());
+  // ------------------------------------------------ precomputed sample effects (J-23)
+  {
+    auto mk = [](size_t n, bool stereo) {
+      auto smp = std::make_shared<Sample>();
+      smp->sampleRate = 44100;
+      smp->left.resize(n), smp->right.resize(n);
+      for (size_t i = 0; i < n; ++i) {
+        smp->left[i] = static_cast<float>(0.5 * std::sin(2 * 3.14159265358979 * 440.0 * i / 44100.0));
+        smp->right[i] = stereo ? static_cast<float>(0.25 * std::sin(2 * 3.14159265358979 * 660.0 * i / 44100.0)) : smp->left[i];
+      }
+      return SamplePtr(smp);
+    };
+    SamplePtr in = mk(44101, false);
+    SamplePrecomputeFx none;
+    expect(precomputeSample(in, none) == in, "precompute: neutral settings keep the sample");
+    // Quick fade out (raw 1024 = 4): silent from a quarter of the sample on; linear from 1 before that.
+    SamplePrecomputeFx fo;
+    fo.rampOut = 4;
+    SamplePtr o = precomputeSample(in, fo);
+    const size_t N = in->frames() - 1;
+    expect(o->left[N / 4 + 10] == 0.f && std::fabs(o->left[N / 8] - in->left[N / 8] * 0.5f) < 1e-5f, "precompute: ramp out law (1 - v/256 · n/N)");
+    SamplePrecomputeFx fi;
+    fi.rampIn = 1;  // raw 256: ramps over the whole sample
+    o = precomputeSample(in, fi);
+    expect(std::fabs(o->left[N / 2] - in->left[N / 2] * 0.5f) < 1e-5f && o->left[0] == 0.f, "precompute: ramp in law");
+    SamplePrecomputeFx bo;
+    bo.boost = 0.25;  // raw 64 → ×5
+    bo.clip = true;
+    o = precomputeSample(in, bo);
+    float pk = 0;
+    for (float v : o->left) pk = std::max(pk, std::fabs(v));
+    expect(std::fabs(o->left[3] - std::clamp(in->left[3] * 5.f, -1.f, 1.f)) < 1e-5f && pk <= 1.f, "precompute: boost ×(1 + v/16), clip");
+    SamplePrecomputeFx sd;
+    sd.stereoDelayMs = 10;  // 441 frames, left later
+    o = precomputeSample(in, sd);
+    expect(o->frames() == in->frames() + 441 && o->left[441 + 100] == in->left[100] && o->right[100] == in->right[100],
+           "precompute: stereo delay shifts the left channel and grows the sample");
+    SamplePrecomputeFx lp;
+    lp.cutoff = 16.0 / 1024;
+    o = precomputeSample(mk(44101, true), lp);
+    double eIn = 0, eOut = 0;
+    for (size_t i = 1000; i < 40000; ++i) eIn += in->left[i] * in->left[i], eOut += o->left[i] * o->left[i];
+    expect(eOut < eIn * 0.1, "precompute: low pass at the lowest cutoff attenuates 440 Hz");
+    SamplePrecomputeFx off;
+    off.cutoff = 1;
+    off.tilt = 0;
+    off.ringMix = 0;
+    expect(precomputeSample(in, off) == in, "precompute: cutoff fully open is neutral");
+    SamplePrecomputeFx rm;
+    rm.ringMix = 1;
+    o = precomputeSample(in, rm);
+    expect(o->left == o->right && std::fabs(o->left[0]) < 1e-6f, "precompute: ring modulation (mono stays mono, starts at phase 0)");
+    SamplePrecomputeFx wp;
+    wp.warp = 1;
+    o = precomputeSample(in, wp);
+    bool fin = true;
+    for (float v : o->left) fin = fin && std::isfinite(v);
+    expect(fin && o->frames() == in->frames() && std::fabs(o->left[N] - in->left[N]) < 1e-3f, "precompute: time warp keeps the ends");
+    SamplePrecomputeFx tl;
+    tl.tilt = 1;  // raw 256 → k = (192 − 96) / 128 = 0.75
+    o = precomputeSample(in, tl);
+    expect(std::fabs(o->left[1] - (in->left[1] + 0.75f * in->left[0])) < 1e-6f, "precompute: tilt one-pole feedback law");
+    SamplePrecomputeFx rv;
+    rv.reverbMix = 0.5;
+    o = precomputeSample(in, rv);
+    expect(o->frames() > in->frames(), "precompute: reverb adds a tail");
+    SamplePrecomputeFx fs;
+    fs.fadeStereo = true;
+    o = precomputeSample(in, fs);
+    expect(std::fabs(o->right[0]) < 1e-6f && std::fabs(o->left[N]) < 1e-3f, "precompute: stereo fade (left out, right in)");
+  }
+
   return finish();
 }

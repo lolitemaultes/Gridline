@@ -163,6 +163,8 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
     e.object["pan"] = num(c.echo.pan);
     e.object["pitch"] = num(c.echo.pitch);
     e.object["pingPong"] = boolean(c.echo.pingPong);
+    if (c.echo.modX != 0) e.object["modX"] = num(c.echo.modX);
+    if (c.echo.modY != 0) e.object["modY"] = num(c.echo.modY);
     jc.object["echo"] = std::move(e);
   }
   if (!c.layer.empty()) {
@@ -191,6 +193,8 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
     c.echo.pan = static_cast<float>(std::clamp(e->num("pan", 0), -1.0, 1.0));
     c.echo.pitch = static_cast<int>(std::clamp(e->num("pitch", 0), -1200.0, 1200.0));
     c.echo.pingPong = flag(*e, "pingPong");
+    c.echo.modX = static_cast<float>(std::clamp(e->num("modX", 0), -1.0, 1.0));
+    c.echo.modY = static_cast<float>(std::clamp(e->num("modY", 0), -1.0, 1.0));
   }
   if (const Json* l = jc.find("layer"); l && l->is(Json::Type::Array))
     for (const auto& v : l->array)

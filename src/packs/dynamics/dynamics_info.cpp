@@ -338,19 +338,41 @@ void addTransplit(std::vector<PluginInfo>& v) {
   p.params.resize(TsCount);
   p.params[TsSplitFreq] = lg("Split", "Hz", 20, 16000, 20);
   p.params[TsBalance] = lin("Split balance", "%", -1, 1, 0);
-  p.params[TsAttack] = lin("Attack", "%", -1, 1, 0.3);
-  p.params[TsAttackShape] = ch("Attack shape", {"Sharp", "Medium", "Soft"}, 1);
-  p.params[TsRelease] = lin("Sustain", "%", -1, 1, 0);
-  p.params[TsReleaseShape] = ch("Sustain shape", {"Short", "Medium", "Long"}, 1);
+  p.params[TsAttack] = lin("Transient level", "%", -1, 1, 0.3);
+  p.params[TsAttackShape] = ch("Detection", {"Sharp", "Medium", "Soft"}, 1);
+  p.params[TsRelease] = lin("Sustain level", "%", -1, 1, 0);
+  p.params[TsReleaseShape] = ch("Release", {"Short", "Medium", "Long"}, 1);
   p.params[TsDrive] = lin("Drive", "%", 0, 1, 0);
   p.params[TsMix] = lin("Mix", "%", 0, 1, 1);
   p.params[TsGain] = lin("Gain", "dB", -18, 18, 0);
+  p.params[TsSensitivity] = lin("Sensitivity", "%", 0, 1, 0.5);
+  p.params[TsHold] = lin("Hold", "ms", 0, 50, 0);
+  p.params[TsTransTilt] = lin("Transient tilt", "%", -1, 1, 0);
+  p.params[TsSusTilt] = lin("Sustain tilt", "%", -1, 1, 0);
+  const std::vector<std::string> fx = {"Saturate", "Bounce", "Diffuse", "Blur", "Echo", "Off"};
+  for (int side = 0; side < 2; ++side) {
+    const int o = side * kTsSlotStride;
+    const std::string n = side ? "Sustain " : "Transient ";
+    p.params[static_cast<size_t>(TsTransFx + o)] = ch(n + "effect", fx, TsFxOff);
+    p.params[static_cast<size_t>(TsTransFxMix + o)] = lin(n + "effect mix", "%", 0, 1, 0.5);
+    p.params[static_cast<size_t>(TsTransFxA + o)] = lin(n + "effect A", "%", 0, 1, 0.5);
+    p.params[static_cast<size_t>(TsTransFxB + o)] = lin(n + "effect B", "%", 0, 1, 0.5);
+  }
+  p.params[TsLookahead] = tog("Look-ahead", 0);
+  p.params[TsStereoLink] = tog("Stereo link", 1);
+  p.params[TsTransOn] = tog("Transient on", 1);
+  p.params[TsSusOn] = tog("Sustain on", 1);
+  p.params[TsTransSync] = tog("Transient echo sync", 0);
+  p.params[TsSusSync] = tog("Sustain echo sync", 0);
   p.presets = {{"Snap", {}},
                {"Tighten tails", {{TsAttack, 0.1f}, {TsRelease, -0.6f}}},
                {"Soften hits", {{TsAttack, -0.5f}, {TsAttackShape, 2.f}}},
-               {"Crisp highs", {{TsSplitFreq, 2000.f}, {TsBalance, 1.f}, {TsAttack, 0.6f}}},
-               {"Fat drums", {{TsAttack, 0.4f}, {TsRelease, 0.3f}, {TsDrive, 0.3f}, {TsReleaseShape, 2.f}}}};
-  p.editorWidth = 600;
+               {"Crisp highs", {{TsSplitFreq, 2000.f}, {TsBalance, 1.f}, {TsAttack, 0.6f}, {TsTransTilt, 0.4f}}},
+               {"Fat drums", {{TsAttack, 0.4f}, {TsRelease, 0.3f}, {TsSusFx, static_cast<float>(TsFxSaturate)}, {TsSusFxMix, 0.6f},
+                              {TsSusFxA, 0.4f}, {TsReleaseShape, 2.f}}},
+               {"Echo tails", {{TsAttack, 0.f}, {TsSusFx, static_cast<float>(TsFxEcho)}, {TsSusFxMix, 0.35f}, {TsSusFxA, 0.45f},
+                               {TsSusFxB, 0.62f}, {TsSusSync, 1.f}}}};
+  p.editorWidth = 740;
   v.push_back(p);
 }
 

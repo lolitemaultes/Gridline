@@ -1,100 +1,169 @@
-// Gridline — "dynamics" pack: editor for Transient Split (gl.transplit).
+// Gridline — "dynamics" pack: editor for Transient Split (gl.transplit), laid
+// out on the reference transient-splitter panel's grid (740 × 366 form units,
+// J-23): a wide history display on top; below it the detector column
+// (sensitivity, detection speed, hold / release), then a transient and a
+// sustain section, each with an on/off box, a level rail, an effect menu and
+// a 2 × 2 wheel block (effect mix, tilt, effect A / B); the bottom strip holds
+// Gridline's band split / drive / mix / gain and the link / look-ahead switches.
 // Overdrive / Squeeze: dist_fl_ui.cpp; Clip Dist (gl.fastdist): app/PluginEditorsK3.cpp.
+#include "../flc_kit.h"
 #include "dyn_widgets.h"
 
 namespace gl::packs::dynamics {
 
 using namespace ui;
 
+namespace {
+
+const skin::Skin& transplitSkin() {
+  static const skin::Skin k = [] {
+    // Reference colour roles: slate panel, dark display, light value labels,
+    // teal latch switches, dark menu wells.
+    skin::Skin s = skin::Skin::fl(0x3E4244, 0x46494B, 0x2C3032, 0xFFB238, 0x30373A, 0xD2D2D2);
+    s.fillPressed = skin::hex(0xFFD08A);
+    s.pillBg = skin::hex(0x111111);
+    s.pillText = skin::hex(0xD2D2D2);
+    s.graphBg = skin::hex(0x383636);
+    s.graphGrid = skin::hex(0x464444);
+    s.graphGridStrong = skin::hex(0x5A5858);
+    s.graphText = skin::hex(0x9A9898);
+    s.select = skin::hex(0x124D54);
+    s.accent2 = skin::hex(0x4FC3CF);
+    s.lcdBg = skin::hex(0x1C2022);
+    s.lcdText = skin::hex(0xE2E2E2);
+    s.handle = skin::hex(0x8B8E97);
+    return s;
+  }();
+  return k;
+}
+
+// Captions of an effect slot's A / B wheels by effect kind.
+void fxLabels(int kind, const char*& a, const char*& b) {
+  static const char* A[TsFxCount] = {"Drive", "Spacing", "Depth", "Depth", "Feedback", "-"};
+  static const char* B[TsFxCount] = {"Tone", "Decay", "Size", "Length", "Time", "-"};
+  kind = std::clamp(kind, 0, TsFxCount - 1);
+  a = A[kind], b = B[kind];
+}
+
+// One transient / sustain section at form x0 (reference columns: on box at
+// x0, rail at x0 + 38, menu at x0 + 111, wheels at x0 + 90 and x0 + 165).
+void section(const flk::Ctx& c, const PluginState& st, int side, float x0) {
+  const int o = side * kTsSlotStride;
+  const int onP = side ? TsSusOn : TsTransOn, lvlP = side ? TsRelease : TsAttack, tiltP = side ? TsSusTilt : TsTransTilt;
+  const int syncP = side ? TsSusSync : TsTransSync;
+  const bool on = val(st, onP) >= 0.5f;
+  flk::chk(c, onP, x0, 206, 16, 14, nullptr);
+  flk::text(c, x0 + 72, 211, side ? "BODY" : "ATTACK", on ? c.K.text : c.K.textDim);
+  // Level rail with its value plate above.
+  {
+    char txt[24];
+    const double g = tsLevelGain(val(st, lvlP));
+    if (!on || g <= 1e-6) std::snprintf(txt, sizeof txt, "OFF");
+    else std::snprintf(txt, sizeof txt, "%+.1f", 20.0 * std::log10(g));
+    skin::valueStrip(c.dl, c.F.p(x0 + 32, 209), c.F.p(x0 + 68, 221), c.K, txt, c.F.font(7.5f));
+    flk::vsl(c, lvlP, x0 + 38, 224, 24, 98, "Level");
+  }
+  const int fx = static_cast<int>(std::lround(val(st, TsTransFx + o)));
+  flk::menu(c, TsTransFx + o, x0 + 111, 209, 79, 13);
+  const char *la, *lb;
+  fxLabels(fx, la, lb);
+  flk::wheel(c, TsTransFxMix + o, x0 + 90, 229, 42, "Mix");
+  flk::wheel(c, tiltP, x0 + 165, 229, 42, "Tilt", skin::WheelBigLine | skin::WheelCentered);
+  flk::wheel(c, TsTransFxA + o, x0 + 90, 287, 42, la);
+  flk::wheel(c, TsTransFxB + o, x0 + 165, 287, 42, lb);
+  if (fx == TsFxEcho) flk::tog(c, syncP, x0 + 206, 328, 12, 13, "T");
+}
+
+// History display: input level (grey), transient part (accent) and sustain
+// part (teal) over the last few seconds, dB scale.
+void display(const flk::Ctx& c, App& a, const PluginTarget& t) {
+  const skin::Skin& K = c.K;
+  float in = -120, tr = -120, su = -120;
+  if (auto rt = runtime(a, t)) {
+    in = rt->input.load();
+    tr = rt->bands[0].load();
+    su = rt->bands[1].load();
+  }
+  History& h = history(t.key() ^ 0x54534c54ull);
+  if (h.due(60)) {
+    float v[3] = {in, tr, su};
+    h.push(v, 3);
+  }
+  const ImVec2 p0 = c.F.p(4, 4), p1 = c.F.p(736, 200);
+  skin::graphWell(c.dl, p0, p1, K);
+  c.dl->PushClipRect(p0, p1, true);
+  auto Y = [&](float db) { return p1.y - (std::clamp(db, -60.0f, 0.0f) + 60.0f) / 60.0f * (p1.y - p0.y - 8); };
+  for (int db = -48; db < 0; db += 12) {
+    const float y = Y(static_cast<float>(db));
+    c.dl->AddLine(ImVec2(p0.x, y), ImVec2(p1.x, y), K.graphGrid);
+    char lab[8];
+    std::snprintf(lab, sizeof lab, "%d", db);
+    skin::text(c.dl, ImVec2(p0.x + 4, y - c.F.font(7.0f) - 1), K.graphText, lab, c.F.font(7.0f));
+  }
+  const float w = p1.x - p0.x;
+  const int cols = std::min(History::N, static_cast<int>(w / 1.5f));
+  const float dx = w / static_cast<float>(cols);
+  for (int i = 0; i < cols; ++i) {
+    const float x = p1.x - static_cast<float>(i + 1) * dx;
+    c.dl->AddRectFilled(ImVec2(x, Y(h.at(0, i))), ImVec2(x + dx + 0.5f, p1.y), theme::withAlpha(K.graphText, 0.25f));
+  }
+  for (int k = 1; k <= 2; ++k) {
+    ImVec2 prev;
+    for (int i = 0; i < cols; ++i) {
+      const ImVec2 q(p1.x - static_cast<float>(i) * dx, Y(h.at(k, i)));
+      if (i) c.dl->AddLine(prev, q, k == 1 ? K.fill : K.accent2C(), 1.5f * c.F.s);
+      prev = q;
+    }
+  }
+  skin::text(c.dl, c.F.p(600, 10), K.fill, "TRANSIENT", c.F.font(7.5f));
+  skin::text(c.dl, c.F.p(668, 10), K.accent2C(), "SUSTAIN", c.F.font(7.5f));
+  c.dl->PopClipRect();
+}
+
+}  // namespace
+
 // ===================================================================== gl.transplit
 void editorTransplit(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
-  const auto& P = pal();
+  const skin::Skin& K = transplitSkin();
+  constexpr float kW = 740, kH = 366;
+  skin::Form F = skin::Form::fit(width, kW);
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  float gain = 0, in = -120;
-  if (auto rt = runtime(a, t)) {
-    gain = rt->meter.load();
-    in = rt->input.load();
-  }
-  float outPk = tapPeak(t.tap(a), 800);
-  History& h = history(t.key() ^ 0x5452414eull);
-  if (h.due(60)) {
-    float v[3] = {in, toDb(outPk), gain};
-    h.push(v, 3);
-  }
-  const float topH = 190, mw = 14;
-  ImVec2 m0 = ImGui::GetCursorScreenPos();
-  ImGui::Dummy(ImVec2(mw, topH));
-  levelBar(dl, m0, ImVec2(m0.x + mw, m0.y + topH), in, -48);
-  ImGui::SameLine(0, 6);
-  float inner = width - 2 * (mw + 6);
-  float wSplit = 78, wDrive = 78, wOut = 78;
-  float wBig = (inner - wSplit - wDrive - wOut - 24) / 2;
-  pui::beginSection("SPLIT", wSplit, topH);
-  {
-    double sf = val(st, TsSplitFreq);
-    char txt[24];
-    if (sf <= 20.5)
-      std::snprintf(txt, sizeof txt, "Full");
-    else if (sf >= 1000)
-      std::snprintf(txt, sizeof txt, "%.1f kHz", sf / 1000);
-    else
-      std::snprintf(txt, sizeof txt, "%.0f Hz", sf);
-    knobText(a, t, TsSplitFreq, "Split", txt, 58, 15);
-  }
-  pui::knobCell(a, t, TsBalance, "Balance", 58, 15);
-  pui::endSection();
-  ImGui::SameLine(0, 6);
-  pui::beginSection("ATTACK", wBig, topH);
-  pui::knobCell(a, t, TsAttack, "Attack", wBig - 20, 36);
-  ImGui::PushFont(nullptr, 11.0f);
-  pui::choiceButtons(a, t, TsAttackShape, wBig - 20);
-  ImGui::PopFont();
-  pui::endSection();
-  ImGui::SameLine(0, 6);
-  pui::beginSection("DRIVE", wDrive, topH);
-  pui::knobCell(a, t, TsDrive, "Drive", 58, 15);
-  pui::knobCell(a, t, TsMix, "Mix", 58, 15);
-  pui::endSection();
-  ImGui::SameLine(0, 6);
-  pui::beginSection("SUSTAIN", wBig, topH);
-  pui::knobCell(a, t, TsRelease, "Sustain", wBig - 20, 36);
-  ImGui::PushFont(nullptr, 11.0f);
-  pui::choiceButtons(a, t, TsReleaseShape, wBig - 20);
-  ImGui::PopFont();
-  pui::endSection();
-  ImGui::SameLine(0, 6);
-  pui::beginSection("OUTPUT", wOut, topH);
-  pui::knobCell(a, t, TsGain, "Gain", 58, 15);
-  pui::endSection();
-  ImGui::SameLine(0, 6);
-  m0 = ImGui::GetCursorScreenPos();
-  ImGui::Dummy(ImVec2(mw, topH));
-  levelBar(dl, m0, ImVec2(m0.x + mw, m0.y + topH), toDb(outPk), -48);
+  skin::panel(dl, F.o, F.p(kW, kH), K, 4);
+  skin::Scope scope(K);
+  flk::Ctx c{a, t, F, K, dl};
+  display(c, a, t);
 
-  // ---- scrolling meter graph
-  ImGui::Dummy(ImVec2(0, 2));
-  ImVec2 p0 = ImGui::GetCursorScreenPos();
-  ImVec2 sz(width, 132), p1(p0.x + sz.x, p0.y + sz.y);
-  ImGui::Dummy(sz);
-  dl->AddRectFilled(p0, p1, P.surface950, 8);
-  dl->PushClipRect(p0, p1, true);
-  float mid = p0.y + sz.y * 0.62f;
-  auto Y = [&](float db) { return mid - (std::clamp(db, -48.0f, 0.0f) + 48.0f) / 48.0f * (mid - p0.y - 6); };
-  const int cols = std::min(History::N, static_cast<int>(sz.x / 1.5f));
-  float dx = sz.x / cols;
-  for (int i = 0; i < cols; ++i) {
-    float x = p1.x - (i + 1) * dx;
-    dl->AddRectFilled(ImVec2(x, Y(h.at(0, i))), ImVec2(x + dx + 0.5f, mid), theme::withAlpha(P.text, 0.12f));
-    dl->AddRectFilled(ImVec2(x, Y(h.at(1, i))), ImVec2(x + dx + 0.5f, mid), theme::withAlpha(P.text, 0.22f));
-    float g = h.at(2, i);
-    float gy = std::clamp(g / 18.0f, -1.0f, 1.0f) * (p1.y - mid - 6);
-    if (std::fabs(gy) > 0.3f) dl->AddRectFilled(ImVec2(x, mid), ImVec2(x + dx + 0.5f, mid + gy), g > 0 ? theme::withAlpha(P.accent, 0.7f) : theme::withAlpha(P.danger, 0.6f));
+  // Detector column.
+  flk::text(c, 47, 208, "SENSITIVITY");
+  flk::wheel(c, TsSensitivity, 47, 223, 80, nullptr);
+  {
+    char txt[16];
+    std::snprintf(txt, sizeof txt, "%.0f", val(st, TsSensitivity) * 100.0);
+    flk::textC(c, 87, 259, txt, K.text, 9.0f);
   }
-  dl->AddLine(ImVec2(p0.x, mid), ImVec2(p1.x, mid), P.gridBeat);
-  caption(a, dl, ImVec2(p0.x + 8, p0.y + 6), P.textFaint, "LEVEL  IN / OUT");
-  caption(a, dl, ImVec2(p0.x + 8, p1.y - 18), P.textFaint, "GAIN  BOOST / CUT");
-  dl->PopClipRect();
+  flk::text(c, 8, 315, "DETECT");
+  flk::menu(c, TsAttackShape, 84, 313, 56, 13);
+  flk::wheel(c, TsHold, 160, 212, 46, "Hold");
+  flk::wheel(c, TsReleaseShape, 160, 279, 46, "Release");
+
+  section(c, st, 0, 246);
+  section(c, st, 1, 492);
+
+  // Bottom strip: name, Gridline's band split / drive / mix / gain, switches.
+  skin::text(dl, F.p(8, 349), K.textDim, "TRANSIENT SPLIT", F.font(10.0f));
+  struct Small {
+    int param;
+    const char* cap;
+    float x;
+  } smalls[] = {{TsSplitFreq, "SPLIT", 170}, {TsBalance, "BAL", 248}, {TsDrive, "DRIVE", 316}, {TsMix, "MIX", 392}, {TsGain, "GAIN", 460}};
+  for (const auto& s : smalls) {
+    flk::text(c, s.x, 351, s.cap);
+    flk::digi(c, s.param, s.x + 30, 347, 34, 15);
+  }
+  flk::tog(c, TsStereoLink, 576, 347, 66, 18, "STEREO LINK");
+  flk::tog(c, TsLookahead, 645, 347, 66, 18, "LOOK-AHEAD");
+  F.end(kW, kH);
 }
 
 }  // namespace gl::packs::dynamics

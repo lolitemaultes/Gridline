@@ -105,7 +105,11 @@ bool readCurve(Rd& r, int kind, RawCurve& out) {
     double x, y;
     if (fmt >= 2) x = r.f64(), y = r.f64();
     else x = kind == 6 ? r.f64() : r.f32(), y = r.f32();
-    p.tension = std::clamp(r.f32(), -1.0f, 1.0f);
+    // FL's segment tension bends the opposite way to Resynth's: positive FL
+    // tension starts fast (1364 of the 1528 bent falling envelope segments in
+    // the shipped presets use it), positive Resynth tension starts slow — so
+    // the sign flips (as for Sytrus, J-3b).
+    p.tension = -std::clamp(r.f32(), -1.0f, 1.0f);
     if (fmt >= 1) {
       p.kind = static_cast<uint8_t>(std::min<int>(r.u8(), 12));
       r.skip(3);

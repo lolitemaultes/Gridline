@@ -326,6 +326,8 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
         e.pitch += static_cast<float>(c.echo.pitch) * static_cast<float>(k) / 100.0f;
         float pan = c.echo.pingPong && k % 2 == 0 ? -c.echo.pan : c.echo.pan;
         e.props.pan = std::clamp(e.props.pan + pan, -1.0f, 1.0f);
+        e.props.modX = std::clamp(e.props.modX + c.echo.modX * 0.5f * static_cast<float>(k), 0.0f, 1.0f);
+        e.props.modY = std::clamp(e.props.modY + c.echo.modY * 0.5f * static_cast<float>(k), 0.0f, 1.0f);
         e.flags = 0;
         out.push_back(e);
       }

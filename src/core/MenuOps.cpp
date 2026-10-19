@@ -671,44 +671,6 @@ bool moveMixerTrack(Document& d, ObjectId id, int dir) {
   return true;
 }
 
-ObjectId insertMixerTrack(Document& d, int index) {
-  const Song& s = d.song();
-  if (s.mixer.empty() || static_cast<int>(s.mixer.size()) > kMaxMixerInserts) return kNoId;
-  index = std::clamp(index, 1, static_cast<int>(s.mixer.size()));
-  ObjectId out = kNoId;
-  d.editSong("insert mixer track", [&](Song& x) {
-    MixerTrack t;
-    t.id = x.allocateId();
-    t.sends.push_back({x.masterId(), 1.0f});
-    x.mixer.insert(x.mixer.begin() + index, t);
-    out = t.id;
-  });
-  return out;
-}
-
-bool resetMixerTrack(Document& d, ObjectId id) {
-  return d.editMixerTrack(id, "reset mixer track", [](MixerTrack& m) {
-    MixerTrack def;
-    m.volume = def.volume;
-    m.pan = def.pan;
-    m.stereoSep = def.stereoSep;
-    m.muted = def.muted;
-    m.solo = def.solo;
-    m.invertPolarity = def.invertPolarity;
-    m.swapLR = def.swapLR;
-  });
-}
-
-bool routeOnlyTo(Document& d, ObjectId from, ObjectId to) {
-  const Song& s = d.song();
-  const MixerTrack* src = s.mixerTrack(from);
-  if (!src || !s.mixerTrack(to) || from == to) return false;
-  bool exists = false;
-  for (const auto& snd : src->sends) exists = exists || snd.to == to;
-  if (!exists && !canRoute(s, from, to)) return false;
-  return d.editMixerTrack(from, "route only to track", [&](MixerTrack& m) { m.sends = {{to, 1.0f}}; });
-}
-
 int trimUnusedMixerTracks(Document& d) {
   int n = 0;
   const Song& s = d.song();

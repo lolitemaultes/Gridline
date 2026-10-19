@@ -1,6 +1,6 @@
 // Gridline — more menu operations (J-18 coverage sweep): time markers, insert /
-// delete space, pattern sorting, channel cut-itself / swing mix / layers, mixer
-// submix and unrouting, discard note lengths, tap tempo. Every edit goes
+// delete space, pattern sorting, channel cut-itself / swing mix / layers,
+// discard note lengths, tap tempo (mixer submix / unrouting live in MixerOps). Every edit goes
 // through Document (one undo step each); tested in tests/test_coverage.cpp.
 #pragma once
 #include <string>
@@ -48,14 +48,6 @@ bool setSwingMix(Document& d, const std::vector<ObjectId>& channels, float mix);
 // A new layer channel (after the last of `channels`) that plays them all.
 // Returns its id (kNoId when fewer than one channel is given).
 ObjectId createLayer(Document& d, const std::vector<ObjectId>& channels);
-
-// ---------------------------------------------------------------- mixer ----
-// Removes every route into `track` (never the master); a track left without a
-// route goes to the master. Returns the number of tracks changed.
-int unrouteInputs(Document& d, ObjectId track);
-// A new mixer track after the last of `tracks`, routed to the master; each of
-// `tracks` then routes only to it. Returns the new track (kNoId on failure).
-ObjectId createSubmix(Document& d, const std::vector<ObjectId>& tracks);
 
 // ---------------------------------------------------------------- notes ----
 // Sets the selected notes (all when none) to `len` ticks — step-length notes.

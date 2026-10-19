@@ -13,6 +13,7 @@
 #include "core/Document.h"
 #include "core/Json.h"
 #include "core/MenuOpsExtra.h"
+#include "core/MixerOps.h"
 #include "core/PluginParams.h"
 #include "core/Project.h"
 #include "core/flp/Flp.h"
@@ -391,11 +392,11 @@ void testPatternsAndChannels() {
 void testMixer() {
   Document d{makeEmptySong()};
   ObjectId a = d.addMixerTrack(), b = d.addMixerTrack(), c = d.addMixerTrack();
-  ops::routeOnlyTo(d, a, c);
+  mixops::route(d, {a}, {c}, mixops::RouteMode::Only);
   d.setSend(b, c, 1.0f);
   d.reset(d.song());
   Song base = d.song();
-  expect(ops::unrouteInputs(d, c) == 2, "unroute both tracks routed here");
+  expect(mixops::unrouteIncoming(d, c) == 2, "unroute both tracks routed here");
   const MixerTrack* ta = d.song().mixerTrack(a);
   const MixerTrack* tb = d.song().mixerTrack(b);
   expect(ta->sends.size() == 1 && ta->sends[0].to == d.song().masterId(), "a track left without a route goes to the master");
@@ -404,9 +405,9 @@ void testMixer() {
   expect(!bToC && !tb->sends.empty(), "other routes stay");
   d.undo();
   expect(d.song() == base, "unroute undoes");
-  expect(ops::unrouteInputs(d, d.song().masterId()) == 0, "the master is never unrouted");
+  expect(mixops::unrouteIncoming(d, d.song().masterId()) == 0, "the master is never unrouted");
 
-  ObjectId sub = ops::createSubmix(d, {a, b});
+  ObjectId sub = mixops::createSubmix(d, {a, b}, "Submix");
   const Song& s = d.song();
   expect(sub && s.mixerIndex(sub) == s.mixerIndex(b) + 1 && s.mixerTrack(sub)->name == "Submix", "submix inserted after the sources");
   expect(s.mixerTrack(a)->sends.size() == 1 && s.mixerTrack(a)->sends[0].to == sub && s.mixerTrack(b)->sends.size() == 1 &&

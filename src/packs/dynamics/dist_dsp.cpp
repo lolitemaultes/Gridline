@@ -374,70 +374,235 @@ class SqueezeFx final : public DynFx {
 
 // ===================================================================== gl.transplit
 
+namespace {
+
+// Ring buffer of fixed capacity (allocated once, in the constructor).
+struct Ring {
+  std::vector<float> b;
+  size_t w = 0;
+  void init(size_t n) { b.assign(std::max<size_t>(n, 4), 0.f); }
+  void clear() { std::fill(b.begin(), b.end(), 0.f), w = 0; }
+  void push(double x) {
+    b[w] = static_cast<float>(x);
+    w = w + 1 == b.size() ? 0 : w + 1;
+  }
+  // Sample written `d` pushes ago (1 = the latest), linear interpolation.
+  double at(double d) const {
+    d = clampd(d, 1.0, static_cast<double>(b.size() - 2));
+    const size_t i = static_cast<size_t>(d);
+    const double f = d - static_cast<double>(i);
+    const size_t n = b.size();
+    const size_t a = (w + n - i) % n, c = (w + n - i - 1) % n;
+    return b[a] + (b[c] - b[a]) * f;
+  }
+};
+
+// One effect slot of one channel: saturate, bounce (taps that crowd together
+// and fade like a dropped ball), diffuse / blur (allpass chains), echo.
+struct TsSlot {
+  static constexpr int kTaps = 8, kAp = 4;
+  Ring line;           // echo / bounce memory
+  Ring ap[kAp];        // allpass memories
+  OnePoleTpt warm, blurLp;
+  double echoFb = 0;
+  void init(double maxSec, double apSec) {
+    line.init(static_cast<size_t>(maxSec * 192000.0) + 8);
+    for (auto& r : ap) r.init(static_cast<size_t>(apSec * 192000.0) + 8);
+  }
+  void clear() {
+    line.clear();
+    for (auto& r : ap) r.clear();
+    warm.s = blurLp.s = 0;
+    echoFb = 0;
+  }
+  double run(int kind, double x, double a, double b, double sr, double echoSec) {
+    switch (kind) {
+      case TsFxSaturate: {
+        const double g = 1.0 + 19.0 * a;
+        double y = std::tanh(x * g) / std::sqrt(g);
+        const double lp = warm.lp(y);
+        return y + (lp - y) * b;  // warmth rounds off the highs of the saturated part
+      }
+      case TsFxBounce: {
+        const double t0 = 0.12 * sr, r = 0.5 + 0.4 * a, g = 0.3 + 0.6 * b;
+        line.push(x);
+        double y = 0, d = t0, step = t0, gk = g;
+        for (int k = 0; k < kTaps; ++k) {
+          y += line.at(d) * gk;
+          step *= r;
+          d += step;
+          gk *= g;
+        }
+        return y;
+      }
+      case TsFxDiffuse:
+      case TsFxBlur: {
+        static const double base[kAp] = {0.0047, 0.0073, 0.0111, 0.0173};
+        const double scale = kind == TsFxBlur ? 1.0 + 4.0 * b : 0.2 + 1.8 * b;
+        const double c = 0.3 + 0.6 * a;
+        double y = x;
+        for (int k = 0; k < kAp; ++k) {
+          const double dl = ap[k].at(base[k] * scale * sr);
+          const double v = y + c * dl;
+          ap[k].push(v);
+          y = dl - c * v;
+        }
+        if (kind == TsFxBlur) y = blurLp.lp(y);
+        return y;
+      }
+      case TsFxEcho: {
+        const double y = line.at(echoSec * sr);
+        line.push(x + y * 0.95 * a);
+        return y;
+      }
+      default: return x;
+    }
+  }
+};
+
+}  // namespace
+
 class TransplitFx final : public DynFx {
  public:
-  TransplitFx() : DynFx("gl.transplit") {}
+  TransplitFx() : DynFx("gl.transplit") {
+    for (auto& side : slot_)
+      for (auto& c : side) c.init(2.0, 0.1);
+    for (auto& r : look_) r.init(static_cast<size_t>(kLookSec * 192000.0) + 8);
+  }
+  static constexpr double kLookSec = 0.0015;
+  int latencyFor(const PluginState& s, double sr) const override {
+    return pb(s, TsLookahead) ? static_cast<int>(std::lround(kLookSec * sr)) : 0;
+  }
+  int meters(float* out, int max) const override {
+    if (max < 2) return 0;
+    out[0] = trPeak_, out[1] = susPeak_;
+    return 2;
+  }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate;
     const double split = p(s, TsSplitFreq);
     if (sr != sr_ || split != split_) {
       for (auto& x : xo_) x.set(sr, split, 2);
+      for (auto& side : slot_)
+        for (auto& c : side) c.warm.set(sr, 2500), c.blurLp.set(sr, 3500);
+      for (auto& t : tilt_)
+        for (auto& c : t) c.set(sr, 800);
       sr_ = sr, split_ = split;
     }
     const double bal = clampd(p(s, TsBalance), -1, 1);
     const double wLow = bal <= 0 ? 1.0 : 1.0 - bal, wHigh = bal >= 0 ? 1.0 : 1.0 + bal;
-    const double atk = clampd(p(s, TsAttack), -1, 1), rel = clampd(p(s, TsRelease), -1, 1);
+    const int det = std::clamp(pi(s, TsAttackShape), 0, 2), rs = std::clamp(pi(s, TsReleaseShape), 0, 2);
     static const double kFastRel[3] = {0.020, 0.045, 0.090};
-    static const double kSlowAtk[3] = {0.012, 0.030, 0.070};
-    static const double kTailRel[3] = {0.150, 0.400, 1.000};
-    const int as = std::clamp(pi(s, TsAttackShape), 0, 2), rs = std::clamp(pi(s, TsReleaseShape), 0, 2);
-    const double fa = timeCoef(0.0005, sr), fr = timeCoef(kFastRel[as], sr);
-    const double sa = timeCoef(kSlowAtk[as], sr), srl = fr;  // same release: only attacks differ
-    const double ta = timeCoef(0.002, sr), tr = timeCoef(kTailRel[rs], sr);
+    static const double kSlowAtk[3] = {0.006, 0.015, 0.035};
+    static const double kEnvRel[3] = {0.015, 0.040, 0.100};
+    const double fa = 0.0, fr = timeCoef(kFastRel[det], sr), sa = timeCoef(kSlowAtk[det], sr);
+    const double er = timeCoef(kEnvRel[rs], sr);
+    // Transient amount: how far the fast envelope runs above the slow one,
+    // past a sensitivity-dependent offset, over a 6 dB span.
+    const double offDb = 0.5 + (1.0 - clampd(p(s, TsSensitivity), 0, 1)) * 6.0;
+    const double sm = timeCoef(0.002, sr);  // peak rectifier release
+    const int holdN = static_cast<int>(clampd(p(s, TsHold), 0, 50) * 0.001 * sr);
+    const bool link = pb(s, TsStereoLink);
+    const int la = pb(s, TsLookahead) ? static_cast<int>(std::lround(kLookSec * sr)) : 0;
+    struct Side {
+      double amp, tiltLo, tiltHi, mix, a, b, echo;
+      int fx;
+    } sd[2];
+    for (int k = 0; k < 2; ++k) {
+      const int o = k * kTsSlotStride;
+      const bool on = pb(s, k ? TsSusOn : TsTransOn);
+      sd[k].amp = on ? tsLevelGain(clampd(p(s, k ? TsRelease : TsAttack), -1, 1)) : 0.0;
+      const double tl = clampd(p(s, k ? TsSusTilt : TsTransTilt), -1, 1);
+      sd[k].tiltLo = dbToLin(-6.0 * tl), sd[k].tiltHi = dbToLin(6.0 * tl);
+      sd[k].fx = std::clamp(pi(s, TsTransFx + o), 0, TsFxCount - 1);
+      sd[k].mix = sd[k].fx == TsFxOff ? 0.0 : clampd(p(s, TsTransFxMix + o), 0, 1);
+      sd[k].a = clampd(p(s, TsTransFxA + o), 0, 1), sd[k].b = clampd(p(s, TsTransFxB + o), 0, 1);
+      sd[k].echo = tsEchoSeconds(sd[k].b, pb(s, k ? TsSusSync : TsTransSync), ctx.tempo);
+    }
     const double drive = clampd(p(s, TsDrive), 0, 1), mix = clampd(p(s, TsMix), 0, 1), out = dbToLin(p(s, TsGain));
     const double dg = 1.0 + drive * 7.0;
     const bool fullBand = split <= 20.5;
-    double peakIn = 0, peakGain = 0;
+    double peakIn = 0, peakT = 0, peakS = 0, peakEnv = 0;
     for (int i = 0; i < n; ++i) {
-      double x[2] = {L[i], R[i]};
-      double a = std::max(std::fabs(x[0]), std::fabs(x[1]));
-      peakIn = std::max(peakIn, a);
-      double ef = fast_.process(a, fa, fr), es = slow_.process(a, sa, srl), et = tail_.process(a, ta, tr);
-      double dAtk = clampd(linToDb(ef + 1e-9) - linToDb(es + 1e-9), 0, 12);
-      double dSus = clampd(linToDb(et + 1e-9) - linToDb(ef + 1e-9), 0, 12);
-      double gDb = atk * dAtk * 1.5 + rel * dSus * 1.5;
-      if (std::fabs(gDb) > std::fabs(peakGain)) peakGain = gDb;
-      double g = dbToLin(gDb);
+      const double in[2] = {L[i], R[i]};
+      peakIn = std::max(peakIn, std::max(std::fabs(in[0]), std::fabs(in[1])));
+      // Detector (per channel, or one shared envelope when linked).
+      double env[2];
       for (int c = 0; c < 2; ++c) {
-        double lo, hi;
-        if (fullBand) {
-          lo = 0;
-          hi = x[c];
-        } else {
-          xo_[c].process(x[c], lo, hi);
+        if (link && c == 1) {
+          env[1] = env[0];
+          break;
         }
-        double y = lo * (1.0 + (g - 1.0) * wLow) + hi * (1.0 + (g - 1.0) * wHigh);
-        if (drive > 0) y = std::tanh(y * dg) / std::tanh(dg);
-        double dry = fullBand ? x[c] : lo + hi;
-        double o = (dry + (y - dry) * mix) * out;
-        if (c)
-          R[i] = static_cast<float>(o);
-        else
-          L[i] = static_cast<float>(o);
+        const double a = rect_[c].process(link ? std::max(std::fabs(in[0]), std::fabs(in[1])) : std::fabs(in[c]), 0.0, sm);
+        const double ef = fast_[c].process(a, fa, fr), es = slow_[c].process(a, sa, fr);
+        const double t = clampd((linToDb(ef + 1e-9) - linToDb(es + 1e-9) - offDb) / 6.0, 0, 1);
+        if (t >= held_[c]) {
+          held_[c] = t, hold_[c] = holdN;
+        } else if (hold_[c] > 0) {
+          --hold_[c];
+        } else {
+          held_[c] = flushDenormal(t + (held_[c] - t) * er);
+        }
+        env[c] = held_[c];
+      }
+      peakEnv = std::max(peakEnv, env[0]);
+      for (int c = 0; c < 2; ++c) {
+        double x = in[c];
+        if (la > 0) {  // look-ahead: the audio runs `la` samples behind the detector
+          look_[c].push(x);
+          x = look_[c].at(la + 1);  // pushed first: la + 1 pushes back = la samples late
+        }
+        double y = 0;
+        for (int k = 0; k < 2; ++k) {
+          double part = x * (k ? 1.0 - env[c] : env[c]);
+          if (sd[k].amp == 0.0) {
+            slot_[k][c].run(sd[k].fx, 0.0, sd[k].a, sd[k].b, sr, sd[k].echo);  // keep the slot's memory moving
+            continue;
+          }
+          const double lp = tilt_[k][c].lp(part);
+          part = lp * sd[k].tiltLo + (part - lp) * sd[k].tiltHi;
+          if (sd[k].mix > 0) part += (slot_[k][c].run(sd[k].fx, part, sd[k].a, sd[k].b, sr, sd[k].echo) - part) * sd[k].mix;
+          part *= sd[k].amp;
+          (k ? peakS : peakT) = std::max(k ? peakS : peakT, std::fabs(part));
+          y += part;
+        }
+        double o = y;
+        if (!fullBand) {  // the band split weights the change per band
+          double dlo, dhi;
+          xo_[c].process(y - x, dlo, dhi);
+          o = x + dlo * wLow + dhi * wHigh;
+        }
+        if (drive > 0) o = std::tanh(o * dg) / std::tanh(dg);
+        o = (x + (o - x) * mix) * out;
+        (c ? R : L)[i] = static_cast<float>(o);
       }
     }
-    meter_ = static_cast<float>(peakGain);
+    meter_ = static_cast<float>(peakEnv);
     input_ = static_cast<float>(linToDb(peakIn));
+    trPeak_ = static_cast<float>(linToDb(peakT));
+    susPeak_ = static_cast<float>(linToDb(peakS));
   }
   void reset() override {
     for (auto& x : xo_) x.reset();
-    fast_.v = slow_.v = tail_.v = 0;
+    for (int c = 0; c < 2; ++c) {
+      fast_[c].v = slow_[c].v = rect_[c].v = 0;
+      held_[c] = 0, hold_[c] = 0;
+      look_[c].clear();
+      for (auto& t : tilt_) t[c].s = 0;
+    }
+    for (auto& side : slot_)
+      for (auto& c : side) c.clear();
   }
 
  private:
   Split xo_[2];
-  Follower fast_, slow_, tail_;
-  double sr_ = 0, split_ = -1;
+  Follower fast_[2], slow_[2], rect_[2];
+  double held_[2] = {}, sr_ = 0, split_ = -1;
+  int hold_[2] = {};
+  TsSlot slot_[2][2];       // [transient / sustain][channel]
+  OnePoleTpt tilt_[2][2];   // [transient / sustain][channel]
+  Ring look_[2];
+  float trPeak_ = -120, susPeak_ = -120;
 };
 
 std::unique_ptr<Effect> createDistEffect(const std::string& type) {

@@ -44,6 +44,12 @@ enum Sampler {
   SmpVelCutoff, SmpKeyCutoff,
   SmpLfoTarget, SmpLfoShape, SmpLfoRate, SmpLfoAmount, SmpLfoDelay,
   SmpPan, SmpVelVolume, SmpVoices, SmpGlide,
+  // J-23: precomputed sample effects (applied once to the sample data when
+  // it loads, in the reference sampler's order: stereo delay, then per frame
+  // time warp, ring modulation, low pass, ramps, boost and clip, then tilt,
+  // stereo fade, reverb). Neutral defaults leave the sample untouched.
+  SmpPreRampIn, SmpPreRampOut, SmpPreBoost, SmpPreClip, SmpPreTilt, SmpPreCutoff, SmpPreReso,
+  SmpPreRingMix, SmpPreRingFreq, SmpPreStereoDelay, SmpPreWarp, SmpPreReverbMix, SmpPreReverbType, SmpPreFadeStereo,
   SmpCount
 };
 // "gl.kick"

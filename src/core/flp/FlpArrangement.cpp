@@ -84,6 +84,7 @@ class Importer {
   void importAudioChannels();
   void importAutomationChannels();
   void importTargets();
+  void importRemoteLinks();
   void importTracksAndClips();
   void importMarkers();
   ObjectId channelId(int flIndex) const {
@@ -97,6 +98,7 @@ void Importer::run() {
   importAudioChannels();
   importAutomationChannels();
   importTargets();
+  importRemoteLinks();
   if (c_.sec.arrangements.empty()) return;
   // Every arrangement is imported; the current one (event 100, else the
   // first) is imported last so the report counts describe it.
@@ -401,6 +403,37 @@ void Importer::importTargets() {
   if (ctlBad) c_.report.counts["controller links not mapped"] = ctlBad;
 }
 
+// 226 records: MIDI remote-control links → Song::links.
+void Importer::importRemoteLinks() {
+  int ok = 0, focused = 0, bad = 0;
+  for (const auto& e : c_.file.events) {
+    FlRemoteLink r;
+    if (e.id != 226 || !decodeRemoteLink(e, r) || !r.midi()) continue;
+    if (r.focused()) {  // follows the focused channel / track: Gridline links have fixed targets
+      ++focused;
+      continue;
+    }
+    Target t;
+    FlTarget ft;
+    ControllerLink l;
+    if (!resolveTarget(r.target, t)) {
+      ++bad;
+      continue;
+    }
+    ft.id = t.id, ft.min = t.min, ft.max = t.max, ft.convert = t.convert, ft.what = t.what;
+    if (!remoteLinkToController(r, ft, l)) {
+      ++bad;
+      continue;
+    }
+    bool dup = false;
+    for (const auto& x : s_.links) dup = dup || x == l;
+    if (!dup) s_.links.push_back(l), ++ok;
+  }
+  if (ok) c_.report.counts["MIDI remote links"] = ok;
+  if (focused) c_.report.counts["MIDI remote links to the focused channel (not imported)"] = focused;
+  if (bad) c_.report.counts["MIDI remote links not mapped"] = bad;
+}
+
 void Importer::importTracksAndClips() {
   const auto& evs = c_.sec.arrangements[arr_];
   // Tracks: 238 record (+ 239 name until the next record).
@@ -577,6 +610,51 @@ void Importer::importMarkers() {
 void importArrangement(Context& c) {
   Importer imp(c);
   imp.run();
+}
+
+bool decodeRemoteLink(const Event& e, FlRemoteLink& out) {
+  if (e.id != 226 || e.size < 20) return false;
+  const uint32_t src = e.u32(0);
+  out.port = static_cast<int>(src >> 22) - 1;
+  out.channel = static_cast<int>((src >> 16) & 0xF);
+  out.control = static_cast<int>(src & 0xFFFF);
+  out.target = e.u32(8);
+  out.flags = e.u32(12);
+  out.noteMode = static_cast<int>((out.flags >> 8) & 0xFF);
+  out.smoothing = e.i32(16);
+  return true;
+}
+
+bool remoteLinkToController(const FlRemoteLink& r, const FlTarget& t, ControllerLink& out) {
+  ControllerLink l;
+  if (r.control >= 0 && r.control < 128) {
+    l.source = RemoteSource::CC, l.cc = r.control;
+  } else if (r.control == 253) {
+    l.source = RemoteSource::ChannelPressure, l.cc = 0;
+  } else if (r.control == 254) {
+    l.source = RemoteSource::KeyPressure, l.cc = 0;
+  } else if (r.control == 255) {
+    l.source = RemoteSource::PitchBend, l.cc = 0;
+  } else if (r.control >= 256 && r.control < 256 + 128) {
+    l.source = RemoteSource::Note, l.cc = r.control - 256;
+  } else {
+    return false;
+  }
+  l.midiChannel = std::clamp(r.channel, 0, 15);
+  l.port = r.port >= 0 ? r.port : -1;
+  l.owner = t.id.owner;
+  l.index = t.id.index;
+  if (t.convert) {  // map the FL range ends through the target's conversion
+    l.min = static_cast<float>(std::clamp(t.convert(0.0), 0.0, 1.0));
+    l.max = static_cast<float>(std::clamp(t.convert(1.0), 0.0, 1.0));
+  } else {
+    l.min = t.min, l.max = t.max;
+  }
+  static const RemoteButton kMode[5] = {RemoteButton::Value, RemoteButton::Momentary, RemoteButton::Toggle, RemoteButton::Increment,
+                                        RemoteButton::Value};
+  l.button = kMode[std::clamp(r.noteMode, 0, 4)];
+  out = l;
+  return true;
 }
 
 bool resolveFlTarget(Context& c, uint32_t target, FlTarget& out) {

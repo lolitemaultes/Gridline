@@ -1750,7 +1750,10 @@ void mixerTrackMenu(App& a, size_t index) {
     a.doc.endGroup();
     a.mixerView.sel.clear();
   }
-  if (ImGui::MenuItem("Insert one")) a.selMixer = ops::insertMixerTrack(a.doc, master ? 1 : static_cast<int>(index));
+  if (ImGui::MenuItem("Insert one")) {
+    auto ids = mixops::insertTracks(a.doc, master ? 1 : static_cast<int>(index), 1);
+    a.selMixer = ids.empty() ? kNoId : ids.front();
+  }
   if (ImGui::MenuItem("Insert multiple...")) {
     const int at = master ? 1 : static_cast<int>(index);
     menus::openPrompt("Insert mixer tracks (how many?)", "4", [&a, at](const std::string& n) {

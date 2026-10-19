@@ -141,14 +141,18 @@ bool decodeSevenBand(Context&, const std::vector<Event>& evs, PluginMapping& m) 
 }
 
 // ------------------------------------------------------------------ Transmitter
-// u32 version 3, then i32 per tag 0..41: 1 hold time, 2 release time
-// (0..10000), 3 transient level, 4 sustain level (0..12800), 5 / 6 transient
-// / sustain tilt, 7..32 the effect knobs of both FX slots (diffuser,
-// saturation 13..18: mix, drive, warmth; bounce, delay), 33 lookahead, 34
-// stereo link, 35 detection mode, 36 / 37 transient / sustain enabled, 38 /
-// 39 transient / sustain FX (0 saturation, 1 bounce, 2 diffusion, 3 blur, 4
-// delay, 5 off), 40 / 41 delay tempo sync. The levels and saturation drive
-// map onto the transient splitter; the other FX are not imported.
+// u32 version 3, then i32 per tag 0..41: 0 sensitivity, 1 hold time, 2
+// release time (0..10000), 3 transient level, 4 sustain level (0..12800), 5 /
+// 6 transient / sustain tilt (5000 = flat), the effect knobs of both slots
+// (0..10000; transient / sustain): diffuser 7..9 / 10..12 (mix, depth,
+// delay), saturation 13..15 / 16..18 (mix, drive, warmth), bounce 19..21 /
+// 22..24 (mix, amp curve, time curve), delay 25..28 / 29..32 (mix, time,
+// synced time 1..768, feedback); 33 lookahead, 34 stereo link, 35 detection
+// mode, 36 / 37 transient / sustain enabled, 38 / 39 transient / sustain
+// effect (0 saturation, 1 bounce, 2 diffusion, 3 blur, 4 delay, 5 off), 40 /
+// 41 delay tempo sync. Every stored setting has a Transient Split parameter;
+// the blur slot shares the diffuser knobs. Only the selected effect's knobs
+// are imported (and linked for automation) per slot.
 constexpr double kTmNeutral = 8743;  // level of the plugin's default state
 double tmLevel(double v) {
   return v >= kTmNeutral ? clampd((v - kTmNeutral) / (12800 - kTmNeutral), 0, 1) : clampd((v - kTmNeutral) / kTmNeutral, -1, 0);
@@ -159,21 +163,60 @@ bool decodeTransmitter(Context&, const std::vector<Event>& evs, PluginMapping& m
   if (b.size() < 4 + 40 * 4) return false;
   gen2::begin(m, "gl.transplit");
   std::vector<double> v = ints(b, 4, 42);
-  applyRows(m,
-            {{3, 0, 12800, dyn::TsAttack, tmLevel},
-             {4, 0, 12800, dyn::TsRelease, tmLevel},
-             {2, 0, 10000, dyn::TsReleaseShape, [](double x) { return x < 3333 ? 0.0 : (x < 6667 ? 1.0 : 2.0); }}},
-            v);
-  if (v[36] < 0.5) gen2::set(m, dyn::TsAttack, -1.0);
-  if (v[37] < 0.5) gen2::set(m, dyn::TsRelease, -1.0);
-  double drive = 0;
-  if (v[36] >= 0.5 && v[38] == 0) drive = std::max(drive, v[13] / 10000.0 * v[14] / 10000.0);
-  if (v[37] >= 0.5 && v[39] == 0) drive = std::max(drive, v[16] / 10000.0 * v[17] / 10000.0);
-  gen2::set(m, dyn::TsDrive, clampd(drive, 0, 1));
+  auto u = [](double x) { return clampd(x / 10000.0, 0, 1); };
+  auto tilt = [](double x) { return clampd((x - 5000.0) / 5000.0, -1, 1); };
+  std::vector<Row> rows = {
+      {0, 0, 10000, dyn::TsSensitivity, u},
+      {1, 0, 10000, dyn::TsHold, [](double x) { return clampd(x / 10000.0, 0, 1) * 50.0; }},
+      {2, 0, 10000, dyn::TsReleaseShape, [](double x) { return x < 3333 ? 0.0 : (x < 6667 ? 1.0 : 2.0); }},
+      {3, 0, 12800, dyn::TsAttack, tmLevel},
+      {4, 0, 12800, dyn::TsRelease, tmLevel},
+      {5, 0, 10000, dyn::TsTransTilt, tilt},
+      {6, 0, 10000, dyn::TsSusTilt, tilt},
+      {33, 0, 1, dyn::TsLookahead},
+      {34, 0, 1, dyn::TsStereoLink},
+      {35, 0, 2, dyn::TsAttackShape, [](double x) { return clampd(std::round(x), 0, 2); }},
+      {36, 0, 1, dyn::TsTransOn},
+      {37, 0, 1, dyn::TsSusOn},
+      {40, 0, 1, dyn::TsTransSync},
+      {41, 0, 1, dyn::TsSusSync},
+  };
+  for (int side = 0; side < 2; ++side) {
+    const int o = side * dyn::kTsSlotStride;
+    const int fx = static_cast<int>(clampd(v[static_cast<size_t>(38 + side)], 0, 5));
+    rows.push_back({38 + side, 0, 5, dyn::TsTransFx + o, [](double x) { return clampd(std::round(x), 0, 5); }});
+    int mix = -1, a = -1, bb = -1;
+    switch (fx) {
+      case dyn::TsFxSaturate: mix = 13 + 3 * side, a = 14 + 3 * side, bb = 15 + 3 * side; break;
+      case dyn::TsFxBounce: mix = 19 + 3 * side, a = 21 + 3 * side, bb = 20 + 3 * side; break;
+      case dyn::TsFxDiffuse:
+      case dyn::TsFxBlur: mix = 7 + 3 * side, a = 8 + 3 * side, bb = 9 + 3 * side; break;
+      case dyn::TsFxEcho: {
+        const int base = 25 + 4 * side;
+        const bool sync = v[static_cast<size_t>(40 + side)] >= 0.5;
+        mix = base, a = base + 3, bb = sync ? base + 2 : base + 1;
+        break;
+      }
+      default: break;
+    }
+    if (mix < 0) continue;
+    rows.push_back({mix, 0, 10000, dyn::TsTransFxMix + o, u});
+    rows.push_back({a, 0, 10000, dyn::TsTransFxA + o, u});
+    if (fx == dyn::TsFxEcho && v[static_cast<size_t>(40 + side)] >= 0.5)
+      rows.push_back({bb, 1, 768, dyn::TsTransFxB + o, [](double x) { return clampd((x - 1.0) / 767.0, 0, 1); }});
+    else
+      rows.push_back({bb, 0, 10000, dyn::TsTransFxB + o, u});
+  }
+  applyRows(m, rows, v);
+  gen2::set(m, dyn::TsDrive, 0.0);
   gen2::set(m, dyn::TsMix, 1.0);
   gen2::set(m, dyn::TsGain, 0.0);
   gen2::set(m, dyn::TsSplitFreq, 20.0);
-  m.exact = false;  // FX slots (diffusion, bounce, blur, delay), tilt and envelope sends not imported
+  gen2::set(m, dyn::TsBalance, 0.0);
+  // Settings all map, but the level / time / effect laws are Gridline's own
+  // (the reference DSP was not measured) and the envelope send outputs are
+  // not stored in the state: approximate.
+  m.exact = false;
   return true;
 }
 

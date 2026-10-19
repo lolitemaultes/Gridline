@@ -191,6 +191,13 @@ WrapperMatch matchWrapper(const WrapperInfo& w) {
   return m;
 }
 
+bool isImageLineVendor(const std::string& vendor) {
+  std::string v;
+  for (unsigned char ch : vendor)
+    if (std::isalnum(ch)) v += static_cast<char>(std::tolower(ch));
+  return v.empty() || v.find("imageline") != std::string::npos;
+}
+
 namespace {
 
 bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m, const PluginDecoder& flWrapped) {
@@ -230,8 +237,10 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m, 
     return true;
   }
   // FL's own plugins loaded through the wrapper (VST builds of FL effects in
-  // older projects): the FL plugin decoders map them (FlpFx2Mod.cpp).
-  if (flWrapped && findDecoder(w.name) && findDecoder(w.name) != findDecoder("Fruity Wrapper")) {
+  // older projects): the FL plugin decoders map them (FlpFx2Mod.cpp). Only
+  // Image-Line's own plugins become built-ins: a third-party plugin is never
+  // replaced by a Gridline equivalent, even when its name matches.
+  if (flWrapped && isImageLineVendor(w.vendor) && findDecoder(w.name) && findDecoder(w.name) != findDecoder("Fruity Wrapper")) {
     PluginMapping fm;
     fm.flName = m.flName;
     if (flWrapped(c, evs, fm) && !fm.glType.empty()) {

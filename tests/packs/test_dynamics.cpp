@@ -495,6 +495,77 @@ int main() {
     set(flat, TsSplitFreq, 1000);
     Buf f = run(flat, sine(3000, 0.3, 0.3));
     expect(std::fabs(db(rms(f, 4800, f.size()) / 0.3 * std::sqrt(2.0))) < 0.1, "transient split: neutral split is flat");
+
+    // Neutral levels with no effect: the two parts sum back to the input.
+    PluginState unity = defaultPluginState("gl.transplit");
+    set(unity, TsAttack, 0);
+    Buf u = run(unity, in);
+    expect(maxDiff(u, in) < 1e-5, "transient split: transient + sustain parts sum to the input");
+    // Each part can be switched off; the transient part alone is spikier.
+    PluginState tOnly = unity, sOnly = unity;
+    set(tOnly, TsSusOn, 0);
+    set(sOnly, TsTransOn, 0);
+    Buf to = run(tOnly, in), so = run(sOnly, in);
+    expect(maxDiff(run(unity, Buf(in.size())), Buf(in.size())) == 0.0, "transient split: silence in, silence out");
+    expect(peak(to) / rms(to, 0, to.size()) > peak(so) / rms(so, 0, so.size()) * 1.2, "transient split: transient part is the spiky one");
+    Buf sum(in.size());
+    for (size_t i = 0; i < in.size(); ++i) sum.L[i] = to.L[i] + so.L[i], sum.R[i] = to.R[i] + so.R[i];
+    expect(maxDiff(sum, in) < 1e-4, "transient split: parts are complementary");
+    // Every effect slot: finite, block-size invariant, audibly different from off.
+    for (int side = 0; side < 2; ++side)
+      for (int fx = 0; fx < TsFxOff; ++fx) {
+        PluginState e = unity;
+        set(e, TsTransFx + side * kTsSlotStride, fx);
+        set(e, TsTransFxMix + side * kTsSlotStride, 1.0);
+        set(e, TsTransFxA + side * kTsSlotStride, 0.7);
+        set(e, TsTransFxB + side * kTsSlotStride, 0.3);
+        auto f1 = createEffect("gl.transplit");
+        auto f2 = createEffect("gl.transplit");
+        Buf a1 = run(*f1, e, in, 64), a2 = run(*f2, e, in, 1000);
+        char name[96];
+        std::snprintf(name, sizeof name, "transient split: %s slot effect %d finite, block invariant, audible", side ? "sustain" : "transient", fx);
+        expect(allFinite(a1) && maxDiff(a1, a2) < 1e-5 && maxDiff(a1, in) > 1e-3 && peak(a1) < 4.0, name);
+      }
+    // Echo on the sustain part: energy arrives after the input stops.
+    {
+      PluginState e = unity;
+      set(e, TsSusFx, TsFxEcho);
+      set(e, TsSusFxMix, 1.0);
+      set(e, TsSusFxA, 0.3);
+      set(e, TsSusSync, 1);  // tempo-synced: B = 0 → one tick; B = 95/767 → 96 ticks = one beat
+      set(e, TsSusFxB, 95.0 / 767.0);
+      Buf tone = sine(220, 0.3, 0.2);
+      Buf padded(static_cast<size_t>(kSr * 1.0));
+      for (size_t i = 0; i < tone.size(); ++i) padded.L[i] = tone.L[i], padded.R[i] = tone.R[i];
+      Buf o = run(e, padded);
+      const size_t beat = static_cast<size_t>(kSr * 0.5);  // 120 BPM
+      expect(rms(o, beat + 100, beat + 9000) > 0.05 && rms(o, static_cast<size_t>(kSr * 0.25), beat - 100) < 0.01,
+             "transient split: synced echo repeats one beat later");
+    }
+    // Tilt: positive tilt brightens the transient part.
+    {
+      PluginState tl = unity;
+      set(tl, TsSusOn, 0);
+      PluginState br = tl;
+      set(br, TsTransTilt, 1.0);
+      Buf a1 = run(tl, hits(0.5, 0.5)), a2 = run(br, hits(0.5, 0.5));
+      expect(rms(a2, 0, a2.size()) > rms(a1, 0, a1.size()), "transient split: tilt changes the transient part's balance");
+    }
+    // Look-ahead reports its latency; off by default.
+    {
+      auto fx = createEffect("gl.transplit");
+      PluginState la = unity;
+      expect(fx->latencyFor(la, 48000) == 0, "transient split: no latency by default");
+      set(la, TsLookahead, 1);
+      expect(fx->latencyFor(la, 48000) == 72, "transient split: look-ahead latency 1.5 ms");
+      Buf imp(4800);
+      imp.L[100] = imp.R[100] = 0.5f;
+      Buf o = run(*fx, la, imp, 256);
+      size_t at = 0;
+      for (size_t i = 0; i < o.size(); ++i)
+        if (std::fabs(o.L[i]) > std::fabs(o.L[at])) at = i;
+      expect(at == 172, "transient split: look-ahead delays the audio by its reported latency");
+    }
   }
 
   return finish();

@@ -210,6 +210,20 @@ std::vector<PluginInfo> build() {
     p.params[SmpVelVolume] = lin("Velocity to volume", "%", 0, 1, 1);
     p.params[SmpVoices] = lin("Voices", "", 1, 32, 32);
     p.params[SmpGlide] = lg("Glide", "s", 0.001, 2, 0.001);
+    p.params[SmpPreRampIn] = lin("Ramp in", "x", 0, 4, 0);
+    p.params[SmpPreRampOut] = lin("Ramp out", "x", 0, 4, 0);
+    p.params[SmpPreBoost] = lin("Boost", "%", 0, 1, 0);
+    p.params[SmpPreClip] = tog("Boost clip", 0);
+    p.params[SmpPreTilt] = lin("Tilt", "%", -1, 1, 0);
+    p.params[SmpPreCutoff] = lin("Pre cutoff", "%", 0.015625, 1, 1);
+    p.params[SmpPreReso] = lin("Pre resonance", "%", 0, 1, 0);
+    p.params[SmpPreRingMix] = lin("Ring mix", "%", 0, 1, 0);
+    p.params[SmpPreRingFreq] = lg("Ring freq", "Hz", 61.25, 2021.25, 1041.25);
+    p.params[SmpPreStereoDelay] = lin("Stereo delay", "ms", -46.44, 46.44, 0);
+    p.params[SmpPreWarp] = lin("Time warp", "%", -1, 1, 0);
+    p.params[SmpPreReverbMix] = lin("Pre reverb", "%", 0, 1, 0);
+    p.params[SmpPreReverbType] = ch("Pre reverb type", {"Room", "Hall"}, 1);
+    p.params[SmpPreFadeStereo] = tog("Stereo fade", 0);
     p.presets = {{"One shot", {}}, {"Sustained", {{SmpOneShot, 0.f}, {SmpSustain, 1.f}, {SmpRelease, 0.3f}, {SmpDeclick, 3.f}}},
                  {"Looped pad", {{SmpOneShot, 0.f}, {SmpLoop, 1.f}, {SmpLoopStart, 0.2f}, {SmpLoopEnd, 0.8f}, {SmpLoopXfade, 0.2f}, {SmpAttack, 0.3f}, {SmpRelease, 1.2f}}},
                  {"Filtered pluck", {{SmpFilterType, 1.f}, {SmpCutoff, 800.f}, {SmpFiltEnv, 0.6f}, {SmpFiltDecay, 0.25f}, {SmpReso, 0.3f}}},

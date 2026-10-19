@@ -1,4 +1,5 @@
 #include "Slicing.h"
+#include "SamplePrecompute.h"
 #include "../core/PluginInfo.h"
 #include "../core/PluginParams.h"
 #include "Generators.h"
@@ -223,7 +224,8 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
     return true;
   }
   if (st.type == "gl.sampler" || st.type == "gl.slicer" || st.type == "gl.granular") {
-    aux.samples.assign(1, sampleCache().get(st.data));
+    // Sampler: its precomputed effects (J-23) run here, once, on the UI thread.
+    aux.samples.assign(1, st.type == "gl.sampler" ? precomputedSample(st.data, samplePrecomputeFx(st)) : sampleCache().get(st.data));
     if (st.type == "gl.slicer" && aux.samples[0]) {
       int mode = st.params.size() > SlMode ? static_cast<int>(st.params[SlMode] + 0.5f) : 0;
       double sens = st.params.size() > SlSensitivity ? st.params[SlSensitivity] : 0.5;

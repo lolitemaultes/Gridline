@@ -225,6 +225,11 @@ void importChannels(Context& c) {
       ch.echo.pitch = std::clamp(e->i32(8), -1200, 1200);
       ch.echo.time = static_cast<float>(std::clamp(e->u32(16) / static_cast<double>(std::max(1, c.file.ppq)), 0.01, 16.0));
       ch.echo.pingPong = params && params->size > 10 && (params->u8(10) & 2);
+      // 138: per-echo mod X (low word) / mod Y (high word), 0..256, 128 = none.
+      if (const Event* m = find(evs, 138)) {
+        ch.echo.modX = static_cast<float>(std::clamp((static_cast<int>(m->value() & 0xFFFF) - 128) / 128.0, -1.0, 1.0));
+        ch.echo.modY = static_cast<float>(std::clamp((static_cast<int>(m->value() >> 16) - 128) / 128.0, -1.0, 1.0));
+      }
       ++echoes;
     }
     // --- Arpeggiator (215 @40): direction, range, chord, time, gate, repeat → the arpeggiator note processor.
@@ -262,9 +267,31 @@ void importChannels(Context& c) {
       using namespace pp;
       PluginState& sp = ch.plugin;
       if (const Event* e = find(evs, 135)) setParam(sp, SmpRoot, std::clamp(e->ivalue(), 0, 127));
-      if (const Event* e = find(evs, 70)) {  // FX flags: 2 reverse, 256 swap stereo
+      if (const Event* e = find(evs, 70)) {  // FX flags: 1 stereo fade, 2 reverse, 4 boost clip, 256 swap stereo
+        if (e->value() & 1) setParam(sp, SmpPreFadeStereo, 1);
         if (e->value() & 2) setParam(sp, SmpReverse, 1);
+        if (e->value() & 4) setParam(sp, SmpPreClip, 1);
         if (e->value() & 256) setParam(sp, SmpSwapStereo, 1);
+      }
+      // Precomputed effects (J-23, laws in engine/SamplePrecompute.cpp): tilt
+      // (69, 0..256, 128 flat), cutoff (71, 16..1024, 1024 off), boost (74,
+      // 0..256), resonance (83, 0..640), stereo delay (85, 0..4096, 2048 off),
+      // time warp (86, 0..512, 256 off), ring modulation (131: mix low word,
+      // frequency high word, 0..256), reverb (139: mix low word 0..256, type
+      // high word).
+      if (const Event* e = find(evs, 69)) setParam(sp, SmpPreTilt, std::clamp((e->ivalue() - 128) / 128.0, -1.0, 1.0));
+      if (const Event* e = find(evs, 71)) setParam(sp, SmpPreCutoff, std::clamp(e->ivalue() / 1024.0, 1.0 / 64, 1.0));
+      if (const Event* e = find(evs, 74)) setParam(sp, SmpPreBoost, std::clamp(e->ivalue() / 256.0, 0.0, 1.0));
+      if (const Event* e = find(evs, 83)) setParam(sp, SmpPreReso, std::clamp(e->ivalue() / 640.0, 0.0, 1.0));
+      if (const Event* e = find(evs, 85)) setParam(sp, SmpPreStereoDelay, std::clamp((e->ivalue() - 2048) / 44.1, -46.44, 46.44));
+      if (const Event* e = find(evs, 86)) setParam(sp, SmpPreWarp, std::clamp((e->ivalue() - 256) / 256.0, -1.0, 1.0));
+      if (const Event* e = find(evs, 131)) {
+        setParam(sp, SmpPreRingMix, std::clamp((e->value() & 0xFFFF) / 256.0, 0.0, 1.0));
+        setParam(sp, SmpPreRingFreq, std::clamp(((e->value() >> 16) + 8) * 44100.0 / 5760.0, 61.25, 2021.25));
+      }
+      if (const Event* e = find(evs, 139)) {
+        setParam(sp, SmpPreReverbMix, std::clamp((e->value() & 0xFFFF) / 256.0, 0.0, 1.0));
+        setParam(sp, SmpPreReverbType, (e->value() >> 16) ? 1 : 0);
       }
       // Sampler flags (143) bit 8 = "use the file's loop points": FL sets it by
       // default and it only loops samples that carry loop markers, which the
@@ -273,8 +300,11 @@ void importChannels(Context& c) {
         setParam(sp, SmpLoop, 1);
         setParam(sp, SmpLoopMode, 1);
       }
-      if (const Event* e = find(evs, 76)) setParam(sp, SmpFadeIn, std::min(0.5, e->value() / 1024.0));
-      if (const Event* e = find(evs, 75)) setParam(sp, SmpFadeOut, std::min(0.5, e->value() / 1024.0));
+      // Quick fades (76 in, 75 out, 0..1024): linear ramps across the whole
+      // sample whose slope is value / 256 (they reach full level only at the
+      // end / start), applied with the precomputed effects.
+      if (const Event* e = find(evs, 76)) setParam(sp, SmpPreRampIn, std::clamp(e->ivalue() / 256.0, 0.0, 4.0));
+      if (const Event* e = find(evs, 75)) setParam(sp, SmpPreRampOut, std::clamp(e->ivalue() / 256.0, 0.0, 4.0));
       if (params && params->size >= 144) {
         if (params->u8(9)) setParam(sp, SmpRemoveDc, 1);
         if (params->u8(80)) setParam(sp, SmpNormalize, 1);

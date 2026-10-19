@@ -36,7 +36,8 @@ int route(Document& d, const std::vector<ObjectId>& from, const std::vector<Obje
 ObjectId createSubmix(Document& d, const std::vector<ObjectId>& tracks, const std::string& name);
 // The tracks route to the master only again. Returns how many changed.
 int resetRouting(Document& d, const std::vector<ObjectId>& tracks);
-// Removes every send into `dest`; sources left without a route go to the master.
+// Removes every send into `dest` (never the master: returns 0); sources left
+// without a route go to the master. Returns how many tracks changed.
 int unrouteIncoming(Document& d, ObjectId dest);
 // Pre-fader (after effects and EQ, before volume / pan) or post-fader send.
 bool setSendPreFader(Document& d, ObjectId from, ObjectId to, bool pre);

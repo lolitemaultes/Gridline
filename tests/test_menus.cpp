@@ -6,6 +6,7 @@
 #include "Check.h"
 #include "core/Document.h"
 #include "core/MenuOps.h"
+#include "core/MixerOps.h"
 
 using namespace gl;
 
@@ -155,14 +156,17 @@ void testRouting() {
   expect(!ops::moveMixerTrack(f.d, s.masterId(), 1), "master does not move");
   expect(!ops::moveMixerTrack(f.d, m2, -1), "nothing moves into the master position");
   size_t before = s.mixer.size();
-  ObjectId ins = ops::insertMixerTrack(f.d, 1);
+  auto insIds = mixops::insertTracks(f.d, 1, 1);
+  ObjectId ins = insIds.empty() ? kNoId : insIds.front();
   expect(ins && s.mixer[1].id == ins && s.mixer.size() == before + 1, "insert mixer track");
   expect(s.mixer[1].sends.size() == 1 && s.mixer[1].sends[0].to == s.masterId(), "new track sends to master");
   f.d.editMixerTrack(m1, "", [](MixerTrack& m) { m.volume = 0.2f; m.pan = 0.5f; m.muted = true; });
-  expect(ops::resetMixerTrack(f.d, m1) && s.mixerTrack(m1)->volume == MixerTrack{}.volume && !s.mixerTrack(m1)->muted, "reset mixer track");
+  expect(mixops::resetTracks(f.d, {m1}) == 1 && s.mixerTrack(m1)->volume == MixerTrack{}.volume && !s.mixerTrack(m1)->muted, "reset mixer track");
   f.d.setSend(m1, m2, 1.0f);
-  expect(ops::routeOnlyTo(f.d, m1, m2) && s.mixerTrack(m1)->sends.size() == 1 && s.mixerTrack(m1)->sends[0].to == m2, "route only to");
-  expect(!ops::routeOnlyTo(f.d, m2, m1), "route only to refuses a cycle");
+  expect(mixops::route(f.d, {m1}, {m2}, mixops::RouteMode::Only) == 1 && s.mixerTrack(m1)->sends.size() == 1 &&
+             s.mixerTrack(m1)->sends[0].to == m2,
+         "route only to");
+  expect(mixops::route(f.d, {m2}, {m1}, mixops::RouteMode::Only) == 0, "route only to refuses a cycle");
   expect(ops::soloMixerTrack(f.d, m2) && s.mixerTrack(m2)->solo, "solo");
   expect(ops::soloMixerTrack(f.d, m2) && !s.mixerTrack(m2)->solo, "solo toggles off");
   f.d.setSlotPlugin(m2, 0, "gl.reverb");

@@ -180,8 +180,8 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::panel(dl, F.o, F.p(kW, kH), K, 4);
   skin::Scope scope(K);
-  static const char* tabs[3] = {"SAMPLE", "ENVELOPE / FILTER", "MISC"};
-  for (int k = 0; k < 3; ++k) {
+  static const char* tabs[4] = {"SAMPLE", "ENVELOPE / FILTER", "MISC", "SAMPLE FX"};
+  for (int k = 0; k < 4; ++k) {
     char id[16];
     std::snprintf(id, sizeof id, "##smptab%d", k);
     if (skin::button(id, F.p(6 + k * 140.0f, 5), F.sz(134, 20), K, tabs[k], ui.tab == k, lf(F, 8))) ui.tab = k;
@@ -293,6 +293,29 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
     w(SmpFiltRelease, 621, 188, "R");
     w(SmpVelCutoff, 510, 240, "VEL");
     w(SmpKeyCutoff, 590, 240, "KEY", skin::WheelBigLine | skin::WheelCentered);
+  } else if (ui.tab == 3) {
+    // Precomputed effects: applied once to the sample data (J-23).
+    panelBox(dl, F, 6, 31, 216, 263, K, "SHAPE");
+    w(SmpPreRampIn, 20, 54, "RAMP IN");
+    w(SmpPreRampOut, 90, 54, "RAMP OUT");
+    w(SmpPreWarp, 160, 54, "WARP", skin::WheelBigLine | skin::WheelCentered);
+    w(SmpPreBoost, 20, 130, "BOOST");
+    w(SmpPreStereoDelay, 90, 130, "ST DELAY", skin::WheelBigLine | skin::WheelCentered);
+    skin::check(a, t, SmpPreClip, F.p(14, 214), F.sz(100, 17), K, "CLIP");
+    skin::check(a, t, SmpPreFadeStereo, F.p(14, 238), F.sz(140, 17), K, "STEREO FADE");
+    panelBox(dl, F, 228, 31, 216, 263, K, "TONE");
+    w(SmpPreCutoff, 242, 54, "CUT");
+    w(SmpPreReso, 312, 54, "RES");
+    w(SmpPreTilt, 382, 54, "TILT", skin::WheelBigLine | skin::WheelCentered);
+    w(SmpPreRingMix, 242, 130, "RING MIX");
+    w(SmpPreRingFreq, 312, 130, "RING FREQ");
+    panelBox(dl, F, 450, 31, 224, 263, K, "SPACE");
+    w(SmpPreReverbMix, 464, 54, "REVERB");
+    {
+      static const char* rt[2] = {"ROOM", "HALL"};
+      skin::switchSel(a, t, SmpPreReverbType, F.p(530, 62), F.sz(130, 20), K, rt, 2, true);
+    }
+    skin::text(dl, F.p(464, 130), K.textDim, "Rendered once into the sample", lf(F, 7.5f));
   } else {
     panelBox(dl, F, 6, 31, 668, 263, K, "ROOT NOTE · VOICE");
     w(SmpRoot, 20, 54, "ROOT");

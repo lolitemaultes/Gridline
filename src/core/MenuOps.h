@@ -85,12 +85,7 @@ bool clearPlaylistTrack(Document& d, int index);
 
 // -------------------------------------------------------------------- mixer ----
 bool moveMixerTrack(Document& d, ObjectId id, int dir);  // never moves the master
-// Inserts a new insert track at `index` (1..size). Returns its id.
-ObjectId insertMixerTrack(Document& d, int index);
-// Volume, pan, separation, mute, solo, polarity back to defaults (keeps name, effects, routing).
-bool resetMixerTrack(Document& d, ObjectId id);
-// Routes `from` only to `to` (removes its other sends).
-bool routeOnlyTo(Document& d, ObjectId from, ObjectId to);
+// Inserting, resetting and routing mixer tracks: see MixerOps.h (gl::mixops).
 // Removes trailing insert tracks that are free. Returns how many were removed.
 int trimUnusedMixerTracks(Document& d);
 bool setSlotEnabled(Document& d, ObjectId track, int slot, bool enabled);
