@@ -560,12 +560,12 @@ bool decodeState(const std::string& data, State& s) {
   s.hash = j.text("hash");
   s.name = j.text("name");
   if (const Json* m = j.find("markers"))
-    for (const auto& o : m->array) s.markers.push_back({static_cast<int64_t>(o.num("pos")), o.text("name")});
+    for (const auto& o : m->array) s.markers.push_back({jsonInt<int64_t>(o.num("pos")), o.text("name")});
   if (const Json* r = j.find("regions"))
-    for (const auto& o : r->array) s.regions.push_back({static_cast<int64_t>(o.num("start")), static_cast<int64_t>(o.num("end")), o.text("name")});
-  s.loopStart = static_cast<int64_t>(j.num("loopStart", -1));
-  s.loopEnd = static_cast<int64_t>(j.num("loopEnd", -1));
-  s.flVersion = static_cast<int>(j.num("flVersion", 0));
+    for (const auto& o : r->array) s.regions.push_back({jsonInt<int64_t>(o.num("start")), jsonInt<int64_t>(o.num("end")), o.text("name")});
+  s.loopStart = jsonInt<int64_t>(j.num("loopStart", -1));
+  s.loopEnd = jsonInt<int64_t>(j.num("loopEnd", -1));
+  s.flVersion = jsonInt<int>(j.num("flVersion", 0));
   s.flExtra = j.text("flExtra");
   return true;
 }

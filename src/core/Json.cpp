@@ -2,6 +2,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace gl {
@@ -86,10 +87,14 @@ struct P {
       ++i; any = true;
     }
     if (!any) { fail = true; return false; }
-    try {
-      out.type = Json::Type::Number;
-      out.number = std::stod(s.substr(start, i - start));
-    } catch (...) { fail = true; return false; }
+    // strtod, not std::stod: stod throws on ERANGE, which libc++ also reports
+    // for subnormal results (e.g. a denormal parameter value that was saved).
+    const std::string tok = s.substr(start, i - start);
+    char* end = nullptr;
+    double v = std::strtod(tok.c_str(), &end);
+    if (end != tok.c_str() + tok.size() || !std::isfinite(v)) { fail = true; return false; }
+    out.type = Json::Type::Number;
+    out.number = v;
     return true;
   }
   bool arrayV(Json& out) {
@@ -139,7 +144,9 @@ void emit(const Json& v, std::string& out, int indent, int depth) {
     case Json::Type::Bool: out += v.boolean ? "true" : "false"; break;
     case Json::Type::Number: {
       char buf[32];
-      if (v.number == static_cast<long long>(v.number) && std::fabs(v.number) < 1e15)
+      if (!std::isfinite(v.number))  // not representable in JSON: readers fall back to their default
+        std::snprintf(buf, sizeof buf, "null");
+      else if (std::fabs(v.number) < 1e15 && v.number == static_cast<double>(static_cast<long long>(v.number)))
         std::snprintf(buf, sizeof buf, "%lld", static_cast<long long>(v.number));
       else
         std::snprintf(buf, sizeof buf, "%.17g", v.number);  // round-trips exactly

@@ -386,6 +386,7 @@ class AudioEngine {
   static constexpr size_t kTickHistory = size_t{1} << 17;  // delayed timeline for latency compensation
   std::vector<double> tickHist_;
   size_t tickHistPos_ = 0;
+  size_t tickHistLat_ = 0;  // latency the history was last read with (audio thread)
   std::vector<double> recTick_;  // delayed position of each frame of this block (-1 = not recording)
   static constexpr size_t kRecEvents = 1024;
   std::vector<RecEvent> recEvents_ = std::vector<RecEvent>(kRecEvents);

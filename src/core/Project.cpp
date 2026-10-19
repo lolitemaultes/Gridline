@@ -1,6 +1,7 @@
 #include "Project.h"
 #include "ProjectInterop.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -8,6 +9,8 @@
 #include <functional>
 #include <set>
 #include <sstream>
+#include <string>
+#include <unistd.h>
 #include "Json.h"
 #include "Params.h"
 
@@ -55,7 +58,7 @@ void migrateV1(Json& j) {
     }
   if (Json* clips = member(j, "playlist"); clips && clips->is(Json::Type::Array))
     for (auto& c : clips->array) {
-      int idx = static_cast<int>(c.num("pattern", -1));
+      int idx = jsonInt<int>(c.num("pattern", -1));
       c.object["pattern"] = num(idx >= 0 && idx < static_cast<int>(patIds.size()) ? patIds[static_cast<size_t>(idx)] : 0);
       c.object["id"] = num(next++);
     }
@@ -71,7 +74,7 @@ void migrateV1(Json& j) {
 // v2 → v3: generator numbers become plugin states; mixer and playlist tracks appear.
 void migrateV2(Json& j) {
   static const char* kTypes[] = {"gl.synth", "gl.kick", "gl.hat"};
-  ObjectId next = static_cast<ObjectId>(j.num("nextId", kFirstObjectId));
+  ObjectId next = jsonInt<ObjectId>(j.num("nextId", kFirstObjectId));
   Json mixer = Json::makeArray();
   ObjectId master = next++;
   {
@@ -93,7 +96,7 @@ void migrateV2(Json& j) {
   }
   if (Json* chans = member(j, "channels"); chans && chans->is(Json::Type::Array))
     for (auto& c : chans->array) {
-      int g = static_cast<int>(c.num("generator", 0));
+      int g = jsonInt<int>(c.num("generator", 0));
       Json p = Json::makeObject();
       p.object["type"] = str(kTypes[g >= 0 && g < 3 ? g : 0]);
       c.object["plugin"] = std::move(p);
@@ -177,21 +180,21 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
 }
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
-  c.fine = static_cast<int>(std::clamp(jc.num("fine", 0), -200.0, 200.0));
+  c.fine = jsonInt<int>(std::clamp(jc.num("fine", 0), -200.0, 200.0));
   c.swingMix = static_cast<float>(std::clamp(jc.num("swingMix", 1), 0.0, 1.0));
   c.timeShift = static_cast<float>(std::clamp(jc.num("timeShift", 0), 0.0, 1.0));
-  c.polyphony = static_cast<int>(std::clamp(jc.num("polyphony", 0), 0.0, 256.0));
+  c.polyphony = jsonInt<int>(std::clamp(jc.num("polyphony", 0), 0.0, 256.0));
   c.mono = flag(jc, "mono");
   c.porta = flag(jc, "porta");
   c.portaTime = static_cast<float>(std::clamp(jc.num("portaTime", 0.1), 0.0, 2.0));
-  c.cutGroup = static_cast<int>(std::clamp(jc.num("cutGroup", 0), 0.0, static_cast<double>(kMaxCutGroups)));
-  c.cutBy = static_cast<int>(std::clamp(jc.num("cutBy", 0), 0.0, static_cast<double>(kMaxCutGroups)));
+  c.cutGroup = jsonInt<int>(std::clamp(jc.num("cutGroup", 0), 0.0, static_cast<double>(kMaxCutGroups)));
+  c.cutBy = jsonInt<int>(std::clamp(jc.num("cutBy", 0), 0.0, static_cast<double>(kMaxCutGroups)));
   if (const Json* e = jc.find("echo"); e && e->is(Json::Type::Object)) {
-    c.echo.count = static_cast<int>(std::clamp(e->num("count", 0), 0.0, 10.0));
+    c.echo.count = jsonInt<int>(std::clamp(e->num("count", 0), 0.0, 10.0));
     c.echo.feedback = static_cast<float>(std::clamp(e->num("feedback", 0.5), 0.0, 1.0));
     c.echo.time = static_cast<float>(std::clamp(e->num("time", 0.375), 0.01, 16.0));
     c.echo.pan = static_cast<float>(std::clamp(e->num("pan", 0), -1.0, 1.0));
-    c.echo.pitch = static_cast<int>(std::clamp(e->num("pitch", 0), -1200.0, 1200.0));
+    c.echo.pitch = jsonInt<int>(std::clamp(e->num("pitch", 0), -1200.0, 1200.0));
     c.echo.pingPong = flag(*e, "pingPong");
     c.echo.modX = static_cast<float>(std::clamp(e->num("modX", 0), -1.0, 1.0));
     c.echo.modY = static_cast<float>(std::clamp(e->num("modY", 0), -1.0, 1.0));
@@ -199,9 +202,9 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
   if (const Json* l = jc.find("layer"); l && l->is(Json::Type::Array))
     for (const auto& v : l->array)
       if (v.is(Json::Type::Number) && v.number >= kFirstObjectId && c.layer.size() < static_cast<size_t>(kMaxLayerChildren))
-        c.layer.push_back(static_cast<ObjectId>(v.number));
-  c.layerMode = static_cast<int>(std::clamp(jc.num("layerMode", 0), 0.0, 1.0));
-  c.group = static_cast<int>(std::clamp(jc.num("group", -1), -1.0, 1e6));
+        c.layer.push_back(jsonInt<ObjectId>(v.number));
+  c.layerMode = jsonInt<int>(std::clamp(jc.num("layerMode", 0), 0.0, 1.0));
+  c.group = jsonInt<int>(std::clamp(jc.num("group", -1), -1.0, 1e6));
 }
 
 void noteToJson(const Note& n, Json& jn) {
@@ -218,12 +221,12 @@ void noteToJson(const Note& n, Json& jn) {
 }
 
 void noteFromJson(const Json& e, Note& n) {
-  n.pan = static_cast<int>(std::clamp(e.num("pan", 0), -static_cast<double>(kNotePanMax), static_cast<double>(kNotePanMax)));
-  n.fine = static_cast<int>(std::clamp(e.num("fine", 0), -static_cast<double>(kNoteFineMax), static_cast<double>(kNoteFineMax)));
-  n.release = static_cast<int>(std::clamp(e.num("release", kNoteReleaseDefault), 0.0, 127.0));
-  n.modX = static_cast<int>(std::clamp(e.num("modX", kNoteModCentre), 0.0, static_cast<double>(kNoteModMax)));
-  n.modY = static_cast<int>(std::clamp(e.num("modY", kNoteModCentre), 0.0, static_cast<double>(kNoteModMax)));
-  n.color = static_cast<int>(std::clamp(e.num("color", 0), 0.0, static_cast<double>(kNoteColors - 1)));
+  n.pan = jsonInt<int>(std::clamp(e.num("pan", 0), -static_cast<double>(kNotePanMax), static_cast<double>(kNotePanMax)));
+  n.fine = jsonInt<int>(std::clamp(e.num("fine", 0), -static_cast<double>(kNoteFineMax), static_cast<double>(kNoteFineMax)));
+  n.release = jsonInt<int>(std::clamp(e.num("release", kNoteReleaseDefault), 0.0, 127.0));
+  n.modX = jsonInt<int>(std::clamp(e.num("modX", kNoteModCentre), 0.0, static_cast<double>(kNoteModMax)));
+  n.modY = jsonInt<int>(std::clamp(e.num("modY", kNoteModCentre), 0.0, static_cast<double>(kNoteModMax)));
+  n.color = jsonInt<int>(std::clamp(e.num("color", 0), 0.0, static_cast<double>(kNoteColors - 1)));
   n.slide = flag(e, "slide");
   n.porta = flag(e, "porta");
   n.muted = flag(e, "muted");
@@ -268,8 +271,8 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
 void clipArrangementFromJson(const Json& jc, Clip& c) {
   std::string k = jc.text("kind", "pattern");
   c.kind = k == "audio" ? ClipKind::Audio : k == "automation" ? ClipKind::Automation : ClipKind::Pattern;
-  c.source = static_cast<ObjectId>(std::max(0.0, jc.num("source", 0)));
-  c.offset = std::max<Tick>(0, static_cast<Tick>(jc.num("offset", 0)));
+  c.source = jsonInt<ObjectId>(std::max(0.0, jc.num("source", 0)));
+  c.offset = std::max<Tick>(0, jsonInt<Tick>(jc.num("offset", 0)));
   c.muted = flag(jc, "muted");
   c.audioStart = std::max(0.0, jc.num("audioStart", 0));
   c.audioEnd = std::max(0.0, jc.num("audioEnd", 0));
@@ -280,8 +283,8 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.stretch = std::clamp(jc.num("stretch", 1), 0.0625, 16.0);
   c.syncBpm = std::clamp(jc.num("syncBpm", 0), 0.0, 1000.0);
   c.reverse = flag(jc, "reverse");
-  c.takeGroup = static_cast<ObjectId>(std::max(0.0, jc.num("takeGroup", 0)));
-  c.take = static_cast<int>(std::clamp(jc.num("take", 0), 0.0, 9999.0));
+  c.takeGroup = jsonInt<ObjectId>(std::max(0.0, jc.num("takeGroup", 0)));
+  c.take = jsonInt<int>(std::clamp(jc.num("take", 0), 0.0, 9999.0));
 }
 
 void arrangementToJson(const Song& s, Json& j) {
@@ -336,17 +339,17 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
       if (!takeId(ja, a.id)) return fail(err, "automation clip has missing or duplicate id");
       a.name = ja.text("name", "Automation");
       a.color = color(ja, a.color);
-      a.owner = static_cast<ObjectId>(std::max(0.0, ja.num("owner", 0)));
-      a.index = static_cast<uint32_t>(std::max(0.0, ja.num("index", 0)));
+      a.owner = jsonInt<ObjectId>(std::max(0.0, ja.num("owner", 0)));
+      a.index = jsonInt<uint32_t>(std::max(0.0, ja.num("index", 0)));
       a.min = static_cast<float>(std::clamp(ja.num("min", 0), 0.0, 1.0));
       a.max = static_cast<float>(std::clamp(ja.num("max", 1), 0.0, 1.0));
-      a.loop = std::max<Tick>(0, static_cast<Tick>(ja.num("loop", 0)));
+      a.loop = std::max<Tick>(0, jsonInt<Tick>(ja.num("loop", 0)));
       if (const Json* pts = ja.find("points"); pts && pts->is(Json::Type::Array))
         for (const auto& jp : pts->array) {
           if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;
           auto at = [&](size_t i, double d) { return i < jp.array.size() && jp.array[i].is(Json::Type::Number) ? jp.array[i].number : d; };
           AutoPoint p;
-          p.pos = std::max<Tick>(0, static_cast<Tick>(at(0, 0)));
+          p.pos = std::max<Tick>(0, jsonInt<Tick>(at(0, 0)));
           p.value = static_cast<float>(std::clamp(at(1, 0.5), 0.0, 1.0));
           p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
           p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
@@ -358,12 +361,12 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
   if (const Json* arr = j.find("markers"); arr && arr->is(Json::Type::Array))
     for (const auto& jm : arr->array) {
       Marker m;
-      m.pos = std::max<Tick>(0, static_cast<Tick>(jm.num("pos", 0)));
+      m.pos = std::max<Tick>(0, jsonInt<Tick>(jm.num("pos", 0)));
       m.name = jm.text("name");
-      m.timeSigNum = static_cast<int>(std::clamp(jm.num("timeSigNum", 0), 0.0, 32.0));
-      m.timeSigDen = static_cast<int>(std::clamp(jm.num("timeSigDen", 0), 0.0, 32.0));
+      m.timeSigNum = jsonInt<int>(std::clamp(jm.num("timeSigNum", 0), 0.0, 32.0));
+      m.timeSigDen = jsonInt<int>(std::clamp(jm.num("timeSigDen", 0), 0.0, 32.0));
       if (m.timeSigNum == 0 || m.timeSigDen == 0) m.timeSigNum = m.timeSigDen = 0;
-      m.action = static_cast<MarkerAction>(static_cast<int>(std::clamp(jm.num("action", 0), 0.0, static_cast<double>(static_cast<int>(MarkerAction::Count) - 1))));
+      m.action = static_cast<MarkerAction>(jsonInt<int>(std::clamp(jm.num("action", 0), 0.0, static_cast<double>(static_cast<int>(MarkerAction::Count) - 1))));
       s.markers.push_back(std::move(m));
     }
   std::stable_sort(s.markers.begin(), s.markers.end(), [](const Marker& x, const Marker& y) { return x.pos < y.pos; });
@@ -396,7 +399,7 @@ std::vector<AutoPoint> pointsFromJson(const Json* pts) {
     if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;
     auto at = [&](size_t i, double d) { return i < jp.array.size() && jp.array[i].is(Json::Type::Number) ? jp.array[i].number : d; };
     AutoPoint p;
-    p.pos = std::max<Tick>(0, static_cast<Tick>(at(0, 0)));
+    p.pos = std::max<Tick>(0, jsonInt<Tick>(at(0, 0)));
     p.value = static_cast<float>(std::clamp(at(1, 0.5), 0.0, 1.0));
     p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
     p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
@@ -474,8 +477,8 @@ void patternExtrasFromJson(const Json& jp, Pattern& p, const Song& s) {
   if (!arr || !arr->is(Json::Type::Array)) return;
   for (const auto& jl : arr->array) {
     PatternAutomation lane;
-    lane.owner = static_cast<ObjectId>(std::max(0.0, jl.num("owner", 0)));
-    lane.index = static_cast<uint32_t>(std::max(0.0, jl.num("index", 0)));
+    lane.owner = jsonInt<ObjectId>(std::max(0.0, jl.num("owner", 0)));
+    lane.index = jsonInt<uint32_t>(std::max(0.0, jl.num("index", 0)));
     lane.points = pointsFromJson(jl.find("points"));
     if (lane.points.empty() || !describeParam(s, {lane.owner, lane.index})) continue;
     bool dup = false;
@@ -495,12 +498,12 @@ void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
 }
 
 void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
-  auto e = [&](const char* k, int dflt, int count) { return static_cast<int>(std::clamp(jt.num(k, dflt), 0.0, static_cast<double>(count - 1))); };
+  auto e = [&](const char* k, int dflt, int count) { return jsonInt<int>(std::clamp(jt.num(k, dflt), 0.0, static_cast<double>(count - 1))); };
   t.launch = static_cast<LaunchGrid>(e("launch", static_cast<int>(LaunchGrid::FourBeats), static_cast<int>(LaunchGrid::Count)));
   t.pad = static_cast<PadMode>(e("pad", 0, static_cast<int>(PadMode::Count)));
   t.follow = static_cast<FollowMode>(e("follow", 0, static_cast<int>(FollowMode::Count)));
   t.syncStart = static_cast<LaunchGrid>(e("syncStart", 0, static_cast<int>(LaunchGrid::Count)));
-  t.groupSize = static_cast<int>(std::clamp(jt.num("groupSize", 0), 0.0, static_cast<double>(kMaxPlaylistTracks)));
+  t.groupSize = jsonInt<int>(std::clamp(jt.num("groupSize", 0), 0.0, static_cast<double>(kMaxPlaylistTracks)));
   t.folded = flag(jt, "folded");
   t.locked = flag(jt, "locked");
 }
@@ -570,10 +573,10 @@ void songExtrasToJson(const Song& s, Json& j) {
 // clips get unique ids; clips whose content is gone are dropped.
 bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const Json&, ObjectId&)>& takeId, std::string* err) {
   if (const Json* jl = j.find("live"); jl && jl->is(Json::Type::Object))
-    s.live.areaEnd = std::max<Tick>(0, static_cast<Tick>(jl->num("areaEnd", 0)));
+    s.live.areaEnd = std::max<Tick>(0, jsonInt<Tick>(jl->num("areaEnd", 0)));
   const Json* arr = j.find("arrangements");
   if (!arr || !arr->is(Json::Type::Array) || arr->array.empty()) return true;
-  const int cur = static_cast<int>(std::clamp(j.num("currentArrangement", 0), 0.0, static_cast<double>(arr->array.size() - 1)));
+  const int cur = jsonInt<int>(std::clamp(j.num("currentArrangement", 0), 0.0, static_cast<double>(arr->array.size() - 1)));
   for (size_t i = 0; i < arr->array.size(); ++i) {
     const Json& ja = arr->array[i];
     Arrangement a;
@@ -583,10 +586,10 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
         for (const auto& jc : clips->array) {
           Clip c;
           if (!takeId(jc, c.id)) return fail(err, "arrangement clip has missing or duplicate id");
-          c.pattern = static_cast<ObjectId>(jc.num("pattern", 0));
-          c.track = static_cast<int>(std::clamp(jc.num("track", 0), 0.0, static_cast<double>(kMaxPlaylistTracks - 1)));
-          c.start = std::max<Tick>(0, static_cast<Tick>(jc.num("start", 0)));
-          c.length = std::max<Tick>(0, static_cast<Tick>(jc.num("length", 0)));
+          c.pattern = jsonInt<ObjectId>(jc.num("pattern", 0));
+          c.track = jsonInt<int>(std::clamp(jc.num("track", 0), 0.0, static_cast<double>(kMaxPlaylistTracks - 1)));
+          c.start = std::max<Tick>(0, jsonInt<Tick>(jc.num("start", 0)));
+          c.length = std::max<Tick>(0, jsonInt<Tick>(jc.num("length", 0)));
           clipArrangementFromJson(jc, c);
           if (c.kind == ClipKind::Audio && !s.channel(c.source)) continue;
           if (c.kind == ClipKind::Automation && !s.automation(c.source)) continue;
@@ -610,16 +613,16 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
       if (const Json* marks = ja.find("markers"); marks && marks->is(Json::Type::Array))
         for (const auto& jm : marks->array) {
           Marker m;
-          m.pos = std::max<Tick>(0, static_cast<Tick>(jm.num("pos", 0)));
+          m.pos = std::max<Tick>(0, jsonInt<Tick>(jm.num("pos", 0)));
           m.name = jm.text("name");
-          m.timeSigNum = static_cast<int>(std::clamp(jm.num("timeSigNum", 0), 0.0, 32.0));
-          m.timeSigDen = static_cast<int>(std::clamp(jm.num("timeSigDen", 0), 0.0, 32.0));
+          m.timeSigNum = jsonInt<int>(std::clamp(jm.num("timeSigNum", 0), 0.0, 32.0));
+          m.timeSigDen = jsonInt<int>(std::clamp(jm.num("timeSigDen", 0), 0.0, 32.0));
           if (m.timeSigNum == 0 || m.timeSigDen == 0) m.timeSigNum = m.timeSigDen = 0;
-          m.action = static_cast<MarkerAction>(static_cast<int>(std::clamp(jm.num("action", 0), 0.0, static_cast<double>(static_cast<int>(MarkerAction::Count) - 1))));
+          m.action = static_cast<MarkerAction>(jsonInt<int>(std::clamp(jm.num("action", 0), 0.0, static_cast<double>(static_cast<int>(MarkerAction::Count) - 1))));
           a.markers.push_back(std::move(m));
         }
       std::stable_sort(a.markers.begin(), a.markers.end(), [](const Marker& x, const Marker& y) { return x.pos < y.pos; });
-      a.live.areaEnd = std::max<Tick>(0, static_cast<Tick>(ja.num("liveAreaEnd", 0)));
+      a.live.areaEnd = std::max<Tick>(0, jsonInt<Tick>(ja.num("liveAreaEnd", 0)));
     }
     s.arrangements.push_back(std::move(a));
   }
@@ -882,7 +885,7 @@ void migrateV5(Json& j) {
 bool migrateProjectJson(Json& j, std::string* err) {
   if (!j.is(Json::Type::Object)) return fail(err, "root not object");
   if (j.text("format") != kProjectFormatTag) return fail(err, "bad format tag");
-  int v = static_cast<int>(j.num("version", 1));
+  int v = jsonInt<int>(j.num("version", 1));
   if (v > kProjectSchemaVersion)
     return fail(err, "project was saved by a newer Gridline (schema " + std::to_string(v) + ")");
   if (v < 1) return fail(err, "bad schema version");
@@ -904,9 +907,9 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   m.solo = flag(jm, "solo");
   m.invertPolarity = flag(jm, "invertPolarity");
   m.swapLR = flag(jm, "swapLR");
-  m.input = static_cast<int>(std::clamp(jm.num("input", -1), -1.0, static_cast<double>(kMaxInputChannels - 1)));
+  m.input = jsonInt<int>(std::clamp(jm.num("input", -1), -1.0, static_cast<double>(kMaxInputChannels - 1)));
   if (const Json* st = jm.find("inputStereo"); st && st->is(Json::Type::Bool)) m.inputStereo = st->boolean;
-  m.monitor = static_cast<uint8_t>(std::clamp(jm.num("monitor", 0), 0.0, static_cast<double>(static_cast<int>(InputMonitor::Count) - 1)));
+  m.monitor = jsonInt<uint8_t>(std::clamp(jm.num("monitor", 0), 0.0, static_cast<double>(static_cast<int>(InputMonitor::Count) - 1)));
   m.armed = flag(jm, "armed");
   if (const Json* sl = jm.find("slots"); sl && sl->is(Json::Type::Array))
     for (size_t i = 0; i < sl->array.size() && i < m.slots.size(); ++i) {
@@ -919,7 +922,7 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
     }
   if (const Json* sd = jm.find("sends"); sd && sd->is(Json::Type::Array))
     for (const auto& js : sd->array)
-      m.sends.push_back({static_cast<ObjectId>(js.num("to", 0)), static_cast<float>(std::clamp(js.num("level", 1), 0.0, 1.25)),
+      m.sends.push_back({jsonInt<ObjectId>(js.num("to", 0)), static_cast<float>(std::clamp(js.num("level", 1), 0.0, 1.25)),
                          flag(js, "sidechain"), flag(js, "preFader")});
   // --- strip EQ (0.5 FL import cycle; absent = defaults) ---
   if (const Json* eq = jm.find("eq"); eq && eq->is(Json::Type::Array))
@@ -929,10 +932,10 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
       m.eqFreq[b] = static_cast<float>(std::clamp(jb.num("freq", kStripEqDefFreq[b]), 20.0, 20000.0));
       m.eqQ[b] = static_cast<float>(std::clamp(jb.num("q", kStripEqDefQ), 0.1, 10.0));
     }
-  m.icon = static_cast<int>(std::clamp(jm.num("icon", 0), 0.0, 255.0));
+  m.icon = jsonInt<int>(std::clamp(jm.num("icon", 0), 0.0, 255.0));
   m.disabled = flag(jm, "disabled");
-  m.dock = static_cast<int>(std::clamp(jm.num("dock", 0), -1.0, 1.0));
-  m.latencyOffset = static_cast<int>(std::clamp(jm.num("latencyOffset", 0), 0.0, static_cast<double>(kMaxManualLatency)));
+  m.dock = jsonInt<int>(std::clamp(jm.num("dock", 0), -1.0, 1.0));
+  m.latencyOffset = jsonInt<int>(std::clamp(jm.num("latencyOffset", 0), 0.0, static_cast<double>(kMaxManualLatency)));
   m.threaded = flag(jm, "threaded", true);
   m.group = jm.text("group");
 }
@@ -948,16 +951,16 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     s.info.genre = info->text("genre");
     s.info.url = info->text("url");
     s.info.comments = info->text("comments");
-    s.info.created = static_cast<int64_t>(info->num("created", 0));
-    s.info.workTime = static_cast<int64_t>(info->num("workTime", 0));
+    s.info.created = jsonInt<int64_t>(info->num("created", 0));
+    s.info.workTime = jsonInt<int64_t>(info->num("workTime", 0));
   }
-  s.ppq = static_cast<int>(j.num("ppq", kDefaultPpq));
+  s.ppq = jsonInt<int>(j.num("ppq", kDefaultPpq));
   if (!isValidPpq(s.ppq)) return fail(err, "unsupported PPQ " + std::to_string(s.ppq));
   s.tempo = j.num("tempo", 140.0);
   auto tempoDesc = describeParam(s, songParam(SongParam::Tempo));
   if (s.tempo < tempoDesc->min || s.tempo > tempoDesc->max) return fail(err, "tempo out of range");
-  s.timeSigNum = static_cast<int>(j.num("timeSigNum", 4));
-  s.timeSigDen = static_cast<int>(j.num("timeSigDen", 4));
+  s.timeSigNum = jsonInt<int>(j.num("timeSigNum", 4));
+  s.timeSigDen = jsonInt<int>(j.num("timeSigDen", 4));
   if (s.timeSigNum < 1 || s.timeSigDen < 1) return fail(err, "bad time signature");
   s.swing = static_cast<float>(std::clamp(j.num("swing", 0), 0.0, 1.0));
   s.masterPitch = static_cast<float>(std::clamp(j.num("masterPitch", 0), -12.0, 12.0));
@@ -1011,17 +1014,17 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       c.gain = static_cast<float>(std::clamp(jc.num("gain", 0.78), 0.0, 1.25));
       c.pan = static_cast<float>(std::clamp(jc.num("pan", 0.0), -1.0, 1.0));
       c.muted = flag(jc, "muted");
-      c.pitch = static_cast<int>(std::clamp(jc.num("pitch", 0), -24.0, 24.0));
-      c.mixerTrack = static_cast<ObjectId>(jc.num("mixerTrack", 0));
+      c.pitch = jsonInt<int>(std::clamp(jc.num("pitch", 0), -24.0, 24.0));
+      c.mixerTrack = jsonInt<ObjectId>(jc.num("mixerTrack", 0));
       if (!s.mixerTrack(c.mixerTrack)) c.mixerTrack = s.masterId();
       if (const Json* ao = jc.find("auxOuts"); ao && ao->is(Json::Type::Array))
         for (const auto& jt : ao->array) {
-          ObjectId t = jt.is(Json::Type::Number) ? static_cast<ObjectId>(jt.number) : kNoId;
+          ObjectId t = jt.is(Json::Type::Number) ? jsonInt<ObjectId>(jt.number) : kNoId;
           c.auxOuts.push_back(t != kNoId && s.mixerTrack(t) ? t : kNoId);
           if (c.auxOuts.size() >= 32) break;
         }
-      c.midiOutPort = static_cast<int>(std::clamp(jc.num("midiOutPort", -1.0), -1.0, 255.0));
-      c.midiInPort = static_cast<int>(std::clamp(jc.num("midiInPort", -1.0), -1.0, 255.0));
+      c.midiOutPort = jsonInt<int>(std::clamp(jc.num("midiOutPort", -1.0), -1.0, 255.0));
+      c.midiInPort = jsonInt<int>(std::clamp(jc.num("midiInPort", -1.0), -1.0, 255.0));
       if (const Json* fx = jc.find("noteFx"); fx && fx->is(Json::Type::Array))
         for (const auto& jf : fx->array) {
           PluginState ps = pluginFromJson(&jf);
@@ -1050,9 +1053,9 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       if (!takeId(jp, p.id)) return fail(err, "pattern has missing or duplicate id");
       p.name = jp.text("name", "Pattern");
       p.color = color(jp, p.color);
-      p.stepsPerBar = static_cast<int>(jp.num("stepsPerBar", 16));
-      p.bars = static_cast<int>(jp.num("bars", 1));
-      if (p.stepsPerBar <= 0 || p.stepsPerBar > 192 || p.bars <= 0 || p.bars > 1024) return fail(err, "bad pattern dims");
+      p.stepsPerBar = jsonInt<int>(jp.num("stepsPerBar", 16));
+      p.bars = jsonInt<int>(jp.num("bars", 1));
+      if (p.stepsPerBar <= 0 || p.stepsPerBar > kMaxStepsPerBar || p.bars <= 0 || p.bars > kMaxPatternBars) return fail(err, "bad pattern dims");
       forRows(jp, "steps", [&](ObjectId ch, const Json& v) {
         if (!s.channel(ch) || !v.is(Json::Type::Array)) return;
         std::vector<uint8_t> row;
@@ -1067,10 +1070,10 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
         std::vector<Note> ns;
         for (const auto& e : v.array) {
           Note n;
-          n.start = std::max<Tick>(0, static_cast<Tick>(e.num("start", 0)));
-          n.length = std::max<Tick>(1, static_cast<Tick>(e.num("length", s.ppq)));
-          n.pitch = static_cast<int>(std::clamp(e.num("pitch", 60), 0.0, 127.0));
-          n.velocity = static_cast<int>(std::clamp(e.num("velocity", 100), 0.0, 127.0));
+          n.start = std::max<Tick>(0, jsonInt<Tick>(e.num("start", 0)));
+          n.length = std::max<Tick>(1, jsonInt<Tick>(e.num("length", s.ppq)));
+          n.pitch = jsonInt<int>(std::clamp(e.num("pitch", 60), 0.0, 127.0));
+          n.velocity = jsonInt<int>(std::clamp(e.num("velocity", 100), 0.0, 127.0));
           noteFromJson(e, n);
           ns.push_back(n);
         }
@@ -1101,10 +1104,10 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     for (const auto& jc : clips->array) {
       Clip c;
       if (!takeId(jc, c.id)) return fail(err, "clip has missing or duplicate id");
-      c.pattern = static_cast<ObjectId>(jc.num("pattern", 0));
-      c.track = static_cast<int>(jc.num("track", 0));
-      c.start = static_cast<Tick>(jc.num("start", 0));
-      c.length = static_cast<Tick>(jc.num("length", 0));
+      c.pattern = jsonInt<ObjectId>(jc.num("pattern", 0));
+      c.track = jsonInt<int>(jc.num("track", 0));
+      c.start = jsonInt<Tick>(jc.num("start", 0));
+      c.length = jsonInt<Tick>(jc.num("length", 0));
       clipArrangementFromJson(jc, c);  // arrangement fields; audio / automation clips with a missing source are dropped
       if (c.kind == ClipKind::Audio && !s.channel(c.source)) continue;
       if (c.kind == ClipKind::Automation && !s.automation(c.source)) continue;
@@ -1117,17 +1120,17 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   if (const Json* links = j.find("links"); links && links->is(Json::Type::Array))
     for (const auto& jl : links->array) {
       ControllerLink l;
-      l.cc = static_cast<int>(std::clamp(jl.num("cc", 1), 0.0, 127.0));
-      l.midiChannel = static_cast<int>(std::clamp(jl.num("midiChannel", -1), -1.0, 15.0));
-      l.owner = static_cast<ObjectId>(jl.num("owner", 0));
-      l.index = static_cast<uint32_t>(jl.num("index", 0));
+      l.cc = jsonInt<int>(std::clamp(jl.num("cc", 1), 0.0, 127.0));
+      l.midiChannel = jsonInt<int>(std::clamp(jl.num("midiChannel", -1), -1.0, 15.0));
+      l.owner = jsonInt<ObjectId>(jl.num("owner", 0));
+      l.index = jsonInt<uint32_t>(jl.num("index", 0));
       l.min = static_cast<float>(std::clamp(jl.num("min", 0), 0.0, 1.0));
       l.max = static_cast<float>(std::clamp(jl.num("max", 1), 0.0, 1.0));
       auto en = [&jl](const char* key, int count) {
-        return static_cast<int>(std::clamp(jl.num(key, 0), 0.0, static_cast<double>(count - 1)));
+        return jsonInt<int>(std::clamp(jl.num(key, 0), 0.0, static_cast<double>(count - 1)));
       };
       l.source = static_cast<RemoteSource>(en("source", static_cast<int>(RemoteSource::Count)));
-      l.port = static_cast<int>(std::clamp(jl.num("port", -1), -1.0, 255.0));
+      l.port = jsonInt<int>(std::clamp(jl.num("port", -1), -1.0, 255.0));
       l.curve = static_cast<ModCurve>(en("curve", static_cast<int>(ModCurve::Count)));
       l.formula = jl.text("formula");
       l.invert = jl.num("invert", 0) != 0;
@@ -1142,14 +1145,14 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   if (const Json* mods = j.find("modLinks"); mods && mods->is(Json::Type::Array))
     for (const auto& jl : mods->array) {
       ModLink l;
-      l.sourceOwner = static_cast<ObjectId>(jl.num("sourceOwner", 0));
-      l.sourceSlot = static_cast<int>(std::clamp(jl.num("sourceSlot", -1), -1.0, static_cast<double>(kEffectSlots - 1)));
-      l.sourceOutput = static_cast<int>(std::clamp(jl.num("sourceOutput", 0), 0.0, static_cast<double>(kMaxControllerOutputs - 1)));
-      l.owner = static_cast<ObjectId>(jl.num("owner", 0));
-      l.index = static_cast<uint32_t>(jl.num("index", 0));
+      l.sourceOwner = jsonInt<ObjectId>(jl.num("sourceOwner", 0));
+      l.sourceSlot = jsonInt<int>(std::clamp(jl.num("sourceSlot", -1), -1.0, static_cast<double>(kEffectSlots - 1)));
+      l.sourceOutput = jsonInt<int>(std::clamp(jl.num("sourceOutput", 0), 0.0, static_cast<double>(kMaxControllerOutputs - 1)));
+      l.owner = jsonInt<ObjectId>(jl.num("owner", 0));
+      l.index = jsonInt<uint32_t>(jl.num("index", 0));
       l.min = static_cast<float>(std::clamp(jl.num("min", 0), 0.0, 1.0));
       l.max = static_cast<float>(std::clamp(jl.num("max", 1), 0.0, 1.0));
-      l.curve = static_cast<ModCurve>(static_cast<int>(std::clamp(jl.num("curve", 0), 0.0, static_cast<double>(static_cast<int>(ModCurve::Count) - 1))));
+      l.curve = static_cast<ModCurve>(jsonInt<int>(std::clamp(jl.num("curve", 0), 0.0, static_cast<double>(static_cast<int>(ModCurve::Count) - 1))));
       l.formula = jl.text("formula");
       l.smoothMs = static_cast<float>(std::clamp(jl.num("smoothMs", 0), 0.0, 10000.0));
       l.enabled = flag(jl, "enabled", true);
@@ -1159,7 +1162,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       s.modLinks.push_back(std::move(l));
     }
   if (!songExtrasFromJson(j, s, takeId, err)) return false;  // live area, arrangements (see block above)
-  s.nextId = std::max<ObjectId>(static_cast<ObjectId>(j.num("nextId", 0)), maxId + 1);
+  s.nextId = std::max<ObjectId>(jsonInt<ObjectId>(j.num("nextId", 0)), maxId + 1);
   out = std::move(s);
   return true;
 }
@@ -1182,7 +1185,11 @@ bool loadProject(const std::string& path, Song& out, std::string* err) {
 std::string projectToText(const Song& song) { return jsonStringify(songToJson(song)) + "\n"; }
 
 bool writeFileAtomic(const std::string& path, const std::string& text, std::string* err) {
-  std::string tmp = path + ".tmp";
+  // A temp name per call: two writers of one file (e.g. the browser indexer's
+  // worker and the UI thread, or two running instances sharing the config
+  // folder's backups) must not write into, or rename away, each other's temp.
+  static std::atomic<unsigned> serial{0};
+  std::string tmp = path + ".tmp." + std::to_string(static_cast<long>(getpid())) + "." + std::to_string(serial.fetch_add(1));
   {
     std::ofstream os(tmp, std::ios::binary | std::ios::trunc);
     if (!os) return fail(err, "cannot write " + tmp);

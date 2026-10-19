@@ -284,6 +284,25 @@ target_include_directories(gridline_tests_export PRIVATE tests)
 target_compile_options(gridline_tests_export PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME export COMMAND gridline_tests_export WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# J-21 QA: mutation fuzzer over the file readers (tests/fuzz/fuzz_main.cpp; long runs by hand,
+# a short smoke run per reader under ctest) and the cross-feature regression tests.
+add_executable(gridline_fuzz tests/fuzz/fuzz_main.cpp)
+target_link_libraries(gridline_fuzz PRIVATE gridline_core)
+target_compile_options(gridline_fuzz PRIVATE -Wall -Wextra -Wpedantic)
+add_executable(gridline_tests_qa tests/test_qa.cpp)
+target_link_libraries(gridline_tests_qa PRIVATE gridline_core)
+target_include_directories(gridline_tests_qa PRIVATE tests)
+target_compile_options(gridline_tests_qa PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME qa COMMAND gridline_tests_qa WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_executable(gridline_tests_qa_cross tests/test_qa_cross.cpp)
+target_link_libraries(gridline_tests_qa_cross PRIVATE gridline_core)
+target_include_directories(gridline_tests_qa_cross PRIVATE tests)
+target_compile_options(gridline_tests_qa_cross PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME qa_cross COMMAND gridline_tests_qa_cross WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+foreach(ft flp fst project sample midi browser-index)
+  add_test(NAME fuzz_${ft} COMMAND gridline_fuzz ${ft} 3 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+endforeach()
+
 # One test executable per pack: tests/packs/test_<pack>.cpp
 file(GLOB GRIDLINE_PACK_TESTS CONFIGURE_DEPENDS tests/packs/test_*.cpp)
 foreach(t ${GRIDLINE_PACK_TESTS})

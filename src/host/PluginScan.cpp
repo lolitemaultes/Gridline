@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <thread>
+#include "../core/Project.h"
 #include "sandbox/Sandbox.h"
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -109,7 +110,7 @@ bool fromJson(const Json& j, ScanResult& r) {
   r.format = j.text("format");
   if (r.format.empty()) r.format = "vst3";
   r.bundle = j.text("bundle");
-  r.mtime = static_cast<int64_t>(j.num("mtime"));
+  r.mtime = jsonInt<int64_t>(j.num("mtime"));
   r.ok = flag(j, "ok");
   r.error = j.text("error");
   if (const Json* cs = j.find("classes"); cs && cs->is(Json::Type::Array))
@@ -124,21 +125,21 @@ bool fromJson(const Json& j, ScanResult& r) {
       c.instrument = flag(jc, "instrument");
       c.eventInput = flag(jc, "eventInput");
       c.eventOutput = flag(jc, "eventOutput");
-      c.inputChannels = static_cast<int>(jc.num("inputs"));
-      c.outputChannels = static_cast<int>(jc.num("outputs"));
-      c.sidechainChannels = static_cast<int>(jc.num("sidechain"));
-      c.latency = static_cast<int>(jc.num("latency"));
+      c.inputChannels = jsonInt<int>(jc.num("inputs"));
+      c.outputChannels = jsonInt<int>(jc.num("outputs"));
+      c.sidechainChannels = jsonInt<int>(jc.num("sidechain"));
+      c.latency = jsonInt<int>(jc.num("latency"));
       c.auxOutputs = readStrings(jc, "auxOutputs");
       c.programs = readStrings(jc, "programs");
       if (const Json* ps = jc.find("params"); ps && ps->is(Json::Type::Array))
         for (const auto& jp : ps->array) {
           ScannedParam p;
-          p.id = static_cast<uint32_t>(jp.num("id"));
+          p.id = jsonInt<uint32_t>(jp.num("id"));
           p.title = jp.text("title");
           p.units = jp.text("units");
-          p.stepCount = static_cast<int>(jp.num("steps"));
+          p.stepCount = jsonInt<int>(jp.num("steps"));
           p.def = std::clamp(jp.num("def"), 0.0, 1.0);
-          p.flags = static_cast<int32_t>(jp.num("flags"));
+          p.flags = jsonInt<int32_t>(jp.num("flags"));
           p.labels = readStrings(jp, "labels");
           c.params.push_back(std::move(p));
         }
@@ -425,14 +426,9 @@ bool ScanCache::save() const {
   j.object["bundles"] = std::move(b);
   std::error_code ec;
   fs::create_directories(fs::path(file_).parent_path(), ec);
-  std::string tmp = file_ + ".tmp";
-  {
-    std::ofstream f(tmp, std::ios::binary);
-    f << jsonStringify(j, 1);
-    if (!f) return false;
-  }
-  fs::rename(tmp, file_, ec);
-  return !ec;
+  // Per-writer temp name: the app's scanner and `gridline scan-plugins` (or a
+  // second instance) may save the shared cache at the same time.
+  return writeFileAtomic(file_, jsonStringify(j, 1));
 }
 
 const ScanResult* ScanCache::find(const std::string& bundle, const std::string& format) const {

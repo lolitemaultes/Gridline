@@ -1150,6 +1150,33 @@ void testSandboxFeatures() {
   host::setRunInSandbox(kClapSynth, false);
 }
 
+// J-21 cross-feature: an offline render (export) of a song whose instrument
+// runs in the sandbox must equal the in-process render, at any block size and
+// with parallel mixer threads (no dropped / late blocks while rendering).
+void testSandboxOfflineRender() {
+  host::setChildExecutable(GRIDLINE_CLI_EXE);
+  Document d(makeEmptySong());
+  d.setParam(songParam(SongParam::Tempo), 132.0, false);
+  ObjectId pat = d.song().patterns[0].id;
+  ObjectId ch = d.addChannel("sandboxed", kClapSynth);
+  for (int k = 0; k < 8; ++k) d.addNote(pat, ch, {k * 48, 40, 60 + k, 110});
+  d.addClip(pat, 0, 0);
+  RenderOptions o;
+  o.blockSize = 256;
+  host::setRunInSandbox(kClapSynth, false);
+  AudioBuffer in = renderSong(d.song(), o);
+  host::setRunInSandbox(kClapSynth, true);
+  AudioBuffer sb = renderSong(d.song(), o);
+  RenderOptions o2 = o;
+  o2.blockSize = 97;
+  o2.threads = 4;
+  AudioBuffer sb2 = renderSong(d.song(), o2);
+  host::setRunInSandbox(kClapSynth, false);
+  expect(in.peak() > 0.1f, "sandbox render fixture makes sound");
+  expect(in.frames == sb.frames && in.data == sb.data, "offline render: sandboxed instrument == in-process (bit-exact)");
+  expect(sb2.frames == sb.frames && sb2.data == sb.data, "offline render: sandboxed, 97-frame blocks + 4 threads identical");
+}
+
 }  // namespace
 
 int main() {
@@ -1170,5 +1197,6 @@ int main() {
   testClapModulation();
   testPresetsAndBypass();
   testSandboxFeatures();
+  testSandboxOfflineRender();
   return finish();
 }

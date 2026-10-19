@@ -3,6 +3,7 @@
 // defines short macro names.
 #include <climits>
 #include <cstring>
+#include <memory>
 #include <vector>
 #include "WavPack.h"
 
@@ -22,7 +23,14 @@ bool decodeOne(const uint8_t* data, size_t size, DecodedAudio& out, std::string*
     return false;
   }
   int e = 0;
-  stb_vorbis* v = stb_vorbis_open_memory(data, static_cast<int>(size), &e, nullptr);
+  // All of stb_vorbis's setup / temp memory comes from one bounded arena: a
+  // corrupt header (e.g. a comment count of 2^31) then fails with "out of
+  // memory" at once instead of allocating per comment for minutes. Real
+  // streams need well under 1 MB; pages are only touched when used.
+  constexpr int kArena = 32 << 20;
+  std::unique_ptr<char[]> arena(new char[kArena]);
+  stb_vorbis_alloc alloc{arena.get(), kArena};
+  stb_vorbis* v = stb_vorbis_open_memory(data, static_cast<int>(size), &e, &alloc);
   if (!v) {
     if (err) *err = "cannot decode Ogg Vorbis (error " + std::to_string(e) + ")";
     return false;

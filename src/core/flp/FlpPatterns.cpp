@@ -87,7 +87,7 @@ void importPatterns(Context& c) {
     }
     for (auto& [ch, ns] : p.notes) std::stable_sort(ns.begin(), ns.end(), [](const Note& a, const Note& b) { return a.start < b.start; });
     const Tick bar = std::max<Tick>(1, s.barTicks());
-    p.bars = std::max<int>(1, static_cast<int>(((fixedLen > 0 ? fixedLen : end) + bar - 1) / bar));
+    p.bars = static_cast<int>(std::clamp<Tick>(((fixedLen > 0 ? fixedLen : end) + bar - 1) / bar, 1, kMaxPatternBars));  // longer content still plays
     fixedLengths += fixedLen > 0;
     s.patterns.push_back(p);
     c.patternIds[idx] = p.id;

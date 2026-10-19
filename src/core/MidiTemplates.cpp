@@ -46,7 +46,7 @@ const char* takeoverKey(RemoteTakeover t) {
 }
 
 int channelOf(const Json& j) {
-  int c = static_cast<int>(j.num("channel", 0));
+  int c = jsonInt<int>(j.num("channel", 0));
   return c >= 1 && c <= 16 ? c - 1 : -1;
 }
 
@@ -55,12 +55,12 @@ bool controlFrom(const Json& j, TemplateControl& c) {
   c.channel = channelOf(j);
   if (const Json* v = j.find("cc"); v && v->is(Json::Type::Number)) {
     c.source = RemoteSource::CC;
-    c.number = std::clamp(static_cast<int>(v->number), 0, 127);
+    c.number = std::clamp(jsonInt<int>(v->number), 0, 127);
     return true;
   }
   if (const Json* v = j.find("note"); v && v->is(Json::Type::Number)) {
     c.source = RemoteSource::Note;
-    c.number = std::clamp(static_cast<int>(v->number), 0, 127);
+    c.number = std::clamp(jsonInt<int>(v->number), 0, 127);
     return true;
   }
   return false;
@@ -85,7 +85,7 @@ std::vector<TemplateControl> controlList(const Json& j, RemoteEncoder* enc) {
         if (v.is(Json::Type::Number)) {
           TemplateControl c;
           c.source = key[0] == 'c' ? RemoteSource::CC : RemoteSource::Note;
-          c.number = std::clamp(static_cast<int>(v.number), 0, 127);
+          c.number = std::clamp(jsonInt<int>(v.number), 0, 127);
           c.channel = ch;
           out.push_back(c);
         }

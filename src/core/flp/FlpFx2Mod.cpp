@@ -89,7 +89,7 @@ bool decodeSpreader(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   if (r.n < 12) return false;
   const uint32_t ver = r.u32();
   std::vector<double> t;
-  int version = static_cast<int>(ver) - 0x10000;
+  int64_t version = static_cast<int64_t>(ver) - 0x10000;
   if (version <= 0) {  // v1: the knobs start at the first word
     version = 1;
     t.push_back(static_cast<int32_t>(ver));
@@ -216,7 +216,7 @@ bool decodeSend(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   fx::applyTable(m, tab, t);
   const int target = static_cast<int>(t[3]);
   m.exact = false;
-  if (target >= 0) {
+  if (target >= 0 && target < 4096) {  // corrupt targets: treated as none
     // FL's send targets are counted from the first insert after the master.
     fx::set(m, md::SnTarget, target + 1);
   } else {

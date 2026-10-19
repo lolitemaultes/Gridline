@@ -7,6 +7,7 @@
 #include <mutex>
 #include <sstream>
 #include "../core/Json.h"
+#include "../core/Project.h"
 
 namespace fs = std::filesystem;
 
@@ -74,13 +75,7 @@ void save(const Store& s) {
   j.object["options"] = std::move(opts);
   std::error_code ec;
   fs::create_directories(fs::path(s.file).parent_path(), ec);
-  std::string tmp = s.file + ".tmp";
-  {
-    std::ofstream f(tmp, std::ios::binary);
-    f << jsonStringify(j, 1);
-    if (!f) return;
-  }
-  fs::rename(tmp, s.file, ec);
+  writeFileAtomic(s.file, jsonStringify(j, 1));  // per-writer temp name (several instances share the file)
 }
 }  // namespace
 
@@ -107,7 +102,7 @@ void loadPluginPrefs(const std::string& configDir) {
           if (!v.is(Json::Type::Object)) continue;
           HostOptions h;
           h.fixedBuffers = readBool(v, "fixedBuffers", h.fixedBuffers);
-          h.fixedSize = static_cast<int>(std::clamp(v.num("fixedSize", h.fixedSize), 32.0, 4096.0));
+          h.fixedSize = jsonInt<int>(std::clamp(v.num("fixedSize", h.fixedSize), 32.0, 4096.0));
           h.maxBuffers = readBool(v, "maxBuffers", h.maxBuffers);
           h.notifyRender = readBool(v, "notifyRender", h.notifyRender);
           h.modulation = readBool(v, "modulation", h.modulation);

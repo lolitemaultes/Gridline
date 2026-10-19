@@ -56,7 +56,7 @@ bool decodeKeys(Context& c, const std::vector<Event>& events, PluginMapping& m) 
   setp(s, KyStretch, clampd(p[10] / 10.0, -50, 50));
   setp(s, KyTreble, clampd(p[11] / 1000.0 * 12.0, -12, 12));
   setp(s, KyModMode, p[12] < 0 ? 1 : 0);  // negative = auto-pan, positive = tremolo
-  setp(s, KyTremDepth, clampd(std::abs(p[12]) / 1000.0, 0, 1));
+  setp(s, KyTremDepth, clampd(std::fabs(static_cast<double>(p[12])) / 1000.0, 0, 1));
   setp(s, KyTremRate, KeysConv::lfoRate(p[13]));
   setp(s, KyDrive, clampd(p[14] / 1000.0, 0, 1));
   // Sample set → the closest of the Keys models (Gridline's keys are modelled, not sampled).

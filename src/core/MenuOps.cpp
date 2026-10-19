@@ -591,7 +591,7 @@ ObjectId mergeClips(Document& d, const std::set<ObjectId>& clips) {
     np.color = x.pattern(sel[0].pattern)->color;
     np.stepsPerBar = 16;
     Tick bar = std::max<Tick>(1, x.barTicks());
-    np.bars = static_cast<int>(std::max<Tick>(1, (hi - lo + bar - 1) / bar));
+    np.bars = static_cast<int>(std::clamp<Tick>((hi - lo + bar - 1) / bar, 1, kMaxPatternBars));  // longer content still plays
     for (const auto& c : sel) {
       const Pattern& p = *x.pattern(c.pattern);
       Tick clipLen = x.clipLength(c), patLen = std::max<Tick>(1, x.patternContentLength(p)), tps = x.ticksPerStep(p);

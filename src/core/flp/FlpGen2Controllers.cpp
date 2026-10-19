@@ -77,8 +77,8 @@ bool decodeVoltageController(Context&, const std::vector<Event>& evs, PluginMapp
   begin(m, "gl.cvctl");
   if (b.size() < 0x4d) return true;
   bool exact = true;
-  set(m, mod::CvLeftOfs, (b.i32(4) - 32768) / 32768.0);
-  set(m, mod::CvRightOfs, (b.i32(8) - 32768) / 32768.0);
+  set(m, mod::CvLeftOfs, (b.i32(4) - 32768.0) / 32768.0);
+  set(m, mod::CvRightOfs, (b.i32(8) - 32768.0) / 32768.0);
   set(m, mod::CvLeftScale, knob(b.i32(0x24)));
   set(m, mod::CvRightScale, knob(b.i32(0x28)));
   set(m, mod::CvLeftSrc, cvSource(b.u8(0x44), exact));
@@ -88,7 +88,7 @@ bool decodeVoltageController(Context&, const std::vector<Event>& evs, PluginMapp
     static const int ppqs[] = {2, 4, 8, 12, 16, 24, 32, 48, 64, 96};
     int ppq = b.i32(0x63), best = 5;
     for (int i = 0; i < 10; ++i)
-      if (std::abs(ppqs[i] - ppq) < std::abs(ppqs[best] - ppq)) best = i;
+      if (std::llabs(int64_t{ppqs[i]} - ppq) < std::llabs(int64_t{ppqs[best]} - ppq)) best = i;
     set(m, mod::CvClockPpq, best);
   }
   if (b.has(0x67, 4) && b.i32(0x67) > 0) set(m, mod::CvPulse, b.i32(0x67) / 44100.0);

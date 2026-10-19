@@ -1,2 +1,4 @@
 stb_vorbis.c v1.22 (https://github.com/nothings/stb), public domain / MIT (see end of file).
 Used by src/engine/AudioCodecs.cpp to decode Ogg Vorbis samples.
+Local patches (marked GRIDLINE PATCH): comment-header lengths / count validated in start_decoder
+(a corrupt count overflowed the comment array size and wrote past it; found by the J-21 fuzzer).

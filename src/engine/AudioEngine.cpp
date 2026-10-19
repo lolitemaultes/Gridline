@@ -894,6 +894,13 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       }
     const size_t lat = static_cast<size_t>(recLatency_.load(std::memory_order_relaxed));
     const size_t mask = kTickHistory - 1;
+    // A longer latency reaches further back than any frame read so far: those
+    // entries are positions of an earlier (finished) pass, which would replay
+    // as a ghost take. Forget them; the new latency starts from silence.
+    if (lat > tickHistLat_) {
+      for (size_t i = tickHistLat_ + 1; i <= lat; ++i) tickHist_[(tickHistPos_ - i) & mask] = -1.0;
+    }
+    tickHistLat_ = lat;
     for (int i = 0; i < n; ++i) {
       tickHist_[tickHistPos_ & mask] = cur[i];
       cur[i] = tickHist_[(tickHistPos_ - lat) & mask];

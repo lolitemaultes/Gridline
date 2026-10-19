@@ -263,12 +263,12 @@ double envSeconds(int v) {
   // FL's envelope time knobs span 100..65536 on a strongly curved scale.
   // Same cubic 0..10 s curve as the channel importer (FlpChannels.cpp), which
   // also applies the volume envelope to Trio Synth channels after this decoder.
-  double x = std::clamp((v - 100) / (65536.0 - 100.0), 0.0, 1.0);
+  double x = std::clamp((v - 100.0) / (65536.0 - 100.0), 0.0, 1.0);
   return std::max(0.001, 10.0 * x * x * x);
 }
 
 double lfoHz(int v) {
-  double x = std::clamp((v - 200) / (65536.0 - 200.0), 0.0, 1.0);
+  double x = std::clamp((v - 200.0) / (65536.0 - 200.0), 0.0, 1.0);
   return 0.05 * std::pow(400.0, x);
 }
 

@@ -132,7 +132,7 @@ bool decodeHarmlessFull(Context& c, const std::vector<Event>& events, PluginMapp
   setp(s, md::AdPluckRel, p[35] ? 1 : 0);
   // ---- master, pitch (detuning moves the partials with the pitch)
   setp(s, md::AdVolume, HlConv::volume(p[36]));
-  setp(s, md::AdPitch, clampd((p[38] + p[39]) / 100.0, -24, 24));
+  setp(s, md::AdPitch, clampd((static_cast<double>(p[38]) + p[39]) / 100.0, -24, 24));
   setp(s, md::AdFine, 0.0);
   setp(s, md::AdDetune, 0.0);
   setp(s, md::AdGrit, clampd(f(40, 1000), -1, 1));
@@ -214,13 +214,13 @@ bool decodeHarmlessFull(Context& c, const std::vector<Event>& events, PluginMapp
   setp(s, md::AdLfoTempo, 1);  // always tempo-locked (rate = cycles per bar)
   setp(s, md::AdLfoRate, p[89] == 0 ? 0.05 : HlConv::cyclesPerBar(p[89]));
   // ---- effects (combo indices: 0 = off)
-  setp(s, md::AdChType, std::clamp(p[90] - 1, 0, 8));
+  setp(s, md::AdChType, std::clamp(p[90], 1, 9) - 1);
   setp(s, md::AdFx + md::FxChorus, p[90] >= 1 ? clampd(f(91, 1000), 0, 1) : 0.0);
-  setp(s, md::AdDelType, std::clamp(p[92] - 1, 0, 2));
+  setp(s, md::AdDelType, std::clamp(p[92], 1, 3) - 1);
   setp(s, md::AdFx + md::FxDelay, p[92] >= 1 ? clampd(HlConv::l11(f(93, 1000)), 0, 1) : 0.0);
   setp(s, md::AdFx + md::FxDelayFeedback, clampd(f(94, 1000), 0, 0.9));
   setp(s, md::AdFx + md::FxDelayTime, clampd(p[95] * 0.3125 / tempo, 0.02, 1.5));  // 1/192-beat ticks
-  setp(s, md::AdRevType, std::clamp(p[96] - 1, 0, 5));
+  setp(s, md::AdRevType, std::clamp(p[96], 1, 6) - 1);
   setp(s, md::AdFx + md::FxReverb, p[96] >= 1 ? clampd(0.5 * HlConv::l11(f(97, 1000)) * 1.6, 0, 1) : 0.0);
   setp(s, md::AdFx + md::FxRoomSize, 0.6);
   setp(s, md::AdCompType, std::clamp(opt[3], 0, 4));

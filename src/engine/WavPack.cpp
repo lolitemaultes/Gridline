@@ -83,6 +83,12 @@ int restoreWeight(int8_t w) {
   return r;
 }
 
+// Decorrelation arithmetic wraps like the reference decoder's 32-bit integers
+// (valid streams never overflow; corrupt ones must not be undefined behaviour).
+inline int32_t wadd(int32_t a, int32_t b) { return static_cast<int32_t>(static_cast<uint32_t>(a) + static_cast<uint32_t>(b)); }
+inline int32_t pred17(const int32_t* a) { return static_cast<int32_t>(2 * static_cast<int64_t>(a[0]) - a[1]); }
+inline int32_t pred18(const int32_t* a) { return static_cast<int32_t>((3 * static_cast<int64_t>(a[0]) - a[1]) >> 1); }
+
 int32_t applyWeight(int32_t weight, int32_t sample) {
   if (sample == static_cast<int16_t>(sample)) return static_cast<int32_t>((static_cast<int64_t>(weight) * sample + 512) >> 10);
   // Wide samples: split product, rounded the same way the encoder does it.
@@ -341,9 +347,9 @@ struct Pass {
 void monoPass(Pass& d, int32_t* buf, size_t n) {
   if (d.term == 17 || d.term == 18) {
     for (size_t i = 0; i < n; ++i) {
-      int32_t sam = d.term == 17 ? 2 * d.a[0] - d.a[1] : (3 * d.a[0] - d.a[1]) >> 1;
+      int32_t sam = d.term == 17 ? pred17(d.a) : pred18(d.a);
       d.a[1] = d.a[0];
-      d.a[0] = applyWeight(d.weightA, sam) + buf[i];
+      d.a[0] = wadd(applyWeight(d.weightA, sam), buf[i]);
       updateWeight(d.weightA, d.delta, sam, buf[i]);
       buf[i] = d.a[0];
     }
@@ -352,7 +358,7 @@ void monoPass(Pass& d, int32_t* buf, size_t n) {
   int m = 0, k = d.term & (kMaxTerm - 1);
   for (size_t i = 0; i < n; ++i) {
     int32_t sam = d.a[m];
-    d.a[k] = applyWeight(d.weightA, sam) + buf[i];
+    d.a[k] = wadd(applyWeight(d.weightA, sam), buf[i]);
     updateWeight(d.weightA, d.delta, sam, buf[i]);
     buf[i] = d.a[k];
     m = (m + 1) & (kMaxTerm - 1);
@@ -366,43 +372,43 @@ void stereoPass(Pass& d, int32_t* buf, size_t frames) {
     case 17:
     case 18:
       for (int32_t* p = buf; p < end; p += 2) {
-        int32_t sa = d.term == 17 ? 2 * d.a[0] - d.a[1] : (3 * d.a[0] - d.a[1]) >> 1;
+        int32_t sa = d.term == 17 ? pred17(d.a) : pred18(d.a);
         d.a[1] = d.a[0];
-        d.a[0] = applyWeight(d.weightA, sa) + p[0];
+        d.a[0] = wadd(applyWeight(d.weightA, sa), p[0]);
         updateWeight(d.weightA, d.delta, sa, p[0]);
         p[0] = d.a[0];
-        int32_t sb = d.term == 17 ? 2 * d.b[0] - d.b[1] : (3 * d.b[0] - d.b[1]) >> 1;
+        int32_t sb = d.term == 17 ? pred17(d.b) : pred18(d.b);
         d.b[1] = d.b[0];
-        d.b[0] = applyWeight(d.weightB, sb) + p[1];
+        d.b[0] = wadd(applyWeight(d.weightB, sb), p[1]);
         updateWeight(d.weightB, d.delta, sb, p[1]);
         p[1] = d.b[0];
       }
       break;
     case -1:
       for (int32_t* p = buf; p < end; p += 2) {
-        int32_t sa = p[0] + applyWeight(d.weightA, d.a[0]);
+        int32_t sa = wadd(p[0], applyWeight(d.weightA, d.a[0]));
         updateWeightClip(d.weightA, d.delta, d.a[0], p[0]);
         p[0] = sa;
-        d.a[0] = p[1] + applyWeight(d.weightB, sa);
+        d.a[0] = wadd(p[1], applyWeight(d.weightB, sa));
         updateWeightClip(d.weightB, d.delta, sa, p[1]);
         p[1] = d.a[0];
       }
       break;
     case -2:
       for (int32_t* p = buf; p < end; p += 2) {
-        int32_t sb = p[1] + applyWeight(d.weightB, d.b[0]);
+        int32_t sb = wadd(p[1], applyWeight(d.weightB, d.b[0]));
         updateWeightClip(d.weightB, d.delta, d.b[0], p[1]);
         p[1] = sb;
-        d.b[0] = p[0] + applyWeight(d.weightA, sb);
+        d.b[0] = wadd(p[0], applyWeight(d.weightA, sb));
         updateWeightClip(d.weightA, d.delta, sb, p[0]);
         p[0] = d.b[0];
       }
       break;
     case -3:
       for (int32_t* p = buf; p < end; p += 2) {
-        int32_t sa = p[0] + applyWeight(d.weightA, d.a[0]);
+        int32_t sa = wadd(p[0], applyWeight(d.weightA, d.a[0]));
         updateWeightClip(d.weightA, d.delta, d.a[0], p[0]);
-        int32_t sb = p[1] + applyWeight(d.weightB, d.b[0]);
+        int32_t sb = wadd(p[1], applyWeight(d.weightB, d.b[0]));
         updateWeightClip(d.weightB, d.delta, d.b[0], p[1]);
         p[0] = d.b[0] = sa;
         p[1] = d.a[0] = sb;
@@ -412,8 +418,8 @@ void stereoPass(Pass& d, int32_t* buf, size_t frames) {
       int m = 0, k = d.term & (kMaxTerm - 1);
       for (int32_t* p = buf; p < end; p += 2) {
         int32_t sa = d.a[m], sb = d.b[m];
-        d.a[k] = applyWeight(d.weightA, sa) + p[0];
-        d.b[k] = applyWeight(d.weightB, sb) + p[1];
+        d.a[k] = wadd(applyWeight(d.weightA, sa), p[0]);
+        d.b[k] = wadd(applyWeight(d.weightB, sb), p[1]);
         updateWeight(d.weightA, d.delta, sa, p[0]);
         updateWeight(d.weightB, d.delta, sb, p[1]);
         p[0] = d.a[k];
@@ -682,7 +688,10 @@ bool decodeBlock(const uint8_t* blk, uint32_t flags, uint32_t frames, uint32_t b
       stereoPass(ps, buf.data(), frames);
   }
   if (!monoData && (flags & kJoint))
-    for (size_t i = 0; i < count; i += 2) buf[i] += (buf[i + 1] -= (buf[i] >> 1));
+    for (size_t i = 0; i < count; i += 2) {  // wrapping, like the 32-bit reference (corrupt data must not be UB)
+      buf[i + 1] = static_cast<int32_t>(static_cast<uint32_t>(buf[i + 1]) - static_cast<uint32_t>(buf[i] >> 1));
+      buf[i] = wadd(buf[i], buf[i + 1]);
+    }
   // The checksum covers the integers as decoded (for hybrid files: the lossy ones).
   uint32_t crc = 0xffffffffu;
   for (int32_t v : buf) crc = crc * 3 + static_cast<uint32_t>(v);

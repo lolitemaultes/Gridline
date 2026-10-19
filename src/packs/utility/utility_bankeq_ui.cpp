@@ -181,7 +181,7 @@ void editorBankEq(App& a, const PluginTarget& t, float width) {
   ImGui::InvisibleButton("##bqmodes", ImVec2(m1.x - m0.x, m1.y - m0.y));
   {
     bool hov = ImGui::IsItemHovered();
-    int hb = std::clamp(static_cast<int>((io.MousePos.x - m0.x) / cellW), 0, kBqBands - 1);
+    int hb = hov ? std::clamp(static_cast<int>((io.MousePos.x - m0.x) / cellW), 0, kBqBands - 1) : 0;  // no mouse: -FLT_MAX
     for (int b = 0; b < kBqBands; ++b) {
       int mode = std::clamp(ival(st, bqMode(target, b)), 0, 2);
       ImVec2 c0(m0.x + b * cellW + 1, m0.y), c1(m0.x + (b + 1) * cellW - 1, m1.y);

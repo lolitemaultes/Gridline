@@ -22,11 +22,14 @@ struct ParamDesc {
   std::vector<std::string> choices;  // ParamKind::Choice labels (value = index)
 
   double clamp(double v) const {
+    if (v != v) v = def;  // NaN (corrupt files, broken DSP) -> default
     if (kind == ParamKind::Toggle) return v >= 0.5 ? 1.0 : 0.0;
     if (kind == ParamKind::Choice) {
-      double r = static_cast<double>(static_cast<long long>(v + 0.5));
       double hi = choices.empty() ? max : static_cast<double>(choices.size() - 1);
-      return r < 0 ? 0 : (r > hi ? hi : r);
+      if (!(v + 0.5 >= 1.0)) return 0;  // also keeps the cast below in range
+      if (v >= hi) return hi;
+      double r = static_cast<double>(static_cast<long long>(v + 0.5));
+      return r > hi ? hi : r;
     }
     return v < min ? min : (v > max ? max : v);
   }

@@ -124,6 +124,10 @@ struct PatternAutomation {
   bool operator==(const PatternAutomation& o) const { return owner == o.owner && index == o.index && points == o.points; }
 };
 
+// Limits of Pattern::bars / stepsPerBar a project file accepts (Project.cpp
+// rejects others). Longer note content still plays: the content length follows the notes.
+inline constexpr int kMaxPatternBars = 1024;
+inline constexpr int kMaxStepsPerBar = 192;
 // Per-step parameters of a step-sequencer row (graph / keyboard editor, J-11).
 // Defaults are neutral: a step plays C5 like before.
 inline constexpr int kStepShiftMax = 100;  // shift: percent of a step

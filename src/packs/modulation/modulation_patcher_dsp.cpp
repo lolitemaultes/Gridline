@@ -362,8 +362,8 @@ PatchGraph parsePatchGraph(const std::string& data) {
       if (const Json* t = jm.find("targets"); t && t->is(Json::Type::Array))
         for (const auto& jt : t->array) {
           PatchMacroTarget mt;
-          mt.node = static_cast<int>(jt.num("node", 0));
-          mt.param = static_cast<int>(jt.num("param", 0));
+          mt.node = jsonInt<int>(jt.num("node", 0));
+          mt.param = jsonInt<int>(jt.num("param", 0));
           mt.min = static_cast<float>(std::clamp(jt.num("min", 0), 0.0, 1.0));
           mt.max = static_cast<float>(std::clamp(jt.num("max", 1), 0.0, 1.0));
           if (mt.node >= 0 && static_cast<size_t>(mt.node) < g.nodes.size()) g.macros[m].push_back(mt);

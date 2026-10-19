@@ -345,6 +345,22 @@ bool Document::removeChannel(ObjectId id) {
                 links.end());
     setModLinks(std::move(links), "delete channel");
   }
+  // Audio clips playing through the channel (every arrangement) and layer
+  // references to it go too: left behind they dangle, and a saved project
+  // silently lost them on load (J-21 undo/save stress).
+  bool refs = false;
+  auto audioOf = [id](const Clip& c) { return c.kind == ClipKind::Audio && c.source == id; };
+  for (const auto& c : song_.playlist) refs = refs || audioOf(c);
+  for (const auto& a : song_.arrangements)
+    for (const auto& c : a.playlist) refs = refs || audioOf(c);
+  for (const auto& ch : song_.channels) refs = refs || std::find(ch.layer.begin(), ch.layer.end(), id) != ch.layer.end();
+  if (refs)
+    editSong("delete channel", [&](Song& s) {
+      auto drop = [&](std::vector<Clip>& v) { v.erase(std::remove_if(v.begin(), v.end(), audioOf), v.end()); };
+      drop(s.playlist);
+      for (auto& a : s.arrangements) drop(a.playlist);
+      for (auto& ch : s.channels) ch.layer.erase(std::remove(ch.layer.begin(), ch.layer.end(), id), ch.layer.end());
+    });
   endGroup();
   return true;
 }
@@ -448,7 +464,9 @@ bool Document::setParam(ParamId id, double value, bool merge) {
 // --- patterns -----------------------------------------------------------------
 
 ObjectId Document::addPattern(const std::string& name, int bars, int stepsPerBar, int index) {
-  if (bars <= 0 || stepsPerBar <= 0 || static_cast<int>(song_.patterns.size()) >= kMaxPatterns) return kNoId;
+  if (bars <= 0 || stepsPerBar <= 0 || bars > kMaxPatternBars || stepsPerBar > kMaxStepsPerBar ||
+      static_cast<int>(song_.patterns.size()) >= kMaxPatterns)
+    return kNoId;
   Pattern p;
   p.id = song_.nextId;
   p.name = name;
@@ -515,7 +533,7 @@ bool Document::renamePattern(ObjectId id, const std::string& name) {
 }
 
 bool Document::setPatternLength(ObjectId id, int bars, int stepsPerBar) {
-  if (bars <= 0 || stepsPerBar <= 0) return false;
+  if (bars <= 0 || stepsPerBar <= 0 || bars > kMaxPatternBars || stepsPerBar > kMaxStepsPerBar) return false;
   return editPattern(id, "change pattern length", [&](Pattern& p) {
     p.bars = bars;
     p.stepsPerBar = stepsPerBar;

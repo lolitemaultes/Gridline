@@ -1181,7 +1181,7 @@ void editorScratch(App& a, const PluginTarget& t, float width) {
   const float kW = leftW / 12, kH = 34;
   ImGui::InvisibleButton("##movekeys", ImVec2(leftW, kH));
   bool khov = ImGui::IsItemHovered();
-  int hk = std::clamp(static_cast<int>((io.MousePos.x - kp.x) / kW), 0, 11);
+  int hk = khov ? std::clamp(static_cast<int>((io.MousePos.x - kp.x) / kW), 0, 11) : 0;  // no mouse: -FLT_MAX
   for (int k = 0; k < 12; ++k) {
     float x0 = kp.x + k * kW;
     bool black = isBlack(k), sel = ed.move == k;

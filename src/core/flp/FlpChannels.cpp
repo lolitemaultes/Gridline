@@ -180,7 +180,7 @@ void importChannels(Context& c) {
       if (type == 0 && stretchMode == 0 && stretchMul != 1) cents -= 1200.0 * std::log2(stretchMul);
     }
     {
-      long total = std::lround(cents);
+      long total = std::lround(std::isfinite(cents) ? std::clamp(cents, -1e6, 1e6) : 0.0);  // corrupt values: no overflow
       long semis = std::clamp<long>((total >= 0 ? total + 50 : total - 50) / 100, -24, 24);
       ch.pitch = static_cast<int>(semis);
       ch.fine = static_cast<int>(std::clamp<long>(total - semis * 100, -200, 200));

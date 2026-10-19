@@ -666,7 +666,7 @@ bool decodeVocodex(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
   applyTable(m, *table, fl);
   set(m, sp::VxHoldMode, iv[0] ? 1 : 0);
   set(m, sp::VxOrder, std::clamp(iv[1], 1, 4) - 1);
-  set(m, sp::VxUnison, std::clamp(iv[2] + 1, 1, sp::kVxMaxUnison));
+  set(m, sp::VxUnison, std::clamp(iv[2], 0, sp::kVxMaxUnison - 1) + 1);
   set(m, sp::VxBands, std::clamp(iv[3], 5, sp::kVxMaxBands));
   set(m, sp::VcModSource, iv[5] >= 1 ? 1 : 0);
   set(m, sp::VxCarSource, iv[6] < 0 ? 0 : (iv[6] == 0 ? 1 : 2));

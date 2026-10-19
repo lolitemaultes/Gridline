@@ -860,13 +860,13 @@ bool Index::load() {
       m.path = p;
       m.kind = kindOf(p);
       m.analysed = true;
-      m.size = static_cast<uint64_t>(e.num("s"));
-      m.mtime = static_cast<int64_t>(e.num("m"));
+      m.size = jsonInt<uint64_t>(e.num("s"));
+      m.mtime = jsonInt<int64_t>(e.num("m"));
       m.seconds = e.num("sec");
       m.rate = e.num("rate");
-      m.channels = static_cast<int>(e.num("ch"));
+      m.channels = jsonInt<int>(e.num("ch"));
       m.bpm = e.num("bpm");
-      int k = static_cast<int>(e.num("key", -1));
+      int k = jsonInt<int>(e.num("key", -1));
       if (k >= 0 && k < 24) m.key = k % 12, m.minor = k >= 12;
       m.peaks = e.text("peaks");
       if (auto t = tags_.find(p); t != tags_.end()) m.tags = t->second;

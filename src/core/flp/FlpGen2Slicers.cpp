@@ -275,8 +275,8 @@ bool decodeSlicex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
     const int ik = static_cast<int>(k);
     set(m, slParam(ik, SliceGain), vol > 0 ? std::clamp(20.0 * std::log10(vol / 8000.0), -24.0, 12.0) : -24.0);
     set(m, slParam(ik, SlicePan), std::clamp(pan / 6400.0, -1.0, 1.0));
-    set(m, slParam(ik, SliceCutoff), std::clamp((cut - 128) / 128.0, -1.0, 1.0));
-    set(m, slParam2(ik, SliceReso), std::clamp((res - 128) / 128.0, -1.0, 1.0));
+    set(m, slParam(ik, SliceCutoff), std::clamp((cut - 128.0) / 128.0, -1.0, 1.0));
+    set(m, slParam2(ik, SliceReso), std::clamp((res - 128.0) / 128.0, -1.0, 1.0));
     static const int kDefault[17] = {0, 0, 0, 8000, 0, 12800, 128, 128, 0, 12800, 0, 0, 12800, 0, 0, 0, 12800};
     for (int f = 0; f < 17; ++f)
       if (f != 3 && f != 4 && f != 6 && f != 7 && s.i32(r + 4 * static_cast<size_t>(f)) != kDefault[f]) regionsDefault = false;
@@ -343,7 +343,7 @@ bool decodeGranulizer(Context& c, const std::vector<Event>& evs, PluginMapping& 
   set(m, GrDensity, std::clamp(1.0 / spacing, 2.0, 120.0));
   set(m, GrSize, std::clamp(spacing * 2.0, 0.01, 0.5));
   set(m, GrShape, std::clamp(att / std::max(1.0, 2.0 * att + hold), 0.02, 0.5));
-  double speed = ws == 0 ? 0.0 : (ws < 0 ? -1.0 : 1.0) * std::exp2((std::abs(ws) - gs) / 200.0);
+  double speed = ws == 0 ? 0.0 : (ws < 0 ? -1.0 : 1.0) * std::exp2((std::fabs(static_cast<double>(ws)) - gs) / 200.0);
   set(m, GrSpeed, std::clamp(speed, -2.0, 2.0));
   set(m, GrFreeze, 0);
   set(m, GrPosition, std::clamp(start / 4096.0, 0.0, 1.0));

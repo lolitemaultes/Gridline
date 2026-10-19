@@ -397,7 +397,7 @@ bool decodeOgun(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   set(m, AdSpectrumB, SpRandom);
   set(m, AdMorph, clampd(t(OgRandom) / 1000.0, 0, 1) * 0.5);
   set(m, AdScatter, clampd(t(OgRandom) / 1000.0, 0, 1));
-  set(m, AdSeed, 1 + ((t(OgSeed1) + 31 * t(OgSeed2)) % 64 + 64) % 64);
+  set(m, AdSeed, 1 + ((static_cast<int64_t>(t(OgSeed1)) + 31 * static_cast<int64_t>(t(OgSeed2))) % 64 + 64) % 64);
   set(m, AdPartials, 256);
   set(m, AdTilt, clampd(t(OgFullness) / 1000.0, -1, 1) * 12.0);
   set(m, AdFltType, AfLowPass);

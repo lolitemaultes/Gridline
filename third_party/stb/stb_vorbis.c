@@ -1583,8 +1583,8 @@ static int get32_packet(vorb *f)
 {
    uint32 x;
    x = get8_packet(f);
-   x += get8_packet(f) << 8;
-   x += get8_packet(f) << 16;
+   x += (uint32) get8_packet(f) << 8;   // GRIDLINE PATCH: EOP (-1) << n is undefined
+   x += (uint32) get8_packet(f) << 16;
    x += (uint32) get8_packet(f) << 24;
    return x;
 }
@@ -3650,6 +3650,7 @@ static int start_decoder(vorb *f)
    if (!vorbis_validate(header))                    return error(f, VORBIS_invalid_setup);
    //file vendor
    len = get32_packet(f);
+   if (len < 0 || len > (1 << 28))                  return error(f, VORBIS_invalid_setup);  // GRIDLINE PATCH: corrupt length
    f->vendor = (char*)setup_malloc(f, sizeof(char) * (len+1));
    if (f->vendor == NULL)                           return error(f, VORBIS_outofmem);
    for(i=0; i < len; ++i) {
@@ -3658,17 +3659,26 @@ static int start_decoder(vorb *f)
    f->vendor[len] = (char)'\0';
    //user comments
    f->comment_list_length = get32_packet(f);
+   // GRIDLINE PATCH: a corrupt count overflowed sizeof(char*) * count (int) and
+   // the loop below wrote past the array; each comment takes >= 4 bytes anyway.
+   // On every error below comment_list_length is cut to the entries that exist:
+   // vorbis_deinit frees comment_list[0 .. comment_list_length).
    f->comment_list = NULL;
+   if (f->comment_list_length < 0 || f->comment_list_length > (1 << 24)) {
+      f->comment_list_length = 0;
+      return error(f, VORBIS_invalid_setup);
+   }
    if (f->comment_list_length > 0)
    {
       f->comment_list = (char**) setup_malloc(f, sizeof(char*) * (f->comment_list_length));
-      if (f->comment_list == NULL)                  return error(f, VORBIS_outofmem);
+      if (f->comment_list == NULL) { f->comment_list_length = 0; return error(f, VORBIS_outofmem); }
    }
 
    for(i=0; i < f->comment_list_length; ++i) {
       len = get32_packet(f);
+      if (len < 0 || len > (1 << 28)) { f->comment_list_length = i; return error(f, VORBIS_invalid_setup); }
       f->comment_list[i] = (char*)setup_malloc(f, sizeof(char) * (len+1));
-      if (f->comment_list[i] == NULL)               return error(f, VORBIS_outofmem);
+      if (f->comment_list[i] == NULL) { f->comment_list_length = i; return error(f, VORBIS_outofmem); }
 
       for(j=0; j < len; ++j) {
          f->comment_list[i][j] = get8_packet(f);

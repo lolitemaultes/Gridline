@@ -45,6 +45,7 @@ void usage() {
       "  gridline import-midi <file.mid> -o <out.json>   new project from a MIDI file\n"
       "  gridline collect|bones <project.json> -o <folder>   copy the project + its samples (bones: + MIDI, presets)\n"
       "  gridline zip <project.json> -o <out.zip>          zipped project with its samples\n"
+      "  gridline render-stats <project.json> [--max-seconds S]   QA: render in memory, print level / NaN / clipping\n"
       "  gridline info   <project.json>\n"
       "  gridline upgrade <project.json> [-o <out.json>]\n"
       "  gridline demo    <out.json>                 write the demo song\n"
@@ -324,6 +325,48 @@ int main(int argc, char** argv) {
       return 1;
     }
     std::printf("wrote %s (schema %d)\n", out.c_str(), gl::kProjectSchemaVersion);
+    return 0;
+  }
+
+  if (cmd == "render-stats") {
+    // QA sweeps (J-21): render in memory (optionally only the first S seconds)
+    // and report non-finite samples, level, clipping and silence; no file.
+    for (int i = 3; i + 1 < argc; ++i)
+      if (!std::strcmp(argv[i], "--max-seconds")) {
+        gl::TempoMap tm;
+        tm.build(song);
+        const auto lim = static_cast<gl::Tick>(tm.tickAtSeconds(std::atof(argv[i + 1])));
+        std::vector<gl::Clip> kept;
+        for (auto c : song.playlist)
+          if (c.start < lim) {
+            c.length = std::min<gl::Tick>(song.clipLength(c), lim - c.start);
+            kept.push_back(c);
+          }
+        song.playlist = std::move(kept);
+      }
+    gl::RenderOptions opt;
+    opt.tail = song.ppq * 2;
+    gl::AudioBuffer buf = gl::renderSong(song, opt);
+    if (buf.frames == 0) { std::fprintf(stderr, "error: empty song\n"); return 1; }
+    size_t nonFinite = 0, clipped = 0, silent = 0;
+    double sum = 0.0, pk = 0.0;
+    const size_t ch = buf.channels ? buf.channels : 1;
+    for (size_t f = 0; f < buf.frames; ++f) {
+      double fp = 0.0;
+      for (size_t c = 0; c < ch; ++c) {
+        float v = buf.data[c * buf.frames + f];  // plane-major
+        if (!std::isfinite(v)) { ++nonFinite; continue; }
+        double a = std::fabs(static_cast<double>(v));
+        sum += a * a;
+        fp = std::max(fp, a);
+        clipped += a > 1.0;
+      }
+      pk = std::max(pk, fp);
+      silent += fp < 1e-5;
+    }
+    std::printf("stats: frames=%zu nonfinite=%zu peak=%.4f rms=%.5f clipped=%zu silentFrac=%.3f\n", buf.frames, nonFinite, pk,
+                std::sqrt(sum / static_cast<double>(buf.frames * ch)), clipped,
+                static_cast<double>(silent) / static_cast<double>(buf.frames));
     return 0;
   }
 
