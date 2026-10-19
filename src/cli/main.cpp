@@ -29,6 +29,8 @@
 #include "host/vst3/Vst3Scan.h"
 #include <filesystem>
 
+int benchMain(int argc, char** argv);  // Bench.cpp
+
 namespace {
 void usage() {
   std::fprintf(stderr,
@@ -47,6 +49,8 @@ void usage() {
       "  gridline upgrade <project.json> [-o <out.json>]\n"
       "  gridline demo    <out.json>                 write the demo song\n"
       "  gridline import-flp <project.flp> -o <out.json> [--fl-data DIR]   convert an FL Studio project\n"
+      "  gridline bench <project.json|.flp> [--threads 1,4] [--repeat N] [--render-seconds S] [--no-render] [--json out]\n"
+      "                                                 load / save / render timings, undo memory, audio hash\n"
       "  gridline import-fl-presets [--fl-data DIR] [--out DIR]   convert FL Studio's presets into your preset library\n"
       "  gridline --scan-plugin <format> <entry> [--out <file>]   describe a plugin (scanner child process)\n"
       "  gridline plugin-smoke <format> <entry> [--sandbox]  load, play and save/restore every class of a plugin\n"
@@ -69,6 +73,7 @@ int main(int argc, char** argv) {
     usage();
     return 0;
   }
+  if (argc >= 2 && std::string(argv[1]) == "bench") return benchMain(argc, argv);
   if (argc >= 3 && std::string(argv[1]) == "vst3-smoke") gl::vst3::smokeMain(argv[2]);
   if (argc >= 4 && std::string(argv[1]) == "plugin-smoke")
     gl::host::smokeMain(argv[2], argv[3], argc >= 5 && std::string(argv[4]) == "--sandbox");

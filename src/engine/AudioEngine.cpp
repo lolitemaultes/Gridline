@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "Denormals.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -1375,6 +1376,7 @@ void AudioEngine::runNoteFx(const Program* p, int n) {
 }
 
 void AudioEngine::process(float* L, float* R, int frames) {
+  const ScopedFlushDenormals ftz;  // J-25: denormal tails cost ~100x on x86
   auto t0 = std::chrono::steady_clock::now();
   blockSampleUi_.store(absClock_, std::memory_order_relaxed);
   blockTimeUi_.store(std::chrono::duration<double>(t0.time_since_epoch()).count(), std::memory_order_relaxed);

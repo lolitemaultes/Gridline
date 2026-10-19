@@ -27,6 +27,10 @@ bool isAudioFile(const std::string& path);
 class SampleCache {
  public:
   SamplePtr get(const std::string& path);
+  // Decodes the files not cached yet on up to `threads` worker threads and
+  // waits for them (J-25: projects reference hundreds of samples; decoding
+  // them one by one dominated project load and the first render).
+  void prefetch(const std::vector<std::string>& paths, int threads = 0);
   void clear();
 
  private:

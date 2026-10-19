@@ -7,6 +7,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <cstdio>
 #include "PluginParams.h"
 
@@ -1382,15 +1383,24 @@ void registerDynamicPlugin(PluginInfo info) {
 std::vector<const PluginInfo*> dynamicPlugins() {
   DynamicTable& t = dynamicTable();
   size_t n = t.count.load(std::memory_order_acquire);
+  // The table only grows: the de-duplicated list is rebuilt (in linear time)
+  // only when entries were added since this thread last asked (J-25: the
+  // browser asks every frame, with thousands of installed plugins).
+  thread_local size_t cachedN = 0;
+  thread_local std::vector<const PluginInfo*> cached;
+  if (cachedN == n) return cached;
   std::vector<const PluginInfo*> out;
+  std::unordered_map<std::string, size_t> at;
   for (size_t i = 0; i < n; ++i) {
     const PluginInfo* p = t.entries[i].load(std::memory_order_relaxed);
-    auto same = std::find_if(out.begin(), out.end(), [&](const PluginInfo* q) { return q->type == p->type; });
-    if (same != out.end())
-      *same = p;  // superseded by a later registration
-    else
+    auto [it, fresh] = at.emplace(p->type, out.size());
+    if (fresh)
       out.push_back(p);
+    else
+      out[it->second] = p;  // superseded by a later registration
   }
+  cached = out;
+  cachedN = n;
   return out;
 }
 

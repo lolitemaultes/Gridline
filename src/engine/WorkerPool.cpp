@@ -1,4 +1,5 @@
 #include "WorkerPool.h"
+#include "Denormals.h"
 #if defined(__APPLE__)
 #include <dispatch/dispatch.h>
 #include <mach/mach.h>
@@ -75,6 +76,7 @@ bool makeRealtime() {
 
 void WorkerPool::loop(int index) {
   (void)index;
+  flushDenormals();  // same float mode as the audio thread (identical output for any thread count)
   if (makeRealtime()) realtime_.fetch_add(1);
   for (;;) {
     sem_.wait();

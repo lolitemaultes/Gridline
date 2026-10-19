@@ -26,8 +26,12 @@ void arc(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, ImU32 col, float
 }  // namespace
 
 void Hint(const std::string& text) {
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) app().setHint(text);
+  if (HintHovered()) app().setHint(text);
 }
+void Hint(const char* text) {
+  if (HintHovered()) app().setHint(text);
+}
+bool HintHovered() { return ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem); }
 
 void Label(const char* text) {
   ImGui::PushFont(app().fontMono, theme::kFontLabel);

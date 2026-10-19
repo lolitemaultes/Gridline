@@ -254,7 +254,15 @@ void pumpHostedPlugins(App& a) {
     }
     it = e.dead ? editors().erase(it) : std::next(it);
   }
-  const std::vector<PluginTarget> targets = hostedTargets(a.doc.song());
+  // Hosted plugin slots, listed again only when the project changes (J-25:
+  // projects with hundreds of mixer slots).
+  static std::vector<PluginTarget> targetCache;
+  static uint64_t targetRev = ~0ull;
+  if (targetRev != a.doc.revision()) {
+    targetRev = a.doc.revision();
+    targetCache = hostedTargets(a.doc.song());
+  }
+  const std::vector<PluginTarget> targets = targetCache;  // copy: the loop may edit the song
   for (const PluginTarget& t : targets) {
     host::HostedInstance* hi = hostedInstanceFor(a, t);
     if (!hi) continue;

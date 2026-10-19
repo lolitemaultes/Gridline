@@ -580,6 +580,18 @@ class ReverbFx final : public Effect {
     static const int difLen[4] = {142, 107, 379, 277};
     double wet1 = width / 2 + 0.5, wet2 = (1 - width) / 2;
     double inGain = freeze == 1 ? 0.0 : 1.0;
+    // Per-block constants (J-25: were recomputed every sample).
+    double erPos[6];
+    for (int k = 0; k < 6; ++k) erPos[k] = pre + erMs[k] * (0.4 + size) * 0.001 * sr_;
+    int difN[2][4];
+    for (int c = 0; c < 2; ++c)
+      for (int k = 0; k < 4; ++k) difN[c][k] = static_cast<int>(difLen[k] * sr_ / 44100.0) + c * 13;
+    // The 16 comb modulators are one sine at phase offsets of k * 45 degrees:
+    // sin(t + k pi/4) = sin t cos(k pi/4) + cos t sin(k pi/4) (one sin + cos per sample).
+    static const double rotC[10] = {1, 0.70710678118654752, 0, -0.70710678118654752, -1, -0.70710678118654752, 0, 0.70710678118654752, 1,
+                                    0.70710678118654752};
+    static const double rotS[10] = {0, 0.70710678118654752, 1, 0.70710678118654752, 0, -0.70710678118654752, -1, -0.70710678118654752, 0,
+                                    0.70710678118654752};
     for (int i = 0; i < n; ++i) {
       double inL = L[i], inR = R[i];
       double mid = (inL + inR) * 0.5;
@@ -588,20 +600,23 @@ class ReverbFx final : public Effect {
       double x = pre_.read(pre), sd = stereoIn ? preS_.read(pre) : 0.0;
       double erL = 0, erR = 0;
       for (int k = 0; k < 6; ++k) {
-        double v = pre_.read(pre + erMs[k] * (0.4 + size) * 0.001 * sr_) * erGain[k];
+        double v = pre_.read(erPos[k]) * erGain[k];
         (k % 2 ? erR : erL) += v;
       }
       double xin[2] = {(x + sd) * 0.015 * inGain, (x - sd) * 0.015 * inGain};
       if (diffusion > 0.001)
         for (int c = 0; c < 2; ++c)
-          for (int k = 0; k < 4; ++k) xin[c] = indiff_[c][k].process(xin[c], static_cast<int>(difLen[k] * sr_ / 44100.0) + c * 13, 0.7 * diffusion);
+          for (int k = 0; k < 4; ++k) xin[c] = indiff_[c][k].process(xin[c], difN[c][k], 0.7 * diffusion);
       modPh_ += modRate / sr_;
       modPh_ -= std::floor(modPh_);
       double out[2] = {0, 0};
+      double ms = 0, mc = 0;
+      if (modDepth > 0) ms = std::sin(kTwoPi * modPh_), mc = std::cos(kTwoPi * modPh_);
       for (int side = 0; side < 2; ++side)
         for (int c = 0; c < 8; ++c) {
           Comb& cb = combs_[side][c];
-          double mo = modDepth > 0 ? modDepth * (1 + std::sin(kTwoPi * (modPh_ + c * 0.125 + side * 0.25))) : 0;
+          const int k = c + 2 * side;
+          double mo = modDepth > 0 ? modDepth * (1 + ms * rotC[k] + mc * rotS[k]) : 0;
           double y = cb.line.read(cb.len + mo);
           double low = cb.xo = y + (cb.xo - y) * xoA_;
           double fbv = low * cb.gLow + (y - low) * cb.g;
@@ -655,7 +670,7 @@ class ReverbFx final : public Effect {
     double b = a.buf[a.i];
     double y = -x + b;
     a.buf[a.i] = static_cast<float>(x + b * 0.5);
-    a.i = (a.i + 1) % a.buf.size();
+    if (++a.i == a.buf.size()) a.i = 0;
     return y;
   }
   void init(double sr) {

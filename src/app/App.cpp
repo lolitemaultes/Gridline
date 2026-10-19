@@ -85,8 +85,16 @@ void App::syncEngine() {
   // changes, when delay compensation is switched, and when a hosted plugin
   // reports a new latency.
   const bool pdc = settings.getBool("audio.pdc");
+  // Stale hosted instances (restart requests) are polled ten times a second:
+  // the check visits every plugin instance (J-25).
+  static double staleChecked = -1;
+  bool stale = false;
+  if (now < staleChecked || now - staleChecked >= 0.1) {
+    staleChecked = now;
+    stale = builder.staleInstances();
+  }
   if (doc.revision() == builtRevision_ && builder.sampleRate() == engine.sampleRate() && builder.pdc() == pdc && !builder.latencyChanged() &&
-      !builder.staleInstances())
+      !stale)
     return;
   builder.setSampleRate(engine.sampleRate());
   builder.setPdc(pdc);

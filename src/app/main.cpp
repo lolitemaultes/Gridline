@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "FrameProfile.h"
 #include "HostedUi.h"
 #include "../host/HostedPlugins.h"
 #include "../host/vst3/Vst3Scan.h"
@@ -542,9 +543,13 @@ int main(int argc, char** argv) {
   bool devMixerOnly = false;              // --show mixer: the mixer fills the window
   float shotScale = 1.0f;                 // --scale F: framebuffer scale of an off-screen shot (HiDPI check)
   bool devHostedEditor = false;           // --hosted-editor: open the native editor of the --plugin target
+  std::string profilePath;                // --profile-frames out.json: per-window UI CPU time per frame (J-25)
+  int profileWarmup = 30;                 // --profile-warmup N: frames not recorded (layout, caches)
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--screenshot" && i + 1 < argc) shotPath = argv[++i];
+    else if (arg == "--profile-frames" && i + 1 < argc) profilePath = argv[++i];
+    else if (arg == "--profile-warmup" && i + 1 < argc) profileWarmup = std::max(0, std::atoi(argv[++i]));
     else if (arg == "--frames" && i + 1 < argc) shotFrames = std::atoi(argv[++i]);
     else if (arg == "--menu" && i + 1 < argc) devMenu = argv[++i];
     else if (arg == "--tool" && i + 1 < argc) devTool = argv[++i];
@@ -719,10 +724,16 @@ int main(int argc, char** argv) {
     }
   }
   int frameNo = 0;
+  if (!profilePath.empty()) {
+    // Profiling: no vsync wait, the measured frames come after the warm-up.
+    prof::enable(true);
+    prof::setWarmup(profileWarmup);
+    SDL_GL_SetSwapInterval(0);
+  }
   splash(1.0f, "Ready");
   // New or changed plugins are scanned in the background, each in a child
   // process (screenshot runs and GRIDLINE_NO_PLUGIN_SCAN skip it).
-  if (shotPath.empty() && !std::getenv("GRIDLINE_NO_PLUGIN_SCAN")) host::startScan(host::selfExecutablePath());
+  if (shotPath.empty() && profilePath.empty() && !std::getenv("GRIDLINE_NO_PLUGIN_SCAN")) host::startScan(host::selfExecutablePath());
   const PluginTarget devEditorTarget = app.fxEditor.first != kNoId ? PluginTarget{app.fxEditor.first, app.fxEditor.second}
                                                                    : PluginTarget{app.settingsChannel, -1};
 
@@ -746,7 +757,7 @@ int main(int argc, char** argv) {
   // Screenshots with an explicit size render off-screen at exactly that size
   // (the OS may clamp a real window to the display).
   OffscreenTarget offscreen;
-  const bool useOffscreen = !shotPath.empty() && forcedSize.first > 0 &&
+  const bool useOffscreen = (!shotPath.empty() || !profilePath.empty()) && forcedSize.first > 0 &&
                             offscreen.create(static_cast<int>(static_cast<float>(forcedSize.first) * shotScale),
                                              static_cast<int>(static_cast<float>(forcedSize.second) * shotScale));
 #if !defined(__APPLE__)
@@ -770,6 +781,7 @@ int main(int argc, char** argv) {
   bool running = true;
   Uint64 t0 = SDL_GetPerformanceCounter();
   while (running) {
+    prof::beginFrame();
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
       ImGui_ImplSDL2_ProcessEvent(&ev);
@@ -830,10 +842,13 @@ int main(int argc, char** argv) {
     }
 
     double now = static_cast<double>(SDL_GetPerformanceCounter() - t0) / static_cast<double>(SDL_GetPerformanceFrequency());
-    app.tick(now);
-    pumpHostedPlugins(app);
-    app.processMidi();
-    app.processAudioRecording();  // J-8
+    {
+      prof::Scope ps("tick");
+      app.tick(now);
+      pumpHostedPlugins(app);
+      app.processMidi();
+      app.processAudioRecording();  // J-8
+    }
     app.engine.setMetronome(app.metronome);
     app.hint.clear();
     // Interface scale: the UI is laid out in logical pixels on a virtual display
@@ -885,7 +900,11 @@ int main(int argc, char** argv) {
       }
     }
 
-    float topH = drawTopBar(app);
+    float topH = 0;
+    {
+      prof::Scope ps("topbar");
+      topH = drawTopBar(app);
+    }
     // Dock space between the top bar and the status bar.
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImVec2 dpos(vp->WorkPos.x, vp->WorkPos.y + topH), dsize(vp->WorkSize.x, vp->WorkSize.y - topH - theme::kStatusBarH);
@@ -928,18 +947,39 @@ int main(int argc, char** argv) {
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(3);
 
-    drawBrowser(app);
-    drawPlaylist(app);
+    {
+      prof::Scope ps("browser");
+      drawBrowser(app);
+    }
+    {
+      prof::Scope ps("playlist");
+      drawPlaylist(app);
+    }
     drawLivePads(app);
-    drawPianoRoll(app);
-    drawChannelRack(app);
-    drawMixer(app);
-    drawChannelSettings(app);
-    drawEffectEditor(app);
-    packs::drawWindows(app);  // pack-owned windows (audio editor) and their background work
-    drawAutomationEditor(app);
-    drawDialogs(app);
-    browserui::drawPluginPicker(app);
+    {
+      prof::Scope ps("pianoroll");
+      drawPianoRoll(app);
+    }
+    {
+      prof::Scope ps("rack");
+      drawChannelRack(app);
+    }
+    {
+      prof::Scope ps("mixer");
+      drawMixer(app);
+    }
+    {
+      prof::Scope ps("plugin_editors");
+      drawChannelSettings(app);
+      drawEffectEditor(app);
+      packs::drawWindows(app);  // pack-owned windows (audio editor) and their background work
+    }
+    {
+      prof::Scope ps("dialogs");
+      drawAutomationEditor(app);
+      drawDialogs(app);
+      browserui::drawPluginPicker(app);
+    }
     browserui::thumbDraw(app);
     if (!devMenu.empty()) drawDevMenu(app, devMenu);
     if (!devFocus.empty() && frameNo == 3) app.focusWindow = devFocus;
@@ -1009,9 +1049,14 @@ int main(int argc, char** argv) {
       if (app.stepRecord) h += " · step record: → rest, ⌫ back";
       app.setHint(h);
     }
-    drawStatusBar(app);
-    handleGlobalShortcuts(app);
+    {
+      prof::Scope ps("statusbar");
+      drawStatusBar(app);
+      handleGlobalShortcuts(app);
+    }
 
+    {
+    prof::Scope psRender("render");
     ImGui::Render();
     if (useOffscreen) offscreen.use(true);
     glViewport(0, 0, fbW, fbH);
@@ -1020,6 +1065,7 @@ int main(int argc, char** argv) {
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
+    if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
     if (!shotPath.empty() && ++frameNo >= shotFrames) {
       // Save the rendered frame (binary PPM) and quit — used for visual checks.
       writePpm(shotPath.c_str(), fbW, fbH);
@@ -1029,14 +1075,24 @@ int main(int argc, char** argv) {
     }
     if (useOffscreen) offscreen.use(false);
     SDL_GL_SwapWindow(window);
-
-    // Sync the engine after the UI's edits this frame.
-    app.syncEngine();
-    std::string title = app.windowTitle();
-    if (title != lastTitle) {
-      SDL_SetWindowTitle(window, title.c_str());
-      lastTitle = title;
     }
+
+    {
+      prof::Scope ps("sync");
+      // Sync the engine after the UI's edits this frame.
+      app.syncEngine();
+      std::string title = app.windowTitle();
+      if (title != lastTitle) {
+        SDL_SetWindowTitle(window, title.c_str());
+        lastTitle = title;
+      }
+    }
+    prof::endFrame();
+  }
+  if (!profilePath.empty()) {
+    std::string label = std::to_string(forcedSize.first) + "x" + std::to_string(forcedSize.second);
+    if (prof::writeJson(profilePath, label))
+      std::fprintf(stderr, "profile: %d frames -> %s\n", prof::recordedFrames(), profilePath.c_str());
   }
 
   closeAllHostedEditors(app);

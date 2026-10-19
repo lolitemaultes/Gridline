@@ -207,13 +207,82 @@ bool Document::editPlaylistTrack(int index, const std::string& label, const std:
 }
 #undef GL_OBJECT_EDIT
 
+namespace {
+
+// Whole-song edit stored as a delta (J-25): the large containers are kept
+// (before and after) only when the edit changed them; everything else lives
+// in two small "rest" copies whose large containers are empty. A tempo change
+// on a big project used to keep two full copies of the song per undo step.
+#define GL_SONG_BIG_FIELDS(X) \
+  X(channels)                 \
+  X(patterns)                 \
+  X(playlist)                 \
+  X(tracks)                   \
+  X(mixer)                    \
+  X(links)                    \
+  X(modLinks)                 \
+  X(automations)              \
+  X(markers)                  \
+  X(arrangements)
+
+class SongDeltaCommand final : public Command {
+ public:
+  // `cur` is the song before the edit (left unchanged), `after` the edited copy.
+  SongDeltaCommand(std::string label, Song& cur, Song after) : label_(std::move(label)) {
+#define GL_TAKE(f)                                  \
+  if (cur.f != after.f) {                           \
+    f##_.changed = true;                            \
+    f##_.before = cur.f;                            \
+    f##_.after = std::move(after.f);                \
+  }                                                 \
+  decltype(Song::f)().swap(after.f); /* frees the capacity too */
+    GL_SONG_BIG_FIELDS(GL_TAKE)
+#undef GL_TAKE
+    restAfter_ = std::move(after);
+    // The small part of the current song: move its large containers out
+    // around the copy so they are not duplicated.
+#define GL_OUT(f) auto f##Tmp = std::move(cur.f); decltype(Song::f)().swap(cur.f);
+    GL_SONG_BIG_FIELDS(GL_OUT)
+#undef GL_OUT
+    restBefore_ = cur;
+#define GL_BACK(f) cur.f = std::move(f##Tmp);
+    GL_SONG_BIG_FIELDS(GL_BACK)
+#undef GL_BACK
+  }
+  void apply(Song& s) override { set(s, restAfter_, true); }
+  void revert(Song& s) override { set(s, restBefore_, false); }
+  std::string label() const override { return label_; }
+
+ private:
+  template <typename V>
+  struct Field {
+    bool changed = false;
+    V before, after;
+  };
+  void set(Song& s, const Song& rest, bool after) const {
+    Song next = rest;
+#define GL_SET(f) next.f = f##_.changed ? (after ? f##_.after : f##_.before) : std::move(s.f);
+    GL_SONG_BIG_FIELDS(GL_SET)
+#undef GL_SET
+    s = std::move(next);
+  }
+  std::string label_;
+  Song restBefore_, restAfter_;
+#define GL_FIELD(f) Field<decltype(Song::f)> f##_;
+  GL_SONG_BIG_FIELDS(GL_FIELD)
+#undef GL_FIELD
+};
+#undef GL_SONG_BIG_FIELDS
+
+}  // namespace
+
 void Document::editSong(const std::string& label, const std::function<void(Song&)>& fn) {
   Song after = song_;
   fn(after);
   if (after == song_) return;
-  Song before = song_;
-  exec(std::make_unique<LambdaCommand>(
-      label, [after](Song& s) { s = after; }, [before](Song& s) { s = before; }));
+  // The edit is already in `after`: record it, then take it over.
+  auto cmd = std::make_unique<SongDeltaCommand>(label, song_, std::move(after));
+  exec(std::move(cmd));
 }
 
 // --- channels ---------------------------------------------------------------

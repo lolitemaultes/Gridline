@@ -6,6 +6,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <unordered_map>
 #include "ExportUi.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Arrangements.h"
@@ -50,7 +51,8 @@ struct ClipGesture {
 ClipGesture cg;
 uint64_t clipGestureCounter = 1;
 
-void drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, ImU32 col) {
+void drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, ImU32 col, float visX0,
+                     float visX1) {
   Tick patLen = std::max<Tick>(1, s.patternContentLength(p));
   float w = b.x - a.x;
   if (w < 6) return;
@@ -63,11 +65,13 @@ void drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, 
   float span = static_cast<float>(std::max(hi - lo, 8));
   auto xAt = [&](Tick t) { return a.x + w * static_cast<float>(t - offset) / static_cast<float>(clipLen); };
   for (Tick rep = 0; rep < offset + clipLen; rep += patLen) {
+    if (rep + patLen > offset && xAt(rep) > visX1) break;  // later repeats start right of the view
     for (const auto& [ch, ns] : p.notes)
       for (const auto& n : ns) {
         Tick t = rep + n.start;
         if (t >= offset + clipLen || t + n.length <= offset) continue;
         float x0 = xAt(std::max(t, offset)), x1 = xAt(std::min(offset + clipLen, t + n.length));
+        if (std::max(x0 + 1.5f, x1) < visX0 || x0 > visX1) continue;  // outside the view
         float y = a.y + 2 + (h - 6) * (1.0f - (n.pitch - lo) / span);
         dl->AddRectFilled(ImVec2(x0, y), ImVec2(std::max(x0 + 1.5f, x1), y + 2), col);
       }
@@ -81,6 +85,8 @@ void drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, 
           if (t >= offset + clipLen) break;
           if (t < offset) continue;
           float x = xAt(t);
+          if (x > visX1) break;
+          if (x + 2 < visX0) continue;
           float y = b.y - 3 - (rowIdx % 4) * 3.0f;
           dl->AddRectFilled(ImVec2(x, y - 2), ImVec2(x + 2, y), col);
         }
@@ -117,16 +123,31 @@ const Peaks& peaksFor(const SamplePtr& s) {
 
 // Source seconds an audio clip plays at song tick t (display approximation of
 // the engine's mapping: resample / stretch / tempo sync).
-double audioSourceAt(const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, double t) {
-  double tf = std::max(0.01, c.stretch);
-  bool sampler = ch.plugin.type == "gl.sampler" && ch.plugin.params.size() > static_cast<size_t>(pp::SmpTimeStretch);
-  if (sampler) tf *= ch.plugin.params[pp::SmpTimeStretch];
-  if (c.syncBpm > 0) return c.audioStart + (t - static_cast<double>(c.start)) * 60.0 / (c.syncBpm * s.ppq) / tf;
-  double speed = 1.0 / tf;
-  if (sampler && ch.plugin.params[pp::SmpStretchMode] < 0.5f)
-    speed *= std::pow(2.0, (ch.plugin.params[pp::SmpPitchShift] + c.pitch) / 1200.0);
-  return c.audioStart + (tm.secondsAt(t) - tm.secondsAt(static_cast<double>(c.start))) * speed;
-}
+// The mapping's per-clip constants are computed once (the waveform evaluates
+// it for every pixel column).
+struct AudioMap {
+  const TempoMap& tm;
+  double audioStart = 0, start = 0, startSec = 0, syncScale = 0, speed = 1;
+  bool sync = false;
+  AudioMap(const Song& s, const Channel& ch, const Clip& c, const TempoMap& map) : tm(map) {
+    double tf = std::max(0.01, c.stretch);
+    bool sampler = ch.plugin.type == "gl.sampler" && ch.plugin.params.size() > static_cast<size_t>(pp::SmpTimeStretch);
+    if (sampler) tf *= ch.plugin.params[pp::SmpTimeStretch];
+    audioStart = c.audioStart;
+    start = static_cast<double>(c.start);
+    sync = c.syncBpm > 0;
+    if (sync) {
+      syncScale = 60.0 / (c.syncBpm * s.ppq) / tf;
+      return;
+    }
+    speed = 1.0 / tf;
+    if (sampler && ch.plugin.params[pp::SmpStretchMode] < 0.5f)
+      speed *= std::pow(2.0, (ch.plugin.params[pp::SmpPitchShift] + c.pitch) / 1200.0);
+    startSec = tm.secondsAt(start);
+  }
+  double at(double t) const { return sync ? audioStart + (t - start) * syncScale : audioStart + (tm.secondsAt(t) - startSec) * speed; }
+};
+double audioSourceAt(const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, double t) { return AudioMap(s, ch, c, tm).at(t); }
 
 void drawWaveform(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
                   float pxPerTick, float visX0, float visX1, ImU32 col) {
@@ -138,9 +159,10 @@ void drawWaveform(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& 
   const double srcEnd = c.audioEnd > c.audioStart ? std::min(c.audioEnd, smp->seconds()) : smp->seconds();
   const float mid = (a.y + b.y) * 0.5f, half = (b.y - a.y) * 0.5f;
   const float x0 = std::max(a.x, visX0), x1 = std::min(b.x, visX1);
+  const AudioMap map(s, ch, c, tm);
   for (float x = std::floor(x0); x < x1; x += 1.0f) {
     double t0 = static_cast<double>(c.start) + (x - clipX0) / pxPerTick, t1 = t0 + 1.0 / pxPerTick;
-    double s0 = audioSourceAt(s, ch, c, tm, t0), s1 = audioSourceAt(s, ch, c, tm, t1);
+    double s0 = map.at(t0), s1 = map.at(t1);
     if (s0 >= srcEnd) break;
     s1 = std::min(s1, srcEnd);
     double f0 = s0 * smp->sampleRate, f1 = s1 * smp->sampleRate;
@@ -174,14 +196,34 @@ void drawAutomation(ImDrawList* dl, const AutomationClip& ac, const AutoGeom& g,
                     bool handles, int hotPoint, int hotHandle, ImU32 hot) {
   float x0 = std::max(g.a.x, visX0), x1 = std::min(g.b.x, visX1);
   if (x1 <= x0) return;
-  float prevY = 0;
+  // One value per pixel column; the fill is one triangle strip and the curve
+  // one polyline (J-25: was two line primitives per column).
+  static std::vector<ImVec2> pts;
+  pts.clear();
   for (float x = std::floor(x0); x <= x1; x += 1.0f) {
     double content = static_cast<double>(g.offset) + (x - g.clipX0) / g.pxPerTick;
-    float y = g.y(automationValue(ac, content));
-    dl->AddLine(ImVec2(x, y), ImVec2(x, g.b.y), fill);
-    if (x > std::floor(x0)) dl->AddLine(ImVec2(x - 1, prevY), ImVec2(x, y), line, 1.5f);
-    prevY = y;
+    pts.emplace_back(x, g.y(automationValue(ac, content)));
   }
+  const int n = static_cast<int>(pts.size());
+  if (n >= 2 && (fill & IM_COL32_A_MASK)) {
+    const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+    dl->PrimReserve(6 * (n - 1), 2 * n);
+    const ImDrawIdx base = static_cast<ImDrawIdx>(dl->_VtxCurrentIdx);
+    for (int i = 0; i < n; ++i) {
+      dl->PrimWriteVtx(ImVec2(pts[static_cast<size_t>(i)].x + 0.5f, pts[static_cast<size_t>(i)].y), uv, fill);
+      dl->PrimWriteVtx(ImVec2(pts[static_cast<size_t>(i)].x + 0.5f, g.b.y), uv, fill);
+    }
+    for (int i = 0; i + 1 < n; ++i) {
+      const ImDrawIdx k = static_cast<ImDrawIdx>(base + 2 * i);
+      dl->PrimWriteIdx(k);
+      dl->PrimWriteIdx(static_cast<ImDrawIdx>(k + 1));
+      dl->PrimWriteIdx(static_cast<ImDrawIdx>(k + 2));
+      dl->PrimWriteIdx(static_cast<ImDrawIdx>(k + 1));
+      dl->PrimWriteIdx(static_cast<ImDrawIdx>(k + 3));
+      dl->PrimWriteIdx(static_cast<ImDrawIdx>(k + 2));
+    }
+  }
+  if (n >= 2) dl->AddPolyline(pts.data(), n, line, ImDrawFlags_None, 1.5f);
   if (!handles) return;
   const auto& p = ac.points;
   for (size_t i = 0; i < p.size(); ++i) {
@@ -229,23 +271,75 @@ std::string clipName(const Song& s, const Clip& c) {
   return p ? p->name : "?";
 }
 
-Rgb clipColor(const Song& s, const Clip& c) {
-  if (c.kind == ClipKind::Audio) {
-    const Channel* ch = s.channel(c.source);
-    return ch ? ch->color : 0x7A8696;
-  }
-  if (c.kind == ClipKind::Automation) {
-    const AutomationClip* a = s.automation(c.source);
-    return a ? a->color : 0x7A8696;
-  }
-  const Pattern* p = s.pattern(c.pattern);
-  return p ? p->color : 0x7A8696;
-}
-
 bool clipValid(const Song& s, const Clip& c) {
   if (c.kind == ClipKind::Audio) return s.channel(c.source) != nullptr;
   if (c.kind == ClipKind::Automation) return s.automation(c.source) != nullptr;
   return s.pattern(c.pattern) != nullptr;
+}
+
+// Per-clip data the canvas needs every frame (validity, length, colour, name),
+// rebuilt only when the document changes: Song::clipLength / lookups by id are
+// linear scans (pattern length walks every note), far too slow for thousands
+// of clips per frame (J-25).
+struct ClipCache {
+  uint64_t rev = ~0ull;
+  const Clip* data = nullptr;
+  size_t count = 0;
+  std::vector<Tick> len;
+  std::vector<uint8_t> valid;
+  std::vector<Rgb> color;
+  std::vector<const std::string*> name;
+  Tick songLen = 0;
+};
+const ClipCache& clipCache(const App& a) {
+  static ClipCache cc;
+  const Song& s = a.doc.song();
+  if (cc.rev == a.doc.revision() && cc.data == s.playlist.data() && cc.count == s.playlist.size()) return cc;
+  cc.rev = a.doc.revision();
+  cc.data = s.playlist.data();
+  cc.count = s.playlist.size();
+  std::unordered_map<ObjectId, size_t> pat, chan, aut;
+  pat.reserve(s.patterns.size());
+  for (size_t i = 0; i < s.patterns.size(); ++i) pat.emplace(s.patterns[i].id, i);
+  for (size_t i = 0; i < s.channels.size(); ++i) chan.emplace(s.channels[i].id, i);
+  for (size_t i = 0; i < s.automations.size(); ++i) aut.emplace(s.automations[i].id, i);
+  std::vector<Tick> patLen(s.patterns.size(), -1);
+  static const std::string kAudio = "Audio", kAuto = "Automation", kUnknown = "?";
+  cc.len.assign(cc.count, 0);
+  cc.valid.assign(cc.count, 0);
+  cc.color.assign(cc.count, 0x7A8696);
+  cc.name.assign(cc.count, &kUnknown);
+  cc.songLen = 0;
+  for (size_t i = 0; i < cc.count; ++i) {
+    const Clip& c = s.playlist[i];
+    if (c.kind == ClipKind::Audio) {
+      auto it = chan.find(c.source);
+      cc.valid[i] = it != chan.end();
+      if (cc.valid[i]) cc.color[i] = s.channels[it->second].color, cc.name[i] = &s.channels[it->second].name;
+      else cc.name[i] = &kAudio;
+      cc.len[i] = s.clipLength(c);
+    } else if (c.kind == ClipKind::Automation) {
+      auto it = aut.find(c.source);
+      cc.valid[i] = it != aut.end();
+      if (cc.valid[i]) cc.color[i] = s.automations[it->second].color, cc.name[i] = &s.automations[it->second].name;
+      else cc.name[i] = &kAuto;
+      cc.len[i] = s.clipLength(c);
+    } else {
+      auto it = pat.find(c.pattern);
+      cc.valid[i] = it != pat.end();
+      if (cc.valid[i]) {
+        const Pattern& pp = s.patterns[it->second];
+        cc.color[i] = pp.color, cc.name[i] = &pp.name;
+        Tick& pl = patLen[it->second];
+        if (pl < 0) pl = s.patternContentLength(pp);
+        cc.len[i] = c.length > 0 ? c.length : pl;
+      } else {
+        cc.len[i] = c.length > 0 ? c.length : 0;
+      }
+    }
+    cc.songLen = std::max(cc.songLen, c.start + cc.len[i]);
+  }
+  return cc;
 }
 
 // Right-click menu of a clip: arrangement settings, then the pattern clip menu.
@@ -519,7 +613,7 @@ void drawPlaylist(App& a) {
     if (ImGui::IsKeyPressed(ImGuiKey_Home)) st.fitRequest = true;
   }
   if (st.fitRequest) {
-    Tick len = std::max<Tick>(s.lengthTicks(), 4 * s.barTicks());
+    Tick len = std::max<Tick>(clipCache(a).songLen, 4 * s.barTicks());
     st.pxPerTick = static_cast<float>(timeline::fitZoom(s, len + s.barTicks(), gridW));
     st.scrollX = 0;
     st.fitRequest = false;
@@ -603,8 +697,10 @@ void drawPlaylist(App& a) {
     dl->AddRectFilled(ImVec2(std::max(gMin.x, xOf(st.selStart)), gMin.y), ImVec2(std::min(gMax.x, xOf(st.selEnd)), gMax.y),
                       theme::withAlpha(P.accent, 0.07f));
   // Song end shading.
-  if (s.lengthTicks() > 0 && xOf(s.lengthTicks()) < gMax.x)
-    dl->AddRectFilled(ImVec2(std::max(gMin.x, xOf(s.lengthTicks())), gMin.y), gMax, theme::withAlpha(P.surface950, 0.35f));
+  const ClipCache& ccache = clipCache(a);
+  const Tick songLen = ccache.songLen;
+  if (songLen > 0 && xOf(songLen) < gMax.x)
+    dl->AddRectFilled(ImVec2(std::max(gMin.x, xOf(songLen)), gMin.y), gMax, theme::withAlpha(P.surface950, 0.35f));
   // Clips.
   ObjectId hoverClip = kNoId;
   bool hoverEdge = false, hoverLeftEdge = false, hoverBody = false;
@@ -615,16 +711,17 @@ void drawPlaylist(App& a) {
   int fadeHoverKind = 0;
   int hoverPoint = -1, hoverHandle = -1;
   // Automation clip being edited: drawn from the live document (edits apply as they happen).
-  for (const auto& c : s.playlist) {
-    if (!clipValid(s, c)) continue;
-    Tick len = s.clipLength(c);
+  for (size_t ci = 0; ci < s.playlist.size(); ++ci) {
+    const Clip& c = s.playlist[ci];
+    if (!ccache.valid[ci]) continue;
+    const Tick len = ccache.len[ci];
     float x0 = xOf(c.start), x1 = xOf(c.start + len), y = yOf(c.track), th = hOf(c.track);
     if (x1 < gMin.x || x0 > gMax.x || y + th < gMin.y || y > gMax.y || th < 1) continue;
     bool sel = st.selected.count(c.id) > 0;
     const bool livePlaying = liveMode && a.engine.liveActive(c.track) == c.id;
     const bool liveWaiting = liveMode && a.engine.liveQueued(c.track) == c.id;
     bool muted = c.muted || (c.track < nTracks && s.tracks[static_cast<size_t>(c.track)].muted);
-    ImU32 base = theme::rgb(clipColor(s, c));
+    ImU32 base = theme::rgb(ccache.color[ci]);
     // Clip: translucent colour body, solid title bar with the name, darker rim;
     // selected clips get a lit rim.
     ImU32 body = theme::mix(base, P.well, muted ? 0.85f : 0.58f);
@@ -641,10 +738,9 @@ void drawPlaylist(App& a) {
       dl->AddRect(ImVec2(a0.x - 1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1),
                   theme::withAlpha(P.accent, 0.35f + 0.65f * (0.5f + 0.5f * std::sin(static_cast<float>(a.now) * 8.0f))), theme::kRadiusSm, 0, 2.0f);
     dl->PushClipRect(ImVec2(std::max(a0.x, gMin.x), std::max(a0.y, gMin.y)), ImVec2(std::min(a1.x, gMax.x), std::min(a1.y, gMax.y)), true);
-    std::string name = clipName(s, c);
-    if (c.muted) name += "  (muted)";
+    const std::string mutedName = c.muted ? *ccache.name[ci] + "  (muted)" : std::string();
     theme::textEllipsis(dl, a.fontBold, std::min(theme::kFontCaption, headH - 2), ImVec2(std::max(a0.x, gMin.x) + 6, a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f)),
-                        a1.x - std::max(a0.x, gMin.x) - 10, theme::contrastText(head), name.c_str());
+                        a1.x - std::max(a0.x, gMin.x) - 10, theme::contrastText(head), c.muted ? mutedName.c_str() : ccache.name[ci]->c_str());
     const ImVec2 b0(a0.x + 3, a0.y + headH + 2), b1(a1.x - 3, a1.y - 3);
     // Clip content (notes, waveform, curve): lighter than the colour on dark
     // slate, darker than it on the light variant's pastel bodies.
@@ -652,7 +748,7 @@ void drawPlaylist(App& a) {
     const ImU32 mark = P.dark ? P.paper : theme::mix(base, P.ink, 0.6f);
     bool inside = hovered && io.MousePos.x >= a0.x && io.MousePos.x < a1.x && io.MousePos.y >= a0.y && io.MousePos.y < a1.y && io.MousePos.y >= gMin.y;
     if (c.kind == ClipKind::Pattern) {
-      drawClipPreview(dl, s, *s.pattern(c.pattern), b0, b1, len, c.offset, ink);
+      drawClipPreview(dl, s, *s.pattern(c.pattern), b0, b1, len, c.offset, ink, gMin.x, gMax.x);
     } else if (c.kind == ClipKind::Audio) {
       if (b1.y - b0.y > 4) drawWaveform(dl, s, *s.channel(c.source), c, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink);
       double sec0 = tempoMap.secondsAt(static_cast<double>(c.start));
@@ -780,8 +876,8 @@ void drawPlaylist(App& a) {
         dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(lx - 34, origin.y + 13), liveMode ? P.text : P.textFaint, "LIVE");
       }
     }
-    if (s.lengthTicks() > 0) {
-      float xe = std::round(xOf(s.lengthTicks()));
+    if (songLen > 0) {
+      float xe = std::round(xOf(songLen));
       dl->AddTriangleFilled(ImVec2(xe - 5, gMin.y - 9), ImVec2(xe + 5, gMin.y - 9), ImVec2(xe, gMin.y - 2), P.textFaint);
     }
     if (a.engine.mode() == PlayMode::Song) {

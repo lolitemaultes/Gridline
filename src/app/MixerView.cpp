@@ -1158,7 +1158,11 @@ void drawMixer(App& a) {
           dl->AddText(a.fontMono, 9.0f, ImVec2(p.x + 4, p.y), P.text, t.group.c_str());
         }
       }
-    for (const auto& pl : placed) drawStrip(a, pl.i, pl.p, pl.w, rowH, ctx);
+    // Strips scrolled out of view are skipped (hundreds of inserts: J-25) unless
+    // a menu is open (it may belong to one of them) or a drag is under way.
+    const bool cull = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::GetDragDropPayload();
+    for (const auto& pl : placed)
+      if (!cull || ImGui::IsRectVisible(pl.p, ImVec2(pl.p.x + pl.w, pl.p.y + rowH))) drawStrip(a, pl.i, pl.p, pl.w, rowH, ctx);
     ImGui::SetCursorScreenPos(o);
     ImGui::Dummy(ImVec2(x - o.x + 8, static_cast<float>(rows) * (rowH + bandH + 6.0f) - 6.0f));
   }

@@ -331,7 +331,7 @@ void drawChannelRack(App& a) {
         a.selectChannel(c.id);
         ImGui::OpenPopup("##chmenu");
       }
-      ui::Hint(c.name + " (zipped: click to unzip)");
+      if (ui::HintHovered()) ui::Hint(c.name + " (zipped: click to unzip)");
       dl->AddRectFilled(ImVec2(rp.x + nameX, rp.y + 1), ImVec2(rp.x + stepsX + stepsW, rp.y + zh - 1),
                         theme::withAlpha(theme::rgb(c.color), zhov ? 0.75f : 0.45f), 2);
       if (ImGui::BeginPopup("##chmenu")) {
@@ -339,6 +339,15 @@ void drawChannelRack(App& a) {
         ImGui::EndPopup();
       }
       ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + zh + 2));
+      ImGui::Dummy(ImVec2(stepsX + stepsW + selLampW, 0));
+      ImGui::PopID();
+      continue;
+    }
+    // Rows outside the visible area only take their space (large racks: J-25),
+    // unless one of the row's menus is open or a step paint runs on it.
+    if (!ImGui::IsRectVisible(rp, ImVec2(rp.x + stepsX + stepsW + selLampW, rp.y + rowH)) && paintRow != c.id &&
+        !ImGui::IsPopupOpen("##chmenu") && !ImGui::IsPopupOpen("##route")) {
+      ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
       ImGui::Dummy(ImVec2(stepsX + stepsW + selLampW, 0));
       ImGui::PopID();
       continue;
@@ -445,9 +454,11 @@ void drawChannelRack(App& a) {
       dl->AddRectFilled(np, ImVec2(np.x + 4, np.y + cellH), theme::content(c.color), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
       theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(np.x + 10, std::round(np.y + (cellH - 13) * 0.5f) - 1),
                           nameW - 14, c.muted ? P.textFaint : selected && P.dark ? P.paper : P.text, c.name.c_str());
-      const PluginInfo* info = findPlugin(c.plugin.type);
-      ui::Hint(c.name + (info ? "  \xC2\xB7  " + info->name : "") +
+      if (ui::HintHovered()) {
+        const PluginInfo* info = findPlugin(c.plugin.type);
+        ui::Hint(c.name + (info ? "  \xC2\xB7  " + info->name : "") +
                "   (click: open / close its settings \xC2\xB7 Ctrl+click: add to selection \xC2\xB7 right-click: menu \xC2\xB7 drag: reorder)");
+      }
       if (ImGui::BeginPopup("##chmenu")) {
         channelContextMenu(a, c.id);
         ImGui::EndPopup();
@@ -489,8 +500,10 @@ void drawChannelRack(App& a) {
       dl->PopClipRect();
     } else if (pat) {
       auto row = rowOf(*pat, c.id);
+      const float visX0 = dl->GetClipRectMin().x, visX1 = dl->GetClipRectMax().x;
       for (int k = 0; k < total; ++k) {
         ImVec2 q(sp.x + stepPos(k), sp.y);
+        if (q.x + stepW < visX0 || q.x > visX1) continue;  // scrolled out of view (long patterns)
         ImGui::SetCursorScreenPos(q);
         ImGui::PushID(k);
         ImGui::InvisibleButton("s", ImVec2(stepW, cellH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);

@@ -185,13 +185,18 @@ struct HalfbandKernel {
   }
 };
 
+// The histories are circular (each sample written twice, at i and i + size,
+// so a window is always contiguous): no shifting per sample (J-25). The sums
+// run in the same order as a shifted history, so results are identical.
 struct Up2 {
   static constexpr int M = (HalfbandKernel::N + 1) / 2;
-  double x[M] = {};
+  double xb[2 * M] = {};
+  int p = 0;
+  const double* h = HalfbandKernel::get().h;
   void process(double in, double& y0, double& y1) {
-    const double* h = HalfbandKernel::get().h;
-    for (int i = M - 1; i > 0; --i) x[i] = x[i - 1];
-    x[0] = in;
+    p = p == 0 ? M - 1 : p - 1;
+    xb[p] = xb[p + M] = in;
+    const double* x = xb + p;  // x[0] newest
     double a = 0, b = 0;
     for (int k = 0; k < M; ++k) {
       a += h[2 * k] * x[k];
@@ -202,22 +207,31 @@ struct Up2 {
     y0 = 2.0 * a;
     y1 = 2.0 * b;
   }
-  void reset() { std::fill(x, x + M, 0.0); }
+  void reset() {
+    std::fill(xb, xb + 2 * M, 0.0);
+    p = 0;
+  }
 };
 
 struct Down2 {
   static constexpr int N = HalfbandKernel::N;
-  double x[N] = {};
+  double xb[2 * N] = {};
+  int p = 0;
+  const double* h = HalfbandKernel::get().h;
   double process(double a, double b) {
-    const double* h = HalfbandKernel::get().h;
-    for (int i = N - 1; i > 1; --i) x[i] = x[i - 2];
-    x[1] = a;
-    x[0] = b;
+    p = (p + N - 2) % N;
+    const int q = p + 1 == N ? 0 : p + 1;
+    xb[p] = xb[p + N] = b;  // x[0]
+    xb[q] = xb[q + N] = a;  // x[1]
+    const double* x = xb + p;
     double y = 0;
     for (int i = 0; i < N; ++i) y += h[i] * x[i];
     return y;
   }
-  void reset() { std::fill(x, x + N, 0.0); }
+  void reset() {
+    std::fill(xb, xb + 2 * N, 0.0);
+    p = 0;
+  }
 };
 
 struct Oversampler {

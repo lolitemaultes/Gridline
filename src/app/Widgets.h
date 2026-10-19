@@ -46,8 +46,13 @@ void Meter(ImGuiID key, float peakL, float peakR, ImVec2 size, bool vertical = t
 // Small coloured swatch that opens a palette popup; returns true when changed.
 bool ColorSwatch(const char* id, uint32_t* rgb, ImVec2 size);
 
-// Sets the hint bar text when the last item is hovered.
+// Sets the hint bar text when the last item is hovered. The const char*
+// overload builds no string unless the item is hovered (cheap per frame).
 void Hint(const std::string& text);
+void Hint(const char* text);
+// True when the last item is hovered for hint purposes: guard hints whose
+// text is concatenated, so the string is built only when it is shown.
+bool HintHovered();
 // Section label in small caps (mono).
 void Label(const char* text);
 // Delayed tooltip for the last item (design-system tooltip style).

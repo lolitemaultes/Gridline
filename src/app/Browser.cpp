@@ -13,6 +13,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
@@ -70,6 +71,23 @@ const DirCache& listDir(const fs::path& dir, double now) {
   std::sort(d.dirs.begin(), d.dirs.end(), byName);
   std::sort(d.files.begin(), d.files.end(), byName);
   return d;
+}
+
+// fs::is_directory for paths the browser checks every frame (one stat call
+// each): cached for a few seconds like the listings (J-25).
+bool isDirCached(const fs::path& dir, double now) {
+  struct Entry {
+    bool dir = false;
+    double stamp = -1;
+  };
+  static std::map<std::string, Entry> cache;
+  Entry& e = cache[dir.string()];
+  if (e.stamp < 0 || now - e.stamp >= 3.0) {
+    std::error_code ec;
+    e.dir = fs::is_directory(dir, ec);
+    e.stamp = now;
+  }
+  return e.dir;
 }
 
 std::vector<std::string> folders;
@@ -350,8 +368,7 @@ void dirTree(App& a, const fs::path& dir, int depth, float baseIndent = 12.0f) {
 
 // Folder of FL Studio's shipped content (read in place) as a tree node.
 void flFolderNode(App& a, const char* label, const fs::path& dir, float indent, uint32_t roleColour) {
-  std::error_code ec;
-  if (!fs::is_directory(dir, ec)) return;
+  if (!isDirCached(dir, a.now)) return;
   if (treeNode(dir.string(), label, -1, indent, roleColour)) dirTree(a, dir, 0, indent + 14);
 }
 
@@ -580,19 +597,26 @@ void sectionCurrentProject(App& a) {
       ui::Hint("Double-click: edit the automation clip");
     }
   }
-  // Samples used by the project's channels (preview, drag elsewhere).
-  std::vector<std::string> used;
-  for (const auto& c : s.channels)
-    if (!c.plugin.data.empty() && browse::kindOf(c.plugin.data) == Kind::Audio &&
-        std::find(used.begin(), used.end(), c.plugin.data) == used.end())
-      used.push_back(c.plugin.data);
+  // Samples used by the project's channels (preview, drag elsewhere), listed
+  // again only when the project changes.
+  static std::vector<std::string> used;
+  static uint64_t usedRev = ~0ull;
+  if (usedRev != a.doc.revision()) {
+    usedRev = a.doc.revision();
+    used.clear();
+    std::set<std::string> seen;
+    for (const auto& c : s.channels)
+      if (!c.plugin.data.empty() && !seen.count(c.plugin.data) && browse::kindOf(c.plugin.data) == Kind::Audio) {
+        seen.insert(c.plugin.data);
+        used.push_back(c.plugin.data);
+      }
+  }
   if (treeNode("##cp.smp", "Samples used", static_cast<int>(used.size()), in, role::kPaint))
     for (const auto& u : used) fileRow(a, u, in + 14);
   // Audio saved with the project (recordings, audio editor renders).
   if (!a.projectPath.empty()) {
     const fs::path audio = fs::path(a.projectPath).parent_path() / "Audio";
-    std::error_code ec;
-    if (fs::is_directory(audio, ec) && treeNode("##cp.audio", "Project audio", -1, in, role::kDelete)) dirTree(a, audio, 0, in + 14);
+    if (isDirCached(audio, a.now) && treeNode("##cp.audio", "Project audio", -1, in, role::kDelete)) dirTree(a, audio, 0, in + 14);
   }
   ImGui::Dummy(ImVec2(0, 4));
 }
@@ -646,13 +670,13 @@ void sectionMixerPresets(App& a) {
 
 // A folder section (FL content or Gridline's own folders).
 void folderSection(App& a, const char* title, const fs::path& dir, uint32_t roleColour, const char* emptyText, bool create = false) {
-  std::error_code ec;
-  if (!fs::is_directory(dir, ec)) {
+  if (!isDirCached(dir, a.now)) {
     if (!create) return;
   }
   if (!sectionHeader(title, -1, false, roleColour)) return;
-  ui::Hint(dir.string());
-  if (create) fs::create_directories(dir, ec);
+  if (ui::HintHovered()) ui::Hint(dir.string());
+  std::error_code ec;
+  if (create && !isDirCached(dir, a.now)) fs::create_directories(dir, ec);
   const DirCache& d = listDir(dir, a.now);
   if (d.dirs.empty() && d.files.empty()) emptyLine(emptyText);
   else dirTree(a, dir, 0);

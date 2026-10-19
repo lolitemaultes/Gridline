@@ -67,7 +67,7 @@ target_compile_options(gridline_core PRIVATE -Wall -Wextra -Wpedantic)
 find_package(Threads REQUIRED)
 target_link_libraries(gridline_core PUBLIC Threads::Threads vst3_pluginterfaces gridline_lua ${CMAKE_DL_LIBS})
 
-add_executable(gridline src/cli/main.cpp)
+add_executable(gridline src/cli/main.cpp src/cli/Bench.cpp)
 target_link_libraries(gridline PRIVATE gridline_core)
 
 add_executable(gridline_tests tests/test_engine.cpp)

@@ -1,4 +1,7 @@
 #include "Sample.h"
+#include <thread>
+#include <set>
+#include <atomic>
 #include "../core/PluginParams.h"
 #include "Generators.h"
 #include <algorithm>
@@ -192,6 +195,31 @@ SamplePtr SampleCache::get(const std::string& path) {
   else
     failed_[path] = true;
   return s;
+}
+
+void SampleCache::prefetch(const std::vector<std::string>& paths, int threads) {
+  std::vector<std::string> todo;
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::set<std::string> seen;
+    for (const auto& p : paths)
+      if (!p.empty() && p.rfind("builtin:", 0) != 0 && !cache_.count(p) && !failed_.count(p) && seen.insert(p).second) todo.push_back(p);
+  }
+  if (todo.empty()) return;
+  if (threads <= 0) threads = static_cast<int>(std::clamp(std::thread::hardware_concurrency() / 2, 1u, 8u));
+  threads = std::min<int>(threads, static_cast<int>(todo.size()));
+  if (threads <= 1) {
+    for (const auto& p : todo) get(p);
+    return;
+  }
+  std::atomic<size_t> next{0};
+  auto work = [&] {
+    for (size_t i; (i = next.fetch_add(1)) < todo.size();) get(todo[i]);
+  };
+  std::vector<std::thread> pool;
+  for (int t = 1; t < threads; ++t) pool.emplace_back(work);
+  work();
+  for (auto& t : pool) t.join();
 }
 
 void SampleCache::clear() {
