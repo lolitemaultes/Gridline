@@ -9,10 +9,14 @@ void drawHarmor(App& a, const PluginTarget& t, float width);
 void drawImageSynth(App& a, const PluginTarget& t, float width);
 void drawStringModel(App& a, const PluginTarget& t, float width);
 void drawDrumModel(App& a, const PluginTarget& t, float width);
+bool drawDrumsEditors(App& a, const PluginTarget& t, float width);    // drums_ui.cpp (J-22)
+bool drawStringsEditors(App& a, const PluginTarget& t, float width);  // strings_ui.cpp (J-22)
+bool drawMetalEditors(App& a, const PluginTarget& t, float width);    // metal_ui.cpp (J-22)
 
 bool drawEditor(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());
   if (!st) return false;
+  if (drawDrumsEditors(a, t, width) || drawStringsEditors(a, t, width) || drawMetalEditors(a, t, width)) return true;
   if (st->type == "gl.additive")
     drawAdditive(a, t, width);
   else if (st->type == "gl.harmor")

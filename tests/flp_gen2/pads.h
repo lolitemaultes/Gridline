@@ -2,6 +2,7 @@
 #pragma once
 #include "../../src/core/PluginParams.h"
 #include "../../src/engine/Slicing.h"
+#include "../../src/packs/models/drums.h"
 #include "../../src/packs/models/models.h"
 #include "Gen2Test.h"
 
@@ -112,37 +113,61 @@ inline void testPads() {
     expect(!r.ok, "fpc: unknown state is rejected");
   }
 
-  // ------------------------------------------------------------ Drumpad
+  // ------------------------------------------------------------ Drumpad (J-22: Membrane Pad)
   {
+    namespace dr = gl::packs::models::dr;
     Bytes st = sslf("3PMD", 0x8C);
-    for (int k = 0; k < 38; ++k) st.f32(k == 11 ? 0.2f : 0.5f);  // size 0.2
+    for (int k = 0; k < 38; ++k) st.f32(k == 11 ? 0.2f : (k == 30 ? 1.0f : (k > 30 && k < 34 ? 0.0f : 0.5f)));
+    st.f32(0.7f).u32(0);  // newer saves: output level, then a word after the chunk
+    const uint32_t chunk = static_cast<uint32_t>(st.b.size() - 12);
+    for (int i = 0; i < 4; ++i) st.b[4 + static_cast<size_t>(i)] = static_cast<uint8_t>(chunk >> (8 * i));
     for (const char* name : {"Drumpad", "DrumPad"}) {
       Run r;
       decode(r, name, st.b);
-      expect(r.ok && r.m.glType == "gl.drumkit", "drumpad: decodes to the drum model");
-      expect(near(param(r, md::DmKeyMode), 1) && near(param(r, md::DmBaseNote), 60), "drumpad: pitched key mode around C5");
-      expect(near(param(r, md::drumPad(1, md::DpMute)), 1) && near(param(r, md::drumPad(0, md::DpMute)), 0), "drumpad: only pad 1 sounds");
-      double hz = param(r, md::drumPad(0, md::DpFreq));
-      expect(hz > 200 && hz < 600, "drumpad: small drum is high");
+      expect(r.ok && r.m.glType == "gl.membranepad" && r.m.exact, "drumpad: decodes exactly to the membrane pad");
+      expect(near(param(r, dr::MdSize), 0.2) && near(param(r, dr::MdVelSrc1), 1) && near(param(r, dr::PdOutput), 0.7), "drumpad: tags 1:1 + output");
+      expect(r.m.param && r.m.param(11) == 11 && r.m.param(29) == 29, "drumpad: automation index = tag");
     }
     Run bad;
     decode(bad, "Drumpad", Bytes().str("XXXX").b);
     expect(!bad.ok, "drumpad: short state is rejected");
   }
 
-  // ------------------------------------------------------------ Drumaxx
+  // ------------------------------------------------------------ Drumaxx (J-22: Membrane Kit)
   {
-    Bytes st = sslf("4SMD", 0x10C);
+    namespace dr = gl::packs::models::dr;
+    Bytes st = sslf("3SMD", 0x10C);
     for (int p = 0; p < 16; ++p) {
       st.f32(p == 2 ? 0.25f : 1.0f).f32(0.5f).f32(0).f32(0).f32(static_cast<float>(36 + p));
-      for (int k = 0; k < 38; ++k) st.f32(0.5f);
+      for (int k = 0; k < 38; ++k) st.f32(k >= 30 && k < 34 ? 0.0f : 0.5f);
       st.f32(0);
     }
+    for (int k = 0; k < 16; ++k) st.f32(k == 1 ? 0.6f : 0.0f);
+    for (int k = 0; k < 16; ++k) {
+      st.u8(k == 0 ? 15 : 0x7F).u8(k == 0 ? 60 : 0x7F);
+      for (int c = 0; c < 16 * 64; ++c) st.u8(c == 4 ? 0xFF : 0x7F);
+    }
+    for (int p = 0; p < 16; ++p) {
+      Bytes nm;
+      nm.str(p == 0 ? "Kick" : "...", true);
+      nm.b.resize(128, 0);
+      st.raw(nm.b);
+    }
+    st.zeros(32);
+    const uint32_t size = static_cast<uint32_t>(st.b.size() - 8);
+    for (int i = 0; i < 4; ++i) st.b[4 + static_cast<size_t>(i)] = static_cast<uint8_t>(size >> (8 * i));
     Run r;
     decode(r, "Drumaxx", st.b);
-    expect(r.ok && r.m.glType == "gl.drumkit", "drumaxx: decodes to the drum model");
-    expect(near(param(r, md::DmBaseNote), 36) && near(param(r, md::DmKeyMode), 0), "drumaxx: pads from the lowest key");
-    expect(near(param(r, md::drumPad(2, md::DpLevel)), 0.25) && near(param(r, md::drumPad(2, md::DpPan)), 0), "drumaxx: pad level / pan");
+    expect(r.ok && r.m.glType == "gl.membranekit" && r.m.exact, "drumaxx: decodes exactly to the membrane kit");
+    expect(near(param(r, dr::kitPad(2, dr::KpVolume)), 0.25) && near(param(r, dr::kitPad(5, dr::KpKey)), 41) && near(param(r, dr::KmLevel), 0.6),
+           "drumaxx: channel volume / key, master level at their tags");
+    dr::KitData d;
+    expect(dr::decodeKitData(r.m.state.data, d) && d.pattern[0].length == 16 && d.pattern[0].key == 60 && d.pattern[0].cell[0][4] == 0xFF &&
+               d.padName[0] == "Kick",
+           "drumaxx: patterns and channel names kept");
+    Run bad;
+    decode(bad, "Drumaxx", std::vector<uint8_t>(st.b.begin(), st.b.end() - 1));
+    expect(!bad.ok, "drumaxx: truncated state is rejected");
   }
 
   // ------------------------------------------------ Fruity DrumSynth Live
@@ -168,15 +193,20 @@ inline void testPads() {
     expect(!bad.ok, "drumsynth live: truncated state is rejected");
   }
 
-  // ------------------------------------------------------------ BassDrum
+  // ------------------------------------------------------------ BassDrum (J-22: Kick Sculptor)
   {
-    Bytes st = sslf("1kiK", 0x50C);
+    namespace dr = gl::packs::models::dr;
+    Bytes st = sslf("2kiK", 0x10C);
+    st.str("%FLStudioFactoryData%/Plugins/Fruity/Generators/BassDrum/Noise Samples/Metallic.wav", true);
+    st.pad(0x50C);
     for (int k = 0; k < 23; ++k) st.f32(k == 2 ? 0.5f : 0.25f);
+    const uint32_t size = static_cast<uint32_t>(st.b.size() - 8);
+    for (int i = 0; i < 4; ++i) st.b[4 + static_cast<size_t>(i)] = static_cast<uint8_t>(size >> (8 * i));
     Run r;
     decode(r, "BassDrum", st.b);
-    expect(r.ok && r.m.glType == "gl.kick", "bassdrum: decodes to the kick");
-    expect(near(param(r, KickDecay), 0.05 * std::sqrt(40.0)), "bassdrum: duration → decay");
-    expect(r.m.param && r.m.param(2) == KickDecay && r.m.param(0) == -1, "bassdrum: automation targets");
+    expect(r.ok && r.m.glType == "gl.kicksculpt" && r.m.exact, "bassdrum: decodes exactly to the kick sculptor");
+    expect(near(param(r, dr::KsDuration), 0.5) && near(param(r, dr::KsNoiseSample), 6), "bassdrum: duration tag + noise sample");
+    expect(r.m.param && r.m.param(2) == 2 && r.m.param(0) == 0, "bassdrum: automation index = tag");
     Run bad;
     decode(bad, "BassDrum", Bytes().str("SSLF", false).zeros(16).b);
     expect(!bad.ok, "bassdrum: short state is rejected");

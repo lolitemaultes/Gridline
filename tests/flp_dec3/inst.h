@@ -12,34 +12,24 @@ inline void testInst() {
   using namespace gl::pp;
 
   // -------------------------------------------------------- Plucked!
+  // J-22: → Plucker (gl.plucker, parameter index = tag; full coverage in
+  // tests/packs/test_strings.cpp).
   {
     Run r;
     decode(r, "Plucked!", Bytes().i32(128).i32(32).i32(1).i32(0).i32(1).b);
-    expect(r.ok && r.m.glType == "gl.pluck", "plucked: decodes to the string model");
-    expect(near(param(r, PlkDecay), 20.0, 0.01) && near(param(r, PlkBrightness), 0.25), "plucked: decay and colour");
-    expect(near(param(r, PlkNormalize), 1) && near(param(r, PlkGate), 0) && param(r, PlkWidth) > 0.5, "plucked: switches");
+    expect(r.ok && r.m.glType == "gl.plucker" && r.m.exact, "plucked: decodes to the Plucker (exact)");
+    expect(near(param(r, 0), 128.0, 0.01) && near(param(r, 1), 32.0), "plucked: decay and colour");
+    expect(near(param(r, 2), 1) && near(param(r, 3), 0) && near(param(r, 4), 1), "plucked: switches");
     expect(r.m.rawNorm && near(r.m.rawNorm(1, 64), 0.5), "plucked: automation range");
   }
 
   // ------------------------------------------------- Transistor Bass
+  // J-22: → Step Bass (gl.stepbass); the container is walked to its end
+  // (tests/packs/test_strings.cpp). Damaged states are rejected.
   {
-    Bytes st;
-    st.u32(1).u32(1).u32(8).u32(0).u32(2).u32(3).u32(2).u32(0).zeros(16);  // header
-    for (int k = 0; k < 4; ++k) st.u32(1).u8(0).u32(static_cast<uint32_t>(k)).u32(static_cast<uint32_t>(k)).zeros(6);  // programs
-    st.u32(4).str("Acid", false);
-    float f[100] = {};
-    for (float& x : f) x = 0.5f;
-    f[1] = 1.0f, f[2] = 0.0f, f[4] = 0.8f, f[27] = 1.0f, f[29] = 0.25f, f[41] = 0.0f;
-    for (float x : f) st.f32(x);
-    st.zeros(64);
-    Run r;
-    decode(r, "Transistor Bass", st.b);
-    expect(r.ok && r.m.glType == "gl.acid", "transistor: decodes to the acid bass");
-    expect(near(param(r, AcWave), 1) && near(param(r, AcCutoff), 60, 0.5) && near(param(r, AcReso), 0.8), "transistor: wave, cutoff, resonance");
-    expect(near(param(r, AcDrive), 0.25) && near(param(r, AcSeqOn), 0), "transistor: distortion drive, sequencer off");
     Run bad;
     decode(bad, "Transistor Bass", Bytes().zeros(1000).b);
-    expect(!bad.ok, "transistor: state without a patch rejected");
+    expect(!bad.ok, "transistor: state without a bank rejected");
   }
 
   // ------------------------------------------------- Fruity Slicer 2

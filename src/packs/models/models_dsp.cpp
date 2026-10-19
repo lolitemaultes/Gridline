@@ -416,6 +416,14 @@ const char* drumPadName(int pad) {
   return n[std::clamp(pad, 0, kDrumPads - 1)];
 }
 
+// J-22 groups (drums_dsp.cpp, strings_dsp.cpp, metal_dsp.cpp).
+std::unique_ptr<Generator> createDrumsGenerator(const std::string& type);
+bool prepareDrumsAux(const PluginState& state, ChannelAux& aux);
+std::unique_ptr<Generator> createStringsGenerator(const std::string& type);
+bool prepareStringsAux(const PluginState& state, ChannelAux& aux);
+std::unique_ptr<Generator> createMetalGenerator(const std::string& type);
+bool prepareMetalAux(const PluginState& state, ChannelAux& aux);
+
 // ============================================================ registry
 std::unique_ptr<Generator> createGenerator(const std::string& type) {
   if (type == "gl.additive") return makeAdditive();
@@ -423,6 +431,9 @@ std::unique_ptr<Generator> createGenerator(const std::string& type) {
   if (type == "gl.imagesynth") return makeImageSynth();
   if (type == "gl.string") return makeString();
   if (type == "gl.drumkit") return makeDrumKit();
+  if (auto g = createDrumsGenerator(type)) return g;
+  if (auto g = createStringsGenerator(type)) return g;
+  if (auto g = createMetalGenerator(type)) return g;
   return nullptr;
 }
 
@@ -435,6 +446,7 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
 // samples (left = red, right = green; second sample left = blue; the image
 // width is stored in sampleRate). Order: [0,1] file, [2,3] canvas.
 bool prepareAux(const PluginState& state, ChannelAux& aux) {
+  if (prepareDrumsAux(state, aux) || prepareStringsAux(state, aux) || prepareMetalAux(state, aux)) return true;
   if (state.type == "gl.additive") {
     aux = ChannelAux{};
     aux.custom = buildAdditiveAux(state);

@@ -4,6 +4,7 @@
 #include <limits>
 #include <memory>
 #include "Flp.h"
+#include "FlpJ22.h"
 #include "FlpWrapper.h"
 
 namespace gl::flp {
@@ -17,6 +18,7 @@ std::map<std::string, PluginDecoder>& decoders() {
     registerGeneratorDecoders2(m);
     registerDecoders3(m);
     registerDecoders4(m);
+    registerDecodersJ22(m);  // J-22: replaces earlier approximate instrument decoders
     registerWrapperDecoder(m);  // third-party plugins (FlpWrapper.cpp)
     return m;
   }();

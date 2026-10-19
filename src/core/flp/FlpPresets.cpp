@@ -154,8 +154,13 @@ bool importPluginPreset(const File& f, Context& c, PresetResult& out) {
 
 }  // namespace
 
-// Groove-machine synth presets (.gmsynth): the plugin's state payload alone.
+// Native preset files that hold a plugin's state payload alone: .gmsynth =
+// groove-machine synth, .mrp = spectral morpher (J-22).
+static bool importNativePreset(const std::string& path, PresetResult& out, const std::string& factoryData, const char* flName);
 bool importGmsPreset(const std::string& path, PresetResult& out, const std::string& factoryData) {
+  return importNativePreset(path, out, factoryData, "GMS");
+}
+static bool importNativePreset(const std::string& path, PresetResult& out, const std::string& factoryData, const char* flName) {
   std::vector<uint8_t> bytes;
   {
     std::FILE* fp = std::fopen(path.c_str(), "rb");
@@ -165,7 +170,7 @@ bool importGmsPreset(const std::string& path, PresetResult& out, const std::stri
     }
     uint8_t buf[4096];
     size_t n;
-    while ((n = std::fread(buf, 1, sizeof buf, fp)) > 0 && bytes.size() < (1u << 20)) bytes.insert(bytes.end(), buf, buf + n);
+    while ((n = std::fread(buf, 1, sizeof buf, fp)) > 0 && bytes.size() < (8u << 20)) bytes.insert(bytes.end(), buf, buf + n);
     std::fclose(fp);
   }
   File f;
@@ -178,11 +183,11 @@ bool importGmsPreset(const std::string& path, PresetResult& out, const std::stri
   e.data = bytes.data();
   e.size = static_cast<uint32_t>(bytes.size());
   PluginMapping m;
-  m.flName = "GMS";
-  out.flPlugin = "GMS";
-  const PluginDecoder* dec = findDecoder("GMS");
+  m.flName = flName;
+  out.flPlugin = flName;
+  const PluginDecoder* dec = findDecoder(flName);
   if (!dec || !(*dec)(c, {e}, m) || m.glType.empty()) {
-    out.error = "not a groove synth preset";
+    out.error = std::string("not a ") + flName + " preset";
     return false;
   }
   if (m.state.type.empty()) m.state.type = m.glType;
@@ -200,6 +205,7 @@ bool importFlPreset(const std::string& path, PresetResult& out, const std::strin
     std::string ext = fs::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (ext == ".gmsynth") return importGmsPreset(path, out, factoryData);
+    if (ext == ".mrp") return importNativePreset(path, out, factoryData, "Morphine");
   }
   File f;
   if (!readFile(path, f, &out.error)) return false;
@@ -253,7 +259,7 @@ PresetLibraryReport importPresetLibrary(const std::string& factoryData, const st
       if (!it->is_regular_file(ec)) continue;
       std::string ext = it->path().extension().string();
       std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-      if (ext != ".fst" && ext != ".gmsynth") continue;
+      if (ext != ".fst" && ext != ".gmsynth" && ext != ".mrp") continue;
       fs::path rel = fs::relative(it->path().parent_path(), root, ec);
       fs::path kept;
       int i = 0;

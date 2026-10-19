@@ -1,5 +1,5 @@
 // Gridline — second-wave instrument decoder tests: synths_a (included by test_flp_gen2.cpp).
-// Fruity DX10 → gl.fm, MiniSynth → gl.synth, Ogun / Autogun → gl.additive, BeepMap → gl.imagesynth.
+// Fruity DX10 → gl.fm, MiniSynth → gl.synth, Ogun / Autogun → gl.alloy (J-22), BeepMap → gl.imagesynth.
 #pragma once
 #include <memory>
 #include "../../src/core/PluginParams.h"
@@ -72,19 +72,15 @@ inline void testDx10() {
   for (int32_t t : tags) b.i32(t);
   Run r;
   decode(r, "Fruity DX10", b.b);
-  expect(r.ok && r.m.glType == "gl.fm", "dx10: decodes to gl.fm");
-  expect(near(param(r, FmAlgorithm), 3), "dx10: carrier + two parallel modulators");
-  expect(near(param(r, FmOctave), -2), "dx10: octave (signed tag 21)");
-  expect(near(param(r, fmParam(0, FmAttack)), 0.001, 1e-4), "dx10: zero attack");
-  expect(near(param(r, fmParam(0, FmSustain)), 0), "dx10: carrier decays (no sustain)");
-  // Coarse 0.5 → floor(40.1 * 0.25) = 10, fine 0 → ratio 10.
-  expect(near(param(r, fmParam(1, FmRatio)), 10), "dx10: modulator 1 ratio from coarse");
-  expect(param(r, fmParam(1, FmLevel)) > 0.2f && param(r, fmParam(2, FmLevel)) > 0.4f, "dx10: modulator depths");
-  expect(near(param(r, fmParam(3, FmLevel)), 0), "dx10: op 4 unused");
-  expect(near(param(r, FmLfoRate), 25.0 * 0.414 * 0.414, 0.05), "dx10: LFO rate");
-  expect(r.m.param && r.m.param(13) == FmLfoRate && r.m.param(99) == -1, "dx10: automation link (LFO rate)");
+  // J-22: DX10 → FM Duo (gl.fmduo, parameter index = control tag, exact).
+  expect(r.ok && r.m.glType == "gl.fmduo", "dx10: decodes to gl.fmduo");
+  expect(near(param(r, 21), -2), "dx10: octave (signed tag 21)");
+  expect(near(param(r, 0), 0) && near(param(r, 1), 42598.0 / 65536.0, 1e-6), "dx10: attack / decay positions");
+  expect(near(param(r, 3), 0.5) && near(param(r, 14), 10000.0 / 65536.0, 1e-6), "dx10: modulator coarse positions");
+  expect(near(param(r, 13), 27132.0 / 65536.0, 1e-6), "dx10: LFO rate position");
+  expect(r.m.param && r.m.param(13) == 13 && r.m.param(99) == -1, "dx10: automation link (LFO rate)");
   expect(r.m.value && near(r.m.value(21, 1.0), 3), "dx10: automation value (octave)");
-  expect(!r.m.exact, "dx10: approximate");
+  expect(r.m.exact, "dx10: exact");
   expect(renderPeak(r.m.state) > 0.01f, "dx10: decoded patch sounds");
   Run shortRun;
   decode(shortRun, "Fruity DX10", std::vector<uint8_t>(40, 0));
@@ -133,15 +129,17 @@ inline void testOgun() {
     b.u32(0x00130003).raw(k == 0 ? ogunFixed() : ogunStored());
     Run r;
     decode(r, k == 0 ? "Ogun" : "Autogun", b.b);
-    const char* what = k == 0 ? "ogun (fixed Huffman): decodes to gl.additive" : "autogun (stored block): decodes to gl.additive";
-    expect(r.ok && r.m.glType == "gl.additive", what);
+    // J-22: Ogun / Autogun → Alloy (gl.alloy, parameter index = control tag);
+    // a tags-only record (never written by the reference) keeps its tags.
+    const char* what = k == 0 ? "ogun (fixed Huffman): decodes to gl.alloy" : "autogun (stored block): decodes to gl.alloy";
+    expect(r.ok && r.m.glType == "gl.alloy", what);
     if (!r.ok) continue;
-    expect(near(param(r, AdPitch), -12), "ogun: coarse pitch");
-    expect(near(param(r, AdDecay), 5.0) && near(param(r, AdRelease), 1.5), "ogun: decay / release (ms)");
-    expect(near(param(r, AdUniOrder), 3), "ogun: unison order");
-    expect(near(param(r, AdScatter), 0.7), "ogun: randomness");
-    expect(near(param(r, AdVolume), 200.0 / 256 * 0.8), "ogun: volume");
-    expect(param(r, AdFx + FxChorus) > 0.4f && near(param(r, AdFx + FxRoomSize), 0.5), "ogun: chorus / reverb");
+    expect(near(param(r, 1), -12) && near(param(r, 2), 10), "ogun: coarse / fine pitch tags");
+    expect(near(param(r, 6), 5000) && near(param(r, 7), 1500), "ogun: decay / release tags");
+    expect(near(param(r, 12), 3), "ogun: unison order");
+    expect(near(param(r, 9), 700), "ogun: randomness / morph");
+    expect(near(param(r, 0), 200), "ogun: volume");
+    expect(near(param(r, 19), 4) && near(param(r, 34), 50), "ogun: chorus order / reverb room");
     expect(renderPeak(r.m.state) > 0.005f, "ogun: decoded patch sounds");
   }
   Bytes broken;

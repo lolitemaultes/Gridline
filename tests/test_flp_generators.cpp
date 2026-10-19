@@ -369,13 +369,13 @@ int main() {
   {
     Env e;
     flp::PluginMapping m;
-    expect(e.run("BooBass", Plug{name16("BooBass"), Bin().i32(1).i32(65535).i32(32767).i32(0).b, {}, {}}, m) && m.glType == "gl.analog" &&
-               near(prm(m.state, packs::synths::AnSubLevel), 1),
-           "BooBass → Analog");
+    expect(e.run("BooBass", Plug{name16("BooBass"), Bin().i32(1).i32(65535).i32(32767).i32(0).b, {}, {}}, m) && m.glType == "gl.fingerbass" &&
+               near(prm(m.state, 0), 1) && near(prm(m.state, 2), 0),
+           "BooBass → Finger Bass (J-22)");
     flp::PluginMapping k;
     expect(e.run("Fruit Kick", Plug{name16("Fruit Kick"), Bin().i32(0).i32(0).i32(-600).i32(64).i32(128).i32(64).i32(128).i32(0).b, {}, {}}, k) &&
-               k.glType == "gl.kick" && near(prm(k.state, pp::KickClick), 1) && near(prm(k.state, pp::KickDrive), 1),
-           "Fruit Kick → Kick");
+               k.glType == "gl.sweepkick" && near(prm(k.state, 4), 64) && near(prm(k.state, 5), 128),
+           "Fruit Kick → Sweep Kick (click / distortion tags 1:1)");
     expect(renderPeak(k.state, 48) > 0.01, "Fruit Kick import renders sound");
   }
   // --------------------------------------------- Sytrus (zlib), Harmor, GMS

@@ -324,12 +324,16 @@ PluginInfo wavetableInfo() {
 
 PluginInfo matrixFmInfo();  // matrixfm_info.cpp
 PluginInfo gmsInfo();       // gms_info.cpp
+void appendVaInfos(std::vector<PluginInfo>& v);   // va_info.cpp (J-22)
+void appendDcoInfos(std::vector<PluginInfo>& v);  // dco_info.cpp (J-22)
 
 void appendInfos(std::vector<PluginInfo>& v) {
   v.push_back(analogInfo());
   v.push_back(wavetableInfo());
   v.push_back(matrixFmInfo());
   v.push_back(gmsInfo());
+  appendVaInfos(v);
+  appendDcoInfos(v);
 }
 
 }  // namespace gl::packs::synths

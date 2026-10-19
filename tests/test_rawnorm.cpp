@@ -68,10 +68,10 @@ void testInstruments() {
     s.u32(0).i32(0).i32(-600).i32(64).i32(128).i32(32).i32(0).u32(1);
     Run r;
     decode(r, "Fruit Kick", s.b);
-    expect(r.ok && r.m.param(3) == gl::pp::KickDecay, "Fruit Kick: decay linked");
+    expect(r.ok && r.m.param(3) == 3, "Fruit Kick: decay linked (Sweep Kick index = tag)");
     expect(near(rn(r, 0, 0), 0.4) && near(rn(r, 3, 128), 0.5) && near(rn(r, 4, 64), 1.0), "Fruit Kick: control ranges");
-    expect(near(glValue(r, 0, 0), r.m.state.params[gl::pp::KickPitch], 0.01), "Fruit Kick: recorded max freq = decoded value");
-    expect(near(glValue(r, 3, 128), r.m.state.params[gl::pp::KickDecay], 0.001), "Fruit Kick: recorded decay = decoded value");
+    expect(near(glValue(r, 0, 0), r.m.state.params[0], 0.01), "Fruit Kick: recorded max freq = decoded value");
+    expect(near(glValue(r, 3, 128), r.m.state.params[3], 0.001), "Fruit Kick: recorded decay = decoded value");
   }
   {  // Sytrus: Mod X / Y 0..512 drive the approximation around the saved patch.
     std::vector<uint8_t> raw(256, 0);
@@ -108,13 +108,15 @@ void testInstruments() {
   {  // Kepler (second wave): sliders 0..6000, volume 0..65536.
     std::vector<float> t(36, 0.0f);
     Bytes b;
-    b.u32(0).u32(0).u32(0).u32(9).str("Kepler-1").u32(0x400).u32(36);
+    b.u32(0).u32(0).u32(0).u32(9).str("Kepler-1").u32(4).u32(36);
     for (float f : t) b.f32(f);
-    b.zeros(13);
+    b.zeros(12);
+    b.b[4] = static_cast<uint8_t>(b.b.size() - 12);
     Run r;
     decode(r, "Kepler", b.b);
     expect(r.ok && near(rn(r, 19, 3000), 0.5) && near(rn(r, 33, 65536), 1.0) && isNan(rn(r, 99, 1)), "Kepler: control ranges");
-    expect(near(glValue(r, 19, 6000), 20000.0, 1.0), "Kepler: recorded VCF frequency → cutoff");
+    // J-22: DCO Synth keeps the reference's 0..1 positions.
+    expect(near(glValue(r, 19, 6000), 1.0, 1e-6), "Kepler: recorded VCF frequency → cutoff position");
   }
   {  // Keyboard Controller: smoothing 0..256.
     Bytes s;

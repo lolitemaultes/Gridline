@@ -1,8 +1,8 @@
-// Gridline — third-wave decoder tests: Kepler Exo → Analog (included by test_flp_dec3.cpp).
+// Gridline — third-wave decoder tests: Kepler Exo → DCO Synth since J-22 (included by test_flp_dec3.cpp).
 #pragma once
 #include <map>
 #include <utility>
-#include "../../src/packs/synths/synths.h"
+#include "../../src/packs/synths/dco.h"
 #include "../flp_gen2/Gen2Test.h"
 
 namespace dec3test {
@@ -34,11 +34,10 @@ inline Bytes keplerExo(const std::map<int, float>& tags, const std::vector<std::
 
 inline void testKepler() {
   using namespace keptest;
-  namespace sy = gl::packs::synths;
+  namespace dc = gl::packs::synths::dco;
   expect(registered("Kepler Exo"), "kepler exo: registered");
   {
-    // DCO1 saw + pulse, DCO2 saw +12 st hard-synced, 24 dB filter, env 2 VCA,
-    // LFO1 → cutoff, matrix env 1 → resonance, arpeggiator, reverb.
+    // J-22: Kepler Exo → DCO Synth (parameter index = control tag, exact).
     std::map<int, float> t = {{7, 1}, {8, 1}, {12, 1}, {13, 0.625f}, {15, 1}, {27, 1}, {32, 1}, {33, 0.5f},
                               {37, 0.5f}, {38, 0.4f}, {40, 1}, {44, 0.6f}, {43, 1}, {45, 0.3f}, {47, 1},
                               {65, 0}, {66, 0.5f}, {67, 0.25f}, {68, 0.5f}, {72, 0.5f}, {74, 0.5f}, {75, 1},
@@ -46,36 +45,28 @@ inline void testKepler() {
                               {92, 0.75f}, {121, 1}, {133, 0.3f}, {4, 0.5f}, {24, 0.5f}};
     Run r;
     decode(r, "Kepler Exo", keplerExo(t, {{2, 38}}).b);
-    expect(r.ok && r.m.glType == "gl.analog" && !r.m.exact, "kepler exo: decodes approximately to Analog");
-    expect(near(param(r, sy::anOsc(0, sy::OscWave)), sy::WaveSaw) && near(param(r, sy::anOsc(2, sy::OscOn)), 1) &&
-               near(param(r, sy::anOsc(2, sy::OscWave)), sy::WavePulse),
-           "kepler exo: DCO1 saw + pulse on oscillators 1 and 3");
-    expect(near(param(r, sy::anOsc(1, sy::OscCoarse)), 12) && near(param(r, sy::anOsc(1, sy::OscMod)), sy::ModSync) &&
-               near(param(r, sy::anOsc(1, sy::OscLevel)), 0.4),
-           "kepler exo: DCO2 transpose, hard sync, level");
-    expect(near(param(r, sy::AnFltMode), sy::FltLp24) && near(param(r, sy::AnCutoff), 20.0 * std::sqrt(1000.0), 0.5) &&
-               near(param(r, sy::AnReso), 0.4) && near(param(r, sy::AnFltEnv), -0.6),
-           "kepler exo: filter slope, cutoff, resonance, inverted env amount");
-    expect(near(param(r, sy::AnAmpS), 0.25) && near(param(r, sy::AnAmpA), 0.001, 1e-4), "kepler exo: VCA follows env 2");
-    expect(near(param(r, sy::anLfo(0, sy::LfoDest)), sy::AdCutoff) && near(param(r, sy::anLfo(0, sy::LfoAmt)), 0.3),
-           "kepler exo: LFO1 → cutoff");
-    expect(near(param(r, sy::anMx(0, 0)), sy::AsFilterEnv) && near(param(r, sy::anMx(0, 1)), sy::AdResonance) &&
-               near(param(r, sy::anMx(0, 2)), 0.5),
+    expect(r.ok && r.m.glType == "gl.dcosynth" && r.m.exact, "kepler exo: decodes exactly to DCO Synth");
+    expect(param(r, dc::DcDco1Pulse) == 1 && param(r, dc::DcDco1Saw) == 1 && param(r, dc::DcDco2On) == 1 &&
+               near(param(r, dc::DcDco2Semi), 0.625f) && param(r, dc::DcSync) == 1,
+           "kepler exo: DCO switches, DCO 2 semitones, hard sync");
+    expect(param(r, dc::DcSlope) == 3 && near(param(r, dc::DcCutoff), 0.5f) && near(param(r, dc::DcReso), 0.4f) &&
+               param(r, dc::DcEnvPolarity) == 1 && near(param(r, dc::DcEnv1ToCut), 0.6f),
+           "kepler exo: slope selector index, cutoff, resonance, polarity, env amount");
+    expect(param(r, dc::DcVcaSrc) == 2 && near(param(r, dc::DcEnv2S), 0.25f), "kepler exo: VCA = env 2");
+    expect(param(r, dc::DcMono) == 1 && param(r, dc::DcOctave) == 2 && param(r, dc::DcArpOn) == 1 && param(r, dc::DcArpRange) == 1 &&
+               param(r, dc::DcArpMode) == 2,
+           "kepler exo: mono, octave up, arpeggiator selectors");
+    expect(param(r, dc::DcMxSrc1) == 3 && param(r, dc::DcMxDst1) == 39 && near(param(r, dc::DcMxAmt1), 0.75f),
            "kepler exo: matrix row env 1 → resonance");
-    expect(near(param(r, sy::AnPlayMode), sy::PlayMono) && near(param(r, sy::AnTranspose), 12) && near(param(r, sy::AnPan), 0),
-           "kepler exo: mono, octave up, centred pan");
-    expect(near(param(r, sy::AnArpOn), 1) && near(param(r, sy::AnArpDiv), sy::Div1_16) && near(param(r, sy::AnArpOct), 2) &&
-               near(param(r, sy::AnArpMode), sy::ArpUpDown),
-           "kepler exo: arpeggiator");
-    expect(near(param(r, sy::AnFxDrive + sy::FxRevOn), 1) && near(param(r, sy::AnFxDrive + sy::FxRevMix), 0.3), "kepler exo: reverb");
-    // Automation: tag 37 → cutoff (log), recorded value of tag 38 in 0..6000.
-    expect(r.m.param && r.m.param(37) == sy::AnCutoff && r.m.value && near(r.m.value(37, 1.0), 20000, 1), "kepler exo: cutoff automation");
+    expect(param(r, dc::DcRevOn) == 1 && near(param(r, dc::DcRevWet), 0.3f) && param(r, dc::DcPanel) == dc::PanelTwo, "kepler exo: reverb, panel");
+    expect(r.m.param && r.m.param(37) == dc::DcCutoff && r.m.value && near(r.m.value(37, 1.0), 1.0) && near(r.m.value(40, 1.0), 3),
+           "kepler exo: automation identity (selectors → index)");
     expect(r.m.rawNorm && near(r.m.rawNorm(38, 3000), 0.5) && std::isnan(r.m.rawNorm(500, 1)), "kepler exo: recorded values → normalized");
   }
   {
     Run r;
     decode(r, "Kepler Exo", std::vector<uint8_t>{1, 2, 3});
-    expect(r.ok && r.m.glType == "gl.analog", "kepler exo: short state keeps defaults");
+    expect(!r.ok, "kepler exo: short state refused");
   }
 }
 

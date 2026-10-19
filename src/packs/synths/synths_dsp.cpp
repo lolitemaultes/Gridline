@@ -5,11 +5,19 @@
 
 namespace gl::packs::synths {
 
+// J-22 groups (va_dsp.cpp, dco_dsp.cpp).
+std::unique_ptr<Generator> createVaGenerator(const std::string& type);
+bool prepareVaAux(const PluginState& state, ChannelAux& aux);
+std::unique_ptr<Generator> createDcoGenerator(const std::string& type);
+bool prepareDcoAux(const PluginState& state, ChannelAux& aux);
+
 std::unique_ptr<Generator> createGenerator(const std::string& type) {
   if (type == "gl.analog") return makeAnalog();
   if (type == "gl.wavetable") return makeWavetable();
   if (type == "gl.matrixfm") return makeMatrixFm();
   if (type == "gl.gms") return makeGms();
+  if (auto g = createVaGenerator(type)) return g;
+  if (auto g = createDcoGenerator(type)) return g;
   return nullptr;
 }
 
@@ -19,6 +27,7 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
 }
 
 bool prepareAux(const PluginState& state, ChannelAux& aux) {
+  if (prepareVaAux(state, aux) || prepareDcoAux(state, aux)) return true;
   if (state.type == "gl.matrixfm") {
     aux.custom = mfm::buildMatrixFmAux(state);
     return true;

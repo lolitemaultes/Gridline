@@ -9,6 +9,7 @@
 #include "../../src/engine/Generators.h"
 #include "../../src/engine/Program.h"
 #include "../../src/engine/Sample.h"
+#include "../../src/packs/models/metal.h"
 #include "../../src/packs/samplers/samplers.h"
 #include "Gen2Test.h"
 
@@ -145,11 +146,13 @@ inline void testSlicers() {
     path.utf16(file);
     r.add(196, path.b);
     decode(r, "Fruity Granulizer", s.b);
-    expect(r.ok && r.m.glType == "gl.granular" && r.m.state.data == file, "Granulizer → gl.granular with the channel sample");
-    expect(near(param(r, GrSpeed), 2.0, 0.05), "Granulizer: grain vs wave spacing → twice faster");
-    expect(near(param(r, GrPosition), 0.5) && near(param(r, GrStereo), 0.5) && near(param(r, GrLoop), 1) && near(param(r, GrKeyMode), 1),
-           "Granulizer: start, stereo, loop, percent trigger mode");
-    expect(near(param(r, GrFreeze), 0) && near(param(r, GrTransientHold), 0.3), "Granulizer: moving playhead, transient hold");
+    // J-22: Granulizer → Grain Scanner (gl.grainscan), parameter index = control tag.
+    using namespace gl::packs::models::metal;
+    expect(r.ok && r.m.glType == "gl.grainscan" && r.m.state.data == file, "Granulizer → gl.grainscan with the channel sample");
+    expect(near(param(r, GsGrainSpace), 413) && near(param(r, GsWaveSpace), 611), "Granulizer: grain / wave spacing");
+    expect(near(param(r, GsStart), 2048) && near(param(r, GsStereo), 32) && near(param(r, GsLoop), 1) && near(param(r, GsTransSource), 1),
+           "Granulizer: start, stereo, loop, transient source");
+    expect(near(param(r, GsHoldOn), 0) && near(param(r, GsTransHold), 300), "Granulizer: moving playhead, transient hold");
     expect(noteRms(r.m.state, 60) > 1e-3, "Granulizer: audible");
     Run lower;
     decode(lower, "Fruity granulizer", s.b);
@@ -175,16 +178,16 @@ inline void testSlicers() {
     s.i32(3000).i32(0);
     Run r;
     decode(r, "Wave Traveller", s.b);
-    expect(r.ok && r.m.glType == "gl.scratch", "Wave Traveller → gl.scratch");
-    using namespace gl::packs::samplers;
-    ScratchData d = parseScratch(r.m.state.data);
-    expect(d.path == file, "Wave Traveller: sample path");
-    const ScratchMove& m0 = d.moves[0];
-    expect(m0.pts.size() == 3 && near(m0.pts[1].y, 0.6) && near(m0.pts[2].y, 0.4) && m0.pts[1].curve == CurveSmooth,
-           "Wave Traveller: key C5 spline scaled into its start..end window");
-    expect(m0.mutes == 0x0F00u, "Wave Traveller: mute toggles → muted steps 8..11");
-    expect(d.moves[1].pts.size() == 2 && near(d.moves[1].pts[1].y, 1), "Wave Traveller: default patch → straight playback");
-    expect(near(param(r, ScLength), 2) && near(param(r, ScKeyMode), KeyMoves) && near(param(r, ScPitchFollow), 0), "Wave Traveller: length, key mode");
+    // J-22: Wave Traveller → Spline Scratcher (gl.splinescratch): every key patch kept.
+    expect(r.ok && r.m.glType == "gl.splinescratch", "Wave Traveller → gl.splinescratch");
+    using namespace gl::packs::models::metal;
+    SsData d;
+    expect(parseScratchSpl(r.m.state.data, d) && d.path == file, "Wave Traveller: sample path");
+    const SsPatch& p0 = d.keys[60];
+    expect(p0.used && p0.pos.size() == 3 && near(p0.pos[1].y, 1) && near(p0.start, 0.2) && near(p0.end, 0.6) && near(p0.beats, 2),
+           "Wave Traveller: key C5 patch (spline, window, length)");
+    expect(!ssSoundOn(p0, 0.6f) && ssSoundOn(p0, 0.8f), "Wave Traveller: mute toggles kept");
+    expect(!d.keys[61].used, "Wave Traveller: untouched patch stays default");
     expect(noteRms(r.m.state, 61) > 1e-3, "Wave Traveller: audible");
   }
   // ---- Truncated / garbage states never crash.

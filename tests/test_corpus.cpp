@@ -348,11 +348,11 @@ int main() {
     Song s;
     flp::Report rep;
     expect(importBytes(B, s, rep, "gl_corpus_plugin_events.flp"), "plugin pattern events: import succeeds");
-    expect(s.channels.size() == 1 && s.channels[0].plugin.type == "gl.kick", "plugin pattern events: Fruit Kick → Kick");
-    const ParamId id = channelPluginParam(s.channels[0].id, pp::KickDecay);
+    expect(s.channels.size() == 1 && s.channels[0].plugin.type == "gl.sweepkick", "plugin pattern events: Fruit Kick → Sweep Kick");
+    const ParamId id = channelPluginParam(s.channels[0].id, 3);  // Sweep Kick amp decay = FL tag 3
     const PatternAutomation* lane = findPatternLane(s.patterns[0], id.owner, id.index);
     auto d = describeParam(s, id);
-    auto decay = [](double v) { return std::clamp(0.05 * std::pow(40.0, v / 256.0), 0.05, 2.0); };
+    auto decay = [](double v) { return v; };  // the control's own 0..256 value
     expect(lane && d && lane->points.size() == 2 && lane->points[1].pos == 48 &&
                std::fabs(lane->points[0].value - d->toNormalized(decay(64))) < 1e-4 &&
                std::fabs(lane->points[1].value - d->toNormalized(decay(192))) < 1e-4,

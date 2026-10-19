@@ -422,6 +422,9 @@ PluginInfo drumModel() {
 }  // namespace
 
 PluginInfo harmorInfo();  // harmor_info.cpp
+void appendDrumsInfos(std::vector<PluginInfo>& v);    // drums_info.cpp (J-22)
+void appendStringsInfos(std::vector<PluginInfo>& v);  // strings_info.cpp (J-22)
+void appendMetalInfos(std::vector<PluginInfo>& v);    // metal_info.cpp (J-22)
 
 void appendInfos(std::vector<PluginInfo>& v) {
   v.push_back(additive());
@@ -429,6 +432,9 @@ void appendInfos(std::vector<PluginInfo>& v) {
   v.push_back(imageSynth());
   v.push_back(stringModel());
   v.push_back(drumModel());
+  appendDrumsInfos(v);
+  appendStringsInfos(v);
+  appendMetalInfos(v);
 }
 
 }  // namespace gl::packs::models
