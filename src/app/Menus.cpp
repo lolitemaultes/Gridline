@@ -22,6 +22,7 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "BrowserUi.h"
+#include "MenuParityUi.h"
 
 namespace gl {
 
@@ -117,6 +118,7 @@ void menuFile(App& a) {
   if (ImGui::MenuItem("Save as...", "Ctrl+Shift+S")) a.saveAs();
   if (ImGui::MenuItem("Save new version", "Ctrl+Alt+S")) a.saveNewVersion();
   if (ImGui::MenuItem("Save as template...")) a.showSaveTemplate = true;
+  menuparity::fileItems(a);  // J-27
   ImGui::Separator();
   if (ImGui::BeginMenu("Import")) {
     if (ImGui::MenuItem("MIDI file..."))
@@ -148,6 +150,7 @@ void menuFile(App& a) {
     if (ImGui::MenuItem("Render to file (WAV, FLAC, MP3, Ogg)...", "Ctrl+R")) exportui::openRender(a, exportui::Preset::Audio);
     if (ImGui::MenuItem("Mixer tracks (stems)...", "Ctrl+Shift+R")) exportui::openRender(a, exportui::Preset::Stems);
     if (ImGui::MenuItem("All playlist tracks...")) exportui::openRender(a, exportui::Preset::PlaylistTracks);
+    menuparity::exportItems(a);  // J-27
     ImGui::SeparatorText("MIDI");
     if (ImGui::MenuItem("Song as MIDI file...", "Ctrl+Shift+M")) exportui::exportMidiDialog(a, 0);
     if (ImGui::MenuItem("Pattern as MIDI file...")) exportui::exportMidiDialog(a, 1);
@@ -230,6 +233,7 @@ void menuAdd(App& a) {
     ObjectId id = a.doc.addClip(a.curPattern, track, at);
     if (id) a.playlist.selected = {id};
   }
+  menuparity::addItems(a);  // J-27
 }
 
 void menuPatterns(App& a) {
@@ -307,6 +311,7 @@ void menuView(App& a) {
   ImGui::MenuItem("Piano roll", "F7", &a.showPiano);
   ImGui::MenuItem("Browser", "Alt+F8", &a.showBrowser);
   if (ImGui::MenuItem("Plugin picker", "F8", browserui::pluginPickerOpen())) browserui::togglePluginPicker();
+  menuparity::viewItems(a);  // J-27
   ImGui::MenuItem("Mixer", "F9", &a.showMixer);
   ImGui::MenuItem("Undo history", "Alt+Z", &a.showHistory);
   ImGui::MenuItem("Live pads", nullptr, &a.showLivePads);
@@ -375,6 +380,7 @@ void menuOptions(App& a) {
   }
   ImGui::MenuItem("Step record", nullptr, &a.stepRecord);
   ImGui::MenuItem("Multilink to controllers", nullptr, &a.multilink);
+  menuparity::optionsItems(a);  // J-27
   {
     const bool pdc = a.settings.getBool("audio.pdc");
     if (ImGui::MenuItem("Plugin delay compensation", nullptr, pdc)) {
@@ -470,6 +476,7 @@ void menuTools(App& a) {
       for (auto& m : s.mixer) m.solo = false;
     });
   if (ImGui::MenuItem("Close plugin windows", "Alt+F12")) a.closePluginWindows();
+  menuparity::toolsItems(a);  // J-27
 }
 
 void menuHelp(App& a) {

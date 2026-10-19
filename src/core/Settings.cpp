@@ -35,7 +35,7 @@ Settings::Settings() {
       {"audio.inputDevice", Json::makeString("")},     // "" = none, "*" = system default
       {"audio.inputChannels", Json::makeNumber(2)},
       {"audio.inputOffsetMs", Json::makeNumber(0)},    // manual recording offset (+ = later)
-      {"audio.recordBits", Json::makeNumber(32)},      // 32 = float, 24 = PCM
+      {"audio.recordBits", Json::makeNumber(32)},      // 32 = float, 24 / 16 = PCM
       {"ui.scale", Json::makeNumber(1.0)},
       {"ui.showHints", b(true)},
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing

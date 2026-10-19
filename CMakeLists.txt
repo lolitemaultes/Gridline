@@ -189,6 +189,11 @@ add_executable(gridline_tests_coverage tests/test_coverage.cpp)
 target_link_libraries(gridline_tests_coverage PRIVATE gridline_core)
 target_compile_options(gridline_tests_coverage PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME coverage COMMAND gridline_tests_coverage WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-27 menu parity sweep: the new menu operations (MenuParity, NoteFxBurn).
+add_executable(gridline_tests_menu_parity tests/test_menu_parity.cpp)
+target_link_libraries(gridline_tests_menu_parity PRIVATE gridline_core)
+target_compile_options(gridline_tests_menu_parity PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME menu_parity COMMAND gridline_tests_menu_parity WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # VST3 hosting: a tiny in-tree test plugin bundle (instrument + effect) and the host tests.
 add_library(gridline_vst3_testplug MODULE tests/vst3/TestPlugin.cpp)
 target_link_libraries(gridline_vst3_testplug PRIVATE vst3_pluginterfaces)

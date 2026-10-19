@@ -59,6 +59,7 @@ struct Session {
 };
 Session S;
 uint64_t sessionCounter = 1;
+std::string lastScriptPath;  // the last piano roll script opened (J-27)
 std::map<std::string, std::vector<script::FormParam>> remembered;  // form values per script id
 std::map<std::string, uint32_t> rememberedSeed;
 std::vector<script::ScriptInfo> prList;
@@ -405,6 +406,8 @@ void scriptsMenuItems(App& a) {
   if (!a.settings.getBool("scripts.enabled")) ImGui::TextDisabled("Scripts are switched off (Settings \xE2\x86\x92 Files)");
 }
 
+const std::string& lastPianoRollScript() { return lastScriptPath; }
+
 void openPianoRollScript(App& a, const std::string& path) {
   if (S.open) closeSession(a, true);
   const Song& s = a.doc.song();
@@ -420,6 +423,7 @@ void openPianoRollScript(App& a, const std::string& path) {
     return;
   }
   n.id = fs::path(path).stem().string();
+  lastScriptPath = path;  // J-27: "run the last script again"
   n.open = n.focus = true;
   n.pat = a.curPattern;
   n.ch = a.selChannel;

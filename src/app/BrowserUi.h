@@ -65,6 +65,8 @@ bool& previewSync();
 // ---- plugin picker (F8) ----
 void drawPluginPicker(App& a);
 void togglePluginPicker();
+// Shows the browser on its current-project tab (View > Project picker).
+void showProjectTab(App& a);
 bool pluginPickerOpen();
 
 // ---- in-house glyphs ----

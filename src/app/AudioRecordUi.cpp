@@ -192,7 +192,8 @@ void App::processAudioRecording() {
     if (!takes.empty()) {
       TakeCommitOptions o;
       o.dir = recordedDir(*this);
-      o.bits = static_cast<int>(settings.getNumber("audio.recordBits")) == 24 ? 24 : 32;
+      const int rb = static_cast<int>(settings.getNumber("audio.recordBits"));
+      o.bits = rb == 24 || rb == 16 ? rb : 32;  // J-27: 16-bit too
       o.sampleRate = engine.sampleRate();
       TakeCommitResult r;
       doc.editSong("Record audio", [&](Song& x) { r = commitTakes(x, takes, o); });
@@ -225,8 +226,9 @@ void audioRecordFilterMenu(App& a) {
   ImGui::MenuItem("Punch in/out at the time selection", nullptr, &a.recPunch);
   if (ImGui::BeginMenu("Audio file format")) {
     const int bits = static_cast<int>(a.settings.getNumber("audio.recordBits"));
-    if (ImGui::MenuItem("32-bit float WAV", nullptr, bits != 24)) a.settings.set("audio.recordBits", 32);
+    if (ImGui::MenuItem("32-bit float WAV", nullptr, bits != 24 && bits != 16)) a.settings.set("audio.recordBits", 32);
     if (ImGui::MenuItem("24-bit WAV", nullptr, bits == 24)) a.settings.set("audio.recordBits", 24);
+    if (ImGui::MenuItem("16-bit WAV", nullptr, bits == 16)) a.settings.set("audio.recordBits", 16);
     ImGui::EndMenu();
   }
   const Song& s = a.doc.song();
@@ -590,9 +592,11 @@ void audioInputSettings(App& a, float fieldW) {
   }
   label("Record format");
   const int bits = static_cast<int>(st.getNumber("audio.recordBits"));
-  if (ui::TextButton("32-bit float", bits != 24)) st.set("audio.recordBits", 32);
+  if (ui::TextButton("32-bit float", bits != 24 && bits != 16)) st.set("audio.recordBits", 32);
   ImGui::SameLine(0, theme::kS1);
   if (ui::TextButton("24-bit", bits == 24)) st.set("audio.recordBits", 24);
+  ImGui::SameLine(0, theme::kS1);
+  if (ui::TextButton("16-bit", bits == 16)) st.set("audio.recordBits", 16);
   label("Recorded files");
   ImGui::PushFont(a.fontMono, theme::kFontLabel + 1);
   ImGui::TextColored(theme::vec(P.textDim), "%s", recordedDir(a).c_str());

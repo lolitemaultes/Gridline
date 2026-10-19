@@ -55,6 +55,8 @@ class Document {
   // increases with every such change (MIDI multilink: "move a control, then a
   // hardware knob").
   ParamId lastTouchedParam() const { return lastTouched_; }
+  // The parameter changed before the last touched one (a different one; owner kNoId = none).
+  ParamId previousTouchedParam() const { return prevTouched_; }
   uint64_t touchSerial() const { return touchSerial_; }
 
   // --- patterns -----------------------------------------------------------
@@ -142,6 +144,7 @@ class Document {
   uint64_t savedSerial_ = 0;
   uint64_t revision_ = 0;
   ParamId lastTouched_;
+  ParamId prevTouched_;
   uint64_t touchSerial_ = 0;
 };
 

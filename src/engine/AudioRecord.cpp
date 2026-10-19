@@ -140,7 +140,7 @@ TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes,
     std::string name = trackName + (group.count(t.mixer) ? " take " + std::to_string(t.pass - firstPass[t.mixer] + 1) : std::string(" rec"));
     const std::string path = packs::edison::renderPath(o.dir, cleanFileName(name), packs::edison::audioHash(a));
     std::string err;
-    if (!packs::edison::writeWavFile(path, packs::edison::makeContent(a), o.bits == 24 ? 24 : 32, &err)) {
+    if (!packs::edison::writeWavFile(path, packs::edison::makeContent(a), o.bits == 24 || o.bits == 16 ? o.bits : 32, &err)) {
       res.error = err.empty() ? "could not write " + path : err;
       continue;
     }

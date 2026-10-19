@@ -837,6 +837,13 @@ void openRender(App& a, Preset p) {
   dlg.replacePattern = p == Preset::PatternReplace;
 }
 
+void openRenderAgain(App& a) {  // J-27: the dialog exactly as last used (formats, scope, splitting)
+  initDialog(a);
+  dlg.open = true;
+  a.showExport = false;
+  if (!dlg.fmt[0] && !dlg.fmt[1] && !dlg.fmt[2] && !dlg.fmt[3] && !dlg.fmt[4] && !dlg.s.midi) dlg.fmt[0] = true;
+}
+
 void startRenderTo(App& a, const std::string& folder) {
   initDialog(a);
   std::snprintf(dlg.folder, sizeof dlg.folder, "%s", folder.c_str());

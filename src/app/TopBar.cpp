@@ -13,6 +13,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include "MenuParityUi.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Automation.h"
@@ -47,12 +48,6 @@ const MenuDef kMenus[] = {{"File", menuFile},     {"Edit", menuEdit},       {"Ad
                           {"View", menuView},     {"Options", menuOptions}, {"Tools", menuTools},
                           {"Help", menuHelp}};
 
-void positionText(const Song& s, double tick, char* out, size_t n) {
-  Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks());
-  Tick t = static_cast<Tick>(tick);
-  long long b = t / bar + 1, bt = (t % bar) / beat + 1, tk = t % beat;
-  std::snprintf(out, n, "%03lld:%02lld:%03lld", b, bt, tk);
-}
 
 // Tempo LCD: drag / wheel / double-click to type. Returns true when changed.
 bool tempoLcd(App& a, double* v, float width) {
@@ -307,8 +302,12 @@ float drawTopBar(App& a) {
     }
     cx += kBtn + kInner;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
-    if (ui::IconButton("stop", ui::Icon::Stop, false, kBtn, "Stop and return to the start")) a.engine.stop();
+    menuparity::transportTick(a);  // J-27: where playback starts (stop can return there)
+    if (ui::IconButton("stop", ui::Icon::Stop, false, kBtn, "Stop and return to the start (right-click: return to where playback started)"))
+      menuparity::stopPressed(a);
     if (ImGui::BeginPopupContextItem("##stopmenu")) {
+      menuparity::stopMenuItems(a);
+      ImGui::Separator();
       actionLinkMenuItems(a, RemoteAction::Stop);
       ImGui::EndPopup();
     }
@@ -352,14 +351,17 @@ float drawTopBar(App& a) {
     if (automated) ui::Hint("Tempo follows the tempo automation clip; dragging changes the base tempo");
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     if (show[Pos]) {
-      char buf[32];
-      positionText(s, a.engine.position(), buf, sizeof buf);
+      const std::string pos = menuparity::positionText(a, a.engine.position());  // J-27: time formats
       ImVec2 p(x + kPanelPad + tempoW + kInner, btnTop);
       ImGui::SetCursorScreenPos(p);
       ImGui::InvisibleButton("##pos", ImVec2(posW, kBtn));
-      ui::Lcd(dl, p, ImVec2(posW, kBtn), buf, false, false);
-      ui::Hint("Song position (bar : beat : tick)");
-      ui::Tooltip("Song position (bar : beat : tick)");
+      if (ImGui::BeginPopupContextItem("##posmenu")) {
+        menuparity::timeFormatMenu(a);
+        ImGui::EndPopup();
+      }
+      ui::Lcd(dl, p, ImVec2(posW, kBtn), pos.c_str(), false, false);
+      ui::Hint("Song position (right-click: bars and beats, minutes and seconds, or timecode)");
+      ui::Tooltip("Song position (right-click for the time format)");
     }
     x += pw + kGap;
   }
@@ -507,7 +509,6 @@ float drawTopBar(App& a) {
     }
     if (!show[Tempo] || !show[Pos]) {
       section("TIME");
-      char buf[32];
       if (!show[Tempo]) {
         double tempo = s.tempo;
         ImGui::SetNextItemWidth(140);
@@ -515,9 +516,9 @@ float drawTopBar(App& a) {
           a.doc.setParam(songParam(SongParam::Tempo), std::clamp(tempo, 10.0, 522.0), true);
         if (ImGui::IsItemDeactivated()) a.doc.endGesture();
       }
-      positionText(s, a.engine.position(), buf, sizeof buf);
+      const std::string pos = menuparity::positionText(a, a.engine.position());
       ImGui::PushFont(a.fontMonoBold, theme::kFontBody);
-      ImGui::TextUnformatted(buf);
+      ImGui::TextUnformatted(pos.c_str());
       ImGui::PopFont();
     }
     if (!show[Pat] && ImGui::BeginMenu("Pattern")) {

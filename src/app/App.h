@@ -52,6 +52,8 @@ struct PianoRollState {
   // J-11 helpers.
   int stampChord = -1;        // tools::chords() index drawn by Draw / Paint (-1 = single notes)
   int stampInversion = 0;
+  bool stampOnce = false;     // J-27: the stamp turns off after one chord
+  int stampAuto = 0;          // J-27: chord from the scale: 0 off, 1 bottom up, 2 top down
   int scaleRoot = 0;          // 0..11 (C..B)
   int scale = 0;              // tools::scales() index; 0 = no scale highlighting
   bool snapToScale = false;   // drawn and moved notes land on the scale

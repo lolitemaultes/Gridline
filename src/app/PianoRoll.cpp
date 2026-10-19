@@ -8,6 +8,7 @@
 #include "AutomationEditor.h"
 #include "EditTools.h"
 #include "ScriptUi.h"
+#include "../core/MenuParity.h"
 #include "../core/NoteTools.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -156,6 +157,15 @@ void previewOff(App& a, ObjectId ch) {
 // the scale when snapping to it.
 std::vector<Note> notesToAdd(const PianoRollState& st, Note n) {
   if (st.snapToScale && st.scale > 0) n.pitch = tools::snapPitchToScale(n.pitch, st.scaleRoot, st.scale);
+  if (st.stampAuto > 0 && st.scale > 0) {  // J-27: a chord from the scale
+    std::vector<Note> out;
+    for (int p : ops::scaleChord(n.pitch, st.scaleRoot, st.scale, 3, st.stampAuto == 2)) {
+      Note x = n;
+      x.pitch = p;
+      out.push_back(x);
+    }
+    return out;
+  }
   if (st.stampChord < 0) return {n};
   return tools::stampChord(n, st.stampChord, st.stampInversion);
 }
@@ -822,6 +832,7 @@ void drawPianoRoll(App& a) {
           for (const Note& x : notesToAdd(st, n)) ns.push_back(x), sel.push_back(true);  // one note or a chord stamp
           if (st.snapToScale && st.scale > 0) n.pitch = tools::snapPitchToScale(n.pitch, st.scaleRoot, st.scale);
           commit(a, patId, chId, ns, sel, st.stampChord >= 0 ? "add chord" : "add note", g.key);
+          if (st.stampOnce && (st.stampChord >= 0 || st.stampAuto > 0)) st.stampChord = -1, st.stampAuto = 0, st.stampOnce = false;
           notes = a.doc.song().pattern(patId)->notes.at(chId);
           g.base = notes;
           g.sel = selVector(a, notes.size());

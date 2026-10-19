@@ -28,6 +28,7 @@
 #include "AudioRecordUi.h"
 #include "AutomationEditor.h"
 #include "MidiUi.h"
+#include "MenuParityUi.h"
 #include "PluginUI.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -752,6 +753,7 @@ void channelContextMenu(App& a, ObjectId id) {
   if (ImGui::MenuItem("Move up", "Alt+Up", false, idx > 0)) a.doc.moveChannel(id, idx - 1);
   if (ImGui::MenuItem("Move down", "Alt+Down", false, idx + 1 < static_cast<int>(s.channels.size()))) a.doc.moveChannel(id, idx + 1);
   if (ImGui::MenuItem("Clone", "Alt+C")) a.selectChannel(a.doc.cloneChannel(id));
+  menuparity::channelItems(a, id);  // J-27
   if (ImGui::MenuItem(a.rack.zipped.count(id) ? "Unzip" : "Zip", "Alt+Z")) {
     if (a.rack.zipped.count(id))
       a.rack.zipped.erase(id);
@@ -839,6 +841,7 @@ void rackOptionsMenu(App& a) {
       if (ImGui::MenuItem((std::to_string(pctv) + "%").c_str())) ops::setSwingMix(a.doc, sel, pctv / 100.0f);
     ImGui::EndMenu();
   }
+  menuparity::rackItems(a, sel);  // J-27
   if (ImGui::MenuItem("Zip selected", "Alt+Z", false, any))
     for (ObjectId c : sel) a.rack.zipped.insert(c);
   if (ImGui::MenuItem("Unzip all", "Alt+U", false, !a.rack.zipped.empty())) a.rack.zipped.clear();
@@ -1367,14 +1370,19 @@ void pianoRollMenu(App& a) {
     ImGui::Separator();
     sendNotesItems(a, true);
     sendNotesItems(a, false);
+    ImGui::Separator();
+    menuparity::pianoEditItems(a);  // J-27
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Tools")) {
     pianoToolItems(a);
+    ImGui::Separator();
+    menuparity::pianoToolItems(a);  // J-27
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Select")) {
     pianoSelectItems(a);
+    menuparity::pianoSelectItems(a);  // J-27
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Chord progression")) {
@@ -1431,6 +1439,8 @@ void pianoRollMenu(App& a) {
     if (ImGui::MenuItem("Zoom out")) a.piano.pxPerTick = std::max(0.02f, a.piano.pxPerTick / 1.25f);
     if (ImGui::MenuItem("Taller rows")) a.piano.rowHeight = std::min(28.0f, a.piano.rowHeight + 2);
     if (ImGui::MenuItem("Shorter rows")) a.piano.rowHeight = std::max(7.0f, a.piano.rowHeight - 2);
+    ImGui::Separator();
+    menuparity::pianoViewItems(a);  // J-27
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Tool")) {
@@ -1443,10 +1453,18 @@ void pianoRollMenu(App& a) {
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Stamp")) {
-    if (ImGui::MenuItem("Single notes", nullptr, a.piano.stampChord < 0)) a.piano.stampChord = -1;
+    if (ImGui::MenuItem("Single notes", nullptr, a.piano.stampChord < 0 && a.piano.stampAuto == 0)) a.piano.stampChord = -1, a.piano.stampAuto = 0;
+    // J-27: chords from the highlighted scale (the clicked note is the bottom or the top one).
+    if (ImGui::MenuItem("Scale chord, clicked note at the bottom", nullptr, a.piano.stampAuto == 1, a.piano.scale > 0))
+      a.piano.stampAuto = 1, a.piano.stampChord = -1;
+    if (ImGui::MenuItem("Scale chord, clicked note on top", nullptr, a.piano.stampAuto == 2, a.piano.scale > 0))
+      a.piano.stampAuto = 2, a.piano.stampChord = -1;
+    ImGui::MenuItem("Just the next chord", nullptr, &a.piano.stampOnce);
+    ui::Hint("The stamp turns itself off after placing one chord");
+    ImGui::Separator();
     const auto& ch = tools::chords();
     for (size_t i = 0; i < ch.size(); ++i)
-      if (ImGui::MenuItem(ch[i].name, nullptr, a.piano.stampChord == static_cast<int>(i))) a.piano.stampChord = static_cast<int>(i);
+      if (ImGui::MenuItem(ch[i].name, nullptr, a.piano.stampChord == static_cast<int>(i))) a.piano.stampChord = static_cast<int>(i), a.piano.stampAuto = 0;
     ImGui::Separator();
     static const char* const inv[] = {"Root position", "1st inversion", "2nd inversion", "3rd inversion"};
     for (int k = 0; k < 4; ++k)
@@ -1862,6 +1880,7 @@ void knobContextMenu(App& a, ParamId pid) {
   automationMenuItems(a, pid);  // J-5: create / edit automation, edit events, record
   ImGui::Separator();
   remoteLinkMenuItems(a, pid);  // MIDI remote control (MidiUi.cpp)
+  menuparity::knobItems(a, pid);  // J-27: tempo presets
 }
 
 // ------------------------------------------------------------ plugin window ----

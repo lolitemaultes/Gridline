@@ -60,7 +60,7 @@ class AudioRecorder {
 
 struct TakeCommitOptions {
   std::string dir;             // "<project>/Recorded"
-  int bits = 32;               // 32 = float, 24 = PCM
+  int bits = 32;               // 32 = float, 24 / 16 = PCM
   double sampleRate = 44100;
   bool muteEarlierTakes = true;
 };

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include "MenuParityUi.h"
 #include "App.h"
 #include "AutomationEditor.h"
 #include "PluginUI.h"
@@ -266,6 +267,7 @@ void App::processMidi() {
   for (const auto& e : midi->poll()) {
     MidiMessage m{e.status, e.data1, e.data2, e.portNumber};
     const int kind = m.kind();
+    menuparity::logMidi(*this, m);  // J-27: score logger
 
     // The remote control dialog takes the next control moved.
     if (remoteListening && showRemoteDialog && learnable(m)) {

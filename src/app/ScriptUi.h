@@ -19,6 +19,7 @@ std::string shippedScriptsDir(const App& a, const char* kind);
 const std::vector<script::ScriptInfo>& pianoRollScripts(App& a, bool rescan = false);
 void scriptsMenuItems(App& a);  // body of the piano roll's "Scripts" menu
 void openPianoRollScript(App& a, const std::string& path);
+const std::string& lastPianoRollScript();  // "" until a script was opened (J-27)
 bool scriptToolOpen();
 void drawScriptTool(App& a);  // per frame (from the piano roll)
 

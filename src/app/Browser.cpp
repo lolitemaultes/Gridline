@@ -1115,4 +1115,12 @@ void drawBrowser(App& a) {
   ui::EndDockWindow();
 }
 
+namespace browserui {
+// J-27: View > Project picker — the browser on its current-project tab.
+void showProjectTab(App& a) {
+  tab = TabProject;
+  a.showBrowser = true;
+}
+}  // namespace browserui
+
 }  // namespace gl

@@ -23,6 +23,8 @@ enum class Preset {
   PatternReplace,  // the current pattern as audio clips replacing its pattern clips
 };
 void openRender(App& a, Preset p = Preset::Audio);
+// Opens the render dialog with the settings of the last render (formats, scope, splitting).
+void openRenderAgain(App& a);
 // Starts the render with the dialog's settings into `folder` (dev checks / scripting).
 void startRenderTo(App& a, const std::string& folder);
 // Per frame (from drawDialogs): render dialog, progress, MIDI import, missing samples.

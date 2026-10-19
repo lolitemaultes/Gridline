@@ -365,6 +365,7 @@ bool Document::setParam(ParamId id, double value, bool merge) {
   auto before = getParam(song_, id);
   if (!before) return false;
   double after = describeParam(song_, id)->clamp(value);
+  if (id != lastTouched_ && lastTouched_.owner != kNoId) prevTouched_ = lastTouched_;  // J-27: next to last tweaked
   lastTouched_ = id;
   ++touchSerial_;
   if (after == *before) return true;
