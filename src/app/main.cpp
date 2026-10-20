@@ -47,6 +47,7 @@ namespace {
 
 SDL_AudioDeviceID gDevice = 0;
 SDL_AudioDeviceID gInDevice = 0;  // capture (J-8)
+uisound::Player* gUiSounds = nullptr;  // J-48: interface sounds, mixed after the master
 
 void initMidi(App& a) {
   a.midi = std::make_unique<MidiManager>(a.engine);
@@ -59,7 +60,11 @@ void initMidi(App& a) {
 
 void audioCallback(void* user, Uint8* stream, int len) {
   auto* eng = static_cast<AudioEngine*>(user);
-  eng->processInterleaved(reinterpret_cast<float*>(stream), len / static_cast<int>(sizeof(float) * 2));
+  const int frames = len / static_cast<int>(sizeof(float) * 2);
+  eng->processInterleaved(reinterpret_cast<float*>(stream), frames);
+  // Interface sounds go on top of the finished output: outside the song mixer,
+  // so they are never recorded, rendered or metered.
+  if (gUiSounds) gUiSounds->mix(reinterpret_cast<float*>(stream), frames);
 }
 
 void inputCallback(void* user, Uint8* stream, int len) {
@@ -143,6 +148,12 @@ void openAudio(App& a) {
     return;
   }
   a.engine.setSampleRate(have.freq);
+  // J-48: the device is still paused, so the callback cannot be reading the clips.
+  gUiSounds = nullptr;
+  if (!a.uiSoundsDisabled && !a.assetsDir.empty()) {
+    a.uiSounds.loadAll((fs::path(a.assetsDir) / "sounds").string(), have.freq);
+    gUiSounds = &a.uiSounds;
+  }
   std::snprintf(buf, sizeof buf, "Running on %s via %s: %d Hz, %d-frame buffer.", name ? name : "the default device",
                 SDL_GetCurrentAudioDriver(), have.freq, have.samples);
   a.audioStatus = buf;
@@ -590,9 +601,16 @@ int main(int argc, char** argv) {
   app.audioInputDevice = app.settings.getString("audio.inputDevice");
   for (int i = 1; i < argc; ++i)  // screenshot runs never open the microphone
     if (std::string(argv[i]) == "--screenshot") app.audioInputDevice.clear();
+  // J-48: interface sounds are off for --no-ui-sounds, GRIDLINE_NO_UI_SOUNDS (tests, CI)
+  // and automated runs (screenshots, profiling, thumbnails).
+  app.uiSoundsDisabled = std::getenv("GRIDLINE_NO_UI_SOUNDS") != nullptr;
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--no-ui-sounds" || arg == "--screenshot" || arg == "--profile-frames") app.uiSoundsDisabled = true;
+  }
+  app.assetsDir = assets;
   openAudio(app);
   splash(0.58f, "Scanning MIDI devices");
-  app.assetsDir = assets;
   initMidi(app);
   splash(0.70f, "Loading the plugin list");
   host::initHosting(app.configDir());
@@ -826,6 +844,7 @@ int main(int argc, char** argv) {
       if (std::sscanf(argv[++i], "%dx%d", &rw, &rh) == 2) setPluginWindowDevResize(rw, rh);
     } else if (arg == "--live") {  // dev check: live mode, first live clip of every track launched (frame 3)
       devLive = true;
+    } else if (arg == "--no-ui-sounds") {  // J-48: handled before the audio device opens
     } else if (arg == "--light") {
       theme::apply(false);
     } else if (arg == "--scale" && i + 1 < argc) {
@@ -835,6 +854,7 @@ int main(int argc, char** argv) {
     }
   }
   int frameNo = 0;
+  int liveFrames = 0;  // J-48: frames drawn (startup sound after the third)
   workspace::Rect rackPlacement;  // floating rack rectangle of the default layout (screen coordinates)
   bool placeRack = false;
   if (!profilePath.empty()) {
@@ -1225,6 +1245,10 @@ int main(int argc, char** argv) {
     if (useOffscreen) offscreen.use(false);
     SDL_GL_SwapWindow(window);
     renderHostedEditors(app);  // control bars of open plugin windows
+    }
+    if (!app.uiSoundsReady && ++liveFrames >= 3) {  // J-48: the window is on screen: startup sound, once
+      app.uiSoundsReady = true;
+      app.uiSound(uisound::Event::Startup);
     }
 
     {

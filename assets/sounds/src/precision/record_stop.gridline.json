@@ -1,0 +1,200 @@
+{
+ "format": "gridline-project",
+ "version": 4,
+ "info": {
+  "title": "Gridline sound - Precision - record_stop",
+  "author": "Gridline",
+  "comments": "J-48 interface sound",
+  "genre": "",
+  "url": ""
+ },
+ "tempo": 120.0,
+ "ppq": 960,
+ "timeSigNum": 4,
+ "timeSigDen": 4,
+ "swing": 0,
+ "masterPitch": 0,
+ "links": [],
+ "channels": [
+  {
+   "id": 20,
+   "name": "Layer 1",
+   "plugin": {
+    "type": "gl.fm",
+    "params": [1, 0, 1, 0.003, 0.22, 0, 0.12, 0.3, 4, 0, 0.12, 0.003, 0.018, 0, 0.01, 0.5, 2, 0, 0.06, 0.003, 0.08, 0, 0.06, 0.5, 1, 0, 0.0, 0.002, 0.6, 0.3, 0.4, 0.5, 4, 0, 8, 0.5, 0, 5, 0, 0, 0.001, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+   },
+   "mixerTrack": 3,
+   "gain": 0.5337288345618306,
+   "pan": 0,
+   "pitch": 0,
+   "muted": false,
+   "color": 14186330
+  }
+ ],
+ "mixer": [
+  {
+   "id": 2,
+   "name": "Master",
+   "volume": 1.0,
+   "pan": 0,
+   "muted": false,
+   "solo": false,
+   "sends": [],
+   "slots": [
+    {
+     "enabled": true,
+     "mix": 1,
+     "plugin": {
+      "type": "gl.limiter",
+      "params": [0, -3.0, 0.0855, 0.002, 0.01, 2, 2, 0, 0, 1, 0, 0.0001, 0.248, 0.001, 0, -80, 0, 0.05, 0, 0, 0, 0]
+     }
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    }
+   ],
+   "color": 5264990,
+   "invertPolarity": false,
+   "stereoSep": 0,
+   "swapLR": false
+  },
+  {
+   "id": 3,
+   "name": "UI bus",
+   "volume": 1.0,
+   "pan": 0,
+   "muted": false,
+   "solo": false,
+   "sends": [
+    {
+     "to": 2,
+     "level": 1
+    }
+   ],
+   "slots": [
+    {
+     "enabled": true,
+     "mix": 1,
+     "plugin": {
+      "type": "gl.filter",
+      "params": [2, 200, 0.0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0.2]
+     }
+    },
+    {
+     "enabled": true,
+     "mix": 1,
+     "plugin": {
+      "type": "gl.reverb",
+      "params": [0, 0.18, 0.6, 0, 400, 7000, 0.5, 0.6, 1.0, 0.1, 0.35, 1, 1, 500, 0, 0.6, 0, 0, 0, 0, 6000, 0, 75, 40, 0, 50, 100, 15, 40, 100, 500, 0, 128, 128, 128, 684, 0]
+     }
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    },
+    {
+     "enabled": true,
+     "mix": 1
+    }
+   ],
+   "color": 5224624,
+   "invertPolarity": false,
+   "stereoSep": 0,
+   "swapLR": false
+  }
+ ],
+ "patterns": [
+  {
+   "id": 40,
+   "name": "Sound",
+   "color": 13214780,
+   "stepsPerBar": 16,
+   "bars": 1,
+   "steps": {},
+   "notes": {
+    "20": [
+     {
+      "start": 0,
+      "length": 108,
+      "pitch": 73,
+      "velocity": 102
+     }
+    ]
+   }
+  }
+ ],
+ "playlist": [
+  {
+   "id": 60,
+   "pattern": 40,
+   "track": 0,
+   "start": 0,
+   "length": 0
+  }
+ ],
+ "tracks": [
+  {
+   "name": "Sound",
+   "color": 14186330,
+   "muted": false
+  }
+ ],
+ "nextId": 100
+}

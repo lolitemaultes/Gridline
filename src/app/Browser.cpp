@@ -504,8 +504,8 @@ void installedPlugins(App& a, float indent) {
     ui::Label(("Scanning " + std::to_string(ss.done + 1) + "/" + std::to_string(ss.total) + "  " + cur).c_str());
   } else {
     if (ui::TextButton("Rescan", false, 0, "Look for new or updated plugins (right-click: rescan everything, including failed ones)"))
-      host::startScan(host::selfExecutablePath(), false);
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) host::startScan(host::selfExecutablePath(), true);
+      { host::startScan(host::selfExecutablePath(), false); a.scanByUser = true; }
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { host::startScan(host::selfExecutablePath(), true); a.scanByUser = true; }
     ImGui::SameLine(0, 6);
     if (ui::TextButton("Manage", false, 0, "Plugin manager: folders, formats, failed plugins, sandbox, favourites")) a.showPluginManager = true;
     if (ss.failed > 0) {

@@ -335,6 +335,7 @@ void finishJob(App& a) {
       if (ch) a.doc.editChannel(ch, "rename", [&](Channel& c) { c.name = chName; });
       packs::openAudioEditor(a, file, ch);
       a.notify("Rendered into the audio editor");
+      a.uiSound(uisound::Event::Export);
     } else {
       const Tick at = job.start;
       const bool replace = job.replacePattern && patternScope;
@@ -375,6 +376,7 @@ void finishJob(App& a) {
       });
       a.showPlaylist = true;
       a.notify(replace ? "Pattern clips replaced by the rendered audio" : "Rendered as an audio clip");
+      if (o.errors.empty()) a.uiSound(uisound::Event::Export);
     }
     for (const auto& e : o.errors) a.notify(e, true);
     return;
@@ -382,8 +384,10 @@ void finishJob(App& a) {
   job.showSummary = true;
   if (!o.errors.empty())
     a.notify(o.errors[0], true);
-  else
+  else {
     a.notify("Exported " + std::to_string(o.files.size()) + " file(s)");
+    a.uiSound(uisound::Event::Export);
+  }
 }
 
 // ---------------------------------------------------------------- render dialog
@@ -725,6 +729,7 @@ void drawMidiImport(App& a) {
         if (r.tempoChanges) msg += ", " + std::to_string(r.tempoChanges) + " tempo changes";
         if (r.skippedControllers) msg += " (" + std::to_string(r.skippedControllers) + " controller events without a target)";
         a.notify(msg);
+        a.uiSound(uisound::Event::Import);
       }
       midiDlg.open = false;
     }
@@ -812,10 +817,12 @@ void writeSampleDialog(App& a, const std::string& title, const std::string& name
   fileDialog(a, title.c_str(), true, {".wav"}, safeFileName(name) + ".wav", [&a, make](const std::string& p) {
     std::string path = p, err;
     if (fs::path(path).extension().empty()) path += ".wav";
-    if (make(path, err))
+    if (make(path, err)) {
       a.notify("Saved " + fs::path(path).filename().string());
-    else
+      a.uiSound(uisound::Event::Export);
+    } else {
       a.notify("Export failed: " + err, true);
+    }
   });
 }
 
@@ -932,9 +939,10 @@ void exportMidiDialog(App& a, int scope) {
     if (fs::path(p2).extension().empty()) p2 += ".mid";
     if (m.tracks.empty())
       a.notify("Nothing to export: no notes", true);
-    else if (writeMidiFile(p2, m, &err))
+    else if (writeMidiFile(p2, m, &err)) {
       a.notify("Exported MIDI " + fs::path(p2).filename().string() + " (" + std::to_string(m.tracks.size()) + " tracks)");
-    else
+      a.uiSound(uisound::Event::Export);
+    } else
       a.notify("MIDI export failed: " + err, true);
   });
 }
@@ -950,6 +958,7 @@ void exportDataFilesDialog(App& a) {
       a.notify("Project + " + std::to_string(r.copied + r.reused) + " file(s) in " + folder +
                    (r.missing.empty() ? std::string() : " (" + std::to_string(r.missing.size()) + " missing)"),
                !r.missing.empty());
+    if (r.error.empty() && r.missing.empty()) a.uiSound(uisound::Event::Export);
   });
 }
 
@@ -960,9 +969,11 @@ void exportBonesDialog(App& a) {
     BonesReport r = exportProjectBones(a.doc.song(), folder, safeFileName(projectName(a)));
     if (!r.files.error.empty())
       a.notify("Export failed: " + r.files.error, true);
-    else
+    else {
       a.notify("Bones: " + std::to_string(r.files.copied + r.files.reused) + " samples, " + std::to_string(r.midiFiles) + " MIDI files, " +
                std::to_string(r.presets) + " presets, " + std::to_string(r.chains) + " effect chains");
+      a.uiSound(uisound::Event::Export);
+    }
   });
 }
 
@@ -984,6 +995,7 @@ void exportFlpDialog(App& a) {
     for (const auto& pl : rep.plugins) notExact += pl.quality != "verbatim" && pl.quality != "exact";
     a.notify("Exported FL Studio project" + (notExact ? " (" + std::to_string(notExact) + " plugin(s) approximated or placeholders; see the log)" : std::string()),
              notExact > 0);
+    if (notExact == 0) a.uiSound(uisound::Event::Export);
     for (const auto& wv : rep.warnings) gl::logging::warning("FL export", wv);
     for (const auto& pl : rep.plugins)
       if (pl.quality != "verbatim" && pl.quality != "exact") gl::logging::warning("FL export", pl.where + ": " + pl.glType + " -> " + pl.flName + " [" + pl.quality + "] " + pl.note);
@@ -1002,6 +1014,7 @@ void exportZipDialog(App& a) {
       a.notify("Zipped project with " + std::to_string(r.copied) + " file(s)" +
                    (r.missing.empty() ? std::string() : " (" + std::to_string(r.missing.size()) + " missing)"),
                !r.missing.empty());
+    if (r.error.empty() && r.missing.empty()) a.uiSound(uisound::Event::Export);
   });
 }
 
@@ -1041,6 +1054,7 @@ void importAudioAsClip(App& a, const std::string& path) {
   a.showPlaylist = true;
   a.syncEngine();
   a.notify("Added " + fs::path(path).filename().string() + " as an audio clip");
+  a.uiSound(uisound::Event::Import);
 }
 
 bool openAny(App& a, const std::string& path) {

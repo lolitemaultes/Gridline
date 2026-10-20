@@ -20,6 +20,7 @@
 #include "../core/WavWriter.h"
 #include "../engine/Render.h"
 #include "ExportUi.h"
+#include "../host/HostedPlugins.h"
 
 namespace gl {
 
@@ -184,6 +185,17 @@ void runMarkerActions(App& a) {
 void App::tick(double t) {
   pollPresetImport();
   now = t;
+  {  // J-48: recording start / stop and a user-started plugin scan finishing
+    const bool rec = recordArmed && engine.playing() && !engine.countingIn() && engine.mode() != PlayMode::Live;
+    if (rec != wasRecording_) uiSound(rec ? uisound::Event::RecordStart : uisound::Event::RecordStop);
+    wasRecording_ = rec;
+    const bool scanning = host::scanStatus().running;
+    if (wasScanning_ && !scanning && scanByUser) {
+      uiSound(uisound::Event::TaskDone);
+      scanByUser = false;
+    }
+    wasScanning_ = scanning;
+  }
   runMarkerActions(*this);
   engine.collectGarbage();
   toasts.erase(std::remove_if(toasts.begin(), toasts.end(), [&](const Toast& x) { return x.until < now; }), toasts.end());
@@ -200,7 +212,9 @@ void App::tick(double t) {
       const int64_t every = static_cast<int64_t>(std::clamp(settings.getNumber("backup.autosaveMinutes"), 1.0, 120.0) * 60.0);
       if (wall - lastAutosave_ >= every) {
         lastAutosave_ = wall;
+        autosaving_ = true;
         if (saveProject(projectPath)) logging::info("app", "autosaved " + fs::path(projectPath).filename().string());
+        autosaving_ = false;
       }
     } else {
       lastAutosave_ = wall;
@@ -208,8 +222,22 @@ void App::tick(double t) {
   }
 }
 
+bool App::uiSound(uisound::Event e) {
+  if (!uiSoundsReady || uiSoundsDisabled) return false;
+  uisound::Context c;
+  c.enabled = settings.getBool("sounds.enabled");
+  c.eventEnabled = settings.getBool(uisound::settingKey(e));
+  c.transportPlaying = engine.playing();
+  c.recording = recordArmed && engine.playing();
+  c.audioInputRecording = audioRecSession;
+  if (!uisound::shouldPlay(e, c) || !uiSoundGate.allow(e, now)) return false;
+  uiSounds.setVolume(static_cast<float>(settings.getNumber("sounds.volume")));
+  return uiSounds.trigger(e);
+}
+
 void App::notify(const std::string& text, bool error) {
   toasts.push_back({text, now + (error ? 6.0 : 3.0), error});
+  if (error) uiSound(uisound::Event::Error);  // every failure is reported through here
   if (error)
     logging::error("app", text);
   else
@@ -361,6 +389,7 @@ bool App::openProject(const std::string& path) {
   engine.setMode(doc.song().playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
   syncEngine();
   notify("Opened " + fs::path(path).filename().string());
+  uiSound(uisound::Event::Open);
   return true;
 }
 
@@ -391,6 +420,8 @@ bool App::importFlpProject(const std::string& path) {
   importReport.warnings = rep.warnings;
   showImportReport = true;
   notify("Imported " + importReport.source);
+  // Finished with warnings or unmapped plugins: the report needs a look.
+  uiSound(importReport.warnings.empty() && importReport.unmapped.empty() ? uisound::Event::Import : uisound::Event::Warning);
   return true;
 }
 
@@ -429,6 +460,7 @@ void App::pollPresetImport() {
   if (presetImport.finished.exchange(false)) {
     if (presetImport.worker.joinable()) presetImport.worker.join();
     notify("FL Studio presets: " + presetImport.summary);
+    uiSound(uisound::Event::TaskDone);
   }
 }
 
@@ -445,6 +477,7 @@ bool App::saveProject(const std::string& path) {
   doc.markSaved();
   addRecent(p);
   notify("Saved " + fs::path(p).filename().string());
+  if (!autosaving_) uiSound(uisound::Event::Save);
   return true;
 }
 
@@ -489,6 +522,7 @@ void App::guardUnsaved(std::function<void()> action) {
   }
   afterDiscard = std::move(action);
   confirmDiscard = true;
+  uiSound(uisound::Event::Warning);
 }
 
 void App::exportAudio(const std::string& path, int bits, int sampleRate, bool patternOnly, bool normalize) {
@@ -524,6 +558,7 @@ void App::exportAudio(const std::string& path, int bits, int sampleRate, bool pa
   std::snprintf(msg, sizeof msg, "Exported %s (%.1f s)%s", fs::path(p).filename().string().c_str(),
                 static_cast<double>(out.frames) / sampleRate, !normalize && peak > 1.0f ? " — clipped, try Normalize" : "");
   notify(msg, !normalize && peak > 1.0f);
+  if (normalize || peak <= 1.0f) uiSound(uisound::Event::Export);
 }
 
 ObjectId App::addInstrument(const std::string& pluginType, const std::string& samplePath) {
@@ -591,10 +626,12 @@ void App::exportMidi(const std::string& path, bool patternOnly) {
   }
   std::string p = path, err;
   if (std::filesystem::path(p).extension().empty()) p += ".mid";
-  if (writeMidiFile(p, m, &err))
+  if (writeMidiFile(p, m, &err)) {
     notify("Exported MIDI " + std::filesystem::path(p).filename().string());
-  else
+    uiSound(uisound::Event::Export);
+  } else {
     notify("MIDI export failed: " + err, true);
+  }
 }
 
 // ---- menu actions --------------------------------------------------------------

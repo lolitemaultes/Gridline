@@ -60,9 +60,9 @@ void leftPanel(App& a, host::PluginPrefs& prefs, bool& changed) {
     ImGui::PopFont();
   } else {
     if (ui::TextButton("Find plugins", false, 110, "Scans new and updated plugins in the folders below (each in its own process)"))
-      host::startScan(host::selfExecutablePath(), false);
+      { host::startScan(host::selfExecutablePath(), false); a.scanByUser = true; }
     ImGui::SameLine(0, 6);
-    if (ui::TextButton("Rescan all", false, 110, "Scans every plugin again, including failed ones")) host::startScan(host::selfExecutablePath(), true);
+    if (ui::TextButton("Rescan all", false, 110, "Scans every plugin again, including failed ones")) { host::startScan(host::selfExecutablePath(), true); a.scanByUser = true; }
   }
   ImGui::TextColored(theme::vec(P.textDim), "%d plugins  \xC2\xB7  %d failed", ss.classes, ss.failed);
 

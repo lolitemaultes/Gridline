@@ -17,6 +17,7 @@
 #include <algorithm>
 #include "core/Automation.h"
 #include "core/Demo.h"
+#include "core/PluginInfo.h"
 #include "core/Project.h"
 #include "core/WavWriter.h"
 #include "core/flp/Flp.h"
@@ -49,6 +50,7 @@ void usage() {
       "  gridline zip <project.json> -o <out.zip>          zipped project with its samples\n"
       "  gridline render-stats <project.json> [--max-seconds S]   QA: render in memory, print level / NaN / clipping\n"
       "  gridline info   <project.json>\n"
+      "  gridline plugin-params [type]               built-in plugin catalog (params, ranges, defaults) as JSON\n"
       "  gridline upgrade <project.json> [-o <out.json>]\n"
       "  gridline demo    <out.json>                 write the demo song\n"
       "  gridline import-flp <project.flp> -o <out.json> [--fl-data DIR]   convert an FL Studio project\n"
@@ -80,6 +82,38 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (argc >= 2 && std::string(argv[1]) == "bench") return benchMain(argc, argv);
+  if (argc >= 2 && std::string(argv[1]) == "plugin-params") {
+    // Built-in plugin catalog as JSON (type, kind, params with range / default /
+    // choices): tools that write projects by hand (tools/make_ui_sounds.py) fill
+    // full parameter vectors from it.
+    gl::Json all = gl::Json::makeArray();
+    for (const auto& p : gl::pluginCatalog()) {
+      if (argc >= 3 && p.type != argv[2]) continue;
+      gl::Json jp = gl::Json::makeObject();
+      jp.object["type"] = gl::Json::makeString(p.type);
+      jp.object["name"] = gl::Json::makeString(p.name);
+      jp.object["kind"] = gl::Json::makeString(p.kind == gl::PluginKind::Generator ? "generator" : "effect");
+      gl::Json params = gl::Json::makeArray();
+      for (const auto& d : p.params) {
+        gl::Json jd = gl::Json::makeObject();
+        jd.object["name"] = gl::Json::makeString(d.name);
+        jd.object["unit"] = gl::Json::makeString(d.unit);
+        jd.object["min"] = gl::Json::makeNumber(d.min);
+        jd.object["max"] = gl::Json::makeNumber(d.max);
+        jd.object["def"] = gl::Json::makeNumber(d.def);
+        if (!d.choices.empty()) {
+          gl::Json ch = gl::Json::makeArray();
+          for (const auto& c : d.choices) ch.array.push_back(gl::Json::makeString(c));
+          jd.object["choices"] = std::move(ch);
+        }
+        params.array.push_back(std::move(jd));
+      }
+      jp.object["params"] = std::move(params);
+      all.array.push_back(std::move(jp));
+    }
+    std::printf("%s\n", gl::jsonStringify(all, 1).c_str());
+    return 0;
+  }
   if (int r = flpToolsMain(argc, argv); r >= 0) return r;  // export-flp, flp-roundtrip, flp-encode-check (FlpTools.cpp)
   if (argc >= 3 && std::string(argv[1]) == "vst3-smoke") gl::vst3::smokeMain(argv[2]);
   if (argc >= 4 && std::string(argv[1]) == "plugin-smoke")

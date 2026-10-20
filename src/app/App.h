@@ -19,6 +19,7 @@
 #include "../core/Templates.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/Sample.h"
+#include "../engine/UiSounds.h"
 #include "Midi.h"
 #include "MixerState.h"
 
@@ -311,6 +312,15 @@ class App {
   std::string configDir() const;
   void addRecent(const std::string& path);
 
+  // ---- J-48 interface sounds (engine/UiSounds.h) ----
+  uisound::Player uiSounds;          // mixed after the master in the audio callback (main.cpp)
+  uisound::Gate uiSoundGate;         // per-event cool-down
+  bool uiSoundsDisabled = false;     // --no-ui-sounds, GRIDLINE_NO_UI_SOUNDS, screenshot / profile runs
+  bool uiSoundsReady = false;        // set with the startup sound, once the window is up (no sounds while launching)
+  bool scanByUser = false;           // the running plugin scan was started from the UI (its end gets a sound)
+  // Plays an interface sound if the settings and the muting rules allow it.
+  bool uiSound(uisound::Event e);
+
   double now = 0;  // seconds since start (frame time)
   std::string browserSearch;  // text put into the browser's search field once (--browser-search)
 
@@ -363,6 +373,9 @@ class App {
   int64_t lastAutosave_ = 0;
   std::vector<TemplateInfo> templates_;
   bool templatesScanned_ = false;
+  bool autosaving_ = false;      // J-48: autosave writes quietly
+  bool wasRecording_ = false;    // J-48: record start / stop sounds
+  bool wasScanning_ = false;     // J-48: plugin scan finished sound
 };
 
 App& app();  // the single application instance

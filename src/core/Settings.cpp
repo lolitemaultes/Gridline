@@ -72,6 +72,19 @@ Settings::Settings() {
       {"scripts.enabled", b(true)},
       {"scripts.maxSeconds", Json::makeNumber(2)},         // per script run / controller hook
       {"scripts.maxMillionInstructions", Json::makeNumber(20)},
+      // J-48: interface sounds (engine/UiSounds.h); per-event switches "sounds.<event>".
+      {"sounds.enabled", b(true)},
+      {"sounds.volume", Json::makeNumber(0.7)},
+      {"sounds.startup", b(true)},
+      {"sounds.open", b(true)},
+      {"sounds.save", b(true)},
+      {"sounds.export", b(true)},
+      {"sounds.import", b(true)},
+      {"sounds.task_done", b(true)},
+      {"sounds.warning", b(false)},
+      {"sounds.error", b(true)},
+      {"sounds.record_start", b(false)},
+      {"sounds.record_stop", b(false)},
   };
   values_ = defaults_;
 }
