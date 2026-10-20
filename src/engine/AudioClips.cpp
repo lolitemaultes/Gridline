@@ -63,17 +63,23 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
       return c.secPerTick > 0 ? c.srcStart + (tickAtU - static_cast<double>(c.start)) * c.secPerTick : c.srcStart + u * c.speed;
     };
     // Declick only where the clip cuts into the audio (an explicit fade replaces it).
-    const double fin = c.fadeIn > 0 ? c.fadeIn : (c.srcStart > 0 ? kDeclick : 0.0);
-    const double fout = c.fadeOut > 0 ? c.fadeOut : (c.cutEnd ? kDeclick : 0.0);
+    // J-43: FL's per-edge declicker mode: 2 bypasses it, 1 / 3 always declick.
+    const bool dIn = c.declickIn == 2 ? false : c.declickIn == 1 || c.declickIn == 3 || c.srcStart > 0;
+    const bool dOut = c.declickOut == 2 ? false : c.declickOut == 1 || c.declickOut == 3 || c.cutEnd;
+    const double fin = c.fadeIn > 0 ? c.fadeIn : (dIn ? kDeclick : 0.0);
+    const double fout = c.fadeOut > 0 ? c.fadeOut : (dOut ? kDeclick : 0.0);
+    // J-43: FL's fade law, sampled like FL (n = round(length · rate) steps).
+    const FadeLaw lawIn = FadeLaw::make(c.shapeIn, c.tensionIn), lawOut = FadeLaw::make(c.shapeOut, c.tensionOut);
+    const double nIn = fadeSamples(c.fadeIn, sr), nOut = fadeSamples(c.fadeOut, sr);
     int64_t cachedGrain = std::numeric_limits<int64_t>::min();
     double grainSrc[2] = {0, 0};
     for (int64_t i = a; i < b; ++i) {
       const double u = sec0 + static_cast<double>(i) / sr - c.startSec;
       double g = c.gain;
       // Fades (J-38: curve shape and tension; the 2 ms declick stays linear).
-      if (fin > 0 && u < fin) g *= c.fadeIn > 0 ? fadeGain(u / fin, c.shapeIn, c.tensionIn) : std::max(0.0, u / fin);
+      if (fin > 0 && u < fin) g *= c.fadeIn > 0 ? lawIn.gain(fadeProgressIn(u * sr, nIn)) : std::max(0.0, u / fin);
       const double rest = c.durSec - u;
-      if (fout > 0 && rest < fout) g *= c.fadeOut > 0 ? fadeGain(rest / fout, c.shapeOut, c.tensionOut) : std::max(0.0, rest / fout);
+      if (fout > 0 && rest < fout) g *= c.fadeOut > 0 ? lawOut.gain(fadeProgressOut(rest * sr, nOut)) : std::max(0.0, rest / fout);
       if (g <= 0.0) continue;
       float l = 0.f, r = 0.f;
       if (!c.granular && chanRatio == 1.0) {

@@ -169,8 +169,9 @@ struct ProgAudioClip {
   bool reverse = false;
   float gain = 1;
   double fadeIn = 0, fadeOut = 0;   // seconds of playback time
-  FadeShape shapeIn = FadeShape::Linear, shapeOut = FadeShape::Linear;  // J-38: curve shapes (resolved)
-  float tensionIn = 0, tensionOut = 0;                                  // J-38: curve tension
+  FadeShape shapeIn = FadeShape::Smooth, shapeOut = FadeShape::Smooth;  // J-38: curve shapes
+  float tensionIn = 0, tensionOut = 0;                                  // J-38 / J-43: curve tension (FL unit)
+  uint8_t declickIn = 0, declickOut = 0;                                // J-43: FL edge declicker mode (Clip::fadeInDeclick)
   bool cutEnd = false;              // the clip ends while its audio still plays (declick)
 };
 

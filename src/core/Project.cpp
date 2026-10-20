@@ -335,6 +335,8 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.fadeOutTension != 0.0f) jc.object["fadeOutTension"] = num(c.fadeOutTension);
   if (c.fadeInManual) jc.object["fadeInManual"] = boolean(true);
   if (c.fadeOutManual) jc.object["fadeOutManual"] = boolean(true);
+  if (c.fadeInDeclick != 0) jc.object["fadeInDeclick"] = num(c.fadeInDeclick);  // J-43
+  if (c.fadeOutDeclick != 0) jc.object["fadeOutDeclick"] = num(c.fadeOutDeclick);
 }
 
 void clipArrangementFromJson(const Json& jc, Clip& c) {
@@ -357,10 +359,14 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.launched = flag(jc, "launched");
   c.group = jsonInt<ObjectId>(std::max(0.0, jc.num("group", 0)));  // J-31
   // J-38
-  c.fadeInShape = static_cast<uint8_t>(jsonInt<int>(std::clamp(jc.num("fadeInShape", 0), 0.0, kFadeShapeCount - 1.0)));
-  c.fadeOutShape = static_cast<uint8_t>(jsonInt<int>(std::clamp(jc.num("fadeOutShape", 0), 0.0, kFadeShapeCount - 1.0)));
-  c.fadeInTension = static_cast<float>(std::clamp(jc.num("fadeInTension", 0), -1.0, 1.0));
-  c.fadeOutTension = static_cast<float>(std::clamp(jc.num("fadeOutTension", 0), -1.0, 1.0));
+  // J-43: shapes 0 smooth / 1 straight (J-38 files: 1 linear = straight, 2 and 3 play smooth);
+  // tension in FL's unit.
+  c.fadeInShape = jc.num("fadeInShape", 0) == 1.0 ? 1 : 0;
+  c.fadeOutShape = jc.num("fadeOutShape", 0) == 1.0 ? 1 : 0;
+  c.fadeInTension = static_cast<float>(std::clamp(jc.num("fadeInTension", 0), -1e7, 1e7));
+  c.fadeOutTension = static_cast<float>(std::clamp(jc.num("fadeOutTension", 0), -1e7, 1e7));
+  c.fadeInDeclick = static_cast<uint8_t>(jsonInt<int>(std::clamp(jc.num("fadeInDeclick", 0), 0.0, 7.0)));
+  c.fadeOutDeclick = static_cast<uint8_t>(jsonInt<int>(std::clamp(jc.num("fadeOutDeclick", 0), 0.0, 7.0)));
   c.fadeInManual = flag(jc, "fadeInManual");
   c.fadeOutManual = flag(jc, "fadeOutManual");
 }

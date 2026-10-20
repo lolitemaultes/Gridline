@@ -620,6 +620,24 @@ void Exporter::writeChannel(int fl) {
     ce.setValue(104, static_cast<uint32_t>(static_cast<uint16_t>(ins < 0 ? 0 : ins)));
   }
   ce.setValue(145, static_cast<uint32_t>(ch.group >= 0 ? ch.group : 0));
+  // J-43: an audio-clip channel's pitch (219 @8, cents) is what its clips
+  // carry (the importer adds it to Clip::pitch; FL's clip record has no pitch
+  // field). Written when the channel's clips agree on it.
+  if (type == kAudio)
+    if (RawEvent* e = ce.get(219); e && e->data.size() >= 12) {
+      bool seen = false, same = true;
+      float p = 0;
+      auto scan = [&](const std::vector<Clip>& clips) {
+        for (const Clip& c : clips)
+          if (c.kind == ClipKind::Audio && c.source == ch.id) {
+            if (!seen) p = c.pitch, seen = true;
+            else same = same && c.pitch == p;
+          }
+      };
+      scan(s.playlist);
+      for (const auto& a : s.arrangements) scan(a.playlist);
+      if (seen && same && std::fabs(p) <= 1e6f) putU32(e->data, 8, static_cast<uint32_t>(static_cast<int32_t>(std::lround(p))));
+    }
   if (type == kLayer) {
     ce.setValue(144, (ce.value(144, 0) & ~1u) | (ch.layerMode == 1 ? 1u : 0u));
     auto it = std::find_if(ce.ev.begin(), ce.ev.end(), [](const RawEvent& e) { return e.id == 104; });

@@ -3,6 +3,8 @@
 // on move / resize / trim, hand-set override, save / load, undo, render) and
 // the thin mixer layout.
 
+constexpr double kPiD = 3.14159265358979323846;
+
 std::string writeWavOf(const char* name, size_t frames, const std::function<float(size_t)>& f) {
   const std::string path = (fs::temp_directory_path() / name).string();
   AudioBuffer b(2, frames);
@@ -47,28 +49,26 @@ float maxStep(const AudioBuffer& b, size_t from, size_t to) {
 }
 
 void crossfadeTests() {
-  // ---- gain law: shapes, tension, mirrored pairs ----
+  // ---- gain law (J-43: FL's shapes and tension law), mirrored pairs ----
   {
-    bool ends = true, mono = true, power = true, ampl = true;
-    for (float t : {-1.0f, -0.6f, -0.2f, 0.0f, 0.3f, 0.75f, 1.0f})
-      for (FadeShape sh : {FadeShape::Linear, FadeShape::EqualPower, FadeShape::SCurve}) {
+    bool ends = true, mono = true, ampl = true;
+    for (float t : {-2000.0f, -10.0f, -0.6f, 0.0f, 0.3f, 4.0f, 635.0f})
+      for (FadeShape sh : {FadeShape::Smooth, FadeShape::Single}) {
         ends = ends && near(fadeGain(0, sh, t), 0, 1e-12) && near(fadeGain(1, sh, t), 1, 1e-12);
         double prev = -1;
         for (int k = 0; k <= 200; ++k) {
           const double p = k / 200.0, g = fadeGain(p, sh, t), m = fadeGain(1 - p, sh, -t);  // fade in vs. mirrored fade out
           mono = mono && g >= prev - 1e-12;
           prev = g;
-          if (sh == FadeShape::EqualPower) power = power && near(g * g + m * m, 1.0, 1e-9);
-          else ampl = ampl && near(g + m, 1.0, 1e-9);
+          ampl = ampl && near(g + m, 1.0, 1e-9);
         }
       }
     expect(ends && mono, "fades: every shape / tension runs 0 -> 1 monotonically");
-    expect(power, "fades: equal-power crossfade with mirrored tensions keeps constant power");
-    expect(ampl, "fades: linear and S-curve crossfades with mirrored tensions keep constant amplitude");
-    expect(near(fadeGain(0.5, FadeShape::Linear, 0), 0.5) && near(fadeGain(0.5, FadeShape::EqualPower, 0), std::sqrt(0.5), 1e-12),
-           "fades: plain linear / equal-power midpoints");
-    expect(fadeGain(0.5, FadeShape::Linear, -0.5f) > 0.5 && fadeGain(0.5, FadeShape::Linear, 0.5f) < 0.5,
-           "fades: negative tension bulges the curve up, positive bows it down");
+    expect(ampl, "fades: crossfades with mirrored tensions keep constant amplitude (both shapes)");
+    expect(near(fadeGain(0.5, FadeShape::Single, 0), 0.5) && near(fadeGain(0.25, FadeShape::Smooth, 0), 0.5 - 0.5 * std::cos(kPiD / 4), 1e-12),
+           "fades: plain straight / smooth (raised cosine) curves");
+    expect(fadeGain(0.5, FadeShape::Single, 2.0f) > 0.5 && fadeGain(0.5, FadeShape::Single, -2.0f) < 0.5,
+           "fades: positive tension bulges the curve up, negative bows it down");
   }
 
   // ---- automatic crossfades ----
@@ -90,8 +90,8 @@ void crossfadeTests() {
     const auto all = resolveAllFades(s, tm);
     const ClipFades &fa = fadesOf(s, all, A), &fb = fadesOf(s, all, B);
     expect(s.clip(A)->length == 384 && s.clip(B)->length == 384, "crossfade fixture: 2 s clips");
-    expect(fa.out.automatic && fa.out.partner == B && near(fa.out.len, 0.5, 1e-9) && fa.out.shape == FadeShape::EqualPower,
-           "auto crossfade: the earlier clip fades out over the overlap (equal power)");
+    expect(fa.out.automatic && fa.out.partner == B && near(fa.out.len, 0.5, 1e-9) && fa.out.shape == FadeShape::Smooth,
+           "auto crossfade: the earlier clip fades out over the overlap (smooth curve)");
     expect(fb.in.automatic && fb.in.partner == A && near(fb.in.len, 0.5, 1e-9) && fa.in.len == 0 && fb.out.len == 0,
            "auto crossfade: the later clip fades in over the overlap, free edges stay unfaded");
     const ClipFades one = resolveFades(s, tm, *s.clip(B));
@@ -139,12 +139,12 @@ void crossfadeTests() {
     expect(near(fadesNow(B).in.len, 0.25, 1e-9) && near(fadesNow(A).out.len, 0.25, 1e-9), "auto crossfade follows a trim");
     // Hand-set fade on the later clip: stored, wins over the overlap, survives moves.
     d.editClip(B, "clip fade in", [](Clip& c) {
-      c.fadeIn = 0.1, c.fadeInManual = true, c.fadeInShape = static_cast<uint8_t>(FadeShape::SCurve), c.fadeInTension = 0.4f;
+      c.fadeIn = 0.1, c.fadeInManual = true, c.fadeInShape = static_cast<uint8_t>(FadeShape::Single), c.fadeInTension = 0.4f;
     });
     d.editClip(A, "crossfade tension", [](Clip& c) { c.fadeOutTension = -0.4f; });
     d.editClips("move clips", [&](std::vector<Clip>& v) { v = pltools::moveClips(v, {B}, -48, 0, tracks); });
     ClipFades fb = fadesNow(B), fa = fadesNow(A);
-    expect(near(fb.in.len, 0.1, 1e-9) && !fb.in.automatic && fb.in.shape == FadeShape::SCurve && fb.in.tension == 0.4f,
+    expect(near(fb.in.len, 0.1, 1e-9) && !fb.in.automatic && fb.in.shape == FadeShape::Single && fb.in.tension == 0.4f,
            "hand-set fade: length / shape / tension persist through a move");
     expect(fa.out.automatic && near(fa.out.len, 0.5, 1e-9) && fa.out.tension == -0.4f, "hand-set fade: the partner edge still follows the overlap");
     // A hand-set zero: no fade at all, even though the clips overlap.
@@ -174,8 +174,8 @@ void crossfadeTests() {
   // ---- render: the overlap plays click-free with a constant sum ----
   {
     Song r = s;  // A [0, 2 s), B [1.5 s, 3.5 s), both DC 0.5, linear crossfade (constant amplitude for equal signals)
-    r.clip(A)->fadeOutShape = static_cast<uint8_t>(FadeShape::Linear);
-    r.clip(B)->fadeInShape = static_cast<uint8_t>(FadeShape::Linear);
+    r.clip(A)->fadeOutShape = static_cast<uint8_t>(FadeShape::Single);
+    r.clip(B)->fadeInShape = static_cast<uint8_t>(FadeShape::Single);
     RenderOptions o;
     AudioBuffer out = renderSong(r, o);
     const float level = out.at(0, 22050);  // A alone
@@ -183,19 +183,18 @@ void crossfadeTests() {
     for (size_t i = 22050; i < 150000; ++i) dev = std::max(dev, std::fabs(out.at(0, i) - level));
     expect(level > 0.05f && dev < level * 0.002f, "render: linear crossfade of equal signals is flat across the overlap");
     expect(maxStep(out, 22050, 150000) < 1e-3f, "render: no step (click) where the clips meet");
-    // Equal power (the automatic shape) on identical signals bulges smoothly (+3 dB at the middle) but never steps.
+    // The default smooth crossfade keeps a constant amplitude too (FL's law): flat, no step.
     r = s;
     out = renderSong(r, o);
-    float peak = 0;
-    for (size_t i = 22050; i < 150000; ++i) peak = std::max(peak, out.at(0, i));
-    expect(maxStep(out, 22050, 150000) < 1e-3f && peak < level * 1.4143f && peak > level * 1.40f,
-           "render: equal-power crossfade is smooth (+3 dB at the middle for identical signals)");
+    dev = 0;
+    for (size_t i = 22050; i < 150000; ++i) dev = std::max(dev, std::fabs(out.at(0, i) - level));
+    expect(maxStep(out, 22050, 150000) < 1e-3f && dev < level * 0.002f, "render: smooth crossfade of equal signals is flat and click-free");
     // Without crossfades the second clip's start is a hard step.
     r.autoCrossfades = false;
     out = renderSong(r, o);
     expect(maxStep(out, 22050, 150000) > level * 0.9f, "render: crossfades off -> the overlap starts with a jump (the click crossfades remove)");
   }
-  {  // independent noise on two channels: equal power keeps the level (RMS) through the overlap
+  {  // independent noise on two channels: a constant-amplitude crossfade dips ~3 dB in the middle
     Song r = makeEmptySong();
     r.tempo = 120.0;
     const ObjectId c1 = addSampleChannel(r, noiseA, "n1"), c2 = addSampleChannel(r, noiseB, "n2");
@@ -205,8 +204,8 @@ void crossfadeTests() {
     AudioBuffer out = renderSong(r, o);
     const double ref = rmsOf(out, 4410, 30000);
     double worst = 0;
-    for (size_t w = 44100 + 2205; w + 4410 < 88200 - 2205; w += 2205) worst = std::max(worst, std::fabs(20 * std::log10(rmsOf(out, w, 4410) / ref)));
-    expect(ref > 0.01 && worst < 0.8, "render: equal-power crossfade of uncorrelated audio keeps a constant level (within 0.8 dB)");
+    for (size_t w = 44100 + 2205; w + 4410 < 88200 - 2205; w += 2205) worst = std::max(worst, -20 * std::log10(rmsOf(out, w, 4410) / ref));
+    expect(ref > 0.01 && worst > 2.4 && worst < 3.3, "render: smooth crossfade of uncorrelated audio dips about 3 dB mid-way (FL's constant-amplitude law)");
   }
   fs::remove(dc);
   fs::remove(noiseA);

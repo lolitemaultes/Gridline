@@ -232,10 +232,11 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
     out.tensionIn = fades->in.tension, out.tensionOut = fades->out.tension;
   } else {  // the clip's own fades only (live clips play alone)
     out.fadeIn = c.fadeIn, out.fadeOut = c.fadeOut;
-    out.shapeIn = c.fadeInShape > 0 && c.fadeInShape < kFadeShapeCount ? static_cast<FadeShape>(c.fadeInShape) : FadeShape::Linear;
-    out.shapeOut = c.fadeOutShape > 0 && c.fadeOutShape < kFadeShapeCount ? static_cast<FadeShape>(c.fadeOutShape) : FadeShape::Linear;
+    out.shapeIn = c.fadeInShape == 1 ? FadeShape::Single : FadeShape::Smooth;
+    out.shapeOut = c.fadeOutShape == 1 ? FadeShape::Single : FadeShape::Smooth;
     out.tensionIn = c.fadeInTension, out.tensionOut = c.fadeOutTension;
   }
+  out.declickIn = c.fadeInDeclick, out.declickOut = c.fadeOutDeclick;  // J-43
   if (c.syncBpm > 0) {  // follows the tempo: always pitch-independent
     out.secPerTick = 60.0 / (c.syncBpm * song.ppq) / timeFactor;
     out.granular = true;

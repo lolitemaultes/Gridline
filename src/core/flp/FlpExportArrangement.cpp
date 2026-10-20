@@ -198,28 +198,36 @@ void Exporter::writeArrangements() {
         const int ci = im.ch(c.source);
         if (ci < 0) continue;
         putU16(r, 6, static_cast<uint32_t>(ci));
-        auto keepF = [&](size_t at, double v, double scale) {  // the original float when it decodes the same
+        auto keepF = [&](size_t at, double v, double scale, double tol = 0.0) {  // the original float when it decodes the same
           const float old = getF32(r, at);
-          if (!(orec && std::isfinite(old) && static_cast<double>(old) / scale == v)) putF32(r, at, static_cast<float>(v * scale));
+          if (!(orec && std::isfinite(old) && std::fabs(static_cast<double>(old) / scale - v) <= tol)) putF32(r, at, static_cast<float>(v * scale));
         };
         keepF(24, c.audioStart, 1000.0);
         if (c.audioEnd > 0) keepF(28, c.audioEnd, 1000.0);
         else putF32(r, 28, -1.0f);
-        // J-38: a clip made in Gridline carries its effective fades, automatic
-        // crossfades included, so FL plays the overlap the same; records from
-        // an FL import keep FL's stored values (FL derives its own crossfades).
-        // Curve shape / tension: FL's fields are not confirmed (@40 may be the
-        // fade-in tension), so they are not written.
+        // J-38 / J-43: FL's fade record (@36 in ms, @40 in tension, @44 out ms,
+        // @48 out tension, @52 gain, @56 flags). FL stores the fades it derives
+        // for overlaps too, so every edge carries its effective length
+        // (automatic crossfades included); an edge is flagged "set by hand"
+        // exactly when Clip::fadeXManual says so. Declicker modes and unknown flag bits are kept.
         const size_t ci2 = static_cast<size_t>(&c - clips.data());
         const ClipFades none;
         const ClipFades& cf = ci2 < fades.size() ? fades[ci2] : none;
-        keepF(36, orec ? c.fadeIn : cf.in.len, 1000.0);
-        keepF(44, orec ? c.fadeOut : cf.out.len, 1000.0);
-        if (c.fadeInShape || c.fadeOutShape || c.fadeInTension != 0.0f || c.fadeOutTension != 0.0f)
-          rep.counts["audio clips: fade curve shape / tension not written"]++;
+        keepF(36, cf.in.len, 1000.0, 1e-5);
+        keepF(44, cf.out.len, 1000.0, 1e-5);
+        putF32(r, 40, c.fadeInTension);
+        putF32(r, 48, c.fadeOutTension);
+        const bool manIn = c.fadeInManual, manOut = c.fadeOutManual;  // FL's own flag (a stored non-manual FL fade stays non-manual)
+        uint32_t fl = getU32(r, 56) & ~(3u | (7u << 2) | (3u << 8) | (3u << 12) | (7u << 14));
+        fl |= (manIn ? 1u : 0u) | (manOut ? 2u : 0u);
+        fl |= (static_cast<uint32_t>(c.fadeInDeclick & 7u) << 2) | (static_cast<uint32_t>(c.fadeOutDeclick & 7u) << 14);
+        fl |= (static_cast<uint32_t>(c.fadeInShape & 3u) << 8) | (static_cast<uint32_t>(c.fadeOutShape & 3u) << 12);
+        putU32(r, 56, fl);
+        // Clip pitch: FL's record has no field for it (@48 is the fade-out
+        // tension); the channel's pitch carries what FL plays.
         const auto cents = audioCents.find(c.source);
-        const float pitch = c.pitch - static_cast<float>(cents == audioCents.end() ? 0 : cents->second);
-        if (!(orec && getF32(r, 48) + static_cast<float>(cents == audioCents.end() ? 0 : cents->second) == c.pitch)) putF32(r, 48, pitch);
+        if (std::fabs(c.pitch - static_cast<float>(cents == audioCents.end() ? 0 : cents->second)) > 1e-3f)
+          rep.counts["audio clips: clip pitch not written"]++;
         if (!(orec && getF32(r, 52) == c.gain)) putF32(r, 52, c.gain);
         if (!(orec && getF64(r, 64) == c.stretch)) putF64(r, 64, c.stretch);
         if (c.reverse) rep.counts["audio clips: reverse not written"]++;

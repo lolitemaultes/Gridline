@@ -37,13 +37,14 @@ inline void testJ38Fades() {
   }
   expect(ba && bb && bc, "J-38 fades: the audio clips come back");
   if (!ba || !bb || !bc) return;
-  expect(std::fabs(ba->fadeOut - ov) < 1e-4 && std::fabs(bb->fadeIn - ov) < 1e-4,
-         "J-38 fades: automatic crossfades are written as FL fade lengths (@44 out / @36 in)");
-  expect(std::fabs(bc->fadeIn - 0.1) < 1e-4 && bc->fadeOut == 0, "J-38 fades: a hand-set fade round-trips");
-  expect(!b.autoCrossfades, "J-38 fades: an FL import plays the stored fades (no second automatic crossfade)");
   TempoMap tb;
   tb.build(b);
-  const ClipFades fb = resolveFades(b, tb, *bb);
-  expect(std::fabs(fb.in.len - ov) < 1e-4 && fb.in.crossfade && fb.in.shape == FadeShape::EqualPower,
-         "J-38 fades: the re-imported overlap still plays as an equal-power crossfade of the same length");
+  const ClipFades fa = resolveFades(b, tb, *ba), fb = resolveFades(b, tb, *bb);
+  expect(b.autoCrossfades && std::fabs(fa.out.len - ov) < 1e-4 && std::fabs(fb.in.len - ov) < 1e-4 && fa.out.automatic && fb.in.automatic,
+         "J-38 fades: automatic crossfades are written as FL fade lengths and come back automatic (event 44 on)");
+  expect(ba->fadeOut == 0 && bb->fadeIn == 0 && !ba->fadeOutManual && !bb->fadeInManual,
+         "J-43 fades: a stored FL crossfade equal to the overlap is not kept on the clip (it follows the clips)");
+  expect(std::fabs(bc->fadeIn - 0.1) < 1e-4 && bc->fadeInManual && bc->fadeOut == 0, "J-38 fades: a hand-set fade round-trips (manual flag @56 bit 0)");
+  expect(fb.in.crossfade && fb.in.shape == FadeShape::Smooth,
+         "J-38 fades: the re-imported overlap still plays as a smooth crossfade of the same length");
 }

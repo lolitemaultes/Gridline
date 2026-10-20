@@ -107,8 +107,8 @@ void devDemo(App& a) {
     TakeCommitResult r = commitTakes(s, takes, o);
     if (r.clips.size() == 4) {
       Clip* vc = s.clip(r.clips[0]);
-      vc->fadeIn = 0.25;
-      vc->fadeOut = 0.6;
+      vc->fadeIn = 0.25, vc->fadeInManual = true;
+      vc->fadeOut = 0.6, vc->fadeOutManual = true;
       const ObjectId g = s.clip(r.clips[1])->takeGroup;
       compTakes(s, g, 2 * s.barTicks() + s.beatTicks() * 2, 2 * s.barTicks() + s.beatTicks() * 4, 0);
       if (mode == "props") propsClip = r.clips[0];
@@ -472,10 +472,10 @@ void drawClipProperties(App& a) {
   float fi = static_cast<float>(c.fadeIn * 1000.0), fo = static_cast<float>(c.fadeOut * 1000.0);
   row("Fade in");
   if (ImGui::DragFloat("##fi", &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-    a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0; }, key + 1);
+    a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0, x.fadeInManual = true; }, key + 1);
   row("Fade out");
   if (ImGui::DragFloat("##fo", &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-    a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0; }, key + 2);
+    a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 2);
   bool rev = c.reverse;
   row("Reverse");
   if (ImGui::Checkbox("##rev", &rev)) a.doc.editClip(id, "reverse clip", [rev](Clip& x) { x.reverse = rev; });

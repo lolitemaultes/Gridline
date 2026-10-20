@@ -201,6 +201,11 @@ bool remoteLinkToController(const FlRemoteLink& r, const FlTarget& t, Controller
 // Pattern events (event 223) and notes on automation channels → pattern
 // automation (FlpPatternEvents.cpp). After importArrangement.
 void importPatternEvents(Context& c);
+// J-43: after everything else: FL stores the crossfades it derives in the clip
+// records; where Gridline derives the same length from the overlap the stored
+// copy is dropped (the fade then follows the clips like in FL), elsewhere it
+// stays stored so playback matches FL (FlpArrangement.cpp).
+void settleImportedFades(Context& c);
 // Automation channel points (event 234) → Gridline points: ticks at `ppq`
 // from the first point, FL curve modes and tension sign converted
 // (FlpAutomation.cpp). Reads both point layouts: 16-byte f32 records (header

@@ -370,7 +370,10 @@ void Exporter::writeHeader() {
   w.byte(18, static_cast<uint32_t>(s.timeSigDen));
   w.byte(35, pv(35, 1));
   w.byte(23, pv(23, 0));
-  w.byte(44, pv(44, 1));
+  {  // J-43: per-project automatic crossfades (the original byte when it says the same)
+    const uint32_t ox = pv(44, 1);
+    w.byte(44, (ox != 0) == s.autoCrossfades ? ox : (s.autoCrossfades ? 1u : 0u));
+  }
   w.byte(30, pv(30, 1));
   w.byte(10, pv(10, 0));
   auto text = [&](uint8_t id, const std::string& v) {

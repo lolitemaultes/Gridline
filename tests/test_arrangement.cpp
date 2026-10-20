@@ -420,7 +420,7 @@ int main() {
     {
       Bytes au(80);
       au.v = item(96, 0, 192, 2, 0x2040);  // audio, muted
-      au.f32(24, 100.0f), au.f32(28, 600.0f), au.f32(36, 25.0f), au.f32(52, 0.5f), au.f32(48, -50.0f);
+      au.f32(24, 100.0f), au.f32(28, 600.0f), au.f32(36, 25.0f), au.f32(52, 0.5f), au.f32(48, -50.0f);  // @48: fade-out tension (J-43)
       items.insert(items.end(), au.v.begin(), au.v.end());
       Bytes at(80);
       at.v = item(0, 1, 768, 5, 0x40);  // tempo automation
@@ -484,8 +484,8 @@ int main() {
     }
     expect(au && au->source == (vox ? vox->id : 0) && au->start == 96 && au->length == 192 && au->track == 2 && au->muted &&
                near(au->audioStart, 0.1, 1e-6) && near(au->audioEnd, 0.6, 1e-6) && near(au->fadeIn, 0.025, 1e-6) && au->gain == 0.5f &&
-               au->pitch == -50.0f,
-           "FLP: audio clip (offsets ms, mute flag, fade, gain, pitch)");
+               au->pitch == 0.0f && au->fadeOutTension == -50.0f,
+           "FLP: audio clip (offsets ms, mute flag, fade, gain; @48 is the fade-out tension, not a pitch)");
     expect(pc && pc->offset == 96 && pc->start == 384 && pc->length == 288, "FLP: pattern clip start offset");
     expect(bv && bv->track == 499 && s.tracks.size() == 500, "FLP: content on track 500 (track = 499 − stored value)");
     const AutomationClip* tempo = ta ? s.automation(ta->source) : nullptr;

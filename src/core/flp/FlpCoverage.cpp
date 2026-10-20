@@ -57,7 +57,7 @@ const std::vector<EventInfo>& eventCatalog() {
       {41, "plugin: unknown switch (FL 21+)", I, "no observable effect identified", -1},
       {42, "mixer insert: unknown switch (FL 21+)", I, "used only to find where inserts start", -1},
       {43, "track: unknown switch (FL 21+)", I, "no observable effect identified", -1},
-      {44, "project: unknown switch (FL 21+)", I, "no observable effect identified", -1},
+      {44, "project: automatic crossfades (FL 21+; J-43)", D, "", 1},
       {45, "marker: unknown (FL 21.2+)", I, "constant 0", 0},
       {46, "marker: unknown (FL 21.2+)", I, "constant 0", 0},
       {47, "project: unknown (FL 21.2+)", I, "constant 0", 0},

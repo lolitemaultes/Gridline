@@ -19,6 +19,7 @@
 #include "flp_export/enc_Wrapper.h"
 #include "flp_export/enc_J39.h"
 #include "flp_export/j38_fades.h"
+#include "flp_export/j43_fades.h"
 
 int main() {
   testCore();
@@ -40,5 +41,6 @@ int main() {
   enctest::testEncJ39();
   enctest::testExportJ39();
   testJ38Fades();
+  testJ43Fades();
   return finish();
 }

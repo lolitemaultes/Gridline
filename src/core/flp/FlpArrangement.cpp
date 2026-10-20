@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <functional>
 #include <set>
+#include "../Fades.h"
 #include "../Params.h"
 #include "../PluginParams.h"
 #include "Flp.h"
@@ -538,11 +539,23 @@ void Importer::importTracksAndClips() {
           if (std::isfinite(so) && so > 0) cl.audioStart = so / 1000.0;
           if (std::isfinite(eo) && eo > 0 && eo > so) cl.audioEnd = eo / 1000.0;
           if (k >= 80) {
-            float fi = e.f32(o + 36), fo = e.f32(o + 44), pc = e.f32(o + 48), g = e.f32(o + 52);
+            // J-43: the clip's fade record (@36): in ms, in tension, out ms,
+            // out tension, gain, flags (bit 0 / 1: in / out set by hand;
+            // bits 2-4 / 14-16: in / out declicker mode; bits 8-9 / 12-13:
+            // in / out curve, 0 smooth, 1 single). See j43_clip_fades.md.
+            float fi = e.f32(o + 36), ti = e.f32(o + 40), fo = e.f32(o + 44), to = e.f32(o + 48), g = e.f32(o + 52);
+            const uint32_t fl = e.u32(o + 56);
             double st = e.f64(o + 64);
             if (std::isfinite(fi) && fi > 0) cl.fadeIn = fi / 1000.0;
             if (std::isfinite(fo) && fo > 0) cl.fadeOut = fo / 1000.0;
-            if (std::isfinite(pc)) cl.pitch = std::clamp(pc, -4800.0f, 4800.0f);
+            if (std::isfinite(ti)) cl.fadeInTension = ti;
+            if (std::isfinite(to)) cl.fadeOutTension = to;
+            cl.fadeInManual = (fl & 1u) != 0;
+            cl.fadeOutManual = (fl & 2u) != 0;
+            cl.fadeInDeclick = static_cast<uint8_t>((fl >> 2) & 7u);
+            cl.fadeOutDeclick = static_cast<uint8_t>((fl >> 14) & 7u);
+            cl.fadeInShape = static_cast<uint8_t>((fl >> 8) & 3u);
+            cl.fadeOutShape = static_cast<uint8_t>((fl >> 12) & 3u);
             if (std::isfinite(g) && g >= 0) cl.gain = std::min(g, 16.0f);
             if (std::isfinite(st) && st > 0.0625 && st < 16) cl.stretch = st;
           }
@@ -633,6 +646,44 @@ void Importer::importMarkers() {
 void importArrangement(Context& c) {
   Importer imp(c);
   imp.run();
+}
+
+void settleImportedFades(Context& c) {
+  Song& s = c.song;
+  TempoMap tm;
+  tm.build(s);
+  int derived = 0, kept = 0;
+  auto settle = [&](std::vector<Clip>& clips) {
+    std::vector<Clip> probe = clips;
+    bool any = false;
+    for (Clip& x : probe) {
+      if (x.kind != ClipKind::Audio) continue;
+      any = any || (!x.fadeInManual && x.fadeIn > 0) || (!x.fadeOutManual && x.fadeOut > 0);
+      if (!x.fadeInManual) x.fadeIn = 0;
+      if (!x.fadeOutManual) x.fadeOut = 0;
+    }
+    if (!any) return;
+    const std::vector<ClipFades> f = resolveAllFades(s, tm, probe);
+    // Within 10 µs (under a sample): FL's float milliseconds vs. the tempo map.
+    auto same = [](double stored, double len) { return std::fabs(stored - len) <= 1e-5; };
+    for (size_t i = 0; i < clips.size(); ++i) {
+      Clip& x = clips[i];
+      if (x.kind != ClipKind::Audio) continue;
+      if (!x.fadeInManual && x.fadeIn > 0) {
+        if (f[i].in.automatic && same(x.fadeIn, f[i].in.len)) x.fadeIn = 0, ++derived;
+        else ++kept;
+      }
+      if (!x.fadeOutManual && x.fadeOut > 0) {
+        if (f[i].out.automatic && same(x.fadeOut, f[i].out.len)) x.fadeOut = 0, ++derived;
+        else ++kept;
+      }
+    }
+  };
+  settle(s.playlist);
+  for (size_t i = 0; i < s.arrangements.size(); ++i)
+    if (static_cast<int>(i) != s.currentArrangement) settle(s.arrangements[i].playlist);
+  if (derived) c.report.counts["audio clip crossfades (automatic)"] = derived;
+  if (kept) c.report.counts["audio clip crossfades kept as FL stored them"] = kept;
 }
 
 bool decodeRemoteLink(const Event& e, FlRemoteLink& out) {

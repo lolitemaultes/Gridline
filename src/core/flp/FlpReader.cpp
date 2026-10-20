@@ -339,6 +339,7 @@ bool importFile(const flp::File& file, Song& out, flp::Report& report, const std
   flp::finishChannels(c);
   flp::importArrangement(c);
   flp::importPatternEvents(c);
+  flp::settleImportedFades(c);
   ensureMixer(song);
   if (keepOrigin) flp::captureOrigin(c);  // original events for the FL exporter (J-34)
   out = std::move(song);

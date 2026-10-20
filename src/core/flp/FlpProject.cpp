@@ -121,10 +121,13 @@ void importProject(Context& c) {
   }
   if (!c.file.events.empty() && !find(c.sec.project, 156) && coarse > 0) s.tempo = coarse + fine / 1000.0;
   s.tempo = std::clamp(s.tempo, 10.0, 522.0);
-  // J-38: FL keeps the fades it creates for overlapping clips in the clip
-  // records (its fade self-test reads them back from the clips), so an import
-  // plays the stored fades as they are instead of deriving crossfades again.
-  s.autoCrossfades = false;
+  // J-43: event 44 is FL's per-project "Automatic crossfades" switch (FL 21+;
+  // any non-zero byte = on). FL also stores the crossfades it derives in the
+  // clip records; the arrangement import keeps them where Gridline would
+  // derive something else (see Importer::importPlaylist). Files without the
+  // event (older FL, some exports) still carry derived crossfades: on.
+  if (const Event* e = find(c.sec.project, 44)) s.autoCrossfades = e->value() != 0;
+  else s.autoCrossfades = true;
   if (s.info.title.empty()) s.info.title = "Imported project";
   if (s.info.comments.empty())  // older projects: comments only as RTF (198)
     if (const Event* e = find(c.sec.project, 198)) s.info.comments = rtfToText(e->text());

@@ -120,8 +120,9 @@ struct Clip {
   // J-38: fade curves and automatic crossfades (core/Fades.h). An edge whose
   // fade was set by hand (or fadeIn / fadeOut > 0) keeps it; otherwise an
   // overlapping audio clip on the same track crossfades automatically.
-  uint8_t fadeInShape = 0, fadeOutShape = 0;     // FadeShape (0 = automatic choice)
-  float fadeInTension = 0, fadeOutTension = 0;   // -1..1, 0 = plain curve
+  uint8_t fadeInShape = 0, fadeOutShape = 0;     // FadeShape (0 = smooth, 1 = straight)
+  float fadeInTension = 0, fadeOutTension = 0;   // FL tension unit (core/Fades.h), 0 = plain curve
+  uint8_t fadeInDeclick = 0, fadeOutDeclick = 0; // J-43: FL edge declicker mode (0 auto, 1 on, 2 off; kept as read)
   bool fadeInManual = false, fadeOutManual = false;  // set by hand (a zero length then means "no fade")
 
   bool operator==(const Clip& o) const {
@@ -131,7 +132,8 @@ struct Clip {
            stretch == o.stretch && syncBpm == o.syncBpm && reverse == o.reverse && takeGroup == o.takeGroup &&
            take == o.take && launched == o.launched && group == o.group && fadeInShape == o.fadeInShape &&
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&
-           fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual;
+           fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual &&
+           fadeInDeclick == o.fadeInDeclick && fadeOutDeclick == o.fadeOutDeclick;
   }
 };
 

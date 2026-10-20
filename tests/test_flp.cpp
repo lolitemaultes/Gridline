@@ -115,5 +115,67 @@ int main() {
   for (const auto& [ch, ns] : s.patterns.at(0).notes) total += ns.size();
   expect(s.patterns.size() == 1 && total == 3, "notes import");
   expect(s.playlist.size() == 1 && s.playlist[0].track == 0 && s.playlist[0].length == 384, "pattern clip on track 1");
+  expect(s.autoCrossfades, "J-43: no event 44 -> automatic crossfades on");
+
+  // ---- J-43: audio clip fade records and the automatic crossfades switch ----
+  auto rec = [](uint32_t start, uint32_t len, int track, float in, float tin, float out, float tout, uint32_t flags) {
+    std::vector<uint8_t> r(80, 0);
+    auto p32 = [&](size_t at, uint32_t v) { for (int i = 0; i < 4; ++i) r[at + static_cast<size_t>(i)] = static_cast<uint8_t>(v >> (8 * i)); };
+    auto pf = [&](size_t at, float v) { uint32_t u; std::memcpy(&u, &v, 4); p32(at, u); };
+    p32(0, start);
+    r[4] = 0x00, r[5] = 0x50;  // base; item 0 = channel 0
+    p32(8, len);
+    r[12] = static_cast<uint8_t>((499 - track) & 0xFF), r[13] = static_cast<uint8_t>((499 - track) >> 8);
+    pf(36, in), pf(40, tin), pf(44, out), pf(48, tout), pf(52, 1.0f);
+    p32(56, flags);
+    const double one = 1.0;
+    std::memcpy(r.data() + 64, &one, 8);
+    return r;
+  };
+  auto audioSong = [&](int e44, const std::vector<std::vector<uint8_t>>& recs, Song& out) {
+    Builder A;
+    A.text(199, "25.2.3.5164");
+    A.d(156, 120000);  // 120 BPM, 96 PPQ: 192 ticks = 1 s
+    if (e44 >= 0) A.b(44, static_cast<uint8_t>(e44));
+    A.w(64, 0), A.b(21, 4), A.text(192, "Vox");  // audio clip channel
+    A.w(99, 0);
+    for (const auto& r : recs) A.data(233, r);
+    const std::string p = "build_flp_test_j43.flp";
+    if (FILE* fp = std::fopen(p.c_str(), "wb")) {
+      auto bytes = A.file(96);
+      std::fwrite(bytes.data(), 1, bytes.size(), fp);
+      std::fclose(fp);
+    }
+    flp::Report r;
+    const bool good = importFlp(p, out, r, &err, "/nonexistent");
+    std::remove(p.c_str());
+    return good;
+  };
+  {  // hand-set fades: lengths, tensions, curves, declicker modes; switch off
+    Song a;
+    const bool good = audioSong(0, {rec(0, 384, 0, 150.0f, -3.9586f, 250.0f, 6.72f, 1u | 2u | (2u << 2) | (1u << 8) | (1u << 14))}, a);
+    const Clip* c = good && a.playlist.size() == 1 ? &a.playlist[0] : nullptr;
+    expect(good && !a.autoCrossfades, "J-43: event 44 = 0 -> automatic crossfades off");
+    expect(c && c->kind == ClipKind::Audio && std::fabs(c->fadeIn - 0.15) < 1e-6 && std::fabs(c->fadeOut - 0.25) < 1e-6,
+           "J-43: fade lengths from @36 / @44 (ms)");
+    expect(c && c->fadeInTension == -3.9586f && c->fadeOutTension == 6.72f && c->pitch == 0.0f,
+           "J-43: tensions from @40 / @48 (@48 is not a clip pitch)");
+    expect(c && c->fadeInManual && c->fadeOutManual && c->fadeInShape == 1 && c->fadeOutShape == 0 && c->fadeInDeclick == 2 &&
+               c->fadeOutDeclick == 1,
+           "J-43: flags @56: manual bits, curve (bits 8-9 / 12-13), declicker (bits 2-4 / 14-16)");
+  }
+  {  // stored automatic crossfades: the one equal to the overlap is derived again, a different one is kept
+    Song a;
+    const bool good = audioSong(1, {rec(0, 384, 0, 0, 0, 500.0f, 0, 0), rec(288, 384, 0, 500.0f, 0, 0, 0, 0),
+                                    rec(0, 384, 1, 0, 0, 123.0f, 0, 0), rec(288, 384, 1, 123.0f, 0, 0, 0, 0)}, a);
+    expect(good && a.autoCrossfades && a.playlist.size() == 4, "J-43: event 44 = 1 -> automatic crossfades on");
+    if (good && a.playlist.size() == 4) {
+      const Clip &x = a.playlist[0], &y = a.playlist[1], &u = a.playlist[2], &v = a.playlist[3];
+      expect(x.fadeOut == 0 && y.fadeIn == 0 && !x.fadeOutManual && !y.fadeInManual,
+             "J-43: a stored crossfade equal to the overlap becomes automatic again (follows the clips)");
+      expect(std::fabs(u.fadeOut - 0.123) < 1e-6 && std::fabs(v.fadeIn - 0.123) < 1e-6 && !u.fadeOutManual,
+             "J-43: a stored crossfade Gridline would not derive is kept, so playback matches FL");
+    }
+  }
   return finish();
 }

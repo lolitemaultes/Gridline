@@ -71,6 +71,14 @@ struct Cmp {
       d(q + ".audioEnd", x.audioEnd, y.audioEnd);
       d(q + ".fadeIn", x.fadeIn, y.fadeIn);
       d(q + ".fadeOut", x.fadeOut, y.fadeOut);
+      v(q + ".fadeInManual", x.fadeInManual, y.fadeInManual);  // J-43
+      v(q + ".fadeOutManual", x.fadeOutManual, y.fadeOutManual);
+      v(q + ".fadeInShape", static_cast<int>(x.fadeInShape), static_cast<int>(y.fadeInShape));
+      v(q + ".fadeOutShape", static_cast<int>(x.fadeOutShape), static_cast<int>(y.fadeOutShape));
+      f(q + ".fadeInTension", x.fadeInTension, y.fadeInTension);
+      f(q + ".fadeOutTension", x.fadeOutTension, y.fadeOutTension);
+      v(q + ".fadeInDeclick", static_cast<int>(x.fadeInDeclick), static_cast<int>(y.fadeInDeclick));
+      v(q + ".fadeOutDeclick", static_cast<int>(x.fadeOutDeclick), static_cast<int>(y.fadeOutDeclick));
       f(q + ".gain", x.gain, y.gain);
       f(q + ".pitch", x.pitch, y.pitch);
       d(q + ".stretch", x.stretch, y.stretch);
@@ -195,6 +203,7 @@ std::vector<std::string> compareSongs(const Song& a0, const Song& b0, bool ignor
   c.v("timeSig", a.timeSigNum * 100 + a.timeSigDen, b.timeSigNum * 100 + b.timeSigDen);
   c.f("swing", a.swing, b.swing);
   c.f("masterPitch", a.masterPitch, b.masterPitch);
+  c.v("autoCrossfades", a.autoCrossfades, b.autoCrossfades);  // J-43
   c.v("channelGroups.size", a.channelGroups.size(), b.channelGroups.size());
   for (size_t i = 0; i < a.channelGroups.size() && i < b.channelGroups.size(); ++i) c.v("channelGroups[" + std::to_string(i) + "]", a.channelGroups[i], b.channelGroups[i]);
   c.v("channels.size", a.channels.size(), b.channels.size());

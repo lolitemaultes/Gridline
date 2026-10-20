@@ -429,10 +429,10 @@ void arrangementClipMenu(App& a, ObjectId id) {
     float fi = static_cast<float>(c->fadeIn * 1000.0), fo = static_cast<float>(c->fadeOut * 1000.0);
     ImGui::SetNextItemWidth(160);
     if (ImGui::DragFloat("Fade in", &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-      a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0; }, key + 2);
+      a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0, x.fadeInManual = true; }, key + 2);
     ImGui::SetNextItemWidth(160);
     if (ImGui::DragFloat("Fade out", &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-      a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0; }, key + 3);
+      a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 3);
     if (ImGui::MenuItem("Reverse", nullptr, c->reverse)) a.doc.editClip(id, "reverse clip", [](Clip& x) { x.reverse = !x.reverse; });
     if (ImGui::MenuItem("Follow tempo", nullptr, c->syncBpm > 0)) {
       TempoMap tm;
@@ -1809,15 +1809,18 @@ void drawPlaylist(App& a) {
         std::snprintf(b, sizeof b, "Fade %s: %.0f ms (set by hand; right-click the handle: automatic, curve)", kind == 1 ? "in" : "out", v * 1000.0);
       } else {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-        const float t = std::clamp(fadeDragT0 + (m.y - fadeDragY0) / 70.0f, -1.0f, 1.0f);
-        const float tq = std::fabs(t) < 0.03f ? 0.0f : t;  // a detent at the plain curve
+        // J-43: drag up = louder (FL's positive tension); the handle moves on FL's
+        // logarithmic tension scale, with a detent at the plain curve.
+        const float t = std::clamp(fadeDragT0 - (m.y - fadeDragY0) / 70.0f, -1.0f, 1.0f);
+        const float uq = std::fabs(t) < 0.03f ? 0.0f : t;
+        const float tq = fadeTensionFromUi(uq);
         a.doc.editClips("fade curve", [&](std::vector<Clip>& v) {
           for (Clip& x : v) {
             if (x.id == id) (kind == 3 ? x.fadeInTension : x.fadeOutTension) = tq;
             if (mirror != kNoId && x.id == mirror) (kind == 3 ? x.fadeOutTension : x.fadeInTension) = -tq;
           }
         }, fadeKey);
-        std::snprintf(b, sizeof b, "Fade curve: %+.0f %%%s", -tq * 100.0f, mirror != kNoId ? "  (crossfade: the other clip mirrors it)" : "");
+        std::snprintf(b, sizeof b, "Fade curve: %+.0f %%%s", uq * 100.0f, mirror != kNoId ? "  (crossfade: the other clip mirrors it)" : "");
       }
       a.setHint(b);
     } else {
@@ -1845,7 +1848,7 @@ void drawPlaylist(App& a) {
         fadeDragKind = fadeHoverKind;
         fadeDragMirror = fadeHoverMirror;
         fadeDragY0 = m.y;
-        fadeDragT0 = hcf ? (fadeHoverKind == 3 ? hcf->fadeInTension : hcf->fadeOutTension) : 0.0f;
+        fadeDragT0 = hcf ? fadeTensionToUi(fadeHoverKind == 3 ? hcf->fadeInTension : hcf->fadeOutTension) : 0.0f;
       }
       lClick = false;
     }
@@ -1895,14 +1898,14 @@ void drawPlaylist(App& a) {
           if (i) x.fadeIn = 0, x.fadeInManual = false, x.fadeInShape = 0, x.fadeInTension = 0;
           else x.fadeOut = 0, x.fadeOutManual = false, x.fadeOutShape = 0, x.fadeOutTension = 0;
         }, false);
-      ui::Hint("Back to the defaults: automatic length (a crossfade where the clip overlaps another), automatic curve");
+      ui::Hint("Back to the defaults: automatic length (a crossfade where the clip overlaps another), smooth curve, no bend");
       ImGui::Separator();
       ImGui::TextDisabled("%s", tied ? "Crossfade curve (both clips)" : "Curve");
       const uint8_t cur = in ? fc->fadeInShape : fc->fadeOutShape;
       for (int k = 0; k < kFadeShapeCount; ++k) {
         std::string label = fadeShapeName(static_cast<FadeShape>(k));
-        if (k == 0) label += e.crossfade ? "  (equal power)" : "  (linear)";
-        if (ImGui::MenuItem(label.c_str(), nullptr, cur == k))
+        if (k == 0) label += "  (default)";
+        if (ImGui::MenuItem(label.c_str(), nullptr, (cur == 1 ? 1 : 0) == k))
           editEdge("fade curve shape", [k](Clip& x, bool i) { (i ? x.fadeInShape : x.fadeOutShape) = static_cast<uint8_t>(k); }, tied);
       }
       if (ImGui::MenuItem("Plain curve (no bend)", nullptr, false, e.tension != 0.0f))

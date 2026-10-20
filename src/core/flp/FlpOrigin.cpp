@@ -123,6 +123,7 @@ uint64_t fingerprintClip(const Clip& c, const IndexMap& m) {
   h.i(c.kind == ClipKind::Audio ? m.ch(c.source) : c.kind == ClipKind::Automation ? m.aut(c.source) : -1);
   h.i(c.offset).i(c.muted).f(c.audioStart).f(c.audioEnd).f(c.fadeIn).f(c.fadeOut).f(c.gain).f(c.pitch).f(c.stretch).f(c.syncBpm).i(c.reverse);
   h.i(c.group != kNoId).i(c.launched);  // J-39 (the group number is solved at export)
+  h.i(c.fadeInShape).i(c.fadeOutShape).f(c.fadeInTension).f(c.fadeOutTension).i(c.fadeInManual).i(c.fadeOutManual);  // J-43
   return h.h;
 }
 
@@ -140,6 +141,7 @@ uint64_t fingerprintArrangement(const std::vector<PlaylistTrack>& tracks, const 
 uint64_t fingerprintProject(const Song& s) {
   Fp h;
   h.tag("project").i(s.ppq).f(s.tempo).i(s.timeSigNum).i(s.timeSigDen).f(s.swing).f(s.masterPitch);
+  h.i(s.autoCrossfades);  // J-43
   h.s(s.info.title).s(s.info.author).s(s.info.genre).s(s.info.url).s(s.info.comments).i(s.info.created).i(s.info.workTime);
   for (const auto& g : s.channelGroups) h.s(g);
   return h.h;
