@@ -172,6 +172,60 @@ int main() {
     expect(eng.position() > 2 * bar - 1 || eng.position() < bar, "cleared selection no longer wraps at its end");
   }
 
+  // 9c. J-40: jumps outside the time selection play on from there (no bounce
+  // back to the selection start); playback re-enters the loop when it reaches
+  // it (before the selection) or after wrapping at the song end (after it).
+  {
+    gl::Document ld = makeDoc();
+    ld.addClip(ld.song().patterns[0].id, 0, 7 * ld.song().barTicks());  // the song is 8 bars long
+    gl::ProgramBuilder builder;
+    gl::AudioEngine eng(44100);
+    eng.setProgram(builder.build(ld.song()));
+    eng.setMode(gl::PlayMode::Song);
+    const double bar = static_cast<double>(ld.song().barTicks());  // 2 s at 120 BPM
+    const int64_t barSmp = 88200;
+    std::vector<float> L(barSmp * 4), R(barSmp * 4);
+    auto run = [&](double bars) { eng.process(L.data(), R.data(), static_cast<int>(bars * static_cast<double>(barSmp))); };
+    auto near = [&](double bars) { return std::fabs(eng.position() - bars * bar) < 0.02 * bar; };
+    eng.setLoopRange(static_cast<gl::Tick>(bar), static_cast<gl::Tick>(2 * bar));  // loop bar 2
+    eng.setPosition(static_cast<gl::Tick>(bar));
+    eng.play();
+    run(0.25);
+    expect(near(1.25), "loop: playing inside the selection");
+    eng.jumpTo(static_cast<gl::Tick>(5 * bar), 0);  // ruler click after the selection
+    run(0.5);
+    expect(near(5.5), "loop: a jump past the selection plays on from there (no bounce back)");
+    run(3.0);  // reaches the song end (8 bars) and wraps into the selection
+    expect(near(1.5), "loop: after the song end playback wraps to the selection start");
+    run(1.0);
+    expect(near(1.5), "loop: the selection loops again once re-entered");
+    eng.jumpTo(0, 0);  // before the selection: plays into it, then loops
+    run(0.5);
+    expect(near(0.5), "loop: a jump before the selection plays from there");
+    run(2.0);
+    expect(near(1.5), "loop: ... and loops once playback reaches the selection");
+    eng.jumpTo(static_cast<gl::Tick>(1.75 * bar), 0);  // inside: loops as before
+    run(0.5);
+    expect(near(1.25), "loop: a jump inside the selection keeps looping");
+    eng.jumpTo(static_cast<gl::Tick>(4 * bar), static_cast<gl::Tick>(bar));  // quantized (J-31): lands on the next bar line
+    run(1.25);  // 0.75 bar to the bar line (= the selection end), then 0.5 bar from bar 4
+    expect(near(4.5), "loop: a quantized jump past the selection lands there and plays on");
+    eng.pause();
+    eng.setPosition(static_cast<gl::Tick>(6 * bar));  // stopped: position set past the selection, then play
+    eng.play();
+    run(0.5);
+    expect(near(6.5), "loop: play from a position past the selection plays on");
+    eng.setLoopRange(static_cast<gl::Tick>(5 * bar), static_cast<gl::Tick>(6 * bar));  // a new selection behind the position
+    run(0.25);
+    expect(near(6.75), "loop: moving the selection keeps playing on past it");
+    eng.stop();
+    eng.setPosition(static_cast<gl::Tick>(7 * bar));
+    eng.setLoopRange(0, 0);  // no selection: the song wraps to its start at the end
+    eng.play();
+    run(1.5);
+    expect(near(0.5), "loop: without a selection the song wraps to its start");
+  }
+
   // 10. Realtime engine: pattern mode loops; live notes; stop.
   {
     gl::ProgramBuilder builder;

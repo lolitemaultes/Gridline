@@ -461,6 +461,43 @@ bool PianoRollScript::loadSource(const std::string& source, const std::string& n
   return true;
 }
 
+Limits previewLimits(const Limits& full) {
+  Limits l = full;
+  l.seconds = std::min(full.seconds, kPreviewSeconds);
+  l.instructions = std::min(full.instructions, kPreviewInstructions);
+  return l;
+}
+
+void PreviewScheduler::changed(double now, bool dragging) {
+  changedAt_ = now;
+  dragging_ = dragging;
+  pending_ = dragging ? Pending::Preview : Pending::Full;
+}
+
+void PreviewScheduler::released() {
+  dragging_ = false;
+  // Values not run yet, or the last preview ran out of budget: one full run.
+  if (pending_ == Pending::Preview || (pending_ == Pending::None && partial_)) pending_ = Pending::Full;
+}
+
+PreviewScheduler::Run PreviewScheduler::poll(double now) {
+  switch (pending_) {
+    case Pending::None: return Run::None;
+    case Pending::Full: return Run::Full;
+    case Pending::Preview:
+      return now - changedAt_ >= kSettle || now - lastRunAt_ >= kMaxWait ? Run::Preview : Run::None;
+  }
+  return Run::None;
+}
+
+void PreviewScheduler::ran(Run kind, double now, bool limitHit) {
+  if (kind == Run::None) return;
+  lastRunAt_ = now;
+  pending_ = Pending::None;
+  partial_ = kind == Run::Preview && limitHit;
+  if (partial_ && !dragging_) pending_ = Pending::Full;
+}
+
 PianoRollResult PianoRollScript::run(const PianoRollContext& ctx, const std::vector<FormParam>& values, const Limits& limits,
                                      const std::string& fileRoot) const {
   PianoRollResult r;
@@ -490,6 +527,7 @@ PianoRollResult PianoRollScript::run(const PianoRollContext& ctx, const std::vec
         &r.error);
   if (!ok) {
     r.log = vm.log();
+    r.limitHit = !vm.abortReason().empty();  // instruction / time limit (memory errors are not budget)
     return r;
   }
   // Read the notes back, protected: note tables may carry metamethods that
@@ -501,6 +539,7 @@ PianoRollResult PianoRollScript::run(const PianoRollContext& ctx, const std::vec
     r.ok = false;
     r.notes.clear(), r.sel.clear(), r.markers.clear();
     r.error = readErr;
+    r.limitHit = !vm.abortReason().empty();
   }
   r.log = vm.log();
   return r;

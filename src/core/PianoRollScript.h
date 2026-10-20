@@ -75,7 +75,49 @@ struct PianoRollResult {
   std::vector<bool> sel;
   std::vector<Marker> markers;
   bool markersChanged = false;
+  bool limitHit = false;  // stopped by the instruction / time limit (J-40)
   std::vector<std::string> log;
+};
+
+// ------------------------------------------------- live preview (J-40) ----
+// While a form control is being dragged, the tool window re-runs the script
+// with a small budget so the UI keeps its frame rate; the full limits are used
+// when the control is released, for discrete edits and on Accept.
+constexpr double kPreviewSeconds = 0.04;
+constexpr uint64_t kPreviewInstructions = 2'000'000;
+Limits previewLimits(const Limits& full);
+
+// Decides when the tool window runs the script. Times are seconds on any
+// monotonic clock. Rapid changes during a drag are coalesced: a preview runs
+// once the newest change is kSettle old, or kMaxWait after the previous run
+// while changes keep coming.
+class PreviewScheduler {
+ public:
+  static constexpr double kSettle = 0.04;
+  static constexpr double kMaxWait = 0.15;
+  enum class Run { None, Preview, Full };
+
+  // The form values changed; `dragging` = a control is still held.
+  void changed(double now, bool dragging);
+  // The held control was released.
+  void released();
+  // The run to do now (the caller then reports it with ran()).
+  Run poll(double now);
+  // Reports a finished run. A complete preview is the full result (runs are
+  // deterministic), so it needs no full run later.
+  void ran(Run kind, double now, bool limitHit);
+  // Accept must run the script with the full limits first.
+  bool needsFull() const { return pending_ != Pending::None || partial_; }
+  // The last preview hit its budget: the window shows the last good result.
+  bool tooSlow() const { return partial_; }
+  bool dragging() const { return dragging_; }
+
+ private:
+  enum class Pending { None, Preview, Full };
+  Pending pending_ = Pending::Full;  // the first run uses the full limits
+  bool dragging_ = false;
+  bool partial_ = false;  // the shown result is older than the values (preview over budget)
+  double changedAt_ = 0, lastRunAt_ = -1e9;
 };
 
 // ------------------------------------------------------------- script list ----

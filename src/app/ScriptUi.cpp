@@ -52,10 +52,11 @@ struct Session {
   uint32_t seed = 1;
   uint64_t key = 0;
   bool changed = false;  // the document holds a preview
-  bool dirty = true;     // values changed since the last run
+  script::PreviewScheduler sched;  // J-40: small-budget previews while dragging, full runs otherwise
   std::string error;
   script::PianoRollResult last;
   double runMs = 0;
+  bool lastLimitHit = false;  // the last run (preview or full) hit its limit
 };
 Session S;
 uint64_t sessionCounter = 1;
@@ -83,7 +84,9 @@ void setSelection(App& a, const std::vector<bool>& sel) {
 
 std::string label() { return "script: " + S.script.name(); }
 
-void runPreview(App& a) {
+// `full`: the configured limits; otherwise the small live-preview budget
+// (J-40). A preview that runs out of budget leaves the last result in place.
+void runPreview(App& a, bool full) {
   const Song& s = a.doc.song();
   const Pattern* p = s.pattern(S.pat);
   const Channel* c = s.channel(S.ch);
@@ -105,8 +108,12 @@ void runPreview(App& a) {
   ctx.pattern = p->name;
   const double t0 = wallNow();
   std::string root = S.script.path().empty() ? std::string() : fs::path(S.script.path()).parent_path().string();
-  S.last = S.script.run(ctx, S.values, appLimits(a), root);
+  const script::Limits fullLimits = appLimits(a);
+  script::PianoRollResult r = S.script.run(ctx, S.values, full ? fullLimits : script::previewLimits(fullLimits), root);
   S.runMs = (wallNow() - t0) * 1000.0;
+  S.lastLimitHit = r.limitHit;
+  if (!full && r.limitHit) return;  // too slow for a live preview: keep showing the last result
+  S.last = std::move(r);
   for (const auto& l : S.last.log) logging::info("script", S.script.name() + ": " + l);
   if (!S.last.ok) {
     S.error = S.last.error;
@@ -442,7 +449,6 @@ void openPianoRollScript(App& a, const std::string& path) {
       for (const auto& r : it->second)
         if (r.name == v.name && r.kind == v.kind) v.value = std::clamp(r.value, v.min, v.max), v.text = r.text;
   if (auto it = rememberedSeed.find(S.id); it != rememberedSeed.end()) S.seed = it->second;
-  S.dirty = true;
   a.showPiano = true;
 }
 
@@ -455,10 +461,14 @@ void drawScriptTool(App& a) {
     S.open = false;
     return;
   }
-  if (S.dirty) {
-    S.dirty = false;
-    runPreview(a);
-  }
+  // Runs the script when the scheduler says so (J-40: coalesced previews while
+  // a control is held, one full run on release).
+  auto runNow = [&a](script::PreviewScheduler::Run kind) {
+    if (kind == script::PreviewScheduler::Run::None) return;
+    runPreview(a, kind == script::PreviewScheduler::Run::Full);
+    S.sched.ran(kind, wallNow(), S.lastLimitHit);
+  };
+  runNow(S.sched.poll(wallNow()));
   const auto& P = pal();
   std::string title = "Script \xE2\x80\x94 " + S.script.name() + " \xE2\x80\x94 " + s.channel(S.ch)->name + "###j24script";
   ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -482,13 +492,21 @@ void drawScriptTool(App& a) {
     ImGui::TextColored(theme::vec(P.textFaint), "%s", desc.c_str());
     ImGui::PopTextWrapPos();
   }
-  if (drawForm(S.values)) S.dirty = true;
+  ImGui::BeginGroup();
+  const bool formChanged = drawForm(S.values);
+  ImGui::EndGroup();
+  const bool held = ImGui::IsItemActive();  // a knob drag / text edit in the form
+  if (formChanged) S.sched.changed(wallNow(), held);
+  if (S.sched.dragging() && !held) S.sched.released();
   if (S.script.form().params.empty()) ImGui::TextColored(theme::vec(P.textFaint), "This script has no settings.");
   ImGui::Dummy(ImVec2(0, 4));
   if (!S.error.empty()) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 440);
     ImGui::TextColored(theme::vec(P.danger), "%s", S.error.c_str());
     ImGui::PopTextWrapPos();
+  } else if (S.sched.tooSlow()) {
+    ImGui::TextColored(theme::vec(P.textFaint), "Preview too slow \xE2\x80\x94 showing the last result");
+    ui::Hint("The live preview has a small time budget; the script runs in full when you release the control or accept");
   } else if (!S.last.log.empty()) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 440);
     size_t from = S.last.log.size() > 3 ? S.last.log.size() - 3 : 0;
@@ -497,14 +515,14 @@ void drawScriptTool(App& a) {
   }
   if (ui::TextButton("New variation", false, 0, "Run again with new random numbers")) {
     S.seed = S.seed * 1664525u + 1013904223u + 7u;
-    S.dirty = true;
+    S.sched.changed(wallNow(), false);
   }
   ImGui::SameLine();
   bool accept = ui::TextButton("Accept", true, 90, "Keep the result (Enter)");
   ImGui::SameLine();
   if (ui::TextButton("Reset", false, 90, "Back to the script's default settings")) {
     S.values = S.script.form().params;
-    S.dirty = true;
+    S.sched.changed(wallNow(), false);
   }
   ImGui::SameLine();
   bool cancel = ui::TextButton("Cancel", false, 90, "Close and restore the notes (Esc)");
@@ -518,6 +536,8 @@ void drawScriptTool(App& a) {
   }
   ui::KeepWindowInViewport();
   ImGui::End();
+  // Accept keeps the result of a run with the full limits (J-40).
+  if (accept && S.sched.needsFull()) runNow(script::PreviewScheduler::Run::Full);
   if (accept && S.error.empty()) {
     if (S.changed || S.last.markersChanged) a.notify(S.script.name() + " applied");
     closeSession(a, true);

@@ -741,11 +741,97 @@ void testMisc() {
   fs::remove_all(dir, ec);
 }
 
+
+// ------------------------------------------------ J-40: live preview budget ----
+void testPreviewBudget() {
+  // The preview budget is small and never larger than the configured limits.
+  Limits full;
+  const Limits pv = previewLimits(full);
+  expect(pv.seconds <= 0.05 && pv.seconds > 0, "preview: time budget is a few tens of ms");
+  expect(pv.instructions < full.instructions && pv.instructions > 0, "preview: instruction budget below the full limit");
+  expect(pv.memoryBytes == full.memoryBytes, "preview: memory cap unchanged");
+  Limits tiny;
+  tiny.seconds = 0.01;
+  tiny.instructions = 1000;
+  expect(previewLimits(tiny).seconds == 0.01 && previewLimits(tiny).instructions == 1000, "preview: never above smaller user limits");
+
+  // A heavy script: completes with the full limits, hits the preview budget.
+  PianoRollScript heavy;
+  std::string err;
+  expect(heavy.loadSource("function form(f) f:knob('Amount', 0.5, 0, 1) end\n"
+                          "function apply(score, p) local x = 0 for i = 1, 1500000 do x = x + i end\n"
+                          "  score:add{time = 0, length = 96, pitch = 60} end", "heavy", &err),
+         "preview: heavy script loads");
+  PianoRollContext ctx = sampleContext();
+  const PianoRollResult pr = heavy.run(ctx, {}, previewLimits(full));
+  expect(!pr.ok && pr.limitHit, "preview: heavy script stops at the preview budget (limitHit)");
+  const PianoRollResult fr = heavy.run(ctx, {}, full);
+  expect(fr.ok && !fr.limitHit && fr.notes.size() == ctx.notes.size() + 1, "preview: the full-limit run completes");
+  const PianoRollResult bad = runSource("error('boom')", ctx);
+  expect(!bad.ok && !bad.limitHit, "preview: a script error is not a budget hit");
+
+  using Run = PreviewScheduler::Run;
+  {  // opening: one full run
+    PreviewScheduler s;
+    expect(s.poll(0) == Run::Full, "scheduler: first run uses the full limits");
+    s.ran(Run::Full, 0, false);
+    expect(s.poll(1) == Run::None && !s.needsFull(), "scheduler: idle after the first run");
+  }
+  {  // a drag: rapid changes coalesce into few previews, release runs in full
+    PreviewScheduler s;
+    s.ran(s.poll(0), 0, false);
+    int previews = 0, fulls = 0;
+    double t = 1.0;
+    for (int i = 0; i < 60; ++i, t += 0.016) {  // ~1 s of knob movement at 60 fps
+      s.changed(t, true);
+      Run r = s.poll(t);
+      if (r == Run::Preview) ++previews;
+      if (r == Run::Full) ++fulls;
+      s.ran(r, t, true);  // every preview runs out of budget
+    }
+    expect(fulls == 0, "scheduler: no full-limit run while the knob is held");
+    expect(previews >= 3 && previews <= 12, (std::string("scheduler: knob changes are coalesced (") + std::to_string(previews) + " previews / 60 changes)").c_str());
+    expect(s.tooSlow(), "scheduler: over-budget preview reported (note shown)");
+    expect(s.needsFull(), "scheduler: Accept needs a full run after an over-budget preview");
+    s.released();
+    expect(s.poll(t) == Run::Full, "scheduler: release runs the script with the full limits");
+    s.ran(Run::Full, t, false);
+    expect(!s.tooSlow() && !s.needsFull() && s.poll(t + 1) == Run::None, "scheduler: settled after the full run");
+  }
+  {  // settle: the newest change runs once the pointer pauses
+    PreviewScheduler s;
+    s.ran(s.poll(0), 0, false);
+    s.changed(1.0, true);
+    expect(s.poll(1.0) == Run::Preview, "scheduler: the first change of a drag previews at once");
+    s.ran(Run::Preview, 1.0, false);
+    s.changed(1.02, true);
+    expect(s.poll(1.02) == Run::None, "scheduler: a change right after a run waits (debounce)");
+    expect(s.poll(1.02 + PreviewScheduler::kSettle) == Run::Preview, "scheduler: preview after the settle time");
+    s.ran(Run::Preview, 1.07, false);
+    expect(!s.needsFull() && !s.tooSlow(), "scheduler: a complete preview is the final result");
+    s.released();
+    expect(s.poll(1.1) == Run::None, "scheduler: no extra run on release after a complete preview");
+  }
+  {  // released before the preview ran: the full run covers it
+    PreviewScheduler s;
+    s.ran(s.poll(0), 0, false);
+    s.changed(1.0, true);
+    s.released();
+    expect(s.poll(1.0) == Run::Full && s.needsFull(), "scheduler: release with a pending change runs in full");
+  }
+  {  // discrete edits (combo, check box, buttons) run in full straight away
+    PreviewScheduler s;
+    s.ran(s.poll(0), 0, false);
+    s.changed(2.0, false);
+    expect(s.poll(2.0) == Run::Full, "scheduler: discrete change runs in full");
+  }
+}
 }  // namespace
 
 int main() {
   testSandbox();
   testLimits();
+  testPreviewBudget();
   testNoteApi();
   testForms();
   testShippedPianoRollScripts();

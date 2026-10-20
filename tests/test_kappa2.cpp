@@ -587,6 +587,44 @@ void testRenderProjects() {
   }
 }
 
+// ======================================================================= J-40: loud demo master
+// "Asher Postman - Future House" renders pinned at 0 dBFS with a high RMS from
+// its first second. That is the project's own master chain, decoded as saved:
+// multiband compressor, maximizer, then the limiter with +5 dB gain, a +4 dB
+// ceiling and the saturation threshold just below 0 dB. The saturation stage
+// tops out at min(ceiling, 0 dBFS), so the output sits at 1.0 by design.
+void testLoudDemoMaster() {
+  PluginState st = state("gl.limiter");
+  st.params[LimGain] = 4.97f;
+  st.params[LimCeiling] = 4.04f;
+  st.params[LimSaturation] = -0.0717f;
+  Buf out = run(st, noise(0.9, 1.0));
+  expect(finiteAll(out) && peak(out) <= 1.0 + 1e-6 && peak(out) > 0.97, "loud master: saturation pins the limiter output at 0 dBFS");
+  st.params[LimSaturation] = 0;  // saturation off: the hard clip follows the (+4 dB) ceiling
+  Buf hot = run(st, noise(0.9, 1.0));
+  expect(peak(hot) > 1.2 && peak(hot) <= dsp::dbToGain(4.04) + 1e-5, "loud master: without saturation the output may exceed 0 dBFS up to the ceiling");
+
+  const std::string flp = kFl + "/Data/Demo projects/Demo songs/Asher Postman - Future House.flp";
+  if (!std::filesystem::exists(flp)) return;
+  Song song;
+  flp::Report rep;
+  std::string err;
+  const bool ok = importFlp(flp, song, rep, &err, kFl);
+  expect(ok && !song.mixer.empty(), "loud master: demo imports");
+  if (!ok || song.mixer.empty()) return;
+  std::vector<std::string> chain;
+  const PluginState* lim = nullptr;
+  for (const auto& sl : song.mixer[0].slots) {
+    if (sl.plugin.type.empty() || sl.plugin.type == "gl.notes") continue;
+    chain.push_back(sl.plugin.type);
+    if (sl.plugin.type == "gl.limiter") lim = &sl.plugin;
+  }
+  expect(chain == std::vector<std::string>{"gl.utility", "gl.multiband", "gl.master", "gl.limiter"}, "loud master: master chain decoded in order");
+  expect(lim && lim->params.size() > static_cast<size_t>(LimSaturation) && std::fabs(lim->params[LimGain] - 4.97) < 0.1 &&
+             std::fabs(lim->params[LimCeiling] - 4.04) < 0.1 && lim->params[LimSaturation] < 0 && lim->params[LimSaturation] > -0.2,
+         "loud master: limiter gain +5 dB, ceiling +4 dB, saturation just below 0 dB (as saved)");
+}
+
 }  // namespace
 
 int main() {
@@ -598,5 +636,6 @@ int main() {
   testMaster();
   testEnhance();
   testRenderProjects();
+  testLoudDemoMaster();
   return finish();
 }

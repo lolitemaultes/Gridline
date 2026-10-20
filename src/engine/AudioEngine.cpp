@@ -481,6 +481,17 @@ void AudioEngine::preview(SamplePtr sample) {
 
 double AudioEngine::loopStart() const { return tMode_ == PlayMode::Song && loopB_ > loopA_ ? loopA_ : 0.0; }
 
+double AudioEngine::transportEnd(const Program* p) const {
+  if (pastLoop_ && tMode_ == PlayMode::Song && loopB_ > loopA_) return static_cast<double>(p->songLoopEnd);
+  return loopEnd(p);
+}
+
+void AudioEngine::landAt(double tick) {
+  anchorTick_ = tick;
+  clock_ = 0;
+  pastLoop_ = tMode_ == PlayMode::Song && loopB_ > loopA_ && tick >= loopB_;
+}
+
 double AudioEngine::loopEnd(const Program* p) const {
   if (tMode_ == PlayMode::Song) return loopB_ > loopA_ ? loopB_ : static_cast<double>(p->songLoopEnd);
   if (tMode_ == PlayMode::Live) return 1e12;  // free-running transport
@@ -732,6 +743,7 @@ void AudioEngine::drain(const Program* p) {
         tPlaying_ = false;
         anchorTick_ = 0;
         clock_ = 0;
+        pastLoop_ = false;
         break;
       case Cmd::Pause:
         countInLeft_ = 0;
@@ -747,6 +759,7 @@ void AudioEngine::drain(const Program* p) {
         clearLive();
         anchorTick_ = 0;
         clock_ = 0;
+        pastLoop_ = false;
         break;
       case Cmd::Pattern:
         if (tPattern_ != c.id && p && tMode_ == PlayMode::Pattern) releaseAll(p, 0);
@@ -754,16 +767,14 @@ void AudioEngine::drain(const Program* p) {
         break;
       case Cmd::Position:
         if (p) releaseAll(p, 0);
-        anchorTick_ = c.tick;
-        clock_ = 0;
+        landAt(c.tick);
         pendJump_ = false;
         jumpPendingUi_.store(false);
         break;
       case Cmd::Jump:  // J-31: quantized song position jump
         if (!tPlaying_ || c.tick2 <= 0 || !p) {
           if (p) releaseAll(p, 0);
-          anchorTick_ = c.tick;
-          clock_ = 0;
+          landAt(c.tick);
           pendJump_ = false;
           jumpPendingUi_.store(false);
         } else {
@@ -776,10 +787,13 @@ void AudioEngine::drain(const Program* p) {
         }
         break;
       case Cmd::Loop: tLoop_ = c.value > 0.5f; break;
-      case Cmd::LoopRange:
+      case Cmd::LoopRange: {
         loopA_ = c.tick;
         loopB_ = c.tick2;
+        const double at = here();
+        pastLoop_ = tMode_ == PlayMode::Song && loopB_ > loopA_ && at >= loopB_ && pastLoop_;  // stays past a moved selection
         break;
+      }
       case Cmd::Preview:
         pvSample_ = c.sample;
         pvPos_ = 0;
@@ -933,15 +947,14 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       if (countInLeft_ <= 0) countingIn_.store(false);
     }
     while (s < n && guard++ < 64) {
-      const double end = loopEnd(p);
+      const double end = transportEnd(p);
       int seg = n - s;
       bool wrap = false, jump = false;
       if (tLoop_) {
         int64_t endSample = sampleAt(p, anchorTick_, end);
         if (endSample <= clock_) {  // already past the end (e.g. a shorter pattern was selected)
           releaseAll(p, s);
-          anchorTick_ = pendJump_ ? pendJumpTo_ : loopStart();
-          clock_ = 0;
+          landAt(pendJump_ ? pendJumpTo_ : loopStart());
           pendJump_ = false;
           continue;
         }
@@ -954,8 +967,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
         const int64_t js = sampleAt(p, anchorTick_, pendJumpAt_);
         if (js <= clock_) {
           releaseAll(p, s);
-          anchorTick_ = pendJumpTo_;
-          clock_ = 0;
+          landAt(pendJumpTo_);
           pendJump_ = false;
           continue;
         }
@@ -998,8 +1010,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       s += seg;
       if (wrap || jump) {
         releaseAll(p, std::min(s, n - 1));
-        anchorTick_ = pendJump_ ? pendJumpTo_ : loopStart();  // a pending jump replaces the loop wrap
-        clock_ = 0;
+        landAt(pendJump_ ? pendJumpTo_ : loopStart());  // a pending jump replaces the loop wrap
         pendJump_ = false;
       }
     }

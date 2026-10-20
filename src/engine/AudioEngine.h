@@ -266,6 +266,10 @@ class AudioEngine {
   const float* inputR(const ProgMixer& m) const;
   double loopEnd(const Program* p) const;
   double loopStart() const;  // where a wrap lands (time selection start, else 0)
+  // Where the transport wraps now: loopEnd, or the song end while pastLoop_.
+  double transportEnd(const Program* p) const;
+  // Moves the transport to `tick` (sample clock 0) and updates pastLoop_.
+  void landAt(double tick);
 
   double sr_;
   // Programs: owned on the UI thread, published to the audio thread.
@@ -329,6 +333,10 @@ class AudioEngine {
   bool ctxWasPlaying_ = false;   // transport state of the previous block (ProcessContext::jumped)
   double ctxNextTick_ = 0;
   double loopA_ = 0, loopB_ = 0;  // song-mode time selection (audio thread)
+  // J-40: the position was moved past the time selection (ruler click, marker
+  // or quantized jump): playback plays on from there to the song end, and only
+  // then wraps into the selection, instead of bouncing straight back.
+  bool pastLoop_ = false;
   PlayMode tMode_ = PlayMode::Pattern;
   ObjectId tPattern_ = kNoId;
   double anchorTick_ = 0;   // tick at sample clock 0

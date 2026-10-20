@@ -542,7 +542,16 @@ void infoWindow(App& a) {
 }
 
 void historyWindow(App& a) {
-  if (!a.showHistory) return;
+  static bool wasShown = false;
+  if (!a.showHistory) {
+    wasShown = false;
+    return;
+  }
+  // J-40: opening it (menu, Alt+Z, --show history) brings it to the front,
+  // also when it is docked behind another tab (the browser by default).
+  const bool opened = !wasShown;
+  wasShown = true;
+  if (opened) ImGui::SetNextWindowFocus();
   ImGui::SetNextWindowSize(ImVec2(300, 420), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Undo history", &a.showHistory)) {
     ImGui::End();
@@ -556,9 +565,10 @@ void historyWindow(App& a) {
     ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(applied ? pal().text : pal().textFaint));
     std::string l = labels[i] + "##" + std::to_string(i);
     if (ImGui::Selectable(l.c_str(), i + 1 == h.position())) a.doc.jumpTo(i + 1);
+    if (opened && i + 1 == h.position()) ImGui::SetScrollHereY(0.5f);  // show the current step
     ImGui::PopStyleColor();
   }
-  if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4) ImGui::SetScrollHereY(1.0f);
+  if (!opened && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4) ImGui::SetScrollHereY(1.0f);
   ImGui::End();
 }
 
