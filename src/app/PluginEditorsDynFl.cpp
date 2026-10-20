@@ -1,6 +1,7 @@
 // Gridline — dynamics editors on the reference form geometry (κ2). Each editor
 // places its controls at the measured positions of the reference layout
 // (form pixels, scaled to the window) and uses its own palette roles.
+#include "../core/I18n.h"
 #include "PluginEditorsDynFl.h"
 #include <map>
 #include "../engine/Dsp.h"
@@ -209,7 +210,7 @@ void editorLimiter(App& a, const PluginTarget& t, float width) {
   if (skin::menuButton(f, "menu", 5, 5, 18, 18, hex(0xD3E1E4))) ImGui::OpenPopup("##limopt");
   if (ImGui::BeginPopup("##limopt")) {
     bool safe = val(st, LimSafety) >= 0.5f;
-    if (ImGui::MenuItem("0.2 dB safety margin", nullptr, safe)) pui::setParamValue(a, t, LimSafety, safe ? 0.0 : 1.0);
+    if (ImGui::MenuItem(i18n::tr("0.2 dB safety margin"), nullptr, safe)) pui::setParamValue(a, t, LimSafety, safe ? 0.0 : 1.0);
     ImGui::EndPopup();
   }
   skin::glyphToggle(f, "vi", 5, 28, 18, 13, ui.vis[0], hex(0xB978FF), glyphBar, "Show input peaks");
@@ -369,7 +370,7 @@ void editorComp(App& a, const PluginTarget& t, float width) {
   if (skin::menuButton(f, "copt", 480, 55, 11, 16, pillText)) ImGui::OpenPopup("##compopt");
   if (ImGui::BeginPopup("##compopt")) {
     bool lim = val(st, CmpLimiter, 1) >= 0.5f;
-    if (ImGui::MenuItem("Output limiter (64-sample look-ahead)", nullptr, lim)) pui::setParamValue(a, t, CmpLimiter, lim ? 0.0 : 1.0);
+    if (ImGui::MenuItem(i18n::tr("Output limiter (64-sample look-ahead)"), nullptr, lim)) pui::setParamValue(a, t, CmpLimiter, lim ? 0.0 : 1.0);
     ImGui::EndPopup();
   }
   // ---- Gridline extras strip

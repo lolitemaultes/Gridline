@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include "../../core/I18n.h"
 #include "../../core/AutomationEdit.h"
 #include "../../core/Automation.h"
 #include "../../core/FlCurves.h"
@@ -215,7 +216,7 @@ void pointEditor(EditTarget& e, EnvcModel& m, UiState& u, ImVec2 p0, ImVec2 size
   if (ImGui::BeginPopup("##artpt")) {
     const int pi = u.menuPoint;
     if (pi >= 0 && static_cast<size_t>(pi) < r.pts.size()) {
-      ImGui::TextDisabled("Segment into point %d", pi + 1);
+      ImGui::TextDisabled(i18n::tr("Segment into point %d"), pi + 1);
       for (int s = 0; s < flcurve::kShapeCount; ++s)
         if (ImGui::MenuItem(shapeName(s), nullptr, r.pts[static_cast<size_t>(pi)].shape == s)) {
           r.pts[static_cast<size_t>(pi)].shape = static_cast<uint8_t>(s);
@@ -223,12 +224,12 @@ void pointEditor(EditTarget& e, EnvcModel& m, UiState& u, ImVec2 p0, ImVec2 size
         }
       if (!isMap) {
         ImGui::Separator();
-        if (ImGui::MenuItem("Sustain here", nullptr, r.sustain == pi)) r.sustain = r.sustain == pi ? -1 : pi, commit(e, m, "articulator sustain", 0);
-        if (ImGui::MenuItem("Loop start here", nullptr, r.loop == pi)) r.loop = r.loop == pi ? -1 : pi, commit(e, m, "articulator loop", 0);
-        if (u.part == 0 && ImGui::MenuItem("Decay starts here", nullptr, r.decay == pi))
+        if (ImGui::MenuItem(i18n::tr("Sustain here"), nullptr, r.sustain == pi)) r.sustain = r.sustain == pi ? -1 : pi, commit(e, m, "articulator sustain", 0);
+        if (ImGui::MenuItem(i18n::tr("Loop start here"), nullptr, r.loop == pi)) r.loop = r.loop == pi ? -1 : pi, commit(e, m, "articulator loop", 0);
+        if (u.part == 0 && ImGui::MenuItem(i18n::tr("Decay starts here"), nullptr, r.decay == pi))
           r.decay = r.decay == pi ? -1 : pi, commit(e, m, "articulator decay point", 0);
       }
-      if (n > 2 && pi > 0 && ImGui::MenuItem("Delete point")) {
+      if (n > 2 && pi > 0 && ImGui::MenuItem(i18n::tr("Delete point"))) {
         r.pts.erase(r.pts.begin() + pi);
         for (int32_t* mk : {&r.decay, &r.loop, &r.sustain}) *mk = *mk == pi ? -1 : (*mk > pi ? *mk - 1 : *mk);
         commit(e, m, "delete articulator point", 0);

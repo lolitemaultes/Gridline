@@ -1,6 +1,7 @@
 // Gridline — J-27 menu parity sweep: menu entries (see MenuParityUi.h).
 // Captions are Gridline's own wording; the operations live in
 // core/MenuParity (undoable, tested) and engine/NoteFxBurn.
+#include "../core/I18n.h"
 #include "MenuParityUi.h"
 #include <algorithm>
 #include <cmath>
@@ -65,23 +66,23 @@ void declickItems(App& a, const std::vector<ObjectId>& chans) {
 
 void timeModeItems(App& a) {
   const auto sel = selectedClipsOfKind(a, ClipKind::Audio);
-  ImGui::SeparatorText("Every audio clip");
-  if (ImGui::MenuItem("Resample (pitch follows speed)##all"))
+  ImGui::SeparatorText(i18n::tr("Every audio clip"));
+  if (ImGui::MenuItem(i18n::tr("Resample (pitch follows speed)##all")))
     report(a, ops::setAudioClipTimeMode(a.doc, {}, 0), "Audio clip channels switched", "Nothing to switch");
-  if (ImGui::MenuItem("Stretch (keep the pitch)##all"))
+  if (ImGui::MenuItem(i18n::tr("Stretch (keep the pitch)##all")))
     report(a, ops::setAudioClipTimeMode(a.doc, {}, 1), "Audio clip channels switched", "Nothing to switch");
-  ImGui::SeparatorText("Selected audio clips");
-  if (ImGui::MenuItem("Resample (pitch follows speed)##sel", nullptr, false, !sel.empty()))
+  ImGui::SeparatorText(i18n::tr("Selected audio clips"));
+  if (ImGui::MenuItem(i18n::tr("Resample (pitch follows speed)##sel"), nullptr, false, !sel.empty()))
     report(a, ops::setAudioClipTimeMode(a.doc, sel, 0), "Audio clip channels switched", "Nothing to switch");
-  if (ImGui::MenuItem("Stretch (keep the pitch)##sel", nullptr, false, !sel.empty()))
+  if (ImGui::MenuItem(i18n::tr("Stretch (keep the pitch)##sel"), nullptr, false, !sel.empty()))
     report(a, ops::setAudioClipTimeMode(a.doc, sel, 1), "Audio clip channels switched", "Nothing to switch");
 }
 
 void scoreLogItems(App& a) {
   const Song& s = a.doc.song();
   const bool target = s.pattern(a.curPattern) && s.channel(a.selChannel);
-  ImGui::TextDisabled("%d logged note events", static_cast<int>(scoreLog.events.size()));
-  if (ImGui::BeginMenu("Put the notes played in the last", target && !scoreLog.events.empty())) {
+  ImGui::TextDisabled(i18n::tr("%d logged note events"), static_cast<int>(scoreLog.events.size()));
+  if (ImGui::BeginMenu(i18n::tr("Put the notes played in the last"), target && !scoreLog.events.empty())) {
     for (int m : {1, 2, 5, 10, 20, 30}) {
       std::string l = std::to_string(m) + (m == 1 ? " minute" : " minutes");
       if (ImGui::MenuItem(l.c_str())) {
@@ -91,13 +92,13 @@ void scoreLogItems(App& a) {
       }
     }
     ImGui::Separator();
-    ImGui::MenuItem("Replace the channel's notes", nullptr, &dumpReplaces);
+    ImGui::MenuItem(i18n::tr("Replace the channel's notes"), nullptr, &dumpReplaces);
     ImGui::EndMenu();
   }
-  if (!target) ImGui::TextDisabled("Select a pattern and a channel first");
-  if (ImGui::MenuItem("Clear the log", nullptr, false, !scoreLog.events.empty())) scoreLog.clear();
-  ImGui::MenuItem("Log MIDI input notes", nullptr, &scoreLog.enabled);
-  if (ImGui::BeginMenu("Keep notes for")) {
+  if (!target) ImGui::TextDisabled("%s", i18n::tr("Select a pattern and a channel first"));
+  if (ImGui::MenuItem(i18n::tr("Clear the log"), nullptr, false, !scoreLog.events.empty())) scoreLog.clear();
+  ImGui::MenuItem(i18n::tr("Log MIDI input notes"), nullptr, &scoreLog.enabled);
+  if (ImGui::BeginMenu(i18n::tr("Keep notes for"))) {
     for (int m : {5, 10, 20, 30, 60}) {
       std::string l = std::to_string(m) + " minutes";
       if (ImGui::MenuItem(l.c_str(), nullptr, std::fabs(scoreLog.keepSeconds - m * 60.0) < 1)) scoreLog.keepSeconds = m * 60.0;
@@ -116,7 +117,7 @@ std::string paramLabel(const App& a, ParamId p) {
 // ================================================================ main menu ====
 
 void fileItems(App& a) {
-  if (ImGui::MenuItem("Save to a new project folder...")) {
+  if (ImGui::MenuItem(i18n::tr("Save to a new project folder..."))) {
     std::string title = a.doc.song().info.title.empty() ? std::string("Untitled") : a.doc.song().info.title;
     fileDialog(a, "Save into a new project folder (with its samples)", true, {".json"}, title, [&a](const std::string& p) {
       fs::path in(p);
@@ -148,7 +149,7 @@ void fileItems(App& a) {
 }
 
 void exportItems(App& a) {
-  if (ImGui::MenuItem("Render again with the last settings...")) exportui::openRenderAgain(a);
+  if (ImGui::MenuItem(i18n::tr("Render again with the last settings..."))) exportui::openRenderAgain(a);
 }
 
 void addItems(App& a) {
@@ -162,11 +163,11 @@ void addItems(App& a) {
 }
 
 void viewItems(App& a) {
-  if (ImGui::MenuItem("Project picker")) browserui::showProjectTab(a);
+  if (ImGui::MenuItem(i18n::tr("Project picker"))) browserui::showProjectTab(a);
   ui::Hint("The browser's project tab: patterns, channels, effects, automation and samples of this project");
   {
     const bool on = a.settings.getBool("ui.showPlayedChords");
-    if (ImGui::MenuItem("Show played chords in the hint bar", nullptr, on)) a.settings.set("ui.showPlayedChords", !on);
+    if (ImGui::MenuItem(i18n::tr("Show played chords in the hint bar"), nullptr, on)) a.settings.set("ui.showPlayedChords", !on);
     ui::Hint("Names the chord held on the MIDI keyboard (e.g. Am7, C/E) in the hint bar");
   }
 }
@@ -174,7 +175,7 @@ void viewItems(App& a) {
 void optionsItems(App& a) {
   if (!a.midi) return;
   const bool clock = a.midi->syncOut != SyncOut::Off;
-  if (ImGui::MenuItem("Send MIDI clock (master sync)", nullptr, clock)) {
+  if (ImGui::MenuItem(i18n::tr("Send MIDI clock (master sync)"), nullptr, clock)) {
     a.midi->syncOut = clock ? SyncOut::Off : SyncOut::Clock;
     a.publishMidi();
     a.midi->save((fs::path(a.configDir()) / "midi.json").string());
@@ -193,13 +194,13 @@ void toolsItems(App& a) {
     knobContextMenu(a, prev);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Score logger")) {
+  if (ImGui::BeginMenu(i18n::tr("Score logger"))) {
     scoreLogItems(a);
     ImGui::EndMenu();
   }
   const std::string& script = lastPianoRollScript();
-  if (ImGui::MenuItem("Open the last piano roll script again", nullptr, false, !script.empty())) openPianoRollScript(a, script);
-  if (ImGui::MenuItem("Save the note clipboard as a MIDI file", nullptr, false, !a.piano.clipboard.empty())) {
+  if (ImGui::MenuItem(i18n::tr("Open the last piano roll script again"), nullptr, false, !script.empty())) openPianoRollScript(a, script);
+  if (ImGui::MenuItem(i18n::tr("Save the note clipboard as a MIDI file"), nullptr, false, !a.piano.clipboard.empty())) {
     const std::string dir = browserui::contentDir(a, "Clipboard files");
     std::string path;
     for (int k = 1; k < 10000; ++k) {
@@ -212,23 +213,23 @@ void toolsItems(App& a) {
     else
       a.notify("Could not save the MIDI file: " + err, true);
   }
-  ImGui::SeparatorText("More macros");
-  if (ImGui::MenuItem("Lock every playlist track")) ops::setAllTracksLocked(a.doc, true);
-  if (ImGui::MenuItem("Unlock every playlist track")) ops::setAllTracksLocked(a.doc, false);
-  if (ImGui::MenuItem("Prepare the live area")) {
+  ImGui::SeparatorText(i18n::tr("More macros"));
+  if (ImGui::MenuItem(i18n::tr("Lock every playlist track"))) ops::setAllTracksLocked(a.doc, true);
+  if (ImGui::MenuItem(i18n::tr("Unlock every playlist track"))) ops::setAllTracksLocked(a.doc, false);
+  if (ImGui::MenuItem(i18n::tr("Prepare the live area"))) {
     Tick t = ops::prepareLiveArea(a.doc);
     a.notify(t ? std::string("Live area ready: each clip once per track at the song start") : std::string("Nothing to prepare"));
   }
   ui::Hint("Puts every different clip of each track once into a live area at the song start (the song moves right)");
-  if (ImGui::BeginMenu("Audio clip channels")) {
+  if (ImGui::BeginMenu(i18n::tr("Audio clip channels"))) {
     timeModeItems(a);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Declicking of the selected channels")) {
+  if (ImGui::BeginMenu(i18n::tr("Declicking of the selected channels"))) {
     declickItems(a, selectedChannels(a));
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Delete unused automation clips"))
+  if (ImGui::MenuItem(i18n::tr("Delete unused automation clips")))
     report(a, ops::deleteUnusedAutomationClips(a.doc), "Deleted unused automation clips", "No unused automation clips");
 }
 
@@ -238,12 +239,12 @@ void channelItems(App& a, ObjectId channel) {
   const Song& s = a.doc.song();
   const Channel* c = s.channel(channel);
   if (!c) return;
-  if (ImGui::MenuItem("Clone with controller links")) a.selectChannel(ops::cloneChannelWithLinks(a.doc, channel));
+  if (ImGui::MenuItem(i18n::tr("Clone with controller links"))) a.selectChannel(ops::cloneChannelWithLinks(a.doc, channel));
   ui::Hint("The copy follows the same MIDI controls and internal controllers as this channel");
   const Pattern* p = s.pattern(a.curPattern);
-  if (p && ImGui::MenuItem("Repeat the first bar of steps", nullptr, false, p->bars > 1 && p->steps.count(channel)))
+  if (p && ImGui::MenuItem(i18n::tr("Repeat the first bar of steps"), nullptr, false, p->bars > 1 && p->steps.count(channel)))
     ops::autoFillSteps(a.doc, p->id, channel);
-  if (p && ImGui::MenuItem("Bake note effects into the pattern", nullptr, false, !c->noteFx.empty())) {
+  if (p && ImGui::MenuItem(i18n::tr("Bake note effects into the pattern"), nullptr, false, !c->noteFx.empty())) {
     if (burnNoteFxToPattern(a.doc, p->id, channel)) a.notify("Note effects baked into " + p->name);
     else a.notify("Nothing to bake: the channel has no notes or steps here");
   }
@@ -252,36 +253,36 @@ void channelItems(App& a, ObjectId channel) {
     const PluginInfo* pi = findPlugin(c->plugin.type);
     const bool hasSample = pi && pi->usesSample && !c->plugin.data.empty() && c->plugin.data[0] != '{' &&
                            c->plugin.data.find('\n') == std::string::npos;
-    if (ImGui::BeginMenu("Open the sample in a new channel", hasSample)) {
+    if (ImGui::BeginMenu(i18n::tr("Open the sample in a new channel"), hasSample)) {
       const std::string path = c->plugin.data;
       for (const char* type : {"gl.sampler", "gl.granular", "gl.slicer"})
         if (const PluginInfo* ti = findPlugin(type); ti && ImGui::MenuItem(ti->name.c_str())) a.addInstrument(type, path);
       ImGui::EndMenu();
     }
   }
-  if (c->isLayer() && ImGui::BeginMenu("Layer")) {
-    if (ImGui::MenuItem("Put its channels in a new group")) {
+  if (c->isLayer() && ImGui::BeginMenu(i18n::tr("Layer"))) {
+    if (ImGui::MenuItem(i18n::tr("Put its channels in a new group"))) {
       int g = ops::groupLayerChildren(a.doc, channel, c->name);
       if (g >= 0) a.notify("Group \"" + a.doc.song().channelGroups[static_cast<size_t>(g)] + "\" created");
     }
-    if (ImGui::MenuItem("Delete its channels")) report(a, ops::deleteLayerChildren(a.doc, channel), "Deleted the layer's channels", "No channels to delete");
+    if (ImGui::MenuItem(i18n::tr("Delete its channels"))) report(a, ops::deleteLayerChildren(a.doc, channel), "Deleted the layer's channels", "No channels to delete");
     ImGui::EndMenu();
   }
 }
 
 void rackItems(App& a, const std::vector<ObjectId>& sel) {
-  if (ImGui::MenuItem("Swing mix for selected (type in)...", nullptr, false, !sel.empty())) {
+  if (ImGui::MenuItem(i18n::tr("Swing mix for selected (type in)..."), nullptr, false, !sel.empty())) {
     std::vector<ObjectId> ids = sel;
     openPrompt("Swing mix for the selected channels (0-100 %)", "50", [&a, ids](const std::string& t) {
       const double v = std::clamp(std::atof(t.c_str()), 0.0, 100.0);
       ops::setSwingMix(a.doc, ids, static_cast<float>(v / 100.0));
     });
   }
-  if (ImGui::BeginMenu("Declicking of selected", !sel.empty())) {
+  if (ImGui::BeginMenu(i18n::tr("Declicking of selected"), !sel.empty())) {
     declickItems(a, sel);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Audio clip channels")) {
+  if (ImGui::BeginMenu(i18n::tr("Audio clip channels"))) {
     timeModeItems(a);
     ImGui::EndMenu();
   }
@@ -289,10 +290,10 @@ void rackItems(App& a, const std::vector<ObjectId>& sel) {
 
 void pianoEditItems(App& a) {
   const bool ok = pianoHasTarget(a);
-  if (ImGui::MenuItem("Delete all notes", nullptr, false, ok))
+  if (ImGui::MenuItem(i18n::tr("Delete all notes"), nullptr, false, ok))
     pianoEdit(a, "delete all notes", [](auto& n, auto& sel) { n.clear(), sel.clear(); });
   const Pattern* p = a.doc.song().pattern(a.curPattern);
-  if (ImGui::BeginMenu("Turn events into an automation clip", p && !p->automation.empty())) {
+  if (ImGui::BeginMenu(i18n::tr("Turn events into an automation clip"), p && !p->automation.empty())) {
     for (const auto& lane : p->automation) {
       std::string l = paramDisplayName(a.doc.song(), ParamId{lane.owner, lane.index}) + "##lane" +
                       std::to_string(lane.owner) + "_" + std::to_string(lane.index);
@@ -301,7 +302,7 @@ void pianoEditItems(App& a) {
     }
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Save the notes as a MIDI file...", nullptr, false, ok)) {
+  if (ImGui::MenuItem(i18n::tr("Save the notes as a MIDI file..."), nullptr, false, ok)) {
     const Pattern* pat = a.doc.song().pattern(a.curPattern);
     std::vector<Note> notes;
     if (auto it = pat->notes.find(a.selChannel); it != pat->notes.end()) notes = it->second;
@@ -319,7 +320,7 @@ void pianoEditItems(App& a) {
 void pianoToolItems(App& a) {
   const bool ok = pianoHasTarget(a);
   static bool removePart = false;
-  if (ImGui::BeginMenu("Keep notes by beat position", ok)) {
+  if (ImGui::BeginMenu(i18n::tr("Keep notes by beat position"), ok)) {
     const Song& s = a.doc.song();
     struct Per {
       const char* name;
@@ -340,18 +341,18 @@ void pianoToolItems(App& a) {
         ImGui::EndMenu();
       }
     ImGui::Separator();
-    ImGui::MenuItem("Remove the part instead", nullptr, &removePart);
+    ImGui::MenuItem(i18n::tr("Remove the part instead"), nullptr, &removePart);
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Invert chords up", nullptr, false, ok)) pianoEdit(a, "invert chords", [](auto& n, auto& s) { ops::invertChords(n, s, 1); });
-  if (ImGui::MenuItem("Invert chords down", nullptr, false, ok)) pianoEdit(a, "invert chords", [](auto& n, auto& s) { ops::invertChords(n, s, -1); });
+  if (ImGui::MenuItem(i18n::tr("Invert chords up"), nullptr, false, ok)) pianoEdit(a, "invert chords", [](auto& n, auto& s) { ops::invertChords(n, s, 1); });
+  if (ImGui::MenuItem(i18n::tr("Invert chords down"), nullptr, false, ok)) pianoEdit(a, "invert chords", [](auto& n, auto& s) { ops::invertChords(n, s, -1); });
   const Channel* c = a.doc.song().channel(a.selChannel);
-  if (ImGui::MenuItem("Bake note effects into the notes", nullptr, false, ok && c && !c->noteFx.empty()))
+  if (ImGui::MenuItem(i18n::tr("Bake note effects into the notes"), nullptr, false, ok && c && !c->noteFx.empty()))
     burnNoteFxToPattern(a.doc, a.curPattern, a.selChannel);
 }
 
 void pianoSelectItems(App& a) {
-  if (ImGui::MenuItem("Stacked notes (chords)", nullptr, false, pianoHasTarget(a)))
+  if (ImGui::MenuItem(i18n::tr("Stacked notes (chords)"), nullptr, false, pianoHasTarget(a)))
     pianoEdit(a, "", [](auto& n, auto& s) { ops::selectStacked(n, s); });
 }
 
@@ -367,7 +368,7 @@ void pianoViewItems(App& a) {
       for (size_t i : a.piano.selected)
         if (i < sel.size()) sel[i] = true;
   }
-  if (ImGui::MenuItem("Scale highlighting from the notes", nullptr, false, !notes.empty())) {
+  if (ImGui::MenuItem(i18n::tr("Scale highlighting from the notes"), nullptr, false, !notes.empty())) {
     auto g = ops::detectScale(notes, sel);
     if (g.scale > 0) {
       static const char* const keys[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -378,12 +379,12 @@ void pianoViewItems(App& a) {
     }
   }
   const std::string chord = notes.empty() ? std::string() : ops::chordName(notes, sel);
-  ImGui::TextDisabled("Chord of the %s: %s", pianoSelectionCount(a) ? "selection" : "notes", chord.empty() ? "\xE2\x80\x94" : chord.c_str());
+  ImGui::TextDisabled(i18n::tr("Chord of the %s: %s"), pianoSelectionCount(a) ? "selection" : "notes", chord.empty() ? "\xE2\x80\x94" : chord.c_str());
 }
 
 void knobItems(App& a, ParamId pid) {
   if (!(pid == songParam(SongParam::Tempo))) return;
-  if (ImGui::BeginMenu("Tempo presets")) {
+  if (ImGui::BeginMenu(i18n::tr("Tempo presets"))) {
     for (int bpm : {80, 90, 100, 110, 120, 130, 140, 150, 160}) {
       std::string l = std::to_string(bpm) + " BPM";
       if (ImGui::MenuItem(l.c_str(), nullptr, std::fabs(a.doc.song().tempo - bpm) < 0.001))
@@ -404,13 +405,13 @@ std::string positionText(App& a, double tick) {
 void timeFormatMenu(App& a) {
   const int f = static_cast<int>(a.settings.getNumber("ui.timeFormat"));
   const int rate = static_cast<int>(a.settings.getNumber("ui.smpteRate"));
-  ImGui::SeparatorText("Song position shows");
-  if (ImGui::MenuItem("Bars : beats : ticks", nullptr, f == 0 && !a.settings.getBool("ui.timeSteps")))
+  ImGui::SeparatorText(i18n::tr("Song position shows"));
+  if (ImGui::MenuItem(i18n::tr("Bars : beats : ticks"), nullptr, f == 0 && !a.settings.getBool("ui.timeSteps")))
     a.settings.set("ui.timeFormat", 0), a.settings.set("ui.timeSteps", false);
-  if (ImGui::MenuItem("Bars : steps : ticks", nullptr, f == 0 && a.settings.getBool("ui.timeSteps")))
+  if (ImGui::MenuItem(i18n::tr("Bars : steps : ticks"), nullptr, f == 0 && a.settings.getBool("ui.timeSteps")))
     a.settings.set("ui.timeFormat", 0), a.settings.set("ui.timeSteps", true);
-  if (ImGui::MenuItem("Minutes : seconds : hundredths", nullptr, f == 1)) a.settings.set("ui.timeFormat", 1);
-  if (ImGui::BeginMenu("Timecode (SMPTE)")) {
+  if (ImGui::MenuItem(i18n::tr("Minutes : seconds : hundredths"), nullptr, f == 1)) a.settings.set("ui.timeFormat", 1);
+  if (ImGui::BeginMenu(i18n::tr("Timecode (SMPTE)"))) {
     const auto& rates = ops::smpteRates();
     for (size_t k = 0; k < rates.size(); ++k)
       if (ImGui::MenuItem(rates[k].name, nullptr, f == 2 && rate == static_cast<int>(k)))
@@ -421,7 +422,7 @@ void timeFormatMenu(App& a) {
 
 void stopMenuItems(App& a) {
   const bool on = a.settings.getBool("transport.rememberSeek");
-  if (ImGui::MenuItem("Stop returns to the set position", nullptr, on)) a.settings.set("transport.rememberSeek", !on);
+  if (ImGui::MenuItem(i18n::tr("Stop returns to the set position"), nullptr, on)) a.settings.set("transport.rememberSeek", !on);
 }
 
 void stopPressed(App& a) { a.engine.stop(); }  // J-49: the engine returns to the seek position

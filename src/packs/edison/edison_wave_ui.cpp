@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "../../core/I18n.h"
 #include "../../app/Theme.h"
 #include "edison_ui.h"
 
@@ -350,21 +351,21 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
   if (ImGui::BeginPopup("markermenu")) {
     if (s.renameMarker >= 0 && static_cast<size_t>(s.renameMarker) < c.markers.size()) {
       ImGui::TextDisabled("%s", c.markers[static_cast<size_t>(s.renameMarker)].name.c_str());
-      if (ImGui::MenuItem("Rename...")) {
+      if (ImGui::MenuItem(i18n::tr("Rename..."))) {
         std::snprintf(s.renameBuf, sizeof s.renameBuf, "%s", c.markers[static_cast<size_t>(s.renameMarker)].name.c_str());
         s.renameRegion = -1;
         openTool(s, Tool::Rename);
       }
-      if (ImGui::MenuItem("Snap to zero crossing")) {
+      if (ImGui::MenuItem(i18n::tr("Snap to zero crossing"))) {
         const auto& m = c.markers[static_cast<size_t>(s.renameMarker)];
         applyNow(a, s, "Snap marker", moveMarker(c, static_cast<size_t>(s.renameMarker), nearestZeroCrossing(c.a(), m.pos, static_cast<int64_t>(s.rate() * 0.01))));
       }
-      if (ImGui::MenuItem("Select to next marker")) {
+      if (ImGui::MenuItem(i18n::tr("Select to next marker"))) {
         const int64_t from = c.markers[static_cast<size_t>(s.renameMarker)].pos;
         const int64_t to = static_cast<size_t>(s.renameMarker) + 1 < c.markers.size() ? c.markers[static_cast<size_t>(s.renameMarker) + 1].pos : s.frames();
         s.sel = {from, to};
       }
-      if (ImGui::MenuItem("Remove")) applyNow(a, s, "Remove marker", removeMarker(c, static_cast<size_t>(s.renameMarker)));
+      if (ImGui::MenuItem(i18n::tr("Remove"))) applyNow(a, s, "Remove marker", removeMarker(c, static_cast<size_t>(s.renameMarker)));
     }
     ImGui::EndPopup();
   }
@@ -454,39 +455,39 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
   if (ImGui::BeginPopup("lanemenu")) {
     const bool has = s.frames() > 0, sel = !s.sel.empty();
     const Range tr = target(s);
-    if (ImGui::MenuItem("Cut", "Ctrl+X", false, sel && !busy)) {
+    if (ImGui::MenuItem(i18n::tr("Cut"), "Ctrl+X", false, sel && !busy)) {
       clipboard() = extract(c.a(), s.sel);
       Range r = s.sel;
       runEdit(a, s, "Cut", [r](const Content& cc) { return deleteRange(cc, r); });
     }
-    if (ImGui::MenuItem("Copy", "Ctrl+C", false, has)) clipboard() = extract(c.a(), tr);
-    if (ImGui::MenuItem("Paste", "Ctrl+V", false, clipboard().frames() > 0 && !busy)) {
+    if (ImGui::MenuItem(i18n::tr("Copy"), "Ctrl+C", false, has)) clipboard() = extract(c.a(), tr);
+    if (ImGui::MenuItem(i18n::tr("Paste"), "Ctrl+V", false, clipboard().frames() > 0 && !busy)) {
       Audio clip = clipboard();
       Range sl = s.sel;
       int64_t at = s.cursor;
       runEdit(a, s, "Paste", [clip, sl, at](const Content& cc) { return sl.empty() ? insertAudio(cc, at, clip) : replaceRange(cc, sl, clip); });
     }
-    if (ImGui::MenuItem("Delete", "Del", false, sel && !busy)) {
+    if (ImGui::MenuItem(i18n::tr("Delete"), "Del", false, sel && !busy)) {
       Range r = s.sel;
       runEdit(a, s, "Delete", [r](const Content& cc) { return deleteRange(cc, r); });
     }
-    if (ImGui::MenuItem("Trim to selection", "Ctrl+T", false, sel && !busy)) {
+    if (ImGui::MenuItem(i18n::tr("Trim to selection"), "Ctrl+T", false, sel && !busy)) {
       Range r = s.sel;
       runEdit(a, s, "Trim to selection", [r](const Content& cc) { return cropTo(cc, r); });
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Fade in", nullptr, false, has && !busy)) runEdit(a, s, "Fade in", [tr, k = static_cast<Curve>(s.fadeCurve)](const Content& cc) { return fadeIn(cc, tr, k); });
-    if (ImGui::MenuItem("Fade out", nullptr, false, has && !busy)) runEdit(a, s, "Fade out", [tr, k = static_cast<Curve>(s.fadeCurve)](const Content& cc) { return fadeOut(cc, tr, k); });
-    if (ImGui::MenuItem("Normalize", nullptr, false, has && !busy)) runEdit(a, s, "Normalize", [tr](const Content& cc) { return normalize(cc, tr, 0); });
-    if (ImGui::MenuItem("Reverse", nullptr, false, has && !busy)) runEdit(a, s, "Reverse", [tr](const Content& cc) { return reverse(cc, tr); });
+    if (ImGui::MenuItem(i18n::tr("Fade in"), nullptr, false, has && !busy)) runEdit(a, s, "Fade in", [tr, k = static_cast<Curve>(s.fadeCurve)](const Content& cc) { return fadeIn(cc, tr, k); });
+    if (ImGui::MenuItem(i18n::tr("Fade out"), nullptr, false, has && !busy)) runEdit(a, s, "Fade out", [tr, k = static_cast<Curve>(s.fadeCurve)](const Content& cc) { return fadeOut(cc, tr, k); });
+    if (ImGui::MenuItem(i18n::tr("Normalize"), nullptr, false, has && !busy)) runEdit(a, s, "Normalize", [tr](const Content& cc) { return normalize(cc, tr, 0); });
+    if (ImGui::MenuItem(i18n::tr("Reverse"), nullptr, false, has && !busy)) runEdit(a, s, "Reverse", [tr](const Content& cc) { return reverse(cc, tr); });
     ImGui::Separator();
-    if (ImGui::MenuItem(sel ? "Add region" : "Add marker", "M", false, has)) addMarkerAtCursor(a, s);
-    if (ImGui::MenuItem("Set loop from selection", nullptr, false, sel)) applyNow(a, s, "Set loop", setLoop(c, s.sel));
-    if (ImGui::MenuItem("Export selection...", nullptr, false, has)) exportSelection(a, s);
+    if (ImGui::MenuItem(sel ? i18n::tr("Add region") : i18n::tr("Add marker"), "M", false, has)) addMarkerAtCursor(a, s);
+    if (ImGui::MenuItem(i18n::tr("Set loop from selection"), nullptr, false, sel)) applyNow(a, s, "Set loop", setLoop(c, s.sel));
+    if (ImGui::MenuItem(i18n::tr("Export selection..."), nullptr, false, has)) exportSelection(a, s);
     if (s.spectral && !s.brush.empty()) {
       ImGui::Separator();
-      if (ImGui::MenuItem("Apply spectral brush...")) openTool(s, Tool::Spectral);
-      if (ImGui::MenuItem("Clear brush")) s.brush.clear();
+      if (ImGui::MenuItem(i18n::tr("Apply spectral brush..."))) openTool(s, Tool::Spectral);
+      if (ImGui::MenuItem(i18n::tr("Clear brush"))) s.brush.clear();
     }
     ImGui::EndPopup();
   }

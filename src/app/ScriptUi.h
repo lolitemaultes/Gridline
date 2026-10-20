@@ -35,6 +35,16 @@ void shutdownControllerScripts();
 // Status line for a device ("running", the error, …).
 std::string controllerScriptStatus(const std::string& device);
 
+// ---- project scripts (SC-02) ----
+// Tools > Project scripts: scripts that edit the whole project (one undo step per run).
+const std::vector<script::ScriptInfo>& projectScripts(App& a, bool rescan = false);
+void projectScriptsMenuItems(App& a);
+void openProjectScript(App& a, const std::string& path);
+void drawProjectScriptWindow(App& a);  // per frame
+
+// The form controls of a script (knobs, combos, check boxes, text); true when a value changed.
+bool drawScriptForm(std::vector<script::FormParam>& values);
+
 // ---- console (Settings → Debug) ----
 void drawScriptConsole(App& a, float height);
 

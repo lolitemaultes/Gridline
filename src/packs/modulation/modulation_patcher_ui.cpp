@@ -6,6 +6,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include "../../core/I18n.h"
 #include "modulation.h"
 #include "modulation_dsp.h"
 #include "modulation_skin.h"
@@ -286,7 +287,7 @@ bool patchV2Body(EditTarget& e) {
     }
   }
   ImGui::PushFont(e.a->fontMono, 10.5f);
-  ImGui::TextColored(theme::vec(P.textFaint), "%zu plugins, %zu audio / %zu controller links, %zu parameters%s", N, t.audio.size(), t.controls.size(),
+  ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%zu plugins, %zu audio / %zu controller links, %zu parameters%s"), N, t.audio.size(), t.controls.size(),
                      g.slots.size(), t.unsupported.empty() ? "" : " (some FL routing not run)");
   ImGui::PopFont();
   pui::endSection();
@@ -303,7 +304,7 @@ bool patchV2Body(EditTarget& e) {
         e.set(st, "edit patch plugin", e.key ^ 0x50483256ull ^ (static_cast<uint64_t>(s2) << 12) ^ k);
       });
     } else {
-      ImGui::TextColored(theme::vec(P.textFaint), "%s has no Gridline equivalent; it is kept for export.", nd.flName.c_str());
+      ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%s has no Gridline equivalent; it is kept for export."), nd.flName.c_str());
     }
     pui::endSection();
   }
@@ -380,7 +381,7 @@ bool patchHostBody(EditTarget& e) {
   }
   ImGui::SameLine(0, 10);
   ImGui::PushFont(e.a->fontMono, 10.5f);
-  ImGui::TextColored(theme::vec(P.textFaint), "%zu / %d modules", g.nodes.size(), kPatchNodes);
+  ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%zu / %d modules"), g.nodes.size(), kPatchNodes);
   ImGui::PopFont();
   pui::endSection();
 
@@ -525,7 +526,7 @@ bool patchHostBody(EditTarget& e) {
       }
       ImGui::PopID();
     }
-  if (!any) ImGui::TextDisabled("Map a macro to module parameters with \"+ map\".");
+  if (!any) ImGui::TextDisabled("%s", i18n::tr("Map a macro to module parameters with \"+ map\"."));
   if (fxHost) {
     w::knob(e, PhMix, "Mix");
     ImGui::SameLine(0, 0);

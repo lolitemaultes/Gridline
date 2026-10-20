@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <deque>
 #include <map>
+#include "../../core/I18n.h"
 #include "../../core/Params.h"
 #include "../../engine/Dsp.h"
 #include "utility_candy.h"
@@ -1174,7 +1175,7 @@ void editorNotes(App& a, const PluginTarget& t, float width) {
   if (ui.preview) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(paper));
     ImGui::BeginChild("##preview", tsz, ImGuiChildFlags_AlwaysUseWindowPadding);
-    if (ui.buf.empty()) ImGui::TextColored(theme::vec(K.textDim), "This page is empty.");
+    if (ui.buf.empty()) ImGui::TextColored(theme::vec(K.textDim), "%s", i18n::tr("This page is empty."));
     int toggled = renderPage(a, ui.buf, tsz.x - 20);
     ImGui::EndChild();
     ImGui::PopStyleColor();

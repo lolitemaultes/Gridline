@@ -6,6 +6,7 @@
 #include <map>
 #include "../core/Automation.h"
 #include "../core/MidiFile.h"
+#include "Loudness.h"
 
 namespace fs = std::filesystem;
 
@@ -39,9 +40,18 @@ struct Writer {
   const ExportSettings& s;
   ExportOutcome& out;
 
+  bool first = true;
+
   void write(const std::string& stem, RenderResult&& r) {
     AudioBuffer buf = applyChannelMode(r.audio, s.channels);
-    if (s.normalize) normalizeBuffer(buf, s.normalizeDb);
+    if (s.normalize && s.normalizeLoudness) {  // RN-09: loudness target, peak ceiling
+      const LoudnessNormalization n = normalizeLoudness(buf, s.render.sampleRate, s.normalizeLufs, std::min(0.0, s.normalizeDb));
+      if (first) out.ceilingLimited = n.ceilingLimited;
+    } else if (s.normalize) {
+      normalizeBuffer(buf, s.normalizeDb);
+    }
+    if (first) out.lufs = integratedLoudness(buf, s.render.sampleRate);
+    first = false;
     WavMeta meta;
     if (s.markers) meta.markers = scopeMarkers(song, s.render, r.start, r.end);
     if (s.tempoInfo && s.render.scope != RenderScope::Range) {

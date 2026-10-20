@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include "../core/I18n.h"
 #include "../core/PluginParams.h"
 #include "../engine/Slicing.h"
 #include "InstrumentSkin.h"
@@ -297,8 +298,8 @@ void drawEnvelope(App& a, const PluginTarget& t, const iskin::Skin& k, const Plu
     if (ImGui::BeginPopup("##envpt")) {
       PadEnvelope ne = e;
       bool changed = false;
-      if (ImGui::MenuItem("Sustain at this point", nullptr, e.sustain == menuPt)) ne.sustain = e.sustain == menuPt ? -1 : menuPt, changed = true;
-      if (menuPt > 0 && ImGui::MenuItem("Delete point")) {
+      if (ImGui::MenuItem(i18n::tr("Sustain at this point"), nullptr, e.sustain == menuPt)) ne.sustain = e.sustain == menuPt ? -1 : menuPt, changed = true;
+      if (menuPt > 0 && ImGui::MenuItem(i18n::tr("Delete point"))) {
         for (int i = menuPt; i + 1 < e.n; ++i) ne.t[i] = ne.t[i + 1], ne.v[i] = ne.v[i + 1], ne.ten[i] = ne.ten[i + 1];
         if (menuPt + 1 < e.n) ne.t[menuPt] = e.t[menuPt] + e.t[menuPt + 1];
         --ne.n;

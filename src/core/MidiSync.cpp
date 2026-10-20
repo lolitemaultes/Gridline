@@ -172,4 +172,152 @@ std::vector<MidiClockFollower::Cmd> MidiClockFollower::takeCommands() {
   return out;
 }
 
+// ---------------------------------------------------------------- receiving (MI-02)
+
+const char* syncSourceName(SyncSource s) {
+  static const char* n[] = {"Internal", "MIDI clock", "MIDI time code"};
+  const int i = static_cast<int>(s);
+  return i >= 0 && i < static_cast<int>(SyncSource::Count) ? n[i] : "?";
+}
+
+SyncOut mtcRateFromCode(int code) {
+  switch (code & 3) {
+    case 0: return SyncOut::Mtc24;
+    case 1: return SyncOut::Mtc25;
+    case 2: return SyncOut::Mtc2997Drop;
+    default: return SyncOut::Mtc30;
+  }
+}
+
+int64_t mtcFrameOf(SyncOut rate, const Timecode& t) {
+  const int fps = mtcNominalFps(rate);
+  int64_t f = ((static_cast<int64_t>(t.h) * 60 + t.m) * 60 + t.s) * fps + t.f;
+  if (rate == SyncOut::Mtc2997Drop) {  // two labels dropped every minute except each tenth
+    const int64_t minutes = static_cast<int64_t>(t.h) * 60 + t.m;
+    f -= 2 * (minutes - minutes / 10);
+  }
+  return std::max<int64_t>(0, f);
+}
+
+void MtcReceiver::reset() { *this = MtcReceiver{}; }
+
+bool MtcReceiver::message(const uint8_t* m, size_t n, double t) {
+  if (n >= 2 && m[0] == 0xF1) {
+    const int piece = (m[1] >> 4) & 7, v = m[1] & 0xF;
+    ++qfCount_;
+    if (t - lastQf_ > 0.25) {  // a pause: the master stopped; resync
+      seqRun_ = 0;
+      assembled_ = false;
+      expect_ = -1;
+    }
+    lastQf_ = t;
+    if (expect_ >= 0 && piece != expect_) {  // out of sequence (lost message, reverse play)
+      ++dropouts_;
+      seqRun_ = 0;
+      assembled_ = false;
+      expect_ = -1;
+    }
+    if (expect_ < 0 && piece != 0) return true;  // wait for the start of a timecode
+    nib_[piece] = static_cast<uint8_t>(v);
+    expect_ = (piece + 1) & 7;
+    ++seqRun_;
+    if (piece == 7) {
+      // Piece k of the label for frame F is sent at F + k/4 frames.
+      tc_.f = nib_[0] | ((nib_[1] & 1) << 4);
+      tc_.s = nib_[2] | ((nib_[3] & 3) << 4);
+      tc_.m = nib_[4] | ((nib_[5] & 3) << 4);
+      tc_.h = nib_[6] | ((nib_[7] & 1) << 4);
+      rate_ = mtcRateFromCode((nib_[7] >> 1) & 3);
+      anchorSec_ = (static_cast<double>(mtcFrameOf(rate_, tc_)) + 1.75) / mtcFrameRate(rate_);
+      anchorTime_ = t;
+      assembled_ = hasPos_ = true;
+    } else if (assembled_) {
+      anchorSec_ += 0.25 / mtcFrameRate(rate_);
+      anchorTime_ = t;
+    }
+    return true;
+  }
+  if (n >= 10 && m[0] == 0xF0 && m[1] == 0x7F && m[3] == 0x01 && m[4] == 0x01) {  // full frame: a locate
+    rate_ = mtcRateFromCode((m[5] >> 5) & 3);
+    tc_.h = m[5] & 0x1F;
+    tc_.m = m[6] & 0x3F;
+    tc_.s = m[7] & 0x3F;
+    tc_.f = m[8] & 0x1F;
+    anchorSec_ = static_cast<double>(mtcFrameOf(rate_, tc_)) / mtcFrameRate(rate_);
+    anchorTime_ = t;
+    hasPos_ = true;
+    assembled_ = false;
+    seqRun_ = 0;
+    expect_ = -1;
+    locate_ = true;
+    locateSec_ = anchorSec_;
+    return true;
+  }
+  return false;
+}
+
+bool MtcReceiver::locked(double now, double timeout) const { return assembled_ && seqRun_ >= 8 && now - lastQf_ < timeout; }
+
+double MtcReceiver::seconds(double now) const {
+  if (!locked(now)) return anchorSec_;
+  // Between quarter frames the position runs on in real time (a few frames at most).
+  return anchorSec_ + std::clamp(now - anchorTime_, 0.0, 4.0 / mtcFrameRate(rate_));
+}
+
+bool MtcReceiver::takeLocate(double& sec) {
+  if (!locate_) return false;
+  locate_ = false;
+  sec = locateSec_;
+  return true;
+}
+
+void SyncChase::reset() {
+  chasing_ = false;
+  drift_ = 0;
+  settleUntil_ = -1e9;
+  over_ = 0;
+}
+
+SyncChase::Action SyncChase::update(double now, bool masterRunning, double masterPos, bool localPlaying, double localPos) {
+  Action a;
+  const double target = masterPos + offset;
+  if (!masterRunning) {
+    if (chasing_) {
+      chasing_ = false;
+      drift_ = 0;
+      over_ = 0;
+      if (localPlaying) a.kind = Action::Stop;
+    }
+    return a;
+  }
+  if (!chasing_ || !localPlaying) {  // the master rolls: start where it is
+    chasing_ = true;
+    drift_ = 0;
+    over_ = 0;
+    settleUntil_ = now + settle;
+    a.kind = Action::Start;
+    a.position = target;
+    return a;
+  }
+  const double d = localPos - target;
+  drift_ = drift_ * 0.8 + d * 0.2;
+  if (now < settleUntil_) {
+    over_ = 0;
+    return a;
+  }
+  if (std::fabs(d) > tolerance) {
+    if (++over_ >= std::max(1, confirm)) {  // a real drift (or a jump of the master), not jitter
+      a.kind = Action::Locate;
+      a.position = target;
+      ++relocations_;
+      over_ = 0;
+      drift_ = 0;
+      settleUntil_ = now + settle;
+    }
+  } else {
+    over_ = 0;
+  }
+  return a;
+}
+
 }  // namespace gl

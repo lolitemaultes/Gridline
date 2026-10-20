@@ -10,6 +10,8 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "../core/I18n.h"
+#include "Keys.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
@@ -358,8 +360,7 @@ void tile(App& a, const PluginInfo& p, bool fav, ImVec2 pos) {
 }  // namespace
 
 void drawPluginPicker(App& a) {
-  ImGuiIO& io = ImGui::GetIO();
-  if (ImGui::IsKeyPressed(ImGuiKey_F8, false) && !io.KeyAlt && !io.KeyCtrl && !io.KeySuper && !io.KeyShift) togglePluginPicker();
+  if (keys::pressed("view.pluginPicker")) togglePluginPicker();
   if (!pickerOpen) return;
   // While a tile is dragged the picker steps aside so the targets show.
   if (hiddenForDrag) {
@@ -449,7 +450,7 @@ void drawPluginPicker(App& a) {
       ImGui::SetKeyboardFocusHere();
       pickerFocusSearch = false;
     }
-    ImGui::InputTextWithHint("##psearch", "Search plugins  (type:effect  tag:delay  tag:fav)", S.search, sizeof S.search);
+    ImGui::InputTextWithHint("##psearch", i18n::tr("Search plugins  (type:effect  tag:delay  tag:fav)"), S.search, sizeof S.search);
     ImGui::PopStyleVar();
     ui::FocusRing();
     ui::drawIcon(dl, ui::Icon::Search, ImVec2(p.x + 14, p.y + ImGui::GetFrameHeight() * 0.5f), 12, P.textFaint);
@@ -464,7 +465,7 @@ void drawPluginPicker(App& a) {
   ImGui::SameLine(0, 6);
   if (thumbnailRunActive()) {
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.textFaint), "Rendering thumbnails\xE2\x80\xA6");
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Rendering thumbnails\xE2\x80\xA6"));
   } else if (ui::TextButton("Render thumbnails", false, 0, "Render every built-in editor once (in the background) and cache the images")) {
     startThumbnailRun(a);
   }

@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include "../../core/I18n.h"
 #include "../../app/App.h"
 #include "../../app/EnvEditor.h"
 #include "../../app/PluginEditorsCommon.h"
@@ -311,11 +312,11 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     o.lockEnds = !beats;
     if (beats)
       o.extraMenu = [&](int i) {
-        ImGui::TextDisabled("Loop");
+        ImGui::TextDisabled("%s", i18n::tr("Loop"));
         bool ch = false;
-        if (ImGui::MenuItem("Set loop start here", nullptr, ls == i)) ls = i, ch = true;
-        if (ImGui::MenuItem("Set loop end here", nullptr, le == i)) le = i, ch = true;
-        if (ImGui::MenuItem("No loop", nullptr, ls < 0)) ls = le = -1, ch = true;
+        if (ImGui::MenuItem(i18n::tr("Set loop start here"), nullptr, ls == i)) ls = i, ch = true;
+        if (ImGui::MenuItem(i18n::tr("Set loop end here"), nullptr, le == i)) le = i, ch = true;
+        if (ImGui::MenuItem(i18n::tr("No loop"), nullptr, ls < 0)) ls = le = -1, ch = true;
         ImGui::Separator();
         return ch;
       };
@@ -351,13 +352,13 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
       if (tbtn("ofslide", 168, ui.slide, sk::glyphSlide, "Slide remaining points")) ui.slide = !ui.slide;
       if (ImGui::BeginPopup("##ofenvm")) {
         std::string key = wsPage ? wsKey(u) : envKey(u, tgt, kind);
-        if (ImGui::MenuItem("Copy")) ui.clip = pointsText(e);
-        if (ImGui::MenuItem("Paste", nullptr, false, !ui.clip.empty())) {
+        if (ImGui::MenuItem(i18n::tr("Copy"))) ui.clip = pointsText(e);
+        if (ImGui::MenuItem(i18n::tr("Paste"), nullptr, false, !ui.clip.empty())) {
           std::string line = (wsPage ? wsKey(u) + "|" : envKey(u, tgt, kind) + " 0 -1|") + ui.clip;
           setState(a, t, st, replaceLine(st.data, key, line), "paste envelope");
         }
-        if (ImGui::MenuItem("Reset (unused)", nullptr, false, exists)) setState(a, t, st, replaceLine(st.data, key, ""), "reset envelope");
-        if (beats && ImGui::BeginMenu("Length")) {
+        if (ImGui::MenuItem(i18n::tr("Reset (unused)"), nullptr, false, exists)) setState(a, t, st, replaceLine(st.data, key, ""), "reset envelope");
+        if (beats && ImGui::BeginMenu(i18n::tr("Length"))) {
           for (double len : {1.0, 2.0, 4.0, 8.0, 16.0}) {
             char b[16];
             std::snprintf(b, sizeof b, "%g beats", len);
@@ -411,11 +412,11 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
       ui.hideLeft = !ui.hideLeft;
     if (sk::button(v, "MenuBtn", pal, false, nullptr, sk::glyphMenu, "Options")) ImGui::OpenPopup("##ofopts");
     if (ImGui::BeginPopup("##ofopts")) {
-      if (ImGui::MenuItem("Copy unit")) {
+      if (ImGui::MenuItem(i18n::tr("Copy unit"))) {
         ui.clip.clear();
         for (int f = 0; f < UFields; ++f) ui.clip += std::to_string(P(unitParam(u, f))) + " ";
       }
-      if (ImGui::MenuItem("Paste unit", nullptr, false, !ui.clip.empty() && ui.clip.find('|') == std::string::npos)) {
+      if (ImGui::MenuItem(i18n::tr("Paste unit"), nullptr, false, !ui.clip.empty() && ui.clip.find('|') == std::string::npos)) {
         PluginState ns = st;
         const char* p = ui.clip.c_str();
         char* end = nullptr;
@@ -439,7 +440,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     }
     if (sk::button(v, "InfoBtn", pal, false, "i", {}, "About")) ImGui::OpenPopup("##ofinfo");
     if (ImGui::BeginPopup("##ofinfo")) {
-      ImGui::TextUnformatted("Octa Filter: eight filter units with envelopes, LFOs and X / Y / follower maps.");
+      ImGui::TextUnformatted(i18n::tr("Octa Filter: eight filter units with envelopes, LFOs and X / Y / follower maps."));
       ImGui::EndPopup();
     }
     sk::bevel(v, "FeedbackBevel", pal);

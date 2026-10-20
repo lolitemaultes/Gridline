@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include "../core/I18n.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
 #include "../host/PluginScan.h"
@@ -54,7 +55,7 @@ void leftPanel(App& a, host::PluginPrefs& prefs, bool& changed) {
   const host::ScanStatus ss = host::scanStatus();
   sectionLabel("SCAN");
   if (ss.running) {
-    ImGui::TextColored(theme::vec(P.text), "Scanning %d / %d", std::min(ss.done + 1, std::max(1, ss.total)), ss.total);
+    ImGui::TextColored(theme::vec(P.text), i18n::tr("Scanning %d / %d"), std::min(ss.done + 1, std::max(1, ss.total)), ss.total);
     ImGui::PushFont(a.fontMono, 10.5f);
     ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(fs::path(ss.current).filename().string().c_str(), 230));
     ImGui::PopFont();
@@ -64,7 +65,7 @@ void leftPanel(App& a, host::PluginPrefs& prefs, bool& changed) {
     ImGui::SameLine(0, 6);
     if (ui::TextButton("Rescan all", false, 110, "Scans every plugin again, including failed ones")) { host::startScan(host::selfExecutablePath(), true); a.scanByUser = true; }
   }
-  ImGui::TextColored(theme::vec(P.textDim), "%d plugins  \xC2\xB7  %d failed", ss.classes, ss.failed);
+  ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%d plugins  \xC2\xB7  %d failed"), ss.classes, ss.failed);
 
   sectionLabel("FORMATS");
   for (const host::Format& f : host::formats()) {
@@ -110,7 +111,7 @@ void leftPanel(App& a, host::PluginPrefs& prefs, bool& changed) {
   ImGui::EndChild();
   ManagerState& ms = state();
   ImGui::SetNextItemWidth(-1);
-  const bool enter = ImGui::InputTextWithHint("##addfolder", "Add a folder (path)", ms.folder, sizeof ms.folder, ImGuiInputTextFlags_EnterReturnsTrue);
+  const bool enter = ImGui::InputTextWithHint("##addfolder", i18n::tr("Add a folder (path)"), ms.folder, sizeof ms.folder, ImGuiInputTextFlags_EnterReturnsTrue);
   if ((ui::TextButton("Add folder", false, 0, "Also search this folder for VST3, CLAP and VST2 plugins") || enter) && ms.folder[0]) {
     std::string f = ms.folder;
     std::error_code ec;
@@ -136,7 +137,7 @@ void detailPanel(App& a, const host::HostedClass& c, host::PluginPrefs& prefs, b
   ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(c.type.c_str(), ImGui::GetContentRegionAvail().x));
   ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(c.bundle.c_str(), ImGui::GetContentRegionAvail().x));
   ImGui::PopFont();
-  ImGui::TextColored(theme::vec(P.textDim), "%s  \xC2\xB7  %zu parameters  \xC2\xB7  %zu programs  \xC2\xB7  %s%s",
+  ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%s  \xC2\xB7  %zu parameters  \xC2\xB7  %zu programs  \xC2\xB7  %s%s"),
                      c.instrument ? "Instrument" : "Effect", c.params.size(), c.programs.size(),
                      c.auxOutputs.empty() ? "stereo out" : (std::to_string(c.auxOutputs.size() + 1) + " outputs").c_str(),
                      c.sidechain ? "  \xC2\xB7  sidechain input" : "");
@@ -161,7 +162,7 @@ void detailPanel(App& a, const host::HostedClass& c, host::PluginPrefs& prefs, b
     std::snprintf(ms.category, sizeof ms.category, "%s", it == prefs.categories.end() ? "" : it->second.c_str());
   }
   ImGui::SetNextItemWidth(170);
-  if (ImGui::InputTextWithHint("##cat", "Category (e.g. Bass, Drums)", ms.category, sizeof ms.category)) {
+  if (ImGui::InputTextWithHint("##cat", i18n::tr("Category (e.g. Bass, Drums)"), ms.category, sizeof ms.category)) {
     if (ms.category[0])
       prefs.categories[c.type] = ms.category;
     else
@@ -197,7 +198,7 @@ void drawPluginManager(App& a) {
   ui::Segmented("##view", views, 5, &ms.view, 92);
   ImGui::SameLine(0, 12);
   ImGui::SetNextItemWidth(std::max(100.0f, std::min(220.0f, ImGui::GetContentRegionAvail().x)));  // J-54: shrinks on narrow screens
-  ImGui::InputTextWithHint("##search", "Search name, vendor, category", ms.search, sizeof ms.search);
+  ImGui::InputTextWithHint("##search", i18n::tr("Search name, vendor, category"), ms.search, sizeof ms.search);
   const std::string q = lower(ms.search);
 
   const float detailH = ms.view == 4 ? 0.0f : 132.0f;  // J-54: name, type, bundle, summary and the button row fit without scrolling
@@ -208,9 +209,9 @@ void drawPluginManager(App& a) {
     if (ImGui::BeginTable("##failed", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_Resizable,
                           ImVec2(0, tableH))) {
       ImGui::TableSetupScrollFreeze(0, 1);
-      ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 56);
-      ImGui::TableSetupColumn("Plugin", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-      ImGui::TableSetupColumn("Reason", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+      ImGui::TableSetupColumn(i18n::tr("Format"), ImGuiTableColumnFlags_WidthFixed, 56);
+      ImGui::TableSetupColumn(i18n::tr("Plugin"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+      ImGui::TableSetupColumn(i18n::tr("Reason"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
       ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 64);
       ImGui::TableHeadersRow();
       int row = 0;
@@ -235,7 +236,7 @@ void drawPluginManager(App& a) {
       if (row == 0) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(1);
-        ImGui::TextColored(theme::vec(P.textFaint), "No failed plugins.");
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No failed plugins."));
       }
       ImGui::EndTable();
     }
@@ -262,13 +263,13 @@ void drawPluginManager(App& a) {
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_Resizable,
                           ImVec2(0, tableH))) {
       ImGui::TableSetupScrollFreeze(0, 1);
-      ImGui::TableSetupColumn("Fav", ImGuiTableColumnFlags_WidthFixed, 30);
-      ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-      ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 52);
-      ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 78);
-      ImGui::TableSetupColumn("Vendor", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-      ImGui::TableSetupColumn("Category", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-      ImGui::TableSetupColumn("Sandbox", ImGuiTableColumnFlags_WidthFixed, 60);
+      ImGui::TableSetupColumn(i18n::tr("Fav"), ImGuiTableColumnFlags_WidthFixed, 30);
+      ImGui::TableSetupColumn(i18n::tr("Name"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
+      ImGui::TableSetupColumn(i18n::tr("Format"), ImGuiTableColumnFlags_WidthFixed, 52);
+      ImGui::TableSetupColumn(i18n::tr("Type"), ImGuiTableColumnFlags_WidthFixed, 78);
+      ImGui::TableSetupColumn(i18n::tr("Vendor"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+      ImGui::TableSetupColumn(i18n::tr("Category"), ImGuiTableColumnFlags_WidthStretch, 0.8f);
+      ImGui::TableSetupColumn(i18n::tr("Sandbox"), ImGuiTableColumnFlags_WidthFixed, 60);
       ImGui::TableHeadersRow();
       ImGuiListClipper clip;
       clip.Begin(static_cast<int>(list.size()));

@@ -15,5 +15,10 @@ void debugSettingsPage(App& a, float fieldW);
 void projectDefaultsPanel(App& a);
 void backupRestorePanel(App& a, float fieldW);
 void hintSettingsPanel(App& a, float fieldW);
+// J-55 (SettingsKeysTheme.cpp): keyboard shortcut editor, theme page, and the
+// read-only shortcut list of Help > Keyboard shortcuts.
+void shortcutSettingsPage(App& a, float fieldW);
+void themeSettingsPage(App& a, float fieldW);
+void shortcutReference(App& a);
 
 }  // namespace gl

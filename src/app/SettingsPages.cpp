@@ -26,7 +26,7 @@ namespace {
 
 void label(const char* text, float x = 168.0f) { ui::FormLabelFit(tr(text), x, pal().textDim); }  // J-54: fitted, never under the control
 
-std::string langDir(const App& a) { return a.assetsDir.empty() ? std::string() : (fs::path(a.assetsDir) / "lang").string(); }
+std::string langDir(const App& a) { return a.languageDir(); }
 
 }  // namespace
 
@@ -45,9 +45,9 @@ void generalSettingsPage(App& a, float fieldW) {
   {
     std::string key = st.getString("general.defaultTemplate");
     const TemplateInfo* t = key.empty() ? nullptr : a.findTemplate(key);
-    std::string preview = key.empty() ? std::string("Starter kit (built in)") : t ? t->category + " \xE2\x96\xB8 " + t->name : key + " (missing)";
+    std::string preview = key.empty() ? std::string(tr("Starter kit (built in)")) : t ? t->category + " \xE2\x96\xB8 " + t->name : key + " (missing)";
     if (ui::BeginCombo("##deftpl", preview.c_str(), fieldW)) {
-      if (ImGui::Selectable("Starter kit (built in)", key.empty())) st.set("general.defaultTemplate", std::string());
+      if (ImGui::Selectable(i18n::tr("Starter kit (built in)"), key.empty())) st.set("general.defaultTemplate", std::string());
       std::string cat;
       for (const auto& x : a.templates()) {
         if (x.category != cat) {
@@ -81,11 +81,11 @@ void generalSettingsPage(App& a, float fieldW) {
         }
       ImGui::EndCombo();
     }
-    ui::Hint("Translations are JSON catalogues in assets/lang; Pseudo shows which texts are translatable and where they clip");
+    ui::Hint("Translations are catalogues in assets/i18n (gettext .po or JSON); Pseudo shows which texts are translatable and where they clip");
   }
   ImGui::PushTextWrapPos(0);
   ImGui::TextColored(theme::vec(pal().textFaint), "%s",
-                     tr("Gridline is in English. The language hook translates the texts that go through it (this settings window so far)."));
+                     tr("Menus, dialogs, settings, hints and editor labels follow the language. To add one, copy assets/i18n/gridline.pot to <code>.po and translate it."));
   ImGui::PopTextWrapPos();
   ui::EndSection();
 }
@@ -121,6 +121,10 @@ void fileSettingsPage(App& a, float fieldW) {
   bool on = st.getBool("scripts.enabled");
   if (ImGui::Checkbox(tr("Run piano roll and controller scripts"), &on)) st.set("scripts.enabled", on);
   ui::Hint("Scripts run in a sandbox: no system or network access, files only inside their own folder");
+  label("Transport");
+  bool tr2 = st.getBool("scripts.allowTransport");
+  if (ImGui::Checkbox(tr("Project scripts may start, stop and move playback"), &tr2)) st.set("scripts.allowTransport", tr2);
+  ui::Hint("Off: project scripts and the console can only read the transport");
   label("Time limit");
   float secs = static_cast<float>(st.getNumber("scripts.maxSeconds"));
   ImGui::SetNextItemWidth(fieldW);
@@ -136,7 +140,7 @@ void fileSettingsPage(App& a, float fieldW) {
     static bool init = false;
     if (!init) std::snprintf(ed, sizeof ed, "%s", st.getString("file.scriptEditor").c_str()), init = true;
     ImGui::SetNextItemWidth(fieldW);
-    if (ImGui::InputTextWithHint("##ed", "System default text editor", ed, sizeof ed)) st.set("file.scriptEditor", std::string(ed));
+    if (ImGui::InputTextWithHint("##ed", i18n::tr("System default text editor"), ed, sizeof ed)) st.set("file.scriptEditor", std::string(ed));
     ui::FocusRing();
     ui::Hint("Command that opens a script for editing (the file path is added at the end)");
   }
@@ -232,7 +236,7 @@ void projectDefaultsPanel(App& a) {
   static bool init = false;
   if (!init) std::snprintf(author, sizeof author, "%s", st.getString("project.defaultAuthor").c_str()), init = true;
   ImGui::SetNextItemWidth(260);
-  if (ImGui::InputTextWithHint("##dauthor", "Your name", author, sizeof author)) st.set("project.defaultAuthor", std::string(author));
+  if (ImGui::InputTextWithHint("##dauthor", i18n::tr("Your name"), author, sizeof author)) st.set("project.defaultAuthor", std::string(author));
   ui::FocusRing();
   ui::Hint("Filled into Project info of new projects");
 }

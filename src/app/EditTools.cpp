@@ -1,4 +1,5 @@
 // Gridline — piano roll / channel rack tool windows (see EditTools.h).
+#include "../core/I18n.h"
 #include "EditTools.h"
 #include <algorithm>
 #include <cmath>
@@ -186,7 +187,7 @@ void scaleCombo(const char* id, int* scale, bool allowNone) {
   const auto& sc = tools::scales();
   combo(id, *scale == 0 && allowNone ? "Off" : sc[static_cast<size_t>(*scale)].name, 150, [&] {
     for (size_t k = allowNone ? 0 : 1; k < sc.size(); ++k)
-      if (ImGui::Selectable(k == 0 ? "Off" : sc[k].name, *scale == static_cast<int>(k))) *scale = static_cast<int>(k);
+      if (ImGui::Selectable(k == 0 ? i18n::tr("Off") : sc[k].name, *scale == static_cast<int>(k))) *scale = static_cast<int>(k);
   });
 }
 void seedButton(const char* id, uint32_t* seed) {
@@ -263,7 +264,7 @@ void quantizeBody(App& a) {
       if (ImGui::Selectable(tools::grooves()[i].name, S.qGrooveChannel < 0 && S.q.groove == static_cast<int>(i)))
         S.q.groove = static_cast<int>(i), S.qGrooveChannel = -1;
     ImGui::Separator();
-    ImGui::TextDisabled("Timing of another channel");
+    ImGui::TextDisabled("%s", i18n::tr("Timing of another channel"));
     const Pattern* p = s.pattern(T.pat);
     for (size_t i = 0; i < s.channels.size(); ++i) {
       const Channel& c = s.channels[i];

@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include "Json.h"
 #include "Params.h"
+#include "TrackModes.h"
 
 namespace gl {
 
@@ -609,6 +610,10 @@ void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
   if (t.folded) jt.object["folded"] = boolean(true);
   if (t.locked) jt.object["locked"] = boolean(true);
   if (t.flIcon) jt.object["flIcon"] = num(t.flIcon);  // J-39
+  // PL-08: track mode and links.
+  if (t.mode != TrackMode::Unassigned) jt.object["mode"] = num(static_cast<int>(t.mode));
+  if (t.mixer != kNoId) jt.object["mixer"] = num(t.mixer);
+  if (t.channel != kNoId) jt.object["channel"] = num(t.channel);
 }
 
 void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
@@ -621,6 +626,9 @@ void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
   t.folded = flag(jt, "folded");
   t.locked = flag(jt, "locked");
   t.flIcon = jsonInt<int>(std::clamp(jt.num("flIcon", 0), 0.0, 65535.0));  // J-39
+  t.mode = static_cast<TrackMode>(e("mode", 0, static_cast<int>(TrackMode::Count)));  // PL-08 (stale links dropped after load)
+  t.mixer = jsonInt<ObjectId>(std::max(0.0, jt.num("mixer", 0)));
+  t.channel = jsonInt<ObjectId>(std::max(0.0, jt.num("channel", 0)));
 }
 
 Json clipToJson(const Clip& c) {
@@ -1329,6 +1337,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       if (v.is(Json::Type::String) && b64Decode(v.str, bytes)) s.flOrigin.blobs[k] = std::move(bytes);
     }
   s.nextId = std::max<ObjectId>(jsonInt<ObjectId>(j.num("nextId", 0)), maxId + 1);
+  trackmodes::dropStaleLinks(s);  // PL-08: links to deleted mixer tracks / channels
   out = std::move(s);
   return true;
 }

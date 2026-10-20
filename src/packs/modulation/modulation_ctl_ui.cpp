@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include "../../core/I18n.h"
 #include "modulation.h"
 #include "modulation_dsp.h"
 #include "modulation_editors.h"
@@ -318,15 +319,15 @@ void formulaEditor(EditTarget& e) {
   if (sk::button("##help", F.p(414, 159), F.sz(26, 29), K, "?")) ImGui::OpenPopup("##fhelp");
   if (ImGui::BeginPopup("##fhelp")) {
     ImGui::PushFont(e.a->fontMono, 11.5f);
-    ImGui::TextUnformatted("Variables: a b c (knobs, 0..1)  t (seconds)  beat  bar  tempo");
-    ImGui::TextUnformatted("           in (input level 0..1)  playing (0/1)");
-    ImGui::TextUnformatted("Operators: + - * / % ^  < <= > >= == !=  && ||  !  c ? x : y");
-    ImGui::TextUnformatted("Functions: sin cos tan asin acos atan atan2 sinh cosh tanh sqrt abs sign");
-    ImGui::TextUnformatted("           exp log log2 log10 pow min max floor ceil round trunc frac");
-    ImGui::TextUnformatted("           mod clamp lerp step smoothstep if saw tri sqr pulse wrap fold");
-    ImGui::TextUnformatted("           quant rand() rand(seed) deg rad    constants: pi e");
-    ImGui::TextUnformatted("Waves take a phase in cycles (saw(beat) ramps once per beat).");
-    ImGui::TextUnformatted("The result is clamped to 0..1.");
+    ImGui::TextUnformatted(i18n::tr("Variables: a b c (knobs, 0..1)  t (seconds)  beat  bar  tempo"));
+    ImGui::TextUnformatted(i18n::tr("           in (input level 0..1)  playing (0/1)"));
+    ImGui::TextUnformatted(i18n::tr("Operators: + - * / % ^  < <= > >= == !=  && ||  !  c ? x : y"));
+    ImGui::TextUnformatted(i18n::tr("Functions: sin cos tan asin acos atan atan2 sinh cosh tanh sqrt abs sign"));
+    ImGui::TextUnformatted(i18n::tr("           exp log log2 log10 pow min max floor ceil round trunc frac"));
+    ImGui::TextUnformatted(i18n::tr("           mod clamp lerp step smoothstep if saw tri sqr pulse wrap fold"));
+    ImGui::TextUnformatted(i18n::tr("           quant rand() rand(seed) deg rad    constants: pi e"));
+    ImGui::TextUnformatted(i18n::tr("Waves take a phase in cycles (saw(beat) ramps once per beat)."));
+    ImGui::TextUnformatted(i18n::tr("The result is clamped to 0..1."));
     ImGui::PopFont();
     ImGui::EndPopup();
   }

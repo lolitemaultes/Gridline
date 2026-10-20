@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include "../../core/I18n.h"
 #include "../../core/PluginParams.h"
 #include "modulation.h"
 #include "modulation_dsp.h"
@@ -195,7 +196,7 @@ void sendEditor(EditTarget& e) {
           std::string l = "Route " + std::to_string(k) + "  " + mixerTrackName(s, static_cast<size_t>(outs[k]));
           if (ImGui::MenuItem(l.c_str(), nullptr, static_cast<int>(k) == target)) e.setParam(SnTarget, static_cast<double>(k), false);
         }
-        if (ImGui::MenuItem("Number by mixer track")) {
+        if (ImGui::MenuItem(i18n::tr("Number by mixer track"))) {
           e.setParam(SnTarget, dest >= 0 ? dest : 0, false);
           e.setParam(SnRoute, 0, true);
         }

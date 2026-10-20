@@ -1,4 +1,5 @@
 // Gridline — audio input & recording UI (J-8). See AudioRecordUi.h.
+#include "../core/I18n.h"
 #include "J31Ui.h"
 #include "AudioRecordUi.h"
 #include <algorithm>
@@ -227,28 +228,28 @@ void App::processAudioRecording() {
 // ------------------------------------------------------------------ record filter menu
 
 void audioRecordFilterMenu(App& a) {
-  ImGui::TextDisabled("What to record");
-  ImGui::MenuItem("Audio, into the playlist as audio clips", nullptr, &a.recAudio);
-  ImGui::MenuItem("Audio, into the audio editor (armed tracks)", nullptr, &a.recAudioEditor);
-  ImGui::MenuItem("Notes", nullptr, &a.recOptions.notes);
-  ImGui::MenuItem("Automation (controller moves)", nullptr, &a.recOptions.automation);
-  if (ImGui::MenuItem("Everything")) a.recAudio = a.recOptions.notes = a.recOptions.automation = true;
+  ImGui::TextDisabled("%s", i18n::tr("What to record"));
+  ImGui::MenuItem(i18n::tr("Audio, into the playlist as audio clips"), nullptr, &a.recAudio);
+  ImGui::MenuItem(i18n::tr("Audio, into the audio editor (armed tracks)"), nullptr, &a.recAudioEditor);
+  ImGui::MenuItem(i18n::tr("Notes"), nullptr, &a.recOptions.notes);
+  ImGui::MenuItem(i18n::tr("Automation (controller moves)"), nullptr, &a.recOptions.automation);
+  if (ImGui::MenuItem(i18n::tr("Everything"))) a.recAudio = a.recOptions.notes = a.recOptions.automation = true;
   ImGui::Separator();
-  ImGui::MenuItem("Punch in/out at the time selection", nullptr, &a.recPunch);
-  if (ImGui::BeginMenu("Audio file format")) {
+  ImGui::MenuItem(i18n::tr("Punch in/out at the time selection"), nullptr, &a.recPunch);
+  if (ImGui::BeginMenu(i18n::tr("Audio file format"))) {
     const int bits = static_cast<int>(a.settings.getNumber("audio.recordBits"));
-    if (ImGui::MenuItem("32-bit float WAV", nullptr, bits != 24 && bits != 16)) a.settings.set("audio.recordBits", 32);
-    if (ImGui::MenuItem("24-bit WAV", nullptr, bits == 24)) a.settings.set("audio.recordBits", 24);
-    if (ImGui::MenuItem("16-bit WAV", nullptr, bits == 16)) a.settings.set("audio.recordBits", 16);
+    if (ImGui::MenuItem(i18n::tr("32-bit float WAV"), nullptr, bits != 24 && bits != 16)) a.settings.set("audio.recordBits", 32);
+    if (ImGui::MenuItem(i18n::tr("24-bit WAV"), nullptr, bits == 24)) a.settings.set("audio.recordBits", 24);
+    if (ImGui::MenuItem(i18n::tr("16-bit WAV"), nullptr, bits == 16)) a.settings.set("audio.recordBits", 16);
     ImGui::EndMenu();
   }
   const Song& s = a.doc.song();
   int armed = 0;
   for (const auto& m : s.mixer) armed += m.armed && m.input >= 0;
   if (armed == 0)
-    ImGui::TextDisabled("No mixer track is armed for audio");
+    ImGui::TextDisabled("%s", i18n::tr("No mixer track is armed for audio"));
   else
-    ImGui::TextDisabled("%d mixer track%s armed for audio", armed, armed == 1 ? "" : "s");
+    ImGui::TextDisabled(i18n::tr("%d mixer track%s armed for audio"), armed, armed == 1 ? "" : "s");
 }
 
 // ------------------------------------------------------------------ mixer
@@ -303,7 +304,7 @@ void mixerInputPanel(App& a, const MixerTrack& t, float width) {
         if (first < 0) m.armed = false;
       });
     };
-    if (ImGui::Selectable("(none)", t.input < 0)) pick(-1, true);
+    if (ImGui::Selectable(i18n::tr("(none)"), t.input < 0)) pick(-1, true);
     for (int c = 0; c + 1 < listCh; c += 2) {
       std::string n = inputName(c, true);
       if (ImGui::Selectable(n.c_str(), t.input == c && t.inputStereo)) pick(c, true);
@@ -325,7 +326,7 @@ void mixerInputPanel(App& a, const MixerTrack& t, float width) {
                             "Always hear the input through the track", "Never hear the input (it is still recorded)"};
   int m = std::clamp(static_cast<int>(t.monitor), 0, 2);
   ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(P.textDim), "Monitor");
+  ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Monitor"));
   ImGui::SameLine(0, theme::kS1);
   if (ui::Segmented("##mon", mon, 3, &m, 40, 0, monHints))
     a.doc.editMixerTrack(t.id, "input monitoring", [m](MixerTrack& x) { x.monitor = static_cast<uint8_t>(m); });
@@ -350,7 +351,7 @@ void editSongClip(App& a, const char* label, const std::function<void(Song&)>& f
 void compMenu(App& a, const Clip& c) {
   const Song& s = a.doc.song();
   if (c.takeGroup == kNoId) return;
-  if (!ImGui::BeginMenu("Takes")) return;
+  if (!ImGui::BeginMenu(i18n::tr("Takes"))) return;
   const bool sel = a.playlist.selEnd > a.playlist.selStart;
   const Tick a0 = sel ? a.playlist.selStart : c.start, b0 = sel ? a.playlist.selEnd : c.start + s.clipLength(c);
   ImGui::TextDisabled(sel ? "Play in the time selection" : "Play in this clip's range");
@@ -362,7 +363,7 @@ void compMenu(App& a, const Clip& c) {
     }
   }
   ImGui::Separator();
-  if (ImGui::MenuItem("Select all takes")) {
+  if (ImGui::MenuItem(i18n::tr("Select all takes"))) {
     a.playlist.selected.clear();
     for (const auto& k : s.playlist)
       if (k.takeGroup == c.takeGroup) a.playlist.selected.insert(k.id);
@@ -377,40 +378,40 @@ void audioClipMenu(App& a, ObjectId id) {
   const Clip* c = s.clip(id);
   if (!c || c->kind != ClipKind::Audio) return;
   const Clip clip = *c;
-  if (ImGui::MenuItem("Clip properties...")) a.clipProps = id;
+  if (ImGui::MenuItem(i18n::tr("Clip properties..."))) a.clipProps = id;
   compMenu(a, clip);
-  if (ImGui::BeginMenu("Time stretch")) {
+  if (ImGui::BeginMenu(i18n::tr("Time stretch"))) {
     const Channel* ch = s.channel(clip.source);
     const bool keep = ch && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) && ch->plugin.params[pp::SmpStretchMode] >= 0.5f;
-    if (ImGui::MenuItem("Resample (pitch follows speed)", nullptr, !keep))
+    if (ImGui::MenuItem(i18n::tr("Resample (pitch follows speed)"), nullptr, !keep))
       editSongClip(a, "stretch mode", [&](Song& x) { setClipStretch(x, id, clip.stretch, false); });
-    if (ImGui::MenuItem("Keep pitch (realtime stretch)", nullptr, keep))
+    if (ImGui::MenuItem(i18n::tr("Keep pitch (realtime stretch)"), nullptr, keep))
       editSongClip(a, "stretch mode", [&](Song& x) { setClipStretch(x, id, clip.stretch, true); });
     ImGui::Separator();
-    if (ImGui::MenuItem("Half as long")) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 0.5, keep); });
-    if (ImGui::MenuItem("Twice as long")) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 2.0, keep); });
-    if (ImGui::MenuItem("Original length", nullptr, false, clip.stretch != 1.0))
+    if (ImGui::MenuItem(i18n::tr("Half as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 0.5, keep); });
+    if (ImGui::MenuItem(i18n::tr("Twice as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 2.0, keep); });
+    if (ImGui::MenuItem(i18n::tr("Original length"), nullptr, false, clip.stretch != 1.0))
       editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, 1.0, keep); });
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Fit to tempo")) {
+  if (ImGui::MenuItem(i18n::tr("Fit to tempo"))) {
     int beats = 0;
     editSongClip(a, "fit clip to tempo", [&](Song& x) { beats = fitClipToTempo(x, id); });
     if (beats > 0) a.notify("Fitted to " + std::to_string(beats) + (beats == 1 ? " beat" : " beats") + "; the clip now follows the tempo");
   }
-  if (ImGui::MenuItem("Normalize")) editSongClip(a, "normalize clip", [&](Song& x) { normalizeClip(x, id, 0.0); });
-  if (ImGui::BeginMenu("Slice")) {
+  if (ImGui::MenuItem(i18n::tr("Normalize"))) editSongClip(a, "normalize clip", [&](Song& x) { normalizeClip(x, id, 0.0); });
+  if (ImGui::BeginMenu(i18n::tr("Slice"))) {
     const Tick beat = s.beatTicks();
-    if (ImGui::MenuItem("At every beat")) editSongClip(a, "slice clip", [&](Song& x) { sliceClipAtGrid(x, id, beat); });
-    if (ImGui::MenuItem("At every bar")) editSongClip(a, "slice clip", [&](Song& x) { sliceClipAtGrid(x, id, s.barTicks()); });
-    if (ImGui::MenuItem("At every step (1/4 beat)")) editSongClip(a, "slice clip", [&](Song& x) { sliceClipAtGrid(x, id, std::max<Tick>(1, beat / 4)); });
-    if (ImGui::MenuItem("At transients")) editSongClip(a, "slice clip at transients", [&](Song& x) { sliceClipAtTransients(x, id, 0.5); });
+    if (ImGui::MenuItem(i18n::tr("At every beat"))) editSongClip(a, "slice clip", [&](Song& x) { sliceClipAtGrid(x, id, beat); });
+    if (ImGui::MenuItem(i18n::tr("At every bar"))) editSongClip(a, "slice clip", [&](Song& x) { sliceClipAtGrid(x, id, s.barTicks()); });
+    if (ImGui::MenuItem(i18n::tr("At every step (1/4 beat)"))) editSongClip(a, "slice clip", [&](Song& x) { sliceClipAtGrid(x, id, std::max<Tick>(1, beat / 4)); });
+    if (ImGui::MenuItem(i18n::tr("At transients"))) editSongClip(a, "slice clip at transients", [&](Song& x) { sliceClipAtTransients(x, id, 0.5); });
     ImGui::EndMenu();
   }
   ImGui::Separator();
   std::set<ObjectId> sel = a.playlist.selected;
   if (!sel.count(id)) sel = {id};
-  if (ImGui::MenuItem(sel.size() > 1 ? "Consolidate selected clips to audio" : "Render clip to audio (consolidate)")) {
+  if (ImGui::MenuItem(sel.size() > 1 ? i18n::tr("Consolidate selected clips to audio") : i18n::tr("Render clip to audio (consolidate)"))) {
     const std::string dir = renderedDir(a);
     const double sr = a.engine.sampleRate();
     ObjectId nid = kNoId;
@@ -418,7 +419,7 @@ void audioClipMenu(App& a, ObjectId id) {
     if (nid != kNoId) a.playlist.selected = {nid};
     else a.notify("Nothing to render", true);
   }
-  if (ImGui::MenuItem("Bounce this track to audio")) {
+  if (ImGui::MenuItem(i18n::tr("Bounce this track to audio"))) {
     const std::string dir = renderedDir(a);
     const double sr = a.engine.sampleRate();
     const int tr = clip.track;
@@ -459,7 +460,7 @@ void drawClipProperties(App& a) {
   SamplePtr smp = sampleCache().get(ch->plugin.data);
   ImGui::PushFont(a.fontMono, theme::kFontLabel);
   if (smp)
-    ImGui::TextColored(theme::vec(P.textFaint), "%s \xC2\xB7 %.0f Hz \xC2\xB7 %.2f s", fs::path(ch->plugin.data).filename().string().c_str(),
+    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%s \xC2\xB7 %.0f Hz \xC2\xB7 %.2f s"), fs::path(ch->plugin.data).filename().string().c_str(),
                        smp->sampleRate, smp->seconds());
   ImGui::PopFont();
   ui::Label("LEVEL");
@@ -509,7 +510,7 @@ void drawClipProperties(App& a) {
   }
   if (c.syncBpm > 0) {
     ImGui::SameLine(0, theme::kS2);
-    ImGui::TextColored(theme::vec(P.textFaint), "at %.2f BPM", c.syncBpm);
+    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("at %.2f BPM"), c.syncBpm);
   }
   ImGui::Dummy(ImVec2(110 - ImGui::GetStyle().ItemSpacing.x, 0));
   ImGui::SameLine();
@@ -554,7 +555,7 @@ void drawClipProperties(App& a) {
 
 void audioInputSettings(App& a, float fieldW) {
   const auto& P = pal();
-  auto label = [](const char* t) { ui::FormLabelFit(t, 168.0f, pal().textDim); };
+  auto label = [](const char* t) { ui::FormLabelFit(i18n::tr(t), 168.0f, pal().textDim); };
   Settings& st = a.settings;
   // J-54: drawn inside the settings section "INPUT & RECORDING" (no second caption).
   label("Input device");
@@ -565,8 +566,8 @@ void audioInputSettings(App& a, float fieldW) {
       st.set("audio.inputDevice", d);
       a.audioReopen = true;
     };
-    if (ImGui::Selectable("None", a.audioInputDevice.empty())) pick("");
-    if (ImGui::Selectable("System default", a.audioInputDevice == "*")) pick("*");
+    if (ImGui::Selectable(i18n::tr("None"), a.audioInputDevice.empty())) pick("");
+    if (ImGui::Selectable(i18n::tr("System default"), a.audioInputDevice == "*")) pick("*");
     for (const auto& d : a.audioInputDevices)
       if (ImGui::Selectable(d.c_str(), d == a.audioInputDevice)) pick(d);
     ImGui::EndCombo();
@@ -587,7 +588,7 @@ void audioInputSettings(App& a, float fieldW) {
   {
     const int autoLat = a.audioInputLatency + a.engine.outputLatency();
     ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
-    ImGui::Text("%d smp (%.1f ms) auto", autoLat, 1000.0 * autoLat / sr);
+    ImGui::Text(i18n::tr("%d smp (%.1f ms) auto"), autoLat, 1000.0 * autoLat / sr);
     ImGui::PopFont();
     ui::Hint("Input + output buffers and plugin delay compensation: recorded audio is moved this much earlier");
     ImGui::SameLine(0, theme::kS2);

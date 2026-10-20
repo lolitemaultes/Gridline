@@ -28,6 +28,7 @@ void drawPerformance(App& a);
 void drawPluginManager(App& a);  // Options > Plugin manager (PluginManager.cpp)
 // Arrangements and live mode (Live.cpp).
 void drawLivePads(App& a);                         // "Live pads" window
+void drawMasterPanel(App& a);                      // RN-09 "Master chain" window
 void arrangementMenu(App& a);                      // menu body: list, new, duplicate, rename, delete
 void arrangementSelector(App& a, float width);     // toolbar combo
 void liveTrackMenu(App& a, int track);             // menu body: a track's live settings
@@ -50,8 +51,6 @@ void menuTools(App& a);
 bool menuShortcuts(App& a);
 // ImGuiTabItemFlags for settings tab `index` (selects it once after Options > … settings).
 int settingsTabFlags(App& a, int index);
-// Extra rows for the keyboard shortcuts window.
-void menuShortcutTable(App& a);
 
 // Context menu bodies (call between BeginPopup/EndPopup) — ContextMenus.cpp.
 void channelContextMenu(App& a, ObjectId channel);

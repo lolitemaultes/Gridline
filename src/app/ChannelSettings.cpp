@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include "../core/I18n.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/PluginParams.h"
 #include "App.h"
@@ -206,7 +207,7 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ui::Label("DISPLAY GROUP");
   const char* gname = c->group >= 0 && static_cast<size_t>(c->group) < s.channelGroups.size() ? s.channelGroups[static_cast<size_t>(c->group)].c_str() : "None";
   if (ui::BeginCombo("##dgroup", gname, 150)) {
-    if (ImGui::Selectable("None", c->group < 0)) a.doc.editChannel(id, "ungroup channel", [](Channel& ch) { ch.group = -1; });
+    if (ImGui::Selectable(i18n::tr("None"), c->group < 0)) a.doc.editChannel(id, "ungroup channel", [](Channel& ch) { ch.group = -1; });
     for (size_t g = 0; g < s.channelGroups.size(); ++g)
       if (ImGui::Selectable((s.channelGroups[g] + "##dg" + std::to_string(g)).c_str(), c->group == static_cast<int>(g)))
         a.doc.editChannel(id, "group channel", [&](Channel& ch) { ch.group = static_cast<int>(g); });
@@ -414,7 +415,7 @@ void drawChannelSettings(App& a) {
       ImGui::TextColored(theme::vec(P.textDim), "%s", fs::path(c->plugin.data).filename().string().c_str());
       if (!smp) {
         ImGui::SameLine();
-        ImGui::TextColored(theme::vec(pal().danger), "missing");
+        ImGui::TextColored(theme::vec(pal().danger), "%s", i18n::tr("missing"));
       }
     }
     ImGui::Dummy(ImVec2(0, theme::kS1));

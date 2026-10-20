@@ -23,12 +23,14 @@ struct MidiManager::Port {
 namespace {
 void callback(double, std::vector<unsigned char>* msg, void* user) {
   auto* p = static_cast<MidiManager::Port*>(user);
-  if (msg && p && p->owner) p->owner->onMessage(p->name, p->notes ? p->number : -(p->number + 2), *msg);
+  if (msg && p && p->owner) p->owner->onMessage(p->name, p->notes ? p->number : -(p->number + 2), *msg, p->clockSource);
 }
 double nowSec() {
   return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 }  // namespace
+
+double MidiManager::clockNow() { return nowSec(); }
 
 MidiManager::MidiManager(AudioEngine& engine) : engine_(engine) {
   sender_ = std::thread([this] { senderLoop(); });
@@ -105,7 +107,7 @@ void MidiManager::apply() {
         }
       if (!port->in->isPortOpen()) continue;
       // Sysex for MMC; timing only when following an external clock.
-      port->in->ignoreTypes(false, !(clockIn && port->clockSource), true);
+      port->in->ignoreTypes(false, !(syncSource != SyncSource::Internal && port->clockSource), true);
       port->in->setCallback(callback, port.get());
       ins_.push_back(std::move(port));
     }
@@ -130,7 +132,7 @@ void MidiManager::publish(const std::vector<uint32_t>& rack) {
   velCurve_ = static_cast<int>(routing.velocity);
   fixedVel_ = routing.fixedVelocity;
   ignoreOff_ = routing.ignoreNoteOff;
-  clockIn_ = clockIn;
+  syncSrc_ = static_cast<int>(syncSource);
   syncOffsetUs_ = syncOffsetMs * 1000;
   for (int c = 0; c < 16; ++c) {
     ObjectId id = kNoId;
@@ -179,7 +181,10 @@ void MidiManager::load(const std::string& file) {
   output = j.text("output");
   syncOut = static_cast<SyncOut>(std::clamp(jsonInt<int>(j.num("syncOut", 0)), 0, static_cast<int>(SyncOut::Count) - 1));
   syncOffsetMs = jsonInt<int>(j.num("syncOffsetMs", 0));
-  clockIn = j.num("clockIn", 0) != 0;
+  // MI-02: sync source (older configs: "clockIn" = follow a MIDI clock).
+  syncSource = static_cast<SyncSource>(std::clamp(jsonInt<int>(j.num("syncSource", j.num("clockIn", 0) != 0 ? 1 : 0)), 0,
+                                                  static_cast<int>(SyncSource::Count) - 1));
+  chaseToleranceMs = std::clamp(jsonInt<int>(j.num("chaseToleranceMs", 40)), 5, 1000);
   clockInDevice = j.text("clockInDevice");
   clockInOffsetMs = jsonInt<int>(j.num("clockInOffsetMs", 0));
   MidiRouting& r = routing;
@@ -214,7 +219,8 @@ void MidiManager::save(const std::string& file) const {
   j.object["output"] = Json::makeString(output);
   j.object["syncOut"] = Json::makeNumber(static_cast<int>(syncOut));
   j.object["syncOffsetMs"] = Json::makeNumber(syncOffsetMs);
-  j.object["clockIn"] = Json::makeNumber(clockIn ? 1 : 0);
+  j.object["syncSource"] = Json::makeNumber(static_cast<int>(syncSource));
+  j.object["chaseToleranceMs"] = Json::makeNumber(chaseToleranceMs);
   j.object["clockInDevice"] = Json::makeString(clockInDevice);
   j.object["clockInOffsetMs"] = Json::makeNumber(clockInOffsetMs);
   const MidiRouting& r = routing;
@@ -236,12 +242,17 @@ void MidiManager::save(const std::string& file) const {
   writeFileAtomic(file, jsonStringify(j) + "\n");
 }
 
-void MidiManager::onMessage(const std::string& port, int portNumber, const std::vector<unsigned char>& msg) {
+void MidiManager::onMessage(const std::string& port, int portNumber, const std::vector<unsigned char>& msg, bool syncPort) {
   if (msg.empty()) return;
   const double t = nowSec();
   const bool notes = portNumber >= 0;
   if (!notes) portNumber = -portNumber - 2;
   uint8_t s = msg[0], a = msg.size() > 1 ? msg[1] : 0, b = msg.size() > 2 ? msg[2] : 0;
+  const auto src = static_cast<SyncSource>(syncSrc_.load());
+  if (src == SyncSource::Mtc && syncPort && (s == 0xF1 || s == 0xF0)) {  // MI-02: time code (quarter / full frames)
+    std::lock_guard<std::mutex> lk(followerMu_);
+    if (mtc_.message(msg.data(), msg.size(), t)) return;
+  }
   if (s == 0xF0) {  // sysex: MIDI Machine Control transport
     RemoteAction act = parseMmc(msg);
     if (act != RemoteAction::None) {
@@ -251,7 +262,7 @@ void MidiManager::onMessage(const std::string& port, int portNumber, const std::
     return;
   }
   if (s >= 0xF0) {  // clock, start/continue/stop, song position
-    if (clockIn_.load()) {
+    if (src == SyncSource::Clock && syncPort) {
       std::lock_guard<std::mutex> lk(followerMu_);
       follower_.message(s, a, b, t);
     }

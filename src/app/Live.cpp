@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include "../core/I18n.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Arrangements.h"
 #include "App.h"
@@ -23,7 +24,7 @@ bool nameField(const char* id, const std::string& current, std::string& out) {
   ImGui::SetNextItemWidth(200);
   bool ok = ImGui::InputText("##name", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
   ImGui::PopID();
-  ImGui::TextDisabled("Enter to apply");
+  ImGui::TextDisabled("%s", i18n::tr("Enter to apply"));
   if (ok && buf[0]) out = buf;
   return ok && buf[0];
 }
@@ -51,18 +52,18 @@ void arrangementMenu(App& a) {
     ImGui::PopID();
   }
   ImGui::Separator();
-  if (ImGui::MenuItem("New arrangement")) {
+  if (ImGui::MenuItem(i18n::tr("New arrangement"))) {
     a.engine.stopAllLive();
     a.doc.editSong("new arrangement", [](Song& x) { selectArrangement(x, addArrangement(x, "", false)); });
     a.playlist.selected.clear();
   }
-  if (ImGui::MenuItem("Duplicate arrangement")) {
+  if (ImGui::MenuItem(i18n::tr("Duplicate arrangement"))) {
     a.engine.stopAllLive();
     std::string nm = uniqueArrangementName(s, arrangementName(s, cur));
     a.doc.editSong("duplicate arrangement", [nm](Song& x) { selectArrangement(x, addArrangement(x, nm, true)); });
     a.playlist.selected.clear();
   }
-  if (ImGui::BeginMenu("Rename arrangement")) {
+  if (ImGui::BeginMenu(i18n::tr("Rename arrangement"))) {
     std::string nm;
     if (nameField("arrname", arrangementName(s, cur), nm)) {
       a.doc.editSong("rename arrangement", [cur, nm](Song& x) { renameArrangement(x, cur, nm); });
@@ -70,14 +71,14 @@ void arrangementMenu(App& a) {
     }
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Delete arrangement", nullptr, false, n > 1)) {
+  if (ImGui::MenuItem(i18n::tr("Delete arrangement"), nullptr, false, n > 1)) {
     a.engine.stopAllLive();
     a.doc.editSong("delete arrangement", [cur](Song& x) { removeArrangement(x, cur); });
     a.playlist.selected.clear();
   }
   ImGui::Separator();
-  if (ImGui::MenuItem("Previous arrangement", nullptr, false, cur > 0)) switchTo(a, cur - 1);
-  if (ImGui::MenuItem("Next arrangement", nullptr, false, cur + 1 < n)) switchTo(a, cur + 1);
+  if (ImGui::MenuItem(i18n::tr("Previous arrangement"), nullptr, false, cur > 0)) switchTo(a, cur - 1);
+  if (ImGui::MenuItem(i18n::tr("Next arrangement"), nullptr, false, cur + 1 < n)) switchTo(a, cur + 1);
 }
 
 void arrangementSelector(App& a, float width) {
@@ -99,22 +100,22 @@ void liveTrackMenu(App& a, int track) {
   if (track < 0 || track >= static_cast<int>(s.tracks.size())) return;
   const PlaylistTrack& t = s.tracks[static_cast<size_t>(track)];
   auto edit = [&](const char* label, auto fn) { a.doc.editPlaylistTrack(track, label, fn); };
-  ImGui::SeparatorText("Pad press");
+  ImGui::SeparatorText(i18n::tr("Pad press"));
   for (int i = 0; i < static_cast<int>(PadMode::Count); ++i)
     if (ImGui::MenuItem(padModeName(static_cast<PadMode>(i)), nullptr, t.pad == static_cast<PadMode>(i)))
       edit("change pad mode", [i](PlaylistTrack& x) { x.pad = static_cast<PadMode>(i); });
-  ImGui::SeparatorText("When the clip ends");
+  ImGui::SeparatorText(i18n::tr("When the clip ends"));
   for (int i = 0; i < static_cast<int>(FollowMode::Count); ++i)
     if (ImGui::MenuItem(followModeName(static_cast<FollowMode>(i)), nullptr, t.follow == static_cast<FollowMode>(i)))
       edit("change clip end action", [i](PlaylistTrack& x) { x.follow = static_cast<FollowMode>(i); });
-  if (ImGui::BeginMenu("Launch on")) {
+  if (ImGui::BeginMenu(i18n::tr("Launch on"))) {
     for (int i = 0; i < static_cast<int>(LaunchGrid::Count); ++i)
       if (ImGui::MenuItem(launchGridName(static_cast<LaunchGrid>(i)), nullptr, t.launch == static_cast<LaunchGrid>(i)))
         edit("change launch grid", [i](PlaylistTrack& x) { x.launch = static_cast<LaunchGrid>(i); });
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Keep in phase")) {
-    if (ImGui::MenuItem("Off (start from the clip start)", nullptr, t.syncStart == LaunchGrid::Now))
+  if (ImGui::BeginMenu(i18n::tr("Keep in phase"))) {
+    if (ImGui::MenuItem(i18n::tr("Off (start from the clip start)"), nullptr, t.syncStart == LaunchGrid::Now))
       edit("change phase", [](PlaylistTrack& x) { x.syncStart = LaunchGrid::Now; });
     for (int i = 1; i < static_cast<int>(LaunchGrid::Count); ++i) {
       std::string label = std::string("With ") + launchGridName(static_cast<LaunchGrid>(i)) + " grid";
@@ -124,7 +125,7 @@ void liveTrackMenu(App& a, int track) {
     ImGui::EndMenu();
   }
   ImGui::Separator();
-  if (ImGui::MenuItem("Stop this track", nullptr, false, a.engine.liveActive(track) != kNoId)) a.engine.stopLiveTrack(track);
+  if (ImGui::MenuItem(i18n::tr("Stop this track"), nullptr, false, a.engine.liveActive(track) != kNoId)) a.engine.stopLiveTrack(track);
 }
 
 void setLiveArea(App& a, Tick end) {

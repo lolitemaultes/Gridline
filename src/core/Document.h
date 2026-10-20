@@ -122,6 +122,11 @@ class Document {
   // label wins. Empty groups record nothing.
   void beginGroup(const std::string& label);
   void endGroup();
+  // Drops the innermost open group: its edits are reverted and nothing is
+  // recorded (a script that failed halfway, SC-02).
+  void cancelGroup();
+  // Number of open groups.
+  size_t groupDepth() const { return groups_.size(); }
 
   // --- history (UN-02) ----------------------------------------------------
   bool undo();

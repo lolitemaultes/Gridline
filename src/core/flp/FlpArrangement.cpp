@@ -20,7 +20,8 @@
 //       insert × 64 + slot; low word 0x8000 + n effect parameter n, 0x1F01
 //       slot mix, 0x1FC0 / 0x1FC1 / 0x1FC2 insert volume / pan / separation.
 //   238 track: u32 index (1-based), u32 colour, u32 icon, u8 enabled, f32 height;
-//       239 name follows its track record.
+//       @49 u32 track mode (1 audio, 3 instrument), @53 i32 linked insert, @57 i32
+//       linked channel (PL-08); 239 name follows its track record.
 //   148 marker position (high byte: kind, 8 = time signature), 33/34 time
 //       signature, 205 name.
 #include <algorithm>
@@ -472,6 +473,27 @@ void Importer::importTracksAndClips() {
         if (!t.liveDefaults()) lastNamed = std::max(lastNamed, cur), ++liveTracks;
       }
       if (e.size > 46 && e.u8(46) && cur > 0) grouped[cur] = true;
+      // PL-08 track mode @49: u32 (0 ordinary, 1 audio, 3 instrument); @53 i32
+      // linked insert, @57 i32 linked channel (FL indices, -1 = none).
+      if (e.size >= 61) {
+        const uint32_t mode = e.u32(49);
+        const int ins = static_cast<int>(e.u32(53)), chan = static_cast<int>(e.u32(57));
+        if (mode == 1 || mode == 3) {
+          if (auto it = c_.insertIds.find(ins); ins >= 0 && it != c_.insertIds.end()) t.mixer = it->second;
+          if (chan >= 0) t.channel = channelId(chan);
+          t.mode = mode == 1 ? TrackMode::Audio : TrackMode::Instrument;
+          if ((t.mode == TrackMode::Audio && t.mixer == kNoId) || (t.mode == TrackMode::Instrument && t.channel == kNoId)) {
+            t.mode = TrackMode::Unassigned;
+            t.mixer = t.channel = kNoId;
+            c_.report.counts["track modes without their link"]++;
+          } else {
+            c_.report.counts[t.mode == TrackMode::Audio ? "audio tracks" : "instrument tracks"]++;
+            lastNamed = std::max(lastNamed, cur);
+          }
+        } else if (mode != 0) {
+          c_.report.counts["unknown track modes"]++;
+        }
+      }
     } else if (e.id == 239 && cur >= 0) {
       tracks[static_cast<size_t>(cur)].name = e.text();
       lastNamed = std::max(lastNamed, cur);

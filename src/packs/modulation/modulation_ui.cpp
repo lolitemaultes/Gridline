@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "../../core/I18n.h"
 #include "../../core/PluginParams.h"
 #include "../PacksUi.h"
 #include "modulation.h"
@@ -20,12 +21,12 @@ using theme::pal;
 void drawLinkMenu(App& a, ParamId pid) {
   const Song& s = a.doc.song();
   const ModLink* cur = findModLink(s, pid.owner, pid.index);
-  if (ImGui::BeginMenu("Link to controller")) {
+  if (ImGui::BeginMenu(i18n::tr("Link to controller"))) {
     auto outs = listControllerOutputs(s);
     if (outs.empty()) {
-      ImGui::TextDisabled("No controllers in this project.");
-      ImGui::TextDisabled("Add Peak Follower, X-Y Pad, Formula Controller,");
-      ImGui::TextDisabled("Envelope or Keyboard Controller first.");
+      ImGui::TextDisabled("%s", i18n::tr("No controllers in this project."));
+      ImGui::TextDisabled("%s", i18n::tr("Add Peak Follower, X-Y Pad, Formula Controller,"));
+      ImGui::TextDisabled("%s", i18n::tr("Envelope or Keyboard Controller first."));
     }
     for (const auto& o : outs) {
       bool sel = cur && cur->sourceOwner == o.owner && cur->sourceSlot == o.slot && cur->sourceOutput == o.output;
@@ -42,12 +43,12 @@ void drawLinkMenu(App& a, ParamId pid) {
     ImGui::EndMenu();
   }
   if (!cur) return;
-  if (ImGui::BeginMenu("Controller link settings")) {
+  if (ImGui::BeginMenu(i18n::tr("Controller link settings"))) {
     ModLink l = *cur;
     ImGui::TextDisabled("%s", controllerOutputName(s, l.sourceOwner, l.sourceSlot, l.sourceOutput).c_str());
     uint64_t key = pid.packed() ^ 0x4C494E4B00000000ull;
     bool en = l.enabled;
-    if (ImGui::Checkbox("Enabled", &en)) a.doc.editModLink(pid, "toggle controller link", [&](ModLink& x) { x.enabled = en; });
+    if (ImGui::Checkbox(i18n::tr("Enabled"), &en)) a.doc.editModLink(pid, "toggle controller link", [&](ModLink& x) { x.enabled = en; });
     int curve = static_cast<int>(l.curve);
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo("Mapping", modCurveName(l.curve))) {
@@ -58,12 +59,12 @@ void drawLinkMenu(App& a, ParamId pid) {
     }
     float mn = l.min * 100, mx = l.max * 100;
     ImGui::SetNextItemWidth(200);
-    if (ImGui::SliderFloat("Range start", &mn, 0, 100, "%.0f%%")) a.doc.editModLink(pid, "change link range", [&](ModLink& x) { x.min = mn / 100; }, key ^ 1);
+    if (ImGui::SliderFloat(i18n::tr("Range start"), &mn, 0, 100, "%.0f%%")) a.doc.editModLink(pid, "change link range", [&](ModLink& x) { x.min = mn / 100; }, key ^ 1);
     ImGui::SetNextItemWidth(200);
-    if (ImGui::SliderFloat("Range end", &mx, 0, 100, "%.0f%%")) a.doc.editModLink(pid, "change link range", [&](ModLink& x) { x.max = mx / 100; }, key ^ 2);
+    if (ImGui::SliderFloat(i18n::tr("Range end"), &mx, 0, 100, "%.0f%%")) a.doc.editModLink(pid, "change link range", [&](ModLink& x) { x.max = mx / 100; }, key ^ 2);
     float sm = l.smoothMs;
     ImGui::SetNextItemWidth(200);
-    if (ImGui::SliderFloat("Smoothing", &sm, 0, 2000, "%.0f ms", ImGuiSliderFlags_Logarithmic))
+    if (ImGui::SliderFloat(i18n::tr("Smoothing"), &sm, 0, 2000, "%.0f ms", ImGuiSliderFlags_Logarithmic))
       a.doc.editModLink(pid, "change link smoothing", [&](ModLink& x) { x.smoothMs = sm; }, key ^ 3);
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     if (l.curve == ModCurve::Formula) {
@@ -74,19 +75,19 @@ void drawLinkMenu(App& a, ParamId pid) {
         bufFor = pid.packed();
       }
       ImGui::SetNextItemWidth(260);
-      ImGui::InputText("Formula", buf, sizeof buf);
+      ImGui::InputText(i18n::tr("Formula"), buf, sizeof buf);
       Expr ex;
       std::string err;
       bool ok = ex.compile(buf, {"input", "base", "t", "beat"}, &err);
       if (!ok) ImGui::TextColored(theme::vec(pal().danger), "%s", err.c_str());
-      else ImGui::TextDisabled("input = controller (0..1), base = knob value, t, beat");
-      if (ok && ImGui::Button("Apply formula")) {
+      else ImGui::TextDisabled("%s", i18n::tr("input = controller (0..1), base = knob value, t, beat"));
+      if (ok && ImGui::Button(i18n::tr("Apply formula"))) {
         std::string f = buf;
         a.doc.editModLink(pid, "change link formula", [&](ModLink& x) { x.formula = f; });
       }
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Remove controller link")) a.doc.removeModLink(pid);
+    if (ImGui::MenuItem(i18n::tr("Remove controller link"))) a.doc.removeModLink(pid);
     ImGui::EndMenu();
   }
 }

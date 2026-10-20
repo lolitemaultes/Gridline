@@ -66,8 +66,9 @@ class NoteRecorder {
   void commitNote(Document& doc, const Held& h, int pitch, double endTick);
   void commitAutomation(Document& doc);
   void newPass(Document& doc);
-  // Song mode: (pattern tick origin) for a song tick, placing a clip if needed.
-  Tick songOrigin(Document& doc, double tick);
+  // Song mode: (pattern tick origin) for a song tick, placing a clip if needed
+  // (PL-08: on the instrument track of `channel` when it has one).
+  Tick songOrigin(Document& doc, double tick, ObjectId channel = kNoId);
 
   bool active_ = false, song_ = false;
   RecordOptions opt_;

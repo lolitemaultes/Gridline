@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include "../../core/I18n.h"
 #include "../../app/App.h"
 #include "../../app/PluginSkin.h"
 #include "../../core/FlexStandin.h"
@@ -175,15 +176,15 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     ImGui::OpenPopup("##flexconvert");
   if (ImGui::IsItemHovered()) a.setHint("Make this channel a normal Gridline instrument (the FLEX preset data is dropped)");
   if (ImGui::BeginPopupModal("##flexconvert", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
-    ImGui::Text("Convert to a Gridline %s?", engineName(engineOf(cat)));
-    ImGui::TextUnformatted("The channel keeps the stand-in sound and becomes a normal Gridline instrument.");
-    ImGui::TextUnformatted("The FLEX preset data is dropped: an FL Studio export no longer opens the original sound.");
-    if (ImGui::Button("Convert")) {
+    ImGui::Text(i18n::tr("Convert to a Gridline %s?"), engineName(engineOf(cat)));
+    ImGui::TextUnformatted(i18n::tr("The channel keeps the stand-in sound and becomes a normal Gridline instrument."));
+    ImGui::TextUnformatted(i18n::tr("The FLEX preset data is dropped: an FL Studio export no longer opens the original sound."));
+    if (ImGui::Button(i18n::tr("Convert"))) {
       setPluginState(a, t, standInState(st), "Convert to Gridline instrument");
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    if (ImGui::Button(i18n::tr("Cancel"))) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
   }
 

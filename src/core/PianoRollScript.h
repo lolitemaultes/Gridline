@@ -53,6 +53,19 @@ struct Form {
   int find(const std::string& name) const;
 };
 
+// Shared by every script kind with a form (piano roll, project, audio editor):
+// formPrelude() defines _gl_newForm and the Form methods in Lua; buildForm
+// calls the script's form(f) (if any) in protected mode and reads the controls;
+// pushFormValues pushes the parameter table apply() receives.
+const char* formPrelude();
+bool readForm(lua_State* L, int idx, Form& out, std::string* err);
+bool buildForm(Vm& vm, Form& out, std::string* err);
+void pushFormValues(lua_State* L, const Form& form, const std::vector<FormParam>& values);
+// Note tables (see the note layout above). readNote clamps fields to their
+// ranges and fails on non-numbers.
+void pushNote(lua_State* L, const Note& n, bool selected);
+bool readNote(lua_State* L, int t, Note& n, bool& selected, std::string* err);
+
 // ------------------------------------------------------------- run context ----
 struct PianoRollContext {
   std::vector<Note> notes;

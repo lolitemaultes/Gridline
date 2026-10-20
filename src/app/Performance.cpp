@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include "../core/I18n.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/PluginInfo.h"
 #include "App.h"
@@ -122,7 +123,7 @@ void drawPerformance(App& a) {
 
   // ---- top consumers ----
   ui::BeginSection("TOP CONSUMERS");
-  ImGui::TextColored(theme::vec(P.textFaint), "Share of one core's real time over the last half second.");
+  ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Share of one core's real time over the last half second."));
   struct Row {
     App::PerfStats::Key key;
     float load;
@@ -137,9 +138,9 @@ void drawPerformance(App& a) {
   }
   const float maxLoad = rows.empty() ? 1.0f : std::max(rows[0].load, 0.01f);
   if (!rows.empty() && ImGui::BeginTable("##top", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-    ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-    ImGui::TableSetupColumn("bar", ImGuiTableColumnFlags_WidthStretch, 2.0f);
-    ImGui::TableSetupColumn("pct", ImGuiTableColumnFlags_WidthFixed, 54.0f);
+    ImGui::TableSetupColumn(i18n::tr("name"), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+    ImGui::TableSetupColumn(i18n::tr("bar"), ImGuiTableColumnFlags_WidthStretch, 2.0f);
+    ImGui::TableSetupColumn(i18n::tr("pct"), ImGuiTableColumnFlags_WidthFixed, 54.0f);
     int n = 0;
     for (const auto& r : rows) {
       ImGui::TableNextRow();

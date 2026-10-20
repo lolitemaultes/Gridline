@@ -36,6 +36,7 @@ Settings::Settings() {
       {"audio.inputChannels", Json::makeNumber(2)},
       {"audio.inputOffsetMs", Json::makeNumber(0)},    // manual recording offset (+ = later)
       {"audio.recordBits", Json::makeNumber(32)},      // 32 = float, 24 / 16 = PCM
+      {"master.targetLufs", Json::makeNumber(-14)},    // RN-09: master chain loudness target
       // J-31: recording extras, audio logger, piano roll extras, quantized jumps.
       {"record.autoUnarm", b(false)},                  // disarm the tracks after a recording
       {"record.ignoreSilent", b(false)},               // takes quieter than -60 dBFS are not kept
@@ -54,12 +55,21 @@ Settings::Settings() {
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing
       {"ui.smoothSnap", b(true)},              // J-37: snapped drags glide from cell to cell (drawing only)
       {"ui.darkTheme", b(true)},
+      // J-55: Settings > Theme (app/ThemeSettings.h).
+      {"theme.mode", Json::makeString("")},          // "dark" | "light" | "system" ("" = ui.darkTheme)
+      {"theme.accent", Json::makeString("")},        // "#RRGGBB" overrides ("" = the theme's role colour)
+      {"theme.hot", Json::makeString("")},
+      {"theme.led", Json::makeString("")},
+      {"theme.playhead", Json::makeString("")},
+      {"theme.contrast", Json::makeNumber(0)},       // -1 .. 1
+      {"theme.brightness", Json::makeNumber(0)},     // -1 .. 1
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide
       {"ui.layoutVersion", Json::makeNumber(0)},  // J-28: default workspace version the saved layout.ini was built with
       // J-24: general, file, project defaults, backup / autosave, hints, debug, scripting.
       {"general.startup", Json::makeString("template")},   // "template" | "empty" | "last"
       {"general.defaultTemplate", Json::makeString("")},   // "<Category>/<Name>" ("" = built-in starter kit)
       {"general.language", Json::makeString("en")},        // i18n code ("en", "pseudo", catalogue stem)
+      {"keys.bindings", Json::makeString("")},             // J-55: shortcut overrides, JSON (keys::Keymap::serialize)
       {"file.scriptEditor", Json::makeString("")},         // command that opens a script ("" = system default)
       {"project.defaultNum", Json::makeNumber(4)},
       {"project.defaultDen", Json::makeNumber(4)},
@@ -71,6 +81,7 @@ Settings::Settings() {
       {"debug.logLevel", Json::makeNumber(2)},             // logging::Level: 0 errors … 3 verbose
       {"debug.logToFile", b(false)},                       // <config>/gridline.log
       {"scripts.enabled", b(true)},
+      {"scripts.allowTransport", b(false)},  // J-57: project scripts may start / stop / move the transport
       {"scripts.maxSeconds", Json::makeNumber(2)},         // per script run / controller hook
       {"scripts.maxMillionInstructions", Json::makeNumber(20)},
       // J-48: interface sounds (engine/UiSounds.h); per-event switches "sounds.<event>".

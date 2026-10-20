@@ -12,6 +12,7 @@
 #include "../../app/App.h"
 #include "../../app/PluginSkin.h"
 #include "../PacksUi.h"
+#include "../../core/PianoRollScript.h"
 #include "edison.h"
 
 namespace gl::packs::edison {
@@ -38,7 +39,7 @@ ImU32 C(uint32_t rgb, float a = 1.f);
 // ------------------------------------------------------------------ tools (dialogs)
 enum class Tool {
   None, Stretch, Equalize, Reverb, Blur, Denoise, Gate, Declick, Resample, Amplify, Normalize, Envelope, Slice, Tune, Silence,
-  Spectral, Rename, Fade
+  Spectral, Rename, Fade, Script
 };
 
 struct Job {
@@ -181,6 +182,12 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float scale);
 void drawToolDialogs(App& a, Session& s);
 void openTool(Session& s, Tool t);
 void handleKeys(App& a, Session& s);
+
+// Audio editor scripts (edison_script_ui.cpp, SC-05 / ED-09).
+const std::vector<script::ScriptInfo>& audioScripts(App& a, bool rescan = false);
+void audioScriptMenuItems(App& a, Session& s);  // body of Tools > Scripts
+void openAudioScript(App& a, Session& s, const std::string& path);
+void drawScriptDialog(App& a, Session& s);      // inside the tool dialog
 
 // View helpers.
 void zoomAll(Session& s);

@@ -6,6 +6,8 @@
 // clipboard · type a value), an options menu of selection and level tools, a
 // separate LFO dialog (start / end value, range and speed, shape, gate), and
 // the clip's target. Drawn entirely with Gridline's palette.
+#include "../core/I18n.h"
+#include "Keys.h"
 #include "AutomationEditor.h"
 #include <algorithm>
 #include <cmath>
@@ -207,59 +209,59 @@ void editorMenu(App& a) {
   const AutomationClip* ac = s.automation(E.autoId);
   if (!ac) return;
   const int n = static_cast<int>(ac->points.size());
-  ImGui::TextDisabled("Points");
-  if (ImGui::MenuItem("Select all", "Ctrl+A"))
+  ImGui::TextDisabled("%s", i18n::tr("Points"));
+  if (ImGui::MenuItem(i18n::tr("Select all"), keys::label("auto.selectAll")))
     for (int i = 0; i < n; ++i) E.sel.insert(i);
-  if (ImGui::MenuItem("Deselect all", "Ctrl+D")) E.sel.clear();
-  if (ImGui::MenuItem("Invert selection", "Ctrl+I")) {
+  if (ImGui::MenuItem(i18n::tr("Deselect all"), keys::label("auto.deselect"))) E.sel.clear();
+  if (ImGui::MenuItem(i18n::tr("Invert selection"), keys::label("auto.invertSelection"))) {
     ae::Selection inv;
     for (int i = 0; i < n; ++i)
       if (!E.sel.count(i)) inv.insert(i);
     E.sel = inv;
   }
   ImGui::Separator();
-  if (ImGui::MenuItem("Cut", "Ctrl+X", false, !E.sel.empty())) {
+  if (ImGui::MenuItem(i18n::tr("Cut"), keys::label("auto.cut"), false, !E.sel.empty())) {
     copySelection(a, *ac);
     deleteSelection(a);
   }
-  if (ImGui::MenuItem("Copy", "Ctrl+C", false, !E.sel.empty())) copySelection(a, *ac);
-  if (ImGui::MenuItem("Paste (insert)", "Ctrl+V", false, !E.clipboard.empty())) pasteAt(a, pasteTick(a, *ac), false);
-  if (ImGui::MenuItem("Paste (replace)", "Ctrl+R", false, !E.clipboard.empty())) pasteAt(a, pasteTick(a, *ac), true);
-  if (ImGui::MenuItem("Duplicate", "Ctrl+B", false, E.sel.size() >= 1)) {
+  if (ImGui::MenuItem(i18n::tr("Copy"), keys::label("auto.copy"), false, !E.sel.empty())) copySelection(a, *ac);
+  if (ImGui::MenuItem(i18n::tr("Paste (insert)"), keys::label("auto.paste"), false, !E.clipboard.empty())) pasteAt(a, pasteTick(a, *ac), false);
+  if (ImGui::MenuItem(i18n::tr("Paste (replace)"), keys::label("auto.pasteReplace"), false, !E.clipboard.empty())) pasteAt(a, pasteTick(a, *ac), true);
+  if (ImGui::MenuItem(i18n::tr("Duplicate"), "Ctrl+B", false, E.sel.size() >= 1)) {
     ae::Points c = ae::copyPoints(ac->points, E.sel);
     Tick at = ac->points[static_cast<size_t>(*E.sel.rbegin())].pos + std::max<Tick>(ae::clipSpan(c), s.beatTicks() / 4);
     std::swap(c, E.clipboard);
     pasteAt(a, at, false);
     std::swap(c, E.clipboard);
   }
-  if (ImGui::MenuItem("Delete", "Del", false, !E.sel.empty())) deleteSelection(a);
+  if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("auto.delete"), false, !E.sel.empty())) deleteSelection(a);
   ImGui::Separator();
-  ImGui::TextDisabled("Tools");
-  if (ImGui::MenuItem("Flip vertically")) {
+  ImGui::TextDisabled("%s", i18n::tr("Tools"));
+  if (ImGui::MenuItem(i18n::tr("Flip vertically"))) {
     ae::Selection t = E.sel;
     editPoints(a, "flip vertically", [&](ae::Points& p) { ae::flipVertical(p, t); });
   }
-  if (ImGui::MenuItem("Flip horizontally")) {
+  if (ImGui::MenuItem(i18n::tr("Flip horizontally"))) {
     ae::Selection t = E.sel;
     editPoints(a, "flip horizontally", [&](ae::Points& p) { ae::flipHorizontal(p, t); });
   }
-  if (ImGui::MenuItem("Scale levels...")) E.scaleOpen = true, E.lfoOpen = false, E.thinOpen = false;
-  if (ImGui::MenuItem("Quantize to the grid", "Q")) {
+  if (ImGui::MenuItem(i18n::tr("Scale levels..."))) E.scaleOpen = true, E.lfoOpen = false, E.thinOpen = false;
+  if (ImGui::MenuItem(i18n::tr("Quantize to the grid"), "Q")) {
     Tick grid = timeline::snapGrid(s, E.snap == Snap::None ? Snap::Line : E.snap, E.pxPerTick, false);
     ae::Selection t = E.sel, out;
     editPoints(a, "quantize points", [&](ae::Points& p) { out = ae::quantize(p, t, grid); });
     E.sel = out;
   }
-  if (ImGui::MenuItem("Thin out points...")) E.thinOpen = true, E.lfoOpen = false, E.scaleOpen = false;
-  if (ImGui::BeginMenu(E.sel.empty() ? "Curve of every point" : "Curve of the selection")) {
+  if (ImGui::MenuItem(i18n::tr("Thin out points..."))) E.thinOpen = true, E.lfoOpen = false, E.scaleOpen = false;
+  if (ImGui::BeginMenu(E.sel.empty() ? i18n::tr("Curve of every point") : i18n::tr("Curve of the selection"))) {
     curveModeItems(a, *ac, E.sel);
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Reset tensions")) {
+  if (ImGui::MenuItem(i18n::tr("Reset tensions"))) {
     ae::Selection t = E.sel;
     editPoints(a, "reset tensions", [&](ae::Points& p) { ae::setTension(p, t, 0.0f); });
   }
-  if (ImGui::MenuItem("Insert point at the playhead")) {
+  if (ImGui::MenuItem(i18n::tr("Insert point at the playhead"))) {
     Tick at = pasteTick(a, *ac);
     const Clip* pl = placementOf(s);
     if (pl && a.engine.mode() == PlayMode::Song) at = std::max<Tick>(0, static_cast<Tick>(a.engine.position()) - pl->start + pl->offset);
@@ -271,7 +273,7 @@ void editorMenu(App& a) {
     E.sel = {idx};
   }
   ImGui::Separator();
-  if (ImGui::MenuItem("LFO...", "L")) E.lfoOpen = true, E.scaleOpen = false, E.thinOpen = false;
+  if (ImGui::MenuItem(i18n::tr("LFO..."), "L")) E.lfoOpen = true, E.scaleOpen = false, E.thinOpen = false;
 }
 
 void pointMenu(App& a, const AutomationClip& ac) {
@@ -282,25 +284,25 @@ void pointMenu(App& a, const AutomationClip& ac) {
   ParamId pid{ac.owner, ac.index};
   ImGui::TextDisabled("%s", fmtParam(s, pid, clipToParam(ac, p.value)).c_str());
   ae::Selection target = E.sel.count(k) ? E.sel : ae::Selection{k};
-  if (ImGui::MenuItem("Delete", nullptr, false, ac.points.size() > 1)) {
+  if (ImGui::MenuItem(i18n::tr("Delete"), nullptr, false, ac.points.size() > 1)) {
     editPoints(a, "delete point", [&](ae::Points& q) { ae::deletePoints(q, target); });
     E.sel.clear();
   }
   ImGui::Separator();
-  ImGui::TextDisabled("Curve");
+  ImGui::TextDisabled("%s", i18n::tr("Curve"));
   curveModeItems(a, ac, target);
-  if (ImGui::MenuItem("Reset tension", nullptr, false, p.tension != 0.0f))
+  if (ImGui::MenuItem(i18n::tr("Reset tension"), nullptr, false, p.tension != 0.0f))
     editPoints(a, "reset tension", [&](ae::Points& q) { ae::setTension(q, target, 0.0f); });
   ImGui::Separator();
-  if (ImGui::MenuItem("Copy value")) E.valueClip = p.value, E.hasValueClip = true;
-  if (ImGui::MenuItem("Paste value", nullptr, false, E.hasValueClip)) {
+  if (ImGui::MenuItem(i18n::tr("Copy value"))) E.valueClip = p.value, E.hasValueClip = true;
+  if (ImGui::MenuItem(i18n::tr("Paste value"), nullptr, false, E.hasValueClip)) {
     float v = static_cast<float>(E.valueClip);
     editPoints(a, "paste value", [&](ae::Points& q) {
       for (int i : target)
         if (i < static_cast<int>(q.size())) q[static_cast<size_t>(i)].value = v;
     });
   }
-  if (ImGui::MenuItem("Type a value...")) E.typeValue = true;
+  if (ImGui::MenuItem(i18n::tr("Type a value..."))) E.typeValue = true;
 }
 
 void typeValuePopup(App& a, const AutomationClip& ac) {
@@ -318,7 +320,7 @@ void typeValuePopup(App& a, const AutomationClip& ac) {
       std::snprintf(buf, sizeof buf, "%s", fmtParam(s, pid, clipToParam(ac, ac.points[static_cast<size_t>(k)].value)).c_str());
       ImGui::SetKeyboardFocusHere();
     }
-    ImGui::TextDisabled("Point value");
+    ImGui::TextDisabled("%s", i18n::tr("Point value"));
     ImGui::SetNextItemWidth(160);
     if (ImGui::InputText("##v", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
       auto d = describeParam(s, pid);
@@ -334,7 +336,7 @@ void typeValuePopup(App& a, const AutomationClip& ac) {
       if (ok) editPoints(a, "type point value", [&](ae::Points& q) { q[static_cast<size_t>(k)].value = static_cast<float>(v); });
       ImGui::CloseCurrentPopup();
     }
-    ImGui::TextDisabled("Enter to apply \xC2\xB7 Esc to cancel");
+    ImGui::TextDisabled("%s", i18n::tr("Enter to apply \xC2\xB7 Esc to cancel"));
     ImGui::EndPopup();
   }
 }
@@ -344,7 +346,7 @@ void typeValuePopup(App& a, const AutomationClip& ac) {
 void targetPicker(App& a, const AutomationClip& ac) {
   const Song& s = a.doc.song();
   ImGui::SetNextItemWidth(-1);
-  ImGui::InputTextWithHint("##tf", "Filter parameters", E.targetFilter, sizeof E.targetFilter);
+  ImGui::InputTextWithHint("##tf", i18n::tr("Filter parameters"), E.targetFilter, sizeof E.targetFilter);
   std::string f = E.targetFilter;
   for (auto& ch : f) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
   ImGui::BeginChild("##tlist", ImVec2(320, 260));
@@ -400,14 +402,14 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
     }
   }
   const bool canInit = pid.owner != kNoId && getParam(s, pid).has_value();
-  if (ImGui::Button("Start from control", ImVec2((w - 4) * 0.5f, 0)) && canInit && !ac.points.empty()) {
+  if (ImGui::Button(i18n::tr("Start from control"), ImVec2((w - 4) * 0.5f, 0)) && canInit && !ac.points.empty()) {
     double n = describeParam(s, pid)->toNormalized(*getParam(s, pid));
     float v = static_cast<float>(paramToClip(ac, n));
     editPoints(a, "start value from control", [&](ae::Points& p) { p.front().value = v; });
   }
   ui::Hint("Sets the clip's first point to the control's current value (the value the song starts with)");
   ImGui::SameLine(0, 4);
-  if (ImGui::Button("Control to start", ImVec2((w - 4) * 0.5f, 0)) && canInit && !ac.points.empty()) {
+  if (ImGui::Button(i18n::tr("Control to start"), ImVec2((w - 4) * 0.5f, 0)) && canInit && !ac.points.empty()) {
     auto d = describeParam(s, pid);
     a.doc.setParam(pid, d->fromNormalized(clipToParam(ac, ac.points.front().value)), false);
   }
@@ -444,7 +446,7 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
       ui::Hint("Length of this placement in the playlist (drag or Ctrl+click to type)");
     }
     bool loop = ac.loop > 0;
-    if (ImGui::Checkbox("Loop the content", &loop)) {
+    if (ImGui::Checkbox(i18n::tr("Loop the content"), &loop)) {
       Tick len = ac.points.empty() ? s.barTicks() : std::max<Tick>(beat, (ac.points.back().pos + beat - 1) / beat * beat);
       a.doc.editAutomation(ac.id, "loop automation", [&](AutomationClip& c) { c.loop = loop ? len : 0; });
     }
@@ -456,7 +458,7 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
         a.doc.editAutomation(ac.id, "loop length", [&](AutomationClip& c) { c.loop = static_cast<Tick>(lb) * beat; }, 0x41520003);
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     }
-    if (ImGui::Button("Select in playlist", ImVec2(w, 0))) {
+    if (ImGui::Button(i18n::tr("Select in playlist"), ImVec2(w, 0))) {
       a.playlist.selected.clear();
       for (const auto& c : s.playlist)
         if (c.kind == ClipKind::Automation && c.source == ac.id) a.playlist.selected.insert(c.id);
@@ -468,14 +470,14 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
   section("SHAPES");
   refreshShapes(a);
   ImGui::SetNextItemWidth(w);
-  ImGui::InputTextWithHint("##sf", "Filter shapes", E.shapeFilter, sizeof E.shapeFilter);
+  ImGui::InputTextWithHint("##sf", i18n::tr("Filter shapes"), E.shapeFilter, sizeof E.shapeFilter);
   {
     float listH = std::max(60.0f, ImGui::GetContentRegionAvail().y - 66);
     ImGui::BeginChild("##shapes", ImVec2(w, listH), ImGuiChildFlags_Borders);
     std::string f = E.shapeFilter;
     for (auto& ch : f) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     std::string lastFolder = "\x01";
-    if (E.shapes.empty()) ImGui::TextWrapped("No shapes yet: save one below, or import FL Studio's (Tools > Import FL Studio presets).");
+    if (E.shapes.empty()) ImGui::TextWrapped("%s", i18n::tr("No shapes yet: save one below, or import FL Studio's (Tools > Import FL Studio presets)."));
     for (size_t i = 0; i < E.shapes.size(); ++i) {
       const auto& e = E.shapes[i];
       std::string low = e.folder + "/" + e.name;
@@ -493,9 +495,9 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
     ImGui::EndChild();
   }
   ImGui::SetNextItemWidth(w - 64);
-  ImGui::InputTextWithHint("##sn", "Shape name", E.shapeName, sizeof E.shapeName);
+  ImGui::InputTextWithHint("##sn", i18n::tr("Shape name"), E.shapeName, sizeof E.shapeName);
   ImGui::SameLine(0, 4);
-  if (ImGui::Button("Save", ImVec2(60, 0)) && E.shapeName[0]) {
+  if (ImGui::Button(i18n::tr("Save"), ImVec2(60, 0)) && E.shapeName[0]) {
     AutomationShape sh;
     sh.points = E.sel.size() >= 2 ? ae::copyPoints(ac.points, E.sel) : ac.points;
     if (saveAutomationShape(presetRoot(a.configDir()), sh, s.ppq, safePresetName(E.shapeName))) {
@@ -650,7 +652,7 @@ void drawLfoTool(App& a) {
   ae::applyLfo(pv, E.lfo, from, to);
   E.preview = pv;
   ImGui::Dummy(ImVec2(0, 2));
-  if (ImGui::Button("Accept", ImVec2(90, 0))) {
+  if (ImGui::Button(i18n::tr("Accept"), ImVec2(90, 0))) {
     ae::LfoSettings l = E.lfo;
     editPoints(a, "LFO tool", [&](ae::Points& p) { ae::applyLfo(p, l, from, to); });
     E.lfoOpen = false;
@@ -658,13 +660,13 @@ void drawLfoTool(App& a) {
     E.sel.clear();
   }
   ImGui::SameLine();
-  if (ImGui::Button("Reset", ImVec2(90, 0))) {
+  if (ImGui::Button(i18n::tr("Reset"), ImVec2(90, 0))) {
     E.lfo = ae::LfoSettings{};
     E.lfoDivStart = E.lfoDivEnd = 4;
     E.lfoHzStart = E.lfoHzEnd = 1;
   }
   ImGui::SameLine();
-  if (ImGui::Button("Cancel", ImVec2(90, 0))) E.lfoOpen = false, E.preview.reset();
+  if (ImGui::Button(i18n::tr("Cancel"), ImVec2(90, 0))) E.lfoOpen = false, E.preview.reset();
   ImGui::End();
   if (!open) E.lfoOpen = false, E.preview.reset();
 }
@@ -707,21 +709,21 @@ void drawLevelTools(App& a) {
     ImGui::SetNextItemWidth(240);
     if (ImGui::SliderFloat("##tol", &t, 0.1f, 20.0f, "Threshold  %.1f%%")) E.thinTol = t / 100.0;
     pv = ae::thin(pv, E.thinTol);
-    ImGui::TextDisabled("%zu \xE2\x86\x92 %zu points", ac->points.size(), pv.size());
+    ImGui::TextDisabled(i18n::tr("%zu \xE2\x86\x92 %zu points"), ac->points.size(), pv.size());
     sel.clear();
     label = "thin out points";
   }
   E.preview = pv;
-  if (ImGui::Button("Accept", ImVec2(76, 0))) {
+  if (ImGui::Button(i18n::tr("Accept"), ImVec2(76, 0))) {
     editPoints(a, label, [&](ae::Points& p) { p = pv; });
     E.scaleOpen = E.thinOpen = false;
     E.preview.reset();
     if (label != "scale levels") E.sel.clear();
   }
   ImGui::SameLine();
-  if (ImGui::Button("Reset", ImVec2(76, 0))) E.scCentre = 0.5, E.scMul = 1, E.scOff = 0, E.scTension = 0, E.thinTol = 0.02;
+  if (ImGui::Button(i18n::tr("Reset"), ImVec2(76, 0))) E.scCentre = 0.5, E.scMul = 1, E.scOff = 0, E.scTension = 0, E.thinTol = 0.02;
   ImGui::SameLine();
-  if (ImGui::Button("Cancel", ImVec2(76, 0))) E.scaleOpen = E.thinOpen = false, E.preview.reset();
+  if (ImGui::Button(i18n::tr("Cancel"), ImVec2(76, 0))) E.scaleOpen = E.thinOpen = false, E.preview.reset();
   ImGui::End();
   if (!open) E.scaleOpen = E.thinOpen = false, E.preview.reset();
 }
@@ -1121,35 +1123,35 @@ void shortcuts(App& a, const AutomationClip& ac) {
   ImGuiIO& io = ImGui::GetIO();
   if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || io.WantTextInput) return;
   const int n = static_cast<int>(ac.points.size());
-  if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && !E.sel.empty()) deleteSelection(a);
-  if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A))
+  if (keys::pressed("auto.delete") && !E.sel.empty()) deleteSelection(a);
+  if (keys::pressed("auto.selectAll"))
     for (int i = 0; i < n; ++i) E.sel.insert(i);
-  if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D)) E.sel.clear();
-  if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I)) {
+  if (keys::pressed("auto.deselect")) E.sel.clear();
+  if (keys::pressed("auto.invertSelection")) {
     ae::Selection inv;
     for (int i = 0; i < n; ++i)
       if (!E.sel.count(i)) inv.insert(i);
     E.sel = inv;
   }
-  if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !E.sel.empty()) copySelection(a, ac);
-  if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_X) && !E.sel.empty()) {
+  if (keys::pressed("auto.copy") && !E.sel.empty()) copySelection(a, ac);
+  if (keys::pressed("auto.cut") && !E.sel.empty()) {
     copySelection(a, ac);
     deleteSelection(a);
   }
-  if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V)) pasteAt(a, pasteTick(a, ac), false);
-  if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R)) pasteAt(a, pasteTick(a, ac), true);
-  if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P)) E.tool = Tool::Draw;
-  if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E)) E.tool = Tool::Select;
-  if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D)) E.tool = Tool::Erase;
-  if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_L)) E.lfoOpen = true, E.scaleOpen = E.thinOpen = false;
-  if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q)) {
+  if (keys::pressed("auto.paste")) pasteAt(a, pasteTick(a, ac), false);
+  if (keys::pressed("auto.pasteReplace")) pasteAt(a, pasteTick(a, ac), true);
+  if (keys::pressed("auto.toolDraw")) E.tool = Tool::Draw;
+  if (keys::pressed("auto.toolSelect")) E.tool = Tool::Select;
+  if (keys::pressed("auto.toolDelete")) E.tool = Tool::Erase;
+  if (keys::pressed("auto.lfo")) E.lfoOpen = true, E.scaleOpen = E.thinOpen = false;
+  if (keys::pressed("auto.quantize")) {
     const Song& s = a.doc.song();
     Tick grid = timeline::snapGrid(s, E.snap == Snap::None ? Snap::Line : E.snap, E.pxPerTick, false);
     ae::Selection t = E.sel, out;
     editPoints(a, "quantize points", [&](ae::Points& p) { out = ae::quantize(p, t, grid); });
     E.sel = out;
   }
-  if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+  if (keys::pressed("auto.cancel")) {
     if (E.preview) E.lfoOpen = E.scaleOpen = E.thinOpen = false, E.preview.reset();
     else E.sel.clear();
   }
@@ -1473,13 +1475,13 @@ void editPatternEvents(App& a, ParamId pid) {
 void automationMenuItems(App& a, ParamId pid) {
   const Song& s = a.doc.song();
   if (!describeParam(s, pid)) return;
-  if (ImGui::MenuItem("Create automation clip")) createAutomationClip(a, pid);
+  if (ImGui::MenuItem(i18n::tr("Create automation clip"))) createAutomationClip(a, pid);
   std::vector<const AutomationClip*> mine;
   for (const auto& c : s.automations)
     if (c.owner == pid.owner && c.index == pid.index) mine.push_back(&c);
   if (mine.size() == 1) {
-    if (ImGui::MenuItem("Edit automation clip...")) openAutomationEditor(a, mine[0]->id);
-  } else if (ImGui::BeginMenu("Edit automation clip", !mine.empty())) {
+    if (ImGui::MenuItem(i18n::tr("Edit automation clip..."))) openAutomationEditor(a, mine[0]->id);
+  } else if (ImGui::BeginMenu(i18n::tr("Edit automation clip"), !mine.empty())) {
     for (const auto* c : mine) {
       ImGui::PushID(static_cast<int>(c->id));
       if (ImGui::MenuItem(c->name.c_str())) openAutomationEditor(a, c->id);
@@ -1487,8 +1489,8 @@ void automationMenuItems(App& a, ParamId pid) {
     }
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Edit events", nullptr, false, s.pattern(a.curPattern) != nullptr)) editPatternEvents(a, pid);
-  if (ImGui::MenuItem("Start the song at this value", nullptr, false, !mine.empty())) {
+  if (ImGui::MenuItem(i18n::tr("Edit events"), nullptr, false, s.pattern(a.curPattern) != nullptr)) editPatternEvents(a, pid);
+  if (ImGui::MenuItem(i18n::tr("Start the song at this value"), nullptr, false, !mine.empty())) {
     // The earliest placement's clip starts at the control's current value.
     const Clip* first = nullptr;
     for (const auto& c : s.playlist)
@@ -1505,7 +1507,7 @@ void automationMenuItems(App& a, ParamId pid) {
         if (p.pos <= at) p.value = v;
     });
   }
-  ImGui::MenuItem("Record automation", nullptr, &recordOn);
+  ImGui::MenuItem(i18n::tr("Record automation"), nullptr, &recordOn);
 }
 
 void devAutomationEditor(App& a, int mode) {
@@ -1576,14 +1578,14 @@ void patternLaneMenu(App& a, ObjectId pattern, ObjectId channel) {
   const Pattern* p = s.pattern(pattern);
   if (!p) return;
   ImGui::Separator();
-  ImGui::TextDisabled("Pattern automation (events)");
+  ImGui::TextDisabled("%s", i18n::tr("Pattern automation (events)"));
   for (const auto& l : p->automation) {
     ParamId pid{l.owner, l.index};
     ImGui::PushID(static_cast<int>(pid.packed() & 0x7FFFFFFF));
     if (ImGui::Selectable(paramDisplayName(s, pid).c_str(), laneTarget == pid)) laneTarget = pid;
     ImGui::PopID();
   }
-  if (ImGui::BeginMenu("Add lane for")) {
+  if (ImGui::BeginMenu(i18n::tr("Add lane for"))) {
     auto add = [&](ParamId pid) {
       if (ImGui::MenuItem(paramDisplayName(s, pid).c_str(), nullptr, findPatternLane(*p, pid.owner, pid.index) != nullptr)) editPatternEvents(a, pid);
     };
@@ -1603,7 +1605,7 @@ void patternLaneMenu(App& a, ObjectId pattern, ObjectId channel) {
     ImGui::EndMenu();
   }
   if (laneTarget.owner != kNoId && findPatternLane(*p, laneTarget.owner, laneTarget.index)) {
-    if (ImGui::MenuItem("Delete this lane")) {
+    if (ImGui::MenuItem(i18n::tr("Delete this lane"))) {
       ParamId pid = laneTarget;
       a.doc.editPattern(pattern, "delete event lane", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, {}); });
       laneTarget = ParamId{};

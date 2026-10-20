@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include "../../core/I18n.h"
 #include "../../app/Theme.h"
 #include "../../../third_party/imgui/imgui_internal.h"
 #include "edison_ui.h"
@@ -496,22 +497,22 @@ void drawMenus(App& a, Session& s, const skin::Form& F, ImDrawList* dl) {
     const Range tr = target(s);
     switch (i) {
       case 0:  // File
-        if (ImGui::MenuItem("Load audio file...", nullptr, false, !busy)) openFile(a, s);
+        if (ImGui::MenuItem(i18n::tr("Load audio file..."), nullptr, false, !busy)) openFile(a, s);
         ImGui::Separator();
-        if (ImGui::MenuItem("Save as WAV...", nullptr, false, has)) saveAs(a, s, FileFormat::Wav);
-        if (ImGui::MenuItem("Save as FLAC...", nullptr, false, has)) saveAs(a, s, FileFormat::Flac);
-        if (ImGui::MenuItem("Export selection...", nullptr, false, has)) exportSelection(a, s);
+        if (ImGui::MenuItem(i18n::tr("Save as WAV..."), nullptr, false, has)) saveAs(a, s, FileFormat::Wav);
+        if (ImGui::MenuItem(i18n::tr("Save as FLAC..."), nullptr, false, has)) saveAs(a, s, FileFormat::Flac);
+        if (ImGui::MenuItem(i18n::tr("Export selection..."), nullptr, false, has)) exportSelection(a, s);
         ImGui::Separator();
-        if (ImGui::MenuItem("Send to playlist as audio clip", nullptr, false, has && !busy)) sendToPlaylist(a, s);
-        if (ImGui::MenuItem("Send to new sampler channel", nullptr, false, has && !busy)) sendToSampler(a, s, false);
-        if (ImGui::MenuItem("Send to new slicer channel (markers = slices)", nullptr, false, has && !busy)) sendToSampler(a, s, true);
+        if (ImGui::MenuItem(i18n::tr("Send to playlist as audio clip"), nullptr, false, has && !busy)) sendToPlaylist(a, s);
+        if (ImGui::MenuItem(i18n::tr("Send to new sampler channel"), nullptr, false, has && !busy)) sendToSampler(a, s, false);
+        if (ImGui::MenuItem(i18n::tr("Send to new slicer channel (markers = slices)"), nullptr, false, has && !busy)) sendToSampler(a, s, true);
         break;
       case 1:  // Format
-        if (ImGui::MenuItem("Mix to mono", nullptr, s.cur().a().channels == 1, has && !busy)) runEdit(a, s, "To mono", [](const Content& c) { return toMono(c); });
-        if (ImGui::MenuItem("Make stereo", nullptr, false, has && !busy && s.cur().a().channels == 1))
+        if (ImGui::MenuItem(i18n::tr("Mix to mono"), nullptr, s.cur().a().channels == 1, has && !busy)) runEdit(a, s, "To mono", [](const Content& c) { return toMono(c); });
+        if (ImGui::MenuItem(i18n::tr("Make stereo"), nullptr, false, has && !busy && s.cur().a().channels == 1))
           runEdit(a, s, "To stereo", [](const Content& c) { return toStereo(c); });
-        if (ImGui::MenuItem("Swap channels", nullptr, false, has && !busy)) runEdit(a, s, "Swap channels", [](const Content& c) { return swapChannels(c); });
-        if (ImGui::BeginMenu("Sample rate", has && !busy)) {
+        if (ImGui::MenuItem(i18n::tr("Swap channels"), nullptr, false, has && !busy)) runEdit(a, s, "Swap channels", [](const Content& c) { return swapChannels(c); });
+        if (ImGui::BeginMenu(i18n::tr("Sample rate"), has && !busy)) {
           for (int rate : {22050, 32000, 44100, 48000, 88200, 96000}) {
             char b[32];
             std::snprintf(b, sizeof b, "%d Hz", rate);
@@ -524,93 +525,98 @@ void drawMenus(App& a, Session& s, const skin::Form& F, ImDrawList* dl) {
         }
         break;
       case 2:  // Edit
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, s.hist.canUndo() && !busy)) undo(a, s);
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, s.hist.canRedo() && !busy)) redo(a, s);
-        if (ImGui::BeginMenu("History", s.hist.canUndo())) {
+        if (ImGui::MenuItem(i18n::tr("Undo"), "Ctrl+Z", false, s.hist.canUndo() && !busy)) undo(a, s);
+        if (ImGui::MenuItem(i18n::tr("Redo"), "Ctrl+Y", false, s.hist.canRedo() && !busy)) redo(a, s);
+        if (ImGui::BeginMenu(i18n::tr("History"), s.hist.canUndo())) {
           auto l = s.hist.labels();
           for (size_t k = l.size(); k-- > 0;) ImGui::MenuItem(l[k].c_str(), nullptr, false, false);
           ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Cut", "Ctrl+X", false, has && !s.sel.empty() && !busy)) {
+        if (ImGui::MenuItem(i18n::tr("Cut"), "Ctrl+X", false, has && !s.sel.empty() && !busy)) {
           clipboard() = extract(s.cur().a(), s.sel);
           Range r = s.sel;
           runEdit(a, s, "Cut", [r](const Content& c) { return deleteRange(c, r); });
         }
-        if (ImGui::MenuItem("Copy", "Ctrl+C", false, has)) clipboard() = extract(s.cur().a(), tr);
-        if (ImGui::MenuItem("Paste", "Ctrl+V", false, clipboard().frames() > 0 && !busy)) {
+        if (ImGui::MenuItem(i18n::tr("Copy"), "Ctrl+C", false, has)) clipboard() = extract(s.cur().a(), tr);
+        if (ImGui::MenuItem(i18n::tr("Paste"), "Ctrl+V", false, clipboard().frames() > 0 && !busy)) {
           Audio clip = clipboard();
           Range sel = s.sel;
           int64_t at = s.cursor;
           runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); });
         }
-        if (ImGui::MenuItem("Delete", "Del", false, has && !s.sel.empty() && !busy)) {
+        if (ImGui::MenuItem(i18n::tr("Delete"), "Del", false, has && !s.sel.empty() && !busy)) {
           Range r = s.sel;
           runEdit(a, s, "Delete", [r](const Content& c) { return deleteRange(c, r); });
         }
-        if (ImGui::MenuItem("Silence selection", nullptr, false, has && !s.sel.empty() && !busy)) {
+        if (ImGui::MenuItem(i18n::tr("Silence selection"), nullptr, false, has && !s.sel.empty() && !busy)) {
           Range r = s.sel;
           runEdit(a, s, "Silence", [r](const Content& c) { return silenceRange(c, r); });
         }
-        if (ImGui::MenuItem("Insert silence...", nullptr, false, !busy)) openTool(s, Tool::Silence);
+        if (ImGui::MenuItem(i18n::tr("Insert silence..."), nullptr, false, !busy)) openTool(s, Tool::Silence);
         ImGui::Separator();
-        if (ImGui::MenuItem("Trim to selection", "Ctrl+T", false, has && !s.sel.empty() && !busy)) {
+        if (ImGui::MenuItem(i18n::tr("Trim to selection"), "Ctrl+T", false, has && !s.sel.empty() && !busy)) {
           Range r = s.sel;
           runEdit(a, s, "Trim to selection", [r](const Content& c) { return cropTo(c, r); });
         }
-        if (ImGui::MenuItem("Trim side silence", nullptr, false, has && !busy)) runEdit(a, s, "Trim side silence", [](const Content& c) { return trimSilence(c, -60); });
+        if (ImGui::MenuItem(i18n::tr("Trim side silence"), nullptr, false, has && !busy)) runEdit(a, s, "Trim side silence", [](const Content& c) { return trimSilence(c, -60); });
         break;
       case 3:  // Tools
-        if (ImGui::BeginMenu("Amplitude", has && !busy)) {
-          if (ImGui::MenuItem("Normalize...")) openTool(s, Tool::Normalize);
-          if (ImGui::MenuItem("Amplify...")) openTool(s, Tool::Amplify);
-          if (ImGui::MenuItem("Fade in")) runEdit(a, s, "Fade in", [tr, k = static_cast<Curve>(s.fadeCurve)](const Content& c) { return fadeIn(c, tr, k); });
-          if (ImGui::MenuItem("Fade out")) runEdit(a, s, "Fade out", [tr, k = static_cast<Curve>(s.fadeCurve)](const Content& c) { return fadeOut(c, tr, k); });
-          if (ImGui::BeginMenu("Fade curve")) {
+        if (ImGui::BeginMenu(i18n::tr("Scripts"), !busy)) {  // J-57: Lua audio scripts (SC-05)
+          audioScriptMenuItems(a, s);
+          ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu(i18n::tr("Amplitude"), has && !busy)) {
+          if (ImGui::MenuItem(i18n::tr("Normalize..."))) openTool(s, Tool::Normalize);
+          if (ImGui::MenuItem(i18n::tr("Amplify..."))) openTool(s, Tool::Amplify);
+          if (ImGui::MenuItem(i18n::tr("Fade in"))) runEdit(a, s, "Fade in", [tr, k = static_cast<Curve>(s.fadeCurve)](const Content& c) { return fadeIn(c, tr, k); });
+          if (ImGui::MenuItem(i18n::tr("Fade out"))) runEdit(a, s, "Fade out", [tr, k = static_cast<Curve>(s.fadeCurve)](const Content& c) { return fadeOut(c, tr, k); });
+          if (ImGui::BeginMenu(i18n::tr("Fade curve"))) {
             for (int k = 0; k < static_cast<int>(Curve::Count); ++k)
               if (ImGui::MenuItem(curveName(static_cast<Curve>(k)), nullptr, s.fadeCurve == k)) s.fadeCurve = k;
             ImGui::EndMenu();
           }
-          if (ImGui::MenuItem("Amplitude envelope...")) openTool(s, Tool::Envelope);
+          if (ImGui::MenuItem(i18n::tr("Amplitude envelope..."))) openTool(s, Tool::Envelope);
           ImGui::Separator();
-          if (ImGui::MenuItem("Reverse")) runEdit(a, s, "Reverse", [tr](const Content& c) { return reverse(c, tr); });
-          if (ImGui::MenuItem("Invert polarity")) runEdit(a, s, "Invert", [tr](const Content& c) { return invert(c, tr); });
-          if (ImGui::MenuItem("Remove DC offset")) runEdit(a, s, "Remove DC", [tr](const Content& c) { return removeDc(c, tr); });
-          if (ImGui::MenuItem("Noise gate...")) openTool(s, Tool::Gate);
+          if (ImGui::MenuItem(i18n::tr("Reverse"))) runEdit(a, s, "Reverse", [tr](const Content& c) { return reverse(c, tr); });
+          if (ImGui::MenuItem(i18n::tr("Invert polarity"))) runEdit(a, s, "Invert", [tr](const Content& c) { return invert(c, tr); });
+          if (ImGui::MenuItem(i18n::tr("Remove DC offset"))) runEdit(a, s, "Remove DC", [tr](const Content& c) { return removeDc(c, tr); });
+          if (ImGui::MenuItem(i18n::tr("Noise gate..."))) openTool(s, Tool::Gate);
           ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Noise", has && !busy)) {
-          if (ImGui::MenuItem("Take noise profile from selection", nullptr, s.noise.valid())) {
+        if (ImGui::BeginMenu(i18n::tr("Noise"), has && !busy)) {
+          if (ImGui::MenuItem(i18n::tr("Take noise profile from selection"), nullptr, s.noise.valid())) {
             s.noise = acquireNoise(s.cur().a(), tr);
             say(s, s.noise.valid() ? "Noise profile taken" : "Select at least 50 ms of noise first");
           }
-          if (ImGui::MenuItem("Clean up (denoise)...")) openTool(s, Tool::Denoise);
-          if (ImGui::MenuItem("Declick...")) openTool(s, Tool::Declick);
+          if (ImGui::MenuItem(i18n::tr("Clean up (denoise)..."))) openTool(s, Tool::Denoise);
+          if (ImGui::MenuItem(i18n::tr("Declick..."))) openTool(s, Tool::Declick);
           ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Time and pitch", has && !busy)) {
-          if (ImGui::MenuItem("Time stretch / pitch shift...")) openTool(s, Tool::Stretch);
-          if (ImGui::MenuItem("Tune to note...")) openTool(s, Tool::Tune);
-          if (ImGui::MenuItem("Resample...")) openTool(s, Tool::Resample);
+        if (ImGui::BeginMenu(i18n::tr("Time and pitch"), has && !busy)) {
+          if (ImGui::MenuItem(i18n::tr("Time stretch / pitch shift..."))) openTool(s, Tool::Stretch);
+          if (ImGui::MenuItem(i18n::tr("Tune to note..."))) openTool(s, Tool::Tune);
+          if (ImGui::MenuItem(i18n::tr("Resample..."))) openTool(s, Tool::Resample);
           ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Effects", has && !busy)) {
-          if (ImGui::MenuItem("Equalize...")) openTool(s, Tool::Equalize);
-          if (ImGui::MenuItem("Convolution reverb...")) openTool(s, Tool::Reverb);
-          if (ImGui::MenuItem("Blur...")) openTool(s, Tool::Blur);
-          if (ImGui::MenuItem("Apply spectral brush...", nullptr, false, !s.brush.empty())) openTool(s, Tool::Spectral);
+        if (ImGui::BeginMenu(i18n::tr("Effects"), has && !busy)) {
+          if (ImGui::MenuItem(i18n::tr("Equalize..."))) openTool(s, Tool::Equalize);
+          if (ImGui::MenuItem(i18n::tr("Convolution reverb..."))) openTool(s, Tool::Reverb);
+          if (ImGui::MenuItem(i18n::tr("Blur..."))) openTool(s, Tool::Blur);
+          if (ImGui::MenuItem(i18n::tr("Apply spectral brush..."), nullptr, false, !s.brush.empty())) openTool(s, Tool::Spectral);
           ImGui::EndMenu();
         }
         break;
       case 4:  // Regions
-        if (ImGui::MenuItem("Add marker / region", "M", false, has)) addMarkerAtCursor(a, s);
-        if (ImGui::MenuItem("Set loop from selection", nullptr, false, has && !s.sel.empty())) applyNow(a, s, "Set loop", setLoop(s.cur(), s.sel));
-        if (ImGui::MenuItem("Clear loop points", nullptr, false, s.cur().hasLoop())) applyNow(a, s, "Clear loop", setLoop(s.cur(), {}));
+        if (ImGui::MenuItem(i18n::tr("Add marker / region"), "M", false, has)) addMarkerAtCursor(a, s);
+        if (ImGui::MenuItem(i18n::tr("Set loop from selection"), nullptr, false, has && !s.sel.empty())) applyNow(a, s, "Set loop", setLoop(s.cur(), s.sel));
+        if (ImGui::MenuItem(i18n::tr("Clear loop points"), nullptr, false, s.cur().hasLoop())) applyNow(a, s, "Clear loop", setLoop(s.cur(), {}));
         ImGui::Separator();
-        if (ImGui::MenuItem("Detect beats (slice markers)...", nullptr, false, has && !busy)) openTool(s, Tool::Slice);
-        if (ImGui::MenuItem("Snap markers to zero crossings", nullptr, false, !s.cur().markers.empty() && !busy))
+        if (ImGui::MenuItem(i18n::tr("Detect beats (slice markers)..."), nullptr, false, has && !busy)) openTool(s, Tool::Slice);
+        if (ImGui::MenuItem(i18n::tr("Snap markers to zero crossings"), nullptr, false, !s.cur().markers.empty() && !busy))
           applyNow(a, s, "Snap markers", snapMarkersToZero(s.cur(), static_cast<int64_t>(s.rate() * 0.01)));
-        if (ImGui::MenuItem("Remove all markers", nullptr, false, !s.cur().markers.empty())) applyNow(a, s, "Remove markers", clearMarkers(s.cur()));
+        if (ImGui::MenuItem(i18n::tr("Remove all markers"), nullptr, false, !s.cur().markers.empty())) applyNow(a, s, "Remove markers", clearMarkers(s.cur()));
         if (!s.cur().markers.empty() || !s.cur().regions.empty()) {
           ImGui::Separator();
           for (size_t k = 0; k < s.cur().markers.size() && k < 40; ++k) {
@@ -626,24 +632,24 @@ void drawMenus(App& a, Session& s, const skin::Form& F, ImDrawList* dl) {
         }
         break;
       case 5:  // View
-        if (ImGui::MenuItem("Waveform", "W", !s.spectral)) s.spectral = false;
-        if (ImGui::MenuItem("Spectrogram", "W", s.spectral)) s.spectral = true;
-        if (ImGui::MenuItem("Spectral brush", "B", s.brushMode, s.spectral)) s.brushMode = !s.brushMode;
+        if (ImGui::MenuItem(i18n::tr("Waveform"), "W", !s.spectral)) s.spectral = false;
+        if (ImGui::MenuItem(i18n::tr("Spectrogram"), "W", s.spectral)) s.spectral = true;
+        if (ImGui::MenuItem(i18n::tr("Spectral brush"), "B", s.brushMode, s.spectral)) s.brushMode = !s.brushMode;
         ImGui::Separator();
-        if (ImGui::MenuItem("Time as min:sec", nullptr, !s.barsTime)) s.barsTime = false;
-        if (ImGui::MenuItem("Time as bar:beat (song tempo)", nullptr, s.barsTime)) s.barsTime = true;
-        if (ImGui::MenuItem("Auto-scroll", nullptr, s.autoScroll)) s.autoScroll = !s.autoScroll;
+        if (ImGui::MenuItem(i18n::tr("Time as min:sec"), nullptr, !s.barsTime)) s.barsTime = false;
+        if (ImGui::MenuItem(i18n::tr("Time as bar:beat (song tempo)"), nullptr, s.barsTime)) s.barsTime = true;
+        if (ImGui::MenuItem(i18n::tr("Auto-scroll"), nullptr, s.autoScroll)) s.autoScroll = !s.autoScroll;
         break;
       case 6:  // Snap
-        if (ImGui::MenuItem("No snap", nullptr, s.snap == 0)) s.snap = 0;
-        if (ImGui::MenuItem("Zero crossings", nullptr, s.snap == 1)) s.snap = 1;
-        if (ImGui::MenuItem("Markers", nullptr, s.snap == 2)) s.snap = 2;
-        if (ImGui::MenuItem("Beats (song tempo)", nullptr, s.snap == 3)) s.snap = 3;
+        if (ImGui::MenuItem(i18n::tr("No snap"), nullptr, s.snap == 0)) s.snap = 0;
+        if (ImGui::MenuItem(i18n::tr("Zero crossings"), nullptr, s.snap == 1)) s.snap = 1;
+        if (ImGui::MenuItem(i18n::tr("Markers"), nullptr, s.snap == 2)) s.snap = 2;
+        if (ImGui::MenuItem(i18n::tr("Beats (song tempo)"), nullptr, s.snap == 3)) s.snap = 3;
         break;
       case 7:  // Select
-        if (ImGui::MenuItem("All", "Ctrl+A", false, has)) s.sel = {0, s.frames()};
-        if (ImGui::MenuItem("None", nullptr, false, !s.sel.empty())) s.sel = {};
-        if (ImGui::MenuItem("Between markers around the cursor", nullptr, false, has)) {
+        if (ImGui::MenuItem(i18n::tr("All"), "Ctrl+A", false, has)) s.sel = {0, s.frames()};
+        if (ImGui::MenuItem(i18n::tr("None"), nullptr, false, !s.sel.empty())) s.sel = {};
+        if (ImGui::MenuItem(i18n::tr("Between markers around the cursor"), nullptr, false, has)) {
           int64_t lo = 0, hi = s.frames();
           for (const auto& m : s.cur().markers) {
             if (m.pos <= s.cursor) lo = std::max(lo, m.pos);
@@ -651,13 +657,13 @@ void drawMenus(App& a, Session& s, const skin::Form& F, ImDrawList* dl) {
           }
           s.sel = {lo, hi};
         }
-        if (ImGui::MenuItem("Loop", nullptr, false, s.cur().hasLoop())) s.sel = {s.cur().loopStart, s.cur().loopEnd};
+        if (ImGui::MenuItem(i18n::tr("Loop"), nullptr, false, s.cur().hasLoop())) s.sel = {s.cur().loopStart, s.cur().loopEnd};
         break;
       case 8:  // Zoom
-        if (ImGui::MenuItem("Zoom in", "+")) zoomBy(s, 0.5, s.viewStart + s.viewLen * 0.5);
-        if (ImGui::MenuItem("Zoom out", "-")) zoomBy(s, 2.0, s.viewStart + s.viewLen * 0.5);
-        if (ImGui::MenuItem("Zoom to selection", nullptr, false, !s.sel.empty())) zoomTo(s, s.sel);
-        if (ImGui::MenuItem("Show all", "0")) zoomAll(s);
+        if (ImGui::MenuItem(i18n::tr("Zoom in"), "+")) zoomBy(s, 0.5, s.viewStart + s.viewLen * 0.5);
+        if (ImGui::MenuItem(i18n::tr("Zoom out"), "-")) zoomBy(s, 2.0, s.viewStart + s.viewLen * 0.5);
+        if (ImGui::MenuItem(i18n::tr("Zoom to selection"), nullptr, false, !s.sel.empty())) zoomTo(s, s.sel);
+        if (ImGui::MenuItem(i18n::tr("Show all"), "0")) zoomAll(s);
         break;
       default: break;
     }

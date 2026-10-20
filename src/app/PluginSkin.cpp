@@ -1,4 +1,5 @@
 // Gridline — rack skin: per-plugin palettes and vector control styles.
+#include "../core/I18n.h"
 #include "PluginSkin.h"
 #include <functional>
 #include <cstring>
@@ -1162,7 +1163,7 @@ bool selector(App& a, const PluginTarget& t, const View& v, const char* name, in
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##selm");
   if (ImGui::BeginPopup("##selm")) {
-    if (ImGui::MenuItem("Reset")) pui::setParamValue(a, t, param, pv.d->def, false);
+    if (ImGui::MenuItem(i18n::tr("Reset"))) pui::setParamValue(a, t, param, pv.d->def, false);
     ImGui::EndPopup();
   }
   if (hov) app().setHint(pv.d->name + ": " + pv.d->format(cur + valueOffset));

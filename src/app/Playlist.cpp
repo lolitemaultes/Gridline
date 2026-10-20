@@ -8,11 +8,14 @@
 #include <limits>
 #include <map>
 #include <unordered_map>
+#include "../core/I18n.h"
+#include "Keys.h"
 #include "ExportUi.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Arrangements.h"
 #include "../core/Automation.h"
 #include "../core/Fades.h"
+#include "../core/TrackModes.h"
 #include "../core/MenuOpsExtra.h"
 #include "../core/MenuParity.h"
 #include "../core/PluginParams.h"
@@ -30,6 +33,7 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "BrowserUi.h"
+#include "TrackModeUi.h"
 
 namespace gl {
 
@@ -402,9 +406,9 @@ void arrangementClipMenu(App& a, ObjectId id) {
   const Clip* c = s.clip(id);
   if (!c) return;
   if (c->kind != ClipKind::Pattern) ImGui::TextDisabled("%s", clipName(s, *c).c_str());
-  if (ImGui::MenuItem("Mute clip", nullptr, c->muted)) a.doc.editClip(id, "mute clip", [](Clip& x) { x.muted = !x.muted; });
+  if (ImGui::MenuItem(i18n::tr("Mute clip"), nullptr, c->muted)) a.doc.editClip(id, "mute clip", [](Clip& x) { x.muted = !x.muted; });
   if (c->kind == ClipKind::Audio) {
-    if (const Channel* ch = s.channel(c->source); ch && ImGui::BeginMenu("Rename...")) {  // J-28: the clip's title (its channel's name)
+    if (const Channel* ch = s.channel(c->source); ch && ImGui::BeginMenu(i18n::tr("Rename..."))) {  // J-28: the clip's title (its channel's name)
       static char buf[128];
       if (ImGui::IsWindowAppearing()) std::snprintf(buf, sizeof buf, "%s", ch->name.c_str());
       ImGui::SetNextItemWidth(180);
@@ -414,41 +418,41 @@ void arrangementClipMenu(App& a, ObjectId id) {
       }
       ImGui::EndMenu();
     }
-    if (const Channel* ch = s.channel(c->source); ch && ImGui::MenuItem("Edit in audio editor", nullptr, false, !ch->plugin.data.empty()))
+    if (const Channel* ch = s.channel(c->source); ch && ImGui::MenuItem(i18n::tr("Edit in audio editor"), nullptr, false, !ch->plugin.data.empty()))
       packs::openAudioEditor(a, ch->plugin.data, ch->id);  // J-7
-    if (ImGui::MenuItem("Export clip as WAV...")) exportui::exportClipAudio(a, id);  // J-20
+    if (ImGui::MenuItem(i18n::tr("Export clip as WAV..."))) exportui::exportClipAudio(a, id);  // J-20
     static uint64_t key = 0x41430000;
     float gainDb = c->gain > 0 ? 20.0f * std::log10(c->gain) : -60.0f;
     ImGui::SetNextItemWidth(160);
-    if (ImGui::DragFloat("Gain", &gainDb, 0.1f, -60.0f, 12.0f, "%.1f dB"))
+    if (ImGui::DragFloat(i18n::tr("Gain"), &gainDb, 0.1f, -60.0f, 12.0f, "%.1f dB"))
       a.doc.editClip(id, "clip gain", [&](Clip& x) { x.gain = gainDb <= -60.0f ? 0.0f : std::pow(10.0f, gainDb / 20.0f); }, key);
     float cents = c->pitch;
     ImGui::SetNextItemWidth(160);
-    if (ImGui::DragFloat("Pitch", &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
+    if (ImGui::DragFloat(i18n::tr("Pitch"), &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
       a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = cents; }, key + 1);
     float fi = static_cast<float>(c->fadeIn * 1000.0), fo = static_cast<float>(c->fadeOut * 1000.0);
     ImGui::SetNextItemWidth(160);
-    if (ImGui::DragFloat("Fade in", &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
+    if (ImGui::DragFloat(i18n::tr("Fade in"), &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
       a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0, x.fadeInManual = true; }, key + 2);
     ImGui::SetNextItemWidth(160);
-    if (ImGui::DragFloat("Fade out", &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
+    if (ImGui::DragFloat(i18n::tr("Fade out"), &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
       a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 3);
-    if (ImGui::MenuItem("Reverse", nullptr, c->reverse)) a.doc.editClip(id, "reverse clip", [](Clip& x) { x.reverse = !x.reverse; });
-    if (ImGui::MenuItem("Follow tempo", nullptr, c->syncBpm > 0)) {
+    if (ImGui::MenuItem(i18n::tr("Reverse"), nullptr, c->reverse)) a.doc.editClip(id, "reverse clip", [](Clip& x) { x.reverse = !x.reverse; });
+    if (ImGui::MenuItem(i18n::tr("Follow tempo"), nullptr, c->syncBpm > 0)) {
       TempoMap tm;
       tm.build(s);
       double bpm = tm.bpmAt(static_cast<double>(c->start));
       a.doc.editClip(id, "follow tempo", [bpm](Clip& x) { x.syncBpm = x.syncBpm > 0 ? 0.0 : bpm; });
     }
-    if (ImGui::MenuItem("Channel settings")) a.settingsChannel = c->source;
+    if (ImGui::MenuItem(i18n::tr("Channel settings"))) a.settingsChannel = c->source;
     {  // J-28 (operations: J-27)
       std::set<ObjectId> sel = a.playlist.selected;
       if (!sel.count(id)) sel = {id};
-      if (ImGui::MenuItem("Make unique as sample")) {
+      if (ImGui::MenuItem(i18n::tr("Make unique as sample"))) {
         if (ObjectId nch = ops::makeAudioClipUnique(a.doc, id)) a.settingsChannel = nch;
       }
-      if (ImGui::MenuItem("Pitch a semitone up")) ops::pitchAudioClips(a.doc, sel, 100.0f);
-      if (ImGui::MenuItem("Pitch a semitone down")) ops::pitchAudioClips(a.doc, sel, -100.0f);
+      if (ImGui::MenuItem(i18n::tr("Pitch a semitone up"))) ops::pitchAudioClips(a.doc, sel, 100.0f);
+      if (ImGui::MenuItem(i18n::tr("Pitch a semitone down"))) ops::pitchAudioClips(a.doc, sel, -100.0f);
     }
     a.doc.endGesture();
     ImGui::Separator();
@@ -457,9 +461,9 @@ void arrangementClipMenu(App& a, ObjectId id) {
     const AutomationClip* ac = s.automation(c->source);
     if (ac) {
       std::string target = ac->owner == kNoId ? std::string("no target") : paramDisplayName(s, {ac->owner, ac->index});
-      ImGui::TextDisabled("Drives: %s", target.c_str());
-      if (ImGui::MenuItem("Edit automation...")) openAutomationEditor(a, ac->id, id);
-      if (ImGui::BeginMenu("Curve of every segment")) {
+      ImGui::TextDisabled(i18n::tr("Drives: %s"), target.c_str());
+      if (ImGui::MenuItem(i18n::tr("Edit automation..."))) openAutomationEditor(a, ac->id, id);
+      if (ImGui::BeginMenu(i18n::tr("Curve of every segment"))) {
         for (int k = 0; k < static_cast<int>(AutoShape::Count); ++k)
           if (ImGui::MenuItem(autoShapeName(static_cast<AutoShape>(k)))) {
             ObjectId aid = ac->id;
@@ -470,20 +474,20 @@ void arrangementClipMenu(App& a, ObjectId id) {
           }
         ImGui::EndMenu();
       }
-      if (ImGui::MenuItem("Reset tensions")) {
+      if (ImGui::MenuItem(i18n::tr("Reset tensions"))) {
         ObjectId aid = ac->id;
         a.doc.editSong("reset tensions", [aid](Song& x) {
           if (AutomationClip* q = x.automation(aid))
             for (auto& p : q->points) p.tension = 0;
         });
       }
-      if (ImGui::MenuItem("Merge selected automation clips", nullptr, false, a.playlist.selected.size() >= 2)) {  // J-28 (op: J-27)
+      if (ImGui::MenuItem(i18n::tr("Merge selected automation clips"), nullptr, false, a.playlist.selected.size() >= 2)) {  // J-28 (op: J-27)
         ObjectId nc = ops::mergeAutomationClips(a.doc, a.playlist.selected);
         if (nc) a.playlist.selected = {nc};
         else a.notify("Merging needs two automation clips of the same parameter");
         return;  // the clip under the menu may be gone
       }
-      if (ImGui::MenuItem("Select all clips of this automation")) {
+      if (ImGui::MenuItem(i18n::tr("Select all clips of this automation"))) {
         a.playlist.selected.clear();
         for (const auto& k : s.playlist)
           if (k.kind == ClipKind::Automation && k.source == ac->id) a.playlist.selected.insert(k.id);
@@ -561,7 +565,7 @@ void drawKindGlyph(ImDrawList* dl, ClipKind kind, ImVec2 c, float size, ImU32 co
 void sourceMenu(App& a) {
   const Song& s = a.doc.song();
   const pltools::Source cur = currentSource(a);
-  ImGui::SeparatorText("Patterns");
+  ImGui::SeparatorText(i18n::tr("Patterns"));
   for (const auto& p : s.patterns) {
     ImGui::PushID(static_cast<int>(p.id));
     if (ImGui::MenuItem(p.name.c_str(), nullptr, cur == pltools::Source{ClipKind::Pattern, p.id})) setSource(a, {ClipKind::Pattern, p.id});
@@ -570,13 +574,13 @@ void sourceMenu(App& a) {
   bool any = false;
   for (const auto& ch : s.channels) {
     if (!isAudioSource(ch)) continue;
-    if (!any) ImGui::SeparatorText("Audio");
+    if (!any) ImGui::SeparatorText(i18n::tr("Audio"));
     any = true;
     ImGui::PushID(static_cast<int>(ch.id));
     if (ImGui::MenuItem(ch.name.c_str(), nullptr, cur == pltools::Source{ClipKind::Audio, ch.id})) setSource(a, {ClipKind::Audio, ch.id});
     ImGui::PopID();
   }
-  if (!s.automations.empty()) ImGui::SeparatorText("Automation");
+  if (!s.automations.empty()) ImGui::SeparatorText(i18n::tr("Automation"));
   for (const auto& ac : s.automations) {
     ImGui::PushID(static_cast<int>(ac.id));
     if (ImGui::MenuItem(ac.name.c_str(), nullptr, cur == pltools::Source{ClipKind::Automation, ac.id})) setSource(a, {ClipKind::Automation, ac.id});
@@ -621,7 +625,7 @@ void drawPlaylist(App& a) {
       else st.snap = st.lastSnap == Snap::None ? Snap::Line : st.lastSnap;
     }
     if (ImGui::BeginPopup("##snapmenu")) {
-      ImGui::TextDisabled("Snap to");
+      ImGui::TextDisabled("%s", i18n::tr("Snap to"));
       for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i) {
         std::string l = snapName(static_cast<Snap>(i));
         if ((static_cast<Snap>(i) == Snap::Line || static_cast<Snap>(i) == Snap::Cell) && st.effGrid > 0 && st.snap == static_cast<Snap>(i))
@@ -775,8 +779,8 @@ void drawPlaylist(App& a) {
         const ObjectId cid = ch.id;
         pickerRow({ClipKind::Audio, ch.id}, ch.name, ch.color, "Click: current source \xC2\xB7 drag into the playlist \xC2\xB7 double-click: channel settings",
                   [&a, cid]() {
-                    if (ImGui::MenuItem("Channel settings")) a.settingsChannel = cid;
-                    if (ImGui::MenuItem("Select its clips")) {
+                    if (ImGui::MenuItem(i18n::tr("Channel settings"))) a.settingsChannel = cid;
+                    if (ImGui::MenuItem(i18n::tr("Select its clips"))) {
                       a.playlist.selected.clear();
                       for (const auto& k : a.doc.song().playlist)
                         if (k.kind == ClipKind::Audio && k.source == cid) a.playlist.selected.insert(k.id);
@@ -791,8 +795,8 @@ void drawPlaylist(App& a) {
         const ObjectId aid = ac.id;
         pickerRow({ClipKind::Automation, ac.id}, ac.name, ac.color, "Click: current source \xC2\xB7 drag into the playlist \xC2\xB7 double-click: edit",
                   [&a, aid]() {
-                    if (ImGui::MenuItem("Edit automation...")) openAutomationEditor(a, aid, kNoId);
-                    if (ImGui::MenuItem("Select its clips")) {
+                    if (ImGui::MenuItem(i18n::tr("Edit automation..."))) openAutomationEditor(a, aid, kNoId);
+                    if (ImGui::MenuItem(i18n::tr("Select its clips"))) {
                       a.playlist.selected.clear();
                       for (const auto& k : a.doc.song().playlist)
                         if (k.kind == ClipKind::Automation && k.source == aid) a.playlist.selected.insert(k.id);
@@ -873,9 +877,9 @@ void drawPlaylist(App& a) {
   const float keyAnchor = hovered && io.MousePos.x >= gMin.x ? io.MousePos.x - gMin.x
                           : (playX >= 0 && playX <= gridW ? playX : gridW * 0.5f);
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput) {
-    if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) st.zoomRequest *= 1.5f;
-    if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) st.zoomRequest /= 1.5f;
-    if (ImGui::IsKeyPressed(ImGuiKey_Home)) st.fitRequest = true;
+    if (keys::pressed("playlist.zoomIn")) st.zoomRequest *= 1.5f;
+    if (keys::pressed("playlist.zoomOut")) st.zoomRequest /= 1.5f;
+    if (keys::pressed("playlist.zoomFit")) st.fitRequest = true;
   }
   if (st.fitRequest) {
     Tick len = std::max<Tick>(clipCache(a).songLen, 4 * s.barTicks());
@@ -1406,6 +1410,8 @@ void drawPlaylist(App& a) {
   int headResize = -1;  // track whose header's bottom edge is under the pointer
   int headHandle = -1;  // track whose "..." handle is under the pointer
   int headLed = -1;     // track whose mute switch is under the pointer
+  int headModeTrack = -1, headModeCtl = 0;  // PL-08: audio / instrument track control under the pointer
+  static int inputTrack = -1;               // track whose input popup is open
   static int renaming = -1;
   static ObjectId menuClip = kNoId;
   static int dragTrack = -1;  // header being dragged to a new place
@@ -1456,9 +1462,19 @@ void drawPlaylist(App& a) {
       for (int d = 0; d < 3; ++d)
         dl->AddCircleFilled(ImVec2(hc0.x + 4 + static_cast<float>(d) * 4.5f, lineY + 1), 1.2f, handleHot || dragTrack == tr ? P.hot : P.textFaint, 6);
     const float nameRight = roomy ? h1.x - 6 : h1.x - 22;
-    if (roomy || th >= 18)
-      theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(roomy ? nameX : nameX + 18, nameY), nameRight - (roomy ? nameX : nameX + 18),
-                          t.muted ? P.textFaint : P.text, playlistTrackName(s, static_cast<size_t>(tr)).c_str());
+    if (roomy || th >= 18) {
+      float nx = roomy ? nameX : nameX + 18;
+      nx += trackui::drawNameGlyph(a, dl, tr, ImVec2(nx, nameY));  // PL-08: audio / instrument track glyph
+      theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(nx, nameY), nameRight - nx, t.muted ? P.textFaint : P.text,
+                          playlistTrackName(s, static_cast<size_t>(tr)).c_str());
+    }
+    {  // PL-08: input / monitoring / arm (audio tracks), channel (instrument tracks) between the handle and the switch
+      const float cx1 = h1.x - 20 - (t.locked ? 16.0f : 0.0f) - (liveMode ? 14.0f : 0.0f);
+      if (const int ctl = trackui::drawHeader(a, dl, tr, hc0.x + 18, cx1, lineY, hovHead && !ledHot && !handleHot, roomy)) {
+        headModeTrack = tr;
+        headModeCtl = ctl;
+      }
+    }
     if (liveMode && a.engine.liveActive(tr) != kNoId)  // live: a clip plays on this track
       dl->AddTriangleFilled(ImVec2(h1.x - 30, lineY - 4), ImVec2(h1.x - 30, lineY + 4), ImVec2(h1.x - 24, lineY), P.accent);
     if (t.locked) ui::drawIcon(dl, ui::Icon::Lock, ImVec2(h1.x - (liveMode ? 42 : 26), lineY), 11, P.textDim);
@@ -1620,8 +1636,10 @@ void drawPlaylist(App& a) {
       a.setHint("Click or drag to move the song position (snaps to the grid, Alt = free)  \xC2\xB7  Ctrl+drag or right-drag: "
                 "time selection (loops playback)  \xC2\xB7  double-click: clear the selection");
   } else if (hovered && inHead) {
+    const char* modeHint = trackui::headerHint(a, headModeCtl ? headModeTrack : trackAt(m.y), headModeCtl);
     if (headLed >= 0) a.setHint("Click: mute / unmute the track \xC2\xB7 right-click: solo (mute every other track)");
     else if (headHandle >= 0) a.setHint("Drag up / down to move the track \xC2\xB7 click: track menu");
+    else if (*modeHint) a.setHint(modeHint);  // PL-08
     else a.setHint("Double-click to rename \xC2\xB7 right-click: track menu \xC2\xB7 drag the bottom edge to resize");
   }
 
@@ -1733,6 +1751,11 @@ void drawPlaylist(App& a) {
       a.doc.beginGroup("move playlist track");
       lClick = false;
     }
+  }
+  if (inHead && headModeCtl && lClick) {  // PL-08: arm / monitoring / input / instrument channel
+    if (headModeCtl == 3) inputTrack = headModeTrack;
+    trackui::headerClick(a, headModeTrack, headModeCtl);
+    lClick = false;
   }
   if (inHead && headLed >= 0 && (lClick || rClick)) {  // mute switch; right-click: solo
     if (lClick) {
@@ -1884,16 +1907,16 @@ void drawPlaylist(App& a) {
         });
       };
       ImGui::TextDisabled("%s", in ? "Fade in" : "Fade out");
-      if (e.crossfade && ImGui::MenuItem("Automatic crossfade", nullptr, e.automatic, s.autoCrossfades)) {
+      if (e.crossfade && ImGui::MenuItem(i18n::tr("Automatic crossfade"), nullptr, e.automatic, s.autoCrossfades)) {
         if (e.automatic)  // keep the current length, set by hand from now on
           editEdge("fade set by hand", [len = e.len](Clip& x, bool i) { (i ? x.fadeIn : x.fadeOut) = len, (i ? x.fadeInManual : x.fadeOutManual) = true; }, false);
         else
           editEdge("automatic crossfade", [](Clip& x, bool i) { (i ? x.fadeIn : x.fadeOut) = 0, (i ? x.fadeInManual : x.fadeOutManual) = false; }, false);
       }
       if (!e.crossfade || !s.autoCrossfades) ui::Hint(!e.crossfade ? "Overlap another audio clip on the track to crossfade with it" : "Automatic crossfades are off for this project (playlist menu)");
-      if (ImGui::MenuItem("No fade", nullptr, e.len <= 0))
+      if (ImGui::MenuItem(i18n::tr("No fade"), nullptr, e.len <= 0))
         editEdge("remove fade", [](Clip& x, bool i) { (i ? x.fadeIn : x.fadeOut) = 0, (i ? x.fadeInManual : x.fadeOutManual) = true; }, false);
-      if (ImGui::MenuItem("Reset"))
+      if (ImGui::MenuItem(i18n::tr("Reset")))
         editEdge("reset fade", [](Clip& x, bool i) {
           if (i) x.fadeIn = 0, x.fadeInManual = false, x.fadeInShape = 0, x.fadeInTension = 0;
           else x.fadeOut = 0, x.fadeOutManual = false, x.fadeOutShape = 0, x.fadeOutTension = 0;
@@ -1908,10 +1931,10 @@ void drawPlaylist(App& a) {
         if (ImGui::MenuItem(label.c_str(), nullptr, (cur == 1 ? 1 : 0) == k))
           editEdge("fade curve shape", [k](Clip& x, bool i) { (i ? x.fadeInShape : x.fadeOutShape) = static_cast<uint8_t>(k); }, tied);
       }
-      if (ImGui::MenuItem("Plain curve (no bend)", nullptr, false, e.tension != 0.0f))
+      if (ImGui::MenuItem(i18n::tr("Plain curve (no bend)"), nullptr, false, e.tension != 0.0f))
         editEdge("plain fade curve", [](Clip& x, bool i) { (i ? x.fadeInTension : x.fadeOutTension) = 0; }, tied);
       ImGui::Separator();
-      if (ImGui::MenuItem("Automatic crossfades in this project", nullptr, s.autoCrossfades))
+      if (ImGui::MenuItem(i18n::tr("Automatic crossfades in this project"), nullptr, s.autoCrossfades))
         a.doc.editSong(s.autoCrossfades ? "automatic crossfades off" : "automatic crossfades on", [](Song& x) { x.autoCrossfades = !x.autoCrossfades; });
     }
     ImGui::EndPopup();
@@ -2073,6 +2096,8 @@ void drawPlaylist(App& a) {
           cg.base = a.doc.song().playlist;
           cg.moved = true;
         }
+      } else if (pltools::sourceValid(s, src) && !trackmodes::clipAllowed(s, pltools::makeClip(s, src, trackAt(m.y), 0).kind, trackAt(m.y))) {
+        a.notify("Instrument tracks take pattern clips only", true);  // PL-08
       } else if (pltools::sourceValid(s, src)) {
         const Tick at = std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
         const int tr = trackAt(m.y);
@@ -2146,7 +2171,14 @@ void drawPlaylist(App& a) {
         const int dtr = curTrack - cg.startTrack;
         if (dt == 0 && dtr == 0 && !cg.moved) break;
         cg.moved = true;
-        applyClips("move clips", pltools::moveClips(cg.base, st.selected, dt, dtr, nTracks, lockedTracks));
+        {
+          std::vector<Clip> moved = pltools::moveClips(cg.base, st.selected, dt, dtr, nTracks, lockedTracks);
+          bool allowed = true;  // PL-08: instrument tracks take pattern clips only
+          for (const auto& c : moved)
+            if (st.selected.count(c.id) && !trackmodes::clipAllowed(s, c.kind, c.track)) allowed = false;
+          if (allowed) applyClips("move clips", std::move(moved));
+          else a.setHint("Instrument tracks take pattern clips only");
+        }
         break;
       }
       case ClipGesture::Resize: {
@@ -2216,6 +2248,7 @@ void drawPlaylist(App& a) {
       case ClipGesture::Paint: {
         const pltools::Source ps{cg.paintKind, cg.paintId};
         if (!pltools::sourceValid(s, ps) || cg.paintLen <= 0 || trackLocked(curTrack)) break;
+        if (!trackmodes::clipAllowed(s, pltools::makeClip(s, ps, curTrack, 0).kind, curTrack)) break;  // PL-08
         std::vector<Tick> todo;
         for (Tick t : pltools::paintSlots(cg.paintAnchor, curTick, cg.paintLen))
           if (!pltools::occupied(s, curTrack, t, cg.paintLen)) todo.push_back(t);
@@ -2332,7 +2365,9 @@ void drawPlaylist(App& a) {
       const pltools::Source dsrc{static_cast<ClipKind>(ps.kind), ps.id};
       const int tr = trackAt(m.y);
       const Tick at = std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
-      if (pltools::sourceValid(s, dsrc) && !trackLocked(tr)) {
+      if (pltools::sourceValid(s, dsrc) && !trackLocked(tr) && !trackmodes::clipAllowed(s, pltools::makeClip(s, dsrc, tr, at).kind, tr)) {
+        a.notify("Instrument tracks take pattern clips only", true);  // PL-08
+      } else if (pltools::sourceValid(s, dsrc) && !trackLocked(tr)) {
         ObjectId id = kNoId;
         a.doc.editSong("add clip", [&](Song& x) {
           Clip c = pltools::makeClip(x, dsrc, tr, at);
@@ -2359,9 +2394,28 @@ void drawPlaylist(App& a) {
   // Add-tracks menu (header corner "+").
   if (ImGui::BeginPopup("##addtracks")) {
     const int n = nTracks;
-    if (ImGui::MenuItem("Add 1 track", nullptr, false, n < kMaxPlaylistTracks)) a.doc.setPlaylistTrackCount(n + 1);
-    if (ImGui::MenuItem("Add 8 tracks", nullptr, false, n + 8 <= kMaxPlaylistTracks)) a.doc.setPlaylistTrackCount(n + 8);
-    if (ImGui::MenuItem("Add 32 tracks", nullptr, false, n + 32 <= kMaxPlaylistTracks)) a.doc.setPlaylistTrackCount(n + 32);
+    if (ImGui::MenuItem(i18n::tr("Add 1 track"), nullptr, false, n < kMaxPlaylistTracks)) a.doc.setPlaylistTrackCount(n + 1);
+    if (ImGui::MenuItem(i18n::tr("Add 8 tracks"), nullptr, false, n + 8 <= kMaxPlaylistTracks)) a.doc.setPlaylistTrackCount(n + 8);
+    if (ImGui::MenuItem(i18n::tr("Add 32 tracks"), nullptr, false, n + 32 <= kMaxPlaylistTracks)) a.doc.setPlaylistTrackCount(n + 32);
+    // PL-08: a new audio track (on the next free mixer track) or instrument track, on the first free playlist track.
+    ImGui::SeparatorText(i18n::tr("Track with a mode"));
+    const int free = trackmodes::freeTrack(s);
+    if (ImGui::MenuItem(i18n::tr("New audio track"), nullptr, false, free >= 0)) {
+      std::string why;
+      if (!trackmodes::makeAudioTrack(a.doc, free, kNoId, &why)) a.notify(why, true);
+    }
+    if (ImGui::BeginMenu(i18n::tr("New instrument track"), free >= 0)) {
+      for (const auto& info : pluginCatalog()) {
+        if (info.kind != PluginKind::Generator) continue;
+        if (ImGui::MenuItem(info.name.c_str())) {
+          std::string why;
+          const ObjectId ch = trackmodes::newInstrumentTrack(a.doc, free, info.type, &why);
+          if (ch == kNoId) a.notify(why, true);
+          else a.selectChannel(ch);
+        }
+      }
+      ImGui::EndMenu();
+    }
     ImGui::EndPopup();
   }
   // Track popups.
@@ -2383,6 +2437,7 @@ void drawPlaylist(App& a) {
     playlistTrackMenu(a, renaming);
     ImGui::EndPopup();
   }
+  trackui::inputPopup(a, inputTrack);  // PL-08
   if (ImGui::BeginPopup("##clipmenu")) {
     arrangementClipMenu(a, menuClip);
     ImGui::EndPopup();
@@ -2394,18 +2449,18 @@ void drawPlaylist(App& a) {
 
   // ---------------- shortcuts ----------------
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput) {
-    if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && !st.selected.empty()) {
+    if (keys::pressed("playlist.delete") && !st.selected.empty()) {
       a.doc.beginGroup("delete clips");
       for (ObjectId id : std::set<ObjectId>(st.selected))
         if (const Clip* c = s.clip(id); c && !trackLocked(c->track)) a.doc.removeClip(id);
       a.doc.endGroup();
       st.selected.clear();
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A)) {
+    if (keys::pressed("playlist.selectAll")) {
       st.selected.clear();
       for (const auto& c : s.playlist) st.selected.insert(c.id);
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D)) st.selected.clear();
+    if (keys::pressed("playlist.deselect")) st.selected.clear();
     // Copies keep every clip setting (kind, source, offsets, audio settings).
     auto duplicate = [&](const std::vector<Clip>& src, const char* label) {
       if (src.empty()) return;
@@ -2425,52 +2480,51 @@ void drawPlaylist(App& a) {
       });
       st.selected = added;
     };
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !st.selected.empty()) {
+    if (keys::pressed("playlist.copy") && !st.selected.empty()) {
       st.clipboard.clear();
       for (const auto& c : s.playlist)
         if (st.selected.count(c.id)) st.clipboard.push_back(c);
       a.notify(std::to_string(st.clipboard.size()) + " clips copied");
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !st.clipboard.empty()) {
+    if (keys::pressed("playlist.paste") && !st.clipboard.empty()) {
       duplicate(st.clipboard, "paste clips");
       st.clipboard.clear();
       for (const auto& c : a.doc.song().playlist)
         if (st.selected.count(c.id)) st.clipboard.push_back(c);
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B) && !st.selected.empty()) {
+    if (keys::pressed("playlist.duplicate") && !st.selected.empty()) {
       std::vector<Clip> src;
       for (const auto& c : s.playlist)
         if (st.selected.count(c.id)) src.push_back(c);
       duplicate(src, "duplicate clips");
     }
-    if (!io.KeyCtrl && !io.KeyAlt && !a.typingKeyboard) {  // tool keys
-      struct K { ImGuiKey key; Tool tool; };
-      const K keys[] = {{ImGuiKey_P, Tool::Draw}, {ImGuiKey_B, Tool::Paint}, {ImGuiKey_D, Tool::Erase}, {ImGuiKey_T, Tool::Mute},
-                        {ImGuiKey_S, Tool::Slip},  {ImGuiKey_C, Tool::Slice}, {ImGuiKey_E, Tool::Select}, {ImGuiKey_Z, Tool::Zoom},
-                        {ImGuiKey_Y, Tool::Play}};
-      for (const auto& k : keys)
-        if (ImGui::IsKeyPressed(k.key, false)) st.tool = k.tool;
+    if (!a.typingKeyboard) {  // tool keys
+      struct K { const char* cmd; Tool tool; };
+      const K toolKeys[] = {{"playlist.toolDraw", Tool::Draw}, {"playlist.toolPaint", Tool::Paint}, {"playlist.toolDelete", Tool::Erase},
+                            {"playlist.toolMute", Tool::Mute}, {"playlist.toolSlip", Tool::Slip},   {"playlist.toolSlice", Tool::Slice},
+                            {"playlist.toolSelect", Tool::Select}, {"playlist.toolZoom", Tool::Zoom}, {"playlist.toolPlay", Tool::Play}};
+      for (const auto& k : toolKeys)
+        if (keys::pressed(k.cmd)) st.tool = k.tool;
     }
-    if (io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_T, false)) {  // marker at the song position
+    if (keys::pressed("playlist.marker")) {  // marker at the song position
       ops::addMarker(a.doc, static_cast<Tick>(a.engine.position()), ops::nextMarkerName(s));
     }
     // FL view toggles: Shift+M stretch on resize, Shift+F fade handles, Alt+P picker panel.
-    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_M, false)) {
+    if (keys::pressed("playlist.stretchResize")) {
       st.stretchResize = !st.stretchResize;
       a.notify(st.stretchResize ? "Resizing audio clips stretches them" : "Resizing audio clips trims them");
     }
-    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_F, false)) st.showFades = !st.showFades;
-    if (io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P, false)) st.pickerOpen = !st.pickerOpen;
-    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_T, false) && st.selEnd > st.selStart)
+    if (keys::pressed("playlist.fades")) st.showFades = !st.showFades;
+    if (keys::pressed("playlist.picker")) st.pickerOpen = !st.pickerOpen;
+    if (keys::pressed("playlist.loopMarkers") && st.selEnd > st.selStart)
       ops::placeLoopMarkers(a.doc, st.selStart, st.selEnd);  // Shift+T: place loop (FL)
-    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt) {  // quick zooms (Shift+1..3) and zoom on selection (Shift+4)
-      if (ImGui::IsKeyPressed(ImGuiKey_1, false)) st.quickZoom = 1;
-      if (ImGui::IsKeyPressed(ImGuiKey_2, false)) st.quickZoom = 2;
-      if (ImGui::IsKeyPressed(ImGuiKey_3, false)) st.quickZoom = 3;
-      if (ImGui::IsKeyPressed(ImGuiKey_4, false)) st.zoomSelRequest = true;
-    }
+    // Quick zooms (Shift+1..3) and zoom on selection (Shift+4).
+    if (keys::pressed("playlist.quickZoom1")) st.quickZoom = 1;
+    if (keys::pressed("playlist.quickZoom2")) st.quickZoom = 2;
+    if (keys::pressed("playlist.quickZoom3")) st.quickZoom = 3;
+    if (keys::pressed("playlist.zoomSelection")) st.zoomSelRequest = true;
     // M: mute / unmute the selected clips.
-    if (!io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_M) && !st.selected.empty()) {
+    if (keys::pressed("playlist.mute") && !st.selected.empty()) {
       auto sel = st.selected;
       a.doc.editClips("mute clips", [&](std::vector<Clip>& cs) {
         for (auto& c : cs)

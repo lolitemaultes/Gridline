@@ -1,4 +1,5 @@
 // Gridline — template windows (see TemplateUi.h).
+#include "../core/I18n.h"
 #include "TemplateUi.h"
 #include <algorithm>
 #include <cmath>
@@ -180,7 +181,7 @@ void newProjectWindow(App& a) {
     ui::BeginSection("PROJECT");
     row("Title");
     ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##title", "Untitled", N.title, sizeof N.title);
+    ImGui::InputTextWithHint("##title", i18n::tr("Untitled"), N.title, sizeof N.title);
     ui::FocusRing();
     row("Author");
     ImGui::SetNextItemWidth(-1);
@@ -220,7 +221,7 @@ void newProjectWindow(App& a) {
     const bool isDefault = a.settings.getString("general.defaultTemplate") == sel->key ||
                            (a.settings.getString("general.defaultTemplate").empty() && sel->key == std::string(kBuiltinCat) + "/Starter kit");
     bool def = isDefault;
-    if (ImGui::Checkbox("Use for File > New and at startup", &def) && def)
+    if (ImGui::Checkbox(i18n::tr("Use for File > New and at startup"), &def) && def)
       a.settings.set("general.defaultTemplate", sel->key == std::string(kBuiltinCat) + "/Starter kit" ? std::string() : sel->key);
     ui::Hint("The default template (Settings > General)");
     if (sel->user) {
@@ -286,7 +287,7 @@ void saveTemplateWindow(App& a) {
     return;
   }
   ui::KeepWindowInViewport();
-  ImGui::TextColored(theme::vec(P.textDim), "The whole project (channels, patterns, mixer, arrangement) becomes a template.");
+  ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("The whole project (channels, patterns, mixer, arrangement) becomes a template."));
   ui::BeginSection("TEMPLATE", 488);
   auto row = [&](const char* label) {
     ImGui::AlignTextToFramePadding();
@@ -314,7 +315,7 @@ void saveTemplateWindow(App& a) {
   ImGui::InputTextMultiline("##tdesc", T.desc, sizeof T.desc, ImVec2(340, 90));
   ui::FocusRing();
   ui::EndSection();
-  ImGui::TextColored(theme::vec(P.textFaint), "Saved in %s", a.templatesDir().c_str());
+  ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Saved in %s"), a.templatesDir().c_str());
   ui::DialogFooter(96 * 2 + theme::kS2);
   bool cancel = ui::TextButton("Cancel", false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape);
   ImGui::SameLine(0, theme::kS2);

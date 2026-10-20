@@ -121,6 +121,10 @@ function score:degree(base, degree)
   return p
 end
 
+)LUA";
+
+// Declarative parameter forms (shared by every script kind with a form()).
+const char* kFormPrelude = R"LUA(
 local Form = {}
 Form.__index = Form
 local function addp(f, p)
@@ -143,6 +147,10 @@ function _gl_newForm() return setmetatable({ _p = {} }, Form) end
 )LUA";
 
 bool finite(double v) { return std::isfinite(v); }
+
+}  // namespace
+
+const char* formPrelude() { return kFormPrelude; }
 
 // Reads the `_p` list of a form object at stack index idx.
 bool readForm(lua_State* L, int idx, Form& out, std::string* err) {
@@ -245,6 +253,7 @@ void pushNote(lua_State* L, const Note& n, bool selected) {
   flag("selected", selected);
 }
 
+namespace {
 // Integer field with range check; false + message for non-numbers.
 bool intField(lua_State* L, int t, const char* key, long long def, long long lo, long long hi, long long* out, std::string* err) {
   lua_getfield(L, t, key);
@@ -266,6 +275,8 @@ bool intField(lua_State* L, int t, const char* key, long long def, long long lo,
   *out = static_cast<long long>(std::clamp(r, static_cast<double>(lo), static_cast<double>(hi)));
   return true;
 }
+
+}  // namespace
 
 bool readNote(lua_State* L, int t, Note& n, bool& selected, std::string* err) {
   long long v = 0;
@@ -296,6 +307,8 @@ bool readNote(lua_State* L, int t, Note& n, bool& selected, std::string* err) {
   selected = fieldBool(L, t, "selected", false);
   return true;
 }
+
+namespace {
 
 void setInt(lua_State* L, int t, const char* k, lua_Integer v) {
   lua_pushinteger(L, v);
@@ -355,7 +368,9 @@ void pushContext(lua_State* L, const PianoRollContext& ctx) {
   lua_pop(L, 1);
 }
 
-void pushValues(lua_State* L, const Form& form, const std::vector<FormParam>& values) {
+}  // namespace
+
+void pushFormValues(lua_State* L, const Form& form, const std::vector<FormParam>& values) {
   lua_newtable(L);
   for (const FormParam& d : form.params) {
     const FormParam* p = &d;
@@ -372,7 +387,30 @@ void pushValues(lua_State* L, const Form& form, const std::vector<FormParam>& va
   }
 }
 
-}  // namespace
+bool buildForm(Vm& vm, Form& out, std::string* err) {
+  out = Form{};
+  if (!vm.hasFunction("form")) return true;
+  // Protected: the script may have replaced _gl_newForm or the form's
+  // fields (J-36: errors there aborted the process).
+  bool read = false;
+  std::string why;
+  if (!vm.protect(
+          [&](lua_State* L) {
+            lua_getglobal(L, "_gl_newForm");
+            lua_call(L, 0, 1);
+            lua_getglobal(L, "form");
+            lua_pushvalue(L, -2);
+            lua_call(L, 1, 0);
+            read = readForm(L, -1, out, &why);
+          },
+          err))
+    return false;
+  if (!read) {
+    if (err) *err = why;
+    return false;
+  }
+  return true;
+}
 
 int Form::find(const std::string& name) const {
   for (size_t i = 0; i < params.size(); ++i)
@@ -433,29 +471,9 @@ bool PianoRollScript::loadSource(const std::string& source, const std::string& n
   lim.instructions = 2'000'000;
   lim.seconds = 1.0;
   Vm vm(lim);
-  if (!vm.ok() || !vm.exec(kScorePrelude, "score", err)) return false;
+  if (!vm.ok() || !vm.exec(kScorePrelude, "score", err) || !vm.exec(kFormPrelude, "form", err)) return false;
   if (!vm.exec(source, name_, err)) return false;
-  if (vm.hasFunction("form")) {
-    // Protected: the script may have replaced _gl_newForm or the form's
-    // fields (J-36: errors there aborted the process).
-    bool read = false;
-    std::string why;
-    if (!vm.protect(
-            [&](lua_State* L) {
-              lua_getglobal(L, "_gl_newForm");
-              lua_call(L, 0, 1);
-              lua_getglobal(L, "form");
-              lua_pushvalue(L, -2);
-              lua_call(L, 1, 0);
-              read = readForm(L, -1, form_, &why);
-            },
-            err))
-      return false;
-    if (!read) {
-      if (err) *err = why;
-      return false;
-    }
-  }
+  if (!buildForm(vm, form_, err)) return false;
   if (form_.description.empty()) form_.description = header_.get("description");
   source_ = source;
   return true;
@@ -507,7 +525,7 @@ PianoRollResult PianoRollScript::run(const PianoRollContext& ctx, const std::vec
   }
   Vm vm(limits, fileRoot, false);
   lua_State* L = vm.L();
-  if (!vm.ok() || !vm.exec(kScorePrelude, "score", &r.error)) return r;
+  if (!vm.ok() || !vm.exec(kScorePrelude, "score", &r.error) || !vm.exec(kFormPrelude, "form", &r.error)) return r;
   pushContext(L, ctx);
   // Deterministic randomness per run.
   lua_getglobal(L, "math");
@@ -521,7 +539,7 @@ PianoRollResult PianoRollScript::run(const PianoRollContext& ctx, const std::vec
         [&](lua_State* S) {
           lua_getglobal(S, "apply");
           lua_getglobal(S, "score");
-          pushValues(S, form_, values);
+          pushFormValues(S, form_, values);
           lua_call(S, 2, 0);
         },
         &r.error);

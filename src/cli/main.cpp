@@ -42,7 +42,7 @@ void usage() {
       "  gridline render <project.json> -o <out.wav|.flac|.mp3|.ogg|.m4a|folder/> [--sr N] [--bits 16|24|32]\n"
       "        [--format wav,flac,mp3,ogg,m4a,mid] [--scope song|pattern:N|range:BAR-BAR] [--loops N]\n"
       "        [--tail cut|leave|wrap] [--dither none|tpdf|shaped] [--channels stereo|mono|left|right]\n"
-      "        [--normalize] [--stems] [--stems-master-fx] [--tracks] [--names PATTERN] [--midi] [--bitrate K]\n"
+      "        [--normalize] [--normalize-lufs L] [--ceiling DB] [--stems] [--stems-master-fx] [--tracks] [--names PATTERN] [--midi] [--bitrate K]\n"
       "        [--interp 0-7] [--oversample 1|2|4] [--no-master-fx] [--no-insert-fx] [--no-poly-limit]\n"
       "  gridline export-midi <project.json> -o <out.mid> [--pattern N]\n"
       "  gridline import-midi <file.mid> -o <out.json>   new project from a MIDI file\n"
@@ -526,6 +526,11 @@ int main(int argc, char** argv) {
       else if (arg("--oversample")) es.render.oversample = std::atoi(argv[++i]);
       else if (arg("--names")) es.partPattern = argv[++i];
       else if (!std::strcmp(argv[i], "--normalize")) es.normalize = true;
+      else if (arg("--normalize-lufs")) {  // RN-09: loudness target (LUFS), peak ceiling -1 dBFS unless --ceiling
+        es.normalize = es.normalizeLoudness = true;
+        es.normalizeLufs = std::atof(argv[++i]);
+        if (es.normalizeDb >= 0) es.normalizeDb = -1.0;
+      } else if (arg("--ceiling")) es.normalizeDb = std::min(0.0, std::atof(argv[++i]));
       else if (!std::strcmp(argv[i], "--stems")) es.splitMixer = true;
       else if (!std::strcmp(argv[i], "--stems-master-fx")) es.stemsMasterFx = true;
       else if (!std::strcmp(argv[i], "--tracks")) es.splitPlaylist = true;
@@ -578,8 +583,9 @@ int main(int argc, char** argv) {
     if (res.peak > 1.0f && !es.normalize)
       std::fprintf(stderr, "warning: peak %.3f exceeds 0 dBFS — integer formats clip (re-run with --normalize)\n", res.peak);
     for (const auto& f : res.files) std::printf("wrote %s\n", f.c_str());
-    std::printf("%lld frames, %.2f s at %d Hz, peak %.3f\n", static_cast<long long>(res.frames),
-                static_cast<double>(res.frames) / es.render.sampleRate, es.render.sampleRate, res.peak);
+    std::printf("%lld frames, %.2f s at %d Hz, peak %.3f, %.1f LUFS%s\n", static_cast<long long>(res.frames),
+                static_cast<double>(res.frames) / es.render.sampleRate, es.render.sampleRate, res.peak, res.lufs,
+                res.ceilingLimited ? " (held back by the peak ceiling)" : "");
     return res.errors.empty() && !res.files.empty() ? 0 : 1;
   }
 

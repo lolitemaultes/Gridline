@@ -8,6 +8,7 @@
 //               time · voice · wave scope).
 //   MIDI Out  → MIDI out panel (558 × 389: channel / patch / bank / port
 //               selectors, 3 × 3 controller wheels, bottom bar).
+#include "../core/I18n.h"
 #include "../engine/Dsp.h"
 #include "PluginEditorsFlSynth.h"
 
@@ -515,7 +516,7 @@ void editorMidiOutFl(App& a, const PluginTarget& t, float width) {
       std::string v = describeParam(a.doc.song(), t.pid(moKnob(k, MoKnobValue)))->format(val(st, moKnob(k, MoKnobValue)));
       skin::text(dl, F.p(x + 74, y + 30), skin::hex(0x797F83), v.c_str(), lf(F, 8));
       if (ImGui::BeginPopup("##knobcfg")) {
-        ImGui::TextDisabled("Controller %d", k + 1);
+        ImGui::TextDisabled(i18n::tr("Controller %d"), k + 1);
         pui::segmented(a, t, moKnob(k, MoKnobType), 260, types);
         pui::stepper(a, t, moKnob(k, MoKnobNumber), 110, "Number");
         pui::stepper(a, t, moKnob(k, MoKnobChannel), 110, "Channel (0 = plugin)");

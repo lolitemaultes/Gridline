@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include "../../core/I18n.h"
 #include "../../app/App.h"
 #include "../../app/InstrumentSkin.h"
 #include "../../app/PluginSkin.h"
@@ -191,26 +192,26 @@ void addFiles(App& a, const PluginTarget& t, const std::vector<std::string>& fil
 
 void zoneMenu(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, int i) {
   if (i < 0 || i >= static_cast<int>(m.zones.size())) return;
-  if (ImGui::MenuItem("Duplicate zone")) {
+  if (ImGui::MenuItem(i18n::tr("Duplicate zone"))) {
     Zone z = m.zones[static_cast<size_t>(i)];
     m.zones.insert(m.zones.begin() + i + 1, z);
     ed.sel = i + 1;
     commitMap(a, t, m, "duplicate zone");
   }
-  if (ImGui::MenuItem("Delete zone")) {
+  if (ImGui::MenuItem(i18n::tr("Delete zone"))) {
     m.zones.erase(m.zones.begin() + i);
     ed.sel = std::max(0, i - 1);
     commitMap(a, t, m, "delete zone");
   }
-  if (ImGui::MenuItem("Full keyboard")) {
+  if (ImGui::MenuItem(i18n::tr("Full keyboard"))) {
     m.zones[static_cast<size_t>(i)].lo = 0, m.zones[static_cast<size_t>(i)].hi = 127;
     commitMap(a, t, m, "zone full range");
   }
-  if (ImGui::MenuItem("Full velocity")) {
+  if (ImGui::MenuItem(i18n::tr("Full velocity"))) {
     m.zones[static_cast<size_t>(i)].vlo = 0, m.zones[static_cast<size_t>(i)].vhi = 127;
     commitMap(a, t, m, "zone full velocity");
   }
-  if (ImGui::MenuItem("Root from file name")) {
+  if (ImGui::MenuItem(i18n::tr("Root from file name"))) {
     int n = noteFromName(m.zones[static_cast<size_t>(i)].path);
     if (n >= 0) {
       m.zones[static_cast<size_t>(i)].root = n;
@@ -219,7 +220,7 @@ void zoneMenu(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, int i) {
       a.notify("No note name in this file name");
     }
   }
-  if (ImGui::MenuItem("Replace sample...")) {
+  if (ImGui::MenuItem(i18n::tr("Replace sample..."))) {
     PluginTarget tt = t;
     int zi = i;
     openDialog(a, "Replace sample", kAudioExts, [&a, tt, zi](const std::string& p) {
@@ -241,8 +242,8 @@ void msZoneList(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, ImVec2 size
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (m.zones.empty()) {
     ImGui::Dummy(ImVec2(0, 6));
-    ImGui::TextColored(theme::vec(P.textFaint), "  No zones. Drop samples here,");
-    ImGui::TextColored(theme::vec(P.textFaint), "  or use Add sample / SoundFont.");
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("  No zones. Drop samples here,"));
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("  or use Add sample / SoundFont."));
   }
   for (size_t i = 0; i < m.zones.size(); ++i) {
     const Zone& z = m.zones[i];
@@ -468,7 +469,7 @@ void msZoneMap(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, ImVec2 size)
 void msSampleTab(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, float width) {
   const auto& P = pal();
   if (ed.sel < 0 || ed.sel >= static_cast<int>(m.zones.size())) {
-    ImGui::TextColored(theme::vec(P.textFaint), "Select a zone to edit its sample, loop and tuning.");
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Select a zone to edit its sample, loop and tuning."));
     return;
   }
   Zone& z = m.zones[static_cast<size_t>(ed.sel)];
@@ -1042,13 +1043,13 @@ void scCurveEditor(App& a, const PluginTarget& t, ScratchData& d, ScEd& ed, ImVe
   if (ImGui::BeginPopup("##ptmenu")) {
     if (menuPt >= 0 && menuPt < static_cast<int>(mv.pts.size())) {
       static const char* names[] = {"Linear", "Smooth", "Ease in", "Ease out", "Hold"};
-      ImGui::TextDisabled("Segment shape");
+      ImGui::TextDisabled("%s", i18n::tr("Segment shape"));
       for (int c = 0; c <= CurveHold; ++c)
         if (ImGui::MenuItem(names[c], nullptr, mv.pts[static_cast<size_t>(menuPt)].curve == c)) {
           mv.pts[static_cast<size_t>(menuPt)].curve = c;
           commitScratch(a, t, d, "point shape");
         }
-      if (menuPt > 0 && menuPt + 1 < static_cast<int>(mv.pts.size()) && ImGui::MenuItem("Delete point")) {
+      if (menuPt > 0 && menuPt + 1 < static_cast<int>(mv.pts.size()) && ImGui::MenuItem(i18n::tr("Delete point"))) {
         mv.pts.erase(mv.pts.begin() + menuPt);
         commitScratch(a, t, d, "delete move point");
       }
@@ -1287,7 +1288,7 @@ void editorScratch(App& a, const PluginTarget& t, float width) {
     ImGui::PushFont(a.fontBold, 14.0f);
     ImGui::Text("%s  ·  %s", noteName((static_cast<int>(val(st, ScRoot, 60) + 0.5f) / 12) * 12 + ed.move).c_str(), factoryMoveName(ed.move));
     ImGui::PopFont();
-    ImGui::TextColored(theme::vec(P.textFaint), "%zu points · %d muted steps", mv.pts.size(), static_cast<int>(std::bitset<32>(mv.mutes).count()));
+    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%zu points · %d muted steps"), mv.pts.size(), static_cast<int>(std::bitset<32>(mv.mutes).count()));
     if (ui::TextButton("Reset", false, 0, "Restore this key's factory move")) {
       mv = factoryMove(ed.move);
       commitScratch(a, t, d, "reset move");

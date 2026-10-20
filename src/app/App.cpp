@@ -14,6 +14,7 @@
 #include <fstream>
 #include "../core/Demo.h"
 #include "../core/I18n.h"
+#include "../core/Keymap.h"
 #include "../core/Log.h"
 #include "ScriptUi.h"
 #include "../core/Project.h"
@@ -347,10 +348,11 @@ void App::applySettingsHooks() {
   logging::setMaxLevel(static_cast<logging::Level>(std::clamp(static_cast<int>(settings.getNumber("debug.logLevel")), 0, 3)));
   logging::setFile(settings.getBool("debug.logToFile") ? (fs::path(configDir()) / "gridline.log").string() : std::string());
   std::string err;
-  if (!i18n::setLanguage(settings.getString("general.language"), assetsDir.empty() ? std::string() : (fs::path(assetsDir) / "lang").string(),
-                         &err))
-    logging::warning("app", err);
+  if (!i18n::setLanguage(settings.getString("general.language"), languageDir(), &err)) logging::warning("app", err);
+  if (!keys::keymap().load(settings.getString("keys.bindings"), &err)) logging::warning("app", err);
 }
+
+std::string App::languageDir() const { return assetsDir.empty() ? std::string() : (fs::path(assetsDir) / "i18n").string(); }
 
 void App::applyStartup() {
   applySettingsHooks();

@@ -1,5 +1,6 @@
 // Gridline — "utility" pack: editors for the EQ / filter / routing plugins and
 // the dispatcher (visual editors live in utility_view_ui.cpp).
+#include "../../core/I18n.h"
 #include "../../engine/FlFilterRef.h"
 #include "../PacksUi.h"
 #include <algorithm>
@@ -151,22 +152,22 @@ void editorCurveEq(App& a, const PluginTarget& t, float width) {
     auto pt = [&](int b) -> float& { return ns.params[static_cast<size_t>(cePoint(ui.snap, b))]; };
     bool apply = false;
     const char* label = "edit curve";
-    ImGui::TextDisabled("Snapshot %s", snapNames[ui.snap]);
-    if (ImGui::MenuItem("Flat")) {
+    ImGui::TextDisabled(i18n::tr("Snapshot %s"), snapNames[ui.snap]);
+    if (ImGui::MenuItem(i18n::tr("Flat"))) {
       for (int b = 0; b < kCeBands; ++b) pt(b) = 0;
       apply = true, label = "flatten curve";
     }
-    if (ImGui::MenuItem("Invert")) {
+    if (ImGui::MenuItem(i18n::tr("Invert"))) {
       for (int b = 0; b < kCeBands; ++b) pt(b) = -pt(b);
       apply = true, label = "invert curve";
     }
-    if (ImGui::MenuItem("Smooth")) {
+    if (ImGui::MenuItem(i18n::tr("Smooth"))) {
       float tmp[kCeBands];
       for (int b = 0; b < kCeBands; ++b) tmp[b] = 0.25f * pt(std::max(0, b - 1)) + 0.5f * pt(b) + 0.25f * pt(std::min(kCeBands - 1, b + 1));
       for (int b = 0; b < kCeBands; ++b) pt(b) = tmp[b];
       apply = true, label = "smooth curve";
     }
-    if (ImGui::MenuItem("Random (gentle)")) {
+    if (ImGui::MenuItem(i18n::tr("Random (gentle)"))) {
       std::mt19937 rng(static_cast<uint32_t>(ImGui::GetFrameCount()) * 2654435761u);
       std::uniform_real_distribution<float> d(-1.f, 1.f);
       float v = 0;
@@ -186,7 +187,7 @@ void editorCurveEq(App& a, const PluginTarget& t, float width) {
         apply = true, label = "copy snapshot";
       }
     }
-    if (ImGui::MenuItem("Copy to all snapshots")) {
+    if (ImGui::MenuItem(i18n::tr("Copy to all snapshots"))) {
       for (int k = 0; k < kCeSnaps; ++k)
         for (int b = 0; b < kCeBands; ++b) ns.params[static_cast<size_t>(cePoint(k, b))] = st.params[static_cast<size_t>(cePoint(ui.snap, b))];
       apply = true, label = "copy to all snapshots";

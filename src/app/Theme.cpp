@@ -75,9 +75,51 @@ ImU32 contrastText(ImU32 bg) {
   return lum > 0.55f ? hex(0x000000) : hex(0xFFFFFF);
 }
 
-void apply(bool dark) {
-  gDark = dark;
-  Palette& p = gPal;
+namespace {
+Tweaks gTweaks;
+
+// Moves a colour toward white (amount > 0) or black (< 0), alpha kept.
+ImU32 lighten(ImU32 c, float amount) {
+  if (amount == 0.0f) return c;
+  const ImU32 target = (c & IM_COL32_A_MASK) | (amount > 0 ? (hex(0xFFFFFF) & ~IM_COL32_A_MASK) : 0u);
+  return mix(c, target, std::min(1.0f, std::fabs(amount)));
+}
+
+void applyTweaks(Palette& p, const Tweaks& t) {
+  const float b = std::clamp(t.brightness, -1.0f, 1.0f) * 0.22f;  // at most ~1/5 of the way to white / black
+  for (ImU32* c : {&p.surface950, &p.surface900, &p.surface800, &p.surface700, &p.surface600, &p.line, &p.lineStrong, &p.well,
+                   &p.field, &p.gridBar, &p.gridBeat, &p.gridStep, &p.stepOff, &p.stepOffAlt, &p.chrome})
+    *c = lighten(*c, b);
+  // Contrast: text and lines move away from (or toward) the panel colour.
+  const float k = std::clamp(t.contrast, -1.0f, 1.0f);
+  if (k != 0.0f) {
+    const ImU32 strong = p.dark ? p.paper : p.ink, panel = p.surface900;
+    auto push = [&](ImU32& c, float amt) { c = k > 0 ? mix(c, strong, k * amt) : mix(c, panel, -k * amt); };
+    push(p.text, 0.7f);
+    push(p.textDim, 0.55f);
+    push(p.textFaint, 0.45f);
+    push(p.lineStrong, 0.35f);
+    // Hairlines go darker on dark slate (lighter on the light variant) for more contrast.
+    const ImU32 deep = p.dark ? p.ink : p.paper;
+    p.line = k > 0 ? mix(p.line, deep, k * 0.35f) : mix(p.line, panel, -k * 0.5f);
+  }
+  if (t.accent != Tweaks::kKeep) p.accent = hex(t.accent & 0xFFFFFF);
+  if (t.hot != Tweaks::kKeep) p.hot = hex(t.hot & 0xFFFFFF);
+  if (t.led != Tweaks::kKeep) p.led = hex(t.led & 0xFFFFFF), p.meterLow = p.led;
+  if (t.playhead != Tweaks::kKeep) p.playhead = hex(t.playhead & 0xFFFFFF);
+  p.chrome = p.surface950;
+}
+}  // namespace
+
+const Tweaks& tweaks() { return gTweaks; }
+
+void setTweaks(const Tweaks& t) {
+  gTweaks = t;
+  apply(gDark);
+}
+
+Palette makePalette(bool dark, const Tweaks& t) {
+  Palette p{};
   p.dark = dark;
   p.paper = hex(0xFFFFFF);
   p.ink = hex(0x000000);
@@ -149,6 +191,14 @@ void apply(bool dark) {
   p.meterLow = dark ? hex(0x86D64A) : hex(0x4CA81C);
   p.meterMid = dark ? hex(0xF2D04A) : hex(0xD9A800);
   p.meterHigh = p.danger;
+  applyTweaks(p, t);
+  return p;
+}
+
+void apply(bool dark) {
+  gDark = dark;
+  gPal = makePalette(dark, gTweaks);
+  const Palette& p = gPal;
 
   ImGuiStyle& s = ImGui::GetStyle();
   s.WindowPadding = ImVec2(kS2, kS2);

@@ -156,4 +156,81 @@ class MidiClockFollower {
   std::vector<Cmd> cmds_;
 };
 
+// ---------------------------------------------------------------- receiving (MI-02)
+
+// Where the transport takes its time from.
+enum class SyncSource : uint8_t { Internal = 0, Clock, Mtc, Count };
+const char* syncSourceName(SyncSource s);
+// MTC rate code (0 = 24, 1 = 25, 2 = 29.97 drop, 3 = 30 fps) → SyncOut rate.
+SyncOut mtcRateFromCode(int code);
+// Inverse of mtcTimecode: the frame number a timecode label stands for.
+int64_t mtcFrameOf(SyncOut rate, const Timecode& t);
+
+// Decodes incoming MIDI time code: quarter frames (F1 0nnndddd, eight per two
+// frames) and full-frame messages (F0 7F <device> 01 01 hh mm ss ff F7).
+// Times are seconds on any monotonic clock. Not thread-safe (feed and read
+// under the caller's lock).
+class MtcReceiver {
+ public:
+  void reset();
+  // One complete MIDI message received at `t`. Returns true when it was MTC.
+  bool message(const uint8_t* m, size_t n, double t);
+  // Quarter frames arrive in order (at least one full timecode assembled) and
+  // the latest is less than `timeout` seconds old.
+  bool locked(double now, double timeout = 0.25) const;
+  bool hasPosition() const { return hasPos_; }
+  // Timecode position in seconds at `now`: extrapolated from the latest
+  // quarter frame while locked (at most a few frames ahead), else the last
+  // position received.
+  double seconds(double now) const;
+  SyncOut rate() const { return rate_; }
+  Timecode timecode() const { return tc_; }  // last complete label (quarter frames or full frame)
+  // A full-frame message located the position since the last call.
+  bool takeLocate(double& seconds);
+  int64_t quarterFrames() const { return qfCount_; }
+  int dropouts() const { return dropouts_; }  // quarter frames out of sequence
+
+ private:
+  uint8_t nib_[8] = {};
+  int expect_ = -1;     // next expected piece (-1 = waiting for piece 0)
+  int seqRun_ = 0;      // quarter frames in sequence
+  bool hasPos_ = false, assembled_ = false;
+  double anchorSec_ = 0, anchorTime_ = -1e9;  // position at the latest quarter frame
+  double lastQf_ = -1e9;
+  SyncOut rate_ = SyncOut::Mtc30;
+  Timecode tc_;
+  bool locate_ = false;
+  double locateSec_ = 0;
+  int64_t qfCount_ = 0;
+  int dropouts_ = 0;
+};
+
+// Chases an external master position with the local transport: starts and
+// stops with the master, locates on full-frame / song-position jumps, and
+// relocates when the local position drifts further than the tolerance from
+// the master's (positions in any unit, e.g. seconds for MTC, ticks for clock).
+class SyncChase {
+ public:
+  struct Action {
+    enum Kind { None, Start, Stop, Locate } kind = None;
+    double position = 0;  // Start / Locate: where the local transport goes
+  };
+  double offset = 0;        // local = master + offset
+  double tolerance = 0.05;  // drift beyond this relocates
+  int confirm = 3;          // updates in a row beyond the tolerance before a relocation
+  double settle = 0.2;      // seconds after a start / relocation during which drift is ignored
+  // One update (UI thread, every frame). `masterRunning`: the master's
+  // transport rolls (MTC locked / clock running); `masterPos` its position.
+  Action update(double now, bool masterRunning, double masterPos, bool localPlaying, double localPos);
+  double drift() const { return drift_; }  // smoothed local − (master + offset)
+  int relocations() const { return relocations_; }
+  bool chasing() const { return chasing_; }  // following a running master
+  void reset();
+
+ private:
+  bool chasing_ = false;
+  double drift_ = 0, settleUntil_ = -1e9;
+  int over_ = 0, relocations_ = 0;
+};
+
 }  // namespace gl

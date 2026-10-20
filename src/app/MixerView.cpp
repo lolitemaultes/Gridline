@@ -9,6 +9,8 @@
 #include <functional>
 #include <map>
 #include <set>
+#include "../core/I18n.h"
+#include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
 #include "App.h"
 #include "AudioRecordUi.h"
@@ -122,7 +124,7 @@ bool stripToggle(const char* id, const char* label, bool on, ImU32 onCol, ImVec2
 
 // Effect picker list (categories as small labels).
 void effectList(App& a, ObjectId track, int slot, const std::string& current) {
-  if (ImGui::Selectable("(empty)", current.empty())) a.doc.setSlotPlugin(track, slot, "");
+  if (ImGui::Selectable(i18n::tr("(empty)"), current.empty())) a.doc.setSlotPlugin(track, slot, "");
   std::string cat;
   for (const auto& p : pluginCatalog()) {
     if (p.kind != PluginKind::Effect) continue;
@@ -632,7 +634,7 @@ void drawRoutingOverview(App& a) {
     return;
   }
   ui::KeepWindowInViewport();
-  ImGui::TextColored(theme::vec(P.textDim), "Click a track to select it. Only tracks with routes or channels are shown.");
+  ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Click a track to select it. Only tracks with routes or channels are shown."));
   mixops::RouteLayout L = mixops::routeLayout(s);
   // Tracks worth showing: master, tracks with channels, effects or routes other than the default.
   std::vector<bool> shown(s.mixer.size(), false);
@@ -788,80 +790,80 @@ void mixerSendMenu(App& a, ObjectId from, ObjectId to) {
   auto go = [&](mixops::RouteMode m) {
     if (!mixops::route(a.doc, {from}, {to}, m, &err)) a.notify(err.empty() ? "Already routed that way" : err, !err.empty());
   };
-  if (ImGui::MenuItem("Route to this track", nullptr, sd && !sd->sidechain)) go(mixops::RouteMode::Send);
-  if (ImGui::MenuItem("Route to this track only")) go(mixops::RouteMode::Only);
-  if (ImGui::MenuItem("Sidechain to this track", nullptr, sd && sd->sidechain)) go(mixops::RouteMode::Sidechain);
-  if (ImGui::MenuItem("Sidechain to this track only")) go(mixops::RouteMode::SidechainOnly);
+  if (ImGui::MenuItem(i18n::tr("Route to this track"), nullptr, sd && !sd->sidechain)) go(mixops::RouteMode::Send);
+  if (ImGui::MenuItem(i18n::tr("Route to this track only"))) go(mixops::RouteMode::Only);
+  if (ImGui::MenuItem(i18n::tr("Sidechain to this track"), nullptr, sd && sd->sidechain)) go(mixops::RouteMode::Sidechain);
+  if (ImGui::MenuItem(i18n::tr("Sidechain to this track only"))) go(mixops::RouteMode::SidechainOnly);
   ImGui::Separator();
-  if (ImGui::MenuItem("Pre-fader send", nullptr, sd && sd->preFader, sd != nullptr)) mixops::setSendPreFader(a.doc, from, to, !sd->preFader);
-  if (ImGui::MenuItem("Remove route", nullptr, false, sd != nullptr)) a.doc.setSend(from, to, 0.0f);
+  if (ImGui::MenuItem(i18n::tr("Pre-fader send"), nullptr, sd && sd->preFader, sd != nullptr)) mixops::setSendPreFader(a.doc, from, to, !sd->preFader);
+  if (ImGui::MenuItem(i18n::tr("Remove route"), nullptr, false, sd != nullptr)) a.doc.setSend(from, to, 0.0f);
 }
 
 void mixerOptionsMenu(App& a) {
   MixerViewState& v = a.mixerView;
-  if (ImGui::BeginMenu("Disk recording")) {
-    if (ImGui::MenuItem("Render armed tracks to wave files...", "Alt+R", false, !armedTracks(a.doc.song()).empty()))
+  if (ImGui::BeginMenu(i18n::tr("Disk recording"))) {
+    if (ImGui::MenuItem(i18n::tr("Render armed tracks to wave files..."), keys::label("mixer.renderArmed"), false, !armedTracks(a.doc.song()).empty()))
       renderMixerStems(a, armedTracks(a.doc.song()));
-    if (ImGui::MenuItem("Render selected tracks to wave files...", "Alt+Shift+R")) renderMixerStems(a, mixerSelection(a));
+    if (ImGui::MenuItem(i18n::tr("Render selected tracks to wave files..."), keys::label("mixer.renderSelected"))) renderMixerStems(a, mixerSelection(a));
     ImGui::Separator();
-    if (ImGui::MenuItem("Arm selected tracks"))
+    if (ImGui::MenuItem(i18n::tr("Arm selected tracks")))
       for (ObjectId id : mixerSelection(a))
         if (const MixerTrack* t = a.doc.song().mixerTrack(id); t && !t->armed) toggleArm(a, id);
-    if (ImGui::MenuItem("Disarm all tracks", nullptr, false, !armedTracks(a.doc.song()).empty()))
+    if (ImGui::MenuItem(i18n::tr("Disarm all tracks"), nullptr, false, !armedTracks(a.doc.song()).empty()))
       for (ObjectId id : armedTracks(a.doc.song())) toggleArm(a, id);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Plugin delay compensation")) {
+  if (ImGui::BeginMenu(i18n::tr("Plugin delay compensation"))) {
     bool pdc = a.builder.pdc();
-    if (ImGui::MenuItem("Automatic", nullptr, pdc)) {
+    if (ImGui::MenuItem(i18n::tr("Automatic"), nullptr, pdc)) {
       a.builder.setPdc(!pdc);
       a.syncEngine();
     }
-    if (ImGui::MenuItem("Reset manual latency on all tracks")) {
+    if (ImGui::MenuItem(i18n::tr("Reset manual latency on all tracks"))) {
       int n = mixops::resetManualLatency(a.doc);
       a.notify(n ? "Reset manual latency on " + std::to_string(n) + " track(s)" : std::string("No track has a manual latency"));
     }
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("View")) {
-    ImGui::MenuItem("Waveforms", "Alt+W", &v.waveforms);
-    ImGui::MenuItem("Routing overview", nullptr, &v.showRouting);
-    ImGui::MenuItem("Effect slots on strips (extended)", nullptr, &v.extended);
+  if (ImGui::BeginMenu(i18n::tr("View"))) {
+    ImGui::MenuItem(i18n::tr("Waveforms"), keys::label("mixer.waveforms"), &v.waveforms);
+    ImGui::MenuItem(i18n::tr("Routing overview"), nullptr, &v.showRouting);
+    ImGui::MenuItem(i18n::tr("Effect slots on strips (extended)"), nullptr, &v.extended);
     ImGui::Separator();
-    static const char* layouts[] = {"Compact strips", "Normal strips", "Wide strips"};
+    static const char* layouts[] = {i18n::N_("Compact strips"), i18n::N_("Normal strips"), i18n::N_("Wide strips")};
     for (int k = 0; k < 3; ++k)
-      if (ImGui::MenuItem(layouts[k], nullptr, v.layout == k)) a.settings.set("ui.mixerLayout", k);
-    if (ImGui::BeginMenu("Rows of tracks")) {
+      if (ImGui::MenuItem(i18n::tr(layouts[k]), nullptr, v.layout == k)) a.settings.set("ui.mixerLayout", k);
+    if (ImGui::BeginMenu(i18n::tr("Rows of tracks"))) {
       for (int r = 1; r <= 4; ++r)
-        if (ImGui::MenuItem((std::to_string(r) + (r == 1 ? " row" : " rows")).c_str(), nullptr, v.rows == r)) v.rows = r;
+        if (ImGui::MenuItem((std::to_string(r) + " " + (r == 1 ? i18n::tr("row") : i18n::tr("rows"))).c_str(), nullptr, v.rows == r)) v.rows = r;
       ImGui::EndMenu();
     }
     ImGui::Separator();
-    static const char* meters[] = {"Peak meters", "RMS meters", "Peak + RMS meters"};
+    static const char* meters[] = {i18n::N_("Peak meters"), i18n::N_("RMS meters"), i18n::N_("Peak + RMS meters")};
     for (int k = 0; k < 3; ++k)
-      if (ImGui::MenuItem(meters[k], nullptr, v.meterMode == k)) v.meterMode = k;
-    ImGui::MenuItem("Peak hold", nullptr, &v.peakHold);
-    ImGui::MenuItem("Master meter scale", nullptr, &v.masterScale);
+      if (ImGui::MenuItem(i18n::tr(meters[k]), nullptr, v.meterMode == k)) v.meterMode = k;
+    ImGui::MenuItem(i18n::tr("Peak hold"), nullptr, &v.peakHold);
+    ImGui::MenuItem(i18n::tr("Master meter scale"), nullptr, &v.masterScale);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Add tracks")) {
-    if (ImGui::MenuItem("Add one")) {
+  if (ImGui::BeginMenu(i18n::tr("Add tracks"))) {
+    if (ImGui::MenuItem(i18n::tr("Add one"))) {
       ObjectId id = a.doc.addMixerTrack();
       if (id) a.selMixer = id;
     }
-    if (ImGui::MenuItem("Add multiple..."))
+    if (ImGui::MenuItem(i18n::tr("Add multiple...")))
       menus::openPrompt("Add mixer tracks (how many?)", "4", [&a](const std::string& n) {
         int k = std::atoi(n.c_str());
         if (k > 0) mixops::insertTracks(a.doc, static_cast<int>(a.doc.song().mixer.size()), k);
       });
-    if (ImGui::MenuItem("Increase number of tracks to..."))
+    if (ImGui::MenuItem(i18n::tr("Increase number of tracks to...")))
       menus::openPrompt("Number of insert tracks", std::to_string(a.doc.song().mixer.size() + 7), [&a](const std::string& n) {
         int added = mixops::growTo(a.doc, std::atoi(n.c_str()));
         a.notify(added ? "Added " + std::to_string(added) + " track(s)" : std::string("The mixer already has that many tracks"));
       });
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Trim unused tracks")) {
+  if (ImGui::MenuItem(i18n::tr("Trim unused tracks"))) {
     int n = ops::trimUnusedMixerTracks(a.doc);
     a.notify(n ? "Removed " + std::to_string(n) + " unused track(s)" : std::string("No unused tracks at the end"));
   }
@@ -962,7 +964,7 @@ static void stripEqPanel(App& a, const MixerTrack& t, float iw) {
     char buf[48];
     std::snprintf(buf, sizeof buf, "%s gain: %+.1f dB", bandNames[b], static_cast<double>(g));
     if (hov || act) a.setHint(std::string(buf) + "   (drag \xC2\xB7 Shift fine \xC2\xB7 double-click reset)");
-    if (act) ImGui::SetTooltip("%+.1f dB", static_cast<double>(g));
+    if (act) ImGui::SetTooltip(i18n::tr("%+.1f dB"), static_cast<double>(g));
     ImGui::PopID();
   }
   // Frequency and bandwidth wheels under the sliders; values under the band view.
@@ -1020,7 +1022,7 @@ static void mixerToolbar(App& a) {
   // stay in the mixer menu) instead of clipping it at the edge.
   auto room = [] { return ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetCursorScreenPos().x - ImGui::GetStyle().WindowPadding.x; };
   if (!column) {
-    static const char* layouts[] = {"Compact", "Normal", "Wide"};
+    static const char* layouts[] = {i18n::N_("Compact"), i18n::N_("Normal"), i18n::N_("Wide")};
     static const char* layoutHints[] = {"Compact strips", "Normal strips", "Wide strips"};
     if (ui::Segmented("##layout", layouts, 3, &v.layout, 0, 0, layoutHints)) a.settings.set("ui.mixerLayout", v.layout);
     ui::Hint("Strip width: compact, wide or extra large");
@@ -1036,11 +1038,14 @@ static void mixerToolbar(App& a) {
   if (ui::TextButton("Slots", v.extended, 0, "Show every effect slot (name and mix) on the strips")) v.extended = !v.extended;
   ImGui::SameLine(0, 4);
   if (ui::ToggleIcon("wave", ui::Icon::Wave, v.waveforms, ImGui::GetFrameHeight(), "Waveforms on the strips (Alt+W)")) v.waveforms = !v.waveforms;
-  static const char* meters[] = {"Peak", "RMS", "Both"};
+  static const char* meters[] = {i18n::N_("Peak"), i18n::N_("RMS"), i18n::N_("Both")};
   const ImGuiStyle& sty = ImGui::GetStyle();
   float meterSegW = 0;
-  for (const char* m : meters) meterSegW += ImGui::CalcTextSize(m).x + sty.FramePadding.x * 2 + 2;
-  const float holdW = ImGui::CalcTextSize("Hold").x + sty.FramePadding.x * 2 + 2, routeW = ImGui::CalcTextSize("Routing").x + sty.FramePadding.x * 2 + 18;
+  float meterMax = 0;  // Segmented makes every segment as wide as the widest (translated) label
+  for (const char* m : meters) meterMax = std::max(meterMax, ImGui::CalcTextSize(i18n::tr(m)).x + sty.FramePadding.x * 2);
+  meterSegW = meterMax * 3 + 4;
+  const float holdW = ImGui::CalcTextSize(i18n::tr("Hold")).x + sty.FramePadding.x * 2 + 2,
+              routeW = ImGui::CalcTextSize(i18n::tr("Routing")).x + sty.FramePadding.x * 2 + 18;
   ImGui::SameLine(0, 6);
   // J-46: decided once from the room at the first optional group (the routing
   // check used to run after "Hold" had ended the line, where the cursor is
@@ -1091,10 +1096,9 @@ void drawMixer(App& a) {
   const MixerTrack* sel = s.mixerTrack(a.selMixer);
   // Mixer shortcuts while the window has focus.
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
-    const ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_R, false))
-      renderMixerStems(a, io.KeyShift ? mixerSelection(a) : armedTracks(s));
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_W, false)) v.waveforms = !v.waveforms;
+    if (keys::pressed("mixer.renderArmed")) renderMixerStems(a, armedTracks(s));
+    if (keys::pressed("mixer.renderSelected")) renderMixerStems(a, mixerSelection(a));
+    if (keys::pressed("mixer.waveforms")) v.waveforms = !v.waveforms;
   }
   mixerToolbar(a);
   const float W = ImGui::GetContentRegionAvail().x, Hm = ImGui::GetContentRegionAvail().y;
@@ -1421,9 +1425,9 @@ void drawMixer(App& a) {
           if (ui::IconButton("x", ui::Icon::Close, false, 20, "Remove send")) a.doc.setSend(sel->id, sd.to, 0.0f);
           ImGui::PopID();
         }
-        if (sel->sends.empty()) ImGui::TextColored(theme::vec(P.danger), "Not routed: this track is silent");
+        if (sel->sends.empty()) ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("Not routed: this track is silent"));
         ImGui::PushTextWrapPos(0);
-        ImGui::TextColored(theme::vec(P.textFaint), "Use the arrows under the strips to add sends (right-click an arrow for route-only, sidechain and pre-fader).");
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Use the arrows under the strips to add sends (right-click an arrow for route-only, sidechain and pre-fader)."));
         ImGui::PopTextWrapPos();
         if (!a.selChannels.empty()) {
           ImGui::Dummy(ImVec2(0, theme::kS1));
@@ -1451,7 +1455,7 @@ void drawMixer(App& a) {
       // Manual track latency.
       {
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(theme::vec(P.textDim), "Latency");
+        ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Latency"));
         ImGui::SameLine(92);
         int lat = sel->latencyOffset;
         ImGui::SetNextItemWidth(std::max(60.0f, iw - 92 - 80));
@@ -1480,24 +1484,24 @@ void mixerLatencyMenu(App& a, ObjectId id) {
   const MixerTrack* t = a.doc.song().mixerTrack(id);
   if (!t) return;
   const double sr = a.engine.sampleRate();
-  if (ImGui::MenuItem("Reset", nullptr, false, t->latencyOffset != 0)) mixops::setLatencyOffset(a.doc, id, 0);
-  if (ImGui::MenuItem("Set in ms...")) {
+  if (ImGui::MenuItem(i18n::tr("Reset"), nullptr, false, t->latencyOffset != 0)) mixops::setLatencyOffset(a.doc, id, 0);
+  if (ImGui::MenuItem(i18n::tr("Set in ms..."))) {
     char b[32];
     std::snprintf(b, sizeof b, "%.2f", 1000.0 * t->latencyOffset / sr);
     menus::openPrompt("Track latency (ms)", b, [&a, id, sr](const std::string& v) {
       mixops::setLatencyOffset(a.doc, id, mixops::latencyFromMs(std::atof(v.c_str()), sr));
     });
   }
-  if (ImGui::MenuItem("Set in samples..."))
+  if (ImGui::MenuItem(i18n::tr("Set in samples...")))
     menus::openPrompt("Track latency (samples)", std::to_string(t->latencyOffset),
                       [&a, id](const std::string& v) { mixops::setLatencyOffset(a.doc, id, std::atoi(v.c_str())); });
-  if (ImGui::MenuItem("Set in beats...")) {
+  if (ImGui::MenuItem(i18n::tr("Set in beats..."))) {
     menus::openPrompt("Track latency (beats)", "0.25", [&a, id, sr](const std::string& v) {
       mixops::setLatencyOffset(a.doc, id, mixops::latencyFromBeats(std::atof(v.c_str()), a.doc.song().tempo, sr));
     });
   }
   ImGui::Separator();
-  if (ImGui::MenuItem("Reset manual latency on all tracks")) mixops::resetManualLatency(a.doc);
+  if (ImGui::MenuItem(i18n::tr("Reset manual latency on all tracks"))) mixops::resetManualLatency(a.doc);
 }
 
 void drawEffectEditor(App& a) {

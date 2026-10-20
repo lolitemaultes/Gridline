@@ -87,8 +87,30 @@ ImU32 popupBg(const Palette& p);
 // Temporarily replaces the palette (plugin editor skins); pops restore it. Nestable.
 void pushPalette(const Palette& p);
 void popPalette();
-void apply(bool dark);  // sets ImGui style + palette
+void apply(bool dark);  // sets ImGui style + palette (with the current tweaks)
 bool isDark();
+
+// J-55: user adjustments on top of the dark / light palette (Settings > Theme).
+// Colour overrides are 0xRRGGBB, kKeep = the theme's own role colour.
+struct Tweaks {
+  static constexpr uint32_t kKeep = 0xFFFFFFFFu;
+  uint32_t accent = kKeep;    // selection, focus, value arcs
+  uint32_t hot = kKeep;       // lit glyphs, active toggles, tab marks
+  uint32_t led = kKeep;       // LEDs (mute / select lamps, effect enable)
+  uint32_t playhead = kKeep;  // song position line
+  float contrast = 0.0f;      // -1 .. 1: text and lines against the panels
+  float brightness = 0.0f;    // -1 .. 1: panels and fields lighter / darker
+  bool operator==(const Tweaks& o) const {
+    return accent == o.accent && hot == o.hot && led == o.led && playhead == o.playhead && contrast == o.contrast &&
+           brightness == o.brightness;
+  }
+  bool operator!=(const Tweaks& o) const { return !(*this == o); }
+};
+// Stores the tweaks and re-applies the current theme with them.
+void setTweaks(const Tweaks& t);
+const Tweaks& tweaks();
+// The dark / light base palette with `t` applied (no global state touched).
+Palette makePalette(bool dark, const Tweaks& t);
 
 ImU32 withAlpha(ImU32 c, float a);
 ImU32 mix(ImU32 a, ImU32 b, float t);

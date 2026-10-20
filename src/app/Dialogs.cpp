@@ -10,6 +10,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "ScriptUi.h"
+#include "Keys.h"
 #include "J31Ui.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Backup.h"
@@ -50,7 +52,7 @@ void centerNext(ImVec2 size, ImVec2 minSize = ImVec2(0, 0)) { ui::PlaceNextDialo
 
 // Label column for settings-style forms: dim caption, control starts at `x`.
 // J-54: a label longer than the column is fitted (ellipsis, full text on hover).
-void formLabel(const char* label, float x = 168.0f) { ui::FormLabelFit(label, x, pal().textDim); }
+void formLabel(const char* label, float x = 168.0f) { ui::FormLabelFit(i18n::tr(label), x, pal().textDim); }
 
 // Right-aligns the next `width` pixels of buttons on the current line.
 void alignRight(float width) {
@@ -60,9 +62,9 @@ void alignRight(float width) {
 
 void dialogTitle(App& a, const char* title, const char* subtitle = nullptr) {
   ImGui::PushFont(a.fontBold, theme::kFontTitle);
-  ImGui::TextUnformatted(title);
+  ImGui::TextUnformatted(i18n::tr(title));
   ImGui::PopFont();
-  if (subtitle) ImGui::TextColored(theme::vec(pal().textDim), "%s", subtitle);
+  if (subtitle) ImGui::TextColored(theme::vec(pal().textDim), "%s", i18n::tr(subtitle));
   ImGui::Dummy(ImVec2(0, theme::kS1));
 }
 
@@ -158,7 +160,7 @@ void fileDialog(App& a) {
     static char nameBuf[512];
     std::snprintf(nameBuf, sizeof nameBuf, "%s", fd.name.c_str());
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::InputTextWithHint("##name", "File name", nameBuf, sizeof nameBuf)) fd.name = nameBuf;
+    if (ImGui::InputTextWithHint("##name", i18n::tr("File name"), nameBuf, sizeof nameBuf)) fd.name = nameBuf;
     ui::FocusRing();
   } else {
     ImGui::AlignTextToFramePadding();
@@ -222,7 +224,7 @@ void fileDialog(App& a) {
 
 void settingsWindow(App& a) {
   if (!a.showSettings) return;
-  centerNext(ImVec2(780, 500), ImVec2(660, 360));
+  centerNext(ImVec2(860, 560), ImVec2(660, 360));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   bool vis = ImGui::Begin("Settings", &a.showSettings, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
@@ -241,11 +243,13 @@ void settingsWindow(App& a) {
     a.settingsTab = -1;
   }
   // J-24 appended General, Files and Debug (tab indices 0..4 stay as they were).
-  const char* pagesEn[] = {"Audio", "MIDI", "Project", "Backup", "Interface", "General", "Files", "Debug"};
-  const char* blurbs[] = {"Output and input devices, sample rate, buffer and recording", "Controllers, keyboards and MIDI out",
-                          "Defaults for new projects", "Automatic backups, autosave and restoring a backup", "Theme, size and hints",
-                          "Startup, default template and language", "Folders and scripting", "Log and script console"};
-  constexpr int kPages = 8;
+  // J-55 appended Shortcuts and Theme.
+  const char* pagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme")};
+  const char* blurbs[] = {i18n::N_("Output and input devices, sample rate, buffer and recording"), i18n::N_("Controllers, keyboards and MIDI out"),
+                          i18n::N_("Defaults for new projects"), i18n::N_("Automatic backups, autosave and restoring a backup"), i18n::N_("Theme, size and hints"),
+                          i18n::N_("Startup, default template and language"), i18n::N_("Folders and scripting"), i18n::N_("Log and script console"),
+                          i18n::N_("Every keyboard shortcut: search, change, reset"), i18n::N_("Dark, light or the system's choice, accent colour and contrast")};
+  constexpr int kPages = 10;
   const char* pages[kPages];
   for (int i = 0; i < kPages; ++i) pages[i] = i18n::tr(pagesEn[i]);
   page = std::clamp(page, 0, kPages - 1);
@@ -259,7 +263,7 @@ void settingsWindow(App& a) {
       ui::BeginSection("INPUT / OUTPUT");
       formLabel("Output device");
       if (ui::BeginCombo("##dev", a.audioDevice.empty() ? "System default" : a.audioDevice.c_str(), fieldW)) {
-        if (ImGui::Selectable("System default", a.audioDevice.empty())) a.audioDevice.clear(), a.audioReopen = true;
+        if (ImGui::Selectable(i18n::tr("System default"), a.audioDevice.empty())) a.audioDevice.clear(), a.audioReopen = true;
         for (const auto& d : a.audioDevices)
           if (ImGui::Selectable(d.c_str(), d == a.audioDevice)) a.audioDevice = d, a.audioReopen = true;
         ImGui::EndCombo();
@@ -311,7 +315,7 @@ void settingsWindow(App& a) {
       formLabel("Delay compensation");
       {
         bool pdc = st.getBool("audio.pdc");
-        if (ImGui::Checkbox("Plugin delay compensation##pdc", &pdc)) {
+        if (ImGui::Checkbox(i18n::tr("Plugin delay compensation##pdc"), &pdc)) {
           st.set("audio.pdc", pdc);
           a.syncEngine();
         }
@@ -319,7 +323,7 @@ void settingsWindow(App& a) {
         const int ol = a.engine.outputLatency();
         if (ol > 0) {
           ImGui::SameLine(0, theme::kS2);
-          ImGui::TextColored(theme::vec(P.textDim), "%d samples (%.1f ms)", ol, 1000.0 * ol / std::max(1, a.audioSampleRate));
+          ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%d samples (%.1f ms)"), ol, 1000.0 * ol / std::max(1, a.audioSampleRate));
         }
       }
       ui::EndSection();
@@ -356,7 +360,7 @@ void settingsWindow(App& a) {
         }
         formLabel("FL data folder");
         ImGui::SetNextItemWidth(fieldW);
-        if (ImGui::InputTextWithHint("##fldata", "Detect automatically", flData, sizeof flData)) st.set("import.flData", std::string(flData));
+        if (ImGui::InputTextWithHint("##fldata", i18n::tr("Detect automatically"), flData, sizeof flData)) st.set("import.flData", std::string(flData));
         ui::FocusRing();
         ui::Hint("Folder that %FLStudioFactoryData% points to (holds the samples FL projects use). Empty = detect.");
         std::string used = flData[0] ? std::string(flData) : flp::defaultFactoryData();
@@ -398,13 +402,13 @@ void settingsWindow(App& a) {
       ui::EndSection();
     }
     if (page == 3) {
-      static const char* freq[] = {"Never (remind every 10 minutes)", "Rarely (every 15 minutes)", "Occasionally (every 10 minutes)",
-                                   "Regularly (every 5 minutes)", "Frequently (5 minutes + before risky edits)",
-                                   "Very frequently (every minute + before risky edits)"};
+      static const char* freq[] = {i18n::N_("Never (remind every 10 minutes)"), i18n::N_("Rarely (every 15 minutes)"), i18n::N_("Occasionally (every 10 minutes)"),
+                                   i18n::N_("Regularly (every 5 minutes)"), i18n::N_("Frequently (5 minutes + before risky edits)"),
+                                   i18n::N_("Very frequently (every minute + before risky edits)")};
       int f = std::clamp(static_cast<int>(st.getNumber("backup.frequency")), 0, 5);
       ui::BeginSection("HOW OFTEN");
       for (int i = 0; i < 6; ++i)
-        if (ImGui::RadioButton(freq[i], f == i)) {
+        if (ImGui::RadioButton(i18n::tr(freq[i]), f == i)) {
           st.set("backup.frequency", i);
           BackupPolicy p = a.backups->policy();
           p.frequency = static_cast<BackupFrequency>(i);
@@ -423,28 +427,22 @@ void settingsWindow(App& a) {
         a.backups = std::make_unique<BackupManager>(p);
       }
       bool inProject = st.getString("backup.location") == "project";
-      if (ImGui::Checkbox("Save backups next to the project once it has been saved", &inProject)) {
+      if (ImGui::Checkbox(i18n::tr("Save backups next to the project once it has been saved"), &inProject)) {
         st.set("backup.location", inProject ? "project" : "global");
         BackupPolicy p = a.backups->policy();
         p.inProjectFolder = inProject;
         a.backups = std::make_unique<BackupManager>(p);
       }
       ImGui::PushTextWrapPos(0);
-      ImGui::TextColored(theme::vec(P.textFaint), "Global backup folder: %s", a.backups->policy().globalFolder.c_str());
+      ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Global backup folder: %s"), a.backups->policy().globalFolder.c_str());
       ImGui::PopTextWrapPos();
       ui::EndSection();
       backupRestorePanel(a, fieldW);  // J-24
     }
     if (page == 4) {
       ui::BeginSection("APPEARANCE");
-      bool dark = theme::isDark();
       formLabel("Theme");
-      int th = dark ? 0 : 1;
-      const char* themes[] = {"Dark", "Light"};
-      if (ui::Segmented("theme", themes, 2, &th, 72)) {
-        theme::apply(th == 0);
-        st.set("ui.darkTheme", th == 0);
-      }
+      if (ui::TextButton("Theme settings...", false, 0, "Dark, light or follow the system, accent colour, contrast")) page = 9;
       formLabel("Interface scale");
       float scale = static_cast<float>(st.getNumber("ui.scale"));
       ImGui::SetNextItemWidth(fieldW);
@@ -452,14 +450,14 @@ void settingsWindow(App& a) {
       ui::Hint("Scales the whole interface; applied as you drag");
       bool hints = st.getBool("ui.showHints");
       formLabel("Status bar");
-      if (ImGui::Checkbox("Show hints for the control under the mouse", &hints)) st.set("ui.showHints", hints);
+      if (ImGui::Checkbox(i18n::tr("Show hints for the control under the mouse"), &hints)) st.set("ui.showHints", hints);
       hintSettingsPanel(a, fieldW);  // J-24
       ui::EndSection();
       // J-48: interface sounds.
       ui::BeginSection("INTERFACE SOUNDS");
       bool snd = st.getBool("sounds.enabled");
       formLabel("Interface sounds");
-      if (ImGui::Checkbox("Play short sounds for startup, saving, exports, imports and errors", &snd)) st.set("sounds.enabled", snd);
+      if (ImGui::Checkbox(i18n::tr("Play short sounds for startup, saving, exports, imports and errors"), &snd)) st.set("sounds.enabled", snd);
       ui::Hint("Quiet while the song plays or records, except errors. Never recorded or exported.");
       ImGui::BeginDisabled(!snd);
       formLabel("Volume");
@@ -489,12 +487,14 @@ void settingsWindow(App& a) {
       ImGui::EndDisabled();
       if (a.uiSoundsDisabled) {
         ImGui::PushTextWrapPos(0);
-        ImGui::TextColored(theme::vec(P.textFaint), "Interface sounds are turned off for this session (--no-ui-sounds or GRIDLINE_NO_UI_SOUNDS).");
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Interface sounds are turned off for this session (--no-ui-sounds or GRIDLINE_NO_UI_SOUNDS)."));
         ImGui::PopTextWrapPos();
       }
       ui::EndSection();
     }
     if (page == 5) generalSettingsPage(a, fieldW);
+    if (page == 8) shortcutSettingsPage(a, fieldW);
+    if (page == 9) themeSettingsPage(a, fieldW);
     if (page == 6) fileSettingsPage(a, fieldW);
     if (page == 7) debugSettingsPage(a, fieldW);
   }
@@ -548,7 +548,7 @@ void infoWindow(App& a) {
       const long long m = static_cast<long long>(s.info.workTime / 60);
       formLabel("Time spent", 120);
       ImGui::AlignTextToFramePadding();
-      ImGui::Text("%lld h %02lld min", m / 60, m % 60);
+      ImGui::Text(i18n::tr("%lld h %02lld min"), m / 60, m % 60);
     }
   }
   ui::EndSection();
@@ -611,7 +611,7 @@ void infoWindow(App& a) {
   size_t notes = 0;
   for (const auto& p : s.patterns)
     for (const auto& [c, ns] : p.notes) notes += ns.size();
-  ImGui::TextDisabled("%zu channels · %zu patterns · %zu clips · %zu notes · %zu mixer tracks", s.channels.size(),
+  ImGui::TextDisabled(i18n::tr("%zu channels · %zu patterns · %zu clips · %zu notes · %zu mixer tracks"), s.channels.size(),
                       s.patterns.size(), s.playlist.size(), notes, s.mixer.size());
   ImGui::End();
 }
@@ -634,7 +634,7 @@ void historyWindow(App& a) {
   }
   const UndoStack& h = a.doc.history();
   auto labels = h.labels();
-  if (ImGui::Selectable("Start of history", h.position() == 0)) a.doc.jumpTo(0);
+  if (ImGui::Selectable(i18n::tr("Start of history"), h.position() == 0)) a.doc.jumpTo(0);
   for (size_t i = 0; i < labels.size(); ++i) {
     bool applied = i < h.position();
     ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(applied ? pal().text : pal().textFaint));
@@ -705,45 +705,7 @@ void shortcutsWindow(App& a) {
     ImGui::End();
     return;
   }
-  const char* rows[][2] = {
-      {"General", ""}, {"Space", "Play / pause"}, {"L", "Switch pattern / song mode"}, {"Ctrl+N / O / S", "New / open / save project"},
-      {"Ctrl+Shift+S", "Save as"}, {"Ctrl+R", "Export audio"}, {"Ctrl+Z / Ctrl+Y", "Undo / redo"}, {"Alt+Z", "Undo history"},
-      {"F4", "New pattern"}, {"F5 F6 F7 F9", "Playlist, channel rack, piano roll, mixer"}, {"Alt+F8", "Browser"}, {"F8", "Plugin picker"},
-      {"F10", "Settings"}, {"F11", "Project info"}, {"Ctrl+T", "Typing keyboard to piano"}, {"Ctrl+M", "Metronome"},
-      {"Numpad + / -", "Next / previous pattern"},
-      {"Channel rack", ""}, {"Ctrl+K", "Graph editor (step velocities)"},
-      {"Piano roll", ""}, {"P B D E C", "Draw, paint, delete, select, slice tools"}, {"Ctrl+A / Ctrl+D", "Select all / none"},
-      {"Ctrl+C / X / V", "Copy / cut / paste"}, {"Del", "Delete selection"}, {"Up / Down (+Shift)", "Transpose (octave)"},
-      {"Left / Right", "Move by the snap grid"}, {"Ctrl+Q", "Quantize"}, {"Ctrl+wheel / Alt+wheel", "Zoom / row height"},
-      {"Alt+drag", "Bypass snap"}, {"Right-click", "Delete note"},
-      {"Playlist", ""}, {"Ctrl+B", "Duplicate selected clips"}, {"Ctrl+C / V", "Copy / paste clips"},
-      {"Double-click clip", "Edit its pattern"},
-      {"Typing keyboard", ""}, {"Z S X D C V G B H N J M", "Lower octave (C..B)"}, {"Q 2 W 3 E R 5 T 6 Y 7 U", "Upper octave"},
-      {"Knobs", ""}, {"Drag / Shift+drag", "Change / fine"}, {"Double-click", "Reset"}, {"Right-click", "Type a value"}};
-  const auto& P = pal();
-  const float keyCol = std::min(168.0f, ImGui::GetContentRegionAvail().x * 0.4f);
-  bool first = true;
-  for (auto& r : rows) {
-    if (r[1][0] == 0) {
-      if (!first) ImGui::Dummy(ImVec2(0, theme::kS2));
-      first = false;
-      std::string up = r[0];
-      for (auto& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-      ui::Label(up.c_str());
-      continue;
-    }
-    ImVec2 q = ImGui::GetCursorScreenPos();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const char* keys = theme::fitText(r[0], keyCol - 16);
-    ImVec2 ts = a.fontMono->CalcTextSizeA(theme::kFontNumber, 1e9f, 0, keys);
-    dl->AddRectFilled(q, ImVec2(q.x + ts.x + 12, q.y + 20), P.surface800, theme::kRadiusSm);
-    dl->AddRect(q, ImVec2(q.x + ts.x + 12, q.y + 20), P.line, theme::kRadiusSm);
-    dl->AddText(a.fontMono, theme::kFontNumber, ImVec2(q.x + 6, q.y + 3), P.text, keys);
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(q.x + keyCol, q.y + 3), ImGui::GetContentRegionAvail().x - keyCol,
-                        P.textDim, r[1]);
-    ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, 22));
-  }
-  menuShortcutTable(a);
+  shortcutReference(a);  // J-55: generated from the keymap (always the current bindings)
   ImGui::End();
 }
 
@@ -826,10 +788,10 @@ void importReportWindow(App& a) {
     }
     if (const auto miss = missingFiles(a.doc.song()); !miss.empty()) {  // J-20: link to the files that did not come across
       ui::BeginSection("MISSING FILES");
-      ImGui::TextColored(theme::vec(P.danger), "%zu sample(s) / file(s) could not be found", miss.size());
+      ImGui::TextColored(theme::vec(P.danger), i18n::tr("%zu sample(s) / file(s) could not be found"), miss.size());
       for (size_t k = 0; k < miss.size() && k < 6; ++k)
         ImGui::TextColored(theme::vec(P.textDim), "\xC2\xB7 %s", theme::fitText(miss[k].c_str(), ImGui::GetContentRegionAvail().x - 12));
-      if (miss.size() > 6) ImGui::TextColored(theme::vec(P.textFaint), "and %zu more", miss.size() - 6);
+      if (miss.size() > 6) ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("and %zu more"), miss.size() - 6);
       if (ui::TextButton("Locate missing samples...", false, 190)) exportui::openMissingSamples(a);
       ui::EndSection();
     }
@@ -873,6 +835,7 @@ void drawDialogs(App& a) {
   drawPluginManager(a);
   drawRemoteDialog(a);
   j31::drawWindows(a);  // J-31: chord progression editor, audio logger, MIDI scale snap
+  drawProjectScriptWindow(a);  // J-57: project script settings / run
   fileDialog(a);
 }
 
@@ -880,22 +843,22 @@ void handleGlobalShortcuts(App& a) {
   if (menuShortcuts(a)) return;
   ImGuiIO& io = ImGui::GetIO();
   if (io.WantTextInput) return;
-  const bool ctrl = io.KeyCtrl || io.KeySuper;
-  auto key = [](ImGuiKey k) { return ImGui::IsKeyPressed(k, false); };
-  if (key(ImGuiKey_Space) && !ctrl) a.engine.playing() ? a.engine.stop() : a.startPlayback();
-  if (ctrl && key(ImGuiKey_Z) && !io.KeyShift) a.doc.undo();
-  if (ctrl && (key(ImGuiKey_Y) || (key(ImGuiKey_Z) && io.KeyShift))) a.doc.redo();
-  if (io.KeyAlt && key(ImGuiKey_Z)) a.showHistory = !a.showHistory;
-  if (ctrl && key(ImGuiKey_S)) io.KeyShift ? a.saveAs() : a.save();
-  if (ctrl && key(ImGuiKey_O)) a.openDialog();
-  if (ctrl && key(ImGuiKey_N)) a.guardUnsaved([&a]() { a.newProject(); });
-  if (ctrl && key(ImGuiKey_R)) a.showExport = true;
-  if (ctrl && key(ImGuiKey_T)) a.typingKeyboard = !a.typingKeyboard;
-  if (ctrl && key(ImGuiKey_M)) a.metronome = !a.metronome;
-  if (!ctrl && !a.typingKeyboard && key(ImGuiKey_L))
+  using keys::pressed;
+  if (pressed("transport.play")) a.engine.playing() ? a.engine.stop() : a.startPlayback();
+  if (pressed("edit.undo")) a.doc.undo();
+  if (pressed("edit.redo")) a.doc.redo();
+  if (pressed("edit.history")) a.showHistory = !a.showHistory;
+  if (pressed("file.save")) a.save();
+  if (pressed("file.saveAs")) a.saveAs();
+  if (pressed("file.open")) a.openDialog();
+  if (pressed("file.new")) a.guardUnsaved([&a]() { a.newProject(); });
+  if (pressed("file.render")) a.showExport = true;
+  if (pressed("options.typingKeyboard")) a.typingKeyboard = !a.typingKeyboard;
+  if (pressed("options.metronome")) a.metronome = !a.metronome;
+  if (!a.typingKeyboard && pressed("transport.songMode"))
     a.engine.setMode(a.engine.mode() == PlayMode::Song ? PlayMode::Pattern : PlayMode::Song);
-  if (key(ImGuiKey_F1)) a.showShortcuts = !a.showShortcuts;
-  if (key(ImGuiKey_F4)) {
+  if (pressed("help.shortcuts")) a.showShortcuts = !a.showShortcuts;
+  if (pressed("pattern.new")) {
     ObjectId id = a.doc.addPattern("Pattern " + std::to_string(a.doc.song().patterns.size() + 1));
     if (id) a.selectPattern(id);
   }
@@ -903,17 +866,16 @@ void handleGlobalShortcuts(App& a) {
     f = !f;
     if (f) a.focusWindow = name;
   };
-  if (key(ImGuiKey_F5)) toggle(a.showPlaylist, "Playlist");
-  if (key(ImGuiKey_F6)) toggle(a.showRack, "Channel rack");
-  if (key(ImGuiKey_F7)) toggle(a.showPiano, "Piano roll");
-  if (key(ImGuiKey_F8) && io.KeyAlt) toggle(a.showBrowser, "Browser");
-  if (key(ImGuiKey_F9)) toggle(a.showMixer, "Mixer");
-  if (key(ImGuiKey_F10)) a.showSettings = !a.showSettings;
-  if (key(ImGuiKey_F11)) a.showInfo = !a.showInfo;
+  if (pressed("view.playlist")) toggle(a.showPlaylist, "Playlist");
+  if (pressed("view.channelRack")) toggle(a.showRack, "Channel rack");
+  if (pressed("view.pianoRoll")) toggle(a.showPiano, "Piano roll");
+  if (pressed("view.browser")) toggle(a.showBrowser, "Browser");
+  if (pressed("view.mixer")) toggle(a.showMixer, "Mixer");
+  if (pressed("file.projectInfo")) a.showInfo = !a.showInfo;
   const auto& pats = a.doc.song().patterns;
   int pi = a.doc.song().patternIndex(a.curPattern);
-  if (key(ImGuiKey_KeypadAdd) && pi + 1 < static_cast<int>(pats.size())) a.selectPattern(pats[static_cast<size_t>(pi + 1)].id);
-  if (key(ImGuiKey_KeypadSubtract) && pi > 0) a.selectPattern(pats[static_cast<size_t>(pi - 1)].id);
+  if (pressed("pattern.next") && pi + 1 < static_cast<int>(pats.size())) a.selectPattern(pats[static_cast<size_t>(pi + 1)].id);
+  if (pressed("pattern.previous") && pi > 0) a.selectPattern(pats[static_cast<size_t>(pi - 1)].id);
 }
 
 }  // namespace gl

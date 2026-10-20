@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include "../core/I18n.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../engine/MEnv.h"
 #include "Theme.h"
@@ -191,18 +192,18 @@ int edit(const char* id, ImVec2 p0, ImVec2 p1, menv::Env<N>& e, State& st, const
       if (i >= 0 && i < e.n) {
         const char* const* names = o.modeNames ? o.modeNames : defaultModeNames();
         if (i > 0) {
-          ImGui::TextDisabled("Segment shape");
+          ImGui::TextDisabled("%s", i18n::tr("Segment shape"));
           for (int k = 0; k < o.modeCount; ++k)
             if (ImGui::MenuItem(names[k], nullptr, e.mode[i] == k)) {
               e.mode[i] = static_cast<uint8_t>(k);
               res |= Changed | Released;
             }
-          if (ImGui::MenuItem("Reset tension")) e.t[i] = 0, res |= Changed | Released;
+          if (ImGui::MenuItem(i18n::tr("Reset tension"))) e.t[i] = 0, res |= Changed | Released;
           ImGui::Separator();
         }
         if (o.extraMenu && o.extraMenu(i)) res |= Changed | Released;
         bool canDel = i > 0 && e.n > 2 && !(o.lockEnds && i == e.n - 1);
-        if (ImGui::MenuItem("Delete point", nullptr, false, canDel)) {
+        if (ImGui::MenuItem(i18n::tr("Delete point"), nullptr, false, canDel)) {
           e.erase(i);
           res |= Changed | Released;
         }

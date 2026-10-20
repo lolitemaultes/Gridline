@@ -1,4 +1,5 @@
 // Gridline — scripting in the app (see ScriptUi.h).
+#include "../core/I18n.h"
 #include "ScriptUi.h"
 #include <algorithm>
 #include <chrono>
@@ -7,8 +8,10 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <set>
 #include "../../third_party/imgui/imgui.h"
 #include "../core/ControllerScript.h"
+#include "../core/ProjectScript.h"
 #include "../core/Log.h"
 #include "../core/MenuOps.h"
 #include "App.h"
@@ -375,6 +378,79 @@ std::string scriptIdOf(const std::string& controllerType) {
 
 }  // namespace
 
+// ============================================================== project ====
+// SC-02: project scripts run against the whole project; a run is one undo
+// step. Selection and transport come from the app.
+
+class AppProjectHost final : public script::ProjectHost {
+ public:
+  explicit AppProjectHost(App& a) : ProjectHost(a.doc), a_(a) { allowTransport = a.settings.getBool("scripts.allowTransport"); }
+  bool playing() const override { return a_.engine.playing(); }
+  bool recording() const override { return a_.recordArmed; }
+  bool songMode() const override { return a_.engine.mode() == PlayMode::Song; }
+  Tick position() const override { return static_cast<Tick>(a_.engine.position()); }
+  void play(bool on) override {
+    if (on != a_.engine.playing()) a_.runAction(RemoteAction::PlayPause);
+  }
+  void setPosition(Tick t) override { a_.engine.setPosition(t); }
+  std::vector<ObjectId> selectedChannels() const override {
+    std::vector<ObjectId> v(a_.selChannels.begin(), a_.selChannels.end());
+    if (v.empty() && a_.selChannel != kNoId) v.push_back(a_.selChannel);
+    return v;
+  }
+  void selectChannels(const std::vector<ObjectId>& ids) override {
+    a_.selChannels = std::set<ObjectId>(ids.begin(), ids.end());
+    if (!ids.empty()) a_.selChannel = ids.front();
+  }
+  std::vector<ObjectId> selectedClips() const override { return {a_.playlist.selected.begin(), a_.playlist.selected.end()}; }
+  void selectClips(const std::vector<ObjectId>& ids) override { a_.playlist.selected = std::set<ObjectId>(ids.begin(), ids.end()); }
+  ObjectId currentPattern() const override { return a_.curPattern; }
+  void setCurrentPattern(ObjectId id) override { a_.selectPattern(id); }
+  ObjectId selectedMixer() const override { return a_.selMixer; }
+  void selectMixer(ObjectId id) override { a_.selMixer = id; }
+  std::pair<Tick, Tick> timeSelection() const override { return {a_.playlist.selStart, a_.playlist.selEnd}; }
+  void setTimeSelection(Tick start, Tick end) override {
+    a_.playlist.selStart = start;
+    a_.playlist.selEnd = end;
+  }
+
+ private:
+  App& a_;
+};
+
+struct ProjectWindow {
+  bool open = false, focus = false;
+  script::ProjectScript script;
+  std::string id;
+  std::vector<script::FormParam> values;
+  uint32_t seed = 1;
+  std::string status;
+  bool statusError = false;
+  std::vector<std::string> log;
+  double runMs = 0;
+};
+ProjectWindow PW;
+std::vector<script::ScriptInfo> projList;
+bool projScanned = false;
+
+void runProjectScript(App& a) {
+  AppProjectHost host(a);
+  const std::string root = PW.script.path().empty() ? std::string() : fs::path(PW.script.path()).parent_path().string();
+  const double t0 = wallNow();
+  script::ProjectRunResult r = PW.script.run(host, PW.values, appLimits(a), root, PW.seed);
+  PW.runMs = (wallNow() - t0) * 1000.0;
+  PW.log = r.log;
+  for (const auto& l : r.log) logging::info("script", PW.script.name() + ": " + l);
+  if (!r.ok) {
+    PW.status = r.error + " (nothing was changed)";
+    PW.statusError = true;
+    logging::error("script", PW.script.name() + ": " + r.error);
+    return;
+  }
+  PW.statusError = false;
+  PW.status = r.changed ? "Done: one undo step (" + a.doc.history().undoLabel() + ")" : "Done: nothing changed";
+}
+
 // ================================================================= public ====
 
 const std::vector<script::ScriptInfo>& pianoRollScripts(App& a, bool rescan) {
@@ -402,15 +478,15 @@ void scriptsMenuItems(App& a) {
     if (ImGui::MenuItem(l.c_str(), nullptr, false, ok)) openPianoRollScript(a, s.path);
     if (!s.description.empty()) ui::Hint(s.description);
   }
-  if (list.empty()) ImGui::TextDisabled("No scripts found");
+  if (list.empty()) ImGui::TextDisabled("%s", i18n::tr("No scripts found"));
   ImGui::Separator();
-  if (ImGui::MenuItem("Rescan scripts")) pianoRollScripts(a, true);
-  if (ImGui::MenuItem("Open your scripts folder")) {
+  if (ImGui::MenuItem(i18n::tr("Rescan scripts"))) pianoRollScripts(a, true);
+  if (ImGui::MenuItem(i18n::tr("Open your scripts folder"))) {
     std::error_code ec;
     fs::create_directories(userScriptsDir(a, "pianoroll"), ec);
     a.notify("Your piano roll scripts (*.lua): " + userScriptsDir(a, "pianoroll"));
   }
-  if (!a.settings.getBool("scripts.enabled")) ImGui::TextDisabled("Scripts are switched off (Settings \xE2\x86\x92 Files)");
+  if (!a.settings.getBool("scripts.enabled")) ImGui::TextDisabled("%s", i18n::tr("Scripts are switched off (Settings \xE2\x86\x92 Files)"));
 }
 
 const std::string& lastPianoRollScript() { return lastScriptPath; }
@@ -498,14 +574,14 @@ void drawScriptTool(App& a) {
   const bool held = ImGui::IsItemActive();  // a knob drag / text edit in the form
   if (formChanged) S.sched.changed(wallNow(), held);
   if (S.sched.dragging() && !held) S.sched.released();
-  if (S.script.form().params.empty()) ImGui::TextColored(theme::vec(P.textFaint), "This script has no settings.");
+  if (S.script.form().params.empty()) ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("This script has no settings."));
   ImGui::Dummy(ImVec2(0, 4));
   if (!S.error.empty()) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 440);
     ImGui::TextColored(theme::vec(P.danger), "%s", S.error.c_str());
     ImGui::PopTextWrapPos();
   } else if (S.sched.tooSlow()) {
-    ImGui::TextColored(theme::vec(P.textFaint), "Preview too slow \xE2\x80\x94 showing the last result");
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Preview too slow \xE2\x80\x94 showing the last result"));
     ui::Hint("The live preview has a small time budget; the script runs in full when you release the control or accept");
   } else if (!S.last.log.empty()) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 440);
@@ -528,7 +604,7 @@ void drawScriptTool(App& a) {
   bool cancel = ui::TextButton("Cancel", false, 90, "Close and restore the notes (Esc)");
   ImGui::SameLine();
   ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(P.textFaint), "%.1f ms", S.runMs);
+  ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%.1f ms"), S.runMs);
   ui::Hint("Time the last run took");
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) accept = true;
@@ -637,6 +713,7 @@ std::string controllerScriptStatus(const std::string& device) {
 void drawScriptConsole(App& a, float height) {
   static std::unique_ptr<script::Vm> vm;
   static std::unique_ptr<AppHost> host;
+  static std::unique_ptr<AppProjectHost> projHost;
   static std::vector<std::pair<bool, std::string>> lines;  // (is input, text)
   static char input[1024] = "";
   if (!vm) {
@@ -647,7 +724,9 @@ void drawScriptConsole(App& a, float height) {
     fs::create_directories(root, ec);
     vm = std::make_unique<script::Vm>(l, root, true);
     script::openControllerApi(*vm, *host);
-    lines.push_back({false, "Lua 5.4 console \xC2\xB7 transport, mixer, channels, plugin, device, ui, files"});
+    projHost = std::make_unique<AppProjectHost>(a);
+    script::openProjectApi(*vm, *projHost);
+    lines.push_back({false, "Lua 5.4 console \xC2\xB7 transport, mixer, channels, plugin, device, ui, files, project"});
   }
   const auto& P = pal();
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface950));
@@ -660,7 +739,7 @@ void drawScriptConsole(App& a, float height) {
   ImGui::EndChild();
   ImGui::PopStyleColor();
   ImGui::SetNextItemWidth(-90);
-  bool run = ImGui::InputTextWithHint("##cin", "mixer.count()   transport.tempo()   channels.name(1)", input, sizeof input,
+  bool run = ImGui::InputTextWithHint("##cin", i18n::tr("mixer.count()   transport.tempo()   channels.name(1)"), input, sizeof input,
                                       ImGuiInputTextFlags_EnterReturnsTrue);
   ui::FocusRing();
   ImGui::SameLine();
@@ -668,7 +747,16 @@ void drawScriptConsole(App& a, float height) {
   if (run && input[0]) {
     std::string code = input, err;
     lines.push_back({true, code});
-    for (auto& l : script::runConsole(*vm, code, &err)) lines.push_back({false, l});
+    // One console line = one undo step for its project edits (SC-02).
+    projHost->allowTransport = a.settings.getBool("scripts.allowTransport");
+    a.doc.endGesture();
+    a.doc.beginGroup("console: " + code.substr(0, 40));
+    std::vector<std::string> out = script::runConsole(*vm, code, &err);
+    if (err.empty())
+      a.doc.endGroup();
+    else
+      a.doc.cancelGroup();
+    for (auto& l : out) lines.push_back({false, l});
     if (!err.empty()) lines.push_back({false, "error: " + err});
     while (lines.size() > 400) lines.erase(lines.begin());
     input[0] = 0;
@@ -676,7 +764,137 @@ void drawScriptConsole(App& a, float height) {
   }
 }
 
+const std::vector<script::ScriptInfo>& projectScripts(App& a, bool rescan) {
+  if (!projScanned || rescan) {
+    std::vector<std::pair<std::string, bool>> dirs;
+    std::string ship = shippedScriptsDir(a, "project");
+    if (!ship.empty()) dirs.push_back({ship, false});
+    dirs.push_back({userScriptsDir(a, "project"), true});
+    projList = script::scanScripts(dirs);
+    projScanned = true;
+  }
+  return projList;
+}
+
+void projectScriptsMenuItems(App& a) {
+  const bool ok = a.settings.getBool("scripts.enabled");
+  const auto& list = projectScripts(a);
+  std::string cat = "\x01";
+  for (const auto& s : list) {
+    if (s.category != cat) {
+      cat = s.category;
+      ImGui::SeparatorText(cat.c_str());
+    }
+    std::string l = s.name + (s.user ? "  (yours)" : "") + "...##" + s.path;
+    if (ImGui::MenuItem(l.c_str(), nullptr, false, ok)) openProjectScript(a, s.path);
+    if (!s.description.empty()) ui::Hint(s.description);
+  }
+  if (list.empty()) ImGui::TextDisabled("No scripts found");
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Rescan scripts"))) projectScripts(a, true);
+  if (ImGui::MenuItem(i18n::tr("Open your scripts folder"))) {
+    std::error_code ec;
+    fs::create_directories(userScriptsDir(a, "project"), ec);
+    a.notify("Your project scripts (*.lua): " + userScriptsDir(a, "project"));
+  }
+  if (!ok) ImGui::TextDisabled("Scripts are switched off (Settings \xE2\x86\x92 Files)");
+}
+
+void openProjectScript(App& a, const std::string& path) {
+  ProjectWindow n;
+  std::string err;
+  if (!n.script.loadFile(path, &err)) {
+    a.notify("Script error: " + err, true);
+    logging::error("script", err);
+    return;
+  }
+  n.id = fs::path(path).stem().string();
+  n.values = n.script.form().params;
+  if (auto it = remembered.find("project:" + n.id); it != remembered.end())
+    for (auto& v : n.values)
+      for (const auto& r : it->second)
+        if (r.name == v.name && r.kind == v.kind) v.value = std::clamp(r.value, v.min, v.max), v.text = r.text;
+  n.open = n.focus = true;
+  // A script without settings runs straight away.
+  const bool direct = n.values.empty();
+  PW = std::move(n);
+  if (direct) {
+    runProjectScript(a);
+    if (!PW.statusError) {
+      a.notify(PW.script.name() + ": " + PW.status);
+      PW.open = false;
+    }
+  }
+}
+
+void drawProjectScriptWindow(App& a) {
+  if (!PW.open) return;
+  const auto& P = pal();
+  std::string title = "Project script \xE2\x80\x94 " + PW.script.name() + "###j57script";
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Appearing,
+                          ImVec2(0.5f, 0.5f));
+  if (PW.focus) ImGui::SetNextWindowFocus(), PW.focus = false;
+  bool open = true;
+  if (!ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
+    ImGui::End();
+    if (!open) PW.open = false;
+    return;
+  }
+  const std::string& desc = PW.script.form().description;
+  if (!desc.empty()) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 440);
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", desc.c_str());
+    ImGui::PopTextWrapPos();
+  }
+  ImGui::BeginGroup();
+  drawForm(PW.values);
+  ImGui::EndGroup();
+  ImGui::Dummy(ImVec2(0, 4));
+  if (!PW.status.empty()) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 440);
+    ImGui::TextColored(theme::vec(PW.statusError ? P.danger : P.textDim), "%s", PW.status.c_str());
+    size_t from = PW.log.size() > 3 ? PW.log.size() - 3 : 0;
+    for (size_t i = from; i < PW.log.size(); ++i) ImGui::TextColored(theme::vec(P.textFaint), "%s", PW.log[i].c_str());
+    ImGui::PopTextWrapPos();
+  }
+  bool run = ui::TextButton("Run", true, 90, "Apply the script to the project (one undo step, Enter)");
+  ImGui::SameLine();
+  if (ui::TextButton("Undo", false, 90, "Undo the last step")) a.doc.undo();
+  ImGui::SameLine();
+  if (ui::TextButton("Reset", false, 90, "Back to the script's default settings")) PW.values = PW.script.form().params;
+  ImGui::SameLine();
+  bool close = ui::TextButton("Close", false, 90, "Close (Esc)");
+  if (PW.runMs > 0) {
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textFaint), "%.1f ms", PW.runMs);
+  }
+  if (a.settings.getBool("scripts.allowTransport")) ImGui::TextColored(theme::vec(P.textFaint), "Scripts may control the transport");
+  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) run = true;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) close = true;
+  }
+  ui::KeepWindowInViewport();
+  ImGui::End();
+  if (run) {
+    PW.seed = PW.seed * 1664525u + 1013904223u;
+    runProjectScript(a);
+  }
+  if (close || !open) {
+    remembered["project:" + PW.id] = PW.values;
+    PW.open = false;
+  }
+}
+
+bool drawScriptForm(std::vector<script::FormParam>& values) { return drawForm(values); }
+
 void devOpenScript(App& a, const std::string& id) {
+  if (id.rfind("project:", 0) == 0) {  // --script project:<id>: J-57 project script window
+    for (const auto& s : projectScripts(a))
+      if (s.id == id.substr(8)) openProjectScript(a, s.path);
+    return;
+  }
   for (const auto& s : pianoRollScripts(a))
     if (s.id == id) {
       openPianoRollScript(a, s.path);

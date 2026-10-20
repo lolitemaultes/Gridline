@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <map>
 #include "../core/Automation.h"
+#include "../core/TrackModes.h"
 #include "../packs/edison/edison.h"
 #include "ClipOps.h"
 
@@ -119,8 +120,13 @@ std::string takeBaseName(const Song& song, ObjectId mixer, TakeCommitOptions::Na
 }
 
 int recordTrackFor(const Song& song, ObjectId mixer) {
-  int i = song.mixerIndex(mixer);
-  return std::max(0, i - 1);
+  // PL-08: the audio track linked to the mixer track takes its recordings.
+  if (const int t = trackmodes::recordTrack(song, mixer); t >= 0) return t;
+  // Otherwise insert N → track N; instrument tracks take no audio clips, so
+  // the first track below that is not one.
+  int i = std::max(0, song.mixerIndex(mixer) - 1);
+  while (i + 1 < kMaxPlaylistTracks && !trackmodes::clipAllowed(song, ClipKind::Audio, i)) ++i;
+  return i;
 }
 
 TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes, const TakeCommitOptions& o) {

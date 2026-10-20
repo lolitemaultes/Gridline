@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 #include "FrameProfile.h"
+#include "ThemeSettings.h"
+#include "../core/I18n.h"
 #include "HostedUi.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
@@ -36,6 +38,7 @@
 #include "ScriptUi.h"
 #include "Theme.h"
 #include "Windows.h"
+#include "TrackModeUi.h"
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -595,7 +598,7 @@ int main(int argc, char** argv) {
   app.fontLarge = fLarge;
   app.fontMono = fMono;
   app.fontMonoBold = fMonoBold;
-  theme::apply(app.settings.getBool("ui.darkTheme"));
+  theme::applyFromSettings(app.settings);
   std::string iniPath = (fs::path(app.configDir()) / "layout.ini").string();
   {
     std::error_code ec;
@@ -761,6 +764,7 @@ int main(int argc, char** argv) {
         app.presetImport.running = true, app.presetImport.done = 1234, app.presetImport.total = 5678;
       }
       else if (w == "livepads") app.showLivePads = true;
+      else if (w == "master") app.showMaster = true;  // RN-09 (GRIDLINE_MASTER_DEMO=1 adds the chain to the demo song)
       else if (w == "autoedit") devAutoEdit = 1;  // automation clip editor on a demo clip
       else if (w == "autolfo") devAutoEdit = 2;   // … with the LFO tool open
       else if (w == "autolane") devAutoEdit = 3, devFocus = "Piano roll";  // pattern automation lane
@@ -771,6 +775,8 @@ int main(int argc, char** argv) {
       else if (w == "general") app.showSettings = true, app.settingsTab = 5;
       else if (w == "files") app.showSettings = true, app.settingsTab = 6;
       else if (w == "debug") app.showSettings = true, app.settingsTab = 7;
+      else if (w == "keys") app.showSettings = true, app.settingsTab = 8;   // J-55 shortcut editor
+      else if (w == "theme") app.showSettings = true, app.settingsTab = 9;  // J-55 theme page
       else if (w == "newproject") app.showNewProject = true;
       else if (w == "savetemplate") app.showSaveTemplate = true;
       else if (w == "rackgraph") app.rack.showGraph = true, app.rack.graphLane = 1;   // J-11 graph editor (pan lane)
@@ -860,6 +866,8 @@ int main(int argc, char** argv) {
     } else if (arg == "--live") {  // dev check: live mode, first live clip of every track launched (frame 3)
       devLive = true;
     } else if (arg == "--no-ui-sounds") {  // J-48: handled before the audio device opens
+    } else if (arg == "--lang" && i + 1 < argc) {  // J-55 dev check: interface language for this run only (not saved)
+      i18n::setLanguage(argv[++i], app.languageDir());
     } else if (arg == "--light") {
       theme::apply(false);
     } else if (arg == "--ui-scale" && i + 1 < argc) {
@@ -939,6 +947,10 @@ int main(int argc, char** argv) {
       if (ev.type == SDL_QUIT || (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE &&
                                   ev.window.windowID == SDL_GetWindowID(window)))
         app.quitRequested = true;
+      // J-55: "Follow system" picks up a desktop appearance change when Gridline is focused again.
+      if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
+          ev.window.windowID == SDL_GetWindowID(window) && theme::modeFromSettings(app.settings) == theme::Mode::System)
+        theme::applyFromSettings(app.settings, true);
       if (ev.type == SDL_DROPFILE) {
         std::string path = ev.drop.file;
         SDL_free(ev.drop.file);
@@ -1125,6 +1137,8 @@ int main(int argc, char** argv) {
       drawPlaylist(app);
     }
     drawLivePads(app);
+    trackui::devDemo(app);  // PL-08 / RN-09 screenshot set-ups
+    drawMasterPanel(app);  // RN-09
     {
       prof::Scope ps("pianoroll");
       drawPianoRoll(app);

@@ -236,6 +236,11 @@ target_link_libraries(gridline_tests_coverage PRIVATE gridline_core)
 target_compile_options(gridline_tests_coverage PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME coverage COMMAND gridline_tests_coverage WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-27 menu parity sweep: the new menu operations (MenuParity, NoteFxBurn).
+# J-55: keymap registry, translation layer and i18n coverage of the sources (runs in the source dir).
+add_executable(gridline_tests_shortcuts_i18n tests/test_shortcuts_i18n.cpp)
+target_link_libraries(gridline_tests_shortcuts_i18n PRIVATE gridline_core)
+target_compile_options(gridline_tests_shortcuts_i18n PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME shortcuts_i18n COMMAND gridline_tests_shortcuts_i18n WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(gridline_tests_menu_parity tests/test_menu_parity.cpp)
 target_link_libraries(gridline_tests_menu_parity PRIVATE gridline_core)
 target_compile_options(gridline_tests_menu_parity PRIVATE -Wall -Wextra -Wpedantic)
@@ -315,6 +320,12 @@ target_link_libraries(gridline_tests_scripting PRIVATE gridline_core)
 target_compile_options(gridline_tests_scripting PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME scripting COMMAND gridline_tests_scripting WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# J-57: full-model project scripting API (SC-02).
+add_executable(gridline_tests_project_script tests/test_project_script.cpp)
+target_link_libraries(gridline_tests_project_script PRIVATE gridline_core)
+target_compile_options(gridline_tests_project_script PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME project_script COMMAND gridline_tests_project_script WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 add_executable(gridline_tests_recording tests/test_recording.cpp)
 target_link_libraries(gridline_tests_recording PRIVATE gridline_core)
 target_compile_options(gridline_tests_recording PRIVATE -Wall -Wextra -Wpedantic)
@@ -337,6 +348,12 @@ target_link_libraries(gridline_tests_j31 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j31 PRIVATE tests)
 target_compile_options(gridline_tests_j31 PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME j31 COMMAND gridline_tests_j31 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-56: playlist track modes (PL-08), MTC / clock receive and chase (MI-02), master chain + loudness (RN-09).
+add_executable(gridline_tests_j56 tests/test_j56.cpp)
+target_link_libraries(gridline_tests_j56 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j56 PRIVATE tests)
+target_compile_options(gridline_tests_j56 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j56 COMMAND gridline_tests_j56 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # J-21 QA: mutation fuzzer over the file readers (tests/fuzz/fuzz_main.cpp; long runs by hand,
 # a short smoke run per reader under ctest) and the cross-feature regression tests.
@@ -353,7 +370,7 @@ target_link_libraries(gridline_tests_qa_cross PRIVATE gridline_core)
 target_include_directories(gridline_tests_qa_cross PRIVATE tests)
 target_compile_options(gridline_tests_qa_cross PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME qa_cross COMMAND gridline_tests_qa_cross WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-foreach(ft flp flp-export fst project sample midi browser-index zip lua song-flp fx-preset)
+foreach(ft flp flp-export fst project sample midi browser-index zip lua lua-project lua-audio song-flp fx-preset)
   add_test(NAME fuzz_${ft} COMMAND gridline_fuzz ${ft} 3 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endforeach()
 
@@ -427,6 +444,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   target_include_directories(gridline_tests_dialog_layout PRIVATE src tests)
   target_compile_options(gridline_tests_dialog_layout PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME dialog_layout COMMAND gridline_tests_dialog_layout WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  # J-55: theme page settings (mode, accent / role colours, contrast, brightness), headless.
+  add_executable(gridline_tests_theme_settings tests/test_theme_settings.cpp src/app/Theme.cpp src/app/ThemeSettings.cpp)
+  target_link_libraries(gridline_tests_theme_settings PRIVATE imgui gridline_core)
+  target_include_directories(gridline_tests_theme_settings PRIVATE src tests)
+  target_compile_options(gridline_tests_theme_settings PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME theme_settings COMMAND gridline_tests_theme_settings WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
   file(GLOB GRIDLINE_APP_SRC CONFIGURE_DEPENDS src/app/*.cpp src/packs/RegistryUi.cpp src/packs/*/*_ui.cpp)
   add_executable(gridline-app ${GRIDLINE_APP_SRC})

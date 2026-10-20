@@ -173,6 +173,7 @@ class App {
   void pollPresetImport();
   bool showLivePads = false;    // live mode pads window
   bool showPerformance = false;  // "Performance" window (CPU per channel / insert / effect)
+  bool showMaster = false;       // RN-09 "Master chain" quick panel
   // CPU use per channel, insert and effect slot, sampled from the engine's
   // profiling counters while the mixer or the Performance window is open
   // (Performance.cpp).
@@ -378,6 +379,7 @@ class App {
   void applyStartup();
   // Log level / log file and language from the settings.
   void applySettingsHooks();
+  std::string languageDir() const;  // assets/i18n: translation catalogues
   std::string templatesDir() const;  // <config>/templates (user templates)
   // Shipped + user templates (cached; rescan after saving or deleting one).
   const std::vector<TemplateInfo>& templates(bool rescan = false);

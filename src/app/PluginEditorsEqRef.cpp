@@ -16,6 +16,7 @@
 //   double-click token  band on / off; double-click empty graph: enable a free band there
 //   right-click token   band menu (reset, type, order, key = snap to a note)
 #include <map>
+#include "../core/I18n.h"
 #include "../engine/Dsp.h"
 #include "../engine/EqDesign.h"
 #include "PluginEditorsCommon.h"
@@ -127,16 +128,16 @@ void setBandType(App& a, const PluginTarget& t, const PluginState& st, int b, in
 }
 
 void bandMenu(App& a, const PluginTarget& t, const PluginState& st, int b) {
-  ImGui::TextDisabled("Band %d (%s)", b + 1, kTypeNames[std::clamp(ival(st, eqParam(b, EqType)), 0, 7)]);
+  ImGui::TextDisabled(i18n::tr("Band %d (%s)"), b + 1, kTypeNames[std::clamp(ival(st, eqParam(b, EqType)), 0, 7)]);
   ImGui::Separator();
-  if (ImGui::MenuItem("Reset")) {
+  if (ImGui::MenuItem(i18n::tr("Reset"))) {
     PluginState ns = st, def = defaultPluginState(st.type);
     for (int idx : {eqParam(b, EqType), eqParam(b, EqGain), eqParam(b, EqFreq), eqFl(b, EqWidth), eqFl(b, EqFlOrder), eqExt(b, EqEnabled)})
       ns.params[static_cast<size_t>(idx)] = def.params[static_cast<size_t>(idx)];
     setPluginState(a, t, ns, "reset EQ band");
   }
   int cur = ival(st, eqParam(b, EqType));
-  if (ImGui::BeginMenu("Type")) {
+  if (ImGui::BeginMenu(i18n::tr("Type"))) {
     static const int order[8] = {EqOff, EqHighCut, EqBandPass, EqLowCut, EqNotch, EqLowShelf, EqPeak, EqHighShelf};
     for (int i : order) {
       ImVec2 ip = ImGui::GetCursorScreenPos();
@@ -145,13 +146,13 @@ void bandMenu(App& a, const PluginTarget& t, const PluginState& st, int b) {
     }
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Order")) {
+  if (ImGui::BeginMenu(i18n::tr("Order"))) {
     int o = ival(st, eqFl(b, EqFlOrder), EqOrd2);
     for (int k = 0; k < 7; ++k)
       if (ImGui::MenuItem(kOrderNames[k], nullptr, k == o)) a.doc.setParam(t.pid(eqFl(b, EqFlOrder)), k, false);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Key")) {
+  if (ImGui::BeginMenu(i18n::tr("Key"))) {
     // Notes between 20 Hz and 20 kHz, grouped by note name (octaves inside).
     static const char* nm[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     double hz = val(st, eqParam(b, EqFreq));
@@ -172,9 +173,9 @@ void bandMenu(App& a, const PluginTarget& t, const PluginState& st, int b) {
   }
   ImGui::Separator();
   bool en = bval(st, eqExt(b, EqEnabled), true);
-  if (ImGui::MenuItem("Enabled", nullptr, en)) a.doc.setParam(t.pid(eqExt(b, EqEnabled)), en ? 0 : 1, false);
+  if (ImGui::MenuItem(i18n::tr("Enabled"), nullptr, en)) a.doc.setParam(t.pid(eqExt(b, EqEnabled)), en ? 0 : 1, false);
   int lis = ival(st, EqListen);
-  if (ImGui::MenuItem("Solo (listen)", nullptr, lis == b + 1)) a.doc.setParam(t.pid(EqListen), lis == b + 1 ? 0 : b + 1, false);
+  if (ImGui::MenuItem(i18n::tr("Solo (listen)"), nullptr, lis == b + 1)) a.doc.setParam(t.pid(EqListen), lis == b + 1 ? 0 : b + 1, false);
 }
 
 void choiceMenu(App& a, const PluginTarget& t, const PluginState& st, int param, const char* label) {
@@ -189,28 +190,28 @@ void choiceMenu(App& a, const PluginTarget& t, const PluginState& st, int param,
 }
 
 void optionsMenu(App& a, const PluginTarget& t, const PluginState& st) {
-  ImGui::TextDisabled("Options");
+  ImGui::TextDisabled("%s", i18n::tr("Options"));
   ImGui::Separator();
   choiceMenu(a, t, st, EqSoloShift, "Band solo on Shift");
   choiceMenu(a, t, st, EqHQ, "Quality");
   choiceMenu(a, t, st, EqLinear, "Linear phase");
   ImGui::Separator();
-  ImGui::TextDisabled("Visualization");
+  ImGui::TextDisabled("%s", i18n::tr("Visualization"));
   choiceMenu(a, t, st, EqMonitor, "Monitor");
   bool tok = bval(st, EqTokens, true);
-  if (ImGui::MenuItem("Band tokens", nullptr, tok)) a.doc.setParam(t.pid(EqTokens), tok ? 0 : 1, false);
+  if (ImGui::MenuItem(i18n::tr("Band tokens"), nullptr, tok)) a.doc.setParam(t.pid(EqTokens), tok ? 0 : 1, false);
   bool ph = bval(st, EqPhaseView);
-  if (ImGui::MenuItem("Phase rotation", nullptr, ph)) a.doc.setParam(t.pid(EqPhaseView), ph ? 0 : 1, false);
+  if (ImGui::MenuItem(i18n::tr("Phase rotation"), nullptr, ph)) a.doc.setParam(t.pid(EqPhaseView), ph ? 0 : 1, false);
   ImGui::Separator();
-  ImGui::TextDisabled("Histogram");
+  ImGui::TextDisabled("%s", i18n::tr("Histogram"));
   choiceMenu(a, t, st, EqSpectrum, "Enabled");
   choiceMenu(a, t, st, EqHistRange, "Range");
   choiceMenu(a, t, st, EqPivot, "Pivot slope");
   choiceMenu(a, t, st, EqSmoothing, "Time smoothing");
   bool avg = bval(st, EqHistAvg);
-  if (ImGui::MenuItem("Average mode", nullptr, avg)) a.doc.setParam(t.pid(EqHistAvg), avg ? 0 : 1, false);
+  if (ImGui::MenuItem(i18n::tr("Average mode"), nullptr, avg)) a.doc.setParam(t.pid(EqHistAvg), avg ? 0 : 1, false);
   ImGui::Separator();
-  ImGui::TextDisabled("Heat map");
+  ImGui::TextDisabled("%s", i18n::tr("Heat map"));
   choiceMenu(a, t, st, EqHeatmap, "Position");
 }
 
@@ -756,7 +757,7 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
         for (int k = 0; k < 6; ++k)
           if (ImGui::MenuItem(q[k], nullptr, lin == k + 1)) a.doc.setParam(t.pid(EqLinear), k + 1, false);
         ImGui::Separator();
-        if (ImGui::MenuItem("Off", nullptr, lin == 0)) a.doc.setParam(t.pid(EqLinear), 0, false);
+        if (ImGui::MenuItem(i18n::tr("Off"), nullptr, lin == 0)) a.doc.setParam(t.pid(EqLinear), 0, false);
         ImGui::EndPopup();
       }
     }

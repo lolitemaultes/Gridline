@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include "../core/I18n.h"
 #include "../engine/Dsp.h"
 #include "../engine/Effects.h"
 #include "../engine/Program.h"
@@ -666,12 +667,12 @@ void editorWaveShaper(App& a, const PluginTarget& t, float width) {
         ns.data = wscurve::serialize(nc);
         setPluginState(a, t, ns, what);
       };
-      if (ImGui::MenuItem("Reset (straight line)")) {
+      if (ImGui::MenuItem(i18n::tr("Reset (straight line)"))) {
         wscurve::Curve nc;
         nc.add(0, 0.f), nc.add(1, 1.f), nc.prepare();
         setCurve(nc, "reset curve");
       }
-      if (ImGui::MenuItem("Flip vertically")) {
+      if (ImGui::MenuItem(i18n::tr("Flip vertically"))) {
         wscurve::Curve nc = c;
         for (int i = 0; i < nc.n; ++i) nc.y[i] = 1.f - nc.y[i], nc.t[i] = -nc.t[i];
         nc.prepare();
@@ -679,7 +680,7 @@ void editorWaveShaper(App& a, const PluginTarget& t, float width) {
       }
       ImGui::Separator();
       bool cl = ed::bval(st, WsClassic, true);
-      if (ImGui::MenuItem("Reference gain staging", nullptr, cl)) a.doc.setParam(t.pid(WsClassic), cl ? 0 : 1, false);
+      if (ImGui::MenuItem(i18n::tr("Reference gain staging"), nullptr, cl)) a.doc.setParam(t.pid(WsClassic), cl ? 0 : 1, false);
       ImGui::EndPopup();
     }
     if (sk::checkFree(v, "FreezeBtn", pal, ui.freeze, "FRZ", "Freeze editing")) ui.freeze = !ui.freeze;

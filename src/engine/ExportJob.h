@@ -23,7 +23,10 @@ struct ExportSettings {
   int mp3Bitrate = 320, oggBitrate = 256, m4aBitrate = 256;
   ChannelMode channels = ChannelMode::Stereo;
   bool normalize = false;
-  double normalizeDb = 0.0;
+  double normalizeDb = 0.0;          // peak target (dBFS); with normalizeLoudness: the peak ceiling
+  // RN-09: normalise to an integrated loudness target (LUFS) instead of the peak.
+  bool normalizeLoudness = false;
+  double normalizeLufs = -14.0;
   bool tempoInfo = true;             // WAV: tempo / beats ('acid')
   bool markers = true;               // WAV: song markers inside the scope as cue points
   // Splitting (both off: one mix).
@@ -46,6 +49,8 @@ struct ExportOutcome {
   bool cancelled = false;
   int64_t frames = 0;               // frames of the (first) mix
   float peak = 0;                   // before normalising (first mix)
+  double lufs = -144.0;             // RN-09: integrated loudness of the (first) mix as written
+  bool ceilingLimited = false;      // loudness normalising stopped at the peak ceiling
 };
 
 // Writes everything. `progress` gets 0..1 and a short status line.

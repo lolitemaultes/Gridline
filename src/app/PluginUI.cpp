@@ -1,3 +1,4 @@
+#include "../core/I18n.h"
 #include "HostedUi.h"
 #include "MidiUi.h"
 #include "PluginUI.h"
@@ -179,7 +180,7 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
       ImGui::SetKeyboardFocusHere();
     }
     ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##psearch", "Search presets", search, sizeof search);
+    ImGui::InputTextWithHint("##psearch", i18n::tr("Search presets"), search, sizeof search);
     std::string q = search;
     for (char& ch : q) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     auto selectable = [&](int i, const std::string& text) {
@@ -194,16 +195,16 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
         selectable(static_cast<int>(i), names[i]);
         ++shown;
       }
-      if (!shown) ImGui::TextDisabled("No presets match");
+      if (!shown) ImGui::TextDisabled("%s", i18n::tr("No presets match"));
     } else {
-      if (ImGui::Selectable("Default", h.presetName.empty())) {
+      if (ImGui::Selectable(i18n::tr("Default"), h.presetName.empty())) {
         PluginState ns = defaultPluginState(info->type);
         ns.data = st->data;
         setPluginState(a, t, ns, "reset plugin");
         h.presetIndex = -1;
         h.presetName.clear();
       }
-      if (factoryCount) ImGui::SeparatorText("Factory");
+      if (factoryCount) ImGui::SeparatorText(i18n::tr("Factory"));
       for (size_t i = 0; i < factoryCount; ++i) selectable(static_cast<int>(i), names[i]);
       PresetNode root;
       for (size_t k = 0; k < lib.size(); ++k) {
@@ -218,7 +219,7 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
         }
         n->items.push_back(static_cast<int>(factoryCount + k));
       }
-      if (!root.items.empty() || !root.kids.empty()) ImGui::SeparatorText("Library");
+      if (!root.items.empty() || !root.kids.empty()) ImGui::SeparatorText(i18n::tr("Library"));
       std::function<void(const PresetNode&)> tree = [&](const PresetNode& n) {
         for (const auto& [name, kid] : n.kids)
           if (ImGui::BeginMenu(name.c_str())) {
@@ -256,7 +257,7 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
       }
       ImGui::CloseCurrentPopup();
     }
-    ImGui::TextDisabled("Enter to save");
+    ImGui::TextDisabled("%s", i18n::tr("Enter to save"));
     ImGui::EndPopup();
   }
 
@@ -559,7 +560,7 @@ void paramMenu(App& a, ParamId pid, const ParamDesc& d, bool* wantType) {
   ImGui::Separator();
   std::string reset = "Reset  (" + d.format(d.def) + ")";
   if (ImGui::MenuItem(reset.c_str())) a.doc.setParam(pid, d.def, false);
-  if (ImGui::MenuItem("Type a value...")) *wantType = true;
+  if (ImGui::MenuItem(i18n::tr("Type a value..."))) *wantType = true;
   ImGui::Separator();
   automationMenuItems(a, pid);  // J-5: create / edit automation, edit events, record
   ImGui::Separator();
@@ -582,7 +583,7 @@ void typePopup(App& a, ParamId pid, const ParamDesc& d) {
       if (pui::parseValue(d, buf, v)) a.doc.setParam(pid, v, false);
       ImGui::CloseCurrentPopup();
     }
-    ImGui::TextDisabled("Enter to apply · Esc to cancel");
+    ImGui::TextDisabled("%s", i18n::tr("Enter to apply · Esc to cancel"));
     ImGui::EndPopup();
   }
 }

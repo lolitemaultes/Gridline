@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "../core/I18n.h"
+#include "Keys.h"
 #include "J31Ui.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
@@ -297,7 +299,7 @@ void drawPianoRoll(App& a) {
       ImGui::SameLine(0, 2);
       const auto& ch = tools::chords();
       if (ui::BeginCombo("##stamp", st.stampChord >= 0 ? ch[static_cast<size_t>(st.stampChord)].name : "No stamp", 110)) {
-        if (ImGui::Selectable("No stamp", st.stampChord < 0)) st.stampChord = -1;
+        if (ImGui::Selectable(i18n::tr("No stamp"), st.stampChord < 0)) st.stampChord = -1;
         for (size_t i = 0; i < ch.size(); ++i)
           if (ImGui::Selectable(ch[i].name, st.stampChord == static_cast<int>(i))) st.stampChord = static_cast<int>(i);
         ImGui::Separator();
@@ -312,7 +314,7 @@ void drawPianoRoll(App& a) {
       const auto& sc = tools::scales();
       std::string sl = st.scale > 0 ? std::string(keys[st.scaleRoot]) + " " + sc[static_cast<size_t>(st.scale)].name : "No scale";
       if (ui::BeginCombo("##scale", sl.c_str(), 120)) {
-        if (ImGui::Selectable("No scale", st.scale == 0)) st.scale = 0;
+        if (ImGui::Selectable(i18n::tr("No scale"), st.scale == 0)) st.scale = 0;
         for (size_t i = 1; i < sc.size(); ++i)
           if (ImGui::Selectable(sc[i].name, st.scale == static_cast<int>(i))) st.scale = static_cast<int>(i);
         ImGui::Separator();
@@ -323,7 +325,7 @@ void drawPianoRoll(App& a) {
           ImGui::PopID();
         }
         ImGui::Separator();
-        ImGui::Checkbox("Snap notes to the scale", &st.snapToScale);
+        ImGui::Checkbox(i18n::tr("Snap notes to the scale"), &st.snapToScale);
         ImGui::EndCombo();
       }
       ui::Hint("Scale highlighting: rows outside the scale are shaded; optionally drawn notes snap to it");
@@ -436,9 +438,9 @@ void drawPianoRoll(App& a) {
   auto pitchAt = [&](float y) { return 127 - static_cast<int>(std::clamp(std::floor((y - gridMin.y + st.scrollY) / rowH), 0.0f, 127.0f)); };
   // ---- zoom: Ctrl+wheel at the pointer, PgUp/PgDn, Home = fit the pattern ----
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput) {
-    if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) st.zoomRequest *= 1.5f;
-    if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) st.zoomRequest /= 1.5f;
-    if (ImGui::IsKeyPressed(ImGuiKey_Home)) st.fitRequest = true;
+    if (keys::pressed("piano.zoomIn")) st.zoomRequest *= 1.5f;
+    if (keys::pressed("piano.zoomOut")) st.zoomRequest /= 1.5f;
+    if (keys::pressed("piano.zoomFit")) st.fitRequest = true;
   }
   if (!st.zoomInit) {
     // Default zoom: a 16th note ~20 px wide (readable note blocks and step
@@ -1100,36 +1102,36 @@ void drawPianoRoll(App& a) {
       Note n = cur->notes.at(chId)[static_cast<size_t>(propsNote)];
       Note orig = n;
       ImGui::PushFont(a.fontBold, 0.0f);
-      ImGui::Text("Note %s", noteName(n.pitch).c_str());
+      ImGui::Text(i18n::tr("Note %s"), noteName(n.pitch).c_str());
       ImGui::PopFont();
       int pitch = n.pitch, vel = n.velocity;
       long long start = n.start, len = n.length;
       ImGui::SetNextItemWidth(160);
-      ImGui::SliderInt("Pitch", &pitch, 0, 127, noteName(pitch).c_str());
+      ImGui::SliderInt(i18n::tr("Pitch"), &pitch, 0, 127, noteName(pitch).c_str());
       ImGui::SetNextItemWidth(160);
-      ImGui::SliderInt("Velocity", &vel, 1, 127);
+      ImGui::SliderInt(i18n::tr("Velocity"), &vel, 1, 127);
       ImGui::SetNextItemWidth(160);
       ImGui::InputScalar("Start (ticks)", ImGuiDataType_S64, &start);
       ImGui::SetNextItemWidth(160);
       ImGui::InputScalar("Length (ticks)", ImGuiDataType_S64, &len);
       int pan = n.pan, fineP = n.fine, rel = n.release, mx = n.modX, my = n.modY, colorG = n.color;
       ImGui::SetNextItemWidth(160);
-      ImGui::SliderInt("Pan", &pan, -kNotePanMax, kNotePanMax, pan == 0 ? "centre" : "%d");
+      ImGui::SliderInt(i18n::tr("Pan"), &pan, -kNotePanMax, kNotePanMax, pan == 0 ? "centre" : "%d");
       ImGui::SetNextItemWidth(160);
-      ImGui::SliderInt("Fine pitch (cents)", &fineP, -kNoteFineMax, kNoteFineMax);
+      ImGui::SliderInt(i18n::tr("Fine pitch (cents)"), &fineP, -kNoteFineMax, kNoteFineMax);
       ImGui::SetNextItemWidth(160);
-      ImGui::SliderInt("Release velocity", &rel, 0, 127);
+      ImGui::SliderInt(i18n::tr("Release velocity"), &rel, 0, 127);
       ImGui::SetNextItemWidth(160);
-      ImGui::SliderInt("Mod X", &mx, 0, kNoteModMax);
+      ImGui::SliderInt(i18n::tr("Mod X"), &mx, 0, kNoteModMax);
       ImGui::SetNextItemWidth(160);
-      ImGui::SliderInt("Mod Y", &my, 0, kNoteModMax);
+      ImGui::SliderInt(i18n::tr("Mod Y"), &my, 0, kNoteModMax);
       ImGui::SetNextItemWidth(160);
-      ImGui::SliderInt("Colour group", &colorG, 0, kNoteColors - 1);
+      ImGui::SliderInt(i18n::tr("Colour group"), &colorG, 0, kNoteColors - 1);
       bool slide = n.slide, porta = n.porta;
-      ImGui::Checkbox("Slide", &slide);
+      ImGui::Checkbox(i18n::tr("Slide"), &slide);
       ui::Hint("Glides the channel's sounding notes to this pitch over the note's length instead of starting a note");
       ImGui::SameLine();
-      ImGui::Checkbox("Porta", &porta);
+      ImGui::Checkbox(i18n::tr("Porta"), &porta);
       ui::Hint("Starts at the previous note's pitch and glides to its own (channel porta time)");
       n.pitch = pitch;
       n.velocity = vel;
@@ -1171,7 +1173,7 @@ void drawPianoRoll(App& a) {
         if (sel[i]) fn(ns[i]);
       commit(a, patId, chId, ns, sel, label, 0);
     };
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
+    if (keys::pressed("piano.delete")) {
       if (anySel) {
         std::vector<Note> keep;
         for (size_t i = 0; i < ns.size(); ++i)
@@ -1179,24 +1181,24 @@ void drawPianoRoll(App& a) {
         commit(a, patId, chId, keep, {}, "delete notes", 0);
       }
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A)) {
+    if (keys::pressed("piano.selectAll")) {
       st.selected.clear();
       for (size_t i = 0; i < ns.size(); ++i) st.selected.insert(i);
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D)) st.selected.clear();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && anySel) {
+    if (keys::pressed("piano.deselect")) st.selected.clear();
+    if (keys::pressed("piano.copy") && anySel) {
       st.clipboard.clear();
       for (size_t i = 0; i < ns.size(); ++i)
         if (sel[i]) st.clipboard.push_back(ns[i]);
       a.notify(std::to_string(st.clipboard.size()) + " notes copied");
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_X) && anySel) {
+    if (keys::pressed("piano.cut") && anySel) {
       st.clipboard.clear();
       std::vector<Note> keep;
       for (size_t i = 0; i < ns.size(); ++i) (sel[i] ? st.clipboard : keep).push_back(ns[i]);
       commit(a, patId, chId, keep, {}, "cut notes", 0);
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !st.clipboard.empty()) {
+    if (keys::pressed("piano.paste") && !st.clipboard.empty()) {
       // Paste after the end of the copied block.
       Tick lo = st.clipboard[0].start, hi = 0;
       for (const auto& n : st.clipboard) lo = std::min(lo, n.start), hi = std::max(hi, n.start + n.length);
@@ -1210,25 +1212,27 @@ void drawPianoRoll(App& a) {
       for (auto& n : st.clipboard) n.start += shift;  // repeated pastes keep going
       commit(a, patId, chId, ns, nsel, "paste notes", 0);
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q)) {
+    if (keys::pressed("piano.quickQuantize")) {
       for (size_t i = 0; i < ns.size(); ++i)
         if (!anySel || sel[i]) ns[i].start = snapNearest(ns[i].start, grid);
       commit(a, patId, chId, ns, sel, "quantize notes", 0);
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) applyToSel([&](Note& n) { n.pitch += io.KeyShift ? 12 : 1; }, "transpose notes");
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) applyToSel([&](Note& n) { n.pitch -= io.KeyShift ? 12 : 1; }, "transpose notes");
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) applyToSel([&](Note& n) { n.start += grid; }, "move notes");
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) applyToSel([&](Note& n) { n.start = std::max<Tick>(0, n.start - grid); }, "move notes");
-    if (!io.KeyCtrl && !a.typingKeyboard) {
-      if (ImGui::IsKeyPressed(ImGuiKey_P, false)) st.tool = Tool::Draw;
-      if (ImGui::IsKeyPressed(ImGuiKey_B, false)) st.tool = Tool::Paint;
-      if (ImGui::IsKeyPressed(ImGuiKey_D, false)) st.tool = Tool::Erase;
-      if (ImGui::IsKeyPressed(ImGuiKey_E, false)) st.tool = Tool::Select;
-      if (ImGui::IsKeyPressed(ImGuiKey_C, false)) st.tool = Tool::Slice;
-      if (ImGui::IsKeyPressed(ImGuiKey_T, false)) st.tool = Tool::Mute;
-      if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) st.tool = Tool::Play;
-      if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) st.tool = Tool::Zoom;
-      if (ImGui::IsKeyPressed(ImGuiKey_U, false)) st.tool = Tool::Detune;
+    if (keys::pressed("piano.transposeUp")) applyToSel([&](Note& n) { n.pitch += 1; }, "transpose notes");
+    if (keys::pressed("piano.transposeDown")) applyToSel([&](Note& n) { n.pitch -= 1; }, "transpose notes");
+    if (keys::pressed("piano.octaveUp")) applyToSel([&](Note& n) { n.pitch += 12; }, "transpose notes");
+    if (keys::pressed("piano.octaveDown")) applyToSel([&](Note& n) { n.pitch -= 12; }, "transpose notes");
+    if (keys::pressed("piano.moveRight")) applyToSel([&](Note& n) { n.start += grid; }, "move notes");
+    if (keys::pressed("piano.moveLeft")) applyToSel([&](Note& n) { n.start = std::max<Tick>(0, n.start - grid); }, "move notes");
+    if (!a.typingKeyboard) {
+      if (keys::pressed("piano.toolDraw")) st.tool = Tool::Draw;
+      if (keys::pressed("piano.toolPaint")) st.tool = Tool::Paint;
+      if (keys::pressed("piano.toolDelete")) st.tool = Tool::Erase;
+      if (keys::pressed("piano.toolSelect")) st.tool = Tool::Select;
+      if (keys::pressed("piano.toolSlice")) st.tool = Tool::Slice;
+      if (keys::pressed("piano.toolMute")) st.tool = Tool::Mute;
+      if (keys::pressed("piano.toolPlay")) st.tool = Tool::Play;
+      if (keys::pressed("piano.toolZoom")) st.tool = Tool::Zoom;
+      if (keys::pressed("piano.toolDetune")) st.tool = Tool::Detune;
     }
   }
   ui::EndDockWindow();

@@ -6,6 +6,8 @@
 #include <cstring>
 #include <filesystem>
 #include <set>
+#include "../core/I18n.h"
+#include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
 #include "App.h"
 #include "HostedUi.h"
@@ -57,7 +59,7 @@ void groupMenu(App& a) {
     for (const auto& c : s.channels) n += c.group == g;
     return n;
   };
-  if (ImGui::Selectable("All channels", groupFilter < 0)) groupFilter = -1;
+  if (ImGui::Selectable(i18n::tr("All channels"), groupFilter < 0)) groupFilter = -1;
   for (size_t g = 0; g < s.channelGroups.size(); ++g) {
     std::string l = s.channelGroups[g] + "  (" + std::to_string(countIn(static_cast<int>(g))) + ")##g" + std::to_string(g);
     if (ImGui::Selectable(l.c_str(), groupFilter == static_cast<int>(g))) groupFilter = static_cast<int>(g);
@@ -71,15 +73,15 @@ void groupMenu(App& a) {
         if (sel.count(c.id)) c.group = g;
     });
   };
-  if (ImGui::BeginMenu("Add selected channels to", anySel && !s.channelGroups.empty())) {
+  if (ImGui::BeginMenu(i18n::tr("Add selected channels to"), anySel && !s.channelGroups.empty())) {
     for (size_t g = 0; g < s.channelGroups.size(); ++g)
       if (ImGui::MenuItem((s.channelGroups[g] + "##m" + std::to_string(g)).c_str())) assign(static_cast<int>(g), "group channels");
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("New group from selected", anySel)) {
+  if (ImGui::BeginMenu(i18n::tr("New group from selected"), anySel)) {
     ImGui::SetNextItemWidth(160);
-    bool enter = ImGui::InputTextWithHint("##ng", "Group name", newGroupName, sizeof newGroupName, ImGuiInputTextFlags_EnterReturnsTrue);
-    if ((enter || ImGui::Button("Create")) && newGroupName[0]) {
+    bool enter = ImGui::InputTextWithHint("##ng", i18n::tr("Group name"), newGroupName, sizeof newGroupName, ImGuiInputTextFlags_EnterReturnsTrue);
+    if ((enter || ImGui::Button(i18n::tr("Create"))) && newGroupName[0]) {
       std::string name = newGroupName;
       std::set<ObjectId> sel = a.selChannels;
       int g = static_cast<int>(s.channelGroups.size());
@@ -94,13 +96,13 @@ void groupMenu(App& a) {
     }
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Remove selected from their group", nullptr, false, anySel)) assign(-1, "ungroup channels");
-  if (groupFilter >= 0 && ImGui::BeginMenu("Rename this group")) {
+  if (ImGui::MenuItem(i18n::tr("Remove selected from their group"), nullptr, false, anySel)) assign(-1, "ungroup channels");
+  if (groupFilter >= 0 && ImGui::BeginMenu(i18n::tr("Rename this group"))) {
     const int g = groupFilter;
     menus::renameField(s.channelGroups[static_cast<size_t>(g)], [&a, g](const std::string& n) { ops::renameChannelGroup(a.doc, g, n); });
     ImGui::EndMenu();
   }
-  if (groupFilter >= 0 && ImGui::MenuItem("Delete this group", nullptr, false)) {
+  if (groupFilter >= 0 && ImGui::MenuItem(i18n::tr("Delete this group"), nullptr, false)) {
     int g = groupFilter;
     a.doc.editSong("delete channel group", [&](Song& song) {
       if (g < 0 || static_cast<size_t>(g) >= song.channelGroups.size()) return;
@@ -158,7 +160,7 @@ void drawChannelRack(App& a) {
   // Ctrl+K (rack focused): toggle the graph editor (works when the header is
   // too narrow to show its button).
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
-      ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_K))
+      keys::pressed("rack.graphEditor"))
     a.rack.showGraph = !a.rack.showGraph;
 
   // ---------------- header: menu · display group · pattern · (right) swing · length · steps · graph · add ----------------
@@ -263,7 +265,7 @@ void drawChannelRack(App& a) {
       ImGui::SameLine(0, 4);
       ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, rowY));
       ImGui::AlignTextToFramePadding();
-      ImGui::TextColored(theme::vec(P.textDim), "Swing");
+      ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Swing"));
     }
   }
   ui::EndToolbar();
@@ -712,9 +714,9 @@ void drawChannelRack(App& a) {
       !ImGui::GetIO().WantTextInput) {
     const int k = a.rack.hoverStep;
     const ObjectId cid = a.rack.hoverChannel;
-    if (ImGui::IsKeyPressed(ImGuiKey_Insert, false) && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift)
+    if (keys::pressed("rack.insertStep"))
       ops::editStepRow(a.doc, pat->id, cid, "insert step", [k](tools::StepRow& r, tools::StepPropRow& p) { tools::insertStep(r, p, k); });
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !ImGui::GetIO().KeyAlt && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift)
+    if (keys::pressed("rack.deleteStep"))
       ops::editStepRow(a.doc, pat->id, cid, "delete step", [k](tools::StepRow& r, tools::StepPropRow& p) { tools::deleteStep(r, p, k); });
   }
   ImGui::EndChild();

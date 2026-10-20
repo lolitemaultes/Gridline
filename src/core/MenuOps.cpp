@@ -1,5 +1,6 @@
 #include "MenuOps.h"
 #include "ChordTools.h"
+#include "TrackModes.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -489,6 +490,13 @@ bool clonePlaylistTrack(Document& d, int index) {
   if (index < 0 || index >= static_cast<int>(s.tracks.size()) || static_cast<int>(s.tracks.size()) >= kMaxPlaylistTracks) return false;
   d.editSong("clone playlist track", [&](Song& x) {
     x.tracks.insert(x.tracks.begin() + index + 1, x.tracks[static_cast<size_t>(index)]);
+    {  // PL-08: a mixer track or channel belongs to one track; a cloned audio track gets a free mixer track
+      PlaylistTrack& k = x.tracks[static_cast<size_t>(index) + 1];
+      const bool audio = k.mode == TrackMode::Audio;
+      k.mode = TrackMode::Unassigned;
+      k.mixer = k.channel = kNoId;
+      if (audio) trackmodes::makeAudioTrack(x, index + 1);
+    }
     std::vector<Clip> copies;
     for (auto& c : x.playlist) {
       if (c.track > index) ++c.track;

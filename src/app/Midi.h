@@ -81,19 +81,28 @@ class MidiManager {
   // Sync.
   SyncOut syncOut = SyncOut::Off;
   int syncOffsetMs = 0;        // master sync offset (positive = later)
-  bool clockIn = false;        // follow an external MIDI clock
-  std::string clockInDevice;   // "" = any enabled input
-  int clockInOffsetMs = 0;
+  // MI-02: following an external master (MIDI clock, or MIDI time code).
+  SyncSource syncSource = SyncSource::Internal;
+  std::string clockInDevice;   // the sync input ("" = any enabled input)
+  int clockInOffsetMs = 0;     // local position = master position + offset
+  int chaseToleranceMs = 40;   // drift beyond this relocates the transport
   std::atomic<double> outputLatency{0.0};  // audio output latency (s), set by the app
+  // Under followerMutex(): the clock follower and the time code receiver
+  // (fed by the driver threads), and the chase state (UI thread).
   MidiClockFollower& follower() { return follower_; }
+  MtcReceiver& mtc() { return mtc_; }
+  SyncChase& chase() { return chase_; }
   std::mutex& followerMutex() { return followerMu_; }
+  // The clock message times are stamped with (seconds).
+  static double clockNow();
 
   std::string status;
   int openInputs() const { return static_cast<int>(ins_.size()); }
   double lastActivity() const { return lastActivity_.load(); }
 
   // RtMidi callback trampoline (driver thread).
-  void onMessage(const std::string& port, int portNumber, const std::vector<unsigned char>& msg);
+  // `syncPort`: the port is the chosen sync input.
+  void onMessage(const std::string& port, int portNumber, const std::vector<unsigned char>& msg, bool syncPort = true);
   struct Port;
 
   // Copies routing / sync settings to the driver threads and the engine
@@ -103,7 +112,8 @@ class MidiManager {
  private:
   void senderLoop();
   std::atomic<int> velCurve_{0}, fixedVel_{100}, syncOffsetUs_{0};
-  std::atomic<bool> ignoreOff_{false}, clockIn_{false};
+  std::atomic<bool> ignoreOff_{false};
+  std::atomic<int> syncSrc_{0};  // SyncSource for the driver threads
   AudioEngine& engine_;
   std::vector<std::unique_ptr<Port>> ins_;
   std::unique_ptr<RtMidiOut> out_;
@@ -114,6 +124,8 @@ class MidiManager {
   std::atomic_flag engineLock_ = ATOMIC_FLAG_INIT;  // several inputs → one engine queue
   std::atomic<double> lastActivity_{-1};
   MidiClockFollower follower_;
+  MtcReceiver mtc_;
+  SyncChase chase_;
   std::mutex followerMu_;
   std::thread sender_;
   std::atomic<bool> quit_{false};

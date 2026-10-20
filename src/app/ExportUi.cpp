@@ -5,6 +5,7 @@
 // quality and the miscellaneous switches (split mixer tracks, master / insert
 // effects, tempo info, markers). Rendering runs on a worker thread with a
 // progress window that can cancel; the summary lists the files written.
+#include "../core/I18n.h"
 #include "ExportUi.h"
 #include <algorithm>
 #include <atomic>
@@ -117,7 +118,7 @@ struct Missing {
 };
 Missing missing;
 
-void formLabel(const char* label, float x = 132.0f) { ui::FormLabelFit(label, x, pal().textDim); }  // J-54: fitted
+void formLabel(const char* label, float x = 132.0f) { ui::FormLabelFit(i18n::tr(label), x, pal().textDim); }  // J-54: fitted
 
 // J-54: centred in the work area, size clamped to the screen (short screens / large interface scale).
 void centerNext(ImVec2 size, ImVec2 minSize = ImVec2(0, 0)) { ui::PlaceNextDialog(size, ImGuiCond_Appearing, minSize); }
@@ -426,7 +427,7 @@ void drawRenderDialog(App& a) {
       for (const auto& n : names) items.push_back(n.c_str());
       if (items.empty()) {
         formLabel("Markers");
-        ImGui::TextColored(theme::vec(P.textFaint), "Add two playlist markers first");
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Add two playlist markers first"));
       } else {
         formLabel("From marker");
         combo("##ma", &dlg.markerA, items.data(), static_cast<int>(items.size()), colW - 148);
@@ -441,7 +442,7 @@ void drawRenderDialog(App& a) {
     }
     if (dlg.scope == 2 && a.playlist.selEnd <= a.playlist.selStart) {
       formLabel("");
-      ImGui::TextColored(theme::vec(P.textFaint), "Select a time range in the playlist ruler");
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Select a time range in the playlist ruler"));
     }
     formLabel("Tail");
     int tail = static_cast<int>(s.render.tail);
@@ -458,7 +459,7 @@ void drawRenderDialog(App& a) {
     ImGui::Text("%d:%05.2f", static_cast<int>(sec / 60), std::fmod(sec, 60.0));
     ImGui::PopFont();
     if (!song.mixer.empty() && song.mixer[0].muted) {
-      ImGui::TextColored(theme::vec(P.danger), "The master track is muted: the render will be silent");
+      ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("The master track is muted: the render will be silent"));
     }
   }
   ui::EndSection();
@@ -468,8 +469,8 @@ void drawRenderDialog(App& a) {
     const char* dests[] = {"Files", "Audio clip", "Audio editor"};
     ui::Segmented("dest", dests, 3, &dlg.dest, 76);
     if (!files) {
-      ImGui::TextColored(theme::vec(P.textFaint), "32-bit float WAV in %s", theme::fitText(renderedFolder(a).c_str(), colW - 140));
-      if (dlg.dest == 1 && dlg.scope == 1) ImGui::Checkbox("Replace the pattern's clips (render and replace)", &dlg.replacePattern);
+      ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("32-bit float WAV in %s"), theme::fitText(renderedFolder(a).c_str(), colW - 140));
+      if (dlg.dest == 1 && dlg.scope == 1) ImGui::Checkbox(i18n::tr("Replace the pattern's clips (render and replace)"), &dlg.replacePattern);
     }
   }
   ui::EndSection();
@@ -522,7 +523,7 @@ void drawRenderDialog(App& a) {
       row(2, "MP3", br, 4, &dlg.mp3Rate);
       row(3, "Ogg Vorbis", br, 4, &dlg.oggRate);
       row(4, "AAC (.m4a)", br, 4, &dlg.m4aRate);
-      ImGui::Checkbox("MIDI", &s.midi);
+      ImGui::Checkbox(i18n::tr("MIDI"), &s.midi);
       formLabel("Channels");
       int cm = static_cast<int>(s.channels);
       const char* cms[] = {"Stereo", "Mono (merged)", "Mono (left only)", "Mono (right only)"};
@@ -556,40 +557,57 @@ void drawRenderDialog(App& a) {
     ui::Tooltip("Applied when writing 16 / 24-bit files");
     bool hq = true;
     ImGui::BeginDisabled();
-    ImGui::Checkbox("HQ for all plugins (offline quality)", &hq);
+    ImGui::Checkbox(i18n::tr("HQ for all plugins (offline quality)"), &hq);
     ImGui::EndDisabled();
     bool noPoly = !s.render.polyphonyLimits;
-    if (ImGui::Checkbox("Disable maximum polyphony", &noPoly)) s.render.polyphonyLimits = !noPoly;
+    if (ImGui::Checkbox(i18n::tr("Disable maximum polyphony"), &noPoly)) s.render.polyphonyLimits = !noPoly;
   }
   ui::EndSection();
   ui::BeginSection("MISCELLANEOUS", colW);
   {
     ImGui::BeginDisabled(!files);
-    ImGui::Checkbox("Split mixer tracks", &s.splitMixer);
+    ImGui::Checkbox(i18n::tr("Split mixer tracks"), &s.splitMixer);
     ui::Tooltip("One file per mixer insert that carries sound (stems)");
     if (s.splitMixer) {
       ImGui::Indent(18);
-      ImGui::Checkbox("Stems through the master effects", &s.stemsMasterFx);
-      ImGui::Checkbox("Also render the full mix", &s.stemsIncludeMaster);
+      ImGui::Checkbox(i18n::tr("Stems through the master effects"), &s.stemsMasterFx);
+      ImGui::Checkbox(i18n::tr("Also render the full mix"), &s.stemsIncludeMaster);
       ImGui::Unindent(18);
     }
-    ImGui::Checkbox("Split playlist tracks", &s.splitPlaylist);
+    ImGui::Checkbox(i18n::tr("Split playlist tracks"), &s.splitPlaylist);
     ui::Tooltip("One file per playlist track that holds clips");
-    ImGui::Checkbox("Split playlist track groups", &s.splitPlaylistGroups);  // J-31
+    ImGui::Checkbox(i18n::tr("Split playlist track groups"), &s.splitPlaylistGroups);  // J-31
     ui::Tooltip("One file per playlist track group (a group track and the tracks it holds)");
     ImGui::EndDisabled();
-    ImGui::Checkbox("Enable master effects", &s.render.masterEffects);
-    ImGui::Checkbox("Enable insert effects", &s.render.insertEffects);
+    ImGui::Checkbox(i18n::tr("Enable master effects"), &s.render.masterEffects);
+    ImGui::Checkbox(i18n::tr("Enable insert effects"), &s.render.insertEffects);
     ImGui::BeginDisabled(!files);
-    ImGui::Checkbox("Save tempo information (WAV)", &s.tempoInfo);
-    ImGui::Checkbox("Playlist markers as WAV cue points", &s.markers);
+    ImGui::Checkbox(i18n::tr("Save tempo information (WAV)"), &s.tempoInfo);
+    ImGui::Checkbox(i18n::tr("Playlist markers as WAV cue points"), &s.markers);
     ImGui::EndDisabled();
-    ImGui::Checkbox("Normalize", &s.normalize);
+    ImGui::Checkbox(i18n::tr("Normalize"), &s.normalize);
     if (s.normalize) {
+      // RN-09: to a peak level, or to an integrated loudness under a peak ceiling.
       ImGui::SameLine();
-      ImGui::SetNextItemWidth(110);
+      ImGui::SetNextItemWidth(92);
+      int kind = s.normalizeLoudness ? 1 : 0;
+      static const char* kinds[] = {"Peak", "Loudness"};
+      if (ImGui::Combo("##nkind", &kind, kinds, 2)) {
+        s.normalizeLoudness = kind == 1;
+        if (s.normalizeLoudness && s.normalizeDb > -0.1) s.normalizeDb = -1.0;  // leave headroom for the peak ceiling
+      }
+      ImGui::SameLine();
+      if (s.normalizeLoudness) {
+        ImGui::SetNextItemWidth(96);
+        float lufs = static_cast<float>(s.normalizeLufs);
+        if (ImGui::DragFloat("##nlufs", &lufs, 0.1f, -36.0f, -5.0f, "%.1f LUFS")) s.normalizeLufs = lufs;
+        ui::Tooltip("Integrated loudness the file is scaled to (streaming platforms play around -14 LUFS)");
+        ImGui::SameLine();
+      }
+      ImGui::SetNextItemWidth(s.normalizeLoudness ? 96 : 110);
       float db = static_cast<float>(s.normalizeDb);
-      if (ImGui::DragFloat("##ndb", &db, 0.05f, -24.0f, 0.0f, "%.1f dBFS")) s.normalizeDb = db;
+      if (ImGui::DragFloat("##ndb", &db, 0.05f, -24.0f, 0.0f, s.normalizeLoudness ? "max %.1f dB" : "%.1f dBFS")) s.normalizeDb = db;
+      if (s.normalizeLoudness) ui::Tooltip("Peak ceiling: the gain stops where the sample peak would pass it");
     }
   }
   ui::EndSection();
@@ -631,10 +649,13 @@ void drawProgress(App& a) {
         o = job.outcome;
       }
       ui::BeginSection("OUTPUT SUMMARY", 440);
-      ImGui::Text("%zu file(s) in %.1f s", o.files.size(), job.seconds);
+      ImGui::Text(i18n::tr("%zu file(s) in %.1f s"), o.files.size(), job.seconds);
       if (o.frames > 0)
-        ImGui::TextColored(theme::vec(P.textDim), "%.2f s of audio, peak %.1f dBFS%s", static_cast<double>(o.frames) / job.settings.render.sampleRate,
+        ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%.2f s of audio, peak %.1f dBFS%s"), static_cast<double>(o.frames) / job.settings.render.sampleRate,
                            o.peak > 1e-9f ? 20.0 * std::log10(o.peak) : -180.0, o.peak > 1.0f && !job.settings.normalize ? "  (clips: try Normalize)" : "");
+      if (o.frames > 0 && o.lufs > -100)  // RN-09: loudness of the file as written
+        ImGui::TextColored(theme::vec(P.textDim), "Integrated loudness %.1f LUFS%s", o.lufs,
+                           o.ceilingLimited ? "  (below the target: the peak ceiling held it back)" : "");
       ImGui::BeginChild("##files", ImVec2(420, std::min(220.0f, 20.0f * static_cast<float>(o.files.size() + o.errors.size()) + 8)));
       for (const auto& f : o.files) ImGui::TextUnformatted(fs::path(f).filename().string().c_str());
       for (const auto& e : o.errors) ImGui::TextColored(theme::vec(P.danger), "%s", e.c_str());
@@ -660,7 +681,7 @@ void drawMidiImport(App& a) {
     const auto& P = pal();
     const MidiFileData& m = midiDlg.data;
     ImGui::TextUnformatted(fs::path(midiDlg.path).filename().string().c_str());
-    ImGui::TextColored(theme::vec(P.textDim), "Format %d · %d PPQ · %.2f BPM%s · %d/%d", m.format, m.division, m.tempo,
+    ImGui::TextColored(theme::vec(P.textDim), i18n::tr("Format %d · %d PPQ · %.2f BPM%s · %d/%d"), m.format, m.division, m.tempo,
                        m.tempos.size() > 1 ? " (tempo changes)" : "", m.timeSigNum, m.timeSigDen);
     ui::BeginDialogBody("##midibody");  // J-54: scrolls on a short screen, the footer stays visible
     ui::BeginSection("TRACKS", 430);
@@ -687,12 +708,12 @@ void drawMidiImport(App& a) {
     }
     ui::EndSection();
     ui::BeginSection("OPTIONS", 430);
-    ImGui::Checkbox("Tempo (and tempo changes as automation)", &midiDlg.o.tempo);
-    ImGui::Checkbox("Time signature and meter changes", &midiDlg.o.timeSignature);
-    ImGui::Checkbox("Markers", &midiDlg.o.markers);
-    ImGui::Checkbox("Volume / pan controllers as pattern automation", &midiDlg.o.controllers);
-    ImGui::Checkbox("Name channels after GM programs", &midiDlg.o.programNames);
-    ImGui::Checkbox("Place the pattern in the playlist", &midiDlg.o.placeInPlaylist);
+    ImGui::Checkbox(i18n::tr("Tempo (and tempo changes as automation)"), &midiDlg.o.tempo);
+    ImGui::Checkbox(i18n::tr("Time signature and meter changes"), &midiDlg.o.timeSignature);
+    ImGui::Checkbox(i18n::tr("Markers"), &midiDlg.o.markers);
+    ImGui::Checkbox(i18n::tr("Volume / pan controllers as pattern automation"), &midiDlg.o.controllers);
+    ImGui::Checkbox(i18n::tr("Name channels after GM programs"), &midiDlg.o.programNames);
+    ImGui::Checkbox(i18n::tr("Place the pattern in the playlist"), &midiDlg.o.placeInPlaylist);
     ui::EndSection();
     ui::EndDialogBody();
     ui::DialogFooter(96 * 2 + theme::kS2);
@@ -744,7 +765,7 @@ void drawMissing(App& a) {
   if (vis) {
     const auto& P = pal();
     missing.files = missingFiles(a.doc.song());
-    ImGui::TextColored(theme::vec(P.textDim), "%zu file(s) this project refers to cannot be found.", missing.files.size());
+    ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%zu file(s) this project refers to cannot be found."), missing.files.size());
     ImGui::BeginChild("##list", ImVec2(0, -ui::DialogFooterHeight()), ImGuiChildFlags_Borders);
     for (size_t k = 0; k < missing.files.size(); ++k) {
       const std::string& f = missing.files[k];
@@ -772,7 +793,7 @@ void drawMissing(App& a) {
       }
       ImGui::PopID();
     }
-    if (missing.files.empty()) ImGui::TextColored(theme::vec(P.textFaint), "Nothing is missing.");
+    if (missing.files.empty()) ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Nothing is missing."));
     ImGui::EndChild();
     ui::DialogFooter(150 + 120 + theme::kS2);
     if (ui::TextButton("Search folder...", false, 150, "Looks for the files by name in a folder and its sub-folders"))

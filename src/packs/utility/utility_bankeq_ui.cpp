@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <map>
 #include <random>
+#include "../../core/I18n.h"
 #include "../../core/Params.h"
 #include "utility_widgets.h"
 
@@ -95,7 +96,7 @@ void editorBankEq(App& a, const PluginTarget& t, float width) {
   if (ImGui::BeginPopup("##bqopt")) {
     PluginState ns = st;
     const char* label = nullptr;
-    if (ImGui::MenuItem("Random curve")) {
+    if (ImGui::MenuItem(i18n::tr("Random curve"))) {
       std::mt19937 rng(static_cast<uint32_t>(ImGui::GetFrameCount()) * 2654435761u);
       std::uniform_real_distribution<float> d(-1.f, 1.f);
       float v = 0;
@@ -105,16 +106,16 @@ void editorBankEq(App& a, const PluginTarget& t, float width) {
       }
       label = "random curve";
     }
-    if (ImGui::MenuItem("Flat curve")) {
+    if (ImGui::MenuItem(i18n::tr("Flat curve"))) {
       for (int b = 0; b < kBqBands; ++b) bandVal(ns, bank, target, b) = 1.0f;
       label = "flatten curve";
     }
-    if (ImGui::MenuItem("Invert curve")) {
+    if (ImGui::MenuItem(i18n::tr("Invert curve"))) {
       for (int b = 0; b < kBqBands; ++b) bandVal(ns, bank, target, b) = 2.0f - bandVal(ns, bank, target, b);
       label = "invert curve";
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Interpolate banks 1 to 8")) {
+    if (ImGui::MenuItem(i18n::tr("Interpolate banks 1 to 8"))) {
       for (int k = 1; k < kBqBanks - 1; ++k)
         for (int tt = 0; tt < kBqTargets; ++tt)
           for (int b = 0; b < kBqBands; ++b) {
@@ -123,13 +124,13 @@ void editorBankEq(App& a, const PluginTarget& t, float width) {
           }
       label = "interpolate banks";
     }
-    if (bank != kBqMaster && ImGui::MenuItem("Copy this bank to all banks")) {
+    if (bank != kBqMaster && ImGui::MenuItem(i18n::tr("Copy this bank to all banks"))) {
       for (int k = 0; k < kBqBanks; ++k)
         for (int tt = 0; tt < kBqTargets; ++tt)
           for (int b = 0; b < kBqBands; ++b) bandVal(ns, k, tt, b) = bandVal(ns, bank, tt, b);
       label = "copy bank";
     }
-    if (ImGui::MenuItem("All bands on")) {
+    if (ImGui::MenuItem(i18n::tr("All bands on"))) {
       for (int tt = 0; tt < kBqTargets; ++tt)
         for (int b = 0; b < kBqBands; ++b) ns.params[static_cast<size_t>(bqMode(tt, b))] = BmOn;
       label = "bands on";

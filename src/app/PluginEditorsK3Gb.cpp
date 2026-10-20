@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include "../core/I18n.h"
 #include "../engine/Program.h"
 #include "../engine/TimeGateSlots.h"
 #include "EnvEditor.h"
@@ -138,7 +139,7 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
       if (ImGui::MenuItem(label, nullptr, on)) a.doc.setParam(t.pid(p), on ? 0 : 1, false);
     };
     tog("Trigger slots from notes", TgMidiTrigger);
-    if (ImGui::BeginMenu("Click reduction")) {
+    if (ImGui::BeginMenu(i18n::tr("Click reduction"))) {
       static const char* dc[3] = {"Off", "Low (drums)", "High (melodic)"};
       for (int k = 0; k < 3; ++k)
         if (ImGui::MenuItem(dc[k], nullptr, ival(st, TgDeclick, 1) == k)) a.doc.setParam(t.pid(TgDeclick), k, false);
@@ -149,19 +150,19 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
     tog("HQ resampling", TgHq);
     ImGui::Separator();
     tog("Run when stopped", TgFreeRun);
-    if (ImGui::BeginMenu("Default trigger sync")) {
+    if (ImGui::BeginMenu(i18n::tr("Default trigger sync"))) {
       static const char* sy[6] = {"Off", "1/4 beat", "1/2 beat", "1 beat", "2 beats", "4 beats"};
       for (int k = 0; k < 6; ++k)
         if (ImGui::MenuItem(sy[k], nullptr, ival(st, TgTrigSync) == k)) a.doc.setParam(t.pid(TgTrigSync), k, false);
       ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Quick effect (no time slot)")) {
+    if (ImGui::BeginMenu(i18n::tr("Quick effect (no time slot)"))) {
       static const char* modes[8] = {"Off", "Repeat 1/4", "Repeat 1/8", "Repeat 1/16", "Repeat 1/32", "Half speed", "Tape stop", "Reverse"};
       for (int k = 0; k < 8; ++k)
         if (ImGui::MenuItem(modes[k], nullptr, ival(st, TgMode) == k)) a.doc.setParam(t.pid(TgMode), k, false);
       ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Step gate (no volume slot)")) {
+    if (ImGui::BeginMenu(i18n::tr("Step gate (no volume slot)"))) {
       tog("Enabled", TgGateOn);
       for (int k = 0; k < kGateSteps; ++k) {
         char lb[24];
@@ -213,12 +214,12 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
       }
       if (ImGui::BeginPopup("##slotm")) {
         const tg::Slot& s = vol ? bank.vol[k] : bank.time[k];
-        if (ImGui::MenuItem("Reset")) {
+        if (ImGui::MenuItem(i18n::tr("Reset"))) {
           PluginState ns = st;
           ns.data = tg::resetSlot(st.data, vol ? 'V' : 'T', k);
           setPluginState(a, t, ns, "reset slot");
         }
-        if (ImGui::MenuItem("Edit slot name...")) {
+        if (ImGui::MenuItem(i18n::tr("Edit slot name..."))) {
           std::snprintf(ui.rename, sizeof ui.rename, "%s", s.name);
           ui.renameBank = vol ? 1 : 0, ui.renameSlot = k;
         }
@@ -229,8 +230,8 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
           setPluginState(a, t, ns, "move slot");
           ui.edit[vol ? 1 : 0] = to;
         };
-        if (ImGui::MenuItem("Move slot left", nullptr, false, k > 0)) move(k - 1);
-        if (ImGui::MenuItem("Move slot right", nullptr, false, k + 1 < tg::kSlots)) move(k + 1);
+        if (ImGui::MenuItem(i18n::tr("Move slot left"), nullptr, false, k > 0)) move(k - 1);
+        if (ImGui::MenuItem(i18n::tr("Move slot right"), nullptr, false, k + 1 < tg::kSlots)) move(k + 1);
         ImGui::EndPopup();
       }
       const tg::Slot& s = vol ? bank.vol[k] : bank.time[k];
@@ -264,7 +265,7 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
   grid(true);
   if (ui.renameSlot >= 0) ImGui::OpenPopup("##gbrename");
   if (ImGui::BeginPopup("##gbrename")) {
-    ImGui::TextDisabled("Slot name");
+    ImGui::TextDisabled("%s", i18n::tr("Slot name"));
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     if (ImGui::InputText("##nm", ui.rename, sizeof ui.rename, ImGuiInputTextFlags_EnterReturnsTrue)) {
       bool vb = ui.renameBank == 1;
@@ -297,8 +298,8 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
   bool slotChanged = false;
   if (sk::button(v, "MenuBtn", pal, false, nullptr, sk::glyphMenu, "Envelope options")) ImGui::OpenPopup("##gbenv");
   if (ImGui::BeginPopup("##gbenv")) {
-    if (ImGui::MenuItem("Copy slot")) ui.clip = tg::serialize(vol ? 'V' : 'T', k, slot);
-    if (ImGui::MenuItem("Paste slot", nullptr, false, !ui.clip.empty())) {
+    if (ImGui::MenuItem(i18n::tr("Copy slot"))) ui.clip = tg::serialize(vol ? 'V' : 'T', k, slot);
+    if (ImGui::MenuItem(i18n::tr("Paste slot"), nullptr, false, !ui.clip.empty())) {
       auto tmp = std::make_unique<tg::Bank>();
       std::string line = "GB2\n" + std::string(1, vol ? 'V' : 'T') + std::to_string(k + 1) + ui.clip.substr(ui.clip.find(' '));
       tg::factory(*tmp);
@@ -307,12 +308,12 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
       slotChanged = true;
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Clear")) slot.flat(1.f), slotChanged = true;
-    if (ImGui::MenuItem("Flip vertically")) {
+    if (ImGui::MenuItem(i18n::tr("Clear"))) slot.flat(1.f), slotChanged = true;
+    if (ImGui::MenuItem(i18n::tr("Flip vertically"))) {
       for (int i = 0; i < slot.env.n; ++i) slot.env.y[i] = 1.f - slot.env.y[i], slot.env.t[i] = -slot.env.t[i];
       slotChanged = true;
     }
-    if (ImGui::MenuItem("Reverse")) {
+    if (ImGui::MenuItem(i18n::tr("Reverse"))) {
       tg::Slot r = slot;
       r.env.clear();
       for (int i = slot.env.n - 1; i >= 0; --i) {
@@ -323,7 +324,7 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
       slot = r;
       slotChanged = true;
     }
-    if (ImGui::BeginMenu("Length")) {
+    if (ImGui::BeginMenu(i18n::tr("Length"))) {
       static const float lens[5] = {1, 2, 4, 8, 16};
       static const char* names[5] = {"1 beat", "2 beats", "1 bar", "2 bars", "4 bars"};
       for (int i = 0; i < 5; ++i)
@@ -335,7 +336,7 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
         }
       ImGui::EndMenu();
     }
-    if (ImGui::MenuItem("Factory content")) {
+    if (ImGui::MenuItem(i18n::tr("Factory content"))) {
       PluginState ns = st;
       ns.data = tg::resetSlot(st.data, vol ? 'V' : 'T', k);
       setPluginState(a, t, ns, "reset slot");
@@ -407,10 +408,10 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
     if (!vol)
       o.extraMenu = [&](int i) {
         if (i <= 0) return false;
-        ImGui::TextDisabled("Pitch");
+        ImGui::TextDisabled("%s", i18n::tr("Pitch"));
         int dir = 0;
-        if (ImGui::MenuItem("1 semitone up")) dir = 1;
-        if (ImGui::MenuItem("1 semitone down")) dir = -1;
+        if (ImGui::MenuItem(i18n::tr("1 semitone up"))) dir = 1;
+        if (ImGui::MenuItem(i18n::tr("1 semitone down"))) dir = -1;
         ImGui::Separator();
         if (!dir) return false;
         // Re-slope the segment ending at the point: speed = 2^(±1/12) → delay changes by (1 - speed) per beat.

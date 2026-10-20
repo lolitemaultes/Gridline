@@ -90,7 +90,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 86 test suites
+ctest --test-dir build          # 93 test suites
 ./build/gridline-app            # start the app
 ```
 

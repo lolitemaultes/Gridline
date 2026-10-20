@@ -295,6 +295,22 @@ void Vm::hook(lua_State* L, lua_Debug* /*ar*/) {
   }
 }
 
+void Vm::charge(lua_State* L, uint64_t units) {
+  used_ += units;
+  if (abort_.empty()) {
+    if (used_ > limits_.instructions) {
+      abort_ = "script stopped: instruction limit reached";
+    } else {
+      double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+      if (s > limits_.seconds) abort_ = "script stopped: time limit reached";
+    }
+  }
+  if (!abort_.empty()) {
+    lua_sethook(L, &Vm::hook, LUA_MASKCOUNT, 1);
+    luaL_error(L, "%s", abort_.c_str());
+  }
+}
+
 Vm::Vm(Limits limits, std::string fileRoot, bool fileWrite)
     : limits_(limits), fileRoot_(std::move(fileRoot)), fileWrite_(fileWrite) {
   L_ = lua_newstate(&Vm::alloc, this);

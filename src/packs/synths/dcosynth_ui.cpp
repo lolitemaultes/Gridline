@@ -8,6 +8,7 @@
 // shows the classic single-DCO front panel on its own 1080 × 217 form.
 // Everything is drawn with the shared skin kit (no reference artwork).
 #include <map>
+#include "../../core/I18n.h"
 #include "../flc_kit.h"
 #include "dco.h"
 #include "synths_common.h"
@@ -446,7 +447,7 @@ void drawDcoSynthEditor(App& a, const PluginTarget& t, float W) {
   // Panel switch above the form.
   {
     const bool one = ival(st, DcPanel) == PanelOne;
-    if (ImGui::SmallButton(one ? "Panel: one DCO (classic)" : "Panel: two DCO")) {
+    if (ImGui::SmallButton(one ? i18n::tr("Panel: one DCO (classic)") : i18n::tr("Panel: two DCO"))) {
       PluginState s = st;
       s.params[DcPanel] = one ? 0.f : 1.f;
       setPluginState(a, t, s, "DCO Synth panel");

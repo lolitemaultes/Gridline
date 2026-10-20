@@ -12,6 +12,8 @@
 //   targets: flp fst project sample midi browser-index zip lua (J-36: zip, lua, project seeds with J-31 fields)
 //            song-flp (J-46: mutated Gridline songs → FLP export with / without origin → re-import)
 //            fx-preset (J-46: mutated FL effect presets → decoder → DSP blocks → FLP export → re-import)
+//            lua-project (J-57: project scripts over the demo song; one undo step, rollback, undo to the start)
+//            lua-audio (J-57: audio editor scripts over a stereo selection)
 //
 // With no corpus the target's built-in seeds are used (ctest smoke run).
 #include <algorithm>
@@ -35,6 +37,7 @@
 #include "core/Document.h"
 #include "core/Grouping.h"
 #include "core/PianoRollScript.h"
+#include "core/ProjectScript.h"
 #include "core/SongTools.h"
 #include "core/Zip.h"
 #include "core/Demo.h"
@@ -49,6 +52,7 @@
 #include "engine/Effects.h"
 #include "engine/Sample.h"
 #include "packs/Packs.h"
+#include "packs/edison/edison_script.h"
 
 namespace fs = std::filesystem;
 using Bytes = std::vector<uint8_t>;
@@ -180,6 +184,45 @@ std::vector<Bytes> seedLua() {
       "local co = coroutine.wrap(function() for i = 1, 10 do coroutine.yield(i) end end) for i = 1, 10 do co() end\n"
       "print(pcall(error, {})) print(select('#', table.unpack({1, 2, 3}))) print(utf8.char(72, 228), math.tointeger(3.0))\n"
       "setmetatable(score, {__index = function(t, k) return rawget(t, '_' .. k) end})\n",
+  };
+  std::vector<Bytes> v;
+  for (const char* x : src) v.emplace_back(x, x + std::strlen(x));
+  return v;
+}
+
+// J-57: project scripts (every module, odd arguments, pcall around edits).
+std::vector<Bytes> seedLuaProject() {
+  const char* src[] = {
+      "local P = project\nfunction apply()\n for i = 1, P.channels.count() do P.channels.setName(i, P.channels.name(i) .. '!')\n"
+      "  P.channels.setVolume(i, 0.5) P.channels.setRoute(i, i % P.mixer.count()) end\n"
+      " local p = P.patterns.add('F', 2) P.patterns.setSteps(p, 1, {100, 0, 50}) P.patterns.setNotes(p, 1, {{time = 0, pitch = 60}})\n"
+      " local id = P.playlist.addPatternClip(p, 3, 96) P.playlist.moveClip(id, 4, 0) P.playlist.setClip(id, {muted = true})\n"
+      " local a = P.automation.add(P.params.mixer(1, 'volume'), 'v', {{time = 0, value = 0.2}}) P.automation.addPoint(a, {time = 9, value = 1})\n"
+      " P.playlist.addAutomationClip(a, 5, 0, 384) P.mixer.setSend(1, 2, 0.5) P.mixer.routeTo(2, 0) P.mixer.setSlot(1, 3, 'gl.reverb')\n"
+      " P.mixer.setSlotParam(1, 3, 1, 0.5) P.markers.add{time = 0, name = 'm'} P.selection.setTime(0, 384) P.song.setTempo(99) end\n",
+      "for _, f in pairs({'count', 'name', 'remove', 'clone', 'add'}) do pcall(project.channels[f], 1) pcall(project.patterns[f], 1) end\n"
+      "for i = 1, 30 do pcall(project.mixer.remove, i) pcall(project.playlist.removeClip, i) pcall(project.automation.remove, 1) end\n"
+      "pcall(project.channels.setParam, 1, 1, 0/0) pcall(project.params.set, project.params.song('swing'), 2) print(project.song.length())\n",
+      ("local t = project.playlist.clips() for _, c in ipairs(t) do project.playlist.setClipLength(c.id, c.length * 2) end\n"
+       "for i = project.markers.count(), 1, -1 do project.markers.remove(i) end error('stop')\n"),
+  };
+  std::vector<Bytes> v;
+  for (const char* x : src) v.emplace_back(x, x + std::strlen(x));
+  return v;
+}
+
+// J-57: audio editor scripts (vector ops, resize, markers, selection).
+std::vector<Bytes> seedLuaAudio() {
+  const char* src[] = {
+      "-- target: cursor\nfunction form(f) f:knob('A', 0.5, 0, 1) end\nfunction apply(audio, p)\n for c, b in audio:buffers() do\n"
+      "  b:ramp(0, p.A, 's') b:biquad('peak', 1000, 1, 6, audio.rate) b:softclip(2) b:quantize(8) b:delay(10, 0.3, 0.5)\n"
+      "  local e = b:envelope(1, 50, audio.rate) b:mul(e) b:add(audio:read(c, 0, 100), 0.5, 1) b:reverse() b:removeDc()\n"
+      " end\n audio:addMarker(3, 'x') audio:select(-5, 50) end\n",
+      "function apply(audio) audio:resize(audio.frames + 100) local n = buffer.new(audio.frames) n:noise('pink', 0.5, 2)\n"
+      " audio:setChannel(1, n) audio:setChannel(audio.channels, n:copy()) for i, z in ipairs(n:zeroCrossings('up', 10)) do\n"
+      " audio:addMarker(z, 'z' .. i) end local t = n:totable(1, 10) n:map(function(x, i) return x * 0.5 end) end\n",
+      ("function apply(audio) local b = audio:channel(1) b:tone('triangle', 3, audio.rate, 0.5, 0.25) b:offset(0.5)\n"
+       " b:clip() b:scale(1e9) b:gainDb(-300) print(b:peak(), b:rms(), b:sum(), b:minmax(), b:nearestZero(1, 10)) end\n"),
   };
   std::vector<Bytes> v;
   for (const char* x : src) v.emplace_back(x, x + std::strlen(x));
@@ -490,6 +533,61 @@ std::vector<Target> targets() {
          (void)s.run(ctx, {}, lim);
        },
        [] { return seedLua(); }},
+      {"lua-project", ".lua",
+       [](const std::string& p) {
+         Bytes b = readAll(p);
+         const std::string src(b.begin(), b.end());
+         static const gl::Song demo = gl::makeDemoSong();
+         gl::Document doc(demo);
+         doc.setMaxUndoLevels(1u << 20);
+         gl::script::SimpleProjectHost host(doc);
+         host.allowTransport = (b.size() & 1) != 0;
+         gl::script::Limits lim;
+         lim.instructions = 2'000'000;
+         lim.seconds = 2.0;
+         lim.memoryBytes = 16u << 20;
+         gl::script::ProjectScript s;
+         if (s.loadSource(src, "fuzz")) {
+           (void)s.run(host, {}, lim);
+         } else {
+           gl::script::Vm vm(lim);  // plain chunks (top-level code) too
+           gl::script::openProjectApi(vm, host);
+           (void)gl::script::runProject(vm, host, src, "fuzz", "fuzz");
+         }
+         if (doc.groupDepth() != 0) std::abort();  // a run must close its undo group
+         while (doc.undo()) {
+         }
+         if (doc.song() != demo) std::abort();  // undo returns to the start
+       },
+       [] { return seedLuaProject(); }},
+      {"lua-audio", ".lua",
+       [](const std::string& p) {
+         Bytes b = readAll(p);
+         const std::string src(b.begin(), b.end());
+         namespace ed = gl::packs::edison;
+         ed::AudioScript s;
+         if (!s.loadSource(src, "fuzz")) return;
+         ed::Audio a = ed::makeAudio(44100, (b.size() & 1) ? 1 : 2, 4000);
+         for (size_t i = 0; i < a.L.size(); ++i) a.L[i] = static_cast<float>(std::sin(static_cast<double>(i) * 0.05)), a.R[i] = a.L[i] * 0.5f;
+         if (a.channels == 1) a.R = a.L;
+         ed::AudioScriptContext ctx;
+         ctx.content = ed::makeContent(a);
+         ctx.sel = (b.size() & 2) ? ed::Range{500, 1500} : ed::Range{};
+         ctx.cursor = 2000;
+         gl::script::Limits lim;
+         lim.instructions = 2'000'000;
+         lim.seconds = 2.0;
+         lim.memoryBytes = 16u << 20;
+         ed::AudioScriptResult r = s.run(ctx, {}, lim);
+         if (r.ok) {
+           const ed::Audio& o = r.content.a();
+           if (o.L.size() != o.R.size()) std::abort();
+           for (float v : o.L)
+             if (!std::isfinite(v)) std::abort();  // results stay finite
+           if (r.sel.a > r.sel.b || r.sel.b > r.content.frames()) std::abort();
+         }
+       },
+       [] { return seedLuaAudio(); }},
   };
 }
 

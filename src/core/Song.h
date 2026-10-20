@@ -217,6 +217,12 @@ enum class FollowMode : uint8_t {
   Count
 };
 
+// PL-08: what a playlist track is for. Audio tracks are linked to a mixer
+// track (its input, monitoring and record arm are the track's; recordings of
+// that mixer track land on this track). Instrument tracks are linked to a
+// rack channel (routed to its own mixer track); they hold pattern clips only.
+enum class TrackMode : uint8_t { Unassigned = 0, Audio, Instrument, Count };
+
 struct PlaylistTrack {
   std::string name;  // empty = "Track N"
   Rgb color = 0x50565E;
@@ -232,10 +238,14 @@ struct PlaylistTrack {
   bool folded = false;    // group collapsed in the playlist
   bool locked = false;    // J-11: clips on the track cannot be edited
   int flIcon = 0;         // J-39 (FL interop): FL's icon number (0 = none), kept for export
+  // PL-08: track mode and its links (kNoId = none; ids that no longer exist count as none).
+  TrackMode mode = TrackMode::Unassigned;
+  ObjectId mixer = kNoId;    // Audio: the linked mixer track (Instrument: optional, else the channel's)
+  ObjectId channel = kNoId;  // Instrument: the linked rack channel
   bool operator==(const PlaylistTrack& o) const {
     return name == o.name && color == o.color && muted == o.muted && height == o.height && launch == o.launch &&
            pad == o.pad && follow == o.follow && syncStart == o.syncStart && groupSize == o.groupSize && folded == o.folded &&
-           locked == o.locked && flIcon == o.flIcon;
+           locked == o.locked && flIcon == o.flIcon && mode == o.mode && mixer == o.mixer && channel == o.channel;
   }
   bool liveDefaults() const {
     return launch == LaunchGrid::FourBeats && pad == PadMode::Trigger && follow == FollowMode::Loop && syncStart == LaunchGrid::Now;

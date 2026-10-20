@@ -151,6 +151,15 @@ void Document::endGroup() {
   undo_.breakMerge();
 }
 
+void Document::cancelGroup() {
+  if (groups_.empty()) return;
+  auto g = std::move(groups_.back());
+  groups_.pop_back();
+  if (g->empty()) return;
+  g->revert(song_);
+  ++revision_;
+}
+
 bool Document::undo() {
   if (!groups_.empty() || !undo_.undo(song_)) return false;
   ++revision_;

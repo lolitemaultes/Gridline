@@ -82,6 +82,10 @@ class Vm {
   const Limits& limits() const { return limits_; }
   void setLimits(const Limits& l) { limits_ = l; }  // memory cap: for later allocations
   uint64_t instructionsUsed() const { return used_; }
+  // Work done in C loops (vector operations of the API modules) counts
+  // against the instruction budget: `units` are added, the time limit is
+  // checked, and a Lua error is raised once a limit is reached (SC-05).
+  void charge(lua_State* L, uint64_t units);
   size_t memoryUsed() const { return mem_; }
   // Why the last call was stopped ("" = it was not).
   const std::string& abortReason() const { return abort_; }

@@ -4,6 +4,7 @@
 #include "Automation.h"
 #include "PatternAutomation.h"
 #include "Timeline.h"
+#include "TrackModes.h"
 
 namespace gl {
 
@@ -72,7 +73,7 @@ void NoteRecorder::newPass(Document& doc) {
   pattern_ = id;
 }
 
-Tick NoteRecorder::songOrigin(Document& doc, double tick) {
+Tick NoteRecorder::songOrigin(Document& doc, double tick, ObjectId channel) {
   const Song& s = doc.song();
   const Pattern* p = s.pattern(pattern_);
   if (!p) return 0;
@@ -85,12 +86,15 @@ Tick NoteRecorder::songOrigin(Document& doc, double tick) {
   const Tick bar = std::max<Tick>(1, s.barTicks());
   const Tick start = static_cast<Tick>(std::floor(tick / static_cast<double>(bar))) * bar;
   const Tick len = std::max<Tick>(bar, s.patternLength(*p));
-  int track = 0;
-  for (; track < static_cast<int>(s.tracks.size()); ++track) {
-    bool busy = false;
-    for (const auto& c : s.playlist)
-      if (c.track == track && c.start < start + len && c.start + s.clipLength(c) > start) busy = true;
-    if (!busy) break;
+  int track = trackmodes::instrumentTrackOf(s, channel);  // PL-08
+  if (track < 0) {
+    for (track = 0; track < static_cast<int>(s.tracks.size()); ++track) {
+      if (s.tracks[static_cast<size_t>(track)].mode != TrackMode::Unassigned) continue;  // audio / other instruments' tracks
+      bool busy = false;
+      for (const auto& c : s.playlist)
+        if (c.track == track && c.start < start + len && c.start + s.clipLength(c) > start) busy = true;
+      if (!busy) break;
+    }
   }
   if (track >= kMaxPlaylistTracks) track = 0;
   doc.addClip(pattern_, track, start);
@@ -106,7 +110,7 @@ void NoteRecorder::noteOn(Document& doc, ObjectId channel, int pitch, int veloci
     held_.erase(it);
   }
   Held h{channel, std::clamp(velocity, 1, 127), tick, pass_, pattern_, 0};
-  if (song_) h.songOrigin = songOrigin(doc, tick);
+  if (song_) h.songOrigin = songOrigin(doc, tick, channel);
   held_[key] = h;
 }
 
@@ -198,6 +202,7 @@ void NoteRecorder::commitAutomation(Document& doc) {
         }
         int track = 0;
         for (; track < static_cast<int>(so.tracks.size()); ++track) {
+          if (!trackmodes::clipAllowed(so, ClipKind::Automation, track)) continue;  // PL-08: not on instrument tracks
           bool busy = false;
           for (const auto& c : so.playlist)
             if (c.track == track && c.start <= last && c.start + so.clipLength(c) > start) busy = true;

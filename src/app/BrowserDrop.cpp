@@ -8,6 +8,7 @@
 #include <sstream>
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Json.h"
+#include "../core/TrackModes.h"
 #include "../core/MidiFile.h"
 #include "../core/Presets.h"
 #include "../core/flp/Flp.h"
@@ -295,6 +296,7 @@ bool performDrop(App& a, const std::string& path, DropTarget target, const DropP
         c.length = std::max<Tick>(1, static_cast<Tick>(std::llround(beats * sg.ppq)));
         if (sync) c.syncBpm = bpm;
         if (!sg.tracks.empty()) c.track = std::min(track, static_cast<int>(sg.tracks.size()) - 1);
+        c.track = trackmodes::placeAudioClip(sg, c.track, ch);  // PL-08: audio tracks route it, instrument tracks pass it on
         sg.playlist.push_back(c);
         a.playlist.selected = {c.id};
       });

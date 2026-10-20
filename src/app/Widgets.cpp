@@ -11,10 +11,12 @@
 #include "App.h"
 #include "Windows.h"
 #include "Theme.h"
+#include "../core/I18n.h"
 
 namespace gl::ui {
 
 using theme::pal;
+using i18n::tr;
 
 namespace {
 constexpr float kPi = 3.14159265f;
@@ -25,17 +27,19 @@ void arc(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, ImU32 col, float
 }
 }  // namespace
 
+// J-55: hints, tooltips, labels, section captions, button and tab texts are
+// translated here, so callers pass plain English.
 void Hint(const std::string& text) {
-  if (HintHovered()) app().setHint(text);
+  if (HintHovered()) app().setHint(tr(text.c_str()));
 }
 void Hint(const char* text) {
-  if (HintHovered()) app().setHint(text);
+  if (text && HintHovered()) app().setHint(tr(text));
 }
 bool HintHovered() { return ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem); }
 
 void Label(const char* text) {
   ImGui::PushFont(app().fontMono, theme::kFontLabel);
-  ImGui::TextColored(theme::vec(pal().textFaint), "%s", text);
+  ImGui::TextColored(theme::vec(pal().textFaint), "%s", tr(text));
   ImGui::PopFont();
 }
 
@@ -44,7 +48,7 @@ void Tooltip(const char* text) {
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay) && !ImGui::IsItemActive() &&
       ImGui::BeginTooltip()) {
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
-    ImGui::TextUnformatted(text);
+    ImGui::TextUnformatted(tr(text));
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
   }
@@ -329,7 +333,7 @@ bool TextButton(const char* label, bool active, float width, const char* hint) {
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::vec(theme::mix(P.surface600, P.hot, t + 0.04f)));
     ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.hot));
   }
-  bool r = ImGui::Button(label, ImVec2(width, 0));
+  bool r = ImGui::Button(tr(label), ImVec2(width, 0));
   if (active) ImGui::PopStyleColor(4);
   if (hint) {
     Hint(hint);
@@ -343,6 +347,9 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
   const auto& P = pal();
   ImGui::PushID(id);
   if (height <= 0) height = ImGui::GetFrameHeight();
+  std::vector<const char*> trLabels(static_cast<size_t>(std::max(0, count)));
+  for (int i = 0; i < count; ++i) trLabels[static_cast<size_t>(i)] = tr(labels[i]);
+  labels = trLabels.data();
   float pad = ImGui::GetStyle().FramePadding.x;
   float w = segWidth;
   if (w <= 0)
@@ -369,8 +376,15 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
       dl->AddRectFilled(q, ImVec2(q.x + w, q.y + height - 4), P.surface700, std::max(1.0f, theme::kRadius - 1));
     ImVec2 ts = ImGui::CalcTextSize(labels[i], nullptr, true);
     const ImU32 onFg = P.hot;
-    dl->AddText(ImVec2(std::round(q.x + (w - ts.x) * 0.5f), std::round(q.y + (height - 4 - ts.y) * 0.5f)),
-                on ? onFg : hov ? P.text : P.textDim, labels[i], ImGui::FindRenderedTextEnd(labels[i]));
+    if (ts.x > w - 6) {  // J-55: a longer translation is fitted to its segment (full text on hover)
+      const std::string shown(labels[i], ImGui::FindRenderedTextEnd(labels[i]));
+      theme::textEllipsis(dl, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(std::round(q.x + 3), std::round(q.y + (height - 4 - ts.y) * 0.5f)),
+                          w - 6, on ? onFg : hov ? P.text : P.textDim, shown.c_str());
+      if (!(hints && hints[i])) Tooltip(shown.c_str());
+    } else {
+      dl->AddText(ImVec2(std::round(q.x + (w - ts.x) * 0.5f), std::round(q.y + (height - 4 - ts.y) * 0.5f)),
+                  on ? onFg : hov ? P.text : P.textDim, labels[i], ImGui::FindRenderedTextEnd(labels[i]));
+    }
     if (hints && hints[i]) {
       Hint(hints[i]);
       Tooltip(hints[i]);
@@ -471,7 +485,7 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
       if (released) *released = true;
       ImGui::CloseCurrentPopup();
     }
-    if (ImGui::Button("Reset to default")) {
+    if (ImGui::Button(i18n::tr("Reset to default"))) {
       *value = d.def;
       changed = true;
       if (released) *released = true;
@@ -695,6 +709,8 @@ void EmptyState(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const char* title, const c
   App& a = app();
   float w = mx.x - mn.x, h = mx.y - mn.y;
   if (w < 40 || h < 30) return;
+  if (title) title = tr(title);
+  if (body) body = tr(body);
   float mark = 80.0f;
   bool showMark = h >= 190 && w >= 160;
   float titleH = title ? theme::kFontBody + 2 : 0, bodyH = body ? theme::kFontCaption + 2 : 0;
@@ -748,7 +764,7 @@ void BeginSection(const char* caption, float width) {
   f->start = ImGui::GetCursorScreenPos();
   const float avail = ImGui::GetContentRegionAvail().x;
   f->right = f->start.x + (width > 0 ? std::min(width, avail) : avail) - 1;  // border stays inside the clip rect
-  f->caption = caption ? caption : "";
+  f->caption = caption ? tr(caption) : "";
   f->workMaxX = w->WorkRect.Max.x;
   f->contentMaxX = w->ContentRegionRect.Max.x;
   f->split.Split(w->DrawList, 2);
@@ -798,10 +814,27 @@ bool TabStrip(const char* id, const char* const* labels, int count, int* index, 
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 q0 = ImGui::GetCursorScreenPos();
   const float tabH = 28.0f, full = ImGui::GetContentRegionAvail().x;
+  // J-55: translated labels; when the tabs do not fit (more pages, longer
+  // languages) the side padding shrinks, then every tab is cut to fit with an
+  // ellipsis (full text in the tooltip).
+  std::vector<const char*> tl(static_cast<size_t>(std::max(0, count)));
+  float textSum = 0;
+  for (int i = 0; i < count; ++i) {
+    tl[static_cast<size_t>(i)] = tr(labels[i]);
+    textSum += ImGui::CalcTextSize(tl[static_cast<size_t>(i)]).x;
+  }
+  const float gaps = 2.0f * std::max(0, count - 1);
+  float padX = theme::kS4, squeeze = 1.0f;
+  if (count > 0 && textSum + gaps + 2 * padX * count > full) {
+    padX = std::max(theme::kS1 + 2, std::floor((full - gaps - textSum) / (2.0f * count)));
+    if (textSum + gaps + 2 * padX * count > full) squeeze = std::max(0.2f, (full - gaps - 2 * padX * count) / std::max(1.0f, textSum));
+  }
   float x = q0.x;
   bool changed = false;
   for (int i = 0; i < count; ++i) {
-    const float tw = std::round(ImGui::CalcTextSize(labels[i]).x + 2 * theme::kS4);
+    const char* text = tl[static_cast<size_t>(i)];
+    const float textW = std::floor(ImGui::CalcTextSize(text).x * squeeze);
+    const float tw = std::round(textW + 2 * padX);
     ImGui::SetCursorScreenPos(ImVec2(x, q0.y));
     ImGui::PushID(i);
     if (ImGui::InvisibleButton("##tab", ImVec2(tw, tabH)) && *index != i) {
@@ -812,14 +845,16 @@ bool TabStrip(const char* id, const char* const* labels, int count, int* index, 
     if (hints && hints[i]) {
       Hint(hints[i]);
       Tooltip(hints[i]);
+    } else if (squeeze < 1.0f) {
+      Tooltip(labels[i]);
     }
     ImGui::PopID();
     if (on || hov)
       dl->AddRectFilled(ImVec2(x, q0.y), ImVec2(x + tw, q0.y + tabH), on ? P.surface800 : theme::mix(P.surface900, P.surface800, 0.5f),
                         theme::kRadius, ImDrawFlags_RoundCornersTop);
     if (on) dl->AddRectFilled(ImVec2(x + 1, q0.y), ImVec2(x + tw - 1, q0.y + 2), P.hot, 1.0f);
-    dl->AddText(ImVec2(std::round(x + theme::kS4), std::round(q0.y + (tabH - ImGui::GetFontSize()) * 0.5f)), on ? P.hot : hov ? P.text : P.textDim,
-                labels[i]);
+    theme::textEllipsis(dl, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(std::round(x + padX), std::round(q0.y + (tabH - ImGui::GetFontSize()) * 0.5f)),
+                        textW + 1, on ? P.hot : hov ? P.text : P.textDim, text);
     x += tw + 2;
   }
   dl->AddLine(ImVec2(q0.x, q0.y + tabH), ImVec2(q0.x + full, q0.y + tabH), P.dark ? theme::withAlpha(P.ink, 0.5f) : P.lineStrong);
@@ -937,7 +972,7 @@ bool ColorSwatch(const char* id, uint32_t* rgb, ImVec2 size) {
       changed = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Custom");
+    ImGui::TextDisabled("%s", i18n::tr("Custom"));
     ImGui::EndPopup();
   }
   ImGui::PopID();

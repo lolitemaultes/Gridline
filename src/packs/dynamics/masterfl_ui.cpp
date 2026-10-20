@@ -2,6 +2,7 @@
 // Dynamics (gl.master, the reference maximizer's counterpart) and Enhance
 // (gl.enhance, the one-knob counterpart). Laid out on the reference forms'
 // geometry with their palette roles, drawn with Gridline's skin kit.
+#include "../../core/I18n.h"
 #include "maximus_ref.h"
 #include <map>
 #include "../../app/PluginEditorsDynFl.h"
@@ -284,16 +285,16 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
   monitorArea(a, t, st, u, f, gr);
   if (skin::menuButton(f, "mxopt", 191, 188, 15, 17, hex(0xFFBC40))) ImGui::OpenPopup("##maxopt");
   if (ImGui::BeginPopup("##maxopt")) {
-    ImGui::TextDisabled("%s band", kBand[b]);
-    if (ImGui::MenuItem("Reference engine", nullptr, ref)) pui::setParamValue(a, t, MsRef0 + MrModel, ref ? 0.0 : 1.0);
-    if (!ref && ImGui::MenuItem("Drawn curve engine", nullptr, drawn)) pui::setParamValue(a, t, X(MxCurveMode), drawn ? 0.0 : 1.0);
-    if (ImGui::MenuItem("Drawn curve engine on all bands")) {
+    ImGui::TextDisabled(i18n::tr("%s band"), kBand[b]);
+    if (ImGui::MenuItem(i18n::tr("Reference engine"), nullptr, ref)) pui::setParamValue(a, t, MsRef0 + MrModel, ref ? 0.0 : 1.0);
+    if (!ref && ImGui::MenuItem(i18n::tr("Drawn curve engine"), nullptr, drawn)) pui::setParamValue(a, t, X(MxCurveMode), drawn ? 0.0 : 1.0);
+    if (ImGui::MenuItem(i18n::tr("Drawn curve engine on all bands"))) {
       PluginState ns = st;
       normalizePluginState(ns);
       for (int k = 0; k < kMsBands; ++k) ns.params[static_cast<size_t>(msExt(k, MxCurveMode))] = 1.f;
       setPluginState(a, t, ns, "drawn curve engine");
     }
-    if (ImGui::MenuItem("Reset this band's curve")) {
+    if (ImGui::MenuItem(i18n::tr("Reset this band's curve"))) {
       DrawnCurve c;
       writeCurve(a, t, st, b, c, "reset curve");
     }

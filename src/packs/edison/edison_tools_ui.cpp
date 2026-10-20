@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "../../core/I18n.h"
 #include "../../app/Theme.h"
 #include "edison_ui.h"
 
@@ -32,6 +33,7 @@ const char* toolTitle(Tool t) {
     case Tool::Spectral: return "Spectral brush";
     case Tool::Rename: return "Name";
     case Tool::Fade: return "Fade";
+    case Tool::Script: return "Script";
     default: return "Tool";
   }
 }
@@ -40,10 +42,10 @@ bool acceptRow(bool enabled = true) {
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::BeginDisabled(!enabled);
-  bool ok = ImGui::Button("Accept", ImVec2(110, 0));
+  bool ok = ImGui::Button(i18n::tr("Accept"), ImVec2(110, 0));
   ImGui::EndDisabled();
   ImGui::SameLine();
-  if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+  if (ImGui::Button(i18n::tr("Cancel"), ImVec2(110, 0))) ImGui::CloseCurrentPopup();
   if (ok) ImGui::CloseCurrentPopup();
   return ok;
 }
@@ -112,31 +114,31 @@ void drawToolDialogs(App& a, Session& s) {
   const Range tr = target(s);
   const bool sel = !s.sel.empty();
   auto scopeLine = [&]() {
-    ImGui::TextDisabled("Applies to: %s (%s)", sel ? "selection" : "whole file", timeText(a, s, tr.len()).c_str());
+    ImGui::TextDisabled(i18n::tr("Applies to: %s (%s)"), sel ? "selection" : "whole file", timeText(a, s, tr.len()).c_str());
   };
   static int drag = -1;
   switch (s.tool) {
     case Tool::Stretch: {
       scopeLine();
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Time", &s.tStretch, 0.25f, 4.f, "x %.3f", ImGuiSliderFlags_Logarithmic);
+      ImGui::SliderFloat(i18n::tr("Time"), &s.tStretch, 0.25f, 4.f, "x %.3f", ImGuiSliderFlags_Logarithmic);
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Pitch", &s.tSemis, -24.f, 24.f, "%.2f semitones");
+      ImGui::SliderFloat(i18n::tr("Pitch"), &s.tSemis, -24.f, 24.f, "%.2f semitones");
       const char* modes[] = {stretchName(Stretch::Elastic), stretchName(Stretch::Transient), stretchName(Stretch::Tape)};
       ImGui::SetNextItemWidth(260);
-      ImGui::Combo("Method", &s.tMode, modes, 3);
+      ImGui::Combo(i18n::tr("Method"), &s.tMode, modes, 3);
       const char* q[] = {"Fast", "Normal", "Best"};
       ImGui::SetNextItemWidth(260);
-      ImGui::Combo("Quality", &s.tQuality, q, 3);
+      ImGui::Combo(i18n::tr("Quality"), &s.tQuality, q, 3);
       const double newLen = s.tMode == 2 ? tr.len() / std::pow(2.0, s.tSemis / 12.0) : tr.len() * static_cast<double>(s.tStretch);
-      ImGui::TextDisabled("New length %s%s", timeText(a, s, static_cast<int64_t>(newLen)).c_str(), s.tMode == 2 ? " (tape: pitch sets speed)" : "");
-      if (ImGui::SmallButton("Fit to song bar")) {
+      ImGui::TextDisabled(i18n::tr("New length %s%s"), timeText(a, s, static_cast<int64_t>(newLen)).c_str(), s.tMode == 2 ? " (tape: pitch sets speed)" : "");
+      if (ImGui::SmallButton(i18n::tr("Fit to song bar"))) {
         const double bar = s.rate() * 60.0 / std::max(10.0, a.doc.song().tempo) * a.doc.song().timeSigNum;
         const double bars = std::max(1.0, std::round(tr.len() / bar));
         s.tStretch = static_cast<float>(bars * bar / std::max<double>(1, tr.len()));
       }
       ImGui::SameLine();
-      if (ImGui::SmallButton("Reset")) s.tStretch = 1, s.tSemis = 0;
+      if (ImGui::SmallButton(i18n::tr("Reset"))) s.tStretch = 1, s.tSemis = 0;
       if (acceptRow()) {
         const double f = s.tStretch, st = s.tSemis;
         const Stretch m = static_cast<Stretch>(s.tMode);
@@ -174,12 +176,12 @@ void drawToolDialogs(App& a, Session& s) {
       });
       s.eq.clear();
       for (auto& p : pts) s.eq.push_back({p.first, p.second});
-      ImGui::TextDisabled("Drag points; double-click adds, right-click removes. +-24 dB, 20 Hz - 20 kHz.");
-      if (ImGui::SmallButton("Flat")) s.eq = {{30, 0}, {120, 0}, {500, 0}, {2000, 0}, {8000, 0}, {16000, 0}};
+      ImGui::TextDisabled("%s", i18n::tr("Drag points; double-click adds, right-click removes. +-24 dB, 20 Hz - 20 kHz."));
+      if (ImGui::SmallButton(i18n::tr("Flat"))) s.eq = {{30, 0}, {120, 0}, {500, 0}, {2000, 0}, {8000, 0}, {16000, 0}};
       ImGui::SameLine();
-      if (ImGui::SmallButton("Low cut")) s.eq = {{20, -24}, {60, -24}, {120, 0}, {16000, 0}};
+      if (ImGui::SmallButton(i18n::tr("Low cut"))) s.eq = {{20, -24}, {60, -24}, {120, 0}, {16000, 0}};
       ImGui::SameLine();
-      if (ImGui::SmallButton("Telephone")) s.eq = {{20, -24}, {300, -24}, {500, 0}, {2500, 3}, {3400, -24}, {20000, -24}};
+      if (ImGui::SmallButton(i18n::tr("Telephone"))) s.eq = {{20, -24}, {300, -24}, {500, 0}, {2500, 3}, {3400, -24}, {20000, -24}};
       if (acceptRow()) {
         std::vector<EqPoint> e = s.eq;
         runEdit(a, s, "Equalize", [tr, e](const Content& c) { return equalize(c, tr, e); });
@@ -191,19 +193,19 @@ void drawToolDialogs(App& a, Session& s) {
       float d = static_cast<float>(s.rv.decay), pd = static_cast<float>(s.rv.predelayMs), dm = static_cast<float>(s.rv.damping),
             w = static_cast<float>(s.rv.width), wet = static_cast<float>(s.rv.wet), dry = static_cast<float>(s.rv.dry);
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Decay", &d, 0.1f, 10.f, "%.2f s", ImGuiSliderFlags_Logarithmic);
+      ImGui::SliderFloat(i18n::tr("Decay"), &d, 0.1f, 10.f, "%.2f s", ImGuiSliderFlags_Logarithmic);
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Pre-delay", &pd, 0.f, 200.f, "%.0f ms");
+      ImGui::SliderFloat(i18n::tr("Pre-delay"), &pd, 0.f, 200.f, "%.0f ms");
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Damping", &dm, 0.f, 1.f, "%.2f");
+      ImGui::SliderFloat(i18n::tr("Damping"), &dm, 0.f, 1.f, "%.2f");
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Width", &w, 0.f, 1.f, "%.2f");
+      ImGui::SliderFloat(i18n::tr("Width"), &w, 0.f, 1.f, "%.2f");
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Wet", &wet, 0.f, 1.f, "%.2f");
+      ImGui::SliderFloat(i18n::tr("Wet"), &wet, 0.f, 1.f, "%.2f");
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Dry", &dry, 0.f, 1.f, "%.2f");
+      ImGui::SliderFloat(i18n::tr("Dry"), &dry, 0.f, 1.f, "%.2f");
       s.rv.decay = d, s.rv.predelayMs = pd, s.rv.damping = dm, s.rv.width = w, s.rv.wet = wet, s.rv.dry = dry;
-      ImGui::TextDisabled("The tail rings into the following audio (and past the end).");
+      ImGui::TextDisabled("%s", i18n::tr("The tail rings into the following audio (and past the end)."));
       if (acceptRow()) {
         ReverbSettings rs = s.rv;
         runEdit(a, s, "Reverb", [tr, rs](const Content& c) { return reverb(c, tr, rs); });
@@ -213,9 +215,9 @@ void drawToolDialogs(App& a, Session& s) {
     case Tool::Blur:
       scopeLine();
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Amount", &s.blurMs, 2.f, 500.f, "%.0f ms", ImGuiSliderFlags_Logarithmic);
+      ImGui::SliderFloat(i18n::tr("Amount"), &s.blurMs, 2.f, 500.f, "%.0f ms", ImGuiSliderFlags_Logarithmic);
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Mix", &s.blurMix, 0.f, 1.f, "%.2f");
+      ImGui::SliderFloat(i18n::tr("Mix"), &s.blurMix, 0.f, 1.f, "%.2f");
       if (acceptRow()) {
         const double ms = s.blurMs, mix = s.blurMix;
         runEdit(a, s, "Blur", [tr, ms, mix](const Content& c) { return blur(c, tr, ms, mix); });
@@ -223,15 +225,15 @@ void drawToolDialogs(App& a, Session& s) {
       break;
     case Tool::Denoise:
       scopeLine();
-      if (ImGui::Button(s.noise.valid() ? "Take profile again (from selection)" : "Take noise profile from the selection")) {
+      if (ImGui::Button(s.noise.valid() ? i18n::tr("Take profile again (from selection)") : i18n::tr("Take noise profile from the selection"))) {
         s.noise = acquireNoise(s.cur().a(), tr);
         if (!s.noise.valid()) say(s, "Select at least 50 ms of noise first");
       }
       ImGui::TextDisabled(s.noise.valid() ? "Noise profile ready." : "No profile yet: select a noise-only part first.");
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Reduction", &s.dnReduce, 3.f, 60.f, "%.0f dB");
+      ImGui::SliderFloat(i18n::tr("Reduction"), &s.dnReduce, 3.f, 60.f, "%.0f dB");
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Sensitivity", &s.dnSens, 0.f, 1.f, "%.2f");
+      ImGui::SliderFloat(i18n::tr("Sensitivity"), &s.dnSens, 0.f, 1.f, "%.2f");
       if (acceptRow(s.noise.valid())) {
         NoiseProfile p = s.noise;
         const double r = s.dnReduce, se = s.dnSens;
@@ -241,15 +243,15 @@ void drawToolDialogs(App& a, Session& s) {
     case Tool::Gate:
       scopeLine();
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Threshold", &s.gThr, -90.f, 0.f, "%.1f dB");
+      ImGui::SliderFloat(i18n::tr("Threshold"), &s.gThr, -90.f, 0.f, "%.1f dB");
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Attack", &s.gAtt, 0.f, 50.f, "%.1f ms");
+      ImGui::SliderFloat(i18n::tr("Attack"), &s.gAtt, 0.f, 50.f, "%.1f ms");
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Hold", &s.gHold, 0.f, 500.f, "%.0f ms");
+      ImGui::SliderFloat(i18n::tr("Hold"), &s.gHold, 0.f, 500.f, "%.0f ms");
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Release", &s.gRel, 1.f, 1000.f, "%.0f ms", ImGuiSliderFlags_Logarithmic);
+      ImGui::SliderFloat(i18n::tr("Release"), &s.gRel, 1.f, 1000.f, "%.0f ms", ImGuiSliderFlags_Logarithmic);
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Floor", &s.gFloor, -90.f, 0.f, s.gFloor <= -90 ? "silence" : "%.0f dB");
+      ImGui::SliderFloat(i18n::tr("Floor"), &s.gFloor, -90.f, 0.f, s.gFloor <= -90 ? "silence" : "%.0f dB");
       if (acceptRow()) {
         const double t = s.gThr, at = s.gAtt, h = s.gHold, rl = s.gRel, fl = s.gFloor;
         runEdit(a, s, "Noise gate", [tr, t, at, h, rl, fl](const Content& c) { return gate(c, tr, t, at, h, rl, fl); });
@@ -258,7 +260,7 @@ void drawToolDialogs(App& a, Session& s) {
     case Tool::Declick:
       scopeLine();
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Sensitivity", &s.dcSens, 0.f, 1.f, "%.2f");
+      ImGui::SliderFloat(i18n::tr("Sensitivity"), &s.dcSens, 0.f, 1.f, "%.2f");
       if (acceptRow()) {
         const double se = s.dcSens;
         runEdit(a, s, "Declick", [tr, se](const Content& c) { return declick(c, tr, se); });
@@ -266,17 +268,17 @@ void drawToolDialogs(App& a, Session& s) {
       break;
     case Tool::Resample: {
       const int rates[] = {8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000};
-      ImGui::Text("Current rate: %.0f Hz", s.rate());
+      ImGui::Text(i18n::tr("Current rate: %.0f Hz"), s.rate());
       int idx = 0;
       for (int i = 0; i < 11; ++i)
         if (rates[i] == s.rsRate) idx = i;
       const char* names[] = {"8000", "11025", "16000", "22050", "32000", "44100", "48000", "88200", "96000", "176400", "192000"};
       ImGui::SetNextItemWidth(200);
-      if (ImGui::Combo("New rate (Hz)", &idx, names, 11)) s.rsRate = rates[idx];
+      if (ImGui::Combo(i18n::tr("New rate (Hz)"), &idx, names, 11)) s.rsRate = rates[idx];
       const char* q[] = {"Fast (16 taps)", "Normal (64 taps)", "Best (192 taps)"};
       ImGui::SetNextItemWidth(200);
-      ImGui::Combo("Quality", &s.rsQuality, q, 3);
-      ImGui::TextDisabled("Converts the whole file (markers move with it).");
+      ImGui::Combo(i18n::tr("Quality"), &s.rsQuality, q, 3);
+      ImGui::TextDisabled("%s", i18n::tr("Converts the whole file (markers move with it)."));
       if (acceptRow(std::lround(s.rate()) != s.rsRate)) {
         const double nr = s.rsRate;
         const int qq = s.rsQuality;
@@ -287,7 +289,7 @@ void drawToolDialogs(App& a, Session& s) {
     case Tool::Amplify:
       scopeLine();
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Gain", &s.ampDb, -48.f, 24.f, "%+.1f dB");
+      ImGui::SliderFloat(i18n::tr("Gain"), &s.ampDb, -48.f, 24.f, "%+.1f dB");
       if (acceptRow()) {
         const double g = s.ampDb;
         runEdit(a, s, "Amplify", [tr, g](const Content& c) { return gain(c, tr, g); });
@@ -296,7 +298,7 @@ void drawToolDialogs(App& a, Session& s) {
     case Tool::Normalize:
       scopeLine();
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Peak level", &s.normDb, -24.f, 0.f, "%.1f dBFS");
+      ImGui::SliderFloat(i18n::tr("Peak level"), &s.normDb, -24.f, 0.f, "%.1f dBFS");
       if (acceptRow()) {
         const double g = s.normDb;
         runEdit(a, s, "Normalize", [tr, g](const Content& c) { return normalize(c, tr, g); });
@@ -315,12 +317,12 @@ void drawToolDialogs(App& a, Session& s) {
         dl->AddLine(ImVec2(p0.x, y1), ImVec2(p1.x, y1), C(col::WaveGridHi));
         dl->AddText(ImVec2(p0.x + 3, y1 - 15), C(col::TextDim), "0 dB");
       });
-      ImGui::TextDisabled("Gain across the range (0 to +6 dB). Double-click adds a point, right-click removes.");
-      if (ImGui::SmallButton("Reset")) s.env = {{0, 1}, {1, 1}};
+      ImGui::TextDisabled("%s", i18n::tr("Gain across the range (0 to +6 dB). Double-click adds a point, right-click removes."));
+      if (ImGui::SmallButton(i18n::tr("Reset"))) s.env = {{0, 1}, {1, 1}};
       ImGui::SameLine();
-      if (ImGui::SmallButton("Swell")) s.env = {{0, 0}, {0.7, 1}, {1, 1}};
+      if (ImGui::SmallButton(i18n::tr("Swell"))) s.env = {{0, 0}, {0.7, 1}, {1, 1}};
       ImGui::SameLine();
-      if (ImGui::SmallButton("Duck")) s.env = {{0, 1}, {0.1, 0.3}, {0.6, 0.3}, {1, 1}};
+      if (ImGui::SmallButton(i18n::tr("Duck"))) s.env = {{0, 1}, {0.1, 0.3}, {0.6, 0.3}, {1, 1}};
       if (acceptRow()) {
         auto e = s.env;
         runEdit(a, s, "Envelope", [tr, e](const Content& c) { return applyEnvelope(c, tr, e); });
@@ -330,8 +332,8 @@ void drawToolDialogs(App& a, Session& s) {
     case Tool::Slice: {
       scopeLine();
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Sensitivity", &s.sliceSens, 0.f, 1.f, "%.2f");
-      ImGui::TextDisabled("Places a marker at every detected hit (replaces the markers).");
+      ImGui::SliderFloat(i18n::tr("Sensitivity"), &s.sliceSens, 0.f, 1.f, "%.2f");
+      ImGui::TextDisabled("%s", i18n::tr("Places a marker at every detected hit (replaces the markers)."));
       if (acceptRow()) detectSlices(a, s, s.sliceSens);
       break;
     }
@@ -346,9 +348,9 @@ void drawToolDialogs(App& a, Session& s) {
         foundKey = k;
       }
       if (found.hz > 0)
-        ImGui::Text("Detected: %.2f Hz = %s %+.0f cents (confidence %.0f%%)", found.hz, noteName(found.note).c_str(), found.cents, found.confidence * 100);
+        ImGui::Text(i18n::tr("Detected: %.2f Hz = %s %+.0f cents (confidence %.0f%%)"), found.hz, noteName(found.note).c_str(), found.cents, found.confidence * 100);
       else
-        ImGui::TextDisabled("No clear pitch found.");
+        ImGui::TextDisabled("%s", i18n::tr("No clear pitch found."));
       std::vector<std::string> names = {"Nearest note"};
       for (int n = 24; n <= 96; ++n) names.push_back(noteName(n));
       int idx = s.tuneNote < 0 ? 0 : s.tuneNote - 23;
@@ -366,8 +368,8 @@ void drawToolDialogs(App& a, Session& s) {
     }
     case Tool::Silence:
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Length", &s.silenceSec, 0.01f, 30.f, "%.2f s", ImGuiSliderFlags_Logarithmic);
-      ImGui::TextDisabled("Inserted at the cursor (%s).", timeText(a, s, s.cursor).c_str());
+      ImGui::SliderFloat(i18n::tr("Length"), &s.silenceSec, 0.01f, 30.f, "%.2f s", ImGuiSliderFlags_Logarithmic);
+      ImGui::TextDisabled(i18n::tr("Inserted at the cursor (%s)."), timeText(a, s, s.cursor).c_str());
       if (acceptRow()) {
         const int64_t at = s.cursor;
         const double sec = s.silenceSec;
@@ -379,10 +381,10 @@ void drawToolDialogs(App& a, Session& s) {
       }
       break;
     case Tool::Spectral:
-      ImGui::Text("%zu painted areas", s.brush.size());
+      ImGui::Text(i18n::tr("%zu painted areas"), s.brush.size());
       ImGui::SetNextItemWidth(260);
-      ImGui::SliderFloat("Gain", &s.spectralDb, -60.f, 12.f, "%+.0f dB");
-      ImGui::TextDisabled("Attenuate (negative) or boost the painted time / frequency areas.");
+      ImGui::SliderFloat(i18n::tr("Gain"), &s.spectralDb, -60.f, 12.f, "%+.0f dB");
+      ImGui::TextDisabled("%s", i18n::tr("Attenuate (negative) or boost the painted time / frequency areas."));
       if (acceptRow(!s.brush.empty())) {
         auto rects = s.brush;
         const double g = s.spectralDb;
@@ -403,6 +405,9 @@ void drawToolDialogs(App& a, Session& s) {
       }
       break;
     }
+    case Tool::Script:
+      drawScriptDialog(a, s);
+      break;
     default:
       if (acceptRow()) {
       }

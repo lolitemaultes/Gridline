@@ -16,6 +16,8 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "../core/I18n.h"
+#include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Presets.h"
 #include "../host/HostedPlugins.h"
@@ -306,16 +308,16 @@ void toggleStar(const std::string& path) {
 void fileContextMenu(App& a, const std::string& ps) {
   if (!ImGui::BeginPopupContextItem("##fctx")) return;
   ImGui::TextDisabled("%s", theme::fitText(fs::path(ps).filename().string().c_str(), 260));
-  if (ImGui::MenuItem(isStarred(ps) ? "Remove star" : "Star")) toggleStar(ps);
-  if (ImGui::MenuItem("Open / add")) browserui::openFile(a, ps);
+  if (ImGui::MenuItem(isStarred(ps) ? i18n::tr("Remove star") : i18n::tr("Star"))) toggleStar(ps);
+  if (ImGui::MenuItem(i18n::tr("Open / add"))) browserui::openFile(a, ps);
   if (browse::kindOf(ps) == Kind::Audio) {
-    if (ImGui::MenuItem("Preview")) browserui::previewFile(a, ps);
-    if (ImGui::MenuItem("Add to playlist as audio clip")) {
+    if (ImGui::MenuItem(i18n::tr("Preview"))) browserui::previewFile(a, ps);
+    if (ImGui::MenuItem(i18n::tr("Add to playlist as audio clip"))) {
       browserui::DropPlace pl;
       pl.tick = a.engine.position() > 0 ? static_cast<Tick>(a.engine.position()) : 0;
       browserui::performDrop(a, ps, browse::DropTarget::Playlist, pl);
     }
-    if (ImGui::MenuItem("Load as impulse on the selected insert")) browserui::performDrop(a, ps, browse::DropTarget::MixerTrack, {});
+    if (ImGui::MenuItem(i18n::tr("Load as impulse on the selected insert"))) browserui::performDrop(a, ps, browse::DropTarget::MixerTrack, {});
   }
   ImGui::EndPopup();
 }
@@ -436,12 +438,12 @@ void pluginRow(App& a, const PluginInfo& p, float indent, const char* detail, bo
   ImGui::PushID(p.type.c_str());
   if (ImGui::BeginPopupContextItem("##pctx")) {
     host::PluginPrefs prefs = host::pluginPrefs();
-    if (ImGui::MenuItem(fav ? "Remove from favourites" : "Add to favourites")) {
+    if (ImGui::MenuItem(fav ? i18n::tr("Remove from favourites") : i18n::tr("Add to favourites"))) {
       if (fav) prefs.favourites.erase(p.type);
       else prefs.favourites.insert(p.type);
       host::setPluginPrefs(prefs);
     }
-    if (ImGui::MenuItem("Plugin picker", "F8")) browserui::togglePluginPicker();
+    if (ImGui::MenuItem(i18n::tr("Plugin picker"), keys::label("view.pluginPicker"))) browserui::togglePluginPicker();
     ImGui::EndPopup();
   }
   ImGui::PopID();
@@ -511,7 +513,7 @@ void installedPlugins(App& a, float indent) {
     if (ss.failed > 0) {
       ImGui::SameLine(0, 8);
       ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);
-      ImGui::TextColored(theme::vec(P.textFaint), "%d failed", ss.failed);
+      ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%d failed"), ss.failed);
       if (ImGui::IsItemHovered()) {
         std::string tip = "Blacklisted (crashed, hung or failed to load; rescanned when updated):";
         for (const auto& [b, why] : host::blacklist()) tip += "\n" + fs::path(b).filename().string() + ": " + why;
@@ -700,11 +702,11 @@ void sectionUserFolders(App& a) {
     ui::Hint(folders[i] + "   (right-click to remove or refresh)");
     if (ImGui::BeginPopupContextItem("##fmenu")) {
       ImGui::TextDisabled("%s", folders[i].c_str());
-      if (ImGui::MenuItem("Refresh")) {
+      if (ImGui::MenuItem(i18n::tr("Refresh"))) {
         dirCache.clear();
         browserui::refreshIndex(a);
       }
-      if (ImGui::MenuItem("Remove from browser")) {
+      if (ImGui::MenuItem(i18n::tr("Remove from browser"))) {
         folders.erase(folders.begin() + static_cast<long>(i));
         saveFolders(a);
         ImGui::EndPopup();
@@ -903,7 +905,7 @@ void infoPanel(App& a) {
   static char tagBuf[48] = "";
   ImGui::SetCursorScreenPos(ImVec2(p0.x + w - pad - 66, y - 2));
   ImGui::SetNextItemWidth(66);
-  if (ImGui::InputTextWithHint("##addtag", "+ tag", tagBuf, sizeof tagBuf, ImGuiInputTextFlags_EnterReturnsTrue) && tagBuf[0]) {
+  if (ImGui::InputTextWithHint("##addtag", i18n::tr("+ tag"), tagBuf, sizeof tagBuf, ImGuiInputTextFlags_EnterReturnsTrue) && tagBuf[0]) {
     auto t = m.tags;
     t.push_back(tagBuf);
     browserui::index().setTags(selPath, t);
@@ -1018,7 +1020,7 @@ void drawBrowser(App& a) {
     float w = ImGui::GetContentRegionAvail().x - 26;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(28, ImGui::GetStyle().FramePadding.y));
     ImGui::SetNextItemWidth(w);
-    ImGui::InputTextWithHint("##filter", "Search  (bpm: key: tag:)", filterBuf, sizeof filterBuf);
+    ImGui::InputTextWithHint("##filter", i18n::tr("Search  (bpm: key: tag:)"), filterBuf, sizeof filterBuf);
     ImGui::PopStyleVar();
     ui::FocusRing();
     ui::Hint("Search plugins, presets and files \xC2\xB7 filters: type:audio|midi|preset|project|effect  tag:kick  bpm:120-130  key:Am  len:<2");

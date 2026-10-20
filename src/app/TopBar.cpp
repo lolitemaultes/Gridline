@@ -13,6 +13,8 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include "../core/I18n.h"
+#include "Keys.h"
 #include "MenuParityUi.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
@@ -44,9 +46,9 @@ struct MenuDef {
   void (*fn)(App&);
 };
 // The bar hosts up to ~9 menus; add entries here when Menus.cpp grows.
-const MenuDef kMenus[] = {{"File", menuFile},     {"Edit", menuEdit},       {"Add", menuAdd}, {"Patterns", menuPatterns},
-                          {"View", menuView},     {"Options", menuOptions}, {"Tools", menuTools},
-                          {"Help", menuHelp}};
+const MenuDef kMenus[] = {{i18n::N_("File"), menuFile},     {i18n::N_("Edit"), menuEdit},       {i18n::N_("Add"), menuAdd}, {i18n::N_("Patterns"), menuPatterns},
+                          {i18n::N_("View"), menuView},     {i18n::N_("Options"), menuOptions}, {i18n::N_("Tools"), menuTools},
+                          {i18n::N_("Help"), menuHelp}};
 
 
 // Tempo LCD: drag / wheel / double-click to type. Returns true when changed.
@@ -90,7 +92,7 @@ bool tempoLcd(App& a, double* v, float width) {
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("BPM");
+    ImGui::TextDisabled("%s", i18n::tr("BPM"));
     ImGui::EndPopup();
   }
   ImGui::PopID();
@@ -165,7 +167,7 @@ float drawTopBar(App& a) {
     menusTotal = 0;
     const float pad = compact ? kMenuPadXCompact : kMenuPadX;
     for (size_t i = 0; i < kMenuCount; ++i) {
-      menuW[i] = std::ceil(ImGui::CalcTextSize(kMenus[i].name).x + pad * 2);
+      menuW[i] = std::ceil(ImGui::CalcTextSize(i18n::tr(kMenus[i].name)).x + pad * 2);
       menusTotal += menuW[i];
     }
     segW = compact ? 40.0f : 46.0f;
@@ -225,7 +227,7 @@ float drawTopBar(App& a) {
     ImGui::SetNextWindowPos(ImVec2(x, wp.y + h - 2));
     if (ImGui::BeginPopup("##mainmenu")) {
       for (const auto& m : kMenus)
-        if (ImGui::BeginMenu(m.name)) {
+        if (ImGui::BeginMenu(i18n::tr(m.name))) {
           m.fn(a);
           ImGui::EndMenu();
         }
@@ -251,9 +253,9 @@ float drawTopBar(App& a) {
       isOpen = ImGui::IsPopupOpen(pid.c_str());
       if (isOpen || hov)
         dl->AddRectFilled(bp, ImVec2(bp.x + menuW[i], bp.y + kBtn), isOpen ? P.surface800 : P.surface900, theme::kRadius);
-      ImVec2 ts = ImGui::CalcTextSize(kMenus[i].name);
+      ImVec2 ts = ImGui::CalcTextSize(i18n::tr(kMenus[i].name));
       dl->AddText(ImVec2(std::round(bp.x + (menuW[i] - ts.x) * 0.5f), std::round(bp.y + (kBtn - ts.y) * 0.5f)),
-                  isOpen || hov ? P.text : P.textDim, kMenus[i].name);
+                  isOpen || hov ? P.text : P.textDim, i18n::tr(kMenus[i].name));
       ImGui::SetNextWindowPos(ImVec2(bp.x, wp.y + h - 2));
       if (ImGui::BeginPopup(pid.c_str())) {
         anyOpen = true;
@@ -414,16 +416,19 @@ float drawTopBar(App& a) {
   if (show[Windows]) {
     rx -= wWindows;
     panel(dl, rx, wWindows, panelTop);
-    struct Wn { const char* id; ui::Icon icon; bool* flag; const char* hint; const char* name; };
-    const Wn wins[] = {{"w_pl", ui::Icon::Playlist, &a.showPlaylist, "Playlist (F5)", "Playlist"},
-                       {"w_cr", ui::Icon::Rack, &a.showRack, "Channel rack (F6)", "Channel rack"},
-                       {"w_pr", ui::Icon::Piano, &a.showPiano, "Piano roll (F7)", "Piano roll"},
-                       {"w_mx", ui::Icon::Mixer, &a.showMixer, "Mixer (F9)", "Mixer"},
-                       {"w_br", ui::Icon::Browser, &a.showBrowser, "Browser (Alt+F8)", "Browser"}};
+    struct Wn { const char* id; ui::Icon icon; bool* flag; const char* cmd; const char* name; };
+    const Wn wins[] = {{"w_pl", ui::Icon::Playlist, &a.showPlaylist, "view.playlist", i18n::N_("Playlist")},
+                       {"w_cr", ui::Icon::Rack, &a.showRack, "view.channelRack", i18n::N_("Channel rack")},
+                       {"w_pr", ui::Icon::Piano, &a.showPiano, "view.pianoRoll", i18n::N_("Piano roll")},
+                       {"w_mx", ui::Icon::Mixer, &a.showMixer, "view.mixer", i18n::N_("Mixer")},
+                       {"w_br", ui::Icon::Browser, &a.showBrowser, "view.browser", i18n::N_("Browser")}};
     float cx = rx + kPanelPad;
     for (const auto& w : wins) {
       ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
-      if (ui::ToggleIcon(w.id, w.icon, *w.flag, kBtn, w.hint)) {
+      // J-55: the hint names the current shortcut (Settings > Shortcuts may have changed it).
+      const char* key = keys::label(w.cmd);
+      const std::string hint = std::string(i18n::tr(w.name)) + (key ? std::string(" (") + key + ")" : std::string());
+      if (ui::ToggleIcon(w.id, w.icon, *w.flag, kBtn, hint.c_str())) {
         *w.flag = !*w.flag;
         if (*w.flag) a.focusWindow = w.name;
       }
@@ -502,7 +507,7 @@ float drawTopBar(App& a) {
     if (!show[Menus]) {
       section("MENU");
       for (const auto& m : kMenus)
-        if (ImGui::BeginMenu(m.name)) {
+        if (ImGui::BeginMenu(i18n::tr(m.name))) {
           m.fn(a);
           ImGui::EndMenu();
         }
@@ -521,15 +526,15 @@ float drawTopBar(App& a) {
       ImGui::TextUnformatted(pos.c_str());
       ImGui::PopFont();
     }
-    if (!show[Pat] && ImGui::BeginMenu("Pattern")) {
+    if (!show[Pat] && ImGui::BeginMenu(i18n::tr("Pattern"))) {
       patternList(a);
       ImGui::EndMenu();
     }
     if (!show[Master]) {
       section("MASTER");
       masterControls(true);
-      if (ImGui::MenuItem("Metronome", "Ctrl+M", a.metronome)) a.metronome = !a.metronome;
-      if (ImGui::MenuItem("Typing keyboard", "Ctrl+T", a.typingKeyboard)) a.typingKeyboard = !a.typingKeyboard;
+      if (ImGui::MenuItem(i18n::tr("Metronome"), keys::label("options.metronome"), a.metronome)) a.metronome = !a.metronome;
+      if (ImGui::MenuItem(i18n::tr("Typing keyboard"), keys::label("options.typingKeyboard"), a.typingKeyboard)) a.typingKeyboard = !a.typingKeyboard;
     }
     if (!show[Monitor]) {
       section("OUTPUT");
@@ -540,11 +545,11 @@ float drawTopBar(App& a) {
     }
     if (!show[Windows]) {
       section("WINDOWS");
-      if (ImGui::MenuItem("Playlist", "F5", a.showPlaylist)) a.showPlaylist = !a.showPlaylist;
-      if (ImGui::MenuItem("Channel rack", "F6", a.showRack)) a.showRack = !a.showRack;
-      if (ImGui::MenuItem("Piano roll", "F7", a.showPiano)) a.showPiano = !a.showPiano;
-      if (ImGui::MenuItem("Mixer", "F9", a.showMixer)) a.showMixer = !a.showMixer;
-      if (ImGui::MenuItem("Browser", "Alt+F8", a.showBrowser)) a.showBrowser = !a.showBrowser;
+      if (ImGui::MenuItem(i18n::tr("Playlist"), keys::label("view.playlist"), a.showPlaylist)) a.showPlaylist = !a.showPlaylist;
+      if (ImGui::MenuItem(i18n::tr("Channel rack"), keys::label("view.channelRack"), a.showRack)) a.showRack = !a.showRack;
+      if (ImGui::MenuItem(i18n::tr("Piano roll"), keys::label("view.pianoRoll"), a.showPiano)) a.showPiano = !a.showPiano;
+      if (ImGui::MenuItem(i18n::tr("Mixer"), keys::label("view.mixer"), a.showMixer)) a.showMixer = !a.showMixer;
+      if (ImGui::MenuItem(i18n::tr("Browser"), keys::label("view.browser"), a.showBrowser)) a.showBrowser = !a.showBrowser;
     }
     ImGui::EndPopup();
   }
@@ -606,6 +611,20 @@ void drawStatusBar(App& a) {
     rx -= lw + 12 + theme::kS4;
     dl->AddCircleFilled(ImVec2(rx + 4, ty + fs * 0.5f + 1), 3.0f, P.hot, 12);
     dl->AddText(a.fontRegular, fs, ImVec2(rx + 12, ty), P.textDim, lbuf);
+  }
+  // MI-02: external sync lock lamp (green = locked to the master, dim = waiting).
+  if (a.midi && a.midi->syncSource != SyncSource::Internal) {
+    bool locked = false;
+    {
+      std::lock_guard<std::mutex> lk(a.midi->followerMutex());
+      locked = a.midi->syncSource == SyncSource::Mtc ? a.midi->mtc().locked(MidiManager::clockNow())
+                                                      : a.midi->follower().hasTempo() && a.midi->follower().running();
+    }
+    const char* lbl = a.midi->syncSource == SyncSource::Mtc ? "MTC" : "CLK";
+    const float lw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, lbl).x;
+    rx -= lw + 14 + theme::kS4;
+    ui::Led(dl, ImVec2(rx + 4, ty + fs * 0.5f + 1), 3.5f, locked);
+    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(rx + 12, ty + 1), locked ? P.text : P.textFaint, lbl);
   }
   float leftMax = rx - wp.x - theme::kS3 * 2 - theme::kS4;
 

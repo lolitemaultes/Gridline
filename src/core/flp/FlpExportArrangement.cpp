@@ -10,7 +10,8 @@
 //   f32 pitch (cents), @52 f32 gain, @64 f64 time stretch.
 // Track (238), 70 bytes: u32 index (1-based), u32 colour, u32 icon, u8 on,
 //   f32 height, …, live settings @22 (motion, press, trigger sync, queue,
-//   tolerant, position sync), @46 u8 grouped under the track above.
+//   tolerant, position sync), @46 u8 grouped under the track above, @49 u32
+//   track mode (0 / 1 audio / 3 instrument), @53 i32 insert, @57 i32 channel.
 // Mixer parameter record (225): {u32 0, u8 id, u8 kind, u16 (base + insert)
 //   << 6 | slot, i32 value}; FL 25 base 448.
 #include <algorithm>
@@ -324,6 +325,19 @@ void Exporter::writeArrangements() {
         putU32(r, 30, static_cast<uint32_t>(pt.launch));
         putU32(r, 42, static_cast<uint32_t>(pt.syncStart));
         putU8(r, 46, grouped[static_cast<size_t>(t)] ? 1 : 0);
+      }
+      if (r.size() >= 61) {  // PL-08 track mode @49, linked insert @53, linked channel @57 (-1 = none)
+        const bool audio = pt.mode == TrackMode::Audio && s.mixerTrack(pt.mixer);
+        const bool instr = pt.mode == TrackMode::Instrument && s.channel(pt.channel);
+        int chan = -1;
+        if (instr)
+          for (size_t k = 0; k < chans.size(); ++k)
+            if (!chans[k].automation && chans[k].id == pt.channel) chan = static_cast<int>(k);
+        const int ins = (audio || instr) && s.mixerTrack(pt.mixer) ? s.mixerIndex(pt.mixer) : -1;
+        putU32(r, 49, audio ? 1u : instr && chan >= 0 ? 3u : 0u);
+        putU32(r, 53, static_cast<uint32_t>(ins));
+        putU32(r, 57, static_cast<uint32_t>(instr ? chan : -1));
+        if (instr && chan < 0) rep.counts["instrument tracks without an FL channel"]++;
       }
       w.data(238, r);
       if (oldAfter.count(t)) {

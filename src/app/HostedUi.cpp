@@ -1,4 +1,5 @@
 // Gridline — hosted (VST3 / CLAP / VST2 / AU) plugins in the app.
+#include "../core/I18n.h"
 #include "HostedUi.h"
 #include <algorithm>
 #include <cmath>
@@ -250,7 +251,7 @@ void outputsSection(App& a, const PluginTarget& t, const host::HostedClass& cls,
   const Channel* ch = s.channel(t.owner);
   if (!ch) return;
   pui::beginSection("OUTPUTS", width);
-  ImGui::TextColored(theme::vec(P.textDim), "Output 1 plays through the channel. Send the other outputs to mixer tracks:");
+  ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Output 1 plays through the channel. Send the other outputs to mixer tracks:"));
   const size_t n = cls.auxOutputs.size();
   for (size_t k = 0; k < n; ++k) {
     ImGui::PushID(static_cast<int>(k));
@@ -268,7 +269,7 @@ void outputsSection(App& a, const PluginTarget& t, const host::HostedClass& cls,
           while (!c.auxOuts.empty() && c.auxOuts.back() == kNoId) c.auxOuts.pop_back();
         });
       };
-      if (ImGui::Selectable("(not used)", cur == kNoId)) pick(kNoId);
+      if (ImGui::Selectable(i18n::tr("(not used)"), cur == kNoId)) pick(kNoId);
       for (size_t m = 1; m < s.mixer.size(); ++m)
         if (ImGui::Selectable((mixerTrackName(s, m) + "##m" + std::to_string(m)).c_str(), s.mixer[m].id == cur)) pick(s.mixer[m].id);
       ImGui::EndCombo();
@@ -415,7 +416,7 @@ void header(App& a, const PluginTarget& t, host::HostedInstance* hi, const Plugi
     selectPreset(a, t, hi, w.preset);
   }
   if (ImGui::BeginPopup("##wrapperPresets")) {
-    if (hi->programCount() > 0) ImGui::TextDisabled("Programs");
+    if (hi->programCount() > 0) ImGui::TextDisabled("%s", i18n::tr("Programs"));
     for (int k = 0; k < hi->programCount(); ++k)
       if (ImGui::Selectable((hi->programName(k) + "##p" + std::to_string(k)).c_str(), k == w.preset) && selectPreset(a, t, hi, k)) w.preset = k;
     std::string cat = "\x01";
@@ -501,9 +502,9 @@ void processingPage(App& a, host::HostedInstance* hi, float width) {
   const double sr = hi->backend()->sampleRate() > 0 ? hi->backend()->sampleRate() : 48000.0;
   const int tail = hi->backend()->tailSamples();
   const std::string tailText = tail >= (1 << 28) ? std::string("infinite") : std::to_string(tail) + " samples";
-  ImGui::TextColored(theme::vec(theme::pal().textDim), "Latency: plugin %d + buffer %d = %d samples (%.1f ms), compensated.",
+  ImGui::TextColored(theme::vec(theme::pal().textDim), i18n::tr("Latency: plugin %d + buffer %d = %d samples (%.1f ms), compensated."),
                      hi->backend()->latency(), hi->totalLatency() - hi->backend()->latency(), hi->totalLatency(), 1000.0 * hi->totalLatency() / sr);
-  ImGui::TextColored(theme::vec(theme::pal().textDim), "Tail: %s.", tailText.c_str());
+  ImGui::TextColored(theme::vec(theme::pal().textDim), i18n::tr("Tail: %s."), tailText.c_str());
   pui::endSection();
   if (o != before) applyOptions(a, cls.type, o);
 }
@@ -515,7 +516,7 @@ void settingsPage(App& a, const PluginTarget& t, host::HostedInstance* hi, Wrapp
   // MIDI ports and detection.
   pui::beginSection("MIDI", width);
   const bool midiIn = hi->backend()->hasEventInput(), midiOut = hi->hasMidiOutput();
-  ImGui::TextColored(theme::vec(P.textDim), "Input: %s  \xC2\xB7  Output: %s", midiIn ? "notes / MIDI" : "none", midiOut ? "notes / MIDI" : "none");
+  ImGui::TextColored(theme::vec(P.textDim), i18n::tr("Input: %s  \xC2\xB7  Output: %s"), midiIn ? "notes / MIDI" : "none", midiOut ? "notes / MIDI" : "none");
   ImGui::SameLine(0, 12);
   if (ui::TextButton("Detect", a.now < w.detectUntil, 0, "Watches the plugin's MIDI output for a few seconds (play some notes)")) {
     w.midiAtDetect = hi->midiOutCount();
@@ -550,10 +551,10 @@ void settingsPage(App& a, const PluginTarget& t, host::HostedInstance* hi, Wrapp
     if (ch->midiOutPort >= 0) {
       int listeners = 0;
       for (const auto& c : s.channels) listeners += c.id != ch->id && c.midiInPort == ch->midiOutPort;
-      ImGui::TextColored(theme::vec(P.textFaint), "%d channel%s listening on port %d", listeners, listeners == 1 ? "" : "s", ch->midiOutPort);
+      ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%d channel%s listening on port %d"), listeners, listeners == 1 ? "" : "s", ch->midiOutPort);
     }
   } else {
-    ImGui::TextColored(theme::vec(P.textFaint), "MIDI ports apply to plugins on channels.");
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("MIDI ports apply to plugins on channels."));
   }
   pui::endSection();
 
@@ -566,7 +567,7 @@ void settingsPage(App& a, const PluginTarget& t, host::HostedInstance* hi, Wrapp
         if (snd.sidechain && snd.to == t.owner) from.push_back(mixerTrackName(s, m));
     std::string list;
     for (const auto& f : from) list += (list.empty() ? "" : ", ") + f;
-    ImGui::TextColored(theme::vec(P.textDim), "%d-channel sidechain input. Fed by: %s", hi->backend()->sidechainChannels(),
+    ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%d-channel sidechain input. Fed by: %s"), hi->backend()->sidechainChannels(),
                        from.empty() ? "nothing yet" : list.c_str());
     if (ui::BeginCombo("##scadd", "Add sidechain from\xE2\x80\xA6", 220)) {
       for (size_t m = 0; m < s.mixer.size(); ++m) {
@@ -597,7 +598,7 @@ void settingsPage(App& a, const PluginTarget& t, host::HostedInstance* hi, Wrapp
   ImGui::PushFont(a.fontMono, 10.5f);
   ImGui::TextColored(theme::vec(P.textDim), "%s", theme::fitText(cls.type.c_str(), width - 24));
   ImGui::TextColored(theme::vec(P.textDim), "%s", theme::fitText(cls.bundle.c_str(), width - 24));
-  ImGui::TextColored(theme::vec(P.textDim), "version %s  \xC2\xB7  %s", cls.version.empty() ? "?" : cls.version.c_str(),
+  ImGui::TextColored(theme::vec(P.textDim), i18n::tr("version %s  \xC2\xB7  %s"), cls.version.empty() ? "?" : cls.version.c_str(),
                      cls.subCategories.empty() ? "-" : cls.subCategories.c_str());
   ImGui::PopFont();
   pui::endSection();
@@ -616,7 +617,7 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
     ImGui::TextColored(theme::vec(P.textFaint), "%s", st ? st->type.c_str() : "");
     std::string err = host::lastError();
     if (!err.empty()) ImGui::TextWrapped("%s", err.c_str());
-    ImGui::TextColored(theme::vec(P.textDim), "Its parameters and state stay in the project.");
+    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Its parameters and state stay in the project."));
     if (info && ui::TextButton("Try again", false, 0, "Loads the plugin again")) a.syncEngine();
     pui::endSection();
     return;
@@ -624,7 +625,7 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
   const host::HostedClass& cls = hi->hostedClass();
   if (hi->crashed()) {
     pui::beginSection("HOSTED PLUGIN", width);
-    ImGui::TextColored(theme::vec(P.danger), "%s crashed and is silenced.", cls.name.c_str());
+    ImGui::TextColored(theme::vec(P.danger), i18n::tr("%s crashed and is silenced."), cls.name.c_str());
     ImGui::TextColored(theme::vec(P.textDim), "%s", hi->crashReason().c_str());
     if (ui::TextButton("Reload plugin", false, 0, "Starts the plugin again with the state saved in the project")) reloadHostedPlugin(a, t);
     pui::endSection();
@@ -659,7 +660,7 @@ void hostedui::drawPage(App& a, const PluginTarget& t, int page, float width) {
   std::snprintf(buf, sizeof buf, "%s", filter.c_str());
   pui::beginSection("PARAMETERS", width);
   ImGui::SetNextItemWidth(std::min(260.0f, width - 24));
-  if (ImGui::InputTextWithHint("##find", "Find parameter", buf, sizeof buf)) filter = buf;
+  if (ImGui::InputTextWithHint("##find", i18n::tr("Find parameter"), buf, sizeof buf)) filter = buf;
   std::string f = filter;
   for (char& c : f) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   std::vector<int> rows;
@@ -680,7 +681,7 @@ void hostedui::drawPage(App& a, const PluginTarget& t, int page, float width) {
   while (clip.Step())
     for (int r = clip.DisplayStart; r < clip.DisplayEnd; ++r)
       paramRow(a, t, hi, rows[static_cast<size_t>(r)], info->params[static_cast<size_t>(rows[static_cast<size_t>(r)])], rw);
-  if (rows.empty()) ImGui::TextColored(theme::vec(P.textFaint), "No parameter matches.");
+  if (rows.empty()) ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No parameter matches."));
   ImGui::PopStyleVar();
   ImGui::EndChild();
   pui::endSection();

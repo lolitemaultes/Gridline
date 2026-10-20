@@ -7,6 +7,7 @@
 // resize, right-click for the chord menu), then performance and preset
 // panels. Edits write into the pattern as they happen, merged into one undo
 // step; Accept keeps them, Cancel puts the pattern back.
+#include "../core/I18n.h"
 #include "ChordEditorUi.h"
 #include <algorithm>
 #include <cmath>
@@ -267,45 +268,45 @@ void beginSession(App& a) {
 void chordMenu(App& a, size_t i) {
   const bool multi = S.sel.size() > 1 && S.sel.count(i);
   ch::Chord& c = S.prog.chords[i];
-  if (multi) ImGui::TextDisabled("%zu chords selected", S.sel.size());
+  if (multi) ImGui::TextDisabled(i18n::tr("%zu chords selected"), S.sel.size());
   else ImGui::TextDisabled("%s", chordLabel(c).c_str());
   ImGui::Separator();
   if (!multi) {
-    if (ImGui::MenuItem("Preview")) {
+    if (ImGui::MenuItem(i18n::tr("Preview"))) {
       soundChord(a, i, S.pressHeld);
       S.pvT0 = a.now;
     }
-    if (ImGui::MenuItem("Play from this chord")) startPreview(a, i);
+    if (ImGui::MenuItem(i18n::tr("Play from this chord"))) startPreview(a, i);
   }
-  if (ImGui::MenuItem(multi ? "Lock" : (c.locked ? "Unlock" : "Lock"))) {
+  if (ImGui::MenuItem(multi ? i18n::tr("Lock") : (c.locked ? i18n::tr("Unlock") : i18n::tr("Lock")))) {
     const bool to = multi ? true : !c.locked;
     editChords(a, i, [to](ch::Chord& x) { x.locked = to; });
   }
-  if (multi && ImGui::MenuItem("Unlock")) editChords(a, i, [](ch::Chord& x) { x.locked = false; });
-  if (ImGui::BeginMenu("Main notes")) {
-    if (ImGui::MenuItem("On", nullptr, c.main)) editChords(a, i, [](ch::Chord& x) { x.main = true; });
-    if (ImGui::MenuItem("Off", nullptr, !c.main)) editChords(a, i, [](ch::Chord& x) { x.main = false; });
+  if (multi && ImGui::MenuItem(i18n::tr("Unlock"))) editChords(a, i, [](ch::Chord& x) { x.locked = false; });
+  if (ImGui::BeginMenu(i18n::tr("Main notes"))) {
+    if (ImGui::MenuItem(i18n::tr("On"), nullptr, c.main)) editChords(a, i, [](ch::Chord& x) { x.main = true; });
+    if (ImGui::MenuItem(i18n::tr("Off"), nullptr, !c.main)) editChords(a, i, [](ch::Chord& x) { x.main = false; });
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Bass note")) {
-    if (ImGui::MenuItem("On", nullptr, c.bass)) editChords(a, i, [](ch::Chord& x) { x.bass = true; });
-    if (ImGui::MenuItem("Off", nullptr, !c.bass)) editChords(a, i, [](ch::Chord& x) { x.bass = false; });
+  if (ImGui::BeginMenu(i18n::tr("Bass note"))) {
+    if (ImGui::MenuItem(i18n::tr("On"), nullptr, c.bass)) editChords(a, i, [](ch::Chord& x) { x.bass = true; });
+    if (ImGui::MenuItem(i18n::tr("Off"), nullptr, !c.bass)) editChords(a, i, [](ch::Chord& x) { x.bass = false; });
     ImGui::EndMenu();
   }
   ui::Label("CHANGE CHORD");
-  if (ImGui::MenuItem("Regenerate")) {
+  if (ImGui::MenuItem(i18n::tr("Regenerate"))) {
     std::vector<size_t> which = multi ? std::vector<size_t>(S.sel.begin(), S.sel.end()) : std::vector<size_t>{i};
     S.seed = S.seed * 1664525u + 1013904223u;
     edit(a, [&](ch::ChordProgression& p) { ch::regenerate(p, which, S.adventure, S.seed); });
   }
   if (!multi) {
-    if (ImGui::MenuItem("Show other chords that fit...")) {
+    if (ImGui::MenuItem(i18n::tr("Show other chords that fit..."))) {
       S.altFor = static_cast<int>(i);
       S.alts = ch::alternatives(S.prog, i);
     }
-    if (ImGui::MenuItem("Add a passing chord after it", nullptr, false, ch::chordLength(S.prog, i) >= 2 * a.doc.song().beatTicks()))
+    if (ImGui::MenuItem(i18n::tr("Add a passing chord after it"), nullptr, false, ch::chordLength(S.prog, i) >= 2 * a.doc.song().beatTicks()))
       edit(a, [&](ch::ChordProgression& p) { ch::addPassingChord(p, i, a.doc.song().beatTicks()); });
-    if (ImGui::BeginMenu("Choose the chord")) {
+    if (ImGui::BeginMenu(i18n::tr("Choose the chord"))) {
       ui::Label("ROOT NOTE");
       for (int k = 0; k < 12; ++k) {
         if (k % 6) ImGui::SameLine();
@@ -320,86 +321,86 @@ void chordMenu(App& a, size_t i) {
       }
       ImGui::EndMenu();
     }
-    if (ImGui::MenuItem("Type the chord name...")) S.typeFor = static_cast<int>(i);
-    if (ImGui::MenuItem("Learn from MIDI input", nullptr, S.learn)) {
+    if (ImGui::MenuItem(i18n::tr("Type the chord name..."))) S.typeFor = static_cast<int>(i);
+    if (ImGui::MenuItem(i18n::tr("Learn from MIDI input"), nullptr, S.learn)) {
       S.learn = !S.learn;
       S.sel = {i};
       S.learned.clear();
     }
   }
   ui::Label("CHANGE NOTES");
-  if (ImGui::BeginMenu("Invert")) {
-    if (ImGui::MenuItem("Up")) editChords(a, i, [](ch::Chord& x) { ch::invert(x, 1); });
-    if (ImGui::MenuItem("Down")) editChords(a, i, [](ch::Chord& x) { ch::invert(x, -1); });
+  if (ImGui::BeginMenu(i18n::tr("Invert"))) {
+    if (ImGui::MenuItem(i18n::tr("Up"))) editChords(a, i, [](ch::Chord& x) { ch::invert(x, 1); });
+    if (ImGui::MenuItem(i18n::tr("Down"))) editChords(a, i, [](ch::Chord& x) { ch::invert(x, -1); });
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Transpose")) {
-    if (ImGui::MenuItem("A semitone up")) editChords(a, i, [](ch::Chord& x) { ch::transpose(x, 1); });
-    if (ImGui::MenuItem("A semitone down")) editChords(a, i, [](ch::Chord& x) { ch::transpose(x, -1); });
-    if (ImGui::MenuItem("An octave up")) editChords(a, i, [](ch::Chord& x) { x.octave += 1; });
-    if (ImGui::MenuItem("An octave down")) editChords(a, i, [](ch::Chord& x) { x.octave -= 1; });
-    if (ImGui::MenuItem("Bass an octave up")) editChords(a, i, [](ch::Chord& x) { x.bassOctave += 1; });
-    if (ImGui::MenuItem("Bass an octave down")) editChords(a, i, [](ch::Chord& x) { x.bassOctave -= 1; });
+  if (ImGui::BeginMenu(i18n::tr("Transpose"))) {
+    if (ImGui::MenuItem(i18n::tr("A semitone up"))) editChords(a, i, [](ch::Chord& x) { ch::transpose(x, 1); });
+    if (ImGui::MenuItem(i18n::tr("A semitone down"))) editChords(a, i, [](ch::Chord& x) { ch::transpose(x, -1); });
+    if (ImGui::MenuItem(i18n::tr("An octave up"))) editChords(a, i, [](ch::Chord& x) { x.octave += 1; });
+    if (ImGui::MenuItem(i18n::tr("An octave down"))) editChords(a, i, [](ch::Chord& x) { x.octave -= 1; });
+    if (ImGui::MenuItem(i18n::tr("Bass an octave up"))) editChords(a, i, [](ch::Chord& x) { x.bassOctave += 1; });
+    if (ImGui::MenuItem(i18n::tr("Bass an octave down"))) editChords(a, i, [](ch::Chord& x) { x.bassOctave -= 1; });
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Fixed bass")) {
-    if (ImGui::MenuItem("The chord's root", nullptr, c.fixedBass < 0)) editChords(a, i, [](ch::Chord& x) { x.fixedBass = -1; });
+  if (ImGui::BeginMenu(i18n::tr("Fixed bass"))) {
+    if (ImGui::MenuItem(i18n::tr("The chord's root"), nullptr, c.fixedBass < 0)) editChords(a, i, [](ch::Chord& x) { x.fixedBass = -1; });
     for (int k = 0; k < 12; ++k)
       if (ImGui::MenuItem(ch::noteName(k).c_str(), nullptr, c.fixedBass == k)) editChords(a, i, [k](ch::Chord& x) { x.fixedBass = k; });
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Extra notes")) {
-    if (ImGui::MenuItem("Leave one note out", nullptr, c.extra < 0)) editChords(a, i, [](ch::Chord& x) { x.extra = -1; });
+  if (ImGui::BeginMenu(i18n::tr("Extra notes"))) {
+    if (ImGui::MenuItem(i18n::tr("Leave one note out"), nullptr, c.extra < 0)) editChords(a, i, [](ch::Chord& x) { x.extra = -1; });
     static const char* const n[] = {"None", "One note", "Two notes", "Three notes"};
     for (int k = 0; k < 4; ++k)
       if (ImGui::MenuItem(n[k], nullptr, c.extra == k)) editChords(a, i, [k](ch::Chord& x) { x.extra = k; });
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Voicing")) {
+  if (ImGui::BeginMenu(i18n::tr("Voicing"))) {
     for (int k = 0; k < static_cast<int>(ch::Voicing::Count); ++k)
       if (ImGui::MenuItem(ch::voicingName(static_cast<ch::Voicing>(k)), nullptr, static_cast<int>(c.voicing) == k))
         editChords(a, i, [k](ch::Chord& x) { x.voicing = static_cast<ch::Voicing>(k); });
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Colour")) {
+  if (ImGui::BeginMenu(i18n::tr("Colour"))) {
     for (int k = 0; k < kNoteColors; ++k)
       if (ImGui::MenuItem(std::to_string(k + 1).c_str(), nullptr, c.color == k)) editChords(a, i, [k](ch::Chord& x) { x.color = k; });
     ImGui::EndMenu();
   }
   ui::Label("PIANO ROLL NOTES");
-  if (ImGui::MenuItem("Snap the pattern's notes to the chords")) {
+  if (ImGui::MenuItem(i18n::tr("Snap the pattern's notes to the chords"))) {
     std::vector<Note> b = S.base;
     if (ch::snapNotes(b, S.prog, startTick(a.doc.song())) > 0) {
       S.base = b;
       writeNow(a);
     }
   }
-  if (ImGui::BeginMenu("Note linking")) {
-    if (ImGui::MenuItem("Write the chord again (replace)")) setLinked(a, i, true);
-    if (ImGui::MenuItem("Link", nullptr, c.linked)) setLinked(a, i, true);
-    if (ImGui::MenuItem("Unlink (keep its notes as they are)", nullptr, !c.linked)) setLinked(a, i, false);
+  if (ImGui::BeginMenu(i18n::tr("Note linking"))) {
+    if (ImGui::MenuItem(i18n::tr("Write the chord again (replace)"))) setLinked(a, i, true);
+    if (ImGui::MenuItem(i18n::tr("Link"), nullptr, c.linked)) setLinked(a, i, true);
+    if (ImGui::MenuItem(i18n::tr("Unlink (keep its notes as they are)"), nullptr, !c.linked)) setLinked(a, i, false);
     ImGui::EndMenu();
   }
   ui::Label("CHORD ACTIONS");
-  if (ImGui::MenuItem("Copy")) {
+  if (ImGui::MenuItem(i18n::tr("Copy"))) {
     S.clip.clear();
     if (multi)
       for (size_t k : S.sel) S.clip.push_back(S.prog.chords[k]);
     else
       S.clip.push_back(c);
   }
-  if (ImGui::MenuItem("Paste after it", nullptr, false, !S.clip.empty()))
+  if (ImGui::MenuItem(i18n::tr("Paste after it"), nullptr, false, !S.clip.empty()))
     edit(a, [&](ch::ChordProgression& p) {
       int at = static_cast<int>(i) + 1;
       for (const auto& k : S.clip) ch::addChord(p, k, at++);
     });
-  if (!multi && ImGui::BeginMenu("Swap with")) {
-    if (ImGui::MenuItem("The chord on the left", nullptr, false, i > 0)) edit(a, [&](ch::ChordProgression& p) { ch::swapChords(p, i, i - 1); });
-    if (ImGui::MenuItem("The chord on the right", nullptr, false, i + 1 < S.prog.chords.size()))
+  if (!multi && ImGui::BeginMenu(i18n::tr("Swap with"))) {
+    if (ImGui::MenuItem(i18n::tr("The chord on the left"), nullptr, false, i > 0)) edit(a, [&](ch::ChordProgression& p) { ch::swapChords(p, i, i - 1); });
+    if (ImGui::MenuItem(i18n::tr("The chord on the right"), nullptr, false, i + 1 < S.prog.chords.size()))
       edit(a, [&](ch::ChordProgression& p) { ch::swapChords(p, i, i + 1); });
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem("Delete", nullptr, false, S.prog.chords.size() > 1)) {
+  if (ImGui::MenuItem(i18n::tr("Delete"), nullptr, false, S.prog.chords.size() > 1)) {
     std::vector<size_t> which = multi ? std::vector<size_t>(S.sel.begin(), S.sel.end()) : std::vector<size_t>{i};
     std::sort(which.rbegin(), which.rend());
     edit(a, [&](ch::ChordProgression& p) {
@@ -412,8 +413,8 @@ void chordMenu(App& a, size_t i) {
 
 void genModeMenu() {
   ui::Label("NOTES WRITTEN");
-  ImGui::MenuItem("Chord notes", nullptr, &S.withMain);
-  ImGui::MenuItem("Bass notes", nullptr, &S.withBass);
+  ImGui::MenuItem(i18n::tr("Chord notes"), nullptr, &S.withMain);
+  ImGui::MenuItem(i18n::tr("Bass notes"), nullptr, &S.withBass);
   ui::Label("NOTES ALREADY IN THE PATTERN");
   for (int k = 0; k < static_cast<int>(ch::NonChordMode::Count); ++k)
     if (ImGui::MenuItem(ch::nonChordModeName(static_cast<ch::NonChordMode>(k)), nullptr, static_cast<int>(S.mode) == k))
@@ -548,14 +549,14 @@ void chordLane(App& a, float height) {
     ImGui::EndPopup();
   }
   if (ImGui::BeginPopup("##newchord")) {
-    if (ImGui::MenuItem("Add a chord at the end"))
+    if (ImGui::MenuItem(i18n::tr("Add a chord at the end")))
       edit(a, [&](ch::ChordProgression& p) {
         ch::Chord c = p.chords.empty() ? ch::diatonicChord(p.key, p.scale, 1) : p.chords.back();
         c.length = lenTicks(s, S.newLen);
         c.locked = false;
         ch::addChord(p, c, -1);
       });
-    if (ImGui::MenuItem("Paste at the end", nullptr, false, !S.clip.empty()))
+    if (ImGui::MenuItem(i18n::tr("Paste at the end"), nullptr, false, !S.clip.empty()))
       edit(a, [&](ch::ChordProgression& p) {
         for (const auto& k : S.clip) ch::addChord(p, k, -1);
       });
@@ -621,7 +622,7 @@ void topStrip(App& a) {
   ImGui::SameLine(0, theme::kS2);
   // Chord count.
   ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(P.textDim), "Chords");
+  ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Chords"));
   ImGui::SameLine(0, 4);
   int count = static_cast<int>(S.prog.chords.size());
   if (stepper("##count", &count, 1, 32, "%d")) {
@@ -674,7 +675,7 @@ void generatorRow(App& a) {
   const auto& P = pal();
   const Song& s = a.doc.song();
   ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(P.textDim), "Adventure");
+  ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Adventure"));
   ImGui::SameLine(0, 4);
   float adv = static_cast<float>(S.adventure);
   ImGui::SetNextItemWidth(120);
@@ -715,7 +716,7 @@ void generatorRow(App& a) {
   }
   ImGui::SameLine(0, theme::kS2);
   ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(P.textDim), "From bar");
+  ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("From bar"));
   ImGui::SameLine(0, 4);
   int sb = S.startBar + 1;
   if (stepper("##start", &sb, 1, 999, "%d")) {
@@ -723,7 +724,7 @@ void generatorRow(App& a) {
     writeNow(a);
   }
   ImGui::SameLine(0, theme::kS2);
-  if (ImGui::Checkbox("Write while editing", &S.live) && S.live) writeNow(a);
+  if (ImGui::Checkbox(i18n::tr("Write while editing"), &S.live) && S.live) writeNow(a);
   ui::Hint("Off: the pattern changes only when you press Accept");
 }
 
@@ -731,7 +732,7 @@ void alternativesRow(App& a) {
   if (S.altFor < 0 || static_cast<size_t>(S.altFor) >= S.prog.chords.size()) return;
   const auto& P = pal();
   ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(P.textDim), "Instead of %s:", chordLabel(S.prog.chords[static_cast<size_t>(S.altFor)]).c_str());
+  ImGui::TextColored(theme::vec(P.textDim), i18n::tr("Instead of %s:"), chordLabel(S.prog.chords[static_cast<size_t>(S.altFor)]).c_str());
   for (size_t k = 0; k < S.alts.size(); ++k) {
     ImGui::SameLine(0, 4);
     ImGui::PushID(static_cast<int>(k));
@@ -784,15 +785,15 @@ void performancePanel(App& a) {
   ui::Hint("Length of one rhythm cycle (it restarts on every chord)");
   float strum = static_cast<float>(pf.strum) / static_cast<float>(std::max(1, s.ppq));
   ImGui::SetNextItemWidth(110);
-  if (ImGui::SliderFloat("Strum##st", &strum, 0.0f, 1.0f, "%.2f beat")) pf.strum = static_cast<Tick>(std::lround(strum * s.ppq));
+  if (ImGui::SliderFloat(i18n::tr("Strum##st"), &strum, 0.0f, 1.0f, "%.2f beat")) pf.strum = static_cast<Tick>(std::lround(strum * s.ppq));
   ImGui::SameLine(0, 4);
-  ImGui::Checkbox("Top first", &pf.strumDown);
+  ImGui::Checkbox(i18n::tr("Top first"), &pf.strumDown);
   float gate = static_cast<float>(pf.gate);
   ImGui::SetNextItemWidth(110);
-  if (ImGui::SliderFloat("Gate##gt", &gate, 0.05f, 1.0f, "%.2f")) pf.gate = gate;
+  if (ImGui::SliderFloat(i18n::tr("Gate##gt"), &gate, 0.05f, 1.0f, "%.2f")) pf.gate = gate;
   ImGui::SameLine(0, 4);
   ImGui::SetNextItemWidth(90);
-  ImGui::SliderInt("Velocity##vl", &pf.velocity, 1, 127);
+  ImGui::SliderInt(i18n::tr("Velocity##vl"), &pf.velocity, 1, 127);
   ui::EndSection();
   static bool perfEditing = false;  // a slider drag is one editor step
   if (!(pf == S.prog.perf)) {
@@ -834,7 +835,7 @@ void presetPanel(App& a) {
     S.preset = static_cast<int>((S.seed >> 8) % ps.size());
   }
   ImGui::SetNextItemWidth(260);
-  ImGui::InputTextWithHint("##text", "C - Am - F - G   or   I V vi IV", S.text, sizeof S.text);
+  ImGui::InputTextWithHint("##text", i18n::tr("C - Am - F - G   or   I V vi IV"), S.text, sizeof S.text);
   ImGui::SameLine(0, 4);
   if (ui::TextButton("Read", false, 46, "Make the progression from the text (names or numerals, separated by spaces, commas or dashes)")) {
     int bad = 0;
@@ -850,10 +851,10 @@ void presetPanel(App& a) {
   if (ui::TextButton("Write out", false, 64, "Put the progression into the text field")) {
     std::snprintf(S.text, sizeof S.text, "%s", ch::progressionText(S.prog, S.roman).c_str());
   }
-  if (ImGui::Checkbox("Learn chords from MIDI input", &S.learn)) S.learned.clear();
+  if (ImGui::Checkbox(i18n::tr("Learn chords from MIDI input"), &S.learn)) S.learned.clear();
   ui::Hint("Play a chord on a MIDI keyboard: it replaces the selected chord");
   ImGui::SameLine(0, 4);
-  ImGui::Checkbox("Then the next chord", &S.autoLearn);
+  ImGui::Checkbox(i18n::tr("Then the next chord"), &S.autoLearn);
   ui::Hint("After each learned chord the selection moves on to the next one");
   ui::EndSection();
 }
@@ -929,10 +930,10 @@ void drawChordEditor(App& a) {
   const float laneBottom = ImGui::GetCursorScreenPos().y;
   alternativesRow(a);
   if (ImGui::BeginTable("##panels", 2, ImGuiTableFlags_SizingStretchProp)) {
-    ImGui::TableSetupColumn("perf", ImGuiTableColumnFlags_WidthFixed, 340);
+    ImGui::TableSetupColumn(i18n::tr("perf"), ImGuiTableColumnFlags_WidthFixed, 340);
     // J-36: an explicit weight. With SizingStretchProp the stretch column takes its
     // auto-fit width as weight, 0 on the first frame: 0 / 0 gave NaN column widths.
-    ImGui::TableSetupColumn("presets", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn(i18n::tr("presets"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableNextColumn();
     performancePanel(a);
     ImGui::TableNextColumn();

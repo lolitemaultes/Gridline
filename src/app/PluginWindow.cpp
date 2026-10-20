@@ -23,6 +23,7 @@
 #include <set>
 #include <thread>
 #include <vector>
+#include "../core/I18n.h"
 #include "../host/EditorLayout.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
@@ -386,7 +387,7 @@ void drawBar(PluginWindow& w, host::HostedInstance* hi) {
     dl->AddTriangleFilled(ImVec2(c.x - 3, c.y - 5), ImVec2(c.x - 3, c.y + 5), ImVec2(c.x + 4, c.y), np > 0 ? K.text : K.faint);
   }
   if (ImGui::BeginPopup("##presets")) {
-    if (hi->programCount() > 0) ImGui::TextDisabled("Programs");
+    if (hi->programCount() > 0) ImGui::TextDisabled("%s", i18n::tr("Programs"));
     for (int k = 0; k < hi->programCount(); ++k)
       if (ImGui::Selectable((hi->programName(k) + "##p" + std::to_string(k)).c_str(), k == cur)) hostedui::selectPreset(a, t, hi, k);
     std::string cat = "\x01";

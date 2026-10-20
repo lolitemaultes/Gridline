@@ -11,6 +11,7 @@
 #include "ScriptUi.h"
 #include "ChordEditorUi.h"
 #include "J31Ui.h"
+#include "../core/Automation.h"
 
 namespace gl {
 
@@ -237,14 +238,50 @@ void App::processMidi() {
         while (rt->midiOut.pop(msg)) midi->send(msg.s, msg.a, msg.b);
       }
 
-  // ---- external clock ----
-  if (midi->clockIn) {
+  // ---- external sync (MI-02) ----
+  if (midi->syncSource == SyncSource::Mtc) {
+    const double t = MidiManager::clockNow();
+    bool locked = false, located = false;
+    double master = 0, locateSec = 0;
+    std::lock_guard<std::mutex> lk(midi->followerMutex());
+    MtcReceiver& rx = midi->mtc();
+    locked = rx.locked(t);
+    master = rx.seconds(t);
+    located = rx.takeLocate(locateSec);
+    SyncChase& chase = midi->chase();
+    chase.offset = midi->clockInOffsetMs / 1000.0;
+    chase.tolerance = std::max(0.005, midi->chaseToleranceMs / 1000.0);
+    TempoMap map;
+    map.build(doc.song());
+    auto tickOf = [&map](double sec) { return static_cast<Tick>(std::llround(map.tickAtSeconds(std::max(0.0, sec)))); };
+    if (located && !locked && !engine.playing()) engine.setPosition(tickOf(locateSec + chase.offset));  // full frame: locate
+    const auto act = chase.update(t, locked, master, engine.playing(), map.secondsAt(engine.position()));
+    if (act.kind == SyncChase::Action::Start) {
+      engine.setPosition(tickOf(act.position));
+      engine.play();
+    } else if (act.kind == SyncChase::Action::Stop) {
+      engine.pause();
+    } else if (act.kind == SyncChase::Action::Locate) {
+      engine.setPosition(tickOf(act.position));
+    }
+  } else if (midi->syncSource == SyncSource::Clock) {
     std::vector<MidiClockFollower::Cmd> cmds;
-    double bpm = 0;
+    double bpm = 0, masterTick = 0;
+    bool running = false;
     {
       std::lock_guard<std::mutex> lk(midi->followerMutex());
       cmds = midi->follower().takeCommands();
       if (midi->follower().hasTempo()) bpm = midi->follower().bpm();
+      running = midi->follower().running() && midi->follower().hasTempo();
+      masterTick = static_cast<double>(midi->follower().clocks()) * doc.song().ppq / 24.0;
+    }
+    {  // drift: the song position the clock count implies (start / stop come with the clock's own commands)
+      SyncChase& chase = midi->chase();
+      const double ticksPerSec = doc.song().tempo / 60.0 * doc.song().ppq;
+      chase.offset = midi->clockInOffsetMs / 1000.0 * ticksPerSec;
+      chase.tolerance = std::max(1.0, midi->chaseToleranceMs / 1000.0 * ticksPerSec);
+      const auto act = chase.update(MidiManager::clockNow(), running && cmds.empty(), masterTick, engine.playing(), engine.position());
+      if (act.kind == SyncChase::Action::Locate) engine.setPosition(static_cast<Tick>(std::llround(std::max(0.0, act.position))));
     }
     for (const auto& c : cmds) {
       if (c.kind == MidiClockFollower::Cmd::Start) {

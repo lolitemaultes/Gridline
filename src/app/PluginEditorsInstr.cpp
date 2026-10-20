@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include "../core/I18n.h"
 #include "../core/PluginParams.h"
 #include "InstrumentSkin.h"
 #include "PluginEditorsCommon.h"
@@ -322,7 +323,7 @@ void editorKeys(App& a, const PluginTarget& t, float width) {
   ImGui::SetCursorScreenPos(k.at(456, 9));
   ImGui::InvisibleButton("##kinfo", ImVec2(k.px(16), k.px(19)));
   if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Tine / Reed / Bright tine / Soft: modelled electric pianos\nGrand / Upright piano: hammered-string models");
+    ImGui::SetTooltip("%s", i18n::tr("Tine / Reed / Bright tine / Soft: modelled electric pianos\nGrand / Upright piano: hammered-string models"));
   // Extras in the header strip: volume, key-tracked pan, velocity curve.
   iskin::wheel(a, t, k, KyVolume, 170, 8, 28, k.c.fill2);
   iskin::text(k, 160, 35, 48, 9, "VOLUME", 8, k.c.textDim, 1, false, true);
