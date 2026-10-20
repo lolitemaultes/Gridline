@@ -4,8 +4,13 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <functional>
+#include <random>
 #include <string>
 #include "../src/core/Document.h"
+#include "../src/core/Fades.h"
+#include "../src/core/MixerLayout.h"
+#include "../src/core/Project.h"
 #include "../src/core/PluginInfo.h"
 #include "../src/core/SmoothSnap.h"
 #include "../src/core/Song.h"
@@ -13,6 +18,7 @@
 #include "../src/core/Workspace.h"
 #include "../src/engine/ClipOps.h"
 #include "../src/engine/PlaylistTools.h"
+#include "../src/engine/Render.h"
 #include "Check.h"
 
 using namespace gl;
@@ -81,6 +87,8 @@ const Clip* clipIn(const std::vector<Clip>& v, ObjectId id) {
 }
 
 bool near(double a, double b, double eps = 1e-9) { return std::fabs(a - b) <= eps; }
+
+#include "playlist_view_j38.inc"  // J-38: fades, automatic crossfades, thin mixer layout
 
 }  // namespace
 
@@ -400,6 +408,8 @@ int main() {
     }
   }
 
+  crossfadeTests();
+  mixerLayoutTests();
   fs::remove(wav);
   return finish();
 }

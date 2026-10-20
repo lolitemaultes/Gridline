@@ -547,6 +547,9 @@ struct Song {
   LiveSettings live;
   std::vector<Arrangement> arrangements;
   int currentArrangement = 0;
+  // J-38: overlapping audio clips on a track crossfade automatically (project
+  // setting; core/Fades.h).
+  bool autoCrossfades = true;
   FlOrigin flOrigin;  // FL Studio import data for the FL exporter (see FlOrigin)
 
   ObjectId allocateId() { return nextId++; }

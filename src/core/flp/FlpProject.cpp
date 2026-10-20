@@ -121,6 +121,10 @@ void importProject(Context& c) {
   }
   if (!c.file.events.empty() && !find(c.sec.project, 156) && coarse > 0) s.tempo = coarse + fine / 1000.0;
   s.tempo = std::clamp(s.tempo, 10.0, 522.0);
+  // J-38: FL keeps the fades it creates for overlapping clips in the clip
+  // records (its fade self-test reads them back from the clips), so an import
+  // plays the stored fades as they are instead of deriving crossfades again.
+  s.autoCrossfades = false;
   if (s.info.title.empty()) s.info.title = "Imported project";
   if (s.info.comments.empty())  // older projects: comments only as RTF (198)
     if (const Event* e = find(c.sec.project, 198)) s.info.comments = rtfToText(e->text());

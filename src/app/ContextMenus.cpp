@@ -1155,6 +1155,20 @@ void playlistOptionsMenu(App& a) {
       if (ImGui::MenuItem("Pitch selected audio clips a semitone up", nullptr, false, audioSel)) ops::pitchAudioClips(a.doc, a.playlist.selected, 100.0f);
       if (ImGui::MenuItem("Pitch selected audio clips a semitone down", nullptr, false, audioSel)) ops::pitchAudioClips(a.doc, a.playlist.selected, -100.0f);
       if (ImGui::MenuItem("Reverse selected audio clips", nullptr, false, audioSel)) ops::reverseAudioClips(a.doc, a.playlist.selected);
+      // J-38: fades and automatic crossfades.
+      if (ImGui::MenuItem("Automatic crossfades", nullptr, s.autoCrossfades))
+        a.doc.editSong(s.autoCrossfades ? "automatic crossfades off" : "automatic crossfades on", [](Song& x) { x.autoCrossfades = !x.autoCrossfades; });
+      ui::Hint("Overlapping audio clips on a track crossfade over the overlap (this project)");
+      if (ImGui::MenuItem("Reset fades of selected audio clips", nullptr, false, audioSel)) {
+        const auto sel = a.playlist.selected;
+        a.doc.editClips("reset fades", [&](std::vector<Clip>& v) {
+          for (Clip& x : v)
+            if (x.kind == ClipKind::Audio && sel.count(x.id)) {
+              x.fadeIn = x.fadeOut = 0, x.fadeInManual = x.fadeOutManual = false;
+              x.fadeInShape = x.fadeOutShape = 0, x.fadeInTension = x.fadeOutTension = 0;
+            }
+        });
+      }
       if (ImGui::MenuItem("Merge selected automation clips", nullptr, false, autoSel)) {
         ObjectId nc = ops::mergeAutomationClips(a.doc, a.playlist.selected);
         if (nc) a.playlist.selected = {nc};

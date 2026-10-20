@@ -12,6 +12,7 @@
 #include <vector>
 #include "../core/Automation.h"
 #include "../core/Expr.h"
+#include "../core/Fades.h"
 #include "../core/Params.h"
 #include "../core/Song.h"
 #include "Effects.h"
@@ -168,6 +169,8 @@ struct ProgAudioClip {
   bool reverse = false;
   float gain = 1;
   double fadeIn = 0, fadeOut = 0;   // seconds of playback time
+  FadeShape shapeIn = FadeShape::Linear, shapeOut = FadeShape::Linear;  // J-38: curve shapes (resolved)
+  float tensionIn = 0, tensionOut = 0;                                  // J-38: curve tension
   bool cutEnd = false;              // the clip ends while its audio still plays (declick)
 };
 

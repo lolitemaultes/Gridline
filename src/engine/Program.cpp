@@ -174,7 +174,8 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
 // Audio clip → playback description (arrangement). The channel's sampler
 // settings give the sample, pitch shift, stretch mode and reverse; the clip
 // adds its own window, gain, fades, pitch, stretch and tempo sync.
-bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const TempoMap& map, ProgAudioClip& out) {
+bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const TempoMap& map, ProgAudioClip& out,
+                      const ClipFades* fades = nullptr) {
   SamplePtr smp = sampleCache().get(ch.plugin.data);
   if (!smp || smp->frames() < 2 || smp->sampleRate <= 0) return false;
   auto par = [&](int k, double d) { return k < static_cast<int>(ch.plugin.params.size()) ? static_cast<double>(ch.plugin.params[static_cast<size_t>(k)]) : d; };
@@ -192,8 +193,16 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   out.srcEnd = c.audioEnd > out.srcStart ? std::min(c.audioEnd, smp->seconds()) : smp->seconds();
   out.reverse = c.reverse != (sampler && par(pp::SmpReverse, 0) >= 0.5);
   out.gain = c.gain;
-  out.fadeIn = c.fadeIn;
-  out.fadeOut = c.fadeOut;
+  if (fades) {  // J-38: resolved fades (automatic crossfades, curve shapes, tension)
+    out.fadeIn = fades->in.len, out.fadeOut = fades->out.len;
+    out.shapeIn = fades->in.shape, out.shapeOut = fades->out.shape;
+    out.tensionIn = fades->in.tension, out.tensionOut = fades->out.tension;
+  } else {  // the clip's own fades only (live clips play alone)
+    out.fadeIn = c.fadeIn, out.fadeOut = c.fadeOut;
+    out.shapeIn = c.fadeInShape > 0 && c.fadeInShape < kFadeShapeCount ? static_cast<FadeShape>(c.fadeInShape) : FadeShape::Linear;
+    out.shapeOut = c.fadeOutShape > 0 && c.fadeOutShape < kFadeShapeCount ? static_cast<FadeShape>(c.fadeOutShape) : FadeShape::Linear;
+    out.tensionIn = c.fadeInTension, out.tensionOut = c.fadeOutTension;
+  }
   if (c.syncBpm > 0) {  // follows the tempo: always pitch-independent
     out.secPerTick = 60.0 / (c.syncBpm * song.ppq) / timeFactor;
     out.granular = true;
@@ -750,7 +759,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (auto it = patternAutos.find(p.id); it != patternAutos.end()) pp.autos = std::move(it->second);
     prog->patterns.push_back(std::move(pp));
   }
-  for (const auto& clip : song.playlist) {
+  const std::vector<ClipFades> clipFades = resolveAllFades(song, prog->tempoMap);  // J-38
+  for (size_t clipIdx = 0; clipIdx < song.playlist.size(); ++clipIdx) {
+    const Clip& clip = song.playlist[clipIdx];
     if (clip.track >= 0 && static_cast<size_t>(clip.track) < song.tracks.size() &&
         song.tracks[static_cast<size_t>(clip.track)].muted)
       continue;
@@ -758,7 +769,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (clip.kind == ClipKind::Audio) {  // arrangement: audio clip through its channel
       int ci = song.channelIndex(clip.source);
       ProgAudioClip ac;
-      if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], clip, prog->tempoMap, ac))
+      if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], clip, prog->tempoMap, ac, &clipFades[clipIdx]))
         prog->channels[static_cast<size_t>(ci)].audio.push_back(std::move(ac));
       continue;
     }

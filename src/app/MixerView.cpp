@@ -19,6 +19,7 @@
 #include "ContextMenus.h"
 #include "HostedUi.h"
 #include "TrackIcons.h"
+#include "../core/MixerLayout.h"
 #include "../core/MixerOps.h"
 #include "../core/WavWriter.h"
 #include "../engine/Render.h"
@@ -247,9 +248,12 @@ void stripMeter(ImGuiID key, float pl, float pr, float rl, float rr, ImVec2 size
     App& a = app();
     static const float dense[] = {6, 0, -6, -12, -18, -24, -36, -48}, sparse[] = {0, -12, -24, -48};
     const bool roomy = size.y >= 200;
+    float lastY = -1e9f;
     for (float db : roomy ? std::vector<float>(dense, dense + 8) : std::vector<float>(sparse, sparse + 4)) {
       const float f = std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);
       const float y = std::round(p.y + size.y - f * size.y);
+      if (y - lastY < 11.0f) continue;  // J-38: labels never overlap on short meters
+      lastY = y;
       dl->AddLine(ImVec2(p.x + size.x + 1, y), ImVec2(p.x + size.x + 4, y), P.textFaint);
       char b[8];
       std::snprintf(b, sizeof b, "%d", static_cast<int>(db));
@@ -335,6 +339,7 @@ struct StripCtx {
   const MixerTrack* focus = nullptr;  // focused track (routing arrows point from it)
   StripDims dims;
   float extraTop = 0;  // extended slot list + waveform height
+  bool masterScale = true;  // J-38: the master's dB scale (dropped first in a very thin mixer)
 };
 
 void selectTrack(App& a, ObjectId id) {
@@ -510,7 +515,7 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
   }
 
   // Meter pair + fader in a sunken well.
-  const bool scale = i == 0 && v.masterScale;
+  const bool scale = i == 0 && v.masterScale && cx0.masterScale;
   const float fy = y + 2, bottomH = 44;
   const float fh = std::max(40.0f, p.y + stripH - fy - bottomH);
   float pl = 0, pr = 0, rl = 0, rr = 0;
@@ -1010,7 +1015,10 @@ static void mixerToolbar(App& a) {
   ImGui::SameLine(0, 6);
   // J-28: as a thin column the strips are compact and wrap by themselves;
   // strip width and rows stay in the mixer menu.
-  const bool column = ImGui::GetWindowWidth() < 520;
+  const bool column = ImGui::GetWindowWidth() < mixlayout::kColumnBelow;
+  // J-38: in a thin column the toolbar drops what doesn't fit (meters / hold
+  // stay in the mixer menu) instead of clipping it at the edge.
+  auto room = [] { return ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetCursorScreenPos().x - ImGui::GetStyle().WindowPadding.x; };
   if (!column) {
     static const char* layouts[] = {"Compact", "Normal", "Wide"};
     static const char* layoutHints[] = {"Compact strips", "Normal strips", "Wide strips"};
@@ -1028,14 +1036,21 @@ static void mixerToolbar(App& a) {
   if (ui::TextButton("Slots", v.extended, 0, "Show every effect slot (name and mix) on the strips")) v.extended = !v.extended;
   ImGui::SameLine(0, 4);
   if (ui::ToggleIcon("wave", ui::Icon::Wave, v.waveforms, ImGui::GetFrameHeight(), "Waveforms on the strips (Alt+W)")) v.waveforms = !v.waveforms;
-  ImGui::SameLine(0, 6);
   static const char* meters[] = {"Peak", "RMS", "Both"};
-  ui::Segmented("##meter", meters, 3, &v.meterMode, 0, 0, nullptr);
-  ui::Hint("Meters: peak, RMS (average level) or both");
-  ImGui::SameLine(0, 4);
-  if (ui::TextButton("Hold", v.peakHold, 0, "Meters hold their peaks for a moment")) v.peakHold = !v.peakHold;
-  const float roomLeft = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetItemRectMax().x;
-  if (!column || roomLeft > 84) {
+  const ImGuiStyle& sty = ImGui::GetStyle();
+  float meterSegW = 0;
+  for (const char* m : meters) meterSegW += ImGui::CalcTextSize(m).x + sty.FramePadding.x * 2 + 2;
+  const float holdW = ImGui::CalcTextSize("Hold").x + sty.FramePadding.x * 2 + 2, routeW = ImGui::CalcTextSize("Routing").x + sty.FramePadding.x * 2 + 18;
+  ImGui::SameLine(0, 6);
+  bool fits = !column || room() >= meterSegW;
+  if (fits) {
+    ui::Segmented("##meter", meters, 3, &v.meterMode, 0, 0, nullptr);
+    ui::Hint("Meters: peak, RMS (average level) or both");
+    ImGui::SameLine(0, 4);
+    fits = !column || room() >= holdW;
+    if (fits && ui::TextButton("Hold", v.peakHold, 0, "Meters hold their peaks for a moment")) v.peakHold = !v.peakHold;
+  }
+  if (fits && (!column || room() >= routeW)) {
     ImGui::SameLine(0, 6);
     ui::ToolbarDivider();
     ImGui::SameLine(0, 6);
@@ -1085,10 +1100,28 @@ void drawMixer(App& a) {
   // compact strips wrap into as many rows as needed (vertical scrolling, every
   // strip whole and readable) and the inspector sits below them when the
   // column is tall enough.
-  const bool column = W < 520;
-  const bool showInspector = !column || Hm >= 520;
+  // J-38: the thin layout comes from mixlayout::compute (core/MixerLayout.h):
+  // strips flow into rows that fill the width (master included), rows keep a
+  // usable fader height (scrolling rather than squashing), the inspector stacks
+  // below when there is room for it.
+  const bool column = W < mixlayout::kColumnBelow;
+  const bool groups = !mixops::groupNames(s).empty();
+  const std::vector<size_t> order = mixops::displayOrder(s);
+  mixlayout::Layout ml;
+  if (column) {
+    mixlayout::Input in;
+    in.width = W, in.height = Hm;
+    in.strips = static_cast<int>(order.size());
+    in.masterScaleW = v.masterScale ? 16.0f : 0.0f;
+    in.masterExtra = 8.0f + in.masterScaleW;
+    in.minStripH = minStripHeight(v);
+    in.bandH = groups ? 14.0f : 0.0f;
+    in.padding = theme::kS2;
+    ml = mixlayout::compute(in);
+  }
+  const bool showInspector = !column || ml.showInspector;
   const float inspectorW = std::clamp(W * 0.27f, 240.0f, 320.0f);
-  const float inspectorH = column ? std::floor(std::clamp(Hm * 0.42f, 220.0f, 380.0f)) : 0.0f;
+  const float inspectorH = column ? ml.inspectorH : 0.0f;
 
   // ---------------- strips ----------------
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, theme::kS2));
@@ -1101,23 +1134,47 @@ void drawMixer(App& a) {
   {
     StripCtx ctx;
     ctx.focus = sel;
-    ctx.dims = stripDims(column ? static_cast<int>(MixerViewState::Compact) : v.layout);
+    ctx.dims = stripDims(column ? static_cast<int>(ml.stripW >= 66.0f ? MixerViewState::Wide : MixerViewState::Compact) : v.layout);
+    ctx.masterScale = !column || ml.masterScale;
     const float stripW = ctx.dims.w, masterW = stripW + 8 + (v.masterScale ? 16.0f : 0.0f), gap = 2.0f;
-    const bool groups = !mixops::groupNames(s).empty();
     const float bandH = groups ? 14.0f : 0.0f;
-    int rows = std::clamp(v.rows, 1, 4);
-    if (column) {  // as many rows as it takes to fit the column's width
-      size_t mids = 0, lefts = 0;
-      for (size_t i : mixops::displayOrder(s)) {
-        const int dock = i == 0 ? -1 : std::clamp(s.mixer[i].dock, -1, 1);
-        mids += dock >= 0;  // the right dock wraps with the middle in a column
-        lefts += dock < 0;
+    const int rows = std::clamp(v.rows, 1, 4);
+    if (column) {  // J-38: flowed rows (see above)
+      const ImVec2 o = ImGui::GetCursorScreenPos();
+      std::vector<size_t> flow;
+      for (size_t i : order)
+        if (i == 0 || std::clamp(s.mixer[i].dock, -1, 1) < 0) flow.push_back(i);  // left dock first (master leads)
+      for (size_t i : order)
+        if (i != 0 && std::clamp(s.mixer[i].dock, -1, 1) >= 0) flow.push_back(i);
+      const bool cull = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::GetDragDropPayload();
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      for (size_t k = 0; k < flow.size() && k < ml.cells.size(); ++k) {
+        const mixlayout::Cell& c = ml.cells[k];
+        const ImVec2 p(o.x + c.x, o.y + static_cast<float>(c.row) * ml.rowPitch + bandH);
+        const MixerTrack& t = s.mixer[flow[k]];
+        if (groups && !t.group.empty()) {  // group band: a rule above the strip, the label where a run starts
+          const ImU32 gc = theme::mix(P.textDim, theme::rgb(t.color), 0.5f);
+          dl->AddRectFilled(ImVec2(p.x, p.y - bandH + 9), ImVec2(p.x + c.w + gap, p.y - bandH + 11), gc);
+          const bool startRun = k == 0 || s.mixer[flow[k - 1]].group != t.group || ml.cells[k - 1].row != c.row;
+          if (startRun) {
+            const ImVec2 ts = a.fontMono->CalcTextSizeA(9.0f, 1e9f, 0, t.group.c_str());
+            dl->AddRectFilled(ImVec2(p.x, p.y - bandH), ImVec2(p.x + std::min(ts.x + 8, c.w), p.y - bandH + 11), P.surface800, 2);
+            dl->PushClipRect(ImVec2(p.x, p.y - bandH), ImVec2(p.x + c.w, p.y), true);
+            dl->AddText(a.fontMono, 9.0f, ImVec2(p.x + 4, p.y - bandH), P.text, t.group.c_str());
+            dl->PopClipRect();
+          }
+        }
+        if (!cull || ImGui::IsRectVisible(p, ImVec2(p.x + c.w, p.y + ml.rowH))) drawStrip(a, flow[k], p, c.w, ml.rowH, ctx);
       }
-      const float leftW = static_cast<float>(lefts) * (stripW + gap) + 8 + (v.masterScale ? 16.0f : 0.0f) + theme::kS3;
-      const float roomW = ImGui::GetContentRegionAvail().x - leftW - 44.0f;
-      const size_t perRow = std::max<size_t>(1, static_cast<size_t>(std::floor(roomW / (stripW + gap))));
-      rows = std::max(1, static_cast<int>((mids + perRow - 1) / perRow));
-    }
+      ImGui::SetCursorScreenPos(ImVec2(o.x + ml.addX + 4, o.y + static_cast<float>(ml.addRow) * ml.rowPitch + bandH));
+      if (ui::IconButton("addtrack", ui::Icon::Plus, false, 28, "Add a mixer track")) {
+        ObjectId id = a.doc.addMixerTrack();
+        if (id) a.selMixer = id;
+      }
+      ImGui::SetCursorScreenPos(o);
+      const int rowsAll = std::max(ml.rows, ml.addRow + 1);
+      ImGui::Dummy(ImVec2(ml.contentW, static_cast<float>(rowsAll) * ml.rowPitch - mixlayout::kRowGap));
+    } else {
     const float avail = ImGui::GetContentRegionAvail().y - (ImGui::GetScrollMaxX() > 0 ? 8.0f : 0.0f);
     const float rowH = column ? minStripHeight(v)
                               : std::max(minStripHeight(v), (avail - static_cast<float>(rows) * bandH - static_cast<float>(rows - 1) * 6.0f) / static_cast<float>(rows));
@@ -1192,6 +1249,7 @@ void drawMixer(App& a) {
       if (!cull || ImGui::IsRectVisible(pl.p, ImVec2(pl.p.x + pl.w, pl.p.y + rowH))) drawStrip(a, pl.i, pl.p, pl.w, rowH, ctx);
     ImGui::SetCursorScreenPos(o);
     ImGui::Dummy(ImVec2(x - o.x + 8, static_cast<float>(rows) * (rowH + bandH + 6.0f) - 6.0f));
+    }
   }
   ImGui::EndChild();
 

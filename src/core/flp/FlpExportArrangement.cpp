@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include "../Fades.h"
 #include "FlpExportInternal.h"
 #include "FlpFx.h"
 
@@ -120,6 +121,19 @@ void Exporter::writeArrangements() {
     else w.text(241, name);
     w.byte(36, findRaw(oe, 36) ? findRaw(oe, 36)->value() : 0);
     // Playlist.
+    // J-38: effective audio fades (automatic crossfades are derived, never stored).
+    std::vector<ClipFades> fades;
+    {
+      TempoMap tm;
+      tm.build(s);
+      if (cur) {
+        fades = resolveAllFades(s, tm);
+      } else {
+        Song t = s;
+        t.playlist = clips;
+        fades = resolveAllFades(t, tm);
+      }
+    }
     ByteWriter pl;
     for (const Clip& c : clips) {
       const EventList co = origin(originKey("clip", c.id));
@@ -173,8 +187,18 @@ void Exporter::writeArrangements() {
         keepF(24, c.audioStart, 1000.0);
         if (c.audioEnd > 0) keepF(28, c.audioEnd, 1000.0);
         else putF32(r, 28, -1.0f);
-        keepF(36, c.fadeIn, 1000.0);
-        keepF(44, c.fadeOut, 1000.0);
+        // J-38: a clip made in Gridline carries its effective fades, automatic
+        // crossfades included, so FL plays the overlap the same; records from
+        // an FL import keep FL's stored values (FL derives its own crossfades).
+        // Curve shape / tension: FL's fields are not confirmed (@40 may be the
+        // fade-in tension), so they are not written.
+        const size_t ci2 = static_cast<size_t>(&c - clips.data());
+        const ClipFades none;
+        const ClipFades& cf = ci2 < fades.size() ? fades[ci2] : none;
+        keepF(36, orec ? c.fadeIn : cf.in.len, 1000.0);
+        keepF(44, orec ? c.fadeOut : cf.out.len, 1000.0);
+        if (c.fadeInShape || c.fadeOutShape || c.fadeInTension != 0.0f || c.fadeOutTension != 0.0f)
+          rep.counts["audio clips: fade curve shape / tension not written"]++;
         const auto cents = audioCents.find(c.source);
         const float pitch = c.pitch - static_cast<float>(cents == audioCents.end() ? 0 : cents->second);
         if (!(orec && getF32(r, 48) + static_cast<float>(cents == audioCents.end() ? 0 : cents->second) == c.pitch)) putF32(r, 48, pitch);

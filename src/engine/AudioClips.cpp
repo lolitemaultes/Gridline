@@ -70,9 +70,10 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     for (int64_t i = a; i < b; ++i) {
       const double u = sec0 + static_cast<double>(i) / sr - c.startSec;
       double g = c.gain;
-      if (fin > 0 && u < fin) g *= std::max(0.0, u / fin);
+      // Fades (J-38: curve shape and tension; the 2 ms declick stays linear).
+      if (fin > 0 && u < fin) g *= c.fadeIn > 0 ? fadeGain(u / fin, c.shapeIn, c.tensionIn) : std::max(0.0, u / fin);
       const double rest = c.durSec - u;
-      if (fout > 0 && rest < fout) g *= std::max(0.0, rest / fout);
+      if (fout > 0 && rest < fout) g *= c.fadeOut > 0 ? fadeGain(rest / fout, c.shapeOut, c.tensionOut) : std::max(0.0, rest / fout);
       if (g <= 0.0) continue;
       float l = 0.f, r = 0.f;
       if (!c.granular && chanRatio == 1.0) {

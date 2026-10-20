@@ -117,13 +117,21 @@ struct Clip {
   bool launched = false;
   // J-31: clip group (kNoId = none); grouped clips are selected together.
   ObjectId group = kNoId;
+  // J-38: fade curves and automatic crossfades (core/Fades.h). An edge whose
+  // fade was set by hand (or fadeIn / fadeOut > 0) keeps it; otherwise an
+  // overlapping audio clip on the same track crossfades automatically.
+  uint8_t fadeInShape = 0, fadeOutShape = 0;     // FadeShape (0 = automatic choice)
+  float fadeInTension = 0, fadeOutTension = 0;   // -1..1, 0 = plain curve
+  bool fadeInManual = false, fadeOutManual = false;  // set by hand (a zero length then means "no fade")
 
   bool operator==(const Clip& o) const {
     return id == o.id && pattern == o.pattern && track == o.track && start == o.start && length == o.length &&
            kind == o.kind && source == o.source && offset == o.offset && muted == o.muted && audioStart == o.audioStart &&
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
            stretch == o.stretch && syncBpm == o.syncBpm && reverse == o.reverse && takeGroup == o.takeGroup &&
-           take == o.take && launched == o.launched && group == o.group;
+           take == o.take && launched == o.launched && group == o.group && fadeInShape == o.fadeInShape &&
+           fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&
+           fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual;
   }
 };
 

@@ -1,4 +1,5 @@
 #include "Project.h"
+#include "Fades.h"
 #include "ProjectInterop.h"
 #include <algorithm>
 #include <atomic>
@@ -321,6 +322,13 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.take != 0) jc.object["take"] = num(c.take);
   if (c.launched) jc.object["launched"] = boolean(true);
   if (c.group != kNoId) jc.object["group"] = num(c.group);  // J-31
+  // J-38: fade curves and hand-set fades (automatic crossfades are derived, not saved).
+  if (c.fadeInShape != 0) jc.object["fadeInShape"] = num(c.fadeInShape);
+  if (c.fadeOutShape != 0) jc.object["fadeOutShape"] = num(c.fadeOutShape);
+  if (c.fadeInTension != 0.0f) jc.object["fadeInTension"] = num(c.fadeInTension);
+  if (c.fadeOutTension != 0.0f) jc.object["fadeOutTension"] = num(c.fadeOutTension);
+  if (c.fadeInManual) jc.object["fadeInManual"] = boolean(true);
+  if (c.fadeOutManual) jc.object["fadeOutManual"] = boolean(true);
 }
 
 void clipArrangementFromJson(const Json& jc, Clip& c) {
@@ -342,6 +350,13 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.take = jsonInt<int>(std::clamp(jc.num("take", 0), 0.0, 9999.0));
   c.launched = flag(jc, "launched");
   c.group = jsonInt<ObjectId>(std::max(0.0, jc.num("group", 0)));  // J-31
+  // J-38
+  c.fadeInShape = static_cast<uint8_t>(jsonInt<int>(std::clamp(jc.num("fadeInShape", 0), 0.0, kFadeShapeCount - 1.0)));
+  c.fadeOutShape = static_cast<uint8_t>(jsonInt<int>(std::clamp(jc.num("fadeOutShape", 0), 0.0, kFadeShapeCount - 1.0)));
+  c.fadeInTension = static_cast<float>(std::clamp(jc.num("fadeInTension", 0), -1.0, 1.0));
+  c.fadeOutTension = static_cast<float>(std::clamp(jc.num("fadeOutTension", 0), -1.0, 1.0));
+  c.fadeInManual = flag(jc, "fadeInManual");
+  c.fadeOutManual = flag(jc, "fadeOutManual");
 }
 
 void arrangementToJson(const Song& s, Json& j) {
@@ -796,6 +811,7 @@ Json songToJson(const Song& s) {
   j.object["timeSigDen"] = num(s.timeSigDen);
   j.object["swing"] = num(s.swing);
   j.object["masterPitch"] = num(s.masterPitch);
+  if (!s.autoCrossfades) j.object["autoCrossfades"] = boolean(false);  // J-38
   j.object["nextId"] = num(s.nextId);
 
   Json chans = Json::makeArray();
@@ -1067,6 +1083,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   if (s.timeSigNum < 1 || s.timeSigDen < 1) return fail(err, "bad time signature");
   s.swing = static_cast<float>(std::clamp(j.num("swing", 0), 0.0, 1.0));
   s.masterPitch = static_cast<float>(std::clamp(j.num("masterPitch", 0), -12.0, 12.0));
+  s.autoCrossfades = flag(j, "autoCrossfades", true);  // J-38
 
   std::set<ObjectId> ids;
   ObjectId maxId = kSongId;

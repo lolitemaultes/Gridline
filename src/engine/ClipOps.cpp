@@ -118,12 +118,13 @@ ObjectId splitClipAt(Song& song, ObjectId id, Tick at) {
     map.build(song);
     right.audioStart = std::max(0.0, clipSourceAt(song, *c, map, static_cast<double>(at)));
     right.fadeIn = 0;
+    right.fadeInManual = false, right.fadeInShape = 0, right.fadeInTension = 0;  // J-38
   } else {
     right.offset = c->offset + (at - c->start);
   }
   c = song.clip(id);  // (allocateId does not move clips, but keep it obviously valid)
   c->length = at - c->start;
-  if (c->kind == ClipKind::Audio) c->fadeOut = 0;
+  if (c->kind == ClipKind::Audio) c->fadeOut = 0, c->fadeOutManual = false, c->fadeOutShape = 0, c->fadeOutTension = 0;
   song.playlist.push_back(right);
   return right.id;
 }

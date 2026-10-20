@@ -12,6 +12,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Arrangements.h"
 #include "../core/Automation.h"
+#include "../core/Fades.h"
 #include "../core/MenuOpsExtra.h"
 #include "../core/MenuParity.h"
 #include "../core/PluginParams.h"
@@ -74,10 +75,13 @@ bool gestureAnimates(ClipGesture::Kind k) {
   return k == ClipGesture::Move || k == ClipGesture::Resize || k == ClipGesture::Trim || k == ClipGesture::Slip || k == ClipGesture::Paint;
 }
 
-// Clip rectangles drawn this frame (overlap highlighting, J-37).
+// Clip rectangles drawn this frame, in drawing (stacking) order (J-37 / J-38).
 struct DrawnClip {
   int track;
   float x0, x1, y0, y1, body;  // body: top of the body (below the title bar)
+  size_t ci;                   // playlist index
+  ImU32 rim;
+  bool sel;
 };
 
 void drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, ImU32 col, float visX0,
@@ -318,6 +322,12 @@ struct ClipCache {
   std::vector<Rgb> color;
   std::vector<const std::string*> name;
   Tick songLen = 0;
+  // J-38: stacking and fades. Clips draw by track, then start (a later clip
+  // lies on top of the one it overlaps); `cover` is the clip lying directly on
+  // top of each clip (-1 = none), `fades` the resolved audio fades.
+  std::vector<uint32_t> order;
+  std::vector<int32_t> cover;
+  std::vector<ClipFades> fades;
 };
 const ClipCache& clipCache(const App& a) {
   static ClipCache cc;
@@ -367,6 +377,22 @@ const ClipCache& clipCache(const App& a) {
     }
     cc.songLen = std::max(cc.songLen, c.start + cc.len[i]);
   }
+  // J-38: stacking order and the clip covering each clip.
+  cc.order.resize(cc.count);
+  for (size_t i = 0; i < cc.count; ++i) cc.order[i] = static_cast<uint32_t>(i);
+  std::sort(cc.order.begin(), cc.order.end(), [&](uint32_t x, uint32_t y) {
+    const Clip &p = s.playlist[x], &q = s.playlist[y];
+    return p.track != q.track ? p.track < q.track : p.start != q.start ? p.start < q.start : x < y;
+  });
+  cc.cover.assign(cc.count, -1);
+  for (size_t k = 0; k + 1 < cc.count; ++k) {
+    const uint32_t i = cc.order[k], j = cc.order[k + 1];
+    const Clip &p = s.playlist[i], &q = s.playlist[j];
+    if (cc.valid[i] && cc.valid[j] && p.track == q.track && q.start < p.start + cc.len[i]) cc.cover[i] = static_cast<int32_t>(j);
+  }
+  TempoMap tm;
+  tm.build(s);
+  cc.fades = resolveAllFades(s, tm);
   return cc;
 }
 
@@ -674,25 +700,35 @@ void drawPlaylist(App& a) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface900));
     ImGui::BeginChild("##picker", ImVec2(pickerW, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleColor();
-    {  // three filter tabs
+    {  // three filter tabs (J-38): one segmented control in the ruler band, so
+       // the list starts level with the first track and the corner's divider runs on
       ImDrawList* pdl = ImGui::GetWindowDrawList();
-      const float tw = std::floor((ImGui::GetContentRegionAvail().x) / 3.0f), th = 24.0f;
+      const float bandH = 14.0f + 26.0f - theme::kS1;  // the ruler band (rulerH below) minus the child padding
+      const ImVec2 q0 = ImGui::GetCursorScreenPos();
+      const float w = ImGui::GetContentRegionAvail().x, th = 22.0f, ty = std::round(q0.y + (bandH - th) * 0.5f) - 1;
+      const float tw = std::floor((w - 4) / 3.0f);
+      pdl->AddRectFilled(ImVec2(q0.x, ty), ImVec2(q0.x + w, ty + th), P.dark ? P.well : P.surface950, 5.0f);
+      pdl->AddRect(ImVec2(q0.x, ty), ImVec2(q0.x + w, ty + th), theme::withAlpha(P.ink, P.dark ? 0.55f : 0.18f), 5.0f);
       static const char* const tabHints[] = {"Pattern clip sources", "Audio clip sources (sample channels)", "Automation clip sources"};
       static const ClipKind tabKinds[] = {ClipKind::Pattern, ClipKind::Audio, ClipKind::Automation};
       for (int k = 0; k < 3; ++k) {
         ImGui::PushID(k);
-        ImVec2 q = ImGui::GetCursorScreenPos();
-        if (ImGui::InvisibleButton("##tab", ImVec2(tw, th))) st.pickerTab = k;
+        const ImVec2 c0(q0.x + 2 + static_cast<float>(k) * tw, ty + 2), c1(c0.x + tw, ty + th - 2);
+        ImGui::SetCursorScreenPos(c0);
+        if (ImGui::InvisibleButton("##tab", ImVec2(tw, th - 4))) st.pickerTab = k;
         const bool hov = ImGui::IsItemHovered(), on = st.pickerTab == k;
         ui::Hint(tabHints[k]);
-        if (hov) pdl->AddRectFilled(q, ImVec2(q.x + tw, q.y + th), theme::withAlpha(P.paper, 0.05f), theme::kRadiusSm);
-        drawKindGlyph(pdl, tabKinds[k], ImVec2(q.x + tw * 0.5f, q.y + th * 0.5f), 14, on ? P.paper : hov ? P.text : P.textFaint);
-        if (on) pdl->AddRectFilled(ImVec2(q.x + 6, q.y + th - 2), ImVec2(q.x + tw - 6, q.y + th), theme::rgb(theme::role::kMenu), 1);
+        if (hov) ImGui::SetTooltip("%s", tabHints[k]);
+        if (on) pdl->AddRectFilled(c0, c1, P.dark ? P.surface600 : P.surface700, 3.5f);
+        else if (hov) pdl->AddRectFilled(c0, c1, theme::withAlpha(P.paper, P.dark ? 0.06f : 0.5f), 3.5f);
+        drawKindGlyph(pdl, tabKinds[k], ImVec2(std::round((c0.x + c1.x) * 0.5f), std::round((c0.y + c1.y) * 0.5f)), 12, on ? P.hot : hov ? P.text : P.textDim);
         ImGui::PopID();
-        if (k < 2) ImGui::SameLine(0, 0);
       }
+      // The corner's bottom rule continues under the tabs.
+      pdl->AddLine(ImVec2(q0.x - theme::kS1, q0.y + bandH - 1), ImVec2(q0.x + w + theme::kS1, q0.y + bandH - 1), P.dark ? P.ink : P.lineStrong);
+      ImGui::SetCursorScreenPos(q0);
+      ImGui::Dummy(ImVec2(w, bandH - ImGui::GetStyle().ItemSpacing.y));
     }
-    ImGui::Dummy(ImVec2(0, 2));
     const float rowH = 22.0f;
     // Rows: a mini clip (colour strip + name) like the clips they place.
     auto pickerRow = [&](const pltools::Source& ps, const std::string& name, Rgb color, const char* hint, const std::function<void()>& menu) {
@@ -949,11 +985,15 @@ void drawPlaylist(App& a) {
   // Clips.
   ObjectId hoverClip = kNoId, hoverMenuGlyph = kNoId;
   bool hoverEdge = false, hoverLeftEdge = false, hoverBody = false;
-  // Audio clip fade handles (J-8): 1 = fade in, 2 = fade out.
+  // Audio clip fade handles (J-8; J-38: tension handles, crossfade partners):
+  // 1 = fade-in length, 2 = fade-out length, 3 = fade-in tension, 4 = fade-out tension.
   static ObjectId fadeDragClip = kNoId;
   static int fadeDragKind = 0;
+  static float fadeDragT0 = 0, fadeDragY0 = 0;
+  static ObjectId fadeDragMirror = kNoId;  // tension: the crossfade partner whose opposite edge mirrors it
   ObjectId fadeHoverClip = kNoId;
   int fadeHoverKind = 0;
+  ObjectId fadeHoverMirror = kNoId;
   int hoverPoint = -1, hoverHandle = -1;
   // Automation clip being edited: drawn from the live document (edits apply as they happen).
   // J-37: clips under a snapped drag glide between grid cells (drawing only);
@@ -964,6 +1004,46 @@ void drawPlaylist(App& a) {
   auto xOfD = [&](double t) { return gMin.x + static_cast<float>(t * static_cast<double>(st.pxPerTick)) - st.scrollX; };
   static std::vector<DrawnClip> drawn;
   drawn.clear();
+  // J-38: the empty grid redrawn under a clip where it lies over another clip
+  // (the clip beneath stops showing through; the grid lines stay).
+  auto gridPatch = [&](float x0, float x1, float y0, float y1) {
+    x0 = std::max(x0, gMin.x), x1 = std::min(x1, gMax.x), y0 = std::max(y0, gMin.y), y1 = std::min(y1, gMax.y);
+    if (x1 - x0 < 0.5f || y1 - y0 < 0.5f) return;
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), P.well);
+    for (Tick t = snapDown(std::max<Tick>(0, tickAt(x0)), barT); xOf(t) < x1; t += barT)
+      if ((t / barT) % 2 == 1)
+        dl->AddRectFilled(ImVec2(std::max(x0, xOf(t)), y0), ImVec2(std::min(x1, xOf(t + barT)), y1), theme::withAlpha(P.paper, P.dark ? 0.035f : 0.018f));
+    const ImU32 fine = theme::withAlpha(P.gridBeat, 0.45f);
+    for (Tick t = snapDown(std::max<Tick>(0, tickAt(x0)), visGrid); xOf(t) < x1; t += visGrid) {
+      const float gx = std::round(xOf(t));
+      if (gx >= x0) dl->AddLine(ImVec2(gx, y0), ImVec2(gx, y1), t % barT == 0 ? P.gridBar : t % beatT == 0 ? P.gridBeat : fine);
+    }
+  };
+  // J-38: a fade curve over [xa, xb]: full level at yt, silence at yb. Fade-ins
+  // rise left to right, fade-outs fall. `pts` receives kFadePts points.
+  constexpr int kFadePts = 25;
+  auto fadePath = [&](float xa, float xb, float yt, float yb, const EdgeFade& e, bool in, ImVec2* pts) {
+    for (int k = 0; k < kFadePts; ++k) {
+      const float f = static_cast<float>(k) / static_cast<float>(kFadePts - 1);
+      const double g = fadeGain(in ? f : 1.0 - f, e.shape, e.tension);
+      pts[k] = ImVec2(xa + (xb - xa) * f, yb - (yb - yt) * static_cast<float>(g));
+    }
+  };
+  // Shade above the curve (the part the fade removes), then the curve itself.
+  auto drawFade = [&](const ImVec2* pts, float yt, ImU32 shade, ImU32 line, float thick) {
+    for (int k = 0; k + 1 < kFadePts; ++k)
+      if (pts[k].y > yt + 0.25f || pts[k + 1].y > yt + 0.25f)
+        dl->AddQuadFilled(ImVec2(pts[k].x, yt), ImVec2(pts[k + 1].x, yt), pts[k + 1], pts[k], shade);
+    dl->AddPolyline(pts, kFadePts, line, ImDrawFlags_None, thick);
+  };
+  // Fade handles of the hovered clip (and of the crossfade partner under it).
+  struct FadeHandle {
+    ObjectId clip;
+    int kind;
+    ImVec2 pos;
+    ObjectId mirror;
+  };
+  std::vector<FadeHandle> fadeHandles;
   auto drawClip = [&](size_t ci) {
     if (!ccache.valid[ci]) return;
     const Clip& lc = s.playlist[ci];  // logical clip (what the document holds)
@@ -971,7 +1051,8 @@ void drawPlaylist(App& a) {
     float x0 = xOf(lc.start), x1 = xOf(lc.start + len), y = yOf(lc.track), th = hOf(lc.track);
     Clip animClip;
     const Clip* cp = &lc;
-    if (!clipAnim.empty() && clipAnim.contains(lc.id)) {
+    const bool gliding = !clipAnim.empty() && clipAnim.contains(lc.id);
+    if (gliding) {
       const double secPerTick = 60.0 / (std::max(1.0, tempoMap.bpmAt(static_cast<double>(lc.start))) * std::max(1, s.ppq));
       const smooth::Tracker<4>::Vec eps{animEpsTick, animEpsTick, 0.01, lc.kind == ClipKind::Audio ? animEpsTick * secPerTick : animEpsTick};
       const auto v = clipAnim.follow(lc.id, clipAnimValues(lc, len), animNow, animSnap, eps);
@@ -995,22 +1076,43 @@ void drawPlaylist(App& a) {
     const bool liveWaiting = liveMode && a.engine.liveQueued(c.track) == c.id;
     bool muted = c.muted || (c.track < nTracks && s.tracks[static_cast<size_t>(c.track)].muted);
     ImU32 base = theme::rgb(ccache.color[ci]);
-    // Clip: translucent colour body (J-37: see-through, so stacked clips and
-    // the grid show), a more opaque title bar with the name, a crisp rim;
-    // selected clips get a lit rim. Over the empty grid the composite matches
-    // the J-13 palette (body ~58 % towards the well, title bar ~8 %).
+    // Clip: translucent colour body (J-37: see-through, so the grid shows), a
+    // more opaque title bar with the name, a crisp rim; selected clips get a lit
+    // rim. Over the empty grid the composite matches the J-13 palette (body ~58 %
+    // towards the well, title bar ~8 %).
     const float bodyA = muted ? 0.60f : 0.74f, headA = muted ? 0.80f : 0.90f;
     const ImU32 headSolid = theme::mix(base, P.well, muted ? 0.56f : 0.0f);  // title text contrast
     const ImU32 body = theme::withAlpha(theme::mix(base, P.well, muted ? 0.75f : 0.43f), bodyA);
     const ImU32 head = theme::withAlpha(headSolid, headA);
+    const ImU32 rim = sel ? P.hot : theme::mix(base, P.ink, muted ? 0.7f : 0.45f);
     ImVec2 a0(std::round(x0) + 1, y + 1), a1(std::max(std::round(x0) + 5, std::round(x1) - 1), y + th - 1);
     const float headH = std::min(15.0f, (a1.y - a0.y) * 0.45f);
+    // J-38: stacking. Where this clip lies over clips drawn before it on the
+    // track, the grid is redrawn under it (the clip beneath no longer shows
+    // through as a muddle of two bodies) and a soft shadow falls from its edge
+    // onto the clip beneath.
+    {
+      const ImU32 shadow = theme::withAlpha(P.ink, P.dark ? 0.42f : 0.20f), clear = theme::withAlpha(P.ink, 0.0f);
+      int budget = 64;
+      for (size_t k = drawn.size(); k-- > 0 && budget-- > 0;) {
+        const DrawnClip& p = drawn[k];
+        if (p.track != lc.track || p.x1 <= a0.x || p.x0 >= a1.x) continue;
+        const float ox0 = std::max(p.x0, a0.x), ox1 = std::min(p.x1, a1.x), oy0 = std::max(p.y0, a0.y), oy1 = std::min(p.y1, a1.y);
+        if (oy1 - oy0 < 1.0f) continue;
+        gridPatch(ox0, ox1, a0.y, a1.y);
+        constexpr float kShadow = 7.0f;
+        if (a0.x > p.x0 + 1 && a0.x < p.x1)  // our left edge over the clip beneath
+          dl->AddRectFilledMultiColor(ImVec2(std::max(p.x0, a0.x - kShadow), oy0), ImVec2(a0.x, oy1), clear, shadow, shadow, clear);
+        if (a1.x < p.x1 - 1 && a1.x > p.x0)  // our right edge too (a short clip inside a long one)
+          dl->AddRectFilledMultiColor(ImVec2(a1.x, oy0), ImVec2(std::min(p.x1, a1.x + kShadow), oy1), shadow, clear, clear, shadow);
+      }
+    }
     dl->AddRectFilled(ImVec2(a0.x, a0.y + headH), a1, body, theme::kRadiusSm, ImDrawFlags_RoundCornersBottom);
     dl->AddRectFilled(a0, ImVec2(a1.x, a0.y + headH), head, theme::kRadiusSm, ImDrawFlags_RoundCornersTop);
-    drawn.push_back({lc.track, a0.x, a1.x, a0.y, a1.y, a0.y + headH});
+    drawn.push_back({lc.track, a0.x, a1.x, a0.y, a1.y, a0.y + headH, ci, rim, sel});
     dl->AddLine(ImVec2(a0.x + 1, a0.y + 0.5f), ImVec2(a1.x - 1, a0.y + 0.5f), theme::withAlpha(P.paper, muted ? 0.08f : 0.28f));
     dl->AddLine(ImVec2(a0.x, a0.y + headH), ImVec2(a1.x, a0.y + headH), theme::withAlpha(P.ink, 0.35f));
-    dl->AddRect(a0, a1, sel ? P.hot : theme::mix(base, P.ink, muted ? 0.7f : 0.45f), theme::kRadiusSm, 0, sel ? 2.0f : 1.0f);
+    dl->AddRect(a0, a1, rim, theme::kRadiusSm, 0, sel ? 2.0f : 1.0f);
     if (livePlaying) dl->AddRect(ImVec2(a0.x - 1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1), P.accent, theme::kRadiusSm, 0, 2.0f);
     if (liveWaiting)
       dl->AddRect(ImVec2(a0.x - 1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1),
@@ -1018,9 +1120,22 @@ void drawPlaylist(App& a) {
     dl->PushClipRect(ImVec2(std::max(a0.x, gMin.x), std::max(a0.y, gMin.y)), ImVec2(std::min(a1.x, gMax.x), std::min(a1.y, gMax.y)), true);
     const std::string mutedName = c.muted ? *ccache.name[ci] + "  (muted)" : std::string();
     const char* title = c.muted ? mutedName.c_str() : ccache.name[ci]->c_str();
+    // J-38: the title stays in the part of the clip that shows. A clip lying on
+    // top cuts it short (ellipsis before the top clip's edge); when that leaves
+    // no room, the title moves past the top clip's end.
+    float titleL = std::max(a0.x, gMin.x), titleR = a1.x;
+    bool titleGlyph = true;
+    if (!gliding && ccache.cover[ci] >= 0) {
+      const size_t cv = static_cast<size_t>(ccache.cover[ci]);
+      if (!(clipAnim.contains(s.playlist[cv].id))) {
+        const float coverX0 = xOf(s.playlist[cv].start), coverX1 = xOf(s.playlist[cv].start + ccache.len[cv]);
+        titleR = std::min(titleR, coverX0 - 2);
+        if (titleR - titleL < 44 && a1.x - std::max(coverX1, gMin.x) > 52) titleL = std::max(coverX1, gMin.x) + 4, titleR = a1.x, titleGlyph = false;
+      }
+    }
     // Title bar: menu glyph (click: clip menu, like FL's clip icon), then the name.
-    const float tx0 = std::max(a0.x, gMin.x);
-    const bool glyph = a1.x - tx0 > 34 && headH >= 9;
+    const float tx0 = titleL;
+    const bool glyph = titleGlyph && titleR - tx0 > 34 && headH >= 9;
     if (glyph) {
       const float gx = tx0 + 7, gy = a0.y + headH * 0.5f;
       const bool hotGlyph = hovered && std::fabs(io.MousePos.x - gx) < 7 && io.MousePos.y >= a0.y && io.MousePos.y < a0.y + headH;
@@ -1028,8 +1143,9 @@ void drawPlaylist(App& a) {
       dl->AddTriangleFilled(ImVec2(gx - 3.5f, gy - 2), ImVec2(gx + 3.5f, gy - 2), ImVec2(gx, gy + 2.5f),
                             hotGlyph ? P.hot : theme::withAlpha(theme::contrastText(headSolid), 0.8f));
     }
-    theme::textEllipsis(dl, a.fontBold, std::min(theme::kFontCaption, headH - 2), ImVec2(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f)),
-                        a1.x - tx0 - (glyph ? 19 : 10), theme::contrastText(headSolid), title);
+    if (titleR - tx0 > 12)
+      theme::textEllipsis(dl, a.fontBold, std::min(theme::kFontCaption, headH - 2), ImVec2(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f)),
+                          titleR - tx0 - (glyph ? 19 : 10), theme::contrastText(headSolid), title);
     const ImVec2 b0(a0.x + 3, a0.y + headH + 2), b1(a1.x - 3, a1.y - 3);
     // Clip content (notes, waveform, curve): lighter than the colour on dark
     // slate, darker than it on the light variant's pastel bodies.
@@ -1040,32 +1156,55 @@ void drawPlaylist(App& a) {
       drawClipPreview(dl, s, *s.pattern(c.pattern), b0, b1, len, c.offset, ink, gMin.x, gMax.x);
     } else if (c.kind == ClipKind::Audio) {
       if (b1.y - b0.y > 4) drawWaveform(dl, s, *s.channel(c.source), c, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink);
-      double sec0 = tempoMap.secondsAt(static_cast<double>(c.start));
-      double dur = tempoMap.secondsAt(static_cast<double>(c.start + len)) - sec0;
-      auto xAtSec = [&](double sec) { return xOf(static_cast<Tick>(std::llround(tempoMap.tickAtSeconds(sec0 + sec)))); };
-      if (c.fadeIn > 0 || c.fadeOut > 0) {  // fade curves (shaded outside)
-        const ImU32 shade = theme::withAlpha(P.ink, 0.28f), line = theme::withAlpha(P.paper, 0.6f);
-        if (c.fadeIn > 0) {
-          float xf = xAtSec(c.fadeIn);
-          dl->AddTriangleFilled(ImVec2(a0.x, b0.y), ImVec2(xf, b0.y), ImVec2(a0.x, b1.y), shade);
-          dl->AddLine(ImVec2(a0.x, b1.y), ImVec2(xf, b0.y), line, 1.2f);
-        }
-        if (c.fadeOut > 0) {
-          float xf = xAtSec(dur - c.fadeOut);
-          dl->AddTriangleFilled(ImVec2(xf, b0.y), ImVec2(a1.x, b0.y), ImVec2(a1.x, b1.y), shade);
-          dl->AddLine(ImVec2(xf, b0.y), ImVec2(a1.x, b1.y), line, 1.2f);
-        }
+      // J-38: fades as they play (automatic crossfades included), with their curve shape.
+      const ClipFades& fd = ci < ccache.fades.size() ? ccache.fades[ci] : ClipFades{};
+      const double sec0 = tempoMap.secondsAt(static_cast<double>(c.start));
+      const double dur = tempoMap.secondsAt(static_cast<double>(c.start + len)) - sec0;
+      auto xAtSec = [&](double sec) { return xOfD(tempoMap.tickAtSeconds(sec0 + sec)); };
+      const ImU32 shade = theme::withAlpha(P.ink, P.dark ? 0.30f : 0.16f);
+      const ImU32 fline = P.dark ? theme::withAlpha(P.paper, 0.75f) : theme::mix(base, P.ink, 0.65f);
+      ImVec2 pts[kFadePts];
+      if (fd.in.len > 0 && b1.y - b0.y > 3) {
+        fadePath(a0.x, std::min(xAtSec(fd.in.len), a1.x), b0.y, b1.y, fd.in, true, pts);
+        drawFade(pts, b0.y, shade, fline, fd.in.crossfade ? 1.6f : 1.2f);
       }
-      // Fade handles at the top corners of the body (drag sideways).
+      if (fd.out.len > 0 && b1.y - b0.y > 3) {
+        fadePath(std::max(xAtSec(dur - fd.out.len), a0.x), a1.x, b0.y, b1.y, fd.out, false, pts);
+        drawFade(pts, b0.y, shade, fline, fd.out.crossfade ? 1.6f : 1.2f);
+      }
+      // Fade handles (drawn after every clip, see below): this clip's own, and
+      // the fade-out of the clip it lies on (its crossfade partner).
       if (st.showFades && (inside || fadeDragClip == c.id) && b1.y - b0.y > 8 && a1.x - a0.x > 24) {
-        const float hin = std::max(a0.x + 4, std::min(xAtSec(c.fadeIn), a1.x - 8));
-        const float hout = std::min(a1.x - 4, std::max(xAtSec(dur - c.fadeOut), a0.x + 8));
-        for (int k = 1; k <= 2; ++k) {
-          const float hx = k == 1 ? hin : hout;
-          const bool hot = (fadeDragClip == c.id && fadeDragKind == k) ||
-                           (fadeDragClip == kNoId && std::fabs(io.MousePos.x - hx) < 5 && std::fabs(io.MousePos.y - b0.y) < 6);
-          if (hot && fadeDragClip == kNoId) fadeHoverClip = c.id, fadeHoverKind = k;
-          dl->AddRectFilled(ImVec2(hx - 3, b0.y - 3), ImVec2(hx + 3, b0.y + 3), hot ? P.hot : theme::withAlpha(P.paper, 0.75f), 1.0f);
+        fadeHandles.clear();
+        const float hin = std::max(a0.x + 4, std::min(xAtSec(fd.in.len), a1.x - 8));
+        const float hout = std::min(a1.x - 4, std::max(xAtSec(dur - fd.out.len), a0.x + 8));
+        // A tied crossfade (both sides follow the overlap): one tension handle steers both.
+        auto tiedTo = [&](const EdgeFade& e, bool in) -> ObjectId {
+          if (!e.crossfade) return kNoId;
+          const int pi = s.clipIndex(e.partner);
+          if (pi < 0 || static_cast<size_t>(pi) >= ccache.fades.size()) return kNoId;
+          const EdgeFade& o = in ? ccache.fades[static_cast<size_t>(pi)].out : ccache.fades[static_cast<size_t>(pi)].in;
+          return o.len > 0 && std::fabs(o.len - e.len) < 1e-6 ? e.partner : kNoId;
+        };
+        fadeHandles.push_back({c.id, 1, ImVec2(hin, b0.y), kNoId});
+        fadeHandles.push_back({c.id, 2, ImVec2(hout, b0.y), kNoId});
+        if (fd.in.len > 0 && hin - a0.x > 14) {
+          fadePath(a0.x, std::min(xAtSec(fd.in.len), a1.x), b0.y, b1.y, fd.in, true, pts);
+          fadeHandles.push_back({c.id, 3, pts[kFadePts / 2], tiedTo(fd.in, true)});
+        }
+        if (fd.out.len > 0 && a1.x - hout > 14) {
+          fadePath(std::max(xAtSec(dur - fd.out.len), a0.x), a1.x, b0.y, b1.y, fd.out, false, pts);
+          fadeHandles.push_back({c.id, 4, pts[kFadePts / 2], tiedTo(fd.out, false)});
+        }
+        // The clip beneath (crossfading into this one): its fade-out length at the bottom.
+        if (fd.in.crossfade) {
+          const int pi = s.clipIndex(fd.in.partner);
+          if (pi >= 0 && static_cast<size_t>(pi) < ccache.fades.size() && ccache.fades[static_cast<size_t>(pi)].out.crossfade) {
+            const Clip& pc = s.playlist[static_cast<size_t>(pi)];
+            const double pEnd = tempoMap.secondsAt(static_cast<double>(pc.start + ccache.len[static_cast<size_t>(pi)]));
+            const float px = xOfD(tempoMap.tickAtSeconds(pEnd - ccache.fades[static_cast<size_t>(pi)].out.len));
+            if (px > a0.x - 2 && px < a1.x) fadeHandles.push_back({pc.id, 2, ImVec2(std::max(a0.x + 4, px), b1.y), kNoId});
+          }
         }
       }
     } else if (c.kind == ClipKind::Automation && b1.y - b0.y > 6) {
@@ -1086,42 +1225,82 @@ void drawPlaylist(App& a) {
       hoverLeftEdge = !hoverEdge && io.MousePos.x < a0.x + edge;
       hoverBody = io.MousePos.y > a0.y + headH;
       if (c.kind != ClipKind::Automation) hoverPoint = hoverHandle = -1;
+      if (c.kind != ClipKind::Audio && fadeDragClip == kNoId) fadeHandles.clear();  // the top clip owns the pointer
     }
   };
-  // Clips under a drag (gliding) draw last: on top of the clips they pass over.
+  // Stacking (J-38): by track, then start (a later clip lies on the one it
+  // overlaps); clips under a drag (gliding) draw last, on top of everything.
   const bool anyAnim = !clipAnim.empty();
-  for (size_t ci = 0; ci < s.playlist.size(); ++ci)
+  for (uint32_t ci : ccache.order)
     if (!anyAnim || !clipAnim.contains(s.playlist[ci].id)) drawClip(ci);
   if (anyAnim)
-    for (size_t ci = 0; ci < s.playlist.size(); ++ci)
+    for (uint32_t ci : ccache.order)
       if (clipAnim.contains(s.playlist[ci].id)) drawClip(ci);
   clipAnim.prune(animNow, gestureAnimates(cg.kind));
-  // J-37: where clips on a track overlap, the shared span gets a light wash,
-  // fine diagonal hatching and both clips' edges, so stacked clips read at a
-  // glance even when their colours match.
+  // J-38: overlaps. The clip beneath keeps a dashed outline through the span
+  // it shares with the clip on top (and its end edge), so both extents read at
+  // a glance; an audio crossfade shows both curves crossing (an X).
   if (drawn.size() > 1) {
-    std::sort(drawn.begin(), drawn.end(), [](const DrawnClip& p, const DrawnClip& q) { return p.track != q.track ? p.track < q.track : p.x0 < q.x0; });
-    const ImU32 wash = P.dark ? theme::withAlpha(P.paper, 0.10f) : theme::withAlpha(P.ink, 0.07f);
-    const ImU32 hatch = P.dark ? theme::withAlpha(P.paper, 0.22f) : theme::withAlpha(P.ink, 0.20f);
-    const ImU32 edge = P.dark ? theme::withAlpha(P.paper, 0.75f) : theme::withAlpha(P.ink, 0.65f);
+    std::vector<size_t> byTrack(drawn.size());
+    for (size_t k = 0; k < drawn.size(); ++k) byTrack[k] = k;
+    std::stable_sort(byTrack.begin(), byTrack.end(), [](size_t p, size_t q) { return drawn[p].track != drawn[q].track ? drawn[p].track < drawn[q].track : drawn[p].x0 < drawn[q].x0; });
+    auto dashH = [&](float xa, float xb, float yy, ImU32 col) {
+      for (float x = xa; x < xb; x += 7.0f) dl->AddLine(ImVec2(x, yy), ImVec2(std::min(x + 4.0f, xb), yy), col, 1.0f);
+    };
+    auto dashV = [&](float xx, float ya, float yb, ImU32 col) {
+      for (float yy = ya; yy < yb; yy += 6.0f) dl->AddLine(ImVec2(xx, yy), ImVec2(xx, std::min(yy + 3.0f, yb)), col, 1.0f);
+    };
+    dl->PushClipRect(gMin, gMax, true);
     int budget = 4096;  // pathological stacks: bounded work per frame
-    for (size_t i = 0; i < drawn.size() && budget > 0; ++i)
-      for (size_t j = i + 1; j < drawn.size() && drawn[j].track == drawn[i].track && drawn[j].x0 < drawn[i].x1 && budget > 0; ++j, --budget) {
-        const DrawnClip &p = drawn[i], &q = drawn[j];
-        const ImVec2 o0(std::max({p.x0, q.x0, gMin.x}), std::max({p.y0, q.y0, gMin.y})), o1(std::min({p.x1, q.x1, gMax.x}), std::min({p.y1, q.y1, gMax.y}));
-        if (o1.x - o0.x < 1.0f || o1.y - o0.y < 2.0f) continue;
-        dl->AddRectFilled(o0, o1, wash);
-        const ImVec2 h0(o0.x, std::max({o0.y, p.body, q.body}));  // titles stay readable: hatching in the bodies only
-        const float hgt = o1.y - h0.y;
-        if (hgt > 1.0f) {
-          dl->PushClipRect(h0, o1, true);
-          for (float hx = o0.x - hgt - std::fmod(o0.x, 6.0f); hx < o1.x; hx += 6.0f) dl->AddLine(ImVec2(hx, o1.y), ImVec2(hx + hgt, h0.y), hatch);
-          dl->PopClipRect();
+    for (size_t u = 0; u < byTrack.size() && budget > 0; ++u)
+      for (size_t v = u + 1; v < byTrack.size() && budget > 0; ++v, --budget) {
+        const size_t iu = byTrack[u], iv = byTrack[v];
+        if (drawn[iv].track != drawn[iu].track || drawn[iv].x0 >= drawn[iu].x1) break;
+        const DrawnClip& p = drawn[std::min(iu, iv)];  // drawn first: beneath
+        const DrawnClip& q = drawn[std::max(iu, iv)];  // drawn later: on top
+        const float ox0 = std::max(p.x0, q.x0), ox1 = std::min(p.x1, q.x1);
+        if (ox1 - ox0 < 1.0f) continue;
+        const ImU32 ghost = p.sel ? P.hot : theme::withAlpha(P.dark ? theme::mix(p.rim, P.paper, 0.55f) : p.rim, 0.85f);
+        dashH(ox0, ox1, std::max(p.y0, q.y0) + 0.5f, ghost);
+        dashH(ox0, ox1, std::min(p.y1, q.y1) - 0.5f, ghost);
+        if (p.x1 > q.x0 + 1 && p.x1 < q.x1 - 1) dashV(p.x1 - 0.5f, std::max(p.y0, q.y0), std::min(p.y1, q.y1), ghost);
+        if (p.x0 > q.x0 + 1 && p.x0 < q.x1 - 1) dashV(p.x0 + 0.5f, std::max(p.y0, q.y0), std::min(p.y1, q.y1), ghost);
+        // Crossfade: the fade-out of the clip beneath, drawn over the clip on top.
+        const Clip& pc = s.playlist[p.ci];
+        if (pc.kind == ClipKind::Audio && p.ci < ccache.fades.size() && ccache.fades[p.ci].out.len > 0 && q.body < q.y1 - 6 &&
+            !clipAnim.contains(pc.id)) {
+          const EdgeFade& e = ccache.fades[p.ci].out;
+          const double pEnd = tempoMap.secondsAt(static_cast<double>(pc.start + ccache.len[p.ci]));
+          const float xa = std::max(p.x0, xOfD(tempoMap.tickAtSeconds(pEnd - e.len)));
+          if (p.x1 - xa > 2 && xa < q.x1) {
+            ImVec2 pts[kFadePts];
+            fadePath(xa, p.x1, q.body + 2, std::min(p.y1, q.y1) - 3, e, false, pts);
+            const ImU32 col = P.dark ? theme::mix(theme::rgb(ccache.color[p.ci]), P.paper, 0.55f) : theme::mix(theme::rgb(ccache.color[p.ci]), P.ink, 0.55f);
+            dl->AddPolyline(pts, kFadePts, theme::withAlpha(col, 0.95f), ImDrawFlags_None, 1.6f);
+          }
         }
-        // The overlapping edges of both clips (the hidden one included).
-        for (float ex : {std::max(p.x0, q.x0), std::min(p.x1, q.x1)})
-          if (ex >= gMin.x && ex <= gMax.x) dl->AddLine(ImVec2(ex + 0.5f, o0.y), ImVec2(ex + 0.5f, o1.y), edge, 1.0f);
       }
+    dl->PopClipRect();
+  }
+  // Fade handles on top of everything (J-38): squares set the length, rings the curve tension.
+  if (!fadeHandles.empty() && hovered) {
+    float best = 7.0f;
+    for (const auto& h : fadeHandles) {
+      const float d = std::max(std::fabs(io.MousePos.x - h.pos.x), std::fabs(io.MousePos.y - h.pos.y));
+      if (fadeDragClip == kNoId && d < best) best = d, fadeHoverClip = h.clip, fadeHoverKind = h.kind, fadeHoverMirror = h.mirror;
+    }
+  }
+  for (const auto& h : fadeHandles) {
+    const bool hot = (fadeDragClip == h.clip && fadeDragKind == h.kind) || (fadeHoverClip == h.clip && fadeHoverKind == h.kind);
+    const ImU32 fill = hot ? P.hot : theme::withAlpha(P.paper, 0.85f), edge = theme::withAlpha(P.ink, 0.7f);
+    if (h.kind <= 2) {
+      dl->AddRectFilled(ImVec2(h.pos.x - 3.5f, h.pos.y - 3.5f), ImVec2(h.pos.x + 3.5f, h.pos.y + 3.5f), edge, 1.0f);
+      dl->AddRectFilled(ImVec2(h.pos.x - 2.5f, h.pos.y - 2.5f), ImVec2(h.pos.x + 2.5f, h.pos.y + 2.5f), fill, 1.0f);
+    } else {
+      dl->AddCircleFilled(h.pos, 4.0f, edge, 12);
+      dl->AddCircleFilled(h.pos, 3.0f, hot ? P.hot : P.well, 12);
+      dl->AddCircle(h.pos, 3.0f, fill, 12, 1.2f);
+    }
   }
   // Empty arrangement: muted mark (guide §08 C).
   if (s.playlist.empty())
@@ -1317,7 +1496,12 @@ void drawPlaylist(App& a) {
     }
   }
 
-  // Header corner: two rows of view buttons (FL's corner above the track headers).
+  // Header corner (J-38 layout): the view buttons above the track headers as
+  // equal flat cells like the toolbar's: audio editing (stretch, fades, zero
+  // crossings) | tracks (add, clear the selection) | view (picker panel, header
+  // width), groups split by a thin rule. One row in a wide header column, two
+  // rows (view group right-aligned) in a narrow one. A lit (orange) glyph on a
+  // raised cell = on; hovering shows what a cell does.
   dl->AddRectFilled(origin, ImVec2(gMin.x, gMin.y), P.dark ? P.field : P.surface950);
   dl->AddLine(ImVec2(origin.x, gMin.y - 1), ImVec2(gMin.x, gMin.y - 1), P.dark ? P.ink : P.lineStrong);
   struct CornerBtn {
@@ -1325,53 +1509,73 @@ void drawPlaylist(App& a) {
     ImVec2 c;
     bool on;
     const char* hint;
+    bool shown;
   };
-  const float rowH2 = rulerH * 0.5f, bw = 20.0f;
-  const float cx0 = origin.x + vbarW + 2 + bw * 0.5f, cxR = gMin.x - 4 - bw * 0.5f;
-  const float r1y = origin.y + rowH2 * 0.5f, r2y = origin.y + rowH2 * 1.5f;
+  constexpr float bw = 20.0f, bh = 16.0f, groupGap = 9.0f;
+  const float cl = origin.x + vbarW + 4, cr = gMin.x - 4;  // usable span
+  const bool oneRow = cr - cl >= 7 * bw + 2 * groupGap;
+  const float ry1 = oneRow ? std::round(rY + (gMin.y - rY) * 0.5f) : origin.y + 10.5f, ry2 = oneRow ? ry1 : origin.y + 29.5f;
+  const float x0 = cl + bw * 0.5f, xR = cr - bw * 0.5f;
+  const float tx = oneRow ? x0 + 3 * bw + groupGap : x0;                // tracks group
+  const bool roomR = oneRow || xR - bw * 0.5f >= x0 + 2.5f * bw + 6;  // two rows: the view cells fit beside the others
   const CornerBtn corner[] = {
-      {0, ImVec2(cx0, r1y), st.stretchResize, "Stretch audio clips when resizing them (Shift+M)"},
-      {1, ImVec2(cx0 + bw, r1y), st.showFades, "Fade handles on audio clips (Shift+F)"},
-      {2, ImVec2(cx0 + 2 * bw, r1y), st.zeroCross, "Audio clip edges land on zero crossings (no clicks)"},
-      {3, ImVec2(cxR, r1y), st.pickerOpen, "Show / hide the clip source picker (Alt+P)"},
-      {4, ImVec2(cx0, r2y), false, "Add tracks"},
-      {5, ImVec2(cx0 + bw, r2y), false, "Clear the selection (clips and time)"},
-      {6, ImVec2(cxR, r2y), st.wideHeaders, "Track header width: narrow / wide"}};
+      {0, ImVec2(x0, ry1), st.stretchResize, "Stretch: resizing an audio clip changes its speed instead of trimming it (Shift+M)", true},
+      {1, ImVec2(x0 + bw, ry1), st.showFades, "Fade handles on audio clips: drag a square for the length, a ring for the curve (Shift+F)", true},
+      {2, ImVec2(x0 + 2 * bw, ry1), st.zeroCross, "Zero crossings: audio clip edges snap to silent points (no clicks)", true},
+      {3, ImVec2(oneRow ? xR - bw : xR, ry1), st.pickerOpen, "Clip source picker panel (Alt+P)", roomR},
+      {4, ImVec2(tx, ry2), false, "Add tracks", true},
+      {5, ImVec2(tx + bw, ry2), false, "Clear the selection (clips and time)", true},
+      {6, ImVec2(xR, ry2), st.wideHeaders, "Track header width: narrow / wide", roomR}};
+  {  // group rules
+    const ImU32 rule = theme::withAlpha(P.dark ? P.paper : P.ink, 0.14f);
+    auto vrule = [&](float gx, float cy) { dl->AddLine(ImVec2(std::round(gx) + 0.5f, cy - 6), ImVec2(std::round(gx) + 0.5f, cy + 6), rule); };
+    if (oneRow) {
+      vrule(x0 + 2.5f * bw + groupGap * 0.5f, ry1);
+      vrule((tx + 1.5f * bw + xR - 1.5f * bw) * 0.5f, ry1);
+    } else if (roomR) {
+      vrule(xR - bw * 0.5f - 4, ry1);
+      vrule(xR - bw * 0.5f - 4, ry2);
+    }
+  }
   int hoverCorner = -1;
   for (const auto& b : corner) {
-    const bool hot = hovered && std::fabs(io.MousePos.x - b.c.x) < bw * 0.5f && std::fabs(io.MousePos.y - b.c.y) < rowH2 * 0.5f;
+    if (!b.shown) continue;
+    const ImVec2 c0(b.c.x - bw * 0.5f, b.c.y - bh * 0.5f), c1(b.c.x + bw * 0.5f, b.c.y + bh * 0.5f);
+    const bool hot = hovered && io.MousePos.x >= c0.x && io.MousePos.x < c1.x && io.MousePos.y >= c0.y - 1 && io.MousePos.y < c1.y + 1;
     if (hot) hoverCorner = b.id;
-    if (b.id == 6 && cxR - cx0 < 3 * bw) continue;
-    if (b.id == 3 && cxR - cx0 < 3 * bw) continue;
-    if (hot) dl->AddRectFilled(ImVec2(b.c.x - bw * 0.5f, b.c.y - rowH2 * 0.5f + 1), ImVec2(b.c.x + bw * 0.5f, b.c.y + rowH2 * 0.5f - 1),
-                               theme::withAlpha(P.paper, 0.07f), theme::kRadiusSm);
-    const ImU32 col = b.on ? P.paper : hot ? P.text : P.textFaint;
-    const float g = 12.0f;
+    if (b.on) dl->AddRectFilled(c0, c1, P.dark ? P.surface600 : P.surface700, 3.0f);
+    else if (hot) dl->AddRectFilled(c0, c1, theme::withAlpha(P.paper, P.dark ? 0.08f : 0.5f), 3.0f);
+    const ImU32 col = b.on ? P.hot : hot ? P.text : P.textDim;
+    const float x = b.c.x, y = b.c.y;
     switch (b.id) {
-      case 0: drawKindGlyph(dl, ClipKind::Audio, b.c, g, col); break;
-      case 1: {  // fade: a ramp up and down
-        dl->AddLine(ImVec2(b.c.x - 6, b.c.y + 4), ImVec2(b.c.x - 2, b.c.y - 4), col, 1.4f);
-        dl->AddLine(ImVec2(b.c.x - 2, b.c.y - 4), ImVec2(b.c.x + 2, b.c.y - 4), col, 1.4f);
-        dl->AddLine(ImVec2(b.c.x + 2, b.c.y - 4), ImVec2(b.c.x + 6, b.c.y + 4), col, 1.4f);
+      case 0: {  // stretch: a wave between two bars
+        dl->AddLine(ImVec2(x - 6.5f, y - 4), ImVec2(x - 6.5f, y + 4), col, 1.3f);
+        dl->AddLine(ImVec2(x + 6.5f, y - 4), ImVec2(x + 6.5f, y + 4), col, 1.3f);
+        dl->AddBezierCubic(ImVec2(x - 4.5f, y), ImVec2(x - 2, y - 6), ImVec2(x + 2, y + 6), ImVec2(x + 4.5f, y), col, 1.3f);
         break;
       }
-      case 2: {  // zero crossing: a wave through a centre line
-        dl->AddLine(ImVec2(b.c.x - 6, b.c.y), ImVec2(b.c.x + 6, b.c.y), theme::withAlpha(col, 0.5f), 1.0f);
-        dl->AddBezierCubic(ImVec2(b.c.x - 6, b.c.y), ImVec2(b.c.x - 3, b.c.y - 7), ImVec2(b.c.x + 3, b.c.y + 7), ImVec2(b.c.x + 6, b.c.y), col, 1.4f);
+      case 1: {  // fades: a ramp up, a hold, a ramp down
+        const ImVec2 pts[] = {ImVec2(x - 6.5f, y + 4), ImVec2(x - 2.5f, y - 4), ImVec2(x + 2.5f, y - 4), ImVec2(x + 6.5f, y + 4)};
+        dl->AddPolyline(pts, 4, col, ImDrawFlags_None, 1.4f);
         break;
       }
-      case 3: ui::drawIcon(dl, st.pickerOpen ? ui::Icon::Left : ui::Icon::Right, b.c, g, col); break;
-      case 4: ui::drawIcon(dl, ui::Icon::Plus, b.c, g, col); break;
-      case 5: ui::drawIcon(dl, ui::Icon::Close, b.c, g, col); break;
-      case 6: {  // <->
-        dl->AddLine(ImVec2(b.c.x - 6, b.c.y), ImVec2(b.c.x + 6, b.c.y), col, 1.4f);
-        dl->AddTriangleFilled(ImVec2(b.c.x - 7, b.c.y), ImVec2(b.c.x - 3, b.c.y - 3.5f), ImVec2(b.c.x - 3, b.c.y + 3.5f), col);
-        dl->AddTriangleFilled(ImVec2(b.c.x + 7, b.c.y), ImVec2(b.c.x + 3, b.c.y + 3.5f), ImVec2(b.c.x + 3, b.c.y - 3.5f), col);
+      case 2: {  // zero crossing: a wave through its centre line, a dot on the crossing
+        dl->AddLine(ImVec2(x - 6.5f, y), ImVec2(x + 6.5f, y), theme::withAlpha(col, 0.45f), 1.0f);
+        dl->AddBezierCubic(ImVec2(x - 6.5f, y), ImVec2(x - 3.5f, y - 7), ImVec2(x + 3.5f, y + 7), ImVec2(x + 6.5f, y), col, 1.3f);
+        dl->AddCircleFilled(ImVec2(x, y), 1.6f, col, 8);
+        break;
+      }
+      case 3: ui::drawIcon(dl, st.pickerOpen ? ui::Icon::Left : ui::Icon::Right, b.c, 10.0f, col); break;
+      case 4: ui::drawIcon(dl, ui::Icon::Plus, b.c, 10.0f, col); break;
+      case 5: ui::drawIcon(dl, ui::Icon::Close, b.c, 9.0f, col); break;
+      case 6: {  // double arrow
+        dl->AddLine(ImVec2(x - 5, y), ImVec2(x + 5, y), col, 1.3f);
+        dl->AddTriangleFilled(ImVec2(x - 7, y), ImVec2(x - 3.5f, y - 3), ImVec2(x - 3.5f, y + 3), col);
+        dl->AddTriangleFilled(ImVec2(x + 7, y), ImVec2(x + 3.5f, y + 3), ImVec2(x + 3.5f, y - 3), col);
         break;
       }
       default: break;
     }
-    if (b.on) dl->AddLine(ImVec2(b.c.x - 5, b.c.y + rowH2 * 0.5f - 2), ImVec2(b.c.x + 5, b.c.y + rowH2 * 0.5f - 2), theme::rgb(theme::role::kMenu), 1.5f);
     if (hot) a.setHint(b.hint);
   }
   if (hoverCorner >= 0) ImGui::SetTooltip("%s", corner[hoverCorner].hint);
@@ -1577,21 +1781,44 @@ void drawPlaylist(App& a) {
     if (lClick && hoverMenuGlyph == kNoId) lClick = false;
     if (rClick && !(hc && m.y < yOf(hc->track) + std::min(16.0f, (hOf(hc->track) - 4) * 0.45f) + 2)) rClick = false;
   }
-  // Fade handle drags (J-8): one undo step per drag.
+  // Fade handle drags (J-8; J-38: tension, crossfades): one undo step per drag.
+  // Dragging a length stores the fade on the clip (it stops following the
+  // overlap); dragging a ring bends the curve, mirrored onto the crossfade
+  // partner so the pair keeps its level.
+  static ObjectId fadeMenuClip = kNoId;
+  static int fadeMenuIn = 1;
+  const uint64_t fadeKey = 0x46414445ull ^ (static_cast<uint64_t>(fadeDragClip) << 8);
   if (fadeDragClip != kNoId) {
     const Clip* fc = s.clip(fadeDragClip);
-    if (fc && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-      const double sec0 = tempoMap.secondsAt(static_cast<double>(fc->start));
-      const double dur = tempoMap.secondsAt(static_cast<double>(fc->start + s.clipLength(*fc))) - sec0;
-      const double at = std::clamp(tempoMap.secondsAt(static_cast<double>(std::max<Tick>(0, tickAt(m.x)))) - sec0, 0.0, dur);
+    const int fi = s.clipIndex(fadeDragClip);
+    if (fc && fi >= 0 && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      const ClipFades fd = static_cast<size_t>(fi) < ccache.fades.size() ? ccache.fades[static_cast<size_t>(fi)] : ClipFades{};
       const int kind = fadeDragKind;
-      const double v = kind == 1 ? std::min(at, dur - fc->fadeOut) : std::min(dur - at, dur - fc->fadeIn);
-      a.doc.editClip(fadeDragClip, kind == 1 ? "clip fade in" : "clip fade out", [kind, v](Clip& x) {
-        (kind == 1 ? x.fadeIn : x.fadeOut) = std::max(0.0, v);
-      }, 0x46414445ull ^ (static_cast<uint64_t>(fadeDragClip) << 8));
-      char b[48];
-      std::snprintf(b, sizeof b, "Fade %s: %.0f ms", kind == 1 ? "in" : "out", std::max(0.0, v) * 1000.0);
+      const ObjectId id = fadeDragClip, mirror = fadeDragMirror;
+      char b[96];
+      if (kind <= 2) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        const double sec0 = tempoMap.secondsAt(static_cast<double>(fc->start));
+        const double dur = tempoMap.secondsAt(static_cast<double>(fc->start + s.clipLength(*fc))) - sec0;
+        const double at = std::clamp(tempoMap.secondsAt(static_cast<double>(std::max<Tick>(0, tickAt(m.x)))) - sec0, 0.0, dur);
+        const double v = std::max(0.0, kind == 1 ? std::min(at, dur - fd.out.len) : std::min(dur - at, dur - fd.in.len));
+        a.doc.editClip(id, kind == 1 ? "clip fade in" : "clip fade out", [kind, v](Clip& x) {
+          if (kind == 1) x.fadeIn = v, x.fadeInManual = true;
+          else x.fadeOut = v, x.fadeOutManual = true;
+        }, fadeKey);
+        std::snprintf(b, sizeof b, "Fade %s: %.0f ms (set by hand; right-click the handle: automatic, curve)", kind == 1 ? "in" : "out", v * 1000.0);
+      } else {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        const float t = std::clamp(fadeDragT0 + (m.y - fadeDragY0) / 70.0f, -1.0f, 1.0f);
+        const float tq = std::fabs(t) < 0.03f ? 0.0f : t;  // a detent at the plain curve
+        a.doc.editClips("fade curve", [&](std::vector<Clip>& v) {
+          for (Clip& x : v) {
+            if (x.id == id) (kind == 3 ? x.fadeInTension : x.fadeOutTension) = tq;
+            if (mirror != kNoId && x.id == mirror) (kind == 3 ? x.fadeOutTension : x.fadeInTension) = -tq;
+          }
+        }, fadeKey);
+        std::snprintf(b, sizeof b, "Fade curve: %+.0f %%%s", -tq * 100.0f, mirror != kNoId ? "  (crossfade: the other clip mirrors it)" : "");
+      }
       a.setHint(b);
     } else {
       a.doc.endGesture();
@@ -1599,13 +1826,92 @@ void drawPlaylist(App& a) {
     }
     lClick = false;
   } else if (fadeHoverClip != kNoId) {
-    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    a.setHint(fadeHoverKind == 1 ? "Drag: fade in" : "Drag: fade out");
+    ImGui::SetMouseCursor(fadeHoverKind <= 2 ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+    a.setHint(fadeHoverKind <= 2 ? "Drag: fade length (sets it by hand) \xC2\xB7 right-click: fade menu (automatic crossfade, curve shape)"
+                                 : "Drag up / down: fade curve \xC2\xB7 double-click: plain curve \xC2\xB7 right-click: fade menu");
     if (lClick) {
-      fadeDragClip = fadeHoverClip;
-      fadeDragKind = fadeHoverKind;
+      const Clip* hcf = s.clip(fadeHoverClip);
+      if (fadeHoverKind >= 3 && hcf && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        const ObjectId id = fadeHoverClip, mirror = fadeHoverMirror;
+        const int kind = fadeHoverKind;
+        a.doc.editClips("plain fade curve", [&](std::vector<Clip>& v) {
+          for (Clip& x : v) {
+            if (x.id == id) (kind == 3 ? x.fadeInTension : x.fadeOutTension) = 0;
+            if (mirror != kNoId && x.id == mirror) (kind == 3 ? x.fadeOutTension : x.fadeInTension) = 0;
+          }
+        });
+      } else {
+        fadeDragClip = fadeHoverClip;
+        fadeDragKind = fadeHoverKind;
+        fadeDragMirror = fadeHoverMirror;
+        fadeDragY0 = m.y;
+        fadeDragT0 = hcf ? (fadeHoverKind == 3 ? hcf->fadeInTension : hcf->fadeOutTension) : 0.0f;
+      }
       lClick = false;
     }
+    if (rClick) {
+      fadeMenuClip = fadeHoverClip;
+      fadeMenuIn = fadeHoverKind == 1 || fadeHoverKind == 3;
+      ImGui::OpenPopup("##fademenu");
+      rClick = false;
+    }
+  }
+  if (ImGui::BeginPopup("##fademenu")) {
+    const Clip* fc = s.clip(fadeMenuClip);
+    const int fi = s.clipIndex(fadeMenuClip);
+    if (!fc || fi < 0 || static_cast<size_t>(fi) >= ccache.fades.size()) {
+      ImGui::CloseCurrentPopup();
+    } else {
+      const bool in = fadeMenuIn != 0;
+      const EdgeFade e = in ? ccache.fades[static_cast<size_t>(fi)].in : ccache.fades[static_cast<size_t>(fi)].out;
+      const ObjectId id = fc->id, partner = e.crossfade ? e.partner : kNoId;
+      // The partner edge is tied when it fades over the same span (both follow the overlap).
+      bool tied = false;
+      if (partner != kNoId)
+        if (const int pi = s.clipIndex(partner); pi >= 0 && static_cast<size_t>(pi) < ccache.fades.size()) {
+          const EdgeFade& o = in ? ccache.fades[static_cast<size_t>(pi)].out : ccache.fades[static_cast<size_t>(pi)].in;
+          tied = o.len > 0 && std::fabs(o.len - e.len) < 1e-6;
+        }
+      auto editEdge = [&](const char* label, const std::function<void(Clip&, bool /*in*/)>& fn, bool alsoPartner) {
+        a.doc.editClips(label, [&](std::vector<Clip>& v) {
+          for (Clip& x : v) {
+            if (x.id == id) fn(x, in);
+            if (alsoPartner && partner != kNoId && x.id == partner) fn(x, !in);
+          }
+        });
+      };
+      ImGui::TextDisabled("%s", in ? "Fade in" : "Fade out");
+      if (e.crossfade && ImGui::MenuItem("Automatic crossfade", nullptr, e.automatic, s.autoCrossfades)) {
+        if (e.automatic)  // keep the current length, set by hand from now on
+          editEdge("fade set by hand", [len = e.len](Clip& x, bool i) { (i ? x.fadeIn : x.fadeOut) = len, (i ? x.fadeInManual : x.fadeOutManual) = true; }, false);
+        else
+          editEdge("automatic crossfade", [](Clip& x, bool i) { (i ? x.fadeIn : x.fadeOut) = 0, (i ? x.fadeInManual : x.fadeOutManual) = false; }, false);
+      }
+      if (!e.crossfade || !s.autoCrossfades) ui::Hint(!e.crossfade ? "Overlap another audio clip on the track to crossfade with it" : "Automatic crossfades are off for this project (playlist menu)");
+      if (ImGui::MenuItem("No fade", nullptr, e.len <= 0))
+        editEdge("remove fade", [](Clip& x, bool i) { (i ? x.fadeIn : x.fadeOut) = 0, (i ? x.fadeInManual : x.fadeOutManual) = true; }, false);
+      if (ImGui::MenuItem("Reset"))
+        editEdge("reset fade", [](Clip& x, bool i) {
+          if (i) x.fadeIn = 0, x.fadeInManual = false, x.fadeInShape = 0, x.fadeInTension = 0;
+          else x.fadeOut = 0, x.fadeOutManual = false, x.fadeOutShape = 0, x.fadeOutTension = 0;
+        }, false);
+      ui::Hint("Back to the defaults: automatic length (a crossfade where the clip overlaps another), automatic curve");
+      ImGui::Separator();
+      ImGui::TextDisabled("%s", tied ? "Crossfade curve (both clips)" : "Curve");
+      const uint8_t cur = in ? fc->fadeInShape : fc->fadeOutShape;
+      for (int k = 0; k < kFadeShapeCount; ++k) {
+        std::string label = fadeShapeName(static_cast<FadeShape>(k));
+        if (k == 0) label += e.crossfade ? "  (equal power)" : "  (linear)";
+        if (ImGui::MenuItem(label.c_str(), nullptr, cur == k))
+          editEdge("fade curve shape", [k](Clip& x, bool i) { (i ? x.fadeInShape : x.fadeOutShape) = static_cast<uint8_t>(k); }, tied);
+      }
+      if (ImGui::MenuItem("Plain curve (no bend)", nullptr, false, e.tension != 0.0f))
+        editEdge("plain fade curve", [](Clip& x, bool i) { (i ? x.fadeInTension : x.fadeOutTension) = 0; }, tied);
+      ImGui::Separator();
+      if (ImGui::MenuItem("Automatic crossfades in this project", nullptr, s.autoCrossfades))
+        a.doc.editSong(s.autoCrossfades ? "automatic crossfades off" : "automatic crossfades on", [](Song& x) { x.autoCrossfades = !x.autoCrossfades; });
+    }
+    ImGui::EndPopup();
   }
   static int menuMarker = -1;
   if (inRuler && rClick && hoverMarker >= 0) {  // right-click a marker: its menu
