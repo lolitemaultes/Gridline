@@ -80,7 +80,13 @@ void importPlugins(Context& c) {
     auto id = c.channelIds.find(idx);
     if (id == c.channelIds.end()) continue;
     PluginMapping m;
-    if (!decode(c, evs, m)) continue;
+    if (!decode(c, evs, m)) {
+      // An unidentified third-party plugin never plays as the stand-in
+      // built-in synth: the channel is left without a plugin.
+      if (m.flName.compare(0, 14, "Fruity Wrapper") == 0)
+        if (Channel* ch = s.channel(id->second)) ch->plugin = PluginState{};
+      continue;
+    }
     if (Channel* ch = s.channel(id->second)) {
       if (m.state.type.empty()) m.state.type = m.glType;
       ch->plugin = m.state;

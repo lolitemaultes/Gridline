@@ -142,6 +142,7 @@ class ClapGui final : public Editor {
   void constrain(int& w, int& h) override;
   bool attach(void* parent) override;
   void setSize(int w, int h) override;
+  void setContentScale(double scale) override;
   bool created = false;
 
  private:
@@ -958,6 +959,13 @@ bool ClapGui::attach(void* parent) {
   if (!b_->gui()->set_parent(b_->plugin(), &win)) return false;
   b_->gui()->show(b_->plugin());
   return true;
+}
+void ClapGui::setContentScale(double scale) {
+#if !defined(__APPLE__)  // cocoa views are in points: CLAP says to ignore the scale there
+  if (created && b_->gui()->set_scale) b_->gui()->set_scale(b_->plugin(), scale);
+#else
+  (void)scale;
+#endif
 }
 void ClapGui::setSize(int w, int h) {
   if (created) b_->gui()->set_size(b_->plugin(), static_cast<uint32_t>(std::max(1, w)), static_cast<uint32_t>(std::max(1, h)));

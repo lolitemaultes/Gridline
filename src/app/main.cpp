@@ -15,6 +15,7 @@
 #include "FrameProfile.h"
 #include "HostedUi.h"
 #include "../host/HostedPlugins.h"
+#include "../host/PluginPrefs.h"
 #include "../host/vst3/Vst3Scan.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_impl_opengl3.h"
@@ -615,6 +616,8 @@ int main(int argc, char** argv) {
   bool devPlaylistOnly = false;           // --show playlist: other panels closed
   bool devMixerOnly = false;              // --show mixer: the mixer fills the window
   float shotScale = 1.0f;                 // --scale F: framebuffer scale of an off-screen shot (HiDPI check)
+  std::string devSaveAtExit;  // --save-at-exit path: project saved when the run ends (plugin state round trips)
+  int devWindowCycle = 0;  // --plugin-window-cycle N: close / reopen the plugin window N times
   bool devHostedEditor = false;           // --hosted-editor: open the native editor of the --plugin target
   std::vector<DevInputLine> devInput;     // --dev-input file: scripted mouse / key input (J-28)
   std::string profilePath;                // --profile-frames out.json: per-window UI CPU time per frame (J-25)
@@ -788,6 +791,21 @@ int main(int argc, char** argv) {
       app.browserSearch = argv[++i];
     } else if (arg == "--hosted-editor") {
       devHostedEditor = true;
+      setPluginWindowLog(true);
+    } else if (arg == "--plugin-panel" && i + 1 < argc) {  // dev check: plugin window settings unfolded on page N
+      setPluginWindowPanel(std::atoi(argv[++i]));
+    } else if (arg == "--save-at-exit" && i + 1 < argc) {  // dev check: save the project when the run ends
+      devSaveAtExit = argv[++i];
+    } else if (arg == "--plugin-window-action" && i + 1 < argc) {  // dev check: press a plugin window bar button
+      setPluginWindowDevAction(argv[++i]);
+    } else if (arg == "--plugin-window-cycle" && i + 1 < argc) {
+      devWindowCycle = std::atoi(argv[++i]);
+    } else if (arg == "--dev-sandbox" && i + 2 < argc) {  // dev check: "Run in sandbox" for a hosted type (before --plugin)
+      const std::string type = argv[++i];
+      host::setRunInSandbox(type, std::atoi(argv[++i]) != 0);
+    } else if (arg == "--plugin-window-resize" && i + 1 < argc) {  // dev check: drag plugin windows to WxH
+      int rw = 0, rh = 0;
+      if (std::sscanf(argv[++i], "%dx%d", &rw, &rh) == 2) setPluginWindowDevResize(rw, rh);
     } else if (arg == "--live") {  // dev check: live mode, first live clip of every track launched (frame 3)
       devLive = true;
     } else if (arg == "--light") {
@@ -1080,6 +1098,10 @@ int main(int argc, char** argv) {
     if (!devMenu.empty()) drawDevMenu(app, devMenu);
     if (!devFocus.empty() && frameNo == 3) app.focusWindow = devFocus;
     if (devHostedEditor && frameNo == 3) openHostedEditor(app, devEditorTarget);
+    if (devWindowCycle > 0 && frameNo >= 10 && frameNo % 10 == 0 && frameNo / 10 <= 2 * devWindowCycle) {
+      togglePluginWindow(app, devEditorTarget);  // channel button / slot click
+      std::fprintf(stderr, "[plugin-window] toggled: %s\n", hostedEditorOpen(devEditorTarget) ? "open" : "closed");
+    }
     if (devAutoEdit && frameNo == 2) devAutomationEditor(app, devAutoEdit);
     if (devExport && frameNo == 2) {
       if (devExport == 1) gl::exportui::openRender(app, gl::exportui::Preset::Stems);
@@ -1171,6 +1193,7 @@ int main(int argc, char** argv) {
     }
     if (useOffscreen) offscreen.use(false);
     SDL_GL_SwapWindow(window);
+    renderHostedEditors(app);  // control bars of open plugin windows
     }
 
     {
@@ -1191,6 +1214,10 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "profile: %d frames -> %s\n", prof::recordedFrames(), profilePath.c_str());
   }
 
+  if (!devSaveAtExit.empty()) {
+    captureHostedStates(app);
+    std::fprintf(stderr, "%s %s\n", app.saveProject(devSaveAtExit) ? "saved" : "could not save", devSaveAtExit.c_str());
+  }
   closeAllHostedEditors(app);
   if (gDevice) SDL_CloseAudioDevice(gDevice);
   ImGui_ImplOpenGL3_Shutdown();

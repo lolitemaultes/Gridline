@@ -1,7 +1,5 @@
 // Gridline — hosted (VST3 / CLAP / VST2 / AU) plugins in the app.
 #include "HostedUi.h"
-#include <SDL.h>
-#include <SDL_syswm.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -11,15 +9,12 @@
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
 #include "../host/vst3/Vst3Editor.h"
+#include "HostedUiPages.h"
 #include "App.h"
 #include "PluginSkin.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "Windows.h"
-#if defined(__APPLE__)
-#include <objc/message.h>
-#include <objc/runtime.h>
-#endif
 
 namespace gl {
 
@@ -70,175 +65,9 @@ void storeState(App& a, const PluginTarget& t, const std::string& data) {
 
 std::map<uint64_t, double> gCaptureDue;  // target key → time of the pending state capture
 
-// ---------------------------------------------------------------- editor windows
-
-struct EditorWindow {
-  App* app = nullptr;
-  PluginTarget target;
-  host::Backend* backend = nullptr;
-  SDL_Window* window = nullptr;
-  std::unique_ptr<host::Editor> editor;
-  bool external = false;  // the editor has its own window (sandbox process)
-  bool dead = false;
-  bool resizing = false;
-
-  void close() {
-    if (dead) return;
-    dead = true;
-    editor.reset();  // detaches the plugin's view before its window goes
-    if (window) SDL_DestroyWindow(window);
-    window = nullptr;
-    if (backend) backend->onGoingAway = nullptr;
-    backend = nullptr;
-  }
-  ~EditorWindow() { close(); }
-};
-
-std::map<uint64_t, std::unique_ptr<EditorWindow>>& editors() {
-  static std::map<uint64_t, std::unique_ptr<EditorWindow>> m;
-  return m;
-}
-
-void* nativeParent(SDL_Window* w) {
-  SDL_SysWMinfo info;
-  SDL_VERSION(&info.version);
-  if (!SDL_GetWindowWMInfo(w, &info)) return nullptr;
-#if defined(__APPLE__)
-  if (info.subsystem != SDL_SYSWM_COCOA) return nullptr;
-  using Send = void* (*)(void*, SEL);
-  return reinterpret_cast<Send>(objc_msgSend)(static_cast<void*>(info.info.cocoa.window), sel_registerName("contentView"));
-#elif defined(SDL_VIDEO_DRIVER_X11)
-  if (info.subsystem != SDL_SYSWM_X11) return nullptr;
-  return reinterpret_cast<void*>(static_cast<uintptr_t>(info.info.x11.window));
-#else
-  return nullptr;
-#endif
-}
-
 }  // namespace
 
-bool hostedEditorOpen(const PluginTarget& t) {
-  auto it = editors().find(t.key());
-  return it != editors().end() && !it->second->dead;
-}
-
-void closeHostedEditor(App& a, const PluginTarget& t) {
-  auto it = editors().find(t.key());
-  if (it == editors().end()) return;
-  it->second->close();
-  editors().erase(it);
-  gCaptureDue[t.key()] = 0;  // keep what the user did in the editor
-  (void)a;
-}
-
-void closeAllHostedEditors(App& a) {
-  for (auto& [k, e] : editors()) e->close();
-  editors().clear();
-  (void)a;
-}
-
-bool openHostedEditor(App& a, const PluginTarget& t) {
-  if (auto it = editors().find(t.key()); it != editors().end() && !it->second->dead) {
-    if (it->second->window) SDL_RaiseWindow(it->second->window);
-    return true;
-  }
-  host::HostedInstance* hi = hostedInstanceFor(a, t);
-  if (!hi || hi->crashed()) {
-    a.notify(hi ? "This plugin crashed: reload it first" : "This plugin is not loaded", true);
-    return false;
-  }
-  host::Backend* b = hi->backend();
-  const std::string& name = hi->hostedClass().name;
-  if (!b->hasEditor()) {
-    a.notify(name + " has no editor of its own: use the parameter list");
-    return false;
-  }
-  std::unique_ptr<host::Editor> editor = b->createEditor();
-  if (!editor) {
-    a.notify(name + ": editor not supported on this platform", true);
-    return false;
-  }
-  auto ed = std::make_unique<EditorWindow>();
-  ed->app = &a;
-  ed->target = t;
-  ed->backend = b;
-  EditorWindow* raw = ed.get();
-  if (editor->external()) {  // sandboxed: the plugin process shows its own window
-    ed->external = true;
-    if (!editor->attach(nullptr)) {
-      a.notify(name + ": the editor could not be opened", true);
-      return false;
-    }
-  } else {
-    int w = 640, h = 420;
-    editor->size(w, h);
-    const bool resizable = editor->canResize();
-    std::string title = name + "  \xC2\xB7  " + targetName(a, t);
-    SDL_Window* win = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h,
-                                       SDL_WINDOW_ALLOW_HIGHDPI | (resizable ? SDL_WINDOW_RESIZABLE : 0));
-    if (!win) {
-      a.notify(std::string("Cannot open a window: ") + SDL_GetError(), true);
-      return false;
-    }
-    ed->window = win;
-    editor->requestResize = [raw](int nw, int nh) {
-      if (!raw->window || raw->dead) return false;
-      raw->resizing = true;
-      SDL_SetWindowSize(raw->window, nw, nh);
-      raw->resizing = false;
-      return true;
-    };
-    void* parent = nativeParent(win);
-    if (!parent || !editor->attach(parent)) {
-      ed->editor = std::move(editor);
-      ed->close();
-      a.notify(name + ": the editor could not be attached", true);
-      return false;
-    }
-    // Some editors (VST2) report their final size only once open.
-    int w2 = w, h2 = h;
-    if (editor->size(w2, h2) && (w2 != w || h2 != h)) SDL_SetWindowSize(win, w2, h2);
-  }
-  ed->editor = std::move(editor);
-  b->onGoingAway = [raw]() { raw->close(); };
-  editors()[t.key()] = std::move(ed);
-  return true;
-}
-
-bool hostedEditorEvent(App& a, const SDL_Event& ev) {
-  if (ev.type != SDL_WINDOWEVENT) return false;
-  for (auto& [k, e] : editors()) {
-    if (e->dead || !e->window || SDL_GetWindowID(e->window) != ev.window.windowID) continue;
-    if (ev.window.event == SDL_WINDOWEVENT_CLOSE) {
-      closeHostedEditor(a, e->target);
-    } else if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED && !e->resizing && e->editor && e->editor->canResize()) {
-      int w = ev.window.data1, h = ev.window.data2;
-      e->editor->constrain(w, h);
-      if (w != ev.window.data1 || h != ev.window.data2) SDL_SetWindowSize(e->window, w, h);
-      e->editor->setSize(w, h);
-    }
-    return true;
-  }
-  return false;
-}
-
-bool screenshotHostedEditor(const PluginTarget& t, const std::string& pngPath) {
-#if defined(__APPLE__)
-  auto it = editors().find(t.key());
-  if (it == editors().end() || it->second->dead || !it->second->window) return false;
-  SDL_SysWMinfo info;
-  SDL_VERSION(&info.version);
-  if (!SDL_GetWindowWMInfo(it->second->window, &info)) return false;
-  using SendLong = long (*)(void*, SEL);
-  long num = reinterpret_cast<SendLong>(objc_msgSend)(static_cast<void*>(info.info.cocoa.window), sel_registerName("windowNumber"));
-  std::string cmd = "screencapture -x -o -l" + std::to_string(num) + " '" + pngPath + "'";
-  return std::system(cmd.c_str()) == 0;
-#else
-  (void)t;
-  (void)pngPath;
-  return false;
-#endif
-}
+std::string hostedTargetName(App& a, const PluginTarget& t) { return targetName(a, t); }
 
 // ---------------------------------------------------------------- per-frame sync
 
@@ -246,14 +75,7 @@ void pumpHostedPlugins(App& a) {
 #if defined(__linux__)
   vst3::runLoop()->pump();
 #endif
-  for (auto it = editors().begin(); it != editors().end();) {
-    EditorWindow& e = *it->second;
-    if (!e.dead && e.editor) {
-      e.editor->idle();
-      if (e.external && !e.editor->isOpen()) e.close();
-    }
-    it = e.dead ? editors().erase(it) : std::next(it);
-  }
+  hostedui::pluginWindowsIdle(a);
   // Hosted plugin slots, listed again only when the project changes (J-25:
   // projects with hundreds of mixer slots).
   static std::vector<PluginTarget> targetCache;
@@ -328,12 +150,16 @@ void reloadHostedPlugin(App& a, const PluginTarget& t) {
   a.syncEngine();
 }
 
-void setHostedSandbox(App& a, const std::string& type, bool on) {
+void setHostedSandbox(App& a, const std::string& typeRef, bool on) {
+  const std::string type = typeRef;  // the caller's string may belong to a window this closes
   if (host::runsInSandbox(type) == on) return;
   captureHostedStates(a);  // the new instance starts from the current state
   for (const PluginTarget& t : hostedTargets(a.doc.song())) {
     const PluginState* st = t.state(a.doc.song());
-    if (st && st->type == type) closeHostedEditor(a, t);
+    if (st && st->type == type && hostedEditorOpen(t)) {
+      closeHostedEditor(a, t);
+      hostedui::reopenLater(t);  // the new instance shows its interface again
+    }
   }
   host::setRunInSandbox(type, on);
   a.syncEngine();
@@ -512,7 +338,10 @@ void applyOptions(App& a, const std::string& type, const host::HostOptions& o) {
     captureHostedStates(a);
     for (const PluginTarget& t : hostedTargets(a.doc.song())) {
       const PluginState* st = t.state(a.doc.song());
-      if (st && st->type == type) closeHostedEditor(a, t);
+      if (st && st->type == type && hostedEditorOpen(t)) {
+        closeHostedEditor(a, t);
+        if (!o.genericEditor) hostedui::reopenLater(t);
+      }
     }
   }
   host::setHostOptions(type, o);
@@ -536,7 +365,7 @@ bool selectPreset(App& a, const PluginTarget& t, host::HostedInstance* hi, int i
 void header(App& a, const PluginTarget& t, host::HostedInstance* hi, const PluginInfo& info, WrapperUi& w, float width) {
   const WrapLook L;
   const host::HostedClass& cls = hi->hostedClass();
-  const host::HostOptions opts = hi->options();
+  const host::HostOptions opts = host::hostOptions(cls.type);  // as chosen now (the instance may predate it)
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::Form F = skin::formAt(640, 94, width, 1.6f);
   skin::gradient(dl, F, 0, 0, 640, 94, L.top, L.bottom);
@@ -546,29 +375,28 @@ void header(App& a, const PluginTarget& t, host::HostedInstance* hi, const Plugi
                 hi->sandboxed() ? " (sandbox)" : "", cls.instrument ? "instrument" : "effect");
   skin::label(dl, F, 10, 23, 330, 14, line, L.dim, 0, 10.5f, 0, false, false);
 
-  // Editor / generic / sandbox.
-  const bool open = hostedEditorOpen(t);
-  const bool hasEditor = hi->backend()->hasEditor() && !opts.genericEditor;
-  if (skin::button(F, "##ed", 10, 44, 104, 20, open ? "CLOSE EDITOR" : "PLUGIN EDITOR", open ? L.btnOn : L.btn, hasEditor ? L.btnText : L.dim,
-                   hasEditor ? "Opens the plugin's own interface in a separate window"
-                             : "The generic editor is selected (or the plugin has no interface of its own)")) {
-    if (open)
-      closeHostedEditor(a, t);
-    else if (hasEditor)
-      openHostedEditor(a, t);
+  // Generic / sandbox. The plugin's own interface is its window: this
+  // panel only shows for plugins without one, when the generic editor is
+  // chosen, or when asked for from the plugin window's settings.
+  const bool hasUi = hi->backend()->hasEditor();
+  if (skin::button(F, "##gen", 10, 44, 82, 20, "GENERIC", opts.genericEditor || !hasUi ? L.btnOn : L.btn, hasUi ? L.btnText : L.dim,
+                   hasUi ? (opts.genericEditor ? "Switch back to the plugin's own interface"
+                                               : "Use Gridline's parameter list as this plugin's editor instead of its own interface")
+                         : "This plugin has no interface of its own: Gridline shows its parameters")) {
+    if (hasUi) {
+      hostedui::setGenericEditor(a, cls.type, !opts.genericEditor);
+      w.tab = 0;
+      return;
+    }
   }
-  if (skin::button(F, "##gen", 118, 44, 70, 20, "GENERIC", opts.genericEditor ? L.btnOn : L.btn, L.btnText,
-                   "Use Gridline's parameter list as this plugin's editor instead of its own interface")) {
-    host::HostOptions o = opts;
-    o.genericEditor = !o.genericEditor;
-    if (o.genericEditor) closeHostedEditor(a, t);
-    applyOptions(a, cls.type, o);
-    w.tab = 0;
-  }
-  if (skin::button(F, "##sb", 192, 44, 76, 20, "SANDBOX", hi->sandboxed() ? L.btnOn : L.btn, L.btnText,
+  if (skin::button(F, "##sb", 96, 44, 76, 20, "SANDBOX", hi->sandboxed() ? L.btnOn : L.btn, L.btnText,
                    "Runs this plugin in its own process: if it crashes, Gridline keeps running and the plugin is silenced")) {
     setHostedSandbox(a, cls.type, !hi->sandboxed());
     return;  // the instance is being replaced
+  }
+  if (hasUi && !opts.genericEditor && !hostedEditorOpen(t) &&
+      skin::button(F, "##show", 176, 44, 96, 20, "INTERFACE", L.btn, L.btnText, "Shows the plugin's own interface")) {
+    openHostedEditor(a, t);
   }
 
   // Presets: previous / next / browser.
@@ -671,9 +499,11 @@ void processingPage(App& a, host::HostedInstance* hi, float width) {
   }
   ImGui::Spacing();
   const double sr = hi->backend()->sampleRate() > 0 ? hi->backend()->sampleRate() : 48000.0;
-  ImGui::TextColored(theme::vec(theme::pal().textDim), "Latency: plugin %d + buffer %d = %d samples (%.1f ms), compensated.  Tail: %d samples.",
-                     hi->backend()->latency(), hi->totalLatency() - hi->backend()->latency(), hi->totalLatency(), 1000.0 * hi->totalLatency() / sr,
-                     hi->backend()->tailSamples());
+  const int tail = hi->backend()->tailSamples();
+  const std::string tailText = tail >= (1 << 28) ? std::string("infinite") : std::to_string(tail) + " samples";
+  ImGui::TextColored(theme::vec(theme::pal().textDim), "Latency: plugin %d + buffer %d = %d samples (%.1f ms), compensated.",
+                     hi->backend()->latency(), hi->totalLatency() - hi->backend()->latency(), hi->totalLatency(), 1000.0 * hi->totalLatency() / sr);
+  ImGui::TextColored(theme::vec(theme::pal().textDim), "Tail: %s.", tailText.c_str());
   pui::endSection();
   if (o != before) applyOptions(a, cls.type, o);
 }
@@ -804,13 +634,21 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
   WrapperUi& w = wit->second;
   if (fresh) w.tab = gWrapperPage;
   header(a, t, hi, *info, w, width);
-  hi = hostedInstanceFor(a, t);  // (a switch above may have replaced it)
-  if (!hi || hi->crashed()) return;
-  if (w.tab == 1) {
+  hostedui::drawPage(a, t, w.tab, width);
+}
+
+void hostedui::drawPage(App& a, const PluginTarget& t, int page, float width) {
+  const auto& P = pal();
+  const PluginState* st = t.state(a.doc.song());
+  const PluginInfo* info = st ? findPlugin(st->type) : nullptr;
+  host::HostedInstance* hi = hostedInstanceFor(a, t);  // (a switch may have replaced it)
+  if (!info || !hi || hi->crashed()) return;
+  WrapperUi& w = wrapperUi()[t.key()];
+  if (page == 1) {
     processingPage(a, hi, width);
     return;
   }
-  if (w.tab == 2) {
+  if (page == 2) {
     settingsPage(a, t, hi, w, width);
     return;
   }
@@ -833,7 +671,7 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
     }
     rows.push_back(static_cast<int>(k));
   }
-  const float rowH = 25.0f, listH = std::min(hi->options().genericEditor ? 560.0f : 380.0f, std::max(rowH, rowH * static_cast<float>(rows.size())));
+  const float rowH = 25.0f, listH = std::min(page == 3 ? 230.0f : host::hostOptions(hi->hostedClass().type).genericEditor ? 560.0f : 380.0f, std::max(rowH, rowH * static_cast<float>(rows.size())));
   ImGui::BeginChild("##params", ImVec2(width - 16, listH), ImGuiChildFlags_None);
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
   ImGuiListClipper clip;
@@ -852,4 +690,55 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
 
 namespace gl {
 void setHostedWrapperPage(int page) { gWrapperPage = std::clamp(page, 0, 2); }
+
+namespace hostedui {
+int presetCount(host::HostedInstance* hi) { return gl::presetCount(hi); }
+std::string presetName(host::HostedInstance* hi, int index) { return gl::presetName(hi, index); }
+bool selectPreset(App& a, const PluginTarget& t, host::HostedInstance* hi, int index) {
+  if (!gl::selectPreset(a, t, hi, index)) return false;
+  wrapperUi()[t.key()].preset = index;
+  return true;
+}
+int& presetIndex(const PluginTarget& t) { return wrapperUi()[t.key()].preset; }
+void cpuLoad(App& a, const PluginTarget& t, host::HostedInstance* hi, float& average, float& peak) {
+  WrapperUi& w = wrapperUi()[t.key()];
+  if (a.now - w.cpuAt > 0.25) {
+    float avg = 0, pk = 0;
+    hi->takeCpu(avg, pk);
+    w.cpuAvg = avg;
+    w.cpuPeak = pk;
+    w.cpuAt = a.now;
+  }
+  average = w.cpuAvg;
+  peak = w.cpuPeak;
+}
+void setGenericEditor(App& a, std::string type, bool on) {
+  host::HostOptions o = host::hostOptions(type);
+  if (o.genericEditor == on) return;
+  o.genericEditor = on;
+  // Windows of this type switch over: the plugin's interface closes and
+  // Gridline's parameter list opens, or the other way round.
+  std::vector<PluginTarget> shown;
+  for (const PluginTarget& t : hostedTargets(a.doc.song())) {
+    const PluginState* st = t.state(a.doc.song());
+    if (!st || st->type != type) continue;
+    const bool panel = t.isChannel() ? a.settingsChannel == t.owner : a.fxEditor == std::make_pair(t.owner, t.slot);
+    if (hostedEditorOpen(t) || panel) shown.push_back(t);
+    closeHostedEditor(a, t);
+    if (panel) {
+      if (t.isChannel())
+        a.settingsChannel = kNoId;
+      else
+        a.fxEditor = {kNoId, -1};
+    }
+  }
+  applyOptions(a, type, o);
+  for (const PluginTarget& t : shown) {
+    if (t.isChannel())
+      a.settingsChannel = t.owner;  // routePluginWindows opens the right editor
+    else
+      a.fxEditor = {t.owner, t.slot};
+  }
+}
+}  // namespace hostedui
 }  // namespace gl

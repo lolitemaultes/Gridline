@@ -21,7 +21,26 @@ void ensureApp() {
 
 namespace gl::host {
 
-void* sandboxOpenWindow(const std::string& title, int w, int h, bool resizable) {
+namespace {
+// Height of the screen whose top-left corner is the origin of top-left based
+// global coordinates (the main / menu bar screen).
+CGFloat originScreenHeight() {
+  NSArray<NSScreen*>* screens = [NSScreen screens];
+  return [screens count] > 0 ? [[screens objectAtIndex:0] frame].size.height : 0;
+}
+}  // namespace
+
+bool sandboxWindowFrame(int& x, int& y, int& w, int& h) {
+  if (!gWindow || !gOpen) return false;
+  NSRect f = [gWindow frame];
+  x = static_cast<int>(f.origin.x);
+  y = static_cast<int>(originScreenHeight() - f.origin.y - f.size.height);
+  w = static_cast<int>(f.size.width);
+  h = static_cast<int>(f.size.height);
+  return true;
+}
+
+void* sandboxOpenWindow(const std::string& title, int w, int h, bool resizable, int x, int y) {
   ensureApp();
   sandboxCloseWindow();
   NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable;
@@ -33,7 +52,11 @@ void* sandboxOpenWindow(const std::string& title, int w, int h, bool resizable) 
                                                                       object:gWindow
                                                                        queue:nil
                                                                   usingBlock:^(NSNotification*) { gOpen = false; }] retain];
-  [gWindow center];
+  if (x == gl::host::Editor::kNoPlace || y == gl::host::Editor::kNoPlace) {
+    [gWindow center];
+  } else {  // frame top-left at (x, y), top-left based
+    [gWindow setFrameTopLeftPoint:NSMakePoint(x, originScreenHeight() - y)];
+  }
   [gWindow makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:YES];
   gOpen = true;

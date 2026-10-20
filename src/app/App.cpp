@@ -711,6 +711,7 @@ void App::closeAllWindows() {
 }
 
 void App::closePluginWindows() {
+  closeAllHostedEditors(*this);
   settingsChannel = kNoId;
   fxEditor = {kNoId, -1};
 }

@@ -179,6 +179,16 @@ class Editor {
   virtual bool external() const { return false; }
   // External editors: false once the user closed the window.
   virtual bool isOpen() const { return true; }
+  // External editors: top-left based global frame of the editor's own
+  // window (the host docks its control bar under it). False when unknown.
+  virtual bool windowFrame(int& x, int& y, int& w, int& h) const { (void)x, (void)y, (void)w, (void)h; return false; }
+  // External editors: where to open the window (top-left based global
+  // position; set by the host before attach). kNoPlace: centred.
+  static constexpr int kNoPlace = -1000000;
+  int placeX = kNoPlace, placeY = kNoPlace;
+  // Content scale the host renders at (X11 / Windows editors that size
+  // themselves in physical pixels; macOS editors scale on their own).
+  virtual void setContentScale(double scale) { (void)scale; }
   // The editor asks the host for a new window size (set by the host before attach).
   std::function<bool(int w, int h)> requestResize;
 };

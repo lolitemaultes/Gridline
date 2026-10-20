@@ -40,6 +40,7 @@
 #include "../../packs/utility/utility.h"
 #include "../PluginParams.h"
 #include "FlpFx2.h"
+#include "FlpWrapper.h"
 
 namespace gl::flp::fx2 {
 
@@ -278,7 +279,7 @@ bool decodeHtmlNoteBook(Context&, const std::vector<Event>& evs, PluginMapping& 
 // ------------------------------------------------------------------ Fruity Wrapper (third-party plugins)
 bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<uint8_t> b = stateBytes(evs);
-  std::string name;
+  std::string name, vendor, path;
   std::vector<float> params;  // chunk 53: the hosted plugin's normalized parameters
   Reader r(b.data(), b.size());
   r.u32();  // version
@@ -288,6 +289,8 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
     uint64_t size = lo | (hi << 32);
     if (size > r.left()) break;
     if (id == 54) name = latin1(b.data() + r.pos, static_cast<size_t>(size));
+    if (id == 55) path = latin1(b.data() + r.pos, static_cast<size_t>(size));
+    if (id == 56) vendor = latin1(b.data() + r.pos, static_cast<size_t>(size));
     if (id == 53 && size >= 25) {
       Reader pr(b.data() + r.pos, static_cast<size_t>(size));
       pr.skip(21);
@@ -296,11 +299,15 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
     }
     r.skip(static_cast<size_t>(size));
   }
-  if (const Event* e = find(evs, 203); e && name.empty()) name = e->text();
-  if (name.empty()) name = "?";
+  // The channel / slot display name (203) only labels the report: it is the
+  // user's name, never the plugin's identity.
+  std::string label = name;
+  if (const Event* e = find(evs, 203); e && label.empty()) label = e->text();
+  if (label.empty()) label = "?";
   // FL's own plugins loaded as plugins-in-a-wrapper: map through their
   // decoder (defaults from an empty state, then the saved parameters).
-  if (!params.empty() && name != "Fruity Wrapper" && flp::findDecoder(name)) {
+  // Third-party plugins are never replaced by a built-in, whatever their name.
+  if (!params.empty() && !name.empty() && name != "Fruity Wrapper" && flp::findDecoder(name) && flp::isImageLinePlugin(vendor, name, path)) {
     std::vector<uint8_t> zero(4096, 0);
     PluginMapping inner;
     if (decodeEmbedded(c, name, zero.data(), zero.size(), inner) && inner.param && inner.value) {
@@ -317,8 +324,8 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
       return true;
     }
   }
-  m.flName = "Fruity Wrapper (" + name + ")";  // reported as unmapped under the hosted plugin's name
-  c.report.warn("Third-party plugin \"" + name + "\" is not hosted; its slot is left empty");
+  m.flName = "Fruity Wrapper (" + label + ")";  // reported as unmapped under the hosted plugin's name
+  c.report.warn("Third-party plugin \"" + label + "\" could not be identified; its slot is left empty");
   return false;
 }
 

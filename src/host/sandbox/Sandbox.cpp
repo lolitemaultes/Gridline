@@ -266,6 +266,7 @@ class RemoteEditor final : public Editor {
   bool attach(void* parent) override;
   bool external() const override { return true; }
   bool isOpen() const override;
+  bool windowFrame(int& x, int& y, int& w, int& h) const override;
   SandboxBackend* b_;
 };
 
@@ -496,6 +497,8 @@ class SandboxBackend final : public Backend {
     if (!call(w.b, reply, 5000)) return;
     Rd r(reply);
     editorOpen_ = r.u8();
+    hasFrame_ = r.u8();
+    for (int& v : frame_) v = r.i32();
     uint32_t n = r.u32();
     bool changed = false;
     for (uint32_t i = 0; i < n && r.ok; ++i) {
@@ -526,9 +529,11 @@ class SandboxBackend final : public Backend {
     return reason_;
   }
 
-  bool openEditor() {
+  bool openEditor(int x, int y) {
     Wr w;
     w.u8(OpOpenEditor);
+    w.i32(x);
+    w.i32(y);
     std::string reply;
     editorOpen_ = call(w.b, reply, 20000) && !reply.empty() && reply[0];
     return editorOpen_;
@@ -543,7 +548,14 @@ class SandboxBackend final : public Backend {
     call(w.b, reply, 5000);
   }
   bool editorOpen() const { return editorOpen_ && !crashed_.load(); }
+  bool editorFrame(int& x, int& y, int& w, int& h) const {
+    if (!editorOpen() || !hasFrame_) return false;
+    x = frame_[0], y = frame_[1], w = frame_[2], h = frame_[3];
+    return true;
+  }
   RemoteEditor* editor_ = nullptr;
+  bool hasFrame_ = false;
+  int frame_[4] = {0, 0, 0, 0};
 
   // ---- audio thread ----
   float* inputChannel(int ch) override { return ch >= 0 && ch < desc_.mainIn && shm_ ? shm_->in[ch] : nullptr; }
@@ -803,8 +815,9 @@ class SandboxBackend final : public Backend {
 RemoteEditor::~RemoteEditor() {
   if (b_) b_->closeEditor();
 }
-bool RemoteEditor::attach(void*) { return b_ && b_->openEditor(); }
+bool RemoteEditor::attach(void*) { return b_ && b_->openEditor(placeX, placeY); }
 bool RemoteEditor::isOpen() const { return b_ && b_->editorOpen(); }
+bool RemoteEditor::windowFrame(int& x, int& y, int& w, int& h) const { return b_ && b_->editorFrame(x, y, w, h); }
 
 // ---------------------------------------------------------------- child side
 
@@ -924,6 +937,12 @@ struct Child {
         if (backend) backend->idle();
         if (editor) editor->idle();
         w.u8(editor && sandboxWindowOpen());
+        {
+          int fx = 0, fy = 0, fw = 0, fh = 0;
+          const bool hasFrame = editor && sandboxWindowFrame(fx, fy, fw, fh);
+          w.u8(hasFrame);
+          for (int v : {fx, fy, fw, fh}) w.i32(v);
+        }
         std::vector<HostEvent> evs;
         if (backend) backend->drainHostEvents(evs);
         w.u32(static_cast<uint32_t>(evs.size()));
@@ -951,11 +970,12 @@ struct Child {
       }
       case OpOpenEditor: {
         bool ok = false;
+        const int px = r.i32(), py = r.i32();
         if (backend && !editor) {
           editor = backend->createEditor();
           int ew = 640, eh = 420;
           if (editor && editor->size(ew, eh)) {
-            void* parent = sandboxOpenWindow(title + "  \xC2\xB7  Gridline sandbox", ew, eh, editor->canResize());
+            void* parent = sandboxOpenWindow(title + "  \xC2\xB7  Gridline sandbox", ew, eh, editor->canResize(), px, py);
             editor->requestResize = [](int nw, int nh) {
               sandboxResizeWindow(nw, nh);
               return true;
@@ -1070,7 +1090,8 @@ int sandboxChildMain(const std::string& shmName) {
 }
 
 #if !defined(__APPLE__)
-void* sandboxOpenWindow(const std::string&, int, int, bool) { return nullptr; }
+void* sandboxOpenWindow(const std::string&, int, int, bool, int, int) { return nullptr; }
+bool sandboxWindowFrame(int&, int&, int&, int&) { return false; }
 void sandboxResizeWindow(int, int) {}
 bool sandboxWindowOpen() { return false; }
 void sandboxCloseWindow() {}

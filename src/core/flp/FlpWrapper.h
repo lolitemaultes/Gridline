@@ -52,10 +52,14 @@ struct WrapperMatch {
 };
 WrapperMatch matchWrapper(const WrapperInfo& w);
 
-// True for Image-Line's own plugins (or a wrapper with no vendor recorded):
-// only these may be converted to Gridline built-ins on import. Every other
-// vendor's plugin stays the real hosted plugin (or a placeholder for it).
+// True when `vendor` names Image-Line. An empty vendor is not Image-Line.
 bool isImageLineVendor(const std::string& vendor);
+// True only for Image-Line's own plugins loaded through the wrapper (VST
+// builds of FL plugins in older projects): the vendor says Image-Line, or no
+// vendor was recorded and the plugin's file lives in an Image-Line folder or
+// carries FL's "Fruity " name. Only these may become Gridline built-ins on
+// import; every other plugin stays the real hosted plugin (or a placeholder).
+bool isImageLinePlugin(const std::string& vendor, const std::string& name, const std::string& path);
 
 void registerWrapperDecoder(std::map<std::string, PluginDecoder>& d);
 

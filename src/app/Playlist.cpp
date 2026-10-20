@@ -18,6 +18,8 @@
 #include "../engine/PlaylistTools.h"
 #include "../engine/Sample.h"
 #include "App.h"
+#include "../core/Grouping.h"
+#include "J31Ui.h"
 #include "../core/NoteTools.h"
 #include "AudioRecordUi.h"
 #include "AutomationEditor.h"
@@ -1539,7 +1541,7 @@ void drawPlaylist(App& a) {
     cg.key = 0x504C000000000000ull ^ (clipGestureCounter++ << 8);
     if (inRuler && lClick && hoverMarker >= 0) {
       a.engine.setMode(PlayMode::Song);
-      a.engine.setPosition(s.markers[static_cast<size_t>(hoverMarker)].pos);  // jump to the marker
+      j31::songJump(a, s.markers[static_cast<size_t>(hoverMarker)].pos);  // jump to the marker (J-31: quantized when the option is on)
     } else if (inRuler && lClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
       st.selStart = st.selEnd = 0;  // double-click clears the time selection
     } else if (inRuler && (rClick || (lClick && io.KeyCtrl))) {
@@ -1547,6 +1549,8 @@ void drawPlaylist(App& a) {
     } else if (inRuler && lClick) {
       a.engine.setMode(PlayMode::Song);
       cg.kind = ClipGesture::Scrub;  // the position follows the pointer until release
+      cg.lastScrub = std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
+      j31::songJump(a, cg.lastScrub);  // J-31: a click while playing waits for the jump grid
     } else if (inHead) {
       int tr = trackAt(m.y);
       if (lClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -1650,6 +1654,7 @@ void drawPlaylist(App& a) {
         if (!st.selected.count(hoverClip)) {
           if (!io.KeyShift || shiftDrag) st.selected.clear();
           st.selected.insert(hoverClip);
+          st.selected = ops::expandClipGroups(s, st.selected);  // J-31: grouped clips are selected together
         }
         setSource(a, pltools::sourceOf(*hc));  // clicking a clip makes its source current (FL)
         cg.kind = hoverEdge ? ClipGesture::Resize : hoverLeftEdge ? ClipGesture::Trim : ClipGesture::Move;
@@ -1717,7 +1722,7 @@ void drawPlaylist(App& a) {
         // Smooth: follows the pointer every frame, landing on the snap grid (Alt = free).
         Tick t = std::max<Tick>(0, timeline::snapTick(curTick, snapG, Snap::Line));
         if (t != cg.lastScrub) {
-          a.engine.setPosition(t);
+          j31::songJump(a, t);  // J-31: immediate when stopped, quantized while playing
           cg.lastScrub = t;
         }
         break;
@@ -1892,7 +1897,8 @@ void drawPlaylist(App& a) {
         st.selected = std::set<ObjectId>(right.begin(), right.end());
       }
     }
-    if (cg.kind == ClipGesture::Move && !cg.moved && cg.anchor != kNoId && !io.KeyShift) st.selected = {cg.anchor};
+    if (cg.kind == ClipGesture::Move && !cg.moved && cg.anchor != kNoId && !io.KeyShift)
+      st.selected = ops::expandClipGroups(a.doc.song(), {cg.anchor});  // the clicked clip and its group (J-31)
     if (cg.kind == ClipGesture::TimeSel) {
       if (st.selEnd > st.selStart) {
         a.engine.setMode(PlayMode::Song);

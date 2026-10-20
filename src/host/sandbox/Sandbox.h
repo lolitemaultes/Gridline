@@ -28,7 +28,11 @@ int sandboxChildMain(const std::string& shmName);
 
 // Child-side native window for a plugin editor (macOS: SandboxWindow.mm).
 // Returns the content view to attach the editor to, nullptr when unsupported.
-void* sandboxOpenWindow(const std::string& title, int w, int h, bool resizable);
+// (x, y): top-left based global position of the window frame, or
+// Editor::kNoPlace to centre it.
+void* sandboxOpenWindow(const std::string& title, int w, int h, bool resizable, int x = Editor::kNoPlace, int y = Editor::kNoPlace);
+// Top-left based global frame of the editor window (title bar included).
+bool sandboxWindowFrame(int& x, int& y, int& w, int& h);
 void sandboxResizeWindow(int w, int h);
 bool sandboxWindowOpen();  // false after the user closed it
 void sandboxCloseWindow();

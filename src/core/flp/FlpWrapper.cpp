@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <set>
 #include "../../host/HostedPlugins.h"
 #include "FlpGen2.h"
 
@@ -172,16 +173,21 @@ WrapperMatch matchWrapper(const WrapperInfo& w) {
   const std::string name = fold(w.name), vendor = fold(w.vendor);
   if (name.empty()) return m;
   std::shared_ptr<const host::HostedClass> sameFormat, other;
+  std::set<std::string> vendors;  // vendors of the name matches
   for (const auto& c : host::hostedClasses()) {
     if (c->instrument != w.instrument || fold(c->name) != name) continue;
     if (!vendor.empty() && !c->vendor.empty() && fold(c->vendor).find(vendor) == std::string::npos && vendor.find(fold(c->vendor)) == std::string::npos)
       continue;
+    vendors.insert(fold(c->vendor));
     if (c->format == own) {
       if (!sameFormat) sameFormat = c;
     } else if (!other || (c->format == "vst3" && other->format != "vst3")) {
       other = c;  // prefer VST3, then whatever is installed
     }
   }
+  // No vendor saved and several vendors make a plugin of that name: no
+  // guess (another company's plugin is not this plugin).
+  if (vendor.empty() && vendors.size() > 1) return m;
   if (sameFormat) {
     m.type = sameFormat->type;
     m.stateKept = true;  // same format, different id (version): the state usually still loads
@@ -195,7 +201,15 @@ bool isImageLineVendor(const std::string& vendor) {
   std::string v;
   for (unsigned char ch : vendor)
     if (std::isalnum(ch)) v += static_cast<char>(std::tolower(ch));
-  return v.empty() || v.find("imageline") != std::string::npos;
+  return v.find("imageline") != std::string::npos;
+}
+
+bool isImageLinePlugin(const std::string& vendor, const std::string& name, const std::string& path) {
+  if (isImageLineVendor(vendor)) return true;
+  bool vendorEmpty = true;
+  for (unsigned char ch : vendor) vendorEmpty = vendorEmpty && !std::isalnum(ch);
+  if (!vendorEmpty) return false;  // another vendor: never Image-Line's
+  return isImageLineVendor(path) || name.compare(0, 7, "Fruity ") == 0;
 }
 
 namespace {
@@ -240,7 +254,7 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m, 
   // older projects): the FL plugin decoders map them (FlpFx2Mod.cpp). Only
   // Image-Line's own plugins become built-ins: a third-party plugin is never
   // replaced by a Gridline equivalent, even when its name matches.
-  if (flWrapped && isImageLineVendor(w.vendor) && findDecoder(w.name) && findDecoder(w.name) != findDecoder("Fruity Wrapper")) {
+  if (flWrapped && isImageLinePlugin(w.vendor, w.name, w.path) && findDecoder(w.name) && findDecoder(w.name) != findDecoder("Fruity Wrapper")) {
     PluginMapping fm;
     fm.flName = m.flName;
     if (flWrapped(c, evs, fm) && !fm.glType.empty()) {

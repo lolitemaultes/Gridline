@@ -17,6 +17,7 @@
 #include "core/flp/Flp.h"
 #include "core/flp/FlpWrapper.h"
 #include "engine/Render.h"
+#include "host/EditorLayout.h"
 #include "host/HostedPlugins.h"
 #include "host/PluginPrefs.h"
 #include "host/PluginScan.h"
@@ -745,8 +746,59 @@ void testWrapper() {
     flp::PluginMapping pm4;
     expect((*dec)(ctx, evs, pm4) && pm4.glType == "vst2:0DEFACED" && pm4.state.data.compare(0, 7, "vst2p1:") == 0,
            "wrapper: third-party plugin named like an FL plugin stays a hosted placeholder");
-    expect(flp::isImageLineVendor("Image-Line") && flp::isImageLineVendor("image line software") && flp::isImageLineVendor(""),
-           "wrapper: Image-Line vendor recognised");
+    expect(flp::isImageLineVendor("Image-Line") && flp::isImageLineVendor("image line software") && !flp::isImageLineVendor(""),
+           "wrapper: Image-Line vendor recognised (an empty vendor is not Image-Line)");
+    // Only Image-Line's own plugins may become built-ins: by vendor, or with
+    // no vendor recorded by an Image-Line install path or FL's "Fruity " name.
+    expect(flp::isImageLinePlugin("Image-Line", "Maximus", "") && flp::isImageLinePlugin("", "Fruity Fast LP", "") &&
+               flp::isImageLinePlugin("", "Maximus", "C:\\Program Files\\Image-Line\\FL Studio\\Plugins\\Maximus.dll"),
+           "wrapper: Image-Line plugins recognised");
+    expect(!flp::isImageLinePlugin("", "Sytrus", "") && !flp::isImageLinePlugin("", "Maximus", "/Library/Audio/Plug-Ins/VST/Maximus.vst") &&
+               !flp::isImageLinePlugin("Dada Life", "Fruity Limiter", "") && !flp::isImageLinePlugin("Xfer Records", "Serum 2", ""),
+           "wrapper: unknown-vendor and third-party plugins are never treated as Image-Line's");
+    // A wrapper with no vendor whose name matches an FL plugin stays the hosted plugin.
+    std::vector<uint8_t> w8 = wrapper(4, u32v(0x5379746E), {}, s2.b, "Sytrus", "");
+    evs[1].data = w8.data(), evs[1].size = static_cast<uint32_t>(w8.size());
+    flp::PluginMapping pm5;
+    expect((*dec)(ctx, evs, pm5) && pm5.glType == "vst2:5379746E", "wrapper: vendor-less plugin named like an FL plugin stays hosted");
+    // Wrappers without a plugin identity (no format record: older files,
+    // formats this importer does not know) go to the name-based decoder,
+    // which still never turns a third-party plugin into a built-in.
+    auto rawWrapper = [](const std::string& name, const std::string& vendor, const std::string& path) {
+      Rec vals;
+      vals.i32(-9), vals.i32(-507), vals.b.push_back(0xFF), vals.i32(0), vals.i32(0), vals.i32(0), vals.i32(2);
+      const float v2[2] = {1.0f, 0.5f};
+      vals.b.insert(vals.b.end(), reinterpret_cast<const uint8_t*>(v2), reinterpret_cast<const uint8_t*>(v2) + 8);
+      Rec w;
+      w.u32(8);
+      if (!name.empty()) w.rec(54, name);
+      if (!path.empty()) w.rec(55, path);
+      if (!vendor.empty()) w.rec(56, vendor);
+      w.rec(53, vals.b);
+      return w.b;
+    };
+    auto decodeRaw = [&](const std::vector<uint8_t>& raw, const std::string& display) {
+      std::vector<flp::Event> ev2 = evs;
+      ev2[1].data = raw.data(), ev2[1].size = static_cast<uint32_t>(raw.size());
+      std::vector<uint8_t> dn;
+      for (char ch : display) dn.push_back(static_cast<uint8_t>(ch)), dn.push_back(0);
+      dn.push_back(0), dn.push_back(0);
+      if (!display.empty()) {
+        flp::Event e;
+        e.id = 203, e.data = dn.data(), e.size = static_cast<uint32_t>(dn.size());
+        ev2.push_back(e);
+      }
+      flp::PluginMapping pm;
+      const bool ok = (*dec)(ctx, ev2, pm);
+      return ok ? pm.glType : std::string();
+    };
+    expect(decodeRaw(rawWrapper("Fruity Fast LP", "", ""), "") == "gl.fastlp", "wrapper (no identity): FL's own plugin still maps to its built-in");
+    expect(decodeRaw(rawWrapper("Fruity Fast LP", "Other Audio Co", ""), "").compare(0, 3, "gl.") != 0,
+           "wrapper (no identity): third-party vendor never becomes a built-in");
+    expect(decodeRaw(rawWrapper("", "", ""), "Fruity Fast LP").compare(0, 3, "gl.") != 0,
+           "wrapper (no identity): the user's channel name is never taken for the plugin");
+    expect(decodeRaw(rawWrapper("Maximus", "", "/Library/Audio/Plug-Ins/VST/Maximus.vst"), "").compare(0, 3, "gl.") != 0,
+           "wrapper (no identity): vendor-less plugin outside Image-Line's folders never becomes a built-in");
     expect(!flp::isImageLineVendor("Dada Life") && !flp::isImageLineVendor("Apple") && !flp::isImageLineVendor("Kilohearts"),
            "wrapper: other vendors are never converted to built-ins");
   }
@@ -1150,6 +1202,155 @@ void testSandboxFeatures() {
   host::setRunInSandbox(kClapSynth, false);
 }
 
+
+// ---- J-29: plugin windows (the plugin's own interface on top, the control
+// bar under it, the settings panel under the bar) ----
+void testPluginWindowLayout() {
+  namespace L = host::layout;
+  // Sizes installed plugins asked for on the development machine (tiny Apple
+  // units up to large synths), plus extremes.
+  const int sizes[][2] = {{48, 30},   {120, 90},  {235, 375}, {236, 375}, {484, 255},  {500, 200},  {522, 72},    {604, 308},
+                          {600, 560}, {807, 638}, {845, 475}, {880, 475}, {1190, 740}, {1296, 754}, {2560, 1440}, {4000, 3000}};
+  bool placed = true, noOverlap = true, sized = true, centred = true, folds = true, barFits = true;
+  for (const auto& sz : sizes) {
+    const int pw = sz[0], ph = sz[1];
+    const L::WindowLayout w = L::layoutWindow(pw, ph, 0);
+    const int ew = std::max(pw, L::kMinPluginW), eh = std::max(ph, L::kMinPluginH);
+    // The interface keeps exactly its size at the top of the window.
+    placed = placed && w.plugin.y == 0 && w.plugin.w == ew && w.plugin.h == eh;
+    // The bar sits right under it at the window's full width; nothing covers the interface.
+    placed = placed && w.bar.y == w.plugin.bottom() && w.bar.x == 0 && w.bar.w == w.w && w.panel.h == 0;
+    noOverlap = noOverlap && !w.plugin.overlaps(w.bar) && !w.plugin.overlaps(w.panel) && !w.bar.overlaps(w.panel);
+    // Window = interface + bar (narrow interfaces get the minimum width, centred).
+    sized = sized && w.w == std::max(ew, L::kMinWindowW) && w.h == eh + w.bar.h;
+    centred = centred && w.plugin.x == (w.w - ew) / 2 && w.plugin.x >= 0 && w.plugin.right() <= w.w;
+    // Unfolding the settings panel grows the window under the bar; folding restores it exactly.
+    const L::WindowLayout open = L::layoutWindow(pw, ph, L::kPanelH);
+    folds = folds && open.plugin.y == 0 && open.plugin.h == eh && open.plugin.w == ew && open.panel.y == open.bar.bottom() &&
+            open.panel.h == L::kPanelH && open.h == eh + open.bar.h + L::kPanelH && open.w >= L::kPanelMinW && open.w >= ew &&
+            !open.plugin.overlaps(open.bar) && !open.bar.overlaps(open.panel);
+    const L::WindowLayout again = L::layoutWindow(pw, ph, 0);
+    folds = folds && again.w == w.w && again.h == w.h && again.plugin == w.plugin && again.bar == w.bar;
+    barFits = barFits && w.bar.h == L::layoutBar(w.w).height;
+  }
+  expect(placed, "plugin window: interface on top at its own size, bar right under it");
+  expect(noOverlap, "plugin window: the bar and the panel never cover the plugin's interface");
+  expect(sized, "plugin window: window = plugin size + bar height (minimum width for tiny plugins)");
+  expect(centred, "plugin window: plugins narrower than the minimum width sit centred");
+  expect(folds, "plugin window: settings panel unfolds under the bar and folding restores the plugin-only size");
+  expect(barFits, "plugin window: bar height follows its layout");
+  {  // Example sizes from the test set.
+    const L::WindowLayout a = L::layoutWindow(484, 255, 0), k = L::layoutWindow(236, 375, 0), s2 = L::layoutWindow(1190, 740, 0);
+    expect(a.w == 484 && a.h == 255 + L::kBarRowH && k.w == 236 && k.h == 375 + 2 * L::kBarRowH && s2.w == 1190 && s2.h == 740 + L::kBarRowH,
+           "plugin window: AUDelay 484x255 -> 484x283, kHs Delay 236x375 -> 236x431 (two-row bar), Serum 2 1190x740 -> 1190x768");
+  }
+
+  // Control bar: every item inside the bar, no two items overlap, the
+  // essential ones always shown; one row when wide, two when narrow.
+  bool inside = true, apart = true, essential = true, rows = true;
+  for (int width = 40; width <= 2400; width += 7) {
+    const L::BarLayout b = L::layoutBar(width);
+    const int bw = std::max(width, L::kMinWindowW);
+    const L::Rect bar{0, 0, bw, b.height};
+    for (int i = 0; i < L::kBarItemCount; ++i) {
+      if (!b.visible[i]) continue;
+      inside = inside && bar.contains(b.items[i]) && b.items[i].w > 0 && b.items[i].h > 0;
+      for (int j = i + 1; j < L::kBarItemCount; ++j)
+        if (b.visible[j]) apart = apart && !b.items[i].overlaps(b.items[j]);
+    }
+    for (L::BarItem it : {L::kBarPrev, L::kBarPreset, L::kBarNext, L::kBarBypass, L::kBarSandbox, L::kBarGeneric, L::kBarSettings})
+      essential = essential && b.visible[it];
+    essential = essential && b.items[L::kBarPreset].w >= 24;
+    rows = rows && (bw >= L::oneRowBarWidth() ? b.rows == 1 && b.height == L::kBarRowH : b.rows == 2 && b.height == 2 * L::kBarRowH);
+    rows = rows && b.items[L::kBarPreset].w <= L::kPresetMaxW;
+  }
+  expect(inside, "control bar: every item inside the bar at every width");
+  expect(apart, "control bar: items never overlap (min-width layout and wrapping)");
+  expect(essential, "control bar: presets, bypass, sandbox, generic and settings stay usable at small widths");
+  expect(rows, "control bar: one row when wide, two rows when narrow");
+  expect(!L::layoutBar(L::kMinWindowW).visible[L::kBarCpu] && L::layoutBar(L::oneRowBarWidth()).visible[L::kBarCpu],
+         "control bar: the readout is dropped first when narrow");
+
+  // The user drags a resizable plugin's window: the plugin size asked for
+  // gives back that window size.
+  bool inverse = true;
+  for (int ww = L::kMinWindowW; ww <= 2000; ww += 37)
+    for (int wh = 160; wh <= 1400; wh += 53)
+      for (int panel : {0, L::kPanelH}) {
+        if (panel > 0 && ww < L::kPanelMinW) continue;
+        if (wh - L::layoutBar(ww).height - panel < L::kMinPluginH) continue;  // below the minimum plugin height
+        int pw = 0, ph = 0;
+        L::pluginSizeForWindow(ww, wh, panel, pw, ph);
+        const L::WindowLayout w = L::layoutWindow(pw, ph, panel);
+        inverse = inverse && w.w == ww && w.h == wh;
+      }
+  expect(inverse, "plugin window: user resize -> plugin size -> same window size");
+
+  // Bar-only window docked under a sandboxed plugin's own window.
+  const L::WindowLayout sb = L::layoutBarWindow(484, 0), sbOpen = L::layoutBarWindow(484, L::kPanelH);
+  expect(sb.w == 484 && sb.h == sb.bar.h && sb.plugin.empty() && sbOpen.h == sbOpen.bar.h + L::kPanelH && sbOpen.panel.y == sbOpen.bar.bottom(),
+         "sandbox bar window: bar at the plugin window's width, panel under it");
+
+  // Placement: on screen, never resized; remembered positions win; new windows cascade.
+  const L::Rect work{0, 25, 1440, 875};
+  const L::Rect off = L::fitOnScreen(L::Rect{1300, 800, 400, 300}, work);
+  const L::Rect huge = L::fitOnScreen(L::Rect{50, 60, 2000, 1200}, work);
+  expect(work.contains(off) && off.w == 400 && off.h == 300 && huge.x == 0 && huge.y == 25 && huge.w == 2000,
+         "plugin window: kept on screen without resizing (top-left wins when larger)");
+  const L::Rect mem = L::placeWindow(500, 300, work, true, 200, 150, 3);
+  const L::Rect c0 = L::placeWindow(500, 300, work, false, 0, 0, 0), c1 = L::placeWindow(500, 300, work, false, 0, 0, 1);
+  expect(mem.x == 200 && mem.y == 150 && work.contains(c0) && work.contains(c1) && c1.x > c0.x && c1.y > c0.y,
+         "plugin window: remembered position per instance, new windows cascade");
+
+  // The plugin's own interface is always the default; the generic list is a
+  // fallback (no interface) or an explicit choice.
+  expect(L::chooseEditorMode(true, false) == L::EditorMode::Native && L::chooseEditorMode(true, true) == L::EditorMode::Generic &&
+             L::chooseEditorMode(false, false) == L::EditorMode::Generic && L::chooseEditorMode(false, true) == L::EditorMode::Generic,
+         "editor mode: native first, generic only as fallback or choice");
+}
+
+// Real instances: plugins with an interface open it by default, plugins
+// without one fall back to the generic list; nothing is ever swapped for a
+// Gridline built-in.
+void testEditorDefaults() {
+  namespace L = host::layout;
+  auto gain = createEffect(kClapGain);
+  if (gain) {
+    host::HostedInstance* hi = host::hostedInstance(gain.get());
+    expect(hi && !hi->backend()->hasEditor() &&
+               L::chooseEditorMode(hi->backend()->hasEditor(), hi->options().genericEditor) == L::EditorMode::Generic,
+           "editor defaults: plugin without an interface -> generic parameter list");
+  }
+#if defined(__APPLE__)
+  for (const char* t : {"au:aufx/dely/appl", "au:aumu/dls /appl"}) {
+    const std::string type = t;
+    std::unique_ptr<Effect> fx;
+    std::unique_ptr<Generator> gen;
+    host::HostedInstance* hi = nullptr;
+    if (type.compare(0, 8, "au:aumu/") == 0) {
+      gen = createGenerator(type);
+      hi = gen ? host::hostedInstance(gen.get()) : nullptr;
+    } else {
+      fx = createEffect(type);
+      hi = fx ? host::hostedInstance(fx.get()) : nullptr;
+    }
+    if (!hi) continue;  // not on this system
+    expect(hi->backend()->hasEditor() && L::chooseEditorMode(hi->backend()->hasEditor(), hi->options().genericEditor) == L::EditorMode::Native,
+           (type + ": opens its own interface by default").c_str());
+  }
+#endif
+  // Hosted types are only ever created as the hosted plugin: an unknown or
+  // missing one yields no instance, never a built-in stand-in.
+  expect(!createEffect("vst3:00000000000000000000000000000000") && !createGenerator("vst2:7FFFFFFF") && !createEffect("au:aufx/none/none"),
+         "missing installed plugins are never replaced by built-ins at run time");
+  PluginState missing;
+  missing.type = "vst3:0123456789ABCDEF0123456789ABCDEF";
+  missing.data = "vst3s1:AAAA:";
+  normalizePluginState(missing);
+  expect(missing.type == "vst3:0123456789ABCDEF0123456789ABCDEF" && missing.data == "vst3s1:AAAA:",
+         "missing installed plugins keep their type and state");
+}
+
 // J-21 cross-feature: an offline render (export) of a song whose instrument
 // runs in the sandbox must equal the in-process render, at any block size and
 // with parallel mixer threads (no dropped / late blocks while rendering).
@@ -1197,6 +1398,8 @@ int main() {
   testClapModulation();
   testPresetsAndBypass();
   testSandboxFeatures();
+  testPluginWindowLayout();
+  testEditorDefaults();
   testSandboxOfflineRender();
   return finish();
 }

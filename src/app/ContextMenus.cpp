@@ -1909,7 +1909,7 @@ void mixerSlotMenu(App& a, ObjectId track, int slot) {
   }
   if (!info) return;
   if (ImGui::MenuItem("Open editor")) a.fxEditor = {track, slot};
-  if (isHostedType(es.plugin.type) && ImGui::MenuItem("Show plugin editor")) openHostedEditor(a, PluginTarget{track, slot});
+  if (isHostedType(es.plugin.type) && ImGui::MenuItem("Gridline panel (parameters, settings)")) showHostedPanel(a, PluginTarget{track, slot});
   if (ImGui::MenuItem("Bypass", nullptr, !es.enabled)) ops::setSlotEnabled(a.doc, track, slot, !es.enabled);
   if (ImGui::BeginMenu("Enable switch")) {  // automation / remote control of the slot's on/off switch
     knobContextMenu(a, slotEnableParam(track, slot));

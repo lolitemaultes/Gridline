@@ -6,6 +6,7 @@
 #include "Vst3Editor.h"
 #include "Vst3Plugin.h"
 #include "Vst3Scan.h"
+#include "pluginterfaces/gui/iplugviewcontentscalesupport.h"
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 
 namespace gl::vst3 {
@@ -51,6 +52,18 @@ class View final : public host::Editor {
   void setSize(int w, int h) override {
     sb::ViewRect r{0, 0, w, h};
     view_->onSize(&r);
+  }
+  void setContentScale(double scale) override {
+#if !defined(__APPLE__)  // macOS views scale with their window themselves
+    void* obj = nullptr;
+    if (view_->queryInterface(sb::IPlugViewContentScaleSupport::iid, &obj) == sb::kResultOk && obj) {
+      auto* cs = static_cast<sb::IPlugViewContentScaleSupport*>(obj);
+      cs->setContentScaleFactor(static_cast<sb::IPlugViewContentScaleSupport::ScaleFactor>(scale));
+      cs->release();
+    }
+#else
+    (void)scale;
+#endif
   }
 
  private:

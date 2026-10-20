@@ -68,7 +68,11 @@ class AuView final : public Editor {
   explicit AuView(AuBackend* b) : b_(b) {}
   ~AuView() override;
   bool size(int& w, int& h) override;
-  bool canResize() const override { return false; }
+  // Cocoa views that stretch with their superview can be resized.
+  bool canResize() const override { return view && ([view autoresizingMask] & (NSViewWidthSizable | NSViewHeightSizable)) != 0; }
+  void setSize(int w, int h) override {
+    if (view && canResize()) [view setFrameSize:NSMakeSize(w, h)];
+  }
   bool attach(void* parent) override;
   AuBackend* b_;
   NSView* view = nil;

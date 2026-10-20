@@ -10,6 +10,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../core/PluginParams.h"
 #include "App.h"
+#include "HostedUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "PluginUI.h"
@@ -216,6 +217,7 @@ static void drawNoteSettings(App& a, ObjectId id) {
 }
 
 void drawChannelSettings(App& a) {
+  routePluginWindows(a);  // installed plugins open as themselves
   if (a.settingsChannel == kNoId) return;
   const Song& s = a.doc.song();
   const Channel* c = s.channel(a.settingsChannel);

@@ -1329,9 +1329,8 @@ void drawMixer(App& a) {
           ImGui::SetCursorScreenPos(ImVec2(b0.x + bw + 4, q.y + (rowH - 20) * 0.5f));
           ui::ParamKnob("mix", slotMixParam(sel->id, k), 10.0f);
           ImGui::SetCursorScreenPos(ImVec2(b0.x + bw + 4 + 20 + 4, q.y + 2));
-          bool editing = a.fxEditor == std::make_pair(sel->id, k);
-          if (ui::IconButton("edit", ui::Icon::Settings, editing, 22, "Open the effect editor"))
-            a.fxEditor = editing ? std::make_pair(kNoId, -1) : std::make_pair(sel->id, k);
+          bool editing = pluginWindowShown(a, PluginTarget{sel->id, k});
+          if (ui::IconButton("edit", ui::Icon::Settings, editing, 22, "Show / hide the effect's window")) togglePluginWindow(a, PluginTarget{sel->id, k});
         }
         ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + rowH + 2));
         ImGui::Dummy(ImVec2(iw, 0));
@@ -1442,6 +1441,7 @@ void mixerLatencyMenu(App& a, ObjectId id) {
 }
 
 void drawEffectEditor(App& a) {
+  routePluginWindows(a);  // installed plugins open as themselves
   if (a.fxEditor.first == kNoId) return;
   const Song& s = a.doc.song();
   const MixerTrack* t = s.mixerTrack(a.fxEditor.first);

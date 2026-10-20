@@ -187,6 +187,9 @@ bool decodePatcher(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
     const PluginInfo* info = findPlugin(inner.glType);
     if (!info || (!instrument && info->kind != PluginKind::Effect) || info->kind == PluginKind::NoteFx) {
       ++skipped;
+      if (isHostedType(inner.glType))  // never silently: the user has to re-add it
+        c.report.warn("Patcher: installed plugin \"" + (nd.display.empty() ? nd.name : nd.display) + "\" (" + inner.glType +
+                      ") cannot run inside the Patcher" + (info ? "" : " and is not installed") + "; it was left out");
       return false;
     }
     if (kept >= kMaxNodes) {

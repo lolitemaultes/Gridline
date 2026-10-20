@@ -8,6 +8,7 @@
 #include <set>
 #include "../../third_party/imgui/imgui.h"
 #include "App.h"
+#include "HostedUi.h"
 #include "ContextMenus.h"
 #include "EditTools.h"
 #include "../core/NoteTools.h"
@@ -428,7 +429,7 @@ void drawChannelRack(App& a) {
           ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).x * ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).x +
                   ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y * ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y <
               16.0f)
-        a.settingsChannel = a.settingsChannel == c.id ? kNoId : c.id;
+        togglePluginWindow(a, PluginTarget{c.id, -1});
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
         a.selectChannel(c.id);
         ImGui::OpenPopup("##chmenu");
@@ -445,7 +446,7 @@ void drawChannelRack(App& a) {
         }
         ImGui::EndDragDropTarget();
       }
-      const bool open = a.settingsChannel == c.id;
+      const bool open = pluginWindowShown(a, PluginTarget{c.id, -1});
       ImU32 bg = selected ? P.surface600 : hov ? P.surface700 : P.surface800;
       if (open) bg = theme::mix(bg, P.hot, 0.10f);
       dl->AddRectFilled(np, ImVec2(np.x + nameW, np.y + cellH), theme::mix(bg, P.ink, 0.3f), theme::kRadiusSm);
