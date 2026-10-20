@@ -51,6 +51,7 @@ Settings::Settings() {
       {"ui.scale", Json::makeNumber(1.0)},
       {"ui.showHints", b(true)},
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing
+      {"ui.smoothSnap", b(true)},              // J-37: snapped drags glide from cell to cell (drawing only)
       {"ui.darkTheme", b(true)},
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide
       {"ui.layoutVersion", Json::makeNumber(0)},  // J-28: default workspace version the saved layout.ini was built with

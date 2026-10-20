@@ -393,6 +393,8 @@ struct HeldNote {
 // One command per line, "<frame> <command> <args>", in logical pixels:
 //   move x y · down b · up b · mod ctrl|shift|alt 0|1 · wheel dy · key <letter>
 //   audio <wav> <track> <bar> (browser drop path) · dump (playlist clips to stdout)
+//   shot <out.ppm> (J-37: this frame is saved once rendered — frame sequences)
+std::string devShotPending;
 struct DevInputLine {
   int frame = 0;
   std::string cmd, a0, a1, a2;
@@ -440,6 +442,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       place.track = std::atoi(l.a1.c_str());
       place.tick = static_cast<Tick>(std::atoi(l.a2.c_str())) * app.doc.song().barTicks();
       browserui::performDrop(app, l.a0, browse::DropTarget::Playlist, place);
+    } else if (l.cmd == "shot") {
+      devShotPending = l.a0;
     } else if (l.cmd == "dump") {
       const Song& s = app.doc.song();
       std::printf("dump frame %d: %zu clips, %zu selected\n", frame, s.playlist.size(), app.playlist.selected.size());
@@ -622,6 +626,7 @@ int main(int argc, char** argv) {
   std::vector<DevInputLine> devInput;     // --dev-input file: scripted mouse / key input (J-28)
   std::string profilePath;                // --profile-frames out.json: per-window UI CPU time per frame (J-25)
   int profileWarmup = 30;                 // --profile-warmup N: frames not recorded (layout, caches)
+  double fixedDt = 0;                     // --fixed-dt ms: fixed UI frame time (J-37 animation frame sequences)
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--screenshot" && i + 1 < argc) shotPath = argv[++i];
@@ -690,6 +695,8 @@ int main(int argc, char** argv) {
       std::string z = argv[++i];
       float f = z == "max" ? 1e9f : static_cast<float>(std::atof(z.c_str()));
       if (f > 0) app.playlist.zoomRequest = app.piano.zoomRequest = f;
+    } else if (arg == "--fixed-dt" && i + 1 < argc) {  // J-37 dev check: every frame advances UI time by N ms (reproducible animation)
+      fixedDt = std::max(0.0, std::atof(argv[++i])) / 1000.0;
     } else if (arg == "--scrollx" && i + 1 < argc) {  // dev check: playlist horizontal scroll (px)
       app.playlist.scrollX = static_cast<float>(std::atof(argv[++i]));
     } else if (arg == "--size" && i + 1 < argc) {
@@ -969,6 +976,7 @@ int main(int argc, char** argv) {
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
+    if (fixedDt > 0) io.DeltaTime = static_cast<float>(fixedDt);
     if (winW > 0 && winH > 0) {
       io.DisplaySize = ImVec2(static_cast<float>(winW) / uiScale, static_cast<float>(winH) / uiScale);
       io.DisplayFramebufferScale = ImVec2(static_cast<float>(fbW) / io.DisplaySize.x, static_cast<float>(fbH) / io.DisplaySize.y);
@@ -1184,6 +1192,10 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
     if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
+    if (!devShotPending.empty()) {  // J-37: dev-input "shot" (frame sequences)
+      writePpm(devShotPending.c_str(), fbW, fbH);
+      devShotPending.clear();
+    }
     if (!shotPath.empty() && ++frameNo >= shotFrames) {
       // Save the rendered frame (binary PPM) and quit — used for visual checks.
       writePpm(shotPath.c_str(), fbW, fbH);

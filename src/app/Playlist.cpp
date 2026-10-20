@@ -15,6 +15,7 @@
 #include "../core/MenuOpsExtra.h"
 #include "../core/MenuParity.h"
 #include "../core/PluginParams.h"
+#include "../core/SmoothSnap.h"
 #include "../engine/PlaylistTools.h"
 #include "../engine/Sample.h"
 #include "App.h"
@@ -59,6 +60,25 @@ struct ClipGesture {
 };
 ClipGesture cg;
 uint64_t clipGestureCounter = 1;
+
+// J-37: smooth snapping. Drawn geometry of clips under a snapped drag:
+// start tick, end tick, track (fractional while gliding between rows) and
+// content position (offset in ticks; audio clips: source start in seconds).
+// The document keeps the exact snapped values; only the drawing eases.
+smooth::Tracker<4> clipAnim;
+smooth::Tracker<4>::Vec clipAnimValues(const Clip& c, Tick len) {
+  return {static_cast<double>(c.start), static_cast<double>(c.start + len), static_cast<double>(c.track),
+          c.kind == ClipKind::Audio ? c.audioStart : static_cast<double>(c.offset)};
+}
+bool gestureAnimates(ClipGesture::Kind k) {
+  return k == ClipGesture::Move || k == ClipGesture::Resize || k == ClipGesture::Trim || k == ClipGesture::Slip || k == ClipGesture::Paint;
+}
+
+// Clip rectangles drawn this frame (overlap highlighting, J-37).
+struct DrawnClip {
+  int track;
+  float x0, x1, y0, y1, body;  // body: top of the body (below the title bar)
+};
 
 void drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, ImU32 col, float visX0,
                      float visX1) {
@@ -936,25 +956,58 @@ void drawPlaylist(App& a) {
   int fadeHoverKind = 0;
   int hoverPoint = -1, hoverHandle = -1;
   // Automation clip being edited: drawn from the live document (edits apply as they happen).
-  for (size_t ci = 0; ci < s.playlist.size(); ++ci) {
-    const Clip& c = s.playlist[ci];
-    if (!ccache.valid[ci]) continue;
-    const Tick len = ccache.len[ci];
-    float x0 = xOf(c.start), x1 = xOf(c.start + len), y = yOf(c.track), th = hOf(c.track);
-    if (x1 < gMin.x || x0 > gMax.x || y + th < gMin.y || y > gMax.y || th < 1) continue;
+  // J-37: clips under a snapped drag glide between grid cells (drawing only);
+  // free dragging (snap off, Alt, free grid at max zoom) follows the pointer.
+  const double animNow = ImGui::GetTime();
+  const bool animSnap = a.settings.getBool("ui.smoothSnap") && snapG > 1;
+  const double animEpsTick = 0.25 / std::max(1e-6, static_cast<double>(st.pxPerTick));  // a quarter pixel
+  auto xOfD = [&](double t) { return gMin.x + static_cast<float>(t * static_cast<double>(st.pxPerTick)) - st.scrollX; };
+  static std::vector<DrawnClip> drawn;
+  drawn.clear();
+  auto drawClip = [&](size_t ci) {
+    if (!ccache.valid[ci]) return;
+    const Clip& lc = s.playlist[ci];  // logical clip (what the document holds)
+    Tick len = ccache.len[ci];
+    float x0 = xOf(lc.start), x1 = xOf(lc.start + len), y = yOf(lc.track), th = hOf(lc.track);
+    Clip animClip;
+    const Clip* cp = &lc;
+    if (!clipAnim.empty() && clipAnim.contains(lc.id)) {
+      const double secPerTick = 60.0 / (std::max(1.0, tempoMap.bpmAt(static_cast<double>(lc.start))) * std::max(1, s.ppq));
+      const smooth::Tracker<4>::Vec eps{animEpsTick, animEpsTick, 0.01, lc.kind == ClipKind::Audio ? animEpsTick * secPerTick : animEpsTick};
+      const auto v = clipAnim.follow(lc.id, clipAnimValues(lc, len), animNow, animSnap, eps);
+      animClip = lc;
+      animClip.start = static_cast<Tick>(std::llround(v[0]));
+      len = std::max<Tick>(1, static_cast<Tick>(std::llround(v[1])) - animClip.start);
+      if (lc.kind == ClipKind::Audio) animClip.audioStart = v[3];
+      else animClip.offset = static_cast<Tick>(std::llround(v[3]));
+      x0 = xOfD(v[0]), x1 = std::max(x0 + 1.0f, xOfD(v[1]));
+      const int tr0 = std::clamp(static_cast<int>(std::floor(v[2])), 0, std::max(0, nTracks - 1));
+      const int tr1 = std::min(tr0 + 1, std::max(0, nTracks - 1));
+      const float f = std::clamp(static_cast<float>(v[2] - tr0), 0.0f, 1.0f);
+      y = yOf(tr0) + (yOf(tr1) - yOf(tr0)) * f;
+      th = hOf(tr0) + (hOf(tr1) - hOf(tr0)) * f;
+      cp = &animClip;
+    }
+    const Clip& c = *cp;  // drawn clip
+    if (x1 < gMin.x || x0 > gMax.x || y + th < gMin.y || y > gMax.y || th < 1) return;
     bool sel = st.selected.count(c.id) > 0;
     const bool livePlaying = liveMode && a.engine.liveActive(c.track) == c.id;
     const bool liveWaiting = liveMode && a.engine.liveQueued(c.track) == c.id;
     bool muted = c.muted || (c.track < nTracks && s.tracks[static_cast<size_t>(c.track)].muted);
     ImU32 base = theme::rgb(ccache.color[ci]);
-    // Clip: translucent colour body, solid title bar with the name, darker rim;
-    // selected clips get a lit rim.
-    ImU32 body = theme::mix(base, P.well, muted ? 0.85f : 0.58f);
-    ImU32 head = theme::mix(base, P.well, muted ? 0.65f : 0.08f);
+    // Clip: translucent colour body (J-37: see-through, so stacked clips and
+    // the grid show), a more opaque title bar with the name, a crisp rim;
+    // selected clips get a lit rim. Over the empty grid the composite matches
+    // the J-13 palette (body ~58 % towards the well, title bar ~8 %).
+    const float bodyA = muted ? 0.60f : 0.74f, headA = muted ? 0.80f : 0.90f;
+    const ImU32 headSolid = theme::mix(base, P.well, muted ? 0.56f : 0.0f);  // title text contrast
+    const ImU32 body = theme::withAlpha(theme::mix(base, P.well, muted ? 0.75f : 0.43f), bodyA);
+    const ImU32 head = theme::withAlpha(headSolid, headA);
     ImVec2 a0(std::round(x0) + 1, y + 1), a1(std::max(std::round(x0) + 5, std::round(x1) - 1), y + th - 1);
     const float headH = std::min(15.0f, (a1.y - a0.y) * 0.45f);
-    dl->AddRectFilled(a0, a1, body, theme::kRadiusSm);
+    dl->AddRectFilled(ImVec2(a0.x, a0.y + headH), a1, body, theme::kRadiusSm, ImDrawFlags_RoundCornersBottom);
     dl->AddRectFilled(a0, ImVec2(a1.x, a0.y + headH), head, theme::kRadiusSm, ImDrawFlags_RoundCornersTop);
+    drawn.push_back({lc.track, a0.x, a1.x, a0.y, a1.y, a0.y + headH});
     dl->AddLine(ImVec2(a0.x + 1, a0.y + 0.5f), ImVec2(a1.x - 1, a0.y + 0.5f), theme::withAlpha(P.paper, muted ? 0.08f : 0.28f));
     dl->AddLine(ImVec2(a0.x, a0.y + headH), ImVec2(a1.x, a0.y + headH), theme::withAlpha(P.ink, 0.35f));
     dl->AddRect(a0, a1, sel ? P.hot : theme::mix(base, P.ink, muted ? 0.7f : 0.45f), theme::kRadiusSm, 0, sel ? 2.0f : 1.0f);
@@ -973,10 +1026,10 @@ void drawPlaylist(App& a) {
       const bool hotGlyph = hovered && std::fabs(io.MousePos.x - gx) < 7 && io.MousePos.y >= a0.y && io.MousePos.y < a0.y + headH;
       if (hotGlyph) hoverMenuGlyph = c.id;
       dl->AddTriangleFilled(ImVec2(gx - 3.5f, gy - 2), ImVec2(gx + 3.5f, gy - 2), ImVec2(gx, gy + 2.5f),
-                            hotGlyph ? P.hot : theme::withAlpha(theme::contrastText(head), 0.8f));
+                            hotGlyph ? P.hot : theme::withAlpha(theme::contrastText(headSolid), 0.8f));
     }
     theme::textEllipsis(dl, a.fontBold, std::min(theme::kFontCaption, headH - 2), ImVec2(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f)),
-                        a1.x - tx0 - (glyph ? 19 : 10), theme::contrastText(head), title);
+                        a1.x - tx0 - (glyph ? 19 : 10), theme::contrastText(headSolid), title);
     const ImVec2 b0(a0.x + 3, a0.y + headH + 2), b1(a1.x - 3, a1.y - 3);
     // Clip content (notes, waveform, curve): lighter than the colour on dark
     // slate, darker than it on the light variant's pastel bodies.
@@ -1034,6 +1087,41 @@ void drawPlaylist(App& a) {
       hoverBody = io.MousePos.y > a0.y + headH;
       if (c.kind != ClipKind::Automation) hoverPoint = hoverHandle = -1;
     }
+  };
+  // Clips under a drag (gliding) draw last: on top of the clips they pass over.
+  const bool anyAnim = !clipAnim.empty();
+  for (size_t ci = 0; ci < s.playlist.size(); ++ci)
+    if (!anyAnim || !clipAnim.contains(s.playlist[ci].id)) drawClip(ci);
+  if (anyAnim)
+    for (size_t ci = 0; ci < s.playlist.size(); ++ci)
+      if (clipAnim.contains(s.playlist[ci].id)) drawClip(ci);
+  clipAnim.prune(animNow, gestureAnimates(cg.kind));
+  // J-37: where clips on a track overlap, the shared span gets a light wash,
+  // fine diagonal hatching and both clips' edges, so stacked clips read at a
+  // glance even when their colours match.
+  if (drawn.size() > 1) {
+    std::sort(drawn.begin(), drawn.end(), [](const DrawnClip& p, const DrawnClip& q) { return p.track != q.track ? p.track < q.track : p.x0 < q.x0; });
+    const ImU32 wash = P.dark ? theme::withAlpha(P.paper, 0.10f) : theme::withAlpha(P.ink, 0.07f);
+    const ImU32 hatch = P.dark ? theme::withAlpha(P.paper, 0.22f) : theme::withAlpha(P.ink, 0.20f);
+    const ImU32 edge = P.dark ? theme::withAlpha(P.paper, 0.75f) : theme::withAlpha(P.ink, 0.65f);
+    int budget = 4096;  // pathological stacks: bounded work per frame
+    for (size_t i = 0; i < drawn.size() && budget > 0; ++i)
+      for (size_t j = i + 1; j < drawn.size() && drawn[j].track == drawn[i].track && drawn[j].x0 < drawn[i].x1 && budget > 0; ++j, --budget) {
+        const DrawnClip &p = drawn[i], &q = drawn[j];
+        const ImVec2 o0(std::max({p.x0, q.x0, gMin.x}), std::max({p.y0, q.y0, gMin.y})), o1(std::min({p.x1, q.x1, gMax.x}), std::min({p.y1, q.y1, gMax.y}));
+        if (o1.x - o0.x < 1.0f || o1.y - o0.y < 2.0f) continue;
+        dl->AddRectFilled(o0, o1, wash);
+        const ImVec2 h0(o0.x, std::max({o0.y, p.body, q.body}));  // titles stay readable: hatching in the bodies only
+        const float hgt = o1.y - h0.y;
+        if (hgt > 1.0f) {
+          dl->PushClipRect(h0, o1, true);
+          for (float hx = o0.x - hgt - std::fmod(o0.x, 6.0f); hx < o1.x; hx += 6.0f) dl->AddLine(ImVec2(hx, o1.y), ImVec2(hx + hgt, h0.y), hatch);
+          dl->PopClipRect();
+        }
+        // The overlapping edges of both clips (the hidden one included).
+        for (float ex : {std::max(p.x0, q.x0), std::min(p.x1, q.x1)})
+          if (ex >= gMin.x && ex <= gMax.x) dl->AddLine(ImVec2(ex + 0.5f, o0.y), ImVec2(ex + 0.5f, o1.y), edge, 1.0f);
+      }
   }
   // Empty arrangement: muted mark (guide §08 C).
   if (s.playlist.empty())
@@ -1698,6 +1786,13 @@ void drawPlaylist(App& a) {
     }
   }
 
+  if ((lClick || rClick) && gestureAnimates(cg.kind) && cg.kind != ClipGesture::Paint && a.settings.getBool("ui.smoothSnap")) {
+    // J-37: the clips this drag changes start gliding from where they are drawn.
+    const Song& ns = a.doc.song();
+    const double now = ImGui::GetTime();
+    for (const auto& c : ns.playlist)
+      if (cg.kind == ClipGesture::Slip ? c.id == cg.anchor : st.selected.count(c.id) > 0) clipAnim.seed(c.id, clipAnimValues(c, ns.clipLength(c)), now);
+  }
   if (active && cg.kind != ClipGesture::None) {
     // Dragging past the left/right edge scrolls the view (scrub, time selection, clips).
     if (cg.kind != ClipGesture::Select && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f) + ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f)) {
@@ -1817,14 +1912,18 @@ void drawPlaylist(App& a) {
           if (!pltools::occupied(s, curTrack, t, cg.paintLen)) todo.push_back(t);
         if (todo.empty()) break;
         const Tick len = cg.paintLen;
+        std::vector<Clip> painted;
         a.doc.editSong("paint clips", [&](Song& x) {
           for (Tick t : todo) {
             Clip c = pltools::makeClip(x, ps, curTrack, t);
             if (c.kind != ClipKind::Pattern || len != x.clipLength(c)) c.length = len;
             c.id = x.allocateId();
             x.playlist.push_back(c);
+            painted.push_back(c);
           }
         });
+        if (a.settings.getBool("ui.smoothSnap") && snapG > 1)  // J-37: painted clips grow in from their start
+          for (const Clip& c : painted) clipAnim.seed(c.id, clipAnimValues(c, 0), ImGui::GetTime());
         break;
       }
       case ClipGesture::Erase:

@@ -7,6 +7,7 @@
 #include <string>
 #include "../src/core/Document.h"
 #include "../src/core/PluginInfo.h"
+#include "../src/core/SmoothSnap.h"
 #include "../src/core/Song.h"
 #include "../src/core/WavWriter.h"
 #include "../src/core/Workspace.h"
@@ -289,6 +290,114 @@ int main() {
     expect(rackOk, "layout: floating rack fully in view over the playlist's left half, tall enough for its rows");
     expect(mixerOk, "layout: mixer is a thin right column (>= 330 px for compact strips)");
     expect(playOk, "layout: playlist is the largest panel");
+  }
+
+  // ---- J-37: smooth snapping (drawn position easing) ----
+  {
+    using smooth::Tracker;
+    const Tracker<1>::Vec eps{0.001};  // a one-cell step of 1.0: settled within 0.1 %
+    // Simulates a one-cell move (0 -> 1) at `fps`: time until settled, largest
+    // value seen, value after one 30 Hz frame (33 ms).
+    struct Run {
+      double settle = -1, peak = 0, at100 = 0;
+    };
+    auto run = [&](double fps) {
+      Tracker<1> tr;
+      Run r;
+      tr.seed(7, {0.0}, 0.0);
+      const double dt = 1.0 / fps;
+      for (int k = 1; k <= static_cast<int>(fps); ++k) {
+        const double now = k * dt;
+        const double v = tr.follow(7, {1.0}, now, true, eps)[0];
+        r.peak = std::max(r.peak, v);
+        if (std::fabs(now - 1.0 / 30.0) < 1e-9) r.at100 = v;
+        if (v == 1.0 && r.settle < 0) r.settle = now;
+      }
+      return r;
+    };
+    const double fpsList[] = {30, 60, 120, 240};
+    Run runs[4];
+    for (int i = 0; i < 4; ++i) runs[i] = run(fpsList[i]);
+    // Analytic settle time to 0.1 %: tau * ln(1000).
+    const double analytic = smooth::settleTime(smooth::kTau, 0.001);
+    bool sameSettle = true, sameAt100 = true, noOvershoot = true;
+    for (int i = 0; i < 4; ++i) {
+      sameSettle = sameSettle && runs[i].settle >= analytic - 1e-9 && runs[i].settle <= analytic + 1.0 / fpsList[i] + 1e-9;
+      sameAt100 = sameAt100 && std::fabs(runs[i].at100 - runs[3].at100) < 1e-9;
+      noOvershoot = noOvershoot && runs[i].peak <= 1.0;
+    }
+    expect(sameSettle, "smooth snap: settles at the same time at 30/60/120/240 fps (within one frame)");
+    expect(sameAt100, "smooth snap: frame-rate independent (same drawn value after 33 ms at every rate)");
+    expect(noOvershoot, "smooth snap: no overshoot past the target cell");
+    const double settle1 = smooth::settleTime();
+    expect(settle1 > 0.040 && settle1 < 0.070, "smooth snap: a one-cell step settles in 40-70 ms");
+    {  // first 60 Hz frame already covers most of the step (snappy, no lag feel)
+      Tracker<1> tr;
+      tr.seed(1, {0.0}, 0.0);
+      const double v = tr.follow(1, {1.0}, 1.0 / 60.0, true, eps)[0];
+      expect(v > 0.6 && v < 0.9, "smooth snap: the first 60 Hz frame covers 60-90 % of a cell");
+    }
+    {  // target changes mid-animation: continuous, monotonic, lands exactly
+      Tracker<1> tr;
+      tr.seed(1, {0.0}, 0.0);
+      double prev = 0, t = 0;
+      bool continuous = true, monotonic = true;
+      for (int k = 0; k < 2; ++k) prev = tr.follow(1, {1.0}, t += 1.0 / 120, true, eps)[0];
+      const double before = prev;
+      for (int k = 0; k < 60; ++k) {
+        const double v = tr.follow(1, {3.0}, t += 1.0 / 120, true, eps)[0];
+        if (k == 0) continuous = v >= before && v - before < 2.0;  // no jump: eases from where it is drawn
+        monotonic = monotonic && v >= prev && v <= 3.0;
+        prev = v;
+      }
+      expect(continuous && monotonic && prev == 3.0, "smooth snap: a new target mid-glide continues from the drawn position and lands exactly");
+      // ... and back the other way.
+      double low = 3.0;
+      for (int k = 0; k < 60; ++k) low = std::min(low, tr.follow(1, {2.0}, t += 1.0 / 120, true, eps)[0]);
+      expect(low >= 2.0 && tr.follow(1, {2.0}, t += 1.0 / 120, true, eps)[0] == 2.0, "smooth snap: reversing never undershoots the new cell");
+    }
+    {  // disabled / free grid: identity
+      Tracker<2> tr;
+      tr.seed(3, {0.0, 0.0}, 0.0);
+      const auto v = tr.follow(3, {5.0, -2.0}, 0.001, false, {0.001, 0.001});
+      expect(v[0] == 5.0 && v[1] == -2.0, "smooth snap off: drawn position = logical position at once");
+      const auto u = tr.follow(99, {4.0, 1.0}, 0.002, true, {0.001, 0.001});
+      expect(u[0] == 4.0 && u[1] == 1.0, "smooth snap: objects that were never seeded draw at their logical position");
+    }
+    {  // bookkeeping: settled entries go once the drag ends, kept while it lasts
+      Tracker<1> tr;
+      tr.seed(1, {0.0}, 0.0);
+      double t = 0;
+      for (int k = 0; k < 30; ++k) tr.follow(1, {1.0}, t += 1.0 / 60, true, eps);
+      tr.prune(t, true);
+      const bool kept = tr.contains(1);
+      tr.prune(t, false);
+      expect(kept && tr.empty(), "smooth snap: settled glides are kept during the drag, dropped after it");
+      tr.seed(2, {0.0}, t);
+      tr.prune(t + 1.0, false);
+      expect(tr.empty(), "smooth snap: glides of vanished objects are dropped");
+      // Re-seeding a key that is still gliding keeps its drawn position.
+      tr.seed(4, {0.0}, t);
+      const double mid = tr.follow(4, {1.0}, t + 0.004, true, eps)[0];
+      tr.seed(4, {1.0}, t + 0.004);
+      const double again = tr.follow(4, {1.0}, t + 0.004, true, eps)[0];
+      expect(mid > 0 && mid < 1 && again == mid, "smooth snap: a new drag continues from where a gliding clip is drawn");
+    }
+    {  // a whole snapped drag: every frame's drawn position stays between the
+       // previous and the current cell, and the release lands on the commit
+      Tracker<1> tr;
+      tr.seed(1, {0.0}, 0.0);
+      double t = 0, cell = 0;
+      bool between = true;
+      double drawnPrev = 0;
+      for (int k = 0; k < 240; ++k) {
+        if (k % 20 == 0 && k < 200) cell += 1.0;  // pointer crosses a cell every 20 frames (240 Hz)
+        const double v = tr.follow(1, {cell}, t += 1.0 / 240, true, eps)[0];
+        between = between && v >= drawnPrev && v <= cell;
+        drawnPrev = v;
+      }
+      expect(between && drawnPrev == cell, "smooth snap: drawn clip trails the snapped cell monotonically and lands on it");
+    }
   }
 
   fs::remove(wav);

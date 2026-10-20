@@ -399,6 +399,11 @@ void menuOptions(App& a) {
     if (ImGui::MenuItem("Auto scrolling", nullptr, follow)) a.settings.set("ui.autoScroll", !follow);
     ui::Hint("The playlist follows the song position while playing");
   }
+  {  // J-37
+    const bool smoothSnap = a.settings.getBool("ui.smoothSnap");
+    if (ImGui::MenuItem("Smooth snapping", nullptr, smoothSnap)) a.settings.set("ui.smoothSnap", !smoothSnap);
+    ui::Hint("Clips and notes dragged on a snapped grid glide from cell to cell instead of jumping (positions still land exactly on the grid)");
+  }
   bool song = a.engine.mode() == PlayMode::Song;
   if (ImGui::MenuItem("Song mode", "L", song)) a.engine.setMode(song ? PlayMode::Pattern : PlayMode::Song);
   bool liveOn = a.engine.mode() == PlayMode::Live;

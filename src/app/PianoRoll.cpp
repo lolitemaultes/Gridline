@@ -11,6 +11,7 @@
 #include "ScriptUi.h"
 #include "../core/MenuParity.h"
 #include "../core/NoteTools.h"
+#include "../core/SmoothSnap.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -46,6 +47,15 @@ struct Gesture {
 };
 Gesture g;
 uint64_t gestureCounter = 1;
+
+// J-37: smooth snapping of a note drag. Every selected note moves by the same
+// snapped delta (start ticks, pitch rows, length ticks); the drawing eases
+// that delta, the document keeps the exact one.
+smooth::Tracker<3> noteAnim;
+struct NoteAnimTarget {
+  ObjectId pat = kNoId, ch = kNoId;
+  smooth::Tracker<3>::Vec d{};
+} noteAnimT;
 
 // ---- note properties: the property lane, new-note colour and slide mode
 enum class Lane { Velocity, Pan, Release, Fine, ModX, ModY, Count };
@@ -534,11 +544,28 @@ void drawPianoRoll(App& a) {
   const ImU32 noteCol = theme::rgb(chan->color);
   int hoverNote = -1;
   bool hoverEdge = false;
+  smooth::Tracker<3>::Vec noteOff{};  // J-37: drawn minus logical delta of the selected notes
+  {
+    const double now = ImGui::GetTime();
+    if (!noteAnim.empty() && noteAnimT.pat == patId && noteAnimT.ch == chId) {
+      const double epsT = 0.25 / std::max(1e-6, static_cast<double>(st.pxPerTick));
+      const auto v = noteAnim.follow(0, noteAnimT.d, now, a.settings.getBool("ui.smoothSnap") && snapG > 1, {epsT, 0.01, epsT});
+      for (size_t k = 0; k < 3; ++k) noteOff[k] = v[k] - noteAnimT.d[k];
+    }
+    noteAnim.prune(now, g.kind == Gesture::Move || g.kind == Gesture::Resize);
+  }
+  const bool noteAnimOn = noteOff[0] != 0 || noteOff[1] != 0 || noteOff[2] != 0;
   for (size_t i = 0; i < notes.size(); ++i) {
     const Note& n = notes[i];
-    float x0 = xOf(n.start), x1 = std::max(x0 + 3, xOf(n.start + n.length)), y = yOf(n.pitch);
-    if (x1 < gridMin.x || x0 > gridMax.x || y + rowH < gridMin.y || y > gridMax.y) continue;
     bool sel = st.selected.count(i) > 0;
+    float x0 = xOf(n.start), x1 = std::max(x0 + 3, xOf(n.start + n.length)), y = yOf(n.pitch);
+    if (sel && noteAnimOn) {
+      const float px = static_cast<float>(noteOff[0]) * st.pxPerTick;
+      x0 += px;
+      x1 = std::max(x0 + 3, xOf(n.start + n.length) + px + static_cast<float>(noteOff[2]) * st.pxPerTick);
+      y -= static_cast<float>(noteOff[1]) * rowH;
+    }
+    if (x1 < gridMin.x || x0 > gridMax.x || y + rowH < gridMin.y || y > gridMax.y) continue;
     float vel = n.velocity / 127.0f;
     const ImU32 col = groupColor(n.color, noteCol);
     // Note: colour-group body whose brightness follows velocity, a darker
@@ -852,6 +879,11 @@ void drawPianoRoll(App& a) {
     }
   }
 
+  if (lClick || rClick) {  // J-37: a new drag starts its own glide
+    noteAnim.clear();
+    noteAnimT = NoteAnimTarget{patId, chId, {}};
+    if ((g.kind == Gesture::Move || g.kind == Gesture::Resize) && a.settings.getBool("ui.smoothSnap")) noteAnim.seed(0, {0, 0, 0}, ImGui::GetTime());
+  }
   if (active && g.kind != Gesture::None) {
     // Dragging past the left/right edge scrolls the view.
     if (g.kind != Gesture::Select && g.kind != Gesture::Velocity && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) {
@@ -884,6 +916,7 @@ void drawPianoRoll(App& a) {
             dt = std::max<Tick>(dt, -g.base[i].start);
             dp = std::clamp(dp, -g.base[i].pitch, 127 - g.base[i].pitch);
           }
+        noteAnimT.d = {static_cast<double>(dt), static_cast<double>(dp), 0.0};
         if (dt == 0 && dp == 0 && !g.moved) break;
         g.moved = true;
         std::vector<Note> ns = g.base;
@@ -905,6 +938,7 @@ void drawPianoRoll(App& a) {
         for (size_t i = 0; i < ns.size(); ++i)
           if (g.sel[i]) ns[i].length = std::max<Tick>(1, ns[i].length + dl2);
         st.lastLength = std::max<Tick>(1, an.length + dl2);
+        noteAnimT.d = {0.0, 0.0, static_cast<double>(dl2)};
         commit(a, patId, chId, ns, g.sel, "resize notes", g.key);
         break;
       }

@@ -1315,6 +1315,11 @@ void playlistOptionsMenu(App& a) {
     ImGui::MenuItem("Stretch audio clips when resizing", "Shift+M", &a.playlist.stretchResize);
     ImGui::MenuItem("Fade handles on audio clips", "Shift+F", &a.playlist.showFades);
     ImGui::MenuItem("Audio clip edges on zero crossings", nullptr, &a.playlist.zeroCross);
+    {  // J-37
+      const bool smoothSnap = a.settings.getBool("ui.smoothSnap");
+      if (ImGui::MenuItem("Smooth snapping", nullptr, smoothSnap)) a.settings.set("ui.smoothSnap", !smoothSnap);
+      ui::Hint("Snapped drags glide from grid cell to grid cell instead of jumping (positions still land exactly on the grid)");
+    }
     ImGui::EndMenu();
   }
   ImGui::Separator();
