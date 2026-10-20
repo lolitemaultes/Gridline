@@ -41,6 +41,7 @@
 #include "Theme.h"
 #include "Windows.h"
 #include "TrackModeUi.h"
+#include "ChopUi.h"
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -1148,6 +1149,7 @@ int main(int argc, char** argv) {
     }
     drawLivePads(app);
     trackui::devDemo(app);  // PL-08 / RN-09 screenshot set-ups
+    chopui::devDemo(app);   // PL-13 screenshot set-ups
     drawMasterPanel(app);  // RN-09
     {
       prof::Scope ps("pianoroll");

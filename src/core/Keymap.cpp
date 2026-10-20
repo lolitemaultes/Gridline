@@ -110,6 +110,13 @@ std::vector<Command> buildCommands() {
       {"playlist.quickZoom2", PL, N_("Quick zoom 2"), {ch(K::D2, S)}},
       {"playlist.quickZoom3", PL, N_("Quick zoom 3"), {ch(K::D3, S)}},
       {"playlist.zoomSelection", PL, N_("Zoom to the selection"), {ch(K::D4, S)}},
+      // PL-13: chop, stutter and time selection editing.
+      {"playlist.chopWindow", PL, N_("Chop and stutter window"), {ch(K::C, A)}},
+      {"playlist.sliceGrid", PL, N_("Slice selected clips at the snap grid"), {ch(K::C, S)}},
+      {"playlist.duplicateTime", PL, N_("Duplicate the time selection"), {ch(K::B, A)}},
+      {"playlist.insertSpace", PL, N_("Insert space at the time selection"), {ch(K::Insert, C)}},
+      {"playlist.deleteSpace", PL, N_("Delete the time selection's space"), {ch(K::Delete, C)}},
+      {"playlist.consolidateTime", PL, N_("Consolidate the time selection to audio"), {ch(K::C, C | A)}},
       {"playlist.zoomIn", PL, N_("Zoom in"), {ch(K::PageUp)}, true},
       {"playlist.zoomOut", PL, N_("Zoom out"), {ch(K::PageDown)}, true},
       {"playlist.zoomFit", PL, N_("Zoom to fit the song"), {ch(K::Home)}},

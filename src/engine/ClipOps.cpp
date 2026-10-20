@@ -298,6 +298,14 @@ bool renderSpan(const Song& song, const std::set<ObjectId>& keep, Tick a, Tick b
 }
 }  // namespace
 
+std::string renderClipsToWav(const Song& song, const std::set<ObjectId>& keep, Tick a, Tick b, double sr, const std::string& dir,
+                             const std::string& name) {
+  ed::Audio au;
+  if (b <= a || !renderSpan(song, keep, a, b, sr, au)) return "";
+  std::string path;
+  return writeAudio(dir, name, au, path) ? path : std::string();
+}
+
 ObjectId consolidateClips(Song& song, const std::set<ObjectId>& clips, const std::string& dir, double sr, bool replace) {
   Tick a = 0, b = 0;
   int track = -1;

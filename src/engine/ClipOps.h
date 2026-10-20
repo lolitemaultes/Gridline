@@ -49,6 +49,11 @@ std::string renderClipStretch(Song& song, ObjectId clip, double timeFactor, doub
 // `replace`, the rendered clips are removed. Returns the new clip id.
 ObjectId consolidateClips(Song& song, const std::set<ObjectId>& clips, const std::string& dir, double sampleRate,
                           bool replace = true);
+// Renders the clips `keep` over [a, b) (song ticks; the clips should lie in
+// the range) with a neutral master into a WAV in `dir` named after `name`.
+// Returns the file ("" = nothing rendered).
+std::string renderClipsToWav(const Song& song, const std::set<ObjectId>& keep, Tick a, Tick b, double sampleRate,
+                             const std::string& dir, const std::string& name);
 // Bounce (freeze) a playlist track: renders all of its clips to one audio clip
 // placed on the first empty track below; the original clips are muted.
 ObjectId bounceTrack(Song& song, int track, const std::string& dir, double sampleRate);

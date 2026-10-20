@@ -34,6 +34,8 @@
 #include "Windows.h"
 #include "BrowserUi.h"
 #include "TrackModeUi.h"
+#include "ChopUi.h"
+#include "../engine/Chop.h"
 
 namespace gl {
 
@@ -71,6 +73,9 @@ uint64_t clipGestureCounter = 1;
 // content position (offset in ticks; audio clips: source start in seconds).
 // The document keeps the exact snapped values; only the drawing eases.
 smooth::Tracker<4> clipAnim;
+// PL-13: the slice tool's cut line(s) glide between grid lines the same way
+// (key 1: the hover / start line, key 2: the far end of a region cut).
+smooth::Tracker<1> sliceAnim;
 smooth::Tracker<4>::Vec clipAnimValues(const Clip& c, Tick len) {
   return {static_cast<double>(c.start), static_cast<double>(c.start + len), static_cast<double>(c.track),
           c.kind == ClipKind::Audio ? c.audioStart : static_cast<double>(c.offset)};
@@ -645,7 +650,7 @@ void drawPlaylist(App& a) {
         {ui::Icon::Erase, Tool::Erase, "Delete (D): click or drag over clips to delete them", theme::role::kDelete},
         {ui::Icon::Mute, Tool::Mute, "Mute (T): click or drag over clips to mute / unmute them", theme::role::kMute},
         {ui::Icon::Slip, Tool::Slip, "Slip (S): drag inside a clip to move its content without moving the clip", theme::role::kSlip},
-        {ui::Icon::Slice, Tool::Slice, "Slice (C): click a clip to cut it, drag up / down to cut every clip the line crosses (Shift: all tracks)", theme::role::kSlice},
+        {ui::Icon::Slice, Tool::Slice, "Slice (C): click a clip to cut it, drag up / down to cut every clip the line crosses, drag sideways to cut out a region (Shift: all tracks)", theme::role::kSlice},
         {ui::Icon::Select, Tool::Select, "Select (E): drag a box (Ctrl+drag selects with any tool, Shift adds)", theme::role::kSelect},
         {ui::Icon::Zoom, Tool::Zoom, "Zoom (Z): drag a range to fill the view, click zooms in, right-click zooms out", theme::role::kZoom},
         {ui::Icon::Play, Tool::Play, "Playback (Y): hold to play from the pointer, drag to scrub", theme::role::kPlay}};
@@ -1323,18 +1328,34 @@ void drawPlaylist(App& a) {
     dl->AddRectFilled(ImVec2(cg.start.x, gMin.y), ImVec2(io.MousePos.x, gMax.y), theme::withAlpha(zc, 0.10f));
     dl->AddRect(ImVec2(cg.start.x, gMin.y), ImVec2(io.MousePos.x, gMax.y), zc, 0, 0, 1.2f);
   }
+  // PL-13: slice line positions glide between grid lines (J-37 smooth snap).
+  auto sliceX = [&](uint64_t key, Tick t) {
+    const smooth::Tracker<1>::Vec target{static_cast<double>(t)};
+    if (!sliceAnim.contains(key)) sliceAnim.seed(key, target, animNow);
+    return std::round(xOfD(sliceAnim.follow(key, target, animNow, animSnap, {animEpsTick})[0]));
+  };
   if (cg.kind == ClipGesture::SliceLine && active) {  // the cut line, over the tracks dragged across
-    const float x = std::round(xOf(cg.startTick));
+    const float x = sliceX(1, cg.startTick);
     const int t0 = std::min(cg.startTrack, trackAt(io.MousePos.y)), t1 = std::max(cg.startTrack, trackAt(io.MousePos.y));
     const float y0 = io.KeyShift ? gMin.y : yOf(t0), y1 = io.KeyShift ? gMax.y : yOf(t1) + hOf(t1);
-    dl->AddLine(ImVec2(x, y0), ImVec2(x, y1), theme::rgb(theme::role::kSlice), 2.0f);
-    dl->AddTriangleFilled(ImVec2(x - 4, y0), ImVec2(x + 4, y0), ImVec2(x, y0 + 5), theme::rgb(theme::role::kSlice));
+    const ImU32 sc = theme::rgb(theme::role::kSlice);
+    const float dx = std::fabs(io.MousePos.x - cg.start.x), dy = std::fabs(io.MousePos.y - cg.start.y);
+    if (dx > 6.0f && dx > dy) {  // horizontal drag: a region cut (both ends), the inside lit
+      const float x2 = sliceX(2, std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(io.MousePos.x)), snapG, Snap::Line)));
+      dl->AddRectFilled(ImVec2(std::min(x, x2), y0), ImVec2(std::max(x, x2), y1), theme::withAlpha(sc, 0.16f));
+      dl->AddLine(ImVec2(x2, y0), ImVec2(x2, y1), sc, 2.0f);
+      dl->AddTriangleFilled(ImVec2(x2 - 4, y0), ImVec2(x2 + 4, y0), ImVec2(x2, y0 + 5), sc);
+    }
+    dl->AddLine(ImVec2(x, y0), ImVec2(x, y1), sc, 2.0f);
+    dl->AddTriangleFilled(ImVec2(x - 4, y0), ImVec2(x + 4, y0), ImVec2(x, y0 + 5), sc);
   } else if (st.tool == Tool::Slice && hovered && io.MousePos.x >= gMin.x && io.MousePos.y >= gMin.y && hoverClip != kNoId) {
     const Tick cut = timeline::snapTick(std::max<Tick>(0, tickAt(io.MousePos.x)), snapG, Snap::Line);
-    const float x = std::round(xOf(cut));
+    const float x = sliceX(1, cut);
     const Clip* sc = s.clip(hoverClip);
     float y0 = io.KeyShift ? gMin.y : yOf(sc->track), y1 = io.KeyShift ? gMax.y : yOf(sc->track) + hOf(sc->track);
     dl->AddLine(ImVec2(x, y0), ImVec2(x, y1), theme::rgb(theme::role::kSlice), 1.5f);
+  } else {
+    sliceAnim.clear();
   }
   dl->PopClipRect();
 
@@ -2325,7 +2346,25 @@ void drawPlaylist(App& a) {
         }
       }
     }
-    if (cg.kind == ClipGesture::SliceLine) {
+    const bool regionCut = cg.kind == ClipGesture::SliceLine && std::fabs(m.x - cg.start.x) > 6.0f &&
+                           std::fabs(m.x - cg.start.x) > std::fabs(m.y - cg.start.y);
+    if (regionCut) {
+      // PL-13: a horizontal drag cuts the clips at both ends of the dragged range
+      // (Shift: on every track), selects the inside and makes it the time
+      // selection, ready for Chop and stutter (Alt+C) or a time selection command.
+      const Tick e = std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
+      const Tick r0 = std::min(cg.startTick, e), r1 = std::max(cg.startTick, e);
+      const int t0 = io.KeyShift ? 0 : std::min(cg.startTrack, trackAt(m.y)), t1 = io.KeyShift ? nTracks - 1 : std::max(cg.startTrack, trackAt(m.y));
+      std::set<int> trs;
+      for (int t = t0; t <= t1; ++t)
+        if (!trackLocked(t)) trs.insert(t);
+      if (r1 > r0 && !trs.empty()) {
+        std::set<ObjectId> inside;
+        a.doc.editSong("slice clips", [&](Song& x) { inside = chop::isolateRange(x, r0, r1, trs); });
+        st.selected = inside;
+        st.selStart = r0, st.selEnd = r1;
+      }
+    } else if (cg.kind == ClipGesture::SliceLine) {
       // Shift: the whole column; otherwise the tracks the line was dragged over.
       const int t0 = io.KeyShift ? 0 : cg.startTrack, t1 = io.KeyShift ? nTracks - 1 : trackAt(m.y);
       std::vector<ObjectId> ids;
@@ -2492,6 +2531,8 @@ void drawPlaylist(App& a) {
       for (const auto& c : a.doc.song().playlist)
         if (st.selected.count(c.id)) st.clipboard.push_back(c);
     }
+    chopui::shortcuts(a);  // PL-13: chop window, slice at the grid, time selection edits
+    if (keys::pressed("playlist.duplicate") && st.selected.empty() && st.selEnd > st.selStart) chopui::duplicateTime(a);
     if (keys::pressed("playlist.duplicate") && !st.selected.empty()) {
       std::vector<Clip> src;
       for (const auto& c : s.playlist)
@@ -2534,6 +2575,7 @@ void drawPlaylist(App& a) {
   }
   ui::EndDockWindow();
   drawClipProperties(a);  // J-8: audio clip properties window
+  chopui::draw(a);         // PL-13: chop and stutter window
 }
 
 }  // namespace gl

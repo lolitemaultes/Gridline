@@ -65,19 +65,7 @@ msgstr ""
 msgid "At beats"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp
-msgid "At every bar"
-msgstr ""
-
-#: src/app/AudioRecordUi.cpp
-msgid "At every beat"
-msgstr ""
-
-#: src/app/AudioRecordUi.cpp
-msgid "At every step (1/4 beat)"
-msgstr ""
-
-#: src/app/AudioRecordUi.cpp
+#: src/app/AudioRecordUi.cpp src/app/ChopUi.cpp
 msgid "At transients"
 msgstr ""
 
@@ -261,10 +249,6 @@ msgstr ""
 msgid "Select all takes"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ContextMenus.cpp
-msgid "Slice"
-msgstr ""
-
 #: src/app/AudioRecordUi.cpp src/app/Dialogs.cpp
 msgid "System default"
 msgstr ""
@@ -305,7 +289,7 @@ msgstr ""
 msgid "Add lane for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -365,7 +349,7 @@ msgstr ""
 msgid "Deselect all"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
 msgid "Duplicate"
 msgstr ""
 
@@ -721,7 +705,7 @@ msgstr ""
 msgid "Plugin picker (F8)"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/ChordEditorUi.cpp
+#: src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp
 msgid "Preview"
 msgstr ""
 
@@ -981,6 +965,342 @@ msgstr ""
 msgid "missing"
 msgstr ""
 
+#: src/app/ChopUi.cpp
+msgid "%d parts"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "%d pieces per clip"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "2 beats"
+msgstr ""
+
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/packs/edison/edison_form_ui.cpp
+msgid "All"
+msgstr ""
+
+#: src/app/ChopUi.cpp src/app/LoopStarterUi.cpp
+msgid "Apply"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "At every beat"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "At every half beat"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "At every quarter beat"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "At the grid"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "At the note starts"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Audio: cuts at the attacks; patterns: at the note starts"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Bar"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Beat"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Chop"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Chop and stutter"
+msgstr ""
+
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp
+msgid "Chop and stutter..."
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Chop it into a slicer channel"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Chopped into %d pieces"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Chopped into %d slices on a new slicer channel"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Clips: %d · bars %s – %s"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Consolidate to an audio clip"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Copies the selected time right after it (on the selected clips' tracks, else on all)"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Cut the clips into pieces"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Cuts at every grid line"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Cuts each clip into pieces of equal length"
+msgstr ""
+
+#: src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Decay"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Delete space"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Each repeat quieter by this share; below zero the repeats build up instead"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Eighth beat"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "End rate"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Equal parts"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Every other"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Fade in / out of every audio slice (0 = edge declick only)"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Fades"
+msgstr ""
+
+#: src/app/ChopUi.cpp src/app/ChordEditorUi.cpp
+msgid "Gate"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Gentle"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Half beat"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Higher finds softer attacks"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Insert space"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Into equal parts"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Keep the result (one undo step)"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Loops the region from its start"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Medium"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Moves everything from the selection start right by the selection length"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Nothing to render in the time selection"
+msgstr ""
+
+#: src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp
+msgid "Off"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "PRESETS"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Parts"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Pitch and speed"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Pitch from"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Pitch of the first slice, semitones"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Pitch of the last slice, semitones (ramped in between)"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Pitch to"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Play on"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Play region"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Playback speed at the region end (tape stop: down to 10 %)"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Playback speed at the region start"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Quarter beat"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Rate"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Removes the selected time and closes the gap"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Renders the selected time into one audio clip on a free track"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Renders the selected time, loads it into a new slicer channel and writes a pattern that plays the slices"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Repeat slices of the region with rate, decay, pitch and gate"
+msgstr ""
+
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
+msgid "Reverse"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Same"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Select clips or a time selection to chop"
+msgstr ""
+
+#: src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Sensitivity"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Share of each slice that sounds"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Sharp"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Show and play the result in the playlist while you edit"
+msgstr ""
+
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp
+msgid "Slice"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Slice length: a note value of the bar (1/16 = a sixteenth)"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Slice the clips at the selection edges"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Slices"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Slices play on through the audio instead of repeating the first one"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Slices two thirds as long"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Snap grid"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Speed from"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Speed to"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Stutter"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Stutter..."
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "The rate the slices reach at the region end (rolls and builds); Same keeps it"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Time selection rendered to an audio clip"
+msgstr ""
+
+#: src/app/ChopUi.cpp
+msgid "Triplets"
+msgstr ""
+
 #: src/app/ChordEditorUi.cpp
 msgid "%zu chords selected"
 msgstr ""
@@ -1110,10 +1430,6 @@ msgid "From the notes"
 msgstr ""
 
 #: src/app/ChordEditorUi.cpp
-msgid "Gate"
-msgstr ""
-
-#: src/app/ChordEditorUi.cpp
 msgid "Generate"
 msgstr ""
 
@@ -1195,10 +1511,6 @@ msgstr ""
 
 #: src/app/ChordEditorUi.cpp
 msgid "Notes..."
-msgstr ""
-
-#: src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp
-msgid "Off"
 msgstr ""
 
 #: src/app/ChordEditorUi.cpp
@@ -1441,10 +1753,6 @@ msgstr ""
 msgid "Advanced fill..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/packs/edison/edison_form_ui.cpp
-msgid "All"
-msgstr ""
-
 #: src/app/ContextMenus.cpp
 msgid "All other channels"
 msgstr ""
@@ -1471,6 +1779,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Articulate..."
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "At the snap grid"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -1527,10 +1839,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Channels routed to this track"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
-msgid "Chop into pieces"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -1659,10 +1967,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Delete selected tracks"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
-msgid "Delete space"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -1938,10 +2242,6 @@ msgid "Insert one before"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Insert space"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
 msgid "Into beats"
 msgstr ""
 
@@ -2127,10 +2427,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/Menus.cpp src/packs/modulation/modulation_notefx_ui.cpp
 msgid "Move up"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
-msgid "Moves everything from the selection start right by the selection length"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/MixerView.cpp
@@ -2374,10 +2670,6 @@ msgid "Remove the live area"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Removes the selected time and closes the gap"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
 msgid "Rename channel"
 msgstr ""
 
@@ -2459,10 +2751,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Reset track to default"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
-msgid "Reverse"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -4151,10 +4439,6 @@ msgstr ""
 
 #: src/app/LoopStarterUi.cpp
 msgid "Ambient"
-msgstr ""
-
-#: src/app/LoopStarterUi.cpp
-msgid "Apply"
 msgstr ""
 
 #: src/app/LoopStarterUi.cpp
@@ -7442,6 +7726,10 @@ msgid "Automation clip editor"
 msgstr ""
 
 #: src/core/Keymap.cpp
+msgid "Chop and stutter window"
+msgstr ""
+
+#: src/core/Keymap.cpp
 msgid "Chop into steps"
 msgstr ""
 
@@ -7459,6 +7747,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Close the tool / clear the selection"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Consolidate the time selection to audio"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -7502,6 +7794,10 @@ msgid "Delete selected points"
 msgstr ""
 
 #: src/core/Keymap.cpp
+msgid "Delete the time selection's space"
+msgstr ""
+
+#: src/core/Keymap.cpp
 msgid "Delete tool"
 msgstr ""
 
@@ -7519,6 +7815,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Duplicate selected clips"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Duplicate the time selection"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -7555,6 +7855,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Insert pattern"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Insert space at the time selection"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -7782,6 +8086,10 @@ msgid "Show waveforms"
 msgstr ""
 
 #: src/core/Keymap.cpp
+msgid "Slice selected clips at the snap grid"
+msgstr ""
+
+#: src/core/Keymap.cpp
 msgid "Slice tool"
 msgstr ""
 
@@ -7831,6 +8139,46 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Zoom tool"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Beat repeat"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Half-time"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Plays on while slowing down to a halt"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Plays the region at half speed"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Repeats the first eighth of the region"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Reverse build"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Reversed repeats that speed up, rise and get louder"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Short gated triplet repeats that fade away"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Tape stop"
+msgstr ""
+
+#: src/engine/Chop.cpp
+msgid "Triplet stutter"
 msgstr ""
 
 #: src/packs/creative/creative_ui.cpp
@@ -8130,10 +8478,6 @@ msgid "Damping"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Decay"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
 msgid "Detected: %.2f Hz = %s %+.0f cents (confidence %.0f%%)"
 msgstr ""
 
@@ -8211,10 +8555,6 @@ msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
 msgid "Release"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
-msgid "Sensitivity"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp

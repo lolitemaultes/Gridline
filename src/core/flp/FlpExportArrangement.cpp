@@ -224,14 +224,17 @@ void Exporter::writeArrangements() {
         fl |= (static_cast<uint32_t>(c.fadeInDeclick & 7u) << 2) | (static_cast<uint32_t>(c.fadeOutDeclick & 7u) << 14);
         fl |= (static_cast<uint32_t>(c.fadeInShape & 3u) << 8) | (static_cast<uint32_t>(c.fadeOutShape & 3u) << 12);
         putU32(r, 56, fl);
-        // Clip pitch: FL's record has no field for it (@48 is the fade-out
-        // tension); the channel's pitch carries what FL plays.
+        // PL-13: FL's per-clip pitch (f32 semitones @60, "Set pitch...",
+        // clamped to +-12 by FL); the channel's pitch knob carries the rest.
         const auto cents = audioCents.find(c.source);
-        if (std::fabs(c.pitch - static_cast<float>(cents == audioCents.end() ? 0 : cents->second)) > 1e-3f)
-          rep.counts["audio clips: clip pitch not written"]++;
+        const double clipSemis = (c.pitch - static_cast<float>(cents == audioCents.end() ? 0 : cents->second)) / 100.0;
+        if (std::fabs(clipSemis) > 12.0 + 1e-6) rep.counts["audio clips: clip pitch beyond 12 semitones clamped"]++;
+        keepF(60, std::clamp(clipSemis, -12.0, 12.0), 1.0, 1e-6);
         if (!(orec && getF32(r, 52) == c.gain)) putF32(r, 52, c.gain);
         if (!(orec && getF64(r, 64) == c.stretch)) putF64(r, 64, c.stretch);
-        if (c.reverse) rep.counts["audio clips: reverse not written"]++;
+        // PL-13: FL's per-clip reverse ("Reverse clip"): bit 0 of u32 @72; the
+        // source window is stored mirrored, like Clip::audioStart / audioEnd.
+        putU32(r, 72, (getU32(r, 72) & ~1u) | (c.reverse ? 1u : 0u));
         if (c.syncBpm > 0) rep.counts["audio clips: tempo sync not written"]++;
       }
       pl.bytes(r);

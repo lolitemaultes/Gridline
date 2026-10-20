@@ -23,6 +23,7 @@
 #include "../core/MenuOpsExtra.h"
 #include "../core/Project.h"
 #include "../core/TrackModes.h"
+#include "../core/Timeline.h"
 #include "../core/Presets.h"
 #include "../core/MixerOps.h"
 #include "../engine/PlaylistTools.h"
@@ -41,6 +42,7 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "TrackModeUi.h"
+#include "ChopUi.h"
 #include "../packs/PacksUi.h"
 
 namespace gl {
@@ -1107,18 +1109,7 @@ void clipContextMenu(App& a, ObjectId clip) {
     const Tick pos = static_cast<Tick>(a.engine.position());
     if (ImGui::MenuItem(i18n::tr("Slice at the song position"), nullptr, false, pos > c->start && pos < c->start + len)) ops::sliceClip(a.doc, clip, pos);
   }
-  if (ImGui::BeginMenu(i18n::tr("Chop into pieces"))) {
-    const Tick bar = s.barTicks(), beat = s.beatTicks();
-    struct Ch { const char* name; Tick t; };
-    const Ch list[] = {{"Every 4 bars", bar * 4}, {"Every 2 bars", bar * 2}, {"Every bar", bar}, {"Every 2 beats", beat * 2},
-                       {"Every beat", beat}, {"Every step", std::max<Tick>(1, s.ppq / 4)}};
-    for (const auto& k : list)
-      if (ImGui::MenuItem(k.name, nullptr, false, k.t < len)) {
-        auto ids = ops::chopClips(a.doc, {clip}, k.t);
-        a.playlist.selected = std::set<ObjectId>(ids.begin(), ids.end());
-      }
-    ImGui::EndMenu();
-  }
+  chopui::clipMenu(a, clip);  // PL-13: slice at the grid / into parts / at note starts, stutter presets
   if (ImGui::MenuItem(i18n::tr("Split by channel"))) {
     auto ids = ops::splitClipByChannel(a.doc, clip);
     a.notify(ids.empty() ? std::string("Nothing to split") : "Split into " + std::to_string(ids.size()) + " clips");
@@ -1159,11 +1150,14 @@ void playlistOptionsMenu(App& a) {
     if (ImGui::MenuItem(i18n::tr("Mute / unmute selected clips"), "M", false, any)) ops::muteClips(a.doc, a.playlist.selected, 2);
     if (ImGui::BeginMenu(i18n::tr("Chop selected clips"), any)) {
       const Tick bar = s.barTicks(), beat = s.beatTicks();
-      if (ImGui::MenuItem(i18n::tr("Every bar"))) ops::chopClips(a.doc, a.playlist.selected, bar);
-      if (ImGui::MenuItem(i18n::tr("Every 2 beats"))) ops::chopClips(a.doc, a.playlist.selected, beat * 2);
-      if (ImGui::MenuItem(i18n::tr("Every beat"))) ops::chopClips(a.doc, a.playlist.selected, beat);
+      if (ImGui::MenuItem(i18n::tr("Every bar"))) chopui::sliceSelectedAtGrid(a, bar);
+      if (ImGui::MenuItem(i18n::tr("Every 2 beats"))) chopui::sliceSelectedAtGrid(a, beat * 2);
+      if (ImGui::MenuItem(i18n::tr("Every beat"))) chopui::sliceSelectedAtGrid(a, beat);
+      if (ImGui::MenuItem(i18n::tr("At the snap grid"), keys::label("playlist.sliceGrid"))) chopui::sliceSelectedAtGrid(a, snapTicks(s, a.playlist.snap == Snap::None ? Snap::Line : a.playlist.snap));
       ImGui::EndMenu();
     }
+    if (ImGui::MenuItem(i18n::tr("Chop and stutter..."), keys::label("playlist.chopWindow"), false, any || a.playlist.selEnd > a.playlist.selStart))
+      chopui::open(a);
     if (ImGui::MenuItem(i18n::tr("Slice at the song position"), nullptr, false, true)) {  // J-28: every clip kind, audio included
       const Tick at = static_cast<Tick>(a.engine.position());
       const auto ids = pltools::clipsAcross(s, at, 0, static_cast<int>(s.tracks.size()) - 1);
@@ -1255,12 +1249,7 @@ void playlistOptionsMenu(App& a) {
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Time selection"))) {
-    const bool hasSel = a.playlist.selEnd > a.playlist.selStart;
-    if (ImGui::MenuItem(i18n::tr("Insert space"), nullptr, false, hasSel))
-      ops::insertSpace(a.doc, a.playlist.selStart, a.playlist.selEnd - a.playlist.selStart);
-    ui::Hint("Moves everything from the selection start right by the selection length");
-    if (ImGui::MenuItem(i18n::tr("Delete space"), nullptr, false, hasSel)) ops::deleteSpace(a.doc, a.playlist.selStart, a.playlist.selEnd);
-    ui::Hint("Removes the selected time and closes the gap");
+    chopui::timeSelectionItems(a);  // PL-13: duplicate, insert / delete space, consolidate, chop it, stutter
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Sort patterns"))) {
@@ -2220,6 +2209,12 @@ void drawDevMenu(App& a, const std::string& name) {
         break;
       }
   }
+  else if (name == "chop") {  // PL-13: the Chop submenu of the last audio (else first) clip
+    ObjectId id = s.playlist.empty() ? kNoId : s.playlist[0].id;
+    for (const auto& c : s.playlist)
+      if (c.kind == ClipKind::Audio) id = c.id;
+    if (id != kNoId) chopui::clipMenuItems(a, id);
+  } else if (name == "timesel") chopui::timeSelectionItems(a);  // PL-13
   else ImGui::TextDisabled(i18n::tr("Unknown menu: %s"), name.c_str());
   ImGui::EndPopup();
 }

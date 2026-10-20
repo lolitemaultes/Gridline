@@ -9,8 +9,9 @@
 //       @24/@28 start/end offset: i32 ticks for pattern items, f32 for channel
 //       items (audio: milliseconds of the sample; automation: beats); −1 = none.
 //       80-byte records add, for audio clips: f32 fade in (ms) @36, f32 fade-in
-//       tension @40, f32 fade out (ms) @44, f32 pitch (cents) @48, f32 gain @52,
-//       f64 stretch factor @64.
+//       tension @40, f32 fade out (ms) @44, f32 fade-out tension @48, f32 gain @52,
+//       u32 fade flags @56, f32 clip pitch (semitones, PL-13) @60, f64 stretch factor @64,
+//       u32 @72 bit 0 clip reverse (PL-13).
 //   234 automation points: see FlpAutomation.cpp.
 //   227 automation link: u16 source channel @2, u32 target @8.
 //       Target: 0x40000005 tempo; < 0x2000 << 16: channel (high word) +
@@ -580,6 +581,11 @@ void Importer::importTracksAndClips() {
             cl.fadeOutShape = static_cast<uint8_t>((fl >> 12) & 3u);
             if (std::isfinite(g) && g >= 0) cl.gain = std::min(g, 16.0f);
             if (std::isfinite(st) && st > 0.0625 && st < 16) cl.stretch = st;
+            // PL-13: per-clip pitch, f32 semitones @60 (FL "Set pitch...", +-12).
+            const float semis = e.f32(o + 60);
+            if (std::isfinite(semis) && std::fabs(semis) <= 48.0f) cl.pitch += semis * 100.0f;
+            // PL-13: per-clip reverse, bit 0 of u32 @72 (window stored mirrored).
+            cl.reverse = (e.u32(o + 72) & 1u) != 0;
           }
           if (auto cc = channelCents_.find(ch->second); cc != channelCents_.end()) cl.pitch += static_cast<float>(cc->second);
           ++audioClips;
