@@ -4541,7 +4541,7 @@ msgstr ""
 msgid "Output 1 plays through the channel. Send the other outputs to mixer tracks:"
 msgstr ""
 
-#: src/app/HostedUi.cpp src/app/PluginWindow.cpp
+#: src/app/HostedUi.cpp src/app/PluginWindowBar.cpp
 msgid "Programs"
 msgstr ""
 
@@ -7465,40 +7465,40 @@ msgstr ""
 msgid "Cannot open a window"
 msgstr ""
 
-#: src/app/PluginWindow.cpp
-msgid "Channel…"
-msgstr ""
-
-#: src/app/PluginWindow.cpp
-msgid "Fold the settings away"
-msgstr ""
-
-#: src/app/PluginWindow.cpp
-msgid "Gridline's channel window: tuning, polyphony, note effects"
-msgstr ""
-
-#: src/app/PluginWindow.cpp
-msgid "Next preset of the plugin"
-msgstr ""
-
-#: src/app/PluginWindow.cpp
-msgid "Previous preset of the plugin"
-msgstr ""
-
-#: src/app/PluginWindow.cpp
-msgid "Settings: processing, MIDI, sidechain, outputs, parameters"
-msgstr ""
-
-#: src/app/PluginWindow.cpp
-msgid "The plugin's own programs and preset library"
-msgstr ""
-
-#: src/app/PluginWindow.cpp
+#: src/app/PluginWindow.cpp src/plugin/HostedWindows.cpp
 msgid "This plugin crashed: reload it first"
 msgstr ""
 
-#: src/app/PluginWindow.cpp
+#: src/app/PluginWindow.cpp src/plugin/HostedWindows.cpp
 msgid "This plugin is not loaded"
+msgstr ""
+
+#: src/app/PluginWindowBar.cpp
+msgid "Channel…"
+msgstr ""
+
+#: src/app/PluginWindowBar.cpp
+msgid "Fold the settings away"
+msgstr ""
+
+#: src/app/PluginWindowBar.cpp
+msgid "Gridline's channel window: tuning, polyphony, note effects"
+msgstr ""
+
+#: src/app/PluginWindowBar.cpp
+msgid "Next preset of the plugin"
+msgstr ""
+
+#: src/app/PluginWindowBar.cpp
+msgid "Previous preset of the plugin"
+msgstr ""
+
+#: src/app/PluginWindowBar.cpp
+msgid "Settings: processing, MIDI, sidechain, outputs, parameters"
+msgstr ""
+
+#: src/app/PluginWindowBar.cpp
+msgid "The plugin's own programs and preset library"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
@@ -9673,6 +9673,26 @@ msgstr ""
 msgid "This page is empty."
 msgstr ""
 
+#: src/plugin/HostedWindows.cpp
+msgid "Its interface cannot be shown on this system"
+msgstr ""
+
+#: src/plugin/HostedWindows.cpp
+msgid "Its interface could not be attached"
+msgstr ""
+
+#: src/plugin/HostedWindows.cpp
+msgid "No interface of its own, Gridline shows its parameters"
+msgstr ""
+
+#: src/plugin/HostedWindows.cpp
+msgid "No window for its interface on this system"
+msgstr ""
+
+#: src/plugin/HostedWindows.cpp
+msgid "The sandboxed interface could not be opened"
+msgstr ""
+
 #: src/plugin/PluginCore.cpp
 msgid "Host input"
 msgstr ""
@@ -9755,8 +9775,4 @@ msgstr ""
 
 #: src/plugin/PluginFrame.cpp
 msgid "Unlink"
-msgstr ""
-
-#: src/plugin/PluginWindowStub.cpp
-msgid "Plugin interfaces open in the Gridline application; here the plugin shows its parameters."
 msgstr ""

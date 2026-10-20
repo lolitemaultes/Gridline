@@ -7,7 +7,8 @@
 //       purpose (sandbox test). Gain is modulatable (PARAM_MOD). "Echo" sends
 //       every note it receives back out one octave higher (note output
 //       port, like an arpeggiator). Two presets through preset discovery
-//       (plugin location) + preset-load.
+//       (plugin location) + preset-load. Its own interface on macOS (a
+//       fixed 320 x 200 Cocoa view, clap.gui).
 //   "org.gridline.test.gain"   effect: level (applied sample-accurately),
 //       sidechain input mixed in by a parameter, 16 samples latency or 64
 //       with "Long" (asks the host for a restart), a bypass parameter.
@@ -22,6 +23,9 @@
 #include <new>
 
 #include "Probe.h"
+#if defined(__APPLE__)
+#include "../common/TestView.h"
+#endif
 
 namespace {
 
@@ -37,6 +41,8 @@ struct Synth {
   int32_t noteId = -1;
   int key = 60;
   double tuning = 0, expr = 0, bend = 0, amp = 0, phase = 0, subPhase = 0;
+  bool gui = false;     // clap.gui created
+  void* view = nullptr;  // its view (macOS)
 };
 
 struct Gain {
@@ -322,7 +328,62 @@ bool presetFromLocation(const clap_plugin_t* p, uint32_t kind, const char*, cons
 }
 const clap_plugin_preset_load_t kPresetLoad = {presetFromLocation};
 
+#if defined(__APPLE__)
+// The synth's own interface (macOS): an embedded, fixed 320 x 200 Cocoa view.
+constexpr uint32_t kGuiW = 320, kGuiH = 200;
+const clap_plugin_gui_t kSynthGui = {
+    [](const clap_plugin_t*, const char* api, bool floating) { return !floating && api && !std::strcmp(api, CLAP_WINDOW_API_COCOA); },
+    [](const clap_plugin_t*, const char** api, bool* floating) {
+      *api = CLAP_WINDOW_API_COCOA;
+      *floating = false;
+      return true;
+    },
+    [](const clap_plugin_t* p, const char* api, bool floating) {
+      if (floating || !api || std::strcmp(api, CLAP_WINDOW_API_COCOA) || synthOf(p)->gui) return false;
+      synthOf(p)->gui = true;
+      return true;
+    },
+    [](const clap_plugin_t* p) {
+      Synth* s = synthOf(p);
+      if (s->view) {
+        gridlineTestViewRemove(s->view);
+        s->view = nullptr;
+        --gProbe.views;
+      }
+      s->gui = false;
+    },
+    [](const clap_plugin_t*, double) { return false; },
+    [](const clap_plugin_t*, uint32_t* w, uint32_t* h) {
+      *w = kGuiW;
+      *h = kGuiH;
+      return true;
+    },
+    [](const clap_plugin_t*) { return false; },
+    [](const clap_plugin_t*, clap_gui_resize_hints_t*) { return false; },
+    [](const clap_plugin_t*, uint32_t* w, uint32_t* h) {
+      *w = kGuiW;
+      *h = kGuiH;
+      return true;
+    },
+    [](const clap_plugin_t*, uint32_t w, uint32_t h) { return w == kGuiW && h == kGuiH; },
+    [](const clap_plugin_t* p, const clap_window_t* win) {
+      Synth* s = synthOf(p);
+      if (!s->gui || s->view || !win || !win->cocoa) return false;
+      s->view = gridlineTestViewAttach(win->cocoa, kGuiW, kGuiH, "CLAP test interface", 0.18f, 0.48f, 0.30f);
+      if (s->view) ++gProbe.views;
+      return s->view != nullptr;
+    },
+    [](const clap_plugin_t*, const clap_window_t*) { return false; },
+    [](const clap_plugin_t*, const char*) {},
+    [](const clap_plugin_t*) { return true; },
+    [](const clap_plugin_t*) { return true; },
+};
+#endif
+
 const void* synthExt(const clap_plugin_t*, const char* id) {
+#if defined(__APPLE__)
+  if (!std::strcmp(id, CLAP_EXT_GUI)) return &kSynthGui;
+#endif
   if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &kSynthParams;
   if (!std::strcmp(id, CLAP_EXT_STATE)) return &kSynthState;
   if (!std::strcmp(id, CLAP_EXT_AUDIO_PORTS)) return &kSynthPorts;

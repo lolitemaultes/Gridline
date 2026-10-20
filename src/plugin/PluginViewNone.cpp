@@ -8,5 +8,10 @@ namespace gl::plugin {
 bool viewSupported(WindowApi) { return false; }
 WindowApi nativeWindowApi() { return WindowApi::X11; }
 std::unique_ptr<View> createView(Instance&) { return nullptr; }
+std::unique_ptr<HostWindow> createHostWindow(View&, const std::string&, const host::layout::WindowLayout&, bool, bool, Surface&, const int*, int) {
+  return nullptr;
+}
+GlBinding currentGl() { return {}; }
+void restoreGl(const GlBinding&) {}
 
 }  // namespace gl::plugin

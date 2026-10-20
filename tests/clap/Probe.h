@@ -11,4 +11,5 @@ struct GridlineClapProbe {
   int lastParamTime = -1;  // time of the last Level event (gain effect)
   int latencyRestarts = 0;
   uint32_t lastFrames = 0;
+  int views = 0;  // interfaces attached now (macOS)
 };

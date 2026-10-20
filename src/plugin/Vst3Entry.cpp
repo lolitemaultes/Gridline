@@ -7,6 +7,12 @@
 //   "Gridline FX"  effect: stereo in (mixer insert 1) + sidechain, stereo out
 // Parameters are the 16 macros; the state is the whole project; the editor
 // is Gridline's interface (NSView / X11 child window), resizable.
+//
+// MIDI controllers: VST 3 delivers notes as events but controllers, channel
+// pressure and pitch bend only as parameters. IMidiMapping assigns each of
+// them, per MIDI channel, to a hidden parameter (16 x 130: CC 0-127, channel
+// pressure, pitch bend); their points are turned back into MIDI messages at
+// their sample offsets, so Gridline receives the same MIDI as from CLAP.
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -28,6 +34,7 @@
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivstevents.h"
+#include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
 #include "pluginterfaces/vst/vstspeaker.h"
@@ -47,6 +54,37 @@ namespace {
 const FUID kInstrumentUid(0x47524944, 0x4C494E45, 0x504C5547, 0x00000001);
 const FUID kEffectUid(0x47524944, 0x4C494E45, 0x504C5547, 0x00000002);
 constexpr int kMaxEvents = 4096;
+
+// Hidden MIDI controller parameters: id = kMidiBase + channel * kMidiCtrls + controller
+// (0-127 CC, 128 channel pressure, 129 pitch bend: the VST 3 controller numbers).
+constexpr ParamID kMidiBase = 0x10000;
+constexpr int kMidiCtrls = 130;
+constexpr int kMidiParams = 16 * kMidiCtrls;
+static_assert(kAfterTouch == 128 && kPitchBend == 129, "VST 3 controller numbers");
+
+bool isMidiParam(ParamID id) { return id >= kMidiBase && id < kMidiBase + static_cast<ParamID>(kMidiParams); }
+
+// A MIDI controller parameter's value as a MIDI message (false: not one).
+bool midiFromParam(ParamID id, double v, uint8_t out[3]) {
+  if (!isMidiParam(id)) return false;
+  const int k = static_cast<int>(id - kMidiBase), ch = k / kMidiCtrls, ctrl = k % kMidiCtrls;
+  v = std::clamp(v, 0.0, 1.0);
+  if (ctrl < 128) {
+    out[0] = static_cast<uint8_t>(0xB0 | ch);
+    out[1] = static_cast<uint8_t>(ctrl);
+    out[2] = static_cast<uint8_t>(std::lround(v * 127.0));
+  } else if (ctrl == kAfterTouch) {
+    out[0] = static_cast<uint8_t>(0xD0 | ch);
+    out[1] = static_cast<uint8_t>(std::lround(v * 127.0));
+    out[2] = 0;
+  } else {
+    const int raw = static_cast<int>(std::lround(v * 16383.0));
+    out[0] = static_cast<uint8_t>(0xE0 | ch);
+    out[1] = static_cast<uint8_t>(raw & 0x7F);
+    out[2] = static_cast<uint8_t>((raw >> 7) & 0x7F);
+  }
+  return true;
+}
 
 bool same(const TUID a, const FUID& b) { return std::memcmp(a, b.toTUID(), sizeof(TUID)) == 0; }
 bool sameIid(const TUID a, const TUID b) { return std::memcmp(a, b, sizeof(TUID)) == 0; }
@@ -198,15 +236,19 @@ class GridlineView final : public RefCounted, public IPlugView, public IPlugView
 
 // ---------------------------------------------------------------- component
 
-class Component final : public RefCounted, public IComponent, public IAudioProcessor, public IEditController {
+class Component final : public RefCounted, public IComponent, public IAudioProcessor, public IEditController, public IMidiMapping {
  public:
-  explicit Component(Variant v) : variant_(v) {}
+  explicit Component(Variant v) : variant_(v) {
+    for (auto& m : midiValues_) m.store(0.f, std::memory_order_relaxed);
+    for (int ch = 0; ch < 16; ++ch) midiValues_[ch * kMidiCtrls + kPitchBend].store(0.5f, std::memory_order_relaxed);
+  }
   ~Component() override { terminate(); }
   GRIDLINE_REFCOUNT
   tresult PLUGIN_API queryInterface(const TUID iid, void** obj) override {
     GRIDLINE_QI(IComponent)
     GRIDLINE_QI(IAudioProcessor)
     GRIDLINE_QI(IEditController)
+    GRIDLINE_QI(IMidiMapping)
     if (sameIid(iid, IPluginBase::iid) || sameIid(iid, FUnknown::iid)) {
       *obj = static_cast<IPluginBase*>(static_cast<IComponent*>(this));
       addRef();
@@ -381,7 +423,9 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
         a.scR = d.inputs[1].numChannels > 1 ? d.inputs[1].channelBuffers32[1] : a.scL;
       }
     }
-    int n = 0;
+    // Parameter points first (macros, MIDI controllers): at the same offset
+    // a controller (pitch bend set before a note) applies before the note.
+    int n = addParamEvents(d, 0);
     if (IEventList* el = d.inputEvents) {
       const int32 count = el->getEventCount();
       for (int32 i = 0; i < count && n < kMaxEvents; ++i) {
@@ -409,8 +453,7 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
         events_[n++] = e;
       }
     }
-    n = addParamEvents(d, n);
-    // Notes and macro points in time order; insertion sort (stable, no allocation on the audio thread).
+    // Notes, controllers and macro points in time order; insertion sort (stable, no allocation on the audio thread).
     for (int i = 1; i < n; ++i) {
       const GlEvent e = events_[i];
       int j = i;
@@ -436,10 +479,26 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
 
   // ---- IEditController ----
   tresult PLUGIN_API setComponentState(IBStream*) override { return kResultOk; }  // one object: setState did it
-  int32 PLUGIN_API getParameterCount() override { return kMacros; }
+  int32 PLUGIN_API getParameterCount() override { return kMacros + kMidiParams; }
   tresult PLUGIN_API getParameterInfo(int32 index, ParameterInfo& info) override {
-    if (index < 0 || index >= kMacros || !inst_) return kInvalidArgument;
+    if (index < 0 || index >= kMacros + kMidiParams || !inst_) return kInvalidArgument;
     info = ParameterInfo{};
+    if (index >= kMacros) {  // hidden MIDI controller parameter (IMidiMapping)
+      const int k = index - kMacros, ch = k / kMidiCtrls, ctrl = k % kMidiCtrls;
+      char name[48];
+      if (ctrl < 128)
+        std::snprintf(name, sizeof name, "MIDI CC %d (ch %d)", ctrl, ch + 1);
+      else
+        std::snprintf(name, sizeof name, "%s (ch %d)", ctrl == kAfterTouch ? "Channel pressure" : "Pitch bend", ch + 1);
+      info.id = kMidiBase + static_cast<ParamID>(k);
+      setString(info.title, name);
+      setString(info.shortTitle, name);
+      info.stepCount = ctrl == kPitchBend ? 16383 : 127;
+      info.defaultNormalizedValue = ctrl == kPitchBend ? 0.5 : 0.0;
+      info.unitId = 0;
+      info.flags = ParameterInfo::kIsHidden;
+      return kResultOk;
+    }
     info.id = static_cast<ParamID>(index);
     setString(info.title, inst_->macroName(index));
     setString(info.shortTitle, "M" + std::to_string(index + 1));
@@ -450,16 +509,28 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
     return kResultOk;
   }
   tresult PLUGIN_API getParamStringByValue(ParamID id, ParamValue v, String128 s) override {
+    if (isMidiParam(id)) {
+      uint8_t m[3];
+      midiFromParam(id, v, m);
+      const int x = (m[0] & 0xF0) == 0xE0 ? ((m[2] << 7) | m[1]) - 8192 : (m[0] & 0xF0) == 0xD0 ? m[1] : m[2];
+      setString(s, std::to_string(x));
+      return kResultOk;
+    }
     if (id >= static_cast<ParamID>(kMacros) || !inst_) return kInvalidArgument;
     setString(s, inst_->macroText(static_cast<int>(id), v));
     return kResultOk;
   }
   tresult PLUGIN_API getParamValueByString(ParamID id, TChar* text, ParamValue& v) override {
-    if (id >= static_cast<ParamID>(kMacros) || !text) return kInvalidArgument;
+    if ((id >= static_cast<ParamID>(kMacros) && !isMidiParam(id)) || !text) return kInvalidArgument;
     const std::string t = narrow(text);
     char* end = nullptr;
     double x = std::strtod(t.c_str(), &end);
     if (end == t.c_str()) return kResultFalse;
+    if (isMidiParam(id)) {
+      const int ctrl = static_cast<int>(id - kMidiBase) % kMidiCtrls;
+      v = ctrl == kPitchBend ? std::clamp((x + 8192.0) / 16383.0, 0.0, 1.0) : std::clamp(x / 127.0, 0.0, 1.0);
+      return kResultOk;
+    }
     if (end && *end == '%') x /= 100.0;
     v = std::clamp(x, 0.0, 1.0);
     return kResultOk;
@@ -467,14 +538,26 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
   ParamValue PLUGIN_API normalizedParamToPlain(ParamID, ParamValue v) override { return v; }
   ParamValue PLUGIN_API plainParamToNormalized(ParamID, ParamValue v) override { return v; }
   ParamValue PLUGIN_API getParamNormalized(ParamID id) override {
+    if (isMidiParam(id)) return midiValues_[id - kMidiBase].load(std::memory_order_relaxed);
     if (!inst_ || id >= static_cast<ParamID>(kMacros)) return 0;
     idleSoon();
     return inst_->macroValue(static_cast<int>(id));
   }
   tresult PLUGIN_API setParamNormalized(ParamID id, ParamValue v) override {
+    if (isMidiParam(id)) {  // the controller's last value (the MIDI arrives through process)
+      midiValues_[id - kMidiBase].store(static_cast<float>(std::clamp(v, 0.0, 1.0)), std::memory_order_relaxed);
+      return kResultOk;
+    }
     if (!inst_ || id >= static_cast<ParamID>(kMacros)) return kInvalidArgument;
     inst_->setMacroValue(static_cast<int>(id), v);
     return kResultOk;
+  }
+
+  // ---- IMidiMapping ----
+  tresult PLUGIN_API getMidiControllerAssignment(int32 busIndex, int16 channel, CtrlNumber ctrl, ParamID& id) override {
+    if (busIndex != 0 || channel < 0 || channel > 15 || ctrl < 0 || ctrl >= kMidiCtrls) return kResultFalse;
+    id = kMidiBase + static_cast<ParamID>(channel * kMidiCtrls + ctrl);
+    return kResultTrue;
   }
   tresult PLUGIN_API setComponentHandler(IComponentHandler* h) override {
     handler_ = h;
@@ -496,25 +579,39 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
   }
   void readParamsOnly(ProcessData& d) {
     const int n = addParamEvents(d, 0);
-    for (int i = 0; i < n; ++i) inst_->setMacroValue(events_[i].macro, events_[i].value);
+    for (int i = 0; i < n; ++i)
+      if (events_[i].kind == GlEvent::Macro)
+        inst_->setMacroValue(events_[i].macro, events_[i].value);
+      else  // no audio this call: the controller takes effect with the next block
+        inst_->queueMidi(events_[i].midi);
   }
+  // Macro points and MIDI controller points (as MIDI messages) of a block.
   int addParamEvents(ProcessData& d, int n) {
     IParameterChanges* pc = d.inputParameterChanges;
     if (!pc) return n;
     const int32 count = pc->getParameterCount();
     for (int32 i = 0; i < count; ++i) {
       IParamValueQueue* q = pc->getParameterData(i);
-      if (!q || q->getParameterId() >= static_cast<ParamID>(kMacros)) continue;
+      if (!q) continue;
+      const ParamID id = q->getParameterId();
+      const bool macro = id < static_cast<ParamID>(kMacros);
+      if (!macro && !isMidiParam(id)) continue;
       const int32 points = q->getPointCount();
       for (int32 k = 0; k < points && n < kMaxEvents; ++k) {
         int32 off = 0;
         ParamValue v = 0;
         if (q->getPoint(k, off, v) != kResultOk) continue;
         GlEvent e;
-        e.kind = GlEvent::Macro;
         e.offset = std::max<int32>(0, std::min<int32>(off, std::max<int32>(0, d.numSamples - 1)));
-        e.macro = static_cast<int>(q->getParameterId());
-        e.value = static_cast<float>(v);
+        if (macro) {
+          e.kind = GlEvent::Macro;
+          e.macro = static_cast<int>(id);
+          e.value = static_cast<float>(v);
+        } else {
+          e.kind = GlEvent::Midi;
+          midiFromParam(id, v, e.midi);
+          midiValues_[id - kMidiBase].store(static_cast<float>(v), std::memory_order_relaxed);
+        }
         events_[n++] = e;
       }
     }
@@ -529,6 +626,7 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
   double lastIdle_ = 0;
   bool inSetActive_ = false;
   GlEvent events_[kMaxEvents];
+  std::atomic<float> midiValues_[kMidiParams];  // last value of each MIDI controller parameter
 #if defined(__APPLE__)
   CFRunLoopTimerRef timer_ = nullptr;
 #endif

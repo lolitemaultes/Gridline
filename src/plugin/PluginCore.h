@@ -27,6 +27,8 @@ class App;
 
 namespace gl::plugin {
 
+class View;
+
 enum class Variant { Instrument, Effect };
 
 inline constexpr int kMacros = 16;
@@ -81,6 +83,12 @@ class Instance {
   App& app() { return *app_; }
   // Makes this instance the one gl::app() returns (main-thread entry points).
   void makeCurrent();
+  // The instance whose App is `a` (main thread), nullptr when none.
+  static Instance* of(const App* a);
+  // The view showing Gridline's editor (nullptr while closed): hosted
+  // plugins' windows belong to it.
+  View* editorView() const { return view_; }
+  void setEditorView(View* v) { view_ = v; }
 
   // ---- main thread ----
   bool activate(double sampleRate, int maxFrames);
@@ -122,6 +130,8 @@ class Instance {
 
   // ---- audio thread ----
   void process(const ProcessArgs& a);
+  // A MIDI message outside process() (parameter flush): applies at the next block.
+  void queueMidi(const uint8_t m[3]);
   // The engine follows the host transport (last block).
   bool followingHost() const;
 
@@ -132,6 +142,7 @@ class Instance {
 
   static constexpr int kChunk = 1024;  // frames per engine call (interleaved input buffer)
   Variant variant_;
+  View* view_ = nullptr;
   std::unique_ptr<App> app_;
   bool active_ = false;
   double sampleRate_ = 44100.0;

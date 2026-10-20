@@ -6,7 +6,8 @@
 //                          single sine voice started/stopped sample-accurately;
 //                          MIDI mapping (pitch bend, CC 7), a program list
 //                          (IUnitInfo) and a second output bus ("Sub", one
-//                          octave lower).
+//                          octave lower); its own interface on macOS (a
+//                          fixed 360 x 220 NSView).
 //   "Gridline Test Gain"   effect, single component (processor = controller),
 //                          sidechain bus, 32 samples reported latency.
 #include <atomic>
@@ -33,11 +34,16 @@
 #include "pluginterfaces/vst/ivstunits.h"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include "Probe.h"
+#include "pluginterfaces/gui/iplugview.h"
+#if defined(__APPLE__)
+#include "../common/TestView.h"
+#endif
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 
 namespace Steinberg {
+DEF_CLASS_IID(IPlugView)
 namespace Vst {
 DEF_CLASS_IID(IComponent)
 DEF_CLASS_IID(IAudioProcessor)
@@ -125,6 +131,66 @@ class RefCounted {
     addRef();                            \
     return kResultOk;                    \
   }
+
+// --------------------------------------------------------------- interface
+
+#if defined(__APPLE__)
+// The synth's own interface (macOS): a fixed 360 x 220 NSView.
+class TestView final : public RefCounted, public IPlugView {
+ public:
+  ~TestView() override { removed(); }
+  TEST_REFCOUNT
+  tresult PLUGIN_API queryInterface(const TUID iid, void** obj) override {
+    TEST_QI(IPlugView)
+    if (same(iid, FUnknown::iid)) {
+      *obj = static_cast<IPlugView*>(this);
+      addRef();
+      return kResultOk;
+    }
+    *obj = nullptr;
+    return kNoInterface;
+  }
+  tresult PLUGIN_API isPlatformTypeSupported(FIDString type) override {
+    return type && std::strcmp(type, kPlatformTypeNSView) == 0 ? kResultTrue : kResultFalse;
+  }
+  tresult PLUGIN_API attached(void* parent, FIDString type) override {
+    if (isPlatformTypeSupported(type) != kResultTrue || view_) return kResultFalse;
+    view_ = gridlineTestViewAttach(parent, kW, kH, "VST3 test interface", 0.55f, 0.24f, 0.62f);
+    if (!view_) return kResultFalse;
+    ++gProbe.views;
+    return kResultOk;
+  }
+  tresult PLUGIN_API removed() override {
+    if (view_) {
+      gridlineTestViewRemove(view_);
+      view_ = nullptr;
+      --gProbe.views;
+    }
+    return kResultOk;
+  }
+  tresult PLUGIN_API onWheel(float) override { return kResultFalse; }
+  tresult PLUGIN_API onKeyDown(char16, int16, int16) override { return kResultFalse; }
+  tresult PLUGIN_API onKeyUp(char16, int16, int16) override { return kResultFalse; }
+  tresult PLUGIN_API getSize(ViewRect* r) override {
+    if (!r) return kInvalidArgument;
+    *r = ViewRect(0, 0, kW, kH);
+    return kResultOk;
+  }
+  tresult PLUGIN_API onSize(ViewRect*) override { return kResultOk; }
+  tresult PLUGIN_API onFocus(TBool) override { return kResultOk; }
+  tresult PLUGIN_API setFrame(IPlugFrame*) override { return kResultOk; }
+  tresult PLUGIN_API canResize() override { return kResultFalse; }
+  tresult PLUGIN_API checkSizeConstraint(ViewRect* r) override {
+    if (!r) return kInvalidArgument;
+    *r = ViewRect(0, 0, kW, kH);
+    return kResultOk;
+  }
+
+ private:
+  static constexpr int kW = 360, kH = 220;
+  void* view_ = nullptr;
+};
+#endif
 
 // --------------------------------------------------------------- synth processor
 
@@ -438,7 +504,13 @@ class SynthController final : public RefCounted,
     handler_ = h;
     return kResultOk;
   }
+#if defined(__APPLE__)
+  IPlugView* PLUGIN_API createView(FIDString name) override {
+    return name && std::strcmp(name, ViewType::kEditor) == 0 ? new TestView : nullptr;
+  }
+#else
   IPlugView* PLUGIN_API createView(FIDString) override { return nullptr; }
+#endif
   // IConnectionPoint
   tresult PLUGIN_API connect(IConnectionPoint*) override { return kResultOk; }
   tresult PLUGIN_API disconnect(IConnectionPoint*) override { return kResultOk; }

@@ -69,7 +69,21 @@ std::string findPluginAssets() {
   return {};
 }
 
+namespace {
+std::vector<Instance*>& instances() {  // main thread
+  static std::vector<Instance*> v;
+  return v;
+}
+}  // namespace
+
+Instance* Instance::of(const App* a) {
+  for (Instance* i : instances())
+    if (i->app_.get() == a) return i;
+  return nullptr;
+}
+
 Instance::Instance(Variant v) : variant_(v) {
+  instances().push_back(this);
   for (auto& m : macroValues_) m.store(-1.f);
   App* prev = setCurrentApp(nullptr);
   app_ = std::make_unique<App>();
@@ -78,6 +92,13 @@ Instance::Instance(Variant v) : variant_(v) {
   a.uiSoundsDisabled = true;
   a.assetsDir = findPluginAssets();
   a.applySettingsHooks();  // language from the assets folder
+  // Installed plugins the application scanned (its plugin cache and
+  // per-plugin options) load inside the Gridline plugin too.
+  static bool hosting = false;
+  if (!hosting) {
+    hosting = true;
+    host::initHosting(a.configDir());
+  }
   if (variant_ == Variant::Effect) {
     a.startProject(effectSong(a));
     a.selMixer = a.doc.song().mixer.size() > 1 ? a.doc.song().mixer[1].id : a.doc.song().masterId();
@@ -92,6 +113,8 @@ Instance::~Instance() {
   makeCurrent();
   closeAllHostedEditors(*app_);
   app_.reset();
+  auto& v = instances();
+  v.erase(std::remove(v.begin(), v.end(), this), v.end());
 }
 
 void Instance::makeCurrent() { setCurrentApp(app_.get()); }
@@ -311,6 +334,8 @@ bool Instance::loadState(const std::string& data, std::string* err) {
 // ---------------------------------------------------------------- audio thread
 
 bool Instance::followingHost() const { return app_->engine.followingHost(); }
+
+void Instance::queueMidi(const uint8_t m[3]) { app_->engine.midiEvent(m[0], m[1], m[2]); }
 
 void Instance::runSlice(const ProcessArgs& a, int from, int len, bool first) {
   AudioEngine& eng = app_->engine;

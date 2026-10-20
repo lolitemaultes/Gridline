@@ -21,8 +21,17 @@
 #include "engine/Generators.h"
 #include "engine/Program.h"
 #include "host/Backend.h"
+#include "host/EditorLayout.h"
 #include "host/HostedPlugins.h"
 #include "host/PluginScan.h"
+#if defined(__APPLE__)
+#include <AudioToolbox/AudioToolbox.h>
+#include <dlfcn.h>
+#include "clap/Probe.h"
+#include "host/sandbox/Sandbox.h"
+#include "host/vst3/Vst3Module.h"
+#include "vst3/Probe.h"
+#endif
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -137,6 +146,66 @@ std::string pluginState(const Song& s, bool follow, int midiMode, ObjectId chann
 std::string clapData(const std::string& state) { return "clap1:" + host::base64Encode(state); }
 std::string vst3Data(const std::string& state) { return "vst3s1:" + host::base64Encode(state) + ":"; }
 
+#if defined(__APPLE__)
+// Audio Unit: the state travels in the unit's ClassInfo (a property list)
+// under "data"; Gridline's host stores it as "au1:<base64 binary plist>".
+constexpr OSType kAuManufacturer = 0x47724C6E;  // GrLn
+constexpr OSType kAuInstrument = 0x4772496E;    // GrIn
+constexpr OSType kAuEffect = 0x47724678;        // GrFx
+std::string auDataFor(const std::string& state, OSType type, OSType subtype) {
+  CFMutableDictionaryRef d = CFDictionaryCreateMutable(nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  auto num = [&](const char* key, SInt32 v) {
+    CFStringRef k = CFStringCreateWithCString(nullptr, key, kCFStringEncodingUTF8);
+    CFNumberRef n = CFNumberCreate(nullptr, kCFNumberSInt32Type, &v);
+    CFDictionarySetValue(d, k, n);
+    CFRelease(n);
+    CFRelease(k);
+  };
+  num(kAUPresetVersionKey, 0);
+  num(kAUPresetTypeKey, static_cast<SInt32>(type));
+  num(kAUPresetSubtypeKey, static_cast<SInt32>(subtype));
+  num(kAUPresetManufacturerKey, static_cast<SInt32>(kAuManufacturer));
+  CFDataRef data = CFDataCreate(nullptr, reinterpret_cast<const UInt8*>(state.data()), static_cast<CFIndex>(state.size()));
+  CFDictionarySetValue(d, CFSTR(kAUPresetDataKey), data);
+  CFDictionarySetValue(d, CFSTR(kAUPresetNameKey), CFSTR("Untitled"));
+  CFRelease(data);
+  CFDataRef bytes = CFPropertyListCreateData(nullptr, d, kCFPropertyListBinaryFormat_v1_0, 0, nullptr);
+  CFRelease(d);
+  std::string out(reinterpret_cast<const char*>(CFDataGetBytePtr(bytes)), static_cast<size_t>(CFDataGetLength(bytes)));
+  CFRelease(bytes);
+  return "au1:" + host::base64Encode(out);
+}
+std::string auData(const std::string& state) { return auDataFor(state, kAudioUnitType_MusicDevice, kAuInstrument); }
+std::string auFxData(const std::string& state) { return auDataFor(state, kAudioUnitType_Effect, kAuEffect); }
+// The "data" of a ClassInfo property list.
+std::string auStateOf(const std::string& plistBytes) {
+  CFDataRef d = CFDataCreate(nullptr, reinterpret_cast<const UInt8*>(plistBytes.data()), static_cast<CFIndex>(plistBytes.size()));
+  CFPropertyListRef p = CFPropertyListCreateWithData(nullptr, d, kCFPropertyListImmutable, nullptr, nullptr);
+  CFRelease(d);
+  std::string out;
+  if (p && CFGetTypeID(p) == CFDictionaryGetTypeID()) {
+    CFTypeRef v = CFDictionaryGetValue(static_cast<CFDictionaryRef>(p), CFSTR(kAUPresetDataKey));
+    if (v && CFGetTypeID(v) == CFDataGetTypeID())
+      out.assign(reinterpret_cast<const char*>(CFDataGetBytePtr(static_cast<CFDataRef>(v))), static_cast<size_t>(CFDataGetLength(static_cast<CFDataRef>(v))));
+  }
+  if (p) CFRelease(p);
+  return out;
+}
+// Registers Gridline.component's two units in this process (nothing is
+// installed): Gridline's AU host then finds them like installed ones.
+bool registerAu() {
+  const std::string bin = std::string(GRIDLINE_PLUGIN_AU) + "/Contents/MacOS/Gridline";
+  void* h = dlopen(bin.c_str(), RTLD_NOW | RTLD_LOCAL);
+  auto factory = h ? reinterpret_cast<AudioComponentFactoryFunction>(dlsym(h, "GridlineAUFactory")) : nullptr;
+  if (!factory) return false;
+  const AudioComponentDescription inst{kAudioUnitType_MusicDevice, kAuInstrument, kAuManufacturer, 0, 0};
+  const AudioComponentDescription fx{kAudioUnitType_Effect, kAuEffect, kAuManufacturer, 0, 0};
+  const UInt32 version = 0x00000400;
+  return AudioComponentRegister(&inst, CFSTR("Gridline: Gridline"), version, factory) &&
+         AudioComponentRegister(&fx, CFSTR("Gridline: Gridline FX"), version, factory);
+}
+#endif
+
 // Reference: the same song rendered by Gridline's own engine in this process.
 std::vector<float> reference(const Song& s, double tempo, double startTick, int frames) {
   Song song = s;
@@ -177,10 +246,23 @@ const host::ScannedClass* findClass(const host::ScanResult& r, const std::string
 // ---------------------------------------------------------------- one format
 
 void testFormat(const std::string& format, const std::string& bundle, const std::string& instUid, const std::string& fxUid,
-                std::string (*wrap)(const std::string&)) {
+                std::string (*wrap)(const std::string&), std::string (*fxWrap)(const std::string&) = nullptr) {
   const std::string tag = format + ": ";
   auto name = [&](const char* s) { return tag + s; };
-  host::ScanResult r = host::findFormat(format)->scanInProcess(bundle);
+  // Audio Units are scanned per component (key), the others per bundle.
+  std::vector<host::ScanResult> scans;
+  if (format == "au") {
+    scans.push_back(host::findFormat(format)->scanInProcess(instUid));
+    scans.push_back(host::findFormat(format)->scanInProcess(fxUid));
+  } else {
+    scans.push_back(host::findFormat(format)->scanInProcess(bundle));
+  }
+  host::ScanResult r = scans[0];
+  for (size_t k = 1; k < scans.size(); ++k) {
+    r.ok = r.ok && scans[k].ok;
+    r.error += scans[k].error;
+    r.classes.insert(r.classes.end(), scans[k].classes.begin(), scans[k].classes.end());
+  }
   expect(r.ok && r.classes.size() == 2, (name("scan finds Gridline and Gridline FX ") + r.error).c_str());
   const host::ScannedClass* ic = findClass(r, instUid);
   const host::ScannedClass* fc = findClass(r, fxUid);
@@ -190,7 +272,7 @@ void testFormat(const std::string& format, const std::string& bundle, const std:
   expect(fc && !fc->instrument && fc->inputChannels == 2 && fc->sidechainChannels == 2 && fc->outputChannels == 2,
          name("effect: stereo in, sidechain, stereo out").c_str());
   if (!ic || !fc) return;
-  host::registerScanResult(r);
+  for (const auto& s : scans) host::registerScanResult(s);
   const std::string inst = format + ":" + instUid, fx = format + ":" + fxUid;
 
   // Instantiate, silence, MIDI note → sound (the default project: starter kit, first channel selected).
@@ -289,8 +371,12 @@ void testFormat(const std::string& format, const std::string& bundle, const std:
     expect(hb && hb->captureState(d2) && d1 == d2, name("state round trip: identical").c_str());
     std::string text;
     const std::string payload = d1.substr(d1.find(':') + 1, d1.find(':', d1.find(':') + 1) - d1.find(':') - 1);
+    bool decoded = host::base64Decode(payload, text);
+#if defined(__APPLE__)
+    if (format == "au") text = auStateOf(text);  // ClassInfo "data"
+#endif
     Json j;
-    expect(host::base64Decode(payload, text) && jsonParse(text, j) && j.find("project") && j.find("samples") &&
+    expect(decoded && jsonParse(text, j) && j.find("project") && j.find("samples") &&
                text.find("Voice 2") != std::string::npos,
            name("state is the whole project (JSON) with its sample list").c_str());
     Host h1, h2;
@@ -371,7 +457,7 @@ void testFormat(const std::string& format, const std::string& bundle, const std:
     lat.mixer[0].latencyOffset = 300;  // master: manual latency, compensated
     auto e2 = createEffect(fx);
     PluginState st2 = defaultPluginState(fx);
-    st2.data = wrap(pluginState(lat, true, 0, kNoId));
+    st2.data = (fxWrap ? fxWrap : wrap)(pluginState(lat, true, 0, kNoId));
     e2->prepareHost(st2, kSr);
     // The state arrives after activation: the plugin asks for a restart (CLAP
     // request_restart, VST 3 restartComponent) and reports the new latency
@@ -381,6 +467,99 @@ void testFormat(const std::string& format, const std::string& bundle, const std:
     be->prepare(kSr, 512);
     expect(be->latency() == 300, name("latency (plugin delay compensation) reported to the host").c_str());
   }
+}
+
+#if defined(__APPLE__)
+// The Audio Unit's Cocoa view (kAudioUnitProperty_CocoaUI) is Gridline's
+// interface: Gridline's AU host opens it in a window that is never shown.
+std::string readFile(const std::string& path);
+void testAuView() {
+  const std::string log = fs::temp_directory_path().append("au-view.log").string();
+  setenv("GRIDLINE_PLUGIN_WINDOW_LOG", log.c_str(), 1);
+  Loaded g = instrument("au:aumu/GrIn/GrLn");
+  host::HostedInstance* hi = g.gen ? host::hostedInstance(g.gen.get()) : nullptr;
+  std::unique_ptr<host::Editor> e = hi ? hi->backend()->createEditor() : nullptr;
+  void* parent = e ? host::offscreenEditorParent(1280, 800) : nullptr;
+  if (e) e->requestResize = [](int, int) { return true; };
+  expect(parent && e->attach(parent), "au: Cocoa view attached");
+  int w = 0, h = 0;
+  expect(e && e->size(w, h) && w == 800 && h == 600 && e->canResize(), "au: the view takes the host's size and resizes");
+  for (int k = 0; k < 60; ++k) {
+    if (e) e->idle();
+    host::pumpOffscreenEvents(0.01);
+  }
+  e.reset();
+  host::closeOffscreenEditorParent();
+  g.gen.reset();
+  const std::string text = readFile(log);
+  std::printf("# au view: %s", text.c_str());
+  const size_t f = text.find("auview closed frames=");
+  expect(text.find("auview opened size=800x600") != std::string::npos && f != std::string::npos &&
+             std::atoi(text.c_str() + f + std::strlen("auview closed frames=")) > 5,
+         "au: the view is Gridline's own interface, drawn, closed with the unit's view");
+  unsetenv("GRIDLINE_PLUGIN_WINDOW_LOG");
+}
+#endif
+
+// ---------------------------------------------------------------- MIDI controllers
+
+// Notes plus controllers at sample offsets, through Gridline's host into the
+// Gridline instrument: CLAP takes raw MIDI, the VST 3 host turns controllers,
+// channel pressure and pitch bend into the parameters the plugin assigned
+// with IMidiMapping (the plugin turns them back into MIDI).
+enum Ctl { kBend = 1, kPressure = 2, kSustain = 4, kAllCtl = 7 };
+std::vector<float> renderMidi(const std::string& inst, std::string (*wrap)(const std::string&), const Song& song, ObjectId ch, int ctl,
+                              int bendAt = 37) {
+  Loaded g = instrument(inst, wrap(pluginState(song, true, 0, ch)));
+  std::vector<float> L, R;
+  if (!g.gen) return L;
+  Host h;
+  for (int b = 0; b < 14; ++b) {
+    if (b == 0) g.gen->noteOn(1, 60, 0.8f, 100);
+    if (b == 2 && (ctl & kBend)) g.gen->midi(0xE0, 0x00, 0x60, bendAt);  // +1 semitone (range 2)
+    if (b == 3 && (ctl & kPressure)) g.gen->midi(0xD0, 90, 0, 211);
+    if (b == 4 && (ctl & kSustain)) g.gen->midi(0xB0, 64, 127, 5);
+    if (b == 5) g.gen->noteOff(1, 300);
+    if (b == 13 && (ctl & kSustain)) g.gen->midi(0xB0, 64, 0, 400);
+    if (b == 11 && (ctl & kBend)) g.gen->midi(0xE0, 0x00, 0x40, 3);  // centre
+    runGen(*g.gen, g.st, h, L, R, kBlock);
+  }
+  return L;
+}
+
+void testMidiControllers() {
+  const std::string clapInst = "clap:org.gridline.gridline", vst3Inst = "vst3:47524944" "4C494E45" "504C5547" "00000001";
+  Song one = beatSong(1, 120);
+  one.patterns[0].steps.clear();
+  const ObjectId ch = one.channels[0].id;
+  // The VST 3 instrument assigns every controller of every MIDI channel.
+  {
+    host::ScanResult r = host::findFormat("vst3")->scanInProcess(kVst3);
+    const host::ScannedClass* c = r.classes.empty() ? nullptr : &r.classes[0];
+    expect(c && c->params.size() == 16, "vst3 MIDI: the controller parameters are hidden (16 macros listed)");
+  }
+  const std::vector<float> clapAll = renderMidi(clapInst, clapData, one, ch, kAllCtl);
+  const std::vector<float> vst3All = renderMidi(vst3Inst, vst3Data, one, ch, kAllCtl);
+  expect(peak(clapAll) > 0.01f && finite(vst3All) && maxDiff(clapAll, vst3All) == 0.f,
+         "vst3 MIDI: pitch bend, channel pressure and sustain render exactly as through CLAP");
+  // Pitch bend lands on its sample.
+  const std::vector<float> vst3NoBend = renderMidi(vst3Inst, vst3Data, one, ch, kAllCtl & ~kBend);
+  auto firstDiff = [](const std::vector<float>& a, const std::vector<float>& b) {
+    for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+      if (a[i] != b[i]) return i;
+    return a.size();
+  };
+  const size_t first = firstDiff(vst3All, vst3NoBend);
+  const size_t later = firstDiff(renderMidi(vst3Inst, vst3Data, one, ch, kAllCtl, 37 + 64), vst3NoBend);
+  const size_t at = static_cast<size_t>(2 * kBlock + 37);
+  std::printf("# vst3 pitch bend at sample %zu: output changes from sample %zu (64 later: %zu)\n", at, first, later);
+  expect(first >= at && first < at + 32 && later == first + 64, "vst3 MIDI: pitch bend is sample-accurate (IMidiMapping parameter point offset)");
+  // Sustain (CC 64) holds the note past its note-off.
+  const std::vector<float> vst3NoSustain = renderMidi(vst3Inst, vst3Data, one, ch, kAllCtl & ~kSustain);
+  const size_t b8 = static_cast<size_t>(12 * kBlock);
+  const float held = peak(vst3All, b8, b8 + kBlock), released = peak(vst3NoSustain, b8, b8 + kBlock);
+  std::printf("# vst3 sustain: held %g, released %g\n", held, released);
+  expect(held > 0.01f && released < held * 0.5f, "vst3 MIDI: sustain pedal (CC 64) holds the note");
 }
 
 // `gridline plugin-check` over both bundles, from a hermetic plugin cache.
@@ -417,12 +596,146 @@ void testPluginCheck() {
   expect(rc == 0 && plugins && plugins->array.size() == 4, "gridline plugin-check: 4 classes (CLAP, VST3 x instrument, effect), none fails");
 }
 
+// ---------------------------------------------------------------- nested interfaces
+
+#if defined(__APPLE__)
+template <class T>
+T* probe(const std::string& binary, const char* symbol) {
+  void* h = dlopen(binary.c_str(), RTLD_NOW | RTLD_NOLOAD);
+  void* f = h ? dlsym(h, symbol) : nullptr;
+  return f ? reinterpret_cast<T* (*)()>(f)() : nullptr;
+}
+
+std::string readFile(const std::string& path) {
+  std::string text;
+  if (FILE* f = std::fopen(path.c_str(), "r")) {
+    char buf[4096];
+    size_t got;
+    while ((got = std::fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, got);
+    std::fclose(f);
+  }
+  return text;
+}
+
+// The line of `log` starting with `event` for `format` ("" when none).
+std::string logLine(const std::string& log, const std::string& event, const std::string& format) {
+  size_t pos = 0;
+  while (pos < log.size()) {
+    size_t end = log.find('\n', pos);
+    if (end == std::string::npos) end = log.size();
+    const std::string line = log.substr(pos, end - pos);
+    if (line.rfind(event + " format=" + format + " ", 0) == 0) return line;
+    pos = end + 1;
+  }
+  return {};
+}
+bool has(const std::string& line, const std::string& what) { return line.find(" " + what) != std::string::npos; }
+
+// Installed plugins hosted inside the Gridline plugin show their own
+// interface (never Gridline's parameter panel): the Gridline VST3 instrument,
+// loaded by Gridline's host with its editor open in a window that is never
+// shown, hosts the in-tree VST3 and CLAP test synths and the LV2 test gain
+// (insert 1); each opens its own interface in a window owned by the editor's
+// window, with Gridline's control bar under it, and closes with the editor.
+void testNestedInterfaces() {
+  const std::string log = fs::temp_directory_path().append("plugin-windows.log").string();
+  setenv("GRIDLINE_PLUGIN_OPEN_HOSTED", "1", 1);
+  setenv("GRIDLINE_PLUGIN_WINDOW_LOG", log.c_str(), 1);
+  // The plugin cache the Gridline plugin reads (the application's, hermetic here).
+  host::ScanCache cache(fs::path(std::getenv("XDG_CONFIG_HOME")).append("gridline").append("plugin-cache.json").string());
+  const host::ScanResult v3 = host::findFormat("vst3")->scanInProcess(GRIDLINE_TESTPLUG_BUNDLE);
+  const host::ScanResult cl = host::findFormat("clap")->scanInProcess(GRIDLINE_CLAP_TESTPLUG);
+  const host::ScanResult lv = host::findFormat("lv2")->scanInProcess(GRIDLINE_LV2_BUNDLE);
+  for (const auto* r : {&v3, &cl, &lv}) {
+    cache.put(*r);
+    host::registerScanResult(*r);
+  }
+  fs::create_directories(fs::path(cache.file()).parent_path());
+  expect(cache.save(), "nested: plugin cache written");
+  // Scanned after the cache exists: the Gridline plugin reads it with its first instance.
+  const host::ScanResult gv = host::findFormat("vst3")->scanInProcess(kVst3);
+  host::registerScanResult(gv);
+  expect(v3.ok && cl.ok && lv.ok && gv.ok, "nested: test plugins and Gridline.vst3 scanned");
+
+  const std::string vst3Synth = "vst3:47524944" "4C494E45" "54535931" "00000001";
+  const std::string clapSynth = "clap:org.gridline.test.synth";
+  const std::string lv2Gain = "lv2:urn:gridline:lv2test:gain";
+  Song s = makeEmptySong();
+  Document doc(s);
+  const ObjectId c1 = doc.addChannel("VST3 synth", vst3Synth);
+  doc.addChannel("CLAP synth", clapSynth);
+  doc.setSlotPlugin(doc.song().mixer[1].id, 0, lv2Gain);
+  const Song song = doc.song();
+  expect(song.channels.size() == 2 && song.mixer[1].slots[0].plugin.type == lv2Gain, "nested: project with three installed plugins");
+
+  Loaded g = instrument("vst3:47524944" "4C494E45" "504C5547" "00000001", vst3Data(pluginState(song, true, 0, c1)));
+  host::HostedInstance* hi = g.gen ? host::hostedInstance(g.gen.get()) : nullptr;
+  expect(hi && hi->backend()->hasEditor(), "nested: Gridline loads, with its editor");
+  if (!hi) return;
+  host::Backend* b = hi->backend();
+  std::unique_ptr<host::Editor> e = b->createEditor();
+  void* parent = e ? host::offscreenEditorParent(1280, 800) : nullptr;
+  e->requestResize = [](int, int) { return true; };
+  expect(parent && e->attach(parent), "nested: Gridline's editor attached (window never shown)");
+  // Gridline's editor draws, opens every hosted plugin's interface, their bars draw.
+  std::string text;
+  for (int k = 0; k < 400; ++k) {
+    e->idle();
+    b->idle();
+    host::pumpOffscreenEvents(0.01);
+    text = readFile(log);
+    const char* ev = std::getenv("GRIDLINE_PLUGIN_WINDOW_SHOT") ? "shot" : "drawn";  // dev: wait for the window images
+    if (!logLine(text, ev, "VST3").empty() && !logLine(text, ev, "CLAP").empty() && !logLine(text, ev, "LV2").empty()) break;
+  }
+  std::printf("# nested plugin windows:\n%s", text.c_str());
+  struct Expect {
+    const char* format;
+    const char* view;  // the plugin's own view, attached in the window
+  };
+  for (const Expect& x : {Expect{"VST3", "view=360x220"}, Expect{"CLAP", "view=320x200"}, Expect{"LV2", "view=320x180"}}) {
+    const std::string open = logLine(text, "open", x.format), drawn = logLine(text, "drawn", x.format);
+    const std::string tag = std::string("nested ") + x.format + ": ";
+    expect(!open.empty() && has(open, "external=0") && has(open, "child=1"), (tag + "its own interface opens in a window owned by the host's window").c_str());
+    expect(!drawn.empty() && has(drawn, x.view) && has(drawn, "child=1") && has(drawn, "visible=1"),
+           (tag + "the plugin's view is in the window, Gridline's bar draws under it").c_str());
+  }
+  const std::string vOpen = logLine(text, "open", "VST3");
+  const host::layout::WindowLayout L = host::layout::layoutWindow(360, 220, 0);
+  expect(has(vOpen, "plugin=360x220") && has(vOpen, "window=" + std::to_string(L.w) + "x" + std::to_string(L.h)) &&
+             has(vOpen, "bar=" + std::to_string(L.bar.h)) && L.bar.y == 220,
+         "nested VST3: J-29 layout (plugin on top, bar under it)");
+  auto* vp = probe<GridlineVst3Probe>(vst3::bundleBinaryPath(GRIDLINE_TESTPLUG_BUNDLE), "gridline_vst3_probe");
+  auto* cp = probe<GridlineClapProbe>(std::string(GRIDLINE_CLAP_TESTPLUG) + "/Contents/MacOS/GridlineTest", "gridline_clap_probe");
+  expect(vp && cp && vp->views == 1 && cp->views == 1, "nested: the VST3 and CLAP synths attached their own views");
+  // Gridline's editor closes: the plugins' windows close with it.
+  e.reset();
+  host::closeOffscreenEditorParent();
+  host::pumpOffscreenEvents(0.05);
+  text = readFile(log);
+  expect(!logLine(text, "close", "VST3").empty() && !logLine(text, "close", "CLAP").empty() && !logLine(text, "close", "LV2").empty(),
+         "nested: the windows close with Gridline's editor");
+  expect(vp && cp && vp->views == 0 && cp->views == 0, "nested: the plugins' views are detached");
+  g.gen.reset();
+  unsetenv("GRIDLINE_PLUGIN_OPEN_HOSTED");
+  unsetenv("GRIDLINE_PLUGIN_WINDOW_LOG");
+}
+#endif
+
 }  // namespace
 
 int main() {
   test::hermeticTestEnv("plugin-build");
+#if defined(__APPLE__)
+  testNestedInterfaces();
+#endif
   testFormat("clap", kClap, "org.gridline.gridline", "org.gridline.gridline-fx", clapData);
   testFormat("vst3", kVst3, "47524944" "4C494E45" "504C5547" "00000001", "47524944" "4C494E45" "504C5547" "00000002", vst3Data);
+  testMidiControllers();
+#if defined(__APPLE__)
+  expect(registerAu(), "au: Gridline.component's units registered in this process (not installed)");
+  testFormat("au", GRIDLINE_PLUGIN_AU, "aumu/GrIn/GrLn", "aufx/GrFx/GrLn", auData, auFxData);
+  testAuView();
+#endif
   testPluginCheck();
   return finish();
 }

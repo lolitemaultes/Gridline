@@ -7,4 +7,5 @@ struct GridlineVst3Probe {
   bool hadContext = false;
   Steinberg::int32 processMode = -1;
   Steinberg::int32 blocks = 0;
+  int views = 0;  // interfaces attached now (macOS)
 };

@@ -137,24 +137,26 @@ The same build also produces Gridline as a plugin, so the whole workstation (cha
 | Plugin | Kind | Audio | Notes |
 |---|---|---|---|
 | **Gridline** | instrument | stereo out, plus 15 stereo outputs carrying mixer inserts 1 to 15 | MIDI in |
-| **Gridline FX** | effect | stereo in (enters mixer insert 1), sidechain in (inputs 3 and 4), stereo out | MIDI in |
+| **Gridline FX** | effect | stereo in (enters mixer insert 1), sidechain in (inputs 3 and 4), stereo out | MIDI in (CLAP, VST3) |
 
 ```sh
 cmake --build build --target gridline_clap gridline_vst3   # build/plugins/Gridline.clap, build/plugins/Gridline.vst3
-cmake --build build --target install-plugins               # copy both into your user plugin folders
+cmake --build build --target gridline_au                   # macOS: build/plugins/Gridline.component (Audio Unit v2)
+cmake --build build --target install-plugins               # copy the bundles into your user plugin folders
 cmake --install build --component plugins --prefix /usr    # or install for a package (lib/clap, lib/vst3)
 ```
 
-`install-plugins` copies to `~/Library/Audio/Plug-Ins/CLAP` and `.../VST3` on macOS, and to `~/.clap` and `~/.vst3` on Linux. The build and the tests never install anything. Each bundle carries the app icon and Gridline's assets (fonts, sounds, templates, translations), so it works on its own.
+`install-plugins` copies to `~/Library/Audio/Plug-Ins/CLAP`, `.../VST3` and `.../Components` on macOS, and to `~/.clap` and `~/.vst3` on Linux. The build and the tests never install anything. Each bundle carries the app icon and Gridline's assets (fonts, sounds, templates, translations), so it works on its own.
 
-- **Formats:** CLAP and VST3, both written against the interface headers only. An Audio Unit wrapper is not part of this release.
-- **Transport:** with **Follow the host transport** on (the default), Gridline starts and stops with the host, takes its tempo and moves to its position: pattern mode plays the pattern at the host position within the pattern, song mode plays the arrangement at the host's song position. Turn it off and Gridline's own transport plays the pattern or the song.
-- **MIDI input** plays the selected channel, or with **By MIDI channel**, MIDI channel 1 to 16 plays rack channel 1 to 16. CLAP carries all MIDI messages; VST3 carries notes and polyphonic pressure.
+- **Formats:** CLAP and VST3, both written against the interface headers only, and on macOS an Audio Unit (v2) written against Apple's AudioToolbox headers only. The Audio Units are `aumu GrIn GrLn` (Gridline) and `aufx GrFx GrLn` (Gridline FX); both pass `auval -strict`.
+- **Transport:** with **Follow the host transport** on (the default), Gridline starts and stops with the host, takes its tempo and moves to its position: pattern mode plays the pattern at the host position within the pattern, song mode plays the arrangement at the host's song position. Turn it off and Gridline's own transport plays the pattern or the song. The Audio Unit reads the transport through the host callbacks.
+- **MIDI input** plays the selected channel, or with **By MIDI channel**, MIDI channel 1 to 16 plays rack channel 1 to 16. Every format carries notes, controllers, channel pressure and pitch bend at their sample positions: CLAP and AU as MIDI messages, VST3 through MIDI controller mapping (each controller of each MIDI channel is a hidden parameter that Gridline turns back into MIDI), so the VST3 build plays exactly like the CLAP one.
 - **Host parameters** are 16 macros. Right-click any control and choose **Link to host macro**, or press **Link** in the **Host link** panel to link the control you touched last. The host automates the macro and Gridline applies it to the linked control every 64 samples; the host shows the linked control's value, such as `62%` or `1.20 kHz`.
-- **State** is the whole project: the project JSON with the paths of the samples it uses, the macro links and the plugin settings. Samples stay where they are on disk.
+- **State** is the whole project: the project JSON with the paths of the samples it uses, the macro links and the plugin settings (for the Audio Unit, inside its ClassInfo). Samples stay where they are on disk.
 - **Latency:** the project's delay compensation is reported to the host and updated when it changes.
 - **Offline render** and **sample rate or buffer size changes** are supported; renders are identical from run to run.
-- **Editor:** Gridline's interface in the host's plugin window, resizable, sharp on HiDPI screens (an NSView on macOS, an X11 child window on Linux). Third-party plugins hosted inside the Gridline plugin show Gridline's parameter panel; their own windows open in the Gridline application.
+- **Editor:** Gridline's interface in the host's plugin window, resizable, sharp on HiDPI screens (an NSView on macOS, also the Audio Unit's Cocoa view, an X11 child window on Linux).
+- **Installed plugins inside Gridline:** the plugin loads the plugins the Gridline application scanned (VST3, CLAP, VST2, AU, LV2), and each opens its own interface, never a stand-in: a window owned by the host's plugin window (on macOS a child window that stays above it, on Linux a transient window), with the plugin's interface on top and Gridline's control bar under it (presets, bypass, sandbox, generic, CPU and latency, settings), as in the application. The windows hide with Gridline's editor and close with it; closing one gives the keyboard back to the host's window.
 
 The **Host link** panel (a tab beside the browser) shows the transport, MIDI and output settings, the reported latency and the 16 macros. `gridline plugin-check Gridline` runs the compatibility sweep on the built bundles once they are in the plugin cache.
 
@@ -178,7 +180,7 @@ Projects can also be saved back to `.flp` with **File, Export, FL Studio project
 | Engine | `src/engine/AudioEngine`, `Program`, `ProgramGraph` | Real-time engine with delay compensation and a parallel mixer graph. |
 | Plugins | `src/packs/`, `src/engine/` | The built-in instruments and effects, one pack per family. |
 | Hosting | `src/host/` | VST3, CLAP, VST2 and AU backends, scanning, sandbox and native editor windows. |
-| Gridline as a plugin | `src/plugin/` | CLAP and VST3 entry points, host transport, macros, state and the embedded editor. |
+| Gridline as a plugin | `src/plugin/` | CLAP, VST3 and Audio Unit entry points, host transport, macros, state, the embedded editor and the windows of plugins hosted inside it. |
 | Interface | `src/app/` | SDL2, OpenGL 3 and Dear ImGui. Every control and icon is drawn in code. |
 | Import and export | `src/core/flp/`, `src/core/MidiFile`, `src/engine/Export` | Project import, MIDI, audio export and stems. |
 

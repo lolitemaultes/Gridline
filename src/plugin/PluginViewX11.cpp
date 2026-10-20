@@ -4,15 +4,24 @@
 // timer (CLAP timer support, VST 3 IRunLoop) calls tick(), which reads the
 // pending window events of all views and draws this one. Sizes are window
 // pixels; the host's content scale makes the interface larger.
+//
+// Hosted plugins' windows (X11HostWindow): a top-level window, transient
+// for the host's window that shows Gridline, with the plugin's interface in
+// a child window on top and the bar's GL view under it; its events are read
+// with the views' (the host's timer), its bar draws from Instance::idle.
 #if !defined(__APPLE__) || defined(GRIDLINE_SYNTAX_CHECK_X11)
 #include <algorithm>
 #include <cfloat>
+#include <cstdint>
+#include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include "../../third_party/imgui/imgui.h"
 #include "PluginCore.h"
 #include "PluginView.h"
 // Xlib last: its macros (None, Bool, …) would clash with Gridline's names.
+#include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/cursorfont.h>
@@ -27,6 +36,9 @@ GLXContext glXCreateContext(Display* dpy, XVisualInfo* vis, GLXContext shareList
 void glXDestroyContext(Display* dpy, GLXContext ctx);
 Bool glXMakeCurrent(Display* dpy, GLXDrawable drawable, GLXContext ctx);
 void glXSwapBuffers(Display* dpy, GLXDrawable drawable);
+GLXContext glXGetCurrentContext(void);
+GLXDrawable glXGetCurrentDrawable(void);
+Display* glXGetCurrentDisplay(void);
 }
 
 namespace gl::plugin {
@@ -44,6 +56,7 @@ struct Shared {
   XVisualInfo* visual = nullptr;
   GLXContext root = nullptr;  // share group
   std::map<Window, X11View*> views;
+  std::map<Window, std::function<void(const XEvent&)>> handlers;  // hosted plugins' top-level windows
   Cursor cursors[ImGuiMouseCursor_COUNT] = {};
   bool init() {
     if (dpy) return visual != nullptr;
@@ -121,9 +134,13 @@ ImGuiKey keyOf(KeySym k) {
 bool viewSupported(WindowApi api) { return api == WindowApi::X11; }
 WindowApi nativeWindowApi() { return WindowApi::X11; }
 
+// A GLX child window drawing a Surface: Gridline's workspace (the editor,
+// with its Instance) or the control bar of a hosted plugin's window.
 class X11View final : public View {
  public:
-  explicit X11View(Instance& inst) : inst_(inst), frame_(inst) {}
+  explicit X11View(Instance& inst) : inst_(&inst), own_(std::make_unique<Frame>(inst)), surface_(own_.get()) {}
+  // A bar: no minimum size, no instance housekeeping.
+  X11View(Surface& s, int w, int h) : surface_(&s), minW_(1), minH_(1), w_(w), h_(h) {}
   ~X11View() override { detach(); }
 
   bool attach(void* parent) override {
@@ -147,19 +164,27 @@ class X11View final : public View {
     s.views[win_] = this;
     XMapWindow(s.dpy, win_);
     XFlush(s.dpy);
+    if (inst_) inst_->setEditorView(this);
     return true;
   }
 
   void detach() override {
     Shared& s = shared();
+    if (inst_ && inst_->editorView() == this) {
+      closeHostedWindows(*inst_);  // their bars share this frame's fonts
+      inst_->setEditorView(nullptr);
+    }
     if (ctx_) {
+      const GlBinding prev = currentGl();
+      GLXContext mine = ctx_;
       glXMakeCurrent(s.dpy, win_, ctx_);
-      frame_.shutdown();
+      surface_->shutdown();
       glXMakeCurrent(s.dpy, None, nullptr);
       glXDestroyContext(s.dpy, ctx_);
       ctx_ = nullptr;
+      if (prev.b != mine) restoreGl(prev);
     } else {
-      frame_.shutdown();
+      surface_->shutdown();
     }
     if (win_) {
       s.views.erase(win_);
@@ -175,8 +200,8 @@ class X11View final : public View {
   }
 
   void setSize(int w, int h) override {
-    w_ = std::max(w, kMinViewW);
-    h_ = std::max(h, kMinViewH);
+    w_ = std::max(w, minW_);
+    h_ = std::max(h, minH_);
     if (win_) {
       XResizeWindow(shared().dpy, win_, static_cast<unsigned>(w_), static_cast<unsigned>(h_));
       XFlush(shared().dpy);
@@ -195,27 +220,62 @@ class X11View final : public View {
       XUnmapWindow(shared().dpy, win_);
     XFlush(shared().dpy);
     visible_ = on;
+    if (inst_ && inst_->editorView() == this) setHostedWindowsVisible(*inst_, on);
   }
   int frames() const override { return frames_; }
+  Frame* frame() override { return glReady_ ? own_.get() : nullptr; }
+  Window xid() const { return win_; }
 
   void tick() override {
+    pump();
+    render();
+  }
+
+  // Reads the pending events of every view and hosted window of the process.
+  static void pump() {
     Shared& s = shared();
     if (!s.dpy) return;
     while (XPending(s.dpy)) {
       XEvent e;
       XNextEvent(s.dpy, &e);
       auto it = s.views.find(e.xany.window);
-      if (it != s.views.end()) it->second->event(e);
+      if (it != s.views.end()) {
+        it->second->event(e);
+        continue;
+      }
+      auto h = s.handlers.find(e.xany.window);
+      if (h != s.handlers.end()) h->second(e);
     }
-    render();
+  }
+
+  void render() {
+    Shared& s = shared();
+    if (!win_ || !ctx_ || !visible_) return;
+    // Housekeeping first: hosted plugins' interfaces may bind their own GL context.
+    if (inst_) inst_->idle();
+    if (!win_ || !ctx_) return;
+    glXMakeCurrent(s.dpy, win_, ctx_);
+    if (!glReady_) {
+      glReady_ = surface_->init("#version 130");
+      if (!glReady_) return;
+    }
+    surface_->draw(static_cast<int>(w_ / scale_), static_cast<int>(h_ / scale_), w_, h_);
+    glXSwapBuffers(s.dpy, win_);
+    const int c = surface_->cursor();
+    if (c != cursor_ && c >= 0 && c < ImGuiMouseCursor_COUNT) {
+      cursor_ = c;
+      XDefineCursor(s.dpy, win_, s.cursors[c]);
+    }
+    XFlush(s.dpy);
+    ++frames_;
   }
 
  private:
-  float toLogical(int v) const { return static_cast<float>(v) / static_cast<float>(scale_) / frame_.uiScale(); }
+  float toLogical(int v) const { return static_cast<float>(v) / static_cast<float>(scale_) / surface_->uiScale(); }
 
   void event(const XEvent& e) {
     if (!glReady_) return;
-    frame_.makeCurrent();
+    surface_->makeCurrent();
     ImGuiIO& io = ImGui::GetIO();
     switch (e.type) {
       case ConfigureNotify:
@@ -262,28 +322,10 @@ class X11View final : public View {
     }
   }
 
-  void render() {
-    Shared& s = shared();
-    if (!win_ || !ctx_ || !visible_) return;
-    glXMakeCurrent(s.dpy, win_, ctx_);
-    if (!glReady_) {
-      glReady_ = frame_.init("#version 130");
-      if (!glReady_) return;
-    }
-    inst_.idle();
-    frame_.draw(static_cast<int>(w_ / scale_), static_cast<int>(h_ / scale_), w_, h_);
-    glXSwapBuffers(s.dpy, win_);
-    const int c = frame_.cursor();
-    if (c != cursor_ && c >= 0 && c < ImGuiMouseCursor_COUNT) {
-      cursor_ = c;
-      XDefineCursor(s.dpy, win_, s.cursors[c]);
-    }
-    XFlush(s.dpy);
-    ++frames_;
-  }
-
-  Instance& inst_;
-  Frame frame_;
+  Instance* inst_ = nullptr;
+  std::unique_ptr<Frame> own_;
+  Surface* surface_ = nullptr;
+  int minW_ = kMinViewW, minH_ = kMinViewH;
   Window win_ = 0;
   Colormap colormap_ = 0;
   GLXContext ctx_ = nullptr;
@@ -296,6 +338,205 @@ class X11View final : public View {
 };
 
 std::unique_ptr<View> createView(Instance& inst) { return std::make_unique<X11View>(inst); }
+
+// ---------------------------------------------------------------- hosted plugins' windows
+
+// A top-level window, transient for the host's window that shows Gridline:
+// the plugin's interface in a child window on top, the bar's GL view under it.
+class X11HostWindow final : public HostWindow {
+ public:
+  X11HostWindow(Surface& bar, int w, int h) : bar_(bar, w, h) {}
+  ~X11HostWindow() override {
+    Shared& s = shared();
+    bar_.detach();
+    if (top_ && s.dpy) {
+      s.handlers.erase(top_);
+      XDestroyWindow(s.dpy, top_);  // the container and the bar holder go with it
+      XFlush(s.dpy);
+    }
+  }
+
+  bool create(Window ownerView, const std::string& title, const host::layout::WindowLayout& L, bool resizable, bool barOnly, const int* place,
+              int index) {
+    Shared& s = shared();
+    if (!s.init()) return false;
+    Display* d = s.dpy;
+    const Window root = DefaultRootWindow(d);
+    // The host's top-level window: the ancestor of Gridline's view right under the root.
+    owner_ = ownerView;
+    for (Window w = ownerView;;) {
+      Window r = 0, parent = 0, *kids = nullptr;
+      unsigned n = 0;
+      if (!XQueryTree(d, w, &r, &parent, &kids, &n)) break;
+      if (kids) XFree(kids);
+      if (parent == root || parent == 0) {
+        owner_ = w;
+        break;
+      }
+      w = parent;
+    }
+    int x = 0, y = 0;
+    if (place) {
+      x = place[0];
+      y = place[1];
+    } else {
+      Window child = 0;
+      XTranslateCoordinates(d, owner_, root, 0, 0, &x, &y, &child);
+      x += 40 + 26 * (index % 8);
+      y += 60 + 26 * (index % 8);
+    }
+    XSetWindowAttributes swa{};
+    swa.event_mask = StructureNotifyMask;
+    swa.background_pixel = BlackPixel(d, DefaultScreen(d));
+    top_ = XCreateWindow(d, root, x, y, static_cast<unsigned>(L.w), static_cast<unsigned>(L.h), 0, CopyFromParent, InputOutput, CopyFromParent,
+                         CWEventMask | CWBackPixel, &swa);
+    if (!top_) return false;
+    XStoreName(d, top_, title.c_str());
+    XSetTransientForHint(d, top_, owner_);
+    Atom del = XInternAtom(d, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(d, top_, &del, 1);
+    resizable_ = resizable;
+    if (!barOnly) {
+      container_ = XCreateSimpleWindow(d, top_, L.plugin.x, L.plugin.y, static_cast<unsigned>(std::max(1, L.plugin.w)),
+                                       static_cast<unsigned>(std::max(1, L.plugin.h)), 0, 0, 0);
+      XMapWindow(d, container_);
+    } else {
+      Atom type = XInternAtom(d, "_NET_WM_WINDOW_TYPE", False), dock = XInternAtom(d, "_NET_WM_WINDOW_TYPE_UTILITY", False);
+      XChangeProperty(d, top_, type, XA_ATOM, 32, PropModeReplace, reinterpret_cast<unsigned char*>(&dock), 1);
+    }
+    holder_ = XCreateSimpleWindow(d, top_, 0, L.bar.y, static_cast<unsigned>(L.w), static_cast<unsigned>(std::max(1, L.h - L.bar.y)), 0, 0, 0);
+    XMapWindow(d, holder_);
+    s.handlers[top_] = [this](const XEvent& e) { event(e); };
+    if (!bar_.attach(reinterpret_cast<void*>(static_cast<uintptr_t>(holder_)))) return false;
+    setLayout(L);
+    XFlush(d);
+    return true;
+  }
+
+  void* container() const override { return container_ ? reinterpret_cast<void*>(static_cast<uintptr_t>(container_)) : nullptr; }
+
+  void setLayout(const host::layout::WindowLayout& L) override {
+    Display* d = shared().dpy;
+    if (!top_ || !d) return;
+    w_ = L.w;
+    h_ = L.h;
+    XSizeHints* hints = XAllocSizeHints();
+    if (hints) {
+      hints->flags = PMinSize | (resizable_ ? 0 : PMaxSize);
+      hints->min_width = resizable_ ? host::layout::kMinWindowW : L.w;
+      hints->min_height = resizable_ ? L.bar.h + host::layout::kMinPluginH : L.h;
+      hints->max_width = L.w;
+      hints->max_height = L.h;
+      XSetWMNormalHints(d, top_, hints);
+      XFree(hints);
+    }
+    XResizeWindow(d, top_, static_cast<unsigned>(L.w), static_cast<unsigned>(L.h));
+    if (container_)
+      XMoveResizeWindow(d, container_, L.plugin.x, L.plugin.y, static_cast<unsigned>(std::max(1, L.plugin.w)), static_cast<unsigned>(std::max(1, L.plugin.h)));
+    const int bh = std::max(1, L.h - L.bar.y);
+    XMoveResizeWindow(d, holder_, 0, L.bar.y, static_cast<unsigned>(L.w), static_cast<unsigned>(bh));
+    bar_.setSize(L.w, bh);
+    XFlush(d);
+  }
+
+  void show() override {
+    shown_ = true;
+    setVisible(true);
+  }
+  void setVisible(bool on) override {
+    Display* d = shared().dpy;
+    if (!top_ || !d || !shown_) return;
+    if (on)
+      XMapRaised(d, top_);
+    else
+      XUnmapWindow(d, top_);
+    mapped_ = on;
+    XFlush(d);
+  }
+  void raise() override {
+    if (top_) {
+      XRaiseWindow(shared().dpy, top_);
+      XFlush(shared().dpy);
+    }
+  }
+  bool topLeft(int& x, int& y) const override {
+    Display* d = shared().dpy;
+    if (!top_ || !d) return false;
+    Window child = 0;
+    return XTranslateCoordinates(d, top_, DefaultRootWindow(d), 0, 0, &x, &y, &child);
+  }
+  void moveTopLeft(int x, int y) override {
+    if (!top_) return;
+    XMoveWindow(shared().dpy, top_, x, y);
+    XFlush(shared().dpy);
+  }
+  double backingScale() const override { return 1.0; }
+  void tick() override {
+    X11View::pump();
+    bar_.render();
+  }
+  int barFrames() const override { return bar_.frames(); }
+  bool ownedByEditor() const override {
+    Window t = 0;
+    return top_ && XGetTransientForHint(shared().dpy, top_, &t) && t == owner_;
+  }
+  bool visible() const override { return mapped_; }
+  bool pluginViewSize(int& w, int& h) const override {
+    Display* d = shared().dpy;
+    if (!container_ || !d) return false;
+    Window r = 0, parent = 0, *kids = nullptr;
+    unsigned n = 0;
+    if (!XQueryTree(d, container_, &r, &parent, &kids, &n) || n == 0) {
+      if (kids) XFree(kids);
+      return false;
+    }
+    XWindowAttributes wa{};
+    const bool ok = XGetWindowAttributes(d, kids[0], &wa);
+    XFree(kids);
+    if (!ok) return false;
+    w = wa.width;
+    h = wa.height;
+    return true;
+  }
+  bool capture(const std::string&) override { return false; }
+
+ private:
+  void event(const XEvent& e) {
+    if (e.type == ClientMessage) {
+      if (static_cast<Atom>(e.xclient.data.l[0]) == XInternAtom(shared().dpy, "WM_DELETE_WINDOW", False) && onClose) onClose();
+    } else if (e.type == ConfigureNotify) {
+      if ((e.xconfigure.width != w_ || e.xconfigure.height != h_) && onUserResize) onUserResize(e.xconfigure.width, e.xconfigure.height);
+    }
+  }
+
+  X11View bar_;
+  Window owner_ = 0;  // the host's top-level window
+  Window top_ = 0, container_ = 0, holder_ = 0;
+  int w_ = 0, h_ = 0;
+  bool resizable_ = false;
+  bool shown_ = false;
+  bool mapped_ = false;
+};
+
+std::unique_ptr<HostWindow> createHostWindow(View& owner, const std::string& title, const host::layout::WindowLayout& L, bool resizable,
+                                             bool barOnly, Surface& bar, const int* place, int index) {
+  const Window ov = static_cast<X11View&>(owner).xid();
+  if (!ov) return nullptr;
+  auto w = std::make_unique<X11HostWindow>(bar, L.w, std::max(1, L.h - L.bar.y));
+  if (!w->create(ov, title, L, resizable, barOnly, place, index)) return nullptr;
+  return w;
+}
+
+GlBinding currentGl() {
+  GlBinding g;
+  g.a = glXGetCurrentDisplay();
+  g.b = glXGetCurrentContext();
+  g.c = glXGetCurrentDrawable();
+  return g;
+}
+void restoreGl(const GlBinding& g) {
+  if (g.a && g.b) glXMakeCurrent(static_cast<Display*>(g.a), static_cast<GLXDrawable>(g.c), static_cast<GLXContext>(g.b));
+}
 
 }  // namespace gl::plugin
 #endif
