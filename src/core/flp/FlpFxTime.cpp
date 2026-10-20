@@ -324,8 +324,8 @@ bool decodeDelayBank(Context&, const std::vector<Event>& evs, PluginMapping& m) 
     if (on && (tempo ? time / 480.0 > 64 : time / 3.84 > 5000)) exact = false;
     (void)inType, (void)fbType;
   }
-  // The 2x oversampling resampler of the reference is not studied.
-  m.exact = exact && st->i32(flags) < 1;
+  // J-42: the 2x resampler (polyphase IIR half-bands) is the reference's own.
+  m.exact = exact;
   return true;
 }
 

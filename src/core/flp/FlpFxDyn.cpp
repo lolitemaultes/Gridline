@@ -340,8 +340,8 @@ bool maximusRefBlock(const Reader& r, PluginMapping& m, int ref, const std::vect
   }
   const int target = rd32(optBase + 4), solo = rd8(optBase + 0x13);
   const int masterMid = ver >= 6 ? rd8(optBase + 0x20) : 0, fir = ver >= 7 ? rd8(optBase + 0x21) : 0;
-  int flags = 0;
-  if (ver >= 14) flags = rd8(after + 8);
+  int flags = 0, quality = 2, speed = 0;
+  if (ver >= 14) flags = rd8(after + 8), quality = rd32(after), speed = rd32(after + 4);
   const bool lin = (flags & 1) != 0, safetyOff = (flags & 0x40) != 0;
   set(m, ref + dy::MrModel, 1);
   for (int k = 0; k < 59; ++k) set(m, ref + dy::MrRaw0 + k, raw[k]);
@@ -351,17 +351,20 @@ bool maximusRefBlock(const Reader& r, PluginMapping& m, int ref, const std::vect
   set(m, ref + dy::MrSafetyOff, safetyOff ? 1 : 0);
   set(m, ref + dy::MrFir, fir ? 1 : 0);
   set(m, ref + dy::MrLin, lin ? 1 : 0);
-  bool exact = !fir && !lin && curves.size() >= 8;
+  set(m, ref + dy::MrLinQuality, std::clamp(quality, 0, 5));
+  set(m, ref + dy::MrLinSpeed, std::clamp(speed, 0, 3));
+  // J-42: both linear-phase splits are reproduced (spec j42 fir notes).
+  bool exact = curves.size() >= 8 && quality >= 0 && quality <= 5 && speed >= 0 && speed <= 3;
   for (int k = 0; k < 4; ++k) {
     const MaxCurve* c = curves.size() >= static_cast<size_t>(2 * k + 1) ? &curves[static_cast<size_t>(2 * k)] : nullptr;
     for (int i = 0; i < dy::kMsCurvePts; ++i) {
       const int ty = c && i < c->n ? c->type[i] : 0;
-      set(m, ref + dy::MrPtType0 + k * dy::kMsCurvePts + i, std::clamp(ty, 0, 2));
+      set(m, ref + dy::MrPtType0 + k * dy::kMsCurvePts + i, std::clamp(ty, 0, 12));
     }
     if (c && c->n > dy::kMsCurvePts) exact = false;
     if (c)
       for (int i = 0; i < c->n; ++i)
-        if (c->type[i] > 2) exact = false;
+        if (c->type[i] > 12 || c->type[i] == 10) exact = false;  // J-42: point shapes 3..12 via the envelope model (smooth: tangents differ)
   }
   return exact;
 }
@@ -566,6 +569,27 @@ void registerFxDyn(std::map<std::string, PluginDecoder>& d) {
   d["Maximus"] = decodeMaximus;
   d["Soundgoodizer"] = decodeSoundgoodizer;
   d["Transient Processor"] = decodeTransient;
+}
+
+// J-42: a Maximus program file (e.g. the vocoder's "SG.dat") → gl.enhance parameters running
+// it on the reference engine (EnCustom 3); false when the file is missing or unreadable.
+bool maximusProgramToEnhance(const std::string& path, std::vector<float>& params, bool* exact) {
+  FILE* fp = std::fopen(path.c_str(), "rb");
+  if (!fp) return false;
+  std::vector<uint8_t> bytes;
+  uint8_t buf[4096];
+  size_t got;
+  while ((got = std::fread(buf, 1, sizeof buf, fp)) > 0) bytes.insert(bytes.end(), buf, buf + got);
+  std::fclose(fp);
+  PluginMapping m;
+  begin(m, "gl.enhance");
+  Reader pr(bytes.data(), bytes.size());
+  bool ex = false;
+  if (!maximusToMaster(pr, m, dy::EnProg0, dy::EnRef0, &ex)) return false;
+  set(m, dy::EnCustom, 3);
+  params = m.state.params;
+  if (exact) *exact = ex;
+  return true;
 }
 
 }  // namespace gl::flp::fx

@@ -129,6 +129,7 @@ struct VxData {
   std::vector<VxPoint> maps[kVxMaps];
   bool pf[kVxMaps] = {};
   std::vector<int> keys;  // empty: built-in carrier root + chord parameters
+  std::string extra;      // J-42: kept verbatim ("sge ...": the enhancer's mastering program)
 };
 inline constexpr double kVxDistLo = 0.14293710887432098, kVxDistHi = 0.9917563796043396;
 inline double vxMapDefault(int m, double x) {
@@ -184,6 +185,7 @@ inline std::string vxSerialize(const VxData& d) {
   s += "\nkeys=";
   for (size_t i = 0; i < d.keys.size(); ++i) s += (i ? "," : "") + std::to_string(d.keys[i]);
   s += "\n";
+  if (!d.extra.empty()) s += d.extra + "\n";
   return s;
 }
 // False (and defaults) when `s` is not vocoder data.
@@ -196,6 +198,10 @@ inline bool vxParse(const std::string& s, VxData& d) {
     if (e == std::string::npos) e = s.size();
     std::string line = s.substr(pos, e - pos);
     pos = e + 1;
+    if (line.compare(0, 4, "sge ") == 0) {
+      d.extra = line;
+      continue;
+    }
     size_t eq = line.find('=');
     if (eq == std::string::npos) continue;
     std::string k = line.substr(0, eq), v = line.substr(eq + 1);

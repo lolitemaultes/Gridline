@@ -215,7 +215,7 @@ void maximusRecord(ByteWriter& w, const std::vector<CurvePt>& pts) {
     w.f64(pts[i].x - prev);
     w.f64(pts[i].y);
     w.f32(pts[i].t);
-    w.u8(static_cast<uint8_t>(std::clamp(pts[i].type, 0, 2)));  // point shape
+    w.u8(static_cast<uint8_t>(std::clamp(pts[i].type, 0, 12)));  // point shape
     w.zeros(2);
     w.u8(i == 0 ? 0 : pts[i].t == 0 ? 2 : 1);  // segment: 2 straight, 1 curved
     prev = pts[i].x;
@@ -316,7 +316,7 @@ Encoder maximus() {
       for (size_t i = 0; same && i < pts.size(); ++i) {
         const CurvePt& c = cur[i == pts.size() - 1 ? cur.size() - 1 : i];
         same = static_cast<float>(c.x) == static_cast<float>(pts[i].x) && static_cast<float>(c.y) == static_cast<float>(pts[i].y) &&
-               c.t == pts[i].t && std::clamp(c.type, 0, 2) == pts[i].type;
+               c.t == pts[i].t && std::clamp(c.type, 0, 12) == pts[i].type;
       }
       if (same) continue;
       ByteWriter w;
@@ -365,6 +365,10 @@ Encoder maximus() {
       f.push_back(field(dy::MsRef0 + dy::MrSolo, opt + 0x13, Type::U8, 0, 1));
       if (ver >= 6) f.push_back(field(dy::MsRef0 + dy::MrMasterMid, opt + 0x20, Type::U8, 0, 1));
       if (ver >= 7) f.push_back(field(dy::MsRef0 + dy::MrFir, opt + 0x21, Type::U8, 0, 1));
+      if (ver >= 14 && s.size() >= 4 + 506 + 8) {  // J-42: linear-phase quality / change speed after the block
+        f.push_back(i32(dy::MsRef0 + dy::MrLinQuality, 4 + 506, 0, 5));
+        f.push_back(i32(dy::MsRef0 + dy::MrLinSpeed, 4 + 506 + 4, 0, 3));
+      }
     }
     return f;
   };

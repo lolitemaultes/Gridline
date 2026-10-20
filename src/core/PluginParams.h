@@ -461,7 +461,9 @@ inline constexpr int TgTrigSync = TgSmooth + 10, TgDeclick = TgSmooth + 11, TgFr
 // κ3: 36-slot banks (kTgSlots), scratch offset, DC removal, attack compensation, HQ resampling, MIDI slot triggers.
 inline constexpr int TgScratch = TgSmooth + 13, TgDcRemove = TgSmooth + 14, TgCompensate = TgSmooth + 15, TgHq = TgSmooth + 16;
 inline constexpr int TgMidiTrigger = TgSmooth + 17;
-inline constexpr int TgCount = TgSmooth + 18;
+// J-42 reference engine (GrossBeatRef.h): model switch and the stored attack / release / scratch.
+inline constexpr int TgModel = TgSmooth + 18, TgRAttack = TgSmooth + 19, TgRRelease = TgSmooth + 20, TgRScratch = TgSmooth + 21;
+inline constexpr int TgCount = TgSmooth + 22;
 // "gl.maximizer" — three-band upward/downward compression + saturating ceiling
 enum Maximizer {
   MxLowFreq, MxHighFreq, MxLowGain, MxMidGain, MxHighGain, MxDrive, MxRelease, MxCeiling, MxLowCut,
@@ -495,7 +497,7 @@ enum LowLift {
   LlCount
 };
 // "gl.tuner" (pass-through, pitch display)
-enum Tuner { TnReference, TnReactivity, TnBassMode, TnDisplay, TnCount };
+enum Tuner { TnReference, TnReactivity, TnBassMode, TnDisplay, TnAverage /* J-42: display averaging */, TnCount };
 // "gl.utility"
 enum Utility {
   UtlGain, UtlPan, UtlWidth, UtlInvert, UtlSwap,

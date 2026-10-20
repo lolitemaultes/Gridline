@@ -17,6 +17,8 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include "../../engine/MEnv.h"
+#include "../../engine/Resample.h"
 #include "sfx_common.h"
 
 namespace gl::packs::spacefx::detail {
@@ -367,8 +369,277 @@ inline void applyEqCurve(IrBuf& ir, const std::vector<EnvPoint>& eq, double mix)
   }
 }
 
+// ------------------------------------------------- reference IR build (CvModel = 1)
+// J-42, spec analysis/demos/specs/j35_convolver.md: normalise (300 ms RMS peak
+// to 0.05) → pan / volume / separation envelopes → self-convolution, all at the
+// file rate; then per engine rate: stretch + rate conversion to stretch × rate,
+// EQ curve (zero-phase FIR from the smoothed curve, or a plain gain when the
+// curve is flat), trailing-silence trim. Pre-delay runs as an integer delay.
+namespace ref {
+
+// Point envelope with FL's segment shapes (shape and tension of the point ending a segment).
+struct EnvEval {
+  const std::vector<EnvPoint>* p = nullptr;
+  std::vector<menv::Coef> c;
+  explicit EnvEval(const std::vector<EnvPoint>& pts) : p(&pts) {
+    for (const EnvPoint& q : pts) c.push_back(menv::coef(static_cast<uint8_t>(std::clamp(q.c, 0, 12)), static_cast<float>(q.k)));
+  }
+  double at(double t) const {
+    const auto& v = *p;
+    if (v.empty()) return 0.5;
+    if (t < v.front().t) return v.front().v;
+    if (t >= v.back().t) return v.back().v;
+    size_t i = static_cast<size_t>(std::upper_bound(v.begin(), v.end(), t, [](double x, const EnvPoint& q) { return x < q.t; }) - v.begin());
+    const EnvPoint& a = v[i - 1];
+    const EnvPoint& b = v[i];
+    const double span = b.t - a.t;
+    const double f = span > 0 ? (t - a.t) / span : 1.0;
+    const uint8_t mode = static_cast<uint8_t>(std::clamp(b.c, 0, 12));
+    return a.v + (b.v - a.v) * menv::shape(mode, c[i], f);
+  }
+};
+
+inline bool flatAt(const std::vector<EnvPoint>& e, double v) {
+  for (const EnvPoint& q : e)
+    if (static_cast<float>(q.v) != static_cast<float>(v)) return false;
+  return true;
+}
+
+// Pan / gain / separation → 2×2 matrix [LL, RR, RL, LR] (constant power ×√2 with a fold,
+// separation cross-feed), the same law as the Delay Bank feedback matrix.
+inline void sepPan(double p, double g, double sp, float m[4]) {
+  if (p == 0 && sp == 0) {
+    m[0] = m[1] = static_cast<float>(g), m[2] = m[3] = 0;
+    return;
+  }
+  if (g == 0) {
+    m[0] = m[1] = m[2] = m[3] = 0;
+    return;
+  }
+  const float sq2 = static_cast<float>(1.0 / std::sin(kPi / 4));
+  const float th = static_cast<float>((1.0 + p) * kPi / 4);
+  const float L = static_cast<float>(std::cos(th) * g * sq2), R = static_cast<float>(std::sin(th) * g * sq2);
+  float cL = 0, cR = 0;
+  if (p > 0) cR = static_cast<float>(1.0 - L / g);
+  else cL = static_cast<float>(1.0 - R / g);
+  if (sp != 0) {
+    const float t = sp > 0 ? static_cast<float>(std::exp(sp * std::log(5.0)) - 1.0) * 0.25f : static_cast<float>(sp);
+    cL = std::min(cL + t, 1.f), cR = std::min(cR + t, 1.f);
+  }
+  m[2] = L * (cL / 2), m[0] = L * (1 - cL / 2);
+  m[3] = R * (cR / 2), m[1] = R * (1 - cR / 2);
+}
+
+// Linear convolution y = a ∗ b (full length a + b − 1), float FFT.
+inline std::vector<float> convolve(const std::vector<float>& a, const std::vector<float>& b) {
+  if (a.empty() || b.empty()) return {};
+  const size_t full = a.size() + b.size() - 1;
+  int n = 2;
+  while (static_cast<size_t>(n) < full) n <<= 1;
+  Fft f;
+  f.init(n);
+  std::vector<float> x(static_cast<size_t>(2 * n), 0.f), y(static_cast<size_t>(2 * n), 0.f);
+  for (size_t i = 0; i < a.size(); ++i) x[2 * i] = a[i];
+  for (size_t i = 0; i < b.size(); ++i) y[2 * i] = b[i];
+  f.run(x.data(), false);
+  f.run(y.data(), false);
+  for (int k = 0; k < n; ++k) {
+    const size_t r = static_cast<size_t>(2 * k), im = r + 1;
+    const double xr = x[r], xi = x[im], yr = y[r], yi = y[im];
+    x[r] = static_cast<float>(xr * yr - xi * yi);
+    x[im] = static_cast<float>(xr * yi + xi * yr);
+  }
+  f.run(x.data(), true);
+  std::vector<float> out(full);
+  const double inv = 1.0 / n;
+  for (size_t i = 0; i < full; ++i) out[i] = static_cast<float>(x[2 * i] * inv);
+  return out;
+}
+
+// Normalise: peak of a causal 300 ms RMS (both channels) brought to 0.05.
+inline void normalise(IrBuf& ir) {
+  const size_t L = ir.len();
+  if (L == 0) return;
+  const long w = std::max(1L, static_cast<long>(std::nearbyint(300.0 * ir.rate * 0.001)));
+  double sum = 0, peak = 0;
+  const std::vector<float>& l = ir.p[0];
+  const std::vector<float>& r = ir.p[1];
+  for (size_t i = 0; i < L; ++i) {
+    sum += static_cast<double>(l[i]) * l[i] + static_cast<double>(r[i]) * r[i];
+    if (static_cast<long>(i) >= w) {
+      const size_t o = i - static_cast<size_t>(w);
+      sum -= static_cast<double>(l[o]) * l[o] + static_cast<double>(r[o]) * r[o];
+    }
+    peak = std::max(peak, std::sqrt(std::max(0.0, sum / (2.0 * static_cast<double>(w)))));
+  }
+  if (peak <= 0) return;
+  const float g = static_cast<float>(0.05 / peak);
+  for (int p = 0; p < 2; ++p)
+    for (float& v : ir.p[p]) v *= g;
+}
+
+// Pan (0), volume (1) and separation (2) envelopes, time = seconds of the source file.
+inline void envelopes(IrBuf& ir, const ConvData& cd) {
+  const bool pan = !cd.pan.empty() && !flatAt(cd.pan, 0.5), vol = !cd.env.empty() && !flatAt(cd.env, 0.5),
+             sep = !cd.sep.empty() && !flatAt(cd.sep, 0.5);
+  if (!pan && !vol && !sep) return;
+  const EnvEval ep(cd.pan), ev(cd.env), es(cd.sep);
+  float m[4];
+  for (size_t i = 0; i < ir.len(); ++i) {
+    const double t = static_cast<double>(i) / ir.rate;
+    const double p = pan ? 2.0 * (static_cast<float>(ep.at(t)) - 0.5) : 0.0;
+    const double g = vol ? 2.0 * static_cast<float>(ev.at(t)) : 1.0;
+    const double sp = sep ? 2.0 * (static_cast<float>(es.at(t)) - 0.5) : 0.0;
+    sepPan(p, g, sp, m);
+    const float l = ir.p[0][i], r = ir.p[1][i];
+    ir.p[0][i] = m[0] * l + m[2] * r;
+    ir.p[1][i] = m[1] * r + m[3] * l;
+  }
+}
+
+// IR' = (1 − s/2)·IR + (s/2)·(IR ∗ IR)/‖IR‖ (largest channel L2 norm), cropped to the IR length.
+inline void selfConvolution(IrBuf& ir, double s) {
+  if (s == 0 || ir.len() == 0) return;
+  double n2 = 0;
+  for (int p = 0; p < 2; ++p) n2 = std::max(n2, energy(ir.p[p]));
+  const double g = n2 > 0 ? 1.0 / std::sqrt(n2) : 1.0;
+  const float dry = static_cast<float>(1.0 - 0.5 * s), wet = static_cast<float>(0.5 * s * g);
+  for (int p = 0; p < 2; ++p) {
+    std::vector<float> y = convolve(ir.p[p], ir.p[p]);
+    for (size_t i = 0; i < ir.len(); ++i) ir.p[p][i] = dry * ir.p[p][i] + wet * y[i];
+  }
+}
+
+// EQ-curve gain law: (3^(2v) − 1) / 2 (0.5 → 0 dB).
+inline float eqGain(double v) {
+  if (2.0 * v == 1.0) return 1.f;
+  const float ln3 = 1.0986123f;
+  return static_cast<float>((std::exp(static_cast<double>(static_cast<float>(2.0 * v) * ln3)) - 1.0) * 0.5);
+}
+// Frequency (Hz) → curve position 0..1 (log above 130.81 Hz, linear below).
+inline double eqX(double f) {
+  const double f0 = 440.0 * std::pow(2.0, (36.0 - 57.0) / 12.0), f1 = 22050.0;
+  const double x0 = std::log(2.0) / std::log(2.0 * f1 / f0), K = f1 / f0;
+  if (f < f0) return f * x0 / f0;
+  return x0 + (1.0 - x0) * std::log(1.0 + (f - f0) * K / (f1 - f0)) / std::log(1.0 + K);
+}
+
+// Zero-phase FIR (length M, centre M/2) from a magnitude curve G[0..M/2] (Hann over M + 2 points).
+inline std::vector<float> firFromCurve(const std::vector<double>& G) {
+  const int N = static_cast<int>(G.size()) - 1, M = 2 * N;
+  Fft f;
+  f.init(M);
+  std::vector<float> a(static_cast<size_t>(2 * M), 0.f);
+  for (int k = 0; k <= N; ++k) a[static_cast<size_t>(2 * k)] = static_cast<float>(G[static_cast<size_t>(k)]);
+  for (int k = 1; k < N; ++k) a[static_cast<size_t>(2 * (M - k))] = static_cast<float>(G[static_cast<size_t>(k)]);
+  f.run(a.data(), true);
+  std::vector<float> h(static_cast<size_t>(M));
+  for (int n = 0; n < M; ++n) {
+    const double v = a[static_cast<size_t>(2 * ((n + M / 2) % M))] / static_cast<double>(M);
+    const double w = 0.5 - 0.5 * std::cos(kTwoPi * (n + 1) / (M + 1.0));
+    h[static_cast<size_t>(n)] = static_cast<float>(v * w);
+  }
+  return h;
+}
+
+// Spectral smoothing kernel of the EQ curve: Gaussian response exp(−½(k/σ)²), σ = 0.25·65537/128,
+// designed as a 131072-point zero-phase FIR (taps below 1e-12 of the peak dropped).
+inline const std::vector<double>& smoothKernel() {
+  static const std::vector<double> k = [] {
+    const int N = 65536;
+    const double sk = 0.25 * 65537.0 / 128.0;
+    std::vector<double> G(static_cast<size_t>(N + 1));
+    for (int i = 0; i <= N; ++i) G[static_cast<size_t>(i)] = std::exp(-0.5 * (i / sk) * (i / sk));
+    std::vector<float> h = firFromCurve(G);
+    const int c = N;
+    double mx = h[static_cast<size_t>(c)];
+    int r = 0;
+    while (r + 1 < N && std::fabs(h[static_cast<size_t>(c + r + 1)]) > 1e-12 * mx) ++r;
+    std::vector<double> out(static_cast<size_t>(2 * r + 1));
+    for (int i = -r; i <= r; ++i) out[static_cast<size_t>(i + r)] = h[static_cast<size_t>(c + i)];
+    return out;
+  }();
+  return k;
+}
+
+// EQ curve on an IR at rate R' (= stretch × engine rate), r = stretch.
+inline void eqCurve(IrBuf& ir, const std::vector<EnvPoint>& eq, double mix, double rp, double r) {
+  if (eq.empty() || ir.len() == 0) return;
+  if (flatAt(eq, eq.front().v)) {
+    if (2.0 * static_cast<float>(eq.front().v) == 1.0) return;
+    const float g = eqGain(static_cast<float>(eq.front().v));
+    for (int p = 0; p < 2; ++p)
+      for (float& v : ir.p[p]) v *= g;
+    return;
+  }
+  if (mix <= 0) return;
+  int lg = 1;
+  const double n2 = std::nearbyint(2.0 * rp);
+  while (static_cast<double>(1L << lg) < n2) ++lg;
+  lg = std::clamp(lg, 4, 20);
+  const int N = 1 << lg;
+  const EnvEval ev(eq);
+  std::vector<double> G(static_cast<size_t>(N + 1));
+  for (int i = 0; i <= N; ++i) {
+    const double f = static_cast<double>(static_cast<float>(i * rp / (N * 22050.0 * r * 2.0))) * 22050.0;
+    G[static_cast<size_t>(i)] = eqGain(static_cast<float>(ev.at(eqX(f))));
+  }
+  // Spectral smoothing (curve padded with its end values).
+  const std::vector<double>& sk = smoothKernel();
+  const int R = static_cast<int>(sk.size() / 2);
+  std::vector<double> Gs(G.size());
+  for (int i = 0; i <= N; ++i) {
+    double acc = 0;
+    for (int j = -R; j <= R; ++j) acc += sk[static_cast<size_t>(j + R)] * G[static_cast<size_t>(std::clamp(i - j, 0, N))];
+    Gs[static_cast<size_t>(i)] = acc;
+  }
+  const std::vector<float> h = firFromCurve(Gs);
+  const size_t half = static_cast<size_t>(N);  // M / 2
+  const float dry = static_cast<float>(1.0 - mix), wet = static_cast<float>(mix);
+  for (int p = 0; p < 2; ++p) {
+    std::vector<float> y = convolve(ir.p[p], h);
+    for (size_t j = 0; j < ir.len(); ++j) ir.p[p][j] = dry * ir.p[p][j] + wet * y[j + half];
+  }
+}
+
+// Drops trailing frames below 2^-24 on both channels.
+inline void trimTail(IrBuf& ir) {
+  const float eps = 1.0f / 16777216.0f;
+  size_t n = ir.len();
+  while (n > 0 && std::fabs(ir.p[0][n - 1]) < eps && std::fabs(ir.p[1][n - 1]) < eps) --n;
+  for (int p = 0; p < 2; ++p) ir.p[p].resize(n);
+}
+
+// File-rate part of the chain.
+inline void buildSource(IrBuf& ir, const PluginState& s) {
+  ir.paths = 2;
+  for (int p = 2; p < 4; ++p) ir.p[p].clear();
+  const ConvData cd = parseConvData(s.data);
+  if (pb(s, CvNormalize)) normalise(ir);
+  envelopes(ir, cd);
+  selfConvolution(ir, clampd(pv(s, CvSelfConv, 0), 0, 1));
+}
+
+// Engine-rate part: stretch + conversion, EQ, tail trim.
+inline void buildForRate(IrBuf& ir, const PluginState& s, double rate) {
+  const double r = clampd(pv(s, CvStretch, 1), 0.5, 2.0), rp = r * rate;
+  if (const size_t len = ir.len(); len > 0 && std::fabs(rp - ir.rate) > 1e-9)  // len: read before p[0] changes
+    for (int p = 0; p < 2; ++p) ir.p[p] = resampleChannel(ir.p[p].data(), len, ir.rate, rp, 64);
+  ir.rate = rp;
+  const ConvData cd = parseConvData(s.data);
+  eqCurve(ir, cd.eq, clampd(pv(s, CvEqMix, 1), 0, 1), rp, r);
+  trimTail(ir);
+  ir.rate = rate;  // played at the engine rate
+}
+
+}  // namespace ref
+
 // Applies the editing pipeline to a raw IR (see header comment).
 inline void editIr(IrBuf& ir, const PluginState& s, double maxSeconds) {
+  if (pi(s, CvModel, 0) == 1) {
+    ref::buildSource(ir, s);
+    return;
+  }
   const ConvData cd = parseConvData(s.data);
   // Start trim.
   size_t start = static_cast<size_t>(pv(s, CvStart, 0) * 0.001 * ir.rate);
@@ -484,6 +755,8 @@ inline void buildKernel(const IrBuf& ir, ConvKernel& k) {
 // ---------------------------------------------------------------- caching
 struct IrCacheEntry {
   std::string key;
+  bool reference = false;  // CvModel 1: buildForRate per engine rate
+  PluginState state;       // the state the entry was built from (reference build)
   IrView view;
   IrBuf edited;  // at native rate
   std::map<long, std::shared_ptr<const IrData>> kernels;  // by rounded rate
@@ -505,7 +778,8 @@ inline std::string irKey(const PluginState& s) {
                 pb(s, CvReverse) ? 1 : 0, pv(s, CvStretch, 1), pv(s, CvLowCut, 20), pv(s, CvHighCut, 20000), pv(s, CvSelfConv),
                 pb(s, CvNormalize) ? 1 : 0, pi(s, CvStereo, 1));
   char ext[96];
-  std::snprintf(ext, sizeof ext, "|%.4f|%d|%d", pv(s, CvEqMix, 1), pb(s, CvEnvOn) ? 1 : 0, pi(s, CvStretchMode, 0));
+  std::snprintf(ext, sizeof ext, "|%.6f|%d|%d|%d|%.7f", pv(s, CvEqMix, 1), pb(s, CvEnvOn) ? 1 : 0, pi(s, CvStretchMode, 0), pi(s, CvModel, 0),
+                pv(s, CvStretch, 1));
   std::string d = s.data;
   if (pi(s, CvSource, SrcHall) != SrcFile) {  // generated spaces ignore the path line
     size_t nl = d.find('\n');
@@ -525,6 +799,8 @@ inline IrCacheEntry* irEntry(const PluginState& s) {
     }
   IrCacheEntry e;
   e.key = key;
+  e.reference = pi(s, CvModel, 0) == 1;
+  if (e.reference) e.state = s;
   int src = std::clamp(pi(s, CvSource, SrcHall), 0, SrcCount - 1);
   bool trueStereo = pi(s, CvStereo, 1) == 1;
   IrBuf raw;
@@ -578,8 +854,12 @@ inline std::shared_ptr<const IrData> irKernel(IrCacheEntry& e, double rate) {
   auto it = e.kernels.find(rk);
   if (it != e.kernels.end()) return it->second;
   IrBuf r = e.edited;
-  resampleIr(r, rate / r.rate);
-  r.rate = rate;
+  if (e.reference) {
+    ref::buildForRate(r, e.state, rate);
+  } else {
+    resampleIr(r, rate / r.rate);
+    r.rate = rate;
+  }
   auto d = std::make_shared<IrData>();
   d->path = kIrTag;
   d->sampleRate = rate;
@@ -833,7 +1113,8 @@ class ConvolverFx final : public Effect {
     const float dry = pv(s, CvDry, 1), wet = pv(s, CvWet, 0.35f);
     const float inW = pv(s, CvInWidth, 1), outW = pv(s, CvWidth, 1);
     const bool mono = pi(s, CvStereo, 1) == 2;
-    const double preD = std::max(0.0, pv(s, CvPreDelay, 0) * 0.001 * sr);
+    double preD = std::max(0.0, pv(s, CvPreDelay, 0) * 0.001 * sr);
+    if (pi(s, CvModel, 0) == 1) preD = std::nearbyint(preD);  // reference: whole samples
     // Tempo-synced length: fade the tail out partition by partition.
     const bool sync = computeGains(s, ctx, k);
     ConvStage& c = *c_;

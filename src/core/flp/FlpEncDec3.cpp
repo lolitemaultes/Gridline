@@ -17,6 +17,7 @@
 #include <vector>
 #include "../../packs/dynamics/dynamics.h"
 #include "../../packs/modulation/modulation.h"
+#include "../../packs/spacefx/sfx_mbd.h"
 #include "../../packs/spacefx/spacefx.h"
 #include "../../packs/utility/utility.h"
 #include "../PluginParams.h"
@@ -88,10 +89,11 @@ Encoder peakController() {
   };
   e.fields = [](const Bytes&) {
     return std::vector<Field>{
-        i32(mod::PkBase, 0, 0, 65536),     i32(mod::PkAmount, 4, -256, 256), i32(mod::PkTension, 8, -128, 128),
-        i32(mod::PkDecay, 12, 5, 128),     i32(mod::LfBase, 16, 0, 65536),   i32(mod::LfAmount, 20, -256, 256),
-        i32(mod::LfTension, 24, -128, 128), i32(mod::LfRate, 28, 200, 65536), i32(mod::LfShape, 32, 0, 4),
-        i32(mod::LfPhase, 36, 0, 65535),   field(mod::PkMute, 40, Type::U8, 0, 1), field(mod::PkRamp, 41, Type::U8, 0, 1)};
+        // J-42: the reference model keeps the stored integers.
+        i32(mod::PkRBase, 0, 0, 65536),     i32(mod::PkRAmount, 4, -256, 256), i32(mod::PkRTension, 8, -128, 128),
+        i32(mod::PkRDecay, 12, 5, 128),     i32(mod::LfRBase, 16, 0, 65536),   i32(mod::LfRAmount, 20, -256, 256),
+        i32(mod::LfRTension, 24, -128, 128), i32(mod::LfRSpeed, 28, 200, 65536), i32(mod::LfShape, 32, 0, 4),
+        i32(mod::LfRPhase, 36, 0, 65535),   field(mod::PkMute, 40, Type::U8, 0, 1), field(mod::PkRamp, 41, Type::U8, 0, 1)};
   };
   return e;
 }
@@ -150,7 +152,7 @@ Encoder tuner() {
     return w.b;
   };
   e.fields = [](const Bytes&) {
-    return std::vector<Field>{i32(pp::TnReactivity, 4, 0, 6000), i32(pp::TnBassMode, 12, 0, 1), i32(pp::TnDisplay, 16, 1, 2)};
+    return std::vector<Field>{i32(pp::TnReactivity, 4, 0, 6000), i32(pp::TnAverage, 8, 0, 1), i32(pp::TnBassMode, 12, 0, 1), i32(pp::TnDisplay, 16, 1, 2)};
   };
   return e;
 }
@@ -482,6 +484,20 @@ Encoder multibandDelay() {
     if (b.size() < 8 || rdU32(b, 4) < 392 || b.size() < mbdAt(static_cast<int>(rdU32(b, 4)))) return;
     PluginState cur;
     if (!decoded("Multiband Delay", b, c, cur)) return;
+    if (prm(g, sfx::BdModel) >= 0.5f) {  // J-42 band-delay model: the 384 band values verbatim
+      if (cur.data == g.data) return;
+      const size_t at = g.data.find("mbd8");
+      if (at == std::string::npos) return;
+      const char* p = g.data.c_str() + at + 4;
+      for (int i = 0; i < 384; ++i) {  // doubles: the stored integers survive the text round trip
+        char* end = nullptr;
+        const double v = std::strtod(p, &end);
+        if (end == p) break;
+        p = end;
+        putI32(b, mbdAt(i), static_cast<int32_t>(std::lround(std::clamp(v, 0.0, 1.0) * kMbdOne)));
+      }
+      return;
+    }
     // Maximum time: the ×0.1 range and the scale together (the scale alone
     // is a field). Each range is tried with its closest scale steps.
     const float wantTime = prm(g, sfx::BdMaxTime);
@@ -524,15 +540,17 @@ Encoder multibandDelay() {
       }
   };
   e.fields = [](const Bytes& b) {
-    const int bankA = std::min(6, std::clamp(rdI32(b, mbdAt(390)), 0, 7000) / 1000);
-    return std::vector<Field>{
-        i32(sfx::BdMaxTime, mbdAt(384), -6000, 6000),
-        i32(sfx::BdFeedback, mbdAt(386), 0, 6000),
-        i32(sfx::BdSmooth, mbdAt(387), 0, 6000),
-        i32(sfx::BdKeepPitch, mbdAt(389), 0, 1),
-        i32(sfx::BdMorph, mbdAt(390), bankA * 1000, bankA * 1000 + 999),
-        i32(sfx::BdDry, mbdAt(391), -128, 128),
-        i32(sfx::BdWet, mbdAt(391), -128, 128)};
+    // J-42: the band-delay model's engine values (decoded states always carry it).
+    const int n = static_cast<int>(rdU32(b, 4));
+    std::vector<Field> f = {i32(sfx::BdRScale, mbdAt(384), -6000, 6000), i32(sfx::BdRTenth, mbdAt(385), 0, 1),
+                            i32(sfx::BdRFeedback, mbdAt(386), 0, 6000),   i32(sfx::BdRSmooth, mbdAt(387), 0, 6000),
+                            i32(sfx::BdRMode, mbdAt(388), 0, 2),          i32(sfx::BdRKeep, mbdAt(389), 0, 1),
+                            i32(sfx::BdRMorph, mbdAt(390), 0, 7000),      i32(sfx::BdRMix, mbdAt(391), -128, 128),
+                            i32(sfx::BdRHarmonic, mbdAt(392), 0, 1)};
+    if (n > 393) f.push_back(i32(sfx::BdRWeight, mbdAt(393), 0, 1));
+    if (n > 394) f.push_back(i32(sfx::BdRHp, mbdAt(394), 1000, 100000));
+    if (n > 395) f.push_back(i32(sfx::BdRSat, mbdAt(395), 0, 2));
+    return f;
   };
   return e;
 }
@@ -964,6 +982,164 @@ Encoder phaseInverter() {
   return e;
 }
 
+// FL Studio Mobile Rack FX (J-42) ↔ gl.pocketrack: "SSLF" | u32 size | "10LF",
+// HEAD (f64 tempo), RACK (u32 0, "10KR", RHED, RPRM, FOUT, then one RMOd per
+// module: u32 size, u32 type, u32 id, HEAD, DESC, PRST, ADD1, PRMS (f32 × n),
+// SMPR (3 × f32), optional CSTM). write() rebuilds the module chunks from the
+// slots; a stored module of the same type keeps its own chunks (names, custom data).
+namespace rack {
+float rackParam(const gl::PluginState& s, int k) { return k >= 0 && static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : 0.0f; }
+void chunk(ByteWriter& w, const char* tag, const Bytes& data) {
+  w.bytes(tag, 4);
+  w.u32(static_cast<uint32_t>(data.size()));
+  w.bytes(data.data(), data.size());
+}
+struct Mod {
+  size_t at = 0, end = 0;  // RMOd chunk (tag offset, end)
+  uint32_t type = 0;
+};
+// Offsets of the RMOd chunks inside the RACK chunk; rackAt = RACK tag offset.
+bool scan(const Bytes& b, size_t& rackAt, std::vector<Mod>& mods, size_t& modsFrom) {
+  mods.clear();
+  rackAt = std::string::npos;
+  for (size_t q = 12; q + 8 <= b.size();) {
+    const uint32_t sz = rdU32(b, q + 4);
+    if (std::memcmp(b.data() + q, "RACK", 4) == 0) {
+      rackAt = q;
+      break;
+    }
+    q += 8 + sz;
+  }
+  if (rackAt == std::string::npos) return false;
+  const size_t rEnd = std::min(b.size(), rackAt + 8 + rdU32(b, rackAt + 4));
+  size_t q = rackAt + 8 + 8;  // u32 0, "10KR"
+  modsFrom = rEnd;
+  while (q + 8 <= rEnd) {
+    const uint32_t sz = rdU32(b, q + 4);
+    if (std::memcmp(b.data() + q, "RMOd", 4) == 0) {
+      if (modsFrom == rEnd) modsFrom = q;
+      mods.push_back({q, std::min(rEnd, q + 8 + sz), rdU32(b, q + 8)});
+    }
+    q += 8 + sz;
+  }
+  return true;
+}
+Bytes floats(const float* v, int n) {
+  ByteWriter w;
+  for (int i = 0; i < n; ++i) w.f32(v[i]);
+  return w.b;
+}
+// A module chunk for slot s (template = the stored chunk of the same type, or none).
+Bytes module(const gl::PluginState& g, int s, const Bytes* tpl, size_t tAt, size_t tEnd) {
+  namespace dy = gl::packs::dynamics;
+  auto P = [&](int f) { return rackParam(g, dy::pkParam(s, f)); };
+  const int type = static_cast<int>(std::lround(P(dy::PkType)));
+  float prm[dy::kPkParams];
+  for (int i = 0; i < dy::kPkParams; ++i) prm[i] = P(dy::PkP0 + i);
+  const float smpr[3] = {P(dy::PkPost), P(dy::PkMix), P(dy::PkPan)};
+  int count = dy::pocketModuleParamCount(type);
+  ByteWriter body;
+  body.u32(static_cast<uint32_t>(type));
+  if (tpl) {
+    body.u32(rdU32(*tpl, tAt + 12));
+    for (size_t q = tAt + 16; q + 8 <= tEnd;) {
+      const uint32_t sz = rdU32(*tpl, q + 4);
+      const Bytes data(tpl->begin() + static_cast<std::ptrdiff_t>(q + 8), tpl->begin() + static_cast<std::ptrdiff_t>(std::min(tEnd, q + 8 + sz)));
+      if (std::memcmp(tpl->data() + q, "PRMS", 4) == 0) {
+        count = std::max(count, static_cast<int>(sz / 4));
+        chunk(body, "PRMS", floats(prm, std::min(count, dy::kPkParams)));
+      } else if (std::memcmp(tpl->data() + q, "SMPR", 4) == 0) {
+        chunk(body, "SMPR", floats(smpr, 3));
+      } else {
+        char tag[4];
+        std::memcpy(tag, tpl->data() + q, 4);
+        body.bytes(tag, 4);
+        body.u32(sz);
+        body.bytes(data.data(), data.size());
+      }
+      q += 8 + sz;
+    }
+  } else {
+    body.u32(static_cast<uint32_t>(s + 1));
+    ByteWriter h;
+    h.u32(static_cast<uint32_t>(type)), h.u32(0), h.u8(1);
+    chunk(body, "HEAD", h.b);
+    Bytes desc(516, 0);
+    std::memcpy(desc.data(), "Default", 7), std::memcpy(desc.data() + 256, "Default", 7);
+    chunk(body, "DESC", desc);
+    ByteWriter pr;
+    const std::string path = "Default\\Default";
+    pr.u32(0), pr.u32(static_cast<uint32_t>(path.size())), pr.bytes(path.data(), path.size());
+    chunk(body, "PRST", pr.b);
+    chunk(body, "ADD1", Bytes{0, 0, 0x7f});
+    chunk(body, "PRMS", floats(prm, count));
+    chunk(body, "SMPR", floats(smpr, 3));
+  }
+  ByteWriter w;
+  chunk(w, "RMOd", body.b);
+  return w.b;
+}
+}  // namespace rack
+
+Encoder mobileRack() {
+  namespace dy = gl::packs::dynamics;
+  Encoder e = make("FL Studio Mobile Rack FX", "gl.pocketrack", 0);
+  e.defaults = [] {
+    ByteWriter rk;
+    rk.u32(0), rk.bytes("10KR", 4);
+    ByteWriter rh;
+    rh.u32(0xFFFFFFFFu), rh.u32(0), rh.u32(0), rh.u32(0xFFFFFFFFu);
+    rack::chunk(rk, "RHED", rh.b);
+    const float rp[6] = {0.85312f, 0.5f, 0, 0, 0.5f, 0};
+    rack::chunk(rk, "RPRM", rack::floats(rp, 6));
+    ByteWriter fo;
+    fo.u32(0xFFFFFFFFu), fo.u32(0);
+    rack::chunk(rk, "FOUT", fo.b);
+    ByteWriter body;
+    body.bytes("10LF", 4);
+    ByteWriter hd;
+    hd.f64(140.0);
+    rack::chunk(body, "HEAD", hd.b);
+    rack::chunk(body, "RACK", rk.b);
+    ByteWriter w;
+    w.bytes("SSLF", 4), w.u32(static_cast<uint32_t>(body.b.size())), w.bytes(body.b.data(), body.b.size());
+    return w.b;
+  };
+  e.write = [](const gl::PluginState& g, Bytes& b, const EncodeContext& c) {
+    gl::PluginState cur;
+    if (decoded("FL Studio Mobile Rack FX", b, c, cur) && cur.params == g.params) return;
+    size_t rackAt = 0, modsFrom = 0;
+    std::vector<rack::Mod> mods;
+    if (b.size() < 12 || std::memcmp(b.data(), "SSLF", 4) != 0 || !rack::scan(b, rackAt, mods, modsFrom)) return;
+    const size_t rEnd = std::min(b.size(), rackAt + 8 + rdU32(b, rackAt + 4));
+    ByteWriter mw;
+    for (int s = 0, k = 0; s < dy::kPkSlots; ++s) {
+      const int type = static_cast<int>(std::lround(rack::rackParam(g, dy::pkParam(s, dy::PkType))));
+      if (type <= 0) continue;
+      const rack::Mod* t = k < static_cast<int>(mods.size()) && mods[static_cast<size_t>(k)].type == static_cast<uint32_t>(type) ? &mods[static_cast<size_t>(k)] : nullptr;
+      const Bytes m = rack::module(g, s, t ? &b : nullptr, t ? t->at : 0, t ? t->end : 0);
+      mw.bytes(m.data(), m.size());
+      ++k;
+    }
+    for (size_t k = static_cast<size_t>(dy::kPkSlots); k < mods.size(); ++k)  // modules beyond the slots stay
+      mw.bytes(b.data() + mods[k].at, mods[k].end - mods[k].at);
+    // Rack payload before the modules + new modules (+ whatever followed the last module).
+    Bytes rackBody(b.begin() + static_cast<std::ptrdiff_t>(rackAt + 8), b.begin() + static_cast<std::ptrdiff_t>(modsFrom));
+    rackBody.insert(rackBody.end(), mw.b.begin(), mw.b.end());
+    const size_t tailFrom = mods.empty() ? modsFrom : mods.back().end;
+    rackBody.insert(rackBody.end(), b.begin() + static_cast<std::ptrdiff_t>(tailFrom), b.begin() + static_cast<std::ptrdiff_t>(rEnd));
+    Bytes out(b.begin(), b.begin() + static_cast<std::ptrdiff_t>(rackAt));
+    ByteWriter rw;
+    rack::chunk(rw, "RACK", rackBody);
+    out.insert(out.end(), rw.b.begin(), rw.b.end());
+    out.insert(out.end(), b.begin() + static_cast<std::ptrdiff_t>(rEnd), b.end());
+    const uint32_t body = static_cast<uint32_t>(out.size() - 8);
+    for (int i = 0; i < 4; ++i) out[static_cast<size_t>(4 + i)] = static_cast<uint8_t>(body >> (8 * i));
+    b = out;
+  };
+  return e;
+}
+
 }  // namespace
 
 void registerDec3(std::vector<Encoder>& v) {
@@ -989,11 +1165,7 @@ void registerDec3(std::vector<Encoder>& v) {
   v.push_back(make("VFX Sequencer", "gl.notesq", 0));       // pattern bank not decoded: FL defaults
   v.push_back(dashboard());
   v.push_back(soundfont());
-  {
-    // The rack's Gridline type is its first module's: any type (no settings decoded).
-    Encoder e = make("FL Studio Mobile Rack FX", "", -1);
-    v.push_back(e);
-  }
+  v.push_back(mobileRack());
   v.push_back(make("Fruity Mute 2", "gl.mute", 0));  // no stored setting decoded: FL defaults
   v.push_back(phaseInverter());
   v.push_back(make("Wasp", "gl.analog", -1, true));

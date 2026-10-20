@@ -586,7 +586,8 @@ void testEmphasizer() {
          "emphasizer: version 2 decodes exactly onto the peak emphasis model");
   Blob v1;
   v1.ints({1, 0, 5013, 0, 0, 0}).u8(0);
-  expect(decodeFx("Emphasizer", v1.b, m) && !m.exact, "emphasizer: version 1 (output default unverified) stays approximate");
+  expect(decodeFx("Emphasizer", v1.b, m) && m.exact && near(P(m, dy::EnPeakOut), (std::sqrt(11.0) - 1.0) / 10.0, 1e-6),
+         "emphasizer: version 1 loads the output wheel default (J-42: -12.7 dB)");
   PluginState s = state("gl.enhance", {{dy::EnCustom, 2.f}, {dy::EnPeakIn, 18.f}, {dy::EnPeakEmph, 0.f}});
   Buf o = run(s, sine(200, 1.0, 0.5));
   std::printf("# emphasizer: peak %.4f with +18 dB in\n", peak(o, 24000));

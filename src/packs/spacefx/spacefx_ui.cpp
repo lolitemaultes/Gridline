@@ -12,6 +12,7 @@
 #include "sfx_skin.h"
 #include "sfx_widgets.h"
 #include "sfx_flcurves.h"
+#include "sfx_mbd.h"
 #include "spacefx.h"
 
 namespace gl::ed {
@@ -979,9 +980,73 @@ const skin::Skin& bdSkin() {
   return k;
 }
 
+// J-42: band-delay model — engine controls plus the 16 bands of the bank
+// nearest the morph position (drag a bar to draw delay / volume / pan).
+void editorBandDelayRef(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  static std::map<uint64_t, int> targetSel;
+  int& target = targetSel[t.key()];
+  pui::beginSection("Band delays", width - 16);
+  const int ks[] = {BdRScale, BdRTenth, BdRFeedback, BdRSmooth, BdRKeep, BdRMorph, BdRMix, BdRHarmonic, BdRWeight, BdRHp};
+  const char* kn[] = {"Scale", "x0.1", "Feedback", "Smooth", "Keep pitch", "Morph", "Dry/wet", "Harmonic", "Weighted", "High pass"};
+  for (int i = 0; i < 10; ++i) {
+    if (i) ImGui::SameLine();
+    pui::knobCell(a, t, ks[i], kn[i], 62, 14);
+  }
+  pui::choiceButtons(a, t, BdRMode, 260);
+  ImGui::SameLine();
+  pui::choiceButtons(a, t, BdRSat, 200);
+  static const char* tn[3] = {"Delay", "Volume", "Pan"};
+  for (int k = 0; k < 3; ++k) {
+    if (k) ImGui::SameLine();
+    if (ImGui::RadioButton(tn[k], target == k)) target = k;
+  }
+  float v[mbd::kVals];
+  mbd::parseBanks(st.data, v);
+  const int bank = std::clamp(static_cast<int>(std::lround(7.0 * val(st, BdRMorph))), 0, 7);
+  const ImVec2 p0 = ImGui::GetCursorScreenPos(), size(std::max(200.f, width - 40), 140);
+  ImGui::InvisibleButton("##bands", size);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  pui::displayFrame(dl, p0, ImVec2(p0.x + size.x, p0.y + size.y));
+  const float bw = size.x / mbd::kBands;
+  for (int u = 0; u < mbd::kBands; ++u) {
+    const float y = v[(bank * 3 + target) * mbd::kBands + u];
+    const float x0 = p0.x + u * bw + 2, x1 = p0.x + (u + 1) * bw - 2, yb = p0.y + size.y - 2, yt = yb - y * (size.y - 4);
+    dl->AddRectFilled(ImVec2(x0, std::min(yt, yb - 1)), ImVec2(x1, yb), theme::withAlpha(pal().accent, 0.85f));
+  }
+  if (ImGui::IsItemActive()) {
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    const int u = std::clamp(static_cast<int>((m.x - p0.x) / bw), 0, mbd::kBands - 1);
+    const float y = std::clamp(1.f - (m.y - p0.y) / size.y, 0.f, 1.f);
+    PluginState ns = st;
+    v[(bank * 3 + target) * mbd::kBands + u] = y;
+    size_t at = ns.data.find("\nmbd8");
+    if (at == std::string::npos) at = ns.data.find("mbd8");
+    std::string d = at == std::string::npos ? ns.data : ns.data.substr(0, at);
+    d += "\nmbd8";
+    char buf[24];
+    for (int i = 0; i < mbd::kVals; ++i) {
+      std::snprintf(buf, sizeof buf, " %.9g", static_cast<double>(v[i]));
+      d += buf;
+    }
+    ns.data = d;
+    setPluginState(a, t, ns, "draw bands", t.key() ^ 0xB0D);
+  }
+  char cap[64];
+  std::snprintf(cap, sizeof cap, "Bank %d  ·  %s", bank + 1, tn[target]);
+  pui::caption(cap);
+  pui::endSection();
+  ImGui::Spacing();
+  pui::choiceButtons(a, t, BdModel, 240);
+}
+
 void editorBandDelay(App& a, const PluginTarget& t, float width) {
   using namespace flskin;
   const PluginState st = *t.state(a.doc.song());
+  if (detail::pi(st, BdModel, 0) == 1) {
+    editorBandDelayRef(a, t, width);
+    return;
+  }
   BdUi& u = bdUi[t.key()];
   const skin::Skin& K = bdSkin();
   constexpr float kW = 560, kH = 290;

@@ -697,17 +697,16 @@ void testMobileRack() {
     if (!flp::importFlPreset(e.path().string(), r) || r.kind != flp::PresetResult::Plugin) continue;
     ++n;
     exact += r.exact;
-    if (r.state.type == "gl.reverb" && P(r.state, pp::RvbModel) == 2) {
+    // J-42: every rack decodes into the Pocket Rack with its modules' stored parameters.
+    if (r.state.type == "gl.pocketrack" && P(r.state, dy::pkParam(0, dy::PkType)) == 35) {
       ++reverb;
-      // Default / Reverb 2: high cut 5.4 kHz, low cut 706 Hz, size 100, decay 1.0 s, damping 2.0 kHz.
-      expect(P(r.state, pp::RvbFHighCut) == 54 && P(r.state, pp::RvbFLowCut) == 706 && P(r.state, pp::RvbFRoom) == 100 &&
-                 P(r.state, pp::RvbFDecay) == 10 && P(r.state, pp::RvbFDamp) == 20,
-             ("mobile rack reverb module: settings from its parameters (" + e.path().filename().string() + ")").c_str());
+      expect(std::fabs(P(r.state, dy::pkParam(0, dy::PkP0 + 1)) - 0.22561) < 1e-4 && P(r.state, dy::pkParam(0, dy::PkMix)) == 1,
+             ("mobile rack reverb module: parameters kept (" + e.path().filename().string() + ")").c_str());
     }
-    if (r.state.type == "gl.effector") multi += P(r.state, dy::EfModel) == 1 && std::lround(11 * P(r.state, dy::EfRawKind)) == 5;
+    if (r.state.type == "gl.pocketrack" && P(r.state, dy::pkParam(0, dy::PkType)) == 4) ++multi;
   }
-  std::printf("# FL Studio Mobile Rack FX: %d presets, %d exact (empty / neutral racks)\n", n, exact);
-  expect(n == 31 && exact >= 8 && reverb == 2 && multi == 1, "mobile rack: neutral racks exact, reverb and X/Y modules decoded");
+  std::printf("# FL Studio Mobile Rack FX: %d presets, %d exact\n", n, exact);
+  expect(n == 31 && exact >= 29 && reverb == 2 && multi == 1, "mobile rack: module racks decoded (29 of 31 exact: reference module engines)");
 }
 
 // ===================================================================== Delay Bank laws, Flangus contour
@@ -722,7 +721,7 @@ void testDelayBankFlangus() {
   ok = ok && near(m[0], 0.5, 1e-6) && near(m[1], 0.5, 1e-6) && near(m[2], 0.5, 1e-6) && near(m[3], 0.5, 1e-6);
   expect(ok, "delay bank: pan / separation matrices (constant power × √2 with fold)");
   expect(near(sf::flc::mdCutHz(1, 0), 44100 * 0.003, 1e-9), "delay bank: filter scale 44100 Hz per unit");
-  if (haveFl()) {  // every preset but the one with 2x oversampling (resampler not studied)
+  if (haveFl()) {  // J-42: the 2x oversampled preset too (reference resampler)
     int n = 0, ex = 0;
     for (const auto& e : fs::recursive_directory_iterator(fs::path(kFlFx) / "Fruity Delay Bank")) {
       if (e.path().extension() != ".fst") continue;
@@ -730,7 +729,7 @@ void testDelayBankFlangus() {
       ++n;
       if (flp::importFlPreset(e.path().string(), r) && r.exact) ++ex;
     }
-    expect(n == 21 && ex == 20, "delay bank: 20 of 21 shipped presets exact (one oversampled)");
+    expect(n == 21 && ex == 21, "delay bank: all 21 shipped presets exact (J-42: oversampling)");
   }
   // Flangus: decodes exactly; the first echo of an impulse comes at the minimum delay.
   Blob b;

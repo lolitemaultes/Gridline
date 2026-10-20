@@ -49,18 +49,25 @@ enum ConvParam {
   CvEnvOn,      // apply the IR amplitude envelope (points in PluginState::data)
   CvStretchMode,// Resample (pitch follows) / Keep pitch (spectral)
   CvLatency,    // samples, informational (reported, not applied)
+  // J-42: IR build model — 0 Gridline editing chain, 1 FL reference chain (normalise to a
+  // 300 ms RMS peak, pan / volume / separation envelopes, self-convolution, stretch + rate
+  // conversion, zero-phase EQ curve FIR, tail trim; spec j35_convolver.md). Old states → 0.
+  CvModel,
   CvCount
 };
 // Point envelope (IR amplitude: t = seconds, v 0..1 with 0.5 = unity, ×2 at 1;
 // EQ: t = 0..1 on a log 20 Hz .. 20 kHz axis, v 0.5 = 0 dB, ±18 dB at 1 / 0).
 struct EnvPoint {
   double t = 0, v = 0.5, k = 0;  // k = tension −1..1
+  int c = 0;                     // curve kind (FL point shape, reference build; 0 = single curve)
 };
 // PluginState::data of gl.convolver: line 1 = IR path; then (version 1)
 //   "#v 1", "#env t,v,k;t,v,k;…", "#eq x,v,k;…" (older states hold only the path).
+// J-42: "#pan" / "#sep" (reference build: the source IR's pan and stereo
+// separation envelopes, 0.5 = neutral), optional 4th point field = curve kind.
 struct ConvData {
   std::string path;
-  std::vector<EnvPoint> env, eq;
+  std::vector<EnvPoint> env, eq, pan, sep;
 };
 ConvData parseConvData(const std::string& data);
 std::string formatConvData(const ConvData& d);
@@ -105,6 +112,24 @@ enum MdFbModeRef { MfbNormal, MfbPingPong, MfbInvert, MfbOff };
 inline constexpr int kBdPoints = 32;  // curve points, log-spaced 20 Hz – 20 kHz
 enum BandTarget { BtDelay, BtFeedback, BtPan, BtLevel, BtCount };
 enum BandParam { BdMaxTime, BdSync, BdSyncTime, BdFeedback, BdSmooth, BdKeepPitch, BdMorph, BdLowCut, BdSat, BdDry, BdWet, BdCount };
+// J-42 reference model (BdModel = 1, sfx_mbd.h): 16 fixed bands, per-band delay lines,
+// 8 banks (data line "mbd8" + 384 values) — engine values 0..1 as the reference stores them.
+enum BandRefParam {
+  BdModel = BdCount,
+  BdRScale,     // 0.5 = 0; |2x − 1| = max time (1 s), x < 0.5 flips the band curve
+  BdRTenth,     // time × 0.1
+  BdRFeedback,  // feedback = 0.95 x (or decay time with weighting)
+  BdRSmooth,    // smoothing time x seconds
+  BdRMode,      // filter bank: < 1/3 gentle, < 2/3 steep, else linear phase
+  BdRKeep,      // keep pitch (tap cross-fades)
+  BdRMorph,     // bank 1 + 7 x
+  BdRMix,       // dry / wet cross-fade
+  BdRHarmonic,  // delay = one period around C5
+  BdRWeight,    // feedback as a decay time
+  BdRHp,        // wet high pass 10 · 100^x Hz
+  BdRSat,       // < 1/3 limiter, < 2/3 tanh, else clip
+  BdTotal
+};
 inline constexpr double kBdSyncBeats[] = {0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4};
 // Curves: [bank][target][point]; values 0..1 (pan: 0..1 maps to -1..1).
 struct BandCurves {

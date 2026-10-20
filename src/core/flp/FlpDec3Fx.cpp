@@ -63,7 +63,15 @@ bool decodePeakController(Context&, const std::vector<Event>& evs, PluginMapping
   gen2::set(m, mod::LfSync, 0);  // FL's LFO runs at a free rate
   gen2::set(m, mod::PkMute, b.u8(40) ? 1 : 0);
   gen2::set(m, mod::PkRamp, b.u8(41) ? 1 : 0);
-  m.exact = false;  // decay / LFO speed curves estimated; FL has no attack control
+  // J-42 reference model: the stored integers with the reference laws. Exact unless the
+  // LFO is audible with a shape whose table orientation is unverified (triangle, square,
+  // saw) or the noise table (random).
+  static const int kRaw[10] = {mod::PkRBase, mod::PkRAmount, mod::PkRTension, mod::PkRDecay, mod::LfRBase,
+                               mod::LfRAmount, mod::LfRTension, mod::LfRSpeed, mod::LfShape, mod::LfRPhase};
+  for (int k = 0; k < 10; ++k) gen2::set(m, kRaw[k], static_cast<double>(static_cast<int32_t>(b.u32(4 * static_cast<size_t>(k)))));
+  gen2::set(m, mod::PkModel, 1);
+  const int shape = static_cast<int32_t>(b.u32(32)), lfoAmt = static_cast<int32_t>(b.u32(20));
+  m.exact = lfoAmt == 0 || shape == 0;
   return true;
 }
 
@@ -118,7 +126,8 @@ bool decodeTuner(Context&, const std::vector<Event>& evs, PluginMapping& m) {
             v);
   gen2::set(m, TnDisplay, b.i32(16) == 2 ? 2 : 1);
   gen2::set(m, TnReference, 440);
-  m.exact = b.i32(8) != 0;  // the averaging option has no Gridline counterpart
+  gen2::set(m, TnAverage, b.i32(8) != 0 ? 1 : 0);  // J-42: display only (the audio passes unchanged)
+  m.exact = true;
   return true;
 }
 
@@ -273,7 +282,36 @@ bool decodeMultibandDelay(Context&, const std::vector<Event>& evs, PluginMapping
              {384, -6000, 6000, sfx::BdMaxTime, [](double x) { return mbdMaxTime(x, false); }}},
             byTag);
   gen2::set(m, sfx::BdMaxTime, mbdMaxTime(val(384), val(385) != 0));
-  m.exact = false;  // 8 banks → 2 (the morph position's pair), 16 bands resampled, time scale estimated
+  // J-42 reference model (sfx_mbd.h): every band value of the 8 banks and the
+  // engine values of tags 384..395 (tags past n keep the control defaults).
+  m.state.data += "\nmbd8";
+  char buf[24];
+  for (size_t i = 0; i < 384; ++i) {
+    std::snprintf(buf, sizeof buf, " %.9g", val(i) / 1073741824.0);
+    m.state.data += buf;
+  }
+  auto tag = [&](size_t i, double dflt) { return i < n ? val(i) : dflt; };
+  gen2::set(m, sfx::BdModel, 1);
+  gen2::set(m, sfx::BdRScale, clampd((tag(384, 0) + 6000) / 12000.0, 0, 1));
+  gen2::set(m, sfx::BdRTenth, clampd(tag(385, 0), 0, 1));
+  gen2::set(m, sfx::BdRFeedback, clampd(tag(386, 0) / 6000.0, 0, 1));
+  gen2::set(m, sfx::BdRSmooth, clampd(tag(387, 1500) / 6000.0, 0, 1));
+  gen2::set(m, sfx::BdRMode, clampd(tag(388, 0), 0, 2));
+  gen2::set(m, sfx::BdRKeep, clampd(tag(389, 0), 0, 1));
+  gen2::set(m, sfx::BdRMorph, clampd(tag(390, 0) / 7000.0, 0, 1));
+  gen2::set(m, sfx::BdRMix, clampd((tag(391, 128) + 128) / 256.0, 0, 1));
+  gen2::set(m, sfx::BdRHarmonic, clampd(tag(392, 0), 0, 1));
+  gen2::set(m, sfx::BdRWeight, clampd(tag(393, 0), 0, 1));
+  gen2::set(m, sfx::BdRHp, clampd((tag(394, 1000) - 1000) / 99000.0, 0, 1));
+  gen2::set(m, sfx::BdRSat, clampd(tag(395, 0), 0, 2));
+  // Band strip states (version ≥ 4: after 2 UI ints and the option bytes): off / locked bands are not modelled.
+  bool statesZero = true;
+  const uint32_t ver = b.u32(0);
+  if (ver >= 4) {
+    size_t at = 8 + 4 * static_cast<size_t>(n) + 8 + 1 + (ver >= 5 ? 1 : 0) + (ver >= 6 ? 1 : 0);
+    for (int k = 0; k < 48 && b.has(at, 4); ++k, at += 4) statesZero = statesZero && b.i32(at) == 0;
+  }
+  m.exact = statesZero;
   return true;
 }
 

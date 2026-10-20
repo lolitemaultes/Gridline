@@ -440,7 +440,7 @@ void testSpConvolver() {
     d.eq = {{0, 0.75, 0}, {1, 0.25, 0}};
     sx::ConvData r = sx::parseConvData(sx::formatConvData(d));
     expect(r.path == d.path && r.env.size() == 3 && jt::near(r.env[1].t, 1.5, 1e-9) && jt::near(r.env[2].k, -0.4, 1e-9) && r.eq.size() == 2 &&
-               sx::parseConvData("/old/path.wav").path == "/old/path.wav" && sx::formatConvData(sx::ConvData{"/p", {}, {}}) == "/p",
+               sx::parseConvData("/old/path.wav").path == "/old/path.wav" && sx::formatConvData(sx::ConvData{"/p", {}, {}, {}, {}}) == "/p",
            "convolver: envelope data round trip, old states unchanged");
     expect(jt::near(sx::envAt(d.env, 0.75), 0.5 * 0.25, 1e-9) && jt::near(sx::convEqDb(d.eq, 20), 9, 1e-9) && jt::near(sx::convEqDb(d.eq, 20000), -9, 1e-9),
            "convolver: envelope interpolation and EQ curve dB");
@@ -488,7 +488,7 @@ void testSpConvolver() {
     expect(jt::near(e, 1.0, 1e-3), "convolver: normalize gives unit energy");
     PluginState en = spConv(p);
     spSet(en, sx::CvEnvOn, 1);
-    en.data = sx::formatConvData(sx::ConvData{p, {{0, 0.5, 0}, {0.1, 0.5, 0}, {0.2, 0.125, 0}}, {}});
+    en.data = sx::formatConvData(sx::ConvData{p, {{0, 0.5, 0}, {0.1, 0.5, 0}, {0.2, 0.125, 0}}, {}, {}, {}});
     sx::IrView ve = sx::convolverIr(en);
     size_t q = static_cast<size_t>(0.25 * jt::kSr);
     expect(ve.ir && jt::near(ve.ir->left[0], 0.5, 1e-4) && jt::near(ve.ir->left[q], 0.5 * 0.25, 1e-4), "convolver: IR amplitude envelope (0.5 = unity)");
@@ -500,7 +500,7 @@ void testSpConvolver() {
       writeWav(pn, b, static_cast<int>(jt::kSr), 24);
     }
     PluginState eq = spConv(pn);
-    eq.data = sx::formatConvData(sx::ConvData{pn, {}, {{0, 0.5, 0}, {0.6, 0.5, 0}, {0.8, 0.0, 0}, {1, 0.0, 0}}});
+    eq.data = sx::formatConvData(sx::ConvData{pn, {}, {{0, 0.5, 0}, {0.6, 0.5, 0}, {0.8, 0.0, 0}, {1, 0.0, 0}}, {}, {}});
     PluginState eq0 = eq;
     spSet(eq0, sx::CvEqMix, 0);
     sx::IrView a = sx::convolverIr(eq), b = sx::convolverIr(eq0);
@@ -543,8 +543,8 @@ void testSpConvolver() {
                jt::near(spP(m.state, sx::CvEqMix), 0.7, 1e-6) && spP(m.state, sx::CvNormalize) == 1 && spP(m.state, sx::CvLatency) == 128 &&
                spP(m.state, sx::CvFadeOut) == 0 && spP(m.state, sx::CvEnvOn) == 1,
            "convolver: knobs, pre-delay, stretch, EQ mix, normalize, latency");
-    expect(cd.env.size() == 3 && jt::near(cd.env[1].t, 0.05, 1e-9) && jt::near(cd.env[1].v, 0.5, 1e-9) && cd.eq.empty() && !m.exact,
-           "convolver: amplitude envelope imported (modelled → not exact)");
+    expect(cd.env.size() == 3 && jt::near(cd.env[1].t, 0.05, 1e-9) && jt::near(cd.env[1].v, 0.5, 1e-9) && cd.eq.empty() && m.exact,
+           "convolver: amplitude envelope imported (J-42 reference build → exact)");
     sx::IrView v = sx::convolverIr(m.state);
     expect(v.ir != nullptr, "convolver: embedded impulse loads");
   }

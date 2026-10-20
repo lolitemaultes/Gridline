@@ -52,6 +52,10 @@ inline double coefFor(double seconds, double sr) { return seconds <= 0 ? 1.0 : 1
 class PeakFollower final : public Effect {
  public:
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (prm(s, PkModel, 0) >= 0.5f) {
+      processRef(s, ctx, L, R, n);
+      return;
+    }
     double sr = ctx.sampleRate;
     double atk = coefFor(prm(s, PkAttack, 0.002f), sr), dec = coefFor(prm(s, PkDecay, 0.25f), sr);
     double ramp = prm(s, PkRamp, 1) >= 0.5f ? coefFor(0.01, sr) : 1.0;
@@ -83,16 +87,98 @@ class PeakFollower final : public Effect {
       if (mute) L[i] = R[i] = 0;
     }
   }
-  void reset() override { env_ = outPeak_ = outLfo_ = 0; }
+  void reset() override {
+    env_ = outPeak_ = outLfo_ = 0;
+    peak_ = 0, tickAcc_ = 0, wasPlaying_ = false;
+    for (double& v : sent_) v = -1;
+  }
   int controlOutputs(float* out, int max) const override {
-    float v[3] = {static_cast<float>(outPeak_), static_cast<float>(outLfo_), static_cast<float>(outPeak_ * outLfo_)};
+    float v[3];
+    if (refOn_) {
+      for (int i = 0; i < 3; ++i) v[i] = static_cast<float>(std::max(0.0, sent_[i]));
+    } else {
+      v[0] = static_cast<float>(clamp01(outPeak_ + outLfo_)), v[1] = static_cast<float>(outPeak_), v[2] = static_cast<float>(outLfo_);
+    }
     int k = std::min(3, max);
     for (int i = 0; i < k; ++i) out[i] = v[i];
     return k;
   }
 
  private:
+  // ---- J-42 reference model (one evaluation per song tick).
+  static double tension(double u, double t) {
+    if (t == 0) return u;
+    const double k = (std::pow(1001.0, std::fabs(t) / 128.0) - 1.0) / 10.0;
+    if (t < 0) return (std::pow(k + 1, u) - 1) / k;
+    return 1 - (std::pow(k + 1, 1 - u) - 1) / k;
+  }
+  static double amountLaw(double a, double scale) {
+    const double m = std::exp(std::fabs(a) / 256.0 * std::log(6.0)) - 1.0;
+    return (a < 0 ? -1.0 : 1.0) * scale * m;
+  }
+  static double wave(int shape, uint32_t pos) {
+    const int i = static_cast<int>(pos >> 18);  // 16384-entry table
+    const double ph = i / 16384.0;
+    switch (shape) {
+      case 0: return std::sin(2 * 3.141592653589793 * ph);
+      case 1: return ph < 0.25 ? 4 * ph : ph < 0.75 ? 2 - 4 * ph : 4 * ph - 4;
+      case 2: return ph < 0.5 ? 1.0 : -1.0;
+      case 3: return 2 * ph - 1;
+      default: {  // noise table: a fixed pseudo-random sequence
+        uint32_t h = static_cast<uint32_t>(i) * 2654435761u;
+        h ^= h >> 15, h *= 2246822519u, h ^= h >> 13;
+        return (h & 0xFFFF) / 32767.5 - 1.0;
+      }
+    }
+  }
+  void tick(const PluginState& s, int ppq) {
+    const double P = prm(s, PkRBase) / 65536.0 + amountLaw(prm(s, PkRAmount, 128), 0.4) * tension(peak_, prm(s, PkRTension));
+    const int shape = std::clamp(static_cast<int>(prm(s, LfShape) + 0.5f), 0, 4);
+    const double w = (wave(shape, pos_) + 1) / 2;
+    const double Lv = prm(s, LfRBase) / 65536.0 + amountLaw(prm(s, LfRAmount), 0.2) * tension(w, prm(s, LfRTension));
+    pos_ += inc_;
+    const double tgt[3] = {P + Lv, P, Lv};
+    const bool ramp = prm(s, PkRamp, 1) >= 0.5f;
+    for (int k = 0; k < 3; ++k) {
+      const double q = std::clamp(std::nearbyint(tgt[k] * 1073741824.0), 0.0, 1073741824.0) / 1073741824.0;
+      if (ramp && sent_[k] >= 0 && std::fabs(q - sent_[k]) > 0.125) sent_[k] += q > sent_[k] ? 0.125 : -0.125;
+      else sent_[k] = q;
+    }
+    const double d = prm(s, PkRDecay, 66);
+    const double step = (std::pow(10001.0, d / 128.0) - 1.0) * 0.0192 / std::max(1, ppq);
+    peak_ = std::max(0.0, peak_ - step);
+  }
+  void processRef(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) {
+    refOn_ = true;
+    const int ppq = std::max(1, ctx.ppq);
+    // LFO increment per tick: period = round((PPQ div 4) · S · 0.512) ticks (× 16384 for random), ≥ 3.
+    const int shape = std::clamp(static_cast<int>(prm(s, LfShape) + 0.5f), 0, 4);
+    const double S = std::pow(1001.0, prm(s, LfRSpeed, 32950) / 65536.0) - 1.0;
+    double period = std::nearbyint((ppq / 4) * S * 0.512);
+    if (shape == 4) period *= 16384;
+    period = std::max(period, 3.0);
+    inc_ = static_cast<uint32_t>(std::floor(4294967296.0 / period));
+    const double spt = ctx.sampleRate * 60.0 / (std::max(1.0, ctx.tempo) * ppq);  // samples per tick
+    const uint32_t phaseOff = static_cast<uint32_t>(static_cast<int64_t>(prm(s, LfRPhase)) << 16);
+    if (ctx.playing && (!wasPlaying_ || ctx.jumped))
+      pos_ = static_cast<uint32_t>(static_cast<uint64_t>(std::llround(ctx.tick) * static_cast<uint64_t>(inc_))) + phaseOff;
+    wasPlaying_ = ctx.playing;
+    const bool mute = prm(s, PkMute) >= 0.5f;
+    // Ticks fall where the tick counter crosses an integer; the peak is the input max so far.
+    double t = ctx.playing ? ctx.tick : tickAcc_;
+    for (int i = 0; i < n; ++i) {
+      peak_ = std::max(peak_, static_cast<double>(std::max(std::fabs(L[i]), std::fabs(R[i]))));
+      const double next = t + 1.0 / spt;
+      if (std::floor(next) > std::floor(t)) tick(s, ppq);
+      t = next;
+      if (mute) L[i] = R[i] = 0;
+    }
+    tickAcc_ = t;
+  }
   double env_ = 0, free_ = 0, outPeak_ = 0, outLfo_ = 0;
+  double peak_ = 0, tickAcc_ = 0, sent_[3] = {-1, -1, -1};
+  uint32_t pos_ = 0, inc_ = 0;
+  bool refOn_ = false, wasPlaying_ = false;
 };
 
 // ------------------------------------------------------- X-Y / X-Y-Z pads

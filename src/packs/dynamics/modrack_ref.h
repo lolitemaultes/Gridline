@@ -3,9 +3,9 @@
 //
 // Up to four modules in series, then an optional soft clip. A module is a
 // distortion (18 algorithms), a filter (22 types), a chorus (the stereo delay
-// reference, fully wet) or a speaker (a procedural cabinet: the reference
-// convolves FL Studio's impulse files, which Gridline does not ship — that
-// kind stays approximate). Each module: input gain → processor → dry / wet →
+// reference, fully wet) or a speaker (J-42: FL Studio's impulse files read in
+// place from the installed program, cabinet_ir.h; a procedural cabinet when
+// they are not available). Each module: input gain → processor → dry / wet →
 // output gain, distortion and filter at 2^os × the rate through cascaded IIR
 // half-band resamplers (the dry path too), then (distortion) an optional DC
 // remover. Settings are the stored integers (ModuleState). Sizes are fixed at
@@ -19,6 +19,7 @@
 #include <random>
 #include <vector>
 #include "../../engine/Delay3Ref.h"
+#include "cabinet_ir.h"
 
 namespace gl::packs::dynamics::drack {
 
@@ -49,8 +50,9 @@ inline float level128(int v) {
   return c == 1.f ? 1.f : (std::pow(11.f, c) - 1.f) / 10.f;
 }
 // Which kinds / algorithms / types the reference is reproduced for.
-inline bool moduleExact(const ModuleState& m) {
-  if (m.kind == KSpeaker) return m.disabled != 0;  // impulse files are FL Studio assets
+// `haveIr`: the speaker's impulse file is readable (J-42).
+inline bool moduleExact(const ModuleState& m, bool haveIr = false) {
+  if (m.kind == KSpeaker) return m.disabled != 0 || haveIr;
   if (m.kind == KFilter) return m.ftype < 8 || m.ftype > 11;
   return true;
 }
@@ -728,6 +730,14 @@ class Module {
   }
   void speaker(float* x) {
     float a = x[0] * mIn_[0] + x[1] * mIn_[2], b = x[1] * mIn_[1] + x[0] * mIn_[3];
+    if (cabK_ && cabRun_) {  // J-42: the impulse file; output matrix at 44100/fs, then the table gain
+      float w[2] = {a, b};
+      cabRun_->tick(*cabK_, w);
+      const float v = static_cast<float>(44100.0 / fsHost_), g = static_cast<float>(cabK_->gain);
+      x[0] = (w[0] * mOut_[0] * v + w[1] * mOut_[2] * v) * g;
+      x[1] = (w[1] * mOut_[1] * v + w[0] * mOut_[3] * v) * g;
+      return;
+    }
     float v[2] = {a, b};
     for (int c = 0; c < 2; ++c) v[c] = spk_[1].run(c, spk_[0].run(c, spkHp_.run(c, v[c])));
     x[0] = v[0] * mOut_[0] + v[1] * mOut_[2];
@@ -765,6 +775,11 @@ class Module {
   d3ref::Engine d3_;
   float d3n_[26] = {};
   // speaker
+ public:
+  const cab::Kernel* cabK_ = nullptr;
+  cab::Run* cabRun_ = nullptr;
+
+ private:
   Biquad spk_[2];
   OnePole spkHp_;
   float mIn_[4] = {1, 1, 0, 0}, mOut_[4] = {1, 1, 0, 0};
@@ -773,6 +788,14 @@ class Module {
 // ---------------------------------------------------------------- the rack
 class Rack {
  public:
+  // J-42: impulse kernels / convolver states per module (null = procedural cabinet).
+  void setCabinets(const cab::Aux* aux, cab::Run* const* runs) {
+    for (int k = 0; k < kModules; ++k) {
+      const cab::Kernel* kk = aux ? aux->k[k].get() : nullptr;
+      if (kk != mod_[k].cabK_ && runs && runs[k]) runs[k]->clear();
+      mod_[k].cabK_ = kk, mod_[k].cabRun_ = runs ? runs[k] : nullptr;
+    }
+  }
   void process(const RackState& s, double fs, float* L, float* R, int n) {
     const bool first = !ready_ || fs != fs_;
     for (int k = 0; k < kModules; ++k)

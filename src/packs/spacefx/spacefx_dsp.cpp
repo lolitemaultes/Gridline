@@ -158,9 +158,9 @@ std::vector<EnvPoint> parsePoints(const std::string& s) {
   while (*p) {
     char* end = nullptr;
     EnvPoint q;
-    double v[3] = {0, 0.5, 0};
+    double v[4] = {0, 0.5, 0, 0};
     int got = 0;
-    for (int k = 0; k < 3; ++k) {
+    for (int k = 0; k < 4; ++k) {
       v[k] = std::strtod(p, &end);
       if (end == p) break;
       ++got;
@@ -171,6 +171,7 @@ std::vector<EnvPoint> parsePoints(const std::string& s) {
       q.t = std::max(0.0, v[0]);
       q.v = clampd(v[1], 0, 1);
       q.k = clampd(v[2], -1, 1);
+      q.c = std::isfinite(v[3]) ? std::clamp(static_cast<int>(v[3]), 0, 12) : 0;
       out.push_back(q);
     }
     while (*p && *p != ';') ++p;
@@ -181,9 +182,12 @@ std::vector<EnvPoint> parsePoints(const std::string& s) {
   return out;
 }
 void formatPoints(std::string& s, const std::vector<EnvPoint>& pts) {
-  char buf[80];
+  char buf[96];
   for (size_t i = 0; i < pts.size(); ++i) {
-    std::snprintf(buf, sizeof buf, "%s%.6g,%.6g,%.4g", i ? ";" : "", pts[i].t, pts[i].v, pts[i].k);
+    if (pts[i].c != 0)
+      std::snprintf(buf, sizeof buf, "%s%.10g,%.9g,%.7g,%d", i ? ";" : "", pts[i].t, pts[i].v, pts[i].k, pts[i].c);
+    else
+      std::snprintf(buf, sizeof buf, "%s%.10g,%.9g,%.7g", i ? ";" : "", pts[i].t, pts[i].v, pts[i].k);
     s += buf;
   }
 }
@@ -203,6 +207,10 @@ ConvData parseConvData(const std::string& data) {
       d.env = parsePoints(line.substr(5));
     } else if (line.compare(0, 4, "#eq ") == 0) {
       d.eq = parsePoints(line.substr(4));
+    } else if (line.compare(0, 5, "#pan ") == 0) {
+      d.pan = parsePoints(line.substr(5));
+    } else if (line.compare(0, 5, "#sep ") == 0) {
+      d.sep = parsePoints(line.substr(5));
     }
     if (nl == std::string::npos) break;
     pos = nl + 1;
@@ -212,7 +220,7 @@ ConvData parseConvData(const std::string& data) {
 
 std::string formatConvData(const ConvData& d) {
   std::string s = d.path;
-  if (d.env.empty() && d.eq.empty()) return s;
+  if (d.env.empty() && d.eq.empty() && d.pan.empty() && d.sep.empty()) return s;
   s += "\n#v 1";
   if (!d.env.empty()) {
     s += "\n#env ";
@@ -221,6 +229,14 @@ std::string formatConvData(const ConvData& d) {
   if (!d.eq.empty()) {
     s += "\n#eq ";
     formatPoints(s, d.eq);
+  }
+  if (!d.pan.empty()) {
+    s += "\n#pan ";
+    formatPoints(s, d.pan);
+  }
+  if (!d.sep.empty()) {
+    s += "\n#sep ";
+    formatPoints(s, d.sep);
   }
   return s;
 }

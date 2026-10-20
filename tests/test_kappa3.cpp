@@ -372,11 +372,14 @@ void testOctaFilter() {
   }
   // Out pan with cross-feed: hard right moves half of the left into the right.
   {
-    PluginState s = st("gl.octafilter", {{U(0, cr::UOrder), 0.f}, {U(0, cr::UPan), 1.f}});
+    PluginState s = st("gl.octafilter", {{U(0, cr::UOrder), 0.f}, {U(0, cr::UPan), 1.f}, {cr::OfModel, 0.f}});
     Buf in;
     in.l.assign(1024, 0.5f), in.r.assign(1024, 0.f);
     Buf out = runOf(s, in);
     expect(near(out.l[500], 0, 1e-6) && near(out.r[500], 0.25, 1e-6), "octa filter: pan law cross-feeds half of the cut side");
+    s.params[static_cast<size_t>(cr::OfModel)] = 1.f;  // J-42 reference: constant power x sqrt2, the far side folded in
+    Buf ref = runOf(s, in);
+    expect(std::fabs(ref.l[500]) < 1e-6 && near(ref.r[500], 0.5 / std::sqrt(2.0), 1e-5), "octa filter (reference): hard right folds the left in at -3 dB");
   }
   // Pattern envelope on the volume: a hold step from 1 to 0 at beat 2.
   {

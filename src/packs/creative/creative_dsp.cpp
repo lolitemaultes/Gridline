@@ -30,7 +30,7 @@ double loopPos(const OEnv& e, int ls, int le, double p) {
 
 }  // namespace
 
-OctaFilterFx::OctaFilterFx() : bank_(std::make_unique<OctaBank>()) {
+OctaFilterFx::OctaFilterFx() : bank_(std::make_unique<OctaBank>()), ref_(std::make_unique<ref::RefEngine>()) {
   for (int u = 0; u < kUnits; ++u)
     for (int t = 0; t < kTargets; ++t) cur_[u][t] = prev_[u][t] = additiveTarget(t) ? 0.0 : 1.0;
 }
@@ -43,6 +43,7 @@ void OctaFilterFx::reset() {
   for (auto& u : lfoPh_)
     for (double& p : u) p = 0;
   dc_[0].reset(), dc_[1].reset();
+  ref_->reset();
 }
 
 int OctaFilterFx::meters(float* out, int max) const {
@@ -134,6 +135,20 @@ void OctaFilterFx::tick(const PluginState& s, const ProcessContext& ctx, double 
 }
 
 void OctaFilterFx::process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) {
+  if (I(s, OfModel) == 1) {  // J-42 reference engine
+    size_t h = std::hash<std::string>{}(s.data);
+    double key = ref::RefEngine::lfoKey(s);
+    for (int u = 0; u < kUnits; ++u) key += (B(s, unitParam(u, UWsBipolar)) ? 1.0 : 0.0) * (u + 1) * 1e-3;
+    if (h != dataHash_ || key != refKey_) {
+      if (h != dataHash_) parse(s.data.c_str(), *bank_);
+      dataHash_ = h, refKey_ = key;
+      ref_->rebuild(*bank_, s);
+    }
+    ref_->process(*bank_, s, ctx, L, R, n);
+    ieMeter_ = ref_->follower();
+    return;
+  }
+  if (refKey_ != -1) refKey_ = -1, dataHash_ = 0;  // back from the reference: rebuild the legacy tables
   if (sr_ != ctx.sampleRate) {
     sr_ = ctx.sampleRate;
     dc_[0].setFreq(sr_, 10.0), dc_[1].setFreq(sr_, 10.0);

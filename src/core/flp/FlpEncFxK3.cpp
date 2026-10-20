@@ -176,9 +176,9 @@ Encoder grossBeat() {
     using namespace pp;
     const uint32_t ver = versionOf(b);
     std::vector<Field> v = tagFields(4, {{TgTimeSlot, 0, 0, tg::kSlots - 1}, {TgVolSlot, 1, 0, tg::kSlots - 1}, {TgTimeMix, 2, 0, 256},
-                                         {TgVolMix, 3, 0, 256}, {TgVolAttack, 4, 0, 10000}, {TgVolRelease, 5, 0, 10000},
+                                         {TgVolMix, 3, 0, 256}, {TgRAttack, 4, 0, 10000}, {TgRRelease, 5, 0, 10000},  // J-42: reference engine values
                                          {TgTension, 6, -256, 256}, {TgHold, 7, 0, 1}});
-    if (ver >= 2) v.push_back(i32(TgScratch, 4 + 4 * 8, 0, 131072));
+    if (ver >= 2) v.push_back(i32(TgRScratch, 4 + 4 * 8, 0, 131072));
     const size_t opt = 4 + 4 * (ver < 2 ? 8 : 9) + 4;
     if (ver >= 3) {
       v.push_back(field(TgDcRemove, opt, Type::U8, 0, 1));
@@ -614,13 +614,21 @@ struct LpWalk {
     }
     return v;
   }
-  // Rewrites the record with `e` (null: copied as it is); loops < -1 keep the template's.
-  void rec(const cr::OEnv* e, int32_t ls = -2, int32_t le = -2) {
+  // Rewrites the record with `e` (null: copied as it is); loops < -1 keep the template's;
+  // en: 1 / 0 sets the record's enabled word (-1 / 0), -1 keeps it.
+  void rec(const cr::OEnv* e, int32_t ls = -2, int32_t le = -2, int en = -1) {
     const size_t n = recSize();
     if (!n) return void(ok = false);
-    if (!e) return copy(n);
     const size_t tail = o + n - 20;
-    putLpRecord(w, getU32(s, o), *e, getU32(s, tail), static_cast<int32_t>(getU32(s, tail + 4)), static_cast<int32_t>(getU32(s, tail + 8)),
+    const int32_t was = static_cast<int32_t>(getU32(s, tail + 4));
+    const int32_t enabled = en < 0 ? was : en ? (was != 0 ? was : -1) : 0;
+    if (!e) {
+      copy(n - 16);
+      w.i32(enabled);
+      o += 4;
+      return copy(12);
+    }
+    putLpRecord(w, getU32(s, o), *e, getU32(s, tail), enabled, static_cast<int32_t>(getU32(s, tail + 8)),
                 ls < -1 ? static_cast<int32_t>(getU32(s, tail + 12)) : ls, le < -1 ? static_cast<int32_t>(getU32(s, tail + 16)) : le);
     o += n;
   }
@@ -658,7 +666,11 @@ void lpWrite(const PluginState& g, Bytes& st, const EncodeContext& c) {
   r.u8(P(cr::OfSyncPatterns) >= 0.5f);
   r.copy(1 + (ver >= 10 ? 1 : 0) + (ver >= 11 ? 1 : 0));
   r.copy(4);  // ui
-  {           // info text
+  if (ver < 6) {  // versions 2..5: i32 byte count + 8-bit RTF, kept as stored
+    const int32_t nb = r.peek();
+    if (nb < 0) return;
+    r.copy(4 + static_cast<size_t>(nb));
+  } else {  // info text
     size_t chars = 0;
     for (int shift = 0; r.has(1) && shift < 28; shift += 7) {
       const uint8_t v = raw[r.o++];
@@ -671,7 +683,6 @@ void lpWrite(const PluginState& g, Bytes& st, const EncodeContext& c) {
   }
   cr::OEnv defWs;
   cr::defaultWs(defWs);
-  const cr::OEnv one = flatEnv(1.f, false);
   for (int u = 0; u < cr::kUnits && r.ok; ++u) {
     for (const LpKnobDef& k : kLpUnitKnobs) r.i32(scaled(P(cr::unitParam(u, k.f)), k.div));
     r.i32(scaled(P(cr::unitParam(u, cr::UOrder)), 1));
@@ -697,32 +708,34 @@ void lpWrite(const PluginState& g, Bytes& st, const EncodeContext& c) {
       r.copy(16);
       for (int k = 0; k < cr::kPatterns; ++k) {
         const cr::OEnv* e = bank->env(u, t, k);
-        if (e) r.rec(e, bank->loopS[u][t][k], bank->loopE[u][t][k]);
-        else r.rec(r.points().size() >= 2 ? &one : nullptr, -1, -1);  // a single point = unused
+        if (e) r.rec(e, bank->loopS[u][t][k], bank->loopE[u][t][k], 1);
+        else r.rec(nullptr, -2, -2, 0);  // J-42: no line = disabled record
         r.copy(16);
       }
-      {  // LFO shape: unused = one point at 1
+      {  // LFO amplitude envelope: no line = disabled record
         const cr::OEnv* e = bank->env(u, t, cr::KLfo);
-        const auto pts = r.points();
-        const bool unused = pts.empty() || (pts.size() == 1 && std::fabs(pts[0].y - 1.0) <= 1e-6);
-        r.rec(e ? e : unused ? nullptr : &one);
+        if (e) {
+          // The decoder pads a single point with a second one at x = 1: write the single point back.
+          const auto pts = r.points();
+          if (pts.size() == 1 && e->n == 2 && e->y[0] == e->y[1] && std::fabs(pts[0].y - e->y[0]) < 1e-6) r.rec(nullptr, -2, -2, 1);
+          else r.rec(e, -2, -2, 1);
+        } else {
+          r.rec(nullptr, -2, -2, 0);
+        }
       }
       r.i32(scaled(P(cr::lfoParam(u, t, cr::LSpeed)), 65536));
       r.i32(scaled(P(cr::lfoParam(u, t, cr::LTension)), 128));
       r.i32(scaled(P(cr::lfoParam(u, t, cr::LSkew)), 128));
       r.i32(scaled(P(cr::lfoParam(u, t, cr::LPulse)), 128));
-      if (ver >= 5) r.i32(scaled(P(cr::lfoParam(u, t, cr::LPhase)), 65536));
+      if (ver >= 5)  // raw 32-bit phase offset
+        r.i32(static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(std::llround(static_cast<double>(P(cr::lfoParam(u, t, cr::LPhase))) * 4294967296.0)))));
       const float def = add ? 0.5f : 1.f;
       const cr::OEnv flat = flatEnv(def, true);
       for (int q = 0; q < 3; ++q) {  // maps: unused = flat at the target's rest value
         const cr::OEnv* e = bank->env(u, t, cr::KMapX + q);
         const auto pts = r.points();
-        bool unused = true;
-        if (pts.size() >= 2) {
-          for (const auto& p : pts) unused = unused && std::fabs(p.y - pts.front().y) <= 1e-6;
-        } else if (pts.size() == 1) {
-          unused = std::fabs(pts[0].y - def) <= 1e-6;
-        }
+        bool unused = true;  // J-42: unused = every point at the rest value
+        for (const auto& p : pts) unused = unused && std::fabs(p.y - def) <= 1e-7;
         r.rec(e ? e : unused ? nullptr : &flat);
       }
     }

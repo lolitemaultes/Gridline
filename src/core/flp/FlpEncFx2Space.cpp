@@ -1,5 +1,6 @@
 // Gridline — FLP export: plugin state encoders for FlpFx2Space.cpp (Convolver, Delay, Phaser, Reeverb, LuxeVerb, Vintage Chorus, Vintage Phaser).
 // The reverse of the decoders in those files; see FlpEncode.h for the model.
+#include <algorithm>
 #include <cmath>
 #include "../../packs/spacefx/spacefx.h"
 #include "../PluginParams.h"
@@ -189,6 +190,7 @@ void writeConvEnvelope(Bytes& b, const ConvLayout& L, int k, const std::vector<s
     uint32_t flags = 0;
     if (n > 0 && i + 1 == pts.size()) flags = getU32(b, at + 12 + (n - 1) * 24 + 20);
     else if (i + 1 < n) flags = getU32(b, at + 12 + i * 24 + 20);
+    flags = (flags & 0xFFFFFF00u) | static_cast<uint32_t>(std::clamp(pts[i].c, 0, 12));  // curve kind
     w.u32(flags);
   }
   w.bytes(b.data() + at + 12 + n * 24, 20);  // markers
@@ -287,11 +289,15 @@ Encoder convolver() {
       L = convLayout(b);
       if (!L.ok) return;
     }
-    if (pointsKey(want.env) != pointsKey(have.env)) {
-      writeConvEnvelope(b, L, 1, want.env);
-      L = convLayout(b);
-      if (!L.ok) return;
-    }
+    // Time envelopes 0 pan, 1 volume, 2 separation (J-42), then the EQ curve.
+    const std::vector<sx::EnvPoint>* wantK[3] = {&want.pan, &want.env, &want.sep};
+    const std::vector<sx::EnvPoint>* haveK[3] = {&have.pan, &have.env, &have.sep};
+    for (int k = 0; k < 3; ++k)
+      if (pointsKey(*wantK[k]) != pointsKey(*haveK[k])) {
+        writeConvEnvelope(b, L, k, *wantK[k]);
+        L = convLayout(b);
+        if (!L.ok) return;
+      }
     if (pointsKey(want.eq) != pointsKey(have.eq)) writeConvEnvelope(b, L, 4, want.eq);
   };
   return e;

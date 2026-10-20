@@ -13,6 +13,7 @@
 #include "Dsp.h"
 #include "Effects.h"
 #include "EffectsK3.h"
+#include "GrossBeatRef.h"
 #include "TimeGateSlots.h"
 
 namespace gl {
@@ -73,6 +74,7 @@ class TimeGateK3 final : public Effect {
 
   // Slot trigger from a note (MIDI trigger option): time slots 60..95, volume slots 24..59.
   void note(int pitch, bool on) {
+    ref_.note(pitch, on);
     int b = pitch >= 60 && pitch <= 95 ? 0 : pitch >= 24 && pitch <= 59 ? 1 : -1;
     if (b < 0) return;
     int slot = pitch - (b == 0 ? 60 : 24) + 1;
@@ -104,6 +106,16 @@ class TimeGateK3 final : public Effect {
       dataHash_ = h;
       *bank_ = *factory_;
       tg::parse(s.data.c_str(), *bank_);
+    }
+    if (bparam(s, TgModel)) {  // J-42 reference engine
+      gbref::Settings g;
+      g.timeSlot = std::clamp(iparam(s, TgTimeSlot), 0, tg::kSlots), g.volSlot = std::clamp(iparam(s, TgVolSlot), 0, tg::kSlots);
+      g.timeMix = param(s, TgTimeMix, 1), g.volMix = param(s, TgVolMix, 1), g.tension = param(s, TgTension);
+      g.attackRaw = param(s, TgRAttack), g.releaseRaw = param(s, TgRRelease, 1000), g.scratch = param(s, TgRScratch);
+      g.hold = bparam(s, TgHold), g.dc = bparam(s, TgDcRemove), g.comp = bparam(s, TgCompensate), g.hq = bparam(s, TgHq, true);
+      g.declick = std::clamp(iparam(s, TgDeclick, 1), 0, 2);
+      ref_.process(g, *bank_, ctx, L, R, n);
+      return;
     }
     const int mode = iparam(s, TgMode);
     const bool gateOn = bparam(s, TgGateOn);
@@ -393,6 +405,7 @@ class TimeGateK3 final : public Effect {
   float lastL_ = 0, lastR_ = 0, phase_ = -1, vphase_ = -1;
   BankState bs_[2];
   DcBlock dc_[2];
+  gbref::Engine ref_;
 };
 
 void timeGateNote(Effect* fx, int pitch, bool on) {

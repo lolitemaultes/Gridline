@@ -434,6 +434,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
       };
       tog("Sync pattern changes", OfSyncPatterns);
       tog("HQ shaper", OfHqShaper);
+      tog("Reference engine", OfModel);
       ImGui::EndPopup();
     }
     if (sk::button(v, "InfoBtn", pal, false, "i", {}, "About")) ImGui::OpenPopup("##ofinfo");
@@ -495,7 +496,9 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     lbl("IEFRelWheelLabel", "REL");
     sk::check(a, t, v, "GlobalCenterBtn", OfCenter, pal, "CENTER");
     sk::check(a, t, v, "DQEnvBtn", OfHqEnvelopes, pal, "HQ ENVELOPES");
-    sk::digi(a, t, v, "DQOverSelect", OfOversample, pal, [](double x) { return std::to_string(static_cast<int>(std::lround(x))); });
+    sk::digi(a, t, v, "DQOverSelect", OfOversample, pal, [](double x) {
+      return std::to_string(1 << std::clamp(static_cast<int>(std::lround(x)), 0, 4)) + "x";
+    });
     lbl("DQOverSelectLabel", "OVERSAMPLING");
     {  // info text
       sk::bevel(v, "InfoEditBevel", pal);

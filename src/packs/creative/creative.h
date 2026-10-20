@@ -56,6 +56,11 @@ inline constexpr int unitParam(int u, int f) { return OfGlobalCount + u * UField
 inline constexpr int LfoBase = OfGlobalCount + kUnits * UFields;
 inline constexpr int lfoParam(int u, int t, int f) { return LfoBase + (u * kTargets + t) * LfoFields + f; }
 inline constexpr int OfCount = LfoBase + kUnits * kTargets * LfoFields;
+// J-42: engine model (appended): 0 legacy, 1 reference (octafilter_refeng.h). In the
+// reference LPhase is the raw 32-bit phase offset / 2^32 and pattern / LFO lines
+// are present only when enabled. Older states load as legacy.
+inline constexpr int OfModel = OfCount;
+inline constexpr int OfTotal = OfCount + 1;
 
 enum FilterType { FtSvf, FtLp2, FtHp2, FtLpRbj, FtBp, FtNotch, FtHpRbj, FtAllPass, FtLowShelf, FtPeak, FtHighShelf, FtLadder, FilterTypeCount };
 inline bool filterUsesGain(int type) { return type == FtLowShelf || type == FtPeak || type == FtHighShelf || type == FtLadder; }
@@ -70,7 +75,7 @@ inline double signedVol(double x) { return x < 0 ? -volCurve(-x) : volCurve(x); 
 // ------------------------------------------------------------- envelope data
 // Envelope kinds per (unit, target): patterns 0..9, LFO shape, X / Y / follower maps; plus one shaper curve per unit.
 enum EnvKind { KPattern0 = 0, KLfo = kPatterns, KMapX, KMapY, KMapF, EnvKinds };
-inline constexpr int kEnvPts = 64;
+inline constexpr int kEnvPts = 192;  // J-42: FL's longest shipped pattern / shaper curve is 183 points
 using OEnv = menv::Env<kEnvPts>;
 
 struct OctaBank {

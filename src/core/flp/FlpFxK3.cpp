@@ -168,6 +168,16 @@ bool decodeGrossBeat(Context& c, const std::vector<Event>& evs, PluginMapping& m
   applyTable(m, *table, fl);
   set(m, pp::TgMode, 0);
   set(m, pp::TgGateOn, 0);
+  // J-42: the reference engine reads the stored attack / release and scratch.
+  set(m, pp::TgModel, 1);
+  set(m, pp::TgRAttack, std::clamp(fl[4], 0.0, 10000.0));
+  set(m, pp::TgRRelease, std::clamp(fl[5], 0.0, 10000.0));
+  set(m, pp::TgRScratch, std::clamp(fl[8] / 65536.0 - 1.0, -1.0, 1.0));
+  if (ver < 3 && opt + 3 <= b.size()) {  // versions 1..2: three option bytes
+    set(m, pp::TgDcRemove, b[opt] ? 1 : 0);
+    set(m, pp::TgCompensate, b[opt + 1] ? 1 : 0);
+    set(m, pp::TgHq, b[opt + 2] ? 1 : 0);
+  }
   bool lossy = false;
   if (ok) {
     std::string data = "GB2\n";
@@ -195,7 +205,8 @@ bool decodeGrossBeat(Context& c, const std::vector<Event>& evs, PluginMapping& m
     }
     m.state.data = data;
   }
-  m.exact = ok && !lossy;  // read-back interpolation and declick crossfade lengths are Gridline's own
+  // J-42: exact on the reference engine (sinc reads, declick, hold, volume smoothing).
+  m.exact = ok && !lossy;
   return true;
 }
 
@@ -438,6 +449,8 @@ struct LpReader {
   struct Rec {
     std::vector<GbPoint> pts;
     int loopS = -1, loopE = -1;
+    uint32_t flags = 0;
+    bool enabled = false;  // J-42: record trailer +4 (pattern envelopes / LFOs run only when set)
   };
   Rec rec() {
     Rec r;
@@ -456,17 +469,14 @@ struct LpReader {
       x += std::max(0.0, dx);
       r.pts.push_back({x, y, t, fl});
     }
+    r.flags = le32(b, o);
+    r.enabled = le32(b, o + 4) != 0;
     r.loopS = static_cast<int32_t>(le32(b, o + 12)), r.loopE = static_cast<int32_t>(le32(b, o + 16));
     o += 20;
     return r;
   }
 };
 
-bool recFlat(const LpReader::Rec& r) {
-  for (const auto& p : r.pts)
-    if (std::fabs(p.y - r.pts.front().y) > 1e-6) return false;
-  return true;
-}
 // Record → envelope (points beyond the pool size are thinned).
 cr::OEnv toEnv(const LpReader::Rec& r, bool& lossy) {
   cr::OEnv e;
@@ -590,12 +600,17 @@ bool decodeLovePhilter(Context& c, const std::vector<Event>& evs, PluginMapping&
   // (every shipped state, versions 6..12); it was read as an i32 byte count,
   // which stopped the unit parse for all of them. CR = line break.
   size_t infoChars = 0;
-  for (int shift = 0; r.ok && shift < 28; shift += 7) {
+  std::string info;
+  if (ver < 6) {  // J-42: versions 2..5 store an i32 byte count + 8-bit RTF text
+    const int32_t nb = r.i32();
+    if (nb < 0 || r.o + static_cast<size_t>(nb) > b.size()) r.ok = false;
+    else info.assign(reinterpret_cast<const char*>(b.data() + r.o), static_cast<size_t>(nb)), r.o += static_cast<size_t>(nb);
+  }
+  for (int shift = 0; ver >= 6 && r.ok && shift < 28; shift += 7) {
     const uint8_t v = r.u8();
     infoChars |= static_cast<size_t>(v & 0x7F) << shift;
     if (!(v & 0x80)) break;
   }
-  std::string info;
   if (r.o + 2 * infoChars > b.size()) r.ok = false;
   for (size_t i = 0; r.ok && i < infoChars; ++i, r.o += 2) {
     const uint32_t cu = b[r.o] | (b[r.o + 1] << 8);
@@ -613,7 +628,7 @@ bool decodeLovePhilter(Context& c, const std::vector<Event>& evs, PluginMapping&
   set(m, cr::OfCenter, center ? 1 : 0);
   set(m, cr::OfSyncPatterns, sync ? 1 : 0);
   std::string data = "OF1\n";
-  bool lossy = false;
+  bool lossy = false, flagsOk = true, wsUsed = false;
   int unitsRead = 0;
   for (int u = 0; u < cr::kUnits && r.ok; ++u) {
     for (int j = 0; j < 12; ++j) set(m, cr::unitParam(u, kLpKnobs[j].f), r.i32() / kLpKnobs[j].div);
@@ -625,6 +640,8 @@ bool decodeLovePhilter(Context& c, const std::vector<Event>& evs, PluginMapping&
     LpReader::Rec ws = r.rec();
     set(m, cr::unitParam(u, cr::UWsBipolar), r.u8() ? 1 : 0);
     if (!r.ok) break;
+    if (m.state.params[static_cast<size_t>(cr::unitParam(u, cr::UWsOn))] >= 0.5f && m.state.params[static_cast<size_t>(cr::unitParam(u, cr::UEnabled))] >= 0.5f)
+      wsUsed = true;
     {  // shaper curve: kept unless it is the default bend
       cr::OEnv e = toEnv(ws, lossy), d;
       cr::defaultWs(d);
@@ -640,7 +657,7 @@ bool decodeLovePhilter(Context& c, const std::vector<Event>& evs, PluginMapping&
         LpReader::Rec pr = r.rec();
         for (int q = 0; q < 4; ++q) r.i32();
         if (!r.ok) break;
-        if (pr.pts.size() >= 2) {  // a single point is the unused default
+        if (pr.enabled && !pr.pts.empty()) {  // J-42: only enabled pattern envelopes run
           cr::OEnv e = toEnv(pr, lossy);
           int ls = pr.loopS >= 0 && pr.loopS < e.n ? pr.loopS : -1, le = pr.loopE >= 0 && pr.loopE < e.n ? pr.loopE : -1;
           data += cr::envLine(u, t, k, e, ls, le) + "\n";
@@ -654,8 +671,10 @@ bool decodeLovePhilter(Context& c, const std::vector<Event>& evs, PluginMapping&
       set(m, cr::lfoParam(u, t, cr::LTension), std::clamp(lp[1] / 128.0, -1.0, 1.0));
       set(m, cr::lfoParam(u, t, cr::LSkew), std::clamp(lp[2] / 128.0, -1.0, 1.0));
       set(m, cr::lfoParam(u, t, cr::LPulse), std::clamp(lp[3] / 128.0, -1.0, 1.0));
-      set(m, cr::lfoParam(u, t, cr::LPhase), std::clamp(lp[4] / 65536.0, 0.0, 1.0));
-      if (lfo.pts.size() >= 2 || (lfo.pts.size() == 1 && std::fabs(lfo.pts[0].y - 1.0) > 1e-6)) {
+      // J-42: the phase knob is a raw 32-bit phase offset (cycles = raw / 2^32).
+      set(m, cr::lfoParam(u, t, cr::LPhase), static_cast<double>(static_cast<uint32_t>(lp[4])) / 4294967296.0);
+      if (lfo.enabled && !lfo.pts.empty()) {
+        if (lfo.flags & 0xCu) flagsOk = false;  // unipolar / frozen LFO options not modelled (bit 1 = phase kept on reset: song-positioned anyway)
         cr::OEnv e = toEnv(lfo, lossy);
         if (e.n == 1) e.add(1.0, e.y[0], 0, menv::SingleCurve), e.prepare();
         data += cr::envLine(u, t, cr::KLfo, e) + "\n";
@@ -663,7 +682,8 @@ bool decodeLovePhilter(Context& c, const std::vector<Event>& evs, PluginMapping&
       for (int q = 0; q < 3; ++q) {
         LpReader::Rec mp = r.rec();
         if (!r.ok) break;
-        bool used = mp.pts.size() >= 2 ? !recFlat(mp) : (mp.pts.size() == 1 && std::fabs(mp.pts[0].y - (add ? 0.5 : 1.0)) > 1e-6);
+        bool used = false;  // J-42: any map not flat at its rest value gets a table
+        for (const GbPoint& q : mp.pts) used = used || std::fabs(q.y - (add ? 0.5 : 1.0)) > 1e-7;
         if (used) data += cr::envLine(u, t, cr::KMapX + q, toEnv(mp, lossy)) + "\n";
       }
     }
@@ -672,9 +692,14 @@ bool decodeLovePhilter(Context& c, const std::vector<Event>& evs, PluginMapping&
   if (unitsRead < cr::kUnits) c.report.warn("Love Philter: not all filter units decoded");
   std::string text = rtfText(info);
   m.state.data = text.empty() ? data : cr::withInfo(data, text);
-  // LFO speed curve, oversampling and the 2-pole / ladder filter cores are Gridline's own.
-  m.exact = false;
-  (void)lossy;
+  // J-42: reference engine (cores, articulators, LFO shaper, pan law, oversampling).
+  // Not exact: thinned envelopes, LFO option flags, smooth segments. The shaper uses
+  // the interpolating lookup FL's renders use (its real-time path rounds to the nearest entry).
+  set(m, cr::OfModel, 1);
+  set(m, cr::OfHqShaper, 1);
+  bool smoothSeg = data.find(",10 ") != std::string::npos || data.find(",10\n") != std::string::npos;
+  m.exact = r.ok && unitsRead == cr::kUnits && !lossy && flagsOk && !smoothSeg;
+  (void)wsUsed;
   return true;
 }
 

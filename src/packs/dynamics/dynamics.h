@@ -3,6 +3,7 @@
 // (dynamics_info.cpp), the runtimes (*_dsp.cpp) and the editors (*_ui.cpp).
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -78,10 +79,12 @@ enum MaxRefParam {
   MrTarget,        // selected (solo) band 0..3
   MrMasterMid,     // mid band works on the whole input
   MrSafetyOff,     // curves reach 0 dBFS instead of the 0.975 safety
-  MrFir,           // legacy linear-phase crossover (not modelled: IIR used)
-  MrLin,           // modern linear-phase crossover (not modelled: IIR used)
+  MrFir,           // legacy linear-phase crossover (J-42: windowed-sinc FIR bands)
+  MrLin,           // modern linear-phase crossover (J-42: FFT filter bank)
   MrPtType0,       // 4 bands × kMsCurvePts point types (0 single curve, 1 double curve, 2 hold)
-  kMrCount = MrPtType0 + kMsBands * kMsCurvePts
+  MrLinQuality = MrPtType0 + kMsBands * kMsCurvePts,  // J-42: FFT size 512 << quality (0..5)
+  MrLinSpeed,      // J-42: cross-fade time on split changes (0.1 / 0.25 / 0.01 / 0.02 s)
+  kMrCount
 };
 inline constexpr int MsRef0 = kMsCount;
 inline constexpr int kMsTotal = MsRef0 + kMrCount;
@@ -260,9 +263,30 @@ inline double tsEchoSeconds(double b, bool sync, double tempo) {
   return 0.001 * std::pow(1000.0, b);
 }
 
+// ------------------------------------------------------------ gl.pocketrack (J-42)
+// Pocket Rack: up to four modules in series (the module rack FL ships as its mobile
+// multi-effect). Slot s: module type id (0 = empty; ids as the reference's module
+// table), 31 normalised module parameters (index 0 = on), then post gain, mix and
+// wet balance (0..1, 0.5 / 1 / 0.5 neutral).
+inline constexpr int kPkSlots = 4, kPkParams = 31;
+enum PkField { PkType = 0, PkP0 = 1, PkPost = PkP0 + kPkParams, PkMix, PkPan, PkFields };
+inline constexpr int pkParam(int slot, int field) { return slot * PkFields + field; }
+inline constexpr int PkCount = kPkSlots * PkFields;
+inline constexpr int kPkTypes = 47;
+const char* pocketModuleName(int type);  // "" for ids without a module
+// Default parameter values of a module type (31 values, index 0 = on).
+void pocketModuleDefaults(int type, float* out);
+const char* pocketParamName(int type, int index);  // nullptr = unused index
+int pocketModuleParamCount(int type);  // stored parameters of a module (index 0 = on included)
+// Whether a module type with these parameters runs a reference engine (pocket_dsp.cpp).
+bool pocketModuleExact(int type, const float* params);
+
 // Runtimes, one factory per source file.
 std::unique_ptr<Effect> createMasterEffect(const std::string& type);  // master_dsp.cpp
 std::unique_ptr<Effect> createRackEffect(const std::string& type);    // rack_dsp.cpp
+std::atomic<double>& cabRate();  // J-42: engine rate seen by the module rack (dynamics_dsp.cpp)
 std::unique_ptr<Effect> createDistEffect(const std::string& type);    // dist_dsp.cpp
+std::unique_ptr<Effect> createPocketEffect(const std::string& type);  // pocket_dsp.cpp
+void appendPocketInfo(std::vector<PluginInfo>& v);                     // pocket_info.cpp
 
 }  // namespace gl::packs::dynamics

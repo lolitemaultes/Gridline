@@ -1268,6 +1268,11 @@ std::vector<PluginInfo> build() {
     p.params[TgCompensate] = tog("Attack compensation", 0);
     p.params[TgHq] = tog("HQ resampling", 1);
     p.params[TgMidiTrigger] = tog("Trigger slots from notes", 1);
+    p.params[TgModel] = ch("Engine", {"Legacy", "Reference"}, 0);
+    p.legacyModelParam = TgModel;
+    p.params[TgRAttack] = lin("Attack (ref.)", "", 0, 10000, 0);
+    p.params[TgRRelease] = lin("Release (ref.)", "", 0, 10000, 1000);
+    p.params[TgRScratch] = lin("Scratch (ref.)", "", -1, 1, 0);
     p.editorWidth = 1000;
     std::vector<std::pair<int, float>> trance;
     for (int k = 0; k < kGateSteps; ++k) trance.push_back({TgGate + k, (k % 4 == 1 || k % 4 == 3) ? 0.f : 1.f});
@@ -1389,6 +1394,7 @@ std::vector<PluginInfo> build() {
     p.params[TnReactivity] = lin("Reactivity", "%", 0, 1, 0.5);
     p.params[TnBassMode] = tog("Bass mode", 0);
     p.params[TnDisplay] = ch("Display", {"Needle", "Strip", "Ring"}, 0);
+    p.params[TnAverage] = tog("Average reading", 1);
     p.editorWidth = 520;
     v.push_back(p);
   }

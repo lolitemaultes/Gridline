@@ -1,5 +1,6 @@
 // Gridline — "dynamics" pack: Amp Rack (gl.amprack) and Multi FX
 // (gl.effector) runtimes.
+#include <atomic>
 #include <cstdio>
 #include "dyn_dsp.h"
 #include "effector_ref.h"
@@ -496,6 +497,40 @@ class RackSlot {
 class AmpRackFx final : public DynFx {
  public:
   AmpRackFx() : DynFx("gl.amprack") {}
+  ~AmpRackFx() override {
+    delete pending_.exchange(nullptr);
+    delete retired_.exchange(nullptr);
+    delete cab_;
+  }
+  AmpRackFx(const AmpRackFx&) = delete;
+  AmpRackFx& operator=(const AmpRackFx&) = delete;
+  // J-42: UI thread: convolver states for impulse cabinets (module rack with a cabinet directory).
+  void prepareHost(const PluginState& s, double sampleRate) override {
+    delete retired_.exchange(nullptr);
+    cabRate().store(sampleRate, std::memory_order_relaxed);  // the Program prepares the aux next, at this rate
+    if ((pi(s, RkModel) != 1 && pi(s, RkModel) != 2) || cab::dirOf(s.data).empty()) return;
+    const int need = cab::partsFor(sampleRate);
+    if (need <= capUi_) return;
+    capUi_ = need;
+    auto* b = new CabBank;
+    for (auto& r : b->run) r = std::make_unique<cab::Run>(need);
+    delete pending_.exchange(b);
+  }
+  void processAux(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R, int n) override {
+    cabRate().store(ctx.sampleRate, std::memory_order_relaxed);
+    if (!retired_.load(std::memory_order_acquire))
+      if (CabBank* b = pending_.exchange(nullptr)) retired_.store(cab_, std::memory_order_release), cab_ = b;
+    const auto* a = dynamic_cast<const cab::Aux*>(aux.custom.get());
+    cab::Run* runs[kDrModules] = {};
+    if (cab_)
+      for (int k = 0; k < kDrModules; ++k) runs[k] = cab_->run[k].get();
+    if (a && a->rate != ctx.sampleRate) a = nullptr;  // prepared for another rate (the next build fixes it)
+    mods_.setCabinets(a, cab_ ? runs : nullptr);
+    const cab::Kernel* bk = a && pi(s, RkModel) == 2 ? a->k[0].get() : nullptr;
+    if (bk != board_.cabK && runs[0]) runs[0]->clear();
+    board_.cabK = bk, board_.cabRun = runs[0];
+    process(s, ctx, L, R, n);
+  }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate;
     const int model = pi(s, RkModel);
@@ -587,8 +622,14 @@ class AmpRackFx final : public DynFx {
   static void safety(float* L, float* R, int n) {
     for (int i = 0; i < n; ++i) L[i] = std::clamp(L[i], -16.f, 16.f), R[i] = std::clamp(R[i], -16.f, 16.f);
   }
+  struct CabBank {
+    std::unique_ptr<cab::Run> run[kDrModules];
+  };
   RackSlot slots_[kRackSlots];
   drack::Rack mods_;
+  CabBank* cab_ = nullptr;
+  std::atomic<CabBank*> pending_{nullptr}, retired_{nullptr};
+  int capUi_ = 0;
   pedal::Board board_;
 };
 

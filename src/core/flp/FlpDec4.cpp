@@ -13,7 +13,7 @@
 //                                            records: 32-byte Pascal name, 16 bytes,
 //                                            32-byte Pascal caption, …
 //   Soundfont Player          → gl.multisampler (the .sf2 path found in the state)
-//   FL Studio Mobile Rack FX  → the Gridline effect of the rack's first module
+//   FL Studio Mobile Rack FX  → gl.pocketrack (J-42: up to four modules, reference engines)
 //                                (chunked "SSLF" state; "RMOd" chunk: u32 size,
 //                                u32 module type, u32 instance)
 //   Fruity Mute 2             → gl.mute       (no shipped state: defaults)
@@ -151,38 +151,6 @@ bool decodeSoundfont(Context& c, const std::vector<Event>& evs, PluginMapping& m
   return true;
 }
 
-// FL Studio Mobile rack modules (type id → Gridline effect), from the rack's
-// shipped one-module presets (J-35: spec j35_flsm_rack.md §2).
-const char* mobileModuleType(uint32_t t) {
-  switch (t) {
-    case 3: case 30: return "gl.eq";          // parametric / tuned EQ
-    case 4: return "gl.effector";            // X / Y multi effect
-    case 6: return "gl.dist";
-    case 7: return "gl.geq";                 // graphic EQ
-    case 8: return "gl.comp";
-    case 20: return "gl.utility";            // leveller: gain and pan
-    case 9: return "gl.filter";
-    case 11: return "gl.chorus";
-    case 13: case 40: return "gl.flanger";   // flanger, comb filter
-    case 14: return "gl.phaser";
-    case 15: case 34: return "gl.stereo";    // stereoizer, spacer
-    case 16: case 18: return "gl.delay";     // trance / tape delay
-    case 24: return "gl.tuner";
-    case 26: return "gl.analyzer";
-    case 27: return "gl.gate";
-    case 28: return "gl.limiter";
-    case 29: return "gl.scduck";             // beat-synced ducking envelope
-    case 35: return "gl.reverb";
-    case 36: return "gl.multiband";
-    case 41: return "gl.waveshaper";
-    case 42: return "gl.timegate";           // tape stop
-    case 43: return "gl.bbdchorus";          // wow & flutter
-    case 44: return "gl.spread";
-    case 45: return "gl.pitcher";
-    case 46: return "gl.autopan";            // tremolo
-    default: return nullptr;
-  }
-}
 
 // One rack module: type, PRMS (index 0 = enable) and SMPR (post gain, mix, wet pan).
 struct MobileModule {
@@ -207,102 +175,43 @@ std::vector<MobileModule> mobileModules(const Blob& b) {
   }
   return out;
 }
-// A module whose stored settings leave the audio untouched (EQs at 0 dB, the
-// leveller at unity and centred, analysis modules, the spacer's neutral
-// state), with the base send / mix at their neutral values.
-bool mobileNeutral(const MobileModule& mm) {
-  auto near = [](float a, float b) { return std::fabs(a - b) < 1e-4f; };
-  const auto& p = mm.prms;
-  if (mm.smpr.size() >= 3 && !(near(mm.smpr[0], 0.5f) && near(mm.smpr[1], 1.f) && near(mm.smpr[2], 0.5f))) return false;
-  auto all = [&](size_t from, size_t to, float v) {
-    if (p.size() < to) return false;
-    for (size_t k = from; k < to; ++k)
-      if (!near(p[k], v)) return false;
-    return true;
-  };
-  switch (mm.type) {
-    case 24: case 26: return true;                                          // tuner, analyser: audio passes
-    case 7: return all(1, 9, 0.5f);                                         // graphic EQ, every band 0 dB
-    case 30: return all(1, 9, 0.5f);                                        // tuned EQ, every gain 0 dB
-    case 3: return p.size() >= 17 && near(p[1], 0.5f) && near(p[5], 0.5f) && near(p[9], 0.5f) && near(p[13], 0.5f);  // param EQ gains 0 dB
-    case 20: return p.size() >= 3 && near(p[1], 0.73796f) && near(p[2], 0.5f);  // leveller 0 dB, centred
-    case 34: return p.size() >= 8 && near(p[1], 0.5f) && near(p[2], 0.5f) && near(p[3], 0.5f) && near(p[4], 0) && near(p[5], 0.5f) &&
-                    near(p[6], 0) && near(p[7], 0);                         // spacer: delays off, centred, no inversion
-    default: return false;
-  }
-}
-// Reverb 2 module → the full reverb model's knobs (laws j35_flsm_rack §3.1; approximate:
-// the module mixes the engine's two output buffers itself).
-void mobileReverb(const MobileModule& mm, PluginMapping& m) {
-  using namespace pp;
-  const auto& p = mm.prms;
-  auto x = [&](size_t i, float d) { return i < p.size() ? std::clamp(static_cast<double>(p[i]), 0.0, 1.0) : d; };
-  auto tbl = [](double n, double lo, double hi) { return std::floor(lo + (hi - lo) * n + 0.5); };
-  // Linear gain g → the standalone reverb's level knob (curve x = k / scale).
-  auto knob = [](double g, double scale) { return std::clamp(std::round(scale * std::log(10 * g + 1) / std::log(11.0)), 0.0, 160.0); };
-  set(m, RvbModel, 2);
-  set(m, RvbFHighCut, tbl(x(1, 0.16f), 5, 221));
-  set(m, RvbFLowCut, tbl(x(2, 0.0187f), 19, 3000));
-  set(m, RvbFRoom, tbl(x(3, 0.5f), 1, 100));
-  set(m, RvbFDecay, tbl(x(4, 0.068f), 1, 200));
-  set(m, RvbFDiffusion, tbl(x(5, 1), 0, 100));
-  set(m, RvbFDamp, tbl(x(6, 0.16f), 5, 221));
-  set(m, RvbFDry, knob(1.25 * x(7, 0.8f), 128));
-  set(m, RvbFEr, knob(1.25 * x(8, 0.8f), 256));
-  set(m, RvbFWet, knob(1.25 * x(9, 0.56f), 256));
-  set(m, RvbInputMode, x(10, 0) > 0.5 ? 1 : 0);
-  set(m, RvbFPredelay, std::clamp(std::round(tbl(x(11, 0), 0, 1000) * 0.384), 0.0, 384.0));
-  set(m, RvbPreSync, 0);
-  set(m, RvbFModDepth, std::round(2048 * x(13, 0.28f)));
-  set(m, RvbFBass, tbl(x(14, 0.5f), 2, 30) * 10);
-  set(m, RvbFSep, std::round((x(15, 0.33f) - 0.5) * 128));
-  set(m, RvbFModSpeed, std::round(2048 * x(16, 0.2405f)));
-  set(m, RvbFCross, tbl(x(17, 0.5f), 25, 2000));
-}
-// X / Y multi effect → the multi effect's reference engine with the closest kind
-// (the module's own sub-units are not studied: approximate).
-void mobileMultiFx(const MobileModule& mm, PluginMapping& m) {
-  namespace dy = packs::dynamics;
-  const auto& p = mm.prms;
-  auto x = [&](size_t i, float d) { return i < p.size() ? std::clamp(p[i], 0.f, 1.f) : d; };
-  static const int kind[8] = {5, 6, 4, 4, 2, 3, 7, 10};  // echo, reverb, LP, HP, flanger, phaser, panner, vowel
-  const int k = std::clamp(static_cast<int>(7 * x(1, 0)), 0, 7);
-  set(m, dy::EfModel, 1);
-  set(m, dy::EfRawKind, kind[k] / 11.0);
-  set(m, dy::EfRawBypass, 0);
-  set(m, dy::EfRawMix, 1);
-  set(m, dy::EfRawX, x(2, 0.5f));
-  set(m, dy::EfRawY, x(3, 0.5f));
-  set(m, dy::EfRawModX, 0.5 + 0.5 * x(5, 0));
-  set(m, dy::EfRawModY, 0.5);
-  set(m, dy::EfRawShape, std::clamp(static_cast<int>(2 * x(6, 0)), 0, 2) / 2.0);
-  set(m, dy::EfRawIn, 1);
-  set(m, dy::EfRawOut, 0.5);
-}
 
+// J-42: the rack's modules → gl.pocketrack slots (reference module engines,
+// pocket_mods.h). Up to four modules; each keeps its stored parameters (indices
+// past the stored ones take the module's defaults) and its post gain / mix /
+// wet balance. Exact when every module's engine is a reference model.
 bool decodeMobileRackFx(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+  namespace dy = packs::dynamics;
   Blob b = gen2::stateBlob(evs);
   std::vector<MobileModule> modules = mobileModules(b);
-  // Disabled modules pass audio through.
-  modules.erase(std::remove_if(modules.begin(), modules.end(), [](const MobileModule& mm) { return !mm.prms.empty() && mm.prms[0] < 0.5f; }),
-                modules.end());
-  // Modules that leave the audio untouched.
-  const size_t all = modules.size();
-  modules.erase(std::remove_if(modules.begin(), modules.end(), mobileNeutral), modules.end());
-  if (modules.empty()) {  // an empty (or fully neutral) rack passes audio through
-    begin(m, "gl.utility");
-    m.exact = true;
-    return true;
+  begin(m, "gl.pocketrack");
+  bool exact = modules.size() <= static_cast<size_t>(dy::kPkSlots);
+  for (int s = 0; s < dy::kPkSlots; ++s) {
+    const bool have = s < static_cast<int>(modules.size());
+    const int type = have ? static_cast<int>(modules[static_cast<size_t>(s)].type) : 0;
+    const bool known = type > 0 && type < dy::kPkTypes && *dy::pocketModuleName(type);
+    set(m, dy::pkParam(s, dy::PkType), known ? type : 0);
+    float def[dy::kPkParams];
+    dy::pocketModuleDefaults(known ? type : 0, def);
+    float p[dy::kPkParams];
+    for (int i = 0; i < dy::kPkParams; ++i) {
+      const auto& pr = have ? modules[static_cast<size_t>(s)].prms : std::vector<float>{};
+      p[i] = i < static_cast<int>(pr.size()) && std::isfinite(pr[static_cast<size_t>(i)]) ? pr[static_cast<size_t>(i)] : def[i];
+      set(m, dy::pkParam(s, dy::PkP0 + i), p[i]);
+    }
+    const auto& sm = have ? modules[static_cast<size_t>(s)].smpr : std::vector<float>{};
+    set(m, dy::pkParam(s, dy::PkPost), sm.size() > 0 ? sm[0] : 0.5f);
+    set(m, dy::pkParam(s, dy::PkMix), sm.size() > 1 ? sm[1] : 1.f);
+    set(m, dy::pkParam(s, dy::PkPan), sm.size() > 2 ? sm[2] : 0.5f);
+    if (have && !known) {
+      exact = false;
+      c.report.warn("FL Studio Mobile rack: module type " + std::to_string(type) + " not available");
+    }
+    if (have && known && p[0] >= 0.5f && !dy::pocketModuleExact(type, p)) exact = false;
   }
-  const MobileModule& mm = modules.front();
-  const char* type = mobileModuleType(mm.type);
-  if (!type) return false;
-  begin(m, type);
-  if (mm.type == 35) mobileReverb(mm, m);
-  else if (mm.type == 4) mobileMultiFx(mm, m);
-  m.exact = false;  // the module engines themselves are not reproduced (spec j35_flsm_rack.md)
-  if (modules.size() > 1 || all > modules.size())
-    c.report.warn("FL Studio Mobile rack: only the first of " + std::to_string(modules.size()) + " active modules imported");
+  if (modules.size() > static_cast<size_t>(dy::kPkSlots))
+    c.report.warn("FL Studio Mobile rack: only the first " + std::to_string(dy::kPkSlots) + " of " + std::to_string(modules.size()) + " modules imported");
+  m.exact = exact;
   return true;
 }
 

@@ -216,11 +216,14 @@ bool decodeSend(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   fx::begin(m, "gl.send");
   KnobTable tab = {{0, -128, 128, md::SnPan, [](double v) { return clampd(v / 128.0, -1, 1); }},
                    {1, 0, 320, md::SnLevel, [](double v) { return clampd(v / 256.0, 0, 1.25); }},
-                   {2, 0, 256, md::SnDry, [](double v) { return clampd(v / 256.0, 0, 1); }}};
+                   // J-42: dry level on FL's volume curve (1 exactly at 256).
+                   {2, 0, 256, md::SnDry, [](double v) { const double g = clampd(v / 256.0, 0, 1); return g == 1 ? 1.0 : 0.1 * (std::pow(11.0, g) - 1.0); }}};
   fx::applyTable(m, tab, t);
   const int target = static_cast<int>(t[3]);
-  m.exact = false;
-  if (target >= 0 && target < 4096) {  // corrupt targets: treated as none
+  // J-42: FL sends only for a target index > 0 (0 and −1 = none); a target is an index
+  // into the hosting insert's route list, not an insert number (not resolved here).
+  m.exact = target <= 0;
+  if (target > 0 && target < 4096) {  // corrupt targets: treated as none
     // FL's send targets are counted from the first insert after the master.
     fx::set(m, md::SnTarget, target + 1);
   } else {

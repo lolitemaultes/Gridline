@@ -449,6 +449,9 @@ maxref::RefState readMaxRef(Get get, int ref, int prog) {
   for (int k = 0; k < maxref::kRaw; ++k) r.raw[k] = static_cast<int>(std::lround(get(ref + MrRaw0 + k)));
   r.solo = get(ref + MrSolo) >= 0.5, r.masterMid = get(ref + MrMasterMid) >= 0.5, r.safetyOff = get(ref + MrSafetyOff) >= 0.5;
   r.target = std::clamp(static_cast<int>(std::lround(get(ref + MrTarget))), 0, 3);
+  r.fir = get(ref + MrFir) >= 0.5, r.lin = get(ref + MrLin) >= 0.5;
+  r.linQuality = std::clamp(static_cast<int>(std::lround(get(ref + MrLinQuality))), 0, 5);
+  r.linSpeed = std::clamp(static_cast<int>(std::lround(get(ref + MrLinSpeed))), 0, 3);
   for (int b = 0; b < kMsBands; ++b) {
     maxref::Curve& c = r.curve[b];
     c.n = std::clamp(static_cast<int>(std::lround(get(prog + msExt(b, MxPoints)))), 1, kMsCurvePts);
@@ -457,7 +460,7 @@ maxref::RefState readMaxRef(Get get, int ref, int prog) {
       c.x[i] = std::max(last, std::clamp(get(prog + msExt(b, MxPt0 + i * 3)), 0.0, 1.0));
       c.y[i] = std::clamp(get(prog + msExt(b, MxPt0 + i * 3 + 1)), 0.0, 1.0);
       c.t[i] = std::clamp(get(prog + msExt(b, MxPt0 + i * 3 + 2)), -1.0, 1.0);
-      c.type[i] = std::clamp(static_cast<int>(std::lround(get(ref + MrPtType0 + b * kMsCurvePts + i))), 0, 2);
+      c.type[i] = std::clamp(static_cast<int>(std::lround(get(ref + MrPtType0 + b * kMsCurvePts + i))), 0, 12);
       last = c.x[i];
     }
   }

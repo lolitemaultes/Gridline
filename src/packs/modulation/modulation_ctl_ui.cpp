@@ -54,37 +54,49 @@ void peakEditor(EditTarget& e) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::Scope scope(K);
   sk::panelBox(dl, F, 7, 7, 234, 83, K, "PEAK");
-  const char* pk[5] = {"BASE", "VOL", "TENSION", "ATTACK", "DECAY"};
-  const int pkp[5] = {PkBase, PkAmount, PkTension, PkAttack, PkDecay};
-  for (int i = 0; i < 5; ++i) sk::wheelL(e, pkp[i], F, 13 + i * 46, 26, 36, K, pk[i]);
+  const bool ref = e.p(PkModel, 0) >= 0.5f;  // J-42 reference: the stored integers, no attack, tempo-locked LFO
+  if (ref) {
+    const char* pk[4] = {"BASE", "VOL", "TENSION", "DECAY"};
+    const int pkp[4] = {PkRBase, PkRAmount, PkRTension, PkRDecay};
+    for (int i = 0; i < 4; ++i) sk::wheelL(e, pkp[i], F, 13 + i * 57, 26, 36, K, pk[i]);
+  } else {
+    const char* pk[5] = {"BASE", "VOL", "TENSION", "ATTACK", "DECAY"};
+    const int pkp[5] = {PkBase, PkAmount, PkTension, PkAttack, PkDecay};
+    for (int i = 0; i < 5; ++i) sk::wheelL(e, pkp[i], F, 13 + i * 46, 26, 36, K, pk[i]);
+  }
   sk::panelBox(dl, F, 249, 7, 304, 83, L, "LFO");
-  sk::wheelL(e, LfBase, F, 255, 26, 36, L, "BASE");
-  sk::wheelL(e, LfAmount, F, 297, 26, 36, L, "VOL");
-  sk::wheelL(e, LfTension, F, 339, 26, 36, L, "TENSION");
+  sk::wheelL(e, ref ? LfRBase : LfBase, F, 255, 26, 36, L, "BASE");
+  sk::wheelL(e, ref ? LfRAmount : LfAmount, F, 297, 26, 36, L, "VOL");
+  sk::wheelL(e, ref ? LfRTension : LfTension, F, 339, 26, 36, L, "TENSION");
   sk::menuBox(e, LfShape, F.p(381, 32), F.sz(54, 24), L);
   sk::text(dl, F, 408, 64, L, "SHAPE", 7.5f, true);
-  const bool sync = e.p(LfSync, 1) >= 0.5f;
-  if (sync) {
-    sk::menuBox(e, LfSyncRate, F.p(441, 32), F.sz(58, 24), L);
-    sk::text(dl, F, 470, 64, L, "LENGTH", 7.5f, true);
+  if (ref) {
+    sk::wheelL(e, LfRSpeed, F, 452, 26, 36, L, "SPEED");
+    sk::wheelL(e, LfRPhase, F, 509, 26, 36, L, "PHASE");
   } else {
-    sk::wheelL(e, LfRate, F, 452, 26, 36, L, "SPEED");
+    const bool sync = e.p(LfSync, 1) >= 0.5f;
+    if (sync) {
+      sk::menuBox(e, LfSyncRate, F.p(441, 32), F.sz(58, 24), L);
+      sk::text(dl, F, 470, 64, L, "LENGTH", 7.5f, true);
+    } else {
+      sk::wheelL(e, LfRate, F, 452, 26, 36, L, "SPEED");
+    }
+    sk::check(e, LfSync, F.p(470, 9), F.sz(60, 14), L, "SYNC");
+    sk::wheelL(e, LfPhase, F, 509, 26, 36, L, "PHASE");
   }
-  sk::check(e, LfSync, F.p(470, 9), F.sz(60, 14), L, "SYNC");
-  sk::wheelL(e, LfPhase, F, 509, 26, 36, L, "PHASE");
   // Monitor sheet.
   sk::panelBox(dl, F, 7, 98, 546, 83, K);
-  monitor(dl, F.p(12, 103), F.p(548, 176), K, e.key, {{1, theme::withAlpha(L.fill, 0.75f)}, {2, K.text}, {0, K.fill}});
-  sk::readout(dl, F.p(7, 189), F.p(103, 207), K, "PEAK", e.output(0));
+  monitor(dl, F.p(12, 103), F.p(548, 176), K, e.key, {{2, theme::withAlpha(L.fill, 0.75f)}, {0, K.text}, {1, K.fill}});
+  sk::readout(dl, F.p(7, 189), F.p(103, 207), K, "PEAK", e.output(1));
   {
     skin::Skin lk = L;
-    sk::readout(dl, F.p(108, 189), F.p(196, 207), lk, "LFO", e.output(1));
+    sk::readout(dl, F.p(108, 189), F.p(196, 207), lk, "LFO", e.output(2));
   }
-  sk::readout(dl, F.p(201, 189), F.p(311, 207), K, "P x LFO", e.output(2));
+  sk::readout(dl, F.p(201, 189), F.p(311, 207), K, "P + LFO", e.output(0));
   sk::check(e, PkRamp, F.p(380, 189), F.sz(76, 18), K, "SMOOTH");
   sk::check(e, PkMute, F.p(458, 189), F.sz(95, 18), K, "MUTE AUDIO");
   if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
-    e.a->setHint("Link any knob to Peak, LFO or Peak x LFO: right-click the knob, Link to controller");
+    e.a->setHint("Link any knob to Peak + LFO, Peak or LFO: right-click the knob, Link to controller");
   F.end(0, kH);
 }
 

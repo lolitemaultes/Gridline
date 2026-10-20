@@ -51,9 +51,14 @@ void addMaxRef(std::vector<ParamDesc>& ps, int base) {
   ps[static_cast<size_t>(base + MrSafetyOff)] = tog("No ceiling safety (ref.)", 0);
   ps[static_cast<size_t>(base + MrFir)] = tog("Linear-phase split, legacy (ref.)", 0);
   ps[static_cast<size_t>(base + MrLin)] = tog("Linear-phase split (ref.)", 0);
+  ps[static_cast<size_t>(base + MrLinQuality)] = ch("Linear-phase quality (ref.)", {"Lowest", "Low", "Normal", "High", "Higher", "Highest"}, 2);
+  ps[static_cast<size_t>(base + MrLinSpeed)] = ch("Linear-phase change speed (ref.)", {"Normal", "Fast", "Faster", "Ultra"}, 0);
   for (int b = 0; b < kMsBands; ++b)
     for (int i = 0; i < kMsCurvePts; ++i)
-      ps[static_cast<size_t>(base + MrPtType0 + b * kMsCurvePts + i)] = ch(std::string(names[b]) + " point type (ref.)", {"Single", "Double", "Hold"}, 0);
+      ps[static_cast<size_t>(base + MrPtType0 + b * kMsCurvePts + i)] = ch(std::string(names[b]) + " point type (ref.)",
+                                                                       {"Single", "Double", "Hold", "Stairs", "Smooth stairs", "Pulse", "Wave", "Single 2", "Double 2",
+                                                                        "Half sine", "Smooth", "Single 3", "Double 3"},
+                                                                       0);
 }
 
 void addMaster(std::vector<PluginInfo>& v) {
@@ -488,6 +493,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   addDistortions(v);
   addEffector(v);
   addTransplit(v);
+  appendPocketInfo(v);
 }
 
 }  // namespace gl::packs::dynamics

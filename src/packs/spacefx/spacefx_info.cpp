@@ -54,6 +54,8 @@ PluginInfo convolver() {
   p.params[CvEnvOn] = tog("IR envelope", 0);
   p.params[CvStretchMode] = ch("Stretch mode", {"Resample", "Keep pitch"}, 0);
   p.params[CvLatency] = lin("Reported latency", "smp", 0, 65536, 0);
+  p.params[CvModel] = ch("IR build", {"Editing chain", "Reference"}, 0);
+  p.legacyModelParam = CvModel;
   p.presets = {{"Concert space", {}},
                {"Tight room", {{CvSource, SrcRoom}, {CvSize, 0.35f}, {CvWet, 0.3f}}},
                {"Bright plate", {{CvSource, SrcPlate}, {CvSize, 0.55f}, {CvTone, 0.85f}, {CvLowCut, 180.f}, {CvWet, 0.3f}}},
@@ -134,7 +136,7 @@ PluginInfo multiDelay() {
 
 PluginInfo bandDelay() {
   PluginInfo p{"gl.banddelay", "Band Delay", "Delay & reverb", PluginKind::Effect, {}, false, {}};
-  p.params.resize(BdCount);
+  p.params.resize(BdTotal);
   p.params[BdMaxTime] = lg("Max time", "s", 0.05, 2, 0.8);
   p.params[BdSync] = tog("Tempo sync", 0);
   p.params[BdSyncTime] = ch("Synced time", {"1/16", "1/8", "1/8.", "1/4", "1/4.", "1/2", "1/2.", "1 bar"}, 3);
@@ -146,6 +148,20 @@ PluginInfo bandDelay() {
   p.params[BdSat] = ch("Saturation", {"Off", "Soft", "Hard"}, 0);
   p.params[BdDry] = lin("Dry", "%", 0, 1, 1);
   p.params[BdWet] = lin("Wet", "%", 0, 1, 0.5);
+  p.params[BdModel] = ch("Engine", {"Spectral", "Band delays"}, 0);
+  p.legacyModelParam = BdModel;
+  p.params[BdRScale] = lin("Time scale (bands)", "%", 0, 1, 0.5);
+  p.params[BdRTenth] = tog("Time x 0.1 (bands)", 0);
+  p.params[BdRFeedback] = lin("Feedback (bands)", "%", 0, 1, 0);
+  p.params[BdRSmooth] = lin("Smoothing (bands)", "s", 0, 1, 0.25);
+  p.params[BdRMode] = ch("Filter bank", {"Gentle", "Steep", "Linear phase"}, 0);
+  p.params[BdRKeep] = tog("Keep pitch (bands)", 0);
+  p.params[BdRMorph] = lin("Bank morph", "%", 0, 1, 0);
+  p.params[BdRMix] = lin("Dry / wet", "%", 0, 1, 1);
+  p.params[BdRHarmonic] = tog("Harmonic scale", 0);
+  p.params[BdRWeight] = tog("Weighted feedback", 0);
+  p.params[BdRHp] = lin("Wet high pass", "%", 0, 1, 0);
+  p.params[BdRSat] = ch("Wet saturation", {"Limit", "Soft", "Clip"}, 0);
   p.presets = {{"Spectral spread", {}},
                {"Bank B", {{BdMorph, 1.f}}},
                {"Halfway morph", {{BdMorph, 0.5f}, {BdFeedback, 0.75f}}},

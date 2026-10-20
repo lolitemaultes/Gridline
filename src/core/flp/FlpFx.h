@@ -80,6 +80,8 @@ void applyTable(PluginMapping& m, const KnobTable& table, const std::vector<doub
 void begin(PluginMapping& m, const std::string& glType);
 // Sets a Gridline parameter (ignored when out of range).
 void set(PluginMapping& m, int glParam, double v);
+// J-42: a Maximus program file → gl.enhance parameters (reference engine), see FlpFxDyn.cpp.
+bool maximusProgramToEnhance(const std::string& path, std::vector<float>& params, bool* exact);
 
 // Linear helpers for conv functions.
 inline std::function<double(double)> scale(double k, double add = 0) {

@@ -81,22 +81,29 @@ inline void testEncDec3() {
     putI32(b, 8 + 4 * 386, 2500), putI32(b, 8 + 4 * 390, 400), putI32(b, 8 + 4 * 391, 64);
   });
   {
-    // A Gridline-drawn curve set (not from FL bands) still writes as the closest
-    // bands; every parameter is kept (Gridline's default feedback / pan curves
-    // have no FL counterpart, so the curve text itself is approximate). FL's
-    // maximum time is 0.5 · 2^(scale / 2000) (×0.1), scale −6000..6000.
+    // J-42: band-delay model states carry the 384 band values verbatim; a full morph
+    // and a linear delay curve in bank 8 keep every parameter. (Spectral-engine states
+    // export through the reference's controls and stay approximate.)
     gl::PluginState g = gl::defaultPluginState("gl.banddelay");
     namespace sfx = gl::packs::spacefx;
-    sfx::BandCurves cv = sfx::defaultBandCurves();
-    for (int i = 0; i < sfx::kBdPoints; ++i) cv.v[0][sfx::BtDelay][i] = static_cast<float>(i) / (sfx::kBdPoints - 1);
-    g.data = sfx::formatBandCurves(cv);
-    g.params[sfx::BdMorph] = 1.0f;
-    g.params[sfx::BdMaxTime] = 0.5f;
+    g.params[sfx::BdModel] = 1;
+    std::string d = sfx::formatBandCurves(sfx::defaultBandCurves()) + "\nmbd8";
+    for (int i = 0; i < 384; ++i) {
+      const int t = (i / 16) % 3, k = i % 16;
+      char buf[24];
+      std::snprintf(buf, sizeof buf, " %.9g", t == 0 ? k / 15.0 : t == 1 ? 1.0 : 0.5);
+      d += buf;
+    }
+    g.data = d;
+    g.params[sfx::BdRMorph] = 1.0f;
+    g.params[sfx::BdRScale] = 0.75f;
     const enc::Encoder* e = enc::findEncoder("Multiband Delay", "gl.banddelay");
     Bytes t = e ? e->defaults() : Bytes{};
     enc::Result r = enc::encode(g, "Multiband Delay", &t, ctx());
-    expect(r.quality == enc::Result::Exact || (r.quality == enc::Result::Approx && r.mismatched.empty()),
-           "Multiband Delay: a full morph and a linear delay curve keep every parameter");
+    bool refKept = true;
+    for (int k = sfx::BdModel; k < sfx::BdTotal; ++k)
+      for (int m : r.mismatched) refKept = refKept && m != k;
+    expect(r.quality != enc::Result::Defaults && refKept, "Multiband Delay: a full morph and a linear delay curve keep every band-delay parameter");
   }
   dec3Corpus("Multiband Delay", "Multiband Delay");
 
@@ -168,7 +175,7 @@ inline void testEncDec3() {
   {
     expect(enc::findEncoder("Wasp", "gl.analog") && enc::findEncoder("Fruity LSD", "gl.midiout") && enc::findEncoder("FL Slayer", "gl.string") &&
                enc::findEncoder("Fruity Mute 2", "gl.mute") && enc::findEncoder("Soundfont Player", "gl.multisampler") &&
-               enc::findEncoder("FL Studio Mobile Rack FX", "gl.reverb"),
+               enc::findEncoder("FL Studio Mobile Rack FX", "gl.pocketrack"),
            "Dec4: defaults-only plugins have encoders");
     gl::PluginState g = gl::defaultPluginState("gl.mute");
     enc::Result r = enc::encode(g, "", nullptr, ctx());

@@ -15,6 +15,7 @@
 #include "../../engine/Dsp.h"
 #include "../../engine/Effects.h"
 #include "creative.h"
+#include "octafilter_refeng.h"
 
 namespace gl::packs::creative {
 
@@ -188,6 +189,8 @@ class OctaFilterFx final : public Effect {
  private:
   void tick(const PluginState& s, const ProcessContext& ctx, double beat);
   std::unique_ptr<OctaBank> bank_;
+  std::unique_ptr<ref::RefEngine> ref_;
+  double refKey_ = -1;
   size_t dataHash_ = 0;
   double sr_ = 0;
   // Per unit / target values (start and end of the current tick).

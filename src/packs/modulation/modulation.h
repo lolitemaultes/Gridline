@@ -8,11 +8,19 @@
 namespace gl::packs::modulation {
 
 // ------------------------------------------------------------- controllers
-// "gl.peakctl" — Peak Follower (mixer effect). Outputs: Peak, LFO, Peak x LFO.
+// "gl.peakctl" — Peak Follower (mixer effect). Outputs (J-42: the reference's
+// order): Peak + LFO (clamped sum), Peak, LFO.
+// J-42 reference model (PkModel = 1): the stored integers PkR* drive a block
+// peak (instant attack) with a linear per-tick decay, a tempo-locked 32-bit
+// phase LFO, the exponential amount / tension laws and a 1/8-per-tick ramp.
 enum PeakCtl {
   PkBase, PkAmount, PkTension, PkAttack, PkDecay,
   LfBase, LfAmount, LfTension, LfShape, LfSync, LfRate, LfSyncRate, LfPhase,
   PkRamp, PkMute,
+  PkModel,                                    // 0 legacy follower, 1 reference (older states: legacy)
+  PkRBase, PkRAmount, PkRTension, PkRDecay,   // 0..65536, −256..256, −128..128, 5..128
+  LfRBase, LfRAmount, LfRTension, LfRSpeed,   // 0..65536, −256..256, −128..128, 200..65536
+  LfRPhase,                                   // 0..65535
   PkCount
 };
 // "gl.xyctl" — X-Y Pad (mixer effect). Outputs: X, Y.

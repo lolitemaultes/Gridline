@@ -25,7 +25,7 @@ const char* kTargetNames[kTargets] = {"pan", "volume", "cutoff", "resonance", "l
 
 PluginInfo octaFilter() {
   PluginInfo p{"gl.octafilter", "Octa Filter", "Filter", PluginKind::Effect, {}, false, {}};
-  p.params.resize(OfCount);
+  p.params.resize(OfTotal);
   p.params[OfMaster] = lin("Master level", "times", 0, 1.25, 1);
   p.params[OfMasterLfo] = lin("Master LFO level", "%", -1, 1, 0);
   p.params[OfIefLevel] = lin("Follower level", "times", 0, 1.25, 1);
@@ -42,7 +42,7 @@ PluginInfo octaFilter() {
   p.params[OfCenter] = tog("Remove DC offset", 0);
   p.params[OfSyncPatterns] = tog("Sync pattern changes", 0);
   p.params[OfHqEnvelopes] = tog("HQ envelopes", 0);
-  p.params[OfOversample] = ch("Oversampling", {"Off", "2x", "3x", "4x", "5x"}, 0);
+  p.params[OfOversample] = ch("Oversampling", {"Off", "2x", "4x", "8x", "16x"}, 0);
   p.params[OfSolo] = ch("Solo unit", {"None", "1", "2", "3", "4", "5", "6", "7", "8"}, 0);
   p.params[OfIefUse1] = tog("Follower reads unit 1", 0);
   p.params[OfHqShaper] = tog("HQ shaper", 1);
@@ -89,6 +89,8 @@ PluginInfo octaFilter() {
       {"Peaking comb", {{U(0, UType), 9.f}, {U(0, UOrder), 3.f}, {U(0, UOut), 0.3f}, {U(1, UEnabled), 1.f}, {U(1, UType), 9.f}, {U(1, UOrder), 3.f},
                         {U(1, UCut), 0.65f}, {U(1, UOut), 0.3f}, {OfMaster, 0.5f}}},
   };
+  p.params[OfModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+  p.legacyModelParam = OfModel;
   p.editorWidth = 1000;
   return p;
 }

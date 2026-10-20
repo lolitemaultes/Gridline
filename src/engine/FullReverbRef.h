@@ -13,6 +13,10 @@
 //               coefficient, early reflections tapped after the second
 //               all-pass, output added to the caller's buffers with a width
 //               matrix.
+//  * Rack     — (J-42) the mobile module rack's reverb: the Multi network at the
+//               host rate with a modulated delay in each tank half, reflections
+//               from the first tap per side only, and two outputs (late + weighted
+//               reflections through the width matrix; raw reflections), no dry.
 //  * Studio   — the standalone reverb: mono input, all input all-passes on one
 //               coefficient, reflections tapped after the first all-pass, a
 //               modulated delay in front of each tank's first all-pass; the
@@ -28,7 +32,7 @@
 
 namespace gl::fullrev {
 
-enum class Variant { Multi, Studio };
+enum class Variant { Multi, Studio, Rack };
 
 // ---------------------------------------------------------------- tables
 inline constexpr int kInConst[4] = {142, 107, 379, 277};
@@ -93,7 +97,7 @@ class Engine {
     for (int k = 0; k < 4; ++k) l_[k].alloc(lineLen(kLeftConst[k], S)), r_[k].alloc(lineLen(kRightConst[k], S));
     pd_.alloc(std::max(1, predelayCap));
     const double x = sri * 0.31632653;
-    const int64_t xi = v == Variant::Multi ? static_cast<int64_t>(x) : static_cast<int64_t>(std::lround(static_cast<float>(sri) * 0.31632653f));
+    const int64_t xi = v != Variant::Studio ? static_cast<int64_t>(x) : static_cast<int64_t>(std::lround(static_cast<float>(sri) * 0.31632653f));
     int bits = 0;
     while ((int64_t{1} << bits) <= xi) ++bits;
     er_.assign(static_cast<size_t>(1) << (bits + 1), 0.f);
@@ -109,7 +113,7 @@ class Engine {
   // Back to silence: Multi fills the lines with 1e-30 (the reference's resume);
   // Studio zeroes them. Filter states zeroed, the wet smoother snaps again.
   void resume() {
-    const float fill = v_ == Variant::Multi ? 1e-30f : 0.f;
+    const float fill = v_ != Variant::Studio ? 1e-30f : 0.f;
     for (auto* L : lines()) L->fill(fill);
     pd_.fill(fill);
     std::fill(er_.begin(), er_.end(), fill);
@@ -119,6 +123,53 @@ class Engine {
     s_ = -1000;
     for (auto& m : mod_) std::fill(m.begin(), m.end(), 0.f);
     modW_[0] = modW_[1] = 0;
+    rd_ = 0;
+  }
+
+  // ---- Rack variant (J-42): engine integers in the rack's ranges.
+  struct RackSettings {
+    int lowCut = 75, highCut = 40, predelayMs = 0, room = 50, diffusion = 100, bass = 10, cross = 500, decay = 15, damp = 40;
+    float modDepth = 0, modSpeed = 0;
+    bool operator!=(const RackSettings& o) const {
+      return lowCut != o.lowCut || highCut != o.highCut || predelayMs != o.predelayMs || room != o.room || diffusion != o.diffusion || bass != o.bass ||
+             cross != o.cross || decay != o.decay || damp != o.damp;
+    }
+  };
+  void setRack(const RackSettings& r) {
+    if (r != rk_ || rkFirst_) rk_ = r, rkFirst_ = false, dirty_ = true;
+    rk_.modDepth = r.modDepth, rk_.modSpeed = r.modSpeed;
+    if (dirty_) recomputeRack();
+    rfs_ = 0.1f + 9.9f * (rk_.modSpeed * rk_.modSpeed * rk_.modSpeed);
+    rdT_ = rk_.modDepth * 0.0045351475f * static_cast<float>(sri_);
+  }
+  // One stereo input sample → A (late + weighted reflections, width matrix) and B (raw reflections).
+  void tickRack(float inL, float inR, float& AL, float& AR, float& BL, float& BR) {
+    const float lfo = std::sin(6.2831855f * rphi_);
+    rphi_ += rfs_ / static_cast<float>(sri_);
+    rphi_ -= std::trunc(rphi_);
+    rd_ = std::fabs(rdT_ - rd_) < 0.01f ? rdT_ : (rdT_ - rd_) * rcDepth_ + rd_ + 1e-30f;
+    const float iL = inL * inGain_, iR = inR * inGain_;
+    const float mono = ((iL + iR) * 0.5f) + 1e-30f;
+    lp_ = ((mono - lp_) * cHC_) + lp_;
+    const float a = ((lp_ - apA_) * cLC_) + apX_;
+    apA_ = a, apX_ = lp_;
+    const float x = cLC_ != 0 ? (((lp_ - a) * 0.5f) + 1e-30f) : lp_;
+    const float EL = gL_[0] * er_[(erPos_ + static_cast<uint32_t>(erL_[0])) & erMask_];
+    const float ERR = gR_[0] * er_[(erPos_ + static_cast<uint32_t>(erR_[0])) & erMask_];
+    const float v1 = in_[0].ap(x, cA_, cA_);
+    const float v2 = in_[1].ap(v1, cB_, cA_);
+    erWrite(v2);
+    const float v3 = in_[2].ap(v2, cA_, cA_);
+    const float v4 = in_[3].ap(v3, cB_, cA_);
+    const float pre = pd_.delay(v4) + 1e-20f;
+    tankRack(pre, rd_ * (lfo * 0.5f + 0.5f));
+    float TL, TR;
+    taps(TL, TR, false);
+    s_ = s_ < -99 ? wet_ : s_;
+    s_ = ((wet_ - s_) * 0.001f) + s_;
+    const float oL = s_ * TL + er_g_ * EL, oR = s_ * TR + er_g_ * ERR;
+    const float sum = oL + oR, dif = (oL - oR) * wf_;
+    AL = sum + dif, AR = sum - dif, BL = EL, BR = ERR;
   }
 
   // ---- Multi variant
@@ -298,6 +349,87 @@ class Engine {
     r_[3].buf[static_cast<size_t>(r_[3].p)] = w2;
     r_[3].adv();
   }
+  // Tank with the rack's grouping and a modulated delay after each damping one-pole (depth 0: none).
+  void tankRack(float pre, float mod) {
+    const float xl = g_ * r_[3].buf[static_cast<size_t>(r_[3].p)];
+    const float xa = ((xl - xsL_) * cX_) + xpL_;
+    xsL_ = xa, xpL_ = xl;
+    const float yl = (((((xa + xl) * kBass_ + xl) + pre) - dL_) * cD_) + dL_;
+    dL_ = yl;
+    const float zl = modLine(0, yl, mod);
+    const float u = l_[0].ap(zl, cT1_, cT1_);
+    const float t = l_[1].delay(u);
+    const float u2 = l_[2].ap(t * g_, cT2_, cT2_);
+    l_[3].buf[static_cast<size_t>(l_[3].p)] = u2;
+    l_[3].adv();
+    const float xr = g_ * l_[3].buf[static_cast<size_t>(l_[3].p)];
+    const float xb = ((xr - xsR_) * cX_) + xpR_;
+    xsR_ = xb, xpR_ = xr;
+    const float yr = (((((xb + xr) * kBass_ + xr) + pre) - dR_) * cD_) + dR_;
+    dR_ = yr;
+    const float zr = modLine(1, yr, mod);
+    const float w = r_[0].ap(zr, cT1_, cT1_);
+    const float t2 = r_[1].delay(w);
+    const float w2 = r_[2].ap(t2 * g_, cT2_, cT2_);
+    r_[3].buf[static_cast<size_t>(r_[3].p)] = w2;
+    r_[3].adv();
+  }
+  void recomputeRack() {
+    const float sr = sr_;
+    const RackSettings& r = rk_;
+    inGain_ = 1.f;  // the module runs input / dry / reflections / reverb at 0 dB
+    if (r.lowCut <= 19) cLC_ = 0;
+    else {
+      const float f = static_cast<float>(r.lowCut) >= 0.5f * sr ? 0.5f * sr : static_cast<float>(r.lowCut);
+      const float t = std::tan(static_cast<float>(static_cast<double>(f) * 3.141592653589793 / static_cast<double>(sr)));
+      cLC_ = (t - 1) / (t + 1);
+    }
+    auto cut = [&](int v) {
+      if (v >= 221) return 1.f;
+      const float cs = std::cos(static_cast<float>(static_cast<double>(2 * 100 * v) * 3.141592653589793 / static_cast<double>(sr)));
+      return (std::sqrt((2 - cs) * (2 - cs) - 1) - (2 - cs)) + 1;
+    };
+    cHC_ = cut(r.highCut);
+    cD_ = cut(r.damp);
+    const int64_t pv = static_cast<int64_t>(r.predelayMs) * sri_;
+    pd_.setLen(pv < 1000 ? 1 : static_cast<int>(pv / 1000));
+    const int room = std::clamp(r.room, 1, 100);
+    layout(room);
+    const float E = static_cast<float>(static_cast<int>((static_cast<int64_t>(room) + 3) * sri_ / 103));
+    erL_[0] = static_cast<int>((static_cast<float>(kErL[0]) * 1.5f * E) / 44100.f);
+    erR_[0] = static_cast<int>((static_cast<float>(kErR[0]) * 1.5f * E) / 44100.f);
+    const float M = static_cast<float>(std::min(erL_[0], erR_[0]));
+    for (float& g : gL_) g = 0;
+    for (float& g : gR_) g = 0;
+    gL_[0] = (0.5f * M) / static_cast<float>(std::max(1, erL_[0]));
+    gR_[0] = (0.36f * M) / static_cast<float>(std::max(1, erR_[0]));
+    if (room != lastRoom_) {
+      lastRoom_ = room;
+      for (auto* L : lines()) L->zeroUsed();
+      std::fill(er_.begin(), er_.end(), 0.f);
+    }
+    const float d = static_cast<float>(r.diffusion) / 100.f;
+    if (d == 0) {
+      cT1_ = cT2_ = cA_ = cB_ = 0;
+    } else {
+      auto c = [&](int sum, float k) { return std::exp(((static_cast<float>(sum) * 0.5f / sr) * -6.9077554f) / (d * k)); };
+      cT1_ = c(l_[0].N + r_[0].N, 0.35f), cT2_ = c(l_[2].N + r_[2].N, 0.51f);
+      cA_ = c(in_[0].N + in_[1].N, 0.07f), cB_ = c(in_[2].N + in_[3].N, 0.11f);
+    }
+    const float X = (static_cast<float>(sumN()) / sr) * -6.9077554f;
+    const float dec = static_cast<float>(std::max(1, r.decay)) / 10.f;
+    g_ = std::pow(std::exp(X / dec), 0.25f);
+    const float gb = std::pow(std::exp(X / ((static_cast<float>(r.bass) * dec) / 10.f)), 0.25f);
+    const float ratio = g_ > 0 ? gb / g_ : 1.f;
+    kBass_ = (ratio - 1) * 0.5f;
+    const float m = std::min(ratio, 1.f);
+    const float t = std::tan(static_cast<float>(static_cast<double>(r.cross) * 3.141592653589793 / static_cast<double>(sr)));
+    cX_ = (t - m) / (m + t);
+    dry_ = 1.f, er_g_ = 0.5f, wet_ = 0.3f, wf_ = 1.f;
+    rcDepth_ = 1.f - std::pow(0.01f, 1.f / (0.1f * static_cast<float>(sri_)));
+    weights();
+    dirty_ = false;
+  }
   void taps(float& TL, float& TR, bool studio) {
     const float a0 = r_[1].tap(tA_[0]), a1 = r_[1].tap(tA_[1]), a2 = r_[2].tap(tA_[2]), a3 = r_[3].tap(tA_[3]), a4 = l_[1].tap(tA_[4]),
                 a5 = l_[2].tap(tA_[5]), a6 = l_[3].tap(tA_[6]);
@@ -462,6 +594,9 @@ class Engine {
   float lp_ = 0, apA_ = 0, apX_ = 0, xsL_ = 0, xpL_ = 0, dL_ = 0, xsR_ = 0, xpR_ = 0, dR_ = 0;
   double phi_ = 0;
   float d_ = 0, dTarget_ = 0, cDepth_ = 0, inc_ = 0;
+  RackSettings rk_;
+  bool rkFirst_ = true;
+  float rphi_ = 0, rfs_ = 0.1f, rd_ = 0, rdT_ = 0, rcDepth_ = 0;
 };
 
 // ---------------------------------------------------------------- standalone reverb (Studio variant + mix)

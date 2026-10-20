@@ -3,8 +3,11 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
+#include <memory>
 #include "sfx_common.h"
 #include "sfx_flcurves.h"
+#include "sfx_mbd.h"
 #include "sfx_resample.h"
 
 namespace gl::packs::spacefx::detail {
@@ -20,9 +23,6 @@ class MultiDelayFx final : public Effect {
   MultiDelayFx() {
     for (auto& t : taps_)
       for (auto& a : t.ap) a.init(4096);  // the delay lines: see prepareHost
-    coefs_.init();
-    for (auto& h : up_) h.c = &coefs_;
-    for (auto& h : dn_) h.c = &coefs_;
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     if (!prepared_.load(std::memory_order_acquire))  // used outside the engine: every unit now
@@ -272,11 +272,19 @@ class MultiDelayFx final : public Effect {
       double wl = 0, wr = 0;
       if (os) {
         double ul[2], ur[2], ol[2], orr[2];
+        // The whole bank, dry path included, runs at the doubled rate.
         up_[0].up(xl, ul[0], ul[1]);
         up_[1].up(xr, ur[0], ur[1]);
-        for (int q = 0; q < 2; ++q, ++refJ_) bankRef(ul[q], ur[q], (refJ_ + 1) * inv, ol[q], orr[q]);
-        wl = dn_[0].down(ol[0], ol[1]);
-        wr = dn_[1].down(orr[0], orr[1]);
+        for (int q = 0; q < 2; ++q, ++refJ_) {
+          bankRef(ul[q], ur[q], (refJ_ + 1) * inv, ol[q], orr[q]);
+          ol[q] = static_cast<float>(ul[q] * dry + ol[q]);
+          orr[q] = static_cast<float>(ur[q] * dry + orr[q]);
+        }
+        L[i] = flush(static_cast<float>(dn_[0].down(ol[0], ol[1])));
+        R[i] = flush(static_cast<float>(dn_[1].down(orr[0], orr[1])));
+        if (refLeft_ == 0)
+          for (int c = 0; c < 2; ++c) up_[c].flushOut(), dn_[c].flushOut();
+        continue;
       } else {
         bankRef(xl, xr, (refJ_ + 1) * inv, wl, wr);
         ++refJ_;
@@ -401,8 +409,38 @@ class MultiDelayFx final : public Effect {
     outL = wl, outR = wr;
   }
   RefTap ref_[kTaps];
-  HalfbandCoefs coefs_;
-  Halfband2x up_[2], dn_[2];
+  // J-42: the reference's 2x resampler — polyphase IIR half-band, two branches of
+  // three first-order all-passes y = x1 + c (x - y1) (double state, every stage
+  // output rounded to float). Up: the input feeds both branches, output (B, A);
+  // down: even sample → A, odd → B, out = (A + B) / 2.
+  struct IirHalfband {
+    static constexpr double kA[3] = {0.1473771136010466, 0.48246854276970014, 0.8830050257693731};
+    static constexpr double kB[3] = {0.039151597734460045, 0.3026468483284934, 0.6746159185469639};
+    double ax[3] = {}, ay[3] = {}, bx[3] = {}, by[3] = {};
+    static double branch(const double* c, double* x1, double* y1, double x) {
+      for (int i = 0; i < 3; ++i) {
+        const double y = x1[i] + c[i] * (x - y1[i]);
+        x1[i] = x, y1[i] = y, x = y;
+      }
+      return x;
+    }
+    void up(double x, double& first, double& second) {
+      first = static_cast<float>(branch(kB, bx, by, x));
+      second = static_cast<float>(branch(kA, ax, ay, x));
+    }
+    double down(double even, double odd) {
+      const double a = branch(kA, ax, ay, even), b = branch(kB, bx, by, odd);
+      return static_cast<float>((b + a) * 0.5);
+    }
+    void flushOut() {
+      for (int i = 0; i < 3; ++i) {
+        if (std::fabs(ay[i]) < 5.9604644775390625e-08) ay[i] = 0;
+        if (std::fabs(by[i]) < 5.9604644775390625e-08) by[i] = 0;
+      }
+    }
+    void clear() { *this = IirHalfband{}; }
+  };
+  IirHalfband up_[2], dn_[2];
   bool lastRef_ = false, lastOs_ = false;
 
   static double soft(double x) { return std::fabs(x) < 1.5 ? x : (x > 0 ? 1.5 + std::tanh(x - 1.5) : -1.5 + std::tanh(x + 1.5)); }
@@ -471,7 +509,33 @@ class BandDelayFx final : public Effect {
     ChannelAux none;
     processAux(s, none, ctx, L, R, n);
   }
+  // J-42: the band-delay model's buffers are sized here (UI thread) when possible.
+  void prepareHost(const PluginState& s, double sr) override {
+    if (pi(s, BdModel, 0) == 1 && !refReady_.load(std::memory_order_acquire)) {
+      ref_->prepare(sr);
+      refSr_ = sr;
+      refReady_.store(true, std::memory_order_release);
+    }
+  }
+  int latencyFor(const PluginState& s, double) const override {
+    return pi(s, BdModel, 0) == 1 && pi(s, BdRMode, 0) == 2 ? 1536 : 0;
+  }
   void processAux(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (pi(s, BdModel, 0) == 1) {
+      if (!refReady_.load(std::memory_order_acquire) || refSr_ != ctx.sampleRate) {
+        ref_->prepare(ctx.sampleRate);  // not prepared by the host (tests / offline use)
+        refSr_ = ctx.sampleRate;
+        refReady_.store(true, std::memory_order_release);
+      }
+      const size_t h = std::hash<std::string>{}(s.data);
+      if (h != refHash_) refHash_ = h, mbd::parseBanks(s.data, refSet_.bank);
+      mbd::Settings& t = refSet_;
+      t.scale = pv(s, BdRScale, 0.5f), t.tenth = pv(s, BdRTenth), t.feedback = pv(s, BdRFeedback), t.smooth = pv(s, BdRSmooth, 0.25f);
+      t.mode = pv(s, BdRMode) / 2.f, t.keep = pv(s, BdRKeep), t.morph = pv(s, BdRMorph), t.mix = pv(s, BdRMix, 1);
+      t.harmonic = pv(s, BdRHarmonic), t.weight = pv(s, BdRWeight), t.hp = pv(s, BdRHp), t.sat = pv(s, BdRSat) / 2.f;
+      ref_->process(t, L, R, n);
+      return;
+    }
     sr_ = ctx.sampleRate;
     if (SamplePtr sp = aux.sample(0); sp && sp->path == kCurveTag && sp->left.size() * sizeof(float) >= sizeof(BandCurves)) {
       std::memcpy(&cur_, sp->left.data(), sizeof(BandCurves));
@@ -524,6 +588,11 @@ class BandDelayFx final : public Effect {
   }
 
   static constexpr const char* kCurveTag = "\x01gl.banddelay.curves";
+  std::unique_ptr<mbd::Engine> ref_ = std::make_unique<mbd::Engine>();
+  mbd::Settings refSet_{};
+  size_t refHash_ = 1;
+  double refSr_ = 0;
+  std::atomic<bool> refReady_{false};
 
  private:
   // Curve value at a bin (log-frequency interpolation between points, with morph).

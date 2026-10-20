@@ -240,12 +240,14 @@ bool readConvEnvelope(Reader& r, std::vector<sx::EnvPoint>& out) {
   for (uint32_t i = 0; i < n; ++i) {
     double dt = r.f64(), v = r.f64();
     float k = r.f32();
-    r.skip(4);
+    const uint8_t kind = r.u8();
+    r.skip(3);
     t += std::isfinite(dt) ? std::max(0.0, dt) : 0.0;
     sx::EnvPoint q;
     q.t = t;
     q.v = clampd(std::isfinite(v) ? v : 0.5, 0, 1);
     q.k = clampd(std::isfinite(k) ? k : 0.0, -1, 1);
+    q.c = kind <= 12 ? kind : 0;
     out.push_back(q);
   }
   r.skip(20);
@@ -308,19 +310,20 @@ bool decodeConvolver(Context& c, const std::vector<Event>& evs, PluginMapping& m
   std::vector<sx::EnvPoint> env[5];
   bool envOk = true;
   for (auto& e : env) envOk = envOk && readConvEnvelope(r, e);
-  bool envFlat = true;
+  bool kindsOk = true;
   if (envOk) {
-    // Envelope 1 is the IR amplitude curve; 0, 2 and 3 are not applied.
-    if (!flatEnvelope(env[1])) {
-      cd.env = env[1];
-      fx::set(m, sx::CvEnvOn, 1);
-      envFlat = false;
-    }
-    for (int k : {0, 2, 3}) envFlat = envFlat && flatEnvelope(env[k]);
+    // J-42 reference build: 0 pan, 1 volume, 2 stereo separation (3 = scratch, not used by
+    // the Convolver), 4 = EQ curve; neutral (all 0.5) envelopes are left out.
+    if (!flatEnvelope(env[0])) cd.pan = env[0];
+    if (!flatEnvelope(env[1])) cd.env = env[1];
+    if (!flatEnvelope(env[2])) cd.sep = env[2];
     if (!flatEnvelope(env[4])) cd.eq = env[4];
+    fx::set(m, sx::CvEnvOn, cd.env.empty() && cd.pan.empty() && cd.sep.empty() ? 0 : 1);
+    for (int k : {0, 1, 2, 4})
+      for (const sx::EnvPoint& q : env[k]) kindsOk = kindsOk && q.c <= 12;
   }
-  double selfConv = 0, eqMix = 1;
-  bool eqFlat = cd.eq.empty();
+  fx::set(m, sx::CvModel, 1);
+  double eqMix = 1;
   if (envOk && r.has(4)) {
     uint8_t flags[4];
     for (uint8_t& f : flags) f = r.u8();
@@ -329,8 +332,7 @@ bool decodeConvolver(Context& c, const std::vector<Event>& evs, PluginMapping& m
     std::vector<double> u = ints(r, version >= 11 ? 5 : 4);
     if (u.size() >= 4) {
       fx::set(m, sx::CvPreDelay, sx::convPreDelayMs(clampd(u[1] / 1000.0, 0, 1)));
-      selfConv = clampd(u[2] / 1000.0, 0, 1);
-      fx::set(m, sx::CvSelfConv, selfConv);
+      fx::set(m, sx::CvSelfConv, clampd(u[2] / 1000.0, 0, 1));
       fx::set(m, sx::CvStretch, sx::convStretch(clampd(u[3] / 1000.0, -1, 1)));
     }
     if (u.size() >= 5) eqMix = clampd(u[4] / 1000.0, 0, 1);
@@ -338,9 +340,10 @@ bool decodeConvolver(Context& c, const std::vector<Event>& evs, PluginMapping& m
   }
   m.state.data = sx::formatConvData(cd);
   normalizePluginState(m.state);
-  // Knobs, path and normalize map exactly; the IR envelope / EQ curve and
-  // self-convolution are modelled.
-  m.exact = resolved && envOk && envFlat && (eqFlat || eqMix <= 0) && selfConv <= 0;
+  // J-42: the reference build reproduces normalise, envelopes, self-convolution,
+  // stretch, EQ curve and pre-delay (spec j35_convolver.md).
+  m.exact = resolved && envOk && kindsOk;
+  (void)eqMix;
   bindKnobs(m, tab);
   return true;
 }

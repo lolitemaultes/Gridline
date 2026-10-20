@@ -200,7 +200,7 @@ inline void parseOne(const char* line, Slot& out) {
 }  // namespace legacy
 
 inline constexpr int kSlots = 36;
-inline constexpr int kMaxPts = 360;
+inline constexpr int kMaxPts = 640;  // J-42: shipped slots hold up to 602 points
 inline constexpr double kTimeRange = 8.0;  // beats reachable by a time envelope
 inline constexpr double kSyncBeats[6] = {0, 0.25, 0.5, 1, 2, 4};
 enum ForceHold { ForceOff, ForceLast, ForceNext };

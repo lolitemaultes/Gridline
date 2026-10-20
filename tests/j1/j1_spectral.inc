@@ -177,7 +177,8 @@ void testSplitterLinear() {
   size_t pk = 0;
   for (size_t i = 0; i < L.size(); ++i)
     if (std::fabs(L[i]) > std::fabs(L[pk])) pk = i;
-  expect(fx->latencyFor(s, jt::kSr) == 1024 && pk == 1024, "splitter linear phase: latency N/2 (1024 at quality 2 / 48 kHz), impulse centred");
+  // J-42: the reference's FFT filters (3 bands): latency 3N/4 (1536 at quality 2 / 48 kHz).
+  expect(fx->latencyFor(s, jt::kSr) == 1536 && pk == 1536, "splitter linear phase: latency 3N/4 (1536 at quality 2 / 48 kHz), impulse centred");
   double sym = 0;
   for (int k = 1; k < 900; ++k) sym = std::max(sym, static_cast<double>(std::fabs(L[pk + static_cast<size_t>(k)] - L[pk - static_cast<size_t>(k)])));
   expect(sym < 1e-4, "splitter linear phase: symmetric impulse response (linear phase)");
@@ -189,10 +190,10 @@ void testSplitterLinear() {
   PluginState lo = s;
   setp(lo, sp::splitParam(1, sp::SbMute), 1);
   setp(lo, sp::splitParam(2, sp::SbMute), 1);
-  double r = std::tan(3.14159265358979 * 800 / jt::kSr) / std::tan(3.14159265358979 * 200 / jt::kSr), lp, hp;
-  gl::packs::spectral::blk::slopeMag(3, r, lp, hp);
+  // J-42: reference mask: −6 dB at the split, then 24 dB per "6 dB octave" (2^(−(6 + 24·oct)/6)).
+  const double lp = std::pow(2.0, (-6.0 - 24.0 * std::log2(800.0 / 200.0)) / 6.0);
   double got = gainAt(lo, 800);
-  expect(std::fabs(got - 20 * std::log10(lp)) < 0.5, "splitter linear phase: low band follows the 24 dB response");
+  expect(std::fabs(got - 20 * std::log10(lp)) < 0.5, "splitter linear phase: low band follows the reference 24 dB mask");
   // Crossover moves are crossfaded (no clicks): output stays bounded.
   {
     auto f2 = createEffect("gl.splitter");

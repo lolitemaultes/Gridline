@@ -701,10 +701,27 @@ bool decodeVocodex(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
   }
   set(m, sp::VxTone, vocodexTone(tone));
   m.state.data = sp::vxSerialize(d);
-  // The control laws are reproduced; the built-in carrier synth (its tones)
-  // and the unison detune table are approximations.
+  // J-42: the output enhancer (tag 1 > 0) is a Maximus running the plugin's own "SG.dat"
+  // program with the amount as its band mix — embedded as gl.enhance parameters ("sge"
+  // line) and run on the reference engine. Unison follows the reference detune table.
+  bool sgOk = fl[1] <= 0;
+  if (fl[1] > 0 && !c.factoryData.empty()) {
+    std::vector<float> sg;
+    bool sgExact = false;
+    if (maximusProgramToEnhance(c.factoryData + "/Plugins/Fruity/Effects/Vocodex/Data/SG.dat", sg, &sgExact)) {
+      d.extra = "sge";
+      char buf[24];
+      for (float v : sg) {
+        std::snprintf(buf, sizeof buf, " %.9g", static_cast<double>(v));
+        d.extra += buf;
+      }
+      m.state.data = sp::vxSerialize(d);
+      sgOk = sgExact;
+    }
+  }
+  // The built-in carrier synth (a hosted FM synth playing the named tone) is approximated.
   const bool synthCarrier = iv[6] < 0 && !fv[0];
-  m.exact = !synthCarrier && iv[2] == 0;
+  m.exact = !synthCarrier && sgOk;
   if (synthCarrier) c.report.warn("Vocodex: built-in carrier tone approximated");
   return true;
 }

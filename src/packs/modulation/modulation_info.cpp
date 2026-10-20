@@ -79,12 +79,24 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params[LfPhase] = lin("LFO phase", "%", 0, 1, 0);
     p.params[PkRamp] = tog("Smooth output", 1);
     p.params[PkMute] = tog("Mute audio", 0);
-    p.outputs = {"Peak", "LFO", "Peak x LFO"};
-    p.presets = {{"Pump follower", {{PkDecay, 0.12f}, {PkTension, -0.3f}}},
-                 {"Slow swell", {{PkAttack, 0.2f}, {PkDecay, 1.5f}, {PkTension, 0.4f}}},
-                 {"Inverted ducker", {{PkBase, 1.0f}, {PkAmount, -1.0f}, {PkDecay, 0.2f}}},
-                 {"Sync wobble", {{PkAmount, 0.0f}, {LfSyncRate, 3}, {LfShape, 1}}},
-                 {"Random steps", {{LfShape, 4}, {LfSyncRate, 4}}}};
+    p.params[PkModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+    p.legacyModelParam = PkModel;
+    p.params[PkRBase] = lin("Peak base (ref.)", "", 0, 65536, 0);
+    p.params[PkRAmount] = lin("Peak amount (ref.)", "", -256, 256, 128);
+    p.params[PkRTension] = lin("Peak tension (ref.)", "", -128, 128, 0);
+    p.params[PkRDecay] = lin("Peak decay (ref.)", "", 5, 128, 66);
+    p.params[LfRBase] = lin("LFO base (ref.)", "", 0, 65536, 0);
+    p.params[LfRAmount] = lin("LFO amount (ref.)", "", -256, 256, 0);
+    p.params[LfRTension] = lin("LFO tension (ref.)", "", -128, 128, 0);
+    p.params[LfRSpeed] = lin("LFO speed (ref.)", "", 200, 65536, 32950);
+    p.params[LfRPhase] = lin("LFO phase (ref.)", "", 0, 65535, 0);
+    p.outputs = {"Peak + LFO", "Peak", "LFO"};
+    // J-42: factory presets on the reference model's stored controls.
+    p.presets = {{"Pump follower", {{PkRDecay, 80.f}, {PkRTension, -40.f}, {PkRAmount, 160.f}}},
+                 {"Slow swell", {{PkRDecay, 30.f}, {PkRTension, 50.f}, {PkRAmount, 200.f}}},
+                 {"Inverted ducker", {{PkRBase, 65536.f}, {PkRAmount, -200.f}, {PkRDecay, 70.f}}},
+                 {"Bar wobble", {{PkRAmount, 0.f}, {LfRAmount, 256.f}, {LfRSpeed, 32950.f}, {LfShape, 0.f}}},
+                 {"Random steps", {{PkRAmount, 0.f}, {LfRAmount, 256.f}, {LfShape, 4.f}, {LfRSpeed, 16384.f}}}};
     p.editorWidth = 640;
     v.push_back(std::move(p));
   }

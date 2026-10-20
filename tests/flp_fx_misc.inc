@@ -117,7 +117,7 @@ static void testFxMisc() {
     expect(m.value && near(m.value(0, 3.0 / 35.0), 4, 1e-9), "gross beat: slot automation value");
   }
 
-  // Love Philter: version 5 state, zlib (stored blocks) around the full
+  // Love Philter: version 6 state (J-42: v2..5 store an i32-counted RTF info text), zlib (stored blocks) around the full
   // sequential layout: globals, options, info text, 8 units x 8 targets.
   {
     Blob raw;
@@ -128,7 +128,7 @@ static void testFxMisc() {
     const std::string info = "Hello\rWorld";
     raw.u8(static_cast<uint8_t>(info.size()));
     for (char ch : info) raw.u8(static_cast<uint8_t>(ch)).u8(0);
-    auto rec = [&](int kind, const std::vector<std::array<double, 3>>& pts, int ls = -1, int le = -1) {  // {dx, y, mode}
+    auto rec = [&](int kind, const std::vector<std::array<double, 3>>& pts, int ls = -1, int le = -1, int en = 0) {  // {dx, y, mode}
       raw.i32(kind).i32(3).i32(static_cast<int32_t>(pts.size()));
       for (const auto& p : pts) {
         uint64_t u;
@@ -138,7 +138,7 @@ static void testFxMisc() {
         raw.i32(static_cast<int32_t>(u & 0xFFFFFFFFu)).i32(static_cast<int32_t>(u >> 32));
         raw.f32(0).i32(static_cast<int32_t>(p[2]));
       }
-      raw.i32(1).i32(0).i32(-1).i32(ls).i32(le);
+      raw.i32(1).i32(en).i32(-1).i32(ls).i32(le);  // flags, enabled (J-42), sustain, loop
     };
     for (int u = 0; u < 8; ++u) {
       std::vector<int32_t> knobs = {128, 128, 128, 128, 0, 0, 128, 128, 0, 128, 128, 0};
@@ -153,7 +153,7 @@ static void testFxMisc() {
         raw.i32(1).f32(0).f32(1).f32(0);
         for (int k = 0; k < 10; ++k) {
           if (u == 0 && t == 2 && k == 1)
-            rec(1, {{0, 0.5, 0}, {1, 1.0, 0}, {1, 0.25, 2}}, 0, 2);
+            rec(1, {{0, 0.5, 0}, {1, 1.0, 0}, {1, 0.25, 2}}, 0, 2, -1);
           else
             rec(1, {{0, 1.0, 0}});
           raw.i32(128).i32(128).i32(0).i32(128);
@@ -171,7 +171,7 @@ static void testFxMisc() {
     }
     // zlib wrapper with stored blocks + Adler-32.
     Blob b;
-    b.u8(5).u8(0).u8(0).u8(0);
+    b.u8(6).u8(0).u8(0).u8(0);
     b.u8(0x78).u8(0x01);
     size_t pos = 0;
     while (pos < raw.b.size()) {

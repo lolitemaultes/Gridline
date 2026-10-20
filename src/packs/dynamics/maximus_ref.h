@@ -18,8 +18,10 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <complex>
 #include <cstring>
 #include <vector>
+#include "../../engine/MEnv.h"
 
 namespace gl::packs::dynamics::maxref {
 
@@ -50,6 +52,10 @@ struct Curve {
 // Reference envelope segment shape: phase t (0..1), tension τ, point type.
 inline double segShape(double t, double tau, int type) {
   if (type == 2) return 0.0;  // hold
+  if (type >= 3 && type <= 12) {  // J-42: the other point shapes of the envelope model
+    const auto m = static_cast<uint8_t>(type);
+    return menv::shape(m, menv::coef(m, static_cast<float>(tau)), t);
+  }
   auto f = [tau](double u) {
     if (tau == 0) return u;
     const double k = (tau > 0 ? 1.0 : -1.0) * (std::pow(10.0, 6.0 * std::fabs(tau)) - 1.0);
@@ -80,6 +86,217 @@ struct RefState {
   bool solo = false, masterMid = false, safetyOff = false;
   int target = 0;
   Curve curve[kBands];
+  // J-42: linear-phase crossovers — legacy FIR (byte 0x335) and the FFT filter bank (flags bit 0, wins).
+  bool fir = false, lin = false;
+  int linQuality = 2, linSpeed = 0;
+};
+
+// ---------------------------------------------------------------- J-42 linear-phase splits
+// Legacy FIR: N = round(4 ms) | 1 taps (≥ 5) per band; split kernels of length
+// round((slope + 1)·os·27500 / f) | 1 (5 … N), windowed sinc (4-term Blackman–Harris),
+// centred; mid = δ − (LP_low + HP_high), so the three bands sum to a pure delay.
+inline int firTaps(double F) { return std::max(5, static_cast<int>(std::nearbyint(0.004 * F)) | 1); }
+inline int firLen(int slope, double f, int N) {
+  int L = static_cast<int>(std::nearbyint(static_cast<float>((slope + 1) * 27500.0 / f))) | 1;
+  if (L < 6) L = 5;
+  return std::min(L, N);
+}
+// Adds a ×sign windowed-sinc low pass (hp: δ − sinc) of length L centred in an N buffer.
+inline void firAdd(std::vector<double>& buf, int N, double f, double F, int L, bool hp) {
+  const double c = std::min(f / F, 0.5), pi = 3.141592653589793;
+  const int m = (L - 1) / 2, off = (N - L) / 2;
+  for (int i = 0; i < L; ++i) {
+    const int t = i - m;
+    const double lp = t == 0 ? 2 * c : std::sin(2 * pi * c * t) / (pi * t);
+    const double a = 2 * pi * i / (L - 1);
+    const double w = 0.35875 - 0.48829 * std::cos(a) + 0.14128 * std::cos(2 * a) - 0.01168 * std::cos(3 * a);
+    buf[static_cast<size_t>(off + i)] += (hp ? (t == 0 ? 1.0 : 0.0) - lp : lp) * w;
+  }
+}
+struct FirBand {
+  int N = 0, pos = 0;
+  std::vector<float> taps, line[2];  // line: double-written ring of N
+  void init(int n) {
+    N = n, pos = 0;
+    taps.assign(static_cast<size_t>(N), 0.f);
+    for (auto& l : line) l.assign(static_cast<size_t>(2 * N), 0.f);
+  }
+  void clear() {
+    for (auto& l : line) std::fill(l.begin(), l.end(), 0.f);
+    pos = 0;
+  }
+  void push(const float* x) {
+    for (int c = 0; c < 2; ++c) line[c][static_cast<size_t>(pos)] = line[c][static_cast<size_t>(pos + N)] = x[c];
+    pos = pos + 1 == N ? 0 : pos + 1;
+  }
+  float out(int c) const {  // y = Σ taps[k]·x[n − k]; oldest sample first at line[pos]
+    const float* h = line[c].data() + pos;
+    double acc = 0;
+    for (int k = 0; k < N; ++k) acc += static_cast<double>(taps[static_cast<size_t>(N - 1 - k)]) * h[k];
+    return static_cast<float>(acc);
+  }
+};
+
+// LIN: FFT filter bank (one object per band). N = (512 << quality) scaled to the rate
+// (halved below 44.1 kHz, ≤ 65536); zero-phase masks from fast log / pow approximations
+// with −6 dB at the split and S dB per "6 dB octave" (LP + HP = 1); the low cut folded into
+// every mask; kernels of N/2 taps (sine window) run by overlap-add (hop N/2, latency 3N/4);
+// mask changes cross-fade between two engines (0.1 / 0.25 / 0.01 / 0.02 s), starting from
+// silence after a load.
+inline int linSize(double F, int quality) {
+  const int base = 512 << std::clamp(quality, 0, 5);
+  if (F < 44100) return base / 2;
+  const int sh = static_cast<int>(std::log2(F / 44100.0) + 0.5);
+  return std::min(base << sh, 65536);
+}
+inline float log2a(float r) {
+  uint32_t b;
+  std::memcpy(&b, &r, 4);
+  const int e = static_cast<int>((b >> 23) & 0xFF) - 127;
+  const float m = static_cast<float>(b & 0x7FFFFF) / 8388608.0f;
+  const float u = 1.0f - m;
+  return static_cast<float>(e + 1) - 0.739f * u - 0.1063157f * u * u - 0.1556501f * u * u * u;
+}
+inline float pow2a(float x) {
+  if (x < 0) return 1.0f / pow2a(-x);
+  const int i = static_cast<int>(x);
+  const float f = x - static_cast<float>(i);
+  return std::ldexp(0.999862219597f + 0.69659850257f * f + 0.224328091473f * f * f + 0.079064658211f * f * f * f, i);
+}
+inline float maskA(float f, float fc, float S, bool hp) {
+  float x = log2a(f / fc);
+  if (hp) x = -x;
+  const float d = -6.0f - S * std::fabs(x);
+  const float a = d < -100.0f ? 0.0f : pow2a(d / 6.0f);
+  return x < 0 ? 1.0f - a : a;
+}
+struct FftD {  // radix-2 complex FFT (double)
+  int n = 0;
+  std::vector<std::complex<double>> w;
+  std::vector<int> rev;
+  void init(int size) {
+    if (size == n) return;
+    n = size;
+    w.resize(static_cast<size_t>(n / 2));
+    for (int k = 0; k < n / 2; ++k) w[static_cast<size_t>(k)] = std::polar(1.0, -2 * 3.141592653589793 * k / n);
+    rev.assign(static_cast<size_t>(n), 0);
+    int bits = 0;
+    while ((1 << bits) < n) ++bits;
+    for (int i = 0; i < n; ++i) {
+      int r = 0;
+      for (int b = 0; b < bits; ++b)
+        if (i & (1 << b)) r |= 1 << (bits - 1 - b);
+      rev[static_cast<size_t>(i)] = r;
+    }
+  }
+  void run(std::complex<double>* a, bool inv) const {
+    for (int i = 0; i < n; ++i)
+      if (i < rev[static_cast<size_t>(i)]) std::swap(a[i], a[rev[static_cast<size_t>(i)]]);
+    for (int len = 2; len <= n; len <<= 1) {
+      const int step = n / len;
+      for (int i = 0; i < n; i += len)
+        for (int j = 0; j < len / 2; ++j) {
+          std::complex<double> tw = w[static_cast<size_t>(j * step)];
+          if (inv) tw = std::conj(tw);
+          const std::complex<double> u = a[i + j], v = a[i + j + len / 2] * tw;
+          a[i + j] = u + v, a[i + j + len / 2] = u - v;
+        }
+    }
+  }
+};
+struct LinEngine {
+  int N = 0, pos = 0;
+  std::vector<std::complex<double>> H, X;
+  std::vector<float> blk[2];
+  std::vector<double> acc[2];
+  void init(int n) {
+    N = n;
+    H.assign(static_cast<size_t>(N), {0, 0});
+    X.assign(static_cast<size_t>(N), {0, 0});
+    for (int c = 0; c < 2; ++c) blk[c].assign(static_cast<size_t>(N / 2), 0.f), acc[c].assign(static_cast<size_t>(N), 0.0);
+    pos = 0;
+  }
+  void clear() {
+    for (int c = 0; c < 2; ++c) std::fill(blk[c].begin(), blk[c].end(), 0.f), std::fill(acc[c].begin(), acc[c].end(), 0.0);
+    pos = 0;
+  }
+  void design(const std::vector<float>& M, const FftD& f) {  // M: N/2 + 1 magnitudes
+    for (int k = 0; k < N; ++k) {
+      const int kk = k <= N / 2 ? k : N - k;
+      X[static_cast<size_t>(k)] = {static_cast<double>(M[static_cast<size_t>(kk)]) * ((k & 1) ? -1.0 : 1.0), 0.0};
+    }
+    f.run(X.data(), true);
+    const int B = N / 2;
+    std::fill(H.begin(), H.end(), std::complex<double>(0, 0));
+    for (int i = 0; i < B; ++i)
+      H[static_cast<size_t>(i)] = X[static_cast<size_t>(N / 4 + i)].real() / N * std::sin(3.141592653589793 * i / (B - 1));
+    f.run(H.data(), false);
+  }
+  void run(const float* in, float* out, const FftD& f) {
+    for (int c = 0; c < 2; ++c) {
+      out[c] = static_cast<float>(acc[c][static_cast<size_t>(pos)]);
+      blk[c][static_cast<size_t>(pos)] = in[c];
+    }
+    if (++pos < N / 2) return;
+    pos = 0;
+    const int B = N / 2;
+    for (int i = 0; i < N; ++i) X[static_cast<size_t>(i)] = i < B ? std::complex<double>(blk[0][static_cast<size_t>(i)], blk[1][static_cast<size_t>(i)]) : 0.0;
+    f.run(X.data(), false);
+    for (int i = 0; i < N; ++i) X[static_cast<size_t>(i)] *= H[static_cast<size_t>(i)];
+    f.run(X.data(), true);
+    for (int c = 0; c < 2; ++c) {
+      std::copy(acc[c].begin() + B, acc[c].end(), acc[c].begin());
+      std::fill(acc[c].begin() + B, acc[c].end(), 0.0);
+      for (int i = 0; i < N; ++i) acc[c][static_cast<size_t>(i)] += (c == 0 ? X[static_cast<size_t>(i)].real() : X[static_cast<size_t>(i)].imag()) / N;
+    }
+  }
+};
+struct LinBand {
+  LinEngine e[2];
+  int active = 0, N = 0, hpos = 0, fadeN = 0, fadePos = 0;
+  bool fading = false, pending = false;
+  std::vector<float> mask, hist[2];
+  void init(int n) {
+    N = n;
+    for (auto& x : e) x.init(n);
+    for (auto& h : hist) h.assign(static_cast<size_t>(N), 0.f);
+    mask.assign(static_cast<size_t>(N / 2 + 1), 0.f);
+    active = 0, hpos = 0, fading = false, pending = false;
+  }
+  void clear() {
+    for (auto& x : e) x.clear();
+    for (auto& h : hist) std::fill(h.begin(), h.end(), 0.f);
+    hpos = 0, fading = false;
+  }
+  void run(const float* in, float* out, const FftD& f, int xfade) {
+    if (pending && !fading) {
+      LinEngine& nw = e[1 - active];
+      nw.clear();
+      nw.design(mask, f);
+      float tmp[2], frame[2];
+      for (int k = 0; k < N; ++k) {
+        const size_t q = static_cast<size_t>((hpos + k) % N);
+        frame[0] = hist[0][q], frame[1] = hist[1][q];
+        nw.run(frame, tmp, f);
+      }
+      pending = false;
+      fadeN = xfade, fadePos = 0;
+      fading = fadeN > 0;
+      if (!fading) active = 1 - active;
+    }
+    hist[0][static_cast<size_t>(hpos)] = in[0], hist[1][static_cast<size_t>(hpos)] = in[1];
+    hpos = hpos + 1 == N ? 0 : hpos + 1;
+    if (fading) {
+      float a[2], b[2];
+      e[active].run(in, a, f);
+      e[1 - active].run(in, b, f);
+      const float t = static_cast<float>(fadePos) / static_cast<float>(fadeN);
+      for (int c = 0; c < 2; ++c) out[c] = t * b[c] + (1 - t) * a[c];
+      if (++fadePos >= fadeN) active = 1 - active, fading = false;
+    } else {
+      e[active].run(in, out, f);
+    }
+  }
 };
 
 // Effective band modes (solo, mid-only master) and the reported latency.
@@ -101,7 +318,8 @@ inline int lmhDelay(const RefState& s, const int* mode, double fs, int k) {
 inline int latencyOf(const RefState& s, double fs) {
   int mode[kBands];
   effectiveModes(s, mode);
-  return std::max({lmhDelay(s, mode, fs, 0), lmhDelay(s, mode, fs, 1), lmhDelay(s, mode, fs, 2)}) + lmhDelay(s, mode, fs, 3);
+  const int split = s.lin ? 3 * linSize(fs, s.linQuality) / 4 : s.fir ? (firTaps(fs) - 1) / 2 : 0;
+  return split + std::max({lmhDelay(s, mode, fs, 0), lmhDelay(s, mode, fs, 1), lmhDelay(s, mode, fs, 2)}) + lmhDelay(s, mode, fs, 3);
 }
 
 // ---------------------------------------------------------------- filters
@@ -170,7 +388,8 @@ class Engine {
     if (rateChanged) fs_ = fs, cfgValid_ = false, allocate(fs);
     if (cfgValid_ && std::memcmp(s.raw, st_.raw, sizeof s.raw) == 0 && s.solo == st_.solo && s.masterMid == st_.masterMid &&
         s.safetyOff == st_.safetyOff && s.target == st_.target && s.curve[0] == st_.curve[0] && s.curve[1] == st_.curve[1] &&
-        s.curve[2] == st_.curve[2] && s.curve[3] == st_.curve[3])
+        s.curve[2] == st_.curve[2] && s.curve[3] == st_.curve[3] && s.fir == st_.fir && s.lin == st_.lin && s.linQuality == st_.linQuality &&
+        s.linSpeed == st_.linSpeed)
       return;
     const RefState old = st_;
     const bool first = !cfgValid_;
@@ -182,6 +401,8 @@ class Engine {
     // Crossover.
     int slL = r[1] > 0 ? 1 : 0, slH = r[3] > 0 ? 1 : 0;
     pol_[0] = slL == 0 ? -1.f : 1.f, pol_[2] = slH == 0 ? -1.f : 1.f, pol_[1] = 1.f;
+    if (s.fir || s.lin) pol_[0] = pol_[2] = 1.f;
+    const int sL0 = slL, sH0 = slH;
     if (r[rawIndex(0, TMode)] == 3) slL = -1;
     if (r[rawIndex(2, TMode)] == 3) slH = -1;
     double fL = splitHz(r[0]), fH = splitHz(r[2]);
@@ -202,8 +423,73 @@ class Engine {
       const double w = 2 * 3.141592653589793 * fH / fs_;
       lowAp_.ap(w, std::sin(w) / std::sqrt(2.0));
     }
+    // J-42: linear-phase splits.
+    splitMode_ = s.lin ? 2 : s.fir ? 1 : 0;
+    if (splitMode_ == 1) {
+      const int N = firTaps(fs_);
+      std::vector<double> lo(static_cast<size_t>(N), 0.0), mi(static_cast<size_t>(N), 0.0), hi(static_cast<size_t>(N), 0.0);
+      if (slL >= 0) firAdd(lo, N, fL, fs_, firLen(slL, fL, N), false);
+      if (slH >= 0) firAdd(hi, N, fH, fs_, firLen(slH, fH, N), true);
+      if (slL >= 0 && slH >= 0) {
+        for (int i = 0; i < N; ++i) mi[static_cast<size_t>(i)] = -(lo[static_cast<size_t>(i)] + hi[static_cast<size_t>(i)]);
+        mi[static_cast<size_t>((N - 1) / 2)] += 1.0;
+      } else if (slH >= 0) {
+        firAdd(mi, N, fH, fs_, firLen(slH, fH, N), false);
+      } else if (slL >= 0) {
+        firAdd(mi, N, fL, fs_, firLen(slL, fL, N), true);
+      }
+      midCopy_ = slL < 0 && slH < 0;
+      std::vector<double>* k3[3] = {&lo, &mi, &hi};
+      for (int b = 0; b < 3; ++b) {
+        if (fir_[b].N != N) fir_[b].init(N);
+        for (int i = 0; i < N; ++i) fir_[b].taps[static_cast<size_t>(i)] = static_cast<float>((*k3[b])[static_cast<size_t>(i)]);
+      }
+    }
+    if (splitMode_ == 2) {
+      const int N = linSize(fs_, s.linQuality);
+      static const float kSpeed[4] = {0.1f, 0.25f, 0.01f, 0.02f};
+      xfade_ = static_cast<int>(static_cast<float>(static_cast<int>(fs_)) * kSpeed[std::clamp(s.linSpeed, 0, 3)]);
+      if (lin_[0].N != N) {
+        fft_.init(N);
+        for (auto& b : lin_) b.init(N);
+      }
+      // Masks (no frequency swap; split frequencies from the stored values).
+      const float FL = static_cast<float>(splitHz(r[0])), FH = static_cast<float>(splitHz(r[2]));
+      const float SL = sL0 > 0 ? 24.f : 12.f, SH = sH0 > 0 ? 24.f : 12.f;
+      const bool lowOff = r[rawIndex(0, TMode)] == 3, highOff = r[rawIndex(2, TMode)] == 3;
+      float lcFc = 0;
+      const bool lc = r[6] > 0;
+      if (lc) {
+        const double fc = lowCutHz(r[6]);
+        lcFc = static_cast<float>(fc - std::nearbyint(std::log(std::max(fc - 5.0, 1.0)) / std::log(1.3)));
+      }
+      bool lcOne = false;
+      for (int i = 0; i <= N / 2; ++i) {
+        const float f = std::max(static_cast<float>(i) * static_cast<float>(fs_ / N), 0.1f);
+        float m3[3];
+        if (f > 0.4999f * static_cast<float>(fs_)) {
+          m3[0] = m3[1] = m3[2] = 1.f;
+        } else {
+          m3[0] = maskA(f, FL, SL, false);
+          if (lowOff && highOff) m3[1] = pow2a(1.0f / 6.0f);
+          else if (highOff) m3[1] = maskA(f, FL, SL, true);
+          else if (lowOff) m3[1] = maskA(f, FH, SH, false);
+          else m3[1] = maskA(f, FL, SL, true) * maskA(f, FH, SH, false);
+          m3[2] = maskA(f, FH, SH, true);
+          if (lc && !lcOne) {
+            const float g = maskA(f, lcFc, 24.f, true);
+            if (g == 1.0f) lcOne = true;
+            else
+              for (float& v : m3) v *= g;
+          }
+        }
+        for (int b = 0; b < 3; ++b) lin_[b].mask[static_cast<size_t>(i)] = m3[b];
+      }
+      for (int b = 0; b < 3; ++b) lin_[b].mask[static_cast<size_t>(N / 2)] = lin_[b].mask[static_cast<size_t>(N / 2 - 1)];
+      for (auto& b : lin_) b.pending = true;
+    }
     // Low cut.
-    lcOn_ = r[6] >= 0;
+    lcOn_ = r[6] >= 0 && splitMode_ != 2;
     if (lcOn_) {
       static const double kk[4] = {0.19771184, 0.61932772, 0.67684454, 1.07935691};
       const double w = 2 * 3.141592653589793 * 0.8 * lowCutHz(r[6]) / fs_;
@@ -213,7 +499,8 @@ class Engine {
     mixActive_ = mix_ != 1.f;
     // Look-ahead delays.
     for (int k = 0; k < kBands; ++k) band_[k].D = std::min(lmhDelay(s, mode_, fs_, k), kCap - 2);
-    lat_ = std::max({band_[0].D, band_[1].D, band_[2].D}) + band_[3].D;
+    lat_ = std::max({band_[0].D, band_[1].D, band_[2].D}) + band_[3].D +
+           (splitMode_ == 2 ? 3 * lin_[0].N / 4 : splitMode_ == 1 ? (fir_[0].N - 1) / 2 : 0);
     // Bands.
     for (int k = 0; k < kBands; ++k) {
       Band& B = band_[k];
@@ -271,6 +558,8 @@ class Engine {
     }
     for (auto& b : lc_) b.clear();
     lowLp_.clear(), midHp_.clear(), midLp_.clear(), highHp_.clear(), lowAp_.clear();
+    for (auto& b : fir_) b.clear();
+    for (auto& b : lin_) b.clear();
   }
 
   void process(float* L, float* R, int n) {
@@ -292,7 +581,15 @@ class Engine {
           for (auto& b : lc_) x[c] = b.run(c, x[c]);
       // Split.
       float lo[2], mid[2], hi[2], full[2] = {x[0], x[1]};
-      for (int c = 0; c < 2; ++c) {
+      if (splitMode_ == 1) {
+        for (auto& b : fir_) b.push(x);
+        for (int c = 0; c < 2; ++c) lo[c] = fir_[0].out(c), mid[c] = midCopy_ ? x[c] : fir_[1].out(c), hi[c] = fir_[2].out(c);
+      } else if (splitMode_ == 2) {
+        lin_[0].run(x, lo, fft_, xfade_);
+        lin_[1].run(x, mid, fft_, xfade_);
+        lin_[2].run(x, hi, fft_, xfade_);
+      }
+      for (int c = 0; c < 2 && splitMode_ == 0; ++c) {
         float X = x[c];
         lo[c] = lowLp_.run(c, X);
         if (apOn_) lo[c] = lowAp_.run(c, lo[c]);
@@ -481,6 +778,11 @@ class Engine {
   Biquad lc_[4], lowAp_;
   Chain lowLp_, midHp_, midLp_, highHp_;
   Band band_[kBands];
+  int splitMode_ = 0, xfade_ = 0;  // 0 IIR, 1 legacy FIR, 2 FFT bank
+  bool midCopy_ = false;
+  FirBand fir_[3];
+  LinBand lin_[3];
+  FftD fft_;
 };
 
 }  // namespace gl::packs::dynamics::maxref

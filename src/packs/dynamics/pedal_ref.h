@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <vector>
 #include "../../engine/FullReverbRef.h"
+#include "cabinet_ir.h"
 
 namespace gl::packs::dynamics::pedal {
 
@@ -23,7 +24,8 @@ enum Type { TEmpty = 0, TDist, TChorus, TFlanger, TPhaser, TReverb, TDelay, TGat
 inline int boxType(float v) { return std::clamp(static_cast<int>(std::trunc(v)), -1, 11); }
 inline double levelGain(double x) { return std::pow(10.0, 2.4 * x - 1.2); }
 // Everything but a cabinet (FL Studio's impulse files) is reproduced.
-inline bool stateExact(const float* v) { return static_cast<int>(std::trunc(v[11])) <= 0; }
+// `haveIr`: the selected cabinet's impulse file is readable (J-42).
+inline bool stateExact(const float* v, bool haveIr = false) { return static_cast<int>(std::trunc(v[11])) <= 0 || haveIr; }
 
 inline float flush(float x) { return std::fabs(x) < 1e-9f ? 0.f : x; }
 
@@ -440,13 +442,21 @@ class Board {
       float l = static_cast<float>(inHp_.run(0, L[i]) * gIn_), r = static_cast<float>(inHp_.run(1, R[i]) * gIn_);
       for (int b = 0; b < kBoxes; ++b)
         if (type_[b] > 0 && en_[b] != 0) ped_[b].tick(l, r);
-      if (cab_ > 0) l = cabinet(0, l), r = cabinet(1, r);
+      if (cab_ > 0 && cabK && cabRun) {  // J-42: FL Studio's impulse file (direct convolution, × 0.2 folded in)
+        float w[2] = {l, r};
+        cabRun->tick(*cabK, w);
+        l = w[0], r = w[1];
+      } else if (cab_ > 0) {
+        l = cabinet(0, l), r = cabinet(1, r);
+      }
       if (eqOn_)
         for (auto& e : eq_) l = e.run(0, l), r = e.run(1, r);
       L[i] = static_cast<float>(l * gOut_), R[i] = static_cast<float>(r * gOut_);
     }
   }
   void reset() { sr_ = 0; }
+  const cab::Kernel* cabK = nullptr;  // J-42: impulse kernel / convolver state (null = procedural)
+  cab::Run* cabRun = nullptr;
 
  private:
   // Procedural cabinet (approximate): high-pass, presence peak, steep low-pass, level.

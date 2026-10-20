@@ -15,6 +15,7 @@
 #include "../Packs.h"
 #include "spectral.h"
 #include "spectral_blocks.h"
+#include "../dynamics/maximus_ref.h"
 
 namespace gl::packs::spectral {
 
@@ -43,6 +44,7 @@ inline double coefFor(double sr, double ms) { return std::exp(-1.0 / std::max(1.
 // per-band curves sampled on a fine grid, pitch-follow flags, held keys.
 struct VocMapsAux final : AuxData {
   static constexpr int kT = 1025;
+  std::vector<float> sge;  // J-42: enhancer program (gl.enhance parameters), empty = Gridline's enhancer
   float t[kVxMaps][kT];
   bool pf[kVxMaps] = {};
   int keys[16] = {};
@@ -104,6 +106,7 @@ class VocRef {
     key_[0] = -1;
   }
 
+  bool skipEnhance = false;  // J-42: the enhancer stage runs on the mastering engine instead
   void process(const Params& p, const VocMapsAux* aux, const ProcessContext& ctx, const float* scL, const float* scR, float* L,
                float* R, int n) {
     const VocMapsAux& mp = aux ? *aux : vocDefaultMaps();
@@ -244,7 +247,7 @@ class VocRef {
         ol = (wl + pl) * wet + mpass + cp1 * carPass;
         orr = (wr + pr) * wet + mpass + cp1 * carPass;
       }
-      if (enh > 0) enhance(ol, orr, enh, eA, eR);
+      if (enh > 0 && !skipEnhance) enhance(ol, orr, enh, eA, eR);
       L[i] = blk::flush(static_cast<float>(ol));
       R[i] = blk::flush(static_cast<float>(orr));
     }
@@ -443,9 +446,11 @@ class VocRef {
       const double shift = std::clamp(static_cast<double>(p[VxUnisonShift]), 0.0, 1.0);
       const double upan = std::clamp(static_cast<double>(p[VxUnisonPan]), -1.0, 1.0);
       const double bpan = 2.0 * mapAt(VmPan) - 1.0;
+      // J-42: the reference's unison detune table (octaves × shift).
+      static const double kT[5][5] = {{0, 0, 0, 0, 0}, {-1, 1, 0, 0, 0}, {-1, 0, 1, 0, 0}, {-1, 1.0 / 3, -1.0 / 3, 1, 0}, {-1, 0.5, 0, -0.5, 1}};
       for (int v = 0; v < uni_; ++v) {
-        double s = uni_ > 1 ? static_cast<double>(v) / (uni_ - 1) * 2.0 - 1.0 : 0.0;
-        bank(B.ana[v], fa0 * std::pow(2.0, s * shift * 0.5), 2.0 * w * modW);
+        const double s = uni_ > 1 ? kT[std::min(uni_ - 1, 4)][v] : 0.0;
+        bank(B.ana[v], fa0 * std::pow(2.0, s * shift), 2.0 * w * modW);
         double ps = uni_ > 1 ? upan * ((static_cast<double>((b + v) % uni_) / (uni_ - 1)) * 2.0 - 1.0) : 0.0;
         double gl, gr;
         dsp::panGains(std::clamp(bpan + ps, -1.0, 1.0), gl, gr);
@@ -546,6 +551,8 @@ class VocoderFx final : public SpectralFx {
  public:
   VocoderFx() {
     info_ = findPlugin("gl.vocoder");
+    sgState_ = defaultPluginState("gl.enhance");
+    sgFx_ = createEffect("gl.enhance");
     reset();
   }
   void setSideIo(const SideIo& io) override {
@@ -569,8 +576,19 @@ class VocoderFx final : public SpectralFx {
   void processAux(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R, int n) override {
     Params p{info_, &state};
     if (p.choice(VxModel) == 1) {
-      ref_.process(p, dynamic_cast<const VocMapsAux*>(aux.custom.get()), ctx, scL_, scR_, L, R, n);
+      const auto* maps = dynamic_cast<const VocMapsAux*>(aux.custom.get());
+      const bool sg = maps && !maps->sge.empty() && sgState_.params.size() >= maps->sge.size();
+      ref_.skipEnhance = sg;
+      ref_.process(p, maps, ctx, scL_, scR_, L, R, n);
       ref_.publish(tel);
+      if (sg && p[VxEnhance] > 0) {  // J-42: the enhancer stage on the mastering reference engine
+        if (maps != sgFrom_) {
+          std::copy(maps->sge.begin(), maps->sge.end(), sgState_.params.begin());
+          sgFrom_ = maps;
+        }
+        sgState_.params[0] = p[VxEnhance];  // EnAmount: the program's band mix
+        sgFx_->process(sgState_, ctx, L, R, n);
+      }
       return;
     }
     process(state, ctx, L, R, n);
@@ -779,6 +797,9 @@ class VocoderFx final : public SpectralFx {
   dsp::Noise noise_;
   uint32_t tick_ = 0;
   VocRef ref_;
+  PluginState sgState_;
+  std::unique_ptr<Effect> sgFx_;
+  const VocMapsAux* sgFrom_ = nullptr;
 };
 
 // ============================================================ Pitch shifter
@@ -1901,6 +1922,87 @@ class ScratchFx final : public SpectralFx {
 // Reference model (J-1): one slope per crossover (6..96 dB), main and send
 // level / mute per band, band sends into other mixer inserts
 // (SideIo::multiL/R, PluginInfo::sendParams) and a linear-phase FFT mode.
+// J-42: the reference splitter's linear-phase mode (2 or 3 bands): FFT filter objects
+// (zero-phase masks: −6 dB at the split, S dB per "6 dB octave", −120 dB floor) for a
+// low pass at f1 and, with 3 bands, a high pass at f2; the remaining band is the input
+// delayed 3N/4 minus the others, so the bands sum to that delay. Changes cross-fade two
+// filter sets over the speed time (the first design fades in from the empty set).
+struct FsLin {
+  using LinEngine = gl::packs::dynamics::maxref::LinEngine;
+  int N = 0, len = 0, count = 0, s = 0, hp = 0, dW = 0;
+  bool dirty = true;
+  LinEngine A[2], B[2];
+  gl::packs::dynamics::maxref::FftD fft;
+  std::vector<float> hist[2], dl[2], maskA, maskB;
+  void alloc(int n) {
+    N = n;
+    fft.init(N);
+    for (int k = 0; k < 2; ++k) A[k].init(N), B[k].init(N);
+    for (int c = 0; c < 2; ++c) hist[c].assign(static_cast<size_t>(N), 0.f), dl[c].assign(static_cast<size_t>(3 * N / 4), 0.f);
+    maskA.assign(static_cast<size_t>(N / 2 + 1), 0.f), maskB = maskA;
+    s = 0, count = len = 0, hp = dW = 0;
+  }
+  static float mag(float f, float fc, float S, bool hpf) {
+    if (f == 0) return hpf ? 0.f : 1.f;
+    float x = gl::packs::dynamics::maxref::log2a(f * (1.0f / fc));
+    if (hpf) x = -x;
+    using gl::packs::dynamics::maxref::pow2a;
+    if (x >= 0) {
+      const float d = -6.0f - S * x;
+      return d >= -120.0f ? pow2a(d / 6.0f) : 0.f;
+    }
+    const float d = -6.0f + S * x;
+    return d >= -120.0f ? 1.0f - pow2a(d / 6.0f) : 1.f;
+  }
+  // One stereo frame → bands (low, [mid,] high).
+  void run(const float* in, int nb, double fs, int q, float f1, float f2, float S1, float S2, double xfadeSec, double (*band)[4]) {
+    const int want = gl::packs::dynamics::maxref::linSize(fs, q);
+    if (dirty && count >= len) {
+      if (want != N) alloc(want);
+      for (int i = 0; i <= N / 2; ++i) {
+        const float f = static_cast<float>(i) * static_cast<float>(fs / N);
+        maskA[static_cast<size_t>(i)] = mag(f, f1, S1, false);
+        maskB[static_cast<size_t>(i)] = mag(f, f2, S2, true);
+      }
+      A[s].clear(), B[s].clear();
+      A[s].design(maskA, fft), B[s].design(maskB, fft);
+      count = 0, len = static_cast<int>(xfadeSec * fs);
+      float tmp[2], fr[2];
+      for (int k = 0; k < N; ++k) {
+        const size_t at = static_cast<size_t>((hp + k) % N);
+        fr[0] = hist[0][at], fr[1] = hist[1][at];
+        A[s].run(fr, tmp, fft);
+        if (nb == 3) B[s].run(fr, tmp, fft);
+      }
+      s = 1 - s;
+      dirty = false;
+    }
+    hist[0][static_cast<size_t>(hp)] = in[0], hist[1][static_cast<size_t>(hp)] = in[1];
+    hp = hp + 1 == N ? 0 : hp + 1;
+    float D[2];
+    for (int c = 0; c < 2; ++c) D[c] = dl[c][static_cast<size_t>(dW)], dl[c][static_cast<size_t>(dW)] = in[c];
+    dW = dW + 1 == static_cast<int>(dl[0].size()) ? 0 : dW + 1;
+    const int nw = 1 - s, od = s;
+    double b3[2][3][2];  // [set][band][channel]
+    const int sets = count < len ? 2 : 1;
+    for (int k = 0; k < sets; ++k) {
+      const int set = k == 0 ? nw : od;
+      float lo[2], hi[2] = {0, 0};
+      A[set].run(in, lo, fft);
+      if (nb == 3) B[set].run(in, hi, fft);
+      for (int c = 0; c < 2; ++c) {
+        b3[k][0][c] = lo[c];
+        if (nb == 3) b3[k][2][c] = hi[c], b3[k][1][c] = D[c] - lo[c] - hi[c];
+        else b3[k][1][c] = D[c] - lo[c];
+      }
+    }
+    const double t = sets == 2 ? static_cast<double>(count) / len : 1.0;
+    for (int b = 0; b < nb; ++b)
+      for (int c = 0; c < 2; ++c) band[c][b] = sets == 2 ? b3[0][b][c] * t + b3[1][b][c] * (1 - t) : b3[0][b][c];
+    if (count < len) ++count;
+  }
+};
+
 class SplitterFx final : public SpectralFx {
  public:
   SplitterFx() {
@@ -1931,6 +2033,7 @@ class SplitterFx final : public SpectralFx {
   int latencyFor(const PluginState& state, double sampleRate) const override {
     Params p{info_, &state};
     if (p.choice(SpModel) != 1 || !p.on(SpLinear)) return 0;
+    if (std::clamp(p.choice(SpBands), 0, 2) + 2 <= 3) return 3 * dynamics::maxref::linSize(sampleRate, p.choice(SpQuality)) / 4;  // J-42
     return splitFftSize(p.choice(SpQuality), sampleRate) / 2;
   }
   void reset() override {
@@ -2093,7 +2196,16 @@ class SplitterFx final : public SpectralFx {
     double f[3];
     int sl[3];
     const int nb = refLayout(p, sr, f, sl);
-    bool linear = p.on(SpLinear) && lin_;
+    // J-42: 2 / 3-band linear phase runs the reference's FFT filter objects.
+    const bool flLin = p.on(SpLinear) && nb <= 3;
+    if (flLin) {
+      if (!fs_) fs_ = std::make_unique<FsLin>();
+      const float key[7] = {static_cast<float>(f[0]), static_cast<float>(f[1]), static_cast<float>(sl[0]), static_cast<float>(sl[1]),
+                            static_cast<float>(nb), static_cast<float>(p.choice(SpQuality)), static_cast<float>(sr)};
+      if (std::memcmp(key, fsKey_, sizeof key) != 0) std::memcpy(fsKey_, key, sizeof key), fs_->dirty = true;
+      latency_.store(3 * dynamics::maxref::linSize(sr, p.choice(SpQuality)) / 4, std::memory_order_relaxed);
+    }
+    bool linear = !flLin && p.on(SpLinear) && lin_;
     int N = linear ? std::min(splitFftSize(p.choice(SpQuality), sr), lin_->cap) : 0;
     // Gains.
     bool anySolo = false;
@@ -2122,7 +2234,7 @@ class SplitterFx final : public SpectralFx {
         cur_ = 0;
       }
       latency_.store(N / 2, std::memory_order_relaxed);
-    } else {
+    } else if (!flLin) {
       linN_ = 0;
       latency_.store(0, std::memory_order_relaxed);
       float key[8] = {static_cast<float>(sr), static_cast<float>(nb), static_cast<float>(f[0]), static_cast<float>(f[1]),
@@ -2145,7 +2257,11 @@ class SplitterFx final : public SpectralFx {
       }
     }
     for (int i = 0; i < n; ++i) {
-      if (linear) {
+      if (flLin) {
+        const float in[2] = {L[i], R[i]};
+        fs_->run(in, nb, sr, p.choice(SpQuality), static_cast<float>(p[SpFreq1]), static_cast<float>(p[SpFreq2]),
+                 static_cast<float>(kSplitSlopeDb[sl[0]]), static_cast<float>(kSplitSlopeDb[sl[1]]), 0.001 * std::clamp(static_cast<double>(p[SpLinSpeed]), 2.0, 200.0), band);
+      } else if (linear) {
         LinBank& lb = *lin_;
         const int H = linN_ / 4;
         lb.inRe[static_cast<size_t>(linN_ - H + fill_)] = L[i];
@@ -2294,6 +2410,8 @@ class SplitterFx final : public SpectralFx {
   blk::XoverRef rc_[2][3][3];  // phase compensation copies [channel][band][crossover]
   float refKey_[8] = {};
   // Reference model (linear phase).
+  std::unique_ptr<FsLin> fs_;
+  float fsKey_[7] = {};
   std::unique_ptr<LinBank> lin_;
   std::atomic<LinBank*> pending_{nullptr};
   std::atomic<LinBank*> retired_{nullptr};
@@ -2637,6 +2755,16 @@ bool prepareAux(const PluginState& state, ChannelAux& aux) {
     auto a = std::make_shared<VocMapsAux>();
     a->build(d);
     a->hash = std::hash<std::string>{}(state.data);
+    if (size_t at = state.data.find("\nsge"); at != std::string::npos) {
+      const char* q = state.data.c_str() + at + 4;
+      for (;;) {
+        char* end = nullptr;
+        const float v = std::strtof(q, &end);
+        if (end == q) break;
+        a->sge.push_back(v);
+        q = end;
+      }
+    }
     aux.custom = a;
     return true;
   }

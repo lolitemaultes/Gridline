@@ -295,7 +295,7 @@ bool decodeFreqSplitter(Context& c, const std::vector<Event>& evs, PluginMapping
   if (version > 4) c.report.warn("Frequency Splitter: newer state version, read as version 4");
   if (routed) c.report.warn("Frequency Splitter: band sends go to the mixer inserts with the same numbers");
   // Exact for the IIR model (the linear-phase FIR designer differs in detail).
-  m.exact = version <= 4 && t[4] == 0 && !routed;  // send-target numbering unverified
+  m.exact = version <= 4 && !routed;  // J-42: linear-phase mode on the reference FFT filters; send targets unresolved
   KnobTable tab = {{0, 0, 65536, sp::SpFreq1, splitHz},
                    {1, 0, 65536, sp::SpFreq2, splitHz},
                    {2, 0, 7, sp::SpSlopeA, [](double v) { return clampd(std::round(v), 0, 7); }},
@@ -381,7 +381,7 @@ bool decodeEmphasizer(Context& c, const std::vector<Event>& evs, PluginMapping& 
   const int version = r.i32();
   std::vector<double> t = ints(r, version >= 2 ? 6 : 5);
   if (t.size() < 5) return false;
-  if (t.size() < 6) t.push_back(10000);  // version 1: output at its 0 dB default (unverified)
+  if (t.size() < 6) t.push_back(5000);  // J-42: version 1 loads the output wheel's default (5000 = −12.7 dB)
   fx::begin(m, "gl.enhance");
   fx::set(m, dy::EnCustom, 2);
   auto n = [](double v) { return clampd(v / 10000.0, 0, 1); };
@@ -393,8 +393,8 @@ bool decodeEmphasizer(Context& c, const std::vector<Event>& evs, PluginMapping& 
                    {4, 0, 1, dy::EnPeakBypass, sw},
                    {5, 0, 10000, dy::EnPeakOut, [n](double v) { return dy::emref::outLin(n(v)); }}};
   fx::applyTable(m, tab, t);
-  m.exact = version >= 2;
-  if (version < 2) c.report.warn("Emphasizer: version 1 state, output gain taken as 0 dB");
+  m.exact = true;
+  (void)c;
   bindKnobs(m, tab);
   return true;
 }
@@ -489,6 +489,7 @@ bool decodeDistructor(Context& c, const std::vector<Event>& evs, PluginMapping& 
     r.u32();
     for (int& sl : slot) sl = std::clamp(static_cast<int>(r.i32()), 0, 3);
   }
+  const std::string cabDir = c.factoryData.empty() ? std::string() : c.factoryData + "/Plugins/Fruity/Effects/Distructor/module/impulses";
   fx::set(m, dy::DrCount, static_cast<double>(mods.size()));
   fx::set(m, dy::DrSoftClip, soft ? 1 : 0);
   KnobTable tab;
@@ -496,7 +497,16 @@ bool decodeDistructor(Context& c, const std::vector<Event>& evs, PluginMapping& 
     fx::set(m, dy::DrSlot0 + k, slot[k]);
     packs::dynamics::drack::ModuleState ms;
     packs::dynamics::drack::moduleDefaults(ms);
-    if (k < static_cast<int>(mods.size())) ms = mods[static_cast<size_t>(k)], exact = exact && packs::dynamics::drack::moduleExact(ms);
+    if (k < static_cast<int>(mods.size())) {
+      ms = mods[static_cast<size_t>(k)];
+      // J-42: speaker impulses are FL Studio's files, read in place at run time.
+      bool haveIr = false;
+      if (ms.kind == packs::dynamics::drack::KSpeaker && !ms.disabled && !cabDir.empty() && packs::dynamics::cab::valid(ms.ir)) {
+        if (std::FILE* f = std::fopen(packs::dynamics::cab::fileFor(cabDir, ms.ir).c_str(), "rb")) haveIr = true, std::fclose(f);
+        if (haveIr) m.state.data = "cabdir=" + cabDir + "\n";
+      }
+      exact = exact && packs::dynamics::drack::moduleExact(ms, haveIr);
+    }
     const int f[dy::DmP0] = {ms.kind, ms.algo, ms.os, ms.removeDc, ms.disabled, ms.ftype, ms.fopt, ms.ir, ms.chorusMode};
     for (int q = 0; q < dy::DmP0; ++q) fx::set(m, dy::drParam(k, q), f[q]);
     for (int q = 0; q < dy::kDrParams; ++q) {
@@ -509,7 +519,7 @@ bool decodeDistructor(Context& c, const std::vector<Event>& evs, PluginMapping& 
   }
   bindKnobs(m, tab);
   m.exact = exact;
-  if (!exact) c.report.warn("Distructor: speaker modules use FL Studio's impulse files; Gridline models the cabinet (approximate)");
+  if (!exact) c.report.warn("Distructor: speaker impulse files not found (FL Studio data); Gridline models the cabinet (approximate)");
   return true;
 }
 
@@ -533,8 +543,15 @@ bool decodeHardcore(Context& c, const std::vector<Event>& evs, PluginMapping& m)
   KnobTable tab;
   for (int k = 0; k < 50; ++k) tab.push_back({k, 0, 1, dy::PbValue0 + k, nullptr});
   bindKnobs(m, tab);
-  m.exact = packs::dynamics::pedal::stateExact(v);
-  if (!m.exact) c.report.warn("Hardcore: the cabinet uses FL Studio's impulse files; Gridline models it (approximate)");
+  // J-42: the cabinet impulses are FL Studio's files, read in place at run time.
+  bool haveIr = false;
+  if (!c.factoryData.empty()) {
+    const std::string dir = c.factoryData + "/Plugins/Fruity/Effects/Hardcore/Imp";
+    const int cab = static_cast<int>(std::trunc(v[11]));
+    if (cab >= 1 && cab <= 20 && !packs::dynamics::cab::boardFile(dir, cab).empty()) haveIr = true, m.state.data = "cabdir=" + dir + "\n";
+  }
+  m.exact = packs::dynamics::pedal::stateExact(v, haveIr);
+  if (!m.exact) c.report.warn("Hardcore: cabinet impulse files not found (FL Studio data); Gridline models it (approximate)");
   return true;
 }
 

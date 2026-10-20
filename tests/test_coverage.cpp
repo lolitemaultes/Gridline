@@ -19,6 +19,7 @@
 #include "core/flp/Flp.h"
 #include "core/flp/FlpCoverage.h"
 #include "core/flp/FlpPresets.h"
+#include "packs/dynamics/dynamics.h"
 #include "packs/modulation/modulation.h"
 
 using namespace gl;
@@ -248,12 +249,17 @@ void testDecoders() {
   };
   auto chorus = rack({11, 35});
   Decoded mob = decode("FL Studio Mobile Rack FX", &chorus);
-  expect(mob.ok && mob.m.glType == "gl.chorus" && !mob.rep.warnings.empty(), "Mobile rack: first module (chorus), extra modules warned");
+  namespace dyn = gl::packs::dynamics;
+  expect(mob.ok && mob.m.glType == "gl.pocketrack" && param(mob, dyn::pkParam(0, dyn::PkType)) == 11.f && param(mob, dyn::pkParam(1, dyn::PkType)) == 35.f &&
+             mob.m.exact,
+         "Mobile rack: modules into Pocket Rack slots (chorus, reverb)");
   auto empty = rack({});
   Decoded mobE = decode("FL Studio Mobile Rack FX", &empty);
-  expect(mobE.ok && mobE.m.glType == "gl.utility" && mobE.m.exact, "Mobile rack: empty rack passes through");
+  expect(mobE.ok && mobE.m.glType == "gl.pocketrack" && param(mobE, dyn::pkParam(0, dyn::PkType)) == 0.f && mobE.m.exact,
+         "Mobile rack: empty rack passes through");
   auto unknown = rack({999});
-  expect(!decode("FL Studio Mobile Rack FX", &unknown).ok, "Mobile rack: unknown module stays unmapped");
+  Decoded mobU = decode("FL Studio Mobile Rack FX", &unknown);
+  expect(mobU.ok && !mobU.m.exact && !mobU.rep.warnings.empty(), "Mobile rack: unknown module warned, not exact");
 
   // Phase inverter: State knob.
   std::vector<uint8_t> inv;
