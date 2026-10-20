@@ -448,7 +448,7 @@ bool decodeHarmorFull(Context& c, const std::vector<Event>& events, PluginMappin
   setp(s, q::FxCompLow, clampd(G(20033) / 1000.0, 0, 2)), setp(s, q::FxCompMid, clampd(G(20034) / 1000.0, 0, 2)),
       setp(s, q::FxCompHigh, clampd(G(20035) / 1000.0, 0, 2));
   setp(s, q::FxEqMix, clampd(parts[0].eqMix, 0, 1));
-  s.data = hm::serializePatch(data);
+  if (!c.paramsOnly) s.data = hm::serializePatch(data);
   m.glType = "gl.harmor";
   m.state = s;
   m.exact = false;

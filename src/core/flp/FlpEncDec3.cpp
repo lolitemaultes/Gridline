@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 #include "../../packs/dynamics/dynamics.h"
@@ -241,14 +242,6 @@ std::string curveText(float v) {
   std::snprintf(buf, sizeof buf, "%.4g", static_cast<double>(v));
   return buf;
 }
-// Point i of a curve from 16 stored bands, as the decoder interpolates it.
-float mbdPoint(const int32_t* s, int i) {
-  const double pos = 15.0 * i / (sfx::kBdPoints - 1);
-  const int k = std::clamp(static_cast<int>(pos), 0, 14);
-  const double f = std::clamp(pos - k, 0.0, 1.0);
-  const double a = s[k] / kMbdOne, c = s[k + 1] / kMbdOne;
-  return static_cast<float>(std::clamp(a + (c - a) * f, 0.0, 1.0));
-}
 // Bands from the printed points by interval propagation: each point's text
 // stands for an interval of values, each point is (1 − f)·band k + f·band
 // k + 1, so the band intervals are narrowed along the chain until stable,
@@ -312,10 +305,66 @@ void mbdIntervals(const std::string* target, double* band) {
   for (int k = 0; k < 16; ++k) band[k] = v[k];
 }
 
+// J-51: the floats that print as one curve text. "%.4g" rounds the value,
+// which is monotonic, so they form one interval in value order: found by
+// bisection over the float order, the per-candidate check is then two
+// comparisons instead of a formatted print (the fit tries ~10^5 candidates).
+struct PrintRange {
+  float lo = 1, hi = 0;  // empty: compare the text
+  int zero = 0;          // 1: the text of +0 ("0"), −1: of −0 (only that float prints so)
+  std::string text;
+  bool has(float v) const {
+    if (zero) return v == 0 && std::signbit(v) == (zero < 0);
+    return lo <= hi ? (v >= lo && v <= hi) : curveText(v) == text;
+  }
+};
+int64_t floatKey(float f) {  // order-preserving integer key (−0 and +0 share 0)
+  uint32_t u;
+  std::memcpy(&u, &f, 4);
+  return (u & 0x80000000u) ? -static_cast<int64_t>(u & 0x7FFFFFFFu) : static_cast<int64_t>(u);
+}
+float keyFloat(int64_t k) {
+  const uint32_t u = k < 0 ? (static_cast<uint32_t>(-k) | 0x80000000u) : static_cast<uint32_t>(k);
+  float f;
+  std::memcpy(&f, &u, 4);
+  return f;
+}
+PrintRange printRange(float want) {
+  PrintRange r;
+  r.text = curveText(want);
+  // Only finite non-zero values (−0 prints differently from +0, which shares
+  // its key): zero and the rest fall back to comparing the text.
+  if (want == 0) {
+    r.zero = std::signbit(want) ? -1 : 1;
+    return r;
+  }
+  if (!std::isfinite(want)) return r;
+  const int64_t w = floatKey(want), kMax = floatKey(std::numeric_limits<float>::max());
+  auto ok = [&](int64_t k) { return k != 0 && curveText(keyFloat(k)) == r.text; };
+  int64_t a = -kMax, b = w;  // lowest match in [a, b]: ok(b), first true
+  if (ok(a)) b = a;
+  while (b - a > 1) {
+    const int64_t m = a + (b - a) / 2;
+    (ok(m) ? b : a) = m;
+  }
+  const int64_t lo = b;
+  a = w, b = kMax;  // highest match: ok(a), last true
+  if (ok(b)) a = b;
+  while (b - a > 1) {
+    const int64_t m = a + (b - a) / 2;
+    (ok(m) ? a : b) = m;
+  }
+  // The interval must not reach zero (whose two signs print differently).
+  if ((lo <= 0 && a >= 0)) return r;
+  r.lo = keyFloat(lo), r.hi = keyFloat(a);
+  return r;
+}
+
 // 16 stored bands whose interpolated points print as `want`.
 void mbdFit(const float* want, int32_t* s) {
   std::string target[sfx::kBdPoints];
-  for (int i = 0; i < sfx::kBdPoints; ++i) target[i] = curveText(want[i]);
+  PrintRange prints[sfx::kBdPoints];
+  for (int i = 0; i < sfx::kBdPoints; ++i) prints[i] = printRange(want[i]), target[i] = prints[i].text;
   // Start: band 0 = first point; each next band through the segment's last point.
   double band[16];
   band[0] = want[0];
@@ -332,16 +381,25 @@ void mbdFit(const float* want, int32_t* s) {
   }
   mbdIntervals(target, band);
   for (int k = 0; k < 16; ++k) s[k] = static_cast<int32_t>(std::lround(std::clamp(band[k], 0.0, 1.0) * kMbdOne));
-  // Points that depend on band k.
+  // Points that depend on band k (J-51: listed once, in point order).
+  // Each point's segment and position in it (the decoder's interpolation).
+  int dep[16][sfx::kBdPoints], deps[16] = {}, segOf[sfx::kBdPoints];
+  double fracOf[sfx::kBdPoints];
+  for (int i = 0; i < sfx::kBdPoints; ++i) {
+    const double pos = 15.0 * i / (sfx::kBdPoints - 1);
+    const int kk = std::clamp(static_cast<int>(pos), 0, 14);
+    segOf[i] = kk, fracOf[i] = std::clamp(pos - kk, 0.0, 1.0);
+    for (int k = 0; k < 16; ++k)
+      if (kk == k || kk + 1 == k) dep[k][deps[k]++] = i;
+  }
   auto cost = [&](int k) {
     int bad = 0;
     double err = 0;
-    for (int i = 0; i < sfx::kBdPoints; ++i) {
-      const double pos = 15.0 * i / (sfx::kBdPoints - 1);
-      const int kk = std::clamp(static_cast<int>(pos), 0, 14);
-      if (kk != k && kk + 1 != k) continue;
-      const float v = mbdPoint(s, i);
-      if (curveText(v) != target[i]) ++bad;
+    for (int j = 0; j < deps[k]; ++j) {
+      const int i = dep[k][j];
+      const double a = s[segOf[i]] / kMbdOne, c = s[segOf[i] + 1] / kMbdOne;
+      const float v = static_cast<float>(std::clamp(a + (c - a) * fracOf[i], 0.0, 1.0));  // the decoder's point i
+      if (!prints[i].has(v)) ++bad;
       err += std::fabs(static_cast<double>(v) - want[i]);
     }
     return bad * 1e3 + err;
@@ -386,15 +444,16 @@ void mbdFit(const float* want, int32_t* s) {
   // candidates, band k + 1 re-solved for each).
   auto bad = [&](int k) { return cost(k) >= 1e3; };
   auto pointValues = [&](int k, std::vector<double>& out) {  // band-k values making one of its points exact
-    out = {0, 1};
-    for (int i = 0; i < sfx::kBdPoints; ++i) {
-      const double pos = 15.0 * i / (sfx::kBdPoints - 1);
-      const int kk = std::clamp(static_cast<int>(pos), 0, 14);
-      const double f = std::clamp(pos - kk, 0.0, 1.0);
+    out.clear();
+    out.push_back(0), out.push_back(1);
+    for (int j = 0; j < deps[k]; ++j) {  // (the points of segments k − 1 and k, in point order)
+      const int i = dep[k][j], kk = segOf[i];
+      const double f = fracOf[i];
       if (kk == k && f < 1) out.push_back((want[i] - f * (s[k + 1] / kMbdOne)) / (1 - f));
       if (kk + 1 == k && f > 0) out.push_back((want[i] - (1 - f) * (s[kk] / kMbdOne)) / f);
     }
   };
+  std::vector<double> candA, candB;
   for (int pass = 0; pass < 4; ++pass) {
     bool any = false;
     for (int k = 0; k + 1 < 16; ++k) {
@@ -403,7 +462,6 @@ void mbdFit(const float* want, int32_t* s) {
       const int32_t keepA = s[k], keepB = s[k + 1];
       int32_t bestA = keepA, bestB = keepB;
       double bc = cost(k) + cost(k + 1);
-      std::vector<double> candA;
       pointValues(k, candA);
       for (double step : {1e-4, 1e-5, 1e-6, 1e-7})
         for (int j = -12; j <= 12; ++j) candA.push_back(keepA / kMbdOne + j * step);
@@ -411,7 +469,6 @@ void mbdFit(const float* want, int32_t* s) {
         if (!(va >= 0 && va <= 1)) continue;
         for (int32_t da = -1; da <= 1; ++da) {
           s[k] = std::clamp(static_cast<int32_t>(std::lround(va * kMbdOne)) + da, 0, static_cast<int32_t>(kMbdOne));
-          std::vector<double> candB;
           pointValues(k + 1, candB);
           candB.push_back(keepB / kMbdOne);
           for (double vb : candB) {
@@ -509,12 +566,12 @@ Encoder multibandDelay() {
     }
     putI32(b, mbdAt(390), morph);
     const sfx::BandCurves cv = sfx::parseBandCurves(g.data);
+    // J-51: the six curve fits are independent: on the solver's threads.
+    int32_t fit[6][16];
+    parallelFor(6, [&](size_t i) { mbdFit(cv.v[i / 3][kMbdTargets[i % 3]], fit[i]); });
     for (int grp = 0; grp < 2; ++grp)
-      for (int t = 0; t < 3; ++t) {
-        int32_t s[16];
-        mbdFit(cv.v[grp][kMbdTargets[t]], s);
-        for (int k = 0; k < 16; ++k) putI32(b, mbdAt((bankA + grp) * 48 + t * 16 + k), s[k]);
-      }
+      for (int t = 0; t < 3; ++t)
+        for (int k = 0; k < 16; ++k) putI32(b, mbdAt((bankA + grp) * 48 + t * 16 + k), fit[grp * 3 + t][k]);
   };
   e.fields = [](const Bytes& b) {
     // J-42: the band-delay model's engine values (decoded states always carry it).

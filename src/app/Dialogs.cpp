@@ -45,18 +45,12 @@ bool matches(const std::string& name, const std::vector<std::string>& exts) {
   return false;
 }
 
-void centerNext(ImVec2 size) {
-  ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-  if (size.x > 0) ImGui::SetNextWindowSize(size, ImGuiCond_Appearing);
-}
+// J-54: centred in the work area, size clamped to the screen (short screens / large interface scale).
+void centerNext(ImVec2 size, ImVec2 minSize = ImVec2(0, 0)) { ui::PlaceNextDialog(size, ImGuiCond_Appearing, minSize); }
 
 // Label column for settings-style forms: dim caption, control starts at `x`.
-void formLabel(const char* label, float x = 168.0f) {
-  ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(pal().textDim), "%s", label);
-  ImGui::SameLine(x);
-}
+// J-54: a label longer than the column is fitted (ellipsis, full text on hover).
+void formLabel(const char* label, float x = 168.0f) { ui::FormLabelFit(label, x, pal().textDim); }
 
 // Right-aligns the next `width` pixels of buttons on the current line.
 void alignRight(float width) {
@@ -102,9 +96,12 @@ void fileDialog(App& a) {
   std::snprintf(dirBuf, sizeof dirBuf, "%s", fd.dir.c_str());
   ImGui::SetNextItemWidth(-1);
   if (ImGui::InputText("##dir", dirBuf, sizeof dirBuf, ImGuiInputTextFlags_EnterReturnsTrue) && fs::is_directory(dirBuf, ec)) fd.dir = dirBuf;
+  if (ImGui::CalcTextSize(fd.dir.c_str()).x > ImGui::GetItemRectSize().x - 2 * ImGui::GetStyle().FramePadding.x) ui::Tooltip(fd.dir.c_str());
   ui::FocusRing();
 
-  const float footer = fh * 2 + theme::kS2 * 3;
+  // J-54: kS1, name field, kS1, buttons under the list; reserved exactly, so
+  // the dialog itself never shows a scrollbar.
+  const float footer = ui::DialogFooterHeight(2);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS1, theme::kS1));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface950));
@@ -153,8 +150,9 @@ void fileDialog(App& a) {
     ui::EmptyState(ImGui::GetWindowDrawList(), mn, ImVec2(mn.x + sz.x, mn.y + sz.y), "This folder is empty",
                    folderMode ? "Choose it, or open a sub-folder" : "No matching files here");
   }
+  ImGui::PopStyleVar();  // rows sit flush inside the list; the list itself keeps the normal gap below it
   ImGui::EndChild();
-  ImGui::PopStyleVar(2);
+  ImGui::PopStyleVar();
   ImGui::Dummy(ImVec2(0, theme::kS1));
   if (!folderMode) {
     static char nameBuf[512];
@@ -177,8 +175,7 @@ void fileDialog(App& a) {
   if (!fd.types.empty()) {
     fd.typeIndex = std::clamp(fd.typeIndex, 0, static_cast<int>(fd.types.size()) - 1);
     const float typeW = std::max(120.0f, ImGui::GetContentRegionAvail().x - (96 + okW + theme::kS2 * 3));
-    ImGui::SetNextItemWidth(typeW);
-    if (ImGui::BeginCombo("##types", fd.types[static_cast<size_t>(fd.typeIndex)].label.c_str())) {
+    if (ui::BeginCombo("##types", fd.types[static_cast<size_t>(fd.typeIndex)].label.c_str(), typeW)) {
       for (size_t i = 0; i < fd.types.size(); ++i)
         if (ImGui::Selectable(fd.types[i].label.c_str(), static_cast<int>(i) == fd.typeIndex)) {
           fd.typeIndex = static_cast<int>(i);
@@ -225,8 +222,7 @@ void fileDialog(App& a) {
 
 void settingsWindow(App& a) {
   if (!a.showSettings) return;
-  centerNext(ImVec2(780, 500));
-  ImGui::SetNextWindowSizeConstraints(ImVec2(660, 360), ImVec2(1200, 1000));
+  centerNext(ImVec2(780, 500), ImVec2(660, 360));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   bool vis = ImGui::Begin("Settings", &a.showSettings, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
@@ -327,7 +323,7 @@ void settingsWindow(App& a) {
         }
       }
       ui::EndSection();
-      ui::BeginSection("INPUT");
+      ui::BeginSection("INPUT & RECORDING");
       audioInputSettings(a, fieldW);  // J-8
       ui::EndSection();
       ImGui::PushTextWrapPos(0);
@@ -470,13 +466,18 @@ void settingsWindow(App& a) {
       float vol = static_cast<float>(st.getNumber("sounds.volume")) * 100.0f;
       ImGui::SetNextItemWidth(fieldW);
       if (ImGui::SliderFloat("##uisndvol", &vol, 0.0f, 100.0f, "%.0f%%")) st.set("sounds.volume", static_cast<double>(vol) / 100.0);
+      // J-54: the Play column clears the widest sound name (checkbox square + gap included).
+      float playX = fieldW + 140;
+      for (int i = 0; i < uisound::kEventCount; ++i)
+        playX = std::max(playX, 168 + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x +
+                                    ImGui::CalcTextSize(uisound::eventLabel(static_cast<uisound::Event>(i))).x + theme::kS3);
       for (int i = 0; i < uisound::kEventCount; ++i) {
         const auto e = static_cast<uisound::Event>(i);
         bool on = st.getBool(uisound::settingKey(e));
         formLabel(i == 0 ? "Sounds" : "");
         ImGui::PushID(i);
         if (ImGui::Checkbox(uisound::eventLabel(e), &on)) st.set(uisound::settingKey(e), on);
-        ImGui::SameLine(fieldW + 140);
+        ImGui::SameLine(playX);
         ImGui::BeginDisabled(a.uiSoundsDisabled || !a.uiSounds.hasClip(e));
         if (ui::TextButton("Play", false, 48, "Preview this sound")) {
           a.uiSounds.setVolume(static_cast<float>(st.getNumber("sounds.volume")));
@@ -500,6 +501,8 @@ void settingsWindow(App& a) {
   ImGui::EndChild();
   ImGui::End();
 }
+
+int pendingPpq = 0;  // Project info: a lower timebase waiting for confirmation
 
 void infoWindow(App& a) {
   if (!a.showInfo) return;
@@ -568,7 +571,6 @@ void infoWindow(App& a) {
     ImGui::EndCombo();
   }
   formLabel("Timebase", 120);
-  static int pendingPpq = 0;
   if (ui::BeginCombo("##ppq", (std::to_string(s.ppq) + " PPQ").c_str(), 136)) {
     for (int p : kPpqChoices)
       if (ImGui::Selectable(std::to_string(p).c_str(), p == s.ppq)) {
@@ -581,16 +583,25 @@ void infoWindow(App& a) {
   }
   ui::Hint("Ticks per quarter note: the finest note position the project can store");
   if (pendingPpq) ImGui::OpenPopup("##ppqwarn");
-  if (ImGui::BeginPopupModal("##ppqwarn", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
-    ImGui::Text("Lowering the timebase to %d PPQ moves %d note or clip", pendingPpq, countPpqRoundings(s, pendingPpq));
-    ImGui::Text("positions onto the coarser grid. You can undo this.");
-    if (ui::TextButton("Change PPQ", true)) {
+  // J-54: laid out like the other confirmation prompts (title, dim body, Cancel + lit action on the right).
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS6, theme::kS6 - 4));
+  const bool warn = ImGui::BeginPopupModal("##ppqwarn", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
+  ImGui::PopStyleVar();
+  if (warn) {
+    char sub[160];
+    std::snprintf(sub, sizeof sub, "%d note or clip position(s) move onto the coarser grid. You can undo this.", countPpqRoundings(s, pendingPpq));
+    char title[64];
+    std::snprintf(title, sizeof title, "Lower the timebase to %d PPQ?", pendingPpq);
+    dialogTitle(a, title, sub);
+    ImGui::Dummy(ImVec2(372, theme::kS2));
+    alignRight(ui::ButtonRowWidth(2, 110));
+    const bool cancel = ui::TextButton("Cancel", false, 110) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    ImGui::SameLine(0, theme::kS2);
+    if (ui::TextButton("Change PPQ", true, 110)) {
       a.doc.setPpq(pendingPpq);
       pendingPpq = 0;
       ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ui::TextButton("Cancel")) {
+    } else if (cancel) {
       pendingPpq = 0;
       ImGui::CloseCurrentPopup();
     }
@@ -685,8 +696,7 @@ void aboutWindow(App& a) {
 
 void shortcutsWindow(App& a) {
   if (!a.showShortcuts) return;
-  centerNext(ImVec2(560, 600));
-  ImGui::SetNextWindowSizeConstraints(ImVec2(420, 300), ImVec2(1000, 1400));
+  centerNext(ImVec2(560, 600), ImVec2(420, 300));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   bool vis = ImGui::Begin("Keyboard shortcuts", &a.showShortcuts, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
@@ -780,8 +790,7 @@ void unsavedPrompt(App& a) {
 // approximated, what has no Gridline equivalent yet.
 void importReportWindow(App& a) {
   if (!a.showImportReport) return;
-  centerNext(ImVec2(560, 520));
-  ImGui::SetNextWindowSizeConstraints(ImVec2(440, 300), ImVec2(900, 900));
+  centerNext(ImVec2(560, 520), ImVec2(440, 300));
   bool vis = ImGui::Begin("FL Studio import", &a.showImportReport, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   if (vis) {
@@ -789,9 +798,17 @@ void importReportWindow(App& a) {
     const auto& r = a.importReport;
     dialogTitle(a, r.source.c_str(), "Opened as a Gridline project. Save asks where to keep it, and in which format.");
     ImGui::BeginChild("##rep", ImVec2(0, -ui::DialogFooterHeight()));
+    // J-54: one number column for both lists, as wide as the longest label
+    // allows (labels beyond ~62% of the width are fitted, full text on hover).
+    std::vector<const char*> labels;
+    for (const auto& kv : r.counts) labels.push_back(kv.first.c_str());
+    for (const auto& kv : r.unmapped) labels.push_back(kv.first.c_str());
+    const float sectionPad = 2 * theme::kS2;
+    const float numX = ui::FormColumn(labels.data(), static_cast<int>(labels.size()), 168.0f,
+                                      std::max(168.0f, (ImGui::GetContentRegionAvail().x - 2 * sectionPad) * 0.62f), theme::kS6);
     ui::BeginSection("IMPORTED");
     for (const auto& [k, v] : r.counts) {
-      formLabel(k.c_str(), 260);
+      formLabel(k.c_str(), numX);
       ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
       ImGui::Text("%d", v);
       ImGui::PopFont();
@@ -800,8 +817,10 @@ void importReportWindow(App& a) {
     if (!r.unmapped.empty()) {
       ui::BeginSection("NO GRIDLINE EQUIVALENT YET");
       for (const auto& [k, v] : r.unmapped) {
-        formLabel(k.c_str(), 260);
+        formLabel(k.c_str(), numX);
+        ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
         ImGui::TextColored(theme::vec(P.danger), "\xC3\x97%d", v);
+        ImGui::PopFont();
       }
       ui::EndSection();
     }
@@ -822,15 +841,20 @@ void importReportWindow(App& a) {
       ui::EndSection();
     }
     ImGui::EndChild();
-    ui::DialogFooter(260);
-    if (ui::TextButton("Save as...", true, 180)) {
+    ui::DialogFooter(ui::ButtonRowWidth(2, 96));
+    if (ui::TextButton("Close", false, 96)) a.showImportReport = false;
+    ImGui::SameLine(0, theme::kS2);
+    if (ui::TextButton("Save as...", true, 96)) {
       a.saveAs();
       a.showImportReport = false;
     }
-    ImGui::SameLine(0, theme::kS1);
-    if (ui::TextButton("Close", false, 72)) a.showImportReport = false;
   }
   ImGui::End();
+}
+
+void devShowPpqWarning(App& a, int ppq) {
+  a.showInfo = true;
+  pendingPpq = ppq;
 }
 
 void drawDialogs(App& a) {

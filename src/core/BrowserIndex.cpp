@@ -967,9 +967,13 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
   // 2. Analyse new / changed audio.
   pending_ = todo.size();
   size_t sinceSave = 0;
+  // J-51: stop() also interrupts the analysis of one long file (the decoders
+  // check the flag between blocks): the entry is then not stored.
+  DecodeCancelScope cancellable(&cancel_);
   for (const auto& t : todo) {
     if (cancel_) break;
     FileMeta m = describe(t.path, true);
+    if (cancel_) break;
     {
       std::lock_guard<std::mutex> lk(mu_);
       if (auto tg = tags_.find(m.path); tg != tags_.end()) m.tags = tg->second;

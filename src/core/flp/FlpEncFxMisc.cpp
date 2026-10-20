@@ -174,7 +174,7 @@ Encoder effector() {
     if (end < 48 + 12) return v;
     const size_t at = end - 48;
     // Reference engine: the twelve stored floats as they are (EfRawKind..).
-    for (int k = 0; k < 12; ++k) v.push_back(Field{dy::EfRawKind + k, at + 4 * static_cast<size_t>(k), Type::F32, 0, 1, [](double g) { return g; }});
+    for (int k = 0; k < 12; ++k) v.push_back(Field{dy::EfRawKind + k, at + 4 * static_cast<size_t>(k), Type::F32, 0, 1, [](double g) { return g; }, {}});
     return v;
   };
   return e;

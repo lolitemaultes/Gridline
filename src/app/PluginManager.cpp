@@ -176,7 +176,7 @@ void drawPluginManager(App& a) {
   if (!a.showPluginManager) return;
   const auto& P = pal();
   ManagerState& ms = state();
-  ImGui::SetNextWindowSize(ImVec2(1060, 640), ImGuiCond_FirstUseEver);
+  ui::PlaceNextDialog(ImVec2(1060, 640), ImGuiCond_Appearing, ImVec2(720, 400));  // J-54: fits short / scaled screens
   if (!ImGui::Begin("Plugin manager", &a.showPluginManager, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
     return;
@@ -196,12 +196,14 @@ void drawPluginManager(App& a) {
   static const char* const views[] = {"All", "Instruments", "Effects", "Favourites", "Failed"};
   ui::Segmented("##view", views, 5, &ms.view, 92);
   ImGui::SameLine(0, 12);
-  ImGui::SetNextItemWidth(220);
+  ImGui::SetNextItemWidth(std::max(100.0f, std::min(220.0f, ImGui::GetContentRegionAvail().x)));  // J-54: shrinks on narrow screens
   ImGui::InputTextWithHint("##search", "Search name, vendor, category", ms.search, sizeof ms.search);
   const std::string q = lower(ms.search);
 
-  const float detailH = ms.view == 4 ? 0.0f : 112.0f;
-  const float tableH = std::max(120.0f, ImGui::GetContentRegionAvail().y - detailH - 8);
+  const float detailH = ms.view == 4 ? 0.0f : 132.0f;  // J-54: name, type, bundle, summary and the button row fit without scrolling
+  // J-54: table + gap + detail box fill the panel exactly (the box's lower edge stays visible).
+  const float gapY = ImGui::GetStyle().ItemSpacing.y;
+  const float tableH = std::max(120.0f, ImGui::GetContentRegionAvail().y - (detailH > 0 ? detailH + gapY : 0.0f));
   if (ms.view == 4) {  // failed / blacklisted entries with their reason
     if (ImGui::BeginTable("##failed", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_Resizable,
                           ImVec2(0, tableH))) {
@@ -311,8 +313,7 @@ void drawPluginManager(App& a) {
     }
     for (const auto& c : list)
       if (c->type == ms.selected) sel = c.get();
-    ImGui::Dummy(ImVec2(0, 4));
-    ImGui::BeginChild("##detail", ImVec2(0, detailH - 4), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("##detail", ImVec2(0, detailH), ImGuiChildFlags_Borders);
     if (sel)
       detailPanel(a, *sel, prefs, changed);
     else

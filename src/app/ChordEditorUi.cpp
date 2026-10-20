@@ -910,18 +910,23 @@ void drawChordEditor(App& a) {
     stopPreview(a);
     return;
   }
-  ImGui::SetNextWindowSize(ImVec2(1010, 500), ImGuiCond_FirstUseEver);
+  ui::PlaceNextDialog(ImVec2(1010, 500), ImGuiCond_FirstUseEver, ImVec2(820, 400));  // J-54: never wider / taller than the screen
   bool open = true;
   if (!ImGui::Begin("Chord progression", &open, ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
     if (!open) closeEditor(a, true);
     return;
   }
+  ui::KeepWindowInViewport();
   topStrip(a);
   generatorRow(a);
   ImGui::Dummy(ImVec2(0, 2));
-  const float laneH = std::clamp(ImGui::GetContentRegionAvail().y - 200.0f, 96.0f, 280.0f);
+  // J-54: the lane takes what the rows below it leave (measured last frame), so
+  // the window never needs a scrollbar of its own.
+  static float belowLane = 200.0f;
+  const float laneH = std::clamp(ImGui::GetContentRegionAvail().y - belowLane, 96.0f, 280.0f);
   chordLane(a, laneH);
+  const float laneBottom = ImGui::GetCursorScreenPos().y;
   alternativesRow(a);
   if (ImGui::BeginTable("##panels", 2, ImGuiTableFlags_SizingStretchProp)) {
     ImGui::TableSetupColumn("perf", ImGuiTableColumnFlags_WidthFixed, 340);
@@ -960,8 +965,8 @@ void drawChordEditor(App& a) {
       S.sel.clear();
     }
   }
-  ui::DialogFooter(250);
-  if (ui::TextButton("Accept", true, 80, "Keep the written chords (one undo step) and close")) {
+  ui::DialogFooter(ui::ButtonRowWidth(3, 88));  // J-54: one button width, kS2 apart, like the other dialogs
+  if (ui::TextButton("Accept", true, 88, "Keep the written chords (one undo step) and close")) {
     if (!S.live) {
       S.live = true;
       writeNow(a);
@@ -969,16 +974,17 @@ void drawChordEditor(App& a) {
     }
     closeEditor(a, true);
   }
-  ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton("Reset", false, 70, "Put the pattern back as it was and start the progression again")) {
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::TextButton("Reset", false, 88, "Put the pattern back as it was and start the progression again")) {
     if (S.changed) a.doc.setNotes(S.pat, S.chan, S.base, "chord progression", S.key);
     S.prog.chords.clear();
     S.undo.clear();
     S.redo.clear();
     beginSession(a);
   }
-  ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton("Cancel", false, 80, "Put the pattern back as it was and close")) closeEditor(a, false);
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::TextButton("Cancel", false, 88, "Put the pattern back as it was and close")) closeEditor(a, false);
+  belowLane = ImGui::GetItemRectMax().y - laneBottom;
   ImGui::End();
   if (!open) closeEditor(a, true);
 }

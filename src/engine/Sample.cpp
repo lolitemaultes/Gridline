@@ -6,6 +6,7 @@
 #include "Generators.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -86,9 +87,62 @@ std::pair<const uint8_t*, size_t> riffVorbisPayload(const std::vector<uint8_t>& 
 }
 }  // namespace
 
+namespace {
+thread_local const std::atomic<bool>* tCancel = nullptr;
+
+// J-51: cancellable decodes (a DecodeCancelScope is alive): dr_libs streams
+// decoded block by block, the flag checked between blocks. The same frames
+// as the one-call readers below.
+constexpr uint64_t kBlockFrames = 1 << 16;
+float* cancellableWav(const std::vector<uint8_t>& bytes, unsigned& ch, unsigned& sr, uint64_t& n) {
+  drwav w;
+  if (!drwav_init_memory(&w, bytes.data(), bytes.size(), nullptr)) return nullptr;
+  float* out = nullptr;
+  const uint64_t total = w.totalPCMFrameCount;
+  if (w.channels > 0 && total <= (static_cast<uint64_t>(SIZE_MAX) / w.channels / sizeof(float))) {
+    out = static_cast<float*>(std::malloc(static_cast<size_t>(total * w.channels * sizeof(float))));
+    uint64_t done = 0;
+    while (out && done < total && !decodeCancelled()) {
+      const uint64_t got = drwav_read_pcm_frames_f32(&w, std::min(kBlockFrames, total - done), out + done * w.channels);
+      if (got == 0) break;
+      done += got;
+    }
+    if (out && done != total) drwav_free(out, nullptr), out = nullptr;
+    ch = w.channels, sr = w.sampleRate, n = total;
+  }
+  drwav_uninit(&w);
+  return out;
+}
+// FLAC / MP3: frames appended block by block until the stream ends.
+template <class Read>
+float* cancellableStream(unsigned channels, Read read, uint64_t& n) {
+  std::vector<float> all;
+  std::vector<float> block(static_cast<size_t>(kBlockFrames) * std::max(1u, channels));
+  while (!decodeCancelled()) {
+    const uint64_t got = read(block.data(), kBlockFrames);
+    if (got == 0) break;
+    all.insert(all.end(), block.begin(), block.begin() + static_cast<std::ptrdiff_t>(got * channels));
+  }
+  if (decodeCancelled() || all.empty() || channels == 0) return nullptr;
+  n = all.size() / channels;
+  float* out = static_cast<float*>(std::malloc(all.size() * sizeof(float)));
+  if (out) std::memcpy(out, all.data(), all.size() * sizeof(float));
+  return out;
+}
+}  // namespace
+
+DecodeCancelScope::DecodeCancelScope(const std::atomic<bool>* flag) : prev_(tCancel) { tCancel = flag; }
+DecodeCancelScope::~DecodeCancelScope() { tCancel = prev_; }
+bool decodeCancelled() { return tCancel && tCancel->load(std::memory_order_relaxed); }
+
 SamplePtr loadSample(const std::string& path, std::string* err) {
   // Formats are recognised by content first (FL Studio content often stores
   // Ogg Vorbis under a .wav name, or inside a RIFF wrapper), then by extension.
+  const bool cancellable = tCancel != nullptr;
+  auto cancelled = [&] {
+    if (err) *err = "cancelled";
+    return nullptr;
+  };
   std::vector<uint8_t> bytes;
   {
     std::ifstream is(path, std::ios::binary);
@@ -96,7 +150,19 @@ SamplePtr loadSample(const std::string& path, std::string* err) {
       if (err) *err = "cannot open " + path;
       return nullptr;
     }
-    bytes.assign(std::istreambuf_iterator<char>(is), std::istreambuf_iterator<char>());
+    if (!cancellable) {
+      bytes.assign(std::istreambuf_iterator<char>(is), std::istreambuf_iterator<char>());
+    } else {  // in blocks, the flag checked between them
+      constexpr size_t kBlock = 4u << 20;
+      for (;;) {
+        if (decodeCancelled()) return cancelled();
+        const size_t at = bytes.size();
+        bytes.resize(at + kBlock);
+        is.read(reinterpret_cast<char*>(bytes.data() + at), static_cast<std::streamsize>(kBlock));
+        bytes.resize(at + static_cast<size_t>(is.gcount()));
+        if (!is) break;
+      }
+    }
   }
   auto magic = [&](const char* m) { return bytes.size() >= 4 && std::memcmp(bytes.data(), m, 4) == 0; };
   std::string e = lowerExt(path);
@@ -117,14 +183,29 @@ SamplePtr loadSample(const std::string& path, std::string* err) {
   } else if (magic("RIFF") || magic("RF64") || magic("RIFX") || e == ".wav" || e == ".wave") {
     unsigned int ch = 0, sr = 0;
     drwav_uint64 n = 0;
-    data = drwav_open_memory_and_read_pcm_frames_f32(bytes.data(), bytes.size(), &ch, &sr, &n, nullptr);
+    if (cancellable) {
+      uint64_t nn = 0;
+      data = cancellableWav(bytes, ch, sr, nn);
+      n = nn;
+    } else {
+      data = drwav_open_memory_and_read_pcm_frames_f32(bytes.data(), bytes.size(), &ch, &sr, &n, nullptr);
+    }
     channels = ch, rate = sr, frames = n;
     if (data) out = fromInterleaved(path, data, frames, channels, rate);
     drwav_free(data, nullptr);
   } else if (magic("fLaC") || e == ".flac") {
     unsigned int ch = 0, sr = 0;
     drflac_uint64 n = 0;
-    data = drflac_open_memory_and_read_pcm_frames_f32(bytes.data(), bytes.size(), &ch, &sr, &n, nullptr);
+    if (cancellable) {
+      if (drflac* f = drflac_open_memory(bytes.data(), bytes.size(), nullptr)) {
+        uint64_t nn = 0;
+        data = cancellableStream(f->channels, [f](float* out, uint64_t k) { return drflac_read_pcm_frames_f32(f, k, out); }, nn);
+        ch = f->channels, sr = f->sampleRate, n = nn;
+        drflac_close(f);
+      }
+    } else {
+      data = drflac_open_memory_and_read_pcm_frames_f32(bytes.data(), bytes.size(), &ch, &sr, &n, nullptr);
+    }
     channels = ch, rate = sr, frames = n;
     if (data) out = fromInterleaved(path, data, frames, channels, rate);
     drflac_free(data, nullptr);
@@ -132,7 +213,17 @@ SamplePtr loadSample(const std::string& path, std::string* err) {
              (bytes.size() > 3 && std::memcmp(bytes.data(), "ID3", 3) == 0)) {
     drmp3_config cfg{};
     drmp3_uint64 n = 0;
-    data = drmp3_open_memory_and_read_pcm_frames_f32(bytes.data(), bytes.size(), &cfg, &n, nullptr);
+    if (cancellable) {
+      drmp3 m;
+      if (drmp3_init_memory(&m, bytes.data(), bytes.size(), nullptr)) {
+        uint64_t nn = 0;
+        data = cancellableStream(m.channels, [&m](float* out, uint64_t k) { return drmp3_read_pcm_frames_f32(&m, k, out); }, nn);
+        cfg.channels = m.channels, cfg.sampleRate = m.sampleRate, n = nn;
+        drmp3_uninit(&m);
+      }
+    } else {
+      data = drmp3_open_memory_and_read_pcm_frames_f32(bytes.data(), bytes.size(), &cfg, &n, nullptr);
+    }
     channels = cfg.channels, rate = cfg.sampleRate, frames = n;
     if (data) out = fromInterleaved(path, data, frames, channels, rate);
     drmp3_free(data, nullptr);
@@ -140,6 +231,7 @@ SamplePtr loadSample(const std::string& path, std::string* err) {
     if (err) *err = "unsupported audio format: " + path;
     return nullptr;
   }
+  if (cancellable && decodeCancelled()) return cancelled();
   if (!out || out->sampleRate <= 0) {
     if (err) *err = "cannot decode " + path + (why.empty() ? "" : ": " + why);
     return nullptr;

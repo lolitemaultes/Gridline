@@ -152,6 +152,10 @@ struct Context {
   std::map<int, int> arrangementIndex;
   // J-45: the FL insert whose effect slot is being decoded (-1: a channel or a preset).
   int insert = -1;
+  // J-51: the caller reads only the parameters (the FLP export's solver):
+  // decoders may skip building PluginState::data (the parameters must not
+  // depend on it).
+  bool paramsOnly = false;
   Context(const File& f, Song& s, Report& r) : file(f), song(s), report(r) {}
   // FL tick → Gridline tick (the song keeps the FL PPQ, so this is identity
   // unless the PPQ had to change).

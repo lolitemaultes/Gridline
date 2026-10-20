@@ -24,11 +24,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-void label(const char* text, float x = 168.0f) {
-  ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(pal().textDim), "%s", tr(text));
-  ImGui::SameLine(x);
-}
+void label(const char* text, float x = 168.0f) { ui::FormLabelFit(tr(text), x, pal().textDim); }  // J-54: fitted, never under the control
 
 std::string langDir(const App& a) { return a.assetsDir.empty() ? std::string() : (fs::path(a.assetsDir) / "lang").string(); }
 
@@ -101,8 +97,11 @@ void fileSettingsPage(App& a, float fieldW) {
   auto folder = [&](const char* what, const std::string& path) {
     label(what);
     ImGui::PushID(what);
-    ImGui::TextColored(theme::vec(pal().text), "%s", theme::fitText(path.c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x - 70)));
-    ImGui::SameLine();
+    // J-54: paths share one fitted column, so the Show buttons line up (full path on hover).
+    const float x0 = ImGui::GetCursorPosX(), pathW = std::max(80.0f, ImGui::GetContentRegionAvail().x - 60 - theme::kS2);
+    ui::TextFit(path.c_str(), pathW, pal().text, true);
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorPosX(x0 + pathW + theme::kS2);
     if (ui::TextButton(tr("Show"), false, 60, path.c_str())) {
       std::error_code ec;
       fs::create_directories(path, ec);
@@ -173,7 +172,7 @@ void debugSettingsPage(App& a, float fieldW) {
     a.applySettingsHooks();
   }
   ImGui::SameLine();
-  ImGui::TextColored(theme::vec(P.textFaint), "%s", (fs::path(a.configDir()) / "gridline.log").string().c_str());
+  ui::TextFit((fs::path(a.configDir()) / "gridline.log").string().c_str(), ImGui::GetContentRegionAvail().x, P.textFaint);
   auto entries = logging::entries();
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface950));
   ImGui::BeginChild("##log", ImVec2(0, 150), ImGuiChildFlags_Borders);

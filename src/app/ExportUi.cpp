@@ -117,17 +117,10 @@ struct Missing {
 };
 Missing missing;
 
-void formLabel(const char* label, float x = 132.0f) {
-  ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(pal().textDim), "%s", label);
-  ImGui::SameLine(x);
-}
+void formLabel(const char* label, float x = 132.0f) { ui::FormLabelFit(label, x, pal().textDim); }  // J-54: fitted
 
-void centerNext(ImVec2 size) {
-  ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-  if (size.x > 0) ImGui::SetNextWindowSize(size, ImGuiCond_Appearing);
-}
+// J-54: centred in the work area, size clamped to the screen (short screens / large interface scale).
+void centerNext(ImVec2 size, ImVec2 minSize = ImVec2(0, 0)) { ui::PlaceNextDialog(size, ImGuiCond_Appearing, minSize); }
 
 bool combo(const char* id, int* idx, const char* const* items, int n, float w) {
   bool changed = false;
@@ -416,6 +409,8 @@ void drawRenderDialog(App& a) {
   ExportSettings& s = dlg.s;
   const float colW = 360;
   const bool files = dlg.dest == static_cast<int>(Dest::Files);
+  // J-54: on a short screen the two columns scroll; the footer stays visible.
+  ui::BeginDialogBody("##renderbody");
   // ---- left column
   ImGui::BeginGroup();
   ui::BeginSection("EXPORT TYPE", colW);
@@ -599,10 +594,12 @@ void drawRenderDialog(App& a) {
   }
   ui::EndSection();
   ImGui::EndGroup();
+  ui::EndDialogBody();
   ui::DialogFooter(96 * 2 + theme::kS2);
   if (ui::TextButton("Cancel", false, 96)) dlg.open = false;
   ImGui::SameLine(0, theme::kS2);
-  if (ui::TextButton("Start", true, 96) || (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter))) startJob(a);
+  if (ui::TextButton("Start", true, 96) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Enter)))
+    startJob(a);
   ImGui::End();
 }
 
@@ -665,6 +662,7 @@ void drawMidiImport(App& a) {
     ImGui::TextUnformatted(fs::path(midiDlg.path).filename().string().c_str());
     ImGui::TextColored(theme::vec(P.textDim), "Format %d · %d PPQ · %.2f BPM%s · %d/%d", m.format, m.division, m.tempo,
                        m.tempos.size() > 1 ? " (tempo changes)" : "", m.timeSigNum, m.timeSigDen);
+    ui::BeginDialogBody("##midibody");  // J-54: scrolls on a short screen, the footer stays visible
     ui::BeginSection("TRACKS", 430);
     ImGui::BeginChild("##trk", ImVec2(410, std::min(200.0f, 24.0f * static_cast<float>(m.tracks.size()) + 6)));
     for (size_t k = 0; k < m.tracks.size(); ++k) {
@@ -696,6 +694,7 @@ void drawMidiImport(App& a) {
     ImGui::Checkbox("Name channels after GM programs", &midiDlg.o.programNames);
     ImGui::Checkbox("Place the pattern in the playlist", &midiDlg.o.placeInPlaylist);
     ui::EndSection();
+    ui::EndDialogBody();
     ui::DialogFooter(96 * 2 + theme::kS2);
     if (ui::TextButton("Cancel", false, 96)) midiDlg.open = false;
     ImGui::SameLine(0, theme::kS2);
@@ -739,8 +738,7 @@ void drawMidiImport(App& a) {
 
 void drawMissing(App& a) {
   if (!missing.open) return;
-  centerNext(ImVec2(640, 420));
-  ImGui::SetNextWindowSizeConstraints(ImVec2(480, 260), ImVec2(1200, 1000));
+  centerNext(ImVec2(640, 420), ImVec2(480, 260));
   bool vis = ImGui::Begin("Missing samples###missing", &missing.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   if (vis) {
@@ -753,7 +751,7 @@ void drawMissing(App& a) {
       ImGui::PushID(static_cast<int>(k));
       const std::string name = fs::path(f).filename().string();
       ImGui::AlignTextToFramePadding();
-      ImGui::TextUnformatted(name.c_str());
+      ImGui::TextUnformatted(theme::fitText(name.c_str(), 260 - ImGui::GetCursorPosX() - theme::kS2));  // J-54: never under the next column
       if (ImGui::IsItemHovered()) ui::Tooltip(f.c_str());
       auto it = missing.found.found.find(f);
       ImGui::SameLine(260);

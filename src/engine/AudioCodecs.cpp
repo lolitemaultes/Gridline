@@ -48,6 +48,11 @@ bool decodeOne(const uint8_t* data, size_t size, DecodedAudio& out, std::string*
   if (total > 0 && total < (1u << 30)) out.interleaved.reserve(static_cast<size_t>(total) * static_cast<size_t>(out.channels));
   std::vector<float> chunk(static_cast<size_t>(4096 * out.channels));
   for (;;) {
+    if (decodeCancelled()) {
+      stb_vorbis_close(v);
+      if (err) *err = "cancelled";
+      return false;
+    }
     int n = stb_vorbis_get_samples_float_interleaved(v, out.channels, chunk.data(), static_cast<int>(chunk.size()));
     if (n <= 0) break;
     out.interleaved.insert(out.interleaved.end(), chunk.begin(), chunk.begin() + n * out.channels);

@@ -18,6 +18,11 @@
 //   4. the result is verified by decoding it: Exact when every parameter
 //      decodes back to the instance's value, else Approx with the list of
 //      parameters that differ.
+// J-51 (speed, same bytes): a field may carry the decoder's forward law, so
+// its search runs without decoding (start and result still checked through
+// the decoder); independent candidates are decoded on a small thread pool and
+// taken in the sequential order; decoded states are reused by their bytes;
+// encode() results are cached by their inputs.
 // Encoders are grouped by family (FlpEnc<Family>.cpp), one registration
 // function each (see registerAll in FlpEncode.cpp).
 #pragma once
@@ -45,10 +50,23 @@ struct Field {
   // Optional direct inverse: Gridline value → stored value. Checked through
   // the decoder; the engine searches when it does not reproduce the value.
   std::function<double(double gl)> inverse = {};
+  // J-51: optional forward law: the value the decoder computes for the
+  // parameter from stored value `stored` (`state`: the whole state, for laws
+  // that read other values), before setp's float and the parameter range's
+  // clamp. With a law the solver searches without decoding each candidate;
+  // the start value and the result are still checked through the decoder (a
+  // law that disagrees there is ignored). It must be the decoder's law
+  // exactly: setVerifyLaws checks every candidate (test_flp_export_perf).
+  std::function<double(double stored, const Bytes& state)> forward = {};
 };
 // Shorthand constructors.
-inline Field field(int gl, size_t offset, Type t, double lo, double hi) { return Field{gl, offset, t, lo, hi, {}}; }
-inline Field i32(int gl, size_t offset, double lo, double hi) { return Field{gl, offset, Type::I32, lo, hi, {}}; }
+inline Field field(int gl, size_t offset, Type t, double lo, double hi) { return Field{gl, offset, t, lo, hi, {}, {}}; }
+inline Field i32(int gl, size_t offset, double lo, double hi) { return Field{gl, offset, Type::I32, lo, hi, {}, {}}; }
+// A field with its forward law.
+inline Field lawField(Field f, std::function<double(double stored, const Bytes& state)> law) {
+  f.forward = std::move(law);
+  return f;
+}
 
 struct EncodeContext;
 
@@ -123,7 +141,9 @@ const Encoder* nativeEncoder(const PluginState& s);
 
 // Decodes one plugin state with the registered decoder (a throwaway import
 // context). False when the decoder rejects it. `state` may be empty (no 213).
-bool decodeState(const std::string& flName, const Bytes& state, PluginMapping& out, const EncodeContext& c);
+// `paramsOnly` (J-51): the parameters are all that is read (decoders may then
+// leave PluginState::data empty).
+bool decodeState(const std::string& flName, const Bytes& state, PluginMapping& out, const EncodeContext& c, bool paramsOnly = false);
 
 struct Result {
   enum Quality {
@@ -172,6 +192,21 @@ bool sytrusStructureRoundTrip(const Bytes& state, Bytes* raw = nullptr, Bytes* a
 Bytes sytrusRaw(const Bytes& state);         // uncompressed, info text removed
 Bytes harmorComparable(const Bytes& state);  // info text removed
 bool harmorStructureRoundTrip(const Bytes& state, Bytes* again = nullptr);
+
+// J-51: law checks (tests): every `every`-th value a forward law gives (1:
+// all, 0: none; default from GRIDLINE_FLP_VERIFY_LAWS, else 0) is also
+// decoded and compared; lawMismatches counts disagreements (also those found
+// in normal use, where the law is then ignored).
+void setVerifyLaws(int every);
+bool verifyLaws();  // true when the next law value is to be checked
+int lawMismatches();
+void noteLawMismatch();  // (counts one; for encoders' own law checks)
+
+// J-51: runs fn(i) for i in [0, n) on the solver's thread pool (pure,
+// independent work such as curve fits); sequential when the pool is busy.
+void parallelFor(size_t n, const std::function<void(size_t)>& fn);
+// Forgets the cached encode() results (tests that measure or check solving).
+void clearEncodeCache();
 
 // Corpus check (gridline flp-encode-check): every plugin state in the given
 // files is decoded, encoded from its Gridline state without the origin

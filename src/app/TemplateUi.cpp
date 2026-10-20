@@ -102,10 +102,7 @@ void newProjectWindow(App& a) {
     return;
   }
   const auto& P = pal();
-  ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(820, 500), ImGuiCond_Appearing);
-  ImGui::SetNextWindowSizeConstraints(ImVec2(680, 420), ImVec2(1400, 1000));
+  ui::PlaceNextDialog(ImVec2(820, 500), ImGuiCond_Appearing, ImVec2(680, 420));  // J-54: clamped to the screen
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   bool vis = ImGui::Begin("New project###j24newproj", &a.showNewProject, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ImGui::PopStyleVar();

@@ -3,10 +3,16 @@
 // Filter, WaveShaper). The reverse of the decoders in that file; see
 // FlpEncode.h for the model. (Fast Dist and WaveShaper: FlpEncFxK3.cpp, whose
 // decoders override these.)
+#include <algorithm>
 #include <cmath>
 #include "FlpEncode.h"
 #include "../PluginParams.h"
 #include "../../packs/utility/utility.h"
+
+namespace gl::flp::fx {
+double flEq2FreqHz(double v);      // FlpFxEq.cpp: the decoder's laws
+double flEq2BandwidthQ(double v);
+}  // namespace gl::flp::fx
 
 namespace gl::flp::enc {
 
@@ -76,16 +82,20 @@ Encoder eq2() {
   };
   e.fields = [](const Bytes&) {
     std::vector<Field> f;
+    // J-51: with the decoder's laws (FlpFxEq.cpp decodeEq2) for the solver.
+    auto level = [](double r, const Bytes&) { return std::clamp(r / 100.0, -18.0, 18.0); };
     for (int b = 0; b < kEq2Bands; ++b) {
       f.push_back(i32(pp::eqParam(b, pp::EqType), knob(21 + b), 0, 7));
-      f.push_back(i32(pp::eqParam(b, pp::EqGain), knob(b), -1800, 1800));
-      f.push_back(i32(pp::eqParam(b, pp::EqFreq), knob(7 + b), 0, 65536));
+      f.push_back(lawField(i32(pp::eqParam(b, pp::EqGain), knob(b), -1800, 1800), level));
+      f.push_back(lawField(i32(pp::eqParam(b, pp::EqFreq), knob(7 + b), 0, 65536),
+                           [](double r, const Bytes&) { return std::clamp(fx::flEq2FreqHz(r), 20.0, 20000.0); }));
       // One width word: the band's width and (derived) Q.
-      f.push_back(i32(pp::eqFl(b, pp::EqWidth), knob(14 + b), 0, 65536));
-      f.push_back(i32(pp::eqParam(b, pp::EqQ), knob(14 + b), 0, 65536));
+      f.push_back(lawField(i32(pp::eqFl(b, pp::EqWidth), knob(14 + b), 0, 65536), [](double r, const Bytes&) { return std::clamp(r / 65536.0, 0.0, 1.0); }));
+      f.push_back(lawField(i32(pp::eqParam(b, pp::EqQ), knob(14 + b), 0, 65536),
+                           [](double r, const Bytes&) { return std::clamp(fx::flEq2BandwidthQ(r), 0.1, 18.0); }));
       f.push_back(i32(pp::eqFl(b, pp::EqFlOrder), knob(28 + b), -3, 3));
     }
-    f.push_back(i32(pp::EqMain, knob(35), -1800, 1800));
+    f.push_back(lawField(i32(pp::EqMain, knob(35), -1800, 1800), level));
     return f;
   };
   static_assert(kEq2Knobs == 5 * kEq2Bands + 1, "EQ 2 knob layout");

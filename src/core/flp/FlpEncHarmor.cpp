@@ -131,6 +131,20 @@ const std::vector<T>& globalTable() {  // field = Gridline param index
 }
 int gIndex(int tag) { return tag >= 20000 ? 17 + tag - 20000 : tag - 10000; }
 
+
+// J-51: the value laws below (partLaw / globalLaw, the decoder's) as the
+// fields' forward laws for the solver. (The delay time also depends on the
+// song tempo, which a law does not see: searched through the decoder.)
+double partLaw(int tag, int32_t t);
+double globalLaw(int tag, int32_t g, double tempo);
+std::function<double(double, const Bytes&)> partFieldLaw(int tag) {
+  return [tag](double r, const Bytes&) { return partLaw(tag, static_cast<int32_t>(r)); };
+}
+std::function<double(double, const Bytes&)> globalFieldLaw(int tag) {
+  if (tag == 20025) return {};
+  return [tag](double r, const Bytes&) { return globalLaw(tag, static_cast<int32_t>(r), 120.0); };
+}
+
 std::vector<Field> fields(const Bytes& b) {
   std::vector<Field> f;
   const Layout l = layout(b);
@@ -138,7 +152,7 @@ std::vector<Field> fields(const Bytes& b) {
   for (int p = 0; p < 2; ++p) {
     if (!l.part[p]) continue;
     const size_t t0 = l.part[p], rec = t0 + static_cast<size_t>(np) * 4 + 12 * 4;
-    auto tag = [&](int gl, int t, int lo, int hi) { f.push_back(i32(gl, t0 + static_cast<size_t>(t) * 4, lo, hi)); };
+    auto tag = [&](int gl, int t, int lo, int hi) { f.push_back(lawField(i32(gl, t0 + static_cast<size_t>(t) * 4, lo, hi), partFieldLaw(t))); };
     for (const T& t : partTable()) tag(hm::pf(p, t.field), t.tag, t.lo, t.hi);
     for (int k = 0; k < 2; ++k) {
       for (const T& t : filterTable()) tag(hm::flt(p, k, t.field), t.tag + 12 * k, t.lo, t.hi);
@@ -155,7 +169,8 @@ std::vector<Field> fields(const Bytes& b) {
     if (p == 0) f.push_back(field(hm::FxEqMix, rec + 48, Type::F32, 0, 1));
   }
   if (l.global) {
-    for (const T& t : globalTable()) f.push_back(i32(t.field, l.global + static_cast<size_t>(gIndex(t.tag)) * 4, t.lo, t.hi));
+    for (const T& t : globalTable())
+      f.push_back(lawField(i32(t.field, l.global + static_cast<size_t>(gIndex(t.tag)) * 4, t.lo, t.hi), globalFieldLaw(t.tag)));
     const size_t rec = l.global + 53 * 4 + 6 * 4;
     f.push_back(i32(hm::GmMono, rec + 8, 0, 3));
     f.push_back(i32(hm::FxDistType, rec + 48, 0, 11));

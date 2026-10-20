@@ -5,6 +5,7 @@
 #include <string>
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Params.h"
+#include "DialogLayout.h"  // DialogFooter, DialogFooterHeight, form columns, fitted text (J-54)
 
 namespace gl::ui {
 
@@ -92,16 +93,12 @@ void EmptyState(ImDrawList* dl, ImVec2 min, ImVec2 max, const char* title, const
 // the remaining width of the window. Nestable; always pair with EndSection().
 void BeginSection(const char* caption, float width = 0.0f);
 void EndSection();
-// Dialog footer: hairline + right-aligned room for `buttonsWidth` px of buttons.
-void DialogFooter(float buttonsWidth);
 // Studio tab strip (settings / channel windows): text tabs on a baseline, the
 // selected one raised with a lit-orange overline. Returns true when changed.
 bool TabStrip(const char* id, const char* const* labels, int count, int* index, const char* const* hints = nullptr);
 // Drag-and-drop preview chip (call between BeginDragDropSource/End): a tint
 // bar (content colour, or the lit orange), the kind icon and the item name.
 void DragPreview(Icon icon, const char* text, ImU32 tint = 0);
-// Height DialogFooter + one row of buttons take (reserve it under a scrolling child).
-float DialogFooterHeight();
 // Round LED (mute/enable lamps). `level` 0..1 brightens it.
 void Led(ImDrawList* dl, ImVec2 center, float radius, bool on, float level = 0.0f);
 // Step button (channel rack): rounded pad with a top bevel; `alt` = the

@@ -20,6 +20,7 @@ void drawMixer(App& a);
 void drawChannelSettings(App& a);
 void drawEffectEditor(App& a);
 void drawDialogs(App& a);
+void devShowPpqWarning(App& a, int ppq);  // J-54 layout check (--show ppqwarn): the lower-timebase confirmation
 // CPU profiling (Performance.cpp): samples the engine counters into App::perf
 // (per frame) and draws the "Performance" window.
 void updatePerformance(App& a);

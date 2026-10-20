@@ -452,7 +452,7 @@ Encoder wrappedFl() {
     std::map<int, size_t> last;
     for (size_t k = 0; k < pl.count && k < pm.gl.size(); ++k)
       if (pm.gl[k] >= 0) last[pm.gl[k]] = k;
-    for (const auto& [gp, k] : last) v.push_back(Field{gp, pl.at + 4 * k, Type::F32, 0, 1, {}});
+    for (const auto& [gp, k] : last) v.push_back(Field{gp, pl.at + 4 * k, Type::F32, 0, 1, {}, {}});
     return v;
   };
   return e;

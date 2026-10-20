@@ -259,9 +259,11 @@ std::vector<Field> fields(const Bytes& b) {
   for (size_t k = 0; k < r.size() && k < static_cast<size_t>(kMoKnobs); ++k) {
     const int kk = static_cast<int>(k);
     const size_t at = r[k];
-    f.push_back(field(moKnob(kk, MoKnobNumber), at + 1, Type::U16, 0, 16383));
-    f.push_back(i32(moKnob(kk, MoKnobMin), at + 9, 0, 16383));
-    f.push_back(i32(moKnob(kk, MoKnobMax), at + 13, 0, 16383));
+    // J-51: with the decoder's law (FlpGenSimple.cpp decodeMidiOut) for the solver.
+    auto law = [](double r, const Bytes&) { return static_cast<double>(std::clamp(static_cast<int>(r), 0, 16383)); };
+    f.push_back(lawField(field(moKnob(kk, MoKnobNumber), at + 1, Type::U16, 0, 16383), law));
+    f.push_back(lawField(i32(moKnob(kk, MoKnobMin), at + 9, 0, 16383), law));
+    f.push_back(lawField(i32(moKnob(kk, MoKnobMax), at + 13, 0, 16383), law));
     f.push_back(i32(moKnob(kk, MoKnobChannel), at + 17, -1, 15));
     const size_t v = kValues + static_cast<size_t>(b[at]) * 4;
     if (v + 4 <= kRecords) f.push_back(i32(moKnob(kk, MoKnobValue), v, 0, 127));

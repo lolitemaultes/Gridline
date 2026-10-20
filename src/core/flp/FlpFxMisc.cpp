@@ -137,22 +137,25 @@ class Inflater {
     }
   }
   bool fixed() {
-    static Huff lit, dist;
-    static bool init = false;
-    if (!init) {
+    // (J-51: built once, thread-safe: the FLP export's solver decodes on several threads.)
+    struct Fixed {
+      Huff lit, dist;
+    };
+    static const Fixed t = [] {
+      Fixed f;
       uint8_t l[288];
       int i = 0;
       for (; i < 144; ++i) l[i] = 8;
       for (; i < 256; ++i) l[i] = 9;
       for (; i < 280; ++i) l[i] = 7;
       for (; i < 288; ++i) l[i] = 8;
-      build(lit, l, 288);
+      build(f.lit, l, 288);
       uint8_t d[30];
       std::fill(d, d + 30, 5);
-      build(dist, d, 30);
-      init = true;
-    }
-    return codes(lit, dist);
+      build(f.dist, d, 30);
+      return f;
+    }();
+    return codes(t.lit, t.dist);
   }
   bool dynamic() {
     int nlen = bits(5), ndist = bits(5), ncode = bits(4);

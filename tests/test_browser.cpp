@@ -12,6 +12,7 @@
 #include "core/BrowserIndex.h"
 #include "core/Png.h"
 #include "core/WavWriter.h"
+#include "engine/Sample.h"
 
 using namespace gl;
 using namespace gl::browse;
@@ -329,8 +330,45 @@ void testPng() {
 
 }  // namespace
 
+// J-51: the indexer's analysis can be cancelled inside one file: decoding
+// under a DecodeCancelScope stops when the flag is set (and decodes the same
+// samples when it is not); stop() leaves no half-analysed entry behind.
+void testCancel() {
+  const std::string base = gl::test::hermeticTestEnv("browser");
+  const std::string root = base + "/long";
+  fs::create_directories(root);
+  const std::string path = root + "/Long take.wav";
+  writeTone(path, 30.0, 44100, 2);
+  SamplePtr plain = loadSample(path);
+  std::atomic<bool> flag{false};
+  SamplePtr scoped;
+  {
+    DecodeCancelScope scope(&flag);
+    scoped = loadSample(path);
+  }
+  expect(plain && scoped && scoped->frames() == plain->frames() && scoped->left == plain->left && scoped->right == plain->right,
+         "cancellable decode: the same samples when not cancelled");
+  flag = true;
+  std::string err;
+  {
+    DecodeCancelScope scope(&flag);
+    expect(decodeCancelled(), "cancel scope: flag seen on this thread");
+    expect(!loadSample(path, &err) && err == "cancelled", "cancellable decode: gives up when the flag is set");
+  }
+  expect(!decodeCancelled() && loadSample(path) != nullptr, "cancel scope: ends with the scope");
+  Index ix;
+  ix.setCacheFile(base + "/config/cancel-index.json");
+  ix.setRoots({{root, true}});
+  ix.start();
+  ix.stop();
+  FileMeta m;
+  expect(!ix.lookup(path, m) || !m.analysed || std::fabs(m.seconds - 30.0) < 0.01, "stop(): no half-analysed entry");
+  fs::remove_all(root);
+}
+
 int main() {
   gl::test::hermeticTestEnv("browser");
+  testCancel();
   testKinds();
   testTempoKey();
   testPeaks();

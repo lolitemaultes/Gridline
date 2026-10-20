@@ -85,6 +85,16 @@ struct Link {
 // for recorded pattern values (PluginMapping::rawNorm).
 void linkParams(PluginMapping& m, std::vector<Link> links, std::vector<RawRange> ranges = {});
 
+// J-51: the Drum kit pad parameters (md::DpLevel, …) one DrumSynth Live
+// patch (its 38 stored values) decodes to, in the decoder's order. Shared
+// with the FLP encoder's joint search (FlpEncGenB.cpp): one law for both.
+struct DslPadValues {
+  int n = 0;
+  int param[20];
+  double value[20];
+};
+DslPadValues drumSynthLivePad(const int32_t* patch);
+
 // Groups (one file each).
 void registerSlicers(std::map<std::string, PluginDecoder>& d);      // FlpGen2Slicers.cpp
 void registerPads(std::map<std::string, PluginDecoder>& d);         // FlpGen2Pads.cpp

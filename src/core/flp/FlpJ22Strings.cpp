@@ -142,7 +142,7 @@ bool decodePlucked(Context&, const std::vector<Event>& evs, PluginMapping& m) {
 }
 
 // ------------------------------------------------------- Transistor Bass
-bool decodeTransistorBass(Context&, const std::vector<Event>& evs, PluginMapping& m) {
+bool decodeTransistorBass(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   gen2::Blob b = gen2::stateBlob(evs);
   StepBassState st;
   if (!parseStepBass(b.p, b.n, st)) return false;
@@ -156,7 +156,7 @@ bool decodeTransistorBass(Context&, const std::vector<Event>& evs, PluginMapping
   gen2::set(m, strs::SbSeqOn, st.flag ? 1 : 0);
   gen2::set(m, strs::SbRoot, std::clamp<uint32_t>(st.root, 0, 127));
   gen2::set(m, strs::SbBpm, std::clamp(st.sequences[st.programs[prog].sequence].bpm, 10.0, 522.0));
-  m.state.data = stepBassData(st);
+  if (!c.paramsOnly) m.state.data = stepBassData(st);
   // Per-step f64 / f32 fields (0.5 everywhere), sequence tails, the trailer's
   // first / fifth words and the second patch copy are kept in no control.
   m.exact = false;

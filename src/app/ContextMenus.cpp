@@ -115,20 +115,28 @@ void drawPrompt() {
   ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.35f), ImGuiCond_Appearing,
                           ImVec2(0.5f, 0.5f));
-  if (ImGui::BeginPopupModal("##menuprompt", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+  // J-54: dialog padding and a right-aligned footer like the other dialogs (Cancel, then the lit OK).
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS4));
+  const bool open = ImGui::BeginPopupModal("##menuprompt", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
+  ImGui::PopStyleVar();
+  if (open) {
+    constexpr float kFieldW = 320.0f, kButtonW = 88.0f;
     ImGui::PushFont(app().fontBold, 0.0f);
-    ImGui::TextUnformatted(prompt.title.c_str());
+    ImGui::TextUnformatted(theme::fitText(prompt.title.c_str(), kFieldW));
     ImGui::PopFont();
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-    ImGui::SetNextItemWidth(280);
+    ImGui::SetNextItemWidth(kFieldW);
     bool enter = ImGui::InputText("##p", prompt.buf, sizeof prompt.buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-    if (ui::TextButton("OK", true, 80) || enter) {
+    ui::FocusRing();
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kFieldW - ui::ButtonRowWidth(2, kButtonW));
+    const bool cancel = ui::TextButton("Cancel", false, kButtonW) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    ImGui::SameLine(0, theme::kS2);
+    if (ui::TextButton("OK", true, kButtonW) || enter) {
       if (prompt.ok) prompt.ok(prompt.buf);
       prompt.ok = nullptr;
       ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ui::TextButton("Cancel", false, 80) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    } else if (cancel) {
       prompt.ok = nullptr;
       ImGui::CloseCurrentPopup();
     }

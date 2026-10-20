@@ -841,20 +841,6 @@ void DragPreview(Icon icon, const char* text, ImU32 tint) {
   ImGui::Dummy(ImVec2(tw + 36, h));
 }
 
-float DialogFooterHeight() { return ImGui::GetFrameHeight() + 2 * (theme::kS1 + ImGui::GetStyle().ItemSpacing.y) + 2; }
-
-void DialogFooter(float buttonsWidth) {
-  const auto& P = pal();
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-  ImVec2 p = ImGui::GetCursorScreenPos();
-  ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, p.y), ImVec2(p.x + ImGui::GetContentRegionAvail().x, p.y), P.line);
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-  if (buttonsWidth > 0) {
-    float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonsWidth;
-    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x));
-  }
-}
-
 void Led(ImDrawList* dl, ImVec2 c, float r, bool on, float level) {
   const auto& P = pal();
   // Studio LED (both themes): green lamp, brighter with activity; off = dark

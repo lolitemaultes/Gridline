@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 #include "../../core/flp/Flp.h"
 #include "../Packs.h"
@@ -558,6 +559,22 @@ bool preparePocketAux(const PluginState& state, ChannelAux& aux) {
   return true;
 }
 
-bool pocketReferenceTables() { return pocketTables()->reference; }
+// J-51: remembered per FL data folder — the FLP decoder asks on every decode
+// (the export's solver decodes thousands of times) and the tables are only
+// cached while an instrument holds them, so each question rebuilt them.
+bool pocketReferenceTables() {
+  static std::mutex mu;
+  static std::string folder;
+  static int known = -1;
+  const std::string fl = flp::defaultFactoryData();
+  {
+    std::lock_guard<std::mutex> lk(mu);
+    if (known >= 0 && folder == fl) return known != 0;
+  }
+  const bool ref = pocketTables()->reference;
+  std::lock_guard<std::mutex> lk(mu);
+  folder = fl, known = ref ? 1 : 0;
+  return ref;
+}
 
 }  // namespace gl::packs::synths

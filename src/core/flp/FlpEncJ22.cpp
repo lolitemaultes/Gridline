@@ -44,7 +44,7 @@ namespace hm = gl::packs::models::hm;
 // ------------------------------------------------------------------ helpers
 
 Field withInverse(int gl, size_t off, Type t, double lo, double hi, std::function<double(double)> inv) {
-  return Field{gl, off, t, lo, hi, std::move(inv)};
+  return Field{gl, off, t, lo, hi, std::move(inv), {}};
 }
 double ident(double v) { return v; }
 // f32 knob stored as the value itself (0..1 unless given).
@@ -512,10 +512,15 @@ Encoder transistorBass() {
     if (!L.ok || L.trailer + 8 > b.size()) return f;
     const uint32_t prog = std::min<uint32_t>(getU32(b, L.trailer + 4), strs::kSbPrograms - 1);
     const uint32_t patch = std::min<uint32_t>(getU32(b, L.progPatch[prog]), 255), seq = getU32(b, L.progSeq[prog]);
-    for (int i = 0; i < strs::SbPatchCount; ++i) f.push_back(f32(i, L.patch[patch] + 4 * static_cast<size_t>(i)));
+    // J-51: with the decoder's laws (FlpJ22Strings.cpp decodeTransistorBass)
+    // for the solver: each decode also formats the whole bank text.
+    for (int i = 0; i < strs::SbPatchCount; ++i)
+      f.push_back(lawField(f32(i, L.patch[patch] + 4 * static_cast<size_t>(i)),
+                           [](double r, const Bytes&) { return std::isfinite(r) ? std::clamp(r, 0.0, 1.0) : 0.0; }));
     f.push_back(withInverse(strs::SbRoot, L.root, Type::U32, 0, 127, ident));
     f.push_back(withInverse(strs::SbSeqOn, L.flag, Type::U8, 0, 1, ident));
-    if (seq < L.bpm.size()) f.push_back(withInverse(strs::SbBpm, L.bpm[seq], Type::F64, 10, 522, ident));
+    if (seq < L.bpm.size())
+      f.push_back(lawField(withInverse(strs::SbBpm, L.bpm[seq], Type::F64, 10, 522, ident), [](double r, const Bytes&) { return std::clamp(r, 10.0, 522.0); }));
     return f;
   };
   e.defaults = tbDefaults;

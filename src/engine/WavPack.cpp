@@ -750,6 +750,7 @@ bool decodeWavPack(const uint8_t* data, size_t size, DecodedAudio& out, std::str
   std::vector<Block> group;  // blocks of one multichannel frame group (INITIAL … FINAL)
   int groupChannels = 0;
   while (pos + 32 <= size) {
+    if (decodeCancelled()) return fail(err, "cancelled");
     const uint8_t* b = data + pos;
     if (b[0] != 'w' || b[1] != 'v' || b[2] != 'p' || b[3] != 'k') {
       if (out.channels > 0) break;  // trailing junk (e.g. tags) after the audio

@@ -96,7 +96,7 @@ bool decodeHarmlessFull(Context& c, const std::vector<Event>& events, PluginMapp
   setp(s, md::AdSpectrumB, kColour[colour]);
   setp(s, md::AdMorph, 0.0);
   setp(s, md::AdPartials, 256);
-  if (!custom.level.empty()) s.data = md::serializeAdditiveData(custom);  // kept even when another colour is selected
+  if (!custom.level.empty() && !c.paramsOnly) s.data = md::serializeAdditiveData(custom);  // kept even when another colour is selected
   for (int k = 0; k < md::kAdDrawn; ++k) setp(s, md::AdDrawnBase + k, 1.0);
   for (int i = 0; i < md::kAdTeq; ++i) setp(s, md::AdTeqBase + i, clampd(f(5 + i, 1024), -1, 1));
   setp(s, md::AdSub, clampd(f(2, 1024), 0, 2));

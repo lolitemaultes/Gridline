@@ -554,14 +554,9 @@ void drawClipProperties(App& a) {
 
 void audioInputSettings(App& a, float fieldW) {
   const auto& P = pal();
-  auto label = [](const char* t) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(pal().textDim), "%s", t);
-    ImGui::SameLine(168.0f);
-  };
+  auto label = [](const char* t) { ui::FormLabelFit(t, 168.0f, pal().textDim); };
   Settings& st = a.settings;
-  ImGui::Dummy(ImVec2(0, theme::kS2));
-  ui::Label("INPUT & RECORDING");
+  // J-54: drawn inside the settings section "INPUT & RECORDING" (no second caption).
   label("Input device");
   const char* cur = a.audioInputDevice.empty() ? "None" : a.audioInputDevice == "*" ? "System default" : a.audioInputDevice.c_str();
   if (ui::BeginCombo("##indev", cur, fieldW)) {

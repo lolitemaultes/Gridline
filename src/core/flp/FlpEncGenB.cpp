@@ -13,6 +13,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include "../../engine/SlicexEngine.h"
@@ -25,6 +26,7 @@
 #include "../../packs/synths/pixel.h"
 #include "../PluginParams.h"
 #include "FlpEncode.h"
+#include "FlpGen2.h"
 
 namespace gl::packs::synths {
 std::string pixelToneDefaultData();  // pixel_info.cpp
@@ -71,8 +73,36 @@ struct Joint {
   const PluginState& g;
   Bytes& b;
   PluginMapping m;
-  float value(int k) { return decodeAs(flName, b, m, c) ? param(m.state, k, NAN) : NAN; }
+  // J-51: optional: parameter k for the current bytes from the decoder's own
+  // law, without decoding (false: decode). setVerifyLaws checks it.
+  std::function<bool(const Bytes& b, int k, float& v)> law = {};
+  bool lawValue(int k, float& v) {
+    if (!law || !law(b, k, v)) return false;
+    if (verifyLaws()) {
+      PluginMapping d;
+      const float got = decodeAs(flName, b, d, c) ? param(d.state, k, NAN) : NAN;
+      if (!(got == v || (std::isnan(got) && std::isnan(v)))) {
+        std::fprintf(stderr, "flp encoder: %s param %d joint law differs from the decoder (%.9g vs %.9g)\n", flName.c_str(), k, got, v);
+        noteLawMismatch();
+        return false;
+      }
+    }
+    return true;
+  }
+  float value(int k) {
+    float v;
+    if (lawValue(k, v)) return v;
+    return decodeAs(flName, b, m, c) ? param(m.state, k, NAN) : NAN;
+  }
   bool matches(const std::vector<int>& ks) {
+    bool viaLaw = static_cast<bool>(law);
+    for (int k : ks) {
+      float v;
+      if (!viaLaw) break;
+      if (!lawValue(k, v)) viaLaw = false;
+      else if (v != param(g, k, NAN)) return false;
+    }
+    if (viaLaw) return true;
     if (!decodeAs(flName, b, m, c)) return false;
     for (int k : ks)
       if (param(m.state, k, NAN) != param(g, k, NAN)) return false;
@@ -442,6 +472,32 @@ DslLayout dslLayout(const Bytes& b) {
   return l;
 }
 
+// J-51: a pad parameter from the patch it reads, through the decoder's law
+// (gen2::drumSynthLivePad), then as decodeState leaves it (float, clamped to
+// the parameter's range). False when the pad has no patch here.
+// (`over`: an offset whose stored value is taken as `overVal` instead.)
+bool dslLawAt(const Bytes& b, int k, size_t over, int32_t overVal, float& v) {
+  const int rel = k - md::DmCount;
+  if (rel < 0 || rel >= md::kDrumPads * md::DpCount) return false;
+  const int pad = rel / md::DpCount, p = rel % md::DpCount;
+  const DslLayout l = dslLayout(b);
+  const int key = l.base + pad;
+  if (!l.ok || key >= kDslKeys || l.at(key, 0) == std::string::npos || l.at(key, kDslParams - 1) + 4 > b.size()) return false;
+  int32_t patch[kDslParams];
+  for (int i = 0; i < kDslParams; ++i) patch[i] = l.at(key, i) == over ? overVal : rdI32(b, l.at(key, i));
+  const gen2::DslPadValues o = gen2::drumSynthLivePad(patch);
+  const PluginInfo* info = findPlugin("gl.drumkit");
+  if (!info || static_cast<size_t>(k) >= info->params.size()) return false;
+  for (int i = o.n - 1; i >= 0; --i)  // (the last setting of p wins, as in the decoder)
+    if (o.param[i] == p) {
+      v = static_cast<float>(info->params[static_cast<size_t>(k)].clamp(static_cast<float>(o.value[i])));
+      return true;
+    }
+  return false;
+}
+
+bool dslLaw(const Bytes& b, int k, float& v) { return dslLawAt(b, k, std::string::npos, 0, v); }
+
 Encoder drumSynthLive() {
   Encoder e;
   e.flName = "Fruity DrumSynth Live";
@@ -489,7 +545,15 @@ Encoder drumSynthLive() {
     for (int pad = 0; pad < md::kDrumPads; ++pad) {
       const int key = l.base + pad;
       if (key >= kDslKeys || l.at(key, 0) == std::string::npos) continue;
-      auto fp = [&](int p, int i, double lo, double hi) { f.push_back(i32(md::drumPad(pad, p), l.at(key, i), lo, hi)); };
+      // (J-51: with the decoder's law for the solver, see dslLaw.)
+      auto fp = [&](int p, int i, double lo, double hi) {
+        const int k = md::drumPad(pad, p);
+        const size_t at = l.at(key, i);
+        f.push_back(lawField(i32(k, at, lo, hi), [k, at](double r, const Bytes& st) {
+          float v;
+          return dslLawAt(st, k, at, static_cast<int32_t>(r), v) ? static_cast<double>(v) : std::numeric_limits<double>::quiet_NaN();
+        }));
+      };
       // Shape and the oscillator levels first: they decide how the rest is read.
       fp(md::DpShape, 32, 0, 1);
       fp(md::DpNoise, 14, 0, 127);
@@ -520,7 +584,8 @@ Encoder drumSynthLive() {
       const int want = std::clamp(static_cast<int>(std::lround(param(g, md::DmBaseNote, 60))), 0, kDslMaxBase);
       if (want != l.base) putI32(b, 4, want), l = dslLayout(b);
     }
-    Joint j{"Fruity DrumSynth Live", c, g, b, {}};
+    Joint j{"Fruity DrumSynth Live", c, g, b, {}, {}};
+    j.law = dslLaw;
     for (int pad = 0; pad < md::kDrumPads; ++pad) {
       const int key = l.base + pad;
       if (key >= kDslKeys || l.at(key, 0) == std::string::npos) continue;
@@ -889,10 +954,24 @@ std::vector<FpcPadView> fpcView(const Bytes& b) {
   return pads;
 }
 
-// Direct inverses (fast path; the engine checks them through the decoder).
-Field fpcField(int gl, size_t at, double lo, double hi, double scale) {
+// Direct inverses (fast path; the engine checks them through the decoder),
+// and (J-51) the decoder's laws (FlpGen2Pads.cpp) for the solver.
+enum class FpcLaw { Level, Pan, Tune, Int127 };
+Field fpcField(int gl, size_t at, double lo, double hi, double scale, FpcLaw law) {
   Field f = i32(gl, at, lo, hi);
   f.inverse = [scale](double v) { return std::round(v * scale); };
+  f.forward = [law](double r, const Bytes&) {
+    switch (law) {
+      case FpcLaw::Level: {
+        const double v = r / 127.0;
+        return v < 0 ? 0 : (v > 1 ? 1 : v);
+      }
+      case FpcLaw::Pan: return std::clamp(r / 128.0, -1.0, 1.0);
+      case FpcLaw::Tune: return static_cast<int>(r) * 12.0 / 128.0;
+      case FpcLaw::Int127: break;
+    }
+    return static_cast<double>(std::clamp(static_cast<int>(r), 0, 127));
+  };
   return f;
 }
 
@@ -905,10 +984,10 @@ std::vector<Field> fpcFields(const Bytes& b) {
     const int pk = static_cast<int>(k);
     const FpcPadView& v = pads[k];
     if (v.settings != std::string::npos) {
-      f.push_back(fpcField(padP(pk, PadLevel), v.settings, 0, 127, kLevel));
-      f.push_back(fpcField(padP(pk, PadPan), v.settings + 4, -128, 128, kPan));
-      f.push_back(fpcField(padP(pk, PadTune), v.settings + 28, -128, 128, kTune));
-      f.push_back(fpcField(padE(pk, PadNote), v.settings + 12, 0, 127, 1));
+      f.push_back(fpcField(padP(pk, PadLevel), v.settings, 0, 127, kLevel, FpcLaw::Level));
+      f.push_back(fpcField(padP(pk, PadPan), v.settings + 4, -128, 128, kPan, FpcLaw::Pan));
+      f.push_back(fpcField(padP(pk, PadTune), v.settings + 28, -128, 128, kTune, FpcLaw::Tune));
+      f.push_back(fpcField(padE(pk, PadNote), v.settings + 12, 0, 127, 1, FpcLaw::Int127));
     }
     if (v.trigger != std::string::npos) {
       Field t = i32(padE(pk, PadLayerMode), v.trigger, 0, 3);
@@ -918,11 +997,11 @@ std::vector<Field> fpcFields(const Bytes& b) {
     for (size_t g = 0; g < v.layers.size() && g < static_cast<size_t>(kPadLayers); ++g) {
       const int lg = static_cast<int>(g);
       const size_t q = v.layers[g];
-      f.push_back(fpcField(padL(pk, lg, LayLevel), q, 0, 127, kLevel));
-      f.push_back(fpcField(padL(pk, lg, LayPan), q + 4, -128, 128, kPan));
-      f.push_back(fpcField(padL(pk, lg, LayVelLow), q + 8, 0, 127, 1));
-      f.push_back(fpcField(padL(pk, lg, LayVelHigh), q + 12, 0, 127, 1));
-      f.push_back(fpcField(padL(pk, lg, LayTune), q + 20, -128, 128, kTune));
+      f.push_back(fpcField(padL(pk, lg, LayLevel), q, 0, 127, kLevel, FpcLaw::Level));
+      f.push_back(fpcField(padL(pk, lg, LayPan), q + 4, -128, 128, kPan, FpcLaw::Pan));
+      f.push_back(fpcField(padL(pk, lg, LayVelLow), q + 8, 0, 127, 1, FpcLaw::Int127));
+      f.push_back(fpcField(padL(pk, lg, LayVelHigh), q + 12, 0, 127, 1, FpcLaw::Int127));
+      f.push_back(fpcField(padL(pk, lg, LayTune), q + 20, -128, 128, kTune, FpcLaw::Tune));
     }
   }
   return f;

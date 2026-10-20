@@ -30,6 +30,7 @@
 #include "App.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
+#include "ContextMenus.h"
 #include "EditTools.h"
 #include "J31Ui.h"
 #include "ScriptUi.h"
@@ -647,11 +648,13 @@ int main(int argc, char** argv) {
   int devExport = 0;                      // --show stems / renderclip / missing / midiimport (J-20)
   int devRemote = 0;                      // --show remote / remote-action: remote control dialog (frame 3)
   std::string devTool;                    // --tool name: J-11 tool window (frame 3) on the --edit target
+  std::string devDialog;                 // --show open / saveas / prompt (J-54, frame 3; file dialogs browse the source tree)
   bool devChords = false;                // --show chords: chord progression editor (frame 3)
   std::string devScript;                  // --script id: J-24 piano roll script window (frame 3) on the --edit target
   bool devPlaylistOnly = false;           // --show playlist: other panels closed
   bool devMixerOnly = false;              // --show mixer: the mixer fills the window
   float shotScale = 1.0f;                 // --scale F: framebuffer scale of an off-screen shot (HiDPI check)
+  float devUiScale = 0.0f;                // --ui-scale F: interface scale for this run only (not saved; J-54 layout checks)
   std::string devSaveAtExit;  // --save-at-exit path: project saved when the run ends (plugin state round trips)
   int devWindowCycle = 0;  // --plugin-window-cycle N: close / reopen the plugin window N times
   bool devHostedEditor = false;           // --hosted-editor: open the native editor of the --plugin target
@@ -752,8 +755,11 @@ int main(int argc, char** argv) {
       else if (w == "piano") devFocus = "Piano roll";
       else if (w == "playlist") devPlaylistOnly = true;  // the playlist fills the window
       else if (w == "mixer") devMixerOnly = true;        // the mixer fills the window
-      else if (w == "open") app.openDialog();
-      else if (w == "unsaved") app.confirmDiscard = true;
+      else if (w == "open" || w == "saveas" || w == "prompt" || w == "unsaved" || w == "ppqwarn") devDialog = w;  // J-54: file dialogs / one-line prompt (frame 3)
+      else if (w == "presetprogress") {  // J-54 layout check: FL preset import progress (no worker runs)
+        app.showSettings = true, app.settingsTab = 2;
+        app.presetImport.running = true, app.presetImport.done = 1234, app.presetImport.total = 5678;
+      }
       else if (w == "livepads") app.showLivePads = true;
       else if (w == "autoedit") devAutoEdit = 1;  // automation clip editor on a demo clip
       else if (w == "autolfo") devAutoEdit = 2;   // … with the LFO tool open
@@ -780,7 +786,8 @@ int main(int argc, char** argv) {
         app.showImportReport = true;
         app.importReport.source = "Sample song.flp";
         app.importReport.counts = {{"Channels", 14}, {"Patterns", 9}, {"Playlist clips", 41}, {"Mixer inserts", 12}, {"Effects", 23}};
-        app.importReport.unmapped = {{"Third-party plugin (no installed match)", 2}};
+        app.importReport.unmapped = {{"Third-party plugin (no installed match)", 2},
+                                     {"Wrapped third-party instrument whose plugin file is not installed on this computer", 1}};
         app.importReport.warnings = {"Two automation clips target parameters that have no Gridline equivalent; they were kept but do nothing.",
                                      "Time stretching of one audio clip is approximated."};
       } else if (w == "steprec") {  // layout check: step record cursor in the piano roll
@@ -855,6 +862,8 @@ int main(int argc, char** argv) {
     } else if (arg == "--no-ui-sounds") {  // J-48: handled before the audio device opens
     } else if (arg == "--light") {
       theme::apply(false);
+    } else if (arg == "--ui-scale" && i + 1 < argc) {
+      devUiScale = std::clamp(static_cast<float>(std::atof(argv[++i])), 0.75f, 2.0f);
     } else if (arg == "--scale" && i + 1 < argc) {
       shotScale = std::clamp(static_cast<float>(std::atof(argv[++i])), 0.5f, 4.0f);
     } else if (fs::exists(arg)) {
@@ -1010,7 +1019,7 @@ int main(int argc, char** argv) {
       fbW = offscreen.w;
       fbH = offscreen.h;
     }
-    float uiScale = static_cast<float>(std::clamp(app.settings.getNumber("ui.scale"), 0.75, 2.0)) * autoDpi;
+    float uiScale = (devUiScale > 0 ? devUiScale : static_cast<float>(std::clamp(app.settings.getNumber("ui.scale"), 0.75, 2.0))) * autoDpi;
     if (uiScale > 1.0f)  // never shrink the logical workspace below the minimum layout size
       uiScale = std::max(1.0f, std::min({uiScale, static_cast<float>(winW) / 960.0f, static_cast<float>(winH) / 600.0f}));
 
@@ -1189,6 +1198,15 @@ int main(int argc, char** argv) {
     if (!devTool.empty() && frameNo == 3) devOpenTool(app, devTool);
     if (!devScript.empty() && frameNo == 3) devOpenScript(app, devScript);
     if (devChords && frameNo == 3) j31::openChordEditor(app);
+    if (!devDialog.empty() && frameNo == 3) {  // a popup opened before frame 3 is closed again
+      if (devDialog == "open") app.openDialog();
+      if (devDialog == "saveas") app.saveAs();
+      if (devDialog == "unsaved") app.confirmDiscard = true;
+      if (devDialog == "ppqwarn") devShowPpqWarning(app, 48);
+      if (devDialog == "prompt") menus::openPrompt("Rename pattern", "Pattern 1", [](const std::string&) {});
+      // Layout checks never list the user's own folders: browse the Gridline source tree.
+      if (devDialog == "open" || devDialog == "saveas") app.fileDialog.dir = fs::path(GRIDLINE_SOURCE_ASSETS).parent_path().string();
+    }
     if (devRemote && frameNo == 3 && !app.doc.song().channels.empty()) {
       if (devRemote == 1) {
         app.openRemoteDialog(channelParam(app.doc.song().channels[0].id, ChannelParam::Volume));

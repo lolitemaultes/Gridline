@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include "FlpEncode.h"
 #include "FlpGen.h"
@@ -974,66 +975,117 @@ Offsets offsets(const Bytes& raw, int ver) {
 
 int version(const Bytes& b) { return versionOf(b.size() >= 4 ? getU32(b, 0) : 0); }
 
+// The decoder's clamp (FlpGenSytrus.cpp): non-finite values go to the low end.
+double cl(double v, double lo, double hi) { return std::isfinite(v) ? std::clamp(v, lo, hi) : lo; }
+using Law = std::function<double(double, const Bytes&)>;
+// Stored / scale, clamped (most of the decoder's laws).
+Law scaled(double scale, double lo, double hi) {
+  return [=](double r, const Bytes&) { return cl(r / scale, lo, hi); };
+}
+
 std::vector<Field> fields(const Bytes& b) {
   std::vector<Field> f;
   Bytes raw;
   if (!inflate(b, raw)) return f;
-  const Offsets o = offsets(raw, version(b));
+  const int ver = version(b);
+  const Offsets o = offsets(raw, ver);
   if (!o.ok) return f;
-  auto F = [&](int gl, size_t rawAt, int lo, int hi, Type t = Type::I32) { f.push_back(field(gl, stored(rawAt), t, lo, hi)); };
-  auto M = [&](int gl, int i, int lo, int hi) { F(gl, static_cast<size_t>(i) * 4, lo, hi); };
-  M(mf::MVolume, 0, 0, 256), M(mf::MLfoLevel, 1, -128, 128), M(mf::MPitch, 2, -48, 48);
+  // J-51: each field with the decoder's law (FlpGenSytrus.cpp), so the solver
+  // needs no decoding per candidate; flags and values that depend on the
+  // drawn curves keep the search through the decoder.
+  auto F = [&](int gl, size_t rawAt, int lo, int hi, Type t = Type::I32, Law law = {}) {
+    Field x = field(gl, stored(rawAt), t, lo, hi);
+    x.forward = std::move(law);
+    f.push_back(std::move(x));
+  };
+  auto M = [&](int gl, int i, int lo, int hi, Law law = {}) { F(gl, static_cast<size_t>(i) * 4, lo, hi, Type::I32, std::move(law)); };
+  // Raw byte / dword of the state (stored form) for laws that read other values.
+  auto byteAt = [](const Bytes& s, size_t rawAt) { return stored(rawAt) < s.size() ? s[stored(rawAt)] : 0; };
+  auto dwordAt = [](const Bytes& s, size_t rawAt) { return stored(rawAt) + 4 <= s.size() ? geti(s, stored(rawAt)) : 0; };
+  M(mf::MVolume, 0, 0, 256, [](double r, const Bytes&) { return r / 128.0; });
+  M(mf::MLfoLevel, 1, -128, 128, scaled(128, -1, 1));
+  M(mf::MPitch, 2, -48, 48, scaled(1, -24, 24));
+  // Matrix cells (a muted cell decodes as 0: one byte per cell from byte 800, v2+).
+  auto cell = [&](int layer, int r, int col) -> Law {
+    const size_t mute = static_cast<size_t>(800 + layer * 81 + r * 9 + col);
+    return [=](double v, const Bytes& s) { return ver >= 2 && byteAt(s, mute) != 0 ? 0.0 : cl(v / 256.0, -1, 1); };
+  };
   for (int r = 0; r < mf::kRows; ++r)
     for (int col = 0; col < mf::kCols; ++col) {
-      M(mf::fm(r, col), 3 + r * 9 + col, -256, 256);
-      if (r < mf::kOps && col < mf::kOps) M(mf::rm(r, col), 84 + r * 9 + col, -256, 256);
+      M(mf::fm(r, col), 3 + r * 9 + col, -256, 256, cell(0, r, col));
+      if (r < mf::kOps && col < mf::kOps) M(mf::rm(r, col), 84 + r * 9 + col, -256, 256, cell(1, r, col));
     }
   const int adsr[8] = {mf::MVolA, mf::MVolD, mf::MVolS, mf::MVolR, mf::MFltA, mf::MFltD, mf::MFltS, mf::MFltR};
-  for (int i = 0; i < 8; ++i) M(adsr[i], 165 + i, i % 4 == 2 ? -128 : 0, i % 4 == 2 ? 128 : 256);
-  M(mf::MUniOrder, 173, 1, 9), M(mf::MUniPan, 174, 0, 128), M(mf::MUniVol, 175, 16, 128), M(mf::MUniPitch, 176, 0, 256);
-  M(mf::MUniSub, 177, 0, 96), M(mf::MUniPhase, 178, 0, 128), M(mf::MUniEnv, 179, 0, 192), M(mf::FxPan, 180, -128, 128);
-  M(mf::ChOrder, 181, 0, 9), M(mf::ChDepth, 182, 0, 1024), M(mf::ChSpeed, 183, 0, 1024), M(mf::ChDelay, 184, 0, 128);
-  M(mf::ChSpread, 185, 0, 128), M(mf::ChCross, 186, -128, 128), M(mf::ChVol, 187, -128, 128);
-  M(mf::MModX, 190, 0, 512), M(mf::MModY, 191, 0, 512);
-  if (o.hasSoften) F(mf::MSoften, o.soften, 0, 128);
+  for (int i = 0; i < 8; ++i)
+    M(adsr[i], 165 + i, i % 4 == 2 ? -128 : 0, i % 4 == 2 ? 128 : 256, scaled(128, i % 4 == 2 ? -1 : 0, i % 4 == 2 ? 1 : 2));
+  M(mf::MUniOrder, 173, 1, 9, scaled(1, 1, 9)), M(mf::MUniPan, 174, 0, 128, scaled(128, 0, 1)), M(mf::MUniVol, 175, 16, 128, scaled(128, 0.125, 1));
+  M(mf::MUniPitch, 176, 0, 256, scaled(256, 0, 1));
+  M(mf::MUniSub, 177, 0, 96, scaled(128, 0, 0.75)), M(mf::MUniPhase, 178, 0, 128, scaled(128, 0, 1)), M(mf::MUniEnv, 179, 0, 192, scaled(128, 0, 1.5));
+  M(mf::FxPan, 180, -128, 128, scaled(128, -1, 1));
+  M(mf::ChOrder, 181, 0, 9, scaled(1, 0, 9)), M(mf::ChDepth, 182, 0, 1024, scaled(1024, 0, 1)), M(mf::ChSpeed, 183, 0, 1024, scaled(1024, 0, 1));
+  M(mf::ChDelay, 184, 0, 128, scaled(128, 0, 1));
+  M(mf::ChSpread, 185, 0, 128, scaled(128, 0, 1)), M(mf::ChCross, 186, -128, 128, scaled(128, -1, 1)), M(mf::ChVol, 187, -128, 128, scaled(128, -1, 1));
+  M(mf::MModX, 190, 0, 512, scaled(512, 0, 1)), M(mf::MModY, 191, 0, 512, scaled(512, 0, 1));
+  if (o.hasSoften) F(mf::MSoften, o.soften, 0, 128, Type::I32, scaled(128, 0, 1));
   if (o.hasGibbs) F(mf::MGibbs, o.gibbs, 0, 1, Type::U8);
   for (int i = 0; i < 3; ++i) {
     const size_t d = o.delays + static_cast<size_t>(i) * 23;
-    F(mf::dly(i, 0), d + 22, 0, 1, Type::U8), F(mf::dly(i, 1), d + 16, 0, 2), F(mf::dly(i, 2), d, 0, 128);
-    F(mf::dly(i, 3), d + 4, 0, 768), F(mf::dly(i, 4), d + 8, -512, 512), F(mf::dly(i, 5), d + 12, -128, 128);
+    F(mf::dly(i, 0), d + 22, 0, 1, Type::U8), F(mf::dly(i, 1), d + 16, 0, 2, Type::I32, scaled(1, 0, 2)),
+        F(mf::dly(i, 2), d, 0, 128, Type::I32, scaled(128, 0, 0.99));
+    F(mf::dly(i, 3), d + 4, 0, 768, Type::I32, scaled(192, 0.01, 4)), F(mf::dly(i, 4), d + 8, -512, 512, Type::I32, scaled(512, -1, 1));
+    F(mf::dly(i, 5), d + 12, -128, 128, Type::I32, scaled(128, -1, 1));
     F(mf::dly(i, 6), d + 20, 0, 1, Type::U8);
   }
   if (o.hasRev) {
     const int rv[9] = {mf::RvLowCut, mf::RvHighCut, mf::RvPreDelay, mf::RvRoom, mf::RvDiff, mf::RvDecay, mf::RvHighDamp, mf::RvColor, mf::RvVol};
     const int lo[9] = {19, 5, 0, 1, 0, 1, 5, 0, -128}, hi[9] = {3000, 220, 192, 100, 100, 200, 220, 4, 128};
-    for (int i = 0; i < 9; ++i) F(rv[i], o.rev + static_cast<size_t>(i) * 4, lo[i], hi[i]);
+    const bool hasTempo = o.hasRevTempo;
+    const size_t tempoAt = o.revTempo;
+    const Law laws[9] = {scaled(1, 19, 3000),
+                         [](double r, const Bytes&) { return cl(r * 100.0, 500, 22000); },
+                         [=](double r, const Bytes& s) { return cl(r / (hasTempo && byteAt(s, tempoAt) ? 192.0 : 384.0), 0, 0.5); },
+                         scaled(100, 0.01, 1),
+                         scaled(100, 0, 1),
+                         scaled(10, 0.1, 20),
+                         [](double r, const Bytes&) { return cl(r * 100.0, 500, 22000); },
+                         scaled(1, 0, 4),
+                         scaled(128, -1, 1)};
+    for (int i = 0; i < 9; ++i) F(rv[i], o.rev + static_cast<size_t>(i) * 4, lo[i], hi[i], Type::I32, laws[i]);
     F(mf::RvOn, o.revOn, 0, 1, Type::U8);
     if (o.hasRevTempo) F(mf::RvTempo, o.revTempo, 0, 1, Type::U8);
   }
   if (o.hasEq) {
-    F(mf::MEqTarget, o.eq, 0, 3);
+    F(mf::MEqTarget, o.eq, 0, 3, Type::I32, scaled(1, 0, 3));
     const size_t stride = o.eqType ? 16 : 12;
     for (int i = 0; i < 3; ++i) {
       const size_t e = o.eq + 4 + static_cast<size_t>(i) * stride;
-      F(mf::eq(i, 3), e, -1800, 1800), F(mf::eq(i, 1), e + 4, 0, 65536), F(mf::eq(i, 2), e + 8, 0, 65536);
-      if (o.eqType) F(mf::eq(i, 0), e + 12, 0, 2);
+      F(mf::eq(i, 3), e, -1800, 1800, Type::I32, scaled(100, -18, 18));
+      F(mf::eq(i, 1), e + 4, 0, 65536, Type::I32, [](double r, const Bytes&) { return cl(20.0 * std::pow(1000.0, r / 65536.0), 20, 20000); });
+      F(mf::eq(i, 2), e + 8, 0, 65536, Type::I32, [](double r, const Bytes&) { return cl(r / 65536.0 * 4.0, 0.1, 4); });
+      if (o.eqType) F(mf::eq(i, 0), e + 12, 0, 2, Type::I32, scaled(1, 0, 2));
     }
   }
   for (int u = 0; u < mf::kUnits; ++u) {
     const Offsets::Unit& U = o.units[u];
     if (u < mf::kOps) {
-      F(mf::op(u, mf::OpPhase), U.u, 0, 256), F(mf::op(u, mf::OpVol), U.u + 4, -256, 256), F(mf::op(u, mf::OpPitchRange), U.u + 8, 0, 4800);
-      F(mf::op(u, mf::OpRatio), U.ratio, 0, 640000), F(mf::op(u, mf::OpFreq), U.freq, -500000, 500000), F(mf::op(u, mf::OpNoise), U.noise, 0, 128);
-      F(mf::op(u, mf::OpShape), U.tail, 0, 512), F(mf::op(u, mf::OpTension), U.tail + 4, -128, 128), F(mf::op(u, mf::OpSkew), U.tail + 8, 0, 128);
-      F(mf::op(u, mf::OpSine), U.tail + 12, 0, 128), F(mf::op(u, mf::OpFilter), U.tail + 16, 0, 128);
+      F(mf::op(u, mf::OpPhase), U.u, 0, 256, Type::I32, scaled(256, 0, 1)), F(mf::op(u, mf::OpVol), U.u + 4, -256, 256, Type::I32, scaled(256, -1, 1));
+      F(mf::op(u, mf::OpPitchRange), U.u + 8, 0, 4800, Type::I32, scaled(100, 0, 48));
+      F(mf::op(u, mf::OpRatio), U.ratio, 0, 640000, Type::I32, scaled(20000, 0, 32));
+      F(mf::op(u, mf::OpFreq), U.freq, -500000, 500000, Type::I32, scaled(100, -5000, 5000));
+      F(mf::op(u, mf::OpNoise), U.noise, 0, 128, Type::I32, scaled(128, 0, 1));
+      F(mf::op(u, mf::OpShape), U.tail, 0, 512, Type::I32, scaled(256, 0, 2)), F(mf::op(u, mf::OpTension), U.tail + 4, -128, 128, Type::I32, scaled(128, -1, 1));
+      F(mf::op(u, mf::OpSkew), U.tail + 8, 0, 128, Type::I32, scaled(128, 0, 1));
+      F(mf::op(u, mf::OpSine), U.tail + 12, 0, 128, Type::I32, scaled(128, 0, 1)), F(mf::op(u, mf::OpFilter), U.tail + 16, 0, 128, Type::I32, scaled(128, 0, 1));
       const int flagParams[7] = {mf::OpHalf, mf::OpEven, mf::OpAbs, mf::OpGlobal, mf::OpCenter, mf::OpDeclick, mf::OpPluck};
       for (int i = 0; i < 7; ++i) F(mf::op(u, flagParams[i]), U.flags + static_cast<size_t>(i), 0, 1, Type::U8);
     } else if (u < mf::kOps + mf::kFilters) {
       const int j = u - mf::kOps;
       const int fl[10] = {mf::FlMode, mf::FlEnv, mf::FlCut, mf::FlRes, mf::FlLow, mf::FlBand, mf::FlHigh, mf::FlWsAmp, mf::FlWsMix, mf::FlNext};
       const int lo[10] = {0, 0, 0, 0, 0, 0, 0, 64, 0, -256}, hi[10] = {mf::kFltModes - 1, 256, 256, 256, 128, 128, 128, 192, 128, 256};
-      for (int i = 0; i < 10; ++i) F(mf::flt(j, fl[i]), U.u + static_cast<size_t>(i) * 4, lo[i], hi[i]);
-      if (U.nf == 12) F(mf::flt(j, mf::FlType), U.fb + 44, 0, mf::kFltTypes - 1);
+      const Law laws[10] = {scaled(1, 0, mf::kFltModes - 1), scaled(128, 0, 2),   scaled(256, 0, 1),   scaled(256, 0, 1),   scaled(128, 0, 1),
+                            scaled(128, 0, 1),               scaled(128, 0, 1),   scaled(128, 0.5, 1.5), scaled(128, 0, 1), scaled(256, -1, 1)};
+      for (int i = 0; i < 10; ++i) F(mf::flt(j, fl[i]), U.u + static_cast<size_t>(i) * 4, lo[i], hi[i], Type::I32, laws[i]);
+      if (U.nf == 12) F(mf::flt(j, mf::FlType), U.fb + 44, 0, mf::kFltTypes - 1, Type::I32, scaled(1, 0, mf::kFltTypes - 1));
       F(mf::flt(j, mf::FlWsOn), U.fb + 40, 0, 1);
       F(mf::flt(j, mf::FlHq), U.fb, 0, 1, Type::U8), F(mf::flt(j, mf::FlFlat), U.fb + 1, 0, 1, Type::U8);
       if (U.hasWsBip) F(mf::flt(j, mf::FlWsBipolar), U.wsBip, 0, 1, Type::U8);
@@ -1041,10 +1093,16 @@ std::vector<Field> fields(const Bytes& b) {
     for (int a = 0; a < static_cast<int>(U.arts.size()) && a < mf::unitArts(u); ++a) {
       const auto& A = U.arts[static_cast<size_t>(a)];
       F(mf::art(u, a, mf::AfEnvOn), A.envTail + 4, -1, 1), F(mf::art(u, a, mf::AfLfoOn), A.lfoTail + 4, -1, 1);
-      F(mf::art(u, a, mf::AfAtt), A.p1 + 4, 0, 256), F(mf::art(u, a, mf::AfDec), A.p1 + 8, 0, 256);
-      F(mf::art(u, a, mf::AfSus), A.p1 + 12, -128, 128), F(mf::art(u, a, mf::AfRel), A.p1 + 16, 0, 256);
+      F(mf::art(u, a, mf::AfAtt), A.p1 + 4, 0, 256, Type::I32, scaled(128, 0, 2)), F(mf::art(u, a, mf::AfDec), A.p1 + 8, 0, 256, Type::I32, scaled(128, 0, 2));
+      F(mf::art(u, a, mf::AfSus), A.p1 + 12, -128, 128, Type::I32, scaled(128, -1, 1)), F(mf::art(u, a, mf::AfRel), A.p1 + 16, 0, 256, Type::I32, scaled(128, 0, 2));
       F(mf::art(u, a, mf::AfTempo), A.lfoTail, 0, 3), F(mf::art(u, a, mf::AfLfoGlobal), A.lfoTail, 0, 3);
-      F(mf::art(u, a, mf::AfLfoSpeed), A.p2 + 4, 0, 65536), F(mf::art(u, a, mf::AfLfoSkew), A.p2 + 12, -128, 128);
+      // LFO speed word → Hz (halved for tempo LFOs: cycles per beat at 120 BPM).
+      const size_t flagsAt = A.lfoTail;
+      F(mf::art(u, a, mf::AfLfoSpeed), A.p2 + 4, 0, 65536, Type::I32, [=](double r, const Bytes& s) {
+        const double hz = (std::pow(10001.0, std::clamp(static_cast<int>(r), 0, 65536) / 65536.0) - 1.0) / 625.0;
+        return cl((dwordAt(s, flagsAt) & 1) ? hz * 0.5 : hz, 0.01, 50);
+      });
+      F(mf::art(u, a, mf::AfLfoSkew), A.p2 + 12, -128, 128, Type::I32, scaled(128, -1, 1));
     }
   }
   return f;

@@ -185,7 +185,7 @@ Encoder equo() {
       for (int band = 0; band < ut::kBqBands; ++band)
         for (int t = 0; t < ut::kBqTargets; ++t) {
           const size_t at = kEquoBanks + static_cast<size_t>((k * ut::kBqBands + band) * ut::kBqTargets + t) * 4;
-          f.push_back(Field{ut::bqValue(k, t, band), at, Type::F32, 0, 2, [](double v) { return v; }});
+          f.push_back(Field{ut::bqValue(k, t, band), at, Type::F32, 0, 2, [](double v) { return v; }, {}});
         }
     const size_t a = kEquoInts;
     f.push_back(i32(ut::BqShift, a, -12000, 12000));

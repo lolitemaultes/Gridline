@@ -16,7 +16,7 @@ namespace sp = gl::packs::spectral;
 float param(const PluginState& s, int k) { return k >= 0 && static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : 0.f; }
 
 Field f32(int gl, size_t offset, double lo, double hi, std::function<double(double)> inverse = {}) {
-  return Field{gl, offset, Type::F32, lo, hi, std::move(inverse)};
+  return Field{gl, offset, Type::F32, lo, hi, std::move(inverse), {}};
 }
 
 // ---------------------------------------------------------------- Pitcher

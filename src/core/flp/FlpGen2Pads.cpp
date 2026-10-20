@@ -393,15 +393,29 @@ struct DslPatch {
 // same 38-value records; they are placed on keys 60..83 (C5 up).
 constexpr int kDslV1Patches = 24, kDslV1Key = 60;
 
-bool parseDsl(const Blob& b, int& selected, std::vector<DslPatch>& patches) {
+// The state's layout: where the 120 key records start (J-51: records are read
+// only for the keys the pads use — the export's solver decodes thousands of
+// times, and reading all 4560 values dominated each decode).
+struct DslState {
+  Blob b;
+  bool v1 = false;
+  size_t recAt = 0;
+  DslPatch patch(int key) const {
+    DslPatch d;  // (version 1: keys without a patch play at level 0)
+    if (v1 && (key < kDslV1Key || key >= kDslV1Key + kDslV1Patches)) return d;
+    const size_t at = recAt + static_cast<size_t>(v1 ? key - kDslV1Key : key) * 152;
+    for (int i = 0; i < 38; ++i) d.v[i] = b.i32(at + 4 * static_cast<size_t>(i));
+    return d;
+  }
+};
+
+bool parseDsl(const Blob& b, int& selected, DslState& st) {
   if (b.size() < 8) return false;
   selected = b.i32(4);
+  st.b = b;
   if (b.u32(0) == 1 && b.size() == 8 + kDslV1Patches * (24 + 152)) {
-    patches.assign(120, DslPatch{});  // keys without a patch: level 0
-    const size_t at = 8 + kDslV1Patches * 24;
-    for (int k = 0; k < kDslV1Patches; ++k)
-      for (int i = 0; i < 38; ++i)
-        patches[static_cast<size_t>(kDslV1Key + k)].v[i] = b.i32(at + static_cast<size_t>(k) * 152 + 4 * static_cast<size_t>(i));
+    st.v1 = true;
+    st.recAt = 8 + kDslV1Patches * 24;
     selected = kDslV1Key;  // the editor's selected patch is not a played key here
     return true;
   }
@@ -411,48 +425,73 @@ bool parseDsl(const Blob& b, int& selected, std::vector<DslPatch>& patches) {
     p += 1 + b.u8(p);
   }
   if (p + 120 * 152 > b.size()) return false;
-  patches.resize(120);
-  for (int k = 0; k < 120; ++k)
-    for (int i = 0; i < 38; ++i) patches[static_cast<size_t>(k)].v[i] = b.i32(p + static_cast<size_t>(k) * 152 + 4 * static_cast<size_t>(i));
+  st.recAt = p;
   return true;
 }
 
-void dslToPad(PluginMapping& m, int pad, const DslPatch& d) {
+// One pad's parameters from a patch: (pad parameter, value) in setting order.
+struct DslPad : DslPadValues {
+  void put(int p, double v) { param[n] = p, value[n] = v, ++n; }
+};
+
+DslPad dslPad(const int32_t* v) {
   using namespace md;
-  const int* v = d.v;
+  DslPad o;
   double f1 = 20.0 * std::pow(2.0, v[4] / 100.0);
   double toneLevel = std::clamp(v[8] / 127.0, 0.0, 1.0), noiseLevel = std::clamp(v[14] / 127.0, 0.0, 1.0);
   bool noiseOsc1 = v[32] != 0;
-  set(m, drumPad(pad, DpLevel), 0.7 * clamp01(v[0] / 128.0) * std::max(0.35, std::max(toneLevel, noiseLevel)));
-  set(m, drumPad(pad, DpPan), std::clamp(v[1] / 64.0, -1.0, 1.0));
+  o.put(DpLevel, 0.7 * clamp01(v[0] / 128.0) * std::max(0.35, std::max(toneLevel, noiseLevel)));
+  o.put(DpPan, std::clamp(v[1] / 64.0, -1.0, 1.0));
   if (toneLevel < 0.15 || noiseOsc1) {
     // Mostly noise: a short, high plate under the noise burst.
-    set(m, drumPad(pad, DpShape), DsPlate);
-    set(m, drumPad(pad, DpFreq), std::clamp(f1, 800.0, 5000.0));
-    set(m, drumPad(pad, DpDecay), 0.03);
-    set(m, drumPad(pad, DpNoise), 1.0);
+    o.put(DpShape, DsPlate);
+    o.put(DpFreq, std::clamp(f1, 800.0, 5000.0));
+    o.put(DpDecay, 0.03);
+    o.put(DpNoise, 1.0);
   } else {
-    set(m, drumPad(pad, DpShape), DsMembrane);
-    set(m, drumPad(pad, DpFreq), std::clamp(f1, 20.0, 5000.0));
-    set(m, drumPad(pad, DpDecay), std::clamp(0.02 * std::pow(150.0, v[7] / 127.0), 0.02, 6.0));
-    set(m, drumPad(pad, DpNoise), clamp01(noiseLevel / std::max(0.2, toneLevel)));
+    o.put(DpShape, DsMembrane);
+    o.put(DpFreq, std::clamp(f1, 20.0, 5000.0));
+    o.put(DpDecay, std::clamp(0.02 * std::pow(150.0, v[7] / 127.0), 0.02, 6.0));
+    o.put(DpNoise, clamp01(noiseLevel / std::max(0.2, toneLevel)));
   }
-  set(m, drumPad(pad, DpSpread), 1.0);
-  set(m, drumPad(pad, DpMaterial), clamp01(0.5 + v[3] / 100.0));
-  set(m, drumPad(pad, DpBend), std::clamp(24.0 * v[6] / 127.0, 0.0, 36.0));
-  set(m, drumPad(pad, DpBendTime), std::clamp(0.005 * std::pow(40.0, v[6] / 127.0), 0.003, 1.0));
-  set(m, drumPad(pad, DpClick), clamp01(v[23] / 100.0));
-  set(m, drumPad(pad, DpNoiseDecay), std::clamp(0.01 * std::pow(150.0, v[13] / 127.0), 0.01, 2.0));
-  set(m, drumPad(pad, DpNoiseTone), std::clamp(200.0 * std::pow(2.0, v[10] / 160.0) * std::pow(2.0, v[2] / 50.0), 200.0, 16000.0));
-  set(m, drumPad(pad, DpWires), 0.0);
-  set(m, drumPad(pad, DpDrive), clamp01(std::fabs(v[3]) / 100.0));
-  set(m, drumPad(pad, DpChoke), v[24] >= 2 ? std::min(8, v[24] - 1) : 0);
-  set(m, drumPad(pad, DpMute), 0);
+  o.put(DpSpread, 1.0);
+  o.put(DpMaterial, clamp01(0.5 + v[3] / 100.0));
+  o.put(DpBend, std::clamp(24.0 * v[6] / 127.0, 0.0, 36.0));
+  o.put(DpBendTime, std::clamp(0.005 * std::pow(40.0, v[6] / 127.0), 0.003, 1.0));
+  o.put(DpClick, clamp01(v[23] / 100.0));
+  o.put(DpNoiseDecay, std::clamp(0.01 * std::pow(150.0, v[13] / 127.0), 0.01, 2.0));
+  o.put(DpNoiseTone, std::clamp(200.0 * std::pow(2.0, v[10] / 160.0) * std::pow(2.0, v[2] / 50.0), 200.0, 16000.0));
+  o.put(DpWires, 0.0);
+  o.put(DpDrive, clamp01(std::fabs(v[3]) / 100.0));
+  o.put(DpChoke, v[24] >= 2 ? std::min(8, v[24] - 1) : 0);
+  o.put(DpMute, 0);
+  return o;
+}
+
+void dslToPad(PluginMapping& m, int pad, const DslPatch& d) {
+  // J-51: the last result per pad slot is kept (per thread): the export's
+  // solver decodes the state thousands of times changing one patch value, and
+  // the other pads' laws (several pow each) dominated each decode.
+  struct Memo {
+    bool valid = false;
+    DslPatch key;
+    DslPad out;
+  };
+  thread_local Memo memo[md::kDrumPads];
+  Memo* mm = pad >= 0 && pad < md::kDrumPads ? &memo[pad] : nullptr;
+  DslPad o;
+  if (mm && mm->valid && std::equal(std::begin(d.v), std::end(d.v), std::begin(mm->key.v))) {
+    o = mm->out;
+  } else {
+    o = dslPad(d.v);
+    if (mm) mm->valid = true, mm->key = d, mm->out = o;
+  }
+  for (int i = 0; i < o.n; ++i) set(m, md::drumPad(pad, o.param[i]), o.value[i]);
 }
 
 bool decodeDrumSynthLive(Context& c, const std::vector<Event>& events, PluginMapping& m) {
   int selected = 60;
-  std::vector<DslPatch> patches;
+  DslState patches;
   if (!parseDsl(stateBlob(events), selected, patches)) return false;
   begin(m, "gl.drumkit");
   using namespace md;
@@ -465,7 +504,7 @@ bool decodeDrumSynthLive(Context& c, const std::vector<Event>& events, PluginMap
   set(m, DmBaseNote, std::min(base, 112));
   base = std::min(base, 112);
   for (int k = 0; k < kDrumPads; ++k) set(m, drumPad(k, DpMute), 1);
-  for (int k = 0; k < kDrumPads && base + k < 120; ++k) dslToPad(m, k, patches[static_cast<size_t>(base + k)]);
+  for (int k = 0; k < kDrumPads && base + k < 120; ++k) dslToPad(m, k, patches.patch(base + k));
   m.exact = false;
   return true;
 }
@@ -514,6 +553,8 @@ bool decodeBassDrum(Context& c, const std::vector<Event>& events, PluginMapping&
 }
 
 }  // namespace
+
+DslPadValues drumSynthLivePad(const int32_t* patch) { return dslPad(patch); }
 
 void registerPads(std::map<std::string, PluginDecoder>& d) {
   add(d, "FPC", decodeFpc);

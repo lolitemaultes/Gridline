@@ -28,4 +28,8 @@ bool decodeWavPack(const uint8_t* data, size_t size, DecodedAudio& out, std::str
 // Ogg Vorbis (whole stream in memory). Implemented in AudioCodecs.cpp.
 bool decodeOggVorbis(const uint8_t* data, size_t size, DecodedAudio& out, std::string* err);
 
+// J-51: both decoders give up (false, "cancelled") when the calling thread's
+// DecodeCancelScope flag is set (Sample.h; defined in Sample.cpp).
+bool decodeCancelled();
+
 }  // namespace gl

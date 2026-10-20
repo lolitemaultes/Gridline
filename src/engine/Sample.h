@@ -117,6 +117,23 @@ using SamplePtr = std::shared_ptr<const Sample>;
 SamplePtr loadSample(const std::string& path, std::string* err = nullptr);
 bool isAudioFile(const std::string& path);
 
+// J-51: while a scope is alive, loading on its thread gives up as soon as
+// *flag is true (loadSample returns nullptr, err "cancelled"): the file is read
+// and decoded in blocks, the flag checked between them. The browser indexer
+// stops within a block of a long file instead of after it. Scopes nest.
+class DecodeCancelScope {
+ public:
+  explicit DecodeCancelScope(const std::atomic<bool>* flag);
+  ~DecodeCancelScope();
+  DecodeCancelScope(const DecodeCancelScope&) = delete;
+  DecodeCancelScope& operator=(const DecodeCancelScope&) = delete;
+
+ private:
+  const std::atomic<bool>* prev_;
+};
+// True when the calling thread's scope flag is set (decoders check it).
+bool decodeCancelled();
+
 // Thread-safe path → sample cache.
 //
 // get() decodes on the calling thread (or waits for a background decode of the
