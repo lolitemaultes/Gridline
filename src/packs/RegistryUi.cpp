@@ -11,13 +11,14 @@ GL_DECLARE_PACK_UI(models)
 GL_DECLARE_PACK_UI(utility)
 GL_DECLARE_PACK_UI(creative)
 GL_DECLARE_PACK_UI(edison)
+GL_DECLARE_PACK_UI(flexpack)
 namespace gl::packs::edison {
 void drawWindows(App& a);
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
 int armTransportRecording(App& a, ObjectId track);
 }  // namespace gl::packs::edison
 
-#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison)
+#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack)
 
 namespace gl::packs {
 

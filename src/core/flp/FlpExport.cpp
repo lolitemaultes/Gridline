@@ -147,7 +147,7 @@ void Exporter::assignIndices() {
 bool Exporter::hasFlPlugin(const PluginState& p, ObjectId owner, int slot) const {
   if (p.empty()) return false;
   const EventList orig = origin(pluginKey(owner, slot));
-  if (!orig.empty() && originGlType(orig) == p.type) return true;
+  if (!orig.empty() && originTypeMatches(orig, p.type)) return true;
   // Encoded already: what the encoder made of it (J-39: FL plugins that are
   // no native home of the type are written only when they are exact).
   if (auto it = pluginCache.find({owner, slot}); it != pluginCache.end()) return it->second.flPlugin;
@@ -164,7 +164,7 @@ Exporter::PluginOut Exporter::encodePlugin(const PluginState& p, ObjectId owner,
   if (auto it = pluginCache.find(key); it != pluginCache.end()) return it->second;
   PluginOut out;
   const EventList orig = stripPseudo(origin(pluginKey(owner, slot)));
-  const bool fromOrigin = !orig.empty() && originGlType(origin(pluginKey(owner, slot))) == p.type;
+  const bool fromOrigin = !orig.empty() && originTypeMatches(origin(pluginKey(owner, slot)), p.type);
   std::string oName;
   Bytes oState, oWrapper;
   bool oHasState = false;

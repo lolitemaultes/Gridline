@@ -5,6 +5,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include "../src/core/FlexStandin.h"
 #include "../src/core/PluginParams.h"
 #include "../src/core/flp/Flp.h"
 #include "../src/engine/ChannelIns.h"
@@ -325,21 +326,28 @@ int main() {
       id.str(preset);
       while (id.b.size() < 0x812) id.u8(0);
       inner.i32(2).i32(128);
-      for (int k = 0; k < 128; ++k) inner.f32(k == 39 ? pitch : (k < 10 || k == 18 ? 0.5f : 0.0f));
+      for (int k = 0; k < 128; ++k) inner.f32(k == 39 ? pitch : (k < 10 || k == 18 || k == 35 ? 0.5f : k == 36 ? 1.0f : 0.0f));
       params.rec(0, inner);
       st.i32(1).rec(1, id).rec(2, params);
       return st.b;
     };
     Env e;
     flp::PluginMapping m;
-    expect(e.run("FLEX", Plug{name16("FLEX"), flex("Library", "Grand Piano Dark", 0.5f), {}, {}}, m) && m.glType == "gl.keys", "FLEX piano → Keys");
+    // J-53: FLEX channels are "gl.flex": the controls kept exactly, a stand-in by category.
+    expect(e.run("FLEX", Plug{name16("FLEX"), flex("Library", "Grand Piano Dark", 0.5f), {}, {}}, m) && m.glType == "gl.flex" &&
+               flex::categoryOf(m.state) == flex::Keys,
+           "FLEX piano → stand-in Keys");
     flp::PluginMapping m2;
-    expect(e.run("FLEX", Plug{name16("FLEX"), flex("Library", "Crystal Bell", 0.5f), {}, {}}, m2) && m2.glType == "gl.fm", "FLEX bell → FM Synth");
+    expect(e.run("FLEX", Plug{name16("FLEX"), flex("Library", "Crystal Bell", 0.5f), {}, {}}, m2) && m2.glType == "gl.flex" &&
+               flex::categoryOf(m2.state) == flex::Bell,
+           "FLEX bell → stand-in Bell (FM Synth)");
     flp::PluginMapping m3;
-    expect(e.run("FLEX", Plug{name16("FLEX"), flex("Library", "Deep Sub Bass", 0.25f), {}, {}}, m3) && m3.glType == "gl.analog" &&
-               near(prm(m3.state, packs::synths::AnTranspose), -24),
-           "FLEX bass → Analog with pitch");
-    expect(renderPeak(m3.state, 48) > 0.01 && renderPeak(m2.state) > 0.01, "FLEX imports render sound");
+    expect(e.run("FLEX", Plug{name16("FLEX"), flex("Library", "Deep Sub Bass", 0.25f), {}, {}}, m3) && m3.glType == "gl.flex" &&
+               near(prm(m3.state, flex::Pitch), 0.25) && flex::categoryOf(m3.state) == flex::SubBass,
+           "FLEX sub bass → stand-in Sub bass, pitch control kept");
+    expect(m3.param && m3.param(flex::Macro3) == flex::Macro3 && m3.value && near(m3.value(flex::Macro3, 0.3), 0.3),
+           "FLEX automation: control k is stand-in parameter k");
+    expect(renderPeak(m3.state, 72) > 0.01 && renderPeak(m2.state) > 0.01 && renderPeak(m.state) > 0.01, "FLEX imports render sound");
   }
   // ------------------------------------------------ Envelope Controller
   {

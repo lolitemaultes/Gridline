@@ -85,6 +85,11 @@ struct Encoder {
   // Runs after the fields are solved, before the result is verified
   // (checksums, sizes that depend on the solved values).
   std::function<void(Bytes& state)> finish = {};
+  // J-53: Gridline-only settings of the state that the FL plugin does not
+  // store (a stand-in's own settings): reset to what the decoder produces
+  // before the instance is compared and encoded, so editing them never
+  // changes the FL state (an unchanged origin stays verbatim).
+  std::function<void(PluginState& s)> strip = {};
 };
 
 // Settings the decoders depend on (sync laws, sample folders).

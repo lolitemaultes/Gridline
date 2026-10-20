@@ -1,5 +1,6 @@
 #include "../packs/Packs.h"
 #include "PluginInfo.h"
+#include "FlexStandin.h"
 #include <cmath>
 #include <algorithm>
 #include <array>
@@ -1527,6 +1528,8 @@ PluginState presetState(const PluginInfo& info, size_t preset) {
 }
 
 void normalizePluginState(PluginState& s) {
+  // J-53: FLEX channels saved before the stand-ins (Analog / Keys / FM + "flex 1" data) become "gl.flex".
+  if (flex::isLegacy(s)) flex::migrateLegacy(s);
   const PluginInfo* p = findPlugin(s.type);
   if (!p) return;
   if (s.params.size() > p->params.size()) s.params.resize(p->params.size());

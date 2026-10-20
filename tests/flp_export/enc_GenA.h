@@ -164,7 +164,7 @@ inline void testEncGenA() {
     genaCorpus("FLEX", "FLEX", 2);
     std::vector<Bytes> st = corpusStates("FLEX", 1);
     gl::PluginState g;
-    if (!st.empty() && genaDecode("FLEX", st[0], "gl.analog", g)) {
+    if (!st.empty() && genaDecode("FLEX", st[0], "gl.flex", g)) {
       expect(nativeRoundTrip("FLEX", g), "FLEX: preset identity and controls rebuilt from the Gridline state");
     }
   }

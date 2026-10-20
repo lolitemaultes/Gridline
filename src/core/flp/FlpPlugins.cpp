@@ -68,7 +68,8 @@ bool decode(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
     return false;
   }
   normalizePluginState(m.state);
-  c.report.counts[m.exact ? "plugins mapped exactly" : "plugins mapped approximately"]++;
+  // J-53: FLEX channels keep the FLEX state and play a Gridline stand-in.
+  c.report.counts[m.glType == "gl.flex" ? "plugins as stand-in (FLEX)" : m.exact ? "plugins mapped exactly" : "plugins mapped approximately"]++;
   return true;
 }
 

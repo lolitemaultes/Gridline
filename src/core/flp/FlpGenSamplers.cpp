@@ -1,6 +1,6 @@
 // Gridline — FLP import: FL sample-based instruments.
 //   DirectWave → Multisampler ("gl.multisampler"): the program's zones.
-//   FLEX       → the closest Gridline instrument for the loaded preset.
+//   FLEX       → "gl.flex": the FLEX state kept exactly + a Gridline stand-in (J-53).
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -8,6 +8,7 @@
 #include <filesystem>
 #include "../../packs/samplers/samplers.h"
 #include "../../packs/synths/synths.h"
+#include "../FlexStandin.h"
 #include "../PluginParams.h"
 #include "FlpGen.h"
 
@@ -40,11 +41,6 @@ std::vector<Rec> records(Bytes b, size_t at) {
 std::string text(Bytes b) {
   std::string s;
   for (size_t i = 0; i < b.n && b.p[i]; ++i) s += static_cast<char>(b.p[i]);
-  return s;
-}
-
-std::string lower(std::string s) {
-  for (char& ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
   return s;
 }
 
@@ -169,51 +165,15 @@ bool decodeDirectWave(Context& c, const std::vector<Event>& events, PluginMappin
 // 21..23 post filter, 24..29 delay, 30..34 reverb, 35/36 levels, 37 delay on,
 // 38 reverb on, 39 pitch (±2400 cents), 40..44 options). The envelope and
 // filter controls are offsets around 0.5 on top of the preset's own sound.
-enum FlexKind { FxKeys, FxElectricKeys, FxBell, FxPad, FxStrings, FxBass, FxBrass, FxPluck, FxLead, FxOther };
-
-FlexKind classify(const std::string& preset, const std::string& library) {
-  // Words of the preset name (then the library name), matched by prefix.
-  std::vector<std::string> words;
-  std::string w;
-  for (char ch : lower(preset + " " + library) + " ") {
-    if (std::isalnum(static_cast<unsigned char>(ch))) {
-      w += ch;
-    } else if (!w.empty()) {
-      words.push_back(w);
-      w.clear();
-    }
-  }
-  auto has = [&](std::initializer_list<const char*> ws) {
-    for (const auto& word : words)
-      for (const char* p : ws)
-        if (word.rfind(p, 0) == 0) return true;
-    return false;
-  };
-  auto is = [&](const char* x) { return std::find(words.begin(), words.end(), x) != words.end(); };
-  if (has({"rhodes", "epiano", "electric", "wurli"}) || is("ep")) return FxElectricKeys;
-  if (has({"piano", "keys", "grand", "upright", "clav"})) return FxKeys;
-  if (has({"bell", "chime", "glock", "celest", "marimba", "vibra", "musicbox", "mallet", "tink", "kalimba", "xylo"})) return FxBell;
-  if (has({"string", "violin", "viola", "cello", "orchestr", "ensemble"})) return FxStrings;
-  if (has({"pad", "atmos", "choir", "texture", "ambient", "drone", "swell"})) return FxPad;
-  if (has({"bass", "sub"})) return FxBass;
-  if (has({"brass", "horn", "trumpet", "trombone", "sax"})) return FxBrass;
-  if (has({"pluck", "harp", "guitar", "pizz", "koto"})) return FxPluck;
-  if (has({"lead", "synth", "saw", "square"})) return FxLead;
-  return FxOther;
-}
-
-PluginState presetOf(const std::string& type, const std::string& preset) {
-  if (const PluginInfo* info = findPlugin(type))
-    for (size_t i = 0; i < info->presets.size(); ++i)
-      if (info->presets[i].name == preset) return presetState(*info, i);
-  return base(type);
-}
-
+// J-53: the channel becomes "gl.flex" (core/FlexStandin.h): the 45 controls
+// are kept exactly (parameters 0..44, identity automation) with the pack and
+// preset names; Gridline plays a stand-in built from them, and the FL export
+// writes the FLEX state back (the original sound in FL Studio).
 bool decodeFlex(Context& c, const std::vector<Event>& events, PluginMapping& m) {
   Bytes b = stateOf(events);
   if (!b.has(0, 16)) return false;
   std::string library, preset;
-  float p[64];
+  float p[flex::kControls];
   for (float& v : p) v = 0.5f;
   bool haveParams = false;
   for (const Rec& r : records(b, 4)) {
@@ -224,82 +184,29 @@ bool decodeFlex(Context& c, const std::vector<Event>& events, PluginMapping& m) 
     if (r.id == 2)
       for (const Rec& q : records(r.data, 0)) {
         if (q.id != 0 || !q.data.has(0, 8)) continue;
-        const int n = std::min(64, q.data.i32(4));
-        for (int k = 0; k < n && q.data.has(8 + static_cast<size_t>(k) * 4, 4); ++k)
-          p[k] = std::clamp(q.data.f32(8 + static_cast<size_t>(k) * 4), 0.0f, 1.0f);
+        const int n = std::min(flex::kControls, q.data.i32(4));
+        for (int k = 0; k < n && q.data.has(8 + static_cast<size_t>(k) * 4, 4); ++k) {
+          const float v = q.data.f32(8 + static_cast<size_t>(k) * 4);
+          p[k] = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f;
+        }
         haveParams = n > 0;
       }
   }
   if (preset.empty() && !haveParams) return false;
-  const FlexKind kind = classify(preset, library);
-  const double pitchSt = (p[39] - 0.5) * 48.0;                   // semitones
-  const double attackMul = std::pow(8.0, (p[0] - 0.5) * 2.0);     // envelope offsets around the preset
-  const double releaseMul = std::pow(8.0, (p[4] - 0.5) * 2.0);
-  const double cutoffOct = (p[18] - 0.5) * 6.0 + (p[40] > 0.5f ? (p[21] - 1.0) * 6.0 : 0.0);
-  const bool dark = lower(preset).find("dark") != std::string::npos;
-  const double reverb = p[38] > 0.5f ? p[30] : 0.0, delay = p[37] > 0.5f ? p[25] : 0.0;
-  PluginState s;
-  std::string what;
-  ParamTable t;
-  if (kind == FxKeys || kind == FxElectricKeys) {
-    using namespace gl::pp;
-    s = base("gl.keys");
-    setp(s, KyModel, kind == FxElectricKeys ? 0 : 2);
-    double muffle = 9000.0 * std::pow(2.0, cutoffOct) * (dark ? 0.6 : 1.0);
-    setp(s, KyMuffle, clampd(muffle, 500, 20000));
-    setp(s, KyHardness, dark ? 0.3 : 0.5);
-    setp(s, KyRelease, clampd(0.25 * releaseMul, 0.02, 3));
-    setp(s, KyTremDepth, 0.0);
-    setp(s, KyTune, 0.0);
-    setp(s, KyVolume, 0.8);
-    what = "Keys";
-  } else if (kind == FxBell) {
-    using namespace gl::pp;
-    s = presetOf("gl.fm", "Bell");
-    setp(s, fmParam(0, FmRelease), clampd(1.2 * releaseMul, 0.005, 10));
-    setp(s, fmParam(0, FmAttack), clampd(0.002 * attackMul, 0.001, 5));
-    setp(s, FmOctave, std::clamp(std::round(pitchSt / 12.0), -3.0, 3.0));
-    what = "FM Synth (bell)";
-  } else {
-    const char* pre = kind == FxPad      ? "Velvet Pad"
-                      : kind == FxStrings ? "PWM Strings"
-                      : kind == FxBass    ? "Fingered Bass"
-                      : kind == FxBrass   ? "Brass Section"
-                      : kind == FxPluck   ? "Glass Pluck"
-                      : kind == FxLead    ? "Trance Stack"
-                                          : "";
-    s = *pre ? presetOf("gl.analog", pre) : base("gl.analog");
-    auto get = [&](int i, double d) { return i < static_cast<int>(s.params.size()) ? s.params[static_cast<size_t>(i)] : d; };
-    setp(s, sy::AnTranspose, clampd(get(sy::AnTranspose, 0) + pitchSt, -24, 24));
-    setp(s, sy::AnAmpA, clampd(get(sy::AnAmpA, 0.003) * attackMul, 0.001, 10));
-    setp(s, sy::AnAmpR, clampd(get(sy::AnAmpR, 0.25) * releaseMul, 0.005, 15));
-    setp(s, sy::AnCutoff, clampd(get(sy::AnCutoff, 4000) * std::pow(2.0, cutoffOct), 20, 20000));
-    if (reverb > 0) setp(s, sy::AnFxDrive + sy::FxRevOn, 1), setp(s, sy::AnFxDrive + sy::FxRevMix, clampd(reverb * 0.5, 0, 1));
-    if (delay > 0) setp(s, sy::AnFxDrive + sy::FxDlyOn, 1), setp(s, sy::AnFxDrive + sy::FxDlyMix, clampd(delay * 0.5, 0, 1));
-    what = std::string("Analog") + (*pre ? std::string(" (") + pre + ")" : "");
-    t.fn(39, sy::AnTranspose, [](double n) { return (n - 0.5) * 48.0; });
-    t.range(39, -2400, 2400);  // pitch control, cents
-  }
-  // Keep the FLEX selection and every control value with the approximation
-  // (the target instruments do not use PluginState::data), so nothing of the
-  // original state is lost and a later FLEX-capable importer can re-map it.
-  {
-    std::string keep = "flex 1\npack " + library + "\npreset " + preset + "\nv";
-    char num[24];
-    for (int k = 0; k < 45; ++k) {
-      std::snprintf(num, sizeof num, " %.6g", static_cast<double>(p[k]));
-      keep += num;
-    }
-    s.data = keep + "\n";
-  }
+  PluginState s = flex::makeState(library, preset, p);
   m.glType = s.type;
   m.state = s;
   m.exact = false;
-  // The pack content (zones and samples) ships access-protected; Gridline does
-  // not unlock it, so FLEX presets play on the closest built-in instrument.
-  note(c, "FLEX", "preset \"" + preset + "\" (" + library + ") is protected sample content (not converted); approximated by " + what +
-                      " with the decoded pitch / envelope / filter / FX offsets; pack / preset / 45 controls kept in the state");
-  t.install(m);
+  // Automation / remote control: FLEX parameter k is stand-in parameter k.
+  m.param = [](int fl) { return fl >= 0 && fl < flex::kControls ? fl : -1; };
+  m.value = [](int, double n) { return std::clamp(n, 0.0, 1.0); };
+  std::vector<RawRange> ranges;
+  for (int k = 0; k < flex::kControls; ++k)
+    ranges.push_back(k == flex::Pitch ? RawRange{k, -2400, 2400} : k == flex::DlyTime ? RawRange{k, 1, 768} : RawRange{k, 0, 65536});
+  setRawRanges(m, ranges);
+  const int cat = flex::classify(library, preset);
+  note(c, "FLEX", "preset \"" + preset + "\" (" + library + ") plays a Gridline stand-in: " + flex::catName(cat) + " on " +
+                      flex::engineName(flex::engineOf(cat)) + "; the FLEX state (pack, preset, 45 controls) is kept and exports unchanged");
   return true;
 }
 

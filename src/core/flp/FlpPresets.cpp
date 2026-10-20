@@ -324,8 +324,13 @@ PresetLibraryReport importPresetLibrary(const std::string& factoryData, const st
     // Plugin presets: under the Gridline type, in "FL Studio/<folder>". Plugin
     // presets' first folder is already the FL plugin name.
     std::string folder = base + (files[i].folder.empty() ? "" : "/" + files[i].folder);
-    if (savePreset(presetRootDir, r.state, folder + "/" + name, "FL Studio: " + r.flPlugin, r.exact)) {
+    // J-53: FLEX presets become stand-in presets: the FLEX selection and
+    // controls (exported back to FL unchanged) + a Gridline stand-in sound.
+    const bool standIn = r.state.type == "gl.flex";
+    const std::string source = standIn ? "FL Studio: FLEX (Gridline stand-in; the original sound plays in FL Studio)" : "FL Studio: " + r.flPlugin;
+    if (savePreset(presetRootDir, r.state, folder + "/" + name, source, r.exact && !standIn)) {
       ++rep.converted;
+      if (standIn) ++rep.standins;
       if (r.exact) ++rep.exact;
       rep.perPlugin[r.flPlugin]++;
     } else {

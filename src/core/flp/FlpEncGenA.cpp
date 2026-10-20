@@ -8,6 +8,7 @@
 #include <limits>
 #include "FlpEncode.h"
 #include "FlpGen.h"
+#include "../FlexStandin.h"
 #include "../PluginParams.h"
 #include "../../packs/synths/matrixfm.h"
 #include "../../packs/models/harmor.h"
@@ -390,13 +391,18 @@ std::string cstr(const Bytes& d, size_t at = 0, size_t max = std::string::npos) 
 // Layout (FlpGenSamplers.cpp): dword version 1, records: 1 = preset identity
 // (library name at 0, preset name at 0x401, ANSI), 2 = parameters (inner
 // record 0: dword 2, dword count, count floats 0..1 in control-tag order).
-// The decoder turns these into the closest Gridline instrument and keeps
-// library, preset and the 45 control values in PluginState::data, which is
-// what write() puts back.
+// J-53: the decoder makes "gl.flex" (core/FlexStandin.h): parameters 0..44 are
+// the 45 control floats as stored, the pack / preset names are in the data.
+// write() puts back the names and every control whose value changed (exactly
+// the float the parameter holds); all other bytes stay as the template has
+// them (the original state when the channel came from FL). The stand-in's
+// own settings (45..48) are not FLEX's: `strip` leaves them out of the
+// comparison, so stand-in-only edits export the original state unchanged.
 namespace flex {
 
+namespace fx = gl::flex;
 constexpr size_t kPresetAt = 0x401, kIdentity = 0x812;
-constexpr int kControls = 45, kStored = 128;
+constexpr int kStored = 128;
 
 Bytes defaults() {
   ByteWriter w;
@@ -404,7 +410,7 @@ Bytes defaults() {
   Rec ident{1, Bytes(kIdentity, 0)};  // no library / preset selected
   ByteWriter p;
   p.i32(2), p.i32(kStored);
-  for (int k = 0; k < kStored; ++k) p.f32(k < kControls ? 0.5f : 0.0f);  // controls centred (offsets around the preset)
+  for (int k = 0; k < kStored; ++k) p.f32(k < fx::kControls ? 0.5f : 0.0f);  // controls centred (offsets around the preset)
   ByteWriter inner;
   putRecs(inner, {{0, p.b}});
   putRecs(w, {ident, {2, inner.b}, {3, Bytes(56, 0)}, {4, Bytes(1, 0)}});  // records 3 / 4: not decoded, zero
@@ -436,39 +442,8 @@ size_t floatsAt(const Bytes& b, int* count = nullptr) {
   return std::string::npos;
 }
 
-struct Kept {
-  bool ok = false;
-  std::string pack, preset;
-  std::vector<double> v;
-};
-Kept parseKept(const std::string& data) {
-  Kept k;
-  size_t pos = 0;
-  while (pos < data.size()) {
-    size_t nl = data.find('\n', pos);
-    if (nl == std::string::npos) nl = data.size();
-    const std::string line = data.substr(pos, nl - pos);
-    if (line == "flex 1") k.ok = true;
-    else if (line.rfind("pack ", 0) == 0) k.pack = line.substr(5);
-    else if (line.rfind("preset ", 0) == 0) k.preset = line.substr(7);
-    else if (line.rfind("v", 0) == 0) {
-      const char* s = line.c_str() + 1;
-      char* e = nullptr;
-      for (double x = std::strtod(s, &e); e != s; x = std::strtod(s, &e)) k.v.push_back(x), s = e;
-    }
-    pos = nl + 1;
-  }
-  return k;
-}
-
-std::string g6(double v) {
-  char num[24];
-  std::snprintf(num, sizeof num, "%.6g", v);
-  return num;
-}
-
 void write(const PluginState& g, Bytes& b, const EncodeContext&) {
-  const Kept k = parseKept(g.data);
+  const fx::Identity k = fx::identity(g.data);
   if (!k.ok || b.size() < 4) return;
   std::vector<Rec> rs = parseRecs(b, 4);
   bool changed = false;
@@ -491,42 +466,46 @@ void write(const PluginState& g, Bytes& b, const EncodeContext&) {
   int count = 0;
   const size_t at = floatsAt(b, &count);
   if (at == std::string::npos) return;
-  for (int i = 0; i < count && i < kControls && i < static_cast<int>(k.v.size()); ++i) {
+  for (int i = 0; i < count && i < fx::kControls && i < static_cast<int>(g.params.size()); ++i) {
     const size_t o = at + static_cast<size_t>(i) * 4;
-    const double cur = std::clamp(getF32(b, o), 0.0f, 1.0f);
-    if (g6(cur) != g6(k.v[static_cast<size_t>(i)])) putF32(b, o, static_cast<float>(k.v[static_cast<size_t>(i)]));
+    const float cur = getF32(b, o), want = g.params[static_cast<size_t>(i)];
+    const float seen = std::isfinite(cur) ? std::clamp(cur, 0.0f, 1.0f) : 0.5f;  // as the decoder reads it
+    if (seen != want) putF32(b, o, want);
   }
 }
 
-// Gridline parameters that follow one control (pitch, envelope, cutoff).
-std::function<std::vector<Field>(const Bytes&)> fieldsFor(std::vector<std::pair<int, int>> map) {
-  return [map](const Bytes& b) {
-    std::vector<Field> f;
-    int count = 0;
-    const size_t at = floatsAt(b, &count);
-    if (at == std::string::npos) return f;
-    // (in reverse: of two controls behind one parameter, e.g. cutoff 18 / 21, the
-    // later one is solved first — J-39: the kept values are 6-digit text, so the
-    // finer control absorbs the rounding and the coarse one stays as kept)
-    for (auto it = map.rbegin(); it != map.rend(); ++it)
-      if (it->second < count) f.push_back(field(it->first, at + static_cast<size_t>(it->second) * 4, Type::F32, 0, 1));
-    return f;
-  };
+// Parameter k is control float k.
+std::vector<Field> fields(const Bytes& b) {
+  std::vector<Field> f;
+  int count = 0;
+  const size_t at = floatsAt(b, &count);
+  if (at == std::string::npos) return f;
+  for (int k = 0; k < count && k < fx::kControls; ++k) {
+    Field x = field(k, at + static_cast<size_t>(k) * 4, Type::F32, 0, 1);
+    x.inverse = [](double v) { return v; };
+    f.push_back(x);
+  }
+  return f;
 }
 
-Encoder encoder(const std::string& type, std::vector<std::pair<int, int>> map) {
+// The stand-in's own settings are not part of the FLEX state.
+void strip(PluginState& s) {
+  const PluginInfo* info = findPlugin(fx::kType);
+  for (int k = fx::kControls; k < fx::PCount && info && static_cast<size_t>(k) < s.params.size() && static_cast<size_t>(k) < info->params.size(); ++k)
+    s.params[static_cast<size_t>(k)] = static_cast<float>(info->params[static_cast<size_t>(k)].def);
+}
+
+Encoder encoder() {
   Encoder e;
   e.flName = "FLEX";
-  e.glType = type;
-  // An approximation of FLEX content: only for states that carry FLEX's
-  // selection and controls (imports from FLEX, PluginState::data "flex 1"),
-  // which write() puts back — also without the original state (J-39).
+  e.glType = fx::kType;
   e.nativeRank = 0;
-  e.accepts = [](const PluginState& s) { return s.data.rfind("flex 1", 0) == 0; };
+  e.accepts = [](const PluginState& s) { return fx::identity(s.data).ok; };
   e.generator = true;
   e.defaults = defaults;
-  e.fields = fieldsFor(std::move(map));
+  e.fields = fields;
   e.write = write;
+  e.strip = strip;
   return e;
 }
 
@@ -1062,12 +1041,7 @@ void registerGenA(std::vector<Encoder>& v) {
   v.push_back(midiout::encoder());
   v.push_back(envctl::encoder());
   v.push_back(gms::encoder());
-  {
-    namespace sy = gl::packs::synths;
-    v.push_back(flex::encoder("gl.analog", {{sy::AnTranspose, 39}, {sy::AnAmpA, 0}, {sy::AnAmpR, 4}, {sy::AnCutoff, 18}, {sy::AnCutoff, 21}, {sy::AnFxDrive + sy::FxRevMix, 30}, {sy::AnFxDrive + sy::FxDlyMix, 25}}));
-    v.push_back(flex::encoder("gl.keys", {{KyRelease, 4}, {KyMuffle, 18}, {KyMuffle, 21}}));
-    v.push_back(flex::encoder("gl.fm", {{fmParam(0, FmAttack), 0}, {fmParam(0, FmRelease), 4}, {FmOctave, 39}}));
-  }
+  v.push_back(flex::encoder());  // J-53: "gl.flex" (FLEX state kept exactly)
   v.push_back(dw::encoder());
   v.push_back(harmless::encoder());
   v.push_back(harmorEncoder());  // FlpEncHarmor.cpp (J-39)

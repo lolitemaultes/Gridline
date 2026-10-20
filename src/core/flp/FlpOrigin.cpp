@@ -189,6 +189,21 @@ std::string originGlType(const EventList& ev) {
   return e ? std::string(e->data.begin(), e->data.end()) : std::string();
 }
 
+bool originTypeMatches(const EventList& ev, const std::string& type) {
+  const std::string t = originGlType(ev);
+  if (t == type) return true;
+  // J-53: FLEX channels imported before the stand-ins were recorded as the
+  // instrument that approximated them (Analog / Keys / FM); they load as
+  // "gl.flex" now and keep their origin.
+  if (type == "gl.flex" && (t == "gl.analog" || t == "gl.keys" || t == "gl.fm"))
+    if (const RawEvent* n = findRaw(ev, 201)) {
+      std::string name;
+      for (size_t i = 0; i + 1 < n->data.size() && (n->data[i] || n->data[i + 1]); i += 2) name += static_cast<char>(n->data[i]);
+      return name == "FLEX";
+    }
+  return false;
+}
+
 EventList stripPseudo(const EventList& ev) {
   EventList out;
   out.reserve(ev.size());

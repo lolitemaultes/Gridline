@@ -163,8 +163,8 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "error: %s\n", rep.error.c_str());
       return 1;
     }
-    std::printf("presets found      %zu\nplugin presets     %zu (%zu exact)\neffect chains      %zu\nautomation shapes  %zu\nnot converted      %zu\n",
-                rep.total, rep.converted, rep.exact, rep.chains, rep.shapes, rep.failed);
+    std::printf("presets found      %zu\nplugin presets     %zu (%zu exact, %zu FLEX stand-ins)\neffect chains      %zu\nautomation shapes  %zu\nnot converted      %zu\n",
+                rep.total, rep.converted, rep.exact, rep.standins, rep.chains, rep.shapes, rep.failed);
     if (!rep.unmappedPlugins.empty()) {
       std::printf("no Gridline equivalent (presets skipped):\n");
       for (const auto& [k, v] : rep.unmappedPlugins) std::printf("  %-34s %d\n", k.c_str(), v);

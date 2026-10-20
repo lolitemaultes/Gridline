@@ -83,6 +83,9 @@ EventList originEvents(const Song& s, const std::string& key);
 int originIndex(const EventList& ev);           // kFlIndex value, -1 when none
 bool originFingerprint(const EventList& ev, uint64_t& out);
 std::string originGlType(const EventList& ev);
+// The origin belongs to a plugin of Gridline type `type` (its recorded type,
+// or J-53: an FL preset-player origin recorded before "gl.flex" existed).
+bool originTypeMatches(const EventList& ev, const std::string& type);
 // The list without Gridline's pseudo events.
 EventList stripPseudo(const EventList& ev);
 

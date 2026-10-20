@@ -29,6 +29,7 @@ bool importFlPreset(const std::string& path, PresetResult& out, const std::strin
 
 struct PresetLibraryReport {
   size_t total = 0, converted = 0, exact = 0, chains = 0, shapes = 0, failed = 0;
+  size_t standins = 0;  // J-53: FLEX presets saved as Gridline stand-in presets (flagged in their source note)
   bool cancelled = false;
   std::string error;
   std::map<std::string, int> perPlugin;        // FL plugin → presets converted

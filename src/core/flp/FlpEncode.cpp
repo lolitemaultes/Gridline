@@ -390,7 +390,11 @@ Result encode(const PluginState& g, const std::string& originFlName, const Bytes
 
 namespace {
 
-Result encodeWith(const Encoder* e, const PluginState& g, const std::string& originFlName, const Bytes* originState, const EncodeContext& ec0) {
+Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& originFlName, const Bytes* originState, const EncodeContext& ec0) {
+  // J-53: settings the FL plugin does not store are left out.
+  PluginState stripped;
+  if (e && e->strip) stripped = g0, e->strip(stripped);
+  const PluginState& g = e && e->strip ? stripped : g0;
   // J-44: a plugin that plays the channel sample reads it from the channel's
   // event 196, which the channel writer adds for it (FlpExportChannels.cpp):
   // decode the state with that event, as FL and the importer see it.
