@@ -23,6 +23,8 @@
 #include "../core/Log.h"
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpExport.h"
+#include "../core/flp/FlpPackage.h"
+#include "../core/ProjectFiles.h"
 #include "../core/MidiFile.h"
 #include "../core/MidiImport.h"
 #include "../core/Project.h"
@@ -155,11 +157,7 @@ std::string renderedFolder(const App& a) {
 std::string projectName(const App& a) {
   const std::string t = a.doc.song().info.title;
   if (!t.empty() && t != "Untitled") return t;
-  if (!a.projectPath.empty()) {
-    std::string n = fs::path(a.projectPath).filename().string();
-    if (auto p = n.find(".gridline.json"); p != std::string::npos) return n.substr(0, p);
-    return fs::path(a.projectPath).stem().string();
-  }
+  if (!a.projectFile().empty()) return projectStemOf(a.projectFile());
   return t.empty() ? "Untitled" : t;
 }
 
@@ -977,33 +975,79 @@ void exportBonesDialog(App& a) {
   });
 }
 
+namespace {
+
+// Plugins the FLP export could not write exactly: count, and each one in the log.
+int logFlpReport(const flp::ExportReport& rep) {
+  int notExact = 0;
+  for (const auto& pl : rep.plugins) notExact += pl.quality != "verbatim" && pl.quality != "exact";
+  for (const auto& wv : rep.warnings) gl::logging::warning("FL export", wv);
+  for (const auto& pl : rep.plugins)
+    if (pl.quality != "verbatim" && pl.quality != "exact") gl::logging::warning("FL export", pl.where + ": " + pl.glType + " -> " + pl.flName + " [" + pl.quality + "] " + pl.note);
+  return notExact;
+}
+
+std::string approxNote(int notExact) {
+  return notExact ? " (" + std::to_string(notExact) + " plugin(s) approximated or placeholders; see the log)" : std::string();
+}
+
+}  // namespace
+
+bool writeFlpFile(App& a, const std::string& path) {
+  captureHostedStates(a);
+  flp::ExportOptions opt;
+  opt.factoryData = flp::defaultFactoryData();
+  opt.projectDir = fs::path(path).parent_path().string();
+  flp::ExportReport rep;
+  std::string err;
+  if (!flp::exportFlpFile(a.doc.song(), path, rep, opt, &err)) {
+    a.notify("FL Studio export failed: " + err, true);
+    return false;
+  }
+  if (const int n = logFlpReport(rep)) a.notify("FL Studio project written" + approxNote(n), true);
+  return true;
+}
+
+bool writeFlpZip(App& a, const std::string& path) {
+  captureHostedStates(a);
+  flp::PackageOptions opt;
+  opt.flp.factoryData = flp::defaultFactoryData();
+  opt.flp.projectDir = fs::path(path).parent_path().string();
+  flp::PackageReport rep;
+  std::string err;
+  if (!flp::exportFlpZip(a.doc.song(), path, projectStemOf(path), opt, rep, &err)) {
+    a.notify("FL Studio zipped loop package failed: " + err, true);
+    return false;
+  }
+  const int n = logFlpReport(rep.flp);
+  for (const auto& m : rep.missing) gl::logging::warning("FL export", "missing file, not packed: " + m);
+  if (n || !rep.missing.empty())
+    a.notify("FL Studio zipped loop package with " + std::to_string(rep.files.size()) + " file(s)" +
+                 (rep.missing.empty() ? std::string() : ", " + std::to_string(rep.missing.size()) + " missing") + approxNote(n),
+             true);
+  return true;
+}
+
 void exportFlpDialog(App& a) {
   fileDialog(a, "Export FL Studio project", true, {".flp"}, safeFileName(projectName(a)) + ".flp", [&a](const std::string& p) {
-    captureHostedStates(a);
-    std::string path = p;
-    if (fs::path(path).extension().empty()) path += ".flp";
-    flp::ExportOptions opt;
-    opt.factoryData = flp::defaultFactoryData();
-    opt.projectDir = fs::path(path).parent_path().string();
-    flp::ExportReport rep;
-    std::string err;
-    if (!flp::exportFlpFile(a.doc.song(), path, rep, opt, &err)) {
-      a.notify("FL Studio export failed: " + err, true);
-      return;
-    }
-    int notExact = 0;
-    for (const auto& pl : rep.plugins) notExact += pl.quality != "verbatim" && pl.quality != "exact";
-    a.notify("Exported FL Studio project" + (notExact ? " (" + std::to_string(notExact) + " plugin(s) approximated or placeholders; see the log)" : std::string()),
-             notExact > 0);
-    if (notExact == 0) a.uiSound(uisound::Event::Export);
-    for (const auto& wv : rep.warnings) gl::logging::warning("FL export", wv);
-    for (const auto& pl : rep.plugins)
-      if (pl.quality != "verbatim" && pl.quality != "exact") gl::logging::warning("FL export", pl.where + ": " + pl.glType + " -> " + pl.flName + " [" + pl.quality + "] " + pl.note);
+    const std::string path = withSaveExtension(p, SaveFormat::Flp);
+    if (!writeFlpFile(a, path)) return;
+    a.notify("Exported " + fs::path(path).filename().string());
+    a.uiSound(uisound::Event::Export);
+  });
+}
+
+void exportFlpZipDialog(App& a) {
+  fileDialog(a, "Export FL Studio zipped loop package", true, {".zip"}, safeFileName(projectName(a)) + ".zip", [&a](const std::string& p) {
+    const std::string path = withSaveExtension(p, SaveFormat::FlZip);
+    if (!writeFlpZip(a, path)) return;
+    a.notify("Exported " + fs::path(path).filename().string());
+    a.uiSound(uisound::Event::Export);
   });
 }
 
 void exportZipDialog(App& a) {
-  fileDialog(a, "Export zipped project", true, {".zip"}, safeFileName(projectName(a)) + ".zip", [&a](const std::string& p) {
+  fileDialog(a, "Export Gridline zipped project", true, {".zip"}, safeFileName(projectName(a)) + ".zip", [&a](const std::string& p) {
     captureHostedStates(a);
     std::string path = p;
     if (fs::path(path).extension().empty()) path += ".zip";
@@ -1060,17 +1104,6 @@ void importAudioAsClip(App& a, const std::string& path) {
 bool openAny(App& a, const std::string& path) {
   if (hasExt(path, {".mid", ".midi", ".rmi"})) {
     importMidiFile(a, path);
-    return true;
-  }
-  if (hasExt(path, {".zip"})) {
-    std::string proj, err;
-    const std::string dir = (fs::path(path).parent_path() / fs::path(path).stem()).string();
-    if (!unpackZippedProject(path, dir, proj, &err)) {
-      a.notify("Cannot open the zipped project: " + err, true);
-      return true;
-    }
-    a.openProject(proj);
-    if (!missingFiles(a.doc.song()).empty()) openMissingSamples(a);
     return true;
   }
   if (isAudioFile(path) && !hasExt(path, {".json", ".flp"})) {

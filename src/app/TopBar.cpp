@@ -580,7 +580,7 @@ void drawStatusBar(App& a) {
   dl->AddLine(wp, ImVec2(wp.x + W, wp.y), P.line);
 
   // Right: audio format · project name · unsaved marker.
-  std::string proj = a.projectPath.empty() ? "Untitled project" : fs::path(a.projectPath).filename().string();
+  std::string proj = a.projectFile().empty() ? "Untitled project" : fs::path(a.projectFile()).filename().string();
   char audio[48];
   std::snprintf(audio, sizeof audio, "%.1f kHz  \xC2\xB7  %d", a.engine.sampleRate() / 1000.0, a.audioBuffer);
   float rx = wp.x + W - theme::kS3;

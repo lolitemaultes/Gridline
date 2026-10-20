@@ -55,6 +55,7 @@ void usage() {
       "  gridline demo    <out.json>                 write the demo song\n"
       "  gridline import-flp <project.flp> -o <out.json> [--fl-data DIR]   convert an FL Studio project\n"
       "  gridline export-flp <project.json|.flp> -o <out.flp> [--no-origin] [--fl-data DIR]   write an FL Studio project\n"
+      "  gridline export-flp-zip <project.json|.flp|.zip> -o <out.zip> [--fl-data DIR] [--factory-samples]   FL Studio zipped loop package\n"
       "  gridline flp-roundtrip <in.flp> [-o out.flp] [--no-origin] [--json report.json]   import, export, re-import, compare\n"
       "  gridline flp-encode-check [--plugin NAME]... [--max N] [--verbose] [files...]   plugin encoders on FL's shipped states\n"
       "  gridline bench <project.json|.flp> [--threads 1,4] [--repeat N] [--render-seconds S] [--no-render] [--json out]\n"

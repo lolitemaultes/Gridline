@@ -167,18 +167,49 @@ void fileDialog(App& a) {
     ImGui::TextColored(theme::vec(P.textDim), "%s", theme::fitText(fd.dir.c_str(), ImGui::GetContentRegionAvail().x));
   }
   ImGui::Dummy(ImVec2(0, theme::kS1));
-  const char* okLabel = fd.save ? "Save" : folderMode ? "Choose this folder" : "Open";
+  // Save dialogs with types: the name always carries the chosen type's extension.
+  const std::string target = fd.name.empty() ? std::string()
+                             : (fs::path(fd.dir) / (fd.save && fd.nameForType ? fd.nameForType(fd.name, fd.typeIndex) : fd.name)).string();
+  if (!fd.confirmOverwrite.empty() && fd.confirmOverwrite != target) fd.confirmOverwrite.clear();
+  const char* okLabel = !fd.confirmOverwrite.empty() ? "Replace" : fd.save ? "Save" : folderMode ? "Choose this folder" : "Open";
   float okW = std::max(96.0f, ImGui::CalcTextSize(okLabel).x + 24);
+  // J-52: file types (Open: all projects / one format; Save as: the format written).
+  if (!fd.types.empty()) {
+    fd.typeIndex = std::clamp(fd.typeIndex, 0, static_cast<int>(fd.types.size()) - 1);
+    const float typeW = std::max(120.0f, ImGui::GetContentRegionAvail().x - (96 + okW + theme::kS2 * 3));
+    ImGui::SetNextItemWidth(typeW);
+    if (ImGui::BeginCombo("##types", fd.types[static_cast<size_t>(fd.typeIndex)].label.c_str())) {
+      for (size_t i = 0; i < fd.types.size(); ++i)
+        if (ImGui::Selectable(fd.types[i].label.c_str(), static_cast<int>(i) == fd.typeIndex)) {
+          fd.typeIndex = static_cast<int>(i);
+          fd.exts = fd.types[i].exts;
+          if (fd.save && fd.nameForType && !fd.name.empty()) fd.name = fd.nameForType(fd.name, fd.typeIndex);
+        }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine(0, theme::kS2);
+  } else if (!fd.confirmOverwrite.empty()) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.hot), "%s", "Already exists");
+    ImGui::SameLine(0, theme::kS2);
+  }
   alignRight(96 + theme::kS2 + okW);
   bool cancel = ui::TextButton("Cancel", false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape);
   ImGui::SameLine(0, theme::kS2);
   bool ok = ui::TextButton(okLabel, true, okW);
+  if (!fd.confirmOverwrite.empty()) ui::Hint((fd.name + " already exists. Replace it?").c_str());
   if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !fd.name.empty()) ok = true;
   if (ok && chosen.empty()) {
     if (folderMode)
       chosen = fd.dir;
     else if (!fd.name.empty())
-      chosen = (fs::path(fd.dir) / fd.name).string();
+      chosen = target;
+  }
+  // Saving over an existing file asks once (the button turns into Replace).
+  if (fd.save && ok && !chosen.empty() && chosen != fd.confirmOverwrite && fs::exists(chosen, ec)) {
+    fd.confirmOverwrite = chosen;
+    fd.name = fs::path(chosen).filename().string();
+    chosen.clear();
   }
   if (!chosen.empty() && (ok || !fd.save)) {
     auto cb = fd.onOk;
@@ -734,12 +765,9 @@ void unsavedPrompt(App& a) {
       ImGui::CloseCurrentPopup();
       auto then = a.afterDiscard;
       if (!a.projectPath.empty()) {
-        if (a.saveProject(a.projectPath) && then) then();
+        if (a.saveProjectAs(a.projectPath, a.projectFormat) && then) then();
       } else {
-        a.saveAs();
-        a.fileDialog.onOk = [&a, then](const std::string& p) {
-          if (a.saveProject(p) && then) then();
-        };
+        a.saveAs(then);  // J-52: with the format list (an opened .flp asks too)
       }
     }
     ImGui::EndPopup();
@@ -759,7 +787,7 @@ void importReportWindow(App& a) {
   if (vis) {
     const auto& P = pal();
     const auto& r = a.importReport;
-    dialogTitle(a, r.source.c_str(), "Converted to a new Gridline project. Save it to keep it.");
+    dialogTitle(a, r.source.c_str(), "Opened as a Gridline project. Save asks where to keep it, and in which format.");
     ImGui::BeginChild("##rep", ImVec2(0, -ui::DialogFooterHeight()));
     ui::BeginSection("IMPORTED");
     for (const auto& [k, v] : r.counts) {
@@ -795,7 +823,7 @@ void importReportWindow(App& a) {
     }
     ImGui::EndChild();
     ui::DialogFooter(260);
-    if (ui::TextButton("Save as Gridline project...", true, 180)) {
+    if (ui::TextButton("Save as...", true, 180)) {
       a.saveAs();
       a.showImportReport = false;
     }

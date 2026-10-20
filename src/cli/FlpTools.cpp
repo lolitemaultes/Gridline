@@ -1,7 +1,9 @@
 // Gridline CLI — FL Studio project export and round-trip tools (J-34).
 //   gridline export-flp <project.json|.flp> -o <out.flp> [--no-origin] [--fl-data DIR]
+//   gridline export-flp-zip <project.json|.flp|.zip> -o <out.zip> [--no-origin] [--fl-data DIR] [--factory-samples]
 //   gridline flp-roundtrip <in.flp> [-o <exported.flp>] [--no-origin] [--fl-data DIR] [--json <report.json>]
 //   gridline flp-encode-check [--plugin NAME]... [--max N] [--verbose] [--fl-data DIR] [files...]
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +18,8 @@
 #include "core/flp/FlpCoverage.h"
 #include "core/flp/FlpEncode.h"
 #include "core/flp/FlpExport.h"
+#include "core/flp/FlpPackage.h"
+#include "core/ProjectInterop.h"
 
 namespace {
 
@@ -46,8 +50,17 @@ int encodeCheckMain(int argc, char** argv) {
 }
 
 bool loadAny(const std::string& path, gl::Song& song, const std::string& data, std::string* err) {
-  const std::string ext = std::filesystem::path(path).extension().string();
-  if (ext == ".flp" || ext == ".FLP") {
+  std::string ext = std::filesystem::path(path).extension().string();
+  for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  if (ext == ".zip") {  // zipped project / FL Studio zipped loop package: unpacked beside the archive
+    const std::filesystem::path zp(path);
+    std::string proj;
+    if (!gl::unpackZippedProject(path, (zp.parent_path() / zp.stem()).string(), proj, err)) return false;
+    if (!loadAny(proj, song, data, err)) return false;
+    gl::resolveRelativePaths(song, std::filesystem::path(proj).parent_path().string());
+    return true;
+  }
+  if (ext == ".flp") {
     gl::flp::Report rep;
     return gl::importFlp(path, song, rep, err, data);
   }
@@ -81,6 +94,42 @@ int exportMain(int argc, char** argv) {
   }
   std::printf("wrote %s\n", out.c_str());
   std::fputs(gl::flp::reportText(rep).c_str(), stdout);
+  return 0;
+}
+
+// FL Studio zipped loop package (J-52): the .flp export-flp writes plus the
+// files the project uses, beside it in one .zip.
+int exportZipMain(int argc, char** argv) {
+  if (argc < 3) return 2;
+  std::string in = argv[2], out, data;
+  gl::flp::PackageOptions opt;
+  for (int i = 3; i < argc; ++i) {
+    if (!std::strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
+    else if (!std::strcmp(argv[i], "--no-origin")) opt.flp.useOrigin = false;
+    else if (!std::strcmp(argv[i], "--fl-data") && i + 1 < argc) data = argv[++i];
+    else if (!std::strcmp(argv[i], "--factory-samples")) opt.includeFactorySamples = true;
+  }
+  if (out.empty()) {
+    std::fprintf(stderr, "usage: gridline export-flp-zip <project.json|.flp|.zip> -o <out.zip> [--no-origin] [--fl-data DIR] [--factory-samples]\n");
+    return 2;
+  }
+  opt.flp.factoryData = data.empty() ? gl::flp::defaultFactoryData() : data;
+  gl::Song song;
+  std::string err;
+  if (!loadAny(in, song, opt.flp.factoryData, &err)) {
+    std::fprintf(stderr, "error: %s\n", err.c_str());
+    return 1;
+  }
+  std::string name = std::filesystem::path(out).stem().string();
+  gl::flp::PackageReport rep;
+  if (!gl::flp::exportFlpZip(song, out, name, opt, rep, &err)) {
+    std::fprintf(stderr, "error: %s\n", err.c_str());
+    return 1;
+  }
+  std::printf("wrote %s: %s + %zu file(s), %d sample path(s) made relative\n", out.c_str(), rep.projectEntry.c_str(), rep.files.size(),
+              rep.rewritten);
+  for (const auto& m : rep.missing) std::printf("missing: %s\n", m.c_str());
+  std::fputs(gl::flp::reportText(rep.flp).c_str(), stdout);
   return 0;
 }
 
@@ -157,6 +206,7 @@ int flpToolsMain(int argc, char** argv) {
   const std::string cmd = argv[1];
   if (cmd == "flp-encode-check") return encodeCheckMain(argc, argv);
   if (cmd == "export-flp") return exportMain(argc, argv);
+  if (cmd == "export-flp-zip") return exportZipMain(argc, argv);
   if (cmd == "flp-roundtrip") return roundtripMain(argc, argv);
   return -1;
 }

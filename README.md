@@ -90,7 +90,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 83 test suites
+ctest --test-dir build          # 84 test suites
 ./build/gridline-app            # start the app
 ```
 
@@ -104,6 +104,7 @@ build/gridline render  demo/song.json -o out.wav --bits 24    # render to audio
 build/gridline export-midi demo/song.json -o song.mid        # write a MIDI file
 build/gridline import-midi song.mid -o song.json             # read a MIDI file
 build/gridline zip     demo/song.json -o song.zip            # project plus samples
+build/gridline export-flp-zip demo/song.json -o song.zip    # FL Studio zipped loop package
 build/gridline plugin-check --all --json report.json         # plugin compatibility sweep
 build/gridline bench   demo/song.json                        # load, save and render timings
 ```
@@ -129,14 +130,14 @@ Interfaces: the VST 3 SDK interface headers (`third_party/vst3/pluginterfaces`, 
 
 ## FL Studio project compatibility
 
-Gridline opens FL Studio projects (`.flp`) and presets (`.fst`), so existing work can be brought across:
+Gridline opens FL Studio projects (`.flp`), FL Studio zipped loop packages (`.zip`) and presets (`.fst`), so existing work can be brought across. **File, Open** (or drag and drop) opens `.flp` and `.zip` files like any project; saving one asks where to keep it and in which format, so the original is never overwritten unasked:
 
 - channels, patterns, notes, playlist clips, automation, markers and mixer routing are imported;
 - FL Studio's own instruments and effects are mapped to their Gridline equivalents with their settings;
 - third-party plugins load as the installed plugin with their saved state, or stay as placeholders until the plugin is installed;
 - **File, Import, FL Studio presets** converts the presets of a local FL Studio installation into Gridline's preset library on your computer.
 
-Projects can also be saved back to `.flp` with **File, Export, FL Studio project**: unchanged parts are written back exactly as they were imported, and FL Studio's own plugins are saved with their settings. Nothing from FL Studio is bundled with Gridline.
+Projects can also be saved back to `.flp` with **File, Export, FL Studio project** (or **File, Save as**), or as an FL Studio zipped loop package (the `.flp` plus every sample it uses, with relative sample paths) with **File, Export, FL Studio zipped loop package**: unchanged parts are written back exactly as they were imported, and FL Studio's own plugins are saved with their settings. Nothing from FL Studio is bundled with Gridline.
 
 ## Architecture
 

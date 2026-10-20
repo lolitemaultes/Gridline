@@ -17,6 +17,7 @@
 #include "../core/Log.h"
 #include "ScriptUi.h"
 #include "../core/Project.h"
+#include "../core/ProjectInterop.h"
 #include "../core/WavWriter.h"
 #include "../engine/Render.h"
 #include "ExportUi.h"
@@ -207,7 +208,8 @@ void App::tick(double t) {
       if (backups->write(doc.song(), projectPath, wall, &err).empty() && !err.empty()) notify("Backup failed: " + err, true);
     }
     // Autosave (J-24): saved projects are written back to their file.
-    if (settings.getBool("backup.autosave") && !projectPath.empty() && doc.modified()) {
+    // Only Gridline files: an FL Studio project is re-exported on an explicit Save only.
+    if (settings.getBool("backup.autosave") && !projectPath.empty() && projectFormat == SaveFormat::Gridline && doc.modified()) {
       if (lastAutosave_ == 0) lastAutosave_ = wall;
       const int64_t every = static_cast<int64_t>(std::clamp(settings.getNumber("backup.autosaveMinutes"), 1.0, 120.0) * 60.0);
       if (wall - lastAutosave_ >= every) {
@@ -245,7 +247,7 @@ void App::notify(const std::string& text, bool error) {
 }
 
 std::string App::windowTitle() const {
-  std::string name = projectPath.empty() ? doc.song().info.title : fs::path(projectPath).filename().string();
+  std::string name = projectFile().empty() ? doc.song().info.title : fs::path(projectFile()).filename().string();
   return (doc.modified() ? "• " : "") + name + " — Gridline";
 }
 
@@ -309,6 +311,8 @@ void App::startProject(Song s) {
   doc.reset(std::move(s));  // the new project is the "saved" baseline, with no history
   trimSamplesAt_ = now + 1.0;  // J-30: the old project's samples leave the cache once its program is retired
   projectPath.clear();
+  projectFormat = SaveFormat::Gridline;
+  openedFrom.clear();
   const Song& song = doc.song();
   curPattern = song.patterns.empty() ? kNoId : song.patterns[0].id;
   selChannel = song.channels.empty() ? kNoId : song.channels[0].id;
@@ -363,11 +367,15 @@ void App::applyStartup() {
 }
 
 bool App::openProject(const std::string& path) {
-  {
-    std::string ext = fs::path(path).extension().string();
-    for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    if (ext == ".flp") return importFlpProject(path);
-    if (exportui::openAny(*this, path)) return true;  // MIDI, zipped projects, audio files (J-20)
+  // J-52: FL Studio projects and zipped projects open as projects; MIDI and
+  // audio files are imported into the open project.
+  switch (openKindOf(path)) {
+    case OpenKind::FlProject: return openFlpProject(path, path);
+    case OpenKind::ZippedProject: return openZippedProject(path);
+    case OpenKind::Midi:
+    case OpenKind::Audio: return exportui::openAny(*this, path);
+    case OpenKind::GridlineProject:
+    case OpenKind::Unknown: break;
   }
   Song s;
   std::string err;
@@ -380,6 +388,8 @@ bool App::openProject(const std::string& path) {
   doc.reset(std::move(s));
   trimSamplesAt_ = now + 1.0;  // J-30
   projectPath = path;
+  projectFormat = SaveFormat::Gridline;
+  openedFrom.clear();
   addRecent(path);
   curPattern = doc.song().patterns.empty() ? kNoId : doc.song().patterns[0].id;
   selChannel = doc.song().channels.empty() ? kNoId : doc.song().channels[0].id;
@@ -393,19 +403,43 @@ bool App::openProject(const std::string& path) {
   return true;
 }
 
-bool App::importFlpProject(const std::string& path) {
+bool App::openZippedProject(const std::string& zip) {
+  // Unpacked beside the archive (not a temporary folder): the samples stay
+  // where the opened project points, whatever it is saved as later.
+  std::string proj, err;
+  const fs::path zp(zip);
+  if (!unpackZippedProject(zip, (zp.parent_path() / projectStemOf(zip)).string(), proj, &err)) {
+    notify("Cannot open the zipped project: " + err, true);
+    return false;
+  }
+  bool ok;
+  if (openKindOf(proj) == OpenKind::FlProject) {
+    ok = openFlpProject(proj, zip);
+  } else {
+    ok = openProject(proj);  // a Gridline zip: the unpacked project is the project file
+  }
+  if (ok && !missingFiles(doc.song()).empty()) exportui::openMissingSamples(*this);
+  return ok;
+}
+
+bool App::openFlpProject(const std::string& path, const std::string& shownAs) {
   Song s;
   flp::Report rep;
   std::string err;
   if (!importFlp(path, s, rep, &err, settings.getString("import.flData"))) {
-    notify("FL Studio import failed: " + err, true);
+    notify("Cannot open the FL Studio project: " + err, true);
     return false;
   }
   engine.stopToStart();
   engine.panic();
   doc.reset(std::move(s));
   trimSamplesAt_ = now + 1.0;  // J-30
-  projectPath.clear();  // a new, unsaved Gridline project
+  // Not a Gridline file yet: Save asks where and in which format, so the
+  // .flp is never replaced by a different format (or a lossy re-export) unasked.
+  projectPath.clear();
+  projectFormat = SaveFormat::Gridline;
+  openedFrom = shownAs;
+  addRecent(shownAs);
   curPattern = doc.song().patterns.empty() ? kNoId : doc.song().patterns[0].id;
   selChannel = doc.song().channels.empty() ? kNoId : doc.song().channels[0].id;
   selChannels = {selChannel};
@@ -414,14 +448,14 @@ bool App::importFlpProject(const std::string& path) {
   engine.setMode(doc.song().playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
   syncEngine();
   importReport = ImportReport{};
-  importReport.source = fs::path(path).filename().string();
+  importReport.source = fs::path(shownAs).filename().string();
   for (const auto& [k, v] : rep.counts) importReport.counts.emplace_back(k, v);
   for (const auto& [k, v] : rep.unmapped) importReport.unmapped.emplace_back(k, v);
   importReport.warnings = rep.warnings;
   showImportReport = true;
-  notify("Imported " + importReport.source);
-  // Finished with warnings or unmapped plugins: the report needs a look.
-  uiSound(importReport.warnings.empty() && importReport.unmapped.empty() ? uisound::Event::Import : uisound::Event::Warning);
+  notify("Opened " + importReport.source);
+  // J-48: opening a project sounds like opening one; warnings or unmapped plugins: the report needs a look.
+  uiSound(importReport.warnings.empty() && importReport.unmapped.empty() ? uisound::Event::Open : uisound::Event::Warning);
   return true;
 }
 
@@ -464,16 +498,30 @@ void App::pollPresetImport() {
   }
 }
 
-bool App::saveProject(const std::string& path) {
+bool App::saveProject(const std::string& path) { return saveProjectAs(path, saveFormatOf(path)); }
+
+bool App::saveProjectAs(const std::string& path, SaveFormat format) {
   captureHostedStates(*this);  // third-party plugin state into the song
   std::string err;
   std::string p = path;
-  if (fs::path(p).extension().empty()) p += ".gridline.json";
-  if (!gl::saveProject(p, doc.song(), &err)) {
-    notify("Save failed: " + err, true);
-    return false;
+  if (format != SaveFormat::Gridline || fs::path(p).extension().empty()) p = withSaveExtension(p, format);
+  switch (format) {
+    case SaveFormat::Gridline:
+      if (!gl::saveProject(p, doc.song(), &err)) {
+        notify("Save failed: " + err, true);
+        return false;
+      }
+      break;
+    case SaveFormat::Flp:
+      if (!exportui::writeFlpFile(*this, p)) return false;
+      break;
+    case SaveFormat::FlZip:
+      if (!exportui::writeFlpZip(*this, p)) return false;
+      break;
   }
   projectPath = p;
+  projectFormat = format;
+  openedFrom.clear();
   doc.markSaved();
   addRecent(p);
   notify("Saved " + fs::path(p).filename().string());
@@ -490,18 +538,29 @@ void App::save() {
   if (projectPath.empty())
     saveAs();
   else
-    saveProject(projectPath);
+    saveProjectAs(projectPath, projectFormat);  // the format the user chose for this file
 }
 
-void App::saveAs() {
+void App::saveAs(std::function<void()> then) {
+  // J-52: one list of formats, like FL's Save as: Gridline project, FL Studio
+  // project, FL Studio zipped loop package. A project opened from an FL file
+  // starts in its folder, under its name, as a Gridline project.
+  const std::string ref = projectFile();
+  const SaveFormat fmt = projectPath.empty() ? SaveFormat::Gridline : projectFormat;
   fileDialog = {};
   fileDialog.open = true;
   fileDialog.save = true;
-  fileDialog.title = "Save project";
-  fileDialog.dir = projectPath.empty() ? homeDir() : fs::path(projectPath).parent_path().string();
-  fileDialog.name = projectPath.empty() ? doc.song().info.title + ".gridline.json" : fs::path(projectPath).filename().string();
-  fileDialog.exts = {".json"};
-  fileDialog.onOk = [this](const std::string& p) { saveProject(p); };
+  fileDialog.title = "Save project as";
+  fileDialog.dir = ref.empty() ? homeDir() : fs::path(ref).parent_path().string();
+  fileDialog.types = saveFileTypes();
+  fileDialog.typeIndex = static_cast<int>(fmt);
+  fileDialog.exts = fileDialog.types[static_cast<size_t>(fmt)].exts;
+  fileDialog.name = withSaveExtension(ref.empty() ? doc.song().info.title : fs::path(ref).filename().string(), fmt);
+  fileDialog.nameForType = [](const std::string& n, int t) { return withSaveExtension(n, static_cast<SaveFormat>(t)); };
+  fileDialog.onOk = [this, then](const std::string& p) {
+    const auto f = static_cast<SaveFormat>(std::clamp(fileDialog.typeIndex, 0, 2));
+    if (saveProjectAs(withSaveExtension(p, f), f) && then) then();
+  };
 }
 
 void App::openDialog() {
@@ -509,8 +568,10 @@ void App::openDialog() {
     fileDialog = {};
     fileDialog.open = true;
     fileDialog.title = "Open project";
-    fileDialog.dir = projectPath.empty() ? homeDir() : fs::path(projectPath).parent_path().string();
-    fileDialog.exts = {".json", ".flp", ".zip", ".mid", ".midi", ".wav", ".flac", ".ogg", ".mp3", ".aif", ".aiff"};
+    const std::string ref = projectFile();
+    fileDialog.dir = ref.empty() ? homeDir() : fs::path(ref).parent_path().string();
+    fileDialog.types = openFileTypes();  // all projects, then Gridline / FL Studio / zipped
+    fileDialog.exts = fileDialog.types[0].exts;
     fileDialog.onOk = [this](const std::string& p) { openProject(p); };
   });
 }
@@ -664,9 +725,9 @@ void App::saveNewVersion() {
   fs::path next;
   do {
     ++ver;
-    next = cur.parent_path() / (stem + " " + std::to_string(ver) + ".gridline.json");
+    next = cur.parent_path() / withSaveExtension(stem + " " + std::to_string(ver), projectFormat);
   } while (fs::exists(next));
-  saveProject(next.string());
+  saveProjectAs(next.string(), projectFormat);
 }
 
 bool App::revertToLastBackup() {

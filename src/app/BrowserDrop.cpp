@@ -433,9 +433,6 @@ bool performDrop(App& a, const std::string& path, DropTarget target, const DropP
     case DropAction::OpenProject:
       a.guardUnsaved([&a, path]() { a.openProject(path); });
       return true;
-    case DropAction::ImportFlp:
-      a.guardUnsaved([&a, path]() { a.importFlpProject(path); });
-      return true;
   }
   return false;
 }

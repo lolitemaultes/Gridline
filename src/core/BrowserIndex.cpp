@@ -98,6 +98,7 @@ Kind kindOf(const std::string& path) {
   if (isAudioFile(path)) return Kind::Audio;
   if (e == ".mid" || e == ".midi") return Kind::Midi;
   if (e == ".flp") return Kind::Flp;
+  if (e == ".zip") return Kind::Project;  // J-52: zipped project / FL Studio zipped loop package
   if (e == ".fst") return Kind::Fst;
   if (e == ".fsc") return Kind::Score;
   if (e == ".json") {
@@ -598,7 +599,7 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
     case Kind::Project:
     case Kind::Flp:
       if (target == DropTarget::Rack || target == DropTarget::Playlist || target == DropTarget::Workspace)
-        return item.kind == Kind::Flp ? DropAction::ImportFlp : DropAction::OpenProject;
+        return DropAction::OpenProject;  // J-52: FL Studio projects open as projects
       return DropAction::None;
     case Kind::Preset:
       if (target == DropTarget::PluginWindow) return !targetType.empty() && targetType == item.pluginType ? DropAction::ApplyPreset : DropAction::None;
@@ -628,7 +629,6 @@ const char* dropActionLabel(DropAction a) {
     case DropAction::ImportMidiChannels: return "Import MIDI (new channels)";
     case DropAction::ImportMidiNotes: return "Import MIDI notes";
     case DropAction::OpenProject: return "Open project";
-    case DropAction::ImportFlp: return "Import FL Studio project";
   }
   return "";
 }

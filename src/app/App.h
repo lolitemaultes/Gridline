@@ -15,6 +15,7 @@
 #include "../core/MidiRecord.h"
 #include "../engine/AudioRecord.h"
 #include "../core/MidiTemplates.h"
+#include "../core/ProjectFiles.h"
 #include "../core/Settings.h"
 #include "../core/Templates.h"
 #include "../engine/AudioEngine.h"
@@ -106,6 +107,13 @@ struct FileDialogState {
   std::string name;
   std::vector<std::string> exts;  // accepted extensions (lower case, with dot)
   std::function<void(const std::string&)> onOk;
+  // J-52: file types the dialog offers (a type list beside the name); the
+  // chosen one sets `exts`. `nameForType` renames the file when a save
+  // dialog's type changes. `typeIndex` is read by onOk.
+  std::vector<FileType> types;
+  int typeIndex = 0;
+  std::function<std::string(const std::string& name, int type)> nameForType;
+  std::string confirmOverwrite;  // save: the existing file the next OK replaces
 };
 
 struct Toast {
@@ -126,6 +134,10 @@ class App {
   Settings settings;
   std::unique_ptr<BackupManager> backups;
   std::string projectPath;  // "" = never saved
+  SaveFormat projectFormat = SaveFormat::Gridline;  // what Save writes to projectPath (J-52)
+  std::string openedFrom;   // J-52: FL project / zip the song was opened from (projectPath "")
+  // The file the project is known by: projectPath, else openedFrom.
+  const std::string& projectFile() const { return projectPath.empty() ? openedFrom : projectPath; }
   std::vector<std::string> recentFiles;
 
   void syncEngine();  // rebuild the engine program after edits
@@ -268,8 +280,14 @@ class App {
   double tapTimes_[4] = {0, 0, 0, 0};
   int tapCount_ = 0;
   void importMidi(const std::string& path);
-  // FL Studio project import (.flp): opens the converted song as a new, unsaved project.
-  bool importFlpProject(const std::string& path);
+  // J-52: FL Studio projects (.flp) open as projects: the converted song,
+  // shown under the FL file's name (`openedFrom`) with the import report; Save
+  // asks where and in which format (never writes over the .flp unasked).
+  // `shownAs` = the file the user opened (the .flp, or the zip it came in).
+  bool openFlpProject(const std::string& flp, const std::string& shownAs);
+  // Zipped projects: Gridline zips and FL Studio zipped loop packages are
+  // unpacked beside the archive and opened from there.
+  bool openZippedProject(const std::string& zip);
   struct ImportReport {
     std::string source;                   // file name
     std::vector<std::pair<std::string, int>> counts;
@@ -293,9 +311,13 @@ class App {
   // ---- actions ----
   void newProject();
   bool openProject(const std::string& path);
+  // Saves in the format the file name says (.flp, .zip FL package, else Gridline).
   bool saveProject(const std::string& path);
+  bool saveProjectAs(const std::string& path, SaveFormat format);
   void save();     // to projectPath, or Save As
-  void saveAs();
+  // Save dialog with the format list (Gridline, FL Studio project, FL Studio
+  // zipped loop package); `then` runs after a successful save.
+  void saveAs(std::function<void()> then = {});
   void openDialog();
   void exportAudio(const std::string& path, int bits, int sampleRate, bool patternOnly, bool normalize);
   void guardUnsaved(std::function<void()> action);  // runs now, or after the user confirms

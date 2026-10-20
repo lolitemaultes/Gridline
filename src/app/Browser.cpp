@@ -340,7 +340,7 @@ void fileRow(App& a, const fs::path& p, float indent) {
       ui::Hint("Click: preview \xC2\xB7 double-click: new sampler channel \xC2\xB7 drag onto the rack, playlist (audio clip), a mixer slot (impulse) or a sampler");
       break;
     case Kind::Midi: ui::Hint("Double-click or drag onto the rack: import \xC2\xB7 drag onto the piano roll: add the notes to the pattern"); break;
-    case Kind::Flp: ui::Hint("Double-click to import this FL Studio project"); break;
+    case Kind::Flp: ui::Hint("Double-click to open this FL Studio project"); break;
     case Kind::Project: ui::Hint("Double-click to open this project"); break;
     case Kind::Fst:
     case Kind::Preset:

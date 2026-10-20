@@ -143,8 +143,7 @@ enum class DropAction {
   ApplyChain,          // effect chain → the mixer track
   ImportMidiChannels,  // MIDI file → new pattern with one channel per track
   ImportMidiNotes,     // MIDI file → notes of the open pattern / channel
-  OpenProject,         // Gridline project → open
-  ImportFlp,           // FL Studio project → import as a new project
+  OpenProject,         // Gridline / FL Studio / zipped project → open (J-52)
 };
 // What a dragged item is. FL presets (.fst) are decoded first and described
 // by what they contain (plugin preset or chain).

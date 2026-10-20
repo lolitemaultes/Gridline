@@ -40,11 +40,18 @@ void exportMidiDialog(App& a, int scope);                    // 0 song, 1 patter
 void exportDataFilesDialog(App& a);
 void exportBonesDialog(App& a);
 void exportZipDialog(App& a);
-// File > Export > FL Studio project (.flp) (J-34).
+// File > Export > FL Studio project (.flp) (J-34) / FL Studio zipped loop
+// package (.zip: the .flp and the files it uses, J-52).
 void exportFlpDialog(App& a);
+void exportFlpZipDialog(App& a);
+// Writes the open song as an .flp / FL zipped loop package (Save as, the
+// export dialogs). Failures and approximated plugins are notified and logged.
+bool writeFlpFile(App& a, const std::string& path);
+bool writeFlpZip(App& a, const std::string& path);
 void openMissingSamples(App& a);
-// Opens anything Gridline reads: projects, FL projects, zipped projects, MIDI
-// files (new pattern), audio files (playlist clip). Returns true when handled.
+// Imports MIDI files (new pattern) and audio files (playlist clip) into the
+// open project; returns false for anything else (projects open through
+// App::openProject, J-52).
 bool openAny(App& a, const std::string& path);
 void importAudioAsClip(App& a, const std::string& path);
 

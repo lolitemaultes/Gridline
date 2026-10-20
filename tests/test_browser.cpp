@@ -200,7 +200,7 @@ void testDrop() {
   DropItem chain{Kind::Chain, "", PluginKind::Effect};
   expect(dropAction(chain, DropTarget::MixerTrack) == DropAction::ApplyChain, "drop chain -> mixer track");
   expect(dropAction(chain, DropTarget::Playlist) == DropAction::None, "drop chain -> playlist: nothing");
-  expect(dropAction(DropItem{Kind::Flp, "", PluginKind::Generator}, DropTarget::Workspace) == DropAction::ImportFlp, "drop flp -> import");
+  expect(dropAction(DropItem{Kind::Flp, "", PluginKind::Generator}, DropTarget::Workspace) == DropAction::OpenProject, "drop flp -> open (J-52)");
   expect(dropAction(DropItem{Kind::Project, "", PluginKind::Generator}, DropTarget::Playlist) == DropAction::OpenProject, "drop project -> open");
   expect(dropAction(DropItem{Kind::Score, "", PluginKind::Generator}, DropTarget::Rack) == DropAction::None, "drop score: nothing");
   expect(std::string(dropActionLabel(DropAction::AudioClip)) == "Audio clip", "drop labels");

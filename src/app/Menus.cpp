@@ -103,6 +103,7 @@ void menuFile(App& a) {
   }
   ImGui::Separator();
   if (ImGui::MenuItem("Open...", "Ctrl+O")) a.openDialog();
+  ui::Hint("Gridline projects, FL Studio projects (.flp) and zipped projects (.zip)");  // J-52
   if (ImGui::BeginMenu("Open recent", !a.recentFiles.empty())) {
     for (const auto& r : a.recentFiles)
       if (ImGui::MenuItem((fs::path(r).filename().string() + "##" + r).c_str())) {
@@ -122,16 +123,9 @@ void menuFile(App& a) {
   menuparity::fileItems(a);  // J-27
   ImGui::Separator();
   if (ImGui::BeginMenu("Import")) {
+    // J-52: FL Studio projects and zipped projects open through File > Open.
     if (ImGui::MenuItem("MIDI file..."))
-      fileDialog(a, "Import MIDI file", false, {".mid", ".midi", ".rmi"}, "", [&a](const std::string& p) { exportui::importMidiFile(a, p); });
-    if (ImGui::MenuItem("FL Studio project (.flp)..."))
-      fileDialog(a, "Import FL Studio project", false, {".flp"}, "", [&a](const std::string& p) {
-        a.guardUnsaved([&a, p]() { a.importFlpProject(p); });
-      });
-    if (ImGui::MenuItem("Zipped project (.zip)..."))
-      fileDialog(a, "Open zipped project", false, {".zip"}, "", [&a](const std::string& p) {
-        a.guardUnsaved([&a, p]() { exportui::openAny(a, p); });
-      });
+      fileDialog(a, "Import MIDI file", false, importMidiTypes()[0].exts, "", [&a](const std::string& p) { exportui::importMidiFile(a, p); });
     if (ImGui::MenuItem("FL Studio presets...", nullptr, false, !a.presetImport.running)) {
       a.startPresetImport();
       a.showSettings = true;
@@ -139,10 +133,10 @@ void menuFile(App& a) {
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Audio file into a sampler..."))
-      fileDialog(a, "Import audio file", false, {".wav", ".flac", ".mp3", ".ogg", ".aif", ".aiff", ".wv"}, "",
+      fileDialog(a, "Import audio file", false, importAudioTypes()[0].exts, "",
                  [&a](const std::string& p) { a.addInstrument("gl.sampler", p); });
     if (ImGui::MenuItem("Audio file as playlist clip..."))
-      fileDialog(a, "Import audio clip", false, {".wav", ".flac", ".mp3", ".ogg", ".aif", ".aiff", ".wv"}, "",
+      fileDialog(a, "Import audio clip", false, importAudioTypes()[0].exts, "",
                  [&a](const std::string& p) { exportui::importAudioAsClip(a, p); });
     ImGui::EndMenu();
   }
@@ -160,8 +154,9 @@ void menuFile(App& a) {
     ImGui::SeparatorText("Project");
     if (ImGui::MenuItem("Project data files...")) exportui::exportDataFilesDialog(a);
     if (ImGui::MenuItem("Project bones...")) exportui::exportBonesDialog(a);
-    if (ImGui::MenuItem("Zipped project...")) exportui::exportZipDialog(a);
+    if (ImGui::MenuItem("Gridline zipped project (.zip)...")) exportui::exportZipDialog(a);
     if (ImGui::MenuItem("FL Studio project (.flp)...")) exportui::exportFlpDialog(a);  // J-34
+    if (ImGui::MenuItem("FL Studio zipped loop package (.zip)...")) exportui::exportFlpZipDialog(a);  // J-52
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem("Locate missing samples...")) exportui::openMissingSamples(a);

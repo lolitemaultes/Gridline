@@ -321,6 +321,12 @@ target_link_libraries(gridline_tests_export PRIVATE gridline_core)
 target_include_directories(gridline_tests_export PRIVATE tests)
 target_compile_options(gridline_tests_export PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME export COMMAND gridline_tests_export WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-52: project files — open vs import routing, dialog types, FL Studio zipped loop package.
+add_executable(gridline_tests_project_files tests/test_project_files.cpp)
+target_link_libraries(gridline_tests_project_files PRIVATE gridline_core)
+target_include_directories(gridline_tests_project_files PRIVATE tests)
+target_compile_options(gridline_tests_project_files PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME project_files COMMAND gridline_tests_project_files WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-31: chord progression editor core, groups & loops, recording extras, key markers, quantized jumps.
 add_executable(gridline_tests_j31 tests/test_j31.cpp)
 target_link_libraries(gridline_tests_j31 PRIVATE gridline_core)
