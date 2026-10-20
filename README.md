@@ -90,7 +90,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 97 test suites
+ctest --test-dir build          # 98 test suites
 ./build/gridline-app            # start the app
 ```
 
@@ -119,14 +119,16 @@ build/gridline bench   demo/song.json                        # load, save and re
 | CLAP | `clap:<plugin id>` | `.../Plug-Ins/CLAP`; on Linux `~/.clap`, `/usr/lib/clap`; `$CLAP_PATH` |
 | VST2 | `vst2:<unique id>` | `.../Plug-Ins/VST`; on Linux `~/.vst`, `/usr/lib/vst`; `$VST_PATH` |
 | AU (macOS) | `au:<type>/<subtype>/<manufacturer>` | the system component registry |
+| LV2 | `lv2:<plugin URI>` | `~/Library/Audio/Plug-Ins/LV2`, `/Library/Audio/Plug-Ins/LV2`, `~/.lv2`, `/usr/local/lib/lv2`; on Linux `~/.lv2`, `/usr/local/lib/lv2`, `/usr/lib/lv2`; `$LV2_PATH` |
 
 - **Opening a plugin** shows its own interface at the size it asks for, with a slim Gridline bar underneath for presets, bypass, sandbox, CPU and latency. The window follows the plugin when it resizes.
 - **Scanning** happens in a child process, so a plugin that crashes or hangs is blocked until it changes instead of taking Gridline down.
 - **The sandbox** runs a plugin in its own process. Audio and events travel through shared memory with a lock-free handshake. If the plugin crashes, Gridline keeps playing, the plugin is silenced and you can reload it.
 - **What plugins get from the host:** transport and tempo, sample-accurate notes and parameter changes, sidechain input, MIDI output into other channels, offline render mode, latency reporting into delay compensation, CLAP parameter modulation and preset discovery.
+- **LV2:** Gridline reads each bundle's Turtle files itself (no lilv). Control ports become parameters with their ranges, enumerations, toggles and logarithmic scales; MIDI travels in atom sequences both ways; plugins get `time:Position`, the worker, state (saved in the project), options with the block sizes, `lv2:enabled` bypass and `lv2:freeWheeling` during exports; the latency port feeds delay compensation; `lv2:Preset`s, also from other bundles, appear as the plugin's presets. Plugin interfaces open in the plugin window: CocoaUI on macOS, X11UI on Linux, and external (kxstudio) interfaces in their own window. On Linux the X11 interface path is written but has not been run yet; everything else is tested on macOS with in-tree test plugins.
 - **Compatibility sweep:** `gridline plugin-check` loads every scanned plugin at several sample rates and buffer sizes, feeds it silence, noise and notes, checks for invalid output, round-trips its state, sweeps its parameters and opens and closes its editor.
 
-Interfaces: the VST 3 SDK interface headers (`third_party/vst3/pluginterfaces`, MIT) and the CLAP headers (`third_party/clap`, MIT). VST2 support uses Gridline's own description of the binary interface (`src/host/vst2/Vst2Abi.h`); no VST2 SDK code is included. No plugin binaries are shipped.
+Interfaces: the VST 3 SDK interface headers (`third_party/vst3/pluginterfaces`, MIT), the CLAP headers (`third_party/clap`, MIT) and the LV2 specification headers (`third_party/lv2`, ISC). VST2 support uses Gridline's own description of the binary interface (`src/host/vst2/Vst2Abi.h`); no VST2 SDK code is included. No plugin binaries are shipped.
 
 ## FL Studio project compatibility
 

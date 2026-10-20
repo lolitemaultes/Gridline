@@ -1,0 +1,2 @@
+LV2 specification headers 1.18.10 (https://github.com/lv2/lv2, tag v1.18.10),
+include/ copied unmodified. Licence: ISC (see COPYING).

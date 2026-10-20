@@ -99,7 +99,7 @@ void registerDynamicPlugin(PluginInfo info);
 // Latest entry of every registered type, in registration order.
 std::vector<const PluginInfo*> dynamicPlugins();
 // True for types owned by a plugin host ("vst3:…", "clap:…", "vst2:…",
-// "au:…"), known or not (a project
+// "au:…", "lv2:…"), known or not (a project
 // keeps a missing hosted plugin's state instead of dropping it).
 bool isHostedType(const std::string& type);
 

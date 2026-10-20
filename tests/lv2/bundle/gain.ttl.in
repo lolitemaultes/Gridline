@@ -1,0 +1,73 @@
+@prefix lv2:    <http://lv2plug.in/ns/lv2core#> .
+@prefix doap:   <http://usefulinc.com/ns/doap#> .
+@prefix foaf:   <http://xmlns.com/foaf/0.1/> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix units:  <http://lv2plug.in/ns/extensions/units#> .
+@prefix pprops: <http://lv2plug.in/ns/ext/port-props#> .
+@prefix ui:     <http://lv2plug.in/ns/extensions/ui#> .
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+<urn:gridline:lv2test:gain>
+    a lv2:Plugin, lv2:AmplifierPlugin ;
+    doap:name "Gridline Test Gain (LV2)" ;
+    doap:maintainer [ foaf:name "Gridline Tests" ] ;
+    rdfs:comment """A test effect.
+It has "quotes", a \t tab and é in its comment.""" ;
+    lv2:minorVersion 2 ; lv2:microVersion 7 ;
+    lv2:optionalFeature lv2:hardRTCapable ;
+    @GL_LV2_GAIN_UI@
+    lv2:port [
+        a lv2:InputPort, lv2:AudioPort ; lv2:index 0 ; lv2:symbol "in_l" ; lv2:name "In L"
+    ] , [
+        a lv2:InputPort, lv2:AudioPort ; lv2:index 1 ; lv2:symbol "in_r" ; lv2:name "In R"
+    ] , [
+        a lv2:OutputPort, lv2:AudioPort ; lv2:index 2 ; lv2:symbol "out_l" ; lv2:name "Out L"
+    ] , [
+        a lv2:OutputPort, lv2:AudioPort ; lv2:index 3 ; lv2:symbol "out_r" ; lv2:name "Out R"
+    ] , [
+        a lv2:InputPort, lv2:ControlPort ;
+        lv2:index 4 ; lv2:symbol "gain" ; lv2:name "Gain" ;
+        lv2:default 1.0 ; lv2:minimum 0.0 ; lv2:maximum 2.0 ;
+        units:unit units:coef
+    ] , [
+        a lv2:InputPort, lv2:ControlPort ;
+        lv2:index 5 ; lv2:symbol "mode" ; lv2:name "Mode" ;
+        lv2:default 0 ; lv2:minimum 0 ; lv2:maximum 2 ;
+        lv2:portProperty lv2:integer, lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "Clean" ; rdf:value 0 ] ,
+                       [ rdfs:label "Warm" ; rdf:value 1 ] ,
+                       [ rdfs:label "Hot" ; rdf:value 2 ]
+    ] , [
+        a lv2:InputPort, lv2:ControlPort ;
+        lv2:index 6 ; lv2:symbol "invert" ; lv2:name "Invert" ;
+        lv2:default 0 ; lv2:minimum 0 ; lv2:maximum 1 ;
+        lv2:portProperty lv2:toggled
+    ] , [
+        a lv2:InputPort, lv2:ControlPort ;
+        lv2:index 7 ; lv2:symbol "freq" ; lv2:name "Frequency" ;
+        lv2:default 1.0E3 ; lv2:minimum 20 ; lv2:maximum 20000 ;
+        lv2:portProperty pprops:logarithmic ;
+        units:unit units:hz
+    ] , [
+        a lv2:InputPort, lv2:ControlPort ;
+        lv2:index 8 ; lv2:symbol "echo" ; lv2:name "Echo" ;
+        lv2:default 0 ; lv2:minimum 0 ; lv2:maximum 1
+    ] , [
+        a lv2:InputPort, lv2:ControlPort ;
+        lv2:index 9 ; lv2:symbol "enabled" ; lv2:name "Enabled" ;
+        lv2:default 1 ; lv2:minimum 0 ; lv2:maximum 1 ;
+        lv2:designation lv2:enabled ;
+        lv2:portProperty lv2:toggled
+    ] , [
+        a lv2:OutputPort, lv2:ControlPort ;
+        lv2:index 10 ; lv2:symbol "level" ; lv2:name "Level"
+    ] , [
+        a lv2:InputPort, lv2:ControlPort ;
+        lv2:index 11 ; lv2:symbol "side" ; lv2:name "Side" ;
+        lv2:default 0 ; lv2:minimum 0 ; lv2:maximum 1
+    ] , [
+        a lv2:InputPort, lv2:AudioPort ;
+        lv2:index 12 ; lv2:symbol "sc" ; lv2:name "Sidechain" ;
+        lv2:portProperty lv2:isSideChain
+    ] .

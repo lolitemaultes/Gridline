@@ -562,7 +562,7 @@ int pluginCheckMain(int argc, char** argv) {
   }
   if (classes.empty()) {
     std::fprintf(stderr,
-                 "plugin-check: nothing to check. Usage: gridline plugin-check [--all | <type | name>…] [--format vst3|clap|vst2|au]\n"
+                 "plugin-check: nothing to check. Usage: gridline plugin-check [--all | <type | name>…] [--format vst3|clap|vst2|au|lv2]\n"
                  "                     [--json report.json] [--timeout seconds] [--no-editor]\n"
                  "(plugins come from the plugin cache: run `gridline scan-plugins` first)\n");
     return 1;

@@ -1,0 +1,33 @@
+# Gridline LV2 test bundle (generated into the build tree by CMake).
+@prefix lv2:  <http://lv2plug.in/ns/lv2core#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix pset: <http://lv2plug.in/ns/ext/presets#> .
+@prefix ui:   <http://lv2plug.in/ns/extensions/ui#> .
+@prefix kx:   <http://kxstudio.sf.net/ns/lv2ext/external-ui#> .
+
+<urn:gridline:lv2test:gain>
+    a lv2:Plugin ;
+    lv2:binary <GridlineTestLv2@GL_LV2_EXT@> ;
+    rdfs:seeAlso <gain.ttl> .
+
+<urn:gridline:lv2test:synth> a lv2:Plugin ; lv2:binary <GridlineTestLv2@GL_LV2_EXT@> ; rdfs:seeAlso <synth.ttl> .
+<urn:gridline:lv2test:state> a lv2:Plugin ; lv2:binary <GridlineTestLv2@GL_LV2_EXT@> ; rdfs:seeAlso <state.ttl> .
+
+<urn:gridline:lv2test:gain#quiet>
+    a pset:Preset ;
+    lv2:appliesTo <urn:gridline:lv2test:gain> ;
+    rdfs:seeAlso <presets.ttl> .
+<urn:gridline:lv2test:gain#loud>
+    a pset:Preset ;
+    lv2:appliesTo <urn:gridline:lv2test:gain> ;
+    rdfs:seeAlso <presets.ttl> .
+<urn:gridline:lv2test:state#tuned>
+    a pset:Preset ;
+    lv2:appliesTo <urn:gridline:lv2test:state> ;
+    rdfs:seeAlso <presets.ttl> .
+
+<urn:gridline:lv2test:state#extui>
+    a kx:Widget ;
+    ui:binary <GridlineTestLv2UI@GL_LV2_EXT@> ;
+    rdfs:seeAlso <ui.ttl> .
+@GL_LV2_COCOA_MANIFEST@

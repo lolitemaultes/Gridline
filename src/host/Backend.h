@@ -1,6 +1,6 @@
 // Gridline — format-neutral interface of one hosted plugin instance.
 //
-// Every plugin format Gridline hosts (VST3, CLAP, VST2, AU) and the
+// Every plugin format Gridline hosts (VST3, CLAP, VST2, AU, LV2) and the
 // out-of-process sandbox proxy implement Backend; the engine adapters in
 // HostedPlugins.cpp (parameters, notes, state, UI pump) only talk to this
 // interface.
@@ -202,7 +202,7 @@ class Backend {
   Backend& operator=(const Backend&) = delete;
 
   // ---- description ----
-  virtual const char* format() const = 0;  // "VST3", "CLAP", "VST2", "AU", …
+  virtual const char* format() const = 0;  // "VST3", "CLAP", "VST2", "AU", "LV2", …
   virtual const std::vector<ParamInfo>& params() const = 0;
   int paramIndex(uint32_t id) const;  // index into params(), -1 when unknown
   virtual bool hasEventInput() const = 0;

@@ -1,0 +1,11 @@
+@prefix lv2:  <http://lv2plug.in/ns/lv2core#> .
+@prefix ui:   <http://lv2plug.in/ns/extensions/ui#> .
+@prefix urid: <http://lv2plug.in/ns/ext/urid#> .
+@prefix kx:   <http://kxstudio.sf.net/ns/lv2ext/external-ui#> .
+
+<urn:gridline:lv2test:state#extui>
+    a kx:Widget ;
+    ui:binary <GridlineTestLv2UI@GL_LV2_EXT@> ;
+    lv2:requiredFeature kx:Host , urid:map ;
+    lv2:optionalFeature ui:noUserResize .
+@GL_LV2_COCOA_UI@

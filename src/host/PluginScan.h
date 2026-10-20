@@ -10,6 +10,7 @@
 // Every scanned class becomes the Gridline plugin type "<format>:<uid>":
 //   vst3:<32 hex digits class id>   clap:<plugin id>
 //   vst2:<8 hex digits unique id>   au:<type>/<subtype>/<manufacturer>
+//   lv2:<plugin URI> (entry: the .lv2 bundle directory)
 #pragma once
 #include <cstdint>
 #include <memory>
@@ -42,7 +43,7 @@ struct ScannedClass {
 };
 
 struct ScanResult {
-  std::string format = "vst3";  // "vst3", "clap", "vst2", "au"
+  std::string format = "vst3";  // "vst3", "clap", "vst2", "au", "lv2"
   std::string bundle;           // the entry (path or AU key)
   int64_t mtime = 0;            // entry modification stamp; rescan when it changes
   bool ok = false;

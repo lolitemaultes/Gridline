@@ -1,0 +1,26 @@
+@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .
+@prefix pset:  <http://lv2plug.in/ns/ext/presets#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix state: <http://lv2plug.in/ns/ext/state#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:gridline:lv2test:gain#quiet>
+    a pset:Preset ;
+    lv2:appliesTo <urn:gridline:lv2test:gain> ;
+    rdfs:label "Quiet" ;
+    lv2:port [ lv2:symbol "gain" ; pset:value 0.25 ] , [ lv2:symbol "mode" ; pset:value 1 ] .
+
+<urn:gridline:lv2test:gain#loud>
+    a pset:Preset ;
+    lv2:appliesTo <urn:gridline:lv2test:gain> ;
+    rdfs:label "Loud" ;
+    lv2:port [ lv2:symbol "gain" ; pset:value 1.5 ] .
+
+<urn:gridline:lv2test:state#tuned>
+    a pset:Preset ;
+    lv2:appliesTo <urn:gridline:lv2test:state> ;
+    rdfs:label "Tuned" ;
+    state:state [
+        <urn:gridline:lv2test:state#scale> "0.75"^^xsd:float ;
+        <urn:gridline:lv2test:state#name> "preset"
+    ] .

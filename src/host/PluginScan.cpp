@@ -29,6 +29,7 @@ namespace gl::host {
 Format vst3Format();
 Format clapFormat();
 Format vst2Format();
+Format lv2Format();
 #if defined(__APPLE__)
 Format auFormat();
 #endif
@@ -152,7 +153,7 @@ bool fromJson(const Json& j, ScanResult& r) {
 
 const std::vector<Format>& formats() {
   static const std::vector<Format> f = [] {
-    std::vector<Format> v{vst3Format(), clapFormat(), vst2Format()};
+    std::vector<Format> v{vst3Format(), clapFormat(), vst2Format(), lv2Format()};
 #if defined(__APPLE__)
     v.push_back(auFormat());
 #endif
@@ -222,7 +223,7 @@ std::vector<std::string> findEntries(const std::vector<std::string>& folders, co
       for (char& ch : e) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
       if (dir) {
         // Never look inside bundles (of any format).
-        bool bundle = e == ".vst3" || e == ".vst" || e == ".clap" || e == ".component" || e == ".app" || e == ".bundle" || e == ".framework";
+        bool bundle = e == ".vst3" || e == ".vst" || e == ".clap" || e == ".component" || e == ".lv2" || e == ".app" || e == ".bundle" || e == ".framework";
         if (e == ext && directories) out.push_back(p.string());
         if (bundle) it.disable_recursion_pending();
       } else if (e == ext && files) {

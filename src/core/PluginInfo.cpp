@@ -1462,7 +1462,7 @@ DynamicTable& dynamicTable() {
 
 bool isHostedType(const std::string& type) {
   return type.compare(0, 5, "vst3:") == 0 || type.compare(0, 5, "clap:") == 0 || type.compare(0, 5, "vst2:") == 0 ||
-         type.compare(0, 3, "au:") == 0;
+         type.compare(0, 3, "au:") == 0 || type.compare(0, 4, "lv2:") == 0;
 }
 
 void registerDynamicPlugin(PluginInfo info) {

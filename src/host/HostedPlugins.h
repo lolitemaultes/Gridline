@@ -8,7 +8,7 @@
 // holds the plugin's own state, prefixed by format:
 //   vst3s1:<base64 component state>:<base64 controller state>
 //   clap1:<base64 state>   vst2c1:<bank|prog>:<base64 chunk>   vst2p1:<base64 floats>
-//   au1:<base64 ClassInfo property list>
+//   au1:<base64 ClassInfo property list>   lv2s1:<base64 port values + state properties>
 //
 // Runtime instances are Generator / Effect adapters (createHostedGenerator /
 // createHostedEffect) over a host::Backend — in this process, or in a sandbox
@@ -34,7 +34,7 @@ inline constexpr int kMaxAuxOutputs = 15;          // extra outputs of multi-out
 // A registered hosted class.
 struct HostedClass {
   std::string type;    // "<format>:<uid>"
-  std::string format;  // "vst3", "clap", "vst2", "au"
+  std::string format;  // "vst3", "clap", "vst2", "au", "lv2"
   std::string bundle;  // entry (bundle path / AU key)
   std::string uid;
   std::string name, vendor, subCategories, version;
