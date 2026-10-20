@@ -35,7 +35,6 @@ namespace {
 
 ops::ScoreLog scoreLog;
 std::multiset<int> heldPitches;  // MIDI input notes held now (played chord display)
-double playStart = 0;  // where the current / last playback started
 bool dumpReplaces = false;
 
 std::vector<ObjectId> selectedChannels(const App& a) {
@@ -421,19 +420,13 @@ void timeFormatMenu(App& a) {
 }
 
 void stopMenuItems(App& a) {
-  const bool on = a.settings.getBool("transport.rememberStart");
-  if (ImGui::MenuItem("Stop returns to where playback started", nullptr, on)) a.settings.set("transport.rememberStart", !on);
+  const bool on = a.settings.getBool("transport.rememberSeek");
+  if (ImGui::MenuItem("Stop returns to the set position", nullptr, on)) a.settings.set("transport.rememberSeek", !on);
 }
 
-void stopPressed(App& a) {
-  a.engine.stop();
-  if (a.settings.getBool("transport.rememberStart") && playStart > 0) a.engine.setPosition(static_cast<Tick>(playStart));
-}
+void stopPressed(App& a) { a.engine.stop(); }  // J-49: the engine returns to the seek position
 
 void transportTick(App& a) {
-  // The position while stopped is where the next playback starts.
-  const bool playing = a.engine.playing();
-  if (!playing) playStart = a.engine.position();
   if (heldPitches.size() >= 2 && a.settings.getBool("ui.showPlayedChords")) {
     std::vector<Note> held;
     for (int p : heldPitches) held.push_back(Note(0, 1, p, 100));

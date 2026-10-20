@@ -795,7 +795,7 @@ void drawPianoRoll(App& a) {
       g.kind = Gesture::None;
       previewOn(a, chId, pitchAt(m.y), 100);
     } else if (inRuler && lClick) {
-      a.engine.setMode(PlayMode::Pattern);
+      if (a.engine.mode() != PlayMode::Pattern) a.engine.setMode(PlayMode::Pattern);  // J-49
       g.kind = Gesture::Scrub;  // the position follows the pointer until release
     } else if (inLaneLabel && lClick) {
       ImGui::OpenPopup("##lanepop");

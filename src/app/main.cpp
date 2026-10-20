@@ -406,6 +406,7 @@ struct HeldNote {
 //   move x y · down b · up b · mod ctrl|shift|alt 0|1 · wheel dy · key <letter>
 //   audio <wav> <track> <bar> (browser drop path) · dump (playlist clips to stdout)
 //   shot <out.ppm> (J-37: this frame is saved once rendered — frame sequences)
+//   key space (J-49) · transport (J-49: song position / playing / seek position to stdout)
 std::string devShotPending;
 struct DevInputLine {
   int frame = 0;
@@ -449,6 +450,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       ImGuiKey k = static_cast<ImGuiKey>(ImGuiKey_A + (l.a0[0] - 'a'));
       io.AddKeyEvent(k, true);
       io.AddKeyEvent(k, false);
+    } else if (l.cmd == "key" && l.a0 == "space") {
+      io.AddKeyEvent(ImGuiKey_Space, true);
+      io.AddKeyEvent(ImGuiKey_Space, false);
+    } else if (l.cmd == "transport") {
+      std::printf("transport frame %d: pos %.0f playing %d seek %.0f mode %d\n", frame, app.engine.position(), app.engine.playing() ? 1 : 0,
+                  app.engine.seekPosition(), static_cast<int>(app.engine.mode()));
+      std::fflush(stdout);
     } else if (l.cmd == "audio") {
       browserui::DropPlace place;
       place.track = std::atoi(l.a1.c_str());
@@ -983,6 +991,7 @@ int main(int argc, char** argv) {
       app.processAudioRecording();  // J-8
     }
     app.engine.setMetronome(app.metronome);
+    app.engine.setReturnToSeek(app.settings.getBool("transport.rememberSeek"));  // J-49
     app.hint.clear();
     // Interface scale: the UI is laid out in logical pixels on a virtual display
     // of window/scale and rendered at the real framebuffer density, so every

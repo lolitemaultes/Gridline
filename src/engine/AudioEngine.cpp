@@ -207,6 +207,7 @@ void AudioEngine::jumpTo(Tick tick, Tick grid) {
   c.tick = static_cast<double>(std::max<Tick>(0, tick));
   c.tick2 = static_cast<double>(std::max<Tick>(0, grid));
   send(c);
+  seekTick_.store(c.tick, std::memory_order_relaxed);  // J-49: a jump sets the song position marker
   if (!playing_.load() || grid <= 0)
     posTick_ = c.tick;
   else
@@ -278,7 +279,23 @@ void AudioEngine::setInterpolation(int quality) {
   if (interp_ >= 2) sincKernel(samplerSincPoints(interp_));
 }
 void AudioEngine::play() { send({Cmd::Play}); playing_ = true; }
-void AudioEngine::stop() { send({Cmd::Stop}); playing_ = false; posTick_ = 0; }
+double AudioEngine::stopTarget() const {
+  if (returnToSeek_.load(std::memory_order_relaxed)) return seekTick_.load(std::memory_order_relaxed);
+  return mode_.load() == PlayMode::Song && uiLoopB_ > uiLoopA_ ? uiLoopA_ : 0.0;
+}
+void AudioEngine::stop() {
+  Cmd c{Cmd::Stop};
+  c.tick = stopTarget();
+  send(c);
+  playing_ = false;
+  posTick_ = c.tick;
+}
+void AudioEngine::stopToStart() {
+  seekTick_.store(0, std::memory_order_relaxed);
+  send({Cmd::Stop});
+  playing_ = false;
+  posTick_ = 0;
+}
 void AudioEngine::pause() { send({Cmd::Pause}); playing_ = false; }
 void AudioEngine::togglePlay() {
   if (playing_.load()) stop(); else play();
@@ -287,6 +304,7 @@ void AudioEngine::setMode(PlayMode m) {
   Cmd c{Cmd::Mode};
   c.value = m == PlayMode::Song ? 1.f : m == PlayMode::Live ? 2.f : 0.f;
   send(c);
+  if (mode_.load() != m) seekTick_.store(0, std::memory_order_relaxed);  // the new mode starts over at 0
   mode_ = m;
 }
 void AudioEngine::setPattern(ObjectId pattern) {
@@ -295,17 +313,20 @@ void AudioEngine::setPattern(ObjectId pattern) {
   send(c);
   pattern_ = pattern;
 }
-void AudioEngine::setPosition(Tick tick) {
+void AudioEngine::setPosition(Tick tick, bool seek) {
   Cmd c{Cmd::Position};
   c.tick = static_cast<double>(std::max<Tick>(0, tick));
   send(c);
   posTick_ = c.tick;
+  if (seek) seekTick_.store(c.tick, std::memory_order_relaxed);
 }
 void AudioEngine::setLoopRange(Tick start, Tick end) {
   Cmd c{Cmd::LoopRange};
   c.tick = static_cast<double>(std::max<Tick>(0, start));
   c.tick2 = static_cast<double>(std::max<Tick>(0, end));
   send(c);
+  uiLoopA_ = c.tick;
+  uiLoopB_ = c.tick2;
 }
 void AudioEngine::setLooping(bool loop) {
   Cmd c{Cmd::Loop};
@@ -741,9 +762,7 @@ void AudioEngine::drain(const Program* p) {
         if (p) releaseAll(p, 0, true);
         clearLive();
         tPlaying_ = false;
-        anchorTick_ = 0;
-        clock_ = 0;
-        pastLoop_ = false;
+        landAt(c.tick);  // J-49: the seek position (0 by default); past a selection stays past it (J-40)
         break;
       case Cmd::Pause:
         countInLeft_ = 0;

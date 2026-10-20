@@ -1937,14 +1937,14 @@ void drawPlaylist(App& a) {
     cg.anchor = hoverClip;
     cg.key = 0x504C000000000000ull ^ (clipGestureCounter++ << 8);
     if (inRuler && lClick && hoverMarker >= 0) {
-      a.engine.setMode(PlayMode::Song);
+      if (a.engine.mode() != PlayMode::Song) a.engine.setMode(PlayMode::Song);  // J-49: no rewind when already in song mode
       j31::songJump(a, s.markers[static_cast<size_t>(hoverMarker)].pos);  // jump to the marker (J-31: quantized when the option is on)
     } else if (inRuler && lClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
       st.selStart = st.selEnd = 0;  // double-click clears the time selection
     } else if (inRuler && (rClick || (lClick && io.KeyCtrl))) {
       cg.kind = ClipGesture::TimeSel;
     } else if (inRuler && lClick) {
-      a.engine.setMode(PlayMode::Song);
+      if (a.engine.mode() != PlayMode::Song) a.engine.setMode(PlayMode::Song);  // J-49: no rewind when already in song mode
       cg.kind = ClipGesture::Scrub;  // the position follows the pointer until release
       cg.lastScrub = std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
       j31::songJump(a, cg.lastScrub);  // J-31: a click while playing waits for the jump grid

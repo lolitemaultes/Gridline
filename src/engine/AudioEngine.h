@@ -36,12 +36,31 @@ class AudioEngine {
   const std::shared_ptr<const Program>& program() const { return current_; }
 
   void play();
-  void stop();  // stop and return to the start (or the last play start)
+  // J-49 transport position rules (FL-like song position marker):
+  //  - setPosition / jumpTo with seek = true (ruler clicks, scrubbing, time
+  //    selections, marker jumps, MIDI song position) also set the *seek
+  //    position*: where Stop returns. Automatic moves pass seek = false.
+  //  - stop(): stops and returns to the seek position (0 when none was set);
+  //    with setReturnToSeek(false) it returns to the start of the time
+  //    selection (song mode) or 0 instead. Repeated play / stop cycles keep
+  //    returning to the same seek position until a new one is set.
+  //  - pause(): stops where playback is (the seek position is kept).
+  //  - stopToStart(): stops, returns to 0 and clears the seek position (new
+  //    project, offline renders).
+  //  - a mode change (pattern / song / live) clears the seek position (the
+  //    transport starts over at 0 in the new mode).
+  void stop();
+  void stopToStart();
   void pause();
   void togglePlay();
   void setMode(PlayMode m);
   void setPattern(ObjectId pattern);
-  void setPosition(Tick tick);
+  void setPosition(Tick tick, bool seek = true);
+  void setReturnToSeek(bool on) { returnToSeek_.store(on, std::memory_order_relaxed); }
+  bool returnToSeek() const { return returnToSeek_.load(std::memory_order_relaxed); }
+  double seekPosition() const { return seekTick_.load(std::memory_order_relaxed); }
+  // Where stop() lands now (UI thread).
+  double stopTarget() const;
   void setLooping(bool loop);  // offline renders turn looping off
   // Offline render (export): hosted plugins are told (time info / process
   // mode). Set before processing starts.
@@ -348,6 +367,9 @@ class AudioEngine {
   std::atomic<PlayMode> mode_{PlayMode::Pattern};
   std::atomic<ObjectId> pattern_{kNoId};
   std::atomic<double> posTick_{0};
+  std::atomic<double> seekTick_{0};        // J-49: the song position marker (where Stop returns)
+  std::atomic<bool> returnToSeek_{true};
+  double uiLoopA_ = 0, uiLoopB_ = 0;       // UI-thread copy of the time selection
   std::atomic<float> cpu_{0}, outPeakL_{0}, outPeakR_{0};
 
   // Note processor timing: transport segments of the current block.

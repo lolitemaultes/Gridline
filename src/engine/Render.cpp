@@ -212,7 +212,7 @@ RenderResult renderAudio(const Song& source, const RenderJob& job) {
   };
   bool ok = true;
   while (ok && pos < body) ok = step(std::min<int64_t>(bs, body - pos));
-  eng.stop();  // releases every note at the scope end; effects ring on
+  eng.stopToStart();  // releases every note at the scope end; effects ring on
   while (ok && pos < body + lat) ok = step(std::min<int64_t>(bs, body + lat - pos));
   if (tails)
     while (ok && pos < body + lat + tailCap && (lastLoud < 0 ? false : pos - 1 - lastLoud < hold)) ok = step(bs);

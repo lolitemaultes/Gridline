@@ -48,6 +48,7 @@ Settings::Settings() {
       {"piano.editableGhosts", b(false)},              // clicking a ghost note edits it in place
       {"piano.followKeyMarkers", b(true)},             // scale highlighting follows key markers
       {"transport.jumpQuantize", Json::makeNumber(0)}, // ops::jumpGrid mode (0 = jump at once)
+      {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
       {"ui.scale", Json::makeNumber(1.0)},
       {"ui.showHints", b(true)},
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing

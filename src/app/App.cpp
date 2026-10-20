@@ -156,13 +156,13 @@ void runMarkerActions(App& a) {
       switch (m.action) {
         case MarkerAction::Pause:
           a.engine.pause();
-          a.engine.setPosition(m.pos);
+          a.engine.setPosition(m.pos, false);  // an automatic move: Stop still returns to the user's position
           break;
         case MarkerAction::Stop: a.engine.stop(); break;
         case MarkerAction::Skip:
           for (const auto& n : s.markers)
             if (n.pos > m.pos) {
-              a.engine.setPosition(n.pos);
+              a.engine.setPosition(n.pos, false);
               break;
             }
           break;
@@ -304,7 +304,7 @@ void App::applyProjectDefaults(Song& s) const {
 }
 
 void App::startProject(Song s) {
-  engine.stop();
+  engine.stopToStart();
   engine.panic();
   doc.reset(std::move(s));  // the new project is the "saved" baseline, with no history
   trimSamplesAt_ = now + 1.0;  // J-30: the old project's samples leave the cache once its program is retired
@@ -375,7 +375,7 @@ bool App::openProject(const std::string& path) {
     notify("Could not open project: " + err, true);
     return false;
   }
-  engine.stop();
+  engine.stopToStart();
   engine.panic();
   doc.reset(std::move(s));
   trimSamplesAt_ = now + 1.0;  // J-30
@@ -401,7 +401,7 @@ bool App::importFlpProject(const std::string& path) {
     notify("FL Studio import failed: " + err, true);
     return false;
   }
-  engine.stop();
+  engine.stopToStart();
   engine.panic();
   doc.reset(std::move(s));
   trimSamplesAt_ = now + 1.0;  // J-30
@@ -681,7 +681,7 @@ bool App::revertToLastBackup() {
     notify("Could not read the backup: " + err, true);
     return false;
   }
-  engine.stop();
+  engine.stopToStart();
   doc.editSong("revert to last backup", [&s](Song& x) { x = s; });
   notify("Reverted to " + fs::path(list.back()).filename().string());
   return true;

@@ -277,7 +277,7 @@ void backupRestorePanel(App& a, float fieldW) {
     Song s;
     std::string err;
     if (loadProject(list[static_cast<size_t>(pick)], s, &err)) {
-      a.engine.stop();
+      a.engine.stopToStart();
       a.doc.editSong("restore backup", [&s](Song& x) { x = s; });
       a.notify("Restored " + fs::path(list[static_cast<size_t>(pick)]).filename().string());
     } else {

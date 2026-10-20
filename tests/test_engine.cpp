@@ -226,6 +226,137 @@ int main() {
     expect(near(0.5), "loop: without a selection the song wraps to its start");
   }
 
+  // 9d. J-49: Stop returns to the song position marker (the last position the
+  // user set: ruler click / scrub / jump / time selection), every time, until
+  // a new one is set; pause stays put; automatic moves don't move the marker.
+  {
+    gl::Document ld = makeDoc();
+    ld.addClip(ld.song().patterns[0].id, 0, 7 * ld.song().barTicks());  // 8 bars
+    gl::ProgramBuilder builder;
+    gl::AudioEngine eng(44100);
+    eng.setProgram(builder.build(ld.song()));
+    eng.setMode(gl::PlayMode::Song);
+    const double bar = static_cast<double>(ld.song().barTicks());  // 2 s at 120 BPM
+    const int64_t barSmp = 88200;
+    std::vector<float> L(barSmp * 4), R(barSmp * 4);
+    auto run = [&](double bars) { eng.process(L.data(), R.data(), static_cast<int>(bars * static_cast<double>(barSmp))); };
+    auto near = [&](double bars) { return std::fabs(eng.position() - bars * bar) < 0.02 * bar; };
+    const gl::Tick b3 = static_cast<gl::Tick>(3 * bar);
+    eng.play();
+    run(0.5);
+    eng.stop();
+    run(0.01);
+    expect(eng.position() == 0 && eng.seekPosition() == 0, "seek: no position set, stop returns to 0");
+    eng.jumpTo(b3, 0);  // ruler click while stopped (J-31 path)
+    for (int cycle = 0; cycle < 3; ++cycle) {
+      eng.play();
+      run(0.5);
+      expect(near(3.5), "seek: plays from the clicked position");
+      eng.stop();
+      expect(eng.position() == static_cast<double>(b3), "seek: stop shows the clicked position at once");
+      run(0.01);
+      expect(!eng.playing() && eng.position() == static_cast<double>(b3), "seek: stop returns to the clicked position (every cycle)");
+    }
+    eng.play();  // pause keeps the playhead; a later stop still returns to the marker
+    run(0.5);
+    eng.pause();
+    run(0.01);
+    expect(near(3.5), "seek: pause stays where playback paused");
+    eng.play();
+    run(0.25);
+    eng.stop();
+    run(0.01);
+    expect(eng.position() == static_cast<double>(b3), "seek: stop after pause / resume returns to the marker");
+    eng.play();  // a click while playing moves the marker
+    run(0.25);
+    eng.setPosition(static_cast<gl::Tick>(5 * bar));
+    run(0.25);
+    expect(near(5.25), "seek: a click while playing jumps there");
+    eng.stop();
+    run(0.01);
+    expect(near(5.0), "seek: stop returns to the latest click");
+    eng.play();  // an automatic move (marker action) keeps the marker
+    run(0.1);
+    eng.pause();
+    eng.setPosition(static_cast<gl::Tick>(6 * bar), false);
+    eng.stop();
+    run(0.01);
+    expect(near(5.0), "seek: automatic moves don't move the marker");
+    // Quantized jump (J-31): stop before it lands returns to the jump target.
+    eng.play();
+    run(0.1);
+    eng.jumpTo(static_cast<gl::Tick>(2 * bar), static_cast<gl::Tick>(bar));
+    run(0.1);
+    expect(eng.jumpPending(), "seek: quantized jump waits");
+    eng.stop();
+    run(0.01);
+    expect(near(2.0) && !eng.jumpPending(), "seek: stop with a pending jump returns to its target");
+    // Time selection (bar 2) + a marker past it (J-40): stop lands past the
+    // selection and playback from there still plays on (no bounce back).
+    eng.setLoopRange(static_cast<gl::Tick>(bar), static_cast<gl::Tick>(2 * bar));
+    eng.setPosition(static_cast<gl::Tick>(bar));  // making the selection puts the marker at its start
+    eng.play();
+    run(1.5);
+    expect(near(1.5), "seek: selection loops");
+    eng.stop();
+    run(0.01);
+    expect(near(1.0), "seek: stop returns to the selection start");
+    eng.jumpTo(static_cast<gl::Tick>(4 * bar), 0);
+    eng.play();
+    run(0.5);
+    eng.stop();
+    run(0.01);
+    expect(near(4.0), "seek: stop returns past the selection to the clicked position");
+    eng.play();
+    run(0.5);
+    expect(near(4.5), "seek: playing again from past the selection plays on (J-40)");
+    eng.stop();
+    // Option off: stop goes to the selection start (song mode), or 0 without one.
+    eng.setReturnToSeek(false);
+    eng.play();
+    run(0.25);
+    eng.stop();
+    run(0.01);
+    expect(near(1.0), "seek off: stop returns to the time selection start");
+    eng.setLoopRange(0, 0);
+    eng.play();
+    run(0.25);
+    eng.stop();
+    run(0.01);
+    expect(eng.position() == 0, "seek off: stop returns to the song start");
+    eng.setReturnToSeek(true);
+    expect(near(0.0) && eng.seekPosition() == 4 * bar, "seek: the marker survives the option being off");
+    // stopToStart clears the marker; a mode change clears it.
+    eng.stopToStart();
+    run(0.01);
+    expect(eng.position() == 0 && eng.seekPosition() == 0, "seek: stopToStart returns to 0 and clears the marker");
+    eng.setPosition(static_cast<gl::Tick>(2 * bar));
+    eng.setMode(gl::PlayMode::Song);  // same mode: the marker stays
+    expect(eng.seekPosition() == 2 * bar, "seek: re-selecting the same mode keeps the marker");
+    eng.setMode(gl::PlayMode::Pattern);
+    expect(eng.seekPosition() == 0, "seek: a mode change clears the marker");
+  }
+  // 9e. J-49 pattern mode (piano roll ruler): stop returns to the scrubbed position.
+  {
+    gl::ProgramBuilder builder;
+    gl::AudioEngine eng(44100);
+    gl::Song ps = s;
+    ps.tempo = 120;
+    eng.setProgram(builder.build(ps));
+    eng.setPattern(ps.patterns[0].id);
+    eng.setMode(gl::PlayMode::Pattern);
+    eng.setPosition(96);
+    std::vector<float> L(22050), R(22050);
+    for (int cycle = 0; cycle < 2; ++cycle) {
+      eng.play();
+      eng.process(L.data(), R.data(), 22050);
+      expect(eng.position() > 96, "pattern seek: plays from the scrubbed position");
+      eng.stop();
+      eng.process(L.data(), R.data(), 256);
+      expect(eng.position() == 96, "pattern seek: stop returns to the scrubbed position");
+    }
+  }
+
   // 10. Realtime engine: pattern mode loops; live notes; stop.
   {
     gl::ProgramBuilder builder;
