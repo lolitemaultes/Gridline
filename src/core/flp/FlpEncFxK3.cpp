@@ -357,11 +357,71 @@ Encoder chorus() {
     w.i32(0);      // 11 wet only
     return w.b;
   };
-  e.fields = [](const Bytes&) {
-    using namespace pp;
-    return tagFields(4, {{ChoDelay, 0, 0, 1024},   {ChoDepthMs, 1, 0, 5000}, {ChoStereo, 2, 0, 1024},    {ChoRate, 3, 0, 5000},
-                         {ChoRate2, 4, 0, 5000},   {ChoRate3, 5, 0, 5000},   {ChoWave1, 6, 0, 1024},     {ChoWave2, 7, 0, 1024},
-                         {ChoWave3, 8, 0, 1024},   {ChoCrossMode, 9, 0, 100}, {ChoCrossFreq, 10, 0, 5000}, {ChoWetOnly, 11, 0, 1024}});
+  static const int kGl[12] = {pp::ChoDelay, pp::ChoDepthMs, pp::ChoStereo, pp::ChoRate, pp::ChoRate2, pp::ChoRate3,
+                              pp::ChoWave1, pp::ChoWave2, pp::ChoWave3, pp::ChoCrossMode, pp::ChoCrossFreq, pp::ChoWetOnly};
+  static const int kRange[12] = {1024, 5000, 1024, 5000, 5000, 5000, 1024, 1024, 1024, 100, 5000, 1024};
+  e.fields = [](const Bytes& b) {
+    std::vector<Field> f;
+    // J-44: the older float layout (no version, 12 × f32 0..1 of each range).
+    if (b.size() == 48)
+      for (size_t k = 0; k < 12; ++k) f.push_back(field(kGl[k], 4 * k, Type::F32, 0, 1));
+    else
+      for (size_t k = 0; k < 12; ++k) f.push_back(i32(kGl[k], 4 + 4 * k, 0, kRange[k]));
+    return f;
+  };
+  // J-44: values between the integer steps (states FL saved in the float
+  // layout: "Chorus send") are written in that layout, which FL still loads —
+  // when it reaches more of the values than the integer one (the float grid
+  // misses other values: an LFO rate of 2.45 Hz is only on the integer one).
+  // Only the continuous knobs (delay, depth, stereo, LFO rates, cross cutoff)
+  // can fall between steps; each is searched on its monotonic scale.
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    if (b.size() != 52) return;
+    auto misses = [&](Bytes t, bool flt) {
+      PluginState cur;
+      int n = 0;
+      for (size_t k : {0u, 1u, 2u, 3u, 4u, 5u, 10u}) {
+        const float want = param(g, kGl[k]);
+        auto at = [&](double v) {
+          if (flt) {
+            const float x = static_cast<float>(v);
+            uint32_t u;
+            std::memcpy(&u, &x, 4);
+            putU32(t, 4 * k, u);
+          } else {
+            putI32(t, 4 + 4 * k, static_cast<int32_t>(v));
+          }
+          return decoded("Fruity Chorus", t, c, cur) ? param(cur, kGl[k]) : NAN;
+        };
+        double a = 0, z = flt ? 1.0 : kRange[k];
+        if (!(at(a) <= want && want <= at(z))) continue;  // outside the knob: the solver clamps it
+        bool hit = at(a) == want || at(z) == want;
+        for (int it = 0; it < 64 && !hit; ++it) {
+          const double m = flt ? static_cast<float>(0.5 * (a + z)) : std::floor(0.5 * (a + z));
+          if (m == a || m == z) break;
+          const float v = at(m);
+          hit = v == want;
+          (v < want ? a : z) = m;
+        }
+        for (double r : {a, z}) {  // neighbours in the stored precision
+          float x = static_cast<float>(r);
+          for (int d = 0; d < 4 && flt && !hit; ++d, x = std::nextafter(x, 2.0f)) hit = at(x) == want;
+        }
+        n += hit ? 0 : 1;
+      }
+      return n;
+    };
+    const int onInts = misses(b, false);
+    if (onInts == 0) return;
+    Bytes f(48);
+    for (size_t k = 0; k < 12; ++k) {
+      const float x = static_cast<float>(static_cast<int32_t>(getU32(b, 4 + 4 * k))) / static_cast<float>(kRange[k]);
+      uint32_t u;
+      std::memcpy(&u, &x, 4);
+      putU32(f, 4 * k, u);
+    }
+    if (misses(f, true) >= onInts) return;
+    b = std::move(f);
   };
   return e;
 }

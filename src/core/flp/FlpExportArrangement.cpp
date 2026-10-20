@@ -607,6 +607,14 @@ void Exporter::writeMixer() {
               if (sameLevel) v = r.value;
             }
           if (v != 12800) kept.push_back({static_cast<uint8_t>(d), 32, 0, v});
+          // J-44: FL has no pre-fader route. A route is only {destination
+          // byte in 235, level record in 225} (level 0 = sidechain only); the
+          // engine's routing info and its menus (route, sidechain, reset,
+          // "send previous") carry no pre / post choice, and in all 164
+          // shipped projects the 235 bytes are only 0 / 1 and the 225 route
+          // records only levels (kind 31 id 64+k, kind 32). FL's own pre-fader tap is a
+          // Fruity Send in a slot — before the strip EQ, so not the same
+          // signal — hence the send is written post-fader and reported.
           if (sd.preFader) rep.counts["mixer: pre-fader sends written post-fader"]++;
         }
         tr = std::move(kept);

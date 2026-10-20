@@ -235,18 +235,10 @@ inline void testEncJ22() {
   corpus("Fruity granulizer", "J22 Fruity granulizer");
   corpus("Wave Traveller", "J22 Wave Traveller");
   corpus("Autogun", "J22 Autogun");
-  {
-    // Records older than version 10 leave out articulators (4..5 before
-    // version 4, 11..12 before 10); the decoder gives those Gridline defaults
-    // that a current record cannot express the same way (an LFO speed of
-    // exactly 1 is not on the knob's grid): those stay approximate natively.
-    int old = 0;
-    for (const Bytes& b : corpusStates("Ogun", 400)) {
-      gl::flp::j22::AlloyDecoded d;
-      if (gl::flp::j22::decodeAlloyState(b.data(), b.size(), d, false) && d.version < 10) ++old;
-    }
-    corpus("Ogun", "J22 Ogun", old);
-  }
+  // Records older than version 10 leave out articulators (4..5 before
+  // version 4, 11..12 before 10): they load FL's fresh articulator (J-44), so
+  // every record is written exactly from Gridline's values.
+  corpus("Ogun", "J22 Ogun");
   {
     Stats s = corpusRoundTrip("Morphine", 400);  // no default state: native = FL's defaults
     expect(s.states > 0 && s.decoded == s.states && s.patchExact == s.decoded, "J22 Morphine: corpus decodes, unchanged = verbatim");

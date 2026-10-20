@@ -42,14 +42,14 @@ inline void testEncFxK3() {
     putI32(b, 20, 40000);
   });
   // Fruity Chorus: one shipped mixer preset is an old float state whose
-  // values fall between the integer knob steps (not representable).
+  // values fall between the integer knob steps: written in that layout (J-44).
   fxbPlugin("Fruity Chorus", "gl.chorus", [](Bytes& b) {
     putI32(b, 4 + 4 * 0, 300);
     putI32(b, 4 + 4 * 3, 4000);
     putI32(b, 4 + 4 * 7, 700);
     putI32(b, 4 + 4 * 9, 60);
     putI32(b, 4 + 4 * 11, 1024);
-  }, 1);
+  });
   fxbPlugin("Fruity WaveShaper", "gl.waveshaper", [](Bytes& b) {
     putI32(b, 4, 150);
     putU8(b, 16, 1);

@@ -180,6 +180,14 @@ bool decodeState(const std::string& flName, const Bytes& state, PluginMapping& o
     s.size = static_cast<uint32_t>(state.size());
     evs.push_back(s);
   }
+  const Bytes sample = ec.channelSample.empty() ? Bytes{} : utf16z(ec.channelSample);
+  if (!sample.empty()) {
+    Event e;
+    e.id = 196;
+    e.data = sample.data();
+    e.size = static_cast<uint32_t>(sample.size());
+    evs.push_back(e);
+  }
   out = PluginMapping{};
   out.flName = flName;
   const PluginDecoder* dec = findDecoder(flName);
@@ -382,7 +390,14 @@ Result encode(const PluginState& g, const std::string& originFlName, const Bytes
 
 namespace {
 
-Result encodeWith(const Encoder* e, const PluginState& g, const std::string& originFlName, const Bytes* originState, const EncodeContext& ec) {
+Result encodeWith(const Encoder* e, const PluginState& g, const std::string& originFlName, const Bytes* originState, const EncodeContext& ec0) {
+  // J-44: a plugin that plays the channel sample reads it from the channel's
+  // event 196, which the channel writer adds for it (FlpExportChannels.cpp):
+  // decode the state with that event, as FL and the importer see it.
+  EncodeContext ec = ec0;
+  if (ec.channelSample.empty() && !g.data.empty() && g.data.find('\n') == std::string::npos)
+    if (const PluginInfo* info = findPlugin(g.type); info && info->usesSample && info->kind == PluginKind::Generator)
+      ec.channelSample = flPath(g.data, ec);
   Result r;
   r.flName = e ? e->flName : originFlName;
   // Template: the origin state, else the encoder's defaults.
@@ -403,9 +418,10 @@ Result encodeWith(const Encoder* e, const PluginState& g, const std::string& ori
   if (decOk && m.state.type == g.type && (hosted || m.state.params == g.params) && m.state.data == g.data && m.state.ins == g.ins) {
     r.state = t;
     r.hasState = !t.empty();
-    r.quality = fromOrigin ? Result::Verbatim : (t.empty() ? Result::Defaults : Result::Exact);
+    const bool stateless = e && e->stateless;
+    r.quality = fromOrigin ? Result::Verbatim : (t.empty() && !stateless ? Result::Defaults : Result::Exact);
     if (r.quality == Result::Defaults) r.note = "FL defaults (the defaults match)";
-    if (!r.hasState && r.quality == Result::Exact) r.quality = Result::Defaults;
+    if (!r.hasState && r.quality == Result::Exact && !stateless) r.quality = Result::Defaults;
     return r;
   }
   if (!e || t.empty()) {
@@ -527,7 +543,7 @@ std::string encodeCheck(const std::vector<std::string>& files, const CheckOption
           // encode() picks the native encoder by type; force this FL plugin:
           // pass the defaults as an "origin" so the same FL plugin is used.
           r = encode(m.state, name, t.empty() ? nullptr : &t, ec);
-          if (t.empty()) r.quality = Result::Defaults;
+          if (t.empty() && !enc->stateless) r.quality = Result::Defaults;
         }
         if (r.quality == Result::Exact || r.quality == Result::Verbatim) ++nExact;
         else if (r.quality == Result::Approx) ++nApprox;

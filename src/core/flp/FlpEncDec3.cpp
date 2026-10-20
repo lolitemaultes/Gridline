@@ -912,6 +912,17 @@ Encoder dashboard() {
 // state; write() replaces it (the rest of the state stays).
 Encoder soundfont() {
   Encoder e = make("Soundfont Player", "gl.multisampler", -1, true);
+  // J-44: without the FL origin, the state starts from the FL installation's
+  // plugin database preset (its bank / program / envelope / effect settings
+  // are FL's defaults; their layout is not modelled here); write() puts the
+  // instance's SoundFont in.
+  e.defaultsIn = [](const EncodeContext& c) {
+    if (c.factoryData.empty()) return Bytes{};
+    File f;
+    if (!readFile(c.factoryData + "/Data/Patches/Plugin database/Generators/Misc/SoundFont Player.fst", f, nullptr)) return Bytes{};
+    const Event* s = pluginState(f.events);
+    return s && s->size >= 16 ? Bytes(s->data, s->data + s->size) : Bytes{};
+  };
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
     PluginState cur;
     if (decoded("Soundfont Player", b, c, cur) && cur.data == g.data) return;
@@ -925,11 +936,15 @@ Encoder soundfont() {
     for (size_t at = 0; at + 4 <= b.size(); ++at) {
       auto lower = [&](size_t i) { return static_cast<char>(std::tolower(b[i])); };
       if (!(lower(at) == '.' && lower(at + 1) == 's' && lower(at + 2) == 'f' && b[at + 3] == '2')) continue;
-      size_t s = at;
-      while (s >= 1 && b[s - 1] >= 0x20) --s;
-      if (s == 0) return;
-      const size_t len = at + 4 - s;
-      if (static_cast<size_t>(b[s - 1]) != len) return;  // not a length-prefixed string: leave it
+      // the string's start: where the length byte before it matches (J-44: a
+      // length of 0x20 or more is itself a printable byte)
+      size_t s = at, len = 0;
+      for (; s >= 1 && b[s] >= 0x20; --s)
+        if (static_cast<size_t>(b[s - 1]) == at + 4 - s) {
+          len = at + 4 - s;
+          break;
+        }
+      if (len == 0) return;  // not a length-prefixed string: leave it
       Bytes out(b.begin(), b.begin() + static_cast<std::ptrdiff_t>(s - 1));
       out.push_back(static_cast<uint8_t>(path.size()));
       out.insert(out.end(), path.begin(), path.end());

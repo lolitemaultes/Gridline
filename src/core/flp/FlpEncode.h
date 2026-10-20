@@ -66,6 +66,9 @@ struct Encoder {
   int nativeRank = -1;
   std::function<bool(const PluginState&)> accepts = {};  // empty = any state of glType
   bool generator = false;  // instrument (channel) plugin
+  // J-44: FL stores no state for this plugin at all (no event 213): an
+  // instance the decoder reproduces from nothing is written exactly.
+  bool stateless = false;
   // A fresh state with the plugin's default settings. Empty function or empty
   // result: unknown — the plugin is then written without a state (FL loads it
   // with its defaults) and the export reports the settings as not carried.
@@ -93,6 +96,10 @@ struct EncodeContext {
   // J-39: the FL plugin the "Fruity Wrapper" encoder wraps (empty = its own
   // choice); encode() tries each one that fits (see wrapCandidates).
   std::string wrapAs;
+  // J-44: the channel's sample path (event 196, FL text) the export writes
+  // beside a plugin that plays the channel sample (Granulizer, a custom-wave
+  // 3x Osc, …): decodeState presents it to the decoder as the channel does.
+  std::string channelSample;
 };
 
 // FL plugins (by decoder name) that can carry this Gridline state inside FL's

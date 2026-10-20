@@ -100,7 +100,7 @@ inline void testEncFx2Mod() {
     gl::flp::PluginMapping m;
     expect(enc::decodeState("Fruity dB Meter", {}, m, ctx()) && m.state.type == "gl.meter", "dB Meter: decodes without a state");
     enc::Result r = enc::encode(m.state, "", nullptr, ctx());
-    expect(r.flName == "Fruity dB Meter" && r.quality == enc::Result::Defaults && r.mismatched.empty(),
+    expect(r.flName == "Fruity dB Meter" && r.quality == enc::Result::Exact && !r.hasState && r.mismatched.empty(),
            "dB Meter: a native meter is written without a state, nothing lost");
   }
   // Edison: recording settings on an empty editor; shipped states (one

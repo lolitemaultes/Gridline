@@ -290,6 +290,7 @@ Encoder dbMeter() {
   e.flName = "Fruity dB Meter";
   e.glType = "gl.meter";
   e.nativeRank = 0;  // no settings: FL loads it as is (peak meter)
+  e.stateless = true;  // FL writes no state for it (J-44: exact, not "defaults")
   return e;
 }
 

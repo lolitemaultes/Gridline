@@ -6,11 +6,14 @@
 // Studio's shipped presets / projects (every one walks to its exact end) and,
 // for field meanings, the plugins' own behaviour (clean-room notes in
 // the J-22 metal-group notes in the task report).
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
+#include <vector>
 #include "../../packs/models/metal.h"
 #include "FlpGen.h"
 #include "FlpJ22.h"
@@ -207,6 +210,38 @@ bool readArt(Rd& r, mt::AlloyArtData& A, int knobs[8]) {
   return !r.bad;
 }
 
+// J-44: an articulator an old state does not store (version < 4: 4..5,
+// version < 10: 11..12) keeps the plugin's fresh one — the articulator every
+// FL-written state carries for an untouched slot: record version 2, header
+// {0, 1, 1}, envelope (0,0) (0.75,1) (1.5,0.5) (0.25,0) at tension 0.2, off,
+// decay point 1, sustain point 2; LFO (0,0.5) (1,0.5) (0.25,1) (1,0.5), sustain
+// point 2; knobs 128 128 0 128 / 40000 0 0 0; four flat maps (0,1) (1,1).
+void freshArt(mt::AlloyArtData& A, int knobs[8]) {
+  std::vector<uint8_t> b;
+  auto i32 = [&b](int32_t v) {
+    for (int k = 0; k < 4; ++k) b.push_back(static_cast<uint8_t>(static_cast<uint32_t>(v) >> (8 * k)));
+  };
+  auto f32 = [&i32](float f) {
+    uint32_t u;
+    std::memcpy(&u, &f, 4);
+    i32(static_cast<int32_t>(u));
+  };
+  auto curve = [&](int kind, std::initializer_list<std::array<float, 3>> pts, std::array<int32_t, 5> tail) {
+    i32(kind), i32(1), i32(static_cast<int32_t>(pts.size()));
+    for (const auto& p : pts) f32(p[0]), f32(p[1]), f32(p[2]), i32(0);
+    for (int32_t v : tail) i32(v);
+  };
+  i32(2);
+  f32(0), f32(1), f32(1);
+  curve(1, {{0, 0, 0}, {0.75f, 1, 0.2f}, {1.5f, 0.5f, 0.2f}, {0.25f, 0, 0.2f}}, {0, 0, 1, -1, 2});
+  for (int v : {128, 128, 0, 128}) i32(v);
+  curve(2, {{0, 0.5f, 0}, {1, 0.5f, 0}, {0.25f, 1, 0}, {1, 0.5f, 0}}, {0, 0, -1, -1, 2});
+  for (int v : {40000, 0, 0, 0}) i32(v);
+  for (int m = 0; m < mt::AmCount; ++m) curve(3, {{0, 1, 0}, {1, 1, 0}}, {0, -1, -1, -1, -1});
+  Rd r{b.data(), b.size()};
+  readArt(r, A, knobs);
+}
+
 // Option block defaults (object offsets 0x200..) for fields an old version does not store.
 void alloyOptionDefaults(uint8_t* o) {
   std::memset(o, 0, 64);
@@ -276,8 +311,12 @@ bool decodeAlloyState(const uint8_t* p, size_t n, AlloyDecoded& out, bool autogu
   if (r.bad) return false;
   // Articulators 0..12 (older versions leave out 4..5 and 11..12), timbre EQ curves 13..16.
   for (int a = 0; a < mt::AaCount; ++a) {
-    if ((ver < 4 && (a == 4 || a == 5)) || (ver < 10 && (a == 11 || a == 12))) continue;
     int knobs[8];
+    if ((ver < 4 && (a == 4 || a == 5)) || (ver < 10 && (a == 11 || a == 12))) {
+      freshArt(out.data.arts[static_cast<size_t>(a)], knobs);
+      if (a < mt::kAlloyEnvArts) std::memcpy(out.knobs[a], knobs, sizeof knobs);
+      continue;
+    }
     if (!readArt(r, out.data.arts[static_cast<size_t>(a)], knobs)) return false;
     if (a < mt::kAlloyEnvArts) std::memcpy(out.knobs[a], knobs, sizeof knobs);
   }
