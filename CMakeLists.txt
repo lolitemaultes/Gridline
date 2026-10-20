@@ -40,7 +40,7 @@ set_target_properties(vst3_pluginterfaces PROPERTIES POSITION_INDEPENDENT_CODE O
 if(APPLE)
   target_link_libraries(vst3_pluginterfaces PUBLIC "-framework CoreFoundation")
 endif()
-# Lua 5.4 (MIT, vendored unmodified; see third_party/lua/LICENSE): the script
+# Lua 5.4 (MIT, vendored; one patch in lstrlib.c, see third_party/lua/README.gridline.md): the script
 # engine (J-24). Compiled as C++ so script errors unwind with exceptions; no
 # io / os / package / debug libraries (left out of the tree). A fixed hash seed
 # keeps table iteration order the same on every run (deterministic scripts).
@@ -319,7 +319,7 @@ target_link_libraries(gridline_tests_qa_cross PRIVATE gridline_core)
 target_include_directories(gridline_tests_qa_cross PRIVATE tests)
 target_compile_options(gridline_tests_qa_cross PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME qa_cross COMMAND gridline_tests_qa_cross WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-foreach(ft flp flp-export fst project sample midi browser-index)
+foreach(ft flp flp-export fst project sample midi browser-index zip lua)
   add_test(NAME fuzz_${ft} COMMAND gridline_fuzz ${ft} 3 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endforeach()
 

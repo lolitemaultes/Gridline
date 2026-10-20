@@ -361,6 +361,7 @@ typedef struct MatchState {
   const char *p_end;  /* end ('\0') of pattern */
   lua_State *L;
   int matchdepth;  /* control for recursive depth (to avoid C stack overflow) */
+  size_t steps;  /* Gridline: work done by this match (see L_MAXMATCHSTEPS) */
   unsigned char level;  /* total number of captures (finished or unfinished) */
   struct {
     const char *init;
@@ -371,6 +372,16 @@ typedef struct MatchState {
 
 /* recursive function */
 static const char *match (MatchState *ms, const char *s, const char *p);
+
+
+/* Gridline patch (J-36): pattern matching runs in C, where the script
+** sandbox's instruction hook never fires, and backtracking patterns can
+** take exponential time ('.-.-.-.-x' on a long subject). Each find / match /
+** gsub call (and each gmatch step) gets a work budget; past it the match
+** raises "pattern too complex". */
+#if !defined(L_MAXMATCHSTEPS)
+#define L_MAXMATCHSTEPS	((size_t)50000000)
+#endif
 
 
 /* maximum recursion depth for 'match' */
@@ -508,6 +519,7 @@ static const char *max_expand (MatchState *ms, const char *s,
   ptrdiff_t i = 0;  /* counts maximum expand for item */
   while (singlematch(ms, s + i, p, ep))
     i++;
+  ms->steps += (size_t)i;  /* Gridline: count the scan */
   /* keeps trying to match with the maximum repetitions */
   while (i>=0) {
     const char *res = match(ms, (s+i), ep+1);
@@ -569,6 +581,8 @@ static const char *match_capture (MatchState *ms, const char *s, int l) {
 
 static const char *match (MatchState *ms, const char *s, const char *p) {
   if (l_unlikely(ms->matchdepth-- == 0))
+    luaL_error(ms->L, "pattern too complex");
+  if (l_unlikely(++ms->steps > L_MAXMATCHSTEPS))  /* Gridline: work budget */
     luaL_error(ms->L, "pattern too complex");
   init: /* using goto to optimize tail recursion */
   if (p != ms->p_end) {  /* end of pattern? */
@@ -758,6 +772,7 @@ static void prepstate (MatchState *ms, lua_State *L,
                        const char *s, size_t ls, const char *p, size_t lp) {
   ms->L = L;
   ms->matchdepth = MAXCCALLS;
+  ms->steps = 0;
   ms->src_init = s;
   ms->src_end = s + ls;
   ms->p_end = p + lp;
@@ -839,6 +854,7 @@ static int gmatch_aux (lua_State *L) {
   GMatchState *gm = (GMatchState *)lua_touserdata(L, lua_upvalueindex(3));
   const char *src;
   gm->ms.L = L;
+  gm->ms.steps = 0;  /* Gridline: budget per gmatch step */
   for (src = gm->src; src <= gm->ms.src_end; src++) {
     const char *e;
     reprepstate(&gm->ms);

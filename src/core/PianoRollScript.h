@@ -107,6 +107,7 @@ class PianoRollScript {
                       const std::string& fileRoot = "") const;
 
  private:
+  void readBack(lua_State* L, PianoRollResult& r) const;  // notes + markers from `score` (run protected)
   std::string source_, name_, path_;
   Header header_;
   Form form_;

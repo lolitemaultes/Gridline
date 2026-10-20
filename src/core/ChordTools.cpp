@@ -660,6 +660,24 @@ int nearestTone(int pitch, const std::vector<int>& classes) {
 }
 }  // namespace
 
+std::vector<Note> rebase(const std::vector<Note>& base, const std::vector<Note>& written, const std::vector<Note>& current) {
+  if (current == written) return base;
+  // Multiset differences: what left `written` and what is new in `current`.
+  std::vector<Note> gone = written, added;
+  for (const Note& n : current) {
+    auto it = std::find(gone.begin(), gone.end(), n);
+    if (it != gone.end())
+      gone.erase(it);
+    else
+      added.push_back(n);
+  }
+  std::vector<Note> out = base;
+  for (const Note& n : gone)
+    if (auto it = std::find(out.begin(), out.end(), n); it != out.end()) out.erase(it);
+  out.insert(out.end(), added.begin(), added.end());
+  return out;
+}
+
 std::vector<Note> write(const std::vector<Note>& existing, const ChordProgression& p, const WriteOpts& o,
                         std::vector<Note>* written) {
   const Tick total = totalLength(p);

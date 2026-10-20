@@ -157,14 +157,17 @@ bool readPart(Rd& r, int ver, RawPart& out) {
   int rec[13];
   for (int& v : rec) v = r.i32();
   out.blend = rec[0], out.prismMul = rec[3], out.clipMode = rec[5], out.subMode = rec[6];
-  out.phType = rec[10] - 200;
+  // J-36: offsets in 64 bits (a damaged state overflowed int: fuzzer, flp target).
+  auto off = [](int32_t v, int d) { return static_cast<int>(std::clamp<int64_t>(static_cast<int64_t>(v) - d, -1000000, 1000000)); };
+  out.phType = off(rec[10], 200);
   {
     float f;
     std::memcpy(&f, &rec[12], 4);
     out.eqMix = std::isfinite(f) ? f : 1.0f;
   }
   out.fType[0] = r.i32(), out.fType[1] = r.i32();
-  out.rType[0] = r.i32() - 100, out.rType[1] = r.i32() - 100;
+  out.rType[0] = off(r.i32(), 100);
+  out.rType[1] = off(r.i32(), 100);
   out.enabled = r.u8() != 0;
   r.u8(), r.u8();
   if (ver >= 11) r.i32();

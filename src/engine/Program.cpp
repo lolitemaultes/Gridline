@@ -15,6 +15,38 @@ namespace gl {
 
 namespace {
 
+// J-36: parameters that change while playing without a program build:
+// automation clips, pattern automation and internal controller links.
+using LiveTargets = std::set<std::pair<ObjectId, uint32_t>>;
+LiveTargets liveTargets(const Song& song) {
+  LiveTargets t;
+  for (const auto& a : song.automations) t.insert({a.owner, a.index});
+  for (const auto& p : song.patterns)
+    for (const auto& l : p.automation) t.insert({l.owner, l.index});
+  for (const auto& m : song.modLinks) t.insert({m.owner, m.index});
+  return t;
+}
+
+// What prepareHost sees: automated parameters at their maximum, so a section
+// that automation may switch on mid-song (Matrix FM delay / reverb / pluck,
+// Multi Delay units: lazily allocated) has its memory before it plays.
+// `base` = ParamId index of the plugin's parameter 0 on `owner`.
+void prepareForHost(const PluginState& st, const LiveTargets& live, ObjectId owner, uint32_t base,
+                    const std::function<void(const PluginState&)>& prepare) {
+  const PluginInfo* info = live.empty() ? nullptr : findPlugin(st.type);
+  if (!info) return prepare(st);
+  auto lo = live.lower_bound({owner, base});
+  if (lo == live.end() || lo->first != owner || lo->second >= base + static_cast<uint32_t>(st.params.size())) return prepare(st);
+  PluginState s = st;
+  for (auto it = lo; it != live.end() && it->first == owner; ++it) {
+    if (it->second < base) continue;
+    const size_t k = it->second - base;
+    if (k >= s.params.size() || k >= info->params.size()) break;
+    s.params[k] = static_cast<float>(info->params[k].max);
+  }
+  prepare(s);
+}
+
 // Effects that move audio between mixer tracks (see ProgSlot). Parameter 0
 // of each selects the destination: a mixer track number, or a bus 0..7.
 constexpr const char* kMixerSendType = "gl.send";
@@ -393,6 +425,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   // build finds them decoded.
   std::optional<SampleCache::NonBlocking> nonBlocking;
   if (asyncSamples_) nonBlocking.emplace();
+  const LiveTargets live = liveTargets(song);
   {  // decode the channels' samples in parallel before they are prepared one by one (J-25)
     std::vector<std::string> paths;
     for (const auto& c : song.channels)
@@ -494,7 +527,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
         }
         if (ps.rt) {
           effects[key] = ps.rt;
-          ps.rt->fx->prepareHost(es.plugin, sampleRate_);
+          prepareForHost(es.plugin, live, m.id, slotParam(m.id, static_cast<int>(s), 0).index,
+                         [&](const PluginState& st) { ps.rt->fx->prepareHost(st, sampleRate_); });
         }
         packs::prepareAux(es.plugin, ps.aux);
         ps.controller = hasOutputs(es.plugin.type);
@@ -597,7 +631,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     }
     chans[c.id] = pc.rt;
     pc.plugin = c.plugin;
-    if (pc.rt->gen) pc.rt->gen->prepareHost(c.plugin, sampleRate_);
+    if (pc.rt->gen)
+      prepareForHost(c.plugin, live, c.id, channelPluginParam(c.id, 0).index,
+                     [&](const PluginState& st) { pc.rt->gen->prepareHost(st, sampleRate_); });
     prepareChannelAux(c.plugin, pc.aux);
     pc.controller = hasOutputs(c.plugin.type);
     double g = c.muted ? 0.0 : dsp::faderGain(c.gain, 0.78), l, r;

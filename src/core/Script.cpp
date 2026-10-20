@@ -239,6 +239,20 @@ do
   string.match = function(s, p, ...) chk(s, p) return match(s, p, ...) end
   string.gmatch = function(s, p, ...) chk(s, p) return gmatch(s, p, ...) end
   string.gsub = function(s, p, ...) chk(s, p) return gsub(s, p, ...) end
+  -- J-36: finalizers run with debug hooks off (no instruction / time limit),
+  -- so an endless __gc loop would hang the host: metatables with __gc are refused.
+  local smt, rawget = setmetatable, rawget
+  setmetatable = function(t, mt)
+    if type(mt) == 'table' and rawget(mt, '__gc') ~= nil then error('__gc metamethods are not available in scripts', 2) end
+    return smt(t, mt)
+  end
+  -- table.move loops in C (no hook): bound the element count.
+  local move, tonumber = table.move, tonumber
+  table.move = function(a1, f, e, t, ...)
+    local nf, ne = tonumber(f), tonumber(e)
+    if nf and ne and ne - nf > 16777216 then error('too many elements to move', 2) end
+    return move(a1, f, e, t, ...)
+  end
 end
 )LUA";
 
@@ -379,12 +393,48 @@ bool Vm::exec(const std::string& code, const std::string& chunkName, std::string
   return ok;
 }
 
+// Raw lookup in the globals table: a script may give _G an __index
+// metamethod, and running Lua code (or raising) outside a protected call
+// would abort the process (J-36).
+static void rawGlobal(lua_State* L, const char* name) {
+  lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+  lua_pushstring(L, name);
+  lua_rawget(L, -2);
+  lua_remove(L, -2);
+}
+
 bool Vm::hasFunction(const char* fn) {
   if (!L_) return false;
-  lua_getglobal(L_, fn);
+  rawGlobal(L_, fn);
   bool f = lua_isfunction(L_, -1);
   lua_pop(L_, 1);
   return f;
+}
+
+namespace {
+int protectTrampoline(lua_State* L) {
+  auto* fn = static_cast<const std::function<void(lua_State*)>*>(lua_touserdata(L, 1));
+  lua_remove(L, 1);  // the arguments are now 1..n
+  (*fn)(L);
+  return 0;
+}
+}  // namespace
+
+bool Vm::protect(const std::function<void(lua_State*)>& fn, std::string* err, int nargs) {
+  if (!L_) {
+    if (err) *err = "scripting unavailable";
+    return false;
+  }
+  begin();
+  int top = lua_gettop(L_) - nargs;
+  lua_pushcfunction(L_, protectTrampoline);
+  lua_insert(L_, top + 1);
+  lua_pushlightuserdata(L_, const_cast<std::function<void(lua_State*)>*>(&fn));
+  lua_insert(L_, top + 2);
+  int st = lua_pcall(L_, nargs + 1, 0, 0);
+  bool ok = finish(st, 0, err);
+  lua_settop(L_, top);
+  return ok;
 }
 
 bool Vm::call(const char* fn, int nargs, int nres, std::string* err) {
@@ -392,7 +442,7 @@ bool Vm::call(const char* fn, int nargs, int nres, std::string* err) {
     if (err) *err = "scripting unavailable";
     return false;
   }
-  lua_getglobal(L_, fn);
+  rawGlobal(L_, fn);
   if (!lua_isfunction(L_, -1)) {
     lua_pop(L_, 1 + nargs);
     if (err) *err = std::string("the script has no function '") + fn + "'";

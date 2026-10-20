@@ -151,10 +151,20 @@ bool readForm(lua_State* L, int idx, Form& out, std::string* err) {
   out.description = fieldString(L, idx, "_desc", "");
   lua_getfield(L, idx, "_p");
   int list = lua_gettop(L);
+  if (!lua_istable(L, list)) {
+    if (err) *err = "the form's control list was replaced";
+    lua_settop(L, list - 1);
+    return false;
+  }
   const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(L, list));
   for (lua_Integer i = 1; i <= n && i <= 128; ++i) {
     lua_rawgeti(L, list, i);
     int t = lua_gettop(L);
+    if (!lua_istable(L, t)) {
+      if (err) *err = "control " + std::to_string(i) + " is not a table";
+      lua_settop(L, list - 1);
+      return false;
+    }
     FormParam p;
     std::string kind = fieldString(L, t, "kind", "");
     p.name = fieldString(L, t, "name", "");
@@ -426,17 +436,25 @@ bool PianoRollScript::loadSource(const std::string& source, const std::string& n
   if (!vm.ok() || !vm.exec(kScorePrelude, "score", err)) return false;
   if (!vm.exec(source, name_, err)) return false;
   if (vm.hasFunction("form")) {
-    lua_State* L = vm.L();
-    lua_getglobal(L, "_gl_newForm");
-    lua_call(L, 0, 1);
-    lua_pushvalue(L, -1);
-    if (!vm.call("form", 1, 0, err)) {
-      lua_pop(L, 1);
+    // Protected: the script may have replaced _gl_newForm or the form's
+    // fields (J-36: errors there aborted the process).
+    bool read = false;
+    std::string why;
+    if (!vm.protect(
+            [&](lua_State* L) {
+              lua_getglobal(L, "_gl_newForm");
+              lua_call(L, 0, 1);
+              lua_getglobal(L, "form");
+              lua_pushvalue(L, -2);
+              lua_call(L, 1, 0);
+              read = readForm(L, -1, form_, &why);
+            },
+            err))
+      return false;
+    if (!read) {
+      if (err) *err = why;
       return false;
     }
-    bool ok = readForm(L, -1, form_, err);
-    lua_pop(L, 1);
-    if (!ok) return false;
   }
   if (form_.description.empty()) form_.description = header_.get("description");
   source_ = source;
@@ -461,28 +479,51 @@ PianoRollResult PianoRollScript::run(const PianoRollContext& ctx, const std::vec
   lua_call(L, 1, 0);
   lua_pop(L, 1);
   bool ok = vm.exec(source_, name_, &r.error);
-  if (ok && vm.hasFunction("apply")) {
-    lua_getglobal(L, "score");
-    pushValues(L, form_, values);
-    ok = vm.call("apply", 2, 0, &r.error);
+  if (ok && vm.hasFunction("apply"))
+    ok = vm.protect(
+        [&](lua_State* S) {
+          lua_getglobal(S, "apply");
+          lua_getglobal(S, "score");
+          pushValues(S, form_, values);
+          lua_call(S, 2, 0);
+        },
+        &r.error);
+  if (!ok) {
+    r.log = vm.log();
+    return r;
+  }
+  // Read the notes back, protected: note tables may carry metamethods that
+  // raise or loop (J-36: an error there aborted the process).
+  std::string readErr;
+  if (vm.protect([&](lua_State* S) { readBack(S, r); }, &readErr)) {
+    r.markersChanged = r.markers != ctx.markers;
+  } else {
+    r.ok = false;
+    r.notes.clear(), r.sel.clear(), r.markers.clear();
+    r.error = readErr;
   }
   r.log = vm.log();
-  if (!ok) return r;
+  return r;
+}
 
-  // Read the notes back.
+void PianoRollScript::readBack(lua_State* L, PianoRollResult& r) const {
   lua_getglobal(L, "score");
   int st = lua_gettop(L);
+  if (!lua_istable(L, st)) {
+    r.error = "score is not a table";
+    return;
+  }
   lua_getfield(L, st, "_notes");
   if (!lua_istable(L, -1)) {
     r.error = "score._notes is not a list";
     lua_settop(L, st - 1);
-    return r;
+    return;
   }
   const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(L, -1));
   if (static_cast<size_t>(n) > kMaxNotes) {
     r.error = "too many notes (" + std::to_string(n) + ")";
     lua_settop(L, st - 1);
-    return r;
+    return;
   }
   std::vector<Note> notes;
   std::vector<bool> sel;
@@ -498,7 +539,7 @@ PianoRollResult PianoRollScript::run(const PianoRollContext& ctx, const std::vec
     if (!why.empty()) {
       r.error = "note " + std::to_string(i) + ": " + why;
       lua_settop(L, st - 1);
-      return r;
+      return;
     }
     notes.push_back(x);
     sel.push_back(s);
@@ -528,7 +569,7 @@ PianoRollResult PianoRollScript::run(const PianoRollContext& ctx, const std::vec
   }
   lua_settop(L, st - 1);
   std::stable_sort(r.markers.begin(), r.markers.end(), [](const Marker& a, const Marker& b) { return a.pos < b.pos; });
-  r.markersChanged = r.markers != ctx.markers;
+
   // Sort notes (start, pitch), selection follows.
   std::vector<size_t> order(notes.size());
   std::iota(order.begin(), order.end(), 0);
@@ -539,7 +580,6 @@ PianoRollResult PianoRollScript::run(const PianoRollContext& ctx, const std::vec
   r.sel.reserve(notes.size());
   for (size_t i : order) r.notes.push_back(notes[i]), r.sel.push_back(sel[i]);
   r.ok = true;
-  return r;
 }
 
 }  // namespace gl::script

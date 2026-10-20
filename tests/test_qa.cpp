@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <random>
@@ -20,14 +21,24 @@
 #include "Check.h"
 #include "Hermetic.h"
 #include "core/BrowserIndex.h"
+#include "core/ChordTools.h"
+#include "core/Grouping.h"
+#include "core/MenuOpsExtra.h"
+#include "core/MenuParity.h"
+#include "core/MixerOps.h"
+#include "core/NoteTools.h"
+#include "core/SongTools.h"
+#include "core/ControllerScript.h"
 #include "core/Demo.h"
 #include "core/Document.h"
 #include "core/Json.h"
 #include "core/MenuOps.h"
 #include "core/Params.h"
+#include "core/PianoRollScript.h"
 #include "core/PluginInfo.h"
 #include "core/Project.h"
 #include "core/flp/Flp.h"
+#include "engine/ClassicModFx.h"
 #include "engine/WavPack.h"
 
 using namespace gl;
@@ -43,6 +54,7 @@ struct Editor {
   std::mt19937_64 rng;
   std::vector<std::string> gens, fxs, notefx;
   int applied = 0;
+  bool newOps = true;  // J-36: mix in the operations added since J-21
 
   size_t pick(size_t n) { return n ? static_cast<size_t>(rng() % n) : 0; }
   int range(int lo, int hi) { return lo + static_cast<int>(pick(static_cast<size_t>(hi - lo + 1))); }
@@ -78,9 +90,184 @@ struct Editor {
     }
   }
 
+  std::set<ObjectId> someClips(int n = 3) {
+    std::set<ObjectId> c;
+    for (int k = 0; k < n; ++k) c.insert(anyClip());
+    c.erase(kNoId);
+    return c;
+  }
+  std::vector<ObjectId> someChannels(int n = 3) {
+    std::set<ObjectId> c;
+    for (int k = 0; k < n; ++k) c.insert(anyChannel());
+    c.erase(kNoId);
+    return {c.begin(), c.end()};
+  }
+  std::vector<ObjectId> someInserts(int n = 3) {
+    std::set<ObjectId> c;
+    for (int k = 0; k < n; ++k) c.insert(anyInsert());
+    c.erase(kNoId);
+    return {c.begin(), c.end()};
+  }
+  ObjectId anyClipOf(ClipKind k) {
+    std::vector<ObjectId> v;
+    for (const auto& c : s().playlist)
+      if (c.kind == k) v.push_back(c.id);
+    return v.empty() ? kNoId : v[pick(v.size())];
+  }
+
+  // J-36: the operations added since J-21 (J-27 menu ops, J-28 playlist
+  // tools, J-31 groups / loops / key markers / chords, J-12 mixer ops).
+  const char* stepNew() {
+    switch (pick(30)) {
+      case 0: {  // automation clip (as the "Create automation clip" command makes it)
+        ParamId pid = channelParam(anyChannel(), ChannelParam::Volume);
+        Tick st = anyTick(), len = range(1, s().ppq * 16);
+        int tr = range(0, 12);
+        d.editSong("create automation clip", [&](Song& x) {
+          AutomationClip c;
+          c.id = x.allocateId();
+          c.name = "auto";
+          c.owner = pid.owner;
+          c.index = pid.index;
+          c.points = {AutoPoint{0, 0.2f, 0, AutoShape::Curve}, AutoPoint{len, 0.9f, 0, AutoShape::Curve}};
+          Clip k;
+          k.id = x.allocateId();
+          k.kind = ClipKind::Automation;
+          k.source = c.id;
+          k.track = tr, k.start = st, k.length = len;
+          while (static_cast<int>(x.tracks.size()) <= tr) x.tracks.push_back(PlaylistTrack{});
+          x.automations.push_back(std::move(c));
+          x.playlist.push_back(k);
+        });
+        return "addAutomationClip";
+      }
+      case 1: {  // audio clip on a channel (no sample file: the clip plays nothing)
+        ObjectId ch = anyChannel();
+        if (ch == kNoId) return "addAudioClip-none";
+        Tick st = anyTick();
+        int tr = range(0, 12);
+        const Tick len = range(1, s().ppq * 8);
+        d.editSong("add audio clip", [&](Song& x) {
+          Clip k;
+          k.id = x.allocateId();
+          k.kind = ClipKind::Audio;
+          k.source = ch;
+          k.track = tr, k.start = st, k.length = len;
+          k.audioEnd = 1.5;
+          while (static_cast<int>(x.tracks.size()) <= tr) x.tracks.push_back(PlaylistTrack{});
+          x.playlist.push_back(k);
+        });
+        return "addAudioClip";
+      }
+      case 2: {
+        std::vector<ObjectId> pats;
+        for (int k = 0; k < 3; ++k) pats.push_back(anyPattern());
+        if (pick(3)) groupPatterns(d, pats, "g" + std::to_string(applied));
+        else if (pick(2)) ungroupPatterns(d, pats);
+        else deletePatternGroup(d, range(-1, 3));
+        return "patternGroups";
+      }
+      case 3: if (pick(2)) groupClips(d, someClips()); else ungroupClips(d, someClips()); return "clipGroups";
+      case 4: setStepLoop(d, anyPattern(), someChannels(), range(-2, 40)); return "setStepLoop";
+      case 5: if (pick(2)) loopToContent(d, anyPattern(), someChannels(), range(0, 16)); else burnStepLoops(d, anyPattern(), someChannels()); return "loopToContent/burn";
+      case 6: setKeyRange(d, anyChannel(), range(-5, 130), range(-5, 130)); return "setKeyRange";
+      case 7: if (pick(2)) sliceClip(d, anyClip(), anyTick()); else sliceAt(d, anyTick(), range(-1, 12)); return "slice";
+      case 8: slipClip(d, anyClip(), range(-s().ppq * 4, s().ppq * 4), pick(2) ? 0 : 77); return "slipClip";
+      case 9: muteClips(d, someClips(), range(-1, 3)); return "muteClips";
+      case 10: chopClips(d, someClips(2), range(-1, s().ppq * 2)); return "chopClips";
+      case 11: splitClipByChannel(d, anyClip()); return "splitClipByChannel";
+      case 12: if (pick(2)) insertSpace(d, anyTick(), range(-10, s().ppq * 8)); else deleteSpace(d, anyTick(), anyTick()); return "insert/deleteSpace";
+      case 13: sortPatterns(d, pick(2) ? PatternSort::Name : PatternSort::Color); return "sortPatterns";
+      case 14:
+        switch (pick(4)) {
+          case 0: addMarker(d, anyTick(), "m" + std::to_string(applied), range(0, 7), 1 << pick(4)); return "addMarker";
+          case 1: removeMarker(d, range(-1, 5)); return "removeMarker";
+          case 2: addKeyMarker(d, anyTick(), range(-2, 13), range(-1, 20)); return "addKeyMarker";
+          default: addJumpToNextBar(d, anyTick()); return "addJumpToNextBar";
+        }
+      case 15: if (pick(2)) createLayer(d, someChannels()); else cutItself(d, someChannels()); return "createLayer/cutItself";
+      case 16: {
+        std::set<ObjectId> a;
+        for (int k = 0; k < 2; ++k) a.insert(anyClipOf(ClipKind::Audio));
+        a.erase(kNoId);
+        switch (pick(4)) {
+          case 0: pitchAudioClips(d, a, static_cast<float>(range(-2400, 2400))); return "pitchAudioClips";
+          case 1: reverseAudioClips(d, a); return "reverseAudioClips";
+          case 2: makeAudioClipUnique(d, anyClipOf(ClipKind::Audio)); return "makeAudioClipUnique";
+          default: setAudioClipTimeMode(d, a, range(-1, 4)); return "setAudioClipTimeMode";
+        }
+      }
+      case 17: {
+        std::set<ObjectId> a;
+        for (int k = 0; k < 3; ++k) a.insert(anyClipOf(ClipKind::Automation));
+        a.erase(kNoId);
+        if (pick(2)) mergeAutomationClips(d, a); else deleteUnusedAutomationClips(d);
+        return "automationClipOps";
+      }
+      case 18:
+        switch (pick(6)) {
+          case 0: mixops::route(d, someInserts(2), someInserts(2), static_cast<mixops::RouteMode>(pick(4))); return "mixops::route";
+          case 1: mixops::createSubmix(d, someInserts(), "sub"); return "mixops::createSubmix";
+          case 2: mixops::insertTracks(d, range(-1, 10), range(0, 3)); return "mixops::insertTracks";
+          case 3: mixops::moveSlotTo(d, anyMixer(), range(-1, kEffectSlots), anyMixer(), range(-1, kEffectSlots), pick(2)); return "mixops::moveSlotTo";
+          case 4: mixops::setLatencyOffset(d, anyMixer(), range(-100, 5000)); return "mixops::setLatencyOffset";
+          default: mixops::setGroup(d, someInserts(), pick(2) ? "grp" : ""); return "mixops::setGroup";
+        }
+      case 19:
+        switch (pick(3)) {
+          case 0: setTrackLocked(d, range(-1, 12), pick(2)); return "setTrackLocked";
+          case 1: mergeTrackPatternClips(d, range(-1, 12)); return "mergeTrackPatternClips";
+          default: muteTrackClips(d, range(-1, 12), pick(2)); return "muteTrackClips";
+        }
+      case 20: {  // J-28 playlist tools: one drag over a selection (move / resize / trim start / slip)
+        std::set<ObjectId> sel = someClips();
+        const Tick dt = range(-s().ppq * 4, s().ppq * 4);
+        const int dtr = range(-2, 2), mode = range(0, 3);
+        d.editClips("tool drag", [&](std::vector<Clip>& v) {
+          for (auto& c : v) {
+            if (!sel.count(c.id)) continue;
+            switch (mode) {
+              case 0: c.start = std::max<Tick>(0, c.start + dt), c.track = std::max(0, c.track + dtr); break;
+              case 1: c.length = std::max<Tick>(1, (c.length ? c.length : s().ppq * 4) + dt); break;
+              case 2: {
+                Tick cut = std::clamp<Tick>(dt, 0, std::max<Tick>(0, (c.length ? c.length : s().ppq) - 1));
+                c.start += cut, c.offset += cut;
+                if (c.length) c.length -= cut;
+                break;
+              }
+              default: c.offset = std::max<Tick>(0, c.offset + dt); break;
+            }
+          }
+        }, pick(2) ? 0 : 0x7001);
+        return "toolDrag";
+      }
+      case 21: if (pick(2)) convertStepsToNotes(d, anyPattern(), anyChannel()); else convertNotesToSteps(d, anyPattern(), anyChannel()); return "convertSteps/Notes";
+      case 22: channelsToNewPattern(d, anyPattern(), someChannels(), pick(2)); return "channelsToNewPattern";
+      case 23: {  // chord progression editor: writes the progression into a pattern (one merged step)
+        chord::ChordProgression pr = chord::generate(range(0, 11), range(1, 6), range(1, 8), range(1, s().ppq * 8), 0.5, static_cast<uint32_t>(applied));
+        chord::WriteOpts o;
+        o.start = anyTick();
+        o.mode = static_cast<chord::NonChordMode>(pick(3));
+        ObjectId pt = anyPattern(), ch = anyChannel();
+        std::vector<Note> base;
+        if (const Pattern* pp = s().pattern(pt))
+          if (auto it = pp->notes.find(ch); it != pp->notes.end()) base = it->second;
+        d.setNotes(pt, ch, chord::write(base, pr, o), "chord progression", pick(2) ? 0x43485244ull : 0);
+        return "chordProgression";
+      }
+      case 24: if (pick(2)) groupLayerChildren(d, anyChannel(), "lg"); else splitLayerChildren(d, anyChannel()); return "layerChildren";
+      case 25: if (pick(2)) altSoloMixerTracks(d, someInserts()); else setSwingTruncate(d, someChannels(), range(-1, 3)); return "altSolo/swingTruncate";
+      case 26: autoFillSteps(d, anyPattern(), anyChannel()); return "autoFillSteps";
+      case 27: cloneChannelWithLinks(d, anyChannel()); return "cloneChannelWithLinks";
+      case 28: addMarkersEvery(d, anyTick(), anyTick(), range(-1, s().ppq * 4)); return "addMarkersEvery";
+      default: sendPatternClipsToTrack(d, anyPattern(), range(-1, 12)); return "sendPatternClipsToTrack";
+    }
+  }
+
   // One random edit; returns a short name (for failure messages).
   const char* step() {
     std::uniform_real_distribution<double> u(-0.2, 1.2);
+    if (newOps && pick(3) == 0) return stepNew();
     switch (pick(46)) {
       case 0: d.addChannel("ch" + std::to_string(applied), gens[pick(gens.size())], range(-1, 5)); return "addChannel";
       case 1: if (s().channels.size() > 1) d.removeChannel(anyChannel()); return "removeChannel";
@@ -496,6 +683,239 @@ void concurrentAtomicWrites() {
   expect(whole && left == 0, "the file holds one writer's complete text, no temp files left");
 }
 
+// J-36 regressions found by the extended undo stress / decoder sweep.
+void j36Regressions() {
+  {  // removePattern left the pattern's id in its pattern group: the saved
+     // project named a missing pattern and loaded back different.
+    Document d(makeDemoSong());
+    std::vector<ObjectId> pats;
+    for (const auto& p : d.song().patterns) pats.push_back(p.id);
+    groupPatterns(d, {pats[0], pats[1]}, "g");
+    const std::string before = text(d.song());
+    d.removePattern(pats[0]);
+    const auto& g = d.song().patternGroups;
+    bool clean = true;
+    for (const auto& x : g)
+      for (ObjectId id : x.patterns) clean = clean && d.song().pattern(id);
+    Json j;
+    Song back;
+    const std::string t = text(d.song());
+    expect(clean && jsonParse(t, j) && songFromJson(j, back) && text(back) == t, "removePattern drops it from its pattern group");
+    d.removePattern(pats[1]);
+    expect(d.song().patternGroups.empty(), "removing a group's last pattern removes the empty group");
+    d.undo();
+    d.undo();
+    expect(text(d.song()) == before, "undo restores the pattern group");
+  }
+  {  // removeChannel left its J-31 step loop entries in every pattern.
+    Document d(makeDemoSong());
+    const ObjectId pat = d.song().patterns[0].id, ch = d.song().channels[0].id;
+    setStepLoop(d, pat, {ch}, 6);
+    const std::string before = text(d.song());
+    d.removeChannel(ch);
+    Json j;
+    Song back;
+    const std::string t = text(d.song());
+    expect(d.song().patterns[0].stepLoop.count(ch) == 0 && jsonParse(t, j) && songFromJson(j, back) && text(back) == t,
+           "removeChannel drops its step loops");
+    d.undo();
+    expect(text(d.song()) == before, "undo restores the channel's step loop");
+  }
+  {  // Effector state with NaN floats: the clamp let NaN through to an int cast (fuzzer, fst target).
+    std::vector<uint8_t> b{'S', 'S', 'L', 'F', 0, 0, 0, 0};
+    b.resize(8 + 12 + 48, 0);
+    const uint32_t len = static_cast<uint32_t>(b.size() - 8);
+    for (int k = 0; k < 4; ++k) b[4 + static_cast<size_t>(k)] = static_cast<uint8_t>(len >> (8 * k));
+    const uint8_t nanBytes[4] = {0x00, 0x00, 0xC0, 0x7F};
+    for (size_t k = 0; k < 12; ++k) std::memcpy(&b[b.size() - 48 + 4 * k], nanBytes, 4);
+    flp::Event ev;
+    ev.id = 213;
+    ev.data = b.data();
+    ev.size = static_cast<uint32_t>(b.size());
+    flp::File f;
+    Song song;
+    flp::Report rep;
+    flp::Context c(f, song, rep);
+    flp::PluginMapping m;
+    bool ok = flp::decoders().at("Effector")(c, {ev}, m);
+    bool finite = true;
+    for (float v : m.state.params) finite = finite && std::isfinite(v);
+    expect(ok && finite, "Effector decoder: NaN state floats decode to finite parameters");
+  }
+  {  // Harmor part with INT_MIN in the phaser / filter type fields: "v - 200" overflowed (UBSan; fuzzer, flp target).
+    std::vector<uint8_t> b;
+    auto put = [&](int32_t v) {
+      for (int k = 0; k < 4; ++k) b.push_back(static_cast<uint8_t>(static_cast<uint32_t>(v) >> (8 * k)));
+    };
+    const int words = 386 + 12 + 13 + 4 + 8;
+    put(16), put(1), put(words * 4);
+    for (int i = 0; i < words; ++i) put(i == 386 + 12 + 10 || i == 386 + 12 + 13 + 2 || i == 386 + 12 + 13 + 3 ? INT32_MIN : 0);
+    flp::Event ev;
+    ev.id = 213;
+    ev.data = b.data();
+    ev.size = static_cast<uint32_t>(b.size());
+    flp::File f;
+    Song song;
+    flp::Report rep;
+    flp::Context c(f, song, rep);
+    flp::PluginMapping m;
+    (void)flp::decoders().at("Harmor")(c, {ev}, m);
+    expect(true, "Harmor decoder: extreme phaser / filter type values (checked by UBSan)");
+  }
+  // FL phaser stage count: lround of a huge decoded value overflowed int.
+  expect(classic::phaserStages(1e15) == 23 && classic::phaserStages(std::nan("")) == 3 && classic::phaserStages(-5) == 3 &&
+             classic::phaserStages(7.0) == 8,
+         "phaser stage count clamps huge / NaN raw values");
+}
+
+// J-36: the chord progression editor rewrote base + progression on every edit
+// from the notes it captured when it opened, so notes drawn in the piano roll
+// (or written by a script, or restored by undo) while it was open vanished at
+// the next chord edit. chord::rebase carries those changes into the base.
+void chordEditorKeepsOutsideEdits() {
+  Document d(makeDemoSong());
+  const ObjectId pat = d.song().patterns[0].id, ch = d.song().channels[0].id;
+  auto notesNow = [&] {
+    const Pattern* p = d.song().pattern(pat);
+    auto it = p->notes.find(ch);
+    return it == p->notes.end() ? std::vector<Note>{} : it->second;
+  };
+  std::vector<Note> base = notesNow();
+  std::vector<Note> written = base;
+  chord::ChordProgression prog = chord::generate(0, 1, 4, d.song().barTicks(), 0.0, 1);
+  chord::WriteOpts o;
+  o.mode = chord::NonChordMode::Keep;
+  auto chordEdit = [&] {  // what ChordEditorUi::writeNow does
+    base = chord::rebase(base, written, notesNow());
+    std::vector<Note> w = chord::write(base, prog, o);
+    d.setNotes(pat, ch, w, "chord progression", 0x43485244ull);
+    written = w;
+  };
+  chordEdit();
+  Note drawn;
+  drawn.start = d.song().ppq * 3, drawn.length = 24, drawn.pitch = 101;  // drawn in the piano roll meanwhile
+  d.addNote(pat, ch, drawn);
+  chord::transpose(prog.chords[0], 2);
+  chordEdit();
+  const auto has = [&](const Note& n) { auto v = notesNow(); return std::find(v.begin(), v.end(), n) != v.end(); };
+  expect(has(drawn), "chord editor: a note drawn while it is open survives the next chord edit");
+  // A note deleted outside (not a chord note) stays deleted.
+  std::vector<Note> v = notesNow();
+  v.erase(std::find(v.begin(), v.end(), drawn));
+  d.setNotes(pat, ch, v);
+  chord::transpose(prog.chords[1], -1);
+  chordEdit();
+  expect(!has(drawn), "chord editor: a note deleted while it is open stays deleted");
+  // Undo of the outside edit, then a chord edit: the undone state is the base.
+  d.addNote(pat, ch, drawn);
+  d.undo();
+  chordEdit();
+  expect(!has(drawn), "chord editor: an undone outside edit is not brought back");
+  // Cancel restores the base including outside edits (not the notes from opening time).
+  d.addNote(pat, ch, drawn);
+  d.setNotes(pat, ch, chord::rebase(base, written, notesNow()), "cancel chord progression");
+  expect(has(drawn), "chord editor: cancel keeps notes drawn while it was open");
+}
+
+// ------------------------------------------------------------- J-36: Lua sandbox
+double secondsOf(const std::function<void()>& f) {
+  auto t0 = std::chrono::steady_clock::now();
+  f();
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+}
+
+std::string luaErr(const std::string& code) {
+  script::Limits lim;
+  lim.seconds = 30.0;  // the checks below must stop on their own, not on the wall clock
+  script::Vm vm(lim);
+  std::string err;
+  return vm.exec(code, "qa", &err) ? std::string() : err;
+}
+
+// Escapes from the instruction / time budget: work done in C where the
+// count hook never fires, and finalizers (which Lua runs with hooks off).
+void luaSandboxLimits() {
+  std::string err;
+  double t = secondsOf([&] { err = luaErr("return string.find(string.rep('a', 200000), '.-.-.-.-.-.-b')"); });
+  std::printf("# catastrophic pattern stopped after %.2f s: %s\n", t, err.c_str());
+  expect(err.find("pattern too complex") != std::string::npos && t < 20.0, "lua: backtracking pattern stops with an error");
+  err = luaErr("for w in string.gmatch(string.rep('a', 100000), '(.-)(.-)(.-)b') do end");
+  expect(err.find("pattern too complex") != std::string::npos, "lua: backtracking gmatch stops with an error");
+  err = luaErr("return string.gsub(string.rep('ab', 50000), '(a-)(.-)(.-)(.-)c', 'x')");
+  expect(err.find("pattern too complex") != std::string::npos, "lua: backtracking gsub stops with an error");
+  expect(luaErr("assert(string.find(string.rep('a', 1000) .. 'b', '.-.-b') == 1)").empty(), "lua: ordinary patterns still match");
+  err = luaErr("setmetatable({}, {__gc = function() while true do end end}) collectgarbage()");
+  expect(err.find("__gc") != std::string::npos, "lua: __gc finalizers are refused");
+  err = luaErr("local mt = {} mt.__gc = true setmetatable({}, mt)");
+  expect(err.find("__gc") != std::string::npos, "lua: __gc refused when set before setmetatable");
+  expect(luaErr("local mt = {} setmetatable({}, mt) mt.__gc = function() while true do end end collectgarbage()").empty(),
+         "lua: __gc added after setmetatable never runs (Lua semantics)");
+  t = secondsOf([&] { err = luaErr("table.move({}, 1, 1e12, 2)"); });
+  expect(!err.empty() && t < 5.0, "lua: table.move over a huge range is refused");
+  expect(luaErr("table.move({}, 1, '1e12', 2)").size() > 0, "lua: table.move with numeric strings is refused too");
+  expect(luaErr("local a = table.move({1, 2, 3}, 1, 3, 2) assert(a[4] == 3 and a[2] == 1)").empty(), "lua: table.move still works");
+}
+
+// C++ glue that read Lua values outside a protected call: a metamethod that
+// raised there called lua's panic handler and aborted the whole app.
+void luaGlueProtected() {
+  using namespace gl::script;
+  PianoRollContext ctx;
+  Note n0;
+  n0.start = 0, n0.length = 96, n0.pitch = 60;
+  ctx.notes = {n0};
+  auto runScript = [&](const std::string& src, std::string* loadErr = nullptr) {
+    PianoRollScript s;
+    std::string e;
+    if (!s.loadSource(src, "qa", &e)) {
+      if (loadErr) *loadErr = e;
+      PianoRollResult r;
+      r.error = "load: " + e;
+      return r;
+    }
+    Limits lim;
+    lim.seconds = 30.0;
+    return s.run(ctx, {}, lim);
+  };
+  PianoRollResult r = runScript("score._notes = { setmetatable({}, {__index = function() error('boom') end}) }");
+  expect(!r.ok && r.error.find("boom") != std::string::npos, "piano roll script: note with a raising __index is an error, not abort");
+  r = runScript("score._notes = { setmetatable({}, {__index = function() while true do end end}) }");
+  expect(!r.ok && r.error.find("limit") != std::string::npos, "piano roll script: note with an endless __index hits the limit");
+  r = runScript("score = setmetatable({}, {__index = function() error('nope') end})");
+  expect(!r.ok, "piano roll script: score replaced by a raising object");
+  r = runScript("score = 5");
+  expect(!r.ok && !r.error.empty(), "piano roll script: score replaced by a number");
+  r = runScript("setmetatable(_G, {__index = function(_, k) error('global ' .. k) end})");
+  expect(r.ok, "piano roll script: _G with a raising __index (no apply / form lookups through it)");
+  r = runScript("score._markers = { setmetatable({}, {__index = function() error('mk') end}) }");
+  expect(!r.ok && r.error.find("mk") != std::string::npos, "piano roll script: marker with a raising __index");
+  std::string le;
+  runScript("function form(f) f._p = 'abcdefgh' end", &le);
+  expect(!le.empty(), "piano roll script: form list replaced by a string is refused (was a type-confused rawgeti)");
+  le.clear();
+  runScript("function form(f) f._p = { 5, 6 } end", &le);
+  expect(!le.empty(), "piano roll script: form entries that are not tables are refused");
+  le.clear();
+  runScript("function _gl_newForm() error('nf') end function form(f) end", &le);
+  expect(le.find("nf") != std::string::npos, "piano roll script: raising _gl_newForm is an error");
+  le.clear();
+  runScript("function form(f) f._p = { setmetatable({}, {__index = function() error('ctl') end}) } end", &le);
+  expect(le.find("ctl") != std::string::npos, "piano roll script: control with a raising __index is an error");
+  r = runScript("function apply(s) s:add{pitch = 64} end");
+  expect(r.ok && r.notes.size() == 2, "piano roll script: ordinary apply still works");
+
+  Document doc(makeDemoSong());
+  SimpleHost host(doc);
+  ControllerScript cs;
+  std::string err;
+  bool loaded = cs.loadSource(
+      "function onMidiMsg(m) setmetatable(m, {__index = function() error('handled?') end}) m.handled = nil end", "qa", host, &err);
+  bool handled = true;
+  cs.onMidiMsg(MidiMessage{0x90, 60, 100, 0}, &handled);
+  expect(loaded && !handled && cs.error().find("handled?") != std::string::npos,
+         "controller script: message table with a raising __index is reported, not abort");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -513,6 +933,10 @@ int main(int argc, char** argv) {
   decoderSweep();
   oggCommentCount();
   concurrentAtomicWrites();
+  j36Regressions();
+  luaSandboxLimits();
+  chordEditorKeepsOutsideEdits();
+  luaGlueProtected();
   const int edits = std::getenv("GRIDLINE_QA_EDITS") ? std::atoi(std::getenv("GRIDLINE_QA_EDITS")) : 2000;
   undoStress(demo, "demo song", edits, 1);
   undoStress(Song{}, "empty song", edits / 4, 7);

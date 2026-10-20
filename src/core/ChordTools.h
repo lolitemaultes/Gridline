@@ -168,6 +168,12 @@ struct WriteOpts {
 // notes the progression added (for the next write's `previous`).
 std::vector<Note> write(const std::vector<Note>& existing, const ChordProgression& p, const WriteOpts& o,
                         std::vector<Note>* written = nullptr);
+// The chord editor keeps the pattern's notes from before it wrote (`base`) and
+// rewrites base + progression on every edit. When the notes changed since its
+// last write (`written`: drawn in the piano roll, a script, an undo), the same
+// change is applied to `base` (notes removed from `written` leave it, new ones
+// join it) so the next write keeps it (J-36).
+std::vector<Note> rebase(const std::vector<Note>& base, const std::vector<Note>& written, const std::vector<Note>& current);
 // Moves notes under the progression to the nearest tone of the chord above them.
 int snapNotes(std::vector<Note>& notes, const ChordProgression& p, Tick start);
 

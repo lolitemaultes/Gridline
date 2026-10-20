@@ -1,5 +1,6 @@
 // Gridline — ZIP archives. See Zip.h.
 #include "Zip.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -306,8 +307,9 @@ constexpr short kDistBase[30] = {1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97
                                  6145, 8193, 12289, 16385, 24577};
 constexpr short kDistExtra[30] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
-bool codes(BitIn& b, std::vector<uint8_t>& out, const Huff& lit, const Huff& dist) {
+bool codes(BitIn& b, std::vector<uint8_t>& out, const Huff& lit, const Huff& dist, size_t cap) {
   for (;;) {
+    if (out.size() > cap) return false;  // more than the entry says it holds (J-36: inflate bombs)
     int sym = decode(b, lit);
     if (sym < 0) return false;
     if (sym < 256) {
@@ -332,7 +334,10 @@ bool codes(BitIn& b, std::vector<uint8_t>& out, const Huff& lit, const Huff& dis
 
 bool inflateRaw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, size_t expected) {
   out.clear();
-  if (expected) out.reserve(expected);
+  // `expected` comes from the archive: never reserve more than deflate can
+  // expand `n` bytes to (1032:1), and stop once the output passes it (J-36).
+  if (expected) out.reserve(std::min(expected, n * 1032 + 1024));
+  const size_t cap = expected ? expected : static_cast<size_t>(-1);
   BitIn b{in, n};
   int last = 0;
   do {
@@ -348,6 +353,7 @@ bool inflateRaw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, size_t e
       if (len != (~nlen & 0xFFFFu) || b.pos + len > n) return false;
       out.insert(out.end(), in + b.pos, in + b.pos + len);
       b.pos += len;
+      if (out.size() > cap) return false;
     } else if (type == 1) {  // fixed codes
       static Huff lit, dist;
       static bool init = [] {
@@ -363,7 +369,7 @@ bool inflateRaw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, size_t e
         return true;
       }();
       (void)init;
-      if (!codes(b, out, lit, dist)) return false;
+      if (!codes(b, out, lit, dist, cap)) return false;
     } else if (type == 2) {  // dynamic codes
       const int nlen = b.bits(5) + 257, ndist = b.bits(5) + 1, ncode = b.bits(4) + 4;
       if (b.bad || nlen > 286 || ndist > 30) return false;
@@ -400,7 +406,7 @@ bool inflateRaw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, size_t e
       if (el < 0 || (el > 0 && nlen - lit.count[0] != 1)) return false;
       const int ed = build(dist, lengths + nlen, ndist);
       if (ed < 0 || (ed > 0 && ndist - dist.count[0] != 1)) return false;
-      if (!codes(b, out, lit, dist)) return false;
+      if (!codes(b, out, lit, dist, cap)) return false;
     } else {
       return false;
     }

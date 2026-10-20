@@ -31,6 +31,7 @@
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
 #include "EditTools.h"
+#include "J31Ui.h"
 #include "ScriptUi.h"
 #include "Theme.h"
 #include "Windows.h"
@@ -616,6 +617,7 @@ int main(int argc, char** argv) {
   int devExport = 0;                      // --show stems / renderclip / missing / midiimport (J-20)
   int devRemote = 0;                      // --show remote / remote-action: remote control dialog (frame 3)
   std::string devTool;                    // --tool name: J-11 tool window (frame 3) on the --edit target
+  bool devChords = false;                // --show chords: chord progression editor (frame 3)
   std::string devScript;                  // --script id: J-24 piano roll script window (frame 3) on the --edit target
   bool devPlaylistOnly = false;           // --show playlist: other panels closed
   bool devMixerOnly = false;              // --show mixer: the mixer fills the window
@@ -757,6 +759,8 @@ int main(int argc, char** argv) {
       } else if (w == "chanmisc") {  // layout check: channel settings, misc tab
         if (!app.doc.song().channels.empty()) app.settingsChannel = app.doc.song().channels[0].id;
         app.channelTab = 1;
+      } else if (w == "chords") {  // J-36 QA: chord progression editor on the selected pattern / channel (frame 3)
+        devChords = true;
       } else if (w == "toast") {  // layout check: notification toasts
         app.notify("Saved the project");
         app.notify("Cannot decode sample: missing.wav", true);
@@ -1141,6 +1145,7 @@ int main(int argc, char** argv) {
     }
     if (!devTool.empty() && frameNo == 3) devOpenTool(app, devTool);
     if (!devScript.empty() && frameNo == 3) devOpenScript(app, devScript);
+    if (devChords && frameNo == 3) j31::openChordEditor(app);
     if (devRemote && frameNo == 3 && !app.doc.song().channels.empty()) {
       if (devRemote == 1) {
         app.openRemoteDialog(channelParam(app.doc.song().channels[0].id, ChannelParam::Volume));

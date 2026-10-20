@@ -527,7 +527,12 @@ bool ControllerScript::onMidiMsg(const MidiMessage& m, bool* handled) {
     lua_settop(L, msg - 1);
     return false;
   }
-  bool h = lua_toboolean(L, -1) != 0 || fieldBool(L, msg, "handled", false);
+  bool h = lua_toboolean(L, -1) != 0;
+  if (!h) {  // protected: the script may have given the message table metamethods (J-36)
+    std::string err;
+    lua_pushvalue(L, msg);
+    if (!vm_->protect([&](lua_State* S) { h = fieldBool(S, 1, "handled", false); }, &err, 1)) error_ = "onMidiMsg: " + err;
+  }
   lua_settop(L, msg - 1);
   if (handled) *handled = h;
   return true;

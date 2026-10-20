@@ -67,6 +67,11 @@ class Vm {
   // leaves `nres` results on success. Missing function = error.
   bool call(const char* fn, int nargs, int nres, std::string* err = nullptr);
   bool hasFunction(const char* fn);
+  // Runs C++ code that reads or writes Lua values (lua_getfield, lua_call…)
+  // in protected mode with the call limits: metamethods or errors raised
+  // there are reported instead of aborting the process. The `nargs` values on
+  // top of the stack are popped and passed in as stack indices 1..nargs.
+  bool protect(const std::function<void(lua_State*)>& fn, std::string* err = nullptr, int nargs = 0);
 
   // Output of print / log (newest last), and an optional live sink.
   const std::vector<std::string>& log() const { return log_; }

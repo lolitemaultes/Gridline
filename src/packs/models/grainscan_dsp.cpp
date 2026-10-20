@@ -211,7 +211,10 @@ class GrainScanGen final : public Generator {
           auto rd = [&](const std::vector<float>& ch, double at) {
             at = std::fmod(at, frames);
             if (at < 0) at += frames;
-            const size_t i0 = static_cast<size_t>(at);
+            // J-36: fmod(-tiny) + frames rounds to frames: index one past the end (ASan, test_determinism).
+            if (!(at < frames)) at = 0;
+            if (ch.empty()) return 0.0f;
+            const size_t i0 = std::min(static_cast<size_t>(at), ch.size() - 1);
             const size_t i1 = i0 + 1 < ch.size() ? i0 + 1 : 0;
             const float f = static_cast<float>(at - static_cast<double>(i0));
             return ch[i0] + (ch[i1] - ch[i0]) * f;

@@ -34,6 +34,7 @@ struct Session {
   bool open = false;
   ObjectId pat = kNoId, chan = kNoId;
   std::vector<Note> base;  // the pattern's notes before the editor wrote (unlinked chords baked in)
+  std::vector<Note> written;  // the notes as the editor last left them (edits made elsewhere since are kept: J-36)
   uint64_t key = 0;
   bool changed = false;
   ch::ChordProgression prog;
@@ -98,13 +99,15 @@ void writeNow(App& a) {
   o.mode = S.mode;
   o.withMain = S.withMain;
   o.withBass = S.withBass;
-  std::vector<Note> notes = ch::write(S.base, S.prog, o);
   auto it = p->notes.find(S.chan);
-  const std::vector<Note> empty;
-  if (notes != (it == p->notes.end() ? empty : it->second)) {
+  const std::vector<Note> cur = it == p->notes.end() ? std::vector<Note>{} : it->second;
+  S.base = ch::rebase(S.base, S.written, cur);  // notes drawn / scripted / undone meanwhile stay
+  std::vector<Note> notes = ch::write(S.base, S.prog, o);
+  if (notes != cur) {
     a.doc.setNotes(S.pat, S.chan, notes, "chord progression", S.key);
     S.changed = true;
   }
+  S.written = notes;
 }
 
 // One editor edit: remembered for the editor's own undo, then written.
@@ -219,7 +222,12 @@ void tickPreview(App& a) {
 void closeEditor(App& a, bool keep) {
   stopPreview(a);
   releaseHeld(a, S.pressHeld);
-  if (!keep && S.changed) a.doc.setNotes(S.pat, S.chan, S.base, "cancel chord progression", S.key);
+  if (!keep && S.changed) {
+    std::vector<Note> cur;
+    if (const Pattern* p = a.doc.song().pattern(S.pat))
+      if (auto it = p->notes.find(S.chan); it != p->notes.end()) cur = it->second;
+    a.doc.setNotes(S.pat, S.chan, ch::rebase(S.base, S.written, cur), "cancel chord progression", S.key);
+  }
   a.doc.endGesture();
   S.open = false;
   S.changed = false;
@@ -232,6 +240,7 @@ void beginSession(App& a) {
   S.base.clear();
   if (const Pattern* p = s.pattern(S.pat))
     if (auto it = p->notes.find(S.chan); it != p->notes.end()) S.base = it->second;
+  S.written = S.base;
   S.key = 0x43485244ull ^ (++sessionCounter << 20);
   S.changed = false;
   S.undo.clear();
@@ -916,7 +925,9 @@ void drawChordEditor(App& a) {
   alternativesRow(a);
   if (ImGui::BeginTable("##panels", 2, ImGuiTableFlags_SizingStretchProp)) {
     ImGui::TableSetupColumn("perf", ImGuiTableColumnFlags_WidthFixed, 340);
-    ImGui::TableSetupColumn("presets", ImGuiTableColumnFlags_WidthStretch);
+    // J-36: an explicit weight. With SizingStretchProp the stretch column takes its
+    // auto-fit width as weight, 0 on the first frame: 0 / 0 gave NaN column widths.
+    ImGui::TableSetupColumn("presets", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableNextColumn();
     performancePanel(a);
     ImGui::TableNextColumn();

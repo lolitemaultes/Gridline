@@ -1212,7 +1212,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
           const ObjectId id = v.is(Json::Type::Number) ? jsonInt<ObjectId>(v.number) : kNoId;
           if (s.pattern(id) && std::find(g.patterns.begin(), g.patterns.end(), id) == g.patterns.end()) g.patterns.push_back(id);
         }
-      s.patternGroups.push_back(std::move(g));
+      if (!g.patterns.empty()) s.patternGroups.push_back(std::move(g));  // J-36: like the editing ops, no empty groups
     }
 
   s.tracks.clear();

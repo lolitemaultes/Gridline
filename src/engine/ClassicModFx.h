@@ -24,7 +24,8 @@ inline uint32_t lfoInc(double hz, double sr) { return static_cast<uint32_t>(std:
 
 // ----------------------------------------------------------------- phaser
 inline double phaserRateHz(double sweepN, bool large) { return (large ? 10.0 : 2.0) * (std::exp(4 * sweepN) - 1) / 53.598150033144236; }
-inline int phaserStages(double raw) { return std::clamp(static_cast<int>(std::lround(raw)) + 1, 3, 23); }
+// J-36: clamp before rounding (decoded raw values can be huge or NaN: int overflow UB).
+inline int phaserStages(double raw) { return std::clamp(static_cast<int>(std::lround(raw >= 0.0 ? std::min(raw, 64.0) : 0.0)) + 1, 3, 23); }
 
 struct PhaserSettings {
   double sweep = 0.5, depthMin = 0.1, depthMax = 0.8, stereo = 0.5, feedback = 0.4, dry = 0.5, gain = 0.8;

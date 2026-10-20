@@ -9,7 +9,7 @@
 // thread copies a slow input to <work>/hang-*.bin and exits with code 3.
 //
 //   gridline_fuzz <target> <seconds> [--work DIR] [--seed N] [--max-len N] [--repro FILE] <corpus file|dir>...
-//   targets: flp fst project sample midi browser-index
+//   targets: flp fst project sample midi browser-index zip lua (J-36: zip, lua, project seeds with J-31 fields)
 //
 // With no corpus the target's built-in seeds are used (ctest smoke run).
 #include <algorithm>
@@ -24,11 +24,17 @@
 #include <fstream>
 #include <functional>
 #include <random>
+#include <set>
 #include <string>
 #include <thread>
 #include <unistd.h>
 #include <vector>
 #include "core/BrowserIndex.h"
+#include "core/Document.h"
+#include "core/Grouping.h"
+#include "core/PianoRollScript.h"
+#include "core/SongTools.h"
+#include "core/Zip.h"
 #include "core/Demo.h"
 #include "core/Json.h"
 #include "core/MidiFile.h"
@@ -91,6 +97,89 @@ Bytes seedFlp() {
 Bytes seedProject() {
   std::string t = gl::projectToText(gl::makeDemoSong());
   return Bytes(t.begin(), t.end());
+}
+
+// J-36: a project using the J-31 fields (pattern / clip / note groups, step
+// loops, key ranges, key markers, recording point, solo-alone).
+Bytes seedProjectGroups() {
+  gl::Document d(gl::makeDemoSong());
+  const gl::Song& s = d.song();
+  std::vector<gl::ObjectId> pats;
+  for (const auto& p : s.patterns) pats.push_back(p.id);
+  gl::ops::groupPatterns(d, pats, "group a");
+  std::set<gl::ObjectId> clips;
+  for (const auto& c : s.playlist) clips.insert(c.id);
+  gl::ops::groupClips(d, clips);
+  std::vector<gl::ObjectId> chans;
+  for (const auto& c : s.channels) chans.push_back(c.id);
+  if (!pats.empty()) gl::ops::setStepLoop(d, pats[0], chans, 6);
+  if (!chans.empty()) gl::ops::setKeyRange(d, chans[0], 36, 72);
+  gl::ops::addKeyMarker(d, s.ppq * 8, 9, 2);
+  if (s.mixer.size() > 1)
+    d.editMixerTrack(s.mixer[1].id, "qa", [](gl::MixerTrack& m) { m.recPoint = 2, m.soloAlone = true; });
+  if (!pats.empty() && !chans.empty()) {
+    std::vector<gl::Note> notes(3);
+    for (size_t i = 0; i < notes.size(); ++i) notes[i].start = static_cast<gl::Tick>(i) * 48, notes[i].group = 1 + static_cast<int>(i % 2);
+    d.setNotes(pats[0], chans[0], notes);
+  }
+  std::string t = gl::projectToText(d.song());
+  return Bytes(t.begin(), t.end());
+}
+
+// J-36: ZIP archives (stored + fixed-Huffman + dynamic-Huffman entries).
+void zipEntry(Bytes& file, Bytes& cd, const std::string& name, uint16_t method, const Bytes& raw, const Bytes& packed) {
+  const uint32_t crc = gl::crc32(raw.data(), raw.size());
+  const uint32_t off = static_cast<uint32_t>(file.size());
+  put32(file, 0x04034b50), put16(file, 20), put16(file, 0), put16(file, method), put32(file, 0);
+  put32(file, crc), put32(file, static_cast<uint32_t>(packed.size())), put32(file, static_cast<uint32_t>(raw.size()));
+  put16(file, static_cast<uint32_t>(name.size())), put16(file, 0);
+  file.insert(file.end(), name.begin(), name.end());
+  file.insert(file.end(), packed.begin(), packed.end());
+  put32(cd, 0x02014b50), put16(cd, 20), put16(cd, 20), put16(cd, 0), put16(cd, method), put32(cd, 0);
+  put32(cd, crc), put32(cd, static_cast<uint32_t>(packed.size())), put32(cd, static_cast<uint32_t>(raw.size()));
+  put16(cd, static_cast<uint32_t>(name.size())), put16(cd, 0), put16(cd, 0), put16(cd, 0), put16(cd, 0), put32(cd, 0), put32(cd, off);
+  cd.insert(cd.end(), name.begin(), name.end());
+}
+
+Bytes seedZip() {
+  const std::string a = "hello hello hello hello";
+  std::string t;
+  for (int i = 0; i < 20; ++i) t += "the quick brown fox jumps over the lazy dog " + std::to_string(i) + "\n";
+  const Bytes fixedPacked{0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0xc8, 0x40, 0x27, 0x01};
+  const Bytes dynPacked{0x95, 0xd1, 0xcb, 0x01, 0x82, 0x30, 0x14, 0x05, 0xd1, 0x3d, 0x55, 0xbc, 0x12, 0xbc, 0x22, 0x6a, 0xca, 0xe1,
+                        0x13, 0x05, 0x3f, 0x04, 0x43, 0x22, 0x60, 0xf5, 0xd2, 0xc2, 0xac, 0x67, 0x76, 0x27, 0xf5, 0xde, 0x3e, 0x79,
+                        0x68, 0x9f, 0xd6, 0xc4, 0xb0, 0x8c, 0x76, 0x0b, 0xab, 0x3d, 0xf2, 0x7b, 0x9a, 0x2d, 0x7c, 0x7d, 0xb4, 0xb4,
+                        0xe7, 0x57, 0xfd, 0xdb, 0xac, 0x0b, 0x77, 0x3b, 0x14, 0x09, 0xdc, 0x42, 0xf7, 0x11, 0xdd, 0x25, 0xba, 0x4f,
+                        0xe8, 0xae, 0xd0, 0x7d, 0x46, 0xf7, 0x05, 0xdd, 0x57, 0x74, 0x3b, 0xa6, 0x03, 0x31, 0x99, 0xa6, 0x18, 0xa7,
+                        0x98, 0xa7, 0x18, 0xa8, 0x98, 0xa8, 0x18, 0xa9, 0x98, 0xa9, 0x18, 0xaa, 0x5c, 0xf1, 0x07};
+  Bytes file, cd;
+  const Bytes rawA(a.begin(), a.end()), rawT(t.begin(), t.end());
+  zipEntry(file, cd, "song/project.json", 0, rawA, rawA);
+  zipEntry(file, cd, "song/fixed.txt", 8, rawA, fixedPacked);
+  zipEntry(file, cd, "song/samples/dyn.txt", 8, rawT, dynPacked);
+  zipEntry(file, cd, "song/samples/", 0, {}, {});
+  const uint32_t cdStart = static_cast<uint32_t>(file.size());
+  file.insert(file.end(), cd.begin(), cd.end());
+  put32(file, 0x06054b50), put16(file, 0), put16(file, 0), put16(file, 4), put16(file, 4);
+  put32(file, static_cast<uint32_t>(cd.size())), put32(file, cdStart), put16(file, 0);
+  return file;
+}
+
+// J-36: piano roll scripts (the run input is the script source).
+std::vector<Bytes> seedLua() {
+  const char* src[] = {
+      "-- name: qa\nfunction form(f) f:knobInt('Hits', 5, 1, 32) f:combo('Grid', {'a', 'b'}, 1) f:check('On', true) f:text('T', 'x') end\n"
+      "function apply(score, p) for i, n in score:notes() do n.velocity = (n.velocity + p['Hits']) % 128 end\n"
+      "  score:add{time = 0, length = score.ppq, pitch = score:snap(61)} score:addMarker{time = 96, name = 'm'} score:sort() end\n",
+      "local s = string.rep('ab', 100) for k in s:gmatch('(a)(b)') do end print(s:find('b+a', 1), ('x'):rep(3, ','), #s)\n"
+      "local t = {} for i = 1, 100 do t[i] = {time = i * 24, pitch = 40 + i % 60} end score._notes = t\n",
+      "local co = coroutine.wrap(function() for i = 1, 10 do coroutine.yield(i) end end) for i = 1, 10 do co() end\n"
+      "print(pcall(error, {})) print(select('#', table.unpack({1, 2, 3}))) print(utf8.char(72, 228), math.tointeger(3.0))\n"
+      "setmetatable(score, {__index = function(t, k) return rawget(t, '_' .. k) end})\n",
+  };
+  std::vector<Bytes> v;
+  for (const char* x : src) v.emplace_back(x, x + std::strlen(x));
+  return v;
 }
 
 Bytes seedWav(int bits) {
@@ -196,7 +285,7 @@ std::vector<Target> targets() {
            if (gl::jsonParse(t, j)) (void)gl::songFromJson(j, s2, &err);
          }
        },
-       [] { return std::vector<Bytes>{seedProject()}; }},
+       [] { return std::vector<Bytes>{seedProject(), seedProjectGroups()}; }},
       {"sample", ".bin",
        [](const std::string& p) { (void)gl::loadSample(p); },
        [] { return std::vector<Bytes>{seedWav(16), seedWav(24)}; }},
@@ -219,6 +308,51 @@ std::vector<Target> targets() {
          }
        },
        [] { return std::vector<Bytes>{seedBrowserIndex()}; }},
+      {"zip", ".zip",
+       [](const std::string& p) {
+         std::vector<gl::ZipEntry> entries;
+         if (!gl::readZipDirectory(p, entries)) return;
+         size_t n = 0;
+         for (const auto& e : entries) {
+           if (++n > 64) break;
+           std::vector<uint8_t> out;
+           (void)gl::readZipEntry(p, e, out);
+         }
+         const std::string dir = gWork + "/unzip";
+         std::error_code ec;
+         fs::remove_all(dir, ec);
+         std::vector<std::string> files;
+         (void)gl::extractZip(p, dir, &files);
+         for (const auto& f : files)  // nothing may land outside the folder
+           if (fs::weakly_canonical(f, ec).string().rfind(fs::weakly_canonical(dir, ec).string(), 0) != 0) std::abort();
+         fs::remove_all(dir, ec);
+         // The raw inflater on the whole input too (most of it is not a deflate stream).
+         Bytes b = readAll(p);
+         std::vector<uint8_t> out;
+         (void)gl::inflateRaw(b.data(), b.size(), out, b.size() * 4);
+       },
+       [] { return std::vector<Bytes>{seedZip()}; }},
+      {"lua", ".lua",
+       [](const std::string& p) {
+         Bytes b = readAll(p);
+         const std::string src(b.begin(), b.end());
+         gl::script::PianoRollScript s;
+         if (!s.loadSource(src, "fuzz")) return;
+         gl::script::PianoRollContext ctx;
+         for (int i = 0; i < 8; ++i) {
+           gl::Note n;
+           n.start = i * 48, n.length = 24, n.pitch = 60 + i;
+           ctx.notes.push_back(n);
+         }
+         ctx.sel.assign(ctx.notes.size(), false);
+         ctx.scale = 2;
+         gl::script::Limits lim;
+         lim.instructions = 2'000'000;
+         lim.seconds = 2.0;
+         lim.memoryBytes = 16u << 20;
+         (void)s.run(ctx, {}, lim);
+       },
+       [] { return seedLua(); }},
   };
 }
 

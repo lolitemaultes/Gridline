@@ -316,10 +316,12 @@ bool Document::removeChannel(ObjectId id) {
   std::vector<std::pair<ObjectId, std::vector<uint8_t>>> steps;
   std::vector<std::pair<ObjectId, std::vector<Note>>> notes;
   std::vector<std::pair<ObjectId, std::vector<StepProps>>> props;
+  std::vector<std::pair<ObjectId, int>> loops;  // J-36: J-31 step loops went missing on reload when left behind
   for (const auto& p : song_.patterns) {
     if (auto it = p.steps.find(id); it != p.steps.end()) steps.push_back({p.id, it->second});
     if (auto it = p.notes.find(id); it != p.notes.end()) notes.push_back({p.id, it->second});
     if (auto it = p.stepProps.find(id); it != p.stepProps.end()) props.push_back({p.id, it->second});
+    if (auto it = p.stepLoop.find(id); it != p.stepLoop.end()) loops.push_back({p.id, it->second});
   }
   beginGroup("delete channel");
   exec(std::make_unique<LambdaCommand>(
@@ -330,13 +332,15 @@ bool Document::removeChannel(ObjectId id) {
           p.steps.erase(id);
           p.notes.erase(id);
           p.stepProps.erase(id);
+          p.stepLoop.erase(id);
         }
       },
-      [saved, idx, steps, notes, props](Song& s) {
+      [saved, idx, steps, notes, props, loops](Song& s) {
         insertAt(s.channels, idx, saved);
         for (const auto& [pid, row] : steps) s.pattern(pid)->steps[saved.id] = row;
         for (const auto& [pid, ns] : notes) s.pattern(pid)->notes[saved.id] = ns;
         for (const auto& [pid, pr] : props) s.pattern(pid)->stepProps[saved.id] = pr;
+        for (const auto& [pid, n] : loops) s.pattern(pid)->stepLoop[saved.id] = n;
       }));
   {
     std::vector<ModLink> links = song_.modLinks;
@@ -495,6 +499,7 @@ bool Document::removePattern(ObjectId id) {
   for (size_t i = 0; i < song_.playlist.size(); ++i)
     if (song_.playlist[i].pattern == id) clips.push_back({static_cast<int>(i), song_.playlist[i]});
   std::vector<Arrangement> parked = song_.arrangements;  // other arrangements lose their clips of it too
+  std::vector<PatternGroup> groups = song_.patternGroups;  // J-36: it leaves its pattern group too
   exec(std::make_unique<LambdaCommand>(
       "delete pattern",
       [id](Song& s) {
@@ -503,11 +508,16 @@ bool Document::removePattern(ObjectId id) {
                                         [id](const Clip& c) { return c.kind == ClipKind::Pattern && c.pattern == id; }),
                          s.playlist.end());
         pruneParkedArrangements(s);
+        for (auto& g : s.patternGroups) g.patterns.erase(std::remove(g.patterns.begin(), g.patterns.end(), id), g.patterns.end());
+        s.patternGroups.erase(std::remove_if(s.patternGroups.begin(), s.patternGroups.end(),
+                                             [](const PatternGroup& g) { return g.patterns.empty(); }),
+                              s.patternGroups.end());
       },
-      [saved, idx, clips, parked](Song& s) {
+      [saved, idx, clips, parked, groups](Song& s) {
         insertAt(s.patterns, idx, saved);
         for (const auto& [i, c] : clips) insertAt(s.playlist, i, c);
         s.arrangements = parked;
+        s.patternGroups = groups;
       }));
   return true;
 }

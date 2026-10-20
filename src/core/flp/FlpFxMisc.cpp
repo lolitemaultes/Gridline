@@ -368,7 +368,10 @@ bool decodeEffector(Context& c, const std::vector<Event>& evs, PluginMapping& m)
   size_t end = std::min(b.size(), static_cast<size_t>(rd32(b, 4)) + 8);
   if (end < 48 + 12) return true;
   std::vector<double> fl(12);
-  for (size_t k = 0; k < 12; ++k) fl[k] = std::clamp(static_cast<double>(rdf32(b, end - 48 + 4 * k)), 0.0, 1.0);
+  for (size_t k = 0; k < 12; ++k) {  // J-36: NaN from a damaged state passed the clamp (int cast UB later)
+    const double v = rdf32(b, end - 48 + 4 * k);
+    fl[k] = std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 0.0;
+  }
   applyTable(m, *table, fl);
   // Every module follows its reference law except the reverb module, whose
   // network is Gridline's (decay / damping / level laws match).

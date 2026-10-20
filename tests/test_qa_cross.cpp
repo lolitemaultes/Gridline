@@ -19,8 +19,11 @@
 #include "core/Song.h"
 #include "engine/AudioEngine.h"
 #include "engine/AudioRecord.h"
+#include "engine/AudioLogger.h"
 #include "engine/Program.h"
 #include "engine/Render.h"
+#include "packs/synths/matrixfm.h"
+#include "core/Demo.h"
 
 using namespace gl;
 
@@ -183,6 +186,164 @@ void parallelEveryEffect() {
   expect(one.data == six.data, "every effect type: 6 mixer threads bit-identical to 1");
 }
 
+// J-36 (J-30 gap): Matrix FM allocates its delay lines in prepareHost only
+// when the section is on in the built state; automation that switches the
+// section on while playing (no program build) left it silent. The builder now
+// prepares automated parameters at their maximum.
+void automatedSectionHasMemory() {
+  namespace mfm = packs::synths::mfm;
+  const PluginInfo* info = findPlugin("gl.matrixfm");
+  if (!info) {
+    expect(false, "matrix fm registered");
+    return;
+  }
+  auto tailEnergy = [&](bool automated) {
+    Document d(makeEmptySong());
+    const ObjectId ch = d.addChannel("fm", "gl.matrixfm");
+    auto setP = [&](int k, double frac) {
+      const auto& pd = info->params[static_cast<size_t>(k)];
+      d.setParam(channelPluginParam(ch, k), pd.min + frac * (pd.max - pd.min), false);
+    };
+    setP(mfm::dly(0, 0), 0.0);  // delay 1 off in the saved state
+    d.setParam(channelPluginParam(ch, mfm::fm(0, mfm::kColFx)), 1.0, false);  // operator 1 feeds the effects bus
+    if (automated) {
+      const ParamId pid = channelPluginParam(ch, mfm::dly(0, 0));
+      d.editSong("auto", [&](Song& x) {
+        AutomationClip a;
+        a.id = x.allocateId();
+        a.owner = pid.owner, a.index = pid.index;
+        a.points = {AutoPoint{0, 1.f, 0, AutoShape::Curve}, AutoPoint{x.ppq * 16, 1.f, 0, AutoShape::Curve}};
+        x.automations.push_back(a);
+      });
+    }
+    ProgramBuilder b;
+    b.setSampleRate(44100);
+    auto prog = b.build(d.song());
+    const ProgChannel* pc = nullptr;
+    for (const auto& c : prog->channels)
+      if (c.id == ch) pc = &c;
+    if (!pc || !pc->rt || !pc->rt->gen) return -1.0;
+    PluginState st = pc->plugin;  // the value the automation plays: delay 1 on
+    st.params[static_cast<size_t>(mfm::dly(0, 0))] = static_cast<float>(info->params[static_cast<size_t>(mfm::dly(0, 0))].max);
+    ProcessContext ctx;
+    ctx.sampleRate = 44100, ctx.tempo = 120;
+    std::vector<float> L(256), R(256);
+    double e = 0;
+    pc->rt->gen->noteOn(1, 60, 1.f, 0);
+    for (int blk = 0; blk < 400; ++blk) {  // ~2.3 s
+      if (blk == 20) pc->rt->gen->noteOff(1, 0);
+      std::fill(L.begin(), L.end(), 0.f), std::fill(R.begin(), R.end(), 0.f);
+      pc->rt->gen->process(st, pc->aux, ctx, L.data(), R.data(), 256);
+      if (blk > 120)
+        for (float v : L) e += static_cast<double>(v) * v;
+    }
+    return e;
+  };
+  const double plain = tailEnergy(false), automated = tailEnergy(true);
+  std::printf("# matrix fm delay tail: not automated %.4g, automated %.4g\n", plain, automated);
+  expect(automated > 1e-3 && automated > 10 * plain, "matrix fm: a delay switched on by automation has its delay lines");
+}
+
+// J-36: audio logger (master and armed inputs) while recording through a
+// latency-compensated insert: the logger sees every processed frame, the
+// take still lands where it was played, nothing non-finite.
+// The first built-in effect that reports latency at its defaults.
+PluginState latencyEffect() {
+  for (const auto& p : pluginCatalog()) {
+    if (p.kind != PluginKind::Effect) continue;
+    PluginState s = defaultPluginState(p.type);
+    if (auto fx = createEffect(p.type); fx && fx->latencyFor(s, 48000) > 0) return s;
+  }
+  return {};
+}
+
+void loggerRecordingPdc() {
+  for (auto src : {AudioLogger::Source::Master, AudioLogger::Source::ArmedInputs}) {
+    Rig r(48000);
+    r.song.tempo = 120;
+    r.song.mixer[1].input = 0;
+    r.song.mixer[1].armed = true;
+    r.song.mixer[1].slots[0].plugin = latencyEffect();
+    r.build();
+    const int lat = r.prog->outputLatency;
+    r.eng.setRecordLatency(lat);
+    auto lg = std::make_shared<AudioLogger>(r.sr, 2.0, src);
+    r.eng.setLogger(lg);
+    const int64_t x = 7000;
+    r.input = [&](int64_t f, int) { return f == x + lat ? 1.0f : 0.0f; };
+    r.rec.begin();
+    r.eng.setRecording(true);
+    r.eng.play();
+    r.run(48000, 300);
+    const int64_t ran = r.frame;
+    r.finish();
+    auto takes = r.rec.release();
+    bool finite = true;
+    for (float v : r.outL) finite = finite && std::isfinite(v);
+    std::vector<float> L, R;
+    lg->copyLast(lg->available(), L, R);
+    for (float v : L) finite = finite && std::isfinite(v);
+    std::printf("# logger %d + recording + pdc %d: %zu takes, logged %lld\n", static_cast<int>(src), lat, takes.size(),
+                static_cast<long long>(lg->written()));
+    expect(lat > 0, "pdc rig: the insert reports latency");
+    expect(lg->written() >= ran && finite, "audio logger hears every frame while recording with PDC, finite");
+    expect(takes.size() == 1 && std::llabs(impulseAt(takes[0]) - x) <= 1, "recording with logger + PDC: take placement exact");
+  }
+}
+
+// J-36: quantized song-position jumps (J-31) with a loop and with recording:
+// the jump lands on the next grid line, replaces a loop wrap that comes
+// first, and recording across it stays finite and in order.
+void quantizedJumps() {
+  Rig r(48000);
+  r.song.tempo = 120;
+  r.build();
+  const Tick bar = r.song.barTicks();
+  r.eng.play();
+  r.run(static_cast<int64_t>(static_cast<double>(bar) * 0.25 * r.spt()));
+  r.eng.jumpTo(bar * 5, bar);  // quarter way into bar 1: lands at bar 5 when bar 2 starts
+  double before = r.eng.position();
+  r.run(static_cast<int64_t>(static_cast<double>(bar) * 0.5 * r.spt()));
+  expect(r.eng.position() > before && r.eng.position() < static_cast<double>(bar), "jump waits for the grid line");
+  r.run(static_cast<int64_t>(static_cast<double>(bar) * 0.5 * r.spt()));
+  const double p = r.eng.position();
+  expect(p >= static_cast<double>(bar * 5) && p < static_cast<double>(bar * 5) + static_cast<double>(bar) * 0.3, "jump lands on bar 5");
+  // Loop shorter than the grid: the wrap comes first and goes to the jump target (inside the loop) instead of the loop start.
+  r.eng.stop();
+  r.run(256);
+  r.eng.setLooping(true);
+  r.eng.setLoopRange(0, bar);
+  r.eng.play();
+  r.run(static_cast<int64_t>(static_cast<double>(bar) * 0.1 * r.spt()));
+  r.eng.jumpTo(bar / 2, bar * 4);
+  r.run(static_cast<int64_t>(static_cast<double>(bar) * 1.0 * r.spt()));
+  const double q = r.eng.position();
+  expect(q >= static_cast<double>(bar) * 0.55 && q < static_cast<double>(bar) * 0.7,
+         "a loop wrap before the grid line takes the pending jump");
+  // Recording across a quantized jump.
+  Rig w(48000);
+  w.song.tempo = 120;
+  w.song.mixer[1].input = 0;
+  w.song.mixer[1].armed = true;
+  w.build();
+  w.input = [](int64_t f, int) { return f % 9000 == 0 ? 0.8f : 0.0f; };
+  w.rec.begin();
+  w.eng.setRecording(true);
+  w.eng.play();
+  w.run(10000);
+  w.eng.jumpTo(bar * 8, w.song.beatTicks());
+  w.run(30000);
+  w.finish();
+  auto takes = w.rec.release();
+  bool ok = !takes.empty();
+  for (const auto& t : takes) {
+    ok = ok && std::isfinite(t.startTick) && t.frames() > 0;
+    for (float v : t.L) ok = ok && std::isfinite(v);
+  }
+  std::printf("# recording across a quantized jump: %zu takes\n", takes.size());
+  expect(ok, "recording across a quantized jump: finite takes");
+}
+
 }  // namespace
 
 int main() {
@@ -190,5 +351,8 @@ int main() {
   countInLoopLatency();
   latencyChangeBetweenTakes();
   parallelEveryEffect();
+  automatedSectionHasMemory();
+  loggerRecordingPdc();
+  quantizedJumps();
   return finish();
 }
