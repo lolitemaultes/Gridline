@@ -89,8 +89,11 @@ ExportOutcome runExport(const Song& song, const ExportSettings& s, const std::fu
   std::vector<int> tracks;
   if (audio && s.splitMixer) stems = s.stemTracks.empty() ? usedInserts(song) : s.stemTracks;
   if (audio && s.splitPlaylist) tracks = usedPlaylistTracks(song);
-  const bool mix = audio && (!(s.splitMixer || s.splitPlaylist) || s.stemsIncludeMaster);
-  const double units = (mix ? 1.0 : 0.0) + static_cast<double>(stems.size()) + static_cast<double>(tracks.size());
+  std::vector<TrackSet> groups;  // J-31: track groups
+  if (audio && s.splitPlaylistGroups) groups = playlistTrackGroups(song);
+  const bool mix = audio && (!(s.splitMixer || s.splitPlaylist || s.splitPlaylistGroups) || s.stemsIncludeMaster);
+  const double units = (mix ? 1.0 : 0.0) + static_cast<double>(stems.size()) + static_cast<double>(tracks.size()) +
+                       static_cast<double>(groups.size());
   double done = 0;
   auto report = [&](double f, const std::string& what) {
     if (progress) progress(units > 0 ? std::min(1.0, (done + f) / units) : 1.0, what);
@@ -142,6 +145,12 @@ ExportOutcome runExport(const Song& song, const ExportSettings& s, const std::fu
     const double base0 = done;
     tj.progress = [&](double f) { report(f * static_cast<double>(tracks.size()) - (done - base0), "Rendering playlist tracks"); };
     renderPlaylistTracks(song, tj, tracks, partSink);
+  }
+  if (!groups.empty() && !(cancel && cancel->load())) {
+    RenderJob gj = job;
+    const double base0 = done;
+    gj.progress = [&](double f) { report(f * static_cast<double>(groups.size()) - (done - base0), "Rendering playlist track groups"); };
+    renderPlaylistTrackSets(song, gj, groups, partSink);
   }
   if (cancel && cancel->load()) {
     out.cancelled = true;

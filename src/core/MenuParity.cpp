@@ -1,5 +1,6 @@
 // Gridline — J-27 menu parity operations (see MenuParity.h).
 #include "MenuParity.h"
+#include "ChordTools.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -438,39 +439,17 @@ std::vector<int> scaleChord(int pitch, int root, int scale, int count, bool topD
 }
 
 std::string chordName(const std::vector<Note>& notes, const NoteSel& sel) {
-  static const char* const names[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-  struct Q {
-    const char* suffix;
-    std::vector<int> iv;  // pitch classes above the root (root included)
-  };
-  static const std::vector<Q> quals = {
-      {"", {0, 4, 7}},        {"m", {0, 3, 7}},        {"dim", {0, 3, 6}},      {"aug", {0, 4, 8}},
-      {"sus2", {0, 2, 7}},    {"sus4", {0, 5, 7}},     {"7", {0, 4, 7, 10}},    {"maj7", {0, 4, 7, 11}},
-      {"m7", {0, 3, 7, 10}},  {"m(maj7)", {0, 3, 7, 11}}, {"dim7", {0, 3, 6, 9}}, {"m7b5", {0, 3, 6, 10}},
-      {"6", {0, 4, 7, 9}},    {"m6", {0, 3, 7, 9}},    {"add9", {0, 2, 4, 7}},  {"9", {0, 2, 4, 7, 10}},
-      {"maj9", {0, 2, 4, 7, 11}}, {"m9", {0, 2, 3, 7, 10}}, {"5", {0, 7}}};
-  int lowest = 1000;
-  std::set<int> pcs;
-  for (size_t i : affected(notes, sel)) {
-    pcs.insert(((notes[i].pitch % 12) + 12) % 12);
-    lowest = std::min(lowest, notes[i].pitch);
+  // J-31: chord detection is shared with the chord progression editor (ChordTools).
+  std::vector<int> pitches;
+  for (size_t i : affected(notes, sel)) pitches.push_back(notes[i].pitch);
+  chord::Chord c;
+  if (!chord::detect(pitches, c)) return "";
+  std::string n = chord::chordName(c);
+  if (c.inversion > 0) {
+    const auto& st = chord::qualities()[static_cast<size_t>(c.quality)].steps;
+    n += "/" + chord::noteName(c.root + st[static_cast<size_t>(c.inversion) % st.size()]);
   }
-  if (pcs.size() < 2) return "";
-  const int bass = ((lowest % 12) + 12) % 12;
-  // Root candidates: the bass first (root position wins), then the others.
-  std::vector<int> roots = {bass};
-  for (int pc : pcs)
-    if (pc != bass) roots.push_back(pc);
-  for (int root : roots)
-    for (const auto& q : quals) {
-      std::set<int> want;
-      for (int iv : q.iv) want.insert((root + iv) % 12);
-      if (want != pcs) continue;
-      std::string n = std::string(names[root]) + q.suffix;
-      if (root != bass) n += std::string("/") + names[bass];
-      return n;
-    }
-  return "";
+  return n;
 }
 
 // ----------------------------------------------------- time selection ----

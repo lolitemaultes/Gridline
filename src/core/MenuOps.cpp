@@ -1,4 +1,5 @@
 #include "MenuOps.h"
+#include "ChordTools.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -692,7 +693,7 @@ bool soloMixerTrack(Document& d, ObjectId id) {
   bool only = s.mixerTrack(id)->solo;
   for (const auto& m : s.mixer) only = only && (m.id == id || !m.solo);
   d.editSong(only ? "unsolo mixer track" : "solo mixer track", [&](Song& x) {
-    for (auto& m : x.mixer) m.solo = !only && m.id == id;
+    for (auto& m : x.mixer) m.solo = !only && m.id == id, m.soloAlone = false;  // J-31: a plain solo
   });
   return true;
 }
@@ -983,15 +984,14 @@ const std::vector<Progression>& progressions() {
 }
 
 namespace {
+// Diatonic triad on a scale degree (J-31: from ChordTools), ascending from `root`.
 std::vector<int> triad(int degree, int root, bool minor) {
-  static const int maj[] = {0, 2, 4, 5, 7, 9, 11}, minr[] = {0, 2, 3, 5, 7, 8, 10};
-  const int* sc = minor ? minr : maj;
-  std::vector<int> out;
-  for (int k = 0; k < 3; ++k) {
-    int d = degree - 1 + 2 * k;
-    out.push_back(root + sc[d % 7] + 12 * (d / 7));
-  }
-  return out;
+  chord::ChordProgression p;
+  p.key = ((root % 12) + 12) % 12;
+  p.scale = minor ? 2 : 1;  // tools::scales(): 1 major, 2 natural minor
+  p.octave = (root - p.key) / 12;
+  p.chords.push_back(chord::diatonicChord(p.key, p.scale, degree));
+  return chord::voice(p, 0).main;
 }
 }  // namespace
 

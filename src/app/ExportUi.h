@@ -21,6 +21,7 @@ enum class Preset {
   PatternFile,     // the current pattern to files
   AudioClip,       // the current pattern as an audio clip
   PatternReplace,  // the current pattern as audio clips replacing its pattern clips
+  TrackGroups,     // J-31: split playlist track groups
 };
 void openRender(App& a, Preset p = Preset::Audio);
 // Opens the render dialog with the settings of the last render (formats, scope, splitting).

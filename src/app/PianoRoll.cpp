@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "J31Ui.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "App.h"
@@ -188,6 +189,7 @@ void drawPianoRoll(App& a) {
     st.selPattern = a.curPattern;
     st.selChannel = a.selChannel;
   }
+  j31::pianoKey(a, st.scaleRoot, st.scale);  // J-31: scale highlighting follows key markers
 
   // ---------------- toolbar ----------------
   ui::BeginToolbar("##prtb");
@@ -510,6 +512,8 @@ void drawPianoRoll(App& a) {
     float xe = xOf(patLen);
     if (xe < gridMax.x) dl->AddRectFilled(ImVec2(std::max(xe, gridMin.x), gridMin.y), gridMax, theme::withAlpha(P.surface950, 0.55f));
   }
+  j31::drawPianoBackground(a, gridMin.x, gridMin.y, gridMax.x, gridMax.y, static_cast<double>(tickAt(gridMin.x)),
+                           1.0 / std::max(1e-6, static_cast<double>(st.pxPerTick)));  // J-31
   // Ghost notes from other channels (all others, or the chosen ones).
   struct GhostHit { ObjectId ch; int pitch; };
   GhostHit ghostHover{kNoId, -1};
@@ -775,7 +779,9 @@ void drawPianoRoll(App& a) {
       g.kind = Gesture::Erase;
     } else if (inGrid && lClick) {
       bool ctrl = io.KeyCtrl;
-      if (dbl && hoverNote < 0 && ghostHover.ch != kNoId) {
+      if (!dbl && hoverNote < 0 && ghostHover.ch != kNoId && j31::editGhostAt(a, tickAt(m.x), ghostHover.pitch)) {
+        // J-31 editable ghosts: the click switched to the ghost's channel with the note selected.
+      } else if (dbl && hoverNote < 0 && ghostHover.ch != kNoId) {
         // Multi-channel editing: double-clicking a ghost note edits its channel.
         a.selectChannel(ghostHover.ch);
         a.notify("Editing " + std::string(s.channel(ghostHover.ch) ? s.channel(ghostHover.ch)->name : "channel"));
@@ -811,6 +817,7 @@ void drawPianoRoll(App& a) {
           if (!st.selected.count(static_cast<size_t>(hoverNote))) {
             if (!io.KeyShift) st.selected.clear();
             st.selected.insert(static_cast<size_t>(hoverNote));
+            j31::expandNoteGroups(a);  // J-31: grouped notes come along
             g.sel = selVector(a, notes.size());
           }
           g.kind = hoverEdge ? Gesture::Resize : Gesture::Move;

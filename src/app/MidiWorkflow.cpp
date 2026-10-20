@@ -9,6 +9,8 @@
 #include "AutomationEditor.h"
 #include "PluginUI.h"
 #include "ScriptUi.h"
+#include "ChordEditorUi.h"
+#include "J31Ui.h"
 
 namespace gl {
 
@@ -173,6 +175,7 @@ void App::runAction(RemoteAction action, bool fromMmc) {
 }
 
 void App::playedNoteOn(ObjectId channel, int pitch, int velocity) {
+  j31::chordEditorNote(*this, pitch, true);  // J-31: learn chords from MIDI input
   if (stepRecord && !engine.playing()) {
     stepRecorder.press(pitch, velocity);
     return;
@@ -181,6 +184,7 @@ void App::playedNoteOn(ObjectId channel, int pitch, int velocity) {
 }
 
 void App::playedNoteOff(ObjectId channel, int pitch) {
+  j31::chordEditorNote(*this, pitch, false);
   if (stepRecord && !engine.playing()) {
     Tick g = piano.effGrid > 0 ? piano.effGrid : snapTicks(doc.song(), piano.snap);
     stepRecorder.step = std::max<Tick>(1, g);
@@ -384,9 +388,9 @@ void App::processMidi() {
           r.route[m.channel()] < static_cast<int>(song.channels.size()))
         ch = song.channels[static_cast<size_t>(r.route[m.channel()])].id;
       if (m.noteOn())
-        playedNoteOn(ch, m.d1, m.d2);
+        playedNoteOn(ch, j31::incomingPitch(*this, m.d1), m.d2);  // J-31: snap incoming MIDI to the scale
       else if (!r.ignoreNoteOff)
-        playedNoteOff(ch, m.d1);
+        playedNoteOff(ch, j31::incomingPitch(*this, m.d1));
     }
   }
   // A controller gesture ends after a short pause: one undo step per move.

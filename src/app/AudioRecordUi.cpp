@@ -1,4 +1,5 @@
 // Gridline — audio input & recording UI (J-8). See AudioRecordUi.h.
+#include "J31Ui.h"
 #include "AudioRecordUi.h"
 #include <algorithm>
 #include <cmath>
@@ -27,7 +28,7 @@ std::string projectSubdir(const App& a, const char* name) {
 
 bool anyArmed(const Song& s) {
   for (const auto& m : s.mixer)
-    if (m.armed && m.input >= 0) return true;
+    if (m.records()) return true;  // J-31: output taps record without an input
   return false;
 }
 
@@ -189,12 +190,18 @@ void App::processAudioRecording() {
     if (const auto& p = engine.program()) audioRec.pump(engine, ringsOf(*p));
     std::vector<RecordedTake> takes = audioRec.release();
     takes.erase(std::remove_if(takes.begin(), takes.end(), [](const RecordedTake& t) { return t.frames() < 64; }), takes.end());
+    // J-31: cancelled sessions keep nothing; silent takes can be dropped.
+    if (j31::takeCancelRequested()) takes.clear();
+    if (settings.getBool("record.ignoreSilent"))
+      if (const int n = dropSilentTakes(takes, -60.0f); n > 0) notify(std::to_string(n) + " silent take" + (n == 1 ? "" : "s") + " dropped");
     if (!takes.empty()) {
       TakeCommitOptions o;
       o.dir = recordedDir(*this);
       const int rb = static_cast<int>(settings.getNumber("audio.recordBits"));
       o.bits = rb == 24 || rb == 16 ? rb : 32;  // J-27: 16-bit too
       o.sampleRate = engine.sampleRate();
+      o.naming = settings.getNumber("record.naming") > 0.5 ? TakeCommitOptions::Naming::Input : TakeCommitOptions::Naming::Insert;
+      o.nameTracks = settings.getBool("record.nameTracks");
       TakeCommitResult r;
       doc.editSong("Record audio", [&](Song& x) { r = commitTakes(x, takes, o); });
       if (!r.error.empty()) notify("Recording: " + r.error, true);
@@ -207,6 +214,10 @@ void App::processAudioRecording() {
         playlist.selected.insert(r.clips.begin(), r.clips.end());
       }
     }
+    if (settings.getBool("record.autoUnarm") && !j31::takeCancelRequested() && anyArmed(doc.song()))  // J-31
+      doc.editSong("disarm tracks after recording", [](Song& x) {
+        for (auto& m : x.mixer) m.armed = false;
+      });
     audioRecSession = audioRecFinishing = false;
     if (audioRecLoopRestore >= 0) engine.setLooping(audioRecLoopRestore > 0);
     audioRecLoopRestore = -1;

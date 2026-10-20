@@ -71,6 +71,12 @@ struct Channel {
   // chord generators). -1 = none; 0..255.
   int midiOutPort = -1;
   int midiInPort = -1;
+  // J-31: key range (MIDI notes, inclusive): notes outside it do not play on
+  // this channel (layer splits use it). Swing truncation: swung steps end at
+  // their unswung end (they do not overlap the next step).
+  int keyLo = 0, keyHi = 127;
+  bool swingTruncate = false;
+  bool fullKeyRange() const { return keyLo <= 0 && keyHi >= 127; }
 
   bool isLayer() const { return !layer.empty(); }
   bool operator==(const Channel& o) const {
@@ -79,7 +85,8 @@ struct Channel {
            fine == o.fine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
            mono == o.mono && porta == o.porta && portaTime == o.portaTime && cutGroup == o.cutGroup &&
            cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && group == o.group &&
-           auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort;
+           auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&
+           keyHi == o.keyHi && swingTruncate == o.swingTruncate;
   }
 };
 
@@ -157,10 +164,15 @@ struct Pattern {
   std::vector<PatternAutomation> automation;       // parameter lanes (at most one per target)
   // J-11: per-step parameters (parallel to `steps`; missing / short rows = defaults).
   std::map<ObjectId, std::vector<StepProps>> stepProps;
+  // J-31: per-channel loop length in steps (missing / 0 = the pattern length):
+  // the channel's first `n` steps (and the notes that start in them) repeat
+  // through the pattern.
+  std::map<ObjectId, int> stepLoop;
 
   bool operator==(const Pattern& o) const {
     return id == o.id && name == o.name && color == o.color && stepsPerBar == o.stepsPerBar && bars == o.bars &&
-           steps == o.steps && notes == o.notes && automation == o.automation && stepProps == o.stepProps;
+           steps == o.steps && notes == o.notes && automation == o.automation && stepProps == o.stepProps &&
+           stepLoop == o.stepLoop;
   }
 };
 
@@ -266,9 +278,21 @@ struct Marker {
   std::string name;
   int timeSigNum = 0, timeSigDen = 0;  // 0 = plain marker
   MarkerAction action = MarkerAction::None;
+  // J-31 key marker: the song is in this key from here on (keyRoot 0..11,
+  // keyScale = tools::scales() index); keyRoot < 0 = not a key marker.
+  int keyRoot = -1, keyScale = 0;
+  bool isKey() const { return keyRoot >= 0; }
   bool operator==(const Marker& o) const {
-    return pos == o.pos && name == o.name && timeSigNum == o.timeSigNum && timeSigDen == o.timeSigDen && action == o.action;
+    return pos == o.pos && name == o.name && timeSigNum == o.timeSigNum && timeSigDen == o.timeSigDen && action == o.action &&
+           keyRoot == o.keyRoot && keyScale == o.keyScale;
   }
+};
+
+// J-31: a named set of patterns (the pattern list can show one group).
+struct PatternGroup {
+  std::string name;
+  std::vector<ObjectId> patterns;
+  bool operator==(const PatternGroup& o) const { return name == o.name && patterns == o.patterns; }
 };
 
 // One playlist arrangement: its clips, tracks, markers and live area. A song
@@ -309,6 +333,9 @@ inline constexpr int kEffectSlots = 10;
 // Mixer strip docking (MixerTrack::dock): left (with the master), middle, right.
 enum class MixerDock : int { Left = -1, Middle = 0, Right = 1 };
 inline constexpr int kMaxManualLatency = 1 << 18;  // samples
+// Where a mixer track records from (J-31): its input before the effects, or
+// its output after the effects (and the fader with PostFader).
+enum class RecordPoint : uint8_t { Input = 0, PostEffects, PostFader, Count };
 // When a mixer track's input is heard through the track (J-8). Auto: while the
 // track is armed for recording, and whenever the transport is stopped.
 enum class InputMonitor : uint8_t { Auto = 0, On, Off, Count };
@@ -351,7 +378,14 @@ struct MixerTrack {
   bool inputStereo = true;
   uint8_t monitor = 0;  // InputMonitor
   bool armed = false;
+  // J-31: where disk recording taps the track (RecordPoint).
+  uint8_t recPoint = 0;
+  // J-31 alt solo: soloed on its own; tracks feeding it stay silent (a plain
+  // solo keeps the tracks routed into it audible).
+  bool soloAlone = false;
   bool hasInput() const { return input >= 0; }
+  // J-31: an armed track records (its input, or its output after the effects).
+  bool records() const { return armed && (input >= 0 || recPoint != 0); }
 
   bool operator==(const MixerTrack& o) const {
     return id == o.id && name == o.name && color == o.color && volume == o.volume && pan == o.pan &&
@@ -359,7 +393,8 @@ struct MixerTrack {
            swapLR == o.swapLR && slots == o.slots && sends == o.sends && eqGain == o.eqGain && eqFreq == o.eqFreq &&
            eqQ == o.eqQ && icon == o.icon && disabled == o.disabled && dock == o.dock &&
            latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && input == o.input &&
-           inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed;
+           inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed && recPoint == o.recPoint &&
+           soloAlone == o.soloAlone;
   }
 };
 
@@ -489,6 +524,7 @@ struct Song {
   std::vector<AutomationClip> automations;  // automation clip contents (arrangement)
   std::vector<Marker> markers;              // song markers, sorted by position (arrangement)
   std::vector<std::string> channelGroups;  // channel rack display groups (Channel::group indexes these)
+  std::vector<PatternGroup> patternGroups;  // J-31: pattern groups (pattern list filter)
   // --- arrangements and live mode ---
   // The current arrangement's content is `playlist`, `tracks`, `markers` and
   // `live`. `arrangements` lists every arrangement in order (empty = just the
@@ -535,7 +571,8 @@ struct Song {
            timeSigDen == o.timeSigDen && swing == o.swing && masterPitch == o.masterPitch && nextId == o.nextId &&
            channels == o.channels && patterns == o.patterns && playlist == o.playlist && tracks == o.tracks &&
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
-           markers == o.markers && channelGroups == o.channelGroups && live == o.live && arrangements == o.arrangements &&
+           markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
+           arrangements == o.arrangements &&
            currentArrangement == o.currentArrangement;
   }
   bool operator!=(const Song& o) const { return !(*this == o); }

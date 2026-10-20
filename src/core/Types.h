@@ -61,6 +61,7 @@ struct Note {
   bool slide = false;  // glides the channel's sounding notes to this pitch over its length (no new note)
   bool porta = false;  // starts at the previous note's pitch and glides to its own (channel porta time)
   bool muted = false;  // J-11: kept in the pattern but not played (mute tool)
+  int group = 0;       // J-31: note group (0 = none); grouped notes are selected together
 
   // {start, length, pitch, velocity} keeps working everywhere (without
   // missing-initializer warnings for the property fields).
@@ -70,12 +71,12 @@ struct Note {
 
   bool hasProps() const {
     return pan != 0 || fine != 0 || release != kNoteReleaseDefault || modX != kNoteModCentre || modY != kNoteModCentre ||
-           color != 0 || slide || porta || muted;
+           color != 0 || slide || porta || muted || group != 0;
   }
   bool operator==(const Note& o) const {
     return start == o.start && length == o.length && pitch == o.pitch && velocity == o.velocity && pan == o.pan &&
            fine == o.fine && release == o.release && modX == o.modX && modY == o.modY && color == o.color &&
-           slide == o.slide && porta == o.porta && muted == o.muted;
+           slide == o.slide && porta == o.porta && muted == o.muted && group == o.group;
   }
 };
 
@@ -111,13 +112,15 @@ struct Clip {
   // share a take group; `take` is the pass number (0 = first). kNoId = none.
   ObjectId takeGroup = kNoId;
   int take = 0;
+  // J-31: clip group (kNoId = none); grouped clips are selected together.
+  ObjectId group = kNoId;
 
   bool operator==(const Clip& o) const {
     return id == o.id && pattern == o.pattern && track == o.track && start == o.start && length == o.length &&
            kind == o.kind && source == o.source && offset == o.offset && muted == o.muted && audioStart == o.audioStart &&
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
            stretch == o.stretch && syncBpm == o.syncBpm && reverse == o.reverse && takeGroup == o.takeGroup &&
-           take == o.take;
+           take == o.take && group == o.group;
   }
 };
 

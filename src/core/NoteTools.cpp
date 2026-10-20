@@ -1,4 +1,5 @@
 #include "NoteTools.h"
+#include "ChordTools.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -152,15 +153,13 @@ std::string pitchName(int pitch) {
 // --------------------------------------------------------------- chord stamps ----
 
 const std::vector<ChordDef>& chords() {
-  static const std::vector<ChordDef> c = {
-      {"Major", {0, 4, 7}},          {"Minor", {0, 3, 7}},           {"Diminished", {0, 3, 6}},
-      {"Augmented", {0, 4, 8}},      {"Suspended 2nd", {0, 2, 7}},   {"Suspended 4th", {0, 5, 7}},
-      {"Power (5th)", {0, 7, 12}},   {"Major 6th", {0, 4, 7, 9}},    {"Minor 6th", {0, 3, 7, 9}},
-      {"Dominant 7th", {0, 4, 7, 10}}, {"Major 7th", {0, 4, 7, 11}}, {"Minor 7th", {0, 3, 7, 10}},
-      {"Half-diminished 7th", {0, 3, 6, 10}}, {"Diminished 7th", {0, 3, 6, 9}}, {"Minor-major 7th", {0, 3, 7, 11}},
-      {"Added 9th", {0, 4, 7, 14}},  {"Major 9th", {0, 4, 7, 11, 14}}, {"Minor 9th", {0, 3, 7, 10, 14}},
-      {"Dominant 9th", {0, 4, 7, 10, 14}}, {"Minor 11th", {0, 3, 7, 10, 14, 17}}, {"Octaves", {0, 12}},
-  };
+  // J-31: the chord vocabulary lives in ChordTools (shared with the chord
+  // progression editor, chord names and the progression presets).
+  static const std::vector<ChordDef> c = [] {
+    std::vector<ChordDef> v;
+    for (const auto& q : chord::qualities()) v.push_back({q.name, q.steps});
+    return v;
+  }();
   return c;
 }
 

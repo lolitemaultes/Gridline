@@ -266,25 +266,36 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
   std::vector<NoteEv> out;
   const ObjectId channel = c.id;
   Tick stepTicks = song.ticksPerStep(p);
+  const size_t total = static_cast<size_t>(p.bars) * static_cast<size_t>(p.stepsPerBar);
+  // J-31: per-channel step loop: the first `loop` steps (and the notes that
+  // start in them) repeat through the pattern.
+  size_t loop = 0;
+  if (auto lt = p.stepLoop.find(channel); lt != p.stepLoop.end() && lt->second > 0 && static_cast<size_t>(lt->second) < total)
+    loop = static_cast<size_t>(lt->second);
   if (auto it = p.steps.find(channel); it != p.steps.end() && stepTicks > 0) {
     const auto& row = it->second;
-    size_t total = static_cast<size_t>(p.bars) * static_cast<size_t>(p.stepsPerBar);
     const float swing = song.swing * c.swingMix;
     // J-11: per-step pitch, properties and shift (graph / keyboard editor).
     const std::vector<StepProps>* props = nullptr;
     if (auto pt = p.stepProps.find(channel); pt != p.stepProps.end()) props = &pt->second;
-    for (size_t s = 0; s < row.size() && s < total; ++s) {
-      if (row[s] == 0) continue;
-      Tick on = static_cast<Tick>(s) * stepTicks;
+    for (size_t s = 0; s < total; ++s) {
+      const size_t src = loop ? s % loop : s;
+      if (src >= row.size() || row[src] == 0) continue;
+      const Tick grid = static_cast<Tick>(s) * stepTicks;
+      Tick on = grid;
       if (s % 2 == 1) on += static_cast<Tick>(swing * static_cast<float>(stepTicks) * 0.5f);  // swing
-      if (!props || s >= props->size() || (*props)[s].isDefault()) {
-        out.push_back(makeEv(on, on + stepTicks, 60.0f, static_cast<float>(row[s]) / 127.0f));
+      // J-31 truncated swing: a swung step still ends where the unswung step ends.
+      const Tick end = c.swingTruncate ? std::max(on + 1, grid + stepTicks) : on + stepTicks;
+      if (!props || src >= props->size() || (*props)[src].isDefault()) {
+        out.push_back(makeEv(on, end, 60.0f, static_cast<float>(row[src]) / 127.0f));
         continue;
       }
-      const StepProps& sp = (*props)[s];
-      on += stepTicks * sp.shift / kStepShiftMax;
-      NoteEv e = makeEv(on, on + stepTicks, static_cast<float>(sp.pitch < 0 ? 60 : sp.pitch) + static_cast<float>(sp.fine) / 100.0f,
-                        static_cast<float>(row[s]) / 127.0f);
+      const StepProps& sp = (*props)[src];
+      const Tick shift = stepTicks * sp.shift / kStepShiftMax;
+      on += shift;
+      NoteEv e = makeEv(on, c.swingTruncate ? std::max(on + 1, end) : end + shift,
+                        static_cast<float>(sp.pitch < 0 ? 60 : sp.pitch) + static_cast<float>(sp.fine) / 100.0f,
+                        static_cast<float>(row[src]) / 127.0f);
       e.props.pan = static_cast<float>(sp.pan) / static_cast<float>(kNotePanMax);
       e.props.release = sp.release == kNoteReleaseDefault ? 0.5f : static_cast<float>(sp.release) / 127.0f;
       e.props.modX = sp.modX == kNoteModCentre ? 0.5f : static_cast<float>(sp.modX) / static_cast<float>(kNoteModMax + 1);
@@ -292,10 +303,14 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       out.push_back(e);
     }
   }
+  const Tick loopTicks = static_cast<Tick>(loop) * stepTicks;
+  const Tick patLen = static_cast<Tick>(total) * stepTicks;
   if (auto it = p.notes.find(channel); it != p.notes.end())
-    for (const auto& n : it->second) {
-      if (n.muted) continue;  // J-11: muted notes stay in the pattern but do not play
-      NoteEv e = makeEv(n.start, n.start + n.length, static_cast<float>(n.pitch) + static_cast<float>(n.fine) / 100.0f,
+    for (const auto& n : it->second)
+      for (Tick rep = 0;; rep += loopTicks) {  // one pass, or the step loop's repeats (J-31)
+      if (n.muted) break;  // J-11: muted notes stay in the pattern but do not play
+      if (loopTicks > 0 && (n.start >= loopTicks || n.start + rep >= patLen)) break;
+      NoteEv e = makeEv(n.start + rep, n.start + rep + n.length, static_cast<float>(n.pitch) + static_cast<float>(n.fine) / 100.0f,
                         static_cast<float>(n.velocity) / 127.0f);
       e.props.pan = static_cast<float>(n.pan) / static_cast<float>(kNotePanMax);
       e.props.release = static_cast<float>(n.release) / 127.0f;
@@ -307,6 +322,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       if (n.modY == kNoteModCentre) e.props.modY = 0.5f;
       e.flags = static_cast<uint8_t>((n.slide ? kNoteSlide : 0) | (n.porta ? kNotePorta : 0));
       out.push_back(e);
+      if (loopTicks <= 0) break;
     }
   // Echo: repeats of every played note.
   if (c.echo.active()) {
@@ -349,6 +365,10 @@ std::vector<NoteEv> compilePatternChannel(const Song& song, const Pattern& p, Ob
   size_t own = out.size();
   addLayerNotes(song, p, *c, 0, out);
   if (out.size() != own) sortEvents(out);
+  if (!c->fullKeyRange()) {  // J-31: the channel's key range (layer splits)
+    const float lo = static_cast<float>(c->keyLo) - 0.5f, hi = static_cast<float>(c->keyHi) + 0.5f;
+    out.erase(std::remove_if(out.begin(), out.end(), [&](const NoteEv& e) { return e.pitch < lo || e.pitch >= hi; }), out.end());
+  }
   return out;
 }
 
@@ -390,7 +410,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
           bool from = audible.count(m.id), to = audible.count(s.to);
           // downstream of a solo track, or upstream into one
           if (from && !to && soloSet.count(m.id)) grew |= audible.insert(s.to).second;
-          if (!from && to && soloSet.count(s.to)) grew |= audible.insert(m.id).second;
+          const MixerTrack* dst = song.mixerTrack(s.to);
+          const bool alone = dst && dst->soloAlone;  // J-31 alt solo: sources stay silent
+          if (!from && to && soloSet.count(s.to) && !alone) grew |= audible.insert(m.id).second;
         }
     }
     audible.insert(song.masterId());
@@ -415,7 +437,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pm.inFirst = m.input;
     pm.inStereo = m.inputStereo;
     pm.monitor = m.monitor;
-    pm.armed = m.armed && m.input >= 0;
+    pm.armed = m.records();
+    pm.recPoint = m.recPoint;
+    if (pm.armed && m.recPoint == static_cast<uint8_t>(RecordPoint::PostEffects)) pm.hasPreSend = true;  // J-31: keeps the pre-fader copy
     if (pm.armed && !pm.rt->rec) pm.rt->rec = std::make_shared<packs::edison::CaptureRing>();
     pm.eq.gain = m.eqGain;
     pm.eq.freq = m.eqFreq;
@@ -579,6 +603,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pc.cutGroup = c.cutGroup;
     pc.cutBy = c.cutBy;
     pc.layerMode = c.layerMode;
+    pc.keyLo = c.keyLo;
+    pc.keyHi = c.keyHi;
     for (ObjectId k : c.layer) {
       int ki = song.channelIndex(k);
       if (ki >= 0 && k != c.id) pc.layer.push_back(ki);

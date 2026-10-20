@@ -201,6 +201,7 @@ struct ProgChannel {
   int cutGroup = 0, cutBy = 0;
   std::vector<int> layer;  // layer children (Program channel indices), for live notes
   int layerMode = 0;
+  int keyLo = 0, keyHi = 127;  // J-31: Channel key range (live notes outside it do not play)
   // Channels listening on this channel's MIDI output port (hosted plugins'
   // MIDI out, see Channel::midiOutPort): Program channel indices.
   std::vector<int> midiTargets;
@@ -270,6 +271,7 @@ struct ProgMixer {
   bool inStereo = true;
   uint8_t monitor = 0;
   bool armed = false;
+  uint8_t recPoint = 0;  // J-31: RecordPoint (MixerTrack::recPoint)
   int latIn = 0;    // path latency at the track input (compensated: all inputs arrive aligned)
   int latOwn = 0;   // latency of the track's own effects
   int latOut() const { return latIn + latOwn; }

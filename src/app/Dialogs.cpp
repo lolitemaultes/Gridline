@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "J31Ui.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Backup.h"
 #include "../core/I18n.h"
@@ -776,6 +777,7 @@ void drawDialogs(App& a) {
   importReportWindow(a);
   drawPluginManager(a);
   drawRemoteDialog(a);
+  j31::drawWindows(a);  // J-31: chord progression editor, audio logger, MIDI scale snap
   fileDialog(a);
 }
 

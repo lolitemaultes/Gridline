@@ -136,23 +136,32 @@ const float* AudioEngine::inputR(const ProgMixer& m) const {
   return inputL(m);
 }
 
-void AudioEngine::captureRecording(const Program* p, int n) {
+void AudioEngine::captureRecording(const Program* p, int n, bool post) {
   const double pa = punchA_.load(std::memory_order_relaxed), pb = punchB_.load(std::memory_order_relaxed);
   const bool punch = pb > pa;
-  for (const ProgMixer& m : p->mixer) {
+  for (size_t mi = 0; mi < p->mixer.size(); ++mi) {
+    const ProgMixer& m = p->mixer[mi];
     MixerRuntime* rt = m.rt.get();
     if (!rt) continue;
+    // J-31: tracks recording their output are captured after the graph.
+    const bool tapsOutput = m.armed && m.recPoint != static_cast<uint8_t>(RecordPoint::Input);
+    if (tapsOutput != post && m.armed) continue;
+    if (post && !m.armed) continue;
     packs::edison::CaptureRing* ring = rt->rec.get();
     if (!m.armed || !ring) {
       if (rt->recActive && ring) pushRecEvent({RecEvent::End, m.id, ring->written(), 0});
       rt->recActive = false;
       continue;
     }
-    const float* L = inputL(m);
-    const float* R = inputR(m);
+    const bool preFader = m.recPoint == static_cast<uint8_t>(RecordPoint::PostEffects) && mi < preL_.size();
+    const float* L = !post ? inputL(m) : preFader ? preL_[mi].data() : mi < busL_.size() ? busL_[mi].data() : silence_.data();
+    const float* R = !post ? inputR(m) : preFader ? preR_[mi].data() : mi < busR_.size() ? busR_[mi].data() : silence_.data();
     int runFrom = rt->recActive ? 0 : -1;
+    // Output taps hear the music late by the track's delay compensation, not the input latency.
+    const size_t lat = static_cast<size_t>(std::max(0, m.latOut()));
+    const size_t base = tickHistPos_ - static_cast<size_t>(n);
     for (int i = 0; i < n; ++i) {
-      const double t = recTick_[static_cast<size_t>(i)];
+      const double t = !post ? recTick_[static_cast<size_t>(i)] : tickHist_[(base + static_cast<size_t>(i) - lat) & (kTickHistory - 1)];
       const bool in = t >= 0 && (!punch || (t >= pa && t < pb));
       // A jump of the position (loop wrap, seek) starts a new take.
       const bool jump = in && rt->recActive && (t < rt->recLastTick - 1e-6 || t > rt->recLastTick + 4.0);
@@ -193,8 +202,61 @@ void AudioEngine::setProgram(std::shared_ptr<const Program> p) {
   collectGarbage();
 }
 
+void AudioEngine::jumpTo(Tick tick, Tick grid) {
+  Cmd c{Cmd::Jump};
+  c.tick = static_cast<double>(std::max<Tick>(0, tick));
+  c.tick2 = static_cast<double>(std::max<Tick>(0, grid));
+  send(c);
+  if (!playing_.load() || grid <= 0)
+    posTick_ = c.tick;
+  else
+    jumpPendingUi_.store(true);
+}
+
+int AudioEngine::snapToScaleMask(int pitch, int root, uint16_t mask) {
+  if ((mask & 0xFFF) == 0) return pitch;
+  auto in = [&](int p) { return p >= 0 && p <= 127 && (mask >> (((p - root) % 12 + 12) % 12) & 1u); };
+  for (int d = 0; d <= 6; ++d) {
+    if (in(pitch - d)) return pitch - d;
+    if (in(pitch + d)) return pitch + d;
+  }
+  return pitch;
+}
+
+void AudioEngine::setLogger(std::shared_ptr<AudioLogger> logger) {
+  if (loggerOwner_) retiredLoggers_.push_back({loggerOwner_, blocks_.load() + 2});
+  loggerOwner_ = std::move(logger);
+  logger_.store(loggerOwner_.get());
+  collectGarbage();
+}
+
+void AudioEngine::logAudio(const Program* p, const float* mL, const float* mR, int n) {
+  AudioLogger* lg = logger_.load(std::memory_order_acquire);
+  if (!lg || n <= 0) return;
+  if (lg->source() == AudioLogger::Source::Master) {
+    lg->write(mL, mR, n);
+    return;
+  }
+  // The inputs of the armed tracks, summed.
+  const int k = std::min(n, kEngineMaxBlock);
+  std::fill(logL_, logL_ + k, 0.0f);
+  std::fill(logR_, logR_ + k, 0.0f);
+  for (const ProgMixer& m : p->mixer) {
+    if (!m.armed || m.inFirst < 0) continue;
+    const float* iL = inputL(m);
+    const float* iR = inputR(m);
+    for (int i = 0; i < k; ++i) {
+      logL_[i] += iL[i];
+      logR_[i] += iR[i];
+    }
+  }
+  lg->write(logL_, logR_, k);
+}
+
 void AudioEngine::collectGarbage() {
   uint64_t b = blocks_.load();
+  retiredLoggers_.erase(std::remove_if(retiredLoggers_.begin(), retiredLoggers_.end(), [&](const auto& r) { return b >= r.second; }),
+                        retiredLoggers_.end());
   retired_.erase(std::remove_if(retired_.begin(), retired_.end(), [&](const auto& r) { return b >= r.second; }),
                  retired_.end());
   retiredSamples_.erase(std::remove_if(retiredSamples_.begin(), retiredSamples_.end(),
@@ -332,6 +394,10 @@ void AudioEngine::drainMidi(const Program* p) {
     int kind = m.s & 0xF0;
     int mch = m.s & 0x0F;
     int pitch = m.a & 0x7F;
+    if (kind == 0x90 || kind == 0x80) {  // J-31: snap incoming notes to the scale
+      const uint32_t sn = midiSnap_.load(std::memory_order_relaxed);
+      if (sn & 0xFFF) pitch = snapToScaleMask(pitch, static_cast<int>(sn >> 12), static_cast<uint16_t>(sn & 0xFFF));
+    }
     if (kind == 0x90 && m.b > 0) {
       if (midiNoteCh_[pitch] != kNoId) release(pitch);  // retrigger
       ObjectId ch = routed(mch);
@@ -485,14 +551,16 @@ void AudioEngine::routePluginMidi(const Program* p, int n) {
 // channel note settings (cut groups, mono, porta, polyphony, slide notes).
 
 void AudioEngine::liveOn(const Program* p, const ProgChannel& ch, uint32_t id, float pitch, float velocity, int color) {
-  sendOn(ch, id, pitch, velocity, 0, color);
+  // J-31: a channel's key range limits the notes it plays (layer splits).
+  auto inRange = [pitch](const ProgChannel& c) { return pitch > c.keyLo - 0.5f && pitch < c.keyHi + 0.5f; };
+  if (inRange(ch)) sendOn(ch, id, pitch, velocity, 0, color);
   if (ch.layer.empty()) return;
   // Layer: the children play too (random layers pick one child per note).
   const size_t pick = ch.layerMode == 1 ? ((id * 2654435761u) >> 7) % ch.layer.size() : 0;
   for (size_t k = 0; k < ch.layer.size(); ++k) {
     if (ch.layerMode == 1 && k != pick) continue;
     const size_t ci = static_cast<size_t>(ch.layer[k]);
-    if (ci < p->channels.size()) sendOn(p->channels[ci], id, pitch, velocity, 0, color);
+    if (ci < p->channels.size() && inRange(p->channels[ci])) sendOn(p->channels[ci], id, pitch, velocity, 0, color);
   }
 }
 
@@ -653,6 +721,8 @@ void AudioEngine::drain(const Program* p) {
         }
         break;
       case Cmd::Stop:
+        pendJump_ = false;
+        jumpPendingUi_.store(false);
         countInLeft_ = 0;
         countingIn_.store(false);
         if (p) releaseAll(p, 0, true);
@@ -684,6 +754,24 @@ void AudioEngine::drain(const Program* p) {
         if (p) releaseAll(p, 0);
         anchorTick_ = c.tick;
         clock_ = 0;
+        pendJump_ = false;
+        jumpPendingUi_.store(false);
+        break;
+      case Cmd::Jump:  // J-31: quantized song position jump
+        if (!tPlaying_ || c.tick2 <= 0 || !p) {
+          if (p) releaseAll(p, 0);
+          anchorTick_ = c.tick;
+          clock_ = 0;
+          pendJump_ = false;
+          jumpPendingUi_.store(false);
+        } else {
+          const double cur = here();
+          pendJumpAt_ = std::ceil(cur / c.tick2 - 1e-9) * c.tick2;
+          if (pendJumpAt_ < cur) pendJumpAt_ += c.tick2;
+          pendJumpTo_ = c.tick;
+          pendJump_ = true;
+          jumpPendingUi_.store(true);
+        }
         break;
       case Cmd::Loop: tLoop_ = c.value > 0.5f; break;
       case Cmd::LoopRange:
@@ -823,18 +911,34 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     while (s < n && guard++ < 64) {
       const double end = loopEnd(p);
       int seg = n - s;
-      bool wrap = false;
+      bool wrap = false, jump = false;
       if (tLoop_) {
         int64_t endSample = sampleAt(p, anchorTick_, end);
         if (endSample <= clock_) {  // already past the end (e.g. a shorter pattern was selected)
           releaseAll(p, s);
-          anchorTick_ = loopStart();
+          anchorTick_ = pendJump_ ? pendJumpTo_ : loopStart();
           clock_ = 0;
+          pendJump_ = false;
           continue;
         }
         if (endSample < clock_ + seg) {
           seg = static_cast<int>(endSample - clock_);
           wrap = true;
+        }
+      }
+      if (pendJump_) {  // J-31: a quantized jump lands on its grid line
+        const int64_t js = sampleAt(p, anchorTick_, pendJumpAt_);
+        if (js <= clock_) {
+          releaseAll(p, s);
+          anchorTick_ = pendJumpTo_;
+          clock_ = 0;
+          pendJump_ = false;
+          continue;
+        }
+        if (js < clock_ + seg) {
+          seg = static_cast<int>(js - clock_);
+          wrap = false;
+          jump = true;
         }
       }
       if (segCount_ < kMaxSegments) segs_[segCount_++] = {s, seg, anchorTick_, clock_};
@@ -868,12 +972,14 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       }
       clock_ += seg;
       s += seg;
-      if (wrap) {
+      if (wrap || jump) {
         releaseAll(p, std::min(s, n - 1));
-        anchorTick_ = loopStart();
+        anchorTick_ = pendJump_ ? pendJumpTo_ : loopStart();  // a pending jump replaces the loop wrap
         clock_ = 0;
+        pendJump_ = false;
       }
     }
+    if (!pendJump_) jumpPendingUi_.store(false, std::memory_order_relaxed);
     curTick_ = tickAt(p, anchorTick_, static_cast<double>(clock_));
     posTick_.store(curTick_);
   }
@@ -949,8 +1055,10 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   }
   bc_.profile = profiling_.load(std::memory_order_relaxed);
   runGraph(p, n);
+  captureRecording(p, n, true);  // J-31: tracks recording their output (closes their takes too)
   const float* mL = busL_[static_cast<size_t>(p->master)].data();
   const float* mR = busR_[static_cast<size_t>(p->master)].data();
+  logAudio(p, mL, mR, n);
   bool bad = false;
   for (int i = 0; i < n; ++i) {
     L[i] = mL[i];

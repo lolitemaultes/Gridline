@@ -63,6 +63,11 @@ struct TakeCommitOptions {
   int bits = 32;               // 32 = float, 24 / 16 = PCM
   double sampleRate = 44100;
   bool muteEarlierTakes = true;
+  // J-31 naming: clips (and empty playlist tracks) are named after the
+  // recorded insert, or after its device input ("In 1 - In 2").
+  enum class Naming : uint8_t { Insert = 0, Input };
+  Naming naming = Naming::Insert;
+  bool nameTracks = true;  // name the playlist track after the take when it has no name
 };
 
 struct TakeCommitResult {
@@ -71,6 +76,13 @@ struct TakeCommitResult {
   std::vector<std::string> files;   // written WAV files
   std::string error;
 };
+
+// J-31: silent takes. Peak of a take (linear) and removal of the takes whose
+// peak stays below `thresholdDb` (dBFS). Returns how many were removed.
+float takePeak(const RecordedTake& t);
+int dropSilentTakes(std::vector<RecordedTake>& takes, float thresholdDb);
+// Name a take gets: the insert's name or its input's name (TakeCommitOptions::Naming).
+std::string takeBaseName(const Song& song, ObjectId mixer, TakeCommitOptions::Naming naming);
 
 // Capture rings of the armed tracks in a program.
 AudioRecorder::Rings ringsOf(const Program& p);

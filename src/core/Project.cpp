@@ -177,6 +177,11 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
     if (c.layerMode) jc.object["layerMode"] = num(c.layerMode);
   }
   if (c.group >= 0) jc.object["group"] = num(c.group);
+  if (!c.fullKeyRange()) {  // J-31 key range
+    jc.object["keyLo"] = num(c.keyLo);
+    jc.object["keyHi"] = num(c.keyHi);
+  }
+  if (c.swingTruncate) jc.object["swingTruncate"] = boolean(true);
 }
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
@@ -205,6 +210,10 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
         c.layer.push_back(jsonInt<ObjectId>(v.number));
   c.layerMode = jsonInt<int>(std::clamp(jc.num("layerMode", 0), 0.0, 1.0));
   c.group = jsonInt<int>(std::clamp(jc.num("group", -1), -1.0, 1e6));
+  c.keyLo = jsonInt<int>(std::clamp(jc.num("keyLo", 0), 0.0, 127.0));  // J-31
+  c.keyHi = jsonInt<int>(std::clamp(jc.num("keyHi", 127), 0.0, 127.0));
+  if (c.keyHi < c.keyLo) std::swap(c.keyLo, c.keyHi);
+  c.swingTruncate = flag(jc, "swingTruncate");
 }
 
 void noteToJson(const Note& n, Json& jn) {
@@ -218,6 +227,7 @@ void noteToJson(const Note& n, Json& jn) {
   if (n.slide) jn.object["slide"] = boolean(true);
   if (n.porta) jn.object["porta"] = boolean(true);
   if (n.muted) jn.object["muted"] = boolean(true);
+  if (n.group > 0) jn.object["group"] = num(n.group);  // J-31
 }
 
 void noteFromJson(const Json& e, Note& n) {
@@ -230,6 +240,7 @@ void noteFromJson(const Json& e, Note& n) {
   n.slide = flag(e, "slide");
   n.porta = flag(e, "porta");
   n.muted = flag(e, "muted");
+  n.group = jsonInt<int>(std::clamp(e.num("group", 0), 0.0, 1e9));  // J-31
 }
 // ---- end of channel / note extras
 
@@ -266,6 +277,7 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.reverse) jc.object["reverse"] = boolean(true);
   if (c.takeGroup != kNoId) jc.object["takeGroup"] = num(c.takeGroup);
   if (c.take != 0) jc.object["take"] = num(c.take);
+  if (c.group != kNoId) jc.object["group"] = num(c.group);  // J-31
 }
 
 void clipArrangementFromJson(const Json& jc, Clip& c) {
@@ -285,6 +297,7 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.reverse = flag(jc, "reverse");
   c.takeGroup = jsonInt<ObjectId>(std::max(0.0, jc.num("takeGroup", 0)));
   c.take = jsonInt<int>(std::clamp(jc.num("take", 0), 0.0, 9999.0));
+  c.group = jsonInt<ObjectId>(std::max(0.0, jc.num("group", 0)));  // J-31
 }
 
 void arrangementToJson(const Song& s, Json& j) {
@@ -325,6 +338,10 @@ void arrangementToJson(const Song& s, Json& j) {
         jm.object["timeSigDen"] = num(m.timeSigDen);
       }
       if (m.action != MarkerAction::None) jm.object["action"] = num(static_cast<int>(m.action));
+      if (m.isKey()) {  // J-31 key marker
+        jm.object["keyRoot"] = num(m.keyRoot);
+        jm.object["keyScale"] = num(m.keyScale);
+      }
       arr.array.push_back(std::move(jm));
     }
     j.object["markers"] = std::move(arr);
@@ -367,6 +384,8 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
       m.timeSigDen = jsonInt<int>(std::clamp(jm.num("timeSigDen", 0), 0.0, 32.0));
       if (m.timeSigNum == 0 || m.timeSigDen == 0) m.timeSigNum = m.timeSigDen = 0;
       m.action = static_cast<MarkerAction>(jsonInt<int>(std::clamp(jm.num("action", 0), 0.0, static_cast<double>(static_cast<int>(MarkerAction::Count) - 1))));
+      m.keyRoot = jsonInt<int>(std::clamp(jm.num("keyRoot", -1), -1.0, 11.0));  // J-31
+      m.keyScale = jsonInt<int>(std::clamp(jm.num("keyScale", 0), 0.0, 64.0));
       s.markers.push_back(std::move(m));
     }
   std::stable_sort(s.markers.begin(), s.markers.end(), [](const Marker& x, const Marker& y) { return x.pos < y.pos; });
@@ -458,6 +477,12 @@ void stepPropsFromJson(const Json& jp, Pattern& p, const Song& s) {
 
 void patternExtrasToJson(const Pattern& p, Json& jp) {
   stepPropsToJson(p, jp);
+  if (!p.stepLoop.empty()) {  // J-31: per-channel step loop lengths
+    Json loops = Json::makeObject();
+    for (const auto& [ch, n] : p.stepLoop)
+      if (n > 0) loops.object[std::to_string(ch)] = num(n);
+    if (!loops.object.empty()) jp.object["stepLoop"] = std::move(loops);
+  }
   if (p.automation.empty()) return;
   Json arr = Json::makeArray();
   for (const auto& lane : p.automation) {
@@ -473,6 +498,13 @@ void patternExtrasToJson(const Pattern& p, Json& jp) {
 // Lanes whose target no longer exists, or that repeat a target, are dropped.
 void patternExtrasFromJson(const Json& jp, Pattern& p, const Song& s) {
   stepPropsFromJson(jp, p, s);
+  if (const Json* loops = jp.find("stepLoop"); loops && loops->is(Json::Type::Object))  // J-31
+    for (const auto& [k, v] : loops->object) {
+      const ObjectId ch = static_cast<ObjectId>(std::strtoul(k.c_str(), nullptr, 10));
+      if (!s.channel(ch) || !v.is(Json::Type::Number)) continue;
+      const int n = jsonInt<int>(std::clamp(v.number, 0.0, 4096.0));
+      if (n > 0) p.stepLoop[ch] = n;
+    }
   const Json* arr = jp.find("automation");
   if (!arr || !arr->is(Json::Type::Array)) return;
   for (const auto& jl : arr->array) {
@@ -557,6 +589,10 @@ void songExtrasToJson(const Song& s, Json& j) {
             jm.object["timeSigDen"] = num(m.timeSigDen);
           }
           if (m.action != MarkerAction::None) jm.object["action"] = num(static_cast<int>(m.action));
+          if (m.isKey()) {  // J-31 key marker
+            jm.object["keyRoot"] = num(m.keyRoot);
+            jm.object["keyScale"] = num(m.keyScale);
+          }
           marks.array.push_back(std::move(jm));
         }
         ja.object["markers"] = std::move(marks);
@@ -619,6 +655,8 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
           m.timeSigDen = jsonInt<int>(std::clamp(jm.num("timeSigDen", 0), 0.0, 32.0));
           if (m.timeSigNum == 0 || m.timeSigDen == 0) m.timeSigNum = m.timeSigDen = 0;
           m.action = static_cast<MarkerAction>(jsonInt<int>(std::clamp(jm.num("action", 0), 0.0, static_cast<double>(static_cast<int>(MarkerAction::Count) - 1))));
+          m.keyRoot = jsonInt<int>(std::clamp(jm.num("keyRoot", -1), -1.0, 11.0));  // J-31
+          m.keyScale = jsonInt<int>(std::clamp(jm.num("keyScale", 0), 0.0, 64.0));
           a.markers.push_back(std::move(m));
         }
       std::stable_sort(a.markers.begin(), a.markers.end(), [](const Marker& x, const Marker& y) { return x.pos < y.pos; });
@@ -649,6 +687,8 @@ Json mixerTrackToJson(const MixerTrack& m) {
   if (!m.inputStereo) jm.object["inputStereo"] = boolean(false);
   if (m.monitor != 0) jm.object["monitor"] = num(m.monitor);
   if (m.armed) jm.object["armed"] = boolean(true);
+  if (m.recPoint != 0) jm.object["recPoint"] = num(m.recPoint);  // J-31
+  if (m.soloAlone) jm.object["soloAlone"] = boolean(true);
   Json slots = Json::makeArray();
   for (const auto& sl : m.slots) {
     Json js = Json::makeObject();
@@ -857,6 +897,18 @@ Json songToJson(const Song& s) {
     for (const auto& g : s.channelGroups) groups.array.push_back(str(g));
     j.object["channelGroups"] = std::move(groups);
   }
+  if (!s.patternGroups.empty()) {  // J-31 pattern groups
+    Json groups = Json::makeArray();
+    for (const auto& g : s.patternGroups) {
+      Json jg = Json::makeObject();
+      jg.object["name"] = str(g.name);
+      Json ids = Json::makeArray();
+      for (ObjectId id : g.patterns) ids.array.push_back(num(id));
+      jg.object["patterns"] = std::move(ids);
+      groups.array.push_back(std::move(jg));
+    }
+    j.object["patternGroups"] = std::move(groups);
+  }
   songExtrasToJson(s, j);  // live area, arrangements (see block above)
   return j;
 }
@@ -911,6 +963,8 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   if (const Json* st = jm.find("inputStereo"); st && st->is(Json::Type::Bool)) m.inputStereo = st->boolean;
   m.monitor = jsonInt<uint8_t>(std::clamp(jm.num("monitor", 0), 0.0, static_cast<double>(static_cast<int>(InputMonitor::Count) - 1)));
   m.armed = flag(jm, "armed");
+  m.soloAlone = flag(jm, "soloAlone");  // J-31
+  m.recPoint = jsonInt<uint8_t>(std::clamp(jm.num("recPoint", 0), 0.0, static_cast<double>(static_cast<int>(RecordPoint::Count) - 1)));
   if (const Json* sl = jm.find("slots"); sl && sl->is(Json::Type::Array))
     for (size_t i = 0; i < sl->array.size() && i < m.slots.size(); ++i) {
       const Json& js = sl->array[i];
@@ -1083,6 +1137,17 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       s.patterns.push_back(std::move(p));
     }
   }
+  if (const Json* groups = j.find("patternGroups"); groups && groups->is(Json::Type::Array))  // J-31
+    for (const auto& jg : groups->array) {
+      PatternGroup g;
+      g.name = jg.text("name", "Group");
+      if (const Json* ids = jg.find("patterns"); ids && ids->is(Json::Type::Array))
+        for (const auto& v : ids->array) {
+          const ObjectId id = v.is(Json::Type::Number) ? jsonInt<ObjectId>(v.number) : kNoId;
+          if (s.pattern(id) && std::find(g.patterns.begin(), g.patterns.end(), id) == g.patterns.end()) g.patterns.push_back(id);
+        }
+      s.patternGroups.push_back(std::move(g));
+    }
 
   s.tracks.clear();
   if (const Json* tracks = j.find("tracks"); tracks && tracks->is(Json::Type::Array))

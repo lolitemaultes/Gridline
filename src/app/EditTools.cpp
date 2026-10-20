@@ -7,6 +7,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../core/NoteTools.h"
 #include "App.h"
+#include "J31Ui.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -914,6 +915,7 @@ void devOpenTool(App& a, const std::string& name) {
     if (name == n) return openNoteTool(a, t);
   if (name == "fill") openStepTool(a, StepTool::Fill, a.selChannel);
   if (name == "randsteps") openStepTool(a, StepTool::Randomize, a.selChannel);
+  if (name == "chords") j31::openChordEditor(a);  // J-31 chord progression editor
 }
 
 }  // namespace gl

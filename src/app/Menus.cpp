@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include "J31Ui.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Demo.h"
@@ -150,6 +151,7 @@ void menuFile(App& a) {
     if (ImGui::MenuItem("Render to file (WAV, FLAC, MP3, Ogg)...", "Ctrl+R")) exportui::openRender(a, exportui::Preset::Audio);
     if (ImGui::MenuItem("Mixer tracks (stems)...", "Ctrl+Shift+R")) exportui::openRender(a, exportui::Preset::Stems);
     if (ImGui::MenuItem("All playlist tracks...")) exportui::openRender(a, exportui::Preset::PlaylistTracks);
+    if (ImGui::MenuItem("All playlist track groups...")) exportui::openRender(a, exportui::Preset::TrackGroups);  // J-31
     menuparity::exportItems(a);  // J-27
     ImGui::SeparatorText("MIDI");
     if (ImGui::MenuItem("Song as MIDI file...", "Ctrl+Shift+M")) exportui::exportMidiDialog(a, 0);
@@ -276,6 +278,7 @@ void menuPatterns(App& a) {
   if (ImGui::MenuItem("Insert one", "Ctrl+Shift+Ins")) a.selectPattern(ops::insertPattern(a.doc, id, ops::nextPatternName(s)));
   if (ImGui::MenuItem("Clone", "Ctrl+Shift+C", false, cur != nullptr)) a.selectPattern(a.doc.clonePattern(id));
   if (ImGui::MenuItem("Delete", "Ctrl+Shift+Del", false, s.patterns.size() > 1)) deletePattern(a);
+  j31::patternsItems(a);  // J-31: pattern groups
   int idx = s.patternIndex(id);
   if (ImGui::MenuItem("Move up", "Ctrl+Shift+Up", false, idx > 0)) movePattern(a, -1);
   if (ImGui::MenuItem("Move down", "Ctrl+Shift+Down", false, idx >= 0 && idx + 1 < static_cast<int>(s.patterns.size()))) movePattern(a, 1);
@@ -381,6 +384,7 @@ void menuOptions(App& a) {
   ImGui::MenuItem("Step record", nullptr, &a.stepRecord);
   ImGui::MenuItem("Multilink to controllers", nullptr, &a.multilink);
   menuparity::optionsItems(a);  // J-27
+  j31::optionsItems(a);         // J-31: quantized jumps, recording options
   {
     const bool pdc = a.settings.getBool("audio.pdc");
     if (ImGui::MenuItem("Plugin delay compensation", nullptr, pdc)) {
@@ -477,6 +481,7 @@ void menuTools(App& a) {
     });
   if (ImGui::MenuItem("Close plugin windows", "Alt+F12")) a.closePluginWindows();
   menuparity::toolsItems(a);  // J-27
+  j31::toolsItems(a);         // J-31: audio logger, cancel recording
 }
 
 void menuHelp(App& a) {

@@ -1,6 +1,7 @@
 // Gridline — context menus (channel, pattern, playlist track/clip, piano roll,
 // mixer track/slot, knob, plugin window) and the editing helpers they share
 // with the main menu. Window files open these popups and call the bodies here.
+#include "J31Ui.h"
 #include "HostedUi.h"
 #include "ContextMenus.h"
 #include "ExportUi.h"
@@ -756,6 +757,7 @@ void channelContextMenu(App& a, ObjectId id) {
   if (ImGui::MenuItem("Move down", "Alt+Down", false, idx + 1 < static_cast<int>(s.channels.size()))) a.doc.moveChannel(id, idx + 1);
   if (ImGui::MenuItem("Clone", "Alt+C")) a.selectChannel(a.doc.cloneChannel(id));
   menuparity::channelItems(a, id);  // J-27
+  j31::channelItems(a, id);         // J-31: step loop, key range, truncated swing, layer split
   if (ImGui::MenuItem(a.rack.zipped.count(id) ? "Unzip" : "Zip", "Alt+Z")) {
     if (a.rack.zipped.count(id))
       a.rack.zipped.erase(id);
@@ -844,6 +846,7 @@ void rackOptionsMenu(App& a) {
     ImGui::EndMenu();
   }
   menuparity::rackItems(a, sel);  // J-27
+  j31::rackItems(a, sel);         // J-31: step loops, truncated swing
   if (ImGui::MenuItem("Zip selected", "Alt+Z", false, any))
     for (ObjectId c : sel) a.rack.zipped.insert(c);
   if (ImGui::MenuItem("Unzip all", "Alt+U", false, !a.rack.zipped.empty())) a.rack.zipped.clear();
@@ -1119,6 +1122,7 @@ void playlistOptionsMenu(App& a) {
   const Song& s = a.doc.song();
   a.editFocus = App::EditFocus::Playlist;
   bool any = !a.playlist.selected.empty();
+  j31::playlistItems(a);  // J-31: clip groups
   if (ImGui::BeginMenu("Edit")) {
     if (ImGui::MenuItem("Cut", "Ctrl+X", false, any)) editCut(a);
     if (ImGui::MenuItem("Copy", "Ctrl+C", false, any)) editCopy(a);
@@ -1190,9 +1194,10 @@ void playlistOptionsMenu(App& a) {
       ImGui::EndMenu();
     }
     markerAddItems(a);  // J-11: at the time selection, every N bars, delete all
+    j31::markerItems(a, pos);  // J-31: key markers
     const int nx = ops::nextMarker(s, pos), pv = ops::previousMarker(s, pos);
-    if (ImGui::MenuItem("Jump to next marker", nullptr, false, nx >= 0)) a.engine.setPosition(s.markers[static_cast<size_t>(nx)].pos);
-    if (ImGui::MenuItem("Jump to previous marker", nullptr, false, pv >= 0)) a.engine.setPosition(s.markers[static_cast<size_t>(pv)].pos);
+    if (ImGui::MenuItem("Jump to next marker", nullptr, false, nx >= 0)) j31::songJump(a, s.markers[static_cast<size_t>(nx)].pos);
+    if (ImGui::MenuItem("Jump to previous marker", nullptr, false, pv >= 0)) j31::songJump(a, s.markers[static_cast<size_t>(pv)].pos);
     const bool hasSel = a.playlist.selEnd > a.playlist.selStart;
     {  // J-28: markers around the time selection (operations from J-27)
       const Tick s0 = a.playlist.selStart, s1 = a.playlist.selEnd;
@@ -1366,7 +1371,7 @@ void markerMenu(App& a, int index) {
   ImGui::TextDisabled("%s", m.name.empty() ? "Marker" : m.name.c_str());
   if (ImGui::MenuItem("Jump here")) {
     a.engine.setMode(PlayMode::Song);
-    a.engine.setPosition(m.pos);
+    j31::songJump(a, m.pos);  // J-31: quantized when the option is on
   }
   if (ImGui::BeginMenu("Rename...")) {
     renameField(m.name, [&a, index](const std::string& n) { ops::editMarker(a.doc, index, "rename marker", [&](Marker& k) { k.name = n; }); });
@@ -1453,6 +1458,8 @@ void pianoRollMenu(App& a) {
     pianoToolItems(a);
     ImGui::Separator();
     menuparity::pianoToolItems(a);  // J-27
+    ImGui::Separator();
+    j31::pianoToolItems(a);  // J-31: chord progression editor, note groups
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Select")) {
@@ -1516,6 +1523,7 @@ void pianoRollMenu(App& a) {
     if (ImGui::MenuItem("Shorter rows")) a.piano.rowHeight = std::max(7.0f, a.piano.rowHeight - 2);
     ImGui::Separator();
     menuparity::pianoViewItems(a);  // J-27
+    j31::pianoViewItems(a);         // J-31: MIDI snap, editable ghosts, key markers, background waveform
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Tool")) {
@@ -1723,6 +1731,7 @@ void mixerTrackMenu(App& a, size_t index) {
   if (ImGui::MenuItem("Unroute tracks routed to this track", nullptr, false, !mixops::routedTo(s, id).empty()))
     mixops::unrouteIncoming(a.doc, id);
   if (ImGui::MenuItem("Solo", "S", t.solo)) ops::soloMixerTrack(a.doc, id);
+  j31::mixerItems(a, id);  // J-31: alt solo, recording point
   {
     // Disk recording arm (J-8's MixerTrack::armed; toggleArm also picks an input).
     if (ImGui::MenuItem(many ? "Arm selected tracks" : "Arm for disk recording", nullptr, t.armed && !many, !master))

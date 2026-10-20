@@ -118,5 +118,16 @@ using PartSink = std::function<bool(const SplitPart&, RenderResult&&)>;
 int renderStems(const Song& song, const RenderJob& job, const std::vector<ObjectId>& tracks, bool masterFx,
                 const PartSink& sink);
 int renderPlaylistTracks(const Song& song, const RenderJob& job, const std::vector<int>& tracks, const PartSink& sink);
+// J-31: several playlist tracks per part (track groups). Each set renders
+// with only its tracks audible; part.track = the set's first track.
+struct TrackSet {
+  std::string name;
+  std::vector<int> tracks;
+};
+Song playlistTracksSong(const Song& song, const std::vector<int>& tracks);
+// Top-level playlist track groups (a header track and the tracks it holds)
+// that hold unmuted clips, named after the header track.
+std::vector<TrackSet> playlistTrackGroups(const Song& song);
+int renderPlaylistTrackSets(const Song& song, const RenderJob& job, const std::vector<TrackSet>& sets, const PartSink& sink);
 
 }  // namespace gl

@@ -32,6 +32,7 @@ struct ExportSettings {
   bool stemsIncludeMaster = true;    // with split: also the full mix (the master's own file)
   std::vector<ObjectId> stemTracks;  // inserts to split (empty = every insert that carries sound)
   bool splitPlaylist = false;        // one file per playlist track
+  bool splitPlaylistGroups = false;  // J-31: one file per playlist track group
   // Files: <folder>/<baseName>.<ext>; split parts use `partPattern` (see expandNamePattern).
   std::string folder;
   std::string baseName = "Untitled";

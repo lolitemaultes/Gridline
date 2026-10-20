@@ -36,6 +36,18 @@ Settings::Settings() {
       {"audio.inputChannels", Json::makeNumber(2)},
       {"audio.inputOffsetMs", Json::makeNumber(0)},    // manual recording offset (+ = later)
       {"audio.recordBits", Json::makeNumber(32)},      // 32 = float, 24 / 16 = PCM
+      // J-31: recording extras, audio logger, piano roll extras, quantized jumps.
+      {"record.autoUnarm", b(false)},                  // disarm the tracks after a recording
+      {"record.ignoreSilent", b(false)},               // takes quieter than -60 dBFS are not kept
+      {"record.naming", Json::makeNumber(0)},          // clip names: 0 insert name, 1 input name
+      {"record.nameTracks", b(true)},                  // name empty playlist tracks after the take
+      {"logger.enabled", b(false)},                    // audio logger keeps the last minutes
+      {"logger.minutes", Json::makeNumber(2)},         // 1 / 2 / 5 / 10
+      {"logger.source", Json::makeNumber(0)},          // AudioLogger::Source: 0 armed inputs, 1 master
+      {"piano.snapIncomingMidi", b(false)},            // played notes land on the highlighted scale
+      {"piano.editableGhosts", b(false)},              // clicking a ghost note edits it in place
+      {"piano.followKeyMarkers", b(true)},             // scale highlighting follows key markers
+      {"transport.jumpQuantize", Json::makeNumber(0)}, // ops::jumpGrid mode (0 = jump at once)
       {"ui.scale", Json::makeNumber(1.0)},
       {"ui.showHints", b(true)},
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing

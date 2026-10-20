@@ -283,6 +283,12 @@ target_link_libraries(gridline_tests_export PRIVATE gridline_core)
 target_include_directories(gridline_tests_export PRIVATE tests)
 target_compile_options(gridline_tests_export PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME export COMMAND gridline_tests_export WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-31: chord progression editor core, groups & loops, recording extras, key markers, quantized jumps.
+add_executable(gridline_tests_j31 tests/test_j31.cpp)
+target_link_libraries(gridline_tests_j31 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j31 PRIVATE tests)
+target_compile_options(gridline_tests_j31 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j31 COMMAND gridline_tests_j31 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # J-21 QA: mutation fuzzer over the file readers (tests/fuzz/fuzz_main.cpp; long runs by hand,
 # a short smoke run per reader under ctest) and the cross-feature regression tests.

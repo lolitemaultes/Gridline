@@ -538,6 +538,11 @@ void drawChannelRack(App& a) {
         const bool alt = (k / 4) % 2 == 1;
         ImVec2 q1(q.x + stepW, q.y + cellH);
         ui::StepPad(dl, q, q1, v > 0, alt, hov, theme::rgb(c.color), v / 127.0f);
+        // J-31 step loop: steps past the channel's loop length repeat the loop (shaded; the first one marked).
+        if (auto lp = pat->stepLoop.find(c.id); lp != pat->stepLoop.end() && lp->second > 0 && k >= lp->second) {
+          dl->AddRectFilled(q, q1, theme::withAlpha(P.surface950, 0.55f), 2.0f);
+          if (k == lp->second) dl->AddLine(ImVec2(q.x - 1, q.y - 2), ImVec2(q.x - 1, q1.y + 2), theme::lit(theme::rgb(theme::role::kLoop)), 2.0f);
+        }
         if (v > 0 && pat->stepProps.count(c.id)) {  // J-11: steps with their own note / parameters get a corner mark
           const auto& pr = pat->stepProps.at(c.id);
           if (static_cast<size_t>(k) < pr.size() && !pr[static_cast<size_t>(k)].isDefault())

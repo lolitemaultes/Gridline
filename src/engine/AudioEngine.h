@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include "../core/MidiSync.h"
+#include "AudioLogger.h"
 #include "Program.h"
 #include "WorkerPool.h"
 
@@ -167,6 +168,23 @@ class AudioEngine {
   };
   bool popRecEvent(RecEvent& e);
 
+  // ---- J-31 ----
+  // Song position jump that waits for the next multiple of `grid` ticks while
+  // the transport plays (quantized jumps); grid <= 0 or stopped: at once.
+  void jumpTo(Tick tick, Tick grid);
+  bool jumpPending() const { return jumpPendingUi_.load(std::memory_order_relaxed); }
+  // Incoming MIDI notes land on the scale: `mask` bit k = pitch class
+  // (root + k) is in the scale; mask 0 = off. Ties snap down.
+  void setMidiScaleSnap(int root, uint16_t mask) {
+    midiSnap_.store(mask ? (static_cast<uint32_t>(mask & 0xFFF) | (static_cast<uint32_t>(((root % 12) + 12) % 12) << 12)) : 0u,
+                    std::memory_order_relaxed);
+  }
+  static int snapToScaleMask(int pitch, int root, uint16_t mask);
+  // Audio logger (nullptr = off). UI thread; the previous logger is freed once
+  // the audio thread can no longer use it.
+  void setLogger(std::shared_ptr<AudioLogger> logger);
+  const std::shared_ptr<AudioLogger>& logger() const { return loggerOwner_; }
+
   // ---- audio thread ----
   // Writes n interleaved stereo frames.
   void processInterleaved(float* out, int frames);
@@ -176,7 +194,7 @@ class AudioEngine {
  private:
   struct Cmd {
     enum Kind { Play, Stop, Pause, Mode, Pattern, Position, NoteOn, NoteOff, Panic, Loop, Preview, LoopRange,
-                Launch, Release, LiveStop, LiveStopAll } kind;
+                Launch, Release, LiveStop, LiveStopAll, Jump } kind;
     ObjectId id = kNoId;
     int pitch = 0;
     float value = 0;
@@ -227,7 +245,9 @@ class AudioEngine {
   void runMixer(size_t mixer, int worker);
   void pullInput(const ProgInput& in, float* accL, float* accR) const;
   void readDeviceInput(int n);                        // input queue → inBuf_ (start of a block)
-  void captureRecording(const Program* p, int n);     // armed tracks → capture rings
+  // Armed tracks → capture rings: before the graph (inputs) or after it (post = tracks recording their output).
+  void captureRecording(const Program* p, int n, bool post = false);
+  void logAudio(const Program* p, const float* mL, const float* mR, int n);  // J-31 audio logger
   void pushRecEvent(const RecEvent& e);
   // Input block of a mixer track (mono tracks duplicate their channel).
   const float* inputL(const ProgMixer& m) const;
@@ -391,6 +411,16 @@ class AudioEngine {
   static constexpr size_t kRecEvents = 1024;
   std::vector<RecEvent> recEvents_ = std::vector<RecEvent>(kRecEvents);
   std::atomic<size_t> reHead_{0}, reTail_{0};
+
+  // J-31: quantized position jump (audio thread) and the audio logger.
+  bool pendJump_ = false;
+  double pendJumpAt_ = 0, pendJumpTo_ = 0;
+  std::atomic<bool> jumpPendingUi_{false};
+  std::atomic<uint32_t> midiSnap_{0};
+  std::shared_ptr<AudioLogger> loggerOwner_;
+  std::vector<std::pair<std::shared_ptr<AudioLogger>, uint64_t>> retiredLoggers_;
+  std::atomic<AudioLogger*> logger_{nullptr};
+  float logL_[kEngineMaxBlock] = {}, logR_[kEngineMaxBlock] = {};
 
   // Task hand-out (see claimTasks).
   std::atomic<int> head_{0}, readyTail_{0}, done_{0};

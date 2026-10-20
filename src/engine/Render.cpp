@@ -278,13 +278,37 @@ Song stemSong(const Song& song, ObjectId track, bool masterFx) {
   return s;
 }
 
-Song playlistTrackSong(const Song& song, int track) {
+Song playlistTrackSong(const Song& song, int track) { return playlistTracksSong(song, {track}); }
+
+Song playlistTracksSong(const Song& song, const std::vector<int>& tracks) {
   Song s = song;
   // Other tracks' notes and audio go; automation keeps playing everywhere.
   s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(),
-                                  [&](const Clip& c) { return c.kind != ClipKind::Automation && c.track != track; }),
+                                  [&](const Clip& c) {
+                                    return c.kind != ClipKind::Automation &&
+                                           std::find(tracks.begin(), tracks.end(), c.track) == tracks.end();
+                                  }),
                    s.playlist.end());
   return s;
+}
+
+std::vector<TrackSet> playlistTrackGroups(const Song& song) {
+  std::vector<TrackSet> out;
+  const std::vector<int> used = usedPlaylistTracks(song);
+  const int n = static_cast<int>(song.tracks.size());
+  for (int h = 0; h < n; ++h) {
+    const int size = song.tracks[static_cast<size_t>(h)].groupSize;
+    if (size <= 0) continue;
+    TrackSet set;
+    set.name = playlistTrackName(song, static_cast<size_t>(h));
+    for (int t = h; t <= std::min(n - 1, h + size); ++t) set.tracks.push_back(t);
+    const bool sounds = std::any_of(set.tracks.begin(), set.tracks.end(), [&](int t) {
+      return std::find(used.begin(), used.end(), t) != used.end();
+    });
+    if (sounds) out.push_back(std::move(set));
+    h += size;  // nested groups render with their parent
+  }
+  return out;
 }
 
 std::vector<int> usedPlaylistTracks(const Song& song) {
@@ -336,13 +360,20 @@ int renderStems(const Song& song, const RenderJob& job, const std::vector<Object
 }
 
 int renderPlaylistTracks(const Song& song, const RenderJob& job, const std::vector<int>& tracks, const PartSink& sink) {
+  std::vector<TrackSet> sets;
+  for (int t : tracks) sets.push_back({playlistTrackName(song, static_cast<size_t>(std::max(0, t))), {t}});
+  return renderPlaylistTrackSets(song, job, sets, sink);
+}
+
+int renderPlaylistTrackSets(const Song& song, const RenderJob& job, const std::vector<TrackSet>& sets, const PartSink& sink) {
   int done = 0;
-  for (size_t k = 0; k < tracks.size(); ++k) {
+  for (size_t k = 0; k < sets.size(); ++k) {
+    if (sets[k].tracks.empty()) continue;
     SplitPart part;
-    part.track = tracks[k];
-    part.index = tracks[k] + 1;
-    part.name = playlistTrackName(song, static_cast<size_t>(std::max(0, tracks[k])));
-    RenderResult r = renderAudio(playlistTrackSong(song, tracks[k]), partJob(song, job, k, tracks.size()));
+    part.track = sets[k].tracks.front();
+    part.index = part.track + 1;
+    part.name = sets[k].name;
+    RenderResult r = renderAudio(playlistTracksSong(song, sets[k].tracks), partJob(song, job, k, sets.size()));
     if (r.cancelled) break;
     ++done;
     if (!sink(part, std::move(r))) break;

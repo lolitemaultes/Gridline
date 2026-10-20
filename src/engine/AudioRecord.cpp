@@ -94,6 +94,30 @@ double AudioRecorder::seconds(double sampleRate) const {
 
 // ------------------------------------------------------------------ commit
 
+float takePeak(const RecordedTake& t) {
+  float pk = 0;
+  for (float v : t.L) pk = std::max(pk, std::fabs(v));
+  for (float v : t.R) pk = std::max(pk, std::fabs(v));
+  return pk;
+}
+
+int dropSilentTakes(std::vector<RecordedTake>& takes, float thresholdDb) {
+  const float lin = std::pow(10.0f, thresholdDb / 20.0f);
+  const size_t before = takes.size();
+  takes.erase(std::remove_if(takes.begin(), takes.end(), [&](const RecordedTake& t) { return takePeak(t) < lin; }), takes.end());
+  return static_cast<int>(before - takes.size());
+}
+
+std::string takeBaseName(const Song& song, ObjectId mixer, TakeCommitOptions::Naming naming) {
+  const MixerTrack* mt = song.mixerTrack(mixer);
+  const int mi = song.mixerIndex(mixer);
+  if (naming == TakeCommitOptions::Naming::Input && mt && mt->input >= 0) {
+    const std::string a = "In " + std::to_string(mt->input + 1);
+    return mt->inputStereo ? a + " - In " + std::to_string(mt->input + 2) : a;
+  }
+  return mi >= 0 ? mixerTrackName(song, static_cast<size_t>(mi)) : std::string("Input");
+}
+
 int recordTrackFor(const Song& song, ObjectId mixer) {
   int i = song.mixerIndex(mixer);
   return std::max(0, i - 1);
@@ -123,9 +147,9 @@ TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes,
   for (const auto& t : takes) {
     if (t.frames() == 0) continue;
     const MixerTrack* mt = song.mixerTrack(t.mixer);
-    const int mi = song.mixerIndex(t.mixer);
-    const std::string trackName = mi >= 0 ? mixerTrackName(song, static_cast<size_t>(mi)) : std::string("Input");
-    const bool stereo = mt ? mt->inputStereo : true;
+    const std::string trackName = takeBaseName(song, t.mixer, o.naming);
+    // Output taps (J-31) are always stereo; inputs follow the track's input pair.
+    const bool stereo = mt ? (mt->inputStereo || mt->recPoint != 0) : true;
     // Clip on the tick at or before the take start; the gap becomes leading silence
     // so the audio lands on the exact sample.
     const Tick T = static_cast<Tick>(std::floor(t.startTick + 1e-9));
@@ -159,7 +183,7 @@ TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes,
     int track = recordTrackFor(song, t.mixer) + (group.count(t.mixer) ? t.pass - firstPass[t.mixer] : 0);
     track = std::clamp(track, 0, kMaxPlaylistTracks - 1);
     if (static_cast<int>(song.tracks.size()) <= track) song.tracks.resize(static_cast<size_t>(track) + 1);
-    if (song.tracks[static_cast<size_t>(track)].name.empty()) song.tracks[static_cast<size_t>(track)].name = name;
+    if (o.nameTracks && song.tracks[static_cast<size_t>(track)].name.empty()) song.tracks[static_cast<size_t>(track)].name = name;
     const double durSec = static_cast<double>(a.frames()) / sr;
     const double endTick = map.tickAtSeconds(t0Sec + durSec);
     Clip c;

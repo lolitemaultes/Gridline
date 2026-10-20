@@ -242,7 +242,7 @@ void startJob(App& a) {
     s.formats = {ExportFormat::Wav};
     s.wavBits = 32;
     s.midi = false;
-    s.splitMixer = s.splitPlaylist = false;
+    s.splitMixer = s.splitPlaylist = s.splitPlaylistGroups = false;
     s.channels = ChannelMode::Stereo;
     s.markers = false;
     s.folder = renderedFolder(a);
@@ -489,7 +489,7 @@ void drawRenderDialog(App& a) {
     formLabel("File name");
     ImGui::SetNextItemWidth(colW - 148);
     ImGui::InputText("##name", dlg.name, sizeof dlg.name);
-    if (s.splitMixer || s.splitPlaylist) {
+    if (s.splitMixer || s.splitPlaylist || s.splitPlaylistGroups) {
       formLabel("Part names");
       ImGui::SetNextItemWidth(colW - 148);
       ImGui::InputText("##pattern", dlg.pattern, sizeof dlg.pattern);
@@ -575,6 +575,8 @@ void drawRenderDialog(App& a) {
     }
     ImGui::Checkbox("Split playlist tracks", &s.splitPlaylist);
     ui::Tooltip("One file per playlist track that holds clips");
+    ImGui::Checkbox("Split playlist track groups", &s.splitPlaylistGroups);  // J-31
+    ui::Tooltip("One file per playlist track group (a group track and the tracks it holds)");
     ImGui::EndDisabled();
     ImGui::Checkbox("Enable master effects", &s.render.masterEffects);
     ImGui::Checkbox("Enable insert effects", &s.render.insertEffects);
@@ -824,6 +826,7 @@ void openRender(App& a, Preset p) {
   a.showExport = false;
   dlg.s.splitMixer = p == Preset::Stems;
   dlg.s.splitPlaylist = p == Preset::PlaylistTracks;
+  dlg.s.splitPlaylistGroups = p == Preset::TrackGroups;  // J-31
   dlg.dest = p == Preset::AudioClip ? static_cast<int>(Dest::AudioClip) : static_cast<int>(Dest::Files);
   if (p == Preset::Midi) {
     for (bool& f : dlg.fmt) f = false;
@@ -833,7 +836,7 @@ void openRender(App& a, Preset p) {
   }
   if (p == Preset::PatternReplace) dlg.dest = static_cast<int>(Dest::AudioClip);
   if (p == Preset::AudioClip || p == Preset::PatternReplace || p == Preset::PatternFile) dlg.scope = 1;
-  if (p == Preset::Audio || p == Preset::Stems || p == Preset::PlaylistTracks) dlg.scope = dlg.scope == 1 ? 0 : dlg.scope;
+  if (p == Preset::Audio || p == Preset::Stems || p == Preset::PlaylistTracks || p == Preset::TrackGroups) dlg.scope = dlg.scope == 1 ? 0 : dlg.scope;
   dlg.replacePattern = p == Preset::PatternReplace;
 }
 
