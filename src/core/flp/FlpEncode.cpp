@@ -17,6 +17,8 @@
 #include <sstream>
 #include <thread>
 #include "../../engine/ChannelIns.h"
+#include "../../packs/synths/matrixfm.h"
+#include "../../packs/synths/mfmref.h"
 
 namespace gl::flp::enc {
 
@@ -216,12 +218,21 @@ namespace {
 std::vector<int> diffParams(const PluginState& a, const PluginState& b) {
   std::vector<int> d;
   const size_t n = std::max(a.params.size(), b.params.size());
+  // J-50: Matrix FM's engine choice is not part of FL's state (imports select the reference model).
+  const bool mfm = a.type == "gl.matrixfm";
   for (size_t i = 0; i < n; ++i) {
+    if (mfm && i == static_cast<size_t>(gl::packs::synths::mfm::MModel)) continue;
     const float x = i < a.params.size() ? a.params[i] : std::numeric_limits<float>::quiet_NaN();
     const float y = i < b.params.size() ? b.params[i] : std::numeric_limits<float>::quiet_NaN();
     if (!(x == y)) d.push_back(static_cast<int>(i));
   }
   return d;
+}
+
+// Data equality; Matrix FM's exact section (J-50) is derived from the FL state itself.
+bool sameData(const PluginState& a, const PluginState& b) {
+  if (a.type == "gl.matrixfm") return gl::packs::synths::mfmref::withoutExact(a.data) == gl::packs::synths::mfmref::withoutExact(b.data);
+  return a.data == b.data;
 }
 
 std::atomic<int> gVerifyEvery{-1};  // -1: not read from the environment yet
@@ -720,7 +731,7 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
   const bool decOk = decodeState(r.flName, t, m, ec);
   // Hosted plugins: the parameters mirror the state (data); compare type and data only.
   const bool hosted = isHostedType(g.type);
-  if (decOk && m.state.type == g.type && (hosted || m.state.params == g.params) && m.state.data == g.data && m.state.ins == g.ins) {
+  if (decOk && m.state.type == g.type && (hosted || diffParams(m.state, g).empty()) && sameData(m.state, g) && m.state.ins == g.ins) {
     r.state = t;
     r.hasState = !t.empty();
     const bool stateless = e && e->stateless;
@@ -734,7 +745,7 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
     r.state = t;
     r.hasState = !t.empty();
     r.quality = t.empty() ? Result::Defaults : Result::Approx;
-    if (decOk && m.state.type == g.type) r.mismatched = diffParams(m.state, g), r.dataMismatch = m.state.data != g.data;
+    if (decOk && m.state.type == g.type) r.mismatched = diffParams(m.state, g), r.dataMismatch = !sameData(m.state, g);
     r.note = !e ? "no encoder for " + r.flName : "no default state for " + r.flName;
     return r;
   }
@@ -768,7 +779,7 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
     r.mismatched = fin.type != g.type ? std::vector<int>{-1} : hosted ? std::vector<int>{} : diffParams(fin, g);
     // J-33: channel envelopes / filter (PluginState::ins). J-39: a state that
     // carries none (the channel's own events do: DX10, …) is not a mismatch.
-    r.dataMismatch = fin.data != g.data || (fin.ins != g.ins && !fin.ins.empty());
+    r.dataMismatch = !sameData(fin, g) || (fin.ins != g.ins && !fin.ins.empty());
   } else {
     r.mismatched = {-1};
     r.note = "the encoded state does not decode";

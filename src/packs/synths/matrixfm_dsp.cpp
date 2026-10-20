@@ -7,6 +7,11 @@
 // curves), evaluated at control rate. Voices sum into a dry bus and an
 // effects bus (chorus → 3 delays → reverb); a 3-band EQ sits on the selected
 // bus. No allocation after construction.
+//
+// MModel = 1 (J-50) plays the reference model instead (mfmref.h): its engine
+// is built on the UI thread in prepareHost and handed over through an atomic
+// pointer; the live controls (volume, matrix, operator volumes, filter
+// controls, mod X / Y) follow the parameters every block.
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -16,6 +21,7 @@
 #include <vector>
 #include "matrixfm.h"
 #include "matrixfm_data.h"
+#include "mfmref.h"
 #include "synths_common.h"
 
 namespace gl::packs::synths {
@@ -348,12 +354,27 @@ class MatrixFmGen final : public Generator {
     (void)sawTable();
     (void)squareTable();
   }
+  ~MatrixFmGen() override {
+    delete pending_.exchange(nullptr);
+    delete specPending_.exchange(nullptr);
+    for (auto& r : retired_) delete r.exchange(nullptr);
+    for (auto& r : retiredSpec_) delete r.exchange(nullptr);
+    delete retiredLeak_;
+    delete spec_;
+    if (ref_) mfmref::EngineDeleter{}(ref_);
+  }
 
   // J-30: the delay lines, the reverb and the pluck lines (~11 MB) are
   // allocated here (UI thread, every program build) only once the patch uses
   // them; a section whose memory is not there yet is skipped.
-  void prepareHost(const PluginState& s, double) override {
+  void prepareHost(const PluginState& s, double sampleRate) override {
     prepared_.store(true, std::memory_order_release);
+    for (auto& r : retired_) delete r.exchange(nullptr);
+    for (auto& r : retiredSpec_) delete r.exchange(nullptr);
+    if (prmb(s, MModel)) {
+      prepareRef(s, static_cast<int>(std::lround(sampleRate)));
+      return;
+    }
     for (int i = 0; i < 3; ++i)
       if (prmb(s, dly(i, 0))) dlyMem_[i].ensure(2 * static_cast<size_t>(kDelayLen));
     if (prmb(s, RvOn)) rvMem_.ensure(kRvFloats);
@@ -367,6 +388,7 @@ class MatrixFmGen final : public Generator {
   bool supportsGlide() const override { return true; }
 
   bool active() const override {
+    if (refOn_) return ref_ && mfmref::active(*ref_);
     for (const Voice& v : voices_)
       if (v.on) return true;
     return tailLeft_ > 0;
@@ -375,6 +397,17 @@ class MatrixFmGen final : public Generator {
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     sr_ = ctx.sampleRate;
     tempo_ = ctx.tempo;
+    lastTempo_.store(ctx.tempo, std::memory_order_relaxed);
+    const bool ref = prmb(s, MModel);
+    if (ref != refOn_) {  // model switch: the other engine's voices stop
+      if (ref_) mfmref::kill(*ref_);
+      for (Voice& v : voices_) v.on = false;
+      refOn_ = ref;
+    }
+    if (refOn_) {
+      configureRef(s, ctx);
+      return;
+    }
     if (!prepared_.load(std::memory_order_acquire)) {  // used outside the engine (never prepared): everything now
       for (auto& d : dlyMem_) d.ensure(2 * static_cast<size_t>(kDelayLen));
       rvMem_.ensure(kRvFloats);
@@ -542,11 +575,28 @@ class MatrixFmGen final : public Generator {
     dcL_.setFreq(sr_), dcR_.setFreq(sr_);
   }
 
-  void onNoteOn(uint32_t id, double pitch, float vel) override { start(id, pitch, vel, NoteProps{}); }
-  void onNoteOnEx(uint32_t id, double pitch, float vel, const NoteProps& p) override { start(id, pitch, vel, p); }
+  void onNoteOn(uint32_t id, double pitch, float vel) override { onNoteOnEx(id, pitch, vel, NoteProps{}); }
+  void onNoteOnEx(uint32_t id, double pitch, float vel, const NoteProps& p) override {
+    if (refOn_) {
+      if (ref_) {
+        // The host's note: velocity v/128 of the instrument's scale, volume (11^(v/100) − 1) / 10.
+        const double v128 = std::nearbyint(static_cast<double>(vel) * 128.0);
+        const double vol = (std::pow(11.0, v128 / 100.0) - 1.0) / 10.0;
+        const float velF = static_cast<float>(static_cast<double>(static_cast<float>(static_cast<float>(1.0 / 2.397895336151123) *
+                                                                                     std::log(vol * 10.0 + 1.0))) * 0.78125);
+        mfmref::noteOn(*ref_, id, (pitch - 60.0) * 100.0, vol, p.pan, (p.modX - 0.5) * 2.0, (p.modY - 0.5) * 2.0, velF, p.color);
+      }
+      return;
+    }
+    start(id, pitch, vel, p);
+  }
   bool handlesNotePan() const override { return true; }
 
   void onNoteOff(uint32_t id) override {
+    if (refOn_) {
+      if (ref_) mfmref::noteOff(*ref_, id);
+      return;
+    }
     if (poly_ == 1) {
       stack_.remove(id);
       if (id == monoId_) {
@@ -571,16 +621,22 @@ class MatrixFmGen final : public Generator {
       if (v.on && v.id == id) v.glide.start(v.pitch, pitch, seconds, sr_);
   }
   void onAllOff() override {
+    if (ref_) mfmref::allOff(*ref_);
     for (Voice& v : voices_) v.released = true;
     stack_.clear();
   }
   void onKill() override {
+    if (ref_) mfmref::kill(*ref_);
     for (Voice& v : voices_) v.on = false;
     stack_.clear();
     clearFx();
   }
 
   void render(float* L, float* R, int n) override {
+    if (refOn_) {
+      if (ref_) mfmref::render(*ref_, L, R, n);
+      return;
+    }
     // Chunks sit on the absolute sample grid (J-30: block-size independent smoothing).
     for (int i = 0; i < n;) {
       const int k = std::min(n - i, kChunk - static_cast<int>(static_cast<int64_t>(clock_) % kChunk));
@@ -590,6 +646,66 @@ class MatrixFmGen final : public Generator {
   }
 
  private:
+  // ------------------------------------------------------------- reference model
+  // UI thread: (re)builds the engine when the patch's structure or the rate changed.
+  void prepareRef(const PluginState& s, int rate) {
+    mfmref::Patch patch = mfmref::patchFromState(s);
+    auto spec = std::make_unique<mfmref::LiveSpec>(mfmref::liveSpec(s));
+    if (built_ && builtRate_ == rate && mfmref::sameStructure(*built_, patch)) {
+      delete specPending_.exchange(spec.release());
+      return;
+    }
+    double tempo = lastTempo_.load(std::memory_order_relaxed);
+    if (!(tempo > 1)) tempo = 120;
+    mfmref::EnginePtr e = mfmref::makeEngine(patch, rate, tempo);
+    built_ = std::make_unique<mfmref::Patch>(std::move(patch));
+    builtRate_ = rate;
+    delete specPending_.exchange(spec.release());
+    delete pending_.exchange(new Pack{std::move(e)});
+  }
+  // Audio thread: adopts a new engine / live map, then the live values.
+  void configureRef(const PluginState& s, const ProcessContext& ctx) {
+    if (Pack* pk = pending_.exchange(nullptr)) {
+      mfmref::Engine* old = ref_;
+      ref_ = pk->engine.release();
+      pk->engine.reset(old);  // retired with its pack (freed on the UI thread)
+      retire(pk);
+    }
+    if (mfmref::LiveSpec* sp = specPending_.exchange(nullptr)) {
+      std::swap(sp, spec_);
+      retireSpec(sp);
+    }
+    if (!ref_ && !prepared_.load(std::memory_order_acquire)) {  // used outside the engine (never prepared): build now
+      prepareRef(s, static_cast<int>(std::lround(ctx.sampleRate)));
+      configureRef(s, ctx);
+      return;
+    }
+    if (!ref_) return;
+    mfmref::setTempo(*ref_, ctx.tempo);
+    if (spec_) {
+      mfmref::liveFromParams(*spec_, s.params.data(), s.params.size(), live_);
+      mfmref::applyLive(*ref_, live_);
+    }
+  }
+  struct Pack {
+    mfmref::EnginePtr engine;
+  };
+  void retire(Pack* p) {
+    if (!p) return;
+    for (auto& r : retired_) {
+      Pack* expect = nullptr;
+      if (r.compare_exchange_strong(expect, p)) return;
+    }
+    retiredLeak_ = p;  // every slot taken (never seen): kept until the instance goes
+  }
+  void retireSpec(mfmref::LiveSpec* sp) {
+    if (!sp) return;
+    for (auto& r : retiredSpec_) {
+      mfmref::LiveSpec* expect = nullptr;
+      if (r.compare_exchange_strong(expect, sp)) return;
+    }
+  }
+
   // ------------------------------------------------------------- notes
   void start(uint32_t id, double pitch, float vel, const NoteProps& p) {
     const float px = p.modX, py = p.modY;
@@ -1175,6 +1291,19 @@ class MatrixFmGen final : public Generator {
   std::array<Voice, kMaxVoices> voices_{};
   LazyMem pluckMem_, dlyMem_[3], rvMem_;  // see prepareHost / bindMemory
   std::atomic<bool> prepared_{false};
+  // Reference model (J-50).
+  bool refOn_ = false;
+  mfmref::Engine* ref_ = nullptr;  // audio thread
+  mfmref::LiveSpec* spec_ = nullptr;
+  mfmref::Live live_;
+  std::atomic<Pack*> pending_{nullptr};
+  std::atomic<mfmref::LiveSpec*> specPending_{nullptr};
+  std::atomic<Pack*> retired_[4] = {};
+  std::atomic<mfmref::LiveSpec*> retiredSpec_[4] = {};
+  Pack* retiredLeak_ = nullptr;
+  std::unique_ptr<mfmref::Patch> built_;  // UI thread
+  int builtRate_ = 0;
+  std::atomic<double> lastTempo_{120.0};
   int64_t tailLeft_ = 0;
   // effects
   float fxPan_ = 0;

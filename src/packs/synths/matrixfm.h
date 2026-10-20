@@ -87,6 +87,10 @@ enum MainParam {
   FltBase = OpBase + kOps * kOpFields,          // kFilters × kFltFields
   kParamCount = FltBase + kFilters * kFltFields
 };
+// Engine model (J-50, appended): 0 = Gridline's own DSP (legacy states),
+// 1 = the reference model (mfmref.h, sample-exact imported patches).
+inline constexpr int MModel = kParamCount;
+inline constexpr int kParamCountAll = kParamCount + 1;
 inline constexpr int kDlStride = Dl2On - Dl1On;
 inline constexpr int kEqStride = MEq2Type - MEq1Type;
 

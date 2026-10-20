@@ -2,6 +2,7 @@
 // origin, project fields the encoder mode carries). Corpus checks read FL
 // Studio's shipped projects / presets when FL is installed (skipped otherwise).
 #pragma once
+#include "packs/synths/mfmref.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -63,7 +64,7 @@ inline void testEncJ39() {
   {
     expect(defaultsDecode("Sytrus", "gl.matrixfm"), "Sytrus: a fresh state (version 25) decodes");
     gl::flp::PluginMapping m;
-    expect(enc::decodeState("Sytrus", enc::findEncoder("Sytrus", "gl.matrixfm")->defaults(), m, ctx()) && m.state.data.empty(),
+    expect(enc::decodeState("Sytrus", enc::findEncoder("Sytrus", "gl.matrixfm")->defaults(), m, ctx()) && gl::packs::synths::mfmref::withoutExact(m.state.data).empty(),
            "Sytrus: the fresh state carries Matrix FM's default curves");
     // Matrix FM's defaults on FL's value grid (a few knobs, e.g. LFO speeds, sit between FL's steps), then edited.
     gl::PluginState g = m.state;

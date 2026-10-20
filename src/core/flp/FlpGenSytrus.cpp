@@ -42,13 +42,20 @@
 //     to the decay point use the attack scale (none without a decay point),
 //     then the decay scale up to the sustain point, which holds or loops back
 //     to the loop start; tempo envelopes are drawn at 120 BPM.
-// The DSP is Gridline's own, so the mapping is approximate (exact = false).
+// J-50: the state is also kept exactly (mfmref.h "x" lines) and played by
+// Matrix FM's reference model (MModel = 1), which reproduces the instrument
+// sample for sample; the parameters stay the legacy mapping and override the
+// exact data where they are edited. exact = false only for patches whose
+// sound the instrument itself randomises (random mapping curves) or that use
+// shared step envelopes (wait points), whose multi-note behaviour is not
+// modelled.
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>
 #include "../../packs/synths/matrixfm.h"
 #include "../../packs/synths/matrixfm_data.h"
+#include "../../packs/synths/mfmref.h"
 #include "FlpGen.h"
 
 namespace gl::flp::gen {
@@ -56,6 +63,7 @@ namespace gl::flp::gen {
 namespace {
 
 namespace mf = gl::packs::synths::mfm;
+namespace mfmref = gl::packs::synths::mfmref;
 
 struct Reader {
   const uint8_t* p;
@@ -260,7 +268,7 @@ bool walk(const uint8_t* d, size_t n, int ver, RawSytrus& s) {
       for (int i = 0; i < nf; ++i) U.fb[i] = r.i32();
       if (ver < 9) {
         r.u8();
-        U.fb[11] = 1;  // older versions: low-pass
+        U.fb[11] = 0;  // older versions: the type is not stored (state-variable)
       }
       U.ws = readList(r);
       for (int i = 0; i < 5; ++i) r.i32();
@@ -485,11 +493,23 @@ bool decodeSytrusMatrix(Context& c, const std::vector<Event>& events, PluginMapp
   if (!c.paramsOnly) s.data = mf::serializePatch(pd);
   if (s.data == "mfm 1\n") s.data.clear();  // J-39: Matrix FM's defaults are no data (as a fresh instance)
   m.glType = "gl.matrixfm";
-  m.state = s;
   m.exact = false;
+  std::string model = "Gridline's own DSP (approximate)";
+  mfmref::Patch xp;
+  if (mfmref::parseNative(raw.data(), raw.size(), ver, xp)) {  // J-50: exact patch for the reference model
+    setp(s, mf::MModel, 1);
+    if (s.data.empty()) s.data = "mfm 1\n";
+    s.data += mfmref::serialize(xp, s.params);
+    std::string why;
+    m.exact = mfmref::exactPatch(xp, &why);
+    model = m.exact ? "reference model (exact)" : "reference model (" + why + ")";
+  } else {
+    setp(s, mf::MModel, 0);
+  }
+  m.state = s;
   note(c, "Sytrus", "\"" + name + "\" (v" + std::to_string(ver) + ") → Matrix FM: matrix, operators (harmonics, shapes), filters, " +
                         std::to_string(envs) + " envelopes, " + std::to_string(lfos) + " LFOs, " + std::to_string(maps) +
-                        " mapping curves, unison and effects decoded; Gridline's own DSP (approximate)");
+                        " mapping curves, unison and effects decoded; " + model);
   // Automation: mod X / Y (18 / 19), filter cutoff / resonance (74 parameters per unit from 326).
   ParamTable t;
   t.lin(18, mf::MModX, 0, 1);

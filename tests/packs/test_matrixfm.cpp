@@ -234,7 +234,7 @@ int main() {
   const PluginInfo* info = findPlugin("gl.matrixfm");
   expect(info != nullptr, "catalogue entry");
   if (!info) return finish();
-  expect(static_cast<int>(info->params.size()) == kParamCount, "parameter count");
+  expect(static_cast<int>(info->params.size()) == kParamCountAll, "parameter count");
   expect(info->presets.size() >= 2 && info->presets.size() <= 6, "2-6 factory presets");
   bool named = true;
   for (const auto& p : info->params) named = named && !p.name.empty() && p.name != "Reserved";
@@ -252,7 +252,7 @@ int main() {
     s.type = "gl.matrixfm";
     s.params = {0.5f, 0.f};
     normalizePluginState(s);
-    expect(static_cast<int>(s.params.size()) == kParamCount, "normalizePluginState pads");
+    expect(static_cast<int>(s.params.size()) == kParamCountAll, "normalizePluginState pads");
   }
 
   const std::vector<Ev> one = {{0, true, 1, 69, 0.9f}, {22050, false, 1, 0, 0}};

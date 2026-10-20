@@ -62,8 +62,10 @@ using Values = std::vector<std::pair<int, float>>;
 PluginInfo matrixFmInfo() {
   PluginInfo p{"gl.matrixfm", "Matrix FM", "Synth", PluginKind::Generator, {}, false, {}};
   auto& q = p.params;
-  q.resize(kParamCount);
+  q.resize(kParamCountAll);
   for (int i = 0; i < kParamCount; ++i) q[static_cast<size_t>(i)] = lin("Reserved", "", 0, 1, 0);
+  q[MModel] = ch("Engine", {"Legacy", "Reference"}, 0);  // imported patches select the reference model
+  p.legacyModelParam = MModel;
   q[MVolume] = lin("Master volume", "%", 0, 1.25, 1);
   q[MLfoLevel] = lin("Master LFO level", "%", -1, 1, 1);
   q[MPitch] = lin("Master pitch", "st", -24, 24, 0);

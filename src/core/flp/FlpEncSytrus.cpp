@@ -27,6 +27,7 @@
 #include "../PluginInfo.h"
 #include "../../packs/synths/matrixfm.h"
 #include "../../packs/synths/matrixfm_data.h"
+#include "../../packs/synths/mfmref.h"
 
 namespace gl::flp::enc {
 
@@ -1110,6 +1111,23 @@ std::vector<Field> fields(const Bytes& b) {
 
 // The template with Gridline's values put in, in the stored form for the fields.
 void write(const PluginState& g, Bytes& b, const EncodeContext&) {
+  {  // J-50: a state with the exact patch writes it as the template
+    namespace mr = gl::packs::synths::mfmref;
+    mr::Patch xp;
+    std::vector<float> snap;
+    if (mr::parse(g.data, xp, snap)) {
+      const Bytes native = mr::writeNative(xp);
+      // Unedited (the drawn-data editor drops the section): the patch itself.
+      bool edited = snap.size() < static_cast<size_t>(mf::kParamCount) || g.params.size() < static_cast<size_t>(mf::kParamCount);
+      for (int k = 0; !edited && k < mf::kParamCount; ++k)
+        edited = std::memcmp(&snap[static_cast<size_t>(k)], &g.params[static_cast<size_t>(k)], sizeof(float)) != 0;
+      if (!edited) {
+        b = storedForm(static_cast<uint32_t>(xp.ver), native);
+        return;
+      }
+      b = compressed(static_cast<uint32_t>(xp.ver), native);
+    }
+  }
   Bytes raw;
   if (b.size() < 8 || !inflate(b, raw)) return;
   Patch p;
