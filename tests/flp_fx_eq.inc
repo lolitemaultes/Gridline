@@ -91,7 +91,9 @@ static void testFxEq() {
     Blob b;
     b.i32(2).i32(300).i32(512).i32(169).i32(676).u8(1);
     expect(decodeFx("Fruity Free Filter", b.b, m) && m.glType == "gl.freefilter", "Free Filter: decodes");
-    expect(param(m, ut::FfType) == 2 && near(param(m, ut::FfGain), 0.0, 0.05), "Free Filter: type (300 = high pass) and neutral gain");
+    // J-26 reference laws: type 300 → high pass, gain 36 n - 18 dB (676 → +5.77 dB), DC remover byte.
+    expect(param(m, ut::FfType) == 2 && near(param(m, ut::FfGain), 36.0 * 676 / 1024 - 18, 1e-3) && param(m, ut::FfDc) == 1 && m.exact,
+           "Free Filter: type (300 = high pass), gain law, centre byte");
   }
   {
     Blob b;

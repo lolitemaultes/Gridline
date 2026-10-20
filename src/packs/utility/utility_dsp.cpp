@@ -1,4 +1,5 @@
 // Gridline — "utility" pack: runtimes (filters, EQ, meters, visual taps).
+#include "../../engine/FlFilterRef.h"
 #include "../Packs.h"
 #include <algorithm>
 #include <cmath>
@@ -252,9 +253,26 @@ class FreeFilterFx final : public UtilityFx {
     for (auto& f : f_) f.clear();
     dcX_[0] = dcX_[1] = dcY_[0] = dcY_[1] = 0;
     primed_ = false;
+    ref_.clear(), dcr_[0].clear(), dcr_[1].clear();
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate;
+    if (prm(s, FfModel, 1) >= 0.5f) {  // J-26 reference: fixed design, no glide
+      int type = std::clamp(static_cast<int>(prm(s, FfType) + 0.5f), 0, 6);
+      double hz = prm(s, FfFreq, 1000), qk = prm(s, FfQK, 0.165f), g = prm(s, FfGain);
+      if (type != rType_ || hz != rHz_ || qk != rQ_ || g != rG_) {
+        ref_.design(type, hz, qk, g);
+        rType_ = type, rHz_ = hz, rQ_ = qk, rG_ = g;
+      }
+      if (sr != rSr_) rSr_ = sr, dcr_[0].set(sr), dcr_[1].set(sr);
+      const bool dc = prm(s, FfDc, 1) >= 0.5f;
+      for (int i = 0; i < n; ++i) {
+        float l = ref_.tick(0, L[i]), r = ref_.tick(1, R[i]);
+        L[i] = dc ? dcr_[0].tick(l) : l;
+        R[i] = dc ? dcr_[1].tick(r) : r;
+      }
+      return;
+    }
     int type = std::clamp(static_cast<int>(prm(s, FfType) + 0.5f), 0, FtCount - 1);
     double tf = std::log(std::clamp<double>(prm(s, FfFreq, 1000), 10.0, sr * 0.49)), tq = prm(s, FfQ, 0.707), tg = prm(s, FfGain);
     if (!primed_ || type != type_) {
@@ -294,6 +312,10 @@ class FreeFilterFx final : public UtilityFx {
 
  private:
   static constexpr int kSub = 32;
+  flref::FixedBiquad ref_;
+  flref::DcRemover dcr_[2];
+  double rHz_ = -1, rQ_ = -1, rG_ = -1e9, rSr_ = 0;
+  int rType_ = -1;
   Tdf2 f_[2];
   double dcX_[2] = {}, dcY_[2] = {};
   double lf_ = 0, q_ = 0.7, g_ = 0;
@@ -309,8 +331,13 @@ class QuickLpFx final : public UtilityFx {
     svf_[0].reset();
     svf_[1].reset();
     primed_ = false;
+    ref_.clear();
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (prm(s, QlModel, 1) >= 0.5f) {  // J-26 reference
+      ref_.process(prm(s, QlCutK, 1), prm(s, QlResK), L, R, n);
+      return;
+    }
     const double sr = ctx.sampleRate;
     double tc = std::log(std::clamp<double>(prm(s, QlCutoff, 20000), 20.0, 22000.0)), tr = prm(s, QlReso);
     if (!primed_) {
@@ -338,6 +365,7 @@ class QuickLpFx final : public UtilityFx {
 
  private:
   static constexpr int kSub = 32;
+  flref::QuickLp ref_;
   dsp::Svf svf_[2];
   double lc_ = 0, reso_ = 0;
   bool primed_ = false;
@@ -350,9 +378,14 @@ class BassBoostFx final : public UtilityFx {
   void reset() override {
     for (auto& f : f_) f.clear();
     primed_ = false;
+    ref_.clear();
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate;
+    if (prm(s, BbModel, 1) >= 0.5f) {  // J-26 reference: integer Hz, (11^n - 1)/2
+      ref_.process(std::nearbyint(prm(s, BbFreq, 60)), flref::bassBoostGain(prm(s, BbAmount, 0.75f)), sr, L, R, n);
+      return;
+    }
     double tf = std::log(std::clamp<double>(prm(s, BbFreq, 80), 20.0, 500.0)), ta = prm(s, BbAmount, 0.75);
     if (!primed_) {
       lf_ = tf, amt_ = ta;
@@ -374,6 +407,7 @@ class BassBoostFx final : public UtilityFx {
 
  private:
   static constexpr int kSub = 32;
+  flref::BassBooster ref_;
   Tdf2 f_[2];
   double lf_ = 0, amt_ = 0;
   bool primed_ = false;

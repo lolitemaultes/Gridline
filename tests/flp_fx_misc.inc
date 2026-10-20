@@ -60,11 +60,13 @@ static void testFxMisc() {
     namespace dy = gl::packs::dynamics;
     expect(decodeFx("Effector", b.b, m) && m.glType == "gl.effector", "effector: decodes");
     keep.push_back({"Effector", b.b});
-    expect(near(param(m, dy::EfKind), 8, 1e-6) && near(param(m, dy::EfMix), 0.5, 1e-6) && near(param(m, dy::EfX), 0.25, 1e-6),
-           "effector: kind (panner → stereo), mix, X");
-    expect(near(param(m, dy::EfModX), 1.0, 1e-6) && near(param(m, dy::EfModY), 0.0, 1e-6) && near(param(m, dy::EfInput), 0, 1e-3),
-           "effector: modulation amounts bipolar, unity input");
-    expect(m.param && m.param(3) == dy::EfX && m.value && near(m.value(2, 1.0), 1.0, 1e-9), "effector: automation mapping");
+    // J-26: the reference engine keeps the twelve stored values.
+    expect(param(m, dy::EfModel) == 1 && near(param(m, dy::EfRawKind), 7.0 / 11.0, 1e-6) && near(param(m, dy::EfRawMix), 0.5, 1e-6) &&
+               near(param(m, dy::EfRawX), 0.25, 1e-6) && m.exact,
+           "effector: reference engine, kind (panner), mix, X");
+    expect(near(param(m, dy::EfRawModX), 1.0, 1e-6) && near(param(m, dy::EfRawModY), 0.5, 1e-6) && near(param(m, dy::EfRawIn), 0.5, 1e-6),
+           "effector: modulation amounts and input stored as is");
+    expect(m.param && m.param(3) == dy::EfRawX && m.value && near(m.value(2, 1.0), 1.0, 1e-9), "effector: automation mapping");
   }
 
   // Gross Beat: version 8 header (9 params), options, 36 time + 36 volume slots, MIDI byte.

@@ -105,8 +105,14 @@ enum Emph {
 // κ2: EnCustom = 1 runs the embedded program (a full gl.master parameter block
 // at EnProg0, e.g. imported from the reference plugin) instead of a built-in voicing;
 // the amount then sets the program's band mix, as the reference does.
+// J-26: EnCustom = 2 runs the peak-emphasis limiter (emphasizer_ref.h) with the
+// appended controls: input dB, emphasis, soft clip, level match, output gain
+// (linear), bypass.
 enum Enh { EnAmount = 0, EnMode, EnCustom, EnProg0 };
-inline constexpr int EnCount = EnProg0 + kMsCount;
+inline constexpr int EnPeakIn = EnProg0 + kMsCount;
+inline constexpr int EnPeakEmph = EnPeakIn + 1, EnPeakSoft = EnPeakIn + 2, EnPeakMatch = EnPeakIn + 3, EnPeakOut = EnPeakIn + 4,
+                     EnPeakBypass = EnPeakIn + 5;
+inline constexpr int EnCount = EnPeakIn + 6;
 
 // ------------------------------------------------------------ gl.amprack
 inline constexpr int kRackSlots = 6;
@@ -128,7 +134,14 @@ void rackKnobText(int type, int k, double v, char* buf, int size);
 double rackKnobDefault(int type, int k);
 
 // ------------------------------------------------------------ gl.overdrive
-enum Od { OdPreBand = 0, OdColor, OdPreAmp, OdBoost, OdPostFilter, OdPostGain, OdOversample, OdCount };
+enum Od {
+  OdPreBand = 0, OdColor, OdPreAmp, OdBoost, OdPostFilter, OdPostGain, OdOversample,
+  // J-26 reference engine (OdModel = 1; pre-model states keep the legacy engine): knob positions
+  // 0..1 as the original — pre gain 1 + 25 p³ (x100: 2500), tone filter coefficient colour³,
+  // post gain (OdPostGainK)², two one-pole low-passes with pole 0.2 + 0.7 · post filter.
+  OdModel, OdPostGainK,
+  OdCount
+};
 double overdriveCurve(double x, double color);
 
 // ------------------------------------------------------------ gl.fastdist
@@ -165,7 +178,12 @@ inline double sqCutoffHz(double pos, double sr) { return 50.0 * std::pow(0.75 * 
 
 // ------------------------------------------------------------ gl.effector
 enum Ef {
-  EfKind = 0, EfX, EfY, EfModX, EfModY, EfModShape, EfModRate, EfInput, EfOutput, EfMix, EfBypass, EfCount
+  EfKind = 0, EfX, EfY, EfModX, EfModY, EfModShape, EfModRate, EfInput, EfOutput, EfMix, EfBypass,
+  // J-26 reference engine (EfModel = 1; pre-model states keep the legacy engine): the twelve
+  // stored values of the original, 0..1 each, in its order (efref:: laws in effector_ref.h).
+  EfModel, EfRawKind, EfRawBypass, EfRawMix, EfRawX, EfRawY, EfRawRate, EfRawTempoRed, EfRawModX, EfRawModY,
+  EfRawShape, EfRawIn, EfRawOut,
+  EfCount
 };
 inline constexpr int kEfKinds = 12;
 const char* effectorKindName(int kind);

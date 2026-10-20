@@ -354,11 +354,11 @@ int main() {
     expect(finite(sh) && rms(sh.l, N / 2) > 0.2, "shaper shelf filter, drive, follower and LFO run");
     Buf ap = runFx(st("gl.shaper", {{ShFilter, 8.f}}), sine(300, N));
     expect(std::fabs(rms(ap.l, N / 2) - rms(sine(300, N).l, N / 2)) < 0.02, "shaper all-pass keeps the level");
-    Buf ll = runFx(st("gl.lowlift", {{LlLowOn, 0.f}}), sine(50, N));
+    Buf ll = runFx(st("gl.lowlift", {{LlModel, 0.f}, {LlLowOn, 0.f}}), sine(50, N));  // legacy engine (J-26 reference: test_j26)
     expect(rms(ll.l, N / 2) < 0.05, "low lifter low band switch removes bass");
-    Buf lb = runFx(st("gl.lowlift", {{LlBoost, 1.f}, {LlBoostFreq, 60.f}, {LlLowGain, 0.f}, {LlHarmonics, 0.f}}), sine(30, N, 0.1));
+    Buf lb = runFx(st("gl.lowlift", {{LlModel, 0.f}, {LlBoost, 1.f}, {LlBoostFreq, 60.f}, {LlLowGain, 0.f}, {LlHarmonics, 0.f}}), sine(30, N, 0.1));
     expect(rms(lb.l, N / 2) > 0.2, "low lifter bass boost");
-    Buf lh = runFx(st("gl.lowlift", {{LlDiffuse, 1.f}, {LlSlope, 1.f}, {LlInvertHarm, 1.f}, {LlDrive, 12.f}, {LlMultiband, 0.f}}), sine(60, N));
+    Buf lh = runFx(st("gl.lowlift", {{LlModel, 0.f}, {LlDiffuse, 1.f}, {LlSlope, 1.f}, {LlInvertHarm, 1.f}, {LlDrive, 12.f}, {LlMultiband, 0.f}}), sine(60, N));
     expect(finite(lh), "low lifter diffuser, slope, inverted harmonics, full-band");
   }
 

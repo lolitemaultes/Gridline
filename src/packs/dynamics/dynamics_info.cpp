@@ -137,7 +137,7 @@ void addEnhance(std::vector<PluginInfo>& v) {
   p.params.resize(EnCount);
   p.params[EnAmount] = lin("Amount", "%", 0, 1, 0.6);
   p.params[EnMode] = ch("Voicing", {"A", "B", "C", "D"}, 0);
-  p.params[EnCustom] = ch("Program", {"Built-in voicing", "Imported program"}, 0);
+  p.params[EnCustom] = ch("Program", {"Built-in voicing", "Imported program", "Peak emphasis"}, 0);
   // Embedded program: the Mastering Dynamics parameter block (same names, prefixed).
   for (const PluginInfo& m : v)
     if (m.type == "gl.master")
@@ -146,6 +146,12 @@ void addEnhance(std::vector<PluginInfo>& v) {
         d.name = "Program: " + d.name;
         p.params[static_cast<size_t>(EnProg0) + k] = d;
       }
+  p.params[EnPeakIn] = lin("Input gain", "dB", 0, 24, 0);
+  p.params[EnPeakEmph] = lin("Emphasis", "%", 0, 1, 0.5);
+  p.params[EnPeakSoft] = tog("Soft clipping", 0);
+  p.params[EnPeakMatch] = tog("Level matching", 0);
+  p.params[EnPeakOut] = lin("Output gain", "x", 0, 1, 1);
+  p.params[EnPeakBypass] = tog("Bypass", 0);
   p.presets = {{"Default", {}},
                {"Subtle", {{EnAmount, 0.3f}}},
                {"Punch", {{EnMode, 1.f}, {EnAmount, 0.7f}}},
@@ -238,10 +244,14 @@ void addDistortions(std::vector<PluginInfo>& v) {
     p.params[OdPostFilter] = lin("Post filter", "%", 0, 1, 0);
     p.params[OdPostGain] = lin("Post gain", "dB", -36, 6, -6);
     p.params[OdOversample] = ch("Oversampling", kOs, 1);
+    p.params[OdModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+    p.params[OdPostGainK] = lin("Post gain", "%", 0, 1, 0.7);
+    p.legacyModelParam = OdModel;
     p.presets = {{"Warm push", {}},
-                 {"Bite", {{OdPreBand, 0.5f}, {OdPreAmp, 0.6f}, {OdPostGain, -9.f}}},
-                 {"Fat and dark", {{OdPostFilter, 0.6f}, {OdColor, 0.75f}, {OdPreAmp, 0.5f}}},
-                 {"Screamer", {{OdBoost, 1.f}, {OdPreAmp, 0.4f}, {OdPostFilter, 0.4f}, {OdPreBand, 0.35f}, {OdPostGain, -12.f}}}};
+                 {"Bite", {{OdPreBand, 0.5f}, {OdPreAmp, 0.6f}, {OdPostGainK, 0.55f}}},
+                 {"Fat and dark", {{OdPostFilter, 0.6f}, {OdColor, 0.75f}, {OdPreAmp, 0.5f}, {OdPostGainK, 0.6f}}},
+                 {"Screamer", {{OdBoost, 1.f}, {OdPreAmp, 0.4f}, {OdPostFilter, 0.4f}, {OdPreBand, 0.35f}, {OdPostGainK, 0.5f}}},
+                 {"Legacy tube", {{OdModel, 0.f}, {OdPreAmp, 0.45f}, {OdPostGain, -9.f}}}};
     p.editorWidth = 560;
     v.push_back(p);
   }
@@ -322,12 +332,27 @@ void addEffector(std::vector<PluginInfo>& v) {
   p.params[EfOutput] = lin("Output", "dB", -24, 12, 0);
   p.params[EfMix] = lin("Wet", "%", 0, 1, 1);
   p.params[EfBypass] = tog("Bypass effect", 0);
-  p.presets = {{"Grit", {}},
-               {"Filter sweep", {{EfKind, 4.f}, {EfX, 0.45f}, {EfY, 0.4f}, {EfModX, 0.8f}, {EfModRate, 5.f}}},
-               {"Phase drift", {{EfKind, 3.f}, {EfY, 0.6f}, {EfModX, 0.7f}, {EfModShape, 1.f}, {EfModRate, 6.f}}},
-               {"Stutter eighths", {{EfKind, 9.f}, {EfX, 0.45f}, {EfY, 0.5f}}},
-               {"Ring warble", {{EfKind, 7.f}, {EfX, 0.35f}, {EfModX, 0.3f}, {EfModShape, 5.f}, {EfModRate, 2.f}}},
-               {"Dub echo", {{EfKind, 5.f}, {EfX, 0.5f}, {EfY, 0.65f}, {EfMix, 0.5f}}}};
+  p.params[EfModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+  p.params[EfRawKind] = lin("Effect", "", 0, 1, 0);  // kind = round(11 v)
+  p.params[EfRawBypass] = tog("Bypass effect", 0);
+  p.params[EfRawMix] = lin("Wet", "%", 0, 1, 1);
+  p.params[EfRawX] = lin("X", "%", 0, 1, 0.5);
+  p.params[EfRawY] = lin("Y", "%", 0, 1, 0.5);
+  p.params[EfRawRate] = lin("Mod rate", "", 0, 1, 0.125);  // choice = round(8 v): 1/8 .. 8 beats
+  p.params[EfRawTempoRed] = lin("Tempo reduce", "%", 0, 1, 0);
+  p.params[EfRawModX] = lin("X modulation", "%", 0, 1, 0.5);  // amount (2v - 1)|2v - 1|
+  p.params[EfRawModY] = lin("Y modulation", "%", 0, 1, 0.5);
+  p.params[EfRawShape] = lin("Mod shape", "", 0, 1, 0);  // round(2 v): sine, saw, square
+  p.params[EfRawIn] = lin("Input", "%", 0, 1, 1);         // gain v²
+  p.params[EfRawOut] = lin("Output", "%", 0, 1, 0.5);     // 10^(2.4 v - 1.2)
+  p.legacyModelParam = EfModel;
+  auto kd = [](int k) { return static_cast<float>(k / 11.0); };
+  p.presets = {{"Grit", {{EfRawX, 0.62f}, {EfRawY, 0.35f}}},
+               {"Filter sweep", {{EfRawKind, kd(4)}, {EfRawX, 0.45f}, {EfRawY, 0.4f}, {EfRawModX, 0.9f}, {EfRawRate, 0.625f}}},
+               {"Phase drift", {{EfRawKind, kd(3)}, {EfRawY, 0.6f}, {EfRawModX, 0.85f}, {EfRawShape, 0.5f}, {EfRawRate, 0.75f}}},
+               {"Stutter quarter", {{EfRawKind, kd(9)}, {EfRawRate, 0.125f}}},
+               {"Vowel talk", {{EfRawKind, kd(10)}, {EfRawX, 0.3f}, {EfRawModX, 0.85f}, {EfRawRate, 0.5f}}},
+               {"Dub echo", {{EfRawKind, kd(5)}, {EfRawX, 0.75f}, {EfRawY, 0.35f}, {EfRawMix, 0.5f}, {EfRawRate, 0.375f}}}};
   p.editorWidth = 560;
   v.push_back(p);
 }

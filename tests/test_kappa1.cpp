@@ -346,9 +346,10 @@ void testDelay() {
     expect(flp::importFlPreset(flPreset("Fruity Delay 3", "Chorus"), r) && r.state.params[DlySync] == 0 &&
                near(r.state.params[DlyModRate3], dly::modRateHz(1032 / 6000.0 * 0.99), 1e-3) && near(r.state.params[DlyModDepth], 3806 / 6000.0, 1e-5),
            "FL Delay 3 'Chorus': free time, modulation rate / depth");
-    expect(flp::importFlPreset(flPreset("Fruity Delay 2", "Widen"), r) && r.state.params[DlyModel] == 0 &&
-               near(r.state.params[DlyOffset], -(std::pow(1001.0, 394 / 512.0) - 1) / 2, 0.01),
-           "FL Delay 2 'Widen': legacy model, offset curve (101 ms left)");
+    // J-26: Delay 2 imports onto the classic tempo-delay model (exact).
+    expect(flp::importFlPreset(flPreset("Fruity Delay 2", "Widen"), r) && r.state.params[DlyModel] == 2 && r.exact &&
+               near(r.state.params[DlyClsOffset], -(std::pow(1001.0, 394 / 512.0) - 1) / 2, 0.01),
+           "FL Delay 2 'Widen': classic model, offset curve (101 ms left)");
   }
 }
 
@@ -441,7 +442,7 @@ void testRenderTests() {
   PluginState rv = slotOf("Fruity Reeverb 2", "gl.reverb");
   expect(rv.type == "gl.reverb" && near(rv.params[RvbDecayTime], 4.5, 1e-5) && near(rv.params[RvbCrossover], 298, 1e-3), "Render test Reeverb 2: settings (version 10000 state)");
   PluginState dl = slotOf("Fruity Delay 2", "gl.delay");
-  expect(dl.type == "gl.delay" && dl.params[DlyModel] == 0 && dl.params[DlySync] == 1, "Render test Delay 2: legacy delay, synced");
+  expect(dl.type == "gl.delay" && dl.params[DlyModel] == 2 && near(dl.params[DlyTicks], 144, 1e-6), "Render test Delay 2: classic delay, ticks");
   PluginState db = slotOf("Fruity Delay Bank", "gl.multidelay");
   expect(db.type == "gl.multidelay", "Render test Delay Bank: multi delay");
   // J-1: Delay Bank imports run the multi delay's reference model (appended "Delay model" choice).

@@ -167,12 +167,15 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params[FfQ] = lg("Q", "", 0.1, 20, 0.707);
     p.params[FfGain] = lin("Gain", "dB", -24, 24, 0);
     p.params[FfDc] = tog("Remove DC", 1);
+    p.params[FfModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+    p.params[FfQK] = lin("Q", "%", 0, 1, 0.165);
+    p.legacyModelParam = FfModel;
     p.presets = {{"Soft lowpass", {}},
-                 {"Phone band", {{FfType, 1.f}, {FfFreq, 1400.f}, {FfQ, 1.1f}}},
-                 {"Rumble cut", {{FfType, 2.f}, {FfFreq, 45.f}, {FfQ, 0.8f}}},
-                 {"Hum notch", {{FfType, 3.f}, {FfFreq, 50.f}, {FfQ, 8.f}}},
-                 {"Warm lows", {{FfType, 4.f}, {FfFreq, 140.f}, {FfGain, 5.f}}},
-                 {"Air lift", {{FfType, 6.f}, {FfFreq, 9000.f}, {FfGain, 4.f}}}};
+                 {"Phone band", {{FfType, 1.f}, {FfFreq, 1400.f}, {FfQK, 0.05f}}},
+                 {"Rumble cut", {{FfType, 2.f}, {FfFreq, 45.f}, {FfQK, 0.035f}}},
+                 {"Hum notch", {{FfType, 3.f}, {FfFreq, 50.f}, {FfQK, 0.42f}}},
+                 {"Warm lows", {{FfType, 4.f}, {FfFreq, 140.f}, {FfGain, 5.f}, {FfQK, 0.5f}}},
+                 {"Air lift", {{FfType, 6.f}, {FfFreq, 9000.f}, {FfGain, 4.f}, {FfQK, 0.5f}}}};
     p.editorWidth = 580;
     v.push_back(p);
   }
@@ -181,8 +184,12 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params.resize(QlCount);
     p.params[QlCutoff] = lg("Cutoff", "Hz", 20, 20000, 20000);
     p.params[QlReso] = lin("Resonance", "%", 0, 1, 0);
-    p.presets = {{"Open", {}}, {"Muffled", {{QlCutoff, 900.f}, {QlReso, 0.1f}}}, {"Squelch", {{QlCutoff, 600.f}, {QlReso, 0.8f}}},
-                 {"Underwater", {{QlCutoff, 300.f}, {QlReso, 0.35f}}}};
+    p.params[QlModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+    p.params[QlCutK] = lin("Cutoff", "%", 0, 1, 1);
+    p.params[QlResK] = lin("Resonance", "%", 0, 1, 0);
+    p.legacyModelParam = QlModel;
+    p.presets = {{"Open", {}}, {"Muffled", {{QlCutK, 0.55f}, {QlResK, 0.1f}}}, {"Squelch", {{QlCutK, 0.45f}, {QlResK, 0.85f}}},
+                 {"Underwater", {{QlCutK, 0.3f}, {QlResK, 0.35f}}}};
     p.editorWidth = 580;
     v.push_back(p);
   }
@@ -191,6 +198,8 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params.resize(BbCount);
     p.params[BbFreq] = lg("Frequency", "Hz", 20, 500, 80);
     p.params[BbAmount] = lin("Amount", "%", 0, 1, 0.4);
+    p.params[BbModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+    p.legacyModelParam = BbModel;
     p.presets = {{"Gentle", {}}, {"Sub weight", {{BbFreq, 50.f}, {BbAmount, 0.5f}}}, {"Punch", {{BbFreq, 110.f}, {BbAmount, 0.35f}}},
                  {"Boom", {{BbFreq, 70.f}, {BbAmount, 0.8f}}}};
     p.editorWidth = 580;

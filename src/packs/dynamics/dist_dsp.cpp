@@ -29,8 +29,17 @@ double fastDistCurve(double x, double threshold, int type) {
 
 class OverdriveFx final : public DynFx {
  public:
-  OverdriveFx() : DynFx("gl.overdrive") {}
+  OverdriveFx() : DynFx("gl.overdrive") {
+    for (int i = 0; i < 65536; ++i) {  // quarter-sine soft clip, index = trunc(32767 x) + 32768
+      int k = i - 32768;
+      shaper_[i] = static_cast<float>(k >= 0 ? std::sin(kPi * k / 65536.0) : -std::sin(kPi * (-k - 1) / 65536.0));
+    }
+  }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (pb(s, OdModel)) {
+      reference(s, L, R, n);
+      return;
+    }
     const double sr = ctx.sampleRate;
     const double band = clampd(p(s, OdPreBand), 0, 1), color = p(s, OdColor), amp = clampd(p(s, OdPreAmp), 0, 1);
     const double post = clampd(p(s, OdPostFilter), 0, 1);
@@ -67,16 +76,65 @@ class OverdriveFx final : public DynFx {
     input_ = static_cast<float>(linToDb(peak));
   }
   // Wet only: the oversampled shaper delays the whole output.
-  int latencyFor(const PluginState& s, double) const override { return osLatency(oversampling(s)); }
+  int latencyFor(const PluginState& s, double) const override { return pb(s, OdModel) ? 0 : osLatency(oversampling(s)); }
   void reset() override {
     for (int c = 0; c < 2; ++c) {
       preHp_[c].reset(); preLp_[c].reset(); postLp_[c].reset();
       dc_[c].reset();
       os_[c].reset();
+      for (float& v : rs_[c]) v = 0;
     }
+    primed_ = false;
   }
 
  private:
+  // Reference engine (study: analysis/demos/specs/j26_bloodoverdrive.md), float arithmetic.
+  float shape(float x) const {
+    float t = std::trunc(32767.0f * x);
+    int i = static_cast<int>(std::clamp(t, -32768.0f, 32767.0f));
+    return shaper_[i + 32768];
+  }
+  void reference(const PluginState& s, float* L, float* R, int n) {
+    const float pa = static_cast<float>(clampd(p(s, OdPreAmp), 0, 1)), col = static_cast<float>(clampd(p(s, OdColor), 0, 1));
+    const float pgN = static_cast<float>(clampd(p(s, OdPostGainK), 0, 1));
+    const float gT = 1.0f + (pb(s, OdBoost) ? 2500.0f : 25.0f) * pa * pa * pa;
+    const float bT = 1.0f - static_cast<float>(clampd(p(s, OdPreBand), 0, 1));
+    const float fT = col * col * col, pgT = pgN * pgN;
+    const float a = 0.2f + 0.7f * static_cast<float>(clampd(p(s, OdPostFilter), 0, 1)), ia = 1.0f - a;
+    if (!primed_) g_ = gT, b_ = bT, f_ = fT, pg_ = pgT, primed_ = true;
+    double peak = 0;
+    for (int i = 0; i < n; ++i) {
+      g_ = 0.99975f * g_ + 0.00025f * gT;
+      b_ = 0.99975f * b_ + 0.00025f * bT;
+      f_ = 0.99975f * f_ + 0.00025f * fT;
+      pg_ = 0.99975f * pg_ + 0.00025f * pgT;
+      float* io[2] = {L + i, R + i};
+      for (int c = 0; c < 2; ++c) {
+        float x = *io[c];
+        peak = std::max(peak, static_cast<double>(std::fabs(x)));
+        float* st = rs_[c];  // lp, bp, l2, b2, y1, y2
+        st[0] += f_ * st[1];
+        float hp = x - st[0] - st[1];
+        st[1] += f_ * hp;
+        float sIn = ((hp + st[0]) * b_ + st[1]) * g_;
+        st[2] += 0.25f * st[3];
+        float h2 = sIn - st[2] - st[3];
+        st[3] += 0.25f * h2;
+        float v = (shape(h2) + shape(st[3]) + shape(st[2])) * pg_;
+        v = std::clamp(v, -0.99995f, 0.99995f);
+        st[4] = a * st[4] + ia * v;
+        st[5] = a * st[5] + ia * st[4];
+        for (int k = 0; k < 6; ++k)
+          if (std::fabs(st[k]) < 1e-20f) st[k] = 0;
+        *io[c] = st[5];
+      }
+    }
+    input_ = static_cast<float>(linToDb(peak));
+  }
+  float shaper_[65536];
+  float rs_[2][6] = {};
+  float g_ = 1, b_ = 1, f_ = 0, pg_ = 1;
+  bool primed_ = false;
   int oversampling(const PluginState& s) const { return osFactor(pi(s, OdOversample)); }
   SvfTpt preHp_[2], preLp_[2], postLp_[2];
   DcBlock dc_[2];

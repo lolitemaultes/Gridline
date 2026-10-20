@@ -40,7 +40,8 @@ static void testFxTime() {
     Blob b;
     for (int x : {0, 128, 128, 64, 144, 0, 1, 128}) b.i32(x);
     expect(decodeFx("Fruity Delay 2", b.b, m) && m.glType == "gl.delay", "delay2: decodes");
-    expect(param(m, pp::DlySync) == 1 && near(pp::kDelayBeats[static_cast<int>(param(m, pp::DlyTime))], 0.75, 1e-9) && param(m, pp::DlyMode) == 2,
+    // J-26 classic model: ticks at the host tempo; "invert" swaps the outputs.
+    expect(param(m, pp::DlyModel) == 2 && near(param(m, pp::DlyTicks), 144, 1e-9) && param(m, pp::DlyClsMode) == 1 && m.exact,
            "delay2: time, mode");
   }
   // Delay Bank: unit 0 enabled with 4 steps.
@@ -71,16 +72,20 @@ static void testFxTime() {
   {
     Blob b;
     for (int x : {2, 500, 500, 581, 783, 819, 805, 1, 20000, 5724, 259, 1000, 0}) b.i32(x);
-    expect(decodeFx("Hyper Chorus", b.b, m) && m.glType == "gl.ensemble" && near(param(m, sf::EnHighPass), 5724, 1e-2) &&
-               near(param(m, sf::EnLowPass), 20000, 1e-2) && param(m, sf::EnLines) == 1 && near(param(m, sf::EnMix), 0.259, 1e-6),
-           "hyper chorus: decodes (filters in Hz)");
+    // J-26: reference engine; the filter values are knob positions, not Hz.
+    expect(decodeFx("Hyper Chorus", b.b, m) && m.glType == "gl.ensemble" && m.exact && param(m, sf::EnModel) == 1 &&
+               near(param(m, sf::EnK8), (5724 - 120) / 10780.0, 1e-6) && near(param(m, sf::EnK7), (20000 - 7140) / 14860.0, 1e-6) &&
+               param(m, sf::EnK6) == 1 && near(param(m, sf::EnK9), 0.259, 1e-6),
+           "hyper chorus: decodes (filter knob positions)");
   }
   {
     Blob b;
     for (int x : {1, 0, 2469, 1167, 61, 0, 0, 61, 1024, 0, 3500, 3500, 3229}) b.i32(x);
-    expect(decodeFx("Fruity Flanger", b.b, m) && m.glType == "gl.flanger" && near(param(m, pp::FlgPhase), 61, 1e-6) &&
-               near(param(m, pp::FlgFeedback), -0.61 * 0.95, 1e-5) && near(param(m, pp::FlgMix), 0.5, 1e-6),
-           "flanger: decodes (inverted feedback, mix)");
+    // J-26 reference engine: knob positions; invert-feedback raw 1024 = on; dry / wet kept apart.
+    expect(decodeFx("Fruity Flanger", b.b, m) && m.glType == "gl.flanger" && m.exact && near(param(m, pp::FlgPhase), 61, 1e-6) &&
+               param(m, pp::FlgInvFb) == 1 && near(param(m, pp::FlgFeedN), 0.61, 1e-6) && near(param(m, pp::FlgDryN), 0.7, 1e-6) &&
+               near(param(m, pp::FlgWetN), 0.7, 1e-6),
+           "flanger: decodes (inverted feedback, separate dry / wet)");
   }
   {
     Blob b;

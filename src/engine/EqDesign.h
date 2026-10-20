@@ -271,12 +271,44 @@ inline void designEqBandRef(const PluginState& s, int band, double sr, EqBandFil
   }
 }
 
+// J-26 classic band model (EqModel = 2): one RBJ biquad per band at the host
+// rate; width w = knob position: q = 0.1 + 18.9 w (cuts, band, notch), peak
+// q = 0.1 + 0.0999 (1001^w - 1), shelf slope S = 0.1 + 1.9 w (spec j26_peq1.md).
+inline void designEqBandClassic(const PluginState& s, int band, double sr, EqBandFilters& f) {
+  using namespace pp;
+  using namespace eqref;
+  f.count = 0;
+  const int type = static_cast<int>(eqValue(s, band, EqType) + 0.5f);
+  if (type == EqOff) return;
+  const double hz = std::min(static_cast<double>(eqValue(s, band, EqFreq)), 0.4999 * sr);
+  const double w = std::clamp(static_cast<double>(eqParamOr(s, eqFl(band, EqWidth), 0.267f)), 0.0, 1.0);
+  const double A = std::pow(10.0, eqValue(s, band, EqGain) / 40.0);
+  const double w0 = 2 * 3.14159265358979323846 * hz / sr, sw = std::sin(w0), cw = std::cos(w0);
+  dsp::Biquad& bq = f.stage[0];
+  f.count = 1;
+  switch (type) {
+    case EqHighCut: rbj(bq, LP, 1, sw / (2 * (0.1 + 18.9 * w)), sw, cw); break;
+    case EqLowCut: rbj(bq, HP, 1, sw / (2 * (0.1 + 18.9 * w)), sw, cw); break;
+    case EqBandPass: rbj(bq, BP, 1, sw / (2 * (0.1 + 18.9 * w)), sw, cw); break;
+    case EqNotch: rbj(bq, Notch, 1, sw / (2 * (0.1 + 18.9 * w)), sw, cw); break;
+    case EqPeak: rbj(bq, Peak, A, sw / (2 * (0.1 + 0.0999 * (std::pow(1001.0, w) - 1))), sw, cw); break;
+    case EqLowShelf:
+    case EqHighShelf: {
+      double S = 0.1 + 1.9 * w, beta = std::sqrt(std::max(0.0, (A * A + 1) / S - (A - 1) * (A - 1)));
+      rbj(bq, type == EqLowShelf ? LShelf : HShelf, A, beta, sw, cw);
+      break;
+    }
+    default: f.count = 0; break;
+  }
+}
+
 // Disabled bands (Enabled off) have no stages.
 inline void designEqBand(const PluginState& s, int band, double sr, EqBandFilters& f) {
   f.count = 0;
   size_t ei = static_cast<size_t>(pp::eqExt(band, pp::EqEnabled));
   if (ei < s.params.size() && s.params[ei] < 0.5f) return;
-  if (eqParamOr(s, pp::EqModel, 0) >= 0.5f) designEqBandRef(s, band, sr, f);
+  if (eqParamOr(s, pp::EqModel, 0) >= 1.5f) designEqBandClassic(s, band, sr, f);
+  else if (eqParamOr(s, pp::EqModel, 0) >= 0.5f) designEqBandRef(s, band, sr, f);
   else designEqBandLegacy(s, band, sr, f);
 }
 

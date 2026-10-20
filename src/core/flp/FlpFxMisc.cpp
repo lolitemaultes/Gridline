@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstring>
 #include "../../packs/dynamics/dynamics.h"
+#include "../../packs/dynamics/effector_ref.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/spectral/spectral.h"
 #include "../../packs/utility/utility.h"
@@ -340,46 +341,38 @@ bool decodeNotebook(Context& c, const std::vector<Event>& evs, PluginMapping& m)
 // "SSLF" chunk: u32 size, "10XF", …, then 12 normalized floats (parameter
 // order: kind, bypass, mix, X, Y, mod rate, tempo reduce, mod amount X/Y,
 // mod shape, input, output) at the end of the chunk.
-int effectorKind(int fl) {
-  // FL: distortion, lo-fi, flanger, phaser, filter, delay, reverb, panner,
-  // trance gate, stutter, vowel, ring mod → Gridline kinds.
-  static const int map[12] = {0, 1, 2, 3, 4, 5, 6, 8, 11, 9, 4, 7};
-  return map[std::clamp(fl, 0, 11)];
-}
+// J-26: reference engine (gl.effector EfModel = 1) takes the twelve floats as
+// stored; the module laws live in packs/dynamics/effector_ref.h.
 std::shared_ptr<const KnobTable> effectorTable() {
   namespace dy = packs::dynamics;
-  static auto t = std::make_shared<const KnobTable>(KnobTable{
-      {0, 0, 1, dy::EfKind, [](double v) { return effectorKind(static_cast<int>(std::lround(v * 11))); }},
-      {1, 0, 1, dy::EfBypass, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
-      {2, 0, 1, dy::EfMix, {}},
-      {3, 0, 1, dy::EfX, {}},
-      {4, 0, 1, dy::EfY, {}},
-      {5, 0, 1, dy::EfModRate, [](double v) { return std::clamp(std::lround(v * 9.0), 0L, 7L); }},
-      {7, 0, 1, dy::EfModX, [](double v) { return std::clamp(v * 2 - 1, -1.0, 1.0); }},
-      {8, 0, 1, dy::EfModY, [](double v) { return std::clamp(v * 2 - 1, -1.0, 1.0); }},
-      {9, 0, 1, dy::EfModShape, [](double v) { return std::clamp(std::lround(v * 5.0), 0L, 5L); }},
-      {10, 0, 1, dy::EfInput, [](double v) { return std::clamp(gainDb(v * 2.0), -24.0, 12.0); }},
-      {11, 0, 1, dy::EfOutput, [](double v) { return std::clamp(gainDb(v * 2.0), -24.0, 12.0); }},
-  });
+  static auto t = [] {
+    KnobTable k;
+    for (int i = 0; i < 12; ++i) k.push_back({i, 0, 1, dy::EfRawKind + i, [](double v) { return std::clamp(v, 0.0, 1.0); }});
+    return std::make_shared<const KnobTable>(k);
+  }();
   return t;
 }
 bool decodeEffector(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   (void)c;
+  namespace dy = packs::dynamics;
   std::vector<uint8_t> b = stateBytes(evs);
   begin(m, "gl.effector");
+  set(m, dy::EfModel, 1);
   auto table = effectorTable();
   bindTable(m, table);
   // The table works in the stored 0..1 floats; the controls (and recorded
-  // pattern values) are integers: knobs 0..256, kind / rate / shape indices.
-  setRawRanges(m, {{0, 0, 11}, {1, 0, 1}, {2, 0, 256}, {3, 0, 256}, {4, 0, 256}, {5, 0, 9},
-                   {7, 0, 256}, {8, 0, 256}, {9, 0, 5}, {10, 0, 256}, {11, 0, 256}});
+  // pattern values) are integers: knobs 0..256, kind 0..11, rate 0..8, shape 0..2.
+  setRawRanges(m, {{0, 0, 11}, {1, 0, 1}, {2, 0, 256}, {3, 0, 256}, {4, 0, 256}, {5, 0, 8}, {6, 0, 256},
+                   {7, 0, 256}, {8, 0, 256}, {9, 0, 2}, {10, 0, 256}, {11, 0, 256}});
   if (b.size() < 12 + 48 || std::memcmp(b.data(), "SSLF", 4) != 0) return true;
   size_t end = std::min(b.size(), static_cast<size_t>(rd32(b, 4)) + 8);
   if (end < 48 + 12) return true;
   std::vector<double> fl(12);
   for (size_t k = 0; k < 12; ++k) fl[k] = std::clamp(static_cast<double>(rdf32(b, end - 48 + 4 * k)), 0.0, 1.0);
   applyTable(m, *table, fl);
-  m.exact = false;  // module algorithms differ; parameters map by role
+  // Every module follows its reference law except the reverb module, whose
+  // network is Gridline's (decay / damping / level laws match).
+  m.exact = packs::dynamics::efref::kindOf(fl[0]) != 6 || fl[1] != 0;
   return true;
 }
 

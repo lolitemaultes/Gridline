@@ -163,8 +163,10 @@ void testEffects() {
   {  // Effector: the table works in stored floats; recorded knobs are 0..256.
     Run r;
     decode(r, "Effector", std::vector<uint8_t>(8, 0));
-    expect(r.ok && near(rn(r, 3, 128), 0.5) && near(rn(r, 0, 11), 1.0) && isNan(rn(r, 6, 10)), "Effector: knob / kind ranges");
-    expect(near(glValue(r, 3, 64), 0.25) && r.m.param(3) == dy::EfX, "Effector: recorded X");
+    // J-26: tempo reduce is a 0..256 knob too; rate 0..8, shape 0..2.
+    expect(r.ok && near(rn(r, 3, 128), 0.5) && near(rn(r, 0, 11), 1.0) && near(rn(r, 6, 64), 0.25) && near(rn(r, 5, 4), 0.5) && near(rn(r, 9, 2), 1.0),
+           "Effector: knob / kind / rate / shape ranges");
+    expect(near(glValue(r, 3, 64), 0.25) && r.m.param(3) == dy::EfRawX, "Effector: recorded X (reference engine value)");
   }
   {  // Control Surface: user-defined controls, no known range.
     Run r;

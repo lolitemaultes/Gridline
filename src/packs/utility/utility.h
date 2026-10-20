@@ -52,15 +52,18 @@ inline constexpr int kCeLinearLatency = kCeLinearHop + kCeLinearKernel / 2;
 inline double ceBandHz(int band) { return 20.0 * std::pow(1000.0, static_cast<double>(band) / (kCeBands - 1)); }
 
 // gl.freefilter
-enum FreeFilter { FfType, FfFreq, FfQ, FfGain, FfDc, FfCount };
+// J-26 reference model (FfModel = 1): fixed 44.1 kHz design, FfQK = Q knob (law per type).
+enum FreeFilter { FfType, FfFreq, FfQ, FfGain, FfDc, FfModel, FfQK, FfCount };
 enum FreeFilterType { FtLowPass, FtBandPass, FtHighPass, FtNotch, FtLowShelf, FtPeak, FtHighShelf, FtCount };
 inline bool ffHasGain(int type) { return type == FtLowShelf || type == FtPeak || type == FtHighShelf; }
 
 // gl.fastlp
-enum QuickLp { QlCutoff, QlReso, QlCount };
+// J-26 reference model (QlModel = 1): per-sample coefficients from the knob positions.
+enum QuickLp { QlCutoff, QlReso, QlModel, QlCutK, QlResK, QlCount };
 
 // gl.bassboost
-enum BassBoost { BbFreq, BbAmount, BbCount };
+// J-26 reference model (BbModel = 1): dry + (11^amount - 1)/2 x two-pole low-pass at an integer Hz.
+enum BassBoost { BbFreq, BbAmount, BbModel, BbCount };
 
 // gl.scope
 enum Scope {

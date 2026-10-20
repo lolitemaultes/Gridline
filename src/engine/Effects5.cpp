@@ -9,6 +9,9 @@
 #include "../core/PluginParams.h"
 #include "Dsp.h"
 #include "Effects.h"
+#include "ClassicDelay.h"
+#include "ClassicModFx.h"
+#include "FlFilterRef.h"
 #include "FreqShiftRef.h"
 #include "PlateReverb.h"
 
@@ -72,6 +75,13 @@ class FilterFx final : public Effect {
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     const double sr = ctx.sampleRate;
+    if (iparam(s, FltModel) == 1) {  // J-26 classic multi-tap model
+      if (!classic_) ref_.clear(), classic_ = true;
+      ref_.process(param(s, FltCutK, 1), param(s, FltResK, 0.2f), param(s, FltLPLevel, 1), param(s, FltBPLevel), param(s, FltHPLevel),
+                   iparam(s, FltSlope) == 1, bparam(s, FltDcBlock), sr, L, R, n);
+      return;
+    }
+    classic_ = false;
     int mode = std::clamp(iparam(s, FltMode), 0, 6);
     double mix = param(s, FltMix, 1);
     target_ = param(s, FltCutoff, 20000);
@@ -130,9 +140,12 @@ class FilterFx final : public Effect {
       for (auto& b : c) b.clear();
     dc_[0].reset(), dc_[1].reset();
     cur_ = 0;
+    ref_.clear();
   }
 
  private:
+  flref::MultiSvf ref_;
+  bool classic_ = false;
   Svf f_[2][2];
   Biquad bq_[2][2];
   DcBlock dc_[2];
@@ -345,6 +358,18 @@ class DelayFx final : public Effect {
  public:
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
+    if (iparam(s, DlyModel) == 2) {  // J-26 classic tempo delay
+      if (!cls_.ready() || clsSr_ != ctx.sampleRate) cls_.init(ctx.sampleRate), clsSr_ = ctx.sampleRate;
+      cdelay::Settings cs;
+      cs.ticks = std::clamp(param(s, DlyTicks, 144), 1.f, 768.f), cs.stepRound = bparam(s, DlyClsStepRound), cs.bpm = param(s, DlyClsBpm);
+      cs.coef = param(s, DlyClsCoef, 1), cs.scaleSr = bparam(s, DlyClsScaleSr, true), cs.feedback = param(s, DlyClsFb, 0.5f);
+      cs.mode = std::clamp(iparam(s, DlyClsMode), 0, 2), cs.offsetMs = param(s, DlyClsOffset), cs.dry = param(s, DlyClsDry, 1);
+      const double g = param(s, DlyClsIn, 1), pan = std::clamp(param(s, DlyClsPan), -1.f, 1.f);
+      if (pan >= 0) cs.inLL = (1 - pan) * g, cs.inLR = 0.5 * pan * g, cs.inRR = g - 0.5 * pan * g, cs.inRL = 0;
+      else cs.inRR = (1 + pan) * g, cs.inRL = -0.5 * pan * g, cs.inLL = g + 0.5 * pan * g, cs.inLR = 0;
+      cls_.process(cs, ctx.tempo, L, R, n);
+      return;
+    }
     if (bparam(s, DlyModel)) {
       ref_.process(s, ctx, L, R, n);
       return;
@@ -502,6 +527,7 @@ class DelayFx final : public Effect {
   }
   void reset() override {
     ref_.reset();
+    if (cls_.ready()) cls_.reset();
     dl_.clear(), dr_.clear();
     lpL_.z = lpR_.z = hpL_.z = hpR_.z = 0;
     svf_[0].reset(), svf_[1].reset();
@@ -516,6 +542,8 @@ class DelayFx final : public Effect {
  private:
   double sr_ = 0, ph_ = 0, curL_ = -1, curR_ = -1, oldL_ = 0, oldR_ = 0, xf_ = 0, tone_ = 9, toneSr_ = 0;
   double env_[2] = {0, 0}, hold_[2] = {0, 0}, held_[2] = {0, 0};
+  cdelay::Line cls_;
+  double clsSr_ = 0;
   Line dl_, dr_;
   OnePole lpL_, lpR_, hpL_, hpR_, toneF_[2];
   Svf svf_[2];
@@ -835,8 +863,18 @@ class ChorusFx final : public Effect {
 // ======================================================================= Flanger
 class FlangerFx final : public Effect {
  public:
+  FlangerFx() : ref_(std::make_unique<classic::Flanger>()) { ref_->reset(); }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
+    if (iparam(s, FlgModel) == 1) {  // J-26 reference engine
+      classic::FlangerSettings fs;
+      fs.delay = param(s, FlgDelayN), fs.depth = param(s, FlgDepthN, 0.4f), fs.rate = param(s, FlgRateN, 0.4f);
+      fs.phase = param(s, FlgPhase, 118) / 360.0, fs.damp = param(s, FlgDampN), fs.shape = param(s, FlgShape);
+      fs.feed = param(s, FlgFeedN, 0.23f), fs.invFeedback = bparam(s, FlgInvFb, true), fs.invWet = bparam(s, FlgInvertWet);
+      fs.dry = param(s, FlgDryN, 0.7f), fs.wet = param(s, FlgWetN, 0.6f), fs.cross = param(s, FlgCrossN, 0.5f);
+      ref_->process(fs, ctx.sampleRate, L, R, n);
+      return;
+    }
     if (sr_ != ctx.sampleRate) {
       sr_ = ctx.sampleRate;
       bl_.init(static_cast<size_t>(sr_ * 0.03) + 4);
@@ -864,12 +902,14 @@ class FlangerFx final : public Effect {
     }
   }
   void reset() override {
+    ref_->reset();
     bl_.clear(), br_.clear();
     ph_ = 0;
     dpL_.z = dpR_.z = 0;
   }
 
  private:
+  std::unique_ptr<classic::Flanger> ref_;  // 256 KB of delay line: on the heap
   double sr_ = 0, ph_ = 0;
   Line bl_, br_;
   OnePole dpL_, dpR_;
@@ -881,6 +921,15 @@ class PhaserFx final : public Effect {
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     const double sr = ctx.sampleRate;
+    if (iparam(s, PhsModel) == 1) {  // J-26 reference engine
+      classic::PhaserSettings ps;
+      ps.sweep = param(s, PhsSweepN, 0.5f), ps.large = iparam(s, PhsRangeLarge) == 1;
+      ps.depthMin = param(s, PhsDepthMin, 0.1f), ps.depthMax = param(s, PhsDepthMax, 0.8f), ps.stereo = param(s, PhsStereoN, 0.5f);
+      ps.stages = iparam(s, PhsStagesN, 8), ps.feedback = param(s, PhsFeedbackN, 0.4f), ps.dry = param(s, PhsDryN, 0.5f);
+      ps.gain = param(s, PhsGainN, 0.8f);
+      ref_.process(ps, sr, L, R, n);
+      return;
+    }
     static const int kStages[9] = {2, 4, 6, 8, 10, 12, 16, 20, 24};
     int stages = kStages[std::clamp(iparam(s, PhsStages, 2), 0, 8)];
     double rate = param(s, PhsRate, 0.4f), depth = param(s, PhsDepth, 0.7f), centre = param(s, PhsCenter, 800);
@@ -912,12 +961,14 @@ class PhaserFx final : public Effect {
     }
   }
   void reset() override {
+    ref_.reset();
     for (auto& c : z_) c.fill(0);
     last_[0] = last_[1] = 0;
     ph_ = 0;
   }
 
  private:
+  classic::Phaser ref_;
   std::array<std::array<double, 24>, 2> z_{};
   double last_[2] = {0, 0}, ph_ = 0;
 };

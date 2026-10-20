@@ -152,7 +152,7 @@ void editorReverbRef(App& a, const PluginTarget& t, float width) {
   reverbVisual(dl, F.p(4, 112), F.p(156, 156), st, K, a.doc.song().tempo);
   {  // J-26: network model (hall / plate reference) in the room view's corner
     static const char* md[2] = {"HALL", "PLATE"};
-    skin::switchSel(a, t, RvbModel, F.p(104, 6), ImVec2(50 * s, 14 * s), K, md, 2);
+    skin::switchSel(a, t, RvbModel, F.p(92, 6), ImVec2(62 * s, 15 * s), K, md, 2, true);
   }
   dl->AddRectFilled(F.p(160, 0), F.p(530, 160), skin::hex(0x434B4D), 0);
   dl->AddLine(F.p(160, 0), F.p(160, 160), skin::darken(K.panel, 0.5f), 1.0f);

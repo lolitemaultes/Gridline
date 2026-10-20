@@ -640,7 +640,8 @@ std::vector<PluginInfo> build() {
     p.params[EqPivot] = ch("Pivot slope", {"0 dB/oct", "1.5 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct"}, 2);
     p.params[EqSmoothing] = ch("Time smoothing", {"Fastest", "Fast", "Medium", "Slow", "Slowest"}, 2);
     p.params[EqHeatmap] = ch("Heat map", {"Off", "Top", "Bottom", "Full"}, 0);
-    p.params[EqModel] = ch("Band model", {"Legacy", "Reference"}, 1);
+    p.params[EqModel] = ch("Band model", {"Legacy", "Reference", "Classic"}, 1);
+    p.params[EqMainLin] = lin("Output (classic)", "x", 0, 12, 1);
     p.params[EqLinear] = ch("Linear phase", {"Off", "Lowest", "Low", "Medium", "High", "Higher", "Highest"}, 0);
     p.params[EqPhaseView] = tog("Show phase", 0);
     p.params[EqHistAvg] = tog("Histogram average", 0);
@@ -671,10 +672,13 @@ std::vector<PluginInfo> build() {
     p.params[FltBPLevel] = lin("Band pass level", "%", 0, 1, 0);
     p.params[FltHPLevel] = lin("High pass level", "%", 0, 1, 0);
     p.params[FltDcBlock] = tog("Remove DC", 0);
+    p.params[FltModel] = ch("Model", {"Modern", "Classic"}, 0);
+    p.params[FltCutK] = lin("Cutoff", "%", 0, 1, 1);
+    p.params[FltResK] = lin("Resonance", "%", 0, 1, 0.2);
     p.editorWidth = 680;
     p.presets = {{"Open", {}}, {"Dark", {{FltCutoff, 1200.f}}}, {"Telephone band", {{FltMode, 1.f}, {FltCutoff, 1500.f}, {FltReso, 0.4f}}},
-                 {"Thin", {{FltMode, 2.f}, {FltCutoff, 400.f}}},
                  {"Steep sweep", {{FltSlope, 1.f}, {FltCutoff, 900.f}, {FltReso, 0.5f}}}, {"Air shelf", {{FltMode, 6.f}, {FltCutoff, 9000.f}, {FltGain, 4.f}}}};
+    p.presets.push_back({"Classic sweep", {{FltModel, 1.f}, {FltCutK, 0.45f}, {FltResK, 0.7f}, {FltHPLevel, 0.f}, {FltDcBlock, 1.f}}});
     v.push_back(p);
   }
   {
@@ -787,7 +791,17 @@ std::vector<PluginInfo> build() {
     p.params[DlyTone] = lin("Output tone", "%", -1, 1, 0);
     p.params[DlyInput] = lin("Input send", "%", 0, 1, 1);
     p.params[DlyInputPan] = lin("Input pan", "pan", -1, 1, 0);
-    p.params[DlyModel] = ch("Delay model", {"Legacy", "Reference"}, 1);
+    p.params[DlyModel] = ch("Delay model", {"Legacy", "Reference", "Classic"}, 1);
+    p.params[DlyClsStepRound] = tog("Whole-step rounding", 0);
+    p.params[DlyClsBpm] = lin("Own tempo", "BPM", 0, 280, 0);
+    p.params[DlyClsCoef] = lin("Feedback filter", "%", 0, 1, 1);
+    p.params[DlyClsScaleSr] = tog("Filter follows the sample rate", 1);
+    p.params[DlyClsFb] = lin("Feedback", "%", 0, 1, 0.5);
+    p.params[DlyClsMode] = ch("Mode", {"Normal", "Swap outputs", "Ping-pong"}, 0);
+    p.params[DlyClsOffset] = lin("Stereo offset", "ms", -500, 500, 0);
+    p.params[DlyClsIn] = lin("Input", "x", 0, 1.9025, 1);
+    p.params[DlyClsPan] = lin("Input pan", "pan", -1, 1, 0);
+    p.params[DlyClsDry] = lin("Dry", "x", 0, 1.9025, 1);
     p.params[DlyType3] = ch("Delay type", {"Fake stereo", "True stereo", "Ping-pong", "Off"}, 1);
     p.params[DlyTicks] = lin("Time (ticks)", "ticks", 1, 768, 192);
     p.params[DlyTimeR] = lin("Time R/L offset", "%", -1, 1, 0);
@@ -890,9 +904,23 @@ std::vector<PluginInfo> build() {
     p.params[FlgShape] = lin("LFO shape", "%", 0, 1, 0);
     p.params[FlgInvertWet] = tog("Invert wet", 0);
     p.params[FlgCross] = lin("Cross", "%", 0, 1, 0);
+    p.params[FlgModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+    p.params[FlgDelayN] = lin("Delay", "%", 0, 1, 0);
+    p.params[FlgDepthN] = lin("Depth", "%", 0, 1, 0.4);
+    p.params[FlgRateN] = lin("Rate", "%", 0, 1, 0.4);
+    p.params[FlgDampN] = lin("Damp", "%", 0, 1, 0);
+    p.params[FlgFeedN] = lin("Feed", "%", 0, 1, 0.23);
+    p.params[FlgInvFb] = tog("Invert feedback", 1);
+    p.params[FlgDryN] = lin("Dry", "%", 0, 1, 0.7);
+    p.params[FlgWetN] = lin("Wet", "%", 0, 1, 0.6);
+    p.params[FlgCrossN] = lin("Cross", "%", 0, 1, 0.5);
+    p.legacyModelParam = FlgModel;
     p.editorWidth = 700;
-    p.presets = {{"Jet", {}}, {"Metallic", {{FlgFeedback, 0.85f}, {FlgDelay, 0.5f}}}, {"Negative", {{FlgFeedback, -0.7f}}},
-                 {"Swirl", {{FlgCross, 0.6f}, {FlgPhase, 180.f}, {FlgShape, 1.f}}}, {"Through zero", {{FlgInvertWet, 1.f}, {FlgDelay, 0.1f}, {FlgMix, 0.5f}}}};
+    p.presets = {{"Jet", {{FlgPhase, 118.f}, {FlgInvertWet, 1.f}}},
+                 {"Metallic", {{FlgFeedN, 0.85f}, {FlgDelayN, 0.1f}, {FlgDepthN, 0.25f}, {FlgPhase, 118.f}}},
+                 {"Slow sweep", {{FlgRateN, 0.15f}, {FlgDepthN, 0.6f}, {FlgFeedN, 0.6f}, {FlgPhase, 90.f}}},
+                 {"Swirl", {{FlgCrossN, 0.7f}, {FlgPhase, 180.f}, {FlgShape, 1.f}}},
+                 {"Legacy jet", {{FlgModel, 0.f}, {FlgFeedback, 0.7f}, {FlgDelay, 0.5f}}}};
     v.push_back(p);
   }
   {
@@ -911,8 +939,23 @@ std::vector<PluginInfo> build() {
     p.params[PhsOutGain] = lin("Output", "dB", -24, 6, 0);
     p.params[PhsShape] = ch("LFO shape", {"Sine", "Triangle"}, 0);
     p.params[PhsManual] = tog("Manual (no LFO)", 0);
+    p.params[PhsModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+    p.params[PhsSweepN] = lin("Sweep frequency", "%", 0, 1, 0.5);
+    p.params[PhsRangeLarge] = ch("Frequency range", {"Small", "Large"}, 0);
+    p.params[PhsDepthMin] = lin("Min depth", "%", 0, 1, 0.1);
+    p.params[PhsDepthMax] = lin("Max depth", "%", 0, 1, 0.8);
+    p.params[PhsStereoN] = lin("Stereo", "%", 0, 1, 0.5);
+    p.params[PhsStagesN] = lin("Stages", "", 3, 23, 8);
+    p.params[PhsFeedbackN] = lin("Feedback", "%", 0, 1, 0.4);
+    p.params[PhsDryN] = lin("Dry", "%", 0, 1, 0.5);
+    p.params[PhsGainN] = lin("Output gain", "%", 0, 1, 0.8);
+    p.legacyModelParam = PhsModel;
     p.editorWidth = 700;
-    p.presets = {{"Classic", {}}, {"Slow sweep", {{PhsRate, 0.08f}, {PhsStages, 4.f}}}, {"Resonant", {{PhsFeedback, 0.8f}, {PhsStages, 5.f}}}};
+    p.presets = {{"Classic", {}},
+                 {"Slow sweep", {{PhsSweepN, 0.2f}, {PhsStagesN, 5.f}}},
+                 {"Resonant", {{PhsFeedbackN, 0.8f}, {PhsStagesN, 12.f}, {PhsDryN, 0.3f}}},
+                 {"Wide stereo", {{PhsStereoN, 1.f}, {PhsStagesN, 23.f}, {PhsDepthMin, 0.45f}, {PhsDepthMax, 0.9f}}},
+                 {"Legacy sweep", {{PhsModel, 0.f}, {PhsRate, 0.3f}}}};
     v.push_back(p);
   }
   {
@@ -1298,8 +1341,22 @@ std::vector<PluginInfo> build() {
     p.params[LlMultiband] = tog("Multiband", 1);
     p.params[LlBoost] = lin("Bass boost", "%", 0, 1, 0);
     p.params[LlBoostFreq] = lg("Boost freq", "Hz", 20, 250, 60);
+    p.params[LlModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+    p.params[LlOn] = tog("Enabled", 1);
+    p.params[LlLookahead] = tog("Look-ahead", 1);
+    p.params[LlLowDb] = lin("Low band gain", "dB", -120, 12, 0);
+    p.params[LlSlopeDb] = lin("Harmonics slope", "dB", -60, 0, -6.5);
+    p.params[LlPreDb] = lin("Pre-shaping boost", "dB", 0, 18, 9);
+    p.params[LlHighDb] = lin("High band gain", "dB", -120, 0, 0);
+    p.params[LlXoverHz] = lg("Crossover", "Hz", 20, 120, 99.5);
+    p.params[LlLowCutHz] = lg("Low cut", "Hz", 20, 120, 20);
+    p.params[LlDiffCoef] = lin("Diffuser coefficient", "", -0.99, 0.99, 0);
+    p.legacyModelParam = LlModel;
     p.editorWidth = 760;
-    p.presets = {{"Lift", {}}, {"Sub harmonics", {{LlHarmonics, 0.7f}, {LlLowGain, 2.f}}}, {"Tight", {{LlLowCut, 45.f}, {LlLowGain, 1.f}}}};
+    p.presets = {{"Lift", {{LlMultiband, 0.f}}},
+                 {"Sub harmonics", {{LlSlopeDb, -3.f}, {LlPreDb, 14.f}, {LlXoverHz, 80.f}, {LlMultiband, 1.f}}},
+                 {"Tight", {{LlLowCutHz, 40.f}, {LlSlopeDb, -18.f}, {LlPreDb, 12.f}, {LlMultiband, 0.f}}},
+                 {"Wide lows", {{LlDiffuse, 0.5f}, {LlDiffCoef, 0.5f}, {LlMultiband, 1.f}, {LlXoverHz, 70.f}}}};
     v.push_back(p);
   }
   {

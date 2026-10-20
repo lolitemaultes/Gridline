@@ -227,11 +227,15 @@ inline constexpr int EqHistRange = EqMonitor + 1;                 // histogram f
 inline constexpr int EqPivot = EqHistRange + 1;                   // histogram tilt: 0 / 1.5 / 3 / 4.5 / 6 dB/oct
 inline constexpr int EqSmoothing = EqPivot + 1;                   // histogram time smoothing: fastest .. slowest
 inline constexpr int EqHeatmap = EqSmoothing + 1;                 // heat map: off / top / bottom / full
-inline constexpr int EqModel = EqHeatmap + 1;                     // 0 legacy (pre-κ1), 1 reference model
+inline constexpr int EqModel = EqHeatmap + 1;                     // 0 legacy (pre-κ1), 1 reference model, 2 classic (J-26)
 inline constexpr int EqLinear = EqModel + 1;                      // linear phase: off / lowest .. highest (FIR 512 .. 16384 taps)
 inline constexpr int EqPhaseView = EqLinear + 1;                  // graph: draw the phase response ("phase rotation")
 inline constexpr int EqHistAvg = EqPhaseView + 1;                 // histogram: long-term average mode
-inline constexpr int EqCount = EqHistAvg + 1;
+// J-26: classic band model (EqModel = 2, the original v1 EQ): per band EqFreq (Hz), EqGain (dB),
+// eqFl(b, EqWidth) = width knob (Q / slope law per type), RBJ designs at the host rate; output gain
+// is linear (EqMainLin, 0 = silence) instead of EqMain.
+inline constexpr int EqMainLin = EqHistAvg + 1;
+inline constexpr int EqCount = EqMainLin + 1;
 inline constexpr int eqLinearTaps(int choice) { return choice <= 0 ? 0 : 256 << choice; }
 // EqFlOrder choices, steepest first (the reference stores -3..3 = index - 3).
 enum EqFlOrderChoice { EqSteep8, EqSteep6, EqSteep4, EqOrd2, EqGentle4, EqGentle6, EqGentle8 };
@@ -245,6 +249,10 @@ enum EqOrderChoice { EqOrderGentle, EqOrderNormal, EqOrderSteep2, EqOrderSteep3,
 enum Filter {
   FltMode, FltCutoff, FltReso, FltMix,
   FltSlope, FltGain, FltBlend, FltLPLevel, FltBPLevel, FltHPLevel, FltDcBlock,  // 0.5
+  // J-26: classic multi-tap state-variable model (FltModel = 1, Fruity Filter reference): knob
+  // positions for cutoff / resonance, FltLP/BP/HPLevel = level knobs, FltSlope = second stage,
+  // FltDcBlock = DC remover (engine/FlFilterRef.h).
+  FltModel, FltCutK, FltResK,
   FltCount
 };
 // FltMode choices: 0 LP, 1 BP, 2 HP, 3 notch, then (0.5) 4 low shelf, 5 peak, 6 high shelf.
@@ -288,6 +296,10 @@ enum Delay {
   // feedback filter mode + cutoff, rate reduction. The input runs through the
   // feedback chain (filter, crush, distortion, diffusion) like the echoes.
   DlyModel, DlyType3, DlyTicks, DlyTimeR, DlySpread3, DlyModRate3, DlyFilter3, DlyCutoff3, DlyRate3,
+  // J-26: classic tempo delay (DlyModel = 2, engine/ClassicDelay.h): DlyTicks = time; own tempo
+  // (0 = host), whole-sixteenth rounding, feedback filter coefficient (× 44.1 kHz / sr when scaled),
+  // linear feedback, output mode, input-side offset (ms, < 0 = left later), input gain + fold pan, dry.
+  DlyClsStepRound, DlyClsBpm, DlyClsCoef, DlyClsScaleSr, DlyClsFb, DlyClsMode, DlyClsOffset, DlyClsIn, DlyClsPan, DlyClsDry,
   DlyCount
 };
 // DlyMode choices: normal, ping-pong, invert, then (0.5) mono, off.
@@ -315,12 +327,21 @@ enum Chorus {
 enum Flanger {
   FlgDelay, FlgDepth, FlgRate, FlgFeedback, FlgMix,
   FlgPhase, FlgDamp, FlgShape, FlgInvertWet, FlgCross,  // 0.5
+  // J-26 reference engine (FlgModel = 1; pre-model states keep the legacy engine): knob positions
+  // (delay / depth / rate curves in engine/ClassicModFx.h), damp coefficient, feedback amount and
+  // sign, separate dry / wet / cross gains (invert wet flips wet and cross). FlgPhase (degrees) and
+  // FlgShape are shared.
+  FlgModel, FlgDelayN, FlgDepthN, FlgRateN, FlgDampN, FlgFeedN, FlgInvFb, FlgDryN, FlgWetN, FlgCrossN,
   FlgCount
 };
 // "gl.phaser"
 enum Phaser {
   PhsStages, PhsRate, PhsDepth, PhsCenter, PhsFeedback, PhsMix,
   PhsRangeMode, PhsMinFreq, PhsMaxFreq, PhsStereo, PhsOutGain, PhsShape, PhsManual,  // 0.5
+  // J-26 reference engine (PhsModel = 1; pre-model states keep the legacy engine): knob positions
+  // for sweep rate (+ small / large range), all-pass depths (coefficients), stereo, feedback,
+  // dry fraction, output gain (2 n · √(1 − fb²)); stage count 3..23.
+  PhsModel, PhsSweepN, PhsRangeLarge, PhsDepthMin, PhsDepthMax, PhsStereoN, PhsStagesN, PhsFeedbackN, PhsDryN, PhsGainN,
   PhsCount
 };
 // "gl.dist"
@@ -456,6 +477,11 @@ enum FreqShift {
 enum LowLift {
   LlCrossover, LlLowGain, LlHarmonics, LlHighGain, LlLowCut, LlMix,
   LlDrive, LlSlope, LlInvertHarm, LlDiffuse, LlDiffuseAmt, LlLowOn, LlHighOn, LlMultiband, LlBoost, LlBoostFreq,  // 0.5
+  // J-26 reference engine (LlModel = 1; pre-model states keep the legacy engine, engine/LowLifterRef.h):
+  // enable, look-ahead, FL-unit gains (low / high ≤ -120 dB = off), harmonic slope, pre boost,
+  // crossover / low cut (20..120 Hz), diffuser coefficient (±0.99). Shared: LlMix, LlDiffuse (mix),
+  // LlInvertHarm, LlMultiband, LlHighOn, LlLowOn.
+  LlModel, LlOn, LlLookahead, LlLowDb, LlSlopeDb, LlPreDb, LlHighDb, LlXoverHz, LlLowCutHz, LlDiffCoef,
   LlCount
 };
 // "gl.tuner" (pass-through, pitch display)

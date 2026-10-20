@@ -2,6 +2,7 @@
 // (gl.enhance) and Loudness (gl.emphasis) runtimes.
 #include <cstring>
 #include "dyn_dsp.h"
+#include "emphasizer_ref.h"
 
 namespace gl::packs::dynamics {
 
@@ -464,6 +465,17 @@ class EnhanceFx final : public DynFx {
  public:
   EnhanceFx() : DynFx("gl.enhance") {}
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (pi(s, EnCustom) == 2) {  // J-26 peak emphasis
+      emref::Settings es;
+      es.inDb = p(s, EnPeakIn), es.emphasis = clampd(p(s, EnPeakEmph), 0, 1), es.outGain = clampd(p(s, EnPeakOut), 0, 1);
+      es.soft = pb(s, EnPeakSoft), es.match = pb(s, EnPeakMatch), es.bypass = pb(s, EnPeakBypass);
+      double pk = 0;
+      for (int i = 0; i < n; ++i) pk = std::max(pk, static_cast<double>(std::max(std::fabs(L[i]), std::fabs(R[i]))));
+      peak_.process(es, ctx.sampleRate, L, R, n);
+      input_ = static_cast<float>(linToDb(pk));
+      meter_ = static_cast<float>(peak_.gainReductionDb());
+      return;
+    }
     const double amount = clampd(p(s, EnAmount), 0, 1);
     const int mode = pi(s, EnMode);
     MasterSet S;
@@ -532,8 +544,12 @@ class EnhanceFx final : public DynFx {
     for (int b = 0; b < k; ++b) out[b] = eng_.gr(b);
     return k;
   }
-  void reset() override { eng_.reset(); }
+  void reset() override {
+    eng_.reset();
+    peak_.reset();
+  }
   int latencyFor(const PluginState& s, double sr) const override {
+    if (pi(s, EnCustom) == 2) return emref::Limiter::latency(sr);
     MasterSet S;
     if (pi(s, EnCustom) == 1)
       readMasterSet(S, [&](int k) { return p(s, EnProg0 + k); });
@@ -543,6 +559,7 @@ class EnhanceFx final : public DynFx {
   }
 
  private:
+  emref::Limiter peak_;
   // Look-ahead and oversampling shared by the built-in voicings.
   static void voicingTiming(MasterSet& S) {
     S.lookaheadMs = 1.5;

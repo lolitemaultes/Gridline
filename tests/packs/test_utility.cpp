@@ -164,7 +164,7 @@ void testPassThrough() {
 // --------------------------------------------------------------- free filter
 void testFreeFilter() {
   auto ff = [](int type, float hz, float q, float g) {
-    return st("gl.freefilter", {{FfType, static_cast<float>(type)}, {FfFreq, hz}, {FfQ, q}, {FfGain, g}, {FfDc, 0.f}});
+    return st("gl.freefilter", {{FfModel, 0.f}, {FfType, static_cast<float>(type)}, {FfFreq, hz}, {FfQ, q}, {FfGain, g}, {FfDc, 0.f}});  // legacy engine
   };
   PluginState lp = ff(FtLowPass, 1000, 0.707f, 0);
   expect(near(gainDb(lp, 100), 0, 0.2), "free filter LP passes 100 Hz");
@@ -206,14 +206,14 @@ void testQuickLpBassBoost() {
     run(*fx, s, L, R, 256);
     expect(L == L0 && R == R0, "quick lowpass fully open is transparent");
   }
-  PluginState lp = st("gl.fastlp", {{QlCutoff, 1000.f}, {QlReso, 0.f}});
+  PluginState lp = st("gl.fastlp", {{QlModel, 0.f}, {QlCutoff, 1000.f}, {QlReso, 0.f}});  // legacy engine
   expect(near(gainDb(lp, 100), 0, 0.3) && gainDb(lp, 10000) < -30, "quick lowpass 12 dB/oct response");
-  PluginState res = st("gl.fastlp", {{QlCutoff, 1000.f}, {QlReso, 0.9f}});
+  PluginState res = st("gl.fastlp", {{QlModel, 0.f}, {QlCutoff, 1000.f}, {QlReso, 0.9f}});
   double peak = gainDb(res, 1000);
   report("quick lowpass resonant peak dB", peak);
   expect(peak > 10, "quick lowpass resonance peaks at the cutoff");
 
-  PluginState bb = st("gl.bassboost", {{BbFreq, 80.f}, {BbAmount, 0.5f}});
+  PluginState bb = st("gl.bassboost", {{BbModel, 0.f}, {BbFreq, 80.f}, {BbAmount, 0.5f}});  // legacy engine
   double lo = gainDb(bb, 25), hi = gainDb(bb, 5000);
   report("bass boost 25 Hz dB", lo);
   expect(near(lo, bassBoostDb(0.5), 1.0), "bass boost lifts lows by the amount");
@@ -224,7 +224,7 @@ void testQuickLpBassBoost() {
   expect(worstDip > -1.0, "bass boost has no cancellation dip above the corner");
   double drawn = 20 * std::log10(bassBoostCoefs(48000, 80, 0.5).magnitude(60, 48000));
   expect(near(gainDb(bb, 60), drawn, 0.2), "bass boost drawn curve matches measurement");
-  PluginState none = st("gl.bassboost", {{BbAmount, 0.f}});
+  PluginState none = st("gl.bassboost", {{BbModel, 0.f}, {BbAmount, 0.f}});
   expect(near(gainDb(none, 60), 0, 0.05), "bass boost at zero amount is flat");
 }
 

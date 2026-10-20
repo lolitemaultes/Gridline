@@ -3,6 +3,8 @@
 // width by skin::Form) with the reference palette roles, drawn with the
 // PluginSkin kit.
 #include <map>
+#include "../engine/ClassicModFx.h"
+#include "../engine/FlFilterRef.h"
 #include "../engine/FreqShiftRef.h"
 #include "../engine/Dsp.h"
 #include "../engine/Program.h"
@@ -50,28 +52,31 @@ void lfoPreview(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const skin::Skin& k, doubl
 void editorFlangerFl(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
   const skin::Skin& K = flangerSkin();
-  constexpr float kW = 500, kH = 205;
+  constexpr float kW = 500, kH = 228;
   skin::Form F = skin::Form::fit(width, kW);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::panel(dl, F.o, F.p(kW, kH), K, 4);
   skin::Scope scope(K);
+  const bool ref = ival(st, FlgModel) == 1;  // J-26 reference engine: knob positions
   const float c0 = 5, c1 = 170, c2 = 335, bw = 160, bh = 45;
-  skin::paramBox(a, t, FlgDelay, F, c0, 5, bw, bh, K, "DELAY");
-  skin::paramBox(a, t, FlgDepth, F, c1, 5, bw, bh, K, "DEPTH");
-  skin::paramBox(a, t, FlgRate, F, c2, 5, bw, bh, K, "RATE");
+  skin::paramBox(a, t, ref ? FlgDelayN : FlgDelay, F, c0, 5, bw, bh, K, "DELAY");
+  skin::paramBox(a, t, ref ? FlgDepthN : FlgDepth, F, c1, 5, bw, bh, K, "DEPTH");
+  skin::paramBox(a, t, ref ? FlgRateN : FlgRate, F, c2, 5, bw, bh, K, "RATE");
   skin::paramBox(a, t, FlgPhase, F, c0, 55, bw, bh, K, "PHASE");
-  skin::paramBox(a, t, FlgDamp, F, c1, 55, bw, bh, K, "DAMP");
+  skin::paramBox(a, t, ref ? FlgDampN : FlgDamp, F, c1, 55, bw, bh, K, "DAMP");
   skin::paramBox(a, t, FlgShape, F, c2, 55, bw, bh, K, "SHAPE");
-  skin::paramBox(a, t, FlgFeedback, F, c0, 105, bw, bh, K, "FEED");
+  skin::paramBox(a, t, ref ? FlgFeedN : FlgFeedback, F, c0, 105, bw, bh, K, "FEED");
   // Feedback polarity: the reference's separate invert-feedback module flips
   // the sign of the (bipolar) feedback here.
   {
     skin::well(dl, F.p(c1, 105), F.p(c1 + bw, 105 + bh), K, 4 * F.s);
     skin::pill(dl, F.p(c1 + 54, 105), F.p(c1 + bw, 121), K, "INV FEEDBACK", F.font(7.5f));
-    const double fb = val(st, FlgFeedback, 0.5f);
+    const double fb = ref ? (bval(st, FlgInvFb) ? -1.0 : 1.0) : val(st, FlgFeedback, 0.5f);
     ImGui::PushID("invfb");
-    if (skin::button("##invfb", F.p(c1 + 6, 110), F.sz(40, 34), K, fb < 0 ? "-" : "+", fb < 0, F.font(12)))
-      pui::setParamValue(a, t, FlgFeedback, -fb);
+    if (skin::button("##invfb", F.p(c1 + 6, 110), F.sz(40, 34), K, fb < 0 ? "-" : "+", fb < 0, F.font(12))) {
+      if (ref) pui::setParamValue(a, t, FlgInvFb, fb < 0 ? 0 : 1);
+      else pui::setParamValue(a, t, FlgFeedback, -fb);
+    }
     if (ImGui::IsItemHovered()) a.setHint("Invert the feedback polarity (flips the sign of FEED)");
     ImGui::PopID();
     skin::valueStrip(dl, F.p(c1 + 55, 131), F.p(c1 + bw - 3, 145), K, fb < 0 ? "inverted" : "normal", F.font(8));
@@ -82,14 +87,27 @@ void editorFlangerFl(App& a, const PluginTarget& t, float width) {
     skin::toggle(a, t, FlgInvertWet, F.p(c2 + 6, 110), F.sz(40, 34), K, "INV", F.font(9));
     skin::valueStrip(dl, F.p(c2 + 55, 131), F.p(c2 + bw - 3, 145), K, bval(st, FlgInvertWet) ? "inverted" : "normal", F.font(8));
   }
-  // Bottom row: LFO preview (where the reference has its dry module), wet/dry mix, cross.
-  {
+  // Bottom row: dry (reference) or the LFO preview, wet, cross.
+  if (ref) {
+    skin::paramBox(a, t, FlgDryN, F, c0, 155, bw, bh, K, "DRY");
+  } else {
     skin::well(dl, F.p(c0, 155), F.p(c0 + bw, 155 + bh), K, 4 * F.s);
     lfoPreview(dl, F.p(c0 + 4, 159), F.p(c0 + bw - 4, 155 + bh - 4), K, val(st, FlgRate, 0.2f), val(st, FlgDepth, 0.6f), val(st, FlgShape),
                val(st, FlgPhase, 90) / 360.0);
   }
-  skin::paramBox(a, t, FlgMix, F, c1, 155, bw, bh, K, "WET");
-  skin::paramBox(a, t, FlgCross, F, c2, 155, bw, bh, K, "CROSS");
+  skin::paramBox(a, t, ref ? FlgWetN : FlgMix, F, c1, 155, bw, bh, K, "WET");
+  skin::paramBox(a, t, ref ? FlgCrossN : FlgCross, F, c2, 155, bw, bh, K, "CROSS");
+  {
+    static const char* eng[2] = {"LEGACY", "REFERENCE"};
+    skin::text(dl, F.p(c0 + 4, 209), K.textDim, "ENGINE", F.font(8));
+    skin::switchSel(a, t, FlgModel, F.p(c0 + 52, 205), F.sz(150, 18), K, eng, 2, true);
+    if (ref) {
+      char b[96];
+      std::snprintf(b, sizeof b, "%.2f ms + %.2f ms · %.3f Hz", classic::flangerMs(val(st, FlgDelayN)), classic::flangerMs(val(st, FlgDepthN, 0.4f)),
+                    classic::flangerRateHz(val(st, FlgRateN, 0.4f)));
+      skin::text(dl, F.p(c1 + 50, 209), K.textDim, b, F.font(8));
+    }
+  }
   F.end(kW, kH);
 }
 
@@ -200,31 +218,40 @@ const skin::Skin& phaserSkin() {
 void editorPhaserFl(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
   const skin::Skin& K = phaserSkin();
-  constexpr float kW = 500, kH = 205;
+  constexpr float kW = 500, kH = 228;
   Frame fr(width, kW, kH, 1.6f, K);
   const skin::Form& F = fr.F;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::Scope scope(K);
   const float c0 = 5, c1 = 170, c2 = 335, bw = 160, bh = 45;
+  const bool ref = ival(st, PhsModel) == 1;  // J-26 reference engine
   const bool mm = ival(st, PhsRangeMode) == 1;
-  skin::paramBox(a, t, PhsRate, F, c0, 5, bw, bh, K, "SWEEP FREQ");
-  skin::paramBox(a, t, mm ? PhsMinFreq : PhsCenter, F, c1, 5, bw, bh, K, mm ? "MIN FREQ" : "CENTRE");
-  skin::paramBox(a, t, mm ? PhsMaxFreq : PhsDepth, F, c2, 5, bw, bh, K, mm ? "MAX FREQ" : "DEPTH");
-  const double lo = mm ? val(st, PhsMinFreq, 200) : val(st, PhsCenter, 800) * std::pow(2.0, -2.0 * val(st, PhsDepth, 0.7f));
-  const double hi = mm ? val(st, PhsMaxFreq, 3000) : val(st, PhsCenter, 800) * std::pow(2.0, 2.0 * val(st, PhsDepth, 0.7f));
+  const double sr = a.engine.sampleRate();
+  auto apHz = [sr](double d) { return sr / dsp::kPi * std::atan((1 - d) / (1 + d)); };  // all-pass corner of coefficient -d
+  skin::paramBox(a, t, ref ? PhsSweepN : PhsRate, F, c0, 5, bw, bh, K, "SWEEP FREQ");
+  skin::paramBox(a, t, ref ? PhsDepthMin : mm ? PhsMinFreq : PhsCenter, F, c1, 5, bw, bh, K, ref ? "MIN DEPTH" : mm ? "MIN FREQ" : "CENTRE");
+  skin::paramBox(a, t, ref ? PhsDepthMax : mm ? PhsMaxFreq : PhsDepth, F, c2, 5, bw, bh, K, ref ? "MAX DEPTH" : mm ? "MAX FREQ" : "DEPTH");
+  double lo = mm ? val(st, PhsMinFreq, 200) : val(st, PhsCenter, 800) * std::pow(2.0, -2.0 * val(st, PhsDepth, 0.7f));
+  double hi = mm ? val(st, PhsMaxFreq, 3000) : val(st, PhsCenter, 800) * std::pow(2.0, 2.0 * val(st, PhsDepth, 0.7f));
+  if (ref) {
+    lo = apHz(val(st, PhsDepthMin, 0.1f)), hi = apHz(val(st, PhsDepthMax, 0.8f));
+    if (lo > hi) std::swap(lo, hi);
+  }
   {  // Frequency range module: the range mode switch in place of the wheel.
     skin::well(dl, F.p(c0, 55), F.p(c0 + bw, 55 + bh), K, 4 * F.s);
     static const char* rm[2] = {"C+D", "MIN/MAX"};
-    skin::switchSel(a, t, PhsRangeMode, F.p(c0 + 3, 58), F.sz(48, 39), K, rm, 2);
+    static const char* rl[2] = {"SMALL", "LARGE"};
+    skin::switchSel(a, t, ref ? PhsRangeLarge : PhsRangeMode, F.p(c0 + 3, 58), F.sz(48, 39), K, ref ? rl : rm, 2);
     skin::pill(dl, F.p(c0 + 54, 55), F.p(c0 + bw, 71), K, "FREQ RANGE", F.font(8.5f));
-    std::string r = fmtHz(lo) + " - " + fmtHz(hi) + " Hz";
+    std::string r = ref ? (fmtHz(classic::phaserRateHz(val(st, PhsSweepN, 0.5f), ival(st, PhsRangeLarge) == 1) * 1000) + " mHz")
+                        : fmtHz(lo) + " - " + fmtHz(hi) + " Hz";
     skin::valueStrip(dl, F.p(c0 + 55, 81), F.p(c0 + bw - 3, 95), K, r.c_str(), F.font(8.5f));
   }
-  skin::paramBox(a, t, PhsStereo, F, c1, 55, bw, bh, K, "STEREO");
-  skin::paramBox(a, t, PhsStages, F, c2, 55, bw, bh, K, "NR. STAGES");
-  skin::paramBox(a, t, PhsFeedback, F, c0, 105, bw, bh, K, "FEEDBACK");
-  skin::paramBox(a, t, PhsMix, F, c1, 105, bw, bh, K, "DRY-WET");
-  skin::paramBox(a, t, PhsOutGain, F, c2, 105, bw, bh, K, "OUT GAIN");
+  skin::paramBox(a, t, ref ? PhsStereoN : PhsStereo, F, c1, 55, bw, bh, K, "STEREO");
+  skin::paramBox(a, t, ref ? PhsStagesN : PhsStages, F, c2, 55, bw, bh, K, "NR. STAGES");
+  skin::paramBox(a, t, ref ? PhsFeedbackN : PhsFeedback, F, c0, 105, bw, bh, K, "FEEDBACK");
+  skin::paramBox(a, t, ref ? PhsDryN : PhsMix, F, c1, 105, bw, bh, K, ref ? "DRY" : "DRY-WET");
+  skin::paramBox(a, t, ref ? PhsGainN : PhsOutGain, F, c2, 105, bw, bh, K, "OUT GAIN");
   {  // Sweep display: the band the notches travel over, and the sweep position.
     ImVec2 p0 = F.p(c0, 155), p1 = F.p(c1 + bw, 200);
     skin::graphWell(dl, p0, p1, K);
@@ -241,8 +268,15 @@ void editorPhaserFl(App& a, const PluginTarget& t, float width) {
     skin::well(dl, F.p(c2, 155), F.p(c2 + bw, 200), K, 4 * F.s);
     skin::pill(dl, F.p(c2 + 4, 155), F.p(c2 + bw, 171), K, "LFO", F.font(8.5f));
     static const char* shp[2] = {"SINE", "TRI"};
+    if (ref) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.45f);
     skin::switchSel(a, t, PhsShape, F.p(c2 + 4, 174), F.sz(78, 22), K, shp, 2, true);
     skin::toggle(a, t, PhsManual, F.p(c2 + 86, 174), F.sz(70, 22), K, "MANUAL", F.font(8));
+    if (ref) ImGui::PopStyleVar();
+  }
+  {
+    static const char* eng[2] = {"LEGACY", "REFERENCE"};
+    skin::text(dl, F.p(c0 + 4, 209), K.textDim, "ENGINE", F.font(8));
+    skin::switchSel(a, t, PhsModel, F.p(c0 + 52, 205), F.sz(150, 18), K, eng, 2, true);
   }
   fr.end();
 }
@@ -272,8 +306,10 @@ void filterGraph(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p,
   dl->PushClipRect(p, ImVec2(p.x + sz.x, p.y + sz.y), true);
   pui::drawFreqGrid(dl, p, ImVec2(p.x + sz.x, p.y + sz.y), 24);
   const int mode = ival(st, FltMode);
-  const double fc = val(st, FltCutoff, 20000), reso = val(st, FltReso), mix = val(st, FltMix, 1), gain = val(st, FltGain);
-  const bool steep = ival(st, FltSlope) == 1, blend = bval(st, FltBlend);
+  const bool classic = ival(st, FltModel) == 1;  // J-26 classic model: approximate view at the host rate
+  const double fc = classic ? flref::filterCutHz(val(st, FltCutK, 1), sr) : val(st, FltCutoff, 20000);
+  const double reso = classic ? val(st, FltResK, 0.2f) * 0.8 : val(st, FltReso), mix = classic ? 1.0 : val(st, FltMix, 1), gain = val(st, FltGain);
+  const bool steep = ival(st, FltSlope) == 1, blend = classic || bval(st, FltBlend);
   std::vector<ImVec2> pts;
   for (int x = 0; x < static_cast<int>(sz.x); x += 2) {
     double hz = pui::xToFreq(p.x + x, p.x, sz.x), db;
@@ -285,7 +321,10 @@ void filterGraph(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p,
     } else if (blend) {
       double lo = dsp::dbToGain(svfResponseDb(0, fc, reso, hz, sr)), bp = dsp::dbToGain(svfResponseDb(1, fc, reso, hz, sr)),
              hp = dsp::dbToGain(svfResponseDb(2, fc, reso, hz, sr));
-      db = dsp::gainToDb(std::fabs(val(st, FltLPLevel, 1) * lo + val(st, FltBPLevel) * bp + val(st, FltHPLevel) * hp));
+      double gl = val(st, FltLPLevel, 1), gb = val(st, FltBPLevel), gh = val(st, FltHPLevel);
+      if (classic) gl = flref::filterLevel(gl), gb = flref::filterLevel(gb), gh = flref::filterLevel(gh);
+      db = dsp::gainToDb(std::fabs(gl * lo + gb * bp + gh * hp));
+      if (classic && steep) db *= 2;
     } else {
       db = svfResponseDb(mode, fc, steep ? reso * 0.75 : reso, hz, sr);
       if (steep) db += svfResponseDb(mode, fc, 0.0, hz, sr);
@@ -305,8 +344,14 @@ void filterGraph(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p,
   if (act && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1)) {
     ImGuiIO& io = ImGui::GetIO();
     PluginState ns = st;
-    ns.params[FltCutoff] = static_cast<float>(pui::xToFreq(io.MousePos.x, p.x, sz.x));
-    ns.params[FltReso] = std::clamp((0.85f - (io.MousePos.y - p.y) / sz.y) / 0.7f, 0.0f, 1.0f);
+    const float ry = std::clamp((0.85f - (io.MousePos.y - p.y) / sz.y) / 0.7f, 0.0f, 1.0f);
+    if (classic) {
+      ns.params[FltCutK] = std::clamp((io.MousePos.x - p.x) / sz.x, 0.0f, 1.0f);
+      ns.params[FltResK] = std::min(1.0f, ry / 0.8f);
+    } else {
+      ns.params[FltCutoff] = static_cast<float>(pui::xToFreq(io.MousePos.x, p.x, sz.x));
+      ns.params[FltReso] = ry;
+    }
     setPluginState(a, t, ns, "move filter", 0x464C540000000000ull ^ t.key());
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
@@ -321,9 +366,10 @@ void editorFilterFl(App& a, const PluginTarget& t, float width) {
   const skin::Form& F = fr.F;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::Scope scope(K);
-  const bool blend = bval(st, FltBlend);
-  sliderBox(a, t, FltCutoff, F, 5, 5, 160, 45, K, "CUTOFF");
-  sliderBox(a, t, FltReso, F, 170, 5, 160, 45, K, "RESO");
+  const bool classic = ival(st, FltModel) == 1;
+  const bool blend = classic || bval(st, FltBlend);
+  sliderBox(a, t, classic ? FltCutK : FltCutoff, F, 5, 5, 160, 45, K, "CUTOFF");
+  sliderBox(a, t, classic ? FltResK : FltReso, F, 170, 5, 160, 45, K, "RESO");
   if (!blend) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.45f);
   sliderBox(a, t, FltLPLevel, F, 335, 5, 160, 45, K, "LOW");
   sliderBox(a, t, FltBPLevel, F, 5, 55, 160, 45, K, "BAND");
@@ -340,8 +386,11 @@ void editorFilterFl(App& a, const PluginTarget& t, float width) {
     skin::well(dl, F.p(5, 105), F.p(330, 150), K, 4 * F.s);
     skin::pill(dl, F.p(5, 105), F.p(330, 121), K, "MODE", F.font(8.5f));
     static const char* modes[7] = {"LP", "BP", "HP", "NOTCH", "LO SH", "PEAK", "HI SH"};
-    skin::switchSel(a, t, FltMode, F.p(9, 124), F.sz(266, 23), K, modes, 7, true);
-    skin::toggle(a, t, FltBlend, F.p(279, 124), F.sz(47, 23), K, "BLEND", F.font(8));
+    if (classic) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.45f);
+    skin::switchSel(a, t, FltMode, F.p(9, 124), F.sz(214, 23), K, modes, 7, true);
+    skin::toggle(a, t, FltBlend, F.p(227, 124), F.sz(47, 23), K, "BLEND", F.font(8));
+    if (classic) ImGui::PopStyleVar();
+    skin::toggle(a, t, FltModel, F.p(278, 124), F.sz(49, 23), K, "CLASSIC", F.font(7.5f));
     miniWell(dl, F, 335, 105, 77, 45, K, "GAIN");
     skin::wheel(a, t, FltGain, F.p(338, 108), 40 * F.s, K, skin::WheelBigLine);
     auto dg = describeParam(a.doc.song(), t.pid(FltGain));
@@ -409,7 +458,7 @@ void editorFreqShiftFl(App& a, const PluginTarget& t, float width) {
     skin::pill(dl, F.p(272, 37), F.p(445, 65), K, buf, F.font(13));
     skin::text(dl, F.p(300, 12), K.textDim, "FREQ SHIFTER", F.font(9));
     static const char* md[2] = {"LEGACY", "REF"};
-    skin::switchSel(a, t, FsModel, F.p(380, 9), F.sz(66, 14), K, md, 2);
+    skin::switchSel(a, t, FsModel, F.p(372, 8), F.sz(76, 16), K, md, 2, true);
   }
   {
     static const char* rg[3] = {"FINE", "WIDE", "TEMPO"};
@@ -907,6 +956,8 @@ void editorLowLiftFl(App& a, const PluginTarget& t, float width) {
   const skin::Form& F = fr.F;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::Scope scope(K);
+  const bool ref = ival(st, LlModel) == 1;  // J-26 reference engine
+  const int pXo = ref ? LlXoverHz : LlCrossover, pLc = ref ? LlLowCutHz : LlLowCut;
   {  // Band visual: spectrum, low-cut shade, low band, draggable crossover.
     ImVec2 p = F.p(6, 6), q = F.p(560, 188);
     ImVec2 sz(q.x - p.x, q.y - p.y);
@@ -924,21 +975,28 @@ void editorLowLiftFl(App& a, const PluginTarget& t, float width) {
     dl->PushClipRect(p, q, true);
     pui::drawFreqGrid(dl, p, q, 24, true);
     dl->PopClipRect();
-    float xo = pui::freqToX(val(st, LlCrossover, 120), p.x, sz.x), xc = pui::freqToX(val(st, LlLowCut, 25), p.x, sz.x);
+    float xo = pui::freqToX(val(st, pXo, 120), p.x, sz.x), xc = pui::freqToX(val(st, pLc, 25), p.x, sz.x);
     dl->AddRectFilled(p, ImVec2(xc, q.y), theme::withAlpha(skin::hex(0x000000), 0.4f));
     if (bval(st, LlMultiband, true)) dl->AddRectFilled(ImVec2(xc, p.y), ImVec2(xo, q.y), theme::withAlpha(skin::hex(0x912C2E), 0.25f));
     dl->AddLine(ImVec2(xo, p.y), ImVec2(xo, q.y), K.text, 1.5f);
     skin::text(dl, ImVec2(xo + 5, p.y + 5), K.text, "CROSSOVER", F.font(7.5f));
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1))
-      a.doc.setParam(t.pid(LlCrossover), pui::xToFreq(ImGui::GetIO().MousePos.x, p.x, sz.x), true);
+      a.doc.setParam(t.pid(pXo), std::clamp(pui::xToFreq(ImGui::GetIO().MousePos.x, p.x, sz.x), ref ? 20.0 : 40.0, ref ? 120.0 : 400.0), true);
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     if (ImGui::IsItemHovered()) a.setHint("Drag to move the crossover");
   }
-  {  // Harmonics / bass boost column.
+  {  // Harmonics / bass boost column (reference engine: enable, look-ahead, engine switch).
     skin::well(dl, F.p(566, 6), F.p(674, 188), K, 4 * F.s);
-    skin::labeledWheel(a, t, LlHarmonics, F, 600, 12, 40, K, "HARMONICS");
-    skin::labeledWheel(a, t, LlBoost, F, 600, 72, 40, K, "BASS BOOST");
-    skin::labeledWheel(a, t, LlBoostFreq, F, 600, 132, 40, K, "BOOST FREQ");
+    if (ref) {
+      skin::check(a, t, LlOn, F.p(578, 16), F.sz(86, 16), K, "ENABLED", skin::hex(0x83EB43));
+      skin::check(a, t, LlLookahead, F.p(578, 40), F.sz(86, 16), K, "LOOKAHEAD", skin::hex(0x83EB43));
+    } else {
+      skin::labeledWheel(a, t, LlHarmonics, F, 600, 12, 40, K, "HARMONICS");
+      skin::labeledWheel(a, t, LlBoost, F, 600, 72, 40, K, "BASS BOOST");
+      skin::labeledWheel(a, t, LlBoostFreq, F, 600, 132, 40, K, "BOOST FREQ");
+    }
+    static const char* eng[2] = {"OLD", "REF"};
+    skin::switchSel(a, t, LlModel, F.p(574, ref ? 160 : 168), F.sz(92, 16), K, eng, 2, true);
   }
   const float y0 = 200;
   dl->AddRectFilled(F.p(0, y0), F.p(kW, kH), K.wellC());
@@ -946,18 +1004,18 @@ void editorLowLiftFl(App& a, const PluginTarget& t, float width) {
     skin::wheel(a, t, param, F.p(x, y0 + y), s * F.s, K, skin::WheelBigLine, fill);
     skin::label(dl, F.p(x + s * 0.5f, 0).x, F.p(0, y0 + y + s + 1).y, lbl, K.textDim, F.font(7.5f));
   };
-  w(LlDrive, 15, 22, 46, "PRE GAIN");
+  w(ref ? LlPreDb : LlDrive, 15, 22, 46, "PRE GAIN");
   skin::check(a, t, LlMultiband, F.p(70, y0 + 30), F.sz(64, 15), K, "MULTI");
-  w(LlSlope, 136, 22, 46, "SLOPE");
+  w(ref ? LlSlopeDb : LlSlope, 136, 22, 46, "SLOPE");
   skin::check(a, t, LlInvertHarm, F.p(186, y0 + 40), F.sz(60, 15), K, "INV");
-  w(LlDiffuseAmt, 253, 26, 40, "DIFF");
+  w(ref ? LlDiffCoef : LlDiffuseAmt, 253, 26, 40, "DIFF");
   w(LlDiffuse, 305, 26, 40, "DIFF MIX");
   skin::check(a, t, LlLowOn, F.p(352, y0 + 8), F.sz(28, 14), K, "", skin::hex(0xFF4E60));
-  w(LlLowGain, 382, 26, 40, "LOW", skin::hex(0xD23A48));
-  w(LlCrossover, 434, 26, 40, "XOVER");
-  w(LlHighGain, 487, 26, 40, "HIGH", skin::hex(0x83EB43));
+  w(ref ? LlLowDb : LlLowGain, 382, 26, 40, "LOW", skin::hex(0xD23A48));
+  w(pXo, 434, 26, 40, "XOVER");
+  w(ref ? LlHighDb : LlHighGain, 487, 26, 40, "HIGH", skin::hex(0x83EB43));
   skin::check(a, t, LlHighOn, F.p(529, y0 + 8), F.sz(28, 14), K, "", skin::hex(0x83EB43));
-  w(LlLowCut, 564, 26, 40, "LOW CUT");
+  w(pLc, 564, 26, 40, "LOW CUT");
   w(LlMix, 625, 26, 40, "MIX");
   skin::text(dl, F.p(348, y0 + 24), K.textDim, "ON", F.font(6.5f));
   skin::text(dl, F.p(530, y0 + 24), K.textDim, "ON", F.font(6.5f));

@@ -3,6 +3,7 @@
 #pragma once
 #include "sfx_common.h"
 #include "sfx_vintage.h"
+#include "hyperchorus_ref.h"
 
 namespace gl::packs::spacefx::detail {
 
@@ -21,12 +22,18 @@ inline void eqPowerMix(double mix, double& dry, double& wet) {
 constexpr int kEnsVoices = 8;
 class EnsembleFx final : public Effect {
  public:
-  EnsembleFx() {
+  EnsembleFx() : ref_(std::make_unique<hcref::Engine>()) {
     for (auto& v : voice_) v.line.init(static_cast<size_t>(0.075 * kMaxRate));
     reset();
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate;
+    if (pi(s, EnModel, 0) == 1) {  // J-26 reference engine
+      float k[11];
+      for (int i = 0; i < 11; ++i) k[i] = static_cast<float>(pv(s, EnK0 + i, 0.5));
+      ref_->process(k, sr, L, R, n);
+      return;
+    }
     const int nv = pi(s, EnLines, 0) == 1 ? 8 : 4;
     const double delay = pv(s, EnDelay, 14) * 0.001 * sr;
     const double fb = pv(s, EnFeedback, 0) * 0.8;
@@ -75,6 +82,7 @@ class EnsembleFx final : public Effect {
     }
   }
   void reset() override {
+    if (ref_) ref_->reset();
     dsp::Noise r;
     r.seed(0xC0FFEEu);
     for (int v = 0; v < kEnsVoices; ++v) {
@@ -94,6 +102,7 @@ class EnsembleFx final : public Effect {
     Wander move;
     double ph = 0, inc = 0, base = 0, pan = 0, phOff = 0, moveInc = 0, movePh = 0;
   };
+  std::unique_ptr<hcref::Engine> ref_;  // ≈ 0.5 MB of lines
   Voice voice_[kEnsVoices];
   dsp::Biquad hp_[2], lp_[2];
 };

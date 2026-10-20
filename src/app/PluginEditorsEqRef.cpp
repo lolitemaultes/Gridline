@@ -386,7 +386,8 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
     }
     dl->AddPolyline(pts.data(), W, skin::hex(kBandHex[listen - 1]), 0, 2.2f);
   } else {
-    double mainDb = val(st, EqMain);
+    const bool classicMain = val(st, EqModel, 1) >= 1.5f;  // J-26 classic model: linear output gain
+    double mainDb = classicMain ? dsp::gainToDb(std::max(1e-6, static_cast<double>(val(st, EqMainLin, 1)))) : val(st, EqMain);
     for (int i = 0; i < W; ++i) pts[static_cast<size_t>(i)] = ImVec2(g0.x + gw * i / (W - 1), dy(std::clamp(total[static_cast<size_t>(i)] + mainDb, -40.0, 40.0)));
     dl->AddPolyline(pts.data(), W, IM_COL32(236, 242, 246, 235), 0, 1.8f);
   }
@@ -476,8 +477,14 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
   }
   if (gAct && ui.drag == -2 && io.MouseDelta.y != 0) {
     PluginState ns = *t.state(a.doc.song());
-    float& g = ns.params[static_cast<size_t>(EqMain)];
-    g = std::clamp(g - io.MouseDelta.y * (io.KeyCtrl ? 0.2f : 1.0f) * 36.0f / gh, -18.0f, 18.0f);
+    const float dDb = -io.MouseDelta.y * (io.KeyCtrl ? 0.2f : 1.0f) * 36.0f / gh;
+    if (val(st, EqModel, 1) >= 1.5f) {
+      float& g = ns.params[static_cast<size_t>(EqMainLin)];
+      g = std::clamp(g * std::pow(10.0f, dDb / 20.0f), 0.0f, 12.0f);
+    } else {
+      float& g = ns.params[static_cast<size_t>(EqMain)];
+      g = std::clamp(g + dDb, -18.0f, 18.0f);
+    }
     setPluginState(a, t, ns, "EQ main level", ui.gesture);
   }
   if (ImGui::IsItemActivated() && ui.hover >= 0) {
@@ -542,7 +549,10 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
         a.doc.setParam(t.pid(eqFl(b, EqWidth)), std::clamp(val(st, eqFl(b, EqWidth)) + step / 54.6, 0.0, 1.0), true);
       }
     } else {
-      a.doc.setParam(t.pid(EqMain), std::clamp(val(st, EqMain) + step * 0.36, -18.0, 18.0), true);
+      if (val(st, EqModel, 1) >= 1.5f)
+        a.doc.setParam(t.pid(EqMainLin), std::clamp(val(st, EqMainLin, 1) * std::pow(10.0, step * 0.018), 0.0, 12.0), true);
+      else
+        a.doc.setParam(t.pid(EqMain), std::clamp(val(st, EqMain) + step * 0.36, -18.0, 18.0), true);
     }
   }
   if (gHov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !io.KeyAlt) {
@@ -588,7 +598,7 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
   // Main level.
   {
     ImVec2 p = F.p(425, 28);
-    skin::vslider(a, t, EqMain, p, ImVec2(15 * s, 191 * s), K, skin::hex(0xB8C2C9));
+    skin::vslider(a, t, val(st, EqModel, 1) >= 1.5f ? EqMainLin : EqMain, p, ImVec2(15 * s, 191 * s), K, skin::hex(0xB8C2C9));
     // Band solo on Shift toggle (right-click: mode menu).
     ImVec2 bp = F.p(425, 224);
     bool on = soloMode > 0;

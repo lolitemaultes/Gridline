@@ -31,9 +31,12 @@
 //                           high band, low band.
 //   Distructor, Hardcore    module racks (not decoded: default Amp Rack).
 #include "../../packs/dynamics/dynamics.h"
+#include "../../packs/dynamics/emphasizer_ref.h"
 #include "../../packs/spectral/spectral.h"
 #include "../../packs/utility/utility.h"
 #include "../PluginParams.h"
+#include "../../engine/FlFilterRef.h"
+#include "../../engine/LowLifterRef.h"
 #include "FlpFx2.h"
 
 namespace gl::flp::fx2 {
@@ -55,26 +58,25 @@ bool decodeBloodOverdrive(Context&, const std::vector<Event>& evs, PluginMapping
   std::vector<double> t = ints(r, 6);
   if (t.size() < 6) return false;
   fx::begin(m, "gl.overdrive");
+  fx::set(m, dy::OdModel, 1);  // J-26 reference engine (spec j26_bloodoverdrive.md)
   auto lvl = [](double v) { return clampd(v / 10000.0, 0, 1); };
   KnobTable tab = {{0, 0, 10000, dy::OdPreBand, lvl},    {1, 0, 10000, dy::OdColor, lvl},
-                   {2, 0, 10000, dy::OdPreAmp, lvl},     {3, 0, 1, dy::OdBoost, nullptr},
-                   {4, 0, 10000, dy::OdPostFilter, lvl}, {5, 0, 10000, dy::OdPostGain, odPostDb}};
+                   {2, 0, 10000, dy::OdPreAmp, lvl},     {3, 0, 1, dy::OdBoost, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
+                   {4, 0, 10000, dy::OdPostFilter, lvl}, {5, 0, 10000, dy::OdPostGainK, lvl}};
   fx::applyTable(m, tab, t);
-  m.exact = false;  // knob curves follow the control ranges; the transfer curve is Gridline's
+  fx::set(m, dy::OdPostGain, odPostDb(t[5] * t[5] / 10000.0));  // legacy view: (n²) in dB
+  m.exact = true;
   bindKnobs(m, tab);
   return true;
 }
 
 // ------------------------------------------------------------------ Fast LP → Quick Lowpass
-// The plugin turns the cutoff knob c (0..1) into a one-pole style coefficient
-// a = (601^x - 1) / 600 with x = (c + 1/63) · 63/64 (bypassed at the top);
-// Hz here assumes a = 1 - e^(-2π f / 44100).
+// J-26: reference model (QlModel = 1, spec j26_fastlp.md): knob positions.
+// QlCutoff keeps the 44.1 kHz one-pole equivalent for the legacy view.
 double fastLpHz(double v) {
-  double c = clampd(v / 1024.0, 0, 1);
-  if (c >= 1.0) return 20000.0;
-  double x = (c + 1.0 / 63.0) * 0.984375;
-  double a = clampd((std::pow(601.0, x) - 1.0) / 600.0, 1e-6, 0.999);
-  return clampd(-44100.0 * std::log(1.0 - a) / (2.0 * 3.14159265358979323846), 20.0, 20000.0);
+  double a = flref::quickLpCoef(clampd(v / 1024.0, 0, 1));
+  if (a >= 1.0) return 20000.0;
+  return clampd(-44100.0 * std::log(1.0 - std::min(0.999, std::max(1e-6, a))) / (2.0 * 3.14159265358979323846), 20.0, 20000.0);
 }
 
 bool decodeFastLp(Context&, const std::vector<Event>& evs, PluginMapping& m) {
@@ -84,14 +86,19 @@ bool decodeFastLp(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<double> t = ints(r, 2);
   if (t.size() < 2) return false;
   fx::begin(m, "gl.fastlp");
-  KnobTable tab = {{0, 0, 1024, ut::QlCutoff, fastLpHz}, {1, 0, 1024, ut::QlReso, [](double v) { return clampd(v / 1024.0, 0, 1); }}};
+  fx::set(m, ut::QlModel, 1);
+  auto n = [](double v) { return clampd(v / 1024.0, 0, 1); };
+  KnobTable tab = {{0, 0, 1024, ut::QlCutK, n}, {1, 0, 1024, ut::QlResK, n}};
   fx::applyTable(m, tab, t);
-  m.exact = t[0] >= 1024 && t[1] == 0;  // fully open = transparent in both
+  fx::set(m, ut::QlCutoff, fastLpHz(t[0]));
+  fx::set(m, ut::QlReso, n(t[1]));
+  m.exact = true;
   bindKnobs(m, tab);
   return true;
 }
 
 // ------------------------------------------------------------------ Bass Boost → Bass Boost
+// J-26: reference model (BbModel = 1, spec j26_bassboost.md): integer Hz 20..100.
 bool decodeBassBoost(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
   if (r.n < 12) return false;
@@ -99,10 +106,11 @@ bool decodeBassBoost(Context&, const std::vector<Event>& evs, PluginMapping& m) 
   std::vector<double> t = ints(r, 2);
   if (t.size() < 2) return false;
   fx::begin(m, "gl.bassboost");
-  KnobTable tab = {{0, 0, 1024, ut::BbFreq, [](double v) { return expMap(v / 1024.0, 20, 500); }},
+  fx::set(m, ut::BbModel, 1);
+  KnobTable tab = {{0, 0, 1024, ut::BbFreq, [](double v) { return static_cast<double>(flref::bassBoostHz(v / 1024.0)); }},
                    {1, 0, 1024, ut::BbAmount, [](double v) { return clampd(v / 1024.0, 0, 1); }}};
   fx::applyTable(m, tab, t);
-  m.exact = false;
+  m.exact = true;
   bindKnobs(m, tab);
   return true;
 }
@@ -140,26 +148,39 @@ bool decodeSqueeze(Context&, const std::vector<Event>& evs, PluginMapping& m) {
 }
 
 // ------------------------------------------------------------------ Parametric EQ (v1) → Parametric EQ
+// J-26: classic band model (EqModel = 2, spec j26_peq1.md). State: 29 ints, no
+// version (a short state keeps the main level at 128 = unity).
 int eqType(int fl) {
   static const int map[8] = {pp::EqOff, pp::EqHighCut, pp::EqBandPass, pp::EqLowCut, pp::EqNotch, pp::EqLowShelf, pp::EqPeak, pp::EqHighShelf};
   return map[std::clamp(fl, 0, 7)];
 }
+double peq1Hz(double v) { return flref::freeFilterHz(clampd(static_cast<float>(v / 65536.0), 0, 1)); }
+double peq1Main(double v) { return (std::pow(11.0, clampd(v, 0, 256) / 128.0) - 1) / 10.0; }
 
 bool decodeParamEq1(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
-  std::vector<double> t = ints(r, 29);
-  if (t.size() < 29) return false;
+  if (r.n < 4) return false;
+  static const int defFreq[7] = {5777, 13024, 19904, 33145, 42327, 49307, 55825};
+  static const int defType[7] = {5, 6, 6, 6, 6, 6, 7};
+  std::vector<double> t(29, 0.0);
+  for (int b = 0; b < 7; ++b) t[7 + b] = defFreq[b], t[14 + b] = 17500, t[21 + b] = defType[b];
+  t[28] = 128;
+  for (int k = 0; k < 29 && r.left() >= 4; ++k) t[static_cast<size_t>(k)] = r.i32();
   fx::begin(m, "gl.eq");
+  fx::set(m, pp::EqModel, 2);
+  fx::set(m, pp::EqHQ, 0);
+  fx::set(m, pp::EqLinear, 0);
   KnobTable tab;
   for (int b = 0; b < 7; ++b) {
     tab.push_back({b, -1800, 1800, pp::eqParam(b, pp::EqGain), [](double v) { return clampd(v / 100.0, -18, 18); }});
-    tab.push_back({7 + b, 0, 65536, pp::eqParam(b, pp::EqFreq), [](double v) { return clampd(fx::flEqFreqHz(v), 20, 20000); }});
-    tab.push_back({14 + b, 0, 65536, pp::eqParam(b, pp::EqQ), [](double v) { return clampd(fx::flInsertEqQ(v), 0.1, 18); }});
+    tab.push_back({7 + b, 0, 65536, pp::eqParam(b, pp::EqFreq), peq1Hz});
+    tab.push_back({14 + b, 0, 65536, pp::eqFl(b, pp::EqWidth), [](double v) { return clampd(v / 65536.0, 0, 1); }});
     tab.push_back({21 + b, 0, 7, pp::eqParam(b, pp::EqType), [](double v) { return eqType(static_cast<int>(std::lround(v))); }});
   }
-  tab.push_back({28, 0, 256, pp::EqMain, [](double v) { return clampd(dbOf(v / 128.0, -18), -18, 18); }});
+  tab.push_back({28, 0, 256, pp::EqMainLin, peq1Main});
   fx::applyTable(m, tab, t);
-  m.exact = false;  // band width → Q curve approximate (levels, types, frequencies follow FL's tables)
+  fx::set(m, pp::EqMain, clampd(dbOf(peq1Main(t[28]), -18), -18, 18));  // the dB view
+  m.exact = true;
   bindKnobs(m, tab);
   return true;
 }
@@ -294,71 +315,103 @@ bool decodeFreqSplitter(Context& c, const std::vector<Event>& evs, PluginMapping
 }
 
 // ------------------------------------------------------------------ Emphasis → Loudness
+// J-26: tags read at their real positions (spec j26_emphasis.md): 0 bypass,
+// 1 delta, 2 envelope order, 3 true peak, 4 M/S, 5 mode, 6 input (24 n dB),
+// 7 link, 8 amount, 9 ceiling ((11^n - 1)/10), 10 level match, 11 oversampling
+// (off / 2x .. 16x), 12 hardness; bytes after two editor ints: low latency,
+// instant recovery, DC block (version >= 9 / 10). The limiter itself is
+// Gridline's (its detector internals are not yet studied), so imports stay
+// approximate.
 bool decodeEmphasis(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
   if (r.n < 4 + 13 * 4) return false;
-  r.i32();
+  const int version = r.i32();
   std::vector<double> t = ints(r, 13);
   if (t.size() < 13) return false;
+  r.i32();
+  if (version >= 7) r.i32();
+  int dcBlock = 1;
+  if (version >= 9 && r.left() >= 1) r.u8();
+  if (version >= 10 && r.left() >= 2) r.u8(), dcBlock = r.u8();
   fx::begin(m, "gl.emphasis");
+  auto n = [](double v) { return clampd(v / 10000.0, 0, 1); };
   KnobTable tab = {
-      {1, 0, 1, dy::EmDelta, nullptr},
-      {3, 0, 1, dy::EmStereoMode, nullptr},
-      {5, 0, 10000, dy::EmInput, [](double v) { return clampd(v / 10000.0 * 24.0, 0, 24); }},
-      {6, 0, 10000, dy::EmLink, [](double v) { return clampd(v / 10000.0, 0, 1); }},
-      {8, 0, 10000, dy::EmCeiling, [](double v) { return clampd(-(1.0 - v / 10000.0) * 12.0, -12, 0); }},
-      {9, 0, 1, dy::EmLevelMatch, nullptr},
-      {10, 0, 4, dy::EmOversample, [](double v) { return clampd(v, 0, 2); }},
+      {1, 0, 1, dy::EmDelta, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
+      {4, 0, 1, dy::EmStereoMode, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
+      {5, 0, 3, dy::EmCharacter, [](double v) { return clampd(std::round(v), 0, 3); }},
+      {6, 0, 10000, dy::EmInput, [n](double v) { return 24.0 * n(v); }},
+      {7, 0, 10000, dy::EmLink, n},
+      {9, 0, 10000, dy::EmCeiling, [n](double v) { return clampd(dbOf((std::pow(11.0, n(v)) - 1) / 10.0, -12), -12, 0); }},
+      {10, 0, 1, dy::EmLevelMatch, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
+      {11, 0, 4, dy::EmOversample, [](double v) { return clampd(std::round(v), 0, 2); }},
   };
   fx::applyTable(m, tab, t);
-  fx::set(m, dy::EmCharacter, clampd(t[4], 0, 3));
-  fx::set(m, dy::EmClipHard, t[2] != 0 ? 1 : 0);
-  m.exact = false;
+  fx::set(m, dy::EmClipHard, t[12] >= 9 ? 1 : 0);  // the hardest setting clips
+  fx::set(m, dy::EmDcBlock, dcBlock ? 1 : 0);
+  m.exact = false;  // limiter internals (detector, amount / hardness behaviour) not yet the reference
   bindKnobs(m, tab);
   return true;
 }
 
 // ------------------------------------------------------------------ Emphasizer → Enhance
-bool decodeEmphasizer(Context&, const std::vector<Event>& evs, PluginMapping& m) {
+// J-26: peak emphasis (gl.enhance EnCustom = 2, spec j26_emphasizer.md). State:
+// version, then params 0..4 (version 1) or 0..5 (version 2), 1 trailing byte.
+bool decodeEmphasizer(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
   if (r.n < 4 + 5 * 4) return false;
-  r.i32();
-  std::vector<double> t = ints(r, 5);
+  const int version = r.i32();
+  std::vector<double> t = ints(r, version >= 2 ? 6 : 5);
   if (t.size() < 5) return false;
+  if (t.size() < 6) t.push_back(10000);  // version 1: output at its 0 dB default (unverified)
   fx::begin(m, "gl.enhance");
-  KnobTable tab = {{1, 0, 10000, dy::EnAmount, [](double v) { return clampd(v / 10000.0, 0, 1); }}};
+  fx::set(m, dy::EnCustom, 2);
+  auto n = [](double v) { return clampd(v / 10000.0, 0, 1); };
+  auto sw = [](double v) { return v >= 0.5 ? 1.0 : 0.0; };
+  KnobTable tab = {{0, 0, 10000, dy::EnPeakIn, [n](double v) { return 24.0 * n(v); }},
+                   {1, 0, 10000, dy::EnPeakEmph, n},
+                   {2, 0, 1, dy::EnPeakSoft, sw},
+                   {3, 0, 1, dy::EnPeakMatch, sw},
+                   {4, 0, 1, dy::EnPeakBypass, sw},
+                   {5, 0, 10000, dy::EnPeakOut, [n](double v) { return dy::emref::outLin(n(v)); }}};
   fx::applyTable(m, tab, t);
-  m.exact = false;
+  m.exact = version >= 2;
+  if (version < 2) c.report.warn("Emphasizer: version 1 state, output gain taken as 0 dB");
   bindKnobs(m, tab);
   return true;
 }
 
 // ------------------------------------------------------------------ Low Lifter → Low Lifter
+// J-26: reference engine (LlModel = 1, spec j26_lowlifter.md). State: version 6,
+// then 15 ints indexed by automation tag; knob law lo + (hi - lo)·n^(1/c).
 bool decodeLowLifter(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
   if (r.n < 4 + 15 * 4) return false;
-  r.i32();
+  if (r.i32() != 6) return false;
   std::vector<double> t = ints(r, 15);
   if (t.size() < 15) return false;
   fx::begin(m, "gl.lowlift");
-  auto lvl = [](double v) { return clampd(v / 10000.0, 0, 1); };
+  fx::set(m, pp::LlModel, 1);
+  auto n = [](double v) { return clampd(v / 10000.0, 0, 1); };
+  auto sw = [](double v) { return v >= 0.5 ? 1.0 : 0.0; };
   KnobTable tab = {
-      {1, 0, 10000, pp::LlMix, lvl},
-      {2, 0, 10000, pp::LlLowGain, [](double v) { return clampd((v - 5000.0) / 5000.0 * 12.0, -12, 12); }},
-      {3, 0, 10000, pp::LlSlope, lvl},
-      {5, 0, 1, pp::LlInvertHarm, nullptr},
-      {6, 0, 10000, pp::LlDrive, [](double v) { return clampd(v / 10000.0 * 24.0, 0, 24); }},
-      {7, 0, 10000, pp::LlDiffuse, lvl},
-      {8, 0, 10000, pp::LlDiffuseAmt, lvl},
-      {9, 0, 10000, pp::LlHighGain, [](double v) { return clampd(dbOf(v / 10000.0, -12), -12, 12); }},
-      {10, 0, 10000, pp::LlCrossover, [](double v) { return expMap(v / 10000.0, 40, 400); }},
-      {11, 0, 10000, pp::LlLowCut, [](double v) { return expMap(v / 10000.0, 10, 80); }},
-      {12, 0, 1, pp::LlMultiband, nullptr},
-      {13, 0, 1, pp::LlHighOn, nullptr},
-      {14, 0, 1, pp::LlLowOn, nullptr},
+      {0, 0, 1, pp::LlOn, sw},
+      {1, 0, 10000, pp::LlMix, n},
+      {2, 0, 10000, pp::LlLowDb, [n](double v) { return std::max(-120.0, llref::lowDb(n(v))); }},
+      {3, 0, 10000, pp::LlSlopeDb, [n](double v) { return llref::slopeDb(n(v)); }},
+      {4, 0, 1, pp::LlLookahead, sw},
+      {5, 0, 1, pp::LlInvertHarm, sw},
+      {6, 0, 10000, pp::LlPreDb, [n](double v) { return 18.0 * n(v); }},
+      {7, 0, 10000, pp::LlDiffuse, n},
+      {8, 0, 10000, pp::LlDiffCoef, [n](double v) { return -0.99 + 1.98 * n(v); }},
+      {9, 0, 10000, pp::LlHighDb, [n](double v) { return std::max(-120.0, llref::highDb(n(v))); }},
+      {10, 0, 10000, pp::LlXoverHz, [n](double v) { return llref::cutHz(n(v)); }},
+      {11, 0, 10000, pp::LlLowCutHz, [n](double v) { return llref::cutHz(n(v)); }},
+      {12, 0, 1, pp::LlMultiband, sw},
+      {13, 0, 1, pp::LlHighOn, sw},
+      {14, 0, 1, pp::LlLowOn, sw},
   };
   fx::applyTable(m, tab, t);
-  m.exact = false;
+  m.exact = true;
   bindKnobs(m, tab);
   return true;
 }
@@ -371,7 +424,73 @@ bool decodeRack(Context& c, const std::vector<Event>& evs, PluginMapping& m, con
   c.report.warn(std::string(what) + ": module rack settings not decoded; default Amp Rack used");
   return true;
 }
-bool decodeDistructor(Context& c, const std::vector<Event>& evs, PluginMapping& m) { return decodeRack(c, evs, m, "Distructor"); }
+
+// J-26: Distructor's module rack (spec j26_distructor.md) mapped module by
+// module onto Amp Rack slots: host u32 version, u32 N, N module states (u32
+// version, kind 0 distortion / 1 filter / 2 chorus / 3 speaker, algorithm,
+// oversampling, u8 remove DC, u8 disabled, filter type, u8 filter option,
+// impulse, 49 raw params, v >= 2 spare int, v >= 4 chorus mode), u8 soft clip.
+// The module algorithms are only partly studied, so imports are approximate.
+bool decodeDistructor(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+  std::vector<uint8_t> bytes = stateBytes(evs);
+  if (bytes.size() < 8) return decodeRack(c, evs, m, "Distructor");
+  Reader r(bytes.data(), bytes.size());
+  r.u32();
+  const uint32_t count = r.u32();
+  if (count > 8) return decodeRack(c, evs, m, "Distructor");
+  fx::begin(m, "gl.amprack");
+  int slot = 0;
+  for (uint32_t k = 0; k < count; ++k) {
+    const uint32_t ver = r.u32();
+    const int kind = static_cast<int>(r.i32()), algo = static_cast<int>(r.i32());
+    r.i32();  // oversampling
+    r.u8();   // remove DC
+    const bool disabled = r.u8() != 0;
+    r.i32(), r.u8(), r.i32();  // filter type, filter option, impulse
+    double p[49];
+    for (double& v : p) v = r.i32();
+    if (ver >= 2) r.i32();
+    if (ver >= 4) r.i32();
+    if (r.left() == 0 && k + 1 < count) break;
+    if (slot >= dy::kRackSlots) continue;
+    auto n = [](double v, double hi) { return clampd(v / hi, 0, 1); };
+    int type = dy::RmEmpty;
+    double kn[dy::kRackKnobs] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.7};
+    switch (kind) {
+      case 0:
+        if (algo == 0) {  // overdrive: pre amp, colour, post gain
+          type = dy::RmOverdrive;
+          kn[0] = clampd(n(p[2], 10000) + (p[5] != 0 ? 0.35 : 0), 0, 1), kn[1] = n(p[1], 10000), kn[5] = n(p[3], 10000) * 0.85;
+        } else if (algo <= 2) {  // clip / soft clip
+          type = dy::RmOverdrive;
+          kn[0] = algo == 1 ? clampd((p[16] - 64) / 128.0, 0, 1) : 0.3;
+        } else {  // shapers, folders, crushers
+          type = dy::RmFuzz;
+          kn[0] = algo <= 13 ? n(p[23], 1000) : algo <= 15 ? n(p[6], 10000) : 0.6;
+        }
+        break;
+      case 1:  // static filter → wah pedal at the cutoff
+        type = dy::RmWah;
+        kn[0] = n(p[39], 10000), kn[1] = 0, kn[2] = 0, kn[3] = n(p[40], 10000);
+        break;
+      case 2: type = dy::RmChorus; break;
+      default:  // speaker: cabinet emulation
+        type = dy::RmAmp;
+        kn[0] = 0.2, kn[4] = 0.5;
+        break;
+    }
+    fx::set(m, dy::rkParam(slot, dy::RsType), type);
+    fx::set(m, dy::rkParam(slot, dy::RsOn), disabled ? 0 : 1);
+    for (int q = 0; q < dy::kRackKnobs; ++q) fx::set(m, dy::rkParam(slot, dy::RsK0 + q), kn[q]);
+    fx::set(m, dy::rkParam(slot, dy::RsMix), n(p[37], 10000));
+    ++slot;
+  }
+  for (int q = slot; q < dy::kRackSlots; ++q) fx::set(m, dy::rkParam(q, dy::RsType), dy::RmEmpty);
+  if (r.left() >= 1) fx::set(m, dy::RkSoftClip, r.u8() ? 1 : 0);
+  m.exact = false;
+  c.report.warn("Distructor: modules mapped onto Amp Rack slots (approximate sound)");
+  return true;
+}
 bool decodeHardcore(Context& c, const std::vector<Event>& evs, PluginMapping& m) { return decodeRack(c, evs, m, "Hardcore"); }
 
 }  // namespace

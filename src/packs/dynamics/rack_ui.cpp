@@ -6,6 +6,7 @@
 // a pedal board in the reference family's style (dark panel, amber values).
 #include "../flc_kit.h"
 #include "dyn_widgets.h"
+#include "effector_ref.h"
 
 namespace gl::packs::dynamics {
 
@@ -178,8 +179,121 @@ void shapeIcon(ImDrawList* dl, int i, ImVec2 c, float w, float h, ImU32 col) {
 }  // namespace
 
 // ===================================================================== gl.effector
+namespace {
+// J-26 reference engine: the same panel driven by the twelve stored 0..1 values.
+const char* kEfRefNames[12] = {"Distort", "Crusher", "Flanger", "Phaser", "Filter", "Echo",
+                               "Reverb",  "Panner",  "Trance", "Stutter", "Vowel",  "Ring"};
+const char* kEfRefAxes[12][2] = {{"Drive", "Band"},  {"Hold", "Bits"},  {"Depth", "Feedback"}, {"Frequency", "Feedback"},
+                                 {"Cutoff", "Resonance"}, {"Feedback", "Tone"}, {"Size", "Damping"}, {"Pan", "Width"},
+                                 {"Curve", "Floor"},  {"-", "-"},       {"Vowel", "Formant"},  {"Frequency", "-"}};
+void editorEffectorRef(App& a, const PluginTarget& t, float width, const skin::Skin& K) {
+  const PluginState st = *t.state(a.doc.song());
+  constexpr float kW = 430, kH = 418;
+  skin::Form F = skin::Form::fit(width, kW);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::panel(dl, F.o, F.p(kW, kH), K, 4);
+  skin::Scope scope(K);
+  flk::Ctx c{a, t, F, K, dl};
+  auto rt = runtime(a, t);
+  float in = rt ? rt->input.load() : -120.f;
+  float outPk = tapPeak(t.tap(a), 800);
+  float liveX = val(st, EfRawX), liveY = val(st, EfRawY);
+  if (rt) {
+    liveX = rt->bands[0].load();
+    liveY = rt->bands[1].load();
+  }
+  const int kind = efref::kindOf(val(st, EfRawKind));
+  skin::Skin io = K;
+  io.rail = skin::hex(0xC0C1C2);
+  io.fill = skin::hex(0x929598);
+  io.cap = skin::hex(0x414146);
+  skin::wheel(a, t, EfRawIn, F.p(19, 9), 34 * F.s, io, skin::WheelBigLine);
+  skin::wheel(a, t, EfRawOut, F.p(378, 9), 34 * F.s, io, skin::WheelBigLine | skin::WheelCentered);
+  flk::textC(c, 36, 45, "IN");
+  flk::textC(c, 395, 45, "OUT");
+  levelBar(dl, F.p(65, 20), F.p(162, 38), in, -48, true);
+  levelBar(dl, F.p(270, 20), F.p(367, 38), toDb(outPk), -48, true);
+  {
+    std::string nm = flk::upper(kEfRefNames[kind]);
+    skin::label(dl, F.p(216, 0).x, F.p(0, 12).y, nm.c_str(), K.lcdText, F.font(10));
+    static const char* eng[2] = {"LEGACY", "REF"};
+    flk::sw(c, EfModel, 184, 32, 64, 14, eng, 2, true);
+  }
+  flk::wheel(c, EfRawX, 16, 68, 40, kEfRefAxes[kind][0]);
+  flk::wheel(c, EfRawY, 16, 136, 40, kEfRefAxes[kind][1]);
+  {
+    bool by = val(st, EfRawBypass) != 0;
+    ImGui::PushID("bypass");
+    if (skin::button("##by", F.p(24, 204), F.sz(24, 24), K, "", by)) setParam(a, t, EfRawBypass, by ? 0 : 1);
+    if (ImGui::IsItemHovered()) a.setHint("Bypass the effect");
+    ImGui::PopID();
+    skin::ledDot(dl, F.p(36, 216), 5 * F.s, by, K, skin::hex(0xFF6C00));
+    flk::textC(c, 36, 231, "BYPASS");
+  }
+  flk::wheel(c, EfRawMix, 16, 266, 40, "Wet");
+  {
+    ImVec2 p0 = F.p(76, 65), p1 = F.p(322, 311);
+    const float pad = p1.x - p0.x;
+    skin::xyPad(a, t, EfRawX, EfRawY, p0, ImVec2(pad, p1.y - p0.y), K);
+    if (ImGui::IsItemHovered()) a.setHint("X / Y: drag to set both parameters; the modulation path is drawn around the point");
+    auto at = [&](double x, double y) { return ImVec2(p0.x + static_cast<float>(x) * pad, p1.y - static_cast<float>(y) * pad); };
+    double X = val(st, EfRawX), Y = val(st, EfRawY), ax = efref::modAmount(val(st, EfRawModX)), ay = efref::modAmount(val(st, EfRawModY));
+    int shape = efref::shapeOf(val(st, EfRawShape));
+    if (ax != 0 || ay != 0) {  // one LFO drives both axes: the path is a line segment
+      ImVec2 path[97];
+      for (int i = 0; i <= 96; ++i) {
+        double ph = i / 96.0;
+        double m = shape == 0 ? std::sin(2 * 3.14159265358979 * ph) : shape == 1 ? 1 - 2 * ph : (ph <= 0.5 ? 1.0 : -1.0);
+        path[i] = at(std::clamp(X + m * ax, 0.0, 1.0), std::clamp(Y + m * ay, 0.0, 1.0));
+      }
+      dl->AddPolyline(path, 97, theme::withAlpha(K.graphCurve, 0.7f), 0, 1.5f);
+    }
+    dl->AddCircleFilled(at(liveX, liveY), 4 * F.s, K.text);
+    skin::text(dl, ImVec2(p0.x + 6, p1.y - F.font(8) - 5), K.graphText, kEfRefAxes[kind][0], F.font(8));
+    skin::text(dl, ImVec2(p0.x + 6, p0.y + 5), K.graphText, kEfRefAxes[kind][1], F.font(8));
+  }
+  {  // rate column: 9 lengths in beats, longest at the top
+    static const char* rates[9] = {"8", "4", "2", "1", "3/4", "1/2", "3/8", "1/4", "1/8"};
+    const int cur = efref::rateOf(val(st, EfRawRate));
+    for (int k = 0; k < 9; ++k) {
+      int choice = 8 - k;
+      ImGui::PushID(600 + k);
+      if (skin::button("##rate", F.p(335, 65 + k * 27.3f), F.sz(24, 26), K, rates[k], cur == choice, F.font(7)))
+        setParam(a, t, EfRawRate, choice / 8.0);
+      if (ImGui::IsItemHovered()) a.setHint(std::string("Modulation cycle: ") + rates[k] + " beat(s)");
+      ImGui::PopID();
+    }
+  }
+  flk::wheel(c, EfRawModX, 375, 64, 36, "Mod X", skin::WheelBigLine | skin::WheelCentered);
+  flk::wheel(c, EfRawModY, 375, 122, 36, "Mod Y", skin::WheelBigLine | skin::WheelCentered);
+  {
+    static const char* shp[3] = {"SIN", "SAW", "SQR"};
+    const int cur = efref::shapeOf(val(st, EfRawShape));
+    for (int k = 0; k < 3; ++k) {
+      ImGui::PushID(650 + k);
+      if (skin::button("##shape", F.p(375, 180 + k * 22.0f), F.sz(40, 20), K, shp[k], cur == k, F.font(7))) setParam(a, t, EfRawShape, k / 2.0);
+      ImGui::PopID();
+    }
+  }
+  flk::wheel(c, EfRawTempoRed, 375, 252, 36, "Reduce");
+  skin::well(dl, F.p(10, 328), F.p(420, 408), K, 4 * F.s);
+  for (int k = 0; k < 12; ++k) {
+    float bx = 14 + (k % 6) * 67.3f, by = 332 + (k / 6) * 37.5f;
+    ImGui::PushID(700 + k);
+    std::string nm = flk::upper(kEfRefNames[k]);
+    if (skin::button("##kind", F.p(bx, by), F.sz(64, 34), K, nm.c_str(), kind == k, F.font(7.5f))) setParam(a, t, EfRawKind, k / 11.0);
+    ImGui::PopID();
+  }
+  F.end(kW, kH);
+}
+}  // namespace
+
 void editorEffector(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
+  if (val(st, EfModel) >= 0.5f) {
+    editorEffectorRef(a, t, width, effectorSkin());
+    return;
+  }
   const skin::Skin& K = effectorSkin();
   constexpr float kW = 430, kH = 418;
   skin::Form F = skin::Form::fit(width, kW);
@@ -209,7 +323,9 @@ void editorEffector(App& a, const PluginTarget& t, float width) {
   levelBar(dl, F.p(270, 20), F.p(367, 38), toDb(outPk), -48, true);
   {
     std::string nm = flk::upper(effectorKindName(kind));
-    skin::label(dl, F.p(216, 0).x, F.p(0, 21).y, nm.c_str(), K.lcdText, F.font(10));
+    skin::label(dl, F.p(216, 0).x, F.p(0, 12).y, nm.c_str(), K.lcdText, F.font(10));
+    static const char* eng[2] = {"LEGACY", "REF"};
+    flk::sw(c, EfModel, 184, 32, 64, 14, eng, 2, true);
   }
   // ---- left: X / Y / bypass / wet
   flk::wheel(c, EfX, 16, 68, 40, effectorAxisLabel(kind, 0));

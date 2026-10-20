@@ -86,10 +86,55 @@ void distortionVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const PluginState& s
 
 }  // namespace
 
+// J-26: the classic tempo delay (DlyModel = 2) on a compact three-row panel.
+void editorDelayClassic(App& a, const PluginTarget& t, float width, const PluginState& st) {
+  const skin::Skin& K = delaySkin();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  constexpr float kW = 500, kH = 182;
+  skin::Form F = skin::Form::fit(width, kW);
+  skin::panel(dl, F.o, F.p(kW, kH), K, 4);
+  skin::Scope scope(K);
+  const float c0 = 5, c1 = 170, c2 = 335, bw = 160, bh = 45;
+  skin::paramBox(a, t, DlyClsIn, F, c0, 5, bw, bh, K, "INPUT");
+  skin::paramBox(a, t, DlyClsPan, F, c1, 5, bw, bh, K, "INPUT PAN", nullptr, skin::WheelBigLine | skin::WheelCentered);
+  skin::paramBox(a, t, DlyClsDry, F, c2, 5, bw, bh, K, "DRY");
+  skin::paramBox(a, t, DlyClsFb, F, c0, 55, bw, bh, K, "FEEDBACK");
+  skin::paramBox(a, t, DlyClsCoef, F, c1, 55, bw, bh, K, "CUTOFF");
+  {
+    char b[24];
+    int ticks = static_cast<int>(std::lround(val(st, DlyTicks, 144)));
+    std::snprintf(b, sizeof b, "%d:%02d", ticks / 48, ticks % 48);
+    skin::paramBox(a, t, DlyTicks, F, c2, 55, bw, bh, K, "TIME", b);
+  }
+  skin::paramBox(a, t, DlyClsOffset, F, c0, 105, bw, bh, K, "STEREO OFFSET", nullptr, skin::WheelBigLine | skin::WheelCentered);
+  {
+    skin::well(dl, F.p(c1, 105), F.p(c1 + bw, 105 + bh), K, 4 * F.s);
+    static const char* md[3] = {"NORMAL", "SWAP", "P.PONG"};
+    skin::switchSel(a, t, DlyClsMode, F.p(c1 + 4, 112), F.sz(bw - 8, 30), K, md, 3, true);
+  }
+  {
+    char b[24];
+    double bpm = val(st, DlyClsBpm);
+    if (bpm <= 0) std::snprintf(b, sizeof b, "host");
+    else std::snprintf(b, sizeof b, "%.0f BPM", bpm);
+    skin::paramBox(a, t, DlyClsBpm, F, c2, 105, bw, bh, K, "TEMPO", b);
+  }
+  static const char* models[3] = {"LEGACY", "REFERENCE", "CLASSIC"};
+  skin::text(dl, F.p(c0 + 4, 162), K.textDim, "MODEL", F.font(8));
+  skin::switchSel(a, t, DlyModel, F.p(c0 + 46, 157), F.sz(220, 20), K, models, 3, true);
+  skin::toggle(a, t, DlyClsStepRound, F.p(c1 + 110, 157), F.sz(70, 20), K, "1/16 GRID", F.font(7.5f));
+  skin::toggle(a, t, DlyClsScaleSr, F.p(c2 + 85, 157), F.sz(75, 20), K, "RATE COMP", F.font(7.5f));
+  F.end(kW, kH);
+}
+
 void editorDelayRef(App& a, const PluginTarget& t, float width) {
   const PluginState* sp = t.state(a.doc.song());
   if (!sp) return;
   const PluginState st = *sp;
+  if (ival(st, DlyModel) == 2) {
+    editorDelayClassic(a, t, width, st);
+    return;
+  }
   const skin::Skin& K = delaySkin();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   constexpr float kW = 747, kH = 217;

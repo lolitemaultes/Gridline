@@ -147,7 +147,11 @@ inline constexpr double kSyncBeats[] = {0.125, 0.25, 0.375, 0.5, 0.75, 1, 1.5, 2
 double hallRt60(const PluginState& s, double hz);
 
 // ---------------------------------------------------------------- Ensemble
-enum EnsParam { EnDelay, EnFeedback, EnModAmount, EnModRate, EnMoveAmount, EnMoveRate, EnLines, EnHighPass, EnLowPass, EnPhase, EnSpread, EnMix, EnCount };
+// J-26: EnModel = 1 runs the reference engine (hyperchorus_ref.h) from the eleven knob
+// positions EnK0..EnK10 (tag order: delay, feedback, mod rate, mod amount, movement amount,
+// movement rate, 8 lines, low pass, high pass, mix, LFO phase difference).
+enum EnsParam { EnDelay, EnFeedback, EnModAmount, EnModRate, EnMoveAmount, EnMoveRate, EnLines, EnHighPass, EnLowPass, EnPhase, EnSpread, EnMix,
+                EnModel, EnK0, EnK1, EnK2, EnK3, EnK4, EnK5, EnK6, EnK7, EnK8, EnK9, EnK10, EnCount };
 
 // ----------------------------------------------------------- Bucket Chorus
 enum BbdParam { BcMode, BcTime1, BcTime2, BcRate, BcSync, BcSyncRate, BcWave, BcPhaseLR, BcStartPhase, BcFeedback, BcHighPass,

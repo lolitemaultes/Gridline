@@ -280,8 +280,8 @@ int main() {
     vals.i32(-9).i32(-507).u8(0xFF).i32(0).i32(0).i32(0).i32(2).f32(1.0f).f32(0.5f);
     w.i32(8).chunk(54, lp).chunk(53, vals.b);
     flp::PluginMapping m2;
-    expect(decode(e, "Fruity Wrapper", w.b, m2) && m2.glType == "gl.fastlp" && near(P(m2, ut::QlCutoff), 20000, 1e-3) &&
-               near(P(m2, ut::QlReso), 0.5, 1e-6),
+    expect(decode(e, "Fruity Wrapper", w.b, m2) && m2.glType == "gl.fastlp" && near(P(m2, ut::QlCutK), 1.0, 1e-6) &&
+               near(P(m2, ut::QlResK), 0.5, 1e-6),
            "wrapped FL plugin mapped from its parameter values");
   }
   {  // Frequency Splitter: crossover curve and main-output levels

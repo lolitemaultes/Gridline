@@ -2,6 +2,7 @@
 // (gl.effector) runtimes.
 #include <cstdio>
 #include "dyn_dsp.h"
+#include "effector_ref.h"
 
 namespace gl::packs::dynamics {
 
@@ -602,6 +603,16 @@ class EffectorFx final : public DynFx {
         rev_(16384) {}
 
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (pb(s, EfModel)) {
+      float v[12];
+      for (int k = 0; k < 12; ++k) v[k] = static_cast<float>(p(s, EfRawKind + k));
+      double peak = 0;
+      for (int i = 0; i < n; ++i) peak = std::max(peak, static_cast<double>(std::max(std::fabs(L[i]), std::fabs(R[i]))));
+      ref_.process(v, ctx.sampleRate, ctx.tempo, ctx.tick / std::max(1, ctx.ppq), L, R, n);
+      curX_ = ref_.curX(), curY_ = ref_.curY();
+      input_ = static_cast<float>(linToDb(peak));
+      return;
+    }
     const double sr = ctx.sampleRate;
     const int kind = std::clamp(pi(s, EfKind), 0, kEfKinds - 1);
     if (kind != kind_) {
@@ -651,6 +662,7 @@ class EffectorFx final : public DynFx {
   // The distortion kind runs its shaper at 2x (wet delayed, dry mixed back
   // undelayed): latent while it dominates the mix.
   int latencyFor(const PluginState& s, double) const override {
+    if (pb(s, EfModel)) return 0;
     const int kind = std::clamp(pi(s, EfKind), 0, kEfKinds - 1);
     return kind == 0 && !pb(s, EfBypass) && clampd(p(s, EfMix), 0, 1) >= 0.5 ? osLatency(2) : 0;
   }
@@ -664,6 +676,7 @@ class EffectorFx final : public DynFx {
   void reset() override {
     resetState();
     phase_ = 0;
+    ref_.reset();
   }
 
  private:
@@ -836,6 +849,7 @@ class EffectorFx final : public DynFx {
     }
   }
 
+  efref::Effector ref_;
   DelayLine delay_[2], mod_[2], grain_[2];
   FdnReverb rev_;
   SvfTpt f_[2], f2_[2];

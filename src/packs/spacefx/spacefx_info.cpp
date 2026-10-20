@@ -248,10 +248,19 @@ PluginInfo ensemble() {
   p.params[EnPhase] = lin("LFO phase spread", "%", 0, 1, 0.5);
   p.params[EnSpread] = lin("Stereo spread", "%", 0, 1, 1);
   p.params[EnMix] = lin("Mix", "%", 0, 1, 0.5);
+  p.params[EnModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+  {
+    static const char* names[11] = {"Delay", "Feedback", "Mod rate", "Mod amount", "Movement", "Movement rate", "8 lines", "Low pass", "High pass",
+                                    "Mix", "LFO phase difference"};
+    static const float defs[11] = {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0, 1, 0, 0.5f, 0.5f};
+    for (int k = 0; k < 11; ++k) p.params[EnK0 + k] = k == 6 ? ch(names[k], {"4", "8"}, 0) : lin(names[k], "%", 0, 1, defs[k]);
+  }
+  p.legacyModelParam = EnModel;
   p.presets = {{"Lush", {}},
-               {"Wide doubler", {{EnDelay, 22.f}, {EnModAmount, 0.15f}, {EnMoveAmount, 0.5f}}},
-               {"Deep ensemble", {{EnLines, 1.f}, {EnModAmount, 0.7f}, {EnModRate, 0.35f}, {EnMix, 0.6f}}},
-               {"Metal swirl", {{EnDelay, 3.f}, {EnFeedback, 0.7f}, {EnModAmount, 0.5f}, {EnModRate, 0.15f}}}};
+               {"Wide doubler", {{EnK0, 0.2f}, {EnK1, 0.f}, {EnK3, 0.3f}, {EnK4, 0.8f}, {EnK9, 0.8f}, {EnK10, 0.8f}}},
+               {"Deep ensemble", {{EnK6, 1.f}, {EnK0, 0.9f}, {EnK3, 0.4f}, {EnK2, 0.2f}, {EnK9, 0.4f}, {EnK10, 0.75f}}},
+               {"Bright shimmer", {{EnK8, 0.55f}, {EnK1, 0.7f}, {EnK2, 0.3f}, {EnK9, 0.5f}}},
+               {"Legacy metal swirl", {{EnModel, 0.f}, {EnDelay, 3.f}, {EnFeedback, 0.7f}, {EnModAmount, 0.5f}, {EnModRate, 0.15f}}}};
   p.editorWidth = 760;
   return p;
 }

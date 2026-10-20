@@ -28,6 +28,7 @@
 #include "../PluginParams.h"
 #include "../../packs/dynamics/dynamics.h"
 #include "../../packs/utility/utility.h"
+#include "../../engine/FlFilterRef.h"
 #include "FlpFx.h"
 
 namespace gl::flp::fx {
@@ -216,40 +217,59 @@ std::shared_ptr<const SimplePlugin> stereoEnhancer() {
 }
 
 // --- Free Filter → Free Filter
-double freeFilterHz(double v) { return 20.0 * std::pow(1000.0, std::clamp(v / 1024.0, 0.0, 1.0)); }  // provisional
-std::shared_ptr<const SimplePlugin> freeFilter() {
+// J-26: reference model (FfModel = 1, spec j26_freefilter.md). State: version,
+// type 100..700 (older states store a smaller type code), frequency, Q, gain
+// (0..1024), then (version 2) 1 byte: DC remover.
+bool decodeFreeFilter(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   namespace ut = gl::packs::utility;
-  auto sp = std::make_shared<SimplePlugin>();
-  sp->glType = "gl.freefilter";
-  sp->versioned = true;
-  sp->knobs = 4;
-  sp->table = {{0, 100, 700, ut::FfType, [](double v) { return std::clamp(std::round(v / 100.0) - 1.0, 0.0, 6.0); }},
-               {1, 0, 1024, ut::FfFreq, freeFilterHz},
-               {2, 0, 1024, ut::FfQ, [](double v) { return std::clamp(0.1 + v / 1024.0 * 19.9, 0.1, 20.0); }},
-               {3, 0, 1024, ut::FfGain, [](double v) { return std::clamp((v - 676.0) / 676.0 * 24.0, -24.0, 24.0); }}};
-  sp->extra = [](PluginMapping& m, const std::vector<double>& v) {
-    if (std::fmod(v[0], 100.0) != 0) m.exact = false;  // between two types: FL morphs, Gridline picks the nearest
-    set(m, ut::FfDc, 0);
-  };
-  return sp;
+  Reader r(pluginState(evs));
+  if (r.n < 4 + 4 * 4) return false;
+  const int version = r.i32();
+  std::vector<double> t;
+  for (int k = 0; k < 4; ++k) t.push_back(r.i32());
+  if (t[0] < 100) t[0] = 100 + std::nearbyint(600.0 * (std::floor(t[0] / 10.0) - 0.5) / 7.0);  // older type code
+  const bool center = version >= 2 && r.left() >= 1 ? (r.u8() & 1) != 0 : false;
+  begin(m, "gl.freefilter");
+  set(m, ut::FfModel, 1);
+  auto n = [](double v) { return std::clamp(v / 1024.0, 0.0, 1.0); };
+  KnobTable tab = {{0, 100, 700, ut::FfType, [](double v) { return static_cast<double>(flref::freeFilterType((v - 100.0) / 600.0)); }},
+                   {1, 0, 1024, ut::FfFreq, [n](double v) { return flref::freeFilterHz(n(v)); }},
+                   {2, 0, 1024, ut::FfQK, n},
+                   {3, 0, 1024, ut::FfGain, [n](double v) { return flref::freeFilterDb(n(v)); }}};
+  applyTable(m, tab, t);
+  set(m, ut::FfDc, center ? 1 : 0);
+  m.exact = true;
+  bindTable(m, std::make_shared<const KnobTable>(tab));
+  return true;
 }
 
-// --- Filter → Filter (multi-mode blend)
-double filterHz(double v) { return 20.0 * std::pow(1000.0, std::clamp(v / 1024.0, 0.0, 1.0)); }  // provisional
-std::shared_ptr<const SimplePlugin> fruityFilter() {
-  auto sp = std::make_shared<SimplePlugin>();
-  sp->glType = "gl.filter";
-  sp->versioned = true;
-  sp->knobs = 6;
+// --- Filter → Filter
+// J-26: classic model (FltModel = 1, spec j26_filter.md). State: version 1
+// (6 ints) or 2 (+ 1 byte: DC remover); x2 is on only for the raw value 1.
+bool decodeFruityFilter(Context&, const std::vector<Event>& evs, PluginMapping& m) {
+  Reader r(pluginState(evs));
+  if (r.n < 4 + 6 * 4) return false;
+  const int version = r.i32();
+  std::vector<double> t;
+  for (int k = 0; k < 6; ++k) t.push_back(r.i32());
+  const bool center = version >= 2 && r.left() >= 1 ? (r.u8() & 1) != 0 : false;
+  begin(m, "gl.filter");
+  set(m, pp::FltModel, 1);
   auto lvl = [](double v) { return std::clamp(v / 1024.0, 0.0, 1.0); };
-  sp->table = {{0, 0, 1024, pp::FltCutoff, filterHz},
-               {1, 0, 1024, pp::FltReso, lvl},
-               {2, 0, 1024, pp::FltLPLevel, lvl},
-               {3, 0, 1024, pp::FltBPLevel, lvl},
-               {4, 0, 1024, pp::FltHPLevel, lvl},
-               {5, 0, 1, pp::FltSlope, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }}};
-  sp->extra = [](PluginMapping& m, const std::vector<double>&) { set(m, pp::FltBlend, 1); };
-  return sp;
+  KnobTable tab = {{0, 0, 1024, pp::FltCutK, lvl},
+                   {1, 0, 1024, pp::FltResK, lvl},
+                   {2, 0, 1024, pp::FltLPLevel, lvl},
+                   {3, 0, 1024, pp::FltBPLevel, lvl},
+                   {4, 0, 1024, pp::FltHPLevel, lvl},
+                   {5, 0, 1, pp::FltSlope, [](double v) { return v == 1 ? 1.0 : 0.0; }}};
+  applyTable(m, tab, t);
+  set(m, pp::FltSlope, t[5] == 1 ? 1 : 0);
+  set(m, pp::FltDcBlock, center ? 1 : 0);
+  set(m, pp::FltCutoff, std::clamp(flref::filterCutHz(lvl(t[0]), 44100.0), 20.0, 20000.0));  // the modern model's view
+  set(m, pp::FltBlend, 1);
+  m.exact = true;
+  bindTable(m, std::make_shared<const KnobTable>(tab));
+  return true;
 }
 
 // --- WaveShaper → Waveshaper
@@ -329,8 +349,8 @@ void registerFxEq(std::map<std::string, PluginDecoder>& d) {
   d["Fruity Fast Dist"] = simpleDecoder(fastDist());
   d["Fruity Stereo Shaper"] = simpleDecoder(stereoShaper());
   d["Fruity Stereo Enhancer"] = simpleDecoder(stereoEnhancer());
-  d["Fruity Free Filter"] = simpleDecoder(freeFilter());
-  d["Fruity Filter"] = simpleDecoder(fruityFilter());
+  d["Fruity Free Filter"] = decodeFreeFilter;
+  d["Fruity Filter"] = decodeFruityFilter;
   d["Fruity WaveShaper"] = decodeWaveShaper;
 }
 

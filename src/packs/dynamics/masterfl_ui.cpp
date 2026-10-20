@@ -380,6 +380,41 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
 void editorEnhanceFl(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
   ImDrawList* dl = ImGui::GetWindowDrawList();
+  if (ui::ival(st, EnCustom) == 2) {  // J-26 peak emphasis panel (210 x 294)
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    skin::Form f = skin::formAt(210, 294, std::min(width, 340.0f));
+    f.o.x += std::max(0.0f, (width - f.w) * 0.5f);
+    dl->AddRectFilled(f.p(0, 0), f.p(210, 294), hex(0x2E3438), f.d(6));
+    skin::gradient(dl, f, 0, 0, 210, 294, hex(0x384046), hex(0x23282B));
+    skin::WheelLook w{hex(0x3F484D), hex(0xE8C267), hex(0xF6D27A), hex(0x4A535A)};
+    w.railWidth = 0.09f;
+    w.dents = 8;
+    skin::wheel(a, t, EnPeakEmph, f, 45, 26, 120, 120, w);
+    char buf[48];
+    std::snprintf(buf, sizeof buf, "EMPHASIS %d%%", static_cast<int>(std::lround(ui::val(st, EnPeakEmph) * 100)));
+    skin::label(dl, f, 25, 150, 160, 16, buf, hex(0xE8E2D2), 0, 10.0f);
+    skin::wheel(a, t, EnPeakIn, f, 22, 176, 54, 54, w);
+    skin::wheel(a, t, EnPeakOut, f, 134, 176, 54, 54, w);
+    std::snprintf(buf, sizeof buf, "IN %.1f dB", ui::val(st, EnPeakIn));
+    skin::label(dl, f, 10, 232, 78, 12, buf, hex(0xA9B3B6), 0, 7.5f);
+    const double og = ui::val(st, EnPeakOut);
+    if (og <= 0) std::snprintf(buf, sizeof buf, "OUT -inf");
+    else std::snprintf(buf, sizeof buf, "OUT %.1f dB", 20 * std::log10(og));
+    skin::label(dl, f, 122, 232, 78, 12, buf, hex(0xA9B3B6), 0, 7.5f);
+    auto tog = [&](const char* id, int param, float x, const char* txt) {
+      const bool on = ui::val(st, param) >= 0.5f;
+      if (skin::button(f, id, x, 252, 60, 16, txt, on ? hex(0xE8C267) : hex(0x3A4247), on ? hex(0x1D2023) : hex(0xA9B3B6), nullptr))
+        pui::setParamValue(a, t, param, on ? 0 : 1);
+    };
+    tog("emsoft", EnPeakSoft, 8, ui::val(st, EnPeakSoft) >= 0.5f ? "SOFT CLIP" : "HARD CLIP");
+    tog("emmatch", EnPeakMatch, 75, "LEVEL MATCH");
+    tog("embyp", EnPeakBypass, 142, "BYPASS");
+    if (skin::button(f, "enbuilt", 75, 274, 60, 14, "VOICINGS", hex(0x3A4247), hex(0xA9B3B6), "Use Gridline's built-in voicings"))
+      pui::setParamValue(a, t, EnCustom, 0);
+    ImGui::SetCursorScreenPos(start);
+    ImGui::Dummy(ImVec2(width, f.h));
+    return;
+  }
   float gr[kMsBands] = {0, 0, 0, 0};
   if (auto rt = ui::runtime(a, t))
     for (int b = 0; b < kMsBands; ++b) gr[b] = rt->bands[b].load();

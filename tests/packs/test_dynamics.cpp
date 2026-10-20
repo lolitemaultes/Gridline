@@ -430,6 +430,7 @@ int main() {
     bool ok = true, audible = true;
     for (int kind = 0; kind < kEfKinds; ++kind) {
       PluginState st = defaultPluginState("gl.effector");
+      set(st, EfModel, 0);
       set(st, EfKind, kind);
       set(st, EfX, 0.7);
       set(st, EfY, 0.3);
@@ -444,6 +445,7 @@ int main() {
     expect(ok, "multi fx: all twelve effects finite and bounded");
     expect(audible, "multi fx: all twelve effects audible");
     PluginState st = defaultPluginState("gl.effector");
+    set(st, EfModel, 0);  // legacy engine (J-26 reference: tests/test_j26.cpp)
     set(st, EfBypass, 1);
     Buf in = sine(440, 0.3, 0.2);
     expect(maxDiff(run(st, in), in) < 1e-6, "multi fx: bypass is transparent");

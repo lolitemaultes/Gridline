@@ -205,7 +205,7 @@ class EqFx final : public Effect {
           band_[c][b] = f;
         }
       }
-      out_ = dbToGain(param(s, pp::EqMain));
+      out_ = param(s, pp::EqModel, 1) >= 1.5f ? param(s, pp::EqMainLin, 1) : dbToGain(param(s, pp::EqMain));  // J-26 classic: linear
       linDirty_ = true;
       listen_ = std::clamp(static_cast<int>(param(s, pp::EqListen) + 0.5f), 0, pp::kEqBands);
       if (listen_ > 0)

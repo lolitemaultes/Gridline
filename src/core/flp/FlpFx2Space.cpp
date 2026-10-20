@@ -39,6 +39,8 @@
 #include "../../packs/spacefx/sfx_flcurves.h"
 #include "../../packs/spacefx/spacefx.h"
 #include "../PluginParams.h"
+#include "../../engine/ClassicDelay.h"
+#include "../../engine/ClassicModFx.h"
 #include "../../engine/PlateReverb.h"
 #include "FlpFx2.h"
 
@@ -387,6 +389,9 @@ bool decodeReeverb1(Context&, const std::vector<Event>& evs, PluginMapping& m) {
 }
 
 // ------------------------------------------------------------------ Fruity Delay → Delay
+// J-26: classic tempo delay (DlyModel = 2, spec j26_delay1.md): input gain n,
+// dry unity, feedback 0.99 n, coefficient (21^n - 1)/20 (not rate-scaled),
+// own tempo round(220 n + 60) (0 = host), steps of a sixteenth, three modes.
 bool decodeDelay1(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
   if (r.n < 28) return false;
@@ -394,22 +399,27 @@ bool decodeDelay1(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<double> t = ints(r, 6);
   if (t.size() < 6) return false;
   fx::begin(m, "gl.delay");
-  auto w = [](double v) { return clampd(v / 1024.0, 0, 1); };
-  KnobTable tab = {{0, 0, 1024, pp::DlyWet, w},
-                   {1, 0, 1024, pp::DlyFeedback, w},
-                   {2, 0, 1024, pp::DlyCutoff, [](double v) { return expMap(v / 1024.0, 300, 20000); }}};
+  fx::set(m, pp::DlyModel, 2);
+  fx::set(m, pp::DlyClsStepRound, 1);
+  fx::set(m, pp::DlyClsScaleSr, 0);
+  fx::set(m, pp::DlyClsDry, 1);
+  fx::set(m, pp::DlyClsPan, 0);
+  auto n = [](double v) { return clampd(v / 1024.0, 0, 1); };
+  KnobTable tab = {{0, 0, 1024, pp::DlyClsIn, n},
+                   {1, 0, 1024, pp::DlyClsFb, [n](double v) { return 0.99 * n(v); }},
+                   {2, 0, 1024, pp::DlyClsCoef, [n](double v) { return cdelay::coefOf(n(v)); }},
+                   {3, 0, 1024, pp::DlyClsBpm, [n](double v) { return v <= 0 ? 0.0 : std::nearbyint(n(v) * 220 + 60); }},
+                   {4, 1, 16, pp::DlyTicks, [](double v) { return 48.0 * clampd(std::nearbyint(v), 1, 16); }},
+                   {5, 0, 1024, pp::DlyClsMode, [n](double v) { return clampd(std::nearbyint(n(v) * 3 - 0.5), 0, 2); }}};
   fx::applyTable(m, tab, t);
-  // Time = steps (sixteenths) at the song tempo.
-  std::vector<double> beats(pp::kDelayBeats, pp::kDelayBeats + pp::kDelayBeatCount);
-  fx::set(m, pp::DlySync, 1);
-  fx::set(m, pp::DlyTime, nearestChoice(clampd(t[4], 1, 16) / 4.0, beats));
-  fx::set(m, pp::DlyMode, t[5] >= 512 ? 1 : 0);
-  m.exact = false;
+  m.exact = true;
   bindKnobs(m, tab);
   return true;
 }
 
 // ------------------------------------------------------------------ Fruity Phaser → Phaser
+// J-26: reference engine (PhsModel = 1, spec j26_phaser.md): every control as
+// its knob position n = raw / max (stages: the raw count + 1, 3..23).
 bool decodePhaser1(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
   if (r.n < 40) return false;
@@ -417,19 +427,21 @@ bool decodePhaser1(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<double> t = ints(r, 9);
   if (t.size() < 9) return false;
   fx::begin(m, "gl.phaser");
+  fx::set(m, pp::PhsModel, 1);
+  auto n = [](double mx) { return [mx](double v) { return clampd(v / mx, 0, 1); }; };
   KnobTable tab = {
-      {0, 0, 5000, pp::PhsRate, [](double v) { return expMap(v / 5000.0, 0.02, 8); }},
-      {1, 0, 1000, pp::PhsMinFreq, [](double v) { return expMap(v / 1000.0, 20, 20000); }},
-      {2, 0, 1000, pp::PhsMaxFreq, [](double v) { return expMap(v / 1000.0, 20, 20000); }},
-      {4, 0, 1024, pp::PhsStereo, [](double v) { return clampd(v / 1024.0 * 180.0, 0, 180); }},
-      {6, 0, 1000, pp::PhsFeedback, [](double v) { return clampd(v / 1000.0 * 0.9, -0.9, 0.9); }},
-      {7, 0, 1024, pp::PhsMix, [](double v) { return clampd(v / 1024.0, 0, 1); }},
-      {8, 0, 5000, pp::PhsOutGain, [](double v) { return clampd(dbOf(v / 4000.0, -24), -24, 6); }},
+      {0, 0, 5000, pp::PhsSweepN, n(5000)},
+      {1, 0, 1000, pp::PhsDepthMin, n(1000)},
+      {2, 0, 1000, pp::PhsDepthMax, n(1000)},
+      {3, 0, 1024, pp::PhsRangeLarge, [](double v) { return v / 1024.0 > 0.5 ? 1.0 : 0.0; }},
+      {4, 0, 1024, pp::PhsStereoN, n(1024)},
+      {5, 0, 22, pp::PhsStagesN, [](double v) { return static_cast<double>(classic::phaserStages(v)); }},
+      {6, 0, 1000, pp::PhsFeedbackN, n(1000)},
+      {7, 0, 1024, pp::PhsDryN, n(1024)},
+      {8, 0, 5000, pp::PhsGainN, n(5000)},
   };
   fx::applyTable(m, tab, t);
-  fx::set(m, pp::PhsRangeMode, 1);  // min / max sweep
-  fx::set(m, pp::PhsStages, nearestChoice(clampd(t[5], 0, 22) + 2, {2, 4, 6, 8, 10, 12, 16, 20, 24}));
-  m.exact = false;
+  m.exact = true;
   bindKnobs(m, tab);
   return true;
 }

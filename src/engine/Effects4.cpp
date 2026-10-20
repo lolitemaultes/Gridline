@@ -6,6 +6,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include "LowLifterRef.h"
 #include "../core/PluginParams.h"
 #include "Dsp.h"
 #include "Effects.h"
@@ -479,11 +480,28 @@ class ShaperFx final : public Effect {
 };
 
 // ======================================================================= Low Lifter
+llref::Settings lowLiftRefSettings(const PluginState& s) {
+  using namespace pp;
+  llref::Settings r;
+  r.on = bparam(s, LlOn, true), r.lookahead = bparam(s, LlLookahead, true), r.invert = bparam(s, LlInvertHarm);
+  r.multiband = bparam(s, LlMultiband), r.highOn = bparam(s, LlHighOn, true), r.lowOn = bparam(s, LlLowOn, true);
+  r.mix = param(s, LlMix, 1), r.dmix = param(s, LlDiffuse), r.dcoef = param(s, LlDiffCoef);
+  const double lo = param(s, LlLowDb), hi = param(s, LlHighDb);
+  r.lowDb = lo <= -119.999 ? -1e9 : lo, r.highDb = hi <= -119.999 ? -1e9 : hi;
+  r.slopeDb = param(s, LlSlopeDb, -6.5f), r.preDb = param(s, LlPreDb, 9), r.xoverHz = param(s, LlXoverHz, 99.5f), r.lowCutHz = param(s, LlLowCutHz, 20);
+  return r;
+}
+
 class LowLiftFx final : public Effect {
  public:
+  LowLiftFx() : ref_(std::make_unique<llref::Engine>()) {}  // fixed buffers, sized once (≈ 1.6 MB)
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     const double sr = ctx.sampleRate;
+    if (iparam(s, LlModel) == 1) {  // J-26 reference engine
+      ref_->process(lowLiftRefSettings(s), sr, L, R, n);
+      return;
+    }
     double xo = param(s, LlCrossover, 120), lc = param(s, LlLowCut, 25);
     double slope = param(s, LlSlope), bf = param(s, LlBoostFreq, 60), boost = param(s, LlBoost), dAmt = param(s, LlDiffuseAmt, 0.5f);
     if (xo != xo_ || lc != lc_ || sr != sr_ || slope != slope_ || bf != bf_ || boost != boost_ || dAmt != dAmt_) {
@@ -531,7 +549,11 @@ class LowLiftFx final : public Effect {
       }
     }
   }
+  int latencyFor(const PluginState& s, double sr) const override {
+    return iparam(s, pp::LlModel) == 1 ? llref::Engine::latency(lowLiftRefSettings(s), sr) : 0;
+  }
   void reset() override {
+    if (ref_) ref_->reset();
     for (auto* f : {&lp_, &hp_})
       for (auto& c : *f)
         for (auto& b : c) b.clear();
@@ -543,6 +565,7 @@ class LowLiftFx final : public Effect {
   }
 
  private:
+  std::unique_ptr<llref::Engine> ref_;
   Biquad lp_[2][2], hp_[2][2], cut_[2], shelf_[2];
   OnePole harmLp_[2];
   Allpass1 diff_[2][4];

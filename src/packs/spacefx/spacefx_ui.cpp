@@ -1473,30 +1473,37 @@ void editorEnsemble(App& a, const PluginTarget& t, float width) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::panel(dl, F.o, F.p(kW, kH), K, 4);
   skin::Scope scope(K);
+  const bool ref = static_cast<int>(val(st, EnModel) + 0.5f) == 1;  // J-26 reference engine: knob positions
+  const int pDelay = ref ? EnK0 : EnDelay, pFb = ref ? EnK1 : EnFeedback, pAmt = ref ? EnK3 : EnModAmount, pRate = ref ? EnK2 : EnModRate;
+  const int pMove = ref ? EnK4 : EnMoveAmount, pMoveR = ref ? EnK5 : EnMoveRate, pLines = ref ? EnK6 : EnLines;
   cap(dl, F, 73, 24, "DELAY / FEEDBACK", K.textDim);
   cap(dl, F, 204, 24, "MOD AMOUNT / RATE", K.textDim);
   cap(dl, F, 335, 24, "MOVEMENT / RATE", K.textDim);
-  skin::xyPad(a, t, EnDelay, EnFeedback, F.p(23, 38), F.sz(100, 100), K);
-  skin::xyPad(a, t, EnModAmount, EnModRate, F.p(154, 38), F.sz(100, 100), K);
-  skin::xyPad(a, t, EnMoveAmount, EnMoveRate, F.p(285, 38), F.sz(100, 100), K);
+  skin::xyPad(a, t, pDelay, pFb, F.p(23, 38), F.sz(100, 100), K);
+  skin::xyPad(a, t, pAmt, pRate, F.p(154, 38), F.sz(100, 100), K);
+  skin::xyPad(a, t, pMove, pMoveR, F.p(285, 38), F.sz(100, 100), K);
   at(F, 408, 33);
   ensembleVisual(a, st, F.u(296), F.u(112));
-  V(a, t, EnSpread, F, 712, 35, 18, 100, K, "SPREAD", skin::hex(0x50A0FF), false);
-  W(a, t, EnDelay, F, 19, 149, 44, K, "DELAY");
-  W(a, t, EnFeedback, F, 83, 149, 44, K, "FEEDBACK");
-  W(a, t, EnModAmount, F, 150, 149, 44, K, "AMOUNT");
-  W(a, t, EnModRate, F, 214, 149, 44, K, "RATE");
-  W(a, t, EnMoveAmount, F, 281, 149, 44, K, "MOVE");
-  W(a, t, EnMoveRate, F, 345, 149, 44, K, "SPEED");
+  if (!ref) V(a, t, EnSpread, F, 712, 35, 18, 100, K, "SPREAD", skin::hex(0x50A0FF), false);
+  {
+    static const char* eng[2] = {"OLD", "REF"};
+    sel(a, t, EnModel, F, 678, 10, 64, 16, K, true, eng);
+  }
+  W(a, t, pDelay, F, 19, 149, 44, K, "DELAY");
+  W(a, t, pFb, F, 83, 149, 44, K, "FEEDBACK");
+  W(a, t, pAmt, F, 150, 149, 44, K, "AMOUNT");
+  W(a, t, pRate, F, 214, 149, 44, K, "RATE");
+  W(a, t, pMove, F, 281, 149, 44, K, "MOVE");
+  W(a, t, pMoveR, F, 345, 149, 44, K, "SPEED");
   {
     static const char* ln[2] = {"4", "8"};
-    sel(a, t, EnLines, F, 420, 160, 50, 18, K, true, ln);
+    sel(a, t, pLines, F, 420, 160, 50, 18, K, true, ln);
     cap(dl, F, 445, 182, "LINES", K.textDim);
   }
-  W(a, t, EnHighPass, F, 490, 149, 44, K, "HP");
-  W(a, t, EnLowPass, F, 545, 149, 44, K, "LP");
-  W(a, t, EnPhase, F, 620, 149, 44, K, "PHASE");
-  W(a, t, EnMix, F, 686, 149, 44, K, "MIX");
+  W(a, t, ref ? EnK8 : EnHighPass, F, 490, 149, 44, K, "HP");
+  W(a, t, ref ? EnK7 : EnLowPass, F, 545, 149, 44, K, "LP");
+  W(a, t, ref ? EnK10 : EnPhase, F, 620, 149, 44, K, "PHASE");
+  W(a, t, ref ? EnK9 : EnMix, F, 686, 149, 44, K, "MIX");
   F.end(kW, kH);
 }
 

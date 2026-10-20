@@ -1,5 +1,6 @@
 // Gridline — "utility" pack: editors for the EQ / filter / routing plugins and
 // the dispatcher (visual editors live in utility_view_ui.cpp).
+#include "../../engine/FlFilterRef.h"
 #include "../PacksUi.h"
 #include <algorithm>
 #include <cmath>
@@ -403,6 +404,25 @@ void editorCurveEq(App& a, const PluginTarget& t, float width) {
   F.end(kW, kH);
 }
 
+namespace {
+// |H(f)| of the reference resonant low-pass kernel (a, b per sample).
+double quickKernelMag(double a, double b, double f, double sr) {
+  const double w = 2 * 3.14159265358979323846 * f / sr;
+  const double cr = std::cos(w), ci = -std::sin(w), c2r = std::cos(2 * w), c2i = -std::sin(2 * w);
+  // (1 - z^-1)(1 - b z^-1) + a z^-1 = 1 - (1 + b - a) z^-1 + b z^-2
+  double re = 1 - (1 + b - a) * cr + b * c2r, im = -(1 + b - a) * ci + b * c2i;
+  return a / std::max(1e-12, std::sqrt(re * re + im * im));
+}
+// |H(f)| of a direct-form biquad.
+double biquadMag(const flref::FixedBiquad& q, double f, double sr) {
+  const double w = 2 * 3.14159265358979323846 * f / sr;
+  const double cr = std::cos(w), ci = -std::sin(w), c2r = std::cos(2 * w), c2i = -std::sin(2 * w);
+  double nr = q.b0 + q.b1 * cr + q.b2 * c2r, ni = q.b1 * ci + q.b2 * c2i;
+  double dr = 1 + q.a1 * cr + q.a2 * c2r, di = q.a1 * ci + q.a2 * c2i;
+  return std::sqrt((nr * nr + ni * ni) / std::max(1e-24, dr * dr + di * di));
+}
+}  // namespace
+
 // ============================================================= Free Filter
 struct NodeUi {
   uint64_t gesture = 0;
@@ -434,8 +454,13 @@ void editorFreeFilter(App& a, const PluginTarget& t, float width) {
   ImGui::InvisibleButton("##ffgraph", gs);
   graphFrame(a, t, dl, g0, g1, range);
   dl->PushClipRect(g0, g1, true);
+  const bool ffRef = val(st, FfModel, 1) >= 0.5f;  // J-26 reference: fixed 44.1 kHz design
   Coefs c = freeFilterCoefs(type, sr, hz, q, gain);
-  drawCurve(dl, g0, g1, range, [&](double f) { return 20 * std::log10(std::max(1e-9, c.magnitude(f, sr))); }, K.graphCurve, 2.0f, true);
+  flref::FixedBiquad fb;
+  if (ffRef) fb.design(std::clamp(type, 0, 6), hz, val(st, FfQK, 0.165f), gain);
+  drawCurve(dl, g0, g1, range, [&](double f) -> double {
+    return 20 * std::log10(std::max(1e-9, ffRef ? biquadMag(fb, f, sr) : c.magnitude(f, sr)));
+  }, K.graphCurve, 2.0f, true);
   bool hasGain = ffHasGain(type);
   float ny = hasGain ? g0.y + gs.y * 0.5f - static_cast<float>(gain / range) * gs.y * 0.5f
                      : g0.y + gs.y * 0.5f - static_cast<float>(std::log(q / 0.707) / std::log(20 / 0.707)) * gs.y * 0.45f;
@@ -452,6 +477,8 @@ void editorFreeFilter(App& a, const PluginTarget& t, float width) {
     ns.params[FfFreq] = static_cast<float>(std::clamp(pui::xToFreq(static_cast<float>(fx), g0.x, gs.x), 10.0, 22000.0));
     if (hasGain)
       ns.params[FfGain] = static_cast<float>(std::clamp(gain - io.MouseDelta.y * fine * range * 2 / gs.y, -24.0, 24.0));
+    else if (ffRef)
+      ns.params[FfQK] = static_cast<float>(std::clamp(static_cast<double>(val(st, FfQK, 0.165f)) - io.MouseDelta.y * fine / gs.y, 0.0, 1.0));
     else
       ns.params[FfQ] = static_cast<float>(std::clamp(q * std::pow(1.02, -io.MouseDelta.y * fine), 0.1, 20.0));
     setPluginState(a, t, ns, "move filter", ui.gesture);
@@ -459,7 +486,8 @@ void editorFreeFilter(App& a, const PluginTarget& t, float width) {
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (ImGui::IsItemHovered() && io.MouseWheel != 0) {
     PluginState ns = st;
-    ns.params[FfQ] = static_cast<float>(std::clamp(q * std::pow(1.15, io.MouseWheel), 0.1, 20.0));
+    if (ffRef) ns.params[FfQK] = static_cast<float>(std::clamp(static_cast<double>(val(st, FfQK, 0.165f)) + 0.02 * io.MouseWheel, 0.0, 1.0));
+    else ns.params[FfQ] = static_cast<float>(std::clamp(q * std::pow(1.15, io.MouseWheel), 0.1, 20.0));
     setPluginState(a, t, ns, "filter Q", 0x4646510000000000ull ^ t.key());
   }
   if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
@@ -471,7 +499,7 @@ void editorFreeFilter(App& a, const PluginTarget& t, float width) {
   const float y0 = kGraphH + 5;
   menuParamBox(a, t, FfType, F, 5, y0, 160, 45, K, "TYPE");
   skin::paramBox(a, t, FfFreq, F, 170, y0, 160, 45, K, "FREQ");
-  sliderBox(a, t, FfQ, F, 5, y0 + 50, 160, 45, K, "Q");
+  sliderBox(a, t, ffRef ? FfQK : FfQ, F, 5, y0 + 50, 160, 45, K, "Q");
   {
     skin::Skin kg = K;  // gain only acts on the shelf / peak types: dim it otherwise
     if (!hasGain) kg.fill = skin::darken(K.fill, 0.45f), kg.valueText = skin::darken(K.fill, 0.35f);
@@ -483,6 +511,12 @@ void editorFreeFilter(App& a, const PluginTarget& t, float width) {
   {
     static const char* dc[2] = {"OFF", "ON"};
     skin::switchSel(a, t, FfDc, F.p(340, y0 + 19), F.sz(69, 22), K, dc, 2, true);
+  }
+  skin::well(dl, F.p(336, y0 + 50), F.p(413, y0 + 95), K, 4 * F.s);
+  skin::pill(dl, F.p(353, y0 + 50), F.p(413, y0 + 66), K, "ENGINE", F.font(8.5f));
+  {
+    static const char* eng[2] = {"OLD", "REF"};
+    skin::switchSel(a, t, FfModel, F.p(340, y0 + 69), F.sz(69, 22), K, eng, 2, true);
   }
   F.end(kW, kH);
 }
@@ -508,17 +542,25 @@ void editorQuickLp(App& a, const PluginTarget& t, float width) {
   ImGui::InvisibleButton("##qlgraph", gs);
   graphFrame(a, t, dl, g0, g1, range);
   dl->PushClipRect(g0, g1, true);
-  bool open = hz >= 19900 && reso < 1e-3;
+  const bool qlRef = val(st, QlModel, 1) >= 0.5f;  // J-26 reference kernel
+  const double qa = flref::quickLpCoef(val(st, QlCutK, 1)), qb = flref::quickLpRes(val(st, QlResK));
+  if (qlRef) {
+    hz = qa >= 1 ? 20000.0 : std::clamp(-sr * std::log(1 - std::min(0.999, qa)) / (2 * 3.14159265358979323846), 20.0, 20000.0);
+    reso = val(st, QlResK);
+  }
+  bool open = qlRef ? qa >= 1 && qb == 0 : hz >= 19900 && reso < 1e-3;
   double k = 2.0 - 1.98 * std::clamp(reso * 0.97, 0.0, 1.0);
   Coefs c = freeFilterCoefs(FtLowPass, sr, std::min(hz, sr * 0.49), 1.0 / k, 0);
-  drawCurve(dl, g0, g1, range, [&](double f) { return open ? 0.0 : 20 * std::log10(std::max(1e-9, c.magnitude(f, sr))); }, K.graphCurve, 2.0f,
-            true);
+  drawCurve(dl, g0, g1, range, [&](double f) -> double {
+    if (open) return 0.0;
+    return 20 * std::log10(std::max(1e-9, qlRef ? quickKernelMag(qa, qb, f, sr) : c.magnitude(f, sr)));
+  }, K.graphCurve, 2.0f, true);
   ImVec2 node(pui::freqToX(hz, g0.x, gs.x), g1.y - 12 - static_cast<float>(reso) * (gs.y - 24));
   dl->AddCircleFilled(node, 7, K.fill, 20);
   dl->PopClipRect();
   NodeUi& ui = nodeUis[t.key()];
   if (ImGui::IsItemActivated()) ui.gesture = gestureKey(t, 0x514C000000000000ull);
-  if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1)) {
+  if (!qlRef && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1)) {
     PluginState ns = st;
     float fine = io.KeyShift ? 0.2f : 1.0f;
     ns.params[QlCutoff] = static_cast<float>(std::clamp(pui::xToFreq(node.x + io.MouseDelta.x * fine, g0.x, gs.x), 20.0, 20000.0));
@@ -527,8 +569,12 @@ void editorQuickLp(App& a, const PluginTarget& t, float width) {
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (ImGui::IsItemHovered()) a.setHint("Drag: cutoff (left/right) and resonance (up/down) · Shift: fine");
-  sliderBox(a, t, QlCutoff, F, 5, kGraphH + 5, 160, 45, K, "CUTOFF");
-  sliderBox(a, t, QlReso, F, 170, kGraphH + 5, 160, 45, K, "RESONANCE");
+  sliderBox(a, t, qlRef ? QlCutK : QlCutoff, F, 5, kGraphH + 5, 160, 45, K, "CUTOFF");
+  sliderBox(a, t, qlRef ? QlResK : QlReso, F, 170, kGraphH + 5, 160, 45, K, "RESONANCE");
+  {
+    static const char* eng[2] = {"OLD", "REF"};
+    skin::switchSel(a, t, QlModel, F.p(kW - 75, 9), F.sz(64, 14), K, eng, 2, true);
+  }
   F.end(kW, kH);
 }
 
@@ -553,9 +599,21 @@ void editorBassBoost(App& a, const PluginTarget& t, float width) {
   ImGui::InvisibleButton("##bbgraph", gs);
   graphFrame(a, t, dl, g0, g1, range);
   dl->PushClipRect(g0, g1, true);
+  const bool bbRef = val(st, BbModel, 1) >= 0.5f;  // J-26 reference: dry + G x two-pole low-pass
   Coefs c = bassBoostCoefs(sr, hz, amt);
-  drawCurve(dl, g0, g1, range, [&](double f) { return 20 * std::log10(std::max(1e-9, c.magnitude(f, sr))); }, K.graphCurve, 2.0f, true);
-  ImVec2 node(pui::freqToX(hz, g0.x, gs.x), g0.y + gs.y * 0.5f - static_cast<float>(bassBoostDb(amt) / range) * gs.y * 0.5f);
+  const double bbG = flref::bassBoostGain(amt), bbC = std::cos(2 * 3.14159265358979323846 * std::nearbyint(hz) / sr), bbM = bbC - 1;
+  const double bbK1 = 2 - 2 * bbC, bbK2 = (bbM / 2 + std::sqrt(2.0) * std::sqrt(std::max(0.0, -bbM * bbM * bbM))) / (bbM / 2);
+  auto bbMag = [&](double f) -> double {
+    if (!bbRef) return c.magnitude(f, sr);
+    // dry + G·LP: evaluate the complex sum
+    const double w = 2 * 3.14159265358979323846 * f / sr, cr = std::cos(w), ci = -std::sin(w), c2r = std::cos(2 * w), c2i = -std::sin(2 * w);
+    double dr = 1 - (1 + bbK2 - bbK1) * cr + bbK2 * c2r, di = -(1 + bbK2 - bbK1) * ci + bbK2 * c2i, d2 = std::max(1e-24, dr * dr + di * di);
+    double lr = bbK1 * dr / d2, li = -bbK1 * di / d2;
+    return std::sqrt((1 + bbG * lr) * (1 + bbG * lr) + (bbG * li) * (bbG * li));
+  };
+  drawCurve(dl, g0, g1, range, [&](double f) { return 20 * std::log10(std::max(1e-9, bbMag(f))); }, K.graphCurve, 2.0f, true);
+  const double bbDb = bbRef ? 20 * std::log10(1 + bbG) : bassBoostDb(amt);
+  ImVec2 node(pui::freqToX(hz, g0.x, gs.x), g0.y + gs.y * 0.5f - static_cast<float>(bbDb / range) * gs.y * 0.5f);
   dl->AddCircleFilled(node, 7, K.fill, 20);
   dl->PopClipRect();
   NodeUi& ui = nodeUis[t.key()];
@@ -570,11 +628,15 @@ void editorBassBoost(App& a, const PluginTarget& t, float width) {
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (ImGui::IsItemHovered()) {
     char buf[96];
-    std::snprintf(buf, sizeof buf, "%.0f Hz · +%.1f dB   (drag: frequency / amount · Shift: fine)", hz, bassBoostDb(amt));
+    std::snprintf(buf, sizeof buf, "%.0f Hz · +%.1f dB   (drag: frequency / amount · Shift: fine)", hz, bbDb);
     a.setHint(buf);
   }
   skin::paramBox(a, t, BbFreq, F, 5, kGraphH + 5, 160, 45, K, "FREQ");
   sliderBox(a, t, BbAmount, F, 170, kGraphH + 5, 160, 45, K, "AMOUNT");
+  {
+    static const char* eng[2] = {"OLD", "REF"};
+    skin::switchSel(a, t, BbModel, F.p(kW - 75, 9), F.sz(64, 14), K, eng, 2, true);
+  }
   F.end(kW, kH);
 }
 

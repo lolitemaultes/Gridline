@@ -94,7 +94,8 @@ void editorOverdriveFl(App& a, const PluginTarget& t, float width) {
   flk::wheel(c, OdColor, 37, 95, 58, "Colour");
   flk::wheel(c, OdPreAmp, 147, 21, 120, "Pre amp");
   flk::wheel(c, OdPostFilter, 329, 6, 58, "Post filter");
-  flk::wheel(c, OdPostGain, 329, 95, 58, "Post gain");
+  const bool ref = val(st, OdModel) >= 0.5f;  // J-26 reference engine
+  flk::wheel(c, ref ? OdPostGainK : OdPostGain, 329, 95, 58, "Post gain");
   // x100 pad (reference: small square pad under the pre-amp wheel).
   {
     bool on = val(st, OdBoost) >= 0.5f;
@@ -106,13 +107,24 @@ void editorOverdriveFl(App& a, const PluginTarget& t, float width) {
   }
   // Shape strip: transfer curve + oversampling.
   skin::well(dl, F.p(5, 184), F.p(kW - 5, kH - 5), K, 4 * F.s);
-  double drive = std::pow(10.0, val(st, OdPreAmp) * 2.0) * (val(st, OdBoost) >= 0.5f ? 100.0 : 1.0);
   double color = val(st, OdColor);
   flk::text(c, 12, 190, "SHAPE");
-  curveWell(dl, F.p(60, 188), F.p(200, kH - 9), K, [&](double x) { return overdriveCurve(x * drive, color) * 0.8; });
-  flk::text(c, 222, 190, "OVERSAMPLING");
-  static const char* os[3] = {"OFF", "2X", "4X"};
-  flk::sw(c, OdOversample, 222, 204, 186, 22, os, 3, true);
+  if (ref) {
+    double pa = val(st, OdPreAmp), g = 1 + (val(st, OdBoost) >= 0.5f ? 2500.0 : 25.0) * pa * pa * pa, pg = val(st, OdPostGainK);
+    curveWell(dl, F.p(60, 188), F.p(200, kH - 9), K, [&](double x) {
+      double u = std::clamp(x * g, -1.0, 1.0);
+      return std::sin(1.5707963267948966 * u) * pg * pg * 0.95;
+    });
+    flk::text(c, 222, 190, "ENGINE");
+  } else {
+    double drive = std::pow(10.0, val(st, OdPreAmp) * 2.0) * (val(st, OdBoost) >= 0.5f ? 100.0 : 1.0);
+    curveWell(dl, F.p(60, 188), F.p(200, kH - 9), K, [&](double x) { return overdriveCurve(x * drive, color) * 0.8; });
+    flk::text(c, 222, 190, "OVERSAMPLING");
+    static const char* os[3] = {"OFF", "2X", "4X"};
+    flk::sw(c, OdOversample, 222, 204, 120, 22, os, 3, true);
+  }
+  static const char* eng[2] = {"OLD", "REF"};
+  flk::sw(c, OdModel, ref ? 222 : 348, 204, ref ? 186 : 60, 22, eng, 2, true);
   F.end(kW, kH);
 }
 

@@ -26,6 +26,7 @@
 // (analysis/demos/COVERAGE.md lists the evidence); no Image-Line code is used.
 #include <algorithm>
 #include <cctype>
+#include "../../packs/dynamics/dynamics.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/utility/utility.h"
 #include "../PluginParams.h"
@@ -194,7 +195,8 @@ bool decodeMobileRackFx(Context& c, const std::vector<Event>& evs, PluginMapping
   const char* type = mobileModuleType(modules.front());
   if (!type) return false;
   begin(m, type);
-  m.exact = false;  // module settings are not converted
+  if (modules.front() == 4) set(m, packs::dynamics::EfModel, 1);  // multi effect: the reference engine (J-26)
+  m.exact = false;  // module settings are not converted (the module's PRMS / SMPR float order is unverified)
   if (modules.size() > 1) c.report.warn("FL Studio Mobile rack: only the first of " + std::to_string(modules.size()) + " modules imported");
   return true;
 }

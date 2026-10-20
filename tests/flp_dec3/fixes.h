@@ -102,7 +102,10 @@ inline void testFixes() {
     Run r;
     decode(r, "Fruity Flanger", st.b);
     expect(r.ok && r.m.glType == "gl.flanger", "flanger (FL 3): float state decodes");
-    expect(param(r, FlgFeedback) < 0 && near(param(r, FlgMix), 1.0) && near(param(r, FlgInvertWet), 1), "flanger (FL 3): inverted feedback, wet only");
+    // J-26 reference engine: knob positions, separate dry / wet.
+    expect(param(r, FlgModel) == 1 && param(r, FlgInvFb) == 1 && near(param(r, FlgWetN), 1.0) && near(param(r, FlgDryN), 0.0) &&
+               near(param(r, FlgInvertWet), 1) && near(param(r, FlgFeedN), 0.24, 1e-4),
+           "flanger (FL 3): inverted feedback, wet only");
   }
 }
 

@@ -14,6 +14,7 @@
 // Value curves: see analysis/demos/notes_gamma.md (Time family).
 #include <algorithm>
 #include <cmath>
+#include "../../engine/ClassicDelay.h"
 #include "FlpFx.h"
 #include "../PluginParams.h"
 #include "../../packs/spacefx/sfx_flcurves.h"
@@ -47,8 +48,6 @@ std::vector<double> oldFloats(const Event* st, const double (&range)[12]) {
   return v;
 }
 
-// Tempo of the project being imported (FL tempo-synced times).
-double tempoOf(const Context& c) { return c.song.tempo > 1 ? c.song.tempo : 120.0; }
 
 // Shared helper: a table + the FL values by tag → mapping.
 void finish(PluginMapping& m, const std::shared_ptr<const KnobTable>& t, const std::vector<double>& byTag) {
@@ -120,21 +119,6 @@ bool decodeReeverb2(Context&, const std::vector<Event>& evs, PluginMapping& m) {
 
 double logMap(double v, double vmax, double lo, double hi) { return lo * std::pow(hi / lo, clampd(v / vmax, 0, 1)); }
 
-// FL tempo-based delay time in ticks (192 per beat) → gl.delay: the matching
-// synced division, or a free time at the project tempo.
-void setDelayTime(PluginMapping& m, double ticks, double tempo) {
-  using namespace pp;
-  const double beats = std::max(1.0, ticks) / 192.0;
-  for (int i = 0; i < kDelayBeatCount; ++i)
-    if (std::fabs(kDelayBeats[i] - beats) < 1e-6) {
-      set(m, DlySync, 1);
-      set(m, DlyTime, i);
-      return;
-    }
-  set(m, DlySync, 0);
-  set(m, DlyTimeMs, clampd(beats * 60000.0 / tempo, 1, 3000));
-}
-
 // ---------------------------------------------------------------- Fruity Delay 3
 
 double u6000(double v) { return clampd(v / 6000.0, 0, 1); }
@@ -190,36 +174,38 @@ bool decodeDelay3(Context&, const std::vector<Event>& evs, PluginMapping& m) {
 
 // ---------------------------------------------------------------- Fruity Delay 2
 
+// J-26: classic tempo delay (DlyModel = 2, spec j26_delay2.md): 8 raw ints, no
+// version. Input / dry volume (11^(v/128) - 1)/10 (1 at 128), fold pan v/128,
+// feedback v/128, time in ticks at the host tempo, input-side offset
+// (1001^(|v|/512) - 1)/2 ms, modes normal / swapped / ping-pong, coefficient
+// (21^(v/128) - 1)/20 scaled by 44.1 kHz / sr.
 std::shared_ptr<const KnobTable> delay2Table() {
   using namespace pp;
   static const auto t = std::make_shared<const KnobTable>(KnobTable{
-      {0, -128, 128, DlyInputPan, scale(1.0 / 128)},
-      {1, 0, 160, DlyInput, scale(1.0 / 128)},
-      {2, 0, 160, DlyDry, [](double v) { return clampd(v / 128.0, 0, 1); }},
-      {3, 0, 127, DlyFeedback, scale(1.0 / 128)},
-      // Offset: (1001^(|v|/512) − 1) / 2 ms, negative = left side later (up to 500 ms).
-      {5, -512, 512, DlyOffset, [](double v) { return (v < 0 ? -1.0 : 1.0) * (std::pow(1001.0, std::fabs(clampd(v, -512, 512)) / 512.0) - 1.0) * 0.5; }},
-      {7, 0, 128, DlyCutoff, [](double v) { return clampd(logMap(v, 128, 20, 20000), 300, 20000); }},
+      {0, -128, 128, DlyClsPan, [](double v) { return clampd(v / 128.0, -1, 1); }},
+      {1, 0, 160, DlyClsIn, [](double v) { return cdelay::volume(std::nearbyint(clampd(v, 0, 160))); }},
+      {2, 0, 160, DlyClsDry, [](double v) { return cdelay::volume(std::nearbyint(clampd(v, 0, 160))); }},
+      {3, 0, 127, DlyClsFb, [](double v) { return clampd(v, 0, 127) / 128.0; }},
+      {4, 1, 768, DlyTicks, [](double v) { return clampd(std::nearbyint(v), 1, 768); }},
+      {5, -512, 512, DlyClsOffset, [](double v) { return (v < 0 ? -1.0 : 1.0) * cdelay::offsetMs(v); }},
+      {6, 0, 2, DlyClsMode, [](double v) { return clampd(std::nearbyint(v), 0, 2); }},
+      {7, 0, 128, DlyClsCoef, [](double v) { return cdelay::coefOf(clampd(v, 0, 128) / 128.0); }},
   });
   return t;
 }
 
-bool decodeDelay2(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+bool decodeDelay2(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   using namespace pp;
   const Event* st = pluginState(evs);
   if (!st || st->size < 32) return false;
   begin(m, "gl.delay");
-  set(m, DlyModel, 0);  // Delay 2 maps onto the legacy model (input pan, inverted feedback, ms offset)
+  set(m, DlyModel, 2);
+  set(m, DlyClsStepRound, 0);
+  set(m, DlyClsScaleSr, 1);
+  set(m, DlyClsBpm, 0);
   std::vector<double> v = ints(st, 0, 8);
   finish(m, delay2Table(), v);
-  setDelayTime(m, v[4], tempoOf(c));
-  static const int modes[3] = {0 /* normal */, 2 /* invert */, 1 /* ping-pong */};
-  set(m, DlyMode, modes[static_cast<int>(clampd(v[6], 0, 2))]);
-  set(m, DlyWet, 1);
-  set(m, DlyFilterType, 0);
-  set(m, DlyLowCut, 20);
-  set(m, DlyDistType, 0);
-  m.exact = false;
+  m.exact = true;
   return true;
 }
 
@@ -348,23 +334,21 @@ bool decodeChorus(Context&, const std::vector<Event>& evs, PluginMapping& m) {
 
 // ---------------------------------------------------------------- Hyper Chorus
 
-double u1000(double v) { return clampd(v / 1000.0, 0, 1); }
 
+// J-26: reference engine (EnModel = 1, spec j26_hyperchorus.md): every control
+// as its knob position n = (raw - min) / (max - min); the low / high pass
+// values are knob positions too (raw is not Hz).
 std::shared_ptr<const KnobTable> hyperChorusTable() {
   using namespace sfx;
-  static const auto t = std::make_shared<const KnobTable>(KnobTable{
-      {0, 0, 1000, EnDelay, [](double v) { return 1.0 + 39.0 * u1000(v); }},
-      {1, 0, 1000, EnFeedback, [](double v) { return 0.9 * u1000(v); }},
-      {2, 0, 1000, EnModRate, [](double v) { return logMap(v, 1000, 0.05, 10); }},
-      {3, 0, 1000, EnModAmount, u1000},
-      {4, 0, 1000, EnMoveAmount, u1000},
-      {5, 0, 1000, EnMoveRate, [](double v) { return logMap(v, 1000, 0.02, 4); }},
-      {6, 0, 1, EnLines, [](double v) { return v > 0 ? 1.0 : 0.0; }},
-      {7, 7140, 22000, EnLowPass, [](double v) { return clampd(v, 1500, 22000); }},
-      {8, 120, 10900, EnHighPass, [](double v) { return clampd(v, 20, 10900); }},
-      {9, 0, 1000, EnMix, u1000},
-      {10, 0, 1000, EnPhase, u1000},
-  });
+  static const auto t = [] {
+    static const double lo[11] = {0, 0, 0, 0, 0, 0, 0, 7140, 120, 0, 0}, hi[11] = {1000, 1000, 1000, 1000, 1000, 1000, 1, 22000, 10900, 1000, 1000};
+    KnobTable k;
+    for (int i = 0; i < 11; ++i) {
+      const double a = lo[i], b = hi[i];
+      k.push_back({i, a, b, EnK0 + i, [a, b](double v) { return clampd((v - a) / (b - a), 0, 1); }});
+    }
+    return std::make_shared<const KnobTable>(k);
+  }();
   return t;
 }
 
@@ -372,29 +356,16 @@ bool decodeHyperChorus(Context&, const std::vector<Event>& evs, PluginMapping& m
   const Event* st = pluginState(evs);
   if (!st || st->size < 48) return false;
   begin(m, "gl.ensemble");
+  set(m, sfx::EnModel, 1);
   finish(m, hyperChorusTable(), ints(st, 4, 11));
-  set(m, sfx::EnSpread, 1);
-  m.exact = false;  // filter frequencies direct; time / rate curves reasoned
+  m.exact = true;  // every control law; the starting LFO phases are random in the original
   return true;
 }
 
 // ---------------------------------------------------------------- Fruity Flanger
 
-std::shared_ptr<const KnobTable> flangerTable() {
-  using namespace pp;
-  static const auto t = std::make_shared<const KnobTable>(KnobTable{
-      {0, 0, 1024, FlgDelay, [](double v) { return 0.1 + 9.9 * clampd(v / 1024.0, 0, 1); }},
-      {1, 0, 5000, FlgDepth, scale(1.0 / 5000)},
-      {2, 0, 5000, FlgRate, [](double v) { return logMap(v, 5000, 0.02, 5); }},
-      {3, 0, 360, FlgPhase, nullptr},
-      {4, 0, 5000, FlgDamp, [](double v) { return logMap(v, 5000, 20000, 500); }},
-      {5, 0, 1024, FlgShape, scale(1.0 / 1024)},
-      {8, 0, 1024, FlgInvertWet, [](double v) { return v >= 512 ? 1.0 : 0.0; }},
-      {11, 0, 5000, FlgCross, scale(1.0 / 5000)},
-  });
-  return t;
-}
-
+// J-26: reference engine (FlgModel = 1, spec j26_flanger.md): knob positions
+// n = raw / max; FL 3 era states hold the twelve n as floats.
 bool decodeFlanger(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   using namespace pp;
   const Event* st = pluginState(evs);
@@ -402,12 +373,17 @@ bool decodeFlanger(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   if (!st || (st->size < 52 && st->size != 48)) return false;
   begin(m, "gl.flanger");
   std::vector<double> v = st->size == 48 ? oldFloats(st, kRange) : ints(st, 4, 12);
-  finish(m, flangerTable(), v);
-  double fb = clampd(v[6] / 100.0, 0, 1) * 0.95;
-  set(m, FlgFeedback, v[7] >= 512 ? -fb : fb);
-  double dry = clampd(v[9], 0, 5000), wet = clampd(v[10], 0, 5000);
-  set(m, FlgMix, dry + wet > 0 ? wet / (dry + wet) : 0.5);
-  m.exact = false;  // separate dry / wet levels folded into one mix
+  set(m, FlgModel, 1);
+  auto n = [](double mx) { return [mx](double x) { return clampd(x / mx, 0, 1); }; };
+  auto sw = [](double x) { return x / 1024.0 > 0.5 ? 1.0 : 0.0; };
+  static const auto table = std::make_shared<const KnobTable>(KnobTable{
+      {0, 0, 1024, FlgDelayN, n(1024)},  {1, 0, 5000, FlgDepthN, n(5000)}, {2, 0, 5000, FlgRateN, n(5000)},
+      {3, 0, 360, FlgPhase, [](double x) { return clampd(x, 0, 360); }},  {4, 0, 5000, FlgDampN, n(5000)},
+      {5, 0, 1024, FlgShape, n(1024)},  {6, 0, 100, FlgFeedN, n(100)},     {7, 0, 1024, FlgInvFb, sw},
+      {8, 0, 1024, FlgInvertWet, sw},    {9, 0, 5000, FlgDryN, n(5000)},    {10, 0, 5000, FlgWetN, n(5000)},
+      {11, 0, 5000, FlgCrossN, n(5000)}});
+  finish(m, table, v);
+  m.exact = true;
   return true;
 }
 
