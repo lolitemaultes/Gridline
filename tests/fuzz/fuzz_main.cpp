@@ -10,6 +10,8 @@
 //
 //   gridline_fuzz <target> <seconds> [--work DIR] [--seed N] [--max-len N] [--repro FILE] <corpus file|dir>...
 //   targets: flp fst project sample midi browser-index zip lua (J-36: zip, lua, project seeds with J-31 fields)
+//            song-flp (J-46: mutated Gridline songs → FLP export with / without origin → re-import)
+//            fx-preset (J-46: mutated FL effect presets → decoder → DSP blocks → FLP export → re-import)
 //
 // With no corpus the target's built-in seeds are used (ctest smoke run).
 #include <algorithm>
@@ -44,7 +46,9 @@
 #include "core/flp/Flp.h"
 #include "core/flp/FlpExport.h"
 #include "core/flp/FlpPresets.h"
+#include "engine/Effects.h"
 #include "engine/Sample.h"
+#include "packs/Packs.h"
 
 namespace fs = std::filesystem;
 using Bytes = std::vector<uint8_t>;
@@ -210,6 +214,94 @@ Bytes seedBrowserIndex() {
   return Bytes(t.begin(), t.end());
 }
 
+
+// J-46: a song with the J-37…J-44 arrangement features: overlapping audio
+// clips (automatic crossfades), hand-set fades with shapes / tensions /
+// declickers, clip groups, markers with actions, FL icons, insert lock /
+// separator, and the J-42 effects in mixer slots.
+Bytes seedSongFlp(bool variant) {  // variant: automatic crossfades off, kick channels
+  gl::Document d(gl::makeDemoSong());
+  const gl::ObjectId ch = d.addChannel("loop", "gl.sampler");
+  d.editSong("qa", [&](gl::Song& x) {
+    for (auto& c : x.channels)
+      if (c.id == ch) c.plugin.data = "sample=/nonexistent/qa-loop.wav\n";
+    const gl::Tick bar = x.barTicks();
+    for (int i = 0; i < 4; ++i) {
+      gl::Clip k;
+      k.id = x.allocateId();
+      k.kind = gl::ClipKind::Audio;
+      k.source = ch;
+      k.track = 9 + i / 3;
+      k.start = bar * i - (i ? bar / 4 : 0);
+      k.length = bar + bar / 2;
+      k.audioEnd = 2.0;
+      if (i == 1) k.fadeIn = 0.25, k.fadeInManual = true, k.fadeInShape = 1, k.fadeInTension = -3.5f, k.fadeInDeclick = 2;
+      if (i == 2) k.fadeOut = 0.1, k.fadeOutManual = true, k.fadeOutTension = 40.f, k.fadeOutDeclick = 1;
+      if (i == 3) k.fadeOutManual = true;  // "no fade" by hand
+      while (static_cast<int>(x.tracks.size()) <= k.track) x.tracks.push_back(gl::PlaylistTrack{});
+      x.playlist.push_back(k);
+    }
+    if (x.tracks.size() > 2) x.tracks[1].flIcon = 37, x.tracks[2].locked = true;
+    if (!x.channels.empty()) x.channels[0].flIcon = 12;
+    for (size_t m = 1; m < x.mixer.size() && m < 4; ++m) x.mixer[m].separator = m == 2, x.mixer[m].locked = m == 3, x.mixer[m].flIcon = static_cast<int>(m) * 5;
+    gl::Marker mk;
+    mk.pos = bar * 2, mk.name = "loop here", mk.action = static_cast<gl::MarkerAction>(1);
+    x.markers.push_back(mk);
+    mk.pos = bar * 4, mk.name = "sig", mk.timeSigNum = 3, mk.timeSigDen = 4, mk.action = gl::MarkerAction::None;
+    x.markers.push_back(mk);
+    x.autoCrossfades = !variant;
+    // Light plugins (the encoders of the demo's synths take seconds per
+    // export) plus the J-42 effects; the variant has kick channels.
+    for (auto& c : x.channels)
+      if (c.id != ch) c.plugin = gl::defaultPluginState(variant ? "gl.kick" : "gl.sampler");
+    for (auto& m : x.mixer)
+      for (auto& sl : m.slots) sl = gl::EffectSlot{};
+    const std::vector<std::string> fx = {"gl.pocketrack", "gl.timegate", "gl.octafilter", "gl.convolver", "gl.amprack", "gl.splitter"};  // (no band delay: its curve fit takes ~1 s per export)
+    for (size_t k = 0; k < fx.size() && 1 + k / 2 < x.mixer.size(); ++k) x.mixer[1 + k / 2].slots[k % 2].plugin = gl::defaultPluginState(fx[k]);
+  });
+  std::set<gl::ObjectId> clips;
+  for (const auto& c : d.song().playlist)
+    if (c.kind == gl::ClipKind::Audio) clips.insert(c.id);
+  gl::ops::groupClips(d, clips);
+  std::string t = gl::projectToText(d.song());
+  return Bytes(t.begin(), t.end());
+}
+
+// J-46: the FL presets of the J-42 effects (Pocket Rack, Gross Beat, Love
+// Philter) when FL Studio is installed; the bare seed otherwise.
+std::vector<Bytes> seedFxPresets() {
+  std::vector<Bytes> v;
+  const std::string root = "/Applications/FL Studio 2026.app/Contents/Resources/FL/Data/Patches/Plugin presets/Effects/";
+  for (const char* dir : {"FL Studio Mobile Rack FX", "Gross Beat", "Fruity Love Philter"}) {
+    std::error_code ec;
+    std::vector<std::string> files;
+    for (auto it = fs::recursive_directory_iterator(root + dir, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+      if (it->path().extension() == ".fst") files.push_back(it->path().string());
+    std::sort(files.begin(), files.end());
+    for (const auto& f : files) v.push_back(readAll(f));
+  }
+  if (v.empty()) v.push_back(seedFlp());
+  return v;
+}
+
+void exportReimport(const gl::Song& s) {
+  for (bool origin : {true, false}) {
+    gl::flp::ExportOptions o;
+    o.useOrigin = origin;
+    o.factoryData = "/nonexistent-fl-data";
+    gl::flp::ExportReport rep;
+    gl::flp::Bytes out;
+    if (!gl::flp::exportFlp(s, out, rep, o)) continue;
+    gl::Song back;
+    gl::flp::Report r2;
+    std::string err;
+    if (!gl::importFlpBytes(out, back, r2, &err, "/nonexistent-fl-data", "", false)) {
+      std::fprintf(stderr, "re-import of our own export failed: %s\n", err.c_str());
+      std::abort();  // our own output must read back
+    }
+  }
+}
+
 // ---------------------------------------------------------------- targets
 struct Target {
   const char* name;
@@ -249,6 +341,51 @@ std::vector<Target> targets() {
          }
        },
        [] { return std::vector<Bytes>{seedFlp()}; }},
+      {"song-flp", ".json",  // J-46: mutated songs → FLP export (with / without the origin) → re-import
+       [](const std::string& p) {
+         gl::Song s;
+         std::string err;
+         if (gl::loadProject(p, s, &err)) exportReimport(s);
+       },
+       [] { return std::vector<Bytes>{seedSongFlp(false), seedSongFlp(true)}; }},  // (the every-effect seed is slow: ~10 s per export)
+      {"fx-preset", ".fst",  // J-46: mutated FL effect presets → decoder → effect DSP → FLP export → re-import
+       [](const std::string& p) {
+         gl::flp::PresetResult r;
+         if (!gl::flp::importFlPreset(p, r, "/nonexistent-fl-data") || r.kind != gl::flp::PresetResult::Plugin) return;
+         gl::PluginState st = r.state;
+         gl::normalizePluginState(st);
+         const gl::PluginInfo* info = gl::findPlugin(st.type);
+         if (!info) return;
+         if (info->kind == gl::PluginKind::Effect) {
+           if (auto fx = gl::createEffect(st.type)) {
+             fx->prepareHost(st, 44100.0);
+             gl::ChannelAux aux;
+             (void)gl::packs::prepareAux(st, aux);
+             (void)fx->latencyFor(st, 44100.0);
+             gl::ProcessContext ctx;
+             ctx.sampleRate = 44100.0, ctx.playing = true;
+             std::vector<float> L(512), R(512);
+             uint32_t x = 12345;
+             for (int b = 0; b < 6; ++b) {
+               for (size_t i = 0; i < L.size(); ++i) {
+                 x = x * 1664525u + 1013904223u;
+                 L[i] = static_cast<float>(x >> 8) / 16777216.0f - 0.5f, R[i] = -L[i];
+               }
+               fx->processAux(st, aux, ctx, L.data(), R.data(), b == 3 ? 37 : 512);
+               ctx.tick += 48;
+             }
+           }
+         }
+         // A light song (cheap encoders) around the decoded plugin.
+         gl::Song s = gl::makeDemoSong();
+         for (auto& ch : s.channels) ch.plugin = gl::defaultPluginState("gl.sampler");
+         for (auto& m : s.mixer)
+           for (auto& sl : m.slots) sl = gl::EffectSlot{};
+         if (info->kind == gl::PluginKind::Effect && s.mixer.size() > 1) s.mixer[1].slots[0].plugin = st;
+         else if (info->kind == gl::PluginKind::Generator && !s.channels.empty()) s.channels[0].plugin = st;
+         exportReimport(s);
+       },
+       [] { return seedFxPresets(); }},
       {"fst", ".fst",
        [](const std::string& p) {
          gl::flp::PresetResult r;

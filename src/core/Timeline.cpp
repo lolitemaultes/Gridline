@@ -93,6 +93,13 @@ Tick snapGrid(const Song& s, Snap mode, double pxPerTick, bool altHeld) {
 
 Tick snapTick(Tick t, Tick grid, Snap mode) { return mode == Snap::Cell ? snapDown(t, grid) : snapNearest(t, grid); }
 
+Tick tickAtPx(float px, float pxPerTick) {
+  constexpr double kLim = 4.0e15;  // far past any song, well inside Tick
+  const double t = static_cast<double>(std::floor(px / pxPerTick));
+  if (std::isnan(t)) return 0;
+  return static_cast<Tick>(std::clamp(t, -kLim, kLim));
+}
+
 double clampZoom(const Song& s, double pxPerTick) { return std::clamp(pxPerTick, minPxPerTick(s), maxPxPerTick(s)); }
 
 void zoomAt(const Song& s, float& pxPerTick, float& scrollX, double factor, float anchorPx) {

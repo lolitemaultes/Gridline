@@ -861,7 +861,7 @@ void drawPlaylist(App& a) {
     tr = std::clamp(tr, 0, std::max(0, nTracks - 1));
     return nTracks ? trackY[static_cast<size_t>(tr) + 1] - trackY[static_cast<size_t>(tr)] : trackH;
   };
-  auto tickAt = [&](float x) { return static_cast<Tick>(std::floor((x - gMin.x + st.scrollX) / st.pxPerTick)); };
+  auto tickAt = [&](float x) { return timeline::tickAtPx(x - gMin.x + st.scrollX, st.pxPerTick); };
   auto trackAt = [&](float y) {
     float yy = y - gMin.y + st.scrollY;
     auto it = std::upper_bound(trackY.begin(), trackY.end(), yy);
@@ -2281,7 +2281,7 @@ void drawPlaylist(App& a) {
   }
   if (ImGui::IsItemDeactivated()) {
     if (cg.kind == ClipGesture::Play) a.engine.pause();  // the play tool plays while held
-    if (cg.kind == ClipGesture::Zoom) {
+    if (cg.kind == ClipGesture::Zoom && ImGui::IsMousePosValid(&m)) {  // J-46: released outside the window: no zoom
       if (std::fabs(m.x - cg.start.x) < 4) {
         st.zoomRequest *= 1.5f;
       } else {

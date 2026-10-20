@@ -431,8 +431,9 @@ void drawPianoRoll(App& a) {
 
   auto xOf = [&](Tick t) { return gridMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; };
   auto yOf = [&](int pitch) { return gridMin.y + (127 - pitch) * rowH - st.scrollY; };
-  auto tickAt = [&](float x) { return static_cast<Tick>(std::floor((x - gridMin.x + st.scrollX) / st.pxPerTick)); };
-  auto pitchAt = [&](float y) { return std::clamp(127 - static_cast<int>(std::floor((y - gridMin.y + st.scrollY) / rowH)), 0, 127); };
+  auto tickAt = [&](float x) { return timeline::tickAtPx(x - gridMin.x + st.scrollX, st.pxPerTick); };
+  // J-46: clamped before the conversion (the pointer is -FLT_MAX outside the window).
+  auto pitchAt = [&](float y) { return 127 - static_cast<int>(std::clamp(std::floor((y - gridMin.y + st.scrollY) / rowH), 0.0f, 127.0f)); };
   // ---- zoom: Ctrl+wheel at the pointer, PgUp/PgDn, Home = fit the pattern ----
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput) {
     if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) st.zoomRequest *= 1.5f;

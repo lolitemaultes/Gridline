@@ -1273,6 +1273,7 @@ int main(int argc, char** argv) {
     captureHostedStates(app);
     std::fprintf(stderr, "%s %s\n", app.saveProject(devSaveAtExit) ? "saved" : "could not save", devSaveAtExit.c_str());
   }
+  browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   closeAllHostedEditors(app);
   if (gDevice) SDL_CloseAudioDevice(gDevice);
   ImGui_ImplOpenGL3_Shutdown();

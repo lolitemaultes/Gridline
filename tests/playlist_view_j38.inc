@@ -267,4 +267,19 @@ void mixerLayoutTests() {
     const auto T = mixlayout::compute(in);
     expect(!T.masterScale && T.cells[0].w <= T.contentW, "thin mixer: the master drops its dB scale first when the pane is very thin");
   }
+  {  // J-46: thin toolbar. "Routing" was drawn (and clipped) in every thin pane:
+     // its room was measured after "Hold" had ended the line. Groups drop in
+     // order, never out of order, and what shows always fits.
+    const float mw = 120, hw = 44, rw = 86;
+    bool ordered = true, fitsRoom = true;
+    for (float room = 0; room <= 400; room += 1) {
+      const auto f = mixlayout::toolbarFit(room, mw, hw, rw);
+      ordered = ordered && (!f.hold || f.meters) && (!f.routing || f.hold);
+      const float used = (f.meters ? mw : 0) + (f.hold ? hw : 0) + (f.routing ? rw : 0);
+      fitsRoom = fitsRoom && used <= room;
+    }
+    const auto at1440 = mixlayout::toolbarFit(200, mw, hw, rw);  // the default layout's pane at 1440 x 900
+    expect(ordered && fitsRoom, "thin mixer toolbar: optional groups drop in order and always fit the room");
+    expect(at1440.meters && at1440.hold && !at1440.routing, "thin mixer toolbar: routing drops when only meters + hold fit");
+  }
 }

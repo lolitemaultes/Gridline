@@ -19,6 +19,14 @@ namespace gl {
 
 namespace {
 
+// J-46: tick values read from a project stay within ±2^42 (≈ 4.4e12 ticks,
+// far past any song) so that start + length sums can never overflow int64
+// (a fuzzed project with start = INT64_MAX overflowed in the FLP exporter).
+Tick jsonTick(double v) {
+  constexpr double kLim = 4398046511104.0;  // 2^42
+  return jsonInt<Tick>(std::isnan(v) ? 0.0 : std::clamp(v, -kLim, kLim));
+}
+
 Json num(double v) { return Json::makeNumber(v); }
 Json str(const std::string& v) { return Json::makeString(v); }
 
@@ -343,7 +351,7 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   std::string k = jc.text("kind", "pattern");
   c.kind = k == "audio" ? ClipKind::Audio : k == "automation" ? ClipKind::Automation : ClipKind::Pattern;
   c.source = jsonInt<ObjectId>(std::max(0.0, jc.num("source", 0)));
-  c.offset = std::max<Tick>(0, jsonInt<Tick>(jc.num("offset", 0)));
+  c.offset = std::max<Tick>(0, jsonTick(jc.num("offset", 0)));
   c.muted = flag(jc, "muted");
   c.audioStart = std::max(0.0, jc.num("audioStart", 0));
   c.audioEnd = std::max(0.0, jc.num("audioEnd", 0));
@@ -432,14 +440,14 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
       a.index = jsonInt<uint32_t>(std::max(0.0, ja.num("index", 0)));
       a.min = static_cast<float>(std::clamp(ja.num("min", 0), 0.0, 1.0));
       a.max = static_cast<float>(std::clamp(ja.num("max", 1), 0.0, 1.0));
-      a.loop = std::max<Tick>(0, jsonInt<Tick>(ja.num("loop", 0)));
+      a.loop = std::max<Tick>(0, jsonTick(ja.num("loop", 0)));
       a.flCurves = flag(ja, "flCurves");
       if (const Json* pts = ja.find("points"); pts && pts->is(Json::Type::Array))
         for (const auto& jp : pts->array) {
           if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;
           auto at = [&](size_t i, double d) { return i < jp.array.size() && jp.array[i].is(Json::Type::Number) ? jp.array[i].number : d; };
           AutoPoint p;
-          p.pos = std::max<Tick>(0, jsonInt<Tick>(at(0, 0)));
+          p.pos = std::max<Tick>(0, jsonTick(at(0, 0)));
           p.value = static_cast<float>(std::clamp(at(1, 0.5), 0.0, 1.0));
           p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
           p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
@@ -451,7 +459,7 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
   if (const Json* arr = j.find("markers"); arr && arr->is(Json::Type::Array))
     for (const auto& jm : arr->array) {
       Marker m;
-      m.pos = std::max<Tick>(0, jsonInt<Tick>(jm.num("pos", 0)));
+      m.pos = std::max<Tick>(0, jsonTick(jm.num("pos", 0)));
       m.name = jm.text("name");
       m.timeSigNum = jsonInt<int>(std::clamp(jm.num("timeSigNum", 0), 0.0, 32.0));
       m.timeSigDen = jsonInt<int>(std::clamp(jm.num("timeSigDen", 0), 0.0, 32.0));
@@ -491,7 +499,7 @@ std::vector<AutoPoint> pointsFromJson(const Json* pts) {
     if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;
     auto at = [&](size_t i, double d) { return i < jp.array.size() && jp.array[i].is(Json::Type::Number) ? jp.array[i].number : d; };
     AutoPoint p;
-    p.pos = std::max<Tick>(0, jsonInt<Tick>(at(0, 0)));
+    p.pos = std::max<Tick>(0, jsonTick(at(0, 0)));
     p.value = static_cast<float>(std::clamp(at(1, 0.5), 0.0, 1.0));
     p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
     p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
@@ -684,7 +692,7 @@ void songExtrasToJson(const Song& s, Json& j) {
 // clips get unique ids; clips whose content is gone are dropped.
 bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const Json&, ObjectId&)>& takeId, std::string* err) {
   if (const Json* jl = j.find("live"); jl && jl->is(Json::Type::Object))
-    s.live.areaEnd = std::max<Tick>(0, jsonInt<Tick>(jl->num("areaEnd", 0)));
+    s.live.areaEnd = std::max<Tick>(0, jsonTick(jl->num("areaEnd", 0)));
   const Json* arr = j.find("arrangements");
   if (!arr || !arr->is(Json::Type::Array) || arr->array.empty()) return true;
   const int cur = jsonInt<int>(std::clamp(j.num("currentArrangement", 0), 0.0, static_cast<double>(arr->array.size() - 1)));
@@ -699,8 +707,8 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
           if (!takeId(jc, c.id)) return fail(err, "arrangement clip has missing or duplicate id");
           c.pattern = jsonInt<ObjectId>(jc.num("pattern", 0));
           c.track = jsonInt<int>(std::clamp(jc.num("track", 0), 0.0, static_cast<double>(kMaxPlaylistTracks - 1)));
-          c.start = std::max<Tick>(0, jsonInt<Tick>(jc.num("start", 0)));
-          c.length = std::max<Tick>(0, jsonInt<Tick>(jc.num("length", 0)));
+          c.start = std::max<Tick>(0, jsonTick(jc.num("start", 0)));
+          c.length = std::max<Tick>(0, jsonTick(jc.num("length", 0)));
           clipArrangementFromJson(jc, c);
           if (c.kind == ClipKind::Audio && !s.channel(c.source)) continue;
           if (c.kind == ClipKind::Automation && !s.automation(c.source)) continue;
@@ -724,7 +732,7 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
       if (const Json* marks = ja.find("markers"); marks && marks->is(Json::Type::Array))
         for (const auto& jm : marks->array) {
           Marker m;
-          m.pos = std::max<Tick>(0, jsonInt<Tick>(jm.num("pos", 0)));
+          m.pos = std::max<Tick>(0, jsonTick(jm.num("pos", 0)));
           m.name = jm.text("name");
           m.timeSigNum = jsonInt<int>(std::clamp(jm.num("timeSigNum", 0), 0.0, 32.0));
           m.timeSigDen = jsonInt<int>(std::clamp(jm.num("timeSigDen", 0), 0.0, 32.0));
@@ -735,7 +743,7 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
           a.markers.push_back(std::move(m));
         }
       std::stable_sort(a.markers.begin(), a.markers.end(), [](const Marker& x, const Marker& y) { return x.pos < y.pos; });
-      a.live.areaEnd = std::max<Tick>(0, jsonInt<Tick>(ja.num("liveAreaEnd", 0)));
+      a.live.areaEnd = std::max<Tick>(0, jsonTick(ja.num("liveAreaEnd", 0)));
     }
     s.arrangements.push_back(std::move(a));
   }
@@ -1212,8 +1220,8 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
         std::vector<Note> ns;
         for (const auto& e : v.array) {
           Note n;
-          n.start = std::max<Tick>(0, jsonInt<Tick>(e.num("start", 0)));
-          n.length = std::max<Tick>(1, jsonInt<Tick>(e.num("length", s.ppq)));
+          n.start = std::max<Tick>(0, jsonTick(e.num("start", 0)));
+          n.length = std::max<Tick>(1, jsonTick(e.num("length", s.ppq)));
           n.pitch = jsonInt<int>(std::clamp(e.num("pitch", 60), 0.0, 127.0));
           n.velocity = jsonInt<int>(std::clamp(e.num("velocity", 100), 0.0, 127.0));
           noteFromJson(e, n);
@@ -1259,8 +1267,8 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       if (!takeId(jc, c.id)) return fail(err, "clip has missing or duplicate id");
       c.pattern = jsonInt<ObjectId>(jc.num("pattern", 0));
       c.track = jsonInt<int>(jc.num("track", 0));
-      c.start = jsonInt<Tick>(jc.num("start", 0));
-      c.length = jsonInt<Tick>(jc.num("length", 0));
+      c.start = jsonTick(jc.num("start", 0));
+      c.length = jsonTick(jc.num("length", 0));
       clipArrangementFromJson(jc, c);  // arrangement fields; audio / automation clips with a missing source are dropped
       if (c.kind == ClipKind::Audio && !s.channel(c.source)) continue;
       if (c.kind == ClipKind::Automation && !s.automation(c.source)) continue;

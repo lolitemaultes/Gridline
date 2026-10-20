@@ -26,6 +26,12 @@ void ensureIndex(App& a);
 void refreshIndex(App& a);
 // Per frame: re-walks the roots every few minutes while idle (file watching).
 void tickIndex(App& a);
+// Stops the indexing worker (main, before teardown). J-46: on a first run the
+// worker is still analysing the shipped packs when a short run quits; left to
+// the index's static destructor it kept running while the function-local
+// statics it uses (tag vocabulary, sample cache …), built after the index,
+// were already destroyed.
+void shutdownIndex();
 // FL Studio's shipped "Data" folder (read in place), or "".
 std::string flDataDir();
 // Gridline's own content folders under the config dir ("Recorded",

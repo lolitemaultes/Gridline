@@ -43,6 +43,11 @@ Tick snapGrid(const Song& s, Snap mode, double pxPerTick, bool altHeld);
 // every other mode to the nearest grid line.
 Tick snapTick(Tick t, Tick grid, Snap mode);
 
+// Tick under a pixel offset (floor(px / pxPerTick)), defined for any input:
+// the pointer position is -FLT_MAX while it is outside the window (J-46: a
+// zoom drag released there converted -inf to an integer).
+Tick tickAtPx(float px, float pxPerTick);  // (float maths, as the views use)
+
 // Clamps a zoom value to the song's range.
 double clampZoom(const Song& s, double pxPerTick);
 // Zooms by `factor`, keeping the tick under `anchorPx` (pixels from the left

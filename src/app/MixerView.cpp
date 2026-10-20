@@ -1042,31 +1042,33 @@ static void mixerToolbar(App& a) {
   for (const char* m : meters) meterSegW += ImGui::CalcTextSize(m).x + sty.FramePadding.x * 2 + 2;
   const float holdW = ImGui::CalcTextSize("Hold").x + sty.FramePadding.x * 2 + 2, routeW = ImGui::CalcTextSize("Routing").x + sty.FramePadding.x * 2 + 18;
   ImGui::SameLine(0, 6);
-  bool fits = !column || room() >= meterSegW;
-  if (fits) {
+  // J-46: decided once from the room at the first optional group (the routing
+  // check used to run after "Hold" had ended the line, where the cursor is
+  // back at the left edge, so "Routing" was always drawn and clipped).
+  mixlayout::ToolbarFit fit{true, true, true};
+  if (column) fit = mixlayout::toolbarFit(room(), meterSegW, 4 + holdW, 12 + routeW);
+  if (fit.meters) {
     ui::Segmented("##meter", meters, 3, &v.meterMode, 0, 0, nullptr);
     ui::Hint("Meters: peak, RMS (average level) or both");
     ImGui::SameLine(0, 4);
-    fits = !column || room() >= holdW;
-    if (fits && ui::TextButton("Hold", v.peakHold, 0, "Meters hold their peaks for a moment")) v.peakHold = !v.peakHold;
+    if (fit.hold && ui::TextButton("Hold", v.peakHold, 0, "Meters hold their peaks for a moment")) v.peakHold = !v.peakHold;
   }
-  if (fits && (!column || room() >= routeW)) {
+  if (fit.routing) {
     ImGui::SameLine(0, 6);
     ui::ToolbarDivider();
     ImGui::SameLine(0, 6);
     if (ui::TextButton("Routing", v.showRouting, 0, "Routing overview: every route between the tracks")) v.showRouting = !v.showRouting;
   }
   const auto selIds = mixerSelection(a);
-  if (selIds.size() > 1) {
+  // Status texts after the buttons: dropped in a thin column when they would clip.
+  auto status = [&](ImU32 col, const std::string& t) {
     ImGui::SameLine(0, 10);
+    if (column && room() < ImGui::CalcTextSize(t.c_str()).x) return;
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.textDim), "%zu tracks selected", selIds.size());
-  }
-  if (const size_t armed = armedTracks(a.doc.song()).size()) {
-    ImGui::SameLine(0, 10);
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.danger), "%zu armed", armed);
-  }
+    ImGui::TextColored(theme::vec(col), "%s", t.c_str());
+  };
+  if (selIds.size() > 1) status(P.textDim, std::to_string(selIds.size()) + " tracks selected");
+  if (const size_t armed = armedTracks(a.doc.song()).size()) status(P.danger, std::to_string(armed) + " armed");
   ui::EndToolbar();
 }
 

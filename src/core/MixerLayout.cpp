@@ -56,4 +56,17 @@ Layout compute(const Input& in) {
   return L;
 }
 
+ToolbarFit toolbarFit(float room, float metersW, float holdW, float routingW) {
+  ToolbarFit f;
+  float left = room;
+  f.meters = left >= metersW;
+  if (!f.meters) return f;
+  left -= metersW;
+  f.hold = left >= holdW;
+  if (!f.hold) return f;
+  left -= holdW;
+  f.routing = left >= routingW;
+  return f;
+}
+
 }  // namespace gl::mixlayout

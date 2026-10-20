@@ -95,6 +95,10 @@ void tickIndex(App& a) {
   }
 }
 
+void shutdownIndex() {
+  if (indexStarted) index().stop();
+}
+
 void refreshIndex(App& a) {
   if (!indexStarted) return ensureIndex(a);
   index().setRoots(indexRoots(a));

@@ -61,4 +61,14 @@ struct Layout {
 float minRowHeight(const Input& in);
 Layout compute(const Input& in);
 
+// Thin-pane toolbar (J-38, J-46): the optional groups after "Slots" and the
+// waveform toggle, in order: meter mode, peak hold, routing. `room` is the
+// width left at the first optional group; each width includes the gap (and
+// divider) before its group. A group shows only when it and the groups before
+// it fit; dropped groups stay in the mixer menu.
+struct ToolbarFit {
+  bool meters = false, hold = false, routing = false;
+};
+ToolbarFit toolbarFit(float room, float metersW, float holdW, float routingW);
+
 }  // namespace gl::mixlayout

@@ -1911,8 +1911,9 @@ inline bool moduleExact(int type, const float* p) {
   switch (type) {
     case 35: return p[12] < 0.5f;             // reverb: tempo-synced pre-delay not modelled
     case 43: case 45: return false;           // wall-clock random drift, pitch corrector
-    case 4: return std::clamp(static_cast<int>(7 * p[1]), 0, 7) == 0;  // only the echo kind
-    case 40: return std::clamp(static_cast<int>(2 * p[1]), 0, 2) == 0;  // manual pitch only
+    // J-46: clamped as floats first (decoded FL values can be huge: UB in the int conversion).
+    case 4: return static_cast<int>(std::clamp(7 * p[1], 0.0f, 7.0f)) == 0;  // only the echo kind
+    case 40: return static_cast<int>(std::clamp(2 * p[1], 0.0f, 2.0f)) == 0;  // manual pitch only
     case 42: return p[5] > 0.5f;  // steady play state passes the audio
     default: return makeModule(type) != nullptr;
   }

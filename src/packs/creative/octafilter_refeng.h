@@ -52,9 +52,13 @@ struct LfoShape {
     c = static_cast<float>((T < 0 ? -1.0 : T > 0 ? 1.0 : 0.0) * (std::exp(static_cast<double>(a) * std::log(1e18)) - 1.0));
     k = c != 0 ? 1.f / std::fabs(c) : 0.f;
     L = static_cast<float>(std::log(std::fabs(static_cast<double>(c)) + 1.0));
-    const float s = static_cast<float>(K / 256.0), w = static_cast<float>(W / 128.0);
+    const float s = static_cast<float>(K / 256.0), w = std::clamp(static_cast<float>(W / 128.0), -1.0f, 1.0f);
     const double two32 = 4294967296.0;
-    E = w > 0 ? static_cast<uint32_t>(std::nearbyint(static_cast<double>(static_cast<float>((1 - w) * two32)) - 1.0)) : 0xFFFFFFFFu;
+    // J-46: full pulse width (w = 1) gives -1 here; converting a negative
+    // double to uint32 is UB. The value wraps modulo 2^32 (0xFFFFFFFF: the
+    // whole cycle, what the conversion produced on x86 before).
+    E = w > 0 ? static_cast<uint32_t>(static_cast<int64_t>(std::nearbyint(static_cast<double>(static_cast<float>((1 - w) * two32)) - 1.0)))
+              : 0xFFFFFFFFu;
     double m = static_cast<double>(static_cast<float>(((1 - w) * 0.5f - (1 - std::fabs(w)) * s) * static_cast<float>(two32)));
     m = std::clamp(m, 1.0, static_cast<double>(E) - 1.0);
     M = static_cast<uint32_t>(std::nearbyint(m));
@@ -236,8 +240,9 @@ class RefEngine {
     } else {
       mx_ = static_cast<float>(tx), my_ = static_cast<float>(ty);
     }
-    const int idx[3] = {std::clamp(static_cast<int>(std::nearbyint(mx_)), 0, 1024), std::clamp(static_cast<int>(std::nearbyint(my_)), 0, 1024),
-                        std::clamp(static_cast<int>(std::nearbyint(folPeak_ * 1024.0)), 0, 1024)};
+    // J-46: clamped before the int conversion (a runaway follower peak overflowed int).
+    auto cell = [](double v) { return std::isnan(v) ? 0 : static_cast<int>(std::clamp(std::nearbyint(v), 0.0, 1024.0)); };
+    const int idx[3] = {cell(mx_), cell(my_), cell(folPeak_ * 1024.0)};
     folPeak_ = 0;
     const int pat = std::clamp(static_cast<int>(std::lround(P(s, OfPattern))), 0, kPatterns - 1);
     const double lfoS = signedVol(P(s, OfMasterLfo));
@@ -354,8 +359,12 @@ class RefEngine {
     const int16_t* T = tabs_->ws[u] + 1;  // T[-1] .. T[N] valid
     const int N = wsN_[u], M = N - 1;
     const double G = run_[u].wsPre;
+    // J-46: a runaway (huge / inf / NaN) input made lrint return LONG_MIN and
+    // -k overflow. Past the table ends the output is flat (T[-1] = T[0],
+    // T[M + 1] = T[M]), so clamping just outside them changes nothing else.
+    auto lim = [M](double v) { return std::isnan(v) ? 0.0 : std::clamp(v, -(M + 2.0), M + 2.0); };
     if (!run_[u].wsBip) {
-      const double val = x * G * M;
+      const double val = lim(x * G * M);
       if (!run_[u].wsHq) {
         const long k = std::lrint(val);
         return (k >= 0 ? T[std::min<long>(k, M)] : -T[std::min<long>(-k, M)]) / 32768.0;
@@ -369,7 +378,7 @@ class RefEngine {
       const long a = std::min<long>(-k, M);
       return -(T[a] - (T[a + 1] - T[a]) * f) / 32768.0;
     }
-    const double val = x * G * M / 2 + M / 2.0;
+    const double val = lim(x * G * M / 2 + M / 2.0);
     long k = std::lrint(val);
     if (!run_[u].wsHq) return T[std::clamp<long>(k, 0, M)] / 32768.0;
     const double f = val - static_cast<double>(k);

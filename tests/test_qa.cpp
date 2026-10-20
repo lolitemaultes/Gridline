@@ -22,12 +22,15 @@
 #include "Hermetic.h"
 #include "core/BrowserIndex.h"
 #include "core/ChordTools.h"
+#include "core/Fades.h"
 #include "core/Grouping.h"
 #include "core/MenuOpsExtra.h"
 #include "core/MenuParity.h"
 #include "core/MixerOps.h"
 #include "core/NoteTools.h"
 #include "core/SongTools.h"
+#include "core/Timeline.h"
+#include "core/WavWriter.h"
 #include "core/ControllerScript.h"
 #include "core/Demo.h"
 #include "core/Document.h"
@@ -38,8 +41,12 @@
 #include "core/PluginInfo.h"
 #include "core/Project.h"
 #include "core/flp/Flp.h"
+#include "core/flp/FlpExport.h"
 #include "engine/ClassicModFx.h"
+#include "engine/Effects.h"
 #include "engine/WavPack.h"
+#include "packs/creative/creative.h"
+#include "packs/dynamics/pocket_mods.h"
 
 using namespace gl;
 using namespace gl::ops;
@@ -118,7 +125,79 @@ struct Editor {
   // J-36: the operations added since J-21 (J-27 menu ops, J-28 playlist
   // tools, J-31 groups / loops / key markers / chords, J-12 mixer ops).
   const char* stepNew() {
-    switch (pick(30)) {
+    switch (pick(37)) {
+      case 30: {  // J-38/J-43: a fade edge edited by hand (length, shape, tension, declicker) or reset to automatic
+        const ObjectId id = anyClipOf(ClipKind::Audio);
+        const bool in = pick(2), reset = pick(4) == 0;
+        const double len = pick(5) == 0 ? 0.0 : static_cast<double>(range(0, 4000)) / 1000.0;
+        const float ten = static_cast<float>(range(-63500, 63500)) / 100.0f;
+        const int shape = range(0, 1), decl = range(0, 2);
+        d.editClip(id, reset ? "automatic crossfade" : "fade set by hand", [&](Clip& x) {
+          double& l = in ? x.fadeIn : x.fadeOut;
+          bool& m = in ? x.fadeInManual : x.fadeOutManual;
+          if (reset) {
+            l = 0, m = false;
+            return;
+          }
+          l = len, m = true;
+          (in ? x.fadeInShape : x.fadeOutShape) = static_cast<uint8_t>(shape);
+          (in ? x.fadeInTension : x.fadeOutTension) = ten;
+          (in ? x.fadeInDeclick : x.fadeOutDeclick) = static_cast<uint8_t>(decl);
+        }, pick(2) ? 0 : 0x46414445ull + (in ? 1 : 0));  // half of them merge like a handle drag
+        return "fadeEdit";
+      }
+      case 31: {  // J-38: an audio clip placed overlapping another one on its track (automatic crossfade)
+        const ObjectId id = anyClipOf(ClipKind::Audio);
+        const Clip* c = s().clip(id);
+        if (!c) return "overlapClip-none";
+        Clip k = *c;
+        const Tick len = std::max<Tick>(1, s().clipLength(*c));
+        k.start = c->start + range(1, static_cast<int>(std::min<Tick>(len, 1 << 20)));
+        d.editSong("overlapping audio clip", [&](Song& x) {
+          k.id = x.allocateId();
+          k.fadeIn = k.fadeOut = 0, k.fadeInManual = k.fadeOutManual = false;
+          x.playlist.push_back(k);
+        });
+        return "overlapClip";
+      }
+      case 32: d.editSong("automatic crossfades", [](Song& x) { x.autoCrossfades = !x.autoCrossfades; }); return "autoCrossfades";
+      case 33: {  // J-39 icons: playlist track / channel FL icons, mixer track icon
+        const int icon = range(-3, 300);
+        switch (pick(3)) {
+          case 0: d.editPlaylistTrack(range(-1, 12), "track icon", [&](PlaylistTrack& t) { t.flIcon = std::max(0, icon); }); break;
+          case 1: d.editChannel(anyChannel(), "channel icon", [&](Channel& c) { c.flIcon = std::max(0, icon); }); break;
+          default: mixops::setIcon(d, someInserts(), icon); break;
+        }
+        return "icons";
+      }
+      case 34: {  // J-39: insert lock / separator
+        const bool sep = pick(2), on = pick(2);
+        d.beginGroup(sep ? "separator" : "lock inserts");
+        for (ObjectId t : someInserts(2))
+          d.editMixerTrack(t, sep ? "separator" : "lock insert", [&](MixerTrack& m) { (sep ? m.separator : m.locked) = on; });
+        d.endGroup();
+        return "insertLockSeparator";
+      }
+      case 35: {  // J-31/J-39: clip groups moved as one (group drag), then possibly ungrouped
+        d.beginGroup("group + drag");
+        const ObjectId g = groupClips(d, someClips(4));
+        const Tick dt = range(-s().ppq * 2, s().ppq * 2);
+        if (g != kNoId)
+          d.editClips("move group", [&](std::vector<Clip>& v) {
+            for (auto& c : v)
+              if (c.group == g) c.start = std::max<Tick>(0, c.start + dt);
+          });
+        d.endGroup();
+        return "groupDrag";
+      }
+      case 36: {  // reset fades (clip menu) on a selection
+        std::set<ObjectId> sel = someClips(4);
+        d.editClips("reset fades", [&](std::vector<Clip>& v) {
+          for (auto& x : v)
+            if (sel.count(x.id)) x.fadeIn = x.fadeOut = 0, x.fadeInManual = x.fadeOutManual = false, x.fadeInShape = x.fadeOutShape = 0, x.fadeInTension = x.fadeOutTension = 0;
+        });
+        return "resetFades";
+      }
       case 0: {  // automation clip (as the "Create automation clip" command makes it)
         ParamId pid = channelParam(anyChannel(), ChannelParam::Volume);
         Tick st = anyTick(), len = range(1, s().ppq * 16);
@@ -260,7 +339,8 @@ struct Editor {
       case 26: autoFillSteps(d, anyPattern(), anyChannel()); return "autoFillSteps";
       case 27: cloneChannelWithLinks(d, anyChannel()); return "cloneChannelWithLinks";
       case 28: addMarkersEvery(d, anyTick(), anyTick(), range(-1, s().ppq * 4)); return "addMarkersEvery";
-      default: sendPatternClipsToTrack(d, anyPattern(), range(-1, 12)); return "sendPatternClipsToTrack";
+      case 29: sendPatternClipsToTrack(d, anyPattern(), range(-1, 12)); return "sendPatternClipsToTrack";
+      default: return "none";
     }
   }
 
@@ -347,6 +427,25 @@ struct Editor {
   }
 };
 
+// J-46: an edited song exports to FLP (with / without its FL origin) and our
+// own file reads back. Returns "" or what failed.
+std::string flpExportReads(const Song& s) {
+  for (bool origin : {true, false}) {
+    if (!origin && s.flOrigin.empty()) continue;  // a Gridline-made song exports the same way in both modes
+    flp::ExportOptions o;
+    o.useOrigin = origin;
+    o.factoryData = "/nonexistent-fl-data";
+    flp::ExportReport rep;
+    flp::Bytes out;
+    if (!flp::exportFlp(s, out, rep, o)) return origin ? "export (origin) failed" : "export failed";
+    Song back;
+    flp::Report r2;
+    std::string err;
+    if (!importFlpBytes(out, back, r2, &err, "/nonexistent-fl-data", "", false)) return "re-import failed: " + err;
+  }
+  return "";
+}
+
 void undoStress(const Song& start, const char* tag, int edits, uint64_t seed) {
   const int checkEvery = std::getenv("GRIDLINE_QA_CHECK_EVERY") ? std::max(1, std::atoi(std::getenv("GRIDLINE_QA_CHECK_EVERY"))) : 25;
   Document d(start);
@@ -362,7 +461,7 @@ void undoStress(const Song& start, const char* tag, int edits, uint64_t seed) {
   std::vector<size_t> at{std::hash<std::string>()(original)};
   std::vector<std::string> what{"start"};
   bool valid = true;
-  std::string firstInvalid;
+  std::string firstInvalid, firstFlp;
   for (int i = 0; i < edits; ++i) {
     const char* op = e.step();
     ++e.applied;
@@ -372,6 +471,8 @@ void undoStress(const Song& start, const char* tag, int edits, uint64_t seed) {
     what.resize(pos + 1);
     at[pos] = std::hash<std::string>()(t);
     what[pos] = op;
+    if (i == edits / 2 && firstFlp.empty())  // J-46: … and an exportable FL project
+      if (std::string e = flpExportReads(d.song()); !e.empty()) firstFlp = std::string(op) + " (edit " + std::to_string(i) + "): " + e;
     if (i % checkEvery == 0) {  // the edited song must still be a loadable project
       Json j;
       Song back;
@@ -408,7 +509,9 @@ void undoStress(const Song& start, const char* tag, int edits, uint64_t seed) {
   if (!firstBad.empty()) std::printf("# first mismatch: %s\n", firstBad.c_str());
   if (!valid) std::printf("# first invalid project: %s\n", firstInvalid.c_str());
   std::printf("# %s: %d edits, %zu history steps\n", tag, edits, steps);
+  if (!firstFlp.empty()) std::printf("# first FLP export failure: %s\n", firstFlp.c_str());
   expect(valid, (n + "every edited state saves and loads back identically").c_str());
+  expect(firstFlp.empty() && flpExportReads(d.song()).empty(), (n + "edited states export to FLP and read back").c_str());
   expect(firstBad.empty(), (n + "each undo / redo step restores the recorded state").c_str());
   expect(backToStart, (n + "undo all == original").c_str());
   expect(backToFinal, (n + "redo all == final").c_str());
@@ -918,6 +1021,193 @@ void luaGlueProtected() {
 
 }  // namespace
 
+
+// ------------------------------------------------------------ J-46 (QA pass 3)
+// Property: the per-clip fade resolver (one clip) and the whole-arrangement
+// resolver (playback, drawing, FLP export) agree on every audio clip of
+// random overlapping arrangements.
+void j46FadeResolversAgree() {
+  std::mt19937_64 rng(46);
+  int bad = 0, xfades = 0;
+  for (int round = 0; round < 300; ++round) {
+    Song s = makeDemoSong();
+    s.playlist.clear();
+    const ObjectId ch = s.channels.empty() ? kNoId : s.channels[0].id;
+    const int n = 2 + static_cast<int>(rng() % 9);
+    for (int i = 0; i < n; ++i) {
+      Clip c;
+      c.id = s.allocateId();
+      c.kind = ClipKind::Audio;
+      c.source = ch;
+      c.track = static_cast<int>(rng() % 2);
+      c.start = static_cast<Tick>(rng() % 8) * 48;
+      c.length = 48 * (1 + static_cast<Tick>(rng() % 6));
+      c.audioEnd = 4;
+      c.muted = rng() % 9 == 0;
+      if (rng() % 4 == 0) c.fadeIn = 0.05, c.fadeInManual = true;
+      s.playlist.push_back(c);
+    }
+    s.autoCrossfades = rng() % 5 != 0;
+    TempoMap tm;
+    tm.build(s);
+    const std::vector<ClipFades> all = resolveAllFades(s, tm);
+    for (size_t i = 0; i < s.playlist.size(); ++i) {
+      const ClipFades one = resolveFades(s, tm, s.playlist[i]);
+      auto same = [](const EdgeFade& a, const EdgeFade& b) {
+        return a.partner == b.partner && a.crossfade == b.crossfade && a.automatic == b.automatic && std::fabs(a.len - b.len) < 1e-9 &&
+               std::fabs(a.overlap - b.overlap) < 1e-9;
+      };
+      if (!same(one.in, all[i].in) || !same(one.out, all[i].out)) {
+        if (++bad == 1) {
+          std::printf("# fade resolver mismatch on clip %u (autoCrossfades %d):\n", static_cast<unsigned>(s.playlist[i].id), s.autoCrossfades);
+          for (const Clip& c : s.playlist)
+            std::printf("#   clip %u track %d start %lld len %lld muted %d fadeIn %.2f manual %d\n", static_cast<unsigned>(c.id), c.track,
+                        static_cast<long long>(c.start), static_cast<long long>(c.length), c.muted, c.fadeIn, c.fadeInManual);
+          std::printf("#   one: in %u %.3f out %u %.3f | all: in %u %.3f out %u %.3f\n", static_cast<unsigned>(one.in.partner), one.in.len,
+                      static_cast<unsigned>(one.out.partner), one.out.len, static_cast<unsigned>(all[i].in.partner), all[i].in.len,
+                      static_cast<unsigned>(all[i].out.partner), all[i].out.len);
+        }
+      }
+      xfades += all[i].in.crossfade;
+    }
+  }
+  std::printf("# fade resolvers: %d crossfades, %d disagreements\n", xfades, bad);
+  expect(xfades > 100 && bad == 0, "fades: single-clip and whole-arrangement resolvers agree (partners, lengths)");
+}
+
+// Bug (fuzzer, fx-preset target; UBSan): the Love Philter reference engine
+// converted -1.0 to uint32 for an LFO at full pulse width (the knob's maximum).
+void j46OctaFilterFullPulse() {
+  namespace cr = gl::packs::creative;
+  bool finite = true;
+  for (float pw : {1.0f, -1.0f, 0.999f}) {
+    PluginState s = defaultPluginState("gl.octafilter");
+    s.params[static_cast<size_t>(cr::OfModel)] = 1;
+    for (int u = 0; u < cr::kUnits; ++u)
+      for (int t = 0; t < cr::kTargets; ++t) s.params[static_cast<size_t>(cr::lfoParam(u, t, cr::LPulse))] = pw;
+    auto fx = createEffect("gl.octafilter");
+    ProcessContext ctx;
+    ctx.sampleRate = 44100, ctx.playing = true;
+    std::vector<float> L(512), R(512);
+    for (int b = 0; b < 8; ++b) {
+      for (size_t i = 0; i < L.size(); ++i) L[i] = R[i] = static_cast<float>(std::sin(0.01 * static_cast<double>(i + 512 * static_cast<size_t>(b))));
+      fx->process(s, ctx, L.data(), R.data(), 512);
+      for (float x : L) finite = finite && std::isfinite(x);
+    }
+  }
+  expect(finite, "love philter (reference engine): LFO at full pulse width runs (no UB) and stays finite");
+}
+
+// Bug (playlist input session, UBSan): a zoom-tool drag released outside the
+// window converted floor(-FLT_MAX / zoom) = -inf to a tick.
+void j46TickAtPointerOutside() {
+  const float lost = -3.402823466e+38f;
+  const Tick a = timeline::tickAtPx(lost, 0.5f), b = timeline::tickAtPx(-lost, 1e-6f), c = timeline::tickAtPx(std::nanf(""), 1.0f);
+  expect(a < 0 && b > 0 && c == 0, "timeline: pixel -> tick is defined for an off-window pointer (-FLT_MAX), huge values and NaN");
+  expect(timeline::tickAtPx(100.0f, 0.5f) == 200 && timeline::tickAtPx(-0.5f, 1.0f) == -1, "timeline: pixel -> tick floors like before");
+}
+
+// Bug (fuzzer, fst target on the shipped racks; UBSan): the Mobile Rack
+// decoder's exactness check converted a huge stored module value to int.
+void j46PocketExactHugeValue() {
+  namespace pk = gl::packs::dynamics::pocket;
+  float p[64] = {};
+  p[0] = 1, p[1] = 9.3e35f;
+  const bool a = pk::moduleExact(4, p), b = pk::moduleExact(40, p);
+  p[1] = -9.3e35f;
+  const bool c = pk::moduleExact(4, p), d = pk::moduleExact(40, p);
+  p[1] = 0;
+  expect(!a && !b && c && d && pk::moduleExact(4, p), "pocket rack: exactness check on huge / negative stored values (no UB, clamped)");
+}
+
+// Bug (fuzzer, song-flp target; UBSan): a project note at start = INT64_MAX
+// overflowed start + length in the FLP exporter. Project ticks now load
+// clamped to ±2^42.
+void j46HugeTicksExport() {
+  Song s = makeDemoSong();
+  std::string t = projectToText(s);
+  Json j;
+  bool ok = jsonParse(t, j);
+  int notes = 0, clips = 0;
+  std::function<void(Json&, const std::string&)> walk = [&](Json& n, const std::string& key) {
+    if (key == "notes")  // channel id → note list
+      for (auto& [ch, list] : n.object)
+        for (auto& x : list.array)
+          if (auto it = x.object.find("start"); it != x.object.end()) it->second.number = 9.3e18, ++notes;
+    if (key == "playlist")
+      for (auto& x : n.array) {
+        if (auto it = x.object.find("start"); it != x.object.end()) it->second.number = 1e300, ++clips;
+        x.object["length"] = Json::makeNumber(9.2e18);
+      }
+    for (auto& [k, v] : n.object) walk(v, k);
+    for (auto& v : n.array) walk(v, "");
+  };
+  walk(j, "");
+  Song back;
+  std::string err;
+  ok = ok && notes > 0 && clips > 0 && songFromJson(j, back, &err);
+  bool bounded = ok;
+  for (const auto& c : back.playlist) bounded = bounded && c.start <= (Tick(1) << 42) && c.length <= (Tick(1) << 42);
+  for (const auto& p : back.patterns)
+    for (const auto& [ch, ns] : p.notes)
+      for (const Note& n : ns) bounded = bounded && n.start <= (Tick(1) << 42);
+  expect(bounded, "project load: tick values clamp to +-2^42 (no int64 overflow in start + length)");
+  expect(ok && flpExportReads(back).empty(), "FLP export of a song with huge note / clip times: no overflow, reads back");
+}
+
+// Bug (fuzzer, fx-preset target; UBSan): the Love Philter reference shaper
+// negated LONG_MIN when a runaway filter fed it a huge sample.
+void j46OctaFilterRunaway() {
+  namespace cr = gl::packs::creative;
+  PluginState s = defaultPluginState("gl.octafilter");
+  s.params[static_cast<size_t>(cr::OfModel)] = 1;
+  auto fx = createEffect("gl.octafilter");
+  ProcessContext ctx;
+  ctx.sampleRate = 44100;
+  std::vector<float> L(256), R(256);
+  for (float big : {1e30f, -1e30f, 3e38f, -3e38f}) {
+    std::fill(L.begin(), L.end(), big), std::fill(R.begin(), R.end(), -big);
+    fx->process(s, ctx, L.data(), R.data(), 256);
+  }
+  expect(true, "love philter (reference engine): huge input samples (no UB in the shaper)");
+}
+
+// Bug (J-47 report, first run with an empty config): the app quit while the
+// browser index was still analysing (an empty cache: full pass over the
+// shipped packs), leaving the worker to the index's static destructor while
+// statics it uses were already gone. main now stops the index before
+// teardown; stop() must end an analysing pass promptly.
+void j46IndexStopsMidPass() {
+  const std::string dir = gl::test::hermeticTestEnv("qa") + "/j46-index";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  AudioBuffer buf(2, 44100);
+  for (size_t i = 0; i < buf.data.size(); ++i) buf.data[i] = static_cast<float>(std::sin(static_cast<double>(i) * 0.01) * 0.3);
+  for (int i = 0; i < 400; ++i) writeWav(dir + "/kick loop " + std::to_string(i) + ".wav", buf, 44100, 16);
+  browse::Index ix;
+  ix.setCacheFile(dir + "/index.json");
+  ix.setRoots({{dir, true}});
+  ix.start();
+  for (int k = 0; k < 200 && ix.done() < 3; ++k) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  const bool wasBusy = ix.busy();
+  const auto t0 = std::chrono::steady_clock::now();
+  ix.stop();
+  const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  std::printf("# index: stopped after %zu of 400 files in %.3f s\n", ix.done(), s);
+  expect(wasBusy && !ix.busy() && ix.done() < 400 && s < 2.0, "browser index: stop() ends an analysing pass promptly (shutdown before teardown)");
+  std::filesystem::remove_all(dir);
+}
+
+void j46Regressions() {
+  j46FadeResolversAgree();
+  j46IndexStopsMidPass();
+  j46HugeTicksExport();
+  j46OctaFilterRunaway();
+  j46PocketExactHugeValue();
+  j46TickAtPointerOutside();
+  j46OctaFilterFullPulse();
+}
+
 int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--types") {  // QA tooling: every built-in plugin type, one per line
     for (const auto& p : pluginCatalog()) std::printf("%s\n", p.type.c_str());
@@ -937,6 +1227,7 @@ int main(int argc, char** argv) {
   luaSandboxLimits();
   chordEditorKeepsOutsideEdits();
   luaGlueProtected();
+  j46Regressions();
   const int edits = std::getenv("GRIDLINE_QA_EDITS") ? std::atoi(std::getenv("GRIDLINE_QA_EDITS")) : 2000;
   undoStress(demo, "demo song", edits, 1);
   undoStress(Song{}, "empty song", edits / 4, 7);

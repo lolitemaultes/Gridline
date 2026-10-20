@@ -103,12 +103,15 @@ float fadeTensionToUi(float t) {
 ObjectId crossfadePartnerIn(const Song& s, const Clip& c) {
   if (!xfadeCandidate(s, c)) return kNoId;
   ObjectId best = kNoId;
-  Tick bestOv = 0;
+  Tick bestOv = 0, bestStart = 0;
   const Tick c0 = c.start, c1 = c.start + s.clipLength(c);
   for (const Clip& o : s.playlist) {
     if (o.id == c.id || o.track != c.track || !xfadeCandidate(s, o)) continue;
     const Tick o0 = o.start, o1 = o.start + s.clipLength(o);
-    if (c0 > o0 && c0 < o1 && c1 > o1 && o1 - c0 > bestOv) bestOv = o1 - c0, best = o.id;
+    // Equal overlaps: the earliest-starting clip wins (as in resolveAllFades,
+    // which playback, drawing and FLP export use; J-46).
+    if (c0 > o0 && c0 < o1 && c1 > o1 && (o1 - c0 > bestOv || (o1 - c0 == bestOv && o0 < bestStart)))
+      bestOv = o1 - c0, bestStart = o0, best = o.id;
   }
   return best;
 }

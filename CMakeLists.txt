@@ -343,7 +343,7 @@ target_link_libraries(gridline_tests_qa_cross PRIVATE gridline_core)
 target_include_directories(gridline_tests_qa_cross PRIVATE tests)
 target_compile_options(gridline_tests_qa_cross PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME qa_cross COMMAND gridline_tests_qa_cross WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-foreach(ft flp flp-export fst project sample midi browser-index zip lua)
+foreach(ft flp flp-export fst project sample midi browser-index zip lua song-flp fx-preset)
   add_test(NAME fuzz_${ft} COMMAND gridline_fuzz ${ft} 3 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endforeach()
 
