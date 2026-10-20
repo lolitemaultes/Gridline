@@ -126,6 +126,7 @@ void Importer::run() {
   importOne(current);
   s_.arrangements.clear();
   for (auto& [idx, a] : done) {
+    c_.arrangementIndex[idx] = static_cast<int>(s_.arrangements.size());
     if (idx == current) {
       s_.currentArrangement = static_cast<int>(s_.arrangements.size());
       s_.playlist = std::move(a.playlist);
@@ -320,7 +321,9 @@ bool Importer::resolveTarget(uint32_t target, Target& t) {
       return eqTarget(static_cast<uint32_t>(MixerParam::EqLowFreq), 0x1FD8, [](double v) { return fx::flEqFreqHz(v * 65536.0); });
     if (lo >= 0x1FE0 && lo <= 0x1FE2)
       return eqTarget(static_cast<uint32_t>(MixerParam::EqLowQ), 0x1FE0, [](double v) { return fx::flInsertEqQ(v * 65536.0); });
-    // Send (route) level to insert k: 0x1F40 + k (FL ≤ 21 layout); 0..1 = 0..100 %.
+    // Send (route) level to insert k: 0x1F40 + k (FL ≤ 21 layout). The FL
+    // value 0..1 is the route level word / 12800 (like the insert volume),
+    // through the fader taper to the linear send gain.
     if (lo >= 0x1F40 && lo < 0x1FC0) {
       t.what += " send to insert " + std::to_string(lo - 0x1F40);
       auto dest = c_.insertIds.find(static_cast<int>(lo - 0x1F40));
@@ -330,7 +333,7 @@ bool Importer::resolveTarget(uint32_t target, Target& t) {
       auto d = describeParam(s_, t.id);
       if (!d) return false;
       ParamDesc desc = *d;
-      t.convert = [desc](double v) { return desc.toNormalized(desc.clamp(v)); };
+      t.convert = [desc](double v) { return desc.toNormalized(desc.clamp(fx::flMixerGain(v * 12800.0))); };
       return true;
     }
     t.what += " setting";
@@ -544,6 +547,7 @@ void Importer::importTracksAndClips() {
       }
       if (cl.length <= 0) continue;
       cl.id = s_.allocateId();
+      c_.clipRecords[cl.id] = std::string(reinterpret_cast<const char*>(e.data + o), k);
       muted += cl.muted;
       s_.playlist.push_back(cl);
       lastUsed = std::max(lastUsed, cl.track);

@@ -172,7 +172,12 @@ bool decode3xOsc(Context& c, const std::vector<Event>& events, PluginMapping& m)
   setp(s, SynVoices, 32);
   setp(s, SynVolume, 1.0);
   // Channel envelopes / filter: the channel's own records, else the copy in the state.
-  ChanSettings cs = channelSettings(events, b.sub(96, 5 * 68), b.sub(436, 24));
+  // J-34 fix: the levels copy is ordered (0, 0, cutoff, resonance, 0, type),
+  // not like event 219 (pan, volume, pitch, cutoff, resonance, type) — compared
+  // with the channel's own 219 in FL's shipped projects. Re-ordered for parseLevels.
+  uint8_t lev[24] = {};
+  if (b.has(436, 24)) std::copy(b.p + 444, b.p + 452, lev + 12), std::copy(b.p + 456, b.p + 460, lev + 20);
+  ChanSettings cs = channelSettings(events, b.sub(96, 5 * 68), b.has(436, 24) ? Bytes(lev, 24) : Bytes());
   std::string lost;
   bool chanExact = applyChannelToTrio(cs, s, &lost);
   // Custom-shape oscillators play one cycle of the channel's sample (event 196).

@@ -33,8 +33,33 @@ enum InsertFlag : uint32_t {
   kSwapLR = 1u << 1,
   kFxEnabled = 1u << 2,
   kEnabled = 1u << 3,
+  kNoThreads = 1u << 4,   // threaded processing off
+  kDockMiddle = 1u << 6,  // neither dock bit: docked left
+  kDockRight = 1u << 7,
   kSolo = 1u << 12,
 };
+
+// (source insert, destination insert) pairs whose route level is driven by
+// automation clips (227), remote-control links (226) or pattern events (223):
+// target 0x1F40 + destination on the source insert. Such a route is an audio
+// send even when its stored level is 0 (the knob starts down).
+std::set<std::pair<int, int>> automatedSends(const File& f) {
+  std::set<std::pair<int, int>> out;
+  auto add = [&](uint32_t target) {
+    const uint32_t hi = target >> 16, lo = target & 0xFFFF;
+    // FL 25 mixer ids run past 0x8000 (0x7000 + insert × 64 + slot, inserts ≥ 64);
+    // 0xFFC0+ is the "focused track" form of remote links.
+    if (hi < 0x2000 || hi == 0x4000 || hi >= 0xFFC0 || lo < 0x1F40 || lo >= 0x1FC0) return;
+    const uint32_t rel = hi - (hi >= 0x7000 ? 0x7000u : 0x2000u);
+    out.insert({static_cast<int>(rel >> 6), static_cast<int>(lo - 0x1F40)});
+  };
+  for (const Event& e : f.events) {
+    if ((e.id == 227 || e.id == 226) && e.size >= 12) add(e.u32(8));
+    if (e.id == 223)
+      for (uint32_t o = 0; o + 12 <= e.size; o += 12) add(e.u32(o + 4));
+  }
+  return out;
+}
 
 struct InsertParams {
   int volume = 12800, pan = 0, sep = 0;
@@ -159,14 +184,17 @@ void importMixer(Context& c) {
     for (const auto& [k, cnt] : zeroIn)
       if (cnt >= 2 && !hasFx(k) && !(defaultSends && k >= 100 && k <= 103)) sendBuses.insert(k);
   }
+  const std::set<std::pair<int, int>> automated = automatedSends(c.file);
+  auto isAutomated = [&](size_t i, int k) { return automated.count({static_cast<int>(i), k}) > 0; };
   // Destinations of insert i. Sidechain-only routes (level 0) into inserts
-  // without effects carry nothing and are dropped (except sends into send buses).
+  // without effects carry nothing and are dropped (except sends into send buses
+  // and automated sends).
   auto routes = [&](size_t i) {
     std::vector<int> r;
     if (const Event* e = find(ins[i].events, 235))
       for (uint32_t k = 0; k < e->size; ++k) {
         if (!e->data[k] || k == i) continue;
-        const bool zero = k != 0 && routeLevel(i, static_cast<int>(k)) == 0;
+        const bool zero = k != 0 && routeLevel(i, static_cast<int>(k)) == 0 && !isAutomated(i, static_cast<int>(k));
         const bool toBus = sendBuses.count(static_cast<int>(k)) && !sendBuses.count(static_cast<int>(i));
         if (zero && sendBuses.count(static_cast<int>(k)) && !toBus) continue;  // between send buses
         if (!(zero && !hasFx(static_cast<int>(k)) && !toBus)) r.push_back(static_cast<int>(k));
@@ -212,6 +240,12 @@ void importMixer(Context& c) {
       t.swapLR = flags & kSwapLR;
       t.muted = !(flags & kEnabled);
       t.solo = flags & kSolo;
+      t.threaded = !(flags & kNoThreads);
+      // Dock side (inserts only; the master always sits on the left). Only the
+      // 12-byte layout (FL 12+) carries the dock bits.
+      if (i > 0)
+        if (const Event* e = find(in.events, 236); e && e->size >= 8)
+          t.dock = static_cast<int>((flags & kDockRight) ? MixerDock::Right : (flags & kDockMiddle) ? MixerDock::Middle : MixerDock::Left);
       const bool fxOn = flags & kFxEnabled;
       auto pit = params.find(static_cast<int>(i));
       if (pit != params.end()) {
@@ -262,7 +296,7 @@ void importMixer(Context& c) {
         continue;
       }
       int level = routeLevel(i, to);
-      if (to != 0 && level == 0 && sendBuses.count(to)) {
+      if (to != 0 && level == 0 && (sendBuses.count(to) || isAutomated(i, to))) {
         t.sends.push_back({dest, 0.0f, false});  // send to a send bus, knob down
         ++sends;
       } else if (to != 0 && level == 0) {

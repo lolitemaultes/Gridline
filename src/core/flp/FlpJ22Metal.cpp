@@ -550,7 +550,7 @@ bool decodeScratch(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
 // { harmonic amplitudes, 8 per group: u8 mask + one f32 per set bit } },
 // then u32 1060-byte loop / curve record: i32 loop start, i32 loop end (steps),
 // i32, i32, f32 × 3, i32, f32[256] } }, then a 28-byte program record }. After
-// the programs: tagged global blocks (morph path "MLM0", envelopes "MDM0" with
+// the programs: tagged global blocks (morph path "MML0", envelopes "MMD0" with
 // "MEG0" children), the master parameter record (u32 size + floats) and the
 // preset name buffer.
 namespace {
@@ -623,7 +623,10 @@ bool decodeMorphState(const uint8_t* p, size_t n, mt::SmData& out, size_t* consu
   while (!r.bad && r.at + 8 <= n) {
     const int32_t size = r.peek(0);
     const uint32_t t = static_cast<uint32_t>(r.peek(4));
-    const bool tagged = t == tag4("MLM0") || t == tag4("MDM0") || t == tag4("MEG0");
+    // (J-34: the global block ids are "MML0" / "MMD0" as stored; the former
+    // "MLM0" / "MDM0" never matched, so the preset name was read from inside
+    // the envelope block.)
+    const bool tagged = t == tag4("MML0") || t == tag4("MMD0") || t == tag4("MEG0");
     if (!tagged) break;
     if (size < 4 || static_cast<size_t>(size) > n - r.at - 4) return false;
     r.at += 4 + static_cast<size_t>(size);

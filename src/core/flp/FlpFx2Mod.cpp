@@ -16,7 +16,8 @@
 //   Fruity Formula Ctrl   v2: version, a, b, c (0..65536), formula (u8 length,
 //                         ANSI), description (u32 length, RTF). v4: version,
 //                         a, b, c, formula (u8 length, UTF-16), description
-//                         (u8 length, UTF-16).
+//                         (u8 length, UTF-16); v4 formulas are ANSI in every
+//                         shipped state.
 //   Fruity Send           pan (±128), volume (0..320, 256 = unity), dry
 //                         (0..256), target send (-1 = none).
 //   Fruity dB Meter       no state.
@@ -188,7 +189,9 @@ bool decodeFormula(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
   fx::applyTable(m, tab, abc);
   std::string formula;
   size_t len = r.u8();
-  if (ver >= 3) {
+  // J-34: every shipped v4 state stores the formula as ANSI bytes (only the
+  // description that follows is UTF-16), so only v3 is read as UTF-16.
+  if (ver == 3) {
     if (r.has(len * 2)) formula = utf16(b.data() + r.pos, len), r.skip(len * 2);
   } else if (r.has(len)) {
     formula = latin1(b.data() + r.pos, len), r.skip(len);
@@ -291,9 +294,14 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
     if (id == 54) name = latin1(b.data() + r.pos, static_cast<size_t>(size));
     if (id == 55) path = latin1(b.data() + r.pos, static_cast<size_t>(size));
     if (id == 56) vendor = latin1(b.data() + r.pos, static_cast<size_t>(size));
-    if (id == 53 && size >= 25) {
+    if (id == 53 && size >= 17) {
+      // i32 -9, u8 version, i32 flag, u32 chunk size (0: parameter list), 8
+      // reserved bytes when the flag is -2 (FL 11 states have flag 0 and
+      // none; J-34 fix: the list used to be read at a fixed offset).
       Reader pr(b.data() + r.pos, static_cast<size_t>(size));
-      pr.skip(21);
+      pr.skip(5);
+      const int32_t flag = pr.i32();
+      pr.skip(flag == -2 ? 12 : 4);
       uint32_t count = pr.u32();
       for (uint32_t k = 0; k < count && k < 4096 && pr.has(4); ++k) params.push_back(pr.f32());
     }

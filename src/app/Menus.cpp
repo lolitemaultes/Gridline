@@ -161,6 +161,7 @@ void menuFile(App& a) {
     if (ImGui::MenuItem("Project data files...")) exportui::exportDataFilesDialog(a);
     if (ImGui::MenuItem("Project bones...")) exportui::exportBonesDialog(a);
     if (ImGui::MenuItem("Zipped project...")) exportui::exportZipDialog(a);
+    if (ImGui::MenuItem("FL Studio project (.flp)...")) exportui::exportFlpDialog(a);  // J-34
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem("Locate missing samples...")) exportui::openMissingSamples(a);

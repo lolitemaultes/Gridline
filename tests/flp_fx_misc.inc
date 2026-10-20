@@ -118,10 +118,10 @@ static void testFxMisc() {
     for (int32_t v : {104, 128, 128, 4096, 8192, 2, 256, 512}) raw.i32(v);
     raw.i32(0).f32(0.9685f).i32(-1).i32(1).i32(2);
     raw.u8(1).u8(1).u8(0).u8(0).i32(0);
-    std::string rtf = "{\\rtf1\\ansi{\\fonttbl{\\f0 Arial;}}\\f0 Hello\\par World}";
-    raw.i32(static_cast<int32_t>(rtf.size() + 1));
-    for (char ch : rtf) raw.u8(static_cast<uint8_t>(ch));
-    raw.u8(0);
+    // Info text: 7-bit varint character count + UTF-16LE, CR = line break (J-34: the layout of every shipped state).
+    const std::string info = "Hello\rWorld";
+    raw.u8(static_cast<uint8_t>(info.size()));
+    for (char ch : info) raw.u8(static_cast<uint8_t>(ch)).u8(0);
     auto rec = [&](int kind, const std::vector<std::array<double, 3>>& pts, int ls = -1, int le = -1) {  // {dx, y, mode}
       raw.i32(kind).i32(3).i32(static_cast<int32_t>(pts.size()));
       for (const auto& p : pts) {
@@ -202,7 +202,7 @@ static void testFxMisc() {
                !ob->env(0, cr::TCut, 0) && !ob->env(0, cr::TVol, 1),
            "love philter: drawn pattern kept (modes, loop), default patterns dropped");
     expect(mx && near(mx->eval(0.5), 0.5, 1e-6) && !ob->env(0, cr::TRes, cr::KMapX), "love philter: X map kept, flat maps dropped");
-    expect(cr::infoText(m.state.data) == "Hello\nWorld", "love philter: info text (RTF to plain text)");
+    expect(cr::infoText(m.state.data) == "Hello\nWorld", "love philter: info text (UTF-16, CR line breaks)");
     expect(m.param && m.param(9) == cr::unitParam(0, cr::UCut) && m.value && near(m.value(9, 0.5), 0.5, 1e-9) &&
                m.param(8 + 12 + 10) == cr::unitParam(1, cr::UIn),
            "love philter: automation (globals, unit knobs)");

@@ -117,7 +117,7 @@ std::vector<uint8_t> osc3State(const int p[21], const uint8_t flags[5]) {
     auto e = envRec(false, 20000, 20000, 30000, 50, 20000, 0);
     b.b.insert(b.b.end(), e.begin(), e.end());
   }
-  b.i32(0).i32(0).i32(0).i32(256).i32(0).i32(0);
+  b.i32(0).i32(0).i32(256).i32(0).i32(0).i32(0);  // levels copy: 0, 0, cutoff, resonance, 0, type (J-34)
   return b.b;
 }
 
@@ -236,7 +236,7 @@ int main() {
     b.u8(0).u8(0);
     b.i32(100);  // controller 0 value
     while (b.b.size() < 0x142) b.u8(0);
-    b.u8(0).u8(74).u8(0).u8(0).i32(128).i32(0).i32(127).i32(-1).pstr("CUT").pstr("Cutoff");
+    b.u8(0).u8(74).u8(0).u8(0).i32(128).u8(0).i32(0).i32(127).i32(-1).pstr("CUT").pstr("Cutoff");  // 21-byte record header (J-34)
     b.u8(0xFF).pstr("Page 1");
     Env e;
     flp::PluginMapping m;

@@ -31,6 +31,7 @@
 #include <filesystem>
 
 int benchMain(int argc, char** argv);  // Bench.cpp
+int flpToolsMain(int argc, char** argv);  // FlpTools.cpp (-1 = not one of its commands)
 
 namespace {
 void usage() {
@@ -51,6 +52,9 @@ void usage() {
       "  gridline upgrade <project.json> [-o <out.json>]\n"
       "  gridline demo    <out.json>                 write the demo song\n"
       "  gridline import-flp <project.flp> -o <out.json> [--fl-data DIR]   convert an FL Studio project\n"
+      "  gridline export-flp <project.json|.flp> -o <out.flp> [--no-origin] [--fl-data DIR]   write an FL Studio project\n"
+      "  gridline flp-roundtrip <in.flp> [-o out.flp] [--no-origin] [--json report.json]   import, export, re-import, compare\n"
+      "  gridline flp-encode-check [--plugin NAME]... [--max N] [--verbose] [files...]   plugin encoders on FL's shipped states\n"
       "  gridline bench <project.json|.flp> [--threads 1,4] [--repeat N] [--render-seconds S] [--no-render] [--json out]\n"
       "                                                 load / save / render timings, undo memory, audio hash\n"
       "  gridline import-fl-presets [--fl-data DIR] [--out DIR]   convert FL Studio's presets into your preset library\n"
@@ -76,6 +80,7 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (argc >= 2 && std::string(argv[1]) == "bench") return benchMain(argc, argv);
+  if (int r = flpToolsMain(argc, argv); r >= 0) return r;  // export-flp, flp-roundtrip, flp-encode-check (FlpTools.cpp)
   if (argc >= 3 && std::string(argv[1]) == "vst3-smoke") gl::vst3::smokeMain(argv[2]);
   if (argc >= 4 && std::string(argv[1]) == "plugin-smoke")
     gl::host::smokeMain(argv[2], argv[3], argc >= 5 && std::string(argv[4]) == "--sandbox");

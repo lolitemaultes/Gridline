@@ -148,8 +148,10 @@ void importChannels(Context& c) {
     } else {
       ch.plugin = defaultPluginState("gl.synth");  // replaced by importPlugins when the plugin is known
     }
+    // FL 24.2.99+ stores every channel's insert in 104 (int16) instead of 22
+    // (J-34 audit: 345 sampler / plugin channels in 24 shipped projects).
     const Event* insEv = find(evs, 22);
-    if (!insEv && type == 4) insEv = find(evs, 104);  // FL 24.2.99+ audio-clip channels store the insert here
+    if (!insEv) insEv = find(evs, 104);
     if (const Event* e = insEv) {  // mixer insert
       auto it = c.insertIds.find(e->id == 104 ? static_cast<int>(static_cast<int16_t>(e->value())) : static_cast<int>(e->ivalue()));
       ch.mixerTrack = it != c.insertIds.end() ? it->second : s.masterId();

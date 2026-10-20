@@ -146,6 +146,10 @@ struct Context {
   std::map<std::pair<int, int>, PluginMapping> slotPlugins;     // (FL insert, slot) → decoded effect
   std::map<int, ObjectId> automationIds;      // FL automation channel → AutomationClip
   std::map<int, uint32_t> automationTargets;  // FL automation channel → its first linked target (227)
+  // FL origin capture (J-34, FlpOrigin.cpp): the playlist record each clip
+  // came from, and each arrangement's Gridline index (FL arrangement → index).
+  std::map<ObjectId, std::string> clipRecords;
+  std::map<int, int> arrangementIndex;
   Context(const File& f, Song& s, Report& r) : file(f), song(s), report(r) {}
   // FL tick → Gridline tick (the song keeps the FL PPQ, so this is identity
   // unless the PPQ had to change).
@@ -242,5 +246,10 @@ namespace gl {
 // Imports an FL Studio project into a new Gridline song.
 bool importFlp(const std::string& path, Song& out, flp::Report& report, std::string* err,
                const std::string& factoryData = "");
+// The same from the file's bytes (`projectDir`: folder relative sample paths
+// resolve against). keepOrigin = false skips Song::flOrigin (the FL
+// exporter's own decoding of single objects, FlpExport*.cpp).
+bool importFlpBytes(std::vector<uint8_t> bytes, Song& out, flp::Report& report, std::string* err, const std::string& factoryData = "",
+                    const std::string& projectDir = "", bool keepOrigin = true);
 
 }  // namespace gl

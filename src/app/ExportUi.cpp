@@ -20,6 +20,9 @@
 #include <thread>
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Automation.h"
+#include "../core/Log.h"
+#include "../core/flp/Flp.h"
+#include "../core/flp/FlpExport.h"
 #include "../core/MidiFile.h"
 #include "../core/MidiImport.h"
 #include "../core/Project.h"
@@ -960,6 +963,30 @@ void exportBonesDialog(App& a) {
     else
       a.notify("Bones: " + std::to_string(r.files.copied + r.files.reused) + " samples, " + std::to_string(r.midiFiles) + " MIDI files, " +
                std::to_string(r.presets) + " presets, " + std::to_string(r.chains) + " effect chains");
+  });
+}
+
+void exportFlpDialog(App& a) {
+  fileDialog(a, "Export FL Studio project", true, {".flp"}, safeFileName(projectName(a)) + ".flp", [&a](const std::string& p) {
+    captureHostedStates(a);
+    std::string path = p;
+    if (fs::path(path).extension().empty()) path += ".flp";
+    flp::ExportOptions opt;
+    opt.factoryData = flp::defaultFactoryData();
+    opt.projectDir = fs::path(path).parent_path().string();
+    flp::ExportReport rep;
+    std::string err;
+    if (!flp::exportFlpFile(a.doc.song(), path, rep, opt, &err)) {
+      a.notify("FL Studio export failed: " + err, true);
+      return;
+    }
+    int notExact = 0;
+    for (const auto& pl : rep.plugins) notExact += pl.quality != "verbatim" && pl.quality != "exact";
+    a.notify("Exported FL Studio project" + (notExact ? " (" + std::to_string(notExact) + " plugin(s) approximated or placeholders; see the log)" : std::string()),
+             notExact > 0);
+    for (const auto& wv : rep.warnings) gl::logging::warning("FL export", wv);
+    for (const auto& pl : rep.plugins)
+      if (pl.quality != "verbatim" && pl.quality != "exact") gl::logging::warning("FL export", pl.where + ": " + pl.glType + " -> " + pl.flName + " [" + pl.quality + "] " + pl.note);
   });
 }
 

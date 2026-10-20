@@ -137,7 +137,7 @@ Gridline opens FL Studio projects (`.flp`) and presets (`.fst`), so existing wor
 - third-party plugins load as the installed plugin with their saved state, or stay as placeholders until the plugin is installed;
 - **File, Import, FL Studio presets** converts the presets of a local FL Studio installation into Gridline's preset library on your computer.
 
-Nothing from FL Studio is bundled with Gridline. Saving back to `.flp` is in development.
+Projects can also be saved back to `.flp` with **File, Export, FL Studio project**: unchanged parts are written back exactly as they were imported, and FL Studio's own plugins are saved with their settings. Nothing from FL Studio is bundled with Gridline.
 
 ## Architecture
 

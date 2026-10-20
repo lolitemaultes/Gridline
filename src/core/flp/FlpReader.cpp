@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include "Flp.h"
+#include "FlpOrigin.h"
 
 namespace gl::flp {
 
@@ -298,15 +299,35 @@ std::string defaultFactoryData() {
 
 namespace gl {
 
+namespace {
+bool importFile(const flp::File& file, Song& out, flp::Report& report, const std::string& factoryData, const std::string& projectDir,
+                bool keepOrigin = true);
+}  // namespace
+
 bool importFlp(const std::string& path, Song& out, flp::Report& report, std::string* err, const std::string& factoryData) {
   flp::File file;
   if (!flp::readFile(path, file, err)) return false;
+  return importFile(file, out, report, factoryData.empty() ? flp::defaultFactoryData() : factoryData,
+                    std::filesystem::path(path).parent_path().string());
+}
+
+bool importFlpBytes(std::vector<uint8_t> bytes, Song& out, flp::Report& report, std::string* err, const std::string& factoryData,
+                    const std::string& projectDir, bool keepOrigin) {
+  flp::File file;
+  if (!flp::readBytes(std::move(bytes), file, err)) return false;
+  return importFile(file, out, report, factoryData, projectDir, keepOrigin);
+}
+
+namespace {
+
+bool importFile(const flp::File& file, Song& out, flp::Report& report, const std::string& factoryData, const std::string& projectDir,
+                bool keepOrigin) {
   Song song;  // built from scratch: mixer, channels, patterns, playlist all come from the file
   song.tracks.clear();
   flp::Context c(file, song, report);
   c.sec = flp::split(file);
-  c.factoryData = factoryData.empty() ? flp::defaultFactoryData() : factoryData;
-  c.projectDir = std::filesystem::path(path).parent_path().string();
+  c.factoryData = factoryData;
+  c.projectDir = projectDir;
   flp::importProject(c);
   flp::importMixer(c);
   flp::importChannels(c);
@@ -316,8 +337,11 @@ bool importFlp(const std::string& path, Song& out, flp::Report& report, std::str
   flp::importArrangement(c);
   flp::importPatternEvents(c);
   ensureMixer(song);
+  if (keepOrigin) flp::captureOrigin(c);  // original events for the FL exporter (J-34)
   out = std::move(song);
   return true;
 }
+
+}  // namespace
 
 }  // namespace gl

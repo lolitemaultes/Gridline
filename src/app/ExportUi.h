@@ -40,6 +40,8 @@ void exportMidiDialog(App& a, int scope);                    // 0 song, 1 patter
 void exportDataFilesDialog(App& a);
 void exportBonesDialog(App& a);
 void exportZipDialog(App& a);
+// File > Export > FL Studio project (.flp) (J-34).
+void exportFlpDialog(App& a);
 void openMissingSamples(App& a);
 // Opens anything Gridline reads: projects, FL projects, zipped projects, MIDI
 // files (new pattern), audio files (playlist clip). Returns true when handled.

@@ -36,6 +36,7 @@
 #include "core/Project.h"
 #include "core/WavWriter.h"
 #include "core/flp/Flp.h"
+#include "core/flp/FlpExport.h"
 #include "core/flp/FlpPresets.h"
 #include "engine/Sample.h"
 
@@ -138,6 +139,25 @@ std::vector<Target> targets() {
          gl::flp::Report r;
          std::string err;
          if (gl::importFlp(p, s, r, &err, "/nonexistent-fl-data")) (void)gl::projectToText(s);
+       },
+       [] { return std::vector<Bytes>{seedFlp()}; }},
+      {"flp-export", ".flp",  // J-34: import → FLP export (with / without the origin) → re-import
+       [](const std::string& p) {
+         gl::Song s;
+         gl::flp::Report r;
+         std::string err;
+         if (!gl::importFlp(p, s, r, &err, "/nonexistent-fl-data")) return;
+         for (bool origin : {true, false}) {
+           gl::flp::ExportOptions o;
+           o.useOrigin = origin;
+           o.factoryData = "/nonexistent-fl-data";
+           gl::flp::ExportReport rep;
+           gl::flp::Bytes out;
+           if (!gl::flp::exportFlp(s, out, rep, o)) continue;
+           gl::Song back;
+           gl::flp::Report r2;
+           if (!gl::importFlpBytes(out, back, r2, &err, "/nonexistent-fl-data", "", false)) std::abort();  // our own output must read back
+         }
        },
        [] { return std::vector<Bytes>{seedFlp()}; }},
       {"fst", ".fst",

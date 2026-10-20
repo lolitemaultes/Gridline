@@ -98,8 +98,8 @@ bool decodeKeys(Context& c, const std::vector<Event>& events, PluginMapping& m) 
 // State: dword version, MIDI channel (0-based), program (-1 none), bank MSB,
 // bank LSB (-1 none), page, port, flags. Version 4+: controller values from
 // 0x22 (dword each), controller records from 0x142: byte index (0xFF ends),
-// word controller number, byte kind, dword ?, dword min, dword max, dword
-// channel (-1 = the plugin's), two ANSI names.
+// word controller number, byte kind, dword ?, byte ?, dword min, dword max,
+// dword channel (-1 = the plugin's), two ANSI names; then the page names.
 bool decodeMidiOut(Context&, const std::vector<Event>& events, PluginMapping& m) {
   Bytes b = stateOf(events);
   if (!b.has(0, 32)) return false;
@@ -115,11 +115,14 @@ bool decodeMidiOut(Context&, const std::vector<Event>& events, PluginMapping& m)
   if (version >= 4) {
     size_t at = 0x142;
     int k = 0;
-    while (b.has(at, 21) && b.u8(at) != 0xFF) {
+    // J-34 fix: the record header is 21 bytes (byte index, word number, byte
+    // kind, dword, byte, dword min, dword max, dword channel), names at +21 —
+    // checked on every record of FL's shipped MIDI Out presets.
+    while (b.has(at, 22) && b.u8(at) != 0xFF) {
       const int idx = b.u8(at);
       const int number = b.u16(at + 1);
-      const int lo = b.i32(at + 8), hi = b.i32(at + 12), chn = b.i32(at + 16);
-      size_t next = at + 20;
+      const int lo = b.i32(at + 9), hi = b.i32(at + 13), chn = b.i32(at + 17);
+      size_t next = at + 21;
       b.pstr(next, &next);
       b.pstr(next, &next);
       if (k < kMoKnobs) {

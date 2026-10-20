@@ -499,6 +499,20 @@ struct SongInfo {
   }
 };
 
+// FL Studio data kept from an imported .flp for the FL exporter (J-34): the
+// original events of imported objects (plugin states, channel / insert /
+// pattern / playlist settings Gridline does not model or models only
+// approximately), keyed by the Gridline object they belong to ("ch/12",
+// "plug/12/-1", "mx/5", "clip/40", …; see core/flp/FlpOrigin.h). The exporter
+// writes an object's original data back where it still decodes to the
+// object's current values, so an unchanged import exports 1:1. Empty for
+// songs that were not imported from FL. Not used by playback or editing.
+struct FlOrigin {
+  std::map<std::string, std::string> blobs;  // key → FLP-encoded event list (binary)
+  bool empty() const { return blobs.empty(); }
+  bool operator==(const FlOrigin& o) const { return blobs == o.blobs; }
+};
+
 inline constexpr int kDefaultInsertTracks = 16;
 inline constexpr int kDefaultPlaylistTracks = 32;
 inline constexpr int kMaxPlaylistTracks = 500;   // reference: 500 [O]
@@ -533,6 +547,7 @@ struct Song {
   LiveSettings live;
   std::vector<Arrangement> arrangements;
   int currentArrangement = 0;
+  FlOrigin flOrigin;  // FL Studio import data for the FL exporter (see FlOrigin)
 
   ObjectId allocateId() { return nextId++; }
 
@@ -573,7 +588,7 @@ struct Song {
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
            arrangements == o.arrangements &&
-           currentArrangement == o.currentArrangement;
+           currentArrangement == o.currentArrangement && flOrigin == o.flOrigin;
   }
   bool operator!=(const Song& o) const { return !(*this == o); }
 };

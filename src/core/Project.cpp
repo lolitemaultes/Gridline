@@ -31,6 +31,48 @@ bool fail(std::string* err, const std::string& msg) {
   return false;
 }
 
+// Base64 (RFC 4648) for binary blobs kept in the project (FL origin data, J-34).
+std::string b64Encode(const std::string& in) {
+  static const char* k = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  out.reserve((in.size() + 2) / 3 * 4);
+  size_t i = 0;
+  for (; i + 2 < in.size(); i += 3) {
+    const uint32_t v = (static_cast<uint8_t>(in[i]) << 16) | (static_cast<uint8_t>(in[i + 1]) << 8) | static_cast<uint8_t>(in[i + 2]);
+    out += k[v >> 18], out += k[(v >> 12) & 63], out += k[(v >> 6) & 63], out += k[v & 63];
+  }
+  if (i + 1 == in.size()) {
+    const uint32_t v = static_cast<uint8_t>(in[i]) << 16;
+    out += k[v >> 18], out += k[(v >> 12) & 63], out += "==";
+  } else if (i + 2 == in.size()) {
+    const uint32_t v = (static_cast<uint8_t>(in[i]) << 16) | (static_cast<uint8_t>(in[i + 1]) << 8);
+    out += k[v >> 18], out += k[(v >> 12) & 63], out += k[(v >> 6) & 63], out += '=';
+  }
+  return out;
+}
+bool b64Decode(const std::string& in, std::string& out) {
+  out.clear();
+  uint32_t acc = 0;
+  int bits = 0;
+  for (char c : in) {
+    int v;
+    if (c >= 'A' && c <= 'Z') v = c - 'A';
+    else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
+    else if (c >= '0' && c <= '9') v = c - '0' + 52;
+    else if (c == '+') v = 62;
+    else if (c == '/') v = 63;
+    else if (c == '=') break;
+    else return false;
+    acc = (acc << 6) | static_cast<uint32_t>(v);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out += static_cast<char>((acc >> bits) & 0xFF);
+    }
+  }
+  return true;
+}
+
 // v1 → v2: assign IDs in list order, turn index references into ID references.
 void migrateV1(Json& j) {
   ObjectId next = kFirstObjectId;
@@ -912,6 +954,11 @@ Json songToJson(const Song& s) {
     j.object["patternGroups"] = std::move(groups);
   }
   songExtrasToJson(s, j);  // live area, arrangements (see block above)
+  if (!s.flOrigin.empty()) {  // FL Studio import data for the FL exporter (J-34)
+    Json fo = Json::makeObject();
+    for (const auto& [k, v] : s.flOrigin.blobs) fo.object[k] = str(b64Encode(v));
+    j.object["flOrigin"] = std::move(fo);
+  }
   return j;
 }
 
@@ -1229,6 +1276,11 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       s.modLinks.push_back(std::move(l));
     }
   if (!songExtrasFromJson(j, s, takeId, err)) return false;  // live area, arrangements (see block above)
+  if (const Json* fo = j.find("flOrigin"); fo && fo->is(Json::Type::Object))
+    for (const auto& [k, v] : fo->object) {
+      std::string bytes;
+      if (v.is(Json::Type::String) && b64Decode(v.str, bytes)) s.flOrigin.blobs[k] = std::move(bytes);
+    }
   s.nextId = std::max<ObjectId>(jsonInt<ObjectId>(j.num("nextId", 0)), maxId + 1);
   out = std::move(s);
   return true;

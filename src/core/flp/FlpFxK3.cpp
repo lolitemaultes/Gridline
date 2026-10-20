@@ -586,13 +586,23 @@ bool decodeLovePhilter(Context& c, const std::vector<Event>& evs, PluginMapping&
   if (ver >= 10) r.u8();
   if (ver >= 11) r.u8();
   r.i32();
-  int32_t infoLen = r.i32();
+  // J-34 fix: the info text is a 7-bit varint character count + UTF-16LE
+  // (every shipped state, versions 6..12); it was read as an i32 byte count,
+  // which stopped the unit parse for all of them. CR = line break.
+  size_t infoChars = 0;
+  for (int shift = 0; r.ok && shift < 28; shift += 7) {
+    const uint8_t v = r.u8();
+    infoChars |= static_cast<size_t>(v & 0x7F) << shift;
+    if (!(v & 0x80)) break;
+  }
   std::string info;
-  if (infoLen > 0 && r.o + static_cast<size_t>(infoLen) <= b.size()) {
-    info.assign(reinterpret_cast<const char*>(b.data() + r.o), static_cast<size_t>(infoLen));
-    r.o += static_cast<size_t>(infoLen);
-  } else if (infoLen != 0) {
-    r.ok = false;
+  if (r.o + 2 * infoChars > b.size()) r.ok = false;
+  for (size_t i = 0; r.ok && i < infoChars; ++i, r.o += 2) {
+    const uint32_t cu = b[r.o] | (b[r.o + 1] << 8);
+    if (cu == '\r') info += '\n';
+    else if (cu < 0x80) info += static_cast<char>(cu);
+    else if (cu < 0x800) info += static_cast<char>(0xC0 | (cu >> 6)), info += static_cast<char>(0x80 | (cu & 0x3F));
+    else info += static_cast<char>(0xE0 | (cu >> 12)), info += static_cast<char>(0x80 | ((cu >> 6) & 0x3F)), info += static_cast<char>(0x80 | (cu & 0x3F));
   }
   while (!info.empty() && info.back() == 0) info.pop_back();
   applyTable(m, *lovePhilterTable(), g);
