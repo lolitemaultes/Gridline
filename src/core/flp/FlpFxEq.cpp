@@ -196,7 +196,7 @@ std::shared_ptr<const SimplePlugin> stereoShaper() {
   sp->extra = [](PluginMapping& m, const std::vector<double>& v) {
     set(m, ut::SmClassic, 1);  // reference gain law, delay and dephase curves
     set(m, ut::SmFxPos, v[7] >= 0.5 ? 1 : 0);
-    if (v[6] != 0) m.exact = false;  // difference sidechain output not available
+    set(m, ut::SmDiffTo, std::clamp(v[6], 0.0, 500.0));  // J-45: FL route index of the difference output
   };
   return sp;
 }
@@ -347,7 +347,17 @@ void registerFxEq(std::map<std::string, PluginDecoder>& d) {
   d["Fruity Balance"] = simpleDecoder(balance());
   d["Fruity Soft Clipper"] = simpleDecoder(softClipper());
   d["Fruity Fast Dist"] = simpleDecoder(fastDist());
-  d["Fruity Stereo Shaper"] = simpleDecoder(stereoShaper());
+  d["Fruity Stereo Shaper"] = [](Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+    static const PluginDecoder base = simpleDecoder(stereoShaper());
+    if (!base(c, evs, m)) return false;
+    const auto k = static_cast<size_t>(gl::packs::utility::SmDiffTo);
+    const int n = k < m.state.params.size() ? static_cast<int>(m.state.params[k]) : 0;
+    if (!flRouteOutputKept(c, n)) {
+      m.exact = false;
+      c.report.warn("Stereo Shaper: the difference output's route is not among the imported routes");
+    }
+    return true;
+  };
   d["Fruity Stereo Enhancer"] = simpleDecoder(stereoEnhancer());
   d["Fruity Free Filter"] = decodeFreeFilter;
   d["Fruity Filter"] = decodeFruityFilter;

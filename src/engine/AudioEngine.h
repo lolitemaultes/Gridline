@@ -406,6 +406,7 @@ class AudioEngine {
     float chL[kEngineMaxBlock], chR[kEngineMaxBlock];
     float dryL[kEngineMaxBlock], dryR[kEngineMaxBlock];
     float auxL[kEngineMaxBlock], auxR[kEngineMaxBlock];
+    float sideL[kEngineMaxBlock], sideR[kEngineMaxBlock];  // J-45 slot side inputs
   };
   std::vector<Scratch> scratch_;
   // The block the graph tasks render (set by processBlock before runGraph).

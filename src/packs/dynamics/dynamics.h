@@ -247,8 +247,23 @@ enum Ts {
   TsTransFx, TsTransFxMix, TsTransFxA, TsTransFxB,
   TsSusFx, TsSusFxMix, TsSusFxA, TsSusFxB,
   TsLookahead, TsStereoLink, TsTransOn, TsSusOn, TsTransSync, TsSusSync,
+  // J-45 reference engine (TsModel = 1, transmitter_ref.h): the 42 stored
+  // controls of the effect it imports as they are kept (tsRaw(tag)); the
+  // transient / sustain sends (FL route indexes, 0 = off) and the detection
+  // source (input route index; -1 = the track's sidechain, 0 = own input).
+  TsModel, TsRaw0, TsSendT = TsRaw0 + 42, TsSendS, TsScIn,
   TsCount
 };
+inline constexpr int tsRaw(int tag) { return TsRaw0 + tag; }
+// Stored-control ranges (tag → min, max) and the defaults of a fresh instance.
+inline constexpr int kTsRawMin[42] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0,
+                                      0, 0, 0, 0, 0, 0, 0, 0, 0};
+inline constexpr int kTsRawMax[42] = {10000, 10000, 10000, 12800, 12800, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000,
+                                      10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 768,
+                                      10000, 10000, 10000, 768, 10000, 1, 1, 2, 1, 1, 5, 5, 1, 1};
+inline constexpr int kTsRawDef[42] = {7475, 1968, 1968, 8743, 8743, 5000, 5000, 10000, 9112, 0, 5000, 5051, 5000, 10000, 3333, 0,
+                                      10000, 3342, 0, 10000, 5320, 5275, 10000, 4443, 4642, 10000, 3531, 144, 0, 10000, 3156, 240, 0,
+                                      1, 1, 1, 1, 1, 0, 2, 0, 0};
 // Effect slot kinds (TsTransFx / TsSusFx). A / B per kind: saturate drive /
 // warmth, bounce time curve / amp curve, diffuse and blur depth / size, echo
 // feedback / time.
@@ -286,6 +301,29 @@ std::unique_ptr<Effect> createMasterEffect(const std::string& type);  // master_
 std::unique_ptr<Effect> createRackEffect(const std::string& type);    // rack_dsp.cpp
 std::atomic<double>& cabRate();  // J-42: engine rate seen by the module rack (dynamics_dsp.cpp)
 std::unique_ptr<Effect> createDistEffect(const std::string& type);    // dist_dsp.cpp
+
+// ------------------------------------------------------------ gl.hitloop
+// J-45 Hit Looper: captures the input continuously; each detected hit (or a
+// tempo / manual trigger) makes two loopers (A, B; B's length divided by the
+// A/B ratio) replay the slice between the last two triggers, with reverse /
+// octave choices per trigger (random or position-based), pan or auto-pan,
+// mixed with the dry signal. Engine: transporter_ref.h. Controls are kept as
+// whole numbers in the ranges of the effect it imports (hlRaw(k)); see
+// kHlRawMin / kHlRawMax / kHlRawDef.
+enum HitLoop {
+  HlDry = 0, HlLevelA, HlLevelB, HlReverse, HlOctave, HlOctaveUp, HlSpread, HlMinLength, HlRatio, HlSensitivity, HlBounce,
+  HlFreeze, HlFlush, HlMode, HlBypass, HlUpdateA, HlUpdateB, HlUpdateAB, HlFixed, HlTempoLength, HlTempoTrigger, HlIgnore,
+  HlSource,      // detection source: left / right / both
+  HlStereo,      // 0 mono capture, 1 stereo (loop A = left, loop B = right)
+  HlFlushOnStop, // clear the loops when the transport stops
+  HlLookahead,   // stored only (the engine always looks ahead)
+  HlSendTo,      // loops A / B to the hosting track's route n (0 = off)
+  HlInput,       // detection from the hosting track's input route n (0 = own input, -1 = the track's sidechain)
+  HlCount
+};
+inline constexpr int kHlRawMin[22] = {0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+inline constexpr int kHlRawMax[22] = {12800, 12800, 12800, 10000, 10000, 10000, 1024, 2000, 36, 1024, 1024, 1, 1, 3, 1, 1, 1, 1, 1, 20, 21, 10000};
+inline constexpr int kHlRawDef[22] = {12800, 12800, 12800, 0, 0, 0, 512, 500, 8, 512, 512, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 0};
 std::unique_ptr<Effect> createPocketEffect(const std::string& type);  // pocket_dsp.cpp
 void appendPocketInfo(std::vector<PluginInfo>& v);                     // pocket_info.cpp
 

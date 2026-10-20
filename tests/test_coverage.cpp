@@ -204,24 +204,10 @@ void testDecoders() {
   Decoded map0 = decode("VFX Color Mapper", &cm0);
   expect(map0.ok && map0.m.exact && param(map0, md::CmMap + 5) == 3.f, "Color Mapper: every colour to port 2 is exact");
 
-  // Dashboard: three values (panel + two controls), two named controls.
-  std::vector<uint8_t> db(28, 0);
-  db[0] = 2;
-  put32(db, 3);
-  put32(db, 0), put32(db, 32768), put32(db, 65536);
-  put32(db, 2);  // control count
-  auto record = [&](const std::string& name) {
-    std::vector<uint8_t> r(80, 0);
-    r[0] = static_cast<uint8_t>(name.size());
-    std::memcpy(&r[1], name.data(), name.size());
-    r[48] = static_cast<uint8_t>(name.size());
-    std::memcpy(&r[49], name.data(), name.size());
-    db.insert(db.end(), r.begin(), r.end());
-  };
-  record("Cutoff"), record("Slider2");
-  db.resize(db.size() + 16, 0);
+  // Dashboard (J-45 layout): a wheel and a slider with internal links.
+  std::vector<uint8_t> db = flp::buildDashboard({{2, "Cutoff"}, {1, "Slider2"}}, {0.5, 1.0});
   Decoded dash = decode("Dashboard", &db);
-  expect(dash.ok && dash.m.glType == "gl.surface" && !dash.m.exact, "Dashboard → Control Surface");
+  expect(dash.ok && dash.m.glType == "gl.surface" && dash.m.exact, "Dashboard → Control Surface (internal links: exact)");
   expect(std::fabs(param(dash, 0) - 0.5f) < 1e-6f && std::fabs(param(dash, 1) - 1.0f) < 1e-6f, "Dashboard: control values");
   expect(dash.m.state.data.find("Cutoff") != std::string::npos &&
              dash.m.state.data.find(std::to_string(md::SkSlider) + " Slider2") != std::string::npos,

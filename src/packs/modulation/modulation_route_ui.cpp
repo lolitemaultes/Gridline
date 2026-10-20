@@ -172,7 +172,11 @@ void sendEditor(EditTarget& e) {
   sk::wheel(e, SnDry, F.p(6, 6), 56 * F.s, K);
   sk::text(dl, F, 34, 66, K, "DRY", 7.5f, true);
   int target = e.ip(SnTarget, 1);
-  std::string name = target >= 0 && static_cast<size_t>(target) < s.mixer.size() ? mixerTrackName(s, static_cast<size_t>(target)) : "(none)";
+  // J-45 route numbering: the target is the n-th route of this track.
+  const bool routed = e.p(SnRoute, 0) >= 0.5f;
+  const int self = s.mixerIndex(e.owner);
+  const int dest = routed ? flRouteOutput(s, self, target) : target;
+  std::string name = dest >= 0 && static_cast<size_t>(dest) < s.mixer.size() ? mixerTrackName(s, static_cast<size_t>(dest)) : "(none)";
   {
     char num[8];
     std::snprintf(num, sizeof num, "%d", target);
@@ -185,10 +189,22 @@ void sendEditor(EditTarget& e) {
     if (hov) kk.lcdText = skin::lighten(K.lcdText, 0.3f);
     skin::lcd(dl, t0, t1, kk, num, F.font(13.0f));
     if (ImGui::BeginPopup("##targets")) {
-      for (size_t i = 0; i < s.mixer.size(); ++i) {
-        if (s.mixer[i].id == e.owner) continue;
-        std::string l = std::to_string(i) + "  " + mixerTrackName(s, i);
-        if (ImGui::MenuItem(l.c_str(), nullptr, static_cast<int>(i) == target)) e.setParam(SnTarget, static_cast<double>(i), false);
+      if (routed) {
+        const std::vector<int> outs = flRouteOutputs(s, self);
+        for (size_t k = 1; k < outs.size(); ++k) {
+          std::string l = "Route " + std::to_string(k) + "  " + mixerTrackName(s, static_cast<size_t>(outs[k]));
+          if (ImGui::MenuItem(l.c_str(), nullptr, static_cast<int>(k) == target)) e.setParam(SnTarget, static_cast<double>(k), false);
+        }
+        if (ImGui::MenuItem("Number by mixer track")) {
+          e.setParam(SnTarget, dest >= 0 ? dest : 0, false);
+          e.setParam(SnRoute, 0, true);
+        }
+      } else {
+        for (size_t i = 0; i < s.mixer.size(); ++i) {
+          if (s.mixer[i].id == e.owner) continue;
+          std::string l = std::to_string(i) + "  " + mixerTrackName(s, i);
+          if (ImGui::MenuItem(l.c_str(), nullptr, static_cast<int>(i) == target)) e.setParam(SnTarget, static_cast<double>(i), false);
+        }
       }
       ImGui::EndPopup();
     }

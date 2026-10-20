@@ -298,7 +298,7 @@ bool decodeWaveShaper(Context& c, const std::vector<Event>& evs, PluginMapping& 
   }
   cv.prepare();
   m.state.data = wscurve::serialize(cv);
-  m.exact = !lossy && os < 4;  // 16x oversampling runs at 8x
+  m.exact = !lossy;  // J-45: the reference engine runs every oversampling factor (2^os, polyphase IIR)
   return true;
 }
 

@@ -192,7 +192,23 @@ void ProgramBuilder::compileGraph(Program& prog) {
           }
       }
     }
+    // J-45 side inputs (PluginInfo::sideInParam): a source track's output,
+    // read by one slot, compensated to that slot's position like a bus return.
+    std::vector<Pending> side;
+    for (size_t r = 0; r < dst.slots.size(); ++r) {
+      dst.slots[r].sideIn.clear();
+      const int si = dst.slots[r].sideSrc;
+      if (si < 0 || static_cast<size_t>(si) >= M || si == jj || !dst.slots[r].rt) continue;
+      if (pos[static_cast<size_t>(si)] < 0 || pos[static_cast<size_t>(si)] >= pos[j]) continue;  // must run earlier
+      Pending p;
+      p.in.kind = ProgInput::Track;
+      p.in.src = si;
+      p.arrival = prog.mixer[static_cast<size_t>(si)].latOut() - slotPre(j, r);  // relative to latIn
+      p.slot = static_cast<int>(r);
+      side.push_back(p);
+    }
     int latIn = 0;
+    for (const auto& p : side) latIn = std::max(latIn, p.arrival);
     for (const auto& p : main) latIn = std::max(latIn, p.arrival);
     for (const auto& p : sc) latIn = std::max(latIn, p.arrival);
     for (const auto& p : aux)
@@ -241,6 +257,10 @@ void ProgramBuilder::compileGraph(Program& prog) {
       makeTap(p, 20);
       dst.slots[static_cast<size_t>(p.slot)].auxIn.push_back(p.in);
     }
+    for (auto& p : side) {
+      makeTap(p, 30);
+      dst.slots[static_cast<size_t>(p.slot)].sideIn.push_back(p.in);
+    }
   }
   lines_ = std::move(lines);
   prog.pdc = pdc_;
@@ -273,6 +293,8 @@ void ProgramBuilder::compileGraph(Program& prog) {
     for (const auto& in : prog.mixer[j].scInputs) addPred(in);
     for (const auto& s : prog.mixer[j].slots)
       for (const auto& in : s.auxIn) addPred(in);
+    for (const auto& s : prog.mixer[j].slots)
+      for (const auto& in : s.sideIn) addPred(in);
     // MIDI-input effects read the port bus that MIDI Out channels fill.
     bool midiIn = false;
     for (const auto& s : prog.mixer[j].slots)

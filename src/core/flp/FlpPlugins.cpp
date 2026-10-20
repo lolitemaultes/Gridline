@@ -102,7 +102,10 @@ void importPlugins(Context& c) {
       const auto& evs = c.sec.inserts[i].slots[k].events;
       if (evs.empty()) continue;
       PluginMapping m;
-      if (!decode(c, evs, m) || !t || k >= t->slots.size()) continue;
+      c.insert = static_cast<int>(i);
+      const bool ok = decode(c, evs, m);
+      c.insert = -1;
+      if (!ok || !t || k >= t->slots.size()) continue;
       if (m.state.type.empty()) m.state.type = m.glType;
       t->slots[k].plugin = m.state;
       c.slotPlugins[{static_cast<int>(i), static_cast<int>(k)}] = std::move(m);

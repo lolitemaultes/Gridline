@@ -50,8 +50,57 @@ inline double clamp01(double v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 inline double coefFor(double seconds, double sr) { return seconds <= 0 ? 1.0 : 1.0 - std::exp(-1.0 / (seconds * sr)); }
 
 // ------------------------------------------------------------ Peak Follower
+// J-45: the reference host's shared LFO tables (16384 float32 each), rebuilt
+// from their published behaviour: sine, triangle (0 rising), square (+1 first
+// half), rising saw, and the noise table — a Mersenne-Twister stream (seed
+// 19650218) whose state refresh revisits word 226 with the refresh counter
+// (624) as its partner word, scaled to [-1, 1).
+struct PeakTables {
+  static constexpr int kN = 16384;
+  float t[5][kN];
+  PeakTables() {
+    for (int i = 0; i < kN; ++i) {
+      t[0][i] = static_cast<float>(std::sin((2.0 * i) * 3.141592653589793 * (1.0 / kN)));
+      t[1][i] = static_cast<float>(i < 4096 ? i / 4096.0 : i < 12288 ? 1.0 - (i - 4096) / 4096.0 : (i - 12288) / 4096.0 - 1.0);
+      t[2][i] = i < 8192 ? 1.f : -1.f;
+      t[3][i] = static_cast<float>((2.0 * i) * (1.0 / kN) - 1.0);
+    }
+    uint32_t mt[624];
+    mt[0] = 19650218u;
+    for (uint32_t i = 1; i < 624; ++i) mt[i] = 1812433253u * (mt[i - 1] ^ (mt[i - 1] >> 30)) + i;
+    uint32_t idx = 624;
+    const uint32_t mag[2] = {0u, 0x9908B0DFu};
+    for (int i = 0; i < kN; ++i) {
+      if (idx >= 624) {
+        for (int k = 0; k < 227; ++k) {
+          const uint32_t y = (mt[k] & 0x80000000u) | (mt[k + 1] & 0x7FFFFFFFu);
+          mt[k] = mt[k + 397] ^ (y >> 1) ^ mag[y & 1];
+        }
+        for (int k = 226; k < 623; ++k) {
+          const uint32_t y = (mt[k] & 0x80000000u) | (mt[k + 1] & 0x7FFFFFFFu);
+          mt[k] = (k == 226 ? idx : mt[k - 227]) ^ (y >> 1) ^ mag[y & 1];
+        }
+        const uint32_t y = (mt[623] & 0x80000000u) | (mt[0] & 0x7FFFFFFFu);
+        mt[623] = mt[396] ^ (y >> 1) ^ mag[y & 1];
+        idx = 0;
+      }
+      uint32_t y = mt[idx++];
+      y ^= y >> 11;
+      y ^= (y << 7) & 0x9D2C5680u;
+      y ^= (y << 15) & 0xEFC60000u;
+      y ^= y >> 18;
+      t[4][i] = static_cast<float>((y * (1.0 / 4294967296.0)) * 2.0 - 1.0);
+    }
+  }
+};
+const PeakTables& peakTables() {
+  static const PeakTables tables;
+  return tables;
+}
+
 class PeakFollower final : public Effect {
  public:
+  PeakFollower() : tab_(&peakTables()) {}  // built on the UI thread, before the first block
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     if (prm(s, PkModel, 0) >= 0.5f) {
       processRef(s, ctx, L, R, n);
@@ -117,25 +166,12 @@ class PeakFollower final : public Effect {
     const double m = std::exp(std::fabs(a) / 256.0 * std::log(6.0)) - 1.0;
     return (a < 0 ? -1.0 : 1.0) * scale * m;
   }
-  static double wave(int shape, uint32_t pos) {
-    const int i = static_cast<int>(pos >> 18);  // 16384-entry table
-    const double ph = i / 16384.0;
-    switch (shape) {
-      case 0: return std::sin(2 * 3.141592653589793 * ph);
-      case 1: return ph < 0.25 ? 4 * ph : ph < 0.75 ? 2 - 4 * ph : 4 * ph - 4;
-      case 2: return ph < 0.5 ? 1.0 : -1.0;
-      case 3: return 2 * ph - 1;
-      default: {  // noise table: a fixed pseudo-random sequence
-        uint32_t h = static_cast<uint32_t>(i) * 2654435761u;
-        h ^= h >> 15, h *= 2246822519u, h ^= h >> 13;
-        return (h & 0xFFFF) / 32767.5 - 1.0;
-      }
-    }
-  }
+  // Table value at the phase, as 0..1 (computed in float like the reference).
+  double wave01(int shape, uint32_t pos) const { return (tab_->t[std::clamp(shape, 0, 4)][pos >> 18] + 1.f) * 0.5f; }
   void tick(const PluginState& s, int ppq) {
     const double P = prm(s, PkRBase) / 65536.0 + amountLaw(prm(s, PkRAmount, 128), 0.4) * tension(peak_, prm(s, PkRTension));
     const int shape = std::clamp(static_cast<int>(prm(s, LfShape) + 0.5f), 0, 4);
-    const double w = (wave(shape, pos_) + 1) / 2;
+    const double w = wave01(shape, pos_);
     const double Lv = prm(s, LfRBase) / 65536.0 + amountLaw(prm(s, LfRAmount), 0.2) * tension(w, prm(s, LfRTension));
     pos_ += inc_;
     const double tgt[3] = {P + Lv, P, Lv};
@@ -154,11 +190,17 @@ class PeakFollower final : public Effect {
     const int ppq = std::max(1, ctx.ppq);
     // LFO increment per tick: period = round((PPQ div 4) · S · 0.512) ticks (× 16384 for random), ≥ 3.
     const int shape = std::clamp(static_cast<int>(prm(s, LfShape) + 0.5f), 0, 4);
-    const double S = std::pow(1001.0, prm(s, LfRSpeed, 32950) / 65536.0) - 1.0;
-    double period = std::nearbyint((ppq / 4) * S * 0.512);
-    if (shape == 4) period *= 16384;
-    period = std::max(period, 3.0);
-    inc_ = static_cast<uint32_t>(std::floor(4294967296.0 / period));
+    // J-45: each step rounded to float32 as the reference computes it.
+    const float a = static_cast<float>(prm(s, LfRSpeed, 32950) * (1.0 / 65536.0));
+    const float S = static_cast<float>(std::exp(static_cast<double>(a) * 6.90875477931522) - 1.0);
+    float q = static_cast<float>(ppq >> 2) * S;
+    q = q / 48.f;
+    q = q * 24576.f;
+    q = q / 1000.f;
+    int32_t period = static_cast<int32_t>(std::nearbyint(q));
+    if (shape == 4) period = static_cast<int32_t>(static_cast<uint32_t>(period) << 14);
+    period = std::max<int32_t>(period, 3);
+    inc_ = static_cast<uint32_t>(4294967296.0 / static_cast<double>(period));
     const double spt = ctx.sampleRate * 60.0 / (std::max(1.0, ctx.tempo) * ppq);  // samples per tick
     const uint32_t phaseOff = static_cast<uint32_t>(static_cast<int64_t>(prm(s, LfRPhase)) << 16);
     if (ctx.playing && (!wasPlaying_ || ctx.jumped))
@@ -180,6 +222,7 @@ class PeakFollower final : public Effect {
   double peak_ = 0, tickAcc_ = 0, sent_[3] = {-1, -1, -1};
   uint32_t pos_ = 0, inc_ = 0;
   bool refOn_ = false, wasPlaying_ = false;
+  const PeakTables* tab_;
 };
 
 // ------------------------------------------------------- X-Y / X-Y-Z pads
@@ -673,15 +716,29 @@ class MixerSend final : public Effect {
  public:
   void setSideIo(const SideIo& io) override { io_ = io; }
   void process(const PluginState& s, const ProcessContext&, float* L, float* R, int n) override {
-    double pl = 1, pr = 1;
-    dsp::panGains(prm(s, SnPan), pl, pr);  // balance law: centre = unity
     float lvl = prm(s, SnLevel, 1), dry = prm(s, SnDry, 1);
-    float sl = static_cast<float>(pl) * lvl, sr = static_cast<float>(pr) * lvl;
-    if (io_.sendL && io_.sendR)
-      for (int i = 0; i < n; ++i) {
-        io_.sendL[i] += L[i] * sl;
-        io_.sendR[i] += R[i] * sr;
-      }
+    if (prm(s, SnRoute) >= 0.5f) {
+      // J-45 route numbering = FL's send: the far channel folds into the near
+      // one at half weight (p >= 0: L→L 1-p, L→R p/2, R→R 1-p/2; mirrored below 0).
+      const float p = std::clamp(prm(s, SnPan), -1.f, 1.f);
+      float ll = lvl, lr = 0, rr = lvl, rl = 0;  // lr: L into the right output, rl: R into the left
+      if (p >= 0) ll = (1 - p) * lvl, lr = 0.5f * p * lvl, rr = (1 - 0.5f * p) * lvl;
+      else rr = (1 + p) * lvl, rl = -0.5f * p * lvl, ll = (1 + 0.5f * p) * lvl;
+      if (io_.sendL && io_.sendR)
+        for (int i = 0; i < n; ++i) {
+          io_.sendL[i] += L[i] * ll + R[i] * rl;
+          io_.sendR[i] += R[i] * rr + L[i] * lr;
+        }
+    } else {
+      double pl = 1, pr = 1;
+      dsp::panGains(prm(s, SnPan), pl, pr);  // balance law: centre = unity
+      float sl = static_cast<float>(pl) * lvl, sr = static_cast<float>(pr) * lvl;
+      if (io_.sendL && io_.sendR)
+        for (int i = 0; i < n; ++i) {
+          io_.sendL[i] += L[i] * sl;
+          io_.sendR[i] += R[i] * sr;
+        }
+    }
     for (int i = 0; i < n; ++i) {
       L[i] *= dry;
       R[i] *= dry;

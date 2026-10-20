@@ -130,6 +130,8 @@ void morphEq(std::vector<PluginInfo>& v) {
       p.params[static_cast<size_t>(bqMode(t, b))] = ch(name, {"On", "Off", "Locked"}, 0);
     }
   p.sendParams = {BqSendTo};
+  p.params[kBqRoute] = ch("Send numbering", {"Mixer track", "Route"}, 0);
+  p.routeModeParam = kBqRoute;
 
   Values smile, sweep, wide, phone, vowels;
   bankLevel(smile, 0, [](double f) { return dbg(shelfLo(f, 90, 5) + shelfHi(f, 7000, 4) + bell(f, 700, 1.2, -2.5)); });
@@ -313,6 +315,9 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params[SmDelayK] = lin("Delay", "%", -1, 1, 0);
     p.params[SmDephaseK] = lin("Dephase", "%", -1, 1, 0);
     p.params[SmClassic] = tog("Reference engine", 1);
+    p.params[SmDiffTo] = lin("Difference to route", "", 0, 500, 0);
+    p.sendParams = {SmDiffTo};
+    p.routeModeParam = kRouteIndexAlways;
     p.presets = {{"Pass", {}},
                  {"Swap sides", {{SmLL, 0.f}, {SmRL, 1.f}, {SmLR, 1.f}, {SmRR, 0.f}}},
                  {"Mono", {{SmLL, 0.6309f}, {SmRL, 0.6309f}, {SmLR, 0.6309f}, {SmRR, 0.6309f}}},

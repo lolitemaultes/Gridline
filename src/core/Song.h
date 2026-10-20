@@ -621,6 +621,19 @@ bool canRoute(const Song& song, ObjectId from, ObjectId to);
 // Mixer tracks in processing order (sources before destinations; master last).
 std::vector<ObjectId> mixerOrder(const Song& song);
 
+// J-45: FL's route numbering for plugin side outputs and inputs (Fruity Send,
+// band splitter sends, difference outputs, sidechain inputs). A plugin stores
+// a number n that indexes its hosting track's route list, resolved whenever
+// the routing is read (so presets follow the track they are loaded on):
+//   outputs(T) = [T, destinations of T ascending]  (normal and sidechain sends)
+//   inputs(T)  = [T, tracks routed to T ascending]
+// Mixer indices. Output n (n >= 1) is outputs[min(n, size - 1)]; input n is
+// inputs[n] (none past the end). -1 = none (n <= 0, or the track itself).
+std::vector<int> flRouteOutputs(const Song& song, int mixerIndex);
+std::vector<int> flRouteInputs(const Song& song, int mixerIndex);
+int flRouteOutput(const Song& song, int mixerIndex, int n);
+int flRouteInput(const Song& song, int mixerIndex, int n);
+
 // Changes the project resolution, rescaling every tick position and length
 // (CORE-01). Returns the number of values that did not land exactly on the
 // new grid (rounded), so callers can warn before reducing PPQ.

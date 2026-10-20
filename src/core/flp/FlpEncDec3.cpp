@@ -5,13 +5,14 @@
 // controls and the defaults FL's plugin database records (no FL bytes are
 // copied). Plugins whose decoder reads nothing (Level Scaler, Sequencer,
 // Mute 2, Wasp, FL Slayer, LSD, Slicer 2) or whose layout is too large to
-// build (VFX Envelope, Dashboard, Soundfont Player, Mobile Rack FX) have no
+// build (VFX Envelope, Soundfont Player, Mobile Rack FX) have no
 // default state: FL loads them with their own defaults, which is what the
 // decoder produces for an empty state.
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -211,38 +212,14 @@ Encoder transmitter() {
     w.u8(0);
     return w.b;
   };
-  e.fields = [](const Bytes& b) {
-    std::vector<Field> f = {
-        i32(dyn::TsSensitivity, tmTag(0), 0, 10000), i32(dyn::TsHold, tmTag(1), 0, 10000), i32(dyn::TsReleaseShape, tmTag(2), 0, 10000),
-        i32(dyn::TsAttack, tmTag(3), 0, 12800),      i32(dyn::TsRelease, tmTag(4), 0, 12800), i32(dyn::TsTransTilt, tmTag(5), 0, 10000),
-        i32(dyn::TsSusTilt, tmTag(6), 0, 10000),     i32(dyn::TsLookahead, tmTag(33), 0, 1),  i32(dyn::TsStereoLink, tmTag(34), 0, 1),
-        i32(dyn::TsAttackShape, tmTag(35), 0, 2),    i32(dyn::TsTransOn, tmTag(36), 0, 1),    i32(dyn::TsSusOn, tmTag(37), 0, 1),
-        i32(dyn::TsTransSync, tmTag(40), 0, 1),      i32(dyn::TsSusSync, tmTag(41), 0, 1)};
-    // Effect slots: the kind first, then the knobs of the stored kind.
-    for (int side = 0; side < 2; ++side) {
-      const int o = side * dyn::kTsSlotStride;
-      f.push_back(i32(dyn::TsTransFx + o, tmTag(38 + side), 0, 5));
-      const int fx = std::clamp(rdI32(b, tmTag(38 + side)), 0, 5);
-      const bool sync = rdI32(b, tmTag(40 + side)) >= 1;
-      int mix = -1, a = -1, bb = -1;
-      switch (fx) {
-        case dyn::TsFxSaturate: mix = 13 + 3 * side, a = 14 + 3 * side, bb = 15 + 3 * side; break;
-        case dyn::TsFxBounce: mix = 19 + 3 * side, a = 21 + 3 * side, bb = 20 + 3 * side; break;
-        case dyn::TsFxDiffuse:
-        case dyn::TsFxBlur: mix = 7 + 3 * side, a = 8 + 3 * side, bb = 9 + 3 * side; break;
-        case dyn::TsFxEcho: {
-          const int base = 25 + 4 * side;
-          mix = base, a = base + 3, bb = sync ? base + 2 : base + 1;
-          break;
-        }
-        default: break;
-      }
-      if (mix < 0) continue;
-      f.push_back(i32(dyn::TsTransFxMix + o, tmTag(mix), 0, 10000));
-      f.push_back(i32(dyn::TsTransFxA + o, tmTag(a), 0, 10000));
-      if (fx == dyn::TsFxEcho && sync) f.push_back(i32(dyn::TsTransFxB + o, tmTag(bb), 1, 768));
-      else f.push_back(i32(dyn::TsTransFxB + o, tmTag(bb), 0, 10000));
-    }
+  // J-45: the reference engine keeps every stored control (tsRaw), then the
+  // two send routes and the detection source route.
+  e.fields = [](const Bytes&) {
+    std::vector<Field> f;
+    for (int k = 0; k < 42; ++k) f.push_back(i32(dyn::tsRaw(k), tmTag(k), dyn::kTsRawMin[k], dyn::kTsRawMax[k]));
+    f.push_back(i32(dyn::TsSendT, tmTag(42), 0, 500));
+    f.push_back(i32(dyn::TsSendS, tmTag(43), 0, 500));
+    f.push_back(i32(dyn::TsScIn, tmTag(44), 0, 500));
     return f;
   };
   return e;
@@ -911,16 +888,106 @@ Encoder colorMapper() {
   return e;
 }
 
-// Dashboard: i32 version, …, @28 u32 N, N × u32 values (value 0 belongs to
-// the panel); the control records are not built (no default state).
-Encoder dashboard() {
-  Encoder e = make("Dashboard", "gl.surface", -1);
+// VFX Level Scaler (J-45): u32 1, chunk 1002 (u8 editor tab), chunk 1001
+// (6 targets × centre, multiply, offset, tension, humanize, mode as i32).
+Encoder levelScaler() {
+  Encoder e = make("VFX Level Scaler", "gl.velscale", 0);
+  e.defaults = [] {
+    ByteWriter w;
+    w.u32(1);
+    w.u32(1002), w.u32(1), w.u32(0), w.u8(0);
+    w.u32(1001), w.u32(144), w.u32(0);
+    for (int t = 0; t < mod::kVsTargets; ++t)
+      for (int v : {t < 2 ? 0 : 4096, 8192, 0, 0, 0, 1}) w.i32(v);
+    return w.b;
+  };
   e.fields = [](const Bytes& b) {
     std::vector<Field> f;
-    const uint32_t n = rdU32(b, 28);
-    if (b.size() < 32 || n > 4096 || 32 + 4 * static_cast<size_t>(n) > b.size()) return f;
-    for (uint32_t k = 1; k < n && static_cast<int>(k - 1) < mod::kSurfaceControls; ++k)
-      f.push_back(field(static_cast<int>(k - 1), 32 + 4 * static_cast<size_t>(k), Type::U32, 0, 65536));
+    if (b.size() < 29 + 144) return f;
+    for (int t = 0; t < mod::kVsTargets; ++t) {
+      const size_t a = 29 + 24 * static_cast<size_t>(t);
+      f.push_back(i32(mod::vsRef(t, mod::VfCenter), a, 0, 8192));
+      f.push_back(i32(mod::vsRef(t, mod::VfMultiply), a + 4, -16384, 16384));
+      f.push_back(i32(mod::vsRef(t, mod::VfOffset), a + 8, -8192, 8192));
+      f.push_back(i32(mod::vsRef(t, mod::VfTension), a + 12, -8192, 8192));
+      f.push_back(i32(mod::vsRef(t, mod::VfHumanize), a + 16, 0, 16384));
+      f.push_back(i32(mod::vsRef(t, mod::VfMode), a + 20, 0, 2));
+    }
+    return f;
+  };
+  return e;
+}
+
+// VFX Sequencer (J-45): the FL installation's default bank (plugin database),
+// with the current program's steps, length, sync and transpose as fields
+// (see parseSeqBank).
+Encoder sequencer() {
+  Encoder e = make("VFX Sequencer", "gl.notesq", 0);
+  e.defaultsIn = [](const EncodeContext& c) {
+    if (c.factoryData.empty()) return Bytes{};
+    File f;
+    if (!readFile(c.factoryData + "/Data/System/Plugin databases/Plugin database (full)/Generators/Utility/VFX Sequencer.fst", f, nullptr))
+      return Bytes{};
+    const Event* s = pluginState(f.events);
+    return s && parseSeqBank(s->data, s->size).ok ? Bytes(s->data, s->data + s->size) : Bytes{};
+  };
+  e.fields = [](const Bytes& b) {
+    std::vector<Field> f;
+    const SeqBank s = parseSeqBank(b.data(), b.size());
+    if (!s.ok) return f;
+    f.push_back(field(mod::SqLength, s.prgp + 1, Type::U8, 1, 64));
+    f.push_back(field(mod::SqRate, s.prgp + 3, Type::U8, 0, 12));
+    f.push_back(field(mod::SqTranspose, s.prgp + 12, Type::I8, -2, 2));
+    for (int i = 0; i < mod::kSeqSteps; ++i) {
+      const size_t k = static_cast<size_t>(i);
+      f.push_back(field(mod::seqParam(i, mod::SqOn), s.lanes[2] + k, Type::U8, 0, 5));
+      f.push_back(field(mod::seqParam(i, mod::SqTie), s.lanes[2] + k, Type::U8, 0, 5));
+      f.push_back(field(mod::seqParam(i, mod::SqNote), s.lanes[3] + k, Type::U8, 0, 255));
+      f.push_back(field(mod::seqParam(i, mod::SqOctave), s.lanes[1] + k, Type::U8, 0, 127));
+      f.push_back(field(mod::seqParam(i, mod::SqVelocity), s.lanes[4] + k, Type::U8, 0, 127));
+      f.push_back(field(mod::seqParam(i, mod::SqGate), s.lanes[5] + k, Type::I8, -3, 5));
+    }
+    return f;
+  };
+  return e;
+}
+
+// Dashboard (J-45): header, value list, controller links, panel block (see
+// parseDashboard). A state whose controls differ is rebuilt from the controls
+// with the panel's default artwork (buildDashboard); the values are fields.
+std::vector<std::pair<int, std::string>> surfaceControls(const PluginState& g) {
+  std::vector<std::pair<int, std::string>> out;
+  size_t at = 0;
+  while (at < g.data.size() && out.size() < static_cast<size_t>(mod::kSurfaceControls)) {
+    size_t e = g.data.find('\n', at);
+    if (e == std::string::npos) e = g.data.size();
+    const std::string line = g.data.substr(at, e - at);
+    at = e + 1;
+    const size_t sp = line.find(' ');
+    if (line.empty()) continue;
+    const int k = std::atoi(line.c_str());
+    const std::string name = sp == std::string::npos ? std::string() : line.substr(sp + 1);
+    out.push_back({k == mod::SkSlider ? 1 : (k == mod::SkButton || k == mod::SkToggle) ? 4 : 2, name});
+  }
+  return out;
+}
+Encoder dashboard() {
+  Encoder e = make("Dashboard", "gl.surface", -1);
+  e.defaults = [] { return buildDashboard({}, {}); };
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    PluginState cur;
+    if (decoded("Dashboard", b, c, cur) && cur.data == g.data) return;  // same controls: the values are fields
+    const auto ctl = surfaceControls(g);
+    std::vector<double> v;
+    for (size_t k = 0; k < ctl.size(); ++k) v.push_back(prm(g, static_cast<int>(k)));
+    b = buildDashboard(ctl, v);
+  };
+  e.fields = [](const Bytes& b) {
+    std::vector<Field> f;
+    const DashPanel d = parseDashboard(b.data(), b.size());
+    if (!d.ok) return f;
+    for (size_t k = 0; k < d.links.size() && k < static_cast<size_t>(mod::kSurfaceControls); ++k)
+      if (d.links[k].valueAt) f.push_back(field(static_cast<int>(k), d.links[k].valueAt, Type::U32, d.links[k].lo, d.links[k].hi));
     return f;
   };
   return e;
@@ -1161,8 +1228,8 @@ void registerDec3(std::vector<Encoder>& v) {
   // FlpDec4.cpp
   v.push_back(bigClock());
   v.push_back(colorMapper());
-  v.push_back(make("VFX Level Scaler", "gl.velscale", 0));  // settings not decoded: FL defaults
-  v.push_back(make("VFX Sequencer", "gl.notesq", 0));       // pattern bank not decoded: FL defaults
+  v.push_back(levelScaler());
+  v.push_back(sequencer());
   v.push_back(dashboard());
   v.push_back(soundfont());
   v.push_back(mobileRack());

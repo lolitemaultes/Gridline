@@ -299,8 +299,8 @@ int main() {
                near(P(m, sp::splitParam2(2, sp::SxMain)), 20 * std::log10(1 + 6.943282 * 300 / 1800), 1e-4) &&
                P(m, sp::splitParam(0, sp::SbMute)) == 1 && P(m, sp::splitParam2(1, sp::SxSendMute)) == 1 && P(m, sp::SpBands) == 1,
            "Frequency Splitter levels (amplitude curve) / main + send mute bits");
-    expect(P(m, sp::splitParam2(1, sp::SxSendTo)) == 5 && P(m, sp::splitParam2(0, sp::SxSendTo)) == -1 && !m.exact,
-           "Frequency Splitter band send target = mixer insert (approximate numbering)");
+    expect(P(m, sp::splitParam2(1, sp::SxSendTo)) == 5 && P(m, sp::splitParam2(0, sp::SxSendTo)) == 0 && P(m, sp::SpRoute) == 1 && m.exact,
+           "Frequency Splitter band send target = the hosting track's route index (J-45)");
   }
   {  // Patcher: input → Fast LP → output, plus a parallel Spreader
     Env e;

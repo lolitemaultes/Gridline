@@ -277,6 +277,8 @@ PluginInfo splitter() {
     p.params[static_cast<size_t>(splitParam2(b, SxSendTo))] = lin(n2[b][3], "", -1, 500, -1);
     p.sendParams.push_back(splitParam2(b, SxSendTo));
   }
+  p.params[SpRoute] = ch("Send numbering", {"Mixer track", "Route"}, 0);
+  p.routeModeParam = SpRoute;
   p.legacyModelParam = SpModel;
   p.presets = {
       {"Three way", {}},

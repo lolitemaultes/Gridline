@@ -141,7 +141,9 @@ enum BankEq {
 inline constexpr int kBqValueBase = BqControlCount;
 inline constexpr int kBqValues = (kBqBanks + 1) * kBqTargets * kBqBands;  // 837
 inline constexpr int kBqModeBase = kBqValueBase + kBqValues;
-inline constexpr int kBqCount = kBqModeBase + kBqTargets * kBqBands;  // 945
+// J-45: BqSendTo is an FL route index of the hosting track when this is on.
+inline constexpr int kBqRoute = kBqModeBase + kBqTargets * kBqBands;  // 945
+inline constexpr int kBqCount = kBqRoute + 1;                          // 946
 static_assert(kBqCount <= 999, "Morph EQ must fit the mixer slot parameter range");
 inline constexpr int bqValue(int bank, int target, int band) { return kBqValueBase + bank * kBqTargets * kBqBands + target * kBqBands + band; }
 inline constexpr int bqMode(int target, int band) { return kBqModeBase + target * kBqBands + band; }
@@ -215,6 +217,9 @@ enum StereoMatrix {
   // κ3 reference engine: slider positions use the gain law sign(x) (3^|x| - 1) / 2 (1 = unity, 2 = +12 dB),
   // delay / dephase knob positions -1..1 (delay (1001^|k| - 1) / 2 ms, all-pass corner (5001^(1-|k|) - 1) 4.398 + 10 Hz).
   SmDelayK, SmDephaseK, SmClassic,
+  // J-45: difference output (input minus output) to the hosting track's
+  // route n (FL route numbering, 0 = off; PluginInfo::sendParams).
+  SmDiffTo,
   SmCount
 };
 

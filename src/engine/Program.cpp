@@ -63,6 +63,19 @@ int paramInt(const PluginState& s, size_t k, int dflt) {
   return k < s.params.size() ? static_cast<int>(std::lround(s.params[k])) : dflt;
 }
 
+// J-45: the send parameters of this state hold FL route indexes (PluginInfo::routeModeParam).
+bool routeIndexed(const PluginInfo* pi, const PluginState& s) {
+  if (!pi || pi->routeModeParam == -1) return false;
+  if (pi->routeModeParam == kRouteIndexAlways) return true;
+  const size_t k = static_cast<size_t>(pi->routeModeParam);
+  return k < s.params.size() && s.params[k] >= 0.5f;
+}
+// A send parameter's destination mixer index (-1 = none) for the effect on track `track`.
+int sendDestination(const Song& song, const PluginInfo* pi, const PluginState& s, int track, size_t param, int dflt) {
+  const int v = paramInt(s, param, dflt);
+  return routeIndexed(pi, s) ? flRouteOutput(song, track, v) : v;
+}
+
 // Mixer processing order over the song's sends plus extra (from, to) edges
 // (slot sends, bus send → return). Extra edges that would close a cycle are
 // dropped and reported through `accepted`. Sources come before destinations;
@@ -534,6 +547,13 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
         }
         packs::prepareAux(es.plugin, ps.aux);
         ps.controller = hasOutputs(es.plugin.type);
+        if (const PluginInfo* pi = findPlugin(es.plugin.type); pi && pi->sideInParam >= 0) {  // J-45 side input
+          const int v = paramInt(es.plugin, static_cast<size_t>(pi->sideInParam), -1);
+          if (v >= 0) {
+            ps.sideOwn = true;
+            ps.sideSrc = flRouteInput(song, static_cast<int>(prog->mixer.size()), v);
+          }
+        }
       }
       pm.slots.push_back(std::move(ps));
     }
@@ -568,14 +588,14 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
         const ProgSlot& ps = prog->mixer[i].slots[s];
         if (!ps.rt) continue;
         if (ps.plugin.type == kMixerSendType) {
-          int to = paramInt(ps.plugin, 0, 0);
+          int to = sendDestination(song, findPlugin(ps.plugin.type), ps.plugin, static_cast<int>(i), 0, 0);
           if (to >= 0 && static_cast<size_t>(to) < prog->mixer.size()) {
             extra.push_back({static_cast<int>(i), to});
             refs.push_back({i, s, false});
           }
         } else if (const PluginInfo* pi = findPlugin(ps.plugin.type); pi && !pi->sendParams.empty()) {
           for (size_t k = 0; k < pi->sendParams.size() && k < static_cast<size_t>(kMaxSendOutputs); ++k) {
-            int to = paramInt(ps.plugin, static_cast<size_t>(pi->sendParams[k]), -1);
+            int to = sendDestination(song, pi, ps.plugin, static_cast<int>(i), static_cast<size_t>(pi->sendParams[k]), -1);
             if (to >= 0 && static_cast<size_t>(to) < prog->mixer.size() && static_cast<size_t>(to) != i) {
               extra.push_back({static_cast<int>(i), to});
               refs.push_back({i, s, false, static_cast<int>(k)});

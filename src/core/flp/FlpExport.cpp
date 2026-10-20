@@ -32,6 +32,41 @@ Bytes words(std::initializer_list<int64_t> v) {
   for (int64_t x : v) w.u32(static_cast<uint32_t>(x));
   return w.b;
 }
+
+// J-45: FL plugins number their send targets and side inputs by the hosting
+// insert's route list (flRouteOutputs / flRouteInputs). A Gridline state that
+// names mixer tracks is turned into that numbering before it is encoded
+// (a target the track does not route to becomes "none").
+PluginState routeIndexed(const Song& s, int track, const PluginState& p) {
+  const PluginInfo* pi = findPlugin(p.type);
+  if (!pi || track < 0) return p;
+  PluginState q = p;
+  auto at = [&](int k) -> float& { return q.params[static_cast<size_t>(k)]; };
+  auto has = [&](int k) { return k >= 0 && static_cast<size_t>(k) < q.params.size(); };
+  if (pi->routeModeParam >= 0 && has(pi->routeModeParam) && at(pi->routeModeParam) < 0.5f) {
+    const std::vector<int> outs = flRouteOutputs(s, track);
+    std::vector<int> params = pi->sendParams;
+    if (p.type == "gl.send") params.push_back(0);
+    for (int k : params) {
+      if (!has(k)) continue;
+      const int to = static_cast<int>(std::lround(at(k)));
+      int n = 0;
+      for (size_t r = 1; r < outs.size() && to >= 0; ++r)
+        if (outs[r] == to) n = static_cast<int>(r);
+      at(k) = static_cast<float>(n);
+    }
+    at(pi->routeModeParam) = 1.0f;
+  }
+  if (has(pi->sideInParam) && at(pi->sideInParam) < 0) {  // the track's sidechain: its first sidechain-only source
+    const std::vector<int> ins = flRouteInputs(s, track);
+    int n = 0;
+    for (size_t r = 1; r < ins.size() && n == 0; ++r)
+      for (const Send& snd : s.mixer[static_cast<size_t>(ins[r])].sends)
+        if (snd.sidechain && s.mixerIndex(snd.to) == track) n = static_cast<int>(r);
+    at(pi->sideInParam) = static_cast<float>(n);
+  }
+  return q;
+}
 }  // namespace
 
 // ------------------------------------------------------------ indices
@@ -140,7 +175,9 @@ Exporter::PluginOut Exporter::encodePlugin(const PluginState& p, ObjectId owner,
       if (e.id == 212) oWrapper = e.data;
       if (e.id == 203 || e.id == 155 || e.id == 128 || e.id == 41) out.extras.push_back(e);
     }
-  enc::Result r = enc::encode(p, oName, oHasState ? &oState : nullptr, ec);
+  const auto host = slot >= 0 ? im.insert.find(owner) : im.insert.end();
+  const PluginState q = host != im.insert.end() ? routeIndexed(s, host->second, p) : p;
+  enc::Result r = enc::encode(q, oName, oHasState ? &oState : nullptr, ec);
   ExportReport::Plugin rp{where, p.type, r.flName, enc::qualityName(r.quality), r.note};
   if (r.quality == enc::Result::None || r.flName.empty()) {
     out.flPlugin = false;

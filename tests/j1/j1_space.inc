@@ -153,14 +153,15 @@ void testSpHallLaws() {
              spP(h, sx::HvFfTicks2) == 384 && spP(h, sx::HvFfSync1) == 1 && spP(h, sx::HvFfSync2) == 0,
          "hall: feed-forward voices (pitch, level, delay, sync bytes)");
   expect(spP(h, sx::HvPreSync) == 1 && spP(h, sx::HvFbSync) == 1 && spP(h, sx::HvPreTicks) == 384 && m.exact, "hall: header sync bytes, exact");
-  // v7 state: limiter loads on, feed-forward defaults; sidechain detector → not exact.
+  // v7 state: limiter loads on, feed-forward defaults; J-45: the sidechain source is the
+  // hosting track's input route 1, resolved by the engine (exact).
   SpBlob s7;
   s7.i32(7).i32(1).u8(0).u8(0).u8(1).u8(0).u8(0);
   for (int k = 0; k < 38; ++k) s7.i32(k == 29 ? 1 : (k == 3 ? 1 : 0));
   flp::PluginMapping m7;
   expect(spDecode(e, "LuxeVerb", s7.b, m7) && spP(m7.state, sx::HvLimiter) == 1 && spP(m7.state, sx::HvFfPitch1) == 24 &&
-             jt::near(spP(m7.state, sx::HvFfAmp1), 1.0, 1e-6) && !m7.exact,
-         "hall: v7 fix-ups (limiter on, feed-forward defaults), sidechain detector not exact");
+             jt::near(spP(m7.state, sx::HvFfAmp1), 1.0, 1e-6) && spP(m7.state, sx::HvScIn) == 1 && m7.exact,
+         "hall: v7 fix-ups (limiter on, feed-forward defaults), sidechain source = input route 1");
 }
 
 void testSpHallModels() {

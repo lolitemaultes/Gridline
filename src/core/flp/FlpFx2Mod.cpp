@@ -40,6 +40,7 @@
 #include "../../packs/spectral/spectral.h"
 #include "../../packs/utility/utility.h"
 #include "../PluginParams.h"
+#include "../../packs/dynamics/dynamics.h"
 #include "FlpFx2.h"
 #include "FlpWrapper.h"
 
@@ -214,22 +215,19 @@ bool decodeSend(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   if (t.size() < 3) return false;
   t.resize(4, -1);
   fx::begin(m, "gl.send");
+  // J-42/J-45: send volume and dry on FL's volume curve (1 exactly at 256).
+  auto vol = [](double v) { const double g = clampd(v / 256.0, 0, 1.25); return g == 1 ? 1.0 : 0.1 * (std::pow(11.0, g) - 1.0); };
   KnobTable tab = {{0, -128, 128, md::SnPan, [](double v) { return clampd(v / 128.0, -1, 1); }},
-                   {1, 0, 320, md::SnLevel, [](double v) { return clampd(v / 256.0, 0, 1.25); }},
-                   // J-42: dry level on FL's volume curve (1 exactly at 256).
-                   {2, 0, 256, md::SnDry, [](double v) { const double g = clampd(v / 256.0, 0, 1); return g == 1 ? 1.0 : 0.1 * (std::pow(11.0, g) - 1.0); }}};
+                   {1, 0, 320, md::SnLevel, vol},
+                   {2, 0, 256, md::SnDry, [vol](double v) { return vol(clampd(v, 0, 256)); }}};
   fx::applyTable(m, tab, t);
-  const int target = static_cast<int>(t[3]);
-  // J-42: FL sends only for a target index > 0 (0 and −1 = none); a target is an index
-  // into the hosting insert's route list, not an insert number (not resolved here).
-  m.exact = target <= 0;
-  if (target > 0 && target < 4096) {  // corrupt targets: treated as none
-    // FL's send targets are counted from the first insert after the master.
-    fx::set(m, md::SnTarget, target + 1);
-  } else {
-    fx::set(m, md::SnLevel, 0);
-    c.report.warn("Fruity Send: no send target selected; send level set to 0");
-  }
+  // J-45: the target is FL's route index of the hosting insert (0 / -1 = no send),
+  // resolved by the engine against the track's routes.
+  const int target = static_cast<int>(clampd(t[3], -1, 500));
+  fx::set(m, md::SnTarget, target);
+  fx::set(m, md::SnRoute, 1);
+  m.exact = flRouteOutputKept(c, target);
+  if (!m.exact) c.report.warn("Fruity Send: its route target is not among the imported routes");
   bindKnobs(m, tab);
   return true;
 }
@@ -363,17 +361,43 @@ bool decodeEdison(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   return true;
 }
 
-// ------------------------------------------------------------------ Transporter → pass-through (dry level)
+// ------------------------------------------------------------------ Transporter → Hit Looper
+// J-45: i32 version, then the controls as stored (v8: 22 i32, v3 / v4: 20),
+// u8 clear on stop, [v4+] u8 look-ahead, i32 detection source (0 left, 1
+// right, 2 both), i32 mono / stereo, [v8] i32 loop send route, i32 input route.
+// Older states load with tempo trigger off and skip chance 0.
 bool decodeTransporter(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+  namespace dy = gl::packs::dynamics;
   Reader r(pluginState(evs));
-  r.i32();  // version
-  std::vector<double> t = ints(r, 1);
-  if (t.empty()) return false;
-  fx::begin(m, "gl.utility");
-  fx::set(m, pp::UtlGain, clampd(dbOf(t[0] / 12800.0, -36), -36, 24));
-  m.exact = false;
-  c.report.warn("Transporter: loop capture / playback not reproduced; dry signal kept");
-  bindKnobs(m, {{0, 0, 12800, pp::UtlGain, [](double v) { return clampd(dbOf(v / 12800.0, -36), -36, 24); }}});
+  if (r.n < 4 + 20 * 4) return false;
+  const int version = r.i32();
+  const int np = version >= 8 ? 22 : 20;
+  std::vector<double> t = ints(r, static_cast<size_t>(np));
+  if (t.size() < 20) return false;
+  if (t.size() < 22) t.resize(22, 0), t[20] = 21, t[21] = 0;
+  fx::begin(m, "gl.hitloop");
+  KnobTable tab;
+  for (int k = 0; k < 22; ++k) {
+    const double lo = dy::kHlRawMin[k], hi = dy::kHlRawMax[k];
+    tab.push_back({k, lo, hi, k, [lo, hi](double v) { return clampd(std::round(v), lo, hi); }});
+  }
+  fx::applyTable(m, tab, t);
+  int flushOnStop = 1, look = 1, source = 2, stereo = 1, sendTo = 0, input = 0;
+  if (r.has(1)) flushOnStop = r.u8();
+  if (version >= 4 && r.has(1)) look = r.u8();
+  if (version >= 4 && r.has(8)) source = r.i32(), stereo = r.i32();
+  if (version >= 8 && r.has(8)) sendTo = r.i32(), input = r.i32();
+  fx::set(m, dy::HlFlushOnStop, flushOnStop ? 1 : 0);
+  fx::set(m, dy::HlLookahead, look ? 1 : 0);
+  fx::set(m, dy::HlSource, std::clamp(source, 0, 2));
+  fx::set(m, dy::HlStereo, stereo ? 1 : 0);
+  fx::set(m, dy::HlSendTo, std::clamp(sendTo, 0, 500));
+  fx::set(m, dy::HlInput, std::clamp(input, 0, 500));
+  // The reference engine runs every control by its law; FL clears the loops when its
+  // transport stops, as the import does (Clear on stop).
+  m.exact = version <= 8 && flRouteOutputKept(c, sendTo) && flRouteInputKept(c, input);
+  if (version > 8) c.report.warn("Transporter: newer state version, read as version 8");
+  bindKnobs(m, tab);
   return true;
 }
 

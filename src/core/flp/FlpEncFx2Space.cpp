@@ -93,6 +93,7 @@ Encoder luxeVerb() {
     const size_t nTags = version <= 7 ? 38 : version == 8 ? 39 : 49;
     for (const TagField& t : luxeTable())
       if (static_cast<size_t>(t.tag) < nTags) f.push_back(i32(t.gl, kLuxeTags + 4 * static_cast<size_t>(t.tag), t.lo, t.hi));
+    f.push_back(field(sx::HvScIn, 4, Type::U32, 0, 500));  // J-45: FL input route index
     f.push_back(field(sx::HvPreSync, 8, Type::U8, 0, 1));
     f.push_back(field(sx::HvFbSync, 9, Type::U8, 0, 1));
     if (nTags == 49 && b.size() >= kLuxeTags + 49 * 4 + 2) {

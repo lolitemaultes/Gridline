@@ -563,10 +563,29 @@ class KeySplitter final : public NoteFx {
 };
 
 // ------------------------------------------------------------- Level Scaler
+}  // namespace
+
+double vsRefCurve(double x, double c, double m, double o, double tension) {
+  const double d = x - c, M = std::max(c, 1.0 - c);
+  const double u = M > 0 ? std::fabs(d) / M : 0.0;
+  const double k = (tension < 0 ? -1.0 : 1.0) * (std::pow(8193.0, std::fabs(tension)) - 1.0);
+  double g = u;
+  if (k > 0) g = 1.0 - (std::pow(k + 1.0, 1.0 - u) - 1.0) / k;
+  else if (k < 0) g = (std::pow(1.0 - k, u) - 1.0) / -k;
+  const double sgn = d > 0 ? 1.0 : d < 0 ? -1.0 : 0.0;
+  return std::clamp(c + o + sgn * g * m * M, 0.0, 1.0);
+}
+
+namespace {
+
 class LevelScaler final : public NoteFx {
  public:
   void process(const PluginState& s, const NoteFxAux&, const NoteFxContext&, const NoteBuffer& in,
                NoteBuffer& out) override {
+    if (iprm(s, VsModel) == 1) {
+      processRef(s, in, out);
+      return;
+    }
     bool pitch = iprm(s, VsTarget) == 1;
     double center = prm(s, VsCenter), mul = prm(s, VsMultiply, 1), ofs = prm(s, VsOffset), ten = prm(s, VsTension);
     double hum = prm(s, VsHumanize);
@@ -594,6 +613,42 @@ class LevelScaler final : public NoteFx {
   void reset() override { rng_ = Rng{}; }
 
  private:
+  // J-45 reference model: each active target (anything but multiply 1, offset 0,
+  // tension 0, humanize 0) maps its value through vsRefCurve over its range;
+  // humanize picks a point between the result and the range bound (scaled by
+  // the distance to it), below (subtract), around (spread) or above (add).
+  void processRef(const PluginState& s, const NoteBuffer& in, NoteBuffer& out) {
+    for (int i = 0; i < in.count; ++i) {
+      NoteMsg m = in.ev[i];
+      if (m.kind == NoteMsg::On)
+        for (int t = 0; t < kVsTargets; ++t) {
+          const double c = prm(s, vsRef(t, VfCenter), t < 2 ? 0.f : 0.5f), mul = prm(s, vsRef(t, VfMultiply), 1),
+                       o = prm(s, vsRef(t, VfOffset)), ten = prm(s, vsRef(t, VfTension)), J = prm(s, vsRef(t, VfHumanize));
+          if (mul == 1 && o == 0 && ten == 0 && J == 0) continue;
+          const double lo = t < 2 ? 0.0 : -1.0, hi = 1.0;
+          const double key = std::nearbyint(m.pitch);
+          double v = t == 0 ? m.velocity : t == 1 ? m.release : t == 2 ? (m.pitch - key) / 12.0 : t == 3 ? m.pan : t == 4 ? m.modX * 2.0 - 1.0 : m.modY * 2.0 - 1.0;
+          const double x = std::clamp((v - lo) / (hi - lo), 0.0, 1.0);
+          double r = std::clamp(lo + vsRefCurve(x, c, mul, o, ten) * (hi - lo), lo, hi);
+          if (J > 0) {
+            const int mode = std::clamp(iprm(s, vsRef(t, VfMode), 1), 0, 2);
+            const double down = r - J * (r - lo), up = r + J * (hi - r);
+            const double B = mode == 2 ? r : down, A = mode == 0 ? r : up;
+            r = B + rng_.next() * (A - B);
+          }
+          const float f = static_cast<float>(r);
+          switch (t) {
+            case 0: m.velocity = f; break;
+            case 1: m.release = f; break;
+            case 2: m.pitch = static_cast<float>(key + r * 12.0); break;
+            case 3: m.pan = f; break;
+            case 4: m.modX = static_cast<float>((r + 1.0) * 0.5); break;
+            default: m.modY = static_cast<float>((r + 1.0) * 0.5); break;
+          }
+        }
+      out.push(m);
+    }
+  }
   Rng rng_;
 };
 

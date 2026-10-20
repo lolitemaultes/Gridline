@@ -225,6 +225,8 @@ PluginInfo hall() {
   p.params[HvEnvSmooth] = lg("Env smoothing", "ms", 1, 100, 1);
   p.params[HvEnvLowCut] = lg("Env low cut", "Hz", 20, 2000, 60);
   p.params[HvEnvSidechain] = tog("Env sidechain", 0);
+  p.params[HvScIn] = lin("Sidechain source", "", -1, 500, -1);
+  p.sideInParam = HvScIn;
   p.params[HvFfDirect] = lin("Unpitched level", "%", 0, 1, 0);
   p.params[HvFfPitch1] = lin("Voice 1 pitch", "st", -24, 24, 0);
   p.params[HvFfPitch2] = lin("Voice 2 pitch", "st", -24, 24, 20);

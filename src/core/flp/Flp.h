@@ -150,6 +150,8 @@ struct Context {
   // came from, and each arrangement's Gridline index (FL arrangement → index).
   std::map<ObjectId, std::string> clipRecords;
   std::map<int, int> arrangementIndex;
+  // J-45: the FL insert whose effect slot is being decoded (-1: a channel or a preset).
+  int insert = -1;
   Context(const File& f, Song& s, Report& r) : file(f), song(s), report(r) {}
   // FL tick → Gridline tick (the song keeps the FL PPQ, so this is identity
   // unless the PPQ had to change).
@@ -157,6 +159,47 @@ struct Context {
   // Expands %FLStudioFactoryData% and relative paths; normalises separators.
   std::string resolvePath(const std::string& flPath) const;
 };
+
+// J-45 FL route numbering (see flRouteOutputs in Song.h): true when an FL
+// route index n on the insert being decoded (Context::insert) names the same
+// track in the imported song as in FL's own route lists (event 235). Always
+// true outside a project (presets resolve against the track they load on).
+bool flRouteOutputKept(const Context& c, int n);
+bool flRouteInputKept(const Context& c, int n);
+
+// J-45: FL's control-panel plugin state (the "Dashboard"): header, the value
+// list (N u32, value 0 = the panel's), the controller links (81-byte records:
+// 48-byte name, 16-byte short name, target, type 0 MIDI CC / 4 internal, lo,
+// hi, pad), then the panel block (artwork, size, grid, label font, control
+// records: kind, artwork name, name, caption, x y w h, kind bytes).
+struct DashLink {
+  std::string name;
+  uint32_t target = 0, type = 4, lo = 0, hi = 65536;
+  size_t valueAt = 0;  // byte offset of the link's value in the state (0 = none)
+};
+struct DashPanel {
+  bool ok = false;
+  std::vector<DashLink> links;
+  std::vector<int> kinds;  // controller-capable panel controls in order (kinds 0 digits, 1 slider, 2 wheel, 4 switch, 7 selector)
+};
+DashPanel parseDashboard(const uint8_t* p, size_t n);
+
+// J-45: FL's step arpeggiator state ("VFX Sequencer"): u32 version 2, chunk
+// {u32 1, u64 len}: u32 1, "bbnk" {tag, u32 len} with "fixp" (engine bytes,
+// [8] = current program), "fpgp" (global program bytes), and 128 "prog"
+// chunks ("prgp" program bytes: [1] steps, [2] gate %, [3] sync, [12]
+// octave transpose; "pgnm" name; "stp0".."stp5" 64-step lanes: scale step,
+// octave bits, step type, key bits, velocity, gate exponent).
+struct SeqBank {
+  bool ok = false;
+  size_t fixp = 0, fpgp = 0;  // payload offsets
+  size_t prgp = 0, lanes[6] = {};  // the current program's
+  int program = 0;
+};
+SeqBank parseSeqBank(const uint8_t* p, size_t n);
+// A complete state from controls (kind 1 slider, 2 wheel, 4 switch; name) and
+// values 0..1, with the panel's default artwork laid out in rows.
+std::vector<uint8_t> buildDashboard(const std::vector<std::pair<int, std::string>>& controls, const std::vector<double>& values);
 
 // Area importers (called in this order by importFlp). Plugins are decoded
 // before the arrangement so automation clips can target plugin parameters.

@@ -14,6 +14,7 @@
 #include <iterator>
 #include <set>
 #include "FlpEncode.h"
+#include "../../packs/dynamics/dynamics.h"
 #include "../../packs/edison/edison.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/modulation/patchv2.h"
@@ -275,13 +276,10 @@ Encoder send() {
     w.i32(-1);   // no target
     return w.b;
   };
-  // Without a target the decoder silences the send: a send that is heard
-  // gets its target first (Gridline counts targets from 1, FL from 0).
-  e.write = [](const PluginState& g, Bytes& b, const EncodeContext&) {
-    if (param(g, md::SnLevel) != 0 && param(g, md::SnTarget) >= 1) putI32(b, 12, static_cast<int32_t>(std::lround(param(g, md::SnTarget))) - 1);
-  };
+  // J-45: the target is stored as the hosting insert's FL route index (the
+  // export turns a mixer-track target into one first: routeIndexed in FlpExport.cpp).
   e.fields = [](const Bytes&) {
-    return std::vector<Field>{i32(md::SnTarget, 12, -1, 299), i32(md::SnPan, 0, -128, 128), i32(md::SnLevel, 4, 0, 320), i32(md::SnDry, 8, 0, 256)};
+    return std::vector<Field>{i32(md::SnTarget, 12, -1, 500),i32(md::SnPan, 0, -128, 128), i32(md::SnLevel, 4, 0, 320), i32(md::SnDry, 8, 0, 256)};
   };
   return e;
 }
@@ -366,37 +364,46 @@ Encoder htmlNoteBook() {
   return e;
 }
 
-// ---------------------------------------------------------------- Transporter
-// v4: version, 20 ints by tag (dry, loop A / B levels 0..12800, biases,
-// spread, lengths, ratio, sensitivity, bouncing, buttons, modes), u8 flush on
-// stop, u8 lookahead, i32 architecture, i32 trigger option.
+// ---------------------------------------------------------------- Transporter (J-45: Hit Looper)
+// v8: version, 22 i32 controls, u8 clear on stop, u8 look-ahead, i32 detection
+// source, i32 mono / stereo, i32 loop send route, i32 input route (v3 / v4:
+// 20 controls, fewer trailing fields; see decodeTransporter).
 Encoder transporter() {
+  namespace dy = gl::packs::dynamics;
   Encoder e;
   e.flName = "Transporter";
-  e.glType = "gl.utility";
-  e.nativeRank = -1;  // only the dry level is carried: never a native home for the utility
+  e.glType = "gl.hitloop";
+  e.nativeRank = 0;
   e.defaults = [] {
     ByteWriter w;
-    w.u32(4);      // version
-    w.i32(12800);  // 0 dry level (unity)
-    w.i32(12800);  // 1 loop level A
-    w.i32(12800);  // 2 loop level B
-    w.i32(0);      // 3 reverse bias
-    w.i32(0);      // 4 octave shift bias
-    w.i32(0);      // 5 octave down / up bias
-    w.i32(512);    // 6 spread and auto panning
-    w.i32(500);    // 7 minimum length A
-    w.i32(8);      // 8 A/B ratio
-    w.i32(512);    // 9 transient sensitivity
-    w.i32(512);    // 10 bouncing rate
-    for (int tag = 11; tag < 20; ++tag) w.i32(0);  // 11..19 buttons / modes off
-    w.u8(1);       // flush on pause / stop
-    w.u8(1);       // lookahead
-    w.i32(2);      // architecture: stereo to stereo
-    w.i32(1);      // trigger option
+    w.u32(8);
+    for (int k = 0; k < 22; ++k) w.i32(dy::kHlRawDef[k]);
+    w.u8(1);   // clear on stop
+    w.u8(1);   // look-ahead
+    w.i32(2);  // detect from both channels
+    w.i32(1);  // stereo
+    w.i32(0);  // no loop send
+    w.i32(0);  // own input
     return w.b;
   };
-  e.fields = [](const Bytes&) { return std::vector<Field>{i32(pp::UtlGain, 4, 0, 12800)}; };
+  e.fields = [](const Bytes& b) {
+    std::vector<Field> f;
+    const uint32_t version = b.size() >= 4 ? getU32(b, 0) : 8;
+    const int np = version >= 8 ? 22 : 20;
+    for (int k = 0; k < np; ++k) f.push_back(i32(k, 4 + 4 * static_cast<size_t>(k), dy::kHlRawMin[k], dy::kHlRawMax[k]));
+    size_t at = 4 + 4 * static_cast<size_t>(np);
+    f.push_back(field(dy::HlFlushOnStop, at, Type::U8, 0, 1));
+    if (version >= 4) {
+      f.push_back(field(dy::HlLookahead, at + 1, Type::U8, 0, 1));
+      f.push_back(i32(dy::HlSource, at + 2, 0, 2));
+      f.push_back(i32(dy::HlStereo, at + 6, 0, 1));
+    }
+    if (version >= 8) {
+      f.push_back(i32(dy::HlSendTo, at + 10, 0, 500));
+      f.push_back(i32(dy::HlInput, at + 14, 0, 500));
+    }
+    return f;
+  };
   return e;
 }
 

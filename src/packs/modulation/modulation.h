@@ -129,7 +129,18 @@ inline constexpr int splitParam(int zone, int field) { return zone * SpFields + 
 inline constexpr int SpMode = kSplitZones * SpFields;  // first match / all matches
 inline constexpr int SpCount = SpMode + 1;
 // "gl.velscale" — Level Scaler (velocity / pitch curve + humanize).
-enum VelScale { VsTarget, VsCenter, VsMultiply, VsOffset, VsTension, VsHumanize, VsHumanMode, VsMin, VsMax, VsCount };
+// J-45 reference model (VsModel = 1): six targets scaled at once (velocity,
+// release, fine pitch, pan, mod X, mod Y), each with centre, multiply,
+// offset, tension, humanize and humanize mode (vsRef(target, field)).
+enum VelScale { VsTarget, VsCenter, VsMultiply, VsOffset, VsTension, VsHumanize, VsHumanMode, VsMin, VsMax,
+                VsModel, VsEdit, VsRef0, VsCount = VsRef0 + 36 };
+enum VelScaleField { VfCenter, VfMultiply, VfOffset, VfTension, VfHumanize, VfMode, VfCount };
+inline constexpr int kVsTargets = 6;
+inline constexpr int vsRef(int target, int field) { return VsRef0 + target * VfCount + field; }
+// Reference curve: the value's distance from the centre, scaled to its side
+// (M = max(c, 1 - c)), bent by the tension and multiplied, plus the offset;
+// x, c, the result 0..1.
+double vsRefCurve(double x, double c, double m, double o, double tension);
 // "gl.colormap" — Colour Router: colour group → output (this or another channel).
 inline constexpr int kColorGroups = 16;
 inline constexpr int CmMap = 0;  // 16 x target (0 = this channel, 1..8 = target slot, 9 = mute)
@@ -150,7 +161,9 @@ inline constexpr int PhMap0 = PhCount;
 inline constexpr int PhCountV2 = PhMap0 + kPatchMaps;
 inline constexpr int kPatchNodes = 8;
 // "gl.send" — Mixer Send (send from this point of the chain to a track).
-enum MixSend { SnTarget, SnLevel, SnPan, SnDry, SnCount };
+// SnRoute (J-45): 0 = SnTarget is a mixer index, 1 = an FL route index of the
+// hosting track (PluginInfo::routeModeParam), with FL's send pan matrix.
+enum MixSend { SnTarget, SnLevel, SnPan, SnDry, SnRoute, SnCount };
 // "gl.bussend" / "gl.busreturn" — named audio buses.
 enum BusSend { BsBus, BsLevel, BsDry, BsCount };
 enum BusReturn { BrBus, BrLevel, BrDry, BrCount };

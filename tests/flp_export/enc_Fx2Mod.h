@@ -94,7 +94,7 @@ inline void testEncFx2Mod() {
       expect(s.decoded > 0 && s.nativeExact == s.decoded, "HTML NoteBook: shipped states encode exactly");
     }
   }
-  encCase("Transporter", "Transporter", "gl.utility", [](Bytes& b) { putI32(b, 4, 6400); });
+  encCase("Transporter", "Transporter", "gl.hitloop", [](Bytes& b) { putI32(b, 4, 6400), putI32(b, 4 + 4 * 3, 2500); });  // J-45: Hit Looper
   // dB Meter: no state at all.
   {
     gl::flp::PluginMapping m;

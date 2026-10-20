@@ -126,6 +126,49 @@ int Song::patternIndex(ObjectId id) const { return indexOf(patterns, id); }
 int Song::clipIndex(ObjectId id) const { return indexOf(playlist, id); }
 int Song::mixerIndex(ObjectId id) const { return indexOf(mixer, id); }
 
+std::vector<int> flRouteOutputs(const Song& song, int mixerIndex) {
+  std::vector<int> r;
+  if (mixerIndex < 0 || static_cast<size_t>(mixerIndex) >= song.mixer.size()) return r;
+  for (const Send& s : song.mixer[static_cast<size_t>(mixerIndex)].sends) {
+    const int to = song.mixerIndex(s.to);
+    if (to >= 0 && to != mixerIndex) r.push_back(to);
+  }
+  std::sort(r.begin(), r.end());
+  r.erase(std::unique(r.begin(), r.end()), r.end());
+  r.insert(r.begin(), mixerIndex);
+  return r;
+}
+
+std::vector<int> flRouteInputs(const Song& song, int mixerIndex) {
+  std::vector<int> r;
+  if (mixerIndex < 0 || static_cast<size_t>(mixerIndex) >= song.mixer.size()) return r;
+  const ObjectId id = song.mixer[static_cast<size_t>(mixerIndex)].id;
+  r.push_back(mixerIndex);
+  for (size_t i = 0; i < song.mixer.size(); ++i) {
+    if (static_cast<int>(i) == mixerIndex) continue;
+    for (const Send& s : song.mixer[i].sends)
+      if (s.to == id) {
+        r.push_back(static_cast<int>(i));
+        break;
+      }
+  }
+  return r;
+}
+
+int flRouteOutput(const Song& song, int mixerIndex, int n) {
+  if (n <= 0) return -1;
+  const std::vector<int> r = flRouteOutputs(song, mixerIndex);
+  if (r.empty()) return -1;
+  const int to = r[std::min(static_cast<size_t>(n), r.size() - 1)];
+  return to == mixerIndex ? -1 : to;
+}
+
+int flRouteInput(const Song& song, int mixerIndex, int n) {
+  if (n <= 0) return -1;
+  const std::vector<int> r = flRouteInputs(song, mixerIndex);
+  return static_cast<size_t>(n) < r.size() ? r[static_cast<size_t>(n)] : -1;
+}
+
 void ensureMixer(Song& song, int inserts) {
   if (!song.mixer.empty()) return;
   MixerTrack master;

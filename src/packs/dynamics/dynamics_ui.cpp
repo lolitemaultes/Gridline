@@ -15,6 +15,7 @@ void editorTransplit(App& a, const PluginTarget& t, float width);
 void editorMasterFl(App& a, const PluginTarget& t, float width);   // masterfl_ui.cpp (κ2)
 void editorEnhanceFl(App& a, const PluginTarget& t, float width);
 void editorPocket(App& a, const PluginTarget& t, float width);  // pocket_ui.cpp (J-42)
+void editorHitLoop(App& a, const PluginTarget& t, float width);  // dist_ui.cpp (J-45)
 
 bool drawEditor(App& a, const PluginTarget& t, float width) {
   const PluginInfo* info = t.info(a.doc.song());
@@ -30,6 +31,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   else if (ty == "gl.squeeze") fn = editorSqueezeFl;
   else if (ty == "gl.transplit") fn = editorTransplit;
   else if (ty == "gl.pocketrack") fn = editorPocket;
+  else if (ty == "gl.hitloop") fn = editorHitLoop;
   if (!fn) return false;
   fn(a, t, width);
   return true;

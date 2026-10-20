@@ -241,9 +241,8 @@ void editorStereoMatrix(App& a, const PluginTarget& t, float width) {
   }
   sk::textAt(dl, v.p(187, 144), v.p(266, 156), pal.textDim, dv.c_str(), std::clamp(v.px(7.f), 9.f, 12.f), 0, true);
   sk::textAt(dl, v.p(187, 237), v.p(266, 249), pal.textDim, pv.c_str(), std::clamp(v.px(7.f), 9.f, 12.f), 0, true);
-  // Difference output (not available in Gridline: shown inactive).
-  const sk::FormCtl& sc = v.c("SideChainSelect");
-  sk::lcd(dl, v.p0(sc), v.p1(sc), pal, "--");
+  // Difference output: the n-th route of the hosting track (J-45).
+  sk::digi(a, t, v, "SideChainSelect", ut::SmDiffTo, pal, [](double x) { return x < 0.5 ? std::string("--") : std::to_string(static_cast<int>(x + 0.5)); });
   sk::textAt(dl, v.p(186, 257), v.p(230, 279), pal.textDim, "DIFF", std::clamp(v.px(7.f), 9.f, 12.f), 1);
   sk::end(v);
 }

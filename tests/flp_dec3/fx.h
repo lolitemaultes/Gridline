@@ -86,29 +86,20 @@ inline void testFx() {
     for (int32_t x : v) st.i32(x);
     Run r;
     decode(r, "Transmitter", st.b);
-    expect(r.ok && r.m.glType == "gl.transplit", "transmitter: decodes to the transient splitter");
-    expect(near(param(r, dyn::TsAttack), 1.0) && near(param(r, dyn::TsRelease), -1.0), "transmitter: transient / sustain levels");
-    expect(near(param(r, dyn::TsTransFx), dyn::TsFxSaturate) && near(param(r, dyn::TsTransFxMix), 1.0) &&
-               near(param(r, dyn::TsTransFxA), 0.5) && near(param(r, dyn::TsTransFxB), 0.5),
-           "transmitter: transient saturation slot (mix, drive, warmth)");
-    expect(near(param(r, dyn::TsSusFx), dyn::TsFxOff) && near(param(r, dyn::TsDrive), 0.0), "transmitter: sustain slot off, no global drive");
-    expect(near(param(r, dyn::TsSensitivity), 0.5) && near(param(r, dyn::TsHold), 25.0) && near(param(r, dyn::TsTransTilt), 0.0),
-           "transmitter: sensitivity, hold, tilt");
-    expect(r.m.param && r.m.param(14) == dyn::TsTransFxA && r.m.param(17) < 0, "transmitter: only the selected effect's knobs are linked");
-    v[36] = 0;
-    v[39] = 4, v[41] = 1, v[29] = 2500, v[31] = 96, v[32] = 8000;  // sustain: tempo-synced delay, 96 ticks = 1 beat
-    v[5] = 10000, v[0] = 2000, v[33] = 1;
+    expect(r.ok && r.m.glType == "gl.transplit" && r.m.exact, "transmitter: decodes to the transient splitter (reference engine, exact)");
+    expect(near(param(r, dyn::TsModel), 1) && near(param(r, dyn::tsRaw(3)), 12800) && near(param(r, dyn::tsRaw(4)), 0),
+           "transmitter: stored controls kept (J-45 reference engine)");
+    expect(near(param(r, dyn::tsRaw(38)), 0) && near(param(r, dyn::tsRaw(39)), 5) && near(param(r, dyn::tsRaw(14)), 5000),
+           "transmitter: effect kinds and knobs");
+    expect(r.m.param && r.m.param(14) == dyn::tsRaw(14) && r.m.param(17) == dyn::tsRaw(17), "transmitter: every stored control is linked");
     Bytes st2;
     st2.u32(3);
     for (int32_t x : v) st2.i32(x);
+    st2.i32(2).i32(0).i32(1).i32(50);  // transient send route 2, detection source route 1
     Run r2;
     decode(r2, "Transmitter", st2.b);
-    expect(near(param(r2, dyn::TsTransOn), 0.0), "transmitter: disabled transient path");
-    expect(near(param(r2, dyn::TsSusFx), dyn::TsFxEcho) && near(param(r2, dyn::TsSusFxMix), 0.25) && near(param(r2, dyn::TsSusFxA), 0.8) &&
-               near(param(r2, dyn::TsSusSync), 1.0) && near(dyn::tsEchoSeconds(param(r2, dyn::TsSusFxB), true, 120), 0.5),
-           "transmitter: synced sustain delay (one beat)");
-    expect(near(param(r2, dyn::TsTransTilt), 1.0) && near(param(r2, dyn::TsSensitivity), 0.2) && near(param(r2, dyn::TsLookahead), 1.0),
-           "transmitter: tilt, sensitivity, lookahead");
+    expect(near(param(r2, dyn::TsSendT), 2) && near(param(r2, dyn::TsSendS), 0) && near(param(r2, dyn::TsScIn), 1) && r2.m.exact,
+           "transmitter: send and detection routes (FL route indexes)");
   }
 
   // ------------------------------------------------- Multiband Delay

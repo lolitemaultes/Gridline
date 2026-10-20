@@ -64,6 +64,17 @@ struct PluginInfo {
   // destination mixer index each (-1 = none). Up to kMaxSendOutputs; the engine
   // orders the graph accordingly and hands the effect one buffer per output.
   std::vector<int> sendParams = {};
+  // J-45: FL route numbering (see flRouteOutputs in Song.h). When the
+  // parameter routeModeParam is on (>= 0.5), or routeModeParam ==
+  // kRouteIndexAlways, the send parameters (sendParams, and gl.send's target)
+  // hold an FL route index n of the hosting track instead of a mixer index
+  // (0 = none). The engine resolves it on every Program build.
+  int routeModeParam = -1;
+  // J-45: parameter holding an FL input route index n of the hosting track:
+  // < 0 = the track's own sidechain input (default), 0 = none (the effect's
+  // own input), n >= 1 = the output of the track's n-th source (unscaled),
+  // handed to the effect as its sidechain input.
+  int sideInParam = -1;
   // Effects that read notes from the engine's MIDI port bus (ProcessContext::
   // ports): the task graph runs every MIDI Out channel before their track.
   bool midiInput = false;
@@ -72,6 +83,7 @@ struct PluginInfo {
   int legacyModelParam = -1;
 };
 inline constexpr int kMaxSendOutputs = 4;
+inline constexpr int kRouteIndexAlways = -2;  // PluginInfo::routeModeParam
 
 // All built-in plugins (generators first).
 const std::vector<PluginInfo>& pluginCatalog();

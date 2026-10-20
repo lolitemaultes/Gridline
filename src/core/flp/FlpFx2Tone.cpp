@@ -231,14 +231,16 @@ bool decodeEquo(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   fx::set(m, ut::BqOversample, t[5] > 0 ? 1 : 0);
   fx::set(m, ut::BqBandwidth, clampd(t[6], 80, 500) / 300.0);
   const int send = static_cast<int>(t[7]);
-  fx::set(m, ut::BqSendTo, send < 0 ? -1 : std::min(send + 1, 125));  // FL insert index (shown + 1) → mixer index
+  // J-45: the send target is an FL route index of the hosting insert (resolved by the engine).
+  fx::set(m, ut::BqSendTo, std::clamp(send, -1, 125));
+  fx::set(m, ut::kBqRoute, 1);
   fx::set(m, ut::BqEditTarget, std::clamp(static_cast<int>(t[8]), 0, 2));
   fx::set(m, ut::BqEditBank, std::clamp(static_cast<int>(t[9]), 0, 7));
   fx::set(m, ut::BqSendOnly, sendOnly ? 1 : 0);
   fx::set(m, ut::BqAddMode, add ? 1 : 0);
   fx::set(m, ut::BqEditMaster, master ? 1 : 0);
-  if (send >= 0) c.report.warn("EQUO: send track routed to the mixer insert with the same number (numbering unverified)");
-  m.exact = send < 0;  // every control maps by its reference law; only the send destination numbering is unverified
+  m.exact = flRouteOutputKept(c, send);  // every control maps by its reference law
+  if (!m.exact) c.report.warn("EQUO: the send target's route is not among the imported routes");
   static const KnobTable tab = [] {
     KnobTable k = {{0, -12000, 12000, ut::BqShift, equoShift},
                    {1, -128, 128, ut::BqMix, equoMix},
@@ -282,6 +284,8 @@ bool decodeFreqSplitter(Context& c, const std::vector<Event>& evs, PluginMapping
   fx::set(m, sp::SpQuality, std::clamp(static_cast<int>(t[6]), 0, 5));
   fx::set(m, sp::SpLinSpeed, sp::splitLinSpeedMs(clampd(t[7], 0, 65536)));
   bool routed = false;
+  fx::set(m, sp::SpRoute, 1);  // J-45: FL route indexes, resolved against the hosting track's routes
+  for (int band = 0; band < 4; ++band) fx::set(m, sp::splitParam2(band, sp::SxSendTo), 0);  // route 0 = none
   for (int band = 0; band < (three ? 3 : 2); ++band) {
     const int k = three || band == 0 ? band : 2;  // FL band index
     fx::set(m, sp::splitParam2(band, sp::SxMain), sp::splitLevelDb(t[static_cast<size_t>(11 + k)]));
@@ -289,13 +293,12 @@ bool decodeFreqSplitter(Context& c, const std::vector<Event>& evs, PluginMapping
     fx::set(m, sp::splitParam(band, sp::SbMute), (bits >> (3 + k)) & 1);
     fx::set(m, sp::splitParam2(band, sp::SxSendMute), (bits >> k) & 1);
     const int to = static_cast<int>(t[static_cast<size_t>(14 + k)]);
-    fx::set(m, sp::splitParam2(band, sp::SxSendTo), to > 0 ? std::min(to, 500) : -1);  // FL insert number = mixer index
-    routed = routed || to > 0;
+    fx::set(m, sp::splitParam2(band, sp::SxSendTo), std::clamp(to, 0, 500));
+    routed = routed || !flRouteOutputKept(c, to);
   }
   if (version > 4) c.report.warn("Frequency Splitter: newer state version, read as version 4");
-  if (routed) c.report.warn("Frequency Splitter: band sends go to the mixer inserts with the same numbers");
-  // Exact for the IIR model (the linear-phase FIR designer differs in detail).
-  m.exact = version <= 4 && !routed;  // J-42: linear-phase mode on the reference FFT filters; send targets unresolved
+  if (routed) c.report.warn("Frequency Splitter: a band send's route is not among the imported routes");
+  m.exact = version <= 4 && !routed;
   KnobTable tab = {{0, 0, 65536, sp::SpFreq1, splitHz},
                    {1, 0, 65536, sp::SpFreq2, splitHz},
                    {2, 0, 7, sp::SpSlopeA, [](double v) { return clampd(std::round(v), 0, 7); }},

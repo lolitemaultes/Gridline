@@ -195,7 +195,7 @@ Encoder equo() {
     f.push_back(i32(ut::BqOutput, a + 16, 0, 256));
     f.push_back(i32(ut::BqOversample, a + 20, 0, 1));
     f.push_back(i32(ut::BqBandwidth, a + 24, 80, 500));
-    f.push_back(i32(ut::BqSendTo, a + 28, -1, 124));
+    f.push_back(i32(ut::BqSendTo, a + 28, -1, 125));
     f.push_back(i32(ut::BqEditTarget, a + 32, 0, 2));
     f.push_back(i32(ut::BqEditBank, a + 36, 0, 7));
     f.push_back(field(ut::BqSendOnly, a + 40, Type::U8, 0, 1));

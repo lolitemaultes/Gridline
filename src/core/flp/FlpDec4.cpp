@@ -26,6 +26,10 @@
 // (analysis/demos/COVERAGE.md lists the evidence); no Image-Line code is used.
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstring>
+#include <string>
+#include <vector>
 #include "../../packs/dynamics/dynamics.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/utility/utility.h"
@@ -84,44 +88,170 @@ bool decodeDashboard(Context& c, const std::vector<Event>& evs, PluginMapping& m
   Blob b = gen2::stateBlob(evs);
   namespace md = packs::modulation;
   begin(m, "gl.surface");
-  m.exact = false;  // panel artwork, control kinds and MIDI output are not reproduced
+  m.exact = false;
   if (b.size() < 32) return true;
-  const uint32_t n = b.u32(28);
-  if (n > 4096 || !b.has(32, 4 * static_cast<size_t>(n))) return true;
-  // Values are 0..65536 (centre 32768), or MIDI-style 0..127 in panels whose
-  // controls all use that range.
-  uint32_t top = 0;
-  for (uint32_t k = 1; k < n; ++k) top = std::max(top, b.u32(32 + 4 * static_cast<size_t>(k)));
-  const double scale = top <= 127 ? 127.0 : 65536.0;
-  for (uint32_t k = 1; k < n && static_cast<int>(k - 1) < md::kSurfaceControls; ++k)
-    set(m, static_cast<int>(k - 1), std::clamp(b.u32(32 + 4 * static_cast<size_t>(k)) / scale, 0.0, 1.0));
-  // Control names: a 32-byte Pascal name field with the caption 48 bytes later.
-  auto pascal = [&](size_t at) -> std::string {
-    const uint8_t len = b.u8(at);
-    if (len == 0 || len > 31 || !b.has(at + 1, len)) return "";
-    std::string s;
-    for (size_t i = 0; i < len; ++i) {
-      const char ch = static_cast<char>(b.u8(at + 1 + i));
-      if (!std::isprint(static_cast<unsigned char>(ch))) return "";
-      s += ch;
-    }
-    return s;
-  };
-  std::string data;
-  int k = 0;
-  for (size_t at = 32 + 4 * static_cast<size_t>(n) + 4; at + 80 <= b.size() && k < md::kSurfaceControls;) {
-    std::string name = pascal(at);
-    if (name.empty() || pascal(at + 48).empty()) {
-      ++at;
-      continue;
-    }
-    const bool slider = name.find("Slider") != std::string::npos || name.find("slider") != std::string::npos;
-    data += std::to_string(slider ? md::SkSlider : md::SkKnob) + " " + name + "\n";
-    ++k;
-    at += 80;
+  const DashPanel d = parseDashboard(b.p, b.size());
+  if (!d.ok) {
+    c.report.warn("Dashboard: panel layout not recognised; controls not converted");
+    return true;
   }
-  if (!data.empty()) m.state.data = data;
-  if (n > static_cast<uint32_t>(md::kSurfaceControls) + 1) c.report.warn("Dashboard: more than 16 controls, extra ones dropped");
+  // J-45: each controller link is one Gridline control (value lo..hi → 0..1),
+  // its kind from the panel control it belongs to.
+  std::string data;
+  bool exact = d.links.size() <= static_cast<size_t>(md::kSurfaceControls);
+  for (size_t k = 0; k < d.links.size() && k < static_cast<size_t>(md::kSurfaceControls); ++k) {
+    const DashLink& l = d.links[k];
+    const double v = l.valueAt ? static_cast<double>(b.u32(l.valueAt)) : 0.0;
+    const double span = static_cast<double>(l.hi) - static_cast<double>(l.lo);
+    set(m, static_cast<int>(k), span > 0 ? std::clamp((v - l.lo) / span, 0.0, 1.0) : 0.0);
+    const int kind = k < d.kinds.size() ? d.kinds[k] : 2;
+    const int gk = kind == 1 ? md::SkSlider : kind == 4 ? md::SkToggle : md::SkKnob;
+    std::string name = l.name;
+    for (char& ch : name)
+      if (ch == '\n' || ch == '\r') ch = ' ';
+    data += std::to_string(gk) + " " + name + "\n";
+    exact = exact && l.type == 4 && l.lo == 0 && l.hi == 65536 && l.valueAt;  // MIDI CC links send to a device instead
+  }
+  m.state.data = data;
+  // The panel's own artwork is not reproduced (display only); its controls and values are.
+  m.exact = exact;
+  if (d.links.size() > static_cast<size_t>(md::kSurfaceControls)) c.report.warn("Dashboard: more than 16 controls, extra ones dropped");
+  return true;
+}
+
+}  // namespace
+
+namespace {
+uint32_t le32at(const uint8_t* p) { return static_cast<uint32_t>(p[0]) | static_cast<uint32_t>(p[1]) << 8 | static_cast<uint32_t>(p[2]) << 16 | static_cast<uint32_t>(p[3]) << 24; }
+// Tagged chunks {4-char tag, u32 length} in [at, end): the payload offset of each tag's k-th chunk.
+template <class F>
+void eachTag(const uint8_t* p, size_t at, size_t end, F&& f) {
+  while (at + 8 <= end) {
+    const size_t len = le32at(p + at + 4);
+    if (len > end - at - 8) return;
+    f(std::string(reinterpret_cast<const char*>(p + at), 4), at + 8, len);
+    at += 8 + len;
+  }
+}
+}  // namespace
+
+SeqBank parseSeqBank(const uint8_t* p, size_t n) {
+  SeqBank s;
+  if (n < 36 || le32at(p) != 2 || le32at(p + 4) != 1) return s;
+  const size_t bankEnd = std::min(n, static_cast<size_t>(16) + le32at(p + 8));
+  if (le32at(p + 16) != 1 || std::memcmp(p + 20, "bbnk", 4) != 0) return s;
+  const size_t bb = 28, bbEnd = std::min(bankEnd, bb + le32at(p + 24));
+  std::vector<std::pair<size_t, size_t>> progs;
+  eachTag(p, bb, bbEnd, [&](const std::string& tag, size_t at, size_t len) {
+    if (tag == "fixp" && len >= 20) s.fixp = at;
+    if (tag == "fpgp" && len >= 42) s.fpgp = at;
+    if (tag == "prog") progs.push_back({at, len});
+  });
+  if (!s.fixp || !s.fpgp || progs.empty()) return s;
+  s.program = static_cast<int8_t>(p[s.fixp + 8]);
+  if (s.program < 0 || static_cast<size_t>(s.program) >= progs.size()) return s;
+  const auto [pa, pl] = progs[static_cast<size_t>(s.program)];
+  int lanes = 0;
+  eachTag(p, pa, pa + pl, [&](const std::string& tag, size_t at, size_t len) {
+    if (tag == "prgp" && len >= 42) s.prgp = at;
+    if (tag.compare(0, 3, "stp") == 0 && tag[3] >= '0' && tag[3] <= '5' && len >= 64) s.lanes[tag[3] - '0'] = at, ++lanes;
+  });
+  s.ok = s.prgp && lanes == 6;
+  return s;
+}
+
+namespace {
+
+// FL step-sync index (beats per step 1/16, 1/12, 1/8, 1/6, 1/4, 1/3, 1/2, 2/3,
+// 1, 3/16, 3/8, 3/4, 3/2) → the Gridline rate choice (-1: none).
+int seqRateOf(int sync) {
+  static const int map[13] = {-1, -1, 5, 8, 4, 7, 3, 6, 2, -1, 11, 10, 9};
+  return sync >= 0 && sync < 13 ? map[sync] : -1;
+}
+
+// VFX Sequencer (J-45): the current program of the bank becomes the step
+// pattern (first 16 steps): step type 0 rest, 2 tie, 4 chord (all held keys),
+// others a note; key bits b >= 2 = held key b - 2 (sorted by pitch), octave bit
+// b = octave b - 3, velocity lane / 127, gate = gate % × 2^lane / 100.
+bool decodeSequencer(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+  Blob b = gen2::stateBlob(evs);
+  namespace md = packs::modulation;
+  begin(m, "gl.notesq");
+  m.exact = false;  // key substitution, note order, swing and the randomisers are not modelled
+  const SeqBank s = parseSeqBank(b.p, b.size());
+  if (!s.ok) {
+    c.report.warn("VFX Sequencer: bank not recognised (defaults used)");
+    return true;
+  }
+  const uint8_t* g = b.p + s.prgp;
+  const int steps = g[1], gate = std::max<int>(1, g[2]);
+  set(m, md::SqThru, steps == 0 ? 1 : 0);
+  set(m, md::SqLength, std::clamp(steps, 1, md::kSeqSteps));
+  const int rate = seqRateOf(g[3]);
+  set(m, md::SqRate, rate < 0 ? 4 : rate);
+  set(m, md::SqTranspose, std::clamp(12 * static_cast<int8_t>(g[12]) + static_cast<int8_t>(b.p[s.fpgp + 14]), -24, 24));
+  for (int i = 0; i < md::kSeqSteps; ++i) {
+    auto lane = [&](int k) { return b.p[s.lanes[k] + static_cast<size_t>(i)]; };
+    const int type = lane(2), keys = lane(3), oct = lane(1);
+    set(m, md::seqParam(i, md::SqOn), type != 0 && type != 2 ? 1 : 0);
+    set(m, md::seqParam(i, md::SqTie), type == 2 ? 1 : 0);
+    int note = 0;
+    for (int bit = 2; bit < 8; ++bit)
+      if (keys & (1 << bit)) {
+        note = bit - 2;
+        break;
+      }
+    set(m, md::seqParam(i, md::SqNote), type == 4 ? 8 : std::min(note, 5));
+    int o = 0;
+    for (int bit = 0; bit < 8; ++bit)
+      if (oct & (1 << bit)) {
+        o = bit - 3;
+        break;
+      }
+    set(m, md::seqParam(i, md::SqOctave), std::clamp(o, -2, 2));
+    set(m, md::seqParam(i, md::SqVelocity), std::clamp(lane(4) / 127.0, 0.0, 1.0));
+    const int ge = static_cast<int8_t>(lane(5));
+    set(m, md::seqParam(i, md::SqGate), std::clamp(gate * std::pow(2.0, ge) / 100.0, 0.05, 1.0));
+  }
+  return true;
+}
+
+// VFX Level Scaler (J-45): u32 version 1, then chunks {u32 id, u64 length}:
+// 1002 = u8 editor tab, 1001 = 6 targets (velocity, release, pitch, pan,
+// mod X, mod Y) × 6 i32: centre 0..8192, multiply ±16384 (8192 = ×1),
+// offset ±8192, tension ±8192, humanize 0..16384, humanize mode 0..2.
+bool decodeLevelScaler(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+  Blob b = gen2::stateBlob(evs);
+  namespace md = packs::modulation;
+  begin(m, "gl.velscale");
+  set(m, md::VsModel, 1);
+  size_t at = 4, data = 0;
+  while (b.has(at, 12)) {
+    const uint32_t id = b.u32(at);
+    const uint64_t len = static_cast<uint64_t>(b.u32(at + 4)) | static_cast<uint64_t>(b.u32(at + 8)) << 32;
+    at += 12;
+    if (len > b.size() - at) break;
+    if (id == 1001 && len >= 144) data = at;
+    at += static_cast<size_t>(len);
+  }
+  if (b.u32(0) != 1 || !data) {
+    m.exact = false;
+    c.report.warn("VFX Level Scaler: settings not recognised (defaults used)");
+    return true;
+  }
+  bool humanized = false;
+  for (int t = 0; t < md::kVsTargets; ++t) {
+    auto v = [&](int f) { return static_cast<double>(b.i32(data + 24 * static_cast<size_t>(t) + 4 * static_cast<size_t>(f))); };
+    set(m, md::vsRef(t, md::VfCenter), std::clamp(v(0) / 8192.0, 0.0, 1.0));
+    set(m, md::vsRef(t, md::VfMultiply), std::clamp(v(1) / 8192.0, -2.0, 2.0));
+    set(m, md::vsRef(t, md::VfOffset), std::clamp(v(2) / 8192.0, -1.0, 1.0));
+    set(m, md::vsRef(t, md::VfTension), std::clamp(v(3) / 8192.0, -1.0, 1.0));
+    set(m, md::vsRef(t, md::VfHumanize), std::clamp(v(4) / 16384.0, 0.0, 1.0));
+    set(m, md::vsRef(t, md::VfMode), std::clamp(v(5), 0.0, 2.0));
+    humanized = humanized || v(4) != 0;
+  }
+  // Every law is the reference's; humanize draws from the player's own random numbers.
+  m.exact = !humanized;
   return true;
 }
 
@@ -227,12 +357,183 @@ bool decodePhaseInverter(Context&, const std::vector<Event>& evs, PluginMapping&
 
 }  // namespace
 
+namespace {
+struct DashReader {
+  const uint8_t* p;
+  size_t n, at = 0;
+  bool bad = false;
+  bool has(size_t k) const { return !bad && at + k <= n; }
+  uint32_t u32() {
+    if (!has(4)) return bad = true, 0;
+    uint32_t v = static_cast<uint32_t>(p[at]) | static_cast<uint32_t>(p[at + 1]) << 8 | static_cast<uint32_t>(p[at + 2]) << 16 | static_cast<uint32_t>(p[at + 3]) << 24;
+    at += 4;
+    return v;
+  }
+  uint8_t u8() {
+    if (!has(1)) return bad = true, 0;
+    return p[at++];
+  }
+  std::string pstr() {
+    const size_t len = u8();
+    if (!has(len)) return bad = true, std::string();
+    std::string s(reinterpret_cast<const char*>(p + at), len);
+    at += len;
+    return s;
+  }
+  std::string fixed(size_t size) {  // length byte + text, padded to size
+    if (!has(size)) return bad = true, std::string();
+    const size_t len = std::min<size_t>(p[at], size - 1);
+    std::string s(reinterpret_cast<const char*>(p + at + 1), len);
+    at += size;
+    return s;
+  }
+};
+}  // namespace
+
+DashPanel parseDashboard(const uint8_t* p, size_t n) {
+  DashPanel d;
+  DashReader r{p, n};
+  r.at = 28;
+  const uint32_t nv = r.u32();
+  if (r.bad || nv > 4096 || !r.has(4 * static_cast<size_t>(nv))) return d;
+  const size_t values = r.at;
+  r.at += 4 * static_cast<size_t>(nv);
+  const uint32_t nl = r.u32();
+  if (r.bad || nl > 4096 || !r.has(81 * static_cast<size_t>(nl))) return d;
+  for (uint32_t i = 0; i < nl; ++i) {
+    DashLink l;
+    l.name = r.fixed(48);
+    r.fixed(16);
+    l.target = r.u32(), l.type = r.u32(), l.lo = r.u32(), l.hi = r.u32();
+    r.u8();
+    // An internal link's value sits at its target index; a MIDI link's (target = CC) at its own.
+    const uint32_t idx = l.type == 4 ? (l.target & 0x7FFFFFFFu) : i;
+    if (1 + static_cast<size_t>(idx) < nv) l.valueAt = values + 4 * (1 + static_cast<size_t>(idx));
+    d.links.push_back(l);
+  }
+  const uint32_t pver = r.u32(), psize = r.u32();
+  if (r.bad || !r.has(psize)) return d;
+  const size_t pend = r.at + psize;
+  if (pver >= 4) {
+    r.pstr(), r.pstr();
+    r.at += 2 + 4 + 4 + 4 + 4;  // grid flags, grid colour, width, height, constant
+    r.pstr();
+    r.at += 4 + 4 + 8 + 4 + 64;  // label size, colour, flags, -1, reserved
+    const uint32_t nc = r.u32();
+    for (uint32_t k = 0; k < nc && !r.bad && nc < 4096; ++k) {
+      const int kind = r.u8();
+      r.pstr();
+      const uint32_t body = r.u32();
+      if (!r.has(static_cast<size_t>(body) + 16)) return d;
+      r.at += body + 16;
+      if (kind == 0 || kind == 1 || kind == 2 || kind == 4 || kind == 7) d.kinds.push_back(kind);
+    }
+    if (r.bad || r.at != pend) return d;
+  }
+  d.ok = true;
+  return d;
+}
+
+std::vector<uint8_t> buildDashboard(const std::vector<std::pair<int, std::string>>& controls, const std::vector<double>& values) {
+  std::vector<uint8_t> o;
+  auto u32 = [](std::vector<uint8_t>& b, int64_t v) {
+    const uint32_t x = static_cast<uint32_t>(v);
+    for (int k = 0; k < 4; ++k) b.push_back(static_cast<uint8_t>(x >> (8 * k)));
+  };
+  auto pstr = [](std::vector<uint8_t>& b, const std::string& s) {
+    const std::string t = s.substr(0, 255);
+    b.push_back(static_cast<uint8_t>(t.size()));
+    b.insert(b.end(), t.begin(), t.end());
+  };
+  auto fixed = [](std::vector<uint8_t>& b, const std::string& s, size_t size) {
+    const std::string t = s.substr(0, size - 1);
+    b.push_back(static_cast<uint8_t>(t.size()));
+    b.insert(b.end(), t.begin(), t.end());
+    b.insert(b.end(), size - 1 - t.size(), 0);
+  };
+  auto hex = [](std::vector<uint8_t>& b, const char* h) {
+    for (; h[0] && h[1]; h += 2) b.push_back(static_cast<uint8_t>(std::stoi(std::string(h, 2), nullptr, 16)));
+  };
+  const size_t n = controls.size();
+  for (int64_t v : {2, 0, -1, -1, -1, 0, 0}) u32(o, v);
+  u32(o, static_cast<int64_t>(n) + 1);
+  u32(o, 0);
+  for (size_t k = 0; k < n; ++k)
+    u32(o, std::lround(std::clamp(k < values.size() ? values[k] : 0.0, 0.0, 1.0) * 65536.0));
+  u32(o, static_cast<int64_t>(n));
+  for (size_t k = 0; k < n; ++k) {
+    fixed(o, controls[k].second, 48);
+    fixed(o, controls[k].second, 16);
+    u32(o, static_cast<int64_t>(k));
+    u32(o, 4);
+    u32(o, 0);
+    u32(o, 65536);
+    o.push_back(0);
+  }
+  // Panel: default artwork; controls in rows (sliders 35 px apart, others 40).
+  struct Look {
+    const char* ini;
+    int w, h;
+    const char* common;
+    const char* spec;
+  };
+  static const Look slider{"Gray (22x100)", 22, 100, "ffff00000000", "0100000000200000"};
+  static const Look wheel{"Gray dull (30x30)", 30, 30, "ffff01000000", "01000000dae3e900ff8000000020000000"};
+  static const Look sw{"Button switch", 29, 21, "ffff00000000", "000000000055004000"};
+  bool allSliders = n > 0;
+  for (const auto& c : controls) allSliders = allSliders && c.first == 1;
+  const size_t perRow = allSliders ? 10 : 8;
+  std::vector<uint8_t> recs;
+  int x = 10, y = 10, rowH = 0, right = 0;
+  for (size_t k = 0; k < n; ++k) {
+    if (k > 0 && k % perRow == 0) y += rowH + 25, x = 10, rowH = 0;
+    const Look& L = controls[k].first == 1 ? slider : controls[k].first == 4 ? sw : wheel;
+    std::vector<uint8_t> body;
+    pstr(body, controls[k].second);
+    pstr(body, controls[k].second);
+    for (int v : {x, y, L.w, L.h}) u32(body, v);
+    hex(body, L.common);
+    hex(body, L.spec);
+    recs.push_back(static_cast<uint8_t>(controls[k].first == 1 ? 1 : controls[k].first == 4 ? 4 : 2));
+    pstr(recs, L.ini);
+    u32(recs, static_cast<int64_t>(body.size()));
+    recs.insert(recs.end(), body.begin(), body.end());
+    recs.insert(recs.end(), 16, 0);
+    right = std::max(right, x + L.w);
+    rowH = std::max(rowH, L.h);
+    x += controls[k].first == 1 ? 35 : 40;
+  }
+  const int pw = std::max(340, right + 13), ph = n ? y + rowH + 25 : 200;
+  std::vector<uint8_t> panel;
+  pstr(panel, "Gray (resizeable)");
+  pstr(panel, "Default\\.\\Gray Panel.bmp");
+  panel.push_back(n ? 3 : 2);
+  panel.push_back(5);
+  u32(panel, 0x404040);
+  u32(panel, pw);
+  u32(panel, ph);
+  u32(panel, 23);
+  pstr(panel, "Fruity fonts");
+  u32(panel, 7);
+  u32(panel, 0xFFFFFF);
+  panel.insert(panel.end(), 8, 0);
+  u32(panel, -1);
+  panel.insert(panel.end(), 64, 0);
+  u32(panel, static_cast<int64_t>(n));
+  panel.insert(panel.end(), recs.begin(), recs.end());
+  u32(o, 4);
+  u32(o, static_cast<int64_t>(panel.size()));
+  o.insert(o.end(), panel.begin(), panel.end());
+  u32(o, 0);
+  return o;
+}
+
 void registerDecoders4(std::map<std::string, PluginDecoder>& d) {
   auto add = [&](const char* name, PluginDecoder f) { d.emplace(name, std::move(f)); };  // never overrides
   add("Fruity Big Clock", decodeBigClock);
   add("VFX Color Mapper", decodeColorMapper);
-  add("VFX Level Scaler", defaults("gl.velscale", "VFX Level Scaler"));
-  add("VFX Sequencer", defaults("gl.notesq", "VFX Sequencer"));
+  add("VFX Level Scaler", decodeLevelScaler);
+  add("VFX Sequencer", decodeSequencer);
   add("Dashboard", decodeDashboard);
   add("Soundfont Player", decodeSoundfont);
   add("FL Studio Mobile Rack FX", decodeMobileRackFx);

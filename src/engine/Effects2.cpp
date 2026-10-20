@@ -1,6 +1,8 @@
 // Gridline — Wave 2 effects: Graphic EQ, Waveshaper, Auto Pan, Shaper,
 // Time Gate, Maximizer, Freq Shifter, Low Lifter, Tuner.
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cmath>
 #include <vector>
 #include "../core/PluginParams.h"
@@ -100,13 +102,45 @@ double shapeCurve(const PluginState& s, double x) {
   return lookup(x);
 }
 
+// J-45: the reference waveshaper's 2x stage: a polyphase IIR half-band (two
+// chains of three first-order all-pass sections at the low rate, double state,
+// float between stages). Up: one input → (B chain, A chain); down: even → A,
+// odd → B, (A + B) / 2.
+struct WsHalfband {
+  static constexpr double kA[3] = {0x1.2dd40d58c3526p-3, 0x1.ee0c3bd22db5fp-2, 0x1.c4193c17c4250p-1};
+  static constexpr double kB[3] = {0x1.40bad9fb6183ap-5, 0x1.35e90e2f3bc08p-2, 0x1.596741f70a58fp-1};
+  double ax[3] = {}, ay[3] = {}, bx[3] = {}, by[3] = {};
+  static double chain(const double* c, double* x1, double* y1, double x) {
+    for (int i = 0; i < 3; ++i) {
+      const double y = c[i] * (x - y1[i]) + x1[i];
+      x1[i] = x, y1[i] = y, x = y;
+    }
+    return x;
+  }
+  void up(float x, float& first, float& second) {
+    first = static_cast<float>(chain(kB, bx, by, x));
+    second = static_cast<float>(chain(kA, ax, ay, x));
+  }
+  float down(float even, float odd) { return static_cast<float>((chain(kB, bx, by, odd) + chain(kA, ax, ay, even)) * 0.5); }
+  void flush() {  // once per block: tiny output states go to zero
+    for (int i = 0; i < 3; ++i) {
+      if (std::fabs(ay[i]) < 0x1p-24) ay[i] = 0;
+      if (std::fabs(by[i]) < 0x1p-24) by[i] = 0;
+    }
+  }
+};
+
 class WaveshaperFx final : public Effect {
  public:
-  WaveshaperFx() : tab_(32770, 0.f) {}
+  WaveshaperFx() : tab_(32770, 0.f), fl_(2 * 2 * kFlChunk * 16, 0.f), flTab_(32770, 0) {}
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     const bool classic = param(s, WsClassic, 1) >= 0.5f;
     const bool unipolar = param(s, WsBipolar, 1) >= 0.5f;
+    if (classic && wscurve::has(s.data.c_str())) {  // J-45: the reference engine
+      for (int o = 0; o < n; o += kFlChunk) processFl(s, ctx, L + o, R + o, std::min(kFlChunk, n - o));
+      return;
+    }
     bool center = param(s, WsCenter) >= 0.5f;
     int os = stages(s);
     int lat = Oversampler::latency(os);
@@ -174,14 +208,21 @@ class WaveshaperFx final : public Effect {
     xl_ = yl_ = xr_ = yr_ = 0;
     osL_.reset(), osR_.reset(), dl_.clear(), dr_.clear();
     primed_ = false;
+    for (auto& st : flUp_) st[0] = st[1] = WsHalfband{};  // the reference's flush: oversamplers and DC remover
+    for (auto& st : flDown_) st[0] = st[1] = WsHalfband{};
+    dcM_[0] = dcM_[1] = dcV_[0] = dcV_[1] = 0;
   }
   int meters(float* out, int max) const override {  // input level after the pre amp (editor marker)
     if (max < 1) return 0;
     out[0] = peak_;
     return 1;
   }
-  // Oversampling delays the wet path; the dry path is delayed to match.
-  int latencyFor(const PluginState& s, double) const override { return Oversampler::latency(stages(s)); }
+  // Oversampling delays the wet path; the dry path is delayed to match. The
+  // reference engine mixes the dry signal at the high rate: no latency.
+  int latencyFor(const PluginState& s, double) const override {
+    if (param(s, pp::WsClassic, 1) >= 0.5f && wscurve::has(s.data.c_str())) return 0;
+    return Oversampler::latency(stages(s));
+  }
 
  private:
   static int stages(const PluginState& s) { return std::clamp(static_cast<int>(param(s, pp::WsOversample) + 0.5f), 0, 3); }
@@ -194,6 +235,163 @@ class WaveshaperFx final : public Effect {
   int tabN_ = 16384;
   size_t tabHash_ = 0;
   wscurve::Curve curve_;
+
+  // ---- J-45 reference engine: 2^os oversampling (polyphase IIR half-bands),
+  // int16 curve table (rounded or interpolated with HQ), dry mixed at the high
+  // rate, gains smoothed per oversampled frame, DC remover at the host rate.
+  static constexpr int kFlChunk = 1024;
+  void buildFlTable(const PluginState& s, bool unipolar) {
+    const size_t h = std::hash<std::string>{}(s.data) ^ (unipolar ? 0x51ed2701u : 0x2b7e1516u);
+    if (h == flHash_) return;
+    flHash_ = h;
+    wscurve::parse(s.data.c_str(), curve_);
+    flN_ = unipolar ? 16384 : 32768;
+    const int M = flN_ - 1;
+    const double centre = unipolar ? 0.0 : 0.5, scale = unipolar ? 32767.0 : 65535.0;
+    const auto& c = curve_;
+    for (int i = 0; i < flN_; ++i) {
+      const double xq = static_cast<double>(i) / M;
+      float v;
+      if (c.n <= 0) {
+        v = 0;
+      } else if (xq <= c.x[0]) {
+        v = static_cast<float>(c.y[0] - centre);
+      } else {
+        const int k = c.segmentAt(xq);
+        if (k >= c.n) {
+          v = static_cast<float>(c.y[c.n - 1] - centre);
+        } else {
+          const float start = static_cast<float>(c.y[k - 1] - centre);
+          const float delta = static_cast<float>(static_cast<double>(c.y[k]) - centre - start);
+          const double w = c.x[k] - c.x[k - 1];
+          const double f = w > 0 ? (xq - c.x[k - 1]) / w : 1.0;
+          const float r = static_cast<float>(c.mode[k] == menv::Smooth ? menv::shape(menv::Smooth, c.c[k], f, c.tanS[k], c.tanE[k])
+                                                                        : menv::shape(c.mode[k], c.c[k], f));
+          v = r * delta + start;
+        }
+      }
+      const double q = std::nearbyint(static_cast<double>(v) * scale);
+      flTab_[static_cast<size_t>(i) + 1] = static_cast<int16_t>(std::clamp(q, -32768.0, 32767.0));
+    }
+    flTab_[0] = flTab_[1];
+    flTab_[static_cast<size_t>(flN_) + 1] = flTab_[static_cast<size_t>(flN_)];
+  }
+  // Table entry i (guards: -1 → 0, N → N - 1).
+  double T(int i) const { return flTab_[static_cast<size_t>(i + 1)]; }
+  double shapeFl(double x, double g, bool unipolar, bool hq) const {
+    const int M = flN_ - 1;
+    if (unipolar) {
+      const double xs = x * (g * M);
+      if (!hq) {
+        const double r = std::nearbyint(xs);
+        if (r >= 0) return T(static_cast<int>(std::min(r, static_cast<double>(M))));
+        return -T(static_cast<int>(std::min(-r, static_cast<double>(M))));
+      }
+      const double ti = std::trunc(xs);
+      const double f = xs - ti;
+      if (ti >= 0) {
+        const int j = static_cast<int>(std::min(ti, static_cast<double>(M)));
+        return T(j) + (T(j + 1) - T(j)) * f;
+      }
+      if (ti < -2147483647.0) return 0;
+      const int j = static_cast<int>(std::min(-ti, static_cast<double>(M)));
+      return -(T(j) + (T(j + 1) - T(j)) * (-f));
+    }
+    const double t = x * (g * M * 0.5) + M * 0.5;
+    if (!hq) return T(static_cast<int>(std::clamp(std::nearbyint(t), 0.0, static_cast<double>(M))));
+    const double ti = std::trunc(t);
+    const int i = static_cast<int>(std::clamp(ti, -1.0, static_cast<double>(M)));
+    return T(i) + (T(i + 1) - T(i)) * (t - ti);
+  }
+  void processFl(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) {
+    using namespace pp;
+    const bool unipolar = param(s, WsBipolar, 1) >= 0.5f;
+    const bool hq = param(s, WsHq) >= 0.5f, smooth = param(s, WsSmooth) >= 0.5f, center = param(s, WsCenter) >= 0.5f;
+    const int os = std::clamp(static_cast<int>(param(s, WsOversample) + 0.5f), 0, 4);
+    if (os != flOs_) {  // new stage set: zeroed
+      flOs_ = os;
+      for (auto& st : flUp_) st[0] = st[1] = WsHalfband{};
+      for (auto& st : flDown_) st[0] = st[1] = WsHalfband{};
+    }
+    buildFlTable(s, unipolar);
+    // Gain targets in the reference's float steps (stored knob values / 128).
+    const float p0 = static_cast<float>(std::nearbyint(param(s, WsPreAmp, 1) * 128.0)) * 0.0078125f;
+    const float p1 = static_cast<float>(std::nearbyint(param(s, WsMix, 1) * 128.0)) * 0.0078125f;
+    const float p2 = static_cast<float>(std::nearbyint(param(s, WsPost, 1) * 128.0)) * 0.0078125f;
+    float G = static_cast<float>(std::exp(static_cast<double>(p0) * 1.3862943611198906) - 1.0);
+    G = G / 3.0f;
+    const float P = p2 == 1.0f ? 1.0f : static_cast<float>((std::exp(static_cast<double>(p2 * 2.3978953f)) - 1.0) * static_cast<double>(0.1f));
+    const float B = p1 * P;
+    const float A = ((P - B) * G) * P;
+    const float k = static_cast<float>(1.0 - std::pow(0.09999999999999998, 1.0 / (0.005 * ctx.sampleRate)));
+    const int f = 1 << os;
+    const int m = n * f;
+    float* buf[2] = {fl_.data(), fl_.data() + 2 * kFlChunk * 16};
+    float* tmp[2] = {fl_.data() + kFlChunk * 16, fl_.data() + 3 * kFlChunk * 16};
+    float* io[2] = {L, R};
+    float peak = 0;
+    for (int ch = 0; ch < 2; ++ch) {
+      std::copy(io[ch], io[ch] + n, buf[ch]);
+      int len = n;
+      for (int st = 0; st < os; ++st) {
+        WsHalfband& h = flUp_[st][ch];
+        for (int i = 0; i < len; ++i) h.up(buf[ch][i], tmp[ch][2 * i], tmp[ch][2 * i + 1]);
+        h.flush();
+        len *= 2;
+        std::copy(tmp[ch], tmp[ch] + len, buf[ch]);
+      }
+      for (int i = 0; i < n; ++i) peak = std::max(peak, std::fabs(io[ch][i]) * G);
+    }
+    const double wetScale = 1.0 / 32768.0;
+    for (int j = 0; j < m; ++j) {
+      float g = G, a = A, b = B;
+      if (smooth) {
+        sPre_ += (G - sPre_) * k;
+        sWet_ += (B - sWet_) * k;
+        sDry_ += (A - sDry_) * k;
+        g = sPre_, a = sDry_, b = sWet_;
+      }
+      const double bs = static_cast<double>(b) * wetScale;
+      for (int ch = 0; ch < 2; ++ch) {
+        const double x = buf[ch][j];
+        buf[ch][j] = static_cast<float>(x * a + shapeFl(x, g, unipolar, hq) * bs);
+      }
+    }
+    for (int ch = 0; ch < 2; ++ch) {
+      int len = m;
+      for (int st = os - 1; st >= 0; --st) {
+        WsHalfband& h = flDown_[st][ch];
+        len /= 2;
+        for (int i = 0; i < len; ++i) buf[ch][i] = h.down(buf[ch][2 * i], buf[ch][2 * i + 1]);
+        h.flush();
+      }
+      float* out = io[ch];
+      if (center) {
+        const double c = static_cast<float>(2.2835e-5 * (44100.0 / ctx.sampleRate));
+        double& dm = dcM_[ch];
+        double& dv = dcV_[ch];
+        for (int i = 0; i < n; ++i) {
+          const double x = buf[ch][i];
+          dv += (x - dm) * c;
+          dm += dv;
+          dv *= static_cast<double>(0.96f);
+          out[i] = static_cast<float>(x - dm);
+        }
+        if (std::fabs(dm) <= 0x1p-24) dm = 0;
+        if (std::fabs(dv) <= 0x1p-24) dv = 0;
+      } else {
+        std::copy(buf[ch], buf[ch] + n, out);
+      }
+    }
+    peak_ = std::max(peak, peak_ * 0.8f);
+  }
+  std::vector<float> fl_;
+  std::vector<int16_t> flTab_;
+  int flN_ = 16384, flOs_ = -1;
+  size_t flHash_ = 0;
+  WsHalfband flUp_[4][2], flDown_[4][2];
+  float sPre_ = 0, sWet_ = 0, sDry_ = 0;  // smoothed gains: start at zero (the reference never primes them)
+  double dcM_[2] = {}, dcV_[2] = {};
 };
 
 class TunerFx final : public Effect {  // display only (pitch detection in the editor)

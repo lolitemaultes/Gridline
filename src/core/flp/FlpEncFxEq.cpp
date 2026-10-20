@@ -136,7 +136,7 @@ Encoder stereoShaper() {
     return std::vector<Field>{i32(ut::SmRL, knob(0), -25600, 25600),    i32(ut::SmLL, knob(1), -25600, 25600),
                               i32(ut::SmRR, knob(2), -25600, 25600),    i32(ut::SmLR, knob(3), -25600, 25600),
                               i32(ut::SmDelayK, knob(4), -4096, 4096),  i32(ut::SmDephaseK, knob(5), -4096, 4096),
-                              i32(ut::SmFxPos, knob(7), 0, 1)};
+                              i32(ut::SmFxPos, knob(7), 0, 1),         i32(ut::SmDiffTo, knob(6), 0, 500)};
   };
   return e;
 }

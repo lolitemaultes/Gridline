@@ -61,12 +61,12 @@ double luxeShape(double v, double rmin, double rmax, double lo, double hi, doubl
 // Input / dry / wet level slider (-600..1500) → dB: -60 + 75·√n (746 = 0 dB).
 double luxeLevelDb(double v) { return luxeShape(v, -600, 1500, -60, 15, 2.0); }
 
-bool decodeLuxeVerb(Context&, const std::vector<Event>& evs, PluginMapping& m) {
+bool decodeLuxeVerb(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<uint8_t> b = stateBytes(evs);
   if (b.size() < 13 + 38 * 4) return false;
   Reader r(b.data(), b.size());
   const uint32_t version = r.u32();
-  r.u32();  // sidechain input number (mixer routing; not mapped)
+  const int scIn = static_cast<int>(std::min<uint32_t>(r.u32(), 500));  // J-45: FL input route index of the hosting insert
   uint8_t hdr[5];  // pre-delay sync, feedback-delay sync, 3 display flags (UI only)
   for (uint8_t& h : hdr) h = r.u8();
   const size_t nTags = version <= 7 ? 38 : version == 8 ? 39 : 49;
@@ -145,9 +145,11 @@ bool decodeLuxeVerb(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   fx::set(m, sx::HvFfSync1, ffSync[0] ? 1 : 0);
   fx::set(m, sx::HvFfSync2, ffSync[1] ? 1 : 0);
   normalizePluginState(m.state);
-  // Every control maps by its exact law; the detector's sidechain source (a
-  // mixer routing) is not imported.
-  m.exact = t[29] == 0;
+  // Every control maps by its exact law. J-45: the detector reads the hosting
+  // track's input route n (resolved by the engine; 0 = its own input).
+  fx::set(m, sx::HvScIn, scIn);
+  m.exact = flRouteInputKept(c, scIn) && !(scIn > 0 && t[29] == 0);
+  if (!m.exact) c.report.warn("LuxeVerb: the sidechain source is not among the imported routes");
   bindKnobs(m, tab);
   return true;
 }

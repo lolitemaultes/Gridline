@@ -350,4 +350,55 @@ void importMixer(Context& c) {
   if (sidechains) c.report.counts["mixer sidechain routes"] = sidechains;
 }
 
+// ------------------------------------------------------------ J-45 route numbering
+namespace {
+// FL's own route lists of insert t (FL insert numbers): every destination the
+// routing event 235 marks (an insert without one feeds the master), and every
+// insert whose routing event marks t.
+std::vector<int> flOutputs(const Context& c, int t) {
+  std::vector<int> r{t};
+  const size_t n = c.sec.inserts.size();
+  if (t < 0 || static_cast<size_t>(t) >= n) return r;
+  if (const Event* e = find(c.sec.inserts[static_cast<size_t>(t)].events, 235)) {
+    for (uint32_t k = 0; k < e->size && k < n; ++k)
+      if (e->data[k] && static_cast<int>(k) != t) r.push_back(static_cast<int>(k));
+  } else if (t != 0) {
+    r.push_back(0);
+  }
+  return r;
+}
+std::vector<int> flInputs(const Context& c, int t) {
+  std::vector<int> r{t};
+  for (size_t i = 0; i < c.sec.inserts.size(); ++i) {
+    if (static_cast<int>(i) == t) continue;
+    const Event* e = find(c.sec.inserts[i].events, 235);
+    if (e ? (static_cast<size_t>(t) < e->size && e->data[t]) : (t == 0 && i != 0)) r.push_back(static_cast<int>(i));
+  }
+  return r;
+}
+// FL insert (or -1) → Gridline mixer index (-1 none; -2 an insert that was not imported).
+int glIndex(const Context& c, int fl) {
+  if (fl < 0) return -1;
+  auto it = c.insertIds.find(fl);
+  return it == c.insertIds.end() ? -2 : c.song.mixerIndex(it->second);
+}
+}  // namespace
+
+bool flRouteOutputKept(const Context& c, int n) {
+  if (c.insert < 0 || n <= 0) return true;
+  const std::vector<int> fl = flOutputs(c, c.insert);
+  const int f = fl[std::min(static_cast<size_t>(n), fl.size() - 1)];
+  const int want = f == c.insert ? -1 : glIndex(c, f);
+  const int self = glIndex(c, c.insert);
+  return self >= 0 && want == flRouteOutput(c.song, self, n);
+}
+
+bool flRouteInputKept(const Context& c, int n) {
+  if (c.insert < 0 || n <= 0) return true;
+  const std::vector<int> fl = flInputs(c, c.insert);
+  const int want = static_cast<size_t>(n) < fl.size() ? glIndex(c, fl[static_cast<size_t>(n)]) : -1;
+  const int self = glIndex(c, c.insert);
+  return self >= 0 && want == flRouteInput(c.song, self, n);
+}
+
 }  // namespace gl::flp

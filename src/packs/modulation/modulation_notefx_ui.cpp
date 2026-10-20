@@ -337,19 +337,25 @@ void velEditor(EditTarget& e) {
   skin::Form F = sk::openForm(e, K, kW, kH);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::Scope scope(K);
-  sk::selector(e, VsTarget, F.p(8, 8), F.sz(240, 26), K);
+  // J-45 reference model: six targets, the selected one's controls are shown.
+  const bool ref = e.ip(VsModel) == 1;
+  const int tg = std::clamp(e.ip(VsEdit), 0, kVsTargets - 1);
+  const int pC = ref ? vsRef(tg, VfCenter) : VsCenter, pM = ref ? vsRef(tg, VfMultiply) : VsMultiply,
+            pO = ref ? vsRef(tg, VfOffset) : VsOffset, pT = ref ? vsRef(tg, VfTension) : VsTension,
+            pH = ref ? vsRef(tg, VfHumanize) : VsHumanize, pHm = ref ? vsRef(tg, VfMode) : VsHumanMode;
+  sk::selector(e, ref ? VsEdit : VsTarget, F.p(8, 8), F.sz(ref ? 420 : 240, 26), K);
   sk::panelBox(dl, F, 8, 38, 550, 304, K);
   const char* sl[3] = {"CENTRE", "MULTIPLY", "OFFSET"};
-  const int sp[3] = {VsCenter, VsMultiply, VsOffset};
+  const int sp[3] = {pC, pM, pO};
   for (int i = 0; i < 3; ++i) {
     sk::text(dl, F, 32 + i * 48, 46, K, sl[i], 6.5f, true);
     sk::vslider(e, sp[i], F.p(12 + i * 48, 60), F.sz(40, 184), K);
   }
-  sk::wheelL(e, VsTension, F, 14, 252, 34, K, "TENSION");
-  sk::wheelL(e, VsHumanize, F, 62, 252, 34, K, "HUMANIZE");
-  sk::wheelL(e, VsMin, F, 110, 252, 34, K, "MIN");
+  sk::wheelL(e, pT, F, 14, 252, 34, K, "TENSION");
+  sk::wheelL(e, pH, F, 62, 252, 34, K, "HUMANIZE");
+  if (!ref) sk::wheelL(e, VsMin, F, 110, 252, 34, K, "MIN");
   static const std::vector<std::string> hmodes = {"SUB", "SPREAD", "ADD"};
-  sk::selector(e, VsHumanMode, F.p(12, 304), F.sz(142, 30), K, &hmodes);
+  sk::selector(e, pHm, F.p(12, 304), F.sz(142, 30), K, &hmodes);
   // Live display.
   ImVec2 p0 = F.p(166, 44), p1 = F.p(552, 336);
   skin::graphWell(dl, p0, p1, K);
@@ -358,15 +364,16 @@ void velEditor(EditTarget& e) {
     dl->AddLine(ImVec2(p0.x + sz.x * g / 4, p0.y + 1), ImVec2(p0.x + sz.x * g / 4, p1.y - 1), K.graphGrid);
     dl->AddLine(ImVec2(p0.x + 1, p0.y + sz.y * g / 4), ImVec2(p1.x - 1, p0.y + sz.y * g / 4), K.graphGrid);
   }
-  double center = e.p(VsCenter), mul = e.p(VsMultiply, 1), ofs = e.p(VsOffset), ten = e.p(VsTension), hum = e.p(VsHumanize);
-  int hm = e.ip(VsHumanMode, 1);
-  double lo = e.p(VsMin), hi = e.p(VsMax, 1);
+  double center = e.p(pC), mul = e.p(pM, 1), ofs = e.p(pO), ten = e.p(pT), hum = e.p(pH);
+  int hm = e.ip(pHm, 1);
+  double lo = ref ? 0.0 : e.p(VsMin), hi = ref ? 1.0 : e.p(VsMax, 1);
   if (lo > hi) std::swap(lo, hi);
   ImVec2 top[48], bot[48], mid[48];
   for (int i = 0; i < 48; ++i) {
     double x = i / 47.0;
-    double y = center + (tensionCurve(x, ten) - center) * mul + ofs;
+    double y = ref ? vsRefCurve(x, center, mul, ofs, ten) : center + (tensionCurve(x, ten) - center) * mul + ofs;
     double y0 = hm == 0 ? y - hum : (hm == 2 ? y : y - hum), y1 = hm == 0 ? y : y + hum;
+    if (ref) y0 = hm == 2 ? y : y - hum * y, y1 = hm == 0 ? y : y + hum * (1 - y);
     auto Y = [&](double v) { return p1.y - static_cast<float>(std::clamp(v, lo, hi)) * sz.y; };
     float X = p0.x + static_cast<float>(x) * sz.x;
     mid[i] = ImVec2(X, Y(y));
@@ -383,11 +390,15 @@ void velEditor(EditTarget& e) {
   // Title strip with the maximum wheel and reset (the reference keeps its
   // persistence wheel at the strip's right end).
   sk::titleStrip(dl, F, 0, 348, kW, 42, K, "Level Scaler");
-  sk::text(dl, F, 360, 362, K, "MAX", 7.5f);
-  sk::wheel(e, VsMax, F.p(386, 354), 30 * F.s, K);
+  if (!ref) {
+    sk::text(dl, F, 360, 362, K, "MAX", 7.5f);
+    sk::wheel(e, VsMax, F.p(386, 354), 30 * F.s, K);
+  }
   if (sk::button("##reset", F.p(440, 358), F.sz(110, 22), K, "RESET CURVE")) {
     PluginState st = defaultPluginState(e.st->type);
     st.params[VsTarget] = e.p(VsTarget);
+    st.params[VsModel] = e.p(VsModel);
+    st.params[VsEdit] = e.p(VsEdit);
     st.data = e.st->data;
     e.set(st, "reset level scaler", 0);
   }

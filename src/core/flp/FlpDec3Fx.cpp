@@ -63,15 +63,13 @@ bool decodePeakController(Context&, const std::vector<Event>& evs, PluginMapping
   gen2::set(m, mod::LfSync, 0);  // FL's LFO runs at a free rate
   gen2::set(m, mod::PkMute, b.u8(40) ? 1 : 0);
   gen2::set(m, mod::PkRamp, b.u8(41) ? 1 : 0);
-  // J-42 reference model: the stored integers with the reference laws. Exact unless the
-  // LFO is audible with a shape whose table orientation is unverified (triangle, square,
-  // saw) or the noise table (random).
+  // J-42 reference model: the stored integers with the reference laws; J-45: every LFO
+  // shape reads the reference host's tables (noise included), so every state is exact.
   static const int kRaw[10] = {mod::PkRBase, mod::PkRAmount, mod::PkRTension, mod::PkRDecay, mod::LfRBase,
                                mod::LfRAmount, mod::LfRTension, mod::LfRSpeed, mod::LfShape, mod::LfRPhase};
   for (int k = 0; k < 10; ++k) gen2::set(m, kRaw[k], static_cast<double>(static_cast<int32_t>(b.u32(4 * static_cast<size_t>(k)))));
   gen2::set(m, mod::PkModel, 1);
-  const int shape = static_cast<int32_t>(b.u32(32)), lfoAmt = static_cast<int32_t>(b.u32(20));
-  m.exact = lfoAmt == 0 || shape == 0;
+  m.exact = true;
   return true;
 }
 
@@ -159,73 +157,28 @@ bool decodeSevenBand(Context&, const std::vector<Event>& evs, PluginMapping& m) 
 // synced time 1..768, feedback); 33 lookahead, 34 stereo link, 35 detection
 // mode, 36 / 37 transient / sustain enabled, 38 / 39 transient / sustain
 // effect (0 saturation, 1 bounce, 2 diffusion, 3 blur, 4 delay, 5 off), 40 /
-// 41 delay tempo sync. Every stored setting has a Transient Split parameter;
-// the blur slot shares the diffuser knobs. Only the selected effect's knobs
-// are imported (and linked for automation) per slot.
-constexpr double kTmNeutral = 8743;  // level of the plugin's default state
-double tmLevel(double v) {
-  return v >= kTmNeutral ? clampd((v - kTmNeutral) / (12800 - kTmNeutral), 0, 1) : clampd((v - kTmNeutral) / kTmNeutral, -1, 0);
-}
-
-bool decodeTransmitter(Context&, const std::vector<Event>& evs, PluginMapping& m) {
+// 41 delay tempo sync; then i32 transient send, sustain send, detection
+// source (FL route indexes), i32 scroll speed, 4 display bytes.
+bool decodeTransmitter(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   Blob b = gen2::stateBlob(evs);
   if (b.size() < 4 + 40 * 4) return false;
   gen2::begin(m, "gl.transplit");
-  std::vector<double> v = ints(b, 4, 42);
-  auto u = [](double x) { return clampd(x / 10000.0, 0, 1); };
-  auto tilt = [](double x) { return clampd((x - 5000.0) / 5000.0, -1, 1); };
-  std::vector<Row> rows = {
-      {0, 0, 10000, dyn::TsSensitivity, u},
-      {1, 0, 10000, dyn::TsHold, [](double x) { return clampd(x / 10000.0, 0, 1) * 50.0; }},
-      {2, 0, 10000, dyn::TsReleaseShape, [](double x) { return x < 3333 ? 0.0 : (x < 6667 ? 1.0 : 2.0); }},
-      {3, 0, 12800, dyn::TsAttack, tmLevel},
-      {4, 0, 12800, dyn::TsRelease, tmLevel},
-      {5, 0, 10000, dyn::TsTransTilt, tilt},
-      {6, 0, 10000, dyn::TsSusTilt, tilt},
-      {33, 0, 1, dyn::TsLookahead},
-      {34, 0, 1, dyn::TsStereoLink},
-      {35, 0, 2, dyn::TsAttackShape, [](double x) { return clampd(std::round(x), 0, 2); }},
-      {36, 0, 1, dyn::TsTransOn},
-      {37, 0, 1, dyn::TsSusOn},
-      {40, 0, 1, dyn::TsTransSync},
-      {41, 0, 1, dyn::TsSusSync},
-  };
-  for (int side = 0; side < 2; ++side) {
-    const int o = side * dyn::kTsSlotStride;
-    const int fx = static_cast<int>(clampd(v[static_cast<size_t>(38 + side)], 0, 5));
-    rows.push_back({38 + side, 0, 5, dyn::TsTransFx + o, [](double x) { return clampd(std::round(x), 0, 5); }});
-    int mix = -1, a = -1, bb = -1;
-    switch (fx) {
-      case dyn::TsFxSaturate: mix = 13 + 3 * side, a = 14 + 3 * side, bb = 15 + 3 * side; break;
-      case dyn::TsFxBounce: mix = 19 + 3 * side, a = 21 + 3 * side, bb = 20 + 3 * side; break;
-      case dyn::TsFxDiffuse:
-      case dyn::TsFxBlur: mix = 7 + 3 * side, a = 8 + 3 * side, bb = 9 + 3 * side; break;
-      case dyn::TsFxEcho: {
-        const int base = 25 + 4 * side;
-        const bool sync = v[static_cast<size_t>(40 + side)] >= 0.5;
-        mix = base, a = base + 3, bb = sync ? base + 2 : base + 1;
-        break;
-      }
-      default: break;
-    }
-    if (mix < 0) continue;
-    rows.push_back({mix, 0, 10000, dyn::TsTransFxMix + o, u});
-    rows.push_back({a, 0, 10000, dyn::TsTransFxA + o, u});
-    if (fx == dyn::TsFxEcho && v[static_cast<size_t>(40 + side)] >= 0.5)
-      rows.push_back({bb, 1, 768, dyn::TsTransFxB + o, [](double x) { return clampd((x - 1.0) / 767.0, 0, 1); }});
-    else
-      rows.push_back({bb, 0, 10000, dyn::TsTransFxB + o, u});
-  }
+  // J-45: the reference engine runs the stored controls as they are (see
+  // transmitter_ref.h); the three words after them are the transient / sustain
+  // send routes and the detection source route (FL route indexes, 0 = off).
+  gen2::set(m, dyn::TsModel, 1);
+  const std::vector<double> v = ints(b, 4, 42);
+  for (int k = 0; k < 42; ++k)
+    gen2::set(m, dyn::tsRaw(k), clampd(b.has(4 + 4 * static_cast<size_t>(k), 4) ? v[static_cast<size_t>(k)] : dyn::kTsRawDef[k], dyn::kTsRawMin[k], dyn::kTsRawMax[k]));
+  const int sendT = b.has(172, 4) ? b.i32(172) : 0, sendS = b.has(176, 4) ? b.i32(176) : 0, sc = b.has(180, 4) ? b.i32(180) : 0;
+  gen2::set(m, dyn::TsSendT, clampd(sendT, 0, 500));
+  gen2::set(m, dyn::TsSendS, clampd(sendS, 0, 500));
+  gen2::set(m, dyn::TsScIn, clampd(sc, 0, 500));
+  std::vector<Row> rows;
+  for (int k = 0; k < 42; ++k) rows.push_back({k, static_cast<double>(dyn::kTsRawMin[k]), static_cast<double>(dyn::kTsRawMax[k]), dyn::tsRaw(k), nullptr});
   applyRows(m, rows, v);
-  gen2::set(m, dyn::TsDrive, 0.0);
-  gen2::set(m, dyn::TsMix, 1.0);
-  gen2::set(m, dyn::TsGain, 0.0);
-  gen2::set(m, dyn::TsSplitFreq, 20.0);
-  gen2::set(m, dyn::TsBalance, 0.0);
-  // Settings all map, but the level / time / effect laws are Gridline's own
-  // (the reference DSP was not measured) and the envelope send outputs are
-  // not stored in the state: approximate.
-  m.exact = false;
+  m.exact = b.has(4 + 42 * 4, 0) && flRouteOutputKept(c, sendT) && flRouteOutputKept(c, sendS) && flRouteInputKept(c, sc);
+  if (!m.exact) c.report.warn("Transmitter: a send or detection route is not among the imported routes");
   return true;
 }
 

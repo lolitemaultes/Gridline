@@ -660,7 +660,7 @@ class HexSynthGen final : public Generator {
     if (v.first && v.fresh) {
       for (int k = 0; k < kOscs; ++k) {
         const bool free = e(HxFreeRun + k) != 0.f;
-        const uint32_t ph = static_cast<uint32_t>(static_cast<double>(e(HxPhase + k)) * 4294967296.0);
+        const uint32_t ph = static_cast<uint32_t>(std::clamp(static_cast<double>(e(HxPhase + k)) * 4294967296.0, 0.0, 4294967295.0));
         for (int j = 0; j < v.uni; ++j) v.osc[k].c[j].ph = free ? rng_.next() : ph;
       }
       v.fresh = false;

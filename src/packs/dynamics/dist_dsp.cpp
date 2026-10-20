@@ -1,6 +1,10 @@
 // Gridline — "dynamics" pack: Overdrive (gl.overdrive), Clip Dist
 // (gl.fastdist), Squeeze (gl.squeeze) and Transient Split (gl.transplit).
+#include <atomic>
+#include <memory>
 #include "dyn_dsp.h"
+#include "transmitter_ref.h"
+#include "transporter_ref.h"
 
 namespace gl::packs::dynamics {
 
@@ -535,16 +539,29 @@ class TransplitFx final : public DynFx {
       for (auto& c : side) c.init(2.0, 0.1);
     for (auto& r : look_) r.init(static_cast<size_t>(kLookSec * 192000.0) + 8);
   }
+  ~TransplitFx() override { delete pending_.exchange(nullptr); }
   static constexpr double kLookSec = 0.0015;
   int latencyFor(const PluginState& s, double sr) const override {
+    if (pi(s, TsModel) == 1) return p(s, tsRaw(33)) >= 0.5 ? static_cast<int>(std::lround(0.002 * sr)) : 0;  // J-45 reference look-ahead
     return pb(s, TsLookahead) ? static_cast<int>(std::lround(kLookSec * sr)) : 0;
   }
+  // J-45: the reference engine's buffers depend on the sample rate: built here (UI thread).
+  void prepareHost(const PluginState& s, double sr) override {
+    if (pi(s, TsModel) != 1 || builtSr_ == sr) return;
+    delete pending_.exchange(new txref::Engine(static_cast<float>(sr)));
+    builtSr_ = sr;
+  }
+  void setSideIo(const SideIo& io) override { io_ = io; }
   int meters(float* out, int max) const override {
     if (max < 2) return 0;
     out[0] = trPeak_, out[1] = susPeak_;
     return 2;
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (pi(s, TsModel) == 1) {
+      processRef(s, ctx, L, R, n);
+      return;
+    }
     const double sr = ctx.sampleRate;
     const double split = p(s, TsSplitFreq);
     if (sr != sr_ || split != split_) {
@@ -648,7 +665,22 @@ class TransplitFx final : public DynFx {
     trPeak_ = static_cast<float>(linToDb(peakT));
     susPeak_ = static_cast<float>(linToDb(peakS));
   }
+  void processRef(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) {
+    if (txref::Engine* e = pending_.exchange(nullptr)) ref_.reset(e);
+    if (!ref_ || ref_->srRaw != static_cast<float>(ctx.sampleRate)) ref_ = std::make_unique<txref::Engine>(static_cast<float>(ctx.sampleRate));  // not prepared (tests, offline use)
+    float raw[42], v[42];
+    for (int k = 0; k < 42; ++k) raw[k] = static_cast<float>(p(s, tsRaw(k)));
+    txref::engineValues(raw, v);
+    for (int o = 0; o < n; o += txref::Engine::kBlock) {
+      const int m = std::min(txref::Engine::kBlock, n - o);
+      auto at = [o](float* b) { return b ? b + o : nullptr; };
+      auto atc = [o](const float* b) { return b ? b + o : nullptr; };
+      ref_->run(v, static_cast<float>(std::max(1.0, ctx.tempo)), m, L + o, R + o, atc(io_.scL), atc(io_.scR), at(io_.multiL[0]), at(io_.multiR[0]),
+                at(io_.multiL[1]), at(io_.multiR[1]));
+    }
+  }
   void reset() override {
+    if (ref_) ref_ = std::make_unique<txref::Engine>(ref_->srRaw);
     for (auto& x : xo_) x.reset();
     for (int c = 0; c < 2; ++c) {
       fast_[c].v = slow_[c].v = rect_[c].v = 0;
@@ -669,9 +701,56 @@ class TransplitFx final : public DynFx {
   OnePoleTpt tilt_[2][2];   // [transient / sustain][channel]
   Ring look_[2];
   float trPeak_ = -120, susPeak_ = -120;
+  std::unique_ptr<txref::Engine> ref_;
+  std::atomic<txref::Engine*> pending_{nullptr};
+  double builtSr_ = 0;
+  SideIo io_;
+};
+
+// =================================================================== gl.hitloop
+// J-45: the reference loop slicer (transporter_ref.h). The engine's 20 s
+// capture rings depend on the sample rate: built in prepareHost (UI thread),
+// or on first use when no host prepared it (tests, offline use).
+class HitLoopFx final : public Effect {
+ public:
+  ~HitLoopFx() override { delete pending_.exchange(nullptr); }
+  void prepareHost(const PluginState&, double sr) override {
+    if (builtSr_ == sr) return;
+    delete pending_.exchange(new tpref::Engine(static_cast<float>(sr)));
+    builtSr_ = sr;
+  }
+  void setSideIo(const SideIo& io) override { io_ = io; }
+  int latencyFor(const PluginState&, double sr) const override { return static_cast<int>(static_cast<int64_t>(static_cast<float>(sr) * 0.005f)); }
+  void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (tpref::Engine* e = pending_.exchange(nullptr)) eng_.reset(e);
+    if (!eng_ || eng_->srRaw != static_cast<float>(ctx.sampleRate)) eng_ = std::make_unique<tpref::Engine>(static_cast<float>(ctx.sampleRate));
+    auto prm = [&](int k, float d) { return static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : d; };
+    int32_t raw[22];
+    for (int k = 0; k < 22; ++k) raw[k] = static_cast<int32_t>(std::lround(prm(k, static_cast<float>(kHlRawDef[k]))));
+    float v[22];
+    tpref::engineValues(raw, v);
+    if (wasPlaying_ && !ctx.playing && prm(HlFlushOnStop, 1) >= 0.5f) eng_->flush();  // clear on stop
+    wasPlaying_ = ctx.playing;
+    const double beats = ctx.tick / std::max(1, ctx.ppq);
+    const float tempoIn = static_cast<float>(4.0 * (beats / 4.0 - std::floor(beats / 4.0)));
+    eng_->run(v, static_cast<float>(ctx.tempo), std::clamp(static_cast<int>(prm(HlSource, 2)), 0, 2), prm(HlStereo, 1) >= 0.5f ? 1 : 0, tempoIn, n, L, R,
+              io_.scL, io_.scR, io_.multiL[0], io_.multiR[0]);
+  }
+  void reset() override {
+    if (eng_) eng_->clear();
+    wasPlaying_ = false;
+  }
+
+ private:
+  std::unique_ptr<tpref::Engine> eng_;
+  std::atomic<tpref::Engine*> pending_{nullptr};
+  double builtSr_ = 0;
+  bool wasPlaying_ = false;
+  SideIo io_;
 };
 
 std::unique_ptr<Effect> createDistEffect(const std::string& type) {
+  if (type == "gl.hitloop") return std::make_unique<HitLoopFx>();
   if (type == "gl.overdrive") return std::make_unique<OverdriveFx>();
   if (type == "gl.fastdist") return std::make_unique<FastDistFx>();
   if (type == "gl.squeeze") return std::make_unique<SqueezeFx>();

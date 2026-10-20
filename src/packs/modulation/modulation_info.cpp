@@ -408,6 +408,21 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params[VsHumanMode] = ch("Humanize mode", {"Subtract", "Spread", "Add"}, 1);
     p.params[VsMin] = lin("Minimum", "%", 0, 1, 0);
     p.params[VsMax] = lin("Maximum", "%", 0, 1, 1);
+    p.params[VsModel] = ch("Engine", {"Legacy", "Reference"}, 0);  // imports run the reference
+    p.params[VsEdit] = ch("Shown target", {"Velocity", "Release", "Fine pitch", "Pan", "Mod X", "Mod Y"}, 0);
+    {
+      static const char* tn[kVsTargets] = {"Velocity", "Release", "Pitch", "Pan", "Mod X", "Mod Y"};
+      for (int t = 0; t < kVsTargets; ++t) {
+        const std::string n = tn[t];
+        p.params[vsRef(t, VfCenter)] = lin(n + " centre", "%", 0, 1, t < 2 ? 0 : 0.5);
+        p.params[vsRef(t, VfMultiply)] = lin(n + " multiply", "x", -2, 2, 1);
+        p.params[vsRef(t, VfOffset)] = lin(n + " offset", "", -1, 1, 0);
+        p.params[vsRef(t, VfTension)] = lin(n + " tension", "", -1, 1, 0);
+        p.params[vsRef(t, VfHumanize)] = lin(n + " humanize", "%", 0, 1, 0);
+        p.params[vsRef(t, VfMode)] = ch(n + " humanize mode", {"Subtract", "Spread", "Add"}, 1);
+      }
+    }
+    p.legacyModelParam = VsModel;
     p.presets = {{"Unity", {}},
                  {"Compress dynamics", {{VsCenter, 0.7f}, {VsMultiply, 0.4f}}},
                  {"Expand dynamics", {{VsCenter, 0.5f}, {VsMultiply, 1.6f}}},
@@ -461,10 +476,12 @@ void appendInfos(std::vector<PluginInfo>& v) {
   {
     PluginInfo p = make("gl.send", "Mixer Send", "Routing", E);
     p.params.resize(SnCount);
-    p.params[SnTarget] = lin("Target track", "", 0, 500, 1);
+    p.params[SnTarget] = lin("Target track", "", -1, 500, 1);
     p.params[SnLevel] = lin("Send level", "%", 0, 1.25, 1);
     p.params[SnPan] = lin("Send pan", "pan", -1, 1, 0);
     p.params[SnDry] = lin("Dry level", "%", 0, 1, 1);
+    p.params[SnRoute] = ch("Target numbering", {"Mixer track", "Route"}, 0);
+    p.routeModeParam = SnRoute;
     p.presets = {{"Parallel copy", {}}, {"Send only", {{SnDry, 0.0f}}}, {"Quiet send", {{SnLevel, 0.4f}}}};
     p.editorWidth = 460;
     v.push_back(std::move(p));

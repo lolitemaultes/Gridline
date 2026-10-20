@@ -220,6 +220,13 @@ void AudioEngine::pullInput(const ProgInput& in, float* accL, float* accR) const
       in.tap.run(live ? sL : nullptr, live ? sR : nullptr, level, accL, accR, n);
       break;
     }
+    case ProgInput::Track: {  // J-45: a track's output at unity (side inputs)
+      const ProgMixer& src = p->mixer[static_cast<size_t>(in.src)];
+      const bool live = !src.rt || src.rt->sent;
+      in.tap.run(live ? busL_[static_cast<size_t>(in.src)].data() : nullptr, live ? busR_[static_cast<size_t>(in.src)].data() : nullptr,
+                 1.0f, accL, accR, n);
+      break;
+    }
     case ProgInput::SlotSend: {
       const EffectRuntime* rt = p->mixer[static_cast<size_t>(in.src)].slots[static_cast<size_t>(in.index)].rt.get();
       const bool live = rt && rt->sent;
@@ -279,8 +286,10 @@ void AudioEngine::runMixer(size_t idx, int worker) {
     std::memset(bL, 0, bytes);
     std::memset(bR, 0, bytes);
     // Bus returns keep their compensation lines running on silence.
-    for (const auto& slot : m.slots)
+    for (const auto& slot : m.slots) {
       for (const auto& in : slot.auxIn) in.tap.run(nullptr, nullptr, 0.f, scr.auxL, scr.auxR, n);
+      for (const auto& in : slot.sideIn) in.tap.run(nullptr, nullptr, 0.f, scr.sideL, scr.sideR, n);
+    }
     if (rt) {
       rt->curL = rt->curR = 0;
       rt->primed = true;
@@ -290,8 +299,10 @@ void AudioEngine::runMixer(size_t idx, int worker) {
     return;
   }
   if (m.disabled) {  // bypassed track: the summed input passes through untouched
-    for (const auto& slot : m.slots)
+    for (const auto& slot : m.slots) {
       for (const auto& in : slot.auxIn) in.tap.run(nullptr, nullptr, 0.f, scr.auxL, scr.auxR, n);
+      for (const auto& in : slot.sideIn) in.tap.run(nullptr, nullptr, 0.f, scr.sideL, scr.sideR, n);
+    }
     if (m.hasPreSend) {
       std::memcpy(preL_[idx].data(), bL, bytes);
       std::memcpy(preR_[idx].data(), bR, bytes);
@@ -310,8 +321,10 @@ void AudioEngine::runMixer(size_t idx, int worker) {
   }
   for (const auto& slot : m.slots) {
     if (!slot.rt || !slot.rt->fx || !slot.enabled) {
-      if (slot.rt)  // keep a bypassed return's compensation lines running
+      if (slot.rt) {  // keep a bypassed return's compensation lines running
         for (const auto& in : slot.auxIn) in.tap.run(nullptr, nullptr, 0.f, scr.auxL, scr.auxR, n);
+        for (const auto& in : slot.sideIn) in.tap.run(nullptr, nullptr, 0.f, scr.sideL, scr.sideR, n);
+      }
       continue;
     }
     const uint64_t s0 = bc_.profile ? nowNs() : 0;
@@ -325,6 +338,16 @@ void AudioEngine::runMixer(size_t idx, int worker) {
       if (m.hasSidechain) {
         io.scL = scL_[idx].data();
         io.scR = scR_[idx].data();
+      }
+      if (slot.sideOwn) {  // J-45: the slot reads one source track instead
+        io.scL = io.scR = nullptr;
+        if (!slot.sideIn.empty()) {
+          std::memset(scr.sideL, 0, bytes);
+          std::memset(scr.sideR, 0, bytes);
+          for (const auto& in : slot.sideIn) pullInput(in, scr.sideL, scr.sideR);
+          io.scL = scr.sideL;
+          io.scR = scr.sideR;
+        }
       }
       if ((slot.sendTo >= 0 || slot.busSend >= 0) && !slot.rt->sendL.empty()) {
         std::memset(slot.rt->sendL.data(), 0, bytes);

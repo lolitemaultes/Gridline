@@ -220,7 +220,7 @@ struct ProgChannel {
 // One input a mixer node pulls (summed in list order, so the result does not
 // depend on which thread produced it), with its delay compensation.
 struct ProgInput {
-  enum Kind : uint8_t { Channel, Send, SlotSend, Sidechain, ChannelAux };
+  enum Kind : uint8_t { Channel, Send, SlotSend, Sidechain, ChannelAux, Track };  // Track: a track's output at unity (J-45)
   Kind kind = Channel;
   int src = 0;    // Channel / ChannelAux: channel index; others: source mixer index
   int index = 0;  // Send / Sidechain: index into the source's list; SlotSend: slot index; ChannelAux: extra output
@@ -242,6 +242,11 @@ struct ProgSlot {
   int busSend = -1;          // audio bus written by a bus send
   int busRecv = -1;          // audio bus read by a bus return
   int multiSend[kMaxSendOutputs] = {-1, -1, -1, -1};  // PluginInfo::sendParams destinations
+  // J-45 (PluginInfo::sideInParam): the slot's sidechain input is its own
+  // (sideOwn) — the output of track sideSrc (-1 = none: no sidechain).
+  bool sideOwn = false;
+  int sideSrc = -1;
+  std::vector<ProgInput> sideIn;  // the source's output, compensated to this slot
   int latency = 0;           // samples this slot adds (0 when bypassed)
   // Bus returns: the senders of the bus that run before this track, in
   // summation order, each compensated to this slot's position.

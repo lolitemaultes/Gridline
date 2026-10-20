@@ -471,6 +471,35 @@ void addTransplit(std::vector<PluginInfo>& v) {
   p.params[TsSusOn] = tog("Sustain on", 1);
   p.params[TsTransSync] = tog("Transient echo sync", 0);
   p.params[TsSusSync] = tog("Sustain echo sync", 0);
+  {
+    static const char* tn[42] = {"Sensitivity", "Hold", "Release", "Transient level", "Sustain level", "Transient tilt", "Sustain tilt",
+                                 "T diffusion mix", "T diffusion depth", "T diffusion delay", "S diffusion mix", "S diffusion depth",
+                                 "S diffusion delay", "T saturation mix", "T saturation drive", "T saturation warmth", "S saturation mix",
+                                 "S saturation drive", "S saturation warmth", "T bounce mix", "T bounce amp curve", "T bounce time curve",
+                                 "S bounce mix", "S bounce amp curve", "S bounce time curve", "T delay mix", "T delay time",
+                                 "T delay synced time", "T delay feedback", "S delay mix", "S delay time", "S delay synced time",
+                                 "S delay feedback", "Look-ahead", "Stereo link", "Detection mode", "Transient on", "Sustain on",
+                                 "Transient effect", "Sustain effect", "T delay sync", "S delay sync"};
+    for (int k = 0; k < 42; ++k) {
+      ParamDesc d = lin(std::string("Ref ") + tn[k], "", kTsRawMin[k], kTsRawMax[k], kTsRawDef[k]);
+      if (kTsRawMax[k] <= 5) {
+        std::vector<std::string> c;
+        if (k == 38 || k == 39) c = {"Saturation", "Bounce", "Diffusion", "Blur", "Delay", "Off"};
+        else if (k == 35) c = {"Smooth", "Balanced", "Dense"};
+        else c = {"Off", "On"};
+        d = ch(std::string("Ref ") + tn[k], c, kTsRawDef[k]);
+      }
+      p.params[static_cast<size_t>(tsRaw(k))] = d;
+    }
+  }
+  p.params[TsModel] = ch("Engine", {"Gridline", "Reference"}, 0);
+  p.params[TsSendT] = lin("Transient send route", "", 0, 500, 0);
+  p.params[TsSendS] = lin("Sustain send route", "", 0, 500, 0);
+  p.params[TsScIn] = lin("Detection source", "", -1, 500, -1);
+  p.sendParams = {TsSendT, TsSendS};
+  p.routeModeParam = kRouteIndexAlways;
+  p.sideInParam = TsScIn;
+  p.legacyModelParam = TsModel;
   p.presets = {{"Snap", {}},
                {"Tighten tails", {{TsAttack, 0.1f}, {TsRelease, -0.6f}}},
                {"Soften hits", {{TsAttack, -0.5f}, {TsAttackShape, 2.f}}},
@@ -485,7 +514,54 @@ void addTransplit(std::vector<PluginInfo>& v) {
 
 }  // namespace
 
+namespace {
+// J-45 Hit Looper (gl.hitloop).
+void addHitLoop(std::vector<PluginInfo>& v) {
+  PluginInfo p{"gl.hitloop", "Hit Looper", "Delay & reverb", PluginKind::Effect, {}, false, {}};
+  p.params.resize(HlCount);
+  static const char* names[22] = {"Dry level", "Loop A level", "Loop B level", "Reverse chance", "Octave chance", "Octave up chance",
+                                  "Spread / auto-pan", "Minimum length", "A / B ratio", "Hit sensitivity", "Bounce", "Hold loops",
+                                  "Clear loops", "Length mode", "Bypass", "Retrigger A", "Retrigger B", "Retrigger A + B", "Fixed choices",
+                                  "Tempo length", "Tempo trigger", "Skip chance"};
+  static const std::vector<std::string> notes = {"1 bar", "1/2", "1/4", "1/8", "1/16", "1/32", "1/2 dot", "1/4 dot", "1/8 dot", "1/16 dot",
+                                                 "1/32 dot", "1/2 tri", "1/4 tri", "1/8 tri", "1/16 tri", "1/32 tri", "1/5", "1/10", "1/20",
+                                                 "1/40", "1/80"};
+  for (int k = 0; k < 22; ++k) p.params[static_cast<size_t>(k)] = lin(names[k], "", kHlRawMin[k], kHlRawMax[k], kHlRawDef[k]);
+  p.params[HlFreeze] = tog(names[HlFreeze], 0);
+  p.params[HlFlush] = tog(names[HlFlush], 0);
+  p.params[HlBypass] = tog(names[HlBypass], 0);
+  p.params[HlUpdateA] = tog(names[HlUpdateA], 0);
+  p.params[HlUpdateB] = tog(names[HlUpdateB], 0);
+  p.params[HlUpdateAB] = tog(names[HlUpdateAB], 0);
+  p.params[HlFixed] = ch(names[HlFixed], {"Random", "Fixed"}, 0);
+  p.params[HlMode] = ch(names[HlMode], {"Hits", "Bounce", "Adapt", "Tempo"}, 0);
+  p.params[HlTempoLength] = ch(names[HlTempoLength], notes, 0);
+  std::vector<std::string> trig = notes;
+  trig.push_back("Off");
+  p.params[HlTempoTrigger] = ch(names[HlTempoTrigger], trig, 21);
+  p.params[HlSource] = ch("Detect from", {"Left", "Right", "Both"}, 2);
+  p.params[HlStereo] = ch("Capture", {"Mono", "Stereo"}, 1);
+  p.params[HlFlushOnStop] = tog("Clear on stop", 1);
+  p.params[HlLookahead] = tog("Look-ahead", 1);
+  p.params[HlSendTo] = lin("Loops to route", "", 0, 500, 0);
+  p.params[HlInput] = lin("Detection route", "", -1, 500, 0);
+  p.sendParams = {HlSendTo};
+  p.routeModeParam = kRouteIndexAlways;
+  p.sideInParam = HlInput;
+  p.presets = {{"Hit repeats", {}},
+               {"Backwards hits", {{HlDry, 0.f}, {HlLevelB, 0.f}, {HlReverse, 10000.f}, {HlSpread, 768.f}, {HlSensitivity, 1024.f},
+                                   {HlMode, 3.f}, {HlFixed, 1.f}}},
+               {"Octave scatter", {{HlDry, 0.f}, {HlOctave, 2000.f}, {HlOctaveUp, 5000.f}, {HlSpread, 1024.f}, {HlMode, 3.f},
+                                   {HlTempoLength, 1.f}, {HlRatio, 0.f}}},
+               {"Drifting echoes", {{HlLevelA, 8000.f}, {HlLevelB, 8000.f}, {HlReverse, 5000.f}, {HlOctave, 10000.f}, {HlMinLength, 2000.f},
+                                    {HlRatio, 2.f}, {HlMode, 2.f}, {HlFixed, 1.f}}}};
+  p.editorWidth = 640;
+  v.push_back(std::move(p));
+}
+}  // namespace
+
 void appendInfos(std::vector<PluginInfo>& v) {
+  addHitLoop(v);
   addMaster(v);
   addLoudness(v);
   addEnhance(v);

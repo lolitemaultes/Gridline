@@ -156,6 +156,9 @@ enum HallParam {
   HvModel, HvBright, HvModFreq, HvPreTicks, HvFbSync, HvFbTicks,
   HvEnvRoute, HvEnvScale, HvEnvOffset, HvEnvSmooth, HvEnvLowCut, HvEnvSidechain,
   HvFfDirect, HvFfPitch1, HvFfPitch2, HvFfAmp1, HvFfAmp2, HvFfDelay1, HvFfDelay2, HvFfSync1, HvFfSync2, HvFfTicks1, HvFfTicks2,
+  // J-45: the envelope's sidechain source (PluginInfo::sideInParam): -1 the
+  // track's sidechain input, 0 none, n the track's n-th source (FL input route).
+  HvScIn,
   HvCount
 };
 enum HallFreeze { HfNormal, HfFreeze, HfInfinite, HfSustain };

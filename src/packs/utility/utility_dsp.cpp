@@ -651,7 +651,10 @@ class StereoMatrixFx final : public UtilityFx {
     int d = std::min(kDelay - 1, static_cast<int>(std::lround(std::fabs(delayMs) * 0.001 * sr)));
     double t = std::tan(kPi * std::min(fc, sr * 0.45) / sr), apc = (t - 1) / (t + 1);
     const bool pre = prm(s, SmFxPos, 1) < 0.5f;  // delay / dephase before the matrix
+    float* diffL = io_.multiL[0];  // J-45 difference output: dry input minus the result
+    float* diffR = io_.multiR[0];
     for (int i = 0; i < n; ++i) {
+      const float inL = L[i], inR = R[i];
       if (sub_.left == 0) {  // gain ramps over sub-blocks of the effect's own clock (J-30)
         for (int k = 0; k < 4; ++k) inc_[k] = g_[k].begin(target[k], kSub);
         sub_.left = kSub;
@@ -683,8 +686,13 @@ class StereoMatrixFx final : public UtilityFx {
       }
       L[i] = static_cast<float>(ol);
       R[i] = static_cast<float>(orr);
+      if (diffL && diffR) {
+        diffL[i] += inL - L[i];
+        diffR[i] += inR - R[i];
+      }
     }
   }
+  void setSideIo(const SideIo& io) override { io_ = io; }
 
  private:
   static constexpr int kDelay = 131072;  // > 500 ms at 192 kHz (reference delay range)
@@ -693,6 +701,7 @@ class StereoMatrixFx final : public UtilityFx {
   };
   float dl_[kDelay] = {}, dr_[kDelay] = {};
   int w_ = 0;
+  SideIo io_;
   Ap ap_[2];
   Ramp g_[4];
   static constexpr int kSub = 32;

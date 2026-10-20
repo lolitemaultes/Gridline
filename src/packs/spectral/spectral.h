@@ -454,7 +454,9 @@ enum SplitParam {
   SpViewMain,   // choice (display): band curves / summed curve, main group
   SpViewSend,   // same, send group
   SpBand2,      // per band: main level, send level, send mute, send to (stride 4)
-  SpCount = SpBand2 + 4 * 4
+  // J-45: the band send targets are FL route indexes of the hosting track (PluginInfo::routeModeParam).
+  SpRoute = SpBand2 + 4 * 4,
+  SpCount
 };
 inline constexpr int kSplitStride = 5;
 enum SplitBandField { SbGain = 0, SbPan, SbWidth, SbMute, SbSolo };
