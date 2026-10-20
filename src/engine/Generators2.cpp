@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include "SlicexEngine.h"
 #include "../core/PluginParams.h"
 #include "Dsp.h"
 #include "Generators.h"
@@ -966,10 +967,12 @@ class KeysGen final : public Generator {
 class SlicerGen final : public Generator {
  public:
   bool active() const override {
+    if (sx_) return sxe_.active();
     for (const auto& v : voices_)
       if (v.on) return true;
     return false;
   }
+  bool handlesNotePan() const override { return sx_; }
 
  protected:
   struct Voice {
@@ -985,6 +988,13 @@ class SlicerGen final : public Generator {
   };
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     using namespace pp;
+    // J-41: Slicex region engine.
+    sx_ = param(s, SlEngine, 0) >= 0.5f && param(s, SlEngine, 0) < SlEngineProcessed - 0.5f && dynamic_cast<const slicex::Aux*>(aux.custom.get()) != nullptr;
+    proc_ = param(s, SlEngine, 0) >= SlEngineProcessed - 0.5f;  // J-41: processed slices (aux sample + starts)
+    if (sx_) {
+      sxe_.configure(s, aux, ctx);
+      return;
+    }
     sr_ = ctx.sampleRate;
     aux_ = &aux;
     state_ = &s;
@@ -1011,7 +1021,9 @@ class SlicerGen final : public Generator {
     }
     // Slice starts: manual markers or the prepared automatic slices.
     nSlices_ = 0;
-    if (static_cast<int>(param(s, SlMode) + 0.5f) == SlModeManual && smp) {
+    if (proc_) {
+      for (size_t k = 0; k < aux.slices.size() && nSlices_ < kMaxSlices; ++k) starts_[nSlices_++] = aux.slices[k];
+    } else if (static_cast<int>(param(s, SlMode) + 0.5f) == SlModeManual && smp) {
       for (int k = 0; k < kMaxSlices; ++k) {
         float m = param(s, slMarker(k), -1);
         if (m >= 0) starts_[nSlices_++] = static_cast<int64_t>(m * static_cast<double>(smp->frames()));
@@ -1024,12 +1036,20 @@ class SlicerGen final : public Generator {
                                     std::max(declick_ ? 0.002 : 0.0, static_cast<double>(param(s, SlRelease, 0.01f))));
   }
   void onNoteOnEx(uint32_t id, double pitch, float vel, const NoteProps& np) override {
+    if (sx_) {
+      sxe_.noteOn(id, pitch, vel, np);
+      return;
+    }
     noteModX_ = np.modX - 0.5, noteModY_ = np.modY - 0.5;
     onNoteOn(id, pitch, vel);
     noteModX_ = noteModY_ = 0;
   }
   void onNoteOn(uint32_t id, double pitch, float vel) override {
     using namespace pp;
+    if (sx_) {
+      sxe_.noteOn(id, pitch, vel, NoteProps{});
+      return;
+    }
     SamplePtr smp = aux_ ? aux_->sample() : nullptr;
     if (!smp || nSlices_ == 0) return;
     const PluginState& s = *state_;
@@ -1070,7 +1090,7 @@ class SlicerGen final : public Generator {
     if (endPos >= 0 && !playToEnd_) sliceEnd = std::clamp(endPos * static_cast<double>(smp->frames()), sliceStart + 1, static_cast<double>(smp->frames() - 1));
     v.start = sliceStart + param(s, slParam(k, SliceStart)) * (sliceEnd - sliceStart);
     v.end = sliceEnd;
-    v.reverse = reverse_ != (param(s, slParam(k, SliceReverse)) >= 0.5f);
+    v.reverse = reverse_ != (!proc_ && param(s, slParam(k, SliceReverse)) >= 0.5f);  // (processed: reversed offline)
     v.pos = v.reverse ? v.end - 1 : v.start;
     v.rate = std::pow(2.0, (pitch_ + semis + param(s, slParam(k, SlicePitch))) / 12.0) * smp->sampleRate / sr_ * speed_;
     double g = dbToGain(param(s, slParam(k, SliceGain))) * (1 - velAmt_ + velAmt_ * vel);
@@ -1088,6 +1108,10 @@ class SlicerGen final : public Generator {
     v.env.gate(true);
   }
   void onNoteOff(uint32_t id) override {
+    if (sx_) {
+      sxe_.noteOff(id);
+      return;
+    }
     if (hold_) return;
     for (auto& v : voices_)
       if (v.on && v.held && v.id == id) {
@@ -1096,12 +1120,18 @@ class SlicerGen final : public Generator {
       }
   }
   void onAllOff() override {
+    sxe_.allOff();
     for (auto& v : voices_) v.env.gate(false), v.held = false;
   }
   void onKill() override {
+    sxe_.kill();
     for (auto& v : voices_) v = Voice{};
   }
   void render(float* L, float* R, int n) override {
+    if (sx_) {
+      sxe_.render(L, R, n);
+      return;
+    }
     SamplePtr smp = aux_ ? aux_->sample() : nullptr;
     if (!smp) return;
     for (auto& v : voices_) {
@@ -1161,6 +1191,8 @@ class SlicerGen final : public Generator {
   bool reverse_ = false, playToEnd_ = false, hold_ = false, mono_ = false, declick_ = true;
   float vol_ = 0.8f;
   size_t next_ = 0;
+  bool sx_ = false, proc_ = false;
+  slicex::Engine sxe_;
 };
 
 // ============================================================ Granular

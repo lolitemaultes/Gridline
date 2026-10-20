@@ -3,11 +3,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <functional>
 #include <map>
 #include "modulation.h"
 #include "modulation_dsp.h"
 #include "modulation_skin.h"
 #include "modulation_widgets.h"
+#include "patchv2.h"
 
 namespace gl::packs::modulation {
 
@@ -105,9 +108,20 @@ void diagram(EditTarget& e, const PatchGraph& g, int& sel, bool fxHost, float W)
   if (ImGui::IsItemHovered()) e.a->setHint("Click a module to edit it. Effects run left to right; stacked effects run in parallel.");
 }
 
-// Inner parameters of one node as free knobs writing back into the graph.
+// Inner parameters of one hosted plugin as free knobs; `changed` stores the
+// edited state (with a merge key per parameter).
+void stateKnobs(EditTarget& e, PluginState& st, float W, const std::function<void(uint64_t)>& changed);
+
 void nodeParams(EditTarget& e, PatchGraph& g, int sel, float W) {
-  PatchNode& nd = g.nodes[static_cast<size_t>(sel)];
+  stateKnobs(e, g.nodes[static_cast<size_t>(sel)].plugin, W, [&](uint64_t k) {
+    commit(e, g, "edit module parameter", e.key ^ 0x50484E50ull ^ (static_cast<uint64_t>(sel) << 12) ^ k);
+  });
+}
+
+void stateKnobs(EditTarget& e, PluginState& st, float W, const std::function<void(uint64_t)>& changed) {
+  struct NodeRef {
+    PluginState& plugin;
+  } nd{st};
   const PluginInfo* info = findPlugin(nd.plugin.type);
   if (!info) return;
   float used = 0;
@@ -125,7 +139,7 @@ void nodeParams(EditTarget& e, PatchGraph& g, int sel, float W) {
     bool rel = false;
     if (ui::Knob("k", &v, d, 14, nullptr, d.min < 0 && d.max > 0, &rel)) {
       nd.plugin.params[k] = static_cast<float>(d.clamp(v));
-      commit(e, g, "edit module parameter", e.key ^ 0x50484E50ull ^ (static_cast<uint64_t>(sel) << 12) ^ k);
+      changed(static_cast<uint64_t>(k));
     }
     released = released || rel;
     {  // draw the module knob as a skin wheel over the generic knob
@@ -174,9 +188,153 @@ bool drawPatchHostEditor(EditTarget& e) {
 
 namespace {
 
+
+// ------------------------------------------------------------ v2 graphs (J-41)
+// FL patches as wired: the plugins at their FL positions with their audio,
+// note and controller links, the selected plugin's parameters, and the
+// patch's exposed parameters (host Param slots).
+bool patchV2Body(EditTarget& e) {
+  const auto& P = pal();
+  const skin::Skin& K = sk::patcher();
+  PatchV2 g;
+  if (!parsePatchV2(e.st->data, g)) return false;
+  const PatchV2Topo t = patchV2Topology(g);
+  const float W = e.width;
+  static std::map<uint64_t, int> selMap;
+  int& sel = selMap[e.key];
+  if (sel >= static_cast<int>(g.nodes.size())) sel = -1;
+  // FL editor positions (1600 records: node id, x, y).
+  std::map<uint64_t, ImVec2> pos;
+  for (const auto& it : g.items) {
+    if (it.empty() || it[0] == '#') continue;
+    const std::vector<uint8_t> b = patchUnhex(it);
+    for (const auto& c : patchChunks(b.data(), b.size())) {
+      if (c.id != 0) continue;
+      for (const auto& k : patchChunks(c.data.data(), c.data.size()))
+        if (k.id == 1600 && k.data.size() >= 16) {
+          uint64_t id = 0;
+          std::memcpy(&id, k.data.data(), 8);
+          float x = 0, y = 0;
+          std::memcpy(&x, k.data.data() + 8, 4);
+          std::memcpy(&y, k.data.data() + 12, 4);
+          pos[id] = ImVec2(x, y);
+        }
+    }
+  }
+  const size_t N = g.nodes.size();
+  std::vector<ImVec2> at(N);
+  float mnx = 1e9f, mny = 1e9f, mxx = -1e9f, mxy = -1e9f;
+  for (size_t i = 0; i < N; ++i) {
+    auto it = pos.find(g.nodes[i].id);
+    at[i] = it != pos.end() ? it->second : ImVec2(static_cast<float>(i % 6) * 150.0f, static_cast<float>(i / 6) * 60.0f);
+    mnx = std::min(mnx, at[i].x), mny = std::min(mny, at[i].y), mxx = std::max(mxx, at[i].x), mxy = std::max(mxy, at[i].y);
+  }
+  pui::beginSection("PATCH", W);
+  const float CW = W - 20, CH = 300, bw = 112, bh = 22, padX = 70;
+  ImVec2 p0 = ImGui::GetCursorScreenPos();
+  ImGui::InvisibleButton("##canvas", ImVec2(CW, CH));
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::graphWell(dl, p0, ImVec2(p0.x + CW, p0.y + CH), K);
+  const float sx = mxx > mnx ? (CW - 2 * padX - bw) / (mxx - mnx) : 1.0f, sy = mxy > mny ? (CH - 20 - bh) / (mxy - mny) : 1.0f;
+  const float sc = std::min(1.0f, std::min(sx, sy));
+  auto box = [&](size_t i) { return ImVec2(p0.x + padX + (at[i].x - mnx) * sc, p0.y + 10 + (at[i].y - mny) * sc); };
+  const ImVec2 hostIn(p0.x + 8, p0.y + CH * 0.5f), hostOut(p0.x + CW - 8, p0.y + CH * 0.5f);
+  auto wire = [&](ImVec2 a, ImVec2 b, ImU32 col, float th) {
+    dl->AddBezierCubic(a, ImVec2(a.x + 30, a.y), ImVec2(b.x - 30, b.y), b, col, th);
+  };
+  const ImU32 audioCol = K.accent2C(), ctlCol = theme::withAlpha(theme::litRole(theme::role::kGraph), 0.55f),
+              noteCol = theme::withAlpha(K.fill, 0.7f);
+  for (const auto& l : t.audio) {
+    const ImVec2 a = l.src < 0 ? hostIn : ImVec2(box(static_cast<size_t>(l.src)).x + bw, box(static_cast<size_t>(l.src)).y + bh * 0.5f);
+    const ImVec2 b = l.dst < 0 ? hostOut : ImVec2(box(static_cast<size_t>(l.dst)).x, box(static_cast<size_t>(l.dst)).y + bh * 0.5f);
+    wire(a, b, audioCol, 1.8f);
+  }
+  for (const auto& c : t.controls) {
+    if (c.src < 0 || c.dst < 0) continue;
+    const ImVec2 a(box(static_cast<size_t>(c.src)).x + bw, box(static_cast<size_t>(c.src)).y + bh - 4);
+    const ImVec2 b(box(static_cast<size_t>(c.dst)).x, box(static_cast<size_t>(c.dst)).y + bh - 4);
+    wire(a, b, ctlCol, 1.0f);
+  }
+  for (size_t i = 0; i < N; ++i)
+    if (t.notes[i]) wire(ImVec2(hostIn.x, hostIn.y - 20), ImVec2(box(i).x, box(i).y + 4), noteCol, 1.2f);
+  dl->AddCircleFilled(hostIn, 5, audioCol, 12);
+  dl->AddCircleFilled(hostOut, 5, audioCol, 12);
+  ImGuiIO& io = ImGui::GetIO();
+  int hover = -1;
+  for (size_t i = 0; i < N; ++i) {
+    const ImVec2 b0 = box(i), b1(b0.x + bw, b0.y + bh);
+    const bool hov = io.MousePos.x >= b0.x && io.MousePos.x < b1.x && io.MousePos.y >= b0.y && io.MousePos.y < b1.y;
+    if (hov) hover = static_cast<int>(i);
+    const bool known = findPlugin(g.nodes[i].plugin.type) != nullptr;
+    dl->AddRectFilled(ImVec2(b0.x + 2, b0.y + 3), ImVec2(b1.x + 2, b1.y + 3), theme::withAlpha(IM_COL32_BLACK, 0.3f), 4);
+    dl->AddRectFilled(b0, b1, static_cast<int>(i) == sel ? skin::lighten(K.wellC(), 0.15f) : K.wellC(), 4);
+    dl->AddRect(b0, b1, static_cast<int>(i) == sel ? K.fill : (hov ? K.text : theme::withAlpha(K.textDim, 0.5f)), 4, 0, 1.2f);
+    std::string nm = g.nodes[i].display.empty() ? g.nodes[i].flName : g.nodes[i].display;
+    ImGui::PushFont(e.a->fontMono, 10.0f);
+    while (nm.size() > 3 && ImGui::CalcTextSize(nm.c_str()).x > bw - 8) nm.pop_back();
+    dl->AddText(ImVec2(b0.x + 4, b0.y + 5), known ? K.text : P.textFaint, nm.c_str());
+    ImGui::PopFont();
+  }
+  if (ImGui::IsItemClicked() && hover >= 0) sel = hover;
+  if (ImGui::IsItemHovered()) {
+    if (hover >= 0) {
+      const auto& n = g.nodes[static_cast<size_t>(hover)];
+      const PluginInfo* info = findPlugin(n.plugin.type);
+      e.a->setHint((n.display.empty() ? n.flName : n.display) + " — " + (info ? info->name : std::string("not available in Gridline")) + "   (click to edit)");
+    } else {
+      e.a->setHint("Orange: audio, green: controller links, light: notes. Click a plugin to edit it.");
+    }
+  }
+  ImGui::PushFont(e.a->fontMono, 10.5f);
+  ImGui::TextColored(theme::vec(P.textFaint), "%zu plugins, %zu audio / %zu controller links, %zu parameters%s", N, t.audio.size(), t.controls.size(),
+                     g.slots.size(), t.unsupported.empty() ? "" : " (some FL routing not run)");
+  ImGui::PopFont();
+  pui::endSection();
+  if (sel >= 0 && static_cast<size_t>(sel) < N) {
+    PatchV2Node& nd = g.nodes[static_cast<size_t>(sel)];
+    const PluginInfo* info = findPlugin(nd.plugin.type);
+    std::string title = "PLUGIN: " + (nd.display.empty() ? nd.flName : nd.display) + (info ? "  (" + info->name + ")" : "");
+    pui::beginSection(title.c_str(), W);
+    if (info) {
+      const int s2 = sel;
+      stateKnobs(e, nd.plugin, W, [&](uint64_t k) {
+        PluginState st = *e.st;
+        st.data = serializePatchV2(g);
+        e.set(st, "edit patch plugin", e.key ^ 0x50483256ull ^ (static_cast<uint64_t>(s2) << 12) ^ k);
+      });
+    } else {
+      ImGui::TextColored(theme::vec(P.textFaint), "%s has no Gridline equivalent; it is kept for export.", nd.flName.c_str());
+    }
+    pui::endSection();
+  }
+  if (!g.slots.empty()) {
+    pui::beginSection("PATCH PARAMETERS", W);
+    float used = 0;
+    for (size_t k = 0; k < t.slots.size() && k < static_cast<size_t>(kPatchMaps); ++k) {
+      const auto& sl = t.slots[k];
+      std::string label = "Param " + std::to_string(k + 1);
+      if (sl.node >= 0 && static_cast<size_t>(sl.node) < N) {
+        const auto& n = g.nodes[static_cast<size_t>(sl.node)];
+        const PatchV2Map* m = n.map(sl.fl);
+        const PluginInfo* info = findPlugin(n.plugin.type);
+        if (m && info && m->gl >= 0 && static_cast<size_t>(m->gl) < info->params.size()) label = info->params[static_cast<size_t>(m->gl)].name;
+      }
+      if (used > 0 && used + 70 > W - 20) used = 0;
+      else if (used > 0) ImGui::SameLine(0, 0);
+      ImGui::PushID(static_cast<int>(k) + 9000);
+      w::knob(e, PhMap0 + static_cast<int>(k), label.c_str(), 70);
+      ImGui::PopID();
+      used += 70;
+    }
+    pui::endSection();
+  }
+  return true;
+}
+
 bool patchHostBody(EditTarget& e) {
   const auto& P = pal();
   if (!e.st) return false;
+  if (isPatchV2(e.st->data)) return patchV2Body(e);  // J-41: FL patches
   bool fxHost = e.st->type == "gl.patcherfx";
   float W = e.width;
   PatchGraph g = patchGraphOf(*e.st);

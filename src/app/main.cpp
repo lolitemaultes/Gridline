@@ -202,7 +202,7 @@ std::vector<Uint8> markCoverage(int size) {
   return out;
 }
 
-// Window icon: the Ink mark (positive form, as the app icon in the logo set).
+// Fallback window icon when the assets folder is missing: the Ink mark.
 SDL_Surface* makeIcon(int size) {
   SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, size, size, 32, SDL_PIXELFORMAT_RGBA32);
   if (!s) return nullptr;
@@ -495,10 +495,6 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
     return 1;
   }
-  if (SDL_Surface* icon = makeIcon(256)) {
-    SDL_SetWindowIcon(window, icon);
-    SDL_FreeSurface(icon);
-  }
   SDL_GLContext gl = SDL_GL_CreateContext(window);
   SDL_GL_MakeCurrent(window, gl);
   SDL_GL_SetSwapInterval(1);
@@ -513,6 +509,14 @@ int main(int argc, char** argv) {
   // ---- fonts (needed to draw the splash) ----
   std::string assets = findAssets(argv[0]);
   if (assets.empty()) std::fprintf(stderr, "warning: assets folder not found; using the built-in font\n");
+  {  // Window / dock icon: the app icon (tools/make_app_icon.py), else the plain mark drawn here.
+    SDL_Surface* icon = assets.empty() ? nullptr : SDL_LoadBMP((fs::path(assets) / "icons" / "gridline-app-256.bmp").string().c_str());
+    if (!icon) icon = makeIcon(256);
+    if (icon) {
+      SDL_SetWindowIcon(window, icon);
+      SDL_FreeSurface(icon);
+    }
+  }
   auto font = [&](const char* file, float size) -> ImFont* {
     if (assets.empty()) return nullptr;
     std::string p = (fs::path(assets) / "fonts" / file).string();
@@ -629,6 +633,7 @@ int main(int argc, char** argv) {
   std::string profilePath;                // --profile-frames out.json: per-window UI CPU time per frame (J-25)
   int profileWarmup = 30;                 // --profile-warmup N: frames not recorded (layout, caches)
   double fixedDt = 0;                     // --fixed-dt ms: fixed UI frame time (J-37 animation frame sequences)
+  std::vector<std::string> devHide;       // --hide rack|browser|mixer|playlist|piano: closed once the layout exists
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--screenshot" && i + 1 < argc) shotPath = argv[++i];
@@ -765,6 +770,8 @@ int main(int argc, char** argv) {
         app.notify("Saved the project");
         app.notify("Cannot decode sample: missing.wav", true);
       }
+    } else if (arg == "--hide" && i + 1 < argc) {  // dev check (README shots): close a main window
+      devHide.push_back(argv[++i]);
     } else if (arg == "--mixer-view" && i + 1 < argc) {
       // Dev check: mixer view options, comma separated: compact, normal, wide, rows2..4, ext, wave,
       // rms, both, nohold, routing, arm1 (arm insert 1), sel1-3 (select inserts 1..3).
@@ -1042,6 +1049,13 @@ int main(int argc, char** argv) {
       app.resetLayout = false;
       app.showBrowser = app.showRack = app.showPiano = app.showPlaylist = app.showMixer = true;
       if (devPlaylistOnly) app.showBrowser = app.showRack = app.showPiano = app.showMixer = false;
+      for (const std::string& w : devHide) {
+        if (w == "rack") app.showRack = false;
+        else if (w == "browser") app.showBrowser = false;
+        else if (w == "mixer") app.showMixer = false;
+        else if (w == "playlist") app.showPlaylist = false;
+        else if (w == "piano") app.showPiano = false;
+      }
       if (devMixerOnly) {
         app.showBrowser = app.showRack = app.showPiano = app.showPlaylist = false;
         ImGui::DockBuilderRemoveNode(dockId);

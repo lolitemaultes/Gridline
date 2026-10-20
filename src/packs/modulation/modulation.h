@@ -44,7 +44,33 @@ inline constexpr int envParam(int art, int field) { return art * EaFields + fiel
 inline constexpr int envPointTime(int art, int pt) { return art * EaFields + EaPoints + pt * 2; }
 inline constexpr int envPointLevel(int art, int pt) { return art * EaFields + EaPoints + pt * 2 + 1; }
 inline constexpr int EcContinuous = kEnvArts * EaFields;
-inline constexpr int EcCount = EcContinuous + 1;
+// J-41: engine model. 0 = the four-envelope simple model (the parameters
+// above), 1 = the articulator model: eight articulators, each an envelope +
+// LFO + five mapping curves (keyboard, velocity, mod X, mod Y, random) run at
+// the tick rate, whose point lists live in PluginState::data (envctlText);
+// the knobs below are its automatable parameters (FL Envelope Controller
+// parameter k = EcArt + k). Pre-model states keep model 0.
+inline constexpr int EcModel = EcContinuous + 1;
+inline constexpr int kArts = 8;
+enum ArtField {
+  AfBase,        // 0..1
+  AfEnvAmt,      // -1..1
+  AfLfoAmt,      // -1..1
+  AfAttack,      // attack time scale 0..2 (×)
+  AfDecay,       // decay time scale 0..2
+  AfSustain,     // sustain level offset -1..1
+  AfRelease,     // release time scale 0..2
+  AfLfoSpeed,    // 0..1 (stored speed / 65536)
+  AfLfoTension,  // -1..1
+  AfLfoSkew,     // -0.5..0.5
+  AfLfoPw,       // 0..1
+  AfFields
+};
+inline constexpr int EcArt = EcModel + 1;
+inline constexpr int artParam(int art, int field) { return EcArt + art * AfFields + field; }
+inline constexpr int EcModX = EcArt + kArts * AfFields;
+inline constexpr int EcModY = EcModX + 1;
+inline constexpr int EcCount = EcModY + 1;
 // "gl.keyctl" — Keyboard Controller (instrument). data = 128 key values.
 // Outputs: Value, Velocity, Gate, Note.
 enum KeyCtl { KcAttack, KcRelease, KcNoteOff, KcNoteOffValue, KcCount };
@@ -61,6 +87,23 @@ enum CvSource { CvsOff, CvsPitch, CvsGate, CvsVelocity, CvsClock, CvsTrigger };
 inline constexpr int kSurfaceControls = 16;
 inline constexpr int SfSmooth = kSurfaceControls;
 inline constexpr int SfCount = kSurfaceControls + 1;
+// J-41: up to 64 controls (FL surfaces in patches); controls 17..64 follow
+// the smoothing parameter. Smoothing at its minimum = immediate (FL).
+inline constexpr int kSurfaceMax = 64;
+inline constexpr int surfaceParam(int k) { return k < kSurfaceControls ? k : SfCount + (k - kSurfaceControls); }
+inline constexpr int SfCountV2 = SfCount + (kSurfaceMax - kSurfaceControls);
+// Surface data: one "kind label" line per control; a trailing "#fl <hex>"
+// line keeps an imported FL surface (layout, looks) for export.
+inline int surfaceControlCount(const std::string& data) {
+  int n = 0;
+  for (size_t p = 0; p < data.size();) {
+    const size_t e = data.find('\n', p);
+    if (data[p] != '#') ++n;
+    if (e == std::string::npos) break;
+    p = e + 1;
+  }
+  return n;
+}
 enum SurfaceKind { SkKnob, SkSlider, SkButton, SkToggle, SkPadX, SkPadY };
 
 // --------------------------------------------------------- note processors
@@ -100,6 +143,11 @@ enum NoteScript { NsA, NsB, NsC, NsEnable, NsCount };
 // "gl.patcher" / "gl.patcherfx" — Patch Host. data = JSON graph; 8 macros.
 inline constexpr int kMacros = 8;
 inline constexpr int PhMix = kMacros, PhGain = kMacros + 1, PhCount = kMacros + 2;
+// J-41: host Param slots of version-2 graphs (FL Patcher patches): slot k
+// drives the patch parameter graph "slots"[k] (patchv2.h).
+inline constexpr int kPatchMaps = 128;
+inline constexpr int PhMap0 = PhCount;
+inline constexpr int PhCountV2 = PhMap0 + kPatchMaps;
 inline constexpr int kPatchNodes = 8;
 // "gl.send" — Mixer Send (send from this point of the chain to a track).
 enum MixSend { SnTarget, SnLevel, SnPan, SnDry, SnCount };

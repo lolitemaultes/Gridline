@@ -1,3 +1,5 @@
+#include "SliceProcess.h"
+#include "SlicexEngine.h"
 #include "Slicing.h"
 #include "SamplePrecompute.h"
 #include "../core/PluginInfo.h"
@@ -223,9 +225,26 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
     aux.samples.assign(1, st.data.empty() ? nullptr : sampleCache().get(st.data));
     return true;
   }
+  if (st.type == "gl.slicer" && st.data.find('\n') != std::string::npos) {
+    // J-41: Slicex region model ("<deck A file>\n<model>"): both decks' samples.
+    auto sx = slicex::prepare(st);
+    aux.samples.assign(2, nullptr);
+    const std::string a = slicex::sampleOf(st.data);
+    if (!a.empty()) aux.samples[0] = sampleCache().get(a);
+    if (sx && !sx->model.decks[1].file.empty()) aux.samples[1] = sampleCache().get(sx->model.decks[1].file);
+    aux.custom = sx;
+    return true;
+  }
   if (st.type == "gl.sampler" || st.type == "gl.slicer" || st.type == "gl.granular") {
     // Sampler: its precomputed effects (J-23) run here, once, on the UI thread.
     aux.samples.assign(1, st.type == "gl.sampler" ? precomputedSample(st.data, samplePrecomputeFx(st)) : sampleCache().get(st.data));
+    if (st.type == "gl.slicer" && aux.samples[0] && st.params.size() > static_cast<size_t>(SlEngine) &&
+        st.params[SlEngine] >= SlEngineProcessed - 0.5f) {
+      // J-41: processed slices (offline, here on the UI thread); the voices
+      // play the processed sample from the processed slice starts.
+      aux.samples[0] = sliceproc::processedFor(st, aux.samples[0], &aux.slices);
+      return true;
+    }
     if (st.type == "gl.slicer" && aux.samples[0]) {
       int mode = st.params.size() > SlMode ? static_cast<int>(st.params[SlMode] + 0.5f) : 0;
       double sens = st.params.size() > SlSensitivity ? st.params[SlSensitivity] : 0.5;

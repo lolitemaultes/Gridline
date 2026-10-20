@@ -139,6 +139,12 @@ inline void testEncFx2Mod() {
     bool same = got.nodes.size() == 3;
     for (size_t k = 0; same && k < 3; ++k)
       same = got.nodes[k].plugin == fx.nodes[k].plugin && got.nodes[k].parallel == fx.nodes[k].parallel && got.nodes[k].mix == fx.nodes[k].mix;
+    if (std::getenv("GL_DEBUG_PATCH")) {
+      std::printf("# patch nodes %zu ok %d\n", got.nodes.size(), ok ? 1 : 0);
+      for (size_t k = 0; k < got.nodes.size() && k < 3; ++k)
+        std::printf("#  %s par %d mix %g same %d\n", got.nodes[k].plugin.type.c_str(), got.nodes[k].parallel ? 1 : 0, static_cast<double>(got.nodes[k].mix),
+                    got.nodes[k].plugin == fx.nodes[k].plugin ? 1 : 0);
+    }
     expect(same, "Patcher: an effect chain with a parallel node encodes back (plugins, order, parallel, mix)");
     md::PatchGraph inst;
     md::PatchNode s;
@@ -160,6 +166,17 @@ inline void testEncFx2Mod() {
         for (const auto& n : md::parsePatchGraph(pm.state.data).nodes)
           all = all && enc::encode(n.plugin, "", nullptr, ctx()).quality == enc::Result::Exact;
         innerExact += all;
+        if (all && std::getenv("GL_DEBUG_PATCH")) {
+          enc::Result rr = enc::encode(pm.state, "", nullptr, ctx());
+          if (rr.quality != enc::Result::Exact) {
+            gl::flp::PluginMapping back2;
+            enc::decodeState("Patcher", rr.state, back2, ctx());
+            size_t d = 0;
+            while (d < pm.state.data.size() && d < back2.state.data.size() && pm.state.data[d] == back2.state.data[d]) ++d;
+            std::printf("# patch approx: mism %zu data@%zu [%s] vs [%s]\n", rr.mismatched.size(), d, pm.state.data.substr(d > 40 ? d - 40 : 0, 120).c_str(),
+                        back2.state.data.substr(d > 40 ? d - 40 : 0, 120).c_str());
+          }
+        }
       }
       expect(st.decoded > 0 && st.nativeExact >= innerExact, "Patcher: every shipped patch whose plugins all encode exactly encodes exactly");
       expect(st.patchExact == st.decoded, "Patcher: unchanged shipped patches are written verbatim");

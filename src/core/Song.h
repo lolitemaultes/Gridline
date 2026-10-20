@@ -262,9 +262,12 @@ struct AutomationClip {
   float min = 0.0f, max = 1.0f;
   std::vector<AutoPoint> points;  // sorted by pos
   Tick loop = 0;  // J-5: > 0 = the content repeats every `loop` ticks (placements longer than one cycle)
+  // J-41: point shapes follow FL's exact laws (core/FlCurves). Clips of
+  // projects saved before J-41 keep the earlier Gridline curves (false).
+  bool flCurves = true;
   bool operator==(const AutomationClip& o) const {
     return id == o.id && name == o.name && color == o.color && owner == o.owner && index == o.index && min == o.min &&
-           max == o.max && points == o.points && loop == o.loop;
+           max == o.max && points == o.points && loop == o.loop && flCurves == o.flCurves;
   }
 };
 

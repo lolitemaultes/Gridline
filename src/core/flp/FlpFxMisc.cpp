@@ -488,9 +488,22 @@ bool decodeWaveCandy(Context& c, const std::vector<Event>& evs, PluginMapping& m
 }
 
 // ============================================================ Control Surface
-// u32 version, then chunks { u32 id, u64 size, payload }. 2003 = control
-// count; per control: 2100 (u32 type, …), 2103 name (UTF-16), 2104 rect
-// (4 × f32), 2102 value(s), 2105.. property text ("control TQuickBtn …").
+// u32 version, then chunks { u32 id, u64 size, payload }: 2000 / 2002 panel,
+// then per control 2100 (u32 type, …), 2103 name (UTF-16), 2104 rect (4 ×
+// f32), 2102 values (f32 × 3), 2105.. property text ("control TQuickBtn …"),
+// 2101 end. Control types (J-41): 0 wheel, 1 X-Y pad (two values), 2 slider,
+// 3 button, 4 check box, 5 bevel, 6 label, 7 digit wheel. The surface's
+// parameters (and controller outputs) are its value controls in order — a pad
+// counts twice, bevels and labels not at all (checked against every patch
+// that links surface ports).
+std::string hexOf(const std::vector<uint8_t>& b) {
+  static const char* d = "0123456789abcdef";
+  std::string s;
+  s.reserve(b.size() * 2);
+  for (uint8_t ch : b) s += d[ch >> 4], s += d[ch & 15];
+  return s;
+}
+
 bool decodeSurface(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<uint8_t> b = stateBytes(evs);
   begin(m, "gl.surface");
@@ -498,9 +511,11 @@ bool decodeSurface(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
   struct Ctl {
     int type = 0;
     std::string name, props;
-    double value = 0;
+    float v[3] = {0, 0, 0};
+    int nv = 0;
   };
   std::vector<Ctl> ctls;
+  std::vector<uint8_t> kept = b;  // the FL surface kept for export, its values zeroed (they are the parameters)
   size_t o = 4;
   while (o + 12 <= b.size()) {
     uint32_t id = rd32(b, o);
@@ -508,13 +523,17 @@ bool decodeSurface(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
     o += 12;
     if (size > b.size() - o) break;
     const uint8_t* p = b.data() + o;
+    if (id == 2102 && !ctls.empty() && ctls.back().type != 5 && ctls.back().type != 6) {
+      const size_t nv = ctls.back().type == 1 ? 2 : 1;
+      for (size_t k = 0; k < nv && 4 * k + 4 <= size; ++k) std::fill(kept.begin() + static_cast<std::ptrdiff_t>(o + 4 * k), kept.begin() + static_cast<std::ptrdiff_t>(o + 4 * k + 4), 0);
+    }
     if (id == 2100) {
       ctls.push_back({});
-      ctls.back().type = static_cast<int>(rd32(b, o));
+      ctls.back().type = size >= 4 ? static_cast<int>(rd32(b, o)) : 0;
     } else if (!ctls.empty() && id == 2103) {
-      ctls.back().name = utf16(p, static_cast<size_t>(size));
-    } else if (!ctls.empty() && id == 2102 && size >= 4) {
-      ctls.back().value = std::clamp(static_cast<double>(rdf32(b, o)), 0.0, 1.0);
+      ctls.back().name = utf16(p, static_cast<size_t>(size));  // (byte count)
+    } else if (!ctls.empty() && id == 2102) {
+      for (size_t k = 0; k < 3 && 4 * k + 4 <= size; ++k) ctls.back().v[k] = rdf32(b, o + 4 * k), ctls.back().nv = static_cast<int>(k + 1);
     } else if (!ctls.empty() && id >= 2105 && id <= 2110) {
       ctls.back().props += utf16(p, static_cast<size_t>(size));
     }
@@ -523,34 +542,48 @@ bool decodeSurface(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
   std::string data;
   int k = 0;
   bool exact = true;
-  for (const Ctl& ct : ctls) {
-    if (k >= md::kSurfaceControls) {
+  auto add = [&](int kind, const std::string& label, double v) {
+    if (k >= md::kSurfaceMax) {
       exact = false;
-      break;
+      return;
     }
-    int kind = md::SkKnob;
-    if (ct.props.find("TQuickBtn") != std::string::npos || ct.type == 3)
-      kind = ct.props.find("StayDown = True") != std::string::npos ? md::SkToggle : md::SkButton;
-    else if (ct.props.find("Slider") != std::string::npos)
-      kind = md::SkSlider;
-    else if (ct.props.find("XY") != std::string::npos)
-      kind = md::SkPadX;
-    data += std::to_string(kind) + " " + (ct.name.empty() ? "Control " + std::to_string(k + 1) : ct.name) + "\n";
-    set(m, k, ct.value);
+    data += std::to_string(kind) + " " + label + "\n";
+    set(m, md::surfaceParam(k), std::clamp(std::isfinite(v) ? v : 0.0, 0.0, 1.0));
     ++k;
+  };
+  for (const Ctl& ct : ctls) {
+    const std::string name = ct.name.empty() ? "Control " + std::to_string(k + 1) : ct.name;
+    switch (ct.type) {
+      case 5:
+      case 6: break;  // bevel / label: no value
+      case 1:
+        add(md::SkPadX, name, ct.v[0]);
+        add(md::SkPadY, "", ct.v[1]);
+        break;
+      case 2: add(md::SkSlider, name, ct.v[0]); break;
+      case 3: add(ct.props.find("StayDown = True") != std::string::npos ? md::SkToggle : md::SkButton, name, ct.v[0]); break;
+      case 4: add(md::SkToggle, name, ct.v[0]); break;
+      case 0:
+      case 7: add(md::SkKnob, name, ct.v[0]); break;
+      default:
+        exact = false;
+        add(md::SkKnob, name, ct.v[0]);
+        break;
+    }
   }
+  if (!b.empty()) data += "#fl " + hexOf(kept) + "\n";  // the FL surface itself, for export (J-41)
   if (!data.empty()) m.state.data = data;
-  // FL parameter k = control k.
+  set(m, md::SfSmooth, 0.001);  // FL's surface outputs follow immediately
+  // FL parameter k = value control k.
   static auto table = [] {
     KnobTable t;
-    for (int i = 0; i < md::kSurfaceControls; ++i) t.push_back({i, 0, 1, i, {}});
+    for (int i = 0; i < md::kSurfaceMax; ++i) t.push_back({i, 0, 1, md::surfaceParam(i), {}});
     return std::make_shared<const KnobTable>(t);
   }();
   bindTable(m, table);
   m.rawNorm = nullptr;  // user-defined controls: the recorded integer range is not known
-  if (ctls.size() > static_cast<size_t>(md::kSurfaceControls)) c.report.warn("Control Surface: more than 16 controls, extra ones dropped");
-  m.exact = false;  // layout, colours and skins are not reproduced
-  (void)exact;
+  if (k >= md::kSurfaceMax && !exact) c.report.warn("Control Surface: more than 64 value controls, extra ones dropped");
+  m.exact = exact;  // the surface's values and outputs (its look is Gridline's)
   return true;
 }
 

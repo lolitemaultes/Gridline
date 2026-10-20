@@ -7,6 +7,7 @@
 // value laws are never inverted here — the engine solves every field through
 // the decoder.
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include "../../engine/SlicexEngine.h"
 #include "../../engine/Sample.h"
 #include "../../engine/Slicing.h"
 #include "../../packs/models/models.h"
@@ -632,6 +634,8 @@ Encoder fruitySlicer() {
   e.flName = "Fruity Slicer";
   e.glType = "gl.slicer";
   e.nativeRank = 0;
+  // Classic slicer and the processed engine (2); the region model is Slicex's.
+  e.accepts = [](const PluginState& g) { return param(g, gl::pp::SlEngine, 0) < 0.5f || param(g, gl::pp::SlEngine, 0) >= 1.5f; };
   e.generator = true;
   e.defaults = [] {
     constexpr uint32_t kVersion = 15;  // the plugin database state's layout
@@ -659,9 +663,14 @@ Encoder fruitySlicer() {
     return w.b;
   };
   e.fields = [](const Bytes& b) {
-    std::vector<Field> f = {i32(pp::SlPitch, 12, -2400, 2400)};
+    // J-41: the processing settings (engine 2).
+    std::vector<Field> f = {i32(pp::SlProcPitch, 12, -1200, 1200), i32(pp::SlProcFit, 16, -20000, 20000), i32(pp::SlProcMethod, 20, 0, 7),
+                            i32(pp::SlProcFadeIn, 24, 0, 1000), i32(pp::SlProcFadeOut, 28, 0, 1000)};
     const FsLayout l = fsLayout(b);
     if (l.ok && l.tailAt + 2 <= b.size()) f.push_back(field(pp::SlBaseNote, l.tailAt + 1, Type::U8, 1, 127));
+    if (l.ok && l.tailAt + 12 <= b.size()) f.push_back(field(pp::SlProcDeclick, l.tailAt + 11, Type::U8, 0, 1));
+    for (size_t k = 0; l.ok && k < l.slice.size() && k < static_cast<size_t>(pp::kMaxSlices); ++k)
+      f.push_back(field(pp::slParam(static_cast<int>(k), pp::SliceReverse), l.slice[k] + 1 + b[l.slice[k]] + 12, Type::U8, 0, 1));
     return f;
   };
   // Sample path and slice starts.
@@ -1322,14 +1331,68 @@ void sxWrite(const PluginState& g, Bytes& b, const EncodeContext& c) {
   }
 }
 
+// J-41: the Slicex region model (SlEngine = 1) is written whole: the model
+// text (decks, region records, articulator groups, options) with the
+// slicer's parameters folded back in (master knobs, deck A region gain /
+// pan / pitch / cut group / delay); embedded deck audio comes from the
+// cached copy the decoder stored (byte for byte).
+bool sxRegionWrite(const PluginState& g, Bytes& b) {
+  using namespace gl::pp;
+  namespace sx = gl::slicex;
+  if (param(g, SlEngine, 0) < 0.5f) return false;
+  sx::Model md;
+  if (!sx::modelOf(g.data, md)) return false;
+  std::array<Bytes, 2> riff;
+  for (int d = 0; d < 2; ++d) {
+    const sx::Deck& dk = md.decks[static_cast<size_t>(d)];
+    if (dk.flag != 0) continue;  // referenced by path
+    riff[static_cast<size_t>(d)] = !dk.riff.empty() ? dk.riff : (dk.file.empty() ? Bytes{} : readFile(dk.file));
+  }
+  md.knobs[2] = static_cast<int32_t>(std::lround(12800.0 * std::log(10.0 * std::max(0.0, static_cast<double>(param(g, SlMaster, 1))) + 1.0) / std::log(11.0)));
+  md.knobs[5] = static_cast<int32_t>(std::lround(param(g, SlPitch, 0) * 100.0));
+  md.knobs[6] = static_cast<int32_t>(std::lround(param(g, SlModX, 0.5f) * 512.0));
+  md.knobs[7] = static_cast<int32_t>(std::lround(param(g, SlModY, 0.5f) * 512.0));
+  auto& regs = md.decks[0].regions;
+  for (size_t k = 0; k < regs.size() && k < static_cast<size_t>(kMaxSlices); ++k) {
+    auto& rec = regs[k].rec;
+    const int ik = static_cast<int>(k);
+    const double db = param(g, slParam(ik, SliceGain), 0);
+    const double gain = db <= -24.0 + 1e-9 ? 0.0 : std::pow(10.0, db / 20.0);
+    rec[sx::RVolume] = static_cast<int32_t>(std::lround(8000.0 * std::log(2.0 * gain + 1.0) / std::log(3.0)));
+    rec[sx::RPan] = static_cast<int32_t>(std::lround(param(g, slParam(ik, SlicePan), 0) * 6400.0));
+    rec[sx::RPitch] = static_cast<int32_t>(std::lround(param(g, slParam(ik, SlicePitch), 0) * 100.0));
+    rec[sx::RCut] = static_cast<int32_t>(std::lround(param(g, slParam2(ik, SliceCut), 0)));
+    rec[sx::RDelay] = static_cast<int32_t>(std::lround(param(g, slParam2(ik, SliceDelay), 0) / 0.5 * 12800.0));
+  }
+  b = sx::writeState(md, riff);
+  return true;
+}
+
+// An empty deck's audio: a header-only 16-bit stereo WAV.
+Bytes emptyWav() {
+  ByteWriter w;
+  w.bytes("RIFF", 4), w.u32(36), w.bytes("WAVE", 4);
+  w.bytes("fmt ", 4), w.u32(16), w.u16(1), w.u16(2), w.u32(44100), w.u32(44100 * 4), w.u16(4), w.u16(16);
+  w.bytes("data", 4), w.u32(0);
+  return w.b;
+}
+
 Encoder slicex() {
   Encoder e;
   e.flName = "Slicex";
   e.glType = "gl.slicer";
   e.generator = true;
-  e.defaults = [] { return Bytes{}; };  // ~26 KB articulator block: not built (see above)
+  // Region-model states (J-41) are written whole, from Gridline values alone.
+  e.nativeRank = 0;
+  e.accepts = [](const PluginState& g) { return param(g, gl::pp::SlEngine, 0) >= 0.5f && g.data.find('\n') != std::string::npos; };
+  e.defaults = [] {
+    gl::slicex::Model md = gl::slicex::defaultModel();
+    return gl::slicex::writeState(md, {emptyWav(), emptyWav()});
+  };
   e.fields = sxFields;
-  e.write = sxWrite;
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    if (!sxRegionWrite(g, b)) sxWrite(g, b, c);
+  };
   return e;
 }
 

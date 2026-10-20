@@ -12,6 +12,7 @@ std::shared_ptr<const AutomationClip> patternLaneCurve(const PatternAutomation& 
   a->min = 0;
   a->max = 1;
   a->points = lane.points;
+  a->flCurves = false;  // pattern automation keeps the Gridline curves (J-41)
   return a;
 }
 

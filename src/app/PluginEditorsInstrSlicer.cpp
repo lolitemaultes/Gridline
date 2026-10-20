@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include "../engine/SlicexEngine.h"
 #include "../core/PluginParams.h"
 #include "../engine/Slicing.h"
 #include "InstrumentSkin.h"
@@ -105,7 +106,8 @@ int markerParamAt(const PluginState& st, double pos) {
 void editorSlicex(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
   SlicerUi& ui = slicerUi[t.key()];
-  SamplePtr smp = st.data.empty() ? nullptr : sampleCache().get(st.data);
+  const std::string file = slicex::sampleOf(st.data);  // J-41: region-model data starts with the sample
+  SamplePtr smp = file.empty() ? nullptr : sampleCache().get(file);
   const std::vector<int64_t> starts = sliceStarts(st, smp.get());
   const int nSl = static_cast<int>(starts.size());
   ui.slice = std::clamp(ui.slice, 0, std::max(0, std::min(nSl, kMaxSlices) - 1));
@@ -296,7 +298,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       a.fileDialog.open = true;
       a.fileDialog.title = "Load loop";
       const char* h = std::getenv("HOME");
-      a.fileDialog.dir = st.data.empty() ? (h ? h : ".") : fs::path(st.data).parent_path().string();
+      a.fileDialog.dir = st.data.empty() ? (h ? h : ".") : fs::path(slicex::sampleOf(st.data)).parent_path().string();
       a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv"};
       a.fileDialog.onOk = [&a, tt](const std::string& p) {
         if (const PluginState* cur = tt.state(a.doc.song())) {
@@ -328,7 +330,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     char info[96];
     std::snprintf(info, sizeof info, "%s", smp ? (std::to_string(static_cast<int>(smp->sampleRate)) + "Hz").c_str() : "--");
     iskin::text(sk, 5, 345, 70, 15, info, 8.5f, sk.c.textDim, 0);
-    std::string nm = smp ? fs::path(st.data).filename().string() : std::string("Drop a loop here or press LOAD");
+    std::string nm = smp ? fs::path(slicex::sampleOf(st.data)).filename().string() : std::string("Drop a loop here or press LOAD");
     iskin::text(sk, 160, 345, 380, 15, nm.c_str(), 9, sk.c.text, 0);
     std::snprintf(info, sizeof info, "%d regions", nSl);
     iskin::text(sk, 547, 345, 160, 15, info, 8.5f, sk.c.textDim, 2);

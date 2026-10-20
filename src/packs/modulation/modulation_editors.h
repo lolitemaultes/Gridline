@@ -10,6 +10,7 @@ void xyEditor(EditTarget& e);
 void xyzEditor(EditTarget& e);
 void formulaEditor(EditTarget& e);
 void envEditor(EditTarget& e);
+void envArtEditor(EditTarget& e);  // articulator model (modulation_envart_ui.cpp)
 void keyEditor(EditTarget& e);
 void cvEditor(EditTarget& e);
 // Routing / surface / sidechain (modulation_route_ui.cpp).

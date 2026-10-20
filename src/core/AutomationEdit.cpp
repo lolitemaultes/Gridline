@@ -89,17 +89,7 @@ AutoShape shapeFromKey(const std::string& key) {
   return AutoShape::Curve;
 }
 
-double valueAt(const Points& p, double t) {
-  if (p.empty()) return 0.0;
-  if (t <= static_cast<double>(p.front().pos)) return p.front().value;
-  if (t >= static_cast<double>(p.back().pos)) return p.back().value;
-  auto it = std::upper_bound(p.begin(), p.end(), t, [](double v, const AutoPoint& q) { return v < static_cast<double>(q.pos); });
-  const AutoPoint& b = *it;
-  const AutoPoint& a = *(it - 1);
-  double span = static_cast<double>(b.pos - a.pos);
-  if (span <= 0) return b.value;
-  return a.value + (b.value - a.value) * autoShape(b.shape, b.tension, (t - static_cast<double>(a.pos)) / span);
-}
+double valueAt(const Points& p, double t, bool fl) { return pointsValue(p, t, fl); }
 
 // ------------------------------------------------------------------ edits ----
 

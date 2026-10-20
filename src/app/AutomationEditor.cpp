@@ -265,7 +265,7 @@ void editorMenu(App& a) {
     if (pl && a.engine.mode() == PlayMode::Song) at = std::max<Tick>(0, static_cast<Tick>(a.engine.position()) - pl->start + pl->offset);
     AutoPoint np;
     np.pos = at;
-    np.value = static_cast<float>(ae::valueAt(ac->points, static_cast<double>(at)));
+    np.value = static_cast<float>(ae::valueAt(ac->points, static_cast<double>(at), ac->flCurves));
     int idx = 0;
     editPoints(a, "insert point", [&](ae::Points& p) { idx = ae::addPoint(p, np); });
     E.sel = {idx};
@@ -834,7 +834,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   if (E.preview) {  // tool preview (LFO, scale, thin)
     float prevY = 0;
     for (float x = std::floor(gMin.x); x <= gMax.x; x += 1.0f) {
-      float y = yOf(ae::valueAt(*E.preview, songAt(x) - static_cast<double>(base)));
+      float y = yOf(ae::valueAt(*E.preview, songAt(x) - static_cast<double>(base), ac.flCurves));
       if (x > std::floor(gMin.x)) dl->AddLine(ImVec2(x - 1, prevY), ImVec2(x, y), P.hot, 1.8f);
       prevY = y;
     }

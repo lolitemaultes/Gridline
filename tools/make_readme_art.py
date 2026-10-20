@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """Generate the README artwork (docs/images/) from Gridline's own brand assets.
 
-  banner.png      header banner in the style of the splash screen: the Tile mark
-                  lockup in Paper on surface-950, the tagline, the loading bar and
-                  a faint step-sequencer grid with a playhead.
-  editors.png     a contact sheet of built-in plugin editors, from screenshots
-                  taken with gridline-app (see --shots).
+  banner.png      header banner: the Tile mark lockup in Paper on a surface-950
+                  card with a faint construction grid, and a tilted, toned-down
+                  view of the workspace (docs/images/workspace.png) on the right.
+  workspace.png, piano-roll.png, chord-editor.png, audio-editor.png,
+  automation.png, plugin-picker.png
+                  crops of screenshots taken with gridline-app (see --shots and
+                  tools/readme_shots.sh).
+  editors.png     a contact sheet of built-in plugin editors (--shots).
 
 Requires Pillow. Fonts come from assets/fonts (Inter, JetBrains Mono).
 
 Usage: python3 tools/make_readme_art.py [--shots DIR] [gridline root]
 """
+import math
 import os
+import random
 import sys
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 # Brand (logo guide v1.0): Ink / Paper, surfaces 950/900/800, Tile mark construction.
 INK = (0, 0, 0)
@@ -26,8 +31,6 @@ FAINT = (138, 138, 138)
 DIM = (107, 107, 107)
 U, R, BAR, INSET = 120.0, 28.0, 10.0, 24.0
 CENTRES = (40.0, 80.0)
-
-SS = 2  # supersampling factor for smooth edges
 
 
 def draw_mark(img, x, y, size, fg, bg):
@@ -43,12 +46,19 @@ def draw_mark(img, x, y, size, fg, bg):
         d.rectangle([x + a, y + c - half, x + b, y + c + half], fill=bg)  # horizontal bar
 
 
+def mark_mask(size, k=4):
+    """Anti-aliased L mask of the mark (holes transparent)."""
+    big = Image.new("L", (size * k, size * k), 0)
+    draw_mark(big, 0, 0, size * k - 1, 255, 0)
+    return big.resize((size, size), Image.LANCZOS)
+
+
 def font(root, name, px):
     return ImageFont.truetype(os.path.join(root, "assets", "fonts", name), int(px))
 
 
 def tracked(d, xy, text, f, fill, tracking):
-    """Text with extra letter spacing (the splash tagline is set wide)."""
+    """Text with extra letter spacing."""
     x, y = xy
     for ch in text:
         d.text((x, y), ch, font=f, fill=fill)
@@ -60,94 +70,190 @@ def text_width(d, text, f, tracking=0.0):
     return sum(d.textlength(ch, font=f) + tracking for ch in text) - tracking
 
 
-def banner(root, out, w=1280, h=380):
-    W, H = w * SS, h * SS
-    img = Image.new("RGB", (W, H), S950)
+def _solve(a, b):
+    """Gaussian elimination for the 8 x 8 perspective system."""
+    n = len(b)
+    m = [row[:] + [b[i]] for i, row in enumerate(a)]
+    for c in range(n):
+        p = max(range(c, n), key=lambda r: abs(m[r][c]))
+        m[c], m[p] = m[p], m[c]
+        for r in range(n):
+            if r != c:
+                f = m[r][c] / m[c][c]
+                m[r] = [x - f * y for x, y in zip(m[r], m[c])]
+    return [m[i][n] / m[i][i] for i in range(n)]
 
-    # Step-sequencer grid on the right: 4 rows x 32 steps in groups of four,
-    # alternating group shades, a few lit pads, fading out towards the lockup.
-    grid = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    g = ImageDraw.Draw(grid)
-    cols, rows = 24, 5
-    pad = 22 * SS
-    gap = 6 * SS
-    gx0 = W - 70 * SS - cols * (pad + gap) + gap
-    gy0 = (H - (rows * pad + (rows - 1) * gap)) // 2
-    pattern = [
-        "x...x...x...x...x...x..x",
-        "....x.......x.......x...",
-        "..x...x...x...x.x.x...x.",
-        "x..x..x...x.x...x..x..x.",
-        "........x.......x...x...",
-    ]
-    play = 16  # playhead step
-    for r in range(rows):
-        for c in range(cols):
-            x = gx0 + c * (pad + gap)
-            y = gy0 + r * (pad + gap)
-            lit = pattern[r][c] == "x"
-            shade = (40, 40, 40) if (c // 4) % 2 == 0 else (29, 29, 29)
-            col = (232, 232, 232) if lit else shade
-            if lit and c == play:
-                col = PAPER
-            g.rounded_rectangle([x, y, x + pad, y + pad], radius=4 * SS, fill=col + (255,))
-    # Playhead: a thin Paper line with a soft glow over the current step.
-    px = gx0 + play * (pad + gap) + pad // 2
-    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    gd.rectangle([px - 10 * SS, gy0 - 26 * SS, px + 10 * SS, gy0 + rows * (pad + gap) + 20 * SS], fill=(255, 255, 255, 46))
-    glow = glow.filter(ImageFilter.GaussianBlur(18 * SS))
-    grid = Image.alpha_composite(grid, glow)
-    gl = ImageDraw.Draw(grid)
-    gl.rectangle([px - 1 * SS, gy0 - 24 * SS, px + 1 * SS, gy0 + rows * (pad + gap) + 18 * SS], fill=(255, 255, 255, 210))
-    gl.polygon([(px - 7 * SS, gy0 - 30 * SS), (px + 7 * SS, gy0 - 30 * SS), (px, gy0 - 22 * SS)], fill=(255, 255, 255, 230))
 
-    # Horizontal fade: the grid dissolves to the left, full strength on the right.
-    fade = Image.new("L", (W, H), 0)
-    fd = ImageDraw.Draw(fade)
+def perspective_coeffs(dst, src):
+    """Coefficients mapping output points dst[i] to input points src[i] (PIL PERSPECTIVE)."""
+    a, b = [], []
+    for (x, y), (u, v) in zip(dst, src):
+        a.append([x, y, 1, 0, 0, 0, -u * x, -u * y])
+        b.append(u)
+        a.append([0, 0, 0, x, y, 1, -v * x, -v * y])
+        b.append(v)
+    return _solve(a, b)
+
+
+def radial_mask(W, H, cx, cy, rx, ry, inner=255, outer=0, power=1.6):
+    small = Image.new("L", (160, max(2, round(160 * H / W))))
+    sw, sh = small.size
+    for y in range(sh):
+        for x in range(sw):
+            dx = ((x + 0.5) / sw * W - cx) / rx
+            dy = ((y + 0.5) / sh * H - cy) / ry
+            t = min(1.0, math.hypot(dx, dy))
+            small.putpixel((x, y), round(inner + (outer - inner) * (t ** power)))
+    return small.resize((W, H), Image.BICUBIC)
+
+
+def hfade(W, H, x0, x1, a0=0, a1=255):
+    """Horizontal ramp from a0 at x0 to a1 at x1 (smoothstep)."""
+    row = Image.new("L", (W, 1))
     for x in range(W):
-        t = (x - gx0 + 40 * SS) / (W * 0.30)
-        t = max(0.0, min(1.0, t))
-        e = max(0.0, min(1.0, (W - x) / (60 * SS)))  # soft right edge
-        fd.line([(x, 0), (x, H)], fill=int(255 * (t ** 1.4) * 0.9 * e))
-    alpha = Image.composite(grid.getchannel("A"), Image.new("L", (W, H), 0), fade)
-    grid.putalpha(alpha)
-    img = Image.alpha_composite(img.convert("RGBA"), grid)
+        t = min(1.0, max(0.0, (x - x0) / max(1, x1 - x0)))
+        t = t * t * (3 - 2 * t)
+        row.putpixel((x, 0), round(a0 + (a1 - a0) * t))
+    return row.resize((W, H))
 
-    # Faint ruler lines across the whole banner (bars), like the playlist grid.
-    lines = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ld = ImageDraw.Draw(lines)
-    step = 64 * SS
-    for i, x in enumerate(range(0, W, step)):
-        a = 26 if i % 4 == 0 else 12
-        ld.line([(x, 0), (x, H)], fill=(255, 255, 255, a), width=SS)
-    img = Image.alpha_composite(img, lines)
 
-    # Lockup on the left (splash proportions: gap 0.2 h, word 0.86 h).
+def vfade(W, H, y0, y1, a0=0, a1=255):
+    col = Image.new("L", (1, H))
+    for y in range(H):
+        t = min(1.0, max(0.0, (y - y0) / max(1, y1 - y0)))
+        t = t * t * (3 - 2 * t)
+        col.putpixel((0, y), round(a0 + (a1 - a0) * t))
+    return col.resize((W, H))
+
+
+def _panel(img, path, L, T, Wd, depth, rise, shadow, fade=(), color=0.18):
+    """Paste a screenshot as a window in perspective (left edge L,T, width Wd,
+    right edge depth x the left height, raised by rise); returns the quad."""
+    W, H = img.size
+    k = 2
+    ws = Image.open(path).convert("RGB")
+    ws = ImageEnhance.Color(ws).enhance(color)
+    sw, sh = ws.size
+    win = ws.convert("RGBA")
+    r = round(sw * 0.012)
+    wm = Image.new("L", (sw, sh), 0)
+    ImageDraw.Draw(wm).rounded_rectangle([0, 0, sw - 1, sh - 1], radius=r, fill=255)
+    win.putalpha(wm)
+    edge = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+    ImageDraw.Draw(edge).rounded_rectangle([0, 0, sw - 1, sh - 1], radius=r, outline=(255, 255, 255, 80),
+                                           width=max(2, sw // 600))
+    win.alpha_composite(edge)
+    Hd = Wd * sh / sw
+    rh = Hd * depth
+    quad = [(L, T), (L + Wd, T + (Hd - rh) * 0.5 - rise), (L + Wd, T + (Hd + rh) * 0.5 - rise), (L, T + Hd)]
+    coeffs = perspective_coeffs(quad, [(0, 0), (sw, 0), (sw, sh), (0, sh)])
+    tilted = win.transform((W, H), Image.PERSPECTIVE, coeffs, Image.BICUBIC)
+    sm = ImageChops.offset(tilted.getchannel("A"), -12 * k, 22 * k).filter(ImageFilter.GaussianBlur(24 * k))
+    img.alpha_composite(_tint(W, H, (0, 0, 0), sm, shadow))
+    a = tilted.getchannel("A")
+    for f in fade:
+        a = ImageChops.multiply(a, f)
+    tilted.putalpha(a)
+    img.alpha_composite(tilted)
+    return quad
+
+
+def banner(root, out, w=1280, h=380, shot=None, card=None):
+    """Brand header: lockup left, the product tilted into the card on the right."""
+    k = 2  # rendered at 2x
+    W, H = w * k, h * k
+    card_r = 28 * k
+    img = Image.new("RGBA", (W, H), S950 + (255,))
+
+    # Depth: a slightly lifted centre-left, darker corners.
+    lift = radial_mask(W, H, W * 0.30, H * 0.42, W * 0.55, H * 1.1, 34, 0, 1.4)
+    img.alpha_composite(_tint(W, H, (255, 255, 255), lift, 0.30))
+
+    # Construction grid: the 120u tile grid continued across the card (10u = 1 cell),
+    # strongest around the lockup, gone towards the edges.
+    cell = 20 * k
+    grid = Image.new("L", (W, H), 0)
+    gd = ImageDraw.Draw(grid)
+    ox = 96 * k % cell
+    for i, x in enumerate(range(ox, W, cell)):
+        gd.line([(x, 0), (x, H)], fill=255 if (x - ox) // cell % 4 == 0 else 120, width=1)
+    for y in range(H // 2 % cell, H, cell):
+        gd.line([(0, y), (W, y)], fill=255 if (y - H // 2) // cell % 4 == 0 else 120, width=1)
+    gmask = radial_mask(W, H, W * 0.26, H * 0.5, W * 0.42, H * 0.95, 255, 0, 1.2)
+    grid = ImageChops.multiply(grid, gmask)
+    img.alpha_composite(_tint(W, H, (255, 255, 255), grid, 0.075))
+
+    # The product: workspace screenshot, toned to the brand palette, tilted away.
+    if shot and os.path.exists(shot):
+        # Workspace window: rotated about the vertical axis, receding to the right,
+        # dissolving into the card at the left and bottom.
+        L, T, Wd = W * 0.535, H * 0.14, W * 0.64
+        quad = _panel(img, shot, L, T, Wd, 0.72, H * 0.035, shadow=0.55,
+                      fade=(hfade(W, H, L - 10 * k, L + 200 * k, 40, 255), vfade(W, H, H * 0.58, H * 0.99, 255, 0)))
+        # A soft rim of light on the top edge of the window.
+        glow = Image.new("L", (W, H), 0)
+        ImageDraw.Draw(glow).line([quad[0], quad[1]], fill=255, width=3 * k)
+        glow = glow.filter(ImageFilter.GaussianBlur(14 * k))
+        img.alpha_composite(_tint(W, H, (255, 255, 255), glow, 0.20))
+        # In front: an editor card (automation curves), same rotation, nearer.
+        if card and os.path.exists(card):
+            cl, ct, cw = W * 0.585, H * 0.47, W * 0.20
+            _panel(img, card, cl, ct, cw, 0.88, H * 0.01, shadow=0.9, color=0.55,
+                   fade=(vfade(W, H, H * 0.84, H * 1.0, 255, 60),))
+
+    # Lockup (logo guide proportions: gap 0.2 x mark, word cap height to mark).
     d = ImageDraw.Draw(img)
-    mh = 92 * SS
-    lx = 84 * SS
-    ly = H // 2 - mh // 2 - 30 * SS
-    draw_mark(img, lx, ly, mh, PAPER, S950)
+    mh = 112 * k
+    lx = 88 * k
+    ly = round(H * 0.5 - mh * 0.5 - 22 * k)
+    # Soft halo behind the mark lifts it off the card.
+    halo = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(halo).rounded_rectangle([lx, ly, lx + mh, ly + mh], radius=mh * R / U, fill=255)
+    halo = halo.filter(ImageFilter.GaussianBlur(40 * k))
+    img.alpha_composite(_tint(W, H, (255, 255, 255), halo, 0.10))
+    mm = mark_mask(mh)
+    img.alpha_composite(_tint(mh, mh, PAPER, mm, 1.0), (lx, ly))
     word = font(root, "Inter-Bold.ttf", mh * 0.86)
     bb = d.textbbox((0, 0), "gridline", font=word)
     tx = lx + mh + mh * 0.2
     ty = ly + (mh - (bb[3] - bb[1])) / 2 - bb[1]
-    d.text((tx, ty), "gridline", font=word, fill=PAPER)
+    _tracked_word(img, (tx, ty), "gridline", word, PAPER, -0.025 * mh * 0.86)
 
-    # Tagline and loading bar, as on the splash.
-    mono = font(root, "JetBrainsMono-Regular.ttf", 15 * SS)
-    tag = "THE GRID, CUT CLEAN"
-    tracked(d, (lx + 4 * SS, ly + mh + 30 * SS), tag, mono, FAINT, 3.2 * SS)
-    by = ly + mh + 64 * SS
-    bw = 300 * SS
-    d.rounded_rectangle([lx + 4 * SS, by, lx + 4 * SS + bw, by + 4 * SS], radius=2 * SS, fill=(38, 38, 38))
-    d.rounded_rectangle([lx + 4 * SS, by, lx + 4 * SS + int(bw * 0.68), by + 4 * SS], radius=2 * SS, fill=PAPER)
-    sub = font(root, "Inter-Regular.ttf", 16 * SS)
-    d.text((lx + 4 * SS, by + 18 * SS), "A free, open source music workstation", font=sub, fill=DIM)
+    sub = font(root, "Inter-Regular.ttf", 23 * k)
+    sy = ly + mh + 34 * k
+    d.text((lx + 2 * k, sy), "The free, open source music workstation", font=sub, fill=(150, 150, 150))
+    mono = font(root, "JetBrainsMono-Regular.ttf", 13 * k)
+    tracked(d, (lx + 3 * k, sy + 44 * k), "PATTERNS   PIANO ROLL   PLAYLIST   MIXER", mono, (92, 92, 92), 2.2 * k)
 
-    img = img.convert("RGB").resize((w * 2, h * 2), Image.LANCZOS) if SS != 2 else img.convert("RGB")
+    # Fine grain so the gradients do not band.
+    rnd = random.Random(7)
+    noise = Image.new("L", (W // 2, H // 2))
+    noise.putdata([rnd.randrange(0, 255) for _ in range((W // 2) * (H // 2))])
+    noise = noise.resize((W, H), Image.NEAREST)
+    img.alpha_composite(_tint(W, H, (255, 255, 255), noise, 0.018))
+
+    # Card shape: rounded corners and a hairline edge (reads on light and dark pages).
+    cm = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(cm).rounded_rectangle([0, 0, W - 1, H - 1], radius=card_r, fill=255)
+    edge = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(edge).rounded_rectangle([0, 0, W - 1, H - 1], radius=card_r, outline=(255, 255, 255, 30), width=k)
+    img.alpha_composite(edge)
+    img.putalpha(ImageChops.multiply(img.getchannel("A"), cm))
     img.save(out, optimize=True)
+
+
+def _tint(W, H, rgb, mask, opacity):
+    layer = Image.new("RGBA", (W, H), rgb + (0,))
+    layer.putalpha(mask.point(lambda v: round(v * opacity)))
+    return layer
+
+
+def _tracked_word(img, xy, text, f, fill, tracking):
+    d = ImageDraw.Draw(img)
+    x, y = xy
+    for ch in text:
+        d.text((x, y), ch, font=f, fill=fill)
+        x += d.textlength(ch, font=f) + tracking
 
 
 def contact_sheet(root, shots, names, out, cols=3, cell_w=600, label_h=34, margin=16):
@@ -197,26 +303,11 @@ def main():
     root = args[0] if args else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     out = os.path.join(root, "docs", "images")
     os.makedirs(out, exist_ok=True)
-    banner(root, os.path.join(out, "banner.png"))
     if shots:
         # Editor windows cropped out of 2880x1800 (UI scale 2) captures.
-        contact_sheet(root, shots, [
-            ("ed_matrixfm.png", "Matrix FM", (233, 103, 2643, 1693)),
-            ("ed_harmor.png", "Resynth", (296, 99, 2513, 1713)),
-            ("ed_hall.png", "Hall reverb", (551, 294, 2298, 1245)),
-            ("ed_eq.png", "Parametric EQ", (497, 228, 2380, 1245)),
-            ("ed_delay.png", "Delay", (506, 440, 2343, 1106)),
-            ("ed_comp.png", "Compressor", (681, 479, 2159, 1084)),
-        ], os.path.join(out, "editors.png"), cols=2)
+        contact_sheet(root, shots, EDITORS, os.path.join(out, "editors.png"), cols=3)
         # Full views from 3200x2000 captures, saved at 1600 px wide.
-        for src, dst, box in [
-            ("main.png", "workspace.png", None),
-            ("pr.png", "piano-roll.png", (480, 100, 2440, 1960)),
-            ("edison.png", "audio-editor.png", (472, 100, 2688, 1640)),
-            ("chords.png", "chord-editor.png", (150, 120, 2140, 1130)),
-            ("autoedit.png", "automation.png", None),
-            ("picker.png", "plugin-picker.png", None),
-        ]:
+        for src, dst, box in VIEWS:
             p = os.path.join(shots, src)
             if not os.path.exists(p):
                 continue
@@ -226,6 +317,30 @@ def main():
             if im.width > 1600:
                 im = im.resize((1600, round(im.height * 1600 / im.width)), Image.LANCZOS)
             im.save(os.path.join(out, dst), optimize=True)
+    banner(root, os.path.join(out, "banner.png"), shot=os.path.join(out, "workspace.png"),
+           card=os.path.join(out, "automation.png"))
+
+
+# Screenshot crops (tools/readme_shots.sh takes the captures).
+# Plugin editors: instruments from 3200x2200 captures (the plugin part of the
+# channel window), effects from 2880x1800 captures (the window below its title).
+EDITORS = [
+    ("ed_matrixfm.png", "Matrix FM", (400, 509, 2765, 1869)),
+    ("ed_wavetable.png", "Wavetable", (461, 509, 2704, 1912)),
+    ("ed_harmor.png", "Resynth", (480, 509, 2688, 1997)),
+    ("ed_eq.png", "Parametric EQ", (507, 288, 2373, 1267)),
+    ("ed_hall.png", "Hall reverb", (550, 302, 2333, 1250)),
+    ("ed_amprack.png", "Amp rack", (412, 343, 2468, 1207)),
+]
+# Views from 3200x2000 captures (1600x1000 window at UI scale 2), saved 1600 px wide.
+VIEWS = [
+    ("main.png", "workspace.png", None),
+    ("pr.png", "piano-roll.png", (491, 104, 2070, 1940)),
+    ("edison.png", "audio-editor.png", (467, 104, 2728, 1712)),
+    ("chords.png", "chord-editor.png", (123, 123, 2141, 1117)),
+    ("autoedit.png", "automation.png", (978, 488, 2720, 1635)),
+    ("picker.png", "plugin-picker.png", None),
+]
 
 
 if __name__ == "__main__":

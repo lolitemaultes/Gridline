@@ -440,6 +440,10 @@ void envGraph(EditTarget& e, int art, ImVec2 p0, ImVec2 size, const skin::Skin& 
 // key-range keyboard on top; the envelope editor underneath with its
 // envelope / LFO settings rows.
 void envEditor(EditTarget& e) {
+  if (e.p(EcModel, 0) >= 0.5f) {  // J-41: articulator model
+    envArtEditor(e);
+    return;
+  }
   const skin::Skin& K = sk::controller();
   int& art = selArt()[e.key];
   art = std::clamp(art, 0, kEnvArts - 1);

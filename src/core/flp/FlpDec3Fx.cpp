@@ -323,6 +323,7 @@ void registerFx(std::map<std::string, PluginDecoder>& d) {
   add(d, "Fruity Spectroman", decodeSpectroman);
   add(d, "Tuner", decodeTuner);
   add(d, "Fruity 7 Band EQ", decodeSevenBand);
+  add(d, "Fruity 7 Band Equalizer", decodeSevenBand);  // the internal name (Patcher nodes, J-41)
   add(d, "Transmitter", decodeTransmitter);
   add(d, "Multiband Delay", decodeMultibandDelay);
 }

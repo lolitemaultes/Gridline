@@ -13,6 +13,11 @@ namespace gl {
 double autoShape(AutoShape shape, double tension, double x);
 // Clip value (0..1) at content tick t; holds the first / last point outside.
 double automationValue(const AutomationClip& a, double t);
+// A bare point list at tick t: `fl` = FL's exact shape laws (J-41), else the
+// earlier Gridline curves (AutomationClip::flCurves).
+double pointsValue(const std::vector<AutoPoint>& pts, double t, bool fl);
+// FL-law progress of the segment ending at point k (smooth uses its neighbours).
+double flAutoShape(const std::vector<AutoPoint>& pts, size_t k, double x);
 // Inserts a point keeping the list sorted (after points at the same tick); returns its index.
 int insertAutoPoint(AutomationClip& a, const AutoPoint& p);
 const char* autoShapeName(AutoShape s);

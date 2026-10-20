@@ -30,7 +30,7 @@ AutoShape shapeFromKey(const std::string& key);
 inline float tensionFromFl(float t) { return -t; }
 
 // Value (0..1) of a bare point list at tick t (same curve maths as clips).
-double valueAt(const Points& pts, double t);
+double valueAt(const Points& pts, double t, bool fl = false);  // fl: FL's exact laws (J-41)
 
 // ---- point edits ----------------------------------------------------------------
 // Adds a point (after points at the same tick); returns its index.

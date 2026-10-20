@@ -11,6 +11,7 @@
 #include "core/PluginParams.h"
 #include "core/flp/FlpGen.h"
 #include "packs/dynamics/dynamics.h"
+#include "packs/modulation/envc.h"
 #include "packs/models/harmor.h"
 #include "packs/modulation/modulation.h"
 #include "packs/synths/hex.h"
@@ -129,19 +130,26 @@ inline void testEncJ39() {
     }
   }
 
-  // ---- Envelope Controller: articulator envelopes (beats), absent articulators.
+  // ---- Envelope Controller (J-41 articulator model): articulator settings written from scratch.
   {
     expect(defaultsDecode("Fruity Envelope Controller", "gl.envctl"), "Envelope Controller: a fresh state decodes");
-    gl::PluginState g = gl::defaultPluginState("gl.envctl");
-    for (int a = 0; a < 2; ++a) {
-      g.params[md::envParam(a, md::EaNumPoints)] = 3;
-      g.params[md::envParam(a, md::EaSustain)] = 0, g.params[md::envParam(a, md::EaBase)] = 0;
-      g.params[md::envParam(a, md::EaEnvAmt)] = 1, g.params[md::envParam(a, md::EaLfoAmt)] = 0;
-      g.params[md::envPointTime(a, 0)] = 0.001f, g.params[md::envPointLevel(a, 0)] = 0;
-      g.params[md::envPointTime(a, 1)] = 0.25f, g.params[md::envPointLevel(a, 1)] = 1;
-      g.params[md::envPointTime(a, 2)] = 1.5f, g.params[md::envPointLevel(a, 2)] = 0.25f;
+    gl::flp::PluginMapping fresh;
+    enc::decodeState("Fruity Envelope Controller", enc::findEncoder("Fruity Envelope Controller", "gl.envctl")->defaults(), fresh, ctx());
+    gl::PluginState g = fresh.state;  // (its model text included)
+    // values on FL's knob grid (raw knob units, defaults moved by 16, inside the knob ranges)
+    const md::EnvcState def = md::defaultEnvcState();
+    for (int k : {0 * md::AfFields + md::AfBase, 0 * md::AfFields + md::AfEnvAmt, 1 * md::AfFields + md::AfLfoAmt, 1 * md::AfFields + md::AfAttack})
+      g.params[static_cast<size_t>(md::envcKnobParam(k))] = static_cast<float>(md::envcKnobToParam(k, def.knobs[static_cast<size_t>(k)] - 16));
+    if (std::getenv("GL_J41_DEBUG")) {
+      Bytes t = enc::findEncoder("Fruity Envelope Controller", "gl.envctl")->defaults();
+      enc::Result r = enc::encode(g, "Fruity Envelope Controller", &t, ctx());
+      gl::flp::PluginMapping back;
+      enc::decodeState("Fruity Envelope Controller", r.state, back, ctx());
+      std::printf("# envctl q %d mism %zu data %d\n", static_cast<int>(r.quality), r.mismatched.size(), back.state.data == g.data ? 1 : 0);
+      for (size_t i = 0; i < g.params.size() && i < back.state.params.size(); ++i)
+        if (g.params[i] != back.state.params[i]) std::printf("#  p%zu %g -> %g\n", i, static_cast<double>(g.params[i]), static_cast<double>(back.state.params[i]));
     }
-    expect(nativeRoundTrip("Fruity Envelope Controller", g), "Envelope Controller: two articulator envelopes are written from scratch");
+    expect(nativeRoundTrip("Fruity Envelope Controller", g), "Envelope Controller: two articulators are written from scratch");
   }
 
   // ---- Distructor: the module rack (J-35 model 1) written module by module; Hardcore: the pedal board.

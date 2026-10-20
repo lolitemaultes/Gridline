@@ -20,25 +20,33 @@ struct SurfaceItem {
   std::string label;
 };
 std::vector<SurfaceItem> parseSurface(const std::string& data) {
-  std::vector<SurfaceItem> v(kSurfaceControls);
-  for (int k = 0; k < kSurfaceControls; ++k) {
-    v[static_cast<size_t>(k)].kind = k < 8 ? SkKnob : (k < 12 ? SkSlider : (k < 14 ? SkButton : (k == 14 ? SkPadX : SkPadY)));
+  const int lines = surfaceControlCount(data);
+  const int count = std::clamp(((lines + 7) / 8) * 8, kSurfaceControls, kSurfaceMax);  // J-41: up to 64
+  std::vector<SurfaceItem> v(static_cast<size_t>(count));
+  for (int k = 0; k < count; ++k) {
+    v[static_cast<size_t>(k)].kind = k < 8 ? SkKnob : (k < 12 ? SkSlider : (k < 14 ? SkButton : (k == 14 ? SkPadX : (k == 15 ? SkPadY : SkKnob))));
     v[static_cast<size_t>(k)].label = k == 14 ? "Pad" : "Control " + std::to_string(k + 1);
   }
   size_t p = 0;
-  for (int k = 0; k < kSurfaceControls && p < data.size(); ++k) {
+  for (int k = 0; k < count && p < data.size(); ++k) {
     size_t e = data.find('\n', p);
     std::string line = data.substr(p, e == std::string::npos ? std::string::npos : e - p);
     p = e == std::string::npos ? data.size() : e + 1;
+    if (!line.empty() && line[0] == '#') {  // kept FL surface (export)
+      --k;
+      continue;
+    }
     if (line.empty()) continue;
     v[static_cast<size_t>(k)].kind = std::clamp(line[0] - '0', 0, 5);
     v[static_cast<size_t>(k)].label = line.size() > 2 ? line.substr(2) : "";
   }
   return v;
 }
-std::string formatSurface(const std::vector<SurfaceItem>& v) {
+std::string formatSurface(const std::vector<SurfaceItem>& v, const std::string& old = {}) {
   std::string s;
   for (const auto& it : v) s += std::to_string(it.kind) + " " + it.label + "\n";
+  const size_t fl = old.find("#fl ");  // keep an imported FL surface
+  if (fl != std::string::npos && (fl == 0 || old[fl - 1] == '\n')) s += old.substr(fl);
   return s;
 }
 
@@ -53,7 +61,9 @@ void surfaceEditor(EditTarget& e) {
   std::vector<SurfaceItem> items = parseSurface(e.st->data);
   static std::map<uint64_t, bool> editing;
   bool& edit = editing[e.key];
-  constexpr float kW = 540, kH = 316;
+  const int count = static_cast<int>(items.size()), rows = (count + 7) / 8;
+  constexpr float kW = 540;
+  const float kH = 52 + 134.0f * static_cast<float>(rows);
   skin::Form F = sk::openForm(e, K, kW, kH);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::Scope scope(K);
@@ -62,11 +72,12 @@ void surfaceEditor(EditTarget& e) {
   sk::text(dl, F, 384, 16, K, "SMOOTH", 8.0f);
   sk::digi(e, SfSmooth, F.p(432, 10), F.sz(104, 24), K);
   const float cx0 = 3, cy0 = 46, cw = 534.0f / 8, ch = 132;
-  skin::graphWell(dl, F.p(cx0, cy0), F.p(cx0 + 534, cy0 + ch * 2 + 2), K);
-  for (int g = 1; g < 8; ++g) dl->AddLine(F.p(cx0 + g * cw, cy0 + 4), F.p(cx0 + g * cw, cy0 + ch * 2 - 2), K.graphGrid);
-  dl->AddLine(F.p(cx0 + 4, cy0 + ch + 1), F.p(cx0 + 530, cy0 + ch + 1), K.graphGrid);
-  for (int k = 0; k < kSurfaceControls; ++k) {
+  skin::graphWell(dl, F.p(cx0, cy0), F.p(cx0 + 534, cy0 + (ch + 2) * static_cast<float>(rows)), K);
+  for (int g = 1; g < 8; ++g) dl->AddLine(F.p(cx0 + g * cw, cy0 + 4), F.p(cx0 + g * cw, cy0 + (ch + 2) * static_cast<float>(rows) - 4), K.graphGrid);
+  for (int r = 1; r < rows; ++r) dl->AddLine(F.p(cx0 + 4, cy0 + (ch + 2) * static_cast<float>(r) - 1), F.p(cx0 + 530, cy0 + (ch + 2) * static_cast<float>(r) - 1), K.graphGrid);
+  for (int k = 0; k < count; ++k) {
     ImGui::PushID(k);
+    const int pk = surfaceParam(k);
     SurfaceItem& it = items[static_cast<size_t>(k)];
     const float x = cx0 + (k % 8) * cw, y = cy0 + (k / 8) * (ch + 2);
     if (edit) {
@@ -77,7 +88,7 @@ void surfaceEditor(EditTarget& e) {
       if (ImGui::Combo("##kind", &kind, kinds, 6)) {
         it.kind = kind;
         PluginState st = *e.st;
-        st.data = formatSurface(items);
+        st.data = formatSurface(items, e.st->data);
         e.set(st, "edit surface", 0);
       }
       char buf[48];
@@ -87,17 +98,17 @@ void surfaceEditor(EditTarget& e) {
       if (ImGui::InputText("##lbl", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue) || ImGui::IsItemDeactivatedAfterEdit()) {
         it.label = buf;
         PluginState st = *e.st;
-        st.data = formatSurface(items);
+        st.data = formatSurface(items, e.st->data);
         e.set(st, "rename control", 0);
       }
     } else {
-      ParamId pid = e.pid(k);
+      ParamId pid = e.pid(pk);
       bool padY = it.kind == SkPadY && k > 0 && items[static_cast<size_t>(k - 1)].kind == SkPadX;
       switch (it.kind) {
-        case SkSlider: sk::vslider(e, k, F.p(x + cw * 0.5f - 13, y + 8), F.sz(26, 96), K); break;
+        case SkSlider: sk::vslider(e, pk, F.p(x + cw * 0.5f - 13, y + 8), F.sz(26, 96), K); break;
         case SkButton:
         case SkToggle: {
-          bool on = e.p(k) >= 0.5f;
+          bool on = e.p(pk) >= 0.5f;
           sk::button("##b", F.p(x + 7, y + 36), F.sz(cw - 14, 40), K, it.kind == SkButton ? "PRESS" : (on ? "ON" : "OFF"), on);
           if (it.kind == SkButton) {
             if (ImGui::IsItemActivated()) e.a->doc.setParam(pid, 1, false);
@@ -109,28 +120,29 @@ void surfaceEditor(EditTarget& e) {
         }
         case SkPadX:
         case SkPadY: {
-          if (it.kind == SkPadX && k + 1 < kSurfaceControls) {
+          if (it.kind == SkPadX && k + 1 < count) {
+            const int pk2 = surfaceParam(k + 1);
             ImVec2 p0 = F.p(x + 6, y + 8), sz = F.sz(cw - 12, 96);
             ImGui::SetCursorScreenPos(p0);
             ImGui::InvisibleButton("##pad", sz);
             dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), skin::lighten(K.graphBg, 0.05f), 3);
             dl->AddRect(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), K.graphGridStrong, 3);
-            float px = e.p(k), py = e.p(k + 1);
+            float px = e.p(pk), py = e.p(pk2);
             ImVec2 c(p0.x + px * sz.x, p0.y + (1 - py) * sz.y);
             dl->AddCircleFilled(c, 6, theme::withAlpha(K.fill, 0.3f), 16);
             dl->AddCircle(c, 6, K.fill, 16, 1.6f);
             if (ImGui::IsItemActive()) {
               PluginState st = *e.st;
               ImGuiIO& io = ImGui::GetIO();
-              st.params[static_cast<size_t>(k)] = std::clamp((io.MousePos.x - p0.x) / sz.x, 0.0f, 1.0f);
-              st.params[static_cast<size_t>(k + 1)] = std::clamp(1 - (io.MousePos.y - p0.y) / sz.y, 0.0f, 1.0f);
+              st.params[static_cast<size_t>(pk)] = std::clamp((io.MousePos.x - p0.x) / sz.x, 0.0f, 1.0f);
+              st.params[static_cast<size_t>(pk2)] = std::clamp(1 - (io.MousePos.y - p0.y) / sz.y, 0.0f, 1.0f);
               e.set(st, "move pad", e.key ^ 0x53504144ull ^ static_cast<uint64_t>(k));
             }
             if (ImGui::IsItemDeactivated()) e.a->doc.endGesture();
           }
           break;
         }
-        default: sk::wheel(e, k, F.p(x + cw * 0.5f - 22, y + 30), 44 * F.s, K); break;
+        default: sk::wheel(e, pk, F.p(x + cw * 0.5f - 22, y + 30), 44 * F.s, K); break;
       }
       if (!padY) {
         ImGui::PushFont(e.a->fontMonoBold, F.font(8.0f));

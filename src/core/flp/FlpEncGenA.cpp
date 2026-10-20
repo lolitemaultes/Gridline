@@ -12,6 +12,7 @@
 #include "../../packs/synths/matrixfm.h"
 #include "../../packs/models/harmor.h"
 #include "../../packs/models/models.h"
+#include "../../packs/modulation/envc.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/samplers/dwave.h"
 #include "../../packs/samplers/samplers.h"
@@ -317,142 +318,28 @@ Encoder encoder() {
 }  // namespace midiout
 
 // ===================================================== Envelope Controller
-// Layout (FlpGenSimple.cpp): from 0x100, per articulator, FL envelope lists:
-// dword point count N, float, float 1.0, float 0.5, dword 1, two dwords, then
-// N points {double Δtime (beats), double level, float tension, dword flags}.
-// The state around them (articulator blocks, LFOs, key mappings) is not
-// decoded: no default state is built (FL loads its own defaults).
+// Layout: packs/modulation/envc.h (J-41). The state is written whole from the
+// articulator parameters (knob block, record floats / extras, option bit) and
+// the model text (records, flags, key ranges); nothing is left to the field
+// search. Simple-model instances (model 0) export FL's default controller.
 namespace envctl {
 
 namespace md = gl::packs::modulation;
-constexpr size_t kHead = 28, kPoint = 24;
 
-struct List {
-  size_t at;
-  int points;  // valid points
-};
-// Same scan as the decoder (lists are recognised by their header).
-std::vector<List> lists(const Bytes& b) {
-  std::vector<List> out;
-  for (size_t p = 0x100; p + kHead + kPoint * 2 <= b.size();) {
-    const int n = geti(b, p);
-    if (n < 2 || n > 64 || std::fabs(getF32(b, p + 8) - 1.0f) > 1e-6f || std::fabs(getF32(b, p + 12) - 0.5f) > 1e-6f || geti(b, p + 16) != 1) {
-      p += 4;
-      continue;
-    }
-    const int stored = geti(b, p + 24);  // (as the decoder: the count before the points, J-39)
-    const int np = stored >= 0 && stored <= 64 ? stored : n;
-    int ok = 0;
-    for (int k = 0; k < np && p + kHead + static_cast<size_t>(k + 1) * kPoint <= b.size(); ++k) {
-      const double dt = getF64(b, p + kHead + static_cast<size_t>(k) * kPoint), y = getF64(b, p + kHead + static_cast<size_t>(k) * kPoint + 8);
-      if (!(dt >= 0 && dt < 1000 && y >= -0.001 && y <= 1.001)) break;
-      ++ok;
-    }
-    if (ok < 2) {
-      p += 4;
-      continue;
-    }
-    out.push_back({p, ok});
-    p += kHead + static_cast<size_t>(ok) * kPoint;
+md::EnvcState stateOf(const PluginState& g) {
+  md::EnvcState st = md::defaultEnvcState();
+  if (pv(g, md::EcModel) < 0.5f) return st;
+  st.model = md::envcOf(g.data);
+  for (int k = 0; k < md::kEnvcKnobs; ++k) {
+    const float v = pv(g, md::envcKnobParam(k));
+    if (std::isfinite(v)) st.knobs[static_cast<size_t>(k)] = md::envcParamToKnob(k, v);
   }
-  return out;
+  st.options = (st.model.uiBits & ~4) | (pv(g, md::EcContinuous) >= 0.5f ? 4 : 0);
+  return st;
 }
 
-std::vector<Field> fields(const Bytes& b) {
-  std::vector<Field> f;
-  const std::vector<List> ls = lists(b);
-  for (int a = 0; a < md::kEnvArts && a < static_cast<int>(ls.size()); ++a)
-    for (int k = 0; k < md::kEnvPoints && k < ls[static_cast<size_t>(a)].points; ++k) {
-      const size_t at = ls[static_cast<size_t>(a)].at + kHead + static_cast<size_t>(k) * kPoint;
-      f.push_back(field(md::envPointTime(a, k), at, Type::F64, 0, 100));  // beats
-      f.push_back(field(md::envPointLevel(a, k), at + 8, Type::F64, 0, 1));
-    }
-  return f;
-}
-
-// Point counts: points are added (a copy of the last one) or removed at the
-// end of a list whose header count equals its valid points.
 void write(const PluginState& g, Bytes& b, const EncodeContext&) {
-  for (int a = 0; a < md::kEnvArts; ++a) {
-    const std::vector<List> ls = lists(b);
-    if (a >= static_cast<int>(ls.size())) break;
-    const List l = ls[static_cast<size_t>(a)];
-    const int want = static_cast<int>(pv(g, md::envParam(a, md::EaNumPoints)));
-    const int have = std::max(2, std::min(l.points, md::kEnvPoints));
-    if (want == have || want < 2 || want > md::kEnvPoints || geti(b, l.at + 24) != l.points) continue;
-    const size_t end = l.at + kHead + static_cast<size_t>(l.points) * kPoint;
-    if (want < l.points) {
-      b.erase(b.begin() + static_cast<std::ptrdiff_t>(l.at + kHead + static_cast<size_t>(want) * kPoint), b.begin() + static_cast<std::ptrdiff_t>(end));
-    } else {
-      const Bytes last(b.begin() + static_cast<std::ptrdiff_t>(end - kPoint), b.begin() + static_cast<std::ptrdiff_t>(end));
-      for (int k = l.points; k < want; ++k) b.insert(b.begin() + static_cast<std::ptrdiff_t>(end), last.begin(), last.end());
-    }
-    putI32(b, l.at + 24, want);
-  }
-}
-
-// J-39: a whole state as FL 20..25 save it (version 6, "03 00 06 00"): 8
-// articulator knob blocks (11 dwords), 4 dwords, 8 articulators {3 dwords,
-// the articulator record Sytrus uses too: i32 3, f32 × 3, i32 1, envelope
-// (format 3: f64 Δ beats, f64 level, f32 tension, 4 bytes), 4 + 5 dwords, LFO
-// curve, 4 + 6 dwords, 5 mapping curves + 5 dwords each}, 2 dwords. Articulators
-// 1..4 carry Gridline's envelopes (Env A..D); the rest FL's default shapes.
-struct Pt {
-  double dx, y;
-  float t;
-};
-void putCurveRec(ByteWriter& w, const std::vector<Pt>& pts) {
-  for (size_t i = 0; i < pts.size(); ++i) {
-    w.f64(pts[i].dx), w.f64(pts[i].y), w.f32(pts[i].t);
-    w.u8(0), w.u8(0), w.u8(0), w.u8(i == 0 ? 0 : pts[i].t < 0 ? 255 : pts[i].t > 0 ? 1 : 2);
-  }
-}
-void putList(ByteWriter& w, int32_t kind, const std::vector<Pt>& pts) {
-  w.i32(kind), w.i32(3), w.i32(static_cast<int32_t>(pts.size()));
-  putCurveRec(w, pts);
-}
-Bytes build(const PluginState& g, double tempo) {
-  const double secPerBeat = 60.0 / std::max(20.0, tempo);
-  ByteWriter w;
-  w.u32(0x00060003);
-  for (int a = 0; a < 8; ++a)
-    for (int32_t v : {128, 256, 128, 128, 128, 0, 128, a < 4 ? 40000 : 40898, 0, 0, 0}) w.i32(v);
-  for (int32_t v : {32768, 32768, 0, 0}) w.i32(v);
-  const std::vector<Pt> defLfo = {{0, 0.5, 0}, {1, 0.5, 0}, {0.25, 1, 0}, {1, 0.5, 0}};
-  for (int a = 0; a < 8; ++a) {
-    if (a == 0) w.i32(2), w.i32(0), w.i32(1);
-    else w.i32(0), w.i32(256), w.i32(1);
-    w.i32(3), w.f32(0.5f), w.f32(1.0f), w.f32(0.5f), w.i32(1);
-    std::vector<Pt> env;
-    // An articulator the importer reads has its signature (sustain 0, base 0,
-    // envelope amount 1, LFO amount 0); the others are written as FL's
-    // one-point envelope, which the importer skips.
-    const bool present = a < md::kEnvArts && pv(g, md::envParam(a, md::EaSustain)) == 0.f && pv(g, md::envParam(a, md::EaBase)) == 0.f &&
-                         pv(g, md::envParam(a, md::EaEnvAmt)) == 1.f && pv(g, md::envParam(a, md::EaLfoAmt)) == 0.f;
-    // (articulators 5..8 too: the importer would read them in place of absent ones)
-    if (!present) env = {{0, 0.5, 0}};
-    if (present) {
-      const int n = std::clamp(static_cast<int>(std::lround(pv(g, md::envParam(a, md::EaNumPoints)))), 2, md::kEnvPoints);
-      env.clear();
-      for (int k = 0; k < n; ++k) {
-        const double t = pv(g, md::envPointTime(a, k)), y = pv(g, md::envPointLevel(a, k));
-        env.push_back({std::isfinite(t) && t > 0.001 ? t / secPerBeat : 0.0, std::isfinite(y) ? y : 0.0, 0.0f});
-      }
-    }
-    w.i32(3), w.i32(static_cast<int32_t>(env.size()));
-    putCurveRec(w, env);
-    for (int32_t v : {0, a < md::kEnvArts ? -1 : 0, 1, -1}) w.i32(v);                  // flags, enabled, decay point, loop
-    for (int32_t v : {static_cast<int32_t>(env.size()) - 2, 128, 128, 0, 128}) w.i32(v);  // sustain point, A D S R
-    putList(w, 2, defLfo);
-    for (int32_t v : {0, 0, -1, -1}) w.i32(v);
-    for (int32_t v : {2, a < 4 ? 40000 : 40898, 0, 0, 0, 0}) w.i32(v);
-    for (int m = 0; m < 5; ++m) {
-      putList(w, 3, {{0, 0.5, 0}, {1, 0.5, 0}});
-      for (int32_t v : {0, -1, -1, -1, -1}) w.i32(v);
-    }
-  }
-  w.i32(0), w.i32(256);
-  return w.b;
+  b = md::writeEnvcState(stateOf(g));
 }
 
 Encoder encoder() {
@@ -461,17 +348,9 @@ Encoder encoder() {
   e.glType = "gl.envctl";
   e.nativeRank = 0;
   e.generator = true;
-  e.defaults = [] { return build(defaultPluginState("gl.envctl"), 120.0); };
-  e.fields = fields;
-  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
-    PluginMapping m;
-    if (decodeState("Fruity Envelope Controller", b, m, c) && m.state.params == g.params) return;
-    // Imported states keep their layout (point counts adjusted, the fields solve
-    // the values); a state the importer reads no envelopes from — FL's own
-    // defaults or another layout — is written whole.
-    if (lists(b).size() >= static_cast<size_t>(md::kEnvArts)) return write(g, b, c);
-    b = build(g, c.tempo);
-  };
+  e.defaults = [] { return md::writeEnvcState(md::defaultEnvcState()); };
+  e.fields = [](const Bytes&) { return std::vector<Field>{}; };
+  e.write = write;
   return e;
 }
 

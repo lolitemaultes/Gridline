@@ -146,6 +146,7 @@ int main() {
   expect(near(autoShape(AutoShape::Hold, 0, 0.999), 0) && near(autoShape(AutoShape::Hold, 0, 1), 1), "hold jumps at the point");
 
   AutomationClip ac;
+  ac.flCurves = false;  // the pre-J-41 Gridline curves (FL laws: test_j41)
   ac.points = {{0, 0.2f, 0, AutoShape::Curve}, {96, 1.0f, 0, AutoShape::Curve}, {192, 0.0f, 0.6f, AutoShape::Curve},
                {288, 0.5f, 0, AutoShape::Hold}};
   expect(near(automationValue(ac, -10), 0.2, 1e-6) && near(automationValue(ac, 1000), 0.5, 1e-6), "holds outside the points");
@@ -495,7 +496,8 @@ int main() {
            "FLP: tempo automation clip (points in beats, tension (FL sign flipped), 60–180 BPM range)");
     TempoMap m;
     m.build(s);
-    expect(std::fabs(m.bpmAt(1) - 150.0) < 1.0 && std::fabs(m.bpmAt(600) - 90.0) < 0.01, "FLP: tempo map from the imported clip");
+    // FL's single curve at tension 0.5 leaves the start value fast (J-41 exact law): ~2 BPM in the first tick.
+    expect(std::fabs(m.bpmAt(1) - 150.0) < 2.5 && std::fabs(m.bpmAt(600) - 90.0) < 0.01, "FLP: tempo map from the imported clip");
     const AutomationClip* bus = bv ? s.automation(bv->source) : nullptr;
     expect(bus && bus->owner == s.mixer[1].id && bus->index == static_cast<uint32_t>(MixerParam::Volume), "FLP: mixer volume target (FL 2025 base)");
     expect(s.markers.size() == 2 && s.markers[0].pos == 0 && s.markers[0].timeSigNum == 3 && s.markers[0].timeSigDen == 4 &&

@@ -5,6 +5,7 @@
 #include <cmath>
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/modulation/modulation_dsp.h"
+#include "FlpFx2.h"
 #include "FlpGen2.h"
 
 namespace gl::flp::gen2 {
@@ -185,6 +186,7 @@ void collectNodes(Blob b, bool utf16, std::vector<HostedPlugin>& out, std::vecto
 }
 
 bool decodePatcher(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+  if (fx2::decodePatcherV2(c, evs, m)) return true;  // J-41: the patch as wired
   Blob b = stateBlob(evs);
   if (b.size() < 16) {
     begin(m, "gl.patcher");

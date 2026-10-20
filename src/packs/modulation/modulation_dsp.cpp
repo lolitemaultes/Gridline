@@ -9,6 +9,7 @@
 #include "../../core/Expr.h"
 #include "../../engine/Dsp.h"
 #include "../Packs.h"
+#include "envc.h"
 #include "modulation.h"
 #include "modulation_dsp.h"
 
@@ -287,18 +288,35 @@ class EnvelopeController final : public Generator {
  public:
   bool active() const override { return false; }  // produces no sound
   int controlOutputs(float* out, int max) const override {
+    if (fl_) return rt_.outputs(out, max);
     int k = std::min(kEnvArts, max);
     for (int i = 0; i < k; ++i) out[i] = static_cast<float>(art_[i].out);
-    return k;
+    for (int i = k; i < std::min(kArts, max); ++i) out[i] = 0.f;
+    return std::min(kArts, max);
   }
 
  protected:
+  void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& props) override {
+    if (fl_) {
+      rt_.noteOn(id, pitch, velocity, props);
+      return;
+    }
+    onNoteOn(id, pitch, velocity);
+  }
   void onNoteOn(uint32_t id, double pitch, float velocity) override {
+    if (fl_) {
+      rt_.noteOn(id, pitch, velocity, NoteProps{});
+      return;
+    }
     if (held_ < kHeld) heldNotes_[held_++] = {id, pitch, velocity};
     for (int a = 0; a < kEnvArts; ++a)
       if (inRange(a, pitch)) trigger(a, velocity);
   }
   void onNoteOff(uint32_t id) override {
+    if (fl_) {
+      rt_.noteOff(id);
+      return;
+    }
     for (int i = 0; i < held_; ++i)
       if (heldNotes_[i].id == id) {
         double p = heldNotes_[i].pitch;
@@ -309,21 +327,29 @@ class EnvelopeController final : public Generator {
       }
   }
   void onAllOff() override {
+    rt_.allOff();
     held_ = 0;
     for (int a = 0; a < kEnvArts; ++a) release(a);
   }
   void onKill() override {
+    rt_.kill();
     held_ = 0;
     for (auto& a : art_) {
       a = Art{};
     }
   }
-  void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
+  void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     st_ = &s;
     ctx_ = ctx;
     continuous_ = prm(s, EcContinuous) >= 0.5f;
+    fl_ = prm(s, EcModel, 0) >= 0.5f && aux.custom != nullptr;  // J-41 articulator model
+    if (fl_) rt_.configure(s, aux, ctx);
   }
   void render(float*, float*, int n) override {
+    if (fl_) {
+      rt_.render(n);
+      return;
+    }
     const PluginState& s = *st_;
     double sr = ctx_.sampleRate;
     double spt = sr * 60.0 / (ctx_.tempo * std::max(1, ctx_.ppq));
@@ -434,7 +460,8 @@ class EnvelopeController final : public Generator {
   }
   const PluginState* st_ = nullptr;
   ProcessContext ctx_;
-  bool continuous_ = false;
+  bool continuous_ = false, fl_ = false;
+  EnvcRuntime rt_;
   Held heldNotes_[kHeld] = {};
   int held_ = 0;
   Art art_[kEnvArts];
@@ -617,24 +644,28 @@ class VoltageOut final : public Generator {
 class ControlSurface final : public Effect {
  public:
   void process(const PluginState& s, const ProcessContext& ctx, float*, float*, int n) override {
-    double c = coefFor(prm(s, SfSmooth, 0.02f), ctx.sampleRate);
-    for (int i = 0; i < kSurfaceControls; ++i) {
-      double t = prm(s, i);
-      if (!primed_) cur_[i] = t;
+    const float sm = prm(s, SfSmooth, 0.02f);
+    const double c = sm <= 0.001f ? 1.0 : coefFor(sm, ctx.sampleRate);  // minimum = immediate (J-41)
+    for (int i = 0; i < kSurfaceMax; ++i) {
+      double t = prm(s, surfaceParam(i));
+      if (!primed_ || c >= 1.0) {
+        cur_[i] = t;
+        continue;
+      }
       for (int j = 0; j < n; ++j) cur_[i] += (t - cur_[i]) * c;
     }
     primed_ = true;
   }
   void reset() override { primed_ = false; }
   int controlOutputs(float* out, int max) const override {
-    int k = std::min(kSurfaceControls, max);
+    int k = std::min(kSurfaceMax, max);
     for (int i = 0; i < k; ++i) out[i] = static_cast<float>(clamp01(cur_[i]));
     return k;
   }
 
  private:
   bool primed_ = false;
-  double cur_[kSurfaceControls] = {};
+  double cur_[kSurfaceMax] = {};
 };
 
 // --------------------------------------------------------- sends and buses
@@ -805,6 +836,10 @@ bool prepareAux(const PluginState& state, ChannelAux& aux) {
     auto fa = std::make_shared<FormulaAux>();
     if (!compileFormula(state.data, fa->expr, &fa->error)) compileFormula(kDefaultFormula, fa->expr, nullptr);
     aux.custom = fa;
+    return true;
+  }
+  if (state.type == "gl.envctl") {
+    if (static_cast<size_t>(EcModel) < state.params.size() && state.params[static_cast<size_t>(EcModel)] >= 0.5f) aux.custom = prepareEnvc(state);
     return true;
   }
   if (state.type == "gl.keyctl") {

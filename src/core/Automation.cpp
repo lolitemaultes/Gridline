@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include "AutomationEdit.h"
+#include "FlCurves.h"
 #include "Params.h"
 
 namespace gl {
@@ -79,10 +81,30 @@ double autoShape(AutoShape shape, double tension, double x) {
   }
 }
 
-double automationValue(const AutomationClip& a, double t) {
-  const auto& p = a.points;
+double flAutoShape(const std::vector<AutoPoint>& p, size_t k, double x) {
+  const AutoPoint& b = p[k];
+  const int mode = autoedit::flModeOf(b.shape);
+  const double t = -static_cast<double>(b.tension);  // FL's tension sign
+  if (mode != flcurve::kSmooth || k == 0) return flcurve::shape(mode, t, x);
+  // Smooth: tangents from neighbouring smooth segments (FlCurves.h).
+  const double T = static_cast<double>(p[k].pos - p[k - 1].pos), d = static_cast<double>(p[k].value) - p[k - 1].value;
+  double ps = 0, pe = 0;
+  if (T > 0 && std::fabs(d) >= 1.0 / 16777216.0) {
+    const double slope = d / T;
+    if (k >= 2 && p[k - 1].shape == AutoShape::Smooth && p[k - 1].pos > p[k - 2].pos) {
+      const double Tp = static_cast<double>(p[k - 1].pos - p[k - 2].pos);
+      ps = flcurve::smoothTangent((static_cast<double>(p[k - 1].value) - p[k - 2].value) / Tp / slope, Tp / T);
+    }
+    if (k + 1 < p.size() && p[k + 1].shape == AutoShape::Smooth && p[k + 1].pos > p[k].pos) {
+      const double Tn = static_cast<double>(p[k + 1].pos - p[k].pos);
+      pe = flcurve::smoothTangent((static_cast<double>(p[k + 1].value) - p[k].value) / Tn / slope, Tn / T);
+    }
+  }
+  return flcurve::smooth(t, std::clamp(x, 0.0, 1.0), ps, pe);
+}
+
+double pointsValue(const std::vector<AutoPoint>& p, double t, bool fl) {
   if (p.empty()) return 0.0;
-  if (a.loop > 0 && t >= static_cast<double>(a.loop)) t = std::fmod(t, static_cast<double>(a.loop));
   if (t <= static_cast<double>(p.front().pos)) return p.front().value;
   if (t >= static_cast<double>(p.back().pos)) return p.back().value;
   auto it = std::upper_bound(p.begin(), p.end(), t, [](double v, const AutoPoint& q) { return v < static_cast<double>(q.pos); });
@@ -91,7 +113,14 @@ double automationValue(const AutomationClip& a, double t) {
   double span = static_cast<double>(b.pos - a0.pos);
   if (span <= 0) return b.value;
   double x = (t - static_cast<double>(a0.pos)) / span;
-  return a0.value + (b.value - a0.value) * autoShape(b.shape, b.tension, x);
+  const double y = fl ? flAutoShape(p, static_cast<size_t>(it - p.begin()), x) : autoShape(b.shape, b.tension, x);
+  return a0.value + (b.value - a0.value) * y;
+}
+
+double automationValue(const AutomationClip& a, double t) {
+  if (a.points.empty()) return 0.0;
+  if (a.loop > 0 && t >= static_cast<double>(a.loop)) t = std::fmod(t, static_cast<double>(a.loop));
+  return pointsValue(a.points, t, a.flCurves);
 }
 
 int insertAutoPoint(AutomationClip& a, const AutoPoint& p) {

@@ -44,6 +44,9 @@ void bindKnobs(PluginMapping& m, const KnobTable& table);
 bool decodeEmbedded(Context& c, const std::string& flName, const uint8_t* state, size_t size, PluginMapping& out);
 // True when `evs` is a channel's event list (generator) rather than a mixer slot's.
 bool isChannelPlugin(const Context& c, const std::vector<Event>& evs);
+// FL Patcher → Patch Host graph v2 (J-41, FlpFx2Patcher.cpp); false when the
+// state is not a readable patch (the caller falls back).
+bool decodePatcherV2(Context& c, const std::vector<Event>& evs, PluginMapping& m);
 
 // Per-family registries (FlpFx2<Family>.cpp), called by FlpEffects2.cpp.
 void registerFx2Mod(std::map<std::string, PluginDecoder>& d);     // pan, stereo, controllers, routing, notes, hosts

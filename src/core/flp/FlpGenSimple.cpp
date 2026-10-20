@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include "../PluginParams.h"
+#include "../../packs/modulation/envc.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/synths/synths.h"
 #include "FlpGen.h"
@@ -152,81 +153,59 @@ bool decodeMidiOut(Context&, const std::vector<Event>& events, PluginMapping& m)
 }
 
 // ------------------------------------------------------ Envelope Controller
-// State: word version, word count, then per-articulator parameter blocks and
-// FL envelope lists. An envelope list is: dword point count N, three floats,
-// three dwords, then N points of {double Δtime (beats), double level 0..1,
-// float tension, dword flags}. The first list is articulator 1's envelope.
+// Full state (J-41, analysis/rea/agents/j33/envc_spec.md §1): the knob block
+// becomes the articulator parameters, the per-articulator records (envelope,
+// LFO, five maps, flags, key range) the model text in data; Gridline runs the
+// same articulator engine (model 1). Output k = articulator k.
 namespace mod = gl::packs::modulation;
 
-// An articulator's envelope list: header {count, float, float 1.0, float 0.5,
-// dword 1, dword, dword} then points; mapping lists (keyboard, velocity …)
-// that follow have zero floats and are skipped. Points are kept up to the
-// first invalid one.
-struct EnvList {
-  size_t at = 0;
-  int points = 0;
-};
-std::vector<EnvList> findEnvelopes(Bytes b, size_t from) {
-  std::vector<EnvList> out;
-  for (size_t p = from; b.has(p, 28 + 24 * 2);) {
-    const int n = b.i32(p);
-    if (n < 2 || n > 64 || std::fabs(b.f32(p + 8) - 1.0f) > 1e-6f || std::fabs(b.f32(p + 12) - 0.5f) > 1e-6f || b.i32(p + 16) != 1) {
-      p += 4;
-      continue;
-    }
-    // J-39: the point count is the dword before the points (the first dword is
-    // the articulator record version, 3, which was read as the count).
-    const int stored = b.i32(p + 24);
-    const int np = stored >= 0 && stored <= 64 ? stored : n;
-    int ok = 0;
-    for (int k = 0; k < np && b.has(p + 28 + static_cast<size_t>(k) * 24, 24); ++k) {
-      double dt = b.f64(p + 28 + static_cast<size_t>(k) * 24), y = b.f64(p + 28 + static_cast<size_t>(k) * 24 + 8);
-      if (!(dt >= 0 && dt < 1000 && y >= -0.001 && y <= 1.001)) break;
-      ++ok;
-    }
-    if (ok < 2) {
-      p += 4;
-      continue;
-    }
-    out.push_back({p, ok});
-    p += 28 + static_cast<size_t>(ok) * 24;
-  }
-  return out;
-}
-
-// Output k of the FL controller = articulator k = Gridline output k (Env A..D).
 bool decodeEnvController(Context& c, const std::vector<Event>& events, PluginMapping& m) {
   Bytes b = stateOf(events);
-  if (!b.has(0, 16)) return false;
   PluginState s = base("gl.envctl");
-  std::vector<EnvList> lists = findEnvelopes(b, 0x100);
-  const double secPerBeat = 60.0 / std::max(20.0, c.song.tempo);
-  const int arts = std::min(static_cast<int>(lists.size()), mod::kEnvArts);
-  for (int a = 0; a < arts; ++a) {
-    const size_t at = lists[static_cast<size_t>(a)].at;
-    const int np = std::min(lists[static_cast<size_t>(a)].points, mod::kEnvPoints);
-    for (int k = 0; k < np; ++k) {
-      double dt = b.f64(at + 28 + static_cast<size_t>(k) * 24), y = b.f64(at + 28 + static_cast<size_t>(k) * 24 + 8);
-      setp(s, mod::envPointTime(a, k), clampd(dt * secPerBeat, 0.001, 10));
-      setp(s, mod::envPointLevel(a, k), clampd(y, 0, 1));
-    }
-    setp(s, mod::envParam(a, mod::EaNumPoints), std::max(2, np));
-    setp(s, mod::envParam(a, mod::EaSustain), 0);  // one-shot shape; the level holds after the last point
-    setp(s, mod::envParam(a, mod::EaBase), 0.0);
-    setp(s, mod::envParam(a, mod::EaEnvAmt), 1.0);
-    setp(s, mod::envParam(a, mod::EaLfoAmt), 0.0);
+  setp(s, mod::EcModel, 1);
+  mod::EnvcState st = mod::defaultEnvcState();
+  const bool parsed = b.n == 0 || mod::parseEnvcState(b.p, b.n, st);
+  if (!parsed) {
+    note(c, "Fruity Envelope Controller", "state not readable; default controller");
+    st = mod::defaultEnvcState();
   }
+  // FL re-applies every knob after loading the records (verified in the
+  // plugin's state loader), so the knob block wins where they differ.
+  bool exact = parsed;
+  for (int k = 0; k < mod::kEnvcKnobs; ++k) {
+    const int gl = mod::envcKnobParam(k);
+    const double v = mod::envcKnobToParam(k, st.knobs[static_cast<size_t>(k)]);
+    const PluginInfo* info = findPlugin("gl.envctl");
+    if (info && static_cast<size_t>(gl) < info->params.size()) {
+      const ParamDesc& d = info->params[static_cast<size_t>(gl)];
+      if (v < d.min || v > d.max) exact = false;  // outside the knob range: clamped
+    }
+    setp(s, gl, v);
+  }
+  setp(s, mod::EcContinuous, (st.options & 4) ? 1 : 0);
+  s.data = b.n == 0 ? std::string() : mod::writeEnvc(st.model);
   m.glType = "gl.envctl";
   m.state = s;
-  m.exact = false;
-  note(c, "Fruity Envelope Controller",
-       arts ? std::to_string(arts) + " articulator envelope(s) → outputs Env A.. (beats → seconds at the song tempo); LFOs / key mappings not imported"
-            : "no envelope found; default controller");
-  // FL parameters 1 / 2 (envelope / LFO level of the current articulator) → articulator A.
+  m.exact = exact;
+  // Automation: FL parameter k = knob k (stored integer ranges, spec §5.4).
   ParamTable t;
-  t.lin(1, mod::envParam(0, mod::EaEnvAmt), -1, 1);
-  t.lin(2, mod::envParam(0, mod::EaLfoAmt), -1, 1);
-  t.range(1, -256, 256), t.range(2, -256, 256);
+  for (int k = 0; k < mod::kEnvcKnobs; ++k) {
+    double lo = 0, hi = 256;
+    if (k >= mod::kArts * mod::AfFields) {
+      hi = 65536;
+    } else {
+      switch (k % mod::AfFields) {
+        case mod::AfEnvAmt: case mod::AfLfoAmt: lo = -256; break;
+        case mod::AfSustain: case mod::AfLfoTension: case mod::AfLfoSkew: lo = -128, hi = 128; break;
+        case mod::AfLfoSpeed: hi = 65536; break;
+        case mod::AfLfoPw: hi = 128; break;
+        default: break;
+      }
+    }
+    const int gl = mod::envcKnobParam(k);
+    t.fn(k, gl, [k, lo, hi](double n) { return mod::envcKnobToParam(k, static_cast<int32_t>(std::lround(lo + n * (hi - lo)))); });
+    t.range(k, lo, hi);
+  }
   t.install(m);
   return true;
 }

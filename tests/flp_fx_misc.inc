@@ -271,7 +271,8 @@ static void testFxMisc() {
     namespace md = gl::packs::modulation;
     expect(decodeFx("Control Surface", b.b, m) && m.glType == "gl.surface", "control surface: decodes");
     keep.push_back({"Control Surface", b.b});
-    expect(m.state.data == "0 Drive\n" + std::to_string(md::SkToggle) + " Go\n" && near(param(m, 0), 0.75, 1e-6), "control surface: controls and values");
+    expect(m.state.data.rfind("0 Drive\n" + std::to_string(md::SkToggle) + " Go\n#fl ", 0) == 0 && near(param(m, 0), 0.75, 1e-6),
+           "control surface: controls and values (+ the kept FL surface)");
   }
 
   // Truncated / corrupted states never crash a decoder.

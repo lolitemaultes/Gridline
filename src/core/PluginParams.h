@@ -181,7 +181,23 @@ inline constexpr int Slice2Base = SliceBase + kMaxSlices * SliceFields;
 inline constexpr int slParam2(int slice, int field) { return Slice2Base + slice * SliceFields2 + field; }
 inline constexpr int SlModX = Slice2Base + kMaxSlices * SliceFields2;
 inline constexpr int SlModY = SlModX + 1;
-inline constexpr int SlCount = SlModY + 1;
+// J-41: engine (0 = classic slicer, 1 = Slicex region engine: decks, region
+// records and articulator groups in data, engine/SlicexEngine.h) and its
+// linear master level (Slicex law (11^(v/12800) − 1)/10, up to ×1.9).
+inline constexpr int SlEngine = SlModY + 1;
+inline constexpr int SlMaster = SlEngine + 1;
+// J-41: engine 2 ("Processed"): the sample is processed once per slice
+// (engine/SliceProcess.h): pitch shift (cents), stretch amount (ratio
+// 2^(fit/10000)), stretch method (0/1 keep the audio, 2+ time-stretch), fade in /
+// out (ms) and the end declick. Per-slice reverse is part of the processing.
+inline constexpr int SlProcPitch = SlMaster + 1;
+inline constexpr int SlProcFit = SlProcPitch + 1;
+inline constexpr int SlProcMethod = SlProcFit + 1;
+inline constexpr int SlProcFadeIn = SlProcMethod + 1;
+inline constexpr int SlProcFadeOut = SlProcFadeIn + 1;
+inline constexpr int SlProcDeclick = SlProcFadeOut + 1;
+inline constexpr int SlEngineProcessed = 2;
+inline constexpr int SlCount = SlProcDeclick + 1;
 // "gl.granular"
 enum Granular {
   GrPosition, GrSpread, GrSize, GrDensity, GrPitchRand, GrStereo, GrAttack, GrRelease, GrFreeze, GrVolume,

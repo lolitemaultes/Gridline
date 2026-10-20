@@ -429,7 +429,8 @@ void testSakuraCorpus() {
     // J-33: the reference engine's levels are the reference's (master 10^(4.8x − 1.8),
     // string level 5): driven presets reach far above 0 dBFS, as in the reference.
     finite += o.finite && o.peak < 1000.f;
-    audible += o.finite && o.peak > 1e-3f;
+    // (J-41: the host's per-note level, 0.7071·velocity at the centre, is applied: −80 dB is "audible".)
+    audible += o.finite && o.peak > 1e-4f;
     if (std::getenv("GL_STR_PEAKS")) std::printf("#  %-40s peak %.4f\n", d.where.c_str(), static_cast<double>(o.peak));
   }
   std::snprintf(buf, sizeof buf, "Sakura presets: %zu/%zu decode → gl.twinstring (%zu exact), %zu finite, %zu audible in 0.5 s", ok,

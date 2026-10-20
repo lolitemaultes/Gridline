@@ -45,6 +45,17 @@ uint32_t hashU(uint32_t a, uint32_t b) {
 float hashF(uint32_t a, uint32_t b) { return static_cast<float>(hashU(a, b) >> 8) / 16777216.0f; }
 
 // Decay time law (ms) of a 0..1 knob position: 50 ms .. 20 s.
+constexpr double kPiD = 3.141592653589793;
+
+// A state-variable filter at `hz` with quality `q` (any Q > 0, below 0.5 too).
+void setSvfQ(dsp::Svf& f, double sr, double hz, double q) {
+  f.set(sr, hz, 0.0);
+  f.k = 1.0 / std::max(0.01, q);
+  f.a1 = 1.0 / (1.0 + f.g * (f.g + f.k));
+  f.a2 = f.g * f.a1;
+  f.a3 = f.g * f.a2;
+}
+
 double decayMs(double d) { return (std::pow(21.0, std::clamp(d, 0.0, 1.0)) - 1.0) * 997.5 + 50.0; }
 
 const AlloyAux& defaultAux() {
@@ -389,9 +400,12 @@ class AlloyGen final : public Generator {
       std::nth_element(order_, order_ + budget, order_ + n, [&](int a, int b) { return cand_[a] > cand_[b]; });
       n = budget;
     }
-    float sum = 0;
-    for (int i = 0; i < n; ++i) sum += cand_[order_[i]];
-    const float norm = sum > 1e-9f ? 1.0f / sum : 0.0f;
+    // J-41: the partials are normalised to unit power (the sum of their
+    // squared levels), not to their summed peak: a rich timbre keeps the level
+    // of a single partial instead of dropping by the number of partials.
+    float sum2 = 0;
+    for (int i = 0; i < n; ++i) sum2 += cand_[order_[i]] * cand_[order_[i]];
+    const float norm = sum2 > 1e-18f ? 1.0f / std::sqrt(sum2) : 0.0f;
     // Unison copies.
     const float uniPitch = p_[AlUniPitch] / 256.0f;   // 0..1 → spread up to ±35 cents
     const float uniPan = p_[AlUniPan] / 128.0f, uniVol = p_[AlUniVol] / 128.0f, uniPhase = p_[AlUniPhase] / 128.0f;
@@ -455,17 +469,42 @@ class AlloyGen final : public Generator {
       v.inc[o] = phaseInc(f0 * v.harm[o] * det, sr_);
     }
     const float velG = p_[AlVelVol] >= 0.5f ? 0.2f + 0.8f * v.vel : 1.0f;
-    v.volT = std::max(0.0f, aVol) * v.gate * velG * p_[AlVolume] / 128.0f * 0.5f;
+    // Each unison voice leaves at 0.3 per channel (centre: 0.3 / 0.7071 before the pan law).
+    v.volT = std::max(0.0f, aVol) * v.gate * velG * p_[AlVolume] / 128.0f * 0.42426f;
     // Filter.
     const int stages = std::clamp(static_cast<int>(p_[AlFltMode]), 0, 4);
     if (stages > 0) {
-      // Harmonic-relative cutoff (the timbre is harmonic): 0 = 1/16 of the
-      // fundamental, 64 = the fundamental, 128 = 16th harmonic, 256 = ×4096.
-      const double pos = std::clamp(p_[AlCutoff] / 256.0 + (aCut - 0.5) * 0.5, 0.0, 1.0);
-      const double cut = std::clamp(f0 * std::pow(2.0, (pos - 0.25) * 16.0), 20.0, 20000.0);
-      const double res = std::clamp((p_[AlReso] / 256.0 + (aRes - 0.5)) * (p_[AlFltFlat] >= 0.5f ? 0.5 : 0.9), 0.0, 0.98);
+      // J-41: the reference filter law. The cutoff is a fixed frequency
+      // (not relative to the note): low pass c → (1501^c − 1)·0.000664667 of
+      // Nyquist (+0.003), band / notch / high pass (1501^c − 1)·0.00039993
+      // (+0.0001; at most 1.0001 / 0.6001). Resonance r: low / high pass
+      // Q = (2001^r − 1)·0.02495 + 0.1 (50 at the top); band / notch a
+      // bandwidth (101^r − 1)·0.1199 + 0.01 octaves (12 at the top). The
+      // alternate mode takes 0.5·(c + 1)·r as the resonance input. Every
+      // stage gets the same Q.
+      const int ftype = static_cast<int>(p_[AlFltType]);
+      const double c = std::clamp(p_[AlCutoff] / 256.0 + (aCut - 0.5) * 0.5, 0.0, 1.0);
+      double r = std::clamp(p_[AlReso] / 256.0 + (aRes - 0.5), 0.0, 1.0);
+      if (p_[AlFltFlat] >= 0.5f) r = 0.5 * (c + 1.0) * r;
+      const double e = c > 0 ? std::pow(1501.0, c) - 1.0 : 0.0;
+      double fn, off, q;
+      if (ftype == 1 || ftype == 2) {
+        fn = std::min(e * 0.0003999333333333333, 1.0001), off = 0.0001;
+      } else if (ftype == 3) {
+        fn = std::min(e * 0.0003999333333333333, 0.6001), off = 0.0001;
+      } else {
+        fn = e * 0.0006646666666666667, off = 0.003;
+      }
+      const double w = std::clamp((fn + off) * kPiD * 44100.0 / sr_, 1e-5, 2.849517146113191);
+      if (ftype == 1 || ftype == 2) {
+        const double bw = r < 1.0 ? (std::pow(101.0, r) - 1.0) * 0.1199 + 0.01 : 12.0;
+        q = 1.0 / (2.0 * std::sinh(0.34657359027997264 * bw * w / std::sin(w)));
+      } else {
+        q = r < 1.0 ? (std::pow(2001.0, r) - 1.0) * 0.02495 + 0.1 : 50.0;
+      }
+      const double hz = w * sr_ / (2.0 * kPiD);
       for (auto& ch : v.flt)
-        for (int s = 0; s < stages; ++s) ch[s].set(sr_, cut, s == stages - 1 ? res : res * 0.4);
+        for (int s = 0; s < stages; ++s) setSvfQ(ch[s], sr_, hz, q);
     }
     if (volumeDone(v)) v.on = false;
   }
@@ -503,7 +542,7 @@ class AlloyGen final : public Generator {
             for (int s = 0; s < stages; ++s) {
               double band = 0, high = 0;
               const double low = v.flt[c][s].process(x, &band, &high);
-              x = ftype == 1 ? band : ftype == 2 ? low + high : ftype == 3 ? high : low;
+              x = ftype == 1 ? band * v.flt[c][s].k : ftype == 2 ? low + high : ftype == 3 ? high : low;  // band pass: 0 dB peak
             }
             out[c] = static_cast<float>(x);
           }

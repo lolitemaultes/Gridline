@@ -184,8 +184,21 @@ inline void testEncGenB() {
     g.data = genbWav("gridline_genb_slicer.wav", 44100);
     const float marks[] = {0.0f, 0.25f, 0.3f, 0.71f};  // whole frames of 44100
     for (int k = 0; k < 4; ++k) g.params[pp::slMarker(k)] = marks[k];
-    g.params[pp::SlBaseNote] = 48, g.params[pp::SlPitch] = -3;
-    expect(ok && genbExact("Fruity Slicer", g), "Fruity Slicer: sample, four slices, base note and pitch encode back exactly");
+    g.params[pp::SlBaseNote] = 48;
+    // J-41: the processing settings (engine 2): method, fades, declick, a reversed slice.
+    g.params[pp::SlProcMethod] = 2, g.params[pp::SlProcFadeIn] = 12, g.params[pp::SlProcFadeOut] = 80, g.params[pp::SlProcDeclick] = 0;
+    g.params[pp::slParam(2, pp::SliceReverse)] = 1;
+    expect(ok && g.params[pp::SlEngine] == pp::SlEngineProcessed && genbExact("Fruity Slicer", g),
+           "Fruity Slicer: sample, four slices, base note, method, fades, declick and a reversed slice encode back exactly");
+    {  // stretch amount and pitch (cents) come back as written (the stretch itself is approximate)
+      gl::PluginState h = g;
+      h.params[pp::SlProcPitch] = -300, h.params[pp::SlProcFit] = 167;
+      enc::Result r = enc::encode(h, "Fruity Slicer", nullptr, ctx());
+      gl::flp::PluginMapping back;
+      expect(r.hasState && enc::decodeState("Fruity Slicer", r.state, back, ctx()) && back.state.params.size() > pp::SlProcFit && back.state.params[pp::SlProcPitch] == -300.0f &&
+                 back.state.params[pp::SlProcFit] == 167.0f && !back.exact,
+             "Fruity Slicer: stretch amount and pitch encode back (approximate: Gridline's own stretcher)");
+    }
     const enc::Encoder* e = enc::nativeEncoder(g);
     expect(e && e->flName == "Fruity Slicer", "Fruity Slicer: native home of gl.slicer");
     genbCorpus("Fruity Slicer", "Fruity Slicer", 0);
@@ -195,7 +208,8 @@ inline void testEncGenB() {
   // ---- Slicex: no default state; slices rewritten into an embedded copy.
   {
     const enc::Encoder* e = enc::findEncoder("Slicex", "gl.slicer");
-    expect(e && e->nativeRank < 0, "Slicex: imports only (no default state)");
+    expect(e && e->nativeRank == 0 && e->accepts && !e->accepts(gl::defaultPluginState("gl.slicer")),
+           "Slicex: native home of region-model slicers only (J-41)");
     // A minimal state: header, embedded 1000-frame WAV, settings with one region.
     const std::string wavPath = genbWav("gridline_genb_slicex.wav", 1000);
     std::ifstream f(wavPath, std::ios::binary);

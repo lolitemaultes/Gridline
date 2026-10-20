@@ -546,6 +546,14 @@ std::vector<PluginInfo> build() {
     }
     p.params[SlModX] = lin("Modulation X (cutoff)", "%", 0, 1, 0.5);
     p.params[SlModY] = lin("Modulation Y (resonance)", "%", 0, 1, 0.5);
+    p.params[SlEngine] = ch("Engine", {"Classic", "Regions", "Processed"}, 0);
+    p.params[SlMaster] = lin("Master level", "x", 0, 2, 1);
+    p.params[SlProcPitch] = lin("Processed pitch", "ct", -1200, 1200, 0);
+    p.params[SlProcFit] = lin("Processed stretch", "", -20000, 20000, 0);
+    p.params[SlProcMethod] = ch("Stretch method", {"Keep audio", "Keep audio (fill)", "Stretch 1", "Stretch 2", "Stretch 3", "Stretch 4", "Stretch 5", "Stretch 6"}, 4);
+    p.params[SlProcFadeIn] = lin("Processed fade in", "ms", 0, 1000, 0);
+    p.params[SlProcFadeOut] = lin("Processed fade out", "ms", 0, 1000, 0);
+    p.params[SlProcDeclick] = tog("Processed declick", 1);
     p.presets = {{"Transients", {}}, {"Even 16ths, mono", {{SlMode, 3.f}, {SlMono, 1.f}}}, {"Fit to tempo", {{SlFitTempo, 1.f}, {SlMono, 1.f}}},
                  {"Lo-fi", {{SlFilterType, 1.f}, {SlCutoff, 3000.f}, {SlPitch, -2.f}}}};
     p.editorWidth = 714;

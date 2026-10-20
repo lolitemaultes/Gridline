@@ -174,7 +174,8 @@ const std::vector<SetFile>& setFiles() {
     std::error_code ec;
     if (dir.empty() || !fs::is_directory(dir, ec)) return v;
     std::string def;
-    if (const std::string* f = get(readIni(dir / "default.wti"), "default", "file")) def = lower(*f);
+    const Ini defIni = readIni(dir / "default.wti");  // (kept alive: get() points into it)
+    if (const std::string* f = get(defIni, "default", "file")) def = lower(*f);
     std::vector<fs::path> wtis;
     for (const auto& e : fs::directory_iterator(dir, ec))
       if (lower(e.path().extension().string()) == ".wti" && lower(e.path().filename().string()) != "default.wti") wtis.push_back(e.path());

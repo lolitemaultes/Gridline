@@ -41,6 +41,9 @@ struct TwinRef::Voice {
   uint64_t start = 0;
   int key = 60;
   double vel = 0, t = 0, relT = -1, relSrc = 0;
+  // J-41: the host's per-note L/R level (FL's voice volume / pan → L/R
+  // conversion: constant power, 0.7071·volume at the centre; volume = velocity).
+  double hostL = 0.70710678118654752, hostR = 0.70710678118654752;
   // Free envelope.
   int egStage = 4;  // 0 attack, 1 decay, 2 sustain, 3 release, 4 done
   double egPh = 0, egLevel = 0, egFrom = 0;
@@ -210,6 +213,7 @@ void TwinRef::noteOn(uint32_t id, double pitch, float vel) {
   v->on = true, v->fresh = true;
   v->id = id, v->start = counter_++, v->key = key;
   v->vel = std::clamp(static_cast<double>(vel), 0.0, 1.0);
+  v->hostL = v->hostR = 0.70710678118654752 * v->vel;  // centre pan
   static const double kBase[7] = {27.5, 55, 110, 220, 440, 880, 1760};
   const int tr = std::clamp(static_cast<int>(std::lround(p_[TsTranspose])), 0, 6);
   v->fExact = kBase[tr] * std::exp2(key / 12.0 - 4.75);
@@ -384,8 +388,8 @@ void TwinRef::control(Voice& v, int n48) {
     const double lev = 0.05 * std::pow(10.0, 2.0 * mod(v, MdLevel));
     const double m = p[TsMix];
     const double pi1 = c01(p[TsStereo] + mod(v, MdPan)), pi2 = c01((1.0 - p[TsStereo]) + mod(v, MdPan));
-    v.gT[0] = lev * (1 - m) * (1 - pi1), v.gT[1] = lev * (1 - m) * pi1;
-    v.gT[2] = lev * m * (1 - pi2), v.gT[3] = lev * m * pi2;
+    v.gT[0] = lev * (1 - m) * (1 - pi1) * v.hostL, v.gT[1] = lev * (1 - m) * pi1 * v.hostR;
+    v.gT[2] = lev * m * (1 - pi2) * v.hostL, v.gT[3] = lev * m * pi2 * v.hostR;
     v.fbComb = std::sqrt(c01(p[TsCombFb])) * (p[TsCombFbInv] >= 0.5f ? -1.0 : 1.0);
     v.levComb = p[TsCombLevel] * (p[TsCombLevelInv] >= 0.5f ? -1.0 : 1.0);
   }

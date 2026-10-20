@@ -233,6 +233,7 @@ ObjectId mergeAutomationClips(Document& d, const std::set<ObjectId>& clips) {
   merged.index = first->index;
   merged.min = 0.0f;
   merged.max = 1.0f;
+  merged.flCurves = first->flCurves;
   for (const Clip* c : same) {
     const AutomationClip* ac = s.automation(c->source);
     for (auto p : visiblePoints(*ac, c->offset, s.clipLength(*c))) {
@@ -286,6 +287,7 @@ ObjectId laneToAutomationClip(Document& d, ObjectId pattern, ObjectId owner, uin
   int track = firstEmptyTrack(s);
   if (track < 0) track = static_cast<int>(s.tracks.size()) - 1;
   AutomationClip ac;
+  ac.flCurves = false;  // from pattern automation: same curves (J-41)
   ac.name = paramDisplayName(s, ParamId{owner, index});
   ac.color = p->color;
   ac.owner = owner;

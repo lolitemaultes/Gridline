@@ -10,6 +10,7 @@
 #include "../src/engine/ChannelIns.h"
 #include "../src/engine/Render.h"
 #include "../src/packs/models/models.h"
+#include "../src/packs/modulation/envc.h"
 #include "../src/packs/modulation/modulation.h"
 #include "../src/packs/samplers/dwave.h"
 #include "../src/packs/samplers/samplers.h"
@@ -342,22 +343,22 @@ int main() {
   }
   // ------------------------------------------------ Envelope Controller
   {
+    namespace mo = packs::modulation;
+    mo::EnvcState st = mo::defaultEnvcState();
+    st.knobs[mo::AfDecay] = 64;  // articulator 1: decay time × 0.5
+    st.model.arts[0].env.pts[1].value = 0.75;
+    st.model.arts[2].keyLo = st.model.arts[2].keyHi = 48;
     Bin b;
-    b.u8(3).u8(0).u8(6).u8(0);
-    while (b.b.size() < 0x180) b.u8(0);
-    b.i32(3).f32(0.05f).f32(1).f32(0.5f).i32(1).i32(3).i32(3);
-    b.f64(0).f64(0).f32(0).i32(0);
-    b.f64(0.25).f64(0.75).f32(0).i32(0);
-    b.f64(0.5).f64(1.0).f32(0).i32(0);
+    b.b = mo::writeEnvcState(st);
     Env e;
     e.song.tempo = 120;
     flp::PluginMapping m;
     expect(e.run("Fruity Envelope Controller", Plug{name16("Fruity Envelope Controller"), b.b, {}, {}}, m) && m.glType == "gl.envctl",
            "Envelope Controller → Envelope Controller");
-    namespace mo = packs::modulation;
-    expect(prm(m.state, mo::envParam(0, mo::EaNumPoints)) == 3 && near(prm(m.state, mo::envPointTime(0, 1)), 0.125) &&
-               near(prm(m.state, mo::envPointLevel(0, 1)), 0.75) && near(prm(m.state, mo::envPointLevel(0, 2)), 1),
-           "Envelope Controller points (beats → seconds)");
+    const mo::EnvcModel md = mo::envcOf(m.state.data);
+    expect(prm(m.state, mo::EcModel) == 1 && near(prm(m.state, mo::artParam(0, mo::AfDecay)), 0.5) && md.arts[0].env.pts[1].value == 0.75 &&
+               md.arts[2].keyLo == 48 && m.exact,
+           "Envelope Controller articulators (knobs + records, exact)");
   }
   // ---------------------------------------------------- Control Surface
   {
@@ -370,6 +371,7 @@ int main() {
     Env e;
     flp::PluginMapping m;
     expect(e.run("Control Surface", Plug{name16("Control Surface"), b.b, {}, {}}, m) && m.glType == "gl.surface", "Control Surface → Control Surface");
+    if (std::getenv("GL_DEBUG_SURFACE")) std::printf("# surface data [%s] p0=%g\n", m.state.data.substr(0, 40).c_str(), static_cast<double>(prm(m.state, 0)));
     expect(m.state.data.rfind("3 Drop\n", 0) == 0 && near(prm(m.state, 0), 1), "Control Surface toggle control + value");
   }
   // ------------------------------------------------ BooBass, Fruit Kick

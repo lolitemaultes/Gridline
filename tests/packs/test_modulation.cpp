@@ -406,6 +406,7 @@ int main() {
     Document d = baseDoc();
     ObjectId pat = d.song().patterns[0].id;
     ObjectId env = d.addChannel("env", "gl.envctl");
+    d.setParam(channelPluginParam(env, mod::EcModel), 0);  // the simple model (J-41: articulators are the default)
     d.addNote(pat, env, {0, 96, 60, 127});
     Rig rig(d.song());
     rig.run(441, 64);  // 10 ms: past the 5 ms attack point

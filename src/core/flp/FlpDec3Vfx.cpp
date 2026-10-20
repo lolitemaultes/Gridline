@@ -715,6 +715,7 @@ bool decodeVfxEnvelope(Context& c, const std::vector<Event>& evs, PluginMapping&
   Blob b = gen2::stateBlob(evs);
   if (b.size() < 0x100 || b.u16(0) != 3) return false;
   begin(m, "gl.envctl");
+  set(m, mod::EcModel, 0);  // the four-envelope simple model (J-41)
   // Envelope lists in order: list 5·a + t = articulator a, target t.
   struct List {
     size_t at;

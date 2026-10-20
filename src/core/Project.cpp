@@ -384,6 +384,7 @@ void arrangementToJson(const Song& s, Json& j) {
       if (a.min != 0.0f) ja.object["min"] = num(a.min);
       if (a.max != 1.0f) ja.object["max"] = num(a.max);
       if (a.loop > 0) ja.object["loop"] = num(static_cast<double>(a.loop));
+      if (a.flCurves) ja.object["flCurves"] = boolean(true);  // J-41 (absent: the pre-J-41 curves)
       Json pts = Json::makeArray();
       for (const auto& p : a.points) {
         Json jp = Json::makeArray();  // [pos, value, tension, shape]
@@ -432,6 +433,7 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
       a.min = static_cast<float>(std::clamp(ja.num("min", 0), 0.0, 1.0));
       a.max = static_cast<float>(std::clamp(ja.num("max", 1), 0.0, 1.0));
       a.loop = std::max<Tick>(0, jsonInt<Tick>(ja.num("loop", 0)));
+      a.flCurves = flag(ja, "flCurves");
       if (const Json* pts = ja.find("points"); pts && pts->is(Json::Type::Array))
         for (const auto& jp : pts->array) {
           if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;

@@ -186,14 +186,35 @@ void appendInfos(std::vector<PluginInfo>& v) {
       }
     }
     p.params[EcContinuous] = tog("Continuous output", 0);
-    p.outputs = {"Env A", "Env B", "Env C", "Env D"};
+    // J-41: articulator model (default for new instances; older states keep the simple model).
+    p.params[EcModel] = ch("Engine", {"Simple", "Articulators"}, 1);
+    p.legacyModelParam = EcModel;
+    for (int a = 0; a < kArts; ++a) {
+      const std::string pre = "Art " + std::to_string(a + 1) + " ";
+      p.params[artParam(a, AfBase)] = lin(pre + "base", "%", 0, 1, 0.5);
+      p.params[artParam(a, AfEnvAmt)] = lin(pre + "envelope", "%", -1, 1, 1);
+      p.params[artParam(a, AfLfoAmt)] = lin(pre + "LFO", "%", -1, 1, 0.5);
+      p.params[artParam(a, AfAttack)] = lin(pre + "attack scale", "x", 0, 2, 1);
+      p.params[artParam(a, AfDecay)] = lin(pre + "decay scale", "x", 0, 2, 1);
+      p.params[artParam(a, AfSustain)] = lin(pre + "sustain offset", "", -1, 1, 0);
+      p.params[artParam(a, AfRelease)] = lin(pre + "release scale", "x", 0, 2, 1);
+      p.params[artParam(a, AfLfoSpeed)] = lin(pre + "LFO speed", "", 0, 1, 40898.0 / 65536.0);
+      p.params[artParam(a, AfLfoTension)] = lin(pre + "LFO tension", "", -1, 1, 0);
+      p.params[artParam(a, AfLfoSkew)] = lin(pre + "LFO skew", "", -0.5, 0.5, 0);
+      p.params[artParam(a, AfLfoPw)] = lin(pre + "LFO width", "", 0, 1, 0);
+    }
+    p.params[EcModX] = lin("Mod X", "%", 0, 1, 0.5);
+    p.params[EcModY] = lin("Mod Y", "%", 0, 1, 0.5);
+    p.outputs = {"Env A", "Env B", "Env C", "Env D", "Env E", "Env F", "Env G", "Env H"};
     p.presets = {
-        {"Pluck shape", {{envPointTime(0, 0), 0.002f}, {envPointTime(0, 1), 0.15f}, {envPointLevel(0, 1), 0.0f},
+        {"Default ADSR", {}},
+        {"Long release", {{artParam(0, AfRelease), 2.0f}, {artParam(0, AfDecay), 1.5f}}},
+        {"Soft attack", {{artParam(0, AfAttack), 2.0f}, {artParam(0, AfSustain), 0.25f}}},
+        {"Pluck shape", {{EcModel, 0}, {envPointTime(0, 0), 0.002f}, {envPointTime(0, 1), 0.15f}, {envPointLevel(0, 1), 0.0f},
                          {envParam(0, EaNumPoints), 2}, {envParam(0, EaSustain), 0}}},
-        {"Slow swell", {{envPointTime(0, 0), 1.5f}, {envPointTime(0, 1), 0.5f}, {envPointLevel(0, 1), 0.8f}}},
-        {"Gated LFO", {{envParam(0, EaLfoAmt), 0.5f}, {envParam(0, EaMode), 1}, {envParam(0, EaLfoSyncRate), 4}}},
-        {"Split keys", {{envParam(0, EaKeyHigh), 59}, {envParam(1, EaKeyLow), 60}}}};
-    p.editorWidth = 600;
+        {"Slow swell", {{EcModel, 0}, {envPointTime(0, 0), 1.5f}, {envPointTime(0, 1), 0.5f}, {envPointLevel(0, 1), 0.8f}}},
+        {"Gated LFO", {{EcModel, 0}, {envParam(0, EaLfoAmt), 0.5f}, {envParam(0, EaMode), 1}, {envParam(0, EaLfoSyncRate), 4}}}};
+    p.editorWidth = 740;
     v.push_back(std::move(p));
   }
   // -------------------------------------------------- Keyboard Controller
@@ -241,9 +262,9 @@ void appendInfos(std::vector<PluginInfo>& v) {
   // ------------------------------------------------------ Control Surface
   {
     PluginInfo p = make("gl.surface", "Control Surface", "Controller", E);
-    p.params.resize(SfCount);
-    for (int k = 0; k < kSurfaceControls; ++k) {
-      p.params[k] = lin("Control " + std::to_string(k + 1), "%", 0, 1, 0);
+    p.params.resize(SfCountV2);
+    for (int k = 0; k < kSurfaceMax; ++k) {
+      p.params[surfaceParam(k)] = lin("Control " + std::to_string(k + 1), "%", 0, 1, 0);
       p.outputs.push_back("Control " + std::to_string(k + 1));
     }
     p.params[SfSmooth] = lg("Smoothing", "s", 0.001, 1, 0.02);
@@ -427,10 +448,11 @@ void appendInfos(std::vector<PluginInfo>& v) {
   // ----------------------------------------------------------- Patch Host
   for (int fx = 0; fx < 2; ++fx) {
     PluginInfo p = make(fx ? "gl.patcherfx" : "gl.patcher", fx ? "Patch Host FX" : "Patch Host", "Utility", fx ? E : G);
-    p.params.resize(PhCount);
+    p.params.resize(PhCountV2);
     for (int k = 0; k < kMacros; ++k) p.params[k] = lin("Macro " + std::to_string(k + 1), "%", 0, 1, 0.5);
     p.params[PhMix] = lin("Mix", "%", 0, 1, 1);
     p.params[PhGain] = lin("Output", "dB", -24, 12, 0);
+    for (int k = 0; k < kPatchMaps; ++k) p.params[PhMap0 + k] = lin("Param " + std::to_string(k + 1), "%", 0, 1, 0);
     p.presets = {{"Macros centred", {}}, {"Macros low", {{0, 0.0f}, {1, 0.0f}, {2, 0.0f}, {3, 0.0f}}}, {"Half wet", {{PhMix, 0.5f}}}};
     p.editorWidth = fx ? 760.0f : 600.0f;  // instruments open in the 600 px channel window
     v.push_back(std::move(p));

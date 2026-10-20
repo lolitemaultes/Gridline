@@ -59,6 +59,16 @@ bool visitState(PluginState& st, const std::function<void(std::string&)>& fn) {
     return changed;
   }
   const PluginInfo* info = findPlugin(st.type);
+  if (info && info->usesSample && st.data.find('\n') != std::string::npos) {
+    // "<sample file>\n<model>" (J-41 slicer region model): the first line.
+    const size_t nl = st.data.find('\n');
+    std::string first = st.data.substr(0, nl);
+    const std::string before = first;
+    if (!first.empty()) fn(first);
+    if (first == before) return false;
+    st.data = first + st.data.substr(nl);
+    return true;
+  }
   if ((info && info->usesSample) || looksLikeFilePath(st.data)) {
     std::string before = st.data;
     fn(st.data);

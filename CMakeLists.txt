@@ -137,6 +137,11 @@ target_link_libraries(gridline_tests_j33 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j33 PRIVATE tests)
 target_compile_options(gridline_tests_j33 PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME j33_instruments COMMAND gridline_tests_j33 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+add_executable(gridline_tests_j41 tests/test_j41.cpp)
+target_link_libraries(gridline_tests_j41 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j41 PRIVATE tests)
+target_compile_options(gridline_tests_j41 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j41_articulators COMMAND gridline_tests_j41 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(gridline_tests_kappa1 tests/test_kappa1.cpp)
 target_link_libraries(gridline_tests_kappa1 PRIVATE gridline_core)
 target_compile_options(gridline_tests_kappa1 PRIVATE -Wall -Wextra -Wpedantic)
@@ -410,11 +415,29 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   # Run from the build tree: assets are found next to the source tree.
   target_compile_definitions(gridline-app PRIVATE GRIDLINE_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")
 
+  # App icon (tools/make_app_icon.py): Gridline.icns for the macOS bundle, gridline-app-<size>.png
+  # for Linux, gridline-app-256.bmp for the SDL window / dock icon (loaded at startup).
+  if(APPLE)
+    # build/Gridline.app: a launchable bundle (Finder / Dock icon) whose executable is a hard
+    # link to build/gridline-app, refreshed after every link. Assets resolve to the source tree.
+    set(GRIDLINE_APP_BUNDLE ${CMAKE_BINARY_DIR}/Gridline.app)
+    file(MAKE_DIRECTORY ${GRIDLINE_APP_BUNDLE}/Contents/MacOS ${GRIDLINE_APP_BUNDLE}/Contents/Resources)
+    file(WRITE ${GRIDLINE_APP_BUNDLE}/Contents/Info.plist
+         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleName</key><string>Gridline</string>\n<key>CFBundleDisplayName</key><string>Gridline</string>\n<key>CFBundleExecutable</key><string>gridline-app</string>\n<key>CFBundleIdentifier</key><string>org.gridline.Gridline</string>\n<key>CFBundleIconFile</key><string>Gridline</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>${PROJECT_VERSION}</string>\n<key>CFBundleVersion</key><string>${PROJECT_VERSION}</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.music</string>\n<key>LSMinimumSystemVersion</key><string>10.15</string>\n<key>NSHighResolutionCapable</key><true/>\n<key>NSMicrophoneUsageDescription</key><string>Gridline records audio from your input devices.</string>\n</dict></plist>\n")
+    add_custom_command(TARGET gridline-app POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/icons/Gridline.icns
+              ${GRIDLINE_APP_BUNDLE}/Contents/Resources/Gridline.icns
+      COMMAND ${CMAKE_COMMAND} -E rm -f ${GRIDLINE_APP_BUNDLE}/Contents/MacOS/gridline-app
+      COMMAND ${CMAKE_COMMAND} -E create_hardlink $<TARGET_FILE:gridline-app> ${GRIDLINE_APP_BUNDLE}/Contents/MacOS/gridline-app
+      COMMAND touch ${GRIDLINE_APP_BUNDLE}
+      COMMENT "Assembling Gridline.app")
+  endif()
+
   install(TARGETS gridline-app gridline RUNTIME DESTINATION bin)
   install(DIRECTORY assets/ DESTINATION share/gridline/assets)
   install(FILES assets/linux/gridline.desktop DESTINATION share/applications)
-  foreach(sz 16 24 32 48 64 128 256 512)
-    install(FILES assets/icons/gridline-${sz}.png DESTINATION share/icons/hicolor/${sz}x${sz}/apps RENAME gridline.png)
+  foreach(sz 16 24 32 48 64 96 128 256 512)
+    install(FILES assets/icons/gridline-app-${sz}.png DESTINATION share/icons/hicolor/${sz}x${sz}/apps RENAME gridline.png)
   endforeach()
 else()
   message(STATUS "SDL2/OpenGL not found: building the engine, CLI and tests only (no gridline-app)")

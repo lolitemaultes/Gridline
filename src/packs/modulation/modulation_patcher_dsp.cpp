@@ -15,6 +15,7 @@
 #include "../Packs.h"
 #include "modulation.h"
 #include "modulation_dsp.h"
+#include "patchv2.h"
 
 namespace gl::packs::modulation {
 
@@ -209,14 +210,34 @@ class PatchRuntime {
 
 class PatchHostGenerator final : public Generator {
  public:
-  bool active() const override { return rt_.active(); }
+  bool active() const override { return v2on_ ? v2_.active() : rt_.active(); }
 
  protected:
-  void onNoteOn(uint32_t id, double pitch, float velocity) override { rt_.noteOn(id, pitch, velocity); }
-  void onNoteOff(uint32_t id) override { rt_.noteOff(id); }
-  void onAllOff() override { rt_.allOff(); }
-  void onKill() override { rt_.kill(); }
+  void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& props) override {
+    if (v2on_) v2_.noteOn(id, pitch, velocity, props);
+    else rt_.noteOn(id, pitch, velocity);
+  }
+  void onNoteOn(uint32_t id, double pitch, float velocity) override { onNoteOnEx(id, pitch, velocity, NoteProps{}); }
+  void onNoteOff(uint32_t id) override {
+    if (v2on_) v2_.noteOff(id);
+    else rt_.noteOff(id);
+  }
+  void onAllOff() override {
+    v2_.allOff();
+    rt_.allOff();
+  }
+  void onKill() override {
+    v2_.kill();
+    rt_.kill();
+  }
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
+    v2on_ = v2_.sync(aux.custom.get());  // J-41: FL Patcher graphs
+    if (v2on_) {
+      st_ = &s;
+      ctx_ = ctx;
+      gain_ = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
+      return;
+    }
     pa_ = dynamic_cast<const PatchAux*>(aux.custom.get());
     rt_.sync(pa_);
     if (pa_) rt_.applyMacros(s, *pa_);
@@ -224,6 +245,17 @@ class PatchHostGenerator final : public Generator {
     gain_ = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
   }
   void render(float* L, float* R, int n) override {
+    if (v2on_) {
+      while (n > 0) {
+        const int m = std::min(n, 256);
+        std::memset(tmpL_, 0, sizeof(float) * static_cast<size_t>(m));
+        std::memset(tmpR_, 0, sizeof(float) * static_cast<size_t>(m));
+        v2_.run(*st_, ctx_, tmpL_, tmpR_, m, true);
+        for (int k = 0; k < m; ++k) L[k] += tmpL_[k] * gain_, R[k] += tmpR_[k] * gain_;
+        L += m, R += m, n -= m;
+      }
+      return;
+    }
     if (!pa_) return;
     // Inner instruments render whole sub-blocks between this host's events.
     float* tl = tmpL_;
@@ -249,6 +281,9 @@ class PatchHostGenerator final : public Generator {
   ProcessContext ctx_;
   float gain_ = 1;
   float tmpL_[256] = {}, tmpR_[256] = {};
+  PatchV2Runtime v2_;
+  bool v2on_ = false;
+  const PluginState* st_ = nullptr;
 };
 
 class PatchHostEffect final : public Effect {
@@ -262,6 +297,22 @@ class PatchHostEffect final : public Effect {
   }
   void processAux(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R,
                   int n) override {
+    if (v2_.sync(aux.custom.get())) {  // J-41: FL Patcher graphs
+      const float mix = static_cast<size_t>(PhMix) < s.params.size() ? s.params[PhMix] : 1.f;
+      const float gain = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
+      for (int done = 0; done < n;) {
+        const int p = std::min(n - done, 256);
+        std::memcpy(dryL_, L + done, sizeof(float) * static_cast<size_t>(p));
+        std::memcpy(dryR_, R + done, sizeof(float) * static_cast<size_t>(p));
+        v2_.run(s, ctx, L + done, R + done, p, false);
+        for (int k = 0; k < p; ++k) {
+          L[done + k] = (dryL_[k] + (L[done + k] - dryL_[k]) * mix) * gain;
+          R[done + k] = (dryR_[k] + (R[done + k] - dryR_[k]) * mix) * gain;
+        }
+        done += p;
+      }
+      return;
+    }
     const auto* pa = dynamic_cast<const PatchAux*>(aux.custom.get());
     rt_.sync(pa);
     if (!pa) return;
@@ -281,14 +332,17 @@ class PatchHostEffect final : public Effect {
       done += p;
     }
   }
-  void reset() override { rt_.kill(); }
+  void reset() override {
+    rt_.kill();
+    v2_.kill();
+  }
   // Sum over the serial stages of the latest hosted effect in each (macros
   // applied as the runtime does). A node's undelayed dry part is mixed back
   // in, so a serial node counts while its wet part dominates (mix >= 50 %);
   // the same holds for the host's own mix.
   int latencyFor(const PluginState& s, double sr) const override {
     auto prm = [&](int k, float d) { return static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : d; };
-    if (prm(PhMix, 1.f) < 0.5f) return 0;
+    if (prm(PhMix, 1.f) < 0.5f || isPatchV2(s.data)) return 0;  // v2 graphs: hosted latencies are not compensated
     const PatchGraph g = patchGraphOf(s);
     std::vector<PluginState> live;
     for (const PatchNode& nd : g.nodes) live.push_back(nd.plugin);
@@ -320,6 +374,7 @@ class PatchHostEffect final : public Effect {
 
  private:
   PatchRuntime rt_;
+  PatchV2Runtime v2_;
   float dryL_[256] = {}, dryR_[256] = {};
 };
 
@@ -430,6 +485,13 @@ PatchGraph patchGraphOf(const PluginState& state) {
 }
 
 void preparePatchHost(const PluginState& state, ChannelAux& aux) {
+  if (isPatchV2(state.data)) {  // J-41: FL Patcher graphs
+    PatchV2 g;
+    if (parsePatchV2(state.data, g)) {
+      preparePatchV2(state, g, aux);
+      return;
+    }
+  }
   auto pa = std::make_shared<PatchAux>();
   pa->fx = state.type == "gl.patcherfx";
   pa->graph = patchGraphOf(state);

@@ -17,6 +17,7 @@
 //                   3 × f32, f32 start, f32 end, i32, mute toggles, position
 //                   spline, volume spline}, ended by 3000.
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -24,6 +25,7 @@
 #include <fstream>
 #include <map>
 #include "../../engine/Sample.h"
+#include "../../engine/SlicexEngine.h"
 #include "../../packs/samplers/samplers.h"
 #include "../PluginParams.h"
 #include "FlpGen2.h"
@@ -211,8 +213,9 @@ void setMarkers(PluginMapping& m, const std::vector<uint32_t>& starts, uint64_t 
   if (k == 0) set(m, slMarker(0), 0.0);
 }
 
-// ------------------------------------------------------------------ Slicex
-bool decodeSlicex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+// States the full parser does not take (partial / unusual layouts): the
+// pre-J-41 reading (sample, cues, master knobs, region fields).
+bool decodeSlicexClassic(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   using namespace pp;
   Blob s = stateBlob(evs);
   if (s.size() < 0x62) return false;
@@ -297,39 +300,211 @@ bool decodeSlicex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   return true;
 }
 
+
+// ------------------------------------------------------------------ Slicex
+// Full state (J-41, analysis/rea/agents/j33/slicex_spec.md Part A): parsed
+// whole into the Slicex region model (engine/SlicexEngine.h) that the
+// slicer's region engine (SlEngine = 1) plays; the per-region gain / pan /
+// pitch / cut group / delay / end and the master knobs are also parameters.
+namespace sx = gl::slicex;
+
+// Regions of a deck from its audio's cue points ("ltxt" lengths); one
+// region over the whole sample when there are none.
+void deckRegions(sx::Deck& d, const WavInfo& w, size_t records) {
+  std::vector<sx::Region> regs;
+  for (size_t k = 0; k < w.cues.size(); ++k) {
+    sx::Region r;
+    r.start = w.cues[k];
+    auto it = w.regionLen.find(w.cues[k]);
+    r.length = it != w.regionLen.end() ? static_cast<int64_t>(it->second) : -1;
+    regs.push_back(r);
+  }
+  if (regs.empty()) regs.push_back(sx::Region{});
+  for (size_t k = 0; k < regs.size() && k < d.regions.size(); ++k) regs[k].rec = d.regions[k].rec;
+  (void)records;
+  d.regions = regs;
+}
+
+bool decodeSlicex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+  using namespace pp;
+  Blob s = stateBlob(evs);
+  if (s.size() < 0x62) return false;
+  begin(m, "gl.slicer");
+  sx::Model md;
+  std::array<std::vector<uint8_t>, 2> riff;
+  const bool parsed = sx::parseState(s.p, s.size(), md, riff);
+  if (!parsed) return decodeSlicexClassic(c, evs, m);
+  bool exact = true;
+  std::string path;
+  WavInfo wa;
+  std::array<size_t, 2> records = {md.decks[0].regions.size(), md.decks[1].regions.size()};
+  for (int d = 0; d < 2; ++d) {
+    sx::Deck& dk = md.decks[static_cast<size_t>(d)];
+    const std::string raw = textBytes(Blob(reinterpret_cast<const uint8_t*>(dk.rawPath.data()), dk.rawPath.size()), 0, dk.rawPath.size());
+    WavInfo w;
+    std::string file;
+    const auto& rf = riff[static_cast<size_t>(d)];
+    if (!rf.empty()) {
+      w = wavInfo(Blob(rf.data(), rf.size()));
+      if (w.ok && w.frames > 0) file = storeEmbedded(Blob(rf.data(), rf.size()), raw.empty() ? "slicex" : raw);
+      else dk.riff = rf;  // an empty deck: kept inline
+    }
+    if (file.empty() && !raw.empty() && dk.riff.empty()) {
+      file = resolveFl(c, raw);
+      std::vector<uint8_t> bytes = readAll(file);
+      w = wavInfo(Blob(bytes.data(), bytes.size()));
+      w.frames = sampleFrames(file, w);
+    }
+    dk.file = file;
+    if (d == 0) path = file, wa = w;
+    if (d == 1 && w.frames > 0) exact = false;  // deck B audio: played, layering by note colour not verified
+    deckRegions(dk, w, records[static_cast<size_t>(d)]);
+    if (dk.regions.size() != records[static_cast<size_t>(d)] && !(records[static_cast<size_t>(d)] == 1 && w.cues.empty()))
+      c.report.warn("Slicex: region count differs from the sample's cue points");
+  }
+  // Features whose behaviour is not verified: song-time-synced layering,
+  // mapping curves, speed / sample-start articulators.
+  if (md.layering() == 7) exact = false;
+  for (const auto& g : md.groups)
+    for (int t = 0; t < sx::kTargets; ++t) {
+      const auto& a = g.arts[static_cast<size_t>(t)];
+      const double neutral = (t == sx::TVol || t == sx::TSpeed) ? 1.0 : 0.5;
+      for (const auto& mp : a.maps)
+        for (const auto& pt : mp.pts)
+          if (pt.value != neutral) exact = false;
+      if ((t == sx::TSpeed || t == sx::TStart) && (a.env.on() || a.lfo.on())) exact = false;
+    }
+  if (md.decks[0].regions.size() > static_cast<size_t>(kMaxSlices)) exact = false;
+  m.state.data = path + "\n" + sx::writeText(md);
+  set(m, SlEngine, 1);
+  // Markers (region starts) for the slicer view, and region end points.
+  std::vector<uint32_t> starts;
+  for (const auto& r : md.decks[0].regions) starts.push_back(static_cast<uint32_t>(r.start));
+  setMarkers(m, starts, wa.frames);
+  if (wa.frames > 0)
+    for (size_t k = 0; k < md.decks[0].regions.size() && k < static_cast<size_t>(kMaxSlices); ++k) {
+      const auto& r = md.decks[0].regions[k];
+      if (r.length < 0) continue;
+      const uint64_t endF = static_cast<uint64_t>(r.start + r.length);
+      const uint64_t next = k + 1 < md.decks[0].regions.size() ? static_cast<uint64_t>(md.decks[0].regions[k + 1].start) : wa.frames;
+      if (endF < next) set(m, slParam2(static_cast<int>(k), SliceEnd), static_cast<double>(endF) / static_cast<double>(wa.frames));
+    }
+  // Master level (11^(v/12800) − 1)/10, pitch (cents), mod X / Y (0..512).
+  const double master = sx::masterGain(md.knobs[2]);
+  set(m, SlMaster, master);
+  set(m, SlVolume, std::clamp(master, 0.0, 1.0));
+  set(m, SlPitch, md.knobs[5] / 100.0);
+  set(m, SlModX, md.knobs[6] / 512.0);
+  set(m, SlModY, md.knobs[7] / 512.0);
+  if (master > 2.0 || std::abs(md.knobs[5]) > 2400 || md.knobs[6] < 0 || md.knobs[6] > 512 || md.knobs[7] < 0 || md.knobs[7] > 512) exact = false;
+  set(m, SlBaseNote, 60);
+  set(m, SlDeclick, 1);
+  // Per-region parameters (deck A).
+  for (size_t k = 0; k < md.decks[0].regions.size() && k < static_cast<size_t>(kMaxSlices); ++k) {
+    const auto& rec = md.decks[0].regions[k].rec;
+    const int ik = static_cast<int>(k);
+    const double g = sx::regionGain(rec[sx::RVolume]);
+    const double db = g > 0 ? 20.0 * std::log10(g) : -24.0;
+    if (db > 12.0 || (g > 0 && db < -24.0)) exact = false;
+    set(m, slParam(ik, SliceGain), std::clamp(db, -24.0, 12.0));
+    set(m, slParam(ik, SlicePan), std::clamp(rec[sx::RPan] / 6400.0, -1.0, 1.0));
+    set(m, slParam(ik, SlicePitch), std::clamp(rec[sx::RPitch] / 100.0, -24.0, 24.0));
+    set(m, slParam2(ik, SliceCut), std::clamp(rec[sx::RCut], 0, 99));
+    set(m, slParam2(ik, SliceDelay), std::clamp(rec[sx::RDelay] / 12800.0 * 0.5, 0.0, 1.0));  // beats → s at 120 BPM
+    if (rec[sx::ROutput] != 0) exact = false;  // per-region mixer outputs are not routed
+  }
+  linkParams(m, {{2, SlMaster, [](double n) { return sx::masterGain(static_cast<int32_t>(std::lround(n * 16000.0))); }},
+                 {5, SlPitch, [](double n) { return (-1200.0 + 2400.0 * n) / 100.0; }},
+                 {6, SlModX, [](double n) { return std::round(n * 512.0) / 512.0; }},
+                 {7, SlModY, [](double n) { return std::round(n * 512.0) / 512.0; }}},
+             {{2, 0, 16000}, {5, -1200, 1200}, {6, 0, 512}, {7, 0, 512}});
+  // An empty deck plays nothing, as in FL: still exact.
+  if (path.empty() && md.decks[0].riff.empty()) c.report.warn("Slicex: no sample found");
+  m.exact = exact;
+  return true;
+}
+
 // ----------------------------------------------------------- Fruity Slicer
+// u32 version, f32 beats, f32 tempo, i32 pitch (cents), i32 stretch amount
+// (ratio 2^(v/10000)), i32 stretch method, i32 fade in (ms), i32 fade out
+// (ms), Pascal path, i32 slice count, slices {Pascal name, i32 start frame,
+// i32 end (-1 = next), f32 (-1), u8 reversed}, then the tail: u8, i32 base
+// note, u8, i32 sample rate, u8, u8 declick, u8 (v16: + settings block).
+// J-41: the processing (reverse, declick, stretch, pitch, fades) is the
+// slicer's engine 2; exact when nothing is stretched or pitch-shifted (the
+// stretch itself is Gridline's own).
 bool decodeFruitySlicer(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   using namespace pp;
   Blob s = stateBlob(evs);
   if (s.size() < 37) return false;
   begin(m, "gl.slicer");
+  const uint32_t version = s.u32(0);
   size_t p = 0;
   std::string rawPath = pascal(s, 32, &p);
   int32_t count = s.i32(p);
   p += 4;
-  std::vector<uint32_t> starts;
-  for (int32_t k = 0; k < count && k < 4096 && s.has(p, 1); ++k) {
+  struct Rec {
+    int32_t start, end;
+    float f;
+    uint8_t rev;
+  };
+  std::vector<Rec> recs;
+  bool parsed = count >= 0;
+  for (int32_t k = 0; k < count && k < 4096; ++k) {
+    if (!s.has(p, 1)) {
+      parsed = false;
+      break;
+    }
     size_t q = 0;
     pascal(s, p, &q);  // slice name
-    int32_t st = s.i32(q);
-    if (st >= 0) starts.push_back(static_cast<uint32_t>(st));
+    if (!s.has(q, 13)) {
+      parsed = false;
+      break;
+    }
+    recs.push_back({s.i32(q), s.i32(q + 4), s.f32(q + 8), s.u8(q + 12)});
     p = q + 13;
   }
-  int baseNote = s.has(p + 1, 1) ? s.u8(p + 1) : 60;
+  const size_t tail = p;
+  int baseNote = s.has(tail + 1, 1) ? s.u8(tail + 1) : 60;
+  const bool haveTail = parsed && s.has(tail, 13);
+  const bool declick = haveTail ? s.u8(tail + 11) != 0 : true;
   std::string path = resolveFl(c, rawPath);
   m.state.data = path;
-  std::sort(starts.begin(), starts.end());
   uint64_t frames = 0;
   if (!path.empty()) {
     std::vector<uint8_t> bytes = readAll(path);
     frames = sampleFrames(path, wavInfo(Blob(bytes.data(), bytes.size())));
   }
+  std::vector<uint32_t> starts;
+  bool sorted = true;
+  for (size_t k = 0; k < recs.size(); ++k) {
+    if (recs[k].start >= 0) starts.push_back(static_cast<uint32_t>(recs[k].start));
+    if (k > 0 && recs[k].start <= recs[k - 1].start) sorted = false;
+  }
+  std::sort(starts.begin(), starts.end());
   setMarkers(m, starts, frames);
   set(m, SlBaseNote, baseNote > 0 && baseNote < 128 ? baseNote : 60);
   set(m, SlVolume, 1.0);
-  set(m, SlPitch, std::clamp(s.i32(12) / 100.0, -24.0, 24.0));
-  set(m, SlDeclick, 1);
-  m.exact = false;  // fit-to-tempo stretch, fades and per-slice reverse are not imported
+  const int32_t pitch = s.i32(12), fit = s.i32(16), method = s.i32(20), fin = s.i32(24), fout = s.i32(28);
+  // Processed engine: pitch / stretch / fades / declick offline, nothing at play time.
+  set(m, SlEngine, SlEngineProcessed);
+  set(m, SlProcPitch, std::clamp(pitch, -1200, 1200));
+  set(m, SlProcFit, std::clamp(fit, -20000, 20000));
+  set(m, SlProcMethod, std::clamp(method, 0, 7));
+  set(m, SlProcFadeIn, std::clamp(fin, 0, 1000));
+  set(m, SlProcFadeOut, std::clamp(fout, 0, 1000));
+  set(m, SlProcDeclick, declick ? 1 : 0);
+  set(m, SlDeclick, 0);
+  set(m, SlAttack, 0.0005);
+  bool anyRev = false;
+  for (size_t k = 0; k < recs.size() && k < static_cast<size_t>(kMaxSlices); ++k)
+    if (recs[k].rev) set(m, slParam(static_cast<int>(k), SliceReverse), 1), anyRev = true;
+  bool plain = true;  // every record: end at the next slice, f32 -1
+  for (const Rec& r : recs) plain = plain && r.end == -1 && r.f == -1.0f && r.rev <= 1;
+  m.exact = parsed && haveTail && (version == 15 || version == 16) && (frames > 0 || (rawPath.empty() && recs.empty())) && fit == 0 && pitch == 0 && method >= 0 && method <= 7 &&
+            fin >= 0 && fin <= 1000 && fout >= 0 && fout <= 1000 && recs.size() <= static_cast<size_t>(kMaxSlices) && plain &&
+            (sorted || (!anyRev && recs.size() <= 1)) && (recs.empty() || recs[0].start >= 0) && starts.size() == recs.size() &&
+            (starts.empty() || starts.back() < frames);
   return true;
 }
 

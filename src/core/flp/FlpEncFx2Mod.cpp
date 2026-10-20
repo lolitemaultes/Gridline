@@ -5,6 +5,7 @@
 // Fruity Wrapper has its own family (FlpEncWrapper.cpp). The reverse of the
 // decoders in those files; see FlpEncode.h for the model.
 #include <algorithm>
+#include <cstdlib>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -15,6 +16,7 @@
 #include "FlpEncode.h"
 #include "../../packs/edison/edison.h"
 #include "../../packs/modulation/modulation.h"
+#include "../../packs/modulation/patchv2.h"
 #include "../../packs/modulation/modulation_dsp.h"
 #include "../../packs/spectral/spectral.h"
 #include "../../packs/utility/utility.h"
@@ -813,6 +815,58 @@ bool patchInPlace(const PluginState& g, Bytes& b, const EncodeContext& c) {
   return true;
 }
 
+// J-41: version-2 graphs (FL patches as wired) are written back chunk for
+// chunk: the kept FL items, each node's chunks around its plugin state, the
+// state re-encoded from the node's Gridline state (or kept as is when
+// Gridline has no equivalent).
+bool writePatchV2(const PluginState& g, Bytes& b, const EncodeContext& c) {
+  md::PatchV2 graph;
+  if (!md::isPatchV2(g.data) || !md::parsePatchV2(g.data, graph)) return false;
+  // The patch's parameters are its targets' values in FL: a host Param slot
+  // moved away from its target's value is written into the target.
+  const md::PatchV2Topo topo = md::patchV2Topology(graph);
+  for (size_t k = 0; k < topo.slots.size() && k < static_cast<size_t>(md::kPatchMaps); ++k) {
+    const auto& sl = topo.slots[k];
+    if (sl.node < 0 || static_cast<size_t>(sl.node) >= graph.nodes.size()) continue;
+    md::PatchV2Node& n = graph.nodes[static_cast<size_t>(sl.node)];
+    const md::PatchV2Map* mp = n.map(sl.fl);
+    const size_t pi = static_cast<size_t>(md::PhMap0) + k;
+    const float v = pi < g.params.size() ? g.params[pi] : std::nanf("");
+    if (!mp || mp->gl < 0 || static_cast<size_t>(mp->gl) >= n.plugin.params.size() || !std::isfinite(v)) continue;
+    const float cur = n.plugin.params[static_cast<size_t>(mp->gl)];
+    if (std::fabs(mp->invert(cur) - v) > 1e-6) n.plugin.params[static_cast<size_t>(mp->gl)] = static_cast<float>(mp->eval(v));
+  }
+  ByteWriter out;
+  out.u32(graph.version);
+  for (const std::string& it : graph.items) {
+    if (it.empty() || it[0] != '#') {
+      out.bytes(md::patchUnhex(it));
+      continue;
+    }
+    const size_t k = static_cast<size_t>(std::strtoul(it.c_str() + 1, nullptr, 10));
+    if (k >= graph.nodes.size()) continue;
+    const md::PatchV2Node& n = graph.nodes[k];
+    Bytes payload = md::patchUnhex(n.head);
+    if (n.tail != "-") {
+      Bytes state;
+      if (!n.raw.empty()) {
+        state = md::patchUnhex(n.raw);
+      } else {
+        const Bytes orig = md::patchUnhex(n.orig);
+        Result r = encode(n.plugin, n.flName, orig.empty() ? nullptr : &orig, c);
+        state = r.hasState ? r.state : orig;
+      }
+      const Bytes ch = md::patchChunkBytes(5005, state);
+      payload.insert(payload.end(), ch.begin(), ch.end());
+      const Bytes tail = md::patchUnhex(n.tail);
+      payload.insert(payload.end(), tail.begin(), tail.end());
+    }
+    out.bytes(md::patchChunkBytes(0, payload));
+  }
+  b = out.b;
+  return true;
+}
+
 Encoder patcher(bool instrument) {
   Encoder e;
   e.flName = "Patcher";
@@ -821,6 +875,7 @@ Encoder patcher(bool instrument) {
   e.generator = instrument;
   e.defaults = [instrument] { return buildPatcher({}, instrument); };
   e.write = [instrument](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    if (writePatchV2(g, b, c)) return;
     if (patchInPlace(g, b, c)) return;
     md::PatchGraph graph = md::parsePatchGraph(g.data);
     std::vector<EncodedNode> nodes;

@@ -7,6 +7,7 @@
 #include "enc_common.h"
 #include "packs/models/harmor.h"
 #include "packs/models/models.h"
+#include "packs/modulation/envc.h"
 #include "packs/modulation/modulation.h"
 #include "packs/samplers/samplers.h"
 #include "packs/synths/gms.h"
@@ -112,14 +113,28 @@ inline void testEncGenA() {
     genaCorpus("MIDI Out", "MIDI Out", 0);
   }
 
-  // ---- Envelope Controller: no default state; points and counts on a shipped state.
-  if (flInstalled()) {
+  // ---- Envelope Controller (J-41): the whole state is written from the
+  // articulator knobs and the model text; edits of both encode exactly.
+  {
     namespace md = gl::packs::modulation;
-    expect(genaPatch("Fruity Envelope Controller", 0, [](gl::PluginState& g) {
-      g.params[md::envPointLevel(0, 1)] = 0.25f;
-      g.params[md::envParam(0, md::EaNumPoints)] = g.params[md::envParam(0, md::EaNumPoints)] + 1;
-    }), "Envelope Controller: a point level and a point count change encode exactly");
-    genaCorpus("Fruity Envelope Controller", "Envelope Controller", 1000);  // no defaults: native writes none
+    gl::PluginState g = gl::defaultPluginState("gl.envctl");
+    g.params[md::artParam(1, md::AfRelease)] = 1.5f;
+    g.params[md::EcContinuous] = 1;
+    md::EnvcModel model = md::defaultEnvc();
+    model.arts[1].env.enabled = -1;
+    model.arts[1].maps[md::MapVel].pts[1].value = 1.0;
+    g.data = md::writeEnvc(model);
+    expect(nativeRoundTrip("Fruity Envelope Controller", g), "Envelope Controller: knobs, records and maps encode back exactly");
+    if (flInstalled()) {
+      expect(genaPatch("Fruity Envelope Controller", 0, [](gl::PluginState& p) {
+        p.params[md::artParam(0, md::AfDecay)] = 0.5f;
+        md::EnvcModel m = md::envcOf(p.data);
+        m.arts[0].env.pts[1].value = 0.25;
+        m.arts[0].env.pts.push_back(m.arts[0].env.pts.back());
+        p.data = md::writeEnvc(m);
+      }), "Envelope Controller: a knob, a point value and a point count change encode exactly");
+      genaCorpus("Fruity Envelope Controller", "Envelope Controller", 0);
+    }
   }
 
   // ---- GMS.

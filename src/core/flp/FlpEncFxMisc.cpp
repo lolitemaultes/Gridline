@@ -337,17 +337,23 @@ Encoder controlSurface() {
     w.zeros(60);
     return w.b;
   };
+  // Values of the value controls in order (a pad has two; bevels and labels none, J-41).
   e.fields = [](const Bytes& b) {
     std::vector<Field> v;
     size_t o = 4;
-    int k = -1;
+    int k = 0, type = -1;
     while (o + 12 <= b.size()) {
       const uint32_t id = getU32(b, o);
       const uint64_t size = static_cast<uint64_t>(getU32(b, o + 4)) | static_cast<uint64_t>(getU32(b, o + 8)) << 32;
       o += 12;
       if (size > b.size() - o) break;
-      if (id == 2100) ++k;
-      if (id == 2102 && size >= 4 && k >= 0 && k < md::kSurfaceControls) v.push_back(field(k, o, Type::F32, 0, 1));
+      if (id == 2100) type = size >= 4 ? static_cast<int>(getU32(b, o)) : 0;
+      if (id == 2102 && type >= 0 && type != 5 && type != 6) {
+        const int n = type == 1 ? 2 : 1;
+        for (int j = 0; j < n && 4 * static_cast<uint64_t>(j) + 4 <= size; ++j, ++k)
+          if (k < md::kSurfaceMax) v.push_back(field(md::surfaceParam(k), o + 4 * static_cast<size_t>(j), Type::F32, 0, 1));
+        type = -1;
+      }
       o += static_cast<size_t>(size);
     }
     return v;
@@ -357,7 +363,20 @@ Encoder controlSurface() {
   // chunks (FL's layout, colours, captions); the others are written as FL's
   // control kinds with their class only (wheel, slider, button; toggles
   // "StayDown"), on a grid. Values are solved by the fields afterwards.
+  // J-41: an imported surface carries its FL chunks ("#fl <hex>" line): it is
+  // written back from them and the values are solved into its 2102 records.
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    if (const size_t at = g.data.find("#fl "); at != std::string::npos && (at == 0 || g.data[at - 1] == '\n')) {
+      const size_t endl = g.data.find('\n', at);
+      const std::string hx = g.data.substr(at + 4, endl == std::string::npos ? std::string::npos : endl - at - 4);
+      Bytes raw;
+      auto v = [](char ch) { return ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : 0; };
+      for (size_t i = 0; i + 1 < hx.size(); i += 2) raw.push_back(static_cast<uint8_t>(v(hx[i]) * 16 + v(hx[i + 1])));
+      if (!raw.empty()) {
+        b = raw;
+        return;
+      }
+    }
     PluginState cur;
     if (decoded("Control Surface", b, c, cur) && cur.data == g.data) return;
     struct Want {
@@ -371,7 +390,7 @@ Encoder controlSurface() {
       const std::string line = g.data.substr(pos, nl - pos);
       pos = nl + 1;
       const size_t sp = line.find(' ');
-      if (sp == std::string::npos) continue;
+      if (sp == std::string::npos || line[0] == '#') continue;
       want.push_back({std::atoi(line.c_str()), line.substr(sp + 1)});
     }
     // Template chunks: panel chunks, and each control's chunk run.
