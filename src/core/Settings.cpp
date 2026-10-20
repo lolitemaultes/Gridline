@@ -84,6 +84,12 @@ Settings::Settings() {
       {"scripts.allowTransport", b(false)},  // J-57: project scripts may start / stop / move the transport
       {"scripts.maxSeconds", Json::makeNumber(2)},         // per script run / controller hook
       {"scripts.maxMillionInstructions", Json::makeNumber(20)},
+      // SC-07: MCP server for AI assistants (Settings > Integrations); off until the user opts in.
+      {"mcp.enabled", b(false)},                 // listen on 127.0.0.1 for assistants
+      {"mcp.allowEdits", b(false)},              // assistants may change the project and write files
+      {"mcp.port", Json::makeNumber(47390)},     // loopback port (0 = any free port)
+      {"mcp.token", Json::makeString("")},       // bearer token ("" = generated on first start)
+      {"mcp.exportFolder", Json::makeString("")},  // extra folder assistants may write renders / exports to
       // J-48: interface sounds (engine/UiSounds.h); per-event switches "sounds.<event>".
       {"sounds.enabled", b(true)},
       {"sounds.volume", Json::makeNumber(0.7)},

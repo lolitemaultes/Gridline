@@ -453,6 +453,9 @@ void runProjectScript(App& a) {
 
 // ================================================================= public ====
 
+std::unique_ptr<script::ProjectHost> makeProjectHost(App& a) { return std::make_unique<AppProjectHost>(a); }
+script::Limits projectScriptLimits(const App& a) { return appLimits(a); }
+
 const std::vector<script::ScriptInfo>& pianoRollScripts(App& a, bool rescan) {
   if (!prScanned || rescan) {
     std::vector<std::pair<std::string, bool>> dirs;

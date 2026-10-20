@@ -1,4 +1,5 @@
 #include "HostedUi.h"
+#include "McpUi.h"
 #include "App.h"
 #include "../core/NoteTools.h"
 #include "../core/flp/Flp.h"
@@ -53,6 +54,7 @@ App::App() {
 
 App::~App() {
   shutdownControllerScripts();  // onDeinit while the app still exists
+  mcpui::shutdown();             // SC-07: stop the assistant server, remove its endpoint file
   presetImport.cancel = true;
   if (presetImport.worker.joinable()) presetImport.worker.join();
   settings.save(Settings::defaultPath());

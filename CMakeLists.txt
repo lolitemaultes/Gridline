@@ -52,6 +52,15 @@ target_compile_definitions(gridline_lua PRIVATE LUA_USER_H="gridline_lua_user.h"
 target_include_directories(gridline_lua PRIVATE third_party/lua)
 target_compile_options(gridline_lua PRIVATE -w)
 set_target_properties(gridline_lua PROPERTIES POSITION_INDEPENDENT_CODE ON LINKER_LANGUAGE CXX)
+# SC-07: the MCP server serves docs/scripting.md as a resource; it is compiled
+# in (regenerated when the document changes).
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/docs/scripting.md)
+file(READ ${CMAKE_SOURCE_DIR}/docs/scripting.md GRIDLINE_SCRIPTING_DOC)
+file(WRITE ${CMAKE_BINARY_DIR}/generated/McpDocs.cpp.in
+     "// Generated from docs/scripting.md by CMakeLists.txt (SC-07). Do not edit.\nnamespace gl::mcp {\nconst char* scriptingReferenceText() {\n  return R\"GLDOC(@GRIDLINE_SCRIPTING_DOC@)GLDOC\";\n}\n}  // namespace gl::mcp\n")
+configure_file(${CMAKE_BINARY_DIR}/generated/McpDocs.cpp.in ${CMAKE_BINARY_DIR}/generated/McpDocs.cpp @ONLY)
+set_source_files_properties(${CMAKE_BINARY_DIR}/generated/McpDocs.cpp PROPERTIES COMPILE_OPTIONS "-Wno-overlength-strings")
+list(APPEND GRIDLINE_CORE_SRC ${CMAKE_BINARY_DIR}/generated/McpDocs.cpp)
 add_library(gridline_core STATIC ${GRIDLINE_CORE_SRC})
 target_include_directories(gridline_core PUBLIC src)
 target_include_directories(gridline_core SYSTEM PUBLIC third_party)
@@ -67,7 +76,7 @@ target_compile_options(gridline_core PRIVATE -Wall -Wextra -Wpedantic)
 find_package(Threads REQUIRED)
 target_link_libraries(gridline_core PUBLIC Threads::Threads vst3_pluginterfaces gridline_lua ${CMAKE_DL_LIBS})
 
-add_executable(gridline src/cli/main.cpp src/cli/Bench.cpp src/cli/FlpTools.cpp)
+add_executable(gridline src/cli/main.cpp src/cli/Bench.cpp src/cli/FlpTools.cpp src/cli/McpCli.cpp)
 target_link_libraries(gridline PRIVATE gridline_core)
 
 add_executable(gridline_tests tests/test_engine.cpp)
@@ -320,11 +329,27 @@ target_link_libraries(gridline_tests_scripting PRIVATE gridline_core)
 target_compile_options(gridline_tests_scripting PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME scripting COMMAND gridline_tests_scripting WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# SC-07: MCP server (protocol, tools, loopback HTTP transport, stdio, attach bridge).
+add_executable(gridline_tests_mcp tests/test_mcp.cpp)
+target_link_libraries(gridline_tests_mcp PRIVATE gridline_core)
+target_compile_options(gridline_tests_mcp PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(gridline_tests_mcp PRIVATE GRIDLINE_CLI_EXE="$<TARGET_FILE:gridline>")
+add_dependencies(gridline_tests_mcp gridline)
+add_test(NAME mcp COMMAND gridline_tests_mcp WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 # J-57: full-model project scripting API (SC-02).
 add_executable(gridline_tests_project_script tests/test_project_script.cpp)
 target_link_libraries(gridline_tests_project_script PRIVATE gridline_core)
 target_compile_options(gridline_tests_project_script PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME project_script COMMAND gridline_tests_project_script WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# J-59: loop starter (GEN-01) and render to sampled instrument (RN-08).
+add_executable(gridline_tests_j59 tests/test_j59.cpp)
+target_link_libraries(gridline_tests_j59 PRIVATE gridline_core)
+target_compile_options(gridline_tests_j59 PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(gridline_tests_j59 PRIVATE GRIDLINE_TESTPLUG_BUNDLE="${GRIDLINE_TESTPLUG_BUNDLE}")
+add_dependencies(gridline_tests_j59 gridline_vst3_testplug)
+add_test(NAME j59_loopstarter_sampler COMMAND gridline_tests_j59 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(gridline_tests_recording tests/test_recording.cpp)
 target_link_libraries(gridline_tests_recording PRIVATE gridline_core)

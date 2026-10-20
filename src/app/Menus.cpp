@@ -8,7 +8,9 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include "J59Ui.h"
 #include "ScriptUi.h"
+#include "McpUi.h"
 #include "../core/I18n.h"
 #include "J31Ui.h"
 #include "../../third_party/imgui/imgui.h"
@@ -105,6 +107,8 @@ void menuFile(App& a) {
     }
     ImGui::EndMenu();
   }
+  if (ImGui::MenuItem(i18n::tr("New from loop starter..."))) j59::openLoopStarter(a);  // J-59 (GEN-01)
+  ui::Hint("Build a ready-to-play loop: style, tempo, key, mood and energy, with parts you can re-roll");
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Open..."), keys::label("file.open"))) a.openDialog();
   ui::Hint("Gridline projects, FL Studio projects (.flp) and zipped projects (.zip)");  // J-52
@@ -453,10 +457,14 @@ void menuTools(App& a) {
     if (ImGui::Button(i18n::tr("Reset"))) tapper.reset();
     ImGui::EndMenu();
   }
+  if (ImGui::MenuItem(i18n::tr("Loop starter..."))) j59::openLoopStarter(a);  // J-59 (GEN-01)
+  if (ImGui::MenuItem(i18n::tr("Render channel to sampled instrument..."), nullptr, false, a.doc.song().channel(a.selChannel) != nullptr))
+    j59::openRenderSampler(a, a.selChannel);  // J-59 (RN-08)
   if (ImGui::BeginMenu(i18n::tr("Project scripts"))) {  // J-57: Lua scripts over the whole project (SC-02)
     projectScriptsMenuItems(a);
     ImGui::EndMenu();
   }
+  if (ImGui::MenuItem(i18n::tr("AI assistant activity"))) mcpui::showActivity();  // SC-07
   ImGui::SeparatorText(i18n::tr("Macros"));
   if (ImGui::MenuItem(i18n::tr("Stop all sound"), keys::label("tools.stopSound"))) stopSound(a);
   if (ImGui::MenuItem(i18n::tr("Route channels to free mixer tracks"), keys::label("rack.routeFree"))) {

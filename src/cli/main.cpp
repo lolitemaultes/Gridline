@@ -33,6 +33,7 @@
 
 int benchMain(int argc, char** argv);  // Bench.cpp
 int flpToolsMain(int argc, char** argv);  // FlpTools.cpp (-1 = not one of its commands)
+int mcpMain(int argc, char** argv);       // McpCli.cpp (SC-07)
 
 namespace {
 void usage() {
@@ -70,7 +71,9 @@ void usage() {
       "  gridline plugin-check [--all | <type | name>...] [--json FILE] [--timeout S] [--no-editor] [--format F]\n"
       "                                                 compatibility sweep, one child process per plugin class\n"
       "  gridline list-plugins [format]                 list plugins this computer has (from the plugin cache)\n"
-      "  gridline scan-plugins [--force]                scan installed plugins into the app's plugin cache\n");
+      "  gridline scan-plugins [--force]                scan installed plugins into the app's plugin cache\n"
+      "  gridline mcp <project.gridline.json|.flp> [--export-dir DIR] [--read-only]   MCP server for AI assistants on stdio\n"
+      "  gridline mcp --attach                          MCP stdio bridge to the running app (docs/mcp.md)\n");
 }
 }  // namespace
 
@@ -83,6 +86,7 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (argc >= 2 && std::string(argv[1]) == "bench") return benchMain(argc, argv);
+  if (argc >= 2 && std::string(argv[1]) == "mcp") return mcpMain(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "plugin-params") {
     // Built-in plugin catalog as JSON (type, kind, params with range / default /
     // choices): tools that write projects by hand (tools/make_ui_sounds.py) fill

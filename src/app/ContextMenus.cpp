@@ -2,6 +2,7 @@
 // mixer track/slot, knob, plugin window) and the editing helpers they share
 // with the main menu. Window files open these popups and call the bodies here.
 #include "../core/I18n.h"
+#include "J59Ui.h"
 #include "Keys.h"
 #include "J31Ui.h"
 #include "HostedUi.h"
@@ -707,6 +708,8 @@ void channelContextMenu(App& a, ObjectId id) {
     });
     ImGui::EndMenu();
   }
+  if (ImGui::MenuItem(i18n::tr("Render to sampled instrument..."))) j59::openRenderSampler(a, id);  // J-59 (RN-08)
+  ui::Hint("Renders the instrument note by note into a multisampled Wave Program");
   if (ImGui::BeginMenu(i18n::tr("Route to mixer track"))) {
     routeMenuItems(a, [c](ObjectId t) { return c->mixerTrack == t; }, [&a, id](ObjectId t) { a.doc.routeChannel(id, t); });
     ImGui::EndMenu();

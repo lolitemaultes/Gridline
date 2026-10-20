@@ -2,9 +2,11 @@
 // script tool window (live preview, Accept / Cancel, one undo step), the
 // controller-script runtime per MIDI device, and the script console.
 #pragma once
+#include <memory>
 #include <string>
 #include <vector>
 #include "../core/PianoRollScript.h"
+#include "../core/ProjectScript.h"
 #include "../core/Remote.h"
 
 namespace gl {
@@ -41,6 +43,10 @@ const std::vector<script::ScriptInfo>& projectScripts(App& a, bool rescan = fals
 void projectScriptsMenuItems(App& a);
 void openProjectScript(App& a, const std::string& path);
 void drawProjectScriptWindow(App& a);  // per frame
+// SC-07: the app's project-script host (selection, transport) and the
+// script limits from Settings > Files, for the MCP server's run_script.
+std::unique_ptr<script::ProjectHost> makeProjectHost(App& a);
+script::Limits projectScriptLimits(const App& a);
 
 // The form controls of a script (knobs, combos, check boxes, text); true when a value changed.
 bool drawScriptForm(std::vector<script::FormParam>& values);

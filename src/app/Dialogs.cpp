@@ -24,7 +24,9 @@
 #include "Theme.h"
 #include "MidiUi.h"
 #include "SettingsPages.h"
+#include "McpUi.h"
 #include "TemplateUi.h"
+#include "J59Ui.h"
 #include "Widgets.h"
 #include "Windows.h"
 
@@ -244,12 +246,13 @@ void settingsWindow(App& a) {
   }
   // J-24 appended General, Files and Debug (tab indices 0..4 stay as they were).
   // J-55 appended Shortcuts and Theme.
-  const char* pagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme")};
+  const char* pagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations")};
   const char* blurbs[] = {i18n::N_("Output and input devices, sample rate, buffer and recording"), i18n::N_("Controllers, keyboards and MIDI out"),
                           i18n::N_("Defaults for new projects"), i18n::N_("Automatic backups, autosave and restoring a backup"), i18n::N_("Theme, size and hints"),
                           i18n::N_("Startup, default template and language"), i18n::N_("Folders and scripting"), i18n::N_("Log and script console"),
-                          i18n::N_("Every keyboard shortcut: search, change, reset"), i18n::N_("Dark, light or the system's choice, accent colour and contrast")};
-  constexpr int kPages = 10;
+                          i18n::N_("Every keyboard shortcut: search, change, reset"), i18n::N_("Dark, light or the system's choice, accent colour and contrast"),
+                          i18n::N_("Let AI assistants (MCP clients) inspect and edit the project")};
+  constexpr int kPages = 11;
   const char* pages[kPages];
   for (int i = 0; i < kPages; ++i) pages[i] = i18n::tr(pagesEn[i]);
   page = std::clamp(page, 0, kPages - 1);
@@ -497,6 +500,7 @@ void settingsWindow(App& a) {
     if (page == 9) themeSettingsPage(a, fieldW);
     if (page == 6) fileSettingsPage(a, fieldW);
     if (page == 7) debugSettingsPage(a, fieldW);
+    if (page == 10) mcpui::settingsPage(a, fieldW);  // SC-07
   }
   ImGui::EndChild();
   ImGui::End();
@@ -822,6 +826,7 @@ void devShowPpqWarning(App& a, int ppq) {
 void drawDialogs(App& a) {
   ImGui::GetStyle().HoverDelayNormal = static_cast<float>(std::clamp(a.settings.getNumber("ui.hintDelay"), 0.0, 2.0));
   drawTemplateDialogs(a);  // J-24: new project from template, save as template
+  j59::drawDialogs(a);     // J-59: loop starter, render to sampled instrument
   updatePerformance(a);
   drawPerformance(a);
   settingsWindow(a);
@@ -836,6 +841,8 @@ void drawDialogs(App& a) {
   drawRemoteDialog(a);
   j31::drawWindows(a);  // J-31: chord progression editor, audio logger, MIDI scale snap
   drawProjectScriptWindow(a);  // J-57: project script settings / run
+  mcpui::tick(a);                // SC-07: AI assistant server (opt-in, loopback only)
+  mcpui::drawActivityWindow(a);
   fileDialog(a);
 }
 

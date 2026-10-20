@@ -209,7 +209,7 @@ msgstr ""
 msgid "Normalize"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp
+#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp
 msgid "Notes"
 msgstr ""
 
@@ -241,7 +241,7 @@ msgstr ""
 msgid "Recording offset"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ExportUi.cpp
+#: src/app/AudioRecordUi.cpp src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp
 msgid "Render"
 msgstr ""
 
@@ -305,7 +305,7 @@ msgstr ""
 msgid "Add lane for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/MidiUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -325,7 +325,7 @@ msgstr ""
 msgid "Control to start"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/McpUi.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
 msgid "Copy"
 msgstr ""
 
@@ -813,7 +813,7 @@ msgstr ""
 msgid "Click to add this channel to the selection"
 msgstr ""
 
-#: src/app/ChannelRack.cpp src/app/TemplateUi.cpp
+#: src/app/ChannelRack.cpp src/app/LoopStarterUi.cpp src/app/TemplateUi.cpp
 msgid "Create"
 msgstr ""
 
@@ -937,7 +937,7 @@ msgstr ""
 msgid "ECHO"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp
+#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/SamplerRenderUi.cpp
 msgid "Instrument"
 msgstr ""
 
@@ -1073,11 +1073,11 @@ msgstr ""
 msgid "Chord notes"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/EditTools.cpp
+#: src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/LoopStarterUi.cpp
 msgid "Chords"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/Dialogs.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/Dialogs.cpp src/app/LoopStarterUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp
 msgid "Close"
 msgstr ""
 
@@ -1197,7 +1197,7 @@ msgstr ""
 msgid "Notes..."
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/EditTools.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp
+#: src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp
 msgid "Off"
 msgstr ""
 
@@ -1973,7 +1973,7 @@ msgstr ""
 msgid "Just the next chord"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/PluginEditorsEqRef.cpp
+#: src/app/ContextMenus.cpp src/app/LoopStarterUi.cpp src/app/PluginEditorsEqRef.cpp
 msgid "Key"
 msgstr ""
 
@@ -1989,7 +1989,7 @@ msgstr ""
 msgid "Left"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/Menus.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp
 msgid "Length"
 msgstr ""
 
@@ -2157,7 +2157,7 @@ msgstr ""
 msgid "Muted notes"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/PluginManager.cpp
+#: src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp
 msgid "Name"
 msgstr ""
 
@@ -2277,7 +2277,7 @@ msgstr ""
 msgid "Place loop"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Dialogs.cpp
+#: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/LoopStarterUi.cpp
 msgid "Play"
 msgstr ""
 
@@ -2403,6 +2403,14 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/MixerView.cpp
 msgid "Render selected tracks to wave files..."
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Render to sampled instrument..."
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Renders the instrument note by note into a multisampled Wave Program"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -3046,6 +3054,10 @@ msgid "In use"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Integrations"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Interface"
 msgstr ""
 
@@ -3059,6 +3071,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Interface sounds are turned off for this session (--no-ui-sounds or GRIDLINE_NO_UI_SOUNDS)."
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Let AI assistants (MCP clients) inspect and edit the project"
 msgstr ""
 
 #: src/app/Dialogs.cpp src/app/Menus.cpp
@@ -3093,7 +3109,7 @@ msgstr ""
 msgid "NO GRIDLINE EQUIVALENT YET"
 msgstr ""
 
-#: src/app/Dialogs.cpp
+#: src/app/Dialogs.cpp src/app/SamplerRenderUi.cpp
 msgid "NOTES"
 msgstr ""
 
@@ -3221,7 +3237,7 @@ msgstr ""
 msgid "TIMING"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/TopBar.cpp
+#: src/app/Dialogs.cpp src/app/LoopStarterUi.cpp src/app/TopBar.cpp
 msgid "Tempo (BPM)"
 msgstr ""
 
@@ -3457,7 +3473,7 @@ msgstr ""
 msgid "FILE NAME AND LOCATION"
 msgstr ""
 
-#: src/app/ExportUi.cpp
+#: src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp
 msgid "Folder"
 msgstr ""
 
@@ -4121,6 +4137,206 @@ msgstr ""
 msgid "When the clip ends"
 msgstr ""
 
+#: src/app/LoopStarterUi.cpp
+msgid "4-bar loop"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "8-bar loop"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "A new project from these settings"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Ambient"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Apply"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Bass"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Bright"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp src/app/SettingsKeysTheme.cpp
+msgid "Dark"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Density of the drums, bass and lead: ghost notes, fills, hat rolls"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Dreamy"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Driving kick, rolling bass, sparse stabs and a hypnotic sequence."
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Drum and bass"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Drums"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Energy"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Four on the floor, off-beat hats, stabbed chords and a plucked arpeggio."
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Gridline instruments only. Each part has its own seed: the same settings build the same project. Bass and lead follow the chords."
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Half-time snare, hat rolls, long sub bass and bell melodies."
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Hear the project the loop starter made"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Higher lead, lighter reverb"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Hip hop"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "House"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Lazy swing, dusty drums, seventh-chord keys and a gentle pluck."
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Lead"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Lo-fi"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Lock: re-roll all leaves this part alone"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Loop starter"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Lower lines, filtered chords and lead"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Mood"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "New notes (and maybe a new sound) for this part"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "New seeds for every unlocked part"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "PARTS"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Pop"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Re-roll"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Re-roll all"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Replace the current project with this one (undo brings it back)"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "SONG"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "STYLE"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Seventh chords, held pads, more reverb and delay"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Short arrangement"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Slow pads, drone bass, soft percussion and a floating bell arp."
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp src/app/SamplerRenderUi.cpp src/packs/edison/edison_script_ui.cpp
+msgid "Stop"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Straight beat, pulsing piano chords, eighth-note bass and a hook."
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Style tempo"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Swung boom-bap drums, round bass, soft keys and a short motif."
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Techno"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "The style as it is"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "The style's usual tempo"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Trap"
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Two-step breaks at full speed under a saw bass and wide pads."
+msgstr ""
+
+#: src/app/LoopStarterUi.cpp
+msgid "Warm"
+msgstr ""
+
 #: src/app/MasterPanel.cpp
 msgid "Add to master"
 msgstr ""
@@ -4163,6 +4379,162 @@ msgstr ""
 
 #: src/app/MasterPanel.cpp
 msgid "Take the chain's five effects off the master"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "AI"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "AI ASSISTANTS"
+msgstr ""
+
+#: src/app/McpUi.cpp src/app/Menus.cpp
+msgid "AI assistant activity"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "AI assistant connected"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "AI assistants are off (Settings > Integrations)."
+msgstr ""
+
+#: src/app/McpUi.cpp src/app/MidiUi.cpp
+msgid "Action"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Activity log"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Allow AI assistants to control Gridline"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Allow assistants to change the project and write files"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Assistant"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Assistants"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Assistants may write renders, exports and saves only into the project's folder and this folder"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "CONNECT AN ASSISTANT"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Changes"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Claude Code: run this command once (it includes the token)."
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Claude Desktop: add this server to claude_desktop_config.json. It starts a bridge that connects to the running Gridline."
+msgstr ""
+
+#: src/app/McpUi.cpp src/app/PluginEditorsK3Gb.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp
+msgid "Clear"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Copy the JSON configuration"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Copy the token to the clipboard"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Export folder"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Hide"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Listening on 127.0.0.1 port"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Listening on 127.0.0.1:%d, %d assistant session(s)"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Loopback port of the server (0 = any free port; the attach bridge finds it either way)"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Make a new token: assistants with the old one are refused"
+msgstr ""
+
+#: src/app/McpUi.cpp src/app/Menus.cpp
+msgid "New"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Off: assistants can only look at the project and measure it. Every change is one undo step labelled AI"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Only the project folder"
+msgstr ""
+
+#: src/app/McpUi.cpp src/app/MidiUi.cpp
+msgid "Port"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Read only: changes are switched off."
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Result"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "See docs/mcp.md for details. Assistants never get shell access, and file writes stay inside the folders above."
+msgstr ""
+
+#: src/app/McpUi.cpp src/app/SettingsPages.cpp
+msgid "Show"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Starting..."
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Starts a server for MCP clients such as Claude Desktop or Claude Code, reachable from this computer only (127.0.0.1)"
+msgstr ""
+
+#: src/app/McpUi.cpp src/app/MidiUi.cpp
+msgid "Status"
+msgstr ""
+
+#: src/app/McpUi.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Time"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Token"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Undo last assistant change"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -4457,6 +4829,10 @@ msgstr ""
 msgid "Browser"
 msgstr ""
 
+#: src/app/Menus.cpp
+msgid "Build a ready-to-play loop: style, tempo, key, mood and energy, with parts you can re-roll"
+msgstr ""
+
 #: src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Channel rack"
 msgstr ""
@@ -4589,6 +4965,10 @@ msgstr ""
 msgid "Load demo song"
 msgstr ""
 
+#: src/app/Menus.cpp src/app/TemplateUi.cpp
+msgid "Loop starter..."
+msgstr ""
+
 #: src/app/Menus.cpp
 msgid "MIDI file..."
 msgstr ""
@@ -4630,7 +5010,7 @@ msgid "Name the pattern"
 msgstr ""
 
 #: src/app/Menus.cpp
-msgid "New"
+msgid "New from loop starter..."
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -4719,6 +5099,10 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Render as audio clip..."
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Render channel to sampled instrument..."
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -4859,10 +5243,6 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Zoom to ticks (snap turns free)"
-msgstr ""
-
-#: src/app/MidiUi.cpp
-msgid "Action"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -5062,10 +5442,6 @@ msgid "Plays"
 msgstr ""
 
 #: src/app/MidiUi.cpp
-msgid "Port"
-msgstr ""
-
-#: src/app/MidiUi.cpp
 msgid "Position offset (ms)"
 msgstr ""
 
@@ -5129,12 +5505,8 @@ msgstr ""
 msgid "Sostenuto (CC 66)"
 msgstr ""
 
-#: src/app/MidiUi.cpp
+#: src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp
 msgid "Source"
-msgstr ""
-
-#: src/app/MidiUi.cpp
-msgid "Status"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -5845,10 +6217,6 @@ msgstr ""
 msgid "1 semitone up"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp
-msgid "Clear"
-msgstr ""
-
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "Click reduction"
 msgstr ""
@@ -5937,7 +6305,7 @@ msgstr ""
 msgid "Find plugins"
 msgstr ""
 
-#: src/app/PluginManager.cpp
+#: src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp
 msgid "Format"
 msgstr ""
 
@@ -6141,6 +6509,158 @@ msgstr ""
 msgid "The plugin's own programs and preset library"
 msgstr ""
 
+#: src/app/SamplerRenderUi.cpp
+msgid "%d notes, %d samples, %.0f s of audio"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "%d samples rendered to %s"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "%d semitones"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "A key range"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Adds a Wave Program channel after this one, on the same mixer track"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Also save to the preset library (Rendered)"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Cancel the render"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Each layer is rendered at the top velocity of its range"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Find loop points in the held part"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Held notes loop while the key is down, then play their recorded release"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Highest note"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Hosted plugin: it renders as itself"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Lowest note"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "New channel"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Note length"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Notes in between play the nearest sample, transposed"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "OUTPUT"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "PROCESSING"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Preset"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Release tail"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Render cancelled"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Render the notes, write the samples and build the instrument"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Render to sampled instrument"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Rendering %.0f%%"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Replace this channel's"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Round robins"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Sample"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Sample every"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Selected notes"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Sustain loops"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Swaps the channel's instrument for the Wave Program (undo brings it back)"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "TAKES"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Takes per note, played in turn (instruments with free-running movement differ from take to take)"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Total"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Trim silence"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "Velocity layers"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "below %.0f dB"
+msgstr ""
+
+#: src/app/SamplerRenderUi.cpp
+msgid "or select notes in the piano roll"
+msgstr ""
+
 #: src/app/ScriptUi.cpp
 msgid "%.1f ms"
 msgstr ""
@@ -6307,10 +6827,6 @@ msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Ctrl+wheel / Alt+wheel"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
-msgid "Dark"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -6662,10 +7178,6 @@ msgid "Scripts run in a sandbox: no system or network access, files only inside 
 msgstr ""
 
 #: src/app/SettingsPages.cpp
-msgid "Show"
-msgstr ""
-
-#: src/app/SettingsPages.cpp
 msgid "Show folder"
 msgstr ""
 
@@ -6699,6 +7211,10 @@ msgstr ""
 
 #: src/app/SettingsPages.cpp
 msgid "Your name"
+msgstr ""
+
+#: src/app/TemplateUi.cpp
+msgid "Build a ready-to-play loop from a style instead (J-59)"
 msgstr ""
 
 #: src/app/TemplateUi.cpp
@@ -7581,10 +8097,6 @@ msgstr ""
 msgid "Play preview"
 msgstr ""
 
-#: src/packs/edison/edison_script_ui.cpp
-msgid "Stop"
-msgstr ""
-
 #: src/packs/edison/edison_tools_ui.cpp
 msgid "%zu painted areas"
 msgstr ""
@@ -7727,10 +8239,6 @@ msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
 msgid "Threshold"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
-msgid "Time"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp

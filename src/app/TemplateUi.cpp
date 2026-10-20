@@ -11,6 +11,8 @@
 #include "../core/Demo.h"
 #include "../core/Templates.h"
 #include "App.h"
+#include "DialogLayout.h"
+#include "J59Ui.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -238,7 +240,14 @@ void newProjectWindow(App& a) {
     }
   }
   ImGui::EndChild();
-  ui::DialogFooter(96 * 3 + theme::kS2 * 2);
+  ui::DialogFooter(ImGui::GetContentRegionAvail().x);
+  ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x);
+  if (ui::TextButton("Loop starter...", false, 0, "Build a ready-to-play loop from a style instead (J-59)")) {
+    j59::openLoopStarter(a);
+    a.showNewProject = false;
+  }
+  ImGui::SameLine();
+  ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ui::ButtonRowWidth(3, 96));
   bool cancel = ui::TextButton("Cancel", false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape);
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Empty", false, 96, "Skip the template: an empty project with your defaults")) {

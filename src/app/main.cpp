@@ -12,7 +12,9 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "J59Ui.h"
 #include "FrameProfile.h"
+#include "McpUi.h"
 #include "ThemeSettings.h"
 #include "../core/I18n.h"
 #include "HostedUi.h"
@@ -777,7 +779,15 @@ int main(int argc, char** argv) {
       else if (w == "debug") app.showSettings = true, app.settingsTab = 7;
       else if (w == "keys") app.showSettings = true, app.settingsTab = 8;   // J-55 shortcut editor
       else if (w == "theme") app.showSettings = true, app.settingsTab = 9;  // J-55 theme page
+      else if (w == "integrations") app.showSettings = true, app.settingsTab = 10;  // SC-07 AI assistants page
+      else if (w == "mcplog") gl::mcpui::showActivity();                            // SC-07 activity log
       else if (w == "newproject") app.showNewProject = true;
+      else if (w == "loopstarter") gl::j59::openLoopStarter(app);  // J-59
+      else if (w.rfind("loopmade", 0) == 0) gl::j59::createFromLoopStarter(app, std::atoi(w.c_str() + 8));  // J-59: "loopmade<style>"
+      else if (w == "rendersampler") {                             // J-59: on the selected (else the first) channel
+        const gl::ObjectId sel = app.doc.song().channel(app.selChannel) ? app.selChannel : gl::kNoId;
+        if (sel || !app.doc.song().channels.empty()) gl::j59::openRenderSampler(app, sel ? sel : app.doc.song().channels[0].id);
+      }
       else if (w == "savetemplate") app.showSaveTemplate = true;
       else if (w == "rackgraph") app.rack.showGraph = true, app.rack.graphLane = 1;   // J-11 graph editor (pan lane)
       else if (w == "rackkeys") app.rack.showGraph = true, app.rack.graphLane = 7;    // J-11 keyboard editor

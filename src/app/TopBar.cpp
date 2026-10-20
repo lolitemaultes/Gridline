@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include "../core/I18n.h"
+#include "McpUi.h"
 #include "Keys.h"
 #include "MenuParityUi.h"
 #include "../../third_party/imgui/imgui.h"
@@ -626,6 +627,7 @@ void drawStatusBar(App& a) {
     ui::Led(dl, ImVec2(rx + 4, ty + fs * 0.5f + 1), 3.5f, locked);
     dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(rx + 12, ty + 1), locked ? P.text : P.textFaint, lbl);
   }
+  mcpui::statusLamp(a, dl, rx, ty, fs);  // SC-07: AI assistant server (lit: connected, hot: working)
   float leftMax = rx - wp.x - theme::kS3 * 2 - theme::kS4;
 
   // Left: the hint for whatever is hovered (notifications float above as cards).
