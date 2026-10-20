@@ -128,6 +128,12 @@ class App {
   ~App();
 
   // ---- document & engine ----
+  // PH-09: running as a plugin inside another application (the host owns the
+  // project, audio and MIDI): no backups, autosave, devices or plugin scans,
+  // one processing thread. Set right after construction.
+  bool embedded = false;
+  // PH-09: extra entries for a parameter's context menu (plugin build: host macros).
+  std::function<void(ParamId)> extraParamMenu;
   Document doc;
   AudioEngine engine{44100.0};
   ProgramBuilder builder;
@@ -141,6 +147,7 @@ class App {
   std::vector<std::string> recentFiles;
 
   void syncEngine();  // rebuild the engine program after edits
+  void forceRebuild() { builtRevision_ = ~0ull; }  // the next syncEngine() rebuilds (PH-09: macro links)
   void tick(double now);  // per-frame housekeeping (backups, toasts, GC)
 
   // ---- selection ----
@@ -403,5 +410,8 @@ class App {
 };
 
 App& app();  // the single application instance
+// PH-09: the instance app() returns (plugin builds run one per plugin
+// instance, all on the host's main thread); returns the previous one.
+App* setCurrentApp(App* a);
 
 }  // namespace gl

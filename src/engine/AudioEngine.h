@@ -250,11 +250,47 @@ class AudioEngine {
   void setLogger(std::shared_ptr<AudioLogger> logger);
   const std::shared_ptr<AudioLogger>& logger() const { return loggerOwner_; }
 
+  // ---- PH-09: running as a plugin inside another application ----
+  // Host transport for the next process() call (audio thread, right before
+  // process()). While `follow` is set the transport follows the host: it
+  // starts and stops with it, relocates when the host position differs from
+  // its own (pattern mode: the position within the pattern; song mode: the
+  // song position, wrapped at the song end, time selection ignored) and runs
+  // at the host tempo. follow = false: the engine runs its own transport.
+  struct HostTransport {
+    bool follow = false;
+    bool playing = false;
+    bool hasPosition = false;
+    double beats = 0;  // host position in quarter notes
+    double bpm = 0;    // host tempo; 0 = keep the project tempo
+  };
+  void setHostTransport(const HostTransport& t) {
+    hostIn_ = t;
+    hostNew_ = true;
+  }
+  bool followingHost() const { return hostFollowUi_.load(std::memory_order_relaxed); }
+  // Host macros: normalized value (0..1) of host parameter k, applied every
+  // control block to the parameter it is linked to (ProgramBuilder::setHostMacros).
+  // A negative value = not set yet (the parameter keeps its own value). Any thread.
+  void setHostMacro(int k, float v) {
+    if (k >= 0 && k < kHostMacros) macro_[k].store(v, std::memory_order_relaxed);
+  }
+  float hostMacro(int k) const { return k >= 0 && k < kHostMacros ? macro_[k].load(std::memory_order_relaxed) : -1.f; }
+  // Extra outputs: copies of mixer tracks' output (post fader) for each frame
+  // process() renders. mixer[k] = mixer track index (out of range: silence).
+  struct OutputTaps {
+    int count = 0;
+    const int* mixer = nullptr;
+    float* const* L = nullptr;
+    float* const* R = nullptr;
+  };
+
   // ---- audio thread ----
   // Writes n interleaved stereo frames.
   void processInterleaved(float* out, int frames);
-  // Writes n frames to separate buffers (overwrites).
-  void process(float* L, float* R, int frames);
+  // Writes n frames to separate buffers (overwrites). `taps`: extra outputs
+  // (direct mode only; with a fixed block they are silent).
+  void process(float* L, float* R, int frames, const OutputTaps* taps = nullptr);
   static constexpr int kOfflineBlock = 512;  // fixed block of offline renders
 
  private:
@@ -269,6 +305,7 @@ class AudioEngine {
   };
   void send(const Cmd& c);
   void processDirect(float* L, float* R, int frames);  // host blocks as given
+  void copyTaps(const Program* p, int offset, int n);   // extra outputs of one block
   void drain(const Program* p);
   void processBlock(const Program* p, float* L, float* R, int n);
   void dispatch(const Program* p, int from, int to);  // sequenced events for block samples [from, to)
@@ -296,7 +333,15 @@ class AudioEngine {
   void applyLinkValue(const Program* p, const ProgLink& l, double normalized);
   // Transport clock through the tempo map (song mode: tempo automation;
   // pattern mode: constant). `clk` samples after the tick `anchor`.
-  const TempoMap& clockMap(const Program* p) const { return tMode_ == PlayMode::Song ? p->tempoMap : p->flatMap; }
+  // Following a host (PH-09): its tempo, constant.
+  const TempoMap& clockMap(const Program* p) const {
+    return hostTempo() ? hostMap_ : tMode_ == PlayMode::Song ? p->tempoMap : p->flatMap;
+  }
+  bool hostTempo() const { return hostFollow_ && hostBpm_ > 0; }
+  const TempoMap& songMap(const Program* p) const { return hostTempo() ? hostMap_ : p->tempoMap; }
+  const TempoMap& flatMap(const Program* p) const { return hostTempo() ? hostMap_ : p->flatMap; }
+  double flatBpm(const Program* p) const { return hostTempo() ? hostBpm_ : p->tempo; }
+  void followHost(const Program* p);  // applies hostIn_ (start of a process() call)
   double tickAt(const Program* p, double anchor, double clk) const { return clockMap(p).tickAfterSamples(anchor, clk, sr_); }
   // First sample (counted from the anchor) at or after `tick`.
   int64_t sampleAt(const Program* p, double anchor, double tick) const {
@@ -517,6 +562,15 @@ class AudioEngine {
 
   // Task hand-out (see claimTasks).
   std::atomic<int> head_{0}, readyTail_{0}, done_{0};
+
+  // PH-09: host transport, macros and extra outputs (audio thread).
+  HostTransport hostIn_;
+  bool hostNew_ = false, hostFollow_ = false;
+  double hostBpm_ = 0;
+  TempoMap hostMap_;
+  std::atomic<bool> hostFollowUi_{false};
+  std::atomic<float> macro_[kHostMacros];
+  const OutputTaps* taps_ = nullptr;
 };
 
 }  // namespace gl

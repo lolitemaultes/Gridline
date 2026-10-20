@@ -46,6 +46,8 @@ inline constexpr int kMaxPendingNotes = 512;
 inline constexpr int kControlBlock = 64;
 inline constexpr int kAudioBuses = 8;  // named buses for bus send / return effects
 inline constexpr int kEngineMaxBlock = 1024;  // largest block the engine renders at once
+// PH-09: host parameters of the plugin build that can be linked to any parameter.
+inline constexpr int kHostMacros = 16;
 
 // Per-object CPU time (opt-in profiling, see AudioEngine::setProfiling):
 // nanoseconds spent, accumulated by the audio thread / workers; the UI
@@ -312,6 +314,12 @@ struct ProgLink {
   std::shared_ptr<LinkRuntime> rt;
 };
 
+// PH-09: a host macro linked to a parameter (plugin build).
+struct ProgMacro {
+  bool valid = false;
+  ProgLink target;  // target fields only
+};
+
 // Automation of one parameter by playlist automation clips (arrangement):
 // evaluated every control block in song mode, applied like a controller link.
 struct ProgAutoLane {
@@ -386,7 +394,10 @@ struct Program {
   std::vector<ProgAutoLane> autos;
   TempoMap tempoMap, flatMap;
   // Links and automation are evaluated on a fixed control-block grid.
-  bool controlGrid() const { return !links.empty() || !autos.empty() || hasPatternAutos; }
+  bool controlGrid() const { return !links.empty() || !autos.empty() || hasPatternAutos || hasMacros; }
+  // PH-09: host macros (index = macro) and whether any is linked.
+  std::vector<ProgMacro> macros;
+  bool hasMacros = false;
   bool hasCutGroups = false;    // some channel cuts channels (cut groups)
   bool hasPatternAutos = false;  // some pattern or live clip carries automation
   // Live mode: the live area's clips and the tracks they sit on.
@@ -431,6 +442,10 @@ class ProgramBuilder {
   // build; the caller rebuilds when SampleCache::generation() changes. Off by
   // default (offline renders and tools need every sample).
   void setAsyncSamples(bool on) { asyncSamples_ = on; }
+  // PH-09: parameters the host macros drive (index = macro, owner kNoId = not
+  // linked); compiled into Program::macros by the next build.
+  void setHostMacros(const std::vector<ParamId>& targets) { macroTargets_ = targets; }
+  const std::vector<ParamId>& hostMacros() const { return macroTargets_; }
   // True when a hosted plugin's reported latency differs from the one the
   // last Program was compensated for (the caller rebuilds).
   bool latencyChanged() const;
@@ -457,6 +472,7 @@ class ProgramBuilder {
   double sampleRate_ = 44100.0;
   bool pdc_ = true;
   bool asyncSamples_ = false;
+  std::vector<ParamId> macroTargets_;
   // Plugin delay compensation: computes latencies and fills ProgMixer::inputs
   // and the task graph (ProgramGraph.cpp).
   void compileGraph(Program& prog);

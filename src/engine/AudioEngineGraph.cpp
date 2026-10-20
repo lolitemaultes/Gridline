@@ -132,12 +132,12 @@ void AudioEngine::runChannel(size_t ci, int worker) {
       const LivePiece& lp = livePieces_[k];
       const ProgLiveClip& lc = p->liveClips[static_cast<size_t>(lp.clip)];
       if (lc.audioChannel == static_cast<int>(ci))
-        renderAudioClips(lc.audio, p->flatMap, sr_, lp.anchor, lp.clock, lp.from, lp.len, cL, cR, ch.pitchOffset);
+        renderAudioClips(lc.audio, flatMap(p), sr_, lp.anchor, lp.clock, lp.from, lp.len, cL, cR, ch.pitchOffset);
     }
   }
   if (!ch.audio.empty() && tPlaying_ && tMode_ == PlayMode::Song)  // arrangement: audio clips on this channel
     for (int sgi = 0; sgi < segCount_; ++sgi)
-      renderAudioClips(ch.audio, p->tempoMap, sr_, segs_[sgi].anchor, segs_[sgi].clock, segs_[sgi].from, segs_[sgi].len, cL, cR,
+      renderAudioClips(ch.audio, songMap(p), sr_, segs_[sgi].anchor, segs_[sgi].clock, segs_[sgi].from, segs_[sgi].len, cL, cR,
                        ch.pitchOffset);
   if (ch.controller) {
     int k = rt->gen->controlOutputs(rt->ctl, kMaxControllerOutputs);

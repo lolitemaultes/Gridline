@@ -339,6 +339,7 @@ void remoteLinkMenuItems(App& a, ParamId pid) {
     ImGui::TextDisabled("  %s", remoteSourceLabel(links[static_cast<size_t>(idx)]).c_str());
     if (ImGui::MenuItem(i18n::tr("Remove controller link"))) removeLinkAt(a, idx);
   }
+  if (a.extraParamMenu) a.extraParamMenu(pid);  // PH-09: host macros (plugin build)
   if (ImGui::MenuItem(i18n::tr("Multilink to controllers"), nullptr, a.multilink)) {
     a.multilink = !a.multilink;
     if (a.multilink) {

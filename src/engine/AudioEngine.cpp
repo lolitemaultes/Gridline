@@ -37,6 +37,7 @@ AudioEngine::AudioEngine(double sampleRate) : sr_(sampleRate), queue_(kQueue) {
   for (auto* v : {&tmpL_, &tmpR_}) v->assign(kMaxBlock, 0.f);
   scratch_.resize(WorkerPool::kMaxThreads);
   for (auto& r : bendRange_) r.store(2.0f);
+  for (auto& m : macro_) m.store(-1.f);
   clockOut_.out = &syncRing_;
   inQueue_.assign(kInputQueueFrames * kMaxInputChannels, 0.f);
   inBuf_.assign(kMaxInputChannels, std::vector<float>(kMaxBlock, 0.f));
@@ -500,10 +501,10 @@ void AudioEngine::preview(SamplePtr sample) {
 // ---------------------------------------------------------------------------
 // Audio thread
 
-double AudioEngine::loopStart() const { return tMode_ == PlayMode::Song && loopB_ > loopA_ ? loopA_ : 0.0; }
+double AudioEngine::loopStart() const { return tMode_ == PlayMode::Song && loopB_ > loopA_ && !hostFollow_ ? loopA_ : 0.0; }
 
 double AudioEngine::transportEnd(const Program* p) const {
-  if (pastLoop_ && tMode_ == PlayMode::Song && loopB_ > loopA_) return static_cast<double>(p->songLoopEnd);
+  if (pastLoop_ && tMode_ == PlayMode::Song && loopB_ > loopA_ && !hostFollow_) return static_cast<double>(p->songLoopEnd);
   return loopEnd(p);
 }
 
@@ -514,7 +515,7 @@ void AudioEngine::landAt(double tick) {
 }
 
 double AudioEngine::loopEnd(const Program* p) const {
-  if (tMode_ == PlayMode::Song) return loopB_ > loopA_ ? loopB_ : static_cast<double>(p->songLoopEnd);
+  if (tMode_ == PlayMode::Song) return loopB_ > loopA_ && !hostFollow_ ? loopB_ : static_cast<double>(p->songLoopEnd);
   if (tMode_ == PlayMode::Live) return 1e12;  // free-running transport
   const ProgPattern* pat = p->pattern(tPattern_);
   return static_cast<double>(pat ? pat->length : p->barTicks);
@@ -1252,7 +1253,7 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
   const int64_t c0 = clock_, c1 = clock_ + len;
   const double t0 = tickAt(p, anchorTick_, static_cast<double>(c0));
   const double t1 = tickAt(p, anchorTick_, static_cast<double>(c1));
-  const double spt = sr_ * 60.0 / (p->flatMap.bpmAt(0) * p->ppq);
+  const double spt = sr_ * 60.0 / (flatBpm(p) * p->ppq);
   auto sampleOf = [&](double tick) { return sampleAt(p, anchorTick_, tick); };
   // Plays content ticks of one clip between transport ticks [a, b).
   auto playPiece = [&](int li, Tick origin, double a, double b) {
@@ -1373,6 +1374,12 @@ void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick) {
     }
     applyLinkValue(p, l, lr.value);
   }
+  // PH-09: host macros (the plugin's host parameters), before automation clips.
+  if (p->hasMacros)
+    for (size_t k = 0; k < p->macros.size(); ++k) {
+      const float v = macro_[k].load(std::memory_order_relaxed);
+      if (p->macros[k].valid && v >= 0.f) applyLinkValue(p, p->macros[k].target, v > 1.f ? 1.0 : static_cast<double>(v));
+    }
   // Automation clips (arrangement): the value at this control block's song
   // position; applied after the controller links, so automation wins.
   if (tMode_ == PlayMode::Song)
@@ -1474,7 +1481,7 @@ void AudioEngine::runNoteFx(const Program* p, int n) {
       rt->inbox.clear();
       continue;
     }
-    const double spt = sr_ * 60.0 / (p->tempo * p->ppq);
+    const double spt = sr_ * 60.0 / (flatBpm(p) * p->ppq);
     for (int sgi = 0; sgi < segCount_; ++sgi) {
       const Segment& sg = segs_[sgi];
       bool last = sgi == segCount_ - 1;
@@ -1492,7 +1499,7 @@ void AudioEngine::runNoteFx(const Program* p, int n) {
       in->sort();
       NoteFxContext ctx;
       ctx.sampleRate = sr_;
-      ctx.tempo = p->tempo;
+      ctx.tempo = flatBpm(p);
       ctx.ppq = p->ppq;
       ctx.from = sg.from;
       ctx.len = sg.len;
@@ -1557,11 +1564,18 @@ void AudioEngine::addBlockBarrier(int64_t sample) {
   if (barrierCount_ < kMaxBarriers) barriers_[barrierCount_++] = sample;
 }
 
-void AudioEngine::process(float* L, float* R, int frames) {
+void AudioEngine::process(float* L, float* R, int frames, const OutputTaps* taps) {
   if (fixed_ <= 0) {
+    taps_ = taps;
     processDirect(L, R, frames);
+    taps_ = nullptr;
     return;
   }
+  if (taps)
+    for (int k = 0; k < taps->count; ++k) {
+      std::memset(taps->L[k], 0, sizeof(float) * static_cast<size_t>(frames));
+      std::memset(taps->R[k], 0, sizeof(float) * static_cast<size_t>(frames));
+    }
   // J-30: render whole blocks on the engine's own grid and hand them out in the
   // caller's chunk sizes. Every internal block boundary is then a function of
   // the absolute sample position alone (plus the barriers), so per-block state
@@ -1600,7 +1614,9 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
       n = std::min(n, kControlBlock - static_cast<int>(absClock_ % kControlBlock));
     drain(p);
     drainMidi(p);
+    if (done == 0 && hostNew_) followHost(p);
     processBlock(p, L + done, R + done, n);
+    if (taps_) copyTaps(p, done, n);
     absClock_ += n;
     blocks_.fetch_add(1);
     done += n;
@@ -1609,6 +1625,83 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
   double avail = frames / sr_;
   storeMax(cpuPeak_, cpuMeter_.add(el, avail));
   cpu_.store(cpuMeter_.load(), std::memory_order_relaxed);
+}
+
+void AudioEngine::copyTaps(const Program* p, int offset, int n) {
+  const size_t bytes = sizeof(float) * static_cast<size_t>(n);
+  for (int k = 0; k < taps_->count; ++k) {
+    float* l = taps_->L[k] + offset;
+    float* r = taps_->R[k] + offset;
+    const int mi = taps_->mixer ? taps_->mixer[k] : -1;
+    if (p && mi >= 0 && static_cast<size_t>(mi) < p->mixer.size() && static_cast<size_t>(mi) < busL_.size()) {
+      std::memcpy(l, busL_[static_cast<size_t>(mi)].data(), bytes);
+      std::memcpy(r, busR_[static_cast<size_t>(mi)].data(), bytes);
+    } else {
+      std::memset(l, 0, bytes);
+      std::memset(r, 0, bytes);
+    }
+  }
+}
+
+// PH-09: the transport follows the host (see HostTransport).
+void AudioEngine::followHost(const Program* p) {
+  hostNew_ = false;
+  const HostTransport h = hostIn_;
+  hostFollow_ = h.follow && p;
+  hostFollowUi_.store(hostFollow_, std::memory_order_relaxed);
+  if (!hostFollow_) return;
+  if (h.bpm > 0 && (h.bpm != hostBpm_ || hostMap_.ppq() != std::max(1, p->ppq))) {
+    hostBpm_ = std::clamp(h.bpm, 1.0, 1000.0);
+    hostMap_.setConstant(hostBpm_, p->ppq);
+  }
+  // A new tempo continues from the current position (as drain does for tempo edits).
+  const uint64_t sig = clockMap(p).signature();
+  if (sig != lastMapSig_) {
+    if (lastMapSig_ != 0 && clock_ != 0) {
+      anchorTick_ = curTick_;
+      clock_ = 0;
+    }
+    lastMapSig_ = sig;
+  }
+  const double here = tickAt(p, anchorTick_, static_cast<double>(clock_));
+  double target = here;
+  double wrap = 0;  // length the transport wraps at (0 = none)
+  if (h.hasPosition && tMode_ != PlayMode::Live) {
+    target = h.beats * static_cast<double>(p->ppq);
+    if (tLoop_) wrap = transportEnd(p);
+    if (wrap > 0) {
+      target = std::fmod(target, wrap);
+      if (target < 0) target += wrap;
+    }
+  }
+  const double bpm = clockMap(p).bpmAt(here);
+  const double tol = 2.0 * bpm * p->ppq / (60.0 * sr_) + 1e-6;  // two samples
+  if (h.playing && !tPlaying_) {
+    releaseAll(p, 0, true);
+    landAt(target);
+    startTick_ = target;
+    tPlaying_ = true;
+    countInLeft_ = 0;
+    countingIn_.store(false);
+    pendJump_ = false;
+  } else if (!h.playing && tPlaying_) {
+    releaseAll(p, 0, true);
+    tPlaying_ = false;
+    landAt(target);
+    pendJump_ = false;
+  } else if (h.hasPosition && tMode_ != PlayMode::Live) {
+    double d = here - target;
+    if (wrap > 0) d = std::remainder(d, wrap);  // the same place one loop apart
+    if (std::fabs(d) > tol) {
+      if (tPlaying_) releaseAll(p, 0);
+      landAt(target);
+      pendJump_ = false;
+    }
+  }
+  if (!tPlaying_) {
+    curTick_ = tickAt(p, anchorTick_, static_cast<double>(clock_));
+    posTick_.store(curTick_);
+  }
 }
 
 void AudioEngine::processInterleaved(float* out, int frames) {

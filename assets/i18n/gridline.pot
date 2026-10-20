@@ -1797,7 +1797,7 @@ msgstr ""
 msgid "Length of one rhythm cycle (it restarts on every chord)"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp
+#: src/app/ChordEditorUi.cpp src/plugin/PluginFrame.cpp
 msgid "Link"
 msgstr ""
 
@@ -6373,7 +6373,7 @@ msgstr ""
 msgid "Right-click any knob, fader or transport button and choose \"Link to controller…\"."
 msgstr ""
 
-#: src/app/MidiUi.cpp
+#: src/app/MidiUi.cpp src/plugin/PluginFrame.cpp
 msgid "Selected channel"
 msgstr ""
 
@@ -9671,4 +9671,92 @@ msgstr ""
 
 #: src/packs/utility/utility_view_ui.cpp
 msgid "This page is empty."
+msgstr ""
+
+#: src/plugin/PluginCore.cpp
+msgid "Host input"
+msgstr ""
+
+#: src/plugin/PluginCore.cpp
+msgid "Macro"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "By MIDI channel"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Every MIDI channel plays the selected channel."
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Follow the host transport"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Following the host: play, stop, position and tempo come from the host."
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Gridline (instrument)"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Gridline FX (effect)"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Gridline's own transport plays the pattern or the song."
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Host link"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Host macros"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Latency reported to the host: %d samples"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Link the control you touched last"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Link to host macro"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "MIDI channel 1-16 plays rack channel 1-16."
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "MIDI input"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Not linked"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Outputs 2-16 carry mixer inserts 1-15 after their faders; the inserts still feed the master."
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Right-click a control and choose Link to host macro, or link the control you touched last."
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "The host's audio enters mixer insert 1; the sidechain arrives as inputs 3-4."
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Unlink"
+msgstr ""
+
+#: src/plugin/PluginWindowStub.cpp
+msgid "Plugin interfaces open in the Gridline application; here the plugin shows its parameters."
 msgstr ""

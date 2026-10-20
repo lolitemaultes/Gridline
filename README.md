@@ -90,7 +90,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 98 test suites
+ctest --test-dir build          # 99 test suites
 ./build/gridline-app            # start the app
 ```
 
@@ -130,6 +130,34 @@ build/gridline bench   demo/song.json                        # load, save and re
 
 Interfaces: the VST 3 SDK interface headers (`third_party/vst3/pluginterfaces`, MIT), the CLAP headers (`third_party/clap`, MIT) and the LV2 specification headers (`third_party/lv2`, ISC). VST2 support uses Gridline's own description of the binary interface (`src/host/vst2/Vst2Abi.h`); no VST2 SDK code is included. No plugin binaries are shipped.
 
+## Gridline as a plugin
+
+The same build also produces Gridline as a plugin, so the whole workstation (channel rack, piano roll, playlist, mixer, every built-in instrument and effect) runs inside another DAW. Each bundle holds two plugins:
+
+| Plugin | Kind | Audio | Notes |
+|---|---|---|---|
+| **Gridline** | instrument | stereo out, plus 15 stereo outputs carrying mixer inserts 1 to 15 | MIDI in |
+| **Gridline FX** | effect | stereo in (enters mixer insert 1), sidechain in (inputs 3 and 4), stereo out | MIDI in |
+
+```sh
+cmake --build build --target gridline_clap gridline_vst3   # build/plugins/Gridline.clap, build/plugins/Gridline.vst3
+cmake --build build --target install-plugins               # copy both into your user plugin folders
+cmake --install build --component plugins --prefix /usr    # or install for a package (lib/clap, lib/vst3)
+```
+
+`install-plugins` copies to `~/Library/Audio/Plug-Ins/CLAP` and `.../VST3` on macOS, and to `~/.clap` and `~/.vst3` on Linux. The build and the tests never install anything. Each bundle carries the app icon and Gridline's assets (fonts, sounds, templates, translations), so it works on its own.
+
+- **Formats:** CLAP and VST3, both written against the interface headers only. An Audio Unit wrapper is not part of this release.
+- **Transport:** with **Follow the host transport** on (the default), Gridline starts and stops with the host, takes its tempo and moves to its position: pattern mode plays the pattern at the host position within the pattern, song mode plays the arrangement at the host's song position. Turn it off and Gridline's own transport plays the pattern or the song.
+- **MIDI input** plays the selected channel, or with **By MIDI channel**, MIDI channel 1 to 16 plays rack channel 1 to 16. CLAP carries all MIDI messages; VST3 carries notes and polyphonic pressure.
+- **Host parameters** are 16 macros. Right-click any control and choose **Link to host macro**, or press **Link** in the **Host link** panel to link the control you touched last. The host automates the macro and Gridline applies it to the linked control every 64 samples; the host shows the linked control's value, such as `62%` or `1.20 kHz`.
+- **State** is the whole project: the project JSON with the paths of the samples it uses, the macro links and the plugin settings. Samples stay where they are on disk.
+- **Latency:** the project's delay compensation is reported to the host and updated when it changes.
+- **Offline render** and **sample rate or buffer size changes** are supported; renders are identical from run to run.
+- **Editor:** Gridline's interface in the host's plugin window, resizable, sharp on HiDPI screens (an NSView on macOS, an X11 child window on Linux). Third-party plugins hosted inside the Gridline plugin show Gridline's parameter panel; their own windows open in the Gridline application.
+
+The **Host link** panel (a tab beside the browser) shows the transport, MIDI and output settings, the reported latency and the 16 macros. `gridline plugin-check Gridline` runs the compatibility sweep on the built bundles once they are in the plugin cache.
+
 ## FL Studio project compatibility
 
 Gridline opens FL Studio projects (`.flp`), FL Studio zipped loop packages (`.zip`) and presets (`.fst`), so existing work can be brought across. **File, Open** (or drag and drop) opens `.flp` and `.zip` files like any project; saving one asks where to keep it and in which format, so the original is never overwritten unasked:
@@ -150,6 +178,7 @@ Projects can also be saved back to `.flp` with **File, Export, FL Studio project
 | Engine | `src/engine/AudioEngine`, `Program`, `ProgramGraph` | Real-time engine with delay compensation and a parallel mixer graph. |
 | Plugins | `src/packs/`, `src/engine/` | The built-in instruments and effects, one pack per family. |
 | Hosting | `src/host/` | VST3, CLAP, VST2 and AU backends, scanning, sandbox and native editor windows. |
+| Gridline as a plugin | `src/plugin/` | CLAP and VST3 entry points, host transport, macros, state and the embedded editor. |
 | Interface | `src/app/` | SDL2, OpenGL 3 and Dear ImGui. Every control and icon is drawn in code. |
 | Import and export | `src/core/flp/`, `src/core/MidiFile`, `src/engine/Export` | Project import, MIDI, audio export and stems. |
 

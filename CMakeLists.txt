@@ -62,6 +62,7 @@ configure_file(${CMAKE_BINARY_DIR}/generated/McpDocs.cpp.in ${CMAKE_BINARY_DIR}/
 set_source_files_properties(${CMAKE_BINARY_DIR}/generated/McpDocs.cpp PROPERTIES COMPILE_OPTIONS "-Wno-overlength-strings")
 list(APPEND GRIDLINE_CORE_SRC ${CMAKE_BINARY_DIR}/generated/McpDocs.cpp)
 add_library(gridline_core STATIC ${GRIDLINE_CORE_SRC})
+set_target_properties(gridline_core PROPERTIES POSITION_INDEPENDENT_CODE ON)  # also linked into the plugin bundles (PH-09)
 target_include_directories(gridline_core PUBLIC src)
 target_include_directories(gridline_core SYSTEM PUBLIC third_party)
 # CLAP interface headers (MIT, vendored unmodified; see third_party/clap/LICENSE).
@@ -477,11 +478,27 @@ endif()
 find_package(OpenGL QUIET)
 
 if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
-  add_library(imgui STATIC
+  # Dear ImGui core + OpenGL 3 renderer (no window system: the plugin build, PH-09),
+  # and the SDL2 platform backend on top for the application.
+  add_library(imgui_core STATIC
     third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
-    third_party/imgui/imgui_widgets.cpp third_party/imgui/imgui_demo.cpp
-    third_party/imgui/imgui_impl_sdl2.cpp third_party/imgui/imgui_impl_opengl3.cpp)
-  target_include_directories(imgui SYSTEM PUBLIC third_party/imgui)
+    third_party/imgui/imgui_widgets.cpp third_party/imgui/imgui_demo.cpp third_party/imgui/imgui_impl_opengl3.cpp)
+  target_include_directories(imgui_core SYSTEM PUBLIC third_party/imgui)
+  target_link_libraries(imgui_core PUBLIC ${CMAKE_DL_LIBS})
+  set_target_properties(imgui_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  # SDL2 headers only (the interface sources include SDL_opengl.h for GL declarations).
+  add_library(gridline_sdl_headers INTERFACE)
+  if(SDL2_FOUND)
+    if(TARGET SDL2::SDL2)
+      target_include_directories(gridline_sdl_headers SYSTEM INTERFACE $<TARGET_PROPERTY:SDL2::SDL2,INTERFACE_INCLUDE_DIRECTORIES>)
+    else()
+      target_include_directories(gridline_sdl_headers SYSTEM INTERFACE ${SDL2_INCLUDE_DIRS})
+    endif()
+  else()
+    target_include_directories(gridline_sdl_headers SYSTEM INTERFACE $<TARGET_PROPERTY:PkgConfig::SDL2PC,INTERFACE_INCLUDE_DIRECTORIES>)
+  endif()
+  add_library(imgui STATIC third_party/imgui/imgui_impl_sdl2.cpp)
+  target_link_libraries(imgui PUBLIC imgui_core)
   if(SDL2_FOUND)
     if(TARGET SDL2::SDL2)
       target_link_libraries(imgui PUBLIC SDL2::SDL2)
@@ -496,6 +513,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
 
   # MIDI I/O (RtMidi): CoreMIDI on macOS, ALSA (+JACK if present) on Linux.
   add_library(rtmidi STATIC third_party/rtmidi/RtMidi.cpp)
+  set_target_properties(rtmidi PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(rtmidi SYSTEM PUBLIC third_party/rtmidi)
   target_compile_options(rtmidi PRIVATE -w)  # vendored code
   if(APPLE)
@@ -534,8 +552,16 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   target_compile_options(gridline_tests_theme_settings PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME theme_settings COMMAND gridline_tests_theme_settings WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+  # The interface (every window and editor) is compiled once and used by the
+  # application and by the plugin build (PH-09). main.cpp and PluginWindow.cpp
+  # (SDL windows) belong to the application only.
   file(GLOB GRIDLINE_APP_SRC CONFIGURE_DEPENDS src/app/*.cpp src/packs/RegistryUi.cpp src/packs/*/*_ui.cpp)
-  add_executable(gridline-app ${GRIDLINE_APP_SRC})
+  list(REMOVE_ITEM GRIDLINE_APP_SRC ${CMAKE_SOURCE_DIR}/src/app/main.cpp ${CMAKE_SOURCE_DIR}/src/app/PluginWindow.cpp)
+  add_library(gridline_ui OBJECT ${GRIDLINE_APP_SRC})
+  target_link_libraries(gridline_ui PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
+  target_compile_options(gridline_ui PRIVATE -Wall -Wextra)
+  set_target_properties(gridline_ui PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp $<TARGET_OBJECTS:gridline_ui>)
   target_link_libraries(gridline-app PRIVATE gridline_core imgui rtmidi)
   if(APPLE)
     target_link_libraries(gridline-app PRIVATE objc)  # plugin editor windows (NSView of an SDL window)
@@ -561,6 +587,8 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
       COMMAND touch ${GRIDLINE_APP_BUNDLE}
       COMMENT "Assembling Gridline.app")
   endif()
+
+  include(cmake/GridlinePlugins.cmake)  # PH-09: Gridline.clap / Gridline.vst3
 
   install(TARGETS gridline-app gridline RUNTIME DESTINATION bin)
   install(DIRECTORY assets/ DESTINATION share/gridline/assets PATTERN "sounds/src" EXCLUDE)  # J-48: sound sources stay in the tree

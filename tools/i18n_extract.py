@@ -4,7 +4,7 @@
     python3 tools/i18n_extract.py            # writes assets/i18n/gridline.pot
     python3 tools/i18n_extract.py --check    # exit 1 when the template is out of date
 
-Collected (src/app, src/packs/*/*_ui.cpp, src/core/Keymap.cpp, src/engine/Chop.cpp):
+Collected (src/app, src/packs/*/*_ui.cpp, src/core/Keymap.cpp, src/engine/Chop.cpp, src/plugin):
   * i18n::tr("...") and i18n::N_("...") literals (N_ marks text translated later);
   * the English text handed to the widgets that translate themselves:
     ui::Hint, ui::Tooltip, ui::Label, ui::BeginSection, ui::TextButton (label, hint),
@@ -48,6 +48,7 @@ def source_files():
     files += glob.glob(os.path.join(ROOT, "src", "packs", "*", "*_ui.cpp"))
     files += [os.path.join(ROOT, "src", "core", "Keymap.cpp")]
     files += [os.path.join(ROOT, "src", "engine", "Chop.cpp")]  # PL-13: chop preset names and hints (N_)
+    files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.cpp"))  # PH-09: the plugin build's own panel and messages
     return sorted(files)
 
 

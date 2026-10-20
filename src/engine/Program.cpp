@@ -750,6 +750,19 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     linkRts[key] = pl.rt;
     prog->links.push_back(std::move(pl));
   }
+  // --- PH-09: host macros (plugin build) ---
+  prog->macros.assign(static_cast<size_t>(kHostMacros), ProgMacro{});
+  for (size_t k = 0; k < macroTargets_.size() && k < static_cast<size_t>(kHostMacros); ++k) {
+    const ParamId target = macroTargets_[k];
+    ProgMacro& m = prog->macros[k];
+    if (target.owner == kNoId || !resolveTarget(song, *prog, target, m.target)) continue;
+    const uint64_t key = target.packed();
+    auto lr = links_.find(key);
+    m.target.rt = linkRts.count(key) ? linkRts[key] : lr != links_.end() ? lr->second : std::make_shared<LinkRuntime>();
+    linkRts[key] = m.target.rt;
+    m.valid = true;
+    prog->hasMacros = true;
+  }
   // --- automation clips (arrangement): one lane per automated parameter ---
   // Tempo automation becomes the tempo map instead (song mode).
   prog->tempoMap.build(song);

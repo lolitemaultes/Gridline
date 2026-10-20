@@ -32,6 +32,11 @@ namespace fs = std::filesystem;
 
 static App* gApp = nullptr;
 App& app() { return *gApp; }
+App* setCurrentApp(App* a) {
+  App* prev = gApp;
+  gApp = a;
+  return prev;
+}
 
 App::App() {
   gApp = this;
@@ -58,7 +63,7 @@ App::~App() {
   presetImport.cancel = true;
   if (presetImport.worker.joinable()) presetImport.worker.join();
   settings.save(Settings::defaultPath());
-  gApp = nullptr;
+  if (gApp == this) gApp = nullptr;
 }
 
 std::string App::configDir() const { return fs::path(Settings::defaultPath()).parent_path().string(); }
@@ -74,6 +79,7 @@ void App::addRecent(const std::string& path) {
 }
 
 int App::processingThreads() const {
+  if (embedded) return 1;  // PH-09: the host spreads its plugins over its own threads
   int n = static_cast<int>(settings.getNumber("audio.threads"));
   if (n <= 0) {
     // Automatic: half the hardware threads (the rest serve the UI, hosted
@@ -204,7 +210,7 @@ void App::tick(double t) {
   engine.collectGarbage();
   toasts.erase(std::remove_if(toasts.begin(), toasts.end(), [&](const Toast& x) { return x.until < now; }), toasts.end());
   int64_t wall = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-  if (wall - lastBackupCheck_ >= 5) {
+  if (wall - lastBackupCheck_ >= 5 && !embedded) {  // PH-09: the host saves an embedded project
     lastBackupCheck_ = wall;
     if (doc.modified() && backups->due(wall)) {
       std::string err;
