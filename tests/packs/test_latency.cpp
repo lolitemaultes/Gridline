@@ -190,12 +190,12 @@ void latentEffects() {
     std::snprintf(what, sizeof what, "gl.amprack oversampling %d", os);
     check(what, st("gl.amprack", {{dyn::RkOversample, static_cast<float>(os)}}), 1, &ref);
     std::snprintf(what, sizeof what, "gl.emphasis oversampling %d", os);
-    check(what, st("gl.emphasis", {{dyn::EmOversample, static_cast<float>(os)}}), 1);
+    check(what, st("gl.emphasis", {{dyn::EmModel, 0.f}, {dyn::EmOversample, static_cast<float>(os)}}), 1);
   }
   for (int ch = 0; ch < 4; ++ch) {
     char what[64];
     std::snprintf(what, sizeof what, "gl.emphasis character %d", ch);
-    check(what, st("gl.emphasis", {{dyn::EmCharacter, static_cast<float>(ch)}}), 1);
+    check(what, st("gl.emphasis", {{dyn::EmModel, 0.f}, {dyn::EmCharacter, static_cast<float>(ch)}}), 1);
   }
   check("gl.fastdist", st("gl.fastdist"), 1);
   check("gl.effector distortion", st("gl.effector", {{dyn::EfKind, 0.f}}), 2);

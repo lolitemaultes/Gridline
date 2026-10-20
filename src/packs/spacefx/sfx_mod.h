@@ -262,6 +262,8 @@ class SwirlFx final : public Effect {
     line_[1].clear();
     ph_ = 0;
     key_ = -1;
+    lastN_ = 0;
+    started_ = false;
   }
 
  private:
@@ -271,8 +273,10 @@ class SwirlFx final : public Effect {
     double g = a >= 1.0 ? 1.0 : 0.1 * (std::pow(11.0, a) - 1.0);
     return x < 0 ? -g : g;
   }
-  // Reference engine: 2 x order voices (a set per side, the second set mirrored and half a cycle later),
-  // each a delay swept by a parabolic contour around its base delay; per-voice opposite-channel gain.
+  // Reference engine (J-35 study j35_flangus.md): 2 x order voices (a set per side, the second
+  // set mirrored and half a cycle later), each a delay swept by the reference's contour (a
+  // triangle bent by t(2 - |t|), starting at the minimum delay) on an int32 phase, read with
+  // linear interpolation; cross = each tap also feeds the other output (no feedback).
   void reference(const PluginState& s, double sr, float* L, float* R, int n) {
     static const double kRatio[20] = {0.967, 1.039, 1.021, 0.1013, 0.977, 1.033, 0.997, 0.971, 1.061, 0.947,
                                       1.031, 0.1009, 1.063, 0.953, 0.991, 1.049, 0.983, 1.051, 1.019, 1.069};
@@ -280,51 +284,72 @@ class SwirlFx final : public Effect {
     const double d = std::clamp(static_cast<double>(pv(s, SwDepthK, 0.5f)), 0.0, 1.0), sp = std::clamp(static_cast<double>(pv(s, SwSpeedK, 0.75f)), 0.0, 1.0);
     const double t = std::clamp(static_cast<double>(pv(s, SwDelayK, 0.0625f)), 0.0, 1.0), spr = std::clamp(static_cast<double>(pv(s, SwSpreadK, 1)), 0.0, 1.0);
     const double c = std::clamp(static_cast<double>(pv(s, SwCrossK, -0.25f)), -1.0, 1.0);
-    const double dry = lvl(pv(s, SwDryK, 0.75f)), wet = lvl(pv(s, SwWetK, 0.75f));
+    const double dryT = lvl(pv(s, SwDryK, 0.75f)), wetT = lvl(pv(s, SwWetK, 0.75f));
     const double D = 109.25 * (std::pow(11.0, d) - 1.0), T = 441.0 * (std::pow(11.0, t) - 1.0);
     const double S = (std::pow(1001.0, spr) - 1.0) / 1000.0, P = 50000.0 + 75000.0 * (std::pow(101.0, 1.0 - sp) - 1.0);
-    const double K = 2147483648.0 * 500.0 / P, k = sr / 44100.0;
+    const double K = 2147483648.0 / P * 500.0, k = static_cast<float>(44100.0 / sr);
     auto lerp = [](double a, double b, double w) { return (1 - w) * b + w * a; };
-    const long key = static_cast<long>(N) * 1000 + static_cast<long>(std::lround(spr * 999));
-    double sumG = 0;
+    double sumG = 0, maxDelay = 0;
+    uint32_t phase0[18];
     for (int i = 0; i < 2 * N; ++i) {
       const bool mirror = i >= N;
-      double u = mirror ? 1.0 - static_cast<double>(2 * N - 1 - i) / N : 1.0 - static_cast<double>(i) / N;
-      double r = kRatio[i % 20], rr = lerp(r * r, 1.0, S);
-      double A = D * u + 10.0;
-      inc_[i] = lerp(rr * K / A, K / (D + 10.0), S) / 4294967296.0 / k;  // cycles per sample
-      amp_[i] = A * k;
-      base_[i] = std::max(lerp(T * u * rr, T, S) * k, 8.0) + amp_[i];
-      own_[i] = 1.0, other_[i] = c * u;
+      const int j = mirror ? 2 * N - 1 - i : i;
+      const double u = 1.0 - static_cast<double>(j) / N;
+      const double r = kRatio[i % 20], rr = lerp(r * r, 1.0, S);
+      const double A = D * u + 10.0;
+      incI_[i] = static_cast<uint32_t>(static_cast<int32_t>(std::lround(k * lerp(rr * K / A, K / (D + 10.0), S))));
+      amp_[i] = A / k;
+      base_[i] = std::max(lerp(T * u * rr, T, S) / k, 8.0) + amp_[i];
+      other_[i] = c * u;
       side_[i] = mirror ? 1 : 0;
       sumG += 1.0 + std::fabs(other_[i]);
-      if (key != key_) phase_[i] = (mirror ? 0.5 : 0.0) + u * S * 0.5;  // spread (and the order) reset the phases
+      maxDelay = std::max(maxDelay, base_[i] + amp_[i]);
+      phase0[i] = (mirror ? 0x80000000u : 0u) + (static_cast<uint32_t>(std::lround(u * S * 2147483648.0 / 256.0)) << 8);
     }
-    key_ = key;
+    // The reference re-allocates (clears) its line and restarts the phases when the line
+    // length or the spread changes (its length also counts the host block: left out here).
+    const long key = std::lround(maxDelay) * 4096 + std::lround(spr * 4095);
+    if (key != key_ || N != lastN_) {
+      if (key != key_) {
+        line_[0].clear(), line_[1].clear();
+        for (int i = 0; i < 2 * N; ++i) p_[i] = phase0[i];
+      } else {
+        for (int i = lastN_ * 2; i < 2 * N; ++i) p_[i] = 0;
+      }
+      key_ = key, lastN_ = N;
+    }
+    if (!started_) dry_ = dryT, wet_ = wetT, started_ = true;
     const double norm = 1.0 - (std::pow(1001.0, 1.0 - 1.0 / std::max(1.0, sumG)) - 1.0) / 1000.0;
+    const double maxStep = 0.001 * 44100.0 / sr;
+    auto slew = [maxStep](double& v, double tgt) { v += std::clamp(tgt - v, -maxStep, maxStep); };
     for (int i = 0; i < n; ++i) {
       double xl = L[i], xr = R[i];
       line_[0].push(flush(static_cast<float>(xl)));
       line_[1].push(flush(static_cast<float>(xr)));
       double wl = 0, wr = 0;
       for (int v = 0; v < 2 * N; ++v) {
-        double ph = phase_[v] - std::floor(phase_[v]);
-        double x = ph * 2.0;  // parabolic sine contour (-1..1)
-        double w = x < 1 ? 4 * x * (1 - x) : -4 * (2 - x) * (x - 1);
-        double tap = line_[side_[v]].read(std::max(1.0, base_[v] + amp_[v] * w));
-        double tl = side_[v] ? other_[v] * tap : own_[v] * tap, tr = side_[v] ? own_[v] * tap : other_[v] * tap;
-        wl += tl, wr += tr;
-        phase_[v] += inc_[v];  // wrapped per sample (J-30: a per-block wrap rounds differently per block size)
-        if (phase_[v] >= 1.0) phase_[v] -= 1.0;
+        const double tau = 2.0 * std::fabs(static_cast<double>(static_cast<int32_t>(p_[v]))) / 2147483648.0 - 1.0;
+        const double pos = base_[v] + amp_[v] * (tau * (2.0 - std::fabs(tau)));
+        const double fl = std::floor(pos);
+        const size_t di = static_cast<size_t>(std::max(0.0, fl));
+        const double fr = pos - fl;
+        const double a = line_[side_[v]].at(di + 1), b = line_[side_[v]].at(di + 2);
+        const double tap = (a + fr * (b - a)) * norm;
+        wl += side_[v] ? other_[v] * tap : tap;
+        wr += side_[v] ? tap : other_[v] * tap;
+        p_[v] += incI_[v];
       }
-      L[i] = flush(static_cast<float>(xl * dry + wl * norm * wet));
-      R[i] = flush(static_cast<float>(xr * dry + wr * norm * wet));
+      slew(dry_, dryT), slew(wet_, wetT);
+      L[i] = flush(static_cast<float>(xl * dry_ + wl * wet_));
+      R[i] = flush(static_cast<float>(xr * dry_ + wr * wet_));
     }
   }
   Ring line_[2];
   double ph_ = 0;
-  double inc_[18] = {}, amp_[18] = {}, base_[18] = {}, own_[18] = {}, other_[18] = {}, phase_[18] = {};
-  int side_[18] = {};
+  double amp_[18] = {}, base_[18] = {}, other_[18] = {}, dry_ = 0, wet_ = 0;
+  uint32_t incI_[18] = {}, p_[18] = {};
+  int side_[18] = {}, lastN_ = 0;
+  bool started_ = false;
   long key_ = -1;
 };
 

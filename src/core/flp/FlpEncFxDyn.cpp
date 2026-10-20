@@ -201,6 +201,7 @@ void maximusKnobs(ByteWriter& w) {
 struct CurvePt {
   double x, y;
   float t;
+  int type = 0;  // J-35: point shape (0 single, 1 double curve, 2 hold)
 };
 
 // One envelope record: header, points (first one at x = 0 without a
@@ -214,7 +215,8 @@ void maximusRecord(ByteWriter& w, const std::vector<CurvePt>& pts) {
     w.f64(pts[i].x - prev);
     w.f64(pts[i].y);
     w.f32(pts[i].t);
-    w.zeros(3);
+    w.u8(static_cast<uint8_t>(std::clamp(pts[i].type, 0, 2)));  // point shape
+    w.zeros(2);
     w.u8(i == 0 ? 0 : pts[i].t == 0 ? 2 : 1);  // segment: 2 straight, 1 curved
     prev = pts[i].x;
   }
@@ -276,6 +278,18 @@ Encoder maximus() {
       else if (mode == 1 && sat >= 0) putI32(s, at, -500);
       else if (mode == 2 && sat <= 0) putI32(s, at, 500);
     }
+    // J-35: linear-phase split (bit 0) and safety-off (bit 6) flags after the block (version 14 on).
+    if (g.params.size() >= static_cast<size_t>(dy::kMsTotal)) {
+      const uint32_t head = getU32(s, 0);
+      const int ver = head >= 0x10000 ? static_cast<int>(head >> 16) : static_cast<int>(head);
+      const size_t flags = 4 + 506 + 8;
+      if (ver >= 14 && s.size() > flags) {
+        uint8_t f = static_cast<uint8_t>(s[flags] & ~0x41);
+        if (P(dy::MsRef0 + dy::MrLin) >= 0.5) f |= 0x01;
+        if (P(dy::MsRef0 + dy::MrSafetyOff) >= 0.5) f |= 0x40;
+        s[flags] = f;
+      }
+    }
     for (int b = 0; b < kMaxBands; ++b) {
       std::vector<size_t> offs = maximusRecords(s);
       if (offs.empty()) return;
@@ -287,19 +301,22 @@ Encoder maximus() {
       for (size_t i = 0; i < n; ++i) {
         const size_t q = at + kRecHead + kRecPoint * i;
         x += getF64(s, q);
-        cur.push_back({std::min(1.0, x), std::clamp(getF64(s, q + 8), 0.0, 1.0), std::clamp(getF32(s, q + 16), -1.0f, 1.0f)});
+        cur.push_back({std::min(1.0, x), std::clamp(getF64(s, q + 8), 0.0, 1.0), std::clamp(getF32(s, q + 16), -1.0f, 1.0f), s[q + 20]});
       }
       const int want = std::clamp(static_cast<int>(std::lround(P(dy::msExt(b, dy::MxPoints)))), 2, dy::kMsCurvePts);
       std::vector<CurvePt> pts;
       for (int i = 0; i < want; ++i) {
         const int k = dy::msExt(b, dy::MxPt0 + 3 * i);
-        pts.push_back({P(k), P(k + 1), static_cast<float>(P(k + 2))});
+        const int ty = g.params.size() > static_cast<size_t>(dy::kMsTotal - 1)
+                           ? static_cast<int>(std::lround(P(dy::MsRef0 + dy::MrPtType0 + b * dy::kMsCurvePts + i)))
+                           : 0;
+        pts.push_back({P(k), P(k + 1), static_cast<float>(P(k + 2)), ty});
       }
       bool same = cur.size() >= 2 && std::min(cur.size(), static_cast<size_t>(dy::kMsCurvePts)) == pts.size();
       for (size_t i = 0; same && i < pts.size(); ++i) {
         const CurvePt& c = cur[i == pts.size() - 1 ? cur.size() - 1 : i];
         same = static_cast<float>(c.x) == static_cast<float>(pts[i].x) && static_cast<float>(c.y) == static_cast<float>(pts[i].y) &&
-               c.t == pts[i].t;
+               c.t == pts[i].t && std::clamp(c.type, 0, 2) == pts[i].type;
       }
       if (same) continue;
       ByteWriter w;
@@ -333,6 +350,21 @@ Encoder maximus() {
       f.push_back(i32(X(dy::MxRelCurve), bandWord(s, b, BRelCurve), 1, 8));
       f.push_back(i32(P(dy::MbWindow), bandWord(s, b, BWindow), 0, 10000));
       f.push_back(i32(X(dy::MxEnvMode), bandWord(s, b, BEnvMode), 0, 1));
+    }
+    // J-35: the reference block holds the stored words themselves, and the options.
+    static const double glo[7] = {0, 0, 0, 0, 0, 0, -1}, ghi[7] = {65536, 1, 65536, 1, 10000, 1000, 65536};
+    static const double blo[13] = {0, 0, 0, -1000, -1000, 0, 0, 0, 1, 0, 1, 0, 0}, bhi[13] = {3, 2000, 2000, 1000, 1000, 2000, 10000, 10000, 8, 10000, 8, 10000, 1};
+    for (int k = 0; k < maxGlobals(s); ++k) f.push_back(i32(dy::MsRef0 + dy::MrRaw0 + k, 4 + 4 * static_cast<size_t>(k), glo[k], ghi[k]));
+    for (int b = 0; b < kMaxBands; ++b)
+      for (int k = 0; k < BCount; ++k) f.push_back(i32(dy::MsRef0 + dy::MrRaw0 + 7 + b * BCount + k, bandWord(s, b, k), blo[k], bhi[k]));
+    if (maxGlobals(s) == kMaxGlobals) {  // option block (version 3 on)
+      const size_t opt = 4 + 0x1D8;
+      const uint32_t head = getU32(s, 0);
+      const int ver = head >= 0x10000 ? static_cast<int>(head >> 16) : static_cast<int>(head);
+      f.push_back(i32(dy::MsRef0 + dy::MrTarget, opt + 4, 0, 3));
+      f.push_back(field(dy::MsRef0 + dy::MrSolo, opt + 0x13, Type::U8, 0, 1));
+      if (ver >= 6) f.push_back(field(dy::MsRef0 + dy::MrMasterMid, opt + 0x20, Type::U8, 0, 1));
+      if (ver >= 7) f.push_back(field(dy::MsRef0 + dy::MrFir, opt + 0x21, Type::U8, 0, 1));
     }
     return f;
   };

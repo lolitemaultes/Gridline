@@ -300,7 +300,10 @@ enum Delay {
   // (0 = host), whole-sixteenth rounding, feedback filter coefficient (× 44.1 kHz / sr when scaled),
   // linear feedback, output mode, input-side offset (ms, < 0 = left later), input gain + fold pan, dry.
   DlyClsStepRound, DlyClsBpm, DlyClsCoef, DlyClsScaleSr, DlyClsFb, DlyClsMode, DlyClsOffset, DlyClsIn, DlyClsPan, DlyClsDry,
-  DlyCount
+  // J-35: stereo feedback delay reference (DlyModel = 3, engine/Delay3Ref.h): the reference's 26
+  // controls, normalised 0..1, in its own order (d3ref::Param).
+  DlyD3Raw0,
+  DlyCount = DlyD3Raw0 + 26
 };
 // DlyMode choices: normal, ping-pong, invert, then (0.5) mono, off.
 // "gl.reverb"
@@ -313,6 +316,13 @@ enum Reverb {
   // J-26: network model: 0 hall (comb network), 1 plate (Reeverb v1 reference: mono input,
   // low cut <= 20 Hz = off, high cut / damping >= 22100 Hz = off, size steps of 1 %, fixed 500 Hz bass crossover)
   RvbModel,
+  // J-35: model 2 = the full reference reverb (FullReverbRef.h), driven by the standalone
+  // reverb's own integer controls (low cut 19..3000 Hz (19 = off), high cut / damping 5..221
+  // ×100 Hz (221 = off), pre-delay 0..384 (1/384 s or 1/192 beat), room 1..100, diffusion 0..100,
+  // decay 1..200 ×0.1 s, bass 20..300 %, crossover 25..2000 Hz, separation -64..64, dry / ER /
+  // wet 0..160, mod speed / depth 0..2048); RvbPreSync and RvbInputMode (mid / side) shared.
+  RvbFLowCut, RvbFHighCut, RvbFPredelay, RvbFRoom, RvbFDiffusion, RvbFDecay, RvbFDamp, RvbFBass, RvbFCross, RvbFSep,
+  RvbFDry, RvbFEr, RvbFWet, RvbFModSpeed, RvbFModDepth,
   RvbCount
 };
 // "gl.chorus"

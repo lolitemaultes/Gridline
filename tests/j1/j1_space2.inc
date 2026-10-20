@@ -398,9 +398,11 @@ void testDelayBankRef() {
   expect(fc::mdOffsetMs(0) == 0 && jt::near(fc::mdOffsetMs(512), 500, 1e-9) && jt::near(fc::mdOffsetMs(-512), -500, 1e-9) &&
              jt::near(fc::mdOffsetMs(256), (std::sqrt(1001.0) - 1) / 2, 1e-9),
          "bank: time offset (1001^(|v|/512) − 1)/2 ms");
-  expect(jt::near(fc::mdCutHz(1, 1), 22050.0, 1e-6) && jt::near(fc::mdCutHz(1, 0), 22050 * 0.003, 1e-9) &&
-             jt::near(fc::mdCutHz(2, 1), 13230, 1e-3) && jt::near(fc::mdCutHz(6, 1), 13230, 1e-3) && jt::near(fc::mdCutHz(3, 0), 22050 * 0.0001, 1e-9),
-         "bank: cutoff curves (LP 66 Hz..22 kHz, others 2.2 Hz..13.2 kHz)");
+  // J-35: the frequency scale is 44100 Hz per unit (spec j35_delaybank.md §1).
+  expect(jt::near(fc::mdCutHz(1, 1), 44100.0 * ((std::exp(7.313886831633462) - 1) * 0.0006646666666666667 + 0.003), 1e-6) &&
+             jt::near(fc::mdCutHz(1, 0), 44100 * 0.003, 1e-9) && jt::near(fc::mdCutHz(2, 1), 44100 * ((std::exp(7.313886831633462) - 1) * 0.0003999333333333333 + 0.0001), 1e-6) &&
+             jt::near(fc::mdCutHz(6, 1), fc::mdCutHz(2, 1), 1e-9) && jt::near(fc::mdCutHz(3, 0), 44100 * 0.0001, 1e-9),
+         "bank: cutoff curves (LP 132 Hz..44 kHz, others 4.4 Hz..44.1 kHz, HP to 26.5 kHz)");
   expect(jt::near(fc::mdQ(0), 0.1, 1e-12) && jt::near(fc::mdQ(1), 50, 1e-12) && jt::near(fc::mdBw(0), 0.01, 1e-12) && jt::near(fc::mdPeakQ(1), 0.1, 1e-12) &&
              jt::near(fc::mdShelfS(0), 1, 1e-9) && jt::near(fc::mdFilterA(128), 1, 1e-5) && jt::near(fc::mdFilterA(256), 2, 1e-5) &&
              jt::near(fc::mdFilterA(0), 0.1, 1e-12),
@@ -430,11 +432,12 @@ void testDelayBankRef() {
   expect(jt::near(po.l[10 + D], 1, 1e-6) && std::fabs(po.r[10 + D]) < 1e-9 && jt::near(po.r[10 + 2 * D], 1, 1e-6) && std::fabs(po.l[10 + 2 * D]) < 1e-9 &&
              jt::near(po.l[10 + 3 * D], 1, 1e-6),
          "bank: ping-pong alternates sides");
-  // Invert mode: stored pass swaps sides (output of pass 2 on the right).
+  // Invert mode (J-35): the unit's output sides swap; the feedback stays on its side.
   PluginState iv = pp;
   s2Set(iv, s2::mdParam(0, s2::MdFbMode), s2::MfbInvert);
   S2Out io = s2Run(iv, il, ir);
-  expect(jt::near(io.l[10 + D], 1, 1e-6) && jt::near(io.r[10 + 2 * D], 1, 1e-6) && jt::near(io.l[10 + 3 * D], 1, 1e-6), "bank: invert swaps L/R every pass");
+  expect(jt::near(io.r[10 + D], 1, 1e-6) && jt::near(io.r[10 + 2 * D], 1, 1e-6) && std::fabs(io.l[10 + D]) < 1e-9 && std::fabs(io.l[10 + 2 * D]) < 1e-9,
+         "bank: invert swaps the output sides");
   // Off mode: no delay line (filter / level path only).
   PluginState of = s2Bank(100);
   s2Set(of, s2::mdParam(0, s2::MdFbMode), s2::MfbOff);
@@ -539,11 +542,11 @@ void testDelayBankRef() {
              s2P(mms.state, s2::mdExt(0, s2::MdxTempo)) == 0 && s2P(mms.state, s2::mdParam(0, s2::MdFbMode)) == s2::MfbPingPong,
          "bank decode: ms time v/3.84, ping-pong mode");
   expect(s2Decode("Fruity Delay Bank", bankBlob(16, 1920, 1, 2, 2, 0), mf) && s2P(mf.state, s2::mdParam(0, s2::MdFbFType)) == s2::MfBandPass &&
-             s2P(mf.state, s2::mdParam(0, s2::MdFbMode)) == s2::MfbInvert && !mf.exact,
-         "bank decode: FL band pass → band pass, invert; filters not exact (frequency scale assumed)");
-  expect(s2Decode("Fruity Delay Bank", bankBlob(16, 1920, 1, 0, 1, -64), m16) && !m16.exact && jt::near(s2P(m16.state, s2::MdWet), 1, 1e-9) &&
+             s2P(mf.state, s2::mdParam(0, s2::MdFbMode)) == s2::MfbInvert && mf.exact,
+         "bank decode: FL band pass → band pass, invert; exact (J-35 filter laws)");
+  expect(s2Decode("Fruity Delay Bank", bankBlob(16, 1920, 1, 0, 1, -64), m16) && m16.exact && jt::near(s2P(m16.state, s2::MdWet), 1, 1e-9) &&
              jt::near(s2P(m16.state, s2::mdParam(0, s2::MdFeedback)), 0.5, 1e-9),
-         "bank decode: levels / feedback; pan not exact (pan law assumed)");
+         "bank decode: levels / feedback, pan; exact (J-35 pan law)");
   if (jt::haveFl()) {
     int total, ok, exact;
     s2Presets("Fruity Delay Bank", "gl.multidelay", total, ok, exact);

@@ -243,7 +243,10 @@ Sections split(const File& f) {
       slotEvents.push_back(e);
       continue;
     }
-    if (e.id == 147 && slotCount < 10 && hasName()) ins.slots[static_cast<size_t>(slotCount++)].events = slotEvents;
+    if (e.id == 147 && slotCount < 10 && hasName()) {
+      ins.slots[static_cast<size_t>(slotCount++)].events = slotEvents;
+      slotEvents.clear();  // J-35: the slot is closed (it was also stored a second time below)
+    }
     ins.events.push_back(e);
     if (e.id == 236) open = true;
     if (e.id == 147) {  // end of this insert

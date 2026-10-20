@@ -67,6 +67,25 @@ inline constexpr int MsExt0 = kMsBaseCount;
 inline int msExt(int band, int k) { return MsExt0 + band * MxStride + k; }
 inline constexpr int kMsCount = MsExt0 + kMsBands * MxStride;
 
+// J-35: reference block (maximus_ref.h): the reference plugin's stored integers
+// (7 globals, then 4 bands × 13 in its tag order), its options and the drawn
+// curves' point types (the points themselves stay in the MxPt block above).
+// gl.master appends it at MsRef0; gl.enhance at EnRef0 (for its program).
+enum MaxRefParam {
+  MrModel = 0,     // 0 legacy engine, 1 reference engine
+  MrRaw0,          // kMrRaw values
+  MrSolo = MrRaw0 + 59,
+  MrTarget,        // selected (solo) band 0..3
+  MrMasterMid,     // mid band works on the whole input
+  MrSafetyOff,     // curves reach 0 dBFS instead of the 0.975 safety
+  MrFir,           // legacy linear-phase crossover (not modelled: IIR used)
+  MrLin,           // modern linear-phase crossover (not modelled: IIR used)
+  MrPtType0,       // 4 bands × kMsCurvePts point types (0 single curve, 1 double curve, 2 hold)
+  kMrCount = MrPtType0 + kMsBands * kMsCurvePts
+};
+inline constexpr int MsRef0 = kMsCount;
+inline constexpr int kMsTotal = MsRef0 + kMrCount;
+
 // Drawn curve of a band (x ascending in 0..1). Value at x with per-segment tension.
 struct DrawnCurve {
   int n = 3;
@@ -98,6 +117,10 @@ enum Emph {
   EmOversample,
   EmLevelMatch,
   EmDelta,
+  // J-35 reference engine (EmModel = 1, emphasis_ref.h; pre-model states keep the
+  // legacy engine). Shared with the legacy set: EmInput (dB 0..24), EmLink,
+  // EmStereoMode (M/S), EmDcBlock, EmLevelMatch, EmDelta.
+  EmModel, EmBypass, EmOrder /* index: order - 1 */, EmTruePeak, EmMode, EmAmount, EmCeilKnob, EmHardness, EmOs5, EmLowLatency, EmInstant,
   EmCount
 };
 
@@ -108,19 +131,33 @@ enum Emph {
 // J-26: EnCustom = 2 runs the peak-emphasis limiter (emphasizer_ref.h) with the
 // appended controls: input dB, emphasis, soft clip, level match, output gain
 // (linear), bypass.
+// J-35: EnCustom = 3 runs the embedded program on the reference mastering
+// engine (program in EnProg0 + the reference block at EnRef0; amount = band mix).
 enum Enh { EnAmount = 0, EnMode, EnCustom, EnProg0 };
 inline constexpr int EnPeakIn = EnProg0 + kMsCount;
 inline constexpr int EnPeakEmph = EnPeakIn + 1, EnPeakSoft = EnPeakIn + 2, EnPeakMatch = EnPeakIn + 3, EnPeakOut = EnPeakIn + 4,
                      EnPeakBypass = EnPeakIn + 5;
-inline constexpr int EnCount = EnPeakIn + 6;
+inline constexpr int EnRef0 = EnPeakIn + 6;
+inline constexpr int EnCount = EnRef0 + kMrCount;
 
 // ------------------------------------------------------------ gl.amprack
 inline constexpr int kRackSlots = 6;
 inline constexpr int kRackKnobs = 6;
 enum RackGlobal { RkInput = 0, RkOutput, RkSoftClip, RkOversample, RkSlot0 };
 enum RackSlotParam { RsType = 0, RsOn, RsK0, RsK1, RsK2, RsK3, RsK4, RsK5, RsMix, RsStride };
-inline constexpr int kRkCount = RkSlot0 + kRackSlots * RsStride;
+inline constexpr int kRkBase = RkSlot0 + kRackSlots * RsStride;
 inline int rkParam(int slot, int k) { return RkSlot0 + slot * RsStride + k; }
+// J-35: reference models after the guitar rack's parameters. RkModel 0 = guitar
+// rack, 1 = module rack (modrack_ref.h: up to four modules, the stored integers of
+// each), 2 = pedal board (pedal_ref.h: the 50 stored values).
+inline constexpr int kDrModules = 4, kDrParams = 49;
+enum ModRackModule { DmKind = 0, DmAlgo, DmOs, DmRemoveDc, DmDisabled, DmFilterType, DmFilterOpt, DmImpulse, DmChorusMode, DmP0,
+                     DmStride = DmP0 + kDrParams };
+inline constexpr int RkModel = kRkBase;
+inline constexpr int DrSoftClip = RkModel + 1, DrCount = RkModel + 2, DrSlot0 = RkModel + 3, DrModule0 = DrSlot0 + kDrModules;
+inline int drParam(int module, int k) { return DrModule0 + module * DmStride + k; }
+inline constexpr int PbValue0 = DrModule0 + kDrModules * DmStride;  // 50 values
+inline constexpr int kRkCount = PbValue0 + 50;
 enum RackModule {
   RmEmpty = 0, RmOverdrive, RmFuzz, RmAmp, RmCompressor, RmEq, RmWah, RmChorus, RmPhaser, RmDelay, RmReverb,
   RmGate, RmTremolo, RmCount

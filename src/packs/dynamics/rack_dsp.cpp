@@ -3,6 +3,8 @@
 #include <cstdio>
 #include "dyn_dsp.h"
 #include "effector_ref.h"
+#include "modrack_ref.h"
+#include "pedal_ref.h"
 
 namespace gl::packs::dynamics {
 
@@ -496,6 +498,28 @@ class AmpRackFx final : public DynFx {
   AmpRackFx() : DynFx("gl.amprack") {}
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate;
+    const int model = pi(s, RkModel);
+    if (model == 1) {  // J-35 module rack
+      drack::RackState rs;
+      rs.count = std::clamp(pi(s, DrCount), 0, kDrModules);
+      rs.softClip = pb(s, DrSoftClip);
+      for (int m = 0; m < kDrModules; ++m) {
+        drack::ModuleState& ms = rs.m[m];
+        int* f[DmP0] = {&ms.kind, &ms.algo, &ms.os, &ms.removeDc, &ms.disabled, &ms.ftype, &ms.fopt, &ms.ir, &ms.chorusMode};
+        for (int k = 0; k < DmP0; ++k) *f[k] = pi(s, drParam(m, k));
+        for (int k = 0; k < kDrParams; ++k) ms.p[k] = pi(s, drParam(m, DmP0 + k));
+      }
+      mods_.process(rs, sr, L, R, n);
+      safety(L, R, n);
+      return;
+    }
+    if (model == 2) {  // J-35 pedal board
+      float v[50];
+      for (int k = 0; k < 50; ++k) v[k] = static_cast<float>(p(s, PbValue0 + k));
+      board_.process(v, sr, L, R, n);
+      safety(L, R, n);
+      return;
+    }
     const double in = dbToLin(p(s, RkInput)), out = dbToLin(p(s, RkOutput));
     const bool soft = pb(s, RkSoftClip);
     const int osf = osFactor(pi(s, RkOversample));
@@ -538,11 +562,14 @@ class AmpRackFx final : public DynFx {
   }
   void reset() override {
     for (auto& sl : slots_) sl.reset();
+    mods_.reset();
+    board_.reset();
   }
   // The drive modules (overdrive, fuzz, amp) oversample their shaper, which
   // delays their wet signal; a slot's undelayed dry part is mixed back in, so
   // count the slots whose wet part dominates (mix >= 50 %).
   int latencyFor(const PluginState& s, double) const override {
+    if (pi(s, RkModel) != 0) return 0;  // reference models: no reported latency (IIR resamplers, as the reference)
     const int os = osLatency(osFactor(pi(s, RkOversample)));
     int lat = 0;
     for (int sl = 0; sl < kRackSlots; ++sl) {
@@ -555,7 +582,14 @@ class AmpRackFx final : public DynFx {
   }
 
  private:
+  // Output safety of the reference models, as the guitar rack: ±16 (+24 dBFS) —
+  // only absurd settings (every gain at its maximum) ever reach it.
+  static void safety(float* L, float* R, int n) {
+    for (int i = 0; i < n; ++i) L[i] = std::clamp(L[i], -16.f, 16.f), R[i] = std::clamp(R[i], -16.f, 16.f);
+  }
   RackSlot slots_[kRackSlots];
+  drack::Rack mods_;
+  pedal::Board board_;
 };
 
 // ===================================================================== effector tables

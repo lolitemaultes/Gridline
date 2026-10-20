@@ -541,7 +541,7 @@ void testEnhance() {
       for (const auto& sl : tr.slots)
         if (sl.plugin.type == "gl.enhance") {
           ++found;
-          if (sl.plugin.params.size() > static_cast<size_t>(dy::EnCustom) && sl.plugin.params[dy::EnCustom] == 1) ++custom;
+          if (sl.plugin.params.size() > static_cast<size_t>(dy::EnCustom) && sl.plugin.params[dy::EnCustom] == 3) ++custom;  // J-35: reference program
         }
     expect(ok && found > 0 && custom == found, "soundgoodizer render test: imports with the shipped programs embedded");
   }

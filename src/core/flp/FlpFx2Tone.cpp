@@ -31,6 +31,9 @@
 //                           high band, low band.
 //   Distructor, Hardcore    module racks (not decoded: default Amp Rack).
 #include "../../packs/dynamics/dynamics.h"
+#include "../../packs/dynamics/emphasis_ref.h"
+#include "../../packs/dynamics/modrack_ref.h"
+#include "../../packs/dynamics/pedal_ref.h"
 #include "../../packs/dynamics/emphasizer_ref.h"
 #include "../../packs/spectral/spectral.h"
 #include "../../packs/utility/utility.h"
@@ -319,9 +322,8 @@ bool decodeFreqSplitter(Context& c, const std::vector<Event>& evs, PluginMapping
 // 1 delta, 2 envelope order, 3 true peak, 4 M/S, 5 mode, 6 input (24 n dB),
 // 7 link, 8 amount, 9 ceiling ((11^n - 1)/10), 10 level match, 11 oversampling
 // (off / 2x .. 16x), 12 hardness; bytes after two editor ints: low latency,
-// instant recovery, DC block (version >= 9 / 10). The limiter itself is
-// Gridline's (its detector internals are not yet studied), so imports stay
-// approximate.
+// instant recovery, DC block (version >= 9 / 10; missing = off).
+// J-35: imports run the reference limiter (spec j35_emphasis.md).
 bool decodeEmphasis(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
   if (r.n < 4 + 13 * 4) return false;
@@ -330,25 +332,42 @@ bool decodeEmphasis(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   if (t.size() < 13) return false;
   r.i32();
   if (version >= 7) r.i32();
-  int dcBlock = 1;
-  if (version >= 9 && r.left() >= 1) r.u8();
-  if (version >= 10 && r.left() >= 2) r.u8(), dcBlock = r.u8();
+  // Trailing option bytes (missing in older versions = 0).
+  int lowLat = 0, instant = 0, dcBlock = 0;
+  if (version >= 9 && r.left() >= 1) lowLat = r.u8();
+  if (version >= 10 && r.left() >= 2) instant = r.u8(), dcBlock = r.u8();
+  if (version < 8) t[2] += 1;  // envelope order stored 0-based before version 8
+  t[2] = clampd(t[2], 1, 4);
   fx::begin(m, "gl.emphasis");
+  // J-35: reference limiter (EmModel = 1, emphasis_ref.h); every control is
+  // stored in the plugin's own units.
+  fx::set(m, dy::EmModel, 1);
   auto n = [](double v) { return clampd(v / 10000.0, 0, 1); };
+  auto sw = [](double v) { return v >= 0.5 ? 1.0 : 0.0; };
   KnobTable tab = {
-      {1, 0, 1, dy::EmDelta, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
-      {4, 0, 1, dy::EmStereoMode, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
-      {5, 0, 3, dy::EmCharacter, [](double v) { return clampd(std::round(v), 0, 3); }},
+      {0, 0, 1, dy::EmBypass, sw},
+      {1, 0, 1, dy::EmDelta, sw},
+      {2, 1, 4, dy::EmOrder, [](double v) { return clampd(std::round(v), 1, 4) - 1; }},
+      {3, 0, 1, dy::EmTruePeak, sw},
+      {4, 0, 1, dy::EmStereoMode, sw},
+      {5, 0, 3, dy::EmMode, [](double v) { return clampd(std::round(v), 0, 3); }},
       {6, 0, 10000, dy::EmInput, [n](double v) { return 24.0 * n(v); }},
       {7, 0, 10000, dy::EmLink, n},
-      {9, 0, 10000, dy::EmCeiling, [n](double v) { return clampd(dbOf((std::pow(11.0, n(v)) - 1) / 10.0, -12), -12, 0); }},
-      {10, 0, 1, dy::EmLevelMatch, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
-      {11, 0, 4, dy::EmOversample, [](double v) { return clampd(std::round(v), 0, 2); }},
+      {8, 0, 10000, dy::EmAmount, n},
+      {9, 0, 10000, dy::EmCeilKnob, n},
+      {10, 0, 1, dy::EmLevelMatch, sw},
+      {11, 0, 4, dy::EmOs5, [](double v) { return clampd(std::round(v), 0, 4); }},
+      {12, 0, 9, dy::EmHardness, [](double v) { return clampd(std::round(v), 0, 9); }},
   };
   fx::applyTable(m, tab, t);
-  fx::set(m, dy::EmClipHard, t[12] >= 9 ? 1 : 0);  // the hardest setting clips
+  fx::set(m, dy::EmLowLatency, lowLat ? 1 : 0);
+  fx::set(m, dy::EmInstant, instant ? 1 : 0);
   fx::set(m, dy::EmDcBlock, dcBlock ? 1 : 0);
-  m.exact = false;  // limiter internals (detector, amount / hardness behaviour) not yet the reference
+  // Legacy-engine mirrors (used only if the model is switched back).
+  fx::set(m, dy::EmCharacter, clampd(std::round(t[5]), 0, 3));
+  fx::set(m, dy::EmOversample, clampd(std::round(t[11]), 0, 2));
+  fx::set(m, dy::EmCeiling, clampd(dbOf(packs::dynamics::emphref::ceilingLin(n(t[9])), -12), -12, 0));
+  m.exact = true;
   bindKnobs(m, tab);
   return true;
 }
@@ -425,73 +444,99 @@ bool decodeRack(Context& c, const std::vector<Event>& evs, PluginMapping& m, con
   return true;
 }
 
-// J-26: Distructor's module rack (spec j26_distructor.md) mapped module by
-// module onto Amp Rack slots: host u32 version, u32 N, N module states (u32
-// version, kind 0 distortion / 1 filter / 2 chorus / 3 speaker, algorithm,
-// oversampling, u8 remove DC, u8 disabled, filter type, u8 filter option,
-// impulse, 49 raw params, v >= 2 spare int, v >= 4 chorus mode), u8 soft clip.
-// The module algorithms are only partly studied, so imports are approximate.
+// J-35: Distructor → gl.amprack module rack (RkModel 1, modrack_ref.h; specs
+// j26_distructor.md / j35_distructor.md). Host: u32 version, u32 N, N module
+// states (u32 version, kind 0 distortion / 1 filter / 2 chorus / 3 speaker,
+// algorithm, oversampling, u8 remove DC, u8 disabled, filter type, u8 filter
+// option, impulse, 49 raw params, v >= 2 spare int, v >= 4 chorus mode), u8 soft
+// clip; v >= 4: u32 4 + 4 automation blocks; v >= 2: spare; v >= 5: u8 meters.
+// Exact unless a speaker module is on (FL Studio's impulse files) or a filter
+// uses one of the four unused "Alt" types.
 bool decodeDistructor(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<uint8_t> bytes = stateBytes(evs);
   if (bytes.size() < 8) return decodeRack(c, evs, m, "Distructor");
   Reader r(bytes.data(), bytes.size());
-  r.u32();
+  const uint32_t hostVer = r.u32();
   const uint32_t count = r.u32();
-  if (count > 8) return decodeRack(c, evs, m, "Distructor");
+  if (count > static_cast<uint32_t>(dy::kDrModules)) return decodeRack(c, evs, m, "Distructor");
   fx::begin(m, "gl.amprack");
-  int slot = 0;
+  fx::set(m, dy::RkModel, 1);
+  bool exact = true;
+  std::vector<packs::dynamics::drack::ModuleState> mods;
   for (uint32_t k = 0; k < count; ++k) {
-    const uint32_t ver = r.u32();
-    const int kind = static_cast<int>(r.i32()), algo = static_cast<int>(r.i32());
-    r.i32();  // oversampling
-    r.u8();   // remove DC
-    const bool disabled = r.u8() != 0;
-    r.i32(), r.u8(), r.i32();  // filter type, filter option, impulse
-    double p[49];
-    for (double& v : p) v = r.i32();
-    if (ver >= 2) r.i32();
-    if (ver >= 4) r.i32();
-    if (r.left() == 0 && k + 1 < count) break;
-    if (slot >= dy::kRackSlots) continue;
-    auto n = [](double v, double hi) { return clampd(v / hi, 0, 1); };
-    int type = dy::RmEmpty;
-    double kn[dy::kRackKnobs] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.7};
-    switch (kind) {
-      case 0:
-        if (algo == 0) {  // overdrive: pre amp, colour, post gain
-          type = dy::RmOverdrive;
-          kn[0] = clampd(n(p[2], 10000) + (p[5] != 0 ? 0.35 : 0), 0, 1), kn[1] = n(p[1], 10000), kn[5] = n(p[3], 10000) * 0.85;
-        } else if (algo <= 2) {  // clip / soft clip
-          type = dy::RmOverdrive;
-          kn[0] = algo == 1 ? clampd((p[16] - 64) / 128.0, 0, 1) : 0.3;
-        } else {  // shapers, folders, crushers
-          type = dy::RmFuzz;
-          kn[0] = algo <= 13 ? n(p[23], 1000) : algo <= 15 ? n(p[6], 10000) : 0.6;
-        }
-        break;
-      case 1:  // static filter → wah pedal at the cutoff
-        type = dy::RmWah;
-        kn[0] = n(p[39], 10000), kn[1] = 0, kn[2] = 0, kn[3] = n(p[40], 10000);
-        break;
-      case 2: type = dy::RmChorus; break;
-      default:  // speaker: cabinet emulation
-        type = dy::RmAmp;
-        kn[0] = 0.2, kn[4] = 0.5;
-        break;
+    if (r.left() < 4 * 4 + 2 + 4 + 1 + 4 + 49 * 4) {
+      exact = false;
+      break;
     }
-    fx::set(m, dy::rkParam(slot, dy::RsType), type);
-    fx::set(m, dy::rkParam(slot, dy::RsOn), disabled ? 0 : 1);
-    for (int q = 0; q < dy::kRackKnobs; ++q) fx::set(m, dy::rkParam(slot, dy::RsK0 + q), kn[q]);
-    fx::set(m, dy::rkParam(slot, dy::RsMix), n(p[37], 10000));
-    ++slot;
+    packs::dynamics::drack::ModuleState ms;
+    const uint32_t ver = r.u32();
+    ms.kind = std::clamp(static_cast<int>(r.i32()), 0, 3);
+    ms.algo = static_cast<int>(r.i32());
+    ms.os = static_cast<int>(r.i32());
+    ms.removeDc = r.u8();
+    ms.disabled = r.u8();
+    ms.ftype = static_cast<int>(r.i32());
+    ms.fopt = r.u8();
+    ms.ir = static_cast<int>(r.i32());
+    for (int& v : ms.p) v = static_cast<int>(r.i32());
+    if (ver >= 2) r.i32();
+    if (ver >= 4) ms.chorusMode = static_cast<int>(r.i32());
+    mods.push_back(ms);
   }
-  for (int q = slot; q < dy::kRackSlots; ++q) fx::set(m, dy::rkParam(q, dy::RsType), dy::RmEmpty);
-  if (r.left() >= 1) fx::set(m, dy::RkSoftClip, r.u8() ? 1 : 0);
-  m.exact = false;
-  c.report.warn("Distructor: modules mapped onto Amp Rack slots (approximate sound)");
+  int soft = r.left() >= 1 ? r.u8() : 1;
+  int slot[dy::kDrModules] = {0, 1, 2, 3};
+  if (hostVer >= 4 && r.left() >= 4 + 16) {
+    r.u32();
+    for (int& sl : slot) sl = std::clamp(static_cast<int>(r.i32()), 0, 3);
+  }
+  fx::set(m, dy::DrCount, static_cast<double>(mods.size()));
+  fx::set(m, dy::DrSoftClip, soft ? 1 : 0);
+  KnobTable tab;
+  for (int k = 0; k < dy::kDrModules; ++k) {
+    fx::set(m, dy::DrSlot0 + k, slot[k]);
+    packs::dynamics::drack::ModuleState ms;
+    packs::dynamics::drack::moduleDefaults(ms);
+    if (k < static_cast<int>(mods.size())) ms = mods[static_cast<size_t>(k)], exact = exact && packs::dynamics::drack::moduleExact(ms);
+    const int f[dy::DmP0] = {ms.kind, ms.algo, ms.os, ms.removeDc, ms.disabled, ms.ftype, ms.fopt, ms.ir, ms.chorusMode};
+    for (int q = 0; q < dy::DmP0; ++q) fx::set(m, dy::drParam(k, q), f[q]);
+    for (int q = 0; q < dy::kDrParams; ++q) {
+      fx::set(m, dy::drParam(k, dy::DmP0 + q), ms.p[q]);
+      // Automation: module k owns host parameters 49·slot + q (raw values).
+      const PluginInfo* info = findPlugin("gl.amprack");
+      const ParamDesc& d = info->params[static_cast<size_t>(dy::drParam(k, dy::DmP0 + q))];
+      tab.push_back({dy::kDrParams * slot[k] + q, d.min, d.max, dy::drParam(k, dy::DmP0 + q), [](double v) { return std::round(v); }});
+    }
+  }
+  bindKnobs(m, tab);
+  m.exact = exact;
+  if (!exact) c.report.warn("Distructor: speaker modules use FL Studio's impulse files; Gridline models the cabinet (approximate)");
   return true;
 }
-bool decodeHardcore(Context& c, const std::vector<Event>& evs, PluginMapping& m) { return decodeRack(c, evs, m, "Hardcore"); }
+
+// J-35: Hardcore → gl.amprack pedal board (RkModel 2, pedal_ref.h; spec
+// j35_hardcore.md): "SSLF" | u32 size | "1RCH" | 50 × f32 | name. Exact unless a
+// cabinet impulse (FL Studio's files) is selected.
+bool decodeHardcore(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+  std::vector<uint8_t> b = stateBytes(evs);
+  size_t at = 0;
+  if (b.size() >= 12 && std::memcmp(b.data(), "SSLF", 4) == 0) at = 8;
+  if (b.size() < at + 4 + 200 || std::memcmp(b.data() + at, "1RCH", 4) != 0) return decodeRack(c, evs, m, "Hardcore");
+  fx::begin(m, "gl.amprack");
+  fx::set(m, dy::RkModel, 2);
+  float v[50];
+  for (int k = 0; k < 50; ++k) {
+    uint32_t u = static_cast<uint32_t>(b[at + 4 + 4 * k]) | (static_cast<uint32_t>(b[at + 5 + 4 * k]) << 8) |
+                 (static_cast<uint32_t>(b[at + 6 + 4 * k]) << 16) | (static_cast<uint32_t>(b[at + 7 + 4 * k]) << 24);
+    std::memcpy(&v[k], &u, 4);
+    fx::set(m, dy::PbValue0 + k, v[k]);
+  }
+  KnobTable tab;
+  for (int k = 0; k < 50; ++k) tab.push_back({k, 0, 1, dy::PbValue0 + k, nullptr});
+  bindKnobs(m, tab);
+  m.exact = packs::dynamics::pedal::stateExact(v);
+  if (!m.exact) c.report.warn("Hardcore: the cabinet uses FL Studio's impulse files; Gridline models it (approximate)");
+  return true;
+}
 
 }  // namespace
 

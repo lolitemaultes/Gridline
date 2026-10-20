@@ -74,16 +74,47 @@ inline double mdGain(double x) {
   return x < 0 ? -g : g;
 }
 // Filter type order of the reference model (see MdFilterType).
-// Cutoff control c (0..1) → Hz at the reference scale (22050 Hz per unit).
+// Cutoff control c (0..1) → Hz at the reference scale (J-35: 44100 Hz per unit, spec j35_delaybank.md §1).
 inline double mdCutHz(int type, double c) {
   c = clamp01(c);
   if (type == 1) {  // low pass
     double f = c > 0 ? (std::exp(c * 7.313886831633462) - 1.0) * 0.0006646666666666667 : 0.0;
-    return 22050.0 * (f + 0.003);
+    return 44100.0 * (f + 0.003);
   }
   double f = c > 0 ? (std::exp(c * 7.313886831633462) - 1.0) * 0.0003999333333333333 : 0.0;
   f = std::min(f, type == 2 ? 0.6001 : 1.0001);  // high pass is capped lower
-  return 22050.0 * (f + 0.0001);
+  return 44100.0 * (f + 0.0001);
+}
+// J-35: the reference's 2×2 pan matrix for a pan p (−1..1) and gain g:
+// constant-power sin / cos scaled by √2 (0 dB at the centre), the far side
+// folded into the near one. m = {LL, RR, RL, LR}: outL = LL·L + RL·R,
+// outR = RR·R + LR·L. sep ≠ 0 (feedback matrix only) adds the separation
+// cross term: s > 0 → (5^s − 1)/4, s < 0 → s (widening).
+inline void mdPanMatrix(double p, double g, double sep, bool fbMatrix, double* m) {
+  if (p == 0 && (!fbMatrix || sep == 0)) {
+    m[0] = m[1] = g, m[2] = m[3] = 0;
+    return;
+  }
+  if (g == 0) {
+    m[0] = m[1] = m[2] = m[3] = 0;
+    return;
+  }
+  const double th = (1.0 + p) * 0.7853981633974483, k = g * static_cast<double>(1.4142135f);
+  const double L = std::cos(th) * k, R = std::sin(th) * k;
+  double cl = 0, cr = 0;
+  if (fbMatrix) {
+    if (p > 0) cr = 1.0 - L / g;
+    else cl = 1.0 - R / g;
+    if (sep != 0) {
+      const double t = sep > 0 ? static_cast<double>(static_cast<float>(std::exp(sep * 1.6094379124341003) - 1.0)) * 0.25 : sep;
+      cl = std::min(cl + t, 1.0), cr = std::min(cr + t, 1.0);
+    }
+  } else {
+    if (p > 0) cr = 1.0 - L / g;
+    else cl = 1.0 - R / g;
+  }
+  m[2] = L * (cl / 2), m[0] = L * (1 - cl / 2);
+  m[3] = R * (cr / 2), m[1] = R * (1 - cr / 2);
 }
 // Resonance control r (0..1) → Q (LP / HP), bandwidth in octaves (BP / notch),
 // Q (peaking, from 1 − r) or shelf slope (shelves, from 1 − r).

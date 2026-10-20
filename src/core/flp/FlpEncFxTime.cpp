@@ -37,7 +37,8 @@ Encoder reeverb2() {
   e.flName = "Fruity Reeverb 2";
   e.glType = "gl.reverb";
   e.nativeRank = 0;  // the plugin Gridline's reverb is modelled on
-  e.accepts = [](const PluginState& s) { return param(s, RvbModel) < 0.5f; };  // hall; the plate model comes from Fruity Reeverb
+  // hall or the full reference model (J-35); the plate model comes from Fruity Reeverb
+  e.accepts = [](const PluginState& s) { return param(s, RvbModel) < 0.5f || std::lround(param(s, RvbModel)) == 2; };
   e.defaults = [] {
     ByteWriter w;
     w.u32(kRv2Version);
@@ -74,6 +75,10 @@ Encoder reeverb2() {
     if (knobs == 15) {
       for (const Field& f : tagFields(base, {{RvbModRate, 13, 0, 2048}, {RvbModDepth, 14, 0, 2048}})) v.push_back(f);
     }
+    // J-35: the full model's knobs are the stored integers.
+    static const double lo[15] = {19, 5, 0, 1, 0, 1, 5, 20, 25, -64, 0, 0, 0, 0, 0};
+    static const double hi[15] = {3000, 221, 384, 100, 100, 200, 221, 300, 2000, 64, 160, 160, 160, 2048, 2048};
+    for (size_t k = 0; k < knobs; ++k) v.push_back(i32(RvbFLowCut + static_cast<int>(k), base + 4 * k, lo[k], hi[k]));
     const size_t flags = base + knobs * 4;
     v.push_back(field(RvbPreSync, flags, Type::U8, 0, 1));
     v.push_back(field(RvbInputMode, flags + 1, Type::U8, 0, 1));
@@ -90,7 +95,10 @@ Encoder delay3() {
   e.flName = "Fruity Delay 3";
   e.glType = "gl.delay";
   e.nativeRank = 0;
-  e.accepts = [](const PluginState& s) { return std::lround(param(s, DlyModel)) == 1; };  // reference delay model
+  e.accepts = [](const PluginState& s) {  // reference delay models (J-35: the stereo reference, model 3)
+    const long m = std::lround(param(s, DlyModel));
+    return m == 1 || m == 3;
+  };
   e.defaults = [] {
     ByteWriter w;
     w.u32(1);       // version
@@ -123,7 +131,7 @@ Encoder delay3() {
     return w.b;
   };
   e.fields = [](const Bytes&) {
-    return tagFields(4, {{DlyInput, 0, 0, 6000},       {DlyType3, 1, 0, 3},           {DlySync, 2, 0, 1},
+    std::vector<Field> v = tagFields(4, {{DlyInput, 0, 0, 6000},       {DlyType3, 1, 0, 3},           {DlySync, 2, 0, 1},
                          {DlyKeepPitch, 3, 0, 1},      {DlyTicks, 4, 1, 768},         {DlyTimeMs, 4, 1, 768},
                          {DlyTimeR, 5, 0, 6000},       {DlyTimeSmooth, 6, 0, 1000},   {DlySpread3, 7, 0, 6000},
                          {DlyModRate3, 8, 0, 6000},    {DlyModDepth, 9, 0, 6000},     {DlyModCutoff, 10, 0, 6000},
@@ -132,6 +140,11 @@ Encoder delay3() {
                          {DlyResonance, 17, 0, 6000},  {DlyDistThresh, 18, 0, 6000},  {DlyDistHardness, 19, 0, 6000},
                          {DlyDistSymmetry, 20, 0, 6000}, {DlyRate3, 21, 0, 60000},    {DlyBits, 22, 0, 6000},
                          {DlyWet, 23, 0, 6000},        {DlyTone, 24, -3000, 3000},    {DlyDry, 25, 0, 6000}});
+    // J-35: the stereo reference's normalised controls, tag k → DlyD3Raw0 + k.
+    static const double lo[26] = {0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -3000, 0};
+    static const double hi[26] = {6000, 3, 1, 1, 768, 6000, 1000, 6000, 6000, 6000, 6000, 6000, 6000, 1, 6000, 3, 6000, 6000, 6000, 6000, 6000, 60000, 6000, 6000, 3000, 6000};
+    for (int k = 0; k < 26; ++k) v.push_back(i32(DlyD3Raw0 + k, 4 + 4 * static_cast<size_t>(k), lo[k], hi[k]));
+    return v;
   };
   return e;
 }

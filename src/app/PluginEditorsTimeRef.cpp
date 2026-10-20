@@ -151,8 +151,8 @@ void editorReverbRef(App& a, const PluginTarget& t, float width) {
   roomVisual(dl, F.p(4, 4), F.p(156, 108), st, K);
   reverbVisual(dl, F.p(4, 112), F.p(156, 156), st, K, a.doc.song().tempo);
   {  // J-26: network model (hall / plate reference) in the room view's corner
-    static const char* md[2] = {"HALL", "PLATE"};
-    skin::switchSel(a, t, RvbModel, F.p(92, 6), ImVec2(62 * s, 15 * s), K, md, 2, true);
+    static const char* md[3] = {"HALL", "PLATE", "FULL"};
+    skin::switchSel(a, t, RvbModel, F.p(80, 6), ImVec2(74 * s, 15 * s), K, md, 3, true);
   }
   dl->AddRectFilled(F.p(160, 0), F.p(530, 160), skin::hex(0x434B4D), 0);
   dl->AddLine(F.p(160, 0), F.p(160, 160), skin::darken(K.panel, 0.5f), 1.0f);
@@ -163,41 +163,44 @@ void editorReverbRef(App& a, const PluginTarget& t, float width) {
     static const char* io[2] = {"MID", "M+S"};
     skin::switchSel(a, t, RvbInputMode, F.p(169, 18), ImVec2(45 * s, 30 * s), K, io, 2);
   }
-  wheelL(a, t, RvbHighCut, F, 172, 57, 36, K, "H.CUT");
-  wheelL(a, t, RvbLowCut, F, 172, 108, 36, K, "L.CUT");
-  wheelL(a, t, RvbPreDelay, F, 231, 5, 36, K, "PRE");
+  // J-35: the full model edits the reference's own integer controls.
+  const bool full = static_cast<int>(std::lround(val(st, RvbModel))) == 2;
+  auto P = [full](int legacy, int fl) { return full ? fl : legacy; };
+  wheelL(a, t, P(RvbHighCut, RvbFHighCut), F, 172, 57, 36, K, "H.CUT");
+  wheelL(a, t, P(RvbLowCut, RvbFLowCut), F, 172, 108, 36, K, "L.CUT");
+  wheelL(a, t, P(RvbPreDelay, RvbFPredelay), F, 231, 5, 36, K, "PRE");
   // Tempo-based pre-delay check (287,27) + the pre-delay read-out in steps:ticks when on.
   skin::check(a, t, RvbPreSync, F.p(281, 24), ImVec2(30 * s, 14 * s), K, "TEMPO");
   if (bval(st, RvbPreSync)) {
-    int ticks = static_cast<int>(std::lround(val(st, RvbPreDelay) * 0.384));
+    int ticks = full ? static_cast<int>(std::lround(val(st, RvbFPredelay))) : static_cast<int>(std::lround(val(st, RvbPreDelay) * 0.384));
     char buf[16];
     std::snprintf(buf, sizeof buf, "%d:%02d", ticks / 48, ticks % 48);
     skin::lcd(dl, F.p(274, 7), F.p(316, 20), K, buf, fsL);
   }
-  wheelL(a, t, RvbSize, F, 231, 57, 36, K, "SIZE");
-  wheelL(a, t, RvbDiffusion, F, 231, 108, 36, K, "DIFF");
-  wheelL(a, t, RvbModDepth, F, 275, 57, 36, K, "DEPTH");
-  wheelL(a, t, RvbModRate, F, 275, 108, 36, K, "SPEED");
-  wheelL(a, t, RvbBassMult, F, 334, 5, 36, K, "BASS");
-  wheelL(a, t, RvbCrossover, F, 334, 57, 36, K, "CROSS");
-  wheelL(a, t, RvbDecayTime, F, 378, 5, 36, K, "DEC");
-  wheelL(a, t, RvbDampHz, F, 377, 57, 36, K, "DAMP");
-  // Gridline additions in the free cell under the decay group.
-  wheelL(a, t, RvbColor, F, 334, 108, 36, K, "COLOR", skin::WheelCentered);
-  {
+  wheelL(a, t, P(RvbSize, RvbFRoom), F, 231, 57, 36, K, "SIZE");
+  wheelL(a, t, P(RvbDiffusion, RvbFDiffusion), F, 231, 108, 36, K, "DIFF");
+  wheelL(a, t, P(RvbModDepth, RvbFModDepth), F, 275, 57, 36, K, "DEPTH");
+  wheelL(a, t, P(RvbModRate, RvbFModSpeed), F, 275, 108, 36, K, "SPEED");
+  wheelL(a, t, P(RvbBassMult, RvbFBass), F, 334, 5, 36, K, "BASS");
+  wheelL(a, t, P(RvbCrossover, RvbFCross), F, 334, 57, 36, K, "CROSS");
+  wheelL(a, t, P(RvbDecayTime, RvbFDecay), F, 378, 5, 36, K, "DEC");
+  wheelL(a, t, P(RvbDampHz, RvbFDamp), F, 377, 57, 36, K, "DAMP");
+  // Gridline additions in the free cell under the decay group (not in the full model).
+  if (!full) wheelL(a, t, RvbColor, F, 334, 108, 36, K, "COLOR", skin::WheelCentered);
+  if (!full) {
     skin::label(dl, F.p(378 + 18, 0).x, F.p(0, 103).y, "FREEZE", K.textDim, fsL);
     static const char* fz[3] = {"OFF", "FRZ", "SUS"};
     skin::switchSel(a, t, RvbFreeze, F.p(378, 113), ImVec2(36 * s, 36 * s), K, fz, 3);
   }
   // Level sliders (434/466/497, 1) 24×90 and separation wheel (460,108).
-  const int lv[3] = {RvbDry, RvbEarly, RvbWet};
+  const int lv[3] = {P(RvbDry, RvbFDry), P(RvbEarly, RvbFEr), P(RvbWet, RvbFWet)};
   const float lx[3] = {434, 466, 497};
   const char* ln[3] = {"DRY", "ER", "WET"};
   for (int i = 0; i < 3; ++i) {
     skin::vslider(a, t, lv[i], F.p(lx[i], 1), ImVec2(24 * s, 90 * s), K);
     skin::label(dl, F.p(lx[i] + 12, 0).x, F.p(0, 92).y, ln[i], K.textDim, fsL);
   }
-  wheelL(a, t, RvbWidth, F, 460, 108, 36, K, "SEP", skin::WheelCentered);
+  wheelL(a, t, P(RvbWidth, RvbFSep), F, 460, 108, 36, K, "SEP", skin::WheelCentered);
   ImGui::SetCursorScreenPos(F.o);
   ImGui::Dummy(ImVec2(width, kH * s));
 }

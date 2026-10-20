@@ -317,7 +317,7 @@ bool decodeFlangus(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   applyTable(m, *flangusTable(), v);
   bindAll(m, flangusTable());
   set(m, gl::packs::spacefx::SwModel, 1);
-  m.exact = false;  // the per-voice sweep contour is approximated (parabolic)
+  m.exact = true;  // J-35: the reference contour, tap read and gains (spec j35_flangus.md)
   return true;
 }
 

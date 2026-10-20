@@ -21,7 +21,7 @@ static void testFxTime() {
                near(param(m, pp::RvbEarly), (std::pow(11.0, 0.25) - 1) / (std::pow(11.0, 0.5) - 1), 1e-5) && near(param(m, pp::RvbDry), 1.0, 1e-6),
            "reverb2: levels (11^x curve)");
     expect(param(m, pp::RvbPreSync) == 1 && param(m, pp::RvbInputMode) == 1 && near(param(m, pp::RvbPreDelay), 62.5, 1e-4), "reverb2: flags, pre-delay (v / 384 s)");
-    expect(m.param && m.param(5) == pp::RvbDecayTime && m.value && near(m.value(5, 1.0), 20.0, 1e-6), "reverb2: automation mapping");
+    expect(m.param && m.param(5) == pp::RvbFDecay && m.value && near(m.value(5, 1.0), 200.0, 1e-6), "reverb2: automation drives the full model's decay knob (J-35)");
   }
   // Delay 3: synced quarter note, ping-pong, feedback.
   {
@@ -30,7 +30,7 @@ static void testFxTime() {
     int v[26] = {6000, 2, 1, 0, 192, 3000, 500, 6000, 3000, 0, 0, 0, 0, 1, 3000, 0, 6000, 0, 0, 0, 0, 60000, 6000, 3000, 0, 6000};
     for (int x : v) b.i32(x);
     expect(decodeFx("Fruity Delay 3", b.b, m) && m.glType == "gl.delay", "delay3: decodes");
-    expect(param(m, pp::DlyModel) == 1 && param(m, pp::DlySync) == 1 && param(m, pp::DlyTicks) == 192, "delay3: reference model, 192 ticks = 1 beat");
+    expect(param(m, pp::DlyModel) == 3 && param(m, pp::DlySync) == 1 && param(m, pp::DlyTicks) == 192, "delay3: stereo reference model (J-35), 192 ticks = 1 beat");
     expect(param(m, pp::DlyType3) == 2 && near(param(m, pp::DlyFeedback), 0.625, 1e-6) && near(param(m, pp::DlyWet), 0.5, 1e-6),
            "delay3: ping-pong, feedback (×1.25), wet");
     expect(param(m, pp::DlyDistType) == 2 && param(m, pp::DlyRate3) >= 47999 && near(param(m, pp::DlyCutoff3), 21985, 0.5), "delay3: saturate, rate off, cutoff");

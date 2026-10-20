@@ -13,6 +13,8 @@
 #include "ClassicModFx.h"
 #include "FlFilterRef.h"
 #include "FreqShiftRef.h"
+#include "Delay3Ref.h"
+#include "FullReverbRef.h"
 #include "PlateReverb.h"
 
 namespace gl {
@@ -370,6 +372,13 @@ class DelayFx final : public Effect {
       cls_.process(cs, ctx.tempo, L, R, n);
       return;
     }
+    if (iparam(s, DlyModel) == 3) {  // J-35 stereo delay reference
+      if (!d3_.ready() || d3Sr_ != ctx.sampleRate) d3_.init(ctx.sampleRate), d3Sr_ = ctx.sampleRate;
+      float raw[26];
+      for (int k = 0; k < 26; ++k) raw[k] = param(s, DlyD3Raw0 + k);
+      d3_.process(raw, ctx.tempo, L, R, n);
+      return;
+    }
     if (bparam(s, DlyModel)) {
       ref_.process(s, ctx, L, R, n);
       return;
@@ -528,6 +537,7 @@ class DelayFx final : public Effect {
   void reset() override {
     ref_.reset();
     if (cls_.ready()) cls_.reset();
+    if (d3_.ready()) d3_.reset();
     dl_.clear(), dr_.clear();
     lpL_.z = lpR_.z = hpL_.z = hpR_.z = 0;
     svf_[0].reset(), svf_[1].reset();
@@ -544,6 +554,8 @@ class DelayFx final : public Effect {
   double env_[2] = {0, 0}, hold_[2] = {0, 0}, held_[2] = {0, 0};
   cdelay::Line cls_;
   double clsSr_ = 0;
+  d3ref::Engine d3_;
+  double d3Sr_ = 0;
   Line dl_, dr_;
   OnePole lpL_, lpR_, hpL_, hpR_, toneF_[2];
   Svf svf_[2];
@@ -561,6 +573,17 @@ class ReverbFx final : public Effect {
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     if (sr_ != ctx.sampleRate) init(ctx.sampleRate);
+    if (iparam(s, RvbModel) == 2) {  // J-35 full reference (standalone variant)
+      fullrev::StudioKnobs k;
+      auto ki = [&](int prm, float def) { return static_cast<int>(std::lround(param(s, prm, def))); };
+      k.lowCut = ki(RvbFLowCut, 75), k.highCut = ki(RvbFHighCut, 40), k.predelay = ki(RvbFPredelay, 0), k.room = ki(RvbFRoom, 50);
+      k.diffusion = ki(RvbFDiffusion, 100), k.decay = ki(RvbFDecay, 15), k.damp = ki(RvbFDamp, 40), k.bass = ki(RvbFBass, 100);
+      k.cross = ki(RvbFCross, 500), k.sep = ki(RvbFSep, 0), k.dry = ki(RvbFDry, 128), k.er = ki(RvbFEr, 128), k.wet = ki(RvbFWet, 128);
+      k.modSpeed = ki(RvbFModSpeed, 684), k.modDepth = ki(RvbFModDepth, 0);
+      k.tempoPredelay = bparam(s, RvbPreSync), k.midSide = iparam(s, RvbInputMode) == 1;
+      full_.process(k, ctx.tempo, L, R, n);
+      return;
+    }
     if (iparam(s, RvbModel) == 1) {  // J-26 plate reference
       plate::Settings ps;
       ps.lowCutHz = param(s, RvbLowCut, 75), ps.highCutHz = param(s, RvbHighCut, 4000), ps.preDelayMs = param(s, RvbPreDelay);
@@ -681,6 +704,7 @@ class ReverbFx final : public Effect {
       for (auto& d : c) d.clear();
     pre_.clear(), preS_.clear();
     if (plate_.ready()) plate_.reset();
+    if (full_.ready()) full_.reset();
     lcL_.z = lcR_.z = hcL_.z = hcR_.z = 0;
     for (int c = 0; c < 2; ++c) colLo_[c].clear(), colHi_[c].clear();
   }
@@ -719,6 +743,7 @@ class ReverbFx final : public Effect {
     pre_.init(static_cast<size_t>(1.0 * sr) + 8);
     preS_.init(static_cast<size_t>(1.0 * sr) + 8);
     plate_.init(sr);
+    full_.init(sr);
     xo_ = -1;
   }
   double sr_ = 0, modPh_ = 0, xo_ = -1, xoA_ = 0, lc_ = -1, hc_ = -1, color_ = 9;
@@ -729,6 +754,7 @@ class ReverbFx final : public Effect {
   OnePole lcL_, lcR_, hcL_, hcR_;
   Biquad colLo_[2], colHi_[2];
   plate::Plate plate_;
+  fullrev::StudioReverb full_;
 };
 
 // ======================================================================= Chorus

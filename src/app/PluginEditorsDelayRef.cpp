@@ -3,6 +3,7 @@
 // modulation / diffusion / distortion + transfer display underneath), drawn
 // with the plugin's rack skin. Shown for the reference delay model.
 #include "../core/DelayCurves.h"
+#include "../engine/Delay3Ref.h"
 #include "../engine/Dsp.h"
 #include "PluginEditorsCommon.h"
 #include "PluginSkin.h"
@@ -119,12 +120,106 @@ void editorDelayClassic(App& a, const PluginTarget& t, float width, const Plugin
     else std::snprintf(b, sizeof b, "%.0f BPM", bpm);
     skin::paramBox(a, t, DlyClsBpm, F, c2, 105, bw, bh, K, "TEMPO", b);
   }
-  static const char* models[3] = {"LEGACY", "REFERENCE", "CLASSIC"};
+  static const char* models[4] = {"LEGACY", "REF", "CLASSIC", "STEREO"};
   skin::text(dl, F.p(c0 + 4, 162), K.textDim, "MODEL", F.font(8));
-  skin::switchSel(a, t, DlyModel, F.p(c0 + 46, 157), F.sz(220, 20), K, models, 3, true);
+  skin::switchSel(a, t, DlyModel, F.p(c0 + 46, 157), F.sz(220, 20), K, models, 4, true);
   skin::toggle(a, t, DlyClsStepRound, F.p(c1 + 110, 157), F.sz(70, 20), K, "1/16 GRID", F.font(7.5f));
   skin::toggle(a, t, DlyClsScaleSr, F.p(c2 + 85, 157), F.sz(75, 20), K, "RATE COMP", F.font(7.5f));
   F.end(kW, kH);
+}
+
+// J-35: the stereo delay reference (DlyModel = 3): the same grid, every control
+// bound to the reference's normalised value (DlyD3Raw0 + index).
+void editorDelayStereo(App& a, const PluginTarget& t, float width, const PluginState& st) {
+  const skin::Skin& K = delaySkin();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  constexpr float kW = 747, kH = 242;
+  skin::Form F{ImGui::GetCursorScreenPos(), width / kW};
+  const float s = F.s;
+  const float fsL = std::clamp(8.0f * s, 10.0f, 13.0f), fsV = std::clamp(8.5f * s, 10.0f, 13.0f);
+  skin::panel(dl, F.o, ImVec2(F.o.x + width, F.o.y + kH * s), K, 4);
+  auto R = [](int k) { return DlyD3Raw0 + k; };
+  auto rv = [&](int k) { return val(st, R(k)); };
+  auto cell = [&](int k, int count) { return std::clamp(static_cast<int>(rv(k) * (count - 1) + 0.5), 0, count - 1); };
+  // A row (or column) of option buttons writing idx / (count - 1).
+  auto opts = [&](const char* id, int k, const char* const* names, int count, float x, float y, float w, float h, bool vertical) {
+    const int on = cell(k, count);
+    for (int i = 0; i < count; ++i) {
+      ImVec2 tl = vertical ? F.p(x, y + i * h / count) : F.p(x + i * w / count, y);
+      ImVec2 sz = vertical ? ImVec2(w * s, (h / count - 1) * s) : ImVec2((w / count - 1) * s, h * s);
+      char bid[48];
+      std::snprintf(bid, sizeof bid, "%s%d", id, i);
+      if (skin::button(bid, tl, sz, K, names[i], i == on, fsL)) a.doc.setParam(t.pid(R(k)), count > 1 ? static_cast<double>(i) / (count - 1) : 0, false);
+    }
+  };
+  auto caption = [&](float x0, float x1, float y, const char* text) {
+    dl->AddLine(F.p(x0, y + 4), F.p(x1, y + 4), skin::darken(K.panel, 0.25f), 1.0f);
+    skin::label(dl, F.p((x0 + x1) * 0.5f, 0).x, F.p(0, y - 1).y, text, K.textDim, fsL);
+  };
+  caption(6, 54, 8, "IN");
+  caption(62, 250, 8, "TIME");
+  caption(256, 374, 8, "STEREO");
+  caption(380, 588, 8, "FEEDBACK");
+  caption(589, 684, 8, "LO-FI");
+  caption(690, 742, 8, "OUT");
+  caption(62, 248, 126, "MODULATION");
+  caption(262, 370, 126, "DIFFUSION");
+  caption(380, 684, 126, "DISTORTION");
+  skin::vslider(a, t, R(d3ref::PInWet), F.p(11, 26), ImVec2(38 * s, 153 * s), K);
+  skin::label(dl, F.p(30, 0).x, F.p(0, 182).y, "WET", K.textDim, fsL);
+  const bool sync = rv(d3ref::PSync) >= 0.5;
+  skin::wheel(a, t, R(d3ref::PTime), F.p(67, 30), 64 * s, K, skin::WheelBigLine);
+  {
+    char buf[24];
+    if (sync) {
+      const int ticks = static_cast<int>(rv(d3ref::PTime) * 767 + 0.5) + 1;
+      std::snprintf(buf, sizeof buf, "%d:%02d", ticks / 48, ticks % 48);
+    } else {
+      std::snprintf(buf, sizeof buf, "%.0f ms", d3ref::freeTimeSec(rv(d3ref::PTime)) * 1000);
+    }
+    skin::lcd(dl, F.p(73, 97), F.p(121, 112), K, buf, fsV);
+  }
+  static const char* onOff[2] = {"OFF", "ON"};
+  skin::label(dl, F.p(170, 0).x, F.p(0, 30).y, "TEMPO SYNC", K.textDim, fsL);
+  opts("##d3sync", d3ref::PSync, onOff, 2, 137, 40, 65, 13, false);
+  skin::label(dl, F.p(170, 0).x, F.p(0, 56).y, "KEEP PITCH", K.textDim, fsL);
+  opts("##d3kp", d3ref::PKeepPitch, onOff, 2, 137, 66, 65, 13, false);
+  skin::hslider(a, t, R(d3ref::PSmooth), F.p(135, 86), ImVec2(71 * s, 13 * s), K);
+  skin::label(dl, F.p(170, 0).x, F.p(0, 101).y, "SMOOTH", K.textDim, fsL);
+  wheelL(a, t, R(d3ref::POffset), F, 207, 42, 40, K, "R/L OFS", skin::WheelCentered | skin::WheelBigLine);
+  static const char* types[4] = {"FAKE ST", "STEREO", "PING PONG", "OFF"};
+  opts("##d3type", d3ref::PType, types, 4, 258, 31, 66, 62, true);
+  wheelL(a, t, R(d3ref::PSpread), F, 330, 42, 40, K, "SPREAD", skin::WheelBigLine);
+  skin::wheel(a, t, R(d3ref::PFeedback), F.p(382, 30), 64 * s, K, skin::WheelBigLine);
+  {
+    char buf[24];
+    std::snprintf(buf, sizeof buf, "%.0f%%", rv(d3ref::PFeedback) * 125);
+    skin::lcd(dl, F.p(390, 97), F.p(438, 112), K, buf, fsV);
+  }
+  wheelL(a, t, R(d3ref::PCutoff), F, 452, 42, 40, K, "CUTOFF", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PRes), F, 499, 42, 40, K, "RES", skin::WheelBigLine);
+  static const char* modes[4] = {"LP", "HP", "BP", "OFF"};
+  opts("##d3flt", d3ref::PFilter, modes, 4, 551, 31, 35, 62, true);
+  wheelL(a, t, R(d3ref::PRate), F, 591, 42, 40, K, "RATE", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PBits), F, 639, 42, 40, K, "BITS", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::POutWet), F, 696, 31, 40, K, "WET", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PTone), F, 696, 93, 40, K, "TONE", skin::WheelCentered | skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PDry), F, 696, 155, 40, K, "DRY", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PModRate), F, 70, 150, 40, K, "RATE", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PModTime), F, 156, 150, 40, K, "TIME", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PModCut), F, 207, 150, 40, K, "CUTOFF", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PDifLevel), F, 269, 150, 40, K, "LEVEL", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PDifSpread), F, 321, 150, 40, K, "SPREAD", skin::WheelBigLine);
+  static const char* dt[2] = {"LIMIT", "SAT"};
+  opts("##d3dist", d3ref::PDistType, dt, 2, 384, 148, 50, 44, true);
+  wheelL(a, t, R(d3ref::PThresh), F, 452, 150, 40, K, "THRES", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PHard), F, 499, 150, 40, K, "HARD", skin::WheelBigLine);
+  wheelL(a, t, R(d3ref::PSym), F, 550, 150, 40, K, "SYM", skin::WheelBigLine);
+  static const char* models[4] = {"LEGACY", "REFERENCE", "CLASSIC", "STEREO REF"};
+  skin::text(dl, F.p(10, 222), K.textDim, "MODEL", F.font(8));
+  skin::switchSel(a, t, DlyModel, F.p(56, 217), F.sz(300, 20), K, models, 4, true);
+  ImGui::SetCursorScreenPos(F.o);
+  ImGui::Dummy(ImVec2(width, kH * s));
 }
 
 void editorDelayRef(App& a, const PluginTarget& t, float width) {
@@ -133,6 +228,10 @@ void editorDelayRef(App& a, const PluginTarget& t, float width) {
   const PluginState st = *sp;
   if (ival(st, DlyModel) == 2) {
     editorDelayClassic(a, t, width, st);
+    return;
+  }
+  if (ival(st, DlyModel) == 3) {
+    editorDelayStereo(a, t, width, st);
     return;
   }
   const skin::Skin& K = delaySkin();

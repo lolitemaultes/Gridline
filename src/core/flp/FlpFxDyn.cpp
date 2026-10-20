@@ -233,6 +233,7 @@ double maxT(double v) { return 2.0 * (std::pow(501.0, v / 10000.0) - 1.0); }
 struct MaxCurve {
   int n = 0;
   double x[64], y[64], t[64];
+  int type[64] = {};
 };
 
 // Reads the envelope records after the band blocks. They are byte-packed after
@@ -297,6 +298,7 @@ std::vector<MaxCurve> maximusCurves(const Reader& r, size_t from) {
         }
         x += dx;
         c.x[c.n] = std::min(1.0, x), c.y[c.n] = std::clamp(y, 0.0, 1.0), c.t[c.n] = std::clamp(t, -1.0, 1.0);
+        c.type[c.n] = fmt >= 3 ? r.p[q + 20] : 0;
         ++c.n;
       }
       if (ok) {
@@ -310,15 +312,70 @@ std::vector<MaxCurve> maximusCurves(const Reader& r, size_t from) {
   return out;
 }
 
+// J-35: the reference block (spec j35_maximus.md §2): stored integers, the
+// option bytes (solo, selected band, mid-only master, legacy linear-phase
+// split) and the flags after the block (linear-phase split, safety off).
+// Returns whether the reference engine reproduces the state exactly.
+bool maximusRefBlock(const Reader& r, PluginMapping& m, int ref, const std::vector<MaxCurve>& curves) {
+  auto rd32 = [&](size_t o) -> int32_t {
+    if (o + 4 > r.n) return 0;
+    return static_cast<int32_t>(static_cast<uint32_t>(r.p[o]) | (static_cast<uint32_t>(r.p[o + 1]) << 8) |
+                                (static_cast<uint32_t>(r.p[o + 2]) << 16) | (static_cast<uint32_t>(r.p[o + 3]) << 24));
+  };
+  auto rd8 = [&](size_t o) -> int { return o < r.n ? r.p[o] : 0; };
+  const uint32_t head = static_cast<uint32_t>(rd32(0));
+  const int ver = head >= 0x10000 ? static_cast<int>(head >> 16) : static_cast<int>(head);
+  int raw[59];
+  size_t optBase, after;
+  if (ver < 3) {
+    for (int k = 0; k < 6; ++k) raw[k] = rd32(4 + 4 * static_cast<size_t>(k));
+    raw[6] = 32768;
+    for (int k = 0; k < 52; ++k) raw[7 + k] = rd32(4 + 24 + 4 * static_cast<size_t>(k));
+    optBase = 4 + 464;
+    after = optBase + (ver < 2 ? 0x15 : 0x16);
+  } else {
+    for (int k = 0; k < 59; ++k) raw[k] = rd32(4 + 4 * static_cast<size_t>(k));
+    optBase = 4 + 0x1D8;
+    after = 4 + (ver == 3 ? 494 : ver == 4 ? 497 : ver == 5 ? 501 : ver == 6 ? 505 : 506);
+  }
+  const int target = rd32(optBase + 4), solo = rd8(optBase + 0x13);
+  const int masterMid = ver >= 6 ? rd8(optBase + 0x20) : 0, fir = ver >= 7 ? rd8(optBase + 0x21) : 0;
+  int flags = 0;
+  if (ver >= 14) flags = rd8(after + 8);
+  const bool lin = (flags & 1) != 0, safetyOff = (flags & 0x40) != 0;
+  set(m, ref + dy::MrModel, 1);
+  for (int k = 0; k < 59; ++k) set(m, ref + dy::MrRaw0 + k, raw[k]);
+  set(m, ref + dy::MrSolo, solo ? 1 : 0);
+  set(m, ref + dy::MrTarget, std::clamp(target, 0, 3));
+  set(m, ref + dy::MrMasterMid, masterMid ? 1 : 0);
+  set(m, ref + dy::MrSafetyOff, safetyOff ? 1 : 0);
+  set(m, ref + dy::MrFir, fir ? 1 : 0);
+  set(m, ref + dy::MrLin, lin ? 1 : 0);
+  bool exact = !fir && !lin && curves.size() >= 8;
+  for (int k = 0; k < 4; ++k) {
+    const MaxCurve* c = curves.size() >= static_cast<size_t>(2 * k + 1) ? &curves[static_cast<size_t>(2 * k)] : nullptr;
+    for (int i = 0; i < dy::kMsCurvePts; ++i) {
+      const int ty = c && i < c->n ? c->type[i] : 0;
+      set(m, ref + dy::MrPtType0 + k * dy::kMsCurvePts + i, std::clamp(ty, 0, 2));
+    }
+    if (c && c->n > dy::kMsCurvePts) exact = false;
+    if (c)
+      for (int i = 0; i < c->n; ++i)
+        if (c->type[i] > 2) exact = false;
+  }
+  return exact;
+}
+
 // Decodes a Maximus state into gl.master parameters, written through `set`
-// at `offset` (0 for gl.master, EnProg0 for gl.enhance's embedded program).
-bool maximusToMaster(Reader& r, PluginMapping& m, int offset) {
+// at `offset` (0 for gl.master, EnProg0 for gl.enhance's embedded program);
+// J-35: also the reference block at `ref` (≥ 0), `exact` = reproduced exactly.
+bool maximusToMaster(Reader& r, PluginMapping& m, int offset, int ref = -1, bool* exact = nullptr) {
   if (r.n < 4 + 7 * 4 + 4 * BCount * 4) return false;
   const int version = r.u16();
   r.u16();
   // Version 2 states have no low cut (six globals); from version 3 on, seven.
   std::vector<int32_t> g = ints(r, version >= 3 ? 7 : 6);
-  if (g.size() < 7) g.resize(7, -1);
+  if (g.size() < 7) g.resize(7, 32768);  // J-35: version 2 runs with the low cut at 32768 (20 Hz), as the reference forces
   std::vector<int32_t> b = ints(r, 4 * BCount);
   if (b.size() < 4 * BCount) return false;
   auto put = [&](int k, double v) { set(m, offset + k, v); };
@@ -380,23 +437,41 @@ bool maximusToMaster(Reader& r, PluginMapping& m, int offset) {
     }
     set(m, X(dy::MxPoints), n);
   }
+  if (ref >= 0) {
+    const bool ok = maximusRefBlock(r, m, ref, curves);
+    if (exact) *exact = ok;
+  }
   return true;
+}
+
+// J-35: automation index p (0..58: 7 globals, then 4 bands × 13) → the
+// reference block's stored integer.
+std::shared_ptr<const KnobTable> maximusRawTable() {
+  static auto t = [] {
+    static const double glo[7] = {0, 0, 0, 0, 0, 0, -1}, ghi[7] = {65536, 1, 65536, 1, 10000, 1000, 65536};
+    static const double blo[13] = {0, 0, 0, -1000, -1000, 0, 0, 0, 1, 0, 1, 0, 0};
+    static const double bhi[13] = {3, 2000, 2000, 1000, 1000, 2000, 10000, 10000, 8, 10000, 8, 10000, 1};
+    KnobTable k;
+    for (int p = 0; p < 59; ++p) {
+      const double lo = p < 7 ? glo[p] : blo[(p - 7) % 13], hi = p < 7 ? ghi[p] : bhi[(p - 7) % 13];
+      k.push_back({p, lo, hi, dy::MsRef0 + dy::MrRaw0 + p, [lo, hi](double v) { return std::clamp(std::round(v), lo, hi); }});
+    }
+    return std::make_shared<const KnobTable>(k);
+  }();
+  return t;
 }
 
 bool decodeMaximus(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
   if (r.n < 4 + 7 * 4 + 4 * BCount * 4) return false;
   begin(m, "gl.master");
-  if (!maximusToMaster(r, m, 0)) return false;
-  // Automation: the global controls (the band page controls follow the
-  // selected band and are not mapped).
-  static auto table = std::make_shared<const KnobTable>(KnobTable{
-      {0, 0, 65536, dy::MsLowFreq, [](double v) { return std::clamp(30.0 * std::pow(2.0, v * 0.000138227748), 40.0, 1000.0); }},
-      {2, 0, 65536, dy::MsHighFreq, [](double v) { return std::clamp(30.0 * std::pow(2.0, v * 0.000138227748), 800.0, 16000.0); }},
-      {5, 0, 1000, dy::MsBandMix, [](double v) { return std::clamp(v / 1000.0, 0.0, 1.0); }},
-  });
-  bindTable(m, table);
-  m.exact = false;  // knob laws and curves exact; band envelope / saturation details approximated
+  bool exact = false;
+  if (!maximusToMaster(r, m, 0, dy::MsRef0, &exact)) return false;
+  // J-35: the reference engine runs the stored integers; automation drives them.
+  bindTable(m, maximusRawTable());
+  // Exact unless the state uses a linear-phase crossover, more than eight
+  // curve points or rarely used point shapes (spec j35_maximus.md).
+  m.exact = exact;
   return true;
 }
 
@@ -413,7 +488,7 @@ bool decodeSoundgoodizer(Context& c, const std::vector<Event>& evs, PluginMappin
   begin(m, "gl.enhance");
   set(m, dy::EnMode, mode);
   set(m, dy::EnAmount, amount);
-  bool fromProgram = false;
+  bool fromProgram = false, progExact = false;
   if (!c.factoryData.empty()) {
     static const char* names[4] = {"a", "b", "c", "d"};
     // Raw program data shipped with the plugin, else the preset copies.
@@ -425,23 +500,24 @@ bool decodeSoundgoodizer(Context& c, const std::vector<Event>& evs, PluginMappin
       while ((got = std::fread(buf, 1, sizeof buf, fp)) > 0) bytes.insert(bytes.end(), buf, buf + got);
       std::fclose(fp);
       Reader pr(bytes.data(), bytes.size());
-      fromProgram = maximusToMaster(pr, m, dy::EnProg0);
+      fromProgram = maximusToMaster(pr, m, dy::EnProg0, dy::EnRef0, &progExact);
     }
     if (!fromProgram) {
       std::string path = c.factoryData + "/Data/Patches/Plugin presets/Effects/Maximus/Soundgoodizer presets/" + names[mode] + ".fst";
       File f;
       if (readFile(path, f, nullptr)) {
         Reader pr(pluginState(f.events));
-        fromProgram = maximusToMaster(pr, m, dy::EnProg0);
+        fromProgram = maximusToMaster(pr, m, dy::EnProg0, dy::EnRef0, &progExact);
       }
     }
   }
-  set(m, dy::EnCustom, fromProgram ? 1 : 0);
+  // J-35: the program runs on the reference engine (EnCustom 3); amount = band mix.
+  set(m, dy::EnCustom, fromProgram ? 3 : 0);
   // Automation: the amount knob (stored 0..1000).
   m.param = [](int fl) { return fl == 0 ? static_cast<int>(dy::EnAmount) : -1; };
   m.value = [](int, double n) { return std::clamp(n, 0.0, 1.0); };
   setRawRanges(m, {{0, 0, 1000}});
-  m.exact = false;
+  m.exact = fromProgram && progExact;  // the program comes from FL Studio's data folder
   return true;
 }
 

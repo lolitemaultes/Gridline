@@ -2,6 +2,8 @@
 // (gl.enhance) and Loudness (gl.emphasis) runtimes.
 #include <cstring>
 #include "dyn_dsp.h"
+#include "emphasis_ref.h"
+#include "maximus_ref.h"
 #include "emphasizer_ref.h"
 
 namespace gl::packs::dynamics {
@@ -259,9 +261,9 @@ class MasterEngine {
           double g = B.mode == kModeNoComp ? 1.0 : B.drawn ? detectDrawn(b, B, now) : detect(b, B, now, atkC[b], relC[b], detRel[b], winC[b]);
           shape(B, late);
           for (int c = 0; c < 2; ++c) {
-            double v = late[c] * g;
-            v = os_[b * 2 + c].process(v, osf, [&](double s) { return saturate(B, s, satT[b], satC[b]); });
-            y[c] = v * B.post;
+            // Post gain before the saturation ceiling, as the reference (J-35/J-40).
+            double v = late[c] * g * B.post;
+            y[c] = os_[b * 2 + c].process(v, osf, [&](double s) { return saturate(B, s, satT[b], satC[b]); });
           }
         }
         sum[0] += y[0];
@@ -289,9 +291,8 @@ class MasterEngine {
         double g = M.mode == kModeNoComp ? 1.0 : M.drawn ? detectDrawn(3, M, m) : detect(3, M, m, atkC[3], relC[3], detRel[3], winC[3]);
         shape(M, late);
         for (int c = 0; c < 2; ++c) {
-          double v = late[c] * g;
-          v = os_[6 + c].process(v, osf, [&](double s) { return saturate(M, s, satT[3], satC[3]); });
-          out[c] = v * M.post;
+          double v = late[c] * g * M.post;  // post gain before the ceiling (J-35/J-40)
+          out[c] = os_[6 + c].process(v, osf, [&](double s) { return saturate(M, s, satT[3], satC[3]); });
         }
       }
       L[i] = static_cast<float>(out[0]);
@@ -441,10 +442,40 @@ void readMasterSet(MasterSet& S, const G& p) {
   }
 }
 
+// J-35: the reference block (+ the drawn points of the extension block) → engine state.
+template <class Get>
+maxref::RefState readMaxRef(Get get, int ref, int prog) {
+  maxref::RefState r;
+  for (int k = 0; k < maxref::kRaw; ++k) r.raw[k] = static_cast<int>(std::lround(get(ref + MrRaw0 + k)));
+  r.solo = get(ref + MrSolo) >= 0.5, r.masterMid = get(ref + MrMasterMid) >= 0.5, r.safetyOff = get(ref + MrSafetyOff) >= 0.5;
+  r.target = std::clamp(static_cast<int>(std::lround(get(ref + MrTarget))), 0, 3);
+  for (int b = 0; b < kMsBands; ++b) {
+    maxref::Curve& c = r.curve[b];
+    c.n = std::clamp(static_cast<int>(std::lround(get(prog + msExt(b, MxPoints)))), 1, kMsCurvePts);
+    double last = 0;
+    for (int i = 0; i < c.n; ++i) {
+      c.x[i] = std::max(last, std::clamp(get(prog + msExt(b, MxPt0 + i * 3)), 0.0, 1.0));
+      c.y[i] = std::clamp(get(prog + msExt(b, MxPt0 + i * 3 + 1)), 0.0, 1.0);
+      c.t[i] = std::clamp(get(prog + msExt(b, MxPt0 + i * 3 + 2)), -1.0, 1.0);
+      c.type[i] = std::clamp(static_cast<int>(std::lround(get(ref + MrPtType0 + b * kMsCurvePts + i))), 0, 2);
+      last = c.x[i];
+    }
+  }
+  return r;
+}
+
 class MasterFx final : public DynFx {
  public:
   MasterFx() : DynFx("gl.master") {}
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (pi(s, MsRef0 + MrModel) == 1) {  // J-35 reference engine
+      ref_.configure(readMaxRef([&](int k) { return p(s, k); }, MsRef0, 0), ctx.sampleRate);
+      ref_.process(L, R, n);
+      meter_ = ref_.bandGr(3);
+      refOn_ = true;
+      return;
+    }
+    refOn_ = false;
     MasterSet S;
     readMasterSet(S, [&](int k) { return p(s, k); });
     eng_.process(S, ctx.sampleRate, L, R, n);
@@ -452,19 +483,25 @@ class MasterFx final : public DynFx {
     input_ = eng_.inLevel();
   }
   int latencyFor(const PluginState& s, double sr) const override {
+    if (pi(s, MsRef0 + MrModel) == 1) return maxref::latencyOf(readMaxRef([&](int k) { return p(s, k); }, MsRef0, 0), sr);
     MasterSet S;
     readMasterSet(S, [&](int k) { return p(s, k); });
     return MasterEngine::latency(S, sr);
   }
   int meters(float* out, int max) const override {
     int k = std::min(max, kMsBands);
-    for (int b = 0; b < k; ++b) out[b] = eng_.gr(b);
+    for (int b = 0; b < k; ++b) out[b] = refOn_ ? ref_.bandGr(b) : eng_.gr(b);
     return k;
   }
-  void reset() override { eng_.reset(); }
+  void reset() override {
+    eng_.reset();
+    ref_.reset();
+  }
 
  private:
   MasterEngine eng_;
+  maxref::Engine ref_;
+  bool refOn_ = false;
 };
 
 // ===================================================================== gl.enhance
@@ -485,6 +522,14 @@ class EnhanceFx final : public DynFx {
       return;
     }
     const double amount = clampd(p(s, EnAmount), 0, 1);
+    if (pi(s, EnCustom) == 3) {  // J-35: program on the reference engine; amount = band mix
+      maxref::RefState r = readMaxRef([&](int k) { return p(s, k); }, EnRef0, EnProg0);
+      r.raw[5] = static_cast<int>(std::lround(amount * 1000));
+      ref_.configure(r, ctx.sampleRate);
+      ref_.process(L, R, n);
+      meter_ = ref_.bandGr(3);
+      return;
+    }
     const int mode = pi(s, EnMode);
     MasterSet S;
     if (pi(s, EnCustom) == 1) {  // embedded program; the amount is its band mix (reference behaviour)
@@ -555,9 +600,11 @@ class EnhanceFx final : public DynFx {
   void reset() override {
     eng_.reset();
     peak_.reset();
+    ref_.reset();
   }
   int latencyFor(const PluginState& s, double sr) const override {
     if (pi(s, EnCustom) == 2) return emref::Limiter::latency(sr);
+    if (pi(s, EnCustom) == 3) return maxref::latencyOf(readMaxRef([&](int k) { return p(s, k); }, EnRef0, EnProg0), sr);
     MasterSet S;
     if (pi(s, EnCustom) == 1)
       readMasterSet(S, [&](int k) { return p(s, EnProg0 + k); });
@@ -574,6 +621,7 @@ class EnhanceFx final : public DynFx {
     S.os = 1;
   }
   MasterEngine eng_;
+  maxref::Engine ref_;
 };
 
 // ===================================================================== gl.emphasis
@@ -637,6 +685,13 @@ class LoudnessFx final : public DynFx {
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate;
+    if (pi(s, EmModel) == 1) {  // J-35 reference limiter
+      const emphref::Settings es = refSettings(s);
+      if (sr != refSr_) ref_.prepare(sr, es), refSr_ = sr;
+      ref_.process(es, L, R, n);
+      meter_ = ref_.gainReductionDb();
+      return;
+    }
     const double inG = dbToLin(p(s, EmInput));
     const double ceil = dbToLin(p(s, EmCeiling));
     const int ch = std::clamp(pi(s, EmCharacter), 0, 3);
@@ -720,9 +775,12 @@ class LoudnessFx final : public DynFx {
   // The limited signal is read W - 1 samples behind its gain computer, after
   // the oversampled clipper.
   int latencyFor(const PluginState& s, double sr) const override {
+    if (pi(s, EmModel) == 1) return emphref::latency(refSettings(s), sr);
     return window(std::clamp(pi(s, EmCharacter), 0, 3), sr) - 1 + osLatency(oversampling(s));
   }
   void reset() override {
+    ref_.reset();
+    refSr_ = 0;
     for (auto& g : lim_) g.clear();
     for (auto& d : dly_) d.reset();
     for (auto& d : dryDly_) d.reset();
@@ -740,6 +798,18 @@ class LoudnessFx final : public DynFx {
     return std::clamp(static_cast<int>(std::lround(kWinMs[ch] * 0.001 * sr)), 1, LookaheadGain::kCap / 2);
   }
   int oversampling(const PluginState& s) const { return osFactor(pi(s, EmOversample)); }
+  emphref::Settings refSettings(const PluginState& s) const {
+    emphref::Settings e;
+    e.bypass = pb(s, EmBypass), e.delta = pb(s, EmDelta), e.truePeak = pb(s, EmTruePeak), e.ms = pi(s, EmStereoMode) == 1;
+    e.levelMatch = pb(s, EmLevelMatch), e.lowLatency = pb(s, EmLowLatency), e.instant = pb(s, EmInstant), e.dcBlock = pb(s, EmDcBlock);
+    e.order = std::clamp(pi(s, EmOrder), 0, 3) + 1, e.mode = std::clamp(pi(s, EmMode), 0, 3), e.os = std::clamp(pi(s, EmOs5), 0, 4);
+    e.hardness = std::clamp(pi(s, EmHardness), 0, 9);
+    e.inDb = clampd(p(s, EmInput), 0, 24), e.link = clampd(p(s, EmLink), 0, 1), e.amount = clampd(p(s, EmAmount), 0, 1);
+    e.ceilN = clampd(p(s, EmCeilKnob), 0, 1);
+    return e;
+  }
+  emphref::Limiter ref_;
+  double refSr_ = 0;
   LookaheadGain lim_[2];
   DelayLine dly_[2], dryDly_[2];
   dsp::Biquad preLo_[2], postLo_[2], preHi_[2], postHi_[2];

@@ -373,9 +373,9 @@ bool decodeEffector(Context& c, const std::vector<Event>& evs, PluginMapping& m)
     fl[k] = std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 0.0;
   }
   applyTable(m, *table, fl);
-  // Every module follows its reference law except the reverb module, whose
-  // network is Gridline's (decay / damping / level laws match).
-  m.exact = packs::dynamics::efref::kindOf(fl[0]) != 6 || fl[1] != 0;
+  // Every module follows its reference law (J-35: the reverb module runs the
+  // full reverb reference engine).
+  m.exact = true;
   return true;
 }
 

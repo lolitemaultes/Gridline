@@ -791,7 +791,15 @@ std::vector<PluginInfo> build() {
     p.params[DlyTone] = lin("Output tone", "%", -1, 1, 0);
     p.params[DlyInput] = lin("Input send", "%", 0, 1, 1);
     p.params[DlyInputPan] = lin("Input pan", "pan", -1, 1, 0);
-    p.params[DlyModel] = ch("Delay model", {"Legacy", "Reference", "Classic"}, 1);
+    p.params[DlyModel] = ch("Delay model", {"Legacy", "Reference", "Classic", "Stereo reference"}, 1);
+    {
+      static const char* nm[26] = {"Input level", "Stereo type", "Tempo sync", "Keep pitch", "Time", "R/L offset", "Time smoothing",
+                                   "Stereo spread", "Mod rate", "Mod time", "Mod cutoff", "Diffusion level", "Diffusion spread",
+                                   "Distortion type", "Feedback", "Filter type", "Cutoff", "Resonance", "Threshold", "Hardness",
+                                   "Symmetry", "Rate reduction", "Bit reduction", "Wet", "Tone", "Dry"};
+      static const float def[26] = {1, 0, 1, 0, 95.f / 767, 0.5f, 0.5f, 1, 0.3f, 0, 0, 0, 0.5f, 0, 0.5f, 0, 1, 0, 0, 1, 0, 1, 1, 0.8f, 0.5f, 1};
+      for (int k = 0; k < 26; ++k) p.params[DlyD3Raw0 + k] = lin((std::string(nm[k]) + " (stereo ref.)").c_str(), "%", 0, 1, def[k]);
+    }
     p.params[DlyClsStepRound] = tog("Whole-step rounding", 0);
     p.params[DlyClsBpm] = lin("Own tempo", "BPM", 0, 280, 0);
     p.params[DlyClsCoef] = lin("Feedback filter", "%", 0, 1, 1);
@@ -849,7 +857,22 @@ std::vector<PluginInfo> build() {
     p.params[RvbColor] = lin("Color", "%", -1, 1, 0);
     p.params[RvbFreeze] = ch("Freeze", {"Off", "Freeze", "Sustain"}, 0);
     p.params[RvbDampHz] = lg("High damping", "Hz", 500, 22100, 4000);
-    p.params[RvbModel] = ch("Model", {"Hall", "Plate"}, 0);
+    p.params[RvbModel] = ch("Model", {"Hall", "Plate", "Full"}, 0);
+    p.params[RvbFLowCut] = lg("Low cut (full)", "Hz", 19, 3000, 75);
+    p.params[RvbFHighCut] = lin("High cut (full)", "x100 Hz", 5, 221, 40);
+    p.params[RvbFPredelay] = lin("Pre-delay (full)", "/384 s", 0, 384, 0);
+    p.params[RvbFRoom] = lin("Room size (full)", "%", 1, 100, 50);
+    p.params[RvbFDiffusion] = lin("Diffusion (full)", "%", 0, 100, 100);
+    p.params[RvbFDecay] = lin("Decay (full)", "x0.1 s", 1, 200, 15);
+    p.params[RvbFDamp] = lin("High damping (full)", "x100 Hz", 5, 221, 40);
+    p.params[RvbFBass] = lin("Bass multiplier (full)", "%", 20, 300, 100);
+    p.params[RvbFCross] = lg("Crossover (full)", "Hz", 25, 2000, 500);
+    p.params[RvbFSep] = lin("Separation (full)", "", -64, 64, 0);
+    p.params[RvbFDry] = lin("Dry (full)", "", 0, 160, 128);
+    p.params[RvbFEr] = lin("Early reflections (full)", "", 0, 160, 128);
+    p.params[RvbFWet] = lin("Wet (full)", "", 0, 160, 128);
+    p.params[RvbFModSpeed] = lin("Mod speed (full)", "", 0, 2048, 684);
+    p.params[RvbFModDepth] = lin("Mod depth (full)", "", 0, 2048, 0);
     p.editorWidth = 880;
     p.presets = {{"Room", {}}, {"Small room", {{RvbSize, 0.3f}, {RvbDecayTime, 0.7f}, {RvbEarly, 0.5f}}},
                  {"Hall", {{RvbSize, 0.85f}, {RvbDecayTime, 4.5f}, {RvbPreDelay, 25.f}, {RvbWet, 0.3f}, {RvbModDepth, 0.3f}}},

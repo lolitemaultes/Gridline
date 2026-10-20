@@ -7,6 +7,7 @@
 // option switches along the bottom.
 #include "../flc_kit.h"
 #include "dyn_widgets.h"
+#include "emphasis_ref.h"
 
 namespace gl::packs::dynamics {
 
@@ -275,7 +276,8 @@ void editorLoudnessFl(App& a, const PluginTarget& t, float width) {
         dl->AddRectFilled(ImVec2(x, p0.y), ImVec2(x + dx + 0.5f, p0.y + std::min(1.0f, -g / 18.0f) * (p1.y - p0.y) * 0.45f),
                           theme::withAlpha(K.accent2C(), 0.55f));
     }
-    float cy = Y(val(st, EmCeiling));
+    const bool refModel = ival(st, EmModel) == 1;
+    float cy = Y(refModel ? static_cast<float>(std::max(-60.0, emphref::ceilingDb(val(st, EmCeilKnob)))) : val(st, EmCeiling));
     for (float x = p0.x; x < p1.x; x += 8) dl->AddLine(ImVec2(x, cy), ImVec2(x + 4, cy), K.accent2C(), 1.5f);
     skin::text(dl, ImVec2(p1.x - 70 * F.s, cy - F.font(8) - 2), K.accent2C(), "CEILING", F.font(8));
     dl->PopClipRect();
@@ -308,6 +310,43 @@ void editorLoudnessFl(App& a, const PluginTarget& t, float width) {
     std::string s = d->format(val(st, param));
     skin::pill(dl, F.p(x, y), F.p(x + w, y + 11), K, s.c_str(), F.font(6.5f));
   };
+  if (ival(st, EmModel) == 1) {  // J-35 reference controls (the reference's own set)
+    flk::wheel(c, EmInput, 19, 262, 54, "Input");
+    valPill(18, 333, EmInput, 56);
+    flk::text(c, 100, 262, "MODE");
+    flk::menu(c, EmMode, 100, 280, 86, 20);
+    flk::wheel(c, EmAmount, 196, 262, 44, "Amount");
+    flk::wheel(c, EmOrder, 251, 262, 44, "Order");
+    flk::wheel(c, EmHardness, 306, 262, 44, "Hardness");
+    valPill(194, 321, EmAmount, 48);
+    valPill(249, 321, EmOrder, 48);
+    valPill(304, 321, EmHardness, 48);
+    static const char* msr[2] = {"L/R", "M/S"};
+    flk::text(c, 384, 262, "CHANNELS");
+    flk::sw(c, EmStereoMode, 384, 280, 62, 20, msr, 2, true);
+    flk::tog(c, EmLowLatency, 384, 310, 62, 16, "LOW LAT.");
+    flk::wheel(c, EmLink, 470, 262, 44, "Link");
+    valPill(468, 321, EmLink, 48);
+    flk::wheel(c, EmCeilKnob, 563, 262, 54, "Ceiling");
+    {
+      char buf[16];
+      const double db = emphref::ceilingDb(val(st, EmCeilKnob));
+      if (db <= -999) std::snprintf(buf, sizeof buf, "-inf dB");
+      else std::snprintf(buf, sizeof buf, "%.1f dB", db);
+      skin::pill(dl, F.p(562, 333), F.p(618, 344), K, buf, F.font(6.5f));
+    }
+    skin::label(dl, F.p(48, 0).x, F.p(0, 349).y, "LOUDNESS", K.accent2C(), F.font(11));
+    flk::tog(c, EmDcBlock, 120, 347, 52, 16, "DC BLOCK");
+    flk::tog(c, EmInstant, 176, 347, 70, 16, "INSTANT REC.");
+    flk::tog(c, EmTruePeak, 250, 347, 58, 16, "TRUE PEAK");
+    static const char* os5[5] = {"OFF", "2X", "4X", "8X", "16X"};
+    flk::sw(c, EmOs5, 312, 347, 140, 16, os5, 5, true);
+    flk::tog(c, EmDelta, 456, 347, 44, 16, "DELTA");
+    flk::tog(c, EmLevelMatch, 504, 347, 80, 16, "LEVEL MATCH");
+    flk::tog(c, EmBypass, 588, 347, 50, 16, "BYPASS");
+    F.end(kW, kH);
+    return;
+  }
   flk::wheel(c, EmInput, 19, 262, 54, "Input");
   valPill(18, 333, EmInput, 56);
   flk::text(c, 100, 262, "CHARACTER");

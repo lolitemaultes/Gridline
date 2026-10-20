@@ -2,6 +2,7 @@
 // Dynamics (gl.master, the reference maximizer's counterpart) and Enhance
 // (gl.enhance, the one-knob counterpart). Laid out on the reference forms'
 // geometry with their palette roles, drawn with Gridline's skin kit.
+#include "maximus_ref.h"
 #include <map>
 #include "../../app/PluginEditorsDynFl.h"
 #include "../../app/PluginSkin.h"
@@ -52,7 +53,7 @@ void writeCurve(App& a, const PluginTarget& t, const PluginState& st, int band, 
 void curveArea(App& a, const PluginTarget& t, const PluginState& st, MaxUi& u, const skin::Form& f, float inDb) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const int b = u.band;
-  const bool drawn = ui::ival(st, msExt(b, MxCurveMode)) == 1;
+  const bool drawn = ui::ival(st, msExt(b, MxCurveMode)) == 1 || ui::ival(st, MsRef0 + MrModel) == 1;
   ImVec2 p0 = f.p(5, 4), p1 = f.p(186, 185);
   dl->AddRectFilled(p0, p1, hex(0x2C3A41));
   const float pad = f.d(6);
@@ -187,7 +188,9 @@ void monitorArea(App& a, const PluginTarget& t, const PluginState& st, MaxUi& u,
     dl->AddPolyline(pts, N, hex(0x8BFC56, 0.55f), 0, 1.0f);
   }
   pui::drawFreqGrid(dl, p0, p1, 24, false);
-  double fl = ui::val(st, MsLowFreq), fh = ui::val(st, MsHighFreq);
+  const bool refm = ui::ival(st, MsRef0 + MrModel) == 1;  // J-35: reference engine stores the raw split values
+  double fl = refm ? maxref::splitHz(ui::val(st, MsRef0 + MrRaw0)) : ui::val(st, MsLowFreq);
+  double fh = refm ? maxref::splitHz(ui::val(st, MsRef0 + MrRaw0 + 2)) : ui::val(st, MsHighFreq);
   float x1 = pui::freqToX(fl, p0.x, p1.x - p0.x), x2 = pui::freqToX(fh, p0.x, p1.x - p0.x);
   float xs[4] = {p0.x, x1, x2, p1.x};
   for (int b = 0; b < 3; ++b) {
@@ -210,7 +213,13 @@ void monitorArea(App& a, const PluginTarget& t, const PluginState& st, MaxUi& u,
     if (drag < 0) u.band = io.MousePos.x < x1 ? 0 : io.MousePos.x < x2 ? 1 : 2;
   }
   if (ImGui::IsItemActive() && drag >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1))
-    a.doc.setParam(t.pid(drag ? MsHighFreq : MsLowFreq), pui::xToFreq(io.MousePos.x, p0.x, p1.x - p0.x), true);
+  {
+    const double hz = pui::xToFreq(io.MousePos.x, p0.x, p1.x - p0.x);
+    if (refm)
+      a.doc.setParam(t.pid(MsRef0 + MrRaw0 + (drag ? 2 : 0)), std::clamp(std::round(std::log2(hz / 30.0) / 0.000138227748), 0.0, 65536.0), true);
+    else
+      a.doc.setParam(t.pid(drag ? MsHighFreq : MsLowFreq), hz, true);
+  }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture(), drag = -1;
   for (float x : {x1, x2}) dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), hex(0xFFFFFF, 0.5f), f.d(1.0f));
   skin::hint(a, "Output spectrum and bands · click a band to edit it · drag a split line to move it");
@@ -244,7 +253,12 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
   const int b = std::clamp(u.band, 0, 3);
   auto P = [&](int k) { return msParam(b, k); };
   auto X = [&](int k) { return msExt(b, k); };
-  const bool drawn = ui::ival(st, X(MxCurveMode)) == 1;
+  // J-35: with the reference engine every control edits the stored integers.
+  const bool ref = ui::ival(st, MsRef0 + MrModel) == 1;
+  auto RB = [&](int tag) { return MsRef0 + MrRaw0 + maxref::rawIndex(b, tag); };
+  auto RG = [&](int g) { return MsRef0 + MrRaw0 + g; };
+  auto S = [&](int legacy, int refParam) { return ref ? refParam : legacy; };
+  const bool drawn = ref || ui::ival(st, X(MxCurveMode)) == 1;
   // Palette roles.
   const ImU32 panel = hex(0x566065), lbl = hex(0xC9D5D4), lblBg = hex(0x31373B);
   skin::WheelLook wPre{hex(0x3F484D), hex(0x6543AA), hex(0x8758C4), hex(0x3F484D)};
@@ -271,7 +285,8 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
   if (skin::menuButton(f, "mxopt", 191, 188, 15, 17, hex(0xFFBC40))) ImGui::OpenPopup("##maxopt");
   if (ImGui::BeginPopup("##maxopt")) {
     ImGui::TextDisabled("%s band", kBand[b]);
-    if (ImGui::MenuItem("Drawn curve engine", nullptr, drawn)) pui::setParamValue(a, t, X(MxCurveMode), drawn ? 0.0 : 1.0);
+    if (ImGui::MenuItem("Reference engine", nullptr, ref)) pui::setParamValue(a, t, MsRef0 + MrModel, ref ? 0.0 : 1.0);
+    if (!ref && ImGui::MenuItem("Drawn curve engine", nullptr, drawn)) pui::setParamValue(a, t, X(MxCurveMode), drawn ? 0.0 : 1.0);
     if (ImGui::MenuItem("Drawn curve engine on all bands")) {
       PluginState ns = st;
       normalizePluginState(ns);
@@ -299,7 +314,12 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
   static const char* bands[4] = {"LOW", "MID", "HIGH", "MASTER"};
   skin::TabLook bt{hex(0x4B5457), hex(0x2B3136), hex(0xA9B3B6), hex(0xFFFFFF)};
   skin::tabsUi(f, "maxband", 2, 210, 69, 96, bands, 4, u.band, bt, true);
-  {
+  if (ref) {  // reference modes: compress / no compression / mute / band off
+    static const char* modes4[4] = {"ON", "OFF", "MUTE", "BYP"};
+    int cell = std::clamp(ui::ival(st, RB(maxref::TMode)), 0, 3);
+    skin::TabLook ml{hex(0x858B8C), hex(0x2F383D), hex(0x1D2023), hex(0xFFFFFF)};
+    if (skin::tabsUi(f, "maxmode", 77, 218, 64, 56, modes4, 4, cell, ml, true)) pui::setParamValue(a, t, RB(maxref::TMode), cell);
+  } else {
     static const char* modes[3] = {"ON", "OFF", "MUTE"};
     int mv = ui::ival(st, P(MbMode));  // 0 bypass, 1 active, 2 mute, 3 no compression, 4 merged
     int cell = mv == 1 ? 0 : mv == 2 ? 2 : 1;
@@ -308,58 +328,69 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
     if (skin::tabsUi(f, "maxmode", 77, 218, 64, 56, modes, 3, cell, ml, true)) pui::setParamValue(a, t, P(MbMode), cell == 0 ? 1 : cell == 1 ? 3 : 2);
   }
   {
-    bool solo = b < 3 && ui::ival(st, MsSolo) == b + 1;
+    bool solo = ref ? (b < 3 && ui::ival(st, MsRef0 + MrSolo) == 1 && ui::ival(st, MsRef0 + MrTarget) == b) : (b < 3 && ui::ival(st, MsSolo) == b + 1);
     ImVec2 c0 = f.p(12, 339), c1 = f.p(56, 355);
     ImGui::SetCursorScreenPos(c0);
-    if (ImGui::InvisibleButton("##maxsolo", ImVec2(c1.x - c0.x, c1.y - c0.y)) && b < 3) pui::setParamValue(a, t, MsSolo, solo ? 0 : b + 1);
+    if (ImGui::InvisibleButton("##maxsolo", ImVec2(c1.x - c0.x, c1.y - c0.y)) && b < 3) {
+      if (ref) {
+        PluginState ns = st;
+        normalizePluginState(ns);
+        ns.params[static_cast<size_t>(MsRef0 + MrSolo)] = solo ? 0.f : 1.f;
+        ns.params[static_cast<size_t>(MsRef0 + MrTarget)] = static_cast<float>(b);
+        setPluginState(a, t, ns, "solo band");
+      } else {
+        pui::setParamValue(a, t, MsSolo, solo ? 0 : b + 1);
+      }
+    }
     skin::hint(a, "Solo the edited band");
     dl->AddRectFilled(ImVec2(c0.x, c0.y + f.d(3)), ImVec2(c0.x + f.d(10), c0.y + f.d(13)), solo ? hex(0xBD4EC7) : hex(0x2B3136), f.d(2));
     skin::label(dl, f, 24, 339, 32, 16, "SOLO", lbl, 0, 8.0f, 0);
   }
-  skin::wheel(a, t, P(MbStereo), f, 83, 302, 40, 40, wEnv);
+  skin::wheel(a, t, S(P(MbStereo), RB(maxref::TSep)), f, 83, 302, 40, 40, wEnv);
   skin::label(dl, f, 79, 343, 48, 10, "STEREO", lbl, 0, 7.0f);
   // ---- gain + saturation
-  skin::wheel(a, t, P(MbPre), f, 143, 218, 46, 46, wPre);
-  skin::wheel(a, t, P(MbPost), f, 197, 218, 46, 46, wPost);
+  skin::wheel(a, t, S(P(MbPre), RB(maxref::TPre)), f, 143, 218, 46, 46, wPre);
+  skin::wheel(a, t, S(P(MbPost), RB(maxref::TPost)), f, 197, 218, 46, 46, wPost);
   skin::label(dl, f, 151, 264, 30, 15, "PRE", lbl, lblBg, 8.0f);
   skin::label(dl, f, 181, 264, 26, 15, "GAIN", hex(0x1D2023), hex(0xC9D5D4), 7.5f);
   skin::label(dl, f, 207, 264, 30, 15, "POST", lbl, lblBg, 8.0f);
-  skin::wheel(a, t, P(MbSatThresh), f, 143, 296, 46, 44, wSat);
-  skin::wheel(a, t, P(MbSatCeil), f, 197, 296, 46, 44, wSat);
+  skin::wheel(a, t, S(P(MbSatThresh), RB(maxref::TSatThr)), f, 143, 296, 46, 44, wSat);
+  skin::wheel(a, t, S(P(MbSatCeil), RB(maxref::TSatCeil)), f, 197, 296, 46, 44, wSat);
   skin::label(dl, f, 151, 341, 30, 15, "THRES", lbl, lblBg, 7.5f);
   skin::label(dl, f, 182, 341, 26, 15, "SAT", hex(0x1D2023), hex(0xC9D5D4), 7.5f);
   skin::label(dl, f, 207, 341, 30, 15, "CEIL", lbl, lblBg, 8.0f);
-  skin::switchSel(a, t, X(MxSatMode), f, 160, 357, 66, 6, hex(0x272C2E), hex(0xCE4679));
+  if (!ref) skin::switchSel(a, t, X(MxSatMode), f, 160, 357, 66, 6, hex(0x272C2E), hex(0xCE4679));
   // ---- envelope
-  skin::wheel(a, t, P(MbAttack), f, 258, 218, 46, 46, wEnv);
-  skin::wheel(a, t, P(MbRelease), f, 318, 218, 46, 46, wEnv);
-  skin::wheel(a, t, P(MbWindow), f, 370, 218, 46, 46, wEnv);
+  skin::wheel(a, t, S(P(MbAttack), RB(maxref::TAtt)), f, 258, 218, 46, 46, wEnv);
+  skin::wheel(a, t, S(P(MbRelease), RB(maxref::TRel)), f, 318, 218, 46, 46, wEnv);
+  skin::wheel(a, t, S(P(MbWindow), RB(maxref::TWindow)), f, 370, 218, 46, 46, wEnv);
   skin::label(dl, f, 266, 264, 30, 15, "ATT", lbl, lblBg, 8.0f);
   skin::label(dl, f, 299, 264, 26, 15, "ENV", hex(0x1D2023), hex(0xC9D5D4), 7.5f);
   skin::label(dl, f, 326, 264, 30, 15, "REL", lbl, lblBg, 8.0f);
   skin::label(dl, f, 368, 264, 50, 15, "SUSTAIN", lbl, lblBg, 7.5f);
-  skin::digi(a, t, X(MxAtkCurve), f, 267, 291, 28, 23, digi);
-  skin::digi(a, t, X(MxRelCurve), f, 327, 291, 28, 23, digi);
+  skin::digi(a, t, S(X(MxAtkCurve), RB(maxref::TAttCurve)), f, 267, 291, 28, 23, digi);
+  skin::digi(a, t, S(X(MxRelCurve), RB(maxref::TRelCurve)), f, 327, 291, 28, 23, digi);
   skin::label(dl, f, 296, 294, 32, 15, "CURVE", lbl, 0, 7.0f);
   static const char* envModes[2] = {"PEAK", "RMS"};
-  skin::switchSel(a, t, X(MxEnvMode), f, 373, 292, 54, 28, hex(0x272C2E), hex(0xB9BFC3), envModes);
-  skin::wheel(a, t, X(MxRelease2), f, 258, 330, 46, 40, wEnv);
+  skin::switchSel(a, t, S(X(MxEnvMode), RB(maxref::TSusMode)), f, 373, 292, 54, 28, hex(0x272C2E), hex(0xB9BFC3), envModes);
+  skin::wheel(a, t, S(X(MxRelease2), RB(maxref::TRel2)), f, 258, 330, 46, 40, wEnv);
   skin::label(dl, f, 264, 369, 34, 12, "REL 2", lbl, lblBg, 7.5f);
   if (!drawn) skin::label(dl, f, 312, 330, 110, 40, "Curve, Rel 2 and Peak/RMS apply to drawn curves", hex(0xC9D5D4, 0.6f), 0, 7.0f, 1, false);
   // ---- global
-  skin::wheel(a, t, MsLookahead, f, 437, 218, 46, 46, wEnv);
+  skin::wheel(a, t, S(MsLookahead, RG(4)), f, 437, 218, 46, 46, wEnv);
   skin::label(dl, f, 435, 264, 50, 15, "LMH DEL", lbl, lblBg, 7.5f);
-  skin::wheel(a, t, MsBandMix, f, 437, 295, 46, 44, wEnv);
+  skin::wheel(a, t, S(MsBandMix, RG(5)), f, 437, 295, 46, 44, wEnv);
   skin::label(dl, f, 435, 340, 50, 15, "LMH MIX", lbl, lblBg, 7.5f);
-  skin::wheel(a, t, MsLowFreq, f, 508, 218, 46, 46, wLow);
-  skin::wheel(a, t, MsHighFreq, f, 568, 218, 46, 46, wHigh);
+  skin::wheel(a, t, S(MsLowFreq, RG(0)), f, 508, 218, 46, 46, wLow);
+  skin::wheel(a, t, S(MsHighFreq, RG(2)), f, 568, 218, 46, 46, wHigh);
   skin::label(dl, f, 513, 264, 34, 15, "LOW", lbl, lblBg, 8.0f);
   skin::label(dl, f, 547, 264, 30, 15, "FREQ", hex(0x1D2023), hex(0xC9D5D4), 7.5f);
   skin::label(dl, f, 577, 264, 34, 15, "HIGH", lbl, lblBg, 8.0f);
   static const char* slopes[3] = {"6", "12", "24"};
-  skin::switchSel(a, t, MsLowSlope, f, 500, 292, 40, 30, hex(0x272C2E), hex(0xB9BFC3), slopes);
-  skin::switchSel(a, t, MsHighSlope, f, 580, 292, 40, 30, hex(0x272C2E), hex(0xB9BFC3), slopes);
-  skin::wheel(a, t, MsLowCut, f, 511, 330, 40, 40, wCut);
+  static const char* slopes2[2] = {"12", "24"};
+  skin::switchSel(a, t, S(MsLowSlope, RG(1)), f, 500, 292, 40, 30, hex(0x272C2E), hex(0xB9BFC3), ref ? slopes2 : slopes);
+  skin::switchSel(a, t, S(MsHighSlope, RG(3)), f, 580, 292, 40, 30, hex(0x272C2E), hex(0xB9BFC3), ref ? slopes2 : slopes);
+  skin::wheel(a, t, S(MsLowCut, RG(6)), f, 511, 330, 40, 40, wCut);
   skin::label(dl, f, 505, 369, 52, 15, "LOW CUT", lbl, lblBg, 7.5f);
   {  // store / flip spare state
     const ImU32 fg = hex(0xB9C5C4);

@@ -336,7 +336,8 @@ int main() {
     expect(prm(m2.state, dy::msParam(0, dy::MbMode)) == 4 && prm(m2.state, dy::msParam(1, dy::MbMode)) == 3 &&
                prm(m2.state, dy::msParam(2, dy::MbMode)) == 4 && prm(m2.state, dy::msParam(3, dy::MbMode)) == 1,
            "maximus v2: six globals, band modes in place (one-band limiter: master active)");
-    expect(prm(m2.state, dy::MsLowCut) <= 10.5f, "maximus v2: no low cut");
+    // J-35: the reference's loader sets the missing low cut word to 32768 (20 Hz) for version 2.
+    expect(std::fabs(prm(m2.state, dy::MsLowCut) - 20.f) < 0.01f, "maximus v2: low cut forced to 20 Hz");
     expect(std::fabs(prm(m2.state, dy::msParam(3, dy::MbPre)) - 20 * std::log10((std::pow(7.0, 1.52) - 1) / 6)) < 0.01,
            "maximus v2: master pre gain read from its own field");
 

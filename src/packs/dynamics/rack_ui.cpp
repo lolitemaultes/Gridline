@@ -129,8 +129,12 @@ void pedal(App& a, const PluginTarget& t, const PluginState& st, const flk::Ctx&
 }  // namespace
 
 // ===================================================================== gl.amprack
+void editorModuleRack(App& a, const PluginTarget& t, float width);  // rack_ref_ui.cpp (J-35)
+void editorPedalBoard(App& a, const PluginTarget& t, float width);  // rack_ref_ui.cpp (J-35)
 void editorAmpRack(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
+  if (ival(st, RkModel) == 1) return editorModuleRack(a, t, width);
+  if (ival(st, RkModel) == 2) return editorPedalBoard(a, t, width);
   const skin::Skin& K = rackSkin();
   constexpr float kW = 1000, kH = 372;
   skin::Form F = skin::Form::fit(width, kW);

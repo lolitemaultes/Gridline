@@ -11,6 +11,7 @@
 #include <cmath>
 #include <vector>
 #include "dyn_dsp.h"
+#include "../../engine/FullReverbRef.h"
 
 namespace gl::packs::dynamics::efref {
 
@@ -62,6 +63,7 @@ class Effector {
  public:
   Effector() : stut_{std::vector<float>(kStutMax, 0.f), std::vector<float>(kStutMax, 0.f)} {
     for (auto& m : fade_) m = 0;
+    rev_.init(fullrev::Variant::Multi, 44100, 44100 / 4);  // the module runs its reverb at 44.1 kHz
   }
   void reset() {
     for (int k = 0; k < kKinds; ++k) clearModule(k);
@@ -162,7 +164,7 @@ class Effector {
           fltLast_[c] = 0;
           break;
         case 5: echo_[c].reset(); break;
-        case 6: rev_.reset(); break;
+        case 6: rev_.resume(); break;
         case 7: pan_[c].reset(); break;
         case 8: trance_ = 0; break;
         case 9: stutW_ = stutR_ = 0; break;
@@ -207,17 +209,18 @@ class Effector {
     echoFb_ = XB * XB;
     if (YB <= 0.5) echoC1_ = 1.98 * YB + 0.01, echoC2_ = 0;
     else echoC1_ = 1, echoC2_ = 0.45 * YB - 0.225;
-    // Reverb (approximate network: decay / damping / level laws of the reference)
-    double decay = std::floor(149.25 * XB * XB * XB + 1.5) / 10.0;
-    double dampHz = std::floor(216 * YB * YB + 5.5) * 100.0;
-    double levelDb = std::floor(94.725 * XB * XB * XB - 150) / 10.0;
-    revLevel_ = std::pow(10.0, levelDb / 20.0);
-    if (std::fabs(decay - revDecay_) > 1e-9 || std::fabs(dampHz - revDamp_) > 1e-9) {
-      revDecay_ = decay, revDamp_ = dampHz;
-      double dampCoef = dampHz >= 22100 ? 0.0 : std::exp(-2 * kPi * dampHz / sr_);
-      rev_.set(sr_, 1.0, decay, dampCoef, 0);
+    // Reverb: the full reverb engine, re-set every control block (it runs at a fixed 44.1 kHz)
+    {
+      float rn[fullrev::MpCount];
+      for (int k = 0; k < fullrev::MpCount; ++k) rn[k] = fullrev::kMultiDefaults[k];
+      const float xf = static_cast<float>(XB), yf = static_cast<float>(YB), x3 = (xf * xf) * xf;
+      rn[fullrev::MpDamp] = yf * yf;
+      rn[fullrev::MpDecay] = 0.75f * x3;
+      rn[fullrev::MpWet] = x3 * 0.225f + 0.5f;
+      rn[fullrev::MpHighCut] = 1, rn[fullrev::MpLowCut] = 0.1f, rn[fullrev::MpDiffusion] = 1, rn[fullrev::MpRoom] = 1;
+      rn[fullrev::MpPredelay] = 0, rn[fullrev::MpDry] = 0, rn[fullrev::MpMuteEr] = 1;
+      rev_.setMulti(rn);
     }
-    revLc_ = std::exp(-2 * kPi * 317.0 / sr_);
     // Vowel
     double vv = 3 * XB;
     int vi = static_cast<int>(vv);
@@ -355,13 +358,11 @@ class Effector {
         }
         break;
       }
-      case 6: {  // Reverb (approximate network)
-        double send = (l + r) * 0.5 * f * w;
-        revHp_ = send + (revHp_ - send) * revLc_;
-        double wl, wr;
-        rev_.process(send - revHp_, wl, wr);
-        l += wl * revLevel_ + l * f * w * 0.0157;
-        r += wr * revLevel_ + r * f * w * 0.0157;
+      case 6: {  // Reverb: the engine adds its output to the module's own buffers
+        const float a = static_cast<float>(f * w);
+        float ol = static_cast<float>(l), orr = static_cast<float>(r);
+        rev_.tickMulti(static_cast<float>(l) * a, static_cast<float>(r) * a, ol, orr);
+        l = ol, r = orr;
         break;
       }
       case 7: {  // Panner: Haas delay on one side + amplitude law
@@ -436,8 +437,7 @@ class Effector {
   double flt_[2][32] = {}, fltLast_[2] = {}, fltG_ = 0, fltR_ = 0;
   bool fltHp_ = false;
   double echoDelay_ = 2, echoFb_ = 0, echoC1_ = 1, echoC2_ = 0;
-  FdnReverb rev_{16384};
-  double revDecay_ = -1, revDamp_ = -1, revLevel_ = 0, revLc_ = 0, revHp_ = 0;
+  fullrev::Engine rev_;
   double trance_ = 0;
   std::vector<float> stut_[2];
   size_t stutW_ = 0, stutR_ = 0;

@@ -222,7 +222,7 @@ class MultiDelayFx final : public Effect {
     int inType = 0, inStages = 1, fbType = 0, fbStages = 1, mode = 0, D = 1, offN[2] = {0, 0}, div = 0, gLen = 2;
     bool on = false, post = false, leaveFirst = false;
     double gPos = 0, gPeriod = 1, gShape = 0, modInc = 0, modDepth = 0, modPh = 0, diffuse = 0;
-    Ramp inL, inR, outL, outR, toNext, m[4];
+    Ramp mi[4], mo[4], toNext, m[4];
     void clear() {
       off[0].clear();
       off[1].clear();
@@ -231,7 +231,9 @@ class MultiDelayFx final : public Effect {
       for (auto& c : fbS)
         for (auto& b : c) b = BqState{};
       gPos = modPh = 0;
-      inL = inR = outL = outR = toNext = Ramp{};
+      toNext = Ramp{};
+      for (auto& q : mi) q = Ramp{};
+      for (auto& q : mo) q = Ramp{};
       for (auto& r : m) r = Ramp{};
     }
   };
@@ -239,22 +241,7 @@ class MultiDelayFx final : public Effect {
   // feedback volume g, pan and stereo separation (sep < 0 widens, > 0 blends
   // toward mono); ping-pong swaps straight and cross.
   static void fbMatrix(double g, double pan, double sep, bool pingPong, double m[4]) {
-    if (pan == 0 && sep == 0) {
-      m[0] = m[1] = g, m[2] = m[3] = 0;
-    } else if (g == 0) {
-      m[0] = m[1] = m[2] = m[3] = 0;
-    } else {
-      double gl, gr;
-      balance(pan, gl, gr);
-      gl *= g, gr *= g;
-      double cl = pan < 0 ? 1.0 - gr / g : 0.0, cr = pan > 0 ? 1.0 - gl / g : 0.0;
-      if (sep != 0) {
-        double st = sep > 0 ? (std::pow(5.0, sep) - 1.0) * 0.25 : sep;
-        cl = std::min(1.0, cl + st), cr = std::min(1.0, cr + st);
-      }
-      m[2] = gl * cl * 0.5, m[0] = (1.0 - cl * 0.5) * gl;
-      m[3] = gr * cr * 0.5, m[1] = (1.0 - cr * 0.5) * gr;
-    }
+    flc::mdPanMatrix(pan, g, sep, true, m);
     if (pingPong) {
       double a = m[0], b = m[1];
       m[0] = m[3], m[1] = m[2], m[2] = b, m[3] = a;
@@ -315,11 +302,9 @@ class MultiDelayFx final : public Effect {
       int offN = std::clamp(static_cast<int>(std::lround(std::fabs(offMs) * 0.001 * sr)), 0, maxOff);
       r.offN[0] = offMs < 0 ? offN : 0;
       r.offN[1] = offMs > 0 ? offN : 0;
-      double gl, gr;
-      balance(clampd(P(MdInPan), -1, 1), gl, gr);
-      double ig = P(MdInLevel, 1) * gin;
-      r.inL.target(gl * ig);
-      r.inR.target(gr * ig);
+      double mm[4];
+      flc::mdPanMatrix(clampd(P(MdInPan), -1, 1), P(MdInLevel, 1) * gin, 0, false, mm);
+      for (int j = 0; j < 4; ++j) r.mi[j].target(mm[j]);
       r.inType = std::clamp(static_cast<int>(std::lround(P(MdInFType))), 0, 7);
       r.inStages = std::clamp(static_cast<int>(std::lround(X(MdxInStages, 1))), 1, 3);
       r.inQ = flc::mdDesign(r.inType, P(MdInCut, 2000), P(MdInRes, 0.1f), X(MdxInGain, 1), r.inStages, sr);
@@ -328,19 +313,19 @@ class MultiDelayFx final : public Effect {
       r.fbStages = std::clamp(static_cast<int>(std::lround(X(MdxFbStages, 1))), 1, 3);
       r.fbQ = flc::mdDesign(r.fbType, P(MdFbCut, 6000), P(MdFbRes, 0.1f), X(MdxFbGain, 1), r.fbStages, sr);
       double m[4];
-      fbMatrix(P(MdFeedback, 0.5f) * fbScale, clampd(P(MdFbPan), -1, 1), clampd(P(MdSep), -1, 1), r.mode == MfbPingPong, m);
+      const double sep = clampd(P(MdSep), -1, 1);
+      // J-35: a negative separation also scales the feedback volume by (1 + s/2).
+      fbMatrix((P(MdFeedback, 0.5f) * (sep < 0 ? 1.0 + 0.5 * sep : 1.0)) * fbScale, clampd(P(MdFbPan), -1, 1), sep, r.mode == MfbPingPong, m);
       for (int j = 0; j < 4; ++j) r.m[j].target(m[j]);
       r.leaveFirst = X(MdxLeaveFirst) >= 0.5;
       r.div = std::clamp(static_cast<int>(std::lround(P(MdGateDiv))), 0, 16);
       r.gShape = clampd(P(MdGateShape), -1, 1);
       if (r.div > 0) {
-        r.gPeriod = static_cast<double>(r.D) / r.div;
+        r.gPeriod = sec * sr / r.div;  // the unrounded delay time
         r.gLen = std::max(2, static_cast<int>(std::lround(r.gPeriod)));
       }
-      balance(clampd(P(MdOutPan), -1, 1), gl, gr);
-      double og = P(MdOutLevel, 0.8f) * wet;
-      r.outL.target(gl * og);
-      r.outR.target(gr * og);
+      flc::mdPanMatrix(clampd(P(MdOutPan), -1, 1), P(MdOutLevel, 0.8f) * wet, 0, false, mm);
+      for (int j = 0; j < 4; ++j) r.mo[j].target(mm[j]);
       r.toNext.target(P(MdToNext));
       r.modInc = P(MdModRate, 0.4f) / sr;
       r.modDepth = P(MdModDepth) * 0.004 * sr;
@@ -368,7 +353,7 @@ class MultiDelayFx final : public Effect {
       }
       Tap& tp = taps_[k];
       double y[2];
-      double in[2] = {xl * r.inL.at(t) + prevL * prevG, xr * r.inR.at(t) + prevR * prevG};
+      double in[2] = {r.mi[0].at(t) * xl + r.mi[2].at(t) * xr + prevL * prevG, r.mi[1].at(t) * xr + r.mi[3].at(t) * xl + prevR * prevG};
       if (r.inType > 0 && !r.post)
         for (int c = 0; c < 2; ++c) in[c] = runStages(r.inS[c], r.inQ, r.inStages, in[c]);
       if (r.mode == MfbOff) {
@@ -395,9 +380,10 @@ class MultiDelayFx final : public Effect {
         const bool swap = r.mode == MfbInvert;
         for (int c = 0; c < 2; ++c) {
           double xo = r.offN[c] > 0 ? r.off[c].at(static_cast<size_t>(r.offN[c]) + 1) : in[c];
-          tp.line[c].push(flush(static_cast<float>(safe(xo + p[swap ? 1 - c : c]))));
+          tp.line[c].push(flush(static_cast<float>(safe(xo + p[c]))));
           y[c] = r.leaveFirst ? cpass[c] : p[c];
         }
+        if (swap) std::swap(y[0], y[1]);  // invert: the unit's output sides swap (J-35), not the feedback
       }
       if (r.div > 0) {
         while (r.gPos >= r.gPeriod) r.gPos -= r.gPeriod;
@@ -408,8 +394,8 @@ class MultiDelayFx final : public Effect {
       }
       if (r.inType > 0 && r.post)
         for (int c = 0; c < 2; ++c) y[c] = runStages(r.inS[c], r.inQ, r.inStages, y[c]);
-      wl += y[0] * r.outL.at(t);
-      wr += y[1] * r.outR.at(t);
+      wl += r.mo[0].at(t) * y[0] + r.mo[2].at(t) * y[1];
+      wr += r.mo[1].at(t) * y[1] + r.mo[3].at(t) * y[0];
       prevL = y[0], prevR = y[1], prevG = r.toNext.at(t);
     }
     outL = wl, outR = wr;

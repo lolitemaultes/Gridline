@@ -18,6 +18,12 @@ namespace {
 const char* kTypes[] = {"gl.master", "gl.emphasis", "gl.enhance", "gl.amprack", "gl.overdrive",
                         "gl.fastdist", "gl.squeeze", "gl.effector", "gl.transplit"};
 const double kSr = 48000.0;
+// The legacy loudness engine (EmModel 0); the reference one is tested in test_j35.
+PluginState legacyEmphasis() {
+  PluginState s = defaultPluginState("gl.emphasis");
+  s.params[static_cast<size_t>(gl::packs::dynamics::EmModel)] = 0;
+  return s;
+}
 
 struct Buf {
   std::vector<float> L, R;
@@ -137,7 +143,7 @@ int main() {
     auto fx = createEffect(ty);
     expect(fx != nullptr, (std::string("creates ") + ty).c_str());
   }
-  expect(static_cast<int>(findPlugin("gl.master")->params.size()) == kMsCount, "master param count");
+  expect(static_cast<int>(findPlugin("gl.master")->params.size()) == kMsTotal, "master param count");
   expect(static_cast<int>(findPlugin("gl.amprack")->params.size()) == kRkCount, "rack param count");
 
   // ---------------------------------------------------------------- silence, finiteness, block size
@@ -276,7 +282,7 @@ int main() {
     for (int ch = 0; ch < 4; ++ch)
       for (int os = 0; os < 3; ++os)
         for (int msMode = 0; msMode < 2; ++msMode) {
-          PluginState st = defaultPluginState("gl.emphasis");
+          PluginState st = legacyEmphasis();
           set(st, EmInput, 18);
           set(st, EmCeiling, -1);
           set(st, EmCharacter, ch);
@@ -297,13 +303,13 @@ int main() {
     std::snprintf(name, sizeof name, "loudness: ceiling respected (worst %.3f dBFS)", worst);
     expect(ok, name);
     // Quiet material passes almost unchanged.
-    PluginState st = defaultPluginState("gl.emphasis");
+    PluginState st = legacyEmphasis();
     Buf in = sine(440, 0.1, 0.5);
     Buf o = run(st, in, 256);
     expect(std::fabs(db(rms(o, 4800, o.size()) / rms(in, 4800, in.size()))) < 0.1, "loudness: transparent below the ceiling");
     // The limiter actually limits (gain reduction meter).
     auto fx = createEffect("gl.emphasis");
-    PluginState hot = defaultPluginState("gl.emphasis");
+    PluginState hot = legacyEmphasis();
     set(hot, EmInput, 12);
     run(*fx, hot, sine(200, 0.9, 0.3), 256);
     expect(fx->meter() < -6.0f, "loudness: gain reduction reported");

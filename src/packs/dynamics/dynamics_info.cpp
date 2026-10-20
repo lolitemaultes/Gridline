@@ -1,6 +1,7 @@
 // Gridline — "dynamics" pack: catalogue entries.
 #include "../Packs.h"
 #include "dynamics.h"
+#include "modrack_ref.h"
 
 namespace gl::packs::dynamics {
 
@@ -23,9 +24,42 @@ using Vals = std::vector<std::pair<int, float>>;
 const std::vector<std::string> kOs = {"Off", "2x", "4x"};
 
 // ------------------------------------------------------------------ master
+// J-35: the reference block (raw integers in the reference's own ranges).
+void addMaxRef(std::vector<ParamDesc>& ps, int base) {
+  ps[static_cast<size_t>(base + MrModel)] = ch("Engine", {"Legacy", "Reference"}, 0);
+  static const char* gn[7] = {"Low / mid split", "Low slope", "Mid / high split", "High slope", "Band look-ahead", "Band mix", "Low cut"};
+  static const double glo[7] = {0, 0, 0, 0, 0, 0, -1}, ghi[7] = {65536, 1, 65536, 1, 10000, 1000, 65536},
+                      gdef[7] = {19800, 1, 48065, 1, 1115, 1000, 32768};
+  for (int k = 0; k < 7; ++k) ps[static_cast<size_t>(base + MrRaw0 + k)] = lin(std::string(gn[k]) + " (ref.)", "", glo[k], ghi[k], gdef[k]);
+  ps[static_cast<size_t>(base + MrRaw0 + 1)] = ch("Low slope (ref.)", {"12 dB", "24 dB"}, 1);
+  ps[static_cast<size_t>(base + MrRaw0 + 3)] = ch("High slope (ref.)", {"12 dB", "24 dB"}, 1);
+  static const char* bn[13] = {"mode", "pre gain", "post gain", "separation", "saturation", "ceiling", "attack", "release 2",
+                               "attack curve", "release", "release curve", "window", "detector"};
+  static const double blo[13] = {0, 0, 0, -1000, -1000, 0, 0, 0, 1, 0, 1, 0, 0}, bhi[13] = {3, 2000, 2000, 1000, 1000, 2000, 10000, 10000, 8, 10000, 8, 10000, 1},
+                      bdef[13] = {0, 1000, 1000, 0, 0, 1000, 1115, 0, 2, 5000, 3, 2882, 0};
+  static const char* names[kMsBands] = {"Low", "Mid", "High", "Master"};
+  for (int b = 0; b < kMsBands; ++b)
+    for (int k = 0; k < 13; ++k)
+    {
+      ps[static_cast<size_t>(base + MrRaw0 + 7 + b * 13 + k)] = lin(std::string(names[b]) + " " + bn[k] + " (ref.)", "", blo[k], bhi[k], bdef[k]);
+      if (k == 0) ps[static_cast<size_t>(base + MrRaw0 + 7 + b * 13)] = ch(std::string(names[b]) + " mode (ref.)", {"Compress", "No compression", "Mute", "Off"}, 0);
+      if (k == 12) ps[static_cast<size_t>(base + MrRaw0 + 7 + b * 13 + 12)] = ch(std::string(names[b]) + " detector (ref.)", {"Peak", "RMS"}, 0);
+    }
+  ps[static_cast<size_t>(base + MrSolo)] = tog("Solo (ref.)", 0);
+  ps[static_cast<size_t>(base + MrTarget)] = ch("Selected band (ref.)", {"Low", "Mid", "High", "Master"}, 0);
+  ps[static_cast<size_t>(base + MrMasterMid)] = tog("Mid on whole input (ref.)", 0);
+  ps[static_cast<size_t>(base + MrSafetyOff)] = tog("No ceiling safety (ref.)", 0);
+  ps[static_cast<size_t>(base + MrFir)] = tog("Linear-phase split, legacy (ref.)", 0);
+  ps[static_cast<size_t>(base + MrLin)] = tog("Linear-phase split (ref.)", 0);
+  for (int b = 0; b < kMsBands; ++b)
+    for (int i = 0; i < kMsCurvePts; ++i)
+      ps[static_cast<size_t>(base + MrPtType0 + b * kMsCurvePts + i)] = ch(std::string(names[b]) + " point type (ref.)", {"Single", "Double", "Hold"}, 0);
+}
+
 void addMaster(std::vector<PluginInfo>& v) {
   PluginInfo p{"gl.master", "Mastering Dynamics", "Dynamics", PluginKind::Effect, {}, false, {}};
-  p.params.resize(kMsCount);
+  p.params.resize(kMsTotal);
+  addMaxRef(p.params, MsRef0);
   p.params[MsLowFreq] = lg("Low / mid split", "Hz", 40, 1000, 160);
   p.params[MsHighFreq] = lg("Mid / high split", "Hz", 800, 16000, 3500);
   p.params[MsLowSlope] = ch("Low split slope", {"6 dB", "12 dB", "24 dB"}, 2);
@@ -120,12 +154,24 @@ void addLoudness(std::vector<PluginInfo>& v) {
   p.params[EmOversample] = ch("Oversampling", kOs, 1);
   p.params[EmLevelMatch] = tog("Level match", 0);
   p.params[EmDelta] = tog("Delta", 0);
+  p.params[EmModel] = ch("Engine", {"Legacy", "Reference"}, 1);
+  p.params[EmBypass] = tog("Bypass", 0);
+  p.params[EmOrder] = ch("Envelope order", {"1", "2", "3", "4"}, 0);
+  p.params[EmTruePeak] = tog("True peak", 0);
+  p.params[EmMode] = ch("Mode", {"Versatile", "Loud", "Transient", "Steady"}, 0);
+  p.params[EmAmount] = lin("Amount", "%", 0, 1, 1);
+  p.params[EmCeilKnob] = lin("Ceiling", "", 0, 1, 0.9912f);  // gain (11^v - 1) / 10
+  p.params[EmHardness] = ch("Hardness", {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}, 7);
+  p.params[EmOs5] = ch("Oversampling", {"Off", "2x", "4x", "8x", "16x"}, 2);
+  p.params[EmLowLatency] = tog("Low latency", 0);
+  p.params[EmInstant] = tog("Instant recovery", 1);
+  p.legacyModelParam = EmModel;
   p.presets = {
       {"Transparent", {}},
-      {"Loud and clear", {{EmInput, 8.f}, {EmCharacter, 1.f}, {EmClip, 0.5f}}},
-      {"Keep the punch", {{EmInput, 5.f}, {EmCharacter, 2.f}, {EmLowEmph, 3.f}, {EmClip, 0.2f}}},
-      {"Soft top", {{EmInput, 6.f}, {EmHighEmph, -4.f}, {EmCharacter, 3.f}}},
-      {"Quick emphasis", {{EmInput, 4.f}, {EmLowEmph, 2.f}, {EmHighEmph, 2.f}, {EmClip, 0.6f}}},
+      {"Push it", {{EmInput, 6.f}, {EmMode, 1.f}, {EmHardness, 8.f}}},
+      {"Snappy drums", {{EmMode, 2.f}, {EmAmount, 0.6f}, {EmHardness, 6.f}, {EmOs5, 0.f}}},
+      {"Round clip", {{EmMode, 3.f}, {EmHardness, 4.f}, {EmInput, 3.f}, {EmOs5, 1.f}}},
+      {"Wide bus", {{EmStereoMode, 1.f}, {EmLink, 0.7f}, {EmInput, 2.f}, {EmTruePeak, 1.f}}},
   };
   p.editorWidth = 760;
   v.push_back(p);
@@ -137,7 +183,8 @@ void addEnhance(std::vector<PluginInfo>& v) {
   p.params.resize(EnCount);
   p.params[EnAmount] = lin("Amount", "%", 0, 1, 0.6);
   p.params[EnMode] = ch("Voicing", {"A", "B", "C", "D"}, 0);
-  p.params[EnCustom] = ch("Program", {"Built-in voicing", "Imported program", "Peak emphasis"}, 0);
+  p.params[EnCustom] = ch("Program", {"Built-in voicing", "Imported program", "Peak emphasis", "Reference program"}, 0);
+  addMaxRef(p.params, EnRef0);
   // Embedded program: the Mastering Dynamics parameter block (same names, prefixed).
   for (const PluginInfo& m : v)
     if (m.type == "gl.master")
@@ -226,6 +273,36 @@ void addRack(std::vector<PluginInfo>& v) {
   slotVals(surf, 3, RmEmpty, false);
   slotVals(surf, 4, RmDelay, true, 0.25f, {{0, 0.3f}});
   slotVals(surf, 5, RmReverb, true, 0.45f, {{0, 0.7f}, {2, 0.2f}});
+  // J-35: module rack and pedal board reference blocks.
+  p.params[RkModel] = ch("Rack model", {"Guitar rack", "Module rack", "Pedal board"}, 0);
+  p.params[DrSoftClip] = tog("Soft clip output (modules)", 1);
+  p.params[DrCount] = lin("Modules", "", 0, kDrModules, 0);
+  for (int k = 0; k < kDrModules; ++k) p.params[DrSlot0 + k] = lin("Module " + std::to_string(k + 1) + " automation block", "", 0, 3, k);
+  {
+    static const char* mn[DmP0] = {"kind", "algorithm", "oversampling", "remove DC", "disabled", "filter type", "smoothing", "impulse", "chorus mode"};
+    static const double mlo[DmP0] = {0, 0, 0, 0, 0, 0, 0, 0, 0}, mhi[DmP0] = {3, 17, 4, 1, 1, 22, 1, 58, 2}, mdef[DmP0] = {0, 0, 0, 0, 0, 0, 1, 0, 0};
+    static const double plo[kDrParams] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 1, 0, 0, 0, 1, 0, 0, -500, 0, -1000, 500, 0,
+                                          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1000, -1000, 0, 0, 0, 0, 0, -3000};
+    static const double phi[kDrParams] = {10000, 10000, 10000, 10000, 10000, 1, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 1,
+                                          192, 10, 128, 128, 1, 127, 160, 1000, 500, 2000, 1000, 1100, 10000, 10000, 10000, 10000, 10000, 1,
+                                          10000, 10000, 10000, 10000, 10000, 10000, 10000, 1000, 1000, 768, 6000, 6000, 6000, 6000, 3000};
+    drack::ModuleState d;
+    drack::moduleDefaults(d);
+    for (int m = 0; m < kDrModules; ++m) {
+      const std::string pre = "Module " + std::to_string(m + 1) + " ";
+      for (int k = 0; k < DmP0; ++k) p.params[drParam(m, k)] = lin(pre + mn[k], "", mlo[k], mhi[k], mdef[k]);
+      for (int k = 0; k < kDrParams; ++k) p.params[drParam(m, DmP0 + k)] = lin(pre + "p" + std::to_string(k), "", plo[k], phi[k], d.p[k]);
+    }
+  }
+  {
+    static const float pdef[50] = {0.5f, 0.5f, 0, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f,
+                                   0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f,
+                                   0.5f, 0.5f, 0.5f, 1, 1, 1, 1, 1, 0.5f, 1, 0, 0, 0, 0};
+    for (int k = 0; k < 50; ++k) {
+      double hi = k == 11 ? 20 : (k >= 45 ? 11 : 1);
+      p.params[PbValue0 + k] = lin("Board value " + std::to_string(k), "", k >= 45 ? -1 : 0, hi, pdef[k]);
+    }
+  }
   p.presets = {{"Crunch stack", crunch}, {"Clean shimmer", clean}, {"Fuzz wall", fuzz},
                {"Ambient lead", ambient}, {"Funk wah", funk},     {"Surf tremolo", surf}};
   p.editorWidth = 1000;

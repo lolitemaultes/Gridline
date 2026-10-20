@@ -284,7 +284,15 @@ Encoder emphasis() {
                             tagField(dy::EmLink, 7, 0, 10000),     tagField(dy::EmCeiling, 9, 0, 10000),
                             tagField(dy::EmLevelMatch, 10, 0, 1),  tagField(dy::EmOversample, 11, 0, 4),
                             tagField(dy::EmClipHard, 12, 0, 9)};
-    if (static_cast<int32_t>(getU32(b, 0)) >= 10 && b.size() >= 67) f.push_back(field(dy::EmDcBlock, 66, Type::U8, 0, 1));
+    // J-35: the reference controls (stored as the plugin keeps them).
+    for (const Field& x : {tagField(dy::EmBypass, 0, 0, 1), tagField(dy::EmOrder, 2, 0, 4), tagField(dy::EmTruePeak, 3, 0, 1),
+                           tagField(dy::EmMode, 5, 0, 3), tagField(dy::EmAmount, 8, 0, 10000), tagField(dy::EmCeilKnob, 9, 0, 10000),
+                           tagField(dy::EmOs5, 11, 0, 4), tagField(dy::EmHardness, 12, 0, 9)})
+      f.push_back(x);
+    const int ver = static_cast<int32_t>(getU32(b, 0));
+    if (ver >= 9 && b.size() >= 65) f.push_back(field(dy::EmLowLatency, 64, Type::U8, 0, 1));
+    if (ver >= 10 && b.size() >= 66) f.push_back(field(dy::EmInstant, 65, Type::U8, 0, 1));
+    if (ver >= 10 && b.size() >= 67) f.push_back(field(dy::EmDcBlock, 66, Type::U8, 0, 1));
     return f;
   };
   return e;

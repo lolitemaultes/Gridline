@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include "../../engine/ClassicDelay.h"
+#include "../../engine/Delay3Ref.h"
 #include "FlpFx.h"
 #include "../PluginParams.h"
 #include "../../packs/spacefx/sfx_flcurves.h"
@@ -91,6 +92,23 @@ std::shared_ptr<const KnobTable> reeverb2Table() {
   return t;
 }
 
+// J-35: the full reference model (RvbModel = 2) takes the knobs as stored
+// (tag k → RvbFLowCut + k); automation drives the same integers.
+std::shared_ptr<const KnobTable> reeverb2RawTable() {
+  using namespace pp;
+  static const auto t = [] {
+    static const double lo[15] = {19, 5, 0, 1, 0, 1, 5, 20, 25, -64, 0, 0, 0, 0, 0};
+    static const double hi[15] = {3000, 221, 384, 100, 100, 200, 221, 300, 2000, 64, 160, 160, 160, 2048, 2048};
+    KnobTable k;
+    for (int i = 0; i < 15; ++i) {
+      const double a = lo[i], b = hi[i];
+      k.push_back({i, a, b, RvbFLowCut + i, [a, b](double v) { return clampd(std::round(v), a, b); }});
+    }
+    return std::make_shared<const KnobTable>(k);
+  }();
+  return t;
+}
+
 bool decodeReeverb2(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   using namespace pp;
   const Event* st = pluginState(evs);
@@ -104,14 +122,14 @@ bool decodeReeverb2(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<double> v = versioned ? ints(st, 4, knobs) : ints(st, 0, 13);
   if (v.size() < 15) v.resize(15), v[13] = 684, v[14] = 0;  // no modulation in old states
   const size_t flags = (versioned ? 4 : 0) + knobs * 4;
-  finish(m, reeverb2Table(), v);
+  applyTable(m, *reeverb2Table(), v);  // Gridline-unit mirrors (hall / plate models)
+  finish(m, reeverb2RawTable(), v);
+  set(m, RvbModel, 2);
   set(m, RvbDamp, 0);  // damping comes from RvbDampHz
   set(m, RvbPreSync, st->u8(flags) ? 1 : 0);
   set(m, RvbInputMode, st->u8(flags + 1) ? 1 : 0);
-  // Decay, size, diffusion, pre-delay (v / 384 s, tempo: v / 192 beat), cuts,
-  // damping, bass, crossover and the level curves follow the plugin; the
-  // reverb network itself is Gridline's own.
-  m.exact = false;
+  // J-35: the full reference reverb runs the stored knobs (spec j35_fullreverb.md).
+  m.exact = true;
   return true;
 }
 
@@ -155,20 +173,36 @@ std::shared_ptr<const KnobTable> delay3Table() {
   return t;
 }
 
+// J-35: tag k → DlyD3Raw0 + k as the reference's normalised value (v − lo) / (hi − lo).
+std::shared_ptr<const KnobTable> delay3RawTable() {
+  using namespace pp;
+  static const auto t = [] {
+    KnobTable k;
+    for (int i = 0; i < 26; ++i)
+      k.push_back({i, static_cast<double>(d3ref::kLo[i]), static_cast<double>(d3ref::kHi[i]), DlyD3Raw0 + i,
+                   [i](double v) { return d3ref::toNorm(i, std::round(v)); }});
+    return std::make_shared<const KnobTable>(k);
+  }();
+  return t;
+}
+
 bool decodeDelay3(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   using namespace pp;
   const Event* st = pluginState(evs);
   if (!st || st->size < 4 + 26 * 4) return false;
   begin(m, "gl.delay");
   std::vector<double> v = ints(st, 4, 26);
-  finish(m, delay3Table(), v);
-  set(m, DlyModel, 1);
+  applyTable(m, *delay3Table(), v);  // Gridline-unit mirrors (reference model 1)
+  finish(m, delay3RawTable(), v);
+  set(m, DlyModel, 3);
   // Time: synced = ticks of 1/192 beat (1..768); free = the time curve (1 ms .. 1 s).
   set(m, DlyTicks, clampd(v[4], 1, 768));
   set(m, DlyTimeMs, clampd(dly::freeTimeSec((clampd(v[4], 1, 768) - 1.0) / 767.0) * 1000.0, 1, 3000));
   // Cutoff depends on the filter mode's table.
   set(m, DlyCutoff3, dly::cutoffHz(static_cast<int>(clampd(v[15], 0, 3)), u6000(v[16])));
-  m.exact = false;  // curves exact (see DelayCurves.h); diffusion / spread networks are Gridline's own
+  // J-35: the stereo delay reference (DlyModel = 3, spec j35_delay3.md) runs the
+  // 26 stored controls.
+  m.exact = true;
   return true;
 }
 
@@ -267,9 +301,9 @@ bool decodeDelayBank(Context&, const std::vector<Event>& evs, PluginMapping& m) 
     P(MdSep, clampd(u[7] / 128.0, -1, 1));
     X(MdxTempo, tempo ? 1 : 0);
     if (tempo)
-      P(MdSteps, clampd(time / 480.0, 0.25, 64));  // 1/1920 beat → sixteenth steps
+      P(MdSteps, clampd(time / 480.0, 0.002, 64));  // 1/1920 beat → sixteenth steps
     else
-      P(MdTimeMs, clampd(time / 3.84, 1, 5000));
+      P(MdTimeMs, clampd(time / 3.84, 0.02, 5000));
     P(MdOffset, flc::mdOffsetMs(u[9]));
     P(MdFbFType, fbType);
     P(MdFbCut, flc::mdCutHz(fbType == MfOff ? MfLowPass : fbType, u[10] / 65536.0));
@@ -284,16 +318,14 @@ bool decodeDelayBank(Context&, const std::vector<Event>& evs, PluginMapping& m) 
     X(MdxLeaveFirst, st->u8(rec + 30) ? 1 : 0);
     P(MdModDepth, 0);
     P(MdDiffuse, 0);
-    // Exact unless an enabled unit relies on a still-assumed piece: the
-    // filter frequency scale (22050 Hz per unit) or the pan law; or a time
-    // outside Gridline's ranges.
-    if (on) {
-      if (inType != MfOff || fbType != MfOff) exact = false;
-      if (u[0] != 0 || u[13] != 0 || u[5] != 0) exact = false;
-      if (tempo ? time < 120 : time < 3.84) exact = false;
-    }
+    // J-35: filter scale, pan laws, cascades, grain window and the minimum time
+    // follow the reference (spec j35_delaybank.md); only times beyond Gridline's
+    // line (5 s) stay approximate.
+    if (on && (tempo ? time / 480.0 > 64 : time / 3.84 > 5000)) exact = false;
+    (void)inType, (void)fbType;
   }
-  m.exact = exact;
+  // The 2x oversampling resampler of the reference is not studied.
+  m.exact = exact && st->i32(flags) < 1;
   return true;
 }
 
