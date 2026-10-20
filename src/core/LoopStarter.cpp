@@ -294,17 +294,7 @@ Harmony makeHarmony(const Settings& s, const Recipe& r, int bars, Tick bar) {
     int deg = degrees[static_cast<size_t>(b % 4)];
     // The second time round an 8-bar loop may answer with a different last chord.
     if (b == 7 && rng.chance(0.4)) deg = degrees[0] == 5 ? 1 : 5;
-    // A stacked seventh with no named quality (e.g. the augmented major
-    // seventh of harmonic minor) falls back to a chord outside the scale:
-    // use the triad then.
-    auto inScale = [&](const chord::Chord& x) {
-      for (int st : chord::qualities()[static_cast<size_t>(x.quality)].steps)
-        if (!tools::inScale(x.root + st, p.key, p.scale)) return false;
-      return true;
-    };
     chord::Chord c = chord::diatonicChord(p.key, p.scale, deg, sevenths);
-    if (!inScale(c)) c = chord::diatonicChord(p.key, p.scale, deg, false);
-    if (!inScale(c)) c = chord::diatonicChord(p.key, p.scale, 1, false);
     c.voicing = chord::Voicing::Smooth;
     c.length = bar;
     p.chords.push_back(c);

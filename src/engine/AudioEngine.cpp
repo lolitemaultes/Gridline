@@ -1607,9 +1607,8 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
   }
   double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   double avail = frames / sr_;
-  float load = static_cast<float>(avail > 0 ? el / avail : 0);
-  storeMax(cpuPeak_, load);
-  cpu_.store(cpu_.load(std::memory_order_relaxed) * 0.9f + load * 0.1f, std::memory_order_relaxed);
+  storeMax(cpuPeak_, cpuMeter_.add(el, avail));
+  cpu_.store(cpuMeter_.load(), std::memory_order_relaxed);
 }
 
 void AudioEngine::processInterleaved(float* out, int frames) {

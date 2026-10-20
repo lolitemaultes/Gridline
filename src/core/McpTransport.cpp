@@ -180,7 +180,15 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
   if (fd_ < 0) return;
   std::vector<pollfd> fds;
   fds.push_back({fd_, POLLIN, 0});
-  for (const auto& c : conns_) fds.push_back({c.fd, static_cast<short>(c.out.empty() ? POLLIN : POLLOUT), 0});
+  // Streamed replies: collect what is ready before waiting.
+  for (auto& c : conns_)
+    if (c.pump && !c.pumpDone) c.pumpDone = c.pump(c.out);
+  bool streaming = false;
+  for (const auto& c : conns_) {
+    fds.push_back({c.fd, static_cast<short>(c.out.size() > c.sent ? POLLOUT : POLLIN), 0});
+    streaming = streaming || (c.pump && !c.pumpDone);
+  }
+  if (streaming) timeoutMs = std::min(timeoutMs, 20);
   if (::poll(fds.data(), static_cast<nfds_t>(fds.size()), timeoutMs) < 0) return;
   // New connections (loopback peers only).
   if (fds[0].revents & POLLIN)
@@ -206,6 +214,31 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
   for (size_t i = conns_.size(); i-- > 0;) {
     Conn& c = conns_[i];
     const short rev = i + 1 < fds.size() && fds[i + 1].fd == c.fd ? fds[i + 1].revents : 0;
+    if (c.pump) {  // J-61: a streamed / deferred reply
+      if (c.out.size() > c.sent && (rev & (POLLOUT | POLLERR | POLLHUP))) {
+        const ssize_t n = ::send(c.fd, c.out.data() + c.sent, c.out.size() - c.sent, kSendFlags);
+        if (n > 0) c.sent += static_cast<size_t>(n);
+        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+          closeConn(i);
+          continue;
+        }
+      } else if (c.out.size() <= c.sent && (rev & (POLLIN | POLLERR | POLLHUP))) {
+        char buf[4096];
+        const ssize_t n = ::recv(c.fd, buf, sizeof buf, 0);
+        if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {  // the client went away
+          closeConn(i);
+          continue;
+        }
+      }
+      if (c.sent >= c.out.size()) {
+        c.out.clear(), c.sent = 0;
+        if (c.pumpDone) {
+          closeConn(i);
+          continue;
+        }
+      }
+      continue;  // no idle timeout while the job runs
+    }
     if (!c.out.empty()) {
       if (rev & (POLLOUT | POLLERR | POLLHUP)) {
         const ssize_t n = ::send(c.fd, c.out.data() + c.sent, c.out.size() - c.sent, kSendFlags);
@@ -262,8 +295,14 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
       }
       if (answer) {
         c.in.clear();
-        c.out = serialize(resp);
         c.sent = 0;
+        if (resp.pump) {
+          c.pump = std::move(resp.pump);
+          c.out.clear();
+          c.pumpDone = c.pump(c.out);
+        } else {
+          c.out = serialize(resp);
+        }
         continue;
       }
     }
@@ -275,7 +314,8 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
 // ============================================================ HTTP client ====
 
 bool httpRequest(int port, const std::string& method, const std::string& path, const std::vector<std::pair<std::string, std::string>>& headers,
-                 const std::string& body, HttpReply& reply, std::string* err, int timeoutSeconds) {
+                 const std::string& body, HttpReply& reply, std::string* err, int timeoutSeconds,
+                 const std::function<void(const std::string& chunk)>& onBody) {
   reply = HttpReply();
   const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {
@@ -311,10 +351,23 @@ bool httpRequest(int port, const std::string& method, const std::string& path, c
   }
   std::string in;
   char buf[65536];
+  size_t streamed = std::string::npos;  // body bytes handed to onBody so far
   for (;;) {
     const ssize_t n = ::recv(fd, buf, sizeof buf, 0);
     if (n <= 0) break;
     in.append(buf, static_cast<size_t>(n));
+    if (onBody) {
+      const size_t he = in.find("\r\n\r\n");
+      if (he != std::string::npos) {
+        if (streamed == std::string::npos) {  // headers first, so the callback can look at them
+          std::string first;
+          parseHeaders(in.substr(0, he), first, reply.headers);
+          streamed = he + 4;
+        }
+        if (in.size() > streamed) onBody(in.substr(streamed));
+        streamed = in.size();
+      }
+    }
     if (in.size() > (64u << 20)) break;
   }
   ::close(fd);
@@ -334,6 +387,33 @@ bool httpRequest(int port, const std::string& method, const std::string& path, c
     if (reply.body.size() > len) reply.body.resize(len);
   }
   return reply.status > 0;
+}
+
+std::vector<std::string> sseEvents(std::string& buffer, const std::string& chunk) {
+  std::vector<std::string> out;
+  buffer += chunk;
+  for (;;) {
+    size_t e = buffer.find("\n\n");
+    size_t skip = 2;
+    const size_t e2 = buffer.find("\r\n\r\n");
+    if (e2 != std::string::npos && (e == std::string::npos || e2 < e)) e = e2, skip = 4;
+    if (e == std::string::npos) break;
+    const std::string ev = buffer.substr(0, e);
+    buffer.erase(0, e + skip);
+    std::string data;
+    std::istringstream ls(ev);
+    std::string line;
+    while (std::getline(ls, line)) {
+      if (!line.empty() && line.back() == '\r') line.pop_back();
+      if (line.rfind("data:", 0) == 0) {
+        std::string d = line.substr(5);
+        if (!d.empty() && d[0] == ' ') d.erase(0, 1);
+        data += (data.empty() ? "" : "\n") + d;
+      }
+    }
+    if (!data.empty()) out.push_back(std::move(data));
+  }
+  return out;
 }
 
 // ========================================================== HTTP endpoint ====
@@ -381,7 +461,7 @@ HttpServer::Response HttpEndpoint::handle(const HttpServer::Request& r) {
     return resp;
   }
   if (r.method != "POST") {
-    HttpServer::Response resp = simple(405, "use POST (this server does not open event streams)");
+    HttpServer::Response resp = simple(405, "use POST (this server opens event streams only as replies to POST)");
     resp.headers.push_back({"Allow", "POST, DELETE"});
     return resp;
   }
@@ -411,9 +491,52 @@ HttpServer::Response HttpEndpoint::handle(const HttpServer::Request& r) {
     e = &it->second;
   }
   e->lastUse = monoNow();
+  e->session->setDeferral(true);
   Json reply = e->session->handleJson(msg);
+  e->session->setDeferral(false);
+  auto pending = e->session->takePending();
   HttpServer::Response resp;
   if (!newId.empty()) resp.headers.push_back({"Mcp-Session-Id", newId});
+  if (!pending.empty()) {  // J-61: a background job answers this request later
+    const Session::Pending pd = pending.front();
+    const std::string accept = lowerStr(r.header("accept"));
+    const bool sse = !pd.progressToken.is(Json::Type::Null) && accept.find("text/event-stream") != std::string::npos;
+    Environment* env = &env_;
+    struct StreamState {
+      bool headSent = false;
+      double lastProgress = -1, lastSent = 0;
+      std::string lastStatus;
+    };
+    auto st = std::make_shared<StreamState>();
+    resp.pump = [env, pd, sse, st](std::string& out) {
+      pollJobs(*env);
+      Job& j = *pd.job;
+      if (!sse) {
+        if (!j.finalized) return false;
+        HttpServer::Response done;
+        done.body = dump(Session::pendingReply(pd));
+        out += serialize(done);
+        return true;
+      }
+      if (!st->headSent) {
+        out += "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+        st->headSent = true;
+      }
+      const double now = monoNow();
+      const double p = j.progress.load();
+      const std::string status = j.status();
+      if (!j.finalized && (p >= st->lastProgress + 0.01 || status != st->lastStatus) && now - st->lastSent >= 0.2) {
+        Json params = jobj({{"progressToken", pd.progressToken}, {"progress", jnum(std::round(p * 1000) / 10)}, {"total", jnum(100)}});
+        if (!status.empty()) params.object["message"] = jstr(status);
+        out += "event: message\ndata: " + dump(jobj({{"jsonrpc", jstr("2.0")}, {"method", jstr("notifications/progress")}, {"params", params}})) + "\n\n";
+        st->lastProgress = p, st->lastStatus = status, st->lastSent = now;
+      }
+      if (!j.finalized) return false;
+      out += "event: message\ndata: " + dump(Session::pendingReply(pd)) + "\n\n";
+      return true;
+    };
+    return resp;
+  }
   if (reply.is(Json::Type::Null)) {
     resp.status = 202;
     resp.contentType.clear();
@@ -424,6 +547,7 @@ HttpServer::Response HttpEndpoint::handle(const HttpServer::Request& r) {
 }
 
 void HttpEndpoint::poll(int timeoutMs) {
+  pollJobs(env_);
   server_.poll([this](const HttpServer::Request& r) { return handle(r); }, timeoutMs);
 }
 
@@ -526,7 +650,22 @@ int attachBridge(std::FILE* in, std::FILE* out, const std::string& endpointFile)
                                                           {"Accept", "application/json, text/event-stream"},
                                                           {"Authorization", "Bearer " + token}};
     if (!session.empty()) h.push_back({"Mcp-Session-Id", session});
-    if (!httpRequest(port, "POST", "/mcp", h, body, rep, &err)) {
+    // J-61: progress notifications of a running job are forwarded as they arrive.
+    std::string sseBuf;
+    bool isSse = false, checked = false;
+    auto onBody = [&](const std::string& chunk) {
+      if (!checked) {
+        checked = true;
+        auto it = rep.headers.find("content-type");
+        isSse = it != rep.headers.end() && lowerStr(it->second).find("text/event-stream") != std::string::npos;
+      }
+      if (!isSse) return;
+      for (const auto& ev : sseEvents(sseBuf, chunk)) {
+        Json m;
+        if (parse(ev, m) && m.find("method")) writeLine(out, dump(m));  // notifications now; the reply below
+      }
+    };
+    if (!httpRequest(port, "POST", "/mcp", h, body, rep, &err, 900, onBody)) {
       err = "Gridline is not reachable (" + err + "): start it and enable Settings > Integrations > \"Allow AI assistants to control Gridline\"";
       return false;
     }
@@ -566,6 +705,15 @@ int attachBridge(std::FILE* in, std::FILE* out, const std::string& endpointFile)
     }
     if (rep.status == 202) continue;
     std::string body = trim(rep.body);
+    if (auto ct = rep.headers.find("content-type"); ct != rep.headers.end() && lowerStr(ct->second).find("text/event-stream") != std::string::npos) {
+      std::string buf;
+      std::string last;
+      for (auto& ev : sseEvents(buf, rep.body + "\n\n")) {
+        Json m;
+        if (parse(ev, m) && !m.find("method")) last = ev;  // the reply (notifications went out while streaming)
+      }
+      body = trim(last);
+    }
     Json bj;
     if (!body.empty() && parse(body, bj) && (bj.find("jsonrpc") || bj.is(Json::Type::Array))) {
       writeLine(out, dump(bj));

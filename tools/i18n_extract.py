@@ -9,7 +9,10 @@ Collected (src/app, src/packs/*/*_ui.cpp, src/core/Keymap.cpp, src/engine/Chop.c
   * the English text handed to the widgets that translate themselves:
     ui::Hint, ui::Tooltip, ui::Label, ui::BeginSection, ui::TextButton (label, hint),
     ui::IconButton / ui::ToggleIcon (hint), ui::EmptyState, formLabel / label,
-    dialogTitle, openPrompt, roleColour.
+    dialogTitle, openPrompt, roleColour, ui::BeginDockWindow / ui::windowTitle (window titles),
+    browser sectionHeader / folderSection / emptyLine;
+  * App::notify messages: a literal, or the leading literal of "text: " + ... (the
+    runtime translates the leading part, i18n::trMessage).
 A literal starting with "##" or with fewer than two letters is an id, not text.
 Translators copy gridline.pot to <code>.po (e.g. de.po), fill in msgstr and add
 "Language-Name: Deutsch\\n" to the header; Settings > General lists it.
@@ -27,12 +30,17 @@ OUT = os.path.join(ROOT, "assets", "i18n", "gridline.pot")
 HELPERS = {
     "Hint": [0], "Tooltip": [0], "Label": [0], "BeginSection": [0], "TextButton": [0, 3], "IconButton": [4],
     "ToggleIcon": [4], "EmptyState": [3, 4], "formLabel": [0], "label": [0], "dialogTitle": [1, 2],
-    "openPrompt": [0], "roleColour": [1, 2],
+    "openPrompt": [0], "roleColour": [1, 2], "BeginDockWindow": [0], "windowTitle": [0],
+    "sectionHeader": [0], "folderSection": [1, 4], "emptyLine": [0], "notify": [0],
 }
+# Helpers called on an object (a.notify(...)).
+MEMBER_HELPERS = {"notify"}
 CONV = re.compile(r"%[-+ #0]*(\d+|\*)?(\.(\d+|\*))?[hlLzjt]*[diouxXeEfgGcspn%]")
 STR = r'"(?:[^"\\]|\\.)*"'
 LITS = re.compile(r"^\s*((?:" + STR + r"\s*)+)$")
 TERN = re.compile(r"^\s*[^\"?]+\?\s*(" + STR + r")\s*:\s*(" + STR + r")\s*$")
+# "text: " + value / std::string("text ") + value: the leading literal.
+LEAD = re.compile(r"^\s*(?:std::string\(\s*)?(" + STR + r")\s*\)?\s*\+")
 
 
 def source_files():
@@ -126,13 +134,17 @@ def strip_comments(s):
     return "".join(out)
 
 
-def texts_in_arg(arg):
+def texts_in_arg(arg, lead=False):
     m = LITS.match(arg)
     if m:
         return [decode(m.group(1))]
     m = TERN.match(arg)
     if m:
         return [decode(m.group(1)), decode(m.group(2))]
+    if lead:
+        m = LEAD.match(arg)
+        if m:
+            return [decode(m.group(1)).rstrip(" :")]
     return []
 
 
@@ -149,7 +161,7 @@ def extract():
             if re.search(r"(void|bool|float|int|auto)\s+$", pre):
                 continue  # a definition, not a call
             q = re.search(r"(\w+)::$", pre)
-            if (q and q.group(1) not in ("ui", "i18n")) or re.search(r"(\.|->)$", pre):
+            if (q and q.group(1) not in ("ui", "i18n")) or (re.search(r"(\.|->)$", pre) and name not in MEMBER_HELPERS):
                 continue  # another namespace's / object's function (keys::label, x.label)
             args = split_args(s, m.end())
             if not args:
@@ -158,7 +170,7 @@ def extract():
             for k in idxs:
                 if k >= len(args):
                     continue
-                for t in texts_in_arg(args[k]):
+                for t in texts_in_arg(args[k], lead=name in MEMBER_HELPERS):
                     if not is_text(t):
                         continue
                     t = t.split("##")[0] if "##" in t and not t.startswith("##") else t

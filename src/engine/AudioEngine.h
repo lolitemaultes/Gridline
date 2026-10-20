@@ -3,6 +3,7 @@
 // thread; everything else is called from the UI thread. The same code renders
 // offline, so exports match playback exactly.
 #pragma once
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <memory>
@@ -17,6 +18,41 @@ namespace gl {
 // Pattern: loops the selected pattern. Song: plays the arrangement. Live:
 // the transport runs freely and plays only clips launched from the live area.
 enum class PlayMode { Pattern, Song, Live };
+
+// J-61: the audio load meter. Load is processing time over the audio time it
+// produced, weighted by time (not by call: a burst of tiny blocks, e.g. the
+// fixed-block grid split at barriers, must not count as much as a whole
+// buffer), measured over windows of `kWindow` seconds of audio and smoothed
+// across windows. One stalled block (a page fault in a cold binary, the
+// thread descheduled on a busy machine) moves the meter by its share of the
+// window only; the worst single block goes to the peak instead.
+struct CpuMeter {
+  static constexpr double kWindow = 0.1;  // seconds of audio per reading
+  // Audio thread: one processed block. Returns the block's own load.
+  float add(double busySeconds, double audioSeconds) {
+    if (!(audioSeconds > 0) || !(busySeconds >= 0)) return 0.f;
+    busy_ += busySeconds;
+    audio_ += audioSeconds;
+    if (audio_ >= kWindow) {
+      const double w = busy_ / audio_;
+      load_ = static_cast<float>(seeded_ ? load_ * 0.6 + w * 0.4 : w);
+      seeded_ = true;
+      busy_ = audio_ = 0;
+    }
+    return static_cast<float>(busySeconds / audioSeconds);
+  }
+  float load() const { return load_; }
+  // Percentage shown on meters: 0..100 (overloads read as a full meter).
+  static int displayPercent(float load) {
+    if (!std::isfinite(load) || load <= 0.f) return 0;
+    return static_cast<int>(std::lround(std::min(load, 1.0f) * 100.0f));
+  }
+
+ private:
+  double busy_ = 0, audio_ = 0;
+  float load_ = 0;
+  bool seeded_ = false;
+};
 
 class AudioEngine {
  public:
@@ -135,7 +171,7 @@ class AudioEngine {
   PlayMode mode() const { return mode_.load(); }
   ObjectId pattern() const { return pattern_.load(); }
   double position() const { return posTick_.load(); }  // current tick
-  float cpuLoad() const { return cpu_.load(); }
+  float cpuLoad() const { return cpu_.load(); }  // time-weighted average (CpuMeter)
   // Worst block load (fraction of real time) since the UI last read it.
   float takeCpuPeak() { return cpuPeak_.exchange(0.f, std::memory_order_relaxed); }
 
@@ -445,6 +481,7 @@ class AudioEngine {
   std::atomic<int> threads_{1};
   std::atomic<bool> profiling_{false};
   std::atomic<float> cpuPeak_{0};
+  CpuMeter cpuMeter_;  // audio thread only
   // Audio input (J-8).
   static constexpr size_t kInputQueueFrames = size_t{1} << 15;
   std::vector<float> inQueue_;  // interleaved, kInputQueueFrames * kMaxInputChannels

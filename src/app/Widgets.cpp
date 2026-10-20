@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <string>
@@ -667,10 +668,21 @@ bool BeginCombo(const char* id, const char* preview, float width) {
 
 // ------------------------------------------------------------ layout ----
 
+std::string windowTitle(const char* english) {
+  // ImHashStr restarts at "###", so "Mixer" and "Mischpult###Mixer" share one id.
+  return std::string(i18n::tr(english)) + "###" + english;
+}
+
+const char* stableWindowName(const char* name) {
+  if (!name) return "";
+  const char* p = std::strstr(name, "###");
+  return p ? p + 3 : name;
+}
+
 bool BeginDockWindow(const char* name, bool* open, ImVec2 firstSize) {
   ImGui::SetNextWindowSize(firstSize, ImGuiCond_FirstUseEver);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-  bool r = ImGui::Begin(name, open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  bool r = ImGui::Begin(windowTitle(name).c_str(), open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::PopStyleVar();
   return r;
 }

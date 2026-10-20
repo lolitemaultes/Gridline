@@ -178,7 +178,7 @@ void drawPluginManager(App& a) {
   const auto& P = pal();
   ManagerState& ms = state();
   ui::PlaceNextDialog(ImVec2(1060, 640), ImGuiCond_Appearing, ImVec2(720, 400));  // J-54: fits short / scaled screens
-  if (!ImGui::Begin("Plugin manager", &a.showPluginManager, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
+  if (!ImGui::Begin(ui::windowTitle("Plugin manager").c_str(), &a.showPluginManager, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
     return;
   }

@@ -476,7 +476,7 @@ void chordLane(App& a, float height) {
         dl->AddRectFilled(ImVec2(x0 + 6, yOf(v.bass) - 1.5f), ImVec2(x0 + std::min(bw - 6, 40.0f), yOf(v.bass) + 1.5f), theme::lit(theme::rgb(theme::role::kGraph)), 1);
     }
     if (c.locked) ui::drawIcon(dl, ui::Icon::Lock, ImVec2(x1 - 10, a0.y + 14), 11, P.textDim);
-    if (!c.linked) dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(x0 + 6, a1.y - 16), P.textFaint, "unlinked");
+    if (!c.linked) dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(x0 + 6, a1.y - 16), P.textFaint, i18n::tr("unlinked"));
     dl->PopClipRect();
     if (hovered && io.MousePos.x >= a0.x && io.MousePos.x < a1.x + 3) {
       hoverChord = static_cast<int>(i);
@@ -913,7 +913,7 @@ void drawChordEditor(App& a) {
   }
   ui::PlaceNextDialog(ImVec2(1010, 500), ImGuiCond_FirstUseEver, ImVec2(820, 400));  // J-54: never wider / taller than the screen
   bool open = true;
-  if (!ImGui::Begin("Chord progression", &open, ImGuiWindowFlags_NoCollapse)) {
+  if (!ImGui::Begin(ui::windowTitle("Chord progression").c_str(), &open, ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
     if (!open) closeEditor(a, true);
     return;

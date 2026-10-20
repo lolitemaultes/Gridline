@@ -240,13 +240,15 @@ bool App::uiSound(uisound::Event e) {
   return uiSounds.trigger(e);
 }
 
-void App::notify(const std::string& text, bool error) {
+void App::notify(const std::string& english, bool error) {
+  // J-61: notifications are shown in the interface language (the log keeps English).
+  const std::string text = i18n::trMessage(english);
   toasts.push_back({text, now + (error ? 6.0 : 3.0), error});
   if (error) uiSound(uisound::Event::Error);  // every failure is reported through here
   if (error)
-    logging::error("app", text);
+    logging::error("app", english);
   else
-    logging::info("app", text);
+    logging::info("app", english);
 }
 
 std::string App::windowTitle() const {

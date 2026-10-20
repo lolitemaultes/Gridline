@@ -590,7 +590,7 @@ void drawLayers(App& a, const PluginTarget& t, const iskin::Skin& k, const Plugi
       });
     }
     iskin::glyphFolder(k.dl(), k.at(311, 348.5f), k.px(5), k.c.textDim);
-    std::string nm = ls.empty() || ls[static_cast<size_t>(ui.layer)].path == "none" ? "(empty)" : fs::path(ls[static_cast<size_t>(ui.layer)].path).filename().string();
+    std::string nm = ls.empty() || ls[static_cast<size_t>(ui.layer)].path == "none" ? std::string(i18n::tr("(empty)")) : fs::path(ls[static_cast<size_t>(ui.layer)].path).filename().string();
     if (!ls.empty() && ls[static_cast<size_t>(ui.layer)].path.empty()) nm = padName(st, pad) + " (built-in)";
     iskin::text(k, 324, 341, 145, 15, nm.c_str(), 9, k.c.textDim, 0);
     if (ui.layer < kPadLayers && !ls.empty()) {
@@ -626,7 +626,7 @@ void editorFpc(App& a, const PluginTarget& t, float width) {
   iskin::text(k, 134, 41, 64, 17, pad < kPads ? "BANK A" : "BANK B", 9, k.c.label, 1, false, true);
   {
     std::string nm = padName(st, pad);
-    iskin::text(k, 202, 43, 92, 15, nm.empty() ? "(empty)" : nm.c_str(), 10, rgb(0xBDBDBD), 0);
+    iskin::text(k, 202, 43, 92, 15, nm.empty() ? i18n::tr("(empty)") : nm.c_str(), 10, rgb(0xBDBDBD), 0);
   }
   auto cap = [&](float x, float w, const char* s) { iskin::text(k, x, 26, w, 9, s, 7.5f, k.c.label, 1, false, true); };
   iskin::wheel(a, t, k, padP(pad, PadLevel), 301, 37, 24, k.c.fill);

@@ -92,6 +92,46 @@ void testChordVocabulary() {
   expect(ch::diatonicChord(0, 1, 7).quality == ch::findQuality("dim"), "vii of C is diminished");
 }
 
+// J-61: every degree of every scale the engine offers, triad and seventh,
+// with every extension setting: the chord is the scale's own stacked thirds
+// (never a fallback with notes outside the key).
+void testDiatonicProperty() {
+  const int nScales = static_cast<int>(tools::scales().size());
+  int bad = 0, badQuality = 0;
+  for (int scale = 0; scale < nScales; ++scale) {
+    std::set<int> key7;
+    for (int k = 0; k < 7; ++k) key7.insert(((ch::degreeOffset(scale, k) % 12) + 12) % 12);
+    const auto& steps = tools::scales()[static_cast<size_t>(scale)].steps;
+    if (scale > 0 && steps.size() == 7)
+      expect(key7 == std::set<int>(steps.begin(), steps.end()), "seven-note scales are used as they are");
+    for (int key = 0; key < 12; key += 5)
+      for (int deg = 1; deg <= 7; ++deg)
+        for (bool sev : {false, true}) {
+          const ch::Chord c = ch::diatonicChord(key, scale, deg, sev);
+          // The quality is exactly the stacked thirds.
+          std::set<int> want, have;
+          const int base = ch::degreeOffset(scale, deg - 1);
+          for (int k = 0; k < (sev ? 4 : 3); ++k) want.insert((ch::degreeOffset(scale, deg - 1 + 2 * k) - base) % 12);
+          for (int st : ch::qualities()[static_cast<size_t>(c.quality)].steps) have.insert(st % 12);
+          if (want != have) ++badQuality;
+          for (int extra = -1; extra <= 3; ++extra) {
+            ch::ChordProgression p;
+            p.key = key, p.scale = scale;
+            ch::Chord x = c;
+            x.extra = extra;
+            p.chords.push_back(x);
+            for (int pc : ch::chordClasses(p, 0))
+              if (!key7.count(((pc - key) % 12 + 12) % 12)) ++bad;
+          }
+        }
+  }
+  expect(badQuality == 0, "diatonic chords are the scale's stacked thirds (all scales, degrees, sevenths)");
+  expect(bad == 0, "diatonic chords and extensions stay inside the scale");
+  const ch::Chord iii = ch::diatonicChord(9, 3, 3, true);  // A harmonic minor
+  expect(iii.root == 0 && iii.quality == ch::findQuality("maj7#5"), "III7 of harmonic minor is an augmented major seventh");
+  expect(ch::chordName(iii) == "Cmaj7#5" && parsed("C+M7").quality == iii.quality, "augmented major seventh names");
+}
+
 ch::ChordProgression cProg(const std::string& text = "C Am F G") {
   ch::ChordProgression p;
   ch::parseProgression(text, 0, 1, 384, p);
@@ -725,6 +765,7 @@ void testSerialization() {
 int main() {
   gl::test::hermeticTestEnv("j31");
   testChordVocabulary();
+  testDiatonicProperty();
   testVoicing();
   testRender();
   testWrite();

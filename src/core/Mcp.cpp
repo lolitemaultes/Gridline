@@ -431,6 +431,14 @@ std::string Session::handle(const std::string& text) {
 
 Json Session::handleJson(const Json& msg) {
   if (msg.is(Json::Type::Array)) {
+    // Batch replies go out together: no deferred members.
+    const bool d = defer_;
+    defer_ = false;
+    struct Restore {
+      bool& f;
+      bool v;
+      ~Restore() { f = v; }
+    } restore{defer_, d};
     if (msg.array.empty()) return errorReply(Json(), kInvalidRequest, "Invalid Request: empty batch");
     if (msg.array.size() > 100) return errorReply(Json(), kInvalidRequest, "Invalid Request: batch too large");
     Json out = Json::makeArray();
@@ -462,12 +470,23 @@ Json Session::handleOne(const Json& msg) {
   int code = 0;
   std::string err;
   Json result;
+  deferred_.reset();
   try {
     result = dispatch(method->str, params, ok, code, err);
   } catch (const std::exception& e) {
     ok = false, code = kInternalError, err = std::string("Internal error: ") + e.what();
   }
   if (!ok) return errorReply(id, code, err);
+  if (deferred_) {  // J-61: answered by the transport when the job finishes
+    Pending pd;
+    pd.id = id;
+    pd.job = std::move(deferred_);
+    if (const Json* meta = params.find("_meta"))
+      if (const Json* tok = meta->find("progressToken"); tok && (tok->is(Json::Type::String) || tok->is(Json::Type::Number))) pd.progressToken = *tok;
+    pending_.push_back(std::move(pd));
+    deferred_.reset();
+    return Json();
+  }
   Json r = jobj({{"jsonrpc", jstr("2.0")}});
   r.object["id"] = id;
   r.object["result"] = std::move(result);
@@ -568,6 +587,143 @@ Json Session::dispatch(const std::string& method, const Json& params, bool& ok, 
   return fail(kMethodNotFound, "Method not found: " + method);
 }
 
+namespace {
+
+// The tools/call result object of a finished call.
+Json resultJson(ToolResult& r, const std::string& protocol) {
+  Json result = Json::makeObject();
+  if (!r.error.empty()) {
+    result.object["content"] = jarr({jobj({{"type", jstr("text")}, {"text", jstr(r.error)}})});
+    result.object["isError"] = jbool(true);
+    return result;
+  }
+  if (!r.data.is(Json::Type::Object)) r.data = jobj({{"result", r.data}});
+  result.object["content"] = jarr({jobj({{"type", jstr("text")}, {"text", jstr(dump(r.data))}})});
+  result.object["isError"] = jbool(false);
+  if (protocol >= "2025-06-18") result.object["structuredContent"] = r.data;
+  return result;
+}
+
+// Activity log, onActivity and the program log for one finished call.
+void logCall(Environment& env, const std::string& client, const std::string& tool, double time, const ToolResult& r, bool readOnly) {
+  Activity act;
+  act.time = time;
+  act.client = client;
+  act.tool = tool;
+  act.ok = r.error.empty();
+  act.changed = r.changed;
+  act.summary = act.ok ? r.summary : r.error;
+  if (act.summary.size() > 200) act.summary = act.summary.substr(0, 197) + "...";
+  env.log.add(act);
+  if (env.onActivity) env.onActivity(act);
+  if (!readOnly || !act.ok) logging::info("mcp", client + ": " + tool + (act.ok ? "" : " failed") + ": " + act.summary);
+}
+
+void finalizeJob(Environment& env, Job& j) {
+  if (j.finalized || !j.done.load(std::memory_order_acquire)) return;
+  const Tool* t = findTool(j.tool);
+  logCall(env, j.client, j.tool, j.started, j.result, t ? t->readOnly : false);
+  j.reply = resultJson(j.result, j.protocol);
+  j.finalized = true;
+}
+
+}  // namespace
+
+// ================================================================== jobs ====
+
+bool JobRunner::start(const std::shared_ptr<Job>& job, JobWork work) {
+  size_t busy = 0;
+  for (const auto& s : slots_) busy += s.job->done.load() ? 0 : 1;
+  if (busy >= kMaxRunning) return false;
+  Slot s;
+  s.job = job;
+  s.worker = std::thread([job, work = std::move(work)] {
+    ToolResult r;
+    try {
+      r = work(*job);
+    } catch (const std::exception& e) {
+      r.error = std::string("internal error: ") + e.what();
+    }
+    if (job->cancel.load() && r.error.empty()) r.error = "cancelled in Gridline (nothing was written)";
+    job->result = std::move(r);
+    job->progress.store(1.0);
+    job->done.store(true, std::memory_order_release);
+  });
+  slots_.push_back(std::move(s));
+  return true;
+}
+
+void JobRunner::keep(const std::shared_ptr<Job>& job) {
+  Slot s;
+  s.job = job;
+  slots_.push_back(std::move(s));
+}
+
+void JobRunner::poll(const std::function<void(Job&)>& finalize) {
+  for (auto& s : slots_) {
+    if (!s.job->done.load(std::memory_order_acquire)) continue;
+    if (s.worker.joinable()) s.worker.join();
+    if (!s.job->finalized && finalize) finalize(*s.job);
+  }
+  // Forget the oldest finished jobs beyond kKeepFinished.
+  size_t finished = 0;
+  for (const auto& s : slots_) finished += s.job->finalized ? 1 : 0;
+  for (size_t i = 0; i < slots_.size() && finished > kKeepFinished;) {
+    if (slots_[i].job->finalized && !slots_[i].worker.joinable()) {
+      slots_.erase(slots_.begin() + static_cast<long>(i));
+      --finished;
+    } else {
+      ++i;
+    }
+  }
+}
+
+std::shared_ptr<Job> JobRunner::find(uint64_t id) const {
+  for (const auto& s : slots_)
+    if (s.job->id == id) return s.job;
+  return nullptr;
+}
+
+std::vector<std::shared_ptr<Job>> JobRunner::running() const {
+  std::vector<std::shared_ptr<Job>> v;
+  for (const auto& s : slots_)
+    if (!s.job->finalized) v.push_back(s.job);
+  return v;
+}
+
+void JobRunner::cancelAll() {
+  for (auto& s : slots_) s.job->cancel.store(true);
+  for (auto& s : slots_)
+    if (s.worker.joinable()) s.worker.join();
+}
+
+void pollJobs(Environment& env) {
+  env.jobs.poll([&env](Job& j) { finalizeJob(env, j); });
+}
+
+Json jobJson(const Job& j) {
+  const bool done = j.finalized;
+  std::string state = "running";
+  if (done) state = j.result.error.empty() ? "done" : j.cancel.load() ? "cancelled" : "failed";
+  Json o = jobj({{"job", jnum(static_cast<double>(j.id))},
+                 {"tool", jstr(j.tool)},
+                 {"state", jstr(state)},
+                 {"progress", jnum(std::round(j.progress.load() * 1000) / 1000)}});
+  const std::string st = j.status();
+  if (!st.empty()) o.object["status"] = jstr(st);
+  if (done && j.result.error.empty()) o.object["result"] = j.result.data;
+  if (done && !j.result.error.empty()) o.object["error"] = jstr(j.result.error);
+  if (!done) o.object["hint"] = jstr("call get_job with this job number until state is done");
+  return o;
+}
+
+Json Session::pendingReply(const Pending& p) {
+  Json r = jobj({{"jsonrpc", jstr("2.0")}});
+  r.object["id"] = p.id;
+  r.object["result"] = p.job ? p.job->reply : Json::makeObject();
+  return r;
+}
+
 Json Session::callTool(const Json& params, bool& ok, int& code, std::string& msg) {
   auto fail = [&](int c, const std::string& m) {
     ok = false, code = c, msg = m;
@@ -584,13 +740,56 @@ Json Session::callTool(const Json& params, bool& ok, int& code, std::string& msg
   const double now = env_.clock();
   if (!env_.limiter.take(now)) return fail(kRateLimited, "Rate limit: too many tool calls, wait a moment and retry");
 
-  Activity act;
-  act.time = now;
-  act.client = client_;
-  act.tool = name;
   ToolResult r;
   if (!tool->readOnly && !env_.allowEdits) {
     r.error = env_.editsOffMessage;
+  } else if (tool->prepare) {
+    // J-61: a job. Prepared here (snapshot, paths), worked on a worker thread
+    // in the app; inline otherwise.
+    std::string perr;
+    JobWork work;
+    try {
+      work = tool->prepare(env_, args, perr);
+    } catch (const std::exception& e) {
+      perr = std::string("internal error: ") + e.what();
+    }
+    if (!work) {
+      r.error = perr.empty() ? "cannot start " + name : perr;
+    } else {
+      auto job = std::make_shared<Job>();
+      job->id = env_.jobs.nextId();
+      job->tool = name;
+      job->title = tool->title;
+      job->client = client_;
+      job->protocol = protocol_;
+      job->started = now;
+      const Json* w = args.find("wait");
+      const bool wait = !w || !w->is(Json::Type::Bool) || w->boolean;
+      if (env_.jobs.useWorker() && (defer_ || !wait)) {
+        if (!env_.jobs.start(job, std::move(work)))
+          return fail(kInternalError, "Too many renders and exports are running: wait for one to finish (get_job) and retry");
+        if (wait) {
+          deferred_ = job;
+          return Json();
+        }
+        Json result = jobj({{"content", jarr({jobj({{"type", jstr("text")}, {"text", jstr(dump(jobJson(*job)))}})})}, {"isError", jbool(false)}});
+        if (protocol_ >= "2025-06-18") result.object["structuredContent"] = jobJson(*job);
+        return result;
+      }
+      try {
+        job->result = work(*job);
+      } catch (const std::exception& e) {
+        job->result.error = std::string("internal error: ") + e.what();
+      }
+      job->progress.store(1.0);
+      job->done.store(true);
+      env_.jobs.keep(job);
+      finalizeJob(env_, *job);
+      if (wait) return job->reply;
+      Json result = jobj({{"content", jarr({jobj({{"type", jstr("text")}, {"text", jstr(dump(jobJson(*job)))}})})}, {"isError", jbool(false)}});
+      if (protocol_ >= "2025-06-18") result.object["structuredContent"] = jobJson(*job);
+      return result;
+    }
   } else {
     Document& doc = env_.doc;
     const uint64_t serial = doc.history().stateSerial();
@@ -615,25 +814,8 @@ Json Session::callTool(const Json& params, bool& ok, int& code, std::string& msg
     }
     r.changed = r.changed || doc.history().stateSerial() != serial;
   }
-  act.ok = r.error.empty();
-  act.changed = r.changed;
-  act.summary = act.ok ? r.summary : r.error;
-  if (act.summary.size() > 200) act.summary = act.summary.substr(0, 197) + "...";
-  env_.log.add(act);
-  if (env_.onActivity) env_.onActivity(act);
-  if (!tool->readOnly || !act.ok) logging::info("mcp", client_ + ": " + name + (act.ok ? "" : " failed") + ": " + act.summary);
-
-  Json result = Json::makeObject();
-  if (!r.error.empty()) {
-    result.object["content"] = jarr({jobj({{"type", jstr("text")}, {"text", jstr(r.error)}})});
-    result.object["isError"] = jbool(true);
-    return result;
-  }
-  if (!r.data.is(Json::Type::Object)) r.data = jobj({{"result", r.data}});
-  result.object["content"] = jarr({jobj({{"type", jstr("text")}, {"text", jstr(dump(r.data))}})});
-  result.object["isError"] = jbool(false);
-  if (protocol_ >= "2025-06-18") result.object["structuredContent"] = r.data;
-  return result;
+  logCall(env_, client_, name, now, r, tool->readOnly);
+  return resultJson(r, protocol_);
 }
 
 }  // namespace gl::mcp

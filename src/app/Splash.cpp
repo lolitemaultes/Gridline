@@ -2,6 +2,7 @@
 // with a loading bar driven by the real start-up steps.
 #include <algorithm>
 #include <cmath>
+#include "../core/I18n.h"
 #include "../../third_party/imgui/imgui.h"
 #include "Theme.h"
 
@@ -45,7 +46,7 @@ void drawSplash(ImFont* bold, ImFont* mono, float progress, const char* status, 
   const char* ver = "Version 0.4.0";
   ImVec2 vsz = ImGui::CalcTextSize(ver);
   dl->AddText(ImVec2(vp->Pos.x + vp->Size.x - vsz.x - 16, vp->Pos.y + vp->Size.y - vsz.y - 14), theme::rgb(0x4A4A4A), ver);
-  dl->AddText(ImVec2(vp->Pos.x + 16, vp->Pos.y + vp->Size.y - vsz.y - 14), theme::rgb(0x4A4A4A), "Free and open for everybody");
+  dl->AddText(ImVec2(vp->Pos.x + 16, vp->Pos.y + vp->Size.y - vsz.y - 14), theme::rgb(0x4A4A4A), i18n::tr("Free and open for everybody"));
   ImGui::PopFont();
   ImGui::End();
   ImGui::PopStyleColor();

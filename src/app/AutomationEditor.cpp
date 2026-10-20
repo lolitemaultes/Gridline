@@ -573,7 +573,7 @@ void drawLfoTool(App& a) {
   ImGui::SetNextWindowPos(ImVec2(E.winMax.x - 16, E.winMax.y - 16), ImGuiCond_Appearing, ImVec2(1, 1));
   if (!E.toolWasOpen) ImGui::SetNextWindowFocus();
   bool open = true;
-  if (!ImGui::Begin("LFO tool###autolfo", &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
+  if (!ImGui::Begin(i18n::tr("LFO tool###autolfo"), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
     if (!open) E.lfoOpen = false, E.preview.reset();
     return;
@@ -1651,7 +1651,7 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
       dl->AddCircleFilled(ImVec2(x + 1, yOf(q.value)), 3.0f, lineCol, 10);
     }
   } else {
-    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(mn.x + 8, mn.y + 4), P.textFaint, "Drag to draw values \xC2\xB7 right-drag to delete");
+    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(mn.x + 8, mn.y + 4), P.textFaint, i18n::tr("Drag to draw values \xC2\xB7 right-drag to delete"));
   }
   dl->PopClipRect();
   if (canvasHovered && inLane) {

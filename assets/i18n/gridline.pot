@@ -5,6 +5,90 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Language-Name: \n"
 
+#: src/app/App.cpp
+msgid "Backup failed"
+msgstr ""
+
+#: src/app/App.cpp src/app/BrowserDrop.cpp src/app/ChannelSettings.cpp src/app/ExportUi.cpp src/packs/samplers/samplers_ui.cpp
+msgid "Cannot decode"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Cannot open the FL Studio project"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Cannot open the zipped project"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Could not open project"
+msgstr ""
+
+#: src/app/App.cpp src/app/TemplateUi.cpp
+msgid "Could not open template"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Could not open the default template"
+msgstr ""
+
+#: src/app/App.cpp src/app/SettingsPages.cpp
+msgid "Could not read the backup"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Could not save template"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Export failed: cannot write"
+msgstr ""
+
+#: src/app/App.cpp src/app/ExportUi.cpp
+msgid "Exported MIDI"
+msgstr ""
+
+#: src/app/App.cpp src/app/Browser.cpp
+msgid "FL Studio presets"
+msgstr ""
+
+#: src/app/App.cpp src/app/ExportUi.cpp
+msgid "MIDI export failed"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "No backup of this project yet"
+msgstr ""
+
+#: src/app/App.cpp src/app/ExportUi.cpp
+msgid "Nothing to export: no notes"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Nothing to export: the"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Opened"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Reverted to"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Save failed"
+msgstr ""
+
+#: src/app/App.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/J31Ui.cpp src/app/MenuParityUi.cpp src/packs/edison/edison_ui.cpp
+msgid "Saved"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Saved template"
+msgstr ""
+
 #: src/app/AudioRecordUi.cpp
 msgid "%d mixer track%s armed for audio"
 msgstr ""
@@ -55,6 +139,10 @@ msgstr ""
 
 #: src/app/AudioRecordUi.cpp
 msgid "Armed"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp
+msgid "Armed. Choose an input device in Settings → Audio to record."
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
@@ -138,6 +226,10 @@ msgid "Fit to tempo"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
+msgid "Fitted to"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp
 msgid "Guess the number of beats and make the clip follow the tempo"
 msgstr ""
 
@@ -186,6 +278,10 @@ msgid "Monitor"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
+msgid "No free effect slot for the audio editor"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp
 msgid "No mixer track is armed for audio"
 msgstr ""
 
@@ -199,6 +295,10 @@ msgstr ""
 
 #: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp
 msgid "Notes"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp src/app/ExportUi.cpp
+msgid "Nothing to render"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
@@ -223,6 +323,10 @@ msgstr ""
 
 #: src/app/AudioRecordUi.cpp
 msgid "Recorded files"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp
+msgid "Recording"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
@@ -262,6 +366,10 @@ msgid "Time stretch"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
+msgid "Track bounced to audio: the original clips are muted"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp
 msgid "Twice as long"
 msgstr ""
 
@@ -287,6 +395,10 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "Add lane for"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp src/app/MenuParityUi.cpp
+msgid "Automation clip for"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
@@ -315,6 +427,14 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp
 msgid "Copy value"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "Could not read that shape"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "Could not save the shape"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
@@ -347,6 +467,10 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "Deselect all"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "Drag to draw values · right-drag to delete"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
@@ -399,6 +523,10 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "LFO"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp src/core/Keymap.cpp
+msgid "LFO tool"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
@@ -517,12 +645,20 @@ msgstr ""
 msgid "Save the selected points (or the whole clip) as a shape"
 msgstr ""
 
+#: src/app/AutomationEditor.cpp
+msgid "Saved shape"
+msgstr ""
+
 #: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp
 msgid "Scale levels..."
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "Scale levels: centre, multiplier, offset"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "Select a pattern first"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
@@ -614,6 +750,18 @@ msgid "Add to playlist as audio clip"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Automation shapes"
+msgstr ""
+
+#: src/app/Browser.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+msgid "Browser"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Channel presets"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Clear search"
 msgstr ""
 
@@ -642,7 +790,15 @@ msgid "Click: select · double-click: open the channel"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Clipboard files"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Close the file info"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Current project"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -670,6 +826,26 @@ msgid "Double-click: load on the selected mixer track · drag onto a mixer strip
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Effect chains"
+msgstr ""
+
+#: src/app/Browser.cpp src/app/TemplateUi.cpp
+msgid "Empty"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "FL Studio projects"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Favourite plugins"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Impulses"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Indexing sample metadata in the background (length, tempo, key, waveform)"
 msgstr ""
 
@@ -682,7 +858,23 @@ msgid "Look for new or updated plugins (right-click: rescan everything, includin
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "MIDI files"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Manage"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Misc"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Mixer presets"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "No impulses"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -690,14 +882,50 @@ msgid "No matches"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "No packs"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "No plugins found"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "No recent projects"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "No scores"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "No sliced audio"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Nothing recorded yet"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Nothing rendered yet"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Open / add"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Packs"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Plugin database"
 msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Plugin manager: folders, formats, failed plugins, sandbox, favourites"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/Menus.cpp src/core/Keymap.cpp
+#: src/app/Browser.cpp src/app/Menus.cpp src/app/PluginPicker.cpp src/core/Keymap.cpp
 msgid "Plugin picker"
 msgstr ""
 
@@ -705,8 +933,32 @@ msgstr ""
 msgid "Plugin picker (F8)"
 msgstr ""
 
+#: src/app/Browser.cpp
+msgid "Plugin presets"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Plugins"
+msgstr ""
+
+#: src/app/Browser.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/MidiUi.cpp
+msgid "Presets"
+msgstr ""
+
 #: src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp
 msgid "Preview"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Projects"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Recent files"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Recorded"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -729,8 +981,40 @@ msgstr ""
 msgid "Remove star"
 msgstr ""
 
+#: src/app/Browser.cpp
+msgid "Rendered"
+msgstr ""
+
 #: src/app/Browser.cpp src/app/PluginManager.cpp
 msgid "Rescan"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Right-click a file: Star"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Right-click a plugin: Add to favourites"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Samples"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Save chains from a mixer track's menu"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Save instrument presets from a channel"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Save presets from a plugin window"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Scores"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -739,6 +1023,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Search plugins, presets and files · filters: type:audio|midi|preset|project|effect  tag:kick  bpm:120-130  key:Am  len:<2"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Sliced audio"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -751,6 +1039,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Starred (click to remove the star)"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Starred files"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -773,6 +1065,26 @@ msgstr ""
 msgid "Try fewer words or filters"
 msgstr ""
 
+#: src/app/BrowserDrop.cpp
+msgid "Imported"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Loaded effect chain"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Loaded preset"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp src/app/ExportUi.cpp
+msgid "MIDI import failed"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "No free effect slot on this track"
+msgstr ""
+
 #: src/app/ChannelRack.cpp
 msgid "Add an instrument channel"
 msgstr ""
@@ -791,6 +1103,10 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp src/app/ContextMenus.cpp
 msgid "All channels"
+msgstr ""
+
+#: src/app/ChannelRack.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+msgid "Channel rack"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -1393,6 +1709,10 @@ msgstr ""
 msgid "Chord notes"
 msgstr ""
 
+#: src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
+msgid "Chord progression"
+msgstr ""
+
 #: src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/LoopStarterUi.cpp
 msgid "Chords"
 msgstr ""
@@ -1506,6 +1826,18 @@ msgid "New chords for every unlocked chord"
 msgstr ""
 
 #: src/app/ChordEditorUi.cpp
+msgid "No chords in the text"
+msgstr ""
+
+#: src/app/ChordEditorUi.cpp
+msgid "Not a chord name"
+msgstr ""
+
+#: src/app/ChordEditorUi.cpp
+msgid "Not a chord the editor knows"
+msgstr ""
+
+#: src/app/ChordEditorUi.cpp
 msgid "Note linking"
 msgstr ""
 
@@ -1599,6 +1931,10 @@ msgstr ""
 
 #: src/app/ChordEditorUi.cpp
 msgid "Rhythm the chords are played with"
+msgstr ""
+
+#: src/app/ChordEditorUi.cpp src/app/ExportUi.cpp
+msgid "Select a channel and a pattern first"
 msgstr ""
 
 #: src/app/ChordEditorUi.cpp
@@ -1705,6 +2041,10 @@ msgstr ""
 msgid "presets"
 msgstr ""
 
+#: src/app/ChordEditorUi.cpp
+msgid "unlinked"
+msgstr ""
+
 #: src/app/ContextMenus.cpp
 msgid "A new note stops this channel's previous note (monophonic choke)"
 msgstr ""
@@ -1751,6 +2091,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Advanced fill..."
+msgstr ""
+
+#: src/app/ContextMenus.cpp src/app/MixerView.cpp
+msgid "All effect slots are in use"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -1849,10 +2193,6 @@ msgstr ""
 msgid "Chop..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Menus.cpp
-msgid "Chord progression"
-msgstr ""
-
 #: src/app/ContextMenus.cpp
 msgid "Clear all effects"
 msgstr ""
@@ -1906,6 +2246,14 @@ msgid "Colour selected"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Copied"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Copied the effect chain of"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Copy effect chain"
 msgstr ""
 
@@ -1919,6 +2267,18 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Copy state"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Could not create the submix"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Could not save the chain"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Could not save the track state"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -2075,6 +2435,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Every beat"
+msgstr ""
+
+#: src/app/ContextMenus.cpp src/app/Menus.cpp
+msgid "Every channel is used in a pattern"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -2281,6 +2645,14 @@ msgstr ""
 msgid "Keyboard editor"
 msgstr ""
 
+#: src/app/ContextMenus.cpp
+msgid "Layer created: its notes play on"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Layers can only hold instrument channels"
+msgstr ""
+
 #: src/app/ContextMenus.cpp src/app/Menus.cpp
 msgid "Layout"
 msgstr ""
@@ -2371,6 +2743,14 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Merged (mono)"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Merging needs at least two pattern clips on the track"
+msgstr ""
+
+#: src/app/ContextMenus.cpp src/app/Playlist.cpp
+msgid "Merging needs two automation clips of the same parameter"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -2470,6 +2850,10 @@ msgid "Next time"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "No clips of this pattern to move"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "No saved chains"
 msgstr ""
 
@@ -2494,7 +2878,19 @@ msgid "Notes in the scale"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Notes off the step grid stay in the piano roll"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Notes outside the scale"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Nothing to route: select other tracks first (Ctrl+click their names)"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Nothing to split: the pattern is empty"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -2553,7 +2949,7 @@ msgstr ""
 msgid "Pattern colour"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+#: src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PianoRoll.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Piano roll"
 msgstr ""
 
@@ -2583,10 +2979,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Portamento on"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/MidiUi.cpp
-msgid "Presets"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -2846,6 +3238,10 @@ msgid "Save preset to file..."
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Saved effect chain"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Scale chord, clicked note at the bottom"
 msgstr ""
 
@@ -2990,6 +3386,10 @@ msgid "Split by channel"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Split into"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Stamp"
 msgstr ""
 
@@ -3023,6 +3423,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Taller rows"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "That file is not a preset for this plugin"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -3197,6 +3601,10 @@ msgstr ""
 msgid "APPEARANCE"
 msgstr ""
 
+#: src/app/Dialogs.cpp src/app/Menus.cpp
+msgid "About Gridline"
+msgstr ""
+
 #: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp
 msgid "Audio"
 msgstr ""
@@ -3275,6 +3683,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "FL STUDIO IMPORT"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "FL Studio import"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -3359,6 +3771,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Interface sounds are turned off for this session (--no-ui-sounds or GRIDLINE_NO_UI_SOUNDS)."
+msgstr ""
+
+#: src/app/Dialogs.cpp src/app/Menus.cpp src/core/Keymap.cpp
+msgid "Keyboard shortcuts"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -3461,6 +3877,10 @@ msgstr ""
 msgid "Project"
 msgstr ""
 
+#: src/app/Dialogs.cpp src/core/Keymap.cpp
+msgid "Project info"
+msgstr ""
+
 #: src/app/Dialogs.cpp
 msgid "Quiet while the song plays or records, except errors. Never recorded or exported."
 msgstr ""
@@ -3495,6 +3915,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Scales the whole interface; applied as you drag"
+msgstr ""
+
+#: src/app/Dialogs.cpp src/app/Menus.cpp
+msgid "Settings"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -3563,6 +3987,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "UNDO"
+msgstr ""
+
+#: src/app/Dialogs.cpp src/app/Menus.cpp src/core/Keymap.cpp
+msgid "Undo history"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -3673,6 +4101,10 @@ msgstr ""
 msgid "SYNC"
 msgstr ""
 
+#: src/app/EditTools.cpp src/app/MenuParityUi.cpp src/app/ScriptUi.cpp
+msgid "Select a pattern and a channel first"
+msgstr ""
+
 #: src/app/EditTools.cpp
 msgid "Time between arpeggio notes"
 msgstr ""
@@ -3718,6 +4150,10 @@ msgid "Add two playlist markers first"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Added"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Also render the full mix"
 msgstr ""
 
@@ -3726,11 +4162,19 @@ msgid "Applied when writing 16 / 24-bit files"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Bones"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Browse"
 msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "Channels"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Choose at least one output format"
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -3758,7 +4202,31 @@ msgid "Enable master effects"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Export failed"
+msgstr ""
+
+#: src/app/ExportUi.cpp src/packs/edison/edison_ui.cpp
+msgid "Exported"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "FILE NAME AND LOCATION"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "FL Studio export failed"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "FL Studio project written"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "FL Studio zipped loop package failed"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "FL Studio zipped loop package with"
 msgstr ""
 
 #: src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp
@@ -3770,11 +4238,23 @@ msgid "Format %d · %d PPQ · %.2f BPM%s · %d/%d"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Found"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "From marker"
 msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "HQ for all plugins (offline quality)"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Import MIDI data"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Inserted"
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -3802,11 +4282,23 @@ msgid "MIDI CHANNELS"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "MIDI import"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "MISCELLANEOUS"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Missing samples"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Name channels after GM programs"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "No time selection in the playlist"
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -3850,6 +4342,10 @@ msgid "Pattern"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Pattern clips replaced by the rendered audio"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Peak ceiling: the gain stops where the sample peak would pass it"
 msgstr ""
 
@@ -3862,6 +4358,10 @@ msgid "Playlist markers as WAV cue points"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Project +"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Put the files next to the project file"
 msgstr ""
 
@@ -3870,7 +4370,23 @@ msgid "QUALITY"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Relinked"
+msgstr ""
+
+#: src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp
+msgid "Render cancelled"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Render to"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Rendered as an audio clip"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Rendered into the audio editor"
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -3930,6 +4446,10 @@ msgid "Tempo (and tempo changes as automation)"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "The MIDI file has no notes"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "The master track is muted: the render will be silent"
 msgstr ""
 
@@ -3951,6 +4471,14 @@ msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "With project"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Zipped project failed"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Zipped project with"
 msgstr ""
 
 #: src/app/HostedUi.cpp
@@ -4114,6 +4642,10 @@ msgid "Clip groups"
 msgstr ""
 
 #: src/app/J31Ui.cpp
+msgid "Could not save the audio log"
+msgstr ""
+
+#: src/app/J31Ui.cpp
 msgid "Disarm tracks after recording"
 msgstr ""
 
@@ -4126,6 +4658,10 @@ msgid "Drop silent takes"
 msgstr ""
 
 #: src/app/J31Ui.cpp
+msgid "Each child plays its own key range"
+msgstr ""
+
+#: src/app/J31Ui.cpp
 msgid "Editable ghost notes"
 msgstr ""
 
@@ -4135,6 +4671,10 @@ msgstr ""
 
 #: src/app/J31Ui.cpp
 msgid "Group the selected notes"
+msgstr ""
+
+#: src/app/J31Ui.cpp
+msgid "Grouped clips move and select together"
 msgstr ""
 
 #: src/app/J31Ui.cpp
@@ -4207,6 +4747,10 @@ msgstr ""
 
 #: src/app/J31Ui.cpp
 msgid "Record from"
+msgstr ""
+
+#: src/app/J31Ui.cpp
+msgid "Recording cancelled: the takes are discarded"
 msgstr ""
 
 #: src/app/J31Ui.cpp src/app/Menus.cpp
@@ -4298,6 +4842,10 @@ msgid "Takes that never rise above -60 dBFS are not placed in the playlist"
 msgstr ""
 
 #: src/app/J31Ui.cpp
+msgid "The audio logger has nothing yet"
+msgstr ""
+
+#: src/app/J31Ui.cpp
 msgid "Toggle for the selected"
 msgstr ""
 
@@ -4371,6 +4919,10 @@ msgstr ""
 
 #: src/app/Live.cpp
 msgid "Live mode: the transport runs freely and plays only the clips you launch"
+msgstr ""
+
+#: src/app/Live.cpp src/app/Menus.cpp
+msgid "Live pads"
 msgstr ""
 
 #: src/app/Live.cpp
@@ -4637,6 +5189,10 @@ msgstr ""
 msgid "Loudness the mix should reach (streaming platforms play around -14 LUFS)"
 msgstr ""
 
+#: src/app/MasterPanel.cpp src/app/Menus.cpp
+msgid "Master chain"
+msgstr ""
+
 #: src/app/MasterPanel.cpp
 msgid "Match target"
 msgstr ""
@@ -4703,6 +5259,10 @@ msgstr ""
 
 #: src/app/McpUi.cpp
 msgid "Assistant"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "Assistant job"
 msgstr ""
 
 #: src/app/McpUi.cpp
@@ -4818,7 +5378,15 @@ msgid "Token"
 msgstr ""
 
 #: src/app/McpUi.cpp
+msgid "Token kept in:"
+msgstr ""
+
+#: src/app/McpUi.cpp
 msgid "Undo last assistant change"
+msgstr ""
+
+#: src/app/McpUi.cpp
+msgid "settings.json (no secure store)"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -4827,6 +5395,10 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Audio clip channels"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Automation clip created in the playlist"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -4858,6 +5430,22 @@ msgid "Clone with controller links"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Could not copy the samples"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Could not create"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Could not save"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Could not save the MIDI file"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Declicking of selected"
 msgstr ""
 
@@ -4879,6 +5467,10 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Every audio clip"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Group \""
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -4919,6 +5511,14 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Names the chord held on the MIDI keyboard (e.g. Am7, C/E) in the hint bar"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Note effects baked into"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Nothing to bake: the channel has no notes or steps here"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -4986,7 +5586,15 @@ msgid "Save to a new project folder..."
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Saved into"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Saves the project into a folder of its own, with copies of every sample it uses"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Scale"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -4995,10 +5603,6 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Score logger"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Select a pattern and a channel first"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -5070,7 +5674,7 @@ msgid "8 playlist tracks"
 msgstr ""
 
 #: src/app/Menus.cpp
-msgid "About Gridline"
+msgid "All effect slots of this track are in use"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -5079,6 +5683,10 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "All playlist tracks..."
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "All sound stopped"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -5109,16 +5717,8 @@ msgstr ""
 msgid "Browse templates..."
 msgstr ""
 
-#: src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
-msgid "Browser"
-msgstr ""
-
 #: src/app/Menus.cpp
 msgid "Build a ready-to-play loop: style, tempo, key, mood and energy, with parts you can re-roll"
-msgstr ""
-
-#: src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
-msgid "Channel rack"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -5229,20 +5829,12 @@ msgstr ""
 msgid "Interface size"
 msgstr ""
 
-#: src/app/Menus.cpp src/core/Keymap.cpp
-msgid "Keyboard shortcuts"
-msgstr ""
-
 #: src/app/Menus.cpp
 msgid "Keyboard shortcuts..."
 msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Live mode"
-msgstr ""
-
-#: src/app/Menus.cpp
-msgid "Live pads"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -5265,15 +5857,11 @@ msgstr ""
 msgid "Macros"
 msgstr ""
 
-#: src/app/Menus.cpp
-msgid "Master chain"
-msgstr ""
-
 #: src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Metronome"
 msgstr ""
 
-#: src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+#: src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Mixer"
 msgstr ""
 
@@ -5325,7 +5913,7 @@ msgstr ""
 msgid "Pattern as MIDI file..."
 msgstr ""
 
-#: src/app/Menus.cpp
+#: src/app/Menus.cpp src/app/Performance.cpp
 msgid "Performance"
 msgstr ""
 
@@ -5337,7 +5925,7 @@ msgstr ""
 msgid "Piano roll tools"
 msgstr ""
 
-#: src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+#: src/app/Menus.cpp src/app/Playlist.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Playlist"
 msgstr ""
 
@@ -5414,6 +6002,10 @@ msgid "Route every channel to its own mixer track"
 msgstr ""
 
 #: src/app/Menus.cpp
+msgid "Routed to"
+msgstr ""
+
+#: src/app/Menus.cpp
 msgid "Save as template..."
 msgstr ""
 
@@ -5426,7 +6018,7 @@ msgid "Set the song tempo"
 msgstr ""
 
 #: src/app/Menus.cpp
-msgid "Settings"
+msgid "Settings, presets and templates"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -5487,10 +6079,6 @@ msgstr ""
 
 #: src/app/Menus.cpp src/core/Keymap.cpp
 msgid "Typing keyboard to piano"
-msgstr ""
-
-#: src/app/Menus.cpp src/core/Keymap.cpp
-msgid "Undo history"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -5578,6 +6166,10 @@ msgid "Controller moves go to"
 msgstr ""
 
 #: src/app/MidiUi.cpp
+msgid "Controller templates folder"
+msgstr ""
+
+#: src/app/MidiUi.cpp
 msgid "Controller type"
 msgstr ""
 
@@ -5629,6 +6221,10 @@ msgstr ""
 msgid "Link transport…"
 msgstr ""
 
+#: src/app/MidiUi.cpp src/app/MidiWorkflow.cpp
+msgid "Linked"
+msgstr ""
+
 #: src/app/MidiUi.cpp
 msgid "Listening: move a control…"
 msgstr ""
@@ -5663,6 +6259,10 @@ msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Move controls in Gridline, then the hardware controls in the same order"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "Multilink: move controls here, then the hardware controls in the same order"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -5845,11 +6445,47 @@ msgstr ""
 msgid "input"
 msgstr ""
 
+#: src/app/MidiWorkflow.cpp
+msgid "Controller template"
+msgstr ""
+
+#: src/app/MidiWorkflow.cpp
+msgid "Count-in off"
+msgstr ""
+
+#: src/app/MidiWorkflow.cpp
+msgid "Count-in: 1 bar"
+msgstr ""
+
+#: src/app/MidiWorkflow.cpp
+msgid "Loop recording: a new take per pass"
+msgstr ""
+
+#: src/app/MidiWorkflow.cpp
+msgid "Loop recording: merge passes"
+msgstr ""
+
+#: src/app/MidiWorkflow.cpp
+msgid "Recording armed"
+msgstr ""
+
+#: src/app/MidiWorkflow.cpp
+msgid "Recording off"
+msgstr ""
+
+#: src/app/MidiWorkflow.cpp
+msgid "Step record off"
+msgstr ""
+
+#: src/app/MidiWorkflow.cpp
+msgid "Step record on"
+msgstr ""
+
 #: src/app/MixerView.cpp
 msgid "%+.1f dB"
 msgstr ""
 
-#: src/app/MixerView.cpp
+#: src/app/MixerView.cpp src/app/PluginEditorsInstrPads.cpp src/packs/edison/edison_form_ui.cpp
 msgid "(empty)"
 msgstr ""
 
@@ -5921,6 +6557,10 @@ msgstr ""
 msgid "Effect slots on strips (extended)"
 msgstr ""
 
+#: src/app/MixerView.cpp
+msgid "Empty slot"
+msgstr ""
+
 #: src/app/MixerView.cpp src/packs/edison/edison_tools_ui.cpp
 msgid "Hold"
 msgstr ""
@@ -5957,8 +6597,20 @@ msgstr ""
 msgid "Meters: peak, RMS (average level) or both"
 msgstr ""
 
+#: src/app/MixerView.cpp
+msgid "Mixer routing"
+msgstr ""
+
 #: src/app/MixerView.cpp src/app/TrackModeUi.cpp
 msgid "Mono"
+msgstr ""
+
+#: src/app/MixerView.cpp
+msgid "No room: every effect slot below that one is taken"
+msgstr ""
+
+#: src/app/MixerView.cpp
+msgid "No tracks to render: select or arm mixer tracks first"
 msgstr ""
 
 #: src/app/MixerView.cpp
@@ -6190,6 +6842,10 @@ msgid "Chord stamp: the chord Draw and Paint place (root = the clicked key)"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "Editing"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "Fine pitch (cents)"
 msgstr ""
 
@@ -6358,6 +7014,10 @@ msgid "Gain"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Instrument tracks take pattern clips only"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Make unique as sample"
 msgstr ""
 
@@ -6395,6 +7055,14 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Plain curve (no bend)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Resizing audio clips stretches them"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Resizing audio clips trims them"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -6463,6 +7131,10 @@ msgstr ""
 
 #: src/app/PluginEditorsEqRef.cpp
 msgid "Solo (listen)"
+msgstr ""
+
+#: src/app/PluginEditorsEqRef.cpp
+msgid "Stored in the spare state"
 msgstr ""
 
 #: src/app/PluginEditorsEqRef.cpp src/app/PluginManager.cpp
@@ -6602,11 +7274,19 @@ msgid "No failed plugins."
 msgstr ""
 
 #: src/app/PluginManager.cpp
+msgid "Not a folder"
+msgstr ""
+
+#: src/app/PluginManager.cpp
 msgid "Not scanned, hidden from the browser (click to switch on)"
 msgstr ""
 
 #: src/app/PluginManager.cpp
 msgid "Plugin"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Plugin manager"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -6674,6 +7354,10 @@ msgid "Close (Esc / F8)"
 msgstr ""
 
 #: src/app/PluginPicker.cpp
+msgid "No free effect slot on"
+msgstr ""
+
+#: src/app/PluginPicker.cpp
 msgid "No plugins match"
 msgstr ""
 
@@ -6725,6 +7409,10 @@ msgstr ""
 msgid "Copy the current state to the other compare slot"
 msgstr ""
 
+#: src/app/PluginUI.cpp
+msgid "Could not save preset"
+msgstr ""
+
 #: src/app/PluginUI.cpp src/app/SettingsKeysTheme.cpp
 msgid "Default"
 msgstr ""
@@ -6762,7 +7450,19 @@ msgid "Save as a user preset"
 msgstr ""
 
 #: src/app/PluginUI.cpp
+msgid "Saved preset"
+msgstr ""
+
+#: src/app/PluginUI.cpp
 msgid "Search presets"
+msgstr ""
+
+#: src/app/PluginWindow.cpp
+msgid "Cannot draw the plugin window"
+msgstr ""
+
+#: src/app/PluginWindow.cpp
+msgid "Cannot open a window"
 msgstr ""
 
 #: src/app/PluginWindow.cpp
@@ -6791,6 +7491,14 @@ msgstr ""
 
 #: src/app/PluginWindow.cpp
 msgid "The plugin's own programs and preset library"
+msgstr ""
+
+#: src/app/PluginWindow.cpp
+msgid "This plugin crashed: reload it first"
+msgstr ""
+
+#: src/app/PluginWindow.cpp
+msgid "This plugin is not loaded"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
@@ -6871,10 +7579,6 @@ msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
 msgid "Release tail"
-msgstr ""
-
-#: src/app/SamplerRenderUi.cpp
-msgid "Render cancelled"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
@@ -6962,6 +7666,14 @@ msgid "Close (Esc)"
 msgstr ""
 
 #: src/app/ScriptUi.cpp
+msgid "Controller script"
+msgstr ""
+
+#: src/app/ScriptUi.cpp
+msgid "Controller script stopped"
+msgstr ""
+
+#: src/app/ScriptUi.cpp
 msgid "Keep the result (Enter)"
 msgstr ""
 
@@ -6990,11 +7702,19 @@ msgid "Run again with new random numbers"
 msgstr ""
 
 #: src/app/ScriptUi.cpp
+msgid "Script error"
+msgstr ""
+
+#: src/app/ScriptUi.cpp
 msgid "Scripts are switched off (Settings → Files)"
 msgstr ""
 
 #: src/app/ScriptUi.cpp
 msgid "The live preview has a small time budget; the script runs in full when you release the control or accept"
+msgstr ""
+
+#: src/app/ScriptUi.cpp
+msgid "The script has an error; nothing was applied"
 msgstr ""
 
 #: src/app/ScriptUi.cpp
@@ -7011,6 +7731,14 @@ msgstr ""
 
 #: src/app/ScriptUi.cpp
 msgid "Undo the last step"
+msgstr ""
+
+#: src/app/ScriptUi.cpp
+msgid "Your piano roll scripts (*.lua)"
+msgstr ""
+
+#: src/app/ScriptUi.cpp
+msgid "Your project scripts (*.lua)"
 msgstr ""
 
 #: src/app/ScriptUi.cpp
@@ -7326,6 +8054,10 @@ msgid "Author"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
+msgid "Backups"
+msgstr ""
+
+#: src/app/SettingsPages.cpp
 msgid "Command that opens a script for editing (the file path is added at the end)"
 msgstr ""
 
@@ -7430,6 +8162,10 @@ msgid "Restore"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
+msgid "Restored"
+msgstr ""
+
+#: src/app/SettingsPages.cpp
 msgid "Run piano roll and controller scripts"
 msgstr ""
 
@@ -7497,6 +8233,10 @@ msgstr ""
 msgid "Your name"
 msgstr ""
 
+#: src/app/Splash.cpp
+msgid "Free and open for everybody"
+msgstr ""
+
 #: src/app/TemplateUi.cpp
 msgid "Build a ready-to-play loop from a style instead (J-59)"
 msgstr ""
@@ -7514,15 +8254,23 @@ msgid "Delete template"
 msgstr ""
 
 #: src/app/TemplateUi.cpp
-msgid "Empty"
+msgid "Existing categories"
+msgstr ""
+
+#: src/app/TemplateUi.cpp src/core/Keymap.cpp
+msgid "New project"
 msgstr ""
 
 #: src/app/TemplateUi.cpp
-msgid "Existing categories"
+msgid "New project from"
 msgstr ""
 
 #: src/app/TemplateUi.cpp
 msgid "Removes your template file"
+msgstr ""
+
+#: src/app/TemplateUi.cpp
+msgid "Save as template"
 msgstr ""
 
 #: src/app/TemplateUi.cpp
@@ -7563,6 +8311,10 @@ msgstr ""
 
 #: src/app/TemplateUi.cpp
 msgid "Use for File > New and at startup"
+msgstr ""
+
+#: src/app/Thumbs.cpp
+msgid "Rendering plugin thumbnails in the background"
 msgstr ""
 
 #: src/app/TopBar.cpp
@@ -7638,6 +8390,10 @@ msgid "Audio track"
 msgstr ""
 
 #: src/app/TrackModeUi.cpp
+msgid "Audio track on playlist track"
+msgstr ""
+
+#: src/app/TrackModeUi.cpp
 msgid "Drop its audio track link"
 msgstr ""
 
@@ -7651,6 +8407,10 @@ msgstr ""
 
 #: src/app/TrackModeUi.cpp
 msgid "Instrument track"
+msgstr ""
+
+#: src/app/TrackModeUi.cpp
+msgid "Instrument track on playlist track"
 msgstr ""
 
 #: src/app/TrackModeUi.cpp
@@ -7707,6 +8467,14 @@ msgstr ""
 
 #: src/app/Widgets.cpp
 msgid "Custom"
+msgstr ""
+
+#: src/app/main.cpp
+msgid "Cannot decode sample: missing.wav"
+msgstr ""
+
+#: src/app/main.cpp
+msgid "Saved the project"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -7862,10 +8630,6 @@ msgid "Insert space at the time selection"
 msgstr ""
 
 #: src/core/Keymap.cpp
-msgid "LFO tool"
-msgstr ""
-
-#: src/core/Keymap.cpp
 msgid "Legato"
 msgstr ""
 
@@ -7907,10 +8671,6 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Mute tool"
-msgstr ""
-
-#: src/core/Keymap.cpp
-msgid "New project"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -7959,10 +8719,6 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Playback tool"
-msgstr ""
-
-#: src/core/Keymap.cpp
-msgid "Project info"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -8742,6 +9498,10 @@ msgid "Apply formula"
 msgstr ""
 
 #: src/packs/modulation/modulation_ui.cpp
+msgid "Cannot link this parameter"
+msgstr ""
+
+#: src/packs/modulation/modulation_ui.cpp
 msgid "Controller link settings"
 msgstr ""
 
@@ -8815,6 +9575,14 @@ msgstr ""
 
 #: src/packs/samplers/samplers_ui.cpp
 msgid "Mirror"
+msgstr ""
+
+#: src/packs/samplers/samplers_ui.cpp
+msgid "No audio files in"
+msgstr ""
+
+#: src/packs/samplers/samplers_ui.cpp
+msgid "No note name in this file name"
 msgstr ""
 
 #: src/packs/samplers/samplers_ui.cpp

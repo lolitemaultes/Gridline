@@ -189,7 +189,10 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
 }
 
 // Collapsible section header (top level): chevron, coloured folder, title, count.
-bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t roleColour = role::kView, ui::Icon icon = ui::Icon::Folder) {
+// `title` is English (and the open state's id); it is shown translated unless
+// it is a name from disk (`translate` false).
+bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t roleColour = role::kView, ui::Icon icon = ui::Icon::Folder,
+                   bool translate = true) {
   const auto& P = pal();
   App& a = app();
   ImGuiStorage* st = ImGui::GetStateStorage();
@@ -208,7 +211,8 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
   ui::drawIcon(dl, open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(q.x + 9, q.y + 13), 10, open ? P.hot : P.textDim);
   ui::drawIcon(dl, icon, ImVec2(q.x + 25, q.y + 13), 12, roleCol(roleColour));
-  const std::string shown = std::string(title).substr(0, std::string(title).find("##"));  // "##" suffix: id only
+  const std::string label = translate ? i18n::tr(title) : title;  // J-61: tree roots are translated
+  const std::string shown = label.substr(0, label.find("##"));     // "##" suffix: id only
   theme::textEllipsis(dl, a.fontBold, theme::kFontCaption + 1, ImVec2(q.x + 37, q.y + 6), w - 37 - 30, P.text, shown.c_str());
   if (count >= 0) {
     std::string c = std::to_string(count);
@@ -235,7 +239,7 @@ bool treeNode(const std::string& key, const char* label, int count, float indent
 void emptyLine(const char* text, float indent = 20) {
   ImGui::Dummy(ImVec2(0, 2));
   ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
-  ImGui::TextColored(theme::vec(pal().textFaint), "%s", text);
+  ImGui::TextColored(theme::vec(pal().textFaint), "%s", i18n::tr(text));
   ImGui::Dummy(ImVec2(0, 4));
 }
 
@@ -698,7 +702,7 @@ void sectionUserFolders(App& a) {
   for (size_t i = 0; i < folders.size(); ++i) {
     ImGui::PushID(static_cast<int>(i));
     fs::path f(folders[i]);
-    bool open = sectionHeader(f.filename().string().c_str(), -1, false, role::kView);
+    bool open = sectionHeader(f.filename().string().c_str(), -1, false, role::kView, ui::Icon::Folder, false);
     ui::Hint(folders[i] + "   (right-click to remove or refresh)");
     if (ImGui::BeginPopupContextItem("##fmenu")) {
       ImGui::TextDisabled("%s", folders[i].c_str());
@@ -776,9 +780,10 @@ int searchResults(App& a, const std::string& text) {
   shown += static_cast<int>(plugs.size());
   // Files grouped by kind.
   static const std::pair<Kind, const char*> groups[] = {
-      {Kind::Audio, "Samples"},       {Kind::Preset, "Presets"}, {Kind::Fst, "FL Studio presets"}, {Kind::Chain, "Effect chains"},
-      {Kind::Midi, "MIDI files"},     {Kind::Score, "Scores"},   {Kind::Project, "Projects"},      {Kind::Flp, "FL Studio projects"},
-      {Kind::Shape, "Automation shapes"},
+      {Kind::Audio, i18n::N_("Samples")}, {Kind::Preset, i18n::N_("Presets")}, {Kind::Fst, i18n::N_("FL Studio presets")},
+      {Kind::Chain, i18n::N_("Effect chains")}, {Kind::Midi, i18n::N_("MIDI files")}, {Kind::Score, i18n::N_("Scores")},
+      {Kind::Project, i18n::N_("Projects")}, {Kind::Flp, i18n::N_("FL Studio projects")},
+      {Kind::Shape, i18n::N_("Automation shapes")},
   };
   for (const auto& [kind, title] : groups) {
     int n = 0;

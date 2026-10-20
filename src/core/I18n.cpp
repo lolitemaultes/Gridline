@@ -213,6 +213,19 @@ bool setLanguage(const std::string& code, const std::string& dir, std::string* e
 
 const std::string& language() { return st().code; }
 
+std::string trMessage(const std::string& text) {
+  State& s = st();
+  if (s.code == "en" || text.empty()) return text;
+  if (s.code == "pseudo") return text.front() == '[' && text.find(']') != std::string::npos ? text : pseudo(text);
+  if (auto c = s.catalogue.find(text); c != s.catalogue.end()) return c->second;
+  for (size_t i = text.size(); i-- > 1;) {
+    if (text[i] != ' ' && !(text[i] == ':' && (i + 1 == text.size() || text[i + 1] == ' '))) continue;
+    auto c = s.catalogue.find(text.substr(0, i));
+    if (c != s.catalogue.end() && !c->second.empty()) return c->second + text.substr(i);
+  }
+  return text;
+}
+
 const char* tr(const char* english) {
   State& s = st();
   if (s.code == "en" || !english || !*english) return english;

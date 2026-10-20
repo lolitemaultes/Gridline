@@ -6,8 +6,9 @@
 // rewriting another's files makes tests fail at random. Call
 // hermeticTestEnv() first thing in main(): it creates a unique directory,
 // points TMPDIR (temp_directory_path, child processes) and XDG_CONFIG_HOME
-// (settings, plugin cache, plugin manager prefs) at it, and removes it when
-// the process exits normally.
+// (settings, plugin cache, plugin manager prefs) at it, keeps secrets in
+// files there instead of the Keychain, and removes it when the process exits
+// normally.
 #pragma once
 #include <cstdlib>
 #include <filesystem>
@@ -28,6 +29,7 @@ inline const std::string& hermeticTestEnv(const char* tag = "test") {
     std::filesystem::create_directories(d + "/config", ec);
     setenv("TMPDIR", (d + "/tmp").c_str(), 1);
     setenv("XDG_CONFIG_HOME", (d + "/config").c_str(), 1);
+    setenv("GRIDLINE_SECRET_STORE", "file", 1);  // J-61: never the user's Keychain
     static struct Cleanup {
       std::string path;
       ~Cleanup() {

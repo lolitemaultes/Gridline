@@ -68,7 +68,7 @@ target_include_directories(gridline_core SYSTEM PUBLIC third_party)
 target_include_directories(gridline_core SYSTEM PUBLIC third_party/clap/include)
 if(APPLE)
   target_link_libraries(gridline_core PUBLIC "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreAudioKit"
-                        "-framework AppKit" "-framework Foundation")
+                        "-framework AppKit" "-framework Foundation" "-framework Security")
 elseif(UNIX)
   target_link_libraries(gridline_core PUBLIC rt)
 endif()
@@ -350,6 +350,12 @@ target_compile_options(gridline_tests_j59 PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(gridline_tests_j59 PRIVATE GRIDLINE_TESTPLUG_BUNDLE="${GRIDLINE_TESTPLUG_BUNDLE}")
 add_dependencies(gridline_tests_j59 gridline_vst3_testplug)
 add_test(NAME j59_loopstarter_sampler COMMAND gridline_tests_j59 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# J-61: audio load meter, secret store (MCP token) and its migration.
+add_executable(gridline_tests_j61 tests/test_j61.cpp)
+target_link_libraries(gridline_tests_j61 PRIVATE gridline_core)
+target_compile_options(gridline_tests_j61 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j61_followups COMMAND gridline_tests_j61 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(gridline_tests_recording tests/test_recording.cpp)
 target_link_libraries(gridline_tests_recording PRIVATE gridline_core)

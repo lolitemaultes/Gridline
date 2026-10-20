@@ -228,7 +228,7 @@ void settingsWindow(App& a) {
   if (!a.showSettings) return;
   centerNext(ImVec2(860, 560), ImVec2(660, 360));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin("Settings", &a.showSettings, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(ui::windowTitle("Settings").c_str(), &a.showSettings, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   ImGui::PopStyleVar();
   if (!vis) {
@@ -512,7 +512,7 @@ void infoWindow(App& a) {
   if (!a.showInfo) return;
   centerNext(ImVec2(480, 0));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin("Project info", &a.showInfo, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(ui::windowTitle("Project info").c_str(), &a.showInfo, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   ImGui::PopStyleVar();
   if (!vis) {
@@ -632,7 +632,7 @@ void historyWindow(App& a) {
   wasShown = true;
   if (opened) ImGui::SetNextWindowFocus();
   ImGui::SetNextWindowSize(ImVec2(300, 420), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Undo history", &a.showHistory)) {
+  if (!ImGui::Begin(ui::windowTitle("Undo history").c_str(), &a.showHistory)) {
     ImGui::End();
     return;
   }
@@ -667,7 +667,7 @@ void aboutWindow(App& a) {
   ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::rgb(0xEDEDED)));
   ImGui::PushStyleColor(ImGuiCol_Border, theme::vec(theme::rgb(0x262626)));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
-  bool vis = ImGui::Begin("About Gridline", &a.showAbout, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(ui::windowTitle("About Gridline").c_str(), &a.showAbout, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   ImGui::PopStyleVar();
   if (vis) {
@@ -702,7 +702,7 @@ void shortcutsWindow(App& a) {
   if (!a.showShortcuts) return;
   centerNext(ImVec2(560, 600), ImVec2(420, 300));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin("Keyboard shortcuts", &a.showShortcuts, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(ui::windowTitle("Keyboard shortcuts").c_str(), &a.showShortcuts, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   ImGui::PopStyleVar();
   if (!vis) {
@@ -757,7 +757,7 @@ void unsavedPrompt(App& a) {
 void importReportWindow(App& a) {
   if (!a.showImportReport) return;
   centerNext(ImVec2(560, 520), ImVec2(440, 300));
-  bool vis = ImGui::Begin("FL Studio import", &a.showImportReport, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(ui::windowTitle("FL Studio import").c_str(), &a.showImportReport, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   if (vis) {
     const auto& P = pal();

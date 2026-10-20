@@ -30,6 +30,9 @@ void openRenderAgain(App& a);
 void startRenderTo(App& a, const std::string& folder);
 // Per frame (from drawDialogs): render dialog, progress, MIDI import, missing samples.
 void draw(App& a);
+// Body of a progress window (status line, bar, Cancel): the render progress
+// window and assistant renders (J-61) share it. True when Cancel was pressed.
+bool progressBody(const std::string& status, double progress, bool escapeCancels = true);
 
 // MIDI.
 void importMidiFile(App& a, const std::string& path);        // options dialog, then a new pattern + channels

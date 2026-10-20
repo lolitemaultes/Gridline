@@ -77,8 +77,17 @@ void KeepWindowInViewport();
 // ---- layout building blocks ----
 // Dock window with zero outer padding (toolbars run edge to edge). Always call
 // EndDockWindow() (even when it returns false).
+// `name` is the English title: the visible title is its translation, the
+// ImGui id stays the English name ("Mixer" -> "Mischpult###Mixer", J-61), so
+// saved layouts, DockBuilderDockWindow / FindWindowByName / SetWindowFocus
+// with the English name keep working in every language.
 bool BeginDockWindow(const char* name, bool* open, ImVec2 firstSize);
 void EndDockWindow();
+// "<translated title>###<english title>" for ImGui::Begin (J-61).
+std::string windowTitle(const char* english);
+// The stable part of a window name: after "###" when present (compare this,
+// not ImGuiWindow::Name, with the English title).
+const char* stableWindowName(const char* name);
 // Full-width toolbar strip (theme::kToolbarH) with a hairline under it. Controls
 // are vertically centred; text should use ImGui::AlignTextToFramePadding().
 void BeginToolbar(const char* id);

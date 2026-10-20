@@ -11,6 +11,11 @@
 // "AI: <what>" (Document groups), so the app shows it in the history and the
 // user can undo it. Tools that change the project or write files run only
 // while McpEnvironment::allowEdits is on (the app's "Allow changes" setting).
+// Renders, loudness analysis and exports are background jobs (J-61): they
+// work on a snapshot of the song, so the app runs them on a worker thread and
+// keeps drawing; the reply follows when they finish (with progress
+// notifications when the client asks for them), or, with "wait": false, the
+// call returns a job number for get_job / cancel_job.
 // File paths are confined to the project folder and the chosen export folder;
 // there is no tool that runs a shell or reads arbitrary files. Calls are rate
 // limited and argument sizes are bounded.
@@ -21,13 +26,16 @@
 // 0 = master, 1.. = inserts, as in the project scripting API.
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include "Document.h"
 #include "Json.h"
@@ -99,6 +107,77 @@ class RateLimiter {
   double rate_, burst_, tokens_, last_ = -1;
 };
 
+// ---- tool results -------------------------------------------------------------------
+struct ToolResult {
+  Json data;              // structured result (an object)
+  std::string error;      // non-empty: the call failed (isError result)
+  bool changed = false;   // wrote a file (project edits are detected from the undo stack)
+  std::string summary;    // for the activity log
+};
+
+// ---- background jobs (J-61) -----------------------------------------------------------
+// A long tool call (render, loudness analysis, export). The work only sees
+// what the tool prepared on the calling thread (a song snapshot, resolved
+// paths), never the Document.
+struct Job {
+  uint64_t id = 0;
+  std::string tool, title, client, protocol;
+  double started = 0;                  // Environment::clock()
+  std::atomic<double> progress{0};     // 0..1 (worker)
+  std::atomic<bool> cancel{false};     // set by the app's Cancel button / cancel_job
+  std::atomic<bool> done{false};       // the worker finished; `result` is valid
+  bool finalized = false;              // calling thread: logged, `reply` built
+  ToolResult result;
+  Json reply;                          // the tools/call result object, once finalized
+  std::string status() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return status_;
+  }
+  void setStatus(std::string s) {
+    std::lock_guard<std::mutex> lk(mu_);
+    status_ = std::move(s);
+  }
+
+ private:
+  mutable std::mutex mu_;
+  std::string status_;
+};
+using JobWork = std::function<ToolResult(Job&)>;
+
+class JobRunner {
+ public:
+  static constexpr size_t kMaxRunning = 4;   // more at once: the call is refused
+  static constexpr size_t kKeepFinished = 32;
+  JobRunner() = default;
+  JobRunner(const JobRunner&) = delete;
+  JobRunner& operator=(const JobRunner&) = delete;
+  ~JobRunner() { cancelAll(); }
+  // false (CLI, tests): the work runs inside the call, on the calling thread.
+  bool background = false;
+  // Asked per call when background: true = run this one on the calling thread
+  // (the app: hosted plugins whose offline instances need the main thread).
+  std::function<bool()> runInline;
+  bool useWorker() const { return background && !(runInline && runInline()); }
+  // Starts `work` on a worker thread; false when too many jobs are running.
+  bool start(const std::shared_ptr<Job>& job, JobWork work);
+  // Records a job that already ran inline (so get_job finds it).
+  void keep(const std::shared_ptr<Job>& job);
+  // Calling thread: joins finished workers and calls `finalize` once per job.
+  void poll(const std::function<void(Job&)>& finalize);
+  std::shared_ptr<Job> find(uint64_t id) const;
+  std::vector<std::shared_ptr<Job>> running() const;  // started, not finalized
+  uint64_t nextId() { return ++lastId_; }
+  void cancelAll();  // cancels and joins every worker
+
+ private:
+  struct Slot {
+    std::shared_ptr<Job> job;
+    std::thread worker;
+  };
+  std::vector<Slot> slots_;
+  uint64_t lastId_ = 0;
+};
+
 // ---- what the tools work on --------------------------------------------------------
 struct Environment {
   Environment(Document& d, script::ProjectHost& h) : doc(d), host(h) {}
@@ -126,6 +205,8 @@ struct Environment {
   std::function<void(const Activity&)> onActivity;
   // Clock (tests replace it).
   std::function<double()> now;
+  // Background jobs (renders, loudness, exports); the app sets background.
+  JobRunner jobs;
 
   Song snapshot() const { return songSnapshot ? songSnapshot() : doc.song(); }
   double clock() const;
@@ -141,12 +222,6 @@ bool resolveWritePath(const std::string& requested, const std::vector<std::strin
                       std::string& out, std::string& err);
 
 // ---- tools -----------------------------------------------------------------------
-struct ToolResult {
-  Json data;              // structured result (an object)
-  std::string error;      // non-empty: the call failed (isError result)
-  bool changed = false;   // wrote a file (project edits are detected from the undo stack)
-  std::string summary;    // for the activity log
-};
 
 struct Tool {
   std::string name, title, description;
@@ -156,6 +231,10 @@ struct Tool {
   bool destructive = false;
   bool grouped = true;    // false: the tool manages the undo stack itself (undo / redo)
   std::function<ToolResult(Environment&, const Json& args)> run;
+  // Job tools (J-61): prepares on the calling thread (snapshot, paths; "" +
+  // err when refused) and returns the work for a worker. `run` then runs
+  // both in one go.
+  std::function<JobWork(Environment&, const Json& args, std::string& err)> prepare;
 };
 
 // The tool catalogue (McpTools.cpp).
@@ -176,6 +255,12 @@ Json projectSummary(const Environment& env);
 // Built-in plugin catalogue as JSON (types, names, kinds, parameters, presets).
 Json pluginCatalogJson(const std::string& kind, const std::string& query, bool withParams);
 
+// Calling thread: finished jobs are logged (activity log, onActivity) and
+// their tools/call result is built. The HTTP endpoint calls it every poll.
+void pollJobs(Environment& env);
+// get_job's view of a job (state, progress, status, result once finished).
+Json jobJson(const Job& j);
+
 // ---- one protocol session -----------------------------------------------------------
 class Session {
  public:
@@ -191,6 +276,20 @@ class Session {
 
   static Json errorReply(const Json& id, int code, const std::string& message);
 
+  // Deferred replies (J-61): with deferral on, a tools/call that started a
+  // background job and waits for it answers nothing from handleJson; the
+  // transport takes the pending entry and sends the reply (and progress)
+  // when the job is finalized. Off (stdio, tests): such calls run inline.
+  struct Pending {
+    Json id;
+    std::shared_ptr<Job> job;
+    Json progressToken;  // null = the client asked for no progress
+  };
+  void setDeferral(bool on) { defer_ = on; }
+  std::vector<Pending> takePending() { return std::move(pending_); }
+  // The JSON-RPC reply of a finalized pending call.
+  static Json pendingReply(const Pending& p);
+
  private:
   Json handleOne(const Json& msg);
   Json dispatch(const std::string& method, const Json& params, bool& ok, int& code, std::string& msg);
@@ -199,6 +298,9 @@ class Session {
   bool initialized_ = false, gotInitialize_ = false;
   std::string protocol_ = kLatestProtocol;
   std::string client_ = "assistant";
+  bool defer_ = false;
+  std::shared_ptr<Job> deferred_;  // set by callTool for the current request
+  std::vector<Pending> pending_;
 };
 
 }  // namespace gl::mcp

@@ -529,7 +529,7 @@ bool menuShortcuts(App& a) {
   drawPrompt();
   // Track which editor Edit-menu commands go to.
   if (ImGuiWindow* nw = GImGui->NavWindow) {
-    const char* n = nw->RootWindow ? nw->RootWindow->Name : nw->Name;
+    const char* n = ui::stableWindowName(nw->RootWindow ? nw->RootWindow->Name : nw->Name);
     if (!std::strcmp(n, "Piano roll")) a.editFocus = App::EditFocus::Piano;
     else if (!std::strcmp(n, "Playlist")) a.editFocus = App::EditFocus::Playlist;
     else if (!std::strcmp(n, "Channel rack")) a.editFocus = App::EditFocus::Rack;
@@ -538,8 +538,9 @@ bool menuShortcuts(App& a) {
   ImGuiIO& io = ImGui::GetIO();
   ImGuiWindow* nav = GImGui->NavWindow;
   const char* focused = nav ? (nav->RootWindow ? nav->RootWindow->Name : nav->Name) : "";
-  const bool inPiano = !std::strcmp(focused, "Piano roll"), inPlaylist = !std::strcmp(focused, "Playlist");
-  const bool inRack = !std::strcmp(focused, "Channel rack"), inMixer = !std::strcmp(focused, "Mixer");
+  const char* focusedId = ui::stableWindowName(focused);  // J-61: titles are translated, ids are English
+  const bool inPiano = !std::strcmp(focusedId, "Piano roll"), inPlaylist = !std::strcmp(focusedId, "Playlist");
+  const bool inRack = !std::strcmp(focusedId, "Channel rack"), inMixer = !std::strcmp(focusedId, "Mixer");
   const bool inAuto = std::strstr(focused, "###autoedit") != nullptr;
   keys::setFocusContext(inPiano ? keys::Context::PianoRoll : inPlaylist ? keys::Context::Playlist : inRack ? keys::Context::ChannelRack
                         : inMixer ? keys::Context::Mixer : inAuto ? keys::Context::Automation : keys::Context::Global);

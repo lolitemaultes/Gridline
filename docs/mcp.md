@@ -18,7 +18,9 @@ Both speak the same protocol and offer the same tools, resources and prompts.
 * Every request to the app must carry the token shown in Settings > Integrations
   (`Authorization: Bearer <token>`). "New" makes a new token; clients with the old one are
   refused. Requests that name another host or come from a web page on another origin are refused
-  as well.
+  as well. The token is kept in the macOS Keychain (item "Gridline mcp-token") or, on Linux, in
+  `secrets/mcp-token` in Gridline's settings folder (readable by you only, mode 0600), not in
+  `settings.json`; a token from an older version is moved there on first use.
 * A second switch, "Allow assistants to change the project and write files", is also off by
   default. While it is off, assistants can read the project and measure loudness, but every tool
   that edits, renders to a file, exports or saves answers with an explanation instead.
@@ -176,6 +178,26 @@ Files (need the same switch; only inside the project and export folders):
 | `export_project` | MIDI (song or one pattern), FL Studio `.flp`, FL Studio zipped loop package |
 | `save_project` | save, or save as a new `.gridline.json` |
 
+Jobs (always allowed):
+
+| Tool | What it does |
+|---|---|
+| `get_job` | state (`running`, `done`, `failed`, `cancelled`), progress 0..1 and the result of a job |
+| `cancel_job` | stops a running job; nothing is written |
+
+### Renders and exports run in the background
+
+`analyze_loudness`, `render_audio` and `export_project` render from a snapshot of the song taken
+when the call arrives, on a worker thread: Gridline keeps responding, shows an "Assistant job"
+window with the progress and a Cancel button, and later edits do not change the render. By
+default the call waits and returns the result when the job is done. A client that sends a
+`progressToken` in the request's `_meta` (and accepts `text/event-stream`) receives
+`notifications/progress` while it waits; the stdio bridge passes them on. With `"wait": false`
+the call returns at once with `{"job": N, "state": "running"}`; poll `get_job` with that number
+and stop it with `cancel_job`. Up to four jobs run at once. Projects with hosted third-party
+plugins render on the main thread (their offline instances need it), so the window waits for
+those, as with File > Export. The headless server (`gridline mcp`) always works inside the call.
+
 ## Resources and prompts
 
 | URI | Content |
@@ -199,8 +221,9 @@ Prompts: `make_beat` (argument `style`, optional `bars`) and `review_mix`.
   fails (no such pattern, path refused, script error) returns a result with `isError: true` and
   the reason as text.
 * Tool results carry the data as JSON text and, from `2025-06-18` on, as `structuredContent`.
-* HTTP (in the app): `POST /mcp` with `Content-Length`, answered with `application/json`
-  (no event streams; `GET` answers 405). `initialize` returns an `Mcp-Session-Id` header that
+* HTTP (in the app): `POST /mcp` with `Content-Length`, answered with `application/json`;
+  a waiting job call with a `progressToken` is answered as `text/event-stream` (progress
+  notifications, then the reply) when the request accepts it. `GET` answers 405. `initialize` returns an `Mcp-Session-Id` header that
   later requests send back; `DELETE /mcp` ends the session. Missing or wrong token: 401;
   foreign `Host` or `Origin`: 403; unknown session: 404; body over 8 MB: 413.
 * The bridge finds the app through `mcp-endpoint.json` in Gridline's settings folder

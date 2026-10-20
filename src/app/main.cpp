@@ -39,6 +39,7 @@
 #include "J31Ui.h"
 #include "ScriptUi.h"
 #include "Theme.h"
+#include "Widgets.h"
 #include "Windows.h"
 #include "TrackModeUi.h"
 #include "ChopUi.h"
@@ -351,7 +352,7 @@ void keepFloatingInView(const char* name, ImVec2 pos, ImVec2 size) {
 bool hostsWindow(const ImGuiDockNode* node, const char* name) {
   if (!node) return false;
   for (ImGuiWindow* w : node->Windows)
-    if (w && std::strcmp(w->Name, name) == 0) return true;
+    if (w && std::strcmp(gl::ui::stableWindowName(w->Name), name) == 0) return true;  // J-61: translated titles
   return hostsWindow(node->ChildNodes[0], name) || hostsWindow(node->ChildNodes[1], name);
 }
 

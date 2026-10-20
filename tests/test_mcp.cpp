@@ -235,7 +235,7 @@ void protocolTests() {
   for (const char* must : {"get_song", "list_channels", "list_patterns", "get_pattern", "get_playlist", "get_mixer", "get_parameters", "get_automation",
                            "get_markers", "list_plugin_catalog", "list_presets", "set_song", "add_channel", "edit_channel", "set_notes", "set_steps",
                            "add_clip", "add_automation", "add_plugin", "remove_plugin", "set_parameter", "add_marker", "run_script", "render_audio",
-                           "analyze_loudness", "export_project", "save_project"})
+                           "analyze_loudness", "export_project", "save_project", "get_job", "cancel_job"})
     expect(std::count(seen.begin(), seen.end(), std::string(must)) == 1, (std::string("tool ") + must).c_str());
 
   // Resources.
@@ -596,6 +596,137 @@ void safetyTests() {
   }
 }
 
+// ================================================================ jobs ====
+// J-61: renders, loudness and exports run as background jobs in the app; the
+// calling thread (the UI loop) never waits for them.
+Json waitJob(Fixture& f, double id) {
+  Json j;
+  for (int i = 0; i < 6000; ++i) {
+    pollJobs(f.env);
+    j = Fixture::data(f.call("get_job", jobj({{"job", jnum(id)}})));
+    if (j.text("state") != "running") break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return j;
+}
+
+void jobTests() {
+  Fixture f("jobs");
+  f.env.allowEdits = true;
+  f.env.jobs.background = true;
+  // Deferred reply: the session answers nothing now, the transport later.
+  f.session.setDeferral(true);
+  Json m = jobj({{"jsonrpc", jstr("2.0")}, {"id", jnum(77)}, {"method", jstr("tools/call")},
+                 {"params", jobj({{"name", jstr("analyze_loudness")}, {"arguments", jobj({{"maxSeconds", jnum(3)}})},
+                                  {"_meta", jobj({{"progressToken", jstr("tok-1")}})}})}});
+  const auto t0 = std::chrono::steady_clock::now();
+  Json now = f.session.handleJson(m);
+  const double callMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  f.session.setDeferral(false);
+  auto pending = f.session.takePending();
+  expect(now.is(Json::Type::Null) && pending.size() == 1 && pending[0].job, "job: deferred tools/call answers later");
+  expect(pending.size() == 1 && pending[0].progressToken.str == "tok-1", "job: progress token kept");
+  std::printf("# analyze_loudness call returned in %.1f ms\n", callMs);
+  bool finalized = false;
+  for (int i = 0; i < 6000 && !pending.empty() && !finalized; ++i) {
+    pollJobs(f.env);
+    finalized = pending[0].job->finalized;
+    if (!finalized) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  expect(finalized, "job: finishes on a worker");
+  if (finalized) {
+    Json r = Session::pendingReply(pending[0]);
+    const Json* res = r.find("result");
+    expect(r.num("id") == 77 && res && Fixture::data(*res).find("lufs") && !Fixture::isError(*res), "job: reply carries the loudness");
+    expect(!f.env.log.entries().empty() && f.env.log.entries().back().tool == "analyze_loudness", "job: logged when finished");
+  }
+
+  // "wait": false returns a job number; get_job reports progress and the result.
+  Json h = Fixture::data(f.call("render_audio", jobj({{"path", jstr("jobs/a.wav")}, {"maxSeconds", jnum(2)}, {"wait", jbool(false)}})));
+  expect(h.num("job") > 0 && (h.text("state") == "running" || h.text("state") == "done"), "job: wait false returns a job number");
+  Json done = waitJob(f, h.num("job"));
+  expect(done.text("state") == "done" && done.find("result") && fs::exists(f.dir / "jobs" / "a.wav"), "job: get_job returns the render result");
+  expect(Fixture::isError(f.call("get_job", jobj({{"job", jnum(99999)}}))), "job: unknown job number refused");
+
+  // Cancel: nothing is written.
+  Json c = Fixture::data(f.call("render_audio", jobj({{"path", jstr("jobs/c.wav")}, {"maxSeconds", jnum(600)}, {"wait", jbool(false)}})));
+  f.call("cancel_job", jobj({{"job", c.find("job") ? *c.find("job") : jnum(0)}}));
+  Json cj = waitJob(f, c.num("job"));
+  expect(cj.text("state") == "cancelled" && !fs::exists(f.dir / "jobs" / "c.wav"), "job: cancel_job stops the render, no file");
+
+  // Hosted plugins (runInline): the work runs inside the call.
+  f.env.jobs.runInline = [] { return true; };
+  f.session.setDeferral(true);
+  Json in = f.session.handleJson(jobj({{"jsonrpc", jstr("2.0")}, {"id", jnum(5)}, {"method", jstr("tools/call")},
+                                       {"params", jobj({{"name", jstr("analyze_loudness")}, {"arguments", jobj({{"maxSeconds", jnum(1)}})}})}}));
+  f.session.setDeferral(false);
+  expect(f.session.takePending().empty() && in.find("result") && Fixture::data(*in.find("result")).find("lufs"), "job: inline when the app says so");
+  f.env.jobs.runInline = nullptr;
+
+  // Refused before starting: bad path, edits off.
+  expect(Fixture::isError(f.call("render_audio", jobj({{"path", jstr("../../x.wav")}, {"wait", jbool(false)}}))), "job: path checked before the job starts");
+  f.env.allowEdits = false;
+  expect(Fixture::isError(f.call("render_audio", jobj({{"path", jstr("x.wav")}}))), "job: edits off refuses renders");
+  f.env.allowEdits = true;
+
+  // Event stream parsing (attach bridge).
+  std::string buf;
+  auto ev = sseEvents(buf, "event: message\ndata: {\"a\":1}\n\nevent: message\r\ndata: {\"b\"");
+  expect(ev.size() == 1 && ev[0] == "{\"a\":1}", "sse: complete event split");
+  ev = sseEvents(buf, ":2}\r\n\r\n");
+  expect(ev.size() == 1 && ev[0] == "{\"b\":2}" && buf.empty(), "sse: event across chunks");
+}
+
+// The app's endpoint: a render over HTTP streams progress and never blocks a poll.
+void httpJobTests() {
+  Fixture f("httpjobs");
+  f.env.allowEdits = true;
+  f.env.jobs.background = true;
+  HttpEndpoint ep(f.env, "job-token-0123456789abcdef");
+  std::string err;
+  expect(ep.start(0, &err), "HTTP jobs: listening");
+  const int port = ep.port();
+  auto hdrs = [](const std::string& session, bool sse) {
+    std::vector<std::pair<std::string, std::string>> h = {{"Content-Type", "application/json"},
+                                                          {"Accept", sse ? "application/json, text/event-stream" : "application/json"},
+                                                          {"Authorization", "Bearer job-token-0123456789abcdef"}};
+    if (!session.empty()) h.push_back({"Mcp-Session-Id", session});
+    return h;
+  };
+  HttpReply init, streamed, plain;
+  std::vector<std::string> chunks;
+  double worstPollMs = 0;
+  std::atomic<bool> done{false};
+  std::thread client([&] {
+    httpRequest(port, "POST", "/mcp", hdrs("", false),
+                R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"job-test"}}})", init);
+    const std::string sid = init.headers.count("mcp-session-id") ? init.headers["mcp-session-id"] : "";
+    httpRequest(port, "POST", "/mcp", hdrs(sid, false), R"({"jsonrpc":"2.0","method":"notifications/initialized"})", plain);
+    httpRequest(port, "POST", "/mcp", hdrs(sid, true),
+                R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"render_audio","arguments":{"path":"s.wav","maxSeconds":20},"_meta":{"progressToken":7}}})",
+                streamed, nullptr, 120, [&](const std::string& c) { chunks.push_back(c); });
+    httpRequest(port, "POST", "/mcp", hdrs(sid, false),
+                R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"analyze_loudness","arguments":{"maxSeconds":2}}})", plain);
+    done = true;
+  });
+  const auto t0 = std::chrono::steady_clock::now();
+  while (!done && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(120)) {
+    const auto p0 = std::chrono::steady_clock::now();
+    ep.poll(0);
+    worstPollMs = std::max(worstPollMs, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - p0).count());
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  client.join();
+  std::printf("# worst endpoint poll while rendering: %.1f ms\n", worstPollMs);
+  expect(worstPollMs < 250, "HTTP jobs: polling never waits for the render");
+  expect(streamed.status == 200 && contains(streamed.headers["content-type"], "text/event-stream"), "HTTP jobs: event stream with a progress token");
+  expect(contains(streamed.body, "notifications/progress") && contains(streamed.body, "\"progressToken\":7"), "HTTP jobs: progress notifications");
+  expect(contains(streamed.body, "\"id\":2") && contains(streamed.body, "\"lufs\"") && fs::exists(f.dir / "s.wav"), "HTTP jobs: final reply in the stream");
+  expect(!chunks.empty(), "HTTP jobs: body delivered as it arrives");
+  expect(plain.status == 200 && contains(plain.headers["content-type"], "application/json") && contains(plain.body, "\"lufs\""),
+         "HTTP jobs: plain JSON reply without a progress token");
+}
+
 // =============================================================== HTTP ====
 struct Served {
   HttpEndpoint& ep;
@@ -820,6 +951,8 @@ int main() {
   pathTests();
   safetyTests();
   httpTests();
+  jobTests();
+  httpJobTests();
   cliTests();
   return finish();
 }

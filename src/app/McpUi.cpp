@@ -11,10 +11,13 @@
 #include "../core/Log.h"
 #include "../core/Mcp.h"
 #include "../core/McpTransport.h"
+#include "../core/PluginInfo.h"
 #include "../core/Presets.h"
 #include "../core/ProjectFiles.h"
+#include "../core/Secrets.h"
 #include "../host/PluginScan.h"
 #include "App.h"
+#include "ExportUi.h"
 #include "ScriptUi.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -37,6 +40,9 @@ struct State {
   bool showLog = false;
   bool revealToken = false;
   std::string endpointFile;
+  // J-61: the token lives in the Keychain / a private file, read once.
+  std::string token;
+  bool tokenStored = false;
 };
 State M;
 
@@ -74,18 +80,69 @@ void ensureEnv(App& a) {
   e.editsOffMessage =
       "Changes are switched off: the user can enable \"Allow assistants to change the project and write files\" in Gridline's "
       "Settings > Integrations.";
+  // J-61: renders, loudness and exports run on worker threads; projects with
+  // hosted plugins render on this thread (their offline instances need it).
+  e.jobs.background = true;
+  e.jobs.runInline = [&a] {
+    const Song& s = a.doc.song();
+    for (const auto& c : s.channels)
+      if (isHostedType(c.plugin.type)) return true;
+    for (const auto& m : s.mixer)
+      for (const auto& sl : m.slots)
+        if (isHostedType(sl.plugin.type)) return true;
+    return false;
+  };
   M.ep = std::make_unique<mcp::HttpEndpoint>(e, "");
   M.endpointFile = mcp::defaultEndpointFile();
 }
 
+// J-61: the token is kept in the Keychain (macOS) or a 0600 file in the
+// config folder; a token still in settings.json moves there on first use.
 std::string token(App& a) {
-  std::string t = a.settings.getString("mcp.token");
-  if (t.size() < 16) {
-    t = mcp::randomToken();
+  if (M.token.size() < 16) {
+    M.token = secrets::migrate(a.settings, "mcp.token", Settings::defaultPath(), secrets::Store{}, "mcp-token", [] { return mcp::randomToken(); },
+                               &M.tokenStored);
+    if (M.token.size() < 16) M.token = mcp::randomToken();
+  }
+  return M.token;
+}
+
+void newToken(App& a) {
+  const std::string t = mcp::randomToken();
+  std::string err;
+  M.tokenStored = secrets::Store{}.set("mcp-token", t, &err);
+  if (!M.tokenStored) {  // no store: keep it in the settings as before
+    logging::warning("mcp", "token kept in settings.json: " + err);
     a.settings.set("mcp.token", t);
     a.settings.save(Settings::defaultPath());
   }
-  return t;
+  M.token = t;
+}
+
+// Assistant renders / exports in progress (J-61): the render progress window's
+// layout, one window for all running jobs.
+void drawJobs(App& a) {
+  if (!M.env) return;
+  auto jobs = M.env->jobs.running();
+  if (jobs.empty()) return;
+  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  if (ImGui::Begin(tr("Assistant job###mcpjobs"), nullptr,
+                   ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
+    ui::KeepWindowInViewport();
+    for (size_t i = 0; i < jobs.size(); ++i) {
+      mcp::Job& j = *jobs[i];
+      ImGui::PushID(static_cast<int>(j.id));
+      if (i > 0) ImGui::Separator();
+      ImGui::TextColored(theme::vec(pal().textDim), "%s: %s", j.client.c_str(), j.title.c_str());
+      std::string st = j.status();
+      if (st.empty()) st = "Preparing";
+      if (j.cancel.load()) st = "Cancelling";
+      if (exportui::progressBody(st, j.progress.load(), false)) j.cancel.store(true);
+      ImGui::PopID();
+    }
+  }
+  ImGui::End();
+  (void)a;
 }
 
 std::string timeText(double t) {
@@ -118,6 +175,7 @@ std::string desktopConfig() {
 void tick(App& a) {
   if (!a.settings.getBool("mcp.enabled")) {
     if (M.ep && M.ep->running()) stopServer();
+    if (M.env) mcp::pollJobs(*M.env);  // jobs still finishing after the switch went off
     M.error.clear();
     return;
   }
@@ -154,9 +212,11 @@ void tick(App& a) {
   // An editor holding an undo group open (live script preview, a drag) keeps
   // requests waiting: an assistant step must never land inside the user's.
   if (M.ep->running() && a.doc.groupDepth() == 0) M.ep->poll(0);
+  else mcp::pollJobs(e);
 }
 
 void shutdown() {
+  if (M.env) M.env->jobs.cancelAll();  // assistant renders stop with the app
   stopServer();
   M.ep.reset();
   M.env.reset();
@@ -169,7 +229,7 @@ void statusLamp(App& a, ImDrawList* dl, float& rx, float ty, float fs) {
   if (!M.ep || !M.ep->running()) return;
   const auto& P = pal();
   const bool connected = M.ep->sessionCount() > 0;
-  const bool busy = M.env && M.env->log.lastTime() > 0 && M.env->clock() - M.env->log.lastTime() < 1.5;
+  const bool busy = M.env && ((M.env->log.lastTime() > 0 && M.env->clock() - M.env->log.lastTime() < 1.5) || !M.env->jobs.running().empty());
   const char* lbl = tr("AI");
   const float lw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, lbl).x;
   rx -= lw + 14 + theme::kS4;
@@ -231,11 +291,11 @@ void settingsPage(App& a, float fieldW) {
     ImGui::SameLine();
     if (ui::TextButton(tr("Copy"), false, 50, "Copy the token to the clipboard")) ImGui::SetClipboardText(tok.c_str());
     ImGui::SameLine();
-    if (ui::TextButton(tr("New"), false, 50, "Make a new token: assistants with the old one are refused")) {
-      st.set("mcp.token", mcp::randomToken());
-      st.save(Settings::defaultPath());
-    }
+    if (ui::TextButton(tr("New"), false, 50, "Make a new token: assistants with the old one are refused")) newToken(a);
   }
+  label("");
+  ImGui::TextColored(theme::vec(P.textFaint), "%s %s", tr("Token kept in:"),
+                     M.tokenStored ? tr(secrets::backendName(secrets::defaultBackend())) : tr("settings.json (no secure store)"));
   label("Export folder");
   {
     static char buf[1024];
@@ -273,6 +333,7 @@ void settingsPage(App& a, float fieldW) {
 }
 
 void drawActivityWindow(App& a) {
+  drawJobs(a);
   if (!M.showLog) return;
   const auto& P = pal();
   ImGui::SetNextWindowSize(ImVec2(640, 360), ImGuiCond_FirstUseEver);

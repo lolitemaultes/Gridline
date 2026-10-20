@@ -400,7 +400,7 @@ void drawRenderDialog(App& a) {
   const Song& song = a.doc.song();
   centerNext(ImVec2(780, 0));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin("Render###render", &dlg.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(i18n::tr("Render###render"), &dlg.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   ImGui::PopStyleVar();
   if (!vis) {
@@ -621,6 +621,17 @@ void drawRenderDialog(App& a) {
   ImGui::End();
 }
 
+}  // namespace
+
+bool progressBody(const std::string& status, double progress, bool escapeCancels) {
+  ImGui::TextUnformatted(i18n::trMessage(status).c_str());
+  ImGui::ProgressBar(static_cast<float>(std::clamp(progress, 0.0, 1.0)), ImVec2(440, 0));
+  ui::DialogFooter(96);
+  return ui::TextButton(i18n::tr("Cancel"), false, 96) || (escapeCancels && ImGui::IsKeyPressed(ImGuiKey_Escape));
+}
+
+namespace {
+
 void drawProgress(App& a) {
   finishJob(a);
   if (!job.running && !job.showSummary) return;
@@ -638,10 +649,7 @@ void drawProgress(App& a) {
         std::lock_guard<std::mutex> lk(job.mu);
         st = job.status;
       }
-      ImGui::TextUnformatted(st.c_str());
-      ImGui::ProgressBar(static_cast<float>(job.progress.load()), ImVec2(440, 0));
-      ui::DialogFooter(96);
-      if (ui::TextButton("Cancel", false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape)) job.cancel = true;
+      if (progressBody(st, job.progress.load())) job.cancel = true;
     } else {
       ExportOutcome o;
       {
@@ -675,7 +683,7 @@ void drawProgress(App& a) {
 void drawMidiImport(App& a) {
   if (!midiDlg.open) return;
   centerNext(ImVec2(460, 0));
-  bool vis = ImGui::Begin("Import MIDI data###midiimport", &midiDlg.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(i18n::tr("Import MIDI data###midiimport"), &midiDlg.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   if (vis) {
     const auto& P = pal();
@@ -760,7 +768,7 @@ void drawMidiImport(App& a) {
 void drawMissing(App& a) {
   if (!missing.open) return;
   centerNext(ImVec2(640, 420), ImVec2(480, 260));
-  bool vis = ImGui::Begin("Missing samples###missing", &missing.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(i18n::tr("Missing samples###missing"), &missing.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   if (vis) {
     const auto& P = pal();

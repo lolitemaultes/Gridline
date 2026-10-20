@@ -396,7 +396,7 @@ void drawPluginPicker(App& a) {
   dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + headH), P.surface900);
   dl->AddLine(ImVec2(wp.x, wp.y + headH), ImVec2(wp.x + ws.x, wp.y + headH), P.line);
   dl->AddRectFilled(ImVec2(wp.x + 16, wp.y + 16), ImVec2(wp.x + 19, wp.y + 36), P.hot);
-  dl->AddText(a.fontBold, theme::kFontTitle, ImVec2(wp.x + 28, wp.y + 11), P.text, "Plugin picker");
+  dl->AddText(a.fontBold, theme::kFontTitle, ImVec2(wp.x + 28, wp.y + 11), P.text, i18n::tr("Plugin picker"));
   // Collect.
   const host::PluginPrefs prefs = host::pluginPrefs();
   const browse::Query q = browse::parseQuery(S.search);

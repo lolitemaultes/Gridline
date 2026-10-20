@@ -1180,10 +1180,18 @@ ToolResult tRunScript(Environment& env, const Json& a) {
 }
 
 // ---------------------------------------------------------------- render ----
-bool renderBuffer(Environment& env, const Json& a, AudioBuffer& buf, int& sr, std::string& err) {
-  Song song = env.snapshot();
+// J-61: renders are jobs. RenderPlan is what the calling thread prepares (a
+// song snapshot, options); renderPlan runs on the worker with progress and
+// cancel from the job.
+struct RenderPlan {
+  Song song;
   RenderOptions opt;
-  sr = opt.sampleRate = static_cast<int>(argInt(a, "sampleRate", 44100));
+  double maxSec = 0;
+};
+bool planRender(Environment& env, const Json& a, RenderPlan& plan, std::string& err) {
+  Song song = env.snapshot();
+  RenderOptions& opt = plan.opt;
+  opt.sampleRate = static_cast<int>(argInt(a, "sampleRate", 44100));
   opt.tail = song.ppq * 2;
   const double maxSec = std::min(env.maxRenderSeconds, argNum(a, "maxSeconds", env.maxRenderSeconds));
   if (argStr(a, "scope", "song") == "pattern") {
@@ -1211,8 +1219,21 @@ bool renderBuffer(Environment& env, const Json& a, AudioBuffer& buf, int& sr, st
       }
     song.playlist = std::move(kept);
   }
-  buf = renderSong(song, opt);
-  const size_t maxFrames = static_cast<size_t>((maxSec + 10.0) * sr);
+  plan.song = std::move(song);
+  plan.maxSec = maxSec;
+  return true;
+}
+bool renderPlan(RenderPlan& plan, Job& job, double share, AudioBuffer& buf, std::string& err) {
+  const int sr = plan.opt.sampleRate;
+  job.setStatus("Rendering");
+  plan.opt.progress = [&job, share](double p) { job.progress.store(std::clamp(p, 0.0, 1.0) * share); };
+  plan.opt.cancel = &job.cancel;
+  buf = renderSong(plan.song, plan.opt);
+  if (job.cancel.load()) {
+    err = "cancelled in Gridline (nothing was written)";
+    return false;
+  }
+  const size_t maxFrames = static_cast<size_t>((plan.maxSec + 10.0) * sr);
   if (buf.frames > maxFrames) {  // pattern mode ignores the cap above: cut here
     AudioBuffer cut(buf.channels, maxFrames);
     for (size_t c = 0; c < buf.channels; ++c) std::copy(buf.plane(c), buf.plane(c) + maxFrames, cut.plane(c));
@@ -1248,68 +1269,96 @@ Json loudnessJson(const AudioBuffer& buf, int sr) {
   return j;
 }
 
-ToolResult tAnalyze(Environment& env, const Json& a) {
-  AudioBuffer buf;
-  int sr = 44100;
-  std::string err;
-  if (!renderBuffer(env, a, buf, sr, err)) return fail(err);
-  Json j = loudnessJson(buf, sr);
-  return ok(j, "loudness " + dump(j.object["lufs"]) + " LUFS, peak " + dump(j.object["peakDb"]) + " dB");
+JobWork pAnalyze(Environment& env, const Json& a, std::string& err) {
+  auto plan = std::make_shared<RenderPlan>();
+  if (!planRender(env, a, *plan, err)) return nullptr;
+  return [plan](Job& job) {
+    AudioBuffer buf;
+    std::string e;
+    if (!renderPlan(*plan, job, 0.95, buf, e)) return fail(e);
+    job.setStatus("Measuring loudness");
+    Json j = loudnessJson(buf, plan->opt.sampleRate);
+    return ok(j, "loudness " + dump(j.object["lufs"]) + " LUFS, peak " + dump(j.object["peakDb"]) + " dB");
+  };
 }
 
-ToolResult tRender(Environment& env, const Json& a) {
-  std::string path, err;
+JobWork pRender(Environment& env, const Json& a, std::string& err) {
+  std::string path;
   auto roots = env.writeRoots();
   if (!env.exportDir.empty() && roots.size() > 1) std::rotate(roots.begin(), roots.begin() + 1, roots.end());  // export folder first
-  if (!resolveWritePath(argStr(a, "path"), roots, {".wav"}, path, err)) return fail(err);
-  AudioBuffer buf;
-  int sr = 44100;
-  if (!renderBuffer(env, a, buf, sr, err)) return fail(err);
+  if (!resolveWritePath(argStr(a, "path"), roots, {".wav"}, path, err)) return nullptr;
+  auto plan = std::make_shared<RenderPlan>();
+  if (!planRender(env, a, *plan, err)) return nullptr;
   const int bits = static_cast<int>(argInt(a, "bits", 24));
-  if (!writeWav(path, buf, sr, bits)) return fail("cannot write " + path);
-  Json j = loudnessJson(buf, sr);
-  j.object["path"] = jstr(path);
-  j.object["bits"] = jnum(bits);
-  ToolResult r = ok(j, "rendered " + fs::path(path).filename().string() + " (" + dump(j.object["lufs"]) + " LUFS)");
-  r.changed = true;
-  return r;
+  return [plan, path, bits](Job& job) {
+    AudioBuffer buf;
+    std::string e;
+    if (!renderPlan(*plan, job, 0.9, buf, e)) return fail(e);
+    const int sr = plan->opt.sampleRate;
+    job.setStatus("Writing " + fs::path(path).filename().string());
+    if (!writeWav(path, buf, sr, bits)) return fail("cannot write " + path);
+    Json j = loudnessJson(buf, sr);
+    j.object["path"] = jstr(path);
+    j.object["bits"] = jnum(bits);
+    ToolResult r = ok(j, "rendered " + fs::path(path).filename().string() + " (" + dump(j.object["lufs"]) + " LUFS)");
+    r.changed = true;
+    return r;
+  };
 }
 
-ToolResult tExport(Environment& env, const Json& a) {
+JobWork pExport(Environment& env, const Json& a, std::string& err) {
   const std::string format = argStr(a, "format");
   const std::vector<std::string> exts = format == "midi" ? std::vector<std::string>{".mid", ".midi"} : format == "flp" ? std::vector<std::string>{".flp"} : std::vector<std::string>{".zip"};
-  std::string path, err;
+  std::string path;
   auto roots = env.writeRoots();
   if (!env.exportDir.empty() && roots.size() > 1) std::rotate(roots.begin(), roots.begin() + 1, roots.end());
-  if (!resolveWritePath(argStr(a, "path"), roots, exts, path, err)) return fail(err);
-  const Song song = env.snapshot();
-  if (format == "midi") {
-    MidiFileData m;
-    if (has(a, "pattern")) {
-      const Pattern* p = patternAt(song, argInt(a, "pattern"), err);
-      if (!p) return fail(err);
-      m = patternToMidi(song, p->id);
-    } else {
-      m = songToMidi(song);
-    }
-    if (m.tracks.empty()) return fail("no notes to export");
-    if (!writeMidiFile(path, m, &err)) return fail(err);
-  } else if (format == "flp") {
-    flp::ExportOptions opt;
-    opt.factoryData = env.factoryData.empty() ? flp::defaultFactoryData() : env.factoryData;
-    flp::ExportReport rep;
-    if (!flp::exportFlpFile(song, path, rep, opt, &err)) return fail(err);
-  } else {
-    flp::PackageOptions opt;
-    opt.flp.factoryData = env.factoryData.empty() ? flp::defaultFactoryData() : env.factoryData;
-    flp::PackageReport rep;
-    if (!flp::exportFlpZip(song, path, fs::path(path).stem().string(), opt, rep, &err)) return fail(err);
+  if (!resolveWritePath(argStr(a, "path"), roots, exts, path, err)) return nullptr;
+  auto song = std::make_shared<Song>(env.snapshot());
+  ObjectId pattern = kNoId;
+  if (format == "midi" && has(a, "pattern")) {
+    const Pattern* p = patternAt(*song, argInt(a, "pattern"), err);
+    if (!p) return nullptr;
+    pattern = p->id;
   }
-  std::error_code ec;
-  ToolResult r = ok(jobj({{"path", jstr(path)}, {"format", jstr(format)}, {"bytes", jnum(static_cast<double>(fs::file_size(path, ec)))}}),
-                    "exported " + fs::path(path).filename().string());
-  r.changed = true;
-  return r;
+  const std::string factory = env.factoryData.empty() ? flp::defaultFactoryData() : env.factoryData;
+  return [song, path, format, pattern, factory](Job& job) {
+    std::string e;
+    job.setStatus("Exporting " + fs::path(path).filename().string());
+    if (format == "midi") {
+      MidiFileData m = pattern != kNoId ? patternToMidi(*song, pattern) : songToMidi(*song);
+      if (m.tracks.empty()) return fail("no notes to export");
+      if (!writeMidiFile(path, m, &e)) return fail(e);
+    } else if (format == "flp") {
+      flp::ExportOptions opt;
+      opt.factoryData = factory;
+      flp::ExportReport rep;
+      if (!flp::exportFlpFile(*song, path, rep, opt, &e)) return fail(e);
+    } else {
+      flp::PackageOptions opt;
+      opt.flp.factoryData = factory;
+      flp::PackageReport rep;
+      if (!flp::exportFlpZip(*song, path, fs::path(path).stem().string(), opt, rep, &e)) return fail(e);
+    }
+    std::error_code ec;
+    ToolResult r = ok(jobj({{"path", jstr(path)}, {"format", jstr(format)}, {"bytes", jnum(static_cast<double>(fs::file_size(path, ec)))}}),
+                      "exported " + fs::path(path).filename().string());
+    r.changed = true;
+    return r;
+  };
+}
+
+ToolResult tGetJob(Environment& env, const Json& a) {
+  pollJobs(env);
+  auto j = env.jobs.find(static_cast<uint64_t>(argInt(a, "job")));
+  if (!j) return fail("no job " + std::to_string(argInt(a, "job")) + " (finished jobs are kept for a while only)");
+  return ok(jobJson(*j), "job " + std::to_string(j->id));
+}
+
+ToolResult tCancelJob(Environment& env, const Json& a) {
+  auto j = env.jobs.find(static_cast<uint64_t>(argInt(a, "job")));
+  if (!j) return fail("no job " + std::to_string(argInt(a, "job")));
+  if (!j->done.load()) j->cancel.store(true);
+  return ok(jobJson(*j), "cancel job " + std::to_string(j->id));
 }
 
 ToolResult tSave(Environment& env, const Json& a) {
@@ -1369,6 +1418,11 @@ std::vector<Tool> buildTools() {
     return v.back();
   };
   const Json noArgs = objSchema({});
+  // J-61: job tools wait for the result by default; "wait": false returns a job number.
+  auto withWait = [](std::vector<std::pair<std::string, Json>> p) {
+    p.push_back({"wait", boolP("Wait for the result (default true). false: return a job number at once and poll get_job")});
+    return p;
+  };
   Json noteItem = objSchema({{"start", numP("Start in beats from the pattern start", 0, 1e6)},
                              {"length", numP("Length in beats (default 1)", 0.0001, 1e6)},
                              {"pitch", intP("MIDI note number (60 = middle C)", 0, 127)},
@@ -1594,30 +1648,51 @@ std::vector<Tool> buildTools() {
   add("analyze_loudness", "analyse loudness",
       "Renders the song or a pattern in memory (no file) and measures integrated loudness (LUFS, BS.1770), sample peak, RMS, length "
       "and clipping.",
-      objSchema(renderArgs), true, tAnalyze);
+      objSchema(withWait(renderArgs)), true, nullptr)
+      .prepare = pAnalyze;
   {
     auto p = renderArgs;
     p.insert(p.begin(), {"path", strP("Output .wav, relative to the export folder (or the project folder)", 1024)});
     p.push_back({"bits", intEnumP("Bit depth (default 24)", {16, 24})});
-    add("render_audio", "render to WAV", "Renders the song or a pattern to a WAV file in the export or project folder and reports its loudness.",
-        objSchema(p, {"path"}), false, tRender)
-        .writesFiles = true;
+    Tool& t = add("render_audio", "render to WAV",
+                  "Renders the song or a pattern to a WAV file in the export or project folder and reports its loudness.",
+                  objSchema(withWait(p), {"path"}), false, nullptr);
+    t.writesFiles = true;
+    t.prepare = pRender;
   }
-  add("export_project", "export project",
-      "Exports MIDI (.mid, the song or one pattern), an FL Studio project (.flp) or an FL Studio zipped loop package (.zip) into the "
-      "export or project folder.",
-      objSchema({{"format", enumP("midi, flp or flp_zip", {"midi", "flp", "flp_zip"})},
-                 {"path", strP("Output file, relative to the export folder (or the project folder)", 1024)},
-                 {"pattern", intP("MIDI: only this pattern", 1, 999)}},
-                {"format", "path"}),
-      false, tExport)
-      .writesFiles = true;
+  {
+    Tool& t = add("export_project", "export project",
+                  "Exports MIDI (.mid, the song or one pattern), an FL Studio project (.flp) or an FL Studio zipped loop package (.zip) into the "
+                  "export or project folder.",
+                  objSchema(withWait({{"format", enumP("midi, flp or flp_zip", {"midi", "flp", "flp_zip"})},
+                                      {"path", strP("Output file, relative to the export folder (or the project folder)", 1024)},
+                                      {"pattern", intP("MIDI: only this pattern", 1, 999)}}),
+                            {"format", "path"}),
+                  false, nullptr);
+    t.writesFiles = true;
+    t.prepare = pExport;
+  }
+  add("get_job", "check a job",
+      "State (running, done, failed, cancelled), progress 0..1 and, once done, the result of a render, loudness analysis or export "
+      "started with \"wait\": false.",
+      objSchema({{"job", intP("Job number returned by the call", 1, 1e15)}}, {"job"}), true, tGetJob);
+  add("cancel_job", "cancel a job", "Stops a running render, loudness analysis or export (nothing is written).",
+      objSchema({{"job", intP("Job number returned by the call", 1, 1e15)}}, {"job"}), true, tCancelJob);
   add("save_project", "save project",
       "Saves the project to its file, or to a new .gridline.json path inside the project or export folder.",
       objSchema({{"path", strP("Save as this file (relative to the project folder)", 1024)}}), false, tSave)
       .writesFiles = true;
-  for (auto& t : v)
-    if (t.writesFiles) t.grouped = false;
+  for (auto& t : v) {
+    if (t.writesFiles || t.prepare) t.grouped = false;
+    if (t.prepare && !t.run)  // the same work inside the call (no worker)
+      t.run = [prep = t.prepare](Environment& env, const Json& args) {
+        std::string err;
+        JobWork w = prep(env, args, err);
+        if (!w) return fail(err);
+        Job job;
+        return w(job);
+      };
+  }
   return v;
 }
 

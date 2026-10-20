@@ -135,7 +135,7 @@ void drawRemoteDialog(App& a) {
   ImGui::SetNextWindowSize(ImVec2(560, 0), ImGuiCond_Always);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   bool open = true;
-  bool vis = ImGui::Begin("Remote control settings", &open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
+  bool vis = ImGui::Begin(ui::windowTitle("Remote control settings").c_str(), &open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
                                                                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
   ui::KeepWindowInViewport();
   ImGui::PopStyleVar();

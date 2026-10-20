@@ -3,15 +3,19 @@
 //   * stdio: newline-delimited JSON-RPC on stdin / stdout (`gridline mcp <project>`).
 //   * Streamable HTTP inside the app: POST /mcp on 127.0.0.1 only, every
 //     request must carry "Authorization: Bearer <token>"; Host and Origin
-//     headers must name the loopback host (DNS rebinding). Replies are plain
-//     application/json (no server-sent events); GET answers 405. Sessions:
-//     initialize returns an Mcp-Session-Id that later requests must send.
+//     headers must name the loopback host (DNS rebinding). Replies are
+//     application/json; a tools/call that runs a background job (J-61) is
+//     answered when the job finishes, as a text/event-stream with
+//     notifications/progress first when the request carries a progressToken
+//     and accepts event streams. GET answers 405. Sessions: initialize
+//     returns an Mcp-Session-Id that later requests must send.
 //   * attach bridge (`gridline mcp --attach`): a stdio server that forwards
 //     every message to the running app's HTTP endpoint, found through the
 //     endpoint file the app writes while the server runs (owner-only access).
 //
 // The HTTP server is polled from the caller's thread (the app's UI loop), so
-// tools run on the thread that owns the Document.
+// tools run on the thread that owns the Document; renders and exports run on
+// worker threads (Environment::jobs) and their replies are sent by later polls.
 #pragma once
 #include <cstdio>
 #include <functional>
@@ -49,6 +53,11 @@ class HttpServer {
     std::string contentType = "application/json";
     std::vector<std::pair<std::string, std::string>> headers;
     std::string body;
+    // Streamed / deferred reply (J-61): when set, the fields above are
+    // ignored; every poll calls it to append raw bytes (status line and
+    // headers first) and it returns true once everything is appended. The
+    // connection closes after that.
+    std::function<bool(std::string& out)> pump;
   };
   using Handler = std::function<Response(const Request&)>;
 
@@ -75,6 +84,8 @@ class HttpServer {
     std::string in, out;
     size_t sent = 0;
     double opened = 0;
+    std::function<bool(std::string&)> pump;  // streamed reply in progress
+    bool pumpDone = false;
   };
   void closeConn(size_t i);
   int fd_ = -1, port_ = 0;
@@ -89,8 +100,13 @@ struct HttpReply {
   std::map<std::string, std::string> headers;  // lower-case names
   std::string body;
 };
+// `onBody` (optional) receives the body as it arrives (event streams).
 bool httpRequest(int port, const std::string& method, const std::string& path, const std::vector<std::pair<std::string, std::string>>& headers,
-                 const std::string& body, HttpReply& reply, std::string* err = nullptr, int timeoutSeconds = 900);
+                 const std::string& body, HttpReply& reply, std::string* err = nullptr, int timeoutSeconds = 900,
+                 const std::function<void(const std::string& chunk)>& onBody = nullptr);
+// Splits text/event-stream data into the data payloads of complete events;
+// `buffer` keeps an unfinished event between calls.
+std::vector<std::string> sseEvents(std::string& buffer, const std::string& chunk);
 
 // ---- MCP over HTTP ------------------------------------------------------------------
 class HttpEndpoint {

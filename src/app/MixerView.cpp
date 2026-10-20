@@ -629,7 +629,7 @@ void drawRoutingOverview(App& a) {
   const auto& P = pal();
   const Song& s = a.doc.song();
   ImGui::SetNextWindowSize(ImVec2(760, 420), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Mixer routing###mixrouting", &v.showRouting, ImGuiWindowFlags_NoDocking)) {
+  if (!ImGui::Begin(i18n::tr("Mixer routing###mixrouting"), &v.showRouting, ImGuiWindowFlags_NoDocking)) {
     ImGui::End();
     return;
   }
@@ -1356,7 +1356,7 @@ void drawMixer(App& a) {
                       P.accent, ls.c_str());
         }
         theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(b0.x + 8, std::round(b0.y + (rowH - 2 - 13) * 0.5f) - 1), bw - 26 - latW,
-                            info ? (es.enabled ? P.text : P.textFaint) : P.textFaint, info ? info->name.c_str() : "Empty slot");
+                            info ? (es.enabled ? P.text : P.textFaint) : P.textFaint, info ? info->name.c_str() : i18n::tr("Empty slot"));
         ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(b0.x + bw - 11, b0.y + (rowH - 2) * 0.5f), 10, P.textFaint);
         ui::Hint(info ? "Click to replace \xC2\xB7 double-click to open \xC2\xB7 right-click for options \xC2\xB7 drag to reorder or onto another track (Ctrl copies)"
                       : "Click to insert an effect (or drop one from the browser)");

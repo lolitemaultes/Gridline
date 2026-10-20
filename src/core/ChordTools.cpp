@@ -84,6 +84,9 @@ const std::vector<Quality>& qualities() {
       {"Augmented 7th", "aug7", {0, 4, 8, 10}},
       {"Dominant 13th", "13", {0, 4, 7, 10, 14, 21}},
       {"Major 11th (#11)", "maj7#11", {0, 4, 7, 11, 18}},
+      // J-61: the diatonic seventh on III of harmonic / melodic minor and VI of
+      // phrygian dominant.
+      {"Augmented major 7th", "maj7#5", {0, 4, 8, 11}},
   };
   return q;
 }
@@ -137,8 +140,21 @@ Chord diatonicChord(int key, int scale, int degree, bool sevenths) {
   Chord c;
   c.root = mod12(key + base);
   int q = qualityOfClasses(rel);
-  if (q < 0) q = rel[1] == 3 ? 1 : 0;
-  c.quality = q;
+  if (q < 0 && sevenths) q = qualityOfClasses({rel[0], rel[1], rel[2]});  // the triad
+  if (q < 0) {
+    // No named chord for the stacked thirds: the richest quality whose notes
+    // all lie in the scale (never a chord with notes outside the key).
+    const auto st = sevenSteps(scale);
+    const auto& qs = qualities();
+    size_t best = 0;
+    for (size_t i = 0; i < qs.size(); ++i) {
+      if (std::string(qs[i].symbol) == "(8va)" || qs[i].steps.size() > (sevenths ? 4u : 3u)) continue;
+      bool ok = true;
+      for (int s : qs[i].steps) ok = ok && std::find(st.begin(), st.end(), mod12(base + s)) != st.end();
+      if (ok && (q < 0 || qs[i].steps.size() > best)) q = static_cast<int>(i), best = qs[i].steps.size();
+    }
+  }
+  c.quality = std::max(q, 0);
   return c;
 }
 
@@ -202,6 +218,7 @@ std::string normalizeSymbol(std::string s) {
       {"ø", "m7b5"}, {"ø7", "m7b5"}, {"m7-5", "m7b5"}, {"+", "aug"}, {"+7", "aug7"}, {"7+", "aug7"},
       {"sus", "sus4"}, {"7sus", "7sus4"}, {"mmaj7", "m(maj7)"}, {"mM7", "m(maj7)"}, {"6/9", "69"},
       {"add2", "add9"}, {"madd2", "madd9"}, {"M9", "maj9"}, {"min9", "m9"}, {"min11", "m11"}, {"min6", "m6"},
+      {"+M7", "maj7#5"}, {"augmaj7", "maj7#5"}, {"maj7+5", "maj7#5"}, {"M7#5", "maj7#5"},
   };
   for (const auto& [from, to] : alias)
     if (s == from) return to;

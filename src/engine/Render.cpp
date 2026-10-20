@@ -48,10 +48,17 @@ AudioBuffer renderSong(const Song& source, const RenderOptions& opt) {
   AudioBuffer out(static_cast<size_t>(opt.channels), static_cast<size_t>(total));
   std::vector<float> L(static_cast<size_t>(span)), R(static_cast<size_t>(span));
   int bs = std::clamp(opt.blockSize, 1, AudioEngine::kMaxBlock);
+  int64_t reported = 0;
   for (int64_t pos = 0; pos < span; pos += bs) {
+    if (opt.cancel && opt.cancel->load(std::memory_order_relaxed)) break;
     int n = static_cast<int>(std::min<int64_t>(bs, span - pos));
     eng.process(L.data() + pos, R.data() + pos, n);
+    if (opt.progress && pos - reported >= opt.sampleRate / 4) {  // four times per second of audio
+      reported = pos;
+      opt.progress(static_cast<double>(pos) / static_cast<double>(span));
+    }
   }
+  if (opt.progress) opt.progress(1.0);
   std::copy(L.begin() + lat, L.end(), out.plane(0));
   if (opt.channels > 1) std::copy(R.begin() + lat, R.end(), out.plane(1));
   return out;

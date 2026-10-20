@@ -107,7 +107,7 @@ void newProjectWindow(App& a) {
   const auto& P = pal();
   ui::PlaceNextDialog(ImVec2(820, 500), ImGuiCond_Appearing, ImVec2(680, 420));  // J-54: clamped to the screen
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin("New project###j24newproj", &a.showNewProject, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(i18n::tr("New project###j24newproj"), &a.showNewProject, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ImGui::PopStyleVar();
   if (!vis) {
     ImGui::End();
@@ -288,7 +288,7 @@ void saveTemplateWindow(App& a) {
   ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin("Save as template###j24savetpl", &a.showSaveTemplate,
+  bool vis = ImGui::Begin(i18n::tr("Save as template###j24savetpl"), &a.showSaveTemplate,
                           ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
   ImGui::PopStyleVar();
   if (!vis) {

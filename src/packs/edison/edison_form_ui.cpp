@@ -431,7 +431,7 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     lcd(F, dl, fm, 110, 103, 52, 17, b, C(col::LcdText));
     std::string name;
     if (s.slot) {
-      name = s.committed.empty() || s.committed[0] == '\x01' ? std::string("(empty)") : fs::path(s.committed).stem().string();
+      name = s.committed.empty() || s.committed[0] == '\x01' ? std::string(i18n::tr("(empty)")) : fs::path(s.committed).stem().string();
       const size_t dash = name.rfind('-');
       if (dash != std::string::npos && name.size() - dash == 13) name.resize(dash);  // drop the version hash
     } else {

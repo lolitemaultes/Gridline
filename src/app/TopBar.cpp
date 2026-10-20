@@ -444,9 +444,10 @@ float drawTopBar(App& a) {
     dl->AddText(a.fontMono, lf, ImVec2(p.x, p.y), P.textFaint, "OUT");
     ImGui::SetCursorScreenPos(ImVec2(p.x + labelW, p.y + 1));
     ui::Meter(ImGui::GetID("##master"), a.engine.masterPeakL(), a.engine.masterPeakR(), ImVec2(w - labelW, rowH - 2), false);
-    float load = std::clamp(a.engine.cpuLoad(), 0.0f, 9.99f);
+    // J-61: an overloaded engine reads as a full meter (100 %), never more.
+    const float load = std::clamp(a.engine.cpuLoad(), 0.0f, 1.0f);
     char cpu[16];
-    std::snprintf(cpu, sizeof cpu, "%.0f%%", load * 100.0f);
+    std::snprintf(cpu, sizeof cpu, "%d%%", CpuMeter::displayPercent(a.engine.cpuLoad()));
     const float y2 = p.y + rowH + 4;
     const ImU32 col = load > 0.8f ? P.danger : P.textDim;
     dl->AddText(a.fontMono, lf, ImVec2(p.x, y2), P.textFaint, "CPU");

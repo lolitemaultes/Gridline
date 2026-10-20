@@ -154,7 +154,11 @@ void i18nTests() {
             "msgid \"Open recent\"\nmsgstr \"\"\n\n"
             "msgid \"%d notes copied\"\nmsgstr \"%d Noten kopiert\"\n\n"
             "msgid \"Say \\\"hi\\\"\"\nmsgstr \"Sag \\\"hallo\\\"\"\n\n"
-            "msgid \"Long \"\n\"text\"\nmsgstr \"Langer \"\n\"Text\"\n");
+            "msgid \"Long \"\n\"text\"\nmsgstr \"Langer \"\n\"Text\"\n\n"
+            "msgid \"Playlist\"\nmsgstr \"Wiedergabeliste\"\n\n"
+            "msgid \"Export failed\"\nmsgstr \"Export fehlgeschlagen\"\n\n"
+            "msgid \"Saved\"\nmsgstr \"Gespeichert\"\n\n"
+            "msgid \"Render cancelled\"\nmsgstr \"Rendern abgebrochen\"\n");
   writeFile(dir / "fr.json", "{ \"name\": \"Fran\xC3\xA7" "ais\", \"strings\": { \"Save\": \"Enregistrer\", \"Undo\": \"\" } }");
   writeFile(dir / "gridline.pot", "msgid \"Save\"\nmsgstr \"\"\n");
   writeFile(dir / "broken.json", "{ nope");
@@ -183,6 +187,14 @@ void i18nTests() {
   expect(!std::strcmp(i18n::tr("Say \"hi\""), "Sag \"hallo\""), "po escapes");
   expect(!std::strcmp(i18n::tr("Long text"), "Langer Text"), "po multi-line strings");
   const char* kept = i18n::tr("Save");
+  // J-61: window titles keep a stable English id after "###" (ImGui hashes
+  // only what follows "###", so layouts and lookups by name still match).
+  expect(!std::strcmp(i18n::tr("Playlist###Playlist"), "Wiedergabeliste###Playlist"), "window title: translated label, stable ### id");
+  // Notifications built at run time.
+  expect(i18n::trMessage("Render cancelled") == "Rendern abgebrochen", "notify: whole message translated");
+  expect(i18n::trMessage("Export failed: disk full") == "Export fehlgeschlagen: disk full", "notify: leading part before ': ' translated");
+  expect(i18n::trMessage("Saved song.wav") == "Gespeichert song.wav", "notify: leading words translated");
+  expect(i18n::trMessage("Something else entirely") == "Something else entirely", "notify: unknown text unchanged");
 
   expect(i18n::setLanguage("fr", dir.string()) && !std::strcmp(i18n::tr("Save"), "Enregistrer"), "json lookup");
   expect(!std::strcmp(i18n::tr("Undo"), "Undo"), "json: empty translation falls back");
@@ -201,7 +213,9 @@ void i18nTests() {
          "pseudo: printf conversions and ids unchanged");
   expect(std::string(i18n::tr(i18n::tr("Mixer"))) == i18n::tr("Mixer"), "pseudo: translating twice changes nothing");
   expect(std::string(i18n::tr("##id")) == "##id", "pseudo: bare ids unchanged");
+  expect(i18n::trMessage("Saved x.wav").front() == '[', "pseudo: notifications go through the translation layer");
   i18n::setLanguage("en", dir.string());
+  expect(i18n::trMessage("Saved x.wav") == "Saved x.wav", "English: notifications unchanged");
   fs::remove_all(dir, ec);
 }
 
@@ -318,6 +332,30 @@ void coverageTests() {
   if (!missing.empty()) std::printf("# run: python3 tools/i18n_extract.py\n");
   expect(literals > 1000, "the sources route their text through tr() / N_()");
   expect(missing.empty(), "every tr() / N_() literal is in assets/i18n/gridline.pot");
+
+  // J-61: window titles, notifications and canvas labels reach the catalogue.
+  for (const char* must : {"Playlist", "Mixer", "Channel rack", "Piano roll", "Browser", "Master chain", "Live pads", "Undo history",
+                           "Settings", "Performance", "Render", "Render cancelled", "Export failed", "Empty slot", "Current project",
+                           "Plugin database", "Samples", "No recent projects"})
+    expect(ids.count(must) == 1, (std::string("in the template: ") + must).c_str());
+  // No window shows a title bar with a hard-coded English title.
+  std::vector<std::string> plainTitles;
+  for (const auto& e : fs::directory_iterator("src/app")) {
+    if (e.path().extension() != ".cpp") continue;
+    std::istringstream in(readFile(e.path().string()));
+    std::string line, prev;
+    std::vector<std::string> lines;
+    while (std::getline(in, line)) lines.push_back(line);
+    for (size_t i = 0; i < lines.size(); ++i) {
+      static const std::regex begin(R"(ImGui::Begin\("[A-Za-z])");
+      if (!std::regex_search(lines[i], begin)) continue;
+      const std::string call = lines[i] + (i + 1 < lines.size() ? lines[i + 1] : "");
+      if (call.find("NoDecoration") != std::string::npos || call.find("NoTitleBar") != std::string::npos) continue;
+      plainTitles.push_back(e.path().filename().string() + ":" + std::to_string(i + 1));
+    }
+  }
+  for (size_t i = 0; i < plainTitles.size() && i < 20; ++i) std::printf("# untranslated window title: %s\n", plainTitles[i].c_str());
+  expect(plainTitles.empty(), "window titles go through ui::windowTitle / i18n::tr");
   for (size_t i = 0; i < raw.size() && i < 20; ++i) std::printf("# hard-coded UI text: %s\n", raw[i].c_str());
   expect(raw.empty(), "no hard-coded English in menus, buttons, checkboxes, lists (wrap in i18n::tr)");
 

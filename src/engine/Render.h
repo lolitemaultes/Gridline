@@ -28,6 +28,10 @@ struct RenderOptions {
   ObjectId pattern = kNoId;  // pattern to render in pattern mode (one loop)
   int threads = 1;           // mixer graph threads (output is identical for any count)
   bool pdc = true;           // plugin delay compensation (off: paths are not aligned, nothing is skipped)
+  // J-61: progress (0..1, called from the rendering thread) and cancel flag
+  // (a cancelled render returns what was rendered so far, zero-padded).
+  std::function<void(double)> progress;
+  const std::atomic<bool>* cancel = nullptr;
 };
 
 // Renders the song (or one pattern) from the start, without looping.

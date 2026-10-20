@@ -30,6 +30,11 @@ const std::string& language();
 // languages' texts are kept), so a language change mid-frame is safe.
 const char* tr(const char* english);
 std::string pseudo(const std::string& english);
+// Messages built at run time (App::notify, J-61): the whole text when the
+// catalogue has it, else its longest leading part that the catalogue has and
+// that ends before ": " or a space ("Export failed: disk full", "Saved
+// x.wav"); the rest is kept as is.
+std::string trMessage(const std::string& text);
 
 // Marks a literal for the extractor without translating it here (arrays of
 // labels handed to widgets that translate, command tables, ...).

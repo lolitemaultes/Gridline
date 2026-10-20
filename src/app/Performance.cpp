@@ -59,7 +59,7 @@ void updatePerformance(App& a) {
 void drawPerformance(App& a) {
   if (!a.showPerformance) return;
   ImGui::SetNextWindowSize(ImVec2(440, 420), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Performance", &a.showPerformance)) {
+  if (!ImGui::Begin(ui::windowTitle("Performance").c_str(), &a.showPerformance)) {
     ImGui::End();
     return;
   }
@@ -78,7 +78,7 @@ void drawPerformance(App& a) {
   };
   char buf[96];
   const float load = a.engine.cpuLoad();
-  std::snprintf(buf, sizeof buf, "%.0f%%   peak %.0f%%", load * 100.0f, a.perf.cpuPeak * 100.0f);
+  std::snprintf(buf, sizeof buf, "%d%%   peak %.0f%%", CpuMeter::displayPercent(load), a.perf.cpuPeak * 100.0f);
   stat("Audio load", buf, std::max(load, a.perf.cpuPeak) > 0.8f ? P.danger : P.text);
   {  // load meter: segmented lamp bar (green, amber above 60 %, red above 85 %) with a peak tick
     ImGui::SetCursorPosX(150);
