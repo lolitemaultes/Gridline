@@ -695,6 +695,12 @@ Encoder dx10() {
     storeDefaults(w.b, "gl.fmduo", f(w.b));
     return w.b;
   };
+  // J-33: version 2 states carry the channel envelope / filter copy (PluginState::ins).
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    PluginMapping m;
+    if (b.size() < 460 || !decodeState("Fruity DX10", b, m, c) || m.state.ins == g.ins) return;
+    writeInsCopy(b, 96, 436, g.ins);
+  };
   return e;
 }
 

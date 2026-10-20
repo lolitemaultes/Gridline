@@ -109,8 +109,11 @@ PluginInfo scratch() {
 
 }  // namespace
 
+PluginInfo waveProgramInfo();  // dwave_info.cpp (J-33)
+
 void appendInfos(std::vector<PluginInfo>& v) {
   v.push_back(multisampler());
+  v.push_back(waveProgramInfo());
   v.push_back(scratch());
 }
 

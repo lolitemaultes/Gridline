@@ -217,8 +217,27 @@ void tallyPlugin(Context& c, const std::vector<Event>& evs, std::map<std::string
 
 }  // namespace
 
+bool isNativePresetFile(const std::string& path) {
+  std::string e = std::filesystem::path(path).extension().string();
+  std::transform(e.begin(), e.end(), e.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  return e == ".gmsynth" || e == ".mrp" || e == ".tbio" || e == ".flms";
+}
+
 void tallyFile(const std::string& path, FileKind kind, CoverageTally& t, const std::string& factoryData) {
   const bool preset = kind != FileKind::Project;
+  if (kind == FileKind::Preset && isNativePresetFile(path)) {  // the preset library converts these too
+    ++t.presets;
+    PresetResult r;
+    const bool ok = importFlPreset(path, r, factoryData);
+    PluginTally& pt = t.presetFiles[r.flPlugin.empty() ? "(" + (r.error.empty() ? std::string("unknown") : r.error) + ")" : r.flPlugin];
+    ++pt.uses;
+    if (ok) {
+      ++pt.mapped;
+      pt.exact += r.exact;
+      pt.types[r.state.type]++;
+    }
+    return;
+  }
   File f;
   std::string err;
   if (!readFile(path, f, &err)) {
@@ -290,6 +309,7 @@ CoverageFiles coverageFiles(const std::string& flRoot) {
   walk(data, ".flp", out.projects, false);
   const fs::path patches = data / "Patches";
   for (const char* sub : {"Plugin presets", "Channel presets", "Packs", "Mixer presets"}) walk(patches / sub, ".fst", out.presets, false);
+  for (const char* ext : {".gmsynth", ".mrp", ".tbio", ".flms"}) walk(patches / "Plugin presets", ext, out.presets, false);  // native formats
   walk(fs::path(flRoot) / "Plugins" / "Fruity", ".fst", out.presets, true);
   walk(patches / "Plugin database", ".fst", out.database, false);
   for (auto* v : {&out.projects, &out.presets, &out.database}) std::sort(v->begin(), v->end());

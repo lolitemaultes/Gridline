@@ -1315,9 +1315,15 @@ void editorScratch(App& a, const PluginTarget& t, float width) {
 
 }  // namespace
 
+void drawWaveProgramEditor(App& a, const PluginTarget& t, float width);  // dwave_ui.cpp (J-33)
+
 bool drawEditor(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());
   if (!st) return false;
+  if (st->type == "gl.waveprogram") {
+    drawWaveProgramEditor(a, t, width);
+    return true;
+  }
   if (st->type == "gl.multisampler") {
     editorDirectWave(a, t, width);
     return true;

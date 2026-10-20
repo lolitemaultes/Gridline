@@ -56,6 +56,8 @@ struct CoverageTally {
 enum class FileKind { Project, Preset, Database };
 // Adds one .flp (Project) or .fst (Preset, Database) to the tally.
 void tallyFile(const std::string& path, FileKind kind, CoverageTally& t, const std::string& factoryData = "");
+// Plugin-native preset files (.gmsynth, .mrp, .tbio): the state payload alone, no FLP events.
+bool isNativePresetFile(const std::string& path);
 // The files a coverage run reads under an FL Studio install folder (the one
 // holding Data/ and Plugins/): shipped projects, the preset library (the
 // folders `import-fl-presets` converts) and the plugin database.

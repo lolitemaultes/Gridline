@@ -158,7 +158,8 @@ inline void testPads() {
     for (int i = 0; i < 4; ++i) st.b[4 + static_cast<size_t>(i)] = static_cast<uint8_t>(size >> (8 * i));
     Run r;
     decode(r, "Drumaxx", st.b);
-    expect(r.ok && r.m.glType == "gl.membranekit" && r.m.exact, "drumaxx: decodes exactly to the membrane kit");
+    // J-33: the kit's voices are Gridline's modal membrane, so the import is reported as approximate.
+    expect(r.ok && r.m.glType == "gl.membranekit" && !r.m.exact, "drumaxx: decodes to the membrane kit (approximate voices)");
     expect(near(param(r, dr::kitPad(2, dr::KpVolume)), 0.25) && near(param(r, dr::kitPad(5, dr::KpKey)), 41) && near(param(r, dr::KmLevel), 0.6),
            "drumaxx: channel volume / key, master level at their tags");
     dr::KitData d;

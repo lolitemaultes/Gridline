@@ -1,6 +1,7 @@
 #include "../packs/Packs.h"
 #include "../host/HostedPlugins.h"
 #include "Generators.h"
+#include "ChannelIns.h"
 #include <cmath>
 #include <vector>
 #include "../core/PluginParams.h"
@@ -128,11 +129,16 @@ class SynthGen final : public Generator {
     float rnd = 0;
     double npL = 1, npR = 1, cutOct = 0, resoAdd = 0;  // per-note pan / mod X / mod Y
     PitchGlide slide;
+    InsVoice ins;            // channel instrument envelopes / filter (J-33)
+    double insX = 0, insY = 0;  // note mod X / Y for them
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     using namespace pp;
     sr_ = ctx.sampleRate;
+    insSet_ = aux.ins;
+    tempo_ = ctx.tempo, ppq_ = ctx.ppq;
+    tick0_ = ctx.tick, blockPos_ = 0;
     const int shapeP[3] = {SynOsc1Shape, SynOsc2Shape, SynOsc3Shape};
     custom_ = aux.sample(0);
     if (custom_ && custom_->frames() < 2) custom_ = nullptr;
@@ -212,6 +218,7 @@ class SynthGen final : public Generator {
       v.age = clock_;
       v.npL = v.npR = 1, v.cutOct = v.resoAdd = 0;
       v.slide = PitchGlide{};
+      if (!legato) v.ins.start(insSet_.get(), sr_, tempo_, ppq_, 0, 0, songTick());
       return;
     }
     Voice* pick = nullptr;
@@ -246,6 +253,7 @@ class SynthGen final : public Generator {
     v.amp.gate(true);
     v.fenv.level = 0;
     v.fenv.gate(true);
+    v.ins.start(insSet_.get(), sr_, tempo_, ppq_, 0, 0, songTick());
     lastPitch_ = pitch;
   }
 
@@ -258,6 +266,10 @@ class SynthGen final : public Generator {
         panGains(std::clamp(static_cast<double>(np.pan), -1.0, 1.0), v.npL, v.npR);
         v.cutOct = (np.modX - 0.5) * 8.0;
         v.resoAdd = np.modY - 0.5;
+        if (insSet_) {  // the channel filter takes the note's mod X / Y instead
+          v.cutOct = v.resoAdd = 0;
+          v.ins.start(insSet_.get(), sr_, tempo_, ppq_, np.modX - 0.5, np.modY - 0.5, songTick());
+        }
       }
   }
   void onGlide(uint32_t id, double pitch, double seconds) override {
@@ -268,18 +280,21 @@ class SynthGen final : public Generator {
       }
   }
 
+  void releaseVoice(Voice& v) {
+    v.held = false;
+    if (v.ins.active()) {
+      v.ins.release();
+      if (insSet_ && insSet_->volumeEnvelope()) return;  // the channel volume envelope ends the voice
+    }
+    v.amp.gate(false);
+  }
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
-      if (v.held && v.id == id) {
-        v.held = false;
-        v.amp.gate(false);
-      }
+      if (v.held && v.id == id) releaseVoice(v);
   }
   void onAllOff() override {
-    for (auto& v : voices_) {
-      v.held = false;
-      v.amp.gate(false);
-    }
+    for (auto& v : voices_)
+      if (v.held) releaseVoice(v);
   }
   void onKill() override {
     for (auto& v : voices_) v = Voice{};
@@ -388,6 +403,7 @@ class SynthGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    blockPos_ += n;  // (notes fired before this call already read the position)
     const double glideCoef = std::exp(-1.0 / std::max(1.0, glide_ * sr_ * 0.3));
     for (auto& v : voices_) {
       if (!v.amp.active()) continue;
@@ -405,6 +421,7 @@ class SynthGen final : public Generator {
           }
           v.lfo = lfo;
           double pitchMod = lfoTarget_ == 1 ? lfo * lfo * (lfo < 0 ? -12.0 : 12.0) : 0.0;
+          if (v.ins.active()) pitchMod += v.ins.pitchSemis();
           for (int sd = 0; sd < (stereo_ ? 2 : 1); ++sd)
             for (int k = 0; k < 3; ++k)
               v.dt[sd][k] = noteToHz(v.pitch + tune_[k] + pitchMod + (sd == 0 ? -detune_[k] : detune_[k])) / sr_;
@@ -440,6 +457,15 @@ class SynthGen final : public Generator {
           panGains(v.lfo, pl, pr);
           outs[0] *= pl, outs[1] *= pr;
         }
+        if (v.ins.active()) {
+          float il = static_cast<float>(outs[0]), ir = static_cast<float>(outs[1]);
+          v.ins.process(il, ir);
+          outs[0] = il, outs[1] = ir;
+          if (!v.held && v.ins.done()) {  // channel volume envelope finished
+            v.amp.stage = Adsr::Idle;
+            v.amp.level = 0;
+          }
+        }
         L[i] += static_cast<float>(outs[0] * v.npL);
         R[i] += static_cast<float>(outs[1] * v.npR);
         if (v.slide.active())
@@ -472,6 +498,11 @@ class SynthGen final : public Generator {
   uint64_t clock_ = 0;
   double lastPitch_ = -1;
   Noise rng_;
+  std::shared_ptr<const InsSettings> insSet_;
+  double tempo_ = 120, tick0_ = 0;
+  int ppq_ = 96;
+  int64_t blockPos_ = 0;
+  double songTick() const { return tick0_ + blockPos_ * tempo_ * ppq_ / (60.0 * sr_); }
 };
 
 // ---------------------------------------------------------------------------

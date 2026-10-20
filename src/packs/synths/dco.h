@@ -53,6 +53,7 @@ enum DcoParam {
   DcMxDst1 = DcMxSrc1 + 8,                       // 8 matrix destinations (choice, 0 = none)
   DcPanel = DcMxDst1 + 8,                        // 0 two-DCO panel, 1 classic one-DCO panel
   DcArpQuantize,                                 // classic panel option: first arpeggio step on the beat
+  DcModel,                                       // J-33: 0 = J-22 engine (older states), 1 = reference laws
   DcCount
 };
 static_assert(DcLfo1Rate == 48 && DcEnv1A == 61 && DcVolume == 72 && DcArpOn == 85 && DcEqOn == 100 &&

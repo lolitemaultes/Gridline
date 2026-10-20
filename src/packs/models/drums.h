@@ -39,7 +39,9 @@ const char* velDestName(int k);
 int velDestParam(int k);
 
 // ------------------------------------------------------------ Membrane Pad
-enum PadParam { PdModel = 0, PdOutput = MdCount, PdCount };  // PdOutput: the stored output level after the model
+// PdOutput: the stored output level after the model; PdEngine (J-33): 0 =
+// Gridline's modal model (J-22), 1 = the reference comb-bank engine (drums_ref.h).
+enum PadParam { PdModel = 0, PdOutput = MdCount, PdEngine, PdCount };
 
 // ------------------------------------------------------------ Membrane Kit
 inline constexpr int kKitPads = 16;

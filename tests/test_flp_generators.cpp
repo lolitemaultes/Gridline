@@ -7,9 +7,11 @@
 #include <vector>
 #include "../src/core/PluginParams.h"
 #include "../src/core/flp/Flp.h"
+#include "../src/engine/ChannelIns.h"
 #include "../src/engine/Render.h"
 #include "../src/packs/models/models.h"
 #include "../src/packs/modulation/modulation.h"
+#include "../src/packs/samplers/dwave.h"
 #include "../src/packs/samplers/samplers.h"
 #include "../src/packs/synths/synths.h"
 #include "../src/packs/synths/gms.h"
@@ -198,9 +200,14 @@ int main() {
     Env e2;
     flp::PluginMapping m2;
     expect(e2.run("3x Osc", pe, m2), "3x Osc with channel envelopes decodes");
-    expect(prm(m2.state, SynSustain) == 0 && prm(m2.state, SynDecay) > 0.05 && prm(m2.state, SynAttack) < 0.01, "channel volume envelope → amp ADSR");
-    expect(prm(m2.state, SynFilterType) == 2 && prm(m2.state, SynCutoff) < 5000 && prm(m2.state, SynFilterEnv) > 0.5, "channel filter + mod X envelope");
-    expect(!m2.exact && !e2.rep.warnings.empty(), "approximated channel settings are reported");
+    // J-33: the channel settings run as the instrument's channel envelopes / filter.
+    InsSettings ins;
+    expect(parseIns(m2.state.ins, ins) && ins.t[InsVol].on && ins.t[InsVol].decay == 20000 && ins.t[InsVol].release == 3000 && ins.t[InsVol].sustain == 0,
+           "channel volume envelope carried (raw)");
+    expect(ins.type == 2 && ins.cutoff == 128 && ins.reso == 64 && ins.t[InsModX].on && ins.t[InsModX].amount == 64 &&
+               prm(m2.state, SynCutoff) == 20000,
+           "channel filter + mod X envelope carried, Trio filter open");
+    expect(m2.exact, "carried channel settings are exact");
 
     // Old version (10: 20 parameters, no flags) still decodes.
     Bin old;
@@ -219,15 +226,14 @@ int main() {
     for (int v : k) b.i32(v);
     Env e;
     flp::PluginMapping m;
-    expect(e.run("FL Keys", Plug{name16("FL Keys"), b.b, {}, {}}, m) && m.glType == "gl.keys", "FL Keys → Keys");
-    using namespace pp;
-    expect(near(prm(m.state, KyHardness), 0.9) && near(prm(m.state, KyVelHardness), -1) && near(prm(m.state, KyMuffle), 20000, 1),
-           "FL Keys hardness / velocity / muffle");
-    expect(near(prm(m.state, KyStereo), 1) && near(prm(m.state, KyTune), 50) && near(prm(m.state, KyTreble), 12) && near(prm(m.state, KyDrive), 1),
-           "FL Keys stereo / tune / treble / overdrive");
-    expect(prm(m.state, KyModMode) == 0 && near(prm(m.state, KyTremDepth), 0.5) && prm(m.state, KyModel) == 4, "FL Keys tremolo + model (grand piano model)");
-    expect(m.param(11) == KyTreble && near(m.value(11, 0.0), -12), "FL Keys automation");
-    expect(renderPeak(m.state) > 0.01, "FL Keys import renders sound");
+    // J-33: FL Keys → Sample Keys (raw knob values, the sound set by name).
+    expect(e.run("FL Keys", Plug{name16("FL Keys"), b.b, {}, {}}, m) && m.glType == "gl.samplekeys", "FL Keys → Sample Keys");
+    expect(prm(m.state, 2) == 1000 && prm(m.state, 3) == -1000 && prm(m.state, 13) == 32768 && prm(m.state, 14) == 1000 &&
+               m.state.data == "Grand Piano",
+           "FL Keys raw knobs + sound set name");
+    expect(m.param(11) == 11 && near(m.value(11, 0.0), -1000), "FL Keys automation");
+    if (m.exact)  // the reference sound sets are installed
+      expect(renderPeak(m.state) > 0.01, "FL Keys import renders sound");
   }
   // ----------------------------------------------------------- MIDI Out
   {
@@ -297,14 +303,15 @@ int main() {
     st.i32(38).rec(6, Bin().zeros(16)).rec(1, prog).rec(1, empty);
     Env e;
     flp::PluginMapping m;
-    expect(e.run("DirectWave", Plug{name16("DirectWave"), st.b, {}, {}}, m) && m.glType == "gl.multisampler", "DirectWave → Multisampler");
-    auto map = packs::samplers::parseZoneMap(m.state.data);
-    expect(map.zones.size() == 2, "DirectWave zones");
-    if (map.zones.size() == 2) {
-      const auto &a = map.zones[0], &z = map.zones[1];
-      expect(a.root == 48 && a.lo == 0 && a.hi == 54 && near(a.gain, 0) && near(a.pan, 0) && a.path == "/tmp/a.wav", "DirectWave zone 1");
-      expect(z.root == 60 && z.lo == 55 && z.hi == 127 && near(z.gain, -6.02, 0.01) && near(z.pan, 1) && z.loop == packs::samplers::LoopForward &&
-                 z.loopStart == 100 && z.loopEnd == 900,
+    // J-33: DirectWave → Wave Program (the reference zone engine; zones kept with their raw values).
+    expect(e.run("DirectWave", Plug{name16("DirectWave"), st.b, {}, {}}, m) && m.glType == "gl.waveprogram", "DirectWave → Wave Program");
+    packs::samplers::dw::DwProgram wp;
+    expect(packs::samplers::dw::parseProgram(m.state.data, wp) && wp.zones.size() == 2, "DirectWave zones");
+    if (wp.zones.size() == 2) {
+      const auto &a = wp.zones[0], &z = wp.zones[1];
+      expect(a.root == 48 && a.lo == 0 && a.hi == 54 && near(a.gain, 1) && near(a.pan, 0.5) && a.path == "/tmp/a.wav", "DirectWave zone 1");
+      expect(z.root == 60 && z.lo == 55 && z.hi == 127 && near(z.gain, 0.5) && near(z.pan, 1) && z.loopMode == 2 && z.loopStart == 100 &&
+                 z.loopEnd == 900,
              "DirectWave zone 2 (gain, pan, loop)");
     }
   }

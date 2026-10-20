@@ -187,7 +187,7 @@ int main() {
       expect(o.finite && o.peak > 1e-3f && o.peak < 4.0f, std::string(type) + " preset '" + pr.name + "' sounds");
     }
   }
-  expect(findPlugin("gl.membranepad")->params.size() == PdCount, "pad: 39 params (FL tags 0..37 + output)");
+  expect(findPlugin("gl.membranepad")->params.size() == PdCount, "pad: 40 params (FL tags 0..37 + output + engine)");
   expect(findPlugin("gl.membranekit")->params.size() == KmCount, "kit: 720 params (FL tags 0..719)");
   expect(findPlugin("gl.kicksculpt")->params.size() == KsCount, "kick sculptor: 23 FL tags + noise sample");
   expect(findPlugin("gl.sweepkick")->params.size() == SkCount, "sweep kick: 6 FL tags + seed");
@@ -206,7 +206,10 @@ int main() {
     small.params[MdSize] = 0.1f;
     expect(zcr(hit(big), 2000, 8000) < zcr(hit(small), 2000, 8000), "pad: larger membrane is lower");
     // Keyboard pitch.
-    expect(zcr(hit(s, 72), 2000, 8000) > zcr(hit(s, 48), 2000, 8000), "pad: keyboard raises the pitch");
+    // (J-22 modal engine; the reference engine (J-33, test_j33) does not transpose by key.)
+    PluginState modal = s;
+    modal.params[PdEngine] = 0;
+    expect(zcr(hit(modal, 72), 2000, 8000) > zcr(hit(modal, 48), 2000, 8000), "pad: keyboard raises the pitch (modal engine)");
     // Pitch control.
     PluginState up = s, dn = s;
     up.params[MdPitch] = 1.0f;

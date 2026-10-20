@@ -52,6 +52,11 @@ inline Field i32(int gl, size_t offset, double lo, double hi) { return Field{gl,
 
 struct EncodeContext;
 
+// Writes PluginState::ins (engine/ChannelIns.h text; "" = neutral) into a
+// state's copy of the channel envelope records (5 × 68 bytes at envAt) and
+// filter levels (6 dwords at levAt: 0, 0, cutoff, resonance, 0, type) (J-33).
+void writeInsCopy(Bytes& b, size_t envAt, size_t levAt, const std::string& ins);
+
 struct Encoder {
   std::string flName;  // FL plugin name (event 201), as the decoder is registered
   std::string glType;  // Gridline type the decoder produces

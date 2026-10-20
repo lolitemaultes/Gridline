@@ -21,4 +21,5 @@ void registerDco(std::map<std::string, PluginDecoder>& d);      // FlpJ22Dco.cpp
 
 namespace gl::flp {
 void registerDecodersJ22(std::map<std::string, PluginDecoder>& d);  // FlpJ22.cpp
+void registerDecodersJ33(std::map<std::string, PluginDecoder>& d);  // FlpJ33.cpp
 }

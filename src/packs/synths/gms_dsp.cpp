@@ -662,7 +662,8 @@ class GmsGen final : public Generator {
       const int* lv = v.lv;
       const float g1 = static_cast<float>((1 - m2_) * (1 - m3_) * (1 - noise_)), g2 = static_cast<float>(m2_ * (1 - m3_) * (1 - noise_)),
                   g3 = static_cast<float>(m3_ * (1 - noise_)), gn = static_cast<float>(noise_);
-      const float norm = 1.0f / std::sqrt(static_cast<float>(uni_));
+      // Unison weight of the reference (J-33): 1 / (1 + 0.15·(N − 1)).
+      const float norm = 1.0f / (1.0f + 0.15f * static_cast<float>(uni_ - 1));
       for (int j = 0; j < len; ++j) {
         // Envelopes.
         switch (v.stage) {
@@ -776,11 +777,11 @@ class GmsGen final : public Generator {
         i0 += sub;
       }
       fx_.process(bl, br, len);
-      double gl, gr;
-      dsp::panGains(pan_, gl, gr);
+      // Output pan of the reference (J-33): L = (1 − p), R = p with p = 0..1, i.e. 0.5 per side at centre.
+      const double gl = std::clamp(0.5 * (1.0 - pan_), 0.0, 1.0), gr = std::clamp(0.5 * (1.0 + pan_), 0.0, 1.0);
       for (int i = 0; i < len; ++i) {
-        L[pos + i] += bl[i] * static_cast<float>(gl * 1.414);
-        R[pos + i] += br[i] * static_cast<float>(gr * 1.414);
+        L[pos + i] += bl[i] * static_cast<float>(gl);
+        R[pos + i] += br[i] * static_cast<float>(gr);
       }
     }
   }

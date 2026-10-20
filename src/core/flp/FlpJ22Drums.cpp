@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstring>
 #include "../../packs/models/drums.h"
+#include "FlpGen.h"
 #include "FlpGen2.h"
 #include "FlpJ22.h"
 
@@ -170,7 +171,11 @@ bool decodeDrumaxx(Context& c, const std::vector<Event>& events, PluginMapping& 
   }
   for (int k = 0; k < 32; ++k) d.link[k] = b.u8(kDxLinks + static_cast<size_t>(k));
   m.state.data = dr::encodeKitData(d);
-  m.exact = !junkUsed;  // out-of-range values only ever sit in unused ("...") channels
+  // J-33: the kit's voices still use Gridline's modal membrane (the reference
+  // drum engine is confirmed for Drumpad only, see drums_ref.h), so not exact.
+  (void)junkUsed;
+  m.exact = false;
+  gen::note(c, "Drumaxx", "drum voices use Gridline's modal membrane model");
   std::vector<gen2::Link> links;
   std::vector<RawRange> ranges;
   for (int p = 0; p < dr::kKitPads; ++p) {

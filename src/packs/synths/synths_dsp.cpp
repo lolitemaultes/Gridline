@@ -10,6 +10,15 @@ std::unique_ptr<Generator> createVaGenerator(const std::string& type);
 bool prepareVaAux(const PluginState& state, ChannelAux& aux);
 std::unique_ptr<Generator> createDcoGenerator(const std::string& type);
 bool prepareDcoAux(const PluginState& state, ChannelAux& aux);
+// J-33 group "hex" (hexsynth_dsp.cpp).
+std::unique_ptr<Generator> makeHexSynth();
+bool prepareHexAux(const PluginState& state, ChannelAux& aux);
+std::unique_ptr<Generator> makePocketSynth();  // pocket_dsp.cpp (J-33)
+bool preparePocketAux(const PluginState& state, ChannelAux& aux);
+std::unique_ptr<Generator> makePixelTone();  // pixel_dsp.cpp (J-33)
+std::unique_ptr<Generator> makeSampleKeys();  // samplekeys_dsp.cpp (J-33)
+bool prepareSampleKeysAux(const PluginState& state, ChannelAux& aux);
+bool preparePixelAux(const PluginState& state, ChannelAux& aux);
 
 std::unique_ptr<Generator> createGenerator(const std::string& type) {
   if (type == "gl.analog") return makeAnalog();
@@ -18,6 +27,10 @@ std::unique_ptr<Generator> createGenerator(const std::string& type) {
   if (type == "gl.gms") return makeGms();
   if (auto g = createVaGenerator(type)) return g;
   if (auto g = createDcoGenerator(type)) return g;
+  if (type == "gl.hexsynth") return makeHexSynth();
+  if (type == "gl.pocketsynth") return makePocketSynth();
+  if (type == "gl.pixeltone") return makePixelTone();
+  if (type == "gl.samplekeys") return makeSampleKeys();
   return nullptr;
 }
 
@@ -27,7 +40,9 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
 }
 
 bool prepareAux(const PluginState& state, ChannelAux& aux) {
-  if (prepareVaAux(state, aux) || prepareDcoAux(state, aux)) return true;
+  if (prepareVaAux(state, aux) || prepareDcoAux(state, aux) || prepareHexAux(state, aux) || preparePocketAux(state, aux) || preparePixelAux(state, aux) ||
+      prepareSampleKeysAux(state, aux))
+    return true;
   if (state.type == "gl.matrixfm") {
     aux.custom = mfm::buildMatrixFmAux(state);
     return true;

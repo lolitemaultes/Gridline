@@ -28,6 +28,7 @@ struct Decoded {
   bool ok = false;      // decoder accepted the state
   PluginState state;    // decoded Gridline state
   bool exact = false;
+  std::vector<std::string> notes;  // importer notes / warnings for this state
 };
 
 // Every shipped preset file of `plugin` (extensions: .fst plus `extra`).
@@ -57,6 +58,7 @@ inline std::vector<Decoded> decodePresets(const std::string& plugin, const std::
     d.ok = flp::importFlPreset(f, r, flData()) && r.kind == flp::PresetResult::Plugin;
     d.state = r.state;
     d.exact = r.exact;
+    d.notes = r.notes;
     v.push_back(std::move(d));
   }
   return v;
@@ -105,6 +107,7 @@ inline std::vector<Decoded> decodeProjects(const std::string& plugin) {
         normalizePluginState(d.state);
         d.exact = m.exact;
       }
+      d.notes = rep.warnings;
       v.push_back(std::move(d));
     }
   }

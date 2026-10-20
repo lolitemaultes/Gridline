@@ -117,11 +117,12 @@ inline void testSynthsB() {
     // a lone spectrum frame is not a program and is refused.
     expect(!r.ok, "Morphine: a fragment without programs is refused");
   }
-  // Toxic Biohazard + damaged / empty states never fail.
+  // Damaged / empty states never fail; Toxic Biohazard (J-33: Hex Synth, exact
+  // layout) refuses a truncated state instead of guessing.
   {
     Run r;
     decode(r, "Toxic Biohazard", {'S', 'S', 'L', 'F', 0, 0, 0, 0, '2', 'i', 'B', 'T'});
-    expect(r.ok && r.m.glType == "gl.analog", "Toxic Biohazard → gl.analog");
+    expect(!r.ok, "Toxic Biohazard: truncated state refused (J-33)");
     bool allOk = true;
     // (Kepler / SimSynth refuse truncated states since J-22: tests/packs/test_dco.cpp;
     //  Sakura likewise: tests/packs/test_strings.cpp.)

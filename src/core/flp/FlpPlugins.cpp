@@ -19,6 +19,7 @@ std::map<std::string, PluginDecoder>& decoders() {
     registerDecoders3(m);
     registerDecoders4(m);
     registerDecodersJ22(m);  // J-22: replaces earlier approximate instrument decoders
+    registerDecodersJ33(m);  // J-33: instrument exactness tier D
     registerWrapperDecoder(m);  // third-party plugins (FlpWrapper.cpp)
     return m;
   }();

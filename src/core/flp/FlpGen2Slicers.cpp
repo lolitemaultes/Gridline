@@ -258,31 +258,38 @@ bool decodeSlicex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   // Master level 0..16000 (12800 = unity), master pitch −1200..1200 cents,
   // modulation X / Y 0..512 (256 = centre).
   int32_t level = s.i32(0x0C), cents = s.i32(0x18);
-  set(m, SlVolume, std::clamp(level / 12800.0, 0.0, 1.0));
+  // Master level law (J-33): (11^(v/12800) − 1)/10 (12800 = unity).
+  set(m, SlVolume, std::clamp((std::pow(11.0, level / 12800.0) - 1.0) / 10.0, 0.0, 1.0));
   set(m, SlPitch, std::clamp(cents / 100.0, -24.0, 24.0));
   set(m, SlModX, std::clamp(s.i32(0x1C) / 512.0, 0.0, 1.0));
   set(m, SlModY, std::clamp(s.i32(0x20) / 512.0, 0.0, 1.0));
   set(m, SlBaseNote, 60);
   set(m, SlDeclick, 1);
-  // Per-region settings (17 × i32 from S + 0x190): volume [3] 0..16000 (8000 =
+  // Per-region settings (17 × i32 from S + 0x190): cut group [0], pan [2] ±6400, volume [3] 0..16000 (8000 =
   // unity), pan [4] ±6400, cutoff [6] / resonance [7] 0..256 (128 = neutral);
   // the articulator amounts / groups keep their defaults in every shipped file.
   bool regionsDefault = true;
   const uint32_t nReg = s.u32(p + 0x18C);
   for (uint32_t k = 0; k < nReg && k < static_cast<uint32_t>(kMaxSlices) && s.has(p + 0x190 + 68 * k, 68); ++k) {
     const size_t r = p + 0x190 + 68 * static_cast<size_t>(k);
-    const int vol = s.i32(r + 12), pan = s.i32(r + 16), cut = s.i32(r + 24), res = s.i32(r + 28);
+    const int vol = s.i32(r + 12), pan = s.i32(r + 8), cut = s.i32(r + 24), res = s.i32(r + 28);
     const int ik = static_cast<int>(k);
-    set(m, slParam(ik, SliceGain), vol > 0 ? std::clamp(20.0 * std::log10(vol / 8000.0), -24.0, 12.0) : -24.0);
+    // Region volume law (J-33): (3^(v/8000) − 1)/2 (8000 = unity, 16000 = ×4).
+    const double g = (std::pow(3.0, vol / 8000.0) - 1.0) / 2.0;
+    set(m, slParam(ik, SliceGain), g > 0 ? std::clamp(20.0 * std::log10(g), -24.0, 12.0) : -24.0);
     set(m, slParam(ik, SlicePan), std::clamp(pan / 6400.0, -1.0, 1.0));
-    set(m, slParam(ik, SliceCutoff), std::clamp((cut - 128.0) / 128.0, -1.0, 1.0));
-    set(m, slParam2(ik, SliceReso), std::clamp((res - 128.0) / 128.0, -1.0, 1.0));
+    // The region filter only runs when its articulator group's filter mode is
+    // on; every shipped group has it off, so the region cutoff stays neutral.
+    (void)cut, (void)res;
+    set(m, slParam(ik, SlicePitch), std::clamp(s.i32(r + 40) / 100.0, -12.0, 12.0));
+    set(m, slParam2(ik, SliceCut), std::clamp(s.i32(r + 0), 0, 99));
+    set(m, slParam2(ik, SliceDelay), std::clamp(s.i32(r + 52) / 12800.0 * 0.5, 0.0, 1.0));  // beats → s at 120 BPM
     static const int kDefault[17] = {0, 0, 0, 8000, 0, 12800, 128, 128, 0, 12800, 0, 0, 12800, 0, 0, 0, 12800};
     for (int f = 0; f < 17; ++f)
-      if (f != 3 && f != 4 && f != 6 && f != 7 && s.i32(r + 4 * static_cast<size_t>(f)) != kDefault[f]) regionsDefault = false;
+      if (f != 0 && f != 2 && f != 3 && f != 10 && f != 13 && s.i32(r + 4 * static_cast<size_t>(f)) != kDefault[f]) regionsDefault = false;
   }
   if (!regionsDefault) c.report.warn("Slicex: region articulator / delay settings are not imported");
-  linkParams(m, {{2, SlVolume, [](double n) { return std::min(1.0, n * 16000.0 / 12800.0); }},
+  linkParams(m, {{2, SlVolume, [](double n) { return std::clamp((std::pow(11.0, n * 16000.0 / 12800.0) - 1.0) / 10.0, 0.0, 1.0); }},
                  {5, SlPitch, [](double n) { return (-1200.0 + 2400.0 * n) / 100.0; }}},
              {{2, 0, 16000}, {5, -1200, 1200}});
   if (path.empty()) c.report.warn("Slicex: no sample found");

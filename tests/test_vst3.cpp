@@ -374,7 +374,7 @@ void testProjectAndRender() {
   // Project round trip keeps the hosted state; a missing plugin's slot is kept.
   Song s = d.song();
   s.channels.back().plugin.data = host::encodeState("abc", "def");
-  s.mixer[1].slots[1].plugin = PluginState{"vst3:00000000000000000000000000000000", {0.3f}, "vst3s1:YQ==:"};
+  s.mixer[1].slots[1].plugin = PluginState{"vst3:00000000000000000000000000000000", {0.3f}, "vst3s1:YQ==:", {}};
   Json j = songToJson(s);
   Song back;
   std::string err;

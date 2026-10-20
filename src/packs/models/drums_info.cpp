@@ -18,13 +18,13 @@ const char* const kVelDest[] = {"None",         "Mallet level", "Mallet decay", 
                                 "Membrane cut", "Tension",      "Strike phase", "Material",     "Size",         "Shape",
                                 "Low freq",     "Low reso",     "Sine freq",    "Sine decay",   "Sine level",   "Mid freq",
                                 "Mid level",    "Mid reso",     "Mid freq mod", "Mid level mod", "Mid attack",  "High freq",
-                                "High level",   "High reso",    "Lo-fi"};
+                                "High level",   "High reso",    "Lo-fi",        "Hold",         "Pitch"};
 const char* const kNoise[] = {"Evolving 1", "Evolving 2", "H-Freq Metal", "Hard Clap", "Lo-Fi Crunch", "Low Bit", "Metallic", "Soft Clap"};
 }  // namespace
 
 int velDestCount() { return static_cast<int>(sizeof kVelDest / sizeof kVelDest[0]); }
 const char* velDestName(int k) { return kVelDest[std::clamp(k, 0, velDestCount() - 1)]; }
-int velDestParam(int k) { return k <= 0 || k >= velDestCount() ? -1 : k + 1; }  // 1 = mallet level (model 2) … 26 = lo-fi (27)
+int velDestParam(int k) { return k <= 0 || k >= velDestCount() ? -1 : k + 1; }  // 1 = mallet level (model 2) … 28 = pitch (29)
 
 int kickNoiseCount() { return static_cast<int>(sizeof kNoise / sizeof kNoise[0]); }
 const char* kickNoiseName(int k) { return kNoise[std::clamp(k, 0, kickNoiseCount() - 1)]; }
@@ -162,6 +162,8 @@ PluginInfo membranePad() {
   p.params.resize(PdCount);
   modelParams(p.params, PdModel, "");
   p.params[PdOutput] = pct("Output", 1.0);
+  p.params[PdEngine] = ch("Engine", {"Modal (J-22)", "Reference"}, 1);
+  p.legacyModelParam = PdEngine;
   using V = std::vector<std::pair<int, float>>;
   auto preset = [&](const char* n, V v) { p.presets.push_back({n, std::move(v)}); };
   preset("Round Kick", {{MdMalletAmp, 0.62f}, {MdMalletDecay, 0.2f}, {MdMalletNoise, 0.3f}, {MdMemDecay, 0.92f}, {MdMemCutoff, 0.25f},

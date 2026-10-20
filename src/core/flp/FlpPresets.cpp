@@ -155,7 +155,8 @@ bool importPluginPreset(const File& f, Context& c, PresetResult& out) {
 }  // namespace
 
 // Native preset files that hold a plugin's state payload alone: .gmsynth =
-// groove-machine synth, .mrp = spectral morpher (J-22).
+// groove-machine synth, .mrp = spectral morpher (J-22), .tbio = six-operator
+// synth (J-33).
 static bool importNativePreset(const std::string& path, PresetResult& out, const std::string& factoryData, const char* flName);
 bool importGmsPreset(const std::string& path, PresetResult& out, const std::string& factoryData) {
   return importNativePreset(path, out, factoryData, "GMS");
@@ -206,6 +207,8 @@ bool importFlPreset(const std::string& path, PresetResult& out, const std::strin
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (ext == ".gmsynth") return importGmsPreset(path, out, factoryData);
     if (ext == ".mrp") return importNativePreset(path, out, factoryData, "Morphine");
+    if (ext == ".tbio") return importNativePreset(path, out, factoryData, "Toxic Biohazard");
+    if (ext == ".flms") return importNativePreset(path, out, factoryData, "MiniSynth");
   }
   File f;
   if (!readFile(path, f, &out.error)) return false;
@@ -259,7 +262,7 @@ PresetLibraryReport importPresetLibrary(const std::string& factoryData, const st
       if (!it->is_regular_file(ec)) continue;
       std::string ext = it->path().extension().string();
       std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-      if (ext != ".fst" && ext != ".gmsynth" && ext != ".mrp") continue;
+      if (ext != ".fst" && ext != ".gmsynth" && ext != ".mrp" && ext != ".tbio" && ext != ".flms") continue;
       fs::path rel = fs::relative(it->path().parent_path(), root, ec);
       fs::path kept;
       int i = 0;

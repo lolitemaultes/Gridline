@@ -16,6 +16,7 @@
 #include "models_rt.h"
 #include "strings.h"
 #include "strings_laws.h"
+#include "twinref.h"
 
 namespace gl::packs::models {
 
@@ -93,6 +94,7 @@ class TwinStringGen final : public Generator {
     for (int i = 0; i < 4; ++i) rev_[i].assign(static_cast<size_t>(192000 * 0.12) + 8, 0.0f);
   }
   bool active() const override {
+    if (ref_ && ref_->active()) return true;
     for (int i = 0; i < kVoices; ++i)
       if (v_[i].on) return true;
     return tail_ > 0;
@@ -130,6 +132,11 @@ class TwinStringGen final : public Generator {
     tempo_ = ctx.tempo > 0 ? ctx.tempo : 120.0;
     // Parameters (missing trailing ones keep the catalogue defaults cached at construction).
     for (size_t i = 0; i < static_cast<size_t>(TsCount); ++i) p_[i] = i < st.params.size() ? st.params[i] : def_[i];
+    useRef_ = st.params.size() > static_cast<size_t>(TsEngine) && st.params[TsEngine] >= 0.5f;
+    if (useRef_) {
+      if (!ref_) ref_ = std::make_unique<TwinRef>();
+      ref_->configure(p_.data(), sr_, tempo_);
+    }
     for (int i = 0; i < kVoices; ++i) {
       v_[i].amp.set(sr_, law::tsAttack(p(TsAmpA)), law::tsDecay(p(TsAmpD)), p(TsAmpS), law::tsRelease(p(TsAmpR)));
       v_[i].eg.set(sr_, law::tsAttack(p(TsEgA)), law::tsDecay(p(TsEgD)), p(TsEgS), law::tsRelease(p(TsEgR)));
@@ -272,6 +279,7 @@ class TwinStringGen final : public Generator {
   }
 
   void onNoteOn(uint32_t id, double pitch, float velocity) override {
+    if (useRef_) return ref_->noteOn(id, pitch, velocity);
     int slot = -1;
     for (int i = 0; i < kVoices; ++i)
       if (!v_[i].on) {
@@ -312,6 +320,7 @@ class TwinStringGen final : public Generator {
       for (int i = 1; i <= cl; ++i) comb[c * kLine + ((v.cw - i) & (kLine - 1))] = 0.0f;
   }
   void onNoteOff(uint32_t id) override {
+    if (ref_) ref_->noteOff(id);
     for (int i = 0; i < kVoices; ++i)
       if (v_[i].on && v_[i].held && v_[i].id == id) {
         v_[i].held = false;
@@ -326,11 +335,14 @@ class TwinStringGen final : public Generator {
     if (kind == 0xB0 && d1 == 1) modWheel_ = d2 / 127.0;
     if (kind == 0xE0) bend_ = std::clamp(((d2 << 7 | d1) - 8192) / 8192.0, -1.0, 1.0);
     if (kind == 0xD0) pressure_ = d1 / 127.0;
+    if (ref_) ref_->midi(modWheel_, bend_, pressure_);
   }
   void onAllOff() override {
+    if (ref_) ref_->allOff();
     for (int i = 0; i < kVoices; ++i) onNoteOff(v_[i].id);
   }
   void onKill() override {
+    if (ref_) ref_->kill();
     for (int i = 0; i < kVoices; ++i) v_[i].on = false;
     tail_ = 0;
     for (auto& b : res_) std::fill(b.begin(), b.end(), 0.0f);
@@ -340,6 +352,7 @@ class TwinStringGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    if (ref_) ref_->render(L, R, n);  // (rings out after a switch back to the J-22 engine)
     while (n > 0) {
       const int m = std::min(n, kChunk);
       renderChunk(L, R, m);
@@ -551,6 +564,8 @@ class TwinStringGen final : public Generator {
   int64_t tail_ = 0;
   double lfoPh_ = 0, lfoInc_ = 0, lfoOut_ = 0;
   double modWheel_ = 0, bend_ = 0, pressure_ = 0;
+  std::unique_ptr<TwinRef> ref_;
+  bool useRef_ = false;
   // Resonators.
   std::array<std::vector<float>, kTsRes> res_;
   bool resOn_[kTsRes] = {};

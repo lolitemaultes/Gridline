@@ -11,6 +11,7 @@
 #include <mutex>
 #include <set>
 #include <sstream>
+#include "../../engine/ChannelIns.h"
 
 namespace gl::flp::enc {
 
@@ -314,6 +315,20 @@ struct Solver {
 
 }  // namespace
 
+void writeInsCopy(Bytes& b, size_t envAt, size_t levAt, const std::string& ins) {
+  InsSettings st;
+  if (!ins.empty()) parseIns(ins, st);
+  for (int t = 0; t < InsTargets; ++t) {
+    const size_t r = envAt + 68 * static_cast<size_t>(t);
+    if (r + 68 > b.size()) break;
+    const InsTarget& x = st.t[t];
+    const int32_t v[17] = {x.flags,     x.on ? -1 : 0, x.predelay,   x.attack,     x.hold,     x.decay,    x.sustain,  x.release, x.amount,
+                           x.lfoDelay,  x.lfoAttack,   x.lfoAmount,  x.lfoSpeed,   x.lfoShape, x.tensionA, x.tensionD, x.tensionR};
+    for (int k = 0; k < 17; ++k) putI32(b, r + 4 * static_cast<size_t>(k), v[k]);
+  }
+  if (levAt + 24 <= b.size()) putI32(b, levAt + 8, st.cutoff), putI32(b, levAt + 12, st.reso), putI32(b, levAt + 20, st.type);
+}
+
 namespace {
 Result encodeWith(const Encoder* e, const PluginState& g, const std::string& originFlName, const Bytes* originState, const EncodeContext& ec);
 }  // namespace
@@ -361,7 +376,7 @@ Result encodeWith(const Encoder* e, const PluginState& g, const std::string& ori
   const bool decOk = decodeState(r.flName, t, m, ec);
   // Hosted plugins: the parameters mirror the state (data); compare type and data only.
   const bool hosted = isHostedType(g.type);
-  if (decOk && m.state.type == g.type && (hosted || m.state.params == g.params) && m.state.data == g.data) {
+  if (decOk && m.state.type == g.type && (hosted || m.state.params == g.params) && m.state.data == g.data && m.state.ins == g.ins) {
     r.state = t;
     r.hasState = !t.empty();
     r.quality = fromOrigin ? Result::Verbatim : (t.empty() ? Result::Defaults : Result::Exact);
@@ -405,7 +420,7 @@ Result encodeWith(const Encoder* e, const PluginState& g, const std::string& ori
   r.hasState = true;
   if (s.decode(fin)) {
     r.mismatched = fin.type != g.type ? std::vector<int>{-1} : hosted ? std::vector<int>{} : diffParams(fin, g);
-    r.dataMismatch = fin.data != g.data;
+    r.dataMismatch = fin.data != g.data || fin.ins != g.ins;  // J-33: channel envelopes / filter (PluginState::ins)
   } else {
     r.mismatched = {-1};
     r.note = "the encoded state does not decode";

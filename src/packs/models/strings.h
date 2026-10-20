@@ -37,7 +37,9 @@ enum TsParam {
   TsSpare = 78,                     // unused slot of the reference layout (kept for the identity map)
   TsMod1 = 79,                      // 8 × (source, amount, negative, destination)
   TsS2Ratio = TsMod1 + 4 * kTsMods, TsDlySync, TsTranspose,
-  TsCount
+  TsCount,
+  // Gridline-side (J-33): 0 = J-22 waveguide engine, 1 = reference engine (twinref.h).
+  TsEngine = TsCount, TsParamCount
 };
 enum TsModField { TmSource, TmAmount, TmNegative, TmDest, TmStride };
 inline constexpr int tsMod(int slot, int field) { return TsMod1 + slot * TmStride + field; }

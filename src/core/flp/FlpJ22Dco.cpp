@@ -57,14 +57,6 @@ using gen::ParamTable;
 void setp(PluginState& s, int idx, double v) { gen::setp(s, idx, v); }
 double clamp01(double v) { return std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 0.0; }
 
-// Channel envelopes / filter in use (FL applies them to native generators).
-bool channelShaping(const std::vector<Event>& evs, Bytes envCopy = {}, Bytes levelsCopy = {}) {
-  gen::ChanSettings cs = gen::channelSettings(evs, envCopy, levelsCopy);
-  bool used = !cs.filter.open();
-  for (const auto& e : cs.env) used = used || (e.enabled && e.amount != 0) || e.lfoOn();
-  return used;
-}
-
 // ------------------------------------------------------------------ DX10
 bool decodeDx10(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   const Event* ev = pluginState(evs);
@@ -80,9 +72,11 @@ bool decodeDx10(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   setp(s, dc::FdOctave, oct);
   m.glType = "gl.fmduo";
   m.state = s;
-  const bool shaped = v2 ? channelShaping(evs, b.sub(96, 5 * 68), b.sub(436, 24)) : channelShaping(evs);
-  m.exact = !shaped;
-  if (shaped) gen::note(c, "Fruity DX10", "channel envelope / filter (applied by FL to native generators) not carried");
+  // Channel envelopes / LFOs / filter run as the instrument's channel settings (J-33).
+  bool insExact = true;
+  m.state.ins = v2 ? gen::channelInsText(evs, b.sub(96, 5 * 68), b.sub(436, 24), &insExact) : gen::channelInsText(evs, {}, {}, &insExact);
+  m.exact = insExact;
+  if (!insExact) gen::note(c, "Fruity DX10", "panning envelope approximated");
   ParamTable t;
   for (int tag = 0; tag <= 20; ++tag) {
     t.lin(tag, tag, 0.0, 1.0);
@@ -322,8 +316,13 @@ bool decodeKeplerExo(Context& c, const std::vector<Event>& evs, PluginMapping& m
   if (extra > 4096 || at + 12 + extra != b.n) return false;
   m.glType = "gl.dcosynth";
   m.state = s;
-  m.exact = !lost;
+  // The reference effects run as analysed (J-33); feedback filter type 3
+  // ("off") reuses a filter object the analysis could not confirm, so it plays unfiltered.
+  auto on = [&](int t) { return s.params[static_cast<size_t>(t)] >= 0.5f; };
+  const bool dlyType3 = on(dc::DcDlyOn) && std::trunc(3.0 * s.params[static_cast<size_t>(dc::DcDlyFbType)] + 0.5) >= 3;
+  m.exact = !lost && !dlyType3;
   if (lost) gen::note(c, "Kepler Exo", "unknown modulation matrix source / destination dropped");
+  if (dlyType3) gen::note(c, "Kepler Exo", "delay feedback filter \"off\" path unconfirmed (plays unfiltered)");
   keplerLinks(m, false);
   return true;
 }

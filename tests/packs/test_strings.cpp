@@ -116,6 +116,8 @@ PluginState fresh(const char* type) {
   PluginState s;
   s.type = type;
   normalizePluginState(s);
+  // These tests cover the J-22 waveguide engine; the reference engine is tested in test_j33.
+  if (s.type == "gl.twinstring") s.params[TsEngine] = 0;
   return s;
 }
 const std::vector<Ev> kNote = {{0, true, 1, 57, 0.9f}, {22050, false, 1, 57, 0}};
@@ -134,7 +136,7 @@ void testCatalog() {
   const PluginInfo* ts = findPlugin("gl.twinstring");
   const PluginInfo* pk = findPlugin("gl.plucker");
   const PluginInfo* sb = findPlugin("gl.stepbass");
-  expect(ts && ts->params.size() == static_cast<size_t>(TsCount), "Twin String registered with 114 parameters (tag layout)");
+  expect(ts && ts->params.size() == static_cast<size_t>(TsParamCount), "Twin String registered with 115 parameters (tag layout + engine)");
   expect(pk && pk->params.size() == static_cast<size_t>(PkCount), "Plucker registered with 5 parameters");
   expect(sb && sb->params.size() == static_cast<size_t>(SbCount), "Step Bass registered");
   expect(ts && ts->presets.size() >= 2 && ts->presets.size() <= 6, "Twin String has 2-6 factory presets");
@@ -323,6 +325,7 @@ void testTwinStringRobust() {
   for (int ext = 0; ext < 2; ++ext) {
     PluginState s = fresh("gl.twinstring");
     for (size_t i = 0; i < s.params.size(); ++i) s.params[i] = static_cast<float>(ext ? info->params[i].max : info->params[i].min);
+    s.params[TsEngine] = 0;  // the J-22 engine (the reference engine: test_j33)
     std::vector<Ev> e;
     for (int k = 0; k < 20; ++k) e.push_back({k * 500, true, static_cast<uint32_t>(k + 1), 20.0 + 5 * k, 1.0f});
     Out o = render(s, e, 44100);
@@ -354,7 +357,7 @@ void testTwinStringRobust() {
     s.type = "gl.twinstring";
     s.params = {0.5f, 0.5f};
     normalizePluginState(s);
-    expect(s.params.size() == static_cast<size_t>(TsCount) && s.params[TsS1Decay] == static_cast<float>(info->params[TsS1Decay].def),
+    expect(s.params.size() == static_cast<size_t>(TsParamCount) && s.params[TsS1Decay] == static_cast<float>(info->params[TsS1Decay].def),
            "Twin String: short state normalises to defaults");
   }
   // Polyphony overflow (voice stealing) stays finite.
@@ -423,7 +426,9 @@ void testSakuraCorpus() {
     ++ok;
     exact += d.exact;
     Out o = render(d.state, {{0, true, 1, 60, 0.8f}, {13230, false, 1, 60, 0}}, 22050);
-    finite += o.finite && o.peak < 8.f;
+    // J-33: the reference engine's levels are the reference's (master 10^(4.8x − 1.8),
+    // string level 5): driven presets reach far above 0 dBFS, as in the reference.
+    finite += o.finite && o.peak < 1000.f;
     audible += o.finite && o.peak > 1e-3f;
     if (std::getenv("GL_STR_PEAKS")) std::printf("#  %-40s peak %.4f\n", d.where.c_str(), static_cast<double>(o.peak));
   }

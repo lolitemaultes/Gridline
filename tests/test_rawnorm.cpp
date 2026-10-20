@@ -101,9 +101,20 @@ void testInstruments() {
     rec(s, 1, prog.b);
     Run r;
     decode(r, "DirectWave", s.b);
-    expect(r.ok && r.m.glType == "gl.multisampler", "DirectWave: decoded");
-    expect(r.m.param(32) == smp::MsAttack && r.m.param(34) == smp::MsSustain && r.m.param(31) == -1, "DirectWave: amp envelope linked");
-    expect(near(rn(r, 32, 500), 0.5) && near(rn(r, 34, 1000), 0.5) && near(glValue(r, 34, 1000), 1.0), "DirectWave: ranges, sustain 1000 = full");
+    // J-33: DirectWave → Wave Program reads the chunked bank (versions 36..38);
+    // the legacy raw-struct format (< 36, never shipped) is refused.
+    expect(!r.ok, "DirectWave: legacy (< 36) state refused");
+    Bytes s38;
+    s38.u32(38);
+    std::vector<uint8_t> hdr(30, 0);
+    Bytes prog38;
+    rec(prog38, 100, hdr);
+    rec(prog38, 3, zone.b);
+    rec(s38, 1, prog38.b);
+    Run r38;
+    decode(r38, "DirectWave", s38.b);
+    expect(r38.ok && r38.m.glType == "gl.waveprogram", "DirectWave: decoded");
+    expect(r38.m.param(0) == 0 && r38.m.param(15) == 15, "DirectWave: program tags 1:1");
   }
   {  // Kepler (second wave): sliders 0..6000, volume 0..65536.
     std::vector<float> t(36, 0.0f);

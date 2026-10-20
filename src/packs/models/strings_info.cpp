@@ -26,7 +26,7 @@ using Ov = std::vector<std::pair<int, float>>;
 PluginInfo twinString() {
   PluginInfo p{"gl.twinstring", "Twin String", "Synth", PluginKind::Generator, {}, false, {}};
   auto& q = p.params;
-  q.resize(TsCount);
+  q.resize(TsParamCount);
   q[TsLevel] = pct("Level", 0.353);
   q[TsTune] = lin("Fine tune", "", 0, 1, 0.5);
   q[TsAmpA] = pct("Amp attack", 0);
@@ -130,6 +130,9 @@ PluginInfo twinString() {
       {"Muted bass", {{TsLevel, 0.6f}, {TsTranspose, 2.f}, {TsHiCut, 0.4f}, {TsHiDec, 0.1f}, {TsS1Decay, 0.6f}, {TsS1Damp, 0.75f},
                       {TsS1DampOfs, 0.05f}, {TsSaturation, 0.2f}, {TsAmpR, 0.1f}}},
   };
+  q[TsEngine] = ch("Engine", {"Waveguide (J-22)", "Reference"}, 1);
+  for (auto& pr : p.presets) pr.values.push_back({TsEngine, 0.f});  // voiced for the waveguide engine
+  p.legacyModelParam = TsEngine;
   p.editorWidth = 900;
   return p;
 }

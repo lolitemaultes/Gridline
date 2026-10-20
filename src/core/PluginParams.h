@@ -103,7 +103,7 @@ enum PadLayerMode { LayerStack, LayerCycle, LayerCycleBack, LayerRandom, LayerRa
 inline constexpr int padLayerSample(int pad, int layer) { return layer == 0 ? pad : kPads + pad * (kPadLayers - 1) + (layer - 1); }
 // J-2: bank B (pads 17..32) — one block per pad after bank A with the same
 // fields (pad, extension, 4 layers). Use padP / padE / padL for any of the 32
-// pads. Layers 5..32 of a pad, pad names / colours and the volume / pan
+// pads. Layers 5..64 of a pad, pad names / colours and the volume / pan
 // envelopes live in PluginState::data (see Slicing.h).
 inline constexpr int kPadsAll = 32;
 inline constexpr int PadsBankBBase = PadLayerBase + kPads * kPadLayers * LayFields;
@@ -116,7 +116,7 @@ inline constexpr int padL(int pad, int layer, int field) {
   return pad < kPads ? padLayer(pad, layer, field) : PadsBankBBase + (pad - kPads) * kPadBlockB + PadFields + PadExtFields + layer * LayFields + field;
 }
 inline constexpr int PadsCount = PadsBankBBase + kPads * kPadBlockB;
-inline constexpr int kPadMaxLayers = 32;
+inline constexpr int kPadMaxLayers = 64;  // J-33: shipped kits use up to 64 layers on a pad
 // Aux sample slot of any pad / layer (bank A layers 1..4 keep their old slots).
 inline constexpr int padLayerSampleX(int pad, int layer) {
   return pad < kPads && layer < kPadLayers ? padLayerSample(pad, layer) : kPads * kPadLayers + pad * kPadMaxLayers + layer;
@@ -195,7 +195,7 @@ enum MidiOut {
   MoKnobs
 };
 enum MoKnobField { MoKnobValue, MoKnobType, MoKnobNumber, MoKnobMin, MoKnobMax, MoKnobChannel, MoKnobFields };
-inline constexpr int kMoKnobs = 8;
+inline constexpr int kMoKnobs = 72;  // J-33: the reference keeps up to 72 controllers (values 0x22..0x142)
 inline constexpr int moKnob(int k, int field) { return MoKnobs + k * MoKnobFields + field; }
 inline constexpr int MoCount = MoKnobs + kMoKnobs * MoKnobFields;
 

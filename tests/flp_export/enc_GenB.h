@@ -123,9 +123,9 @@ inline void testEncGenB() {
 
   // ---- MiniSynth: 43 floats after "0rev".
   {
-    expect(defaultsDecode("MiniSynth", "gl.synth"), "MiniSynth: defaults decode");
+    expect(defaultsDecode("MiniSynth", "gl.pocketsynth"), "MiniSynth: defaults decode");
     gl::PluginState g;
-    bool ok = genbEdited("MiniSynth", "gl.synth", [](Bytes& b) {
+    bool ok = genbEdited("MiniSynth", "gl.pocketsynth", [](Bytes& b) {
       const size_t at = 4 + std::string(b.begin(), b.end()).find("0rev");
       putF32(b, at + 4 * 5, 7.0f / 9.0f);  // spread saw (fifth)
       putF32(b, at + 4 * 6, 0.3f);         // osc mod
@@ -142,24 +142,22 @@ inline void testEncGenB() {
 
   // ---- BeepMap: tag words + the canvas as a bitmap.
   {
-    expect(defaultsDecode("BeepMap", "gl.imagesynth"), "BeepMap: defaults decode");
+    // J-33: BeepMap → Pixel Tone (raw controls, the picture as RGB text).
+    expect(defaultsDecode("BeepMap", "gl.pixeltone"), "BeepMap: defaults decode");
     gl::PluginState g;
-    bool ok = genbEdited("BeepMap", "gl.imagesynth", [](Bytes& b) { putI32(b, 4, 4800), putI32(b, 12, 2), putI32(b, 20, 1); }, g);
-    std::vector<uint8_t> px(static_cast<size_t>(md::kCanvasW * md::kCanvasH), 0);
-    for (int x = 0; x < md::kCanvasW; ++x) px[static_cast<size_t>((x % md::kCanvasH) * md::kCanvasW + x)] = static_cast<uint8_t>(x % 16);
-    g.data = md::makeImageData("", md::encodeCanvas(px));
-    g.params[md::ImPixel] = 0.12f;  // longer than a 64-pixel picture can reach
-    expect(ok && nativeRoundTrip("BeepMap", g), "BeepMap: a drawn canvas and a long pixel time encode back exactly");
+    bool ok = genbEdited("BeepMap", "gl.pixeltone", [](Bytes& b) { putI32(b, 4, 4800), putI32(b, 12, 2), putI32(b, 20, 1); }, g);
+    std::string pic = "P 8 4\n";
+    for (int y = 0; y < 4; ++y) {
+      for (int x = 0; x < 8; ++x) pic += (x / 2 == y) ? "FF8000" : "000000";
+      pic += "\n";
+    }
+    g.data = pic;
+    expect(ok && nativeRoundTrip("BeepMap", g), "BeepMap: a picture and edited controls encode back exactly");
     genbCorpus("BeepMap", "BeepMap", 0);
   }
 
-  // ---- Toxic Biohazard: not decoded, so no state is written (FL defaults).
-  {
-    gl::flp::PluginMapping m;
-    expect(enc::decodeState("Toxic Biohazard", {}, m, ctx()), "Toxic Biohazard: an empty state decodes");
-    enc::Result r = enc::encode(m.state, "Toxic Biohazard", nullptr, ctx());
-    expect(r.quality == enc::Result::Defaults && !r.hasState, "Toxic Biohazard: written with FL's defaults");
-  }
+  // ---- Toxic Biohazard → Hex Synth (J-33): imported states round trip verbatim.
+  genbCorpus("Toxic Biohazard", "Toxic Biohazard", 1000);
 
   // ---- DrumSynth Live: selected key + 16 patches (joint search of coupled values).
   {
@@ -215,8 +213,9 @@ inline void testEncGenB() {
     bool ok = genbDecode("Slicex", w.b, "gl.slicer", g);
     g.params[pp::slMarker(1)] = 0.25f, g.params[pp::slMarker(2)] = 0.6f;
     g.params[pp::slParam2(1, pp::SliceEnd)] = 0.5f;
-    g.params[pp::slParam(2, pp::SliceGain)] = static_cast<float>(20.0 * std::log10(4000.0 / 8000.0)),  // volume 4000 g.params[pp::slParam(1, pp::SlicePan)] = 0.5f;
-    g.params[pp::SlVolume] = 0.5f;
+    // J-33 laws: region (3^(v/8000) − 1)/2 → volume 4000; master (11^(v/12800) − 1)/10 → 6400.
+    g.params[pp::slParam(2, pp::SliceGain)] = static_cast<float>(20.0 * std::log10((std::pow(3.0, 4000.0 / 8000.0) - 1.0) / 2.0));
+    g.params[pp::SlVolume] = static_cast<float>(std::clamp((std::pow(11.0, 6400.0 / 12800.0) - 1.0) / 10.0, 0.0, 1.0));
     enc::Result r = genbEncode("Slicex", g, &w.b);
     // The embedded copy gets a new cache file name, so only the parameters are compared.
     expect(ok && r.hasState && r.mismatched.empty(), "Slicex: slices, a region end and region settings encode back exactly");

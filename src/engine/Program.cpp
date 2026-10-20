@@ -1,5 +1,6 @@
 #include "../packs/Packs.h"
 #include "Program.h"
+#include "ChannelIns.h"
 #include "../packs/edison/edison.h"
 #include <algorithm>
 #include <cmath>
@@ -635,6 +636,10 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       prepareForHost(c.plugin, live, c.id, channelPluginParam(c.id, 0).index,
                      [&](const PluginState& st) { pc.rt->gen->prepareHost(st, sampleRate_); });
     prepareChannelAux(c.plugin, pc.aux);
+    if (!c.plugin.ins.empty()) {  // channel instrument envelopes / filter (J-33)
+      auto ins = std::make_shared<InsSettings>();
+      if (parseIns(c.plugin.ins, *ins) && ins->active()) pc.aux.ins = ins;
+    }
     pc.controller = hasOutputs(c.plugin.type);
     double g = c.muted ? 0.0 : dsp::faderGain(c.gain, 0.78), l, r;
     dsp::panGains(c.pan, l, r);

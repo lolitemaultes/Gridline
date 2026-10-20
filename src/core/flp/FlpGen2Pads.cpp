@@ -183,6 +183,7 @@ bool decodeFpc(Context& c, const std::vector<Event>& events, PluginMapping& m) {
   if (pads.empty()) return false;
   begin(m, "gl.pads");
   bool exact = pads.size() <= static_cast<size_t>(kPadsAll);
+  if (!exact) c.report.warn("FPC: more than 32 pads (extra pads dropped)");
   if (pads.size() > static_cast<size_t>(kPadsAll)) pads.resize(kPadsAll);
   // FL cut groups (-1 = none, 0..99) → Gridline groups 1..8 in order of appearance.
   std::map<int, int> groups;
@@ -192,6 +193,7 @@ bool decodeFpc(Context& c, const std::vector<Event>& events, PluginMapping& m) {
     if (it != groups.end()) return it->second;
     int n = static_cast<int>(groups.size()) + 1;
     if (n > 8) {
+      if (exact) c.report.warn("FPC: more than 8 cut groups (extra groups merged into group 8)");
       exact = false;
       return 8;
     }
@@ -227,7 +229,10 @@ bool decodeFpc(Context& c, const std::vector<Event>& events, PluginMapping& m) {
     std::vector<FpcLayer> ls;
     for (const auto& l : p.layers)
       if (!l.path.empty()) ls.push_back(l);
-    if (ls.size() > static_cast<size_t>(kPadMaxLayers)) exact = false, ls.resize(kPadMaxLayers);
+    if (ls.size() > static_cast<size_t>(kPadMaxLayers)) {
+      c.report.warn("FPC: pad with more than " + std::to_string(kPadMaxLayers) + " layers (extra layers dropped)");
+      exact = false, ls.resize(kPadMaxLayers);
+    }
     if (ls.empty()) {
       if (pk >= kPads) data = setPadSamplePath(data, pk, 0, "none");
       set(m, padL(pk, 0, LayEnabled), 0);
@@ -257,7 +262,10 @@ bool decodeFpc(Context& c, const std::vector<Event>& events, PluginMapping& m) {
       const FpcEnv& env = p.env[e];
       if (!env.present || !env.on || env.pts.empty()) continue;
       std::string txt;
-      if (!fpcEnvText(env, txt)) exact = false;
+      if (!fpcEnvText(env, txt)) {
+        c.report.warn("FPC: pad envelope with more than " + std::to_string(PadEnvelope::kMax) + " points (truncated)");
+        exact = false;
+      }
       data = padDataSet(data, "E" + pn + (e == 0 ? ".v" : ".p"), txt);
     }
   }

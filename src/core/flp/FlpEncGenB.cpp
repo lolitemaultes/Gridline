@@ -19,10 +19,17 @@
 #include "../../packs/models/models.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/modulation/modulation_dsp.h"
+#include "../../packs/synths/pixel.h"
 #include "../PluginParams.h"
 #include "FlpEncode.h"
 
+namespace gl::packs::synths {
+std::string pixelToneDefaultData();  // pixel_info.cpp
+}
+
 namespace gl::flp::enc {
+
+namespace px = gl::packs::synths::pixel;
 
 namespace {
 
@@ -294,7 +301,7 @@ Bytes miniSynthDefaults() {
 Encoder miniSynth() {
   Encoder e;
   e.flName = "MiniSynth";
-  e.glType = "gl.synth";
+  e.glType = "gl.pocketsynth";  // J-33: the reference engine, parameters 1:1
   e.generator = true;
   e.defaults = miniSynthDefaults;
   e.fields = [](const Bytes& b) {
@@ -303,23 +310,11 @@ Encoder miniSynth() {
     auto it = std::search(b.begin(), b.end(), kTag, kTag + 4);
     if (it == b.end()) return f;
     const size_t at = static_cast<size_t>(it - b.begin()) + 4;
-    using namespace gl::pp;
-    // Solve order: the oscillator model before the values it reinterprets,
-    // the LFO amount before its target (no amount = no target).
-    const std::pair<int, int> map[] = {
-        {SynVoices, MnVoicesMode}, {SynGlide, MnSlide},          {SynOsc1Shape, MnOscKind}, {SynOsc2Level, MnOscKind}, {SynOsc2Coarse, MnOscKind}, {SynOsc2Fine, MnOscMod},
-        {SynOsc2Level, MnOscMod},  {SynOsc1Coarse, MnTranspose}, {SynNoise, MnNoise},       {SynCutoff, MnCutoff},
-        {SynResonance, MnPeak},    {SynKeyTrack, MnKbd},         {SynVelCutoff, MnVel},     {SynFilterEnv, MnFAmt},
-        {SynFilterDecay, MnFDec},  {SynAttack, MnAAtk},          {SynDecay, MnADec},        {SynSustain, MnASus},
-        {SynRelease, MnARel},      {SynOsc1Fine, MnOscMod},
-    };
-    for (const auto& [gl, mn] : map) f.push_back(field(gl, at + 4 * static_cast<size_t>(mn), Type::F32, 0.0, 1.0));
-    // LFO amount: bipolar around 0.5, the Gridline amount is its size — each half on its own.
-    const size_t amt = at + 4 * static_cast<size_t>(MnLfoAmt);
-    f.push_back(field(SynLfoAmount, amt, Type::F32, 0.5, 1.0));
-    f.push_back(field(SynLfoAmount, amt, Type::F32, 0.0, 0.5));
-    for (const auto& [gl, mn] : {std::pair<int, int>{SynLfoTarget, MnLfoDest}, {SynLfoShape, MnLfoShape}, {SynLfoRate, MnLfoRate}})
-      f.push_back(field(gl, at + 4 * static_cast<size_t>(mn), Type::F32, 0.0, 1.0));
+    for (int i = 0; i < MnCount; ++i) {
+      Field x = field(i, at + 4 * static_cast<size_t>(i), Type::F32, 0.0, 1.0);
+      x.inverse = [](double gl) { return gl; };
+      f.push_back(x);
+    }
     return f;
   };
   return e;
@@ -330,122 +325,71 @@ Encoder miniSynth() {
 // blue, grainy, loop, widen), 7 reserved words, i32 max bitmap height, u32
 // bitmap size, then the bitmap (Windows BMP).
 enum BeepTag { BmRange, BmLength, BmScale, BmUseBlue, BmGrainy, BmLoop, BmWiden, BmTags };
-constexpr size_t kBmHeader = 4 + 4 * BmTags + 4 * 7;  // the max-height word follows
 
-// The Gridline canvas (64 × 32, 0..15 grey) as a 32-bit bottom-up BMP of
-// width `w` (≥ 64): each canvas column covers the source columns
-// [cx·w/64, (cx+1)·w/64), so the picture reads back as the same canvas while
-// the width sets how long one canvas column plays.
-Bytes canvasBmp(const std::string& canvasHex, int w = md::kCanvasW) {
-  const std::vector<uint8_t> px = md::decodeCanvas(canvasHex);
-  const int cw = md::kCanvasW, h = md::kCanvasH;
-  w = std::max(w, cw);
-  std::vector<int> colOf(static_cast<size_t>(w), 0);
-  for (int cx = 0; cx < cw; ++cx)
-    for (int x = cx * w / cw; x < (cx + 1) * w / cw; ++x) colOf[static_cast<size_t>(x)] = cx;
-  const uint32_t pixBytes = static_cast<uint32_t>(w * h * 4), off = 54;
+// The picture as a 24-bit bottom-up BMP.
+Bytes pictureBmp(const px::Picture& p) {
+  const int w = std::max(1, p.w), h = std::max(1, p.h);
+  const uint32_t stride = static_cast<uint32_t>((w * 3 + 3) & ~3), pixBytes = stride * static_cast<uint32_t>(h), off = 54;
   ByteWriter b;
   putBytes(b, "BM");
-  b.u32(off + pixBytes);
-  b.u32(0);
-  b.u32(off);
-  b.u32(40);  // BITMAPINFOHEADER
-  b.i32(w);
-  b.i32(h);
-  b.u16(1);
-  b.u16(32);
-  b.u32(0);  // BI_RGB
-  b.u32(pixBytes);
-  b.u32(0);
-  b.u32(0);
-  b.u32(0);
-  b.u32(0);
-  for (int y = h - 1; y >= 0; --y)
+  b.u32(off + pixBytes), b.u32(0), b.u32(off);
+  b.u32(40), b.i32(w), b.i32(h), b.u16(1), b.u16(24), b.u32(0), b.u32(pixBytes), b.u32(0), b.u32(0), b.u32(0), b.u32(0);
+  for (int y = h - 1; y >= 0; --y) {
     for (int x = 0; x < w; ++x) {
-      const size_t i = static_cast<size_t>(y * cw + colOf[static_cast<size_t>(x)]);
-      const uint8_t v = static_cast<uint8_t>(17 * (px[i] & 15));  // 0..15 → 0..255
-      b.u8(v);
-      b.u8(v);
-      b.u8(v);
-      b.u8(0);
+      const size_t i = (static_cast<size_t>(y) * static_cast<size_t>(p.w) + static_cast<size_t>(x)) * 3;
+      const bool in = y < p.h && x < p.w && i + 2 < p.rgb.size();
+      b.u8(in ? p.rgb[i + 2] : 0), b.u8(in ? p.rgb[i + 1] : 0), b.u8(in ? p.rgb[i] : 0);
     }
+    b.zeros(stride - static_cast<uint32_t>(w * 3));
+  }
   return b.b;
-}
-
-size_t findBm(const Bytes& b) {
-  for (size_t i = 4 + 4 * BmTags; i + 1 < b.size(); ++i)
-    if (b[i] == 'B' && b[i + 1] == 'M') return i;
-  return std::string::npos;
 }
 
 Encoder beepMap() {
   Encoder e;
   e.flName = "BeepMap";
-  e.glType = "gl.imagesynth";
+  e.glType = "gl.pixeltone";  // J-33: the reference engine
   e.nativeRank = 0;
   e.generator = true;
   e.defaults = [] {
-    constexpr int32_t kVersion = 0, kRange = 7200, kLength = 2048, kScale = 0, kUseBlue = 0, kGrainy = 0, kLoop = 1, kWiden = 1;
-    constexpr int32_t kMaxHeight = md::kCanvasH;  // keeps every canvas row (FL's own default is 23)
+    constexpr int32_t kVersion = 0, kRange = 7200, kLength = 2048, kScale = 0, kUseBlue = 0, kGrainy = 0, kLoop = 1, kWiden = 0, kMaxHeight = 23;
     ByteWriter w;
     w.i32(kVersion);
     for (int32_t v : {kRange, kLength, kScale, kUseBlue, kGrainy, kLoop, kWiden}) w.i32(v);
     w.zeros(4 * 7);  // reserved
     w.i32(kMaxHeight);
-    const Bytes bmp = canvasBmp("0");
+    px::Picture pic;
+    px::parsePicture(gl::packs::synths::pixelToneDefaultData(), pic);
+    const Bytes bmp = pictureBmp(pic);
     w.u32(static_cast<uint32_t>(bmp.size()));
     w.bytes(bmp);
     return w.b;
   };
   e.fields = [](const Bytes&) {
-    auto tag = [](int t) { return static_cast<size_t>(4 + 4 * t); };
-    return std::vector<Field>{
-        i32(md::ImHigh, tag(BmRange), 24, 9600),   i32(md::ImPixel, tag(BmLength), 0, 4096), i32(md::ImScale, tag(BmScale), 0, 2),
-        i32(md::ImUseBlue, tag(BmUseBlue), 0, 1),  i32(md::ImGrainy, tag(BmGrainy), 0, 1),  i32(md::ImLoop, tag(BmLoop), 0, 1),
-        i32(md::ImWiden, tag(BmWiden), 0, 1),
-    };
+    static const int lo[7] = {24, 0, 0, 0, 0, 0, 0}, hi[7] = {9600, 4096, 2, 1, 1, 1, 1};
+    std::vector<Field> f;
+    for (int t = 0; t < 7; ++t) f.push_back(i32(t, static_cast<size_t>(4 + 4 * t), lo[t], hi[t]));
+    f.push_back(i32(px::PxMaxHeight, 60, 3, 999));
+    return f;
   };
-  // The picture: replaced by the Gridline canvas when it differs, or when
-  // its width cannot reach the pixel duration (the decoder scales the
-  // stored length by width / 64; the length wheel stops at 4096). No canvas
-  // (pattern / file source): no picture.
+  // The picture (PluginState::data) and, in version 1 states, the channel
+  // envelope / filter copy (PluginState::ins).
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
-    const std::string canvas = md::imageDataCanvas(g.data);
-    size_t bm = findBm(b);
-    if (bm == std::string::npos) {
-      if (canvas.empty()) return;
-      if (b.size() < kBmHeader + 8) b.resize(kBmHeader + 8, 0);
-      bm = b.size();
-    }
-    if (canvas.empty()) {
-      b.resize(bm);
-      if (bm >= kBmHeader + 8) putU32(b, bm - 4, 0);
-      return;
-    }
     PluginMapping m;
-    const bool same = decodeAs("BeepMap", b, m, c) && m.state.data == g.data;
-    const int curW = rdI32(b, bm + 18);
-    // Widest pixel duration of a width: 4096 length units = 0.02 s per source pixel.
-    const double pixel = param(g, md::ImPixel, 0.05);
-    const int needW = md::kCanvasW * std::max(1, static_cast<int>(std::ceil(pixel / 0.02 - 1e-9)));
-    if (same && curW >= md::kCanvasW && pixel <= 0.02 * curW / md::kCanvasW) return;
-    auto place = [&](int w) {
-      const Bytes bmp = canvasBmp(canvas, w);
-      b.resize(bm);
-      b.insert(b.end(), bmp.begin(), bmp.end());
-      if (bm >= kBmHeader + 8) {
-        putU32(b, bm - 4, static_cast<uint32_t>(bmp.size()));
-        if (rdI32(b, bm - 8) < md::kCanvasH) putI32(b, bm - 8, md::kCanvasH);  // max bitmap height
-      }
-    };
-    // The first width (from the smallest that reaches it) whose length
-    // reproduces the duration exactly; else the smallest.
-    Joint j{"BeepMap", c, g, b, {}};
-    for (int w = needW; w < needW + 128; ++w) {
-      place(w);
-      if (j.bisect({4 + 4 * BmLength, 0, 4096, md::ImPixel})) return;
-    }
-    place(needW);
+    if (b.size() < 68 || !decodeAs("BeepMap", b, m, c)) return;
+    const int32_t ver = rdI32(b, 0);
+    const size_t at = ver == 0 ? 64 : 428;
+    if (ver == 1 && m.state.ins != g.ins) writeInsCopy(b, 64, 404, g.ins);
+    if (m.state.data == g.data) return;
+    px::Picture pic;
+    if (!px::parsePicture(g.data, pic) || at + 4 > b.size()) return;
+    const Bytes bmp = pictureBmp(pic);
+    b.resize(at);
+    ByteWriter n;
+    n.u32(static_cast<uint32_t>(bmp.size()));
+    b.insert(b.end(), n.b.begin(), n.b.end());
+    b.insert(b.end(), bmp.begin(), bmp.end());
+    if (rdI32(b, 60) < pic.h) putI32(b, 60, std::min(999, pic.h));
   };
   return e;
 }
@@ -1305,9 +1249,10 @@ std::vector<Field> sxFields(const Bytes& b) {
     if (r + kSxRegion > b.size()) break;
     const int ik = static_cast<int>(k);
     f.push_back(i32(slParam(ik, SliceGain), r + 12, 0, 16000));
-    f.push_back(i32(slParam(ik, SlicePan), r + 16, -6400, 6400));
-    f.push_back(i32(slParam(ik, SliceCutoff), r + 24, 0, 256));
-    f.push_back(i32(slParam2(ik, SliceReso), r + 28, 0, 256));
+    f.push_back(i32(slParam(ik, SlicePan), r + 8, -6400, 6400));
+    f.push_back(i32(slParam(ik, SlicePitch), r + 40, -1200, 1200));
+    f.push_back(i32(slParam2(ik, SliceCut), r + 0, 0, 99));
+    f.push_back(i32(slParam2(ik, SliceDelay), r + 52, 0, 12800));
   }
   return f;
 }
@@ -1387,13 +1332,13 @@ Encoder slicex() {
 }
 
 // ---------------------------------------------------------- Toxic Biohazard
-// "SSLF" "TBi2" FM engine block. The decoder reads nothing from it (every
-// state imports as the same Analog patch), so no state is built: FL loads the
-// plugin with its defaults, which decode to that same patch.
+// "SSLF" "TBi2" engine block → Hex Synth (J-33, 340 parameters in reference
+// order). No state is built here: unchanged imports are written verbatim,
+// edited ones over their origin through the per-parameter search.
 Encoder toxicBiohazard() {
   Encoder e;
   e.flName = "Toxic Biohazard";
-  e.glType = "gl.analog";
+  e.glType = "gl.hexsynth";
   e.generator = true;
   e.defaults = [] { return Bytes{}; };
   return e;

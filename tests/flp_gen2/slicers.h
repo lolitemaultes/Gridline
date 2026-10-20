@@ -115,7 +115,8 @@ inline void testSlicers() {
            {}, std::filesystem::absolute("gen2-slicers/fl").string());
     expect(r.ok && std::filesystem::equivalent(r.m.state.data, file), "Slicex: %FLStudioData% path resolved");
     expect(near(param(r, slMarker(3)), 0.75) && param(r, slMarker(4)) < 0, "Slicex: four markers from the file's cue chunk");
-    expect(near(param(r, SlVolume), 0.5) && near(param(r, SlPitch), -12), "Slicex: level 50 %, pitch −1 octave");
+    // J-33: master level law (11^(v/12800) − 1)/10 → raw 6400 = 0.2317.
+    expect(near(param(r, SlVolume), (std::sqrt(11.0) - 1.0) / 10.0) && near(param(r, SlPitch), -12), "Slicex: level 6400 (law), pitch −1 octave");
   }
   // ---- Fruity Slicer: slice starts in frames, base note in the trailer.
   {

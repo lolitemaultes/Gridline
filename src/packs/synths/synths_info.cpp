@@ -326,6 +326,10 @@ PluginInfo matrixFmInfo();  // matrixfm_info.cpp
 PluginInfo gmsInfo();       // gms_info.cpp
 void appendVaInfos(std::vector<PluginInfo>& v);   // va_info.cpp (J-22)
 void appendDcoInfos(std::vector<PluginInfo>& v);  // dco_info.cpp (J-22)
+PluginInfo hexSynthInfo();                        // hex_info.cpp (J-33)
+PluginInfo pocketSynthInfo();                     // pocket_info.cpp (J-33)
+PluginInfo pixelToneInfo();                       // pixel_info.cpp (J-33)
+PluginInfo sampleKeysInfo();                      // samplekeys_info.cpp (J-33)
 
 void appendInfos(std::vector<PluginInfo>& v) {
   v.push_back(analogInfo());
@@ -334,6 +338,10 @@ void appendInfos(std::vector<PluginInfo>& v) {
   v.push_back(gmsInfo());
   appendVaInfos(v);
   appendDcoInfos(v);
+  v.push_back(hexSynthInfo());
+  v.push_back(pocketSynthInfo());
+  v.push_back(pixelToneInfo());
+  v.push_back(sampleKeysInfo());
 }
 
 }  // namespace gl::packs::synths

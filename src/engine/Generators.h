@@ -89,11 +89,15 @@ struct AuxData {
   virtual ~AuxData() = default;
 };
 
+struct InsSettings;  // engine/ChannelIns.h
+
 // Data an instrument needs besides its parameters, prepared on the UI thread.
 struct ChannelAux {
   std::vector<SamplePtr> samples;  // sampler: [0]; drum pads: one per pad (may be null)
   std::vector<int64_t> slices;     // slicer: slice start frames
   std::shared_ptr<const AuxData> custom;  // pack data (see packs::prepareAux)
+  // Channel instrument envelopes / filter (PluginState::ins, J-33); null = none.
+  std::shared_ptr<const InsSettings> ins;
   SamplePtr sample(size_t i = 0) const { return i < samples.size() ? samples[i] : nullptr; }
 };
 

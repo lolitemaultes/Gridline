@@ -13,6 +13,7 @@
 #include <cmath>
 #include "../Packs.h"
 #include "drums.h"
+#include "drums_ref.h"
 #include "drums_voice.h"
 
 namespace gl::packs::models {
@@ -32,17 +33,44 @@ class MembranePadGen final : public Generator {
   bool active() const override {
     for (const auto& v : voices_)
       if (v.on) return true;
+    for (const auto& v : ref_)
+      if (v.on) return true;
     return false;
   }
 
  protected:
-  static constexpr int kVoices = 8;
+  static constexpr int kVoices = 8, kRefVoices = 16;
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
     sr_ = ctx.sampleRate;
     for (int k = 0; k < MdCount; ++k) model_[k] = pv(s, PdModel + k);
     out_ = pv(s, PdOutput, 1.0f);
+    engine_ = pv(s, PdEngine, 1.0f) >= 0.5f;
+    if (engine_ && !refReady_) {
+      for (int k = 0; k < kRefVoices; ++k) ref_[static_cast<size_t>(k)].allocate(0x9E3779B9u * static_cast<uint32_t>(k + 1));
+      refReady_ = true;
+    }
   }
   void onNoteOn(uint32_t id, double pitch, float velocity) override {
+    if (engine_ && refReady_) {
+      // First voice whose note slot is free (it may still ring), else the oldest.
+      RefMembraneVoice* v = nullptr;
+      for (auto& x : ref_)
+        if (!x.held) {
+          v = &x;
+          break;
+        }
+      if (!v) {
+        v = &ref_[0];
+        for (auto& x : ref_)
+          if (x.age < v->age) v = &x;
+      }
+      float p[MdCount];
+      RefMembraneVoice::routes(model_, p, velocity);
+      v->id = id;
+      v->age = ++clock_;
+      v->strike(p, pitch - std::round(pitch), sr_);  // the key does not transpose; fine pitch does
+      return;
+    }
     MembraneVoice* v = &voices_[0];
     for (auto& x : voices_)
       if (!x.on) {
@@ -57,12 +85,26 @@ class MembranePadGen final : public Generator {
     v->age = ++clock_;
     v->strike(p, velocity, pitch - 60.0, sr_, static_cast<uint32_t>(clock_));
   }
-  void onNoteOff(uint32_t) override {}  // one-shot: the hold control gates the ring
-  void onAllOff() override {}
+  void onNoteOff(uint32_t id) override {  // one-shot: the hold control gates the ring
+    for (auto& v : ref_)
+      if (v.held && v.id == id) v.held = false;
+  }
+  void onAllOff() override {
+    for (auto& v : ref_) v.held = false;
+  }
   void onKill() override {
     for (auto& v : voices_) v.on = false;
+    for (auto& v : ref_) v.held = false, v.on = false;
   }
   void render(float* L, float* R, int n) override {
+    for (auto& v : ref_) {
+      if (!v.on) continue;
+      for (int i = 0; i < n; ++i) {
+        const float y = v.next() * out_;
+        L[i] += y;
+        R[i] += y;
+      }
+    }
     const float g = out_ * 0.7f;
     for (auto& v : voices_) {
       if (!v.on) continue;
@@ -76,6 +118,8 @@ class MembranePadGen final : public Generator {
 
  private:
   std::array<MembraneVoice, kVoices> voices_;
+  std::array<RefMembraneVoice, kRefVoices> ref_;
+  bool engine_ = true, refReady_ = false;
   float model_[MdCount] = {};
   float out_ = 1;
   double sr_ = 44100;
@@ -109,13 +153,14 @@ class MembraneKitGen final : public Generator {
     for (int c = 0; c < kKitPads; ++c) {
       const bool audible = pv(s, kitPad(c, KpMute)) < 0.5f && (!anySolo || pv(s, kitPad(c, KpSolo)) >= 0.5f);
       const float vol = pv(s, kitPad(c, KpVolume), 0.7f);
-      const float pan = pv(s, kitPad(c, KpPan), 0.5f) * 2.0f - 1.0f;
-      const float g = audible ? vol * vol * 1.4f : 0.0f;
-      gl_[c] = g * std::sqrt(0.5f * (1.0f - pan));
-      gr_[c] = g * std::sqrt(0.5f * (1.0f + pan));
+      // Reference laws (J-33): pad gain 2·v², linear pan L = g·(1 − p), R = g·p (p = 0..1).
+      const float pan01 = std::clamp(pv(s, kitPad(c, KpPan), 0.5f), 0.0f, 1.0f);
+      const float g = audible ? 2.0f * vol * vol : 0.0f;
+      gl_[c] = g * (1.0f - pan01);
+      gr_[c] = g * pan01;
       key_[c] = static_cast<int>(std::lround(pv(s, kitPad(c, KpKey), 60.0f + c)));
     }
-    master_ = 2.0f * pv(s, KmLevel, 0.5f);
+    master_ = std::pow(10.0f, 1.6f * pv(s, KmLevel, 0.5f)) / 8.0f;  // reference: 10^(1.6x)·0.25 × output 0.5
     swing_ = pv(s, KmSwing, 0);
     eqOn_ = pv(s, KmEqOn) >= 0.5f;
     float eq[8];
@@ -132,7 +177,7 @@ class MembraneKitGen final : public Generator {
       }
     }
     limOn_ = pv(s, KmLimiter) >= 0.5f;
-    limGain_ = static_cast<float>(dbToGain(pv(s, KmLimGain) * 24.0));
+    limGain_ = static_cast<float>(std::pow(10.0, 1.5 * pv(s, KmLimGain)));  // reference: 10^(1.5x)
     limRel_ = static_cast<float>(std::exp(-1.0 / std::max(1.0, 0.01 * std::pow(100.0, pv(s, KmLimRelease, 0.5f)) * sr_)));
   }
   void strikeChannel(int c, float vel) {
@@ -198,8 +243,8 @@ class MembraneKitGen final : public Generator {
           r *= limGain_;
           const float pk = static_cast<float>(std::max(std::fabs(l), std::fabs(r)));
           env_ = pk > env_ ? pk : env_ * limRel_ + pk * (1.0f - limRel_);
-          if (env_ > 0.95f) {
-            const double g = 0.95 / env_;
+          if (env_ > 1.0f) {  // ceiling at full scale
+            const double g = 1.0 / env_;
             l *= g;
             r *= g;
           }

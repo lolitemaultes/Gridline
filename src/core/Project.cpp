@@ -183,6 +183,7 @@ Json pluginToJson(const PluginState& p) {
   for (float v : p.params) params.array.push_back(num(v));
   j.object["params"] = std::move(params);
   if (!p.data.empty()) j.object["data"] = str(p.data);
+  if (!p.ins.empty()) j.object["ins"] = str(p.ins);
   return j;
 }
 
@@ -292,6 +293,7 @@ PluginState pluginFromJson(const Json* j) {
   if (!j || !j->is(Json::Type::Object)) return p;
   p.type = j->text("type");
   p.data = j->text("data");
+  p.ins = j->text("ins");
   if (const Json* a = j->find("params"); a && a->is(Json::Type::Array))
     for (const auto& v : a->array) p.params.push_back(static_cast<float>(v.is(Json::Type::Number) ? v.number : 0));
   normalizePluginState(p);

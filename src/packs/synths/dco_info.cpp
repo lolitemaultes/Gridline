@@ -42,12 +42,13 @@ constexpr float kDcDefaults[151] = {
 
 }  // namespace
 
+// Matrix sources in the reference's index order (choice = index + 1).
 std::vector<std::string> dcoSourceNames() {
-  return {"None",          "LFO 1 bi (tri)", "LFO 2 bi",     "Env 1",         "Env 2",          "Velocity",
-          "Rel. velocity", "Mod X bi",       "Mod Y bi",     "Mod X uni",     "Mod Y uni",      "Gate",
-          "Gate inverted", "LFO 1 bi (sine)", "LFO 1 uni",   "LFO 2 uni",     "Key bi",         "LFO 1 bi fast",
-          "LFO 2 bi fast", "LFO 1 sine fast", "LFO 1 uni fast", "LFO 2 uni fast", "Alternate",   "Key uni",
-          "Random"};
+  return {"None",           "LFO 1 bi (tri)",  "LFO 2 bi",        "Env 1",          "Env 2",        "Velocity",
+          "Rel. velocity",  "Mod X bi",        "Mod Y bi",        "Gate",           "Gate inverted", "LFO 1 bi (sine)",
+          "LFO 1 uni",      "LFO 2 uni",       "Key bi",          "LFO 1 delayed",  "LFO 2 delayed", "LFO 1 sine delayed",
+          "LFO 1 uni delayed", "LFO 2 uni delayed", "Alternate",  "Key uni",        "Random",        "Mod X uni",
+          "Mod Y uni"};
 }
 
 PluginInfo dcoSynthInfo() {
@@ -55,8 +56,9 @@ PluginInfo dcoSynthInfo() {
   auto& q = p.params;
   q.resize(DcCount);
   const std::vector<std::string> pwSrc = {"LFO", "Manual", "Env"};
-  const std::vector<std::string> xShapes = {"Sine", "Triangle", "Ramp up", "Ramp down", "Square", "Osc out"};
-  const std::vector<std::string> lfo2Shapes = {"Triangle", "Sine", "Square", "Ramp up", "Ramp down", "Random"};
+  // Reference order (the classic engine of older states reads its own order).
+  const std::vector<std::string> xShapes = {"Sine", "Triangle", "Pulse", "Noise", "DCO 1 out", "(osc out)"};
+  const std::vector<std::string> lfo2Shapes = {"Triangle", "Ramp up", "Ramp down", "Sine", "Random", "Random glide"};
   auto def = [&](int i) { return static_cast<double>(kDcDefaults[i]); };
   auto P = [&](int i, const char* n) { q[static_cast<size_t>(i)] = pct(n, def(i)); };
   auto T = [&](int i, const char* n) { q[static_cast<size_t>(i)] = tog(n, def(i) >= 0.5); };
@@ -201,6 +203,8 @@ PluginInfo dcoSynthInfo() {
   }
   q[DcPanel] = ch("Panel", {"Two DCO", "One DCO"}, PanelTwo);
   q[DcArpQuantize] = tog("Arp quantize first step", false);
+  q[DcModel] = ch("Engine", {"Classic (J-22)", "Reference"}, 1);
+  p.legacyModelParam = DcModel;
 
   using V = std::vector<std::pair<int, float>>;
   p.presets = {

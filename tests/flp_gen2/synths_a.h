@@ -103,19 +103,21 @@ inline void testMiniSynth() {
   Bytes data;
   data.str("0rev", false);
   for (float f : v) data.f32(f);
+  Bytes inner;
+  inner.raw({0x99, 'F', 'L', 'S', 0x0d, 0x0a, 0x1a, 0x0a}).str("HEAD", false).u32(6).u32(0x00010001).u16(0);
+  inner.str("DATA", false).u32(static_cast<uint32_t>(data.size())).raw(data.b);
   Bytes b;
-  b.str("SSLF", false).u32(0).raw({0x99, 'F', 'L', 'S', 0x0d, 0x0a, 0x1a, 0x0a}).str("HEAD", false).u32(4).u32(0x00010001);
-  b.str("DATA", false).u32(static_cast<uint32_t>(data.size())).raw(data.b);
+  b.str("SSLF", false).u32(static_cast<uint32_t>(inner.size())).raw(inner.b);
   Run r;
+  // J-33: MiniSynth → Pocket Synth (gl.pocketsynth), parameters 1:1 in reference order.
   decode(r, "MiniSynth", b.b);
-  expect(r.ok && r.m.glType == "gl.synth", "minisynth: decodes to gl.synth");
-  expect(near(param(r, SynVoices), 1), "minisynth: mono voice mode");
-  expect(near(param(r, SynSustain), 0.75), "minisynth: amp sustain");
-  expect(near(param(r, SynOsc2Coarse), 12), "minisynth: octave spread oscillator");
-  expect(near(param(r, SynFilterEnv), 1), "minisynth: bipolar filter env amount");
-  expect(param(r, SynCutoff) > 500 && param(r, SynCutoff) < 1500, "minisynth: cutoff mid position");
-  expect(r.m.param && r.m.param(8) == SynCutoff, "minisynth: automation link (cutoff)");
-  expect(renderPeak(r.m.state) > 0.01f, "minisynth: decoded patch sounds");
+  expect(r.ok && r.m.glType == "gl.pocketsynth", "minisynth: decodes to gl.pocketsynth");
+  expect(near(param(r, 0), 1) && near(param(r, 2), 0.3), "minisynth: voice mode / slide 1:1");
+  expect(near(param(r, 23), 0.75) && near(param(r, 22), 1), "minisynth: amp envelope 1:1");
+  expect(near(param(r, 5), 8 / 9.f) && near(param(r, 16), 1), "minisynth: oscillator kind / filter env amount 1:1");
+  expect(near(param(r, 8), 0.5), "minisynth: cutoff position 1:1");
+  expect(r.m.param && r.m.param(8) == 8, "minisynth: automation link (cutoff)");
+  expect(renderPeak(r.m.state) > 0.001f, "minisynth: decoded patch sounds");
   Run bad;
   decode(bad, "MiniSynth", std::vector<uint8_t>(64, 0));
   expect(!bad.ok, "minisynth: state without data chunk rejected");
@@ -171,14 +173,11 @@ inline void testBeepMap() {
   b.zeros(4 * 8).u32(static_cast<uint32_t>(bmp.size())).raw(bmp.b);
   Run r;
   decode(r, "BeepMap", b.b);
-  expect(r.ok && r.m.glType == "gl.imagesynth", "beepmap: decodes to gl.imagesynth");
-  expect(near(param(r, ImSource), SrcCanvas), "beepmap: embedded picture → canvas");
-  expect(near(param(r, ImScale), 1) && near(param(r, ImUseBlue), 0) && near(param(r, ImGrainy), 1) && near(param(r, ImLoop), 1), "beepmap: scale / switches");
-  expect(near(param(r, ImHigh), 65.0 * 64.0, 1.0), "beepmap: 6-octave frequency range");
-  std::string canvas = imageDataCanvas(r.m.state.data);
-  auto px = decodeCanvas(canvas);
-  expect(!canvas.empty() && px[0] == 15 && px[static_cast<size_t>(31 * kCanvasW + 63)] == 15 && px[static_cast<size_t>(31 * kCanvasW)] == 0,
-         "beepmap: picture orientation kept (top row = first column)");
+  // J-33: BeepMap → Pixel Tone (gl.pixeltone): raw controls, picture kept as text.
+  expect(r.ok && r.m.glType == "gl.pixeltone", "beepmap: decodes to gl.pixeltone");
+  expect(near(param(r, 0), 7200) && near(param(r, 1), 4096) && near(param(r, 2), 1), "beepmap: range / length / scale raw");
+  expect(near(param(r, 3), 0) && near(param(r, 4), 1) && near(param(r, 5), 1), "beepmap: scale / switches");
+  expect(r.m.state.data.rfind("P ", 0) == 0, "beepmap: embedded picture kept");
   expect(renderPeak(r.m.state) > 0.001f, "beepmap: decoded picture sounds");
 }
 

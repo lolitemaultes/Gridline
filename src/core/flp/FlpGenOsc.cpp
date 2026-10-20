@@ -171,15 +171,25 @@ bool decode3xOsc(Context& c, const std::vector<Event>& events, PluginMapping& m)
   setp(s, SynGlide, 0.001);
   setp(s, SynVoices, 32);
   setp(s, SynVolume, 1.0);
-  // Channel envelopes / filter: the channel's own records, else the copy in the state.
-  // J-34 fix: the levels copy is ordered (0, 0, cutoff, resonance, 0, type),
-  // not like event 219 (pan, volume, pitch, cutoff, resonance, type) — compared
-  // with the channel's own 219 in FL's shipped projects. Re-ordered for parseLevels.
-  uint8_t lev[24] = {};
-  if (b.has(436, 24)) std::copy(b.p + 444, b.p + 452, lev + 12), std::copy(b.p + 456, b.p + 460, lev + 20);
-  ChanSettings cs = channelSettings(events, b.sub(96, 5 * 68), b.has(436, 24) ? Bytes(lev, 24) : Bytes());
+  // Channel envelopes / LFOs / filter: the channel's own records, else the
+  // copy in the state. They run as the instrument's channel envelopes (J-33);
+  // the Trio's own envelope and filter stay neutral, like the reference's
+  // oscillators (full level while held, cut at release without a volume envelope).
+  // (J-34: the state's levels copy is ordered (0, 0, cutoff, resonance, 0, type),
+  // not like event 219; channelInsText reads it that way.)
   std::string lost;
-  bool chanExact = applyChannelToTrio(cs, s, &lost);
+  bool chanExact = true;
+  s.ins = channelInsText(events, b.sub(96, 5 * 68), b.sub(436, 24), &chanExact);
+  if (!chanExact) lost = "panning envelope / global LFO approximated";
+  setp(s, SynAttack, 0.0);
+  setp(s, SynDecay, 1.0);
+  setp(s, SynSustain, 1.0);
+  setp(s, SynRelease, 0.0);
+  setp(s, SynCutoff, 20000.0);
+  setp(s, SynResonance, 0.0);
+  setp(s, SynFilterType, 0);
+  setp(s, SynFilterEnv, 0.0);
+  setp(s, SynLfoTarget, 0);
   // Custom-shape oscillators play one cycle of the channel's sample (event 196).
   std::string customPath;
   if (custom)

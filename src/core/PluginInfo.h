@@ -96,8 +96,12 @@ struct PluginState {
   std::string type;
   std::vector<float> params;  // one per descriptor, plugin units
   std::string data;           // e.g. sample file path
+  // Channel instrument envelopes / LFOs / filter of FL-style channels (J-33,
+  // engine/ChannelIns.h text; empty = none). Kept with the instrument so
+  // presets and channel copies carry them.
+  std::string ins;
 
-  bool operator==(const PluginState& o) const { return type == o.type && params == o.params && data == o.data; }
+  bool operator==(const PluginState& o) const { return type == o.type && params == o.params && data == o.data && ins == o.ins; }
   bool empty() const { return type.empty(); }
 };
 

@@ -815,7 +815,11 @@ class ScratchGen final : public Generator {
 
 }  // namespace
 
+std::unique_ptr<Generator> makeWaveProgram();  // dwave_dsp.cpp (J-33)
+bool prepareWaveProgramAux(const PluginState& state, ChannelAux& aux);
+
 std::unique_ptr<Generator> createGenerator(const std::string& type) {
+  if (type == "gl.waveprogram") return makeWaveProgram();
   if (type == "gl.multisampler") return std::make_unique<MultiSamplerGen>();
   if (type == "gl.scratch") return std::make_unique<ScratchGen>();
   return nullptr;
@@ -827,6 +831,7 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
 }
 
 bool prepareAux(const PluginState& state, ChannelAux& aux) {
+  if (prepareWaveProgramAux(state, aux)) return true;
   if (state.type == "gl.multisampler") {
     int set = static_cast<int>(prm(state, MsFactorySet) + 0.5f);
     aux.samples = {buildMsRuntime(state.data, set)};

@@ -22,6 +22,7 @@
 #include <array>
 #include <cmath>
 #include "../Packs.h"
+#include "../../engine/ChannelIns.h"
 #include "../../engine/Dsp.h"
 #include "dco.h"
 #include "synths_common.h"
@@ -69,10 +70,13 @@ class FmDuoGen final : public Generator {
     uint64_t age = 0;
     double carPh = 0, attEnv = 0, decEnv = 1;
     Mod m[2];
+    InsVoice ins;  // channel instrument envelopes / filter (J-33)
   };
 
-  void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
+  void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     sr_ = ctx.sampleRate > 0 ? ctx.sampleRate : 44100.0;
+    ins_ = aux.ins;
+    tempo_ = ctx.tempo, ppq_ = ctx.ppq, tick0_ = ctx.tick, blockPos_ = 0;
     auto p = [&](int i, float d) { return static_cast<double>(std::clamp(prm(s, i, d), 0.f, 1.f)); };
     attC_ = coefFor(std::exp(8.0 * p(FdAttack, 0) - 8.0), sr_);
     const double dec = p(FdDecay, 0.65f);
@@ -125,13 +129,15 @@ class FmDuoGen final : public Generator {
       v.m[k].env = init_[k];
       v.m[k].target = sus_[k];
     }
+    v.ins.start(ins_.get(), sr_, tempo_, ppq_, 0, 0, tick0_ + blockPos_ * tempo_ * ppq_ / (60.0 * sr_));
   }
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
-      if (v.on && v.held && v.id == id) v.held = false;
+      if (v.on && v.held && v.id == id) v.held = false, v.ins.release();
   }
   void onAllOff() override {
-    for (auto& v : voices_) v.held = false;
+    for (auto& v : voices_)
+      if (v.held) v.held = false, v.ins.release();
   }
   void onKill() override {
     for (auto& v : voices_) v = Voice{};
@@ -139,11 +145,12 @@ class FmDuoGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    blockPos_ += n;
     for (int i = 0; i < n; ++i) {
       lfoPh_ += lfoInc_;
       if (lfoPh_ >= 1.0) lfoPh_ -= 1.0;
       const double vib = std::pow(2.0, vibCents_ * std::sin(dsp::kTwoPi * lfoPh_) / 1200.0);
-      double out = 0;
+      double out = 0, outR = 0;
       for (auto& v : voices_) {
         if (!v.on) continue;
         // Envelopes.
@@ -158,7 +165,7 @@ class FmDuoGen final : public Generator {
           v.on = false;
           continue;
         }
-        const double hz = dsp::noteToHz(v.pitch + 12.0 * octave_) * vib;
+        const double hz = dsp::noteToHz(v.pitch + 12.0 * octave_ + (v.ins.active() ? v.ins.pitchSemis() : 0.0)) * vib;
         const double inc = hz / sr_;
         double pm = 0, thru = 0;
         for (int k = 0; k < 2; ++k) {
@@ -179,10 +186,18 @@ class FmDuoGen final : public Generator {
         const double th = dsp::kTwoPi * v.carPh + pm;
         const double car = std::sin(th + 2.0 * shape_ * std::sin(th));
         const double velAmp = 0.25 + 0.75 * v.vel;
-        out += 0.3 * velAmp * amp * (car + thru_ * thru);
+        const double o = 0.3 * velAmp * amp * (car + thru_ * thru);
+        if (v.ins.active()) {
+          float l = static_cast<float>(o), r = static_cast<float>(o);
+          v.ins.process(l, r);
+          out += l, outR += r;
+          if (!v.held && v.ins.done()) v.on = false;
+        } else {
+          out += o, outR += o;
+        }
       }
       L[i] += static_cast<float>(out);
-      R[i] += static_cast<float>(out);
+      R[i] += static_cast<float>(outR);
     }
   }
 
@@ -195,6 +210,10 @@ class FmDuoGen final : public Generator {
   double vibCents_ = 0, lfoInc_ = 0, lfoPh_ = 0, shape_ = 0, thru_ = 0;
   int octave_ = 0;
   uint64_t clock_ = 0;
+  std::shared_ptr<const InsSettings> ins_;
+  double tempo_ = 120, tick0_ = 0;
+  int ppq_ = 96;
+  int64_t blockPos_ = 0;
 };
 
 }  // namespace

@@ -13,8 +13,10 @@
 #include "../../packs/models/harmor.h"
 #include "../../packs/models/models.h"
 #include "../../packs/modulation/modulation.h"
+#include "../../packs/samplers/dwave.h"
 #include "../../packs/samplers/samplers.h"
 #include "../../packs/synths/gms.h"
+#include "../../packs/synths/samplekeys.h"
 #include "../../packs/synths/synths.h"
 
 namespace gl::flp::enc {
@@ -27,49 +29,9 @@ using namespace gl::pp;
 float pv(const PluginState& s, int k) {
   return k >= 0 && static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : std::numeric_limits<float>::quiet_NaN();
 }
-// True when any of the params differ between a and b.
-bool differ(const PluginState& a, const PluginState& b, std::initializer_list<int> ks) {
-  for (int k : ks)
-    if (!(pv(a, k) == pv(b, k))) return true;
-  return false;
-}
 int32_t geti(const Bytes& b, size_t at) { return static_cast<int32_t>(getU32(b, at)); }
 
-// Decoded value of param k of state b (NaN when it does not decode).
-float decoded(const std::string& fl, const Bytes& b, int k, const EncodeContext& c) {
-  PluginMapping m;
-  return decodeState(fl, b, m, c) ? pv(m.state, k) : std::numeric_limits<float>::quiet_NaN();
-}
 
-// Bisection of the i32 at `at` (lo..hi, decoded value non-decreasing in it)
-// for param k = want. Leaves the closest value written; true when exact.
-bool bisect(const std::string& fl, Bytes& b, size_t at, int lo, int hi, int k, float want, const EncodeContext& c) {
-  auto val = [&](int r) {
-    putI32(b, at, r);
-    return decoded(fl, b, k, c);
-  };
-  int best = lo;
-  float bestErr = HUGE_VALF;
-  auto consider = [&](int r, float v) {
-    const float err = std::fabs(v - want);
-    if (err < bestErr) bestErr = err, best = r;
-    return v == want;
-  };
-  if (consider(lo, val(lo)) || consider(hi, val(hi))) {
-    putI32(b, at, best);
-    return true;
-  }
-  int a = lo, z = hi;
-  while (z - a > 1) {
-    const int mid = a + (z - a) / 2;
-    const float v = val(mid);
-    if (!std::isfinite(v)) break;
-    if (consider(mid, v)) break;
-    (v < want ? a : z) = mid;
-  }
-  putI32(b, at, best);
-  return bestErr == 0.0f;
-}
 void pstr(ByteWriter& w, const std::string& s) {
   const size_t n = std::min<size_t>(s.size(), 255);
   w.u8(static_cast<uint32_t>(n));
@@ -85,12 +47,10 @@ void pstr(ByteWriter& w, const std::string& s) {
 // 0, 0, cutoff, resonance, 0, type). Early presets: 11 dwords, no version.
 namespace osc {
 
-constexpr size_t kEnv = 96, kRec = 68, kLev = 436, kSize14 = 460;
-size_t rec(int target) { return kEnv + kRec * static_cast<size_t>(target); }
+constexpr size_t kEnv = 96, kLev = 436, kSize14 = 460;  // channel envelope copies: 5 × 68 bytes from kEnv
 // Channel envelope record fields (dword index × 4).
 enum : size_t { RFlag = 0, REnabled = 4, RPredelay = 8, RAttack = 12, RHold = 16, RDecay = 20, RSustain = 24, RRelease = 28, RAmount = 32,
                 RLfoPredelay = 36, RLfoAttack = 40, RLfoAmount = 44, RLfoSpeed = 48, RLfoShape = 52, RTension = 56 };
-constexpr size_t kLevCutoff = kLev + 8, kLevReso = kLev + 12, kLevType = kLev + 20;
 
 // Offset of control tag i (0..20) in the state (npos when absent).
 size_t tagOffset(const Bytes& b, int i) {
@@ -102,18 +62,6 @@ size_t tagOffset(const Bytes& b, int i) {
   }
   const size_t at = 4 + static_cast<size_t>(i) * 4;
   return at + 4 <= b.size() ? at : std::string::npos;
-}
-
-// The LFO the decoder reads: the first channel LFO in use in this order.
-struct LfoCand {
-  int rec, trio;
-};
-constexpr LfoCand kLfo[4] = {{1, 3}, {2, 2}, {4, 1}, {0, 4}};  // volume, mod X, pitch, panning
-
-int activeLfo(const Bytes& b) {
-  for (int k = 0; k < 4; ++k)
-    if (geti(b, rec(kLfo[k].rec) + RLfoAmount) != 0) return k;
-  return -1;
 }
 
 Bytes defaults() {
@@ -171,79 +119,17 @@ std::vector<Field> fields(const Bytes& b) {
     f.push_back(field(SynOsc3Mode, 91, Type::U8, 0, 1));
   }
   if (version >= 13 && b.size() >= 93) f.push_back(field(SynHQ, 92, Type::U8, 0, 1));
-  if (b.size() >= kSize14) {
-    const size_t v = rec(1), x = rec(2);
-    f.push_back(i32(SynAttack, v + RAttack, 100, 65536));
-    f.push_back(i32(SynDecay, v + RDecay, 100, 65536));
-    f.push_back(i32(SynDecay, v + RHold, 100, 65536));  // decay time = hold / 4 + decay
-    f.push_back(i32(SynSustain, v + RSustain, 0, 128));
-    f.push_back(i32(SynRelease, v + RRelease, 100, 65536));
-    f.push_back(i32(SynCutoff, kLevCutoff, 0, 256));
-    f.push_back(i32(SynResonance, kLevReso, 0, 256));
-    f.push_back(i32(SynFilterType, kLevType, 0, 7));
-    f.push_back(i32(SynFilterEnv, x + RAmount, -128, 128));
-    f.push_back(i32(SynFilterDecay, x + RDecay, 100, 65536));
-    f.push_back(i32(SynFilterDecay, x + RHold, 100, 65536));
-    const int l = activeLfo(b);
-    if (l >= 0) {
-      const size_t r = rec(kLfo[l].rec);
-      f.push_back(i32(SynLfoShape, r + RLfoShape, 0, 2));
-      f.push_back(i32(SynLfoRate, r + RLfoSpeed, 200, 65536));
-      // (the pitch LFO goes to ±256: half depth per unit)
-      f.push_back(i32(SynLfoAmount, r + RLfoAmount, 1, kLfo[l].rec == 4 ? 256 : 128));
-    }
-  }
+  // (J-33: the channel envelope / filter copies decode to PluginState::ins,
+  // written whole by write(); the Trio's own envelope and filter stay neutral.)
   return f;
 }
 
-// Switches the channel envelope / filter / LFO copies on or off as the
-// target needs (the field solver then sets their values).
+// The channel envelope / LFO / filter copies follow PluginState::ins (J-33).
 void write(const PluginState& g, Bytes& b, const EncodeContext& c) {
   if (b.size() < kSize14) return;  // only v14+ carries the channel copies
   PluginMapping m;
   if (!decodeState("3x Osc", b, m, c)) return;
-  const PluginState& cur = m.state;
-  const float kOffA = 0.001f, kOffD = 1.0f, kOffS = 1.0f, kOffR = 0.008f;  // decoder's values without a volume envelope
-  if (differ(g, cur, {SynAttack, SynDecay, SynSustain, SynRelease})) {
-    const bool off = pv(g, SynAttack) == kOffA && pv(g, SynDecay) == kOffD && pv(g, SynSustain) == kOffS && pv(g, SynRelease) == kOffR;
-    putI32(b, rec(1) + REnabled, off ? 0 : -1);
-  }
-  const size_t x = rec(2);
-  const bool modX = geti(b, x + REnabled) != 0 && geti(b, x + RAmount) != 0;
-  if (differ(g, cur, {SynFilterEnv, SynFilterDecay})) {
-    const float want = pv(g, SynFilterEnv);
-    if (want != 0.0f && !modX) putI32(b, x + REnabled, -1), putI32(b, x + RAmount, want > 0 ? 64 : -64);
-    if (want == 0.0f && modX) putI32(b, x + RAmount, 0);
-  }
-  if (differ(g, cur, {SynCutoff, SynResonance, SynFilterType}) && pv(g, SynCutoff) == 20000.0f && pv(g, SynResonance) == 0.0f &&
-      pv(g, SynFilterType) == 0.0f)
-    putI32(b, kLevCutoff, 256), putI32(b, kLevReso, 0);
-  if (!(pv(g, SynLfoTarget) == pv(cur, SynLfoTarget))) {
-    const int want = static_cast<int>(pv(g, SynLfoTarget));
-    for (const LfoCand& l : kLfo) {
-      const size_t r = rec(l.rec) + RLfoAmount;
-      if (l.trio == want) {
-        if (geti(b, r) == 0) putI32(b, r, 64);
-        break;
-      }
-      putI32(b, r, 0);
-    }
-  }
-  // Decay times are hold / 4 + decay: try the usual holds (as stored, the
-  // shortest, FL's default) with the decay solved for each.
-  for (auto [t, k] : {std::pair<int, int>{1, SynDecay}, {2, SynFilterDecay}}) {
-    const float want = pv(g, k);
-    if (decoded("3x Osc", b, k, c) == want) continue;
-    const size_t r = rec(t);
-    const Bytes keep = b;
-    bool hit = false;
-    const int d0 = geti(b, r + RDecay);
-    for (int h : {geti(b, r + RHold), 100, 20000})
-      if (!hit) putI32(b, r + RHold, h), hit = bisect("3x Osc", b, r + RDecay, 100, 65536, k, want, c);
-    for (int d : {d0, 100, 30000})  // or the hold solved for the usual decays
-      if (!hit) putI32(b, r + RDecay, d), hit = bisect("3x Osc", b, r + RHold, 100, 65536, k, want, c);
-    if (!hit) b = keep;
-  }
+  if (m.state.ins != g.ins) writeInsCopy(b, kEnv, kLev, g.ins);
 }
 
 Encoder encoder() {
@@ -286,51 +172,32 @@ Bytes defaults() {
 
 std::vector<Field> fields(const Bytes& b) {
   const size_t at = valuesAt(b);
-  struct T {
-    int tag, gl;
-    double lo, hi;
-  };
-  // Tag 12 (pan / tremolo: sign = mode, size = depth) is written by write().
-  static const T t[] = {{0, KyDecay, -1000, 1000},   {1, KyRelease, -1000, 1000},  {2, KyHardness, -1000, 1000}, {3, KyVelHardness, -1000, 1000},
-                        {4, KyMuffle, 0, 1000},      {5, KyVelMuffle, 0, 2000},    {6, KyVelocity, -1000, 1000}, {7, KyStereo, 0, 2000},
-                        {8, KyTune, -1000, 1000},    {9, KyDetune, 0, 500},        {10, KyStretch, -500, 500},   {11, KyTreble, -1000, 1000},
-                        {13, KyTremRate, 0, 65536},  {14, KyDrive, 0, 1000}};
+  // J-33: Sample Keys keeps the 15 raw knob values (parameter index = tag).
+  namespace sk = gl::packs::synths::skeys;
   std::vector<Field> f;
-  for (const T& x : t) {
-    const size_t o = at + static_cast<size_t>(x.tag) * 4;
-    if (at && o + 4 <= b.size()) f.push_back(i32(x.gl, o, x.lo, x.hi));
+  for (int tag = 0; tag < sk::SkCount; ++tag) {
+    const size_t o = at + static_cast<size_t>(tag) * 4;
+    if (at && o + 4 <= b.size()) f.push_back(i32(tag, o, sk::kSkMin[tag], sk::kSkMax[tag]));
   }
   return f;
 }
 
+// The sound set name (PluginState::data).
 void write(const PluginState& g, Bytes& b, const EncodeContext& c) {
   PluginMapping m;
-  if (b.size() < 5 || !decodeState("FL Keys", b, m, c)) return;
-  if (!(pv(g, KyModel) == pv(m.state, KyModel))) {
-    // Sample set the decoder maps to the wanted model.
-    const int model = static_cast<int>(pv(g, KyModel));
-    const char* set = model == 4 ? "Grand Piano" : model == 0 ? "Rhodes" : model == 5 ? "mda Piano" : nullptr;
-    if (set) {
-      const size_t at = valuesAt(b);
-      ByteWriter w;
-      w.bytes(b.data(), 4);
-      pstr(w, set);
-      if (at <= b.size()) w.b.insert(w.b.end(), b.begin() + static_cast<std::ptrdiff_t>(at), b.end());
-      b = w.b;
-    }
-  }
-  if (differ(g, m.state, {KyModMode, KyTremDepth})) {
-    const size_t o = valuesAt(b) + 12 * 4;
-    const double depth = std::clamp(static_cast<double>(pv(g, KyTremDepth)), 0.0, 1.0);
-    const long v = std::lround(depth * 1000.0);
-    if (o + 4 <= b.size()) putI32(b, o, static_cast<int32_t>(pv(g, KyModMode) >= 0.5f ? -v : v));
-  }
+  if (b.size() < 5 || !decodeState("FL Keys", b, m, c) || m.state.data == g.data) return;
+  const size_t at = valuesAt(b);
+  ByteWriter w;
+  w.bytes(b.data(), 4);
+  pstr(w, g.data);
+  if (at <= b.size()) w.b.insert(w.b.end(), b.begin() + static_cast<std::ptrdiff_t>(at), b.end());
+  b = w.b;
 }
 
 Encoder encoder() {
   Encoder e;
   e.flName = "FL Keys";
-  e.glType = "gl.keys";
+  e.glType = "gl.samplekeys";
   e.nativeRank = 0;
   e.generator = true;
   e.defaults = defaults;
@@ -706,104 +573,187 @@ Encoder encoder(const std::string& type, std::vector<std::pair<int, int>> map) {
 }  // namespace flex
 
 // =============================================================== DirectWave
-// Layout (FlpGenSamplers.cpp): dword version, records; record 1 = a program
-// (128), the first with zones is decoded. Zone = record 3 of the program with
-// sub-records 500 (root, key / velocity range bytes, f32 volume at 9, f32 pan
-// at 13), 501 name, 502 sample path, 503 sample info (loop mode / start / end
-// dwords at 20 / 24 / 28). The default state (128 empty programs, ~370 KB of
-// program / zone settings) is not built: native multisampler instances are
-// not written as DirectWave.
+// Layout (directwave_spec / FlpJ33.cpp decodeWaveProgram): dword version
+// 36..38, records; record 1 = a program (128); zones = record 3 with
+// sub-records 500..516. The default state (128 empty programs, ~370 KB) is not
+// built: native Wave Program instances are only written over their origin.
 namespace dw {
 
-namespace smp = gl::packs::samplers;
+namespace pw = gl::packs::samplers::dw;
 
-// Volume / pan float whose decoded value is `want` (checked with the decoder's
-// conversion via neighbours of the direct inverse).
-float solveFloat(float guess, float want, const std::function<float(float)>& dec) {
-  if (dec(guess) == want) return guess;
-  float lo = guess, hi = guess;
-  for (int i = 0; i < 64; ++i) {
-    lo = std::nextafter(lo, -HUGE_VALF), hi = std::nextafter(hi, HUGE_VALF);
-    if (dec(lo) == want) return lo;
-    if (dec(hi) == want) return hi;
+// J-33: the decoder produces Wave Program (gl.waveprogram): program tags
+// 0..31 in the parameters, everything else in PluginState::data. A changed
+// instance rewrites the sounding program (channel 0's) from them: header,
+// FX sections, LFOs, Mod Vals, trigger groups and every zone record.
+Bytes zoneRecord(const pw::DwZone& z, const std::string& path) {
+  std::vector<Rec> rs;
+  auto rec = [&](uint32_t id, const ByteWriter& w) { rs.push_back({id, w.b}); };
+  {
+    ByteWriter w;
+    w.u8(z.root), w.u8(z.lo), w.u8(z.hi), w.u8(z.vlo), w.u8(z.vhi), w.u8(z.muteGroup), w.u8(0), w.u8(0), w.u8(z.parallel);
+    w.f32(z.gain), w.f32(z.pan), w.i32(z.trigGroup), w.i32(512);
+    rec(500, w);
   }
-  return guess;
-}
-
-void patchZone(Rec& zone, const smp::Zone& z) {
-  std::vector<Rec> rs = parseRecs(zone.data, 0);
-  for (Rec& r : rs) {
-    Bytes& d = r.data;
-    if (r.id == 500 && d.size() >= 17) {
-      d[0] = static_cast<uint8_t>(std::clamp(z.root, 0, 127));
-      d[1] = static_cast<uint8_t>(std::clamp(z.lo, 0, 127)), d[2] = static_cast<uint8_t>(std::clamp(z.hi, 0, 127));
-      d[3] = static_cast<uint8_t>(std::clamp(z.vlo, 0, 127)), d[4] = static_cast<uint8_t>(std::clamp(z.vhi, 0, 127));
-      auto decGain = [](float v) { return static_cast<float>(v > 0.001 ? std::clamp(20.0 * std::log10(static_cast<double>(v)), -60.0, 12.0) : -60.0); };
-      auto decPan = [](float p) { return static_cast<float>(std::clamp((static_cast<double>(p) - 0.5) * 2.0, -1.0, 1.0)); };
-      if (decGain(getF32(d, 9)) != z.gain)
-        putF32(d, 9, z.gain <= -60.0f ? 0.0f : solveFloat(static_cast<float>(std::pow(10.0, z.gain / 20.0)), z.gain, decGain));
-      if (decPan(getF32(d, 13)) != z.pan) putF32(d, 13, solveFloat(z.pan / 2.0f + 0.5f, z.pan, decPan));
-    } else if (r.id == 501) {
-      if (cstr(d) != z.name) d.assign(z.name.begin(), z.name.end());
-    } else if (r.id == 503 && d.size() >= 32) {  // (502, the path, is set by the caller when it differs)
-      const int mode = geti(d, 20);
-      const bool on = mode > 0 && geti(d, 28) > geti(d, 24);
-      if (z.loop == smp::LoopOff) {
-        if (on) putI32(d, 20, 0);
-      } else {
-        putI32(d, 20, z.loop == smp::LoopBounce ? 3 : (on && mode != 3 ? mode : 2));
-        putI32(d, 24, static_cast<int32_t>(z.loopStart)), putI32(d, 28, static_cast<int32_t>(z.loopEnd));
-      }
-    }
+  {
+    ByteWriter w;
+    w.bytes(z.name.data(), z.name.size());
+    rec(501, w);
   }
+  {
+    ByteWriter w;
+    w.bytes(path.data(), path.size());
+    rec(502, w);
+  }
+  {
+    ByteWriter w;
+    w.u64(0), w.i32(1), w.i32(z.ticks), w.f32(z.rate), w.i32(z.loopMode), w.i32(z.loopStart), w.i32(z.loopEnd), w.i32(z.sampleStart), w.i32(16);
+    rec(503, w);
+  }
+  {
+    ByteWriter w;
+    w.f32(z.tune), w.u8(static_cast<uint8_t>(z.transpose)), w.u8(static_cast<uint8_t>(z.fine)), w.u16(static_cast<uint16_t>(z.keytrack));
+    rec(504, w);
+  }
+  {
+    ByteWriter w;
+    w.u8(z.ts), w.u8(z.tsSync), w.f32(z.tsTime), w.f32(z.tsGrain), w.f32(z.tsSmooth);
+    rec(505, w);
+  }
+  {
+    ByteWriter w;
+    for (float v : z.send) w.f32(v);
+    w.zeros(32);
+    rec(506, w);
+  }
+  for (const auto& f : z.f) {
+    ByteWriter w;
+    w.u8(f.type), w.zeros(3), w.f32(f.cut), w.f32(f.res), w.f32(f.shape), w.f32(0);
+    rec(507, w);
+  }
+  {
+    ByteWriter w;
+    w.u8(z.beatSync), w.u8(z.waveSlice);
+    rec(508, w);
+  }
+  {
+    ByteWriter w;
+    for (float v : z.amp) w.f32(v);
+    rec(509, w);
+  }
+  for (int k = 0; k < 4; ++k) {
+    ByteWriter w;
+    w.u8(z.fxOn[k]), w.f32(z.fxA[k]), w.f32(z.fxB[k]);
+    rec(510 + static_cast<uint32_t>(k), w);
+  }
+  for (const auto& e : z.menv) {
+    ByteWriter w;
+    for (float v : e) w.f32(v);
+    rec(514, w);
+  }
+  for (const auto& l : z.lfo) {
+    ByteWriter w;
+    w.u8(l.wave), w.u8(l.sync), w.zeros(2), w.f32(l.rate), w.f32(l.phase), w.f32(l.attack), w.f32(0);
+    rec(515, w);
+  }
+  for (const auto& s : z.slot) {
+    ByteWriter w;
+    w.u16(static_cast<uint16_t>(s.src)), w.u16(static_cast<uint16_t>(s.dst)), w.f32(s.amt);
+    rec(516, w);
+  }
+  rs.push_back({4, {}});
   ByteWriter w;
   putRecs(w, rs);
-  zone.data = w.b;
-}
-
-void setPath(Rec& zone, const std::string& path) {
-  std::vector<Rec> rs = parseRecs(zone.data, 0);
-  for (Rec& r : rs)
-    if (r.id == 502) r.data.assign(path.begin(), path.end());
-  ByteWriter w;
-  putRecs(w, rs);
-  zone.data = w.b;
-}
-
-std::string zonePath(const Rec& zone) {
-  for (const Rec& r : parseRecs(zone.data, 0))
-    if (r.id == 502) return cstr(r.data);
-  return {};
+  return w.b;
 }
 
 void write(const PluginState& g, Bytes& b, const EncodeContext& c) {
   PluginMapping m;
-  if (b.size() < 16 || !decodeState("DirectWave", b, m, c) || m.state.data == g.data) return;
-  const smp::ZoneMap want = smp::parseZoneMap(g.data);
-  const smp::ZoneMap have = smp::parseZoneMap(m.state.data);
-  if (want.zones.empty()) return;
+  if (b.size() < 16 || !decodeState("DirectWave", b, m, c)) return;
+  if (m.state.data == g.data && m.state.params == g.params) return;
+  pw::DwProgram p;
+  if (!pw::parseProgram(g.data, p)) return;
+  auto t = [&](int k) { return static_cast<float>(pv(g, k)); };
   std::vector<Rec> top = parseRecs(b, 4);
+  int chanProgram = 0;
+  for (Rec& r : top) {
+    if (r.id == 6 && r.data.size() >= 4) putU32(r.data, 0, (getU32(r.data, 0) & ~3u) | (p.clipVolume ? 1u : 0u) | (p.compatVelocity ? 2u : 0u));
+    if (r.id == 518 && r.data.size() >= 6) putI32(r.data, 1, p.sinc ? 1 : 0), r.data[5] = p.hq ? 1 : 0;
+    if (r.id == 5 && r.data.size() >= 0x248 && getU32(r.data, 0) == 0) {
+      chanProgram = r.data[0x208];
+      putI32(r.data, 0x214, p.bendRange);
+      putF32(r.data, 0x238, p.cc1), putF32(r.data, 0x23C, p.cc7), putF32(r.data, 0x240, p.cc10), putF32(r.data, 0x244, p.cc11);
+    }
+  }
   for (Rec& prog : top) {
     if (prog.id != 1) continue;
     std::vector<Rec> pr = parseRecs(prog.data, 0);
-    std::vector<size_t> zi;  // zone records the decoder reads (a sample path)
-    for (size_t i = 0; i < pr.size(); ++i)
-      if (pr[i].id == 3 && !zonePath(pr[i]).empty()) zi.push_back(i);
-    if (zi.empty()) continue;
-    // Zone count: extra zones copy the last one; surplus zones are removed.
-    const Rec tmpl = pr[zi.back()];
-    while (zi.size() > want.zones.size()) pr.erase(pr.begin() + static_cast<std::ptrdiff_t>(zi.back())), zi.pop_back();
-    for (size_t n = zi.size(); n < want.zones.size(); ++n) {
-      pr.insert(pr.begin() + static_cast<std::ptrdiff_t>(zi.back() + 1), tmpl);
-      zi.push_back(zi.back() + 1);
+    bool mine = false;
+    for (const Rec& h : pr)
+      if (h.id == 100 && h.data.size() >= 4 && static_cast<int>(getU32(h.data, 0)) == chanProgram) mine = true;
+    if (!mine) continue;
+    std::vector<Rec> out;
+    int lfoK = 0, modK = 0;
+    for (Rec r : pr) {
+      Bytes& d = r.data;
+      switch (r.id) {
+        case 100:
+          if (d.size() >= 18) {
+            d[4] = static_cast<uint8_t>(p.playMode), d[5] = p.glideAuto;
+            putF32(d, 6, t(pw::DwMaster)), putF32(d, 10, t(pw::DwGlide)), putU32(d, 14, static_cast<uint32_t>(p.zones.size()));
+          }
+          break;
+        case 102: d.assign(p.name.begin(), p.name.end()); break;
+        case 104:
+          if (d.size() >= 10) d[0] = p.driveOn[0], d[1] = p.driveOn[1], putF32(d, 2, t(pw::DwDriveA)), putF32(d, 6, t(pw::DwDriveB));
+          break;
+        case 105:
+          if (d.size() >= 18) {
+            d[0] = p.delayOn, d[1] = p.pingPong;
+            for (int k = 0; k < 4; ++k) putF32(d, 2 + 4 * static_cast<size_t>(k), t(pw::DwDelayTime + k));
+          }
+          break;
+        case 106:
+          if (d.size() >= 17) {
+            d[0] = p.revOn;
+            for (int k = 0; k < 4; ++k) putF32(d, 1 + 4 * static_cast<size_t>(k), t(pw::DwRevRoom + k));
+          }
+          break;
+        case 107:
+          if (d.size() >= 17) {
+            d[0] = p.choOn;
+            for (int k = 0; k < 4; ++k) putF32(d, 1 + 4 * static_cast<size_t>(k), t(pw::DwChoDelay + k));
+          }
+          break;
+        case 108:
+          if (d.size() >= 20 && lfoK < 2) {
+            d[0] = static_cast<uint8_t>(p.plfo[lfoK].wave), d[1] = p.plfo[lfoK].sync;
+            putF32(d, 4, t(lfoK ? pw::DwLfo2Rate : pw::DwLfo1Rate));
+            putF32(d, 8, t(lfoK ? pw::DwLfo2Phase : pw::DwLfo1Phase));
+            putF32(d, 12, t(lfoK ? pw::DwLfo2Attack : pw::DwLfo1Attack));
+            ++lfoK;
+          }
+          break;
+        case 109:
+          if (d.size() == 4 && modK < 4) putF32(d, 0, t(pw::DwModVal1 + modK++));
+          break;
+        case 110:
+          if (d.size() >= 13) {
+            const uint32_t gi = getU32(d, 0);
+            if (gi >= 1 && gi <= 99) {
+              const pw::DwTrigger& tg = p.trig[gi];
+              d[4] = static_cast<uint8_t>(tg.type), putF32(d, 5, tg.prob), putF32(d, 9, tg.overlap);
+            }
+          }
+          break;
+        default: break;
+      }
+      if (r.id == 3 || r.id == 2) continue;  // zones are rebuilt below; the end record follows them
+      out.push_back(std::move(r));
     }
-    for (size_t k = 0; k < zi.size(); ++k) {
-      Rec& z = pr[zi[k]];
-      patchZone(z, want.zones[k]);
-      if (k >= have.zones.size() || have.zones[k].path != want.zones[k].path) setPath(z, flPath(want.zones[k].path, c));
-    }
+    for (const auto& z : p.zones) out.push_back({3, zoneRecord(z, flPath(z.path, c))});
+    out.push_back({2, {}});
     ByteWriter w;
-    putRecs(w, pr);
+    putRecs(w, out);
     prog.data = w.b;
     break;
   }
@@ -816,7 +766,7 @@ void write(const PluginState& g, Bytes& b, const EncodeContext& c) {
 Encoder encoder() {
   Encoder e;
   e.flName = "DirectWave";
-  e.glType = "gl.multisampler";
+  e.glType = "gl.waveprogram";
   e.nativeRank = -1;
   e.generator = true;
   e.write = write;

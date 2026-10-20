@@ -163,7 +163,7 @@ void testCatalogue() {
     Out silent = render(fresh(t), {}, 4096, 256);
     expect(silent.finite && silent.peak == 0.f && !silent.activeAtEnd, (std::string(t) + ": silent without notes").c_str());
   }
-  expect(findPlugin("gl.dcosynth")->params.size() == DcCount && DcCount == 173, "DCO Synth: tags 0..154 + matrix + panel");
+  expect(findPlugin("gl.dcosynth")->params.size() == DcCount && DcCount == 174, "DCO Synth: tags 0..154 + matrix + panel + engine model");
 }
 
 void testFmDuo() {
@@ -285,7 +285,7 @@ void testDco() {
   Out pitchMx = note(with(s, {{DcMxSrc1, 3}, {DcMxDst1, kDcDestDco1Pitch}, {DcMxAmt1, 1.0f}, {DcVcaSrc, 1}, {DcCutoff, 1}}));
   expect(zcHz(pitchMx.L, 4000, 12000) > 330, "DCO Synth: matrix env 1 → DCO 1 pitch");
   // Mono glide.
-  Out glide = render(with(s, {{DcMono, 1}, {DcPorta, 0.5f}, {DcCutoff, 1}}),
+  Out glide = render(with(s, {{DcMono, 1}, {DcPorta, 0.3f}, {DcCutoff, 1}}),
                      {{0, true, 1, 48, 0.8f}, {8000, true, 2, 72, 0.8f}, {30000, false, 2, 0, 0}, {30000, false, 1, 0, 0}}, 32000, 256);
   const double early = zcHz(glide.L, 8200, 9800), late = zcHz(glide.L, 26000, 30000);
   expect(early < late * 0.8 && std::fabs(late - 523.3) < 40, "DCO Synth: mono portamento glides");

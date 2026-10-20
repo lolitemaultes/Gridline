@@ -11,11 +11,31 @@ void drawMatrixFmEditor(App& a, const PluginTarget& t, float width);   // matrix
 void drawGmsEditor(App& a, const PluginTarget& t, float width);        // gms_ui.cpp
 bool drawVaEditors(App& a, const PluginTarget& t, float width);        // va_ui.cpp (J-22)
 bool drawDcoEditors(App& a, const PluginTarget& t, float width);       // dco_ui.cpp (J-22)
+void drawHexSynthEditor(App& a, const PluginTarget& t, float width);   // hex_ui.cpp (J-33)
+void drawPocketSynthEditor(App& a, const PluginTarget& t, float width);  // pocket_ui.cpp (J-33)
+void drawPixelToneEditor(App& a, const PluginTarget& t, float width);    // pixel_ui.cpp (J-33)
+void drawSampleKeysEditor(App& a, const PluginTarget& t, float width);   // samplekeys_ui.cpp (J-33)
 
 bool drawEditor(App& a, const PluginTarget& t, float width) {
   const PluginInfo* info = t.info(a.doc.song());
   if (!info) return false;
   if (drawVaEditors(a, t, width) || drawDcoEditors(a, t, width)) return true;
+  if (info->type == "gl.samplekeys") {
+    drawSampleKeysEditor(a, t, width);
+    return true;
+  }
+  if (info->type == "gl.pixeltone") {
+    drawPixelToneEditor(a, t, width);
+    return true;
+  }
+  if (info->type == "gl.pocketsynth") {
+    drawPocketSynthEditor(a, t, width);
+    return true;
+  }
+  if (info->type == "gl.hexsynth") {
+    drawHexSynthEditor(a, t, width);
+    return true;
+  }
   if (info->type == "gl.analog") {
     drawAnalogEditor(a, t, width);
     return true;

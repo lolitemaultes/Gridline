@@ -52,6 +52,7 @@ Json stateJson(const PluginState& st) {
   for (float v : st.params) p.array.push_back(Json::makeNumber(v));
   j.object["params"] = std::move(p);
   if (!st.data.empty()) j.object["data"] = Json::makeString(st.data);
+  if (!st.ins.empty()) j.object["ins"] = Json::makeString(st.ins);
   return j;
 }
 
@@ -61,6 +62,7 @@ PluginState stateFrom(const Json& j) {
     for (size_t i = 0; i < p->array.size() && i < s.params.size(); ++i)
       if (p->array[i].is(Json::Type::Number)) s.params[i] = static_cast<float>(p->array[i].number);
   s.data = j.text("data");
+  s.ins = j.text("ins");
   normalizePluginState(s);
   return s;
 }

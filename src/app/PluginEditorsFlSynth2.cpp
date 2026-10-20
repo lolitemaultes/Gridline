@@ -486,9 +486,26 @@ void editorMidiOutFl(App& a, const PluginTarget& t, float width) {
   // Controller page: 3 × 3 wheels (8 controllers + note velocity).
   skin::well(dl, F.p(0, 46), F.p(558, 349), K, 3 * F.s);
   static const char* types[5] = {"CC", "RPN", "NRPN", "AT", "Note"};
-  for (int k = 0; k < 9; ++k) {
-    const float x = 83 + (k % 3) * 152.0f, y = 51 + (k / 3) * 84.0f;
-    ImGui::PushID(k + 1000);
+  // Controller pages of 8 (J-33: up to 72 controllers).
+  static int moPage = 0;
+  {
+    int used = 8;
+    for (int k = 0; k < kMoKnobs; ++k)
+      if (ival(st, moKnob(k, MoKnobValue)) != 0 || ival(st, moKnob(k, MoKnobNumber)) != 20 + k) used = std::max(used, k + 1);
+    const int pages = (used + 7) / 8;
+    moPage = std::clamp(moPage, 0, pages - 1);
+    if (pages > 1) {
+      char pl[32];
+      std::snprintf(pl, sizeof pl, "Page %d / %d", moPage + 1, pages);
+      if (skin::button("##pgp", F.p(360, 14), F.sz(20, 18), K, "<", false, lf(F, 8))) moPage = std::max(0, moPage - 1);
+      skin::text(dl, F.p(384, 16), K.textDim, pl, lf(F, 7.0f));
+      if (skin::button("##pgn", F.p(440, 14), F.sz(20, 18), K, ">", false, lf(F, 8))) moPage = std::min(pages - 1, moPage + 1);
+    }
+  }
+  for (int i = 0; i < 9; ++i) {
+    const int k = i < 8 ? moPage * 8 + i : kMoKnobs;
+    const float x = 83 + (i % 3) * 152.0f, y = 51 + (i / 3) * 84.0f;
+    ImGui::PushID(i + 1000);
     if (k < kMoKnobs) {
       skin::wheel(a, t, moKnob(k, MoKnobValue), F.p(x, y), 70 * F.s, K, skin::WheelBigLine);
       char lbl[24];

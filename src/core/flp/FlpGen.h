@@ -78,6 +78,12 @@ ChanEnv parseEnv(Bytes b);
 // embedded in some plugin states: 5 × 68 bytes + 24-byte levels) when absent.
 ChanSettings channelSettings(const std::vector<Event>& events, Bytes fallbackEnv = {}, Bytes fallbackLevels = {});
 
+// The channel's instrument envelopes / LFOs / filter (events 218 / 219, else
+// the copy some plugin states embed) as PluginState::ins text (J-33,
+// engine/ChannelIns.h). Returns "" when nothing is in use. `exact` turns false
+// for settings the runtime does not reproduce (panning envelope, global LFOs).
+std::string channelInsText(const std::vector<Event>& events, Bytes fallbackEnv, Bytes fallbackLevels, bool* exact = nullptr);
+
 // Approximate seconds of an FL envelope time value (100..65536).
 double envSeconds(int v);
 // Sustain 0..128 → 0..1.

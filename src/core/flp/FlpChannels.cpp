@@ -383,6 +383,7 @@ void finishChannels(Context& c) {
     if (id == c.channelIds.end()) continue;
     Channel* ch = c.song.channel(id->second);
     if (!ch || ch->plugin.type != "gl.synth" || !c.channelPlugins.count(idx)) continue;
+    if (!ch->plugin.ins.empty() || c.channelPlugins[idx].flName == "3x Osc") continue;  // channel envelopes run as such (J-33)
     ChannelIns ins = decodeChannelIns(evs);
     const ChannelIns::Env& v = ins.env[ChannelIns::Volume];
     if (!v.enabled) continue;

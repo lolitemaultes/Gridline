@@ -359,8 +359,9 @@ void testSlicer() {
     expect(std::fabs(gen2test::param(r, slMarker(1)) - 0.5f) < 1e-4 && std::fabs(gen2test::param(r, slParam2(0, SliceEnd)) - 0.2f) < 1e-4 &&
                gen2test::param(r, slParam2(1, SliceEnd)) < 0,
            "slicex: region 1 ends at its ltxt length, region 2 runs to the end");
-    expect(std::fabs(gen2test::param(r, slParam(1, SliceGain)) - 6.0206f) < 0.01 && std::fabs(gen2test::param(r, SlModX) - 0.5f) < 1e-4,
-           "slicex: region volume (16000 = +6 dB) and modulation X");
+    // J-33: region volume law (3^(v/8000) − 1)/2 → 16000 = ×4 (+12 dB).
+    expect(std::fabs(gen2test::param(r, slParam(1, SliceGain)) - 12.0f) < 0.01 && std::fabs(gen2test::param(r, SlModX) - 0.5f) < 1e-4,
+           "slicex: region volume (16000 = ×4, the +12 dB ceiling) and modulation X");
   }
 }
 
@@ -416,7 +417,7 @@ void testFlFiles() {
     const char* file;
     const char* glType;
   };
-  const RT rts[] = {{"3OSC.flp", "gl.synth"}, {"FPC.flp", "gl.pads"}, {"Slicex.flp", "gl.slicer"}, {"Directwave.flp", "gl.multisampler"}, {"FL Keys.flp", "gl.keys"}};
+  const RT rts[] = {{"3OSC.flp", "gl.synth"}, {"FPC.flp", "gl.pads"}, {"Slicex.flp", "gl.slicer"}, {"Directwave.flp", "gl.waveprogram"}, {"FL Keys.flp", "gl.samplekeys"}};  // J-33: FL Keys → Sample Keys
   for (const RT& rt : rts) {
     Song song;
     flp::Report rep;

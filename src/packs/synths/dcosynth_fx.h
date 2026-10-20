@@ -49,6 +49,7 @@ struct BbdChorus {
   int mode = 0;  // 0 off, 1 I, 2 II, 3 I+II
   double noise = 0;
   bool gate = false;
+  bool ref = false;  // reference modes: I 0.4 Hz / II 0.6 Hz over 1.08–5.23 ms, I+II 8 Hz over 2.85–3.37 ms
   uint32_t rnd = 12345;
   BbdChorus() : bufL(static_cast<size_t>(0.05 * kMaxRate) + 4, 0.f), bufR(static_cast<size_t>(0.05 * kMaxRate) + 4, 0.f) {}
   void configure(double s, int m, double noiseAmt, bool g) {
@@ -65,11 +66,11 @@ struct BbdChorus {
   void process(float* L, float* R, int n, bool active) {
     if (mode == 0) return;
     // Rates / depths of the classic modes (Hz, ms).
-    const double rate = mode == 1 ? 0.513 : mode == 2 ? 0.863 : 9.75;
-    const double depthMs = mode == 3 ? 0.35 : 1.6;
-    const double baseMs = mode == 3 ? 3.2 : 3.5;
+    const double rate = ref ? (mode == 1 ? 0.4 : mode == 2 ? 0.6 : 8.0) : (mode == 1 ? 0.513 : mode == 2 ? 0.863 : 9.75);
+    const double depthMs = ref ? (mode == 3 ? 0.26 : 2.075) : (mode == 3 ? 0.35 : 1.6);
+    const double baseMs = ref ? (mode == 3 ? 3.11 : 3.155) : (mode == 3 ? 3.2 : 3.5);
     const int len = static_cast<int>(bufL.size());
-    const double hiss = (gate && !active) ? 0.0 : noise * noise * 0.004;
+    const double hiss = (gate && !active) ? 0.0 : (ref ? 0.2 * noise * noise * noise : noise * noise * 0.004);
     for (int i = 0; i < n; ++i) {
       rnd = rnd * 1664525u + 1013904223u;
       const double nz = (static_cast<double>(rnd >> 9) / 4194304.0 - 1.0) * hiss;

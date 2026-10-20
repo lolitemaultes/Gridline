@@ -1,3 +1,4 @@
+#include "../../src/packs/samplers/dwave.h"
 // Gridline — FLP export tests: GenA plugin encoders (FlpEncGenA.cpp).
 #pragma once
 #include <functional>
@@ -73,11 +74,12 @@ inline void testEncGenA() {
       putI32(b, 96 + 136 + 44, 50);     // mod X LFO
     }, g);
     expect(ok, "3x Osc: synthetic state decodes");
+    expect(ok && !g.ins.empty(), "3x Osc: channel envelope / filter copy decodes to the channel settings (J-33)");
     expect(ok && nativeRoundTrip("3x Osc", g), "3x Osc: an edited patch with envelope / filter / LFO encodes back exactly");
     gl::PluginState d;
     if (genaDecode("3x Osc", enc::findEncoder("3x Osc", "gl.synth")->defaults(), "gl.synth", d)) {
-      d.params[pp::SynLfoTarget] = 0;
-      expect(nativeRoundTrip("3x Osc", d), "3x Osc: defaults round trip");
+      d.ins = g.ins;  // channel settings written into a fresh state's copy
+      expect(nativeRoundTrip("3x Osc", d), "3x Osc: defaults + channel settings round trip");
     }
     const enc::Encoder* e = enc::nativeEncoder(gl::defaultPluginState("gl.synth"));
     expect(e && e->flName == "3x Osc", "3x Osc: native home of the Trio Synth");
@@ -87,12 +89,14 @@ inline void testEncGenA() {
 
   // ---- FL Keys: sample set name + 15 tags.
   {
-    expect(defaultsDecode("FL Keys", "gl.keys"), "FL Keys: defaults decode");
+    // J-33: FL Keys → Sample Keys (raw knobs, sound set name).
+    expect(defaultsDecode("FL Keys", "gl.samplekeys"), "FL Keys: defaults decode");
     gl::PluginState g;
-    expect(genaDecode("FL Keys", enc::findEncoder("FL Keys", "gl.keys")->defaults(), "gl.keys", g), "FL Keys: defaults decode to Keys");
-    g.params[pp::KyModel] = 5;  // the other piano set
-    g.params[pp::KyModMode] = 1, g.params[pp::KyTremDepth] = 0.4f;
-    expect(nativeRoundTrip("FL Keys", g), "FL Keys: set name, auto-pan depth encode back exactly");
+    expect(genaDecode("FL Keys", enc::findEncoder("FL Keys", "gl.samplekeys")->defaults(), "gl.samplekeys", g),
+           "FL Keys: defaults decode to Sample Keys");
+    g.data = "mda Piano";
+    g.params[12] = -400, g.params[13] = 30000;
+    expect(nativeRoundTrip("FL Keys", g), "FL Keys: set name, auto-pan depth / rate encode back exactly");
     genaCorpus("FL Keys", "FL Keys", 0);
   }
 
@@ -152,14 +156,16 @@ inline void testEncGenA() {
 
   // ---- DirectWave: zones patched on a shipped program.
   if (flInstalled()) {
-    namespace smp = gl::packs::samplers;
+    namespace pw = gl::packs::samplers::dw;
     expect(genaPatch("DirectWave", 0, [](gl::PluginState& g) {
-      smp::ZoneMap zm = smp::parseZoneMap(g.data);
-      if (zm.zones.size() < 2) return;
-      zm.zones[0].root = 48, zm.zones[0].gain = -6.0f, zm.zones[0].pan = 0.25f, zm.zones[0].loop = smp::LoopOff;
-      zm.zones.pop_back();
-      g.data = smp::serializeZoneMap(zm);
-    }), "DirectWave: zone root / gain / pan / loop and zone count encode exactly");
+      pw::DwProgram p;
+      if (!pw::parseProgram(g.data, p) || p.zones.size() < 2) return;
+      p.zones[0].root = 48, p.zones[0].gain = 0.5f, p.zones[0].pan = 0.25f, p.zones[0].loopMode = 0;
+      p.zones.pop_back();
+      p.revOn = !p.revOn;
+      g.data = pw::formatProgram(p);
+      g.params[pw::DwMaster] = 0.6f;
+    }), "DirectWave: zone root / gain / pan / loop, zone count and program settings encode exactly");
     genaCorpus("DirectWave", "DirectWave", 1000);  // no defaults: native writes none
   }
 

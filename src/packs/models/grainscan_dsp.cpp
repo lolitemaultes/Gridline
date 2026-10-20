@@ -125,12 +125,17 @@ class GrainScanGen final : public Generator {
     // grain spacing and the read-head step are both proportional to the grain
     // length (200 units per octave), so their ratio is the playback speed;
     // tempo lock stretches the whole sample over one bar.
-    const double attSec = std::clamp(static_cast<double>(p_[GsAttack]), 50.0, 500.0) * 1e-4;
-    const double holdSec = std::clamp(static_cast<double>(p_[GsHold]), 0.0, 500.0) * 1e-4;
+    // Reference laws (J-33): attack / hold ms = round(10·(e^(0.00786365·x) − 1));
+    // spacing = (A + H)·s(gs)/256 (≥ 5 samples) and head step = (A + H)·s(ws)/256
+    // with s(x) = round(76.8·(e^(0.0023979·|x|) − 1)) (s(611) = 256).
+    auto ms = [](double x) { return std::round(10.0 * (std::exp(0.00786365 * std::max(0.0, x)) - 1.0)); };
+    auto sp = [](double x) { return std::round(76.8 * (std::exp(0.0023979 * std::fabs(x)) - 1.0)); };
+    const double attSec = std::max(1.0, ms(p_[GsAttack])) * 1e-3;
+    const double holdSec = ms(p_[GsHold]) * 1e-3;
     const double grainSec = attSec + holdSec;
-    const double space = std::max(5.0 / sr_, 0.5 * grainSec * std::pow(2.0, (std::clamp(static_cast<double>(p_[GsGrainSpace]), 125.0, 1000.0) - 611.0) / 200.0));
+    const double space = std::max(5.0 / sr_, grainSec * sp(p_[GsGrainSpace]) / 256.0);
     const double ws = std::clamp(static_cast<double>(p_[GsWaveSpace]), -1000.0, 1000.0);
-    double step = ws == 0 ? 0.0 : (ws < 0 ? -1.0 : 1.0) * 0.5 * grainSec * std::pow(2.0, (std::fabs(ws) - 611.0) / 200.0);  // source seconds per grain
+    double step = ws == 0 ? 0.0 : (ws < 0 ? -1.0 : 1.0) * grainSec * sp(ws) / 256.0;  // source seconds per grain
     if (p_[GsTempoLock] >= 0.5f && smp->sampleRate > 0)
       step = (ws < 0 ? -1.0 : 1.0) * smp->seconds() * space / (4.0 * 60.0 / tempo_);
     const double fxDepth = std::clamp(p_[GsFxDepth] / 384.0f, 0.0f, 1.0f);
@@ -143,7 +148,6 @@ class GrainScanGen final : public Generator {
     const double eA = std::max(0.001, static_cast<double>(p_[GsEnvAttack])), eH = std::max(0.0, static_cast<double>(p_[GsEnvHold]));
     const double eD = std::max(0.001, static_cast<double>(p_[GsEnvDecay])), eR = std::max(0.002, static_cast<double>(p_[GsEnvRelease]));
     const float eS = std::clamp(p_[GsEnvSustain], 0.0f, 1.0f);
-    const float vol = std::clamp(p_[GsVolume], 0.0f, 1.0f);
     for (auto& v : v_) {
       if (!v.on) continue;
       const double rate = (trig == 0 ? std::pow(2.0, (v.note - p_[GsRoot]) / 12.0) : 1.0) * srcRate;
@@ -188,7 +192,8 @@ class GrainScanGen final : public Generator {
               g.rate = rate;
               // Stereo: alternate grains lean left / right.
               const float pan = stereo * ((++v.grainCount & 1) ? 1.0f : -1.0f);
-              g.panL = std::sqrt(0.5f * (1.0f - pan)) * 1.41421356f, g.panR = std::sqrt(0.5f * (1.0f + pan)) * 1.41421356f;
+              // Constant grain gain 1.42 through a balance pan (reference).
+              g.panL = 1.42f * std::min(1.0f, 1.0f - pan), g.panR = 1.42f * std::min(1.0f, 1.0f + pan);
               g.rOff = 0;
               break;
             }
@@ -207,7 +212,7 @@ class GrainScanGen final : public Generator {
           if (g.age < g.att) e = static_cast<float>(g.age) / static_cast<float>(g.att);
           else if (g.age < g.att + g.hold) e = 1.0f;
           else e = 1.0f - static_cast<float>(g.age - g.att - g.hold) / static_cast<float>(g.att);
-          e = e * e * (3.0f - 2.0f * e);
+          // linear ramps (overlapping windows sum to 1 at the default spacing)
           auto rd = [&](const std::vector<float>& ch, double at) {
             at = std::fmod(at, frames);
             if (at < 0) at += frames;
@@ -224,7 +229,7 @@ class GrainScanGen final : public Generator {
           g.pos += g.rate;
           if (++g.age >= g.len) g.on = false;
         }
-        const float gain = target * v.vel * vol * 0.7f;
+        const float gain = target * v.vel;
         L[i] += l * gain;
         R[i] += r * gain;
       }

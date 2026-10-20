@@ -1418,7 +1418,7 @@ class MidiOutGen final : public Generator {
   MidiPortBus* bus_ = nullptr;
   int port_ = 0;
   int ch_ = 0, prog_ = 0, msb_ = -1, lsb_ = -1, velCurve_ = 0;
-  int knobLast_[pp::kMoKnobs] = {0, 0, 0, 0, 0, 0, 0, 0};
+  int knobLast_[pp::kMoKnobs] = {};
   float velScale_ = 1;
 };
 
