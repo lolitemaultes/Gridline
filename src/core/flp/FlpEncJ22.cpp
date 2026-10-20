@@ -1164,38 +1164,57 @@ Bytes moZone(const mt::SmZone& z, const Bytes* loopTemplate) {
   moBlock(zw, "MSP0", sp.b);
   return zw.b;
 }
+// The four programs of `b` rebuilt from `d` (the rest kept); false when `b`
+// does not parse.
+bool moRebuild(Bytes& b, const mt::SmData& d) {
+  const MoBlocks M = moBlocks(b);
+  if (!M.ok) return false;
+  ByteWriter w;
+  w.bytes(b.data(), kMoPrograms);  // "SSLF", size, "Mor0", "MPR0"
+  for (int p = 0; p < mt::kSmPrograms; ++p) {
+    const auto& zones = d.prog[static_cast<size_t>(p)].zones;
+    ByteWriter zh;
+    if (zones.empty()) {  // an empty corner: one silent placeholder zone
+      mt::SmZone z;
+      z.key = kMoEmptyKey;
+      z.frames.resize(1);
+      zh.i32(1);
+      zh.bytes(moZone(z, nullptr));
+    } else {
+      zh.i32(static_cast<int32_t>(zones.size()));
+      for (size_t k = 0; k < zones.size(); ++k)
+        zh.bytes(moZone(zones[k], k < M.loopRec[static_cast<size_t>(p)].size() ? &M.loopRec[static_cast<size_t>(p)][k] : nullptr));
+    }
+    ByteWriter vc;
+    moBlock(vc, "MZH0", zh.b);
+    vc.bytes(M.progRec[static_cast<size_t>(p)]);
+    moBlock(w, "MVC0", vc.b);
+  }
+  w.bytes(b.data() + M.end, b.size() - M.end);  // global blocks
+  putU32(w.b, 4, static_cast<uint32_t>(w.size() - 8));
+  b = std::move(w.b);
+  return true;
+}
 Encoder morphine() {
   Encoder e = base("Morphine", "gl.spectramorph", 0);
+  // J-39: a native instance starts from the FL installation's plugin database
+  // preset (its global blocks and master record are FL's default settings —
+  // their layout is not modelled here), with the programs emptied.
+  e.defaultsIn = [](const EncodeContext& c) {
+    if (c.factoryData.empty()) return Bytes{};
+    File f;
+    if (!readFile(c.factoryData + "/Data/Patches/Plugin database/Generators/Synth special/Morphine.fst", f, nullptr)) return Bytes{};
+    const Event* s = pluginState(f.events);
+    if (!s || s->size < 16) return Bytes{};
+    Bytes b(s->data, s->data + s->size);
+    if (!moRebuild(b, mt::SmData{})) return Bytes{};
+    return b;
+  };
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
     PluginState cur;
     mt::SmData d;
     if ((decodeNow("Morphine", b, c, cur) && cur.data == g.data) || !mt::parseMorph(g.data, d)) return;
-    const MoBlocks M = moBlocks(b);
-    if (!M.ok) return;
-    ByteWriter w;
-    w.bytes(b.data(), kMoPrograms);  // "SSLF", size, "Mor0", "MPR0"
-    for (int p = 0; p < mt::kSmPrograms; ++p) {
-      const auto& zones = d.prog[static_cast<size_t>(p)].zones;
-      ByteWriter zh;
-      if (zones.empty()) {  // an empty corner: one silent placeholder zone
-        mt::SmZone z;
-        z.key = kMoEmptyKey;
-        z.frames.resize(1);
-        zh.i32(1);
-        zh.bytes(moZone(z, nullptr));
-      } else {
-        zh.i32(static_cast<int32_t>(zones.size()));
-        for (size_t k = 0; k < zones.size(); ++k)
-          zh.bytes(moZone(zones[k], k < M.loopRec[static_cast<size_t>(p)].size() ? &M.loopRec[static_cast<size_t>(p)][k] : nullptr));
-      }
-      ByteWriter vc;
-      moBlock(vc, "MZH0", zh.b);
-      vc.bytes(M.progRec[static_cast<size_t>(p)]);
-      moBlock(w, "MVC0", vc.b);
-    }
-    w.bytes(b.data() + M.end, b.size() - M.end);  // global blocks
-    putU32(w.b, 4, static_cast<uint32_t>(w.size() - 8));
-    b = std::move(w.b);
+    moRebuild(b, d);
   };
   return e;
 }

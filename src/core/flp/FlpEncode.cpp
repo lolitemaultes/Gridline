@@ -337,18 +337,41 @@ Result encode(const PluginState& g, const std::string& originFlName, const Bytes
   if (!originFlName.empty()) return encodeWith(findEncoder(originFlName, g.type), g, originFlName, originState, ec);
   // Native instance: every FL plugin that decodes to this type, preferred
   // first; the first that reproduces the state exactly wins, else the closest.
-  std::vector<const Encoder*> cands;
+  // J-39: then the FL plugins that are no native home of the type (other FL
+  // plugins the importer maps to it) — used only when one reproduces the
+  // state exactly, which is what an instance imported from it does.
+  std::vector<const Encoder*> cands, fallback;
   for (const auto& e : encoders()) {
     const bool typeOk = e.glType == g.type || (e.glType == "*hosted" && isHostedType(g.type));
-    if (e.nativeRank >= 0 && typeOk && (!e.accepts || e.accepts(g))) cands.push_back(&e);
+    // (glType "": FL plugins in FL's plugin wrapper, as old projects load them — any type)
+    if (!(typeOk || (e.glType.empty() && e.nativeRank < 0)) || (e.accepts && !e.accepts(g))) continue;
+    (e.nativeRank >= 0 && typeOk ? cands : fallback).push_back(&e);
   }
   std::stable_sort(cands.begin(), cands.end(), [](const Encoder* a, const Encoder* b) { return a->nativeRank < b->nativeRank; });
+  const size_t ranked = cands.size();
+  cands.insert(cands.end(), fallback.begin(), fallback.end());
   Result best;
   best.note = "no FL plugin for " + g.type;
   bool have = false;
-  for (const Encoder* e : cands) {
+  for (size_t i = 0; i < cands.size(); ++i) {
+    const Encoder* e = cands[i];
+    if (i >= ranked && !e->defaults && !e->defaultsIn) continue;  // a fallback needs a state of its own
+    if (i >= ranked && e->flName == "Fruity Wrapper" && e->glType.empty() && ec.wrapAs.empty()) {
+      // FL's plugin wrapper: each FL plugin that can carry the state in turn
+      // (an old project's wrapped plugin stores its values at its own resolution).
+      for (const std::string& n : wrapCandidates(g)) {
+        EncodeContext c2 = ec;
+        c2.wrapAs = n;
+        Result r = encodeWith(e, g, "", nullptr, c2);
+        if (r.quality == Result::Exact) return r;
+      }
+      continue;
+    }
     Result r = encodeWith(e, g, "", nullptr, ec);
-    if (r.quality == Result::Exact) return r;
+    // Exact, or no state at all because FL's defaults decode to the instance.
+    const bool defaultsMatch = r.quality == Result::Defaults && r.mismatched.empty() && !r.dataMismatch && r.note.rfind("FL defaults (the defaults match)", 0) == 0;
+    if (r.quality == Result::Exact || defaultsMatch) return r;
+    if (i >= ranked) continue;  // fallbacks only when exact
     auto score = [](const Result& x) {
       return x.quality == Result::Approx ? static_cast<int>(x.mismatched.size()) + (x.dataMismatch ? 1 : 0) : 1 << 20;
     };
@@ -367,6 +390,7 @@ Result encodeWith(const Encoder* e, const PluginState& g, const std::string& ori
   bool fromOrigin = false;
   if (originState && !originFlName.empty()) t = *originState, fromOrigin = true;
   else if (e && e->defaults) t = e->defaults();
+  else if (e && e->defaultsIn) t = e->defaultsIn(ec);
   if (r.flName.empty()) {
     r.quality = Result::None;
     r.note = "no FL plugin for " + g.type;
@@ -417,10 +441,12 @@ Result encodeWith(const Encoder* e, const PluginState& g, const std::string& ori
   if (e->finish) e->finish(b);
   PluginState fin;
   r.state = b;
-  r.hasState = true;
+  r.hasState = !b.empty();  // (an encoder may decide FL's defaults are the state: none)
   if (s.decode(fin)) {
     r.mismatched = fin.type != g.type ? std::vector<int>{-1} : hosted ? std::vector<int>{} : diffParams(fin, g);
-    r.dataMismatch = fin.data != g.data || fin.ins != g.ins;  // J-33: channel envelopes / filter (PluginState::ins)
+    // J-33: channel envelopes / filter (PluginState::ins). J-39: a state that
+    // carries none (the channel's own events do: DX10, …) is not a mismatch.
+    r.dataMismatch = fin.data != g.data || (fin.ins != g.ins && !fin.ins.empty());
   } else {
     r.mismatched = {-1};
     r.note = "the encoded state does not decode";
@@ -497,7 +523,7 @@ std::string encodeCheck(const std::vector<std::string>& files, const CheckOption
       {
         Result r;
         if (enc) {
-          Bytes t = enc->defaults ? enc->defaults() : Bytes{};
+          Bytes t = enc->defaults ? enc->defaults() : enc->defaultsIn ? enc->defaultsIn(ec) : Bytes{};
           // encode() picks the native encoder by type; force this FL plugin:
           // pass the defaults as an "origin" so the same FL plugin is used.
           r = encode(m.state, name, t.empty() ? nullptr : &t, ec);
@@ -510,8 +536,32 @@ std::string encodeCheck(const std::vector<std::string>& files, const CheckOption
         if (r.dataMismatch) worst["(data)"]++;
         if (o.verbose && r.quality != Result::Exact && r.quality != Result::Verbatim) {
           detail << name << "\t" << in.file << "\tnative " << qualityName(r.quality) << ":";
-          for (int k : r.mismatched) detail << " " << paramName(glType, k);
-          if (r.dataMismatch) detail << " (data)";
+          PluginMapping got;
+          const bool gotOk = r.hasState && decodeState(r.flName, r.state, got, ec);
+          for (int k : r.mismatched) {
+            detail << " " << paramName(glType, k);
+            if (gotOk && k >= 0 && static_cast<size_t>(k) < m.state.params.size() && static_cast<size_t>(k) < got.state.params.size())
+              detail << "(" << m.state.params[static_cast<size_t>(k)] << "→" << got.state.params[static_cast<size_t>(k)] << ")";
+          }
+          if (r.dataMismatch) {
+            detail << " (data)";
+            // First differing line of the data texts (want / decoded again).
+            PluginMapping back;
+            if (decodeState(r.flName, r.state, back, ec)) {
+              std::istringstream a(m.state.data), b(back.state.data);
+              std::string la, lb;
+              while (true) {
+                const bool ga = static_cast<bool>(std::getline(a, la)), gb = static_cast<bool>(std::getline(b, lb));
+                if (!ga && !gb) break;
+                if (!ga) la = "<end>";
+                if (!gb) lb = "<end>";
+                if (la != lb) {
+                  detail << "\n    want " << la.substr(0, 200) << "\n    got  " << lb.substr(0, 200);
+                  break;
+                }
+              }
+            }
+          }
           detail << "\n";
         }
       }

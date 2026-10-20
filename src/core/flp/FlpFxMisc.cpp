@@ -292,7 +292,7 @@ double gainDb(double g) { return g > 1e-6 ? 20.0 * std::log10(g) : -120.0; }
 
 // ============================================================ Fruity NoteBook 2
 // u32 version (0), u32 current page (1-based), then pages
-// { u32 page (1-based), LEB128 character count, UTF-16LE text } until page = -1, u8 ?.
+// { u32 page (1-based), character count (u8; 0xFF: u32 follows), UTF-16LE text } until page = -1, u8 ?.
 bool decodeNotebook(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   (void)c;
   std::vector<uint8_t> b = stateBytes(evs);
@@ -306,13 +306,11 @@ bool decodeNotebook(Context& c, const std::vector<Event>& evs, PluginMapping& m)
     int32_t page = static_cast<int32_t>(rd32(b, o));
     o += 4;
     if (page == -1) break;
-    size_t len = 0;
-    int shift = 0;
-    while (o < b.size()) {
-      uint8_t v = b[o++];
-      len |= static_cast<size_t>(v & 0x7F) << shift;
-      shift += 7;
-      if (!(v & 0x80) || shift > 28) break;
+    // character count: u8, or 0xFF then u32 (J-39: not LEB128 — 200 is one byte 0xC8)
+    size_t len = o < b.size() ? b[o++] : 0;
+    if (len == 0xFF) {
+      len = o + 4 <= b.size() ? rd32(b, o) : b.size();
+      o += 4;
     }
     if (o + len * 2 > b.size() || page < 1) {
       ok = false;

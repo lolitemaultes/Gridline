@@ -347,7 +347,19 @@ const ParamMap& paramMap(const std::string& flName) {
 // FL plugin to wrap for a Gridline type: the template's, else the native
 // encoder's FL plugin, else any decoder that maps parameters to that type.
 // A candidate fits when it maps every parameter that is not at its default.
-std::string wrappedName(const PluginState& g, const std::string& tplName) {
+bool wrapFits(const PluginState& g, const std::string& n);
+
+std::string wrappedName(const PluginState& g, const std::string& tplName, const std::string& wrapAs = {}) {
+  if (!wrapAs.empty() && wrapFits(g, wrapAs)) return wrapAs;
+  auto fits = [&](const std::string& n) { return wrapFits(g, n); };
+  if (fits(tplName)) return tplName;
+  if (const Encoder* e = nativeEncoder(g); e && fits(e->flName)) return e->flName;
+  for (const auto& [name, dec] : decoders())
+    if (name.rfind("Fruity", 0) == 0 && fits(name)) return name;
+  return {};
+}
+
+bool wrapFits(const PluginState& g, const std::string& n) {
   const PluginState def = defaultPluginState(g.type);
   auto fits = [&](const std::string& n) {
     if (n.empty()) return false;
@@ -357,11 +369,7 @@ std::string wrappedName(const PluginState& g, const std::string& tplName) {
       if (g.params[k] != def.params[k] && std::find(pm.gl.begin(), pm.gl.end(), static_cast<int>(k)) == pm.gl.end()) return false;
     return true;
   };
-  if (fits(tplName)) return tplName;
-  if (const Encoder* e = nativeEncoder(g); e && fits(e->flName)) return e->flName;
-  for (const auto& [name, dec] : decoders())
-    if (name.rfind("Fruity", 0) == 0 && fits(name)) return name;
-  return {};
+  return fits(n);
 }
 
 struct ParamList {
@@ -397,12 +405,12 @@ Encoder wrappedFl() {
     rs.push_back(kindRec(0));
     return build(kWrapperVersion, rs);
   };
-  e.write = [](const PluginState& g, Bytes& b, const EncodeContext&) {
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& ec) {
     if (formatOf(g.type) != Format::None) return;
     const std::vector<Rec> tpl = records(b);
     const Rec* nameRec = findRec(tpl, 54);
     const std::string tplName = nameRec ? str(nameRec->data) : std::string();
-    const std::string name = wrappedName(g, tplName);
+    const std::string name = wrappedName(g, tplName, ec.wrapAs);
     if (name.empty()) return;
     if (name == tplName && findRec(tpl, 53)) return;  // the origin's layout: the values are solved in place
     const ParamMap& pm = paramMap(name);
@@ -451,6 +459,17 @@ Encoder wrappedFl() {
 }
 
 }  // namespace
+
+std::vector<std::string> wrapCandidates(const PluginState& g) {
+  std::vector<std::string> v;
+  auto add = [&](const std::string& n) {
+    if (!n.empty() && std::find(v.begin(), v.end(), n) == v.end() && wrapFits(g, n)) v.push_back(n);
+  };
+  if (const Encoder* e = nativeEncoder(g)) add(e->flName);
+  for (const auto& [name, dec] : decoders())
+    if (name.rfind("Fruity", 0) == 0) add(name);
+  return v;
+}
 
 void registerWrapper(std::vector<Encoder>& v) {
   // Order matters for findEncoder: the last loose match wins, so hosted

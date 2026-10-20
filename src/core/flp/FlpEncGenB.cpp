@@ -19,6 +19,7 @@
 #include "../../packs/models/models.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/modulation/modulation_dsp.h"
+#include "../../packs/synths/hex.h"
 #include "../../packs/synths/pixel.h"
 #include "../PluginParams.h"
 #include "FlpEncode.h"
@@ -302,6 +303,7 @@ Encoder miniSynth() {
   Encoder e;
   e.flName = "MiniSynth";
   e.glType = "gl.pocketsynth";  // J-33: the reference engine, parameters 1:1
+  e.nativeRank = 0;             // J-39: its FL home (also without the origin)
   e.generator = true;
   e.defaults = miniSynthDefaults;
   e.fields = [](const Bytes& b) {
@@ -1333,16 +1335,64 @@ Encoder slicex() {
 
 // ---------------------------------------------------------- Toxic Biohazard
 // "SSLF" "TBi2" engine block → Hex Synth (J-33, 340 parameters in reference
-// order). No state is built here: unchanged imports are written verbatim,
-// edited ones over their origin through the per-parameter search.
-Encoder toxicBiohazard() {
+// order). J-39: written whole from Gridline's state: "SSLF", u32 size, magic
+// "TBi2", the 64-byte engine header (the template's; FL's default header for
+// a fresh state: 16 words then 8 floats, not read by the decoder), the 8 wave
+// slots (128 harmonic amplitudes, then 128 phases, f32), the 340 parameters
+// (f32), 294 modulation-link bytes and the 128-byte patch name ("<noname>").
+namespace toxic {
+
+namespace hx = gl::packs::synths::hex;
+constexpr size_t kHeader = 64, kName = 128, kLinks = 294;
+
+Bytes build(const PluginState& g, const Bytes& header) {
+  hx::HexData d;
+  if (!hx::parseHexData(g.data, d)) d = hx::HexData{};
+  ByteWriter in;
+  in.u32(0x54426932u);  // "2iBT" as stored
+  in.bytes(header);
+  for (int s = 0; s < hx::kSlots; ++s) {
+    for (int h = 0; h < 128; ++h) in.f32(h < hx::kHarmonics ? d.amp[s][h] : 0.f);
+    for (int h = 0; h < 128; ++h) in.f32(h < hx::kHarmonics ? d.phase[s][h] : 0.f);
+  }
+  for (int i = 0; i < 340; ++i) in.f32(i < static_cast<int>(g.params.size()) && i < hx::HxCount ? g.params[static_cast<size_t>(i)] : 0.f);
+  for (size_t i = 0; i < kLinks; ++i) in.u8(static_cast<uint8_t>(i < static_cast<size_t>(hx::kAutomatable) ? d.link[i] : -1));
+  std::string name = d.name.empty() ? "<noname>" : d.name;
+  name.resize(kName, '\0');
+  in.bytes(name.data(), kName);
+  ByteWriter w;
+  putBytes(w, "SSLF");
+  w.u32(static_cast<uint32_t>(in.b.size()));
+  w.bytes(in.b);
+  return w.b;
+}
+Bytes defaultHeader() {
+  ByteWriter h;
+  for (int v : {8, 8, 8, 0, 0, 0, 0, 0, 12, 150, 244, 3, 3, 3, 3, 3}) h.u16(static_cast<uint32_t>(v));
+  for (float v : {0.64f, -0.99f, 1.0f, 0.f, 0.f, 0.f, 0.f, 0.f}) h.f32(v);
+  return h.b;
+}
+
+Encoder encoder() {
   Encoder e;
   e.flName = "Toxic Biohazard";
   e.glType = "gl.hexsynth";
+  e.nativeRank = 0;
   e.generator = true;
-  e.defaults = [] { return Bytes{}; };
+  e.defaults = [] { return build(defaultPluginState("gl.hexsynth"), defaultHeader()); };
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    PluginMapping m;
+    if (decodeState("Toxic Biohazard", b, m, c) && m.state.params == g.params && m.state.data == g.data) return;
+    // The template's engine header when it is the plain "SSLF" "TBi2" form.
+    Bytes header = defaultHeader();
+    if (b.size() >= 12 + kHeader && getU32(b, 0) == 0x464C5353u && getU32(b, 8) == 0x54426932u)
+      header.assign(b.begin() + 12, b.begin() + 12 + static_cast<std::ptrdiff_t>(kHeader));
+    b = build(g, header);
+  };
   return e;
 }
+
+}  // namespace toxic
 
 }  // namespace
 
@@ -1355,7 +1405,7 @@ void registerGenB(std::vector<Encoder>& v) {
   v.push_back(slicex());
   v.push_back(miniSynth());
   v.push_back(beepMap());
-  v.push_back(toxicBiohazard());
+  v.push_back(toxic::encoder());
 }
 
 }  // namespace gl::flp::enc

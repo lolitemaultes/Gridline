@@ -32,6 +32,8 @@ double envTime(int32_t v) {
 
 }  // namespace
 
+double flEnvTime(int32_t v) { return envTime(v); }
+
 ChannelIns decodeChannelIns(const std::vector<Event>& evs) {
   ChannelIns ins;
   int k = 0;
@@ -132,6 +134,7 @@ void importChannels(Context& c) {
     ch.id = s.allocateId();
     ch.name.clear();
     if (const Event* e = find(evs, 203)) ch.name = e->text();
+    if (const Event* e = find(evs, 155)) ch.flIcon = static_cast<int>(std::min<uint32_t>(e->value(), 65535));  // J-39
     if (ch.name.empty())
       if (const Event* e = find(evs, 192)) ch.name = e->text();
     if (ch.name.empty()) ch.name = "Channel " + std::to_string(idx + 1);
@@ -307,13 +310,18 @@ void importChannels(Context& c) {
       // end / start), applied with the precomputed effects.
       if (const Event* e = find(evs, 76)) setParam(sp, SmpPreRampIn, std::clamp(e->ivalue() / 256.0, 0.0, 4.0));
       if (const Event* e = find(evs, 75)) setParam(sp, SmpPreRampOut, std::clamp(e->ivalue() / 256.0, 0.0, 4.0));
-      if (params && params->size >= 144) {
+      // J-39: the flags, declick mode and crossfade sit at the same offsets in
+      // the shorter records of FL 10..12 (112 / 125 / 156 bytes; the shipped
+      // projects use the same declick values there).
+      if (params && params->size >= 88) {
         if (params->u8(9)) setParam(sp, SmpRemoveDc, 1);
         if (params->u8(80)) setParam(sp, SmpNormalize, 1);
         if (params->u8(81)) setParam(sp, SmpPolarity, 1);
         static const int kDeclick[6] = {1, 2, 2, 3, 4, 4};
         setParam(sp, SmpDeclick, kDeclick[std::min<int>(params->u8(83), 5)]);
         setParam(sp, SmpLoopXfade, std::clamp(params->u32(84) / 256.0, 0.0, 1.0) * 0.5);
+      }
+      if (params && params->size >= 144) {
         double start = params->f64(128), end = params->f64(136);
         if (std::isfinite(start) && start > 0 && start < 1) setParam(sp, SmpStart, start);
         if (std::isfinite(end) && end > 0 && end < 1) setParam(sp, SmpEnd, end);

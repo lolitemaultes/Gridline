@@ -174,8 +174,12 @@ std::vector<EnvList> findEnvelopes(Bytes b, size_t from) {
       p += 4;
       continue;
     }
+    // J-39: the point count is the dword before the points (the first dword is
+    // the articulator record version, 3, which was read as the count).
+    const int stored = b.i32(p + 24);
+    const int np = stored >= 0 && stored <= 64 ? stored : n;
     int ok = 0;
-    for (int k = 0; k < n && b.has(p + 28 + static_cast<size_t>(k) * 24, 24); ++k) {
+    for (int k = 0; k < np && b.has(p + 28 + static_cast<size_t>(k) * 24, 24); ++k) {
       double dt = b.f64(p + 28 + static_cast<size_t>(k) * 24), y = b.f64(p + 28 + static_cast<size_t>(k) * 24 + 8);
       if (!(dt >= 0 && dt < 1000 && y >= -0.001 && y <= 1.001)) break;
       ++ok;

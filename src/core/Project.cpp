@@ -226,6 +226,8 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
     jc.object["keyHi"] = num(c.keyHi);
   }
   if (c.swingTruncate) jc.object["swingTruncate"] = boolean(true);
+  if (c.audioClip) jc.object["audioClip"] = boolean(true);  // J-39
+  if (c.flIcon) jc.object["flIcon"] = num(c.flIcon);
 }
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
@@ -258,6 +260,8 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
   c.keyHi = jsonInt<int>(std::clamp(jc.num("keyHi", 127), 0.0, 127.0));
   if (c.keyHi < c.keyLo) std::swap(c.keyLo, c.keyHi);
   c.swingTruncate = flag(jc, "swingTruncate");
+  c.audioClip = flag(jc, "audioClip");
+  c.flIcon = jsonInt<int>(std::clamp(jc.num("flIcon", 0), 0.0, 65535.0));
 }
 
 void noteToJson(const Note& n, Json& jn) {
@@ -588,6 +592,7 @@ void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
   if (t.groupSize > 0) jt.object["groupSize"] = num(t.groupSize);
   if (t.folded) jt.object["folded"] = boolean(true);
   if (t.locked) jt.object["locked"] = boolean(true);
+  if (t.flIcon) jt.object["flIcon"] = num(t.flIcon);  // J-39
 }
 
 void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
@@ -599,6 +604,7 @@ void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
   t.groupSize = jsonInt<int>(std::clamp(jt.num("groupSize", 0), 0.0, static_cast<double>(kMaxPlaylistTracks)));
   t.folded = flag(jt, "folded");
   t.locked = flag(jt, "locked");
+  t.flIcon = jsonInt<int>(std::clamp(jt.num("flIcon", 0), 0.0, 65535.0));  // J-39
 }
 
 Json clipToJson(const Clip& c) {
@@ -750,6 +756,9 @@ Json mixerTrackToJson(const MixerTrack& m) {
   if (m.armed) jm.object["armed"] = boolean(true);
   if (m.recPoint != 0) jm.object["recPoint"] = num(m.recPoint);  // J-31
   if (m.soloAlone) jm.object["soloAlone"] = boolean(true);
+  if (m.separator) jm.object["separator"] = boolean(true);  // J-39
+  if (m.locked) jm.object["locked"] = boolean(true);
+  if (m.flIcon) jm.object["flIcon"] = num(m.flIcon);
   Json slots = Json::makeArray();
   for (const auto& sl : m.slots) {
     Json js = Json::makeObject();
@@ -1031,6 +1040,9 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   m.monitor = jsonInt<uint8_t>(std::clamp(jm.num("monitor", 0), 0.0, static_cast<double>(static_cast<int>(InputMonitor::Count) - 1)));
   m.armed = flag(jm, "armed");
   m.soloAlone = flag(jm, "soloAlone");  // J-31
+  m.separator = flag(jm, "separator");  // J-39
+  m.locked = flag(jm, "locked");
+  m.flIcon = jsonInt<int>(std::clamp(jm.num("flIcon", 0), 0.0, 65535.0));
   m.recPoint = jsonInt<uint8_t>(std::clamp(jm.num("recPoint", 0), 0.0, static_cast<double>(static_cast<int>(RecordPoint::Count) - 1)));
   if (const Json* sl = jm.find("slots"); sl && sl->is(Json::Type::Array))
     for (size_t i = 0; i < sl->array.size() && i < m.slots.size(); ++i) {

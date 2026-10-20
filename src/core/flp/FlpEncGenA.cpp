@@ -340,8 +340,10 @@ std::vector<List> lists(const Bytes& b) {
       p += 4;
       continue;
     }
+    const int stored = geti(b, p + 24);  // (as the decoder: the count before the points, J-39)
+    const int np = stored >= 0 && stored <= 64 ? stored : n;
     int ok = 0;
-    for (int k = 0; k < n && p + kHead + static_cast<size_t>(k + 1) * kPoint <= b.size(); ++k) {
+    for (int k = 0; k < np && p + kHead + static_cast<size_t>(k + 1) * kPoint <= b.size(); ++k) {
       const double dt = getF64(b, p + kHead + static_cast<size_t>(k) * kPoint), y = getF64(b, p + kHead + static_cast<size_t>(k) * kPoint + 8);
       if (!(dt >= 0 && dt < 1000 && y >= -0.001 && y <= 1.001)) break;
       ++ok;
@@ -377,7 +379,7 @@ void write(const PluginState& g, Bytes& b, const EncodeContext&) {
     const List l = ls[static_cast<size_t>(a)];
     const int want = static_cast<int>(pv(g, md::envParam(a, md::EaNumPoints)));
     const int have = std::max(2, std::min(l.points, md::kEnvPoints));
-    if (want == have || want < 2 || want > md::kEnvPoints || geti(b, l.at) != l.points) continue;
+    if (want == have || want < 2 || want > md::kEnvPoints || geti(b, l.at + 24) != l.points) continue;
     const size_t end = l.at + kHead + static_cast<size_t>(l.points) * kPoint;
     if (want < l.points) {
       b.erase(b.begin() + static_cast<std::ptrdiff_t>(l.at + kHead + static_cast<size_t>(want) * kPoint), b.begin() + static_cast<std::ptrdiff_t>(end));
@@ -385,8 +387,72 @@ void write(const PluginState& g, Bytes& b, const EncodeContext&) {
       const Bytes last(b.begin() + static_cast<std::ptrdiff_t>(end - kPoint), b.begin() + static_cast<std::ptrdiff_t>(end));
       for (int k = l.points; k < want; ++k) b.insert(b.begin() + static_cast<std::ptrdiff_t>(end), last.begin(), last.end());
     }
-    putI32(b, l.at, want);
+    putI32(b, l.at + 24, want);
   }
+}
+
+// J-39: a whole state as FL 20..25 save it (version 6, "03 00 06 00"): 8
+// articulator knob blocks (11 dwords), 4 dwords, 8 articulators {3 dwords,
+// the articulator record Sytrus uses too: i32 3, f32 × 3, i32 1, envelope
+// (format 3: f64 Δ beats, f64 level, f32 tension, 4 bytes), 4 + 5 dwords, LFO
+// curve, 4 + 6 dwords, 5 mapping curves + 5 dwords each}, 2 dwords. Articulators
+// 1..4 carry Gridline's envelopes (Env A..D); the rest FL's default shapes.
+struct Pt {
+  double dx, y;
+  float t;
+};
+void putCurveRec(ByteWriter& w, const std::vector<Pt>& pts) {
+  for (size_t i = 0; i < pts.size(); ++i) {
+    w.f64(pts[i].dx), w.f64(pts[i].y), w.f32(pts[i].t);
+    w.u8(0), w.u8(0), w.u8(0), w.u8(i == 0 ? 0 : pts[i].t < 0 ? 255 : pts[i].t > 0 ? 1 : 2);
+  }
+}
+void putList(ByteWriter& w, int32_t kind, const std::vector<Pt>& pts) {
+  w.i32(kind), w.i32(3), w.i32(static_cast<int32_t>(pts.size()));
+  putCurveRec(w, pts);
+}
+Bytes build(const PluginState& g, double tempo) {
+  const double secPerBeat = 60.0 / std::max(20.0, tempo);
+  ByteWriter w;
+  w.u32(0x00060003);
+  for (int a = 0; a < 8; ++a)
+    for (int32_t v : {128, 256, 128, 128, 128, 0, 128, a < 4 ? 40000 : 40898, 0, 0, 0}) w.i32(v);
+  for (int32_t v : {32768, 32768, 0, 0}) w.i32(v);
+  const std::vector<Pt> defLfo = {{0, 0.5, 0}, {1, 0.5, 0}, {0.25, 1, 0}, {1, 0.5, 0}};
+  for (int a = 0; a < 8; ++a) {
+    if (a == 0) w.i32(2), w.i32(0), w.i32(1);
+    else w.i32(0), w.i32(256), w.i32(1);
+    w.i32(3), w.f32(0.5f), w.f32(1.0f), w.f32(0.5f), w.i32(1);
+    std::vector<Pt> env;
+    // An articulator the importer reads has its signature (sustain 0, base 0,
+    // envelope amount 1, LFO amount 0); the others are written as FL's
+    // one-point envelope, which the importer skips.
+    const bool present = a < md::kEnvArts && pv(g, md::envParam(a, md::EaSustain)) == 0.f && pv(g, md::envParam(a, md::EaBase)) == 0.f &&
+                         pv(g, md::envParam(a, md::EaEnvAmt)) == 1.f && pv(g, md::envParam(a, md::EaLfoAmt)) == 0.f;
+    // (articulators 5..8 too: the importer would read them in place of absent ones)
+    if (!present) env = {{0, 0.5, 0}};
+    if (present) {
+      const int n = std::clamp(static_cast<int>(std::lround(pv(g, md::envParam(a, md::EaNumPoints)))), 2, md::kEnvPoints);
+      env.clear();
+      for (int k = 0; k < n; ++k) {
+        const double t = pv(g, md::envPointTime(a, k)), y = pv(g, md::envPointLevel(a, k));
+        env.push_back({std::isfinite(t) && t > 0.001 ? t / secPerBeat : 0.0, std::isfinite(y) ? y : 0.0, 0.0f});
+      }
+    }
+    w.i32(3), w.i32(static_cast<int32_t>(env.size()));
+    putCurveRec(w, env);
+    for (int32_t v : {0, a < md::kEnvArts ? -1 : 0, 1, -1}) w.i32(v);                  // flags, enabled, decay point, loop
+    for (int32_t v : {static_cast<int32_t>(env.size()) - 2, 128, 128, 0, 128}) w.i32(v);  // sustain point, A D S R
+    putList(w, 2, defLfo);
+    for (int32_t v : {0, 0, -1, -1}) w.i32(v);
+    for (int32_t v : {2, a < 4 ? 40000 : 40898, 0, 0, 0, 0}) w.i32(v);
+    for (int m = 0; m < 5; ++m) {
+      putList(w, 3, {{0, 0.5, 0}, {1, 0.5, 0}});
+      for (int32_t v : {0, -1, -1, -1, -1}) w.i32(v);
+    }
+  }
+  w.i32(0), w.i32(256);
+  return w.b;
 }
 
 Encoder encoder() {
@@ -395,8 +461,17 @@ Encoder encoder() {
   e.glType = "gl.envctl";
   e.nativeRank = 0;
   e.generator = true;
+  e.defaults = [] { return build(defaultPluginState("gl.envctl"), 120.0); };
   e.fields = fields;
-  e.write = write;
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    PluginMapping m;
+    if (decodeState("Fruity Envelope Controller", b, m, c) && m.state.params == g.params) return;
+    // Imported states keep their layout (point counts adjusted, the fields solve
+    // the values); a state the importer reads no envelopes from — FL's own
+    // defaults or another layout — is written whole.
+    if (lists(b).size() >= static_cast<size_t>(md::kEnvArts)) return write(g, b, c);
+    b = build(g, c.tempo);
+  };
   return e;
 }
 
@@ -551,8 +626,11 @@ std::function<std::vector<Field>(const Bytes&)> fieldsFor(std::vector<std::pair<
     int count = 0;
     const size_t at = floatsAt(b, &count);
     if (at == std::string::npos) return f;
-    for (auto [gl, tag] : map)
-      if (tag < count) f.push_back(field(gl, at + static_cast<size_t>(tag) * 4, Type::F32, 0, 1));
+    // (in reverse: of two controls behind one parameter, e.g. cutoff 18 / 21, the
+    // later one is solved first — J-39: the kept values are 6-digit text, so the
+    // finer control absorbs the rounding and the coarse one stays as kept)
+    for (auto it = map.rbegin(); it != map.rend(); ++it)
+      if (it->second < count) f.push_back(field(it->first, at + static_cast<size_t>(it->second) * 4, Type::F32, 0, 1));
     return f;
   };
 }
@@ -561,7 +639,10 @@ Encoder encoder(const std::string& type, std::vector<std::pair<int, int>> map) {
   Encoder e;
   e.flName = "FLEX";
   e.glType = type;
-  e.nativeRank = -1;  // an approximation of FLEX content: only for FLEX imports
+  // An approximation of FLEX content: only for states that carry FLEX's
+  // selection and controls (imports from FLEX, PluginState::data "flex 1"),
+  // which write() puts back — also without the original state (J-39).
+  e.nativeRank = 0;
   e.accepts = [](const PluginState& s) { return s.data.rfind("flex 1", 0) == 0; };
   e.generator = true;
   e.defaults = defaults;
@@ -668,8 +749,9 @@ Bytes zoneRecord(const pw::DwZone& z, const std::string& path) {
 
 void write(const PluginState& g, Bytes& b, const EncodeContext& c) {
   PluginMapping m;
-  if (b.size() < 16 || !decodeState("DirectWave", b, m, c)) return;
-  if (m.state.data == g.data && m.state.params == g.params) return;
+  if (b.size() < 16) return;
+  // (a template without zones — defaults() — does not decode: it is filled all the same)
+  if (decodeState("DirectWave", b, m, c) && m.state.data == g.data && m.state.params == g.params) return;
   pw::DwProgram p;
   if (!pw::parseProgram(g.data, p)) return;
   auto t = [&](int k) { return static_cast<float>(pv(g, k)); };
@@ -763,12 +845,76 @@ void write(const PluginState& g, Bytes& b, const EncodeContext& c) {
   b = w.b;
 }
 
+// J-39: a fresh version-38 state (what FL 20..25 save): settings records 6 /
+// 518, the 16 MIDI channel records (channel n plays program n: pitch bend
+// range 200, CC 7 / 10 / 11 at FL's defaults) and 128 empty programs (header,
+// "---" name, FX / LFO / Mod Val records at FL's defaults, 100 trigger
+// groups). write() then fills the sounding program from Gridline's data.
+Bytes defaults() {
+  static const Bytes d = [] {
+    std::vector<Rec> top;
+    top.push_back({6, Bytes(16, 0)});
+    top.push_back({518, Bytes{1, 0, 0, 0, 0, 0, 0}});
+    for (uint32_t ch = 0; ch < 16; ++ch) {
+      Bytes r(628, 0);
+      putU32(r, 0, ch), putU32(r, 4, 60), putU32(r, 0x208, ch), putU32(r, 0x214, 200);
+      putU32(r, 0x23C, 0x3F499326u), putF32(r, 0x240, 0.5f), putF32(r, 0x244, 1.0f);
+      top.push_back({5, r});
+    }
+    auto floats = [](uint8_t lead, std::initializer_list<float> v) {
+      ByteWriter w;
+      w.u8(lead);
+      for (float x : v) w.f32(x);
+      return w.b;
+    };
+    for (uint32_t p = 0; p < 128; ++p) {
+      std::vector<Rec> pr;
+      {
+        Bytes h(30, 0);
+        putU32(h, 0, p), putF32(h, 6, 1.0f);
+        pr.push_back({100, h});
+      }
+      pr.push_back({102, Bytes{'-', '-', '-'}});
+      pr.push_back({103, {}});
+      pr.push_back({104, Bytes(10, 0)});
+      {
+        ByteWriter w;
+        w.u8(0), w.u8(0), w.f32(0.75f), w.f32(0.75f), w.f32(0.5f), w.f32(0.75f);
+        pr.push_back({105, w.b});
+      }
+      pr.push_back({106, floats(0, {0.25f, 0.5f, 0.75f, 0.25f})});
+      pr.push_back({107, floats(0, {0.25f, 0.5f, 0.25f, 0.0f})});
+      for (int k = 0; k < 2; ++k) {
+        ByteWriter w;
+        w.u32(0), w.f32(0.1f), w.f32(1.0f), w.u32(0), w.u32(0);
+        pr.push_back({108, w.b});
+      }
+      for (int k = 0; k < 4; ++k) pr.push_back({109, Bytes(4, 0)});
+      for (uint32_t gidx = 0; gidx < 100; ++gidx) {
+        ByteWriter w;
+        w.u32(gidx), w.u8(0), w.f32(1.0f), w.f32(0.0f);
+        pr.push_back({110, w.b});
+      }
+      pr.push_back({2, {}});
+      ByteWriter w;
+      putRecs(w, pr);
+      top.push_back({1, w.b});
+    }
+    ByteWriter w;
+    w.u32(38);
+    putRecs(w, top);
+    return w.b;
+  }();
+  return d;
+}
+
 Encoder encoder() {
   Encoder e;
   e.flName = "DirectWave";
   e.glType = "gl.waveprogram";
-  e.nativeRank = -1;
+  e.nativeRank = 0;  // J-39: also without the origin (from defaults())
   e.generator = true;
+  e.defaults = defaults;
   e.write = write;
   return e;
 }
@@ -1029,514 +1175,6 @@ Encoder encoder() {
 
 }  // namespace harmless
 
-// =================================================================== Harmor
-// Layout (FlpGenHarmor.cpp): u32 version, u32 section mask, per part (A, B):
-// i32 size + part (386 tag dwords — 385 before v16 —, 12 unit-order dwords,
-// 13-dword part record, 2 filter shapes, 2 resonance shapes (100 +), u8
-// enabled, …, articulator / shaping curves, image), then the global block:
-// 53 dwords (tags 10000.., 20000..), 6 fx-order dwords, 14 dwords (2 mono,
-// 12 distortion, 13 compression), …
-// Fields cover every parameter stored as one number; the curves, image and
-// articulator smoothing (PluginState::data) are kept from the template: no
-// default state is built (the format needs every curve of 43 articulators).
-namespace harmor {
-
-namespace hm = gl::packs::models::hm;
-
-struct Layout {
-  int ver = 0;
-  size_t part[2] = {0, 0};  // offsets of the parts' tag dwords (0 = absent)
-  size_t global = 0;        // offset of the global dwords (0 = absent)
-};
-
-Layout layout(const Bytes& b) {
-  Layout l;
-  if (b.size() < 12) return l;
-  const uint32_t raw = getU32(b, 0);
-  l.ver = raw >= 0x10000 ? static_cast<int>(raw >> 16) : static_cast<int>(raw);
-  const int sections = geti(b, 4);
-  const int parts = (sections & 3) == 3 ? 2 : (sections & 3) ? 1 : 0;
-  size_t at = 8;
-  for (int k = 0; k < parts; ++k) {
-    if (at + 4 > b.size()) return Layout{};
-    const int32_t size = geti(b, at);
-    if (size < 0 || at + 4 + static_cast<size_t>(size) > b.size()) return Layout{};
-    l.part[k] = at + 4;
-    at += 4 + static_cast<size_t>(size);
-  }
-  if ((sections & 4) && at + 53 * 4 + 24 + 14 * 4 <= b.size()) l.global = at;
-  return l;
-}
-
-struct T {
-  int field, tag, lo, hi;
-};
-const std::vector<T>& partTable() {
-  static const std::vector<T> t = {
-      {hm::PfPhase, 0, 0, 1000},          {hm::PfPhaseRand, 1, -1000, 1000},   {hm::PfPredelay, 2, -384, 384},
-      {hm::PfRelMul, 3, 0, 1000},         {hm::PfTimbreMix, 4, 0, 1000},       {hm::PfSub1, 5, 0, 2048},
-      {hm::PfSub3, 6, 0, 2048},           {hm::PfSub4, 7, 0, 2048},            {hm::PfProtect, 8, 0, 1024},
-      {hm::PfClip, 9, 0, 1024},           {hm::PfFxMix, 10, -1000, 1000},      {hm::PfVolume, 11, -2000, 2000},
-      {hm::PfEnvVolume, 12, 0, 2000},     {hm::PfAutoGain, 13, 0, 1000},       {hm::PfVelAttTime, 14, 0, 1},
-      {hm::PfVelAttLen, 15, 0, 1},        {hm::PfVelRelLen, 16, 0, 1},         {hm::PfTremolo, 17, 0, 1000},
-      {hm::PfTremHz, 18, 0, 10000},       {hm::PfTremGap, 19, 0, 999},         {hm::PfBlurMix, 20, 0, 1000},
-      {hm::PfTBlurAtt, 21, 0, 1600},      {hm::PfTBlurDec, 22, 0, 1600},       {hm::PfHBlur, 23, 0, 10000},
-      {hm::PfHBlurLo, 24, 0, 1000},       {hm::PfHBlurHi, 25, 0, 1000},        {hm::PfPrism, 26, -1000, 1000},
-      {hm::PfHzMix, 27, 0, 1000},         {hm::PfHzWidth, 28, 0, 1000},        {hm::PfHzStrength, 29, 0, 1024},
-      {hm::PfHzShift, 30, -2, 7},         {hm::PfHzShiftStep, 31, -7, 8},      {hm::PfHzGap, 32, -1, 8},
-      {hm::PfHzGapStep, 33, -7, 8},       {hm::PfUniOrder, 34, 1, 9},          {hm::PfUniType, 35, 0, 4},
-      {hm::PfUniAlt, 36, 0, 1},           {hm::PfUniPan, 37, 0, 256},          {hm::PfUniPitch, 38, 0, 256},
-      {hm::PfUniPhase, 39, -1000, 1000},  {hm::PfFreqMul, 40, 10000, 160000},  {hm::PfFreqDiv, 41, 1, 9},
-      {hm::PfDetMul, 42, 10000, 160000},  {hm::PfDetDiv, 43, 1, 9},            {hm::PfPitchArt, 44, -6000, 6000},
-      {hm::PfVibrato, 45, 0, 1000},       {hm::PfVibHz, 46, 0, 1000},          {hm::PfPortaLog, 47, 0, 1},
-      {hm::PfPortaVar, 48, 0, 1},         {hm::PfPortaTime, 49, -384, 384},    {hm::PfPortaLimit, 50, 0, 1200},
-      {hm::PfFMix, 74, -1000, 1000},      {hm::PfPluck, 75, 0, 1000},          {hm::PfPhMix, 76, 0, 1000},
-      {hm::PfPhScale, 77, 0, 2},          {hm::PfPhWidth, 78, 0, 10000},       {hm::PfPhOfs, 79, 0, 999},
-      {hm::PfPhMotion, 80, -8000, 8000},  {hm::PfPhKey, 81, -2000, 2000},      {hm::PfImgTimeSmooth, 82, -1000, 1000},
-      {hm::PfImgTime, 83, 0, 1048575},    {hm::PfImgSpeed, 84, -20000, 20000}, {hm::PfImgSpeedOct, 85, -60000, 60000},
-      {hm::PfImgSharp, 86, -1000, 1000},  {hm::PfImgGainScale, 88, 0, 1000},   {hm::PfImgGainMix, 89, 0, 1000},
-      {hm::PfImgFreqMode, 90, 0, 3},      {hm::PfImgFreqScale, 92, -2000, 2000}, {hm::PfImgFormant, 93, -600, 600},
-      {hm::PfImgFormantMix, 94, 0, 1000}};
-  return t;
-}
-const std::vector<T>& filterTable() {  // per filter, tag + 12 × filter
-  static const std::vector<T> t = {{hm::PfF1Adapt, 51, 0, 1},     {hm::PfF1Cut, 52, 0, 8192},     {hm::PfF1Width, 54, 0, 1000},
-                                   {hm::PfF1Key, 55, -2000, 2000}, {hm::PfF1Env, 56, -1000, 1000}, {hm::PfF1Res, 57, 0, 1000},
-                                   {hm::PfF1ResWidth, 59, 0, 1000}, {hm::PfF1ResOfs, 60, -2400, 2400}, {hm::PfF1ResAdapt, 61, 0, 1}};
-  return t;
-}
-const std::vector<T>& globalTable() {  // field = Gridline param index
-  static const std::vector<T> t = {
-      {hm::GmModX, 10000, 0, 512},        {hm::GmModY, 10001, 0, 512},          {hm::GmModZ, 10002, 0, 512},
-      {hm::GmLegatoLimit, 10003, 0, 2400}, {hm::GmLegato, 10004, 0, 1},         {hm::GmPorta, 10005, 0, 1},
-      {hm::GmVelPorta, 10006, 0, 1},      {hm::GmStrumMode, 10007, 0, 3},       {hm::GmStrumTime, 10008, 0, 1000},
-      {hm::GmStrumTension, 10009, -1000, 1000}, {hm::GmPartMix, 10010, 0, 1000}, {hm::GmVolume, 10011, 0, 2000},
-      {hm::GmPostVolume, 10012, 0, 2000}, {hm::GmVelVol, 10013, 0, 1},          {hm::GmPitch, 10014, -2400, 2400},
-      {hm::GmLfoAmt, 10015, -1000, 1000}, {hm::FxDistDrive, 20000, 0, 1000},    {hm::FxDistAsym, 20001, -500, 500},
-      {hm::FxDistOut, 20002, 0, 2000},    {hm::FxDistMix, 20003, -1000, 1000},  {hm::FxDistTone, 20004, 0, 1100},
-      {hm::FxRvOn, 20005, 0, 1},          {hm::FxRvLowCut, 20006, 0, 1000},     {hm::FxRvHighCut, 20007, 0, 1100},
-      {hm::FxRvPredelay, 20008, -384, 384}, {hm::FxRvRoom, 20009, 0, 100},      {hm::FxRvDiffusion, 20010, 0, 100},
-      {hm::FxRvDecay, 20011, 0, 900},     {hm::FxRvDamp, 20012, 0, 1100},       {hm::FxRvColor, 20013, 0, 4},
-      {hm::FxRvMix, 20014, -1000, 1000},  {hm::FxChOrder, 20015, 0, 9},         {hm::FxChDepth, 20016, 0, 1024},
-      {hm::FxChSpeed, 20017, 0, 1024},    {hm::FxChDelay, 20018, 0, 128},       {hm::FxChSpread, 20019, 0, 128},
-      {hm::FxChCross, 20020, -128, 128},  {hm::FxChMix, 20021, -1000, 1000},    {hm::FxDlOn, 20022, 0, 1},
-      {hm::FxDlMode, 20023, 0, 2},        {hm::FxDlFeedback, 20024, 0, 1000},   {hm::FxDlTime, 20025, -384, 384},
-      {hm::FxDlOffset, 20026, -512, 512}, {hm::FxDlVol, 20027, -1000, 1000},    {hm::FxDlPan, 20028, -128, 128},
-      {hm::FxDlLowCut, 20029, 0, 1000},   {hm::FxDlHighCut, 20030, 0, 1100},    {hm::FxDlDamp, 20031, 0, 1},
-      {hm::FxCompAmount, 20032, 0, 1000}, {hm::FxCompLow, 20033, 0, 2000},      {hm::FxCompMid, 20034, 0, 2000},
-      {hm::FxCompHigh, 20035, 0, 2000}};
-  return t;
-}
-
-std::vector<Field> fields(const Bytes& b) {
-  std::vector<Field> f;
-  const Layout l = layout(b);
-  const int np = l.ver >= 16 ? 386 : 385;
-  for (int p = 0; p < 2; ++p) {
-    if (!l.part[p]) continue;
-    const size_t t0 = l.part[p], rec = t0 + static_cast<size_t>(np) * 4 + 12 * 4;
-    auto tag = [&](int gl, int t, int lo, int hi) { f.push_back(i32(gl, t0 + static_cast<size_t>(t) * 4, lo, hi)); };
-    for (const T& t : partTable()) tag(hm::pf(p, t.field), t.tag, t.lo, t.hi);
-    for (int k = 0; k < 2; ++k) {
-      for (const T& t : filterTable()) tag(hm::flt(p, k, t.field), t.tag + 12 * k, t.lo, t.hi);
-      f.push_back(i32(hm::flt(p, k, hm::PfF1Type), rec + 52 + static_cast<size_t>(k) * 4, 0, hm::kFltShapes));
-      f.push_back(i32(hm::flt(p, k, hm::PfF1ResType), rec + 60 + static_cast<size_t>(k) * 4, 100, 100 + hm::kResShapes - 1));
-    }
-    tag(hm::flt(p, 0, hm::PfF1Osc), 62, 0, 2048);
-    f.push_back(i32(hm::pf(p, hm::PfBlend), rec, 0, 5));
-    f.push_back(i32(hm::pf(p, hm::PfPrismMul), rec + 12, 0, 1));
-    f.push_back(i32(hm::pf(p, hm::PfClipMode), rec + 20, 0, 4));
-    f.push_back(i32(hm::pf(p, hm::PfSubMode), rec + 24, 0, 1));
-    f.push_back(i32(hm::pf(p, hm::PfPhType), rec + 40, 200, 210));
-    f.push_back(field(hm::pf(p, hm::PfEnabled), rec + 68, Type::U8, 0, 1));
-    if (p == 0) f.push_back(field(hm::FxEqMix, rec + 48, Type::F32, 0, 1));
-  }
-  if (l.global) {
-    for (const T& t : globalTable()) {
-      const int idx = t.tag >= 20000 ? 17 + t.tag - 20000 : t.tag - 10000;
-      f.push_back(i32(t.field, l.global + static_cast<size_t>(idx) * 4, t.lo, t.hi));
-    }
-    const size_t rec = l.global + 53 * 4 + 6 * 4;
-    f.push_back(i32(hm::GmMono, rec + 8, 0, 3));
-    f.push_back(i32(hm::FxDistType, rec + 48, 0, 11));
-    f.push_back(i32(hm::FxCompType, rec + 52, 0, 4));
-  }
-  return f;
-}
-
-Encoder encoder() {
-  Encoder e;
-  e.flName = "Harmor";
-  e.glType = "gl.harmor";
-  e.nativeRank = 0;
-  e.generator = true;
-  e.fields = fields;
-  return e;
-}
-
-}  // namespace harmor
-
-// =================================================================== Sytrus
-// Layout (FlpGenSytrus.cpp): dword header (version), zlib stream of the
-// patch. The encoder works on an uncompressed view: write() re-packs the
-// stream as stored deflate blocks (so every value sits at a fixed offset of
-// the state and ordinary Fields apply); finish() compresses it again (own
-// fixed-Huffman deflate) with a correct adler-32 trailer.
-// No default state is built (operator harmonics and 50+ articulators of
-// curves would all need FL's defaults).
-namespace sytrus {
-
-namespace mf = gl::packs::synths::mfm;
-constexpr size_t kBlock = 65535;
-
-bool inflate(const Bytes& b, Bytes& raw) {
-  if (b.size() < 6) return false;
-  return gen::inflateZlib(gen::Bytes(b.data() + 4, b.size() - 4), raw, 4u << 20);
-}
-uint32_t adler32(const Bytes& d) {
-  uint32_t a = 1, s = 0;
-  for (uint8_t x : d) a = (a + x) % 65521u, s = (s + a) % 65521u;
-  return (s << 16) | a;
-}
-void putAdler(ByteWriter& w, const Bytes& raw) {
-  const uint32_t ad = adler32(raw);
-  for (int k = 3; k >= 0; --k) w.u8((ad >> (8 * k)) & 0xFF);
-}
-// State offset of raw byte o in the stored form.
-size_t stored(size_t o) { return 4 + 2 + (o / kBlock + 1) * 5 + o; }
-bool isStored(const Bytes& b, size_t rawSize) {
-  if (b.size() != 4 + 2 + ((rawSize + kBlock - 1) / kBlock) * 5 + rawSize + 4 || b[4] != 0x78 || b[5] != 0x01) return false;
-  for (size_t at = 6, left = rawSize; left; ) {
-    const size_t n = std::min(left, kBlock);
-    if ((b[at] & 6) != 0 || getU16(b, at + 1) != n) return false;
-    at += 5 + n, left -= n;
-  }
-  return true;
-}
-Bytes storedForm(const Bytes& head, const Bytes& raw) {
-  ByteWriter w;
-  w.bytes(head.data(), 4);
-  w.u8(0x78), w.u8(0x01);
-  for (size_t at = 0; at < raw.size(); at += kBlock) {
-    const size_t n = std::min(kBlock, raw.size() - at);
-    w.u8(at + n >= raw.size() ? 1 : 0);
-    w.u16(static_cast<uint32_t>(n)), w.u16(static_cast<uint32_t>(~n & 0xFFFF));
-    w.bytes(raw.data() + at, n);
-  }
-  putAdler(w, raw);
-  return w.b;
-}
-
-// Deflate, fixed Huffman codes, greedy LZ77 over a 32 KB window.
-struct BitOut {
-  Bytes b;
-  uint32_t acc = 0, n = 0;
-  void bits(uint32_t v, uint32_t k) {  // LSB first
-    acc |= v << n, n += k;
-    while (n >= 8) b.push_back(static_cast<uint8_t>(acc)), acc >>= 8, n -= 8;
-  }
-  void huff(uint32_t code, uint32_t len) {  // Huffman codes go MSB first
-    uint32_t r = 0;
-    for (uint32_t i = 0; i < len; ++i) r = (r << 1) | ((code >> i) & 1);
-    bits(r, len);
-  }
-  void flush() {
-    if (n) b.push_back(static_cast<uint8_t>(acc));
-    acc = 0, n = 0;
-  }
-};
-void litLen(BitOut& o, int sym) {
-  if (sym < 144) o.huff(0x30 + static_cast<uint32_t>(sym), 8);
-  else if (sym < 256) o.huff(0x190 + static_cast<uint32_t>(sym - 144), 9);
-  else if (sym < 280) o.huff(static_cast<uint32_t>(sym - 256), 7);
-  else o.huff(0xC0 + static_cast<uint32_t>(sym - 280), 8);
-}
-Bytes deflateFixed(const Bytes& in) {
-  static const uint16_t lenBase[29] = {3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-  static const uint8_t lenExtra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
-  static const uint16_t distBase[30] = {1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
-  static const uint8_t distExtra[30] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
-  BitOut o;
-  o.bits(1, 1), o.bits(1, 2);  // final block, fixed codes
-  constexpr size_t kHash = 1 << 15, kWin = 32768;
-  std::vector<int64_t> head(kHash, -1), prev(in.size(), -1);
-  auto hash = [&](size_t i) { return ((static_cast<uint32_t>(in[i]) << 10) ^ (static_cast<uint32_t>(in[i + 1]) << 5) ^ in[i + 2]) & (kHash - 1); };
-  auto insert = [&](size_t i) {
-    if (i + 2 >= in.size()) return;
-    const uint32_t h = hash(i);
-    prev[i] = head[h], head[h] = static_cast<int64_t>(i);
-  };
-  for (size_t i = 0; i < in.size();) {
-    size_t bestLen = 0, bestDist = 0;
-    if (i + 2 < in.size()) {
-      int chain = 64;
-      for (int64_t j = head[hash(i)]; j >= 0 && i - static_cast<size_t>(j) <= kWin && chain--; j = prev[static_cast<size_t>(j)]) {
-        size_t l = 0;
-        while (l < 258 && i + l < in.size() && in[static_cast<size_t>(j) + l] == in[i + l]) ++l;
-        if (l > bestLen) bestLen = l, bestDist = i - static_cast<size_t>(j);
-        if (l == 258) break;
-      }
-    }
-    if (bestLen >= 3) {
-      int c = 28;
-      while (lenBase[c] > bestLen) --c;
-      litLen(o, 257 + c);
-      o.bits(static_cast<uint32_t>(bestLen - lenBase[c]), lenExtra[c]);
-      int d = 29;
-      while (distBase[d] > bestDist) --d;
-      o.huff(static_cast<uint32_t>(d), 5);
-      o.bits(static_cast<uint32_t>(bestDist - distBase[d]), distExtra[d]);
-      for (size_t k = 0; k < bestLen; ++k) insert(i + k);
-      i += bestLen;
-    } else {
-      litLen(o, in[i]);
-      insert(i);
-      ++i;
-    }
-  }
-  litLen(o, 256);
-  o.flush();
-  return o.b;
-}
-
-// Offsets (in the uncompressed patch) of everything the decoder reads as one number.
-struct Offsets {
-  int ver = 0;
-  size_t soften = 0, gibbs = 0, delays = 0, rev = 0, revOn = 0, revTempo = 0, eq = 0;
-  bool hasSoften = false, hasGibbs = false, hasRev = false, hasRevTempo = false, hasEq = false, eqType = false;
-  struct Unit {
-    size_t u = 0, ratio = 0, freq = 0, noise = 0, tail = 0, flags = 0, fb = 0, wsBip = 0;
-    bool hasWsBip = false;
-    int nf = 12;
-    struct Art {
-      size_t envTail = 0, p1 = 0, lfoTail = 0, p2 = 0;
-    };
-    std::vector<Art> arts;
-  } units[mf::kUnits];
-  bool ok = false;
-};
-
-Offsets offsets(const Bytes& raw, int ver) {
-  Offsets o;
-  o.ver = ver;
-  size_t at = 0;
-  bool bad = false;
-  auto need = [&](size_t k) {
-    if (bad || at + k > raw.size()) bad = true;
-    return !bad;
-  };
-  auto i32 = [&]() {
-    if (!need(4)) return 0;
-    const int v = geti(raw, at);
-    at += 4;
-    return v;
-  };
-  auto skip = [&](size_t k) {
-    if (need(k)) at += k;
-  };
-  auto pts = [&](int fmt, int n) {
-    if (n < 0 || n > 4096) return void(bad = true);
-    skip(static_cast<size_t>(n) * (fmt <= 0 ? 12 : fmt == 1 ? 16 : 24));
-  };
-  auto list = [&]() {
-    i32();
-    const int fmt = i32(), n = i32();
-    pts(fmt, n);
-  };
-  skip(240 * 4 + 2);
-  if (ver > 3) o.soften = at, o.hasSoften = true, skip(4);
-  if (ver > 5) skip(1);
-  if (ver > 6) skip(1);
-  if (ver > 12) o.gibbs = at, o.hasGibbs = true, skip(1);
-  int n507 = 0;
-  if (ver > 13) n507 = (ver > 14 ? 5 : 1) + (ver > 17 ? 3 : 0) + (ver > 18 ? 1 : 0);
-  skip(static_cast<size_t>(n507));
-  o.delays = at, skip(3 * 23);
-  if (ver >= 10) {
-    o.rev = at, o.hasRev = true, skip(36);
-    o.revOn = at, skip(1);
-    if (ver > 10) o.revTempo = at, o.hasRevTempo = true, skip(1);
-  }
-  if (ver > 2) o.eq = at, o.hasEq = true, o.eqType = ver > 13, skip(4 + 3 * (ver > 13 ? 16 : 12));
-  if (ver < 0x17) {
-    const int len = i32();
-    if (len < 0) return o;
-    skip(static_cast<size_t>(len));
-  } else {
-    int len = need(1) ? raw[at++] : 0;
-    if (len == 0xff) len = i32();
-    if (len < 0) return o;
-    skip(static_cast<size_t>(len) * 2);
-  }
-  for (int u = 0; u < mf::kUnits && !bad; ++u) {
-    Offsets::Unit& U = o.units[u];
-    U.u = at, skip(40);
-    int na = 2;
-    if (u < mf::kOps) {
-      na = 6;
-      int nh = 0;
-      U.ratio = at, U.freq = at + 4;
-      if (ver < 8) {
-        skip(8), nh = 24;
-      } else {
-        U.noise = at + 8, skip(12), nh = ver < 0x11 ? 128 : 256;
-      }
-      skip(static_cast<size_t>(nh) * 8);
-      U.tail = at, skip(20);
-      if (ver < 8) U.noise = at, skip(4), U.flags = at, skip(7);
-      else U.flags = at, skip(8);
-    } else if (u < mf::kOps + mf::kFilters) {
-      na = 8;
-      U.nf = ver < 9 ? 10 : 12;
-      U.fb = at, skip(static_cast<size_t>(U.nf) * 4);
-      if (ver < 9) skip(1);
-      list();
-      skip(20);
-      if (ver >= 12) U.wsBip = at, U.hasWsBip = true, skip(1);
-    }
-    for (int a = 0; a < na && !bad; ++a) {
-      Offsets::Unit::Art A;
-      const int h0 = i32();
-      skip(16);
-      const int fmt = i32(), n = i32();
-      pts(fmt, n);
-      A.envTail = at, skip(16);
-      A.p1 = at, skip(20);
-      list();
-      A.lfoTail = at, skip(16);
-      A.p2 = at, skip(h0 >= 3 ? 24 : 20);
-      for (int k = 0; k < mf::kMaps; ++k) list(), skip(20);
-      U.arts.push_back(A);
-    }
-  }
-  o.ok = !bad;
-  return o;
-}
-
-int version(const Bytes& b) {
-  const uint32_t hdr = b.size() >= 4 ? getU32(b, 0) : 0;
-  return static_cast<int>(hdr > 0xffff ? hdr >> 16 : hdr);
-}
-
-std::vector<Field> fields(const Bytes& b) {
-  std::vector<Field> f;
-  Bytes raw;
-  if (!inflate(b, raw)) return f;
-  const Offsets o = offsets(raw, version(b));
-  if (!o.ok) return f;
-  auto F = [&](int gl, size_t rawAt, int lo, int hi, Type t = Type::I32) { f.push_back(field(gl, stored(rawAt), t, lo, hi)); };
-  auto M = [&](int gl, int i, int lo, int hi) { F(gl, static_cast<size_t>(i) * 4, lo, hi); };
-  M(mf::MVolume, 0, 0, 256), M(mf::MLfoLevel, 1, -128, 128), M(mf::MPitch, 2, -48, 48);
-  for (int r = 0; r < mf::kRows; ++r)
-    for (int col = 0; col < mf::kCols; ++col) {
-      M(mf::fm(r, col), 3 + r * 9 + col, -256, 256);
-      if (r < mf::kOps && col < mf::kOps) M(mf::rm(r, col), 84 + r * 9 + col, -256, 256);
-    }
-  const int adsr[8] = {mf::MVolA, mf::MVolD, mf::MVolS, mf::MVolR, mf::MFltA, mf::MFltD, mf::MFltS, mf::MFltR};
-  for (int i = 0; i < 8; ++i) M(adsr[i], 165 + i, i % 4 == 2 ? -128 : 0, i % 4 == 2 ? 128 : 256);
-  M(mf::MUniOrder, 173, 1, 9), M(mf::MUniPan, 174, 0, 128), M(mf::MUniVol, 175, 16, 128), M(mf::MUniPitch, 176, 0, 256);
-  M(mf::MUniSub, 177, 0, 96), M(mf::MUniPhase, 178, 0, 128), M(mf::MUniEnv, 179, 0, 192), M(mf::FxPan, 180, -128, 128);
-  M(mf::ChOrder, 181, 0, 9), M(mf::ChDepth, 182, 0, 1024), M(mf::ChSpeed, 183, 0, 1024), M(mf::ChDelay, 184, 0, 128);
-  M(mf::ChSpread, 185, 0, 128), M(mf::ChCross, 186, -128, 128), M(mf::ChVol, 187, -128, 128);
-  M(mf::MModX, 190, 0, 512), M(mf::MModY, 191, 0, 512);
-  if (o.hasSoften) F(mf::MSoften, o.soften, 0, 128);
-  if (o.hasGibbs) F(mf::MGibbs, o.gibbs, 0, 1, Type::U8);
-  for (int i = 0; i < 3; ++i) {
-    const size_t d = o.delays + static_cast<size_t>(i) * 23;
-    F(mf::dly(i, 0), d + 22, 0, 1, Type::U8), F(mf::dly(i, 1), d + 16, 0, 2), F(mf::dly(i, 2), d, 0, 128);
-    F(mf::dly(i, 3), d + 4, 0, 768), F(mf::dly(i, 4), d + 8, -512, 512), F(mf::dly(i, 5), d + 12, -128, 128);
-    F(mf::dly(i, 6), d + 20, 0, 1, Type::U8);
-  }
-  if (o.hasRev) {
-    const int rv[9] = {mf::RvLowCut, mf::RvHighCut, mf::RvPreDelay, mf::RvRoom, mf::RvDiff, mf::RvDecay, mf::RvHighDamp, mf::RvColor, mf::RvVol};
-    const int lo[9] = {19, 5, 0, 1, 0, 1, 5, 0, -128}, hi[9] = {3000, 220, 192, 100, 100, 200, 220, 4, 128};
-    for (int i = 0; i < 9; ++i) F(rv[i], o.rev + static_cast<size_t>(i) * 4, lo[i], hi[i]);
-    F(mf::RvOn, o.revOn, 0, 1, Type::U8);
-    if (o.hasRevTempo) F(mf::RvTempo, o.revTempo, 0, 1, Type::U8);
-  }
-  if (o.hasEq) {
-    F(mf::MEqTarget, o.eq, 0, 3);
-    const size_t stride = o.eqType ? 16 : 12;
-    for (int i = 0; i < 3; ++i) {
-      const size_t e = o.eq + 4 + static_cast<size_t>(i) * stride;
-      F(mf::eq(i, 3), e, -1800, 1800), F(mf::eq(i, 1), e + 4, 0, 65536), F(mf::eq(i, 2), e + 8, 0, 65536);
-      if (o.eqType) F(mf::eq(i, 0), e + 12, 0, 2);
-    }
-  }
-  for (int u = 0; u < mf::kUnits; ++u) {
-    const Offsets::Unit& U = o.units[u];
-    if (u < mf::kOps) {
-      F(mf::op(u, mf::OpPhase), U.u, 0, 256), F(mf::op(u, mf::OpVol), U.u + 4, -256, 256), F(mf::op(u, mf::OpPitchRange), U.u + 8, 0, 4800);
-      F(mf::op(u, mf::OpRatio), U.ratio, 0, 640000), F(mf::op(u, mf::OpFreq), U.freq, -500000, 500000), F(mf::op(u, mf::OpNoise), U.noise, 0, 128);
-      F(mf::op(u, mf::OpShape), U.tail, 0, 512), F(mf::op(u, mf::OpTension), U.tail + 4, -128, 128), F(mf::op(u, mf::OpSkew), U.tail + 8, 0, 128);
-      F(mf::op(u, mf::OpSine), U.tail + 12, 0, 128), F(mf::op(u, mf::OpFilter), U.tail + 16, 0, 128);
-      const int flagParams[7] = {mf::OpHalf, mf::OpEven, mf::OpAbs, mf::OpGlobal, mf::OpCenter, mf::OpDeclick, mf::OpPluck};
-      for (int i = 0; i < 7; ++i) F(mf::op(u, flagParams[i]), U.flags + static_cast<size_t>(i), 0, 1, Type::U8);
-    } else if (u < mf::kOps + mf::kFilters) {
-      const int j = u - mf::kOps;
-      const int fl[10] = {mf::FlMode, mf::FlEnv, mf::FlCut, mf::FlRes, mf::FlLow, mf::FlBand, mf::FlHigh, mf::FlWsAmp, mf::FlWsMix, mf::FlNext};
-      const int lo[10] = {0, 0, 0, 0, 0, 0, 0, 64, 0, -256}, hi[10] = {mf::kFltModes - 1, 256, 256, 256, 128, 128, 128, 192, 128, 256};
-      for (int i = 0; i < 10; ++i) F(mf::flt(j, fl[i]), U.u + static_cast<size_t>(i) * 4, lo[i], hi[i]);
-      if (U.nf == 12) F(mf::flt(j, mf::FlType), U.fb + 44, 0, mf::kFltTypes - 1);
-      F(mf::flt(j, mf::FlWsOn), U.fb + 40, 0, 1);
-      F(mf::flt(j, mf::FlHq), U.fb, 0, 1, Type::U8), F(mf::flt(j, mf::FlFlat), U.fb + 1, 0, 1, Type::U8);
-      if (U.hasWsBip) F(mf::flt(j, mf::FlWsBipolar), U.wsBip, 0, 1, Type::U8);
-    }
-    for (int a = 0; a < static_cast<int>(U.arts.size()) && a < mf::unitArts(u); ++a) {
-      const auto& A = U.arts[static_cast<size_t>(a)];
-      F(mf::art(u, a, mf::AfEnvOn), A.envTail + 4, 0, 1), F(mf::art(u, a, mf::AfLfoOn), A.lfoTail + 4, 0, 1);
-      F(mf::art(u, a, mf::AfAtt), A.p1 + 4, 0, 256), F(mf::art(u, a, mf::AfDec), A.p1 + 8, 0, 256);
-      F(mf::art(u, a, mf::AfSus), A.p1 + 12, -128, 128), F(mf::art(u, a, mf::AfRel), A.p1 + 16, 0, 256);
-      F(mf::art(u, a, mf::AfTempo), A.lfoTail, 0, 3), F(mf::art(u, a, mf::AfLfoGlobal), A.lfoTail, 0, 3);
-      F(mf::art(u, a, mf::AfLfoSpeed), A.p2 + 4, 0, 65536), F(mf::art(u, a, mf::AfLfoSkew), A.p2 + 12, -128, 128);
-    }
-  }
-  return f;
-}
-
-// Stored form for the solver; un-mutes matrix cells the target uses.
-void write(const PluginState& g, Bytes& b, const EncodeContext&) {
-  Bytes raw;
-  if (!inflate(b, raw) || raw.size() < 962) return;
-  if (version(b) >= 2)
-    for (int layer = 0; layer < 2; ++layer)
-      for (int r = 0; r < mf::kRows; ++r)
-        for (int col = 0; col < mf::kCols; ++col) {
-          if (layer == 1 && (r >= mf::kOps || col >= mf::kOps)) continue;
-          const float want = pv(g, layer ? mf::rm(r, col) : mf::fm(r, col));
-          const size_t at = 800 + static_cast<size_t>(layer * 81 + r * 9 + col);
-          if (want != 0.0f && raw[at] != 0) raw[at] = 0;
-        }
-  const Bytes head(b.begin(), b.begin() + 4);
-  b = storedForm(head, raw);
-}
-
-// Compressed again, with the adler-32 of the final patch.
-void finish(Bytes& b) {
-  Bytes raw;
-  if (b.size() < 10 || !inflate(b, raw) || !isStored(b, raw.size())) return;
-  ByteWriter w;
-  w.bytes(b.data(), 4);
-  w.u8(0x78), w.u8(0x01);
-  w.bytes(deflateFixed(raw));
-  putAdler(w, raw);
-  b = w.b;
-}
-
-Encoder encoder() {
-  Encoder e;
-  e.flName = "Sytrus";
-  e.glType = "gl.matrixfm";
-  e.nativeRank = 0;
-  e.generator = true;
-  e.fields = fields;
-  e.write = write;
-  e.finish = finish;
-  return e;
-}
-
-}  // namespace sytrus
-
 }  // namespace
 
 void registerGenA(std::vector<Encoder>& v) {
@@ -1553,8 +1191,8 @@ void registerGenA(std::vector<Encoder>& v) {
   }
   v.push_back(dw::encoder());
   v.push_back(harmless::encoder());
-  v.push_back(harmor::encoder());
-  v.push_back(sytrus::encoder());
+  v.push_back(harmorEncoder());  // FlpEncHarmor.cpp (J-39)
+  v.push_back(sytrusEncoder());  // FlpEncSytrus.cpp (J-39)
 }
 
 }  // namespace gl::flp::enc

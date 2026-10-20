@@ -73,6 +73,7 @@ void importPatterns(Context& c) {
         n.modY = std::clamp(my, 0, kNoteModMax);
         n.color = mch & 0x0F;
         n.slide = (flags & 0x08) != 0;
+        n.group = e.u16(o + 14);  // J-39: note group (0 = none)
         slides += n.slide;
         panned += n.pan != 0;
         fine += n.fine != 0;

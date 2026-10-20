@@ -230,6 +230,8 @@ struct ChannelIns {
   bool present = false;
 };
 ChannelIns decodeChannelIns(const std::vector<Event>& channelEvents);
+// Seconds of an FL channel envelope time knob (100..65536), as the importer reads it.
+double flEnvTime(int32_t v);
 // Maps the instrument page onto a "gl.sampler" state (filter, volume and
 // cutoff envelopes, LFO).
 void applyInsToSampler(const ChannelIns& ins, PluginState& sampler);

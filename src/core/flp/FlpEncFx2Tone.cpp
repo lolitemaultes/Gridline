@@ -1,7 +1,10 @@
 // Gridline — FLP export: plugin state encoders for FlpFx2Tone.cpp (Distructor, EQUO, Emphasis, Emphasizer, Frequency Splitter, Bass Boost, Blood Overdrive, Fast LP, Parametric EQ, Squeeze, Hardcore, Low Lifter).
 // The reverse of the decoders in those files; see FlpEncode.h for the model.
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 #include "../../packs/dynamics/dynamics.h"
+#include "../../packs/dynamics/modrack_ref.h"
 #include "../../packs/spectral/spectral.h"
 #include "../../packs/utility/utility.h"
 #include "../PluginParams.h"
@@ -357,16 +360,150 @@ Encoder lowLifter() {
 }
 
 // ------------------------------------------------------------------ Distructor / Hardcore → gl.amprack
-// Distructor's modules map onto Amp Rack slots many-to-one (not invertible)
-// and Hardcore is not decoded: no state is built. FL loads its defaults for
-// native racks; imported states are kept as they were.
-Encoder rack(const char* flName, int rank) {
+// Hardcore is not decoded: no state is built (FL loads its defaults).
+// J-39: Distructor written from the module rack (gl.amprack RkModel 1, the J-35
+// decoder's raw fields): host u32 version 5, u32 module count, per module u32
+// version 4, kind, algorithm, oversampling, u8 remove DC, u8 disabled, filter
+// type, u8 filter option, impulse, 49 parameters, spare (0), chorus mode; then
+// u8 soft clip, u32 4 + the four modules' automation blocks, u32 0 (spare), u8
+// 1 (meters). A guitar rack (RkModel 0) has no FL counterpart: its slots are
+// approximated by modules (the default rack is written without a state — FL's
+// own defaults import as it).
+namespace distructor {
+
+namespace dr = gl::packs::dynamics::drack;
+
+void putModule(ByteWriter& w, const dr::ModuleState& m) {
+  w.u32(4);
+  w.i32(m.kind), w.i32(m.algo), w.i32(m.os);
+  w.u8(static_cast<uint32_t>(m.removeDc)), w.u8(static_cast<uint32_t>(m.disabled));
+  w.i32(m.ftype);
+  w.u8(static_cast<uint32_t>(m.fopt));
+  w.i32(m.ir);
+  for (int v : m.p) w.i32(v);
+  w.i32(0);  // spare
+  w.i32(m.chorusMode);
+}
+Bytes build(const std::vector<dr::ModuleState>& ms, bool softClip, const int (&slot)[dy::kDrModules]) {
+  ByteWriter w;
+  w.u32(5);
+  w.u32(static_cast<uint32_t>(ms.size()));
+  for (const auto& m : ms) putModule(w, m);
+  w.u8(softClip ? 1 : 0);
+  w.u32(static_cast<uint32_t>(dy::kDrModules));
+  for (int s : slot) w.i32(s);
+  w.u32(0);
+  w.u8(1);
+  return w.b;
+}
+int ip(const PluginState& g, int k) { return static_cast<int>(std::lround(paramOf(g, k))); }
+
+// Module rack parameters → modules.
+Bytes fromModules(const PluginState& g) {
+  const int count = std::clamp(ip(g, dy::DrCount), 0, dy::kDrModules);
+  std::vector<dr::ModuleState> ms;
+  for (int k = 0; k < count; ++k) {
+    dr::ModuleState m;
+    int* f[dy::DmP0] = {&m.kind, &m.algo, &m.os, &m.removeDc, &m.disabled, &m.ftype, &m.fopt, &m.ir, &m.chorusMode};
+    for (int q = 0; q < dy::DmP0; ++q) *f[q] = ip(g, dy::drParam(k, q));
+    for (int q = 0; q < dy::kDrParams; ++q) m.p[q] = ip(g, dy::drParam(k, dy::DmP0 + q));
+    ms.push_back(m);
+  }
+  int slot[dy::kDrModules];
+  for (int k = 0; k < dy::kDrModules; ++k) slot[k] = std::clamp(ip(g, dy::DrSlot0 + k), 0, 3);
+  return build(ms, paramOf(g, dy::DrSoftClip) >= 0.5f, slot);
+}
+
+int32_t r10k(double v) { return static_cast<int32_t>(std::lround(std::clamp(v, 0.0, 1.0) * 10000.0)); }
+
+// Guitar rack slots → the nearest modules (an approximation: the guitar
+// rack's effects are Gridline's own).
+Bytes fromSlots(const PluginState& g) {
+  std::vector<dr::ModuleState> ms;
+  for (int s = 0; s < dy::kRackSlots && static_cast<int>(ms.size()) < dy::kDrModules; ++s) {
+    auto P = [&](int f) { return static_cast<double>(paramOf(g, dy::rkParam(s, f))); };
+    dr::ModuleState m;
+    dr::moduleDefaults(m);
+    m.os = 1, m.removeDc = 1, m.ftype = 2, m.ir = 1;
+    m.disabled = P(dy::RsOn) < 0.5 ? 1 : 0;
+    const double k0 = P(dy::RsK0), k1 = P(dy::RsK1), k3 = P(dy::RsK3), k5 = P(dy::RsK5);
+    switch (static_cast<int>(std::lround(P(dy::RsType)))) {
+      case dy::RmOverdrive: m.kind = 0, m.algo = 0, m.p[2] = r10k(k0), m.p[1] = r10k(k1), m.p[3] = r10k(k5 / 0.85); break;
+      case dy::RmFuzz: m.kind = 0, m.algo = 3, m.p[23] = static_cast<int>(std::lround(std::clamp(k0, 0.0, 1.0) * 1000.0)); break;
+      case dy::RmWah: m.kind = 1, m.ftype = 12, m.p[39] = r10k(k0), m.p[40] = r10k(k3); break;
+      case dy::RmChorus: m.kind = 2; break;
+      default: continue;  // no module for this slot type
+    }
+    m.p[37] = r10k(P(dy::RsMix));
+    ms.push_back(m);
+  }
+  const int slot[dy::kDrModules] = {0, 1, 2, 3};
+  return build(ms, paramOf(g, dy::RkSoftClip) >= 0.5f, slot);
+}
+
+Encoder encoder() {
   Encoder e;
-  e.flName = flName;
+  e.flName = "Distructor";
   e.glType = "gl.amprack";
-  e.nativeRank = rank;
+  e.nativeRank = 0;  // the module rack's FL counterpart (and the guitar rack's nearest)
+  e.accepts = [](const PluginState& s) { return ip(s, dy::RkModel) != 2; };
+  e.defaults = [] {
+    const int slot[dy::kDrModules] = {0, 1, 2, 3};
+    return build({}, true, slot);
+  };
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    PluginMapping m;
+    if (decodeState("Distructor", b, m, c) && m.state.params == g.params) return;
+    const int model = ip(g, dy::RkModel);
+    if (model == 1) return void(b = fromModules(g));
+    // The default guitar rack is what FL's own Distructor defaults import as: no state.
+    if (g.params == defaultPluginState("gl.amprack").params) return b.clear();
+    b = fromSlots(g);
+  };
   return e;
 }
+
+}  // namespace distructor
+
+// J-39: Hardcore written from the pedal board (gl.amprack RkModel 2): "SSLF" |
+// u32 size | "1RCH" | 50 × f32 (the board values as the decoder reads them) |
+// 256-byte preset name (empty).
+namespace hardcore {
+
+Bytes build(const PluginState& g) {
+  ByteWriter w;
+  w.bytes(reinterpret_cast<const uint8_t*>("SSLF"), 4);
+  w.u32(4 + 200 + 256);
+  w.bytes(reinterpret_cast<const uint8_t*>("1RCH"), 4);
+  for (int k = 0; k < 50; ++k) w.f32(paramOf(g, dy::PbValue0 + k));
+  w.zeros(256);
+  return w.b;
+}
+
+Encoder encoder() {
+  Encoder e;
+  e.flName = "Hardcore";
+  e.glType = "gl.amprack";
+  e.nativeRank = 0;
+  e.accepts = [](const PluginState& s) { return distructor::ip(s, dy::RkModel) == 2; };
+  e.defaults = [] {
+    PluginState g = defaultPluginState("gl.amprack");
+    return build(g);
+  };
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    PluginMapping m;
+    if (decodeState("Hardcore", b, m, c) && m.state.params == g.params) return;
+    if (b.size() >= 12 + 200 && std::memcmp(b.data() + 8, "1RCH", 4) == 0) {  // in place (the name kept)
+      for (int k = 0; k < 50; ++k) putF32(b, 12 + 4 * static_cast<size_t>(k), paramOf(g, dy::PbValue0 + k));
+      return;
+    }
+    b = build(g);
+  };
+  return e;
+}
+
+}  // namespace hardcore
+
 
 }  // namespace
 
@@ -381,8 +518,8 @@ void registerFx2Tone(std::vector<Encoder>& v) {
   v.push_back(emphasis());
   v.push_back(emphasizer());
   v.push_back(lowLifter());
-  v.push_back(rack("Distructor", 0));  // the Amp Rack's closest FL plugin (settings not carried)
-  v.push_back(rack("Hardcore", -1));
+  v.push_back(distructor::encoder());  // J-39: the module rack (and the guitar rack, approximated)
+  v.push_back(hardcore::encoder());    // J-39: the pedal board
 }
 
 }  // namespace gl::flp::enc

@@ -632,8 +632,10 @@ bool decodeMorphState(const uint8_t* p, size_t n, mt::SmData& out, size_t* consu
     r.at += 4 + static_cast<size_t>(size);
   }
   if (r.at + 4 <= n) {
+    // (J-39: the master record's size counts its own size word — 1476 =
+    // 4 + 368 floats; read as "after the word", the record was taken for the name)
     const int32_t size = r.peek(0);
-    if (size >= 4 && static_cast<size_t>(size) <= n - r.at - 4) r.at += 4 + static_cast<size_t>(size);
+    if (size >= 4 && static_cast<size_t>(size) <= n - r.at) r.at += static_cast<size_t>(size);
   }
   if (r.at + 4 <= n) {
     r.i32();
@@ -654,6 +656,7 @@ bool decodeMorph(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   m.glType = "gl.spectramorph";
   m.state = gen::base("gl.spectramorph");
   m.state.data = mt::serializeMorph(d);
+  if (m.state.data == mt::serializeMorph(mt::SmData{})) m.state.data.clear();  // J-39: no programs = Spectra Morph's default (no data)
   m.exact = false;  // master parameters / morph path / envelopes stay at the engine defaults
   return true;
 }

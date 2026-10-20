@@ -3,6 +3,7 @@
 // decoders in that file; see FlpEncode.h for the model.
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include "FlpEncode.h"
 #include "../PluginParams.h"
@@ -68,8 +69,8 @@ std::vector<uint16_t> utf16Units(const std::string& s) {
 }
 
 // ============================================================ Fruity NoteBook 2
-// u32 version 0, u32 current page (1-based), pages { u32 page, varint
-// character count, UTF-16LE text (CR line ends) }, u32 -1, u8 1.
+// u32 version 0, u32 current page (1-based), pages { u32 page, character
+// count (u8, or 0xFF + u32), UTF-16LE text (CR line ends) }, u32 -1, u8 1.
 void putNotePages(ByteWriter& w, const std::vector<std::string>& pages) {
   for (size_t p = 0; p < pages.size(); ++p) {
     if (pages[p].empty()) continue;
@@ -77,11 +78,12 @@ void putNotePages(ByteWriter& w, const std::vector<std::string>& pages) {
     for (char ch : pages[p]) text += ch == '\n' ? '\r' : ch;
     const std::vector<uint16_t> u = utf16Units(text);
     w.u32(static_cast<uint32_t>(p + 1));
-    size_t n = u.size();
-    do {
-      w.u8(static_cast<uint32_t>((n & 0x7F) | (n > 0x7F ? 0x80 : 0)));
-      n >>= 7;
-    } while (n);
+    if (u.size() < 0xFF) {
+      w.u8(static_cast<uint32_t>(u.size()));
+    } else {
+      w.u8(0xFF);
+      w.u32(static_cast<uint32_t>(u.size()));
+    }
     for (uint16_t x : u) w.u16(x);
   }
 }
@@ -92,11 +94,12 @@ size_t notePagesEnd(const Bytes& b) {
     const int32_t page = static_cast<int32_t>(getU32(b, o));
     o += 4;
     if (page == -1) return o;
-    size_t len = 0;
-    for (int shift = 0; o < b.size(); shift += 7) {
-      const uint8_t v = b[o++];
-      len |= static_cast<size_t>(v & 0x7F) << shift;
-      if (!(v & 0x80) || shift > 21) break;
+    if (o >= b.size()) return 0;
+    size_t len = b[o++];
+    if (len == 0xFF) {
+      if (o + 4 > b.size()) return 0;
+      len = getU32(b, o);
+      o += 4;
     }
     if (o + 2 * len > b.size()) return 0;
     o += 2 * len;
@@ -348,6 +351,110 @@ Encoder controlSurface() {
       o += static_cast<size_t>(size);
     }
     return v;
+  };
+  // J-39: the controls themselves (Gridline's kind + name per control): a
+  // control the template already holds with the same kind and name keeps its
+  // chunks (FL's layout, colours, captions); the others are written as FL's
+  // control kinds with their class only (wheel, slider, button; toggles
+  // "StayDown"), on a grid. Values are solved by the fields afterwards.
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    PluginState cur;
+    if (decoded("Control Surface", b, c, cur) && cur.data == g.data) return;
+    struct Want {
+      int kind;
+      std::string name;
+    };
+    std::vector<Want> want;
+    for (size_t pos = 0; pos < g.data.size();) {
+      size_t nl = g.data.find('\n', pos);
+      if (nl == std::string::npos) nl = g.data.size();
+      const std::string line = g.data.substr(pos, nl - pos);
+      pos = nl + 1;
+      const size_t sp = line.find(' ');
+      if (sp == std::string::npos) continue;
+      want.push_back({std::atoi(line.c_str()), line.substr(sp + 1)});
+    }
+    // Template chunks: panel chunks, and each control's chunk run.
+    struct Chunk {
+      uint32_t id;
+      Bytes data;
+    };
+    std::vector<Chunk> panel;
+    std::vector<std::vector<Chunk>> ctls;
+    for (size_t o = 4; o + 12 <= b.size();) {
+      const uint32_t id = getU32(b, o);
+      const uint64_t size = static_cast<uint64_t>(getU32(b, o + 4)) | static_cast<uint64_t>(getU32(b, o + 8)) << 32;
+      if (size > b.size() - o - 12) break;
+      Chunk ch{id, slice(b, o + 12, o + 12 + static_cast<size_t>(size))};
+      o += 12 + static_cast<size_t>(size);
+      if (id == 2100) ctls.emplace_back();
+      if (id >= 2100 && !ctls.empty()) ctls.back().push_back(std::move(ch));
+      else if (id < 2100) panel.push_back(std::move(ch));
+    }
+    auto utf16Bytes = [](const std::string& s) {
+      Bytes out;
+      for (uint16_t u : utf16Units(s)) out.push_back(static_cast<uint8_t>(u)), out.push_back(static_cast<uint8_t>(u >> 8));
+      return out;
+    };
+    // What the decoder makes of one template control (kind, name).
+    auto readCtl = [&](const std::vector<Chunk>& cs, int k) {
+      Want w{md::SkKnob, ""};
+      int type = 0;
+      std::string props;
+      for (const Chunk& ch : cs) {
+        std::string t;
+        for (size_t i = 0; i + 1 < ch.data.size(); i += 2) t += static_cast<char>(ch.data[i]);  // ASCII view suffices for the class tests
+        if (ch.id == 2100 && ch.data.size() >= 4) type = static_cast<int>(getU32(ch.data, 0));
+        if (ch.id >= 2105 && ch.id <= 2110) props += t;
+      }
+      if (props.find("TQuickBtn") != std::string::npos || type == 3) w.kind = props.find("StayDown = True") != std::string::npos ? md::SkToggle : md::SkButton;
+      else if (props.find("Slider") != std::string::npos) w.kind = md::SkSlider;
+      else if (props.find("XY") != std::string::npos) w.kind = md::SkPadX;
+      (void)k;
+      return w;
+    };
+    auto prop = [&](uint32_t id, const std::string& text) { return Chunk{id, utf16Bytes(text)}; };
+    std::vector<std::vector<Chunk>> out;
+    for (size_t k = 0; k < want.size() && k < static_cast<size_t>(md::kSurfaceControls); ++k) {
+      const Want& w = want[k];
+      if (k < ctls.size()) {  // same kind: keep FL's chunks, with the name
+        if (readCtl(ctls[k], static_cast<int>(k)).kind == w.kind) {
+          std::vector<Chunk> cs = ctls[k];
+          bool named = false;
+          for (Chunk& ch : cs)
+            if (ch.id == 2103) ch.data = utf16Bytes(w.name), named = true;
+          if (!named) cs.insert(cs.begin() + 1, Chunk{2103, utf16Bytes(w.name)});
+          out.push_back(cs);
+          continue;
+        }
+      }
+      const bool btn = w.kind == md::SkButton || w.kind == md::SkToggle;
+      const int type = btn ? 3 : w.kind == md::SkSlider ? 2 : 0;
+      const char* cls = btn ? "TQuickBtn" : w.kind == md::SkSlider ? "TVectorSlider" : w.kind == md::SkPadX || w.kind == md::SkPadY ? "TVectorXY" : "TVectorWheel";
+      std::vector<Chunk> cs;
+      ByteWriter t;
+      t.u32(static_cast<uint32_t>(type));
+      t.zeros(28);
+      cs.push_back({2100, t.b});
+      cs.push_back({2103, utf16Bytes(w.name)});
+      ByteWriter r;  // rectangle: a 4-column grid of 64 × 64 cells
+      const float x = static_cast<float>(8 + 72 * (k % 4)), y = static_cast<float>(8 + 72 * (k / 4));
+      r.f32(x), r.f32(y), r.f32(x + 64), r.f32(y + 64);
+      cs.push_back({2104, r.b});
+      ByteWriter v;
+      v.f32(0.5f), v.u32(0), v.u32(0);
+      cs.push_back({2102, v.b});
+      cs.push_back(prop(2105, std::string("control ") + cls + "\r\nend\r\n"));
+      if (w.kind == md::SkToggle) cs.push_back(prop(2107, "control TQuickBtn\r\n  StayDown = True\r\nend\r\n"));
+      cs.push_back({2101, {}});
+      out.push_back(cs);
+    }
+    ByteWriter w;
+    w.u32(b.size() >= 4 ? getU32(b, 0) : 1);
+    for (const Chunk& ch : panel) w.u32(ch.id), w.u64(ch.data.size()), w.bytes(ch.data);
+    for (const auto& cs : out)
+      for (const Chunk& ch : cs) w.u32(ch.id), w.u64(ch.data.size()), w.bytes(ch.data);
+    b = w.b;
   };
   return e;
 }

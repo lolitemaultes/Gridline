@@ -70,6 +70,10 @@ struct Encoder {
   // result: unknown — the plugin is then written without a state (FL loads it
   // with its defaults) and the export reports the settings as not carried.
   std::function<Bytes()> defaults = {};
+  // J-39: a fresh state taken from the FL installation (its plugin database
+  // preset, read at export time; empty when FL is not installed) — for
+  // plugins whose default layout is not built here. Used when `defaults` is empty.
+  std::function<Bytes(const EncodeContext& c)> defaultsIn = {};
   // Layout of the given state (may depend on its version word / sizes).
   std::function<std::vector<Field>(const Bytes& state)> fields = {};
   // Values that are not one number each (strings, sample paths, tables).
@@ -86,7 +90,14 @@ struct EncodeContext {
   int ppq = 96;
   std::string factoryData;  // folder %FLStudioFactoryData% stands for
   std::string projectDir;
+  // J-39: the FL plugin the "Fruity Wrapper" encoder wraps (empty = its own
+  // choice); encode() tries each one that fits (see wrapCandidates).
+  std::string wrapAs;
 };
+
+// FL plugins (by decoder name) that can carry this Gridline state inside FL's
+// plugin wrapper: every parameter not at its default maps. Preferred first.
+std::vector<std::string> wrapCandidates(const PluginState& g);
 
 // FL path for a sample path that the decoders resolved: absolute paths inside
 // the factory data folder become "%FLStudioFactoryData%\…" again (backslashes).
@@ -138,6 +149,17 @@ void registerGenA(std::vector<Encoder>& v);      // FlpGenOsc/Samplers/Simple/Sy
 void registerGenB(std::vector<Encoder>& v);      // FlpGen2*.cpp
 void registerJ22(std::vector<Encoder>& v);       // FlpJ22*.cpp
 void registerWrapper(std::vector<Encoder>& v);   // Fruity Wrapper (third-party plugins), FlpEncWrapper.cpp
+
+// Full state writers in their own files (J-39), registered by their family.
+Encoder sytrusEncoder();  // FlpEncSytrus.cpp
+Encoder harmorEncoder();  // FlpEncHarmor.cpp
+// Structure checks (tests): the writer's lossless structure reproduces an
+// FL state byte for byte (parse + serialize). `raw` / `again`: the
+// uncompressed patch and its re-serialization.
+bool sytrusStructureRoundTrip(const Bytes& state, Bytes* raw = nullptr, Bytes* again = nullptr);
+Bytes sytrusRaw(const Bytes& state);         // uncompressed, info text removed
+Bytes harmorComparable(const Bytes& state);  // info text removed
+bool harmorStructureRoundTrip(const Bytes& state, Bytes* again = nullptr);
 
 // Corpus check (gridline flp-encode-check): every plugin state in the given
 // files is decoded, encoded from its Gridline state without the origin

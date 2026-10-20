@@ -17,6 +17,7 @@
 //   224-226 EQ bandwidth. kind 32 (FL 25): id k = route level to insert k.
 //   A routed destination with level 0 is a sidechain-only route.
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <map>
 #include <set>
@@ -36,6 +37,8 @@ enum InsertFlag : uint32_t {
   kNoThreads = 1u << 4,   // threaded processing off
   kDockMiddle = 1u << 6,  // neither dock bit: docked left
   kDockRight = 1u << 7,
+  kSeparator = 1u << 10,
+  kLocked = 1u << 11,
   kSolo = 1u << 12,
 };
 
@@ -53,7 +56,12 @@ std::set<std::pair<int, int>> automatedSends(const File& f) {
     const uint32_t rel = hi - (hi >= 0x7000 ? 0x7000u : 0x2000u);
     out.insert({static_cast<int>(rel >> 6), static_cast<int>(lo - 0x1F40)});
   };
+  // J-39: an automation clip keeps one target (the first, FlpArrangement.cpp
+  // importTargets): only that one makes a send automated, so a route whose
+  // automation is a clip's second target is read as FL plays it untouched.
+  std::set<uint32_t> clips;
   for (const Event& e : f.events) {
+    if (e.id == 227 && e.size >= 12 && !(e.u16(0) & 0x8000) && !clips.insert(e.u16(2)).second) continue;
     if ((e.id == 227 || e.id == 226) && e.size >= 12) add(e.u32(8));
     if (e.id == 223)
       for (uint32_t o = 0; o + 12 <= e.size; o += 12) add(e.u32(o + 4));
@@ -124,8 +132,8 @@ void importMixer(Context& c) {
   const auto& ins = c.sec.inserts;
   // The last written insert is FL's "current" track (not a real insert).
   size_t n = ins.size();
+  int count103 = -1;  // FL 2024+: the mixer track count the project was saved with
   {
-    int count103 = -1;
     for (const Event& e : c.file.events)
       if (e.id == 103) count103 = static_cast<int>(e.value());
     bool lastIsCurrent = count103 >= 0 ? static_cast<int>(n) == count103 : n >= 64;
@@ -201,11 +209,26 @@ void importMixer(Context& c) {
       }
     return r;
   };
+  // J-39: inserts an automation clip or a link targets (227 / 226 / 223:
+  // 0x2000 + insert × 64 + slot, FL 25 0x7000 + …) are in use as well.
+  std::set<int> automationTargets;
+  {
+    auto add = [&](uint32_t target) {
+      const uint32_t hi = target >> 16;
+      if (hi < 0x2000 || hi == 0x4000 || hi >= 0xFFC0) return;
+      automationTargets.insert(static_cast<int>((hi - (hi >= 0x7000 ? 0x7000u : 0x2000u)) >> 6));
+    };
+    for (const Event& e : c.file.events) {
+      if ((e.id == 227 || e.id == 226) && e.size >= 12) add(e.u32(8));
+      if (e.id == 223)
+        for (uint32_t o = 0; o + 12 <= e.size; o += 12) add(e.u32(o + 4));
+    }
+  }
   size_t keep = std::min<size_t>(n, 1);
   for (size_t i = 0; i < n; ++i) {
-    bool used = i == 0 || channelTargets.count(static_cast<int>(i)) || sendBuses.count(static_cast<int>(i));
+    bool used = i == 0 || channelTargets.count(static_cast<int>(i)) || sendBuses.count(static_cast<int>(i)) || automationTargets.count(static_cast<int>(i));
     const auto& in = ins[i];
-    used = used || find(in.events, 204) || find(in.events, 149);
+    used = used || find(in.events, 204) || find(in.events, 149) || find(in.events, 95);
     for (const auto& sl : in.slots) used = used || !sl.events.empty();
     if (auto it = params.find(static_cast<int>(i)); it != params.end()) {
       const InsertParams& p = it->second;
@@ -225,6 +248,12 @@ void importMixer(Context& c) {
     for (int to : routes(i))
       if (to > 0 && static_cast<size_t>(to) < n) keep = std::max(keep, static_cast<size_t>(to) + 1);
   if (n == 0) keep = 1;
+  // J-39: FL 2024+ projects store their mixer track count (event 103 in FL
+  // 25, the user adds and removes tracks): every track is kept. Older
+  // projects always wrote FL's fixed 105 / 127 inserts: their unused tail goes.
+  const size_t usedKeep = keep;  // inserts in use; the rest (FL 2024+) are plain tracks
+  const int major = std::atoi(c.file.version.c_str());
+  if (count103 > 0 || major >= 24) keep = std::max(keep, n);
   if (keep < n) c.report.counts["mixer inserts trimmed"] = static_cast<int>(n - keep);
 
   for (size_t i = 0; i < keep; ++i) {
@@ -234,6 +263,7 @@ void importMixer(Context& c) {
       const auto& in = ins[i];
       if (const Event* e = find(in.events, 204)) t.name = e->text();
       if (const Event* e = find(in.events, 149)) t.color = flColor(e->value());
+      if (const Event* e = find(in.events, 95)) t.flIcon = static_cast<int>(e->value());  // J-39
       uint32_t flags = kFxEnabled | kEnabled;
       if (const Event* e = find(in.events, 236); e && e->size >= 8) flags = e->u32(4);
       t.invertPolarity = flags & kPolarity;
@@ -241,6 +271,8 @@ void importMixer(Context& c) {
       t.muted = !(flags & kEnabled);
       t.solo = flags & kSolo;
       t.threaded = !(flags & kNoThreads);
+      t.separator = flags & kSeparator;  // J-39
+      t.locked = flags & kLocked;
       // Dock side (inserts only; the master always sits on the left). Only the
       // 12-byte layout (FL 12+) carries the dock bits.
       if (i > 0)
@@ -284,7 +316,12 @@ void importMixer(Context& c) {
       t.sends.push_back({s.mixer[0].id, 1.0f, false});
       continue;
     }
-    for (int to : routes(i)) {
+    std::vector<int> rr = routes(i);
+    if (i >= usedKeep) {  // unused tracks kept for the FL 2024+ count: the master (and automated sends), as trimmed ones had
+      rr.erase(std::remove_if(rr.begin(), rr.end(), [&](int to) { return to != 0 && !isAutomated(i, to); }), rr.end());
+      if (rr.empty()) rr.push_back(0);
+    }
+    for (int to : rr) {
       if (to == static_cast<int>(i)) continue;
       if (static_cast<size_t>(to) >= s.mixer.size()) {
         c.report.warn("mixer: insert " + std::to_string(i) + " routes to unused insert " + std::to_string(to) + " (dropped)");

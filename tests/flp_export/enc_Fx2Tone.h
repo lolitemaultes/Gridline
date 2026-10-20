@@ -53,13 +53,15 @@ inline void testEncFx2Tone() {
     putI32(b, tag(2), 8000), putI32(b, tag(5), 1), putI32(b, tag(10), 2500), putI32(b, tag(12), 1), putI32(b, tag(14), 0);
   });
 
-  // Distructor / Hardcore: no state is built (the decoders read none); FL loads its defaults.
+  // Distructor: the default rack is written without a state (FL's defaults import as it; J-39
+  // writes other racks module by module, see enc_J39.h).
   {
     gl::PluginState rack = gl::defaultPluginState("gl.amprack");
     const enc::Encoder* e = enc::nativeEncoder(rack);
     expect(e && e->flName == "Distructor", "Amp Rack exports as Distructor");
     enc::Result r = enc::encode(rack, "", nullptr, ctx());
-    expect(r.flName == "Distructor" && r.quality == enc::Result::Defaults && !r.hasState, "Amp Rack: written without a state (FL defaults)");
+    expect(r.flName == "Distructor" && (r.quality == enc::Result::Exact || r.quality == enc::Result::Defaults) && !r.hasState,
+           "Amp Rack: the default rack is written without a state (FL defaults)");
     if (flInstalled())
       for (const char* n : {"Distructor", "Hardcore"}) {
         Stats s = corpusRoundTrip(n);

@@ -36,6 +36,7 @@ Note decodeNoteRecord(const uint8_t* r, int, Tick stepLen) {
   n.modY = r[23];
   n.color = r[19] & 0x0F;
   n.slide = (u16(4) & 0x08) != 0;
+  n.group = u16(14);
   return n;
 }
 
@@ -55,6 +56,7 @@ Bytes noteRecord(const Note& n, int flChannel, const Bytes* tmpl) {
   putU16(r, 6, static_cast<uint32_t>(flChannel));
   putU32(r, 8, static_cast<uint32_t>(std::max<Tick>(1, n.length)));
   putU16(r, 12, static_cast<uint32_t>(std::clamp(n.pitch, 0, 127)));
+  putU16(r, 14, static_cast<uint32_t>(std::clamp(n.group, 0, 65535)));  // J-39: note group
   r[16] = static_cast<uint8_t>(std::clamp(120 + static_cast<int>(std::lround(n.fine / 10.0)), 0, 240));
   r[18] = static_cast<uint8_t>(std::clamp(n.release, 0, 128));
   r[19] = static_cast<uint8_t>((r[19] & 0xF0) | (n.color & 0x0F));
@@ -111,6 +113,7 @@ void Exporter::writePatternNotes() {
         int ch;
         int key;
         Bytes rec;
+        int lane = -1;  // notes carrying pattern automation lane k: kept in lane order at one position
       };
       std::vector<N> all;
       for (const auto& [cid, ns] : p->notes) {
@@ -169,7 +172,47 @@ void Exporter::writePatternNotes() {
         }
       }
       for (const Bytes& r : autoNotes) all.push_back({static_cast<Tick>(getU32(r, 0)), getU16(r, 6), getU16(r, 12), r});
-      std::stable_sort(all.begin(), all.end(), [](const N& a, const N& b) { return a.pos != b.pos ? a.pos < b.pos : a.ch < b.ch; });
+      // J-39: lanes that are copies of an automation clip's curve (what notes on
+      // an automation channel import as) → those notes again, when no origin
+      // carries them: each copy starts where the clip's first point lands.
+      std::set<size_t> laneAsNotes;
+      if (autoNotes.empty())
+        for (size_t li = 0; li < p->automation.size(); ++li) {
+          const PatternAutomation& l = p->automation[li];
+          for (const auto& [aid, afl] : im.automation) {
+            const AutomationClip* a = s.automation(aid);
+            if (!a || a->owner != l.owner || a->index != l.index || a->points.empty() || l.points.empty()) continue;
+            const size_t n = a->points.size();
+            std::vector<Tick> starts;
+            bool ok = l.points.size() % n == 0;
+            for (size_t i = 0; ok && i < l.points.size(); i += n) {
+              const Tick st = l.points[i].pos - a->points[0].pos;
+              for (size_t k = 0; ok && k < n; ++k) {
+                const AutoPoint& q = l.points[i + k];
+                const AutoPoint& p0 = a->points[k];
+                const float v = std::clamp(a->min + p0.value * (a->max - a->min), 0.0f, 1.0f);
+                ok = q.pos == st + p0.pos && q.value == v && q.tension == p0.tension && q.shape == p0.shape;
+              }
+              starts.push_back(st);
+            }
+            if (!ok) continue;
+            for (Tick st : starts) {
+              Note n;
+              n.start = std::max<Tick>(0, st);
+              n.pitch = 60;
+              n.length = std::max<Tick>(1, a->points.back().pos);
+              all.push_back({n.start, afl, n.pitch, noteRecord(n, afl, nullptr), static_cast<int>(li)});
+            }
+            laneAsNotes.insert(li);
+            rep.counts["pattern automation as notes on automation channels"]++;
+            break;
+          }
+        }
+      std::stable_sort(all.begin(), all.end(), [](const N& a, const N& b) {
+        if (a.pos != b.pos) return a.pos < b.pos;
+        if ((a.lane >= 0) != (b.lane >= 0)) return a.lane >= 0;  // lane notes first, in lane order (the import makes lanes in note order)
+        return a.lane >= 0 ? a.lane < b.lane : a.ch < b.ch;
+      });
       if (!all.empty()) {
         ByteWriter b;
         for (const auto& n : all) b.bytes(n.rec);
@@ -178,7 +221,9 @@ void Exporter::writePatternNotes() {
       // Pattern automation → 223 controller events (lanes made from notes on
       // automation channels are carried by those notes).
       ByteWriter ev;
-      for (const auto& l : p->automation) {
+      for (size_t li = 0; li < p->automation.size(); ++li) {
+        const PatternAutomation& l = p->automation[li];
+        if (laneAsNotes.count(li)) continue;
         bool fromTrigger = false;
         for (const auto& [aid, afl] : im.automation)
           if (const AutomationClip* a = s.automation(aid); a && a->owner == l.owner && a->index == l.index && !autoNotes.empty()) fromTrigger = true;

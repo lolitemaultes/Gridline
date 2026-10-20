@@ -36,18 +36,24 @@ static void testFxMisc() {
   flp::PluginMapping m;
   std::vector<std::pair<std::string, std::vector<uint8_t>>> keep;  // blobs for the truncation test
 
-  // NoteBook 2: version, current page, {page, LEB128 length, UTF-16}, -1, flag.
+  // NoteBook 2: version, current page, {page, length (u8; 0xFF + u32), UTF-16}, -1, flag.
   {
     Blob b;
     b.i32(0).i32(2).i32(1).u8(8);
     utf16(b, "Hi\rthere");
     b.i32(2).u8(3);
     utf16(b, "two");
+    // J-39: a 200-character page is one length byte (0xC8), 300 is 0xFF + u32
+    b.i32(3).u8(200);
+    utf16(b, std::string(200, 'a'));
+    b.i32(4).u8(0xFF).i32(300);
+    utf16(b, std::string(300, 'b'));
     b.i32(-1).u8(1);
     expect(decodeFx("Fruity NoteBook 2", b.b, m) && m.glType == "gl.notes", "notebook: decodes");
     keep.push_back({"Fruity NoteBook 2", b.b});
     auto pages = gl::packs::utility::decodeNotes(m.state.data);
     expect(pages[0] == "Hi\nthere" && pages[1] == "two", "notebook: pages, CR line ends");
+    expect(pages[2] == std::string(200, 'a') && pages[3] == std::string(300, 'b'), "notebook: one-byte and 0xFF + u32 lengths");
     expect(near(param(m, gl::packs::utility::NtPage), 2, 1e-6), "notebook: current page");
   }
 

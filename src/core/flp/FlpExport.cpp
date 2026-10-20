@@ -40,6 +40,8 @@ void Exporter::assignIndices() {
   forEachArrangementClip(s, [&](const Clip& c) {
     if (c.kind == ClipKind::Audio && s.channel(c.source)) audioChannels.insert(c.source);
   });
+  for (const Channel& c : s.channels)
+    if (c.audioClip && c.plugin.type == "gl.sampler") audioChannels.insert(c.id);  // J-39: clip sources without clips
   // Channels + automation clips, ordered by their FL index when the rack
   // order still agrees with it (an unchanged import keeps FL's numbering).
   struct Item {
@@ -111,9 +113,13 @@ bool Exporter::hasFlPlugin(const PluginState& p, ObjectId owner, int slot) const
   if (p.empty()) return false;
   const EventList orig = origin(pluginKey(owner, slot));
   if (!orig.empty() && originGlType(orig) == p.type) return true;
+  // Encoded already: what the encoder made of it (J-39: FL plugins that are
+  // no native home of the type are written only when they are exact).
+  if (auto it = pluginCache.find({owner, slot}); it != pluginCache.end()) return it->second.flPlugin;
   for (const auto& e : enc::encoders()) {
-    if (e.nativeRank < 0) continue;
-    if (e.glType == p.type || (e.glType == "*hosted" && isHostedType(p.type))) return true;
+    if (!(e.glType == p.type || (e.glType == "*hosted" && isHostedType(p.type)))) continue;
+    if (e.accepts && !e.accepts(p)) continue;
+    if (e.nativeRank >= 0 || e.defaults) return true;
   }
   return false;
 }

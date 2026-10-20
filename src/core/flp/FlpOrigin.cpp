@@ -58,6 +58,7 @@ uint64_t fingerprintPlugin(const PluginState& p) {
 uint64_t fingerprintChannel(const Channel& c, const IndexMap& m) {
   Fp h;
   h.tag("channel").s(c.name).i(c.color).f(c.gain).f(c.pan).i(c.muted).i(c.pitch).i(m.ins(c.mixerTrack));
+  h.i(c.flIcon);  // J-39
   // A plugin channel's instrument has its own origin entry; a sampler's
   // settings are channel events.
   if (c.plugin.type == "gl.sampler" || c.plugin.type.empty()) h.plugin(c.plugin);
@@ -105,6 +106,7 @@ uint64_t fingerprintInsert(const MixerTrack& t, const IndexMap& m) {
   for (const auto& sd : t.sends) h.i(m.ins(sd.to)).f(sd.level).i(sd.sidechain).i(sd.preFader);
   for (int b = 0; b < 3; ++b) h.f(t.eqGain[static_cast<size_t>(b)]).f(t.eqFreq[static_cast<size_t>(b)]).f(t.eqQ[static_cast<size_t>(b)]);
   h.i(t.icon).i(t.disabled).i(t.dock).i(t.latencyOffset).i(t.threaded).s(t.group).i(t.input).i(t.inputStereo).i(t.monitor).i(t.armed);
+  h.i(t.separator).i(t.locked).i(t.flIcon);  // J-39
   return h.h;
 }
 
@@ -120,6 +122,7 @@ uint64_t fingerprintClip(const Clip& c, const IndexMap& m) {
   h.tag("clip").i(static_cast<int>(c.kind)).i(m.pat(c.pattern)).i(c.track).i(c.start).i(c.length);
   h.i(c.kind == ClipKind::Audio ? m.ch(c.source) : c.kind == ClipKind::Automation ? m.aut(c.source) : -1);
   h.i(c.offset).i(c.muted).f(c.audioStart).f(c.audioEnd).f(c.fadeIn).f(c.fadeOut).f(c.gain).f(c.pitch).f(c.stretch).f(c.syncBpm).i(c.reverse);
+  h.i(c.group != kNoId).i(c.launched);  // J-39 (the group number is solved at export)
   return h.h;
 }
 
@@ -129,7 +132,7 @@ uint64_t fingerprintArrangement(const std::vector<PlaylistTrack>& tracks, const 
   h.tag("arrangement").s(name).i(live.areaEnd).i(static_cast<int64_t>(tracks.size()));
   for (const auto& t : tracks)
     h.s(t.name).i(t.color).i(t.muted).f(t.height).i(static_cast<int>(t.launch)).i(static_cast<int>(t.pad)).i(static_cast<int>(t.follow))
-        .i(static_cast<int>(t.syncStart)).i(t.groupSize).i(t.folded).i(t.locked);
+        .i(static_cast<int>(t.syncStart)).i(t.groupSize).i(t.folded).i(t.locked).i(t.flIcon);
   for (const auto& mk : markers) h.i(mk.pos).s(mk.name).i(mk.timeSigNum).i(mk.timeSigDen).i(static_cast<int>(mk.action));
   return h.h;
 }

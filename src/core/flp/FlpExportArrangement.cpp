@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <set>
 #include "../Fades.h"
 #include "FlpExportInternal.h"
 #include "FlpFx.h"
@@ -69,11 +71,8 @@ Bytes defaultTrack(int index) {
   w.u32(0);         // icon
   w.u8(1);          // on
   w.f32(1.0f);      // height
-  w.u8(0xF0);       // @17..21: constants in every FL 25 track record
-  w.u8(0xFF);
-  w.u8(0xFF);
-  w.u8(0xFF);
-  w.u8(0xFF);
+  w.i32(-1);         // @17 (J-39: FL 24 / 25's value on 15 000 of the shipped 17 000 tracks)
+  w.u8(0);           // @21
   w.u32(0);  // @22 motion
   w.u32(0);  // @26 press
   w.u32(5);  // @30 trigger sync (4 beats)
@@ -81,14 +80,10 @@ Bytes defaultTrack(int index) {
   w.u32(1);  // @38 tolerant
   w.u32(0);  // @42 position sync
   w.u8(0);   // @46 grouped
-  w.u32(0);
-  w.u32(0);
-  w.u8(0);
+  w.zeros(6);  // @47 (J-39: the record is 70 bytes in FL 24.2 … 26.1)
   for (int i = 0; i < 8; ++i) w.u8(0xFF);
-  w.u8(1);
-  w.u32(0);
-  w.u32(0);
-  while (w.size() < 70) w.u8(0);
+  w.u8(1);     // @61
+  w.zeros(8);
   return w.b;
 }
 
@@ -134,8 +129,28 @@ void Exporter::writeArrangements() {
         fades = resolveAllFades(t, tm);
       }
     }
+    // J-39: clip groups → FL's u16 group number @14: the origin record's number
+    // when the group had one, else the next free number (in playlist order).
+    std::map<ObjectId, uint32_t> groupNo;
+    {
+      std::set<uint32_t> used;
+      for (const Clip& c : clips) {
+        if (c.group == kNoId || groupNo.count(c.group)) continue;
+        const EventList oc = origin(originKey("clip", c.id));
+        const RawEvent* o = findRaw(oc, 233);
+        const uint32_t g = o && o->data.size() >= 16 ? getU16(o->data, 14) : 0;
+        if (g && !used.count(g)) groupNo[c.group] = g, used.insert(g);
+      }
+      uint32_t next = 1;
+      for (const Clip& c : clips) {
+        if (c.group == kNoId || groupNo.count(c.group)) continue;
+        while (used.count(next)) ++next;
+        groupNo[c.group] = next, used.insert(next);
+      }
+    }
     ByteWriter pl;
     for (const Clip& c : clips) {
+      const uint32_t grp = c.group == kNoId ? 0 : groupNo[c.group];
       const EventList co = origin(originKey("clip", c.id));
       const RawEvent* orec0 = findRaw(co, 233);
       // Records of older FL versions (32 / 60 bytes) are widened to FL 25's 80.
@@ -162,7 +177,10 @@ void Exporter::writeArrangements() {
       putU32(r, 0, static_cast<uint32_t>(std::max<Tick>(0, c.start)));
       putU32(r, 8, static_cast<uint32_t>(std::max<Tick>(1, len)));
       putU16(r, 12, static_cast<uint32_t>(499 - std::clamp(c.track, 0, 499)));
-      putU16(r, 18, static_cast<uint32_t>((getU16(r, 18) & ~0x2000) | (c.muted ? 0x2000 : 0)));
+      putU16(r, 14, grp);
+      // (J-39: in the live area FL's mute bit is the launch state — clips not playing are muted)
+      const bool flMuted = live.areaEnd > 0 && c.start < live.areaEnd ? (c.muted || !c.launched) : c.muted;
+      putU16(r, 18, static_cast<uint32_t>((getU16(r, 18) & ~0x2000) | (flMuted ? 0x2000 : 0)));
       const double ppq = std::max(1, s.ppq);
       if (c.kind == ClipKind::Pattern) {
         const int pi = im.pat(c.pattern);
@@ -236,21 +254,33 @@ void Exporter::writeArrangements() {
       }
     }
     for (const Marker& m : ms) {
-      const uint32_t kind = m.timeSigNum < 0 ? 5 : m.timeSigNum > 0 ? 8 : 0;
+      // Kinds: FL's marker action menu (1 marker loop, 2 skip, 3 pause, 5
+      // start, 8 time signature, …; J-39).
+      uint32_t kind = m.timeSigNum < 0 ? 5 : m.timeSigNum > 0 ? 8 : 0;
+      if (kind == 0 && m.action == MarkerAction::Loop) kind = 1;
+      if (kind == 0 && m.action == MarkerAction::Skip) kind = 2;
+      if (kind == 0 && m.action == MarkerAction::Pause) kind = 3;
+      if (m.action == MarkerAction::Stop) rep.counts["marker actions without FL kind (stop)"]++;
       const uint32_t v = (kind << 24) | static_cast<uint32_t>(m.pos & 0x00FFFFFF);
       w.dword(148, v);
       const EventList* extra = nullptr;
       for (const auto& [ov, ev] : oldMarkers)
         if (ov == v) extra = &ev;
-      if (kind == 8) {
-        w.byte(33, static_cast<uint32_t>(m.timeSigNum));
-        w.byte(34, static_cast<uint32_t>(m.timeSigDen));
-      }
+      // FL 24 / 25 write the meter (4 / 4 on plain markers) and four zero
+      // settings (46, 45, 168, 101) with every marker.
+      w.byte(33, static_cast<uint32_t>(kind == 8 ? m.timeSigNum : 4));
+      w.byte(34, static_cast<uint32_t>(kind == 8 ? m.timeSigDen : 4));
+      bool hasExtra = false;
       if (extra)
         for (const auto& e : *extra)
-          if (e.id != 33 && e.id != 34) w.raw(e);
+          if (e.id != 33 && e.id != 34) w.raw(e), hasExtra = true;
+      if (!hasExtra) {
+        w.byte(46, 0);
+        w.byte(45, 0);
+        w.dword(168, 0);
+        w.word(101, 0);
+      }
       w.text(205, m.name);
-      if (m.action != MarkerAction::None) rep.counts["marker actions not written"]++;
     }
     // Tracks: FL keeps 500.
     std::map<int, Bytes> oldTracks;
@@ -272,7 +302,9 @@ void Exporter::writeArrangements() {
       putU32(r, 0, static_cast<uint32_t>(t + 1));
       const PlaylistTrack def;
       const PlaylistTrack& pt = static_cast<size_t>(t) < tracks.size() ? tracks[static_cast<size_t>(t)] : def;
-      putU32(r, 4, flColor(pt.color));
+      // (tracks past the song's keep FL's default colour: J-39)
+      if (static_cast<size_t>(t) < tracks.size() || oldTracks.count(t)) putU32(r, 4, flColor(pt.color));
+      putU32(r, 8, static_cast<uint32_t>(pt.flIcon));  // J-39
       putU8(r, 12, pt.muted ? 0 : 1);
       if (!(getF32(r, 13) == pt.height || (std::clamp(getF32(r, 13), 0.25f, 4.0f) == pt.height))) putF32(r, 13, pt.height);
       if (r.size() >= 47) {
@@ -385,7 +417,7 @@ void Exporter::writeMixer() {
           after = true;
           continue;
         }
-        if (e.id == 149 || e.id == 204 || e.id == 235 || e.id == 154) continue;  // from the model
+        if (e.id == 149 || e.id == 204 || e.id == 235 || e.id == 154 || e.id == 95) continue;  // from the model
         (after ? post : pre).push_back(e);
       }
       EventList out;
@@ -394,8 +426,17 @@ void Exporter::writeMixer() {
         putU32(b, 0, flColor(t->color));
         out.push_back({149, b});
       }
-      for (const auto& e : pre) out.push_back(e);
-      if (!findRaw(pre, 42)) out.push_back(scalarEvent(42, 0));
+      // J-39: FL's insert icon (95) follows the colour, else event 42
+      const bool icon95 = t && t->flIcon != 0;
+      if (icon95 && !out.empty()) out.push_back(scalarEvent(95, static_cast<uint32_t>(t->flIcon)));
+      for (const auto& e : pre) {
+        out.push_back(e);
+        if (e.id == 42 && icon95 && !findRaw(out, 95)) out.push_back(scalarEvent(95, static_cast<uint32_t>(t->flIcon)));
+      }
+      if (!findRaw(pre, 42)) {
+        out.push_back(scalarEvent(42, 0));
+        if (icon95 && !findRaw(out, 95)) out.push_back(scalarEvent(95, static_cast<uint32_t>(t->flIcon)));
+      }
       if (t && !t->name.empty() && !(i == 0 && t->name == "Master" && !findRaw(ev, 204))) out.push_back({204, utf16z(t->name)});
       Bytes fb = flags && flags->data.size() == 12 ? flags->data : dwords({0, i == 0 ? 0x0C : 0x4C, 0});
       uint32_t f = getU32(fb, 4);
@@ -405,6 +446,13 @@ void Exporter::writeMixer() {
         bit(2, t->swapLR);
         bit(8, !t->muted);
         bit(0x1000, t->solo);
+        bit(0x400, t->separator);  // J-39
+        bit(0x800, t->locked);
+        bit(0x10, !t->threaded);
+        if (i > 0) {  // dock side (the master has none)
+          bit(0x40, t->dock == static_cast<int>(MixerDock::Middle));
+          bit(0x80, t->dock == static_cast<int>(MixerDock::Right));
+        }
         bool anyOn = false;
         for (const auto& sl : t->slots) anyOn = anyOn || sl.enabled;
         if (anyOn) f |= 4;

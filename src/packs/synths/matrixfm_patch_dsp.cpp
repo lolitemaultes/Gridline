@@ -107,7 +107,7 @@ bool readPts(const std::string& s, Curve& c) {
     p.dt = std::clamp(p.dt, 0.f, 1000.f);
     p.y = std::clamp(p.y, -1.f, 2.f);
     p.tension = std::clamp(p.tension, -1.f, 1.f);
-    if (c.pts.size() < 512) c.pts.push_back(p);
+    if (c.pts.size() < 4096) c.pts.push_back(p);  // as many as the FL import keeps (J-39)
     i = e + 1;
   }
   return !c.pts.empty();

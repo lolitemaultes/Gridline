@@ -15,9 +15,9 @@ inline void testEncFxMisc() {
   namespace ut = gl::packs::utility;
   namespace sp = gl::packs::spectral;
 
-  // NoteBook 2: pages rewritten from the data. One shipped notebook holds text
-  // the decoder cannot read back identically (counted out).
-  fxbPlugin("Fruity NoteBook 2", "gl.notes", [](Bytes& b) { putI32(b, 4, 3); }, 1);
+  // NoteBook 2: pages rewritten from the data (J-39: every shipped notebook,
+  // page lengths read as u8 / 0xFF + u32).
+  fxbPlugin("Fruity NoteBook 2", "gl.notes", [](Bytes& b) { putI32(b, 4, 3); });
   fxbGlEdit("Fruity NoteBook 2", "gl.notes", [](gl::PluginState& s) {
     std::vector<std::string> pages(ut::kNotePages);
     pages[0] = "Intro\nverse \xC3\xA9t\xC3\xA9";

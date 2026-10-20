@@ -198,6 +198,7 @@ void Importer::importAudioChannels() {
     }
     if (const Event* e = find(evs, 70)) set(pp::SmpReverse, (e->value() & 2) ? 1.f : 0.f);
     if (const Event* e = find(evs, 219); e && e->size >= 12 && e->i32(8) != 0) channelCents_[id] = e->i32(8);
+    ch->audioClip = true;  // J-39: an audio-clip channel also when no clip uses it
     audioChannels_[idx] = id;
     c_.channelIds[idx] = id;
   }
@@ -450,10 +451,11 @@ void Importer::importTracksAndClips() {
       if (cur < 0) continue;
       PlaylistTrack& t = tracks[static_cast<size_t>(cur)];
       t.color = flColor(e.u32(4));
+      t.flIcon = static_cast<int>(std::min<uint32_t>(e.u32(8), 65535));  // J-39
       t.muted = e.u8(12) == 0;
       float h = e.f32(13);
       t.height = std::isfinite(h) ? std::clamp(h, 0.25f, 4.0f) : 1.0f;
-      if (t.muted || t.height != 1.0f) lastNamed = std::max(lastNamed, cur);
+      if (t.muted || t.height != 1.0f || t.flIcon) lastNamed = std::max(lastNamed, cur);
       // Live (performance) settings @22: u32 motion, press, trigger sync,
       // queue, tolerant, position sync; @46 u8 "grouped under the track above".
       if (e.size >= 46) {
@@ -495,6 +497,7 @@ void Importer::importTracksAndClips() {
   }
   int lastUsed = -1;
   int patClips = 0, audioClips = 0, autoClips = 0, muted = 0, offsets = 0, other = 0;
+  std::map<int, ObjectId> clipGroups;
   for (const auto& e : evs) {
     if (e.id != 233) continue;
     uint32_t k = itemStride(e);
@@ -509,6 +512,11 @@ void Importer::importTracksAndClips() {
       int base = e.u16(o + 4), item = e.u16(o + 6);
       cl.track = std::clamp(trackBase - static_cast<int>(e.u16(o + 12)), 0, kMaxPlaylistTracks - 1);
       cl.muted = (e.u16(o + 18) & 0x2000) != 0;
+      if (const int grp = e.u16(o + 14)) {  // J-39: clip group (FL's number; one id per number)
+        auto [gi, fresh] = clipGroups.emplace(grp, kNoId);
+        if (fresh) gi->second = s_.allocateId();
+        cl.group = gi->second;
+      }
       if (item > base) {  // pattern item; offsets in ticks
         auto it = c_.patternIds.find(item - base);
         if (it == c_.patternIds.end()) continue;
@@ -576,6 +584,13 @@ void Importer::importMarkers() {
         Marker mk;
         mk.pos = c_.tick(v & 0x00FFFFFFu);
         if ((v >> 24) == 8) mk.timeSigNum = mk.timeSigDen = 4;  // time signature marker (values follow)
+        // J-39: marker actions (the kinds of FL's marker action menu: 1 marker
+        // loop, 2 marker skip, 3 marker pause; 4 loop, 5 start, 6 pattern
+        // length, 7 bar override, 8 time signature, 9 / 10 start / stop
+        // recording, 11 key / scale).
+        if ((v >> 24) == 1) mk.action = MarkerAction::Loop;
+        if ((v >> 24) == 2) mk.action = MarkerAction::Skip;
+        if ((v >> 24) == 3) mk.action = MarkerAction::Pause;
         // Kind 5 = song start: clips placed before it are launched by hand
         // (FL's performance zone) → Gridline's live area.
         if ((v >> 24) == 5 && mk.pos > 0) s_.live.areaEnd = mk.pos;

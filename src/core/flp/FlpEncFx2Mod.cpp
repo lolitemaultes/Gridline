@@ -431,6 +431,7 @@ Bytes edisonState(int version, const std::vector<int32_t>& head, const Bytes& wa
   w.u32(static_cast<uint32_t>(version));
   for (int32_t v : head) w.i32(v);
   w.u32(static_cast<uint32_t>(wav.size()));
+  if (ed::flEdisonSize64(version)) w.u32(0);  // J-39: a u64 size from version 13
   w.bytes(wav);
   w.bytes(extra);
   for (int32_t v : settings) w.i32(v);

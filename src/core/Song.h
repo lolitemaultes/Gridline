@@ -76,6 +76,12 @@ struct Channel {
   // their unswung end (they do not overlap the next step).
   int keyLo = 0, keyHi = 127;
   bool swingTruncate = false;
+  // J-39: the channel is a playlist audio-clip source (FL's audio-clip
+  // channel), kept as such when no clip uses it.
+  bool audioClip = false;
+  // J-39 (FL interop): FL's icon number for the channel (0 = none); kept
+  // for export, not drawn (Gridline's icons are its own).
+  int flIcon = 0;
   bool fullKeyRange() const { return keyLo <= 0 && keyHi >= 127; }
 
   bool isLayer() const { return !layer.empty(); }
@@ -86,7 +92,7 @@ struct Channel {
            mono == o.mono && porta == o.porta && portaTime == o.portaTime && cutGroup == o.cutGroup &&
            cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && group == o.group &&
            auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&
-           keyHi == o.keyHi && swingTruncate == o.swingTruncate;
+           keyHi == o.keyHi && swingTruncate == o.swingTruncate && audioClip == o.audioClip && flIcon == o.flIcon;
   }
 };
 
@@ -225,10 +231,11 @@ struct PlaylistTrack {
   int groupSize = 0;      // number of following tracks in this track's group (0 = not a group)
   bool folded = false;    // group collapsed in the playlist
   bool locked = false;    // J-11: clips on the track cannot be edited
+  int flIcon = 0;         // J-39 (FL interop): FL's icon number (0 = none), kept for export
   bool operator==(const PlaylistTrack& o) const {
     return name == o.name && color == o.color && muted == o.muted && height == o.height && launch == o.launch &&
            pad == o.pad && follow == o.follow && syncStart == o.syncStart && groupSize == o.groupSize && folded == o.folded &&
-           locked == o.locked;
+           locked == o.locked && flIcon == o.flIcon;
   }
   bool liveDefaults() const {
     return launch == LaunchGrid::FourBeats && pad == PadMode::Trigger && follow == FollowMode::Loop && syncStart == LaunchGrid::Now;
@@ -383,6 +390,11 @@ struct MixerTrack {
   // J-31 alt solo: soloed on its own; tracks feeding it stay silent (a plain
   // solo keeps the tracks routed into it audible).
   bool soloAlone = false;
+  // J-39 (FL interop): a separator gap before the strip, and a locked strip
+  // (FL keeps it from being edited by mouse); both are display state.
+  bool separator = false;
+  bool locked = false;
+  int flIcon = 0;  // FL's icon number (0 = none), kept for export (`icon` is Gridline's own)
   bool hasInput() const { return input >= 0; }
   // J-31: an armed track records (its input, or its output after the effects).
   bool records() const { return armed && (input >= 0 || recPoint != 0); }
@@ -394,7 +406,7 @@ struct MixerTrack {
            eqQ == o.eqQ && icon == o.icon && disabled == o.disabled && dock == o.dock &&
            latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && input == o.input &&
            inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed && recPoint == o.recPoint &&
-           soloAlone == o.soloAlone;
+           soloAlone == o.soloAlone && separator == o.separator && locked == o.locked && flIcon == o.flIcon;
   }
 };
 

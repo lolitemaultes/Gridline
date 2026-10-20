@@ -308,8 +308,12 @@ std::string encodeState(const State& s);
 bool decodeState(const std::string& data, State& s);  // a bare path is accepted too
 
 // ---- FL Studio Edison state --------------------------------------------------------
+// J-39: the version word is either a plain number (4, 6, 11) or 3 | number << 16
+// (12, 13); from 13 the audio size before the RIFF image is a u64.
+inline int flEdisonVersion(int32_t word) { return word > 0xFFFF ? static_cast<int>(static_cast<uint32_t>(word) >> 16) : word; }
+inline bool flEdisonSize64(int32_t word) { return flEdisonVersion(word) >= 13; }
 struct FlEdison {
-  int version = 0;
+  int version = 0;                // the version word as stored
   std::vector<int32_t> head;      // ints between the version and the RIFF size
   std::vector<int32_t> settings;  // trailing ints (record mode, …, max time, …)
   bool hasAudio = false;

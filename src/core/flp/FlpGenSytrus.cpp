@@ -483,6 +483,7 @@ bool decodeSytrusMatrix(Context& c, const std::vector<Event>& events, PluginMapp
     }
   }
   s.data = mf::serializePatch(pd);
+  if (s.data == "mfm 1\n") s.data.clear();  // J-39: Matrix FM's defaults are no data (as a fresh instance)
   m.glType = "gl.matrixfm";
   m.state = s;
   m.exact = false;

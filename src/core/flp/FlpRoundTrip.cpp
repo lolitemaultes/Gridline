@@ -39,7 +39,8 @@ struct Cmp {
       b.data.size() > 80 ? "<" + std::to_string(b.data.size()) + " bytes>" : b.data);
     if (a.data.size() > 80 && b.data.size() > 80 && a.data != b.data) v<std::string>(p + ".data", "(differs)", "");
     v(p + ".params.size", a.params.size(), b.params.size());
-    for (size_t k = 0; k < a.params.size() && k < b.params.size(); ++k) f(p + ".params[" + std::to_string(k) + "]", a.params[k], b.params[k]);
+    // Parameter paths carry the plugin type ("….plugin.params<gl.sampler>[11]") so reports can group them.
+    for (size_t k = 0; k < a.params.size() && k < b.params.size(); ++k) f(p + ".params<" + a.type + ">[" + std::to_string(k) + "]", a.params[k], b.params[k]);
   }
   void points(const std::string& p, const std::vector<AutoPoint>& a, const std::vector<AutoPoint>& b) {
     v(p + ".size", a.size(), b.size());
@@ -64,6 +65,8 @@ struct Cmp {
       v(q + ".length", x.length, y.length);
       v(q + ".offset", x.offset, y.offset);
       v(q + ".muted", x.muted, y.muted);
+      v(q + ".launched", x.launched, y.launched);  // J-39
+      v(q + ".grouped", x.group != kNoId, y.group != kNoId);
       d(q + ".audioStart", x.audioStart, y.audioStart);
       d(q + ".audioEnd", x.audioEnd, y.audioEnd);
       d(q + ".fadeIn", x.fadeIn, y.fadeIn);
@@ -96,6 +99,7 @@ struct Cmp {
       v(q + ".pos", a[i].pos, b[i].pos);
       v(q + ".name", a[i].name, b[i].name);
       v(q + ".timeSig", a[i].timeSigNum * 100 + a[i].timeSigDen, b[i].timeSigNum * 100 + b[i].timeSigDen);
+      v(q + ".action", static_cast<int>(a[i].action), static_cast<int>(b[i].action));
     }
   }
 };
@@ -222,6 +226,7 @@ std::vector<std::string> compareSongs(const Song& a0, const Song& b0, bool ignor
     c.v(p + ".layer", x.layer == y.layer, true);
     c.v(p + ".layerMode", x.layerMode, y.layerMode);
     c.v(p + ".group", x.group, y.group);
+    c.v(p + ".audioClip", x.audioClip, y.audioClip);
   }
   c.v("patterns.size", a.patterns.size(), b.patterns.size());
   for (size_t i = 0; i < a.patterns.size() && i < b.patterns.size(); ++i) {

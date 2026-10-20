@@ -623,6 +623,22 @@ int main() {
     expect(!st.path.empty() && loadContent(st.path, back) && back.frames() == a.frames() && st.markers.size() == 1 && st.flVersion == 6 &&
                !st.flExtra.empty(),
            "FL embedded audio rendered to a file referenced by the state");
+    // J-39: version word 3 | 13 << 16 — the audio size is a u64.
+    {
+      std::vector<uint8_t> b13;
+      auto w32 = [&b13](uint32_t v) {
+        for (int k = 0; k < 4; ++k) b13.push_back(static_cast<uint8_t>(v >> (8 * k)));
+      };
+      w32(0x000D0003u);
+      w32(0), w32(0), w32(0);
+      w32(static_cast<uint32_t>(riff.size())), w32(0);
+      b13.insert(b13.end(), riff.begin(), riff.end());
+      for (int k = 0; k < 12; ++k) w32(0);
+      FlEdison f13;
+      expect(decodeFlState(b13.data(), b13.size(), f13) && f13.version == 0x000D0003 && f13.head.size() == 3 && f13.hasAudio &&
+                 f13.content.frames() == a.frames() && f13.settings.size() == 12,
+             "FL Edison state version 13: u64 audio size, 12 settings");
+    }
     std::vector<uint8_t> junk(7, 0xFF);
     PluginState pj;
     expect(!mapFlState(junk.data(), junk.size(), dir, pj, nullptr) && pj.type == kType, "garbage FL state keeps a valid placeholder");

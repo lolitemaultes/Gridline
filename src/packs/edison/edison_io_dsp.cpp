@@ -582,16 +582,19 @@ bool decodeFlState(const uint8_t* p, size_t n, FlEdison& out) {
   out = FlEdison{};
   if (n < 12) return false;
   out.version = static_cast<int32_t>(rd32(p));
-  if (out.version < 1 || out.version > 64) return false;
+  const int ver = flEdisonVersion(out.version);
+  const size_t sizeBytes = flEdisonSize64(out.version) ? 8 : 4;
+  if (ver < 1 || ver > 64) return false;
   size_t riff = 0;
   for (size_t o = 4; o + 12 <= n && o < 96; o += 4)
     if (std::memcmp(p + o, "RIFF", 4) == 0 && std::memcmp(p + o + 8, "WAVE", 4) == 0) {
       riff = o;
       break;
     }
-  if (riff < 8) return false;
-  for (size_t o = 4; o + 4 <= riff - 4; o += 4) out.head.push_back(static_cast<int32_t>(rd32(p + o)));
-  const uint32_t len = rd32(p + riff - 4);
+  if (riff < 4 + sizeBytes) return false;
+  for (size_t o = 4; o + 4 <= riff - sizeBytes; o += 4) out.head.push_back(static_cast<int32_t>(rd32(p + o)));
+  if (sizeBytes == 8 && rd32(p + riff - 4) != 0) return false;
+  const uint32_t len = rd32(p + riff - sizeBytes);
   if (riff + len > n) return false;
   Content c;
   if (parseWav(p + riff, len, c, nullptr)) {
@@ -599,7 +602,7 @@ bool decodeFlState(const uint8_t* p, size_t n, FlEdison& out) {
     out.content = std::move(c);
   }
   const size_t tail = riff + len;
-  const size_t nSet = std::min<size_t>(static_cast<size_t>(std::max(0, out.version - 1)), (n - tail) / 4);
+  const size_t nSet = std::min<size_t>(static_cast<size_t>(std::max(0, ver - 1)), (n - tail) / 4);
   const size_t setAt = n - nSet * 4;
   out.extra.assign(p + tail, p + setAt);
   for (size_t o = setAt; o + 4 <= n; o += 4) out.settings.push_back(static_cast<int32_t>(rd32(p + o)));

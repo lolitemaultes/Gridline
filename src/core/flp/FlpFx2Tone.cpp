@@ -437,10 +437,10 @@ bool decodeLowLifter(Context&, const std::vector<Event>& evs, PluginMapping& m) 
 
 // ------------------------------------------------------------------ Distructor / Hardcore → Amp Rack
 bool decodeRack(Context& c, const std::vector<Event>& evs, PluginMapping& m, const char* what) {
-  if (!pluginState(evs)) return false;
+  // (J-39: also without a state — FL loads the plugin with its defaults)
   fx::begin(m, "gl.amprack");
   m.exact = false;
-  c.report.warn(std::string(what) + ": module rack settings not decoded; default Amp Rack used");
+  if (pluginState(evs)) c.report.warn(std::string(what) + ": module rack settings not decoded; default Amp Rack used");
   return true;
 }
 

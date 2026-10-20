@@ -17,6 +17,7 @@
 #include "flp_export/enc_GenB.h"
 #include "flp_export/enc_J22.h"
 #include "flp_export/enc_Wrapper.h"
+#include "flp_export/enc_J39.h"
 #include "flp_export/j38_fades.h"
 
 int main() {
@@ -36,6 +37,8 @@ int main() {
   enctest::testEncGenB();
   enctest::testEncJ22();
   enctest::testEncWrapper();
+  enctest::testEncJ39();
+  enctest::testExportJ39();
   testJ38Fades();
   return finish();
 }

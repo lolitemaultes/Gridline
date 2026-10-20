@@ -59,20 +59,22 @@ Bytes defaultPoly() {  // max voices, porta time, flags
 }
 
 // 215: channel parameters (sampler settings, arpeggiator, time stretch).
-Bytes defaultParams(bool sampler) {
+// (FL 24 / 25 values per channel type: J-39, from the shipped projects.)
+Bytes defaultParams(int type) {
+  const bool audio = type == kAudio, plain = type == kSampler || type == kPlugin;
   ByteWriter w;
-  w.i32(-1);
+  w.i32(audio ? 0x8C : -1);
   w.u32(0);
-  w.u8(sampler ? 1 : 0);  // @8
+  w.u8(1);                // @8
   w.u8(0);                // @9 remove DC
   w.u8(0);                // @10 flags (2 = ping-pong echo)
-  w.u8(1);                // @11
+  w.u8(plain ? 1 : 0);    // @11
   w.i32(-1);              // @12
   w.u32(60);              // @16
   for (int i = 0; i < 5; ++i) w.f32(1.0f);  // @20..39
   w.u32(0);     // @40 arpeggiator direction
-  w.u32(1);     // @44 range
-  w.i32(-1);    // @48 chord
+  w.u32(audio ? 3 : 1);   // @44 range
+  w.i32(audio ? 0 : -1);  // @48 chord
   w.u32(1024);  // @52 time (1024 = one step)
   w.u32(48);    // @56 gate
   w.u8(0);
@@ -86,7 +88,7 @@ Bytes defaultParams(bool sampler) {
   w.u8(0);      // @80 normalize
   w.u8(0);      // @81 polarity
   w.u8(0);      // @82
-  w.u8(0);      // @83 declick
+  w.u8(audio ? 1 : 0);  // @83 declick
   w.u32(0);     // @84 loop crossfade
   w.u32(0);     // @88
   w.u32(1);     // @92 arpeggiator repeat
@@ -103,7 +105,7 @@ Bytes defaultParams(bool sampler) {
   w.u32(0);
   w.u32(0);
   w.i32(-1);
-  w.u32(0x100);
+  w.u32(0x101);  // @156 (FL 24 / 25)
   w.f64(0.5);   // @160
   return w.b;
 }
@@ -171,7 +173,6 @@ struct ChanEvents {
 // Canonical FL 25 channel event list (sizes and order), filled with FL's
 // defaults, then with whatever the template has for the same ids.
 EventList canonicalChannel(int type, int ppq, const EventList& tmpl) {
-  const bool sampler = type == kSampler || type == kAudio;
   EventList out;
   auto add = [&](uint8_t id, Bytes b) {
     RawEvent e{id, std::move(b)};
@@ -188,7 +189,7 @@ EventList canonicalChannel(int type, int ppq, const EventList& tmpl) {
   add(203, utf16z(""));
   scalar(155, 0);
   scalar(128, 0x5A5A5A);
-  scalar(41, type == kPlugin || type == kAuto ? 1 : 0);
+  scalar(41, 1);  // FL 24 / 25: 1 on most channels
   if (type == kPlugin) add(213, {});
   scalar(0, 1);
   add(209, defaultEcho(ppq));
@@ -209,10 +210,14 @@ EventList canonicalChannel(int type, int ppq, const EventList& tmpl) {
   scalar(70, 0);
   scalar(104, 0);
   scalar(50, 1);
-  add(219, defaultLevels());
+  add(219, type == kAuto ? words({0, 12800, 0, 256, 0, 0}) : defaultLevels());  // automation channels: pan 0, full volume (FL 24 / 25)
   add(229, defaultLevelAdjust());
-  add(221, defaultPoly());
-  add(215, defaultParams(sampler));
+  {
+    Bytes poly = defaultPoly();
+    if (type == kAuto) poly[0] = 1;  // automation channels: 1 (FL 24 / 25)
+    add(221, poly);
+  }
+  add(215, defaultParams(type));
   if (type != kLayer) scalar(132, 0);
   scalar(144, 0);
   scalar(145, 0);
@@ -221,9 +226,9 @@ EventList canonicalChannel(int type, int ppq, const EventList& tmpl) {
   add(228, defaultKeyTrack(100));
   add(228, defaultKeyTrack(60));
   for (int i = 0; i < 5; ++i) add(218, defaultEnvelope(i));
-  scalar(143, type == kPlugin ? 10 : 3);
+  scalar(143, type == kAudio ? 2 : type == kAuto ? 3 : 10);
   scalar(20, 0);
-  scalar(170, 0xFFFFFFFFu);
+  scalar(170, type == kPlugin || type == kAudio ? 0xFFFFFFFFu : 0);
   scalar(51, 0);
   // Template values for the same ids (in order of occurrence), and template
   // events this layout does not list (kept, after 51).
@@ -312,7 +317,12 @@ bool solveField(ChanEvents& ce, const ChanField& f, const Channel& target, const
     hit = hit || static_cast<float>(v) == static_cast<float>(want);
   };
   const bool flt = f.type == Type::F32 || f.type == Type::F64;
-  if (!flt && f.hi - f.lo <= 300) {
+  // Stored floats are mostly the value itself (sample start / end): try it
+  // first — the search below needs distinct values at the range ends, which
+  // laws with a default outside the range (end = 1 when not in 0..1) lack.
+  if (flt && want >= f.lo && want <= f.hi) consider(want, valueAt(want));
+  if (hit) {
+  } else if (!flt && f.hi - f.lo <= 300) {
     for (double r = f.lo; r <= f.hi && !hit; r += 1) consider(r, valueAt(r));
   } else {
     double a = f.lo, z = f.hi, va = valueAt(a), vz = valueAt(z);
@@ -360,7 +370,7 @@ std::vector<ChanField> channelFields(int type, const Channel& target, int ppq) {
       add([](const Channel& c) { return c.echo.pan; }, 209, 0, 4, Type::I32, 0, 12800);
       add([](const Channel& c) { return c.echo.pitch; }, 209, 0, 8, Type::I32, -1200, 1200);
       add([](const Channel& c) { return c.echo.count; }, 209, 0, 12, Type::U32, 1, 10);
-      add([](const Channel& c) { return c.echo.time; }, 209, 0, 16, Type::U32, 1, 16.0 * ppq);
+      add([](const Channel& c) { return c.echo.time; }, 209, 0, 16, Type::U32, 0, 16.0 * ppq);  // 0 reads as the shortest time
       add([](const Channel& c) { return c.echo.modX; }, 138, 0, 0, Type::U16, 0, 256);
       add([](const Channel& c) { return c.echo.modY; }, 138, 0, 2, Type::U16, 0, 256);
     }
@@ -395,7 +405,7 @@ std::vector<ChanField> channelFields(int type, const Channel& target, int ppq) {
     add(spf(SmpCutoff), 219, 0, 12, Type::U32, 0, 256);
     add(spf(SmpReso), 219, 0, 16, Type::U32, 0, 256);
     // Volume envelope (218 #1).
-    add(spf(SmpOneShot), 218, 1, 4, Type::I32, 0, 1);
+    add(spf(SmpOneShot), 218, 1, 4, Type::I32, -1, 0);  // FL stores "on" as -1
     add(spf(SmpEnvDelay), 218, 1, 8, Type::I32, 100, 65536);
     add(spf(SmpAttack), 218, 1, 12, Type::I32, 100, 65536);
     add(spf(SmpEnvHold), 218, 1, 16, Type::I32, 100, 65536);
@@ -441,7 +451,9 @@ int Exporter::channelType(const Channel& c) const {
   int ot = -1;
   if (const RawEvent* e = findRaw(orig, 21)) ot = static_cast<int>(e->value());
   if (c.plugin.type == "gl.sampler") return ot == kAudio ? kAudio : kSampler;
-  if (c.plugin.empty()) return c.isLayer() || ot == kLayer ? kLayer : kSampler;
+  // An instrument-less channel is FL's layer channel (also without children:
+  // that is what imports as one, J-39); an origin sampler stays one.
+  if (c.plugin.empty()) return ot == kSampler && !c.isLayer() ? kSampler : kLayer;
   if (!hasFlPlugin(c.plugin, c.id, -1)) return kSampler;  // placeholder: an empty sampler channel
   return kPlugin;
 }
@@ -602,6 +614,7 @@ void Exporter::writeChannel(int fl) {
   if (RawEvent* e = ce.get(203)) e->data = utf16z(placeholder ? "[Gridline] " + ch.name : ch.name);
   ce.setValue(128, flColor(ch.color));
   ce.setValue(0, ch.muted ? 0 : 1);
+  ce.setValue(155, static_cast<uint32_t>(ch.flIcon));  // J-39
   {
     const int ins = im.ins(ch.mixerTrack);
     ce.setValue(104, static_cast<uint32_t>(static_cast<uint16_t>(ins < 0 ? 0 : ins)));
@@ -733,6 +746,19 @@ void Exporter::writeChannel(int fl) {
       putU32(e->data, 20, getU32(po.state, 456));
     }
   }
+  // Sampler cutoff envelope (Mod X, 218 #2): the importer reads it only when
+  // the envelope is on with an amount, so switch it on (FL's -1) for the
+  // solver to set the amount and times (J-39).
+  if (type == kSampler && ch.plugin.type == "gl.sampler" && sp(ch, gl::pp::SmpFiltEnv) != 0)
+    if (RawEvent* e = ce.get(218, 2); e && e->data.size() >= 36) {
+      if (getU32(e->data, 4) == 0) putI32(e->data, 4, -1);
+      if (getU32(e->data, 32) == 0) putI32(e->data, 32, sp(ch, gl::pp::SmpFiltEnv) > 0 ? 64 : -64);
+    }
+  // Echo delay (209): the importer reads it only with a feedback above 0, and
+  // the inactive echo's feedback reads as the default (0.5) — switch it on
+  // first so the solver sees every field (J-39).
+  if (type != kAuto && ch.echo.active())
+    if (RawEvent* e = ce.get(209); e && e->data.size() >= 20 && getU32(e->data, 0) == 0) putU32(e->data, 0, 6400);
   // Derived values, solved through the importer.
   int decodes = 0;
   const std::vector<ChanField> fields = channelFields(type, ch, s.ppq);
@@ -749,6 +775,41 @@ void Exporter::writeChannel(int fl) {
     }
     if (!any) break;
   }
+  // Trio Synth decay = the channel volume envelope's decay + hold (as the
+  // importer reads them): the decay knob alone cannot reach every sum, so the
+  // hold is searched with it (J-39).
+  if (type == kPlugin && ch.plugin.type == "gl.synth")
+    if (RawEvent* e = ce.get(218, 1); e && e->data.size() >= 32 && getU32(e->data, 4) != 0) {
+      Channel cur;
+      const float want = static_cast<float>(sp(ch, gl::pp::SynDecay));
+      if (decodeChannel(ce.ev, *this, cur) && static_cast<float>(sp(cur, gl::pp::SynDecay)) != want) {
+        auto law = [](int32_t h, int32_t d) { return static_cast<float>(std::clamp(flEnvTime(d) + flEnvTime(h), 0.005, 10.0)); };
+        int32_t fh = 0, fd = 0;
+        auto tryHold = [&](int32_t h) {
+          int32_t a = 100, z = 65536;
+          if (law(h, a) > want || law(h, z) < want) return false;
+          while (z - a > 1) {
+            const int32_t m = a + (z - a) / 2;
+            if (law(h, m) < want) a = m;
+            else z = m;
+          }
+          for (int32_t d : {a, z})
+            if (law(h, d) == want) {
+              fh = h, fd = d;
+              return true;
+            }
+          return false;
+        };
+        bool found = tryHold(static_cast<int32_t>(getU32(e->data, 16))) || tryHold(100);
+        for (int32_t h = 101; !found && h <= 65536; ++h) found = tryHold(h);
+        if (found) {
+          const Bytes keep = e->data;
+          putI32(e->data, 16, fh), putI32(e->data, 20, fd);
+          Channel chk;
+          if (!(decodeChannel(ce.ev, *this, chk) && static_cast<float>(sp(chk, gl::pp::SynDecay)) == want)) e->data = keep;
+        }
+      }
+    }
   rep.counts["channel solver imports"] += decodes;
   // Volume between the 219 steps: the 229 multiplier makes up the rest
   // (gain = volume / 12800 × multiplier / 12800, as the importer reads it).
