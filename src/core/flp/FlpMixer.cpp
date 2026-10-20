@@ -133,11 +133,17 @@ void importMixer(Context& c) {
     }
     return false;
   };
+  // FL ≤ 21 projects (127 inserts written) route every insert to its default
+  // send inserts 100–103 at level 0. Files that leave those levels out (FL's
+  // render tests) mean the same: a missing level there is 0, not full level
+  // (full level would add four extra copies of every insert to the master).
+  const bool defaultSends = n >= 104;
   auto routeLevel = [&](size_t i, int to) {
+    const int missing = defaultSends && to >= 100 && to <= 103 && static_cast<int>(i) != to ? 0 : 12800;
     auto pit = params.find(static_cast<int>(i));
-    if (pit == params.end()) return 12800;
+    if (pit == params.end()) return missing;
     auto lv = pit->second.routeLevel.find(to);
-    return lv == pit->second.routeLevel.end() ? 12800 : lv->second;
+    return lv == pit->second.routeLevel.end() ? missing : lv->second;
   };
   // Send buses (templates such as "Empty with 4 sends"): an insert without
   // effects that several inserts route to at level 0 is a send whose knobs
@@ -149,9 +155,7 @@ void importMixer(Context& c) {
       if (const Event* e = find(ins[i].events, 235))
         for (uint32_t k = 1; k < e->size && k < n; ++k)
           if (e->data[k] && k != i && routeLevel(i, static_cast<int>(k)) == 0) ++zeroIn[static_cast<int>(k)];
-    // FL ≤ 21 projects (127 inserts written) route every insert to its default
-    // send inserts 100–103 at level 0: those stay trimmed unless used otherwise.
-    const bool defaultSends = n >= 104;
+    // Default send inserts 100–103 (see routeLevel) stay trimmed unless used otherwise.
     for (const auto& [k, cnt] : zeroIn)
       if (cnt >= 2 && !hasFx(k) && !(defaultSends && k >= 100 && k <= 103)) sendBuses.insert(k);
   }

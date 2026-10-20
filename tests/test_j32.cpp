@@ -468,6 +468,48 @@ int main() {
            "fl import: the unmuted zone clip is the launched one, zone mutes become launch state");
   }
 
+  // ======================= FL import: default sends 100–103 without stored levels
+  {
+    // Old-layout project (127 inserts written): every insert routes to the master
+    // and to the default send inserts 100–103, levels not stored (FL's render tests).
+    Flp B;
+    B.text(199, "20.8.0.2115");
+    B.d(156, 120000);
+    B.w(65, 1);
+    std::vector<uint8_t> note(24, 0);
+    note[4] = 0x00, note[5] = 0x40, note[8] = 96, note[12] = 60, note[16] = 120, note[18] = 64, note[20] = 64, note[21] = 100, note[22] = 128, note[23] = 128;
+    B.data(224, note);
+    B.w(64, 0), B.b(21, 2), B.text(192, "Lead"), B.b(22, 1);
+    for (int k = 0; k < 127; ++k) {
+      B.data(236, std::vector<uint8_t>(12, 0));
+      for (int sl = 0; sl < 10; ++sl) B.w(98, static_cast<uint16_t>(sl));
+      std::vector<uint8_t> route(127, 0);
+      if (k > 0) {
+        route[0] = 1;
+        for (int d = 100; d <= 103; ++d)
+          if (d != k) route[static_cast<size_t>(d)] = 1;
+      }
+      B.data(235, route);
+      B.d(147, 0);
+    }
+    const std::string path = "build_j32_sends.flp";
+    if (FILE* fp = std::fopen(path.c_str(), "wb")) {
+      auto bytes = B.file(96);
+      std::fwrite(bytes.data(), 1, bytes.size(), fp);
+      std::fclose(fp);
+    }
+    Song s;
+    flp::Report rep;
+    std::string err;
+    const bool ok = importFlp(path, s, rep, &err, "/nonexistent");
+    std::remove(path.c_str());
+    const MixerTrack* t1 = s.mixer.size() > 1 ? &s.mixer[1] : nullptr;
+    int audible = 0;
+    if (t1)
+      for (const auto& sd : t1->sends) audible += sd.level > 0 && !sd.sidechain;
+    expect(ok && t1 && audible == 1, "fl import: default sends 100–103 without stored levels carry nothing (insert feeds the master once)");
+  }
+
   // ================================================ FL paths: %FLStudioData%
   {
     flp::File file;
