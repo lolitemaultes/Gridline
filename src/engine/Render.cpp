@@ -2,22 +2,27 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include "LiveRender.h"
 #include "Resample.h"
 #include "../core/MixerOps.h"
 
 namespace gl {
 
-AudioBuffer renderSong(const Song& song, const RenderOptions& opt) {
+AudioBuffer renderSong(const Song& source, const RenderOptions& opt) {
+  // Live area (performance mode): launched clips play from the song start (J-32).
+  Song song = source;
+  const Tick start = opt.patternMode ? 0 : prepareOfflineLive(song);
   ProgramBuilder builder;
   builder.setSampleRate(opt.sampleRate);
   builder.setPdc(opt.pdc);
   auto prog = builder.build(song);
   Tick end = opt.patternMode ? (prog->pattern(opt.pattern) ? prog->pattern(opt.pattern)->length : 0) : prog->songEnd;
-  if (end <= 0) return AudioBuffer(static_cast<size_t>(opt.channels), 0);
+  if (end <= start) return AudioBuffer(static_cast<size_t>(opt.channels), 0);
   end += opt.tail;
   // Song mode follows the tempo map (tempo automation); patterns play at the song tempo.
   const TempoMap& map = opt.patternMode ? prog->flatMap : prog->tempoMap;
-  const int64_t total = static_cast<int64_t>(std::ceil(map.samplesBetween(0.0, static_cast<double>(end), opt.sampleRate))) + 1;
+  const int64_t total =
+      static_cast<int64_t>(std::ceil(map.samplesBetween(static_cast<double>(start), static_cast<double>(end), opt.sampleRate))) + 1;
 
   AudioEngine eng(opt.sampleRate);
   eng.setProgram(prog);
@@ -28,6 +33,7 @@ AudioBuffer renderSong(const Song& song, const RenderOptions& opt) {
     eng.setPattern(opt.pattern);
   } else {
     eng.setMode(PlayMode::Song);
+    if (start > 0) eng.setPosition(start);
   }
   eng.play();
 
@@ -104,9 +110,12 @@ bool renderScopeTicks(const Song& song, const RenderJob& job, Tick& start, Tick&
       start = std::max<Tick>(0, job.start);
       end = job.end;
       break;
-    default:
-      end = song.lengthTicks();
+    default: {
+      Song s = song;
+      start = prepareOfflineLive(s);
+      end = s.lengthTicks();
       break;
+    }
   }
   return end > start;
 }
@@ -123,7 +132,9 @@ int64_t scopeFrames(const Song& song, const RenderJob& job, Tick start, Tick end
 RenderResult renderAudio(const Song& source, const RenderJob& job) {
   RenderResult res;
   res.sampleRate = job.sampleRate;
-  const Song song = prepareRenderSong(source, job);
+  Song song = prepareRenderSong(source, job);
+  // Live area (performance mode): launched clips play from the song start (J-32).
+  const Tick liveStart = job.scope == RenderScope::Song ? prepareOfflineLive(song) : 0;
   const int os = job.oversample >= 4 ? 4 : job.oversample >= 2 ? 2 : 1;
   const int sr = job.sampleRate * os;
   if (job.sampleRate < 8000 || job.sampleRate > 384000) {
@@ -142,6 +153,7 @@ RenderResult renderAudio(const Song& source, const RenderJob& job) {
     A = std::max<Tick>(0, job.start);
     B = job.end;
   } else {
+    A = liveStart;
     B = prog->songEnd;
   }
   res.start = A;

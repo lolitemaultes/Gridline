@@ -596,9 +596,13 @@ void Importer::importMarkers() {
     bool any = false;
     for (const auto& cl : s_.playlist) any = any || cl.start < s_.live.areaEnd;
     // FL marks performance clips that are not playing as muted; in the live
-    // area that is launch state, not a mute.
+    // area that is launch state, not a mute: the unmuted ones were playing
+    // when the project was saved (offline renders launch them).
     for (auto& cl : s_.playlist)
-      if (cl.start < s_.live.areaEnd) cl.muted = false;
+      if (cl.start < s_.live.areaEnd) {
+        cl.launched = !cl.muted;
+        cl.muted = false;
+      }
     if (!any) s_.live.areaEnd = 0;  // a start marker with nothing before it: plain song
     else c_.report.counts["live area clips"] = static_cast<int>(std::count_if(s_.playlist.begin(), s_.playlist.end(), [&](const Clip& cl) { return cl.start < s_.live.areaEnd; }));
   }

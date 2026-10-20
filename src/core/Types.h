@@ -112,6 +112,9 @@ struct Clip {
   // share a take group; `take` is the pass number (0 = first). kNoId = none.
   ObjectId takeGroup = kNoId;
   int take = 0;
+  // Live area (J-32): the clip was playing when the project was saved (FL's
+  // performance state); offline renders launch it at the song start.
+  bool launched = false;
   // J-31: clip group (kNoId = none); grouped clips are selected together.
   ObjectId group = kNoId;
 
@@ -120,7 +123,7 @@ struct Clip {
            kind == o.kind && source == o.source && offset == o.offset && muted == o.muted && audioStart == o.audioStart &&
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
            stretch == o.stretch && syncBpm == o.syncBpm && reverse == o.reverse && takeGroup == o.takeGroup &&
-           take == o.take && group == o.group;
+           take == o.take && launched == o.launched && group == o.group;
   }
 };
 

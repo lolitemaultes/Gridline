@@ -39,7 +39,7 @@ void addMaster(std::vector<PluginInfo>& v) {
   for (int b = 0; b < kMsBands; ++b) {
     std::string n = names[b];
     bool m = b == 3;
-    p.params[msParam(b, MbMode)] = ch(n + " mode", {"Bypass", "Active", "Mute"}, 1);
+    p.params[msParam(b, MbMode)] = ch(n + " mode", {"Bypass", "Active", "Mute", "No compression", "Merged"}, 1);
     p.params[msParam(b, MbPre)] = lin(n + " pre gain", "dB", -24, 24, 0);
     p.params[msParam(b, MbPost)] = lin(n + " post gain", "dB", -24, 24, 0);
     p.params[msParam(b, MbAttack)] = lg(n + " attack", "ms", 0.1, 300, m ? 2 : 10);

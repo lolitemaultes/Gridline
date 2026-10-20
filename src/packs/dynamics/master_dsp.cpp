@@ -154,15 +154,20 @@ class MasterEngine {
   }
   // Output delay: the bands and the master band each delay the audio by the
   // look-ahead; an active (compressing) stage also oversamples its saturator.
+  // Band modes (MbMode): 0 bypass, 1 active, 2 mute, 3 no compression (pre /
+  // stereo / saturation / post still apply), 4 merged (low / high band only:
+  // the mid band processes its range).
+  static constexpr int kModeNoComp = 3, kModeMerged = 4;
+  static bool shapes(int mode) { return mode == 1 || mode == kModeNoComp; }
   static int latency(const MasterSet& S, double sr) {
     int lat = 2 * lookahead(S, sr);
     const int os = osLatency(osFactor(S.os));
     if (os > 0) {
       bool bandOs = false;
       for (int b = 0; b < 3; ++b)
-        if (S.band[b].mode == 1 && (S.solo == 0 || S.solo == b + 1)) bandOs = true;
+        if (shapes(S.band[b].mode) && (S.solo == 0 || S.solo == b + 1)) bandOs = true;
       if (bandOs) lat += os;
-      if (S.solo == 0 && S.band[3].mode == 1) lat += os;
+      if (S.solo == 0 && shapes(S.band[3].mode)) lat += os;
     }
     return lat;
   }
@@ -231,6 +236,9 @@ class MasterEngine {
       double band[3][2];
       for (int c = 0; c < 2; ++c) {
         xo_[c].process(x[c], band[0][c], band[1][c], band[2][c]);
+        // A merged low / high band is handled by the mid band (its split disappears).
+        if (S.band[0].mode == kModeMerged) band[1][c] += band[0][c], band[0][c] = 0;
+        if (S.band[2].mode == kModeMerged) band[1][c] += band[2][c], band[2][c] = 0;
         for (int b = 0; b < 3; ++b) dl_[b * 2 + c].push(band[b][c]);
       }
       double sum[2] = {0, 0}, dry[2] = {0, 0}, solo[2] = {0, 0};
@@ -243,12 +251,12 @@ class MasterEngine {
         double y[2];
         if (B.mode == 2) {
           y[0] = y[1] = 0;
-        } else if (B.mode == 0) {
+        } else if (!shapes(B.mode)) {
           y[0] = late[0];
           y[1] = late[1];
         } else {
           shape(B, now);
-          double g = B.drawn ? detectDrawn(b, B, now) : detect(b, B, now, atkC[b], relC[b], detRel[b], winC[b]);
+          double g = B.mode == kModeNoComp ? 1.0 : B.drawn ? detectDrawn(b, B, now) : detect(b, B, now, atkC[b], relC[b], detRel[b], winC[b]);
           shape(B, late);
           for (int c = 0; c < 2; ++c) {
             double v = late[c] * g;
@@ -270,15 +278,15 @@ class MasterEngine {
       for (int c = 0; c < 2; ++c) dl_[6 + c].push(S.solo ? solo[c] : m[c]);
       double late[2] = {dl_[6].at(dly), dl_[7].at(dly)};
       double out[2];
-      if (S.solo || M.mode == 0) {
+      if (!S.solo && M.mode == 2) {
+        out[0] = out[1] = 0;
+      } else if (S.solo || !shapes(M.mode)) {
         out[0] = late[0];
         out[1] = late[1];
-      } else if (M.mode == 2) {
-        out[0] = out[1] = 0;
       } else {
         shape(M, m);
         inPeak = std::max(inPeak, std::max(std::fabs(m[0]), std::fabs(m[1])));
-        double g = M.drawn ? detectDrawn(3, M, m) : detect(3, M, m, atkC[3], relC[3], detRel[3], winC[3]);
+        double g = M.mode == kModeNoComp ? 1.0 : M.drawn ? detectDrawn(3, M, m) : detect(3, M, m, atkC[3], relC[3], detRel[3], winC[3]);
         shape(M, late);
         for (int c = 0; c < 2; ++c) {
           double v = late[c] * g;

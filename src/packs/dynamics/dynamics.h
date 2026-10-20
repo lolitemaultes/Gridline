@@ -27,7 +27,7 @@ enum MasterGlobal {
   MsBand0,
 };
 enum MasterBand {
-  MbMode = 0,  // Bypass / Active / Mute
+  MbMode = 0,  // Bypass / Active / Mute / No compression (gain stages + saturation only) / Merged (low / high: into mid)
   MbPre,       // dB
   MbPost,      // dB
   MbAttack,    // ms

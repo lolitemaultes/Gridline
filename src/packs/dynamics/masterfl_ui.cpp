@@ -301,10 +301,11 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
   skin::tabsUi(f, "maxband", 2, 210, 69, 96, bands, 4, u.band, bt, true);
   {
     static const char* modes[3] = {"ON", "OFF", "MUTE"};
-    int mv = ui::ival(st, P(MbMode));  // 0 bypass, 1 active, 2 mute
-    int cell = mv == 1 ? 0 : mv == 0 ? 1 : 2;
+    int mv = ui::ival(st, P(MbMode));  // 0 bypass, 1 active, 2 mute, 3 no compression, 4 merged
+    int cell = mv == 1 ? 0 : mv == 2 ? 2 : 1;
     skin::TabLook ml{hex(0x858B8C), hex(0x2F383D), hex(0x1D2023), hex(0xFFFFFF)};
-    if (skin::tabsUi(f, "maxmode", 77, 218, 64, 56, modes, 3, cell, ml, true)) pui::setParamValue(a, t, P(MbMode), cell == 0 ? 1 : cell == 1 ? 0 : 2);
+    // OFF = compression off (gains and saturation stay), as on the reference.
+    if (skin::tabsUi(f, "maxmode", 77, 218, 64, 56, modes, 3, cell, ml, true)) pui::setParamValue(a, t, P(MbMode), cell == 0 ? 1 : cell == 1 ? 3 : 2);
   }
   {
     bool solo = b < 3 && ui::ival(st, MsSolo) == b + 1;

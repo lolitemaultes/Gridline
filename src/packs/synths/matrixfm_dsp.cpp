@@ -292,7 +292,9 @@ double runFilter(FltState& st, const FltCfg& c, double sr, double x, double hz, 
 }
 
 double waveshape(const FltCfg& c, double x) {
-  if (!c.wsC || c.wsC->empty()) return x;
+  // The transfer curve covers full scale; louder input stays at its end (the
+  // default straight line clips at ±1, so the pre-amp drives into it).
+  if (!c.wsC || c.wsC->empty()) return std::clamp(x, -1.0, 1.0);
   if (c.wsBip) {
     const double u = std::clamp((x + 1) * 0.5, 0.0, 1.0);
     return curveAt(*c.wsC, u * curveLength(*c.wsC)) * 2 - 1;
@@ -323,6 +325,7 @@ struct Voice {
   uint32_t cyc[kOps] = {}, noise = 1;
   float* pk = nullptr;  // kOps × kPluck
   int pkLen[kOps] = {}, pkPos[kOps] = {};
+  int pkFill[kOps] = {};  // pluck: excitation samples left (one period of the waveform)
   double pkG[kOps] = {}, pkPrev[kOps] = {};
   FltState flt[kFilters];
   double fHz[kFilters] = {}, fRes[kFilters] = {}, fLow[kFilters] = {}, fBand[kFilters] = {}, fHigh[kFilters] = {};
@@ -665,7 +668,10 @@ class MatrixFmGen final : public Generator {
     v.mainVol = 0;
     control(v, 0.0);
     v.mainVol = v.attackFade > 0 ? 0.f : v.mainVolTo;
-    for (int k = 0; k < kOps; ++k) v.amp[k] = op_[k].declick ? 0.f : v.ampTo[k];
+    for (int k = 0; k < kOps; ++k) {
+      v.amp[k] = op_[k].declick ? 0.f : v.ampTo[k];
+      v.pkFill[k] = op_[k].pluck ? v.pkLen[k] : 0;
+    }
   }
 
   // Articulator value of unit u, target a (neutral 1, or 0.5 when bipolar).
@@ -816,11 +822,21 @@ class MatrixFmGen final : public Generator {
           int rd = pos - len;
           if (rd < 0) rd += kPluck;
           const double d = buf[rd];
-          const double out = 0.5 * (d + v.pkPrev[k]) * v.pkG[k];
+          // Plucked mode: one period of the waveform excites a string loop
+          // (delay of one period, averaging low-pass, loss per pass) that
+          // then rings on its own. Exciting it continuously instead piles up
+          // energy at the fundamental (tens of times the waveform's level).
+          double out;
+          if (v.pkFill[k] > 0) {
+            --v.pkFill[k];
+            out = w;
+          } else {
+            out = 0.5 * (d + v.pkPrev[k]) * v.pkG[k];
+          }
           v.pkPrev[k] = d;
-          buf[pos] = static_cast<float>(out + w * 0.25);
+          buf[pos] = static_cast<float>(out);
           pos = (pos + 1) % kPluck;
-          w = d;
+          w = out;
         }
         if (op_[k].center) {
           const double o = w - v.dcX[k] + 0.995 * v.dcY[k];

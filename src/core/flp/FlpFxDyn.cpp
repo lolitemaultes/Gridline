@@ -235,7 +235,10 @@ struct MaxCurve {
   double x[64], y[64], t[64];
 };
 
-// Scans for the envelope records after the band blocks.
+// Reads the envelope records after the band blocks. They are byte-packed after
+// the spare state and options, so the start is found as the offset from which
+// eight consecutive valid records end exactly at the end of the state (every
+// shipped preset and demo state, versions 2-10); otherwise a forward scan.
 std::vector<MaxCurve> maximusCurves(const Reader& r, size_t from) {
   std::vector<MaxCurve> out;
   auto rd32 = [&](size_t o) {
@@ -254,7 +257,31 @@ std::vector<MaxCurve> maximusCurves(const Reader& r, size_t from) {
     std::memcpy(&f, &u, 4);
     return static_cast<double>(f);
   };
+  // End of a valid record at `o` (0 = none).
+  auto recEnd = [&](size_t o) -> size_t {
+    if (o + 12 > r.n) return 0;
+    const uint32_t kind = rd32(o), fmt = rd32(o + 4), n = rd32(o + 8);
+    if (!((fmt == 2 || fmt == 3) && kind <= 16 && n >= 1 && n <= 64 && o + 12 + 24ull * n + 20 <= r.n)) return 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      const double dx = rdf64(o + 12 + 24ull * i), y = rdf64(o + 20 + 24ull * i);
+      if (!(dx >= 0 && dx <= 1.0001 && y >= -0.01 && y <= 1.01)) return 0;
+    }
+    return o + 12 + 24ull * n + 20;
+  };
   size_t o = from;
+  for (size_t s = from; s + 12 <= r.n; ++s) {
+    size_t p = s;
+    int k = 0;
+    for (; k < 8; ++k) {
+      const size_t q = recEnd(p);
+      if (!q) break;
+      p = q;
+    }
+    if (k == 8 && p == r.n) {
+      o = s;
+      break;
+    }
+  }
   while (o + 12 <= r.n && out.size() < 8) {
     uint32_t kind = rd32(o), fmt = rd32(o + 4), n = rd32(o + 8);
     if ((fmt == 2 || fmt == 3) && kind <= 16 && n >= 1 && n <= 64 && o + 12 + 24ull * n + 20 <= r.n) {
@@ -287,8 +314,11 @@ std::vector<MaxCurve> maximusCurves(const Reader& r, size_t from) {
 // at `offset` (0 for gl.master, EnProg0 for gl.enhance's embedded program).
 bool maximusToMaster(Reader& r, PluginMapping& m, int offset) {
   if (r.n < 4 + 7 * 4 + 4 * BCount * 4) return false;
-  r.u32();  // version / flags
-  std::vector<int32_t> g = ints(r, 7);
+  const int version = r.u16();
+  r.u16();
+  // Version 2 states have no low cut (six globals); from version 3 on, seven.
+  std::vector<int32_t> g = ints(r, version >= 3 ? 7 : 6);
+  if (g.size() < 7) g.resize(7, -1);
   std::vector<int32_t> b = ints(r, 4 * BCount);
   if (b.size() < 4 * BCount) return false;
   auto put = [&](int k, double v) { set(m, offset + k, v); };
@@ -303,12 +333,19 @@ bool maximusToMaster(Reader& r, PluginMapping& m, int offset) {
   double lc = g[6] < 0 ? 10.0 : 5.0 * std::pow(2.0, g[6] / 16384.0);
   put(dy::MsLowCut, lc <= 10.5 ? 10.0 : std::clamp(lc, 10.0, 300.0));
   put(dy::MsSolo, 0);
+  // The reference saturates at the base rate: no oversampling, so a stage's
+  // output never exceeds its ceiling (no reconstruction overshoot).
+  put(dy::MsOversample, 0);
   std::vector<MaxCurve> curves = maximusCurves(r, r.pos);
   for (int k = 0; k < 4; ++k) {
     auto P = [&](int f) { return offset + dy::msParam(k, f); };
     auto X = [&](int f) { return offset + dy::msExt(k, f); };
-    const double md = band(k, BMode);  // reference: 0 active, 1 off, 2 mute
-    set(m, P(dy::MbMode), md == 0 ? 1 : md == 2 ? 2 : 0);
+    // Reference band modes: 0 compress, 1 compression off (pre / post /
+    // separation / saturation still apply), 2 muted, 3 band off: a low / high
+    // band merges into the mid band (its split goes away), the master stage
+    // passes through.
+    const double md = band(k, BMode);
+    set(m, P(dy::MbMode), md == 0 ? 1 : md == 1 ? 3 : md == 2 ? 2 : (md == 3 && (k == 0 || k == 2)) ? 4 : 0);
     set(m, P(dy::MbPre), maxDb(band(k, BPre), -24, 24));
     set(m, P(dy::MbPost), maxDb(band(k, BPost), -24, 24));
     set(m, P(dy::MbStereo), std::clamp(band(k, BSep) / 1000.0, -1.0, 1.0));

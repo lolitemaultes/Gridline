@@ -3,6 +3,7 @@
 //   gridline info   <project.json>
 //   gridline upgrade <project.json> [-o <out.json>]   rewrite in the current schema
 //   gridline import-flp <project.flp> -o <out.json> [--fl-data DIR]   convert an FL Studio project
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -347,6 +348,19 @@ int main(int argc, char** argv) {
     gl::RenderOptions opt;
     opt.tail = song.ppq * 2;
     gl::AudioBuffer buf = gl::renderSong(song, opt);
+    if (buf.frames == 0)  // nothing arranged (e.g. FL's render tests): play the first pattern with notes
+      for (const auto& p : song.patterns) {
+        bool notes = false;
+        for (const auto& [ch, ns] : p.notes) notes = notes || !ns.empty();
+        for (const auto& [ch, st] : p.steps)
+          for (uint8_t v : st) notes = notes || v != 0;
+        if (!notes) continue;
+        opt.patternMode = true;
+        opt.pattern = p.id;
+        buf = gl::renderSong(song, opt);
+        std::printf("mode: pattern \"%s\"\n", p.name.c_str());
+        break;
+      }
     if (buf.frames == 0) { std::fprintf(stderr, "error: empty song\n"); return 1; }
     size_t nonFinite = 0, clipped = 0, silent = 0;
     double sum = 0.0, pk = 0.0;
@@ -367,6 +381,78 @@ int main(int argc, char** argv) {
     std::printf("stats: frames=%zu nonfinite=%zu peak=%.4f rms=%.5f clipped=%zu silentFrac=%.3f\n", buf.frames, nonFinite, pk,
                 std::sqrt(sum / static_cast<double>(buf.frames * ch)), clipped,
                 static_cast<double>(silent) / static_cast<double>(buf.frames));
+    // J-32 loudness sweep: integrated loudness (BS.1770 K-weighting, 400 ms
+    // blocks, absolute + relative gates), the peak's time and the longest
+    // silent gap between the first and the last sound (sudden dropouts).
+    {
+      const double fs = opt.sampleRate;
+      auto biquad = [](double b0, double b1, double b2, double a0, double a1, double a2) {
+        return std::array<double, 5>{b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0};
+      };
+      const double pi = 3.14159265358979323846;
+      double w = 2 * pi * 1681.974450955533 / fs, A = std::pow(10.0, 3.999843853973347 / 40.0), al = std::sin(w) / (2 * 0.7071752369554196);
+      const auto shelf = biquad(A * ((A + 1) + (A - 1) * std::cos(w) + 2 * std::sqrt(A) * al), -2 * A * ((A - 1) + (A + 1) * std::cos(w)),
+                                A * ((A + 1) + (A - 1) * std::cos(w) - 2 * std::sqrt(A) * al), (A + 1) - (A - 1) * std::cos(w) + 2 * std::sqrt(A) * al,
+                                2 * ((A - 1) - (A + 1) * std::cos(w)), (A + 1) - (A - 1) * std::cos(w) - 2 * std::sqrt(A) * al);
+      w = 2 * pi * 38.13547087602444 / fs, al = std::sin(w) / (2 * 0.5003270373238773);
+      const auto hp = biquad((1 + std::cos(w)) / 2, -(1 + std::cos(w)), (1 + std::cos(w)) / 2, 1 + al, -2 * std::cos(w), 1 - al);
+      std::vector<double> power(buf.frames, 0.0);
+      for (size_t c = 0; c < std::min<size_t>(ch, 2); ++c) {
+        double s1[4] = {}, s2[4] = {};
+        for (size_t f = 0; f < buf.frames; ++f) {
+          double x = buf.data[c * buf.frames + f];
+          if (!std::isfinite(x)) x = 0;
+          double y = shelf[0] * x + shelf[1] * s1[0] + shelf[2] * s1[1] - shelf[3] * s1[2] - shelf[4] * s1[3];
+          s1[1] = s1[0], s1[0] = x, s1[3] = s1[2], s1[2] = y;
+          double z = hp[0] * y + hp[1] * s2[0] + hp[2] * s2[1] - hp[3] * s2[2] - hp[4] * s2[3];
+          s2[1] = s2[0], s2[0] = y, s2[3] = s2[2], s2[2] = z;
+          power[f] += z * z;
+        }
+      }
+      const size_t blk = static_cast<size_t>(0.4 * fs), hop = blk / 4;
+      std::vector<double> blocks;
+      if (blk > 0)
+        for (size_t s = 0; s + blk <= buf.frames; s += hop) {
+          double e = 0;
+          for (size_t f = s; f < s + blk; ++f) e += power[f];
+          blocks.push_back(e / static_cast<double>(blk));
+        }
+      auto lufsOf = [](double ms) { return -0.691 + 10.0 * std::log10(std::max(ms, 1e-30)); };
+      auto gated = [&](double gate) {
+        double acc = 0;
+        size_t n = 0;
+        for (double b : blocks)
+          if (lufsOf(b) > gate) acc += b, ++n;
+        return n ? acc / static_cast<double>(n) : 0.0;
+      };
+      double lufs = -120;
+      if (const double a = gated(-70.0); a > 0) {
+        const double r = gated(lufsOf(a) - 10.0);
+        lufs = r > 0 ? lufsOf(r) : lufsOf(a);
+      }
+      size_t first = buf.frames, last = 0, run = 0, gap = 0, peakAt = 0;
+      double pmax = 0;
+      for (size_t f = 0; f < buf.frames; ++f) {
+        double fp = 0;
+        for (size_t c = 0; c < ch; ++c) {
+          const float v = buf.data[c * buf.frames + f];
+          if (std::isfinite(v)) fp = std::max(fp, static_cast<double>(std::fabs(v)));
+        }
+        if (fp > pmax) pmax = fp, peakAt = f;
+        if (fp >= 1e-4) {
+          if (first == buf.frames) first = f;
+          last = f;
+          if (first < f) gap = std::max(gap, run);
+          run = 0;
+        } else {
+          ++run;
+        }
+      }
+      std::printf("loudness: lufs=%.2f peakDb=%.2f peakAt=%.2f maxGap=%.2f firstSound=%.2f lastSound=%.2f seconds=%.2f\n", lufs,
+                  20.0 * std::log10(std::max(pk, 1e-12)), static_cast<double>(peakAt) / fs, static_cast<double>(gap) / fs,
+                  first == buf.frames ? -1.0 : static_cast<double>(first) / fs, static_cast<double>(last) / fs,
+                  static_cast<double>(buf.frames) / fs);
+    }
     return 0;
   }
 

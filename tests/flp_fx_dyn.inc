@@ -47,7 +47,7 @@ static void testFxDyn() {
     expect(near(param(m, pp::MbLowThresh), -18, 0.01) && near(param(m, pp::MbOutput), 0, 1e-6), "multiband: threshold / output");
     expect(near(param(m, pp::MbLowAtk), 0.02, 1e-6) && near(param(m, pp::MbLowRel), 0.2, 1e-6), "multiband: per-band attack / release");
   }
-  // Maximus: header, 7 globals, 4 band blocks (low on, mid mute, high off, master).
+  // Maximus: header, 7 globals, 4 band blocks (low compression off, mid mute, high on, master).
   {
     Blob b;
     b.i32(0x000F0003);
@@ -59,7 +59,8 @@ static void testFxDyn() {
     flp::PluginMapping m;
     namespace dy = gl::packs::dynamics;
     expect(decodeFx("Maximus", b.b, m) && m.glType == "gl.master", "maximus: decodes to Mastering Dynamics");
-    expect(param(m, dy::msParam(0, dy::MbMode)) == 0 && param(m, dy::msParam(1, dy::MbMode)) == 2 && param(m, dy::msParam(2, dy::MbMode)) == 1,
+    // J-32: reference mode 1 is "compression off" (gains / saturation stay) → gl mode 3.
+    expect(param(m, dy::msParam(0, dy::MbMode)) == 3 && param(m, dy::msParam(1, dy::MbMode)) == 2 && param(m, dy::msParam(2, dy::MbMode)) == 1,
            "maximus: band modes");
     expect(near(param(m, dy::msParam(0, dy::MbPost)), 20 * std::log10((std::pow(7.0, 2.0) - 1) / 6), 1e-3), "maximus: band post gain (7^x law)");
     expect(near(param(m, dy::MsLowFreq), 30 * std::pow(2.0, 19800 * 0.000138227748), 0.01) && param(m, dy::msExt(0, dy::MxCurveMode)) == 1,

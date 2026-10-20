@@ -706,7 +706,7 @@ int main(int argc, char** argv) {
       else if (w == "shortcuts") app.showShortcuts = true;
       else if (w == "export") app.showExport = true;
       else if (w == "info") app.showInfo = true;
-      else if (w == "history") app.showHistory = true;
+      else if (w == "history") app.showHistory = true, devFocus = "Undo history";  // docked behind the browser: bring its tab to the front
       else if (w == "performance") app.showPerformance = true;
       else if (w == "plugins") app.showPluginManager = true;
       else if (w == "piano") devFocus = "Piano roll";

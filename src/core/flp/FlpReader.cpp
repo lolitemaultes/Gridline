@@ -268,6 +268,10 @@ std::string Context::resolvePath(const std::string& flPath) const {
     if (ch == '\\') ch = '/';
   const std::string tag = "%FLStudioFactoryData%";
   if (p.rfind(tag, 0) == 0) p = factoryData + p.substr(tag.size());
+  // FL's shared data folder (demo samples under Patches/Misc/…) is the
+  // installation's Data folder.
+  const std::string dtag = "%FLStudioData%";
+  if (p.rfind(dtag, 0) == 0 && !factoryData.empty()) p = factoryData + "/Data" + p.substr(dtag.size());
   const std::string utag = "%FLStudioUserData%";
   if (p.rfind(utag, 0) == 0) {
     const char* home = std::getenv("HOME");
