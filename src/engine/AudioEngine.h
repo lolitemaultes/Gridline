@@ -46,6 +46,16 @@ class AudioEngine {
   // Offline render (export): hosted plugins are told (time info / process
   // mode). Set before processing starts.
   void setOffline(bool on) { offline_ = on; }
+  // Offline renders (J-30): the engine renders blocks of `frames` (<= kMaxBlock)
+  // on its own absolute sample grid, buffered, whatever chunk sizes the caller
+  // asks for — so the output is identical for any caller block size, hosted
+  // plugins included. 0 = off: host blocks are processed as given (realtime).
+  // Set before processing starts.
+  void setFixedBlock(int frames);
+  // Fixed-block mode: no internal block crosses absolute sample `sample`
+  // (frames since construction), so a command sent when the caller reaches it
+  // (e.g. stop at the end of an export's body) takes effect exactly there.
+  void addBlockBarrier(int64_t sample);
   // Offline render: sampler interpolation quality (RenderInterp, 0 = linear).
   // Builds the interpolation tables (call before processing starts).
   void setInterpolation(int quality);
@@ -190,6 +200,7 @@ class AudioEngine {
   void processInterleaved(float* out, int frames);
   // Writes n frames to separate buffers (overwrites).
   void process(float* L, float* R, int frames);
+  static constexpr int kOfflineBlock = 512;  // fixed block of offline renders
 
  private:
   struct Cmd {
@@ -202,6 +213,7 @@ class AudioEngine {
     const Sample* sample = nullptr;
   };
   void send(const Cmd& c);
+  void processDirect(float* L, float* R, int frames);  // host blocks as given
   void drain(const Program* p);
   void processBlock(const Program* p, float* L, float* R, int n);
   void dispatch(const Program* p, int from, int to);  // sequenced events for block samples [from, to)
@@ -306,6 +318,13 @@ class AudioEngine {
   // Transport (audio thread), published through atomics.
   bool tPlaying_ = false, tLoop_ = true;
   bool offline_ = false;         // offline render (see setOffline)
+  // Fixed-block mode (setFixedBlock): rendered frames not handed out yet.
+  int fixed_ = 0;
+  std::vector<float> fifoL_, fifoR_;
+  int fifoPos_ = 0, fifoLen_ = 0;
+  static constexpr int kMaxBarriers = 16;
+  int64_t barriers_[kMaxBarriers] = {};
+  int barrierCount_ = 0;
   int interp_ = 0;               // offline render interpolation (see setInterpolation)
   bool ctxWasPlaying_ = false;   // transport state of the previous block (ProcessContext::jumped)
   double ctxNextTick_ = 0;
@@ -317,7 +336,6 @@ class AudioEngine {
   uint64_t lastMapSig_ = 0;  // tempo map of the last block (re-anchor when it changes)
   double curTick_ = 0;       // position at the end of the last block
   double startTick_ = 0;    // where Play started (Stop returns here)
-  uint32_t noteSeq_ = 1;
   std::atomic<bool> playing_{false};
   std::atomic<PlayMode> mode_{PlayMode::Pattern};
   std::atomic<ObjectId> pattern_{kNoId};
@@ -334,7 +352,14 @@ class AudioEngine {
   Segment segs_[kMaxSegments];
   int segCount_ = 0;
   int64_t absClock_ = 0;      // samples rendered since construction (control-block grid)
-  uint32_t fxIdSeq_ = 1;      // ids of notes created by note processors
+  // Note starts of the current block, in time order (dispatch).
+  struct BlockStart {
+    int64_t at;  // clock sample
+    int ch;
+    const NoteEv* ev;
+  };
+  static constexpr int kMaxBlockStarts = 4096;
+  std::vector<BlockStart> starts_ = std::vector<BlockStart>(kMaxBlockStarts);
   NoteBuffer fxA_, fxB_;      // chain scratch
 
   // Live mode (audio thread): per playlist track, the clip playing and the

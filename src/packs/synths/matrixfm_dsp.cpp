@@ -9,6 +9,7 @@
 // bus. No allocation after construction.
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -343,17 +344,24 @@ struct Voice {
 class MatrixFmGen final : public Generator {
  public:
   MatrixFmGen() {
-    pluck_.assign(static_cast<size_t>(kMaxVoices) * kOps * kPluck, 0.f);
-    for (int i = 0; i < kMaxVoices; ++i) voices_[static_cast<size_t>(i)].pk = pluck_.data() + static_cast<size_t>(i) * kOps * kPluck;
-    for (int c = 0; c < 2; ++c) {
-      for (auto& d : dly_) d.buf[c].assign(kDelayLen, 0.f);
-      chorusBuf_[c].assign(kChorusLen, 0.f);
-      preBuf_[c].assign(kPreLen, 0.f);
-      for (int i = 0; i < 8; ++i) comb_[c][i].buf.assign(kCombMax, 0.f);
-      for (int i = 0; i < 4; ++i) ap_[c][i].buf.assign(kApMax, 0.f);
-    }
+    for (int c = 0; c < 2; ++c) chorusBuf_[c].assign(kChorusLen, 0.f);
     (void)sawTable();
     (void)squareTable();
+  }
+
+  // J-30: the delay lines, the reverb and the pluck lines (~11 MB) are
+  // allocated here (UI thread, every program build) only once the patch uses
+  // them; a section whose memory is not there yet is skipped.
+  void prepareHost(const PluginState& s, double) override {
+    prepared_.store(true, std::memory_order_release);
+    for (int i = 0; i < 3; ++i)
+      if (prmb(s, dly(i, 0))) dlyMem_[i].ensure(2 * static_cast<size_t>(kDelayLen));
+    if (prmb(s, RvOn)) rvMem_.ensure(kRvFloats);
+    for (int k = 0; k < kOps; ++k)
+      if (prmb(s, op(k, OpPluck))) {
+        pluckMem_.ensure(static_cast<size_t>(kMaxVoices) * kOps * kPluck);
+        break;
+      }
   }
 
   bool supportsGlide() const override { return true; }
@@ -367,6 +375,12 @@ class MatrixFmGen final : public Generator {
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     sr_ = ctx.sampleRate;
     tempo_ = ctx.tempo;
+    if (!prepared_.load(std::memory_order_acquire)) {  // used outside the engine (never prepared): everything now
+      for (auto& d : dlyMem_) d.ensure(2 * static_cast<size_t>(kDelayLen));
+      rvMem_.ensure(kRvFloats);
+      pluckMem_.ensure(static_cast<size_t>(kMaxVoices) * kOps * kPluck);
+    }
+    bindMemory();
     aux_ = dynamic_cast<const mfm::MfmAux*>(aux.custom.get());
     if (!aux_) {
       if (!fallback_) fallback_ = std::make_shared<mfm::MfmAux>();
@@ -567,7 +581,12 @@ class MatrixFmGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
-    for (int i = 0; i < n; i += kChunk) renderChunk(L + i, R + i, std::min(kChunk, n - i));
+    // Chunks sit on the absolute sample grid (J-30: block-size independent smoothing).
+    for (int i = 0; i < n;) {
+      const int k = std::min(n - i, kChunk - static_cast<int>(static_cast<int64_t>(clock_) % kChunk));
+      renderChunk(L + i, R + i, k);
+      i += k;
+    }
   }
 
  private:
@@ -656,7 +675,7 @@ class MatrixFmGen final : public Generator {
       v.ph[k] = ph0 - std::floor(ph0);
       v.prev[k] = 0, v.lp[k] = 0, v.dcX[k] = v.dcY[k] = 0, v.cyc[k] = 0, v.amp[k] = 0, v.ampTo[k] = 0;
       v.pkPos[k] = 0, v.pkPrev[k] = 0;
-      std::fill(v.pk + static_cast<size_t>(k) * kPluck, v.pk + static_cast<size_t>(k + 1) * kPluck, 0.f);
+      if (v.pk) std::fill(v.pk + static_cast<size_t>(k) * kPluck, v.pk + static_cast<size_t>(k + 1) * kPluck, 0.f);
     }
     for (auto& f : v.flt) f.reset();
     for (float& y : v.yF) y = 0;
@@ -815,7 +834,7 @@ class MatrixFmGen final : public Generator {
           w = w * (1.0 - std::min(1.0, rs)) + w * ring;
         }
         if (v.lpA[k] > 0) w = v.lp[k] = w + (v.lp[k] - w) * v.lpA[k];
-        if (op_[k].pluck) {
+        if (op_[k].pluck && v.pk) {
           float* buf = v.pk + static_cast<size_t>(k) * kPluck;
           int& pos = v.pkPos[k];
           const int len = v.pkLen[k];
@@ -884,8 +903,11 @@ class MatrixFmGen final : public Generator {
       dL[i] += sl * g, dR[i] += sr * g;
       fL[i] += xl * g, fR[i] += xr * g;
       v.age += 1.0 / sr_;
+      if (voiceDone(v)) {  // on the voice's own clock, not at a block end (J-30)
+        v.on = false;
+        break;
+      }
     }
-    if (voiceDone(v)) v.on = false;
   }
 
   // ------------------------------------------------------------ effects
@@ -897,14 +919,13 @@ class MatrixFmGen final : public Generator {
   static constexpr int kAp[4] = {556, 441, 341, 225};
 
   struct Dly {
-    std::vector<float> buf[2];
+    float* buf[2] = {nullptr, nullptr};  // kDelayLen each (null until allocated, see prepareHost)
     int w = 0;
     bool on = false;
     int mode = 0;
     double fb = 0.5, tL = 1000, tR = 1000, vol = 0.5, lpL = 0, lpR = 0;
     void clear() {
-      std::fill(buf[0].begin(), buf[0].end(), 0.f);
-      std::fill(buf[1].begin(), buf[1].end(), 0.f);
+      if (buf[0]) std::fill(buf[0], buf[0] + kDelayLen, 0.f), std::fill(buf[1], buf[1] + kDelayLen, 0.f);
       lpL = lpR = 0;
     }
     float read(int c, double t) const {
@@ -931,7 +952,7 @@ class MatrixFmGen final : public Generator {
     }
   };
   struct Comb {
-    std::vector<float> buf;
+    float* buf = nullptr;  // kCombMax
     int len = 2, pos = 0;
     double fb = 0.8, store = 0;
     double run(double in, double damp) {
@@ -945,7 +966,7 @@ class MatrixFmGen final : public Generator {
     }
   };
   struct Ap {
-    std::vector<float> buf;
+    float* buf = nullptr;  // kApMax
     int len = 2, pos = 0;
     double run(double in, double g) {
       if (pos >= len) pos = 0;
@@ -959,10 +980,46 @@ class MatrixFmGen final : public Generator {
 
   void clearReverb() {
     for (auto& ch : comb_)
-      for (auto& c : ch) std::fill(c.buf.begin(), c.buf.end(), 0.f), c.store = 0;
+      for (auto& c : ch) {
+        if (c.buf) std::fill(c.buf, c.buf + kCombMax, 0.f);
+        c.store = 0;
+      }
     for (auto& ch : ap_)
-      for (auto& a : ch) std::fill(a.buf.begin(), a.buf.end(), 0.f);
-    for (auto& b : preBuf_) std::fill(b.begin(), b.end(), 0.f);
+      for (auto& a : ch)
+        if (a.buf) std::fill(a.buf, a.buf + kApMax, 0.f);
+    for (auto& b : preBuf_)
+      if (b) std::fill(b, b + kPreLen, 0.f);
+  }
+  // Lazily allocated memory (J-30): allocated on the UI thread (prepareHost),
+  // published through an atomic pointer, never freed before the instance.
+  struct LazyMem {
+    std::unique_ptr<float[]> mem;
+    std::atomic<float*> ptr{nullptr};
+    void ensure(size_t n) {
+      if (mem) return;
+      mem.reset(new float[n]());
+      ptr.store(mem.get(), std::memory_order_release);
+    }
+    float* get() const { return ptr.load(std::memory_order_acquire); }
+  };
+  static constexpr size_t kRvFloats = 2 * (8 * static_cast<size_t>(kCombMax) + 4 * static_cast<size_t>(kApMax) + static_cast<size_t>(kPreLen));
+  // Audio thread: points the sections at the memory allocated so far.
+  void bindMemory() {
+    for (int i = 0; i < 3; ++i) {
+      float* m = dlyMem_[i].get();
+      dly_[i].buf[0] = m;
+      dly_[i].buf[1] = m ? m + kDelayLen : nullptr;
+    }
+    float* r = rvMem_.get();
+    for (int c = 0; c < 2; ++c) {
+      for (int k = 0; k < 8; ++k) comb_[c][k].buf = r ? r + (static_cast<size_t>(c) * 8 + static_cast<size_t>(k)) * kCombMax : nullptr;
+      float* aps = r ? r + 16 * static_cast<size_t>(kCombMax) : nullptr;
+      for (int k = 0; k < 4; ++k) ap_[c][k].buf = aps ? aps + (static_cast<size_t>(c) * 4 + static_cast<size_t>(k)) * kApMax : nullptr;
+      preBuf_[c] = r ? r + 16 * static_cast<size_t>(kCombMax) + 8 * static_cast<size_t>(kApMax) + static_cast<size_t>(c) * kPreLen : nullptr;
+    }
+    float* pk = pluckMem_.get();
+    for (int i = 0; i < kMaxVoices; ++i)
+      voices_[static_cast<size_t>(i)].pk = pk ? pk + static_cast<size_t>(i) * kOps * kPluck : nullptr;
   }
   void clearFx() {
     for (auto& d : dly_) d.clear();
@@ -995,13 +1052,13 @@ class MatrixFmGen final : public Generator {
       }
     }
     bool anyD = false;
-    for (const auto& d : dly_) anyD = anyD || d.on;
+    for (const auto& d : dly_) anyD = anyD || (d.on && d.buf[0]);
     if (anyD)
       for (int i = 0; i < n; ++i) {
         float l = L[i], r = R[i];
         if (dlSerial_) {
           for (auto& d : dly_)
-            if (d.on) {
+            if (d.on && d.buf[0]) {
               float a = l, b = r;
               d.run(a, b);
               l += a, r += b;
@@ -1010,7 +1067,7 @@ class MatrixFmGen final : public Generator {
         } else {
           float al = 0, ar = 0;
           for (auto& d : dly_)
-            if (d.on) {
+            if (d.on && d.buf[0]) {
               float a = l, b = r;
               d.run(a, b);
               al += a, ar += b;
@@ -1018,7 +1075,7 @@ class MatrixFmGen final : public Generator {
           L[i] = l + al, R[i] = r + ar;
         }
       }
-    if (rvOn_)
+    if (rvOn_ && preBuf_[0])
       for (int i = 0; i < n; ++i) {
         preBuf_[0][static_cast<size_t>(preW_)] = L[i];
         preBuf_[1][static_cast<size_t>(preW_)] = R[i];
@@ -1116,14 +1173,16 @@ class MatrixFmGen final : public Generator {
   uint64_t noteCount_ = 0, orderCount_ = 0;
   double clock_ = 0;
   std::array<Voice, kMaxVoices> voices_{};
-  std::vector<float> pluck_;
+  LazyMem pluckMem_, dlyMem_[3], rvMem_;  // see prepareHost / bindMemory
+  std::atomic<bool> prepared_{false};
   int64_t tailLeft_ = 0;
   // effects
   float fxPan_ = 0;
   int chN_ = 0, chW_ = 0;
   float chDepth_ = 0.5f, chSpeed_ = 0.75f, chDelay_ = 0.06f, chSpread_ = 1, chCross_ = -0.25f, chVol_ = 1;
   double chPh_ = 0;
-  std::vector<float> chorusBuf_[2], preBuf_[2];
+  std::vector<float> chorusBuf_[2];
+  float* preBuf_[2] = {nullptr, nullptr};  // kPreLen each, in rvMem_
   bool dlSerial_ = false;
   Dly dly_[3];
   bool rvOn_ = false;

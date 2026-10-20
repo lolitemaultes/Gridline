@@ -361,10 +361,13 @@ class StringGen final : public Generator {
       br[j] += o * v.panR;
       float a = std::fabs(o);
       v.quiet = a > v.quiet ? a : v.quiet * 0.9995f;
+      // Voice ends when released/inaudible, on its own clock (J-30: not at a block end).
+      if (v.silent > v.s[0].len * 2 + sr_ * 0.03 &&
+          (!v.amp.active() || (!v.held && v.quiet < 1e-5f) || (v.held && exciter_ < ExBow && v.quiet < 2e-6f))) {
+        v.on = false;
+        break;
+      }
     }
-    // Voice ends when released/inaudible.
-    bool settled = v.silent > v.s[0].len * 2 + sr_ * 0.03;
-    if (v.delay <= 0 && settled && (!v.amp.active() || (!v.held && v.quiet < 1e-5f) || (v.held && exciter_ < ExBow && v.quiet < 2e-6f))) v.on = false;
   }
 
   void render(float* L, float* R, int n) override {

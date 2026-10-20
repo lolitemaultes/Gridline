@@ -34,10 +34,20 @@ SamplePtr fromInterleaved(const std::string& path, float* data, uint64_t frames,
   s->path = path;
   s->sampleRate = rate;
   s->left.resize(frames);
-  s->right.resize(frames);
-  for (uint64_t i = 0; i < frames; ++i) {
-    s->left[i] = data[i * channels];
-    s->right[i] = channels > 1 ? data[i * channels + 1] : data[i * channels];
+  for (uint64_t i = 0; i < frames; ++i) s->left[i] = data[i * channels];
+  // J-30: mono files — and stereo files whose two channels are identical —
+  // keep one copy (the right channel shares the left one).
+  bool dual = channels <= 1;
+  if (!dual) {
+    dual = true;
+    for (uint64_t i = 0; i < frames && dual; ++i) dual = data[i * channels + 1] == data[i * channels];
+  }
+  if (dual) {
+    s->setMono();
+  } else {
+    std::vector<float>& r = s->right.mut();
+    r.resize(frames);
+    for (uint64_t i = 0; i < frames; ++i) r[i] = data[i * channels + 1];
   }
   return s;
 }
@@ -173,6 +183,64 @@ static SamplePtr renderBuiltin(const std::string& name) {
   return s;
 }
 
+namespace {
+thread_local bool tNonBlocking = false;  // see SampleCache::NonBlocking
+}
+
+SampleCache::NonBlocking::NonBlocking() : prev_(tNonBlocking) { tNonBlocking = true; }
+SampleCache::NonBlocking::~NonBlocking() { tNonBlocking = prev_; }
+
+SampleCache::~SampleCache() {
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    stop_ = true;
+    queue_.clear();
+  }
+  work_.notify_all();
+  for (auto& t : workers_) t.join();
+}
+
+// Decodes `path` on this thread (mu_ held on entry and exit; released while decoding).
+SamplePtr SampleCache::decodeLocked(std::unique_lock<std::mutex>& lk, const std::string& path) {
+  inflight_.insert(path);
+  lk.unlock();
+  SamplePtr s = loadSample(path);
+  lk.lock();
+  inflight_.erase(path);
+  if (s)
+    cache_[path] = s;
+  else
+    failed_[path] = true;
+  done_.notify_all();
+  return s;
+}
+
+void SampleCache::enqueueLocked(const std::string& path) {
+  if (inflight_.count(path) || std::find(queue_.begin(), queue_.end(), path) != queue_.end()) return;
+  queue_.push_back(path);
+  if (workers_.empty()) {  // background decoders start with the first request
+    const int n = static_cast<int>(std::clamp(std::thread::hardware_concurrency() / 4, 1u, 4u));
+    for (int i = 0; i < n; ++i) workers_.emplace_back([this] { worker(); });
+  }
+  work_.notify_one();
+}
+
+void SampleCache::worker() {
+  std::unique_lock<std::mutex> lk(mu_);
+  for (;;) {
+    work_.wait(lk, [&] { return stop_ || (!paused_ && !queue_.empty()); });
+    if (stop_) return;
+    const std::string path = queue_.front();
+    queue_.pop_front();
+    if (cache_.count(path) || failed_.count(path) || inflight_.count(path)) {
+      done_.notify_all();  // (waitIdle re-checks the queue)
+      continue;
+    }
+    decodeLocked(lk, path);
+    gen_.fetch_add(1, std::memory_order_acq_rel);
+  }
+}
+
 SamplePtr SampleCache::get(const std::string& path) {
   if (path.empty()) return nullptr;
   if (path.rfind("builtin:", 0) == 0) {
@@ -183,18 +251,67 @@ SamplePtr SampleCache::get(const std::string& path) {
     if (s) cache_[path] = s;
     return s;
   }
+  if (tNonBlocking) return request(path);
+  std::unique_lock<std::mutex> lk(mu_);
+  // A background decode of this file is running: wait for it instead of decoding twice.
+  done_.wait(lk, [&] { return !inflight_.count(path); });
+  if (auto it = cache_.find(path); it != cache_.end()) return it->second;
+  if (failed_.count(path)) return nullptr;
+  if (auto q = std::find(queue_.begin(), queue_.end(), path); q != queue_.end()) queue_.erase(q);  // decode it here, now
+  return decodeLocked(lk, path);
+}
+
+SamplePtr SampleCache::request(const std::string& path) {
+  if (path.empty()) return nullptr;
+  if (path.rfind("builtin:", 0) == 0) {
+    struct Off {  // built-in drums render in microseconds: synchronous
+      bool prev = tNonBlocking;
+      Off() { tNonBlocking = false; }
+      ~Off() { tNonBlocking = prev; }
+    } off;
+    return get(path);
+  }
+  std::lock_guard<std::mutex> lk(mu_);
+  if (auto it = cache_.find(path); it != cache_.end()) return it->second;
+  if (failed_.count(path)) return nullptr;
+  enqueueLocked(path);
+  return nullptr;
+}
+
+int SampleCache::pending() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return static_cast<int>(queue_.size() + inflight_.size());
+}
+
+bool SampleCache::isPending(const std::string& path) const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return inflight_.count(path) || std::find(queue_.begin(), queue_.end(), path) != queue_.end();
+}
+
+void SampleCache::pauseBackground(bool paused) {
   {
     std::lock_guard<std::mutex> lk(mu_);
-    if (auto it = cache_.find(path); it != cache_.end()) return it->second;
-    if (failed_.count(path)) return nullptr;
+    paused_ = paused;
   }
-  SamplePtr s = loadSample(path);
+  work_.notify_all();
+}
+
+void SampleCache::waitIdle() {
+  std::unique_lock<std::mutex> lk(mu_);
+  done_.wait(lk, [&] { return queue_.empty() && inflight_.empty(); });
+}
+
+size_t SampleCache::trim() {
   std::lock_guard<std::mutex> lk(mu_);
-  if (s)
-    cache_[path] = s;
-  else
-    failed_[path] = true;
-  return s;
+  size_t n = 0;
+  for (auto it = cache_.begin(); it != cache_.end();)
+    if (it->second.use_count() == 1) {
+      it = cache_.erase(it);
+      ++n;
+    } else {
+      ++it;
+    }
+  return n;
 }
 
 void SampleCache::prefetch(const std::vector<std::string>& paths, int threads) {

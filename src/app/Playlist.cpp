@@ -179,7 +179,7 @@ struct AudioMap {
 
 void drawWaveform(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
                   float pxPerTick, float visX0, float visX1, ImU32 col) {
-  SamplePtr smp = sampleCache().get(ch.plugin.data);
+  SamplePtr smp = sampleCache().request(ch.plugin.data);  // J-30: never waits for a decode (drawn once ready)
   if (!smp || smp->frames() < 2) return;
   const Peaks& pk = peaksFor(smp);
   const bool rev = c.reverse != (ch.plugin.type == "gl.sampler" && ch.plugin.params.size() > pp::SmpReverse &&

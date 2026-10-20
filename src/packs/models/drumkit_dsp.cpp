@@ -194,8 +194,12 @@ class DrumGen final : public Generator {
       float a = std::fabs(o);
       v.peak = a > v.peak ? a : v.peak * 0.9993f;
       ++v.n;
+      // Ends on the voice's own clock, not at a block end (J-30).
+      if (v.fade <= 0 || (v.n > v.pulseLen + static_cast<int64_t>(sr_ * 0.02) && v.peak < 2e-5f)) {
+        v.on = false;
+        break;
+      }
     }
-    if (v.fade <= 0 || (v.n > v.pulseLen + static_cast<int64_t>(sr_ * 0.02) && v.peak < 2e-5f)) v.on = false;
   }
 
   void render(float* L, float* R, int n) override {

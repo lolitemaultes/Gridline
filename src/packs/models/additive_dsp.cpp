@@ -484,7 +484,9 @@ class AdditiveGen final : public Generator {
       if (voices_[i].on) voiceControl(voices_[i], false);
   }
 
-  void renderVoices(float* bl, float* br, int n) {
+  // `end`: this chunk closes the control period (J-30: flushes and voice ends happen
+  // there, not at the end of each host block).
+  void renderVoices(float* bl, float* br, int n, bool end) {
     const SineTable& st = sineTable();
     float mono[kMaxUni][kCtl];
     for (int i = 0; i < kVoices; ++i) {
@@ -507,7 +509,7 @@ class AdditiveGen final : public Generator {
             a += o.damp;
           }
           o.ph = ph;
-          o.amp = std::fabs(a) < 1e-9f ? 0.0f : a;
+          o.amp = end && std::fabs(a) < 1e-9f ? 0.0f : a;
         }
         if (c == 0) {
           for (Osc* s : {&v.sub[0], &v.sub[1], &v.sub[2], &v.self}) {
@@ -517,7 +519,7 @@ class AdditiveGen final : public Generator {
               s->ph += s->inc;
               s->amp += s->damp;
             }
-            if (std::fabs(s->amp) < 1e-9f) s->amp = 0;
+            if (end && std::fabs(s->amp) < 1e-9f) s->amp = 0;
           }
         }
       }
@@ -534,7 +536,7 @@ class AdditiveGen final : public Generator {
         bl[j] += l * e * vol_ * (tremolo_ > 0 ? tl : 1.0f);
         br[j] += r * e * vol_ * (tremolo_ > 0 ? trr : 1.0f);
       }
-      if (!v.amp.active()) v.on = false;
+      if (end && !v.amp.active()) v.on = false;
     }
   }
 
@@ -577,7 +579,7 @@ class AdditiveGen final : public Generator {
       }
       int len = std::min(ctr_, n - pos);
       float bl[kCtl] = {}, br[kCtl] = {};
-      renderVoices(bl, br, len);
+      renderVoices(bl, br, len, len == ctr_);
       fx_.process(bl, br, len);
       compress(bl, br, len);
       for (int j = 0; j < len; ++j) {

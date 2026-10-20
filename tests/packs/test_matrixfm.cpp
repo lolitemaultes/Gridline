@@ -47,6 +47,7 @@ Out render(const PluginState& st, const std::vector<Ev>& evs, int total, int blo
   }
   ChannelAux aux;
   packs::prepareAux(st, aux);
+  g->prepareHost(st, sr);  // J-30: allocates the delay / reverb / pluck memory the patch uses
   ProcessContext ctx;
   ctx.sampleRate = sr;
   ctx.tempo = 120;
@@ -517,6 +518,7 @@ int main() {
       auto g = packs::createGenerator(s.type);
       ChannelAux aux;
       packs::prepareAux(s, aux);
+      g->prepareHost(s, 44100);
       ProcessContext ctx;
       ctx.sampleRate = 44100, ctx.tempo = tempo;
       std::vector<float> L(441), R(441);

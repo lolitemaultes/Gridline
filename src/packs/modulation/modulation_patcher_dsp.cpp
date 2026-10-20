@@ -443,9 +443,12 @@ void preparePatchHost(const PluginState& state, ChannelAux& aux) {
     if (gen) {
       prepareChannelAux(ps, na);
       pa->gens[i] = gl::createGenerator(ps.type);
+      // J-30: instruments allocate the memory their settings need here (UI thread).
+      if (pa->gens[i]) pa->gens[i]->prepareHost(ps, 44100.0);
     } else {
       packs::prepareAux(ps, na);
       pa->fxs[i] = gl::createEffect(ps.type);
+      if (pa->fxs[i]) pa->fxs[i]->prepareHost(ps, 44100.0);
     }
     pa->nodeAux.push_back(std::move(na));
     pa->live.push_back(ps);

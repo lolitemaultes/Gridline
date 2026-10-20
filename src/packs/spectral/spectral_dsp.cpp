@@ -89,6 +89,7 @@ class VocRef {
       for (auto& h : b.hold) h = 0;
       b.cenv = 0;
     }
+    clearBanks();
     modHp_.clear();
     carLp_.clear();
     noiseHp_.clear();
@@ -184,15 +185,24 @@ class VocRef {
       double nzs = noise_.next();
       if (noiseHpOn) nzs = noiseHp_.process(nzs);
       double carIn = car + nzs * noiseG * (cNoise ? cont_ : 1.0);
+      // Resonator banks, band-parallel (J-30): structure-of-arrays stages the
+      // compiler vectorizes across bands; per band the arithmetic is exactly
+      // Bq::process's, so the output is unchanged.
+      alignas(16) double cb[kVxMaxBands];
+      alignas(16) double mb[kVxMaxUnison][kVxMaxBands];
+      for (int b = 0; b < nb; ++b) cb[b] = carIn;
+      for (int s = 0; s < ord; ++s) runBank(syn_[s], cb, nb);
+      for (int v = 0; v < uni; ++v) {
+        for (int b = 0; b < nb; ++b) mb[v][b] = mod;
+        for (int s = 0; s < ord; ++s) runBank(ana_[v][s], mb[v], nb);
+      }
       double wl = 0, wr = 0, pl = 0, pr = 0;
       for (int b = 0; b < nb; ++b) {
         Band& B = b_[b];
-        double c = carIn;
-        for (int s = 0; s < ord; ++s) c = B.syn[s].process(c);
+        const double c = cb[b];
         double e = 0, m0 = 0;
         for (int v = 0; v < uni; ++v) {
-          double m = mod;
-          for (int s = 0; s < ord; ++s) m = B.ana[v][s].process(m);
+          const double m = mb[v][b];
           if (v == 0) m0 = m;
           double& env = B.env[v];
           if (!freeze) {
@@ -396,6 +406,7 @@ class VocRef {
           for (auto& f : u) f.clear();
         for (auto& f : b.syn) f.clear();
       }
+      clearBanks();
     }
     nb_ = std::clamp(static_cast<int>(std::lround(p[VxBands])), 5, kVxMaxBands);
     ord_ = std::clamp(p.choice(VxOrder) + 1, 1, kVxMaxOrder);
@@ -484,7 +495,41 @@ class VocRef {
     sib_.highpass(sr, 4500.0, 0.7071);
     enhHp_[0].highpass(sr, 3000.0, 0.7071);
     enhHp_[1].highpass(sr, 3000.0, 0.7071);
+    syncBanks();
   }
+
+  // One stage of every band's resonator (structure of arrays; see process()).
+  struct BankSoA {
+    alignas(16) double b0[kVxMaxBands] = {}, b1[kVxMaxBands] = {}, b2[kVxMaxBands] = {}, a1[kVxMaxBands] = {}, a2[kVxMaxBands] = {};
+    alignas(16) double z1[kVxMaxBands] = {}, z2[kVxMaxBands] = {};
+  };
+  static void runBank(BankSoA& k, double* x, int n) {
+    for (int b = 0; b < n; ++b) {  // Bq::process, band by band
+      const double in = x[b];
+      const double y = k.b0[b] * in + k.z1[b];
+      k.z1[b] = k.b1[b] * in - k.a1[b] * y + k.z2[b];
+      k.z2[b] = k.b2[b] * in - k.a2[b] * y;
+      x[b] = y;
+    }
+  }
+  static void loadStage(BankSoA& k, int b, const blk::Bq& q) {
+    k.b0[b] = q.b0, k.b1[b] = q.b1, k.b2[b] = q.b2, k.a1[b] = q.a1, k.a2[b] = q.a2;
+  }
+  void syncBanks() {  // coefficients of the designed bands → the band-parallel banks
+    for (int b = 0; b < kVxMaxBands; ++b) {
+      for (int s = 0; s < kVxMaxOrder; ++s) {
+        loadStage(syn_[s], b, b_[static_cast<size_t>(b)].syn[s]);
+        for (int v = 0; v < kVxMaxUnison; ++v) loadStage(ana_[v][s], b, b_[static_cast<size_t>(b)].ana[v][s]);
+      }
+    }
+  }
+  void clearBanks() {
+    for (auto& k : syn_) std::fill(std::begin(k.z1), std::end(k.z1), 0.0), std::fill(std::begin(k.z2), std::end(k.z2), 0.0);
+    for (auto& u : ana_)
+      for (auto& k : u) std::fill(std::begin(k.z1), std::end(k.z1), 0.0), std::fill(std::begin(k.z2), std::end(k.z2), 0.0);
+  }
+  BankSoA syn_[kVxMaxOrder];
+  BankSoA ana_[kVxMaxUnison][kVxMaxOrder];
 
   std::array<Band, kVxMaxBands> b_{};
   int nb_ = 47, ord_ = 2, uni_ = 1;
@@ -1693,7 +1738,9 @@ class ScratchFx final : public SpectralFx {
     static const double rateBeats[4] = {2.0, 1.0, 0.5, 0.25};
     const double cycle = rateBeats[std::clamp(p.choice(ScRate), 0, 3)];
     const double beatsPerSample = ctx.tempo / 60.0 / sr;
-    double beat = ctx.playing ? ctx.tick / std::max(1, ctx.ppq) : freePhase_;
+    // + 1e-9 beat (J-30): block start + offset rounds differently per block size; pattern
+    // gates switching exactly on the grid must not flip with it.
+    double beat = ctx.playing ? ctx.tick / std::max(1, ctx.ppq) + 1e-9 : freePhase_;
     const double fader = std::clamp(static_cast<double>(p[ScFader]), 0.0, 1.0);
     const int curve = p.choice(ScCurve);
     const double vol = dsp::dbToGain(p[ScVolume]);

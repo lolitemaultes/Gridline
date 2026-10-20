@@ -147,7 +147,10 @@ class TimeGateK3 final : public Effect {
     for (int i = 0; i < n; ++i) {
       double beat;
       if (ctx.playing) {
-        beat = ctx.tick / std::max(1, ctx.ppq) + i / spb;
+        // + 1e-9 beat (J-30): the position is block start + offset, which rounds a few ulps
+        // differently for every block size; on-grid samples (exact .5 rounding ties of
+        // the read head, slice and sync boundaries) must not flip with it.
+        beat = ctx.tick / std::max(1, ctx.ppq) + i / spb + 1e-9;
       } else {
         free_ += 1.0 / spb;
         beat = free_;

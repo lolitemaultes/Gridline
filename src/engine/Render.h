@@ -21,7 +21,9 @@ struct RenderOptions {
   int sampleRate = 44100;
   int channels = 2;
   Tick tail = 0;         // extra ticks after the song end for release tails
-  int blockSize = 512;   // engine block size (output is identical for any size)
+  // Chunk size the renderer asks the engine for. The engine renders its own fixed
+  // blocks offline (AudioEngine::setFixedBlock), so the output is identical for any size.
+  int blockSize = 512;
   bool patternMode = false;
   ObjectId pattern = kNoId;  // pattern to render in pattern mode (one loop)
   int threads = 1;           // mixer graph threads (output is identical for any count)

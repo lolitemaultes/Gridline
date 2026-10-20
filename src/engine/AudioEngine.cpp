@@ -641,8 +641,10 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
         if (rt->pending[i].at < rt->pending[old].at) old = i;
       cutPending(ch, old, offset);
     }
-  uint32_t id = (noteSeq_++ & 0x7FFFFFFFu);
-  if (id == 0) id = noteSeq_++;
+  // Ids come from the channel's own counter (J-30): instruments seed their
+  // randomness with them, and a global counter numbered notes in a different
+  // order for every block size. Range 1 .. 0x10000000 (below note processor ids).
+  const uint32_t id = 1u + (((rt->noteSeq++ & 0x1FFFFu) << 11) | (static_cast<uint32_t>(&ch - p->channels.data()) & 0x7FFu));
   const NoteProps* props = e.props.neutral() ? nullptr : &e.props;
   if (porta && std::fabs(rt->lastPitch - e.pitch) > 1e-4f) {
     sendOn(ch, id, rt->lastPitch, e.velocity, offset, 0, props);
@@ -836,6 +838,11 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
   const ProgPattern* pat = tMode_ == PlayMode::Pattern ? p->pattern(tPattern_) : nullptr;
   if (tMode_ == PlayMode::Live) dispatchLive(p, from, to);  // launched clips (note-offs below)
 
+  // J-30: notes start in time order across all channels (then channel order),
+  // and note-offs due before a start are sent before it. Handling channel by
+  // channel made the result depend on where block boundaries fall (cut
+  // groups, mono / polyphony limits saw notes that had already ended).
+  int nStarts = 0;
   for (size_t ci = 0; ci < p->channels.size(); ++ci) {
     const ProgChannel& ch = p->channels[ci];
     ChannelRuntime* rt = ch.rt.get();
@@ -847,28 +854,45 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
       evs = &ch.song;
     else if (pat && ci < pat->perChannel.size())
       evs = &pat->perChannel[ci];
-    if (evs && !evs->empty()) {
-      auto it = std::lower_bound(evs->begin(), evs->end(), static_cast<Tick>(std::floor(tLo)),
-                                 [](const NoteEv& e, Tick t) { return e.on < t; });
-      for (; it != evs->end() && static_cast<double>(it->on) <= tHi; ++it) {
-        int64_t s = sampleOf(static_cast<double>(it->on));
-        if (s < c0 || s >= c1) continue;
-        if (rt->pendingCount >= kMaxPendingNotes) break;
-        startNote(p, ch, *it, from + static_cast<int>(s - c0), absClock_ + from + (s - c0), sr_ * 60.0 / (clockMap(p).bpmAt(static_cast<double>(it->on)) * p->ppq));  // local tempo (tempo map)
-      }
-    }
-    // Note-offs due in this segment (including notes started just now).
-    for (int i = 0; i < rt->pendingCount;) {
-      int64_t s = sampleOf(static_cast<double>(rt->pending[i].off));
-      if (s < c1) {
-        int off = s < c0 ? from : from + static_cast<int>(s - c0);
-        sendOff(ch, rt->pending[i].id, off);
-        rt->pending[i] = rt->pending[--rt->pendingCount];
-      } else {
-        ++i;
-      }
+    if (!evs || evs->empty()) continue;
+    auto it = std::lower_bound(evs->begin(), evs->end(), static_cast<Tick>(std::floor(tLo)),
+                               [](const NoteEv& e, Tick t) { return e.on < t; });
+    for (; it != evs->end() && static_cast<double>(it->on) <= tHi; ++it) {
+      int64_t s = sampleOf(static_cast<double>(it->on));
+      if (s < c0 || s >= c1) continue;
+      if (nStarts >= kMaxBlockStarts) break;
+      starts_[static_cast<size_t>(nStarts++)] = {s, static_cast<int>(ci), &*it};
     }
   }
+  std::sort(starts_.begin(), starts_.begin() + nStarts, [](const BlockStart& a, const BlockStart& b) {
+    return a.at != b.at ? a.at < b.at : (a.ch != b.ch ? a.ch < b.ch : a.ev < b.ev);
+  });
+  // Note-offs due before clock sample `lim` (notes started just now included).
+  auto offsBefore = [&](int64_t lim) {
+    for (const ProgChannel& ch : p->channels) {
+      ChannelRuntime* rt = ch.rt.get();
+      if (!rt || !rt->gen) continue;
+      for (int i = 0; i < rt->pendingCount;) {
+        int64_t s = sampleOf(static_cast<double>(rt->pending[i].off));
+        if (s < lim) {
+          int off = s < c0 ? from : from + static_cast<int>(s - c0);
+          sendOff(ch, rt->pending[i].id, off);
+          rt->pending[i] = rt->pending[--rt->pendingCount];
+        } else {
+          ++i;
+        }
+      }
+    }
+  };
+  for (int k = 0; k < nStarts; ++k) {
+    const BlockStart& b = starts_[static_cast<size_t>(k)];
+    if (k == 0 || starts_[static_cast<size_t>(k - 1)].at != b.at) offsBefore(b.at);
+    const ProgChannel& ch = p->channels[static_cast<size_t>(b.ch)];
+    if (ch.rt->pendingCount >= kMaxPendingNotes) continue;
+    startNote(p, ch, *b.ev, from + static_cast<int>(b.at - c0), absClock_ + from + (b.at - c0),
+              sr_ * 60.0 / (clockMap(p).bpmAt(static_cast<double>(b.ev->on)) * p->ppq));  // local tempo (tempo map)
+  }
+  offsBefore(c1);
 }
 
 void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
@@ -1452,7 +1476,9 @@ void AudioEngine::runNoteFx(const Program* p, int n) {
         ctx.spt = sr_ * 60.0 / (ctx.tempo * p->ppq);
       }
       ctx.playing = tPlaying_;
-      ctx.idCounter = &fxIdSeq_;
+      // Per-channel id range (J-30): 1M ids per channel before ranges meet.
+      if (rt->fxIdSeq == 0) rt->fxIdSeq = ((static_cast<uint32_t>(ci) & 0xFFu) << 20) | 1u;
+      ctx.idCounter = &rt->fxIdSeq;
       for (const auto& nf : ch.noteFx) {
         if (!nf.rt) continue;
         out->clear();
@@ -1490,7 +1516,46 @@ void AudioEngine::runNoteFx(const Program* p, int n) {
   }
 }
 
+void AudioEngine::setFixedBlock(int frames) {
+  fixed_ = std::clamp(frames, 0, kMaxBlock);
+  fifoL_.assign(static_cast<size_t>(std::max(1, fixed_)), 0.f);
+  fifoR_.assign(static_cast<size_t>(std::max(1, fixed_)), 0.f);
+  fifoPos_ = fifoLen_ = 0;
+}
+
+void AudioEngine::addBlockBarrier(int64_t sample) {
+  if (barrierCount_ < kMaxBarriers) barriers_[barrierCount_++] = sample;
+}
+
 void AudioEngine::process(float* L, float* R, int frames) {
+  if (fixed_ <= 0) {
+    processDirect(L, R, frames);
+    return;
+  }
+  // J-30: render whole blocks on the engine's own grid and hand them out in the
+  // caller's chunk sizes. Every internal block boundary is then a function of
+  // the absolute sample position alone (plus the barriers), so per-block state
+  // in instruments, effects and hosted plugins sees the same blocks for any
+  // caller block size.
+  int done = 0;
+  while (done < frames) {
+    if (fifoPos_ == fifoLen_) {
+      int len = fixed_ - static_cast<int>(absClock_ % fixed_);
+      for (int b = 0; b < barrierCount_; ++b)
+        if (barriers_[b] > absClock_ && barriers_[b] < absClock_ + len) len = static_cast<int>(barriers_[b] - absClock_);
+      processDirect(fifoL_.data(), fifoR_.data(), len);
+      fifoPos_ = 0;
+      fifoLen_ = len;
+    }
+    const int k = std::min(fifoLen_ - fifoPos_, frames - done);
+    std::memcpy(L + done, fifoL_.data() + fifoPos_, sizeof(float) * static_cast<size_t>(k));
+    std::memcpy(R + done, fifoR_.data() + fifoPos_, sizeof(float) * static_cast<size_t>(k));
+    fifoPos_ += k;
+    done += k;
+  }
+}
+
+void AudioEngine::processDirect(float* L, float* R, int frames) {
   const ScopedFlushDenormals ftz;  // J-25: denormal tails cost ~100x on x86
   auto t0 = std::chrono::steady_clock::now();
   blockSampleUi_.store(absClock_, std::memory_order_relaxed);

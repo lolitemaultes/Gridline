@@ -235,7 +235,7 @@ class SpectraMorphGen final : public Generator {
     // Morph position.
     float x = mx_, y = my_;
     if (mode_ > 0 && rate_ > 0) {
-      const double ph = dsp::kTwoPi * rate_ * t_;
+      const double ph = dsp::kTwoPi * rate_ * (static_cast<double>(tN_) / sr_);  // J-30: the current sample, not the block start
       if (mode_ == 1) x = 0.5f + 0.5f * static_cast<float>(std::cos(ph)), y = 0.5f + 0.5f * static_cast<float>(std::sin(ph));
       else if (mode_ == 2) x = 0.5f - 0.5f * static_cast<float>(std::cos(ph));
       else if (mode_ == 3) y = 0.5f - 0.5f * static_cast<float>(std::cos(ph));
@@ -327,8 +327,9 @@ class SpectraMorphGen final : public Generator {
       if (drive_ > 0) out = std::tanh(out * (1 + 6 * drive_)) / (1 + 2 * drive_);
       L[i] += out;
       R[i] += out;
+      ++tN_;
     }
-    t_ += n / sr_;
+
     fx_.process(L, R, n);
   }
 
@@ -338,7 +339,8 @@ class SpectraMorphGen final : public Generator {
   uint32_t vinc_[kVoices][kParts] = {};
   const SmAux* prep_ = nullptr;
   ModelFx fx_;
-  double sr_ = 44100, t_ = 0, inc0_ = 0, lastNote_ = -1;
+  double sr_ = 44100, inc0_ = 0, lastNote_ = -1;
+  int64_t tN_ = 0;  // samples rendered (morph LFO clock)
   float vol_ = 0.8f, trans_ = 0, glide_ = 0, velSens_ = 0.7f, mx_ = 0, my_ = 0, rate_ = 0, speed_ = 1;
   float att_ = 0.002f, dec_ = 0.5f, sus_ = 1, rel_ = 0.3f, noise_ = 0, noiseColor_ = 0.5f, drive_ = 0;
   int mode_ = 0, loop_ = 1, voices_ = 12;

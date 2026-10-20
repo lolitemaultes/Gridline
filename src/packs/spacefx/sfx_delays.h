@@ -1,5 +1,6 @@
 // Gridline — "spacefx" pack: Multi Delay and Band Delay (included by spacefx_dsp.cpp only).
 #pragma once
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include "sfx_common.h"
@@ -17,20 +18,15 @@ namespace gl::packs::spacefx::detail {
 class MultiDelayFx final : public Effect {
  public:
   MultiDelayFx() {
-    for (auto& t : taps_) {
-      t.line[0].init(kMdMaxDelay);
-      t.line[1].init(kMdMaxDelay);
-      for (auto& a : t.ap) a.init(4096);
-    }
-    for (auto& r : ref_) {
-      r.off[0].init(1 << 17);
-      r.off[1].init(1 << 17);
-    }
+    for (auto& t : taps_)
+      for (auto& a : t.ap) a.init(4096);  // the delay lines: see prepareHost
     coefs_.init();
     for (auto& h : up_) h.c = &coefs_;
     for (auto& h : dn_) h.c = &coefs_;
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (!prepared_.load(std::memory_order_acquire))  // used outside the engine: every unit now
+      for (int k = 0; k < kTaps; ++k) ensureTap(k);
     const bool refModel = pi(s, MdModel, 0) == 1;
     if (refModel != lastRef_) {
       reset();
@@ -84,7 +80,7 @@ class MultiDelayFx final : public Effect {
       double wl = 0, wr = 0, nextL = 0, nextR = 0;
       for (int k = 0; k < kTaps; ++k) {
         Tap& t = taps_[k];
-        if (!t.on && !t.active) {
+        if ((!t.on && !t.active) || !ready_[k].load(std::memory_order_acquire)) {
           nextL = nextR = 0;
           continue;
         }
@@ -158,13 +154,38 @@ class MultiDelayFx final : public Effect {
     }
   }
   void reset() override {
-    for (auto& t : taps_) t.clear();
-    for (auto& r : ref_) r.clear();
+    for (int k = 0; k < kTaps; ++k)
+      if (ready_[k].load(std::memory_order_acquire)) {  // (a unit's lines may be being allocated otherwise)
+        taps_[k].clear();
+        ref_[k].clear();
+      }
     for (auto& h : up_) h.clear();
     for (auto& h : dn_) h.clear();
+    refLeft_ = refJ_ = 0;
+  }
+
+  // J-30: a unit's delay lines (3 MB) are allocated when the unit is first
+  // switched on (UI thread, every program build) and published to the audio
+  // thread; units without lines are silent. An instance that is never
+  // prepared (used outside the engine) allocates every unit on first use.
+  void prepareHost(const PluginState& s, double) override {
+    prepared_.store(true, std::memory_order_release);
+    for (int k = 0; k < kTaps; ++k)
+      if (pv(s, mdParam(k, MdOn)) >= 0.5f) ensureTap(k);
   }
 
  private:
+  void ensureTap(int k) {
+    if (ready_[k].load(std::memory_order_acquire)) return;
+    taps_[k].line[0].init(kMdMaxDelay);
+    taps_[k].line[1].init(kMdMaxDelay);
+    ref_[k].off[0].init(1 << 17);
+    ref_[k].off[1].init(1 << 17);
+    ready_[k].store(true, std::memory_order_release);
+  }
+  std::atomic<bool> ready_[kTaps] = {};
+  std::atomic<bool> prepared_{false};
+  int refLeft_ = 0, refJ_ = 0;  // reference model: position in the current ramp sub-block
   // ------------------------------------------------------------ reference model
   // Per unit: input (level / pan, plus the previous unit's output × "to next")
   // → input filter (pre) → stereo line whose period is the unit time: each
@@ -239,6 +260,10 @@ class MultiDelayFx final : public Effect {
       m[0] = m[3], m[1] = m[2], m[2] = b, m[3] = a;
     }
   }
+  // Parameter ramps of the reference model run over sub-blocks of kRefSub
+  // samples on the effect's own clock (J-30: ramps over each host block made
+  // the output depend on the block size).
+  static constexpr int kRefSub = 32;
   void processRef(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) {
     const bool os = pb(s, MdOversample);
     if (os != lastOs_) {
@@ -246,9 +271,37 @@ class MultiDelayFx final : public Effect {
       for (auto& h : dn_) h.clear();
       lastOs_ = os;
     }
+    const double dry = pv(s, MdDry, 1);
+    const int sub = os ? 2 : 1;
+    const double inv = 1.0 / (static_cast<double>(kRefSub) * sub);
+    for (int i = 0; i < n; ++i) {
+      if (refLeft_ == 0) {
+        setupRef(s, ctx, os);
+        refLeft_ = kRefSub;
+        refJ_ = 0;
+      }
+      --refLeft_;
+      const double xl = L[i], xr = R[i];
+      double wl = 0, wr = 0;
+      if (os) {
+        double ul[2], ur[2], ol[2], orr[2];
+        up_[0].up(xl, ul[0], ul[1]);
+        up_[1].up(xr, ur[0], ur[1]);
+        for (int q = 0; q < 2; ++q, ++refJ_) bankRef(ul[q], ur[q], (refJ_ + 1) * inv, ol[q], orr[q]);
+        wl = dn_[0].down(ol[0], ol[1]);
+        wr = dn_[1].down(orr[0], orr[1]);
+      } else {
+        bankRef(xl, xr, (refJ_ + 1) * inv, wl, wr);
+        ++refJ_;
+      }
+      L[i] = flush(static_cast<float>(xl * dry + wl));
+      R[i] = flush(static_cast<float>(xr * dry + wr));
+    }
+  }
+  void setupRef(const PluginState& s, const ProcessContext& ctx, bool os) {
     const double sr = ctx.sampleRate * (os ? 2.0 : 1.0);
     const double stepSec = 15.0 / std::max(1.0, ctx.tempo);
-    const double dry = pv(s, MdDry, 1), wet = pv(s, MdWet, 0.5), gin = pv(s, MdInput, 1), fbScale = pv(s, MdFbScale, 1);
+    const double wet = pv(s, MdWet, 0.5), gin = pv(s, MdInput, 1), fbScale = pv(s, MdFbScale, 1);
     const int maxD = static_cast<int>(kMdMaxDelay) - 8, maxOff = (1 << 17) - 8;
     for (int k = 0; k < kTaps; ++k) {
       RefTap& r = ref_[k];
@@ -298,26 +351,6 @@ class MultiDelayFx final : public Effect {
       t.apD[2] = 0.0089 * sr;
       t.apD[3] = 0.0137 * sr;
     }
-    const int sub = os ? 2 : 1;
-    const double inv = 1.0 / (static_cast<double>(n) * sub);
-    int j = 0;
-    for (int i = 0; i < n; ++i) {
-      const double xl = L[i], xr = R[i];
-      double wl = 0, wr = 0;
-      if (os) {
-        double ul[2], ur[2], ol[2], orr[2];
-        up_[0].up(xl, ul[0], ul[1]);
-        up_[1].up(xr, ur[0], ur[1]);
-        for (int q = 0; q < 2; ++q, ++j) bankRef(ul[q], ur[q], (j + 1) * inv, ol[q], orr[q]);
-        wl = dn_[0].down(ol[0], ol[1]);
-        wr = dn_[1].down(orr[0], orr[1]);
-      } else {
-        bankRef(xl, xr, (j + 1) * inv, wl, wr);
-        ++j;
-      }
-      L[i] = flush(static_cast<float>(xl * dry + wl));
-      R[i] = flush(static_cast<float>(xr * dry + wr));
-    }
   }
   static double runStages(BqState* st, const flc::Bq& q, int stages, double x) {
     for (int k = 0; k < stages; ++k) x = st[k].run(q, x);
@@ -329,7 +362,7 @@ class MultiDelayFx final : public Effect {
     double prevL = 0, prevR = 0, prevG = 0, wl = 0, wr = 0;
     for (int k = 0; k < kTaps; ++k) {
       RefTap& r = ref_[k];
-      if (!r.on) {
+      if (!r.on || !ready_[k].load(std::memory_order_acquire)) {
         prevL = prevR = prevG = 0;
         continue;
       }

@@ -175,6 +175,14 @@ class BankEqFx final : public UtilityFx {
     }
     for (int i = 0; i < n; ++i) {
       if (left_ == 0) {
+        // Denormal flush on the sub-block grid (J-30: once per host block made the output block-size dependent).
+        for (int b = 0; b < kBqBands; ++b)
+          for (int c = 0; c < 2; ++c) {
+            if (std::fabs(z1_[c][b]) < 1e-25) z1_[c][b] = 0;
+            if (std::fabs(z2_[c][b]) < 1e-25) z2_[c][b] = 0;
+          }
+        if (ovs)
+          for (auto& o : os_) o.flush();
         startSub(p, sr, add, sending);
         left_ = kSub;
       }
@@ -213,13 +221,6 @@ class BankEqFx final : public UtilityFx {
         sR[i] += static_cast<float>(er);
       }
     }
-    for (int b = 0; b < kBqBands; ++b)
-      for (int c = 0; c < 2; ++c) {
-        if (std::fabs(z1_[c][b]) < 1e-25) z1_[c][b] = 0;
-        if (std::fabs(z2_[c][b]) < 1e-25) z2_[c][b] = 0;
-      }
-    if (ovs)
-      for (auto& o : os_) o.flush();
     if (capture) {
       accFrames_ += n;
       for (int b = 0; b < kBqBands; ++b) tel_.energy[b].store(static_cast<float>(acc_[b]), std::memory_order_relaxed);

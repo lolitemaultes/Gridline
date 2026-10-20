@@ -166,8 +166,11 @@ class PluckerGen final : public Generator {
         L[i] += out[0] * e;
         R[i] += (widen_ ? out[1] : out[0]) * e;
         v.silent = std::fabs(out[0]) * e < 1e-5f ? v.silent + 1 : 0;
+        if (v.silent > sr_ * 0.05 || v.env < 1e-4f) {  // on the voice's own clock (J-30: not at a block end)
+          v.on = false;
+          break;
+        }
       }
-      if (v.silent > sr_ * 0.05 || v.env < 1e-4f) v.on = false;
     }
   }
 

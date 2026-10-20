@@ -93,11 +93,29 @@ void App::syncEngine() {
     staleChecked = now;
     stale = builder.staleInstances();
   }
+  // J-30: samples decode in the background (program builds never wait for
+  // them); rebuild when some have finished — at most four times a second while
+  // more are still loading — so they start to play.
+  if (trimSamplesAt_ > 0 && now >= trimSamplesAt_) {  // a project was replaced: free the old one's samples
+    sampleCache().trim();
+    trimSamplesAt_ = -1;
+  }
+  const uint64_t sampleGen = sampleCache().generation();
+  bool samplesReady = false;
+  if (sampleGen != builtSampleGen_) {
+    static double lastSampleBuild = -1;
+    if (sampleCache().pending() == 0 || now < lastSampleBuild || now - lastSampleBuild >= 0.25) {
+      samplesReady = true;
+      lastSampleBuild = now;
+    }
+  }
   if (doc.revision() == builtRevision_ && builder.sampleRate() == engine.sampleRate() && builder.pdc() == pdc && !builder.latencyChanged() &&
-      !stale)
+      !stale && !samplesReady)
     return;
   builder.setSampleRate(engine.sampleRate());
   builder.setPdc(pdc);
+  builder.setAsyncSamples(true);
+  builtSampleGen_ = sampleGen;
   builtRevision_ = doc.revision();
   const Song& s = doc.song();
   // Keep the selection valid after undo/redo/deletes.
@@ -261,6 +279,7 @@ void App::startProject(Song s) {
   engine.stop();
   engine.panic();
   doc.reset(std::move(s));  // the new project is the "saved" baseline, with no history
+  trimSamplesAt_ = now + 1.0;  // J-30: the old project's samples leave the cache once its program is retired
   projectPath.clear();
   const Song& song = doc.song();
   curPattern = song.patterns.empty() ? kNoId : song.patterns[0].id;
@@ -331,6 +350,7 @@ bool App::openProject(const std::string& path) {
   engine.stop();
   engine.panic();
   doc.reset(std::move(s));
+  trimSamplesAt_ = now + 1.0;  // J-30
   projectPath = path;
   addRecent(path);
   curPattern = doc.song().patterns.empty() ? kNoId : doc.song().patterns[0].id;
@@ -355,6 +375,7 @@ bool App::importFlpProject(const std::string& path) {
   engine.stop();
   engine.panic();
   doc.reset(std::move(s));
+  trimSamplesAt_ = now + 1.0;  // J-30
   projectPath.clear();  // a new, unsaved Gridline project
   curPattern = doc.song().patterns.empty() ? kNoId : doc.song().patterns[0].id;
   selChannel = doc.song().channels.empty() ? kNoId : doc.song().channels[0].id;

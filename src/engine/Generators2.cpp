@@ -341,6 +341,8 @@ class FmGen final : public Generator {
     double last[4] = {0, 0, 0, 0};
     Adsr env[4];
     double lfoPh = 0;
+    float gain[4] = {0, 0, 0, 0};  // operator gains of the current control period
+    uint32_t ctl = 0;              // samples rendered (control grid)
   };
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
     using namespace pp;
@@ -393,6 +395,7 @@ class FmGen final : public Generator {
     v.vel = vel;
     v.age = ++clock_;
     v.lfoPh = 0;
+    v.ctl = 0;  // operator gains for the new note at its first sample
     for (int o = 0; o < 4; ++o) {
       if (init_[o] > 0) v.env[o].level = init_[o];
       v.env[o].gate(true);
@@ -426,12 +429,16 @@ class FmGen final : public Generator {
     const double glideCoef = std::exp(-1.0 / std::max(1.0, glide_ * sr_ * 0.3));
     for (auto& v : voices_) {
       if (!v.on) continue;
-      float gain[4];
-      for (int o = 0; o < 4; ++o) {
-        double ks = keyScale_[o] != 0 ? dbToGain(keyScale_[o] * 6.0 * (v.note - 60.0) / 12.0) : 1.0;
-        gain[o] = static_cast<float>(level_[o] * (1 - velSens_[o] + velSens_[o] * v.vel) * ks);
-      }
+      float* gain = v.gain;
       for (int i = 0; i < n; ++i) {
+        // Operator gains (key scaling follows the gliding pitch) every 16
+        // samples of the voice's own clock (J-30: once per host block made the
+        // sound depend on the block size).
+        if ((v.ctl++ & 15u) == 0)
+          for (int o = 0; o < 4; ++o) {
+            double ks = keyScale_[o] != 0 ? dbToGain(keyScale_[o] * 6.0 * (v.note - 60.0) / 12.0) : 1.0;
+            gain[o] = static_cast<float>(level_[o] * (1 - velSens_[o] + velSens_[o] * v.vel) * ks);
+          }
         double lfo = 0;
         if (vibrato_ > 0 || lfoIndex_ > 0) {
           lfo = std::sin(kTwoPi * v.lfoPh);
@@ -469,11 +476,15 @@ class FmGen final : public Generator {
         L[i] += static_cast<float>(sl * k);
         R[i] += static_cast<float>(sr * k);
         v.note = v.target + (v.note - v.target) * glideCoef;
+        // Ends when its carriers' envelopes have, on its own clock (J-30: not at a block end).
+        bool any = false;
+        for (int o = 0; o < 4; ++o)
+          if ((al.carriers & (1 << o)) && v.env[o].active()) any = true;
+        if (!any) {
+          v.on = false;
+          break;
+        }
       }
-      bool any = false;
-      for (int o = 0; o < 4; ++o)
-        if ((al.carriers & (1 << o)) && v.env[o].active()) any = true;
-      if (!any) v.on = false;
     }
   }
 
@@ -718,6 +729,7 @@ class KeysGen final : public Generator {
     int parts = 0;
     double knock = 0, knockDec = 0, knockLp = 0;
     uint32_t seed = 1;
+    uint32_t ticks = 0;  // samples rendered (piano renormalisation grid)
   };
   static bool pianoModel(int m) { return m >= 4; }
   // Starts the partials of a piano voice (model 4 grand, 5 upright).
@@ -865,14 +877,20 @@ class KeysGen final : public Generator {
           if (velMuffle_ > 0) l = v.lp[0].process(l), r = v.lp[1].process(r);
           bufL_[static_cast<size_t>(i)] += static_cast<float>(l);
           bufR_[static_cast<size_t>(i)] += static_cast<float>(r);
-          if (i == n - 1 && peak < 1e-4 && v.knock < 1e-5) v.on = false;
-        }
-        // Renormalise the phasors once per block (keeps the recursive sines stable).
-        for (int p = 0; p < v.parts; ++p)
-          for (int sd = 0; sd < 2; ++sd) {
-            double m = std::sqrt(v.re[sd][p] * v.re[sd][p] + v.im[sd][p] * v.im[sd][p]);
-            if (m > 0) v.re[sd][p] /= m, v.im[sd][p] /= m;
+          // Every 256 samples of the voice's life (not per block, J-30):
+          // end check, and renormalise the phasors (keeps the recursive sines stable).
+          if ((++v.ticks & 255u) == 0) {
+            if (peak < 1e-4 && v.knock < 1e-5) {
+              v.on = false;
+              break;
+            }
+            for (int p = 0; p < v.parts; ++p)
+              for (int sd = 0; sd < 2; ++sd) {
+                double m = std::sqrt(v.re[sd][p] * v.re[sd][p] + v.im[sd][p] * v.im[sd][p]);
+                if (m > 0) v.re[sd][p] /= m, v.im[sd][p] /= m;
+              }
           }
+        }
         continue;
       }
       double pitchScale = std::pow(2.0, -(12.0 * std::log2(v.hz / 261.6)) / 24.0);  // higher keys decay faster
@@ -901,8 +919,11 @@ class KeysGen final : public Generator {
         v.bph -= std::floor(v.bph);
         v.amp *= v.held ? dec : rel;
         v.modEnv *= modDec;
+        if (v.amp < 1e-4) {  // ends on its own clock, not at a block end (J-30)
+          v.on = false;
+          break;
+        }
       }
-      if (v.amp < 1e-4) v.on = false;
     }
     for (int i = 0; i < n; ++i) {
       double t = std::sin(kTwoPi * tph_);

@@ -1020,38 +1020,45 @@ class AutoPanFx final : public Effect {
       lastPan_ = static_cast<float>(std::clamp(span + sm_ * panAmt, -1.0, 1.0)), lastVol_ = static_cast<float>(g);
     }
   }
-  void reset() override { free_ = 0, sm_ = 0, primed_ = false; }
+  void reset() override { free_ = 0, sm_ = 0, primed_ = false, ctl_ = 0; }
   // Reference engine: static pan / volume knob, one LFO (sine / triangle / square) on pan or volume,
-  // evaluated per block; pan law folds half of the attenuated side into the other; gains glide.
+  // evaluated once per control period (kCtl samples of the effect's own clock — J-30: per
+  // host block made the sound depend on the buffer size); pan law folds half of the attenuated
+  // side into the other; gains glide.
+  static constexpr int kCtl = 64;
   void classic(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) {
     using namespace pp;
     const int shape = std::clamp(iparam(s, ApShape), 0, 2), target = std::clamp(iparam(s, ApTarget), 0, 2);
     const double x = param(s, ApStaticVol, 1), sp = param(s, ApSpeedK, 27500.f / 65536.f) * 65536.0;
-    double p = std::clamp(static_cast<double>(param(s, ApStaticPan)), -1.0, 1.0);
-    double g = x == 1.0 ? 1.0 : 0.1 * (std::pow(11.0, x) - 1.0);
+    const double p0 = std::clamp(static_cast<double>(param(s, ApStaticPan)), -1.0, 1.0);
+    const double g0 = x == 1.0 ? 1.0 : 0.1 * (std::pow(11.0, x) - 1.0);
     const double period = std::round(std::pow(50000.0, (65536.0 - sp) / 65536.0));  // LFO period in samples
     const double inc = 1.0 / std::max(1.0, period);
-    double lfo = 0;
-    if (target) {
-      double ph = free_ - std::floor(free_);
-      lfo = shape == 1 ? (ph < 0.25 ? 4 * ph : ph < 0.75 ? 2 - 4 * ph : 4 * ph - 4) : shape == 2 ? (ph < 0.5 ? 1.0 : -1.0) : std::sin(kTwoPi * ph);
-      if (target == 1) p = std::clamp(p + param(s, ApAmount, 0.5f) * lfo, -1.0, 1.0);
-      else g = std::max(0.0, g + param(s, ApAmount, 0.5f) * 0.5 * lfo);
-    }
-    double tLL, tRR, tRL, tLR;
-    if (p < 0) tRR = (1 + p) * g, tRL = -p * 0.5 * g, tLL = g - tRL, tLR = 0;
-    else tLL = (1 - p) * g, tLR = p * 0.5 * g, tRR = g * (1 - 0.5 * p), tRL = 0;
-    if (!primed_) gLL_ = tLL, gRR_ = tRR, gRL_ = tRL, gLR_ = tLR, primed_ = true;
+    const double amount = param(s, ApAmount, 0.5f);
     const double c = 1.0 - std::exp(-1.0 / (0.005 * ctx.sampleRate));
     for (int i = 0; i < n; ++i) {
-      gLL_ += (tLL - gLL_) * c, gRR_ += (tRR - gRR_) * c, gRL_ += (tRL - gRL_) * c, gLR_ += (tLR - gLR_) * c;
+      if (ctl_ == 0) {  // targets for the next control period
+        double p = p0, g = g0;
+        if (target) {
+          double ph = free_ - std::floor(free_);
+          double lfo = shape == 1 ? (ph < 0.25 ? 4 * ph : ph < 0.75 ? 2 - 4 * ph : 4 * ph - 4) : shape == 2 ? (ph < 0.5 ? 1.0 : -1.0) : std::sin(kTwoPi * ph);
+          if (target == 1) p = std::clamp(p + amount * lfo, -1.0, 1.0);
+          else g = std::max(0.0, g + amount * 0.5 * lfo);
+        }
+        if (p < 0) tRR_ = (1 + p) * g, tRL_ = -p * 0.5 * g, tLL_ = g - tRL_, tLR_ = 0;
+        else tLL_ = (1 - p) * g, tLR_ = p * 0.5 * g, tRR_ = g * (1 - 0.5 * p), tRL_ = 0;
+        if (!primed_) gLL_ = tLL_, gRR_ = tRR_, gRL_ = tRL_, gLR_ = tLR_, primed_ = true;
+        free_ += inc * kCtl;
+        free_ -= std::floor(free_);
+        lastPan_ = static_cast<float>(p), lastVol_ = static_cast<float>(g);
+        ctl_ = kCtl;
+      }
+      --ctl_;
+      gLL_ += (tLL_ - gLL_) * c, gRR_ += (tRR_ - gRR_) * c, gRL_ += (tRL_ - gRL_) * c, gLR_ += (tLR_ - gLR_) * c;
       double l = L[i], r = R[i];
       L[i] = static_cast<float>(gLL_ * l + gRL_ * r);
       R[i] = static_cast<float>(gRR_ * r + gLR_ * l);
     }
-    free_ += inc * n;
-    free_ -= std::floor(free_);
-    lastPan_ = static_cast<float>(p), lastVol_ = static_cast<float>(g);
   }
   int meters(float* out, int max) const override {  // current pan / volume (editor's position display)
     if (max < 2) return 0;
@@ -1061,6 +1068,8 @@ class AutoPanFx final : public Effect {
 
  private:
   double free_ = 0, sm_ = 0, gLL_ = 1, gRR_ = 1, gRL_ = 0, gLR_ = 0;
+  double tLL_ = 1, tRR_ = 1, tRL_ = 0, tLR_ = 0;
+  int ctl_ = 0;  // samples left in the current control period (classic engine)
   bool primed_ = false;
   float lastPan_ = 0, lastVol_ = 1;
 };

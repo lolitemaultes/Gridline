@@ -353,15 +353,20 @@ class SqueezeFx final : public DynFx {
     }
     inImpact_ = false;
     cI_ = cP_ = 0;
+    quiet_ = kQuiet;
   }
 
  private:
-  // Reference engine (study: analysis/demos/specs/j26_squeeze.md).
+  // Reference engine (study: analysis/demos/specs/j26_squeeze.md). Silence
+  // (input below 1e-6 for kQuiet samples running) passes through with the state
+  // untouched — counted per sample (J-30: judging each host block made the
+  // output depend on the block size).
+  static constexpr int kQuiet = 64;
   void reference(const PluginState& s, double sr, float* L, float* R, int n) {
     double peak = 0;
     for (int i = 0; i < n; ++i) peak = std::max(peak, static_cast<double>(std::max(std::fabs(L[i]), std::fabs(R[i]))));
     input_ = static_cast<float>(linToDb(peak));
-    if (peak < 1e-6) return;  // silent block: passed through, state untouched
+    if (peak < 1e-6 && quiet_ >= kQuiet) return;  // silence: passed through, state untouched
     const double g = clampd(p(s, SqGainRef), 0, 2), m = clampd(p(s, SqMix), 0, 1);
     const double S = p(s, SqStepsRef);
     const bool quant = S < 32768;
@@ -387,6 +392,8 @@ class SqueezeFx final : public DynFx {
       return out;
     };
     for (int i = 0; i < n; ++i) {
+      quiet_ = std::max(std::fabs(L[i]), std::fabs(R[i])) < 1e-6f ? quiet_ + 1 : 0;
+      if (quiet_ >= kQuiet) continue;
       double wImp = 0, wPass = 1;
       if (impactLen > 0) {
         if (inImpact_) {
@@ -418,6 +425,7 @@ class SqueezeFx final : public DynFx {
   }
   double lp_[2] = {}, bp_[2] = {}, cI_ = 0, cP_ = 0;
   bool inImpact_ = false;
+  int quiet_ = kQuiet;  // silent input samples in a row (reference engine)
   SvfTpt filt_[2];
   double sr_ = 0, cut_ = -1, res_ = -1;
   int holdCount_ = 0;

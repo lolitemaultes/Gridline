@@ -156,7 +156,7 @@ SamplePtr precomputeSample(const SamplePtr& in, const SamplePrecomputeFx& fx) {
   const int boostRaw = static_cast<int>(std::lround(fx.boost * 256.0));
   const double boostGain = boostRaw * 0.0625 + 1.0;
   for (int ch = 0; ch < chans; ++ch) {
-    std::vector<float>& x = ch ? s->right : s->left;
+    std::vector<float>& x = ch ? s->right.mut() : s->left;
     const std::vector<float> src = x;  // warp reads the unwarped copy
     double phase = static_cast<double>(ch) * 4096.0;
     double fv = 0, fy = 0;
@@ -198,25 +198,27 @@ SamplePtr precomputeSample(const SamplePtr& in, const SamplePrecomputeFx& fx) {
   if (tiltRaw != 128) {
     const double k = static_cast<double>((tiltRaw * 192) / 256 - 96) * 0.0078125;
     for (int ch = 0; ch < chans; ++ch) {
-      std::vector<float>& x = ch ? s->right : s->left;
+      std::vector<float>& x = ch ? s->right.mut() : s->left;
       double prev = 0;
       for (float& v : x) prev = v = static_cast<float>(v + prev * k);
     }
   }
-  if (chans == 1) s->right = s->left;
+  if (chans == 1) s->setMono();  // J-30: one copy of mono material
   // 4. Stereo fade.
   if (fx.fadeStereo && N > 0) {
     const double step = 1.5707963267948966 / static_cast<double>(N);
+    std::vector<float>& right = s->right.mut();  // its own copy before the left channel changes
     for (long n = 0; n <= N; ++n) {
       s->left[static_cast<size_t>(n)] = static_cast<float>(s->left[static_cast<size_t>(n)] * std::cos(n * step));
-      s->right[static_cast<size_t>(n)] = static_cast<float>(s->right[static_cast<size_t>(n)] * std::cos((N - n) * step));
+      right[static_cast<size_t>(n)] = static_cast<float>(right[static_cast<size_t>(n)] * std::cos((N - n) * step));
     }
   }
   // 5. Reverb (own algorithm) and tail trim.
   if (fx.reverbMix > 0) {
     const size_t n0 = s->frames();
+    std::vector<float>& right = s->right.mut();  // its own copy before the left channel changes
     reverbTail(s->left, sr, fx.reverbType, fx.reverbMix, 0);
-    reverbTail(s->right, sr, fx.reverbType, fx.reverbMix, 1);
+    reverbTail(right, sr, fx.reverbType, fx.reverbMix, 1);
     size_t n = s->frames();
     while (n > n0 && std::fabs(s->left[n - 1]) < 0.001953125f && std::fabs(s->right[n - 1]) < 0.001953125f) --n;
     s->left.resize(n), s->right.resize(n);

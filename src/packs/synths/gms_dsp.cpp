@@ -484,6 +484,9 @@ class GmsGen final : public Generator {
     double g = 0.5, kRes = 0, mod = 0, volMod = 1, hz[kOscs] = {220, 220, 220};
     int lv[kOscs] = {0, 0, 0};
     bool ctlDone = false;
+    // Noise source of this voice (J-30: one generator shared by all voices handed its
+    // values out in an order that depended on how blocks were split).
+    dsp::Noise rng;
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -565,6 +568,7 @@ class GmsGen final : public Generator {
     const bool wasOn = v.on;
     v.on = v.held = true;
     v.age = ++clock_;
+    if (!wasOn) v.rng.seed(static_cast<uint32_t>(v.age) * 2654435761u + 0x9E3779B9u);
     v.cur = fromPitch;
     v.stage = 1;
     for (int k = 0; k < 2; ++k) v.egStage[k] = 1, v.eg[k] = fresh ? 0.0 : v.eg[k];
@@ -713,7 +717,7 @@ class GmsGen final : public Generator {
           }
           ph[1] += incFor(hz[1] * ur, sr_);
           ph[2] += incFor(hz[2] * ur, sr_);
-          const float nz = gn > 0 ? rng_.next() * 0.5f : 0.0f;
+          const float nz = gn > 0 ? v.rng.next() * 0.5f : 0.0f;
           const float x = (o1 * g1 + o2 * g2 + o3 * g3 + nz * gn) * norm;
           l += x * uniL_[u];
           r += x * uniR_[u];
@@ -803,7 +807,6 @@ class GmsGen final : public Generator {
   double noise_ = 0, m2_ = 0, m3_ = 0, modAmt_ = 0, o2Phase_ = 0, velAmt_ = 0;
   int modKind_ = GkFm, velDest_ = 0;
   uint64_t clock_ = 0;
-  dsp::Noise rng_;
   GmsFx fx_;
 };
 

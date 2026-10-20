@@ -379,11 +379,19 @@ void prepareChannelAux(const PluginState& state, ChannelAux& aux) {
 }
 
 std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
+  // J-30: asynchronous builds (the app) never wait for sample decoding: the
+  // samples are queued for the background decoders and play once a later
+  // build finds them decoded.
+  std::optional<SampleCache::NonBlocking> nonBlocking;
+  if (asyncSamples_) nonBlocking.emplace();
   {  // decode the channels' samples in parallel before they are prepared one by one (J-25)
     std::vector<std::string> paths;
     for (const auto& c : song.channels)
       if (!c.plugin.data.empty() && isAudioFile(c.plugin.data)) paths.push_back(c.plugin.data);
-    sampleCache().prefetch(paths);
+    if (asyncSamples_)
+      for (const auto& p : paths) sampleCache().request(p);
+    else
+      sampleCache().prefetch(paths);
   }
   auto prog = std::make_shared<Program>();
   prog->tempo = song.tempo;

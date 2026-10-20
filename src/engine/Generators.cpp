@@ -518,6 +518,8 @@ class SamplerGen final : public Generator {
       sample_ = aux.sample();
       scan_ = 0, peak_ = 0, sumL_ = sumR_ = 0, analysed_ = false;
     }
+    smpL_ = sample_ ? sample_->left.data() : nullptr;
+    smpR_ = sample_ ? sample_->right.data() : nullptr;
     if (sample_ && !analysed_) {  // peak / mean, at most 65536 frames per block
       size_t nf = sample_->frames(), end = std::min(nf, scan_ + 65536);
       for (size_t i = scan_; i < end; ++i) {
@@ -565,9 +567,15 @@ class SamplerGen final : public Generator {
     static const double minAtk[5] = {0, 0, 0, 0.001, 0.005}, minRel[5] = {0, 0.002, 0.005, 0.005, 0.02};
     double atk = std::max(static_cast<double>(param(s, SmpAttack)), minAtk[declick_]);
     double rel = std::max(static_cast<double>(param(s, SmpRelease, 0.02f)), minRel[declick_]);
+    // J-30: the envelope coefficients (eight exp()) are designed once and copied
+    // to the voices (designed per voice, every block, they were a hot spot of
+    // projects with hundreds of samplers); identical values.
+    Adsr e, f;
+    e.set(sr_, atk, param(s, SmpDecay, 10), param(s, SmpSustain, 1), rel);
+    f.set(sr_, param(s, SmpFiltAttack, 0.001f), param(s, SmpFiltDecay, 0.3f), param(s, SmpFiltSustain), param(s, SmpFiltRelease, 0.3f));
     for (auto& v : voices_) {
-      v.env.set(sr_, atk, param(s, SmpDecay, 10), param(s, SmpSustain, 1), rel);
-      v.fenv.set(sr_, param(s, SmpFiltAttack, 0.001f), param(s, SmpFiltDecay, 0.3f), param(s, SmpFiltSustain), param(s, SmpFiltRelease, 0.3f));
+      v.env.atkInc = e.atkInc, v.env.decCoef = e.decCoef, v.env.relCoef = e.relCoef, v.env.sustain = e.sustain;
+      v.fenv.atkInc = f.atkInc, v.fenv.decCoef = f.decCoef, v.fenv.relCoef = f.relCoef, v.fenv.sustain = f.sustain;
     }
   }
 
@@ -676,9 +684,9 @@ class SamplerGen final : public Generator {
 
   // Reads the sample at a fractional frame with the render-time processing applied.
   void read(double p, double& l, double& r) const {
-    const auto& sl = sample_->left;
-    const auto& sr = sample_->right;
-    double len = static_cast<double>(sl.size());
+    const float* sl = smpL_;  // raw channel pointers, set in configure (J-30: no per-read
+    const float* sr = smpR_;  // shared-channel test)
+    double len = static_cast<double>(sample_->left.size());
     p = std::clamp(p, 0.0, len - 2);
     size_t p0 = static_cast<size_t>(p);
     double fr = p - static_cast<double>(p0);
@@ -691,6 +699,7 @@ class SamplerGen final : public Generator {
       r = (r - dcR_) * gain_;
     }
     if (swap_) std::swap(l, r);
+    if (fadeIn_ <= 0 && fadeOutAmt_ <= 0) return;  // J-30: no region fades, no per-sample division (gain 1)
     double lo = regionLo(), hi = regionHi(), span = std::max(1.0, hi - lo);
     double rel = (p - lo) / span;
     double g = 1;
@@ -911,6 +920,8 @@ class SamplerGen final : public Generator {
  private:
   std::array<Voice, 32> voices_{};
   SamplePtr sample_;
+  const float* smpL_ = nullptr;  // sample_ channel data (read)
+  const float* smpR_ = nullptr;
   size_t scan_ = 0;
   double peak_ = 0, sumL_ = 0, sumR_ = 0;
   bool analysed_ = false;

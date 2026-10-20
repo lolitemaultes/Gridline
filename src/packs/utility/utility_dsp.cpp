@@ -53,6 +53,23 @@ struct Ramp {
   }
 };
 
+// Sub-blocks of a fixed length on the effect's own sample clock (J-30):
+// smoothing steps, coefficient updates and denormal flushes happen at the same
+// samples whatever the host block size (per-call sub-blocks made the output
+// depend on it).
+struct SubClock {
+  int left = 0;
+  // Frames of the current sub-block that fit in `avail`; `start`: a new sub-block begins.
+  int take(int avail, int len, bool& start) {
+    start = left == 0;
+    if (start) left = len;
+    const int m = std::min(left, avail);
+    left -= m;
+    return m;
+  }
+  bool ended() const { return left == 0; }
+};
+
 // ================================================================ Curve EQ
 class CurveEqFx final : public UtilityFx {
  public:
@@ -72,6 +89,7 @@ class CurveEqFx final : public UtilityFx {
     primed_ = false;
     designedLinear_ = designedMin_ = false;
     mode_ = -1;
+    sub_ = {};
   }
 
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
@@ -97,23 +115,27 @@ class CurveEqFx final : public UtilityFx {
     }
     const double smooth = prm(s, CeSmooth);
     const double outTarget = dsp::dbToGain(prm(s, CeOutput));
-    for (int off = 0; off < n; off += kSub) {
-      int m = std::min(kSub, n - off);
-      double a = glide(sr, smooth, m);
-      x_ = tx + (x_ - tx) * a;
-      y_ = ty + (y_ - ty) * a;
-      depth_ = td + (depth_ - td) * a;
-      shift_ = tsh + (shift_ - tsh) * a;
-      float morphed[kCeBands];
-      ceMorph(s, x_, y_, morphed);
-      bool changed = false;
-      for (int b = 0; b < kCeBands; ++b) changed = changed || std::fabs(morphed[b] - last_[b]) > 1e-4f;
-      changed = changed || std::fabs(depth_ - lastDepth_) > 1e-5 || std::fabs(shift_ - lastShift_) > 1e-5;
-      if (changed) {
-        std::memcpy(last_, morphed, sizeof last_);
-        lastDepth_ = depth_;
-        lastShift_ = shift_;
-        designedLinear_ = designedMin_ = false;
+    for (int off = 0; off < n;) {
+      bool start = false;
+      const int m = sub_.take(n - off, kSub, start);
+      if (start) {
+        double a = glide(sr, smooth, kSub);
+        x_ = tx + (x_ - tx) * a;
+        y_ = ty + (y_ - ty) * a;
+        depth_ = td + (depth_ - td) * a;
+        shift_ = tsh + (shift_ - tsh) * a;
+        float morphed[kCeBands];
+        ceMorph(s, x_, y_, morphed);
+        bool changed = false;
+        for (int b = 0; b < kCeBands; ++b) changed = changed || std::fabs(morphed[b] - last_[b]) > 1e-4f;
+        changed = changed || std::fabs(depth_ - lastDepth_) > 1e-5 || std::fabs(shift_ - lastShift_) > 1e-5;
+        if (changed) {
+          std::memcpy(last_, morphed, sizeof last_);
+          lastDepth_ = depth_;
+          lastShift_ = shift_;
+          designedLinear_ = designedMin_ = false;
+        }
+        outInc_ = out_.begin(outTarget, kSub);
       }
       float* l = L + off;
       float* r = R + off;
@@ -129,8 +151,9 @@ class CurveEqFx final : public UtilityFx {
           l[i] = static_cast<float>(xl);
           r[i] = static_cast<float>(xr);
         }
-        for (auto& ch : bq_)
-          for (auto& b : ch) b.flush();
+        if (sub_.ended())
+          for (auto& ch : bq_)
+            for (auto& b : ch) b.flush();
       } else {
         for (int i = 0; i < m; ++i) {
           inL_[pos_] = l[i];
@@ -144,12 +167,12 @@ class CurveEqFx final : public UtilityFx {
           }
         }
       }
-      double inc = out_.begin(outTarget, m);
       for (int i = 0; i < m; ++i) {
-        out_.cur += inc;
+        out_.cur += outInc_;
         l[i] = static_cast<float>(l[i] * out_.cur);
         r[i] = static_cast<float>(r[i] * out_.cur);
       }
+      off += m;
     }
   }
 
@@ -239,6 +262,8 @@ class CurveEqFx final : public UtilityFx {
   bool primed_ = false, designedLinear_ = false, designedMin_ = false;
   int mode_ = -1;
   Ramp out_;
+  double outInc_ = 0;
+  SubClock sub_;
   Fft fftK_, fftN_;
   float wr_[kN] = {}, wi_[kN] = {}, hr_[kN] = {}, hi_[kN] = {};
   float inL_[kCeLinearHop] = {}, inR_[kCeLinearHop] = {};
@@ -253,6 +278,7 @@ class FreeFilterFx final : public UtilityFx {
     for (auto& f : f_) f.clear();
     dcX_[0] = dcX_[1] = dcY_[0] = dcY_[1] = 0;
     primed_ = false;
+    sub_ = {};
     ref_.clear(), dcr_[0].clear(), dcr_[1].clear();
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
@@ -282,13 +308,17 @@ class FreeFilterFx final : public UtilityFx {
     }
     const bool dc = prm(s, FfDc, 1) >= 0.5f;
     const double R1 = 1.0 - 2 * kPi * 8.0 / sr;
-    for (int off = 0; off < n; off += kSub) {
-      int m = std::min(kSub, n - off);
-      double a = glide(sr, 0.012, m);
-      lf_ = tf + (lf_ - tf) * a;
-      q_ = tq + (q_ - tq) * a;
-      g_ = tg + (g_ - tg) * a;
-      Coefs c = freeFilterCoefs(type, sr, std::exp(lf_), q_, g_);
+    for (int off = 0; off < n;) {
+      bool start = false;
+      const int m = sub_.take(n - off, kSub, start);
+      if (start) {
+        double a = glide(sr, 0.012, kSub);
+        lf_ = tf + (lf_ - tf) * a;
+        q_ = tq + (q_ - tq) * a;
+        g_ = tg + (g_ - tg) * a;
+        c_ = freeFilterCoefs(type, sr, std::exp(lf_), q_, g_);
+      }
+      const Coefs& c = c_;
       for (int i = off; i < off + m; ++i) {
         double l = f_[0].run(c, L[i]), r = f_[1].run(c, R[i]);
         if (dc) {
@@ -304,10 +334,13 @@ class FreeFilterFx final : public UtilityFx {
         L[i] = static_cast<float>(l);
         R[i] = static_cast<float>(r);
       }
+      off += m;
+      if (sub_.ended()) {
+        for (auto& f : f_) f.flush();
+        for (int k = 0; k < 2; ++k)
+          if (std::fabs(dcY_[k]) < 1e-25) dcY_[k] = 0;
+      }
     }
-    for (auto& f : f_) f.flush();
-    for (int c = 0; c < 2; ++c)
-      if (std::fabs(dcY_[c]) < 1e-25) dcY_[c] = 0;
   }
 
  private:
@@ -317,6 +350,8 @@ class FreeFilterFx final : public UtilityFx {
   double rHz_ = -1, rQ_ = -1, rG_ = -1e9, rSr_ = 0;
   int rType_ = -1;
   Tdf2 f_[2];
+  Coefs c_;
+  SubClock sub_;
   double dcX_[2] = {}, dcY_[2] = {};
   double lf_ = 0, q_ = 0.7, g_ = 0;
   int type_ = -1;
@@ -331,6 +366,7 @@ class QuickLpFx final : public UtilityFx {
     svf_[0].reset();
     svf_[1].reset();
     primed_ = false;
+    sub_ = {};
     ref_.clear();
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
@@ -344,27 +380,33 @@ class QuickLpFx final : public UtilityFx {
       lc_ = tc, reso_ = tr;
       primed_ = true;
     }
-    for (int off = 0; off < n; off += kSub) {
-      int m = std::min(kSub, n - off);
-      double a = glide(sr, 0.01, m);
-      lc_ = tc + (lc_ - tc) * a;
-      reso_ = tr + (reso_ - tr) * a;
-      double hz = std::exp(lc_);
-      // Fully open: pass straight through (no high-end loss at the default).
-      bool open = hz >= std::min(19900.0, sr * 0.45) && reso_ < 1e-3;
-      for (auto& f : svf_) f.set(sr, hz, reso_ * 0.97);
+    for (int off = 0; off < n;) {
+      bool start = false;
+      const int m = sub_.take(n - off, kSub, start);
+      if (start) {
+        double a = glide(sr, 0.01, kSub);
+        lc_ = tc + (lc_ - tc) * a;
+        reso_ = tr + (reso_ - tr) * a;
+        double hz = std::exp(lc_);
+        // Fully open: pass straight through (no high-end loss at the default).
+        open_ = hz >= std::min(19900.0, sr * 0.45) && reso_ < 1e-3;
+        for (auto& f : svf_) f.set(sr, hz, reso_ * 0.97);
+      }
       for (int i = off; i < off + m; ++i) {
         double l = svf_[0].process(L[i]), r = svf_[1].process(R[i]);
-        if (!open) {
+        if (!open_) {
           L[i] = static_cast<float>(l);
           R[i] = static_cast<float>(r);
         }
       }
+      off += m;
     }
   }
 
  private:
   static constexpr int kSub = 32;
+  SubClock sub_;
+  bool open_ = false;
   flref::QuickLp ref_;
   dsp::Svf svf_[2];
   double lc_ = 0, reso_ = 0;
@@ -378,6 +420,7 @@ class BassBoostFx final : public UtilityFx {
   void reset() override {
     for (auto& f : f_) f.clear();
     primed_ = false;
+    sub_ = {};
     ref_.clear();
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
@@ -391,24 +434,31 @@ class BassBoostFx final : public UtilityFx {
       lf_ = tf, amt_ = ta;
       primed_ = true;
     }
-    for (int off = 0; off < n; off += kSub) {
-      int m = std::min(kSub, n - off);
-      double a = glide(sr, 0.015, m);
-      lf_ = tf + (lf_ - tf) * a;
-      amt_ = ta + (amt_ - ta) * a;
-      Coefs c = bassBoostCoefs(sr, std::exp(lf_), amt_);
-      for (int i = off; i < off + m; ++i) {
-        L[i] = static_cast<float>(f_[0].run(c, L[i]));
-        R[i] = static_cast<float>(f_[1].run(c, R[i]));
+    for (int off = 0; off < n;) {
+      bool start = false;
+      const int m = sub_.take(n - off, kSub, start);
+      if (start) {
+        double a = glide(sr, 0.015, kSub);
+        lf_ = tf + (lf_ - tf) * a;
+        amt_ = ta + (amt_ - ta) * a;
+        c_ = bassBoostCoefs(sr, std::exp(lf_), amt_);
       }
+      for (int i = off; i < off + m; ++i) {
+        L[i] = static_cast<float>(f_[0].run(c_, L[i]));
+        R[i] = static_cast<float>(f_[1].run(c_, R[i]));
+      }
+      off += m;
+      if (sub_.ended())
+        for (auto& f : f_) f.flush();
     }
-    for (auto& f : f_) f.flush();
   }
 
  private:
   static constexpr int kSub = 32;
   flref::BassBooster ref_;
   Tdf2 f_[2];
+  Coefs c_;
+  SubClock sub_;
   double lf_ = 0, amt_ = 0;
   bool primed_ = false;
 };
@@ -580,6 +630,7 @@ class StereoMatrixFx final : public UtilityFx {
     w_ = 0;
     ap_[0] = ap_[1] = {};
     for (auto& g : g_) g.primed = false;
+    sub_ = {};
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate;
@@ -587,8 +638,6 @@ class StereoMatrixFx final : public UtilityFx {
     double target[4] = {prm(s, SmLL, 1), prm(s, SmRL), prm(s, SmLR), prm(s, SmRR, 1)};
     if (classic)
       for (double& x : target) x = (x < 0 ? -1.0 : 1.0) * (std::pow(3.0, std::fabs(x)) - 1.0) * 0.5;
-    double inc[4];
-    for (int k = 0; k < 4; ++k) inc[k] = g_[k].begin(target[k], n);
     double delayMs = prm(s, SmDelay);
     double deph = prm(s, SmDephase);
     // First-order allpass on one side: corner sweeps 20 kHz -> 40 Hz with |amount|.
@@ -603,7 +652,12 @@ class StereoMatrixFx final : public UtilityFx {
     double t = std::tan(kPi * std::min(fc, sr * 0.45) / sr), apc = (t - 1) / (t + 1);
     const bool pre = prm(s, SmFxPos, 1) < 0.5f;  // delay / dephase before the matrix
     for (int i = 0; i < n; ++i) {
-      for (int k = 0; k < 4; ++k) g_[k].cur += inc[k];
+      if (sub_.left == 0) {  // gain ramps over sub-blocks of the effect's own clock (J-30)
+        for (int k = 0; k < 4; ++k) inc_[k] = g_[k].begin(target[k], kSub);
+        sub_.left = kSub;
+      }
+      --sub_.left;
+      for (int k = 0; k < 4; ++k) g_[k].cur += inc_[k];
       double l = L[i], r = R[i];
       double ol = pre ? l : g_[0].cur * l + g_[1].cur * r;
       double orr = pre ? r : g_[2].cur * l + g_[3].cur * r;
@@ -641,6 +695,9 @@ class StereoMatrixFx final : public UtilityFx {
   int w_ = 0;
   Ap ap_[2];
   Ramp g_[4];
+  static constexpr int kSub = 32;
+  double inc_[4] = {};
+  SubClock sub_;
 };
 
 }  // namespace

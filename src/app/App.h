@@ -353,6 +353,8 @@ class App {
 
  private:
   uint64_t builtRevision_ = ~0ull;
+  uint64_t builtSampleGen_ = 0;   // SampleCache::generation() of the last build (J-30)
+  double trimSamplesAt_ = -1;     // drop the replaced project's samples from the cache at this time (J-30)
   int64_t lastBackupCheck_ = 0;
   SamplePtr preview_;
   double lastCcTime_ = -1;

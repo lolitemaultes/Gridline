@@ -189,9 +189,25 @@ class EqFx final : public Effect {
  public:
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     if (ctx.sampleRate != sr_ || s.params != last_) {
+      // J-30: only the bands whose own settings changed are redesigned (an
+      // automated band used to redesign all seven every control block).
+      const bool all = ctx.sampleRate != sr_ || s.params.size() != last_.size() || changed(s, pp::EqHQ) || changed(s, pp::EqModel);
+      auto bandChanged = [&](int b) {
+        if (all) return true;
+        for (int f = 0; f < pp::EqFields; ++f)
+          if (changed(s, pp::eqParam(b, f))) return true;
+        for (int f = 0; f < pp::EqExtFields; ++f)
+          if (changed(s, pp::eqExt(b, f))) return true;
+        for (int f = 0; f < pp::EqFlFields; ++f)
+          if (changed(s, pp::eqFl(b, f))) return true;
+        return false;
+      };
+      bool redesign[pp::kEqBands];
+      for (int b = 0; b < pp::kEqBands; ++b) redesign[b] = bandChanged(b);
       sr_ = ctx.sampleRate;
       last_ = s.params;
       for (int b = 0; b < pp::kEqBands; ++b) {
+        if (!redesign[b]) continue;
         EqBandFilters f;
         designEqBand(s, b, sr_, f);
         for (int c = 0; c < 2; ++c) {
@@ -261,6 +277,11 @@ class EqFx final : public Effect {
     const int listen = std::clamp(static_cast<int>(param(s, pp::EqListen) + 0.5f), 0, pp::kEqBands);
     const int taps = pp::eqLinearTaps(static_cast<int>(param(s, pp::EqLinear) + 0.5f));
     return taps > 0 && listen == 0 ? std::clamp(taps, 64, LinearPhaseEq::kMaxTaps) : 0;
+  }
+  // Parameter `i` differs from the last processed state (same-size vectors).
+  bool changed(const PluginState& s, int i) const {
+    const size_t k = static_cast<size_t>(i);
+    return k < s.params.size() && k < last_.size() && s.params[k] != last_[k];
   }
   EqBandFilters band_[2][pp::kEqBands];
   LinearPhaseEq lin_;

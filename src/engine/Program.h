@@ -84,6 +84,11 @@ struct ChannelRuntime {
   uintptr_t chainSig = 0;
   // Note dispatch state (slides / porta): pitch of the last started note.
   float lastPitch = -1;
+  // Note ids: sequenced notes and notes made by the note processors are
+  // numbered per channel, so the numbering (instruments seed randomness with
+  // it) does not depend on how blocks interleave channels (J-30).
+  uint32_t noteSeq = 0;
+  uint32_t fxIdSeq = 0;
   // This block's output after the strip gains (the mixer pulls it).
   std::vector<float> outL = std::vector<float>(kEngineMaxBlock, 0.f), outR = std::vector<float>(kEngineMaxBlock, 0.f);
   CpuStat cpu;
@@ -412,6 +417,11 @@ class ProgramBuilder {
   // of a mixing point arrives aligned. Off: latencies are reported only.
   void setPdc(bool on) { pdc_ = on; }
   bool pdc() const { return pdc_; }
+  // J-30: builds never wait for sample decoding (SampleCache::NonBlocking):
+  // samples not decoded yet are queued and left out (silence) until a later
+  // build; the caller rebuilds when SampleCache::generation() changes. Off by
+  // default (offline renders and tools need every sample).
+  void setAsyncSamples(bool on) { asyncSamples_ = on; }
   // True when a hosted plugin's reported latency differs from the one the
   // last Program was compensated for (the caller rebuilds).
   bool latencyChanged() const;
@@ -437,6 +447,7 @@ class ProgramBuilder {
   std::map<uint64_t, std::shared_ptr<LinkRuntime>> links_;  // by target ParamId
   double sampleRate_ = 44100.0;
   bool pdc_ = true;
+  bool asyncSamples_ = false;
   // Plugin delay compensation: computes latencies and fills ProgMixer::inputs
   // and the task graph (ProgramGraph.cpp).
   void compileGraph(Program& prog);

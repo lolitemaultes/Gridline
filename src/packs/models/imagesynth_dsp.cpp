@@ -201,6 +201,7 @@ class ImageGen final : public Generator {
         ctr_ = kCtl;
       }
       int len = std::min(ctr_, n - pos);
+      const bool end = len == ctr_;
       for (int i = 0; i < kVoices; ++i) {
         Voice& v = voices_[i];
         if (!v.on) continue;
@@ -225,15 +226,17 @@ class ImageGen final : public Generator {
             v.aL[y] += v.dL[y];
             v.aR[y] += v.dR[y];
           }
-          if (std::fabs(v.aL[y]) < 1e-9f) v.aL[y] = 0;
-          if (std::fabs(v.aR[y]) < 1e-9f) v.aR[y] = 0;
+          // J-30: flushes and the voice end happen at the end of a control period,
+          // not at the end of each host block.
+          if (end && std::fabs(v.aL[y]) < 1e-9f) v.aL[y] = 0;
+          if (end && std::fabs(v.aR[y]) < 1e-9f) v.aR[y] = 0;
         }
         for (int j = 0; j < len; ++j) {
           float e = static_cast<float>(v.env.next());
           L[pos + j] += bl[j] * e;
           R[pos + j] += br[j] * e;
         }
-        if (!v.env.active()) v.on = false;
+        if (end && !v.env.active()) v.on = false;
       }
       ctr_ -= len;
       pos += len;

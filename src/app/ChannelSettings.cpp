@@ -387,7 +387,7 @@ void drawChannelSettings(App& a) {
 
   // Sample (sampler only).
   if (info && info->type == "gl.sampler") {  // other sample instruments have their own sample UI
-    SamplePtr smp = c->plugin.data.empty() ? nullptr : sampleCache().get(c->plugin.data);
+    SamplePtr smp = c->plugin.data.empty() ? nullptr : sampleCache().request(c->plugin.data);  // J-30: non-blocking
     float startFrac = c->plugin.params.size() > pp::SmpStart ? c->plugin.params[pp::SmpStart] : 0;
     drawWaveform(a, smp, ImVec2(600, 110), startFrac);
     if (ImGui::BeginDragDropTarget()) {

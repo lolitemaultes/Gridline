@@ -510,10 +510,11 @@ int main() {
       r.run(L, R, 3000, block);
       return L;
     };
-    auto a = renderSeq(64), b = renderSeq(1000);
+    auto a = renderSeq(64), b = renderSeq(1000), c = renderSeq(333);  // J-30: odd sizes too
     double diff = 0;
-    for (size_t i = 0; i < a.size(); ++i) diff = std::max(diff, static_cast<double>(std::fabs(a[i] - b[i])));
-    expect(a.size() == b.size() && diff < 1e-6, "multisampler block-size invariant");
+    for (size_t i = 0; i < a.size(); ++i)
+      diff = std::max({diff, static_cast<double>(std::fabs(a[i] - b[i])), static_cast<double>(std::fabs(a[i] - c[i]))});
+    expect(a.size() == b.size() && a.size() == c.size() && diff < 1e-6, "multisampler block-size invariant");
     Rig si("gl.multisampler");
     si.set(MsInterp, InterpSinc);
     si.gen->noteOn(1, 61, 1.f, 0);

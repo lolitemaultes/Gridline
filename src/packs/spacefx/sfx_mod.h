@@ -314,12 +314,12 @@ class SwirlFx final : public Effect {
         double tap = line_[side_[v]].read(std::max(1.0, base_[v] + amp_[v] * w));
         double tl = side_[v] ? other_[v] * tap : own_[v] * tap, tr = side_[v] ? own_[v] * tap : other_[v] * tap;
         wl += tl, wr += tr;
-        phase_[v] += inc_[v];
+        phase_[v] += inc_[v];  // wrapped per sample (J-30: a per-block wrap rounds differently per block size)
+        if (phase_[v] >= 1.0) phase_[v] -= 1.0;
       }
       L[i] = flush(static_cast<float>(xl * dry + wl * norm * wet));
       R[i] = flush(static_cast<float>(xr * dry + wr * norm * wet));
     }
-    for (int v = 0; v < 2 * N; ++v) phase_[v] -= std::floor(phase_[v]);
   }
   Ring line_[2];
   double ph_ = 0;

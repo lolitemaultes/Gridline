@@ -598,6 +598,15 @@ void drawStatusBar(App& a) {
     rx -= theme::kS3;
     dl->AddCircleFilled(ImVec2(rx + 3, ty + fs * 0.5f + 1), 3.0f, P.text, 12);
   }
+  // J-30: samples still decoding in the background (their sounds play once ready).
+  if (const int loading = sampleCache().pending(); loading > 0) {
+    char lbuf[48];
+    std::snprintf(lbuf, sizeof lbuf, "Loading %d sample%s", loading, loading == 1 ? "" : "s");
+    const float lw = a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, lbuf).x;
+    rx -= lw + 12 + theme::kS4;
+    dl->AddCircleFilled(ImVec2(rx + 4, ty + fs * 0.5f + 1), 3.0f, P.hot, 12);
+    dl->AddText(a.fontRegular, fs, ImVec2(rx + 12, ty), P.textDim, lbuf);
+  }
   float leftMax = rx - wp.x - theme::kS3 * 2 - theme::kS4;
 
   // Left: the hint for whatever is hovered (notifications float above as cards).

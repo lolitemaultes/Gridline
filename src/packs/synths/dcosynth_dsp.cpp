@@ -122,6 +122,8 @@ class DcoSynth final : public Generator {
     double vcaSmooth = 0;
     double modOff[kDcTags] = {};  // matrix offsets of this voice (control rate)
     double p1Mod = 0, p2Mod = 0;
+    bool ctlValid = false;        // control values computed for the current period (J-30)
+    double ce1 = 0, ce2 = 0;      // envelope values of the current period
   };
 
   double P(int i) const { return static_cast<double>(p_[static_cast<size_t>(i)]); }
@@ -140,7 +142,6 @@ class DcoSynth final : public Generator {
     }
     // Global effects (modulated per control step through gfx()).
     chorus_.configure(sr_, ci(DcChorus, 4), P(DcChorusNoise), P(DcChorusGate) >= 0.5);
-    plate_.configure(sr_);
     ens_.sr = sr_;
     dly_.configure(sr_);
     const bool arp = P(DcArpOn) >= 0.5;
@@ -187,6 +188,9 @@ class DcoSynth final : public Generator {
     plate_.dry = std::min(1.0, gv(DcRevDry) * 1.25);
     plate_.early = gv(DcRevEarly);
     plate_.wet = gv(DcRevWet);
+    // J-30: the plate's filters and line lengths follow the values just set
+    // (configured once per process call, they used the previous chunk's values).
+    plate_.configure(sr_);
     ens_.on = P(DcEnsOn) >= 0.5;
     ens_.delayMs = 2.0 + 30.0 * gv(DcEnsDelay);
     ens_.fb = gv(DcEnsFb) * 0.8;
@@ -315,6 +319,7 @@ class DcoSynth final : public Generator {
     ++heldCount_;
   }
   void trigger(Voice& v) {
+    v.ctlValid = false;  // fresh control values from this sample on (J-30)
     applyEnvs(v);
     v.e1.on();
     v.e2.on();
@@ -435,7 +440,10 @@ class DcoSynth final : public Generator {
   void render(float* L, float* R, int n) override {
     int pos = 0;
     while (pos < n) {
-      int m = std::min(n - pos, kCtl);
+      // Control periods of kCtl samples on the instrument's own clock (J-30:
+      // periods counted from each render call made the sound depend on the
+      // host block size).
+      int m = std::min(n - pos, kCtl - ctlPhase_);
       if (arpOn_) {
         if (arpCount_ > 0 && arpCounter_ <= 0) {
           arpFire();
@@ -449,6 +457,7 @@ class DcoSynth final : public Generator {
         if (arpNoteOn_) m = std::min(m, std::max(1, static_cast<int>(std::ceil(arpGateLeft_))));
       }
       renderChunk(L + pos, R + pos, m);
+      ctlPhase_ = (ctlPhase_ + m) % kCtl;
       if (arpOn_) {
         if (arpCount_ > 0) arpCounter_ -= m;
         if (arpNoteOn_) arpGateLeft_ -= m;
@@ -458,39 +467,46 @@ class DcoSynth final : public Generator {
   }
 
   void renderChunk(float* L, float* R, int n) {
-    // LFOs (global).
-    double lfoVal[2], lfo1Sin;
-    for (int l = 0; l < 2; ++l) {
-      lfoPh_[l] += lfoRate(l) / sr_ * n;
-      while (lfoPh_[l] >= 1.0) {
-        lfoPh_[l] -= 1.0;
-        ++lfoCycle_[l];
+    // Control values are computed at the start of each control period (for
+    // the whole period) and held for its later chunks (J-30).
+    const bool fresh = ctlPhase_ == 0;
+    if (fresh) {
+      // LFOs (global).
+      for (int l = 0; l < 2; ++l) {
+        lfoPh_[l] += lfoRate(l) / sr_ * kCtl;
+        while (lfoPh_[l] >= 1.0) {
+          lfoPh_[l] -= 1.0;
+          ++lfoCycle_[l];
+        }
+        const double delay = (l == 0 ? gv(DcLfo1Delay) : gv(DcLfo2Delay)) * 5.0;
+        lfoFade_[l] = delay < 1e-3 ? 1.0 : std::min(1.0, lfoFade_[l] + kCtl / (delay * sr_));
       }
-      const double delay = (l == 0 ? gv(DcLfo1Delay) : gv(DcLfo2Delay)) * 5.0;
-      lfoFade_[l] = delay < 1e-3 ? 1.0 : std::min(1.0, lfoFade_[l] + n / (delay * sr_));
-    }
-    {
       const double ph = lfoPh_[0];
-      lfoVal[0] = (ph < 0.25 ? 4 * ph : ph < 0.75 ? 2 - 4 * ph : 4 * ph - 4) * lfoFade_[0];
-      lfo1Sin = std::sin(dsp::kTwoPi * ph) * lfoFade_[0];
-      lfoVal[1] = lfoShape2(lfoPh_[1], lfoCycle_[1]) * lfoFade_[1];
+      lfoVal_[0] = (ph < 0.25 ? 4 * ph : ph < 0.75 ? 2 - 4 * ph : 4 * ph - 4) * lfoFade_[0];
+      lfo1Sin_ = std::sin(dsp::kTwoPi * ph) * lfoFade_[0];
+      lfoVal_[1] = lfoShape2(lfoPh_[1], lfoCycle_[1]) * lfoFade_[1];
+      // Global matrix (FX destinations follow the newest voice's envelopes).
+      globalMod_.fill(0.0);
+      const Voice* newest = nullptr;
+      for (const auto& v : voices_)
+        if (v.on && (!newest || v.age > newest->age)) newest = &v;
+      for (int r = 0; r < kDcMatrix; ++r) {
+        if (mxSrc_[r] == 0 || mxDst_[r] == 0 || mxDst_[r] > kDcTags) continue;
+        globalMod_[static_cast<size_t>(mxDst_[r] - 1)] += mxAmt_[r] * source(mxSrc_[r], newest, lfoVal_[0], lfo1Sin_, lfoVal_[1]);
+      }
     }
-    // Global matrix (FX destinations follow the newest voice's envelopes).
-    globalMod_.fill(0.0);
-    const Voice* newest = nullptr;
-    for (const auto& v : voices_)
-      if (v.on && (!newest || v.age > newest->age)) newest = &v;
-    for (int r = 0; r < kDcMatrix; ++r) {
-      if (mxSrc_[r] == 0 || mxDst_[r] == 0 || mxDst_[r] > kDcTags) continue;
-      globalMod_[static_cast<size_t>(mxDst_[r] - 1)] += mxAmt_[r] * source(mxSrc_[r], newest, lfoVal[0], lfo1Sin, lfoVal[1]);
-    }
+    const double* lfoVal = lfoVal_;
+    const double lfo1Sin = lfo1Sin_;
     setupFx();
     std::fill(bufL_.begin(), bufL_.begin() + n, 0.f);
     std::fill(bufR_.begin(), bufR_.begin() + n, 0.f);
     bool any = false;
     for (auto& v : voices_)
       if (v.on) {
-        renderVoice(v, n, lfoVal[0], lfo1Sin, lfoVal[1]);
+        // Voices compute their controls at period starts, and when they start mid-period
+        // (for the rest of it).
+        const bool ctl = fresh || !v.ctlValid;
+        renderVoice(v, n, lfoVal[0], lfo1Sin, lfoVal[1], ctl, kCtl - ctlPhase_);
         any = true;
       }
     float* bl = bufL_.data();
@@ -540,40 +556,46 @@ class DcoSynth final : public Generator {
     }
   }
 
-  void renderVoice(Voice& v, int n, double lfo1, double lfo1Sin, double lfo2) {
-    // Per-voice matrix.
-    std::fill(std::begin(v.modOff), std::end(v.modOff), 0.0);
-    v.p1Mod = v.p2Mod = 0;
-    for (int r = 0; r < kDcMatrix; ++r) {
-      const int d = mxDst_[r];
-      if (mxSrc_[r] == 0 || d == 0) continue;
-      const double val = mxAmt_[r] * source(mxSrc_[r], &v, lfo1, lfo1Sin, lfo2);
-      if (d == kDcDestDco1Pitch) v.p1Mod += val * 12.0;
-      else if (d == kDcDestDco2Pitch) v.p2Mod += val * 12.0;
-      else if (d >= 1 && d <= kDcTags) v.modOff[d - 1] += val;
-    }
-    // Glide.
-    if (v.glideT < 1.0) {
-      v.glideT = std::min(1.0, v.glideT + n / std::max(1.0, v.glideLen * sr_));
-      if (ci(DcPortaMode, 2) == 0) {  // exponential approach
-        const double k = 1.0 - std::exp(-5.0 * n / std::max(1.0, v.glideLen * sr_));
-        v.pitch += (v.target - v.pitch) * k;
-        if (v.glideT >= 1.0) v.pitch = v.target;
-      } else {
-        v.pitch = v.glideFrom + (v.target - v.glideFrom) * v.glideT;
-      }
-    } else {
-      v.pitch = v.target;
-    }
-    applyEnvs(v);
-    const double e1 = v.e1.tick(n);
-    const double e2 = v.e2.tick(n);
+  // `ctl`: compute the voice's control values (matrix, glide, envelopes) for
+  // the next `adv` samples; otherwise the chunk reuses them (J-30).
+  void renderVoice(Voice& v, int n, double lfo1, double lfo1Sin, double lfo2, bool ctl, int adv) {
     const int vca = panelOne_ ? (P(DcVcaSrc) >= 0.5 ? 1 : 0) : ci(DcVcaSrc, 3);
-    const bool envDone = vca == 0 ? v.e1.stage == 0 : vca == 2 ? v.e2.stage == 0 : (!v.held && !v.sustained && v.vcaSmooth < 1e-4);
-    if (!v.held && !v.sustained && envDone) {
-      v.on = false;
-      return;
+    if (ctl) {
+      v.ctlValid = true;
+      // Per-voice matrix.
+      std::fill(std::begin(v.modOff), std::end(v.modOff), 0.0);
+      v.p1Mod = v.p2Mod = 0;
+      for (int r = 0; r < kDcMatrix; ++r) {
+        const int d = mxDst_[r];
+        if (mxSrc_[r] == 0 || d == 0) continue;
+        const double val = mxAmt_[r] * source(mxSrc_[r], &v, lfo1, lfo1Sin, lfo2);
+        if (d == kDcDestDco1Pitch) v.p1Mod += val * 12.0;
+        else if (d == kDcDestDco2Pitch) v.p2Mod += val * 12.0;
+        else if (d >= 1 && d <= kDcTags) v.modOff[d - 1] += val;
+      }
+      // Glide.
+      if (v.glideT < 1.0) {
+        v.glideT = std::min(1.0, v.glideT + adv / std::max(1.0, v.glideLen * sr_));
+        if (ci(DcPortaMode, 2) == 0) {  // exponential approach
+          const double k = 1.0 - std::exp(-5.0 * adv / std::max(1.0, v.glideLen * sr_));
+          v.pitch += (v.target - v.pitch) * k;
+          if (v.glideT >= 1.0) v.pitch = v.target;
+        } else {
+          v.pitch = v.glideFrom + (v.target - v.glideFrom) * v.glideT;
+        }
+      } else {
+        v.pitch = v.target;
+      }
+      applyEnvs(v);
+      v.ce1 = v.e1.tick(adv);
+      v.ce2 = v.e2.tick(adv);
+      const bool envDone = vca == 0 ? v.e1.stage == 0 : vca == 2 ? v.e2.stage == 0 : (!v.held && !v.sustained && v.vcaSmooth < 1e-4);
+      if (!v.held && !v.sustained && envDone) {
+        v.on = false;
+        return;
+      }
     }
+    const double e1 = v.ce1, e2 = v.ce2;
     const double lfoA = lfo1, lfoB = lfo2;
     const double oct = (ci(DcOctave, 3) - 1) * 12.0 + bip(P(DcMasterTune));
     auto dcoDepth = [&](int amt, int wide) {
@@ -815,6 +837,8 @@ class DcoSynth final : public Generator {
   bool panelOne_ = false;
   double sr_ = 44100, tempo_ = 120;
   double lfoPh_[2] = {0, 0}, lfoFade_[2] = {1, 1};
+  double lfoVal_[2] = {0, 0}, lfo1Sin_ = 0;  // LFO values of the current control period
+  int ctlPhase_ = 0;                         // position in the control period (own clock, J-30)
   uint64_t lfoCycle_[2] = {0, 0};
   double lastPitch_ = -1, altSign_ = 1;
   int heldCount_ = 0;

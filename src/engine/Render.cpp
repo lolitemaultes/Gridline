@@ -28,6 +28,7 @@ AudioBuffer renderSong(const Song& source, const RenderOptions& opt) {
   eng.setProgram(prog);
   eng.setLooping(false);
   eng.setOffline(true);
+  eng.setFixedBlock(AudioEngine::kOfflineBlock);  // J-30: identical output for any opt.blockSize
   if (opt.patternMode) {
     eng.setMode(PlayMode::Pattern);
     eng.setPattern(opt.pattern);
@@ -174,6 +175,10 @@ RenderResult renderAudio(const Song& source, const RenderJob& job) {
   AudioEngine eng(sr);
   eng.setProgram(prog);
   eng.setOffline(true);
+  // J-30: fixed engine blocks (identical output for any job.blockSize); the
+  // stop at the end of the body lands exactly on its sample.
+  eng.setFixedBlock(AudioEngine::kOfflineBlock);
+  eng.addBlockBarrier(body);
   eng.setInterpolation(static_cast<int>(job.interp));
   eng.setThreads(job.threads);
   if (job.scope == RenderScope::Pattern) {

@@ -529,6 +529,10 @@ struct MbEnv {
     a = t / (1.0 + t);
     b = (1.0 - t) / (1.0 + t);
   }
+  // Held peak, decaying exponentially (time constant rel × fac) for 10 s after
+  // it was set. J-30: the decay steps by a cached per-sample factor instead of
+  // an exp() per sample (re-anchored exactly whenever the time constant
+  // changes; drift < 1e-10 relative over the 10 s).
   double peakHold(double x) {
     if (x > held) {
       held = peak0 = x;
@@ -538,11 +542,19 @@ struct MbEnv {
         else fac = std::max(0.01, 1.0 - 0.4 * (x - 1.0));
       }
     } else if (count <= static_cast<int64_t>(sr * 10.0)) {
-      held = peak0 * std::exp(-(static_cast<double>(count) / sr) / (rel * (adaptive ? fac : 1.0)));
+      const double tau = rel * (adaptive ? fac : 1.0);
+      if (count == 0 || tau != stepTau || sr != stepSr) {
+        held = peak0 * std::exp(-(static_cast<double>(count) / sr) / tau);
+        step = std::exp(-(1.0 / sr) / tau);
+        stepTau = tau, stepSr = sr;
+      } else {
+        held *= step;
+      }
       ++count;
     }
     return held;
   }
+  double step = 1, stepTau = -1, stepSr = 0;
   double over(double x) const {
     double lo = kk * T - 0.005, hi = 2.0 * T - lo;
     if (x < lo) return 0.0;
@@ -628,6 +640,37 @@ struct MbFir {
   }
 };
 
+// The three band FIRs over one shared input history (J-30): the history is
+// stored twice in a row so each tap sum reads contiguous memory without a
+// wrap test, and the three sums share every load. Each sum adds the same
+// products in the same order as MbFir::run (identical output).
+struct MbFirBank {
+  static constexpr int N = MbFir::N;
+  double h[3][N] = {};
+  double z[2][2 * N] = {};
+  int pos = 0;
+  void run(int c, double x, double out[3]) {
+    double* zz = z[c];
+    zz[pos] = x;
+    zz[pos + N] = x;
+    const double* p = zz + pos + N;  // p[-i] = input i samples ago
+    double s0 = 0, s1 = 0, s2 = 0;
+    for (int i = 0; i < N; ++i) {
+      const double v = p[-i];
+      s0 += h[0][i] * v;
+      s1 += h[1][i] * v;
+      s2 += h[2][i] * v;
+    }
+    out[0] = s0, out[1] = s1, out[2] = s2;
+  }
+  void advance() { pos = pos + 1 == N ? 0 : pos + 1; }
+  void clear() {
+    for (auto& r : z)
+      for (double& v : r) v = 0;
+    pos = 0;
+  }
+};
+
 class MultibandK2 final : public Effect {
  public:
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
@@ -656,7 +699,7 @@ class MultibandK2 final : public Effect {
       gainB[b] = dbToGain(prm(s, MbLowGain + b * 3));
       state[b] = std::clamp(iprm(s, MbLowState + b), 0, 2);
     }
-    float minGr[3] = {0, 0, 0};
+    double minCg[3] = {1, 1, 1};  // lowest compressor gain of the block (meter; dB taken once)
     double outPk = 0;
     for (int i = 0; i < n; ++i) {
       double x[2] = {L[i], R[i]}, band[3][2];
@@ -668,7 +711,7 @@ class MultibandK2 final : public Effect {
         if (state[b] == 0) {
           double cg = env_[b].gain(std::max(std::fabs(band[b][0]), std::fabs(band[b][1])));
           g *= cg;
-          minGr[b] = std::min(minGr[b], static_cast<float>(gainToDb(cg)));
+          minCg[b] = std::min(minCg[b], cg);
         }
         out[0] += band[b][0] * g;
         out[1] += band[b][1] * g;
@@ -683,7 +726,7 @@ class MultibandK2 final : public Effect {
       R[i] = static_cast<float>(out[1]);
       outPk = std::max(outPk, std::max(std::fabs(out[0]), std::fabs(out[1])));
     }
-    for (int b = 0; b < 3; ++b) gr_[b] = minGr[b];
+    for (int b = 0; b < 3; ++b) gr_[b] = std::min(0.0f, static_cast<float>(gainToDb(minCg[b])));
     level_ = static_cast<float>(gainToDb(outPk));
   }
 
@@ -700,7 +743,7 @@ class MultibandK2 final : public Effect {
     for (auto& e : limEnv_) e.reset();
     for (auto& c : iir_)
       for (auto& q : c) q.clear();
-    for (auto& f : fir_) f.clear();
+    firBank_.clear();
     for (auto& c : lr_)
       for (auto& q : c) q.clear();
   }
@@ -743,12 +786,15 @@ class MultibandK2 final : public Effect {
     fir_[0].design(0, 0, f_[0], sr_);
     fir_[1].design(2, f_[2], f_[3], sr_);
     fir_[2].design(1, f_[1], 0, sr_);
+    for (int b = 0; b < 3; ++b) std::copy(std::begin(fir_[b].h), std::end(fir_[b].h), firBank_.h[b]);
     for (int c = 0; c < 2; ++c) limEnv_[c].set(sr_, 0.871, 0.75, 3.0e-6, 0.01495, std::sqrt((0.81095 - 0.005) / 0.995));
   }
   void splitSample(const double* x, double band[3][2]) {
     for (int c = 0; c < 2; ++c) {
       if (ftype_ == 1) {
-        for (int b = 0; b < 3; ++b) band[b][c] = fir_[b].run(c, x[c]);
+        double o[3];
+        firBank_.run(c, x[c], o);
+        for (int b = 0; b < 3; ++b) band[b][c] = o[b];
       } else if (ftype_ == 0) {
         Biquad* f = iir_[c];
         band[0][c] = f[1].process(f[0].process(x[c]));
@@ -762,14 +808,14 @@ class MultibandK2 final : public Effect {
         band[2][c] = f[7].process(f[6].process(rest));
       }
     }
-    if (ftype_ == 1)
-      for (auto& f : fir_) f.advance();
+    if (ftype_ == 1) firBank_.advance();
   }
 
   static int filterType(const PluginState& s) { return std::clamp(iprm(s, pp::MbFilterType), 0, 2); }
   MbEnv env_[3], limEnv_[2];
   Biquad iir_[2][8], lr_[2][12];
-  MbFir fir_[3];
+  MbFir fir_[3];  // designs (their histories are unused: firBank_ runs them)
+  MbFirBank firBank_;
   double f_[4] = {-1, -1, -1, -1}, sr_ = 0;
   int ftype_ = -1;
   float gr_[3] = {0, 0, 0}, level_ = -120;
