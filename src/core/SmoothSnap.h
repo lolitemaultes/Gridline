@@ -100,4 +100,38 @@ class Tracker {
   std::unordered_map<uint64_t, Entry> map_;
 };
 
+// J-67: single snapped values that glide while their drag is under way
+// (time-selection edges, automation points, slice and marker lines). Unlike
+// Tracker, a key remembers where it is drawn while it rests, so the next
+// snapped step glides from there; keys not followed for `staleAfter`
+// seconds are forgotten. `animate` false (smooth snapping off, snap off, no
+// drag) draws the value exactly where it is: no lag.
+class Glides {
+ public:
+  double follow(uint64_t key, double target, double now, bool animate, double eps, double tau = kTau) {
+    auto it = map_.find(key);
+    if (!animate || it == map_.end()) {
+      if (animate) map_[key] = Entry{target, now};
+      else if (it != map_.end()) map_.erase(it);
+      return target;
+    }
+    Entry& e = it->second;
+    double v = approach(e.pos, target, now - e.time, tau);
+    if (std::fabs(v - target) <= eps) v = target;
+    e.pos = v;
+    e.time = now;
+    return v;
+  }
+  void prune(double now, double staleAfter = 0.5) {
+    for (auto it = map_.begin(); it != map_.end();) it = now - it->second.time > staleAfter ? map_.erase(it) : std::next(it);
+  }
+  size_t size() const { return map_.size(); }
+
+ private:
+  struct Entry {
+    double pos = 0, time = 0;
+  };
+  std::unordered_map<uint64_t, Entry> map_;
+};
+
 }  // namespace gl::smooth

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include "../../app/App.h"
+#include "../../core/SmoothScroll.h"
 #include "../../app/PluginSkin.h"
 #include "../PacksUi.h"
 #include "../../core/PianoRollScript.h"
@@ -67,6 +68,7 @@ struct Session {
 
   // view
   double viewStart = 0, viewLen = 0;  // frames
+  smoothscroll::Axis viewAx;          // J-67: wheel scrolling glides (no elastic edges: frames outside the take)
   float vZoom = 1.f;
   Range sel;
   int64_t cursor = 0;

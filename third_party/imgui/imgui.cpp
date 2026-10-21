@@ -8571,6 +8571,7 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
 
         // Apply scrolling
         window->Scroll = CalcNextScrollFromScrollTargetAndClamp(window);
+        window->Scroll += window->ScrollOverscroll; // GRIDLINE PATCH (J-67): elastic edges (0 unless the app stretches this window)
         window->ScrollTarget = ImVec2(FLT_MAX, FLT_MAX);
         window->DecoInnerSizeX1 = window->DecoInnerSizeY1 = 0.0f;
 

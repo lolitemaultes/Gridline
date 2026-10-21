@@ -2960,6 +2960,7 @@ struct IMGUI_API ImGuiWindow
     ImVec2                  ScrollTarget;                       // target scroll position. stored as cursor position with scrolling canceled out, so the highest point is always 0.0f. (FLT_MAX for no change)
     ImVec2                  ScrollTargetCenterRatio;            // 0.0f = scroll so that target position is at top, 0.5f = scroll so that target position is centered
     ImVec2                  ScrollTargetEdgeSnapDist;           // 0.0f = no snapping, >0.0f snapping threshold
+    ImVec2                  ScrollOverscroll;                   // GRIDLINE PATCH (J-67): elastic overscroll past the limits, added to Scroll after the clamp (set by the app's smooth scroller)
     ImVec2                  ScrollbarSizes;                     // Size taken by each scrollbars on their smaller axis. Pay attention! ScrollbarSizes.x == width of the vertical scrollbar, ScrollbarSizes.y = height of the horizontal scrollbar.
     bool                    ScrollbarX, ScrollbarY;             // Are scrollbars visible?
     bool                    ScrollbarXStabilizeEnabled;         // Was ScrollbarX previously auto-stabilized?

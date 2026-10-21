@@ -17,6 +17,7 @@
 #include "../core/MidiTemplates.h"
 #include "../core/ProjectFiles.h"
 #include "../core/Settings.h"
+#include "../core/SmoothScroll.h"
 #include "../core/Templates.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/Sample.h"
@@ -39,6 +40,8 @@ struct PianoRollState {
   float pxPerTick = 0.25f;
   float rowHeight = 14.0f;
   float scrollX = 0, scrollY = -1;  // -1: centre on C5 at first open
+  bool centred = false;             // J-67: first-open centring done (scrollY < 0 is an elastic overscroll now)
+  smoothscroll::Axis axX, axY;      // J-67: smooth scrolling / elastic edges
   Tool tool = Tool::Draw;
   Snap snap = Snap::Line;
   Tick effGrid = 0;          // grid the last frame snapped to (for the snap chip)
@@ -77,6 +80,7 @@ struct PlaylistState {
   float pxPerTick = 0.17f;
   float trackHeight = 46.0f;
   float scrollX = 0, scrollY = 0;
+  smoothscroll::Axis axX, axY;  // J-67: smooth scrolling / elastic edges
   Tool tool = Tool::Draw;
   Snap snap = Snap::Line;
   Tick effGrid = 0;              // grid the last frame snapped to (for the snap chip)

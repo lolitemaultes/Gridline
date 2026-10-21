@@ -44,6 +44,7 @@
 #include "TrackModeUi.h"
 #include "ChopUi.h"
 #include "Shell.h"
+#include "SmoothScrollUi.h"
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -286,7 +287,16 @@ struct HeldNote {
 //   audio <wav> <track> <bar> (browser drop path) · dump (playlist clips to stdout)
 //   shot <out.ppm> (J-37: this frame is saved once rendered — frame sequences)
 //   key space (J-49) · transport (J-49: song position / playing / seek position to stdout)
+//   scroll dx dy (J-67: one trackpad-style two-axis scroll event, wheel units)
+//   momentum dx dy frames (J-67: a decaying scroll stream over the next frames, like an OS fling)
+//   trace on|off (J-67: per frame, the drawn scroll positions to stdout)
 std::string devShotPending;
+bool devTrace = false;
+ImVec2 devTraceWheel;  // this frame's wheel input (io clears it at the end of the frame)
+struct DevMomentum {
+  float dx = 0, dy = 0;
+  int left = 0;
+} devMomentum;
 struct DevInputLine {
   int frame = 0;
   std::string cmd, a0, a1, a2;
@@ -313,6 +323,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   // otherwise report the real pointer whenever the window has focus).
   static ImVec2 pointer(-FLT_MAX, -FLT_MAX);
   if (pointer.x > -FLT_MAX) io.AddMousePosEvent(pointer.x, pointer.y);
+  if (devMomentum.left > 0) {  // the fling decays like an OS momentum phase (~0.9 per 60 Hz frame);
+    // events land on two of every three frames, like OS event timing against frame timing
+    if (devMomentum.left % 3 != 0) io.AddMouseWheelEvent(devMomentum.dx, devMomentum.dy);
+    devMomentum.dx *= 0.9f;
+    devMomentum.dy *= 0.9f;
+    --devMomentum.left;
+  }
   for (const auto& l : script) {
     if (l.frame != frame) continue;
     if (l.cmd == "move") {
@@ -321,6 +338,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     }
     else if (l.cmd == "down" || l.cmd == "up") io.AddMouseButtonEvent(std::atoi(l.a0.c_str()), l.cmd == "down");
     else if (l.cmd == "wheel") io.AddMouseWheelEvent(0, std::strtof(l.a0.c_str(), nullptr));
+    else if (l.cmd == "scroll") io.AddMouseWheelEvent(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
+    else if (l.cmd == "momentum") devMomentum = {std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr), std::atoi(l.a2.c_str())};
+    else if (l.cmd == "trace") devTrace = l.a0 != "off";
     else if (l.cmd == "mod") {
       const bool on = std::atoi(l.a1.c_str()) != 0;
       ImGuiKey k = l.a0 == "ctrl" ? ImGuiMod_Ctrl : l.a0 == "shift" ? ImGuiMod_Shift : ImGuiMod_Alt;
@@ -940,7 +960,11 @@ int main(int argc, char** argv) {
         lastScaledEvent = g.InputEventsNextEventId - 1;  // already in logical pixels
       }
     }
+    scrollui::configure(app.settings);  // J-67: smooth scrolling / elastic edges for every ImGui scroll region
+    scrollui::beforeNewFrame();
     ImGui::NewFrame();
+    scrollui::afterNewFrame();
+    devTraceWheel = ImVec2(io.MouseWheelH, io.MouseWheel);
     {  // splash -> main window: the workspace fades in from the splash surface over the first frames
       static int introFrame = 0;
       if (introFrame < 12) {
@@ -1156,6 +1180,14 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
     if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
+    if (devTrace) {  // J-67: the scroll positions this frame was drawn with
+      ImGuiContext& g = *ImGui::GetCurrentContext();
+      const ImGuiWindow* hw = g.HoveredWindow;
+      std::printf("trace frame %d: wheel %.3f %.3f playlist %.2f %.2f piano %.2f %.2f window %s %.2f %.2f\n", frameNo, devTraceWheel.x, devTraceWheel.y,
+                  app.playlist.scrollX, app.playlist.scrollY, app.piano.scrollX, app.piano.scrollY, hw ? hw->Name : "-", hw ? hw->Scroll.x : 0.0f,
+                  hw ? hw->Scroll.y : 0.0f);
+      std::fflush(stdout);
+    }
     if (!devShotPending.empty()) {  // J-37: dev-input "shot" (frame sequences)
       writePpm(devShotPending.c_str(), fbW, fbH);
       devShotPending.clear();

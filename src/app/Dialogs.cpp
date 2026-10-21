@@ -24,6 +24,7 @@
 #include "Theme.h"
 #include "MidiUi.h"
 #include "SettingsPages.h"
+#include "SmoothScrollUi.h"
 #include "McpUi.h"
 #include "TemplateUi.h"
 #include "J59Ui.h"
@@ -455,6 +456,28 @@ void settingsWindow(App& a) {
       formLabel("Status bar");
       if (ImGui::Checkbox(i18n::tr("Show hints for the control under the mouse"), &hints)) st.set("ui.showHints", hints);
       hintSettingsPanel(a, fieldW);  // J-24
+      ui::EndSection();
+      // J-67: motion (smooth snapping of drags, smooth scrolling, elastic edges).
+      ui::BeginSection("MOTION");
+      const bool reduced = scrollui::systemReducedMotion();
+      ImGui::BeginDisabled(reduced);
+      bool smoothSnap = st.getBool("ui.smoothSnap") && !reduced;
+      bool smoothScroll = st.getBool("ui.smoothScroll") && !reduced, elastic = st.getBool("ui.elasticEdges") && !reduced;
+      formLabel("Dragging");
+      if (ImGui::Checkbox(i18n::tr("Smooth snapping"), &smoothSnap)) st.set("ui.smoothSnap", smoothSnap);
+      ui::Hint("Snapped drags (clips, notes, selections, points, cut lines) glide from grid line to grid line");
+      formLabel("Scrolling");
+      if (ImGui::Checkbox(i18n::tr("Smooth scrolling"), &smoothScroll)) st.set("ui.smoothScroll", smoothScroll);
+      ui::Hint("Mouse wheel steps glide to their row or step; trackpads follow the fingers directly");
+      formLabel("");
+      if (ImGui::Checkbox(i18n::tr("Elastic edges"), &elastic)) st.set("ui.elasticEdges", elastic);
+      ui::Hint("Scrolling past the start or end of a view stretches a little and springs back");
+      ImGui::EndDisabled();
+      if (reduced) {
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Off while the system asks for reduced motion."));
+        ImGui::PopTextWrapPos();
+      }
       ui::EndSection();
       // J-48: interface sounds.
       ui::BeginSection("INTERFACE SOUNDS");

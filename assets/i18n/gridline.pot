@@ -3345,7 +3345,7 @@ msgstr ""
 msgid "Slip"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Menus.cpp
+#: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/Menus.cpp
 msgid "Smooth snapping"
 msgstr ""
 
@@ -3678,6 +3678,14 @@ msgid "Don't save"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Dragging"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Elastic edges"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Every keyboard shortcut: search, change, reset"
 msgstr ""
 
@@ -3802,7 +3810,15 @@ msgid "MIXER"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "MOTION"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Maximum levels"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Mouse wheel steps glide to their row or step; trackpads follow the fingers directly"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -3827,6 +3843,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Occasionally (every 10 minutes)"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Off while the system asks for reduced motion."
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -3917,6 +3937,14 @@ msgstr ""
 msgid "Scales the whole interface; applied as you drag"
 msgstr ""
 
+#: src/app/Dialogs.cpp
+msgid "Scrolling"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Scrolling past the start or end of a view stretches a little and springs back"
+msgstr ""
+
 #: src/app/Dialogs.cpp src/app/Menus.cpp
 msgid "Settings"
 msgstr ""
@@ -3927,6 +3955,14 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Show hints for the control under the mouse"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Smooth scrolling"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Snapped drags (clips, notes, selections, points, cut lines) glide from grid line to grid line"
 msgstr ""
 
 #: src/app/Dialogs.cpp

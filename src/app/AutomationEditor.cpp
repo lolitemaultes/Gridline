@@ -9,6 +9,7 @@
 #include "../core/I18n.h"
 #include "Keys.h"
 #include "AutomationEditor.h"
+#include "SmoothScrollUi.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -73,6 +74,7 @@ struct Editor {
   ObjectId autoId = kNoId, placement = kNoId;
   ae::Selection sel;
   float pxPerTick = 0.3f, scrollX = 0;
+  smoothscroll::Axis axX;  // J-67: smooth scrolling / elastic left edge
   bool fit = true;
   Snap snap = Snap::Line;
   Tool tool = Tool::Draw;
@@ -85,6 +87,7 @@ struct Editor {
   int anchor = -1;
   float baseTension = 0;
   uint64_t key = 0;
+  Tick moveDelta = 0;  // J-67: snapped time shift of the points being moved (their drawing glides to it)
   // Menus and tools.
   int menuPoint = -1;
   double valueClip = 0;
@@ -759,7 +762,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
     E.fit = false;
   }
   E.pxPerTick = static_cast<float>(timeline::clampZoom(s, E.pxPerTick));
-  E.scrollX = std::max(0.0f, E.scrollX);
+  scrollui::clampOuter(E.axX, E.scrollX, 0.0f, 1e9f);  // J-67: the view's own glide / overscroll is left alone
   auto xOfSong = [&](double t) { return gMin.x + static_cast<float>(t) * E.pxPerTick - E.scrollX; };
   auto xOf = [&](Tick content) { return xOfSong(static_cast<double>(base + content)); };
   auto songAt = [&](float x) { return static_cast<double>((x - gMin.x + E.scrollX) / E.pxPerTick); };
@@ -768,12 +771,16 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   auto valueAtY = [&](float y) { return std::clamp(static_cast<double>((y1 - y) / (y1 - y0)), 0.0, 1.0); };
 
   // Wheel: scroll / zoom.
+  // J-67: through the smooth scroller (notches glide 80 px, trackpads 1:1, elastic left edge).
+  float wheelX = 0;
+  bool notchX = false;
   if (hovered && io.MouseWheel != 0) {
     if (io.KeyCtrl) timeline::zoomAt(s, E.pxPerTick, E.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gMin.x);
-    else E.scrollX = std::max(0.0f, E.scrollX - io.MouseWheel * 80);
+    else wheelX -= io.MouseWheel * 80, notchX = smoothscroll::isNotch(io.MouseWheel);
   }
-  if (hovered && io.MouseWheelH != 0) E.scrollX = std::max(0.0f, E.scrollX - io.MouseWheelH * 80);
-  if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) E.scrollX = std::max(0.0f, E.scrollX - io.MouseDelta.x);
+  if (hovered && io.MouseWheelH != 0) wheelX -= io.MouseWheelH * 80, notchX = smoothscroll::isNotch(io.MouseWheelH);
+  if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) wheelX -= io.MouseDelta.x, notchX = false;
+  scrollui::step(E.axX, E.scrollX, wheelX, notchX, 0.0f, 1e9f);
   const Tick snapG = timeline::snapGrid(s, E.snap, E.pxPerTick, io.KeyAlt);
   auto snapContent = [&](Tick c) { return timeline::snapTick(base + c, snapG, E.snap) - base; };
 
@@ -818,6 +825,25 @@ void drawCanvas(App& a, const AutomationClip& ac) {
       }
     }
   }
+  // J-67: points being moved glide between grid lines (smooth motion, like
+  // clip moves): drawn from a copy shifted by the eased minus the snapped
+  // shift; the document keeps the snapped positions.
+  if (E.g != Editor::Move) E.moveDelta = 0;
+  const AutomationClip* drawAc = &ac;
+  AutomationClip glided;
+  {
+    const double d = static_cast<double>(E.moveDelta);
+    const double off = scrollui::glide(0x41454D4F5645ull, d, E.g == Editor::Move && snapG > 1, 0.5) - d;
+    if (off != 0 && !E.sel.empty()) {
+      glided = ac;
+      for (int i : E.sel)
+        if (i >= 0 && static_cast<size_t>(i) < glided.points.size())
+          glided.points[static_cast<size_t>(i)].pos = std::max<Tick>(0, glided.points[static_cast<size_t>(i)].pos + static_cast<Tick>(std::llround(off)));
+      for (size_t i = 1; i < glided.points.size(); ++i)  // keep the drawn copy in order while it glides
+        glided.points[i].pos = std::max(glided.points[i].pos, glided.points[i - 1].pos);
+      drawAc = &glided;
+    }
+  }
   // ---- the curve ----
   const ImU32 col = theme::rgb(ac.color);
   const ImU32 ink = theme::mix(col, P.paper, 0.35f);
@@ -827,7 +853,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
     for (float x = std::floor(x0); x <= x1; x += 1.0f) {
       double song = songAt(x);
       bool inClip = song >= static_cast<double>(vis0) && song <= static_cast<double>(vis1);
-      float y = yOf(automationValue(ac, song - static_cast<double>(base)));
+      float y = yOf(automationValue(*drawAc, song - static_cast<double>(base)));
       dl->AddLine(ImVec2(x, y), ImVec2(x, gMax.y), theme::withAlpha(col, inClip ? (E.preview ? 0.08f : 0.16f) : 0.05f));
       if (x > std::floor(x0)) dl->AddLine(ImVec2(x - 1, prevY), ImVec2(x, y), inClip ? (E.preview ? theme::withAlpha(ink, 0.4f) : ink) : theme::withAlpha(ink, 0.35f), 1.6f);
       prevY = y;
@@ -862,17 +888,18 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   }
   if (E.g == Editor::Tension) hoverHandle = E.anchor;
   if (!E.preview) {
-    for (size_t i = 1; i < pts.size(); ++i) {
-      if (pts[i].shape == AutoShape::Hold || xOf(pts[i].pos) - xOf(pts[i - 1].pos) < 16) continue;
-      double mid = 0.5 * static_cast<double>(pts[i - 1].pos + pts[i].pos);
-      ImVec2 c(xOfSong(mid + static_cast<double>(base)), yOf(automationValue(ac, mid)));
+    const auto& dpts = drawAc->points;  // J-67: drawn (possibly gliding) positions
+    for (size_t i = 1; i < dpts.size(); ++i) {
+      if (dpts[i].shape == AutoShape::Hold || xOf(dpts[i].pos) - xOf(dpts[i - 1].pos) < 16) continue;
+      double mid = 0.5 * static_cast<double>(dpts[i - 1].pos + dpts[i].pos);
+      ImVec2 c(xOfSong(mid + static_cast<double>(base)), yOf(automationValue(*drawAc, mid)));
       if (c.x < gMin.x - 8 || c.x > gMax.x + 8) continue;
       bool hot = static_cast<int>(i) == hoverHandle;
       dl->AddCircleFilled(c, hot ? 4.5f : 3.5f, P.field, 12);
       dl->AddCircle(c, hot ? 4.5f : 3.5f, hot ? P.paper : theme::withAlpha(ink, 0.8f), 12, 1.3f);
     }
-    for (size_t i = 0; i < pts.size(); ++i) {
-      ImVec2 c(xOf(pts[i].pos), yOf(pts[i].value));
+    for (size_t i = 0; i < dpts.size(); ++i) {
+      ImVec2 c(xOf(dpts[i].pos), yOf(dpts[i].value));
       if (c.x < gMin.x - 8 || c.x > gMax.x + 8) continue;
       bool sel = E.sel.count(static_cast<int>(i)) > 0, hot = static_cast<int>(i) == hoverPoint;
       dl->AddCircleFilled(c, hot ? 6.0f : 5.0f, sel ? P.hot : P.field, 16);
@@ -1024,6 +1051,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
           dv = 0;
         }
         ae::Points out;
+        E.moveDelta = target - an.pos;
         ae::movePoints(E.base, E.sel, target - an.pos, dv, out);
         if (out != a.doc.song().automation(E.autoId)->points) editPoints(a, "move automation points", [&](ae::Points& p) { p = out; }, E.key);
         break;

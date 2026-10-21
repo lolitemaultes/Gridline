@@ -1,0 +1,16 @@
+# J-67 regression: piano roll scrolled into its top/left edges, then the browser list into its top
+5 move 600 580
+6 trace on
+20 wheel 60
+30 momentum 0.5 0.8 40
+80 wheel 1
+84 wheel 1
+88 wheel 1
+92 wheel 1
+96 scroll 1 0
+100 scroll 1 0
+110 move 100 400
+112 wheel -2
+130 momentum 0 0.8 40
+180 wheel 1
+184 wheel 1

@@ -8,6 +8,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "App.h"
+#include "SmoothScrollUi.h"
 #include "AutomationEditor.h"
 #include "EditTools.h"
 #include "ScriptUi.h"
@@ -418,7 +419,7 @@ void drawPianoRoll(App& a) {
   // First open: centre on the notes (C5-ish at the top when there are none).
   // Re-centred for a few frames while the dock layout settles the window size.
   static int settleFrames = 0;
-  if (st.scrollY < 0) settleFrames = 8;
+  if (!st.centred) settleFrames = 8, st.centred = true;  // J-67: not "scrollY < 0": that is an elastic overscroll now
   if (settleFrames > 0) {
     --settleFrames;
     st.scrollY = (127 - 72) * rowH;
@@ -428,8 +429,10 @@ void drawPianoRoll(App& a) {
       st.scrollY = (127 - (lo + hi) * 0.5f) * rowH - gridH * 0.5f;
     }
   }
-  st.scrollY = std::clamp(st.scrollY, 0.0f, std::max(0.0f, 128 * rowH - gridH));
-  st.scrollX = std::clamp(st.scrollX, 0.0f, std::max(0.0f, viewTicks * st.pxPerTick - gridW * 0.5f));
+  // J-67: outside writes are clamped here; the view's own glide / elastic
+  // overscroll is left to scrollui::step below.
+  scrollui::clampOuter(st.axY, st.scrollY, 0.0f, std::max(0.0f, 128 * rowH - gridH));
+  scrollui::clampOuter(st.axX, st.scrollX, 0.0f, std::max(0.0f, viewTicks * st.pxPerTick - gridW * 0.5f));
 
   auto xOf = [&](Tick t) { return gridMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; };
   auto yOf = [&](int pitch) { return gridMin.y + (127 - pitch) * rowH - st.scrollY; };
@@ -469,22 +472,35 @@ void drawPianoRoll(App& a) {
   const Tick defLen = st.lastLength > 0 ? st.lastLength : std::max<Tick>(1, s.ppq / 4);
 
   // Scroll & zoom.
+  // J-67: wheel / trackpad input goes through the smooth scroller: a notch
+  // glides three keys (or 60 px) and lands on them, trackpad deltas stay 1:1,
+  // the edges stretch a little and spring back instead of jumping.
+  float wheelX = 0, wheelY = 0;
+  bool notchX = false, notchY = false;
   if (hovered && io.MouseWheel != 0) {
     if (io.KeyCtrl) {
       timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gridMin.x);
     } else if (io.KeyAlt) {
       st.rowHeight = std::clamp(st.rowHeight + io.MouseWheel, 7.0f, 28.0f);
     } else if (io.KeyShift) {
-      st.scrollX -= io.MouseWheel * 60;
+      wheelX -= io.MouseWheel * 60;
+      notchX = smoothscroll::isNotch(io.MouseWheel);
     } else {
-      st.scrollY -= io.MouseWheel * rowH * 3;
+      wheelY -= io.MouseWheel * rowH * 3;
+      notchY = smoothscroll::isNotch(io.MouseWheel);
     }
   }
-  if (hovered && io.MouseWheelH != 0) st.scrollX -= io.MouseWheelH * 60;
-  if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
-    st.scrollX -= io.MouseDelta.x;
-    st.scrollY -= io.MouseDelta.y;
+  if (hovered && io.MouseWheelH != 0) {
+    wheelX -= io.MouseWheelH * 60;
+    notchX = smoothscroll::isNotch(io.MouseWheelH);
   }
+  if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+    wheelX -= io.MouseDelta.x;
+    wheelY -= io.MouseDelta.y;
+    notchX = notchY = false;
+  }
+  scrollui::step(st.axX, st.scrollX, wheelX, notchX, 0.0f, std::max(0.0f, viewTicks * st.pxPerTick - gridW * 0.5f));
+  scrollui::step(st.axY, st.scrollY, wheelY, notchY, 0.0f, std::max(0.0f, 128 * st.rowHeight - gridH));
 
   // ---------------- draw: grid ----------------
   dl->PushClipRect(gridMin, gridMax, true);
@@ -552,7 +568,7 @@ void drawPianoRoll(App& a) {
     const double now = ImGui::GetTime();
     if (!noteAnim.empty() && noteAnimT.pat == patId && noteAnimT.ch == chId) {
       const double epsT = 0.25 / std::max(1e-6, static_cast<double>(st.pxPerTick));
-      const auto v = noteAnim.follow(0, noteAnimT.d, now, a.settings.getBool("ui.smoothSnap") && snapG > 1, {epsT, 0.01, epsT});
+      const auto v = noteAnim.follow(0, noteAnimT.d, now, scrollui::smoothSnap() && snapG > 1, {epsT, 0.01, epsT});
       for (size_t k = 0; k < 3; ++k) noteOff[k] = v[k] - noteAnimT.d[k];
     }
     noteAnim.prune(now, g.kind == Gesture::Move || g.kind == Gesture::Resize);
@@ -626,7 +642,11 @@ void drawPianoRoll(App& a) {
   if (g.kind == Gesture::Select && active)
     dl->AddRectFilled(g.start, io.MousePos, theme::withAlpha(P.accent, 0.12f)),
         dl->AddRect(g.start, io.MousePos, P.accent, 0, 0, 1.5f);
-  if (g.kind == Gesture::Slice && active) dl->AddLine(ImVec2(io.MousePos.x, gridMin.y), ImVec2(io.MousePos.x, gridMax.y), P.danger, 1.5f);
+  if (g.kind == Gesture::Slice && active) {  // J-67: drawn on the snapped cut, gliding between grid lines (smooth motion)
+    const Tick cut = std::max<Tick>(0, snapNearest(tickAt(io.MousePos.x), snapG));
+    const float x = std::round(gridMin.x + static_cast<float>(scrollui::glide(0x50525343ull, static_cast<double>(cut), snapG > 1, 0.5)) * st.pxPerTick - st.scrollX);
+    dl->AddLine(ImVec2(x, gridMin.y), ImVec2(x, gridMax.y), P.danger, 1.5f);
+  }
   if (g.kind == Gesture::Zoom && active) {
     const ImU32 zc = theme::rgb(theme::role::kZoom);
     dl->AddRectFilled(ImVec2(g.start.x, gridMin.y), ImVec2(io.MousePos.x, gridMax.y), theme::withAlpha(zc, 0.10f));
@@ -885,7 +905,7 @@ void drawPianoRoll(App& a) {
   if (lClick || rClick) {  // J-37: a new drag starts its own glide
     noteAnim.clear();
     noteAnimT = NoteAnimTarget{patId, chId, {}};
-    if ((g.kind == Gesture::Move || g.kind == Gesture::Resize) && a.settings.getBool("ui.smoothSnap")) noteAnim.seed(0, {0, 0, 0}, ImGui::GetTime());
+    if ((g.kind == Gesture::Move || g.kind == Gesture::Resize) && scrollui::smoothSnap()) noteAnim.seed(0, {0, 0, 0}, ImGui::GetTime());
   }
   if (active && g.kind != Gesture::None) {
     // Dragging past the left/right edge scrolls the view.

@@ -9,6 +9,7 @@
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
 #include "edison_ui.h"
+#include "../../app/SmoothScrollUi.h"
 
 namespace gl::packs::edison {
 
@@ -325,7 +326,9 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
     }
   }
   if (s.dragMarker >= 0 && ImGui::IsItemActive() && static_cast<size_t>(s.dragMarker) < c.markers.size()) {
-    float x = std::clamp(mouse.x, g.p0.x, g.p1.x);
+    // J-67: previewed where it will land (the snapped frame), gliding between snap points.
+    const double to = static_cast<double>(snapFrame(a, s, g, g.frameAt(std::clamp(mouse.x, g.p0.x, g.p1.x))));
+    float x = std::clamp(g.xOf(scrollui::glide(0x45444D4Bull, to, s.snap != 0, 0.5)), g.p0.x, g.p1.x);
     dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Marker), 2.f);
   }
   if (s.dragMarker >= 0 && ImGui::IsItemDeactivated()) {
@@ -433,16 +436,18 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
       }
     s.sel = r;
   }
+  double wheelFrames = 0;  // J-67: horizontal scroll input this frame (frames), eased by the smooth scroller
+  bool wheelNotch = false;
   if (hovered) {
     if (io.MouseWheel != 0) {
       if (io.KeyCtrl || io.KeySuper)
         s.vZoom = std::clamp(s.vZoom * (io.MouseWheel > 0 ? 1.25f : 0.8f), 0.25f, 16.f);
       else if (io.KeyShift)
-        s.viewStart = std::clamp(s.viewStart - io.MouseWheel * s.viewLen * 0.1, 0.0, std::max(0.0, n - s.viewLen));
+        wheelFrames -= io.MouseWheel * s.viewLen * 0.1, wheelNotch = smoothscroll::isNotch(io.MouseWheel);
       else
         zoomBy(s, io.MouseWheel > 0 ? 0.8 : 1.25, fm0);
     }
-    if (io.MouseWheelH != 0) s.viewStart = std::clamp(s.viewStart + io.MouseWheelH * s.viewLen * 0.1, 0.0, std::max(0.0, n - s.viewLen));
+    if (io.MouseWheelH != 0) wheelFrames += io.MouseWheelH * s.viewLen * 0.1, wheelNotch = smoothscroll::isNotch(io.MouseWheelH);
     char b[96];
     if (s.spectral)
       std::snprintf(b, sizeof b, "%s  %.0f Hz%s", timeText(a, s, static_cast<int64_t>(fm0)).c_str(), hzAtY(s, mouse.y, g.p0.y, g.p1.y),
@@ -451,6 +456,8 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
       std::snprintf(b, sizeof b, "%s  - drag to select, Shift extends, Alt scrubs, wheel zooms, right-click for edits", timeText(a, s, static_cast<int64_t>(fm0)).c_str());
     a.setHint(b);
   }
+  if (s.viewLen > 0)  // J-67: wheel scrolling glides; zoom, follow and drags are adopted as they are
+    scrollui::stepUnits(s.viewAx, s.viewStart, wheelFrames, wheelNotch, 0.0, std::max(0.0, n - s.viewLen), s.viewLen / std::max(1.0f, g.W()), false);
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("lanemenu");
   if (ImGui::BeginPopup("lanemenu")) {
     const bool has = s.frames() > 0, sel = !s.sel.empty();

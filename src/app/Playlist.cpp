@@ -23,6 +23,7 @@
 #include "../engine/PlaylistTools.h"
 #include "../engine/Sample.h"
 #include "App.h"
+#include "SmoothScrollUi.h"
 #include "../core/Grouping.h"
 #include "J31Ui.h"
 #include "../core/NoteTools.h"
@@ -862,8 +863,11 @@ void drawPlaylist(App& a) {
     trackY[static_cast<size_t>(i) + 1] = trackY[static_cast<size_t>(i)] +
         (folded[static_cast<size_t>(i)] ? 0.0f : std::round(trackH * std::clamp(s.tracks[static_cast<size_t>(i)].height, 0.25f, 4.0f)));
   const float totalH = trackY.back();
-  st.scrollY = std::clamp(st.scrollY, 0.0f, std::max(0.0f, totalH - (gMax.y - gMin.y)));
-  st.scrollX = std::max(0.0f, st.scrollX);
+  // J-67: the range is enforced here for outside writes; the view's own drawn
+  // position (a glide, an elastic overscroll) is left to scrollui::step below.
+  const float maxScrollY = std::max(0.0f, totalH - (gMax.y - gMin.y)), maxScrollX = 1e9f;
+  scrollui::clampOuter(st.axY, st.scrollY, 0.0f, maxScrollY);
+  scrollui::clampOuter(st.axX, st.scrollX, 0.0f, maxScrollX);
   auto xOf = [&](Tick t) { return gMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; };
   auto yOf = [&](int tr) { return gMin.y + trackY[static_cast<size_t>(std::clamp(tr, 0, nTracks))] - st.scrollY; };
   auto hOf = [&](int tr) {
@@ -934,22 +938,35 @@ void drawPlaylist(App& a) {
   st.effGrid = timeline::snapGrid(s, st.snap, st.pxPerTick, false);
   auto snapPos = [&](Tick t) { return timeline::snapTick(t, snapG, st.snap); };
 
+  // J-67: wheel / trackpad input goes through the smooth scroller: notches
+  // glide a whole track (or 80 px) and land on it, trackpad deltas stay 1:1,
+  // the edges stretch a little and spring back instead of jumping.
+  float wheelX = 0, wheelY = 0;
+  bool notchX = false, notchY = false;
   if (hovered && io.MouseWheel != 0) {
     if (io.KeyCtrl) {
       timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gMin.x);
     } else if (io.KeyAlt) {
       st.trackHeight = std::clamp(st.trackHeight + io.MouseWheel * 4, 24.0f, 120.0f);
     } else if (io.KeyShift) {
-      st.scrollX = std::max(0.0f, st.scrollX - io.MouseWheel * 80);
+      wheelX -= io.MouseWheel * 80;
+      notchX = smoothscroll::isNotch(io.MouseWheel);
     } else {
-      st.scrollY -= io.MouseWheel * trackH;
+      wheelY -= io.MouseWheel * trackH;
+      notchY = smoothscroll::isNotch(io.MouseWheel);
     }
   }
-  if (hovered && io.MouseWheelH != 0) st.scrollX = std::max(0.0f, st.scrollX - io.MouseWheelH * 80);
-  if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
-    st.scrollX = std::max(0.0f, st.scrollX - io.MouseDelta.x);
-    st.scrollY -= io.MouseDelta.y;
+  if (hovered && io.MouseWheelH != 0) {
+    wheelX -= io.MouseWheelH * 80;
+    notchX = smoothscroll::isNotch(io.MouseWheelH);
   }
+  if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+    wheelX -= io.MouseDelta.x;
+    wheelY -= io.MouseDelta.y;
+    notchX = notchY = false;
+  }
+  scrollui::step(st.axX, st.scrollX, wheelX, notchX, 0.0f, maxScrollX);
+  scrollui::step(st.axY, st.scrollY, wheelY, notchY, 0.0f, maxScrollY);
 
   // Background & grid: alternate bar shading, then track separators and bar/beat lines.
   dl->PushClipRect(gMin, gMax, true);
@@ -982,10 +999,13 @@ void drawPlaylist(App& a) {
     dl->AddRectFilled(ImVec2(std::max(gMin.x, xOf(0)), gMin.y), ImVec2(lx1, gMax.y), theme::withAlpha(P.paper, liveMode ? 0.05f : 0.03f));
     if (lx1 < gMax.x) dl->AddLine(ImVec2(std::round(lx1), gMin.y), ImVec2(std::round(lx1), gMax.y), P.lineStrong, 2.0f);
   }
-  // Time selection: tinted band across the tracks.
+  // Time selection: tinted band across the tracks. J-67: its edges glide
+  // between grid lines while dragged (smooth motion, like clip moves).
+  const bool selGlide = cg.kind == ClipGesture::TimeSel && snapG > 1;
+  const float selX0 = gMin.x + static_cast<float>(scrollui::glide(0x504C53454C41ull, static_cast<double>(st.selStart), selGlide, 0.5)) * st.pxPerTick - st.scrollX;
+  const float selX1 = gMin.x + static_cast<float>(scrollui::glide(0x504C53454C42ull, static_cast<double>(st.selEnd), selGlide, 0.5)) * st.pxPerTick - st.scrollX;
   if (st.selEnd > st.selStart)
-    dl->AddRectFilled(ImVec2(std::max(gMin.x, xOf(st.selStart)), gMin.y), ImVec2(std::min(gMax.x, xOf(st.selEnd)), gMax.y),
-                      theme::withAlpha(P.accent, 0.07f));
+    dl->AddRectFilled(ImVec2(std::max(gMin.x, selX0), gMin.y), ImVec2(std::min(gMax.x, selX1), gMax.y), theme::withAlpha(P.accent, 0.07f));
   // Song end shading.
   const ClipCache& ccache = clipCache(a);
   const Tick songLen = ccache.songLen;
@@ -1008,7 +1028,7 @@ void drawPlaylist(App& a) {
   // J-37: clips under a snapped drag glide between grid cells (drawing only);
   // free dragging (snap off, Alt, free grid at max zoom) follows the pointer.
   const double animNow = ImGui::GetTime();
-  const bool animSnap = a.settings.getBool("ui.smoothSnap") && snapG > 1;
+  const bool animSnap = scrollui::smoothSnap() && snapG > 1;
   const double animEpsTick = 0.25 / std::max(1e-6, static_cast<double>(st.pxPerTick));  // a quarter pixel
   auto xOfD = [&](double t) { return gMin.x + static_cast<float>(t * static_cast<double>(st.pxPerTick)) - st.scrollX; };
   static std::vector<DrawnClip> drawn;
@@ -1367,7 +1387,7 @@ void drawPlaylist(App& a) {
   {
     // Time selection in the ruler.
     if (st.selEnd > st.selStart) {
-      float sx0 = xOf(st.selStart), sx1 = xOf(st.selEnd);
+      const float sx0 = selX0, sx1 = selX1;
       dl->AddRectFilled(ImVec2(sx0, rY + 2), ImVec2(sx1, gMin.y - 1), theme::withAlpha(P.accent, 0.38f), 2);
       dl->AddLine(ImVec2(sx0, rY + 2), ImVec2(sx0, gMin.y - 1), P.accent, 1.5f);
       dl->AddLine(ImVec2(sx1, rY + 2), ImVec2(sx1, gMin.y - 1), P.accent, 1.5f);
@@ -1512,9 +1532,9 @@ void drawPlaylist(App& a) {
   const ImVec2 vb0(origin.x, gMin.y), vb1(origin.x + vbarW - 2, gMax.y);
   const ImVec2 hb0(gMin.x, origin.y + 1), hb1(gMax.x, rY - 1);
   const float vThumbH = std::max(18.0f, (vb1.y - vb0.y) * std::min(1.0f, gridH / std::max(1.0f, totalH)));
-  const float vThumbY = vb0.y + (totalH > gridH ? (vb1.y - vb0.y - vThumbH) * st.scrollY / (totalH - gridH) : 0.0f);
+  const float vThumbY = vb0.y + (totalH > gridH ? (vb1.y - vb0.y - vThumbH) * std::clamp(st.scrollY / (totalH - gridH), 0.0f, 1.0f) : 0.0f);  // J-67: overscroll keeps the thumb in its rail
   const float hThumbW = std::max(24.0f, (hb1.x - hb0.x) * std::min(1.0f, gridW / std::max(1.0f, contentW)));
-  const float hThumbX = hb0.x + (contentW > gridW ? (hb1.x - hb0.x - hThumbW) * st.scrollX / (contentW - gridW) : 0.0f);
+  const float hThumbX = hb0.x + (contentW > gridW ? (hb1.x - hb0.x - hThumbW) * std::clamp(st.scrollX / (contentW - gridW), 0.0f, 1.0f) : 0.0f);
   static int barDrag = 0;  // 1 vertical, 2 horizontal
   static float barGrab = 0;
   const bool overV = hovered && io.MousePos.x >= vb0.x && io.MousePos.x < vb1.x + 2 && io.MousePos.y >= vb0.y && io.MousePos.y < vb1.y;
@@ -2141,7 +2161,7 @@ void drawPlaylist(App& a) {
     }
   }
 
-  if ((lClick || rClick) && gestureAnimates(cg.kind) && cg.kind != ClipGesture::Paint && a.settings.getBool("ui.smoothSnap")) {
+  if ((lClick || rClick) && gestureAnimates(cg.kind) && cg.kind != ClipGesture::Paint && scrollui::smoothSnap()) {
     // J-37: the clips this drag changes start gliding from where they are drawn.
     const Song& ns = a.doc.song();
     const double now = ImGui::GetTime();
@@ -2285,7 +2305,7 @@ void drawPlaylist(App& a) {
             painted.push_back(c);
           }
         });
-        if (a.settings.getBool("ui.smoothSnap") && snapG > 1)  // J-37: painted clips grow in from their start
+        if (scrollui::smoothSnap() && snapG > 1)  // J-37: painted clips grow in from their start
           for (const Clip& c : painted) clipAnim.seed(c.id, clipAnimValues(c, 0), ImGui::GetTime());
         break;
       }
