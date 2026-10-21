@@ -13,6 +13,9 @@ c++ --version || true
 echo "sdl2: $(pkg-config --modversion sdl2 2>&1 || true)"
 echo "gl:   $(pkg-config --modversion gl 2>&1 || true)"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+# The VMs stop answering SSH under memory pressure (GCC 10 on NetBSD, the large render-cache
+# tests everywhere): two compilers or tests at a time.
+if [ "$JOBS" -gt 2 ]; then JOBS=2; fi
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_GUI_TESTS=OFF ${GRIDLINE_CMAKE_ARGS:-}
 cmake --build build -j"$JOBS" -- -k 0
 test -x build/gridline-app || { echo "gridline-app was not built (SDL2 / OpenGL missing)" >&2; exit 1; }
