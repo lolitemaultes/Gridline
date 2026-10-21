@@ -8,6 +8,9 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    # Pushes to the porting branch run the whole pipeline as a dry run (nothing is published;
+    # "Run workflow" needs this file on the default branch first).
+    branches: [port-ci]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -43,6 +46,8 @@ jobs:
               exit 1
             fi
             if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.dry_run }}" = "false" ]; then publish=true; fi
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            publish=false  # a branch push: dry run
           elif [ "${{ inputs.dry_run }}" = "false" ]; then
             echo "::error::publishing needs a tag v$ver; run with dry_run on a branch"
             exit 1
