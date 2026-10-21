@@ -11,6 +11,9 @@ namespace gl {
 
 uint32_t crc32(const uint8_t* data, size_t n, uint32_t crc = 0);
 
+// The archive is written to a temporary file beside `path` and only replaces
+// `path` when close() succeeds (J-78): a failed or abandoned archive leaves
+// an existing file untouched and no temporary file behind.
 class ZipWriter {
  public:
   bool open(const std::string& path, std::string* err = nullptr);
@@ -27,7 +30,9 @@ class ZipWriter {
   };
   std::vector<Entry> entries_;
   std::FILE* f_ = nullptr;
+  std::string path_, tmp_;
   uint32_t pos_ = 0;
+  int errno_ = 0;  // first write error
   bool ok_ = true;
   void raw(const void* p, size_t n);
 };

@@ -1,6 +1,7 @@
 // Gridline — application state shared by all windows (UI thread only).
 #pragma once
 #include <atomic>
+#include <cstdint>
 #include <thread>
 #include <functional>
 #include <map>
@@ -9,6 +10,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "RackReveal.h"
 #include "../core/Timeline.h"
 #include "../core/Backup.h"
 #include "../core/Document.h"
@@ -74,6 +76,15 @@ struct RackState {
   int graphLane = 0;           // tools::StepLane
   ObjectId hoverChannel = kNoId;
   int hoverStep = -1;
+  // J-84: the step area scrolls sideways (long patterns, narrow racks).
+  float stepScroll = 0;          // px into the step content (drawn, may be elastically past an edge)
+  smoothscroll::Axis axStep;     // J-67 smooth scroll / elastic edges
+  float lastAvail = 0;           // rows pane inner width last frame (bottom bar reserve)
+  float viewX0 = 0, viewX1 = 0;  // step viewport, screen x (time scroller alignment)
+  float originX = 0;             // row origin, screen x (bottom bar alignment)
+  bool thumbDrag = false;        // time scroller thumb dragged
+  float thumbGrab = 0;           // pointer offset into the thumb
+  int lastPlayStep = -1;         // page follow while the pattern plays
 };
 
 struct PlaylistState {
@@ -94,6 +105,10 @@ struct PlaylistState {
   ObjectId srcId = kNoId;                //   patterns follow App::curPattern
   int pickerTab = 0;                     // clip source picker: 0 patterns, 1 audio, 2 automation
   bool pickerOpen = true;                // picker panel shown (Alt+P)
+  // J-82: picker selection (Ctrl+click adds, Shift+click a range) of the
+  // current tab; Delete deletes it while the picker has the focus.
+  std::set<ObjectId> pickerSel;
+  bool pickerFocus = false;              // last click landed in the picker
   bool stretchResize = false;            // Shift+M: resizing audio clips stretches them
   bool showFades = true;                 // Shift+F: fade handles on audio clips
   bool zeroCross = false;                // audio clip edges land on zero crossings
@@ -121,9 +136,14 @@ struct FileDialogState {
 };
 
 struct Toast {
-  std::string text;
+  std::string text;     // shown (interface language)
   double until = 0;
   bool error = false;
+  // J-78: a click copies the English message + details (toast::clipboardText).
+  std::string english;  // untranslated message
+  std::string details;  // file path, error code, missing files … ("" = none)
+  double copiedUntil = 0;  // "Copied" feedback shows until then
+  uint64_t serial = 0;     // stable ImGui id
 };
 
 class App {
@@ -217,8 +237,16 @@ class App {
   bool recordArmed = false;
   bool metronome = false;
   bool resetLayout = false;
+  RackReveal rackReveal;  // J-77: choosing PAT shows the channel rack (main loop)
   bool quitRequested = false;
   bool confirmDiscard = false;  // unsaved-changes prompt open
+  // J-82: short yes / no prompt ("Delete 'Drum loop' and its 6 clips?"):
+  // `action` runs on the confirm button; Cancel / Esc drop it.
+  struct ConfirmPrompt {
+    bool open = false;
+    std::string title, subtitle, okLabel;
+    std::function<void()> action;
+  } confirm;
   std::function<void()> afterDiscard;
 
   // Audio device (opened by main).
@@ -325,7 +353,9 @@ class App {
   bool openProject(const std::string& path);
   // Saves in the format the file name says (.flp, .zip FL package, else Gridline).
   bool saveProject(const std::string& path);
-  bool saveProjectAs(const std::string& path, SaveFormat format);
+  // J-80: FL Studio formats are written by a background job (instruments
+  // rendered to samples): the save completes, and `then` runs, when it ends.
+  bool saveProjectAs(const std::string& path, SaveFormat format, std::function<void()> then = {});
   void save();     // to projectPath, or Save As
   // Save dialog with the format list (Gridline, FL Studio project, FL Studio
   // zipped loop package); `then` runs after a successful save.
@@ -340,7 +370,9 @@ class App {
   void openPianoRoll(ObjectId channel);
   void previewSample(const std::string& path);
   void stopPreview();
-  void notify(const std::string& text, bool error = false);
+  // A notification card; `details` (path, code) is not shown but is copied
+  // with the message when the card is clicked (J-78).
+  void notify(const std::string& text, bool error = false, const std::string& details = "");
   void setHint(const std::string& text) { hint = text; }
   std::string windowTitle() const;
   std::string configDir() const;

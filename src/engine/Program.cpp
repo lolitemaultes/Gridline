@@ -7,6 +7,7 @@
 #include <functional>
 #include <set>
 #include "../core/Arrangements.h"
+#include "../core/ClipGain.h"
 #include "../core/ClipLoop.h"
 #include "../core/PatternAutomation.h"
 #include "../core/PluginParams.h"
@@ -239,7 +240,7 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   out.srcStart = std::max(0.0, c.audioStart);
   out.srcEnd = c.audioEnd > out.srcStart ? std::min(c.audioEnd, smp->seconds()) : smp->seconds();
   out.reverse = c.reverse != (sampler && par(pp::SmpReverse, 0) >= 0.5);
-  out.gain = c.gain;
+  out.gain = clipgain::playGain(c.gain);  // J-79: the bottom of FL's range is silence
   if (fades) {  // J-38: resolved fades (automatic crossfades, curve shapes, tension)
     out.fadeIn = fades->in.len, out.fadeOut = fades->out.len;
     out.shapeIn = fades->in.shape, out.shapeOut = fades->out.shape;
@@ -459,6 +460,46 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   prog->songEnd = song.lengthTicks();
   Tick bar = std::max<Tick>(1, prog->barTicks);
   prog->songLoopEnd = std::max(bar, (prog->songEnd + bar - 1) / bar * bar);
+  {  // J-85: marker actions (FL's marker skip / pause / marker loop, Gridline's stop; FL's loop marker)
+    std::vector<Tick> at;
+    for (const auto& m : song.markers) at.push_back(m.pos);
+    std::sort(at.begin(), at.end());
+    auto nextAfter = [&](Tick t) -> Tick {
+      auto it = std::upper_bound(at.begin(), at.end(), t);
+      return it == at.end() ? -1 : *it;
+    };
+    for (const auto& m : song.markers) {
+      ProgMarkerEvent e;
+      e.tick = static_cast<double>(m.pos);
+      switch (m.action) {
+        case MarkerAction::Skip: {
+          const Tick n = nextAfter(m.pos);
+          if (n < 0) continue;
+          e.kind = ProgMarkerEvent::Skip;
+          e.target = static_cast<double>(n);
+          break;
+        }
+        case MarkerAction::Pause: e.kind = ProgMarkerEvent::Pause; break;
+        case MarkerAction::Stop: e.kind = ProgMarkerEvent::Stop; break;
+        case MarkerAction::Loop: {  // repeats [marker, next marker) (or to the song end; as ops::markerLoopRange)
+          Tick n = nextAfter(m.pos);
+          if (n < 0) n = std::max(prog->songEnd, m.pos + bar);
+          e.kind = ProgMarkerEvent::LoopBack;
+          e.tick = static_cast<double>(n);
+          e.from = e.target = static_cast<double>(m.pos);
+          break;
+        }
+        case MarkerAction::SongLoop:
+          if (m.pos < prog->songLoopEnd) prog->songLoopStart = std::max(prog->songLoopStart, static_cast<double>(m.pos));
+          continue;
+        default: continue;
+      }
+      if (m.pos <= 0 && e.kind != ProgMarkerEvent::LoopBack) continue;  // playback never reaches tick 0 from earlier
+      prog->markerEvents.push_back(e);
+    }
+    std::stable_sort(prog->markerEvents.begin(), prog->markerEvents.end(),
+                     [](const ProgMarkerEvent& a, const ProgMarkerEvent& b) { return a.tick < b.tick; });
+  }
 
   // --- mixer ---
   std::set<ObjectId> soloSet;

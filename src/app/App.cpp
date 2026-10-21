@@ -1,3 +1,4 @@
+#include "DisplayConfirm.h"
 #include "HostedUi.h"
 #include "McpUi.h"
 #include "App.h"
@@ -23,6 +24,8 @@
 #include "../core/WavWriter.h"
 #include "../engine/Render.h"
 #include "ExportUi.h"
+#include "FlpExportUi.h"
+#include "ToastText.h"
 #include "../host/HostedPlugins.h"
 
 namespace gl {
@@ -62,6 +65,9 @@ App::~App() {
   mcpui::shutdown();             // SC-07: stop the assistant server, remove its endpoint file
   presetImport.cancel = true;
   if (presetImport.worker.joinable()) presetImport.worker.join();
+  flpexport::shutdown();         // J-80: a running FL export is cancelled and waited for
+  // J-77: a size / theme / language / audio change still waiting for Keep is not saved.
+  dispconf::confirm().abandon();
   settings.save(Settings::defaultPath());
   if (gApp == this) gApp = nullptr;
 }
@@ -147,50 +153,6 @@ void App::syncEngine() {
   engine.setPattern(curPattern);
 }
 
-namespace {
-// J-11: marker actions during song playback, checked once per frame: the
-// first action marker crossed since the last frame pauses, stops, skips to the
-// next marker or loops to it (through the time selection loop).
-void runMarkerActions(App& a) {
-  static double last = -1;
-  const Song& s = a.doc.song();
-  if (!a.engine.playing() || a.engine.mode() != PlayMode::Song || s.markers.empty()) {
-    last = -1;
-    return;
-  }
-  const double pos = a.engine.position();
-  if (last >= 0 && pos > last && pos - last < static_cast<double>(s.barTicks()) * 8) {
-    for (size_t i = 0; i < s.markers.size(); ++i) {
-      const Marker& m = s.markers[i];
-      if (m.action == MarkerAction::None || static_cast<double>(m.pos) <= last || static_cast<double>(m.pos) > pos) continue;
-      switch (m.action) {
-        case MarkerAction::Pause:
-          a.engine.pause();
-          a.engine.setPosition(m.pos, false);  // an automatic move: Stop still returns to the user's position
-          break;
-        case MarkerAction::Stop: a.engine.stop(); break;
-        case MarkerAction::Skip:
-          for (const auto& n : s.markers)
-            if (n.pos > m.pos) {
-              a.engine.setPosition(n.pos, false);
-              break;
-            }
-          break;
-        case MarkerAction::Loop: {
-          auto r = ops::markerLoopRange(s, static_cast<int>(i));
-          a.playlist.selStart = r.first;
-          a.playlist.selEnd = r.second;
-          a.engine.setLoopRange(r.first, r.second);
-          break;
-        }
-        default: break;
-      }
-      break;
-    }
-  }
-  last = a.engine.playing() ? a.engine.position() : -1;
-}
-}  // namespace
 
 void App::tick(double t) {
   pollPresetImport();
@@ -206,7 +168,7 @@ void App::tick(double t) {
     }
     wasScanning_ = scanning;
   }
-  runMarkerActions(*this);
+  // Marker actions (J-11) run in the audio engine at the exact sample (J-85).
   engine.collectGarbage();
   toasts.erase(std::remove_if(toasts.begin(), toasts.end(), [&](const Toast& x) { return x.until < now; }), toasts.end());
   int64_t wall = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -246,15 +208,23 @@ bool App::uiSound(uisound::Event e) {
   return uiSounds.trigger(e);
 }
 
-void App::notify(const std::string& english, bool error) {
+void App::notify(const std::string& english, bool error, const std::string& details) {
   // J-61: notifications are shown in the interface language (the log keeps English).
-  const std::string text = i18n::trMessage(english);
-  toasts.push_back({text, now + (error ? 6.0 : 3.0), error});
+  static uint64_t serial = 0;
+  Toast t;
+  t.text = i18n::trMessage(english);
+  t.until = now + toast::lifetime(error);  // J-78: errors stay up longer (and while hovered)
+  t.error = error;
+  t.english = english;
+  t.details = details;
+  t.serial = ++serial;
+  toasts.push_back(std::move(t));
   if (error) uiSound(uisound::Event::Error);  // every failure is reported through here
+  const std::string logged = details.empty() || english.find(details) != std::string::npos ? english : english + " [" + details + "]";
   if (error)
-    logging::error("app", english);
+    logging::error("app", logged);
   else
-    logging::info("app", english);
+    logging::info("app", logged);
 }
 
 std::string App::windowTitle() const {
@@ -332,6 +302,7 @@ void App::startProject(Song s) {
   piano.selPattern = kNoId;
   playlist.selected.clear();
   engine.setMode(song.playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
+  rackReveal.quietSwitch(engine.mode());  // J-77: a new project does not count as choosing PAT
   syncEngine();
 }
 
@@ -409,6 +380,7 @@ bool App::openProject(const std::string& path) {
   selMixer = doc.song().masterId();
   playlist.selected.clear();
   engine.setMode(doc.song().playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
+  rackReveal.quietSwitch(engine.mode());  // J-77: opening a project does not count as choosing PAT
   syncEngine();
   notify("Opened " + fs::path(path).filename().string());
   uiSound(uisound::Event::Open);
@@ -512,32 +484,51 @@ void App::pollPresetImport() {
 
 bool App::saveProject(const std::string& path) { return saveProjectAs(path, saveFormatOf(path)); }
 
-bool App::saveProjectAs(const std::string& path, SaveFormat format) {
+bool App::saveProjectAs(const std::string& path, SaveFormat format, std::function<void()> then) {
   captureHostedStates(*this);  // third-party plugin state into the song
-  std::string err;
+  std::string err, note;
   std::string p = path;
   if (format != SaveFormat::Gridline || fs::path(p).extension().empty()) p = withSaveExtension(p, format);
-  switch (format) {
-    case SaveFormat::Gridline:
-      if (!gl::saveProject(p, doc.song(), &err)) {
-        notify("Save failed: " + err, true);
-        return false;
+  auto saved = [this, p, format]() {
+    projectPath = p;
+    projectFormat = format;
+    openedFrom.clear();
+    doc.markSaved();
+    addRecent(p);
+  };
+  try {  // J-78: an unexpected failure is reported, never a crash that loses the open project
+    switch (format) {
+      case SaveFormat::Gridline:
+        if (!gl::saveProject(p, doc.song(), &err)) {
+          notify("Could not save the project: " + err, true, p);
+          return false;
+        }
+        break;
+      case SaveFormat::Flp:
+      case SaveFormat::FlZip: {
+        // J-80: a background job (instruments rendered to samples, progress,
+        // cancel); it refuses a read-only target (J-78) and notifies the summary ("Saved x.flp: ...") or the error
+        // itself, and the save completes, and `then` runs, when it is done.
+        auto done = [saved, then](bool ok) {
+          if (!ok) return;
+          saved();
+          if (then) then();
+        };
+        return format == SaveFormat::Flp ? exportui::writeFlpFile(*this, p, done) : exportui::writeFlpZip(*this, p, done);
       }
-      break;
-    case SaveFormat::Flp:
-      if (!exportui::writeFlpFile(*this, p)) return false;
-      break;
-    case SaveFormat::FlZip:
-      if (!exportui::writeFlpZip(*this, p)) return false;
-      break;
+      case SaveFormat::GridlineZip:
+        if (!exportui::writeGridlineZip(*this, p, &note)) return false;
+        break;
+      case SaveFormat::Count: return false;
+    }
+  } catch (const std::exception& e) {
+    notify(std::string("Could not save the project: internal error (") + e.what() + "). Please report it; try another format meanwhile.", true, p);
+    return false;
   }
-  projectPath = p;
-  projectFormat = format;
-  openedFrom.clear();
-  doc.markSaved();
-  addRecent(p);
-  notify("Saved " + fs::path(p).filename().string());
+  saved();
+  notify("Saved " + fs::path(p).filename().string() + note, false, p);
   if (!autosaving_) uiSound(uisound::Event::Save);
+  if (then) then();
   return true;
 }
 
@@ -554,8 +545,8 @@ void App::save() {
 }
 
 void App::saveAs(std::function<void()> then) {
-  // J-52: one list of formats, like FL's Save as: Gridline project, FL Studio
-  // project, FL Studio zipped loop package. A project opened from an FL file
+  // J-52: one list of formats, like FL's Save as: Gridline project, Gridline
+  // zipped project (J-78), FL Studio project, FL Studio zipped loop package. A project opened from an FL file
   // starts in its folder, under its name, as a Gridline project.
   const std::string ref = projectFile();
   const SaveFormat fmt = projectPath.empty() ? SaveFormat::Gridline : projectFormat;
@@ -570,8 +561,8 @@ void App::saveAs(std::function<void()> then) {
   fileDialog.name = withSaveExtension(ref.empty() ? doc.song().info.title : fs::path(ref).filename().string(), fmt);
   fileDialog.nameForType = [](const std::string& n, int t) { return withSaveExtension(n, static_cast<SaveFormat>(t)); };
   fileDialog.onOk = [this, then](const std::string& p) {
-    const auto f = static_cast<SaveFormat>(std::clamp(fileDialog.typeIndex, 0, 2));
-    if (saveProjectAs(withSaveExtension(p, f), f) && then) then();
+    const auto f = static_cast<SaveFormat>(std::clamp(fileDialog.typeIndex, 0, static_cast<int>(SaveFormat::Count) - 1));
+    saveProjectAs(withSaveExtension(p, f), f, then);
   };
 }
 

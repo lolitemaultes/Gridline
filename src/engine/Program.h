@@ -17,6 +17,7 @@
 #include "../core/Song.h"
 #include "Effects.h"
 #include "Generators.h"
+#include "NoteActivity.h"
 #include "NoteFx.h"
 #include "Pdc.h"
 #include "Sample.h"
@@ -76,6 +77,7 @@ struct ChannelRuntime {
   int pendingCount = 0;
   std::atomic<float> level{0};  // recent output peak, for the UI
   std::atomic<int> lastStep{-1};
+  NoteActivity keys;  // J-77: sounding keys + per-key hits (piano roll keyboard, pad flashes)
   ScopeTap tap;  // channel output (pre-fader)
   MidiOutRing midiOut;  // MIDI Out channels
   // Controller instruments: latest outputs (audio thread) + copies for the UI.
@@ -372,6 +374,16 @@ struct ProgGraph {
   std::unique_ptr<std::atomic<int>[]> pending, ready;
 };
 
+// J-85: a marker action compiled for the audio thread (song mode, realtime
+// playback). Playback acts when it reaches `tick` from earlier positions.
+struct ProgMarkerEvent {
+  enum Kind : uint8_t { Skip, Pause, Stop, LoopBack };
+  double tick = 0;
+  double from = -1;   // LoopBack (FL marker loop): applies only from this position on
+  double target = 0;  // Skip / LoopBack: where playback continues
+  Kind kind = Skip;
+};
+
 struct Program {
   double tempo = 140;
   int ppq = kDefaultPpq;
@@ -379,6 +391,10 @@ struct Program {
   Tick beatTicks = 96;
   Tick songEnd = 0;      // last clip end (0 = empty)
   Tick songLoopEnd = 0;  // song end rounded up to whole bars (>= one bar)
+  // J-85 marker actions: events sorted by tick, and where the song end wraps
+  // to (the last song loop marker before songLoopEnd; < 0 = the song start).
+  std::vector<ProgMarkerEvent> markerEvents;
+  double songLoopStart = -1;
   std::vector<ProgChannel> channels;
   std::vector<ProgPattern> patterns;
   std::vector<ProgMixer> mixer;

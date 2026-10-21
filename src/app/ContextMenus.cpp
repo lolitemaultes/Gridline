@@ -2,6 +2,7 @@
 // mixer track/slot, knob, plugin window) and the editing helpers they share
 // with the main menu. Window files open these popups and call the bodies here.
 #include "../core/ClipLoop.h"
+#include "../core/ClipSources.h"
 #include "../core/I18n.h"
 #include "J59Ui.h"
 #include "Keys.h"
@@ -953,7 +954,17 @@ void patternContextMenu(App& a, ObjectId id) {
   if (ImGui::MenuItem(i18n::tr("Clone"), keys::label("pattern.clone"))) a.selectPattern(a.doc.clonePattern(id));
   if (ImGui::MenuItem(i18n::tr("Move up"), keys::label("pattern.moveUp"), false, idx > 0)) ops::movePattern(a.doc, id, idx - 1);
   if (ImGui::MenuItem(i18n::tr("Move down"), keys::label("pattern.moveDown"), false, idx + 1 < static_cast<int>(s.patterns.size()))) ops::movePattern(a.doc, id, idx + 1);
-  if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("pattern.delete"), false, s.patterns.size() > 1)) a.doc.removePattern(id);
+  // J-82: the picker's selection when it holds this pattern; a pattern the
+  // arrangement uses asks first (as audio and automation sources do).
+  const auto& psel = a.playlist.pickerSel;
+  std::vector<ObjectId> targets = psel.size() > 1 && psel.count(id) ? std::vector<ObjectId>(psel.begin(), psel.end()) : std::vector<ObjectId>{id};
+  char label[96];
+  if (targets.size() > 1)
+    std::snprintf(label, sizeof label, i18n::tr("Delete %d selected..."), static_cast<int>(targets.size()));
+  else
+    std::snprintf(label, sizeof label, "%s", i18n::tr("Delete"));
+  if (ImGui::MenuItem(label, keys::label("pattern.delete"), false, s.patterns.size() > targets.size()))
+    requestDeleteSources(a, ClipKind::Pattern, targets);
 }
 
 // ---------------------------------------------------------------- playlist ----
@@ -1162,7 +1173,7 @@ void playlistOptionsMenu(App& a) {
     if (ImGui::MenuItem(i18n::tr("Slice at the song position"), nullptr, false, true)) {  // J-28: every clip kind, audio included
       const Tick at = static_cast<Tick>(a.engine.position());
       const auto ids = pltools::clipsAcross(s, at, 0, static_cast<int>(s.tracks.size()) - 1);
-      if (!ids.empty()) a.doc.editSong("slice clips", [&](Song& x) { pltools::sliceClips(x, ids, at); });
+      if (!ids.empty()) a.doc.editSong("slice clips", [&](Song& x) { pltools::sliceClips(x, ids, at, a.playlist.zeroCross); });
     }
     {  // J-28: audio and automation clip items (operations from J-27)
       bool audioSel = false, autoSel = false;
@@ -1216,6 +1227,10 @@ void playlistOptionsMenu(App& a) {
   if (ImGui::BeginMenu(i18n::tr("Time markers"))) {
     const Tick pos = static_cast<Tick>(a.engine.position());
     if (ImGui::MenuItem(i18n::tr("Add marker at the song position"))) ops::addMarker(a.doc, pos, ops::nextMarkerName(s));
+    {  // J-85: one step to a song loop (Shift+T without a time selection)
+      const bool sel = a.playlist.selEnd > a.playlist.selStart;
+      if (ImGui::MenuItem(i18n::tr("Add loop marker at the song position"), sel ? nullptr : keys::label("playlist.loopMarkers"))) addLoopMarker(a, pos);
+    }
     if (ImGui::BeginMenu(i18n::tr("Add time signature marker"))) {
       const int sigs[][2] = {{2, 4}, {3, 4}, {4, 4}, {5, 4}, {6, 8}, {7, 8}, {12, 8}};
       for (const auto& g : sigs) {
@@ -1341,8 +1356,8 @@ void playlistOptionsMenu(App& a) {
     ImGui::MenuItem(i18n::tr("Clip source picker"), keys::label("playlist.picker"), &a.playlist.pickerOpen);
     ImGui::MenuItem(i18n::tr("Wide track headers"), nullptr, &a.playlist.wideHeaders);
     ImGui::MenuItem(i18n::tr("Stretch audio clips when resizing"), keys::label("playlist.stretchResize"), &a.playlist.stretchResize);
-    ImGui::MenuItem(i18n::tr("Fade handles on audio clips"), keys::label("playlist.fades"), &a.playlist.showFades);
-    ImGui::MenuItem(i18n::tr("Audio clip edges on zero crossings"), nullptr, &a.playlist.zeroCross);
+    ImGui::MenuItem(i18n::tr("Fade and volume handles on audio clips"), keys::label("playlist.fades"), &a.playlist.showFades);
+    ImGui::MenuItem(i18n::tr("Audio clip edits on zero crossings"), keys::label("playlist.zeroCross"), &a.playlist.zeroCross);
     {  // J-37
       const bool smoothSnap = a.settings.getBool("ui.smoothSnap");
       if (ImGui::MenuItem(i18n::tr("Smooth snapping"), nullptr, smoothSnap)) a.settings.set("ui.smoothSnap", !smoothSnap);
@@ -1393,6 +1408,27 @@ void markerAddItems(App& a) {
     a.doc.editSong("delete markers", [](Song& x) { x.markers.clear(); });
 }
 
+void addLoopMarker(App& a, Tick pos) {
+  const Tick grid = a.playlist.effGrid > 0 ? a.playlist.effGrid : snapTicks(a.doc.song(), a.playlist.snap);
+  const Tick at = std::max<Tick>(0, grid > 0 ? timeline::snapTick(pos, grid, Snap::Line) : pos);
+  const bool had = ops::songLoopMarker(a.doc.song()) >= 0;
+  if (ops::addSongLoopMarker(a.doc, at) >= 0)
+    a.notify(i18n::tr("Loop marker placed: at the song end playback goes on from it"));
+  else if (had)
+    a.notify(i18n::tr("Loop marker removed"));
+}
+
+void rulerMenu(App& a, Tick pos) {
+  const Song& s = a.doc.song();
+  if (ImGui::MenuItem(i18n::tr("Add loop marker here"))) addLoopMarker(a, pos);
+  if (ImGui::MenuItem(i18n::tr("Add marker here"))) ops::addMarker(a.doc, pos, ops::nextMarkerName(s));
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Move the song position here"))) {
+    if (a.engine.mode() != PlayMode::Song) a.engine.setMode(PlayMode::Song);
+    j31::songJump(a, pos);
+  }
+}
+
 // Right-click on a marker in the playlist ruler.
 void markerMenu(App& a, int index) {
   const Song& s = a.doc.song();
@@ -1421,10 +1457,24 @@ void markerMenu(App& a, int index) {
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Action during playback"))) {
-    for (int k = 0; k < static_cast<int>(MarkerAction::Count); ++k) {
-      const auto act = static_cast<MarkerAction>(k);
-      if (ImGui::MenuItem(ops::markerActionName(act), nullptr, m.action == act))
-        ops::editMarker(a.doc, index, "marker action", [act](Marker& x) { x.action = act; });
+    // J-85: song loop (FL "loop") first after None, as in FL's action menu.
+    static const MarkerAction order[] = {MarkerAction::None, MarkerAction::SongLoop, MarkerAction::Loop, MarkerAction::Skip, MarkerAction::Pause,
+                                         MarkerAction::Stop};
+    static const char* const names[] = {i18n::N_("None"), i18n::N_("Loop (from here at the song end)"), i18n::N_("Loop to the next marker"),
+                                        i18n::N_("Skip to the next marker"), i18n::N_("Pause"), i18n::N_("Stop")};
+    for (size_t k = 0; k < sizeof(order) / sizeof(order[0]); ++k) {
+      const auto act = order[k];
+      if (ImGui::MenuItem(i18n::tr(names[k]), nullptr, m.action == act)) {
+        if (act == MarkerAction::SongLoop) {  // one song loop marker: the earlier one becomes plain
+          a.doc.editSong("marker action", [index](Song& x) {
+            for (auto& o : x.markers)
+              if (o.action == MarkerAction::SongLoop) o.action = MarkerAction::None;
+            x.markers[static_cast<size_t>(index)].action = MarkerAction::SongLoop;
+          });
+        } else {
+          ops::editMarker(a.doc, index, "marker action", [act](Marker& x) { x.action = act; });
+        }
+      }
     }
     ImGui::EndMenu();
   }
@@ -2216,6 +2266,17 @@ void drawDevMenu(App& a, const std::string& name) {
       if (c.kind == ClipKind::Audio) id = c.id;
     if (id != kNoId) chopui::clipMenuItems(a, id);
   } else if (name == "timesel") chopui::timeSelectionItems(a);  // PL-13
+  else if (name == "audiosource") {  // J-82: picker menu of the first audio clip source
+    a.playlist.pickerTab = 1;
+    for (const auto& c : s.channels)
+      if (ops::isAudioClipSource(c)) {
+        audioSourceMenu(a, c.id);
+        break;
+      }
+  } else if (name == "autosource") {  // J-82: picker menu of the first automation clip
+    a.playlist.pickerTab = 2;
+    if (!s.automations.empty()) automationSourceMenu(a, s.automations[0].id);
+  } else if (name == "patternsource") patternSourceMenu(a, pat);  // J-82
   else ImGui::TextDisabled(i18n::tr("Unknown menu: %s"), name.c_str());
   ImGui::EndPopup();
 }

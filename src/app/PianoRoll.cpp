@@ -4,6 +4,7 @@
 #include <cstdio>
 #include "../core/I18n.h"
 #include "Keys.h"
+#include "KeyLight.h"
 #include "J31Ui.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
@@ -701,11 +702,19 @@ void drawPianoRoll(App& a) {
     // White keys: light face shading to a darker tip (left), like a keyboard seen from above.
     dl->AddRectFilledMultiColor(ImVec2(kx0, gridMin.y), ImVec2(kx1, gridMax.y), theme::mix(white, P.ink, 0.12f), white, white,
                                 theme::mix(white, P.ink, 0.12f));
+    // J-77: keys sounding on this channel (playback, MIDI, typing keyboard, previews) light in the
+    // channel colour while held and fade out smoothly on release.
+    const keylight::ChannelLights* lit = keylight::lights(a, chId);
+    const ImU32 litCol = theme::mix(theme::rgb(chan->color), P.hot, 0.25f);
     for (int p = 0; p < 128; ++p) {
       float y = yOf(p);
       if (y > gridMax.y || y + rowH < gridMin.y) continue;
       bool isB = isBlack(p);
-      ImU32 tint = g.previewPitch == p ? P.accent : hoverPitch == p ? theme::withAlpha(P.accent, 0.35f) : 0;
+      const float lv = lit ? lit->key(p) : 0.0f;
+      ImU32 tint = g.previewPitch == p ? P.accent
+                   : lv > 0.004f      ? theme::mix(isB ? black : white, litCol, 0.9f * lv)
+                   : hoverPitch == p  ? theme::withAlpha(P.accent, 0.35f)
+                                      : 0;
       if (!isB) {
         if (tint) dl->AddRectFilled(ImVec2(kx0, y), ImVec2(kx1, y + rowH), tint);
         // Boundary between two adjacent white keys (E|F, B|C) gets a full line.
@@ -882,7 +891,10 @@ void drawPianoRoll(App& a) {
       g.kind = Gesture::None;
       previewOn(a, chId, pitchAt(m.y), 100);
     } else if (inRuler && lClick) {
-      if (a.engine.mode() != PlayMode::Pattern) a.engine.setMode(PlayMode::Pattern);  // J-49
+      if (a.engine.mode() != PlayMode::Pattern) {  // J-49 (J-77: scrubbing here keeps the rack where it is)
+        a.engine.setMode(PlayMode::Pattern);
+        a.rackReveal.quietSwitch(PlayMode::Pattern);
+      }
       g.kind = Gesture::Scrub;  // the position follows the pointer until release
     } else if (inLaneLabel && lClick) {
       ImGui::OpenPopup("##lanepop");

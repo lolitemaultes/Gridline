@@ -11,7 +11,7 @@ Only the icons Gridline uses are included. Each file starts with a comment namin
 
 Unmodified geometry: audio-waveform, chart-gantt, chevron-down, chevron-right, circle-help, copy,
 ellipsis, eraser, eye, eye-off, file, file-plus, folder, folder-open, folder-tree, grid-3x3,
-keyboard, layout-grid, list-music, lock, menu, minus, paintbrush-vertical, pencil, plug, plus,
+keyboard, layout-grid, list-music, lock, menu, minus, move-horizontal, paintbrush-vertical, pencil, plug, plus,
 redo-2, repeat, save, scissors, search, settings, sliders-vertical, square-dashed-mouse-pointer,
 stamp, step-forward, trash-2, undo-2, volume-x, x, zoom-in.
 
@@ -31,6 +31,8 @@ caret-up, caret-down, caret-left, caret-right (filled).
 
 - `slip`: clip edges with the content arrow sliding between them (slip tool).
 - `detune`: a note with fine-pitch up / down chevrons (detune tool).
+- `fade-handles`: a level rising, holding and falling over the volume line (fade / volume handles toggle).
+- `zero-crossing`: one wave cycle crossing its centre line, the crossing marked (zero-crossing toggle).
 
 The stroke is drawn at least 1.5 logical pixels wide (2 units at 18 px and up) and every icon is
 grid fitted when rasterised: the glyph, then each of its paths, may shift by under half a pixel so

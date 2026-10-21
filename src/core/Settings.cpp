@@ -45,6 +45,10 @@ Settings::Settings() {
       {"logger.enabled", b(false)},                    // audio logger keeps the last minutes
       {"logger.minutes", Json::makeNumber(2)},         // 1 / 2 / 5 / 10
       {"logger.source", Json::makeNumber(0)},          // AudioLogger::Source: 0 armed inputs, 1 master
+      // J-79: playlist audio clip editing toggles (global, like FL's toolbar switches).
+      {"playlist.stretchResize", b(false)},            // resizing audio clips time-stretches them
+      {"playlist.showFades", b(true)},                 // fade + volume handles on audio clips
+      {"playlist.zeroCross", b(false)},                // audio clip edits land on zero crossings
       {"piano.snapIncomingMidi", b(false)},            // played notes land on the highlighted scale
       {"piano.editableGhosts", b(false)},              // clicking a ghost note edits it in place
       {"piano.followKeyMarkers", b(true)},             // scale highlighting follows key markers
@@ -52,6 +56,7 @@ Settings::Settings() {
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
       {"ui.scale", Json::makeNumber(1.0)},
       {"ui.showHints", b(true)},
+      {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing
       {"ui.smoothSnap", b(true)},              // J-37: snapped drags glide from cell to cell (drawing only)
       {"ui.smoothScroll", b(true)},            // J-67: wheel scrolling glides to its step (trackpads stay 1:1)
@@ -65,6 +70,7 @@ Settings::Settings() {
       {"theme.playhead", Json::makeString("")},
       {"theme.contrast", Json::makeNumber(0)},       // -1 .. 1
       {"theme.brightness", Json::makeNumber(0)},     // -1 .. 1
+      {"ui.mixerWheel", Json::makeNumber(2)},  // J-83: wheel over mixer controls: 0 adjust, 1 scroll the mixer, 2 auto (scroll when narrow)
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide
       {"ui.layoutVersion", Json::makeNumber(0)},  // J-28: default workspace version the saved layout.ini was built with
       // J-24: general, file, project defaults, backup / autosave, hints, debug, scripting.

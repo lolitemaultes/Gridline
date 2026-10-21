@@ -285,13 +285,15 @@ struct AutomationClip {
   }
 };
 
-// What song playback does when it reaches a marker (J-11).
+// What song playback does when it reaches a marker (J-11). The audio engine
+// runs them at the exact sample (J-85; song mode, realtime playback only).
 enum class MarkerAction : uint8_t {
   None = 0,
-  Loop,   // playback repeats from this marker to the next one
-  Skip,   // playback jumps to the next marker
-  Pause,  // playback pauses here
-  Stop,   // playback stops (the position returns to the start)
+  Loop,      // FL "marker loop": playback repeats from this marker to the next one
+  Skip,      // playback jumps to the next marker
+  Pause,     // playback pauses here
+  Stop,      // playback stops (the position returns to the start)
+  SongLoop,  // J-85, FL "loop": at the song end playback continues here
   Count
 };
 

@@ -42,6 +42,14 @@ msgid "Could not save template"
 msgstr ""
 
 #: src/app/App.cpp
+msgid "Could not save the project"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Could not save the project: internal error ("
+msgstr ""
+
+#: src/app/App.cpp
 msgid "Export failed: cannot write"
 msgstr ""
 
@@ -75,10 +83,6 @@ msgstr ""
 
 #: src/app/App.cpp
 msgid "Reverted to"
-msgstr ""
-
-#: src/app/App.cpp
-msgid "Save failed"
 msgstr ""
 
 #: src/app/App.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/J31Ui.cpp src/app/MenuParityUi.cpp src/packs/edison/edison_ui.cpp
@@ -289,7 +293,7 @@ msgstr ""
 msgid "None"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ExportUi.cpp src/packs/edison/edison_wave_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/ExportUi.cpp src/app/Playlist.cpp src/packs/edison/edison_wave_ui.cpp
 msgid "Normalize"
 msgstr ""
 
@@ -353,7 +357,7 @@ msgstr ""
 msgid "Select all takes"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/Dialogs.cpp
+#: src/app/AudioRecordUi.cpp src/app/Dialogs.cpp src/app/DisplayConfirmUi.cpp
 msgid "System default"
 msgstr ""
 
@@ -405,7 +409,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -429,7 +433,7 @@ msgstr ""
 msgid "Copy"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp
 msgid "Copy value"
 msgstr ""
 
@@ -581,7 +585,7 @@ msgstr ""
 msgid "Paste (replace)"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp
 msgid "Paste value"
 msgstr ""
 
@@ -789,7 +793,7 @@ msgstr ""
 msgid "Automation shapes"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+#: src/app/Browser.cpp src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Browser"
 msgstr ""
 
@@ -862,6 +866,10 @@ msgid "Double-click: load on the selected mixer track · drag onto a mixer strip
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Edited audio"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Effect chains"
 msgstr ""
 
@@ -907,6 +915,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Mixer presets"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "No edited audio"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1389,7 +1401,7 @@ msgstr ""
 msgid "All channels"
 msgstr ""
 
-#: src/app/ChannelRack.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+#: src/app/ChannelRack.cpp src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Channel rack"
 msgstr ""
 
@@ -1478,11 +1490,31 @@ msgid "Steps per bar"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
+msgid "Steps: drag to scroll the pattern (Shift+wheel or a sideways swipe over the steps also scrolls)"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
 msgid "Swing"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
 msgid "Unmute channel (Ctrl+click: solo)"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "click or Ctrl+wheel to change"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "click or Ctrl+wheel: semitone"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "scroll to change"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "wheel: semitone"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp
@@ -1993,7 +2025,7 @@ msgstr ""
 msgid "Chords"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/Dialogs.cpp src/app/LoopStarterUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp
 msgid "Close"
 msgstr ""
 
@@ -2342,11 +2374,23 @@ msgid "Add jump to next bar"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Add loop marker at the song position"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Add loop marker here"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Add marker at the song position"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Add marker at the time selection"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Add marker here"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -2402,7 +2446,7 @@ msgid "At the snap grid"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Audio clip edges on zero crossings"
+msgid "Audio clip edits on zero crossings"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -2577,6 +2621,10 @@ msgstr ""
 msgid "Cut itself (selected)"
 msgstr ""
 
+#: src/app/ContextMenus.cpp src/app/Playlist.cpp
+msgid "Delete %d selected..."
+msgstr ""
+
 #: src/app/ContextMenus.cpp
 msgid "Delete all clips on track"
 msgstr ""
@@ -2726,7 +2774,7 @@ msgid "Export sample as WAV..."
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Fade handles on audio clips"
+msgid "Fade and volume handles on audio clips"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/TopBar.cpp
@@ -2958,6 +3006,18 @@ msgid "Load preset from file..."
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Loop (from here at the song end)"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Loop marker placed: at the song end playback goes on from it"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Loop marker removed"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Loop to the next marker"
 msgstr ""
 
@@ -3063,6 +3123,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Move selected up"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Move the song position here"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -3217,6 +3281,10 @@ msgstr ""
 msgid "Pattern colour"
 msgstr ""
 
+#: src/app/ContextMenus.cpp
+msgid "Pause"
+msgstr ""
+
 #: src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PianoRoll.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Piano roll"
 msgstr ""
@@ -3237,7 +3305,7 @@ msgstr ""
 msgid "Place loop"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/LoopStarterUi.cpp
+#: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/DisplayConfirmUi.cpp src/app/LoopStarterUi.cpp
 msgid "Play"
 msgstr ""
 
@@ -3598,6 +3666,10 @@ msgid "Size"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Skip to the next marker"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Slice at the song position"
 msgstr ""
 
@@ -3663,6 +3735,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Stereo separation"
+msgstr ""
+
+#: src/app/ContextMenus.cpp src/app/LoopStarterUi.cpp src/app/SamplerRenderUi.cpp src/packs/edison/edison_script_ui.cpp
+msgid "Stop"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -3857,6 +3933,10 @@ msgstr ""
 msgid "%zu sample(s) / file(s) could not be found"
 msgstr ""
 
+#: src/app/Dialogs.cpp
+msgid "A change that makes the interface hard to use or cuts the sound goes back by itself"
+msgstr ""
+
 #: src/app/Dialogs.cpp src/app/SettingsKeysTheme.cpp
 msgid "APPEARANCE"
 msgstr ""
@@ -3865,8 +3945,16 @@ msgstr ""
 msgid "About Gridline"
 msgstr ""
 
+#: src/app/Dialogs.cpp
+msgid "Adjust the control"
+msgstr ""
+
 #: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp
 msgid "Audio"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Auto (scroll when the pane scrolls)"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -3891,6 +3979,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Choose it, or open a sub-folder"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Confirm changes"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -4078,6 +4170,10 @@ msgid "Maximum levels"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Mouse wheel over controls in scrolling panes (narrow mixer, channel rack with a long pattern or many channels). Scrolling: the wheel scrolls the pane; drag, click then wheel, or hold Ctrl and wheel, to change a control or step"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Mouse wheel steps glide to their row or step; trackpads follow the fingers directly"
 msgstr ""
 
@@ -4117,7 +4213,7 @@ msgstr ""
 msgid "Output and input devices, sample rate, buffer and recording"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/MidiUi.cpp
+#: src/app/Dialogs.cpp src/app/DisplayConfirmUi.cpp src/app/MidiUi.cpp
 msgid "Output device"
 msgstr ""
 
@@ -4174,6 +4270,10 @@ msgid "Regularly (every 5 minutes)"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Revert size, theme, language and audio changes not kept within 15 s"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "STORAGE"
 msgstr ""
 
@@ -4194,7 +4294,11 @@ msgid "Save changes to this project?"
 msgstr ""
 
 #: src/app/Dialogs.cpp
-msgid "Scales the whole interface; applied as you drag"
+msgid "Scales the whole interface; asks to keep the new size once you let go"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Scroll the pane"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -4249,7 +4353,7 @@ msgstr ""
 msgid "Tempo (BPM)"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/SettingsKeysTheme.cpp
+#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/SettingsKeysTheme.cpp
 msgid "Theme"
 msgstr ""
 
@@ -4294,11 +4398,135 @@ msgid "Very frequently (every minute + before risky edits)"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Wheel over controls"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Your changes will be lost if you don't save them."
 msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "and %zu more"
+msgstr ""
+
+#: src/app/DisplayConfirm.cpp src/app/Menus.cpp
+msgid "Interface size"
+msgstr ""
+
+#: src/app/DisplayConfirm.cpp
+msgid "Use this interface size?"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "After"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Audio output"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Automatic revert is off (Settings, Interface)."
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Before"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Change reverted: it was not confirmed in time"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/LoopStarterUi.cpp src/app/SettingsKeysTheme.cpp
+msgid "Dark"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Default layout"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/SettingsPages.cpp
+msgid "Display language"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/SettingsKeysTheme.cpp
+msgid "Follow system"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Goes back to the earlier setting in %d s unless you keep it."
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Keep"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Keep these audio settings?"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Keep this audio device?"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Keep this language?"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Keep this theme?"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/SettingsKeysTheme.cpp
+msgid "Light"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+msgid "Mixer"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/McpUi.cpp src/app/Menus.cpp
+msgid "New"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Not applied unless you keep it: closes by itself in %d s."
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Now"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+msgid "Playlist"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Previews shown smaller than life, at the same proportion."
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Reset the window layout?"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Revert"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/Menus.cpp
+msgid "Windows"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "Your arrangement"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "brightness"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "contrast"
 msgstr ""
 
 #: src/app/EditTools.cpp
@@ -4470,6 +4698,10 @@ msgid "Choose at least one output format"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Could not save the zipped project"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "DESTINATION"
 msgstr ""
 
@@ -4503,22 +4735,6 @@ msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "FILE NAME AND LOCATION"
-msgstr ""
-
-#: src/app/ExportUi.cpp
-msgid "FL Studio export failed"
-msgstr ""
-
-#: src/app/ExportUi.cpp
-msgid "FL Studio project written"
-msgstr ""
-
-#: src/app/ExportUi.cpp
-msgid "FL Studio zipped loop package failed"
-msgstr ""
-
-#: src/app/ExportUi.cpp
-msgid "FL Studio zipped loop package with"
 msgstr ""
 
 #: src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp
@@ -4761,14 +4977,6 @@ msgstr ""
 msgid "With project"
 msgstr ""
 
-#: src/app/ExportUi.cpp
-msgid "Zipped project failed"
-msgstr ""
-
-#: src/app/ExportUi.cpp
-msgid "Zipped project with"
-msgstr ""
-
 #: src/app/ExternalDragUi.cpp
 msgid "%d files: %s"
 msgstr ""
@@ -4795,6 +5003,90 @@ msgstr ""
 
 #: src/app/ExternalDragUi.cpp
 msgid "Receiving the dropped file…"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "%d sample files rendered next to the project"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "An FL Studio export is already running"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Approximated"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Details"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Exact"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Exporting FL Studio project"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "FL Studio export cancelled"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "FL Studio export report"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "FL Studio zipped loop package written without"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "FL defaults"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Gridline plugin"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Mapped"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "No FL Studio export yet"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "No FL counterpart"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Not used"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Note"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Rendered to samples"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Rendering Gridline instruments to samples"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Stop the export"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Where"
+msgstr ""
+
+#: src/app/FlpExportUi.cpp
+msgid "Written as"
 msgstr ""
 
 #: src/app/HostedUi.cpp
@@ -5317,10 +5609,6 @@ msgstr ""
 msgid "Bright"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp src/app/SettingsKeysTheme.cpp
-msgid "Dark"
-msgstr ""
-
 #: src/app/LoopStarterUi.cpp
 msgid "Density of the drums, bass and lead: ghost notes, fills, hat rolls"
 msgstr ""
@@ -5447,10 +5735,6 @@ msgstr ""
 
 #: src/app/LoopStarterUi.cpp
 msgid "Slow pads, drone bass, soft percussion and a floating bell arp."
-msgstr ""
-
-#: src/app/LoopStarterUi.cpp src/app/SamplerRenderUi.cpp src/packs/edison/edison_script_ui.cpp
-msgid "Stop"
 msgstr ""
 
 #: src/app/LoopStarterUi.cpp
@@ -5641,10 +5925,6 @@ msgstr ""
 msgid "Make a new token: assistants with the old one are refused"
 msgstr ""
 
-#: src/app/McpUi.cpp src/app/Menus.cpp
-msgid "New"
-msgstr ""
-
 #: src/app/McpUi.cpp
 msgid "Off: assistants can only look at the project and measure it. Every change is one undo step labelled AI"
 msgstr ""
@@ -5777,7 +6057,7 @@ msgstr ""
 msgid "Delete its channels"
 msgstr ""
 
-#: src/app/MenuParityUi.cpp
+#: src/app/MenuParityUi.cpp src/app/Playlist.cpp
 msgid "Delete unused automation clips"
 msgstr ""
 
@@ -6090,6 +6370,10 @@ msgid "Export"
 msgstr ""
 
 #: src/app/Menus.cpp
+msgid "FL Studio export report..."
+msgstr ""
+
+#: src/app/Menus.cpp
 msgid "FL Studio presets..."
 msgstr ""
 
@@ -6126,7 +6410,7 @@ msgid "Gridline projects, FL Studio projects (.flp) and zipped projects (.zip)"
 msgstr ""
 
 #: src/app/Menus.cpp
-msgid "Gridline zipped project (.zip)..."
+msgid "Gridline zipped project (.gridline.zip)..."
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -6139,10 +6423,6 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Interface settings..."
-msgstr ""
-
-#: src/app/Menus.cpp
-msgid "Interface size"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -6175,10 +6455,6 @@ msgstr ""
 
 #: src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Metronome"
-msgstr ""
-
-#: src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/core/Keymap.cpp
-msgid "Mixer"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -6239,10 +6515,6 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Piano roll tools"
-msgstr ""
-
-#: src/app/Menus.cpp src/app/Playlist.cpp src/app/TopBar.cpp src/core/Keymap.cpp
-msgid "Playlist"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -6407,10 +6679,6 @@ msgstr ""
 
 #: src/app/Menus.cpp src/app/MixerView.cpp
 msgid "Wide strips"
-msgstr ""
-
-#: src/app/Menus.cpp
-msgid "Windows"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -6861,6 +7129,10 @@ msgstr ""
 msgid "Disk recording"
 msgstr ""
 
+#: src/app/MixerView.cpp src/app/Widgets.cpp
+msgid "Drag to change, Ctrl+wheel to fine-tune"
+msgstr ""
+
 #: src/app/MixerView.cpp
 msgid "EFFECTS"
 msgstr ""
@@ -7298,6 +7570,10 @@ msgid "paint notes while dragging"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "(Shift: fine, Alt: no stop at 0 dB, double-click: 0 dB)"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "A clip longer than its pattern repeats the pattern (every clip of this pattern)"
 msgstr ""
 
@@ -7307,6 +7583,14 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Add 32 tracks"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Audio clip edits land exactly where dropped"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Audio clip edits land on zero crossings"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -7334,7 +7618,43 @@ msgid "Click to place the selected pattern, or drag one in from the list"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Clip volume"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Curve of every segment"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Delete %d clip sources and their %d clips?"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Delete '%s' and its %d clips?"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Delete '%s' and its clip?"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Delete '%s'?"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Delete unused audio clips"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Delete..."
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Deleted"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Deleted clip sources"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -7354,7 +7674,23 @@ msgid "Empty arrangement"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Every clip of it leaves the playlist, in every arrangement."
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Export clip as WAV..."
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Fade and volume handles"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Fade and volume handles hidden"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Fade and volume handles shown"
 msgstr ""
 
 #: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp
@@ -7375,6 +7711,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Instrument tracks take pattern clips only"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Its notes and steps in patterns go too. The sample file stays on disk."
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -7410,6 +7750,10 @@ msgid "No pattern clips to make unique"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Normalize the selection together"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Overlap another audio clip on the track to crossfade with it"
 msgstr ""
 
@@ -7430,7 +7774,19 @@ msgid "Plain curve (no bend)"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Removes the audio clip channel and every clip of it from the project (the sample file stays on disk)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Removes the automation clip and every placement of it from the playlist"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Reset loop start"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Reset to 0 dB"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -7450,11 +7806,43 @@ msgid "Select its clips"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Select unused audio clips"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Select unused automation clips"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Select unused patterns"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Snap to"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Sources no clip in any arrangement uses (audio: channels that play no pattern either)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Stretch"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Stretching keeps the pitch: the clip's channel now time-stretches"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "The channel leaves the channel rack. The sample file stays on disk."
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "The copies are unique (new patterns)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "The project keeps at least one pattern"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -7463,6 +7851,22 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Track with a mode"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Type in value"
+msgstr ""
+
+#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp
+msgid "Zero crossings"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "audio clip edges, slips and slices land on the nearest zero crossing (no clicks)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "audio clips show their fade handles (squares: length, rings: curve) and the volume line (drag up / down for the clip's gain)"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -7494,11 +7898,35 @@ msgid "drag inside a clip to move its content without moving the clip"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "drag up / down · double-click: 0 dB · right-click: volume menu"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "hold to play from the pointer, drag to scrub"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "marker loop"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "paint clips while dragging: the current source, one after another"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "pause"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "resizing an audio clip time-stretches it (the pitch stays) instead of trimming it"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "skip"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "stop"
 msgstr ""
 
 #: src/app/PluginEditorsDelayRef.cpp
@@ -8306,10 +8734,6 @@ msgid "Every shortcut back to the default map"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
-msgid "Follow system"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
 msgid "Hint"
 msgstr ""
 
@@ -8319,10 +8743,6 @@ msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "LEDs"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
-msgid "Light"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -8430,6 +8850,10 @@ msgid "Theme colours, contrast and brightness back to the defaults (the dark / l
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
+msgid "Theme reset"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
 msgid "Type a value"
 msgstr ""
 
@@ -8507,10 +8931,6 @@ msgstr ""
 
 #: src/app/SettingsPages.cpp
 msgid "Detail"
-msgstr ""
-
-#: src/app/SettingsPages.cpp
-msgid "Display language"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
@@ -8755,6 +9175,26 @@ msgstr ""
 
 #: src/app/TopBar.cpp
 msgid "BPM"
+msgstr ""
+
+#: src/app/TopBar.cpp
+msgid "Click to copy"
+msgstr ""
+
+#: src/app/TopBar.cpp
+msgid "Click to copy the message (with its details) to the clipboard"
+msgstr ""
+
+#: src/app/TopBar.cpp
+msgid "Copied to clipboard"
+msgstr ""
+
+#: src/app/TopBar.cpp
+msgid "Dismiss"
+msgstr ""
+
+#: src/app/TopBar.cpp
+msgid "Dismiss this notification"
 msgstr ""
 
 #: src/app/TopBar.cpp
@@ -9054,6 +9494,10 @@ msgid "Articulate tool"
 msgstr ""
 
 #: src/core/Keymap.cpp
+msgid "Audio clip edits land on zero crossings (on / off)"
+msgstr ""
+
+#: src/core/Keymap.cpp
 msgid "Automation clip editor"
 msgstr ""
 
@@ -9218,6 +9662,10 @@ msgid "Limit key range tool"
 msgstr ""
 
 #: src/core/Keymap.cpp
+msgid "Mixer / channel rack control: mouse wheel adjusts it while the pane scrolls"
+msgstr ""
+
+#: src/core/Keymap.cpp
 msgid "Move notes left by the snap"
 msgstr ""
 
@@ -9290,7 +9738,7 @@ msgid "Picker panel"
 msgstr ""
 
 #: src/core/Keymap.cpp
-msgid "Place loop markers on the time selection"
+msgid "Place loop: around the time selection, else a loop marker at the song position"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -9414,7 +9862,7 @@ msgid "Settings (MIDI page)"
 msgstr ""
 
 #: src/core/Keymap.cpp
-msgid "Show fade handles"
+msgid "Show fade and volume handles on audio clips (on / off)"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -9479,6 +9927,38 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Zoom tool"
+msgstr ""
+
+#: src/core/ProjectFiles.cpp
+msgid "All projects (.gridline.json, .flp, .zip)"
+msgstr ""
+
+#: src/core/ProjectFiles.cpp
+msgid "Audio file"
+msgstr ""
+
+#: src/core/ProjectFiles.cpp
+msgid "FL Studio project (.flp)"
+msgstr ""
+
+#: src/core/ProjectFiles.cpp
+msgid "FL Studio zipped loop package (.zip)"
+msgstr ""
+
+#: src/core/ProjectFiles.cpp
+msgid "Gridline project (.gridline.json)"
+msgstr ""
+
+#: src/core/ProjectFiles.cpp
+msgid "Gridline zipped project (.gridline.zip)"
+msgstr ""
+
+#: src/core/ProjectFiles.cpp
+msgid "MIDI file (.mid)"
+msgstr ""
+
+#: src/core/ProjectFiles.cpp
+msgid "Zipped project / FL Studio zipped loop package (.zip)"
 msgstr ""
 
 #: src/engine/Chop.cpp
@@ -9783,10 +10263,6 @@ msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
 msgid "Waveform"
-msgstr ""
-
-#: src/packs/edison/edison_form_ui.cpp
-msgid "Zero crossings"
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp

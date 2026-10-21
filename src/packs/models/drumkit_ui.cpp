@@ -6,6 +6,7 @@
 // velocity, key mode); the selected pad's strike / membrane / pitch / noise /
 // output blocks below; then the live view of its resonant modes and the kit
 // equalizer / limiter.
+#include "../../app/KeyLight.h"
 #include "../flc_kit.h"
 #include <map>
 #include "../../engine/Dsp.h"
@@ -71,6 +72,8 @@ void padTile(App& a, const PluginTarget& t, const PluginState& st, int pad, int&
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) a.doc.setParam(t.pid(drumPad(pad, DpMute)), muted ? 0 : 1, false);
   ImU32 bg = act ? theme::mix(P.surface700, P.paper, 0.3f) : (pad == sel ? P.surface600 : (hov ? P.surface700 : P.surface900));
   dl->AddRectFilled(q, ImVec2(q.x + sz.x, q.y + sz.y), bg, 6);
+  // J-77: the pad flashes on every hit of its note (playback, MIDI, keys, clicks).
+  if (t.isChannel()) keylight::drawFlash(dl, q, ImVec2(q.x + sz.x, q.y + sz.y), P.hot, keylight::flash(a, t.owner, base + pad), 6);
   if (pad == sel) dl->AddRect(q, ImVec2(q.x + sz.x, q.y + sz.y), P.accent, 6, 0, 1.5f);
   ImGui::PushFont(a.fontMono, 10.0f);
   char num[8];

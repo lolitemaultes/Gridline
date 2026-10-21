@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include "../core/I18n.h"
+#include "ToastText.h"
 #include "McpUi.h"
 #include "Keys.h"
 #include "MenuParityUi.h"
@@ -562,6 +563,8 @@ float drawTopBar(App& a) {
 
 // ---------------------------------------------------------- status bar ----
 
+static void drawNotifications(App& a, ImVec2 wp, float W, float fs);
+
 void drawStatusBar(App& a) {
   const auto& P = pal();
   ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -646,32 +649,113 @@ void drawStatusBar(App& a) {
       theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(lx + hw + 8, ty), leftMax - 16 - hw - 8, P.textFaint, h.c_str() + cut + 3);
   }
   ImGui::End();
+  drawNotifications(a, wp, W, fs);
+}
 
-  // Notifications: stacked cards over the bottom-right corner, newest at the
-  // bottom; a lamp (green, red for errors) and a quick fade before they expire.
-  if (!a.toasts.empty()) {
-    ImDrawList* fg = ImGui::GetForegroundDrawList(vp);
-    const float cardMaxW = std::min(420.0f, vp->WorkSize.x * 0.45f), cardH = 34.0f;
-    float y = wp.y - theme::kS2;
-    int shown = 0;
-    for (auto it = a.toasts.rbegin(); it != a.toasts.rend() && shown < 3; ++it, ++shown) {
-      const Toast& t = *it;
-      const float life = static_cast<float>(t.until - a.now);
-      const float alpha = std::clamp(life / 0.4f, 0.0f, 1.0f);
-      const float tw = std::min(a.fontRegular->CalcTextSizeA(fs + 1, 1e9f, 0, t.text.c_str()).x, cardMaxW - 44);
-      const float cw = tw + 44;
-      const ImVec2 c0(wp.x + W - theme::kS3 - cw, y - cardH), c1(wp.x + W - theme::kS3, y);
-      fg->AddRectFilled(ImVec2(c0.x + 2, c0.y + 3), ImVec2(c1.x + 2, c1.y + 3), theme::withAlpha(P.ink, 0.25f * alpha), theme::kRadiusLg);
-      fg->AddRectFilled(c0, c1, theme::withAlpha(theme::popupBg(P), alpha), theme::kRadiusLg);
-      fg->AddRect(c0, c1, theme::withAlpha(P.dark ? P.ink : P.lineStrong, 0.8f * alpha), theme::kRadiusLg);
-      const ImU32 lamp = t.error ? P.danger : P.led;
-      fg->AddRectFilled(ImVec2(c0.x, c0.y), ImVec2(c0.x + 3, c1.y), theme::withAlpha(lamp, alpha), theme::kRadiusLg, ImDrawFlags_RoundCornersLeft);
-      fg->AddCircleFilled(ImVec2(c0.x + 18, (c0.y + c1.y) * 0.5f), 4.0f, theme::withAlpha(lamp, alpha), 12);
-      theme::textEllipsis(fg, a.fontRegular, fs + 1, ImVec2(c0.x + 30, std::round((c0.y + c1.y - fs - 1) * 0.5f) - 1), cw - 40,
-                          theme::withAlpha(t.error ? theme::mix(P.danger, P.text, 0.35f) : P.text, alpha), t.text.c_str());
-      y -= cardH + theme::kS1;
-    }
+// Notifications: stacked cards over the bottom-right corner, newest at the
+// bottom; a lamp (green, red for errors) and a quick fade before they expire.
+// J-78: long messages wrap (up to four lines); a click copies the English
+// message and its details to the clipboard ("Copied" for a second), the x
+// dismisses the card, and a hovered card stays up.
+static void drawNotifications(App& a, ImVec2 wp, float W, float fs) {
+  if (a.toasts.empty()) return;
+  const auto& P = pal();
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+  const float fsz = fs + 1;
+  const float cardMaxW = std::min(460.0f, vp->WorkSize.x * 0.45f);
+  const float padL = 30, padR = 46;  // lamp | text | copy + close glyphs
+  const float lineH = a.fontRegular->CalcTextSizeA(fsz, 1e9f, 0, "Ag").y;
+  struct Card {
+    Toast* t;
+    ImVec2 c0, c1;
+  };
+  std::vector<Card> cards;
+  float y = wp.y - theme::kS2;
+  for (auto it = a.toasts.rbegin(); it != a.toasts.rend() && cards.size() < 3; ++it) {
+    Toast& t = *it;
+    const bool copied = t.copiedUntil > a.now;
+    const char* shown = copied ? i18n::tr("Copied to clipboard") : t.text.c_str();
+    const ImVec2 one = a.fontRegular->CalcTextSizeA(fsz, 1e9f, 0, shown);
+    const float wrapW = cardMaxW - padL - padR;
+    const float tw = std::min(one.x, wrapW);
+    const float th = one.x <= wrapW ? lineH : std::min(a.fontRegular->CalcTextSizeA(fsz, 1e9f, wrapW, shown).y, lineH * 4);
+    const float cw = tw + padL + padR, ch = std::max(34.0f, th + 18);
+    cards.push_back({&t, ImVec2(wp.x + W - theme::kS3 - cw, y - ch), ImVec2(wp.x + W - theme::kS3, y)});
+    y -= ch + theme::kS1;
   }
+  // Input: one borderless window over the cards, kept in front of every other window.
+  ImVec2 bb0(1e9f, 1e9f), bb1(-1e9f, -1e9f);
+  for (const auto& c : cards) {
+    bb0 = ImVec2(std::min(bb0.x, c.c0.x), std::min(bb0.y, c.c0.y));
+    bb1 = ImVec2(std::max(bb1.x, c.c1.x), std::max(bb1.y, c.c1.y));
+  }
+  ImGui::SetNextWindowPos(bb0);
+  ImGui::SetNextWindowSize(ImVec2(bb1.x - bb0.x, bb1.y - bb0.y));
+  ImGui::SetNextWindowViewport(vp->ID);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
+  ImGui::Begin("##notifications", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking |
+                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                   ImGuiWindowFlags_NoScrollWithMouse);
+  ImGui::PopStyleVar(3);
+  ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+  ImDrawList* fg = ImGui::GetForegroundDrawList(vp);
+  const ImVec2 mouse = ImGui::GetIO().MousePos;
+  for (const auto& c : cards) {
+    Toast& t = *c.t;
+    ImGui::PushID(static_cast<int>(t.serial));
+    ImGui::SetCursorScreenPos(c.c0);
+    const bool clicked = ImGui::InvisibleButton("##card", ImVec2(c.c1.x - c.c0.x, c.c1.y - c.c0.y));
+    const bool hov = ImGui::IsItemHovered();
+    const ImVec2 xc(c.c1.x - 14, c.c0.y + 14);  // close glyph centre
+    const bool overClose = hov && std::fabs(mouse.x - xc.x) <= 10 && std::fabs(mouse.y - xc.y) <= 10;
+    if (hov) {
+      t.until = std::max(t.until, a.now + 1.0);  // stays while the pointer is on it
+      a.setHint(overClose ? i18n::tr("Dismiss this notification") : i18n::tr("Click to copy the message (with its details) to the clipboard"));
+      ui::Tooltip(overClose ? "Dismiss" : "Click to copy");
+    }
+    if (clicked && overClose) {
+      t.until = 0;
+    } else if (clicked) {
+      ImGui::SetClipboardText(toast::clipboardText(t.english.empty() ? t.text : t.english, t.details, t.error).c_str());
+      t.copiedUntil = a.now + toast::kCopiedFeedback;
+      t.until = std::max(t.until, a.now + toast::kCopiedFeedback + 0.6);
+    }
+    ImGui::PopID();
+    const bool copied = t.copiedUntil > a.now;
+    const float life = static_cast<float>(t.until - a.now);
+    const float alpha = std::clamp(life / 0.4f, 0.0f, 1.0f);
+    const ImVec2 c0 = c.c0, c1 = c.c1;
+    fg->AddRectFilled(ImVec2(c0.x + 2, c0.y + 3), ImVec2(c1.x + 2, c1.y + 3), theme::withAlpha(P.ink, 0.25f * alpha), theme::kRadiusLg);
+    fg->AddRectFilled(c0, c1, theme::withAlpha(hov ? theme::mix(theme::popupBg(P), P.text, 0.06f) : theme::popupBg(P), alpha), theme::kRadiusLg);
+    fg->AddRect(c0, c1, theme::withAlpha(P.dark ? P.ink : P.lineStrong, 0.8f * alpha), theme::kRadiusLg);
+    const ImU32 lamp = copied ? P.led : t.error ? P.danger : P.led;
+    fg->AddRectFilled(ImVec2(c0.x, c0.y), ImVec2(c0.x + 3, c1.y), theme::withAlpha(lamp, alpha), theme::kRadiusLg, ImDrawFlags_RoundCornersLeft);
+    const ImVec2 lc(c0.x + 18, (c0.y + c1.y) * 0.5f);
+    if (copied) {  // a tick in place of the lamp
+      const ImVec2 tick[3] = {ImVec2(lc.x - 4.5f, lc.y), ImVec2(lc.x - 1.5f, lc.y + 3.5f), ImVec2(lc.x + 4.5f, lc.y - 3.5f)};
+      fg->AddPolyline(tick, 3, theme::withAlpha(P.led, alpha), ImDrawFlags_None, 2.0f);
+    } else {
+      fg->AddCircleFilled(lc, 4.0f, theme::withAlpha(lamp, alpha), 12);
+    }
+    const char* shown = copied ? i18n::tr("Copied to clipboard") : t.text.c_str();
+    const float textW = c1.x - c0.x - 30 - 46;
+    const ImU32 tc = theme::withAlpha(copied ? P.text : t.error ? theme::mix(P.danger, P.text, 0.35f) : P.text, alpha);
+    const float oneW = a.fontRegular->CalcTextSizeA(fsz, 1e9f, 0, shown).x;
+    if (oneW <= textW + 0.5f) {
+      theme::textEllipsis(fg, a.fontRegular, fsz, ImVec2(c0.x + 30, std::round((c0.y + c1.y - fsz) * 0.5f) - 1), textW + 1, tc, shown);
+    } else {
+      const ImVec4 clip(c0.x, c0.y + 6, c1.x, c1.y - 6);
+      fg->AddText(a.fontRegular, fsz, ImVec2(c0.x + 30, c0.y + 9), tc, shown, nullptr, textW, &clip);
+    }
+    // Copy glyph (hovered) and close glyph.
+    const ImU32 glyph = theme::withAlpha(P.textDim, alpha * (hov ? 1.0f : 0.55f));
+    if (hov && !copied) ui::drawIcon(fg, ui::Icon::Clone, ImVec2(c1.x - 34, xc.y), 11, glyph);
+    ui::drawIcon(fg, ui::Icon::Close, xc, 10, overClose ? theme::withAlpha(P.text, alpha) : glyph);
+  }
+  ImGui::End();
 }
 
 }  // namespace gl

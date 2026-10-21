@@ -284,6 +284,13 @@ void write(const PluginState& g, Bytes& b, const EncodeContext&) {
     for (int fld = 0; fld < MoKnobFields; ++fld)
       if (!(pv(g, moKnob(k, fld)) == pv(def, moKnob(k, fld)))) need = k + 1;
   if (static_cast<int>(r.size()) >= need) return;
+  // J-81: controller records are written in the v4 layout (FL's presets with
+  // controllers); a v6/v7 state with them hangs FL's MIDI Out while loading.
+  // Such a state goes back to v4, which has no trailing dword.
+  if (geti(b, 0) >= 6 && b.size() >= end + 5) {
+    putU32(b, 0, 4);
+    b.resize(b.size() - 4);
+  }
   std::vector<bool> used(static_cast<size_t>(kValueSlots), false);
   for (size_t at : r)
     if (b[at] < kValueSlots) used[b[at]] = true;

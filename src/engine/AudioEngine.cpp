@@ -501,7 +501,47 @@ void AudioEngine::preview(SamplePtr sample) {
 // ---------------------------------------------------------------------------
 // Audio thread
 
-double AudioEngine::loopStart() const { return tMode_ == PlayMode::Song && loopB_ > loopA_ && !hostFollow_ ? loopA_ : 0.0; }
+double AudioEngine::loopStart(const Program* p) const {
+  if (tMode_ != PlayMode::Song || hostFollow_) return 0.0;
+  if (loopB_ > loopA_) return loopA_;  // an explicit time selection wins over the song loop marker
+  return markerActions(p) && p->songLoopStart > 0 ? p->songLoopStart : 0.0;
+}
+
+// J-85: marker actions on the audio thread, at the exact sample. Song mode
+// only; off while a time selection loops (it takes precedence), while
+// following a host transport, and in offline renders (an export plays the
+// song once, start to end, like FL's).
+bool AudioEngine::markerActions(const Program* p) const {
+  return p && tMode_ == PlayMode::Song && !offline_ && !hostFollow_ && !(loopB_ > loopA_);
+}
+
+const ProgMarkerEvent* AudioEngine::nextMarkerEvent(const Program* p, double tick) const {
+  for (const auto& e : p->markerEvents) {
+    if (e.tick <= tick + 1e-9) continue;
+    if (e.kind == ProgMarkerEvent::LoopBack && tick < e.from - 1e-6) continue;  // not inside its loop
+    return &e;
+  }
+  return nullptr;
+}
+
+bool AudioEngine::fireMarker(const Program* p, const ProgMarkerEvent& e, int at) {
+  switch (e.kind) {
+    case ProgMarkerEvent::Skip:
+    case ProgMarkerEvent::LoopBack:
+      releaseAll(p, at);
+      landAt(e.target);
+      return true;
+    case ProgMarkerEvent::Pause:
+    case ProgMarkerEvent::Stop:
+      releaseAll(p, at, true);
+      pendJump_ = false;
+      tPlaying_ = false;
+      // Pause holds at the marker; Stop returns where the Stop button does.
+      landAt(e.kind == ProgMarkerEvent::Pause ? e.tick : returnToSeek_.load(std::memory_order_relaxed) ? seekTick_.load(std::memory_order_relaxed) : 0.0);
+      return false;
+  }
+  return true;
+}
 
 double AudioEngine::transportEnd(const Program* p) const {
   if (pastLoop_ && tMode_ == PlayMode::Song && loopB_ > loopA_ && !hostFollow_) return static_cast<double>(p->songLoopEnd);
@@ -531,6 +571,7 @@ void AudioEngine::sendOn(const ProgChannel& ch, uint32_t id, float pitch, float 
       ch.rt->gen->noteOn(id, pitch + ch.pitchOffset, velocity, offset, *props);
     else
       ch.rt->gen->noteOn(id, pitch + ch.pitchOffset, velocity, offset);
+    ch.rt->keys.on(id, pitch, velocity);  // J-77
     return;
   }
   NoteMsg m;
@@ -612,7 +653,7 @@ void AudioEngine::cutPending(const ProgChannel& ch, int index, int offset) {
   if (chain)
     sendOff(ch, id, offset);
   else if (rt->gen)
-    rt->gen->cut(id, offset);
+    rt->gen->cut(id, offset), rt->keys.off(id);
   rt->pending[index] = rt->pending[--rt->pendingCount];
 }
 
@@ -655,8 +696,10 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
       for (int i = rt->pendingCount - 1; i >= 0; --i)
         if (i != keep) {
           gen->cut(rt->pending[i].id, offset);
+          rt->keys.off(rt->pending[i].id);
         }
       gen->glide(kept.id, e.pitch + ch.pitchOffset, ch.portaTime, offset);
+      rt->keys.retarget(kept.id, e.pitch);
       kept.off = e.off;
       kept.pitch = e.pitch;
       kept.at = at;
@@ -682,6 +725,7 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   if (porta && std::fabs(rt->lastPitch - e.pitch) > 1e-4f) {
     sendOn(ch, id, rt->lastPitch, e.velocity, offset, 0, props);
     gen->glide(id, e.pitch + ch.pitchOffset, ch.portaTime, offset);
+    rt->keys.retarget(id, e.pitch);
   } else {
     sendOn(ch, id, e.pitch, e.velocity, offset, 0, props);
   }
@@ -700,6 +744,7 @@ void AudioEngine::sendOff(const ProgChannel& ch, uint32_t id, int offset) {
   for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
   if (!chain) {
     ch.rt->gen->noteOff(id, offset);
+    ch.rt->keys.off(id);  // J-77
     return;
   }
   NoteMsg m;
@@ -715,6 +760,7 @@ void AudioEngine::releaseAll(const Program* p, int offset, bool hard) {
     if (c.rt->gen)
       for (int i = 0; i < c.rt->pendingCount; ++i) sendOff(c, c.rt->pending[i].id, offset);
     c.rt->pendingCount = 0;
+    if (hard) c.rt->keys.clear();
     if (hard && !c.noteFx.empty() && c.rt->gen) {
       NoteMsg m;
       m.kind = NoteMsg::AllOff;
@@ -851,6 +897,7 @@ void AudioEngine::drain(const Program* p) {
           for (const auto& ch : p->channels)
             if (ch.rt && ch.rt->gen) {
               ch.rt->gen->kill();
+              ch.rt->keys.clear();
               ch.rt->pendingCount = 0;
               ch.rt->inbox.clear();
               for (const auto& nf : ch.noteFx)
@@ -974,7 +1021,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
         int64_t endSample = sampleAt(p, anchorTick_, end);
         if (endSample <= clock_) {  // already past the end (e.g. a shorter pattern was selected)
           releaseAll(p, s);
-          landAt(pendJump_ ? pendJumpTo_ : loopStart());
+          landAt(pendJump_ ? pendJumpTo_ : loopStart(p));
           pendJump_ = false;
           continue;
         }
@@ -995,6 +1042,24 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
           seg = static_cast<int>(js - clock_);
           wrap = false;
           jump = true;
+        }
+      }
+      // J-85: a marker action inside this stretch ends it on its sample.
+      const ProgMarkerEvent* mev = nullptr;
+      if (markerActions(p)) {
+        mev = nextMarkerEvent(p, tickAt(p, anchorTick_, static_cast<double>(clock_)));
+        if (mev) {
+          const int64_t ms = sampleAt(p, anchorTick_, mev->tick);
+          if (ms <= clock_) {
+            if (!fireMarker(p, *mev, std::min(s, n - 1))) break;
+            continue;
+          }
+          if (ms <= clock_ + seg) {  // on this stretch's last edge too (the next block would start past it)
+            seg = static_cast<int>(ms - clock_);
+            wrap = jump = false;
+          } else {
+            mev = nullptr;
+          }
         }
       }
       if (segCount_ < kMaxSegments) segs_[segCount_++] = {s, seg, anchorTick_, clock_};
@@ -1028,9 +1093,13 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       }
       clock_ += seg;
       s += seg;
+      if (mev) {
+        if (!fireMarker(p, *mev, std::min(s, n - 1))) break;
+        continue;
+      }
       if (wrap || jump) {
         releaseAll(p, std::min(s, n - 1));
-        landAt(pendJump_ ? pendJumpTo_ : loopStart());  // a pending jump replaces the loop wrap
+        landAt(pendJump_ ? pendJumpTo_ : loopStart(p));  // a pending jump replaces the loop wrap
         pendJump_ = false;
       }
     }
@@ -1100,7 +1169,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     bc_.ctx.tsDen = std::max(1, static_cast<int>(static_cast<Tick>(p->ppq) * 4 / beat));
     bc_.ctx.tsNum = std::max(1, static_cast<int>(std::max<Tick>(1, p->barTicks) / beat));
     bc_.ctx.looping = tPlaying_ && tLoop_ && tMode_ != PlayMode::Live;
-    bc_.ctx.loopStart = loopStart();
+    bc_.ctx.loopStart = loopStart(p);
     bc_.ctx.loopEnd = tMode_ == PlayMode::Live ? 0.0 : loopEnd(p);
     bc_.ctx.offline = offline_;
     bc_.ctx.interp = interp_;
@@ -1472,7 +1541,7 @@ void AudioEngine::runNoteFx(const Program* p, int n) {
     uintptr_t sig = 0;
     for (const auto& nf : ch.noteFx) sig = sig * 31u + reinterpret_cast<uintptr_t>(nf.rt.get());
     if (sig != rt->chainSig) {  // chain added, removed or rebuilt: release what it was holding
-      if (rt->chainSig != 0) rt->gen->allNotesOff(0);
+      if (rt->chainSig != 0) rt->gen->allNotesOff(0), rt->keys.clear();
       for (const auto& nf : ch.noteFx)
         if (nf.rt) nf.rt->fx->reset();
       rt->chainSig = sig;
@@ -1542,11 +1611,12 @@ void AudioEngine::runNoteFx(const Program* p, int n) {
             g->noteOn(m.id, m.pitch + tc->pitchOffset, m.velocity, off);
           else
             g->noteOn(m.id, m.pitch + tc->pitchOffset, m.velocity, off, np);
+          tc->rt->keys.on(m.id, m.pitch, m.velocity);  // J-77: the notes the chain plays light up
         }
         else if (m.kind == NoteMsg::Off)
-          g->noteOff(m.id, off);
+          g->noteOff(m.id, off), tc->rt->keys.off(m.id);
         else
-          g->allNotesOff(off);
+          g->allNotesOff(off), tc->rt->keys.clear();
       }
     }
     rt->inbox.clear();

@@ -1,4 +1,5 @@
 // Gridline — J-24 settings pages (see SettingsPages.h).
+#include "DisplayConfirmUi.h"
 #include "SettingsPages.h"
 #include <algorithm>
 #include <cstdio>
@@ -75,10 +76,8 @@ void generalSettingsPage(App& a, float fieldW) {
       if (l.code == cur) name = l.name;
     if (ui::BeginCombo("##lang", name.c_str(), fieldW)) {
       for (const auto& l : langs)
-        if (ImGui::Selectable((l.name + "##" + l.code).c_str(), l.code == cur)) {
-          st.set("general.language", l.code);
-          a.applySettingsHooks();
-        }
+        if (ImGui::Selectable((l.name + "##" + l.code).c_str(), l.code == cur))
+          ui::confirmLanguage(a, l.code);  // J-77: applied at once, Keep / Revert in both languages
       ImGui::EndCombo();
     }
     ui::Hint("Translations are catalogues in assets/i18n (gettext .po or JSON); Pseudo shows which texts are translatable and where they clip");

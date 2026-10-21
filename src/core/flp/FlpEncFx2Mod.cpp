@@ -229,7 +229,13 @@ Encoder formulaController() {
     const std::string f = md::kDefaultFormula;
     w.u8(static_cast<uint32_t>(f.size()));
     w.bytes(f.data(), f.size());
-    w.u8(0);  // no description
+    // Description (u8 length + UTF-16) and the closing byte every state FL
+    // writes ends with (J-81: without them FL 2026 reads past the state and
+    // crashes in the plugin's editor; FL never stores an empty description).
+    const std::string d = "Gridline";
+    w.u8(static_cast<uint32_t>(d.size()));
+    for (char ch : d) w.u8(static_cast<uint8_t>(ch)), w.u8(0);
+    w.u8(0);
     return w.b;
   };
   e.fields = [](const Bytes&) { return std::vector<Field>{i32(md::FmA, 4, 0, 65536), i32(md::FmB, 8, 0, 65536), i32(md::FmC, 12, 0, 65536)}; };
@@ -247,7 +253,8 @@ Encoder formulaController() {
       for (char16_t c : u) text.push_back(static_cast<uint8_t>(c & 0xFF)), text.push_back(static_cast<uint8_t>(c >> 8));
       n = u.size();
     } else {
-      std::string a = toLatin1(g.data);
+      // An empty formula decodes as the default one: write that (FL's own states always have text).
+      std::string a = toLatin1(g.data.empty() ? std::string(md::kDefaultFormula) : g.data);
       if (a.size() > 255) a.resize(255);
       text.assign(a.begin(), a.end());
       n = a.size();
@@ -470,11 +477,12 @@ Encoder edison() {
     if (!ed::decodeFlState(b.data(), b.size(), fl)) return v;
     const size_t at = b.size() - fl.settings.size() * 4;
     if (fl.settings.size() > 0) v.push_back(i32(ed::EdRecMode, at, 0, 3));
-    if (fl.settings.size() > 2) v.push_back(i32(ed::EdRecMax, at + 8, 0, 7));
-    if (fl.settings.size() > 4) v.push_back(i32(ed::EdFollowHost, at + 16, 0, 1));
+    // -1: "unset", as FL's own plugin database entry stores them.
+    if (fl.settings.size() > 2) v.push_back(i32(ed::EdRecMax, at + 8, -1, 7));
+    if (fl.settings.size() > 4) v.push_back(i32(ed::EdFollowHost, at + 16, -1, 1));
     return v;
   };
-  e.write = [](const PluginState& g, Bytes& b, const EncodeContext&) {
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& ec) {
     ed::State s;
     ed::decodeState(g.data, s);
     // A state the decoder did not recognise: its bytes, when complete.
@@ -492,6 +500,22 @@ Encoder edison() {
     int version = base.version;
     std::vector<int32_t> head = base.head, settings = base.settings;
     Bytes extra = base.extra;
+    // J-81: FL's Edison (v6+) keeps its editor records between the audio and
+    // the settings and reads them unconditionally; a state without them is cut
+    // short for FL. A from-scratch state takes them from the FL installation's
+    // plugin database entry (read at export time, as other encoders do).
+    if (extra.empty() && version >= 6 && !ec.factoryData.empty()) {
+      File f;
+      if (readFile(ec.factoryData + "/Data/Patches/Plugin database/Effects/Misc/Edison.fst", f, nullptr))
+        if (const Event* st = pluginState(f.events)) {
+          ed::FlEdison fl;
+          if (ed::decodeFlState(st->data, st->size, fl) && fl.version == version && !fl.extra.empty()) {
+            extra = fl.extra;
+            // ... with that entry's other settings (the fields solve record mode, time and host sync after).
+            if (fl.settings.size() == settings.size()) settings = fl.settings;
+          }
+        }
+    }
     if (s.flVersion > 0) {  // the parts an FL import kept: "head:extra:settings" (hex)
       const size_t c1 = s.flExtra.find(':'), c2 = c1 == std::string::npos ? c1 : s.flExtra.find(':', c1 + 1);
       if (c2 != std::string::npos) {

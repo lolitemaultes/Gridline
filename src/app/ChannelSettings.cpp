@@ -1,6 +1,7 @@
 // Gridline — channel settings window: strip, routing, instrument parameters,
 // sample loading and waveform for the sampler.
 #include <algorithm>
+#include "KeyLight.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -346,10 +347,16 @@ void drawChannelSettings(App& a) {
       held = -1;
     }
     const ImU32 white = P.keyWhite, whiteHov = theme::mix(P.keyWhite, P.paper, 0.6f), black = P.keyBlack;
+    // J-77: keys sounding on the channel (playback, MIDI, editors) light up and fade out.
+    const keylight::ChannelLights* lit = keylight::lights(a, id);
+    auto litMix = [&](ImU32 base, int note) {
+      const float lv = lit ? lit->key(note) : 0.0f;
+      return lv > 0.004f ? theme::mix(base, P.hot, 0.85f * lv) : base;
+    };
     for (int i = 0; i < kWhite; ++i) {
       int note = kBase + (i / 7) * 12 + whiteSemis[i % 7];
       ImVec2 k0(p.x + kw * i, p.y), k1(k0.x + kw - 1, p.y + kh);
-      ImU32 fill = held == note ? P.hot : hit == note ? whiteHov : white;
+      ImU32 fill = held == note ? P.hot : litMix(hit == note ? whiteHov : white, note);
       dl->AddRectFilled(k0, k1, fill, 3, ImDrawFlags_RoundCornersBottom);
       if (i % 7 == 0) {
         char lbl[8];
@@ -363,7 +370,7 @@ void drawChannelSettings(App& a) {
       for (int k = 0; k < 5; ++k) {
         int note = kBase + o * 12 + blackSemi[k];
         float bx = blackX(o * 7 + blackAfter[k]);
-        ImU32 fill = held == note ? P.hot : hit == note ? theme::mix(P.keyBlack, P.paper, 0.15f) : black;
+        ImU32 fill = held == note ? P.hot : litMix(hit == note ? theme::mix(P.keyBlack, P.paper, 0.15f) : black, note);
         dl->AddRectFilled(ImVec2(bx, p.y), ImVec2(bx + bw, p.y + bh), fill, 2, ImDrawFlags_RoundCornersBottom);
       }
     ui::Hint("Click or drag across the keys to audition the instrument (C3..B4)");

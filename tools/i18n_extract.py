@@ -4,12 +4,13 @@
     python3 tools/i18n_extract.py            # writes assets/i18n/gridline.pot
     python3 tools/i18n_extract.py --check    # exit 1 when the template is out of date
 
-Collected (src/app, src/packs/*/*_ui.cpp, src/core/Keymap.cpp, src/engine/Chop.cpp, src/plugin .cpp and .mm):
+Collected (src/app, src/packs/*/*_ui.cpp, src/core/Keymap.cpp, src/core/ProjectFiles.cpp, src/engine/Chop.cpp, src/plugin .cpp and .mm):
   * i18n::tr("...") and i18n::N_("...") literals (N_ marks text translated later);
   * the English text handed to the widgets that translate themselves:
     ui::Hint, ui::Tooltip, ui::Label, ui::BeginSection, ui::TextButton (label, hint),
     ui::IconButton / ui::ToggleIcon (hint), ui::EmptyState, formLabel / label,
     dialogTitle, openPrompt, roleColour, ui::BeginDockWindow / ui::windowTitle (window titles),
+    ui::confirmTheme (what changed; confirmation titles are marked N_),
     browser sectionHeader / folderSection / emptyLine;
   * App::notify messages: a literal, or the leading literal of "text: " + ... (the
     runtime translates the leading part, i18n::trMessage).
@@ -32,6 +33,8 @@ HELPERS = {
     "ToggleIcon": [4], "EmptyState": [3, 4], "formLabel": [0], "label": [0], "dialogTitle": [1, 2],
     "openPrompt": [0], "roleColour": [1, 2], "BeginDockWindow": [0], "windowTitle": [0],
     "sectionHeader": [0], "folderSection": [1, 4], "emptyLine": [0], "notify": [0],
+    # J-77: Keep / Revert confirmations (title, row caption; what changed).
+    "confirmTheme": [2],
 }
 # Helpers called on an object (a.notify(...)).
 MEMBER_HELPERS = {"notify"}
@@ -48,6 +51,7 @@ def source_files():
     files += glob.glob(os.path.join(ROOT, "src", "packs", "*", "*_ui.cpp"))
     files += [os.path.join(ROOT, "src", "core", "Keymap.cpp")]
     files += [os.path.join(ROOT, "src", "core", "ExternalDrop.cpp")]  # J-75: drop hints ("Drop to add 3 audio clips ...")
+    files += [os.path.join(ROOT, "src", "core", "ProjectFiles.cpp")]  # J-78: open / save dialog file types (N_)
     files += [os.path.join(ROOT, "src", "engine", "Chop.cpp")]  # PL-13: chop preset names and hints (N_)
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.cpp"))  # PH-09: the plugin build's own panel and messages
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.mm"))  # J-64: Cocoa views, hosted plugins' windows, Audio Unit

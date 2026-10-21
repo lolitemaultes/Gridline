@@ -39,6 +39,14 @@ int solidRows(const std::vector<uint8_t>& a, int px, int run) {
 }  // namespace
 
 int main() {
+  {  // J-77: tool strip icons are sized like the top-bar toggles (metronome etc.)
+    expect(icons::toggleIconBox(28.0f) == 16.0f, "top-bar toggle (28 px button): 16 px icon box");
+    expect(icons::toolIconBox(24.0f) == 16.0f, "tool strip (24 px button): 16 px icon box");
+    expect(icons::toolIconBox(24.0f) == icons::toggleIconBox(28.0f), "tool icons match the top-bar toggles");
+    expect(icons::toolIconBox(24.0f) < 20.0f, "tool icons are smaller than before (20 px)");
+    expect(icons::toolIconBox(32.0f) == 20.0f && icons::toolIconBox(36.0f) == 24.0f, "larger strips keep the proportion on standard sizes");
+    expect((24.0f - icons::toolIconBox(24.0f)) * 0.5f == 4.0f, "4 px clear around the glyph in a 24 px button");
+  }
   int n = 0;
   const icons::SvgSource* svgs = icons::embeddedSvgs(&n);
   expect(n >= 50, "the icon set is embedded");

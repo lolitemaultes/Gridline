@@ -104,6 +104,19 @@ std::pair<Tick, Tick> shiftTimeSelection(Tick from, Tick to, int dir);
 int addMarkerPair(Document& d, Tick from, Tick to);
 // A loop marker at `from` and a plain end marker at `to` (playback repeats the range).
 int placeLoopMarkers(Document& d, Tick from, Tick to);
+// J-85 (FL "loop" marker): one step to a song loop. A marker "Loop" with the
+// SongLoop action at `pos`: song playback that reaches the song end goes on
+// from it. A song has one (FL's rule): an earlier song loop marker is removed,
+// and placing it where it already is removes it (toggle). One undo step.
+// Returns the new marker's index (-1: removed, or `pos` < 0).
+int addSongLoopMarker(Document& d, Tick pos);
+// FL's "Place loop" (Shift+T): loop markers around the time selection
+// [selStart, selEnd) when there is one, else a song loop marker at `pos`.
+// Returns the loop marker's index (-1: nothing placed).
+int placeLoop(Document& d, Tick selStart, Tick selEnd, Tick pos);
+// Index of the song loop marker playback returns to at the song end (the last
+// one before it), -1 when none.
+int songLoopMarker(const Song& s);
 // A skip marker at `pos` and a marker at the next bar line: playback jumps
 // from `pos` to the next bar. Returns the skip marker's index.
 int addJumpToNextBar(Document& d, Tick pos);

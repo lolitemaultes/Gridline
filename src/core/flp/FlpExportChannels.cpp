@@ -571,11 +571,11 @@ void Exporter::writeChannel(int fl) {
   const bool placeholder = type == kSampler && !ch.plugin.empty() && ch.plugin.type != "gl.sampler";
   PluginOut po;
   if (type == kPlugin) po = encodePlugin(ch.plugin, ch.id, -1, true, "channel '" + ch.name + "'");
-  if (placeholder) {
-    rep.plugins.push_back({"channel '" + ch.name + "'", ch.plugin.type, "", "placeholder",
-                           "no FL instrument; written as an empty sampler channel named after it"});
-    rep.counts["plugins placeholder"]++;
-  }
+  if (placeholder)
+    reportPlugin({"channel '" + ch.name + "'", ch.plugin.type, "", "placeholder", "no FL instrument; written as an empty sampler channel named after it"},
+                 ch.id, -1);
+  else if (ch.plugin.type == "gl.sampler" && standIns && standIns->find(ch.id, -1))  // J-80: rendered to a sampler channel
+    reportPlugin({"channel '" + ch.name + "'", ch.plugin.type, "Sampler", "rendered", ""}, ch.id, -1);
   // Replaces the plugin events (201 212 213) of a list with the encoded plugin.
   auto putPlugin = [&](EventList& ev) {
     if (type != kPlugin) return;
@@ -894,10 +894,15 @@ void Exporter::writeChannel(int fl) {
       cmp("volume", back.gain, ch.gain);
       cmp("pan", back.pan, ch.pan);
       if (type != kAudio) cmp("pitch", back.pitch * 100.0 + back.fine, ch.pitch * 100.0 + ch.fine);
-      cmp("swing mix", back.swingMix, ch.swingMix);
+      if (s.swing != 0) cmp("swing mix", back.swingMix, ch.swingMix);
       cmp("time shift", back.timeShift, ch.timeShift);
       cmp("polyphony", back.polyphony, ch.polyphony);
-      cmp("porta time", back.portaTime, ch.portaTime);
+      // J-78 / J-80: settings only where they play a part (porta time: porta / mono / gliding notes; swing mix: song swing).
+      bool glides = ch.porta || ch.mono;
+      for (const Pattern& p : s.patterns)
+        if (auto it = p.notes.find(ch.id); it != p.notes.end() && !glides)
+          for (const Note& n : it->second) glides = glides || n.porta || n.slide;
+      if (glides) cmp("porta time", back.portaTime, ch.portaTime);
       if (!(back.echo == ch.echo) && (back.echo.active() || ch.echo.active())) diff.push_back("echo");
       if (ch.plugin.type == "gl.sampler" && back.plugin.type == "gl.sampler") {
         const PluginInfo* info = findPlugin("gl.sampler");

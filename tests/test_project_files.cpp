@@ -71,9 +71,9 @@ void testRouting() {
   expect(dropAction(DropItem{Kind::Project, "", PluginKind::Generator}, DropTarget::Rack) == DropAction::OpenProject, "drop zip/project opens it");
   expect(std::string(dropActionLabel(DropAction::OpenProject)) == "Open project", "drop label");
 
-  // Save as: Gridline, FL Studio project, FL Studio zipped loop package.
+  // Save as: Gridline, Gridline zipped (J-78), FL Studio project, FL Studio zipped loop package.
   const auto& save = saveFileTypes();
-  expect(save.size() == 3 && save[1].exts[0] == ".flp" && save[2].exts[0] == ".zip", "save types");
+  expect(save.size() == 4 && save[1].exts[0] == ".gridline.zip" && save[2].exts[0] == ".flp" && save[3].exts[0] == ".zip", "save types");
   expect(saveFormatOf("/a/x.flp") == SaveFormat::Flp && saveFormatOf("/a/x.zip") == SaveFormat::FlZip &&
              saveFormatOf("/a/x.gridline.json") == SaveFormat::Gridline,
          "save format by name");
@@ -187,6 +187,9 @@ void testPackage() {
   }
   flp::PackageOptions opt;
   opt.flp.factoryData = flp::defaultFactoryData();
+  // J-80: the demo's Gridline instruments are not rendered here (compared with
+  // a plain in-memory export; renders in the package: test_flp_standin).
+  opt.flp.renderInstruments = false;
   // Entry names: flat, unique (case-insensitive), never the project's own name.
   const auto entries = flp::packageEntries(s, "kick.flp", opt);
   std::set<std::string> lower;

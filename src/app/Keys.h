@@ -34,6 +34,10 @@ bool modifierHeld(const char* id);
 // Same, but a gesture whose modifier is none (0) matches when no modifier is
 // held (plain wheel / drag gestures).
 bool modifierExact(const char* id);
+// J-83: the gesture modifier's keys are held, other modifiers allowed too
+// (Ctrl+Shift+wheel: the wheel-adjust modifier plus the fine key). False for
+// gestures without a modifier.
+bool modifierIncludes(const char* id);
 
 // Menu shortcut text: the first chord ("Ctrl+S"), nullptr when unbound.
 const char* label(const char* id);

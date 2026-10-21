@@ -1088,6 +1088,7 @@ void drawBrowser(App& a) {
     }
     if (all || tab == TabSounds) {
       folderSection(a, "Sliced audio", browserui::contentDir(a, "Sliced audio"), role::kSlip, "No sliced audio", true);
+      folderSection(a, "Edited audio", editedDir(a), role::kSlip, "No edited audio", true);
       sectionUserFolders(a);
     }
     if (tab == TabStarred) sectionStarred(a);

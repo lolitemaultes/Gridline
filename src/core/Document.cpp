@@ -367,12 +367,20 @@ bool Document::removeChannel(ObjectId id) {
   for (const auto& a : song_.arrangements)
     for (const auto& c : a.playlist) refs = refs || audioOf(c);
   for (const auto& ch : song_.channels) refs = refs || std::find(ch.layer.begin(), ch.layer.end(), id) != ch.layer.end();
+  // J-82: MIDI controller links and pattern automation lanes of its controls go too.
+  auto linkOf = [id](const ControllerLink& l) { return l.owner == id && l.action == RemoteAction::None; };
+  auto laneOf = [id](const PatternAutomation& l) { return l.owner == id; };
+  for (const auto& l : song_.links) refs = refs || linkOf(l);
+  for (const auto& p : song_.patterns)
+    for (const auto& l : p.automation) refs = refs || laneOf(l);
   if (refs)
     editSong("delete channel", [&](Song& s) {
       auto drop = [&](std::vector<Clip>& v) { v.erase(std::remove_if(v.begin(), v.end(), audioOf), v.end()); };
       drop(s.playlist);
       for (auto& a : s.arrangements) drop(a.playlist);
       for (auto& ch : s.channels) ch.layer.erase(std::remove(ch.layer.begin(), ch.layer.end(), id), ch.layer.end());
+      s.links.erase(std::remove_if(s.links.begin(), s.links.end(), linkOf), s.links.end());
+      for (auto& p : s.patterns) p.automation.erase(std::remove_if(p.automation.begin(), p.automation.end(), laneOf), p.automation.end());
     });
   endGroup();
   return true;

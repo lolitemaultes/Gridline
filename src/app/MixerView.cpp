@@ -23,6 +23,7 @@
 #include "TrackIcons.h"
 #include "../core/MixerLayout.h"
 #include "../core/MixerOps.h"
+#include "../core/WheelRoute.h"
 #include "../core/WavWriter.h"
 #include "../engine/Render.h"
 #include "BrowserUi.h"
@@ -33,6 +34,13 @@
 namespace gl {
 
 using theme::pal;
+
+namespace {
+float gMixerStripsScroll = 0;     // J-83 dev check: the strips pane's scroll as drawn last
+bool gMixerWheelScrolls = false;  // J-83: the plain wheel scrolls the mixer (thin layout / setting)
+}  // namespace
+float mixerStripsScrollY() { return gMixerStripsScroll; }
+bool mixerWheelScrolls() { return gMixerWheelScrolls; }
 
 // Generic parameter panel used by effects and instruments: knobs for
 // continuous values, segmented buttons for choices, toggles for switches.
@@ -352,8 +360,11 @@ void stripSlots(App& a, const MixerTrack& t, ImVec2 p, float w) {
     ImGui::SetCursorScreenPos(ImVec2(p.x, y));
     ImGui::InvisibleButton("xs", ImVec2(nameW, kExtSlotRowH));
     const bool hov = ImGui::IsItemHovered();
-    if (hov && keys::modifierExact("mixer.slotWheelMove")) {  // Q-8: wheel moves the effect
-      ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+    // Q-8: wheel moves the effect. J-83: in a scrolling mixer only after a
+    // click on the slot or with the wheel-adjust modifier (the plain wheel scrolls).
+    const ui::WheelGate wg = ui::wheelGate(ui::wheelPaneScrolls() || keys::modifierExact("mixer.slotWheelMove"));
+    if (wg.scale > 0) {
+      if (!ui::wheelPaneScrolls()) ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
       if (info && ImGui::GetIO().MouseWheel != 0) wheelSlot(a, t.id, k, ImGui::GetIO());
     }
     if (hov) dl->AddRectFilled(ImVec2(p.x + 1, y), ImVec2(p.x + nameW, y + kExtSlotRowH), P.surface700, 1);
@@ -1003,12 +1014,14 @@ static void stripEqPanel(App& a, const MixerTrack& t, float iw) {
     ImGui::SetCursorScreenPos(ImVec2(sx - 6, p.y));
     ImGui::InvisibleButton("gain", ImVec2(22, h));
     const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+    const ui::WheelGate wg = ui::wheelGate();  // J-83: a scrolling mixer scrolls over the slider
     const float travel = h - 8;
     float g = t.eqGain[bi];
-    if (act && ImGui::GetIO().MouseDelta.y != 0)
+    if (act && wg.dragOk && ImGui::GetIO().MouseDelta.y != 0)
       edit(bi, 0, std::clamp(g - ImGui::GetIO().MouseDelta.y / travel * 36.0f * (ImGui::GetIO().KeyShift ? 0.2f : 1.0f), -18.0f, 18.0f));
     if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) edit(bi, 0, 0.0f);
-    if (hov && ImGui::GetIO().MouseWheel != 0) edit(bi, 0, std::clamp(g + ImGui::GetIO().MouseWheel * 0.5f, -18.0f, 18.0f));
+    if (wg.scale > 0 && ImGui::GetIO().MouseWheel != 0) edit(bi, 0, std::clamp(g + ImGui::GetIO().MouseWheel * 0.5f * wg.scale, -18.0f, 18.0f));
+    if (wg.hint) ui::Tooltip("Drag to change, Ctrl+wheel to fine-tune");
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     const float cxs = (r0.x + r1.x) * 0.5f, mid = p.y + h * 0.5f;
     const float y = mid - std::clamp(g, -18.0f, 18.0f) / 18.0f * (travel * 0.5f);
@@ -1181,6 +1194,12 @@ void drawMixer(App& a) {
     in.padding = theme::kS2;
     ml = mixlayout::compute(in);
   }
+  // J-83: the thin mixer scrolls with the wheel; its faders, knobs and slots
+  // take the wheel only after a click or with Ctrl (Settings > Interface).
+  // Read every frame: resizing across the breakpoint flips it at once.
+  const bool wheelScrolls = wheelroute::paneScrolls(wheelroute::modeFromSetting(a.settings.getNumber("ui.mixerWheel")), column);
+  gMixerWheelScrolls = wheelScrolls;
+  ui::WheelPolicyScope wheelScope(wheelScrolls);
   const bool showInspector = !column || ml.showInspector;
   const float inspectorW = std::clamp(W * 0.27f, 240.0f, 320.0f);
   const float inspectorH = column ? ml.inspectorH : 0.0f;
@@ -1193,6 +1212,7 @@ void drawMixer(App& a) {
                     ImGuiChildFlags_AlwaysUseWindowPadding, column ? 0 : ImGuiWindowFlags_HorizontalScrollbar);
   ImGui::PopStyleColor();
   ImGui::PopStyleVar(2);
+  gMixerStripsScroll = ImGui::GetScrollY();
   {
     StripCtx ctx;
     ctx.focus = sel;
@@ -1378,13 +1398,18 @@ void drawMixer(App& a) {
       // the next notches keep moving it; here the moved effect stays the
       // wheel's target while the pointer rests). Rows glide to their new place.
       ImGuiIO& wio = ImGui::GetIO();
-      const bool wheelMove = wio.MouseWheel != 0 && keys::modifierExact("mixer.slotWheelMove");
+      // J-83: in a scrolling mixer the slot list scrolls with the plain wheel;
+      // a slot moves only after a click on it (wheel focus) or with Ctrl, and
+      // a running pane scroll never moves one (see core/WheelRoute.h).
+      const bool thinWheel = ui::wheelPaneScrolls();
+      const bool wheelMove = wio.MouseWheel != 0 && (thinWheel ? !ui::wheelScrolling() : keys::modifierExact("mixer.slotWheelMove"));
       bool wheelDone = false;
-      if (wheelMove && slotWheel.track == sel->id && slotWheel.slot >= 0 && ImGui::GetTime() - slotWheel.time < 2.0 &&
+      if (wheelMove && (!thinWheel || ui::wheelModifierHeld() || ui::wheelFocusActive()) && slotWheel.track == sel->id && slotWheel.slot >= 0 && ImGui::GetTime() - slotWheel.time < 2.0 &&
           std::fabs(wio.MousePos.x - slotWheel.at.x) + std::fabs(wio.MousePos.y - slotWheel.at.y) < 3.0f &&
           ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
         wheelSlot(a, sel->id, slotWheel.slot, wio);
         wheelDone = true;
+        if (thinWheel) ui::wheelClaim();
       }
       for (int k = 0; k < kEffectSlots; ++k) {
         const EffectSlot& es = sel->slots[static_cast<size_t>(k)];
@@ -1414,8 +1439,9 @@ void drawMixer(App& a) {
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton("slot", ImVec2(bw, rowH - 2));
         bool hov = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##fxlist");
-        if (hov && keys::modifierExact("mixer.slotWheelMove")) {
-          ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);  // the panel does not scroll under a slot
+        const ui::WheelGate wg = ui::wheelGate(thinWheel || keys::modifierExact("mixer.slotWheelMove"));
+        if (wg.scale > 0) {
+          if (!thinWheel) ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);  // the panel does not scroll under a slot (the gate claims it when thin)
           if (wheelMove && !wheelDone && info) {
             wheelSlot(a, sel->id, k, wio);
             wheelDone = true;

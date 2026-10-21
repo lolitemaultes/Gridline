@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 #include "../engine/ChannelIns.h"
+#include "FlpExportUi.h"
 #include "J59Ui.h"
 #include "FrameProfile.h"
 #include "FrameStats.h"
@@ -31,6 +32,7 @@
 #include "../../third_party/imgui/imgui_impl_sdl2.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include <cfloat>
+#include "../core/ClipSources.h"
 #include "../core/Project.h"
 #include "../core/Workspace.h"
 #include "../packs/PacksUi.h"
@@ -303,6 +305,8 @@ struct HeldNote {
 //   trace on|off (J-67: per frame, the drawn scroll positions to stdout)
 //   J-75 drags from other applications (logical pixels): dragenter x y <file|promise:file|"path with spaces">...,
 //   dragmove x y, drop [x y], dragleave · undo · channels (channel names / samples to stdout)
+//   mixer (J-83: track volumes / pans, the strips pane's scroll and wheel policy to stdout)
+//   rack (J-84: channel rack layout, step scroll, channel volumes / pans, step velocities / pitches to stdout)
 std::string devShotPending;
 bool devTrace = false;
 ImVec2 devTraceWheel;  // this frame's wheel input (io clears it at the end of the frame)
@@ -428,6 +432,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     else if (l.cmd == "scroll") io.AddMouseWheelEvent(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
     else if (l.cmd == "momentum") devMomentum = {std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr), std::atoi(l.a2.c_str())};
     else if (l.cmd == "trace") devTrace = l.a0 != "off";
+    else if (l.cmd == "toasts") app.toasts.clear();  // J-78: "toasts clear": no notification cards (control runs)
     else if (l.cmd == "mod") {
       const bool on = std::atoi(l.a1.c_str()) != 0;
       // (macOS: "ctrl" is the physical Ctrl key, "super" the Cmd key — ImGui swaps them)
@@ -473,6 +478,15 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       xdragui::devDrop(std::strtof(l.a0.c_str(), nullptr) * devDragScale, std::strtof(l.a1.c_str(), nullptr) * devDragScale, l.args.size() >= 2);
     } else if (l.cmd == "dragleave") {
       xdragui::devLeave();
+    } else if (l.cmd == "mixer") {  // J-83: mixer track volumes / pans and the strips pane's scroll to stdout
+      const Song& s = app.doc.song();
+      std::printf("mixer frame %d: scroll %.1f wheelScrolls %d undo %zu\n", frame, mixerStripsScrollY(), mixerWheelScrolls() ? 1 : 0,
+                  app.doc.history().position());
+      for (size_t i = 0; i < s.mixer.size(); ++i)
+        std::printf("  track %zu volume %.4f pan %.4f\n", i, static_cast<double>(s.mixer[i].volume), static_cast<double>(s.mixer[i].pan));
+      std::fflush(stdout);
+    } else if (l.cmd == "rack") {  // J-84: channel rack layout, step scroll and values to stdout
+      rackDevDump(app, frame);
     } else if (l.cmd == "undo") {
       app.doc.undo();
       app.syncEngine();
@@ -532,8 +546,13 @@ int main(int argc, char** argv) {
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
   // Start as a compact borderless splash; becomes the main window once loaded.
+  // J-78: --hidden (automated off-screen runs with --size / --screenshot): the
+  // window is never shown on the user's desktop.
+  bool startHidden = false;
+  for (int i = 1; i < argc; ++i) startHidden = startHidden || std::string(argv[i]) == "--hidden";
   SDL_Window* window = SDL_CreateWindow("Gridline", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 380,
-                                        SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI);
+                                        SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI |
+                                            (startHidden ? SDL_WINDOW_HIDDEN : 0));
   if (!window) {
     std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
     return 1;
@@ -581,6 +600,17 @@ int main(int argc, char** argv) {
   theme::apply(true);
   ImGui_ImplSDL2_InitForOpenGL(window, gl);
   ImGui_ImplOpenGL3_Init(glsl);
+  if (startHidden) {
+    // J-78: automated runs keep their own clipboard (a scripted click on a
+    // notification must not replace what the user copied); stdout shows it.
+    static std::string devClipboard;
+    ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+    pio.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* text) {
+      devClipboard = text ? text : "";
+      std::printf("clipboard: %s\n", devClipboard.c_str());
+    };
+    pio.Platform_GetClipboardTextFn = [](ImGuiContext*) -> const char* { return devClipboard.c_str(); };
+  }
   theme::setMarkTextureProvider(&markTexture);
 
   // ---- splash: each real start-up step advances the bar ----
@@ -679,6 +709,7 @@ int main(int argc, char** argv) {
   float shotScale = 1.0f;                 // --scale F: framebuffer scale of an off-screen shot (HiDPI check)
   float devUiScale = 0.0f;                // --ui-scale F: interface scale for this run only (not saved; J-54 layout checks)
   std::string devSaveAtExit;  // --save-at-exit path: project saved when the run ends (plugin state round trips)
+  std::string devSaveAt;      // --save-at path: project saved at frame 3 (J-78: the notification shows in the shot)
   int devWindowCycle = 0;  // --plugin-window-cycle N: close / reopen the plugin window N times
   bool devHostedEditor = false;           // --hosted-editor: open the native editor of the --plugin target
   std::vector<DevInputLine> devInput;     // --dev-input file: scripted mouse / key input (J-28)
@@ -778,7 +809,7 @@ int main(int argc, char** argv) {
       else if (w == "piano") devFocus = "Piano roll";
       else if (w == "playlist") devPlaylistOnly = true;  // the playlist fills the window
       else if (w == "mixer") devMixerOnly = true;        // the mixer fills the window
-      else if (w == "open" || w == "saveas" || w == "prompt" || w == "unsaved" || w == "ppqwarn") devDialog = w;  // J-54: file dialogs / one-line prompt (frame 3)
+      else if (w == "open" || w == "saveas" || w == "prompt" || w == "unsaved" || w == "ppqwarn" || w == "delsource") devDialog = w;  // J-54: file dialogs / one-line prompt (frame 3)
       else if (w == "presetprogress") {  // J-54 layout check: FL preset import progress (no worker runs)
         app.showSettings = true, app.settingsTab = 2;
         app.presetImport.running = true, app.presetImport.done = 1234, app.presetImport.total = 5678;
@@ -841,10 +872,17 @@ int main(int argc, char** argv) {
           }
       } else if (w == "chords") {  // J-36 QA: chord progression editor on the selected pattern / channel (frame 3)
         devChords = true;
+      } else if (w == "flpexport") {  // J-80 layout check: FL export of the song into the config folder, then its report
+        const std::string out = (std::filesystem::path(app.configDir()) / "dev-flp-export" / "check.flp").string();
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(out).parent_path(), ec);
+        flpexport::start(app, out, false, [](bool) { flpexport::openReport(); });
       } else if (w == "toast") {  // layout check: notification toasts
         app.notify("Saved the project");
         app.notify("Cannot decode sample: missing.wav", true);
       }
+    } else if (arg == "--rack" && i + 1 < argc) {  // J-84 dev check: rack pattern length / size / docking
+      rackDevSpec(argv[++i]);
     } else if (arg == "--hide" && i + 1 < argc) {  // dev check (README shots): close a main window
       devHide.push_back(argv[++i]);
     } else if (arg == "--mixer-view" && i + 1 < argc) {
@@ -894,6 +932,8 @@ int main(int argc, char** argv) {
       setPluginWindowLog(true);
     } else if (arg == "--plugin-panel" && i + 1 < argc) {  // dev check: plugin window settings unfolded on page N
       setPluginWindowPanel(std::atoi(argv[++i]));
+    } else if (arg == "--save-at" && i + 1 < argc) {  // dev check: save the project at frame 3
+      devSaveAt = argv[++i];
     } else if (arg == "--save-at-exit" && i + 1 < argc) {  // dev check: save the project when the run ends
       devSaveAtExit = argv[++i];
     } else if (arg == "--plugin-window-action" && i + 1 < argc) {  // dev check: press a plugin window bar button
@@ -917,6 +957,8 @@ int main(int argc, char** argv) {
       devUiScale = std::clamp(static_cast<float>(std::atof(argv[++i])), 0.75f, 2.0f);
     } else if (arg == "--scale" && i + 1 < argc) {
       shotScale = std::clamp(static_cast<float>(std::atof(argv[++i])), 0.5f, 4.0f);
+    } else if (arg == "--hidden") {
+      // J-78: read before the window is created (see startHidden)
     } else if (fs::exists(arg)) {
       app.openProject(arg);
     }
@@ -1136,6 +1178,7 @@ int main(int argc, char** argv) {
     scrollui::beforeNewFrame();
     ImGui::NewFrame();
     scrollui::afterNewFrame();
+    ui::wheelFrameBegin();     // J-83: wheel routing over controls in scrolling panes
     xdragui::beginFrame(app);  // J-75: an external drag is an ImGui drag from outside
     devTraceWheel = ImVec2(io.MouseWheelH, io.MouseWheel);
     {  // splash -> main window: the workspace fades in from the splash surface over the first frames
@@ -1226,8 +1269,21 @@ int main(int argc, char** argv) {
     }
     {
       prof::Scope ps("rack");
+      // J-77: choosing PAT shows the rack: a closed rack reopens where it was, an open one comes to the
+      // front (not moved; the keyboard focus stays where it is, e.g. in a text field).
+      const RackReveal::Action reveal = app.rackReveal.step(app.engine.mode(), app.showRack);
+      if (reveal == RackReveal::Action::Show) app.showRack = true;
       if (placeRack && app.showRack) ImGui::SetNextWindowDockID(0, ImGuiCond_Always);  // default layout: the rack floats
+      rackDevBefore(app, frameNo);  // J-84 dev check (--rack)
       drawChannelRack(app);
+      if (reveal != RackReveal::Action::None)
+        if (ImGuiWindow* rw = ImGui::FindWindowByName("Channel rack")) {
+          if (rw->DockIsActive && rw->DockNode) {
+            if (rw->DockNode->TabBar) rw->DockNode->TabBar->NextSelectedTabId = rw->TabId;  // docked: its tab comes forward
+          } else {
+            ImGui::BringWindowToDisplayFront(rw);
+          }
+        }
       if (placeRack && app.showRack) {  // ... over the playlist's left part (once the window exists)
         if (ImGuiWindow* rw = ImGui::FindWindowByName("Channel rack")) {
           ImGui::SetWindowPos(rw, ImVec2(rackPlacement.x, rackPlacement.y), ImGuiCond_Always);
@@ -1236,6 +1292,7 @@ int main(int argc, char** argv) {
         }
       }
       keepFloatingInView("Channel rack", dpos, dsize);
+      rackDevAfter(app, frameNo);
     }
     {
       prof::Scope ps("mixer");
@@ -1292,12 +1349,22 @@ int main(int argc, char** argv) {
     }
     if (!devTool.empty() && frameNo == 3) devOpenTool(app, devTool);
     if (!devScript.empty() && frameNo == 3) devOpenScript(app, devScript);
+    if (!devSaveAt.empty() && frameNo == 3) {
+      app.saveProject(devSaveAt);
+      flpexport::wait();  // J-80: an FL format saves in the background; its card is up on the next frame
+    }
     if (devChords && frameNo == 3) j31::openChordEditor(app);
     if (!devDialog.empty() && frameNo == 3) {  // a popup opened before frame 3 is closed again
       if (devDialog == "open") app.openDialog();
       if (devDialog == "saveas") app.saveAs();
       if (devDialog == "unsaved") app.confirmDiscard = true;
       if (devDialog == "ppqwarn") devShowPpqWarning(app, 48);
+      if (devDialog == "delsource")  // J-82: delete the first used audio clip source (asks first)
+        for (const auto& c : app.doc.song().channels)
+          if (gl::ops::isAudioClipSource(c) && gl::ops::clipSourceUses(app.doc.song(), gl::ClipKind::Audio, c.id) > 0) {
+            gl::requestDeleteSources(app, gl::ClipKind::Audio, {c.id});
+            break;
+          }
       if (devDialog == "prompt") menus::openPrompt("Rename pattern", "Pattern 1", [](const std::string&) {});
       // Layout checks never list the user's own folders: browse the Gridline source tree.
       if (devDialog == "open" || devDialog == "saveas") app.fileDialog.dir = fs::path(GRIDLINE_SOURCE_ASSETS).parent_path().string();
@@ -1343,6 +1410,7 @@ int main(int argc, char** argv) {
     }
 
     xdragui::endFrame(app);  // J-75: a drop no window took opens the files
+    ui::wheelFrameEnd();     // J-83
     {
     prof::Scope psRender("render");
     ImGui::Render();
@@ -1415,7 +1483,7 @@ int main(int argc, char** argv) {
 
   if (!devSaveAtExit.empty()) {
     captureHostedStates(app);
-    std::fprintf(stderr, "%s %s\n", app.saveProject(devSaveAtExit) ? "saved" : "could not save", devSaveAtExit.c_str());
+    std::fprintf(stderr, "%s %s\n", app.saveProject(devSaveAtExit) && (flpexport::wait(), true) ? "saved" : "could not save", devSaveAtExit.c_str());
   }
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   closeAllHostedEditors(app);

@@ -270,7 +270,10 @@ CollectReport exportZippedProject(const Song& song, const std::string& zipPath, 
     return rep;
   }
   const std::string text = projectToText(copy);
-  z.add(name + ".gridline.json", std::vector<uint8_t>(text.begin(), text.end()));
+  if (!z.add(name + ".gridline.json", std::vector<uint8_t>(text.begin(), text.end()))) {
+    rep.error = z.close(&err) ? "cannot write " + zipPath : err;  // J-78: a failed entry is reported (the target stays as it was)
+    return rep;
+  }
   for (const auto& [src, n] : entry) {
     if (!z.addFile(n, src, &err)) {
       rep.error = err;

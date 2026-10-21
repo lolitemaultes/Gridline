@@ -1,5 +1,6 @@
 // Gridline — J-27 menu parity operations (see MenuParity.h).
 #include "MenuParity.h"
+#include "ClipSources.h"
 #include "ChordTools.h"
 #include <algorithm>
 #include <cmath>
@@ -325,13 +326,7 @@ ObjectId laneToAutomationClip(Document& d, ObjectId pattern, ObjectId owner, uin
 }
 
 std::vector<ObjectId> unusedAutomationClips(const Song& s) {
-  std::vector<ObjectId> out;
-  for (const auto& a : s.automations) {
-    bool used = false;
-    for (const auto& c : s.playlist) used = used || (c.kind == ClipKind::Automation && c.source == a.id);
-    if (!used) out.push_back(a.id);
-  }
-  return out;
+  return unusedClipSources(s, ClipKind::Automation);  // J-82: clips in other arrangements count too
 }
 
 int deleteUnusedAutomationClips(Document& d) {
@@ -500,6 +495,43 @@ int placeLoopMarkers(Document& d, Tick from, Tick to) {
   for (size_t k = 0; k < d.song().markers.size(); ++k)
     if (d.song().markers[k].pos == from && d.song().markers[k].action == MarkerAction::Loop) return static_cast<int>(k);
   return -1;
+}
+
+int addSongLoopMarker(Document& d, Tick pos) {
+  if (pos < 0) return -1;
+  // As FL's place song loop marker: the song's loop marker is replaced (one
+  // per song); placing it where it already is removes it (a toggle).
+  bool here = false;
+  for (const auto& m : d.song().markers) here = here || (m.action == MarkerAction::SongLoop && m.pos == pos);
+  int index = -1;
+  d.editSong("place song loop marker", [&](Song& s) {
+    s.markers.erase(std::remove_if(s.markers.begin(), s.markers.end(), [](const Marker& m) { return m.action == MarkerAction::SongLoop; }),
+                    s.markers.end());
+    if (here) return;
+    Marker m;
+    m.pos = pos;
+    m.name = "Loop";
+    m.action = MarkerAction::SongLoop;
+    auto it = std::upper_bound(s.markers.begin(), s.markers.end(), pos, [](Tick p, const Marker& k) { return p < k.pos; });
+    index = static_cast<int>(it - s.markers.begin());
+    s.markers.insert(it, m);
+  });
+  return index;
+}
+
+int placeLoop(Document& d, Tick selStart, Tick selEnd, Tick pos) {
+  return selEnd > selStart ? placeLoopMarkers(d, selStart, selEnd) : addSongLoopMarker(d, pos);
+}
+
+int songLoopMarker(const Song& s) {
+  const Tick bar = std::max<Tick>(1, s.barTicks());
+  const Tick end = std::max(bar, (s.lengthTicks() + bar - 1) / bar * bar);  // where song playback wraps
+  int best = -1;
+  for (size_t i = 0; i < s.markers.size(); ++i)
+    if (s.markers[i].action == MarkerAction::SongLoop && s.markers[i].pos < end &&
+        (best < 0 || s.markers[i].pos >= s.markers[static_cast<size_t>(best)].pos))
+      best = static_cast<int>(i);
+  return best;
 }
 
 int addJumpToNextBar(Document& d, Tick pos) {

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include "DisplayConfirmUi.h"
 #include "J59Ui.h"
 #include "ScriptUi.h"
 #include "McpUi.h"
@@ -23,6 +24,7 @@
 #include "AutomationEditor.h"
 #include "ContextMenus.h"
 #include "ExportUi.h"
+#include "FlpExportUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -162,9 +164,10 @@ void menuFile(App& a) {
     ImGui::SeparatorText(i18n::tr("Project"));
     if (ImGui::MenuItem(i18n::tr("Project data files..."))) exportui::exportDataFilesDialog(a);
     if (ImGui::MenuItem(i18n::tr("Project bones..."))) exportui::exportBonesDialog(a);
-    if (ImGui::MenuItem(i18n::tr("Gridline zipped project (.zip)..."))) exportui::exportZipDialog(a);
+    if (ImGui::MenuItem(i18n::tr("Gridline zipped project (.gridline.zip)..."))) exportui::exportZipDialog(a);
     if (ImGui::MenuItem(i18n::tr("FL Studio project (.flp)..."))) exportui::exportFlpDialog(a);  // J-34
     if (ImGui::MenuItem(i18n::tr("FL Studio zipped loop package (.zip)..."))) exportui::exportFlpZipDialog(a);  // J-52
+    if (ImGui::MenuItem(i18n::tr("FL Studio export report..."), nullptr, false, flpexport::hasReport())) flpexport::openReport();  // J-80
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Locate missing samples..."))) exportui::openMissingSamples(a);
@@ -343,12 +346,14 @@ void menuView(App& a) {
   ImGui::SeparatorText(i18n::tr("Layout"));
   if (ImGui::MenuItem(i18n::tr("Close all windows"), keys::label("view.closeAll"))) a.closeAllWindows();
   if (ImGui::MenuItem(i18n::tr("Close plugin windows"), keys::label("view.closePlugins"))) a.closePluginWindows();
-  if (ImGui::MenuItem(i18n::tr("Reset window layout"), keys::label("view.resetLayout"))) a.resetLayout = true;
+  if (ImGui::MenuItem(i18n::tr("Reset window layout"), keys::label("view.resetLayout"))) ui::confirmLayoutReset(a);
   ImGui::SeparatorText(i18n::tr("Appearance"));
   bool dark = theme::isDark();
   if (ImGui::MenuItem(i18n::tr("Dark theme"), nullptr, dark)) {
+    const dispconf::Snapshot before = dispconf::take(a.settings, dispconf::themeKeys());
     theme::modeToSettings(dark ? theme::Mode::Light : theme::Mode::Dark, a.settings);
     theme::applyFromSettings(a.settings);
+    ui::confirmTheme(a, before, "Theme");
   }
   if (ImGui::MenuItem(i18n::tr("Theme settings..."))) openSettings(a, 9);
   if (ImGui::BeginMenu(i18n::tr("Mixer layout"))) {
@@ -362,7 +367,7 @@ void menuView(App& a) {
     double cur = a.settings.getNumber("ui.scale");
     for (int pct : {75, 90, 100, 110, 125, 150, 175, 200}) {
       std::string l = std::to_string(pct) + "%";
-      if (ImGui::MenuItem(l.c_str(), nullptr, std::fabs(cur * 100 - pct) < 0.5)) a.settings.set("ui.scale", pct / 100.0);
+      if (ImGui::MenuItem(l.c_str(), nullptr, std::fabs(cur * 100 - pct) < 0.5)) ui::confirmScale(a, pct / 100.0);  // J-77: Keep / Revert
     }
     ImGui::EndMenu();
   }
@@ -570,7 +575,7 @@ bool menuShortcuts(App& a) {
   }
   if (key("view.closeAll")) a.closeAllWindows();
   if (key("view.closePlugins")) a.closePluginWindows();
-  if (key("view.resetLayout")) a.resetLayout = true;
+  if (key("view.resetLayout")) ui::confirmLayoutReset(a);
 
   // Channel rack.
   if (inRack) {

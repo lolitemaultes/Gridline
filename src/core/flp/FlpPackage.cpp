@@ -1,9 +1,13 @@
 // Gridline — FL Studio zipped loop package (J-52). See FlpPackage.h.
 #include "FlpPackage.h"
 #include <cctype>
+#include <chrono>
 #include <filesystem>
+#include <functional>
 #include <set>
+#include "../../packs/samplers/dwave.h"
 #include "../ProjectInterop.h"
+#include "FlpStandIn.h"
 #include "../Zip.h"
 #include "Flp.h"
 #include "FlpWriter.h"
@@ -109,9 +113,63 @@ bool exportFlpZip(const Song& song, const std::string& zipPath, const std::strin
                   PackageReport& rep, std::string* err) {
   rep = PackageReport{};
   rep.projectEntry = name + ".flp";
-  const auto entries = packageEntries(song, rep.projectEntry, opt, &rep.missing);
+  // J-80: Gridline-only plugins → stand-ins; rendered samples go into the
+  // package (rendered in a temporary folder, removed afterwards).
+  Song work = song;
+  StandInResult sr;
+  StandInOptions so;
+  std::error_code ec;
+  const fs::path tmp = fs::temp_directory_path(ec) /
+                       ("gridline-flp-" + std::to_string(std::hash<std::string>{}(zipPath + std::to_string(
+                                                             std::chrono::steady_clock::now().time_since_epoch().count()))));
+  struct Cleanup {
+    fs::path p;
+    ~Cleanup() {
+      std::error_code e;
+      if (!p.empty()) fs::remove_all(p, e);
+    }
+  } cleanup{opt.flp.renderInstruments ? tmp : fs::path()};
+  if (opt.flp.renderInstruments) so.sampleDir = (tmp / name).string();
+  so.progress = opt.flp.progress;
+  so.cancel = opt.flp.cancel;
+  if (!applyStandIns(work, opt.flp, so, sr)) {
+    rep.flp.cancelled = sr.cancelled;
+    if (err) *err = sr.cancelled ? "cancelled" : sr.error;
+    return false;
+  }
+  auto entries = packageEntries(work, rep.projectEntry, opt, &rep.missing);
+  {
+    std::set<std::string> names = {lowerStr(rep.projectEntry)};
+    for (const auto& [src, e] : entries) names.insert(lowerStr(e));
+    std::map<std::string, std::string> rendered;  // rendered file → entry
+    for (const auto& f : sr.files) {
+      const std::string key = norm(f);
+      if (entries.count(key)) {
+        rendered[key] = entries[key];
+        continue;
+      }
+      const fs::path src(f);
+      std::string n;
+      for (int k = 1;; ++k) {
+        n = k == 1 ? src.filename().string() : src.stem().string() + " (" + std::to_string(k) + ")" + src.extension().string();
+        if (names.insert(lowerStr(n)).second) break;
+      }
+      entries.emplace(key, n);
+      rendered[key] = n;
+    }
+    // DirectWave keeps its zone paths in its own state: they name the files beside the project.
+    namespace dwn = gl::packs::samplers::dw;
+    for (auto& c : work.channels) {
+      if (c.plugin.type != "gl.waveprogram" || !sr.find(c.id, -1)) continue;
+      dwn::DwProgram p;
+      if (!dwn::parseProgram(c.plugin.data, p)) continue;
+      for (auto& z : p.zones)
+        if (auto it = rendered.find(norm(z.path)); it != rendered.end()) z.path = it->second;
+      c.plugin.data = dwn::formatProgram(p);
+    }
+  }
   Bytes flp;
-  if (!exportFlp(song, flp, rep.flp, opt.flp)) {
+  if (!exportFlpWithStandIns(work, sr, flp, rep.flp, opt.flp)) {
     if (err) *err = rep.flp.warnings.empty() ? "FL Studio export failed" : rep.flp.warnings.back();
     return false;
   }
@@ -124,7 +182,7 @@ bool exportFlpZip(const Song& song, const std::string& zipPath, const std::strin
   ZipWriter z;
   if (!z.open(zipPath, err)) return false;
   if (!z.add(rep.projectEntry, flp)) {
-    if (err) *err = "cannot write " + zipPath;
+    if (z.close(err) && err) *err = "cannot write " + zipPath;  // close() names the reason (J-78)
     return false;
   }
   for (const auto& [src, entry] : entries) {

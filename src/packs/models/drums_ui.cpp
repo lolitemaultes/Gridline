@@ -15,6 +15,7 @@
 //                   noise block (sample selector, A / D / S / start, pitch, mix,
 //                   filter) and the click arc.
 //   Sweep Kick    — 380 × 80: max / min / decay group, amp decay, click, dist.
+#include "../../app/KeyLight.h"
 #include "../flc_kit.h"
 #include <map>
 #include "drums.h"
@@ -147,6 +148,8 @@ void drawPad(App& a, const PluginTarget& t, float width) {
   flk::text(c, 548, 16, "OUTPUT");
   skin::wheel(a, t, PdOutput, F.p(600, 8), 26 * F.s, padBig(), skin::WheelBigLine);
   skin::button("##audition", F.p(650, 8), F.sz(80, 26), K, "STRIKE", false, F.font(8));
+  if (t.isChannel())  // J-77: flashes on every strike (any key: one membrane)
+    keylight::drawFlash(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), theme::pal().hot, keylight::flashAny(a, t.owner), 3 * F.s);
   if (ImGui::IsItemActivated()) a.engine.noteOn(t.owner, 60, 0.9f);
   if (ImGui::IsItemDeactivated()) a.engine.noteOff(t.owner, 60);
   drawModel(a, t, F, dl, PdModel, 0, 0);
@@ -200,6 +203,9 @@ void drawKit(App& a, const PluginTarget& t, float width) {
     char num[8];
     std::snprintf(num, sizeof num, "%d", ch + 1);
     skin::button("##play", F.p(x + 54, y + 26), F.sz(45, 45), K, num, u.sel == ch, F.font(10));
+    // J-77: the channel's pad flashes on every hit of its key (playback, MIDI, keys, clicks).
+    if (t.isChannel())
+      keylight::drawFlash(dl, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), theme::pal().hot, keylight::flash(a, t.owner, key), 4 * F.s);
     if (ImGui::IsItemActivated()) {
       u.sel = ch;
       a.engine.noteOn(t.owner, key, 0.9f);

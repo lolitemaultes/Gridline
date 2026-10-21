@@ -186,7 +186,13 @@ bool renderTakes(const Song& song, ObjectId channel, const Options& o, std::vect
   const Tick gap = static_cast<Tick>(std::ceil(kGapSeconds * sr / fpt));
   const Tick slot = hold + tail + gap;
   // Every take in order: note, layer, round robin.
-  const int layers = std::clamp(o.velocityLayers, 1, 8), rrs = std::clamp(o.roundRobins, 1, 4);
+  std::vector<int> vels;  // J-80: explicit layer velocities
+  for (int v : o.velocities)
+    if (v >= 1 && v <= 127) vels.push_back(v);
+  std::sort(vels.begin(), vels.end());
+  vels.erase(std::unique(vels.begin(), vels.end()), vels.end());
+  const int layers = vels.empty() ? std::clamp(o.velocityLayers, 1, 8) : static_cast<int>(vels.size());
+  const int rrs = std::clamp(o.roundRobins, 1, 4);
   for (size_t i = 0; i < notes.size(); ++i)
     for (int l = 0; l < layers; ++l)
       for (int r = 0; r < rrs; ++r) {
@@ -194,8 +200,15 @@ bool renderTakes(const Song& song, ObjectId channel, const Options& o, std::vect
         t.note = notes[i];
         t.roundRobin = r;
         keyRange(notes, i, t.keyLo, t.keyHi);
-        velocityLayer(layers, l, t.velLo, t.velHi);
-        t.velocity = t.velHi;
+        if (vels.empty()) {
+          velocityLayer(layers, l, t.velLo, t.velHi);
+          t.velocity = t.velHi;
+        } else {
+          const size_t k = static_cast<size_t>(l);
+          t.velocity = vels[k];
+          t.velLo = k == 0 ? 1 : (vels[k - 1] + vels[k]) / 2 + 1;
+          t.velHi = k + 1 == vels.size() ? 127 : (vels[k] + vels[k + 1]) / 2;
+        }
         out.push_back(std::move(t));
       }
   const ObjectId pat = src.patterns[0].id;

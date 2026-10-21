@@ -1,5 +1,6 @@
 // Gridline — dialogs (file, settings, project info, export, history, about,
 // shortcuts, unsaved changes) and global keyboard shortcuts.
+#include "DisplayConfirmUi.h"
 #include "GridlineVersion.h"
 #include <algorithm>
 #include <chrono>
@@ -28,9 +29,11 @@
 #include "SmoothScrollUi.h"
 #include "McpUi.h"
 #include "TemplateUi.h"
+#include "FlpExportUi.h"
 #include "J59Ui.h"
 #include "Widgets.h"
 #include "Windows.h"
+#include "../core/WheelRoute.h"
 
 namespace gl {
 
@@ -181,9 +184,9 @@ void fileDialog(App& a) {
   if (!fd.types.empty()) {
     fd.typeIndex = std::clamp(fd.typeIndex, 0, static_cast<int>(fd.types.size()) - 1);
     const float typeW = std::max(120.0f, ImGui::GetContentRegionAvail().x - (96 + okW + theme::kS2 * 3));
-    if (ui::BeginCombo("##types", fd.types[static_cast<size_t>(fd.typeIndex)].label.c_str(), typeW)) {
+    if (ui::BeginCombo("##types", i18n::tr(fd.types[static_cast<size_t>(fd.typeIndex)].label.c_str()), typeW)) {  // J-78: translated labels
       for (size_t i = 0; i < fd.types.size(); ++i)
-        if (ImGui::Selectable(fd.types[i].label.c_str(), static_cast<int>(i) == fd.typeIndex)) {
+        if (ImGui::Selectable(i18n::tr(fd.types[i].label.c_str()), static_cast<int>(i) == fd.typeIndex)) {
           fd.typeIndex = static_cast<int>(i);
           fd.exts = fd.types[i].exts;
           if (fd.save && fd.nameForType && !fd.name.empty()) fd.name = fd.nameForType(fd.name, fd.typeIndex);
@@ -268,29 +271,30 @@ void settingsWindow(App& a) {
       ui::BeginSection("INPUT / OUTPUT");
       formLabel("Output device");
       if (ui::BeginCombo("##dev", a.audioDevice.empty() ? "System default" : a.audioDevice.c_str(), fieldW)) {
-        if (ImGui::Selectable(i18n::tr("System default"), a.audioDevice.empty())) a.audioDevice.clear(), a.audioReopen = true;
+        // J-77: device / rate / buffer changes apply at once and ask Keep / Revert (they can cut the sound).
+        if (ImGui::Selectable(i18n::tr("System default"), a.audioDevice.empty())) ui::confirmAudioDevice(a, "");
         for (const auto& d : a.audioDevices)
-          if (ImGui::Selectable(d.c_str(), d == a.audioDevice)) a.audioDevice = d, a.audioReopen = true;
+          if (ImGui::Selectable(d.c_str(), d == a.audioDevice)) ui::confirmAudioDevice(a, d);
         ImGui::EndCombo();
       }
       const int rates[] = {44100, 48000, 88200, 96000};
       formLabel("Sample rate");
       for (int r : rates) {
         if (r != rates[0]) ImGui::SameLine(0, theme::kS1);
-        if (ui::TextButton(std::to_string(r).c_str(), a.audioSampleRate == r)) {
-          a.audioSampleRate = r;
+        if (ui::TextButton(std::to_string(r).c_str(), a.audioSampleRate == r) && a.audioSampleRate != r) {
+          const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
           st.set("audio.sampleRate", r);
-          a.audioReopen = true;
+          ui::confirmAudio(a, before);
         }
       }
       const int bufs[] = {64, 128, 256, 512, 1024, 2048};
       formLabel("Buffer size");
       for (int b : bufs) {
         if (b != bufs[0]) ImGui::SameLine(0, theme::kS1);
-        if (ui::TextButton(std::to_string(b).c_str(), a.audioBuffer == b)) {
-          a.audioBuffer = b;
+        if (ui::TextButton(std::to_string(b).c_str(), a.audioBuffer == b) && a.audioBuffer != b) {
+          const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
           st.set("audio.bufferFrames", b);
-          a.audioReopen = true;
+          ui::confirmAudio(a, before);
         }
       }
       char lat[96];
@@ -449,10 +453,21 @@ void settingsWindow(App& a) {
       formLabel("Theme");
       if (ui::TextButton("Theme settings...", false, 0, "Dark, light or follow the system, accent colour, contrast")) page = 9;
       formLabel("Interface scale");
-      float scale = static_cast<float>(st.getNumber("ui.scale"));
-      ImGui::SetNextItemWidth(fieldW);
-      if (ImGui::SliderFloat("##scale", &scale, 0.75f, 2.0f, "%.2fx")) st.set("ui.scale", static_cast<double>(scale));
-      ui::Hint("Scales the whole interface; applied as you drag");
+      {  // J-77: nothing changes while dragging; the value you let go of asks Keep / Revert.
+        static dispconf::DeferredValue drag;
+        const double committed = st.getNumber("ui.scale");
+        float pct = static_cast<float>(std::round(drag.shown(committed) * 100.0));
+        ImGui::SetNextItemWidth(fieldW);
+        if (ImGui::SliderFloat("##scale", &pct, 75.0f, 200.0f, "%.0f%%")) drag.edit(std::round(pct / 5.0f) * 5.0 / 100.0);
+        double to = 0;
+        if (ImGui::IsItemDeactivated() && drag.release(committed, &to)) ui::confirmScale(a, to);
+        ui::Hint("Scales the whole interface; asks to keep the new size once you let go");
+      }
+      formLabel("Confirm changes");
+      bool autoRevert = st.getBool("ui.confirmAutoRevert");
+      if (ImGui::Checkbox(i18n::tr("Revert size, theme, language and audio changes not kept within 15 s"), &autoRevert))
+        st.set("ui.confirmAutoRevert", autoRevert);
+      ui::Hint("A change that makes the interface hard to use or cuts the sound goes back by itself");
       bool hints = st.getBool("ui.showHints");
       formLabel("Status bar");
       if (ImGui::Checkbox(i18n::tr("Show hints for the control under the mouse"), &hints)) st.set("ui.showHints", hints);
@@ -478,6 +493,19 @@ void settingsWindow(App& a) {
         ImGui::PushTextWrapPos(0);
         ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Off while the system asks for reduced motion."));
         ImGui::PopTextWrapPos();
+      }
+      {  // J-83: what the plain wheel does over mixer faders and knobs; J-84: and over the channel rack's steps and knobs
+        static const char* const kWheelModes[] = {i18n::N_("Adjust the control"), i18n::N_("Scroll the pane"),
+                                                  i18n::N_("Auto (scroll when the pane scrolls)")};
+        const int cur = static_cast<int>(wheelroute::modeFromSetting(st.getNumber("ui.mixerWheel")));
+        formLabel("Wheel over controls");
+        if (ui::BeginCombo("##mixerwheel", i18n::tr(kWheelModes[cur]), fieldW)) {
+          for (int i = 0; i < 3; ++i)
+            if (ImGui::Selectable(i18n::tr(kWheelModes[i]), cur == i)) st.set("ui.mixerWheel", i);
+          ImGui::EndCombo();
+        }
+        ui::Hint("Mouse wheel over controls in scrolling panes (narrow mixer, channel rack with a long pattern or many channels). "
+                 "Scrolling: the wheel scrolls the pane; drag, click then wheel, or hold Ctrl and wheel, to change a control or step");
       }
       ui::EndSection();
       // J-48: interface sounds.
@@ -765,13 +793,54 @@ void unsavedPrompt(App& a) {
       ImGui::CloseCurrentPopup();
       auto then = a.afterDiscard;
       if (!a.projectPath.empty()) {
-        if (a.saveProjectAs(a.projectPath, a.projectFormat) && then) then();
+        a.saveProjectAs(a.projectPath, a.projectFormat, then);
       } else {
         a.saveAs(then);  // J-52: with the format list (an opened .flp asks too)
       }
     }
     ImGui::EndPopup();
   }
+}
+
+// J-82: one-question prompt in the unsaved-changes style (title, one dim
+// line, Cancel + the action). Title and line come translated; the button
+// label is English (marked N_), translated by TextButton.
+void confirmPrompt(App& a) {
+  auto& c = a.confirm;
+  if (c.open) {
+    ImGui::OpenPopup("##confirm");
+    c.open = false;
+  }
+  centerNext(ImVec2(420, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS6, theme::kS6 - 4));
+  bool open = ImGui::BeginPopupModal("##confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
+  ImGui::PopStyleVar();
+  if (!open) return;
+  ImGui::PushFont(a.fontBold, theme::kFontTitle);
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 372);
+  ImGui::TextUnformatted(c.title.c_str());
+  ImGui::PopTextWrapPos();
+  ImGui::PopFont();
+  if (!c.subtitle.empty()) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 372);
+    ImGui::TextColored(theme::vec(pal().textDim), "%s", c.subtitle.c_str());
+    ImGui::PopTextWrapPos();
+  }
+  ImGui::Dummy(ImVec2(372, theme::kS1 + theme::kS2));
+  alignRight(90 + 100 + theme::kS2);
+  if (ui::TextButton("Cancel", false, 90) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    c.action = nullptr;
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::TextButton(c.okLabel.empty() ? "OK" : c.okLabel.c_str(), true, 100) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+      ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+    auto run = std::move(c.action);
+    c.action = nullptr;
+    ImGui::CloseCurrentPopup();
+    if (run) run();
+  }
+  ImGui::EndPopup();
 }
 
 }  // namespace
@@ -851,6 +920,7 @@ void drawDialogs(App& a) {
   ImGui::GetStyle().HoverDelayNormal = static_cast<float>(std::clamp(a.settings.getNumber("ui.hintDelay"), 0.0, 2.0));
   drawTemplateDialogs(a);  // J-24: new project from template, save as template
   j59::drawDialogs(a);     // J-59: loop starter, render to sampled instrument
+  flpexport::draw(a);      // J-80: FL Studio export progress and report
   updatePerformance(a);
   drawPerformance(a);
   settingsWindow(a);
@@ -860,6 +930,8 @@ void drawDialogs(App& a) {
   aboutWindow(a);
   shortcutsWindow(a);
   unsavedPrompt(a);
+  confirmPrompt(a);           // J-82: delete clip sources, …
+  ui::drawDisplayConfirm(a);  // J-77: Keep / Revert for size, theme, language, layout and audio changes
   importReportWindow(a);
   drawPluginManager(a);
   drawRemoteDialog(a);

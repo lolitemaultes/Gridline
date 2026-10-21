@@ -129,6 +129,7 @@ void devDemo(App& a) {
 
 std::string recordedDir(const App& a) { return projectSubdir(a, "Recorded"); }
 std::string renderedDir(const App& a) { return projectSubdir(a, "Rendered"); }
+std::string editedDir(const App& a) { return projectSubdir(a, "Edited audio"); }
 
 std::string inputName(int first, bool stereo) {
   if (first < 0) return "(none)";

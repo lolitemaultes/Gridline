@@ -72,6 +72,9 @@ const char* iconSvgName(Icon icon) {
     case Icon::ToolPlay: return "step-forward";
     case Icon::ToolDetune: return "detune";
     case Icon::ToolSnap: return "magnet";
+    case Icon::StretchMode: return "move-horizontal";
+    case Icon::FadeHandles: return "fade-handles";
+    case Icon::ZeroCross: return "zero-crossing";
     case Icon::Count: break;
   }
   return nullptr;

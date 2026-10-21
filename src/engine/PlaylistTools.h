@@ -35,10 +35,28 @@ Source sourceOf(const Clip& c);
 std::vector<Clip> moveClips(const std::vector<Clip>& base, const std::set<ObjectId>& sel, Tick dt, int dtr, int trackCount,
                             const std::vector<char>& locked = {});
 
+// J-79: zero crossings ("Check for zero-crossing when editing audio clips"):
+// the source position (seconds) of the zero crossing (mono sum changes sign
+// or is 0) nearest to `sec` within kZeroCrossReach; with `notAfter` only
+// crossings at or before `sec` count (clip ends: the cut lands on silence
+// before the clip stops). `sec` when the audio has none there.
+constexpr double kZeroCrossReach = 0.005;
+double nearestZeroCrossing(const Song& s, const Clip& c, double sec, bool notAfter = false);
+
 // Right edge: every selected clip's end moves by d (at least 1 tick long).
 // Audio clips stop at the end of their audio unless `stretch` is on; with
 // `stretch` an audio clip keeps its content and plays it slower / faster.
-std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const std::set<ObjectId>& sel, Tick d, bool stretch);
+// With `zeroCross` (and a tempo map), a trimmed audio clip's audio ends on
+// the zero crossing at or just before its new end (Clip::audioEnd); growing
+// a clip past an end set that way clears it again.
+std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const std::set<ObjectId>& sel, Tick d, bool stretch,
+                             const TempoMap* tm = nullptr, bool zeroCross = false);
+
+// J-79: stretch mode keeps the pitch. The sampler channels of the selected
+// audio clips that resample (pitch follows speed), and the switch of those
+// channels to their pitch-keeping time stretch.
+std::set<ObjectId> resamplingChannels(const Song& s, const std::vector<Clip>& clips, const std::set<ObjectId>& sel);
+void keepPitch(Song& s, const std::set<ObjectId>& channels);
 
 // Left edge: every selected clip's start moves by d while its content stays
 // in place (pattern / automation: offset; audio: source start in seconds,
@@ -52,11 +70,15 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
 // Slip: the content moves by d ticks inside the clip, the clip stays. Pattern
 // content wraps around (patterns repeat); automation and audio stop at their
 // beginning (and audio before its end).
-Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d);
+// J-79: with `zeroCross`, an audio clip's new source start is moved to the
+// nearest zero crossing.
+Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d, bool zeroCross = false);
 
 // Slice: cuts every listed clip that spans `at` (all kinds; audio keeps its
-// sample positions). Returns the ids of the right-hand parts.
-std::vector<ObjectId> sliceClips(Song& s, const std::vector<ObjectId>& ids, Tick at);
+// sample positions). Returns the ids of the right-hand parts. J-79: with
+// `zeroCross`, an audio cut lands on the zero crossing nearest to it: the left
+// part's audio ends and the right part's audio starts there.
+std::vector<ObjectId> sliceClips(Song& s, const std::vector<ObjectId>& ids, Tick at, bool zeroCross = false);
 // Clips crossed by a vertical slice line at `at` over tracks [t0, t1].
 std::vector<ObjectId> clipsAcross(const Song& s, Tick at, int t0, int t1);
 
@@ -74,6 +96,29 @@ std::vector<ObjectId> cloneClips(Song& s, const std::set<ObjectId>& sel);
 // Q-3: gives copies of grouped clips new groups (one new group per original
 // group among `copies`), so copies never join the originals' groups.
 void regroupCopies(Song& s, std::vector<Clip>& copies);
+
+// J-79: stacking (J-38): on a track, a clip that starts later lies on the
+// clips it overlaps; equal starts stack in playlist order. The topmost clip
+// covering (track, t), kNoId when none.
+ObjectId topClipAt(const Song& s, int track, Tick t);
+
+// J-79: a delete sweep (right-drag / delete tool) removes the topmost clip
+// under the pointer. A clip uncovered by a deletion is not deleted while the
+// pointer stays where the deleted clip was, so a click on overlapping clips
+// removes only the one on top; dragging on onto the uncovered clip's own
+// area deletes it too (FL: one clip per click, every clip the drag enters).
+struct EraseSweep {
+  struct Span {
+    int track;
+    Tick start, end;
+  };
+  std::vector<Span> spans;  // clips deleted by this sweep
+  bool covers(int track, Tick t) const;
+  void add(const Song& s, const Clip& c);
+  // The clip to delete at (track, t): `hit` (the clip the view hit-tested,
+  // kNoId: the topmost clip there), kNoId where this sweep already deleted one.
+  ObjectId pick(const Song& s, int track, Tick t, ObjectId hit = kNoId) const;
+};
 
 // Tracks: move track `from` to `to` (clips follow, other tracks shift).
 bool moveTrack(Song& s, int from, int to);

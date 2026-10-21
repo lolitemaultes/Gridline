@@ -1,4 +1,5 @@
 // Gridline — instrument editor skin (see InstrumentSkin.h).
+#include "KeyLight.h"
 #include "InstrumentSkin.h"
 #include <algorithm>
 #include <cmath>
@@ -407,9 +408,7 @@ int pad(const Skin& k, const char* id, float x, float y, float w, float h, const
   dl->AddRectFilledMultiColor(ImVec2(p.x + 1, p.y + 1), ImVec2(q.x - 1, q.y - 1), lerp(base, IM_COL32_WHITE, 0.07f),
                               lerp(base, IM_COL32_WHITE, 0.07f), base, base);
   dl->AddRect(p, q, selected ? k.c.fill : k.c.panelLine, rd, 0, selected ? 1.5f : 1.0f);
-  if (glow > 0.01f) {
-    dl->AddRectFilled(ImVec2(p.x + 2, p.y + 2), ImVec2(q.x - 2, q.y - 2), theme::withAlpha(k.c.fill2, 0.55f * std::min(1.0f, glow)), rd);
-  }
+  keylight::drawFlash(dl, ImVec2(p.x + 1, p.y + 1), ImVec2(q.x - 1, q.y - 1), k.c.fill2, glow, rd);  // J-77 hit flash
   if (caption && *caption) {
     ImFont* f = app().fontRegular;
     float fs = std::max(8.0f, k.px(10));
@@ -458,10 +457,13 @@ int keyboard(App& a, const PluginTarget& t, const Skin& k, float x, float y, flo
   }
   ImDrawList* dl = k.dl();
   dl->AddRectFilled(p, q, kc.sep);
+  // J-77: without an explicit lit set, the keys sounding on the editor's channel light up.
+  const keylight::ChannelLights* chLit = !lit && t.isChannel() ? keylight::lights(a, t.owner) : nullptr;
   auto keyCol = [&](int note, ImU32 base) {
     if (act && note == playing) return kc.pressed;
     if (note == mark) return kc.mark;
     if (lit && note >= 0 && note < 128 && lit[note]) return lerp(base, kc.pressed, 0.45f);
+    if (chLit && chLit->key(note) > 0.004f) return lerp(base, kc.pressed, 0.85f * chLit->key(note));
     if (note == hoverNote) return lerp(base, kc.pressed, 0.18f);
     return base;
   };

@@ -21,6 +21,9 @@ struct Options {
   int step = 3;                  // sample every `step` semitones from noteLo (noteHi is always sampled)
   std::vector<int> notes;        // non-empty: exactly these notes (a note selection) instead of the range
   int velocityLayers = 1;        // 1..8
+  // J-80: non-empty: exactly these velocities as layers (1..127; each layer
+  // reaches halfway to its neighbours) instead of velocityLayers even splits.
+  std::vector<int> velocities;
   int roundRobins = 1;           // 1..4 takes per note and layer
   double noteSeconds = 1.0;      // how long each note is held
   double tailSeconds = 1.0;      // release tail recorded after the note off

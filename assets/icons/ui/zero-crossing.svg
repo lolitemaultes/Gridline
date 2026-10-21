@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: one wave cycle crossing its centre line, the crossing marked. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 12c2-8 8-8 10 0s8 8 10 0" />
+  <path d="M12 3v3" />
+  <path d="M12 18v3" />
+</svg>

@@ -495,6 +495,9 @@ struct Solver {
     bool hit = false;
     if (f.inverse) {
       double r = f.inverse(want);
+      // J-81: never past the stored range (FL's valid range): e.g. an FPC pad
+      // tuned −24 semitones wrote −256 into a ±128 word.
+      if (f.hi >= f.lo) r = std::clamp(r, f.lo, f.hi);
       if (std::isfinite(r)) hit = consider(r, at(r));
     }
     double lo = f.lo, hi = f.hi;
@@ -689,17 +692,11 @@ Result encodeUncached(const PluginState& g, const std::string& originFlName, con
   for (size_t i = 0; i < cands.size(); ++i) {
     const Encoder* e = cands[i];
     if (i >= ranked && !e->defaults && !e->defaultsIn) continue;  // a fallback needs a state of its own
-    if (i >= ranked && e->flName == "Fruity Wrapper" && e->glType.empty() && ec.wrapAs.empty()) {
-      // FL's plugin wrapper: each FL plugin that can carry the state in turn
-      // (an old project's wrapped plugin stores its values at its own resolution).
-      for (const std::string& n : wrapCandidates(g)) {
-        EncodeContext c2 = ec;
-        c2.wrapAs = n;
-        Result r = encodeWith(e, g, "", nullptr, c2);
-        if (r.quality == Result::Exact) return r;
-      }
-      continue;
-    }
+    // J-81: never FL's plugin wrapper for a native instance. An FL plugin in
+    // the wrapper is its old VST build (Windows-era projects); FL 2026 lists
+    // e.g. "Fruity Parametric EQ 2 (VST)" as a missing plugin and drops it.
+    // Instances imported from a wrapped FL plugin keep it through their origin.
+    if (i >= ranked && e->flName == "Fruity Wrapper" && e->glType.empty() && ec.wrapAs.empty()) continue;
     Result r = encodeWith(e, g, "", nullptr, ec);
     // Exact, or no state at all because FL's defaults decode to the instance.
     const bool defaultsMatch = r.quality == Result::Defaults && r.mismatched.empty() && !r.dataMismatch && r.note.rfind("FL defaults (the defaults match)", 0) == 0;

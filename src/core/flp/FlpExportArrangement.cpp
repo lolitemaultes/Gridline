@@ -272,6 +272,7 @@ void Exporter::writeArrangements() {
       if (kind == 0 && m.action == MarkerAction::Loop) kind = 1;
       if (kind == 0 && m.action == MarkerAction::Skip) kind = 2;
       if (kind == 0 && m.action == MarkerAction::Pause) kind = 3;
+      if (kind == 0 && m.action == MarkerAction::SongLoop) kind = 4;  // J-85: FL's loop marker
       if (m.action == MarkerAction::Stop) rep.counts["marker actions without FL kind (stop)"]++;
       const uint32_t v = (kind << 24) | static_cast<uint32_t>(m.pos & 0x00FFFFFF);
       w.dword(148, v);

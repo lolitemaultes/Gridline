@@ -15,6 +15,7 @@
 #include "Theme.h"
 #include "icons/IconTexture.h"
 #include "../core/I18n.h"
+#include "../core/WheelRoute.h"
 
 namespace gl::ui {
 
@@ -29,6 +30,53 @@ void arc(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, ImU32 col, float
   dl->PathStroke(col, 0, th);
 }
 }  // namespace
+
+// ---- J-83: wheel routing ----
+namespace {
+wheelroute::Router gWheel;
+bool gPaneScrolls = false;    // innermost WheelPolicyScope
+ImGuiID gDragBlocked = 0;     // pressed while the pane was scrolling: no drag until released
+}  // namespace
+
+WheelPolicyScope::WheelPolicyScope(bool paneScrolls) : prev_(gPaneScrolls) { gPaneScrolls = paneScrolls; }
+WheelPolicyScope::~WheelPolicyScope() { gPaneScrolls = prev_; }
+bool wheelPaneScrolls() { return gPaneScrolls; }
+bool wheelScrolling() { return gWheel.scrolling(); }
+bool wheelFocusActive() { return gWheel.focused() != 0; }
+bool wheelModifierHeld() { return keys::modifierIncludes("mixer.wheelAdjust"); }
+void wheelClaim() { gWheel.claim(); }
+void wheelFrameBegin() { gWheel.beginFrame(ImGui::GetTime(), ImGui::GetIO().MouseWheel); }
+void wheelFrameEnd() { gWheel.endFrame(); }
+const char* wheelHintText() { return tr("Drag to change, Ctrl+wheel to fine-tune"); }
+
+WheelGate wheelGate(bool takesWheel) {
+  WheelGate g;
+  const bool hov = ImGui::IsItemHovered();
+  if (!gPaneScrolls) {  // adjusting pane (the normal mixer, every other view): as before
+    g.scale = hov && takesWheel ? 1.0f : 0.0f;
+    return g;
+  }
+  const ImGuiIO& io = ImGui::GetIO();
+  const ImGuiID id = ImGui::GetItemID();
+  const bool act = ImGui::IsItemActive();
+  if (ImGui::IsItemActivated() && !gWheel.mayStartDrag(true)) gDragBlocked = id;
+  const bool blocked = gDragBlocked == id;
+  if (blocked && !act) gDragBlocked = 0;
+  g.dragOk = !blocked;
+  if (hov) gWheel.hovered(id);
+  // A click (press and release without dragging) gives the control wheel focus.
+  if (ImGui::IsItemDeactivated() && !blocked && io.MouseDragMaxDistanceSqr[0] < 16.0f) gWheel.focus(id);
+  if (!hov || !takesWheel) return g;
+  const wheelroute::Query q{true, wheelModifierHeld(), gWheel.hasFocus(id)};
+  if (gWheel.route(q) == wheelroute::Route::Adjust) {
+    ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);  // the pane stays put under the control
+    if (io.MouseWheel != 0) gWheel.claim();
+    g.scale = wheelroute::Router::scale(q);
+  } else {
+    g.hint = true;
+  }
+  return g;
+}
 
 // J-55: hints, tooltips, labels, section captions, button and tab texts are
 // translated here, so callers pass plain English.
@@ -174,8 +222,8 @@ bool ToolButton(const char* id, Icon icon, bool active, float size, const char* 
     dl->AddRectFilled(ImVec2(ux, q1.y - 3), ImVec2(ux + uw, q1.y - 2), lit, 1.0f);  // lit underline
   }
   const ImU32 fg = active ? lit : held || hov ? P.text : P.textDim;
-  // Q-13: the SVG box is 20 px in a 24 px control (16 / 24 / 32 at other sizes).
-  drawIconBox(dl, icon, ImVec2(p.x + size * 0.5f, p.y + size * 0.5f - (active ? 1.0f : 0.0f)), size * 0.8f, fg);
+  // J-77: sized like the top-bar toggles (16 px SVG box in a 24 px control, icons::toolIconBox).
+  drawIconBox(dl, icon, ImVec2(p.x + size * 0.5f, p.y + size * 0.5f - (active ? 1.0f : 0.0f)), icons::toolIconBox(size), fg);
   if (hov) {
     const std::string tip = toolTip(name, desc, keyId);
     app().setHint(tip);
@@ -287,10 +335,11 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   float labelH = label ? labelFs + 2.0f : 0.0f;
   ImGui::InvisibleButton("##knob", ImVec2(w, radius * 2.0f + labelH + 2));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  const WheelGate wg = wheelGate();  // J-83
   bool changed = false;
   double n = d.toNormalized(*value);
   ImGuiIO& io = ImGui::GetIO();
-  if (act && io.MouseDelta.y != 0 && !io.KeyAlt) {
+  if (act && wg.dragOk && io.MouseDelta.y != 0 && !io.KeyAlt) {
     double speed = io.KeyShift ? 0.0008 : 0.005;
     double nn = std::clamp(n - io.MouseDelta.y * speed, 0.0, 1.0);
     if (d.kind == ParamKind::Choice) {
@@ -305,10 +354,10 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
       changed = true;
     }
   }
-  if (hov && io.MouseWheel != 0 && !act) {
+  if (wg.scale > 0 && io.MouseWheel != 0 && !act) {
     double step = d.kind == ParamKind::Choice
                       ? 1.0 / std::max<size_t>(1, d.choices.empty() ? 1 : d.choices.size() - 1)
-                      : (io.KeyShift ? 0.005 : 0.03);
+                      : (io.KeyShift ? 0.005 : 0.03) * wg.scale;
     double v = d.fromNormalized(std::clamp(n + io.MouseWheel * step, 0.0, 1.0));
     if (v != *value) {
       *value = v;
@@ -347,8 +396,9 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
     dl->AddText(ImGui::GetFont(), labelFs, ImVec2(std::round(c.x - ts.x * 0.5f), p.y + radius * 2.0f + 2.0f), P.textDim, label);
   }
   std::string txt = d.name + ": " + d.format(*value);
-  if (hov || act) app().setHint(txt + "   (drag · Shift fine · double-click reset · right-click type)");
+  if (hov || act) app().setHint(txt + "   (drag · Shift fine · double-click reset · right-click type)" + (wg.hint ? std::string("   ") + wheelHintText() : ""));
   if (act) ImGui::SetTooltip("%s", d.format(*value).c_str());
+  if (wg.hint) Tooltip("Drag to change, Ctrl+wheel to fine-tune");  // J-83: the wheel scrolls the pane here
 
   // Type-in value.
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right) || (ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyAlt))
@@ -420,17 +470,18 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##fader", size);
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  const WheelGate wg = wheelGate();  // J-83: the thin mixer scrolls under the pointer
   ImGuiIO& io = ImGui::GetIO();
   double n = d->toNormalized(*v);
   bool changed = false;
   float capH = 18.0f, travel = size.y - capH;
-  if (act && io.MouseDelta.y != 0) {
+  if (act && wg.dragOk && io.MouseDelta.y != 0) {
     double nn = std::clamp(n - io.MouseDelta.y / travel * (io.KeyShift ? 0.15 : 1.0), 0.0, 1.0);
     a.doc.setParam(pid, d->fromNormalized(nn), true);
     changed = true;
   }
-  if (hov && io.MouseWheel != 0 && !act) {
-    a.doc.setParam(pid, d->fromNormalized(std::clamp(n + io.MouseWheel * 0.02, 0.0, 1.0)), true);
+  if (wg.scale > 0 && io.MouseWheel != 0 && !act) {
+    a.doc.setParam(pid, d->fromNormalized(std::clamp(n + io.MouseWheel * 0.02 * wg.scale, 0.0, 1.0)), true);
     a.doc.endGesture();
   }
   if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -468,9 +519,11 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   dl->AddLine(ImVec2(p.x + 6, y + capH * 0.5f), ImVec2(p.x + size.x - 6, y + capH * 0.5f), P.surface900, 2);
   if (hov || act) {
     std::string txt = d->name + ": " + d->format(*getParam(a.doc.song(), pid));
+    if (wg.hint) txt += std::string("   ") + wheelHintText();
     app().setHint(txt);
     if (act) ImGui::SetTooltip("%s", d->format(*getParam(a.doc.song(), pid)).c_str());
   }
+  if (wg.hint) Tooltip("Drag to change, Ctrl+wheel to fine-tune");  // J-83 (delayed, after the hover settles)
   ImGui::PopID();
   return changed;
 }

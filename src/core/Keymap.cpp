@@ -102,9 +102,10 @@ std::vector<Command> buildCommands() {
       {"playlist.toolZoom", PL, N_("Zoom tool"), {ch(K::Z)}},
       {"playlist.toolPlay", PL, N_("Playback tool"), {ch(K::Y)}},
       {"playlist.marker", PL, N_("Add a marker at the song position"), {ch(K::T, A)}},
-      {"playlist.loopMarkers", PL, N_("Place loop markers on the time selection"), {ch(K::T, S)}},
+      {"playlist.loopMarkers", PL, N_("Place loop: around the time selection, else a loop marker at the song position"), {ch(K::T, S)}},
       {"playlist.stretchResize", PL, N_("Resizing audio clips stretches them (on / off)"), {ch(K::M, S)}},
-      {"playlist.fades", PL, N_("Show fade handles"), {ch(K::F, S)}},
+      {"playlist.fades", PL, N_("Show fade and volume handles on audio clips (on / off)"), {ch(K::F, S)}},
+      {"playlist.zeroCross", PL, N_("Audio clip edits land on zero crossings (on / off)"), {ch(K::X, S)}},  // J-79 (FL has no key for it)
       {"playlist.picker", PL, N_("Picker panel"), {ch(K::P, A)}},
       {"playlist.quickZoom1", PL, N_("Quick zoom 1"), {ch(K::D1, S)}},
       {"playlist.quickZoom2", PL, N_("Quick zoom 2"), {ch(K::D2, S)}},
@@ -431,6 +432,10 @@ const std::vector<MouseModifier>& mouseModifiers() {
       {"piano.laneDefaultDrag", Context::PianoRoll, N_("Event lane: drag sets the default value"), kAlt},
       // Q-8: the reference moves an effect with the plain wheel over its slot (no modifier).
       {"mixer.slotWheelMove", Context::Mixer, N_("Effect slot: mouse wheel moves the effect up / down"), 0},
+      // J-83: while the mixer scrolls (thin layout, or Settings > Interface "scroll") the plain
+      // wheel scrolls it; with this held the wheel adjusts the control under the pointer.
+      // J-84: the same modifier adjusts channel rack knobs, step velocities and keyboard-lane notes while the rack scrolls.
+      {"mixer.wheelAdjust", Context::Mixer, N_("Mixer / channel rack control: mouse wheel adjusts it while the pane scrolls"), kCtrl},
   };
   return v;
 }

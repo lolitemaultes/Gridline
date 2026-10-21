@@ -93,6 +93,8 @@ int exportMain(int argc, char** argv) {
     return 1;
   }
   std::printf("wrote %s\n", out.c_str());
+  std::printf("%s\n", gl::flp::exportSummary(rep, std::filesystem::path(out).filename().string()).c_str());
+  if (!rep.files.empty()) std::printf("rendered %zu sample file(s) into %s\n", rep.files.size(), gl::flp::defaultSampleDir(out).c_str());
   std::fputs(gl::flp::reportText(rep).c_str(), stdout);
   return 0;
 }

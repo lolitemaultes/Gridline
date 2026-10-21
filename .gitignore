@@ -6,3 +6,4 @@ build-*/
 gen2-slicers/
 Testing/
 .DS_Store
+imgui.ini

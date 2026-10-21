@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gridline VERSION 0.5.0 LANGUAGES C CXX)
+project(gridline VERSION 0.5.1 LANGUAGES C CXX)
 
 # Gridline — clean-room DAW. Native Linux target (also builds on macOS for development).
 #   cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
@@ -154,6 +154,18 @@ target_link_libraries(gridline_tests_smooth_scroll PRIVATE gridline_core)
 target_include_directories(gridline_tests_smooth_scroll PRIVATE tests)
 target_compile_options(gridline_tests_smooth_scroll PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME smooth_scroll COMMAND gridline_tests_smooth_scroll WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# J-83: wheel routing over mixer controls (thin mixer scrolls, wide adjusts, momentum, setting).
+add_executable(gridline_tests_wheel_route tests/test_wheel_route.cpp)
+target_link_libraries(gridline_tests_wheel_route PRIVATE gridline_core)
+target_include_directories(gridline_tests_wheel_route PRIVATE tests)
+target_compile_options(gridline_tests_wheel_route PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME wheel_route COMMAND gridline_tests_wheel_route WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# J-84: channel rack layout (knobs at every width / length, name truncation, step scroll) and rack wheel routing.
+add_executable(gridline_tests_rack_layout tests/test_rack_layout.cpp)
+target_link_libraries(gridline_tests_rack_layout PRIVATE gridline_core)
+target_include_directories(gridline_tests_rack_layout PRIVATE tests)
+target_compile_options(gridline_tests_rack_layout PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME rack_layout COMMAND gridline_tests_rack_layout WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(gridline_tests_j1 tests/test_j1.cpp)
 target_link_libraries(gridline_tests_j1 PRIVATE gridline_core)
 target_compile_options(gridline_tests_j1 PRIVATE -Wall -Wextra -Wpedantic)
@@ -220,6 +232,11 @@ add_executable(gridline_tests_flp_export_perf tests/test_flp_export_perf.cpp)
 target_link_libraries(gridline_tests_flp_export_perf PRIVATE gridline_core)
 target_compile_options(gridline_tests_flp_export_perf PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME flp_export_perf COMMAND gridline_tests_flp_export_perf WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_executable(gridline_tests_flp_standin tests/test_flp_standin.cpp)
+target_link_libraries(gridline_tests_flp_standin PRIVATE gridline_core)
+target_compile_options(gridline_tests_flp_standin PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(gridline_tests_flp_standin PRIVATE GRIDLINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME flp_standin COMMAND gridline_tests_flp_standin WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_flp_dec3 tests/test_flp_dec3.cpp)
 target_link_libraries(gridline_tests_flp_dec3 PRIVATE gridline_core)
 target_compile_options(gridline_tests_flp_dec3 PRIVATE -Wall -Wextra -Wpedantic)
@@ -472,12 +489,41 @@ target_link_libraries(gridline_tests_project_files PRIVATE gridline_core)
 target_include_directories(gridline_tests_project_files PRIVATE tests)
 target_compile_options(gridline_tests_project_files PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME project_files COMMAND gridline_tests_project_files WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-78: FLP export hunt, FLP file writing, save types (Gridline zipped project), notification copy text.
+add_executable(gridline_tests_j78 tests/test_j78.cpp src/app/ToastText.cpp)
+target_link_libraries(gridline_tests_j78 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j78 PRIVATE tests src)
+target_compile_options(gridline_tests_j78 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j78 COMMAND gridline_tests_j78 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-31: chord progression editor core, groups & loops, recording extras, key markers, quantized jumps.
 add_executable(gridline_tests_j31 tests/test_j31.cpp)
 target_link_libraries(gridline_tests_j31 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j31 PRIVATE tests)
 target_compile_options(gridline_tests_j31 PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME j31 COMMAND gridline_tests_j31 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-77: engine note state (lit keys, pad flashes), Keep / Revert flow, PAT shows the rack.
+add_executable(gridline_tests_j77 tests/test_j77.cpp src/app/DisplayConfirm.cpp)
+target_link_libraries(gridline_tests_j77 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j77 PRIVATE tests src)
+target_compile_options(gridline_tests_j77 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j77 COMMAND gridline_tests_j77 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-79: topmost-only delete sweeps, the audio clip volume line, zero crossings, stretch mode, toggles.
+add_executable(gridline_tests_j79 tests/test_j79.cpp)
+target_link_libraries(gridline_tests_j79 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j79 PRIVATE tests src)
+target_compile_options(gridline_tests_j79 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j79 COMMAND gridline_tests_j79 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-85: one-step song loop markers; marker actions in the audio engine (sample-exact).
+add_executable(gridline_tests_j85 tests/test_j85.cpp)
+target_link_libraries(gridline_tests_j85 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j85 PRIVATE tests src)
+target_compile_options(gridline_tests_j85 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j85 COMMAND gridline_tests_j85 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_executable(gridline_tests_clip_sources tests/test_clip_sources.cpp)
+target_link_libraries(gridline_tests_clip_sources PRIVATE gridline_core)
+target_include_directories(gridline_tests_clip_sources PRIVATE tests src)
+target_compile_options(gridline_tests_clip_sources PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME clip_sources COMMAND gridline_tests_clip_sources WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-56: playlist track modes (PL-08), MTC / clock receive and chase (MI-02), master chain + loudness (RN-09).
 add_executable(gridline_tests_chop tests/test_chop.cpp)
 target_link_libraries(gridline_tests_chop PRIVATE gridline_core)
@@ -678,6 +724,27 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                    --screenshot ${CMAKE_BINARY_DIR}/layout_audit/frame.ppm --frames 100000 --no-ui-sounds
            WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
   set_tests_properties(editor_layout_audit PROPERTIES ENVIRONMENT "GRIDLINE_CONFIG_HOME=${CMAKE_BINARY_DIR}/layout_audit_cfg" TIMEOUT 900)
+
+  # J-78: clicks on a notification card never reach the playlist clip below it (hidden off-screen run).
+  add_test(NAME j78_toast_click
+           COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                   -DOUT=${CMAKE_BINARY_DIR}/j78_toast_click -P ${CMAKE_SOURCE_DIR}/tests/j78_toast_click.cmake
+           WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(j78_toast_click PROPERTIES TIMEOUT 300)
+
+  # J-83: wheel over a mixer gain fader: thin mixer scrolls, wide adjusts, Ctrl / click / momentum / live resize.
+  add_test(NAME j83_mixer_wheel
+           COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                   -DOUT=${CMAKE_BINARY_DIR}/j83_mixer_wheel -P ${CMAKE_SOURCE_DIR}/tests/j83_mixer_wheel.cmake
+           WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(j83_mixer_wheel PROPERTIES TIMEOUT 300)
+
+  # J-84: channel rack with long patterns / narrow racks: knobs drawn, steps scroll, Q-15 wheel routing.
+  add_test(NAME j84_rack_scroll
+           COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                   -DOUT=${CMAKE_BINARY_DIR}/j84_rack_scroll -P ${CMAKE_SOURCE_DIR}/tests/j84_rack_scroll.cmake
+           WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(j84_rack_scroll PROPERTIES TIMEOUT 300)
 
   include(cmake/GridlinePlugins.cmake)  # PH-09: Gridline.clap / Gridline.vst3
 

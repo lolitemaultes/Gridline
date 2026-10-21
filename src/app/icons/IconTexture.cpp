@@ -77,6 +77,9 @@ float standardSize(float logicalPx) {
   return best;
 }
 
+float toggleIconBox(float button) { return standardSize(std::round(button * 0.52f) * 1.2f); }
+float toolIconBox(float button) { return standardSize(button * (2.0f / 3.0f)); }
+
 void draw(ImDrawList* dl, int svgIndex, ImVec2 c, float logicalPx, ImU32 col) {
   if (!dl || svgIndex < 0 || (col & IM_COL32_A_MASK) == 0) return;
   State& st = state();

@@ -37,6 +37,7 @@
 #include "../packs/PacksUi.h"
 #include "App.h"
 #include "ContextMenus.h"
+#include "FlpExportUi.h"
 #include "HostedUi.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -1004,89 +1005,64 @@ void exportBonesDialog(App& a) {
 
 namespace {
 
-// Plugins the FLP export could not write exactly: count, and each one in the log.
-int logFlpReport(const flp::ExportReport& rep) {
-  int notExact = 0;
-  for (const auto& pl : rep.plugins) notExact += pl.quality != "verbatim" && pl.quality != "exact";
-  for (const auto& wv : rep.warnings) gl::logging::warning("FL export", wv);
-  for (const auto& pl : rep.plugins)
-    if (pl.quality != "verbatim" && pl.quality != "exact") gl::logging::warning("FL export", pl.where + ": " + pl.glType + " -> " + pl.flName + " [" + pl.quality + "] " + pl.note);
-  return notExact;
-}
-
-std::string approxNote(int notExact) {
-  return notExact ? " (" + std::to_string(notExact) + " plugin(s) approximated or placeholders; see the log)" : std::string();
+// Missing files of a package: one red card (the archive lacks them), the paths as its details.
+void notifyMissing(App& a, const char* what, const std::vector<std::string>& missingFiles) {
+  if (missingFiles.empty()) return;
+  std::string list;
+  for (const auto& m : missingFiles) list += (list.empty() ? "" : "\n") + m;
+  a.notify(std::string(what) + " written without " + std::to_string(missingFiles.size()) +
+               " missing file(s); relink them with File > Locate missing samples",
+           true, list);
 }
 
 }  // namespace
 
-bool writeFlpFile(App& a, const std::string& path) {
-  captureHostedStates(a);
-  flp::ExportOptions opt;
-  opt.factoryData = flp::defaultFactoryData();
-  opt.projectDir = fs::path(path).parent_path().string();
-  flp::ExportReport rep;
-  std::string err;
-  if (!flp::exportFlpFile(a.doc.song(), path, rep, opt, &err)) {
-    a.notify("FL Studio export failed: " + err, true);
-    return false;
-  }
-  if (const int n = logFlpReport(rep)) a.notify("FL Studio project written" + approxNote(n), true);
-  return true;
+// J-80: both run as a background job (FlpExportUi.h): Gridline-only
+// instruments are rendered to samples first, with progress and cancel; the
+// job notifies the success summary (J-78: never an error card) or the
+// failure (red, the path as its details) and keeps the full report.
+bool writeFlpFile(App& a, const std::string& path, std::function<void(bool)> done) {
+  return flpexport::start(a, path, false, std::move(done));
 }
 
-bool writeFlpZip(App& a, const std::string& path) {
+bool writeFlpZip(App& a, const std::string& path, std::function<void(bool)> done) {
+  return flpexport::start(a, path, true, std::move(done));
+}
+
+bool writeGridlineZip(App& a, const std::string& path, std::string* note) {
   captureHostedStates(a);
-  flp::PackageOptions opt;
-  opt.flp.factoryData = flp::defaultFactoryData();
-  opt.flp.projectDir = fs::path(path).parent_path().string();
-  flp::PackageReport rep;
-  std::string err;
-  if (!flp::exportFlpZip(a.doc.song(), path, projectStemOf(path), opt, rep, &err)) {
-    a.notify("FL Studio zipped loop package failed: " + err, true);
+  CollectReport r = exportZippedProject(a.doc.song(), path, projectStemOf(path));
+  if (!r.error.empty()) {
+    a.notify("Could not save the zipped project: " + r.error, true, path);
     return false;
   }
-  const int n = logFlpReport(rep.flp);
-  for (const auto& m : rep.missing) gl::logging::warning("FL export", "missing file, not packed: " + m);
-  if (n || !rep.missing.empty())
-    a.notify("FL Studio zipped loop package with " + std::to_string(rep.files.size()) + " file(s)" +
-                 (rep.missing.empty() ? std::string() : ", " + std::to_string(rep.missing.size()) + " missing") + approxNote(n),
-             true);
+  notifyMissing(a, "Zipped project", r.missing);
+  if (note && r.copied) *note = " (" + std::to_string(r.copied) + " file(s))";
   return true;
 }
 
 void exportFlpDialog(App& a) {
   fileDialog(a, "Export FL Studio project", true, {".flp"}, safeFileName(projectName(a)) + ".flp", [&a](const std::string& p) {
-    const std::string path = withSaveExtension(p, SaveFormat::Flp);
-    if (!writeFlpFile(a, path)) return;
-    a.notify("Exported " + fs::path(path).filename().string());
-    a.uiSound(uisound::Event::Export);
+    writeFlpFile(a, withSaveExtension(p, SaveFormat::Flp));
   });
 }
 
 void exportFlpZipDialog(App& a) {
   fileDialog(a, "Export FL Studio zipped loop package", true, {".zip"}, safeFileName(projectName(a)) + ".zip", [&a](const std::string& p) {
-    const std::string path = withSaveExtension(p, SaveFormat::FlZip);
-    if (!writeFlpZip(a, path)) return;
-    a.notify("Exported " + fs::path(path).filename().string());
-    a.uiSound(uisound::Event::Export);
+    writeFlpZip(a, withSaveExtension(p, SaveFormat::FlZip));
   });
 }
 
 void exportZipDialog(App& a) {
-  fileDialog(a, "Export Gridline zipped project", true, {".zip"}, safeFileName(projectName(a)) + ".zip", [&a](const std::string& p) {
-    captureHostedStates(a);
-    std::string path = p;
-    if (fs::path(path).extension().empty()) path += ".zip";
-    CollectReport r = exportZippedProject(a.doc.song(), path, safeFileName(projectName(a)));
-    if (!r.error.empty())
-      a.notify("Zipped project failed: " + r.error, true);
-    else
-      a.notify("Zipped project with " + std::to_string(r.copied) + " file(s)" +
-                   (r.missing.empty() ? std::string() : " (" + std::to_string(r.missing.size()) + " missing)"),
-               !r.missing.empty());
-    if (r.error.empty() && r.missing.empty()) a.uiSound(uisound::Event::Export);
-  });
+  // J-78: the writer of Save as > Gridline zipped project; the name always ends in .gridline.zip.
+  fileDialog(a, "Export Gridline zipped project", true, {".gridline.zip"}, safeFileName(projectName(a)) + ".gridline.zip",
+             [&a](const std::string& p) {
+               const std::string path = withSaveExtension(p, SaveFormat::GridlineZip);
+               std::string note;
+               if (!writeGridlineZip(a, path, &note)) return;
+               a.notify("Exported " + fs::path(path).filename().string() + note, false, path);
+               a.uiSound(uisound::Event::Export);
+             });
 }
 
 void openMissingSamples(App& a) {

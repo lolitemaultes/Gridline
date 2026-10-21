@@ -1029,7 +1029,7 @@ std::vector<std::pair<int, std::string>> surfaceControls(const PluginState& g) {
   return out;
 }
 Encoder dashboard() {
-  Encoder e = make("Dashboard", "gl.surface", -1);
+  Encoder e = make("Dashboard", "gl.surface", -1, true);  // an FL instrument (J-81: never in a mixer slot)
   e.defaults = [] { return buildDashboard({}, {}); };
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
     PluginState cur;

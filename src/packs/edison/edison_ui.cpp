@@ -2,6 +2,7 @@
 // audio (worker thread), undo, transport, recording, the actions behind the
 // toolbar and menus, the slot editor entry point and the standalone window
 // opened from any sample or audio clip.
+#include "../../app/AudioRecordUi.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -28,10 +29,10 @@ std::map<uint64_t, std::unique_ptr<Session>>& sessions() {
 
 uint64_t standaloneKey(ObjectId ch) { return 0xED15000000000000ull ^ static_cast<uint64_t>(ch); }
 
-std::string audioDir(App& a) {
-  if (!a.projectPath.empty()) return (fs::path(a.projectPath).parent_path() / "Audio" / "Edison").string();
-  return (fs::path(a.configDir()) / "Audio" / "Edison").string();
-}
+// Edited audio goes into a neutral "Edited audio" folder next to the project
+// (the config folder while unsaved), like "Recorded" and "Rendered". Files
+// saved earlier under "Audio/Edison" keep working: projects store their paths.
+std::string audioDir(App& a) { return editedDir(a); }
 
 std::string displayName(App& a, const Session& s) {
   if (!s.slot) {
@@ -660,7 +661,7 @@ void drawWindows(App& a) {
     devStandalone = true;
     Content c = demoContent(a.engine.sampleRate());
     const char* cache = std::getenv("GRIDLINE_CACHE_DIR");
-    const std::string dir = cache && *cache ? std::string(cache) : (fs::path(a.configDir()) / "Audio" / "Edison").string();
+    const std::string dir = cache && *cache ? std::string(cache) : (fs::path(a.configDir()) / "Edited audio").string();
     const std::string path = renderPath(dir, "demo phrase", audioHash(c.a()));
     if (writeWavFile(path, c, 24)) {
       ObjectId ch = a.addInstrument("gl.sampler", path);

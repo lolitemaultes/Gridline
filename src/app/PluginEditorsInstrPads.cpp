@@ -13,6 +13,7 @@
 //     (37 / 72 / 107), waveform (140, 101×20), velocity range (247, 215×24)
 //   sample view (301, 220, 190×117) + name / load / reverse (303..490, 341)
 //   envelope editor (495, 220, 269×137) with volume / pan tabs (766, 220 / 288)
+#include "KeyLight.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -63,7 +64,6 @@ struct FpcUi {
   int pad = 0, layer = 0, envTab = 0, bank = 0, scroll = 0;
   int dragPoint = -1, dragRange = -1;
   bool lockLayers = false;
-  float glow[kPadsAll] = {};
 };
 std::map<uint64_t, FpcUi> fpcUi;
 
@@ -409,7 +409,6 @@ void drawLayers(App& a, const PluginTarget& t, const iskin::Skin& k, const Plugi
       float v = std::clamp((ImGui::GetIO().MousePos.x - k.at(548, 0).x) / k.px(211), 0.01f, 1.0f);
       testNote = padNoteOf(st, pad);
       a.engine.noteOn(t.owner, testNote, v);
-      ui.glow[pad] = 1;
     }
     if (ImGui::IsItemDeactivated() && testNote >= 0) a.engine.noteOff(t.owner, testNote), testNote = -1;
     if (ImGui::IsItemHovered()) a.setHint("Test the pad: click at a velocity (left = soft, right = hard)");
@@ -693,14 +692,14 @@ void editorFpc(App& a, const PluginTarget& t, float width) {
     std::snprintf(lbl, sizeof lbl, "%s", nm.c_str());
     iskin::Skin kp = k;
     kp.c.panel = lerp(padColour(st, pk, rgb(0x5C6A70)), rgb(0x232A2E), nm.empty() ? 0.75f : muted ? 0.6f : 0.25f);
-    ui.glow[pk] = std::max(0.0f, ui.glow[pk] - ImGui::GetIO().DeltaTime * 3.0f);
-    int r = iskin::pad(kp, "##pad", x, y, 60, 56, lbl, pk == pad, ui.glow[pk], &vel);
     const int note = padNoteOf(st, pk);
+    // J-77: every hit of the pad's note (playback, MIDI, keys, clicks) flashes it, scaled by velocity.
+    const float flash = t.isChannel() ? keylight::flash(a, t.owner, note) : 0.0f;
+    int r = iskin::pad(kp, "##pad", x, y, 60, 56, lbl, pk == pad, flash, &vel);
     static int playing = -1;
     if (r == 1) {
       ui.pad = pk;
       if (t.isChannel()) a.engine.noteOn(t.owner, note, vel), playing = note;
-      ui.glow[pk] = 1;
     }
     if (r == 2 && playing >= 0 && t.isChannel()) a.engine.noteOff(t.owner, playing), playing = -1;
     char num[8];

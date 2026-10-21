@@ -20,6 +20,8 @@ enum class Icon {
   // Q-12: editing tool family (Q-13: SVG icons, see iconSvgName):
   // playlist / piano roll / automation editor tool strips.
   ToolDraw, ToolPaint, ToolDelete, ToolMute, ToolSlip, ToolSlice, ToolSelect, ToolZoom, ToolPlay, ToolDetune, ToolSnap,
+  // J-79: playlist audio clip editing toggles.
+  StretchMode, FadeHandles, ZeroCross,
   Count  // number of icons (not an icon)
 };
 // Q-12: true for the tool family (playlist / piano roll / automation editor strips).
@@ -72,6 +74,48 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
 bool ParamKnob(const char* id, ParamId pid, float radius = 14.0f, const char* label = nullptr, bool bipolar = false);
 // Vertical fader bound to a parameter.
 bool ParamFader(const char* id, ParamId pid, ImVec2 size);
+// J-83: wheel routing (core/WheelRoute.h). Inside a scope whose pane scrolls
+// (the thin mixer, or Settings > Interface "Mouse wheel over mixer controls:
+// scroll") the plain wheel over a knob / fader / slot scrolls the pane; the
+// control takes it with the wheel-adjust modifier (Ctrl / Cmd, fine steps) or
+// after a click on it (wheel focus); a press while the pane is being scrolled
+// starts no drag. Outside a scope, or in a pane that adjusts, nothing changes.
+class WheelPolicyScope {
+ public:
+  explicit WheelPolicyScope(bool paneScrolls);
+  ~WheelPolicyScope();
+  WheelPolicyScope(const WheelPolicyScope&) = delete;
+  WheelPolicyScope& operator=(const WheelPolicyScope&) = delete;
+
+ private:
+  bool prev_;
+};
+// The innermost scope scrolls its pane with the plain wheel.
+bool wheelPaneScrolls();
+// A pane scroll gesture (or its momentum) is running.
+bool wheelScrolling();
+// A control has wheel focus and the pointer is on it.
+bool wheelFocusActive();
+// The wheel-adjust modifier (keymap "mixer.wheelAdjust") is held.
+bool wheelModifierHeld();
+// A control used this frame's wheel (the gesture is not a pane scroll).
+void wheelClaim();
+// Per wheel-sensitive control, right after its item. `takesWheel`: the
+// control's own rule in an adjusting pane (e.g. a modifier). `scale` > 0: the
+// control applies this frame's wheel times `scale`; `dragOk`: a drag may move
+// it; `hint`: the wheel scrolls the pane here (show "Drag to change, ...").
+struct WheelGate {
+  float scale = 0;
+  bool dragOk = true;
+  bool hint = false;
+};
+WheelGate wheelGate(bool takesWheel = true);
+// Translated "Drag to change, Ctrl+wheel to fine-tune".
+const char* wheelHintText();
+// Around every frame (after ImGui::NewFrame / before ImGui::Render).
+void wheelFrameBegin();
+void wheelFrameEnd();
+
 // Free knob over a value with descriptor (no document); returns true while changing.
 bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const char* label, bool bipolar,
           bool* released = nullptr, const std::function<void()>& extraMenu = nullptr);

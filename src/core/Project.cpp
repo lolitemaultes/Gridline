@@ -1,9 +1,12 @@
 #include "Project.h"
+#include "ClipGain.h"
 #include "Fades.h"
 #include "ProjectInterop.h"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -358,7 +361,7 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.audioEnd = std::max(0.0, jc.num("audioEnd", 0));
   c.fadeIn = std::clamp(jc.num("fadeIn", 0), 0.0, 3600.0);
   c.fadeOut = std::clamp(jc.num("fadeOut", 0), 0.0, 3600.0);
-  c.gain = static_cast<float>(std::clamp(jc.num("gain", 1), 0.0, 16.0));
+  c.gain = clipgain::clampGain(static_cast<float>(jc.num("gain", 1)));  // J-79: FL's range, up to +36 dB
   c.pitch = static_cast<float>(std::clamp(jc.num("pitch", 0), -4800.0, 4800.0));
   c.stretch = std::clamp(jc.num("stretch", 1), 0.0625, 16.0);
   c.syncBpm = std::clamp(jc.num("syncBpm", 0), 0.0, 1000.0);
@@ -1361,22 +1364,64 @@ bool loadProject(const std::string& path, Song& out, std::string* err) {
 
 std::string projectToText(const Song& song) { return jsonStringify(songToJson(song)) + "\n"; }
 
+std::string fileWriteError(const std::string& path, int errnum) {
+  const std::filesystem::path p(path);
+  // The folder by its name only: the message must fit a notification card
+  // (the full path travels as the notification's details).
+  const std::string file = p.filename().string(), folder = p.parent_path().filename().string();
+  const std::string where = folder.empty() ? std::string("this folder") : "the folder \"" + folder + "\"";
+  const std::string head = "cannot write " + file + ": ";
+  switch (errnum) {
+    case EACCES:
+    case EPERM:
+    case EROFS: return head + "no permission to write in " + where + " (read-only folder or disk). Choose another folder.";
+    case ENOENT:
+    case ENOTDIR: return head + where + " does not exist. Choose an existing folder.";
+    case ENOSPC:
+#ifdef EDQUOT
+    case EDQUOT:
+#endif
+      return head + "the disk is full. Free some space or choose another disk.";
+    case ENAMETOOLONG: return head + "the file name or path is too long. Choose a shorter name or folder.";
+    case EISDIR: return head + "a folder has that name. Choose another name.";
+    default: break;
+  }
+  return head + (errnum ? std::string(std::strerror(errnum)) : std::string("write failed")) + ".";
+}
+
+bool checkWritableTarget(const std::string& path, std::string* err) {
+  std::error_code ec;
+  if (std::filesystem::is_directory(path, ec)) return fail(err, fileWriteError(path, EISDIR));
+  if (std::filesystem::exists(path, ec) && ::access(path.c_str(), W_OK) != 0 && (errno == EACCES || errno == EPERM || errno == EROFS))
+    return fail(err, "cannot replace " + std::filesystem::path(path).filename().string() +
+                         ": the file is read-only. Choose another name, or make the file writable.");
+  return true;
+}
+
 bool writeFileAtomic(const std::string& path, const std::string& text, std::string* err) {
+  // J-78: a read-only file is not replaced behind its back (the rename would succeed).
+  if (!checkWritableTarget(path, err)) return false;
   // A temp name per call: two writers of one file (e.g. the browser indexer's
   // worker and the UI thread, or two running instances sharing the config
   // folder's backups) must not write into, or rename away, each other's temp.
   static std::atomic<unsigned> serial{0};
   std::string tmp = path + ".tmp." + std::to_string(static_cast<long>(getpid())) + "." + std::to_string(serial.fetch_add(1));
-  {
-    std::ofstream os(tmp, std::ios::binary | std::ios::trunc);
-    if (!os) return fail(err, "cannot write " + tmp);
-    os << text;
-    os.flush();
-    if (!os) return fail(err, "write failed: " + tmp);
+  errno = 0;
+  std::FILE* f = std::fopen(tmp.c_str(), "wb");
+  if (!f) return fail(err, fileWriteError(path, errno));
+  errno = 0;
+  const bool wrote = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+  const int werr = errno;
+  const bool closed = std::fclose(f) == 0;
+  const int cerr = errno;
+  if (!wrote || !closed) {
+    std::remove(tmp.c_str());  // J-78: no half-written temp left behind (e.g. disk full)
+    return fail(err, fileWriteError(path, !wrote ? werr : cerr));
   }
   if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+    const int e = errno;
     std::remove(tmp.c_str());
-    return fail(err, "cannot replace " + path);
+    return fail(err, fileWriteError(path, e));
   }
   return true;
 }

@@ -21,6 +21,7 @@
 #include "flp_export/enc_J44.h"
 #include "flp_export/j38_fades.h"
 #include "flp_export/j43_fades.h"
+#include "flp_export/j81_slots.h"
 
 int main() {
   testCore();
@@ -44,5 +45,6 @@ int main() {
   enctest::testEncJ44();
   testJ38Fades();
   testJ43Fades();
+  j81::testJ81();
   return finish();
 }

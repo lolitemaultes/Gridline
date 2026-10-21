@@ -9,6 +9,7 @@
 #include "FlpEncode.h"
 #include "FlpExport.h"
 #include "FlpOrigin.h"
+#include "FlpStandIn.h"
 #include "FlpWriter.h"
 
 namespace gl::flp::xp {
@@ -37,6 +38,9 @@ struct Exporter {
   std::set<ObjectId> audioChannels;                // channels placed as audio clips
   std::map<ObjectId, int> audioCents;              // audio-clip channel → pitch written in its levels (cents)
   int insertCount = 0;                             // inserts written (master … last, + the current one)
+  const StandInResult* standIns = nullptr;         // J-80: plugins replaced by stand-ins (report)
+  // Report entry for a plugin: the stand-in's when it has one.
+  void reportPlugin(ExportReport::Plugin rp, ObjectId owner, int slot);
 
   Exporter(const Song& song, const ExportOptions& opt, ExportReport& r) : s(song), o(opt), rep(r) {}
 

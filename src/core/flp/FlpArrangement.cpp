@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <functional>
 #include <set>
+#include "../ClipGain.h"
 #include "../Fades.h"
 #include "../Params.h"
 #include "../PluginParams.h"
@@ -579,7 +580,7 @@ void Importer::importTracksAndClips() {
             cl.fadeOutDeclick = static_cast<uint8_t>((fl >> 14) & 7u);
             cl.fadeInShape = static_cast<uint8_t>((fl >> 8) & 3u);
             cl.fadeOutShape = static_cast<uint8_t>((fl >> 12) & 3u);
-            if (std::isfinite(g) && g >= 0) cl.gain = std::min(g, 16.0f);
+            if (std::isfinite(g) && g >= 0) cl.gain = std::min(g, clipgain::kMaxGain);  // J-79: kept exactly (FL clamps to +36 dB)
             if (std::isfinite(st) && st > 0.0625 && st < 16) cl.stretch = st;
             // PL-13: per-clip pitch, f32 semitones @60 (FL "Set pitch...", +-12).
             const float semis = e.f32(o + 60);
@@ -632,6 +633,7 @@ void Importer::importMarkers() {
         if ((v >> 24) == 1) mk.action = MarkerAction::Loop;
         if ((v >> 24) == 2) mk.action = MarkerAction::Skip;
         if ((v >> 24) == 3) mk.action = MarkerAction::Pause;
+        if ((v >> 24) == 4) mk.action = MarkerAction::SongLoop;  // J-85: FL's loop marker (song end → here)
         // Kind 5 = song start: clips placed before it are launched by hand
         // (FL's performance zone) → Gridline's live area.
         if ((v >> 24) == 5 && mk.pos > 0) s_.live.areaEnd = mk.pos;

@@ -3,6 +3,7 @@
 // import options, project data files / bones / zipped project, the missing
 // samples window, and "export as WAV" for samples and audio clips.
 #pragma once
+#include <functional>
 #include <string>
 #include "../core/Types.h"
 
@@ -48,9 +49,15 @@ void exportZipDialog(App& a);
 void exportFlpDialog(App& a);
 void exportFlpZipDialog(App& a);
 // Writes the open song as an .flp / FL zipped loop package (Save as, the
-// export dialogs). Failures and approximated plugins are notified and logged.
-bool writeFlpFile(App& a, const std::string& path);
-bool writeFlpZip(App& a, const std::string& path);
+// export dialogs) as a background job with progress and cancel (J-80,
+// FlpExportUi.h); failures are notified as error cards (J-78), a success as
+// one summary card. `done(ok)` runs when it has finished. False when it
+// could not start.
+bool writeFlpFile(App& a, const std::string& path, std::function<void(bool)> done = {});
+bool writeFlpZip(App& a, const std::string& path, std::function<void(bool)> done = {});
+// Gridline zipped project (J-78): failures notified; `note` sums up the files
+// for the caller's "Saved" message.
+bool writeGridlineZip(App& a, const std::string& path, std::string* note = nullptr);
 void openMissingSamples(App& a);
 // Imports MIDI files (new pattern) and audio files (playlist clip) into the
 // open project; returns false for anything else (projects open through

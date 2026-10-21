@@ -4,6 +4,7 @@
 #include <cctype>
 #include <filesystem>
 #include "../engine/Sample.h"
+#include "I18n.h"
 
 namespace fs = std::filesystem;
 
@@ -23,7 +24,7 @@ bool endsWith(const std::string& s, const std::string& suffix) {
 
 // Longest project extension of a (lower-case) file name, "" when none.
 std::string projectExt(const std::string& lname) {
-  for (const char* e : {".gridline.json", ".json", ".flp", ".zip"})
+  for (const char* e : {".gridline.json", ".json", ".gridline.zip", ".flp", ".zip"})
     if (endsWith(lname, e) && lname.size() > std::string(e).size()) return e;
   return "";
 }
@@ -47,29 +48,30 @@ bool opensAsProject(const std::string& path) {
 
 const std::vector<FileType>& openFileTypes() {
   static const std::vector<FileType> t = {
-      {"All projects (.gridline.json, .flp, .zip)", {".json", ".flp", ".zip"}},
-      {"Gridline project (.gridline.json)", {".json"}},
-      {"FL Studio project (.flp)", {".flp"}},
-      {"Zipped project / FL Studio zipped loop package (.zip)", {".zip"}},
+      {i18n::N_("All projects (.gridline.json, .flp, .zip)"), {".json", ".flp", ".zip"}},
+      {i18n::N_("Gridline project (.gridline.json)"), {".json"}},
+      {i18n::N_("FL Studio project (.flp)"), {".flp"}},
+      {i18n::N_("Zipped project / FL Studio zipped loop package (.zip)"), {".zip"}},
   };
   return t;
 }
 
 const std::vector<FileType>& importMidiTypes() {
-  static const std::vector<FileType> t = {{"MIDI file (.mid)", {".mid", ".midi", ".rmi"}}};
+  static const std::vector<FileType> t = {{i18n::N_("MIDI file (.mid)"), {".mid", ".midi", ".rmi"}}};
   return t;
 }
 
 const std::vector<FileType>& importAudioTypes() {
-  static const std::vector<FileType> t = {{"Audio file", {".wav", ".flac", ".mp3", ".ogg", ".aif", ".aiff", ".wv"}}};
+  static const std::vector<FileType> t = {{i18n::N_("Audio file"), {".wav", ".flac", ".mp3", ".ogg", ".aif", ".aiff", ".wv"}}};
   return t;
 }
 
 const std::vector<FileType>& saveFileTypes() {
   static const std::vector<FileType> t = {
-      {"Gridline project (.gridline.json)", {".json"}},
-      {"FL Studio project (.flp)", {".flp"}},
-      {"FL Studio zipped loop package (.zip)", {".zip"}},
+      {i18n::N_("Gridline project (.gridline.json)"), {".json"}},
+      {i18n::N_("Gridline zipped project (.gridline.zip)"), {".gridline.zip"}},
+      {i18n::N_("FL Studio project (.flp)"), {".flp"}},
+      {i18n::N_("FL Studio zipped loop package (.zip)"), {".zip"}},
   };
   return t;
 }
@@ -77,6 +79,7 @@ const std::vector<FileType>& saveFileTypes() {
 SaveFormat saveFormatOf(const std::string& path) {
   const std::string n = lowerName(path);
   if (endsWith(n, ".flp")) return SaveFormat::Flp;
+  if (endsWith(n, ".gridline.zip")) return SaveFormat::GridlineZip;
   if (endsWith(n, ".zip")) return SaveFormat::FlZip;
   return SaveFormat::Gridline;
 }
@@ -88,7 +91,9 @@ std::string withSaveExtension(const std::string& name, SaveFormat f) {
   switch (f) {
     case SaveFormat::Flp: return base + ".flp";
     case SaveFormat::FlZip: return base + ".zip";
-    case SaveFormat::Gridline: break;
+    case SaveFormat::GridlineZip: return base + ".gridline.zip";
+    case SaveFormat::Gridline:
+    case SaveFormat::Count: break;
   }
   return base + ".gridline.json";
 }

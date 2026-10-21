@@ -32,7 +32,14 @@ bool migrateProjectJson(Json& j, std::string* err = nullptr);
 Json mixerTrackToJson(const MixerTrack& m);
 void mixerTrackFromJson(const Json& j, MixerTrack& m);
 
-// Writes `text` to `path` atomically (temp file + rename).
+// Writes `text` to `path` atomically (temp file + rename). Nothing is left
+// behind on failure, and an existing read-only file is not replaced.
 bool writeFileAtomic(const std::string& path, const std::string& text, std::string* err = nullptr);
+// J-78: why writing `path` failed (errno), in words the user can act on:
+// "cannot write Song.flp: no permission to write in /x (read-only folder or
+// disk). Choose another folder."
+std::string fileWriteError(const std::string& path, int errnum);
+// False (with the reason) when `path` is a folder or an existing read-only file.
+bool checkWritableTarget(const std::string& path, std::string* err = nullptr);
 
 }  // namespace gl

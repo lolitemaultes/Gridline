@@ -14,6 +14,13 @@ float drawTopBar(App& a);      // menu + transport; returns height used
 void drawStatusBar(App& a);    // hint bar + notifications
 void drawBrowser(App& a);
 void drawChannelRack(App& a);
+// J-84 dev checks: --rack <spec> (comma separated: steps<N> pattern length,
+// w<W> / h<H> floating rack size, dock = docked beside the browser, scroll<px>
+// step area scroll) and the --dev-input "rack" dump (layout, scroll, values).
+void rackDevSpec(const std::string& spec);
+void rackDevBefore(App& a, int frame);  // right before drawChannelRack
+void rackDevAfter(App& a, int frame);   // right after it
+void rackDevDump(App& a, int frame);
 void drawPianoRoll(App& a);
 // Q-4 dev check (--dev-input "lane"): the piano roll's event lane as drawn last
 // frame, in logical pixels: x of tick t = x0 + t * pxPerTick; value v (0..1) at
@@ -25,6 +32,10 @@ struct PianoLaneGeometry {
 const PianoLaneGeometry& pianoLaneGeometry();
 void drawPlaylist(App& a);
 void drawMixer(App& a);
+// J-83 dev check (--dev-input "mixer"): the strips pane's vertical scroll as
+// drawn last frame, and whether the plain wheel scrolls the mixer there.
+float mixerStripsScrollY();
+bool mixerWheelScrolls();
 void drawChannelSettings(App& a);
 void drawChannelEnvelope(App& a, ObjectId channel);  // channel envelope / LFO / filter page (J-72)
 void drawEffectEditor(App& a);
@@ -66,12 +77,22 @@ void channelContextMenu(App& a, ObjectId channel);
 void rackOptionsMenu(App& a);      // channel rack menu: selection ops, sorting, colours
 void addChannelMenu(App& a);       // instruments by category
 void patternContextMenu(App& a, ObjectId pattern);
+// J-82 (Playlist.cpp): playlist picker source menus and deleting sources.
+// Used sources ask first (App::confirm); unused ones are deleted at once.
+void audioSourceMenu(App& a, ObjectId channel);
+void automationSourceMenu(App& a, ObjectId automation);
+void patternSourceMenu(App& a, ObjectId pattern);
+void requestDeleteSources(App& a, ClipKind kind, std::vector<ObjectId> ids);
 void playlistTrackMenu(App& a, int track);
 void clipContextMenu(App& a, ObjectId clip);
 void playlistOptionsMenu(App& a);
 void pianoRollMenu(App& a);
 void markerMenu(App& a, int index);  // playlist ruler: one marker (J-11)
 void markerAddItems(App& a);         // playlist menu > Time markers (J-11)
+// J-85: a song loop marker at `pos` snapped to the playlist grid (one undo
+// step; playback reaching the song end goes on from it).
+void addLoopMarker(App& a, Tick pos);
+void rulerMenu(App& a, Tick pos);    // right-click on the playlist ruler (J-85)
 void mixerTrackMenu(App& a, size_t index);
 void mixerSlotMenu(App& a, ObjectId track, int slot);
 // Mixer (MixerView.cpp, J-12): selected tracks in mixer order (the focused

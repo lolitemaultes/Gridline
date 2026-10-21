@@ -11,13 +11,16 @@
 //   inserts (149 42 95 204 236, slots: plugin events + 98, 235 165 166 49 154 147)
 //   225 mixer parameters, 133, 243, 47
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <sstream>
 #include "../Arrangements.h"
 #include "../Params.h"
+#include "../Project.h"
 #include "FlpExportInternal.h"
 
 namespace gl::flp {
@@ -178,6 +181,20 @@ Exporter::PluginOut Exporter::encodePlugin(const PluginState& p, ObjectId owner,
   const auto host = slot >= 0 ? im.insert.find(owner) : im.insert.end();
   const PluginState q = host != im.insert.end() ? routeIndexed(s, host->second, p) : p;
   enc::Result r = enc::encode(q, oName, oHasState ? &oState : nullptr, ec);
+  // J-81: a mixer slot holds FL effects only; FL reports an instrument there
+  // (e.g. Dashboard for a control surface) as an error while loading.
+  if (!generator && r.quality != enc::Result::None) {
+    const enc::Encoder* used = enc::findEncoder(r.flName, q.type);
+    if (used && used->generator) {
+      r = enc::Result{};
+      r.note = "its FL counterpart is an instrument, which a mixer slot cannot hold";
+    } else if (r.flName.rfind("VFX ", 0) == 0) {
+      // FL's VFX note plugins run only inside Patcher (FL never stores one in
+      // an insert); FL reports one in a mixer slot as an error reading the file.
+      r = enc::Result{};
+      r.note = "its FL counterpart is a VFX note plugin, which runs only inside Patcher";
+    }
+  }
   ExportReport::Plugin rp{where, p.type, r.flName, enc::qualityName(r.quality), r.note};
   if (r.quality == enc::Result::None || r.flName.empty()) {
     out.flPlugin = false;
@@ -189,17 +206,15 @@ Exporter::PluginOut Exporter::encodePlugin(const PluginState& p, ObjectId owner,
       const PluginInfo* info = findPlugin(p.type);
       out.extras = {RawEvent{203, utf16z("[Gridline] " + (info ? info->name : p.type))}};
       rp.flName = out.flName;
-      rp.note = "no FL plugin; neutral placeholder (Fruity Balance at unity) named after it";
+      rp.note = std::string(r.note.rfind("its FL counterpart", 0) == 0 ? r.note + "; " : "no FL plugin; ") +
+                "neutral placeholder (Fruity Balance at unity) named after it";
     }
     rp.quality = "placeholder";
-    rep.counts["plugins placeholder"]++;
-    if (!p.empty()) rep.warn(where + ": " + p.type + " has no FL equivalent (placeholder)");
   } else {
     out.flPlugin = true;
     out.flName = r.flName;
     out.hasState = r.hasState;
     out.state = r.state;
-    rep.counts[std::string("plugins ") + enc::qualityName(r.quality)]++;
     if (r.quality == enc::Result::Approx) {
       const PluginInfo* info = findPlugin(p.type);
       std::string t;
@@ -215,16 +230,43 @@ Exporter::PluginOut Exporter::encodePlugin(const PluginState& p, ObjectId owner,
     }
     if (r.quality == enc::Result::Defaults) rp.note = (rp.note.empty() ? "" : rp.note + "; ") + "written without settings (FL loads its defaults)";
   }
+  // Plugin host record (event 212). For a mixer effect its first two words are
+  // the FL insert and slot: on project load FL takes the slot to load into from
+  // them, not from the event's position (J-81: written as insert 0, every effect
+  // was loaded over the master's slots and FL hung loading the project).
+  constexpr uint32_t kFlInserts = 127;  // master + 126 inserts (higher: FL's own sentinels, kept)
+  const int flInsert = host != im.insert.end() ? host->second : 0;
   out.wrapper = !oWrapper.empty() && out.flName == oName ? oWrapper
                 : generator ? words({0, 0, 2, 0, 0x150, 0, 0, 0, 0, 0, 0, 0, 0})
-                            : words({0, slot, 2, 0, 0x140, 0, 0, 0, 0, 0, 0, 0, 0});
-  rep.plugins.push_back(rp);
+                            : words({flInsert, slot, 2, 0, 0x140, 0, 0, 0, 0, 0, 0, 0, 0});
+  // An FL-written record of a track that has moved since: follow it.
+  if (slot >= 0 && out.wrapper.size() >= 8 && getU32(out.wrapper, 0) < kFlInserts && static_cast<int>(getU32(out.wrapper, 0)) != flInsert)
+    putU32(out.wrapper, 0, static_cast<uint32_t>(flInsert));
+  reportPlugin(rp, owner, slot);
   if (out.flPlugin) {
     PluginMapping m;
     if (enc::decodeState(out.flName, out.hasState ? out.state : Bytes{}, m, ec)) writtenPlugins[key] = std::move(m);
   }
   pluginCache[key] = out;
   return out;
+}
+
+void Exporter::reportPlugin(ExportReport::Plugin rp, ObjectId owner, int slot) {
+  const StandIn* si = standIns ? standIns->find(owner, slot) : nullptr;
+  if (si) {
+    rp.glType = si->glType;
+    if (si->action == "neutral" || si->action == "unused") {
+      rp.quality = si->action == "unused" ? "unused" : "placeholder";
+      rp.note = si->note;
+    } else {
+      rp.quality = si->action;  // mapped / rendered
+      if (rp.flName.empty()) rp.flName = si->flName.empty() ? "Sampler" : si->flName;
+      rp.note = si->note;
+    }
+  }
+  rep.counts["plugins " + rp.quality]++;
+  if (rp.quality == "placeholder" && !si && !rp.glType.empty()) rep.warn(rp.where + ": " + rp.glType + " has no FL equivalent (placeholder)");
+  rep.plugins.push_back(rp);
 }
 
 void Exporter::encodeAllPlugins() {
@@ -587,8 +629,36 @@ void Exporter::writeLinks() {
 
 // ------------------------------------------------------------ driver
 
+namespace {
+bool exportPrepared(const Song& song, const StandInResult* standIns, Bytes& out, ExportReport& rep, const ExportOptions& opt);
+}
+
 bool exportFlp(const Song& song, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
+  // J-80: Gridline-only plugins → their stand-ins, on a copy.
+  Song work = song;
+  StandInResult sr;
+  StandInOptions so;
+  so.sampleDir = opt.renderInstruments ? opt.sampleDir : std::string();
+  so.progress = opt.progress;
+  so.cancel = opt.cancel;
+  if (!applyStandIns(work, opt, so, sr)) {
+    rep.cancelled = sr.cancelled;
+    rep.warn(sr.cancelled ? "export cancelled" : "export failed: " + sr.error);
+    return false;
+  }
+  rep.files = sr.files;
+  return exportPrepared(work, &sr, out, rep, opt);
+}
+
+bool exportFlpWithStandIns(const Song& work, const StandInResult& sr, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
+  rep.files = sr.files;
+  return exportPrepared(work, &sr, out, rep, opt);
+}
+
+namespace {
+bool exportPrepared(const Song& song, const StandInResult* standIns, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
   xp::Exporter x(song, opt, rep);
+  x.standIns = standIns;
   x.ec.tempo = song.tempo;
   x.ec.ppq = song.ppq;
   x.ec.factoryData = opt.factoryData;
@@ -613,31 +683,33 @@ bool exportFlp(const Song& song, Bytes& out, ExportReport& rep, const ExportOpti
   (void)channels;
   return true;
 }
+}  // namespace
 
-bool exportFlpFile(const Song& song, const std::string& path, ExportReport& rep, const ExportOptions& opt, std::string* err) {
+std::string defaultSampleDir(const std::string& flpPath) {
+  const std::filesystem::path p(flpPath);
+  return (p.parent_path() / p.stem()).string();
+}
+
+bool exportFlpFile(const Song& song, const std::string& path, ExportReport& rep, const ExportOptions& opt0, std::string* err) {
+  ExportOptions opt = opt0;
+  {  // J-80: refused before anything is rendered (the sample folder would create a missing folder)
+    std::error_code ec;
+    const std::filesystem::path parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty() && !std::filesystem::is_directory(parent, ec)) {
+      if (err) *err = fileWriteError(path, ENOENT);
+      return false;
+    }
+    if (!checkWritableTarget(path, err)) return false;
+  }
+  if (opt.sampleDir.empty() && opt.renderInstruments) opt.sampleDir = defaultSampleDir(path);
   Bytes b;
   if (!exportFlp(song, b, rep, opt)) {
-    if (err) *err = "export failed";
+    if (err) *err = rep.cancelled ? "cancelled" : rep.warnings.empty() ? "export failed" : rep.warnings.back();
     return false;
   }
-  const std::string tmp = path + ".tmp";
-  {
-    std::ofstream f(tmp, std::ios::binary);
-    if (!f) {
-      if (err) *err = "cannot write " + path;
-      return false;
-    }
-    f.write(reinterpret_cast<const char*>(b.data()), static_cast<std::streamsize>(b.size()));
-    if (!f) {
-      if (err) *err = "cannot write " + path;
-      return false;
-    }
-  }
-  if (std::rename(tmp.c_str(), path.c_str()) != 0) {
-    if (err) *err = "cannot write " + path;
-    return false;
-  }
-  return true;
+  // J-78: the shared atomic writer (per-call temp removed on failure, a
+  // read-only file kept, a reason the user can act on).
+  return writeFileAtomic(path, std::string(b.begin(), b.end()), err);
 }
 
 std::string reportText(const ExportReport& rep) {
@@ -648,6 +720,26 @@ std::string reportText(const ExportReport& rep) {
       os << "  plugin " << p.where << ": " << p.glType << " -> " << (p.flName.empty() ? "-" : p.flName) << " [" << p.quality << "] " << p.note << "\n";
   for (const auto& wv : rep.warnings) os << "  warning: " << wv << "\n";
   return os.str();
+}
+
+std::string exportSummary(const ExportReport& rep, const std::string& fileName) {
+  int rendered = 0, mappedFx = 0, mappedInst = 0, neutral = 0;
+  for (const auto& p : rep.plugins) {
+    const PluginInfo* pi = findPlugin(p.glType);
+    const bool inst = pi && pi->kind == PluginKind::Generator;
+    if (p.quality == "rendered") ++rendered;
+    else if (p.quality == "mapped") ++(inst ? mappedInst : mappedFx);
+    else if (p.quality == "placeholder") ++neutral;
+  }
+  std::vector<std::string> parts;
+  auto n = [](int k, const char* one, const char* many) { return std::to_string(k) + " " + (k == 1 ? one : many); };
+  if (rendered) parts.push_back(n(rendered, "Gridline instrument rendered to samples", "Gridline instruments rendered to samples"));
+  if (mappedInst) parts.push_back(n(mappedInst, "instrument mapped", "instruments mapped"));
+  if (mappedFx) parts.push_back(n(mappedFx, "effect mapped", "effects mapped"));
+  if (neutral) parts.push_back(n(neutral, "plugin without FL counterpart", "plugins without FL counterpart"));
+  std::string s = "Saved " + fileName;
+  for (size_t i = 0; i < parts.size(); ++i) s += (i == 0 ? ": " : ", ") + parts[i];
+  return s;
 }
 
 }  // namespace gl::flp

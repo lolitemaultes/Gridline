@@ -365,7 +365,16 @@ class AudioEngine {
   const float* inputL(const ProgMixer& m) const;
   const float* inputR(const ProgMixer& m) const;
   double loopEnd(const Program* p) const;
-  double loopStart() const;  // where a wrap lands (time selection start, else 0)
+  // Where a wrap lands: the time selection start, else the song loop marker
+  // (J-85), else 0.
+  double loopStart(const Program* p) const;
+  // J-85: marker actions run (song mode, realtime, no time selection, not
+  // following a host transport).
+  bool markerActions(const Program* p) const;
+  // The first marker event playback reaches after `tick` (nullptr: none).
+  const ProgMarkerEvent* nextMarkerEvent(const Program* p, double tick) const;
+  // Runs a marker event reached at block offset `at`; false when playback stopped.
+  bool fireMarker(const Program* p, const ProgMarkerEvent& e, int at);
   // Where the transport wraps now: loopEnd, or the song end while pastLoop_.
   double transportEnd(const Program* p) const;
   // Moves the transport to `tick` (sample clock 0) and updates pastLoop_.

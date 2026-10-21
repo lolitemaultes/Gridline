@@ -1365,7 +1365,7 @@ int addMarkersEvery(Document& d, Tick from, Tick to, Tick every) {
 }
 
 const char* markerActionName(MarkerAction a) {
-  static const char* const n[] = {"None", "Loop to the next marker", "Skip to the next marker", "Pause", "Stop"};
+  static const char* const n[] = {"None", "Loop to the next marker", "Skip to the next marker", "Pause", "Stop", "Song loop (from here at the song end)"};
   int i = static_cast<int>(a);
   return i >= 0 && i < static_cast<int>(MarkerAction::Count) ? n[i] : "";
 }

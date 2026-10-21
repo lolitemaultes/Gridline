@@ -423,8 +423,8 @@ Json markerJson(const Song& s, size_t i) {
   const Marker& m = s.markers[i];
   Json j = jobj({{"marker", jnum(static_cast<double>(i + 1))}, {"position", beatsJ(s, m.pos)}, {"name", jstr(m.name)}});
   if (m.timeSigNum > 0) j.object["timeSignature"] = jstr(std::to_string(m.timeSigNum) + "/" + std::to_string(m.timeSigDen));
-  static const char* actions[] = {"none", "loop", "skip", "pause", "stop"};
-  if (m.action != MarkerAction::None && static_cast<size_t>(m.action) < 5) j.object["action"] = jstr(actions[static_cast<size_t>(m.action)]);
+  static const char* actions[] = {"none", "loop", "skip", "pause", "stop", "song loop"};
+  if (m.action != MarkerAction::None && static_cast<size_t>(m.action) < 6) j.object["action"] = jstr(actions[static_cast<size_t>(m.action)]);
   return j;
 }
 double songSeconds(const Song& s) {

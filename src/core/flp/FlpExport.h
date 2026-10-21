@@ -15,6 +15,8 @@
 // Gridline's values, with the original events as the template for settings
 // Gridline does not model. Plugins go through the encoders (FlpEncode.h).
 #pragma once
+#include <atomic>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -28,6 +30,14 @@ struct ExportOptions {
   std::string factoryData;   // folder %FLStudioFactoryData% stands for (sample paths)
   std::string projectDir;    // folder of the .flp (relative sample paths)
   std::string version = "25.2.5.5319";  // saved-by version written to event 199
+  // J-80: Gridline-only instruments are rendered to samples in this folder
+  // (FlpStandIn.h). exportFlpFile fills it with "<folder of the .flp>/<its
+  // name>" when empty and renderInstruments is on; empty in exportFlp: those
+  // instruments stay placeholders.
+  std::string sampleDir;
+  bool renderInstruments = true;
+  std::function<void(double)> progress;           // 0..1 (rendering)
+  const std::atomic<bool>* cancel = nullptr;      // stops the export (exportFlp returns false)
 };
 
 struct ExportReport {
@@ -41,12 +51,22 @@ struct ExportReport {
     std::string note;
   };
   std::vector<Plugin> plugins;
+  std::vector<std::string> files;  // J-80: samples rendered for the project
+  bool cancelled = false;
   void warn(const std::string& w) { warnings.push_back(w); }
 };
 
 bool exportFlp(const Song& song, Bytes& out, ExportReport& rep, const ExportOptions& opt);
+// J-80: a song whose stand-ins applyStandIns (FlpStandIn.h) already made.
+struct StandInResult;
+bool exportFlpWithStandIns(const Song& work, const StandInResult& standIns, Bytes& out, ExportReport& rep, const ExportOptions& opt);
+// The folder rendered samples go to for an .flp: "<its folder>/<its name>".
+std::string defaultSampleDir(const std::string& flpPath);
 bool exportFlpFile(const Song& song, const std::string& path, ExportReport& rep, const ExportOptions& opt, std::string* err);
 std::string reportText(const ExportReport& rep);
+// J-80: one line for the notification ("Saved x.flp: 6 Gridline instruments
+// rendered to samples, 2 effects mapped").
+std::string exportSummary(const ExportReport& rep, const std::string& fileName);
 
 // Round trip of one FL project: import → export → import, then the two
 // Gridline songs compared field by field, and the exported event stream

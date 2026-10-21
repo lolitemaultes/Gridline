@@ -9,6 +9,7 @@
 namespace gl {
 
 std::string recordedDir(const App& a);  // "<project>/Recorded" (unsaved: config folder)
+std::string editedDir(const App& a);    // "<project>/Edited audio": the audio editor's saved edits
 std::string renderedDir(const App& a);  // "<project>/Rendered"
 // "In 1", "In 1 - In 2", "(none)".
 std::string inputName(int first, bool stereo);

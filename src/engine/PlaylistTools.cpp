@@ -6,6 +6,7 @@
 #include <map>
 #include "ClipOps.h"
 #include "../core/ClipLoop.h"
+#include "../core/PluginParams.h"
 #include "Sample.h"
 
 namespace gl::pltools {
@@ -24,25 +25,24 @@ double sourceSeconds(const Song& s, const Clip& c, double* total = nullptr) {
   return std::max(0.0, end - c.audioStart);
 }
 
-// Nearest zero crossing (mono sum) to `sec` within +-5 ms; `sec` when none.
-double nearestZeroCrossing(const Song& s, const Clip& c, double sec) {
+}  // namespace
+
+double nearestZeroCrossing(const Song& s, const Clip& c, double sec, bool notAfter) {
   const Channel* ch = s.channel(c.source);
   SamplePtr smp = ch ? sampleCache().get(ch->plugin.data) : nullptr;
-  if (!smp || smp->frames() < 2) return sec;
+  if (!smp || smp->frames() < 2 || !(smp->sampleRate > 0)) return sec;
   const double sr = smp->sampleRate;
   const long n = static_cast<long>(smp->frames());
-  const long at = std::clamp(static_cast<long>(std::llround(sec * sr)), 0L, n - 1);
-  const long reach = static_cast<long>(sr * 0.005);
+  const long at = std::clamp(static_cast<long>(std::floor(sec * sr + (notAfter ? 1e-9 : 0.5))), 0L, n - 1);
+  const long reach = static_cast<long>(sr * kZeroCrossReach);
   auto v = [&](long i) { return smp->left[static_cast<size_t>(i)] + smp->right[static_cast<size_t>(i)]; };
   for (long k = 0; k <= reach; ++k)
     for (long i : {at - k, at + k}) {
-      if (i <= 0 || i >= n) continue;
+      if (i <= 0 || i >= n || (notAfter && i > at)) continue;
       if (v(i) == 0.0f || (v(i - 1) < 0.0f) != (v(i) < 0.0f)) return static_cast<double>(i) / sr;
     }
   return sec;
 }
-
-}  // namespace
 
 bool sourceValid(const Song& s, const Source& src) {
   switch (src.kind) {
@@ -100,15 +100,21 @@ std::vector<Clip> moveClips(const std::vector<Clip>& base, const std::set<Object
   return out;
 }
 
-std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const std::set<ObjectId>& sel, Tick d, bool stretch) {
+std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const std::set<ObjectId>& sel, Tick d, bool stretch,
+                             const TempoMap* tm, bool zeroCross) {
   // Every clip keeps at least one tick; audio clips without stretch stop at
-  // the end of their audio.
+  // the end of their audio (J-79: the sample's end; an end cut earlier, e.g.
+  // on a zero crossing, opens up again when the clip grows past it).
+  auto fullWindow = [](Clip c) {
+    c.audioEnd = 0;
+    return c;
+  };
   for (const auto& c : base) {
     if (!sel.count(c.id)) continue;
     const Tick len = s.clipLength(c);
     d = std::max<Tick>(d, 1 - len);
     if (c.kind == ClipKind::Audio && !stretch) {
-      const Tick natural = audioClipNaturalLength(s, c);
+      const Tick natural = std::max(audioClipNaturalLength(s, c), audioClipNaturalLength(s, fullWindow(c)));
       if (natural > 0) d = std::min<Tick>(d, std::max<Tick>(0, natural - len));
     }
   }
@@ -118,8 +124,38 @@ std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const
     const Tick len = s.clipLength(c), nl = std::max<Tick>(1, len + d);
     if (c.kind == ClipKind::Audio && stretch && len > 0) c.stretch = std::clamp(c.stretch * static_cast<double>(nl) / static_cast<double>(len), 0.0625, 16.0);
     c.length = nl;
+    if (c.kind == ClipKind::Audio && !stretch && tm) {
+      const double endSrc = clipSourceAt(s, c, *tm, static_cast<double>(c.start + nl));
+      if (c.audioEnd > c.audioStart && endSrc > c.audioEnd + 1e-9) c.audioEnd = 0;  // grown past a cut end
+      if (zeroCross) {
+        double total = 0;
+        sourceSeconds(s, fullWindow(c), &total);
+        if (total > 0 && endSrc < total - 1e-6) {
+          const double zc = nearestZeroCrossing(s, c, endSrc, true);
+          if (zc > c.audioStart) c.audioEnd = zc;
+        }
+      }
+    }
   }
   return out;
+}
+
+std::set<ObjectId> resamplingChannels(const Song& s, const std::vector<Clip>& clips, const std::set<ObjectId>& sel) {
+  std::set<ObjectId> out;
+  for (const auto& c : clips) {
+    if (c.kind != ClipKind::Audio || !sel.count(c.id) || c.syncBpm > 0) continue;  // tempo-synced clips already keep the pitch
+    const Channel* ch = s.channel(c.source);
+    if (ch && ch->plugin.type == "gl.sampler" && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) &&
+        ch->plugin.params[pp::SmpStretchMode] < 0.5f)
+      out.insert(ch->id);
+  }
+  return out;
+}
+
+void keepPitch(Song& s, const std::set<ObjectId>& channels) {
+  for (ObjectId id : channels)
+    if (Channel* ch = s.channel(id); ch && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode))
+      ch->plugin.params[pp::SmpStretchMode] = 1.0f;
 }
 
 std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vector<Clip>& base, const std::set<ObjectId>& sel, Tick d,
@@ -169,7 +205,7 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
   return out;
 }
 
-Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d) {
+Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d, bool zeroCross) {
   Clip c = base;
   if (d == 0) return c;
   if (base.kind == ClipKind::Audio) {
@@ -181,6 +217,7 @@ Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d) {
     double a = base.audioStart + (d > 0 ? -span : span);
     a = std::max(0.0, a);
     if (total > 0) a = std::min(a, std::max(0.0, total - 1e-3));
+    if (zeroCross && a > 0) a = nearestZeroCrossing(s, base, a);
     const double moved = a - base.audioStart;
     c.audioStart = a;
     if (base.audioEnd > base.audioStart) c.audioEnd = std::max(a, base.audioEnd + moved);
@@ -207,10 +244,20 @@ std::vector<ObjectId> clipsAcross(const Song& s, Tick at, int t0, int t1) {
   return out;
 }
 
-std::vector<ObjectId> sliceClips(Song& s, const std::vector<ObjectId>& ids, Tick at) {
+std::vector<ObjectId> sliceClips(Song& s, const std::vector<ObjectId>& ids, Tick at, bool zeroCross) {
   std::vector<ObjectId> out;
   for (ObjectId id : ids)
-    if (ObjectId r = splitClipAt(s, id, at); r != kNoId) out.push_back(r);
+    if (ObjectId r = splitClipAt(s, id, at); r != kNoId) {
+      out.push_back(r);
+      Clip* right = s.clip(r);
+      if (!zeroCross || !right || right->kind != ClipKind::Audio) continue;
+      const double zc = nearestZeroCrossing(s, *right, right->audioStart, true);  // the left part ends on it
+      if (Clip* left = s.clip(id); left && zc > left->audioStart) left->audioEnd = zc;
+      if ((right = s.clip(r))) {
+        if (right->audioEnd > 0 && right->audioEnd <= zc) continue;
+        right->audioStart = zc;
+      }
+    }
   return out;
 }
 
@@ -253,6 +300,27 @@ std::vector<ObjectId> cloneClips(Song& s, const std::set<ObjectId>& sel) {
     s.playlist.push_back(c);
   }
   return out;
+}
+
+ObjectId topClipAt(const Song& s, int track, Tick t) {
+  ObjectId best = kNoId;
+  Tick bestStart = -1;
+  for (const auto& c : s.playlist)  // later start wins; equal starts: later in the playlist
+    if (c.track == track && t >= c.start && t < c.start + s.clipLength(c) && c.start >= bestStart) best = c.id, bestStart = c.start;
+  return best;
+}
+
+bool EraseSweep::covers(int track, Tick t) const {
+  for (const Span& sp : spans)
+    if (sp.track == track && t >= sp.start && t < sp.end) return true;
+  return false;
+}
+
+void EraseSweep::add(const Song& s, const Clip& c) { spans.push_back({c.track, c.start, c.start + s.clipLength(c)}); }
+
+ObjectId EraseSweep::pick(const Song& s, int track, Tick t, ObjectId hit) const {
+  if (covers(track, t)) return kNoId;
+  return hit != kNoId ? hit : topClipAt(s, track, t);
 }
 
 bool moveTrack(Song& s, int from, int to) {

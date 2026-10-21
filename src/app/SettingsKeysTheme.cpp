@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include "DisplayConfirmUi.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/I18n.h"
 #include "../core/Keymap.h"
@@ -398,8 +399,10 @@ void themeSettingsPage(App& a, float fieldW) {
     int m = static_cast<int>(theme::modeFromSettings(st));
     const char* modes[] = {tr("Dark"), tr("Light"), tr("Follow system")};
     if (ui::Segmented("thememode", modes, 3, &m, 0)) {
+      const dispconf::Snapshot before = dispconf::take(st, dispconf::themeKeys());
       theme::modeToSettings(static_cast<theme::Mode>(m), st);
       theme::applyFromSettings(st, true);
+      ui::confirmTheme(a, before, "Theme");  // J-77
     }
     if (static_cast<theme::Mode>(m) == theme::Mode::System) {
       ImGui::SameLine(0, theme::kS2);
@@ -450,10 +453,21 @@ void themeSettingsPage(App& a, float fieldW) {
 
   ui::BeginSection(tr("ADJUST"));
   {
+    // J-77: contrast / brightness preview live while dragging; on release they ask Keep / Revert
+    // (back to the values before the drag).
+    static dispconf::Snapshot dragFrom;
+    auto dragConfirm = [&](const char* what) {
+      if (ImGui::IsItemActivated()) dragFrom = dispconf::take(st, dispconf::themeKeys());
+      if (ImGui::IsItemDeactivatedAfterEdit()) {
+        if (changed) theme::tweaksToSettings(t, st), applyTheme(a), changed = false;
+        ui::confirmTheme(a, dragFrom, what);
+      }
+    };
     label("Contrast");
     float c = t.contrast * 100.0f;
     ImGui::SetNextItemWidth(fieldW - 56);
     if (ImGui::SliderFloat("##contrast", &c, -100.0f, 100.0f, " ")) t.contrast = c / 100.0f, changed = true;
+    dragConfirm("Contrast");
     ui::Hint(tr("Text and lines against the panels"));
     ImGui::SameLine(0, theme::kS2);
     ImGui::Text("%+.0f%%", static_cast<double>(c));
@@ -461,6 +475,7 @@ void themeSettingsPage(App& a, float fieldW) {
     float b = t.brightness * 100.0f;
     ImGui::SetNextItemWidth(fieldW - 56);
     if (ImGui::SliderFloat("##brightness", &b, -100.0f, 100.0f, " ")) t.brightness = b / 100.0f, changed = true;
+    dragConfirm("Brightness");
     ui::Hint(tr("Panels, fields and grids lighter or darker"));
     ImGui::SameLine(0, theme::kS2);
     ImGui::Text("%+.0f%%", static_cast<double>(b));
@@ -477,8 +492,10 @@ void themeSettingsPage(App& a, float fieldW) {
   ui::EndSection();
 
   if (ui::TextButton(tr("Reset theme"), false, 0, tr("Theme colours, contrast and brightness back to the defaults (the dark / light choice stays)"))) {
+    const dispconf::Snapshot before = dispconf::take(st, dispconf::themeKeys());
     theme::resetThemeSettings(st);
     applyTheme(a);
+    ui::confirmTheme(a, before, "Theme reset");  // J-77: colours and adjustments can come back
   }
 }
 

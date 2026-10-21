@@ -1,6 +1,10 @@
 // Gridline — ZIP archives. See Zip.h.
 #include "Zip.h"
+#include "Project.h"
+#include <unistd.h>
 #include <algorithm>
+#include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -54,20 +58,38 @@ uint32_t crc32(const uint8_t* data, size_t n, uint32_t crc) {
 // ---------------------------------------------------------------- writer
 
 ZipWriter::~ZipWriter() {
-  if (f_) std::fclose(f_);
+  if (f_) {  // never closed: the temporary archive goes, the target stays as it was
+    std::fclose(f_);
+    std::remove(tmp_.c_str());
+  }
 }
 
 bool ZipWriter::open(const std::string& path, std::string* err) {
-  f_ = std::fopen(path.c_str(), "wb");
-  if (!f_) return fail(err, "cannot write " + path);
+  if (f_) {
+    std::fclose(f_);
+    std::remove(tmp_.c_str());
+    f_ = nullptr;
+  }
+  if (!checkWritableTarget(path, err)) return false;
+  static std::atomic<unsigned> serial{0};
+  path_ = path;
+  tmp_ = path + ".tmp." + std::to_string(static_cast<long>(getpid())) + "." + std::to_string(serial.fetch_add(1));
+  errno = 0;
+  f_ = std::fopen(tmp_.c_str(), "wb");
+  if (!f_) return fail(err, fileWriteError(path, errno));
   entries_.clear();
   pos_ = 0;
+  errno_ = 0;
   ok_ = true;
   return true;
 }
 
 void ZipWriter::raw(const void* p, size_t n) {
-  if (!f_ || std::fwrite(p, 1, n, f_) != n) ok_ = false;
+  errno = 0;
+  if (!f_ || std::fwrite(p, 1, n, f_) != n) {
+    if (ok_) errno_ = errno;
+    ok_ = false;
+  }
   pos_ += static_cast<uint32_t>(n);
 }
 
@@ -98,10 +120,16 @@ bool ZipWriter::add(const std::string& name, const std::vector<uint8_t>& data) {
 }
 
 bool ZipWriter::addFile(const std::string& name, const std::string& sourcePath, std::string* err) {
+  errno = 0;
   std::ifstream in(sourcePath, std::ios::binary);
-  if (!in) return fail(err, "cannot read " + sourcePath);
+  if (!in)
+    return fail(err, "cannot read " + sourcePath + " to pack it (" + (errno ? std::string(std::strerror(errno)) : std::string("unreadable")) +
+                         "). Check the file, or relink it (File > Locate missing samples).");
   std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  if (!add(name, d)) return fail(err, "cannot add " + name + " (archive too large?)");
+  if (!add(name, d)) {
+    if (!ok_ && errno_) return fail(err, fileWriteError(path_, errno_));
+    return fail(err, "cannot add " + name + ": a zip archive holds at most 4 GB. Remove large samples or save without packing them.");
+  }
   return true;
 }
 
@@ -140,9 +168,20 @@ bool ZipWriter::close(std::string* err) {
   le32(end, cdStart);
   le16(end, 0);
   raw(end.data(), end.size());
-  const bool ok = ok_ && std::fclose(f_) == 0;
+  errno = 0;
+  const bool closed = std::fclose(f_) == 0;
+  if (ok_ && !closed) errno_ = errno;
   f_ = nullptr;
-  return ok || fail(err, "write failed");
+  if (!ok_ || !closed) {
+    std::remove(tmp_.c_str());
+    return fail(err, fileWriteError(path_, errno_));
+  }
+  if (std::rename(tmp_.c_str(), path_.c_str()) != 0) {
+    const int e = errno;
+    std::remove(tmp_.c_str());
+    return fail(err, fileWriteError(path_, e));
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------- reader

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.5.0" src="https://img.shields.io/badge/version-0.5.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.5.1" src="https://img.shields.io/badge/version-0.5.1-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -91,7 +91,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 113 test suites
+ctest --test-dir build          # 124 test suites
 ./build/gridline-app            # start the app
 ```
 

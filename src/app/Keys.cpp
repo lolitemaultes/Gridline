@@ -101,6 +101,11 @@ bool modifierHeld(const char* id) {
 
 bool modifierExact(const char* id) { return modsNow() == mouseModifier(id); }
 
+bool modifierIncludes(const char* id) {
+  const uint8_t want = mouseModifier(id);
+  return want != 0 && (modsNow() & want) == want;
+}
+
 const char* label(const char* id) {
   LabelCache& lc = labelCache();
   auto it = lc.text.find(id);
