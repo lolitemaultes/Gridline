@@ -517,6 +517,7 @@ int pluginCheckMain(int argc, char** argv) {
       else if (!std::strcmp(argv[i], "--no-editor")) editor = false;
     }
     if (out.empty()) return 1;
+    platform::quietCrashDialogs();
     return childMain(argv[3], argv[4], argv[5], out, editor);
   }
   std::vector<std::string> wanted;

@@ -63,13 +63,21 @@ expectToast(short "clipboard: Saved toast.gridline.json" "${OUT}/toast.gridline.
 # rendered to samples (J-80: the summary; the full report is its details).
 run(flp "${OUT}/toast.flp")
 expectToast(flp "clipboard: Saved toast.flp: " "rendered to samples" "${OUT}/toast.flp")
-# Long multi-line error card: a read-only destination.
+# Long multi-line error card: a read-only destination (not where permissions do not stop the
+# process: root in CI containers).
 file(MAKE_DIRECTORY "${OUT}/read only")
 execute_process(COMMAND chmod 555 "${OUT}/read only")
-run(error "${OUT}/read only/x.flp")
-execute_process(COMMAND chmod 755 "${OUT}/read only")
-expectToast(error "clipboard: Error: Could not save the FL Studio project: cannot write x.flp: no permission to write in the folder \"read only\""
-            "Choose another folder." "${OUT}/read only/x.flp")
+execute_process(COMMAND sh -c "echo x > probe" WORKING_DIRECTORY "${OUT}/read only" RESULT_VARIABLE probeRc OUTPUT_QUIET ERROR_QUIET)
+if(EXISTS "${OUT}/read only/probe")
+  file(REMOVE "${OUT}/read only/probe")
+  execute_process(COMMAND chmod 755 "${OUT}/read only")
+  message(STATUS "skip - error: folder permissions are not enforced for this user")
+else()
+  run(error "${OUT}/read only/x.flp")
+  execute_process(COMMAND chmod 755 "${OUT}/read only")
+  expectToast(error "clipboard: Error: Could not save the FL Studio project: cannot write x.flp: no permission to write in the folder \"read only\""
+              "Choose another folder." "${OUT}/read only/x.flp")
+endif()
 # Control: the same input with no notification up does reach the clip.
 run(control "")
 string(FIND "${control_saved}" "${want}" controlKept)

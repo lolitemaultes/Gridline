@@ -313,8 +313,12 @@ int childMain(int argc, char** argv) {
       sandbox = argv[++i];
     }
   }
-  if (!sandbox.empty()) return sandboxChildMain(sandbox);
+  if (!sandbox.empty()) {
+    platform::quietCrashDialogs();
+    return sandboxChildMain(sandbox);
+  }
   if (entry.empty()) return -1;
+  platform::quietCrashDialogs();
   ScanResult r;
   r.format = format;
   r.bundle = entry;

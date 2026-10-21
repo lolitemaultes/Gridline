@@ -141,8 +141,8 @@ jobs:
           if [ "${{ matrix.arch }}" = "amd64_arm64" ]; then extra="-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"; fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cc }} \
             -DGRIDLINE_BUNDLED_SDL2=ON -DGRIDLINE_WERROR=${{ matrix.werror }} -DGRIDLINE_GUI_TESTS=OFF $extra \
-            "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /Zi" "-DCMAKE_C_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /Zi" \
-            "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=/DEBUG /OPT:REF /OPT:ICF" "-DCMAKE_MODULE_LINKER_FLAGS_RELEASE=/DEBUG /OPT:REF /OPT:ICF"
+            "-DCMAKE_CXX_FLAGS_RELEASE=-O2 -Ob2 -DNDEBUG -Zi" "-DCMAKE_C_FLAGS_RELEASE=-O2 -Ob2 -DNDEBUG -Zi" \
+            "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=-DEBUG -OPT:REF -OPT:ICF" "-DCMAKE_MODULE_LINKER_FLAGS_RELEASE=-DEBUG -OPT:REF -OPT:ICF"
       - name: Build
         run: cmake --build build -j4 -- -k 0
       - name: Tests

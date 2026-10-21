@@ -37,6 +37,9 @@ std::string cacheRoot();
 std::string dataRoot();
 
 int processId();
+// Child processes that load plugins (scanner, sandbox, plugin check): a crash ends the process
+// at once instead of opening a system error dialog (Windows) that would hang it until its timeout.
+void quietCrashDialogs();
 // Environment (UTF-8). setEnv with overwrite=false keeps an existing value.
 bool setEnv(const char* name, const char* value, bool overwrite = true);
 bool unsetEnv(const char* name);

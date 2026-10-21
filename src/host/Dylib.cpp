@@ -120,7 +120,11 @@ std::string lastError() {
 
 void* open(const std::string& path, std::string* err, bool) {
   // The DLL's own folder is searched for the DLLs it depends on (plugins ship them beside it).
+  // No "bad image" / "missing DLL" dialog: a broken plugin fails the load.
+  DWORD oldMode = 0;
+  SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &oldMode);
   HMODULE h = LoadLibraryExW(widen(path).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+  SetThreadErrorMode(oldMode, nullptr);
   if (!h && err) *err = "LoadLibrary: " + lastError();
   return reinterpret_cast<void*>(h);
 }
