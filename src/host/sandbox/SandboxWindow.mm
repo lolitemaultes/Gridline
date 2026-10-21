@@ -1,11 +1,16 @@
 // Gridline — the sandbox child's editor window (macOS): one plain Cocoa
 // window whose content view hosts the plugin's editor.
 #import <AppKit/AppKit.h>
+#include <poll.h>
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include "../ui/NativeView.h"
 #include "Sandbox.h"
 
 namespace {
 NSWindow* gWindow = nil;
+void* gContainer = nullptr;  // the view the editor attaches to (keys pass through it, J-66)
 bool gOpen = false;
 id gCloseObserver = nil;
 
@@ -57,10 +62,83 @@ void* sandboxOpenWindow(const std::string& title, int w, int h, bool resizable, 
   } else {  // frame top-left at (x, y), top-left based
     [gWindow setFrameTopLeftPoint:NSMakePoint(x, originScreenHeight() - y)];
   }
+  // The editor's parent: Gridline's plugin container filling the window (keys
+  // the interface does not use come back through it).
+  native::Window nw;
+  nw.handle = gWindow;
+  gContainer = native::createContainer(nw, layout::Rect{0, 0, w, h});
+  if (gContainer) [(NSView*)gContainer setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
   [gWindow makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:YES];
   gOpen = true;
-  return [gWindow contentView];
+  return gContainer ? gContainer : [gWindow contentView];
+}
+
+bool sandboxPopKey(KeyEvent& e) { return gContainer && native::popKey(gContainer, e); }
+
+void sandboxDevStats(int idles) {
+  static const bool on = std::getenv("GRIDLINE_SANDBOX_STATS") != nullptr;
+  if (!on || !gContainer) return;
+  static double last = 0;
+  if (idles % 30 == 1) native::startDrawStats(gContainer);
+  if (idles == 240)
+    if (const char* d = std::getenv("GRIDLINE_DEV_DRAG")) {
+      int x = 0, y = 0;
+      double s = 0;
+      native::Window nw;
+      nw.handle = gWindow;
+      if (std::sscanf(d, "%d,%d,%lf", &x, &y, &s) == 3) native::devDrag(nw, gContainer, x, y, s);
+    }
+  const double now = CFAbsoluteTimeGetCurrent();
+  if (last == 0) {
+    last = now;
+    native::takeDrawStats();
+    return;
+  }
+  if (now - last < 1.0) return;
+  const native::DrawStats d = native::takeDrawStats();
+  const double span = now - last;
+  std::fprintf(stderr, "[sandbox-stats] plugin ui/s: views %.0f layers %.0f gl %.0f metal %.0f | runloop %.0f/s\n", d.views / span, d.layers / span,
+               d.gl / span, d.metal / span, d.runLoopTurns / span);
+  last = now;
+}
+
+void sandboxDevKeys() {
+  if (!gContainer) return;
+  if (!native::devTestKeyView(gContainer, 3)) native::devTestKeyView(gContainer, 0);
+  native::devSendKey(gContainer, 0x31, true, 0, " ");
+  native::devSendKey(gContainer, 0x31, false, 0, " ");
+}
+
+bool sandboxWaitEvents(int fd, double seconds) {
+  auto ready = [fd]() {
+    pollfd pf{fd, POLLIN, 0};
+    return ::poll(&pf, 1, 0) > 0;
+  };
+  sandboxPumpEvents();
+  if (ready()) return true;
+  // The parent's calls wake the run loop through a CFFileDescriptor source.
+  static CFFileDescriptorRef src = nullptr;
+  static int srcFd = -1;
+  if (srcFd != fd) {
+    if (src) {
+      CFFileDescriptorInvalidate(src);
+      CFRelease(src);
+    }
+    src = CFFileDescriptorCreate(kCFAllocatorDefault, fd, false, [](CFFileDescriptorRef, CFOptionFlags, void*) {}, nullptr);
+    srcFd = fd;
+    if (src) {
+      CFRunLoopSourceRef rls = CFFileDescriptorCreateRunLoopSource(kCFAllocatorDefault, src, 0);
+      CFRunLoopAddSource(CFRunLoopGetMain(), rls, kCFRunLoopDefaultMode);
+      CFRelease(rls);
+    }
+  }
+  if (src) CFFileDescriptorEnableCallBacks(src, kCFFileDescriptorReadCallBack);  // one-shot: armed per wait
+  @autoreleasepool {
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, true);
+  }
+  sandboxPumpEvents();
+  return ready();
 }
 
 void sandboxResizeWindow(int w, int h) {
@@ -74,6 +152,12 @@ void sandboxCloseWindow() {
     [[NSNotificationCenter defaultCenter] removeObserver:gCloseObserver];
     [gCloseObserver release];
     gCloseObserver = nil;
+  }
+  if (gContainer) {
+    native::Window nw;
+    nw.handle = gWindow;
+    native::destroyContainer(nw, gContainer);
+    gContainer = nullptr;
   }
   if (gWindow) {
     if (gOpen) [gWindow close];

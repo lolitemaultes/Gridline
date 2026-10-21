@@ -98,6 +98,8 @@ enum : int32_t {
   opGetTailSize = 52,
   opGetParamInfo = 56,    // index: parameter; ptr: ParamProps*
   opGetApiVersion = 58,
+  opEditorKeyDown = 59,   // index: character, value: virtual key, opt: modifiers; returns 1 when used
+  opEditorKeyUp = 60,
   opBeginSetProgram = 67,
   opEndSetProgram = 68,
   opShellNext = 70,       // ptr: char[64] name out; returns the next sub-plugin id (0 = done)

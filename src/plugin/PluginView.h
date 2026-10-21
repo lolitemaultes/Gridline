@@ -16,6 +16,7 @@
 #include <memory>
 #include <string>
 #include "../host/EditorLayout.h"
+#include "../host/KeyForward.h"
 
 namespace gl::plugin {
 
@@ -98,6 +99,10 @@ class HostWindow {
   virtual bool pluginViewSize(int& w, int& h) const = 0;
   // Image of the window's content (PNG); false when unsupported.
   virtual bool capture(const std::string& pngPath) = 0;
+  // A key the plugin's interface did not use (J-66; the sandbox process'
+  // window forwards them too): it goes to Gridline's editor, as if typed
+  // there (Gridline's shortcuts). macOS; no-op elsewhere.
+  virtual void forwardKey(const host::KeyEvent& k) { (void)k; }
   // The user closed the window / resized it to w x h (content size).
   std::function<void()> onClose;
   std::function<void(int w, int h)> onUserResize;

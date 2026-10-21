@@ -16,6 +16,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "KeyForward.h"
 
 namespace gl::host {
 
@@ -191,6 +192,15 @@ class Editor {
   virtual void setContentScale(double scale) { (void)scale; }
   // The editor asks the host for a new window size (set by the host before attach).
   std::function<bool(int w, int h)> requestResize;
+  // J-66 keys. External editors: a key the interface did not use, typed in
+  // its own window (for Gridline's shortcuts); false when none is waiting.
+  virtual bool popKey(KeyEvent& e) { (void)e; return false; }
+  // A key typed in the host's window while the interface is shown, offered to
+  // the plugin first where the format has a way to (VST3 onKeyDown / VST2
+  // effEditKeyDown on X11; macOS interfaces get keys from AppKit directly).
+  // True when the plugin used it. `usage`: USB HID usage, `ch`: the character
+  // typed (0 for none), `mods`: KeyMods.
+  virtual bool hostKey(bool down, int usage, uint32_t ch, uint32_t mods) { (void)down, (void)usage, (void)ch, (void)mods; return false; }
 };
 
 // One plugin instance.

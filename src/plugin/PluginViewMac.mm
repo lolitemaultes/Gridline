@@ -25,6 +25,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "PluginCore.h"
 #include "PluginView.h"
+#include "../host/ui/NativeView.h"
 
 // NSOpenGL is deprecated (still supported); the editor uses it like SDL does.
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -396,6 +397,18 @@ class MacView final : public View {
     surface_->makeCurrent();
     modifiers([e modifierFlags]);
   }
+  // A key a hosted plugin's interface did not use (J-66).
+  void hostKey(const host::KeyEvent& k) {
+    if (!glReady_) return;
+    surface_->makeCurrent();
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiMod_Ctrl, (k.mods & host::kKeyCtrl) != 0);
+    io.AddKeyEvent(ImGuiMod_Shift, (k.mods & host::kKeyShift) != 0);
+    io.AddKeyEvent(ImGuiMod_Alt, (k.mods & host::kKeyAlt) != 0);
+    io.AddKeyEvent(ImGuiMod_Super, (k.mods & host::kKeyCmd) != 0);
+    const ImGuiKey key = keyOf(k.code);
+    if (key != ImGuiKey_None) io.AddKeyEvent(key, k.down);
+  }
 
  private:
   // Dev check: GRIDLINE_PLUGIN_SHOT=<file.ppm> saves the 60th frame (our own GL surface only).
@@ -467,9 +480,14 @@ class MacHostWindow final : public HostWindow {
   ~MacHostWindow() override {
     bar_.detach();
     if (container_) {
+      host::native::unwatchKeys(container_);
       [container_ removeFromSuperview];
       [container_ release];
       container_ = nil;
+    }
+    if (editorView_) {
+      [editorView_ release];
+      editorView_ = nil;
     }
     if (holder_) {
       [holder_ removeFromSuperview];
@@ -498,6 +516,7 @@ class MacHostWindow final : public HostWindow {
               int index) {
     owner_ = [ownerView window];
     if (!owner_) return false;
+    editorView_ = [ownerView retain];
     NSWindowStyleMask style = barOnly ? NSWindowStyleMaskBorderless
                                       : (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable |
                                          (resizable ? NSWindowStyleMaskResizable : 0));
@@ -525,6 +544,7 @@ class MacHostWindow final : public HostWindow {
       [container_ setWantsLayer:YES];
       [[container_ layer] setMasksToBounds:YES];
       [content addSubview:container_];
+      host::native::watchKeys(container_);  // keys the interface does not use go to Gridline's editor
     }
     holder_ = [[NSView alloc] initWithFrame:NSMakeRect(0, L.bar.y, L.w, std::max(1, L.h - L.bar.y))];
     [content addSubview:holder_];
@@ -619,7 +639,16 @@ class MacHostWindow final : public HostWindow {
     if (win_) [win_ setFrameTopLeftPoint:NSMakePoint(x, primaryHeight() - y)];
   }
   double backingScale() const override { return win_ ? [win_ backingScaleFactor] : 1.0; }
-  void tick() override {}
+  void tick() override {
+    host::KeyEvent k;
+    while (container_ && host::native::popKey(container_, k)) forwardKey(k);
+  }
+  void forwardKey(const host::KeyEvent& k) override {
+    if (editorView_ && [editorView_ isKindOfClass:[GRIDLINE_PLUGIN_VIEW_CLASS class]]) {
+      gl::plugin::MacView* v = ((GRIDLINE_PLUGIN_VIEW_CLASS*)editorView_)->owner;
+      if (v) v->hostKey(k);
+    }
+  }
   int barFrames() const override { return bar_.frames(); }
   bool ownedByEditor() const override { return win_ && owner_ && [win_ parentWindow] == owner_; }
   bool visible() const override { return win_ && [win_ isVisible]; }
@@ -676,6 +705,7 @@ class MacHostWindow final : public HostWindow {
   NSWindow* win_ = nil;
   NSView* container_ = nil;
   NSView* holder_ = nil;
+  NSView* editorView_ = nil;  // Gridline's editor (retained): unused plugin keys go there
   GRIDLINE_HOSTED_DELEGATE_CLASS* delegate_ = nil;
   int applying_ = 0;
   bool offscreen_ = false;
@@ -714,6 +744,13 @@ void restoreGl(const GlBinding& g) {
 @implementation GRIDLINE_HOSTED_CONTAINER_CLASS
 - (BOOL)isOpaque {
   return NO;
+}
+// Keys the plugin's interface passed on (J-66), queued for Gridline's editor.
+- (void)keyDown:(NSEvent*)e {
+  if (!gl::host::native::containerKey(self, e, true)) [super keyDown:e];
+}
+- (void)keyUp:(NSEvent*)e {
+  if (!gl::host::native::containerKey(self, e, false)) [super keyUp:e];
 }
 - (BOOL)acceptsFirstMouse:(NSEvent*)event {
   (void)event;

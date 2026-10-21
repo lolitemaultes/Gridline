@@ -302,6 +302,8 @@ void runAction(NestedWindow& w) {
 void setPluginWindowLog(bool on) { gLog = on; }
 void setPluginWindowPanel(int page) { gStartPanel = std::clamp(page, -1, 2); }
 void setPluginWindowDevAction(const std::string&) {}
+void setPluginWindowDrawStats(bool) {}
+void setPluginWindowDevKeys(bool) {}
 void setPluginWindowDevResize(int, int) {}
 
 bool hostedEditorOpen(const PluginTarget& t) { return windowFor(&app(), t) != nullptr; }
@@ -489,6 +491,10 @@ void hostedui::pluginWindowsIdle(App& a) {
         const plugin::GlBinding gl = plugin::currentGl();
         w.editor->idle();
         plugin::restoreGl(gl);
+      }
+      if (w.external && w.win) {  // keys typed in the sandbox window that its interface did not use (J-66)
+        host::KeyEvent k;
+        while (w.editor->popKey(k)) w.win->forwardKey(k);
       }
       if (w.external) {
         if (!w.editor->isOpen()) {

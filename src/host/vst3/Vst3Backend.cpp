@@ -53,6 +53,21 @@ class View final : public host::Editor {
     sb::ViewRect r{0, 0, w, h};
     view_->onSize(&r);
   }
+  // X11 (J-66): keys typed into the host's window are offered to the view
+  // first. macOS views receive their keys from AppKit and pass on what they
+  // do not use (NativeViewMac.mm), so they are never asked twice.
+  bool hostKey(bool down, int usage, uint32_t ch, uint32_t mods) override {
+#if !defined(__APPLE__)
+    (void)ch;
+    host::VstKey k;
+    if (!attached_ || !host::vstKeyOf(usage, mods, k)) return false;
+    return (down ? view_->onKeyDown(static_cast<sb::char16>(k.character), k.virtualKey, k.modifiers)
+                 : view_->onKeyUp(static_cast<sb::char16>(k.character), k.virtualKey, k.modifiers)) == sb::kResultTrue;
+#else
+    (void)down, (void)usage, (void)ch, (void)mods;
+    return false;
+#endif
+  }
   void setContentScale(double scale) override {
 #if !defined(__APPLE__)  // macOS views scale with their window themselves
     void* obj = nullptr;

@@ -347,6 +347,11 @@ target_compile_definitions(gridline_tests_hosting PRIVATE GRIDLINE_CLAP_TESTPLUG
                            GRIDLINE_CLI_EXE="$<TARGET_FILE:gridline>")
 add_dependencies(gridline_tests_hosting gridline_clap_testplug gridline_vst2_testplug gridline_vst3_testplug gridline)
 add_test(NAME plugin_hosting COMMAND gridline_tests_hosting WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-66: keys from plugin interfaces to Gridline's shortcuts.
+add_executable(gridline_tests_j66 tests/test_j66.cpp)
+target_link_libraries(gridline_tests_j66 PRIVATE gridline_core)
+target_compile_options(gridline_tests_j66 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j66_plugin_keys COMMAND gridline_tests_j66 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # LV2 hosting (PH-04): an in-tree test bundle (three plugins, their interfaces,
 # presets) plus a presets-only bundle, built into test-lv2/ (never installed).

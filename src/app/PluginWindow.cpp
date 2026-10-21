@@ -10,6 +10,14 @@
 //
 // Sandboxed plugins show their interface in a window of the sandbox process;
 // Gridline docks a bar-only window right under it and follows it.
+//
+// Keys (J-66): Gridline's global shortcuts work while a plugin window has
+// the keyboard, as in FL Studio. Keys the plugin's interface does not use
+// (it passes them up to the container, see host/KeyForward.h; the sandbox
+// process forwards them the same way) and keys typed while Gridline's own
+// parts of the window have the keyboard go to the main window's handlers as
+// if typed there. A text field of the interface keeps every key, and the
+// interface always sees a key first (its own computer-keyboard notes).
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <SDL_syswm.h>
@@ -50,6 +58,8 @@ int gStartPanel = -1;  // dev: settings panel page new windows start with
 int gDevResizeW = 0, gDevResizeH = 0;  // dev: first window dragged to this size after a few frames
 bool gDevResized = false;
 std::string gDevAction;  // dev: bar button pressed on the first window ("generic", "sandbox", "settings")
+bool gDevKeys = false;  // dev: Space typed into the first window's interface (J-66 check)
+bool gDrawStats = false;  // dev: plugin interface drawing is counted (--frame-stats)
 SDL_Window* gMainWin = nullptr;
 SDL_GLContext gMainGl = nullptr;
 std::thread::id gUiThread;
@@ -102,6 +112,35 @@ void makeCurrent(SDL_Window* win, SDL_GLContext gl) {
   SDL_GL_MakeCurrent(win, gl);
 }
 
+// J-66: a key for Gridline's main window, as if typed there (its shortcuts,
+// transport, typing keyboard): queued, handled by the main loop's event poll.
+void sendToMain(bool down, bool repeat, int scancode, uint32_t mods) {
+  if (!gMainWin || scancode <= 0 || scancode >= SDL_NUM_SCANCODES) return;
+  SDL_Event e{};
+  e.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+  e.key.windowID = SDL_GetWindowID(gMainWin);
+  e.key.state = down ? SDL_PRESSED : SDL_RELEASED;
+  e.key.repeat = repeat ? 1 : 0;
+  e.key.keysym.scancode = static_cast<SDL_Scancode>(scancode);
+  e.key.keysym.sym = SDL_GetKeyFromScancode(e.key.keysym.scancode);
+  Uint16 m = KMOD_NONE;
+  if (mods & host::kKeyShift) m |= KMOD_LSHIFT;
+  if (mods & host::kKeyCtrl) m |= KMOD_LCTRL;
+  if (mods & host::kKeyAlt) m |= KMOD_LALT;
+  if (mods & host::kKeyCmd) m |= KMOD_LGUI;
+  e.key.keysym.mod = m;
+  SDL_PushEvent(&e);
+}
+void sendToMain(const host::KeyEvent& k) { sendToMain(k.down, k.repeat, host::hidUsageOfMacKey(k.code), k.mods); }
+uint32_t modsOf(Uint16 m) {
+  uint32_t r = 0;
+  if (m & KMOD_SHIFT) r |= host::kKeyShift;
+  if (m & KMOD_CTRL) r |= host::kKeyCtrl;
+  if (m & KMOD_ALT) r |= host::kKeyAlt;
+  if (m & KMOD_GUI) r |= host::kKeyCmd;
+  return r;
+}
+
 // Restores the main window's GL and ImGui contexts.
 struct ContextGuard {
   ImGuiContext* imgui = ImGui::GetCurrentContext();
@@ -142,6 +181,7 @@ struct PluginWindow {
   Action action = Action::None;
   std::string capturePath;  // dev check: capture on the next draw
   int frames = 0;           // frames drawn since opening
+  std::set<int> heldKeys;   // scancodes whose key-down went to the main window (J-66)
 
   int panelH() const { return panelPage >= 0 ? lay::kPanelH : 0; }
   void computeLayout() { L = external ? lay::layoutBarWindow(extFrame[2] > 0 ? extFrame[2] : 420, panelH()) : lay::layoutWindow(pw, ph, panelH()); }
@@ -233,8 +273,13 @@ struct PluginWindow {
     if (gl) SDL_GL_DeleteContext(gl);
     gl = nullptr;
     if (win) {
+      const bool hadKeyboard = (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+      for (int sc : heldKeys) sendToMain(false, false, sc, 0);
+      heldKeys.clear();
       if (gMainWin) native::keepAbove(nw, nativeOf(gMainWin), false);
       SDL_DestroyWindow(win);
+      // The keyboard goes back to the main window (not to another app's window).
+      if (hadKeyboard && gMainWin && !(SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_HIDDEN)) SDL_RaiseWindow(gMainWin);
     }
     win = nullptr;
     if (backend) backend->onGoingAway = nullptr;
@@ -322,6 +367,98 @@ void renderWindow(PluginWindow& w) {
   SDL_GL_SwapWindow(w.win);
 }
 
+// A key SDL saw in a plugin window (J-66). On macOS SDL sees every key of
+// the key window, also those AppKit delivers to the plugin's interface: while
+// the interface has the keyboard, the container decides (unused keys come
+// back through popKey). Otherwise the key was typed into Gridline's part of
+// the window (its control bar, the window itself) and goes to the main
+// window, unless a text field of the bar is being edited.
+void routeKey(PluginWindow& w, const SDL_Event& ev) {
+  const bool down = ev.type == SDL_KEYDOWN;
+  const int sc = static_cast<int>(ev.key.keysym.scancode);
+  if (!down) {  // key-ups of keys that went to the main window follow them
+    if (w.heldKeys.erase(sc)) sendToMain(false, false, sc, modsOf(ev.key.keysym.mod));
+    return;
+  }
+  if (w.container && native::keyFocus(w.container) != native::KeyFocus::Host) return;
+  if (w.ctx) {
+    ImGuiContext* prev = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(w.ctx);
+    const bool typing = ImGui::GetIO().WantTextInput;
+    ImGui::SetCurrentContext(prev);
+    if (typing) return;
+  }
+  // X11: the plugin may use keys typed into the host's window (VST3 / VST2).
+  if (w.editor && !w.external && w.editor->hostKey(true, sc, 0, modsOf(ev.key.keysym.mod))) return;
+  w.heldKeys.insert(sc);
+  sendToMain(true, ev.key.repeat != 0, sc, modsOf(ev.key.keysym.mod));
+}
+
+// Keys the plugin's interface did not use (in-process container or the
+// sandbox window) go to the main window.
+void forwardPluginKeys(PluginWindow& w) {
+  host::KeyEvent k;
+  if (w.container)
+    while (native::popKey(w.container, k)) sendToMain(k);
+  if (w.external && w.editor)
+    while (w.editor->popKey(k)) sendToMain(k);
+}
+
+// Dev check (--plugin-window-keys): Space typed into the interface with a
+// view that passes keys on, a text field, a view that uses every key; only
+// the first toggles the transport.
+void devKeys(PluginWindow& w) {
+  static const int kinds[3] = {0, 2, 1};
+  static const char* names[3] = {"interface view", "interface text field", "interface using the key"};
+  static bool before = false;
+  static int result[3] = {-1, -1, -1};
+  const int step = w.frames - 20;
+  if (step == -10) {  // the interface's own view first (reported, not checked: up to the plugin)
+    void* v = native::devTestKeyView(w.container, 3);
+    before = w.app->engine.playing();
+    if (v) {
+      native::devSendKey(w.container, 0x31, true, 0, " ");
+      native::devSendKey(w.container, 0x31, false, 0, " ");
+    }
+    std::fprintf(stderr, "[plugin-window] key check: the interface's own view %s\n", v ? "has the keyboard" : "does not take the keyboard");
+  }
+  if (step == -1) {
+    const bool now = w.app->engine.playing();
+    std::fprintf(stderr, "[plugin-window] key check: Space in the interface's own view -> transport %s\n", now != before ? "toggled" : "unchanged");
+    if (now != before) w.app->engine.stop();
+  }
+  if (step < 0 || step >= 3 * 12) return;
+  const int k = step / 12, phase = step % 12;
+  if (phase == 0) {
+    native::devTestKeyView(w.container, kinds[k]);
+    before = w.app->engine.playing();
+    native::devSendKey(w.container, 0x31, true, 0, " ");
+    native::devSendKey(w.container, 0x31, false, 0, " ");
+  } else if (phase == 11) {
+    result[k] = w.app->engine.playing() != before ? 1 : 0;
+    std::fprintf(stderr, "[plugin-window] key check: Space in %s -> transport %s\n", names[k], result[k] ? "toggled" : "unchanged");
+    if (k == 2) {
+      const bool ok = result[0] == 1 && result[1] == 0 && result[2] == 0;
+      std::fprintf(stderr, "[plugin-window] key check: %s\n", ok ? "PASS" : "FAIL");
+    }
+  }
+}
+
+// Dev check (--plugin-window-keys with GRIDLINE_SANDBOX_DEV_KEYS=1): the
+// sandbox process types Space into its interface; the transport toggles here.
+void devSandboxKeys(PluginWindow& w) {
+  static bool before = false, done = false;
+  if (done) return;
+  if (w.frames == 2) before = w.app->engine.playing();
+  if (w.frames > 2 && w.app->engine.playing() != before) {
+    std::fprintf(stderr, "[plugin-window] key check: Space in the sandboxed interface -> transport toggled (frame %d)\n", w.frames);
+    done = true;
+  } else if (w.frames == 400) {
+    std::fprintf(stderr, "[plugin-window] key check: Space in the sandboxed interface -> transport unchanged\n");
+    done = true;
+  }
+}
+
 void runAction(PluginWindow& w) {
   const Action act = w.action;
   w.action = Action::None;
@@ -340,6 +477,8 @@ void runAction(PluginWindow& w) {
 void setPluginWindowLog(bool on) { gLog = on; }
 void setPluginWindowPanel(int page) { gStartPanel = std::clamp(page, -1, 2); }
 void setPluginWindowDevAction(const std::string& action) { gDevAction = action; }
+void setPluginWindowDrawStats(bool on) { gDrawStats = on; }
+void setPluginWindowDevKeys(bool on) { gDevKeys = on; }
 void setPluginWindowDevResize(int w, int h) {
   gDevResizeW = w;
   gDevResizeH = h;
@@ -500,6 +639,11 @@ bool hostedEditorEvent(App& a, const SDL_Event& ev) {
       ImGui_ImplSDL2_ProcessEvent(&ev);
       ImGui::SetCurrentContext(prev);
     }
+    if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) routeKey(*w, ev);
+    if (ev.type == SDL_WINDOWEVENT && w->container) {
+      if (ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) native::restoreKeyFocus(w->container);
+      if (ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) native::saveKeyFocus(w->container);
+    }
     if (ev.type == SDL_WINDOWEVENT) {
       if (ev.window.event == SDL_WINDOWEVENT_CLOSE) {
         w->action = Action::Close;
@@ -559,6 +703,13 @@ void hostedui::pluginWindowsIdle(App& a) {
         if (gDevAction == "settings") w.setPanel(0);
         gDevAction.clear();
       }
+      if (gDrawStats && w.container && w.frames % 30 == 1) native::startDrawStats(w.container);  // interfaces add views late
+      if (gDrawStats && w.container && w.frames == 240)  // dev: GRIDLINE_DEV_DRAG="x,y,seconds" turns a knob of the interface
+        if (const char* d = std::getenv("GRIDLINE_DEV_DRAG")) {
+          int dx = 0, dy = 0;
+          double secs = 0;
+          if (std::sscanf(d, "%d,%d,%lf", &dx, &dy, &secs) == 3) native::devDrag(w.nw, w.container, dx, dy, secs);
+        }
       const int pwq = w.pendingW.exchange(0), phq = w.pendingH.exchange(0);
       if (pwq > 0 && phq > 0) w.pluginResize(pwq, phq);
       if (w.notifySize) {
@@ -566,6 +717,9 @@ void hostedui::pluginWindowsIdle(App& a) {
         w.editor->setSize(w.pw, w.ph);
       }
       w.editor->idle();
+      if (gDevKeys && w.container) devKeys(w);
+      if (gDevKeys && w.external) devSandboxKeys(w);
+      forwardPluginKeys(w);
       if (w.external) {
         if (!w.editor->isOpen()) {
           w.close();

@@ -37,6 +37,15 @@ void sandboxResizeWindow(int w, int h);
 bool sandboxWindowOpen();  // false after the user closed it
 void sandboxCloseWindow();
 void sandboxPumpEvents();  // non-blocking
+// Waits up to `seconds` for `fd` to become readable, handling window events,
+// timers and redraws meanwhile (macOS: inside the run loop); true when readable.
+bool sandboxWaitEvents(int fd, double seconds);
+// Keys the interface in the editor window did not use (for Gridline, J-66).
+bool sandboxPopKey(KeyEvent& e);
+void sandboxDevKeys();  // dev check: Space typed into the interface's own view
+// Dev measurement (GRIDLINE_SANDBOX_STATS=1, GRIDLINE_DEV_DRAG="x,y,s"): the
+// interface's drawing per second on stderr, a knob turned after 240 idles.
+void sandboxDevStats(int idles);
 // Plugin checks (macOS): a parent view in a window that is never shown;
 // nullptr when unsupported. pumpOffscreenEvents runs the event loop briefly.
 void* offscreenEditorParent(int w, int h);

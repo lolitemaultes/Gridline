@@ -74,9 +74,28 @@ void keepAbove(const Window& child, const Window& parent, bool on) {
   x.flush(child.display);
 }
 
+Window windowOfView(void*) { return {}; }
 double backingScale(const Window&) { return 1.0; }
 long windowNumber(const Window&) { return -1; }
 bool captureWindow(const Window&, const std::string&, const unsigned char*, int, int) { return false; }
+void startDrawStats(void*) {}
+// Keys: X11 plugin windows get their keys from the X server directly; Gridline
+// forwards what reaches its own window (PluginWindow.cpp, Editor::key).
+void watchKeys(void*) {}
+void unwatchKeys(void*) {}
+bool containerKey(void*, void*, bool) { return false; }
+bool popKey(void*, KeyEvent&) { return false; }
+KeyFocus keyFocus(void*) { return KeyFocus::Host; }
+void saveKeyFocus(void*) {}
+void restoreKeyFocus(void*) {}
+void* devTestKeyView(void*, int) { return nullptr; }
+bool devSendKey(void*, uint16_t, bool, uint32_t, const char*) { return false; }
+DrawStats takeDrawStats() { return {}; }
+void devDrag(const Window&, void*, int, int, double) {}
+bool frameClockStart(const Window&) { return false; }
+void frameClockFollow(const Window&) {}
+void frameClockWait() {}
+void frameClockStop() {}
 
 }  // namespace gl::host::native
 #endif

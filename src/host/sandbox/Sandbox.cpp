@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -267,6 +268,7 @@ class RemoteEditor final : public Editor {
   bool external() const override { return true; }
   bool isOpen() const override;
   bool windowFrame(int& x, int& y, int& w, int& h) const override;
+  bool popKey(KeyEvent& e) override;
   SandboxBackend* b_;
 };
 
@@ -518,6 +520,17 @@ class SandboxBackend final : public Backend {
       outVals_.insert(outVals_.begin(), v);
       changed = true;
     }
+    // Keys the interface did not use, typed in the sandbox window (J-66).
+    uint32_t nk = r.u32();
+    for (uint32_t i = 0; i < nk && r.ok && i < 256; ++i) {
+      KeyEvent k;
+      const uint8_t f = r.u8();
+      k.down = (f & 1) != 0;
+      k.repeat = (f & 2) != 0;
+      k.code = static_cast<uint16_t>(r.u32());
+      k.mods = r.u32();
+      if (r.ok) keys_.push_back(k);
+    }
     if (changed) {
       values_.clear();
       texts_.clear();
@@ -553,6 +566,13 @@ class SandboxBackend final : public Backend {
     x = frame_[0], y = frame_[1], w = frame_[2], h = frame_[3];
     return true;
   }
+  bool popKey(KeyEvent& k) {
+    if (keys_.empty()) return false;
+    k = keys_.front();
+    keys_.erase(keys_.begin());
+    return true;
+  }
+  std::vector<KeyEvent> keys_;
   RemoteEditor* editor_ = nullptr;
   bool hasFrame_ = false;
   int frame_[4] = {0, 0, 0, 0};
@@ -818,6 +838,7 @@ RemoteEditor::~RemoteEditor() {
 bool RemoteEditor::attach(void*) { return b_ && b_->openEditor(placeX, placeY); }
 bool RemoteEditor::isOpen() const { return b_ && b_->editorOpen(); }
 bool RemoteEditor::windowFrame(int& x, int& y, int& w, int& h) const { return b_ && b_->editorFrame(x, y, w, h); }
+bool RemoteEditor::popKey(KeyEvent& e) { return b_ && b_->popKey(e); }
 
 // ---------------------------------------------------------------- child side
 
@@ -827,6 +848,7 @@ struct Child {
   std::mutex lock;  // backend reconfiguration vs. processing
   std::unique_ptr<Editor> editor;
   std::string title;
+  int idles = 0;  // idle calls since the editor opened
 
   void run() {
     std::lock_guard<std::mutex> g(lock);
@@ -936,6 +958,9 @@ struct Child {
       case OpIdle: {
         if (backend) backend->idle();
         if (editor) editor->idle();
+        // Dev check (J-66): GRIDLINE_SANDBOX_DEV_KEYS types Space into the interface once.
+        if (editor && ++idles == 40 && std::getenv("GRIDLINE_SANDBOX_DEV_KEYS")) sandboxDevKeys();
+        if (editor) sandboxDevStats(idles);
         w.u8(editor && sandboxWindowOpen());
         {
           int fx = 0, fy = 0, fw = 0, fh = 0;
@@ -960,6 +985,15 @@ struct Child {
           w.u32(x.id);
           w.f64(x.value);
         }
+        std::vector<KeyEvent> keys;
+        KeyEvent k;
+        while (keys.size() < 256 && sandboxPopKey(k)) keys.push_back(k);
+        w.u32(static_cast<uint32_t>(keys.size()));
+        for (const auto& x : keys) {
+          w.u8(static_cast<uint8_t>((x.down ? 1 : 0) | (x.repeat ? 2 : 0)));
+          w.u32(x.code);
+          w.u32(x.mods);
+        }
         break;
       }
       case OpSelectProgram: {
@@ -981,6 +1015,7 @@ struct Child {
               return true;
             };
             ok = parent && editor->attach(parent);
+            idles = 0;
           }
           if (!ok) {
             editor.reset();
@@ -1073,8 +1108,15 @@ int sandboxChildMain(const std::string& shmName) {
   });
   audio.detach();
   for (;;) {
-    pollfd pf{kRpcFd, POLLIN, 0};
-    int r = ::poll(&pf, 1, child->editor ? 10 : 50);
+    int r = 0;
+    if (child->editor) {
+      // The interface's window is open: wait inside the Cocoa run loop (its
+      // timers and redraws run meanwhile, J-66), woken by the parent's calls.
+      r = sandboxWaitEvents(kRpcFd, 0.05) ? 1 : 0;
+    } else {
+      pollfd pf{kRpcFd, POLLIN, 0};
+      r = ::poll(&pf, 1, 50);
+    }
     if (r > 0) {
       std::string msg;
       if (!recvMsg(kRpcFd, msg, 10000)) std::_Exit(0);
@@ -1090,6 +1132,13 @@ int sandboxChildMain(const std::string& shmName) {
 }
 
 #if !defined(__APPLE__)
+bool sandboxWaitEvents(int fd, double seconds) {
+  pollfd pf{fd, POLLIN, 0};
+  return ::poll(&pf, 1, static_cast<int>(seconds * 1000.0)) > 0;
+}
+bool sandboxPopKey(KeyEvent&) { return false; }
+void sandboxDevKeys() {}
+void sandboxDevStats(int) {}
 void* sandboxOpenWindow(const std::string&, int, int, bool, int, int) { return nullptr; }
 bool sandboxWindowFrame(int&, int&, int&, int&) { return false; }
 void sandboxResizeWindow(int, int) {}

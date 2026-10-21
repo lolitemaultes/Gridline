@@ -2,6 +2,7 @@
 // device, default layout, typing keyboard, file drops.
 #include <SDL.h>
 #include <SDL_opengl.h>
+#include <SDL_syswm.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <vector>
 #include "J59Ui.h"
 #include "FrameProfile.h"
+#include "FrameStats.h"
 #include "McpUi.h"
 #include "ThemeSettings.h"
 #include "../core/I18n.h"
@@ -21,6 +23,7 @@
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
 #include "../host/vst3/Vst3Scan.h"
+#include "../host/ui/NativeView.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_impl_opengl3.h"
 #include "../../third_party/imgui/imgui_impl_sdl2.h"
@@ -72,10 +75,15 @@ void initMidi(App& a) {
 void audioCallback(void* user, Uint8* stream, int len) {
   auto* eng = static_cast<AudioEngine*>(user);
   const int frames = len / static_cast<int>(sizeof(float) * 2);
+  const bool stats = fstats::enabled();
+  const Uint64 t0 = stats ? SDL_GetPerformanceCounter() : 0;
   eng->processInterleaved(reinterpret_cast<float*>(stream), frames);
   // Interface sounds go on top of the finished output: outside the song mixer,
   // so they are never recorded, rendered or metered.
   if (gUiSounds) gUiSounds->mix(reinterpret_cast<float*>(stream), frames);
+  if (stats && eng->sampleRate() > 0)  // J-66 --frame-stats: blocks that missed their deadline
+    fstats::audioBlock(static_cast<double>(SDL_GetPerformanceCounter() - t0) / static_cast<double>(SDL_GetPerformanceFrequency()),
+                       static_cast<double>(frames) / eng->sampleRate());
 }
 
 void inputCallback(void* user, Uint8* stream, int len) {
@@ -749,6 +757,11 @@ int main(int argc, char** argv) {
       browserui::togglePluginPicker();
     } else if (arg == "--browser-search" && i + 1 < argc) {
       app.browserSearch = argv[++i];
+    } else if (arg == "--plugin-window-keys") {  // J-66 dev check: Space typed into the plugin's interface
+      setPluginWindowDevKeys(true);
+    } else if (arg == "--frame-stats") {  // J-66: frame rate, frame time parts, CPU, plugin interface draws (stderr, each second)
+      fstats::enable(true);
+      setPluginWindowDrawStats(true);
     } else if (arg == "--hosted-editor") {
       devHostedEditor = true;
       setPluginWindowLog(true);
@@ -836,6 +849,18 @@ int main(int argc, char** argv) {
   const float autoDpi = 1.0f;  // macOS scales points to pixels itself
 #endif
   ImU32 lastScaledEvent = 0;
+  // J-66 (macOS): no blocking vsync swap; the frame clock waits for the
+  // display inside the Cocoa run loop, where hosted plugin interfaces live.
+  host::native::Window mainNative;
+  {
+    SDL_SysWMinfo wm;
+    SDL_VERSION(&wm.version);
+#if defined(__APPLE__)
+    if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_COCOA) mainNative.handle = static_cast<void*>(wm.info.cocoa.window);
+#endif
+  }
+  const bool frameClock = profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
+  if (frameClock) SDL_GL_SetSwapInterval(0);
 
   std::map<SDL_Keycode, HeldNote> held;
   std::string lastTitle;
@@ -844,6 +869,7 @@ int main(int argc, char** argv) {
   while (running) {
     prof::beginFrame();
     SDL_Event ev;
+    uint64_t statT = fstats::stamp();
     while (SDL_PollEvent(&ev)) {
       ImGui_ImplSDL2_ProcessEvent(&ev);
       if (hostedEditorEvent(app, ev)) continue;  // plugin editor windows
@@ -890,6 +916,7 @@ int main(int argc, char** argv) {
         }
       }
     }
+    fstats::since(fstats::Events, statT);
     if (app.quitRequested) {
       app.quitRequested = false;
       app.guardUnsaved([&running]() { running = false; });
@@ -909,6 +936,7 @@ int main(int argc, char** argv) {
     double now = static_cast<double>(SDL_GetPerformanceCounter() - t0) / static_cast<double>(SDL_GetPerformanceFrequency());
     {
       prof::Scope ps("tick");
+      fstats::Timer ft(fstats::Tick);
       app.tick(now);
       pumpHostedPlugins(app);
       app.processMidi();
@@ -917,6 +945,7 @@ int main(int argc, char** argv) {
     app.engine.setMetronome(app.metronome);
     app.engine.setReturnToSeek(app.settings.getBool("transport.rememberSeek"));  // J-49
     app.hint.clear();
+    statT = fstats::stamp();
     // Interface scale: the UI is laid out in logical pixels on a virtual display
     // of window/scale and rendered at the real framebuffer density, so every
     // window (including fixed-size editors) scales as one and stays sharp.
@@ -1200,8 +1229,20 @@ int main(int argc, char** argv) {
       running = false;
     }
     if (useOffscreen) offscreen.use(false);
+    fstats::since(fstats::Ui, statT);
+    statT = fstats::stamp();
     SDL_GL_SwapWindow(window);
+    fstats::since(fstats::Present, statT);
+    statT = fstats::stamp();
     renderHostedEditors(app);  // control bars of open plugin windows
+    fstats::since(fstats::PluginWindows, statT);
+    if (frameClock) {  // J-66: wait for the next refresh inside the run loop (plugin interfaces draw meanwhile)
+      statT = fstats::stamp();
+      static unsigned followTick = 0;
+      if ((++followTick & 63u) == 1u) host::native::frameClockFollow(mainNative);  // the window may move to another display
+      host::native::frameClockWait();
+      fstats::since(fstats::Wait, statT);
+    }
     }
     if (!app.uiSoundsReady && ++liveFrames >= 3) {  // J-48: the window is on screen: startup sound, once
       app.uiSoundsReady = true;
@@ -1219,6 +1260,7 @@ int main(int argc, char** argv) {
       }
     }
     prof::endFrame();
+    fstats::endFrame();
   }
   if (!profilePath.empty()) {
     std::string label = std::to_string(forcedSize.first) + "x" + std::to_string(forcedSize.second);
@@ -1232,6 +1274,7 @@ int main(int argc, char** argv) {
   }
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   closeAllHostedEditors(app);
+  if (frameClock) host::native::frameClockStop();
   if (gDevice) SDL_CloseAudioDevice(gDevice);
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplSDL2_Shutdown();

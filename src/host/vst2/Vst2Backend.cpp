@@ -49,6 +49,7 @@ class Vst2Editor final : public Editor {
   bool size(int& w, int& h) override;
   bool attach(void* parent) override;
   void idle() override;
+  bool hostKey(bool down, int usage, uint32_t ch, uint32_t mods) override;
   Vst2Backend* b_;
   bool open = false;
 };
@@ -518,6 +519,20 @@ bool Vst2Editor::attach(void* parent) {
 }
 void Vst2Editor::idle() {
   if (b_ && open) b_->dispatch(abi::opEditorIdle);
+}
+// X11 (J-66): keys typed into the host's window are offered to the editor
+// first (macOS editors get theirs from AppKit, see NativeViewMac.mm).
+bool Vst2Editor::hostKey(bool down, int usage, uint32_t ch, uint32_t mods) {
+  (void)ch;
+#if !defined(__APPLE__)
+  VstKey k;
+  if (!b_ || !open || !vstKeyOf(usage, mods, k)) return false;
+  return b_->dispatch(down ? abi::opEditorKeyDown : abi::opEditorKeyUp, static_cast<int32_t>(k.character), k.virtualKey, nullptr,
+                      static_cast<float>(k.modifiers)) == 1;
+#else
+  (void)down, (void)usage, (void)mods;
+  return false;
+#endif
 }
 
 // ---------------------------------------------------------------- format

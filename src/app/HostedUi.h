@@ -71,6 +71,10 @@ void setPluginWindowPanel(int page);
 void setPluginWindowDevResize(int w, int h);
 // Dev checks: a control bar button ("generic", "sandbox", "settings") pressed shortly after opening.
 void setPluginWindowDevAction(const std::string& action);
+// Dev measurement (--frame-stats): plugin interfaces' drawing is counted.
+void setPluginWindowDrawStats(bool on);
+// Dev check (J-66): Space typed into the first plugin window's interface.
+void setPluginWindowDevKeys(bool on);
 
 // Plugin window body for hosted types: editor button, plugin info and the
 // generic, searchable parameter list.
