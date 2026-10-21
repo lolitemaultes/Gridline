@@ -78,6 +78,27 @@ bool pressed(const char* id) {
   return false;
 }
 
+bool pressedHeld(const char* id) {
+  if (capturing() || ImGui::GetIO().WantTextInput) return false;
+  const Command* cmd = findCommand(id);
+  if (!cmd) return false;
+  for (const Chord& c : keymap().bindings(id))
+    if (ImGui::IsKeyPressed(toImGui(c.key), cmd->repeat)) return true;
+  return false;
+}
+
+bool keyDown(const char* id) {
+  if (capturing() || ImGui::GetIO().WantTextInput || !findCommand(id)) return false;
+  for (const Chord& c : keymap().bindings(id))
+    if (ImGui::IsKeyDown(toImGui(c.key))) return true;
+  return false;
+}
+
+bool modifierHeld(const char* id) {
+  const uint8_t want = mouseModifier(id);
+  return want != 0 && modsNow() == want;
+}
+
 const char* label(const char* id) {
   LabelCache& lc = labelCache();
   auto it = lc.text.find(id);

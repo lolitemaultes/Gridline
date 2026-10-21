@@ -291,10 +291,10 @@ struct HeldNote {
 
 // J-28 dev check: scripted input for interaction checks (--dev-input file).
 // One command per line, "<frame> <command> <args>", in logical pixels:
-//   move x y · down b · up b · mod ctrl|shift|alt 0|1 · wheel dy · key <letter>
+//   move x y · down b · up b · mod ctrl|shift|alt|super 0|1 (super = Cmd: Ctrl + click is a right click on macOS) · wheel dy · key <letter>
 //   audio <wav> <track> <bar> (browser drop path) · dump (playlist clips to stdout)
 //   shot <out.ppm> (J-37: this frame is saved once rendered — frame sequences)
-//   key space (J-49) · transport (J-49: song position / playing / seek position to stdout)
+//   key space (J-49) · key escape, notes (Q-3: piano roll notes to stdout) · transport (J-49: song position / playing / seek position to stdout)
 //   scroll dx dy (J-67: one trackpad-style two-axis scroll event, wheel units)
 //   momentum dx dy frames (J-67: a decaying scroll stream over the next frames, like an OS fling)
 //   trace on|off (J-67: per frame, the drawn scroll positions to stdout)
@@ -325,6 +325,54 @@ std::vector<DevInputLine> loadDevInput(const std::string& path) {
   return out;
 }
 
+// Q-4 piano roll checks on the edited pattern / channel (--edit p c):
+//   mknotes <count> <step ticks> <length ticks>[x<chord size>] (velocity 64, pitches 60, 64, 68, ...)
+//   selnotes <i,j,...|none> · notes (the notes to stdout) · lane (event lane geometry to stdout)
+void devPianoCommand(App& app, const DevInputLine& l, int frame) {
+  const Pattern* pat = app.doc.song().pattern(app.curPattern);
+  const ObjectId ch = app.selChannel;
+  if (l.cmd == "lane") {
+    const PianoLaneGeometry& g = pianoLaneGeometry();
+    std::printf("lane frame %d: x0 %.3f pxPerTick %.6f yTop %.2f yBottom %.2f valid %d\n", frame, g.x0, g.pxPerTick, g.yTop, g.yBottom,
+                g.valid ? 1 : 0);
+  } else if (!pat || ch == kNoId) {
+    std::printf("%s frame %d: no pattern / channel\n", l.cmd.c_str(), frame);
+  } else if (l.cmd == "mknotes") {  // a2 = "<length>" or "<length>x<chord size>"
+    const int count = std::atoi(l.a0.c_str());
+    const Tick step = std::atoll(l.a1.c_str());
+    char* e = nullptr;
+    const Tick len = std::max<Tick>(1, std::strtoll(l.a2.c_str(), &e, 10));
+    const int chord = e && *e == 'x' ? std::clamp(std::atoi(e + 1), 1, 8) : 1;
+    std::vector<Note> ns;
+    for (int i = 0; i < count; ++i)
+      for (int k = 0; k < chord; ++k) ns.push_back(Note(static_cast<Tick>(i) * step, len, 60 + 4 * k, 64));
+    app.doc.setNotes(pat->id, ch, ns, "dev notes", 0);
+    app.piano.selected.clear();
+  } else if (l.cmd == "selnotes") {
+    app.piano.selected.clear();
+    if (l.a0 != "none") {
+      const char* p = l.a0.c_str();
+      while (*p) {
+        char* e = nullptr;
+        const long v = std::strtol(p, &e, 10);
+        if (e == p) break;
+        app.piano.selected.insert(static_cast<size_t>(v));
+        p = *e == ',' ? e + 1 : e;
+      }
+    }
+  } else {  // notes
+    auto it = pat->notes.find(ch);
+    const size_t n = it == pat->notes.end() ? 0 : it->second.size();
+    std::printf("notes frame %d: %zu notes, undo %zu\n", frame, n, app.doc.history().position());
+    for (size_t i = 0; i < n; ++i) {
+      const Note& x = it->second[i];
+      std::printf("  note %zu start %lld len %lld pitch %d vel %d pan %d rel %d fine %d modx %d mody %d sel %d\n", i, static_cast<long long>(x.start),
+                  static_cast<long long>(x.length), x.pitch, x.velocity, x.pan, x.release, x.fine, x.modX, x.modY, app.piano.selected.count(i) ? 1 : 0);
+    }
+  }
+  std::fflush(stdout);
+}
+
 void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   ImGuiIO& io = ImGui::GetIO();
   // The scripted pointer stays put between commands (the backend would
@@ -351,7 +399,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     else if (l.cmd == "trace") devTrace = l.a0 != "off";
     else if (l.cmd == "mod") {
       const bool on = std::atoi(l.a1.c_str()) != 0;
-      ImGuiKey k = l.a0 == "ctrl" ? ImGuiMod_Ctrl : l.a0 == "shift" ? ImGuiMod_Shift : ImGuiMod_Alt;
+      // (macOS: "ctrl" is the physical Ctrl key, "super" the Cmd key — ImGui swaps them)
+      ImGuiKey k = l.a0 == "ctrl" ? ImGuiMod_Ctrl : l.a0 == "shift" ? ImGuiMod_Shift : l.a0 == "super" ? ImGuiMod_Super : ImGuiMod_Alt;
       io.AddKeyEvent(k, on);
     } else if (l.cmd == "key" && l.a0.size() == 1 && l.a0[0] >= 'a' && l.a0[0] <= 'z') {
       ImGuiKey k = static_cast<ImGuiKey>(ImGuiKey_A + (l.a0[0] - 'a'));
@@ -360,6 +409,21 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "key" && l.a0 == "space") {
       io.AddKeyEvent(ImGuiKey_Space, true);
       io.AddKeyEvent(ImGuiKey_Space, false);
+    } else if (l.cmd == "key" && l.a0 == "escape") {  // Q-3: cancel a drag
+      io.AddKeyEvent(ImGuiKey_Escape, true);
+      io.AddKeyEvent(ImGuiKey_Escape, false);
+    } else if (l.cmd == "notes") {  // Q-3: the piano roll's notes (current pattern, selected channel) and selection
+      const Song& s = app.doc.song();
+      const Pattern* p = s.pattern(app.curPattern);
+      const auto* ns = p && p->notes.count(app.selChannel) ? &p->notes.at(app.selChannel) : nullptr;
+      std::printf("notes frame %d: %zu notes, %zu selected\n", frame, ns ? ns->size() : size_t(0), app.piano.selected.size());
+      if (ns)
+        for (size_t i = 0; i < ns->size(); ++i) {
+          const Note& n = (*ns)[i];
+          std::printf("  note %zu start %lld len %lld pitch %d vel %d pan %d color %d slide %d group %d sel %d\n", i, static_cast<long long>(n.start),
+                      static_cast<long long>(n.length), n.pitch, n.velocity, n.pan, n.color, n.slide ? 1 : 0, n.group, app.piano.selected.count(i) ? 1 : 0);
+        }
+      std::fflush(stdout);
     } else if (l.cmd == "transport") {
       std::printf("transport frame %d: pos %.0f playing %d seek %.0f mode %d\n", frame, app.engine.position(), app.engine.playing() ? 1 : 0,
                   app.engine.seekPosition(), static_cast<int>(app.engine.mode()));
@@ -371,13 +435,16 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       browserui::performDrop(app, l.a0, browse::DropTarget::Playlist, place);
     } else if (l.cmd == "shot") {
       devShotPending = l.a0;
+    } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane") {
+      devPianoCommand(app, l, frame);
     } else if (l.cmd == "dump") {
       const Song& s = app.doc.song();
       std::printf("dump frame %d: %zu clips, %zu selected\n", frame, s.playlist.size(), app.playlist.selected.size());
       for (const auto& c : s.playlist)
-        std::printf("  clip %u kind %d track %d start %lld len %lld offset %lld audioStart %.6f muted %d\n", static_cast<unsigned>(c.id),
-                    static_cast<int>(c.kind), c.track, static_cast<long long>(c.start), static_cast<long long>(s.clipLength(c)),
-                    static_cast<long long>(c.offset), c.audioStart, c.muted ? 1 : 0);
+        std::printf("  clip %u kind %d track %d start %lld len %lld offset %lld audioStart %.6f muted %d pattern %u group %u sel %d\n",
+                    static_cast<unsigned>(c.id), static_cast<int>(c.kind), c.track, static_cast<long long>(c.start),
+                    static_cast<long long>(s.clipLength(c)), static_cast<long long>(c.offset), c.audioStart, c.muted ? 1 : 0,
+                    static_cast<unsigned>(c.pattern), static_cast<unsigned>(c.group), app.playlist.selected.count(c.id) ? 1 : 0);
       std::fflush(stdout);
     }
   }

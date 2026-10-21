@@ -21,6 +21,16 @@ Context focusContext();
 // its modifiers (Ctrl also matches Cmd). Never true while text is typed or
 // while the shortcut editor is capturing a chord.
 bool pressed(const char* id);
+// Like pressed(), whatever modifiers are held (Q-3: Esc cancels a drag that
+// started with Shift / Ctrl held). Only for commands bound to plain keys.
+bool pressedHeld(const char* id);
+// True while one of the command's keys is held down (any modifiers; Q-3: FL
+// makes Shift+drag copies unique when V is held as the drag ends).
+bool keyDown(const char* id);
+
+// True when exactly the modifiers of the mouse gesture modifier `id` are held
+// (core/Keymap.h mouseModifiers; Ctrl also matches Cmd). False for unknown ids.
+bool modifierHeld(const char* id);
 
 // Menu shortcut text: the first chord ("Ctrl+S"), nullptr when unbound.
 const char* label(const char* id);

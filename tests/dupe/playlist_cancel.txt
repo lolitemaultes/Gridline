@@ -1,0 +1,42 @@
+# Q-3: Shift+drag a copy, then Esc while dragging: no copy, nothing recorded,
+# the selection as before. Then the same cancelled with a right-click, and a
+# plain move cancelled with Esc (the clip goes back).
+#   gridline-app showcase.gridline --size 1440x900 --hide rack --hide browser --hide mixer --zoom 2.2 \
+#     --frames 120 --dev-input tests/dupe/playlist_cancel.txt
+# Expect: dumps 29 / 59: 7 clips (the copy being dragged), dump 97: the clip moved;
+# dumps 40, 80 and 110 = the 6 clips at their places; undo has nothing to take
+# back (dump 118 unchanged).
+20 move 400 185
+22 mod shift 1
+24 down 0
+26 move 450 280
+28 move 520 360
+29 dump
+30 key escape
+32 move 600 380
+34 up 0
+35 mod shift 0
+40 dump
+50 move 400 230
+52 mod shift 1
+54 down 0
+56 move 450 330
+58 move 600 400
+59 dump
+60 down 1
+62 up 1
+64 up 0
+65 mod shift 0
+80 dump
+90 move 520 277
+92 down 0
+94 move 600 420
+96 move 700 430
+97 dump
+98 key escape
+100 up 0
+110 dump
+112 mod ctrl 1
+113 key z
+114 mod ctrl 0
+118 dump

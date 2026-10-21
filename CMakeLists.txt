@@ -352,6 +352,11 @@ add_executable(gridline_tests_j66 tests/test_j66.cpp)
 target_link_libraries(gridline_tests_j66 PRIVATE gridline_core)
 target_compile_options(gridline_tests_j66 PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME j66_plugin_keys COMMAND gridline_tests_j66 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# Q-4: piano roll event lane painting (segment sweep) and line tool.
+add_executable(gridline_tests_q4 tests/test_q4.cpp)
+target_link_libraries(gridline_tests_q4 PRIVATE gridline_core)
+target_compile_options(gridline_tests_q4 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME q4_event_lane COMMAND gridline_tests_q4 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # LV2 hosting (PH-04): an in-tree test bundle (three plugins, their interfaces,
 # presets) plus a presets-only bundle, built into test-lv2/ (never installed).
@@ -459,6 +464,12 @@ target_link_libraries(gridline_tests_chop PRIVATE gridline_core)
 target_include_directories(gridline_tests_chop PRIVATE tests)
 target_compile_options(gridline_tests_chop PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME chop COMMAND gridline_tests_chop WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# Q-1 / Q-3: looping pattern clips, Shift+drag copies (core side).
+add_executable(gridline_tests_q1 tests/test_q1_loops.cpp)
+target_link_libraries(gridline_tests_q1 PRIVATE gridline_core)
+target_include_directories(gridline_tests_q1 PRIVATE tests)
+target_compile_options(gridline_tests_q1 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME q1_loops COMMAND gridline_tests_q1 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_j56 tests/test_j56.cpp)
 target_link_libraries(gridline_tests_j56 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j56 PRIVATE tests)

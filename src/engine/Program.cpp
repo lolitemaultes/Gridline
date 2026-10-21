@@ -7,6 +7,7 @@
 #include <functional>
 #include <set>
 #include "../core/Arrangements.h"
+#include "../core/ClipLoop.h"
 #include "../core/PatternAutomation.h"
 #include "../core/PluginParams.h"
 #include "Dsp.h"
@@ -802,7 +803,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     const Tick len = std::max<Tick>(1, song.clipLength(c));
     if (c.kind == ClipKind::Pattern) {
       if (const Pattern* p = song.pattern(c.pattern))
-        for (auto& lane : singlePatternLanes(*p, len, c.offset)) prog->hasPatternAutos |= compileLane(std::move(lane), lanes);
+        for (auto& lane : singlePatternLanes(*p, len, c.offset, clipLoopLength(song, c))) prog->hasPatternAutos |= compileLane(std::move(lane), lanes);
     } else if (c.kind == ClipKind::Automation) {
       if (const AutomationClip* a = song.automation(c.source); a && !a->points.empty() && a->owner != kNoId) {
         AutomationLane l;
@@ -851,16 +852,19 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (clip.kind != ClipKind::Pattern) continue;
     const ProgPattern* pp = prog->pattern(clip.pattern);
     if (!pp) continue;
-    // The clip shows pattern ticks [offset, offset + len).
-    Tick len = song.clipLength(clip), off = clip.offset;
+    // The clip shows pattern ticks [offset, offset + len); a looping
+    // pattern repeats them pass by pass (Q-1, core/ClipLoop.h).
+    const Tick len = song.clipLength(clip);
+    const std::vector<ClipPass> passes = clipPasses(song, clip);
     for (size_t ci = 0; ci < pp->perChannel.size(); ++ci)
-      for (const auto& e : pp->perChannel[ci]) {
-        if (e.on < off || e.on >= off + len) continue;
-        NoteEv x = e;
-        x.on = clip.start + (e.on - off);
-        x.off = clip.start + (std::min(e.off, off + len) - off);
-        prog->channels[ci].song.push_back(x);
-      }
+      for (const ClipPass& ps : passes)
+        for (const auto& e : pp->perChannel[ci]) {
+          if (e.on < ps.content || e.on >= ps.content + ps.len) continue;
+          NoteEv x = e;
+          x.on = clip.start + ps.at + (e.on - ps.content);
+          x.off = std::min(clip.start + ps.at + (e.off - ps.content), clip.start + len);
+          prog->channels[ci].song.push_back(x);
+        }
   }
   // --- live area: clips compiled for launching (content ticks from 0) ---
   for (size_t k = 0; k < liveIdx.size(); ++k) {
@@ -873,15 +877,16 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (clip.kind == ClipKind::Pattern) {
       if (const ProgPattern* pp = prog->pattern(clip.pattern))
         for (size_t ci = 0; ci < pp->perChannel.size(); ++ci)
-          for (const auto& e : pp->perChannel[ci]) {
-            if (e.on < clip.offset || e.on >= clip.offset + lc.length) continue;
-            ProgLiveClip::Ev x;
-            x.channel = static_cast<int>(ci);
-            x.e = e;
-            x.e.on = e.on - clip.offset;
-            x.e.off = std::min(e.off, clip.offset + lc.length) - clip.offset;
-            lc.notes.push_back(x);
-          }
+          for (const ClipPass& ps : clipPasses(song, clip))  // Q-1: repeats of a looping pattern
+            for (const auto& e : pp->perChannel[ci]) {
+              if (e.on < ps.content || e.on >= ps.content + ps.len) continue;
+              ProgLiveClip::Ev x;
+              x.channel = static_cast<int>(ci);
+              x.e = e;
+              x.e.on = ps.at + (e.on - ps.content);
+              x.e.off = std::min(ps.at + (e.off - ps.content), lc.length);
+              lc.notes.push_back(x);
+            }
       std::stable_sort(lc.notes.begin(), lc.notes.end(), [](const ProgLiveClip::Ev& a, const ProgLiveClip::Ev& b) { return a.e.on < b.e.on; });
     } else if (clip.kind == ClipKind::Audio) {
       int ci = song.channelIndex(clip.source);

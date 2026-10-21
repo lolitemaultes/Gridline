@@ -21,7 +21,7 @@ int to127(int v) { return std::clamp(static_cast<int>(std::lround(v * 127.0 / 12
 
 void importPatterns(Context& c) {
   Song& s = c.song;
-  int notes = 0, slides = 0, panned = 0, fine = 0, release = 0, modX = 0, modY = 0, colored = 0, steps = 0, fixedLengths = 0;
+  int notes = 0, slides = 0, panned = 0, fine = 0, release = 0, modX = 0, modY = 0, colored = 0, steps = 0, fixedLengths = 0, loops = 0;
   const Tick stepLen = std::max<Tick>(1, c.tick(c.file.ppq / 4));
   // FL does not write patterns that hold nothing (no notes, name or colour),
   // but the playlist can still place them: such patterns are created empty.
@@ -47,11 +47,13 @@ void importPatterns(Context& c) {
     Pattern p;
     p.id = s.allocateId();
     p.name = "Pattern " + std::to_string(idx);
+    p.loop = false;  // Q-1: FL's pattern loop mode is off unless the file sets it (event 26)
     Tick end = 0, fixedLen = 0;
     for (const auto& e : evs) {
       if (e.id == 193) p.name = e.text();
       if (e.id == 164) fixedLen = c.tick(e.value());  // fixed pattern length in ticks (0 = follows its notes)
       if (e.id == 150) p.color = flColor(e.value());
+      if (e.id == 26) p.loop = e.value() != 0, loops += p.loop;  // Q-1: pattern loop mode
       if (e.id != 224) continue;
       for (uint32_t o = 0; o + 24 <= e.size; o += 24) {
         uint32_t pos = e.u32(o), len = e.u32(o + 8);
@@ -107,6 +109,7 @@ void importPatterns(Context& c) {
   count("notes: colour", colored);
   count("notes: step (length 0)", steps);
   count("patterns with a fixed length", fixedLengths);
+  count("patterns looping (loop mode)", loops);
 }
 
 }  // namespace gl::flp

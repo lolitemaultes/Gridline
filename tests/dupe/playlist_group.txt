@@ -1,0 +1,20 @@
+# Q-3: Shift+drag a grouped clip (bar 6, track 1; grouped with the clip under
+# it): both copies move together, keep their offsets and lengths and form a
+# new group (not the originals' group); Ctrl+Z removes both in one step.
+#   gridline-app showcase.gridline --size 1440x900 --hide rack --hide browser --hide mixer --zoom 2.2 \
+#     --frames 90 --dev-input tests/dupe/playlist_group.txt
+# Expect: dump 40 = 8 clips, two new ones on tracks 3 and 4 (0-based) at start
+# 1920, sharing a new group id, both selected; dump 60 = the 6 clips.
+20 move 1100 185
+22 mod shift 1
+24 down 0
+26 move 1100 250
+28 move 1100 330
+30 move 1100 325
+34 up 0
+35 mod shift 0
+40 dump
+52 mod ctrl 1
+53 key z
+54 mod ctrl 0
+60 dump

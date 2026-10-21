@@ -4,6 +4,13 @@
 //
 // GRIDLINE_FLP_PERF_DUMP=<dir>: also writes each song (.gridline.json) and its
 // export (.flp) there, for byte comparisons between builds.
+//
+// Q-2: load tolerance. Wall time on a busy machine (parallel ctest, other
+// builds) can be many times the unloaded time, so each bound is checked on
+// the best of up to three attempts, and a case whose wall time still misses
+// passes only when its CPU time (process user + system, every thread) is
+// within the CPU bound — CPU time hardly grows with machine load, so a real
+// regression (more work) still fails.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -12,6 +19,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <sys/resource.h>
 #include "Check.h"
 #include "core/Demo.h"
 #include "core/PluginInfo.h"
@@ -110,14 +118,29 @@ Song makeSong(uint64_t seed, int synths, int effects, int delays, int tweaks) {
   return s;
 }
 
-double exportSeconds(const Song& s, flp::Bytes& out, flp::ExportReport& rep) {
+// Process CPU time (user + system, all threads), seconds.
+double cpuSeconds() {
+  rusage u{};
+  getrusage(RUSAGE_SELF, &u);
+  return static_cast<double>(u.ru_utime.tv_sec + u.ru_stime.tv_sec) + static_cast<double>(u.ru_utime.tv_usec + u.ru_stime.tv_usec) * 1e-6;
+}
+
+struct Timing {
+  double wall = -1, cpu = -1;
+};
+
+Timing exportTimed(const Song& s, flp::Bytes& out, flp::ExportReport& rep) {
   flp::ExportOptions o;
   o.factoryData = "/nonexistent-fl-data";
+  const double c0 = cpuSeconds();
   const auto t0 = std::chrono::steady_clock::now();
   const bool ok = flp::exportFlp(s, out, rep, o);
   const double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-  return ok ? dt : -1;
+  if (!ok) return {};
+  return {dt, cpuSeconds() - c0};
 }
+
+double exportSeconds(const Song& s, flp::Bytes& out, flp::ExportReport& rep) { return exportTimed(s, out, rep).wall; }
 
 }  // namespace
 
@@ -154,33 +177,54 @@ int main() {
     uint64_t seed;
     int synths, effects, delays, tweaks;
     double bound;  // seconds, generous (before J-51: demo 0.8 s, typical 23 s / 12 s, delays 37 s, synths 67 s, mixed 73 s)
+    // Q-2: CPU seconds (all threads) when the wall time misses under load —
+    // about 4x the CPU time measured at Q-2 (demo 0.09 s, typical 1.06 s,
+    // delays 2.4 s, synths 3.0 s, mixed 4.8 s on 8 solver threads).
+    double cpuBound;
   };
   const Case cases[] = {
-      {"demo", 0, 0, 0, 0, 0, 1.5},
-      {"typical", 1, 8, 12, 2, 4, 3.0},
-      {"typical2", 5, 8, 12, 2, 4, 3.0},
-      {"delays", 2, 0, 0, 12, 0, 5.0},
-      {"synths", 3, 40, 0, 0, -1, 20.0},
-      {"mixed", 4, 24, 40, 6, -1, 20.0},
+      {"demo", 0, 0, 0, 0, 0, 1.5, 0.6},
+      {"typical", 1, 8, 12, 2, 4, 3.0, 4.0},
+      {"typical2", 5, 8, 12, 2, 4, 3.0, 4.0},
+      {"delays", 2, 0, 0, 12, 0, 5.0, 8.0},
+      {"synths", 3, 40, 0, 0, -1, 20.0, 12.0},
+      {"mixed", 4, 24, 40, 6, -1, 20.0, 18.0},
   };
   for (const Case& c : cases) {
     const Song s = makeSong(c.seed, c.synths, c.effects, c.delays, c.tweaks);
     flp::Bytes a, b, again;
     flp::ExportReport ra, rb, rc;
     flp::enc::clearEncodeCache();  // (time the solving, not the cache)
-    const double t = exportSeconds(s, a, ra);
-    const double tCached = exportSeconds(s, again, rc);
+    Timing t = exportTimed(s, a, ra);
+    Timing tCached = exportTimed(s, again, rc);
     flp::enc::clearEncodeCache();
-    const double t2 = exportSeconds(s, b, rb);
+    Timing t2 = exportTimed(s, b, rb);
+    // Q-2: a busy machine gets two more attempts (best wall time, best CPU time).
+    for (int retry = 0; retry < 2 && (t.wall >= c.bound || t2.wall >= c.bound); ++retry) {
+      flp::Bytes x;
+      flp::ExportReport rx;
+      flp::enc::clearEncodeCache();
+      const Timing r = exportTimed(s, x, rx);
+      if (r.wall >= 0) t.wall = std::min(t.wall, r.wall), t.cpu = std::min(t.cpu, r.cpu);
+    }
+    for (int retry = 0; retry < 2 && tCached.wall >= std::max(0.5, 0.5 * t.wall); ++retry) {
+      flp::Bytes x;
+      flp::ExportReport rx;
+      const Timing r = exportTimed(s, x, rx);  // the cache still holds the solutions
+      if (r.wall >= 0) tCached.wall = std::min(tCached.wall, r.wall), tCached.cpu = std::min(tCached.cpu, r.cpu);
+    }
     int exact = 0, other = 0;
     for (const auto& p : ra.plugins) (p.quality == "exact" || p.quality == "verbatim" ? exact : other) += 1;
-    std::printf("# %s: %zu plugins (%d exact, %d other), %zu bytes, export %.3f s, again %.3f s, cached %.3f s\n", c.name, ra.plugins.size(), exact,
-                other, a.size(), t, t2, tCached);
-    expect(t >= 0 && t2 >= 0 && tCached >= 0, (std::string(c.name) + ": exports").c_str());
+    std::printf("# %s: %zu plugins (%d exact, %d other), %zu bytes, export %.3f s (cpu %.3f s), again %.3f s, cached %.3f s (cpu %.3f s)\n", c.name,
+                ra.plugins.size(), exact, other, a.size(), t.wall, t.cpu, t2.wall, tCached.wall, tCached.cpu);
+    expect(t.wall >= 0 && t2.wall >= 0 && tCached.wall >= 0, (std::string(c.name) + ": exports").c_str());
     expect(a == b, (std::string(c.name) + ": a second export, solved again, is byte-identical").c_str());
     expect(a == again, (std::string(c.name) + ": an export from the cached solutions is byte-identical").c_str());
-    expect(t < c.bound, (std::string(c.name) + ": export within the time bound").c_str());
-    expect(tCached < std::max(0.5, 0.5 * t), (std::string(c.name) + ": a repeat export reuses the solved states").c_str());
+    const bool inTime = t.wall < c.bound || t.cpu < c.cpuBound;
+    if (t.wall >= c.bound && inTime) std::printf("# %s: wall time over the bound (machine load), CPU time within it\n", c.name);
+    expect(inTime, (std::string(c.name) + ": export within the time bound (wall, or CPU under load)").c_str());
+    const bool cachedFast = tCached.wall < std::max(0.5, 0.5 * t.wall) || tCached.cpu < std::max(0.25, 0.5 * t.cpu);
+    expect(cachedFast, (std::string(c.name) + ": a repeat export reuses the solved states").c_str());
     if (dump) {
       const std::string base = std::string(dump) + "/" + c.name;
       saveProject(base + ".gridline.json", s);

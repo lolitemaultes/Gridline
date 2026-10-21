@@ -62,8 +62,11 @@ Sum runFx(const std::string& type, const std::vector<std::pair<int, float>>& par
     s.abs += std::fabs(L[i]) + std::fabs(R[i]);
     s.sq += static_cast<double>(L[i]) * L[i] + static_cast<double>(R[i]) * R[i];
   }
+  // Q-2: a pick past the run's end reads 0 (the 1 s runs used to read past
+  // the buffer: whatever the heap held there, so the check failed at random,
+  // more often on a busy machine where the heap is reused differently).
   const size_t pick[4] = {100, 11025, 30000, 70000};
-  for (int k = 0; k < 4; ++k) s.at[k] = L[pick[k]];
+  for (int k = 0; k < 4; ++k) s.at[k] = pick[k] < n ? L[pick[k]] : 0.0f;
   return s;
 }
 
@@ -95,8 +98,8 @@ int main() {
   //      shifting the history every sample; same arithmetic order: exact) ----
   {
     using namespace packs::dynamics;
-    static const double os4[7] = {-86.615606158839668, 2604.4507095505046, 481.14257364789177, 0, -0.0481787473, 3.21525826e-25, -1.69357156e-24};
-    static const double os2[7] = {-86.478856969695556, 2659.0505232690939, 500.7580559141507, 0, -0.145377219, 3.19146646e-25, -1.68689267e-24};
+    static const double os4[7] = {-86.615606158839668, 2604.4507095505046, 481.14257364789177, 0, -0.0481787473, 3.21525826e-25, 0};
+    static const double os2[7] = {-86.478856969695556, 2659.0505232690939, 500.7580559141507, 0, -0.145377219, 3.19146646e-25, 0};
     checkGolden("master dynamics 4x oversampling matches the reference", runFx("gl.master", {{MsOversample, 2.f}}, 1.0), os4, 1e-12);
     checkGolden("master dynamics 2x oversampling matches the reference", runFx("gl.master", {{MsOversample, 1.f}}, 1.0), os2, 1e-12);
   }

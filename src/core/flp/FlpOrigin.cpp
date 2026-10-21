@@ -96,6 +96,7 @@ uint64_t fingerprintPattern(const Pattern& p, const Song& s, const IndexMap& m) 
     h.i(m.ch(ch)).i(static_cast<int64_t>(v.size()));
     for (const auto& sp : v) h.i(sp.pitch).i(sp.pan).i(sp.release).i(sp.fine).i(sp.modX).i(sp.modY).i(sp.shift);
   }
+  if (p.loop) h.tag("loop");  // Q-1 (only when on: fingerprints of FL's usual patterns stay as they were)
   return h.h;
 }
 

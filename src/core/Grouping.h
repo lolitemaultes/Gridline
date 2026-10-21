@@ -20,6 +20,11 @@ int ungroupNotes(std::vector<Note>& notes, const ops::NoteSel& sel);
 // Adds every note that shares a group with a selected note to the selection.
 // Returns the number of notes added.
 int selectGroups(const std::vector<Note>& notes, ops::NoteSel& sel);
+// Q-3 (Shift+drag): appends a copy of every selected note (every property
+// kept; grouped notes form new groups, one per original group) and makes the
+// copies the selection. Returns, per original index, the copy's index (-1 =
+// not copied).
+std::vector<int> cloneNotes(std::vector<Note>& notes, std::vector<bool>& sel);
 
 }  // namespace gl::tools
 

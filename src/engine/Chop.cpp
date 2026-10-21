@@ -1,5 +1,6 @@
 // Gridline — chop, stutter and time-region editing (PL-13). See Chop.h.
 #include "Chop.h"
+#include "../core/ClipLoop.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -126,8 +127,8 @@ std::vector<Tick> patternOnsets(const Song& s, const Clip& c) {
   if (!p) return out;
   const Tick len = s.clipLength(c);
   for (const auto& [ch, ns] : contentNotes(s, *p))
-    for (const Note& n : ns)
-      if (!n.muted && n.start > c.offset && n.start < c.offset + len) out.push_back(c.start + n.start - c.offset);
+    for (const Note& n : clipChannelNotes(s, c, ns))  // Q-1: every pass of a looping pattern
+      if (n.start > 0 && n.start < len) out.push_back(c.start + n.start);
   std::sort(out.begin(), out.end());
   out.erase(std::unique(out.begin(), out.end()), out.end());
   return out;
@@ -244,7 +245,10 @@ std::vector<ObjectId> stutterAudio(Song& s, const Clip& base, const std::vector<
 std::vector<ObjectId> stutterPattern(Song& s, const Clip& base, Tick length, const std::vector<Step>& steps) {
   const Pattern* bp = s.pattern(base.pattern);
   if (!bp) return {};
-  const auto notes = contentNotes(s, *bp);
+  // Q-1: the clip's notes as they play (clip ticks; a looping pattern's passes unrolled).
+  std::map<ObjectId, std::vector<Note>> notes;
+  for (const auto& [ch, ns] : contentNotes(s, *bp)) notes[ch] = clipChannelNotes(s, base, ns, true);
+  const Tick laneOffset = wrapLoopOffset(base.offset, clipLoopLength(s, base));
   Pattern np;
   np.name = bp->name + " stutter";
   np.color = bp->color;
@@ -255,11 +259,11 @@ std::vector<ObjectId> stutterPattern(Song& s, const Clip& base, Tick length, con
     PatternAutomation l = lane;
     l.points.clear();
     for (AutoPoint q : lane.points)
-      if (q.pos >= base.offset && q.pos <= base.offset + length) q.pos -= base.offset, l.points.push_back(q);
+      if (q.pos >= laneOffset && q.pos <= laneOffset + length) q.pos -= laneOffset, l.points.push_back(q);
     if (!l.points.empty()) np.automation.push_back(l);
   }
   for (const Step& st : steps) {
-    const double w0 = static_cast<double>(base.offset) + st.src;
+    const double w0 = st.src;  // clip ticks (the notes above are clip-relative)
     const double W = static_cast<double>(st.play) * st.speed;  // content heard in this slice
     const Tick end = st.at + st.play;
     for (const auto& [ch, ns] : notes)

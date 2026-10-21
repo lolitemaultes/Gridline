@@ -310,8 +310,8 @@ void Exporter::writePatternMeta() {
             e.data = b;
             return;
           }
-        // keep FL's order: 193 150 157 158 164 …
-        static const uint8_t order[] = {193, 150, 157, 158, 164, 52, 171, 252, 253};
+        // keep FL's order: 193 150 157 158 (26 162: loop mode) 164 …
+        static const uint8_t order[] = {193, 150, 157, 158, 26, 162, 164, 52, 171, 252, 253};
         auto rank = [&](uint8_t x) {
           for (size_t i = 0; i < sizeof order; ++i)
             if (order[i] == x) return static_cast<int>(i);
@@ -330,6 +330,13 @@ void Exporter::writePatternMeta() {
       if (findRaw(meta, 150) || p->color != Pattern{}.color) setOrAdd(150, dw(flColor(p->color)));
       if (!findRaw(meta, 157)) setOrAdd(157, dw(0xFFFFFFFFu));
       if (!findRaw(meta, 158)) setOrAdd(158, dw(0xFFFFFFFFu));
+      // Q-1: FL's pattern loop mode: 26 (byte, 1) and 162 (1), as FL writes them.
+      if (p->loop) {
+        setOrAdd(26, Bytes{1});
+        if (!findRaw(meta, 162)) setOrAdd(162, dw(1));
+      } else {
+        meta.erase(std::remove_if(meta.begin(), meta.end(), [](const RawEvent& e) { return e.id == 26 || e.id == 162; }), meta.end());
+      }
       // Fixed length when the pattern is longer than its content.
       Tick end = 0;
       for (const auto& [c, ns] : p->notes)

@@ -1328,9 +1328,12 @@ void recorderTick(App& a) {
 ParamId laneTarget{kNoId, 0};
 
 struct LaneGesture {
-  bool drawing = false, erasing = false;
+  bool drawing = false, line = false;  // left drag draws, right drag is the line tool (Q-4, FL)
   double lastTick = -1;
   float lastY = 0;
+  double tickA = 0;  // line tool: start point
+  float yA = 0;
+  ae::Points base;   // line tool: the lane at the press
   uint64_t key = 0;
 } lg;
 
@@ -1679,50 +1682,57 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
       dl->AddCircleFilled(ImVec2(x + 1, yOf(q.value)), 3.0f, lineCol, 10);
     }
   } else {
-    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(mn.x + 8, mn.y + 4), P.textFaint, i18n::tr("Drag to draw values \xC2\xB7 right-drag to delete"));
+    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(mn.x + 8, mn.y + 4), P.textFaint, i18n::tr("Drag to draw values \xC2\xB7 right-drag for a straight line"));
   }
   dl->PopClipRect();
   if (canvasHovered && inLane) {
     double t = tickAt(m.x);
     a.setHint(paramDisplayName(s, pid) + ": " + fmtParam(s, pid, valAt(m.y)) + " at " + timeline::rulerLabel(s, std::max<Tick>(0, static_cast<Tick>(t)), grid) +
-              "   (drag: draw values on the grid \xC2\xB7 right-drag: delete \xC2\xB7 Alt: free)");
+              "   " + i18n::tr("(drag: draw values on the grid \xC2\xB7 right-drag: straight line \xC2\xB7 Alt: free)"));
   }
 
   // ---- edit ----
   if (canvasHovered && inLane && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
     lg = LaneGesture{};
     lg.drawing = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-    lg.erasing = !lg.drawing;
+    lg.line = !lg.drawing;
+    lg.tickA = tickAt(m.x);
+    lg.yA = m.y;
+    lg.base = pts;
     lg.key = 0x504C410000000000ull ^ (gestureCounter++ << 8);
   }
-  if ((lg.drawing || lg.erasing) && canvasActive) {
-    double t0 = lg.lastTick < 0 ? tickAt(m.x) : lg.lastTick, t1 = tickAt(m.x);
-    float yA = lg.lastTick < 0 ? m.y : lg.lastY, yB = m.y;
+  if ((lg.drawing || lg.line) && canvasActive) {
+    // Draw: the segment since the last frame (nothing skipped on fast drags).
+    // Line: from the press point to the pointer, on the lane as it was at the press.
+    double t0 = lg.line ? lg.tickA : lg.lastTick < 0 ? tickAt(m.x) : lg.lastTick, t1 = tickAt(m.x);
+    float yA = lg.line ? lg.yA : lg.lastTick < 0 ? m.y : lg.lastY, yB = m.y;
     if (t1 < t0) std::swap(t0, t1), std::swap(yA, yB);
-    ae::Points next = pts;
+    ae::Points next = lg.line ? lg.base : pts;
     Tick c0 = std::max<Tick>(0, snapDown(static_cast<Tick>(std::floor(t0)), grid)), c1 = std::max<Tick>(0, snapDown(static_cast<Tick>(std::floor(t1)), grid));
     for (Tick c = c0; c <= c1; c += grid) {
       next.erase(std::remove_if(next.begin(), next.end(), [&](const AutoPoint& q) { return q.pos >= c && q.pos < c + grid; }), next.end());
-      if (lg.drawing) {
-        double f = t1 > t0 ? std::clamp((static_cast<double>(c) - t0) / (t1 - t0), 0.0, 1.0) : 1.0;
-        AutoPoint np;
-        np.pos = c;
-        np.value = static_cast<float>(valAt(yA + (yB - yA) * static_cast<float>(f)));
-        np.shape = AutoShape::Hold;
-        ae::addPoint(next, np);
-      }
+      double f = t1 > t0 ? std::clamp((static_cast<double>(c) - t0) / (t1 - t0), 0.0, 1.0) : 1.0;
+      AutoPoint np;
+      np.pos = c;
+      np.value = static_cast<float>(valAt(yA + (yB - yA) * static_cast<float>(f)));
+      np.shape = AutoShape::Hold;
+      ae::addPoint(next, np);
     }
-    if (next != pts) {
-      a.doc.editPattern(pattern, lg.drawing ? "draw events" : "delete events", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, next); }, lg.key);
-      if (next.empty()) {  // keep the lane visible with one point so the target stays listed
-        AutoPoint keep{0, static_cast<float>(ae::valueAt(pts, 0)), 0, AutoShape::Hold};
-        a.doc.editPattern(pattern, "delete events", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, {keep}); }, lg.key);
-      }
-    }
+    if (next != pts)
+      a.doc.editPattern(pattern, lg.line ? "draw line" : "draw events", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, next); }, lg.key);
     lg.lastTick = tickAt(m.x);
     lg.lastY = m.y;
   }
-  if (!canvasActive && (lg.drawing || lg.erasing)) {
+  if (lg.line && canvasActive) {  // line tool preview
+    const ImVec2 pa(xOf(lg.tickA), std::clamp(lg.yA, mn.y, mx.y)), pb(m.x, std::clamp(m.y, mn.y, mx.y));
+    dl->PushClipRect(ImVec2(mn.x, mn.y - 4), ImVec2(mx.x, mx.y + 4), true);
+    dl->AddLine(pa, pb, theme::withAlpha(P.ink, 0.6f), 3.0f);
+    dl->AddLine(pa, pb, col, 1.5f);
+    dl->AddCircleFilled(pa, 3.0f, col, 10);
+    dl->AddCircleFilled(pb, 3.0f, col, 10);
+    dl->PopClipRect();
+  }
+  if (!canvasActive && (lg.drawing || lg.line)) {
     lg = LaneGesture{};
     a.doc.endGesture();
   }

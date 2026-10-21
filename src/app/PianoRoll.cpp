@@ -12,7 +12,9 @@
 #include "AutomationEditor.h"
 #include "EditTools.h"
 #include "ScriptUi.h"
+#include "../core/Grouping.h"
 #include "../core/MenuParity.h"
+#include "../core/NoteLaneEdit.h"
 #include "../core/NoteTools.h"
 #include "../core/SmoothSnap.h"
 #include "Theme.h"
@@ -47,9 +49,30 @@ struct Gesture {
   uint64_t key = 0;
   bool moved = false;
   int previewPitch = -1;
+  // Q-3: Shift+drag duplicates (copies made when the pointer first moves);
+  // the drag's edits form one undo step (grouped) that Esc / right-click cancels.
+  bool copyPending = false;
+  bool grouped = false;
+  std::set<size_t> selBefore;
 };
 Gesture g;
 uint64_t gestureCounter = 1;
+
+// Q-4: event lane drag state (Gesture::Velocity). Left drag paints along the
+// pointer path (segment sweep from the previous frame's position); right drag
+// is FL's line tool: a straight line from the press point, applied on release.
+struct LaneDrag {
+  bool line = false;     // right drag: line tool
+  bool reset = false;    // paint with each note's default value (FL: Alt + drag)
+  bool select = false;   // select notes by time (FL: Ctrl + drag in the lane)
+  bool hasPrev = false;  // paint: previous pointer position known
+  double prevTick = 0;   // paint: previous pointer position (ticks, fractional)
+  float prevFrac = 0;    // paint: previous value (0..1)
+  double tickA = 0;      // line: start point
+  float fracA = 0;
+};
+LaneDrag ld;
+PianoLaneGeometry laneGeo;  // dev check: last drawn lane geometry
 
 // J-37: smooth snapping of a note drag. Every selected note moves by the same
 // snapped delta (start ticks, pitch rows, length ticks); the drawing eases
@@ -91,6 +114,11 @@ void setLaneValue(Note& n, Lane l, float f) {
     default: n.velocity = std::clamp(static_cast<int>(std::lround(f * 127)), 1, 127); break;
   }
 }
+// Q-4: lane edits go through setLaneValue (its rounding, e.g. fine pitch in 10 cent steps).
+void laneSetFn(Note& n, tools::NoteProp p, double v) { setLaneValue(n, static_cast<Lane>(p), static_cast<float>(v)); }
+// Line tool: half a pixel either side, so a stem drawn on the pixel where the
+// line starts or ends is inside it.
+constexpr float kLaneLineSlackPx = 0.5f;
 std::string laneText(const Note& n, Lane l) {
   char b[48];
   switch (l) {
@@ -166,6 +194,8 @@ void previewOff(App& a, ObjectId ch) {
 }
 
 }  // namespace
+
+const PianoLaneGeometry& pianoLaneGeometry() { return laneGeo; }
 
 // Notes added by Draw / Paint: one note, or a chord when a stamp is chosen; on
 // the scale when snapping to it.
@@ -767,6 +797,17 @@ void drawPianoRoll(App& a) {
   }
   dl->PopClipRect();
 
+  // Q-4: lane pointer mapping. Positions stay fractional (no tick rounding) so
+  // the sweep and the line tool are exact at every zoom level.
+  auto laneTickAt = [&](float x) { return static_cast<double>(x - gridMin.x + st.scrollX) / std::max(1e-6f, st.pxPerTick); };
+  auto laneXOf = [&](double t) { return gridMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; };
+  auto laneFracAt = [&](float y) {
+    float f = std::clamp((vMax.y - y) / std::max(1.0f, vMax.y - vMin.y), 0.0f, 1.0f);
+    if (laneBipolar(lane) && std::fabs(f - 0.5f) < 0.03f) f = 0.5f;  // easy return to centre
+    return f;
+  };
+  laneGeo = PianoLaneGeometry{gridMin.x - st.scrollX, st.pxPerTick, vMin.y, vMax.y, !autoLane};
+
   // ---------------- interaction ----------------
   const ImVec2 m = io.MousePos;
   const bool inGrid = m.x >= gridMin.x && m.x < gridMax.x && m.y >= gridMin.y && m.y < gridMax.y;
@@ -782,9 +823,13 @@ void drawPianoRoll(App& a) {
       char buf[96];
       std::snprintf(buf, sizeof buf, "%s  ·  bar %lld", noteName(pitchAt(m.y)).c_str(),
                     static_cast<long long>(tickAt(m.x) / std::max<Tick>(1, s.barTicks()) + 1));
-      a.setHint(std::string(buf) + "   (wheel: scroll · Shift+wheel: horizontal · Ctrl+wheel: zoom · Alt: no snap)");
+      if (hoverNote >= 0 && st.tool == Tool::Draw)
+        a.setHint(std::string(buf) + "   " + i18n::tr("(drag: move · edge: resize · Shift+drag: copy · Esc / right-click while dragging: cancel · Alt: no snap)"));
+      else
+        a.setHint(std::string(buf) + "   (wheel: scroll · Shift+wheel: horizontal · Ctrl+wheel: zoom · Alt: no snap)");
     } else if (inVel && !autoLane) {
-      a.setHint(std::string(kLaneNames[static_cast<int>(lane)]) + ": drag over notes to set it (selected notes only when there is a selection)");
+      a.setHint(std::string(kLaneNames[static_cast<int>(lane)]) + ": " +
+                i18n::tr("drag over notes to set it, right-drag to draw a line (selected notes only when there is a selection)"));
     } else if (inLaneLabel) {
       a.setHint("Choose the note property shown in the lane (wheel cycles)");
       if (io.MouseWheel != 0) {
@@ -799,13 +844,27 @@ void drawPianoRoll(App& a) {
     }
   }
 
-  const bool lClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-  const bool rClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+  bool lClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+  bool rClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
   const bool dbl = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
   static int propsNote = -1;
+  // Q-3: Esc or a right-click during a note drag (move, Shift+drag copies,
+  // resize) cancels it: notes back, copies gone, selection restored.
+  if ((g.kind == Gesture::Move || g.kind == Gesture::Resize) && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+      (keys::pressedHeld("piano.cancelDrag") || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+    if (g.grouped) a.doc.cancelGroup();
+    st.selected = g.selBefore;
+    previewOff(a, chId);
+    noteAnim.clear();
+    g = Gesture{};
+    lClick = rClick = false;
+    a.setHint(i18n::tr("Drag cancelled"));
+    if (const Pattern* cp = a.doc.song().pattern(patId); cp && cp->notes.count(chId)) notes = cp->notes.at(chId);
+  }
 
   if (lClick || rClick) {
     g = Gesture{};
+    g.selBefore = st.selected;
     g.start = m;
     g.startTick = tickAt(m.x);
     g.startPitch = pitchAt(m.y);
@@ -822,7 +881,15 @@ void drawPianoRoll(App& a) {
     } else if (inLaneLabel && lClick) {
       ImGui::OpenPopup("##lanepop");
     } else if (inVel && (lClick || rClick)) {
-      if (!autoLane && lClick) g.kind = Gesture::Velocity;  // automation lane: edited by drawPatternAutomationLane
+      if (!autoLane) {  // automation lane: edited by drawPatternAutomationLane
+        g.kind = Gesture::Velocity;
+        ld = LaneDrag{};
+        ld.line = rClick;  // Q-4: right drag = line tool (FL)
+        ld.select = lClick && keys::modifierHeld("piano.laneSelectDrag");
+        ld.reset = lClick && keys::modifierHeld("piano.laneDefaultDrag");
+        ld.tickA = laneTickAt(m.x);
+        ld.fracA = laneFracAt(m.y);
+      }
     } else if (inGrid && rClick && st.tool == Tool::Zoom) {
       st.zoomRequest /= 1.5f;  // zoom tool: right-click zooms out
     } else if (inGrid && rClick) {
@@ -864,13 +931,19 @@ void drawPianoRoll(App& a) {
         }
       } else {  // Draw
         if (hoverNote >= 0) {
+          // Q-3: Shift+drag on a note copies the selection (or just that
+          // note when it is not selected), like FL; the copies follow the pointer.
+          const bool shiftCopy = io.KeyShift && !io.KeyCtrl && !hoverEdge;
           if (!st.selected.count(static_cast<size_t>(hoverNote))) {
-            if (!io.KeyShift) st.selected.clear();
+            if (!io.KeyShift || shiftCopy) st.selected.clear();
             st.selected.insert(static_cast<size_t>(hoverNote));
             j31::expandNoteGroups(a);  // J-31: grouped notes come along
             g.sel = selVector(a, notes.size());
           }
           g.kind = hoverEdge ? Gesture::Resize : Gesture::Move;
+          g.copyPending = shiftCopy;
+          a.doc.beginGroup(shiftCopy ? "copy notes" : hoverEdge ? "resize notes" : "move notes");  // one undo step (empty: none)
+          g.grouped = true;
           const Note& hn = notes[static_cast<size_t>(hoverNote)];
           previewOn(a, chId, hn.pitch, hn.velocity);
           st.lastLength = hn.length;
@@ -941,6 +1014,12 @@ void drawPianoRoll(App& a) {
           }
         noteAnimT.d = {static_cast<double>(dt), static_cast<double>(dp), 0.0};
         if (dt == 0 && dp == 0 && !g.moved) break;
+        if (g.copyPending) {  // Q-3: the copies (every property kept, new groups) are what moves from here
+          g.copyPending = false;
+          const std::vector<int> map = tools::cloneNotes(g.base, g.sel);
+          if (g.anchor >= 0 && static_cast<size_t>(g.anchor) < map.size() && map[static_cast<size_t>(g.anchor)] >= 0)
+            g.anchor = map[static_cast<size_t>(g.anchor)];
+        }
         g.moved = true;
         std::vector<Note> ns = g.base;
         for (size_t i = 0; i < ns.size(); ++i)
@@ -1041,28 +1120,73 @@ void drawPianoRoll(App& a) {
         break;
       }
       case Gesture::Velocity: {  // property lane (velocity, pan, release, fine pitch, mod X / Y)
-        float frac = std::clamp((vMax.y - m.y) / (vMax.y - vMin.y), 0.0f, 1.0f);
-        if (laneBipolar(lane) && std::fabs(frac - 0.5f) < 0.03f) frac = 0.5f;  // easy return to centre
-        std::vector<Note> ns = notes;
-        bool changed = false;
-        bool useSel = !st.selected.empty();
+        const float frac = laneFracAt(m.y);
+        const double t = laneTickAt(m.x);
+        const bool anySel = std::find(g.sel.begin(), g.sel.end(), true) != g.sel.end();
+        const std::vector<bool> only = anySel ? g.sel : std::vector<bool>{};  // FL: selected notes only
+        const auto prop = static_cast<tools::NoteProp>(lane);
         Note shown;
         setLaneValue(shown, lane, frac);
-        for (size_t i = 0; i < ns.size(); ++i) {
-          float x = xOf(ns[i].start);
-          bool under = std::fabs(x - m.x) < 5;
-          if (under && (!useSel || st.selected.count(i))) {
-            Note before = ns[i];
-            setLaneValue(ns[i], lane, frac);
-            changed = changed || !(before == ns[i]);
+        const char* label = lane == Lane::Velocity ? "change velocity" : "change note property";
+        if (ld.select) {
+          // Ctrl + drag: select the notes starting inside the dragged time span.
+          std::set<size_t> sel;
+          for (size_t i : notelane::notesBetween(notes, {}, ld.tickA, t)) sel.insert(i);
+          st.selected = sel;
+          a.setHint(std::to_string(sel.size()) + " " + i18n::tr("notes selected"));
+        } else if (ld.line) {
+          // Line tool: the notes between A and the pointer follow the line live
+          // (from the gesture's start state), so release leaves exactly the line.
+          const double slack = kLaneLineSlackPx / std::max(1e-6f, st.pxPerTick);
+          std::vector<Note> ns = g.base;
+          notelane::applyLine(ns, only, prop, ld.tickA, ld.fracA, t, frac, laneSetFn, slack);
+          if (ns != notes) commit(a, patId, chId, ns, g.sel, label, g.key);
+          Note from;
+          setLaneValue(from, lane, ld.fracA);
+          a.setHint(laneText(from, lane) + "  \xE2\x86\x92  " + laneText(shown, lane));
+        } else {
+          // Paint: sweep the segment from the previous pointer position to this
+          // one; every position edits its nearest stem (FL), so nothing is skipped.
+          std::vector<Note> ns = notes;
+          const double t0 = ld.hasPrev ? ld.prevTick : t;
+          const float f0 = ld.hasPrev ? ld.prevFrac : frac;
+          bool changed = false;
+          if (ld.reset) {  // each note back to its property's default
+            for (size_t i : notelane::nearestInSweep(ns, only, t0, t)) {
+              const Note before = ns[i];
+              setLaneValue(ns[i], lane, static_cast<float>(tools::notePropNorm(Note{}, prop)));
+              changed = changed || !(before == ns[i]);
+            }
+            setLaneValue(shown, lane, static_cast<float>(tools::notePropNorm(Note{}, prop)));
+          } else {
+            changed = notelane::paintSegment(ns, only, prop, t0, f0, t, frac, laneSetFn);
           }
+          if (changed) commit(a, patId, chId, ns, g.sel, label, g.key);
+          ld.hasPrev = true;
+          ld.prevTick = t;
+          ld.prevFrac = frac;
+          a.setHint(laneText(shown, lane));
         }
-        if (changed) commit(a, patId, chId, ns, selVector(a, ns.size()), lane == Lane::Velocity ? "change velocity" : "change note property", g.key);
-        a.setHint(laneText(shown, lane));
         break;
       }
       default: break;
     }
+  }
+  if (active && g.kind == Gesture::Velocity && ld.select) {  // Q-4: Ctrl + drag selection span
+    const float xa = laneXOf(ld.tickA);
+    dl->AddRectFilled(ImVec2(std::min(xa, m.x), vMin.y), ImVec2(std::max(xa, m.x), vMax.y), theme::withAlpha(P.hot, 0.15f));
+    dl->AddRect(ImVec2(std::min(xa, m.x), vMin.y), ImVec2(std::max(xa, m.x), vMax.y), theme::withAlpha(P.hot, 0.6f));
+  }
+  if (active && g.kind == Gesture::Velocity && ld.line) {  // Q-4: line tool preview, anchored to the start tick
+    const float span = vMax.y - vMin.y;
+    const ImVec2 pa(laneXOf(ld.tickA), vMax.y - span * ld.fracA), pb(m.x, vMax.y - span * laneFracAt(m.y));
+    const ImU32 lc = theme::litRole(theme::role::kGraph);
+    dl->PushClipRect(ImVec2(vMin.x, vMin.y - 4), ImVec2(vMax.x, vMax.y + 4), true);
+    dl->AddLine(pa, pb, theme::withAlpha(P.ink, 0.6f), 3.0f);
+    dl->AddLine(pa, pb, lc, 1.5f);
+    dl->AddCircleFilled(pa, 3.0f, lc, 10);
+    dl->AddCircleFilled(pb, 3.0f, lc, 10);
+    dl->PopClipRect();
   }
   if (ImGui::IsItemDeactivated()) {
     if (g.kind == Gesture::Play)
@@ -1102,6 +1226,7 @@ void drawPianoRoll(App& a) {
     if (g.kind == Gesture::Move && !g.moved && g.anchor >= 0 && !io.KeyShift) {
       st.selected = {static_cast<size_t>(std::min<int>(g.anchor, static_cast<int>(notes.size()) - 1))};
     }
+    if (g.grouped) a.doc.endGroup();
     a.doc.endGesture();
     previewOff(a, chId);
     g = Gesture{};

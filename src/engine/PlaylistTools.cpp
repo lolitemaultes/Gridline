@@ -2,7 +2,10 @@
 #include "PlaylistTools.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <map>
 #include "ClipOps.h"
+#include "../core/ClipLoop.h"
 #include "Sample.h"
 
 namespace gl::pltools {
@@ -138,8 +141,8 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
         }
         d = hi;
       }
-    } else {
-      d = std::max<Tick>(d, -c.offset);
+    } else if (clipLoopLength(s, c) <= 0) {
+      d = std::max<Tick>(d, -c.offset);  // Q-1: a looping pattern clip may grow to the left (its content wraps)
     }
   }
   std::vector<Clip> out = base;
@@ -157,6 +160,8 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
         if (zeroCross) src = nearestZeroCrossing(s, b, src);
         c.audioStart = src;
       }
+    } else if (const Tick loop = clipLoopLength(s, b); loop > 0) {
+      c.offset = wrapLoopOffset(b.offset + d, loop);  // Q-1: the loop start follows the edge
     } else {
       c.offset = std::max<Tick>(0, b.offset + d);
     }
@@ -181,16 +186,16 @@ Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d) {
     if (base.audioEnd > base.audioStart) c.audioEnd = std::max(a, base.audioEnd + moved);
     return c;
   }
-  if (base.kind == ClipKind::Pattern) {
-    const Pattern* p = s.pattern(base.pattern);
-    const Tick patLen = p ? s.patternContentLength(*p) : 0;
-    if (patLen > 0) {
-      Tick off = (base.offset - d) % patLen;
-      c.offset = off < 0 ? off + patLen : off;
-      return c;
-    }
+  // Q-1: a looping pattern's content wraps (the loop start moves, the clip
+  // stays); other content stops at its start and its end.
+  if (const Tick loop = clipLoopLength(s, base); loop > 0) {
+    c.offset = wrapLoopOffset(base.offset - d, loop);
+    return c;
   }
-  c.offset = std::max<Tick>(0, base.offset - d);
+  Tick hi = std::numeric_limits<Tick>::max() / 4;
+  if (base.kind == ClipKind::Pattern)
+    if (const Pattern* p = s.pattern(base.pattern)) hi = std::max<Tick>(0, s.patternContentLength(*p) - 1);
+  c.offset = std::clamp<Tick>(base.offset - d, 0, std::max(hi, base.offset));
   return c;
 }
 
@@ -225,10 +230,21 @@ bool occupied(const Song& s, int track, Tick start, Tick len) {
   return false;
 }
 
+void regroupCopies(Song& s, std::vector<Clip>& copies) {
+  std::map<ObjectId, ObjectId> fresh;
+  for (Clip& c : copies) {
+    if (c.group == kNoId) continue;
+    auto [it, added] = fresh.emplace(c.group, kNoId);
+    if (added) it->second = s.allocateId();
+    c.group = it->second;
+  }
+}
+
 std::vector<ObjectId> cloneClips(Song& s, const std::set<ObjectId>& sel) {
   std::vector<Clip> copies;
   for (const auto& c : s.playlist)
     if (sel.count(c.id)) copies.push_back(c);
+  regroupCopies(s, copies);
   std::vector<ObjectId> out;
   for (Clip c : copies) {
     c.id = s.allocateId();

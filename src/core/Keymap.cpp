@@ -120,6 +120,8 @@ std::vector<Command> buildCommands() {
       {"playlist.zoomIn", PL, N_("Zoom in"), {ch(K::PageUp)}, true},
       {"playlist.zoomOut", PL, N_("Zoom out"), {ch(K::PageDown)}, true},
       {"playlist.zoomFit", PL, N_("Zoom to fit the song"), {ch(K::Home)}},
+      {"playlist.uniqueCopy", PL, N_("While Shift+dragging copies: make them unique (new patterns)"), {ch(K::V, S)}},  // Q-3 (FL: drag + Shift+V)
+      {"playlist.cancelDrag", PL, N_("Cancel the clip drag (copies, moves, resizes)"), {ch(K::Escape)}},  // Q-3
       // ---- piano roll ----
       {"piano.delete", PR, N_("Delete selected notes"), {ch(K::Delete), ch(K::Backspace)}},
       {"piano.selectAll", PR, N_("Select all notes"), {ch(K::A, C)}},
@@ -128,6 +130,7 @@ std::vector<Command> buildCommands() {
       {"piano.cut", PR, N_("Cut notes"), {ch(K::X, C)}},
       {"piano.paste", PR, N_("Paste notes"), {ch(K::V, C)}},
       {"piano.duplicate", PR, N_("Duplicate notes"), {ch(K::B, C)}},
+      {"piano.cancelDrag", PR, N_("Cancel the note drag (copies, moves, resizes)"), {ch(K::Escape)}},  // Q-3
       {"piano.quickQuantize", PR, N_("Quick quantize start times"), {ch(K::Q, C)}},
       {"piano.transposeUp", PR, N_("Transpose up a semitone"), {ch(K::Up)}, true},
       {"piano.transposeDown", PR, N_("Transpose down a semitone"), {ch(K::Down)}, true},
@@ -420,6 +423,20 @@ bool Keymap::load(const std::string& json, std::string* err) {
 Keymap& keymap() {
   static Keymap k;
   return k;
+}
+
+const std::vector<MouseModifier>& mouseModifiers() {
+  static const std::vector<MouseModifier> v = {
+      {"piano.laneSelectDrag", Context::PianoRoll, N_("Event lane: drag selects notes"), kCtrl},
+      {"piano.laneDefaultDrag", Context::PianoRoll, N_("Event lane: drag sets the default value"), kAlt},
+  };
+  return v;
+}
+
+uint8_t mouseModifier(const std::string& id) {
+  for (const auto& m : mouseModifiers())
+    if (id == m.id) return m.mods;
+  return 0;
 }
 
 }  // namespace gl::keys

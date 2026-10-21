@@ -1,0 +1,17 @@
+# Q-3: a Shift+drag copy follows the pointer like a move: the grab offset is
+# kept and the start snaps to the grid, across tracks; Shift+V while dragging
+# makes the copy unique (FL: drag + Shift+V), so it plays a new pattern.
+#   gridline-app showcase.gridline --size 1440x900 --hide rack --hide browser --hide mixer --zoom 2.2 \
+#     --frames 90 --dev-input tests/dupe/playlist_snap.txt
+# Expect: dump 50 = 7 clips; the new one (selected) starts on the snap grid (672),
+# keeps offset 192 and length 768 of the track 3 clip, sits on track 8 and has a new pattern id.
+20 move 520 277
+22 mod shift 1
+24 down 0
+26 move 600 380
+28 move 633 520
+30 key v
+32 move 641 505
+36 up 0
+37 mod shift 0
+50 dump

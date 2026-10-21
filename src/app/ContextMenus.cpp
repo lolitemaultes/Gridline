@@ -1,6 +1,7 @@
 // Gridline — context menus (channel, pattern, playlist track/clip, piano roll,
 // mixer track/slot, knob, plugin window) and the editing helpers they share
 // with the main menu. Window files open these popups and call the bodies here.
+#include "../core/ClipLoop.h"
 #include "../core/I18n.h"
 #include "J59Ui.h"
 #include "Keys.h"
@@ -1104,7 +1105,7 @@ void clipContextMenu(App& a, ObjectId clip) {
     if (np) a.selectPattern(np);
   }
   Tick patLen = s.patternContentLength(*p), len = s.clipLength(*c);
-  if (ImGui::MenuItem(i18n::tr("Split at pattern repeats"), nullptr, false, patLen > 0 && len > patLen)) ops::chopClip(a.doc, clip, patLen);
+  if (ImGui::MenuItem(i18n::tr("Split at pattern repeats"), nullptr, false, patLen > 0 && (len > patLen || clipRepeats(s, *c)))) ops::chopClip(a.doc, clip, patLen);  // Q-1: at the loop points
   {
     const Tick pos = static_cast<Tick>(a.engine.position());
     if (ImGui::MenuItem(i18n::tr("Slice at the song position"), nullptr, false, pos > c->start && pos < c->start + len)) ops::sliceClip(a.doc, clip, pos);

@@ -389,6 +389,10 @@ msgstr ""
 msgid "%zu → %zu points"
 msgstr ""
 
+#: src/app/AutomationEditor.cpp
+msgid "(drag: draw values on the grid · right-drag: straight line · Alt: free)"
+msgstr ""
+
 #: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/MidiUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp
 msgid "Accept"
 msgstr ""
@@ -470,7 +474,7 @@ msgid "Deselect all"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
-msgid "Drag to draw values · right-drag to delete"
+msgid "Drag to draw values · right-drag for a straight line"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
@@ -6866,6 +6870,10 @@ msgid "pct"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "(drag: move · edge: resize · Shift+drag: copy · Esc / right-click while dragging: cancel · Alt: no snap)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "Channel being edited"
 msgstr ""
 
@@ -6875,6 +6883,10 @@ msgstr ""
 
 #: src/app/PianoRoll.cpp
 msgid "Chord stamp: the chord Draw and Paint place (root = the clicked key)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp src/app/Playlist.cpp
+msgid "Drag cancelled"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -6977,6 +6989,18 @@ msgstr ""
 msgid "Zoom out (PgDn, Ctrl+wheel)"
 msgstr ""
 
+#: src/app/PianoRoll.cpp
+msgid "drag over notes to set it, right-drag to draw a line (selected notes only when there is a selection)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "notes selected"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "A clip longer than its pattern repeats the pattern (every clip of this pattern)"
+msgstr ""
+
 #: src/app/Playlist.cpp
 msgid "Add 1 track"
 msgstr ""
@@ -7054,6 +7078,14 @@ msgid "Instrument tracks take pattern clips only"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Loop pattern when stretched"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Looping the pattern: the clip repeats it"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Make unique as sample"
 msgstr ""
 
@@ -7074,6 +7106,10 @@ msgid "No fade"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "No pattern clips to make unique"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Overlap another audio clip on the track to crossfade with it"
 msgstr ""
 
@@ -7091,6 +7127,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Plain curve (no bend)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Reset loop start"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -7115,6 +7155,14 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Snap: click for the grid menu, right-click toggles snapping (Alt while dragging bypasses it)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "The copies are unique (new patterns)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "This pattern does not loop: turn on \"Loop pattern when stretched\" in the clip menu"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -8534,6 +8582,14 @@ msgid "Automation clip editor"
 msgstr ""
 
 #: src/core/Keymap.cpp
+msgid "Cancel the clip drag (copies, moves, resizes)"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Cancel the note drag (copies, moves, resizes)"
+msgstr ""
+
+#: src/core/Keymap.cpp
 msgid "Chop and stutter window"
 msgstr ""
 
@@ -8627,6 +8683,14 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Duplicate the time selection"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Event lane: drag selects notes"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Event lane: drag sets the default value"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -8923,6 +8987,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Unzip all channels"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "While Shift+dragging copies: make them unique (new patterns)"
 msgstr ""
 
 #: src/core/Keymap.cpp

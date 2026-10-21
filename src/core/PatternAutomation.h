@@ -16,8 +16,9 @@ std::shared_ptr<const AutomationClip> patternLaneCurve(const PatternAutomation& 
 // instance plays its pattern's curve from the clip's content offset.
 std::vector<AutomationLane> patternAutomationLanes(const Song& song);
 // Pattern mode / live launches: the lanes of one pattern as a single
-// instance [0, length) starting at content tick `offset`.
-std::vector<AutomationLane> singlePatternLanes(const Pattern& p, Tick length, Tick offset = 0);
+// instance [0, length) starting at content tick `offset` (Q-1: `loop` > 0:
+// the content repeats every `loop` ticks, one instance per pass).
+std::vector<AutomationLane> singlePatternLanes(const Pattern& p, Tick length, Tick offset = 0, Tick loop = 0);
 // Sets (or replaces) the lane for a target; an empty point list removes it.
 void setPatternLane(Pattern& p, ObjectId owner, uint32_t index, std::vector<AutoPoint> points);
 const PatternAutomation* findPatternLane(const Pattern& p, ObjectId owner, uint32_t index);

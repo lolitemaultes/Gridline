@@ -174,11 +174,15 @@ struct Pattern {
   // the channel's first `n` steps (and the notes that start in them) repeat
   // through the pattern.
   std::map<ObjectId, int> stepLoop;
+  // Q-1: loop mode (FL's pattern loop mode, FLP event 26): a playlist clip
+  // longer than the pattern repeats it (core/ClipLoop.h). Patterns made in
+  // Gridline loop; FL imports keep FL's setting (off unless set there).
+  bool loop = true;
 
   bool operator==(const Pattern& o) const {
     return id == o.id && name == o.name && color == o.color && stepsPerBar == o.stepsPerBar && bars == o.bars &&
            steps == o.steps && notes == o.notes && automation == o.automation && stepProps == o.stepProps &&
-           stepLoop == o.stepLoop;
+           stepLoop == o.stepLoop && loop == o.loop;
   }
 };
 

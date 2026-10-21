@@ -1,4 +1,5 @@
 #include "MenuOps.h"
+#include "ClipLoop.h"
 #include "ChordTools.h"
 #include "TrackModes.h"
 #include <algorithm>
@@ -551,7 +552,14 @@ std::vector<ObjectId> duplicateClips(Document& d, const std::set<ObjectId>& clip
         k.start += shift;
         add.push_back(k);
       }
+    std::map<ObjectId, ObjectId> groups;  // Q-3: grouped copies form new groups
     for (auto& k : add) {
+      if (k.group != kNoId) {
+        auto [it, fresh] = groups.emplace(k.group, kNoId);
+        if (fresh) it->second = x.allocateId();
+        k.group = it->second;
+      }
+      k.takeGroup = kNoId;
       k.id = x.allocateId();
       out.push_back(k.id);
       x.playlist.push_back(k);
@@ -652,7 +660,28 @@ std::vector<ObjectId> chopClip(Document& d, ObjectId clip, Tick every) {
   const Clip* c = s.clip(clip);
   if (!c || !s.pattern(c->pattern)) return {};  // pattern clips only
   Tick len = s.clipLength(*c), patLen = s.patternContentLength(*s.pattern(c->pattern));
-  // Clips have no content offset, so pieces must start on a pattern repeat.
+  // Q-1: a looping clip splits at its loop points (each piece one pass, its
+  // loop start kept).
+  if (const Tick loop = clipLoopLength(s, *c); loop > 0 && every == loop) {
+    const std::vector<ClipPass> passes = clipPasses(s, *c);
+    if (passes.size() < 2) return {};
+    std::vector<ObjectId> out;
+    d.editSong("chop clip", [&](Song& x) {
+      Clip base = *x.clip(clip);
+      eraseIf<Clip>(x.playlist, [&](const Clip& k) { return k.id == clip; });
+      for (const ClipPass& p : passes) {
+        Clip k = base;
+        k.id = p.index == 0 ? base.id : x.allocateId();
+        k.start = base.start + p.at;
+        k.length = p.len;
+        k.offset = p.content;
+        x.playlist.push_back(k);
+        out.push_back(k.id);
+      }
+    });
+    return out;
+  }
+  // Pieces must start on a pattern repeat (they keep the clip's offset).
   if (every <= 0 || patLen <= 0 || every % patLen != 0 || every >= len) return {};
   std::vector<ObjectId> out;
   d.editSong("chop clip", [&](Song& x) {

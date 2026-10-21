@@ -559,6 +559,7 @@ void stepPropsFromJson(const Json& jp, Pattern& p, const Song& s) {
 
 void patternExtrasToJson(const Pattern& p, Json& jp) {
   stepPropsToJson(p, jp);
+  if (!p.loop) jp.object["loop"] = boolean(false);  // Q-1: written only when off (the default is on)
   if (!p.stepLoop.empty()) {  // J-31: per-channel step loop lengths
     Json loops = Json::makeObject();
     for (const auto& [ch, n] : p.stepLoop)
@@ -580,6 +581,7 @@ void patternExtrasToJson(const Pattern& p, Json& jp) {
 // Lanes whose target no longer exists, or that repeat a target, are dropped.
 void patternExtrasFromJson(const Json& jp, Pattern& p, const Song& s) {
   stepPropsFromJson(jp, p, s);
+  if (const Json* lp = jp.find("loop"); lp && lp->is(Json::Type::Bool)) p.loop = lp->boolean;  // Q-1
   if (const Json* loops = jp.find("stepLoop"); loops && loops->is(Json::Type::Object))  // J-31
     for (const auto& [k, v] : loops->object) {
       const ObjectId ch = static_cast<ObjectId>(std::strtoul(k.c_str(), nullptr, 10));

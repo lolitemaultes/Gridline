@@ -1,0 +1,38 @@
+# Q-3: piano roll — a Shift+drag copy cancelled with Esc, another with a
+# right-click, and a plain move cancelled with Esc: the notes stay as they
+# were and nothing is recorded.
+#   gridline-app showcase.gridline --size 1440x900 --hide rack --hide browser --hide mixer --edit 1 0 \
+#     --frames 110 --dev-input tests/dupe/piano_cancel.txt
+# Expect: notes 27 / 57 = 9 notes (the copy being dragged), notes 87 = A4 moved;
+# notes 40, 70, 100 = the 8 notes, as at the start; notes 108 unchanged (no undo step).
+20 move 85 591
+22 mod shift 1
+24 down 0
+26 move 300 480
+27 notes
+28 key escape
+30 up 0
+31 mod shift 0
+40 notes
+50 move 245 507
+52 mod shift 1
+54 down 0
+56 move 500 400
+57 notes
+58 down 1
+59 up 1
+60 up 0
+61 mod shift 0
+70 notes
+80 move 345 465
+82 down 0
+84 move 600 380
+86 move 700 370
+87 notes
+88 key escape
+90 up 0
+100 notes
+104 mod ctrl 1
+105 key z
+106 mod ctrl 0
+108 notes

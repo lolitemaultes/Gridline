@@ -1,0 +1,25 @@
+# Q-3: piano roll — select every note (Ctrl+A), then Shift+drag one of them two
+# bars later: the whole selection is copied, keeps its spacing, snaps to the
+# grid and becomes the selection; one undo step removes the copies.
+#   gridline-app showcase.gridline --size 1440x900 --hide rack --hide browser --hide mixer --edit 1 0 \
+#     --frames 80 --dev-input tests/dupe/piano_multi.txt
+# Expect: notes 30 = 8 selected; notes 50 = 16 notes, the 8 copies 768 ticks
+# later, same pitches and velocities, selected; notes 70 = the 8 notes.
+18 move 600 300
+19 mod ctrl 1
+20 key a
+21 mod ctrl 0
+30 notes
+32 move 165 549
+33 mod shift 1
+34 down 0
+36 move 300 552
+38 move 600 549
+40 move 805 549
+44 up 0
+45 mod shift 0
+50 notes
+62 mod ctrl 1
+63 key z
+64 mod ctrl 0
+70 notes

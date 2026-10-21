@@ -15,6 +15,14 @@ void drawStatusBar(App& a);    // hint bar + notifications
 void drawBrowser(App& a);
 void drawChannelRack(App& a);
 void drawPianoRoll(App& a);
+// Q-4 dev check (--dev-input "lane"): the piano roll's event lane as drawn last
+// frame, in logical pixels: x of tick t = x0 + t * pxPerTick; value v (0..1) at
+// y = yBottom - v * (yBottom - yTop).
+struct PianoLaneGeometry {
+  float x0 = 0, pxPerTick = 0, yTop = 0, yBottom = 0;
+  bool valid = false;
+};
+const PianoLaneGeometry& pianoLaneGeometry();
 void drawPlaylist(App& a);
 void drawMixer(App& a);
 void drawChannelSettings(App& a);

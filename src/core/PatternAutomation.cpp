@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <map>
 #include "Arrangements.h"
+#include "ClipLoop.h"
 
 namespace gl {
 
@@ -24,7 +25,7 @@ std::vector<AutomationLane> patternAutomationLanes(const Song& song) {
     if (c.track >= 0 && static_cast<size_t>(c.track) < song.tracks.size() && song.tracks[static_cast<size_t>(c.track)].muted) continue;
     const Pattern* p = song.pattern(c.pattern);
     if (!p || p->automation.empty()) continue;
-    const Tick len = song.clipLength(c);
+    const std::vector<ClipPass> passes = clipPasses(song, c);  // Q-1: a looping pattern repeats its lanes
     for (size_t k = 0; k < p->automation.size(); ++k) {
       const PatternAutomation& pa = p->automation[k];
       if (pa.points.empty() || pa.owner == kNoId) continue;
@@ -33,7 +34,7 @@ std::vector<AutomationLane> patternAutomationLanes(const Song& song) {
       AutomationLane& l = lanes[{pa.owner, pa.index}];
       l.owner = pa.owner;
       l.index = pa.index;
-      l.inst.push_back({c.start, c.start + len, c.offset, cv});
+      for (const ClipPass& ps : passes) l.inst.push_back({c.start + ps.at, c.start + ps.at + ps.len, ps.content, cv});
     }
   }
   std::vector<AutomationLane> out;
@@ -45,14 +46,15 @@ std::vector<AutomationLane> patternAutomationLanes(const Song& song) {
   return out;
 }
 
-std::vector<AutomationLane> singlePatternLanes(const Pattern& p, Tick length, Tick offset) {
+std::vector<AutomationLane> singlePatternLanes(const Pattern& p, Tick length, Tick offset, Tick loop) {
   std::vector<AutomationLane> out;
   for (const auto& pa : p.automation) {
     if (pa.points.empty() || pa.owner == kNoId) continue;
     AutomationLane l;
     l.owner = pa.owner;
     l.index = pa.index;
-    l.inst.push_back({0, std::max<Tick>(1, length), offset, patternLaneCurve(pa)});
+    const auto cv = patternLaneCurve(pa);
+    for (const ClipPass& ps : loopPasses(offset, std::max<Tick>(1, length), loop)) l.inst.push_back({ps.at, ps.at + ps.len, ps.content, cv});
     out.push_back(std::move(l));
   }
   return out;

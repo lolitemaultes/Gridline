@@ -67,8 +67,13 @@ std::vector<Tick> paintSlots(Tick anchor, Tick to, Tick len);
 bool occupied(const Song& s, int track, Tick start, Tick len);
 
 // Clone (Shift + drag): copies of the selected clips at the same place (new
-// ids, appended). Returns the new ids in playlist order.
+// ids, appended). Returns the new ids in playlist order. Copies keep every
+// clip setting; grouped clips form new groups (one per original group, Q-3)
+// and recording takes are not shared.
 std::vector<ObjectId> cloneClips(Song& s, const std::set<ObjectId>& sel);
+// Q-3: gives copies of grouped clips new groups (one new group per original
+// group among `copies`), so copies never join the originals' groups.
+void regroupCopies(Song& s, std::vector<Clip>& copies);
 
 // Tracks: move track `from` to `to` (clips follow, other tracks shift).
 bool moveTrack(Song& s, int from, int to);

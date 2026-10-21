@@ -1,0 +1,37 @@
+# Q-1: loop editing in the playlist.
+#  1. the left edge of the looping clip on track 3 (bar 2, loop start 192) is
+#     dragged a beat and a half to the left: the clip grows, its content stays
+#     in place, the loop start wraps (192 - 144 = 48);
+#  2. Ctrl+Shift+drag (slip; Cmd+Shift on macOS = "mod super", use "mod ctrl"
+#     on Linux) inside the track 2 clip moves its loop start, the clip stays;
+#  3. the right edge of the one-shot clip (track 4, its pattern's loop mode off,
+#     the only clip of it) is stretched a bar further: loop mode turns on
+#     ("Looping the pattern") and the clip repeats.
+#   gridline-app showcase.gridline --size 1440x900 --hide rack --hide browser --hide mixer --zoom 2.2 \
+#     --frames 110 --dev-input tests/dupe/playlist_loops.txt
+# Expect: dump 40: the track 2 clip (0-based) start 288 len 864 offset 96 (the
+# edge snaps to the beat); dump 70: the track 1 clip start 0 len 1344, its
+# offset wrapped back from 96; dump 100: the track 3 clip len 1536, repeating.
+20 move 484 280
+24 down 0
+26 move 460 280
+28 move 433 281
+30 move 432 281
+34 up 0
+40 dump
+50 move 500 230
+51 mod super 1
+52 mod shift 1
+54 down 0
+56 move 540 230
+58 move 572 230
+62 up 0
+63 mod shift 0
+64 mod super 0
+70 dump
+80 move 765 320
+82 down 0
+84 move 820 320
+86 move 910 320
+90 up 0
+100 dump

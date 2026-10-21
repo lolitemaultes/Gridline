@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include "../core/ClipLoop.h"
 #include "../core/PluginParams.h"
 #include "../packs/edison/edison.h"
 #include "Render.h"
@@ -121,6 +122,7 @@ ObjectId splitClipAt(Song& song, ObjectId id, Tick at) {
     right.fadeInManual = false, right.fadeInShape = 0, right.fadeInTension = 0;  // J-38
   } else {
     right.offset = c->offset + (at - c->start);
+    if (const Tick loop = clipLoopLength(song, *c); loop > 0) right.offset = wrapLoopOffset(right.offset, loop);  // Q-1
   }
   c = song.clip(id);  // (allocateId does not move clips, but keep it obviously valid)
   c->length = at - c->start;

@@ -109,4 +109,17 @@ class Keymap {
 // The app's keymap.
 Keymap& keymap();
 
+// Mouse gesture modifiers (Q-4): the modifier keys that switch what a mouse
+// drag does (FL's defaults), kept in this table next to the keyboard commands
+// so every modifier of the app is named in one place.
+struct MouseModifier {
+  const char* id;     // stable: "piano.laneDefaultDrag"
+  Context context;
+  const char* label;  // English description (translatable)
+  uint8_t mods;       // Mod bits
+};
+const std::vector<MouseModifier>& mouseModifiers();
+// Modifier bits of a gesture modifier (0 for unknown ids).
+uint8_t mouseModifier(const std::string& id);
+
 }  // namespace gl::keys

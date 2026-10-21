@@ -5,6 +5,29 @@
 
 namespace gl::tools {
 
+std::vector<int> cloneNotes(std::vector<Note>& notes, std::vector<bool>& sel) {
+  sel.resize(notes.size(), false);
+  const size_t n = notes.size();
+  int maxGroup = 0;
+  for (const Note& x : notes) maxGroup = std::max(maxGroup, x.group);
+  std::map<int, int> fresh;
+  std::vector<int> map(n, -1);
+  for (size_t i = 0; i < n; ++i) {
+    if (!sel[i]) continue;
+    Note c = notes[i];
+    if (c.group != 0) {
+      auto [it, added] = fresh.emplace(c.group, 0);
+      if (added) it->second = ++maxGroup;
+      c.group = it->second;
+    }
+    map[i] = static_cast<int>(notes.size());
+    notes.push_back(c);
+  }
+  sel.assign(notes.size(), false);
+  for (size_t i = n; i < notes.size(); ++i) sel[i] = true;
+  return map;
+}
+
 namespace {
 bool anySel(const ops::NoteSel& sel) { return std::find(sel.begin(), sel.end(), true) != sel.end(); }
 bool isSel(const ops::NoteSel& sel, size_t i) { return i < sel.size() && sel[i]; }
