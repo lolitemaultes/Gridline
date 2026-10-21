@@ -1,9 +1,8 @@
 // Gridline — audio export. See Export.h.
 #include "Export.h"
-#include <fcntl.h>
-#include <spawn.h>
-#include <sys/wait.h>
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -14,8 +13,7 @@
 #include <fstream>
 #include <mutex>
 #include "../packs/edison/edison.h"
-
-extern char** environ;
+#include "../core/Platform.h"
 
 namespace fs = std::filesystem;
 
@@ -270,22 +268,37 @@ std::string findProgram(const std::string& name) {
     if (it != overrides().end()) return it->second;
   }
   std::vector<std::string> dirs;
+#if defined(_WIN32)
+  const char sep = ';';
+#else
+  const char sep = ':';
+#endif
   if (const char* p = std::getenv("PATH")) {
     std::string s = p;
     size_t a = 0;
     while (a <= s.size()) {
-      size_t b = s.find(':', a);
+      size_t b = s.find(sep, a);
       if (b == std::string::npos) b = s.size();
       if (b > a) dirs.push_back(s.substr(a, b - a));
       a = b + 1;
     }
   }
+#if defined(_WIN32)
+  for (const auto& d : dirs) {
+    std::error_code ec;
+    for (const char* ext : {".exe", ".com", ""}) {
+      const fs::path f = fs::path(d) / (name + ext);
+      if (fs::is_regular_file(f, ec)) return f.string();
+    }
+  }
+#else
   // Apps started from a desktop launcher often get a minimal PATH.
-  for (const char* d : {"/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/opt/local/bin"}) dirs.push_back(d);
+  for (const char* d : {"/usr/local/bin", "/opt/homebrew/bin", "/usr/pkg/bin", "/usr/bin", "/bin", "/opt/local/bin"}) dirs.push_back(d);
   for (const auto& d : dirs) {
     const std::string f = d + "/" + name;
     if (::access(f.c_str(), X_OK) == 0) return f;
   }
+#endif
   return "";
 }
 
@@ -300,22 +313,10 @@ std::vector<std::string> candidates(ExportFormat f) {
 }
 
 int run(const std::vector<std::string>& args) {
-  std::vector<char*> argv;
-  for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
-  argv.push_back(nullptr);
-  posix_spawn_file_actions_t fa;
-  posix_spawn_file_actions_init(&fa);
-  posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-  posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-  posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
-  pid_t pid = 0;
-  const int rc = posix_spawn(&pid, argv[0], &fa, nullptr, argv.data(), environ);
-  posix_spawn_file_actions_destroy(&fa);
-  if (rc != 0) return -1;
-  int status = 0;
-  while (waitpid(pid, &status, 0) < 0)
-    if (errno != EINTR) return -1;
-  return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+  platform::Process child;
+  if (args.empty() || !child.start(args[0], args)) return -1;
+  child.wait();
+  return child.status().crashed ? -1 : child.status().code;
 }
 
 }  // namespace
@@ -348,7 +349,7 @@ bool encodeExternal(const std::string& path, const AudioBuffer& buf, int sampleR
   const std::string exe = findProgram(prog);
   // Intermediate WAV next to the output (same disk), removed afterwards.
   const fs::path out(path);
-  const std::string tmp = (out.parent_path() / (".gridline-encode-" + std::to_string(::getpid()) + "-" + out.stem().string() + ".wav")).string();
+  const std::string tmp = (out.parent_path() / (".gridline-encode-" + std::to_string(platform::processId()) + "-" + out.stem().string() + ".wav")).string();
   AudioBuffer pcm = buf;
   int bits = 32;
   if (prog != "ffmpeg") {  // lame / oggenc read integer PCM

@@ -10,16 +10,7 @@
 #include <thread>
 #include "../core/Project.h"
 #include "sandbox/Sandbox.h"
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
-#include <fcntl.h>
-#include <signal.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-extern char** environ;
+#include "../core/Platform.h"
 
 namespace fs = std::filesystem;
 
@@ -274,20 +265,11 @@ void addEnvPaths(std::vector<std::string>& v, const char* var) {
 }
 
 std::string selfExecutablePath() {
-#if defined(__APPLE__)
-  uint32_t size = 0;
-  _NSGetExecutablePath(nullptr, &size);
-  std::string buf(size, '\0');
-  if (_NSGetExecutablePath(buf.data(), &size) != 0) return {};
-  buf.resize(std::strlen(buf.c_str()));
+  const std::string p = platform::executablePath();
+  if (p.empty()) return p;
   std::error_code ec;
-  auto canon = fs::canonical(buf, ec);
-  return ec ? buf : canon.string();
-#else
-  std::error_code ec;
-  auto p = fs::read_symlink("/proc/self/exe", ec);
-  return ec ? std::string() : p.string();
-#endif
+  auto canon = fs::canonical(p, ec);
+  return ec ? p : canon.string();
 }
 
 // ---------------------------------------------------------------- child processes
@@ -337,42 +319,21 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
   const Format* fmt = findFormat(format);
   r.mtime = fmt ? fmt->mtime(entry) : 0;
   static std::atomic<int> serial{0};
-  fs::path tmp = fs::temp_directory_path() / ("gridline-plugin-scan-" + std::to_string(getpid()) + "-" + std::to_string(serial++) + ".json");
+  fs::path tmp = fs::temp_directory_path() / ("gridline-plugin-scan-" + std::to_string(platform::processId()) + "-" + std::to_string(serial++) + ".json");
   std::vector<std::string> args = {exe, "--scan-plugin", format, entry, "--out", tmp.string()};
-  std::vector<char*> argv;
-  for (auto& a : args) argv.push_back(a.data());
-  argv.push_back(nullptr);
-  posix_spawn_file_actions_t fa;
-  posix_spawn_file_actions_init(&fa);
-  posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-  posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
-  pid_t pid = 0;
-  int rc = posix_spawn(&pid, exe.c_str(), &fa, nullptr, argv.data(), environ);
-  posix_spawn_file_actions_destroy(&fa);
-  if (rc != 0) {
+  platform::Process child;
+  if (!child.start(exe, args)) {
     r.error = "cannot start the scanner process";
     return r;
   }
-  int status = 0;
-  auto start = std::chrono::steady_clock::now();
-  bool done = false;
-  while (!done) {
-    pid_t w = waitpid(pid, &status, WNOHANG);
-    if (w == pid) {
-      done = true;
-      break;
-    }
-    if (w < 0) break;
-    double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    if (el > timeoutSeconds) {
-      kill(pid, SIGKILL);
-      waitpid(pid, &status, 0);
-      r.error = "timed out while loading";
-      std::error_code ec;
-      fs::remove(tmp, ec);
-      return r;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(15));
+  const bool done = child.wait(timeoutSeconds);
+  if (!done) {
+    child.kill();
+    child.wait();
+    r.error = "timed out while loading";
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    return r;
   }
   std::string text;
   {
@@ -383,14 +344,14 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
   }
   std::error_code ec;
   fs::remove(tmp, ec);
-  if (done && WIFSIGNALED(status)) {
-    r.error = "crashed while loading (signal " + std::to_string(WTERMSIG(status)) + ")";
+  if (child.status().crashed) {
+    r.error = "crashed while loading (" + child.status().describe().substr(9);
     return r;
   }
   Json j;
   ScanResult parsed;
   if (text.empty() || !jsonParse(text, j) || !fromJson(j, parsed)) {
-    r.error = done && WIFEXITED(status) ? "scanner exited with code " + std::to_string(WEXITSTATUS(status)) : "scanner failed";
+    r.error = "scanner exited with code " + std::to_string(child.status().code);
     return r;
   }
   parsed.format = format;

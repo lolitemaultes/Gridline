@@ -14,17 +14,11 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include <fcntl.h>
-#include <signal.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #include "../core/Json.h"
+#include "../core/Platform.h"
 #include "HostedPlugins.h"
 #include "PluginScan.h"
 #include "sandbox/Sandbox.h"
-
-extern char** environ;
 
 namespace fs = std::filesystem;
 
@@ -459,37 +453,21 @@ Result runOne(const std::string& exe, const std::shared_ptr<const HostedClass>& 
               int serial) {
   Result res;
   res.cls = c;
-  const std::string out = tmpDir + "/check-" + std::to_string(getpid()) + "-" + std::to_string(serial) + ".jsonl";
+  const std::string out = tmpDir + "/check-" + std::to_string(platform::processId()) + "-" + std::to_string(serial) + ".jsonl";
   std::vector<std::string> args = {exe, "plugin-check", "--child", c->format, c->bundle, c->uid, "--out", out};
   if (!editor) args.push_back("--no-editor");
-  std::vector<char*> argv;
-  for (auto& a : args) argv.push_back(a.data());
-  argv.push_back(nullptr);
-  posix_spawn_file_actions_t fa;
-  posix_spawn_file_actions_init(&fa);
-  posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-  posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
-  pid_t pid = -1;
   const double t0 = nowMs();
-  int rc = ::posix_spawn(&pid, exe.c_str(), &fa, nullptr, argv.data(), environ);
-  posix_spawn_file_actions_destroy(&fa);
-  if (rc != 0) {
+  platform::Process child;
+  if (!child.start(exe, args)) {
     res.status = "crash";
     res.where = "cannot start the check process";
     return res;
   }
-  int st = 0;
   bool timedOut = false;
-  for (;;) {
-    pid_t w = ::waitpid(pid, &st, WNOHANG);
-    if (w == pid) break;
-    if (nowMs() - t0 > timeout * 1000.0) {
-      ::kill(pid, SIGKILL);
-      ::waitpid(pid, &st, 0);
-      timedOut = true;
-      break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  if (!child.wait(timeout)) {
+    child.kill();
+    child.wait();
+    timedOut = true;
   }
   res.ms = nowMs() - t0;
   bool done = false;
@@ -517,7 +495,7 @@ Result runOne(const std::string& exe, const std::shared_ptr<const HostedClass>& 
   } else if (!done && res.status != "fail") {
     res.status = "crash";
     res.where = (current.empty() ? std::string("?") : current) +
-                (WIFSIGNALED(st) ? " (signal " + std::to_string(WTERMSIG(st)) + ")" : " (exit " + std::to_string(WEXITSTATUS(st)) + ")");
+                (child.status().crashed ? " (" + child.status().describe().substr(9) : " (exit " + std::to_string(child.status().code) + ")");
   }
   return res;
 }
