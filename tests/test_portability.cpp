@@ -129,7 +129,13 @@ void testFiles() {
   std::FILE* c = std::fopen(f.u8string().c_str(), "wb");  // narrow fopen with a UTF-8 name
   expect(c != nullptr, "fopen with a UTF-8 name");
   if (c) std::fclose(c);
-  expect(platform::cpuSeconds() > 0 && platform::peakRssMb() > 1, "process statistics");
+  {  // CPU time is counted in clock ticks (FreeBSD: statistics clock): use some first
+    const auto t0 = std::chrono::steady_clock::now();
+    volatile double sink = 0;
+    while (platform::cpuSeconds() <= 0 && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5))
+      for (int k = 0; k < 100000; ++k) sink = sink + std::sqrt(static_cast<double>(k));
+    expect(platform::cpuSeconds() > 0 && platform::peakRssMb() > 1, "process statistics");
+  }
 }
 
 void testSockets() {

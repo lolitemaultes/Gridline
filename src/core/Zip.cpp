@@ -221,7 +221,7 @@ bool readZipDirectory(const std::string& path, std::vector<ZipEntry>& out, std::
     const uint16_t nl = rd16(&d[p + 28]), xl = rd16(&d[p + 30]), cl = rd16(&d[p + 32]);
     e.offset = rd32(&d[p + 42]);
     if (p + 46 + nl > d.size()) return fail(err, "damaged ZIP directory");
-    e.name.assign(reinterpret_cast<const char*>(&d[p + 46]), nl);
+    e.name.assign(reinterpret_cast<const char*>(d.data() + p + 46), nl);  // (nl may be 0 at the end)
     for (char& c : e.name)
       if (c == '\\') c = '/';
     out.push_back(e);
@@ -240,7 +240,7 @@ bool readZipEntry(const std::string& path, const ZipEntry& e, std::vector<uint8_
   if (e.method == 0) {
     out.assign(d.begin() + static_cast<long>(data), d.begin() + static_cast<long>(data + e.packed));
   } else if (e.method == 8) {
-    if (!inflateRaw(&d[data], e.packed, out, e.size)) return fail(err, "cannot decompress " + e.name);
+    if (!inflateRaw(d.data() + data, e.packed, out, e.size)) return fail(err, "cannot decompress " + e.name);
   } else {
     return fail(err, "unsupported compression in " + e.name);
   }
