@@ -184,14 +184,13 @@ int64_t pathMtime(const std::string& path) {
   auto stamp = [&](const fs::path& p) {
     auto t = fs::last_write_time(p, ec);
     if (ec) return;
-    auto s = std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count();
-    best = std::max<int64_t>(best, static_cast<int64_t>(s));
+    best = std::max<int64_t>(best, platform::fileTimeSeconds(t));
   };
   stamp(path);
   // Bundles: the binaries change on updates even when the folder does not.
   if (fs::is_directory(path, ec)) {
     fs::path contents = fs::path(path) / "Contents";
-    for (const char* sub : {"MacOS", "x86_64-linux", "aarch64-linux", "i386-linux"}) {
+    for (const char* sub : {"MacOS", "x86_64-linux", "aarch64-linux", "i386-linux", "x86_64-win", "arm64-win", "arm64x-win", "arm64ec-win"}) {
       fs::path d = contents / sub;
       if (!fs::is_directory(d, ec)) continue;
       for (fs::directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec)) stamp(it->path());
@@ -215,10 +214,10 @@ std::vector<std::string> findEntries(const std::vector<std::string>& folders, co
       if (dir) {
         // Never look inside bundles (of any format).
         bool bundle = e == ".vst3" || e == ".vst" || e == ".clap" || e == ".component" || e == ".lv2" || e == ".app" || e == ".bundle" || e == ".framework";
-        if (e == ext && directories) out.push_back(p.string());
+        if (e == ext && directories) out.push_back(p.generic_string());
         if (bundle) it.disable_recursion_pending();
       } else if (e == ext && files) {
-        out.push_back(p.string());
+        out.push_back(p.generic_string());
       }
       if (it.depth() > 6) it.disable_recursion_pending();
     }

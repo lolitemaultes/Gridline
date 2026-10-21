@@ -115,12 +115,12 @@ std::vector<std::string> findBundles(const std::vector<std::string>& folders) {
       const fs::path& p = it->path();
       if (p.extension() == ".vst3") {
         if (it->is_directory(ec)) {
-          out.push_back(p.string());
+          out.push_back(p.generic_string());
           it.disable_recursion_pending();
         }
 #if defined(_WIN32)
         else if (it->is_regular_file(ec)) {
-          out.push_back(p.string());  // VST 3.6 and older: a single .vst3 DLL
+          out.push_back(p.generic_string());  // VST 3.6 and older: a single .vst3 DLL
         }
 #endif
       }

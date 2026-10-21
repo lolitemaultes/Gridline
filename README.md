@@ -95,7 +95,7 @@ On Wayland Gridline runs natively through SDL; the interfaces of hosted plugins 
 
 ## Build
 
-Gridline needs CMake, a C++17 compiler and SDL2. Everything else (Dear ImGui, Lua, RtMidi, the plugin interfaces and the audio decoders) is bundled in `third_party/`. The CI builds and tests every change on the systems below (`.github/workflows/ci.yml`); `tools/ci/install-deps.sh` installs the dependencies on each.
+Gridline needs CMake, a C++17 compiler and SDL2. Everything else (Dear ImGui, Lua, RtMidi, Signalsmith Stretch, the plugin interfaces and the audio decoders) is bundled in `third_party/`. The CI builds and tests every change on the systems below (`.github/workflows/ci.yml`); `tools/ci/install-deps.sh` installs the dependencies on each.
 
 ```sh
 # macOS
@@ -110,7 +110,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev libx11-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 124 test suites
+ctest --test-dir build          # 125 test suites
 ./build/gridline-app            # start the app
 ```
 
@@ -220,7 +220,7 @@ Project files are JSON (`"format": "gridline-project"`). Older files are upgrade
 ## License
 
 Gridline is free software, released under the GNU General Public License v3.0 (see `LICENSE`).
-Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), CLAP headers (MIT), VST3 plug-in interfaces (MIT), dr_libs and stb_vorbis (public domain or MIT-0), nanosvg (zlib). See each folder under `third_party/`.
+Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), Signalsmith Stretch and Signalsmith Linear (MIT, time stretching and pitch shifting), CLAP headers (MIT), VST3 plug-in interfaces (MIT), dr_libs and stb_vorbis (public domain or MIT-0), nanosvg (zlib). See each folder under `third_party/`.
 The interface icons in `assets/icons/ui/` use geometry from Lucide (ISC) and Tabler Icons (MIT); see `assets/icons/ui/NOTICE.md`.
 
 Gridline is an independent project and is not affiliated with or endorsed by Image-Line. "FL Studio" is a trademark of Image-Line Software and is mentioned only to describe file compatibility.

@@ -241,6 +241,12 @@ bool writePrivateFile(const std::string& path, const std::string& data) {
 #endif
 }
 
+int64_t fileTimeSeconds(std::filesystem::file_time_type t) {
+  using namespace std::chrono;
+  const auto sys = system_clock::now() + duration_cast<system_clock::duration>(t - std::filesystem::file_time_type::clock::now());
+  return static_cast<int64_t>(duration_cast<seconds>(sys.time_since_epoch()).count());
+}
+
 bool writable(const std::string& path) {
 #if defined(_WIN32)
   const DWORD a = GetFileAttributesW(widen(path).c_str());

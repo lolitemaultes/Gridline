@@ -652,10 +652,10 @@ void editorPitch(App& a, const PluginTarget& t, float width) {
   const Song& s = a.doc.song();
   const PluginState st = *t.state(s);
   Live lv = live(a, t);
-  const int engine = std::clamp(static_cast<int>(val(st, PsEngine) + 0.5f), 0, 2);
-  const bool classic = engine == kPsClassic, voice = engine == kPsVoice, music = engine == kPsMusic;
+  const int engine = std::clamp(static_cast<int>(val(st, PsEngine) + 0.5f), 0, 3);
+  const bool classic = engine == kPsClassic, voice = engine == kPsVoice, music = engine == kPsMusic, hifi = engine == kPsHifi;
   const bool spectral = val(st, PsMode) >= 0.5f;
-  const bool formantOn = voice || (classic && spectral);
+  const bool formantOn = voice || hifi || (classic && spectral);
   const skin::Skin& K = music ? pitchMusicSkin() : pitchSkin();
   constexpr float kW = 747, kH = 330;
   skin::Form F = skin::Form::fit(width, kW);
@@ -664,7 +664,7 @@ void editorPitch(App& a, const PluginTarget& t, float width) {
   skin::Scope scope(K);
   const auto& P = pal();
   {
-    static const char* engines[3] = {"CLS", "VOICE", "MUSIC"};
+    static const char* engines[4] = {"CLS", "VOICE", "MUSIC", "HI-FI"};
     sel(a, t, PsEngine, F, 5, 5, 32, 270, K, false, engines);
   }
   // Pitch (x) / formant or grain length (y) pad.
@@ -720,7 +720,8 @@ void editorPitch(App& a, const PluginTarget& t, float width) {
       a.setHint(buf);
     }
   }
-  text(dl, F, 47, 271, music ? "GRAIN CLOUD" : (voice ? "PITCH-SYNCHRONOUS" : (spectral ? "SPECTRAL" : "DELAY LINE")), K.textDim);
+  text(dl, F, 47, 271, hifi ? "SPECTRAL STRETCH + RESAMPLING" : music ? "GRAIN CLOUD" : (voice ? "PITCH-SYNCHRONOUS" : (spectral ? "SPECTRAL" : "DELAY LINE")),
+       K.textDim);
   // Pitch and formant / duration sliders.
   VV(a, t, PsPitch, F, 319, 44, 26, 200, K, "PITCH");
   if (music) {
@@ -741,6 +742,9 @@ void editorPitch(App& a, const PluginTarget& t, float width) {
       menu(a, t, ps[i], F, 445, 153 + 33 * i, 80, 20, K);
     }
     cap(dl, F, 485, 254, "PITCH ANALYSIS", K.textDim);
+  } else if (hifi) {  // J-87: engine/TimeStretch, in tune to the cent; latency compensated
+    chk(a, t, PsPreserve, F, 438, 74, 110, 18, K, "KEEP FORMANTS");
+    cap(dl, F, 485, 254, "HI-FI ENGINE", K.textDim);
   } else if (music) {
     WV(a, t, PsDensity, F, 455, 47, 60, K, "DENSITY");
     WV(a, t, PsJitter, F, 435, 199, 42, K, "JITTER");
@@ -787,6 +791,7 @@ void editorPitch(App& a, const PluginTarget& t, float width) {
     skin::lcd(dl, F.p(240, 292), F.p(380, 312), K, buf, F.font(8.0f));
   }
   if (classic) text(dl, F, 400, 297, "CLASSIC: DELAY AFTER THE SHIFTER, FEEDBACK INTO IT", K.textDim, 6.5f);
+  else if (hifi) text(dl, F, 400, 297, "HI-FI: IN TUNE TO THE CENT, ECHOES AFTER THE SHIFTER", K.textDim, 6.5f);
   else text(dl, F, 400, 297, voice ? "VOICE: PSOLA, FORMANTS KEPT BY CORRECTION" : "MUSIC: GRANULAR, ANY MATERIAL", K.textDim, 6.5f);
   F.end(kW, kH);
 }

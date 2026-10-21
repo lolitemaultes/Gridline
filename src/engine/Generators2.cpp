@@ -1,5 +1,6 @@
 // Gridline — Wave 2 instruments: Drum Pads, FM Synth, Acid Bass, Keys,
 // Slicer, Granular, MIDI Out. Audio-thread only; no allocation after creation.
+#include "TimeStretch.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -24,6 +25,21 @@ inline float interp(const std::vector<float>& v, double pos) {
   if (i0 + 1 >= v.size()) return i0 < v.size() ? v[i0] : 0.f;
   float fr = static_cast<float>(pos - static_cast<double>(i0));
   return v[i0] + (v[i0 + 1] - v[i0]) * fr;
+}
+
+// J-87: band-limited read (windowed sinc, cutoff following the read rate) for
+// pitched sample playback: no aliasing when pitched up, no dulling between
+// samples. Exact on whole frames.
+inline void interpBl(const Sample& s, double pos, double rate, float& l, float& r) {
+  const double fl = std::floor(pos);
+  if (std::fabs(rate) <= 1.000001 && pos - fl < 1e-9 && pos >= 0 && fl < static_cast<double>(s.frames())) {  // exact unless reading faster
+    const auto i = static_cast<size_t>(fl);
+    l = s.left[i];
+    r = s.right[i];
+    return;
+  }
+  stretch::readSinc2(s.left.data(), s.right.data(), static_cast<int64_t>(s.frames()), pos, std::fabs(rate),
+                     stretch::sincTable(stretch::Quality::Realtime), l, r);
 }
 
 // ============================================================ Drum Pads
@@ -286,8 +302,10 @@ class PadsGen final : public Generator {
           setGains(v, (v.panEnv.value - 0.5) * 2.0);
         }
         float g = v.fade * static_cast<float>(a);
-        L[i] += interp(sm.left, v.pos) * v.gl * g;
-        R[i] += interp(sm.right, v.pos) * v.gr * g;
+        float sl, sr;
+        interpBl(sm, v.pos, v.rate, sl, sr);
+        L[i] += sl * v.gl * g;
+        R[i] += sr * v.gr * g;
         v.pos += v.reverse ? -v.rate : v.rate;
         v.fade -= v.fadeStep;
       }
@@ -1163,7 +1181,9 @@ class SlicerGen final : public Generator {
         double toEnd = v.reverse ? v.pos - v.start : v.end - v.pos;
         if (edge > 0 && toEnd < edge) f *= toEnd / edge;
         double g = a * vol_ * f * v.fade;
-        double l = interp(smp->left, v.pos), r = interp(smp->right, v.pos);
+        float bl, br;
+        interpBl(*smp, v.pos, v.rate, bl, br);
+        double l = bl, r = br;
         if (ftype_ > 0) {
           double io[2] = {l, r};
           for (int c = 0; c < 2; ++c) {

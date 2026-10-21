@@ -68,7 +68,7 @@ AudioBuffer renderSong(const Song& source, const RenderOptions& opt) {
 
 const char* renderInterpName(RenderInterp q) {
   switch (q) {
-    case RenderInterp::Linear: return "Linear (realtime)";
+    case RenderInterp::Linear: return "Realtime (band-limited sinc)";  // J-87: was linear
     case RenderInterp::Hermite: return "Hermite (4-point)";
     case RenderInterp::Sinc16: return "Sinc 16-point";
     case RenderInterp::Sinc32: return "Sinc 32-point";

@@ -117,7 +117,7 @@ PluginInfo pitch() {
   p.params[PsOutput] = lin("Output", "dB", -24, 12, 0);
   p.params[PsMix] = lin("Mix", "%", 0, 1, 1);
   // J-1 reference engines (pre-J-1 states keep the classic engines).
-  p.params[PsEngine] = ch("Engine", {"Classic", "Voice", "Music"}, kPsMusic);
+  p.params[PsEngine] = ch("Engine", {"Classic", "Voice", "Music", "Hi-fi"}, kPsHifi);  // J-87: new instances: Hi-fi
   p.params[PsCorrection] = lin("Formant correction", "%", 0, 1, 1);
   p.params[PsDuration] = lin("Grain length", "ms", 20, 150, 85);
   p.params[PsDensity] = lin("Density", "x", 1, 5, 3);

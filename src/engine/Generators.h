@@ -186,6 +186,10 @@ class Generator {
     (void)state;
     (void)sampleRate;
   }
+  // J-87: UI thread, Program build, before prepareHost: the channel only
+  // feeds playlist audio clips (no notes in any pattern), so instruments can
+  // skip per-note resources (the sampler's stretch voices).
+  virtual void setClipOnly(bool clipOnly) { (void)clipOnly; }
   // Processing latency in samples (for plugin delay compensation).
   virtual int latencySamples() const { return 0; }
   // Latency with `state` at `sampleRate` (UI thread, Program build; see

@@ -266,10 +266,6 @@ msgid "Input status"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
-msgid "Keep pitch (realtime stretch)"
-msgstr ""
-
-#: src/app/AudioRecordUi.cpp
 msgid "LEVEL"
 msgstr ""
 
@@ -343,10 +339,6 @@ msgstr ""
 
 #: src/app/AudioRecordUi.cpp
 msgid "Render clip to audio (consolidate)"
-msgstr ""
-
-#: src/app/AudioRecordUi.cpp src/app/MenuParityUi.cpp
-msgid "Resample (pitch follows speed)"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
@@ -5994,6 +5986,14 @@ msgid "Audio clip channels"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Auto"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Auto (general)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Automation clip created in the playlist"
 msgstr ""
 
@@ -6062,7 +6062,15 @@ msgid "Delete unused automation clips"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Drum loops and percussion: every hit re-attacked from the original"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Every audio clip"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Formant keep"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -6102,6 +6110,10 @@ msgid "Minutes : seconds : hundredths"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Mono / vocal"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "More macros"
 msgstr ""
 
@@ -6130,6 +6142,18 @@ msgid "Other devices follow Gridline's tempo and transport (MIDI clock on the MI
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Pitch and speed change together, like a turntable (band-limited, no aliasing)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Pitch and time apart, for full mixes, chords and loops; drum hits stay sharp"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Pitch shift that keeps a voice's character (no chipmunk effect)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Plays the channel's note effects (arpeggiator, chords, …) and writes their output as notes"
 msgstr ""
 
@@ -6154,6 +6178,10 @@ msgid "Puts every different clip of each track once into a live area at the song
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Realtime (band-limited sinc)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Remove the part instead"
 msgstr ""
 
@@ -6167,6 +6195,10 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Replace the channel's notes"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Resample"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -6214,6 +6246,10 @@ msgid "Show played chords in the hint bar"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Single voices, vocals, bass and leads: tighter timing"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Song position shows"
 msgstr ""
 
@@ -6226,15 +6262,15 @@ msgid "Stop returns to the set position"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
-msgid "Stretch (keep the pitch)"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
 msgid "Swing mix for selected (type in)..."
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Swing mix for the selected channels (0-100 %)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Tape (varispeed)"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -6251,6 +6287,14 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Timecode (SMPTE)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Transient"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Transient (drums)"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp

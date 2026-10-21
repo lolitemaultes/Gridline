@@ -131,7 +131,7 @@ inline void testSlicers() {
     for (const char* name : {"Fruity Slicer", "Fruity slicer"}) {
       Run r;
       decode(r, name, s.b);
-      expect(r.ok && r.m.glType == "gl.slicer" && r.m.state.data == file, "Fruity Slicer → gl.slicer with its sample");
+      expect(r.ok && r.m.glType == "gl.slicer" && std::filesystem::path(r.m.state.data) == std::filesystem::path(file), "Fruity Slicer → gl.slicer with its sample");
       expect(near(param(r, slMarker(1)), 0.25) && near(param(r, slMarker(2)), 0.75) && param(r, slMarker(3)) < 0, "Fruity Slicer: slice starts → markers");
       expect(near(param(r, SlBaseNote), 62), "Fruity Slicer: base note");
       expect(noteRms(r.m.state, 63) > 0.01 && noteRms(r.m.state, 70) < 1e-6, "Fruity Slicer: slice 2 sounds, keys past the slices are silent");
@@ -150,7 +150,7 @@ inline void testSlicers() {
     decode(r, "Fruity Granulizer", s.b);
     // J-22: Granulizer → Grain Scanner (gl.grainscan), parameter index = control tag.
     using namespace gl::packs::models::metal;
-    expect(r.ok && r.m.glType == "gl.grainscan" && r.m.state.data == file, "Granulizer → gl.grainscan with the channel sample");
+    expect(r.ok && r.m.glType == "gl.grainscan" && std::filesystem::path(r.m.state.data) == std::filesystem::path(file), "Granulizer → gl.grainscan with the channel sample");
     expect(near(param(r, GsGrainSpace), 413) && near(param(r, GsWaveSpace), 611), "Granulizer: grain / wave spacing");
     expect(near(param(r, GsStart), 2048) && near(param(r, GsStereo), 32) && near(param(r, GsLoop), 1) && near(param(r, GsTransSource), 1),
            "Granulizer: start, stereo, loop, transient source");
@@ -184,7 +184,7 @@ inline void testSlicers() {
     expect(r.ok && r.m.glType == "gl.splinescratch", "Wave Traveller → gl.splinescratch");
     using namespace gl::packs::models::metal;
     SsData d;
-    expect(parseScratchSpl(r.m.state.data, d) && d.path == file, "Wave Traveller: sample path");
+    expect(parseScratchSpl(r.m.state.data, d) && std::filesystem::path(d.path) == std::filesystem::path(file), "Wave Traveller: sample path");
     const SsPatch& p0 = d.keys[60];
     expect(p0.used && p0.pos.size() == 3 && near(p0.pos[1].y, 1) && near(p0.start, 0.2) && near(p0.end, 0.6) && near(p0.beats, 2),
            "Wave Traveller: key C5 patch (spline, window, length)");

@@ -382,7 +382,7 @@ int main() {
     gl::BackupPolicy p3;
     p3.inProjectFolder = true;
     gl::BackupManager local(p3);
-    expect(local.folderFor("/songs/a/x.gridline.json") == "/songs/a/Backup", "project-folder backups go next to the project");
+    expect(fs::path(local.folderFor("/songs/a/x.gridline.json")) == fs::path("/songs/a/Backup"), "project-folder backups go next to the project");
   }
 
   fs::remove_all(tmp);

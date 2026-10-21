@@ -1,11 +1,12 @@
 // Gridline — "edison" pack: frequency-domain and resampling tools — FFT,
-// sample-rate conversion, time stretch / pitch shift (phase vocoder with
-// phase locking, WSOLA, varispeed), noise reduction, drawn EQ, convolution
+// sample-rate conversion, time stretch / pitch shift (engine/TimeStretch,
+// varispeed), noise reduction, drawn EQ, convolution
 // reverb, blur, spectral editing and the spectrogram.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include "../../engine/Dsp.h"
+#include "../../engine/TimeStretch.h"
 #include "edison.h"
 #include "edison_internal.h"
 
@@ -181,134 +182,14 @@ Content resample(const Content& c, double newRate, int quality) {
 // ------------------------------------------------------------------ time stretch / pitch shift
 const char* stretchName(Stretch s) {
   switch (s) {
-    case Stretch::Elastic: return "Elastic (tonal)";
+    case Stretch::Elastic: return "Auto (general)";
     case Stretch::Transient: return "Transient (drums)";
     case Stretch::Tape: return "Tape (varispeed)";
+    case Stretch::Mono: return "Mono / vocal";
+    case Stretch::Formant: return "Formant keep";
     default: return "?";
   }
 }
-
-namespace {
-
-// Phase vocoder with identity phase locking: output length = round(n * factor).
-std::vector<float> pvStretch(const float* x, int64_t n, double factor, int fft) {
-  const int64_t m = static_cast<int64_t>(std::llround(static_cast<double>(n) * factor));
-  std::vector<float> out(static_cast<size_t>(std::max<int64_t>(0, m)), 0.f);
-  if (n <= 0 || m <= 0) return out;
-  const int Hs = fft / 4;
-  const double Ha = Hs / factor;
-  const Fft F(fft);
-  const std::vector<double> w = hannWindow(fft);
-  const int bins = fft / 2 + 1, half = fft / 2;
-  std::vector<double> lastPhase(static_cast<size_t>(bins), 0.0), sumPhase(static_cast<size_t>(bins), 0.0), mag(static_cast<size_t>(bins)),
-      ph(static_cast<size_t>(bins)), outPh(static_cast<size_t>(bins));
-  std::vector<double> acc(static_cast<size_t>(m + fft), 0.0), norm(static_cast<size_t>(m + fft), 0.0);
-  std::vector<cplx> buf(static_cast<size_t>(fft));
-  const int64_t frames = m / Hs + 2;
-  double lastPos = 0;
-  for (int64_t k = 0; k < frames; ++k) {
-    const double pos = static_cast<double>(k) * Ha;  // analysis centre (input samples)
-    const int64_t ip = static_cast<int64_t>(std::llround(pos));
-    for (int i = 0; i < fft; ++i) {
-      int64_t s = ip - half + i;
-      double v = s >= 0 && s < n ? x[s] : 0.0;
-      buf[static_cast<size_t>(i)] = cplx(v * w[static_cast<size_t>(i)], 0.0);
-    }
-    F.forward(buf);
-    for (int b = 0; b < bins; ++b) {
-      mag[static_cast<size_t>(b)] = std::abs(buf[static_cast<size_t>(b)]);
-      ph[static_cast<size_t>(b)] = std::arg(buf[static_cast<size_t>(b)]);
-    }
-    if (k == 0) {
-      outPh = ph;
-    } else {
-      const double da = static_cast<double>(ip) - lastPos;  // actual analysis hop
-      // Instantaneous frequencies at peaks; other bins follow their peak.
-      std::vector<int> peakOf(static_cast<size_t>(bins), -1);
-      std::vector<int> peaks;
-      for (int b = 1; b + 1 < bins; ++b)
-        if (mag[static_cast<size_t>(b)] > mag[static_cast<size_t>(b - 1)] && mag[static_cast<size_t>(b)] >= mag[static_cast<size_t>(b + 1)])
-          peaks.push_back(b);
-      if (peaks.empty()) peaks.push_back(0);
-      size_t pi = 0;
-      for (int b = 0; b < bins; ++b) {
-        while (pi + 1 < peaks.size() && std::abs(peaks[pi + 1] - b) <= std::abs(peaks[pi] - b)) ++pi;
-        peakOf[static_cast<size_t>(b)] = peaks[pi];
-      }
-      for (int p : peaks) {
-        const double omega = kTwoPi * p / fft;
-        double dphi = ph[static_cast<size_t>(p)] - lastPhase[static_cast<size_t>(p)] - omega * da;
-        dphi -= kTwoPi * std::round(dphi / kTwoPi);
-        const double inst = omega + (da > 0 ? dphi / da : 0.0);
-        sumPhase[static_cast<size_t>(p)] += inst * Hs;
-      }
-      for (int b = 0; b < bins; ++b) {
-        int p = peakOf[static_cast<size_t>(b)];
-        outPh[static_cast<size_t>(b)] = sumPhase[static_cast<size_t>(p)] + (ph[static_cast<size_t>(b)] - ph[static_cast<size_t>(p)]);
-      }
-    }
-    for (int b = 0; b < bins; ++b) {
-      sumPhase[static_cast<size_t>(b)] = outPh[static_cast<size_t>(b)];
-      lastPhase[static_cast<size_t>(b)] = ph[static_cast<size_t>(b)];
-    }
-    lastPos = static_cast<double>(ip);
-    for (int b = 0; b < bins; ++b) {
-      buf[static_cast<size_t>(b)] = std::polar(mag[static_cast<size_t>(b)], outPh[static_cast<size_t>(b)]);
-      if (b > 0 && b < half) buf[static_cast<size_t>(fft - b)] = std::conj(buf[static_cast<size_t>(b)]);
-    }
-    F.inverse(buf);
-    const int64_t c0 = k * Hs - half;
-    for (int i = 0; i < fft; ++i) {
-      int64_t s = c0 + i;
-      if (s < 0 || s >= m) continue;
-      acc[static_cast<size_t>(s)] += buf[static_cast<size_t>(i)].real() * w[static_cast<size_t>(i)];
-      norm[static_cast<size_t>(s)] += w[static_cast<size_t>(i)] * w[static_cast<size_t>(i)];
-    }
-  }
-  for (int64_t s = 0; s < m; ++s)
-    out[static_cast<size_t>(s)] = static_cast<float>(norm[static_cast<size_t>(s)] > 1e-9 ? acc[static_cast<size_t>(s)] / norm[static_cast<size_t>(s)] : 0.0);
-  return out;
-}
-
-// WSOLA: overlap-adds input frames picked near their nominal position to
-// continue the previous frame best (keeps transients sharp).
-std::vector<float> wsola(const float* x, int64_t n, double factor, int N, const float* guide) {
-  const int64_t m = static_cast<int64_t>(std::llround(static_cast<double>(n) * factor));
-  std::vector<float> out(static_cast<size_t>(std::max<int64_t>(0, m)), 0.f);
-  if (n <= 0 || m <= 0) return out;
-  const int Hs = N / 2, tol = N / 4;
-  const std::vector<double> w = hannWindow(N);
-  std::vector<double> acc(static_cast<size_t>(m + N), 0.0), norm(static_cast<size_t>(m + N), 0.0);
-  auto at = [&](const float* s, int64_t i) { return i >= 0 && i < n ? static_cast<double>(s[i]) : 0.0; };
-  int64_t prev = 0;  // input start of the previous frame
-  for (int64_t k = 0; k * Hs < m; ++k) {
-    const int64_t nominal = static_cast<int64_t>(std::llround(static_cast<double>(k * Hs) / factor));
-    int64_t best = nominal;
-    if (k > 0) {
-      const int64_t natural = prev + Hs;  // what would follow the previous frame
-      double bestC = -1e300;
-      for (int64_t d = -tol; d <= tol; d += 1) {
-        const int64_t cand = nominal + d;
-        double cc = 0;
-        for (int i = 0; i < Hs; i += 2) cc += at(guide, natural + i) * at(guide, cand + i);
-        if (cc > bestC) bestC = cc, best = cand;
-      }
-    }
-    const int64_t o0 = k * Hs;
-    for (int i = 0; i < N; ++i) {
-      int64_t s = o0 + i;
-      if (s >= m) break;
-      acc[static_cast<size_t>(s)] += at(x, best + i) * w[static_cast<size_t>(i)];
-      norm[static_cast<size_t>(s)] += w[static_cast<size_t>(i)];
-    }
-    prev = best;
-  }
-  for (int64_t s = 0; s < m; ++s)
-    out[static_cast<size_t>(s)] = static_cast<float>(norm[static_cast<size_t>(s)] > 1e-6 ? acc[static_cast<size_t>(s)] / norm[static_cast<size_t>(s)] : 0.0);
-  return out;
-}
-
-}  // namespace
 
 Audio stretchAudio(const Audio& a, double timeFactor, double semitones, Stretch mode, int quality) {
   const double P = std::pow(2.0, semitones / 12.0);
@@ -326,27 +207,21 @@ Audio stretchAudio(const Audio& a, double timeFactor, double semitones, Stretch 
   }
   timeFactor = std::clamp(timeFactor, 0.05, 20.0);
   const int64_t target = static_cast<int64_t>(std::llround(static_cast<double>(a.frames()) * timeFactor));
-  const double f = timeFactor * P;  // stretch, then resample by 1/P
-  const int fft = quality <= 0 ? 1024 : quality == 1 ? 2048 : 4096;
-  std::vector<float> guide(a.L.size());
-  for (size_t i = 0; i < guide.size(); ++i) guide[i] = 0.5f * (a.L[i] + a.R[i]);
-  Audio s;
-  s.rate = a.rate;
-  s.channels = a.channels;
-  for (int ch = 0; ch < (a.channels == 1 ? 1 : 2); ++ch) {
-    std::vector<float> y = mode == Stretch::Elastic ? pvStretch(a.ch(ch), a.frames(), f, fft)
-                                                    : wsola(a.ch(ch), a.frames(), f, fft / 2, guide.data());
-    (ch == 0 ? s.L : s.R) = std::move(y);
-  }
-  if (a.channels == 1) s.R = s.L;
-  if (std::fabs(P - 1.0) > 1e-9) {
-    s.rate = a.rate * P;
-    s = resampleAudio(s, a.rate, quality);
-  }
-  s.rate = a.rate;
-  s.resize(target);  // exact length
-  fixMono(s);
-  return s;
+  stretch::Settings set;
+  set.mode = mode == Stretch::Transient ? stretch::Mode::Transient
+             : mode == Stretch::Mono    ? stretch::Mode::Mono
+             : mode == Stretch::Formant ? stretch::Mode::Formant
+                                        : stretch::Mode::Auto;
+  set.pitch = P;
+  const int nch = a.channels == 1 ? 1 : 2;
+  o.L.assign(static_cast<size_t>(std::max<int64_t>(0, target)), 0.f);
+  o.R.assign(o.L.size(), 0.f);
+  const float* in[2] = {a.L.data(), a.R.data()};
+  float* out[2] = {o.L.data(), o.R.data()};
+  stretch::process(in, nch, a.frames(), out, target, a.rate, set);
+  if (nch == 1) o.R = o.L;
+  fixMono(o);
+  return o;
 }
 
 Content stretch(const Content& c, Range r, double timeFactor, double semitones, Stretch mode, int quality) {

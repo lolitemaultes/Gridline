@@ -253,7 +253,8 @@ void testInterpolation() {
   for (double l : levels) similar = similar && l > 0.01 && std::fabs(l - levels[0]) / levels[0] < 0.02;
   expect(similar, "sampler interpolation qualities: same level for every quality");
   expect(maxDiff(outs[0], outs[2]) > 1e-6f && maxDiff(outs[0], outs[2]) < 0.05f, "sinc interpolation differs slightly from linear");
-  // A 15 kHz tone a semitone down: linear interpolation dulls it, sinc keeps its level.
+  // A 15 kHz tone a semitone down: the realtime reader (J-87: band-limited
+  // windowed sinc, was linear) keeps its level like the offline sinc.
   std::vector<float> hiTone(44100);
   for (size_t i = 0; i < hiTone.size(); ++i) hiTone[i] = static_cast<float>(0.8 * std::sin(2 * 3.14159265358979 * 15000.0 * i / 44100.0));
   Song h = baseSong();
@@ -266,7 +267,7 @@ void testInterpolation() {
   RenderResult snc = renderAudio(h, job);
   const double lr = rms(lin.audio.plane(0) + 4410, 22050), sr = rms(snc.audio.plane(0) + 4410, 22050);
   if (std::getenv("GL_DEBUG")) std::printf("15k: linear %g sinc %g\n", lr, sr);
-  expect(sr > lr * 1.15, "sinc interpolation keeps high frequencies that linear interpolation dulls");
+  expect(lr > sr * 0.95 && lr < sr * 1.05, "realtime interpolation keeps high frequencies like the offline sinc (J-87: no linear dulling)");
 }
 
 // ---------------------------------------------------------------- tails

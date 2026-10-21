@@ -10,6 +10,7 @@
 //               selectors, 3 × 3 controller wheels, bottom bar).
 #include "../core/I18n.h"
 #include "../engine/Dsp.h"
+#include "../engine/TimeStretch.h"
 #include "PluginEditorsFlSynth.h"
 
 namespace gl {
@@ -241,9 +242,9 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
     skin::menuBox(a, t, SmpDeclick, F.p(80, 210), F.sz(132, 18), K, lf(F, 8));
     // TIME STRETCHING
     panelBox(dl, F, 226, 137, 200, 157, K, "TIME STRETCHING");
-    {
-      static const char* tm[2] = {"RESAMPLE", "STRETCH"};
-      skin::switchSel(a, t, SmpStretchMode, F.p(234, 156), F.sz(184, 20), K, tm, 2, true);
+    {  // J-87: the time modes (engine/TimeStretch)
+      skin::menuBox(a, t, SmpStretchMode, F.p(234, 156), F.sz(184, 18), K, lf(F, 8));
+      if (ImGui::IsItemHovered()) a.setHint(i18n::tr(stretch::modeHint(stretch::modeOf(val(st, SmpStretchMode)))));
     }
     w(SmpPitchShift, 256, 190, "PITCH", skin::WheelBigLine | skin::WheelCentered);
     w(SmpTimeStretch, 352, 190, "TIME");

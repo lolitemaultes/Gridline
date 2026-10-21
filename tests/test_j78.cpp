@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 #include "Check.h"
@@ -369,6 +370,37 @@ std::string slurp(const std::string& p) {
   return s;
 }
 
+// Whether file permissions stop this process: not as root (CI containers), and folder / read
+// permissions not on Windows. Probed, not assumed.
+bool folderPermsEnforced(const std::string& scratch) {
+  const std::string d = scratch + "/perm-probe";
+  fs::create_directories(d);
+  fs::permissions(d, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+  bool enforced;
+  {
+    std::ofstream os(d + "/x");
+    enforced = !os;
+  }
+  fs::permissions(d, fs::perms::owner_all, fs::perm_options::replace);
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return enforced;
+}
+bool filePermsEnforced(const std::string& scratch) {
+  const std::string f = scratch + "/perm-probe.txt";
+  { std::ofstream(f) << "x"; }
+  fs::permissions(f, fs::perms::owner_read, fs::perm_options::replace);
+  bool enforced;
+  {
+    std::ofstream os(f, std::ios::app);
+    enforced = !os;
+  }
+  fs::permissions(f, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+  std::error_code ec;
+  fs::remove(f, ec);
+  return enforced;
+}
+
 void testFlpFileWriting() {
   const Song s = makeDemoSong();
   flp::ExportOptions o;
@@ -385,7 +417,14 @@ void testFlpFileWriting() {
   expect(flp::exportFlpFile(s, p, rep, o, &err), "FLP overwrites an existing file (" + err + ")");
   expect(!leftovers(dir), "no temporary files left after writing");
 
+  const bool folderPerms = folderPermsEnforced(scratch), filePerms = filePermsEnforced(scratch);
+  if (!folderPerms) std::printf("# folder permissions are not enforced here (root / Windows): read-only folder checks skipped\n");
+  if (!filePerms) std::printf("# file permissions are not enforced here (root): read-only file checks skipped\n");
+  flp::PackageOptions po;
+  flp::PackageReport pr;
+  CollectReport cr;
   // Read-only folder: clear, actionable error, nothing left behind.
+  if (folderPerms) {
   const std::string ro = scratch + "/read only";
   fs::create_directories(ro);
   fs::permissions(ro, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
@@ -396,17 +435,17 @@ void testFlpFileWriting() {
              err.find("Choose another folder") != std::string::npos,
          "read-only folder: the message names the file, the reason and what to do");
   // Zipped formats in the same folder.
-  flp::PackageOptions po;
-  flp::PackageReport pr;
   err.clear();
   expect(!flp::exportFlpZip(s, ro + "/x.zip", "x", po, pr, &err) && err.find("no permission") != std::string::npos,
          "read-only folder: FL zip fails with the reason (" + err + ")");
-  CollectReport cr = exportZippedProject(s, ro + "/x.gridline.zip", "x");
+  cr = exportZippedProject(s, ro + "/x.gridline.zip", "x");
   expect(cr.error.find("no permission") != std::string::npos, "read-only folder: Gridline zip fails with the reason (" + cr.error + ")");
   fs::permissions(ro, fs::perms::owner_all, fs::perm_options::replace);
   expect(!leftovers(ro) && fs::is_empty(ro), "read-only folder: nothing written");
+  }
 
   // A read-only file is not replaced; its content stays.
+  if (filePerms) {
   const std::string locked = dir + "/Locked.flp";
   expect(flp::exportFlpFile(s, locked, rep, o, &err), "locked file: first write");
   const std::string before = slurp(locked);
@@ -417,6 +456,7 @@ void testFlpFileWriting() {
          "read-only file: not replaced, says why (" + err + ")");
   expect(slurp(locked) == before, "read-only file: content unchanged");
   fs::permissions(locked, fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace);
+  }
 
   // Missing folder / a folder in the way / a too-long name.
   err.clear();
@@ -437,6 +477,7 @@ void testFlpFileWriting() {
   const std::string gz = dir + "/Keep.gridline.zip", fz = dir + "/Keep.zip";
   expect(exportZippedProject(zs, gz, "Keep").error.empty() && flp::exportFlpZip(zs, fz, "Keep", po, pr, &err), "good archives written");
   const std::string gzBefore = slurp(gz), fzBefore = slurp(fz);
+  if (folderPerms) {
   fs::permissions(wav, fs::perms::none, fs::perm_options::replace);  // the sample can no longer be read
   cr = exportZippedProject(zs, gz, "Keep");
   err.clear();
@@ -445,6 +486,7 @@ void testFlpFileWriting() {
   expect(!cr.error.empty() && cr.error.find("snare.wav") != std::string::npos, "unreadable sample: Gridline zip fails naming it (" + cr.error + ")");
   expect(!fzOk && err.find("snare.wav") != std::string::npos, "unreadable sample: FL zip fails naming it (" + err + ")");
   expect(slurp(gz) == gzBefore && slurp(fz) == fzBefore, "a failed archive leaves the previous file intact");
+  }
   expect(!leftovers(dir), "a failed archive leaves no temporary file");
 }
 

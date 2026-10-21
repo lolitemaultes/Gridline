@@ -1,5 +1,6 @@
 // Gridline — J-4 tests: Resynth (gl.harmor), its drawn data / images, and the
 // decode of FL Studio's shipped two-part additive synth states.
+#include <filesystem>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -224,7 +225,7 @@ int main() {
   }
   // Picture import (PPM): bright bottom row → fundamental.
   {
-    const std::string path = "/tmp/gl_harmor_test.ppm";
+    const std::string path = (std::filesystem::temp_directory_path() / "gl_harmor_test.ppm").string();
     {
       std::ofstream f(path, std::ios::binary);
       f << "P6\n4 8\n255\n";

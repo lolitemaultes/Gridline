@@ -21,6 +21,7 @@
 #include <vector>
 #include "FlArticulator.h"
 #include "Generators.h"
+#include "TimeStretch.h"
 
 namespace gl::slicex {
 
@@ -168,6 +169,7 @@ class Engine {
   SamplePtr deck_[2];
   ProcessContext ctx_;
   int block_ = 48;
+  const stretch::SincTable* sinc_ = &stretch::sincTable(stretch::Quality::Realtime);  // J-87: band-limited reads
   std::array<Voice, 32> voices_{};
   std::array<int, 128> cycle_{};
   uint64_t rng_ = 0x2545F4914F6CDD1Dull;

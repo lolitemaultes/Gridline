@@ -194,7 +194,7 @@ int64_t bundleMtime(const std::string& bundle) {
       ec.clear();
       continue;
     }
-    best = std::max<int64_t>(best, std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count());
+    best = std::max<int64_t>(best, platform::fileTimeSeconds(t));
   }
   return best;
 }

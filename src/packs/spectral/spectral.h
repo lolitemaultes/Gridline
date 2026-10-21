@@ -312,7 +312,7 @@ enum PitchParam {
   PsOutput,     // dB
   PsMix,        // 0..1 dry/wet (0.5: FL import; the dry path is latency-aligned)
   // ---- J-1 reference engines (appended; pre-J-1 states normalise PsEngine to Classic) ----
-  PsEngine,     // choice: Classic (PsMode engines) / Voice (PSOLA) / Music (grains)
+  PsEngine,     // choice: Classic (PsMode engines) / Voice (PSOLA) / Music (grains) / Hi-fi (J-87)
   PsCorrection, // 0..1 formant correction (Voice): formant st = formant + pitch * (1 - corr)
   PsDuration,   // ms 20..150: grain length (Music)
   PsDensity,    // 1..5: grain overlap (Music)
@@ -327,6 +327,9 @@ enum PitchParam {
   PsCount
 };
 inline constexpr int kPsClassic = 0, kPsVoice = 1, kPsMusic = 2;
+// J-87: Hi-fi engine (engine/TimeStretch: spectral time stretch + band-limited
+// resampling, formant keep). Gridline's own; exported to FL as Music.
+inline constexpr int kPsHifi = 3;
 enum PsDelayModes { PsDlyOff = 0, PsDlyPost, PsDlyPre, PsDlyNoShift };
 // FL delay word 1..768 → ms (free) and 1/16 steps (tempo sync).
 inline double psDelayMs(double raw) { return 1.0 + 999.0 * (raw - 1.0) / 767.0; }

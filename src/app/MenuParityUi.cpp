@@ -1,6 +1,7 @@
 // Gridline — J-27 menu parity sweep: menu entries (see MenuParityUi.h).
 // Captions are Gridline's own wording; the operations live in
 // core/MenuParity (undoable, tested) and engine/NoteFxBurn.
+#include "../engine/TimeStretch.h"
 #include "../core/I18n.h"
 #include "MenuParityUi.h"
 #include <algorithm>
@@ -64,18 +65,34 @@ void declickItems(App& a, const std::vector<ObjectId>& chans) {
       report(a, ops::setSamplerDeclick(a.doc, chans, k), "Declicking changed", "No sampler channel to change");
 }
 
+// J-87: the sampler's time modes (engine/TimeStretch::modeName / modeHint),
+// marked here for the translation catalogue.
+[[maybe_unused]] constexpr const char* kTimeModeText[] = {
+    i18n::N_("Resample"), i18n::N_("Auto"), i18n::N_("Mono / vocal"), i18n::N_("Transient"), i18n::N_("Formant keep"),
+    i18n::N_("Pitch and speed change together, like a turntable (band-limited, no aliasing)"),
+    i18n::N_("Pitch and time apart, for full mixes, chords and loops; drum hits stay sharp"),
+    i18n::N_("Single voices, vocals, bass and leads: tighter timing"),
+    i18n::N_("Drum loops and percussion: every hit re-attacked from the original"),
+    i18n::N_("Pitch shift that keeps a voice's character (no chipmunk effect)"),
+    i18n::N_("Auto (general)"), i18n::N_("Transient (drums)"), i18n::N_("Tape (varispeed)"),
+    i18n::N_("Realtime (band-limited sinc)")};
+
 void timeModeItems(App& a) {
   const auto sel = selectedClipsOfKind(a, ClipKind::Audio);
-  ImGui::SeparatorText(i18n::tr("Every audio clip"));
-  if (ImGui::MenuItem(i18n::tr("Resample (pitch follows speed)##all")))
-    report(a, ops::setAudioClipTimeMode(a.doc, {}, 0), "Audio clip channels switched", "Nothing to switch");
-  if (ImGui::MenuItem(i18n::tr("Stretch (keep the pitch)##all")))
-    report(a, ops::setAudioClipTimeMode(a.doc, {}, 1), "Audio clip channels switched", "Nothing to switch");
-  ImGui::SeparatorText(i18n::tr("Selected audio clips"));
-  if (ImGui::MenuItem(i18n::tr("Resample (pitch follows speed)##sel"), nullptr, false, !sel.empty()))
-    report(a, ops::setAudioClipTimeMode(a.doc, sel, 0), "Audio clip channels switched", "Nothing to switch");
-  if (ImGui::MenuItem(i18n::tr("Stretch (keep the pitch)##sel"), nullptr, false, !sel.empty()))
-    report(a, ops::setAudioClipTimeMode(a.doc, sel, 1), "Audio clip channels switched", "Nothing to switch");
+  for (int group = 0; group < 2; ++group) {
+    ImGui::SeparatorText(group == 0 ? i18n::tr("Every audio clip") : i18n::tr("Selected audio clips"));
+    ImGui::PushID(group);
+    for (int m = 0; m < static_cast<int>(stretch::Mode::Count); ++m) {
+      ImGui::PushID(m);
+      const auto mode = static_cast<stretch::Mode>(m);
+      if (ImGui::MenuItem(i18n::tr(stretch::modeName(mode)), nullptr, false, group == 0 || !sel.empty()))
+        report(a, ops::setAudioClipTimeMode(a.doc, group == 0 ? decltype(sel){} : sel, m), "Audio clip channels switched",
+               "Nothing to switch");
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", i18n::tr(stretch::modeHint(mode)));
+      ImGui::PopID();
+    }
+    ImGui::PopID();
+  }
 }
 
 void scoreLogItems(App& a) {

@@ -190,7 +190,8 @@ std::vector<PluginInfo> build() {
     p.params[SmpFadeOut] = lin("Fade out", "%", 0, 0.5, 0);
     p.params[SmpLoopXfade] = lin("Loop crossfade", "%", 0, 0.5, 0);
     p.params[SmpDeclick] = ch("Declick", {"Off", "Out only", "Transient", "Generic", "Smooth"}, 0);
-    p.params[SmpStretchMode] = ch("Time mode", {"Resample", "Stretch"}, 0);
+    // J-87: engine/TimeStretch modes (0 = resample; the others keep the pitch apart from the speed).
+    p.params[SmpStretchMode] = ch("Time mode", {"Resample", "Auto", "Mono / vocal", "Transient", "Formant keep"}, 0);
     p.params[SmpPitchShift] = lin("Pitch shift", "ct", -1200, 1200, 0);
     p.params[SmpTimeStretch] = lg("Time stretch", "times", 0.25, 4, 1);
     p.params[SmpEnvDelay] = lin("Env delay", "s", 0, 5, 0);
@@ -553,7 +554,7 @@ std::vector<PluginInfo> build() {
     p.params[SlMaster] = lin("Master level", "x", 0, 2, 1);
     p.params[SlProcPitch] = lin("Processed pitch", "ct", -1200, 1200, 0);
     p.params[SlProcFit] = lin("Processed stretch", "", -20000, 20000, 0);
-    p.params[SlProcMethod] = ch("Stretch method", {"Keep audio", "Keep audio (fill)", "Stretch 1", "Stretch 2", "Stretch 3", "Stretch 4", "Stretch 5", "Stretch 6"}, 4);
+    p.params[SlProcMethod] = ch("Stretch method", {"Keep audio", "Keep audio (fill)", "Auto", "Transient", "Drums", "Tonal", "Mono / vocal", "Formant keep"}, 4);
     p.params[SlProcFadeIn] = lin("Processed fade in", "ms", 0, 1000, 0);
     p.params[SlProcFadeOut] = lin("Processed fade out", "ms", 0, 1000, 0);
     p.params[SlProcDeclick] = tog("Processed declick", 1);

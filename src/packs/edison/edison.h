@@ -149,7 +149,9 @@ Content applyEnvelope(const Content& c, Range r, const std::vector<std::pair<dou
 Audio resampleAudio(const Audio& a, double newRate, int quality = 1);
 Content resample(const Content& c, double newRate, int quality = 1);
 
-enum class Stretch { Elastic = 0, Transient, Tape, Count };  // phase vocoder, WSOLA, varispeed
+// J-87: Elastic / Transient / Mono / Formant run on engine/TimeStretch (its
+// Auto, Transient, Mono / vocal and Formant keep modes); Tape is varispeed.
+enum class Stretch { Elastic = 0, Transient, Tape, Mono, Formant, Count };
 const char* stretchName(Stretch s);
 // Time factor (2 = twice as long) and pitch shift in semitones. Tape couples them
 // (the time factor is ignored: pitch follows speed). quality 0..2 (FFT size).

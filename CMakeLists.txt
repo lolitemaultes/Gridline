@@ -32,11 +32,19 @@ if(MSVC)
   # <math.h> first everywhere: its M_PI (_USE_MATH_DEFINES) and SDL's fallback definition would
   # otherwise collide (C4005) depending on the include order.
   add_compile_options(/FImath.h)
+  # Headers of vendored libraries (SYSTEM include folders) are not Gridline's warnings.
+  add_compile_options(/external:W0)
   add_compile_definitions(_USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE
                           _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
   set(GL_WARN -Wall -Wextra -Wpedantic)
+  # Identical audio on every CPU: GCC fuses a*b+c into one rounding (FMA) wherever the CPU has it
+  # (aarch64, and x86 with -march), unlike Clang and MSVC; the reference captures expect
+  # separate roundings.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-ffp-contract=off)
+  endif()
   set(GL_WARN_LOOSE -Wall -Wextra)
   set(GL_NOWARN -w)
   if(GRIDLINE_WERROR)
@@ -640,6 +648,12 @@ target_link_libraries(gridline_tests_j85 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j85 PRIVATE tests src)
 target_compile_options(gridline_tests_j85 PRIVATE ${GL_WARN})
 add_test(NAME j85 COMMAND gridline_tests_j85 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-87: time stretching / pitch shifting (engine/TimeStretch, Signalsmith Stretch).
+add_executable(gridline_tests_j87 tests/test_j87.cpp)
+target_link_libraries(gridline_tests_j87 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j87 PRIVATE tests src)
+target_compile_options(gridline_tests_j87 PRIVATE ${GL_WARN})
+add_test(NAME j87 COMMAND gridline_tests_j87 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_clip_sources tests/test_clip_sources.cpp)
 target_link_libraries(gridline_tests_clip_sources PRIVATE gridline_core)
 target_include_directories(gridline_tests_clip_sources PRIVATE tests src)

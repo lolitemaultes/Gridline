@@ -1,4 +1,5 @@
 // Gridline — audio input & recording UI (J-8). See AudioRecordUi.h.
+#include "../engine/TimeStretch.h"
 #include "../core/I18n.h"
 #include "J31Ui.h"
 #include "AudioRecordUi.h"
@@ -385,10 +386,15 @@ void audioClipMenu(App& a, ObjectId id) {
   if (ImGui::BeginMenu(i18n::tr("Time stretch"))) {
     const Channel* ch = s.channel(clip.source);
     const bool keep = ch && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) && ch->plugin.params[pp::SmpStretchMode] >= 0.5f;
-    if (ImGui::MenuItem(i18n::tr("Resample (pitch follows speed)"), nullptr, !keep))
-      editSongClip(a, "stretch mode", [&](Song& x) { setClipStretch(x, id, clip.stretch, false); });
-    if (ImGui::MenuItem(i18n::tr("Keep pitch (realtime stretch)"), nullptr, keep))
-      editSongClip(a, "stretch mode", [&](Song& x) { setClipStretch(x, id, clip.stretch, true); });
+    // J-87: every time mode (engine/TimeStretch), the current one checked.
+    const int cur = ch && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)
+                        ? static_cast<int>(stretch::modeOf(ch->plugin.params[pp::SmpStretchMode]))
+                        : 0;
+    for (int m = 0; m < static_cast<int>(stretch::Mode::Count); ++m) {
+      if (ImGui::MenuItem(i18n::tr(stretch::modeName(static_cast<stretch::Mode>(m))), nullptr, m == cur))
+        editSongClip(a, "stretch mode", [&](Song& x) { setClipStretchMode(x, id, clip.stretch, m); });
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", i18n::tr(stretch::modeHint(static_cast<stretch::Mode>(m))));
+    }
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Half as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 0.5, keep); });
     if (ImGui::MenuItem(i18n::tr("Twice as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 2.0, keep); });
@@ -483,12 +489,22 @@ void drawClipProperties(App& a) {
   if (ImGui::DragFloat("##pitch", &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
     a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = cents; }, key + 3);
   const bool keep = ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) && ch->plugin.params[pp::SmpStretchMode] >= 0.5f;
-  int mode = keep ? 1 : 0;
-  const char* modes[] = {"Resample", "Keep pitch"};
-  const char* modeHints[] = {"Speed and pitch change together (like a tape)", "Pitch stays while the length changes (realtime grains)"};
+  // J-87: the channel's time mode (engine/TimeStretch).
+  int mode = ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)
+                 ? static_cast<int>(stretch::modeOf(ch->plugin.params[pp::SmpStretchMode]))
+                 : 0;
   row("Stretch mode");
-  if (ui::Segmented("##smode", modes, 2, &mode, 96, 0, modeHints))
-    a.doc.editSong("stretch mode", [&](Song& x) { setClipStretch(x, id, c.stretch, mode == 1); });
+  ImGui::SetNextItemWidth(200);
+  if (ImGui::BeginCombo("##smode", i18n::tr(stretch::modeName(static_cast<stretch::Mode>(mode))))) {
+    for (int m = 0; m < static_cast<int>(stretch::Mode::Count); ++m) {
+      if (ImGui::Selectable(i18n::tr(stretch::modeName(static_cast<stretch::Mode>(m))), m == mode)) {
+        const int pick = m;
+        a.doc.editSong("stretch mode", [&](Song& x) { setClipStretchMode(x, id, c.stretch, pick); });
+      }
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", i18n::tr(stretch::modeHint(static_cast<stretch::Mode>(m))));
+    }
+    ImGui::EndCombo();
+  }
   float tf = static_cast<float>(c.stretch);
   row("Time");
   if (ImGui::DragFloat("##tf", &tf, 0.005f, 0.0625f, 16.0f, "x %.3f")) {

@@ -44,7 +44,8 @@ int reverseAudioClips(Document& d, const std::set<ObjectId>& clips);
 // channel (kNoId: not an audio clip).
 ObjectId makeAudioClipUnique(Document& d, ObjectId clip);
 // Sampler time mode of the channels playing audio clips: 0 = resample (pitch
-// follows speed), 1 = stretch (keeps pitch). `clips` empty = every audio clip.
+// follows speed), 1 … 4 = the stretch modes (engine/TimeStretch: auto, mono,
+// transient, formant; all keep the pitch). `clips` empty = every audio clip.
 // Returns how many channels changed.
 int setAudioClipTimeMode(Document& d, const std::set<ObjectId>& clips, int mode);
 // Declick mode (0 off … 4 smooth, the sampler's "Declick" choice) of the

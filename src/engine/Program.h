@@ -23,6 +23,7 @@
 #include "Sample.h"
 #include "Scope.h"
 #include "StripEq.h"
+#include "TimeStretch.h"
 
 namespace gl::packs::edison {
 class CaptureRing;  // recording capture (packs/edison/edison.h)
@@ -177,6 +178,12 @@ struct ProgAudioClip {
   float tensionIn = 0, tensionOut = 0;                                  // J-38 / J-43: curve tension (FL unit)
   uint8_t declickIn = 0, declickOut = 0;                                // J-43: FL edge declicker mode (Clip::fadeInDeclick)
   bool cutEnd = false;              // the clip ends while its audio still plays (declick)
+  // J-87: the clip's audio rendered once at offline quality (pitch, stretch,
+  // tempo sync, resampling) at the program's sample rate: frame j plays j
+  // frames after the clip's first sample. Used while ready and while the
+  // channel pitch is still `hqSemis`; the realtime grains cover the rest.
+  stretch::RenderedClipPtr hq;
+  double hqSemis = 0;
 };
 
 // Adds a channel's audio clips to L/R for block samples [from, from + len),

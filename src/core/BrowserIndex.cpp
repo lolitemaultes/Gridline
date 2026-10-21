@@ -29,6 +29,18 @@ bool endsWith(const std::string& s, const std::string& suf) {
   return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
 }
 
+// Index keys: '/' separators everywhere (Windows paths arrive with either separator).
+std::string keyOf(const std::string& path) {
+#if defined(_WIN32)
+  std::string k = path;
+  for (char& c : k)
+    if (c == '\\') c = '/';
+  return k;
+#else
+  return path;
+#endif
+}
+
 std::string extOf(const std::string& path) { return lower(fs::path(path).extension().string()); }
 
 // Splits on anything but letters, digits (and '#' when keepSharp).
@@ -87,7 +99,7 @@ double fileMtime(const fs::path& p) {
   std::error_code ec;
   auto t = fs::last_write_time(p, ec);
   if (ec) return 0;
-  return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count());
+  return static_cast<double>(platform::fileTimeSeconds(t));
 }
 
 }  // namespace
@@ -727,13 +739,16 @@ void Index::put(const FileMeta& m) {
   {
     std::lock_guard<std::mutex> lk(mu_);
     FileMeta c = m;
-    if (auto t = tags_.find(m.path); t != tags_.end()) c.tags = t->second;
-    entries_[m.path] = std::move(c);
+    c.path = keyOf(m.path);
+    if (auto t = tags_.find(c.path); t != tags_.end()) c.tags = t->second;
+    const std::string key = c.path;
+    entries_[key] = std::move(c);
   }
   ++gen_;
 }
 
-bool Index::lookup(const std::string& path, FileMeta& out) const {
+bool Index::lookup(const std::string& pathIn, FileMeta& out) const {
+  const std::string path = keyOf(pathIn);
   std::lock_guard<std::mutex> lk(mu_);
   auto it = entries_.find(path);
   if (it == entries_.end()) return false;
@@ -764,7 +779,8 @@ std::vector<FileMeta> Index::search(const Query& q, size_t limit) const {
   return out;
 }
 
-void Index::setTags(const std::string& path, std::vector<std::string> tags) {
+void Index::setTags(const std::string& pathIn, std::vector<std::string> tags) {
+  const std::string path = keyOf(pathIn);
   for (auto& t : tags) {
     t = lower(t);
     t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)) || c == ','; }), t.end());
@@ -791,7 +807,7 @@ void Index::setTags(const std::string& path, std::vector<std::string> tags) {
 
 std::vector<std::string> Index::tagsOf(const std::string& path) const {
   std::lock_guard<std::mutex> lk(mu_);
-  auto it = tags_.find(path);
+  auto it = tags_.find(keyOf(path));
   return it == tags_.end() ? std::vector<std::string>{} : it->second;
 }
 
@@ -917,7 +933,7 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
       }
       std::error_code e2;
       if (!it->is_regular_file(e2)) continue;
-      const std::string p = it->path().string();
+      const std::string p = keyOf(it->path().string());
       const Kind k = kindOf(p);
       if (!listable(k) || !seen.insert(p).second) continue;
       const uint64_t size = static_cast<uint64_t>(it->file_size(e2));
@@ -959,7 +975,7 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
     for (auto it = entries_.begin(); it != entries_.end();) {
       bool under = false;
       for (const auto& r : roots) {
-        const std::string pre = (fs::path(r.first) / "").string();
+        const std::string pre = keyOf((fs::path(r.first) / "").string());
         if (it->first.compare(0, pre.size(), pre) == 0) under = true;
       }
       if (under && !seen.count(it->first) && !tags_.count(it->first)) {

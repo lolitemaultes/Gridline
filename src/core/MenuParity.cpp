@@ -150,6 +150,7 @@ ObjectId makeAudioClipUnique(Document& d, ObjectId clip) {
 }
 
 int setAudioClipTimeMode(Document& d, const std::set<ObjectId>& clips, int mode) {
+  mode = std::clamp(mode, 0, 4);  // J-87: Resample, Auto, Mono, Transient, Formant
   const Song& s = d.song();
   std::set<ObjectId> chans;
   for (const auto& c : s.playlist)
@@ -157,7 +158,7 @@ int setAudioClipTimeMode(Document& d, const std::set<ObjectId>& clips, int mode)
       if (const Channel* ch = s.channel(c.source); ch && isSampler(*ch) && ch->plugin.params[pp::SmpStretchMode] != mode)
         chans.insert(ch->id);
   if (chans.empty()) return 0;
-  d.editSong(mode ? "switch audio clips to stretch" : "switch audio clips to resample", [&](Song& x) {
+  d.editSong(mode ? "switch audio clips' time mode" : "switch audio clips to resample", [&](Song& x) {
     for (auto& ch : x.channels)
       if (chans.count(ch.id)) ch.plugin.params[pp::SmpStretchMode] = static_cast<float>(mode);
   });
