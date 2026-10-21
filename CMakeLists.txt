@@ -105,6 +105,9 @@ file(GLOB GRIDLINE_CORE_SRC CONFIGURE_DEPENDS src/core/*.cpp src/core/flp/*.cpp 
      src/packs/*/*_info.cpp src/packs/*/*_dsp.cpp src/host/*.cpp src/host/*/*.cpp)
 # Plugin hosting on macOS: Audio Units, Cocoa plugin views, sandbox windows (Objective-C++).
 if(APPLE)
+  # OBJC too: with only OBJCXX enabled, CMake would build plain Objective-C files (.m, e.g. the
+  # bundled SDL2's) as Objective-C++ with the C++ standard flag.
+  enable_language(OBJC)
   enable_language(OBJCXX)
   set(CMAKE_OBJCXX_STANDARD 17)
   set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
@@ -581,6 +584,15 @@ add_executable(gridline_tests_j61 tests/test_j61.cpp)
 target_link_libraries(gridline_tests_j61 PRIVATE gridline_core)
 target_compile_options(gridline_tests_j61 PRIVATE ${GL_WARN})
 add_test(NAME j61_followups COMMAND gridline_tests_j61 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# J-86: the operating-system layer (folders, processes, numbers, sockets, shared objects, keys).
+add_executable(gridline_tests_portability tests/test_portability.cpp)
+target_link_libraries(gridline_tests_portability PRIVATE gridline_core)
+target_include_directories(gridline_tests_portability PRIVATE tests)
+target_compile_options(gridline_tests_portability PRIVATE ${GL_WARN})
+target_compile_definitions(gridline_tests_portability PRIVATE GRIDLINE_CLI_EXE="$<TARGET_FILE:gridline>")
+add_dependencies(gridline_tests_portability gridline)
+add_test(NAME portability COMMAND gridline_tests_portability WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(gridline_tests_recording tests/test_recording.cpp)
 target_link_libraries(gridline_tests_recording PRIVATE gridline_core)

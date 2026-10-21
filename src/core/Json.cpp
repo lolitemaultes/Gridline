@@ -1,4 +1,5 @@
 #include "Json.h"
+#include "Platform.h"
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -91,7 +92,7 @@ struct P {
     // for subnormal results (e.g. a denormal parameter value that was saved).
     const std::string tok = s.substr(start, i - start);
     char* end = nullptr;
-    double v = std::strtod(tok.c_str(), &end);
+    double v = platform::parseDouble(tok.c_str(), &end);  // '.' whatever the locale
     if (end != tok.c_str() + tok.size() || !std::isfinite(v)) { fail = true; return false; }
     out.type = Json::Type::Number;
     out.number = v;
@@ -149,7 +150,7 @@ void emit(const Json& v, std::string& out, int indent, int depth) {
       else if (std::fabs(v.number) < 1e15 && v.number == static_cast<double>(static_cast<long long>(v.number)))
         std::snprintf(buf, sizeof buf, "%lld", static_cast<long long>(v.number));
       else
-        std::snprintf(buf, sizeof buf, "%.17g", v.number);  // round-trips exactly
+        std::snprintf(buf, sizeof buf, "%s", platform::formatDouble("%.17g", v.number).c_str());  // round-trips exactly, '.' always
       out += buf;
       break;
     }

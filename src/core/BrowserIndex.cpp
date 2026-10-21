@@ -1,5 +1,6 @@
 // Gridline — browser content model (see BrowserIndex.h).
 #include "BrowserIndex.h"
+#include "Platform.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -153,18 +154,18 @@ double bpmFromName(const std::string& name) {
     const std::string& s = t[i];
     // "120bpm"
     if (endsWith(s, "bpm") && s.size() > 3 && allDigits(s.substr(0, s.size() - 3))) {
-      double v = std::atof(s.c_str());
+      double v = platform::parseDouble(s.c_str());
       if (inRange(v)) return v;
     }
     // "bpm120"
     if (s.rfind("bpm", 0) == 0 && s.size() > 3 && allDigits(s.substr(3))) {
-      double v = std::atof(s.c_str() + 3);
+      double v = platform::parseDouble(s.c_str() + 3);
       if (inRange(v)) return v;
     }
     // "120 bpm" / "bpm 120"
     if (s == "bpm") {
-      if (i > 0 && allDigits(t[i - 1]) && inRange(std::atof(t[i - 1].c_str()))) return std::atof(t[i - 1].c_str());
-      if (i + 1 < t.size() && allDigits(t[i + 1]) && inRange(std::atof(t[i + 1].c_str()))) return std::atof(t[i + 1].c_str());
+      if (i > 0 && allDigits(t[i - 1]) && inRange(platform::parseDouble(t[i - 1].c_str()))) return platform::parseDouble(t[i - 1].c_str());
+      if (i + 1 < t.size() && allDigits(t[i + 1]) && inRange(platform::parseDouble(t[i + 1].c_str()))) return platform::parseDouble(t[i + 1].c_str());
     }
   }
   // A bare number in loop names ("Funk loop 96", "groove_120").
@@ -172,7 +173,7 @@ double bpmFromName(const std::string& name) {
   if (loopish)
     for (const auto& s : t)
       if (allDigits(s) && s.size() >= 2 && s.size() <= 3) {
-        double v = std::atof(s.c_str());
+        double v = platform::parseDouble(s.c_str());
         if (v >= 70 && v <= 180) return v;
       }
   return 0;
@@ -390,7 +391,7 @@ Query parseQuery(const std::string& text) {
     if (v.empty()) return false;
     if (v[0] == '>' || v[0] == '<') {
       size_t o = v.size() > 1 && v[1] == '=' ? 2 : 1;
-      double x = std::atof(v.c_str() + o);
+      double x = platform::parseDouble(v.c_str() + o);
       if (!(x > 0) && v.substr(o) != "0") return false;
       if (v[0] == '>') lo = x, hi = 1e9;
       else lo = 0, hi = x;
@@ -398,12 +399,12 @@ Query parseQuery(const std::string& text) {
     }
     size_t dash = v.find('-', 1);
     if (dash != std::string::npos) {
-      lo = std::atof(v.substr(0, dash).c_str());
-      hi = std::atof(v.substr(dash + 1).c_str());
+      lo = platform::parseDouble(v.substr(0, dash).c_str());
+      hi = platform::parseDouble(v.substr(dash + 1).c_str());
       if (lo > hi) std::swap(lo, hi);
       return hi > 0;
     }
-    double x = std::atof(v.c_str());
+    double x = platform::parseDouble(v.c_str());
     if (!(x > 0)) return false;
     lo = x - tol;
     hi = x + tol;

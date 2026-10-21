@@ -1,4 +1,5 @@
 #include "Turtle.h"
+#include "../../core/Platform.h"
 #include <cstdint>
 #include <cctype>
 #include <cstdio>
@@ -45,7 +46,7 @@ double Node::number(double def) const {
   if (value == "true") return 1;
   if (value == "false") return 0;
   char* end = nullptr;
-  double v = std::strtod(value.c_str(), &end);
+  double v = platform::parseDouble(value.c_str(), &end);
   return end && end != value.c_str() ? v : def;
 }
 
