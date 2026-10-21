@@ -50,6 +50,25 @@ std::string extOf(const std::string& path) {
   return lower(path.substr(dot));
 }
 
+// The last `n` components of a path, file name first (string operations, as above).
+std::vector<std::string> tailParts(const std::string& path, size_t n) {
+#ifdef _WIN32
+  const char* seps = "/\\";
+#else
+  const char* seps = "/";
+#endif
+  std::vector<std::string> out;
+  size_t end = path.size();
+  while (out.size() < n && end > 0) {
+    const size_t sep = path.find_last_of(seps, end - 1);
+    const size_t begin = sep == std::string::npos ? 0 : sep + 1;
+    if (end > begin) out.push_back(path.substr(begin, end - begin));
+    if (sep == std::string::npos) break;
+    end = sep;
+  }
+  return out;
+}
+
 // Splits on anything but letters, digits (and '#' when keepSharp).
 std::vector<std::string> tokens(const std::string& s, bool keepSharp) {
   std::vector<std::string> out;
@@ -332,12 +351,13 @@ std::vector<std::string> autoTags(const std::string& path) {
       {"string", "strings"}, {"strings", "strings"}, {"brass", "brass"}, {"horn", "brass"}, {"impulse", "ir"},
       {"impulses", "ir"}, {"reverb", "ir"},      {"oneshot", "oneshot"}, {"shot", "oneshot"}, {"break", "loop"},
   };
-  fs::path p(path);
-  std::string hay = p.stem().string();
-  if (p.has_parent_path()) {
-    hay += " " + p.parent_path().filename().string();
-    if (p.parent_path().has_parent_path()) hay += " " + p.parent_path().parent_path().filename().string();
+  const std::vector<std::string> parts = tailParts(path, 3);
+  std::string hay;
+  if (!parts.empty()) {
+    const size_t dot = parts[0].rfind('.');
+    hay = dot == std::string::npos || dot == 0 ? parts[0] : parts[0].substr(0, dot);
   }
+  for (size_t i = 1; i < parts.size(); ++i) hay += " " + parts[i];
   std::vector<std::string> out;
   for (const std::string& t : tokens(lower(hay), false)) {
     for (const auto& [kw, tag] : vocab) {
@@ -503,12 +523,8 @@ bool matches(const FileMeta& m, const Query& q) {
   for (const auto& t : q.tags)
     if (!hasTag(m, t, autos)) return false;
   if (!q.words.empty()) {
-    fs::path p(m.path);
-    std::string hay = lower(p.filename().string());
-    if (p.has_parent_path()) {
-      hay += " " + lower(p.parent_path().filename().string());
-      if (p.parent_path().has_parent_path()) hay += " " + lower(p.parent_path().parent_path().filename().string());
-    }
+    std::string hay;
+    for (const std::string& part : tailParts(m.path, 3)) hay += (hay.empty() ? "" : " ") + lower(part);
     for (const auto& t : m.tags) hay += " " + t;
     for (const auto& t : autos) hay += " " + t;
     for (const auto& w : q.words)
@@ -709,7 +725,8 @@ FileMeta Index::describe(const std::string& path, bool analyse) {
   m.size = static_cast<uint64_t>(fs::file_size(path, ec));
   if (ec) m.size = 0;
   m.mtime = static_cast<int64_t>(fileMtime(path));
-  const std::string name = fs::path(path).filename().string();
+  const std::vector<std::string> parts = tailParts(path, 1);
+  const std::string name = parts.empty() ? std::string() : parts[0];
   if (m.kind == Kind::Audio) {
     m.bpm = bpmFromName(name);
     keyFromName(name, m.key, m.minor);
@@ -779,7 +796,12 @@ std::vector<FileMeta> Index::search(const Query& q, size_t limit) const {
     }
   }
   std::sort(out.begin(), out.end(), [](const FileMeta& a, const FileMeta& b) {
-    const std::string na = lower(fs::path(a.path).filename().string()), nb = lower(fs::path(b.path).filename().string());
+    // Plain string work: a stored path need not convert to the system code page (Windows).
+    auto nameOf = [](const std::string& p) {
+      const auto parts = tailParts(p, 1);
+      return parts.empty() ? std::string() : lower(parts[0]);
+    };
+    const std::string na = nameOf(a.path), nb = nameOf(b.path);
     return na != nb ? na < nb : a.path < b.path;
   });
   if (out.size() > limit) out.resize(limit);

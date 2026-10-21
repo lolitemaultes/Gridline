@@ -37,6 +37,9 @@ if(MSVC)
   add_compile_definitions(_USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE
                           _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  # The main thread gets 8 MB of stack like on Linux and macOS (Windows default: 1 MB); some
+  # tests and the offline renderer keep large buffers on the stack.
+  string(APPEND CMAKE_EXE_LINKER_FLAGS " /STACK:8388608")
 else()
   set(GL_WARN -Wall -Wextra -Wpedantic)
   # Identical audio on every CPU: GCC fuses a*b+c into one rounding (FMA) wherever the CPU has it
@@ -44,6 +47,11 @@ else()
   # separate roundings.
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-ffp-contract=off)
+  endif()
+  # musl gives the main thread of a program 8 MB but other threads 128 KB unless the program
+  # asks for more; this sets the default (glibc ignores it and uses the stack limit).
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,-z,stack-size=8388608")
   endif()
   set(GL_WARN_LOOSE -Wall -Wextra)
   set(GL_NOWARN -w)

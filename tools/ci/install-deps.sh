@@ -44,14 +44,20 @@ case "${1:?platform}" in
     # The X11 sets (Xlib, Mesa's libGL, headers) when the system was installed without them.
     if [ ! -f /usr/X11R7/include/X11/Xlib.h ]; then
       for set in xbase xcomp; do
-        url="https://cdn.netbsd.org/pub/NetBSD/NetBSD-$(uname -r)/$(uname -m)/binary/sets/$set.tar.xz"
-        ftp -o "/tmp/$set.tar.xz" "$url" && tar -xJpf "/tmp/$set.tar.xz" -C / && rm -f "/tmp/$set.tar.xz"
+        # Current releases on the CDN, older ones in the archive.
+        for base in https://cdn.netbsd.org/pub/NetBSD https://archive.netbsd.org/pub/NetBSD-archive; do
+          if ftp -o "/tmp/$set.tar.xz" "$base/NetBSD-$(uname -r)/$(uname -m)/binary/sets/$set.tar.xz"; then
+            tar -xJpf "/tmp/$set.tar.xz" -C / && rm -f "/tmp/$set.tar.xz" && break
+          fi
+        done
       done
     fi
     if command -v pkgin >/dev/null 2>&1; then
       pkgin -y install cmake ninja-build pkgconf SDL2 sndio bash
     else
-      for p in cmake ninja-build pkgconf SDL2 sndio bash; do pkg_add "$p" || echo "pkg_add $p failed" >&2; done
+      for p in cmake ninja-build pkgconf SDL2 sndio bash; do  # mirrors are flaky: three tries each
+        pkg_info -e "$p" >/dev/null 2>&1 || pkg_add "$p" || { sleep 10; pkg_add "$p"; } || { sleep 30; pkg_add "$p"; } || echo "pkg_add $p failed" >&2
+      done
     fi
     ls /usr/X11R7/include/X11/Xlib.h /usr/X11R7/lib/libGL.so
     ;;

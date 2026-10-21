@@ -5,6 +5,8 @@
 namespace {
 int failures = 0;
 int checks = 0;
+// Unbuffered: a test that crashes still shows every check it passed.
+[[maybe_unused]] const bool kUnbufferedStdout = std::setvbuf(stdout, nullptr, _IONBF, 0) == 0;
 void expect(bool ok, const char* name) {
   ++checks;
   std::printf("%s %d - %s\n", ok ? "ok" : "not ok", checks, name);
