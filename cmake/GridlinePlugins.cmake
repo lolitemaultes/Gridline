@@ -14,7 +14,7 @@ set(GRIDLINE_PLUGIN_DIR ${CMAKE_BINARY_DIR}/plugins)
 
 add_library(gridline_plugin_common OBJECT src/plugin/PluginCore.cpp src/plugin/PluginFrame.cpp src/plugin/HostedWindows.cpp)
 target_link_libraries(gridline_plugin_common PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
-target_compile_options(gridline_plugin_common PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(gridline_plugin_common PRIVATE ${GL_WARN})
 target_compile_definitions(gridline_plugin_common PRIVATE GRIDLINE_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")
 set_target_properties(gridline_plugin_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -45,7 +45,7 @@ function(gridline_plugin target format entry viewClass)
   if(NOT APPLE AND X11_FOUND)
     target_link_libraries(${target} PRIVATE X11::X11)
   endif()
-  target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(${target} PRIVATE ${GL_WARN})
   target_compile_definitions(${target} PRIVATE GRIDLINE_VERSION_STRING="${PROJECT_VERSION}" GRIDLINE_PLUGIN_VIEW_CLASS=${viewClass})
   set_target_properties(${target} PROPERTIES PREFIX "" OUTPUT_NAME Gridline)
   if(format STREQUAL "clap")
@@ -168,7 +168,7 @@ endif()
 add_executable(gridline_tests_plugin_build tests/test_plugin_build.cpp)
 target_link_libraries(gridline_tests_plugin_build PRIVATE gridline_core)
 target_include_directories(gridline_tests_plugin_build PRIVATE tests)
-target_compile_options(gridline_tests_plugin_build PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(gridline_tests_plugin_build PRIVATE ${GL_WARN})
 target_compile_definitions(gridline_tests_plugin_build PRIVATE GRIDLINE_PLUGIN_CLAP="${GRIDLINE_CLAP_BUNDLE}"
                            GRIDLINE_PLUGIN_VST3="${GRIDLINE_VST3_BUNDLE}" GRIDLINE_CLI_EXE="$<TARGET_FILE:gridline>"
                            GRIDLINE_TESTPLUG_BUNDLE="${GRIDLINE_TESTPLUG_BUNDLE}" GRIDLINE_CLAP_TESTPLUG="${GRIDLINE_CLAP_TESTPLUG}"
