@@ -5,11 +5,11 @@
 // and no change on failure, read-only mode, path restrictions, rate and size
 // limits, the loopback HTTP transport (bind address, token, sessions, Host /
 // Origin checks, oversized bodies), the attach bridge, and the CLI stdio server.
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
+#if !defined(_WIN32)
 #include <sys/stat.h>
-#include <unistd.h>
+#endif
+#include "core/Net.h"
+#include "core/Platform.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -823,27 +823,29 @@ void httpTests() {
   {
     std::string reply;
     Served big(ep, [&] {
-      const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+      const net::Sock fd = net::tcpSocket();
       sockaddr_in a{};
       a.sin_family = AF_INET;
       a.sin_port = htons(static_cast<uint16_t>(port));
       a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
       if (::connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0) {
         const std::string req = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer s3cret-token-0123456789\r\nContent-Length: 999999999\r\n\r\n{";
-        (void)!::send(fd, req.data(), req.size(), 0);
+        (void)!net::sendSome(fd, req.data(), req.size());
         char buf[4096];
-        ssize_t n;
-        while ((n = ::recv(fd, buf, sizeof buf, 0)) > 0) reply.append(buf, static_cast<size_t>(n));
+        long n;
+        while ((n = net::recvSome(fd, buf, sizeof buf)) > 0) reply.append(buf, static_cast<size_t>(n));
       }
-      ::close(fd);
+      net::closeSock(fd);
     });
     expect(contains(reply, " 413 "), "HTTP: oversized body -> 413");
   }
   // Endpoint file: owner-only.
   const std::string efile = (f.dir / "mcp-endpoint.json").string();
   expect(writeEndpointFile(efile, port, ep.token()), "endpoint file written");
+#if !defined(_WIN32)
   struct stat st {};
   expect(::stat(efile.c_str(), &st) == 0 && (st.st_mode & 0777) == 0600, "endpoint file is owner-only (0600)");
+#endif
   int p2 = 0;
   std::string t2;
   expect(readEndpointFile(efile, p2, t2) && p2 == port && t2 == ep.token(), "endpoint file read back");
@@ -904,9 +906,9 @@ void cliTests() {
        << "\n"
        << "garbage\n";
   }
-  auto q = [](const fs::path& p) { return "'" + p.string() + "'"; };
-  const std::string cmd = std::string("'") + GRIDLINE_CLI_EXE + "' mcp " + q(song) + " < " + q(in) + " > " + q(out) + " 2> " + q(err);
-  const int rc = std::system(cmd.c_str());
+  auto q = [](const fs::path& p) { return platform::shellQuote(p.string()); };
+  const std::string cmd = platform::shellQuote(GRIDLINE_CLI_EXE) + " mcp " + q(song) + " < " + q(in) + " > " + q(out) + " 2> " + q(err);
+  const int rc = platform::runShell(cmd);
   expect(rc == 0, "gridline mcp: exits 0 at end of input");
   std::ifstream is(out);
   std::vector<std::string> lines;
@@ -931,8 +933,8 @@ void cliTests() {
     os << R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{}}})" << "\n"
        << R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_song","arguments":{"tempo":90}}})" << "\n";
   }
-  const std::string cmd2 = std::string("'") + GRIDLINE_CLI_EXE + "' mcp " + q(song) + " --read-only < " + q(in) + " > " + q(out) + " 2> " + q(err);
-  expect(std::system(cmd2.c_str()) == 0, "gridline mcp --read-only runs");
+  const std::string cmd2 = platform::shellQuote(GRIDLINE_CLI_EXE) + " mcp " + q(song) + " --read-only < " + q(in) + " > " + q(out) + " 2> " + q(err);
+  expect(platform::runShell(cmd2) == 0, "gridline mcp --read-only runs");
   std::ifstream is2(out);
   std::string l1, l2;
   std::getline(is2, l1);

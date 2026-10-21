@@ -30,6 +30,7 @@
 #include "../Dylib.h"
 #include "../PluginScan.h"
 #include "clap/clap.h"
+#include "../../core/Platform.h"
 
 namespace gl::host {
 
@@ -515,8 +516,8 @@ class ClapBackend final : public Backend {
     clap_event_transport_t tr{};
     tr.header = header(CLAP_EVENT_TRANSPORT, sizeof tr, 0);
     tr.flags = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE | CLAP_TRANSPORT_HAS_SECONDS_TIMELINE | CLAP_TRANSPORT_HAS_TIME_SIGNATURE |
-               (t.playing ? CLAP_TRANSPORT_IS_PLAYING : 0u) | (t.recording ? CLAP_TRANSPORT_IS_RECORDING : 0u) |
-               (t.looping ? CLAP_TRANSPORT_IS_LOOP_ACTIVE : 0u);
+               (t.playing ? static_cast<uint32_t>(CLAP_TRANSPORT_IS_PLAYING) : 0u) | (t.recording ? static_cast<uint32_t>(CLAP_TRANSPORT_IS_RECORDING) : 0u) |
+               (t.looping ? static_cast<uint32_t>(CLAP_TRANSPORT_IS_LOOP_ACTIVE) : 0u);
     tr.song_pos_beats = beats(t.projectQn);
     tr.song_pos_seconds = secs(t.projectQn);
     tr.tempo = t.tempo;
@@ -1115,14 +1116,16 @@ std::vector<PresetRef> ClapBackend::discoverPresets() {
 
 std::vector<std::string> clapPaths() {
   std::vector<std::string> v;
-  const char* home = std::getenv("HOME");
+  const char* home = gl::platform::homeEnv();
 #if defined(__APPLE__)
   if (home) v.push_back(std::string(home) + "/Library/Audio/Plug-Ins/CLAP");
   v.push_back("/Library/Audio/Plug-Ins/CLAP");
+#elif defined(_WIN32)
+  (void)home;
+  addSystemPluginFolders(v, "CLAP", "clap");
 #else
   if (home) v.push_back(std::string(home) + "/.clap");
-  v.push_back("/usr/lib/clap");
-  v.push_back("/usr/local/lib/clap");
+  addSystemPluginFolders(v, "CLAP", "clap");
 #endif
   addEnvPaths(v, "CLAP_PATH");
   return v;

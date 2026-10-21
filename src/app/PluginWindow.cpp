@@ -20,7 +20,7 @@
 // interface always sees a key first (its own computer-keyboard notes).
 #include <SDL.h>
 #include <SDL_opengl.h>
-#include <SDL_syswm.h>
+#include "SysWm.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -78,6 +78,8 @@ native::Window nativeOf(SDL_Window* w) {
   if (!SDL_GetWindowWMInfo(w, &info)) return n;
 #if defined(__APPLE__)
   if (info.subsystem == SDL_SYSWM_COCOA) n.handle = static_cast<void*>(info.info.cocoa.window);
+#elif defined(_WIN32)
+  if (info.subsystem == SDL_SYSWM_WINDOWS) n.handle = static_cast<void*>(info.info.win.window);
 #elif defined(SDL_VIDEO_DRIVER_X11)
   if (info.subsystem == SDL_SYSWM_X11) {
     n.display = static_cast<void*>(info.info.x11.display);

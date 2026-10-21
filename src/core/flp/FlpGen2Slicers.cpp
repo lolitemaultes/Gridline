@@ -29,6 +29,7 @@
 #include "../../packs/samplers/samplers.h"
 #include "../PluginParams.h"
 #include "FlpGen2.h"
+#include "../Platform.h"
 
 namespace gl::flp::gen2 {
 
@@ -173,8 +174,8 @@ uint64_t sampleFrames(const std::string& path, const WavInfo& w) {
 // Folder for samples stored inside plugin states (written once, reused).
 std::string embeddedDir() {
   if (const char* e = std::getenv("GRIDLINE_CACHE_DIR"); e && *e) return std::string(e) + "/flp-samples";
-  if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/gridline/flp-samples";
-  if (const char* h = std::getenv("HOME"); h && *h) return std::string(h) + "/.cache/gridline/flp-samples";
+  // $XDG_CACHE_HOME, %LOCALAPPDATA% (Windows) or ~/.cache
+  if (const std::string c = gl::platform::cacheRoot(); !c.empty()) return c + "/gridline/flp-samples";
   return (fs::temp_directory_path() / "gridline-flp-samples").string();
 }
 

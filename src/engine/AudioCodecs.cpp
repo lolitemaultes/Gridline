@@ -9,7 +9,20 @@
 
 #define STB_VORBIS_NO_STDIO
 #define STB_VORBIS_NO_PUSHDATA_API
+// Vendored code: its own warnings are not Gridline's (GCC reports some of them after inlining,
+// outside the system-header suppression).
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma warning(push, 0)
+#elif defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 #include <stb/stb_vorbis.c>
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma warning(pop)
+#elif defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace gl {
 

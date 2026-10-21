@@ -34,6 +34,7 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "../core/WheelRoute.h"
+#include "../core/Platform.h"
 
 namespace gl {
 
@@ -95,11 +96,11 @@ void fileDialog(App& a) {
   const bool folderMode = fd.exts.size() == 1 && fd.exts[0] == "/";
   dialogTitle(a, fd.title.c_str());
   std::error_code ec;
-  if (fd.dir.empty() || !fs::is_directory(fd.dir, ec)) fd.dir = std::getenv("HOME") ? std::getenv("HOME") : ".";
+  if (fd.dir.empty() || !fs::is_directory(fd.dir, ec)) fd.dir = gl::platform::homeEnv() ? gl::platform::homeEnv() : ".";
   const float fh = ImGui::GetFrameHeight();
   if (ui::IconButton("up", ui::Icon::Up, false, fh, "Parent folder")) fd.dir = fs::path(fd.dir).parent_path().string();
   ImGui::SameLine(0, theme::kS1);
-  if (ui::IconButton("home", ui::Icon::Folder, false, fh, "Home folder")) fd.dir = std::getenv("HOME") ? std::getenv("HOME") : ".";
+  if (ui::IconButton("home", ui::Icon::Folder, false, fh, "Home folder")) fd.dir = gl::platform::homeEnv() ? gl::platform::homeEnv() : ".";
   ImGui::SameLine(0, theme::kS1);
   static char dirBuf[1024];
   std::snprintf(dirBuf, sizeof dirBuf, "%s", fd.dir.c_str());

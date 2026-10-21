@@ -448,7 +448,7 @@ class FmGen final : public Generator {
         }
         double semis = v.note + octave_ * 12.0 + lfo * vibrato_ / 100.0 + pitchEnv_ * v.env[0].level;
         double hz = noteToHz(semis);
-        double out[4];
+        double out[4] = {};
         double modScale = 1.0 - lfoIndex_ * (0.5 + 0.5 * lfo);
         for (int o = 3; o >= 0; --o) {  // modulators always have higher indices
           double mod = 0;

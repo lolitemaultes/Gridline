@@ -3,7 +3,6 @@
 // playlist-track splits, WAV metadata, external encoders, MIDI import/export
 // (SMF 0/1, round trip), zipped projects / data files / bones (path
 // rewriting), missing-sample relinking.
-#include <unistd.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -448,7 +447,7 @@ void testResampleAndFormats() {
          "MP3 without an encoder program fails with a clear message");
   setEncoderOverride("ffmpeg", "/usr/local/bin/ffmpeg");
   setEncoderOverride("lame", "/usr/local/bin/lame");
-  if (::access("/usr/local/bin/ffmpeg", X_OK) == 0) {
+  if (std::error_code ec; fs::is_regular_file("/usr/local/bin/ffmpeg", ec)) {
     err.clear();
     const std::string mp3 = (fs::path(scratch) / "t.mp3").string(), ogg = (fs::path(scratch) / "t.ogg").string();
     AudioBuffer longer(2, 44100);

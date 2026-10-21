@@ -22,6 +22,7 @@
 #include "../engine/Slicing.h"
 #include "InstrumentSkin.h"
 #include "PluginEditorsCommon.h"
+#include "../core/Platform.h"
 
 namespace gl {
 
@@ -297,7 +298,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       a.fileDialog = {};
       a.fileDialog.open = true;
       a.fileDialog.title = "Load loop";
-      const char* h = std::getenv("HOME");
+      const char* h = gl::platform::homeEnv();
       a.fileDialog.dir = st.data.empty() ? (h ? h : ".") : fs::path(slicex::sampleOf(st.data)).parent_path().string();
       a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv"};
       a.fileDialog.onOk = [&a, tt](const std::string& p) {
@@ -440,7 +441,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       std::snprintf(cap, sizeof cap, "%s", ed::noteName(sliceKey(s)).c_str());
       const bool muted = ed::bval(st, slParam(s, SliceMute));
       if (iskin::button(sk, "##rg", x + 1, 511, bw - 2, 22, bw > 26 ? cap : "", s == k, 8, muted ? rgb(0x6A3030) : 0)) ui.slice = s;
-      char num[8];
+      char num[32];
       std::snprintf(num, sizeof num, "%d", s + 1);
       if (bw > 14) iskin::text(sk, x, 536, bw, 12, num, 7.5f, s == k ? sk.c.fill : sk.c.textDim, 1, true, false);
       ImGui::PopID();

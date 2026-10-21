@@ -3,7 +3,12 @@
 //       stdio MCP server on a project file, headless (see docs/mcp.md)
 //   gridline mcp --attach [--endpoint FILE]
 //       stdio bridge to the running app's local MCP endpoint
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -43,9 +48,17 @@ int mcpMain(int argc, char** argv) {
   }
   // The protocol owns stdout: everything else printed by the process goes to stderr.
   std::fflush(stdout);
+#if defined(_WIN32)
+  // Byte streams: the protocol's newlines stay "\n".
+  _setmode(_fileno(stdin), _O_BINARY);
+  const int protoFd = _dup(_fileno(stdout));
+  _dup2(_fileno(stderr), _fileno(stdout));
+  std::FILE* out = protoFd >= 0 ? _fdopen(protoFd, "wb") : nullptr;
+#else
   const int protoFd = ::dup(STDOUT_FILENO);
   ::dup2(STDERR_FILENO, STDOUT_FILENO);
   std::FILE* out = protoFd >= 0 ? ::fdopen(protoFd, "w") : nullptr;
+#endif
   if (!out) {
     std::fprintf(stderr, "gridline mcp: cannot open the output stream\n");
     return 1;

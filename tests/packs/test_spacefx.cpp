@@ -68,7 +68,8 @@ double maxDiff(const Buf& a, const Buf& b) {
 }
 double peak(const Buf& a, size_t from = 0, size_t to = SIZE_MAX) {
   double m = 0;
-  for (size_t i = from; i < std::min(to, a.size()); ++i) m = std::max({m, std::fabs(static_cast<double>(a.l[i])), std::fabs(static_cast<double>(a.r[i]))});
+  const size_t n = std::min({to, a.l.size(), a.r.size()});
+  for (size_t i = from; i < n; ++i) m = std::max({m, std::fabs(static_cast<double>(a.l[i])), std::fabs(static_cast<double>(a.r[i]))});
   return m;
 }
 double rms(const std::vector<float>& x, size_t from, size_t to) {

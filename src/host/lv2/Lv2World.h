@@ -3,6 +3,7 @@
 // Read with Gridline's own Turtle reader (Turtle.h).
 #pragma once
 #include <memory>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,7 +30,7 @@ struct Port {
 };
 
 struct Ui {
-  enum Kind { Cocoa, X11, External, Other } kind = Other;
+  enum Kind { Cocoa, X11, Windows, External, Other } kind = Other;
   std::string uri, typeUri, binary, bundle;
   std::vector<std::string> required, optional;
 };

@@ -3,7 +3,10 @@
 #include "GridlineVersion.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
-#include <SDL_syswm.h>
+#include "SysWm.h"
+#if defined(_WIN32)
+#include <shellapi.h>  // CommandLineToArgvW
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -517,6 +520,15 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+  // A GUI program has no console: --version / --help / errors go to the one it was started from.
+  if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+    std::FILE* f = nullptr;
+    if (_fileno(stdout) < 0) freopen_s(&f, "CONOUT$", "w", stdout);
+    if (_fileno(stderr) < 0) freopen_s(&f, "CONOUT$", "w", stderr);
+  }
+  SDL_SetMainReady();  // SDL_MAIN_HANDLED: this is the real entry (WinMain below)
+#endif
   // Child processes (see host/PluginScan.h): plugin scanner and plugin
   // sandbox; no window, no audio.
   if (int rc = host::childMain(argc, argv); rc >= 0) return rc;
@@ -1026,6 +1038,8 @@ int main(int argc, char** argv) {
     SDL_VERSION(&wm.version);
 #if defined(__APPLE__)
     if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_COCOA) mainNative.handle = static_cast<void*>(wm.info.cocoa.window);
+#elif defined(_WIN32)
+    if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_WINDOWS) mainNative.handle = static_cast<void*>(wm.info.win.window);
 #endif
   }
   if (mainNative.valid() && !xdrop::native::install(mainNative.handle))  // J-75: hover, promises, links (macOS)
@@ -1497,3 +1511,24 @@ int main(int argc, char** argv) {
   SDL_Quit();
   return browserui::auditIssueCount() > 0 ? 1 : 0;  // Q-7: --layout-audit fails on any inset issue
 }
+
+#if defined(_WIN32)
+// Windows GUI entry: the command line as UTF-8 arguments (the process code page is UTF-8 too,
+// see assets/windows/gridline.manifest), then main().
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+  int argc = 0;
+  wchar_t** wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  std::vector<std::string> args;
+  for (int i = 0; i < argc; ++i) {
+    const int n = WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, nullptr, 0, nullptr, nullptr);
+    std::string a(static_cast<size_t>(n > 0 ? n - 1 : 0), '\0');
+    if (n > 1) WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, a.data(), n, nullptr, nullptr);
+    args.push_back(a);
+  }
+  LocalFree(wargv);
+  std::vector<char*> argv;
+  for (auto& a : args) argv.push_back(a.data());
+  argv.push_back(nullptr);
+  return main(argc, argv.data());
+}
+#endif

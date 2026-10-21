@@ -472,7 +472,7 @@ int keyboard(App& a, const PluginTarget& t, const Skin& k, float x, float y, flo
     float x0 = p.x + i * ww;
     dl->AddRectFilled(ImVec2(x0 + 0.5f, p.y), ImVec2(x0 + ww - 0.5f, q.y), keyCol(note, kc.white), 2.0f, ImDrawFlags_RoundCornersBottom);
     if (note % 12 == 0 && ww > 9) {
-      char nm[8];
+      char nm[32];
       std::snprintf(nm, sizeof nm, "C%d", note / 12 - 1);
       ImFont* f = app().fontMono;
       float fs = std::min(9.0f, ww * 0.8f);

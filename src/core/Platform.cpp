@@ -13,10 +13,13 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <process.h>
+#include <psapi.h>
 #else
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 extern char** environ;
@@ -217,6 +220,94 @@ std::string executablePath() {
 #endif
 }
 
+bool writePrivateFile(const std::string& path, const std::string& data) {
+#if defined(_WIN32)
+  FILE* f = _wfopen(widen(path).c_str(), L"wb");
+  if (!f) return false;
+  const bool ok = std::fwrite(data.data(), 1, data.size(), f) == data.size();
+  return std::fclose(f) == 0 && ok;
+#else
+  const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  if (fd < 0) return false;
+  ::fchmod(fd, 0600);
+  size_t done = 0;
+  while (done < data.size()) {
+    const auto n = ::write(fd, data.data() + done, data.size() - done);
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) break;
+    done += static_cast<size_t>(n);
+  }
+  return ::close(fd) == 0 && done == data.size();
+#endif
+}
+
+bool writable(const std::string& path) {
+#if defined(_WIN32)
+  const DWORD a = GetFileAttributesW(widen(path).c_str());
+  if (a == INVALID_FILE_ATTRIBUTES) {
+    errno = ENOENT;
+    return false;
+  }
+  if ((a & FILE_ATTRIBUTE_READONLY) && !(a & FILE_ATTRIBUTE_DIRECTORY)) {
+    errno = EACCES;
+    return false;
+  }
+  return true;
+#else
+  return ::access(path.c_str(), W_OK) == 0;
+#endif
+}
+
+bool replaceFile(const std::string& from, const std::string& to, std::string* err) {
+#if defined(_WIN32)
+  if (MoveFileExW(widen(from).c_str(), widen(to).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+  const DWORD code = GetLastError();
+  errno = code == ERROR_ACCESS_DENIED || code == ERROR_SHARING_VIOLATION ? EACCES
+          : code == ERROR_DISK_FULL || code == ERROR_HANDLE_DISK_FULL    ? ENOSPC
+          : code == ERROR_PATH_NOT_FOUND || code == ERROR_FILE_NOT_FOUND ? ENOENT
+                                                                         : EIO;
+  if (err) *err = "cannot replace " + to + " (error " + std::to_string(static_cast<unsigned long>(code)) + ")";
+  return false;
+#else
+  if (std::rename(from.c_str(), to.c_str()) == 0) return true;
+  if (err) *err = "cannot replace " + to + ": " + std::strerror(errno);
+  return false;
+#endif
+}
+
+double cpuSeconds() {
+#if defined(_WIN32)
+  FILETIME c, e, k, u;
+  if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u)) return 0;
+  auto sec = [](const FILETIME& t) {
+    return static_cast<double>((static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime) * 1e-7;
+  };
+  return sec(k) + sec(u);
+#else
+  rusage ru{};
+  getrusage(RUSAGE_SELF, &ru);
+  return static_cast<double>(ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) +
+         static_cast<double>(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec) * 1e-6;
+#endif
+}
+
+double peakRssMb() {
+#if defined(_WIN32)
+  PROCESS_MEMORY_COUNTERS pmc{};
+  pmc.cb = sizeof pmc;
+  if (!GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc)) return 0;
+  return static_cast<double>(pmc.PeakWorkingSetSize) / (1024.0 * 1024.0);
+#else
+  rusage ru{};
+  getrusage(RUSAGE_SELF, &ru);
+#if defined(__APPLE__)
+  return static_cast<double>(ru.ru_maxrss) / (1024.0 * 1024.0);  // bytes
+#else
+  return static_cast<double>(ru.ru_maxrss) / 1024.0;  // kilobytes
+#endif
+#endif
+}
+
 // ---------------------------------------------------------------- numbers
 
 double parseDouble(const char* s, char** end) {
@@ -250,6 +341,35 @@ std::string formatDouble(const char* fmt, double v) {
     for (auto& c : s)
       if (c == dp) c = '.';
   return s;
+}
+
+std::string shellQuote(const std::string& word) {
+#if defined(_WIN32)
+  std::string q = "\"";
+  for (char c : word) q += c == '"' ? std::string("\\\"") : std::string(1, c);
+  return q + "\"";
+#else
+  std::string q = "'";
+  for (char c : word) q += c == '\'' ? std::string("'\\''") : std::string(1, c);
+  return q + "'";
+#endif
+}
+
+int runShell(const std::string& command) {
+#if defined(_WIN32)
+  // cmd /c drops the first and the last quote of a line holding several: wrap it once more.
+  return std::system(("\"" + command + "\"").c_str());
+#else
+  return std::system(command.c_str());
+#endif
+}
+
+const char* nullDevice() {
+#if defined(_WIN32)
+  return "NUL";
+#else
+  return "/dev/null";
+#endif
 }
 
 // ---------------------------------------------------------------- processes
@@ -395,7 +515,8 @@ bool Process::wait(double seconds) {
 }
 
 void Process::kill() {
-  if (started_ && !status_.exited && handle_) TerminateProcess(reinterpret_cast<HANDLE>(handle_), 0xC000013Au);
+  // Reads only what start() wrote: safe while another thread waits for the child.
+  if (started_ && handle_) TerminateProcess(reinterpret_cast<HANDLE>(handle_), 0xC000013Au);
 }
 
 #else
@@ -459,7 +580,9 @@ bool Process::wait(double seconds) {
 }
 
 void Process::kill() {
-  if (started_ && !status_.exited && pid_ > 0) ::kill(static_cast<pid_t>(pid_), SIGKILL);
+  // Reads only what start() wrote: safe while another thread waits for the child. Callers make
+  // sure the child has not been reaped yet (its id could be reused).
+  if (started_ && pid_ > 0) ::kill(static_cast<pid_t>(pid_), SIGKILL);
 }
 
 #endif

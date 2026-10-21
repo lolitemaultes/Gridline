@@ -26,7 +26,8 @@
 #include "host/PluginScan.h"
 #if defined(__APPLE__)
 #include <AudioToolbox/AudioToolbox.h>
-#include <dlfcn.h>
+#include "host/Dylib.h"
+#include "core/Platform.h"
 #include "clap/Probe.h"
 #include "host/sandbox/Sandbox.h"
 #include "host/vst3/Vst3Module.h"
@@ -195,8 +196,8 @@ std::string auStateOf(const std::string& plistBytes) {
 // installed): Gridline's AU host then finds them like installed ones.
 bool registerAu() {
   const std::string bin = std::string(GRIDLINE_PLUGIN_AU) + "/Contents/MacOS/Gridline";
-  void* h = dlopen(bin.c_str(), RTLD_NOW | RTLD_LOCAL);
-  auto factory = h ? reinterpret_cast<AudioComponentFactoryFunction>(dlsym(h, "GridlineAUFactory")) : nullptr;
+  void* h = host::dl::open(bin, nullptr, true);
+  auto factory = h ? host::toFunction<AudioComponentFactoryFunction>(host::dl::sym(h, "GridlineAUFactory")) : nullptr;
   if (!factory) return false;
   const AudioComponentDescription inst{kAudioUnitType_MusicDevice, kAuInstrument, kAuManufacturer, 0, 0};
   const AudioComponentDescription fx{kAudioUnitType_Effect, kAuEffect, kAuManufacturer, 0, 0};
@@ -574,7 +575,7 @@ void testPluginCheck() {
   const std::string report = fs::temp_directory_path().append("plugin-check.json").string();
   const std::string cmd = std::string("\"") + GRIDLINE_CLI_EXE + "\" plugin-check Gridline --json \"" + report + "\" > \"" +
                           fs::temp_directory_path().append("plugin-check.txt").string() + "\" 2>&1";
-  const int rc = std::system(cmd.c_str());
+  const int rc = platform::runShell(cmd);
   std::string text;
   if (FILE* f = std::fopen(fs::temp_directory_path().append("plugin-check.txt").string().c_str(), "r")) {
     char buf[4096];
@@ -601,9 +602,9 @@ void testPluginCheck() {
 #if defined(__APPLE__)
 template <class T>
 T* probe(const std::string& binary, const char* symbol) {
-  void* h = dlopen(binary.c_str(), RTLD_NOW | RTLD_NOLOAD);
-  void* f = h ? dlsym(h, symbol) : nullptr;
-  return f ? reinterpret_cast<T* (*)()>(f)() : nullptr;
+  void* h = host::dl::loaded(binary);
+  void* f = h ? host::dl::sym(h, symbol) : nullptr;
+  return f ? host::toFunction<T* (*)()>(f)() : nullptr;
 }
 
 std::string readFile(const std::string& path) {

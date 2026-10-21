@@ -267,7 +267,8 @@ Selection pastePoints(Points& pts, const Points& clip, Tick at, bool replace) {
 Points thin(const Points& in, double tolerance) {
   if (in.size() <= 2) return in;
   std::vector<char> keep(in.size(), 0);
-  keep.front() = keep.back() = 1;
+  keep[0] = 1;
+  keep[in.size() - 1] = 1;
   // Iterative Ramer–Douglas–Peucker on (tick, value); the error is the
   // vertical distance to the chord.
   std::vector<std::pair<size_t, size_t>> stack{{0, in.size() - 1}};

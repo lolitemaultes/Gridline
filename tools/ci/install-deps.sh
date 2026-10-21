@@ -41,8 +41,11 @@ case "${1:?platform}" in
   netbsd)
     # X11 (Xlib, Mesa's libGL, Xvfb) is part of the base sets; sndio from pkgsrc.
     export PATH="/usr/pkg/sbin:/usr/pkg/bin:$PATH"
-    pkgin -y install cmake ninja-build pkgconf SDL2 libsndio git bash python311 || \
-      pkgin -y install cmake ninja-build pkgconf SDL2 git bash python311
+    if command -v pkgin >/dev/null 2>&1; then
+      pkgin -y install cmake ninja-build pkgconf SDL2 sndio bash
+    else
+      for p in cmake ninja-build pkgconf SDL2 sndio bash; do pkg_add "$p" || echo "pkg_add $p failed" >&2; done
+    fi
     ;;
   *)
     echo "unknown platform: $1" >&2

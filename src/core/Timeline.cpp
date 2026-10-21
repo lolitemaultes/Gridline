@@ -117,7 +117,7 @@ std::string rulerLabel(const Song& s, Tick t, Tick grid) {
   const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks()), step = stepTicks(s);
   t = std::max<Tick>(0, t);
   const long long b = t / bar + 1, bt = (t % bar) / beat + 1, st = (t % beat) / step + 1, tk = (t % beat) % step;
-  char buf[48];
+  char buf[96];
   if (grid >= bar) std::snprintf(buf, sizeof buf, "%lld", b);
   else if (grid >= beat) std::snprintf(buf, sizeof buf, "%lld.%lld", b, bt);
   else if (grid >= step) std::snprintf(buf, sizeof buf, "%lld.%lld.%lld", b, bt, st);

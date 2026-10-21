@@ -11,6 +11,7 @@
 #include <map>
 #include "../../engine/Dsp.h"
 #include "models_widgets.h"
+#include "../../core/Platform.h"
 
 namespace gl::packs::models {
 
@@ -39,7 +40,7 @@ void openImageDialog(App& a, const PluginTarget& t) {
   a.fileDialog = {};
   a.fileDialog.open = true;
   a.fileDialog.title = "Load image";
-  const char* h = std::getenv("HOME");
+  const char* h = gl::platform::homeEnv();
   a.fileDialog.dir = h ? h : ".";
   a.fileDialog.exts = {".bmp", ".ppm", ".pgm", ".tga"};
   PluginTarget tt = t;

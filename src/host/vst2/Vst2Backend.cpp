@@ -13,6 +13,7 @@
 #include "../Dylib.h"
 #include "../PluginScan.h"
 #include "Vst2Abi.h"
+#include "../../core/Platform.h"
 
 namespace fs = std::filesystem;
 
@@ -539,14 +540,19 @@ bool Vst2Editor::hostKey(bool down, int usage, uint32_t ch, uint32_t mods) {
 
 std::vector<std::string> vst2Paths() {
   std::vector<std::string> v;
-  const char* home = std::getenv("HOME");
+  const char* home = gl::platform::homeEnv();
 #if defined(__APPLE__)
   if (home) v.push_back(std::string(home) + "/Library/Audio/Plug-Ins/VST");
   v.push_back("/Library/Audio/Plug-Ins/VST");
+#elif defined(_WIN32)
+  // No standard folder for VST 2: the usual ones of installers and other hosts.
+  (void)home;
+  for (const char* pf : {"ProgramFiles", "ProgramW6432"})
+    for (const char* sub : {"VSTPlugins", "Steinberg/VSTPlugins", "Common Files/VST2", "Common Files/Steinberg/VST2"})
+      if (const std::string p = envFolder(pf, sub); !p.empty() && std::find(v.begin(), v.end(), p) == v.end()) v.push_back(p);
 #else
   if (home) v.push_back(std::string(home) + "/.vst");
-  v.push_back("/usr/lib/vst");
-  v.push_back("/usr/local/lib/vst");
+  addSystemPluginFolders(v, "VST2", "vst");
   v.push_back("/usr/lib/lxvst");
 #endif
   addEnvPaths(v, "VST_PATH");
@@ -556,6 +562,8 @@ std::vector<std::string> vst2Paths() {
 std::vector<std::string> vst2Discover(const std::vector<std::string>& folders) {
 #if defined(__APPLE__)
   return findEntries(folders, ".vst", true, false);
+#elif defined(_WIN32)
+  return findEntries(folders, ".dll", false, true);
 #else
   return findEntries(folders, ".so", false, true);
 #endif

@@ -291,7 +291,7 @@ void drawSpectrum(App& a, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const StereoRing
   for (double f : {50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0}) {
     float x = pui::freqToX(f, p0.x, w);
     dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), f == 100.0 || f == 1000.0 || f == 10000.0 ? P.gridBar : P.gridStep);
-    char buf[12];
+    char buf[48];
     std::snprintf(buf, sizeof buf, f >= 1000 ? "%gk" : "%g", f >= 1000 ? f / 1000 : f);
     textAt(dl, a.fontMono, 10.0f, ImVec2(x + 3, p1.y - 14), P.textFaint, buf);
   }

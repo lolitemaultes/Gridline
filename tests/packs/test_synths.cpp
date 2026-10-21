@@ -118,7 +118,7 @@ void testCatalog() {
     const PluginInfo* info = findPlugin(type);
     expect(info != nullptr, (std::string(type) + " is in the catalogue").c_str());
     if (!info) continue;
-    int expected = std::string(type) == "gl.analog" ? AnCount : WtCount;
+    int expected = std::string(type) == "gl.analog" ? static_cast<int>(AnCount) : static_cast<int>(WtCount);
     expect(static_cast<int>(info->params.size()) == expected, (std::string(type) + " parameter count").c_str());
     expect(info->presets.size() >= 6 && info->presets.size() <= 12, (std::string(type) + " has 6-12 presets").c_str());
     expect(info->editorWidth >= 900, (std::string(type) + " has a wide editor").c_str());

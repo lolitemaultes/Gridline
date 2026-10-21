@@ -19,7 +19,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
-#include <sys/resource.h>
+#include "core/Platform.h"
 #include "Check.h"
 #include "core/Demo.h"
 #include "core/PluginInfo.h"
@@ -119,11 +119,7 @@ Song makeSong(uint64_t seed, int synths, int effects, int delays, int tweaks) {
 }
 
 // Process CPU time (user + system, all threads), seconds.
-double cpuSeconds() {
-  rusage u{};
-  getrusage(RUSAGE_SELF, &u);
-  return static_cast<double>(u.ru_utime.tv_sec + u.ru_stime.tv_sec) + static_cast<double>(u.ru_utime.tv_usec + u.ru_stime.tv_usec) * 1e-6;
-}
+double cpuSeconds() { return gl::platform::cpuSeconds(); }
 
 struct Timing {
   double wall = -1, cpu = -1;

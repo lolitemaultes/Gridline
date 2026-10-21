@@ -67,7 +67,7 @@ double readField(const Bytes& b, size_t at, Type t) {
 
 void writeField(Bytes& b, size_t at, Type t, double v) {
   if (at + typeSize(t) > b.size() || !std::isfinite(v)) return;
-  double lo, hi;
+  double lo = 0, hi = 0;
   typeRange(t, lo, hi);
   if (!isFloat(t)) v = std::clamp(std::round(v), lo, hi);
   switch (t) {
@@ -406,7 +406,7 @@ struct Solver {
   static double storedAs(const Field& f, double r) {
     if (f.type == Type::F32) return static_cast<float>(r);
     if (f.type == Type::F64) return r;
-    double lo, hi;
+    double lo = 0, hi = 0;
     typeRange(f.type, lo, hi);
     return std::clamp(std::round(r), lo, hi);
   }

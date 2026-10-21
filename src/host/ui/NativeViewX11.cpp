@@ -1,7 +1,7 @@
 // Gridline — native pieces of a plugin window (X11). Xlib is resolved at run
 // time from the library SDL's X11 driver already loaded, so Gridline links no
 // X11 library itself; without it the plugin attaches to the window directly.
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(_WIN32)
 #include <dlfcn.h>
 #include <cstdint>
 #include "NativeView.h"
@@ -22,8 +22,12 @@ struct Xlib {
 const Xlib& xlib() {
   static Xlib x = [] {
     Xlib l;
-    void* h = dlopen("libX11.so.6", RTLD_LAZY | RTLD_NOLOAD);
-    if (!h) h = dlopen("libX11.so.6", RTLD_LAZY);
+    // libX11.so.6 (Linux, FreeBSD, NetBSD); OpenBSD numbers its libraries differently.
+    void* h = nullptr;
+    for (const char* name : {"libX11.so.6", "libX11.so"}) {
+      if (!h) h = dlopen(name, RTLD_LAZY | RTLD_NOLOAD);
+      if (!h) h = dlopen(name, RTLD_LAZY);
+    }
     if (!h) return l;
     auto sym = [h](const char* n) { return dlsym(h, n); };
     l.createSimpleWindow = reinterpret_cast<decltype(l.createSimpleWindow)>(sym("XCreateSimpleWindow"));

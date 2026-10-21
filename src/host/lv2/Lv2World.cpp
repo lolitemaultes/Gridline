@@ -8,6 +8,7 @@
 #include <mutex>
 #include "../Backend.h"
 #include "../PluginScan.h"
+#include "../../core/Platform.h"
 
 namespace fs = std::filesystem;
 
@@ -141,16 +142,22 @@ std::map<std::string, std::shared_ptr<const PluginDesc>>& cache() {
 
 std::vector<std::string> defaultPaths() {
   std::vector<std::string> v;
-  const char* home = std::getenv("HOME");
+  const char* home = gl::platform::homeEnv();
 #if defined(__APPLE__)
   if (home) v.push_back(std::string(home) + "/Library/Audio/Plug-Ins/LV2");
   v.push_back("/Library/Audio/Plug-Ins/LV2");
   if (home) v.push_back(std::string(home) + "/.lv2");
   v.push_back("/usr/local/lib/lv2");
+#elif defined(_WIN32)
+  // The LV2 specification's Windows locations: %APPDATA%\LV2 and %COMMONPROGRAMFILES%\LV2.
+  (void)home;
+  for (const std::string& p : {host::envFolder("APPDATA", "LV2"), host::envFolder("CommonProgramFiles", "LV2")})
+    if (!p.empty()) v.push_back(p);
 #else
   if (home) v.push_back(std::string(home) + "/.lv2");
   v.push_back("/usr/local/lib/lv2");
   v.push_back("/usr/lib/lv2");
+  v.push_back("/usr/pkg/lib/lv2");
 #endif
   addEnvPaths(v, "LV2_PATH");
   return v;
@@ -270,6 +277,7 @@ std::shared_ptr<const PluginDesc> describe(const std::string& bundleIn, const st
     for (const std::string& t : iris(m, u, kRdfType)) {
       if (t == std::string(kUi) + "CocoaUI") ui.kind = Ui::Cocoa, ui.typeUri = t;
       else if (t == std::string(kUi) + "X11UI") ui.kind = Ui::X11, ui.typeUri = t;
+      else if (t == std::string(kUi) + "WindowsUI") ui.kind = Ui::Windows, ui.typeUri = t;
       else if ((t == kKxExternalUi || t == kOldExternalUi) && ui.kind == Ui::Other) ui.kind = Ui::External, ui.typeUri = t;
     }
     if (const Node* bin = m.object(u, std::string(kUi) + "binary"); bin && bin->isIri()) uriToPath(bin->value, ui.binary);

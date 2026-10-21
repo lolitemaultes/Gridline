@@ -1,7 +1,7 @@
 // Gridline — ZIP archives. See Zip.h.
 #include "Zip.h"
 #include "Project.h"
-#include <unistd.h>
+#include "Platform.h"
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -73,7 +73,7 @@ bool ZipWriter::open(const std::string& path, std::string* err) {
   if (!checkWritableTarget(path, err)) return false;
   static std::atomic<unsigned> serial{0};
   path_ = path;
-  tmp_ = path + ".tmp." + std::to_string(static_cast<long>(getpid())) + "." + std::to_string(serial.fetch_add(1));
+  tmp_ = path + ".tmp." + std::to_string(static_cast<long>(platform::processId())) + "." + std::to_string(serial.fetch_add(1));
   errno = 0;
   f_ = std::fopen(tmp_.c_str(), "wb");
   if (!f_) return fail(err, fileWriteError(path, errno));
@@ -176,7 +176,7 @@ bool ZipWriter::close(std::string* err) {
     std::remove(tmp_.c_str());
     return fail(err, fileWriteError(path_, errno_));
   }
-  if (std::rename(tmp_.c_str(), path_.c_str()) != 0) {
+  if (!platform::replaceFile(tmp_, path_)) {
     const int e = errno;
     std::remove(tmp_.c_str());
     return fail(err, fileWriteError(path_, e));

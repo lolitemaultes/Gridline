@@ -4,6 +4,7 @@
 // overshoot independent of the frame rate, the side-count morph never pops,
 // and building a frame allocates nothing.
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

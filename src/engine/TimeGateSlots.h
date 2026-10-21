@@ -512,7 +512,7 @@ namespace detail {
 inline std::string without(const std::string& data, char bank, int idx) {
   std::string src = upgrade(data);
   std::string out = "GB2\n";
-  char key[8];
+  char key[32];
   std::snprintf(key, sizeof key, "%c%d ", bank, idx + 1);
   size_t st = 4;
   while (st < src.size()) {

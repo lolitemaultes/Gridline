@@ -14,7 +14,7 @@
 #include <set>
 #include <sstream>
 #include <string>
-#include <unistd.h>
+#include "Platform.h"
 #include "Json.h"
 #include "Params.h"
 #include "TrackModes.h"
@@ -1392,7 +1392,7 @@ std::string fileWriteError(const std::string& path, int errnum) {
 bool checkWritableTarget(const std::string& path, std::string* err) {
   std::error_code ec;
   if (std::filesystem::is_directory(path, ec)) return fail(err, fileWriteError(path, EISDIR));
-  if (std::filesystem::exists(path, ec) && ::access(path.c_str(), W_OK) != 0 && (errno == EACCES || errno == EPERM || errno == EROFS))
+  if (std::filesystem::exists(path, ec) && !platform::writable(path) && (errno == EACCES || errno == EPERM || errno == EROFS))
     return fail(err, "cannot replace " + std::filesystem::path(path).filename().string() +
                          ": the file is read-only. Choose another name, or make the file writable.");
   return true;
@@ -1405,7 +1405,7 @@ bool writeFileAtomic(const std::string& path, const std::string& text, std::stri
   // worker and the UI thread, or two running instances sharing the config
   // folder's backups) must not write into, or rename away, each other's temp.
   static std::atomic<unsigned> serial{0};
-  std::string tmp = path + ".tmp." + std::to_string(static_cast<long>(getpid())) + "." + std::to_string(serial.fetch_add(1));
+  std::string tmp = path + ".tmp." + std::to_string(static_cast<long>(platform::processId())) + "." + std::to_string(serial.fetch_add(1));
   errno = 0;
   std::FILE* f = std::fopen(tmp.c_str(), "wb");
   if (!f) return fail(err, fileWriteError(path, errno));
@@ -1418,7 +1418,7 @@ bool writeFileAtomic(const std::string& path, const std::string& text, std::stri
     std::remove(tmp.c_str());  // J-78: no half-written temp left behind (e.g. disk full)
     return fail(err, fileWriteError(path, !wrote ? werr : cerr));
   }
-  if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+  if (!platform::replaceFile(tmp, path)) {
     const int e = errno;
     std::remove(tmp.c_str());
     return fail(err, fileWriteError(path, e));

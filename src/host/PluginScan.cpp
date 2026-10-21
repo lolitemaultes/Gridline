@@ -256,12 +256,37 @@ void addEnvPaths(std::vector<std::string>& v, const char* var) {
   std::string s = e;
   size_t a = 0;
   while (a <= s.size()) {
+#if defined(_WIN32)
+    size_t b = s.find(';', a);  // Windows paths hold ':' (C:\...)
+#else
     size_t b = s.find(':', a);
+#endif
     std::string p = s.substr(a, b == std::string::npos ? std::string::npos : b - a);
     if (!p.empty() && std::find(v.begin(), v.end(), p) == v.end()) v.push_back(p);
     if (b == std::string::npos) break;
     a = b + 1;
   }
+}
+
+std::string envFolder(const char* var, const char* sub) {
+  const char* e = std::getenv(var);
+  if (!e || !*e) return {};
+  return (fs::path(e) / sub).string();
+}
+
+void addSystemPluginFolders(std::vector<std::string>& v, const char* winCommon, const char* unixLib) {
+#if defined(_WIN32)
+  // Per user: %LOCALAPPDATA%\Programs\Common\<format>; everyone: %COMMONPROGRAMFILES%\<format>.
+  for (const std::string& p : {envFolder("LOCALAPPDATA", (std::string("Programs/Common/") + winCommon).c_str()), envFolder("CommonProgramFiles", winCommon)})
+    if (!p.empty()) v.push_back(p);
+  (void)unixLib;
+#else
+  (void)winCommon;
+  for (const char* prefix : {"/usr/lib/", "/usr/local/lib/", "/usr/pkg/lib/"}) {
+    const std::string p = std::string(prefix) + unixLib;
+    if (std::find(v.begin(), v.end(), p) == v.end()) v.push_back(p);
+  }
+#endif
 }
 
 std::string selfExecutablePath() {

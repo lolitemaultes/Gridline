@@ -13,6 +13,7 @@
 #include <mutex>
 #include <thread>
 #include "I18n.h"
+#include "Platform.h"
 
 namespace gl::xdrop {
 
@@ -34,7 +35,7 @@ std::string lower(std::string s) {
   return s;
 }
 
-std::string fmt(const char* f, ...) __attribute__((format(printf, 1, 2)));
+std::string fmt(const char* f, ...) GL_PRINTF_FORMAT(1, 2);
 std::string fmt(const char* f, ...) {
   char buf[512];
   va_list ap;
@@ -380,7 +381,7 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
 }
 
 // ------------------------------------------------------- platform fallback
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(_WIN32)  // Windows: host/ui/ExternalDropWin.cpp
 namespace native {
 bool install(void*) { return false; }
 void poll() {}

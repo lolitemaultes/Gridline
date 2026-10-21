@@ -429,7 +429,7 @@ void draw(App& a) {
   {  // target line
     const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks());
     auto pos = [&](Tick t) {
-      char b2[32];
+      char b2[48];
       std::snprintf(b2, sizeof b2, "%lld.%lld", static_cast<long long>(t / bar + 1), static_cast<long long>(t % bar / beat + 1));
       return std::string(b2);
     };

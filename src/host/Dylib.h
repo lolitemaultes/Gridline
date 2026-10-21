@@ -22,6 +22,19 @@ class Dylib {
   bool bundle_ = false;
 };
 
+// Plain shared objects (dlopen / LoadLibrary), for code that manages the handle itself.
+namespace dl {
+// Opens a shared object (Windows: a DLL, its folder searched for its dependencies).
+// `now`: resolve every symbol at load (RTLD_NOW). nullptr on failure, with the reason in *err.
+void* open(const std::string& path, std::string* err = nullptr, bool now = false);
+// The handle of a shared object this process has already loaded, nullptr otherwise.
+void* loaded(const std::string& path);
+void* sym(void* handle, const char* name);
+void close(void* handle);
+// The file of the shared object (or executable) that contains `address`, empty when unknown.
+std::string pathOf(const void* address);
+}  // namespace dl
+
 // Function pointer from a symbol address without a pointer-to-object cast.
 template <class Fn>
 Fn toFunction(void* sym) {

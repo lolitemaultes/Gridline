@@ -2,7 +2,7 @@
 //   gridline bench <project.json|.flp> [--threads 1,4] [--repeat 5] [--render-seconds S] [--json out.json]
 // Prints medians of every stage plus a hash of the rendered audio (bit-exact checks
 // of optimisations: equal hashes = identical output).
-#include <sys/resource.h>
+#include "../core/Platform.h"
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
 #elif defined(__GLIBC__)
@@ -32,21 +32,8 @@ namespace {
 double nowSec() {
   return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-double cpuSec() {  // whole process (all threads)
-  rusage ru{};
-  getrusage(RUSAGE_SELF, &ru);
-  return static_cast<double>(ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) +
-         static_cast<double>(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec) * 1e-6;
-}
-double peakRssMb() {
-  rusage ru{};
-  getrusage(RUSAGE_SELF, &ru);
-#if defined(__APPLE__)
-  return static_cast<double>(ru.ru_maxrss) / (1024.0 * 1024.0);
-#else
-  return static_cast<double>(ru.ru_maxrss) / 1024.0;
-#endif
-}
+double cpuSec() { return gl::platform::cpuSeconds(); }  // whole process (all threads)
+double peakRssMb() { return gl::platform::peakRssMb(); }
 // Bytes currently allocated on the heap (0 where unsupported).
 size_t heapInUse() {
 #if defined(__APPLE__)

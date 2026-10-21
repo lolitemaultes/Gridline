@@ -7,6 +7,8 @@
 #include <mach/thread_policy.h>
 #include <pthread.h>
 #include <sys/qos.h>
+#elif defined(_WIN32)
+#include <windows.h>
 #else
 #include <pthread.h>
 #include <sched.h>
@@ -20,6 +22,11 @@ Semaphore::Semaphore() : h_(dispatch_semaphore_create(0)) {}
 Semaphore::~Semaphore() { dispatch_release(static_cast<dispatch_semaphore_t>(h_)); }
 void Semaphore::post() { dispatch_semaphore_signal(static_cast<dispatch_semaphore_t>(h_)); }
 void Semaphore::wait() { dispatch_semaphore_wait(static_cast<dispatch_semaphore_t>(h_), DISPATCH_TIME_FOREVER); }
+#elif defined(_WIN32)
+Semaphore::Semaphore() : h_(CreateSemaphoreW(nullptr, 0, 0x7fffffff, nullptr)) {}
+Semaphore::~Semaphore() { CloseHandle(static_cast<HANDLE>(h_)); }
+void Semaphore::post() { ReleaseSemaphore(static_cast<HANDLE>(h_), 1, nullptr); }
+void Semaphore::wait() { WaitForSingleObject(static_cast<HANDLE>(h_), INFINITE); }
 #else
 Semaphore::Semaphore() : h_(new sem_t) { sem_init(static_cast<sem_t*>(h_), 0, 0); }
 Semaphore::~Semaphore() {
@@ -66,6 +73,8 @@ bool makeRealtime() {
   pol.preemptible = 1;
   return thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
                            reinterpret_cast<thread_policy_t>(&pol), THREAD_TIME_CONSTRAINT_POLICY_COUNT) == KERN_SUCCESS;
+#elif defined(_WIN32)
+  return SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) != 0;
 #else
   sched_param sp{};
   sp.sched_priority = sched_get_priority_min(SCHED_FIFO) + 10;

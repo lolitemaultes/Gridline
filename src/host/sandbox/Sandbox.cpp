@@ -11,17 +11,18 @@
 #include <new>
 #include <thread>
 #include <vector>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
-#include <spawn.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <unistd.h>
+#endif
 #include "../PluginScan.h"
-
-extern char** environ;
+#include "../../core/Platform.h"
 
 namespace gl::host {
 
@@ -34,7 +35,9 @@ constexpr uint32_t kShmVersion = 2;
 constexpr int kBlock = 1024;  // AudioEngine::kMaxBlock
 constexpr int kOutBuses = 16;  // main + 15 extra outputs
 constexpr int kMaxParams = 2048, kMaxEvents = 1024, kMaxMidiOut = 512;
+#if !defined(_WIN32)
 constexpr int kRpcFd = 3, kWakeFd = 4;  // descriptors in the child
+#endif
 
 struct ParamChange {
   uint32_t id;
@@ -122,9 +125,69 @@ struct Rd {
   }
 };
 
-bool writeAll(int fd, const char* p, size_t n) {
+// A byte stream between the processes. POSIX: one socket (r == w) or a pipe end;
+// Windows: anonymous pipe handles (one pipe per direction).
+struct Chan {
+  std::intptr_t r = -1, w = -1;
+  bool valid() const { return r != -1 || w != -1; }
+};
+
+#if defined(_WIN32)
+HANDLE handleOf(std::intptr_t h) { return reinterpret_cast<HANDLE>(h); }
+
+bool writeAll(const Chan& c, const char* p, size_t n) {
   while (n > 0) {
-    ssize_t w = ::write(fd, p, n);
+    DWORD done = 0;
+    if (!WriteFile(handleOf(c.w), p, static_cast<DWORD>(std::min<size_t>(n, 1u << 20)), &done, nullptr) || done == 0) return false;
+    p += done;
+    n -= done;
+  }
+  return true;
+}
+
+// Bytes waiting in the pipe; -1 when the other end is gone.
+long pipeAvailable(const Chan& c) {
+  DWORD avail = 0;
+  if (!PeekNamedPipe(handleOf(c.r), nullptr, 0, nullptr, &avail, nullptr)) return -1;
+  return static_cast<long>(avail);
+}
+
+bool waitReadable(const Chan& c, int timeoutMs) {
+  const auto start = std::chrono::steady_clock::now();
+  for (;;) {
+    const long a = pipeAvailable(c);
+    if (a != 0) return true;  // data, or a closed pipe (the read reports it)
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() >= timeoutMs) return false;
+    Sleep(1);
+  }
+}
+
+// Reads exactly n bytes; timeoutMs < 0 waits forever.
+bool readAll(const Chan& c, char* p, size_t n, int timeoutMs) {
+  auto start = std::chrono::steady_clock::now();
+  while (n > 0) {
+    if (timeoutMs >= 0) {
+      int left = timeoutMs - static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+      if (left <= 0 || !waitReadable(c, left)) return false;
+    }
+    DWORD got = 0;
+    if (!ReadFile(handleOf(c.r), p, static_cast<DWORD>(std::min<size_t>(n, 1u << 20)), &got, nullptr) || got == 0) return false;
+    p += got;
+    n -= got;
+  }
+  return true;
+}
+
+void closeChan(Chan& c) {
+  if (c.r != -1) CloseHandle(handleOf(c.r));
+  if (c.w != -1 && c.w != c.r) CloseHandle(handleOf(c.w));
+  c = Chan{};
+}
+#else
+bool writeAll(const Chan& c, const char* p, size_t n) {
+  const int fd = static_cast<int>(c.w);
+  while (n > 0) {
+    auto w = ::write(fd, p, n);
     if (w < 0 && errno == EINTR) continue;
     if (w <= 0) return false;
     p += w;
@@ -133,8 +196,14 @@ bool writeAll(int fd, const char* p, size_t n) {
   return true;
 }
 
+bool waitReadable(const Chan& c, int timeoutMs) {
+  pollfd pf{static_cast<int>(c.r), POLLIN, 0};
+  return ::poll(&pf, 1, timeoutMs) > 0;
+}
+
 // Reads exactly n bytes; timeoutMs < 0 waits forever.
-bool readAll(int fd, char* p, size_t n, int timeoutMs) {
+bool readAll(const Chan& c, char* p, size_t n, int timeoutMs) {
+  const int fd = static_cast<int>(c.r);
   auto start = std::chrono::steady_clock::now();
   while (n > 0) {
     if (timeoutMs >= 0) {
@@ -145,7 +214,7 @@ bool readAll(int fd, char* p, size_t n, int timeoutMs) {
       if (r < 0 && errno == EINTR) continue;
       if (r <= 0) return false;
     }
-    ssize_t got = ::read(fd, p, n);
+    auto got = ::read(fd, p, n);
     if (got < 0 && errno == EINTR) continue;
     if (got <= 0) return false;
     p += got;
@@ -154,18 +223,111 @@ bool readAll(int fd, char* p, size_t n, int timeoutMs) {
   return true;
 }
 
-bool sendMsg(int fd, const std::string& payload) {
+void closeChan(Chan& c) {
+  if (c.r >= 0) ::close(static_cast<int>(c.r));
+  if (c.w >= 0 && c.w != c.r) ::close(static_cast<int>(c.w));
+  c = Chan{};
+}
+#endif
+
+bool sendMsg(const Chan& c, const std::string& payload) {
   uint32_t n = static_cast<uint32_t>(payload.size());
-  return writeAll(fd, reinterpret_cast<const char*>(&n), 4) && writeAll(fd, payload.data(), payload.size());
+  return writeAll(c, reinterpret_cast<const char*>(&n), 4) && writeAll(c, payload.data(), payload.size());
 }
 
-bool recvMsg(int fd, std::string& payload, int timeoutMs) {
+bool recvMsg(const Chan& c, std::string& payload, int timeoutMs) {
   uint32_t n = 0;
-  if (!readAll(fd, reinterpret_cast<char*>(&n), 4, timeoutMs)) return false;
+  if (!readAll(c, reinterpret_cast<char*>(&n), 4, timeoutMs)) return false;
   if (n > (256u << 20)) return false;
   payload.resize(n);
-  return n == 0 || readAll(fd, payload.data(), n, timeoutMs < 0 ? -1 : std::max(timeoutMs, 2000));
+  return n == 0 || readAll(c, payload.data(), n, timeoutMs < 0 ? -1 : std::max(timeoutMs, 2000));
 }
+
+// ---------------------------------------------------------------- shared block
+
+// Creates (parent) or opens (child) the named audio block. POSIX: shm_open; the parent unlinks
+// the name once the child has it. Windows: a named file mapping in the session namespace,
+// gone when both processes closed it.
+struct ShmMap {
+  void* mem = nullptr;
+#if defined(_WIN32)
+  HANDLE mapping = nullptr;
+#endif
+  bool create(const std::string& name, size_t size, std::string* err) {
+#if defined(_WIN32)
+    std::wstring w(name.begin(), name.end());  // ASCII
+    mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, static_cast<DWORD>(size), w.c_str());
+    if (!mapping || GetLastError() == ERROR_ALREADY_EXISTS) {
+      if (mapping) CloseHandle(mapping);
+      mapping = nullptr;
+      if (err) *err = "cannot create shared memory";
+      return false;
+    }
+    mem = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, size);
+    if (!mem) {
+      if (err) *err = "cannot map shared memory";
+      return false;
+    }
+    return true;
+#else
+    int fd = ::shm_open(name.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) {
+      if (err) *err = "cannot create shared memory";
+      return false;
+    }
+    if (::ftruncate(fd, static_cast<off_t>(size)) != 0) {
+      ::close(fd);
+      ::shm_unlink(name.c_str());
+      if (err) *err = "cannot size shared memory";
+      return false;
+    }
+    void* m = ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (m == MAP_FAILED) {
+      ::shm_unlink(name.c_str());
+      if (err) *err = "cannot map shared memory";
+      return false;
+    }
+    mem = m;
+    return true;
+#endif
+  }
+  bool open(const std::string& name, size_t size) {
+#if defined(_WIN32)
+    std::wstring w(name.begin(), name.end());
+    mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, w.c_str());
+    if (!mapping) return false;
+    mem = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, size);
+    return mem != nullptr;
+#else
+    int fd = ::shm_open(name.c_str(), O_RDWR, 0600);
+    if (fd < 0) return false;
+    void* m = ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (m == MAP_FAILED) return false;
+    mem = m;
+    return true;
+#endif
+  }
+  static void unlinkName(const std::string& name) {
+#if defined(_WIN32)
+    (void)name;
+#else
+    ::shm_unlink(name.c_str());
+#endif
+  }
+  void close(size_t size) {
+#if defined(_WIN32)
+    (void)size;
+    if (mem) UnmapViewOfFile(mem);
+    if (mapping) CloseHandle(mapping);
+    mapping = nullptr;
+#else
+    if (mem) ::munmap(mem, size);
+#endif
+    mem = nullptr;
+  }
+};
 
 // Description of the child's instance (create / prepare / restart replies).
 struct Desc {
@@ -305,15 +467,15 @@ class SandboxBackend final : public Backend {
 
   ~SandboxBackend() override {
     if (editor_) editor_->b_ = nullptr;
-    if (rpc_ >= 0) ::close(rpc_);
-    if (wake_ >= 0) ::close(wake_);
+    closeChan(rpc_);
+    closeChan(wake_);
     // The child exits on EOF; give it a moment, then make sure.
     for (int i = 0; i < 100 && !exited_.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    if (!exited_.load() && pid_ > 0) ::kill(pid_, SIGKILL);
+    if (!exited_.load()) proc_.kill();
     if (watcher_.joinable()) watcher_.join();
     if (shm_) {
       shm_->~Shm();
-      ::munmap(shm_, sizeof(Shm));
+      map_.close(sizeof(Shm));
     }
   }
 
@@ -638,7 +800,12 @@ class SandboxBackend final : public Backend {
     const uint32_t seq = ++seq_;
     shm_->request.store(seq, std::memory_order_release);
     const char byte = 1;
-    ssize_t wr = ::write(wake_, &byte, 1);
+#if defined(_WIN32)
+    DWORD wr = 0;
+    WriteFile(handleOf(wake_.w), &byte, 1, &wr, nullptr);  // PIPE_NOWAIT: never blocks
+#else
+    auto wr = ::write(static_cast<int>(wake_.w), &byte, 1);  // non-blocking
+#endif
     (void)wr;
     for (uint32_t spin = 0;; ++spin) {
       if (shm_->done.load(std::memory_order_acquire) == seq) {
@@ -662,42 +829,52 @@ class SandboxBackend final : public Backend {
   SandboxBackend() : silence_(kBlock, 0.0f), params_(new ParamChange[kMaxParams]), events_(new NoteEvent[kMaxEvents]), midiBuf_(new MidiOut[kMaxMidiOut]) {}
 
   bool spawn(const std::string& exe, std::string* err) {
+    static std::atomic<int> serial{0};
+#if defined(_WIN32)
+    shmName_ = "Local\\glsb." + std::to_string(platform::processId()) + "." + std::to_string(serial++);
+#else
     // Writing to a dead child's pipe / socket must fail with EPIPE, not kill us.
     static const bool sigpipeIgnored = [] {
       ::signal(SIGPIPE, SIG_IGN);
       return true;
     }();
     (void)sigpipeIgnored;
-    static std::atomic<int> serial{0};
-    shmName_ = "/glsb." + std::to_string(::getpid()) + "." + std::to_string(serial++);
-    int fd = ::shm_open(shmName_.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
-    if (fd < 0) {
-      if (err) *err = "cannot create shared memory";
-      return false;
-    }
-    if (::ftruncate(fd, static_cast<off_t>(sizeof(Shm))) != 0) {
-      ::close(fd);
-      ::shm_unlink(shmName_.c_str());
-      if (err) *err = "cannot size shared memory";
-      return false;
-    }
-    void* mem = ::mmap(nullptr, sizeof(Shm), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
-    if (mem == MAP_FAILED) {
-      ::shm_unlink(shmName_.c_str());
-      if (err) *err = "cannot map shared memory";
-      return false;
-    }
-    shm_ = new (mem) Shm;
+    shmName_ = "/glsb." + std::to_string(platform::processId()) + "." + std::to_string(serial++);
+#endif
+    if (!map_.create(shmName_, sizeof(Shm), err)) return false;
+    shm_ = new (map_.mem) Shm;
     shm_->magic = kShmMagic;
     shm_->version = kShmVersion;
     shm_->request.store(0);
     shm_->done.store(0);
 
+    std::vector<std::string> args = {exe, "--plugin-sandbox", shmName_};
+    std::vector<std::intptr_t> inherit;
+    Chan childRpc, childWake;
+#if defined(_WIN32)
+    // Three anonymous pipes (requests, replies, wake-ups); the child's ends are passed on its
+    // command line with the block's name, and only they are inherited.
+    HANDLE toChildR = nullptr, toChildW = nullptr, fromChildR = nullptr, fromChildW = nullptr, wakeR = nullptr, wakeW = nullptr;
+    if (!CreatePipe(&toChildR, &toChildW, nullptr, 1 << 16) || !CreatePipe(&fromChildR, &fromChildW, nullptr, 1 << 16) ||
+        !CreatePipe(&wakeR, &wakeW, nullptr, 4096)) {
+      if (err) *err = "cannot create the sandbox channels";
+      return false;
+    }
+    DWORD mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;  // the audio thread's wake-up never blocks
+    SetNamedPipeHandleState(wakeW, &mode, nullptr, nullptr);
+    rpc_ = Chan{reinterpret_cast<std::intptr_t>(fromChildR), reinterpret_cast<std::intptr_t>(toChildW)};
+    wake_ = Chan{-1, reinterpret_cast<std::intptr_t>(wakeW)};
+    childRpc = Chan{reinterpret_cast<std::intptr_t>(toChildR), reinterpret_cast<std::intptr_t>(fromChildW)};
+    childWake = Chan{reinterpret_cast<std::intptr_t>(wakeR), -1};
+    inherit = {childRpc.r, childRpc.w, childWake.r};
+    args[2] += "|" + std::to_string(childRpc.r) + "|" + std::to_string(childRpc.w) + "|" + std::to_string(childWake.r) + "|" +
+               std::to_string(platform::processId());
+    const unsigned flags = platform::Process::kInheritStderr;
+#else
     int sv[2], pp[2];
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0 || ::pipe(pp) != 0) {
       if (err) *err = "cannot create the sandbox channels";
-      ::shm_unlink(shmName_.c_str());
+      ShmMap::unlinkName(shmName_);
       return false;
     }
 #if defined(SO_NOSIGPIPE)
@@ -706,47 +883,28 @@ class SandboxBackend final : public Backend {
 #endif
     ::fcntl(pp[1], F_SETFL, ::fcntl(pp[1], F_GETFL) | O_NONBLOCK);
     for (int f : {sv[0], pp[1]}) ::fcntl(f, F_SETFD, FD_CLOEXEC);
-    posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_adddup2(&fa, sv[1], kRpcFd);
-    posix_spawn_file_actions_adddup2(&fa, pp[0], kWakeFd);
-    posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-    posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-#if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
-    posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);  // only 0-4 reach the child
-    posix_spawn_file_actions_addinherit_np(&fa, 0);
-    posix_spawn_file_actions_addinherit_np(&fa, 2);
+    rpc_ = Chan{sv[0], sv[0]};
+    wake_ = Chan{-1, pp[1]};
+    childRpc = Chan{sv[1], sv[1]};
+    childWake = Chan{pp[0], -1};
+    inherit = {sv[1], pp[0]};  // become descriptors 3 (kRpcFd) and 4 (kWakeFd) in the child
+    const unsigned flags = platform::Process::kInheritStdin | platform::Process::kInheritStderr;
 #endif
-    std::vector<std::string> args = {exe, "--plugin-sandbox", shmName_};
-    std::vector<char*> argv;
-    for (auto& a : args) argv.push_back(a.data());
-    argv.push_back(nullptr);
-    int rc = ::posix_spawn(&pid_, exe.c_str(), &fa, &attr, argv.data(), environ);
-    posix_spawn_file_actions_destroy(&fa);
-    posix_spawnattr_destroy(&attr);
-    ::close(sv[1]);
-    ::close(pp[0]);
-    rpc_ = sv[0];
-    wake_ = pp[1];
-    if (rc != 0) {
-      ::shm_unlink(shmName_.c_str());
-      pid_ = -1;
+    const bool started = proc_.start(exe, args, flags, inherit);
+    closeChan(childRpc);
+    closeChan(childWake);
+    if (!started) {
+      ShmMap::unlinkName(shmName_);
       exited_.store(true);
       if (err) *err = "cannot start the sandbox process";
       return false;
     }
     // The child opens the block first thing; unlink it once it has.
     watcher_ = std::thread([this]() {
-      int status = 0;
-      pid_t r;
-      do {
-        r = ::waitpid(pid_, &status, 0);
-      } while (r < 0 && errno == EINTR);
+      proc_.wait();
       exited_.store(true);
-      std::string why = r < 0 ? "lost the sandbox process"
-                        : WIFSIGNALED(status) ? "the plugin crashed (signal " + std::to_string(WTERMSIG(status)) + ")"
-                                              : "the sandbox process exited (code " + std::to_string(WEXITSTATUS(status)) + ")";
+      const platform::ExitStatus& st = proc_.status();
+      std::string why = st.crashed ? "the plugin " + st.describe() : "the sandbox process exited (code " + std::to_string(st.code) + ")";
       markCrashed(why);
     });
     return true;
@@ -754,13 +912,13 @@ class SandboxBackend final : public Backend {
 
   // One request/response on the socket (UI thread).
   bool call(const std::string& req, std::string& reply, int timeoutMs) {
-    if (crashed_.load() || rpc_ < 0) return false;
+    if (crashed_.load() || !rpc_.valid()) return false;
     if (!sendMsg(rpc_, req) || !recvMsg(rpc_, reply, timeoutMs)) {
       if (!crashed_.load()) hang();
       return false;
     }
     if (!unlinked_) {
-      ::shm_unlink(shmName_.c_str());
+      ShmMap::unlinkName(shmName_);
       unlinked_ = true;
     }
     return true;
@@ -799,7 +957,7 @@ class SandboxBackend final : public Backend {
   // The child stopped answering: end it.
   void hang() {
     markCrashed("the plugin stopped responding");
-    if (pid_ > 0 && !exited_.load()) ::kill(pid_, SIGKILL);
+    if (!exited_.load()) proc_.kill();
   }
 
   Desc desc_;
@@ -807,8 +965,9 @@ class SandboxBackend final : public Backend {
   std::string shmName_;
   bool unlinked_ = false;
   Shm* shm_ = nullptr;
-  int rpc_ = -1, wake_ = -1;
-  pid_t pid_ = -1;
+  ShmMap map_;
+  Chan rpc_, wake_;
+  platform::Process proc_;
   std::thread watcher_;
   std::atomic<bool> exited_{false}, crashed_{false};
   mutable std::mutex reasonLock_;
@@ -1082,23 +1241,43 @@ std::unique_ptr<Backend> createSandboxBackend(const std::string& exe, const std:
   return SandboxBackend::create(exe, format, entry, uid, err, name.empty() ? uid : name);
 }
 
-int sandboxChildMain(const std::string& shmName) {
+int sandboxChildMain(const std::string& arg) {
+  std::string shmName = arg;
+#if defined(_WIN32)
+  // "<block name>|<request pipe>|<reply pipe>|<wake pipe>|<parent pid>" (see spawn()).
+  std::vector<std::string> parts;
+  for (size_t a = 0;;) {
+    const size_t b = arg.find('|', a);
+    parts.push_back(arg.substr(a, b == std::string::npos ? std::string::npos : b - a));
+    if (b == std::string::npos) break;
+    a = b + 1;
+  }
+  if (parts.size() < 4) return 4;
+  shmName = parts[0];
+  const Chan rpc{static_cast<std::intptr_t>(std::stoll(parts[1])), static_cast<std::intptr_t>(std::stoll(parts[2]))};
+  const Chan wake{static_cast<std::intptr_t>(std::stoll(parts[3])), -1};
+#else
   ::signal(SIGPIPE, SIG_IGN);
-  int fd = ::shm_open(shmName.c_str(), O_RDWR, 0600);
-  if (fd < 0) return 4;
-  void* mem = ::mmap(nullptr, sizeof(Shm), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  ::close(fd);
-  if (mem == MAP_FAILED) return 4;
+  const Chan rpc{kRpcFd, kRpcFd};
+  const Chan wake{kWakeFd, -1};
+#endif
+  ShmMap map;
+  if (!map.open(shmName, sizeof(Shm))) return 4;
   auto* child = new Child;  // never destroyed: the process leaves with _exit
-  child->shm = static_cast<Shm*>(mem);
+  child->shm = static_cast<Shm*>(map.mem);
   if (child->shm->magic != kShmMagic || child->shm->version != kShmVersion) return 5;
-  std::thread audio([child]() {
+  std::thread audio([child, wake]() {
     char buf[64];
     uint32_t last = 0;
     for (;;) {
-      ssize_t got = ::read(kWakeFd, buf, sizeof buf);
+#if defined(_WIN32)
+      DWORD got = 0;
+      if (!ReadFile(handleOf(wake.r), buf, sizeof buf, &got, nullptr) || got == 0) std::_Exit(0);  // parent gone
+#else
+      auto got = ::read(static_cast<int>(wake.r), buf, sizeof buf);
       if (got < 0 && errno == EINTR) continue;
       if (got <= 0) std::_Exit(0);  // parent gone
+#endif
       const uint32_t seq = child->shm->request.load(std::memory_order_acquire);
       if (seq == last) continue;
       last = seq;
@@ -1108,19 +1287,21 @@ int sandboxChildMain(const std::string& shmName) {
   });
   audio.detach();
   for (;;) {
-    int r = 0;
+    bool ready = false;
+#if !defined(_WIN32)
     if (child->editor) {
       // The interface's window is open: wait inside the Cocoa run loop (its
       // timers and redraws run meanwhile, J-66), woken by the parent's calls.
-      r = sandboxWaitEvents(kRpcFd, 0.05) ? 1 : 0;
-    } else {
-      pollfd pf{kRpcFd, POLLIN, 0};
-      r = ::poll(&pf, 1, 50);
+      ready = sandboxWaitEvents(static_cast<int>(rpc.r), 0.05);
+    } else
+#endif
+    {
+      ready = waitReadable(rpc, 50);
     }
-    if (r > 0) {
+    if (ready) {
       std::string msg;
-      if (!recvMsg(kRpcFd, msg, 10000)) std::_Exit(0);
-      if (!sendMsg(kRpcFd, child->handle(msg))) std::_Exit(0);
+      if (!recvMsg(rpc, msg, 10000)) std::_Exit(0);
+      if (!sendMsg(rpc, child->handle(msg))) std::_Exit(0);
     }
     if (child->editor) {
       sandboxPumpEvents();
@@ -1133,8 +1314,14 @@ int sandboxChildMain(const std::string& shmName) {
 
 #if !defined(__APPLE__)
 bool sandboxWaitEvents(int fd, double seconds) {
+#if defined(_WIN32)
+  (void)fd;
+  Sleep(static_cast<DWORD>(seconds * 1000.0));
+  return false;
+#else
   pollfd pf{fd, POLLIN, 0};
   return ::poll(&pf, 1, static_cast<int>(seconds * 1000.0)) > 0;
+#endif
 }
 bool sandboxPopKey(KeyEvent&) { return false; }
 void sandboxDevKeys() {}

@@ -72,7 +72,7 @@ const skin::Skin& kitChannel() {  // channel wheels: black rail, silver fill
 
 std::string noteName(int n) {
   static const char* names[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-  char b[8];
+  char b[32];
   std::snprintf(b, sizeof b, "%s%d", names[((n % 12) + 12) % 12], n / 12 - 1);
   return b;
 }
@@ -200,7 +200,7 @@ void drawKit(App& a, const PluginTarget& t, float width) {
     skin::wheel(a, t, kitPad(ch, KpPan), F.p(x + 10, y + 64), 28 * F.s, kitChannel(), skin::WheelBigLine | skin::WheelCentered);
     flk::chk(c, kitPad(ch, KpMute), x + 106, y + 28, 36, 18, "M");
     flk::chk(c, kitPad(ch, KpSolo), x + 106, y + 52, 36, 18, "S");
-    char num[8];
+    char num[32];
     std::snprintf(num, sizeof num, "%d", ch + 1);
     skin::button("##play", F.p(x + 54, y + 26), F.sz(45, 45), K, num, u.sel == ch, F.font(10));
     // J-77: the channel's pad flashes on every hit of its key (playback, MIDI, keys, clicks).
@@ -285,7 +285,7 @@ void drawKit(App& a, const PluginTarget& t, float width) {
     const float x = 60 + s * 40;
     char id[16];
     std::snprintf(id, sizeof id, "##st%d", s);
-    char lbl[8];
+    char lbl[32];
     std::snprintf(lbl, sizeof lbl, "%d", step + 1);
     if (flk::btn(c, id, x, 496, 27, 27, lbl, on)) {
       cell = static_cast<uint8_t>(on ? (cell & 0x7F) : (cell | 0x80));
@@ -301,7 +301,7 @@ void drawKit(App& a, const PluginTarget& t, float width) {
   }
   flk::text(c, 14, 500, "CH");
   {
-    char b[8];
+    char b[32];
     std::snprintf(b, sizeof b, "%d", u.sel + 1);
     flk::lcd(c, 14, 512, 34, 16, b);
   }

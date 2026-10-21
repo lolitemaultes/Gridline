@@ -41,6 +41,7 @@
 #include "HostedUi.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "../core/Platform.h"
 
 namespace fs = std::filesystem;
 
@@ -138,7 +139,7 @@ bool combo(const char* id, int* idx, const char* const* items, int n, float w) {
 }
 
 std::string homeDir() {
-  const char* h = std::getenv("HOME");
+  const char* h = gl::platform::homeEnv();
   return h ? h : ".";
 }
 

@@ -55,11 +55,7 @@
 #include "lv2/ui/ui.h"
 #include "lv2/urid/urid.h"
 #include "lv2/worker/worker.h"
-#if defined(__APPLE__)
-#include <dispatch/dispatch.h>
-#else
-#include <semaphore.h>
-#endif
+#include "../../engine/WorkerPool.h"  // gl::Semaphore
 
 namespace fs = std::filesystem;
 
@@ -188,29 +184,7 @@ class Ring {
   std::atomic<size_t> w_{0}, r_{0};
 };
 
-class Semaphore {
- public:
-#if defined(__APPLE__)
-  Semaphore() : s_(dispatch_semaphore_create(0)) {}
-  ~Semaphore() { dispatch_release(s_); }
-  void post() { dispatch_semaphore_signal(s_); }
-  void wait() { dispatch_semaphore_wait(s_, DISPATCH_TIME_FOREVER); }
-
- private:
-  dispatch_semaphore_t s_;
-#else
-  Semaphore() { sem_init(&s_, 0, 0); }
-  ~Semaphore() { sem_destroy(&s_); }
-  void post() { sem_post(&s_); }
-  void wait() {
-    while (sem_wait(&s_) != 0) {
-    }
-  }
-
- private:
-  sem_t s_;
-#endif
-};
+using Semaphore = gl::Semaphore;
 
 // ---------------------------------------------------------------- worker
 
@@ -824,6 +798,8 @@ class Lv2Backend final : public Backend {
       const lv2::Ui& u = d_->uis[i];
 #if defined(__APPLE__)
       const int rank = u.kind == lv2::Ui::Cocoa ? 3 : u.kind == lv2::Ui::External ? 1 : 0;
+#elif defined(_WIN32)
+      const int rank = u.kind == lv2::Ui::Windows ? 3 : u.kind == lv2::Ui::External ? 1 : 0;
 #else
       const int rank = u.kind == lv2::Ui::X11 ? 3 : u.kind == lv2::Ui::External ? 1 : 0;
 #endif

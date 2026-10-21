@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Gridline project files for the desktop's file manager (shared-mime-info). -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-gridline-project">
+    <comment>Gridline project</comment>
+    <sub-class-of type="application/json"/>
+    <glob pattern="*.gridline.json" weight="60"/>
+    <icon name="gridline"/>
+  </mime-type>
+</mime-info>

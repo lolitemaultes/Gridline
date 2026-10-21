@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include "Project.h"
+#include "Platform.h"
 
 namespace gl {
 
@@ -116,18 +117,10 @@ Settings::Settings() {
 }
 
 std::string Settings::defaultPath() {
-  fs::path base;
   // GRIDLINE_CONFIG_HOME (J-68): an isolated config root for automated runs
-  // (screenshots, agents) that does not touch other tools' XDG configuration.
-  if (const char* g = std::getenv("GRIDLINE_CONFIG_HOME"); g && *g)
-    base = g;
-  else if (const char* x = std::getenv("XDG_CONFIG_HOME"); x && *x)
-    base = x;
-  else if (const char* h = std::getenv("HOME"); h && *h)
-    base = fs::path(h) / ".config";
-  else
-    base = ".";
-  return (base / "gridline" / "settings.json").string();
+  // (screenshots, agents) that does not touch other tools' XDG configuration;
+  // else $XDG_CONFIG_HOME, %APPDATA% (Windows) or ~/.config (see core/Platform.h).
+  return (fs::path(platform::configRoot()) / "gridline" / "settings.json").string();
 }
 
 bool Settings::load(const std::string& path, std::string* err) {

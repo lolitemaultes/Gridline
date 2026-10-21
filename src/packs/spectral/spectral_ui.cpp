@@ -425,7 +425,7 @@ void vxCurveEditor(App& a, const PluginTarget& t, const PluginState& st, const L
       bool hot = static_cast<int>(i) == hover || static_cast<int>(i) == drag;
       dl->AddCircleFilled(ImVec2(X(ax[i]), Y(pts[i].y)), hot ? 4.5f : 3.0f, hot ? P.paper : K.fill);
     }
-  char vb[48], hb[96];
+  char vb[48], hb[192];
   vxValueText(vb, sizeof vb, m, hovered ? my : vxEval(pts, 0.5));
   mono(dl, ImVec2(p1.x - monoWidth(vb) - 8, p.y + 4), K.lcdText, vb);
   if (hovered) {
@@ -1424,7 +1424,7 @@ void editorSplitterRef(App& a, const PluginTarget& t, float width) {
   const double sr = a.engine.sampleRate();
   const int nb = std::clamp(static_cast<int>(val(st, SpBands) + 0.5f), 0, 2) + 2;
   double f[3] = {val(st, SpFreq1), val(st, SpFreq2), val(st, SpFreq3)};
-  std::sort(f, f + nb - 1);
+  std::sort(f, f + std::clamp(nb - 1, 1, 3));
   int sl[3];
   for (int k = 0; k < 3; ++k) sl[k] = std::clamp(static_cast<int>(val(st, SpSlopeA + k) + 0.5f), 0, kSplitSlopes - 1);
   const bool sends = val(st, SpMonitor) >= 0.5f;

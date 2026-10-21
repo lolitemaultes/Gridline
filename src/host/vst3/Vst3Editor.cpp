@@ -74,7 +74,7 @@ sb::tresult PLUGIN_API PlugFrame::resizeView(sb::IPlugView* view, sb::ViewRect* 
 }
 
 sb::tresult PlugFrame::queryExtra(const sb::TUID iid, void** obj) {
-#if defined(__linux__)
+#if !defined(__APPLE__) && !defined(_WIN32)  // X11 (Linux, the BSDs)
   if (std::memcmp(iid, sb::Linux::IRunLoop::iid.toTUID(), sizeof(sb::TUID)) == 0) {
     RunLoop* r = runLoop();
     r->addRef();

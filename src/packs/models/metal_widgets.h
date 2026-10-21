@@ -14,6 +14,7 @@
 #include "../samplers/samplers.h"
 #include "harmor.h"
 #include "metal.h"
+#include "../../core/Platform.h"
 
 namespace gl::packs::models::metal::ui {
 
@@ -31,7 +32,7 @@ inline void openSampleDialog(App& a, const std::string& title, std::function<voi
   a.fileDialog = {};
   a.fileDialog.open = true;
   a.fileDialog.title = title;
-  const char* h = std::getenv("HOME");
+  const char* h = gl::platform::homeEnv();
   a.fileDialog.dir = h ? h : ".";
   a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".aif", ".aiff"};
   a.fileDialog.onOk = std::move(ok);

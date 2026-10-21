@@ -235,12 +235,12 @@ void busEditor(EditTarget& e, bool send) {
   skin::Form F = sk::openForm(e, K, kW, kH, 300);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::Scope scope(K);
-  sk::wheel(e, send ? BsDry : BrDry, F.p(6, 6), 56 * F.s, K);
+  sk::wheel(e, send ? static_cast<int>(BsDry) : static_cast<int>(BrDry), F.p(6, 6), 56 * F.s, K);
   sk::text(dl, F, 34, 66, K, send ? "DRY" : "OWN", 7.5f, true);
   sk::text(dl, F, 98, 8, K, "BUS", 7.5f, true);
   sk::menuBox(e, BsBus, F.p(68, 20), F.sz(60, 26), K);
   sk::text(dl, F, 98, 52, K, send ? "SEND" : "RETURN", 7.5f, true);
-  sk::wheel(e, send ? BsLevel : BrLevel, F.p(158, 6), 56 * F.s, K);
+  sk::wheel(e, send ? static_cast<int>(BsLevel) : static_cast<int>(BrLevel), F.p(158, 6), 56 * F.s, K);
   sk::text(dl, F, 186, 66, K, send ? "LEVEL" : "RETURN", 7.5f, true);
   sk::panelBox(dl, F, 6, 80, 246, 46, K, send ? "RECEIVED BY" : "SENT FROM");
   std::string list;

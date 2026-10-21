@@ -14,6 +14,7 @@
 #include "sfx_flcurves.h"
 #include "sfx_mbd.h"
 #include "spacefx.h"
+#include "../../core/Platform.h"
 
 namespace gl::ed {
 double svfResponseDb(int mode, double cutoff, double reso01, double hz, double sr);  // app/PluginEditorsEq.cpp
@@ -46,7 +47,7 @@ void openIrDialog(App& a, const PluginTarget& t, const std::string& cur) {
   a.fileDialog = {};
   a.fileDialog.open = true;
   a.fileDialog.title = "Load impulse response";
-  const char* h = std::getenv("HOME");
+  const char* h = gl::platform::homeEnv();
   a.fileDialog.dir = !cur.empty() ? fs::path(cur).parent_path().string() : (h ? h : ".");
   a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3"};
   PluginTarget tt = t;
@@ -500,7 +501,7 @@ void mdGraph(App& a, const PluginTarget& t, const PluginState& st, MdUi& u, floa
       float x = X(i * stepS);
       dl->AddLine(ImVec2(x, p.y + 16), ImVec2(x, p1.y - 6), i % 4 == 0 ? P.gridBeat : P.gridStep);
       if (i % 4 == 0 && steps <= 64) {
-        char b[8];
+        char b[32];
         std::snprintf(b, sizeof b, "%d", i / 4 + 1);
         smallText(a, dl, ImVec2(x + 3, p.y + 3), P.textFaint, b);
       }

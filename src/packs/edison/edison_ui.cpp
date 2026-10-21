@@ -498,11 +498,11 @@ void detectSlices(App& a, Session& s, double sensitivity) {
 
 void addMarkerAtCursor(App& a, Session& s) {
   if (!s.sel.empty()) {
-    char b[24];
+    char b[48];
     std::snprintf(b, sizeof b, "Region %zu", s.cur().regions.size() + 1);
     applyNow(a, s, "Add region", addRegion(s.cur(), s.sel, b));
   } else {
-    char b[24];
+    char b[48];
     std::snprintf(b, sizeof b, "Marker %zu", s.cur().markers.size() + 1);
     applyNow(a, s, "Add marker", addMarker(s.cur(), s.cursor, b));
   }

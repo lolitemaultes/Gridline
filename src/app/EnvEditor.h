@@ -131,7 +131,7 @@ int edit(const char* id, ImVec2 p0, ImVec2 p1, menv::Env<N>& e, State& st, const
         double x = snap(toX(m.x));
         int at = e.segmentAt(x);
         if (o.lockEnds) at = std::clamp(at, 1, std::max(1, e.n - 1));
-        e.insert(at, x, static_cast<float>(toY(m.y)), 0.f, at < e.n && at > 0 ? e.mode[std::min(at + 1, e.n - 1)] : menv::SingleCurve);
+        e.insert(at, x, static_cast<float>(toY(m.y)), 0.f, at < e.n && at > 0 ? e.mode[std::min(at + 1, e.n - 1)] : static_cast<uint8_t>(menv::SingleCurve));
         st.drag = at;
         res = Changed;
       }

@@ -1,6 +1,5 @@
 // Gridline — Gridline itself as a plugin (PH-09): the format-independent instance.
 #include "PluginCore.h"
-#include <dlfcn.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -13,7 +12,9 @@
 #include "../core/Json.h"
 #include "../core/Project.h"
 #include "../core/ProjectInterop.h"
+#include "../host/Dylib.h"
 #include "../host/HostedPlugins.h"
+#include "../core/Platform.h"
 
 namespace fs = std::filesystem;
 
@@ -49,9 +50,8 @@ Song effectSong(const App& a) {
 std::string findPluginAssets() {
   std::vector<fs::path> cands;
   if (const char* env = std::getenv("GRIDLINE_ASSETS")) cands.emplace_back(env);
-  Dl_info info{};
-  if (dladdr(reinterpret_cast<const void*>(&findPluginAssets), &info) && info.dli_fname) {
-    const fs::path bin = fs::path(info.dli_fname).parent_path();  // <bundle>/Contents/<arch or MacOS>
+  if (const std::string self = host::dl::pathOf(reinterpret_cast<const void*>(&findPluginAssets)); !self.empty()) {
+    const fs::path bin = fs::u8path(self).parent_path();  // <bundle>/Contents/<arch or MacOS>
     cands.push_back(bin / ".." / "Resources" / "assets");
     cands.push_back(bin / "assets");
     cands.push_back(bin / "Gridline-assets");
@@ -59,7 +59,7 @@ std::string findPluginAssets() {
 #ifdef GRIDLINE_SOURCE_ASSETS
   cands.emplace_back(GRIDLINE_SOURCE_ASSETS);
 #endif
-  if (const char* home = std::getenv("HOME")) cands.push_back(fs::path(home) / ".local" / "share" / "gridline" / "assets");
+  if (const char* home = gl::platform::homeEnv()) cands.push_back(fs::path(home) / ".local" / "share" / "gridline" / "assets");
   cands.emplace_back("/usr/local/share/gridline/assets");
   cands.emplace_back("/usr/share/gridline/assets");
   for (const auto& c : cands) {

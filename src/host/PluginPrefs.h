@@ -3,6 +3,7 @@
 // <config>/plugin-manager.json. Thread-safe.
 #pragma once
 #include <map>
+#include <cstdint>
 #include <set>
 #include <string>
 #include <vector>

@@ -1,8 +1,15 @@
 // Gridline — secrets kept out of settings.json (see Secrets.h).
 #include "Secrets.h"
+#if defined(_WIN32)
+#include <windows.h>
+#include <wincred.h>
+#else
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
+#include <fstream>
+#include <sstream>
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
@@ -20,7 +27,7 @@ namespace gl::secrets {
 namespace fs = std::filesystem;
 
 Backend defaultBackend() {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   const char* e = std::getenv("GRIDLINE_SECRET_STORE");
   if (e && std::string(e) == "file") return Backend::File;
   return Backend::Keychain;
@@ -29,7 +36,13 @@ Backend defaultBackend() {
 #endif
 }
 
-const char* backendName(Backend b) { return b == Backend::Keychain ? "macOS Keychain" : "private file"; }
+const char* backendName(Backend b) {
+#if defined(_WIN32)
+  return b == Backend::Keychain ? "Windows Credential Manager" : "private file";
+#else
+  return b == Backend::Keychain ? "macOS Keychain" : "private file";
+#endif
+}
 
 namespace {
 
@@ -60,6 +73,14 @@ CFMutableDictionaryRef query(const std::string& service, const std::string& acco
 }
 #endif
 
+#if defined(_WIN32)
+// Credential Manager: a generic credential "<service>/<name>" of the signed-in user.
+std::wstring credTarget(const std::string& service, const std::string& name) {
+  const std::string t = service + "/" + name;
+  return std::wstring(t.begin(), t.end());  // validName: ASCII only
+}
+#endif
+
 }  // namespace
 
 std::string Store::folder() const {
@@ -84,6 +105,25 @@ bool Store::get(const std::string& name, std::string& value) const {
     return true;
   }
 #endif
+#if defined(_WIN32)
+  if (backend == Backend::Keychain) {
+    PCREDENTIALW cred = nullptr;
+    if (!CredReadW(credTarget(service, name).c_str(), CRED_TYPE_GENERIC, 0, &cred) || !cred) return false;
+    value.assign(reinterpret_cast<const char*>(cred->CredentialBlob), cred->CredentialBlobSize);
+    CredFree(cred);
+    return true;
+  }
+  // File: the folder lives in the user's profile (%APPDATA%), private to the user.
+  std::ifstream is(fs::path(folder()) / name, std::ios::binary);
+  if (!is) return false;
+  std::stringstream ss;
+  ss << is.rdbuf();
+  std::string v = ss.str();
+  if (v.size() > 65536) return false;
+  while (!v.empty() && (v.back() == '\n' || v.back() == '\r')) v.pop_back();
+  value = v;
+  return true;
+#else
   const fs::path p = fs::path(folder()) / name;
   const int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
   if (fd < 0) return false;
@@ -94,13 +134,14 @@ bool Store::get(const std::string& name, std::string& value) const {
   }
   if ((sb.st_mode & 077) != 0) ::fchmod(fd, 0600);  // tighten a file someone loosened
   std::string v(static_cast<size_t>(sb.st_size), '\0');
-  const ssize_t n = v.empty() ? 0 : ::read(fd, v.data(), v.size());
+  const auto n = v.empty() ? 0 : ::read(fd, v.data(), v.size());
   ::close(fd);
   if (n < 0) return false;
   v.resize(static_cast<size_t>(n));
   while (!v.empty() && (v.back() == '\n' || v.back() == '\r')) v.pop_back();
   value = v;
   return true;
+#endif
 }
 
 bool Store::set(const std::string& name, const std::string& value, std::string* err) const {
@@ -133,6 +174,39 @@ bool Store::set(const std::string& name, const std::string& value, std::string* 
     return true;
   }
 #endif
+#if defined(_WIN32)
+  if (backend == Backend::Keychain) {
+    std::wstring target = credTarget(service, name);
+    std::wstring user = L"Gridline";
+    CREDENTIALW c{};
+    c.Type = CRED_TYPE_GENERIC;
+    c.TargetName = target.data();
+    c.CredentialBlobSize = static_cast<DWORD>(value.size());
+    c.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<char*>(value.data()));
+    c.Persist = CRED_PERSIST_LOCAL_MACHINE;
+    c.UserName = user.data();
+    if (!CredWriteW(&c, 0)) {
+      if (err) *err = "Credential Manager error " + std::to_string(static_cast<unsigned long>(GetLastError()));
+      return false;
+    }
+    return true;
+  }
+  std::error_code ec;
+  const fs::path d = folder();
+  fs::create_directories(d, ec);
+  const fs::path tmp = d / ("." + name + ".tmp");
+  {
+    std::ofstream os(tmp, std::ios::binary | std::ios::trunc);
+    os << value << "\n";
+    os.flush();
+    if (!os) {
+      os.close();
+      fs::remove(tmp, ec);
+      if (err) *err = "cannot write " + tmp.string();
+      return false;
+    }
+  }
+#else
   std::error_code ec;
   const fs::path d = folder();
   fs::create_directories(d, ec);
@@ -145,13 +219,14 @@ bool Store::set(const std::string& name, const std::string& value, std::string* 
   }
   ::fchmod(fd, 0600);
   const std::string text = value + "\n";
-  const bool ok = ::write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size()) && ::fsync(fd) == 0;
+  const bool ok = ::write(fd, text.data(), text.size()) == static_cast<decltype(::write(fd, nullptr, 0))>(text.size()) && ::fsync(fd) == 0;
   ::close(fd);
   if (!ok) {
     fs::remove(tmp, ec);
     if (err) *err = "cannot write " + tmp.string();
     return false;
   }
+#endif
   fs::rename(tmp, d / name, ec);
   if (ec) {
     fs::remove(tmp, ec);
@@ -169,6 +244,9 @@ bool Store::remove(const std::string& name) const {
     CfRelease qr{q};
     return SecItemDelete(q) == errSecSuccess;
   }
+#endif
+#if defined(_WIN32)
+  if (backend == Backend::Keychain) return CredDeleteW(credTarget(service, name).c_str(), CRED_TYPE_GENERIC, 0) != 0;
 #endif
   std::error_code ec;
   return fs::remove(fs::path(folder()) / name, ec);

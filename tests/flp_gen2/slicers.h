@@ -12,6 +12,7 @@
 #include "../../src/packs/models/metal.h"
 #include "../../src/packs/samplers/samplers.h"
 #include "Gen2Test.h"
+#include "core/Platform.h"
 
 namespace gen2test {
 
@@ -84,7 +85,7 @@ inline double noteRms(const gl::PluginState& st, double pitch) {
 inline void testSlicers() {
   using namespace gl::pp;
   using namespace slicers;
-  setenv("GRIDLINE_CACHE_DIR", std::filesystem::absolute("gen2-slicers/cache").string().c_str(), 1);
+  gl::platform::setEnv("GRIDLINE_CACHE_DIR", std::filesystem::absolute("gen2-slicers/cache").string().c_str());
   for (const char* n : {"Slicex", "Fruity Slicer", "Fruity slicer", "Fruity Granulizer", "Fruity granulizer", "Wave Traveller"})
     expect(registered(n), (std::string("decoder registered: ") + n).c_str());
 

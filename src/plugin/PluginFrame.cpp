@@ -13,6 +13,9 @@
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
 #else
+#if defined(_WIN32)
+#include <windows.h>  // GL/gl.h needs its APIENTRY / WINGDIAPI
+#endif
 #include <GL/gl.h>
 #endif
 #include "../../third_party/imgui/imgui.h"

@@ -94,6 +94,12 @@ int64_t pathMtime(const std::string& path);
 std::vector<std::string> findEntries(const std::vector<std::string>& folders, const std::string& ext, bool directories, bool files);
 // Search folders from an environment variable (":"-separated), appended to v.
 void addEnvPaths(std::vector<std::string>& v, const char* var);
+// $var/sub, "" when the variable is not set.
+std::string envFolder(const char* var, const char* sub);
+// The system-wide plugin folders of a format: Windows %LOCALAPPDATA%\Programs\Common\<winCommon>
+// and %COMMONPROGRAMFILES%\<winCommon>; elsewhere /usr/lib, /usr/local/lib and (NetBSD) /usr/pkg/lib
+// followed by <unixLib>.
+void addSystemPluginFolders(std::vector<std::string>& v, const char* winCommon, const char* unixLib);
 // Audio Unit entry key "<type>/<subtype>/<manufacturer>" from four-character
 // codes (codes that are not plain text are written as 0xXXXXXXXX).
 std::string auKey(uint32_t type, uint32_t subtype, uint32_t manufacturer);

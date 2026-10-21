@@ -27,6 +27,11 @@ struct KeyEvent {
 // USB HID keyboard usage (the value of SDL_Scancode) of a macOS virtual key
 // code; 0 when unknown.
 int hidUsageOfMacKey(uint16_t code);
+// The macOS virtual key code of a HID usage (0xFFFF when none): KeyEvent::code for keys
+// forwarded on other systems.
+uint16_t macKeyOfHidUsage(int usage);
+// HID usage of a Windows virtual-key code (VK_*); 0 when unknown.
+int hidUsageOfWinVk(int vk);
 // Gridline's key of a HID usage (Key::None when Gridline has no name for it).
 keys::Key keyOfHidUsage(int usage);
 // The chord a forwarded key makes in Gridline's keymap (Cmd is Gridline's

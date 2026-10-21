@@ -9,6 +9,18 @@
 //   cache   $XDG_CACHE_HOME, else Windows %LOCALAPPDATA%, else ~/.cache
 //   data    $XDG_DATA_HOME, else Windows %APPDATA%, else ~/.local/share
 #pragma once
+// printf-style format checking where the compiler has it.
+#if defined(__GNUC__) || defined(__clang__)
+#define GL_PRINTF_FORMAT(fmtIndex, firstArg) __attribute__((format(printf, fmtIndex, firstArg)))
+#else
+#define GL_PRINTF_FORMAT(fmtIndex, firstArg)
+#endif
+// Exported from a shared library / plugin binary.
+#if defined(_WIN32)
+#define GL_EXPORT __declspec(dllexport)
+#else
+#define GL_EXPORT __attribute__((visibility("default")))
+#endif
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -30,11 +42,30 @@ bool unsetEnv(const char* name);
 // Absolute path of the running executable, empty when unknown.
 std::string executablePath();
 
+// Writes a file only the user can read (POSIX 0600; Windows: files in the user's profile are
+// private to the user). False on failure.
+bool writePrivateFile(const std::string& path, const std::string& data);
+// The user may write to this existing file or folder (access(W_OK); Windows: not read-only).
+// False with errno set (EACCES, EROFS, ...) otherwise.
+bool writable(const std::string& path);
+// Moves `from` over `to`, replacing it (atomic on POSIX and NTFS). False on failure, `err` set.
+bool replaceFile(const std::string& from, const std::string& to, std::string* err = nullptr);
+// Processor time of this process (user + system, seconds) and its peak resident memory (MB).
+double cpuSeconds();
+double peakRssMb();
+
 // Locale-independent numbers ('.' as the decimal separator whatever LC_NUMERIC says; hosted
 // plugins may change the process locale). parseDouble behaves like strtod.
 double parseDouble(const char* s, char** end = nullptr);
 // printf-style formatting of one double ("%.17g", "%.3f", ...) with '.' as the separator.
 std::string formatDouble(const char* fmt, double v);
+
+// Shell commands (tests, tools): a word quoted for the system's shell (sh: '...';
+// Windows cmd: "..."), and std::system that copes with cmd's quote stripping.
+std::string shellQuote(const std::string& word);
+int runShell(const std::string& command);
+// The null device for shell redirections ("/dev/null", "NUL").
+const char* nullDevice();
 
 // ---- child processes ----
 struct ExitStatus {

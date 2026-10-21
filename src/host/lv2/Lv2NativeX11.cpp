@@ -1,7 +1,7 @@
 // Gridline — LV2 X11UI child windows (see Lv2Native.h). Xlib is resolved at
 // run time; Gridline links no X11 library. Written for Linux but not run on
 // the development machine (macOS): compiled there in principle, untested.
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(_WIN32)
 #include <dlfcn.h>
 #include <cstdint>
 #include "Lv2Native.h"
@@ -21,8 +21,12 @@ struct Xlib {
 Xlib& xlib() {
   static Xlib x = [] {
     Xlib l;
-    void* h = dlopen("libX11.so.6", RTLD_LAZY | RTLD_NOLOAD);
-    if (!h) h = dlopen("libX11.so.6", RTLD_LAZY);
+    // libX11.so.6 (Linux, FreeBSD, NetBSD); OpenBSD numbers its libraries differently.
+    void* h = nullptr;
+    for (const char* name : {"libX11.so.6", "libX11.so"}) {
+      if (!h) h = dlopen(name, RTLD_LAZY | RTLD_NOLOAD);
+      if (!h) h = dlopen(name, RTLD_LAZY);
+    }
     if (!h) return l;
     l.openDisplay = reinterpret_cast<decltype(l.openDisplay)>(dlsym(h, "XOpenDisplay"));
     l.getGeometry = reinterpret_cast<decltype(l.getGeometry)>(dlsym(h, "XGetGeometry"));

@@ -27,7 +27,7 @@
 #include "clap/Probe.h"
 #include "vst2/Probe.h"
 #include "vst3/Probe.h"
-#include <dlfcn.h>
+#include "host/Dylib.h"
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -855,10 +855,10 @@ void testWrapper() {
 
 template <class T>
 T* probe(const std::string& binary, const char* symbol) {
-  void* h = dlopen(binary.c_str(), RTLD_NOW | RTLD_NOLOAD);
-  if (!h) h = dlopen(binary.c_str(), RTLD_NOW);
-  void* f = h ? dlsym(h, symbol) : nullptr;
-  return f ? reinterpret_cast<T* (*)()>(f)() : nullptr;
+  void* h = host::dl::loaded(binary);
+  if (!h) h = host::dl::open(binary, nullptr, true);
+  void* f = h ? host::dl::sym(h, symbol) : nullptr;
+  return f ? host::toFunction<T* (*)()>(f)() : nullptr;
 }
 std::string clapBinary() {
 #if defined(__APPLE__)

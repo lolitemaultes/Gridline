@@ -25,7 +25,7 @@ std::map<uint64_t, int>& selection() {
 
 std::string noteLabel(int n) {
   static const char* names[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-  char b[8];
+  char b[32];
   std::snprintf(b, sizeof b, "%s%d", names[((n % 12) + 12) % 12], n / 12 - 1);
   return b;
 }
@@ -76,7 +76,7 @@ void padTile(App& a, const PluginTarget& t, const PluginState& st, int pad, int&
   if (t.isChannel()) keylight::drawFlash(dl, q, ImVec2(q.x + sz.x, q.y + sz.y), P.hot, keylight::flash(a, t.owner, base + pad), 6);
   if (pad == sel) dl->AddRect(q, ImVec2(q.x + sz.x, q.y + sz.y), P.accent, 6, 0, 1.5f);
   ImGui::PushFont(a.fontMono, 10.0f);
-  char num[8];
+  char num[32];
   std::snprintf(num, sizeof num, "%02d", pad + 1);
   dl->AddText(ImVec2(q.x + 6, q.y + 5), P.textFaint, num);
   std::string nl = noteLabel(base + pad);

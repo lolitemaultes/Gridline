@@ -563,7 +563,7 @@ const std::vector<SmpteRate>& smpteRates() {
 }
 
 std::string formatSongTime(const Song& s, double tick, TimeFormat f, bool steps, int smpteRate) {
-  char buf[48];
+  char buf[96];
   tick = std::max(0.0, tick);
   if (f == TimeFormat::BarBeatTick) {
     const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks());

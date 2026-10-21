@@ -17,6 +17,7 @@
 // tools run on the thread that owns the Document; renders and exports run on
 // worker threads (Environment::jobs) and their replies are sent by later polls.
 #pragma once
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <map>
@@ -80,7 +81,7 @@ class HttpServer {
 
  private:
   struct Conn {
-    int fd = -1;
+    std::intptr_t fd = -1;
     std::string in, out;
     size_t sent = 0;
     double opened = 0;
@@ -88,7 +89,8 @@ class HttpServer {
     bool pumpDone = false;
   };
   void closeConn(size_t i);
-  int fd_ = -1, port_ = 0;
+  std::intptr_t fd_ = -1;
+  int port_ = 0;
   std::vector<Conn> conns_;
 };
 
