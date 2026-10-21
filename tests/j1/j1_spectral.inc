@@ -535,8 +535,8 @@ void testVocoderPresets() {
                  jt::near(p[sp::VxWidth], std::pow(5.0, 0.349) - 1, 1e-4) && p[sp::VcModSource] == 1 && p[sp::VxCarSource] == 1 &&
                  d.pf[3] && d.pf[4] && !d.pf[0] && d.keys.size() == 1 && d.keys[0] == 60 && r.exact,
              "preset Default: levels, times, band count, inputs, pitch-follow flags, keys");
-    if (nm == "Clearer") expect(d.keys.size() == 2 && d.keys[0] == 64 && p[sp::VxTone] == 5 && p[sp::VxCarSource] == 0 && !r.exact,
-                                "preset Clearer: synth carrier keys and tone family");
+    if (nm == "Clearer") expect(d.keys.size() == 2 && d.keys[0] == 64 && p[sp::VxTone] == 5 && p[sp::VxCarSource] == 0 && r.exact,
+                                "preset Clearer: synth carrier keys and tone family (J-65: the tone preset is played)");
     if (nm == "Bark scale") expect(d.maps[sp::VmDist].size() == 24 && jt::near(d.maps[sp::VmDist][0].y, 0.09829, 1e-4), "preset Bark scale: band distribution curve");
     if (nm == "Robot") expect(jt::near(p[sp::VxBands], 24, 1e-6) && p[sp::VxHoldMode] == 1 && p[sp::VxOrder] == 0, "preset Robot: 24 bands, RMS hold, order 1");
     if (nm == "Sidechained carrier") expect(p[sp::VxCarSource] == 2 && p[sp::VcModSource] == 0, "preset Sidechained carrier: carrier from the sidechain");
@@ -547,7 +547,8 @@ void testVocoderPresets() {
     if (!jt::finite(o)) expect(false, ("preset renders finite: " + nm).c_str());
   }
   std::printf("# Vocodex presets exact: %d/%d\n", exact, total);
-  expect(total == 21 && exact == 6, "Vocodex presets: 21 decoded, the 6 external-carrier ones exact");
+  // J-65: synth-carrier presets play the installation's tone preset on the FM reference model.
+  expect(total == 21 && exact == 21, "Vocodex presets: 21 decoded, all exact (external carriers and installed tones)");
 }
 }  // namespace vs1
 

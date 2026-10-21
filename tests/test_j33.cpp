@@ -513,11 +513,17 @@ void testTwinRef() {
   s.params[st::TsS1Damp] = 0.3f;
   const Buf a = render(s, {{69, 1.f}}, 1.0, 0.8);
   expect(a.finite() && a.rms(4410, 30000) > 1e-4, "twin ref: plucked note sounds");
-  // String 1 is exactly in tune (fractional string clock): A4 → 440 Hz.
-  int zc = 0;
-  for (size_t i = 8821; i < 8820 + 22050; ++i) zc += (a.l[i - 1] <= 0 && a.l[i] > 0);
-  std::printf("# twin zc %d\n", zc);
-  expect(std::abs(zc - 220) <= 3, "twin ref: string 1 in tune (440 Hz)");
+  // String 1 is exactly in tune (fractional string clock): A4 → 440 Hz (period 100.2 samples:
+  // the strongest autocorrelation lag between 60 and 400 samples).
+  int bestLag = 0;
+  double best = -1e30;
+  for (int lag = 60; lag <= 400; ++lag) {
+    double acc = 0;
+    for (size_t i = 8820; i < 8820 + 22050; ++i) acc += static_cast<double>(a.l[i]) * a.l[i + static_cast<size_t>(lag)];
+    if (acc > best) best = acc, bestLag = lag;
+  }
+  std::printf("# twin period %d samples\n", bestLag);
+  expect(std::abs(bestLag - 100) <= 1, "twin ref: string 1 in tune (440 Hz)");
   const Buf b = render(s, {{69, 1.f}}, 1.0, 0.8, 37), c = render(s, {{69, 1.f}}, 1.0, 0.8, 1024);
   bool same = true;
   for (size_t i = 0; i < a.l.size(); ++i) same = same && a.l[i] == b.l[i] && a.l[i] == c.l[i];

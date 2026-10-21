@@ -47,7 +47,8 @@ inline double tsRatio(int k) {
 // position 0..1 that its engine snaps to 7 octave steps (−3..+3);
 // Gridline stores the step (0..6, 3 = none).
 inline double tsFineSemis(double x) { return (clamp01(x) - 0.5) * 2.0; }
-inline int tsOctaveStep(double pos) { return std::clamp(static_cast<int>(std::lround((clamp01(pos) - 0.5) * 6.0)), -3, 3) + 3; }
+// Octave wheel: the knob position truncated to 7 steps (0 = −3 oct … 6 = +3 oct).
+inline int tsOctaveStep(double pos) { return std::clamp(static_cast<int>(clamp01(pos) * 6.0), 0, 6); }
 inline double tsTransposeSemis(int step) { return 12.0 * (std::clamp(step, 0, 6) - 3); }
 // Delay time (s) when free; sync steps in beats.
 inline double tsDelaySec(double x) { return expMap(x, 0.01, 2.0); }

@@ -323,8 +323,8 @@ Encoder sakura() {
     std::vector<Field> f;
     for (int t = 0; t < strs::TsCount; ++t) {
       const size_t off = kTsVals + 4 * static_cast<size_t>(t);
-      if (t == strs::TsTranspose)  // octave step 0..6 stored as a 0..1 knob position
-        f.push_back(withInverse(t, off, Type::F32, 0, 1, [](double s) { return s / 6.0; }));
+      if (t == strs::TsTranspose)  // octave step 0..6 stored as a 0..1 knob position (mid-step)
+        f.push_back(withInverse(t, off, Type::F32, 0, 1, [](double s) { return (s + 0.5) / 6.0; }));
       else if (tsRaw(t))
         f.push_back(f32(t, off, 0, std::max(1, choiceCount(desc("gl.twinstring", t)) - 1)));
       else

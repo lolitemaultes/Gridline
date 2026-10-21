@@ -92,8 +92,14 @@ bool decodeSakura(Context&, const std::vector<Event>& evs, PluginMapping& m) {
     bool raw = t == strs::TsS2Ratio || t == strs::TsDlySync ||
                (t >= strs::TsMod1 && t < strs::TsS2Ratio && ((t - strs::TsMod1) % strs::TmStride == strs::TmSource ||
                                                               (t - strs::TsMod1) % strs::TmStride == strs::TmDest));
+    // Switches: the instrument reads any non-zero position as on.
+    const bool sw = t == strs::TsS1Inv || t == strs::TsS2Inv || t == strs::TsCombFbInv || t == strs::TsCombLevelInv ||
+                    (t >= strs::TsResOn1 && t < strs::TsResOn1 + strs::kTsRes) || t == strs::TsDlyOn || t == strs::TsChoOn ||
+                    t == strs::TsRevOn;
     if (t == strs::TsTranspose)
       gen2::set(m, t, strs::law::tsOctaveStep(v));  // the engine snaps the knob to octave steps
+    else if (sw)
+      gen2::set(m, t, v != 0 ? 1 : 0);
     else
       gen2::set(m, t, raw ? std::round(v) : clamp01(v));
   }

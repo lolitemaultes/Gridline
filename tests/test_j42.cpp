@@ -486,7 +486,8 @@ void testBandDelayAndPeak() {
     expect(gb.first == 34 && gb.second == 34, "time gate: every shipped project state exact on the reference engine (11 before)");
     auto vx = projectsExact("Vocodex");
     std::printf("# Vocodex projects %d/%d exact (enhancer = mastering program, unison table)\n", vx.first, vx.second);
-    expect(vx.first == 10 && vx.second == 12, "vocodex: project instances exact except the built-in carrier synth");
+    // J-65: the built-in carrier plays the installation's own tone presets on the FM reference model.
+    expect(vx.first == 12 && vx.second == 12, "vocodex: every project instance exact (built-in carrier tones: J-65)");
   }
 }
 

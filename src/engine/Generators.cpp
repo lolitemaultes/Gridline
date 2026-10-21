@@ -1,4 +1,5 @@
 #include "../packs/Packs.h"
+#include "../packs/synths/trioref.h"
 #include "../host/HostedPlugins.h"
 #include "Generators.h"
 #include "ChannelIns.h"
@@ -108,7 +109,7 @@ class SynthGen final : public Generator {
  public:
   bool active() const override {
     for (const auto& v : voices_)
-      if (v.amp.active()) return true;
+      if (v.amp.active() || v.rOn) return true;
     return false;
   }
 
@@ -116,6 +117,11 @@ class SynthGen final : public Generator {
   struct Voice {
     uint32_t id = 0;
     bool held = false;
+    // J-65 reference oscillators: phases, release declick position, host note gains.
+    packs::synths::trioref::Voice rv;
+    bool rOn = false;
+    int relK = -1;
+    float hostL = 0.70710678f, hostR = 0.70710678f;
     double pitch = 60, target = 60;
     float vel = 0;
     uint64_t age = 0;
@@ -179,6 +185,13 @@ class SynthGen final : public Generator {
     glide_ = param(s, SynGlide);
     maxVoices_ = std::clamp(static_cast<int>(param(s, SynVoices, 16) + 0.5f), 1, kMaxVoices);
     volume_ = param(s, SynVolume);
+    // J-65: the reference oscillator model (tables prepared by the synths pack on the UI thread).
+    refTab_ = std::dynamic_pointer_cast<const packs::synths::trioref::Tables>(aux.custom);
+    refSetup_ = packs::synths::trioref::setup(s, sr_);
+    const bool ref = param(s, SynModel) >= 0.5f && refTab_ && !refSetup_.custom;
+    if (ref != ref_)
+      for (auto& v : voices_) v.amp.stage = Adsr::Idle, v.amp.level = 0, v.rOn = false;
+    ref_ = ref;
     for (auto& v : voices_) {
       v.amp.set(sr_, atk_, dec_, sus_, rel_);
       v.fenv.set(sr_, 0.001, fdec_, 0.0, fdec_);
@@ -199,7 +212,34 @@ class SynthGen final : public Generator {
       }
   }
 
+  // J-65: reference oscillators — one voice per note (the oldest is taken over
+  // when all are busy), the host's note volume (11^(v/100) − 1) / 10 for
+  // velocity v/128 and constant-power pan.
+  void refNoteOn(uint32_t id, double pitch, float vel, float pan) {
+    ++clock_;
+    Voice* pick = nullptr;
+    for (auto& v : voices_)
+      if (!v.rOn) {
+        pick = &v;
+        break;
+      }
+    if (!pick)
+      for (auto& v : voices_)
+        if (!pick || v.age < pick->age) pick = &v;
+    Voice& v = *pick;
+    v.id = id, v.pitch = v.target = pitch, v.vel = vel, v.held = true, v.age = clock_;
+    v.rOn = true, v.relK = -1, v.ctr = 0;
+    packs::synths::trioref::start(v.rv, refSetup_);
+    const double vol = (std::pow(11.0, std::nearbyint(static_cast<double>(vel) * 128.0) / 100.0) - 1.0) / 10.0;
+    const long double a = (1.0L + static_cast<long double>(std::clamp(pan, -1.0f, 1.0f))) * static_cast<long double>(0.7853981633974483);
+    v.hostL = static_cast<float>(std::cos(a) * static_cast<long double>(vol));
+    v.hostR = static_cast<float>(std::sin(a) * static_cast<long double>(vol));
+    v.slide = PitchGlide{};
+    v.ins.start(insSet_.get(), sr_, tempo_, ppq_, 0, 0, songTick());
+  }
+
   void onNoteOn(uint32_t id, double pitch, float vel) override {
+    if (ref_) return refNoteOn(id, pitch, vel, 0.f);
     ++clock_;
     if (maxVoices_ == 1) {  // mono / legato with glide
       Voice& v = voices_[0];
@@ -260,6 +300,13 @@ class SynthGen final : public Generator {
   bool supportsGlide() const override { return true; }
   bool handlesNotePan() const override { return true; }
   void onNoteOnEx(uint32_t id, double pitch, float vel, const NoteProps& np) override {
+    if (ref_) {
+      refNoteOn(id, pitch, vel, np.pan);
+      if (insSet_)
+        for (auto& v : voices_)
+          if (v.id == id && v.held && v.rOn) v.ins.start(insSet_.get(), sr_, tempo_, ppq_, np.modX - 0.5, np.modY - 0.5, songTick());
+      return;
+    }
     onNoteOn(id, pitch, vel);
     for (auto& v : voices_)
       if (v.id == id && v.held) {
@@ -282,6 +329,11 @@ class SynthGen final : public Generator {
 
   void releaseVoice(Voice& v) {
     v.held = false;
+    if (v.rOn) {  // reference: the channel volume envelope ends the voice, else the 10 ms declick
+      if (v.ins.active()) v.ins.release();
+      if (!(v.ins.active() && insSet_ && insSet_->volumeEnvelope())) v.relK = 0;
+      return;
+    }
     if (v.ins.active()) {
       v.ins.release();
       if (insSet_ && insSet_->volumeEnvelope()) return;  // the channel volume envelope ends the voice
@@ -299,6 +351,7 @@ class SynthGen final : public Generator {
   void onKill() override {
     for (auto& v : voices_) v = Voice{};
     lastPitch_ = -1;
+    refSeed_ = 0;
   }
 
   double lfoValue(Voice& v) {
@@ -402,8 +455,42 @@ class SynthGen final : public Generator {
     return sum;
   }
 
+  // J-65: reference voices — oscillators in chunks on the voice's own 64-frame
+  // clock (pitch re-read per chunk), the channel instrument envelopes, the
+  // release declick, then the host note gains.
+  void renderRef(float* L, float* R, int n) {
+    float buf[2 * 64];
+    for (auto& v : voices_) {
+      if (!v.rOn) continue;
+      for (int i = 0; i < n && v.rOn;) {
+        const int m = std::min(n - i, 64 - static_cast<int>(v.ctr & 63));
+        const float cents = static_cast<float>((v.pitch - 60.0 + (v.ins.active() ? v.ins.pitchSemis() : 0.0)) * 100.0);
+        packs::synths::trioref::render(v.rv, refSetup_, *refTab_, cents, buf, m, refSeed_);
+        for (int j = 0; j < m; ++j) {
+          float l = buf[2 * j], r = buf[2 * j + 1];
+          if (v.ins.active()) {
+            v.ins.process(l, r);
+            if (!v.held && v.ins.done()) v.rOn = false;
+          }
+          if (v.relK >= 0) {
+            const float g = packs::synths::trioref::declick(v.relK++, sr_);
+            l *= g, r *= g;
+            if (v.relK >= packs::synths::trioref::declickLength(sr_)) v.rOn = false;
+          }
+          L[i + j] += static_cast<float>(static_cast<double>(l * v.hostL) * volume_);
+          R[i + j] += static_cast<float>(static_cast<double>(r * v.hostR) * volume_);
+          if (v.slide.active()) v.slide.advance(v.pitch);
+          if (!v.rOn) break;
+        }
+        v.ctr += static_cast<uint32_t>(m);
+        i += m;
+      }
+    }
+  }
+
   void render(float* L, float* R, int n) override {
     blockPos_ += n;  // (notes fired before this call already read the position)
+    if (ref_) return renderRef(L, R, n);
     const double glideCoef = std::exp(-1.0 / std::max(1.0, glide_ * sr_ * 0.3));
     for (auto& v : voices_) {
       if (!v.amp.active()) continue;
@@ -499,6 +586,10 @@ class SynthGen final : public Generator {
   double lastPitch_ = -1;
   Noise rng_;
   std::shared_ptr<const InsSettings> insSet_;
+  bool ref_ = false;
+  packs::synths::trioref::Setup refSetup_;
+  std::shared_ptr<const packs::synths::trioref::Tables> refTab_;
+  uint32_t refSeed_ = 0;
   double tempo_ = 120, tick0_ = 0;
   int ppq_ = 96;
   int64_t blockPos_ = 0;

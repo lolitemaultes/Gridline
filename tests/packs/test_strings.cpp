@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "../../src/core/PluginInfo.h"
+#include "../../src/core/flp/FlpEncode.h"
 #include "../../src/core/flp/FlpJ22Strings.h"
 #include "../../src/engine/Generators.h"
 #include "../../src/packs/Packs.h"
@@ -692,6 +693,58 @@ void testStepBass() {
   }
 }
 
+// J-65: the reference engine's host side and the import laws it relies on.
+void testTwinRefHost() {
+  // Import: switches read any non-zero position as on; the octave wheel truncates.
+  {
+    std::vector<uint8_t> b(596, 0);
+    std::memcpy(b.data(), "SSLF", 4);
+    const uint32_t sz = 588;
+    std::memcpy(b.data() + 4, &sz, 4);
+    std::memcpy(b.data() + 8, "1rkS", 4);
+    auto put = [&](int tag, float v) { std::memcpy(b.data() + 12 + 4 * tag, &v, 4); };
+    put(TsCombFbInv, 0.03f), put(TsResOn1, 0.15f), put(TsChoOn, 0.85f), put(TsS1Inv, 0.f), put(TsTranspose, 0.4375f);
+    flp::PluginMapping m;
+    flp::enc::EncodeContext c;
+    const bool ok = flp::enc::decodeState("Sakura", b, m, c) && m.state.params.size() > static_cast<size_t>(TsTranspose);
+    expect(ok && m.state.params[TsCombFbInv] == 1.f && m.state.params[TsResOn1] == 1.f && m.state.params[TsChoOn] == 1.f &&
+               m.state.params[TsS1Inv] == 0.f,
+           "Sakura import: switches are on at any non-zero position");
+    expect(ok && m.state.params[TsTranspose] == 2.f, "Sakura import: octave wheel 0.4375 truncates to step 2 (-1 oct)");
+  }
+  PluginState s = fresh("gl.twinstring");
+  s.params[TsEngine] = 1;
+  for (int k = 0; k < kTsRes; ++k) s.params[static_cast<size_t>(TsResOn1 + k)] = 0;
+  s.params[TsDlyOn] = s.params[TsChoOn] = s.params[TsRevOn] = 0;
+  s.params[TsAmpS] = 1.f, s.params[TsAmpR] = 0.f, s.params[TsS1Decay] = 0.9f, s.params[TsS2Decay] = 0.9f, s.params[TsStereo] = 0.5f;
+  const int n = 44100;
+  auto run = [&](float pan, bool retrigger) {
+    Out o;
+    o.L.assign(static_cast<size_t>(n), 0.f), o.R.assign(static_cast<size_t>(n), 0.f);
+    auto g = packs::createGenerator(s.type);
+    ChannelAux aux;
+    packs::prepareAux(s, aux);
+    ProcessContext ctx;
+    ctx.sampleRate = 44100, ctx.tempo = 120;
+    NoteProps pr;
+    pr.pan = pan;
+    for (int pos = 0; pos < n; pos += 256) {
+      const int k = std::min(256, n - pos);
+      if (pos == 0) g->noteOn(1, 60, 0.78125f, 0, pr);
+      if (retrigger && pos == 256 * 20) g->noteOn(2, 60, 0.78125f, 0, pr);
+      if (retrigger && pos == 256 * 40) g->noteOff(2, 0);
+      g->process(s, aux, ctx, o.L.data() + pos, o.R.data() + pos, k);
+    }
+    for (size_t i = 0; i < o.L.size(); ++i) o.peak = std::max({o.peak, std::fabs(o.L[i]), std::fabs(o.R[i])});
+    return o;
+  };
+  const Out left = run(-1.f, false);
+  expect(left.peak > 1e-3f && rms(left.R, 0, static_cast<size_t>(n)) == 0.0, "twin ref: a hard-left note leaves the right channel silent");
+  // Striking a held key again releases it; releasing the new note then releases both (one key, one state).
+  const Out held = run(0.f, false), re = run(0.f, true);
+  expect(rms(held.L, 30000, 44100) > 1e-4 && rms(re.L, 30000, 44100) < 1e-6, "twin ref: a re-struck key's notes release together");
+}
+
 }  // namespace
 
 int main() {
@@ -699,6 +752,7 @@ int main() {
   testTwinStringBehaviour();
   testTwinStringRobust();
   testTwinStringParse();
+  testTwinRefHost();
   testSakuraCorpus();
   testPlucker();
   testStepBass();

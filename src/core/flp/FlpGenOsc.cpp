@@ -164,6 +164,7 @@ bool decode3xOsc(Context& c, const std::vector<Event>& events, PluginMapping& m)
   setp(s, SynPhaseRand, std::clamp(p[20] / 64.0, 0.0, 1.0));
   setp(s, SynOsc3Mode, am ? SynModeAM : SynModeNormal);
   setp(s, SynHQ, hq ? 1.0 : 0.0);
+  setp(s, SynModel, 1.0);  // J-65: the reference oscillators (sample-exact)
   setp(s, SynOsc2Mod, 0);
   setp(s, SynNoise, 0.0);
   setp(s, SynVelCutoff, 0.0);

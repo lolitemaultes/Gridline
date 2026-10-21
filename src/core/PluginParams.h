@@ -27,6 +27,9 @@ enum Synth {
   // J-2: band-limited ("high quality") oscillators; off = the classic naive shapes.
   // Shape 7 = custom: one cycle read from the channel sample (PluginState::data).
   SynHQ,
+  // J-65: oscillator model: 0 = Trio (legacy), 1 = Reference (the reference
+  // three-oscillator instrument, sample-exact; packs/synths/trioref.h).
+  SynModel,
   SynCount
 };
 enum SynOsc3ModeChoice { SynModeNormal, SynModeAM, SynModeRing, SynModeFM, SynModePM };

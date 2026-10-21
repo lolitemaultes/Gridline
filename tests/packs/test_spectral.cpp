@@ -10,7 +10,12 @@
 #include <vector>
 #include "../../src/core/PluginInfo.h"
 #include "../../src/engine/Effects.h"
+#include "../../src/engine/Program.h"
 #include "../../src/packs/spectral/spectral.h"
+#include "../../src/packs/spectral/vxcarrier.h"
+#include "../../src/packs/synths/mfmref.h"
+#include "../../src/core/flp/FlpPresets.h"
+#include <filesystem>
 #include "../Check.h"
 
 using namespace gl;
@@ -552,6 +557,105 @@ int main() {
     bool finite = true;
     for (float v : c.L) finite = finite && std::isfinite(v);
     expect(finite && rms(c.L, c.size() / 2, c.size()) > 0.1, "pitch shifter half mix is finite and audible");
+  }
+
+  // ================================================ vocoder carrier tones (J-65)
+  {
+    // The imported tone name survives the data text round trip ("" = none loaded).
+    sp::VxData d = sp::vxDefaultData();
+    d.keys = {60, 64};
+    d.hasTone = true;
+    d.tone = "Robot saw";
+    sp::VxData back;
+    expect(sp::vxParse(sp::vxSerialize(d), back) && back.hasTone && back.tone == "Robot saw" && back.keys.size() == 2,
+           "vocoder data: carrier tone name round trip");
+    d.tone.clear();
+    expect(sp::vxParse(sp::vxSerialize(d), back) && back.hasTone && back.tone.empty(), "vocoder data: empty tone kept as 'none'");
+    expect(!sp::vxParse(sp::vxSerialize(sp::vxDefaultData()), back) || !back.hasTone, "vocoder data: no tone line for new instances");
+    expect(sp::vxToneFamily("Robot saw") == 7 && sp::vxToneFamily("PWM") == 2 && sp::vxToneFamily("Saw") == 0, "vocoder: tone families");
+
+    // An imported state without a tone: the built-in carrier is silent (the reference plays nothing).
+    PluginState st = stateOf("gl.vocoder");
+    set(st, sp::VxModel, 1);
+    set(st, sp::VxCarSource, 0);
+    set(st, sp::VcWetLevel, -60.f);
+    set(st, sp::VcModLevel, -60.f);
+    set(st, sp::VcCarLevel, 0.f);
+    sp::VxData none = sp::vxDefaultData();
+    none.keys = {60};
+    none.hasTone = true;
+    st.data = sp::vxSerialize(none);
+    {
+      auto fx = createEffect("gl.vocoder");
+      ChannelAux aux;
+      prepareChannelAux(st, aux);
+      fx->prepareHost(st, kSr);
+      Buf b(static_cast<size_t>(0.5 * kSr));
+      ProcessContext ctx;
+      ctx.sampleRate = kSr;
+      for (size_t i = 0; i < b.size(); i += 256)
+        fx->processAux(st, aux, ctx, b.L.data() + i, b.R.data() + i, static_cast<int>(std::min<size_t>(256, b.size() - i)));
+      expect(rms(b.L, 0, b.size()) < 1e-6, "vocoder: imported state without a carrier tone has a silent carrier");
+      // The same state with the tone line removed plays Gridline's approximate tone.
+      PluginState legacy = st;
+      legacy.data = sp::vxSerialize([] { sp::VxData x = sp::vxDefaultData(); x.keys = {60}; return x; }());
+      auto fx2 = createEffect("gl.vocoder");
+      ChannelAux aux2;
+      prepareChannelAux(legacy, aux2);
+      Buf c(static_cast<size_t>(0.5 * kSr));
+      for (size_t i = 0; i < c.size(); i += 256)
+        fx2->processAux(legacy, aux2, ctx, c.L.data() + i, c.R.data() + i, static_cast<int>(std::min<size_t>(256, c.size() - i)));
+      expect(rms(c.L, 0, c.size()) > 1e-3, "vocoder: states without the tone line keep the approximate tone families");
+    }
+
+    // With FL Studio installed: the tone preset is read in place and played by the FM reference
+    // model as the vocoder drives it (volume 0.5, velocity 0.78125, pitch (key - 60) * 100 cents).
+    const std::string fd = "/Applications/FL Studio 2026.app/Contents/Resources/FL";
+    sp::VxCarrier none2;
+    float tl[64], tr[64];
+    const int k60[1] = {60};
+    expect(!none2.render(k60, 1, 120, tl, tr, 64), "vxcarrier: nothing to play before a tone is prepared");
+    if (std::filesystem::exists(fd + "/Plugins/Fruity/Effects/Vocodex/Synthesizer/Data/Presets")) {
+      expect(!sp::vxTonePath("Saw", fd).empty() && !sp::vxTonePath("saw", fd).empty() && sp::vxTonePath("No such tone", fd).empty(),
+             "vxcarrier: tone presets found in the installation (case-insensitive)");
+      expect(sp::vxToneExact("Robot saw", fd), "vxcarrier: a shipped tone is exact on the reference model");
+      const int keys[3] = {60, 77, 69};
+      auto renderCar = [&](int block) {
+        sp::VxCarrier car;
+        car.prepare("Robot saw", 44100);
+        Buf o(static_cast<size_t>(0.4 * kSr));
+        bool ok = true;
+        for (size_t i = 0; i < o.size(); i += static_cast<size_t>(block)) {
+          const int n = static_cast<int>(std::min(static_cast<size_t>(block), o.size() - i));
+          ok = car.render(keys, 3, 120, o.L.data() + i, o.R.data() + i, n) && ok;
+        }
+        return std::make_pair(ok, o);
+      };
+      auto a = renderCar(256), b = renderCar(37);
+      double diff = 0;
+      for (size_t i = 0; i < a.second.size(); ++i) diff = std::max(diff, static_cast<double>(std::fabs(a.second.L[i] - b.second.L[i])));
+      expect(a.first && rms(a.second.L, 0, a.second.size()) > 0.01 && diff == 0.0, "vxcarrier: tone plays, independent of the block size");
+      // Same as the reference engine driven directly with the vocoder's voice.
+      flp::PresetResult r;
+      namespace mr = gl::packs::synths::mfmref;
+      if (flp::importFlPreset(sp::vxTonePath("Robot saw", fd), r, fd)) {
+        auto e = mr::makeEngine(mr::patchFromState(r.state), 44100, 120);
+        for (int k : keys) mr::noteOn(*e, static_cast<uint32_t>(k) + 1, (k - 60) * 100.0, 0.5, 0, 0, 0, 0.78125, 0);
+        std::vector<float> l(a.second.size(), 0.f), rr(a.second.size(), 0.f);
+        for (size_t i = 0; i < l.size(); i += 256) mr::render(*e, l.data() + i, rr.data() + i, static_cast<int>(std::min<size_t>(256, l.size() - i)));
+        double d2 = 0;
+        for (size_t i = 0; i < l.size(); ++i) d2 = std::max(d2, static_cast<double>(std::fabs(l[i] - a.second.L[i])));
+        expect(d2 == 0.0, "vxcarrier: the vocoder's voice on the reference engine");
+      }
+      // Key changes: a released key stops, a new key starts (no allocation, no crash).
+      sp::VxCarrier car;
+      car.prepare("Saw", 44100);
+      Buf o(4096);
+      expect(car.render(keys, 3, 120, o.L.data(), o.R.data(), 2048) && car.render(keys + 1, 1, 120, o.L.data() + 2048, o.R.data() + 2048, 2048),
+             "vxcarrier: held keys change");
+      car.reset();
+      expect(car.render(keys, 0, 120, o.L.data(), o.R.data(), 512) && rms(o.L, 0, 512) < 1.0, "vxcarrier: reset and no keys");
+    }
   }
 
   return finish();

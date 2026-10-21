@@ -278,6 +278,11 @@ class TwinStringGen final : public Generator {
     v.pan = std::clamp(mod(v, MdPan, egv), -1.0, 1.0);
   }
 
+  void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& props) override {
+    if (useRef_) return ref_->noteOn(id, pitch, velocity, props.pan);
+    onNoteOn(id, pitch, velocity);
+  }
+  bool handlesNotePan() const override { return useRef_; }
   void onNoteOn(uint32_t id, double pitch, float velocity) override {
     if (useRef_) return ref_->noteOn(id, pitch, velocity);
     int slot = -1;

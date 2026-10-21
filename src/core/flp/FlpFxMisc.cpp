@@ -17,6 +17,7 @@
 #include "../../packs/dynamics/effector_ref.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/spectral/spectral.h"
+#include "../../packs/spectral/vxcarrier.h"
 #include "../../packs/utility/utility.h"
 #include "../PluginParams.h"
 #include "FlpFx.h"
@@ -627,21 +628,8 @@ std::shared_ptr<const KnobTable> vocodexTable() {
   });
   return t;
 }
-// Built-in carrier tone family for a saved carrier tone name (keyword match;
-// the reference's tones are synthesizer presets, approximated).
-int vocodexTone(std::string name) {
-  for (auto& ch : name) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  auto has = [&](const char* k) { return name.find(k) != std::string::npos; };
-  if (has("noise") || has("breath") || has("whisper")) return 8;
-  if (has("organ")) return 6;
-  if (has("string") || has("ensemble") || has("pad") || has("choir") || has("phase")) return 5;
-  if (has("super") || has("stack") || has("unison") || has("group")) return 4;
-  if (has("pwm") || has("pulse")) return 2;
-  if (has("square")) return 1;
-  if (has("tri") || has("sine") || has("soft")) return 3;
-  if (has("growl") || has("power") || has("buzz") || has("elderly") || has("robot")) return 7;
-  return 0;
-}
+// Built-in carrier tone family for a saved carrier tone name (spectral.h).
+int vocodexTone(const std::string& name) { return packs::spectral::vxToneFamily(name); }
 // State: u32 version (2, 3, 5 or 0x00080003 → 8), 13 curve records
 // {i32 3, i32 kind, i32 n, n × {f64 dx, f64 y, f32 tension, u32 flags}, u32,
 // 4 × i32}, 20 tag ints (19 before version 3), 7 ints (hold mode, order,
@@ -736,6 +724,13 @@ bool decodeVocodex(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
     }
   }
   set(m, sp::VxTone, vocodexTone(tone));
+  // J-65: the built-in carrier (iv[6] < 0, no L-R encoding) plays the named
+  // tone preset of the installation's own synthesizer (none: no carrier).
+  const bool synthCarrier = iv[6] < 0 && !fv[0];
+  if (synthCarrier) {
+    d.hasTone = true;
+    d.tone = tone;
+  }
   m.state.data = sp::vxSerialize(d);
   // J-42: the output enhancer (tag 1 > 0) is a Maximus running the plugin's own "SG.dat"
   // program with the amount as its band mix — embedded as gl.enhance parameters ("sge"
@@ -755,10 +750,11 @@ bool decodeVocodex(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
       sgOk = sgExact;
     }
   }
-  // The built-in carrier synth (a hosted FM synth playing the named tone) is approximated.
-  const bool synthCarrier = iv[6] < 0 && !fv[0];
-  m.exact = !synthCarrier && sgOk;
-  if (synthCarrier) c.report.warn("Vocodex: built-in carrier tone approximated");
+  // The built-in carrier synth: exact when the tone's preset is in the
+  // installation and the reference model plays it exactly (or no tone).
+  const bool toneOk = !synthCarrier || tone.empty() || sp::vxToneExact(tone, c.factoryData);
+  m.exact = toneOk && sgOk;
+  if (!toneOk) c.report.warn("Vocodex: built-in carrier tone \"" + tone + "\" approximated (synthesizer preset not found)");
   return true;
 }
 

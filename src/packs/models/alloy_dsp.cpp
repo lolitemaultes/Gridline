@@ -145,6 +145,7 @@ class AlloyGen final : public Generator {
     uint64_t age = 0;
     double note = 60, cur = 60, glideFrom = 60, glideT = 1, glideLen = 0;
     float vel = 1;
+    float hostVol = 1;
     double t = 0;
     int nOsc = 0, ctl = 0;
     uint32_t ph[kMaxOsc], inc[kMaxOsc];
@@ -274,6 +275,7 @@ class AlloyGen final : public Generator {
     v.serial = ++serial_;
     v.note = pitch;
     v.vel = vel;
+    v.hostVol = static_cast<float>((std::pow(11.0, std::nearbyint(static_cast<double>(vel) * 128.0) / 100.0) - 1.0) / 10.0);
     v.age = ++clock_;
     v.t = 0;
     v.ctl = 0;
@@ -468,7 +470,9 @@ class AlloyGen final : public Generator {
       const double det = std::pow(static_cast<double>(v.det[o]), uniScale);
       v.inc[o] = phaseInc(f0 * v.harm[o] * det, sr_);
     }
-    const float velG = p_[AlVelVol] >= 0.5f ? 0.2f + 0.8f * v.vel : 1.0f;
+    // J-65: the host's note volume, measured against the reference: (11^(v/100) − 1) / 10 for
+    // velocity v/128 (1 at 100, +6.3 dB at 128, −33.5 dB at 8), with the option on or off.
+    const float velG = v.hostVol;
     // Each unison voice leaves at 0.3 per channel (centre: 0.3 / 0.7071 before the pan law).
     v.volT = std::max(0.0f, aVol) * v.gate * velG * p_[AlVolume] / 128.0f * 0.42426f;
     // Filter.

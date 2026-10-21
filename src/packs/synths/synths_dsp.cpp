@@ -2,6 +2,8 @@
 // wavetable_dsp.cpp, Matrix FM in matrixfm_dsp.cpp).
 #include "../Packs.h"
 #include "synths_common.h"
+#include "../../core/PluginParams.h"
+#include "trioref.h"
 
 namespace gl::packs::synths {
 
@@ -43,6 +45,11 @@ bool prepareAux(const PluginState& state, ChannelAux& aux) {
   if (prepareVaAux(state, aux) || prepareDcoAux(state, aux) || prepareHexAux(state, aux) || preparePocketAux(state, aux) || preparePixelAux(state, aux) ||
       prepareSampleKeysAux(state, aux))
     return true;
+  if (state.type == "gl.synth") {  // J-65: the reference oscillators' tables (the core prepares the rest)
+    if (state.params.size() > static_cast<size_t>(pp::SynModel) && state.params[pp::SynModel] >= 0.5f)
+      aux.custom = trioref::tables(state.params[pp::SynHQ] >= 0.5f);
+    return false;
+  }
   if (state.type == "gl.matrixfm") {
     aux.custom = mfm::buildMatrixFmAux(state);
     return true;

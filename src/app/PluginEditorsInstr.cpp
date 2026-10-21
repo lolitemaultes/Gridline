@@ -274,6 +274,8 @@ void editorTrio(App& a, const PluginTarget& t, float width) {
   iskin::text(k, 390, y0 + 96, 50, 12, "VOICES", 9, k.c.textDim, 0, false, true);
   iskin::digi(a, t, k, SynVoices, 390, y0 + 109, 44, 18, [](double v) { return std::to_string(static_cast<int>(std::lround(v))); }, 11);
   cwheel(a, t, k, SynVolume, 472, y0 + 92, "VOLUME", k.c.fill2, 30);
+  // J-65: reference oscillator model (sample-exact to the imported instrument's oscillators).
+  iskin::check(a, t, k, SynModel, 437, y0 + 102, 34, 24, "REF", 9.5f);
   iskin::end(k, kTrioH + kTrioChanH);
 }
 

@@ -158,6 +158,8 @@ std::vector<PluginInfo> build() {
       d.choices.push_back("Custom wave");
       d.max = static_cast<double>(d.choices.size() - 1);
     }
+    p.params[SynModel] = ch("Oscillator model", {"Trio", "Reference"}, 0);
+    p.legacyModelParam = SynModel;
     p.usesSample = true;  // custom-wave oscillators read the channel sample
     p.editorWidth = 600;
     v.push_back(p);

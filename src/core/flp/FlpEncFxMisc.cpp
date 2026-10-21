@@ -587,12 +587,14 @@ Encoder vocodex() {
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
     PluginState cur;
     if (!decoded("Vocodex", b, c, cur)) return;
-    const bool toneOk = param(cur, sp::VxTone) == param(g, sp::VxTone);
+    sp::VxData d, dc;
+    sp::vxParse(g.data, d);
+    sp::vxParse(cur.data, dc);
+    // J-65: the imported tone name is kept in the data; otherwise the family's name.
+    const bool toneOk = param(cur, sp::VxTone) == param(g, sp::VxTone) && (!d.hasTone || (dc.hasTone && dc.tone == d.tone));
     if (cur.data == g.data && toneOk) return;
     const VxLayout L = vxLayout(b);
     if (!L.ok) return;
-    sp::VxData d;
-    sp::vxParse(g.data, d);
     ByteWriter w;
     w.bytes(slice(b, 0, 4));
     size_t o = 4;
@@ -606,7 +608,9 @@ Encoder vocodex() {
     if (toneOk) {
       append(w.b, slice(b, L.tone, L.keys));
     } else {
-      const std::string name = vxToneName(static_cast<int>(std::lround(param(g, sp::VxTone))));
+      const int fam = static_cast<int>(std::lround(param(g, sp::VxTone)));
+      const bool keep = d.hasTone && !d.tone.empty() && sp::vxToneFamily(d.tone) == fam;
+      const std::string name = keep ? d.tone : vxToneName(fam);
       w.u8(static_cast<uint32_t>(name.size()));
       w.bytes(name.data(), name.size());
     }

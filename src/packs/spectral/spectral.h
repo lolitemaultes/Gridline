@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -117,6 +118,21 @@ inline void vxStagger(int order, double flat, double width, double* offOct, doub
     widthOct[s] = std::min(ws, 2.0);
   }
 }
+// Built-in carrier tone family for a saved carrier tone name (keyword match;
+// VxTone's approximate families, used when the tone's preset is not there).
+inline int vxToneFamily(std::string name) {
+  for (auto& ch : name) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  auto has = [&](const char* k) { return name.find(k) != std::string::npos; };
+  if (has("noise") || has("breath") || has("whisper")) return 8;
+  if (has("organ")) return 6;
+  if (has("string") || has("ensemble") || has("pad") || has("choir") || has("phase")) return 5;
+  if (has("super") || has("stack") || has("unison") || has("group")) return 4;
+  if (has("pwm") || has("pulse")) return 2;
+  if (has("square")) return 1;
+  if (has("tri") || has("sine") || has("soft")) return 3;
+  if (has("growl") || has("power") || has("buzz") || has("elderly") || has("robot")) return 7;
+  return 0;
+}
 // Per-band curves, pitch-follow flags and held carrier keys, kept in
 // PluginState::data as versioned text (parsed on the UI thread):
 //   vx1\n m<i>=dx:y:t;dx:y:t;…\n pf=0001100000000\n keys=60,64\n
@@ -130,6 +146,9 @@ struct VxData {
   bool pf[kVxMaps] = {};
   std::vector<int> keys;  // empty: built-in carrier root + chord parameters
   std::string extra;      // J-42: kept verbatim ("sge ...": the enhancer's mastering program)
+  // J-65: the imported built-in carrier tone ("tone=<name>"; empty name = no tone loaded).
+  bool hasTone = false;
+  std::string tone;
 };
 inline constexpr double kVxDistLo = 0.14293710887432098, kVxDistHi = 0.9917563796043396;
 inline double vxMapDefault(int m, double x) {
@@ -185,6 +204,7 @@ inline std::string vxSerialize(const VxData& d) {
   s += "\nkeys=";
   for (size_t i = 0; i < d.keys.size(); ++i) s += (i ? "," : "") + std::to_string(d.keys[i]);
   s += "\n";
+  if (d.hasTone) s += "tone=" + d.tone + "\n";
   if (!d.extra.empty()) s += d.extra + "\n";
   return s;
 }
@@ -227,6 +247,9 @@ inline bool vxParse(const std::string& s, VxData& d) {
         if (*c == ';') ++c;
       }
       if (!pts.empty()) d.maps[m] = std::move(pts);
+    } else if (k == "tone") {
+      d.hasTone = true;
+      d.tone = v;
     } else if (k == "pf") {
       for (int m = 0; m < kVxMaps && static_cast<size_t>(m) < v.size(); ++m) d.pf[m] = v[static_cast<size_t>(m)] == '1';
     } else if (k == "keys") {

@@ -15,6 +15,7 @@
 #include "../Packs.h"
 #include "spectral.h"
 #include "spectral_blocks.h"
+#include "vxcarrier.h"
 #include "../dynamics/maximus_ref.h"
 
 namespace gl::packs::spectral {
@@ -50,7 +51,11 @@ struct VocMapsAux final : AuxData {
   int keys[16] = {};
   int nkeys = 0;
   uint64_t hash = 0;
+  bool hasTone = false;  // J-65: an imported carrier tone ("" = none loaded)
+  std::string tone;
   void build(const VxData& d) {
+    hasTone = d.hasTone;
+    tone = d.tone;
     for (int m = 0; m < kVxMaps; ++m) {
       for (int i = 0; i < kT; ++i) t[m][i] = static_cast<float>(vxEval(d.maps[m], static_cast<double>(i) / (kT - 1)));
       pf[m] = d.pf[m];
@@ -107,8 +112,10 @@ class VocRef {
   }
 
   bool skipEnhance = false;  // J-42: the enhancer stage runs on the mastering engine instead
+  // extL / extR: the exact carrier tone (J-65), null = the approximate tone
+  // families; silentTone: an imported state without a tone (no carrier).
   void process(const Params& p, const VocMapsAux* aux, const ProcessContext& ctx, const float* scL, const float* scR, float* L,
-               float* R, int n) {
+               float* R, int n, const float* extL = nullptr, const float* extR = nullptr, bool silentTone = false) {
     const VocMapsAux& mp = aux ? *aux : vocDefaultMaps();
     const double sr = ctx.sampleRate;
     design(p, mp, sr);
@@ -171,8 +178,10 @@ class VocRef {
           car = 0.5 * (l + r);
         else if (carSrc == 2)
           car = scOk ? 0.5 * (static_cast<double>(scL[i]) + scR[i]) : 0.5 * (l + r);
+        else if (extL)
+          car = 0.5 * (static_cast<double>(extL[i]) + extR[i]);
         else
-          car = synth(tone, nk, voices, dts) * synGain;
+          car = silentTone ? 0.0 : synth(tone, nk, voices, dts) * synGain;
       }
       // Unvoiced (consonant) detector.
       double hf = sib_.process(mod), ah = std::fabs(hf), at = std::fabs(mod);
@@ -572,14 +581,37 @@ class VocoderFx final : public SpectralFx {
     tick_ = 0;
     sr_ = 0;
     ref_.reset();
+    carrier_.reset();
   }
+  // J-65: the imported carrier tone's engine (UI thread).
+  void prepareHost(const PluginState& state, double sampleRate) override {
+    prepared_.store(true, std::memory_order_release);
+    carrier_.prepare(exactTone(state), static_cast<int>(std::lround(sampleRate)));
+  }
+
   void processAux(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R, int n) override {
     Params p{info_, &state};
     if (p.choice(VxModel) == 1) {
       const auto* maps = dynamic_cast<const VocMapsAux*>(aux.custom.get());
       const bool sg = maps && !maps->sge.empty() && sgState_.params.size() >= maps->sge.size();
       ref_.skipEnhance = sg;
-      ref_.process(p, maps, ctx, scL_, scR_, L, R, n);
+      const bool toneCar = maps && maps->hasTone && p.choice(VxCarSource) == 0 && !p.on(VxLrEncoding) &&
+                           p.choice(VxTone) == vxToneFamily(maps->tone);
+      if (toneCar && !prepared_.load(std::memory_order_acquire))  // used outside the engine (never prepared): build now
+        carrier_.prepare(maps->tone, static_cast<int>(std::lround(ctx.sampleRate)));
+      if (toneCar) {
+        int keys[16];
+        const int nk = carrierKeys(p, maps, ctx, keys);
+        for (int i = 0; i < n;) {
+          const int k = std::min(n - i, kCarChunk);
+          const bool ext = carrier_.render(keys, nk, ctx.tempo, carL_, carR_, k);
+          ref_.process(p, maps, ctx, scL_ ? scL_ + i : nullptr, scR_ ? scR_ + i : nullptr, L + i, R + i, k, ext ? carL_ : nullptr,
+                       ext ? carR_ : nullptr, maps->tone.empty());
+          i += k;
+        }
+      } else {
+        ref_.process(p, maps, ctx, scL_, scR_, L, R, n);
+      }
       ref_.publish(tel);
       if (sg && p[VxEnhance] > 0) {  // J-42: the enhancer stage on the mastering reference engine
         if (maps != sgFrom_) {
@@ -800,6 +832,30 @@ class VocoderFx final : public SpectralFx {
   PluginState sgState_;
   std::unique_ptr<Effect> sgFx_;
   const VocMapsAux* sgFrom_ = nullptr;
+  // J-65: exact carrier tone.
+  static constexpr int kCarChunk = 512;
+  static std::string exactTone(const PluginState& state) {
+    if (state.data.find("\ntone=") == std::string::npos) return "";
+    VxData d;
+    vxParse(state.data, d);
+    Params p{findPlugin("gl.vocoder"), &state};
+    if (!d.hasTone || p.choice(VxTone) != vxToneFamily(d.tone)) return "";
+    return d.tone;
+  }
+  // The keys the vocoder plays: its MIDI port's notes, else the held keys.
+  static int carrierKeys(const Params& p, const VocMapsAux* mp, const ProcessContext& ctx, int* keys) {
+    int nk = 0;
+    const int port = static_cast<int>(std::lround(p[VxMidiPort]));
+    if (ctx.ports && port >= 0 && port < MidiPortBus::kPorts)
+      for (int k = 0; k < 128 && nk < 16; ++k)
+        if (ctx.ports->get(port, k)) keys[nk++] = k;
+    if (nk == 0 && mp)
+      for (int k = 0; k < mp->nkeys && nk < 16; ++k) keys[nk++] = mp->keys[k];
+    return nk;
+  }
+  VxCarrier carrier_;
+  std::atomic<bool> prepared_{false};
+  float carL_[kCarChunk] = {}, carR_[kCarChunk] = {};
 };
 
 // ============================================================ Pitch shifter
