@@ -875,8 +875,11 @@ void testInterop() {
             fs::path(loaded.channels[0].plugin.data).parent_path() == fs::path(out) / "Samples";
   expect(ok, "loaded copy: relative paths resolve to the copied files with the right content");
   if (std::getenv("GL_DEBUG")) std::printf("edison data: %s\n", loaded.mixer[1].slots[0].plugin.data.c_str());
-  expect(loaded.mixer[1].slots[0].plugin.data.find((fs::path(out) / "Samples" / "hall.wav").string()) != std::string::npos,
-         "JSON plugin state rewritten to the copy");
+  {
+    Json state;
+    expect(jsonParse(loaded.mixer[1].slots[0].plugin.data, state) && fs::path(state.text("path")) == fs::path(out) / "Samples" / "hall.wav",
+           "JSON plugin state rewritten to the copy");
+  }
 
   // Zipped project.
   const std::string zp = (fs::path(scratch) / "Song.zip").string();
@@ -909,15 +912,16 @@ void testInterop() {
   auto missing = missingFiles(m);
   expect(missing.size() == 4, "missing files listed");
   RelinkReport rr = findReplacements(missing, (fs::path(scratch) / "lib").string());
-  expect(rr.found.size() == 3 && rr.found["/gone/drive/A/kick.wav"] == kickA && rr.found["C:\\Samples\\B\\kick.wav"] == kickB &&
-             rr.found["/gone/hall.flac"] == ir && rr.notFound.size() == 1,
+  auto same = [](const std::string& a, const std::string& b) { return fs::path(a) == fs::path(b); };
+  expect(rr.found.size() == 3 && same(rr.found["/gone/drive/A/kick.wav"], kickA) && same(rr.found["C:\\Samples\\B\\kick.wav"], kickB) &&
+             same(rr.found["/gone/hall.flac"], ir) && rr.notFound.size() == 1,
          "relink: by name (parent folder breaks ties, Windows paths), by stem; the rest reported");
   expect(relinkFiles(m, rr.found) == 3 && missingFiles(m).size() == 1, "relink applies to the song");
   // Size hint breaks a tie when folders do not.
   RelinkOptions ro;
   ro.sizeHints["/x/kick.wav"] = fs::file_size(kickB);
   RelinkReport r2 = findReplacements({"/x/kick.wav"}, (fs::path(scratch) / "lib").string(), ro);
-  expect(r2.found["/x/kick.wav"] == kickB, "relink: size hint picks between same-named files");
+  expect(same(r2.found["/x/kick.wav"], kickB), "relink: size hint picks between same-named files");
 }
 
 void testExportJob() {

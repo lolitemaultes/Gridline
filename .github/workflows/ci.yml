@@ -65,7 +65,7 @@ jobs:
       - name: Smoke
         run: bash tools/ci/smoke.sh build/gridline
       - name: App starts (Xvfb)
-        run: xvfb-run -a sh -c 'build/gridline-app --version && GRIDLINE_CONFIG_HOME=$PWD/build/appcfg build/gridline-app --hidden --size 800x600 --screenshot build/app.ppm --frames 5 --no-ui-sounds' && test -s build/app.ppm
+        run: xvfb-run -a -s '-screen 0 1280x1024x24' sh -c 'build/gridline-app --version && GRIDLINE_CONFIG_HOME=$PWD/build/appcfg build/gridline-app --hidden --size 800x600 --screenshot build/app.ppm --frames 5 --no-ui-sounds' && test -s build/app.ppm
 
   linux-arm64:
     name: Linux arm64 (Ubuntu 24.04)

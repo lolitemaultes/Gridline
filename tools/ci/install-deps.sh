@@ -41,14 +41,19 @@ case "${1:?platform}" in
   netbsd)
     # X11 (Xlib, Mesa's libGL, Xvfb) is part of the base sets; sndio from pkgsrc.
     export PATH="/usr/pkg/sbin:/usr/pkg/bin:$PATH"
-    # MesaLib: libGL when the X11 sets of the base system are not installed.
-    if command -v pkgin >/dev/null 2>&1; then
-      pkgin -y install cmake ninja-build pkgconf SDL2 sndio bash MesaLib libX11 xorgproto
-    else
-      for p in cmake ninja-build pkgconf SDL2 sndio bash MesaLib libX11 xorgproto; do pkg_add "$p" || echo "pkg_add $p failed" >&2; done
+    # The X11 sets (Xlib, Mesa's libGL, headers) when the system was installed without them.
+    if [ ! -f /usr/X11R7/include/X11/Xlib.h ]; then
+      for set in xbase xcomp; do
+        url="https://cdn.netbsd.org/pub/NetBSD/NetBSD-$(uname -r)/$(uname -m)/binary/sets/$set.tar.xz"
+        ftp -o "/tmp/$set.tar.xz" "$url" && tar -xJpf "/tmp/$set.tar.xz" -C / && rm -f "/tmp/$set.tar.xz"
+      done
     fi
-    ls /usr/X11R7/lib 2>/dev/null | grep -i 'libGL\.\|libX11\.' || echo "no X11 sets in /usr/X11R7"
-    ls /usr/pkg/lib | grep -i 'libGL\.' || true
+    if command -v pkgin >/dev/null 2>&1; then
+      pkgin -y install cmake ninja-build pkgconf SDL2 sndio bash
+    else
+      for p in cmake ninja-build pkgconf SDL2 sndio bash; do pkg_add "$p" || echo "pkg_add $p failed" >&2; done
+    fi
+    ls /usr/X11R7/include/X11/Xlib.h /usr/X11R7/lib/libGL.so
     ;;
   *)
     echo "unknown platform: $1" >&2

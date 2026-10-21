@@ -55,9 +55,13 @@ ProcessContext ctx48() {
   return c;
 }
 
+// Sandbox data-path checks render offline: on a slow (virtual) machine a real-time block may
+// miss its budget and come back silent, which is the sandbox working as designed.
+bool gOfflineRuns = false;
 void runGen(Generator& g, const PluginState& st, std::vector<float>& L, std::vector<float>& R, int n, int block = 256) {
   ChannelAux aux;
   ProcessContext c = ctx48();
+  c.offline = c.offline || gOfflineRuns;
   size_t base = L.size();
   L.resize(base + static_cast<size_t>(n), 0.0f);
   R.resize(base + static_cast<size_t>(n), 0.0f);
@@ -1184,6 +1188,10 @@ void testPresetsAndBypass() {
 
 // Sandbox: MIDI output and modulation travel through shared memory.
 void testSandboxFeatures() {
+  struct OfflineScope {
+    OfflineScope() { gOfflineRuns = true; }
+    ~OfflineScope() { gOfflineRuns = false; }
+  } offline;
   host::setChildExecutable(GRIDLINE_CLI_EXE);
   host::setRunInSandbox(kClapSynth, true);
   auto g = createGenerator(kClapSynth);

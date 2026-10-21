@@ -32,7 +32,26 @@ extern char** environ;
 #include <sys/types.h>
 #endif
 
+#if defined(__linux__) && !defined(__GLIBC__)
+#include <pthread.h>
+#endif
+
 namespace fs = std::filesystem;
+
+#if defined(__linux__) && !defined(__GLIBC__)
+namespace {
+// musl gives new threads 128 KB of stack (glibc: 8 MB, from the stack limit). Audio rendering,
+// plugin and decoder threads need more: every thread of the process gets 8 MB.
+[[maybe_unused]] const bool kMuslThreadStacks = [] {
+  pthread_attr_t a;
+  if (pthread_attr_init(&a) != 0) return false;
+  pthread_attr_setstacksize(&a, 8u << 20);
+  const bool ok = pthread_setattr_default_np(&a) == 0;
+  pthread_attr_destroy(&a);
+  return ok;
+}();
+}  // namespace
+#endif
 
 namespace gl::platform {
 
@@ -273,8 +292,15 @@ bool writable(const std::string& path) {
 
 bool replaceFile(const std::string& from, const std::string& to, std::string* err) {
 #if defined(_WIN32)
-  if (MoveFileExW(widen(from).c_str(), widen(to).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
-  const DWORD code = GetLastError();
+  // Another writer replacing the same file, a virus scanner or the search indexer may hold it
+  // for a moment: retry briefly before giving up.
+  DWORD code = 0;
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    if (MoveFileExW(widen(from).c_str(), widen(to).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+    code = GetLastError();
+    if (code != ERROR_ACCESS_DENIED && code != ERROR_SHARING_VIOLATION && code != ERROR_LOCK_VIOLATION) break;
+    Sleep(5);
+  }
   errno = code == ERROR_ACCESS_DENIED || code == ERROR_SHARING_VIOLATION ? EACCES
           : code == ERROR_DISK_FULL || code == ERROR_HANDLE_DISK_FULL    ? ENOSPC
           : code == ERROR_PATH_NOT_FOUND || code == ERROR_FILE_NOT_FOUND ? ENOENT

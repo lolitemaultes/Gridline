@@ -266,7 +266,7 @@ void testZip() {
 }  // namespace
 
 int main() {
-  std::setvbuf(stdout, nullptr, _IOLBF, 0);
+  std::setvbuf(stdout, nullptr, _IONBF, 0);  // (MSVC rejects _IOLBF with no buffer size)
   testDemo();
   testZip();
   testCatalogue();
