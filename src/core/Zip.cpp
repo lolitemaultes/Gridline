@@ -255,8 +255,15 @@ bool extractZip(const std::string& path, const std::string& dir, std::vector<std
   const fs::path root = fs::weakly_canonical(fs::path(dir), ec);
   fs::create_directories(root, ec);
   for (const auto& e : entries) {
-    const fs::path rel = fs::path(e.name).lexically_normal();
-    if (rel.is_absolute() || rel.empty() || *rel.begin() == "..") return fail(err, "unsafe path in archive: " + e.name);
+    fs::path rel;
+    try {  // Windows: a name that is not valid UTF-8 cannot become a path
+      rel = fs::u8path(e.name).lexically_normal();
+    } catch (const std::exception&) {
+      return fail(err, "unreadable file name in archive");
+    }
+    // Absolute, drive-relative (C:x) or UNC names never leave the folder.
+    if (rel.is_absolute() || rel.has_root_name() || rel.has_root_directory() || rel.empty() || *rel.begin() == "..")
+      return fail(err, "unsafe path in archive: " + e.name);
     const fs::path dst = root / rel;
     if (e.dir()) {
       fs::create_directories(dst, ec);

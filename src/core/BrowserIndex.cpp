@@ -41,7 +41,14 @@ std::string keyOf(const std::string& path) {
 #endif
 }
 
-std::string extOf(const std::string& path) { return lower(fs::path(path).extension().string()); }
+// String operations, not std::filesystem: names read from a cache file may not be valid UTF-8,
+// which Windows' path conversion rejects with an exception.
+std::string extOf(const std::string& path) {
+  const size_t slash = path.find_last_of("/\\");
+  const size_t dot = path.rfind('.');
+  if (dot == std::string::npos || (slash != std::string::npos && dot < slash) || dot == (slash == std::string::npos ? 0 : slash + 1)) return {};
+  return lower(path.substr(dot));
+}
 
 // Splits on anything but letters, digits (and '#' when keepSharp).
 std::vector<std::string> tokens(const std::string& s, bool keepSharp) {

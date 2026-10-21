@@ -1371,6 +1371,8 @@ std::string fileWriteError(const std::string& path, int errnum) {
   const std::string file = p.filename().string(), folder = p.parent_path().filename().string();
   const std::string where = folder.empty() ? std::string("this folder") : "the folder \"" + folder + "\"";
   const std::string head = "cannot write " + file + ": ";
+  // Windows reports an over-long name as an invalid argument (or a missing file).
+  if (file.size() > 255 && errnum != ENAMETOOLONG) errnum = ENAMETOOLONG;
   switch (errnum) {
     case EACCES:
     case EPERM:

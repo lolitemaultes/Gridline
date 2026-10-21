@@ -843,7 +843,8 @@ Song interopSong(std::string& kickA, std::string& kickB, std::string& ir) {
   addSampler(s, "Kick A again", kickA);
   // A JSON plugin state that refers to a file (audio editor style).
   s.mixer[1].slots[0].plugin.type = "gl.edison";
-  s.mixer[1].slots[0].plugin.data = "{\"name\": \"take\", \"path\": \"" + ir + "\"}";
+  // (escaped: Windows paths hold backslashes)
+  s.mixer[1].slots[0].plugin.data = "{\"name\": \"take\", \"path\": " + jsonStringify(Json::makeString(ir), 0) + "}";
   return s;
 }
 

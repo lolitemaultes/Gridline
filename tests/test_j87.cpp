@@ -54,6 +54,9 @@ void* operator new[](std::size_t n) {
   if (void* p = std::malloc(n ? n : 1)) return p;
   throw std::bad_alloc();
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"  // the replaced operator new is malloc
+#endif
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
@@ -635,8 +638,10 @@ int main() {
     long probe = 0;
     {
       CountScope cs;
-      std::vector<float>* v = new std::vector<float>(100);
-      delete v;
+      // Through a volatile pointer: the compiler may otherwise drop the new / delete pair.
+      static std::vector<float>* volatile sink = nullptr;
+      sink = new std::vector<float>(100);
+      delete sink;
       probe = cs.n();
     }
     expect(probe >= 2, "allocation counter sees allocations (self-check)");
