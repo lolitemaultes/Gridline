@@ -1424,7 +1424,10 @@ void editorSplitterRef(App& a, const PluginTarget& t, float width) {
   const double sr = a.engine.sampleRate();
   const int nb = std::clamp(static_cast<int>(val(st, SpBands) + 0.5f), 0, 2) + 2;
   double f[3] = {val(st, SpFreq1), val(st, SpFreq2), val(st, SpFreq3)};
-  std::sort(f, f + std::clamp(nb - 1, 1, 3));
+  if (nb >= 4)
+    std::sort(f, f + 3);
+  else if (nb == 3)
+    std::sort(f, f + 2);
   int sl[3];
   for (int k = 0; k < 3; ++k) sl[k] = std::clamp(static_cast<int>(val(st, SpSlopeA + k) + 0.5f), 0, kSplitSlopes - 1);
   const bool sends = val(st, SpMonitor) >= 0.5f;

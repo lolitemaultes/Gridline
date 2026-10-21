@@ -41,11 +41,14 @@ case "${1:?platform}" in
   netbsd)
     # X11 (Xlib, Mesa's libGL, Xvfb) is part of the base sets; sndio from pkgsrc.
     export PATH="/usr/pkg/sbin:/usr/pkg/bin:$PATH"
+    # MesaLib: libGL when the X11 sets of the base system are not installed.
     if command -v pkgin >/dev/null 2>&1; then
-      pkgin -y install cmake ninja-build pkgconf SDL2 sndio bash
+      pkgin -y install cmake ninja-build pkgconf SDL2 sndio bash MesaLib
     else
-      for p in cmake ninja-build pkgconf SDL2 sndio bash; do pkg_add "$p" || echo "pkg_add $p failed" >&2; done
+      for p in cmake ninja-build pkgconf SDL2 sndio bash MesaLib; do pkg_add "$p" || echo "pkg_add $p failed" >&2; done
     fi
+    ls /usr/X11R7/lib 2>/dev/null | grep -i 'libGL\.\|libX11\.' || echo "no X11 sets in /usr/X11R7"
+    ls /usr/pkg/lib | grep -i 'libGL\.' || true
     ;;
   *)
     echo "unknown platform: $1" >&2

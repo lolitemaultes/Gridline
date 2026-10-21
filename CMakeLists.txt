@@ -966,6 +966,10 @@ if(WIN32)
     get_target_property(_type ${_t} TYPE)
     if(_type STREQUAL "EXECUTABLE")
       target_sources(${_t} PRIVATE ${CMAKE_SOURCE_DIR}/cmake/windows/gridline.manifest)
+    elseif(_type STREQUAL "MODULE_LIBRARY")
+      # Plugins share output names (Gridline, GridlineTest): their import libraries and export
+      # files (.lib / .exp) go to a folder of their own.
+      set_target_properties(${_t} PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/implib/${_t})
     endif()
   endforeach()
 endif()

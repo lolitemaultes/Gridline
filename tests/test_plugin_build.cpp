@@ -476,7 +476,7 @@ void testFormat(const std::string& format, const std::string& bundle, const std:
 std::string readFile(const std::string& path);
 void testAuView() {
   const std::string log = fs::temp_directory_path().append("au-view.log").string();
-  setenv("GRIDLINE_PLUGIN_WINDOW_LOG", log.c_str(), 1);
+  gl::platform::setEnv("GRIDLINE_PLUGIN_WINDOW_LOG", log.c_str());
   Loaded g = instrument("au:aumu/GrIn/GrLn");
   host::HostedInstance* hi = g.gen ? host::hostedInstance(g.gen.get()) : nullptr;
   std::unique_ptr<host::Editor> e = hi ? hi->backend()->createEditor() : nullptr;
@@ -498,7 +498,7 @@ void testAuView() {
   expect(text.find("auview opened size=800x600") != std::string::npos && f != std::string::npos &&
              std::atoi(text.c_str() + f + std::strlen("auview closed frames=")) > 5,
          "au: the view is Gridline's own interface, drawn, closed with the unit's view");
-  unsetenv("GRIDLINE_PLUGIN_WINDOW_LOG");
+  gl::platform::unsetEnv("GRIDLINE_PLUGIN_WINDOW_LOG");
 }
 #endif
 
@@ -640,8 +640,8 @@ bool has(const std::string& line, const std::string& what) { return line.find(" 
 // window, with Gridline's control bar under it, and closes with the editor.
 void testNestedInterfaces() {
   const std::string log = fs::temp_directory_path().append("plugin-windows.log").string();
-  setenv("GRIDLINE_PLUGIN_OPEN_HOSTED", "1", 1);
-  setenv("GRIDLINE_PLUGIN_WINDOW_LOG", log.c_str(), 1);
+  gl::platform::setEnv("GRIDLINE_PLUGIN_OPEN_HOSTED", "1");
+  gl::platform::setEnv("GRIDLINE_PLUGIN_WINDOW_LOG", log.c_str());
   // The plugin cache the Gridline plugin reads (the application's, hermetic here).
   host::ScanCache cache(fs::path(std::getenv("XDG_CONFIG_HOME")).append("gridline").append("plugin-cache.json").string());
   const host::ScanResult v3 = host::findFormat("vst3")->scanInProcess(GRIDLINE_TESTPLUG_BUNDLE);
@@ -717,8 +717,8 @@ void testNestedInterfaces() {
          "nested: the windows close with Gridline's editor");
   expect(vp && cp && vp->views == 0 && cp->views == 0, "nested: the plugins' views are detached");
   g.gen.reset();
-  unsetenv("GRIDLINE_PLUGIN_OPEN_HOSTED");
-  unsetenv("GRIDLINE_PLUGIN_WINDOW_LOG");
+  gl::platform::unsetEnv("GRIDLINE_PLUGIN_OPEN_HOSTED");
+  gl::platform::unsetEnv("GRIDLINE_PLUGIN_WINDOW_LOG");
 }
 #endif
 

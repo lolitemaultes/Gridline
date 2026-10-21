@@ -114,6 +114,9 @@ void receivePromise(NSFilePromiseReceiver* r, uint64_t token, size_t base, size_
   [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
   NSURL* dest = [NSURL fileURLWithPath:dir isDirectory:YES];
   auto next = std::make_shared<std::atomic<size_t>>(base);
+  // macOS 14 raises (instead of reporting an error) for a promise without a file name: the
+  // items fail, Gridline keeps running.
+  @try {
   [r receivePromisedFilesAtDestination:dest
                                options:@{}
                         operationQueue:promiseQueue()
@@ -132,6 +135,16 @@ void receivePromise(NSFilePromiseReceiver* r, uint64_t token, size_t base, size_
                                   }
                                   post(e);
                                 }];
+  } @catch (NSException* ex) {
+    for (size_t i = 0; i < n; ++i) {
+      Event e;
+      e.type = EventType::Failed;
+      e.token = token;
+      e.index = base + i;
+      e.error = ex.reason ? str(ex.reason) : std::string("the promised file has no name");
+      post(e);
+    }
+  }
 }
 
 bool listableName(const std::string& name) { return browse::listable(browse::kindOf(name)); }

@@ -534,7 +534,7 @@ void testSpConvolver() {
     s.u8(0).u8(0).u8(1).u8(1).i32(128).i32(0).i32(500).i32(0).i32(-1000).i32(700);
     SpEnv e;
     flp::PluginMapping m;
-    setenv("GRIDLINE_CACHE_DIR", spTmpDir().c_str(), 1);  // keep the test's IR out of the user cache
+    gl::platform::setEnv("GRIDLINE_CACHE_DIR", spTmpDir().c_str());  // keep the test's IR out of the user cache
     bool ok = spDecode(e, "Fruity Convolver", s.b, m);
     sx::ConvData cd = sx::parseConvData(m.state.data);
     std::error_code ec;
