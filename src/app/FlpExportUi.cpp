@@ -1,6 +1,6 @@
 // Gridline — J-80: FL Studio export job, progress and report windows (see FlpExportUi.h).
 #include "FlpExportUi.h"
-#include <unistd.h>
+#include "../core/Platform.h"
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -202,7 +202,7 @@ bool start(App& a, const std::string& path, bool zip, std::function<void(bool)> 
   {  // J-78: a folder or read-only file is refused before anything is rendered
     std::string why;
     const fs::path dir = fs::path(path).parent_path().empty() ? fs::path(".") : fs::path(path).parent_path();
-    if (checkWritableTarget(path, &why) && ::access(dir.c_str(), W_OK) != 0) why = fileWriteError(path, errno);
+    if (checkWritableTarget(path, &why) && !platform::writable(dir.string())) why = fileWriteError(path, errno);
     if (!why.empty()) {
       a.notify((zip ? "Could not save the FL Studio zipped loop package: " : "Could not save the FL Studio project: ") + why, true, path);
       return false;

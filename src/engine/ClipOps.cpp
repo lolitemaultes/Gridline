@@ -219,12 +219,21 @@ float normalizeClip(Song& song, ObjectId id, double targetDb) {
 }
 
 bool setClipStretch(Song& song, ObjectId id, double timeFactor, bool keepPitch) {
+  const Clip* c = song.clip(id);
+  const Channel* ch = c ? song.channel(c->source) : nullptr;
+  int mode = keepPitch ? 1 : 0;
+  if (keepPitch && ch && ch->plugin.type == "gl.sampler" && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode))
+    mode = std::max(1, static_cast<int>(std::lround(ch->plugin.params[pp::SmpStretchMode])));
+  return setClipStretchMode(song, id, timeFactor, mode);
+}
+
+bool setClipStretchMode(Song& song, ObjectId id, double timeFactor, int mode) {
   Clip* c = song.clip(id);
   if (!c || c->kind != ClipKind::Audio || !(timeFactor > 0)) return false;
   Channel* ch = song.channel(c->source);
   if (!ch) return false;
   if (ch->plugin.type == "gl.sampler" && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode))
-    ch->plugin.params[pp::SmpStretchMode] = keepPitch ? 1.0f : 0.0f;
+    ch->plugin.params[pp::SmpStretchMode] = static_cast<float>(std::clamp(mode, 0, 4));
   c = song.clip(id);
   c->stretch = std::clamp(timeFactor, 0.0625, 16.0);
   if (Tick n = audioClipNaturalLength(song, *c); n > 0) song.clip(id)->length = n;

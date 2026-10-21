@@ -21,6 +21,7 @@
 #include "LayoutAudit.h"
 #include "PluginUI.h"
 #include "Theme.h"
+#include "../core/Platform.h"
 
 namespace gl::browserui {
 
@@ -113,11 +114,11 @@ void startThumbnailRun(App& a) {
   std::error_code ec;
   fs::create_directories(dir, ec);
   const std::string frame = (dir / ".frame.ppm").string();
-  std::string cmd = "'" + exe + "' --make-thumbs --size 1400x1000 --screenshot '" + frame + "' --frames 100000 > /dev/null 2>&1";
+  const std::vector<std::string> args = {exe, "--make-thumbs", "--size", "1400x1000", "--screenshot", frame, "--frames", "100000"};
   a.notify("Rendering plugin thumbnails in the background");
-  std::thread([cmd]() {
-    int rc = std::system(cmd.c_str());
-    (void)rc;
+  std::thread([exe, args]() {
+    platform::Process p;
+    if (p.start(exe, args)) p.wait();
     ++texGeneration;
     runActive = false;
   }).detach();

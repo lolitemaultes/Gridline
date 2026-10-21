@@ -34,6 +34,7 @@
 #include "../Fades.h"
 #include "../Params.h"
 #include "../PluginParams.h"
+#include "../../engine/TimeStretch.h"
 #include "Flp.h"
 #include "FlpFx.h"
 
@@ -197,7 +198,8 @@ void Importer::importAudioChannels() {
     if (const Event* e = find(evs, 215); e && e->size >= 112) {
       int cents = e->i32(100), mul = e->i32(104), mode = e->i32(108);
       set(pp::SmpPitchShift, static_cast<float>(std::clamp(cents, -1200, 1200)));
-      set(pp::SmpStretchMode, mode != 0 ? 1.f : 0.f);  // 0 = resample; others keep the pitch apart from the speed
+      // 0 = resample; FL's other methods keep the pitch apart from the speed (J-87: closest Gridline mode).
+      set(pp::SmpStretchMode, static_cast<float>(stretch::modeFromFl(mode)));
       if (mul != 0) set(pp::SmpTimeStretch, static_cast<float>(std::clamp(std::pow(2.0, mul / 10000.0), 0.25, 4.0)));
     }
     if (const Event* e = find(evs, 70)) set(pp::SmpReverse, (e->value() & 2) ? 1.f : 0.f);

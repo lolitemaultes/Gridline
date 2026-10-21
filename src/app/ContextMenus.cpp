@@ -46,6 +46,7 @@
 #include "TrackModeUi.h"
 #include "ChopUi.h"
 #include "../packs/PacksUi.h"
+#include "../core/Platform.h"
 
 namespace gl {
 
@@ -159,7 +160,7 @@ void fileDialog(App& a, const char* title, bool save, std::vector<std::string> e
   a.fileDialog.open = true;
   a.fileDialog.save = save;
   a.fileDialog.title = title;
-  const char* h = std::getenv("HOME");
+  const char* h = gl::platform::homeEnv();
   a.fileDialog.dir = a.projectPath.empty() ? (h ? h : ".") : fs::path(a.projectPath).parent_path().string();
   a.fileDialog.exts = std::move(exts);
   a.fileDialog.name = name;

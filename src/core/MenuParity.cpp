@@ -150,6 +150,7 @@ ObjectId makeAudioClipUnique(Document& d, ObjectId clip) {
 }
 
 int setAudioClipTimeMode(Document& d, const std::set<ObjectId>& clips, int mode) {
+  mode = std::clamp(mode, 0, 4);  // J-87: Resample, Auto, Mono, Transient, Formant
   const Song& s = d.song();
   std::set<ObjectId> chans;
   for (const auto& c : s.playlist)
@@ -157,7 +158,7 @@ int setAudioClipTimeMode(Document& d, const std::set<ObjectId>& clips, int mode)
       if (const Channel* ch = s.channel(c.source); ch && isSampler(*ch) && ch->plugin.params[pp::SmpStretchMode] != mode)
         chans.insert(ch->id);
   if (chans.empty()) return 0;
-  d.editSong(mode ? "switch audio clips to stretch" : "switch audio clips to resample", [&](Song& x) {
+  d.editSong(mode ? "switch audio clips' time mode" : "switch audio clips to resample", [&](Song& x) {
     for (auto& ch : x.channels)
       if (chans.count(ch.id)) ch.plugin.params[pp::SmpStretchMode] = static_cast<float>(mode);
   });
@@ -563,7 +564,7 @@ const std::vector<SmpteRate>& smpteRates() {
 }
 
 std::string formatSongTime(const Song& s, double tick, TimeFormat f, bool steps, int smpteRate) {
-  char buf[48];
+  char buf[96];
   tick = std::max(0.0, tick);
   if (f == TimeFormat::BarBeatTick) {
     const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks());

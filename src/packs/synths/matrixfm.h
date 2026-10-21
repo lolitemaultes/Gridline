@@ -29,7 +29,7 @@ inline constexpr int kMaps = 6;  // key, velocity, mod X, mod Y, random, unison
 enum OpArt { OaPan, OaVol, OaMod, OaPitch, OaPhase, OaDamp, kOpArts };
 enum FltArt { FaPan, FaVol, FaCut, FaRes, FaLow, FaBand, FaHigh, FaWsMix, kFltArts };
 enum MainArt { MaPan, MaVol, kMainArts };
-inline constexpr int unitArts(int unit) { return unit < kOps ? kOpArts : unit < kOps + kFilters ? kFltArts : kMainArts; }
+inline constexpr int unitArts(int unit) { return unit < kOps ? static_cast<int>(kOpArts) : unit < kOps + kFilters ? static_cast<int>(kFltArts) : static_cast<int>(kMainArts); }
 enum MapKind { MapKey, MapVel, MapX, MapY, MapRand, MapUni };
 
 // Articulator scalar fields.

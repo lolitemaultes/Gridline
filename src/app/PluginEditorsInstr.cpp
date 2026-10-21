@@ -12,6 +12,7 @@
 #include "../core/PluginParams.h"
 #include "InstrumentSkin.h"
 #include "PluginEditorsCommon.h"
+#include "../core/Platform.h"
 
 namespace gl {
 
@@ -31,7 +32,7 @@ void chooseSample(App& a, const char* title, const std::string& current, std::fu
   a.fileDialog = {};
   a.fileDialog.open = true;
   a.fileDialog.title = title;
-  const char* home = std::getenv("HOME");
+  const char* home = gl::platform::homeEnv();
   a.fileDialog.dir = current.empty() || current.rfind("builtin:", 0) == 0 ? (home ? home : ".") : std::filesystem::path(current).parent_path().string();
   a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv"};
   a.fileDialog.onOk = std::move(ok);

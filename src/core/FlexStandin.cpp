@@ -2,6 +2,7 @@
 // Gridline's own: the keyword table, the templates and the control laws.
 // Nothing is derived from FLEX's pack content (which Gridline never reads).
 #include "FlexStandin.h"
+#include "Platform.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -709,7 +710,7 @@ bool migrateLegacy(PluginState& s) {
     const char* c = s.data.c_str() + pos + 2;
     char* e = nullptr;
     for (int k = 0; k < kControls; ++k) {
-      const double x = std::strtod(c, &e);
+      const double x = platform::parseDouble(c, &e);
       if (e == c) break;
       v[k] = static_cast<float>(x);
       c = e;

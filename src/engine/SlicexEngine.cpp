@@ -1,4 +1,5 @@
 // Gridline — Slicex region engine (see SlicexEngine.h).
+#include "TimeStretch.h"
 #include "SlicexEngine.h"
 #include <algorithm>
 #include <cmath>
@@ -776,8 +777,14 @@ void Engine::render(float* L, float* R, int n) {
       int64_t i0 = static_cast<int64_t>(std::floor(x));
       const double fr = x - static_cast<double>(i0);
       i0 = std::clamp<int64_t>(i0, 0, frames - 1);
-      const int64_t i1 = std::min(i0 + 1, frames - 1);
-      double l = sl[i0] + (sl[i1] - sl[i0]) * fr, r = sr[i0] + (sr[i1] - sr[i0]) * fr;
+      double l, r;
+      if (fr < 1e-9 && std::fabs(v.rate) <= 1.000001) {  // exact unless reading faster
+        l = sl[i0], r = sr[i0];
+      } else {  // J-87: band-limited (was linear): no aliasing when pitched up
+        float a, b;
+        stretch::readSinc2(sl, sr, frames, x, std::fabs(v.rate), *sinc_, a, b);
+        l = a, r = b;
+      }
       for (int k = 0; k < v.stages; ++k) l = v.bq[k].run(0, l), r = v.bq[k].run(1, r);
       v.gl += v.dl, v.gr += v.dr;
       L[i] += static_cast<float>(l * v.gl);

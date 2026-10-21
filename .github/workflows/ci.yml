@@ -1,0 +1,200 @@
+name: CI
+
+# Build (Release, warnings as errors on the primary compilers), unit tests (ctest) and a CLI
+# smoke test (version, demo render, FLP export / re-import) on every supported platform.
+on:
+  push:
+    branches: [main, port-ci]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: "1"
+  GRIDLINE_NO_PLUGIN_SCAN: "1"
+
+jobs:
+  consistency:
+    name: Version, icons, line endings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/ci/check-version.sh
+      - run: python3 tools/make_ico.py --check
+      - name: No CRLF in text files
+        run: |
+          if git ls-files --eol | grep 'i/crlf' | grep -v 'attr/-text'; then echo "CRLF line endings above"; exit 1; fi
+
+  linux:
+    name: Linux ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Ubuntu 22.04, image: "ubuntu:22.04", pm: apt, werror: "ON", gui: "OFF" }
+          - { name: Ubuntu 24.04, image: "ubuntu:24.04", pm: apt, werror: "ON", gui: "ON" }
+          - { name: Debian 12, image: "debian:12", pm: apt, werror: "ON", gui: "OFF" }
+          - { name: Fedora, image: "fedora:latest", pm: dnf, werror: "OFF", gui: "OFF" }
+          - { name: Arch, image: "archlinux:latest", pm: pacman, werror: "OFF", gui: "OFF" }
+          - { name: openSUSE Tumbleweed, image: "opensuse/tumbleweed:latest", pm: zypper, werror: "OFF", gui: "OFF" }
+          - { name: Alpine (musl), image: "alpine:latest", pm: apk, werror: "OFF", gui: "OFF" }
+    steps:
+      - name: Bootstrap (shell for the checkout)
+        if: matrix.pm == 'apk'
+        run: apk add --no-cache bash git
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sh tools/ci/install-deps.sh ${{ matrix.pm }}
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_WERROR=${{ matrix.werror }} -DGRIDLINE_GUI_TESTS=${{ matrix.gui }}
+      - name: Build
+        run: cmake --build build -j4 -- -k 0
+      - name: Tests
+        run: |
+          if [ "${{ matrix.gui }}" = "ON" ]; then
+            xvfb-run -a -s "-screen 0 2560x1700x24" ctest --test-dir build -j4 --timeout 1500
+          else
+            ctest --test-dir build -j4 --timeout 1500
+          fi
+      - name: Smoke
+        run: bash tools/ci/smoke.sh build/gridline
+      - name: App starts (Xvfb)
+        run: xvfb-run -a -s '-screen 0 1280x1024x24' sh -c 'build/gridline-app --version && GRIDLINE_CONFIG_HOME=$PWD/build/appcfg build/gridline-app --hidden --size 800x600 --screenshot build/app.ppm --frames 5 --no-ui-sounds' && test -s build/app.ppm
+
+  linux-arm64:
+    name: Linux arm64 (Ubuntu 24.04)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo sh tools/ci/install-deps.sh apt
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_WERROR=ON -DGRIDLINE_GUI_TESTS=OFF
+      - run: cmake --build build -j4 -- -k 0
+      - run: ctest --test-dir build -j4 --timeout 1500
+      - run: bash tools/ci/smoke.sh build/gridline
+
+  macos:
+    name: macOS ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Intel x86_64, os: macos-15-intel }
+          - { name: Apple Silicon arm64, os: macos-15 }
+          - { name: Apple Silicon arm64 (macOS 14), os: macos-14 }
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh tools/ci/install-deps.sh brew
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_WERROR=ON -DGRIDLINE_GUI_TESTS=OFF
+      - run: cmake --build build -j4 -- -k 0
+      - run: ctest --test-dir build -j3 --timeout 1500
+      - run: bash tools/ci/smoke.sh build/gridline
+
+  macos-universal:
+    name: macOS universal2 (bundled SDL2)
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install --quiet ninja || true
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_BUNDLED_SDL2=ON "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DGRIDLINE_GUI_TESTS=OFF
+      - run: cmake --build build -j4 -- -k 0
+      - name: Both architectures present
+        run: |
+          lipo -archs build/gridline | grep -q 'x86_64 arm64\|arm64 x86_64'
+          lipo -archs build/gridline-app | grep -q 'x86_64 arm64\|arm64 x86_64'
+          otool -L build/gridline-app | grep -vi sdl
+      - run: ctest --test-dir build -j3 --timeout 1500
+      - run: arch -x86_64 build/gridline --version
+      - run: bash tools/ci/smoke.sh build/gridline
+
+  windows:
+    name: Windows ${{ matrix.name }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x64 MSVC, arch: amd64, cc: cl, werror: "ON", test: true }
+          - { name: x64 clang-cl, arch: amd64, cc: clang-cl, werror: "OFF", test: true }
+          - { name: ARM64 MSVC (cross), arch: amd64_arm64, cc: cl, werror: "ON", test: false }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Configure
+        run: |
+          extra=""
+          if [ "${{ matrix.arch }}" = "amd64_arm64" ]; then extra="-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"; fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cc }} \
+            -DGRIDLINE_BUNDLED_SDL2=ON -DGRIDLINE_WERROR=${{ matrix.werror }} -DGRIDLINE_GUI_TESTS=OFF $extra \
+            "-DCMAKE_CXX_FLAGS_RELEASE=-O2 -Ob2 -DNDEBUG -Zi" "-DCMAKE_C_FLAGS_RELEASE=-O2 -Ob2 -DNDEBUG -Zi" \
+            "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=-DEBUG -OPT:REF -OPT:ICF" "-DCMAKE_MODULE_LINKER_FLAGS_RELEASE=-DEBUG -OPT:REF -OPT:ICF"
+      - name: Build
+        run: cmake --build build -j4 -- -k 0
+      - name: Tests
+        if: matrix.test
+        run: ctest --test-dir build -j4 --timeout 1500
+      - name: Where failed tests crash (debugger stacks)
+        if: failure() && matrix.test
+        shell: pwsh
+        run: pwsh tools/ci/win-crash-stacks.ps1 build
+      - name: Smoke
+        if: matrix.test
+        run: bash tools/ci/smoke.sh build/gridline.exe
+      - name: Architecture
+        run: file build/gridline.exe build/gridline-app.exe || dumpbin //headers build/gridline.exe | head -20
+
+  bsd:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: FreeBSD 14, os: freebsd }
+          - { name: OpenBSD 7, os: openbsd }
+          - { name: NetBSD 10, os: netbsd }
+    steps:
+      - uses: actions/checkout@v4
+      - name: FreeBSD
+        if: matrix.os == 'freebsd'
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.3"
+          usesh: true
+          mem: 8192
+          prepare: sh tools/ci/install-deps.sh freebsd
+          run: sh tools/ci/bsd-build.sh
+      - name: OpenBSD
+        if: matrix.os == 'openbsd'
+        uses: vmactions/openbsd-vm@v1
+        with:
+          release: "7.7"
+          usesh: true
+          mem: 8192
+          prepare: sh tools/ci/install-deps.sh openbsd
+          run: sh tools/ci/bsd-build.sh
+      - name: NetBSD
+        if: matrix.os == 'netbsd'
+        uses: vmactions/netbsd-vm@v1
+        with:
+          release: "10.1"
+          usesh: true
+          mem: 8192
+          prepare: sh tools/ci/install-deps.sh netbsd
+          run: sh tools/ci/bsd-build.sh

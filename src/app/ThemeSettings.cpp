@@ -6,9 +6,14 @@
 #include <cstdlib>
 #include "../core/Settings.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace gl::theme {
 
 namespace {
+#if !defined(_WIN32)
 // Output of a short shell query, lower case ("" when it fails).
 std::string query(const char* cmd) {
   std::string out;
@@ -20,7 +25,8 @@ std::string query(const char* cmd) {
   for (auto& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return out;
 }
-bool has(const std::string& s, const char* needle) { return s.find(needle) != std::string::npos; }
+#endif
+[[maybe_unused]] bool has(const std::string& s, const char* needle) { return s.find(needle) != std::string::npos; }
 }  // namespace
 
 std::string colourText(uint32_t rgb) {
@@ -75,7 +81,14 @@ void tweaksToSettings(const Tweaks& t, Settings& s) {
 void resetThemeSettings(Settings& s) { tweaksToSettings(Tweaks{}, s); }
 
 bool systemPrefersDark() {
-#if defined(__APPLE__)
+#if defined(_WIN32)
+  // Settings > Personalisation > Colours > "Choose your app mode" (absent before Windows 10 1809: light).
+  DWORD light = 1, size = sizeof light;
+  if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme",
+                   RRF_RT_REG_DWORD, nullptr, &light, &size) != ERROR_SUCCESS)
+    return false;
+  return light == 0;
+#elif defined(__APPLE__)
   // Light mode has no AppleInterfaceStyle key at all.
   return has(query("defaults read -g AppleInterfaceStyle 2>/dev/null"), "dark");
 #else

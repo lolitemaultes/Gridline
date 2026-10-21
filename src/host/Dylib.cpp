@@ -2,7 +2,11 @@
 #include <filesystem>
 #include <map>
 #include <mutex>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -52,8 +56,9 @@ std::shared_ptr<Dylib> Dylib::open(const std::string& path, std::string* err) {
   }
 #endif
   if (!fs::exists(path, ec)) return fail("file not found");
-  void* h = dlopen(path.c_str(), RTLD_LAZY | RTLD_LOCAL);
-  if (!h) return fail(std::string("dlopen: ") + dlerror());
+  std::string why;
+  void* h = dl::open(path, &why);
+  if (!h) return fail(why);
   d->handle_ = h;
   (*cache)[path] = d;
   return d;
@@ -68,7 +73,7 @@ void* Dylib::function(const char* name) const {
     return p;
   }
 #endif
-  return handle_ ? dlsym(handle_, name) : nullptr;
+  return handle_ ? dl::sym(handle_, name) : nullptr;
 }
 
 void* Dylib::data(const char* name) const {
@@ -80,7 +85,100 @@ void* Dylib::data(const char* name) const {
     return p;
   }
 #endif
-  return handle_ ? dlsym(handle_, name) : nullptr;
+  return handle_ ? dl::sym(handle_, name) : nullptr;
 }
+
+namespace dl {
+
+#if defined(_WIN32)
+namespace {
+std::wstring widen(const std::string& s) {
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+  std::wstring w(static_cast<size_t>(n), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+  for (auto& c : w)
+    if (c == L'/') c = L'\\';
+  return w;
+}
+std::string lastError() {
+  const DWORD code = GetLastError();
+  wchar_t* msg = nullptr;
+  FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code, 0,
+                 reinterpret_cast<wchar_t*>(&msg), 0, nullptr);
+  std::string out = "error " + std::to_string(code);
+  if (msg) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, msg, -1, nullptr, 0, nullptr, nullptr);
+    std::string s(static_cast<size_t>(n > 0 ? n - 1 : 0), '\0');
+    if (n > 1) WideCharToMultiByte(CP_UTF8, 0, msg, -1, s.data(), n, nullptr, nullptr);
+    LocalFree(msg);
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ' || s.back() == '.')) s.pop_back();
+    if (!s.empty()) out = s + " (" + out + ")";
+  }
+  return out;
+}
+}  // namespace
+
+void* open(const std::string& path, std::string* err, bool) {
+  // The DLL's own folder is searched for the DLLs it depends on (plugins ship them beside it).
+  // No "bad image" / "missing DLL" dialog: a broken plugin fails the load.
+  DWORD oldMode = 0;
+  SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &oldMode);
+  HMODULE h = LoadLibraryExW(widen(path).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+  SetThreadErrorMode(oldMode, nullptr);
+  if (!h && err) *err = "LoadLibrary: " + lastError();
+  return reinterpret_cast<void*>(h);
+}
+void* loaded(const std::string& path) {
+  HMODULE h = nullptr;
+  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, widen(path).c_str(), &h)) return nullptr;
+  return reinterpret_cast<void*>(h);
+}
+void* sym(void* handle, const char* name) {
+  if (!handle) return nullptr;
+  FARPROC p = GetProcAddress(reinterpret_cast<HMODULE>(handle), name);
+  void* v = nullptr;
+  static_assert(sizeof(p) == sizeof(v), "function pointer size");
+  std::memcpy(&v, &p, sizeof v);
+  return v;
+}
+void close(void* handle) {
+  if (handle) FreeLibrary(reinterpret_cast<HMODULE>(handle));
+}
+std::string pathOf(const void* address) {
+  HMODULE h = nullptr;
+  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          static_cast<LPCWSTR>(address), &h))
+    return {};
+  std::wstring buf(32768, L'\0');
+  DWORD n = GetModuleFileNameW(h, buf.data(), static_cast<DWORD>(buf.size()));
+  if (n == 0) return {};
+  buf.resize(n);
+  int m = WideCharToMultiByte(CP_UTF8, 0, buf.c_str(), -1, nullptr, 0, nullptr, nullptr);
+  std::string s(static_cast<size_t>(m > 0 ? m - 1 : 0), '\0');
+  if (m > 1) WideCharToMultiByte(CP_UTF8, 0, buf.c_str(), -1, s.data(), m, nullptr, nullptr);
+  return s;
+}
+#else
+void* open(const std::string& path, std::string* err, bool now) {
+  void* h = dlopen(path.c_str(), (now ? RTLD_NOW : RTLD_LAZY) | RTLD_LOCAL);
+  if (!h && err) {
+    const char* e = dlerror();
+    *err = std::string("dlopen: ") + (e ? e : "failed");
+  }
+  return h;
+}
+void* loaded(const std::string& path) { return dlopen(path.c_str(), RTLD_LAZY | RTLD_NOLOAD); }
+void* sym(void* handle, const char* name) { return handle ? dlsym(handle, name) : nullptr; }
+void close(void* handle) {
+  if (handle) dlclose(handle);
+}
+std::string pathOf(const void* address) {
+  Dl_info info{};
+  if (!dladdr(const_cast<void*>(address), &info) || !info.dli_fname) return {};
+  return info.dli_fname;
+}
+#endif
+
+}  // namespace dl
 
 }  // namespace gl::host

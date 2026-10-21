@@ -10,11 +10,13 @@
 // files there instead of the Keychain, and removes it when the process exits
 // normally.
 #pragma once
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <random>
 #include <string>
 #include <system_error>
-#include <unistd.h>
+#include "core/Platform.h"
 
 namespace gl::test {
 
@@ -23,13 +25,22 @@ inline const std::string& hermeticTestEnv(const char* tag = "test") {
     std::error_code ec;
     std::string base = std::filesystem::temp_directory_path(ec).string();
     if (base.empty()) base = "/tmp";
-    std::string tmpl = base + "/gridline-" + tag + "-XXXXXX";
-    std::string d = mkdtemp(tmpl.data()) ? tmpl : base + "/gridline-" + tag + "-" + std::to_string(getpid());
+    // A new directory nobody else uses (create_directory fails when it exists).
+    std::mt19937_64 rng(static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) ^
+                        static_cast<uint64_t>(gl::platform::processId()));
+    std::string d;
+    for (int attempt = 0; attempt < 100 && d.empty(); ++attempt) {
+      const std::string cand = base + "/gridline-" + tag + "-" + std::to_string(gl::platform::processId()) + "-" + std::to_string(rng() % 1000000);
+      if (std::filesystem::create_directory(cand, ec)) d = cand;
+    }
+    if (d.empty()) d = base + "/gridline-" + tag + "-" + std::to_string(gl::platform::processId());
     std::filesystem::create_directories(d + "/tmp", ec);
     std::filesystem::create_directories(d + "/config", ec);
-    setenv("TMPDIR", (d + "/tmp").c_str(), 1);
-    setenv("XDG_CONFIG_HOME", (d + "/config").c_str(), 1);
-    setenv("GRIDLINE_SECRET_STORE", "file", 1);  // J-61: never the user's Keychain
+    gl::platform::setEnv("TMPDIR", (d + "/tmp").c_str());
+    gl::platform::setEnv("TMP", (d + "/tmp").c_str());   // Windows: GetTempPath reads TMP, then TEMP
+    gl::platform::setEnv("TEMP", (d + "/tmp").c_str());
+    gl::platform::setEnv("XDG_CONFIG_HOME", (d + "/config").c_str());
+    gl::platform::setEnv("GRIDLINE_SECRET_STORE", "file");  // J-61: never the user's Keychain / Credential Manager
     static struct Cleanup {
       std::string path;
       ~Cleanup() {

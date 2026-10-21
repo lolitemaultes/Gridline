@@ -253,16 +253,25 @@ int main() {
     expect(firstAbove(slow, 0.5f) == start && peakAt > start + 2 * 4851 - 2700 && peakAt <= start + 2 * 4851 + 100 &&
                std::fabs(slow.at(0, static_cast<size_t>(start + 4851))) < 0.1f,
            "tempo-synced clip follows the tempo");
-    // Pitch shift without a speed change (stretch mode): clip length unchanged, DC level kept.
-    Song p = audioSong(dc);
+    // Pitch shift without a speed change (stretch mode): clip length unchanged,
+    // level kept (J-87: the offline stretch engine; a 220 Hz tone, since a
+    // spectral stretcher does not carry DC).
+    const std::string tone = writeTestWav("gl_arr_tone.wav", 441000, [](size_t i) { return static_cast<float>(0.5 * std::sin(2 * 3.14159265358979 * 220.0 * static_cast<double>(i) / 44100.0)); });
+    Song p = audioSong(tone);
     p.channels[0].plugin.params[pp::SmpStretchMode] = 1;
     p.channels[0].plugin.params[pp::SmpPitchShift] = 700;
     p.playlist.push_back(audioClip(p, 0, 384));
     p.playlist.push_back(audioClip(p, 768, 96));  // keeps the song going after the first clip
     p.playlist.back().muted = true;
     AudioBuffer ps = renderSong(p, o);
-    expect(std::fabs(ps.at(0, 30000) - 0.5f) < 0.01f && std::fabs(ps.at(0, 88199 - 200)) > 0.4f && std::fabs(ps.at(0, 88400)) < 1e-6f,
-           "granular pitch shift keeps level and length");
+    auto rmsAt = [&](size_t a, size_t n) {
+      double e = 0;
+      for (size_t i = a; i < a + n; ++i) e += static_cast<double>(ps.at(0, i)) * ps.at(0, i);
+      return std::sqrt(e / static_cast<double>(n));
+    };
+    const double want = 0.5 / std::sqrt(2.0);
+    expect(std::fabs(rmsAt(20000, 20000) - want) < 0.02 && std::fabs(rmsAt(88199 - 2200, 2000) - want) < 0.03 && std::fabs(ps.at(0, 88400)) < 1e-6f,
+           "pitch shift keeps level and length");
     // Reverse plays from the end.
     s = audioSong(click);
     s.playlist.push_back(audioClip(s, 0, 192));

@@ -211,7 +211,7 @@ BonesReport exportProjectBones(const Song& song, const std::string& folder, cons
     ++k;
     MidiFileData m = patternToMidi(song, p.id);
     if (m.tracks.empty()) continue;
-    char num[8];
+    char num[32];
     std::snprintf(num, sizeof num, "%02d ", k);
     if (writeMidiFile((midiDir / (num + p.name + ".mid")).string(), m)) ++rep.midiFiles;
   }

@@ -4,6 +4,7 @@
 #include "../packs/edison/edison.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <set>
 #include "../core/Arrangements.h"
@@ -222,8 +223,14 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
 // Audio clip → playback description (arrangement). The channel's sampler
 // settings give the sample, pitch shift, stretch mode and reverse; the clip
 // adds its own window, gain, fades, pitch, stretch and tempo sync.
+// J-87: how compiled clips get their offline-quality render.
+struct ClipRenderCtx {
+  double sampleRate = 44100;
+  bool async = false;  // app builds: rendered in the background (realtime grains until ready)
+};
+
 bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const TempoMap& map, ProgAudioClip& out,
-                      const ClipFades* fades = nullptr) {
+                      const ClipFades* fades = nullptr, const ClipRenderCtx* rctx = nullptr) {
   SamplePtr smp = sampleCache().get(ch.plugin.data);
   if (!smp || smp->frames() < 2 || smp->sampleRate <= 0) return false;
   auto par = [&](int k, double d) { return k < static_cast<int>(ch.plugin.params.size()) ? static_cast<double>(ch.plugin.params[static_cast<size_t>(k)]) : d; };
@@ -265,6 +272,48 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   }
   double played = out.secPerTick > 0 ? static_cast<double>(out.end - out.start) * out.secPerTick : out.durSec * out.speed;
   out.cutEnd = out.srcStart + played < out.srcEnd - 1e-6;
+  // J-87: offline-quality render of every pitched / stretched / synced clip.
+  // The channel's own pitch (knob + fine + master pitch) is part of it; when
+  // it moves at run time (automation), the realtime grains take over.
+  if (rctx && out.end > out.start && out.srcEnd > out.srcStart) {
+    const double chanSemis = static_cast<double>(ch.pitch) + static_cast<double>(ch.fine) / 100.0 + song.masterPitch;
+    const double chanRatio = std::pow(2.0, chanSemis / 12.0);
+    stretch::Mode mode = sampler ? stretch::modeOf(par(pp::SmpStretchMode, 0)) : stretch::Mode::Resample;
+    stretch::ClipRequest rq;
+    rq.sample = smp;
+    rq.srcStart = out.srcStart, rq.srcEnd = out.srcEnd;
+    rq.reverse = out.reverse;
+    rq.rate = rctx->sampleRate;
+    rq.frames = static_cast<int64_t>(std::ceil(out.durSec * rctx->sampleRate)) + 2;
+    bool need = false;
+    if (out.secPerTick > 0) {  // tempo sync: pitch-independent
+      if (mode == stretch::Mode::Resample) mode = stretch::Mode::Auto;
+      rq.map = &map;
+      rq.secPerTick = out.secPerTick;
+      rq.startTick = static_cast<double>(out.start);
+      rq.startSec = out.startSec;
+      char sig[64];
+      std::snprintf(sig, sizeof sig, "%llx", static_cast<unsigned long long>(map.signature()));
+      rq.mapKey = sig;
+      rq.pitch = out.pitch * chanRatio;
+      // At the clip's own tempo, unpitched, it is a plain read.
+      need = std::fabs(rq.pitch - 1.0) > 1e-9 || !map.constant() || std::fabs(map.secondsAt(1.0) - map.secondsAt(0.0) - out.secPerTick) > 1e-12;
+    } else if (out.granular || mode != stretch::Mode::Resample) {
+      rq.speed = out.speed;
+      rq.pitch = out.pitch * chanRatio;
+      need = std::fabs(rq.pitch - 1.0) > 1e-9 || std::fabs(out.speed - 1.0) > 1e-9;
+    } else {  // resample: speed carries the pitch; a channel pitch on top keeps the timing
+      rq.speed = out.speed;
+      rq.pitch = chanRatio;
+      if (std::fabs(chanRatio - 1.0) > 1e-9) mode = stretch::Mode::Auto;
+      need = std::fabs(out.speed - 1.0) > 1e-9 || std::fabs(chanRatio - 1.0) > 1e-9;
+    }
+    rq.mode = mode;
+    if (need) {
+      out.hq = stretch::renderClip(rq, rctx->async);
+      out.hqSemis = chanSemis;
+    }
+  }
   return out.end > out.start && out.srcEnd > out.srcStart;
 }
 
@@ -442,6 +491,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   // build finds them decoded.
   std::optional<SampleCache::NonBlocking> nonBlocking;
   if (asyncSamples_) nonBlocking.emplace();
+  // J-87: interpolation tables built here, never on the audio thread.
+  stretch::sincTable(stretch::Quality::Realtime);
+  stretch::sincTable(stretch::Quality::Offline);
   const LiveTargets live = liveTargets(song);
   {  // decode the channels' samples in parallel before they are prepared one by one (J-25)
     std::vector<std::string> paths;
@@ -681,6 +733,17 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   // --- channels ---
   std::map<ObjectId, std::shared_ptr<ChannelRuntime>> chans;
   std::map<std::pair<ObjectId, int>, std::shared_ptr<NoteFxRuntime>> noteFx;
+  // J-87: channels that feed audio clips, channels with notes or steps.
+  std::set<ObjectId> clipSources, noteChannels;
+  for (const auto& cl : song.playlist)
+    if (cl.kind == ClipKind::Audio) clipSources.insert(cl.source);
+  for (const auto& p : song.patterns) {
+    for (const auto& [id, v] : p.notes)
+      if (!v.empty()) noteChannels.insert(id);
+    for (const auto& [id, v] : p.steps)
+      for (uint8_t x : v)
+        if (x) noteChannels.insert(id);
+  }
   for (const auto& c : song.channels) {
     ProgChannel pc;
     pc.id = c.id;
@@ -695,6 +758,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     }
     chans[c.id] = pc.rt;
     pc.plugin = c.plugin;
+    if (pc.rt->gen && c.plugin.type == "gl.sampler")  // J-87: no stretch voices for clip-only channels
+      pc.rt->gen->setClipOnly((c.audioClip || clipSources.count(c.id)) && !noteChannels.count(c.id));
     if (pc.rt->gen)
       prepareForHost(c.plugin, live, c.id, channelPluginParam(c.id, 0).index,
                      [&](const PluginState& st) { pc.rt->gen->prepareHost(st, sampleRate_); });
@@ -886,7 +951,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (clip.kind == ClipKind::Audio) {  // arrangement: audio clip through its channel
       int ci = song.channelIndex(clip.source);
       ProgAudioClip ac;
-      if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], clip, prog->tempoMap, ac, &clipFades[clipIdx]))
+      const ClipRenderCtx rctx{sampleRate_, asyncSamples_};
+      if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], clip, prog->tempoMap, ac, &clipFades[clipIdx], &rctx))
         prog->channels[static_cast<size_t>(ci)].audio.push_back(std::move(ac));
       continue;
     }
@@ -934,7 +1000,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       Clip at0 = clip;
       at0.start = 0;
       ProgAudioClip ac;
-      if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], at0, prog->flatMap, ac)) {
+      const ClipRenderCtx rctx{sampleRate_, asyncSamples_};
+      if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], at0, prog->flatMap, ac, nullptr, &rctx)) {
         lc.audioChannel = ci;
         lc.audio.push_back(std::move(ac));
       }

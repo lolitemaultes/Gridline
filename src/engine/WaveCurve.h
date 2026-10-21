@@ -83,7 +83,7 @@ inline void toBipolar(Curve& c) {
   Curve o = c;
   c.clear();
   for (int i = o.n - 1; i >= 0; --i) {
-    uint8_t m = i + 1 < o.n ? o.mode[i + 1] : menv::SingleCurve;
+    uint8_t m = i + 1 < o.n ? o.mode[i + 1] : static_cast<uint8_t>(menv::SingleCurve);
     float t = i + 1 < o.n ? o.t[i + 1] : 0.f;
     bool curveFamily = m == menv::SingleCurve || m == menv::SingleCurve2 || m == menv::HalfSine || m == menv::SingleCurve3;
     if (i == o.n - 1) m = menv::SingleCurve, t = 0;

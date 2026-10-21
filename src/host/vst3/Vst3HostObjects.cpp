@@ -59,11 +59,26 @@ void toUtf16(const std::string& s, sv::TChar* out, size_t cap) {
   if (cap) out[o] = 0;
 }
 
+namespace {
+// Class ids are written in the platform-independent form (FUID's four 32-bit words, most
+// significant byte first). Windows keeps a TUID in COM's GUID layout (COM_COMPATIBLE: the first
+// word and the two 16-bit halves of the second little-endian): the same class id has other bytes
+// there, so the bytes are read in this order.
+int uidByte(int i) {
+#if COM_COMPATIBLE
+  static const int order[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
+  return order[i];
+#else
+  return i;
+#endif
+}
+}  // namespace
+
 std::string uidToHex(const sb::TUID uid) {
   static const char* hex = "0123456789ABCDEF";
   std::string s;
   for (int i = 0; i < 16; ++i) {
-    unsigned char b = static_cast<unsigned char>(uid[i]);
+    unsigned char b = static_cast<unsigned char>(uid[uidByte(i)]);
     s += hex[b >> 4];
     s += hex[b & 15];
   }
@@ -81,7 +96,7 @@ bool hexToUid(const std::string& h, sb::TUID out) {
   for (int i = 0; i < 16; ++i) {
     int a = nib(h[static_cast<size_t>(2 * i)]), b = nib(h[static_cast<size_t>(2 * i + 1)]);
     if (a < 0 || b < 0) return false;
-    out[i] = static_cast<char>((a << 4) | b);
+    out[uidByte(i)] = static_cast<char>((a << 4) | b);
   }
   return true;
 }

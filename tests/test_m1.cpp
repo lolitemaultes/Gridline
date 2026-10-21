@@ -15,6 +15,7 @@
 #include "core/Project.h"
 #include "core/Settings.h"
 #include "engine/Render.h"
+#include "core/Platform.h"
 
 namespace fs = std::filesystem;
 
@@ -343,8 +344,10 @@ int main() {
     gl::Settings st3;
     expect(st3.load((tmp / "missing.json").string()) && st3.getNumber("project.defaultPpq") == 96,
            "missing settings file keeps defaults");
-    ::setenv("XDG_CONFIG_HOME", "/xdg", 1);
-    expect(gl::Settings::defaultPath() == "/xdg/gridline/settings.json", "settings path follows XDG_CONFIG_HOME");
+    gl::platform::unsetEnv("GRIDLINE_CONFIG_HOME");
+    gl::platform::setEnv("XDG_CONFIG_HOME", "/xdg");
+    expect(gl::Settings::defaultPath() == (std::filesystem::path("/xdg") / "gridline" / "settings.json").string(),
+           "settings path follows XDG_CONFIG_HOME");
   }
 
   // ---- PJ-02: backups -------------------------------------------------------------------
@@ -379,7 +382,7 @@ int main() {
     gl::BackupPolicy p3;
     p3.inProjectFolder = true;
     gl::BackupManager local(p3);
-    expect(local.folderFor("/songs/a/x.gridline.json") == "/songs/a/Backup", "project-folder backups go next to the project");
+    expect(fs::path(local.folderFor("/songs/a/x.gridline.json")) == fs::path("/songs/a/Backup"), "project-folder backups go next to the project");
   }
 
   fs::remove_all(tmp);

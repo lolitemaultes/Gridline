@@ -2,6 +2,7 @@
 #include "SlicexEngine.h"
 #include "Slicing.h"
 #include "SamplePrecompute.h"
+#include "TimeStretch.h"
 #include "../core/PluginInfo.h"
 #include "../core/PluginParams.h"
 #include "Generators.h"
@@ -238,6 +239,12 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
   if (st.type == "gl.sampler" || st.type == "gl.slicer" || st.type == "gl.granular") {
     // Sampler: its precomputed effects (J-23) run here, once, on the UI thread.
     aux.samples.assign(1, st.type == "gl.sampler" ? precomputedSample(st.data, samplePrecomputeFx(st)) : sampleCache().get(st.data));
+    if (st.type == "gl.sampler" && aux.samples[0] && st.params.size() > static_cast<size_t>(SmpStretchMode)) {
+      // J-87: the stretch voices restart at the sample's onsets (Auto: strong ones only).
+      const stretch::Mode m = stretch::modeOf(st.params[SmpStretchMode]);
+      if (m == stretch::Mode::Auto || m == stretch::Mode::Transient)
+        aux.slices = *stretch::onsetsOf(aux.samples[0], m == stretch::Mode::Transient ? 0.75 : 0.25);
+    }
     if (st.type == "gl.slicer" && aux.samples[0] && st.params.size() > static_cast<size_t>(SlEngine) &&
         st.params[SlEngine] >= SlEngineProcessed - 0.5f) {
       // J-41: processed slices (offline, here on the UI thread); the voices

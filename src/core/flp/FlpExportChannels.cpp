@@ -23,6 +23,7 @@
 #include "../AutomationEdit.h"
 #include "../PluginParams.h"
 #include "../../engine/ChannelIns.h"
+#include "../../engine/TimeStretch.h"
 #include "FlpExportInternal.h"
 
 namespace gl::flp::xp {
@@ -430,7 +431,9 @@ std::vector<ChanField> channelFields(int type, const Channel& target, int ppq) {
       add(spf(SmpLfoDelay), 218, e, 36, Type::I32, 100, 65536);
     }
   } else if (sampler && type == kAudio) {
-    add(spf(SmpStretchMode), 215, 0, 108, Type::U32, 0, 1);
+    // J-87: FL's stretch methods −2 … 9 (stretch::modeFromFl); the solver keeps
+    // the stored method when it already imports as the channel's mode.
+    add(spf(SmpStretchMode), 215, 0, 108, Type::I32, -2, 9);
     add(spf(SmpTimeStretch), 215, 0, 104, Type::I32, -20000, 20000);
     add(spf(SmpPitchShift), 215, 0, 100, Type::I32, -1200, 1200);
   } else if (target.plugin.type == "gl.synth" && target.plugin.ins.empty()) {
@@ -712,7 +715,9 @@ void Exporter::writeChannel(int fl) {
                           sp(probe, SmpPitchShift) == sp(ch, SmpPitchShift);
         if (!same) {
           if (sp(ch, SmpStretchMode) >= 0.5) {
-            if (getU32(e->data, 108) == 0) putU32(e->data, 108, 1);
+            // J-87: keep FL's stored method when it maps to the channel's mode, else the closest one.
+            const stretch::Mode m = stretch::modeOf(sp(ch, SmpStretchMode));
+            if (stretch::modeFromFl(static_cast<int32_t>(getU32(e->data, 108))) != m || getU32(e->data, 108) == 0) putI32(e->data, 108, stretch::flCodeOf(m));
             putI32(e->data, 104, static_cast<int32_t>(std::lround(std::log2(std::max(1e-6, sp(ch, SmpTimeStretch))) * 10000.0)));
             putI32(e->data, 100, static_cast<int32_t>(std::lround(sp(ch, SmpPitchShift))));
           } else {

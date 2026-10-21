@@ -27,12 +27,12 @@ bool isCommand(const keys::Chord& c, const char* id) {
 
 // What Gridline's main window does with a forwarded key (handleGlobalShortcuts):
 // the transport toggles on "transport.play".
-void applyToTransport(const host::KeyEvent& k, AudioEngine& eng) {
+[[maybe_unused]] void applyToTransport(const host::KeyEvent& k, AudioEngine& eng) {
   if (!k.down || k.repeat) return;
   if (isCommand(host::chordOf(k), "transport.play")) eng.playing() ? eng.stop() : eng.play();
 }
 
-std::vector<host::KeyEvent> drain(void* container) {
+[[maybe_unused]] std::vector<host::KeyEvent> drain(void* container) {
   std::vector<host::KeyEvent> v;
   host::KeyEvent k;
   while (native::popKey(container, k)) v.push_back(k);

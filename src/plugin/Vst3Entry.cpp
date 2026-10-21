@@ -153,7 +153,10 @@ class GridlineView final : public RefCounted, public IPlugView, public IPlugView
   }
   tresult PLUGIN_API isPlatformTypeSupported(FIDString type) override {
     if (!type || !gl::plugin::viewSupported(gl::plugin::nativeWindowApi())) return kResultFalse;
-    const char* want = gl::plugin::nativeWindowApi() == gl::plugin::WindowApi::Cocoa ? kPlatformTypeNSView : kPlatformTypeX11EmbedWindowID;
+    const gl::plugin::WindowApi api = gl::plugin::nativeWindowApi();
+    const char* want = api == gl::plugin::WindowApi::Cocoa   ? kPlatformTypeNSView
+                       : api == gl::plugin::WindowApi::Win32 ? kPlatformTypeHWND
+                                                             : kPlatformTypeX11EmbedWindowID;
     return std::strcmp(type, want) == 0 ? kResultTrue : kResultFalse;
   }
   tresult PLUGIN_API attached(void* parent, FIDString type) override {
@@ -700,6 +703,9 @@ SMTG_EXPORT_SYMBOL IPluginFactory* PLUGIN_API GetPluginFactory() { return new Fa
 #if defined(__APPLE__)
 SMTG_EXPORT_SYMBOL bool bundleEntry(CFBundleRef) { return true; }
 SMTG_EXPORT_SYMBOL bool bundleExit() { return true; }
+#elif defined(_WIN32)
+SMTG_EXPORT_SYMBOL bool InitDll() { return true; }
+SMTG_EXPORT_SYMBOL bool ExitDll() { return true; }
 #else
 SMTG_EXPORT_SYMBOL bool ModuleEntry(void*) { return true; }
 SMTG_EXPORT_SYMBOL bool ModuleExit() { return true; }

@@ -38,18 +38,6 @@ void fadeRange(float* x, int64_t n, bool in, double sampleRate) {
   }
 }
 
-// Cubic (Catmull-Rom) read.
-float readCubic(const std::vector<float>& v, double pos) {
-  const int64_t n = static_cast<int64_t>(v.size());
-  if (n == 0) return 0.0f;
-  const int64_t i = static_cast<int64_t>(std::floor(pos));
-  const double f = pos - static_cast<double>(i);
-  auto at = [&](int64_t k) { return static_cast<double>(v[static_cast<size_t>(std::clamp<int64_t>(k, 0, n - 1))]); };
-  const double y0 = at(i - 1), y1 = at(i), y2 = at(i + 1), y3 = at(i + 2);
-  const double a = -0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3, b = y0 - 2.5 * y1 + 2 * y2 - 0.5 * y3, c = -0.5 * y0 + 0.5 * y2;
-  return static_cast<float>(((a * f + b) * f + c) * f + y1);
-}
-
 }  // namespace
 
 double ratioOf(int fit) { return static_cast<float>(std::exp(static_cast<double>(static_cast<float>(fit)) / 10000.0 * 0.6931471805599453)); }
@@ -83,77 +71,27 @@ void fadeOut(float* x, int64_t len, int64_t frames, double sampleRate) {
   fadeRange(x + (len - n), n, false, sampleRate);
 }
 
-std::vector<std::vector<float>> stretch(const float* const* in, int nch, int64_t n, int64_t outLen, double pitch, double sampleRate) {
+std::vector<std::vector<float>> stretch(const float* const* in, int nch, int64_t n, int64_t outLen, double pitch, double sampleRate,
+                                        stretch::Mode mode) {
   std::vector<std::vector<float>> out(static_cast<size_t>(std::max(0, nch)), std::vector<float>(static_cast<size_t>(std::max<int64_t>(0, outLen)), 0.0f));
   if (n <= 0 || outLen <= 0 || nch <= 0) return out;
-  pitch = std::clamp(pitch, 0.125, 8.0);
-  const int64_t len1 = std::max<int64_t>(1, std::llround(static_cast<double>(outLen) * pitch));  // before resampling
-  std::vector<std::vector<float>> mid(static_cast<size_t>(nch));
-  if (len1 == n) {
-    for (int c = 0; c < nch; ++c) mid[static_cast<size_t>(c)].assign(in[c], in[c] + n);
-  } else {
-    // WSOLA: Hann frames of ~23 ms at 50 % overlap; each frame is placed where
-    // it best continues the previous one (search ±N/4 around the nominal
-    // position, correlation on the channel sum).
-    int N = 1024;
-    while (N > 64 && N > sampleRate * 0.03) N /= 2;
-    while (N < 4096 && N < sampleRate * 0.015) N *= 2;
-    const int Ha = N / 2, D = N / 4;
-    const double Hs = static_cast<double>(Ha) * static_cast<double>(n) / static_cast<double>(len1);
-    std::vector<float> win(static_cast<size_t>(N));
-    for (int i = 0; i < N; ++i) win[static_cast<size_t>(i)] = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * kPi * i / N));
-    std::vector<float> mono(static_cast<size_t>(n));
-    for (int64_t i = 0; i < n; ++i) {
-      double s = 0;
-      for (int c = 0; c < nch; ++c) s += in[c][i];
-      mono[static_cast<size_t>(i)] = static_cast<float>(s);
-    }
-    auto monoAt = [&](int64_t i) { return i >= 0 && i < n ? mono[static_cast<size_t>(i)] : 0.0f; };
-    for (int c = 0; c < nch; ++c) mid[static_cast<size_t>(c)].assign(static_cast<size_t>(len1 + N), 0.0f);
-    std::vector<float> wsum(static_cast<size_t>(len1 + N), 0.0f);
-    int64_t prev = 0;
-    for (int64_t j = 0; j * Ha < len1; ++j) {
-      const int64_t nominal = std::llround(static_cast<double>(j) * Hs);
-      int64_t best = nominal;
-      if (j > 0) {
-        const int64_t natural = prev + Ha;  // where the previous frame would continue
-        double bestC = -1e300;
-        for (int64_t d = -D; d <= D; d += 2) {
-          const int64_t cand = nominal + d;
-          double cc = 0;
-          for (int i = 0; i < N; i += 4) cc += static_cast<double>(monoAt(cand + i)) * static_cast<double>(monoAt(natural + i));
-          if (cc > bestC) bestC = cc, best = cand;
-        }
-      }
-      prev = best;
-      const int64_t o = j * Ha;
-      for (int i = 0; i < N; ++i) {
-        const int64_t src = best + i;
-        if (o + i >= len1 + N) break;
-        wsum[static_cast<size_t>(o + i)] += win[static_cast<size_t>(i)];
-        if (src < 0 || src >= n) continue;
-        for (int c = 0; c < nch; ++c) mid[static_cast<size_t>(c)][static_cast<size_t>(o + i)] += win[static_cast<size_t>(i)] * in[c][src];
-      }
-    }
-    for (int c = 0; c < nch; ++c) {
-      auto& v = mid[static_cast<size_t>(c)];
-      for (size_t i = 0; i < v.size(); ++i)
-        if (wsum[i] > 1e-3f) v[i] /= wsum[i];
-      v.resize(static_cast<size_t>(len1));
-    }
-  }
-  // Resample len1 → outLen (raises the pitch by len1 / outLen).
-  for (int c = 0; c < nch; ++c) {
-    const auto& v = mid[static_cast<size_t>(c)];
-    auto& o = out[static_cast<size_t>(c)];
-    if (len1 == outLen) {
-      std::copy(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(outLen), o.begin());
-      continue;
-    }
-    const double step = static_cast<double>(len1) / static_cast<double>(outLen);
-    for (int64_t i = 0; i < outLen; ++i) o[static_cast<size_t>(i)] = readCubic(v, static_cast<double>(i) * step);
-  }
+  std::vector<float*> op(static_cast<size_t>(nch));
+  for (int c = 0; c < nch; ++c) op[static_cast<size_t>(c)] = out[static_cast<size_t>(c)].data();
+  stretch::Settings set;
+  set.mode = mode == stretch::Mode::Resample ? stretch::Mode::Transient : mode;
+  set.pitch = std::clamp(pitch, 0.125, 8.0);
+  stretch::process(in, nch, n, op.data(), outLen, sampleRate, set);
   return out;
+}
+
+stretch::Mode methodMode(int method) {
+  switch (method) {
+    case 2:
+    case 5: return stretch::Mode::Auto;
+    case 6: return stretch::Mode::Mono;
+    case 7: return stretch::Mode::Formant;
+    default: return stretch::Mode::Transient;
+  }
 }
 
 SamplePtr process(const Sample& in, const std::vector<int64_t>& starts0, const std::vector<char>& reverse, const Settings& s,
@@ -209,12 +147,12 @@ SamplePtr process(const Sample& in, const std::vector<int64_t>& starts0, const s
         for (int c = 0; c < nch; ++c) std::copy(chan(*out, c) + starts[k], chan(*out, c) + starts[k] + cp, chan(*res, c) + st2[k]);
         if (s.pitchCents != 0) {
           const float* src[2] = {chan(*res, 0) + st2[k], nch > 1 ? chan(*res, 1) + st2[k] : nullptr};
-          auto v = stretch(src, nch, outLen, outLen, pitch, sr);
+          auto v = stretch(src, nch, outLen, outLen, pitch, sr, methodMode(s.method));
           for (int c = 0; c < nch; ++c) std::copy(v[static_cast<size_t>(c)].begin(), v[static_cast<size_t>(c)].end(), chan(*res, c) + st2[k]);
         }
       } else {
         const float* src[2] = {chan(*out, 0) + starts[k], nch > 1 ? chan(*out, 1) + starts[k] : nullptr};
-        auto v = stretch(src, nch, lens[k], outLen, pitch, sr);
+        auto v = stretch(src, nch, lens[k], outLen, pitch, sr, methodMode(s.method));
         for (int c = 0; c < nch; ++c) std::copy(v[static_cast<size_t>(c)].begin(), v[static_cast<size_t>(c)].end(), chan(*res, c) + st2[k]);
       }
     }

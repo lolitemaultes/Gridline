@@ -1,7 +1,8 @@
 // Gridline — the plugin's editor (PH-09): Gridline's whole interface in a
 // child view of the host's plugin window, drawn with OpenGL 3 + Dear ImGui.
 // macOS: an NSView with its own OpenGL context (PluginViewMac.mm), redrawn by
-// a main-thread timer. X11: a child window with a GLX context
+// a main-thread timer. Windows: a child window with a WGL context and its own
+// timer (PluginViewWin.cpp). X11: a child window with a GLX context
 // (PluginViewX11.cpp); the host's timer (CLAP timer support, VST3 run loop)
 // calls tick(). Every view has its own Dear ImGui context; OpenGL objects are
 // shared between all views of the process (one share group).
@@ -40,7 +41,7 @@ class Surface {
 };
 
 // Window systems the views attach to.
-enum class WindowApi { Cocoa, X11 };
+enum class WindowApi { Cocoa, X11, Win32 };
 bool viewSupported(WindowApi api);
 WindowApi nativeWindowApi();
 

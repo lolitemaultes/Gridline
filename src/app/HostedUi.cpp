@@ -73,7 +73,7 @@ std::string hostedTargetName(App& a, const PluginTarget& t) { return targetName(
 // ---------------------------------------------------------------- per-frame sync
 
 void pumpHostedPlugins(App& a) {
-#if defined(__linux__)
+#if !defined(__APPLE__) && !defined(_WIN32)  // X11 (Linux, the BSDs)
   vst3::runLoop()->pump();
 #endif
   hostedui::pluginWindowsIdle(a);

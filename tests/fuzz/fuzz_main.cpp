@@ -31,7 +31,7 @@
 #include <set>
 #include <string>
 #include <thread>
-#include <unistd.h>
+#include "core/Platform.h"
 #include <vector>
 #include "core/BrowserIndex.h"
 #include "core/Document.h"
@@ -232,7 +232,7 @@ std::vector<Bytes> seedLuaAudio() {
 Bytes seedWav(int bits) {
   gl::AudioBuffer buf(2, 256);
   for (size_t i = 0; i < buf.data.size(); ++i) buf.data[i] = static_cast<float>(std::sin(static_cast<double>(i) * 0.1) * 0.5);
-  std::string p = (fs::temp_directory_path() / ("gl-fuzz-seed-" + std::to_string(getpid()) + ".wav")).string();
+  std::string p = (fs::temp_directory_path() / ("gl-fuzz-seed-" + std::to_string(gl::platform::processId()) + ".wav")).string();
   gl::writeWav(p, buf, 44100, bits);
   Bytes b = readAll(p);
   fs::remove(p);
@@ -243,7 +243,7 @@ Bytes seedMidi() {
   gl::MidiFileData m;
   m.tracks.resize(2);
   for (int i = 0; i < 8; ++i) m.tracks[static_cast<size_t>(i % 2)].notes.push_back({i * 48, 40, 60 + i, 100, i % 2});
-  std::string p = (fs::temp_directory_path() / ("gl-fuzz-seed-" + std::to_string(getpid()) + ".mid")).string();
+  std::string p = (fs::temp_directory_path() / ("gl-fuzz-seed-" + std::to_string(gl::platform::processId()) + ".mid")).string();
   gl::writeMidiFile(p, m);
   Bytes b = readAll(p);
   fs::remove(p);
@@ -755,11 +755,11 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "unknown target %s\n", name.c_str());
     return 2;
   }
-  if (work.empty()) work = (fs::temp_directory_path() / ("gl-fuzz-" + name + "-" + std::to_string(getpid()))).string();
+  if (work.empty()) work = (fs::temp_directory_path() / ("gl-fuzz-" + name + "-" + std::to_string(gl::platform::processId()))).string();
   fs::create_directories(work);
   // Readers that cache decoded data (FL samples, IRs) write under the work dir.
-  setenv("GRIDLINE_CACHE_DIR", (work + "/cache").c_str(), 1);
-  setenv("XDG_CONFIG_HOME", (work + "/config").c_str(), 1);
+  gl::platform::setEnv("GRIDLINE_CACHE_DIR", (work + "/cache").c_str());
+  gl::platform::setEnv("XDG_CONFIG_HOME", (work + "/config").c_str());
   const std::string input = work + "/input" + t->ext;
 
   if (!repro.empty()) {  // run one file (no mutation)
@@ -791,7 +791,7 @@ int main(int argc, char** argv) {
         fs::copy_file(input, dst, fs::copy_options::overwrite_existing, ec);
         std::fprintf(stderr, "HANG (> %.0f s): input saved to %s\n", hangSeconds, dst.c_str());
         std::fflush(stderr);
-        _exit(3);
+        std::_Exit(3);
       }
     }
   });

@@ -19,6 +19,7 @@
 #include "PluginUI.h"
 #include "Windows.h"
 #include "../packs/modulation/modulation_ui.h"
+#include "../core/Platform.h"
 
 namespace gl {
 
@@ -359,7 +360,7 @@ void drawChannelSettings(App& a) {
       ImU32 fill = held == note ? P.hot : litMix(hit == note ? whiteHov : white, note);
       dl->AddRectFilled(k0, k1, fill, 3, ImDrawFlags_RoundCornersBottom);
       if (i % 7 == 0) {
-        char lbl[8];
+        char lbl[32];
         std::snprintf(lbl, sizeof lbl, "C%d", note / 12 - 1);
         ImVec2 ts = a.fontMono->CalcTextSizeA(theme::kFontLabel - 1, 1e9f, 0, lbl);
         dl->AddText(a.fontMono, theme::kFontLabel - 1, ImVec2(std::round(k0.x + (kw - 1 - ts.x) * 0.5f), k1.y - ts.y - 3),
@@ -429,7 +430,7 @@ void drawChannelSettings(App& a) {
       a.fileDialog = {};
       a.fileDialog.open = true;
       a.fileDialog.title = "Load sample";
-      a.fileDialog.dir = c->plugin.data.empty() ? (std::getenv("HOME") ? std::getenv("HOME") : ".") : fs::path(c->plugin.data).parent_path().string();
+      a.fileDialog.dir = c->plugin.data.empty() ? (gl::platform::homeEnv() ? gl::platform::homeEnv() : ".") : fs::path(c->plugin.data).parent_path().string();
       a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3"};
       a.fileDialog.onOk = [&a, id](const std::string& p) {
         a.doc.editChannel(id, "load sample", [&](Channel& x) { x.plugin.data = p; });

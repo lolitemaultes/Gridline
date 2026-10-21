@@ -3,6 +3,7 @@
 // coefficients) update once per control block of 256 samples (8 with "high
 // quality") on the instrument's own sample clock; the amp envelope, gains,
 // filters, insert effects and buses run per sample.
+#include "../../engine/TimeStretch.h"
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -458,10 +459,25 @@ class WaveProgramGen final : public Generator {
       if (sp && !v.ended) {
         const int64_t ip = static_cast<int64_t>(std::floor(v.pos));
         const double fr = v.pos - static_cast<double>(ip);
-        for (int c = 0; c < 2; ++c) {
-          const float a = readFrame(*sp, c, ip, v, z, looping && z.loopMode != 4, ls, le);
-          const float b = readFrame(*sp, c, ip + 1, v, z, looping && z.loopMode != 4, ls, le);
-          x[c] = a + (b - a) * fr;
+        const bool lp = looping && z.loopMode != 4;
+        if (fr < 1e-9 && std::fabs(v.inc) <= 1.000001) {  // exact unless reading faster
+          for (int c = 0; c < 2; ++c) x[c] = readFrame(*sp, c, ip, v, z, lp, ls, le);
+        } else {
+          // J-87: band-limited windowed sinc (was linear): zones pitched away
+          // from their root (rendered instruments, multisamples) neither alias
+          // nor dull; the taps follow the loop like the frames do.
+          const stretch::SincTable& tb = stretch::sincTable(stretch::Quality::Realtime);
+          const double rate = std::fabs(v.inc);
+          const double fc = std::min(1.0, 1.0 / std::clamp(rate, 1e-6, 8.0)) * 0.94;
+          const double hw = tb.zeroCrossings / fc;
+          const auto i0 = static_cast<int64_t>(std::ceil(v.pos - hw)), i1 = static_cast<int64_t>(std::floor(v.pos + hw));
+          double acc[2] = {0, 0}, wsum = 0;
+          for (int64_t k = i0; k <= i1; ++k) {
+            const double w = tb.at((v.pos - static_cast<double>(k)) * fc);
+            wsum += w;
+            for (int c = 0; c < 2; ++c) acc[c] += w * readFrame(*sp, c, k, v, z, lp, ls, le);
+          }
+          for (int c = 0; c < 2; ++c) x[c] = wsum > 1e-9 ? acc[c] / wsum : 0.0;
         }
       }
       v.follower = std::max({std::fabs(x[0]), std::fabs(x[1]), v.follower * gc});

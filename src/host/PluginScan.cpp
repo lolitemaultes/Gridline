@@ -10,16 +10,7 @@
 #include <thread>
 #include "../core/Project.h"
 #include "sandbox/Sandbox.h"
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
-#include <fcntl.h>
-#include <signal.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-extern char** environ;
+#include "../core/Platform.h"
 
 namespace fs = std::filesystem;
 
@@ -193,14 +184,13 @@ int64_t pathMtime(const std::string& path) {
   auto stamp = [&](const fs::path& p) {
     auto t = fs::last_write_time(p, ec);
     if (ec) return;
-    auto s = std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count();
-    best = std::max<int64_t>(best, static_cast<int64_t>(s));
+    best = std::max<int64_t>(best, platform::fileTimeSeconds(t));
   };
   stamp(path);
   // Bundles: the binaries change on updates even when the folder does not.
   if (fs::is_directory(path, ec)) {
     fs::path contents = fs::path(path) / "Contents";
-    for (const char* sub : {"MacOS", "x86_64-linux", "aarch64-linux", "i386-linux"}) {
+    for (const char* sub : {"MacOS", "x86_64-linux", "aarch64-linux", "i386-linux", "x86_64-win", "arm64-win", "arm64x-win", "arm64ec-win"}) {
       fs::path d = contents / sub;
       if (!fs::is_directory(d, ec)) continue;
       for (fs::directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec)) stamp(it->path());
@@ -224,10 +214,10 @@ std::vector<std::string> findEntries(const std::vector<std::string>& folders, co
       if (dir) {
         // Never look inside bundles (of any format).
         bool bundle = e == ".vst3" || e == ".vst" || e == ".clap" || e == ".component" || e == ".lv2" || e == ".app" || e == ".bundle" || e == ".framework";
-        if (e == ext && directories) out.push_back(p.string());
+        if (e == ext && directories) out.push_back(p.generic_string());
         if (bundle) it.disable_recursion_pending();
       } else if (e == ext && files) {
-        out.push_back(p.string());
+        out.push_back(p.generic_string());
       }
       if (it.depth() > 6) it.disable_recursion_pending();
     }
@@ -265,7 +255,11 @@ void addEnvPaths(std::vector<std::string>& v, const char* var) {
   std::string s = e;
   size_t a = 0;
   while (a <= s.size()) {
+#if defined(_WIN32)
+    size_t b = s.find(';', a);  // Windows paths hold ':' (C:\...)
+#else
     size_t b = s.find(':', a);
+#endif
     std::string p = s.substr(a, b == std::string::npos ? std::string::npos : b - a);
     if (!p.empty() && std::find(v.begin(), v.end(), p) == v.end()) v.push_back(p);
     if (b == std::string::npos) break;
@@ -273,21 +267,33 @@ void addEnvPaths(std::vector<std::string>& v, const char* var) {
   }
 }
 
-std::string selfExecutablePath() {
-#if defined(__APPLE__)
-  uint32_t size = 0;
-  _NSGetExecutablePath(nullptr, &size);
-  std::string buf(size, '\0');
-  if (_NSGetExecutablePath(buf.data(), &size) != 0) return {};
-  buf.resize(std::strlen(buf.c_str()));
-  std::error_code ec;
-  auto canon = fs::canonical(buf, ec);
-  return ec ? buf : canon.string();
+std::string envFolder(const char* var, const char* sub) {
+  const char* e = std::getenv(var);
+  if (!e || !*e) return {};
+  return (fs::path(e) / sub).string();
+}
+
+void addSystemPluginFolders(std::vector<std::string>& v, const char* winCommon, const char* unixLib) {
+#if defined(_WIN32)
+  // Per user: %LOCALAPPDATA%\Programs\Common\<format>; everyone: %COMMONPROGRAMFILES%\<format>.
+  for (const std::string& p : {envFolder("LOCALAPPDATA", (std::string("Programs/Common/") + winCommon).c_str()), envFolder("CommonProgramFiles", winCommon)})
+    if (!p.empty()) v.push_back(p);
+  (void)unixLib;
 #else
-  std::error_code ec;
-  auto p = fs::read_symlink("/proc/self/exe", ec);
-  return ec ? std::string() : p.string();
+  (void)winCommon;
+  for (const char* prefix : {"/usr/lib/", "/usr/local/lib/", "/usr/pkg/lib/"}) {
+    const std::string p = std::string(prefix) + unixLib;
+    if (std::find(v.begin(), v.end(), p) == v.end()) v.push_back(p);
+  }
 #endif
+}
+
+std::string selfExecutablePath() {
+  const std::string p = platform::executablePath();
+  if (p.empty()) return p;
+  std::error_code ec;
+  auto canon = fs::canonical(p, ec);
+  return ec ? p : canon.string();
 }
 
 // ---------------------------------------------------------------- child processes
@@ -307,8 +313,12 @@ int childMain(int argc, char** argv) {
       sandbox = argv[++i];
     }
   }
-  if (!sandbox.empty()) return sandboxChildMain(sandbox);
+  if (!sandbox.empty()) {
+    platform::quietCrashDialogs();
+    return sandboxChildMain(sandbox);
+  }
   if (entry.empty()) return -1;
+  platform::quietCrashDialogs();
   ScanResult r;
   r.format = format;
   r.bundle = entry;
@@ -337,42 +347,21 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
   const Format* fmt = findFormat(format);
   r.mtime = fmt ? fmt->mtime(entry) : 0;
   static std::atomic<int> serial{0};
-  fs::path tmp = fs::temp_directory_path() / ("gridline-plugin-scan-" + std::to_string(getpid()) + "-" + std::to_string(serial++) + ".json");
+  fs::path tmp = fs::temp_directory_path() / ("gridline-plugin-scan-" + std::to_string(platform::processId()) + "-" + std::to_string(serial++) + ".json");
   std::vector<std::string> args = {exe, "--scan-plugin", format, entry, "--out", tmp.string()};
-  std::vector<char*> argv;
-  for (auto& a : args) argv.push_back(a.data());
-  argv.push_back(nullptr);
-  posix_spawn_file_actions_t fa;
-  posix_spawn_file_actions_init(&fa);
-  posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-  posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
-  pid_t pid = 0;
-  int rc = posix_spawn(&pid, exe.c_str(), &fa, nullptr, argv.data(), environ);
-  posix_spawn_file_actions_destroy(&fa);
-  if (rc != 0) {
+  platform::Process child;
+  if (!child.start(exe, args)) {
     r.error = "cannot start the scanner process";
     return r;
   }
-  int status = 0;
-  auto start = std::chrono::steady_clock::now();
-  bool done = false;
-  while (!done) {
-    pid_t w = waitpid(pid, &status, WNOHANG);
-    if (w == pid) {
-      done = true;
-      break;
-    }
-    if (w < 0) break;
-    double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    if (el > timeoutSeconds) {
-      kill(pid, SIGKILL);
-      waitpid(pid, &status, 0);
-      r.error = "timed out while loading";
-      std::error_code ec;
-      fs::remove(tmp, ec);
-      return r;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(15));
+  const bool done = child.wait(timeoutSeconds);
+  if (!done) {
+    child.kill();
+    child.wait();
+    r.error = "timed out while loading";
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    return r;
   }
   std::string text;
   {
@@ -383,14 +372,14 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
   }
   std::error_code ec;
   fs::remove(tmp, ec);
-  if (done && WIFSIGNALED(status)) {
-    r.error = "crashed while loading (signal " + std::to_string(WTERMSIG(status)) + ")";
+  if (child.status().crashed) {
+    r.error = "crashed while loading (" + child.status().describe().substr(9);
     return r;
   }
   Json j;
   ScanResult parsed;
   if (text.empty() || !jsonParse(text, j) || !fromJson(j, parsed)) {
-    r.error = done && WIFEXITED(status) ? "scanner exited with code " + std::to_string(WEXITSTATUS(status)) : "scanner failed";
+    r.error = "scanner exited with code " + std::to_string(child.status().code);
     return r;
   }
   parsed.format = format;

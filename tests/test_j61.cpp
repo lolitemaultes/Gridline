@@ -1,7 +1,9 @@
 // Gridline — J-61 follow-ups: the audio load meter (time-weighted, never
 // above 100 % on screen) and the secret store that keeps the MCP token out of
 // settings.json (private file backend, migration from the plain setting).
+#if !defined(_WIN32)
 #include <sys/stat.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -64,11 +66,13 @@ void testSecretFile() {
   expect(!st.get("mcp-token", v), "secrets: nothing stored yet");
   expect(st.set("mcp-token", "abc123abc123abc123"), "secrets: set");
   expect(st.get("mcp-token", v) && v == "abc123abc123abc123", "secrets: get");
+#if !defined(_WIN32)  // POSIX permissions (Windows: the folder lives in the user's private profile)
   struct stat sb{};
   expect(::stat((dir / "mcp-token").c_str(), &sb) == 0 && (sb.st_mode & 0777) == 0600, "secrets: file is 0600");
   expect(::stat(dir.c_str(), &sb) == 0 && (sb.st_mode & 0777) == 0700, "secrets: folder is 0700");
   ::chmod((dir / "mcp-token").c_str(), 0644);
   expect(st.get("mcp-token", v) && ::stat((dir / "mcp-token").c_str(), &sb) == 0 && (sb.st_mode & 0777) == 0600, "secrets: a loosened file is tightened");
+#endif
   expect(st.set("mcp-token", "second-value-0000"), "secrets: replace");
   expect(st.get("mcp-token", v) && v == "second-value-0000", "secrets: replaced value");
   expect(!st.set("../escape", "x") && !st.set("", "x") && !st.set(".hidden", "x"), "secrets: names cannot leave the folder");

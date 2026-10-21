@@ -1,0 +1,23 @@
+# Text files keep LF line endings on every system (Windows checkouts included): the shell
+# scripts, test fixtures and generated sources must be byte-identical everywhere.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.iss text eol=crlf
+# Binary data.
+*.png binary
+*.bmp binary
+*.icns binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.wav binary
+*.flac binary
+*.ogg binary
+*.mp3 binary
+*.mid binary
+*.zip binary
+*.fst binary
+*.wv binary
+# Vendored as published (CRLF).
+third_party/nanosvg/LICENSE.txt -text

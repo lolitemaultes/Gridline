@@ -1,7 +1,7 @@
 // Gridline — ZIP archives. See Zip.h.
 #include "Zip.h"
 #include "Project.h"
-#include <unistd.h>
+#include "Platform.h"
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -73,7 +73,7 @@ bool ZipWriter::open(const std::string& path, std::string* err) {
   if (!checkWritableTarget(path, err)) return false;
   static std::atomic<unsigned> serial{0};
   path_ = path;
-  tmp_ = path + ".tmp." + std::to_string(static_cast<long>(getpid())) + "." + std::to_string(serial.fetch_add(1));
+  tmp_ = path + ".tmp." + std::to_string(static_cast<long>(platform::processId())) + "." + std::to_string(serial.fetch_add(1));
   errno = 0;
   f_ = std::fopen(tmp_.c_str(), "wb");
   if (!f_) return fail(err, fileWriteError(path, errno));
@@ -176,7 +176,7 @@ bool ZipWriter::close(std::string* err) {
     std::remove(tmp_.c_str());
     return fail(err, fileWriteError(path_, errno_));
   }
-  if (std::rename(tmp_.c_str(), path_.c_str()) != 0) {
+  if (!platform::replaceFile(tmp_, path_)) {
     const int e = errno;
     std::remove(tmp_.c_str());
     return fail(err, fileWriteError(path_, e));
@@ -221,7 +221,7 @@ bool readZipDirectory(const std::string& path, std::vector<ZipEntry>& out, std::
     const uint16_t nl = rd16(&d[p + 28]), xl = rd16(&d[p + 30]), cl = rd16(&d[p + 32]);
     e.offset = rd32(&d[p + 42]);
     if (p + 46 + nl > d.size()) return fail(err, "damaged ZIP directory");
-    e.name.assign(reinterpret_cast<const char*>(&d[p + 46]), nl);
+    e.name.assign(reinterpret_cast<const char*>(d.data() + p + 46), nl);  // (nl may be 0 at the end)
     for (char& c : e.name)
       if (c == '\\') c = '/';
     out.push_back(e);
@@ -240,7 +240,7 @@ bool readZipEntry(const std::string& path, const ZipEntry& e, std::vector<uint8_
   if (e.method == 0) {
     out.assign(d.begin() + static_cast<long>(data), d.begin() + static_cast<long>(data + e.packed));
   } else if (e.method == 8) {
-    if (!inflateRaw(&d[data], e.packed, out, e.size)) return fail(err, "cannot decompress " + e.name);
+    if (!inflateRaw(d.data() + data, e.packed, out, e.size)) return fail(err, "cannot decompress " + e.name);
   } else {
     return fail(err, "unsupported compression in " + e.name);
   }
@@ -255,8 +255,15 @@ bool extractZip(const std::string& path, const std::string& dir, std::vector<std
   const fs::path root = fs::weakly_canonical(fs::path(dir), ec);
   fs::create_directories(root, ec);
   for (const auto& e : entries) {
-    const fs::path rel = fs::path(e.name).lexically_normal();
-    if (rel.is_absolute() || rel.empty() || *rel.begin() == "..") return fail(err, "unsafe path in archive: " + e.name);
+    fs::path rel;
+    try {  // Windows: a name that is not valid UTF-8 cannot become a path
+      rel = fs::u8path(e.name).lexically_normal();
+    } catch (const std::exception&) {
+      return fail(err, "unreadable file name in archive");
+    }
+    // Absolute, drive-relative (C:x) or UNC names never leave the folder.
+    if (rel.is_absolute() || rel.has_root_name() || rel.has_root_directory() || rel.empty() || *rel.begin() == "..")
+      return fail(err, "unsafe path in archive: " + e.name);
     const fs::path dst = root / rel;
     if (e.dir()) {
       fs::create_directories(dst, ec);

@@ -202,4 +202,47 @@ keys::Chord chordOf(const KeyEvent& e) {
   return c;
 }
 
+uint16_t macKeyOfHidUsage(int usage) {
+  if (usage <= 0) return 0xFFFF;
+  for (uint16_t code = 0; code < 128; ++code)
+    if (hidUsageOfMacKey(code) == usage) return code;
+  return 0xFFFF;
+}
+
+int hidUsageOfWinVk(int vk) {
+  if (vk >= 'A' && vk <= 'Z') return 4 + (vk - 'A');
+  if (vk >= '1' && vk <= '9') return 30 + (vk - '1');
+  if (vk == '0') return 39;
+  if (vk >= 0x70 && vk <= 0x7B) return 58 + (vk - 0x70);  // VK_F1..VK_F12
+  switch (vk) {
+    case 0x0D: return 40;  // VK_RETURN
+    case 0x1B: return 41;  // VK_ESCAPE
+    case 0x08: return 42;  // VK_BACK
+    case 0x09: return 43;  // VK_TAB
+    case 0x20: return 44;  // VK_SPACE
+    case 0xBD: return 45;  // VK_OEM_MINUS
+    case 0xBB: return 46;  // VK_OEM_PLUS (the = key)
+    case 0xDB: return 47;  // VK_OEM_4 ([)
+    case 0xDD: return 48;  // VK_OEM_6 (])
+    case 0xDC: return 49;  // VK_OEM_5 (backslash)
+    case 0xBA: return 51;  // VK_OEM_1 (;)
+    case 0xDE: return 52;  // VK_OEM_7 (')
+    case 0xC0: return 53;  // VK_OEM_3 (`)
+    case 0xBC: return 54;  // VK_OEM_COMMA
+    case 0xBE: return 55;  // VK_OEM_PERIOD
+    case 0xBF: return 56;  // VK_OEM_2 (/)
+    case 0x2D: return 73;  // VK_INSERT
+    case 0x24: return 74;  // VK_HOME
+    case 0x21: return 75;  // VK_PRIOR
+    case 0x2E: return 76;  // VK_DELETE
+    case 0x23: return 77;  // VK_END
+    case 0x22: return 78;  // VK_NEXT
+    case 0x27: return 79;  // VK_RIGHT
+    case 0x25: return 80;  // VK_LEFT
+    case 0x28: return 81;  // VK_DOWN
+    case 0x26: return 82;  // VK_UP
+    default: return 0;
+  }
+}
+
 }  // namespace gl::host

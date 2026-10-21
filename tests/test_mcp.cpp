@@ -5,11 +5,11 @@
 // and no change on failure, read-only mode, path restrictions, rate and size
 // limits, the loopback HTTP transport (bind address, token, sessions, Host /
 // Origin checks, oversized bodies), the attach bridge, and the CLI stdio server.
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
+#if !defined(_WIN32)
 #include <sys/stat.h>
-#include <unistd.h>
+#endif
+#include "core/Net.h"
+#include "core/Platform.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -35,6 +35,23 @@
 using namespace gl;
 using namespace gl::mcp;
 namespace fs = std::filesystem;
+
+namespace {
+// `text` written to `path`, opened for reading (a stdin stand-in).
+std::FILE* streamOf(const std::string& text, const fs::path& path) {
+  {
+    std::ofstream os(path, std::ios::binary);
+    os << text;
+  }
+  return std::fopen(path.string().c_str(), "rb");
+}
+std::string fileText(const fs::path& path) {
+  std::ifstream is(path, std::ios::binary);
+  std::stringstream ss;
+  ss << is.rdbuf();
+  return ss.str();
+}
+}  // namespace
 
 namespace {
 
@@ -823,27 +840,29 @@ void httpTests() {
   {
     std::string reply;
     Served big(ep, [&] {
-      const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+      const net::Sock fd = net::tcpSocket();
       sockaddr_in a{};
       a.sin_family = AF_INET;
       a.sin_port = htons(static_cast<uint16_t>(port));
       a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
       if (::connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0) {
         const std::string req = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer s3cret-token-0123456789\r\nContent-Length: 999999999\r\n\r\n{";
-        (void)!::send(fd, req.data(), req.size(), 0);
+        (void)!net::sendSome(fd, req.data(), req.size());
         char buf[4096];
-        ssize_t n;
-        while ((n = ::recv(fd, buf, sizeof buf, 0)) > 0) reply.append(buf, static_cast<size_t>(n));
+        long n;
+        while ((n = net::recvSome(fd, buf, sizeof buf)) > 0) reply.append(buf, static_cast<size_t>(n));
       }
-      ::close(fd);
+      net::closeSock(fd);
     });
     expect(contains(reply, " 413 "), "HTTP: oversized body -> 413");
   }
   // Endpoint file: owner-only.
   const std::string efile = (f.dir / "mcp-endpoint.json").string();
   expect(writeEndpointFile(efile, port, ep.token()), "endpoint file written");
+#if !defined(_WIN32)
   struct stat st {};
   expect(::stat(efile.c_str(), &st) == 0 && (st.st_mode & 0777) == 0600, "endpoint file is owner-only (0600)");
+#endif
   int p2 = 0;
   std::string t2;
   expect(readEndpointFile(efile, p2, t2) && p2 == port && t2 == ep.token(), "endpoint file read back");
@@ -852,15 +871,13 @@ void httpTests() {
   {
     const std::string in = init + "\n" + R"({"jsonrpc":"2.0","method":"notifications/initialized"})" + "\n" +
                            R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_song"}})" + "\n";
-    std::FILE* fin = ::fmemopen(const_cast<char*>(in.data()), in.size(), "r");
-    char* outBuf = nullptr;
-    size_t outLen = 0;
-    std::FILE* fout = ::open_memstream(&outBuf, &outLen);
+    // Files stand in for the stdio streams (fmemopen / open_memstream are POSIX only).
+    std::FILE* fin = streamOf(in, f.dir / "bridge-in.txt");
+    std::FILE* fout = std::fopen((f.dir / "bridge-out.txt").string().c_str(), "wb");
     Served bridge(ep, [&] { attachBridge(fin, fout, efile); });
     std::fclose(fin);
     std::fclose(fout);
-    std::string out(outBuf ? outBuf : "", outLen);
-    std::free(outBuf);
+    const std::string out = fileText(f.dir / "bridge-out.txt");
     std::vector<std::string> lines;
     std::istringstream ls(out);
     for (std::string l; std::getline(ls, l);) lines.push_back(l);
@@ -868,15 +885,12 @@ void httpTests() {
   }
   {  // bridge without a running app: JSON-RPC errors for requests
     const std::string in = init + "\n" + R"({"jsonrpc":"2.0","method":"notifications/initialized"})" + "\n";
-    std::FILE* fin = ::fmemopen(const_cast<char*>(in.data()), in.size(), "r");
-    char* outBuf = nullptr;
-    size_t outLen = 0;
-    std::FILE* fout = ::open_memstream(&outBuf, &outLen);
+    std::FILE* fin = streamOf(in, f.dir / "bridge-in2.txt");
+    std::FILE* fout = std::fopen((f.dir / "bridge-out2.txt").string().c_str(), "wb");
     attachBridge(fin, fout, (f.dir / "missing.json").string());
     std::fclose(fin);
     std::fclose(fout);
-    std::string out(outBuf ? outBuf : "", outLen);
-    std::free(outBuf);
+    const std::string out = fileText(f.dir / "bridge-out2.txt");
     Json r = parseJ(out.substr(0, out.find('\n')));
     expect(errorCode(r) != 0 && r.find("id") && r.find("id")->number == 1 && std::count(out.begin(), out.end(), '\n') == 1,
            "attach bridge: app not running -> error reply, nothing for notifications");
@@ -904,9 +918,9 @@ void cliTests() {
        << "\n"
        << "garbage\n";
   }
-  auto q = [](const fs::path& p) { return "'" + p.string() + "'"; };
-  const std::string cmd = std::string("'") + GRIDLINE_CLI_EXE + "' mcp " + q(song) + " < " + q(in) + " > " + q(out) + " 2> " + q(err);
-  const int rc = std::system(cmd.c_str());
+  auto q = [](const fs::path& p) { return platform::shellQuote(p.string()); };
+  const std::string cmd = platform::shellQuote(GRIDLINE_CLI_EXE) + " mcp " + q(song) + " < " + q(in) + " > " + q(out) + " 2> " + q(err);
+  const int rc = platform::runShell(cmd);
   expect(rc == 0, "gridline mcp: exits 0 at end of input");
   std::ifstream is(out);
   std::vector<std::string> lines;
@@ -931,8 +945,8 @@ void cliTests() {
     os << R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{}}})" << "\n"
        << R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_song","arguments":{"tempo":90}}})" << "\n";
   }
-  const std::string cmd2 = std::string("'") + GRIDLINE_CLI_EXE + "' mcp " + q(song) + " --read-only < " + q(in) + " > " + q(out) + " 2> " + q(err);
-  expect(std::system(cmd2.c_str()) == 0, "gridline mcp --read-only runs");
+  const std::string cmd2 = platform::shellQuote(GRIDLINE_CLI_EXE) + " mcp " + q(song) + " --read-only < " + q(in) + " > " + q(out) + " 2> " + q(err);
+  expect(platform::runShell(cmd2) == 0, "gridline mcp --read-only runs");
   std::ifstream is2(out);
   std::string l1, l2;
   std::getline(is2, l1);

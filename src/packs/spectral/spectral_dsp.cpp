@@ -12,6 +12,10 @@
 #include <cstring>
 #include <functional>
 #include "../../engine/Dsp.h"
+#include "../../engine/TimeStretch.h"
+#include <map>
+#include <mutex>
+#include <tuple>
 #include "../Packs.h"
 #include "spectral.h"
 #include "spectral_blocks.h"
@@ -1045,6 +1049,11 @@ class PitchFx final : public SpectralFx {
     reset();
   }
   void reset() override {
+    if (hifi_) {  // J-87: the Hi-fi voice restarts on silence
+      hifi_->started = false;
+      hifi_->w = hifi_->r = hifi_->dw = 0;
+      for (auto& d : hifi_->dry) std::fill(d.begin(), d.end(), 0.0f);
+    }
     for (auto& d : fast_) d.clear();
     for (auto& d : delay_) d.clear();
     for (auto& d : dry_) d.clear();
@@ -1058,7 +1067,11 @@ class PitchFx final : public SpectralFx {
     Params p{info_, &state};
     const double sr = ctx.sampleRate;
     int mode = p.choice(PsMode);
-    const int engine = std::clamp(p.choice(PsEngine), 0, 2);
+    const int engine = std::clamp(p.choice(PsEngine), 0, 3);
+    if (engine == kPsHifi) {
+      processHifi(p, L, R, n);
+      return;
+    }
     if (engine != kPsClassic) mode = 10 + engine * 2 + std::clamp(p.choice(PsDetector), 0, 1);
     if (mode != mode_ || sr != sr_) {
       reset();
@@ -1121,7 +1134,8 @@ class PitchFx final : public SpectralFx {
   }
   int latencyFor(const PluginState& state, double sampleRate) const override {
     Params p{info_, &state};
-    const int engine = std::clamp(p.choice(PsEngine), 0, 2);
+    const int engine = std::clamp(p.choice(PsEngine), 0, 3);
+    if (engine == kPsHifi) return Hifi::delayFor(p, sampleRate);
     if (engine == kPsVoice) {  // PSOLA: 3 longest periods + 8 behind the input (see PsolaShifter)
       const double fmin = p.choice(PsDetector) == 0 ? 80.0 : 50.0;
       return 3 * (static_cast<int>(std::ceil(sampleRate / fmin)) + 2) + 8;
@@ -1218,6 +1232,149 @@ class PitchFx final : public SpectralFx {
     tel.v[TvLatency].store(static_cast<float>(lat_), std::memory_order_relaxed);
     double hz = engine == kPsVoice ? det_.hz() : 0.0;
     tel.v[TvDetected].store(hz > 0 ? static_cast<float>(69.0 + 12.0 * std::log2(hz / 440.0)) : 0.f, std::memory_order_relaxed);
+  }
+
+  // ---- J-87 Hi-fi engine: engine/TimeStretch voice, streaming. The input
+  // goes through a FIFO that starts with `delay` frames of silence, and the
+  // voice starts aligned on it, so the output is exactly `delay` frames late
+  // (reported for delay compensation). The delay covers the voice's
+  // lookahead for pitches down to an octave under the setting (or under
+  // unison); deeper live changes are held at that floor.
+ public:
+  void prepareHost(const PluginState& state, double sampleRate) override {
+    delete hifiRetired_.exchange(nullptr, std::memory_order_acq_rel);
+    Params p{info_, &state};
+    if (std::clamp(p.choice(PsEngine), 0, 3) != kPsHifi) return;
+    const stretch::Mode m = p.on(PsPreserve) || std::fabs(p[PsFormant]) > 0.01f ? stretch::Mode::Formant : stretch::Mode::Mono;
+    const int delay = Hifi::delayFor(p, sampleRate);
+    if (hifiUi_.mode == m && hifiUi_.rate == sampleRate && hifiUi_.delay == delay) return;
+    auto* h = new Hifi;
+    h->mode = m, h->rate = sampleRate, h->delay = delay;
+    h->minPitch = Hifi::floorOf(p);
+    h->voice.prepare(2, sampleRate, m, 1.0 / h->minPitch * 1.01 + 4.0, 1.0);
+    h->cap = delay + 65536;
+    for (auto& f : h->fifo) f.assign(static_cast<size_t>(h->cap), 0.0f);
+    for (auto& d : h->dry) d.assign(static_cast<size_t>(delay + 8192), 0.0f);
+    delete hifiPending_.exchange(h, std::memory_order_acq_rel);
+    hifiUi_.mode = m, hifiUi_.rate = sampleRate, hifiUi_.delay = delay;
+  }
+  ~PitchFx() override {
+    delete hifiPending_.exchange(nullptr);
+    delete hifiRetired_.exchange(nullptr);
+    delete hifi_;
+  }
+
+ private:
+  struct Hifi {
+    stretch::Mode mode = stretch::Mode::Mono;
+    double rate = 0, minPitch = 0.5;
+    int delay = 0, cap = 0;
+    stretch::Voice voice;
+    std::vector<float> fifo[2], dry[2];
+    int64_t w = 0, r = 0;  // FIFO frames written / read (positions modulo cap)
+    int64_t dw = 0;
+    bool started = false;
+    static double floorOf(const Params& p) {
+      const double st = std::min(0.0, static_cast<double>(p[PsPitch]) + p[PsFine] / 100.0);
+      return std::max(0.24, std::pow(2.0, st / 12.0) * 0.5);
+    }
+    static int delayFor(const Params& p, double sr) {  // UI thread (latency queries, prepareHost)
+      const stretch::Mode m = p.on(PsPreserve) || std::fabs(p[PsFormant]) > 0.01f ? stretch::Mode::Formant : stretch::Mode::Mono;
+      const double fl = floorOf(p);
+      static std::mutex mu;
+      static std::map<std::tuple<int, double, double>, int> cache;
+      const auto key = std::make_tuple(static_cast<int>(m), sr, fl);
+      std::lock_guard<std::mutex> lk(mu);
+      if (auto it = cache.find(key); it != cache.end()) return it->second;
+      stretch::Voice probe;
+      probe.prepare(2, sr, m, 1.0 / fl * 1.01 + 4.0, 1.0);
+      return cache[key] = probe.lookahead(1.0, fl) + 64;
+    }
+    static int read(void* ctx, float* const* d, int frames, bool) {
+      auto* h = static_cast<Hifi*>(ctx);
+      for (int k = 0; k < frames; ++k) {
+        if (h->r < h->w) {
+          const auto i = static_cast<size_t>(h->r % h->cap);
+          d[0][k] = h->fifo[0][i];
+          d[1][k] = h->fifo[1][i];
+          ++h->r;
+        } else {
+          d[0][k] = d[1][k] = 0.0f;  // never with the delay above
+        }
+      }
+      return -1;
+    }
+  };
+  struct HifiUi {
+    stretch::Mode mode = stretch::Mode::Resample;
+    double rate = 0;
+    int delay = -1;
+  } hifiUi_;
+  std::atomic<Hifi*> hifiPending_{nullptr}, hifiRetired_{nullptr};
+  Hifi* hifi_ = nullptr;
+  float hifiOut_[2][256] = {};
+
+  void processHifi(const Params& p, float* L, float* R, int n) {
+    if (Hifi* h = hifiPending_.load(std::memory_order_acquire); h && hifiRetired_.load(std::memory_order_acquire) == nullptr) {
+      hifiPending_.store(nullptr, std::memory_order_release);
+      if (hifi_) hifiRetired_.store(hifi_, std::memory_order_release);
+      hifi_ = h;
+    }
+    Hifi* h = hifi_;
+    if (!h) {  // not prepared yet (first block after switching): silence
+      std::fill(L, L + n, 0.0f);
+      std::fill(R, R + n, 0.0f);
+      return;
+    }
+    const double st = p[PsPitch] + p[PsFine] / 100.0;
+    const double pitch = std::max(h->minPitch, std::pow(2.0, st / 12.0));
+    const double formant = p[PsFormant];
+    const double out = dsp::dbToGain(p[PsOutput]);
+    const double mix = std::clamp(static_cast<double>(p[PsMix]), 0.0, 1.0);
+    const int dmode = std::clamp(p.choice(PsDelayMode), 0, 3);
+    const double fb = std::clamp(static_cast<double>(p[PsFeedback]), 0.0, 0.95);
+    const double dly = std::clamp(static_cast<double>(p[PsDelay]) * 0.001 * h->rate, 1.0, static_cast<double>(delay_[0].size() - 8));
+    if (!h->started) {
+      for (int k = 0; k < h->delay; ++k) {
+        const auto i = static_cast<size_t>(h->w % h->cap);
+        h->fifo[0][i] = h->fifo[1][i] = 0.0f;
+        ++h->w;
+      }
+      h->voice.start(&Hifi::read, h, 1.0, pitch, false);
+      h->started = true;
+    }
+    const auto dcap = static_cast<int64_t>(h->dry[0].size());
+    for (int done = 0; done < n;) {
+      const int m = std::min(256, n - done);
+      for (int k = 0; k < m; ++k) {
+        const auto i = static_cast<size_t>(h->w % h->cap);
+        h->fifo[0][i] = L[done + k];
+        h->fifo[1][i] = R[done + k];
+        ++h->w;
+      }
+      float* o[2] = {hifiOut_[0], hifiOut_[1]};
+      h->voice.render(o, m, 1.0, pitch, formant, &Hifi::read, h);
+      for (int k = 0; k < m; ++k) {
+        float* io[2] = {L + done + k, R + done + k};
+        for (int c = 0; c < 2; ++c) {
+          const float x = *io[c];
+          double y = o[c][k];
+          if (dmode != PsDlyOff) {  // echoes of the shifted signal
+            const double e = delay_[c].linear(static_cast<double>(dw_) - dly);
+            delay_[c].at(dw_) = static_cast<float>(y + fb * e);
+            y += e;
+          }
+          // Dry path delayed like the wet one.
+          h->dry[c][static_cast<size_t>(h->dw % dcap)] = x;
+          const float dry = h->dry[c][static_cast<size_t>((h->dw - h->delay + dcap) % dcap)];
+          *io[c] = blk::flush(static_cast<float>((mix * y + (1.0 - mix) * dry) * out));
+        }
+        ++h->dw;
+        ++dw_;
+      }
+      done += m;
+    }
+    tel.v[TvLatency].store(static_cast<float>(h->delay), std::memory_order_relaxed);
   }
 
   static double grainSamples(const Params& p, double sr) { return std::clamp(static_cast<double>(p[PsGrain]), 10.0, 120.0) * 0.001 * sr; }

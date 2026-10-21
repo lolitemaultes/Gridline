@@ -15,6 +15,10 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace gl::scrollui {
 
 namespace {
@@ -23,6 +27,7 @@ smoothscroll::Params gParams;
 bool gSmoothSnap = true;
 smooth::Glides gGlides;
 
+#if !defined(_WIN32)
 std::string query(const char* cmd) {
   std::string out;
   if (FILE* f = popen(cmd, "r")) {
@@ -32,6 +37,7 @@ std::string query(const char* cmd) {
   }
   return out;
 }
+#endif
 
 // ImGui scroll regions: one entry per window that is gliding or stretched.
 struct WinState {
@@ -62,7 +68,11 @@ bool systemReducedMotion() {
     cached = (e[0] == '1' || e[0] == 'y' || e[0] == 't') ? 1 : 0;
     return cached != 0;
   }
-#if defined(__APPLE__)
+#if defined(_WIN32)
+  // Settings > Accessibility > Visual effects > Animation effects.
+  BOOL animate = TRUE;
+  cached = SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animate, 0) && !animate ? 1 : 0;
+#elif defined(__APPLE__)
   cached = query("defaults read com.apple.universalaccess reduceMotion 2>/dev/null").find('1') != std::string::npos ? 1 : 0;
 #else
   cached = query("gsettings get org.gnome.desktop.interface enable-animations 2>/dev/null").find("false") != std::string::npos ? 1 : 0;

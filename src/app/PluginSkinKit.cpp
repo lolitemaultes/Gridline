@@ -596,7 +596,7 @@ int keyboard(const char* id, ImVec2 tl, ImVec2 size, int lo, int hi, const Skin&
                         ImDrawFlags_RoundCornersBottom);
       if (n == root) dl->AddRect(ImVec2(a0.x + 1, a0.y + 1), ImVec2(a1.x - 1, a1.y - 1), k.accent2C(), 2, 0, 2.0f);
       if (!black && n % 12 == 0 && a1.x - a0.x > 9) {
-        char buf[8];
+        char buf[32];
         std::snprintf(buf, sizeof buf, "%d", n / 12 - 1);
         ImGui::PushFont(app().fontMono, std::clamp(ww * 0.7f, 8.0f, 10.0f));
         ImVec2 ts = ImGui::CalcTextSize(buf);

@@ -4,6 +4,7 @@
 // port bus, multi-destination send outputs). FL preset / project checks run
 // only when an FL Studio installation is present.
 #include <algorithm>
+#include "core/Platform.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>

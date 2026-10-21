@@ -141,7 +141,7 @@ bool decodeSimSynth(Context& c, const std::vector<Event>& evs, PluginMapping& m)
   for (int k = 0; k < 4; ++k) {
     const int sel = simShapeSel(clamp01(d[kSimShapeDouble[k]]));
     // Not one of the five values: the engine keeps its initial shape.
-    setp(s, 54 + k, sel >= 0 ? sel : (k == 3 ? dc::WlTriangle : dc::WsSaw));
+    setp(s, 54 + k, sel >= 0 ? sel : (k == 3 ? static_cast<int>(dc::WlTriangle) : static_cast<int>(dc::WsSaw)));
     if (k == 3 && sel == 4) setp(s, 57, dc::WlTriangle);  // 0.3 is not an LFO shape
   }
   m.glType = "gl.warmsynth";

@@ -124,9 +124,10 @@ void drawToolDialogs(App& a, Session& s) {
       ImGui::SliderFloat(i18n::tr("Time"), &s.tStretch, 0.25f, 4.f, "x %.3f", ImGuiSliderFlags_Logarithmic);
       ImGui::SetNextItemWidth(260);
       ImGui::SliderFloat(i18n::tr("Pitch"), &s.tSemis, -24.f, 24.f, "%.2f semitones");
-      const char* modes[] = {stretchName(Stretch::Elastic), stretchName(Stretch::Transient), stretchName(Stretch::Tape)};
+      const char* modes[] = {i18n::tr(stretchName(Stretch::Elastic)), i18n::tr(stretchName(Stretch::Transient)), i18n::tr(stretchName(Stretch::Tape)),
+                             i18n::tr(stretchName(Stretch::Mono)), i18n::tr(stretchName(Stretch::Formant))};
       ImGui::SetNextItemWidth(260);
-      ImGui::Combo(i18n::tr("Method"), &s.tMode, modes, 3);
+      ImGui::Combo(i18n::tr("Method"), &s.tMode, modes, 5);
       const char* q[] = {"Fast", "Normal", "Best"};
       ImGui::SetNextItemWidth(260);
       ImGui::Combo(i18n::tr("Quality"), &s.tQuality, q, 3);

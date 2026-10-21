@@ -43,6 +43,7 @@
 #include "../../engine/ClassicModFx.h"
 #include "../../engine/PlateReverb.h"
 #include "FlpFx2.h"
+#include "../Platform.h"
 
 namespace gl::flp::fx2 {
 
@@ -159,8 +160,8 @@ bool decodeLuxeVerb(Context& c, const std::vector<Event>& evs, PluginMapping& m)
 std::string irCacheDir() {
   namespace fs = std::filesystem;
   if (const char* e = std::getenv("GRIDLINE_CACHE_DIR"); e && *e) return std::string(e) + "/flp-ir";
-  if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/gridline/flp-ir";
-  if (const char* h = std::getenv("HOME"); h && *h) return std::string(h) + "/.cache/gridline/flp-ir";
+  // $XDG_CACHE_HOME, %LOCALAPPDATA% (Windows) or ~/.cache
+  if (const std::string c = gl::platform::cacheRoot(); !c.empty()) return c + "/gridline/flp-ir";
   return (fs::temp_directory_path() / "gridline-flp-ir").string();
 }
 
@@ -211,7 +212,7 @@ std::string resolveImpulse(Context& c, std::string p) {
   const std::string data = "%FLStudioData%", user = "%USERPROFILE%";
   if (p.rfind(data, 0) == 0) p = "%FLStudioFactoryData%/Data" + p.substr(data.size());
   if (p.rfind(user, 0) == 0) {
-    const char* home = std::getenv("HOME");
+    const char* home = gl::platform::homeEnv();
     p = std::string(home ? home : "") + p.substr(user.size());
   }
   std::string r = c.resolvePath(p);

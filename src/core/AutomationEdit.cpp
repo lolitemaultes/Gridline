@@ -95,7 +95,11 @@ double valueAt(const Points& p, double t, bool fl) { return pointsValue(p, t, fl
 
 int addPoint(Points& pts, const AutoPoint& p) {
   auto it = std::upper_bound(pts.begin(), pts.end(), p.pos, [](Tick v, const AutoPoint& q) { return v < q.pos; });
-  return static_cast<int>(pts.insert(it, p) - pts.begin());
+  // The index first: insert may reallocate, and the operands of '-' are evaluated in an
+  // unspecified order (GCC took begin() before the insert).
+  const auto at = it - pts.begin();
+  pts.insert(it, p);
+  return static_cast<int>(at);
 }
 
 int deletePoints(Points& pts, const Selection& sel, size_t keep) {
@@ -267,7 +271,8 @@ Selection pastePoints(Points& pts, const Points& clip, Tick at, bool replace) {
 Points thin(const Points& in, double tolerance) {
   if (in.size() <= 2) return in;
   std::vector<char> keep(in.size(), 0);
-  keep.front() = keep.back() = 1;
+  keep[0] = 1;
+  keep[in.size() - 1] = 1;
   // Iterative Ramer–Douglas–Peucker on (tick, value); the error is the
   // vertical distance to the chord.
   std::vector<std::pair<size_t, size_t>> stack{{0, in.size() - 1}};

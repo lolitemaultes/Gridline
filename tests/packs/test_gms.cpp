@@ -1,5 +1,6 @@
 // Gridline — J-4 tests: Groove Synth (gl.gms) and the decode of FL Studio's
 // shipped groove-machine synth states (.gmsynth presets + projects).
+#include <filesystem>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -142,7 +143,7 @@ int main() {
   }
   // Wave file in the data (a written single-cycle WAV: square).
   {
-    const std::string path = "/tmp/gl_gms_test_cycle.wav";
+    const std::string path = (std::filesystem::temp_directory_path() / "gl_gms_test_cycle.wav").string();
     {
       std::ofstream f(path, std::ios::binary);
       const int n = 256;

@@ -360,7 +360,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
         if (ImGui::MenuItem(i18n::tr("Reset (unused)"), nullptr, false, exists)) setState(a, t, st, replaceLine(st.data, key, ""), "reset envelope");
         if (beats && ImGui::BeginMenu(i18n::tr("Length"))) {
           for (double len : {1.0, 2.0, 4.0, 8.0, 16.0}) {
-            char b[16];
+            char b[48];
             std::snprintf(b, sizeof b, "%g beats", len);
             if (ImGui::MenuItem(b)) {
               double sc = len / std::max(1e-6, e.length());

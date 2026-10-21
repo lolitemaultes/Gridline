@@ -1,4 +1,5 @@
 #include "DisplayConfirm.h"
+#include "../core/Platform.h"
 #include "HostedUi.h"
 #include "McpUi.h"
 #include "App.h"
@@ -533,7 +534,7 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
 }
 
 static std::string homeDir() {
-  const char* h = std::getenv("HOME");
+  const char* h = gl::platform::homeEnv();
   return h ? h : ".";
 }
 
@@ -814,7 +815,7 @@ int App::exportStems(const std::string& dir, int bits, int sampleRate) {
     o.tail = song.barTicks();
     AudioBuffer buf = renderSong(solo, o);
     if (buf.frames == 0 || buf.peak() < 1e-6f) continue;
-    char num[8];
+    char num[32];
     std::snprintf(num, sizeof num, "%02zu", i);
     std::string name = song.info.title + " - " + num + " " + mixerTrackName(song, i) + ".wav";
     for (char& c : name)

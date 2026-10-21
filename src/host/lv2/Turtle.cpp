@@ -1,4 +1,6 @@
 #include "Turtle.h"
+#include "../../core/Platform.h"
+#include <cstdint>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -44,7 +46,7 @@ double Node::number(double def) const {
   if (value == "true") return 1;
   if (value == "false") return 0;
   char* end = nullptr;
-  double v = std::strtod(value.c_str(), &end);
+  double v = platform::parseDouble(value.c_str(), &end);
   return end && end != value.c_str() ? v : def;
 }
 
@@ -52,9 +54,23 @@ bool Node::truth() const { return kind == Literal && (value == "true" || value =
 
 // ---------------------------------------------------------------- IRIs
 
-std::string fileUri(const std::string& path) {
+std::string fileUri(const std::string& pathIn) {
+  std::string path = pathIn;
+#if defined(_WIN32)
+  // C:\x\y -> file:///C:/x/y
+  for (char& c : path)
+    if (c == '\\') c = '/';
+  if (path.size() > 1 && path[1] == ':') path = "/" + path;
+#endif
   std::string out = "file://";
-  for (unsigned char c : path) {
+  for (size_t i = 0; i < path.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(path[i]);
+#if defined(_WIN32)
+    if (c == ':' && i == 2) {  // the drive letter's colon stays as it is
+      out += ':';
+      continue;
+    }
+#endif
     if (std::isalnum(c) || std::strchr("/-._~", c)) {
       out += static_cast<char>(c);
     } else {
@@ -81,6 +97,9 @@ bool uriToPath(const std::string& uri, std::string& path) {
       path += uri[i];
     }
   }
+#if defined(_WIN32)
+  if (path.size() > 2 && path[0] == '/' && path[2] == ':') path.erase(0, 1);  // /C:/x -> C:/x
+#endif
   return !path.empty();
 }
 

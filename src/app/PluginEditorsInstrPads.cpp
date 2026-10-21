@@ -24,6 +24,7 @@
 #include "../engine/Slicing.h"
 #include "InstrumentSkin.h"
 #include "PluginEditorsCommon.h"
+#include "../core/Platform.h"
 
 namespace gl {
 
@@ -165,7 +166,7 @@ void openSample(App& a, const char* title, std::function<void(const std::string&
   a.fileDialog = {};
   a.fileDialog.open = true;
   a.fileDialog.title = title;
-  const char* h = std::getenv("HOME");
+  const char* h = gl::platform::homeEnv();
   a.fileDialog.dir = h ? h : ".";
   a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv"};
   a.fileDialog.onOk = std::move(ok);
@@ -449,7 +450,7 @@ void drawLayers(App& a, const PluginTarget& t, const iskin::Skin& k, const Plugi
     ImGui::PushID(l);
     iskin::bevel(k, 300, y, 465, 29, l == ui.layer ? rgb(0x4A5256) : rgb(0x3F4649), k.c.panelLine, 0);
     // Select button with the layer number.
-    char num[8];
+    char num[32];
     std::snprintf(num, sizeof num, "%d", l + 1);
     if (iskin::button(k, "##lsel", 303, y + 3, 21, 22, num, l == ui.layer, 9)) ui.layer = l;
     // Volume / pan / tune (parameters for layers 1..4; data text for 5..).

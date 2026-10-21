@@ -270,6 +270,9 @@ class Backend {
   // Rendering mode (UI thread; the adapter suspends processing): offline =
   // an export faster than real time. False when the format has no notion of it.
   virtual bool setOffline(bool offline) { (void)offline; return false; }
+  // The blocks that follow are rendered offline (audio thread / render worker, every block; no
+  // call into the plugin): the sandbox then waits for each block instead of its real-time budget.
+  virtual void setRenderingOffline(bool offline) { (void)offline; }
   // The plugin's own bypass (UI thread; takes effect with the next block).
   virtual bool setBypass(bool on) { (void)on; return false; }
   // Presets of the plugin's own library (CLAP preset discovery; slow, UI

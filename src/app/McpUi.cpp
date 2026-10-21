@@ -148,7 +148,11 @@ void drawJobs(App& a) {
 std::string timeText(double t) {
   const std::time_t tt = static_cast<std::time_t>(t);
   std::tm tm{};
+#if defined(_WIN32)
+  localtime_s(&tm, &tt);
+#else
   localtime_r(&tt, &tm);
+#endif
   char b[16];
   std::strftime(b, sizeof b, "%H:%M:%S", &tm);
   return b;

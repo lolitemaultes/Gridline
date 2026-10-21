@@ -23,10 +23,13 @@ void* operator new(std::size_t n) {
   throw std::bad_alloc();
 }
 void* operator new[](std::size_t n) { return operator new(n); }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"  // the replaced operator new is malloc
+#endif
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { operator delete(p); }
+void operator delete[](void* p, std::size_t) noexcept { operator delete(p); }
 
 namespace fs = std::filesystem;
 using namespace gl;

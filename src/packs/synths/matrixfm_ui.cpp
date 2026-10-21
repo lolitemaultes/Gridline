@@ -441,7 +441,7 @@ void fxPanel(App& a, const PluginTarget& t, const iskin::Skin& k, UiState& u) {
   }
   iskin::bevel(k, X + 310, Y + 3, 219, 89, k.c.panel, k.c.panelLine, 3);
   const int D = u.delay;
-  char cap[16];
+  char cap[32];
   std::snprintf(cap, sizeof cap, "DELAY %d", D + 1);
   caption(k, X + 312, Y + 4, 60, cap);
   iskin::check(a, t, k, dly(D, 0), X + 316, Y + 18, 40, 12, "ON", 8);

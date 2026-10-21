@@ -21,6 +21,7 @@
 #include "../../engine/Sample.h"
 #include "../PacksUi.h"
 #include "samplers.h"
+#include "../../core/Platform.h"
 
 namespace gl::packs::samplers {
 
@@ -118,7 +119,7 @@ void openDialog(App& a, const std::string& title, std::vector<std::string> exts,
   a.fileDialog = {};
   a.fileDialog.open = true;
   a.fileDialog.title = title;
-  const char* h = std::getenv("HOME");
+  const char* h = gl::platform::homeEnv();
   a.fileDialog.dir = h ? h : ".";
   a.fileDialog.exts = std::move(exts);
   a.fileDialog.onOk = std::move(ok);

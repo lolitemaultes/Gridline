@@ -85,7 +85,7 @@ void testSandbox() {
   const std::string r = root.string();
   expect(evalIn("files.read('data.txt')", r) == "hello", "files: read inside the folder");
   expect(contains(evalIn("files.read('../gridline-j24-outside/secret.txt')", r), "not allowed"), "files: '..' refused");
-  expect(contains(evalIn("files.read('" + (outside / "secret.txt").string() + "')", r), "not allowed"), "files: absolute path refused");
+  expect(contains(evalIn("files.read('" + (outside / "secret.txt").generic_string() + "')", r), "not allowed"), "files: absolute path refused");
   expect(contains(evalIn("files.read('sub/x.txt')", r), "not allowed"), "files: sub-folders refused");
   expect(contains(evalIn("files.read('.hidden')", r), "not allowed"), "files: hidden names refused");
   std::error_code ec;

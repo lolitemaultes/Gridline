@@ -1,14 +1,8 @@
 // Gridline — MCP transports: loopback HTTP server / client, stdio loop,
 // attach bridge (see McpTransport.h).
 #include "McpTransport.h"
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/time.h>
-#include <unistd.h>
+#include "Net.h"
+#include "Platform.h"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -35,19 +29,6 @@ std::string trim(const std::string& s) {
   while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
   return s.substr(a, b - a);
 }
-void noSigPipe(int fd) {
-#ifdef SO_NOSIGPIPE
-  int one = 1;
-  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
-#else
-  (void)fd;
-#endif
-}
-#ifdef MSG_NOSIGNAL
-constexpr int kSendFlags = MSG_NOSIGNAL;
-#else
-constexpr int kSendFlags = 0;
-#endif
 // Parses "Name: value" lines after the start line (names lower-cased).
 void parseHeaders(const std::string& head, std::string& first, std::map<std::string, std::string>& out) {
   std::istringstream is(head);
@@ -110,25 +91,26 @@ std::string httpReason(int s) {
 
 bool HttpServer::start(int port, std::string* err) {
   stop();
-  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) {
-    if (err) *err = std::string("socket: ") + std::strerror(errno);
+  const net::Sock fd = net::tcpSocket();
+  if (fd == net::kNoSock) {
+    if (err) *err = "socket: " + net::lastError();
     return false;
   }
+#if !defined(_WIN32)  // Windows: SO_REUSEADDR would let another program take the same port
   int one = 1;
-  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+  setsockopt(static_cast<int>(fd), SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+#endif
   sockaddr_in a{};
   a.sin_family = AF_INET;
   a.sin_port = htons(static_cast<uint16_t>(port));
   a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // 127.0.0.1 only, never INADDR_ANY
   if (::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || ::listen(fd, 16) != 0) {
-    if (err) *err = "cannot listen on 127.0.0.1:" + std::to_string(port) + ": " + std::strerror(errno);
-    ::close(fd);
+    if (err) *err = "cannot listen on 127.0.0.1:" + std::to_string(port) + ": " + net::lastError();
+    net::closeSock(fd);
     return false;
   }
-  fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
-  fcntl(fd, F_SETFD, FD_CLOEXEC);
-  socklen_t len = sizeof a;
+  net::setNonBlocking(fd);
+  net::SockLen len = sizeof a;
   getsockname(fd, reinterpret_cast<sockaddr*>(&a), &len);
   fd_ = fd;
   port_ = ntohs(a.sin_port);
@@ -136,9 +118,9 @@ bool HttpServer::start(int port, std::string* err) {
 }
 
 void HttpServer::stop() {
-  for (auto& c : conns_) ::close(c.fd);
+  for (auto& c : conns_) net::closeSock(c.fd);
   conns_.clear();
-  if (fd_ >= 0) ::close(fd_);
+  if (fd_ >= 0) net::closeSock(fd_);
   fd_ = -1;
   port_ = 0;
 }
@@ -146,7 +128,7 @@ void HttpServer::stop() {
 std::string HttpServer::boundAddress() const {
   if (fd_ < 0) return "";
   sockaddr_in a{};
-  socklen_t len = sizeof a;
+  net::SockLen len = sizeof a;
   if (getsockname(fd_, reinterpret_cast<sockaddr*>(&a), &len) != 0) return "";
   char buf[INET_ADDRSTRLEN] = {};
   inet_ntop(AF_INET, &a.sin_addr, buf, sizeof buf);
@@ -154,7 +136,7 @@ std::string HttpServer::boundAddress() const {
 }
 
 void HttpServer::closeConn(size_t i) {
-  ::close(conns_[i].fd);
+  net::closeSock(conns_[i].fd);
   conns_.erase(conns_.begin() + static_cast<long>(i));
 }
 
@@ -178,33 +160,33 @@ HttpServer::Response simple(int status, const std::string& msg) {
 
 void HttpServer::poll(const Handler& handler, int timeoutMs) {
   if (fd_ < 0) return;
-  std::vector<pollfd> fds;
-  fds.push_back({fd_, POLLIN, 0});
+  std::vector<net::PollFd> fds;
+  fds.push_back(net::pollEntry(fd_, POLLIN));
   // Streamed replies: collect what is ready before waiting.
   for (auto& c : conns_)
     if (c.pump && !c.pumpDone) c.pumpDone = c.pump(c.out);
   bool streaming = false;
   for (const auto& c : conns_) {
-    fds.push_back({c.fd, static_cast<short>(c.out.size() > c.sent ? POLLOUT : POLLIN), 0});
+    fds.push_back(net::pollEntry(c.fd, static_cast<short>(c.out.size() > c.sent ? POLLOUT : POLLIN)));
     streaming = streaming || (c.pump && !c.pumpDone);
   }
   if (streaming) timeoutMs = std::min(timeoutMs, 20);
-  if (::poll(fds.data(), static_cast<nfds_t>(fds.size()), timeoutMs) < 0) return;
+  if (net::pollSocks(fds.data(), fds.size(), timeoutMs) < 0) return;
   // New connections (loopback peers only).
   if (fds[0].revents & POLLIN)
     for (int k = 0; k < 8; ++k) {
       sockaddr_in peer{};
-      socklen_t len = sizeof peer;
-      const int c = ::accept(fd_, reinterpret_cast<sockaddr*>(&peer), &len);
-      if (c < 0) break;
+      net::SockLen len = sizeof peer;
+      const net::Sock c = static_cast<net::Sock>(::accept(fd_, reinterpret_cast<sockaddr*>(&peer), &len));
+      if (c == net::kNoSock) break;
       const bool loop = peer.sin_family == AF_INET && (ntohl(peer.sin_addr.s_addr) >> 24) == 127;
       if (!loop || conns_.size() >= kMaxConnections) {
-        ::close(c);
+        net::closeSock(c);
         continue;
       }
-      fcntl(c, F_SETFL, fcntl(c, F_GETFL, 0) | O_NONBLOCK);
-      fcntl(c, F_SETFD, FD_CLOEXEC);
-      noSigPipe(c);
+      net::setNonBlocking(c);
+      net::setNoInherit(c);
+      net::setNoSigPipe(c);
       Conn n;
       n.fd = c;
       n.opened = monoNow();
@@ -213,19 +195,19 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
   const double now = monoNow();
   for (size_t i = conns_.size(); i-- > 0;) {
     Conn& c = conns_[i];
-    const short rev = i + 1 < fds.size() && fds[i + 1].fd == c.fd ? fds[i + 1].revents : 0;
+    const short rev = i + 1 < fds.size() && net::sockOf(fds[i + 1]) == c.fd ? fds[i + 1].revents : 0;
     if (c.pump) {  // J-61: a streamed / deferred reply
       if (c.out.size() > c.sent && (rev & (POLLOUT | POLLERR | POLLHUP))) {
-        const ssize_t n = ::send(c.fd, c.out.data() + c.sent, c.out.size() - c.sent, kSendFlags);
+        const long n = net::sendSome(c.fd, c.out.data() + c.sent, c.out.size() - c.sent);
         if (n > 0) c.sent += static_cast<size_t>(n);
-        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        if (n < 0 && !net::wouldBlock()) {
           closeConn(i);
           continue;
         }
       } else if (c.out.size() <= c.sent && (rev & (POLLIN | POLLERR | POLLHUP))) {
         char buf[4096];
-        const ssize_t n = ::recv(c.fd, buf, sizeof buf, 0);
-        if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {  // the client went away
+        const long n = net::recvSome(c.fd, buf, sizeof buf);
+        if (n == 0 || (n < 0 && !net::wouldBlock())) {  // the client went away
           closeConn(i);
           continue;
         }
@@ -241,9 +223,9 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
     }
     if (!c.out.empty()) {
       if (rev & (POLLOUT | POLLERR | POLLHUP)) {
-        const ssize_t n = ::send(c.fd, c.out.data() + c.sent, c.out.size() - c.sent, kSendFlags);
+        const long n = net::sendSome(c.fd, c.out.data() + c.sent, c.out.size() - c.sent);
         if (n > 0) c.sent += static_cast<size_t>(n);
-        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        if (n < 0 && !net::wouldBlock()) {
           closeConn(i);
           continue;
         }
@@ -254,9 +236,9 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
       }
     } else if (rev & (POLLIN | POLLERR | POLLHUP)) {
       char buf[65536];
-      const ssize_t n = ::recv(c.fd, buf, sizeof buf, 0);
+      const long n = net::recvSome(c.fd, buf, sizeof buf);
       if (n <= 0) {
-        if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
+        if (n == 0 || !net::wouldBlock()) {
           closeConn(i);
           continue;
         }
@@ -317,23 +299,20 @@ bool httpRequest(int port, const std::string& method, const std::string& path, c
                  const std::string& body, HttpReply& reply, std::string* err, int timeoutSeconds,
                  const std::function<void(const std::string& chunk)>& onBody) {
   reply = HttpReply();
-  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) {
-    if (err) *err = std::strerror(errno);
+  const net::Sock fd = net::tcpSocket();
+  if (fd == net::kNoSock) {
+    if (err) *err = net::lastError();
     return false;
   }
-  noSigPipe(fd);
-  timeval tv{};
-  tv.tv_sec = timeoutSeconds;
-  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+  net::setNoSigPipe(fd);
+  net::setTimeouts(fd, timeoutSeconds);
   sockaddr_in a{};
   a.sin_family = AF_INET;
   a.sin_port = htons(static_cast<uint16_t>(port));
   a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   if (::connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
-    if (err) *err = std::string("cannot connect to 127.0.0.1:") + std::to_string(port) + ": " + std::strerror(errno);
-    ::close(fd);
+    if (err) *err = std::string("cannot connect to 127.0.0.1:") + std::to_string(port) + ": " + net::lastError();
+    net::closeSock(fd);
     return false;
   }
   std::string req = method + " " + path + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) + "\r\nConnection: close\r\n";
@@ -341,10 +320,10 @@ bool httpRequest(int port, const std::string& method, const std::string& path, c
   req += "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
   size_t sent = 0;
   while (sent < req.size()) {
-    const ssize_t n = ::send(fd, req.data() + sent, req.size() - sent, kSendFlags);
+    const long n = net::sendSome(fd, req.data() + sent, req.size() - sent);
     if (n <= 0) {
       if (err) *err = "send failed";
-      ::close(fd);
+      net::closeSock(fd);
       return false;
     }
     sent += static_cast<size_t>(n);
@@ -353,7 +332,7 @@ bool httpRequest(int port, const std::string& method, const std::string& path, c
   char buf[65536];
   size_t streamed = std::string::npos;  // body bytes handed to onBody so far
   for (;;) {
-    const ssize_t n = ::recv(fd, buf, sizeof buf, 0);
+    const long n = net::recvSome(fd, buf, sizeof buf);
     if (n <= 0) break;
     in.append(buf, static_cast<size_t>(n));
     if (onBody) {
@@ -370,7 +349,7 @@ bool httpRequest(int port, const std::string& method, const std::string& path, c
     }
     if (in.size() > (64u << 20)) break;
   }
-  ::close(fd);
+  net::closeSock(fd);
   const size_t he = in.find("\r\n\r\n");
   if (he == std::string::npos) {
     if (err) *err = "no reply";
@@ -566,16 +545,14 @@ bool writeEndpointFile(const std::string& path, int port, const std::string& tok
   std::error_code ec;
   fs::create_directories(fs::path(path).parent_path(), ec);
   const std::string tmp = path + ".tmp";
-  const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
-  if (fd < 0) {
+  const std::string text = dump(jobj({{"port", jnum(port)}, {"token", jstr(token)}, {"pid", jnum(static_cast<double>(platform::processId()))}})) + "\n";
+  // Owner-only (0600 on POSIX; Windows: the user's profile folder is private to the user).
+  if (!platform::writePrivateFile(tmp, text)) {
     if (err) *err = "cannot write " + path;
     return false;
   }
-  fchmod(fd, 0600);
-  const std::string text = dump(jobj({{"port", jnum(port)}, {"token", jstr(token)}, {"pid", jnum(static_cast<double>(::getpid()))}})) + "\n";
-  const bool ok = ::write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
-  ::close(fd);
-  if (!ok || std::rename(tmp.c_str(), path.c_str()) != 0) {
+  fs::rename(tmp, path, ec);
+  if (ec) {
     if (err) *err = "cannot write " + path;
     std::remove(tmp.c_str());
     return false;

@@ -96,7 +96,7 @@ std::string canon(const std::string& p) {
 }
 void normalisePaths(Song& s) {
   forEachFileRef(s, [](std::string& p) {
-    if (!p.empty() && p[0] == '/') p = canon(p);
+    if (!p.empty() && (p[0] == '/' || fs::path(p).is_absolute())) p = canon(p);
   });
 }
 

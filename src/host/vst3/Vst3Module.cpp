@@ -3,10 +3,14 @@
 #include <filesystem>
 #include <map>
 #include <mutex>
+#include "../Dylib.h"
+#include "../../core/Platform.h"
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
-#else
-#include <dlfcn.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#endif
+#if !defined(_WIN32)
 #include <sys/utsname.h>
 #endif
 
@@ -34,29 +38,69 @@ bool ClassInfo::isInstrument() const {
   return first == "Instrument";
 }
 
-std::string bundleBinaryPath(const std::string& bundlePath) {
-  fs::path b(bundlePath);
-#if defined(__APPLE__)
-  return (b / "Contents" / "MacOS" / b.stem()).string();
+// The bundle's architecture folder: <arch>-win (Windows), <arch>-linux (Linux and the BSDs,
+// which use the Linux layout).
+std::string bundleArchFolder() {
+#if defined(_WIN32)
+#if defined(_M_ARM64) || defined(__aarch64__)
+  return "arm64-win";
+#elif defined(_M_IX86) || defined(__i386__)
+  return "x86-win";
+#else
+  return "x86_64-win";
+#endif
 #else
   struct utsname u {};
   std::string arch = uname(&u) == 0 ? u.machine : "x86_64";
   if (arch == "i686" || arch == "i586" || arch == "i486") arch = "i386";
   if (arch == "arm64") arch = "aarch64";
-  return (b / "Contents" / (arch + "-linux") / (b.stem().string() + ".so")).string();
+  if (arch == "amd64") arch = "x86_64";  // FreeBSD / OpenBSD / NetBSD name
+  return arch + "-linux";
+#endif
+}
+
+std::string bundleBinaryPath(const std::string& bundlePath) {
+  fs::path b(bundlePath);
+#if defined(__APPLE__)
+  return (b / "Contents" / "MacOS" / b.stem()).string();
+#elif defined(_WIN32)
+  // Windows on ARM: arm64x / arm64ec binaries run too.
+  std::error_code ec;
+  const std::string own = (b / "Contents" / bundleArchFolder() / b.filename()).string();
+#if defined(_M_ARM64) || defined(__aarch64__)
+  if (!fs::exists(own, ec))
+    for (const char* alt : {"arm64x-win", "arm64ec-win"}) {
+      const std::string p = (b / "Contents" / alt / b.filename()).string();
+      if (fs::exists(p, ec)) return p;
+    }
+#endif
+  return own;
+#else
+  return (b / "Contents" / bundleArchFolder() / (b.stem().string() + ".so")).string();
 #endif
 }
 
 std::vector<std::string> defaultSearchPaths() {
   std::vector<std::string> v;
-  const char* home = std::getenv("HOME");
+  const char* home = platform::homeEnv();
 #if defined(__APPLE__)
   if (home) v.push_back(std::string(home) + "/Library/Audio/Plug-Ins/VST3");
   v.push_back("/Library/Audio/Plug-Ins/VST3");
+#elif defined(_WIN32)
+  // %LOCALAPPDATA%\Programs\Common\VST3 (per user) and %COMMONPROGRAMFILES%\VST3.
+  (void)home;
+  if (const char* la = std::getenv("LOCALAPPDATA")) v.push_back(std::string(la) + "\\Programs\\Common\\VST3");
+  if (const char* cf = std::getenv("CommonProgramFiles"))
+    v.push_back(std::string(cf) + "\\VST3");
+  else
+    v.push_back("C:\\Program Files\\Common Files\\VST3");
 #else
   if (home) v.push_back(std::string(home) + "/.vst3");
   v.push_back("/usr/lib/vst3");
   v.push_back("/usr/local/lib/vst3");
+#if !defined(__linux__)
+  v.push_back("/usr/pkg/lib/vst3");  // NetBSD pkgsrc
+#endif
 #endif
   return v;
 }
@@ -71,9 +115,14 @@ std::vector<std::string> findBundles(const std::vector<std::string>& folders) {
       const fs::path& p = it->path();
       if (p.extension() == ".vst3") {
         if (it->is_directory(ec)) {
-          out.push_back(p.string());
+          out.push_back(p.generic_string());
           it.disable_recursion_pending();
         }
+#if defined(_WIN32)
+        else if (it->is_regular_file(ec)) {
+          out.push_back(p.generic_string());  // VST 3.6 and older: a single .vst3 DLL
+        }
+#endif
       }
       if (it.depth() > 6) it.disable_recursion_pending();
     }
@@ -96,8 +145,12 @@ Module::~Module() {
   CFRelease(bundle);
 #else
   if (!leak_) {
-    if (void* exitSym = dlsym(handle_, "ModuleExit")) toFunction<bool (*)()>(exitSym)();
-    dlclose(handle_);
+#if defined(_WIN32)
+    if (void* exitSym = host::dl::sym(handle_, "ExitDll")) toFunction<bool (*)()>(exitSym)();
+#else
+    if (void* exitSym = host::dl::sym(handle_, "ModuleExit")) toFunction<bool (*)()>(exitSym)();
+#endif
+    host::dl::close(handle_);
   }
 #endif
 }
@@ -148,16 +201,26 @@ std::unique_ptr<Module> Module::load(const std::string& bundlePath, std::string*
     else
       return fail("no binary for this platform (" + bin + ")");
   }
-  void* h = dlopen(bin.c_str(), RTLD_LAZY | RTLD_LOCAL);
-  if (!h) return fail(std::string("dlopen: ") + dlerror());
+  std::string why;
+  void* h = host::dl::open(bin, &why);
+  if (!h) return fail(why);
   m->handle_ = h;
-  if (void* entry = dlsym(h, "ModuleEntry")) {
+#if defined(_WIN32)
+  if (void* entry = host::dl::sym(h, "InitDll")) {
+    if (!toFunction<bool (*)()>(entry)()) {
+      m->leak_ = true;
+      return fail("InitDll failed");
+    }
+  }
+#else
+  if (void* entry = host::dl::sym(h, "ModuleEntry")) {
     if (!toFunction<bool (*)(void*)>(entry)(h)) {
       m->leak_ = true;
       return fail("ModuleEntry failed");
     }
   }
-  factorySym = dlsym(h, "GetPluginFactory");
+#endif
+  factorySym = host::dl::sym(h, "GetPluginFactory");
 #endif
   if (!factorySym) return fail("no GetPluginFactory export");
   sb::IPluginFactory* f = toFunction<sb::IPluginFactory* (*)()>(factorySym)();

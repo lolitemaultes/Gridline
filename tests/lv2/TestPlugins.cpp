@@ -15,6 +15,7 @@
 //       state extension (scale, a name, a path), freeWheeling port; external
 //       (kx) interface.
 #include <atomic>
+#include <thread>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -237,6 +238,7 @@ struct Stateful {
   LV2_Worker_Schedule* schedule = nullptr;
   LV2_URID kScale = 0, kName = 0, kPath = 0, atomFloat = 0, atomString = 0, atomPath = 0, atomInt = 0, atomChunk = 0, atomSequence = 0;
   std::atomic<bool> inRun{false};
+  std::thread::id runThread;  // the thread run() was last called on
   int sentCounter = 0;
   LV2_Atom_Forge forge;
 };
@@ -283,6 +285,7 @@ void stateConnect(LV2_Handle h, uint32_t port, void* data) {
 void stateRun(LV2_Handle h, uint32_t n) {
   auto* s = static_cast<Stateful*>(h);
   s->inRun = true;
+  s->runThread = std::this_thread::get_id();
   ++gProbe.runs;
   gProbe.freewheel = *s->freewheel;
   *s->latency = 32;
@@ -318,7 +321,8 @@ void stateFree(LV2_Handle h) { delete static_cast<Stateful*>(h); }
 LV2_Worker_Status stateWork(LV2_Handle h, LV2_Worker_Respond_Function respond, LV2_Worker_Respond_Handle rh, uint32_t size, const void* data) {
   auto* s = static_cast<Stateful*>(h);
   ++gProbe.works;
-  gProbe.workOnRunThread = s->inRun.load();
+  // The worker's thread, not "while run() is busy": the host keeps calling run() meanwhile.
+  gProbe.workOnRunThread = std::this_thread::get_id() == s->runThread;
   if (size != sizeof(int32_t)) return LV2_WORKER_ERR_UNKNOWN;
   int32_t req = 0;
   std::memcpy(&req, data, sizeof req);

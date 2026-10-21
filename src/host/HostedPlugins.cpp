@@ -446,6 +446,7 @@ class Core final : public HostedInstance {
   void beginBlock(const ProcessContext& ctx) {
     ctx_ = ctx;
     ctxClock_ = inClock_;
+    b_->setRenderingOffline(ctx.offline);
     const int want = ctx.offline && opts_.notifyRender ? 1 : 0;
     if (want != offlineApplied_) {
       // Offline exports run on the thread that created the instance: switch

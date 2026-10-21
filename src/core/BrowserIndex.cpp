@@ -1,5 +1,6 @@
 // Gridline — browser content model (see BrowserIndex.h).
 #include "BrowserIndex.h"
+#include "Platform.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -28,7 +29,45 @@ bool endsWith(const std::string& s, const std::string& suf) {
   return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
 }
 
-std::string extOf(const std::string& path) { return lower(fs::path(path).extension().string()); }
+// Index keys: '/' separators everywhere (Windows paths arrive with either separator).
+std::string keyOf(const std::string& path) {
+#if defined(_WIN32)
+  std::string k = path;
+  for (char& c : k)
+    if (c == '\\') c = '/';
+  return k;
+#else
+  return path;
+#endif
+}
+
+// String operations, not std::filesystem: names read from a cache file may not be valid UTF-8,
+// which Windows' path conversion rejects with an exception.
+std::string extOf(const std::string& path) {
+  const size_t slash = path.find_last_of("/\\");
+  const size_t dot = path.rfind('.');
+  if (dot == std::string::npos || (slash != std::string::npos && dot < slash) || dot == (slash == std::string::npos ? 0 : slash + 1)) return {};
+  return lower(path.substr(dot));
+}
+
+// The last `n` components of a path, file name first (string operations, as above).
+std::vector<std::string> tailParts(const std::string& path, size_t n) {
+#ifdef _WIN32
+  const char* seps = "/\\";
+#else
+  const char* seps = "/";
+#endif
+  std::vector<std::string> out;
+  size_t end = path.size();
+  while (out.size() < n && end > 0) {
+    const size_t sep = path.find_last_of(seps, end - 1);
+    const size_t begin = sep == std::string::npos ? 0 : sep + 1;
+    if (end > begin) out.push_back(path.substr(begin, end - begin));
+    if (sep == std::string::npos) break;
+    end = sep;
+  }
+  return out;
+}
 
 // Splits on anything but letters, digits (and '#' when keepSharp).
 std::vector<std::string> tokens(const std::string& s, bool keepSharp) {
@@ -86,7 +125,7 @@ double fileMtime(const fs::path& p) {
   std::error_code ec;
   auto t = fs::last_write_time(p, ec);
   if (ec) return 0;
-  return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count());
+  return static_cast<double>(platform::fileTimeSeconds(t));
 }
 
 }  // namespace
@@ -153,18 +192,18 @@ double bpmFromName(const std::string& name) {
     const std::string& s = t[i];
     // "120bpm"
     if (endsWith(s, "bpm") && s.size() > 3 && allDigits(s.substr(0, s.size() - 3))) {
-      double v = std::atof(s.c_str());
+      double v = platform::parseDouble(s.c_str());
       if (inRange(v)) return v;
     }
     // "bpm120"
     if (s.rfind("bpm", 0) == 0 && s.size() > 3 && allDigits(s.substr(3))) {
-      double v = std::atof(s.c_str() + 3);
+      double v = platform::parseDouble(s.c_str() + 3);
       if (inRange(v)) return v;
     }
     // "120 bpm" / "bpm 120"
     if (s == "bpm") {
-      if (i > 0 && allDigits(t[i - 1]) && inRange(std::atof(t[i - 1].c_str()))) return std::atof(t[i - 1].c_str());
-      if (i + 1 < t.size() && allDigits(t[i + 1]) && inRange(std::atof(t[i + 1].c_str()))) return std::atof(t[i + 1].c_str());
+      if (i > 0 && allDigits(t[i - 1]) && inRange(platform::parseDouble(t[i - 1].c_str()))) return platform::parseDouble(t[i - 1].c_str());
+      if (i + 1 < t.size() && allDigits(t[i + 1]) && inRange(platform::parseDouble(t[i + 1].c_str()))) return platform::parseDouble(t[i + 1].c_str());
     }
   }
   // A bare number in loop names ("Funk loop 96", "groove_120").
@@ -172,7 +211,7 @@ double bpmFromName(const std::string& name) {
   if (loopish)
     for (const auto& s : t)
       if (allDigits(s) && s.size() >= 2 && s.size() <= 3) {
-        double v = std::atof(s.c_str());
+        double v = platform::parseDouble(s.c_str());
         if (v >= 70 && v <= 180) return v;
       }
   return 0;
@@ -312,12 +351,13 @@ std::vector<std::string> autoTags(const std::string& path) {
       {"string", "strings"}, {"strings", "strings"}, {"brass", "brass"}, {"horn", "brass"}, {"impulse", "ir"},
       {"impulses", "ir"}, {"reverb", "ir"},      {"oneshot", "oneshot"}, {"shot", "oneshot"}, {"break", "loop"},
   };
-  fs::path p(path);
-  std::string hay = p.stem().string();
-  if (p.has_parent_path()) {
-    hay += " " + p.parent_path().filename().string();
-    if (p.parent_path().has_parent_path()) hay += " " + p.parent_path().parent_path().filename().string();
+  const std::vector<std::string> parts = tailParts(path, 3);
+  std::string hay;
+  if (!parts.empty()) {
+    const size_t dot = parts[0].rfind('.');
+    hay = dot == std::string::npos || dot == 0 ? parts[0] : parts[0].substr(0, dot);
   }
+  for (size_t i = 1; i < parts.size(); ++i) hay += " " + parts[i];
   std::vector<std::string> out;
   for (const std::string& t : tokens(lower(hay), false)) {
     for (const auto& [kw, tag] : vocab) {
@@ -390,7 +430,7 @@ Query parseQuery(const std::string& text) {
     if (v.empty()) return false;
     if (v[0] == '>' || v[0] == '<') {
       size_t o = v.size() > 1 && v[1] == '=' ? 2 : 1;
-      double x = std::atof(v.c_str() + o);
+      double x = platform::parseDouble(v.c_str() + o);
       if (!(x > 0) && v.substr(o) != "0") return false;
       if (v[0] == '>') lo = x, hi = 1e9;
       else lo = 0, hi = x;
@@ -398,12 +438,12 @@ Query parseQuery(const std::string& text) {
     }
     size_t dash = v.find('-', 1);
     if (dash != std::string::npos) {
-      lo = std::atof(v.substr(0, dash).c_str());
-      hi = std::atof(v.substr(dash + 1).c_str());
+      lo = platform::parseDouble(v.substr(0, dash).c_str());
+      hi = platform::parseDouble(v.substr(dash + 1).c_str());
       if (lo > hi) std::swap(lo, hi);
       return hi > 0;
     }
-    double x = std::atof(v.c_str());
+    double x = platform::parseDouble(v.c_str());
     if (!(x > 0)) return false;
     lo = x - tol;
     hi = x + tol;
@@ -483,12 +523,8 @@ bool matches(const FileMeta& m, const Query& q) {
   for (const auto& t : q.tags)
     if (!hasTag(m, t, autos)) return false;
   if (!q.words.empty()) {
-    fs::path p(m.path);
-    std::string hay = lower(p.filename().string());
-    if (p.has_parent_path()) {
-      hay += " " + lower(p.parent_path().filename().string());
-      if (p.parent_path().has_parent_path()) hay += " " + lower(p.parent_path().parent_path().filename().string());
-    }
+    std::string hay;
+    for (const std::string& part : tailParts(m.path, 3)) hay += (hay.empty() ? "" : " ") + lower(part);
     for (const auto& t : m.tags) hay += " " + t;
     for (const auto& t : autos) hay += " " + t;
     for (const auto& w : q.words)
@@ -689,7 +725,8 @@ FileMeta Index::describe(const std::string& path, bool analyse) {
   m.size = static_cast<uint64_t>(fs::file_size(path, ec));
   if (ec) m.size = 0;
   m.mtime = static_cast<int64_t>(fileMtime(path));
-  const std::string name = fs::path(path).filename().string();
+  const std::vector<std::string> parts = tailParts(path, 1);
+  const std::string name = parts.empty() ? std::string() : parts[0];
   if (m.kind == Kind::Audio) {
     m.bpm = bpmFromName(name);
     keyFromName(name, m.key, m.minor);
@@ -726,13 +763,16 @@ void Index::put(const FileMeta& m) {
   {
     std::lock_guard<std::mutex> lk(mu_);
     FileMeta c = m;
-    if (auto t = tags_.find(m.path); t != tags_.end()) c.tags = t->second;
-    entries_[m.path] = std::move(c);
+    c.path = keyOf(m.path);
+    if (auto t = tags_.find(c.path); t != tags_.end()) c.tags = t->second;
+    const std::string key = c.path;
+    entries_[key] = std::move(c);
   }
   ++gen_;
 }
 
-bool Index::lookup(const std::string& path, FileMeta& out) const {
+bool Index::lookup(const std::string& pathIn, FileMeta& out) const {
+  const std::string path = keyOf(pathIn);
   std::lock_guard<std::mutex> lk(mu_);
   auto it = entries_.find(path);
   if (it == entries_.end()) return false;
@@ -756,14 +796,20 @@ std::vector<FileMeta> Index::search(const Query& q, size_t limit) const {
     }
   }
   std::sort(out.begin(), out.end(), [](const FileMeta& a, const FileMeta& b) {
-    const std::string na = lower(fs::path(a.path).filename().string()), nb = lower(fs::path(b.path).filename().string());
+    // Plain string work: a stored path need not convert to the system code page (Windows).
+    auto nameOf = [](const std::string& p) {
+      const auto parts = tailParts(p, 1);
+      return parts.empty() ? std::string() : lower(parts[0]);
+    };
+    const std::string na = nameOf(a.path), nb = nameOf(b.path);
     return na != nb ? na < nb : a.path < b.path;
   });
   if (out.size() > limit) out.resize(limit);
   return out;
 }
 
-void Index::setTags(const std::string& path, std::vector<std::string> tags) {
+void Index::setTags(const std::string& pathIn, std::vector<std::string> tags) {
+  const std::string path = keyOf(pathIn);
   for (auto& t : tags) {
     t = lower(t);
     t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)) || c == ','; }), t.end());
@@ -790,7 +836,7 @@ void Index::setTags(const std::string& path, std::vector<std::string> tags) {
 
 std::vector<std::string> Index::tagsOf(const std::string& path) const {
   std::lock_guard<std::mutex> lk(mu_);
-  auto it = tags_.find(path);
+  auto it = tags_.find(keyOf(path));
   return it == tags_.end() ? std::vector<std::string>{} : it->second;
 }
 
@@ -916,7 +962,7 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
       }
       std::error_code e2;
       if (!it->is_regular_file(e2)) continue;
-      const std::string p = it->path().string();
+      const std::string p = keyOf(it->path().string());
       const Kind k = kindOf(p);
       if (!listable(k) || !seen.insert(p).second) continue;
       const uint64_t size = static_cast<uint64_t>(it->file_size(e2));
@@ -958,7 +1004,7 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
     for (auto it = entries_.begin(); it != entries_.end();) {
       bool under = false;
       for (const auto& r : roots) {
-        const std::string pre = (fs::path(r.first) / "").string();
+        const std::string pre = keyOf((fs::path(r.first) / "").string());
         if (it->first.compare(0, pre.size(), pre) == 0) under = true;
       }
       if (under && !seen.count(it->first) && !tags_.count(it->first)) {

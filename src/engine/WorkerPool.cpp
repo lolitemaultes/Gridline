@@ -1,5 +1,7 @@
 #include "WorkerPool.h"
 #include "Denormals.h"
+#include <cstdlib>
+#include <thread>
 #if defined(__APPLE__)
 #include <dispatch/dispatch.h>
 #include <mach/mach.h>
@@ -7,6 +9,8 @@
 #include <mach/thread_policy.h>
 #include <pthread.h>
 #include <sys/qos.h>
+#elif defined(_WIN32)
+#include <windows.h>
 #else
 #include <pthread.h>
 #include <sched.h>
@@ -20,6 +24,11 @@ Semaphore::Semaphore() : h_(dispatch_semaphore_create(0)) {}
 Semaphore::~Semaphore() { dispatch_release(static_cast<dispatch_semaphore_t>(h_)); }
 void Semaphore::post() { dispatch_semaphore_signal(static_cast<dispatch_semaphore_t>(h_)); }
 void Semaphore::wait() { dispatch_semaphore_wait(static_cast<dispatch_semaphore_t>(h_), DISPATCH_TIME_FOREVER); }
+#elif defined(_WIN32)
+Semaphore::Semaphore() : h_(CreateSemaphoreW(nullptr, 0, 0x7fffffff, nullptr)) {}
+Semaphore::~Semaphore() { CloseHandle(static_cast<HANDLE>(h_)); }
+void Semaphore::post() { ReleaseSemaphore(static_cast<HANDLE>(h_), 1, nullptr); }
+void Semaphore::wait() { WaitForSingleObject(static_cast<HANDLE>(h_), INFINITE); }
 #else
 Semaphore::Semaphore() : h_(new sem_t) { sem_init(static_cast<sem_t*>(h_), 0, 0); }
 Semaphore::~Semaphore() {
@@ -53,7 +62,17 @@ namespace {
 // tasks they claimed: a worker the OS preempts for a scheduler quantum (10 ms)
 // stalls the whole block. Run them with real-time scheduling like the audio
 // thread itself (best effort: falls back to the default policy when refused).
-bool makeRealtime() {
+// GRIDLINE_NO_REALTIME=1 keeps every worker at normal priority.
+bool makeRealtime(int index) {
+  if (const char* off = std::getenv("GRIDLINE_NO_REALTIME"); off && *off && *off != '0') return false;
+#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+  // No real-time throttling on the BSDs (Linux keeps 5% of the CPU for everything else): one
+  // CPU stays free of real-time workers, or a long render could starve the rest of the system.
+  const unsigned cpus = std::thread::hardware_concurrency();
+  if (cpus == 0 || static_cast<unsigned>(index) >= cpus - 1) return false;
+#else
+  (void)index;
+#endif
 #if defined(__APPLE__)
   pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
   mach_timebase_info_data_t tb;
@@ -66,6 +85,8 @@ bool makeRealtime() {
   pol.preemptible = 1;
   return thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
                            reinterpret_cast<thread_policy_t>(&pol), THREAD_TIME_CONSTRAINT_POLICY_COUNT) == KERN_SUCCESS;
+#elif defined(_WIN32)
+  return SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) != 0;
 #else
   sched_param sp{};
   sp.sched_priority = sched_get_priority_min(SCHED_FIFO) + 10;
@@ -75,9 +96,8 @@ bool makeRealtime() {
 }  // namespace
 
 void WorkerPool::loop(int index) {
-  (void)index;
   flushDenormals();  // same float mode as the audio thread (identical output for any thread count)
-  if (makeRealtime()) realtime_.fetch_add(1);
+  if (makeRealtime(index)) realtime_.fetch_add(1);
   for (;;) {
     sem_.wait();
     if (quit_.load()) return;

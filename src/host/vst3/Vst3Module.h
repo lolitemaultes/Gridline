@@ -64,6 +64,8 @@ class Module {
 
 // Platform binary inside a bundle (Linux: Contents/<arch>-linux/<name>.so).
 std::string bundleBinaryPath(const std::string& bundlePath);
+// Contents/<folder> holding this platform's binary: "x86_64-win", "arm64-win", "x86_64-linux", ...
+std::string bundleArchFolder();
 // Default VST3 search folders for this platform (existing or not).
 std::vector<std::string> defaultSearchPaths();
 // Every *.vst3 bundle below the folders (bundles are not searched inside).

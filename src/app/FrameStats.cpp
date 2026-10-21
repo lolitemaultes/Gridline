@@ -1,6 +1,6 @@
 // Gridline — live frame statistics (see FrameStats.h).
 #include "FrameStats.h"
-#include <sys/resource.h>
+#include "../core/Platform.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -21,11 +21,7 @@ double gCpu0 = 0;
 uint64_t nowNs() {
   return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
-double cpuSeconds() {
-  rusage u{};
-  getrusage(RUSAGE_SELF, &u);
-  return static_cast<double>(u.ru_utime.tv_sec + u.ru_stime.tv_sec) + static_cast<double>(u.ru_utime.tv_usec + u.ru_stime.tv_usec) * 1e-6;
-}
+double cpuSeconds() { return platform::cpuSeconds(); }
 }  // namespace
 
 void enable(bool on) { gOn = on; }

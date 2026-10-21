@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include "../../third_party/rtmidi/RtMidi.h"
+#include "MidiBackend.h"
 #include "../core/Json.h"
 #include "../core/MidiTemplates.h"
 #include "../core/Project.h"
@@ -61,11 +62,11 @@ void MidiManager::scan() {
   inputs.clear();
   outputs.clear();
   try {
-    RtMidiIn probe;
-    for (unsigned i = 0; i < probe.getPortCount(); ++i) inputs.push_back(probe.getPortName(i));
-    RtMidiOut probeOut;
-    for (unsigned i = 0; i < probeOut.getPortCount(); ++i) outputs.push_back(probeOut.getPortName(i));
-    status = std::to_string(inputs.size()) + " input(s), " + std::to_string(outputs.size()) + " output(s) found";
+    auto probe = makeMidiIn();
+    for (unsigned i = 0; i < probe->getPortCount(); ++i) inputs.push_back(probe->getPortName(i));
+    auto probeOut = makeMidiOut();
+    for (unsigned i = 0; i < probeOut->getPortCount(); ++i) outputs.push_back(probeOut->getPortName(i));
+    status = std::to_string(inputs.size()) + " input(s), " + std::to_string(outputs.size()) + " output(s) found (" + midiBackendName() + ")";
   } catch (const RtMidiError& e) {
     status = "MIDI unavailable: " + e.getMessage();
   }
@@ -93,7 +94,7 @@ void MidiManager::apply() {
       const MidiInputConfig* cfg = inputConfig(name);
       if (!cfg || !cfg->enabled) continue;
       auto port = std::make_unique<Port>();
-      port->in = std::make_unique<RtMidiIn>(RtMidi::UNSPECIFIED, "Gridline");
+      port->in = makeMidiIn();
       port->name = name;
       port->number = cfg->port;
       port->notes = cfg->notes;
@@ -115,7 +116,7 @@ void MidiManager::apply() {
     if (out_) out_->closePort();
     out_.reset();
     if (!output.empty()) {
-      out_ = std::make_unique<RtMidiOut>(RtMidi::UNSPECIFIED, "Gridline");
+      out_ = makeMidiOut();
       for (unsigned k = 0; k < out_->getPortCount(); ++k)
         if (out_->getPortName(k) == output) {
           out_->openPort(k, "Gridline Out");

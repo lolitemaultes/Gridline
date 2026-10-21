@@ -446,7 +446,8 @@ Encoder wrappedFl() {
     const std::vector<Rec> rs = records(b);
     const Rec* nameRec = findRec(rs, 54);
     if (!nameRec) return v;
-    const ParamMap& pm = paramMap(str(nameRec->data));
+    const std::string pluginName = str(nameRec->data);
+    const ParamMap& pm = paramMap(pluginName);
     const ParamList pl = paramList(b);
     // Several FL parameters may set one Gridline parameter: the last one wins.
     std::map<int, size_t> last;

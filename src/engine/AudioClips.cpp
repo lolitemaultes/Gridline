@@ -8,6 +8,12 @@
 // where the clip's time map places that moment, at the pitch ratio. The
 // windows sum to one, so at unit speed and pitch the result equals the
 // plain read exactly.
+//
+// J-87: pitched, stretched and tempo-synced clips play their offline-quality
+// render (ProgAudioClip::hq, engine/TimeStretch) once it is ready, indexed by
+// the sample count since the clip's first sample; the grains above are the
+// fallback while it renders and while the channel pitch is automated. Plain
+// clips read the source through a band-limited windowed-sinc kernel.
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -19,6 +25,25 @@ namespace {
 constexpr double kGrainHop = 0.030;    // seconds between grain starts (grain length = 2 hops)
 constexpr double kDeclick = 0.002;     // minimum fade at clip edges, seconds
 constexpr double kPi = 3.14159265358979323846;
+
+// Band-limited read (J-87): plain clips, sample-rate conversion.
+inline void readFrameSinc(const Sample& s, double sec, bool reverse, float& l, float& r, const stretch::SincTable& t, double rate) {
+  double f = sec * s.sampleRate;
+  const double last = static_cast<double>(s.frames() - 1);
+  if (reverse) f = last - f;
+  if (!(f >= -1e-6) || f > last + 1e-6) {
+    l = r = 0.f;
+    return;
+  }
+  const double fr = f - std::floor(f);
+  if (rate <= 1.000001 && (fr < 1e-7 || fr > 1 - 1e-7)) {  // on a sample, not reading faster: exact
+    const auto i = static_cast<size_t>(std::clamp(std::llround(f), 0LL, static_cast<long long>(s.frames() - 1)));
+    l = s.left[i];
+    r = s.right[i];
+    return;
+  }
+  stretch::readSinc2(s.left.data(), s.right.data(), static_cast<int64_t>(s.frames()), f, rate, t, l, r);
+}
 
 inline void readFrame(const Sample& s, double sec, bool reverse, float& l, float& r) {
   double f = sec * s.sampleRate;
@@ -45,6 +70,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
                       int64_t clock, int from, int len, float* L, float* R, double pitchSemis) {
   if (clips.empty() || len <= 0) return;
   const double chanRatio = pitchSemis != 0 ? std::pow(2.0, pitchSemis / 12.0) : 1.0;
+  const stretch::SincTable& rt = stretch::sincTable(stretch::Quality::Realtime);  // built by the program builder
   const double t0 = map.tickAfterSamples(anchorTick, static_cast<double>(clock), sr);
   const double t1 = map.tickAfterSamples(anchorTick, static_cast<double>(clock + len), sr);
   const double sec0 = map.secondsAt(t0);
@@ -73,6 +99,13 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     const double nIn = fadeSamples(c.fadeIn, sr), nOut = fadeSamples(c.fadeOut, sr);
     int64_t cachedGrain = std::numeric_limits<int64_t>::min();
     double grainSrc[2] = {0, 0};
+    // J-87: the offline render, while it applies.
+    // (A render in progress publishes its finished start: frames below hqReady.)
+    const stretch::RenderedClip* hq = c.hq && std::fabs(pitchSemis - c.hqSemis) < 1e-6 ? c.hq.get() : nullptr;
+    const int64_t hqReady = hq ? hq->readyFrames.load(std::memory_order_acquire) : 0;
+    const int64_t hqFrames = hq ? hq->frames() : 0;
+    const int64_t first = sampleOf(static_cast<double>(c.start));  // block index of the clip's first sample
+    const double readRate = c.speed * s.sampleRate / sr;              // source frames per output frame (plain reads)
     for (int64_t i = a; i < b; ++i) {
       const double u = sec0 + static_cast<double>(i) / sr - c.startSec;
       double g = c.gain;
@@ -82,10 +115,17 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
       if (fout > 0 && rest < fout) g *= c.fadeOut > 0 ? lawOut.gain(fadeProgressOut(rest * sr, nOut)) : std::max(0.0, rest / fout);
       if (g <= 0.0) continue;
       float l = 0.f, r = 0.f;
-      if (!c.granular && chanRatio == 1.0) {
+      const int64_t m = i - first;
+      if (hq && m < hqReady) {
+        if (m < 0) continue;
+        l = hq->L[static_cast<size_t>(m)];
+        r = hq->R[static_cast<size_t>(m)];
+      } else if (hq && hqReady >= hqFrames) {
+        continue;  // past the render's end: silence
+      } else if (!c.granular && chanRatio == 1.0) {
         double src = srcAt(u, t0 + (t1 - t0) * static_cast<double>(i) / static_cast<double>(len));
         if (src >= c.srcEnd) continue;
-        readFrame(s, src, c.reverse, l, r);
+        readFrameSinc(s, src, c.reverse, l, r, rt, c.secPerTick > 0 ? 1.0 : readRate);
       } else {
         // Grains k (starting at k·H) and k − 1 overlap at u.
         const int64_t k = static_cast<int64_t>(std::floor(u / kGrainHop));

@@ -6,6 +6,7 @@
 #include <fstream>
 #include "Flp.h"
 #include "FlpOrigin.h"
+#include "../Platform.h"
 
 namespace gl::flp {
 
@@ -278,7 +279,7 @@ std::string Context::resolvePath(const std::string& flPath) const {
   if (p.rfind(dtag, 0) == 0 && !factoryData.empty()) p = factoryData + "/Data" + p.substr(dtag.size());
   const std::string utag = "%FLStudioUserData%";
   if (p.rfind(utag, 0) == 0) {
-    const char* home = std::getenv("HOME");
+    const char* home = gl::platform::homeEnv();
     p = std::string(home ? home : "") + "/Documents/Image-Line" + p.substr(utag.size());
   }
   if (!p.empty() && p[0] != '/' && !projectDir.empty() && !(p.size() > 1 && p[1] == ':')) p = projectDir + "/" + p;
@@ -311,7 +312,12 @@ std::string defaultFactoryData() {
   for (const char* c : {"/Applications/FL Studio 2026.app/Contents/Resources/FL", "/Applications/FL Studio 2025.app/Contents/Resources/FL",
                         "/Applications/FL Studio 21.app/Contents/Resources/FL"})
     if (fs::exists(c, ec)) return c;
-  if (const char* home = std::getenv("HOME")) {
+#if defined(_WIN32)
+  for (const char* c : {"C:/Program Files/Image-Line/FL Studio 2026", "C:/Program Files/Image-Line/FL Studio 2025",
+                        "C:/Program Files/Image-Line/FL Studio 2024", "C:/Program Files/Image-Line/FL Studio 21"})
+    if (fs::exists(c, ec)) return c;
+#endif
+  if (const char* home = gl::platform::homeEnv()) {
     std::string w = std::string(home) + "/.wine/drive_c/Program Files/Image-Line/FL Studio 2025";
     if (fs::exists(w, ec)) return w;
   }

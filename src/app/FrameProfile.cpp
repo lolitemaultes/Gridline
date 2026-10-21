@@ -4,6 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 #include <new>
 #include <vector>
 
@@ -75,9 +78,16 @@ State& st() {
 }
 
 int64_t threadCpuNs() {
+#if defined(_WIN32)
+  FILETIME c, e, k, u;
+  if (!GetThreadTimes(GetCurrentThread(), &c, &e, &k, &u)) return 0;
+  auto ns = [](const FILETIME& t) { return static_cast<int64_t>((static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime) * 100; };
+  return ns(k) + ns(u);
+#else
   timespec ts{};
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
   return static_cast<int64_t>(ts.tv_sec) * 1000000000 + ts.tv_nsec;
+#endif
 }
 int64_t wallNs() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();

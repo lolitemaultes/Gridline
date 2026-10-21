@@ -1,5 +1,6 @@
 // Gridline — tests for the "models" pack (Additive, Image Synth, String
 // Model, Drum Model).
+#include <filesystem>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -366,7 +367,7 @@ int main() {
     expect(back == px, "imagesynth: canvas hex round trip");
     expect(encodeCanvas(std::vector<uint8_t>(px.size(), 0)) == "0", "imagesynth: blank canvas encodes as \"0\"");
     // Write a 6x4 24-bit BMP and load it.
-    std::string path = "/tmp/gridline_models_test.bmp";
+    std::string path = (std::filesystem::temp_directory_path() / "gridline_models_test.bmp").string();
     {
       int w = 6, h = 4, stride = (w * 3 + 3) & ~3;
       std::vector<unsigned char> f(54 + static_cast<size_t>(stride * h), 0);

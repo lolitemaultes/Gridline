@@ -3,7 +3,6 @@
 // playlist-track splits, WAV metadata, external encoders, MIDI import/export
 // (SMF 0/1, round trip), zipped projects / data files / bones (path
 // rewriting), missing-sample relinking.
-#include <unistd.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -254,7 +253,8 @@ void testInterpolation() {
   for (double l : levels) similar = similar && l > 0.01 && std::fabs(l - levels[0]) / levels[0] < 0.02;
   expect(similar, "sampler interpolation qualities: same level for every quality");
   expect(maxDiff(outs[0], outs[2]) > 1e-6f && maxDiff(outs[0], outs[2]) < 0.05f, "sinc interpolation differs slightly from linear");
-  // A 15 kHz tone a semitone down: linear interpolation dulls it, sinc keeps its level.
+  // A 15 kHz tone a semitone down: the realtime reader (J-87: band-limited
+  // windowed sinc, was linear) keeps its level like the offline sinc.
   std::vector<float> hiTone(44100);
   for (size_t i = 0; i < hiTone.size(); ++i) hiTone[i] = static_cast<float>(0.8 * std::sin(2 * 3.14159265358979 * 15000.0 * i / 44100.0));
   Song h = baseSong();
@@ -267,7 +267,7 @@ void testInterpolation() {
   RenderResult snc = renderAudio(h, job);
   const double lr = rms(lin.audio.plane(0) + 4410, 22050), sr = rms(snc.audio.plane(0) + 4410, 22050);
   if (std::getenv("GL_DEBUG")) std::printf("15k: linear %g sinc %g\n", lr, sr);
-  expect(sr > lr * 1.15, "sinc interpolation keeps high frequencies that linear interpolation dulls");
+  expect(lr > sr * 0.95 && lr < sr * 1.05, "realtime interpolation keeps high frequencies like the offline sinc (J-87: no linear dulling)");
 }
 
 // ---------------------------------------------------------------- tails
@@ -448,7 +448,7 @@ void testResampleAndFormats() {
          "MP3 without an encoder program fails with a clear message");
   setEncoderOverride("ffmpeg", "/usr/local/bin/ffmpeg");
   setEncoderOverride("lame", "/usr/local/bin/lame");
-  if (::access("/usr/local/bin/ffmpeg", X_OK) == 0) {
+  if (std::error_code ec; fs::is_regular_file("/usr/local/bin/ffmpeg", ec)) {
     err.clear();
     const std::string mp3 = (fs::path(scratch) / "t.mp3").string(), ogg = (fs::path(scratch) / "t.ogg").string();
     AudioBuffer longer(2, 44100);
@@ -843,7 +843,8 @@ Song interopSong(std::string& kickA, std::string& kickB, std::string& ir) {
   addSampler(s, "Kick A again", kickA);
   // A JSON plugin state that refers to a file (audio editor style).
   s.mixer[1].slots[0].plugin.type = "gl.edison";
-  s.mixer[1].slots[0].plugin.data = "{\"name\": \"take\", \"path\": \"" + ir + "\"}";
+  // (escaped: Windows paths hold backslashes)
+  s.mixer[1].slots[0].plugin.data = "{\"name\": \"take\", \"path\": " + jsonStringify(Json::makeString(ir), 0) + "}";
   return s;
 }
 
@@ -874,8 +875,11 @@ void testInterop() {
             fs::path(loaded.channels[0].plugin.data).parent_path() == fs::path(out) / "Samples";
   expect(ok, "loaded copy: relative paths resolve to the copied files with the right content");
   if (std::getenv("GL_DEBUG")) std::printf("edison data: %s\n", loaded.mixer[1].slots[0].plugin.data.c_str());
-  expect(loaded.mixer[1].slots[0].plugin.data.find((fs::path(out) / "Samples" / "hall.wav").string()) != std::string::npos,
-         "JSON plugin state rewritten to the copy");
+  {
+    Json state;
+    expect(jsonParse(loaded.mixer[1].slots[0].plugin.data, state) && fs::path(state.text("path")) == fs::path(out) / "Samples" / "hall.wav",
+           "JSON plugin state rewritten to the copy");
+  }
 
   // Zipped project.
   const std::string zp = (fs::path(scratch) / "Song.zip").string();
@@ -908,15 +912,16 @@ void testInterop() {
   auto missing = missingFiles(m);
   expect(missing.size() == 4, "missing files listed");
   RelinkReport rr = findReplacements(missing, (fs::path(scratch) / "lib").string());
-  expect(rr.found.size() == 3 && rr.found["/gone/drive/A/kick.wav"] == kickA && rr.found["C:\\Samples\\B\\kick.wav"] == kickB &&
-             rr.found["/gone/hall.flac"] == ir && rr.notFound.size() == 1,
+  auto same = [](const std::string& a, const std::string& b) { return fs::path(a) == fs::path(b); };
+  expect(rr.found.size() == 3 && same(rr.found["/gone/drive/A/kick.wav"], kickA) && same(rr.found["C:\\Samples\\B\\kick.wav"], kickB) &&
+             same(rr.found["/gone/hall.flac"], ir) && rr.notFound.size() == 1,
          "relink: by name (parent folder breaks ties, Windows paths), by stem; the rest reported");
   expect(relinkFiles(m, rr.found) == 3 && missingFiles(m).size() == 1, "relink applies to the song");
   // Size hint breaks a tie when folders do not.
   RelinkOptions ro;
   ro.sizeHints["/x/kick.wav"] = fs::file_size(kickB);
   RelinkReport r2 = findReplacements({"/x/kick.wav"}, (fs::path(scratch) / "lib").string(), ro);
-  expect(r2.found["/x/kick.wav"] == kickB, "relink: size hint picks between same-named files");
+  expect(same(r2.found["/x/kick.wav"], kickB), "relink: size hint picks between same-named files");
 }
 
 void testExportJob() {

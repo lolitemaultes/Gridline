@@ -1,4 +1,5 @@
 #include "Expr.h"
+#include "Platform.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -210,7 +211,7 @@ class Parser {
     if (std::isdigit(static_cast<unsigned char>(c)) || c == '.') {
       const char* start = s_.c_str() + pos_;
       char* end = nullptr;
-      double v = std::strtod(start, &end);
+      double v = platform::parseDouble(start, &end);
       if (end == start) return error("bad number");
       pos_ += static_cast<size_t>(end - start);
       emit(OConst, 0, v);

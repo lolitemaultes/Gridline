@@ -14,14 +14,18 @@ set(GRIDLINE_PLUGIN_DIR ${CMAKE_BINARY_DIR}/plugins)
 
 add_library(gridline_plugin_common OBJECT src/plugin/PluginCore.cpp src/plugin/PluginFrame.cpp src/plugin/HostedWindows.cpp)
 target_link_libraries(gridline_plugin_common PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
-target_compile_options(gridline_plugin_common PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(gridline_plugin_common PRIVATE GRIDLINE_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")
+target_compile_options(gridline_plugin_common PRIVATE ${GL_WARN})
+if(GRIDLINE_DEV_ASSETS)
+  target_compile_definitions(gridline_plugin_common PRIVATE GRIDLINE_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")
+endif()
 set_target_properties(gridline_plugin_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The editor: Cocoa on macOS, X11 (Xlib + GLX) where Xlib is installed,
 # otherwise the plugins run without an editor.
 if(APPLE)
   set(GRIDLINE_PLUGIN_VIEW_SRC src/plugin/PluginViewMac.mm)
+elseif(WIN32)
+  set(GRIDLINE_PLUGIN_VIEW_SRC src/plugin/PluginViewWin.cpp)
 else()
   find_package(X11 QUIET)
   if(X11_FOUND)
@@ -32,20 +36,16 @@ else()
   endif()
 endif()
 
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
-  set(GRIDLINE_LINUX_ARCH aarch64-linux)
-else()
-  set(GRIDLINE_LINUX_ARCH ${CMAKE_SYSTEM_PROCESSOR}-linux)
-endif()
+set(GRIDLINE_LINUX_ARCH ${GRIDLINE_VST3_ARCH})  # Contents/<arch> of the VST3 bundle (CMakeLists.txt)
 
 # gridline_plugin(<target> <format: clap|vst3> <entry source> <Objective-C view class>)
 function(gridline_plugin target format entry viewClass)
   add_library(${target} MODULE ${entry} ${GRIDLINE_PLUGIN_VIEW_SRC} $<TARGET_OBJECTS:gridline_plugin_common> $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS})
   target_link_libraries(${target} PRIVATE gridline_core imgui_core rtmidi ${CMAKE_DL_LIBS})
-  if(NOT APPLE AND X11_FOUND)
+  if(NOT APPLE AND NOT WIN32 AND X11_FOUND)
     target_link_libraries(${target} PRIVATE X11::X11)
   endif()
-  target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(${target} PRIVATE ${GL_WARN})
   target_compile_definitions(${target} PRIVATE GRIDLINE_VERSION_STRING="${PROJECT_VERSION}" GRIDLINE_PLUGIN_VIEW_CLASS=${viewClass})
   set_target_properties(${target} PROPERTIES PREFIX "" OUTPUT_NAME Gridline)
   if(format STREQUAL "clap")
@@ -58,6 +58,8 @@ function(gridline_plugin target format entry viewClass)
     set(bundle ${GRIDLINE_PLUGIN_DIR}/Gridline.vst3)
     if(APPLE)
       set(exports GetPluginFactory bundleEntry bundleExit)
+    elseif(WIN32)
+      set(exports GetPluginFactory InitDll ExitDll)
     else()
       set(exports GetPluginFactory ModuleEntry ModuleExit)
     endif()
@@ -86,13 +88,13 @@ function(gridline_plugin target format entry viewClass)
       set(id org.gridline.Gridline.vst3)
     endif()
     file(WRITE ${bundle}/Contents/Info.plist
-         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleDevelopmentRegion</key><string>English</string>\n<key>CFBundleName</key><string>Gridline</string>\n<key>CFBundleDisplayName</key><string>Gridline</string>\n<key>CFBundleExecutable</key><string>Gridline</string>\n<key>CFBundleIdentifier</key><string>${id}</string>\n<key>CFBundleIconFile</key><string>Gridline</string>\n<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n<key>CFBundlePackageType</key><string>BNDL</string>\n<key>CFBundleSignature</key><string>????</string>\n<key>CFBundleShortVersionString</key><string>${PROJECT_VERSION}</string>\n<key>CFBundleVersion</key><string>${PROJECT_VERSION}</string>\n<key>LSMinimumSystemVersion</key><string>10.15</string>\n<key>NSHighResolutionCapable</key><true/>\n${components}</dict></plist>\n")
+         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleDevelopmentRegion</key><string>English</string>\n<key>CFBundleName</key><string>Gridline</string>\n<key>CFBundleDisplayName</key><string>Gridline</string>\n<key>CFBundleExecutable</key><string>Gridline</string>\n<key>CFBundleIdentifier</key><string>${id}</string>\n<key>CFBundleIconFile</key><string>Gridline</string>\n<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n<key>CFBundlePackageType</key><string>BNDL</string>\n<key>CFBundleSignature</key><string>????</string>\n<key>CFBundleShortVersionString</key><string>${PROJECT_VERSION}</string>\n<key>CFBundleVersion</key><string>${PROJECT_VERSION}</string>\n<key>LSMinimumSystemVersion</key><string>${GL_MACOS_MIN}</string>\n<key>NSHighResolutionCapable</key><true/>\n${components}</dict></plist>\n")
     file(WRITE ${bundle}/Contents/PkgInfo "BNDL????")
     set(list "")
     foreach(sym ${exports})
       string(APPEND list "_${sym}\n")
     endforeach()
-    file(WRITE ${CMAKE_BINARY_DIR}/generated/${target}.exports ${list})
+    file(WRITE ${CMAKE_BINARY_DIR}/generated/${target}.exports "${list}")
     target_link_options(${target} PRIVATE "LINKER:-exported_symbols_list,${CMAKE_BINARY_DIR}/generated/${target}.exports")
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E make_directory ${bundle}/Contents/Resources
@@ -100,6 +102,26 @@ function(gridline_plugin target format entry viewClass)
       COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets ${bundle}/Contents/Resources/assets
       COMMAND touch ${bundle}
       COMMENT "Assembling ${bundle}")
+  elseif(WIN32)
+    # Windows: Gridline.clap is one DLL with Gridline-assets beside it; Gridline.vst3 is a bundle
+    # folder holding Contents/<arch>-win/Gridline.vst3 (the DLL) and Contents/Resources.
+    if(format STREQUAL "clap")
+      set_target_properties(${target} PROPERTIES SUFFIX ".clap" LIBRARY_OUTPUT_DIRECTORY ${GRIDLINE_PLUGIN_DIR})
+      set(assetsDir ${GRIDLINE_PLUGIN_DIR}/Gridline-assets)
+    else()
+      set_target_properties(${target} PROPERTIES SUFFIX ".vst3" LIBRARY_OUTPUT_DIRECTORY ${bundle}/Contents/${GRIDLINE_LINUX_ARCH})
+      set(assetsDir ${bundle}/Contents/Resources/assets)
+    endif()
+    set(def "EXPORTS\n")
+    foreach(sym ${exports})
+      string(APPEND def "    ${sym}\n")
+    endforeach()
+    file(WRITE ${CMAKE_BINARY_DIR}/generated/${target}.def "${def}")
+    target_sources(${target} PRIVATE ${CMAKE_BINARY_DIR}/generated/${target}.def)
+    target_link_libraries(${target} PRIVATE OpenGL::GL)
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets ${assetsDir}
+      COMMENT "Assembling the ${format} plugin")
   else()
     if(format STREQUAL "clap")  # a single file; its assets sit beside it in Gridline-assets
       set_target_properties(${target} PROPERTIES SUFFIX ".clap" LIBRARY_OUTPUT_DIRECTORY ${GRIDLINE_PLUGIN_DIR})
@@ -113,7 +135,7 @@ function(gridline_plugin target format entry viewClass)
       string(APPEND list "    ${sym};\n")
     endforeach()
     string(APPEND list "  local: *;\n};\n")
-    file(WRITE ${CMAKE_BINARY_DIR}/generated/${target}.map ${list})
+    file(WRITE ${CMAKE_BINARY_DIR}/generated/${target}.map "${list}")
     target_link_options(${target} PRIVATE "LINKER:--version-script=${CMAKE_BINARY_DIR}/generated/${target}.map" "LINKER:-Bsymbolic")
     target_link_libraries(${target} PRIVATE OpenGL::GL)
     add_custom_command(TARGET ${target} POST_BUILD
@@ -133,13 +155,21 @@ if(APPLE)  # Audio Unit v2 (instrument aumu/GrIn, effect aufx/GrFx, manufacturer
 endif()
 
 # ---- installing (never done by the build or the tests) ----
+# The plugins are installed with `--component plugins` only, unless GRIDLINE_INSTALL_PLUGINS is
+# on (packages: .deb / .rpm / .tar.gz put them in lib/vst3 and lib/clap).
+option(GRIDLINE_INSTALL_PLUGINS "Install Gridline.vst3 / Gridline.clap with the programs" OFF)
+if(GRIDLINE_INSTALL_PLUGINS)
+  set(GL_PLUGINS_EXCLUDE "")
+else()
+  set(GL_PLUGINS_EXCLUDE EXCLUDE_FROM_ALL)
+endif()
 if(APPLE)
   set(GRIDLINE_USER_CLAP "$ENV{HOME}/Library/Audio/Plug-Ins/CLAP")
   set(GRIDLINE_USER_VST3 "$ENV{HOME}/Library/Audio/Plug-Ins/VST3")
   set(GRIDLINE_USER_AU "$ENV{HOME}/Library/Audio/Plug-Ins/Components")
-  install(DIRECTORY ${GRIDLINE_CLAP_BUNDLE} DESTINATION Library/Audio/Plug-Ins/CLAP COMPONENT plugins EXCLUDE_FROM_ALL USE_SOURCE_PERMISSIONS)
-  install(DIRECTORY ${GRIDLINE_VST3_BUNDLE} DESTINATION Library/Audio/Plug-Ins/VST3 COMPONENT plugins EXCLUDE_FROM_ALL USE_SOURCE_PERMISSIONS)
-  install(DIRECTORY ${GRIDLINE_AU_BUNDLE} DESTINATION Library/Audio/Plug-Ins/Components COMPONENT plugins EXCLUDE_FROM_ALL USE_SOURCE_PERMISSIONS)
+  install(DIRECTORY ${GRIDLINE_CLAP_BUNDLE} DESTINATION Library/Audio/Plug-Ins/CLAP COMPONENT plugins ${GL_PLUGINS_EXCLUDE} USE_SOURCE_PERMISSIONS)
+  install(DIRECTORY ${GRIDLINE_VST3_BUNDLE} DESTINATION Library/Audio/Plug-Ins/VST3 COMPONENT plugins ${GL_PLUGINS_EXCLUDE} USE_SOURCE_PERMISSIONS)
+  install(DIRECTORY ${GRIDLINE_AU_BUNDLE} DESTINATION Library/Audio/Plug-Ins/Components COMPONENT plugins ${GL_PLUGINS_EXCLUDE} USE_SOURCE_PERMISSIONS)
   add_custom_target(install-plugins
     COMMAND ${CMAKE_COMMAND} -E make_directory ${GRIDLINE_USER_CLAP} ${GRIDLINE_USER_VST3} ${GRIDLINE_USER_AU}
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${GRIDLINE_CLAP_BUNDLE} ${GRIDLINE_USER_CLAP}/Gridline.clap
@@ -148,12 +178,28 @@ if(APPLE)
     DEPENDS gridline_clap gridline_vst3 gridline_au
     COMMENT "Installing Gridline.clap, Gridline.vst3 and Gridline.component into the user's plug-in folders"
     VERBATIM)
+elseif(WIN32)
+  # Per-user folders (no administrator rights needed); the installer offers the system-wide
+  # Common Files\CLAP and Common Files\VST3.
+  file(TO_CMAKE_PATH "$ENV{LOCALAPPDATA}/Programs/Common/CLAP" GRIDLINE_USER_CLAP)
+  file(TO_CMAKE_PATH "$ENV{LOCALAPPDATA}/Programs/Common/VST3" GRIDLINE_USER_VST3)
+  install(FILES ${GRIDLINE_CLAP_BUNDLE} DESTINATION plugins/CLAP COMPONENT plugins ${GL_PLUGINS_EXCLUDE})
+  install(DIRECTORY ${GRIDLINE_PLUGIN_DIR}/Gridline-assets DESTINATION plugins/CLAP COMPONENT plugins ${GL_PLUGINS_EXCLUDE})
+  install(DIRECTORY ${GRIDLINE_VST3_BUNDLE} DESTINATION plugins/VST3 COMPONENT plugins ${GL_PLUGINS_EXCLUDE})
+  add_custom_target(install-plugins
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${GRIDLINE_USER_CLAP} ${GRIDLINE_USER_VST3}
+    COMMAND ${CMAKE_COMMAND} -E copy ${GRIDLINE_CLAP_BUNDLE} ${GRIDLINE_USER_CLAP}/Gridline.clap
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${GRIDLINE_PLUGIN_DIR}/Gridline-assets ${GRIDLINE_USER_CLAP}/Gridline-assets
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${GRIDLINE_VST3_BUNDLE} ${GRIDLINE_USER_VST3}/Gridline.vst3
+    DEPENDS gridline_clap gridline_vst3
+    COMMENT "Installing Gridline.clap and Gridline.vst3 into ${GRIDLINE_USER_CLAP} and ${GRIDLINE_USER_VST3}"
+    VERBATIM)
 else()
   set(GRIDLINE_USER_CLAP "$ENV{HOME}/.clap")
   set(GRIDLINE_USER_VST3 "$ENV{HOME}/.vst3")
-  install(FILES ${GRIDLINE_CLAP_BUNDLE} DESTINATION lib/clap COMPONENT plugins EXCLUDE_FROM_ALL)
-  install(DIRECTORY ${GRIDLINE_PLUGIN_DIR}/Gridline-assets DESTINATION lib/clap COMPONENT plugins EXCLUDE_FROM_ALL)
-  install(DIRECTORY ${GRIDLINE_VST3_BUNDLE} DESTINATION lib/vst3 COMPONENT plugins EXCLUDE_FROM_ALL USE_SOURCE_PERMISSIONS)
+  install(FILES ${GRIDLINE_CLAP_BUNDLE} DESTINATION lib/clap COMPONENT plugins ${GL_PLUGINS_EXCLUDE})
+  install(DIRECTORY ${GRIDLINE_PLUGIN_DIR}/Gridline-assets DESTINATION lib/clap COMPONENT plugins ${GL_PLUGINS_EXCLUDE})
+  install(DIRECTORY ${GRIDLINE_VST3_BUNDLE} DESTINATION lib/vst3 COMPONENT plugins ${GL_PLUGINS_EXCLUDE} USE_SOURCE_PERMISSIONS)
   add_custom_target(install-plugins
     COMMAND ${CMAKE_COMMAND} -E make_directory ${GRIDLINE_USER_CLAP} ${GRIDLINE_USER_VST3}
     COMMAND ${CMAKE_COMMAND} -E copy ${GRIDLINE_CLAP_BUNDLE} ${GRIDLINE_USER_CLAP}/Gridline.clap
@@ -168,7 +214,7 @@ endif()
 add_executable(gridline_tests_plugin_build tests/test_plugin_build.cpp)
 target_link_libraries(gridline_tests_plugin_build PRIVATE gridline_core)
 target_include_directories(gridline_tests_plugin_build PRIVATE tests)
-target_compile_options(gridline_tests_plugin_build PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(gridline_tests_plugin_build PRIVATE ${GL_WARN})
 target_compile_definitions(gridline_tests_plugin_build PRIVATE GRIDLINE_PLUGIN_CLAP="${GRIDLINE_CLAP_BUNDLE}"
                            GRIDLINE_PLUGIN_VST3="${GRIDLINE_VST3_BUNDLE}" GRIDLINE_CLI_EXE="$<TARGET_FILE:gridline>"
                            GRIDLINE_TESTPLUG_BUNDLE="${GRIDLINE_TESTPLUG_BUNDLE}" GRIDLINE_CLAP_TESTPLUG="${GRIDLINE_CLAP_TESTPLUG}"

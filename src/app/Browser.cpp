@@ -33,6 +33,7 @@
 #include "Theme.h"
 #include "Widgets.h"
 #include "Windows.h"
+#include "../core/Platform.h"
 
 namespace gl {
 
@@ -104,7 +105,7 @@ void loadFolders(App& a) {
   for (std::string l; std::getline(in, l);)
     if (!l.empty()) folders.push_back(l);
   if (folders.empty()) {
-    const char* h = std::getenv("HOME");
+    const char* h = gl::platform::homeEnv();
     std::string home = h ? h : ".";
     for (const char* sub : {"Music", "Documents", "Downloads"})
       if (fs::is_directory(fs::path(home) / sub)) folders.push_back((fs::path(home) / sub).string());
@@ -1108,7 +1109,7 @@ void drawBrowser(App& a) {
       a.fileDialog = {};
       a.fileDialog.open = true;
       a.fileDialog.title = "Add a folder to the browser";
-      const char* h = std::getenv("HOME");
+      const char* h = gl::platform::homeEnv();
       a.fileDialog.dir = h ? h : ".";
       a.fileDialog.exts = {"/"};  // folder mode
       a.fileDialog.onOk = [&a](const std::string& path) { browserui::addBrowserFolder(a, path); };

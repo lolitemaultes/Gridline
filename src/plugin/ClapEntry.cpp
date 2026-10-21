@@ -8,6 +8,7 @@
 // project), latency, render (offline), GUI (Cocoa / X11, resizable) and the
 // host's timer support (X11 editor redraws, idle work).
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -274,7 +275,9 @@ const clap_plugin_timer_support_t kTimer = {onTimer};
 
 // ---------------------------------------------------------------- GUI
 
-const char* apiName(WindowApi a) { return a == WindowApi::Cocoa ? CLAP_WINDOW_API_COCOA : CLAP_WINDOW_API_X11; }
+const char* apiName(WindowApi a) {
+  return a == WindowApi::Cocoa ? CLAP_WINDOW_API_COCOA : a == WindowApi::Win32 ? CLAP_WINDOW_API_WIN32 : CLAP_WINDOW_API_X11;
+}
 bool guiApiSupported(const clap_plugin_t*, const char* api, bool floating) {
   return !floating && api && std::strcmp(api, apiName(nativeWindowApi())) == 0 && viewSupported(nativeWindowApi());
 }
@@ -336,7 +339,9 @@ bool guiSetSize(const clap_plugin_t* p, uint32_t w, uint32_t h) {
 bool guiSetParent(const clap_plugin_t* p, const clap_window_t* window) {
   Plugin& pl = *self(p);
   if (!pl.view || !window) return false;
-  void* parent = nativeWindowApi() == WindowApi::Cocoa ? window->cocoa : reinterpret_cast<void*>(static_cast<uintptr_t>(window->x11));
+  void* parent = nativeWindowApi() == WindowApi::Cocoa   ? window->cocoa
+                 : nativeWindowApi() == WindowApi::Win32 ? static_cast<void*>(window->win32)
+                                                         : reinterpret_cast<void*>(static_cast<uintptr_t>(window->x11));
   return pl.view->attach(parent);
 }
 bool guiSetTransient(const clap_plugin_t*, const clap_window_t*) { return false; }
@@ -522,5 +527,7 @@ const void* entryFactory(const char* id) { return !std::strcmp(id, CLAP_PLUGIN_F
 }  // namespace
 
 extern "C" {
-CLAP_EXPORT const clap_plugin_entry_t clap_entry = {CLAP_VERSION_INIT, entryInit, entryDeinit, entryFactory};
+// extern: a namespace-scope const object would otherwise have internal linkage (not exported).
+CLAP_EXPORT extern const clap_plugin_entry_t clap_entry;
+const clap_plugin_entry_t clap_entry = {CLAP_VERSION_INIT, entryInit, entryDeinit, entryFactory};
 }

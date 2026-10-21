@@ -27,11 +27,15 @@
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
 #else
+#if defined(_WIN32)
+#include <windows.h>  // GL/gl.h needs its APIENTRY / WINGDIAPI
+#endif
 #include <GL/gl.h>
 #endif
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_impl_opengl3.h"
 #include "../app/App.h"
+#include "../core/Platform.h"
 #include "../app/HostedUi.h"
 #include "../app/HostedUiPages.h"
 #include "../app/PluginWindowBar.h"
@@ -53,7 +57,7 @@ double nowSeconds() {
   return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-void devLog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void devLog(const char* fmt, ...) GL_PRINTF_FORMAT(1, 2);
 void devLog(const char* fmt, ...) {
   const char* path = std::getenv("GRIDLINE_PLUGIN_WINDOW_LOG");
   if (!path || !*path) return;

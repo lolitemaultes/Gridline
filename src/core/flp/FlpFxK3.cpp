@@ -283,7 +283,7 @@ bool decodeWaveShaper(Context& c, const std::vector<Event>& evs, PluginMapping& 
   for (uint32_t i = 0; i < n; ++i, o += sz) {
     double dx = fmt >= 2 ? lef64(b, o) : lef32(b, o), y = fmt >= 2 ? lef64(b, o + 8) : lef32(b, o + 4);
     float t = lef32(b, o + (fmt >= 2 ? 16 : 8));
-    uint8_t mode = fmt >= 1 ? static_cast<uint8_t>(le32(b, o + (fmt >= 2 ? 20 : 12)) & 0xFF) : menv::SingleCurve;
+    uint8_t mode = fmt >= 1 ? static_cast<uint8_t>(le32(b, o + (fmt >= 2 ? 20 : 12)) & 0xFF) : static_cast<uint8_t>(menv::SingleCurve);
     if (!std::isfinite(dx) || !std::isfinite(y)) break;
     x += std::max(0.0, dx);
     if (i % step != 0 && i + 1 != n) continue;

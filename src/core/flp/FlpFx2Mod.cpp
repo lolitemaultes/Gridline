@@ -43,6 +43,7 @@
 #include "../../packs/dynamics/dynamics.h"
 #include "FlpFx2.h"
 #include "FlpWrapper.h"
+#include "../Platform.h"
 
 namespace gl::flp::fx2 {
 
@@ -344,8 +345,8 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m) 
 // cache, named by content hash (see packs/edison).
 std::string edisonAudioDir() {
   if (const char* e = std::getenv("GRIDLINE_CACHE_DIR"); e && *e) return std::string(e) + "/flp-edison";
-  if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/gridline/flp-edison";
-  if (const char* h = std::getenv("HOME"); h && *h) return std::string(h) + "/.cache/gridline/flp-edison";
+  // $XDG_CACHE_HOME, %LOCALAPPDATA% (Windows) or ~/.cache
+  if (const std::string c = gl::platform::cacheRoot(); !c.empty()) return c + "/gridline/flp-edison";
   return (std::filesystem::temp_directory_path() / "gridline-flp-edison").string();
 }
 

@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 #include "../PluginScan.h"
+#include "../../core/Platform.h"
 
 namespace gl::host {
 
@@ -768,7 +769,7 @@ bool AuView::attach(void* parent) {
 
 std::vector<std::string> auPaths() {
   std::vector<std::string> v;
-  if (const char* home = std::getenv("HOME")) v.push_back(std::string(home) + "/Library/Audio/Plug-Ins/Components");
+  if (const char* home = gl::platform::homeEnv()) v.push_back(std::string(home) + "/Library/Audio/Plug-Ins/Components");
   v.push_back("/Library/Audio/Plug-Ins/Components");
   return v;
 }

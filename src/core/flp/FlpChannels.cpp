@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include "../PluginParams.h"
+#include "../../engine/TimeStretch.h"
 #include "Flp.h"
 
 namespace gl::flp {
@@ -325,8 +326,8 @@ void importChannels(Context& c) {
         double start = params->f64(128), end = params->f64(136);
         if (std::isfinite(start) && start > 0 && start < 1) setParam(sp, SmpStart, start);
         if (std::isfinite(end) && end > 0 && end < 1) setParam(sp, SmpEnd, end);
-        if (stretchMode != 0 && (stretchMul != 1 || params->i32(100) != 0)) {  // time stretch (pitch kept)
-          setParam(sp, SmpStretchMode, 1);
+        if (stretchMode != 0) {  // time stretch (pitch kept): J-87 the closest Gridline mode of FL's method
+          setParam(sp, SmpStretchMode, static_cast<float>(stretch::modeFromFl(stretchMode)));
           setParam(sp, SmpTimeStretch, std::clamp(stretchMul, 0.25, 4.0));
           setParam(sp, SmpPitchShift, std::clamp(params->i32(100), -1200, 1200));
         }

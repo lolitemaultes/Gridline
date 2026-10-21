@@ -79,7 +79,7 @@ inline std::string genbWav(const std::string& name, uint32_t frames) {
   w.bytes("data", 4);
   w.u32(2 * frames);
   w.zeros(2 * frames);
-  const std::string path = (std::filesystem::temp_directory_path() / name).string();
+  const std::string path = (std::filesystem::temp_directory_path() / name).generic_string();  // FL states keep / separators
   std::ofstream f(path, std::ios::binary);
   f.write(reinterpret_cast<const char*>(w.b.data()), static_cast<std::streamsize>(w.b.size()));
   return path;

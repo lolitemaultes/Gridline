@@ -317,9 +317,9 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
       tg::Slot r = slot;
       r.env.clear();
       for (int i = slot.env.n - 1; i >= 0; --i) {
-        uint8_t m = i + 1 < slot.env.n ? slot.env.mode[i + 1] : menv::SingleCurve;
+        uint8_t m = i + 1 < slot.env.n ? slot.env.mode[i + 1] : static_cast<uint8_t>(menv::SingleCurve);
         float tt = i + 1 < slot.env.n ? -slot.env.t[i + 1] : 0.f;
-        r.env.add(slot.len - slot.env.x[i], slot.env.y[i], i == slot.env.n - 1 ? 0.f : tt, i == slot.env.n - 1 ? menv::SingleCurve : m);
+        r.env.add(slot.len - slot.env.x[i], slot.env.y[i], i == slot.env.n - 1 ? 0.f : tt, i == slot.env.n - 1 ? static_cast<uint8_t>(menv::SingleCurve) : m);
       }
       slot = r;
       slotChanged = true;

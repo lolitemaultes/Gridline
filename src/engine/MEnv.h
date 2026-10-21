@@ -188,7 +188,7 @@ struct Env {
   void clear() { n = 0; }
   bool add(double px, float py, float pt = 0, uint8_t pm = SingleCurve) {
     if (n >= N) return false;
-    x[n] = px, y[n] = py, t[n] = pt, mode[n] = pm < ModeCount ? pm : SingleCurve;
+    x[n] = px, y[n] = py, t[n] = pt, mode[n] = pm < ModeCount ? pm : static_cast<uint8_t>(SingleCurve);
     ++n;
     return true;
   }

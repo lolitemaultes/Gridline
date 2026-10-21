@@ -354,7 +354,7 @@ struct Oversampler {
  private:
   template <typename F>
   double step(double x, int level, int stages, F& f) {
-    if (level >= stages) return f(x);
+    if (level >= stages || level >= 3) return f(x);  // 3 = size of up / down
     const Halfband& h = hb();
     double a = up[level].push(h, x * 2.0), b = up[level].push(h, 0.0);
     double ya = step(a, level + 1, stages, f), yb = step(b, level + 1, stages, f);

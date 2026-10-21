@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.5.1" src="https://img.shields.io/badge/version-0.5.1-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.6.0" src="https://img.shields.io/badge/version-0.6.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -78,22 +78,52 @@
   <sub>The plugin picker shows every instrument and effect with a preview of its editor.</sub>
 </p>
 
+## Download
+
+Every [release](https://github.com/lolitemaultes/Gridline/releases) has builds for:
+
+| System | Files |
+|---|---|
+| macOS 11 or later (Apple Silicon and Intel) | `Gridline-<version>-macos-universal.dmg`: the app, the command line tool and the VST3 / CLAP / AU plugins |
+| Windows 10 / 11, x64 and ARM64 | `...-windows-x64-setup.exe` (installer, optional plugins and file types), `...-windows-x64.zip`; the same for `arm64` |
+| Linux x86_64 and aarch64 | `.AppImage` (runs on most distributions), `.deb` (Debian, Ubuntu), `.rpm` (Fedora, openSUSE), `.tar.gz` |
+| FreeBSD, OpenBSD, NetBSD | `.tar.gz` built on each system |
+
+`Gridline-<version>-SHA256SUMS` lists the checksums. The builds are not signed by Apple or Microsoft: on macOS open the app the first time with right-click > Open, on Windows choose "More info" > "Run anyway" in the SmartScreen prompt.
+
+On Wayland Gridline runs natively through SDL; the interfaces of hosted plugins are X11 windows and open through XWayland.
+
 ## Build
 
-Gridline needs CMake, a C++17 compiler and SDL2. Everything else (Dear ImGui, Lua, RtMidi, the plugin interfaces and the audio decoders) is bundled in `third_party/`.
+Gridline needs CMake, a C++17 compiler and SDL2. Everything else (Dear ImGui, Lua, RtMidi, Signalsmith Stretch, the plugin interfaces and the audio decoders) is bundled in `third_party/`. The CI builds and tests every change on the systems below (`.github/workflows/ci.yml`); `tools/ci/install-deps.sh` installs the dependencies on each.
 
 ```sh
 # macOS
 brew install cmake sdl2
 
 # Debian / Ubuntu
-sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev
+sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev libx11-dev
+
+# Fedora: sudo dnf install cmake gcc-c++ SDL2-devel alsa-lib-devel libX11-devel mesa-libGL-devel
+# Arch:   sudo pacman -S cmake sdl2 alsa-lib libx11 mesa
+# FreeBSD: pkg install cmake ninja sdl2 libX11 sndio    OpenBSD: pkg_add cmake ninja sdl2
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 124 test suites
+ctest --test-dir build          # 126 test suites
 ./build/gridline-app            # start the app
 ```
+
+On Windows (Visual Studio 2022 or its Build Tools, from a developer command prompt), SDL2 is built from source:
+
+```bat
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_BUNDLED_SDL2=ON
+cmake --build build
+ctest --test-dir build
+build\gridline-app.exe
+```
+
+Audio goes through SDL (Core Audio, WASAPI, ALSA / PulseAudio / PipeWire / JACK, sndio / OSS on the BSDs); MIDI devices through RtMidi (CoreMIDI, Windows Multimedia, ALSA, JACK) and sndio on the BSDs.
 
 `./build.sh` is a quicker path for the core alone: it builds the command line tool, runs the core tests and renders the demo song.
 
@@ -116,9 +146,9 @@ build/gridline bench   demo/song.json                        # load, save and re
 
 | Format | Type id | Where Gridline looks |
 |---|---|---|
-| VST3 | `vst3:<class uid>` | `~/Library/Audio/Plug-Ins/VST3`, `/Library/Audio/Plug-Ins/VST3`; on Linux `~/.vst3`, `/usr/lib/vst3` |
-| CLAP | `clap:<plugin id>` | `.../Plug-Ins/CLAP`; on Linux `~/.clap`, `/usr/lib/clap`; `$CLAP_PATH` |
-| VST2 | `vst2:<unique id>` | `.../Plug-Ins/VST`; on Linux `~/.vst`, `/usr/lib/vst`; `$VST_PATH` |
+| VST3 | `vst3:<class uid>` | `~/Library/Audio/Plug-Ins/VST3`, `/Library/Audio/Plug-Ins/VST3`; Windows `Common Files\VST3`, `%LOCALAPPDATA%\Programs\Common\VST3`; Linux / BSD `~/.vst3`, `/usr/lib/vst3`, `/usr/local/lib/vst3` |
+| CLAP | `clap:<plugin id>` | `.../Plug-Ins/CLAP`; Windows `Common Files\CLAP`, `%LOCALAPPDATA%\Programs\Common\CLAP`; Linux / BSD `~/.clap`, `/usr/lib/clap`, `/usr/local/lib/clap`; `$CLAP_PATH` |
+| VST2 | `vst2:<unique id>` | `.../Plug-Ins/VST`; Windows `Program Files\VSTPlugins`, `Program Files\Steinberg\VSTPlugins`, `Common Files\VST2`; Linux / BSD `~/.vst`, `/usr/lib/vst`; `$VST_PATH` |
 | AU (macOS) | `au:<type>/<subtype>/<manufacturer>` | the system component registry |
 | LV2 | `lv2:<plugin URI>` | `~/Library/Audio/Plug-Ins/LV2`, `/Library/Audio/Plug-Ins/LV2`, `~/.lv2`, `/usr/local/lib/lv2`; on Linux `~/.lv2`, `/usr/local/lib/lv2`, `/usr/lib/lv2`; `$LV2_PATH` |
 
@@ -126,7 +156,7 @@ build/gridline bench   demo/song.json                        # load, save and re
 - **Scanning** happens in a child process, so a plugin that crashes or hangs is blocked until it changes instead of taking Gridline down.
 - **The sandbox** runs a plugin in its own process. Audio and events travel through shared memory with a lock-free handshake. If the plugin crashes, Gridline keeps playing, the plugin is silenced and you can reload it.
 - **What plugins get from the host:** transport and tempo, sample-accurate notes and parameter changes, sidechain input, MIDI output into other channels, offline render mode, latency reporting into delay compensation, CLAP parameter modulation and preset discovery.
-- **LV2:** Gridline reads each bundle's Turtle files itself (no lilv). Control ports become parameters with their ranges, enumerations, toggles and logarithmic scales; MIDI travels in atom sequences both ways; plugins get `time:Position`, the worker, state (saved in the project), options with the block sizes, `lv2:enabled` bypass and `lv2:freeWheeling` during exports; the latency port feeds delay compensation; `lv2:Preset`s, also from other bundles, appear as the plugin's presets. Plugin interfaces open in the plugin window: CocoaUI on macOS, X11UI on Linux, and external (kxstudio) interfaces in their own window. On Linux the X11 interface path is written but has not been run yet; everything else is tested on macOS with in-tree test plugins.
+- **LV2:** Gridline reads each bundle's Turtle files itself (no lilv). Control ports become parameters with their ranges, enumerations, toggles and logarithmic scales; MIDI travels in atom sequences both ways; plugins get `time:Position`, the worker, state (saved in the project), options with the block sizes, `lv2:enabled` bypass and `lv2:freeWheeling` during exports; the latency port feeds delay compensation; `lv2:Preset`s, also from other bundles, appear as the plugin's presets. Plugin interfaces open in the plugin window: CocoaUI on macOS, WindowsUI on Windows, X11UI on Linux and the BSDs, and external (kxstudio) interfaces in their own window. The Windows and X11 interface paths are built and unit-tested on CI but have not been used by hand yet; everything else is tested with in-tree test plugins on every system.
 - **Compatibility sweep:** `gridline plugin-check` loads every scanned plugin at several sample rates and buffer sizes, feeds it silence, noise and notes, checks for invalid output, round-trips its state, sweeps its parameters and opens and closes its editor.
 
 Interfaces: the VST 3 SDK interface headers (`third_party/vst3/pluginterfaces`, MIT), the CLAP headers (`third_party/clap`, MIT) and the LV2 specification headers (`third_party/lv2`, ISC). VST2 support uses Gridline's own description of the binary interface (`src/host/vst2/Vst2Abi.h`); no VST2 SDK code is included. No plugin binaries are shipped.
@@ -190,7 +220,7 @@ Project files are JSON (`"format": "gridline-project"`). Older files are upgrade
 ## License
 
 Gridline is free software, released under the GNU General Public License v3.0 (see `LICENSE`).
-Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), CLAP headers (MIT), VST3 plug-in interfaces (MIT), dr_libs and stb_vorbis (public domain or MIT-0), nanosvg (zlib). See each folder under `third_party/`.
+Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), Signalsmith Stretch and Signalsmith Linear (MIT, time stretching and pitch shifting), CLAP headers (MIT), VST3 plug-in interfaces (MIT), dr_libs and stb_vorbis (public domain or MIT-0), nanosvg (zlib). See each folder under `third_party/`.
 The interface icons in `assets/icons/ui/` use geometry from Lucide (ISC) and Tabler Icons (MIT); see `assets/icons/ui/NOTICE.md`.
 
 Gridline is an independent project and is not affiliated with or endorsed by Image-Line. "FL Studio" is a trademark of Image-Line Software and is mentioned only to describe file compatibility.

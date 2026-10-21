@@ -7,6 +7,7 @@
 #include <string>
 #include "Check.h"
 #include "core/Document.h"
+#include "core/flp/Flp.h"
 #include "core/Json.h"
 #include "core/MidiFile.h"
 #include "core/PluginParams.h"
@@ -142,6 +143,8 @@ int main() {
   // 9. Every instrument sounds.
   for (const auto& info : gl::pluginCatalog()) {
     if (info.kind != gl::PluginKind::Generator || info.type == "gl.midiout" || !info.outputs.empty()) continue;  // controllers are silent
+    // Sample Keys plays the key sample sets of an installed FL Studio only (none: silent).
+    if (info.type == "gl.samplekeys" && gl::flp::defaultFactoryData().empty()) continue;
     gl::Document d(gl::makeEmptySong());
     gl::ObjectId c = d.addChannel("x", info.type);
     // Sample-based instruments use a built-in sample (drum pads: the built-in kit).

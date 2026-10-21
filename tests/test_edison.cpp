@@ -486,7 +486,7 @@ int main() {
     bool ok = on.size() == truth.size();
     int64_t worst = 0;
     for (size_t k = 0; ok && k < on.size(); ++k) worst = std::max<int64_t>(worst, std::llabs(on[k] - truth[k]));
-    char name[96];
+    char name[160];
     std::snprintf(name, sizeof name, "beat detection finds every hit (%zu/%zu, worst %lld samples)", on.size(), truth.size(), static_cast<long long>(worst));
     expect(ok && worst <= 64, name);
     double bpm = estimateTempo(on, rate);

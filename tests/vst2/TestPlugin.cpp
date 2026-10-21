@@ -16,6 +16,7 @@
 #include <cstring>
 #include "host/vst2/Vst2Abi.h"
 #include "Probe.h"
+#include "core/Platform.h"
 
 namespace abi = gl::vst2abi;
 
@@ -213,9 +214,9 @@ intptr_t dispatch(abi::Effect* e, int32_t op, int32_t index, intptr_t value, voi
 
 }  // namespace
 
-extern "C" __attribute__((visibility("default"))) GridlineVst2Probe* gridline_vst2_probe() { return &gProbe; }
+extern "C" GL_EXPORT GridlineVst2Probe* gridline_vst2_probe() { return &gProbe; }
 
-extern "C" __attribute__((visibility("default"))) abi::Effect* VSTPluginMain(abi::HostCallback host) {
+extern "C" GL_EXPORT abi::Effect* VSTPluginMain(abi::HostCallback host) {
   if (!host) return nullptr;
   const int32_t want = static_cast<int32_t>(host(nullptr, abi::hostCurrentId, 0, 0, nullptr, 0));
   auto* p = new Plugin;
