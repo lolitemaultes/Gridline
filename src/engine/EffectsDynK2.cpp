@@ -128,6 +128,51 @@ class MovingRms {
 };
 
 // ======================================================================= Limiter
+// The limiter's compressor law (J-68: shared by the engine and the editor's
+// compressor overlay): threshold, ratio (compression or expansion), the
+// reference's bend shape and Gridline's optional soft knee.
+struct LimComp {
+  bool on = false;
+  double thr = 1, slope = 1, shape = 0, softKnee = 0, k = 0, lnk = 0;
+  static LimComp from(const PluginState& s) {
+    using namespace pp;
+    LimComp c;
+    const double thrDb = prm(s, LimCompThresh);
+    c.on = thrDb < -0.01;
+    c.thr = std::max(dbToGain(thrDb), dbToGain(-60.0));
+    const double ratio = std::max(0.25, static_cast<double>(prm(s, LimCompRatio, 1)));
+    c.slope = 1.0 / ratio;  // < 1 compresses, > 1 expands
+    c.shape = std::clamp(static_cast<double>(prm(s, LimCompShape)), -1.0, 1.0);
+    c.softKnee = std::max(0.0, static_cast<double>(prm(s, LimCompKnee)));
+    // Shape factor k (same law as the reference: 0.005·(201^|x|−1) bending
+    // down, 0.001·(201^|x|−1) bending up).
+    if (c.shape > 0) c.k = 0.005 * (std::pow(201.0, c.shape) - 1.0);
+    else if (c.shape < 0) c.k = 0.001 * (std::pow(201.0, -c.shape) - 1.0);
+    c.lnk = std::log1p(c.k);
+    return c;
+  }
+  // Static compressor curve (dB of gain change) for a detector level (RMS amplitude).
+  double gainDb(double lv) const {
+    double lvDb = gainToDb(std::max(lv, 1e-9)), thrDb = gainToDb(thr);
+    double over = gainToDb(std::min(lv, thr * 100.0) / thr);
+    if (softKnee > 0) {  // Gridline extra: quadratic soft knee around the threshold
+      double o = lvDb - thrDb;
+      if (o < -softKnee * 0.5) return 0.0;
+      if (o < softKnee * 0.5) {
+        double e = o + softKnee * 0.5;
+        return (slope - 1.0) * e * e / (2.0 * softKnee);
+      }
+    } else if (lv <= thr) {
+      return 0.0;
+    }
+    if (over <= 0) return 0.0;
+    double h = over;
+    if (shape > 0 && k > 0) h = std::log1p(k * (over + 1.0)) / lnk - 1.0;
+    else if (shape < 0 && k > 0) h = (std::exp((over + 1.0) * lnk) - 1.0) / k - 1.0;
+    return slope * h - over;
+  }
+};
+
 class LimiterK2 final : public Effect {
  public:
   static constexpr int kCap = 1 << 17;  // 1 s up to ~131 kHz
@@ -148,19 +193,8 @@ class LimiterK2 final : public Effect {
     const double rel = prm(s, LimRelease, 0.0855f);
     relStages_.set(rel > 0 ? iprm(s, LimRelCurve, 2) + 1 : 0, 0.0, smp(rel));
     // Compressor.
-    const double thrDb = prm(s, LimCompThresh);
-    const bool compOn = thrDb < -0.01;
-    const double thr = std::max(dbToGain(thrDb), dbToGain(-60.0));
-    const double ratio = std::max(0.25, static_cast<double>(prm(s, LimCompRatio, 1)));
-    const double slope = 1.0 / ratio;  // < 1 compresses, > 1 expands
-    const double shape = std::clamp(static_cast<double>(prm(s, LimCompShape)), -1.0, 1.0);
-    const double softKnee = std::max(0.0, static_cast<double>(prm(s, LimCompKnee)));
-    // Shape factor k (same law as the reference: 0.005·(201^|x|−1) bending
-    // down, 0.001·(201^|x|−1) bending up).
-    double k = 0;
-    if (shape > 0) k = 0.005 * (std::pow(201.0, shape) - 1.0);
-    else if (shape < 0) k = 0.001 * (std::pow(201.0, -shape) - 1.0);
-    const double lnk = std::log1p(k);
+    const LimComp law = LimComp::from(s);
+    const bool compOn = law.on;
     rms_.setWindow(std::max(1, static_cast<int>(smp(prm(s, LimCompRms, 0.001f)))));
     double catk = prm(s, LimCompAttack, 0.0001f);
     if (catk < 0.00011) catk = 0;
@@ -186,7 +220,7 @@ class LimiterK2 final : public Effect {
       if (compOn) {
         double kl = side ? io_.scL[i] : xl, kr = side ? io_.scR[i] : xr;
         double lv = compStages_.run(rms_.push(0.5 * (kl * kl + kr * kr)));
-        double cg = compGainDb(lv, thr, slope, k, lnk, shape, softKnee);
+        double cg = law.gainDb(lv);
         g = pre * dbToGain(cg);
         minComp = std::min(minComp, cg);
       } else {
@@ -224,27 +258,6 @@ class LimiterK2 final : public Effect {
     m_[1] = static_cast<float>(minComp);
     m_[2] = static_cast<float>(minGate);
     m_[3] = static_cast<float>(gainToDb(outPk));
-  }
-
-  // Static compressor curve (dB of gain change) for a detector level.
-  static double compGainDb(double lv, double thr, double slope, double k, double lnk, double shape, double softKnee) {
-    double lvDb = gainToDb(std::max(lv, 1e-9)), thrDb = gainToDb(thr);
-    double over = gainToDb(std::min(lv, thr * 100.0) / thr);
-    if (softKnee > 0) {  // Gridline extra: quadratic soft knee around the threshold
-      double o = lvDb - thrDb;
-      if (o < -softKnee * 0.5) return 0.0;
-      if (o < softKnee * 0.5) {
-        double e = o + softKnee * 0.5;
-        return (slope - 1.0) * e * e / (2.0 * softKnee);
-      }
-    } else if (lv <= thr) {
-      return 0.0;
-    }
-    if (over <= 0) return 0.0;
-    double h = over;
-    if (shape > 0 && k > 0) h = std::log1p(k * (over + 1.0)) / lnk - 1.0;
-    else if (shape < 0 && k > 0) h = (std::exp((over + 1.0) * lnk) - 1.0) / k - 1.0;
-    return slope * h - over;
   }
 
   static double saturate(double x, double t, double range, double inv) {
@@ -950,5 +963,58 @@ std::unique_ptr<Effect> createDynK2Effect(const std::string& type) {
   }
   return nullptr;
 }
+
+namespace graphmodel {
+// J-68: the limiter compressor's static curve for the editor overlay (GraphModels.h).
+bool limiterCompOn(const PluginState& s) { return LimComp::from(s).on; }
+double limiterCompGainDb(const PluginState& s, double levelDb) { return LimComp::from(s).gainDb(dbToGain(levelDb)); }
+
+// J-68: the multiband's band filters as the engine designs them (IIR
+// Butterworth, linear-phase FIR or Linkwitz-Riley), magnitude at each hz.
+void multibandBandResponses(const PluginState& s, double sr, const double* hz, int count, double* low, double* mid, double* high) {
+  using namespace pp;
+  const bool indep = iprm(s, MbEdgeMode) == 1;
+  auto clampF = [&](double f) { return std::clamp(f, 20.0, sr * 0.45); };
+  const double fL = clampF(prm(s, MbLowXover, 300.3f)), fH = clampF(prm(s, MbHighXover, 9236.7f));
+  const double fML = clampF(indep ? prm(s, MbMidLowEdge, 300.3f) : fL), fMH = clampF(indep ? prm(s, MbMidHighEdge, 9236.7f) : fH);
+  const int ft = std::clamp(iprm(s, MbFilterType), 0, 2);
+  if (ft == 1) {
+    MbFir fir[3];
+    fir[0].design(0, 0, fL, sr), fir[1].design(2, fML, fMH, sr), fir[2].design(1, fH, 0, sr);
+    double* out[3] = {low, mid, high};
+    for (int i = 0; i < count; ++i)
+      for (int b = 0; b < 3; ++b) {
+        double re = 0, im = 0, w = 2 * kPi * hz[i] / sr;
+        for (int k = 0; k < MbFir::N; ++k) re += fir[b].h[k] * std::cos(w * k), im -= fir[b].h[k] * std::sin(w * k);
+        out[b][i] = std::hypot(re, im);
+      }
+    return;
+  }
+  auto bq = [&](Biquad::Type t, double f, double q) {
+    Biquad b;
+    b.set(t, sr, f, q, 0);
+    return b;
+  };
+  for (int i = 0; i < count; ++i) {
+    const double f = hz[i];
+    if (ft == 0) {
+      const double q[2] = {0.5412, 1.3066};
+      double lo = 1, mi = 1, hi = 1;
+      for (double qq : q) {
+        lo *= bq(Biquad::LowPass, fL, qq).magnitude(f, sr);
+        mi *= bq(Biquad::HighPass, fML, qq).magnitude(f, sr) * bq(Biquad::LowPass, fMH, qq).magnitude(f, sr);
+        hi *= bq(Biquad::HighPass, fH, qq).magnitude(f, sr);
+      }
+      low[i] = lo, mid[i] = mi, high[i] = hi;
+    } else {  // Linkwitz-Riley serial split (the low band's all-pass leaves its magnitude)
+      auto sq = [](double m) { return m * m; };
+      const double rest = sq(bq(Biquad::HighPass, fL, 0.7071).magnitude(f, sr));
+      low[i] = sq(bq(Biquad::LowPass, fL, 0.7071).magnitude(f, sr));
+      mid[i] = rest * sq(bq(Biquad::LowPass, fH, 0.7071).magnitude(f, sr));
+      high[i] = rest * sq(bq(Biquad::HighPass, fH, 0.7071).magnitude(f, sr));
+    }
+  }
+}
+}  // namespace graphmodel
 
 }  // namespace gl

@@ -10,6 +10,7 @@
 //   Sweep Kick    — sine sweeping from the max to the min frequency, amp decay,
 //                   click and distortion.
 #include <array>
+#include <atomic>
 #include <cmath>
 #include "../Packs.h"
 #include "drums.h"
@@ -209,11 +210,12 @@ class MembraneKitGen final : public Generator {
       if (key_[c] == note) strikeChannel(c, velocity);
   }
   void onNoteOff(uint32_t id) override {
-    if (seq_.on && seq_.id == id) seq_.on = false;
+    if (seq_.on && seq_.id == id) seq_.on = false, uiStep_.store(-1, std::memory_order_relaxed);
   }
-  void onAllOff() override { seq_.on = false; }
+  void onAllOff() override { seq_.on = false, uiStep_.store(-1, std::memory_order_relaxed); }
+  int displayStep() const override { return uiStep_.load(std::memory_order_relaxed); }
   void onKill() override {
-    seq_.on = false;
+    seq_.on = false, uiStep_.store(-1, std::memory_order_relaxed);
     for (auto& v : voices_) v.on = false;
   }
   void render(float* L, float* R, int n) override {
@@ -269,6 +271,7 @@ class MembraneKitGen final : public Generator {
     const double sixteenth = sr_ * 15.0 / tempo_;
     const double len = sixteenth * ((seq_.step & 1) ? 1.0 - swing_ * 0.5 : 1.0 + swing_ * 0.5);
     if (seq_.pos == 0.0) {
+      uiStep_.store(seq_.step, std::memory_order_relaxed);
       for (int c = 0; c < kKitPads; ++c) {
         const uint8_t cell = P.cell[c][seq_.step % kKitSteps];
         if (cell & 0x80) strikeChannel(c, seq_.vel * static_cast<float>(cell & 0x7F) / 127.0f);
@@ -285,6 +288,7 @@ class MembraneKitGen final : public Generator {
   const PluginState* state_ = nullptr;
   const KitAux* data_ = nullptr;
   Seq seq_;
+  std::atomic<int> uiStep_{-1};  // J-68: running step for the editor
   float gl_[kKitPads] = {}, gr_[kKitPads] = {};
   int key_[kKitPads] = {};
   float master_ = 1, swing_ = 0, limGain_ = 1, limRel_ = 0.999f, env_ = 0;

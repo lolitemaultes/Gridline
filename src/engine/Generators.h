@@ -156,6 +156,10 @@ class Generator {
   // noteOff this also ends one-shot voices.
   void cut(uint32_t id, int offset) { push(Ev::make(Ev::Cut, id, 0, 0, offset)); }
   virtual bool supportsGlide() const { return false; }
+  // J-68: the step an instrument's own sequencer is playing (−1 = none), for
+  // the editor's running-step display. Read on the UI thread: implementations
+  // publish it through an atomic.
+  virtual int displayStep() const { return -1; }
   // A raw MIDI channel message for the instrument (controllers, pitch bend,
   // channel / poly pressure from a MIDI keyboard). Only hosted plugins use it.
   void midi(uint8_t status, uint8_t d1, uint8_t d2, int offset) {

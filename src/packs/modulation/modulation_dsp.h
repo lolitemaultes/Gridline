@@ -16,6 +16,10 @@ namespace gl::packs::modulation {
 double tensionCurve(double x, double t);
 // LFO shapes 0..4 (sine, triangle, square, saw, random) over a phase in cycles, 0..1.
 double lfoWave(int shape, double phase, uint64_t cycle);
+// J-68: the peak controller's tension laws as the engine applies them (legacy
+// tensionCurve or the reference model's exponential bend), 0..1 → 0..1, for
+// the curves drawn in its tension wheels. lfo = false: the peak section.
+double peakTensionLaw(const PluginState& s, bool lfo, double x);
 
 // Formula controller: compiles its formula (variables a b c t beat bar tempo in playing).
 bool compileFormula(const std::string& text, Expr& out, std::string* err);

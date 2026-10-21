@@ -93,6 +93,27 @@ struct BbdChorus {
 struct ThreeBandEq {
   dsp::Biquad b[3][2];
   bool on = false;
+  // J-68: knob laws (legacy / reference) from the 0..1 controls (low, mid,
+  // high); shared by the engine and the editor's response graph.
+  static void laws(bool ref, const double gain01[3], const double freq01[3], const double q01[3], double gainDb[3], double hz[3], double q[3]) {
+    for (int k = 0; k < 3; ++k) {
+      if (ref) {
+        gainDb[k] = 32.0 * gain01[k] - 16.0;
+        hz[k] = 20.0 * std::exp2(10.036 * freq01[k]);
+        q[k] = 0.28 * std::pow(13.0, std::pow(q01[k], 1.28));
+      } else {
+        gainDb[k] = std::clamp(gain01[k] * 2.0 - 1.0, -1.0, 1.0) * 18.0;
+        hz[k] = 20.0 * std::pow(1000.0, std::clamp(freq01[k], 0.0, 1.0));
+        q[k] = 0.3 * std::pow(20.0, std::clamp(q01[k], 0.0, 1.0));
+      }
+    }
+  }
+  // Magnitude of the three bands (left channel's designs) at hz.
+  double magnitude(double hz, double sr) const {
+    double m = 1;
+    for (int k = 0; k < 3; ++k) m *= b[k][0].magnitude(hz, sr);
+    return m;
+  }
   void configure(double sr, bool enable, const double gainDb[3], const double hz[3], const double q[3]) {
     on = enable;
     for (int c = 0; c < 2; ++c) {

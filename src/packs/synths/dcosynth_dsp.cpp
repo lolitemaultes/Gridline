@@ -207,18 +207,10 @@ class DcoSynth final : public Generator {
   double gv(int tag) const { return std::clamp(P(tag) + globalMod_[static_cast<size_t>(tag)], 0.0, 1.0); }
 
   void setupFx() {
-    const double gains[3] = {bip(gv(DcEqGainLo)) * 18.0, bip(gv(DcEqGainMid)) * 18.0, bip(gv(DcEqGainHi)) * 18.0};
-    const double hz[3] = {expMap(gv(DcEqFreqLo), 20, 1000), expMap(gv(DcEqFreqMid), 20, 1000), expMap(gv(DcEqFreqHi), 20, 1000)};
-    const double q[3] = {expMap(gv(DcEqQLo), 0.3, 20), expMap(gv(DcEqQMid), 0.3, 20), expMap(gv(DcEqQHi), 0.3, 20)};
-    if (ref_) {
-      double g2[3], h2[3], q2[3];
-      for (int k = 0; k < 3; ++k) {
-        g2[k] = 32.0 * gv(DcEqGainLo + k) - 16.0;
-        h2[k] = 20.0 * std::exp2(10.036 * gv(DcEqFreqLo + k));
-        q2[k] = 0.28 * std::pow(13.0, std::pow(gv(DcEqQLo + k), 1.28));
-      }
-      eq_.configure(sr_, P(DcEqOn) >= 0.5, g2, h2, q2);
-    } else {
+    {
+      double g01[3], f01[3], q01[3], gains[3], hz[3], q[3];
+      for (int k = 0; k < 3; ++k) g01[k] = gv(DcEqGainLo + k), f01[k] = gv(DcEqFreqLo + k), q01[k] = gv(DcEqQLo + k);
+      dcofx::ThreeBandEq::laws(ref_, g01, f01, q01, gains, hz, q);
       eq_.configure(sr_, P(DcEqOn) >= 0.5, gains, hz, q);
     }
     dly_.on = P(DcDlyOn) >= 0.5;

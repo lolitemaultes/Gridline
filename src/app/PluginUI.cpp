@@ -505,28 +505,41 @@ static void fft(std::vector<std::complex<float>>& a) {
 
 void spectrum(const ScopeTap* tap, uint64_t key, int points, float* outDb, double sampleRate) {
   static std::map<uint64_t, std::vector<float>> smooth;
+  // J-68: the FFT runs only when the tap holds new audio (the write counter
+  // moved) or the layout changed; otherwise the last analysis is reused.
+  struct Raw {
+    size_t written = static_cast<size_t>(-1);
+    double sr = 0;
+    std::vector<float> db;
+  };
+  static std::map<uint64_t, Raw> raws;
   auto& sm = smooth[key];
   if (static_cast<int>(sm.size()) != points) sm.assign(static_cast<size_t>(points), -120.f);
-  const size_t N = 4096;
-  static std::vector<float> buf(N);
-  static std::vector<std::complex<float>> c(N);
-  bool ok = tap && tap->read(buf.data(), N);
-  if (ok) {
-    for (size_t i = 0; i < N; ++i) {
-      float w = 0.5f - 0.5f * std::cos(2.0f * 3.14159265f * static_cast<float>(i) / static_cast<float>(N - 1));  // Hann
-      c[i] = std::complex<float>(buf[i] * w, 0);
+  Raw& raw = raws[key];
+  const size_t written = tap ? tap->written() : 0;
+  if (raw.written != written || raw.sr != sampleRate || static_cast<int>(raw.db.size()) != points) {
+    raw.written = written, raw.sr = sampleRate;
+    raw.db.assign(static_cast<size_t>(points), -120.f);
+    const size_t N = 4096;
+    static std::vector<float> buf(N);
+    static std::vector<std::complex<float>> c(N);
+    if (tap && tap->read(buf.data(), N)) {
+      for (size_t i = 0; i < N; ++i) {
+        float w = 0.5f - 0.5f * std::cos(2.0f * 3.14159265f * static_cast<float>(i) / static_cast<float>(N - 1));  // Hann
+        c[i] = std::complex<float>(buf[i] * w, 0);
+      }
+      fft(c);
+      for (int k = 0; k < points; ++k) {
+        double f0 = 20.0 * std::pow(1000.0, static_cast<double>(k) / points), f1 = 20.0 * std::pow(1000.0, static_cast<double>(k + 1) / points);
+        size_t b0 = static_cast<size_t>(f0 / sampleRate * N), b1 = std::max(b0 + 1, static_cast<size_t>(f1 / sampleRate * N));
+        float mag = 0;
+        for (size_t b = b0; b < b1 && b < N / 2; ++b) mag = std::max(mag, std::abs(c[b]));
+        raw.db[static_cast<size_t>(k)] = 20.0f * std::log10(std::max(mag * 4.0f / static_cast<float>(N), 1e-7f));
+      }
     }
-    fft(c);
   }
   for (int k = 0; k < points; ++k) {
-    float db = -120;
-    if (ok) {
-      double f0 = 20.0 * std::pow(1000.0, static_cast<double>(k) / points), f1 = 20.0 * std::pow(1000.0, static_cast<double>(k + 1) / points);
-      size_t b0 = static_cast<size_t>(f0 / sampleRate * N), b1 = std::max(b0 + 1, static_cast<size_t>(f1 / sampleRate * N));
-      float mag = 0;
-      for (size_t b = b0; b < b1 && b < N / 2; ++b) mag = std::max(mag, std::abs(c[b]));
-      db = 20.0f * std::log10(std::max(mag * 4.0f / static_cast<float>(N), 1e-7f));
-    }
+    const float db = raw.db[static_cast<size_t>(k)];
     float& s = sm[static_cast<size_t>(k)];
     s = db > s ? s + (db - s) * 0.6f : s + (db - s) * 0.12f;  // fast rise, slow fall
     outDb[k] = s;

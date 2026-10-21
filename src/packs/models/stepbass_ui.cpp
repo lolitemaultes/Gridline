@@ -212,6 +212,15 @@ void drawStepBass(App& a, const PluginTarget& t, float width) {
     flk::text(c, 12, 492, "GATE", K.textDim, 7);
     flk::text(c, 12, 513, "SLIDE", K.textDim, 7);
     flk::text(c, 12, 534, "ACCENT", K.textDim, 7);
+    // J-68: the step the sequencer is playing (published by the engine).
+    int playing = -1;
+    if (t.isChannel())
+      if (auto rt = a.builder.channelRuntime(t.owner); rt && rt->gen) playing = rt->gen->displayStep();
+    if (playing >= 0 && playing < 16) {
+      const float x = 58.0f + 36.0f * playing;
+      dl->AddRectFilled(F.p(x - 1, 462), F.p(x + 35, 572), theme::withAlpha(K.select, 0.16f), 3 * F.s);
+      dl->AddRect(F.p(x - 1, 462), F.p(x + 35, 572), theme::withAlpha(K.select, 0.8f), 3 * F.s, 0, 1.2f);
+    }
     for (int i = 0; i < 16; ++i) {
       const float x = 58.0f + 36.0f * i;
       ImGui::PushID(i);

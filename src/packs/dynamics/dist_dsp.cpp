@@ -733,8 +733,19 @@ class HitLoopFx final : public Effect {
     wasPlaying_ = ctx.playing;
     const double beats = ctx.tick / std::max(1, ctx.ppq);
     const float tempoIn = static_cast<float>(4.0 * (beats / 4.0 - std::floor(beats / 4.0)));
+    float pin = 0, pout = 0;  // J-68: block peaks for the editor's envelope graph
+    for (int i = 0; i < n; ++i) pin = std::max(pin, std::max(std::fabs(L[i]), std::fabs(R[i])));
     eng_->run(v, static_cast<float>(ctx.tempo), std::clamp(static_cast<int>(prm(HlSource, 2)), 0, 2), prm(HlStereo, 1) >= 0.5f ? 1 : 0, tempoIn, n, L, R,
               io_.scL, io_.scR, io_.multiL[0], io_.multiR[0]);
+    for (int i = 0; i < n; ++i) pout = std::max(pout, std::max(std::fabs(L[i]), std::fabs(R[i])));
+    inDb_ = pin > 1e-6f ? 20.f * std::log10(pin) : -120.f;
+    outDb_ = pout > 1e-6f ? 20.f * std::log10(pout) : -120.f;
+  }
+  float inputLevel() const override { return inDb_; }
+  int meters(float* out, int max) const override {
+    if (max < 1) return 0;
+    out[0] = outDb_;
+    return 1;
   }
   void reset() override {
     if (eng_) eng_->clear();
@@ -747,6 +758,7 @@ class HitLoopFx final : public Effect {
   double builtSr_ = 0;
   bool wasPlaying_ = false;
   SideIo io_;
+  float inDb_ = -120.f, outDb_ = -120.f;
 };
 
 std::unique_ptr<Effect> createDistEffect(const std::string& type) {

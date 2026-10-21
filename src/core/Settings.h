@@ -13,7 +13,7 @@ class Settings {
 
   Settings();  // registers defaults (see Settings.cpp)
 
-  // $XDG_CONFIG_HOME/gridline/settings.json, else ~/.config/gridline/settings.json.
+  // $GRIDLINE_CONFIG_HOME/gridline/settings.json, else $XDG_CONFIG_HOME/gridline/..., else ~/.config/gridline/....
   static std::string defaultPath();
   // Missing file is not an error (defaults stay). Unknown keys are kept.
   bool load(const std::string& path, std::string* err = nullptr);

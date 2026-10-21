@@ -4,7 +4,10 @@
 // with the plugin's rack skin. Shown for the reference delay model.
 #include "../core/DelayCurves.h"
 #include "../engine/Delay3Ref.h"
+#include "../core/I18n.h"
 #include "../engine/Dsp.h"
+#include "../engine/GraphModels.h"
+#include "../engine/LiveGraph.h"
 #include "PluginEditorsCommon.h"
 #include "PluginSkin.h"
 
@@ -215,6 +218,35 @@ void editorDelayStereo(App& a, const PluginTarget& t, float width, const PluginS
   wheelL(a, t, R(d3ref::PThresh), F, 452, 150, 40, K, "THRES", skin::WheelBigLine);
   wheelL(a, t, R(d3ref::PHard), F, 499, 150, 40, K, "HARD", skin::WheelBigLine);
   wheelL(a, t, R(d3ref::PSym), F, 550, 150, 40, K, "SYM", skin::WheelBigLine);
+  // J-68: the feedback visual (610,138 70×70): the loop distortion's transfer
+  // curve from the engine's own limiter / knee law, redrawn when the
+  // distortion controls move.
+  {
+    const int type = cell(d3ref::PDistType, 2);
+    const double thr = rv(d3ref::PThresh), hard = rv(d3ref::PHard), sym = rv(d3ref::PSym);
+    const uint64_t in = livegraph::Hasher().i(type).d(thr).d(hard).d(sym).value();
+    constexpr int kPts = 65;
+    const livegraph::Curve& c = livegraph::memo<livegraph::Curve>(t.key(), 0x44334656).get(in, [&](livegraph::Curve& o) {
+      o.resize(kPts);
+      for (int i = 0; i < kPts; ++i) o[static_cast<size_t>(i)] = static_cast<float>(graphmodel::delay3Transfer(type, thr, hard, sym, (i / (kPts - 1.0) * 2 - 1) * 1.5));
+    });
+    ImVec2 q0 = F.p(610, 138), q1 = F.p(680, 208);
+    skin::graphWell(dl, q0, q1, K);
+    const ImVec2 cc((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f);
+    const float hw = (q1.x - q0.x) * 0.5f - 3, hh = (q1.y - q0.y) * 0.5f - 3;
+    dl->AddLine(ImVec2(q0.x + 2, cc.y), ImVec2(q1.x - 2, cc.y), K.graphGrid);
+    dl->AddLine(ImVec2(cc.x, q0.y + 2), ImVec2(cc.x, q1.y - 2), K.graphGrid);
+    ImVec2 pts[kPts];
+    float peak = 0;  // output axis follows the curve's own peak (the make-up gain can lift or lower it)
+    for (float y : c) peak = std::max(peak, std::fabs(y));
+    const float ys = std::max(0.25f, peak * 1.15f);
+    for (int i = 0; i < kPts; ++i)
+      pts[i] = ImVec2(cc.x + hw * (i / (kPts - 1.0f) * 2 - 1), cc.y - hh * std::clamp(c[static_cast<size_t>(i)] / ys, -1.0f, 1.0f));
+    dl->AddPolyline(pts, kPts, K.fill, 0, 1.6f);
+    ImGui::SetCursorScreenPos(q0);
+    ImGui::InvisibleButton("##d3fbvis", ImVec2(q1.x - q0.x, q1.y - q0.y));
+    if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Feedback distortion: input level (x) to output level (y)"));
+  }
   static const char* models[4] = {"LEGACY", "REFERENCE", "CLASSIC", "STEREO REF"};
   skin::text(dl, F.p(10, 222), K.textDim, "MODEL", F.font(8));
   skin::switchSel(a, t, DlyModel, F.p(56, 217), F.sz(300, 20), K, models, 4, true);

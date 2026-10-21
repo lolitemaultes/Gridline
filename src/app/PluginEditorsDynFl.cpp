@@ -5,6 +5,8 @@
 #include "PluginEditorsDynFl.h"
 #include <map>
 #include "../engine/Dsp.h"
+#include "../engine/GraphModels.h"
+#include "../engine/LiveGraph.h"
 #include "PluginEditorsCommon.h"
 
 namespace gl {
@@ -199,6 +201,39 @@ void editorLimiter(App& a, const PluginTarget& t, float width) {
     marker(val(st, LimCeiling), hex(0x7AF400, 0.8f), "CEIL");
     if (val(st, LimCompThresh) < -0.01f) marker(val(st, LimCompThresh), hex(0x00CAF4, 0.8f), "THRES");
     if (val(st, LimGateThresh, -80) > -79.9f) marker(val(st, LimGateThresh), hex(0xCEA245, 0.8f), "NOISE");
+  }
+  // J-68: compressor overlay. With the compressor on, the newest columns'
+  // input levels run through the compressor's own static curve (engine law,
+  // tabulated once per parameter change) and draw as strokes fading with age:
+  // what the compressor does to the material just played.
+  if (graphmodel::limiterCompOn(st)) {
+    constexpr int kTab = 133;  // -60 .. +6 dB in 0.5 dB steps
+    const uint64_t in = livegraph::Hasher().floats(st.params).value();
+    const livegraph::Curve& tab = livegraph::memo<livegraph::Curve>(t.key(), 0x4C434F4D).get(in, [&](livegraph::Curve& o) {
+      o.resize(kTab);
+      for (int i = 0; i < kTab; ++i) o[static_cast<size_t>(i)] = static_cast<float>(graphmodel::limiterCompGainDb(st, -60.0 + 0.5 * i));
+    });
+    auto gainAt = [&](float db) {
+      float u = std::clamp((db + 60.0f) * 2.0f, 0.0f, kTab - 1.001f);
+      int i = static_cast<int>(u);
+      return tab[static_cast<size_t>(i)] + (tab[static_cast<size_t>(i + 1)] - tab[static_cast<size_t>(i)]) * (u - i);
+    };
+    const int fade = std::min(cols, 120);
+    for (int age = 0; age < fade && age < ScrollHistory::kCols; ++age) {
+      float inDb = h.at(4, age);
+      if (inDb <= lo) continue;
+      float g = gainAt(inDb);
+      if (std::fabs(g) < 0.05f) continue;
+      float px = v1.x - 1 - static_cast<float>(age);
+      dl->AddLine(ImVec2(px, yOf(inDb)), ImVec2(px, yOf(inDb + g)), hex(0x00CAF4, 0.75f * (1.0f - static_cast<float>(age) / fade)), 1.0f);
+    }
+  }
+  {  // gain-reduction indicator on the display's left edge, lit while reducing
+    const bool reducing = m.gr < -0.05f;
+    ImVec2 c(v0.x + f.d(5), (v0.y + v1.y) * 0.5f);
+    float s = f.d(5);
+    dl->AddTriangleFilled(ImVec2(c.x - s * 0.6f, c.y - s), ImVec2(c.x - s * 0.6f, c.y + s), ImVec2(c.x + s * 0.6f, c.y),
+                          reducing ? hex(0xE5E2DE, 0.9f) : hex(0x4A545A, 0.8f));
   }
   if (h.frozen) skin::label(dl, f, vx + 6, vh - 18, 60, 14, "FROZEN", hex(0xE5E2DE), hex(0x000000, 0.5f), 9);
   ImGui::SetCursorScreenPos(v0);
@@ -547,15 +582,21 @@ void editorMultiband(App& a, const PluginTarget& t, float width) {
   }
   double eL = val(st, MbLowXover, 300.3f), eH = val(st, MbHighXover, 9236.7f);
   double eML = indep ? val(st, MbMidLowEdge, 300.3f) : eL, eMH = indep ? val(st, MbMidHighEdge, 9236.7f) : eH;
-  // Band shapes (approximate 24 dB/oct skirts) with their reduction shading.
+  // Band shapes (J-68: the engine's own band filters — IIR / FIR / LR — cached
+  // per parameter change) offset by the live reduction and the band gain.
   const ImU32 bandCol[3] = {hex(0xFF8C5A), hex(0xF2D35B), hex(0x6FB7FF)};
+  struct BandResp {
+    double hz[64], g[3][64];
+  };
+  const double mbSr = a.engine.sampleRate();
+  const BandResp& br = livegraph::memo<BandResp>(t.key(), 0x4D424E44).get(livegraph::Hasher().floats(st.params).d(mbSr).value(), [&](BandResp& o) {
+    for (int i = 0; i < 64; ++i) o.hz[i] = 20.0 * std::pow(1000.0, i / 63.0);
+    graphmodel::multibandBandResponses(st, mbSr, o.hz, 64, o.g[0], o.g[1], o.g[2]);
+  });
   for (int b = 0; b < 3; ++b) {
     ImVec2 pts[64];
     for (int i = 0; i < 64; ++i) {
-      double hz = 20.0 * std::pow(1000.0, i / 63.0), g = 1.0;
-      auto lp = [&](double fc) { return 1.0 / std::sqrt(1.0 + std::pow(hz / fc, 8.0)); };
-      auto hp = [&](double fc) { return 1.0 / std::sqrt(1.0 + std::pow(fc / hz, 8.0)); };
-      g = b == 0 ? lp(eL) : b == 1 ? hp(eML) * lp(eMH) : hp(eH);
+      const double hz = br.hz[i], g = br.g[b][i];
       double gr = ival(st, MbLowState + b) == 2 ? -60.0 : static_cast<double>(m.b[b]);
       double db = dsp::gainToDb(std::max(1e-4, g)) + gr + val(st, MbLowGain + b * 3);
       pts[i] = ImVec2(xOf(hz), v0.y + (v1.y - v0.y) * static_cast<float>(std::clamp(-db / 36.0 + 0.12, 0.0, 1.0)));

@@ -534,6 +534,25 @@ class AmpRackFx final : public DynFx {
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate;
     const int model = pi(s, RkModel);
+    // J-68: the reference models publish input / output peaks too (editor meters).
+    auto peakOf = [](const float* l, const float* r, int count) {
+      float pk = 0;
+      for (int i = 0; i < count; ++i) pk = std::max(pk, std::max(std::fabs(l[i]), std::fabs(r[i])));
+      return static_cast<double>(pk);
+    };
+    if (model == 1 || model == 2) input_ = static_cast<float>(linToDb(peakOf(L, R, n)));
+    struct OutPeak {
+      float *l, *r;
+      int n;
+      float* dst;
+      bool on;
+      ~OutPeak() {
+        if (!on) return;
+        float pk = 0;
+        for (int i = 0; i < n; ++i) pk = std::max(pk, std::max(std::fabs(l[i]), std::fabs(r[i])));
+        *dst = static_cast<float>(linToDb(pk));
+      }
+    } outPeak{L, R, n, &meter_, model == 1 || model == 2};
     if (model == 1) {  // J-35 module rack
       drack::RackState rs;
       rs.count = std::clamp(pi(s, DrCount), 0, kDrModules);

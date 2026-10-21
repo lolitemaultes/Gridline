@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <map>
 #include "../../core/I18n.h"
+#include "../../engine/LiveGraph.h"
 #include "modulation.h"
 #include "modulation_dsp.h"
 #include "modulation_editors.h"
@@ -84,6 +85,29 @@ void peakEditor(EditTarget& e) {
     }
     sk::check(e, LfSync, F.p(470, 9), F.sz(60, 14), L, "SYNC");
     sk::wheelL(e, LfPhase, F, 509, 26, 36, L, "PHASE");
+  }
+  // J-68: the tension wheels show their curve (the engine's own tension law,
+  // input level → output) drawn over the cap, redrawn when tension moves.
+  {
+    const PluginState* ps = e.st;
+    if (ps) {
+      const PluginState& st = *ps;
+      auto vis = [&](bool lfo, float x, const skin::Skin& sk) {
+        const int prm = lfo ? (ref ? LfRTension : LfTension) : (ref ? PkRTension : PkTension);
+        const uint64_t in = livegraph::Hasher().f(e.p(prm, 0)).f(e.p(PkModel, 0)).value();
+        const livegraph::Curve& c = livegraph::memo<livegraph::Curve>(e.key, lfo ? 0x504C5456u : 0x504B5456u).get(in, [&](livegraph::Curve& o) {
+          o.resize(17);
+          for (int i = 0; i < 17; ++i) o[static_cast<size_t>(i)] = static_cast<float>(peakTensionLaw(st, lfo, i / 16.0));
+        });
+        const ImVec2 q0 = F.p(x + 10, 36), q1 = F.p(x + 26, 52);
+        ImVec2 pts[17];
+        for (int i = 0; i < 17; ++i)
+          pts[i] = ImVec2(q0.x + (q1.x - q0.x) * i / 16.0f, q1.y - (q1.y - q0.y) * std::clamp(c[static_cast<size_t>(i)], 0.0f, 1.0f));
+        dl->AddPolyline(pts, 17, theme::withAlpha(sk.fill, 0.95f), 0, 1.4f);
+      };
+      vis(false, ref ? 127.0f : 105.0f, K);
+      vis(true, 339, L);
+    }
   }
   // Monitor sheet.
   sk::panelBox(dl, F, 7, 98, 546, 83, K);

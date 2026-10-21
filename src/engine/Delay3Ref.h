@@ -53,6 +53,31 @@ inline float makeUp(float n) {
   const float d = (((1.f + 6.8819f * p2) - 3.1787f * p2) - 7.5177f * p2 * p) + 2.9843f * p2 * p2;
   return std::pow(1.f / d, 0.707f);
 }
+// Saturator knee (J-68: shared with the editor's transfer display): linear up
+// to hard * top, then a quadratic knee reaching top, per polarity (symmetry
+// shifts the two tops).
+struct Knee {
+  float lp = 1, kp = 1e-11f, ln = 1, kn = 1e-11f;
+};
+inline Knee kneeFor(float thrN, float hard, float sym) {
+  const float T = std::pow(10.f, threshDb(thrN) / 20.f);
+  const float A = (1 + sym) * T, B = (1 - sym) * T;
+  Knee k;
+  k.lp = hard * A, k.kp = std::max(1e-11f, A - k.lp);
+  k.ln = hard * B, k.kn = std::max(1e-11f, B - k.ln);
+  return k;
+}
+inline float kneeApply(const Knee& c, float x) {
+  const bool neg = x < 0;
+  const float v = neg ? -x : x, l = neg ? c.ln : c.lp, k = neg ? c.kn : c.kp;
+  float y;
+  if (v <= l) y = v;
+  else {
+    const float d = std::min(v - l, 2 * k);
+    y = l + d * (1 - d * 0.25f / k);
+  }
+  return neg ? -y : y;
+}
 
 struct Ring {
   std::vector<float> buf;
@@ -208,10 +233,7 @@ class Engine {
         thrDb_ = threshDb(tn);
         M_ = makeUp(tn);
         limLevel_ = std::pow(10.f, thrDb_ / 20.f) * M_;
-        const float T = std::pow(10.f, thrDb_ / 20.f), hard = cur_[PHard], sym = cur_[PSym];
-        const float A = (1 + sym) * T, B = (1 - sym) * T;
-        lp_ = hard * A, kp_ = std::max(1e-11f, A - lp_);
-        ln_ = hard * B, kn_ = std::max(1e-11f, B - ln_);
+        knee_ = kneeFor(tn, cur_[PHard], cur_[PSym]);
         break;
       }
       case PRate: {
@@ -304,17 +326,7 @@ class Engine {
     env_[c] += (a - env_[c]) * (a >= env_[c] ? 0.00520766f : 0.000522017f);
     return x / std::max(1.f, env_[c]);
   }
-  float knee(float x) const {
-    const bool neg = x < 0;
-    const float v = neg ? -x : x, l = neg ? ln_ : lp_, k = neg ? kn_ : kp_;
-    float y;
-    if (v <= l) y = v;
-    else {
-      const float d = std::min(v - l, 2 * k);
-      y = l + d * (1 - d * 0.25f / k);
-    }
-    return neg ? -y : y;
-  }
+  float knee(float x) const { return kneeApply(knee_, x); }
   float dist(int c, float x) { return distType_ == 0 ? limiter(c, x / limLevel_) * limLevel_ : knee(x) * M_; }
   float crush(int c, float x) {
     float y = x;
@@ -433,7 +445,8 @@ class Engine {
   int type_ = 0, distType_ = 0, filter_ = 0;
   bool sync_ = false, keepPitch_ = false;
   float inWet_ = 0.5f, timeN_ = 0.5f, offN_ = 0.5f, sA_ = 1, sB_ = 0, lfoInc_ = 0, rateDepth_ = 1, modAmt_ = 0, modCut_ = 0, apK_ = 0;
-  float difSpread_ = 0, fb_ = 0.99f, cut_ = 0.5f, res_ = 0, thrDb_ = 0, M_ = 1, limLevel_ = 1, lp_ = 1, kp_ = 1e-11f, ln_ = 1, kn_ = 1e-11f;
+  float difSpread_ = 0, fb_ = 0.99f, cut_ = 0.5f, res_ = 0, thrDb_ = 0, M_ = 1, limLevel_ = 1;
+  Knee knee_;
   float rr_ = 0, bq_ = 0, scale_ = 65536, wet_ = 1, dry_ = 0.5f;
   float phase_ = 0, depth_ = 0;
   float env_[2] = {0, 0}, cnt_[2] = {0, 0}, held_[2] = {0, 0};

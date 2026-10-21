@@ -7,6 +7,8 @@
 #include "../engine/FlFilterRef.h"
 #include "../engine/FreqShiftRef.h"
 #include "../engine/Dsp.h"
+#include "../engine/GraphModels.h"
+#include "../engine/LiveGraph.h"
 #include "../engine/Program.h"
 #include "PluginEditorsCommon.h"
 #include "PluginSkin.h"
@@ -311,8 +313,23 @@ void filterGraph(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p,
   const double reso = classic ? val(st, FltResK, 0.2f) * 0.8 : val(st, FltReso), mix = classic ? 1.0 : val(st, FltMix, 1), gain = val(st, FltGain);
   const bool steep = ival(st, FltSlope) == 1, blend = classic || bval(st, FltBlend);
   std::vector<ImVec2> pts;
+  // J-68: the modern model's curve is the engine's own response (complex SVF
+  // taps, steep stage, mix), cached until a parameter moves.
+  const livegraph::Curve* modern = nullptr;
+  if (!classic) {
+    const int W = static_cast<int>(sz.x) / 2 + 1;
+    modern = &livegraph::memo<livegraph::Curve>(t.key(), 0x464C5452).get(livegraph::Hasher().floats(st.params).d(sr).i(W).value(), [&](livegraph::Curve& o) {
+      o.resize(static_cast<size_t>(W));
+      for (int i = 0; i < W; ++i) o[static_cast<size_t>(i)] = static_cast<float>(graphmodel::filterResponseDb(st, sr, pui::xToFreq(p.x + 2 * i, p.x, sz.x)));
+    });
+  }
   for (int x = 0; x < static_cast<int>(sz.x); x += 2) {
     double hz = pui::xToFreq(p.x + x, p.x, sz.x), db;
+    if (modern) {
+      db = (*modern)[static_cast<size_t>(std::min(static_cast<int>(modern->size()) - 1, x / 2))];
+      pts.push_back(ImVec2(p.x + x, p.y + sz.y * 0.5f - static_cast<float>(std::clamp(db, -30.0, 30.0) / 24) * sz.y * 0.5f));
+      continue;
+    }
     if (mode >= 4 && !blend) {
       dsp::Biquad bq;
       bq.set(mode == 4 ? dsp::Biquad::LowShelf : mode == 5 ? dsp::Biquad::Peak : dsp::Biquad::HighShelf, sr, fc, 0.5 + reso * 9.5, steep ? gain * 0.5 : gain);
@@ -439,6 +456,16 @@ void editorFreqShiftFl(App& a, const PluginTarget& t, float width) {
   {  // Carrier visual.
     ImVec2 p0 = F.p(128, 21), p1 = F.p(262, 82);
     skin::graphWell(dl, p0, p1, K);
+    {  // J-68: the shifted output's live spectrum behind the carrier (log 20 Hz–20 kHz)
+      constexpr int N = 64;
+      float db[N];
+      pui::spectrum(t.tap(a), t.key() ^ 0x4653ull, N, db, a.engine.sampleRate());
+      const float w = (p1.x - p0.x) / N;
+      for (int i = 0; i < N; ++i) {
+        const float hh = std::clamp((db[i] + 84.0f) / 84.0f, 0.0f, 1.0f) * (p1.y - p0.y - 4);
+        if (hh > 0.5f) dl->AddRectFilled(ImVec2(p0.x + w * i, p1.y - 2 - hh), ImVec2(p0.x + w * (i + 1) - 0.5f, p1.y - 2), theme::withAlpha(K.text, 0.13f));
+      }
+    }
     ImVec2 pts[120];
     const double shp = val(st, FsShapeL, 1), shr = val(st, FsShapeR, 1);
     for (int side = 0; side < 2; ++side) {
@@ -975,6 +1002,33 @@ void editorLowLiftFl(App& a, const PluginTarget& t, float width) {
     dl->PushClipRect(p, q, true);
     pui::drawFreqGrid(dl, p, q, 24, true);
     dl->PopClipRect();
+    {  // J-68: band responses (low red, high green, total white) from the engine's filters, ±24 dB
+      const double sr = a.engine.sampleRate();
+      const int W = std::max(2, static_cast<int>(sz.x / 2));
+      struct Resp {
+        std::vector<float> lo, hi, tot;
+      };
+      const uint64_t in = livegraph::Hasher().floats(st.params).d(sr).i(W).value();
+      const Resp& r = livegraph::memo<Resp>(t.key(), 0x4C4C5250).get(in, [&](Resp& o) {
+        o.lo.resize(static_cast<size_t>(W)), o.hi.resize(static_cast<size_t>(W)), o.tot.resize(static_cast<size_t>(W));
+        for (int i = 0; i < W; ++i) {
+          graphmodel::LowLiftResponse v = graphmodel::lowLiftResponse(st, sr, pui::xToFreq(p.x + sz.x * i / (W - 1), p.x, sz.x));
+          auto db = [](double g) { return static_cast<float>(20 * std::log10(std::max(1e-6, g))); };
+          o.lo[static_cast<size_t>(i)] = db(v.low), o.hi[static_cast<size_t>(i)] = db(v.high), o.tot[static_cast<size_t>(i)] = db(v.total);
+        }
+      });
+      auto yOf = [&](float db) { return p.y + sz.y * (0.5f - std::clamp(db, -24.0f, 24.0f) / 48.0f); };
+      std::vector<ImVec2> pts(static_cast<size_t>(W));
+      auto line = [&](const std::vector<float>& v, ImU32 col, float th) {
+        for (int i = 0; i < W; ++i) pts[static_cast<size_t>(i)] = ImVec2(p.x + sz.x * i / (W - 1), yOf(v[static_cast<size_t>(i)]));
+        dl->AddPolyline(pts.data(), W, col, 0, th);
+      };
+      dl->PushClipRect(p, q, true);
+      line(r.lo, theme::withAlpha(skin::hex(0xD23A48), 0.85f), 1.3f);
+      line(r.hi, theme::withAlpha(skin::hex(0x83EB43), 0.85f), 1.3f);
+      line(r.tot, theme::withAlpha(K.text, 0.95f), 1.8f);
+      dl->PopClipRect();
+    }
     float xo = pui::freqToX(val(st, pXo, 120), p.x, sz.x), xc = pui::freqToX(val(st, pLc, 25), p.x, sz.x);
     dl->AddRectFilled(p, ImVec2(xc, q.y), theme::withAlpha(skin::hex(0x000000), 0.4f));
     if (bval(st, LlMultiband, true)) dl->AddRectFilled(ImVec2(xc, p.y), ImVec2(xo, q.y), theme::withAlpha(skin::hex(0x912C2E), 0.25f));

@@ -263,6 +263,15 @@ void drawKit(App& a, const PluginTarget& t, float width) {
     std::snprintf(b, sizeof b, "%d", pg + 1);
     if (flk::btn(c, (std::string("##pg") + b).c_str(), 630 + pg * 31, 468, 28, 18, b, u.page == pg)) u.page = pg;
   }
+  {  // J-68: running step of the kit's sequencer (published by the engine)
+    int playing = -1;
+    if (t.isChannel())
+      if (auto rt = a.builder.channelRuntime(t.owner); rt && rt->gen) playing = rt->gen->displayStep();
+    if (playing >= u.page * 16 && playing < u.page * 16 + 16) {
+      const float x = 60 + (playing - u.page * 16) * 40;
+      dl->AddRect(F.p(x - 3, 493), F.p(x + 30, 544), theme::withAlpha(K.select, 0.9f), 3 * F.s, 0, 1.5f);
+    }
+  }
   for (int s = 0; s < 16; ++s) {
     const int step = u.page * 16 + s;
     uint8_t& cell = P.cell[u.sel][step];

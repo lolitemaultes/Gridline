@@ -19,6 +19,7 @@
 #include "../core/I18n.h"
 #include "../engine/Dsp.h"
 #include "../engine/EqDesign.h"
+#include "../engine/LiveGraph.h"
 #include "PluginEditorsCommon.h"
 #include "PluginSkin.h"
 
@@ -355,20 +356,38 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
   ImGui::PopFont();
 
   // Band responses.
+  // J-68: the band responses come from the biquads the engine designs
+  // (designEqBand / eqBandMagnitude) and are recomputed only when a parameter,
+  // the sample rate or the graph width changes.
   EqBandFilters f[kEqBands];
   for (int b = 0; b < kEqBands; ++b) designEqBand(st, b, sr, f[b]);
   const int W = std::max(2, static_cast<int>(gw / 2));
+  struct EqCurves {
+    std::vector<double> band[kEqBands], total;
+  };
+  const uint64_t eqIn = livegraph::Hasher().floats(st.params).d(sr).i(W).value();
+  const EqCurves& ec = livegraph::memo<EqCurves>(t.key(), 0x45514331).get(eqIn, [&](EqCurves& o) {
+    o.total.assign(static_cast<size_t>(W), 0.0);
+    for (int b = 0; b < kEqBands; ++b) {
+      o.band[b].clear();
+      if (f[b].count == 0) continue;
+      o.band[b].resize(static_cast<size_t>(W));
+      for (int i = 0; i < W; ++i) {
+        double v = dsp::gainToDb(eqBandMagnitude(f[b], xf(g0.x + gw * i / (W - 1)), sr));
+        o.band[b][static_cast<size_t>(i)] = v;
+        o.total[static_cast<size_t>(i)] += v;
+      }
+    }
+  });
+  const std::vector<double>& total = ec.total;
   std::vector<ImVec2> pts(static_cast<size_t>(W));
-  std::vector<double> total(static_cast<size_t>(W), 0.0);
   const float zy = dy(0);
   for (int b = 0; b < kEqBands; ++b) {
-    if (f[b].count == 0) continue;
+    if (ec.band[b].empty()) continue;
     ImU32 bc = skin::hex(kBandHex[b]);
     for (int i = 0; i < W; ++i) {
       float x = g0.x + gw * i / (W - 1);
-      double v = dsp::gainToDb(eqBandMagnitude(f[b], xf(x), sr));
-      total[static_cast<size_t>(i)] += v;
-      pts[static_cast<size_t>(i)] = ImVec2(x, dy(std::clamp(v, -40.0, 40.0)));
+      pts[static_cast<size_t>(i)] = ImVec2(x, dy(std::clamp(ec.band[b][static_cast<size_t>(i)], -40.0, 40.0)));
     }
     bool sel = b == ui.selected || b == ui.hover || b == ui.drag;
     for (int i = 0; i + 1 < W; ++i) {

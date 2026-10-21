@@ -111,7 +111,11 @@ Settings::Settings() {
 
 std::string Settings::defaultPath() {
   fs::path base;
-  if (const char* x = std::getenv("XDG_CONFIG_HOME"); x && *x)
+  // GRIDLINE_CONFIG_HOME (J-68): an isolated config root for automated runs
+  // (screenshots, agents) that does not touch other tools' XDG configuration.
+  if (const char* g = std::getenv("GRIDLINE_CONFIG_HOME"); g && *g)
+    base = g;
+  else if (const char* x = std::getenv("XDG_CONFIG_HOME"); x && *x)
     base = x;
   else if (const char* h = std::getenv("HOME"); h && *h)
     base = fs::path(h) / ".config";

@@ -98,6 +98,14 @@ const PeakTables& peakTables() {
   return tables;
 }
 
+// Reference model tension (−128..128): exponential bend of 0..1.
+double refTension(double u, double t) {
+  if (t == 0) return u;
+  const double k = (std::pow(1001.0, std::fabs(t) / 128.0) - 1.0) / 10.0;
+  if (t < 0) return (std::pow(k + 1, u) - 1) / k;
+  return 1 - (std::pow(k + 1, 1 - u) - 1) / k;
+}
+
 class PeakFollower final : public Effect {
  public:
   PeakFollower() : tab_(&peakTables()) {}  // built on the UI thread, before the first block
@@ -156,12 +164,7 @@ class PeakFollower final : public Effect {
 
  private:
   // ---- J-42 reference model (one evaluation per song tick).
-  static double tension(double u, double t) {
-    if (t == 0) return u;
-    const double k = (std::pow(1001.0, std::fabs(t) / 128.0) - 1.0) / 10.0;
-    if (t < 0) return (std::pow(k + 1, u) - 1) / k;
-    return 1 - (std::pow(k + 1, 1 - u) - 1) / k;
-  }
+  static double tension(double u, double t) { return refTension(u, t); }
   static double amountLaw(double a, double scale) {
     const double m = std::exp(std::fabs(a) / 256.0 * std::log(6.0)) - 1.0;
     return (a < 0 ? -1.0 : 1.0) * scale * m;
@@ -833,6 +836,11 @@ class SidechainDucker final : public Effect {
 };
 
 }  // namespace
+
+double peakTensionLaw(const PluginState& s, bool lfo, double x) {
+  if (prm(s, PkModel, 0) >= 0.5f) return refTension(clamp01(x), prm(s, lfo ? LfRTension : PkRTension));
+  return tensionCurve(x, prm(s, lfo ? LfTension : PkTension));
+}
 
 // Pack-level helpers for the formula controller's prepared data and the
 // keyboard controller's key table (also used by the editors).

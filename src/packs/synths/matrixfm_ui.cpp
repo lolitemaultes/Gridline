@@ -295,12 +295,21 @@ void opScope(const iskin::Skin& k, const PluginState& st, const PatchData& d, in
   iskin::bevel(k, x, y, w, h, rgb(0x121517), k.c.panelLine, 3);
   const auto& lv = d.level[static_cast<size_t>(opk)];
   const auto& ph = d.phase[static_cast<size_t>(opk)];
-  const float shape = st.params[static_cast<size_t>(op(opk, OpShape))];
+  auto P = [&](int k) { return st.params[static_cast<size_t>(op(opk, k))]; };
+  const float shape = P(OpShape), tension = P(OpTension), skew = P(OpSkew), sine = P(OpSine);
+  const bool half = P(OpHalf) >= 0.5f, absv = P(OpAbs) >= 0.5f;
   ImVec2 pts[96];
   float peak = 1e-6f;
   float v[96];
   for (int i = 0; i < 96; ++i) {
-    const double p = i / 95.0;
+    // J-68: the operator's phase warps and wave shaping in the engine's order
+    // (skew, tension, harmonic table, shape blend, sine shaper, half / abs).
+    double p = i / 95.0;
+    if (skew > 0) {
+      const double m = 0.5 + 0.48 * skew;
+      p = p < m ? 0.5 * p / m : 0.5 + 0.5 * (p - m) / (1 - m);
+    }
+    if (tension != 0) p = std::pow(p, std::exp2(tension * 2.0));
     double s = 0;
     for (int hh = 0; hh < 48; ++hh)
       if (lv[static_cast<size_t>(hh)] != 0) s += lv[static_cast<size_t>(hh)] * std::sin(6.283185307 * ((hh + 1) * p + ph[static_cast<size_t>(hh)]));
@@ -308,6 +317,9 @@ void opScope(const iskin::Skin& k, const PluginState& st, const PatchData& d, in
     const double s1 = std::min(1.0f, shape), s2 = std::max(0.0f, shape - 1);
     s = s + (saw - s) * s1;
     s = s + (sq - s) * s2;
+    if (sine > 0) s = s + (std::sin(s * 3.14159265358979 * 0.5 * (1.0 + 3.0 * sine)) - s) * sine;
+    if (half && p >= 0.5) s = 0;
+    if (absv) s = std::fabs(s) * 2.0 - 1.0;
     v[i] = static_cast<float>(s);
     peak = std::max(peak, std::fabs(v[i]));
   }

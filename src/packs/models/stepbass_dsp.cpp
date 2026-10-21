@@ -11,6 +11,7 @@
 // The bank (128 programs: patches + sequences) lives in PluginState::data
 // as text, parsed on the UI thread into the aux data.
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -164,6 +165,7 @@ class StepBassGen final : public Generator {
     glideLeft_ = std::max(1, static_cast<int>(seconds * sr_));
     glideStep_ = (target_ - pitch_) / glideLeft_;
   }
+  int displayStep() const override { return uiStep_.load(std::memory_order_relaxed); }
   void onAllOff() override {
     held_ = 0;
     gate_ = false;
@@ -180,7 +182,10 @@ class StepBassGen final : public Generator {
   }
 
   void sequencerTick() {
-    if (!seqOn_ || held_ == 0) return;
+    if (!seqOn_ || held_ == 0) {
+      uiStep_.store(-1, std::memory_order_relaxed);
+      return;
+    }
     stepPos_ += 1.0;
     if (stepPos_ < stepLen_) {
       if (gate_ && !curSlide_ && stepPos_ >= 0.5 * stepLen_) gate_ = false;  // gate length: half a step unless sliding
@@ -192,6 +197,7 @@ class StepBassGen final : public Generator {
     const int len = std::clamp(s.length, 1, kSbSteps);
     const int prevStep = step_;
     step_ = (step_ + 1) % len;
+    uiStep_.store(step_, std::memory_order_relaxed);
     const bool prevSlide = prevStep >= 0 && s.slide[prevStep] && s.gate[prevStep];
     if (!s.gate[step_]) {
       gate_ = false;
@@ -321,6 +327,7 @@ class StepBassGen final : public Generator {
   const SbBank* bank_ = nullptr;
   double sr_ = 44100, songBpm_ = 120, stepLen_ = 5000, stepPos_ = 0;
   bool seqOn_ = false, gate_ = false, accent_ = false, curSlide_ = false;
+  std::atomic<int> uiStep_{-1};  // J-68: running step for the editor
   int prog_ = 0, root_ = 60, step_ = -1, seqKey_ = 60, held_ = 0, heldKeys_[16] = {}, glideLeft_ = 0;
   uint32_t heldIds_[16] = {};
   double pitch_ = 60, target_ = 60, glideStep_ = 0, ph_ = 0, lfoPh_ = 0, env_ = 0, accEnv_ = 0, amp_ = 0, click_ = 0;

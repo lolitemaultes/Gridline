@@ -1,5 +1,7 @@
 // Gridline — "samplers" pack, J-33 group "dwave": Wave Program editor
 // (gl.waveprogram): program controls and the zone list.
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include "../flc_kit.h"
@@ -35,7 +37,7 @@ void drawWaveProgramEditor(App& a, const PluginTarget& t, float W) {
     if (!parseProgram(st.data, prog)) prog = DwProgram{};
   }
   const skin::Skin& K = wpSkin();
-  constexpr float kW = 700, kH = 330;
+  constexpr float kW = 700, kH = 400;
   ImGui::PushID("gl.waveprogram");
   skin::Form F = skin::Form::fit(W, kW);
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -52,8 +54,36 @@ void drawWaveProgramEditor(App& a, const PluginTarget& t, float W) {
   static const char* names[] = {"Master", "Glide", "LFO 1", "LFO 2", "Dly time", "Dly fb", "Room", "Decay",
                                 "Cho depth", "Cho rate", "Mod 1", "Mod 2", "Mod 3", "Mod 4", "Drive A", "Drive B"};
   for (int i = 0; i < 16; ++i) flk::wheel(c, tags[i], 14.f + 86.f * static_cast<float>(i % 8), 40.f + 70.f * static_cast<float>(i / 8), 32, names[i]);
+  // J-68: output peak meter (the channel's live output) next to the title.
+  {
+    float peak = 0;
+    if (const ScopeTap* tap = t.tap(a)) {
+      float buf[512];
+      if (tap->read(buf, 512))
+        for (float v : buf) peak = std::max(peak, std::fabs(v));
+    }
+    const float db = peak > 1e-6f ? 20.0f * std::log10(peak) : -120.0f, k = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
+    dl->AddRectFilled(F.p(560, 12), F.p(690, 22), K.wellC(), 2 * F.s);
+    if (k > 0) dl->AddRectFilled(F.p(561, 13), F.p(561 + 128 * k, 21), db > -0.5f ? skin::hex(0xE5484D) : K.accent2C(), 2 * F.s);
+  }
+  // J-68: zone map: every zone as its key (x) × velocity (y) rectangle with
+  // its root key marked, redrawn from the program as it changes.
+  {
+    const ImVec2 z0 = F.p(10, 186), z1 = F.p(690, 254);
+    skin::graphWell(dl, z0, z1, K);
+    auto kx = [&](double key) { return z0.x + 2 + static_cast<float>(key / 128.0) * (z1.x - z0.x - 4); };
+    auto vy = [&](double vel) { return z1.y - 2 - static_cast<float>(vel / 127.0) * (z1.y - z0.y - 4); };
+    for (int o = 0; o <= 10; ++o) dl->AddLine(ImVec2(kx(o * 12), z0.y + 1), ImVec2(kx(o * 12), z1.y - 1), K.graphGrid);
+    for (size_t i = 0; i < prog.zones.size(); ++i) {
+      const DwZone& z = prog.zones[i];
+      const ImU32 col = theme::withAlpha(K.accent2C(), 0.18f + 0.12f * static_cast<float>(i % 3));
+      dl->AddRectFilled(ImVec2(kx(z.lo), vy(z.vhi)), ImVec2(kx(z.hi + 1), vy(z.vlo)), col);
+      dl->AddRect(ImVec2(kx(z.lo), vy(z.vhi)), ImVec2(kx(z.hi + 1), vy(z.vlo)), theme::withAlpha(K.accent2C(), 0.7f));
+      dl->AddLine(ImVec2(kx(z.root + 0.5), vy(z.vhi)), ImVec2(kx(z.root + 0.5), vy(z.vlo)), K.text, 1.2f);
+    }
+  }
   // Zone list.
-  ImGui::SetCursorScreenPos(F.p(10, 190));
+  ImGui::SetCursorScreenPos(F.p(10, 260));
   ImGui::BeginChild("zones", ImVec2(680 * F.s, 130 * F.s), true);
   for (size_t i = 0; i < prog.zones.size(); ++i) {
     const DwZone& z = prog.zones[i];

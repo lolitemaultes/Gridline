@@ -15,6 +15,22 @@ using namespace ui;
 
 namespace {
 
+// J-68: input / output peak meters (the engine's per-block peaks), two bars.
+void ioMeters(App& a, const PluginTarget& t, const flk::Ctx& c, float x, float y, float w) {
+  float in = -120, out = -120;
+  if (auto rt = runtime(a, t)) in = rt->input.load(), out = rt->meter.load();
+  const float v[2] = {in, out};
+  const char* lab[2] = {"IN", "OUT"};
+  for (int k = 0; k < 2; ++k) {
+    const float yy = y + k * 14;
+    flk::text(c, x, yy + 1, lab[k]);
+    const ImVec2 p0 = c.F.p(x + 26, yy), p1 = c.F.p(x + w, yy + 9);
+    c.dl->AddRectFilled(p0, p1, skin::hex(0x181B1E), 2 * c.F.s);
+    const float kk = std::clamp((v[k] + 60.0f) / 60.0f, 0.0f, 1.0f);
+    if (kk > 0) c.dl->AddRectFilled(p0, ImVec2(p0.x + (p1.x - p0.x) * kk, p1.y), v[k] > -0.5f ? skin::hex(0xE5484D) : c.K.select, 2 * c.F.s);
+  }
+}
+
 const skin::Skin& refRackSkin() {
   static const skin::Skin k = [] {
     skin::Skin s = skin::Skin::fl(0x2E3134, 0x3B4044, 0x23272A, 0xE8743B, 0x4B5155, 0xC8CDD0);
@@ -201,6 +217,7 @@ void editorModuleRack(App& a, const PluginTarget& t, float width) {
   static const char* models[3] = {"GUITAR RACK", "MODULE RACK", "PEDAL BOARD"};
   flk::text(c, 300, 368, "MODEL");
   flk::sw(c, RkModel, 350, 362, 330, 22, models, 3, true);
+  ioMeters(a, t, c, 700, 360, 190);
   F.end(kW, kH);
 }
 
@@ -261,6 +278,7 @@ void editorPedalBoard(App& a, const PluginTarget& t, float width) {
   }
   static const char* models[3] = {"GUITAR", "MODULES", "PEDALS"};
   flk::sw(c, RkModel, 720, 252, 170, 22, models, 3, true);
+  ioMeters(a, t, c, 720, 290, 170);
   F.end(kW, kH);
 }
 

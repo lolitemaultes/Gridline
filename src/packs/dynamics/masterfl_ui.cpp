@@ -202,6 +202,39 @@ void monitorArea(App& a, const PluginTarget& t, const PluginState& st, MaxUi& u,
     }
     skin::label(dl, f, (xs[b] - f.o.x) / f.s + 4, 170, 50, 10, kBand[b], b == u.band ? kBandCol[b] : hex(0x7F8A8E), 0, 7.5f, 0);
   }
+  // J-68: scrolling gain envelopes of all four bands in their colours (the
+  // reference's main monitor layer): newest at the right, 0 dB at the top,
+  // −24 dB at the bottom; sampled from the engine's per-block reduction.
+  if (u.vis[5]) {
+    struct GrHist {
+      enum { N = 512 };
+      float v[4][N] = {};
+      int head = 0;
+      double last = -1;
+    };
+    static std::map<uint64_t, GrHist> hists;
+    GrHist& h = hists[t.key()];
+    const double now = ImGui::GetTime();
+    if (h.last < 0) h.last = now;
+    for (int guard = 0; now - h.last >= 1.0 / 60.0 && guard < 8; ++guard) {
+      h.last += 1.0 / 60.0;
+      h.head = (h.head + 1) % static_cast<int>(GrHist::N);
+      for (int b = 0; b < 4; ++b) h.v[b][h.head] = std::min(0.0f, gr[b]);
+    }
+    if (now - h.last > 1.0) h.last = now;
+    const float w = p1.x - p0.x;
+    const int cols = std::min(static_cast<int>(GrHist::N), static_cast<int>(w / 1.5f));
+    const float dx = w / static_cast<float>(cols);
+    for (int b = 0; b < 4; ++b) {
+      ImVec2 prev;
+      for (int i = 0; i < cols; ++i) {
+        const float v = h.v[b][(h.head - i + static_cast<int>(GrHist::N)) % static_cast<int>(GrHist::N)];
+        const ImVec2 q(p1.x - static_cast<float>(i) * dx, p0.y + 2 + std::clamp(-v / 24.0f, 0.0f, 1.0f) * (p1.y - p0.y - 16));
+        if (i) dl->AddLine(prev, q, theme::withAlpha(kBandCol[b], b == u.band ? 0.95f : 0.55f), f.d(b == u.band ? 1.4f : 1.0f));
+        prev = q;
+      }
+    }
+  }
   // Master reduction strip on the right edge.
   float hm = std::min(1.0f, -gr[3] / 24.0f) * (p1.y - p0.y);
   if (hm > 1) dl->AddRectFilled(ImVec2(p1.x - f.d(6), p0.y), ImVec2(p1.x - f.d(1), p0.y + hm), theme::withAlpha(kBandCol[3], 0.7f));
@@ -279,6 +312,17 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
   skin::bevel(dl, f, 139, 290, 108, 73, hex(0x4F5859), skin::BevelRounded);
   skin::bevel(dl, f, 6, 328, 66, 35, hex(0x404748), skin::BevelRounded);
 
+  // J-68: compression indicators at both panel edges (arrow shapes): filled
+  // with the selected band's colour, deeper with its live gain reduction.
+  {
+    const float k = std::clamp(-gr[b] / 12.0f, 0.0f, 1.0f);
+    for (int side = 0; side < 2; ++side) {
+      const float x0 = side ? 616.0f : 0.0f, x1 = x0 + 10, tip = side ? x0 : x1, base = side ? x1 : x0;
+      ImVec2 pts[5] = {f.p(base, 260), f.p(base, 383), f.p((x0 + x1) * 0.5f, 383), f.p(tip, 321.5f), f.p((x0 + x1) * 0.5f, 260)};
+      dl->AddConvexPolyFilled(pts, 5, hex(0x3A4245));
+      if (k > 0.01f) dl->AddConvexPolyFilled(pts, 5, theme::withAlpha(kBandCol[b], 0.25f + 0.6f * k));
+    }
+  }
   // ---- top: curve editor + monitor + display options
   float inDb = b == 3 ? inLevel : -120.f;
   curveArea(a, t, st, u, f, inDb);
@@ -308,6 +352,7 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
   skin::glyphToggle(f, "mvi", 206, 188, 16, 17, u.vis[0], hex(0x609E98), glyphDots, "Show input level on the curve");
   skin::glyphToggle(f, "mvs", 222, 188, 16, 17, u.vis[2], hex(0x8BFC56), glyphLine, "Show the output spectrum");
   skin::glyphToggle(f, "mvg", 238, 188, 16, 17, u.vis[4], hex(0xDD4AEB), glyphBars, "Show band gain reduction");
+  skin::glyphToggle(f, "mve", 254, 188, 16, 17, u.vis[5], hex(0xC9B465), glyphLine, i18n::tr("Show the bands' gain envelopes over time"));
   skin::label(dl, f, 382, 187, 89, 19, "SPEED", lbl, hex(0x1D2023), 7.5f, 0);
   skin::slider(f, "mxspeed", 413, 190, 58, 12, u.speed, hex(0x474F50), hex(0x8B9294), "Monitor speed");
 

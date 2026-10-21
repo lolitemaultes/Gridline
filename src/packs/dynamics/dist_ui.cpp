@@ -6,6 +6,7 @@
 // a 2 × 2 wheel block (effect mix, tilt, effect A / B); the bottom strip holds
 // Gridline's band split / drive / mix / gain and the link / look-ahead switches.
 // Overdrive / Squeeze: dist_fl_ui.cpp; Clip Dist (gl.fastdist): app/PluginEditorsK3.cpp.
+#include "../../core/I18n.h"
 #include "../flc_kit.h"
 #include "dyn_widgets.h"
 
@@ -198,6 +199,39 @@ void editorTransplit(App& a, const PluginTarget& t, float width) {
 // ===================================================================== gl.hitloop
 // J-45 Hit Looper: levels | loops | variation | detector, in sections.
 void editorHitLoop(App& a, const PluginTarget& t, float width) {
+  {  // J-68: envelope graph: input (grey) and output with the loops (accent) over the last seconds
+    float in = -120, out = -120;
+    if (auto rt = runtime(a, t)) in = rt->input.load(), out = rt->bands[0].load();
+    History& h = history(t.key() ^ 0x484C4556ull);
+    if (h.due(60)) {
+      float v[2] = {in, out};
+      h.push(v, 2);
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + width - 24, p0.y + 96);
+    const auto& P = theme::pal();
+    pui::displayFrame(dl, p0, p1);
+    dl->PushClipRect(p0, p1, true);
+    auto Y = [&](float db) { return p1.y - 3 - (std::clamp(db, -60.0f, 0.0f) + 60.0f) / 60.0f * (p1.y - p0.y - 8); };
+    for (int db = -48; db < 0; db += 12) dl->AddLine(ImVec2(p0.x, Y(static_cast<float>(db))), ImVec2(p1.x, Y(static_cast<float>(db))), theme::withAlpha(P.text, 0.08f));
+    const float w = p1.x - p0.x;
+    const int cols = std::min(History::N, static_cast<int>(w / 1.5f));
+    const float dx = w / static_cast<float>(cols);
+    for (int i = 0; i < cols; ++i) {
+      const float x = p1.x - static_cast<float>(i + 1) * dx;
+      dl->AddRectFilled(ImVec2(x, Y(h.at(0, i))), ImVec2(x + dx + 0.5f, p1.y), theme::withAlpha(P.text, 0.18f));
+    }
+    ImVec2 prev;
+    for (int i = 0; i < cols; ++i) {
+      const ImVec2 q(p1.x - static_cast<float>(i) * dx, Y(h.at(1, i)));
+      if (i) dl->AddLine(prev, q, P.accent, 1.5f);
+      prev = q;
+    }
+    dl->AddText(ImVec2(p0.x + 6, p0.y + 4), theme::withAlpha(P.text, 0.6f), i18n::tr("Input"));
+    dl->AddText(ImVec2(p0.x + 60, p0.y + 4), P.accent, i18n::tr("Output"));
+    dl->PopClipRect();
+    ImGui::Dummy(ImVec2(width - 24, 100));
+  }
   const float avail = width - 24, wL = avail * 0.18f, wP = avail * 0.34f, wV = avail * 0.24f, wD = avail * 0.24f;
   pui::beginSection("LEVELS", wL);
   pui::knobCell(a, t, HlDry, "Dry", wL - 12);

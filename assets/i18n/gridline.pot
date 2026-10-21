@@ -7121,6 +7121,10 @@ msgstr ""
 msgid "Track with a mode"
 msgstr ""
 
+#: src/app/PluginEditorsDelayRef.cpp
+msgid "Feedback distortion: input level (x) to output level (y)"
+msgstr ""
+
 #: src/app/PluginEditorsDynFl.cpp
 msgid "0.2 dB safety margin"
 msgstr ""
@@ -9005,6 +9009,14 @@ msgstr ""
 msgid "Set loop start here"
 msgstr ""
 
+#: src/packs/dynamics/dist_ui.cpp
+msgid "Input"
+msgstr ""
+
+#: src/packs/dynamics/dist_ui.cpp
+msgid "Output"
+msgstr ""
+
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "%s band"
 msgstr ""
@@ -9023,6 +9035,10 @@ msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Reset this band's curve"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Show the bands' gain envelopes over time"
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp

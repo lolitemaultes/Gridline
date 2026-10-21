@@ -10,7 +10,9 @@
 #include <map>
 #include "../../core/I18n.h"
 #include "../flc_kit.h"
+#include "../../engine/LiveGraph.h"
 #include "dco.h"
+#include "dcosynth_fx.h"
 #include "synths_common.h"
 #include "synths_widgets.h"
 
@@ -307,22 +309,21 @@ void drawPanelTwo(App& a, const PluginTarget& t, const PluginState& st, float W)
       }
       ImVec2 p0 = F.p(766, 439), p1 = F.p(1039, 553);
       skin::graphWell(dl, p0, p1, KF);
-      // Response: sum of the three bands (dB, ±18) over 20 Hz..20 kHz.
-      auto bandDb = [&](double hz) {
-        double db = 0;
-        for (int b = 0; b < 3; ++b) {
-          const double g = (val(st, DcEqGainLo + b) * 2.0 - 1.0) * 18.0;
-          const double f0 = 20.0 * std::pow(1000.0, val(st, DcEqFreqLo + b));
-          const double q = 0.3 * std::pow(20.0, val(st, DcEqQLo + b));
-          const double r = std::log2(hz / f0);
-          if (b == 0) db += g / (1.0 + std::exp(4.0 * q * r));
-          else if (b == 2) db += g / (1.0 + std::exp(-4.0 * q * r));
-          else db += g * std::exp(-r * r * q * 2.0);
-        }
-        return db;
-      };
-      cycleGraph(dl, p0, ImVec2(p1.x - p0.x, p1.y - p0.y), [&](double x) { return bandDb(20.0 * std::pow(1000.0, x)) / 18.0; },
-                 KF.graphCurve, 1.5f);
+      // Response (J-68): the engine's own shelf / peak / shelf biquads with its
+      // knob laws (dB, ±18) over 20 Hz..20 kHz, rebuilt when a control moves.
+      const double eqSr = a.engine.sampleRate() > 0 ? a.engine.sampleRate() : 48000.0;
+      const livegraph::Curve& resp = livegraph::memo<livegraph::Curve>(t.key(), 0x44434551).get(
+          livegraph::Hasher().floats(st.params).d(eqSr).value(), [&](livegraph::Curve& o) {
+            double g01[3], f01[3], q01[3], gains[3], hz[3], q[3];
+            for (int k = 0; k < 3; ++k) g01[k] = val(st, DcEqGainLo + k), f01[k] = val(st, DcEqFreqLo + k), q01[k] = val(st, DcEqQLo + k);
+            dcofx::ThreeBandEq::laws(val(st, DcModel) >= 0.5f, g01, f01, q01, gains, hz, q);
+            dcofx::ThreeBandEq eq;
+            eq.configure(eqSr, true, gains, hz, q);
+            o.resize(129);
+            for (int i = 0; i < 129; ++i) o[static_cast<size_t>(i)] = static_cast<float>(dsp::gainToDb(eq.magnitude(20.0 * std::pow(1000.0, i / 128.0), eqSr)));
+          });
+      cycleGraph(dl, p0, ImVec2(p1.x - p0.x, p1.y - p0.y),
+                 [&](double x) { return resp[static_cast<size_t>(std::clamp(static_cast<int>(std::lround(x * 128)), 0, 128))] / 18.0; }, KF.graphCurve, 1.5f);
       break;
     }
     case 3: {
