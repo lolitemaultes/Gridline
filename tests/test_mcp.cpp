@@ -37,6 +37,23 @@ using namespace gl::mcp;
 namespace fs = std::filesystem;
 
 namespace {
+// `text` written to `path`, opened for reading (a stdin stand-in).
+std::FILE* streamOf(const std::string& text, const fs::path& path) {
+  {
+    std::ofstream os(path, std::ios::binary);
+    os << text;
+  }
+  return std::fopen(path.string().c_str(), "rb");
+}
+std::string fileText(const fs::path& path) {
+  std::ifstream is(path, std::ios::binary);
+  std::stringstream ss;
+  ss << is.rdbuf();
+  return ss.str();
+}
+}  // namespace
+
+namespace {
 
 bool contains(const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; }
 
@@ -854,15 +871,13 @@ void httpTests() {
   {
     const std::string in = init + "\n" + R"({"jsonrpc":"2.0","method":"notifications/initialized"})" + "\n" +
                            R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_song"}})" + "\n";
-    std::FILE* fin = ::fmemopen(const_cast<char*>(in.data()), in.size(), "r");
-    char* outBuf = nullptr;
-    size_t outLen = 0;
-    std::FILE* fout = ::open_memstream(&outBuf, &outLen);
+    // Files stand in for the stdio streams (fmemopen / open_memstream are POSIX only).
+    std::FILE* fin = streamOf(in, f.dir / "bridge-in.txt");
+    std::FILE* fout = std::fopen((f.dir / "bridge-out.txt").string().c_str(), "wb");
     Served bridge(ep, [&] { attachBridge(fin, fout, efile); });
     std::fclose(fin);
     std::fclose(fout);
-    std::string out(outBuf ? outBuf : "", outLen);
-    std::free(outBuf);
+    const std::string out = fileText(f.dir / "bridge-out.txt");
     std::vector<std::string> lines;
     std::istringstream ls(out);
     for (std::string l; std::getline(ls, l);) lines.push_back(l);
@@ -870,15 +885,12 @@ void httpTests() {
   }
   {  // bridge without a running app: JSON-RPC errors for requests
     const std::string in = init + "\n" + R"({"jsonrpc":"2.0","method":"notifications/initialized"})" + "\n";
-    std::FILE* fin = ::fmemopen(const_cast<char*>(in.data()), in.size(), "r");
-    char* outBuf = nullptr;
-    size_t outLen = 0;
-    std::FILE* fout = ::open_memstream(&outBuf, &outLen);
+    std::FILE* fin = streamOf(in, f.dir / "bridge-in2.txt");
+    std::FILE* fout = std::fopen((f.dir / "bridge-out2.txt").string().c_str(), "wb");
     attachBridge(fin, fout, (f.dir / "missing.json").string());
     std::fclose(fin);
     std::fclose(fout);
-    std::string out(outBuf ? outBuf : "", outLen);
-    std::free(outBuf);
+    const std::string out = fileText(f.dir / "bridge-out2.txt");
     Json r = parseJ(out.substr(0, out.find('\n')));
     expect(errorCode(r) != 0 && r.find("id") && r.find("id")->number == 1 && std::count(out.begin(), out.end(), '\n') == 1,
            "attach bridge: app not running -> error reply, nothing for notifications");

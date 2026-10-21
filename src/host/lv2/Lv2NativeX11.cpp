@@ -4,6 +4,7 @@
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <dlfcn.h>
 #include <cstdint>
+#include <initializer_list>
 #include "Lv2Native.h"
 
 namespace gl::host::lv2::native {

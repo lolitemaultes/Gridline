@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Builds the macOS disk image from a build folder (release.yml; works on any build):
+#   tools/release/package-macos.sh <build dir> <version> <out dir> [arch label]
+# The image holds Gridline.app (the app, the command line tool and the assets inside), the
+# plugins (Gridline.vst3 / .clap / .component), the command line tool and a README. Everything
+# is signed ad hoc (no Developer ID: users open it with right-click > Open the first time).
+set -euo pipefail
+BUILD="$(cd "${1:?build dir}" && pwd)"
+VER="${2:?version}"
+OUT="${3:?out dir}"
+LABEL="${4:-universal}"
+SRC="$(cd "$(dirname "$0")/../.." && pwd)"
+mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"
+ROOT="$OUT/dmgroot"
+rm -rf "$ROOT"
+mkdir -p "$ROOT/Plugins"
+
+app="$ROOT/Gridline.app"
+ditto "$BUILD/Gridline.app" "$app"
+# The build tree's bundle holds a hard link to the program; the image gets a real copy, the
+# command line tool next to it and the assets inside (the app finds Contents/Resources/assets).
+rm -f "$app/Contents/MacOS/gridline-app"
+cp "$BUILD/gridline-app" "$app/Contents/MacOS/gridline-app"
+cp "$BUILD/gridline" "$app/Contents/MacOS/gridline"
+rm -rf "$app/Contents/Resources/assets"
+ditto "$SRC/assets" "$app/Contents/Resources/assets"
+rm -rf "$app/Contents/Resources/assets/sounds/src"
+cp "$SRC/assets/icons/Gridline.icns" "$app/Contents/Resources/Gridline.icns"
+
+for p in Gridline.vst3 Gridline.clap Gridline.component; do
+  ditto "$BUILD/plugins/$p" "$ROOT/Plugins/$p"
+  rm -rf "$ROOT/Plugins/$p/Contents/Resources/assets/sounds/src"
+done
+cp "$BUILD/gridline" "$ROOT/gridline"
+sed "s/@VERSION@/$VER/g" "$SRC/tools/release/README-macos.txt" > "$ROOT/README.txt"
+ln -s /Applications "$ROOT/Applications"
+
+# Ad hoc signatures (inside out: nested code first).
+codesign --force --sign - --timestamp=none "$app/Contents/MacOS/gridline"
+codesign --force --sign - --timestamp=none "$app"  # no hardened runtime: it would refuse unsigned plugins
+for p in Gridline.vst3 Gridline.clap Gridline.component; do codesign --force --sign - --timestamp=none "$ROOT/Plugins/$p"; done
+codesign --force --sign - --timestamp=none "$ROOT/gridline"
+codesign --verify --deep --strict "$app"
+
+dmg="$OUT/Gridline-$VER-macos-$LABEL.dmg"
+rm -f "$dmg"
+for attempt in 1 2 3 4 5; do  # hdiutil is flaky on CI machines ("resource busy")
+  if hdiutil create -volname "Gridline $VER" -srcfolder "$ROOT" -ov -format UDZO -fs HFS+ "$dmg"; then break; fi
+  sleep 5
+done
+test -s "$dmg"
+echo "$dmg"

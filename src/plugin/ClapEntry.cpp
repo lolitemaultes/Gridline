@@ -529,5 +529,5 @@ const void* entryFactory(const char* id) { return !std::strcmp(id, CLAP_PLUGIN_F
 extern "C" {
 // extern: a namespace-scope const object would otherwise have internal linkage (not exported).
 CLAP_EXPORT extern const clap_plugin_entry_t clap_entry;
-CLAP_EXPORT const clap_plugin_entry_t clap_entry = {CLAP_VERSION_INIT, entryInit, entryDeinit, entryFactory};
+const clap_plugin_entry_t clap_entry = {CLAP_VERSION_INIT, entryInit, entryDeinit, entryFactory};
 }

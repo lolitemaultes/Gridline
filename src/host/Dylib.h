@@ -19,7 +19,9 @@ class Dylib {
  private:
   std::string path_;
   void* handle_ = nullptr;
-  bool bundle_ = false;
+#if defined(__APPLE__)
+  bool bundle_ = false;  // a CFBundle (macOS)
+#endif
 };
 
 // Plain shared objects (dlopen / LoadLibrary), for code that manages the handle itself.

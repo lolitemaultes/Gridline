@@ -637,7 +637,7 @@ void testPluginCheck() {
 
 int main() {
   gl::test::hermeticTestEnv("lv2");
-  setenv("LV2_PATH", kDir.c_str(), 1);
+  platform::setEnv("LV2_PATH", kDir.c_str());
   testTurtle();
   testScan();
   testGain();

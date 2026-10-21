@@ -29,6 +29,9 @@ if(MSVC)
   # UTF-8 sources and narrow strings, standard conformance, large objects, <cmath> constants,
   # no min/max macros from <windows.h>.
   add_compile_options(/utf-8 /permissive- /Zc:__cplusplus /Zc:preprocessor /bigobj /EHsc)
+  # <math.h> first everywhere: its M_PI (_USE_MATH_DEFINES) and SDL's fallback definition would
+  # otherwise collide (C4005) depending on the include order.
+  add_compile_options(/FImath.h)
   add_compile_definitions(_USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE
                           _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -53,11 +56,16 @@ if(CMAKE_SYSTEM_NAME MATCHES "BSD|DragonFly")
   # VST3 SDK headers (kept unmodified) only know Windows, Linux and macOS: let them take their
   # Linux branch. Nothing else in the tree or the system headers tests __gnu_linux__.
   add_compile_definitions(__gnu_linux__=1)
-  # Ports / pkgsrc install headers and libraries outside the compiler's default paths.
+  if(CMAKE_SYSTEM_NAME STREQUAL "NetBSD")
+    # The full NetBSD API with strict -std=c++17 (LLONG_MAX in <limits.h>, ...).
+    add_compile_definitions(_NETBSD_SOURCE)
+  endif()
+  # Ports / pkgsrc / X11 install headers and libraries outside the compiler's default paths.
   foreach(_pfx /usr/local /usr/pkg /usr/X11R6 /usr/X11R7)
     if(EXISTS ${_pfx}/include)
       include_directories(SYSTEM ${_pfx}/include)
       link_directories(${_pfx}/lib)
+      list(APPEND CMAKE_PREFIX_PATH ${_pfx})
     endif()
   endforeach()
 endif()
@@ -78,6 +86,16 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|AMD64|x86_64")
 else()
   set(GRIDLINE_VST3_ARCH ${CMAKE_SYSTEM_PROCESSOR}-linux)
 endif()
+# Oldest macOS the bundles declare (Info.plist): the deployment target when one is set
+# (universal builds: 11.0, the first with Apple Silicon), else 10.15.
+if(CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(GL_MACOS_MIN ${CMAKE_OSX_DEPLOYMENT_TARGET})
+else()
+  set(GL_MACOS_MIN 10.15)
+endif()
+# Builds run from the build tree find assets/ in the source tree (a compiled-in fallback path);
+# release packages turn this off so no build machine path ends up in the programs.
+option(GRIDLINE_DEV_ASSETS "Fall back to the source tree's assets/ folder (development builds)" ON)
 # GUI tests (the off-screen app runs) need a display; headless CI runners turn them off.
 option(GRIDLINE_GUI_TESTS "Register the tests that open (hidden) application windows" ON)
 
@@ -828,7 +846,9 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   endif()
   target_compile_options(gridline-app PRIVATE ${GL_WARN_LOOSE})
   # Run from the build tree: assets are found next to the source tree.
-  target_compile_definitions(gridline-app PRIVATE GRIDLINE_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")
+  if(GRIDLINE_DEV_ASSETS)
+    target_compile_definitions(gridline-app PRIVATE GRIDLINE_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")
+  endif()
 
   # App icon (tools/make_app_icon.py): Gridline.icns for the macOS bundle, gridline-app-<size>.png
   # for Linux, gridline-app-256.bmp for the SDL window / dock icon (loaded at startup).
@@ -838,7 +858,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     set(GRIDLINE_APP_BUNDLE ${CMAKE_BINARY_DIR}/Gridline.app)
     file(MAKE_DIRECTORY ${GRIDLINE_APP_BUNDLE}/Contents/MacOS ${GRIDLINE_APP_BUNDLE}/Contents/Resources)
     file(WRITE ${GRIDLINE_APP_BUNDLE}/Contents/Info.plist
-         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleName</key><string>Gridline</string>\n<key>CFBundleDisplayName</key><string>Gridline</string>\n<key>CFBundleExecutable</key><string>gridline-app</string>\n<key>CFBundleIdentifier</key><string>org.gridline.Gridline</string>\n<key>CFBundleIconFile</key><string>Gridline</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>${PROJECT_VERSION}</string>\n<key>CFBundleVersion</key><string>${PROJECT_VERSION}</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.music</string>\n<key>LSMinimumSystemVersion</key><string>10.15</string>\n<key>NSHighResolutionCapable</key><true/>\n<key>NSMicrophoneUsageDescription</key><string>Gridline records audio from your input devices.</string>\n</dict></plist>\n")
+         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleName</key><string>Gridline</string>\n<key>CFBundleDisplayName</key><string>Gridline</string>\n<key>CFBundleExecutable</key><string>gridline-app</string>\n<key>CFBundleIdentifier</key><string>org.gridline.Gridline</string>\n<key>CFBundleIconFile</key><string>Gridline</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>${PROJECT_VERSION}</string>\n<key>CFBundleVersion</key><string>${PROJECT_VERSION}</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.music</string>\n<key>LSMinimumSystemVersion</key><string>${GL_MACOS_MIN}</string>\n<key>NSHighResolutionCapable</key><true/>\n<key>NSMicrophoneUsageDescription</key><string>Gridline records audio from your input devices.</string>\n</dict></plist>\n")
     add_custom_command(TARGET gridline-app POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/icons/Gridline.icns
               ${GRIDLINE_APP_BUNDLE}/Contents/Resources/Gridline.icns
@@ -900,7 +920,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     endforeach()
   endif()
 else()
-  message(STATUS "SDL2/OpenGL not found: building the engine, CLI and tests only (no gridline-app)")
+  message(STATUS "SDL2/OpenGL not found (SDL2: ${SDL2_FOUND}${SDL2PC_FOUND}, OpenGL: ${OPENGL_FOUND}): building the engine, CLI and tests only (no gridline-app)")
 endif()
 
 # ---- Windows: version resources, icons and the application manifest ----
@@ -936,5 +956,43 @@ if(WIN32)
       target_sources(${_t} PRIVATE ${CMAKE_SOURCE_DIR}/cmake/windows/gridline.manifest)
     endif()
   endforeach()
+endif()
+
+# ---- Linux packages (cpack in the build folder): .tar.gz, .deb, .rpm ----
+# Installed under /usr: programs in bin, assets in share/gridline, the desktop entry, icons and
+# MIME type; with GRIDLINE_INSTALL_PLUGINS=ON also lib/vst3/Gridline.vst3 and lib/clap/Gridline.clap.
+if(UNIX AND NOT APPLE)
+  set(CPACK_PACKAGE_NAME gridline)
+  set(CPACK_PACKAGE_VENDOR "Gridline")
+  set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Pattern-based music workstation")
+  set(CPACK_PACKAGE_DESCRIPTION "Gridline is a pattern-based digital audio workstation: channel rack, piano roll, playlist, mixer, built-in instruments and effects, VST3 / CLAP / VST2 / LV2 plugin hosting, and FL Studio project import and export.")
+  set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/lolitemaultes/Gridline")
+  set(CPACK_PACKAGE_CONTACT "Gridline <188165912+lolitemaultes@users.noreply.github.com>")
+  set(CPACK_PACKAGING_INSTALL_PREFIX /usr)
+  set(CPACK_STRIP_FILES ON)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    set(_gl_deb_arch arm64)
+    set(_gl_rpm_arch aarch64)
+  else()
+    set(_gl_deb_arch amd64)
+    set(_gl_rpm_arch x86_64)
+  endif()
+  set(CPACK_PACKAGE_FILE_NAME "Gridline-${PROJECT_VERSION}-linux-${_gl_rpm_arch}")
+  set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE ${_gl_deb_arch})
+  set(CPACK_DEBIAN_FILE_NAME "Gridline-${PROJECT_VERSION}-linux-${_gl_deb_arch}.deb")
+  set(CPACK_DEBIAN_PACKAGE_SECTION sound)
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+  set(CPACK_RPM_PACKAGE_ARCHITECTURE ${_gl_rpm_arch})
+  set(CPACK_RPM_FILE_NAME "Gridline-${PROJECT_VERSION}-linux-${_gl_rpm_arch}.rpm")
+  set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-or-later")
+  set(CPACK_RPM_PACKAGE_GROUP "Applications/Multimedia")
+  set(CPACK_RPM_PACKAGE_URL "https://github.com/lolitemaultes/Gridline")
+  set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/share/applications /usr/share/icons /usr/share/icons/hicolor /usr/share/mime
+      /usr/share/mime/packages /usr/lib/vst3 /usr/lib/clap)
+  if(NOT CPACK_GENERATOR)
+    set(CPACK_GENERATOR "TGZ;DEB;RPM")
+  endif()
+  include(CPack)
 endif()
 

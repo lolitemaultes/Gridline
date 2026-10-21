@@ -82,7 +82,12 @@ NSOpenGLPixelFormat* pixelFormat() {
                                             NSOpenGLPFAStencilSize,   8,
                                             NSOpenGLPFADoubleBuffer,  NSOpenGLPFAAccelerated,
                                             0};
-    return [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs];
+    NSOpenGLPixelFormat* f = [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs];
+    if (!f) {  // no GPU (virtual machines, some remote sessions): Apple's software renderer
+      attrs[9] = 0;
+      f = [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs];
+    }
+    return f;
   }();
   return fmt;
 }

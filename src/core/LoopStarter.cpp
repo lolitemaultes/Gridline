@@ -694,13 +694,15 @@ std::vector<std::string> partChannels(int part) {
 
 std::vector<Sound> soundOptions(int style, int part) {
   const Recipe& r = recipes()[static_cast<size_t>(std::clamp(style, 0, static_cast<int>(recipes().size()) - 1))];
-  std::vector<Snd> v;
-  if (part == kDrums) v = {r.kick, r.snare, r.hat, r.ohat, r.perc};
-  else if (part == kBass) v = r.bass;
-  else if (part == kChords) v = r.chords;
-  else if (part == kLead) v = r.lead;
   std::vector<Sound> out;
-  for (const Snd& x : v) out.push_back(Sound{x.type, x.preset, x.gain});
+  auto add = [&out](const Snd& x) { out.push_back(Sound{x.type, x.preset, x.gain}); };
+  if (part == kDrums) {
+    for (const Snd* x : {&r.kick, &r.snare, &r.hat, &r.ohat, &r.perc}) add(*x);
+  } else {
+    const std::vector<Snd>* src = part == kBass ? &r.bass : part == kChords ? &r.chords : part == kLead ? &r.lead : nullptr;
+    if (src)
+      for (const Snd& x : *src) add(x);
+  }
   return out;
 }
 

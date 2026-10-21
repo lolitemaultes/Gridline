@@ -17,6 +17,17 @@ env:
   GRIDLINE_NO_PLUGIN_SCAN: "1"
 
 jobs:
+  consistency:
+    name: Version, icons, line endings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/ci/check-version.sh
+      - run: python3 tools/make_ico.py --check
+      - name: No CRLF in text files
+        run: |
+          if git ls-files --eol | grep 'i/crlf' | grep -v 'attr/-text'; then echo "CRLF line endings above"; exit 1; fi
+
   linux:
     name: Linux ${{ matrix.name }}
     runs-on: ubuntu-latest

@@ -26,7 +26,7 @@ std::string query(const char* cmd) {
   return out;
 }
 #endif
-bool has(const std::string& s, const char* needle) { return s.find(needle) != std::string::npos; }
+[[maybe_unused]] bool has(const std::string& s, const char* needle) { return s.find(needle) != std::string::npos; }
 }  // namespace
 
 std::string colourText(uint32_t rgb) {

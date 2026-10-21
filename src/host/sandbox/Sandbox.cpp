@@ -498,6 +498,7 @@ class SandboxBackend final : public Backend {
   }
   bool hasBypass() const override { return desc_.bypass; }
   bool handlesNotePan() const override { return desc_.notePan; }
+  void setRenderingOffline(bool offline) override { offline_.store(offline, std::memory_order_relaxed); }
   bool setOffline(bool offline) override {
     Wr w;
     w.u8(OpSetOffline);
@@ -779,8 +780,9 @@ class SandboxBackend final : public Backend {
       return false;
     }
     const auto start = std::chrono::steady_clock::now();
-    // Budget: a few block lengths (the child runs the plugin in real time).
-    const double budget = std::max(0.004, 4.0 * n / std::max(8000.0, t.sampleRate));
+    // Budget: a few block lengths (the child runs the plugin in real time). Offline (export)
+    // nothing waits for the sound card: every block is waited for, however slow the machine.
+    const double budget = offline_.load(std::memory_order_relaxed) ? 30.0 : std::max(0.004, 4.0 * n / std::max(8000.0, t.sampleRate));
     if (inflight_) {  // the previous block came back late
       if (shm_->done.load(std::memory_order_acquire) != seq_) {
         lateSeconds_ += static_cast<double>(n) / std::max(8000.0, t.sampleRate);
@@ -970,6 +972,7 @@ class SandboxBackend final : public Backend {
   platform::Process proc_;
   std::thread watcher_;
   std::atomic<bool> exited_{false}, crashed_{false};
+  std::atomic<bool> offline_{false};  // rendering offline: no real-time budget
   mutable std::mutex reasonLock_;
   std::string reason_;
   std::vector<double> values_;  // cached parameter values (UI)

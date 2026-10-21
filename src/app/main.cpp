@@ -698,6 +698,15 @@ int main(int argc, char** argv) {
     else
       app.applyStartup();
   }
+  {  // Opened with files (file manager, "Open with", the Linux desktop entry's %F): no options,
+     // only paths; the first project among them opens.
+    bool onlyPaths = argc > 1;
+    for (int i = 1; i < argc; ++i) onlyPaths = onlyPaths && argv[i][0] != '-';
+    for (int i = 1; onlyPaths && i < argc; ++i) {
+      std::error_code ec;
+      if (fs::is_regular_file(fs::u8path(argv[i]), ec) && app.openProject(argv[i])) break;
+    }
+  }
 
   // Command line: [project] [--screenshot out.ppm] [--frames N] [--play] [--fx mixer slot] [--chan index]
   //               [--plugin type] [--size WxH]
@@ -1381,7 +1390,11 @@ int main(int argc, char** argv) {
           }
       if (devDialog == "prompt") menus::openPrompt("Rename pattern", "Pattern 1", [](const std::string&) {});
       // Layout checks never list the user's own folders: browse the Gridline source tree.
+#ifdef GRIDLINE_SOURCE_ASSETS
       if (devDialog == "open" || devDialog == "saveas") app.fileDialog.dir = fs::path(GRIDLINE_SOURCE_ASSETS).parent_path().string();
+#else
+      if (devDialog == "open" || devDialog == "saveas") app.fileDialog.dir = fs::path(app.assetsDir).parent_path().string();
+#endif
     }
     if (devRemote && frameNo == 3 && !app.doc.song().channels.empty()) {
       if (devRemote == 1) {
