@@ -77,6 +77,11 @@ ReverbView reverbView(const PluginState& st, double sr, double tempo) {
     v.dry = fullrev::levelCurve(std::clamp(k.dry, 0, 160) / 128.0);
     v.er = fullrev::levelCurve(std::clamp(k.er, 0, 160) / 256.0);
     v.wet = fullrev::levelCurve(std::clamp(k.wet, 0, 160) / 256.0);
+    {  // separation law of the output matrix: a = 0.5 is mono, a < 0 widens
+      const double sp = std::clamp(iv(st, RvbFSep, 0), -64, 64) / 64.0;
+      const double a = std::min(sp > 0 ? (std::pow(5.0, sp) - 1) * 0.25 : sp, 1.0) * 0.5;
+      v.spread = std::clamp(1 - 2 * a, 0.0, 2.0);
+    }
     // Reflection taps (not pre-delayed), as the engine places and weights them.
     const float e = static_cast<float>((s.room + 3) * sri) * 3.302292e-7f;
     int tl[7], tr[8];
@@ -144,6 +149,8 @@ ReverbView reverbView(const PluginState& st, double sr, double tempo) {
   v.diffusion = std::clamp(static_cast<double>(pv(st, RvbDiffusion, 1)), 0.0, 1.0);
   v.modDepth = std::clamp(pv(st, RvbModDepth) / 10.0, 0.0, 1.0);
   v.dry = pv(st, RvbDry, 1), v.er = pv(st, RvbEarly, 0.3f), v.wet = pv(st, RvbWet, 0.25f);
+  v.spread = std::fabs(std::clamp(static_cast<double>(pv(st, RvbWidth, 1)), -1.0, 1.0));  // wet1 / wet2 cross-mix
+  v.color = std::clamp(static_cast<double>(pv(st, RvbColor)), -1.0, 1.0);
   static const double erMs[6] = {7.1, 11.3, 17.9, 23.3, 31.7, 41.9};
   static const double erGain[6] = {0.82, 0.71, 0.58, 0.49, 0.38, 0.29};
   for (int k = 0; k < 6; ++k) v.erSec[static_cast<size_t>(k)] = v.preSec + erMs[k] * (0.4 + size) * 0.001, v.erGain[static_cast<size_t>(k)] = erGain[k];

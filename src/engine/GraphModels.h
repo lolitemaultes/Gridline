@@ -27,6 +27,8 @@ struct ReverbView {
   double diffusion = 1;      // 0..1
   double modDepth = 0;       // 0..1 (display only)
   double dry = 1, er = 0.3, wet = 0.25;  // linear output levels
+  double spread = 1;         // Q-5: stereo spread of the tail (0 mono, 1 as recorded, 2 widened)
+  double color = 0;          // Q-5: hall colour tilt -1 (dark) .. 1 (bright)
   int freeze = 0;            // hall: 0 off, 1 freeze, 2 sustain
   int erCount = 0;           // early reflections (time after the input, gain incl. the ER level)
   std::array<double, 16> erSec{}, erGain{};

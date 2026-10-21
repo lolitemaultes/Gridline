@@ -5,6 +5,7 @@
 #include "../engine/Dsp.h"
 #include "../engine/GraphModels.h"
 #include "../engine/LiveGraph.h"
+#include "../engine/ReverbRoomViz.h"
 #include "PluginEditorsCommon.h"
 #include "PluginSkin.h"
 
@@ -46,106 +47,283 @@ const skin::Skin& reverbSkin() {
   return k;
 }
 
-// Room visual (the reference's left box): a slowly turning wireframe prism —
-// more sides with more diffusion, wider with a bigger room, glowing brighter
-// with more wet signal — over the plugin's fill colour.
-void roomVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const graphmodel::ReverbView& rv, const skin::Skin& k) {
-  const float w = p1.x - p0.x, h = p1.y - p0.y;
-  dl->AddRectFilled(p0, p1, skin::darken(k.fill, 0.55f), 3);
-  dl->AddRectFilledMultiColor(p0, ImVec2(p1.x, p0.y + h * 0.5f), theme::withAlpha(skin::lighten(k.fill, 0.1f), 0.35f),
-                              theme::withAlpha(skin::lighten(k.fill, 0.1f), 0.35f), 0, 0);
-  // J-68: from the active network's own values (the full model's integer controls too).
-  // The room size sets the side count (triangle .. near-cylinder) and the
-  // twist between the rings, diffusion the radius, the reflection level
-  // (the tail level on the plate, which has none) the glow.
-  const double size = rv.size, diff = rv.diffusion, wet = std::clamp(rv.model == 1 ? rv.wet : rv.model == 2 ? rv.er * 4.0 : rv.er, 0.0, 1.0);
-  const int sides = std::clamp(3 + static_cast<int>(std::lround(std::exp(size * 3.26) - 1.0)), 3, 28);
-  const double radius = diff * 10.9 + 2.0, ringGap = 45.0 / radius + 5.0;
-  const double t0 = ImGui::GetTime() * 0.35;
-  const double cx = (p0.x + p1.x) * 0.5, cy = (p0.y + p1.y) * 0.5, scale = std::min(w, h) * 3.125 / 3.0;
-  ImVec2 v[2][28];
-  float depth[2][28];
-  for (int ring = 0; ring < 2; ++ring)
-    for (int i = 0; i < sides; ++i) {
-      double an = t0 + i * 2.0 * dsp::kPi / sides + ring * size * 0.785;
-      // prism axis along z, spun about it, then tilted towards the viewer
-      double x = std::cos(an) * radius, y = std::sin(an) * radius, z = (ring - 0.5) * ringGap;
-      const double tilt = 1.05;
-      double Y = y * std::cos(tilt) - z * std::sin(tilt), Z = y * std::sin(tilt) + z * std::cos(tilt);
-      double pz = Z + 33.333;
-      v[ring][i] = ImVec2(static_cast<float>(cx + x * scale / pz), static_cast<float>(cy + Y * scale / pz));
-      depth[ring][i] = static_cast<float>(std::clamp(0.6 - Z / (2.0 * radius + ringGap), 0.15, 1.0));
-    }
-  const ImU32 glow = skin::lighten(k.fill, 0.75f);
-  auto edge = [&](ImVec2 a, ImVec2 b, float d) {
-    float al = static_cast<float>(0.25 + 0.75 * wet) * d;
-    dl->AddLine(a, b, theme::withAlpha(glow, al * 0.35f), 4.0f);
-    dl->AddLine(a, b, theme::withAlpha(glow, al), 1.4f);
-  };
-  for (int ring = 0; ring < 2; ++ring)
-    for (int i = 0; i < sides; ++i) edge(v[ring][i], v[ring][(i + 1) % sides], 0.5f * (depth[ring][i] + depth[ring][(i + 1) % sides]));
-  for (int i = 0; i < sides; ++i) edge(v[0][i], v[1][i], 0.5f * (depth[0][i] + depth[1][i]));
-  dl->AddRect(p0, p1, skin::darken(k.panel, 0.6f), 3, 0, 1.0f);
-  char buf[48];
-  std::snprintf(buf, sizeof buf, "%.1f s", rv.decayKnob);
-  monoText(dl, ImVec2(p0.x + 5, p1.y - h * 0.12f), theme::withAlpha(glow, 0.85f), buf, std::clamp(h * 0.07f, 9.0f, 12.0f));
-  if (rv.freeze) monoText(dl, ImVec2(p1.x - h * 0.42f, p1.y - h * 0.12f), glow, rv.freeze == 1 ? "FREEZE" : "SUSTAIN", std::clamp(h * 0.07f, 9.0f, 12.0f));
+// Room visual and decay view (Q-5). The reference's left box shows a
+// wireframe prism "room"; here every control has its own cue, computed in
+// roomviz (engine/ReverbRoomViz.h) from the active network's view and eased
+// there, so this code only strokes prepared geometry: anti-aliased vectors,
+// one line-weight scale per box, far edges dimmer and thinner, a soft glow
+// under the cores. Both boxes share one palette from the reverb skin's roles.
+struct RoomInk {
+  ImU32 bgTop, bgBot, bgMid, frame, line, lineWarm, glow, spark, grid, text;
+};
+RoomInk roomInk(const skin::Skin& k) {
+  RoomInk c;
+  c.bgTop = skin::darken(k.fill, 0.45f);
+  c.bgBot = skin::darken(k.fill, 0.74f);
+  c.bgMid = theme::mix(c.bgTop, c.bgBot, 0.5f);
+  c.frame = skin::darken(k.panel, 0.62f);
+  c.line = skin::lighten(k.fill, 0.86f);      // lit edges
+  c.lineWarm = skin::lighten(k.fill, 0.04f);  // damped highs: the top ring sinks into the plugin's colour
+  c.glow = skin::lighten(k.fill, 0.55f);
+  c.spark = skin::lighten(k.select, 0.6f);
+  c.grid = theme::mix(c.bgMid, c.line, 0.13f);
+  c.text = theme::mix(c.bgMid, c.line, 0.62f);
+  return c;
 }
 
-// Decay visual (J-68: from graphmodel::reverbView, i.e. the active network's
-// loop gains): pre-delay gap, early reflections where the engine taps them,
-// the tail's envelope below the crossover (bass multiplier) and at 6 kHz
-// (damping). The polylines are cached and rebuilt only when the view changes.
-struct DecayCurves {
-  float span = 1;
-  std::vector<ImVec2> lo, hi;  // (seconds, amplitude 0..1)
-  std::vector<ImVec2> er;      // (seconds, height 0..1)
+// Per editor instance: the eased look and the geometry built from it.
+struct RoomAnim {
+  roomviz::Ease ease;
+  roomviz::Look target, built;
+  roomviz::Geometry geo;
+  roomviz::Decay decay;
+  uint64_t viewKey = 0;
+  ImVec4 box{0, 0, 0, 0};
+  bool haveTarget = false, haveGeo = false;
 };
-void reverbVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const graphmodel::ReverbView& rv, uint64_t inputs, uint64_t key, const skin::Skin& k) {
-  skin::graphWell(dl, p0, p1, k);
-  const float h = p1.y - p0.y;
-  const DecayCurves& c = livegraph::memo<DecayCurves>(key, 0x52563031).get(inputs, [&](DecayCurves& o) {
-    const double longest = std::min(30.0, std::max({rv.rt60, rv.rt60Low, rv.rt60High}));
-    const double erEnd = rv.erCount ? rv.erSec[static_cast<size_t>(rv.erCount - 1)] : 0.0;
-    o.span = static_cast<float>(std::max({0.5, rv.preSec + longest * 1.05, erEnd * 1.2}));
-    const int N = 96;
-    o.lo.resize(N + 1), o.hi.resize(N + 1);
-    // Levels: tail by the wet level, reflections by the ER level, shared scale.
-    const double ref = std::max({rv.wet, rv.er, 1e-6});
-    const double tailAmp = std::clamp(0.25 + 0.75 * rv.wet / ref, 0.0, 1.0), erAmp = rv.er / ref;
-    for (int i = 0; i <= N; ++i) {
-      double tt = rv.preSec + (o.span - rv.preSec) * i / N, dt = tt - rv.preSec;
-      o.lo[static_cast<size_t>(i)] = ImVec2(static_cast<float>(tt), static_cast<float>(std::sqrt(graphmodel::decayAmp(dt, rv.rt60Low)) * tailAmp));
-      o.hi[static_cast<size_t>(i)] = ImVec2(static_cast<float>(tt), static_cast<float>(std::sqrt(graphmodel::decayAmp(dt, rv.rt60High)) * tailAmp * 0.85));
-    }
-    o.er.clear();
-    double gmax = 1e-9;
-    for (int e = 0; e < rv.erCount; ++e) gmax = std::max(gmax, rv.erGain[static_cast<size_t>(e)]);
-    for (int e = 0; e < rv.erCount; ++e)
-      o.er.push_back(ImVec2(static_cast<float>(rv.erSec[static_cast<size_t>(e)]), static_cast<float>(rv.erGain[static_cast<size_t>(e)] / gmax * 0.82 * std::min(1.0, erAmp))));
-  });
-  const float lx = p0.x + 6, rx = p1.x - 6, top = p0.y + h * 0.14f, base = p1.y - h * 0.16f;
-  auto X = [&](double sec) { return lx + static_cast<float>(std::clamp(sec / c.span, 0.0, 1.0)) * (rx - lx); };
-  auto Y = [&](float amp) { return base - amp * (base - top); };
-  for (int sgrid = 1; sgrid < 40 && sgrid <= c.span; ++sgrid) dl->AddLine(ImVec2(X(sgrid), p0.y + 2), ImVec2(X(sgrid), p1.y - 2), k.graphGrid);
-  dl->AddLine(ImVec2(lx, base), ImVec2(rx, base), k.graphGridStrong);
-  const size_t N = c.lo.size();
-  std::vector<ImVec2> lo(N), hi(N);
-  for (size_t i = 0; i < N; ++i) lo[i] = ImVec2(X(c.lo[i].x), Y(c.lo[i].y)), hi[i] = ImVec2(X(c.hi[i].x), Y(c.hi[i].y));
-  for (size_t i = 0; i + 1 < N; ++i) {
-    ImVec2 q[4] = {lo[i], lo[i + 1], ImVec2(lo[i + 1].x, base), ImVec2(lo[i].x, base)};
-    dl->AddConvexPolyFilled(q, 4, theme::withAlpha(k.fill, 0.28f));
+
+// Advances the easing and rebuilds geometry only when the look or the box moved.
+void updateRoom(RoomAnim& r, const graphmodel::ReverbView& rv, uint64_t viewKey, ImVec2 s0, ImVec2 s1) {
+  if (!r.haveTarget || viewKey != r.viewKey) r.target = roomviz::lookFor(rv), r.viewKey = viewKey, r.haveTarget = true;
+  r.ease.step(r.target, std::clamp(static_cast<double>(ImGui::GetIO().DeltaTime), 0.0, 0.1));
+  const ImVec4 box(s0.x, s0.y, s1.x, s1.y);
+  const bool boxMoved = box.x != r.box.x || box.y != r.box.y || box.z != r.box.z || box.w != r.box.w;
+  if (!r.haveGeo || boxMoved || r.ease.cur.v != r.built.v) {
+    roomviz::build(r.ease.cur, s0.x, s0.y, s1.x, s1.y, r.geo);
+    roomviz::buildDecay(r.ease.cur, r.decay);
+    r.built = r.ease.cur, r.box = box, r.haveGeo = true;
   }
-  dl->AddPolyline(lo.data(), static_cast<int>(N), k.fill, 0, 1.5f);
-  dl->AddPolyline(hi.data(), static_cast<int>(N), skin::lighten(k.fill, 0.45f), 0, 1.0f);
-  for (const ImVec2& e : c.er) dl->AddLine(ImVec2(X(e.x), base), ImVec2(X(e.x), Y(e.y)), k.text, 1.5f);
-  if (rv.preSec > 0) dl->AddLine(ImVec2(X(rv.preSec), base), ImVec2(X(rv.preSec), base - 3), k.graphText, 1.0f);
-  dl->AddLine(ImVec2(X(0), base), ImVec2(X(0), top), k.graphText, 2.0f);  // direct sound
-  char buf[48];
-  if (rv.freeze == 0) std::snprintf(buf, sizeof buf, "%.1f s", rv.decayKnob);
-  else buf[0] = 0;
-  monoText(dl, ImVec2(p0.x + 5, p1.y - h * 0.13f), k.graphText, buf, std::clamp(h * 0.07f, 9.0f, 12.0f));
-  if (rv.freeze) monoText(dl, ImVec2(p1.x - h * 0.42f, p1.y - h * 0.13f), k.select, rv.freeze == 1 ? "FREEZE" : "SUSTAIN", std::clamp(h * 0.07f, 9.0f, 12.0f));
+}
+
+void boxBackground(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const RoomInk& c) {
+  dl->AddRectFilledMultiColor(p0, p1, c.bgTop, c.bgTop, c.bgBot, c.bgBot);
+}
+void boxFrame(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const RoomInk& c) {
+  dl->AddRect(ImVec2(p0.x - 0.5f, p0.y - 0.5f), ImVec2(p1.x + 0.5f, p1.y + 0.5f), c.frame, 0, 0, 1.0f);
+}
+ImVec2 iv(const roomviz::Pt& p) { return ImVec2(p.x, p.y); }
+
+// Thick anti-aliased polyline with per-vertex colour and width: one mesh with
+// mitred joins and a 1 px fringe, so joints have no notches and translucent
+// strokes never blend twice where segments meet. n <= 64.
+void strokeShaded(ImDrawList* dl, const ImVec2* p, const ImU32* col, const float* wid, int n, bool closed) {
+  constexpr int kMax = 64;
+  if (n < 2 || n > kMax) return;
+  const int segs = closed ? n : n - 1;
+  const float aa = dl->_FringeScale;
+  ImVec2 sn[kMax];  // segment normals
+  bool ok[kMax];
+  for (int s = 0; s < segs; ++s) {
+    const ImVec2 a = p[s], b = p[(s + 1) % n];
+    const float dx = b.x - a.x, dy = b.y - a.y, len = std::sqrt(dx * dx + dy * dy);
+    ok[s] = len > 1e-4f;
+    sn[s] = ok[s] ? ImVec2(dy / len, -dx / len) : ImVec2(0, 0);
+  }
+  for (int pass = 0; pass < 2; ++pass)  // zero-length segments (side-count morph) borrow a neighbour's normal
+    for (int s = 0; s < segs; ++s)
+      if (!ok[s]) {
+        const int q = (s + segs - 1) % segs, r = (s + 1) % segs;
+        if (ok[q]) sn[s] = sn[q], ok[s] = true;
+        else if (ok[r]) sn[s] = sn[r], ok[s] = true;
+      }
+  const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+  dl->PrimReserve(segs * 18, n * 4);
+  const unsigned int base = dl->_VtxCurrentIdx;  // after the reserve (it may start a new vertex offset)
+  for (int i = 0; i < n; ++i) {
+    ImVec2 m;
+    if (!closed && i == 0) m = sn[0];
+    else if (!closed && i == n - 1) m = sn[segs - 1];
+    else {
+      const ImVec2 n0 = sn[(i + segs - 1) % segs], n1 = sn[i % segs];
+      m = ImVec2((n0.x + n1.x) * 0.5f, (n0.y + n1.y) * 0.5f);
+      const float d2 = m.x * m.x + m.y * m.y;
+      const float inv = d2 > 1e-6f ? std::min(1.0f / d2, 4.0f) : 1.0f;  // mitre, at most 2x
+      m = ImVec2(m.x * inv, m.y * inv);
+    }
+    const float w = std::max(0.0f, wid[i]);
+    const float h = std::max(0.0f, (w - aa) * 0.5f);
+    ImU32 c = col[i];
+    if (w < aa) c = theme::withAlpha(c, w / aa);  // hairlines fade instead of thinning below a pixel
+    const ImU32 c0 = c & ~IM_COL32_A_MASK;
+    dl->PrimWriteVtx(ImVec2(p[i].x + m.x * (h + aa), p[i].y + m.y * (h + aa)), uv, c0);
+    dl->PrimWriteVtx(ImVec2(p[i].x + m.x * h, p[i].y + m.y * h), uv, c);
+    dl->PrimWriteVtx(ImVec2(p[i].x - m.x * h, p[i].y - m.y * h), uv, c);
+    dl->PrimWriteVtx(ImVec2(p[i].x - m.x * (h + aa), p[i].y - m.y * (h + aa)), uv, c0);
+  }
+  for (int s = 0; s < segs; ++s) {
+    const unsigned int i0 = base + static_cast<unsigned int>(s * 4), i1 = base + static_cast<unsigned int>(((s + 1) % n) * 4);
+    for (unsigned int k = 0; k < 3; ++k) {
+      dl->PrimWriteIdx(static_cast<ImDrawIdx>(i0 + k)), dl->PrimWriteIdx(static_cast<ImDrawIdx>(i0 + k + 1)), dl->PrimWriteIdx(static_cast<ImDrawIdx>(i1 + k + 1));
+      dl->PrimWriteIdx(static_cast<ImDrawIdx>(i0 + k)), dl->PrimWriteIdx(static_cast<ImDrawIdx>(i1 + k + 1)), dl->PrimWriteIdx(static_cast<ImDrawIdx>(i1 + k));
+    }
+  }
+}
+
+void roomVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const RoomAnim& r, const RoomInk& c) {
+  using namespace roomviz;
+  const Geometry& g = r.geo;
+  const Look& l = r.built;
+  boxBackground(dl, p0, p1, c);
+  dl->PushClipRect(p0, p1, true);
+  const float u = std::clamp(g.unit * 0.9f, 1.0f, 4.0f);
+  const float wet = std::clamp(l[kWet], 0.f, 1.f), bright = std::clamp(l[kBright], 0.f, 1.f), bass = std::clamp(l[kBass], 0.f, 1.f);
+  // Floor: soft shadow under the room, then the decay ripples (level = the
+  // tail's level at each ripple's time), then the reflection sparks.
+  {
+    ImVec2 pts[kRipplePts];
+    for (int i = 0; i < kRipplePts; ++i) pts[i] = iv(g.shadow[static_cast<size_t>(i)]);
+    dl->AddConvexPolyFilled(pts, kRipplePts, theme::withAlpha(skin::darken(c.bgBot, 0.5f), 0.55f));
+    for (int k = kRipples - 1; k >= 0; --k) {
+      const float lv = g.rippleLevel[static_cast<size_t>(k)];
+      for (int i = 0; i < kRipplePts; ++i) pts[i] = iv(g.ripple[static_cast<size_t>(k)][static_cast<size_t>(i)]);
+      dl->AddPolyline(pts, kRipplePts, theme::mix(c.bgMid, c.glow, 0.10f + 0.72f * lv), ImDrawFlags_Closed, u * (0.65f + 0.35f * lv));
+    }
+  }
+  for (int e = 0; e < kMaxTaps; ++e) {
+    const float lv = g.sparkLevel[static_cast<size_t>(e)];
+    if (lv < 0.01f) continue;
+    const ImVec2 q = iv(g.spark[static_cast<size_t>(e)]);
+    dl->AddCircleFilled(q, u * (1.8f + 1.6f * lv), theme::withAlpha(c.spark, 0.22f * lv), 16);
+    dl->AddCircleFilled(q, u * (0.55f + 0.75f * lv), theme::mix(c.bgMid, c.spark, 0.35f + 0.65f * lv), 12);
+  }
+  // Room: faint top cap, then glow and cores. Rings are single meshes shaded
+  // per vertex by depth (no notches at the joints, no double blending); the
+  // uprights behind the rings go first, the ones in front last.
+  {
+    ImVec2 cap[kMaxSides];
+    for (int i = 0; i < g.capCount; ++i) cap[i] = iv(g.cap[static_cast<size_t>(i)]);
+    dl->AddConvexPolyFilled(cap, g.capCount, theme::withAlpha(c.glow, (0.03f + 0.08f * wet) * (0.4f + 0.6f * bright)));
+  }
+  const ImU32 topCol = theme::mix(c.lineWarm, c.line, bright);
+  // Many sides: thinner uprights so a near-cylinder reads as a surface, not a hatch.
+  const float upW = 1.0f - 0.35f * std::clamp((l[kSides] - 3.f) / 25.f, 0.f, 1.f);
+  const float kindW[3] = {0.7f + 0.45f * bright, 0.75f + 0.6f * bass, upW};
+  const ImU32 kindCol[3] = {topCol, c.line, theme::mix(topCol, c.line, 0.5f)};
+  auto width = [&](int kind, float depth) { return u * (1.25f - 0.6f * depth) * kindW[kind]; };
+  auto core = [&](int kind, float depth, float alpha) { return theme::withAlpha(theme::mix(c.bgMid, kindCol[kind], 0.97f - 0.7f * depth), alpha); };
+  auto glowA = [&](float depth, int pass) { return (1.0f - 0.8f * depth) * (pass == 0 ? 0.06f + 0.16f * wet : 0.09f + 0.24f * wet); };
+  ImVec2 pts[kMaxSides];
+  ImU32 cols[kMaxSides];
+  float wids[kMaxSides];
+  auto ring = [&](const std::array<Pt, kMaxSides>& r, int kind, int pass) {  // pass 0/1 glow, 2 core
+    for (int i = 0; i < g.capCount; ++i) {
+      const Pt& q = r[static_cast<size_t>(i)];
+      pts[i] = iv(q);
+      wids[i] = width(kind, q.depth) * (pass == 0 ? 4.6f : pass == 1 ? 2.4f : 1.0f);
+      cols[i] = pass == 2 ? core(kind, q.depth, 1.f) : theme::withAlpha(c.glow, glowA(q.depth, pass));
+    }
+    strokeShaded(dl, pts, cols, wids, g.capCount, true);
+  };
+  auto upright = [&](const Seg& s, int pass) {
+    const ImVec2 e[2] = {iv(s.a), iv(s.b)};
+    const float w2[2] = {width(2, s.a.depth) * (pass == 0 ? 4.6f : pass == 1 ? 2.4f : 1.0f), width(2, s.b.depth) * (pass == 0 ? 4.6f : pass == 1 ? 2.4f : 1.0f)};
+    // core: shaded from the base ring's colour to the top ring's
+    const ImU32 c2[2] = {pass == 2 ? theme::withAlpha(theme::mix(c.bgMid, c.line, 0.97f - 0.7f * s.a.depth), s.alpha)
+                                   : theme::withAlpha(c.glow, glowA(s.a.depth, pass) * s.alpha),
+                         pass == 2 ? theme::withAlpha(theme::mix(c.bgMid, topCol, 0.97f - 0.7f * s.b.depth), s.alpha)
+                                   : theme::withAlpha(c.glow, glowA(s.b.depth, pass) * s.alpha)};
+    strokeShaded(dl, e, c2, w2, 2, false);
+  };
+  for (int pass = 0; pass < 3; ++pass) {
+    for (int i = 0; i < g.segCount; ++i) {  // far uprights (segs are sorted far to near)
+      const Seg& s = g.segs[static_cast<size_t>(i)];
+      if (s.kind == 2 && s.a.depth + s.b.depth > 1.0f) upright(s, pass);
+    }
+    ring(g.base, 1, pass);
+    ring(g.cap, 0, pass);
+    for (int i = 0; i < g.segCount; ++i) {
+      const Seg& s = g.segs[static_cast<size_t>(i)];
+      if (s.kind == 2 && s.a.depth + s.b.depth <= 1.0f) upright(s, pass);
+    }
+  }
+  dl->PopClipRect();
+  boxFrame(dl, p0, p1, c);
+  const float fz = std::clamp(l[kFreeze], 0.f, 1.f);
+  if (fz > 0.01f) {
+    const float fs = std::clamp((p1.y - p0.y) * 0.075f, 9.0f, 12.0f);
+    monoText(dl, ImVec2(p0.x + 5, p1.y - fs - 4), theme::withAlpha(c.spark, fz), "HOLD", fs);
+  }
+}
+
+void decayVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const RoomAnim& r, const graphmodel::ReverbView& rv, const RoomInk& c) {
+  using namespace roomviz;
+  const Decay& d = r.decay;
+  const Look& l = r.built;
+  boxBackground(dl, p0, p1, c);
+  dl->PushClipRect(p0, p1, true);
+  const float w = p1.x - p0.x, h = p1.y - p0.y;
+  const float u = std::clamp(r.geo.unit * 0.9f, 1.0f, 4.0f);
+  const float lx = p0.x + std::round(w * 0.035f), rx = p1.x - std::round(w * 0.035f);
+  const float top = p0.y + std::round(h * 0.24f), base = p1.y - std::round(h * 0.14f);
+  const float span = std::max(0.05f, d.span);
+  auto X = [&](double sec) { return lx + static_cast<float>(std::clamp(sec / span, 0.0, 1.0)) * (rx - lx); };
+  auto Y = [&](float lv) { return base - std::clamp(lv, 0.f, 1.f) * (base - top); };
+  auto px = [](float v) { return std::floor(v) + 0.5f; };  // 1 px grid lines on pixel centres
+  // Grid: time steps (at most ~6 lines), -20 / -40 dB, the -60 dB floor.
+  static const float steps[] = {0.05f, 0.1f, 0.25f, 0.5f, 1.f, 2.f, 5.f, 10.f};
+  float st = 10.f;
+  for (float s : steps)
+    if (span / s <= 6.f) {
+      st = s;
+      break;
+    }
+  for (int i = 1; i * st < span; ++i) dl->AddLine(ImVec2(px(X(i * st)), top - 2), ImVec2(px(X(i * st)), base), c.grid, 1.0f);
+  for (int db = 1; db <= 2; ++db) dl->AddLine(ImVec2(lx, px(Y(db / 3.f))), ImVec2(rx, px(Y(db / 3.f))), c.grid, 1.0f);
+  // Pre-delay: the tail has not started yet.
+  if (d.pre > 0) dl->AddRectFilled(ImVec2(X(0), top - 2), ImVec2(X(d.pre), base), theme::withAlpha(c.glow, 0.07f));
+  // Mid-band envelope as one convex fill (dB lines: straight, then the floor).
+  const float wet = std::clamp(l[kWet], 0.f, 1.f), bright = std::clamp(l[kBright], 0.f, 1.f);
+  ImVec2 pts[kDecayPts + 3];
+  int n = 0;
+  pts[n++] = ImVec2(X(d.pre), base);
+  pts[n++] = ImVec2(X(d.pre), Y(1));
+  for (int i = 0; i <= kDecayPts; ++i) {
+    const double t = static_cast<double>(span) * i / kDecayPts;
+    if (t > d.pre) pts[n++] = ImVec2(X(t), Y(d.mid[static_cast<size_t>(i)]));
+  }
+  pts[n++] = ImVec2(rx, base);
+  dl->AddConvexPolyFilled(pts, n, theme::withAlpha(c.glow, 0.13f + 0.12f * wet));
+  dl->AddLine(ImVec2(lx, px(base)), ImVec2(rx, px(base)), theme::mix(c.bgMid, c.line, 0.25f), 1.0f);
+  // Band envelopes: below the crossover (base ring colour), 6 kHz (top ring colour), mid on top.
+  auto band = [&](const std::array<float, kDecayPts + 1>& v, ImU32 col, float thick) {
+    ImVec2 q[kDecayPts + 2];
+    int m = 0;
+    q[m++] = ImVec2(X(d.pre), Y(1));
+    for (int i = 0; i <= kDecayPts; ++i) {
+      const double t = static_cast<double>(span) * i / kDecayPts;
+      if (t > d.pre) q[m++] = ImVec2(X(t), Y(v[static_cast<size_t>(i)]));
+    }
+    dl->AddPolyline(q, m, col, 0, thick);
+  };
+  band(d.lo, theme::mix(c.bgMid, c.line, 0.45f), u * 0.8f);
+  band(d.hi, theme::mix(c.bgMid, theme::mix(c.lineWarm, c.line, bright), 0.75f), u * 0.8f);
+  band(d.mid, c.line, u * 1.1f);
+  // Direct sound and the reflections where the engine taps them (same sparks as the floor).
+  dl->AddLine(ImVec2(X(0), base), ImVec2(X(0), top - 2), theme::mix(c.bgMid, c.line, 0.8f), u);
+  for (int e = 0; e < kMaxTaps; ++e) {
+    const float lv = std::clamp(l[kErLvl0 + e], 0.f, 1.f);
+    if (lv < 0.01f) continue;
+    const float x = X(l[kErSec0 + e]), y = Y(lv * 0.9f);
+    dl->AddLine(ImVec2(x, base), ImVec2(x, y), theme::mix(c.bgMid, c.spark, 0.3f + 0.5f * lv), std::max(1.0f, u * 0.7f));
+    dl->AddCircleFilled(ImVec2(x, y), u * (0.6f + 0.5f * lv), theme::mix(c.bgMid, c.spark, 0.4f + 0.6f * lv), 10);
+  }
+  dl->PopClipRect();
+  boxFrame(dl, p0, p1, c);
+  // Read-outs: pre-delay (left), the network's T60 (right).
+  const float fs = std::clamp(h * 0.17f, 9.0f, 12.0f);
+  char buf[32];
+  if (rv.freeze) std::snprintf(buf, sizeof buf, "T60 hold");
+  else if (rv.rt60 < 10) std::snprintf(buf, sizeof buf, "T60 %.2f s", rv.rt60);
+  else std::snprintf(buf, sizeof buf, "T60 %.1f s", rv.rt60);
+  ImGui::PushFont(app().fontMono, fs);
+  const float tw = ImGui::CalcTextSize(buf).x;
+  ImGui::PopFont();
+  const float ty = p0.y + std::max(2.0f, (top - p0.y - fs) * 0.5f - 1);
+  monoText(dl, ImVec2(p1.x - tw - 5, ty), c.text, buf, fs);
+  if (rv.preSec >= 0.0005) {
+    std::snprintf(buf, sizeof buf, "PRE %.0f ms", rv.preSec * 1000);
+    monoText(dl, ImVec2(p0.x + 5, ty), c.text, buf, fs);
+  }
 }
 
 }  // namespace
@@ -165,8 +343,16 @@ void editorReverbRef(App& a, const PluginTarget& t, float width) {
   const uint64_t inputs = livegraph::Hasher().floats(st.params).d(sr).d(tempo).value();
   const graphmodel::ReverbView& rv =
       livegraph::memo<graphmodel::ReverbView>(t.key(), 0x52563030).get(inputs, [&](graphmodel::ReverbView& o) { o = graphmodel::reverbView(st, sr, tempo); });
-  roomVisual(dl, F.p(4, 4), F.p(156, 108), rv, K);
-  reverbVisual(dl, F.p(4, 112), F.p(156, 156), rv, inputs, t.key(), K);
+  {  // Q-5: room visual (prism + floor) over the decay view, one eased state
+    const ImVec2 r0 = F.p(4, 4), r1 = F.p(156, 108);
+    const float rw = r1.x - r0.x, rh = r1.y - r0.y;
+    RoomAnim& ra = livegraph::memo<RoomAnim>(t.key(), 0x52563032).value;
+    // Stage: clear of the model selector strip at the top, even side margins.
+    updateRoom(ra, rv, inputs, ImVec2(r0.x + rw * 0.05f, r0.y + rh * 0.2f), ImVec2(r1.x - rw * 0.05f, r1.y - rh * 0.05f));
+    const RoomInk ink = roomInk(K);
+    roomVisual(dl, r0, r1, ra, ink);
+    decayVisual(dl, F.p(4, 112), F.p(156, 156), ra, rv, ink);
+  }
   {  // J-26: network model (hall / plate reference) in the room view's corner
     static const char* md[3] = {"HALL", "PLATE", "FULL"};
     skin::switchSel(a, t, RvbModel, F.p(80, 6), ImVec2(74 * s, 15 * s), K, md, 3, true);
