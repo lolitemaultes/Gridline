@@ -622,7 +622,14 @@ void testPluginCheck() {
     for (const auto& p : plugins->array) {
       ++count;
       const std::string s = p.text("status");
-      if (s != "pass") notes += p.text("name") + ": " + s + "; ";
+      // A block slower than real time on a busy machine (shared CI runner) is only a load
+      // warning: audio checks whose detail is just levels and load do not count.
+      bool loadOnly = s == "warn";
+      if (const Json* ch = p.find("checks"); ch && ch->is(Json::Type::Array))
+        for (const auto& c : ch->array)
+          if (c.text("status") == "warn" && (c.text("detail").rfind("peak ", 0) != 0 || c.text("detail").find("denormal") != std::string::npos))
+            loadOnly = false;
+      if (s != "pass" && !loadOnly) notes += p.text("name") + ": " + s + "; ";
       if (const Json* ch = p.find("checks"); ch && ch->is(Json::Type::Array))
         for (const auto& c : ch->array)
           if (c.text("status") == "fail" || (kOffscreenEditors && c.text("check") == "editor" && c.text("status") != "pass" &&

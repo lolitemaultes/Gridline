@@ -8,6 +8,8 @@ set -eu
 export PATH="/usr/pkg/sbin:/usr/pkg/bin:/usr/local/sbin:/usr/local/bin:$PATH"
 export PKG_CONFIG_PATH="/usr/pkg/lib/pkgconfig:/usr/X11R7/lib/pkgconfig:/usr/X11R6/lib/pkgconfig:/usr/local/libdata/pkgconfig:/usr/local/lib/pkgconfig:/usr/libdata/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export GRIDLINE_NO_PLUGIN_SCAN=1
+# Root in the VM may give real-time priority to audio workers; heavy tests would then starve SSH.
+export GRIDLINE_NO_REALTIME=1
 uname -a
 c++ --version || true
 echo "sdl2: $(pkg-config --modversion sdl2 2>&1 || true)"
