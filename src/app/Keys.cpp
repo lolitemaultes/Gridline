@@ -99,6 +99,8 @@ bool modifierHeld(const char* id) {
   return want != 0 && modsNow() == want;
 }
 
+bool modifierExact(const char* id) { return modsNow() == mouseModifier(id); }
+
 const char* label(const char* id) {
   LabelCache& lc = labelCache();
   auto it = lc.text.find(id);

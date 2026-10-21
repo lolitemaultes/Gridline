@@ -746,34 +746,33 @@ const skin::Skin& fruitySkin(uint32_t fill) {
 }
 
 namespace {
-// Shared frame of a wheel module: well, wheel on the left, caption pill.
-// Returns the x where the value row starts (form units).
-float boxFrame(App& a, const PluginTarget& t, int param, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k,
-               const char* caption, bool& changed) {
+// Shared frame of a wheel module: well, wheel on the left, caption pill;
+// returns the module geometry (skin::module, Q-7 shared inset).
+skin::Module boxFrame(App& a, const PluginTarget& t, int param, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k,
+                      const char* caption, bool& changed) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  skin::well(dl, F.p(x, y), F.p(x + w, y + h), k, 4 * F.s);
-  float ws = h - 5;
-  changed = skin::wheel(a, t, param, F.p(x + 2, y + 3), ws * F.s, k, skin::WheelBigLine);
-  float cx = x + ws + 6;
-  skin::pill(dl, F.p(cx, y), F.p(x + w, y + std::min(16.0f, h * 0.36f)), k, caption, F.font(8.5f));
-  return cx;
+  const skin::Module m = skin::module(F, x, y, w, h);
+  skin::well(dl, m.b0, m.b1, k, 4 * F.s);
+  changed = skin::wheel(a, t, param, m.wheelTl, m.wheelSize, k, skin::WheelBigLine);
+  skin::pill(dl, m.pill0, m.pill1, k, caption, F.font(8.5f));
+  return m;
 }
 }  // namespace
 
 bool sliderBox(App& a, const PluginTarget& t, int param, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k,
                const char* caption) {
   bool ch = false;
-  float cx = boxFrame(a, t, param, F, x, y, w, h, k, caption, ch);
-  ch |= skin::hslider(a, t, param, F.p(cx - 3, y + h - 16), F.sz(x + w - cx - 3, 14), k);
+  const skin::Module m = boxFrame(a, t, param, F, x, y, w, h, k, caption, ch);
+  ch |= skin::hslider(a, t, param, m.row0, ImVec2(m.row1.x - m.row0.x, m.row1.y - m.row0.y), k);
   return ch;
 }
 
 bool menuParamBox(App& a, const PluginTarget& t, int param, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k,
                   const char* caption) {
   bool ch = false;
-  float cx = boxFrame(a, t, param, F, x, y, w, h, k, caption, ch);
-  float vy = y + h * 0.58f;
-  ch |= skin::menuBox(a, t, param, F.p(cx + 1, vy - 2), F.sz(x + w - cx - 4, std::min(y + h - 3, vy + 14) - vy + 2), k, F.font(8.5f));
+  const skin::Module m = boxFrame(a, t, param, F, x, y, w, h, k, caption, ch);
+  const float rh = std::max(m.row1.y - m.row0.y, 16.0f * F.s * 0.8f);
+  ch |= skin::menuBox(a, t, param, ImVec2(m.row0.x, m.row1.y - rh), ImVec2(m.row1.x - m.row0.x, rh), k, F.font(8.5f));
   return ch;
 }
 

@@ -83,6 +83,10 @@ double glide(uint64_t key, double target, bool dragging, double eps) {
   return gGlides.follow(key, target, ImGui::GetTime(), dragging && gSmoothSnap, eps);
 }
 
+double glideBar(uint64_t key, double target) {
+  return gGlides.follow(key ^ 0x51310000000000ull, target, ImGui::GetTime(), gSmoothSnap, 2e-3, smooth::kBarTau);
+}
+
 const smoothscroll::Params& params() { return gParams; }
 
 void beforeNewFrame() {

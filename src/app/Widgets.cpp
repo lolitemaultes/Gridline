@@ -10,8 +10,10 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "App.h"
+#include "Keys.h"
 #include "Windows.h"
 #include "Theme.h"
+#include "icons/IconTexture.h"
 #include "../core/I18n.h"
 
 namespace gl::ui {
@@ -36,7 +38,12 @@ void Hint(const std::string& text) {
 void Hint(const char* text) {
   if (text && HintHovered()) app().setHint(tr(text));
 }
-bool HintHovered() { return ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem); }
+bool HintHovered() {
+  // While files are dragged (browser / other applications) the status bar says what the drop does (J-75).
+  if (const ImGuiPayload* p = ImGui::GetDragDropPayload(); p && (p->IsDataType("GL_FILE") || p->IsDataType("GL_ITEM") || p->IsDataType("GL_FILES")))
+    return false;
+  return ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+}
 
 void Label(const char* text) {
   ImGui::PushFont(app().fontMono, theme::kFontLabel);
@@ -62,217 +69,29 @@ void FocusRing() {
                                       ImGui::GetStyle().FrameRounding + 1, 0, 1.5f);
 }
 
+namespace {
+struct ToolFlash {
+  int tool = -1;
+  double until = 0;
+  std::string text;
+};
+std::map<std::string, ToolFlash>& toolFlashes() {
+  static std::map<std::string, ToolFlash> m;
+  return m;
+}
+
+// Q-13: every icon is an SVG on the 24-unit grid (assets/icons/ui), drawn from
+// the icon atlas. `s` is the glyph box of the old vector set: the SVG box is
+// 1.2x that (the grid keeps a 2-unit margin), snapped to a standard size.
+float svgBox(float s) { return icons::standardSize(s * 1.2f); }
+}  // namespace
+
 void drawIcon(ImDrawList* dl, Icon icon, ImVec2 c, float s, ImU32 col) {
-  const float h = s * 0.5f, th = std::max(1.5f, s * 0.11f);
-  auto P = [&](float x, float y) { return ImVec2(c.x + x * h, c.y + y * h); };
-  switch (icon) {
-    case Icon::Play: dl->AddTriangleFilled(P(-0.55f, -0.7f), P(0.75f, 0), P(-0.55f, 0.7f), col); break;
-    case Icon::Pause:
-      dl->AddRectFilled(P(-0.6f, -0.65f), P(-0.15f, 0.65f), col, 1.5f);
-      dl->AddRectFilled(P(0.15f, -0.65f), P(0.6f, 0.65f), col, 1.5f);
-      break;
-    case Icon::Stop: dl->AddRectFilled(P(-0.6f, -0.6f), P(0.6f, 0.6f), col, 2.0f); break;
-    case Icon::Record: dl->AddCircleFilled(c, h * 0.62f, col, 24); break;
-    case Icon::Plus:
-      dl->AddLine(P(-0.6f, 0), P(0.6f, 0), col, th);
-      dl->AddLine(P(0, -0.6f), P(0, 0.6f), col, th);
-      break;
-    case Icon::Minus: dl->AddLine(P(-0.6f, 0), P(0.6f, 0), col, th); break;
-    case Icon::Close:
-      dl->AddLine(P(-0.5f, -0.5f), P(0.5f, 0.5f), col, th);
-      dl->AddLine(P(0.5f, -0.5f), P(-0.5f, 0.5f), col, th);
-      break;
-    case Icon::Pattern:  // 2x2 cells
-      for (int y = 0; y < 2; ++y)
-        for (int x = 0; x < 2; ++x)
-          dl->AddRectFilled(P(-0.7f + x * 0.75f, -0.7f + y * 0.75f), P(-0.05f + x * 0.75f, -0.05f + y * 0.75f), col, 1.5f);
-      break;
-    case Icon::Song:  // stacked lanes
-      for (int y = 0; y < 3; ++y) dl->AddRectFilled(P(-0.75f + y * 0.25f, -0.7f + y * 0.5f), P(0.75f - (2 - y) * 0.2f, -0.35f + y * 0.5f), col, 1.5f);
-      break;
-    case Icon::Draw:
-      dl->AddLine(P(-0.6f, 0.6f), P(0.5f, -0.5f), col, th * 1.4f);
-      dl->AddTriangleFilled(P(-0.75f, 0.75f), P(-0.45f, 0.65f), P(-0.65f, 0.45f), col);
-      break;
-    case Icon::Paint:
-      dl->AddRectFilled(P(-0.7f, -0.7f), P(0.5f, -0.15f), col, 2);
-      dl->AddLine(P(0.5f, -0.4f), P(0.75f, -0.4f), col, th);
-      dl->AddLine(P(0.75f, -0.4f), P(0.75f, 0.05f), col, th);
-      dl->AddLine(P(0.75f, 0.05f), P(-0.05f, 0.05f), col, th);
-      dl->AddRectFilled(P(-0.17f, 0.05f), P(0.07f, 0.75f), col, 1);
-      break;
-    case Icon::Erase:
-    case Icon::Trash:
-      dl->AddRect(P(-0.5f, -0.45f), P(0.5f, 0.75f), col, 2, th);
-      dl->AddLine(P(-0.7f, -0.55f), P(0.7f, -0.55f), col, th);
-      dl->AddLine(P(-0.2f, -0.75f), P(0.2f, -0.75f), col, th);
-      break;
-    case Icon::Select:
-      for (int i = 0; i < 4; ++i) {
-        float a = -0.7f + i * 0.4f;
-        dl->AddLine(P(a, -0.7f), P(a + 0.2f, -0.7f), col, th);
-        dl->AddLine(P(a, 0.7f), P(a + 0.2f, 0.7f), col, th);
-        dl->AddLine(P(-0.7f, a), P(-0.7f, a + 0.2f), col, th);
-        dl->AddLine(P(0.7f, a), P(0.7f, a + 0.2f), col, th);
-      }
-      break;
-    case Icon::Slice:
-      dl->AddLine(P(0.4f, -0.8f), P(-0.4f, 0.8f), col, th);
-      dl->AddRect(P(-0.7f, -0.3f), P(0.7f, 0.3f), col, 2, th * 0.7f);
-      break;
-    case Icon::Mute:
-      dl->AddTriangleFilled(P(-0.7f, -0.25f), P(-0.1f, -0.7f), P(-0.1f, 0.7f), col);
-      dl->AddRectFilled(P(-0.75f, -0.25f), P(-0.35f, 0.25f), col);
-      dl->AddLine(P(0.2f, -0.35f), P(0.75f, 0.35f), col, th);
-      dl->AddLine(P(0.75f, -0.35f), P(0.2f, 0.35f), col, th);
-      break;
-    case Icon::Metronome:
-      dl->AddTriangle(P(-0.55f, 0.75f), P(0.55f, 0.75f), P(0, -0.75f), col, th);
-      dl->AddLine(P(0, 0.4f), P(0.55f, -0.45f), col, th);
-      break;
-    case Icon::Loop:
-      arc(dl, c, h * 0.62f, -kPi * 0.95f, kPi * 0.55f, col, th);
-      dl->AddTriangleFilled(P(-0.85f, -0.05f), P(-0.35f, -0.05f), P(-0.6f, -0.45f), col);
-      break;
-    case Icon::Undo:
-    case Icon::Redo: {
-      float d = icon == Icon::Undo ? 1.f : -1.f;
-      arc(dl, P(0.05f * -d, 0.15f), h * 0.55f, icon == Icon::Undo ? -kPi * 0.95f : -kPi * 0.05f,
-          icon == Icon::Undo ? kPi * 0.25f : kPi * 1.25f, col, th);
-      dl->AddTriangleFilled(P(-0.8f * d, -0.35f), P(-0.25f * d, -0.35f), P(-0.55f * d, 0.15f), col);
-      break;
-    }
-    case Icon::Save:
-      dl->AddRect(P(-0.7f, -0.7f), P(0.7f, 0.7f), col, 2, th);
-      dl->AddRectFilled(P(-0.4f, -0.7f), P(0.35f, -0.2f), col);
-      dl->AddRect(P(-0.4f, 0.15f), P(0.4f, 0.7f), col, 1, th * 0.8f);
-      break;
-    case Icon::Open:
-    case Icon::Folder:
-      dl->AddRectFilled(P(-0.75f, -0.6f), P(-0.1f, -0.35f), col, 1.5f);
-      dl->AddRect(P(-0.75f, -0.4f), P(0.75f, 0.65f), col, 2, th);
-      break;
-    case Icon::NewFile:
-    case Icon::File:
-      dl->AddRect(P(-0.55f, -0.75f), P(0.55f, 0.75f), col, 2, th);
-      dl->AddLine(P(-0.25f, -0.2f), P(0.25f, -0.2f), col, th * 0.8f);
-      dl->AddLine(P(-0.25f, 0.15f), P(0.25f, 0.15f), col, th * 0.8f);
-      break;
-    case Icon::Keyboard:
-      dl->AddRect(P(-0.8f, -0.55f), P(0.8f, 0.55f), col, 2, th);
-      for (int i = -1; i <= 1; ++i) dl->AddLine(P(i * 0.4f, -0.55f), P(i * 0.4f, 0.55f), col, th * 0.7f);
-      for (int i = -1; i <= 1; i += 2) dl->AddRectFilled(P(i * 0.4f - 0.12f, -0.55f), P(i * 0.4f + 0.12f, 0.05f), col);
-      break;
-    case Icon::Browser:
-      for (int i = 0; i < 4; ++i) {
-        float y = -0.65f + i * 0.43f;
-        dl->AddRectFilled(P(-0.75f + (i % 2) * 0.3f, y - 0.07f), P(-0.5f + (i % 2) * 0.3f, y + 0.07f), col);
-        dl->AddLine(P(-0.35f + (i % 2) * 0.3f, y), P(0.75f, y), col, th * 0.8f);
-      }
-      break;
-    case Icon::Rack:
-      for (int r = 0; r < 3; ++r)
-        for (int x = 0; x < 4; ++x)
-          dl->AddRectFilled(P(-0.8f + x * 0.42f, -0.7f + r * 0.5f), P(-0.5f + x * 0.42f, -0.4f + r * 0.5f), col, 1);
-      break;
-    case Icon::Piano:
-      dl->AddRect(P(-0.75f, -0.75f), P(0.75f, 0.75f), col, 2, th);
-      dl->AddRectFilled(P(-0.55f, -0.45f), P(0.0f, -0.2f), col);
-      dl->AddRectFilled(P(-0.2f, 0.05f), P(0.55f, 0.3f), col);
-      break;
-    case Icon::Playlist:
-      dl->AddRectFilled(P(-0.8f, -0.65f), P(0.1f, -0.25f), col, 1.5f);
-      dl->AddRectFilled(P(-0.3f, -0.15f), P(0.8f, 0.25f), col, 1.5f);
-      dl->AddRectFilled(P(-0.8f, 0.35f), P(0.4f, 0.75f), col, 1.5f);
-      break;
-    case Icon::Mixer:
-      for (int i = 0; i < 3; ++i) {
-        float x = -0.55f + i * 0.55f, y = i == 1 ? 0.25f : -0.25f;
-        dl->AddLine(P(x, -0.75f), P(x, 0.75f), col, th * 0.8f);
-        dl->AddRectFilled(P(x - 0.2f, y - 0.12f), P(x + 0.2f, y + 0.12f), col, 1);
-      }
-      break;
-    case Icon::Settings:
-      dl->AddCircle(c, h * 0.35f, col, 16, th);
-      for (int i = 0; i < 8; ++i) {
-        float a = i * kPi / 4;
-        dl->AddLine(ImVec2(c.x + std::cos(a) * h * 0.5f, c.y + std::sin(a) * h * 0.5f),
-                    ImVec2(c.x + std::cos(a) * h * 0.8f, c.y + std::sin(a) * h * 0.8f), col, th * 1.3f);
-      }
-      break;
-    case Icon::Audio:
-    case Icon::Wave:
-      for (int i = 0; i < 7; ++i) {
-        float x = -0.75f + i * 0.25f, a = 0.2f + 0.55f * std::fabs(std::sin(i * 1.3f + 0.4f));
-        dl->AddLine(P(x, -a), P(x, a), col, th);
-      }
-      break;
-    case Icon::Plug:
-      dl->AddRect(P(-0.5f, -0.2f), P(0.5f, 0.45f), col, 3, th);
-      dl->AddLine(P(-0.22f, -0.75f), P(-0.22f, -0.2f), col, th);
-      dl->AddLine(P(0.22f, -0.75f), P(0.22f, -0.2f), col, th);
-      dl->AddLine(P(0, 0.45f), P(0, 0.8f), col, th);
-      break;
-    case Icon::Up: dl->AddTriangleFilled(P(-0.6f, 0.35f), P(0.6f, 0.35f), P(0, -0.4f), col); break;
-    case Icon::Down: dl->AddTriangleFilled(P(-0.6f, -0.35f), P(0.6f, -0.35f), P(0, 0.4f), col); break;
-    case Icon::Left: dl->AddTriangleFilled(P(0.35f, -0.6f), P(0.35f, 0.6f), P(-0.4f, 0), col); break;
-    case Icon::Right: dl->AddTriangleFilled(P(-0.35f, -0.6f), P(-0.35f, 0.6f), P(0.4f, 0), col); break;
-    case Icon::Magnet:
-      arc(dl, P(0, 0.05f), h * 0.5f, 0, kPi, col, th * 1.6f);
-      dl->AddLine(P(-0.5f, 0.05f), P(-0.5f, -0.6f), col, th * 1.6f);
-      dl->AddLine(P(0.5f, 0.05f), P(0.5f, -0.6f), col, th * 1.6f);
-      break;
-    case Icon::Menu:
-      for (int i = -1; i <= 1; ++i) dl->AddLine(P(-0.65f, i * 0.45f), P(0.65f, i * 0.45f), col, th);
-      break;
-    case Icon::Zoom:
-      dl->AddCircle(P(-0.15f, -0.15f), h * 0.45f, col, 16, th);
-      dl->AddLine(P(0.2f, 0.2f), P(0.7f, 0.7f), col, th * 1.4f);
-      break;
-    case Icon::Help:
-      dl->AddCircle(c, h * 0.75f, col, 20, th);
-      dl->AddText(nullptr, s * 0.7f, ImVec2(c.x - s * 0.17f, c.y - s * 0.38f), col, "?");
-      break;
-    case Icon::Clone:
-      dl->AddRect(P(-0.7f, -0.7f), P(0.3f, 0.3f), col, 2, th);
-      dl->AddRect(P(-0.3f, -0.3f), P(0.7f, 0.7f), col, 2, th);
-      break;
-    case Icon::More:
-      for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(P(i * 0.55f, 0), std::max(1.3f, s * 0.085f), col, 12);
-      break;
-    case Icon::Search:
-      dl->AddCircle(P(-0.12f, -0.12f), h * 0.5f, col, 20, th);
-      dl->AddLine(P(0.28f, 0.28f), P(0.72f, 0.72f), col, th * 1.2f);
-      break;
-    case Icon::Chevron:
-      dl->AddLine(P(-0.2f, -0.5f), P(0.25f, 0), col, th);
-      dl->AddLine(P(0.25f, 0), P(-0.2f, 0.5f), col, th);
-      break;
-    case Icon::ChevronDown:
-      dl->AddLine(P(-0.5f, -0.2f), P(0, 0.25f), col, th);
-      dl->AddLine(P(0, 0.25f), P(0.5f, -0.2f), col, th);
-      break;
-    case Icon::Slip:  // content sliding inside a clip frame
-      dl->AddRect(P(-0.8f, -0.55f), P(0.8f, 0.55f), col, 2, th * 0.8f);
-      dl->AddLine(P(-0.45f, 0), P(0.45f, 0), col, th);
-      dl->AddTriangleFilled(P(-0.6f, 0), P(-0.3f, -0.25f), P(-0.3f, 0.25f), col);
-      dl->AddTriangleFilled(P(0.6f, 0), P(0.3f, -0.25f), P(0.3f, 0.25f), col);
-      break;
-    case Icon::Detune:  // a pitch bend: a note bar with a curved arrow
-      dl->AddRectFilled(P(-0.8f, 0.35f), P(0.1f, 0.65f), col, 1);
-      dl->AddBezierQuadratic(P(-0.2f, 0.2f), P(0.45f, 0.15f), P(0.55f, -0.55f), col, th);
-      dl->AddTriangleFilled(P(0.55f, -0.8f), P(0.32f, -0.42f), P(0.78f, -0.42f), col);
-      break;
-    case Icon::Stamp:  // stacked chord notes
-      for (int i = 0; i < 3; ++i) dl->AddRectFilled(P(-0.7f, -0.7f + i * 0.5f), P(0.7f, -0.42f + i * 0.5f), col, 1);
-      break;
-    case Icon::Lock:
-      arc(dl, P(0, -0.2f), h * 0.36f, kPi, 2 * kPi, col, th);
-      dl->AddLine(P(-0.36f, -0.2f), P(-0.36f, 0.05f), col, th);
-      dl->AddLine(P(0.36f, -0.2f), P(0.36f, 0.05f), col, th);
-      dl->AddRectFilled(P(-0.6f, 0.05f), P(0.6f, 0.75f), col, 2);
-      break;
-  }
+  icons::draw(dl, iconSvgName(icon), c, svgBox(s), col);
+}
+
+void drawIconBox(ImDrawList* dl, Icon icon, ImVec2 c, float box, ImU32 col) {
+  icons::draw(dl, iconSvgName(icon), c, icons::standardSize(box), col);
 }
 
 bool IconButton(const char* id, Icon icon, bool active, float size, const char* hint, ImU32 activeCol, ImU32 idleCol) {
@@ -323,6 +142,66 @@ bool ToggleIcon(const char* id, Icon icon, bool on, float size, const char* hint
   }
   ImGui::PopID();
   return pressed;
+}
+
+bool EyeToggle(const char* id, bool shown, float size) {
+  return IconButton(id, eyeIcon(shown), shown, size, eyeHint(shown));
+}
+
+std::string toolTip(const char* name, const char* desc, const char* keyId) {
+  std::string s = tr(name);
+  if (const char* k = keyId ? keys::label(keyId) : nullptr) s += std::string(" (") + k + ")";
+  s += std::string(": ") + tr(desc);
+  return s;
+}
+
+bool ToolButton(const char* id, Icon icon, bool active, float size, const char* name, const char* desc, const char* keyId, ImU32 roleCol) {
+  ImGui::PushID(id);
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const bool pressed = ImGui::InvisibleButton("##tool", ImVec2(size, size));
+  const bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const auto& P = pal();
+  const ImU32 lit = roleCol ? theme::lit(roleCol) : P.hot;
+  const ImVec2 q1(p.x + size, p.y + size);
+  // Faces: pressed (deepest), active (tinted by the tool's role colour), hover.
+  if (held) dl->AddRectFilled(p, q1, P.surface600, theme::kRadius);
+  else if (active) dl->AddRectFilled(p, q1, theme::mix(hov ? P.surface700 : P.surface800, lit, P.dark ? 0.14f : 0.16f), theme::kRadius);
+  else if (hov) dl->AddRectFilled(p, q1, P.surface700, theme::kRadius);
+  if (active) {
+    dl->AddRect(p, q1, theme::withAlpha(lit, P.dark ? 0.35f : 0.55f), theme::kRadius);
+    const float uw = std::round(size * 0.42f), ux = std::round(p.x + (size - uw) * 0.5f);
+    dl->AddRectFilled(ImVec2(ux, q1.y - 3), ImVec2(ux + uw, q1.y - 2), lit, 1.0f);  // lit underline
+  }
+  const ImU32 fg = active ? lit : held || hov ? P.text : P.textDim;
+  // Q-13: the SVG box is 20 px in a 24 px control (16 / 24 / 32 at other sizes).
+  drawIconBox(dl, icon, ImVec2(p.x + size * 0.5f, p.y + size * 0.5f - (active ? 1.0f : 0.0f)), size * 0.8f, fg);
+  if (hov) {
+    const std::string tip = toolTip(name, desc, keyId);
+    app().setHint(tip);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay) && !held && ImGui::BeginTooltip()) {
+      ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+      ImGui::TextUnformatted(tip.c_str());
+      ImGui::PopTextWrapPos();
+      ImGui::EndTooltip();
+    }
+  }
+  ImGui::PopID();
+  return pressed;
+}
+
+void noteActiveTool(const char* strip, int tool, const char* name, const char* keyId) {
+  ToolFlash& f = toolFlashes()[strip];
+  const double now = ImGui::GetTime();
+  if (f.tool != tool) {
+    if (f.tool >= 0) {
+      std::string k = keyId && keys::label(keyId) ? std::string(" (") + keys::label(keyId) + ")" : std::string();
+      f.text = std::string(tr("Tool")) + ": " + tr(name) + k;
+      f.until = now + 1.6;
+    }
+    f.tool = tool;
+  }
+  if (now < f.until && app().hint.empty()) app().setHint(f.text);
 }
 
 bool TextButton(const char* label, bool active, float width, const char* hint) {

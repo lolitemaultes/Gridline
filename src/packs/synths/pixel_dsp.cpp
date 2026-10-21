@@ -102,6 +102,7 @@ class PixelToneGen final : public Generator {
     v->on = true, v->released = false, v->id = id, v->pitch = pitch, v->vel = velocity, v->fade = 1;
     v->column = -1, v->left = 0, v->gamma = 0, v->age = ++clock_;
     v->ins.start(ins_.get(), sr_, tempo_, ppq_, 0, 0, tick0_ + blockPos_ * tempo_ * ppq_ / (60.0 * sr_));
+    v->ins.setNote(pitch, velocity);  // J-72: velocity / key tracking
     for (auto& r : v->row) {
       r.th = (rnd() >> 8) * 256u;
       r.phR = widen_ ? (rnd() >> 8) * 256u : 0u;

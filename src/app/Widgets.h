@@ -4,6 +4,7 @@
 #include <functional>
 #include <string>
 #include "../../third_party/imgui/imgui.h"
+#include "../core/I18n.h"
 #include "../core/Params.h"
 #include "DialogLayout.h"  // DialogFooter, DialogFooterHeight, form columns, fitted text (J-54)
 
@@ -14,10 +15,25 @@ enum class Icon {
   Metronome, Loop, Undo, Redo, Save, Open, NewFile, Keyboard, Browser, Rack, Piano, Playlist, Mixer, Settings,
   Folder, File, Audio, Plug, Up, Down, Left, Right, Magnet, Menu, Zoom, Help, Wave, Clone, Trash, More, Search,
   Chevron, ChevronDown,
-  Slip, Detune, Stamp, Lock  // J-11 tool glyphs
+  Slip, Detune, Stamp, Lock,  // J-11 tool glyphs
+  Eye, EyeOff,                // Q-6: window shown / hidden
+  // Q-12: editing tool family (Q-13: SVG icons, see iconSvgName):
+  // playlist / piano roll / automation editor tool strips.
+  ToolDraw, ToolPaint, ToolDelete, ToolMute, ToolSlip, ToolSlice, ToolSelect, ToolZoom, ToolPlay, ToolDetune, ToolSnap,
+  Count  // number of icons (not an icon)
 };
+// Q-12: true for the tool family (playlist / piano roll / automation editor strips).
+inline bool isToolIcon(Icon i) { return i >= Icon::ToolDraw && i <= Icon::ToolSnap; }
 
+// Q-13: every icon is an SVG on the 24-unit grid (assets/icons/ui/<name>.svg,
+// Lucide / Tabler geometry, see NOTICE.md there), rasterised once per size into
+// the icon atlas (src/app/icons) and drawn as a tinted, pixel-snapped quad.
+// File stem of the icon's SVG (nullptr only for Icon::Count).
+const char* iconSvgName(Icon icon);
+// `size`: the glyph's visible box (the SVG box is 1.2x, snapped to 10/12/14/16/20/24/... px).
 void drawIcon(ImDrawList* dl, Icon icon, ImVec2 center, float size, ImU32 col);
+// Same, `box` = the SVG's 24-unit box (snapped to a standard size).
+void drawIconBox(ImDrawList* dl, Icon icon, ImVec2 center, float box, ImU32 col);
 // Square icon button; `active` draws it highlighted (Paper fill, or activeCol).
 // Dark theme: the active glyph lights in `activeCol` (tool role colour) or the
 // lit-glyph orange; `idleCol` tints the glyph at rest (e.g. menu buttons).
@@ -26,6 +42,25 @@ bool IconButton(const char* id, Icon icon, bool active = false, float size = 26.
 // Icon toggle for "show/enable" states: quiet when off, bright icon + accent
 // underline when on (window toggles, metronome, typing keyboard).
 bool ToggleIcon(const char* id, Icon icon, bool on, float size = 28.0f, const char* hint = nullptr);
+// Q-6: show / hide toggle for a plugin's window: an open eye while the window
+// is shown (lit), an eye with a slash while it is hidden; the tooltip says
+// what a click does. Returns true when clicked.
+inline Icon eyeIcon(bool shown) { return shown ? Icon::Eye : Icon::EyeOff; }
+// English (i18n::N_), translated by the tooltip: what a click does.
+inline const char* eyeHint(bool shown) { return shown ? i18n::N_("Hide the plugin's window") : i18n::N_("Show the plugin's window"); }
+bool EyeToggle(const char* id, bool shown, float size = 22.0f);
+// Q-12: a tool strip button. The glyph is the SVG icon (Q-13, 20 px box in a
+// 24 px control, pixel-snapped), lit in `roleCol` when active (FL-style lit glyph on a
+// tinted face with an underline), hover / pressed faces from the theme. The
+// tooltip reads "Name (key): description" with the key from the keymap
+// command `keyId` (no key part when unbound). English name / description
+// (i18n::N_ literals) are translated here. Returns true when clicked.
+bool ToolButton(const char* id, Icon icon, bool active, float size, const char* name, const char* desc, const char* keyId, ImU32 roleCol = 0);
+// Tooltip text of a tool button (translated, key from the keymap).
+std::string toolTip(const char* name, const char* desc, const char* keyId);
+// Q-12: call once a frame per tool strip with the active tool: for a moment
+// after the tool changes (click or shortcut) the status hint names it.
+void noteActiveTool(const char* strip, int tool, const char* name, const char* keyId);
 // Text button with fixed width (0 = fit).
 bool TextButton(const char* label, bool active = false, float width = 0.0f, const char* hint = nullptr);
 // Segmented control (one of n). Returns true when *index changed.

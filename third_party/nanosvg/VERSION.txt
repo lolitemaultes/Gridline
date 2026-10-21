@@ -1,0 +1,4 @@
+nanosvg + nanosvgrast (Mikko Mononen), zlib licence (see LICENSE.txt).
+Source: github.com/memononen/nanosvg, master at 239e102ec2c691f2902e20ace2ed36ee4a35cfe6 (2026-07-09).
+Vendored unmodified: src/nanosvg.h, src/nanosvgrast.h. Used by src/app/icons/ to rasterise the
+interface icons (assets/icons/ui/*.svg) into a texture atlas.

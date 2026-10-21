@@ -27,6 +27,8 @@
 #include "../engine/Render.h"
 #include "BrowserUi.h"
 #include "../engine/StripEq.h"
+#include "../core/SmoothSnap.h"
+#include "SmoothScrollUi.h"
 
 namespace gl {
 
@@ -162,6 +164,56 @@ struct SlotDrag {
   ObjectId track;
   int slot;
 };
+
+// Q-8: wheel reorder state. `slotWheel`: the effect the last notch moved and
+// where the pointer was (it stays the target while the pointer rests);
+// `slotGlide`: the last move, for drawing the rows gliding into place.
+struct SlotWheel {
+  ObjectId track = kNoId;
+  int slot = -1;
+  ImVec2 at;
+  double time = 0;
+  float acc = 0;  // trackpad deltas: one move per whole notch
+};
+SlotWheel slotWheel;
+struct SlotGlide {
+  ObjectId track = kNoId;
+  int from = 0, to = 0;
+  double t0 = -1;
+};
+SlotGlide slotGlide;
+
+void wheelSlot(App& a, ObjectId track, int slot, const ImGuiIO& io) {
+  if (slotWheel.track != track || slotWheel.slot != slot) slotWheel.acc = 0;
+  slotWheel.acc += io.MouseWheel;
+  const int notches = static_cast<int>(slotWheel.acc);
+  if (notches == 0) {
+    slotWheel.track = track, slotWheel.slot = slot, slotWheel.at = io.MousePos, slotWheel.time = ImGui::GetTime();
+    return;
+  }
+  slotWheel.acc -= static_cast<float>(notches);
+  const int to = mixops::stepSlot(a.doc, track, slot, -notches);  // wheel up = up the chain
+  if (to != slot) {
+    if (a.fxEditor == std::make_pair(track, slot)) a.fxEditor.second = to;
+    slotGlide = SlotGlide{track, slot, to, ImGui::GetTime()};
+    a.setHint(i18n::tr("Effect moved (wheel over a slot moves its effect)"));
+  }
+  slotWheel = SlotWheel{track, to, io.MousePos, ImGui::GetTime(), slotWheel.acc};
+}
+
+// Drawn offset (in rows) of slot `k` while the last move glides into place.
+float slotGlideOffset(ObjectId track, int k) {
+  if (slotGlide.track != track || slotGlide.t0 < 0 || !scrollui::smoothSnap()) return 0;
+  const double dt = ImGui::GetTime() - slotGlide.t0;
+  if (dt > smooth::settleTime() * 2) return 0;
+  const int f = slotGlide.from, t = slotGlide.to;
+  int prev = k;  // where slot k's content was drawn before the move
+  if (k == t) prev = f;
+  else if (t < f && k > t && k <= f) prev = k - 1;
+  else if (t > f && k >= f && k < t) prev = k + 1;
+  if (prev == k) return 0;
+  return static_cast<float>(smooth::approach(static_cast<double>(prev), static_cast<double>(k), dt) - k);
+}
 
 // Moves / copies an effect dropped on (track, slot); Ctrl copies.
 void dropSlot(App& a, const SlotDrag& from, ObjectId track, int slot) {
@@ -300,6 +352,10 @@ void stripSlots(App& a, const MixerTrack& t, ImVec2 p, float w) {
     ImGui::SetCursorScreenPos(ImVec2(p.x, y));
     ImGui::InvisibleButton("xs", ImVec2(nameW, kExtSlotRowH));
     const bool hov = ImGui::IsItemHovered();
+    if (hov && keys::modifierExact("mixer.slotWheelMove")) {  // Q-8: wheel moves the effect
+      ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+      if (info && ImGui::GetIO().MouseWheel != 0) wheelSlot(a, t.id, k, ImGui::GetIO());
+    }
     if (hov) dl->AddRectFilled(ImVec2(p.x + 1, y), ImVec2(p.x + nameW, y + kExtSlotRowH), P.surface700, 1);
     if (ImGui::IsItemClicked()) {
       a.selMixer = t.id;
@@ -311,7 +367,7 @@ void stripSlots(App& a, const MixerTrack& t, ImVec2 p, float w) {
       ImGui::EndPopup();
     }
     if (info) {
-      ui::Hint(info->name + "   (click: open \xC2\xB7 drag: move, Ctrl copies \xC2\xB7 right-click: slot menu)");
+      ui::Hint(info->name + "   (click: open \xC2\xB7 wheel: move up / down \xC2\xB7 drag: move, Ctrl copies \xC2\xB7 right-click: slot menu)");
       if (ImGui::BeginDragDropSource()) {
         SlotDrag sd{t.id, k};
         ImGui::SetDragDropPayload("GL_SLOT", &sd, sizeof sd);
@@ -1317,15 +1373,31 @@ void drawMixer(App& a) {
       mixerInputPanel(a, *sel, iw);  // J-8: audio input, monitoring, arm
       ui::Label("EFFECTS");
       const float rowH = 24.0f;
+      // Q-8: the mouse wheel over an effect's slot moves the effect up / down
+      // (the reference: plain wheel, the pointer then follows the effect, so
+      // the next notches keep moving it; here the moved effect stays the
+      // wheel's target while the pointer rests). Rows glide to their new place.
+      ImGuiIO& wio = ImGui::GetIO();
+      const bool wheelMove = wio.MouseWheel != 0 && keys::modifierExact("mixer.slotWheelMove");
+      bool wheelDone = false;
+      if (wheelMove && slotWheel.track == sel->id && slotWheel.slot >= 0 && ImGui::GetTime() - slotWheel.time < 2.0 &&
+          std::fabs(wio.MousePos.x - slotWheel.at.x) + std::fabs(wio.MousePos.y - slotWheel.at.y) < 3.0f &&
+          ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        wheelSlot(a, sel->id, slotWheel.slot, wio);
+        wheelDone = true;
+      }
       for (int k = 0; k < kEffectSlots; ++k) {
         const EffectSlot& es = sel->slots[static_cast<size_t>(k)];
         ImGui::PushID(k);
         const PluginInfo* info = findPlugin(es.plugin.type);
-        ImVec2 q = ImGui::GetCursorScreenPos();
+        const ImVec2 rowBase = ImGui::GetCursorScreenPos();
+        ImVec2 q(rowBase.x, rowBase.y + slotGlideOffset(sel->id, k) * (rowH + 2));
+        ImGui::SetCursorScreenPos(q);
         // Slot number + enable LED.
         char nb[4];
         std::snprintf(nb, sizeof nb, "%d", k + 1);
-        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q.x, std::round(q.y + (rowH - theme::kFontLabel) * 0.5f)), info ? P.textDim : P.textFaint, nb);
+        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q.x, std::round(rowBase.y + (rowH - theme::kFontLabel) * 0.5f)), info ? P.textDim : P.textFaint,
+                    nb);  // the slot number stays: only the effect glides
         ImGui::SetCursorScreenPos(ImVec2(q.x + 12, q.y));
         if (ImGui::InvisibleButton("en", ImVec2(16, rowH)) && info) ops::setSlotEnabled(a.doc, sel->id, k, !es.enabled);
         if (info && ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##enmenu");
@@ -1342,6 +1414,13 @@ void drawMixer(App& a) {
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton("slot", ImVec2(bw, rowH - 2));
         bool hov = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##fxlist");
+        if (hov && keys::modifierExact("mixer.slotWheelMove")) {
+          ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);  // the panel does not scroll under a slot
+          if (wheelMove && !wheelDone && info) {
+            wheelSlot(a, sel->id, k, wio);
+            wheelDone = true;
+          }
+        }
         if (ImGui::IsItemClicked()) ImGui::OpenPopup("##fxlist");
         if (info && hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.fxEditor = {sel->id, k};
         const ImU32 slotBg = info ? theme::mix(P.field, P.surface800, 0.35f) : P.field;
@@ -1358,7 +1437,7 @@ void drawMixer(App& a) {
         theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(b0.x + 8, std::round(b0.y + (rowH - 2 - 13) * 0.5f) - 1), bw - 26 - latW,
                             info ? (es.enabled ? P.text : P.textFaint) : P.textFaint, info ? info->name.c_str() : i18n::tr("Empty slot"));
         ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(b0.x + bw - 11, b0.y + (rowH - 2) * 0.5f), 10, P.textFaint);
-        ui::Hint(info ? "Click to replace \xC2\xB7 double-click to open \xC2\xB7 right-click for options \xC2\xB7 drag to reorder or onto another track (Ctrl copies)"
+        ui::Hint(info ? "Click to replace \xC2\xB7 double-click to open \xC2\xB7 right-click for options \xC2\xB7 wheel moves it up / down \xC2\xB7 drag to reorder or onto another track (Ctrl copies)"
                       : "Click to insert an effect (or drop one from the browser)");
         ImGui::SetNextWindowSizeConstraints(ImVec2(bw, 0), ImVec2(320, 460));
         if (ImGui::BeginPopup("##fxlist")) {
@@ -1394,9 +1473,9 @@ void drawMixer(App& a) {
           ui::ParamKnob("mix", slotMixParam(sel->id, k), 10.0f);
           ImGui::SetCursorScreenPos(ImVec2(b0.x + bw + 4 + 20 + 4, q.y + 2));
           bool editing = pluginWindowShown(a, PluginTarget{sel->id, k});
-          if (ui::IconButton("edit", ui::Icon::Settings, editing, 22, "Show / hide the effect's window")) togglePluginWindow(a, PluginTarget{sel->id, k});
+          if (ui::EyeToggle("edit", editing, 22)) togglePluginWindow(a, PluginTarget{sel->id, k});  // Q-6
         }
-        ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + rowH + 2));
+        ImGui::SetCursorScreenPos(ImVec2(rowBase.x, rowBase.y + rowH + 2));
         ImGui::Dummy(ImVec2(iw, 0));
         ImGui::PopID();
       }

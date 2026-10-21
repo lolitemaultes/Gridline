@@ -1097,20 +1097,26 @@ void drawToolbar(App& a, const AutomationClip& ac) {
   const float fh = ImGui::GetFrameHeight();
   menuButton("aemenu", "Automation editor menu: selection, clipboard, flip, scale, quantize, thin, curves, LFO", [&a]() { editorMenu(a); });
   ImGui::SameLine(0, 4);
+  // Q-12: the shared tool family; tooltips "Name (key): what it does" from the keymap.
   struct T {
     ui::Icon icon;
     Tool tool;
-    const char* hint;
+    const char* name;
+    const char* desc;
+    const char* key;
+    uint32_t role;
   };
-  const T tools[] = {{ui::Icon::Draw, Tool::Draw, "Draw (P): click to add points, drag points and tension rings"},
-                     {ui::Icon::Select, Tool::Select, "Select (E): drag a box (Ctrl+drag works with any tool)"},
-                     {ui::Icon::Erase, Tool::Erase, "Delete (D): click or drag over points"}};
+  const T tools[] = {{ui::Icon::ToolDraw, Tool::Draw, i18n::N_("Draw"), i18n::N_("click to add points, drag points and tension rings"), "auto.toolDraw", theme::role::kDraw},
+                     {ui::Icon::ToolSelect, Tool::Select, i18n::N_("Select"), i18n::N_("drag a box (Ctrl+drag works with any tool)"), "auto.toolSelect", theme::role::kSelect},
+                     {ui::Icon::ToolDelete, Tool::Erase, i18n::N_("Delete"), i18n::N_("click or drag over points to delete them"), "auto.toolDelete", theme::role::kDelete}};
   for (const auto& t : tools) {
-    if (ui::IconButton(t.hint, t.icon, E.tool == t.tool, fh, t.hint)) E.tool = t.tool;
+    if (ui::ToolButton(t.key, t.icon, E.tool == t.tool, fh, t.name, t.desc, t.key, theme::rgb(t.role))) E.tool = t.tool;
+    if (E.tool == t.tool) ui::noteActiveTool("autoedit", static_cast<int>(t.tool), t.name, t.key);
     ImGui::SameLine(0, 2);
   }
   ui::ToolbarDivider();
-  ui::IconButton("aesnap", ui::Icon::Magnet, false, fh, "Snap to grid (hold Alt while dragging to bypass)");
+  ui::ToolButton("aesnap", ui::Icon::ToolSnap, E.snap != Snap::None, fh, i18n::N_("Snap"),
+                 i18n::N_("snap to the grid chosen beside it (hold Alt while dragging to bypass)"), nullptr, theme::rgb(theme::role::kSnap));
   ImGui::SameLine(0, 2);
   std::string snapLabel = snapName(E.snap);
   if (ui::BeginCombo("##aesnapc", snapLabel.c_str(), 110)) {
@@ -1653,6 +1659,12 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
   const ParamId pid = laneTarget;
   const PatternAutomation* lane = findPatternLane(*p, pid.owner, pid.index);
   ae::Points pts = lane ? lane->points : ae::Points{};
+  // Q-10: drawn values glide to edits (display only; the lane already holds them).
+  ae::Points shown = pts;
+  for (auto& q : shown)
+    q.value = scrollui::glideBar((static_cast<uint64_t>(pattern) << 44) ^ (static_cast<uint64_t>(pid.owner) << 28) ^ (static_cast<uint64_t>(pid.index) << 20) ^
+                                     (static_cast<uint64_t>(q.pos) * 0x9E3779B1ull),
+                                 q.value);
   auto yOf = [&](double v) { return mx.y - static_cast<float>(v) * (mx.y - mn.y); };
   auto valAt = [&](float y) { return std::clamp(static_cast<double>((mx.y - y) / (mx.y - mn.y)), 0.0, 1.0); };
   ImGuiIO& io = ImGui::GetIO();
@@ -1670,12 +1682,12 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
     float prevY = 0;
     for (float x = std::floor(mn.x); x <= mx.x; x += 1.0f) {
       double t = tickAt(x);
-      float y = yOf(ae::valueAt(pts, t));
+      float y = yOf(ae::valueAt(shown, t));
       dl->AddLine(ImVec2(x, y), ImVec2(x, mx.y), theme::withAlpha(col, 0.16f));
       if (x > std::floor(mn.x)) dl->AddLine(ImVec2(x - 1, prevY), ImVec2(x, y), theme::withAlpha(lineCol, 0.9f), 1.3f);
       prevY = y;
     }
-    for (const auto& q : pts) {
+    for (const auto& q : shown) {
       float x = xOf(static_cast<double>(q.pos));
       if (x < mn.x - 4 || x > mx.x + 4) continue;
       dl->AddRectFilled(ImVec2(x, yOf(q.value)), ImVec2(x + 2, mx.y), theme::withAlpha(col, 0.7f));

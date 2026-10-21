@@ -672,8 +672,8 @@ void drawPlaylist(App& a) {
     menuButton("plmenu", "Playlist options: edit, select, snap, view, picker panel, tracks", [&a]() { playlistOptionsMenu(a); });
     ImGui::SameLine(0, 4);
     // Magnet: the snap menu (right-click toggles snapping off / back on).
-    if (ui::IconButton("snapicon", ui::Icon::Magnet, st.snap != Snap::None, fh,
-                       "Snap: click for the grid menu, right-click toggles snapping (Alt while dragging bypasses it)",
+    if (ui::ToolButton("snapicon", ui::Icon::ToolSnap, st.snap != Snap::None, fh, i18n::N_("Snap"),
+                       i18n::N_("click for the grid menu, right-click turns snapping off / on (Alt while dragging bypasses it)"), nullptr,
                        theme::rgb(theme::role::kSnap)))
       ImGui::OpenPopup("##snapmenu");
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
@@ -694,19 +694,21 @@ void drawPlaylist(App& a) {
       ImGui::EndPopup();
     }
     ImGui::SameLine(0, 4);
-    struct T { ui::Icon icon; Tool tool; const char* hint; uint32_t role; };
+    // Q-12: one tool family, tooltips "Name (key): what it does" from the keymap.
+    struct T { ui::Icon icon; Tool tool; const char* name; const char* desc; const char* key; uint32_t role; };
     const T tools[] = {
-        {ui::Icon::Draw, Tool::Draw, "Draw (P): click places the current clip source, drag moves, drag an edge to resize / trim, Shift+drag copies, right-click deletes", theme::role::kDraw},
-        {ui::Icon::Paint, Tool::Paint, "Paint (B): drag lays clips of the current source one after another", theme::role::kPaint},
-        {ui::Icon::Erase, Tool::Erase, "Delete (D): click or drag over clips to delete them", theme::role::kDelete},
-        {ui::Icon::Mute, Tool::Mute, "Mute (T): click or drag over clips to mute / unmute them", theme::role::kMute},
-        {ui::Icon::Slip, Tool::Slip, "Slip (S): drag inside a clip to move its content without moving the clip", theme::role::kSlip},
-        {ui::Icon::Slice, Tool::Slice, "Slice (C): click a clip to cut it, drag up / down to cut every clip the line crosses, drag sideways to cut out a region (Shift: all tracks)", theme::role::kSlice},
-        {ui::Icon::Select, Tool::Select, "Select (E): drag a box (Ctrl+drag selects with any tool, Shift adds)", theme::role::kSelect},
-        {ui::Icon::Zoom, Tool::Zoom, "Zoom (Z): drag a range to fill the view, click zooms in, right-click zooms out", theme::role::kZoom},
-        {ui::Icon::Play, Tool::Play, "Playback (Y): hold to play from the pointer, drag to scrub", theme::role::kPlay}};
+        {ui::Icon::ToolDraw, Tool::Draw, i18n::N_("Draw"), i18n::N_("click places the current clip source, drag moves, drag an edge to resize / trim, Shift+drag copies, right-click deletes"), "playlist.toolDraw", theme::role::kDraw},
+        {ui::Icon::ToolPaint, Tool::Paint, i18n::N_("Paint"), i18n::N_("paint clips while dragging: the current source, one after another"), "playlist.toolPaint", theme::role::kPaint},
+        {ui::Icon::ToolDelete, Tool::Erase, i18n::N_("Delete"), i18n::N_("click or drag over clips to delete them"), "playlist.toolDelete", theme::role::kDelete},
+        {ui::Icon::ToolMute, Tool::Mute, i18n::N_("Mute"), i18n::N_("click or drag over clips to mute / unmute them"), "playlist.toolMute", theme::role::kMute},
+        {ui::Icon::ToolSlip, Tool::Slip, i18n::N_("Slip"), i18n::N_("drag inside a clip to move its content without moving the clip"), "playlist.toolSlip", theme::role::kSlip},
+        {ui::Icon::ToolSlice, Tool::Slice, i18n::N_("Slice"), i18n::N_("click a clip to cut it, drag up / down to cut every clip the line crosses, drag sideways to cut out a region (Shift: all tracks)"), "playlist.toolSlice", theme::role::kSlice},
+        {ui::Icon::ToolSelect, Tool::Select, i18n::N_("Select"), i18n::N_("drag a box (Ctrl+drag selects with any tool, Shift adds)"), "playlist.toolSelect", theme::role::kSelect},
+        {ui::Icon::ToolZoom, Tool::Zoom, i18n::N_("Zoom"), i18n::N_("drag a range to fill the view, click zooms in, right-click zooms out"), "playlist.toolZoom", theme::role::kZoom},
+        {ui::Icon::ToolPlay, Tool::Play, i18n::N_("Playback"), i18n::N_("hold to play from the pointer, drag to scrub"), "playlist.toolPlay", theme::role::kPlay}};
     for (const auto& t : tools) {
-      if (ui::IconButton(t.hint, t.icon, st.tool == t.tool, fh, t.hint, theme::rgb(t.role))) st.tool = t.tool;
+      if (ui::ToolButton(t.key, t.icon, st.tool == t.tool, fh, t.name, t.desc, t.key, theme::rgb(t.role))) st.tool = t.tool;
+      if (st.tool == t.tool) ui::noteActiveTool("playlist", static_cast<int>(t.tool), t.name, t.key);
       ImGui::SameLine(0, 2);
     }
     // Breadcrumb: Playlist > arrangement > current clip source (each opens its menu).
@@ -2619,6 +2621,32 @@ void drawPlaylist(App& a) {
     place.track = trackAt(m.y);
     place.tick = std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
     browserui::acceptFileDrop(a, browse::DropTarget::Playlist, place);
+    // J-75: ghost clips where the dropped files will land (sized to the audio
+    // when its length is known), gliding from cell to cell like a clip drag.
+    if (const browserui::HoverPlan* hp = browserui::hoverPlan(browse::DropTarget::Playlist)) {
+      const auto& P = pal();
+      dl->PushClipRect(gMin, gMax, true);
+      uint64_t key = 0x4A37354700000000ull;  // "J75G"
+      for (const xdrop::Step& sp : hp->plan.steps) {
+        if (sp.action != browse::DropAction::AudioClip && sp.action != browse::DropAction::MidiPatternClip) continue;
+        const double gt = scrollui::glide(key++, static_cast<double>(sp.tick), true, 0.5);
+        const double gr = scrollui::glide(key++, static_cast<double>(sp.track), true, 1e-3);
+        const int r0 = static_cast<int>(std::floor(gr));
+        const float fr = static_cast<float>(gr - r0);
+        const float y0 = yOf(r0) + (yOf(r0 + 1) - yOf(r0)) * fr;
+        const float h = hOf(r0);
+        const float x0 = gMin.x + static_cast<float>(gt) * st.pxPerTick - st.scrollX;
+        const float x1 = x0 + std::max(6.0f, static_cast<float>(sp.length) * st.pxPerTick);
+        const bool audio = sp.action == browse::DropAction::AudioClip;
+        const ImU32 col = audio ? theme::rgb(theme::role::kPaint) : theme::rgb(theme::role::kDraw);
+        dl->AddRectFilled(ImVec2(x0, y0 + 1), ImVec2(x1, y0 + h - 1), theme::withAlpha(col, 0.28f), theme::kRadiusSm);
+        dl->AddRect(ImVec2(x0, y0 + 1), ImVec2(x1, y0 + h - 1), theme::withAlpha(col, 0.95f), theme::kRadiusSm, 0, 1.5f);
+        if (sp.item < hp->items.size() && x1 - x0 > 24)
+          theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(x0 + 5, y0 + 4), x1 - x0 - 10, P.text,
+                              xdrop::displayName(hp->items[sp.item]).c_str());
+      }
+      dl->PopClipRect();
+    }
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PLUGIN")) {  // instruments: a new channel
       std::string type(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
       if (const PluginInfo* info = findPlugin(type); info && info->kind == PluginKind::Generator) a.settingsChannel = a.addInstrument(type);

@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include "../core/Params.h"
 #include "App.h"
+#include "Inset.h"
+#include "LayoutAudit.h"
 #include "PluginSkin.h"
 #include "Theme.h"
 
@@ -120,6 +122,8 @@ Backdrop::~Backdrop() {
 
 void well(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
   ImU32 w = k.wellC();
+  audit::frame(p0, p1, "well");
+  noteFrame(p0, p1);
   dl->AddRectFilled(p0, p1, w, rounding);
   dl->AddRect(p0, p1, theme::withAlpha(darken(k.panel, 0.45f), 0.6f), rounding, 0, 1.0f);
   dl->AddLine(ImVec2(p0.x + rounding, p0.y + 0.5f), ImVec2(p1.x - rounding, p0.y + 0.5f), theme::withAlpha(lighten(w, 0.14f), 0.8f), 1.0f);
@@ -128,13 +132,18 @@ void well(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
 float text(ImDrawList* dl, ImVec2 p, ImU32 col, const char* s, float size) {
   ImGui::PushFont(app().fontMonoBold, size);
   float w = ImGui::CalcTextSize(s).x;
+  ImVec2 q1(p.x + w, p.y + size);
+  placeKitFrame(p, q1);  // Q-7: off the panel's edges
+  audit::control(p, q1, "text");
   dl->AddText(ImVec2(std::round(p.x), std::round(p.y)), col, s);
   ImGui::PopFont();
   return w;
 }
 
 void pill(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* s, float font) {
+  placeKitFrame(p0, p1);
   float h = p1.y - p0.y;
+  audit::control(p0, p1, "pill");
   dl->AddRectFilled(p0, p1, k.pillBgC(), std::min(h * 0.5f, 6.0f));
   if (!s || !*s) return;
   float fs = font > 0 ? font : std::clamp(h * 0.66f, 9.0f, 13.0f);
@@ -147,7 +156,9 @@ void pill(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* s, fl
 }
 
 void valueStrip(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* s, float font) {
+  placeKitFrame(p0, p1);
   float h = p1.y - p0.y;
+  audit::control(p0, p1, "value");
   dl->AddRectFilled(p0, p1, k.valueBgC(), 2);
   if (!s || !*s) return;
   float fs = font > 0 ? font : std::clamp(h * 0.72f, 9.0f, 13.0f);
@@ -177,23 +188,43 @@ bool labeledWheel(App& a, const PluginTarget& t, int param, const Form& F, float
   return ch;
 }
 
+Module module(const Form& F, float x, float y, float w, float h, float pillH, float rowH, float textX) {
+  Module m;
+  m.b0 = F.p(x, y);
+  m.b1 = F.p(x + w, y + h);
+  const inset::Rect in = inset::inner(inset::Rect{m.b0.x, m.b0.y, m.b1.x, m.b1.y}, inset::minFor(F.s));
+  m.wheelSize = std::max(1.0f, in.h());
+  m.wheelTl = ImVec2(in.x0, in.y0);
+  const float cx = textX >= 0 ? std::max(F.p(x + textX, 0).x, in.x0) : in.x0 + m.wheelSize + 3 * F.s;
+  m.pill0 = ImVec2(cx, in.y0);
+  m.pill1 = ImVec2(in.x1, in.y0 + std::min(pillH * F.s, in.h() * 0.42f));
+  m.row0 = ImVec2(cx, in.y1 - std::min(rowH * F.s, in.h() * 0.4f));
+  m.row1 = ImVec2(in.x1, in.y1);
+  return m;
+}
+
+Module captionWell(ImDrawList* dl, const Form& F, float x, float y, float w, float h, const Skin& k, const char* caption, float font,
+                   float textX, float pillH) {
+  const Module m = module(F, x, y, w, h, pillH, 14, textX);
+  well(dl, m.b0, m.b1, k, 4 * F.s);
+  pill(dl, m.pill0, m.pill1, k, caption, font);
+  return m;
+}
+
 bool paramBox(App& a, const PluginTarget& t, int param, const Form& F, float x, float y, float w, float h, const Skin& k, const char* caption,
               const char* value, int flags) {
   Bound b = bind(a, t, param);
   if (!b.ok) return false;
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  well(dl, F.p(x, y), F.p(x + w, y + h), k, 4 * F.s);
-  float ws = h - 5;  // wheel square
-  bool ch = wheel(a, t, param, F.p(x + 2, y + 3), ws * F.s, k, flags);
+  const Module m = module(F, x, y, w, h);
+  well(dl, m.b0, m.b1, k, 4 * F.s);
+  bool ch = wheel(a, t, param, m.wheelTl, m.wheelSize, k, flags);
   b = bind(a, t, param);
-  float cx = x + ws + 6;
   std::string cap = caption ? std::string(caption) : b.d.name;
   for (char& c : cap) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-  float pillH = std::min(16.0f, h * 0.36f);
-  pill(dl, F.p(cx, y), F.p(x + w, y + pillH), k, cap.c_str(), F.font(8.5f));
+  pill(dl, m.pill0, m.pill1, k, cap.c_str(), F.font(8.5f));
   std::string v = value ? std::string(value) : b.d.format(b.val);
-  float vy = y + h * 0.58f;
-  valueStrip(dl, F.p(cx + 1, vy), F.p(x + w - 3, std::min(y + h - 3, vy + 14)), k, v.c_str(), F.font(8.5f));
+  valueStrip(dl, m.row0, m.row1, k, v.c_str(), F.font(8.5f));
   return ch;
 }
 
@@ -213,6 +244,11 @@ bool toggle(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, co
 bool menuBox(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, float font) {
   Bound b = bind(a, t, param);
   if (!b.ok) return false;
+  {  // Q-7 shared inset
+    ImVec2 p1(tl.x + size.x, tl.y + size.y);
+    placeKitFrame(tl, p1);
+    size = ImVec2(p1.x - tl.x, p1.y - tl.y);
+  }
   ImGui::PushID(param);
   ImGui::SetCursorScreenPos(tl);
   bool pressed = ImGui::InvisibleButton("##mb", size);

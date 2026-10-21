@@ -31,6 +31,9 @@ bool keyDown(const char* id);
 // True when exactly the modifiers of the mouse gesture modifier `id` are held
 // (core/Keymap.h mouseModifiers; Ctrl also matches Cmd). False for unknown ids.
 bool modifierHeld(const char* id);
+// Same, but a gesture whose modifier is none (0) matches when no modifier is
+// held (plain wheel / drag gestures).
+bool modifierExact(const char* id);
 
 // Menu shortcut text: the first chord ("Ctrl+S"), nullptr when unbound.
 const char* label(const char* id);

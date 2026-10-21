@@ -282,6 +282,26 @@ std::string Context::resolvePath(const std::string& flPath) const {
     p = std::string(home ? home : "") + "/Documents/Image-Line" + p.substr(utag.size());
   }
   if (!p.empty() && p[0] != '/' && !projectDir.empty() && !(p.size() > 1 && p[1] == ':')) p = projectDir + "/" + p;
+  // J-74: a project copied from another machine (e.g. "C:/Users/<name>/…/<project>/Samples/kick.wav")
+  // keeps the author's absolute paths. FL then finds the file next to the project: the longest
+  // trailing part of the path that exists under the project's folder ("Samples/kick.wav", else
+  // "kick.wav").
+  std::error_code ec;
+  if (p.empty() || projectDir.empty() || fs::is_regular_file(p, ec)) return p;
+  std::vector<std::string> parts;
+  for (size_t at = 0; at <= p.size();) {
+    size_t slash = p.find('/', at);
+    if (slash == std::string::npos) slash = p.size();
+    if (slash > at) parts.push_back(p.substr(at, slash - at));
+    at = slash + 1;
+  }
+  for (size_t first = 0; first < parts.size(); ++first) {
+    if (parts[first].size() == 2 && parts[first][1] == ':') continue;  // drive letter
+    std::string tail;
+    for (size_t k = first; k < parts.size(); ++k) tail += "/" + parts[k];
+    const std::string q = projectDir + tail;
+    if (fs::is_regular_file(q, ec)) return q;
+  }
   return p;
 }
 

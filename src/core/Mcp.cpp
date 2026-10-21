@@ -1,5 +1,6 @@
 // Gridline — MCP protocol session, JSON helpers, path policy, argument
 // validation, resources and prompts (see Mcp.h). The tools are in McpTools.cpp.
+#include "GridlineVersion.h"
 #include "Mcp.h"
 #include <algorithm>
 #include <cmath>
@@ -520,7 +521,7 @@ Json Session::dispatch(const std::string& method, const Json& params, bool& ok, 
                       {"prompts", jobj({{"listChanged", jbool(false)}})}});
     return jobj({{"protocolVersion", jstr(protocol_)},
                  {"capabilities", caps},
-                 {"serverInfo", jobj({{"name", jstr("gridline")}, {"title", jstr("Gridline")}, {"version", jstr("0.4.0")}})},
+                 {"serverInfo", jobj({{"name", jstr("gridline")}, {"title", jstr("Gridline")}, {"version", jstr(GRIDLINE_VERSION)}})},
                  {"instructions",
                   jstr("Gridline is a pattern-based digital audio workstation. Tools inspect and edit the open project; every "
                        "editing call is one undo step in Gridline (labelled \"AI: ...\"). Positions and lengths are in "

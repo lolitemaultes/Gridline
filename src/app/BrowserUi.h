@@ -9,6 +9,7 @@
 #include <string>
 #include "../../third_party/imgui/imgui.h"
 #include "../core/BrowserIndex.h"
+#include "../core/ExternalDrop.h"
 #include "../core/Types.h"
 
 namespace gl {
@@ -63,6 +64,34 @@ bool performDrop(App& a, const std::string& path, browse::DropTarget target, con
 // Double-click in the browser / file dropped onto the app window.
 void openFile(App& a, const std::string& path);
 
+// ---- several files at once (J-75: drags from other applications) ----
+// Payload "GL_FILES": the items of the external drag (ExternalDragUi.h);
+// one file that is already on disk travels as "GL_FILE" / "GL_ITEM" like a
+// browser file, so every sample slot takes it too.
+// What an item is (presets decoded, folders, pending items by name).
+browse::DropItem dropItemFor(const xdrop::Item& it);
+// Modifier keys as ImGui sees them (external drags feed theirs in).
+xdrop::Mods currentMods();
+// What dropping `items` on `target` at `place` does, with the hint text.
+xdrop::Plan planFor(App& a, const std::vector<xdrop::Item>& items, browse::DropTarget target, const DropPlace& place, const xdrop::Mods& mods);
+// Runs it as one undo step (clips stacked / one after another, unsupported
+// files notified). Pending items: the drop waits until their files are here.
+bool performItems(App& a, const std::vector<xdrop::Item>& items, browse::DropTarget target, const DropPlace& place, const xdrop::Mods& mods);
+// Files dropped where no window takes them (each opened like a double click).
+void openFiles(App& a, const std::vector<xdrop::Item>& items);
+// The drop hovering `target` this frame (accepted), for drop previews such as
+// the playlist's ghost clips; nullptr otherwise.
+struct HoverPlan {
+  browse::DropTarget target = browse::DropTarget::Workspace;
+  xdrop::Plan plan;
+  std::vector<xdrop::Item> items;
+};
+const HoverPlan* hoverPlan(browse::DropTarget target);
+// Adds a folder to the browser's user folders (and indexes it).
+void addBrowserFolder(App& a, const std::string& dir);
+// Browser window drop zone (folders); call inside the browser window.
+void browserDropTarget(App& a);
+
 // ---- preview ----
 // Plays a sample; with tempo sync on and a known tempo it is resampled to the song tempo.
 void previewFile(App& a, const std::string& path);
@@ -93,6 +122,12 @@ bool thumbnailRunActive();
 // --make-thumbs mode (main.cpp): draw the editor window, then capture it.
 void beginThumbMode(App& a, const std::string& onlyType = "");
 bool thumbMode();
+// Q-7 --layout-audit <dir>: every built-in editor at widths x1 / x1.5 / x2;
+// controls closer than inset::kMinInset to their panel's edge go to
+// <dir>/layout_audit.tsv, editors (width x1, issues outlined) to <dir>/sheet_NN.png.
+void beginAuditMode(App& a, const std::string& dir);
+// Issues the finished audit found (main's exit status in audit mode).
+int auditIssueCount();
 void thumbDraw(App& a);
 // After rendering: reads the editor from the framebuffer. False when done.
 bool thumbCapture(App& a, int fbW, int fbH);

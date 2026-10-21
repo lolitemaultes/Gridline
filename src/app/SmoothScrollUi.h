@@ -34,6 +34,12 @@ bool smoothSnap();
 // (pass dragging = false when the grid is off: no lag). `key`: a stable id.
 double glide(uint64_t key, double target, bool dragging, double eps = 1e-3);
 
+// Q-10: drawn height of an event-lane bar (0..1 value): glides to `target`
+// with smooth::kBarTau whenever smooth snapping is on (the stored value has
+// already changed: playback, undo and saving never wait), exactly `target`
+// when it is off or the system asks for reduced motion. `key`: stable per bar.
+double glideBar(uint64_t key, double target);
+
 // ImGui scroll regions: call right before and right after ImGui::NewFrame().
 void beforeNewFrame();
 void afterNewFrame();

@@ -129,4 +129,15 @@ void buildDecay(const Look& l, Decay& d);
 double decaySpan(const Look& l);
 float decayLevel(double secAfterPre, double t60, bool freeze);
 
+// ---------------------------------------------------------------- Q-9: the room view as a control
+// The reference forwards a press on its room view to the room size wheel, so
+// dragging on the picture is dragging that wheel (vertical, up = larger).
+// The parameter it drives: the reference model's own size control, or the
+// Gridline networks' size (core/PluginParams.h indices).
+int roomDragParam(bool fullModel);
+// One drag step in normalized units: `upPx` pixels moved up over a view of
+// `spanPx` (the full range takes about two view heights; fine: one eighth of
+// that speed). Clamped to 0..1, monotonic in upPx.
+double roomDragStep(double norm, float upPx, float spanPx, bool fine);
+
 }  // namespace gl::roomviz

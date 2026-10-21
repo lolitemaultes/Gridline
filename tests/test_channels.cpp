@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 #include "Check.h"
@@ -14,6 +15,7 @@
 #include "core/Project.h"
 #include "core/WavWriter.h"
 #include "core/flp/Flp.h"
+#include "core/flp/FlpExport.h"
 #include "engine/AudioEngine.h"
 #include "engine/Render.h"
 #include "engine/SamplePrecompute.h"
@@ -513,6 +515,87 @@ int main() {
     expect(ns.at(keys.id)[1].slide && ns.at(keys.id)[1].release == kNoteReleaseDefault, "slide flag");
     expect(ns.at(hat.id)[0].length == 24, "step notes (length 0) last one step");
     expect(ns.count(s.channels[3].id) && rep.counts["notes: slide"] == 1, "notes on channels after a layer map correctly; report counts");
+  }
+  // ------------------------------------------------ J-74: the slicer keeps a note's fine pitch
+  {
+    auto play = [&](int fine) {
+      Song s = baseSong();
+      ObjectId ch = addChannel(s, "gl.slicer", a441);
+      Note n = mk(0, 192, 60);
+      n.fine = fine;
+      s.patterns[0].notes[ch].push_back(n);
+      return freqAt(render(s), 0.1, 0.4);
+    };
+    const double f0 = play(0), f40 = play(40);
+    expect(f0 > 400 && std::fabs(f40 / f0 - std::pow(2.0, 40.0 / 1200.0)) < 0.004, "J-74: slicer note fine pitch (+40 cents) tunes the slice");
+  }
+  // ------------------------------------------------ J-74: FL velocity law, fine pitch, foreign sample paths
+  {
+    namespace fs = std::filesystem;
+    const std::string dir = "test_j74_proj";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir + "/Samples", ec);
+    fs::copy_file(a441, dir + "/Samples/kick.wav", ec);
+    fs::copy_file(a441, dir + "/loop.wav", ec);
+    Builder B;
+    B.text(199, "25.1.1.4879");
+    B.d(156, 162000);
+    B.w(65, 1);
+    std::vector<uint8_t> notes;
+    // FL velocity bytes 100 (default), 64, 65, 128 (100 %), 12; fine pitch 156 (+360 cents) and 121 (+10).
+    const uint8_t vels[] = {100, 64, 65, 128, 12};
+    for (int k = 0; k < 5; ++k) {
+      auto n = flNote(static_cast<uint32_t>(k * 48), 0, 48, static_cast<uint16_t>(60 + k), 0x4000, k == 0 ? 156 : k == 1 ? 121 : 120, 64,
+                      0, 64, vels[k], 128, 128);
+      notes.insert(notes.end(), n.begin(), n.end());
+    }
+    B.data(224, notes);
+    // Samples saved on another machine: absolute Windows paths into the project's own folder.
+    B.w(64, 0), B.b(21, 0), B.text(203, "Kick");
+    B.text(196, "C:\\Users\\Someone Else\\Music\\Old Place\\My Song\\Samples\\kick.wav");
+    B.w(64, 1), B.b(21, 0), B.text(203, "Loop");
+    B.text(196, "D:\\elsewhere\\loop.wav");
+    B.w(64, 2), B.b(21, 0), B.text(203, "Gone");
+    B.text(196, "C:\\Users\\Someone Else\\missing.wav");
+    const std::string path = dir + "/song.flp";
+    if (FILE* fp = std::fopen(path.c_str(), "wb")) {
+      auto bytes = B.file(96);
+      std::fwrite(bytes.data(), 1, bytes.size(), fp);
+      std::fclose(fp);
+    }
+    Song s;
+    flp::Report rep;
+    std::string err;
+    const bool ok = importFlp(path, s, rep, &err, "/nonexistent");
+    expect(ok && s.channels.size() == 3 && s.patterns.size() == 1, "J-74: synthetic project imports");
+    if (ok && s.channels.size() == 3 && s.patterns.size() == 1) {
+      const auto& ns = s.patterns[0].notes.at(s.channels[0].id);
+      expect(ns.size() == 5 && ns[0].velocity == 100 && ns[1].velocity == 64 && ns[2].velocity == 65 && ns[3].velocity == 127 &&
+                 ns[4].velocity == 12,
+             "J-74: FL velocity is the MIDI velocity (100 stays 100, 64 / 65 stay apart, 128 → 127)");
+      expect(ns.size() == 5 && ns[0].fine == 360 && ns[1].fine == 10 && ns[2].fine == 0, "J-74: note fine pitch (10 cents per step)");
+      expect(fs::path(s.channels[0].plugin.data) == fs::path(dir + "/Samples/kick.wav"),
+             "J-74: a foreign absolute sample path resolves into the project's Samples folder");
+      expect(fs::path(s.channels[1].plugin.data) == fs::path(dir + "/loop.wav"), "J-74: … or next to the project");
+      expect(s.channels[2].plugin.data == "C:/Users/Someone Else/missing.wav", "J-74: a sample found nowhere keeps its path");
+      // FL export without the original events: the velocity bytes come back as FL stored them.
+      flp::ExportOptions opt;
+      opt.useOrigin = false;
+      opt.projectDir = dir;
+      std::vector<uint8_t> out;
+      flp::ExportReport xr;
+      flp::File f;
+      std::vector<int> back;
+      if (flp::exportFlp(s, out, xr, opt) && flp::readBytes(out, f, &err))
+        for (const auto& e : f.events)
+          if (e.id == 224)
+            for (uint32_t o = 0; o + 24 <= e.size; o += 24) back.push_back(e.u8(o + 21) | ((e.u8(o + 16)) << 8));
+      expect(back.size() == 5 && (back[0] & 0xFF) == 100 && (back[1] & 0xFF) == 64 && (back[2] & 0xFF) == 65 && (back[3] & 0xFF) == 127 &&
+                 (back[4] & 0xFF) == 12 && (back[0] >> 8) == 156 && (back[1] >> 8) == 121,
+             "J-74: exported velocity / fine pitch bytes match FL's");
+    }
+    fs::remove_all(dir, ec);
   }
   std::remove(a441.c_str());
   std::remove(a2.c_str());

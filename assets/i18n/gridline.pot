@@ -461,7 +461,7 @@ msgstr ""
 msgid "Cut"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp
 msgid "Delete"
 msgstr ""
 
@@ -475,6 +475,10 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "Drag to draw values · right-drag for a straight line"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
+msgid "Draw"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
@@ -525,7 +529,7 @@ msgstr ""
 msgid "Invert selection"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/app/ChannelEnvelopeUi.cpp
 msgid "LFO"
 msgstr ""
 
@@ -661,6 +665,10 @@ msgstr ""
 msgid "Scale levels: centre, multiplier, offset"
 msgstr ""
 
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
+msgid "Select"
+msgstr ""
+
 #: src/app/AutomationEditor.cpp
 msgid "Select a pattern first"
 msgstr ""
@@ -685,8 +693,8 @@ msgstr ""
 msgid "Shape name"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/PianoRoll.cpp
-msgid "Snap to grid (hold Alt while dragging to bypass)"
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/samplers/samplers_ui.cpp
+msgid "Snap"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
@@ -725,6 +733,22 @@ msgstr ""
 msgid "Zoom to fit the clip"
 msgstr ""
 
+#: src/app/AutomationEditor.cpp
+msgid "click or drag over points to delete them"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "click to add points, drag points and tension rings"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "drag a box (Ctrl+drag works with any tool)"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp src/app/PianoRoll.cpp
+msgid "snap to the grid chosen beside it (hold Alt while dragging to bypass)"
+msgstr ""
+
 #: src/app/Browser.cpp
 msgid "%d failed"
 msgstr ""
@@ -751,6 +775,14 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Add to playlist as audio clip"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Added to the browser: "
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Already in the browser: "
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -903,6 +935,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "No sliced audio"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Not a folder: "
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1069,6 +1105,10 @@ msgstr ""
 msgid "Try fewer words or filters"
 msgstr ""
 
+#: src/app/BrowserDrop.cpp src/core/ExternalDrop.cpp
+msgid "Drop to "
+msgstr ""
+
 #: src/app/BrowserDrop.cpp
 msgid "Imported"
 msgstr ""
@@ -1082,11 +1122,251 @@ msgid "Loaded preset"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp src/app/ExportUi.cpp
+msgid "MIDI import"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp src/app/ExportUi.cpp
 msgid "MIDI import failed"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
 msgid "No free effect slot on this track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Nothing here takes these files"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Unsupported file type: "
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Amount"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Att. curve"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Attack"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "BP"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Cutoff"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Dec. curve"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Decay"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Delay"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "ENVELOPE"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Envelope times in beats (tempo-synced) instead of seconds"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "FILTER"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "FL timing"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "FL timing: these settings play as FL Studio plays them (stepped once per tick)."
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Fast LP"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/core/Keymap.cpp
+msgid "Global"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "HP"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/app/MixerView.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Hold"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Key middle"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Key → X"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Key → Y"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Key → pan"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "LFO times in beats (tempo-synced) instead of seconds"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "LP"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "LP x2"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/app/PianoRoll.cpp
+msgid "Mod X"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Mod X: filter cutoff envelope and LFO"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/app/PianoRoll.cpp
+msgid "Mod Y"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Mod Y: filter resonance envelope and LFO"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Notch"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp
+msgid "Off"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChordEditorUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/PluginUI.cpp
+msgid "On"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "On: envelopes and LFOs step once per song tick with FL Studio's exact results (FL imports switch it on). Off: smooth per-sample curves."
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "One LFO phase locked to the song for every note, instead of restarting with each note"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Panning"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Panning LFO (the panning envelope is kept but does not move the voice)"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Period"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Pitch"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Pitch envelope and vibrato (cents)"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Pulse"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Rel. curve"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Release"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Resonance"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "SVF LP"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "SVF x2"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Sine"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Smooth timing: per-sample envelopes and LFOs. Switch FL timing on for FL Studio's results."
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Sustain"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Switch this target's envelope on or off"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "TRACKING"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Tempo"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Triangle"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Vel. middle"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Vel. → X"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Vel. → Y"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Vel. → pan"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp src/app/Dialogs.cpp
+msgid "Volume"
+msgstr ""
+
+#: src/app/ChannelEnvelopeUi.cpp
+msgid "Volume envelope and tremolo"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -1385,10 +1665,6 @@ msgstr ""
 msgid "Cuts each clip into pieces of equal length"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp
-msgid "Decay"
-msgstr ""
-
 #: src/app/ChopUi.cpp
 msgid "Delete space"
 msgstr ""
@@ -1463,10 +1739,6 @@ msgstr ""
 
 #: src/app/ChopUi.cpp
 msgid "Nothing to render in the time selection"
-msgstr ""
-
-#: src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp
-msgid "Off"
 msgstr ""
 
 #: src/app/ChopUi.cpp
@@ -1565,7 +1837,7 @@ msgstr ""
 msgid "Show and play the result in the playlist while you edit"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ContextMenus.cpp
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
 msgid "Slice"
 msgstr ""
 
@@ -1851,10 +2123,6 @@ msgstr ""
 
 #: src/app/ChordEditorUi.cpp
 msgid "Off: the pattern changes only when you press Accept"
-msgstr ""
-
-#: src/app/ChordEditorUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/PluginUI.cpp
-msgid "On"
 msgstr ""
 
 #: src/app/ChordEditorUi.cpp
@@ -2349,7 +2617,7 @@ msgstr ""
 msgid "Deselect"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/PianoRoll.cpp
 msgid "Detune"
 msgstr ""
 
@@ -2371,10 +2639,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Dock to"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
-msgid "Draw"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/TopBar.cpp
@@ -2813,7 +3077,7 @@ msgstr ""
 msgid "Move up"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MixerView.cpp
+#: src/app/ContextMenus.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
 msgid "Mute"
 msgstr ""
 
@@ -2933,7 +3197,7 @@ msgstr ""
 msgid "Overlapping notes"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
 msgid "Paint"
 msgstr ""
 
@@ -3266,10 +3530,6 @@ msgid "Scripts"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Select"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
 msgid "Select all clips of this pattern"
 msgstr ""
 
@@ -3345,16 +3605,12 @@ msgstr ""
 msgid "Slide and portamento"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/Playlist.cpp
 msgid "Slip"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/Menus.cpp
 msgid "Smooth snapping"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/packs/samplers/samplers_ui.cpp
-msgid "Snap"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/PianoRoll.cpp
@@ -3461,7 +3717,7 @@ msgstr ""
 msgid "Toggle"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/Widgets.cpp
 msgid "Tool"
 msgstr ""
 
@@ -3561,7 +3817,7 @@ msgstr ""
 msgid "Zip selected"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
 msgid "Zoom"
 msgstr ""
 
@@ -4038,10 +4294,6 @@ msgid "Very frequently (every minute + before risky edits)"
 msgstr ""
 
 #: src/app/Dialogs.cpp
-msgid "Volume"
-msgstr ""
-
-#: src/app/Dialogs.cpp
 msgid "Your changes will be lost if you don't save them."
 msgstr ""
 
@@ -4322,10 +4574,6 @@ msgid "MIDI CHANNELS"
 msgstr ""
 
 #: src/app/ExportUi.cpp
-msgid "MIDI import"
-msgstr ""
-
-#: src/app/ExportUi.cpp
 msgid "MISCELLANEOUS"
 msgstr ""
 
@@ -4519,6 +4767,34 @@ msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "Zipped project with"
+msgstr ""
+
+#: src/app/ExternalDragUi.cpp
+msgid "%d files: %s"
+msgstr ""
+
+#: src/app/ExternalDragUi.cpp
+msgid "Could not receive: "
+msgstr ""
+
+#: src/app/ExternalDragUi.cpp
+msgid "Drop cancelled"
+msgstr ""
+
+#: src/app/ExternalDragUi.cpp
+msgid "Receiving "
+msgstr ""
+
+#: src/app/ExternalDragUi.cpp
+msgid "Receiving %d dropped files…"
+msgstr ""
+
+#: src/app/ExternalDragUi.cpp
+msgid "Receiving %d files (%s …)"
+msgstr ""
+
+#: src/app/ExternalDragUi.cpp
+msgid "Receiving the dropped file…"
 msgstr ""
 
 #: src/app/HostedUi.cpp
@@ -6566,7 +6842,7 @@ msgid "Click to insert an effect (or drop one from the browser)"
 msgstr ""
 
 #: src/app/MixerView.cpp
-msgid "Click to replace · double-click to open · right-click for options · drag to reorder or onto another track (Ctrl copies)"
+msgid "Click to replace · double-click to open · right-click for options · wheel moves it up / down · drag to reorder or onto another track (Ctrl copies)"
 msgstr ""
 
 #: src/app/MixerView.cpp
@@ -6594,15 +6870,15 @@ msgid "EQUALIZER"
 msgstr ""
 
 #: src/app/MixerView.cpp
+msgid "Effect moved (wheel over a slot moves its effect)"
+msgstr ""
+
+#: src/app/MixerView.cpp
 msgid "Effect slots on strips (extended)"
 msgstr ""
 
 #: src/app/MixerView.cpp
 msgid "Empty slot"
-msgstr ""
-
-#: src/app/MixerView.cpp src/packs/edison/edison_tools_ui.cpp
-msgid "Hold"
 msgstr ""
 
 #: src/app/MixerView.cpp
@@ -6770,10 +7046,6 @@ msgid "Set in samples..."
 msgstr ""
 
 #: src/app/MixerView.cpp
-msgid "Show / hide the effect's window"
-msgstr ""
-
-#: src/app/MixerView.cpp
 msgid "Show every effect slot (name and mix) on the strips"
 msgstr ""
 
@@ -6906,14 +7178,6 @@ msgid "Glides the channel's sounding notes to this pitch over the note's length 
 msgstr ""
 
 #: src/app/PianoRoll.cpp
-msgid "Mod X"
-msgstr ""
-
-#: src/app/PianoRoll.cpp
-msgid "Mod Y"
-msgstr ""
-
-#: src/app/PianoRoll.cpp
 msgid "No scale"
 msgstr ""
 
@@ -6937,8 +7201,8 @@ msgstr ""
 msgid "Pan"
 msgstr ""
 
-#: src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_tools_ui.cpp
-msgid "Pitch"
+#: src/app/PianoRoll.cpp src/app/Playlist.cpp
+msgid "Playback"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -6990,11 +7254,47 @@ msgid "Zoom out (PgDn, Ctrl+wheel)"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "click or drag over notes to delete them"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "click or drag over notes to mute / unmute them"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "click to add, drag to move, drag the end to resize, right-click deletes"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "drag a box; Ctrl+drag selects with any tool"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "drag a note up / down to change its fine pitch (Shift: finer)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp src/app/Playlist.cpp
+msgid "drag a range to fill the view, click zooms in, right-click zooms out"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "drag across notes to cut them"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "drag over notes to set it, right-drag to draw a line (selected notes only when there is a selection)"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "hold and move to hear the notes under the pointer"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "notes selected"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "paint notes while dragging"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -7154,10 +7454,6 @@ msgid "Snap to"
 msgstr ""
 
 #: src/app/Playlist.cpp
-msgid "Snap: click for the grid menu, right-click toggles snapping (Alt while dragging bypasses it)"
-msgstr ""
-
-#: src/app/Playlist.cpp
 msgid "The copies are unique (new patterns)"
 msgstr ""
 
@@ -7167,6 +7463,42 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Track with a mode"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "click a clip to cut it, drag up / down to cut every clip the line crosses, drag sideways to cut out a region (Shift: all tracks)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "click for the grid menu, right-click turns snapping off / on (Alt while dragging bypasses it)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "click or drag over clips to delete them"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "click or drag over clips to mute / unmute them"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "click places the current clip source, drag moves, drag an edge to resize / trim, Shift+drag copies, right-click deletes"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "drag a box (Ctrl+drag selects with any tool, Shift adds)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "drag inside a clip to move its content without moving the clip"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "hold to play from the pointer, drag to scrub"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "paint clips while dragging: the current source, one after another"
 msgstr ""
 
 #: src/app/PluginEditorsDelayRef.cpp
@@ -7303,6 +7635,22 @@ msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "Step gate (no volume slot)"
+msgstr ""
+
+#: src/app/PluginEditorsTimeRef.cpp
+msgid "(drag up / down · Shift fine · double-click reset · wheel steps)"
+msgstr ""
+
+#: src/app/PluginEditorsTimeRef.cpp
+msgid "Reset room size"
+msgstr ""
+
+#: src/app/PluginEditorsTimeRef.cpp
+msgid "Room size"
+msgstr ""
+
+#: src/app/PluginEditorsTimeRef.cpp
+msgid "SIZE"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -8557,12 +8905,140 @@ msgstr ""
 msgid "Custom"
 msgstr ""
 
+#: src/app/Widgets.h
+msgid "Hide the plugin's window"
+msgstr ""
+
+#: src/app/Widgets.h
+msgid "Show the plugin's window"
+msgstr ""
+
 #: src/app/main.cpp
 msgid "Cannot decode sample: missing.wav"
 msgstr ""
 
 #: src/app/main.cpp
 msgid "Saved the project"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid " (%d files left out)"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid " (%d other files ignored)"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid " (1 file left out)"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid " and "
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "%d files"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "%s cannot be dropped here"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "Drop to open the project %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "Gridline cannot open %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add %d audio clips on tracks %d-%d at bar %d"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add %d audio clips one after another on track %d from bar %d"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add %d channels from presets"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add %d folders to the browser"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add %d sampler channels"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add a channel from the preset %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add a sampler channel"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add an audio clip on track %d at bar %d"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add the folder %s to the browser"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "import %d MIDI files as pattern clips from track %d at bar %d"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "import %d MIDI files as patterns"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "import %s as a pattern"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "import %s as a pattern clip on track %d at bar %d"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "insert the effect preset %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "insert the notes of %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "load %s as an impulse response"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "load %s as the sample"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "load %s into %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "load the effect chain %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "load the preset %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "replace the channel's sample"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "replace the sample of %s"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -8686,6 +9162,10 @@ msgid "Duplicate the time selection"
 msgstr ""
 
 #: src/core/Keymap.cpp
+msgid "Effect slot: mouse wheel moves the effect up / down"
+msgstr ""
+
+#: src/core/Keymap.cpp
 msgid "Event lane: drag selects notes"
 msgstr ""
 
@@ -8703,10 +9183,6 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Find next empty pattern"
-msgstr ""
-
-#: src/core/Keymap.cpp
-msgid "Global"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -9326,15 +9802,7 @@ msgid "%zu painted areas"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Amount"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
 msgid "Applies to: %s (%s)"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
-msgid "Attack"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
@@ -9427,10 +9895,6 @@ msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
 msgid "Reduction"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
-msgid "Release"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp

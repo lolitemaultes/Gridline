@@ -71,8 +71,7 @@ void editorFlangerFl(App& a, const PluginTarget& t, float width) {
   // Feedback polarity: the reference's separate invert-feedback module flips
   // the sign of the (bipolar) feedback here.
   {
-    skin::well(dl, F.p(c1, 105), F.p(c1 + bw, 105 + bh), K, 4 * F.s);
-    skin::pill(dl, F.p(c1 + 54, 105), F.p(c1 + bw, 121), K, "INV FEEDBACK", F.font(7.5f));
+    skin::captionWell(dl, F, c1, 105, bw, bh, K, "INV FEEDBACK", F.font(7.5f), 54);
     const double fb = ref ? (bval(st, FlgInvFb) ? -1.0 : 1.0) : val(st, FlgFeedback, 0.5f);
     ImGui::PushID("invfb");
     if (skin::button("##invfb", F.p(c1 + 6, 110), F.sz(40, 34), K, fb < 0 ? "-" : "+", fb < 0, F.font(12))) {
@@ -84,8 +83,7 @@ void editorFlangerFl(App& a, const PluginTarget& t, float width) {
     skin::valueStrip(dl, F.p(c1 + 55, 131), F.p(c1 + bw - 3, 145), K, fb < 0 ? "inverted" : "normal", F.font(8));
   }
   {
-    skin::well(dl, F.p(c2, 105), F.p(c2 + bw, 105 + bh), K, 4 * F.s);
-    skin::pill(dl, F.p(c2 + 54, 105), F.p(c2 + bw, 121), K, "INV WET", F.font(7.5f));
+    skin::captionWell(dl, F, c2, 105, bw, bh, K, "INV WET", F.font(7.5f), 54);
     skin::toggle(a, t, FlgInvertWet, F.p(c2 + 6, 110), F.sz(40, 34), K, "INV", F.font(9));
     skin::valueStrip(dl, F.p(c2 + 55, 131), F.p(c2 + bw - 3, 145), K, bval(st, FlgInvertWet) ? "inverted" : "normal", F.font(8));
   }
@@ -142,19 +140,19 @@ void flabel(ImDrawList* dl, const skin::Form& F, float cx, float y, const skin::
 void sliderBox(App& a, const PluginTarget& t, int param, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k,
                const char* caption) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  skin::well(dl, F.p(x, y), F.p(x + w, y + h), k, 4 * F.s);
-  skin::wheel(a, t, param, F.p(x + 2, y + 3), (h - 5) * F.s, k, skin::WheelBigLine);
+  const skin::Module m = skin::module(F, x, y, w, h);
+  skin::well(dl, m.b0, m.b1, k, 4 * F.s);
+  skin::wheel(a, t, param, m.wheelTl, m.wheelSize, k, skin::WheelBigLine);
   auto d = describeParam(a.doc.song(), t.pid(param));
   std::string cap = caption;
   if (d) cap += "  " + d->format(pui::paramValue(a, t, param));
-  skin::pill(dl, F.p(x + 54, y), F.p(x + w, y + 16), k, cap.c_str(), F.font(8.0f));
-  skin::hslider(a, t, param, F.p(x + 51, y + 29), F.sz(w - 55, 14), k);
+  skin::pill(dl, m.pill0, m.pill1, k, cap.c_str(), F.font(8.0f));
+  skin::hslider(a, t, param, m.row0, ImVec2(m.row1.x - m.row0.x, m.row1.y - m.row0.y), k);
 }
 
 // Narrow module (77 wide): caption pill on the right of the top, control below.
-void miniWell(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k, const char* caption) {
-  skin::well(dl, F.p(x, y), F.p(x + w, y + h), k, 4 * F.s);
-  skin::pill(dl, F.p(x + 17, y), F.p(x + w, y + 16), k, caption, F.font(8.0f));
+skin::Module miniWell(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k, const char* caption) {
+  return skin::captionWell(dl, F, x, y, w, h, k, caption, F.font(8.0f), 17);
 }
 
 // Choice parameter laid out as a grid of cells (cols × rows), reference switch style.
@@ -240,11 +238,10 @@ void editorPhaserFl(App& a, const PluginTarget& t, float width) {
     if (lo > hi) std::swap(lo, hi);
   }
   {  // Frequency range module: the range mode switch in place of the wheel.
-    skin::well(dl, F.p(c0, 55), F.p(c0 + bw, 55 + bh), K, 4 * F.s);
+    skin::captionWell(dl, F, c0, 55, bw, bh, K, "FREQ RANGE", F.font(8.5f), 54);
     static const char* rm[2] = {"C+D", "MIN/MAX"};
     static const char* rl[2] = {"SMALL", "LARGE"};
     skin::switchSel(a, t, ref ? PhsRangeLarge : PhsRangeMode, F.p(c0 + 3, 58), F.sz(48, 39), K, ref ? rl : rm, 2);
-    skin::pill(dl, F.p(c0 + 54, 55), F.p(c0 + bw, 71), K, "FREQ RANGE", F.font(8.5f));
     std::string r = ref ? (fmtHz(classic::phaserRateHz(val(st, PhsSweepN, 0.5f), ival(st, PhsRangeLarge) == 1) * 1000) + " mHz")
                         : fmtHz(lo) + " - " + fmtHz(hi) + " Hz";
     skin::valueStrip(dl, F.p(c0 + 55, 81), F.p(c0 + bw - 3, 95), K, r.c_str(), F.font(8.5f));
@@ -267,8 +264,7 @@ void editorPhaserFl(App& a, const PluginTarget& t, float width) {
     skin::text(dl, ImVec2(p0.x + 5, p0.y + 3), K.graphText, "SWEEP", F.font(7.5f));
   }
   {
-    skin::well(dl, F.p(c2, 155), F.p(c2 + bw, 200), K, 4 * F.s);
-    skin::pill(dl, F.p(c2 + 4, 155), F.p(c2 + bw, 171), K, "LFO", F.font(8.5f));
+    skin::captionWell(dl, F, c2, 155, bw, 45, K, "LFO", F.font(8.5f), 0);
     static const char* shp[2] = {"SINE", "TRI"};
     if (ref) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.45f);
     skin::switchSel(a, t, PhsShape, F.p(c2 + 4, 174), F.sz(78, 22), K, shp, 2, true);
@@ -400,23 +396,22 @@ void editorFilterFl(App& a, const PluginTarget& t, float width) {
     skin::toggle(a, t, FltDcBlock, F.p(421, 73), F.sz(69, 25), K, "DC OFF", F.font(8));
   }
   {  // Mode row: filter type cells + blend switch, then gain and mix.
-    skin::well(dl, F.p(5, 105), F.p(330, 150), K, 4 * F.s);
-    skin::pill(dl, F.p(5, 105), F.p(330, 121), K, "MODE", F.font(8.5f));
+    skin::captionWell(dl, F, 5, 105, 325, 45, K, "MODE", F.font(8.5f), 0);
     static const char* modes[7] = {"LP", "BP", "HP", "NOTCH", "LO SH", "PEAK", "HI SH"};
     if (classic) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.45f);
     skin::switchSel(a, t, FltMode, F.p(9, 124), F.sz(214, 23), K, modes, 7, true);
     skin::toggle(a, t, FltBlend, F.p(227, 124), F.sz(47, 23), K, "BLEND", F.font(8));
     if (classic) ImGui::PopStyleVar();
     skin::toggle(a, t, FltModel, F.p(278, 124), F.sz(49, 23), K, "CLASSIC", F.font(7.5f));
-    miniWell(dl, F, 335, 105, 77, 45, K, "GAIN");
-    skin::wheel(a, t, FltGain, F.p(338, 108), 40 * F.s, K, skin::WheelBigLine);
+    const skin::Module mg = miniWell(dl, F, 335, 105, 77, 45, K, "GAIN");
+    skin::wheel(a, t, FltGain, mg.wheelTl, mg.wheelSize, K, skin::WheelBigLine);
     auto dg = describeParam(a.doc.song(), t.pid(FltGain));
-    if (dg) skin::valueStrip(dl, F.p(380, 128), F.p(410, 144), K, dg->format(val(st, FltGain)).c_str(), F.font(7.5f));
-    miniWell(dl, F, 417, 105, 77, 45, K, "MIX");
-    skin::wheel(a, t, FltMix, F.p(420, 108), 40 * F.s, K, skin::WheelBigLine);
+    if (dg) skin::valueStrip(dl, ImVec2(mg.wheelTl.x + mg.wheelSize + 2 * F.s, mg.row0.y), mg.row1, K, dg->format(val(st, FltGain)).c_str(), F.font(7.5f));
+    const skin::Module mm = miniWell(dl, F, 417, 105, 77, 45, K, "MIX");
+    skin::wheel(a, t, FltMix, mm.wheelTl, mm.wheelSize, K, skin::WheelBigLine);
     char b[16];
     std::snprintf(b, sizeof b, "%.0f%%", val(st, FltMix, 1) * 100);
-    skin::valueStrip(dl, F.p(462, 128), F.p(492, 144), K, b, F.font(7.5f));
+    skin::valueStrip(dl, ImVec2(mm.wheelTl.x + mm.wheelSize + 2 * F.s, mm.row0.y), mm.row1, K, b, F.font(7.5f));
   }
   filterGraph(a, t, st, F.p(5, 156), F.sz(490, 101), K);
   fr.end();

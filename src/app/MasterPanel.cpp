@@ -211,14 +211,19 @@ void drawMasterPanel(App& a) {
     const bool hov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + 24));
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + 24), hov ? P.surface700 : P.field, theme::kRadiusSm);
     ui::Led(dl, ImVec2(p.x + 10, p.y + 12), 4.0f, es.enabled);
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(p.x + 20, p.y + 5), w - 24, es.enabled ? P.text : P.textFaint,
+    const float eyeW = info ? 22.0f : 0.0f;  // Q-6: show / hide toggle at the right end
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(p.x + 20, p.y + 5), w - 24 - eyeW, es.enabled ? P.text : P.textFaint,
                         info ? info->name.c_str() : es.plugin.type.c_str());
-    ImGui::InvisibleButton("##slot", ImVec2(w, 24));
+    ImGui::InvisibleButton("##slot", ImVec2(w - eyeW, 24));
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
       if (ImGui::GetIO().MousePos.x < p.x + 18) a.doc.setParam(slotEnableParam(master.id, slot), es.enabled ? 0.0 : 1.0, false);
       else togglePluginWindow(a, PluginTarget{master.id, slot});
     }
     ui::Hint("Click: open the effect \xC2\xB7 click the lamp: bypass / enable");
+    if (info) {
+      ImGui::SetCursorScreenPos(ImVec2(p.x + w - eyeW, p.y + 1));
+      if (ui::EyeToggle("##eye", pluginWindowShown(a, PluginTarget{master.id, slot}), 22)) togglePluginWindow(a, PluginTarget{master.id, slot});
+    }
     ImGui::PopID();
   }
   pui::endPanel();

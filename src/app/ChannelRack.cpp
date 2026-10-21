@@ -446,6 +446,10 @@ void drawChannelRack(App& a) {
           ObjectId moving = *static_cast<const ObjectId*>(pl->Data);
           a.doc.moveChannel(moving, static_cast<int>(ci));
         }
+        // J-75: a sample dropped on a sample channel replaces its sample (Shift: a new channel).
+        browserui::DropPlace place;
+        place.channel = c.id;
+        browserui::acceptFileDrop(a, browse::DropTarget::Rack, place);
         ImGui::EndDragDropTarget();
       }
       const bool open = pluginWindowShown(a, PluginTarget{c.id, -1});

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gridline VERSION 0.4.0 LANGUAGES C CXX)
+project(gridline VERSION 0.5.0 LANGUAGES C CXX)
 
 # Gridline — clean-room DAW. Native Linux target (also builds on macOS for development).
 #   cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
@@ -64,6 +64,8 @@ list(APPEND GRIDLINE_CORE_SRC ${CMAKE_BINARY_DIR}/generated/McpDocs.cpp)
 add_library(gridline_core STATIC ${GRIDLINE_CORE_SRC})
 set_target_properties(gridline_core PROPERTIES POSITION_INDEPENDENT_CODE ON)  # also linked into the plugin bundles (PH-09)
 target_include_directories(gridline_core PUBLIC src)
+configure_file(cmake/Version.h.in ${CMAKE_BINARY_DIR}/generated/GridlineVersion.h @ONLY)
+target_include_directories(gridline_core PUBLIC ${CMAKE_BINARY_DIR}/generated)
 target_include_directories(gridline_core SYSTEM PUBLIC third_party)
 # CLAP interface headers (MIT, vendored unmodified; see third_party/clap/LICENSE).
 target_include_directories(gridline_core SYSTEM PUBLIC third_party/clap/include)
@@ -247,6 +249,19 @@ target_link_libraries(gridline_tests_browser PRIVATE gridline_core)
 target_include_directories(gridline_tests_browser PRIVATE tests)
 target_compile_options(gridline_tests_browser PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME browser COMMAND gridline_tests_browser WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-75: drags from other applications (planning, formats, headers; macOS: pasteboards + the window's drag destination).
+add_executable(gridline_tests_external_drop tests/test_external_drop.cpp)
+target_link_libraries(gridline_tests_external_drop PRIVATE gridline_core)
+target_include_directories(gridline_tests_external_drop PRIVATE tests)
+target_compile_options(gridline_tests_external_drop PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME external_drop COMMAND gridline_tests_external_drop WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+if(APPLE)
+  add_executable(gridline_tests_external_drop_mac tests/test_external_drop_mac.mm)
+  target_link_libraries(gridline_tests_external_drop_mac PRIVATE gridline_core "-framework AppKit")
+  target_include_directories(gridline_tests_external_drop_mac PRIVATE tests)
+  target_compile_options(gridline_tests_external_drop_mac PRIVATE -Wall -Wextra)
+  add_test(NAME external_drop_mac COMMAND gridline_tests_external_drop_mac WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
 add_executable(gridline_tests_channels tests/test_channels.cpp)
 target_link_libraries(gridline_tests_channels PRIVATE gridline_core)
 target_compile_options(gridline_tests_channels PRIVATE -Wall -Wextra -Wpedantic)
@@ -357,6 +372,11 @@ add_executable(gridline_tests_q4 tests/test_q4.cpp)
 target_link_libraries(gridline_tests_q4 PRIVATE gridline_core)
 target_compile_options(gridline_tests_q4 PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME q4_event_lane COMMAND gridline_tests_q4 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-73: eye toggle, shared minimum inset, effect reorder by wheel, reverb room drag, lane bar glides.
+add_executable(gridline_tests_j73 tests/test_j73.cpp)
+target_link_libraries(gridline_tests_j73 PRIVATE gridline_core)
+target_compile_options(gridline_tests_j73 PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME j73_ui_polish COMMAND gridline_tests_j73 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # LV2 hosting (PH-04): an in-tree test bundle (three plugins, their interfaces,
 # presets) plus a presets-only bundle, built into test-lv2/ (never installed).
@@ -576,6 +596,32 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     endif()
   endif()
 
+  # Q-13: interface icons. assets/icons/ui/*.svg (Lucide ISC / Tabler MIT geometry) are embedded at
+  # build time and rasterised by nanosvg (zlib, vendored unmodified in third_party/nanosvg) into an
+  # alpha atlas at the exact device size (src/app/icons).
+  file(GLOB GRIDLINE_UI_SVGS CONFIGURE_DEPENDS assets/icons/ui/*.svg)
+  set(GRIDLINE_ICON_DATA ${CMAKE_BINARY_DIR}/generated/IconData.cpp)
+  add_custom_command(OUTPUT ${GRIDLINE_ICON_DATA}
+    COMMAND ${CMAKE_COMMAND} -DICON_DIR=${CMAKE_SOURCE_DIR}/assets/icons/ui -DOUT=${GRIDLINE_ICON_DATA}
+            -P ${CMAKE_SOURCE_DIR}/cmake/EmbedIcons.cmake
+    DEPENDS ${GRIDLINE_UI_SVGS} ${CMAKE_SOURCE_DIR}/cmake/EmbedIcons.cmake
+    COMMENT "Embedding interface icons")
+  add_library(gridline_nanosvg OBJECT src/app/icons/NanoSvgImpl.cpp)
+  target_compile_options(gridline_nanosvg PRIVATE -w)  # vendored code
+  set_target_properties(gridline_nanosvg PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  add_library(gridline_icons OBJECT src/app/icons/IconAtlas.cpp src/app/icons/IconTexture.cpp src/app/icons/IconNames.cpp ${GRIDLINE_ICON_DATA})
+  target_include_directories(gridline_icons PRIVATE src/app/icons)
+  target_link_libraries(gridline_icons PRIVATE imgui_core)
+  target_compile_options(gridline_icons PRIVATE -Wall -Wextra -Wpedantic)
+  set_target_properties(gridline_icons PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  set(GRIDLINE_ICON_OBJS $<TARGET_OBJECTS:gridline_icons> $<TARGET_OBJECTS:gridline_nanosvg>)
+  # Q-13 tests: the atlas builds, every icon has its SVG, re-rasterisation on a scale change only.
+  add_executable(gridline_tests_icons tests/test_icons.cpp ${GRIDLINE_ICON_OBJS})
+  target_link_libraries(gridline_tests_icons PRIVATE imgui_core)
+  target_include_directories(gridline_tests_icons PRIVATE src tests)
+  target_compile_options(gridline_tests_icons PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME q13_icons COMMAND gridline_tests_icons WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
   # J-54: dialog layout checks, headless Dear ImGui (no window, no renderer).
   add_executable(gridline_tests_dialog_layout tests/test_dialog_layout.cpp src/app/DialogLayout.cpp src/app/Theme.cpp)
   target_link_libraries(gridline_tests_dialog_layout PRIVATE imgui)
@@ -598,7 +644,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   target_link_libraries(gridline_ui PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
   target_compile_options(gridline_ui PRIVATE -Wall -Wextra)
   set_target_properties(gridline_ui PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp $<TARGET_OBJECTS:gridline_ui>)
+  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS})
   target_link_libraries(gridline-app PRIVATE gridline_core imgui rtmidi)
   if(APPLE)
     target_link_libraries(gridline-app PRIVATE objc)  # plugin editor windows (NSView of an SDL window)
@@ -624,6 +670,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
       COMMAND touch ${GRIDLINE_APP_BUNDLE}
       COMMENT "Assembling Gridline.app")
   endif()
+
+  # Q-7: every built-in editor at widths x1 / x1.5 / x2, no control within
+  # inset::kMinInset px of its panel's edge (off-screen run; isolated config).
+  add_test(NAME editor_layout_audit
+           COMMAND gridline-app --layout-audit ${CMAKE_BINARY_DIR}/layout_audit --size 2400x1600
+                   --screenshot ${CMAKE_BINARY_DIR}/layout_audit/frame.ppm --frames 100000 --no-ui-sounds
+           WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(editor_layout_audit PROPERTIES ENVIRONMENT "GRIDLINE_CONFIG_HOME=${CMAKE_BINARY_DIR}/layout_audit_cfg" TIMEOUT 900)
 
   include(cmake/GridlinePlugins.cmake)  # PH-09: Gridline.clap / Gridline.vst3
 

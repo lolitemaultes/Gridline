@@ -120,6 +120,14 @@ void drawWheel(ImDrawList* dl, ImVec2 c, float r, double norm, bool centered, bo
 
 // ---- J-19 additions: skin scope + reference-family controls -----------------
 
+// Q-7: forget the panels registered for the shared minimum inset (start of
+// every editor, pui::drawPluginBody); noteFrame registers one (wells, bevels
+// and panels call it themselves).
+void resetFrames();
+void noteFrame(ImVec2 p0, ImVec2 p1);
+// Moves a label / caption rectangle inside the innermost registered panel.
+void placeKitFrame(ImVec2& p0, ImVec2& p1);
+
 // Active skin (innermost Scope), or nullptr. pui:: widgets draw in this skin
 // when one is active (wheels, panels, selectors, sliders, LEDs).
 const Skin* active();
@@ -167,6 +175,21 @@ bool labeledWheel(App& a, const PluginTarget& t, int param, const Form& F, float
 // parameter name; `value` overrides the formatted value.
 bool paramBox(App& a, const PluginTarget& t, int param, const Form& F, float x, float y, float w, float h, const Skin& k,
               const char* caption = nullptr, const char* value = nullptr, int flags = WheelBigLine);
+// Q-7: geometry of a wheel module (well with a wheel on the left, caption pill
+// at the top right, a value row / slider along the bottom right), every part
+// kept inset::minFor(F.s) px inside the well. All rectangles in screen px.
+struct Module {
+  ImVec2 b0, b1;            // the well
+  ImVec2 wheelTl;           // wheel square
+  float wheelSize = 0;
+  ImVec2 pill0, pill1;      // caption pill
+  ImVec2 row0, row1;        // bottom row (value strip / slider)
+};
+Module module(const Form& F, float x, float y, float w, float h, float pillH = 16, float rowH = 14, float textX = -1);
+// Well + caption pill laid out by module() (textX: pill start in form units
+// from the well's left, -1 = right of the wheel square); returns the geometry.
+Module captionWell(ImDrawList* dl, const Form& F, float x, float y, float w, float h, const Skin& k, const char* caption, float font,
+                   float textX = -1, float pillH = 16);
 // Push button bound to a toggle parameter (lit when on).
 bool toggle(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, const char* text = nullptr, float font = 0);
 // Drop-down box bound to a choice parameter (LCD with an arrow; opens a menu).

@@ -26,6 +26,7 @@ const PianoLaneGeometry& pianoLaneGeometry();
 void drawPlaylist(App& a);
 void drawMixer(App& a);
 void drawChannelSettings(App& a);
+void drawChannelEnvelope(App& a, ObjectId channel);  // channel envelope / LFO / filter page (J-72)
 void drawEffectEditor(App& a);
 void drawDialogs(App& a);
 void devShowPpqWarning(App& a, int ppq);  // J-54 layout check (--show ppqwarn): the lower-timebase confirmation

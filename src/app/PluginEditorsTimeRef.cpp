@@ -2,10 +2,12 @@
 // (reverb 530 × 160, delay 747 × 217 panel units), drawn with per-plugin
 // rack skins. Positions are panel units scaled to the window width.
 #include <map>
+#include "../core/I18n.h"
 #include "../engine/Dsp.h"
 #include "../engine/GraphModels.h"
 #include "../engine/LiveGraph.h"
 #include "../engine/ReverbRoomViz.h"
+#include "Inset.h"
 #include "PluginEditorsCommon.h"
 #include "PluginSkin.h"
 
@@ -326,6 +328,63 @@ void decayVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const RoomAnim& r, const 
   }
 }
 
+// Q-9: the room view drives the room size like the reference (a press on
+// its view drags the size wheel): vertical drag (Shift fine), Ctrl+click or
+// double-click reset, wheel steps, right-click the parameter menu through the
+// size control. One undo step per gesture; automation and recording go
+// through Document::setParam like every knob.
+void roomControl(App& a, const PluginTarget& t, int param, ImVec2 p0, ImVec2 p1, const RoomInk& ink) {
+  const Song& s = a.doc.song();
+  const ParamId pid = t.pid(param);
+  const auto d = describeParam(s, pid);
+  const auto v = getParam(s, pid);
+  if (!d || !v) return;
+  ImGui::PushID("roomctl");
+  ImGui::SetCursorScreenPos(p0);
+  ImGui::InvisibleButton("##room", ImVec2(p1.x - p0.x, p1.y - p0.y));
+  const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  ImGuiIO& io = ImGui::GetIO();
+  static double norm = 0;  // accumulated position during the gesture
+  if (ImGui::IsItemActivated()) norm = d->toNormalized(*v);
+  if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+    a.doc.setParam(pid, d->def, false);
+    a.doc.endGesture();
+  } else if (ImGui::IsItemActivated() && (io.KeyCtrl || io.KeySuper)) {
+    a.doc.setParam(pid, d->def, false);
+  } else if (act && !(io.KeyCtrl || io.KeySuper) && io.MouseDelta.y != 0) {
+    norm = roomviz::roomDragStep(norm, -io.MouseDelta.y, p1.y - p0.y, io.KeyShift);
+    const double nv = d->fromNormalized(norm);
+    if (nv != *v) a.doc.setParam(pid, nv, true);
+  }
+  if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+  if (hov && !act && io.MouseWheel != 0) {
+    const double nv = d->fromNormalized(std::clamp(d->toNormalized(*v) + io.MouseWheel * (io.KeyShift ? 0.005 : 0.025), 0.0, 1.0));
+    if (nv != *v) a.doc.setParam(pid, nv, false);
+  }
+  if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##roommenu");
+  if (ImGui::BeginPopup("##roommenu")) {
+    if (ImGui::MenuItem(i18n::tr("Reset room size"))) a.doc.setParam(pid, d->def, false);
+    ImGui::EndPopup();
+  }
+  if (hov || act) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRect(p0, p1, theme::withAlpha(ink.spark, act ? 0.9f : 0.55f), 0, 0, act ? 1.5f : 1.0f);
+    const double cur = *getParam(a.doc.song(), pid);
+    const std::string txt = std::string(i18n::tr("SIZE")) + " " + d->format(cur);
+    const float fs = std::clamp((p1.y - p0.y) * 0.075f, 9.0f, 12.0f);
+    ImGui::PushFont(app().fontMono, fs);
+    const ImVec2 ts = ImGui::CalcTextSize(txt.c_str());
+    ImGui::PopFont();
+    const ImVec2 q(p1.x - ts.x - 6, p1.y - fs - 5);
+    dl->AddRectFilled(ImVec2(q.x - 3, q.y - 1), ImVec2(p1.x - 3, p1.y - 3), theme::withAlpha(ink.bgBot, 0.85f), 2);
+    monoText(dl, q, ink.spark, txt.c_str(), fs);
+    a.setHint(std::string(i18n::tr("Room size")) + ": " + d->format(cur) + "   " +
+              i18n::tr("(drag up / down \xC2\xB7 Shift fine \xC2\xB7 double-click reset \xC2\xB7 wheel steps)"));
+  }
+  ImGui::PopID();
+}
+
 }  // namespace
 
 void editorReverbRef(App& a, const PluginTarget& t, float width) {
@@ -352,6 +411,8 @@ void editorReverbRef(App& a, const PluginTarget& t, float width) {
     const RoomInk ink = roomInk(K);
     roomVisual(dl, r0, r1, ra, ink);
     decayVisual(dl, F.p(4, 112), F.p(156, 156), ra, rv, ink);
+    // Q-9: the room view (below the model selector) drags the room size.
+    roomControl(a, t, roomviz::roomDragParam(static_cast<int>(std::lround(val(st, RvbModel))) == 2), ImVec2(r0.x, F.p(0, 24).y), r1, ink);
   }
   {  // J-26: network model (hall / plate reference) in the room view's corner
     static const char* md[3] = {"HALL", "PLATE", "FULL"};
@@ -395,12 +456,15 @@ void editorReverbRef(App& a, const PluginTarget& t, float width) {
     static const char* fz[3] = {"OFF", "FRZ", "SUS"};
     skin::switchSel(a, t, RvbFreeze, F.p(378, 113), ImVec2(36 * s, 36 * s), K, fz, 3);
   }
-  // Level sliders (434/466/497, 1) 24×90 and separation wheel (460,108).
+  // Level sliders (434/466/497) and separation wheel (460,108). Q-7: the
+  // reference puts the sliders 1 unit under the panel top; here they start
+  // after the shared minimum inset (inset::kMinInsetUnits) and end where the
+  // reference does, so the captions under them stay put.
   const int lv[3] = {P(RvbDry, RvbFDry), P(RvbEarly, RvbFEr), P(RvbWet, RvbFWet)};
   const float lx[3] = {434, 466, 497};
   const char* ln[3] = {"DRY", "ER", "WET"};
   for (int i = 0; i < 3; ++i) {
-    skin::vslider(a, t, lv[i], F.p(lx[i], 1), ImVec2(24 * s, 90 * s), K);
+    skin::vslider(a, t, lv[i], F.p(lx[i], 1 + inset::kMinInsetUnits), ImVec2(24 * s, (90 - inset::kMinInsetUnits) * s), K);
     skin::label(dl, F.p(lx[i] + 12, 0).x, F.p(0, 92).y, ln[i], K.textDim, fsL);
   }
   wheelL(a, t, P(RvbWidth, RvbFSep), F, 460, 108, 36, K, "SEP", skin::WheelCentered);

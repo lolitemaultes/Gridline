@@ -130,6 +130,7 @@ enum class DropTarget {
   MixerSlot,     // an effect slot of a strip
   PluginWindow,  // a plugin window (header / body)
   Workspace,     // anywhere else (file dropped onto the app window)
+  Browser,       // the browser window (J-75: folders from other apps)
 };
 enum class DropAction {
   None,
@@ -144,6 +145,9 @@ enum class DropAction {
   ImportMidiChannels,  // MIDI file → new pattern with one channel per track
   ImportMidiNotes,     // MIDI file → notes of the open pattern / channel
   OpenProject,         // Gridline / FL Studio / zipped project → open (J-52)
+  ReplaceSample,       // audio → the sample of the channel row under the pointer (J-75)
+  MidiPatternClip,     // MIDI file → new pattern + its clip at the playlist drop position (J-75)
+  AddBrowserFolder,    // folder → a browser folder (J-75)
 };
 // What a dragged item is. FL presets (.fst) are decoded first and described
 // by what they contain (plugin preset or chain).
@@ -153,7 +157,8 @@ struct DropItem {
   PluginKind pluginKind = PluginKind::Generator;
 };
 // `targetType` = the plugin type shown by a PluginWindow target / of the
-// MixerSlot's current effect; `targetUsesSample` = that plugin loads samples.
+// MixerSlot's current effect / of the Rack channel row under the pointer
+// (empty: the rack's free area); `targetUsesSample` = that plugin loads samples.
 DropAction dropAction(const DropItem& item, DropTarget target, const std::string& targetType = "", bool targetUsesSample = false);
 const char* dropActionLabel(DropAction a);  // "New sampler channel", …
 

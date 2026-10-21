@@ -9,6 +9,8 @@
 #include <vector>
 #include "../core/Params.h"
 #include "App.h"
+#include "Inset.h"
+#include "LayoutAudit.h"
 #include "Theme.h"
 
 namespace gl::skin {
@@ -32,6 +34,52 @@ struct Bound {
   double val = 0;
   bool ok = false;
 };
+
+// Q-7: panels / wells / bevels drawn in the current editor (reset by
+// drawPluginBody and View begin); bound controls keep the shared minimum
+// inset (inset::minFor) inside the innermost one holding their centre.
+std::vector<inset::Rect> kitFrames;
+float kitScale = 1.0f;  // scale of the last form started (formAt / Form::fit / View begin)
+void kitFrame(ImVec2 a, ImVec2 b) {
+  if (kitFrames.size() < 512) kitFrames.push_back(inset::Rect{a.x, a.y, b.x, b.y});
+}
+void fitKitMin(float min, ImVec2& p0, ImVec2& p1) {
+  const inset::Rect r{p0.x, p0.y, p1.x, p1.y};
+  const float cx = (r.x0 + r.x1) * 0.5f, cy = (r.y0 + r.y1) * 0.5f;
+  const inset::Rect* best = nullptr;
+  for (const auto& f : kitFrames)
+    if (f.contains(cx, cy) && f.area() > r.area() * 1.2f && f.w() >= r.w() - 0.5f && f.h() >= r.h() - 0.5f && (!best || f.area() < best->area()))
+      best = &f;
+  if (!best) return;
+  const inset::Rect o = inset::fit(*best, r, min);
+  p0 = ImVec2(o.x0, o.y0);
+  p1 = ImVec2(o.x1, o.y1);
+}
+void fitKit(const View& v, ImVec2& p0, ImVec2& p1) { fitKitMin(inset::minFor(v.s), p0, p1); }
+// Labels, captions, read-outs: moved inside the innermost panel (shrunk only
+// when they are wider than the room). Returns the offset applied to p0.
+ImVec2 placeKit(ImVec2& p0, ImVec2& p1) {
+  const inset::Rect r{p0.x, p0.y, p1.x, p1.y};
+  const float cx = (r.x0 + r.x1) * 0.5f, cy = (r.y0 + r.y1) * 0.5f;
+  const inset::Rect* best = nullptr;
+  for (const auto& f : kitFrames)
+    if (f.contains(cx, cy) && f.area() > r.area() * 1.2f && (!best || f.area() < best->area())) best = &f;
+  if (!best) return ImVec2(0, 0);
+  const inset::Rect o = inset::place(*best, r, inset::minFor(kitScale));
+  const ImVec2 d(o.x0 - p0.x, o.y0 - p0.y);
+  p0 = ImVec2(o.x0, o.y0);
+  p1 = ImVec2(o.x1, o.y1);
+  return d;
+}
+// Square controls (wheels): fitted, then the largest centred square inside.
+void fitKitSquare(float min, ImVec2& tl, float& size) {
+  ImVec2 p0 = tl, p1(tl.x + size, tl.y + size);
+  fitKitMin(min, p0, p1);
+  const float s = std::min(p1.x - p0.x, p1.y - p0.y);
+  if (s >= size - 0.01f) return;
+  tl = ImVec2((p0.x + p1.x - s) * 0.5f, (p0.y + p1.y - s) * 0.5f);
+  size = s;
+}
 
 Bound bind(App& a, const PluginTarget& t, int param) {
   Bound b;
@@ -95,7 +143,16 @@ ImU32 Skin::valueBgC() const { return valueBg ? valueBg : lcdBg; }
 ImU32 Skin::valueTextC() const { return valueText ? valueText : lcdText; }
 ImU32 Skin::accent2C() const { return accent2 ? accent2 : lerpCol(fill, text, 0.5f); }
 
-Form Form::fit(float width, float formW) { return Form{ImGui::GetCursorScreenPos(), formW > 0 ? width / formW : 1.0f}; }
+Form Form::fit(float width, float formW) {
+  kitScale = formW > 0 ? width / formW : 1.0f;
+  return Form{ImGui::GetCursorScreenPos(), kitScale};
+}
+void noteFrame(ImVec2 p0, ImVec2 p1) { kitFrame(p0, p1); }
+void placeKitFrame(ImVec2& p0, ImVec2& p1) { placeKit(p0, p1); }
+void resetFrames() {
+  kitFrames.clear();
+  kitScale = 1.0f;
+}
 float Form::font(float px) const { return std::clamp(px * s, 9.0f, 15.0f); }
 void Form::end(float formW, float formH) const {
   ImGui::SetCursorScreenPos(o);
@@ -103,11 +160,15 @@ void Form::end(float formW, float formH) const {
 }
 
 void panel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
+  audit::frame(p0, p1, "panel");
+  kitFrame(p0, p1);
   dl->AddRectFilledMultiColor(p0, p1, k.panelHi, k.panelHi, k.panel, k.panel);
   dl->AddRect(p0, p1, darken(k.panel, 0.45f), rounding, 0, 1.0f);
 }
 
 void bevel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
+  audit::frame(p0, p1, "bevel");
+  kitFrame(p0, p1);
   dl->AddRectFilled(p0, p1, theme::withAlpha(k.bevel, 0.55f), rounding);
   dl->AddRect(p0, p1, darken(k.panel, 0.5f), rounding, 0, 1.0f);
   dl->AddLine(ImVec2(p0.x + rounding, p1.y), ImVec2(p1.x - rounding, p1.y), lighten(k.panel, 0.12f), 1.0f);
@@ -116,11 +177,16 @@ void bevel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) 
 void label(ImDrawList* dl, float cx, float y, const char* text, ImU32 col, float size) {
   ImGui::PushFont(app().fontMonoBold, size);
   ImVec2 ts = ImGui::CalcTextSize(text);
-  dl->AddText(ImVec2(std::round(cx - ts.x * 0.5f), std::round(y)), col, text);
+  ImVec2 q0(cx - ts.x * 0.5f, y), q1(cx + ts.x * 0.5f, y + ts.y);
+  placeKit(q0, q1);  // Q-7: off the panel's edges
+  dl->AddText(ImVec2(std::round(q0.x), std::round(q0.y)), col, text);
+  audit::control(q0, q1, "label");
   ImGui::PopFont();
 }
 
 void lcd(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* text, float size, bool center) {
+  placeKit(p0, p1);
+  audit::control(p0, p1, "lcd");
   dl->AddRectFilled(p0, p1, k.lcdBg, 2);
   dl->AddRect(p0, p1, darken(k.panel, 0.7f), 2, 0, 1.0f);
   ImGui::PushFont(app().fontMono, size);
@@ -133,6 +199,7 @@ void lcd(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* text, 
 }
 
 void graphWell(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k) {
+  audit::frame(p0, p1, "graph");
   dl->AddRectFilled(p0, p1, k.graphBg, 2);
   dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), darken(k.panel, 0.65f), 2, 0, 1.0f);
 }
@@ -163,6 +230,7 @@ void drawWheel(ImDrawList* dl, ImVec2 c, float r, double norm, bool centered, bo
 bool wheel(App& a, const PluginTarget& t, int param, ImVec2 tl, float size, const Skin& k, int flags, ImU32 fill) {
   Bound b = bind(a, t, param);
   if (!b.ok) return false;
+  fitKitSquare(inset::minFor(kitScale), tl, size);
   ImGui::PushID(param);
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton("##w", ImVec2(size, size));
@@ -180,6 +248,11 @@ bool wheel(App& a, const PluginTarget& t, int param, ImVec2 tl, float size, cons
 bool vslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, ImU32 fill, bool ruler) {
   Bound b = bind(a, t, param);
   if (!b.ok) return false;
+  {  // Q-7: shared minimum inset inside its panel (shortens, never moves past the bottom)
+    ImVec2 p1(tl.x + size.x, tl.y + size.y);
+    fitKitMin(inset::minFor(kitScale), tl, p1);
+    size = ImVec2(p1.x - tl.x, p1.y - tl.y);
+  }
   ImGui::PushID(param);
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton("##vs", size);
@@ -216,6 +289,11 @@ bool vslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
 bool hslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, ImU32 fill) {
   Bound b = bind(a, t, param);
   if (!b.ok) return false;
+  {
+    ImVec2 p1(tl.x + size.x, tl.y + size.y);
+    fitKitMin(inset::minFor(kitScale), tl, p1);
+    size = ImVec2(p1.x - tl.x, p1.y - tl.y);
+  }
   ImGui::PushID(param);
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton("##hs", size);
@@ -319,6 +397,11 @@ bool check(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, con
 bool digi(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, const char* text, float font) {
   Bound b = bind(a, t, param);
   if (!b.ok) return false;
+  {  // Q-7 shared inset
+    ImVec2 p1(tl.x + size.x, tl.y + size.y);
+    placeKitFrame(tl, p1);
+    size = ImVec2(p1.x - tl.x, p1.y - tl.y);
+  }
   ImGui::PushID(param);
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton("##dg", size);
@@ -369,6 +452,12 @@ void text(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* s, ImU32 col, float 
   ImVec2 ts = fnt ? fnt->CalcTextSizeA(px, 1e6f, 0, s) : ImGui::CalcTextSize(s);
   float x = align == 0 ? p0.x + 2 : align == 2 ? p1.x - ts.x - 2 : (p0.x + p1.x - ts.x) * 0.5f;
   float y = (p0.y + p1.y - ts.y) * 0.5f;
+  {  // Q-7: the text itself keeps off the panel's edges
+    ImVec2 q0(x, y), q1(x + ts.x, y + ts.y);
+    const ImVec2 d = placeKit(q0, q1);
+    x += d.x, y += d.y, p0.x += d.x, p0.y += d.y, p1.x += d.x, p1.y += d.y;
+  }
+  audit::control(ImVec2(x, y), ImVec2(x + ts.x, y + ts.y), "text");
   dl->PushClipRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), true);
   dl->AddText(fnt, px, ImVec2(std::floor(x), std::floor(y)), col, s);
   dl->PopClipRect();
@@ -386,6 +475,7 @@ Form formAt(float formW, float formH, float width, float maxScale) {
   Form f;
   f.o = ImGui::GetCursorScreenPos();
   f.s = std::min(maxScale, std::max(0.5f, width / formW));
+  kitScale = f.s;
   f.w = formW * f.s;
   f.h = formH * f.s;
   return f;
@@ -400,6 +490,8 @@ void reserve(const Form& f) {
 
 void bevel(ImDrawList* dl, const Form& f, float x, float y, float w, float h, ImU32 col, int style) {
   ImVec2 p0 = f.p(x, y), p1 = f.p(x + w, y + h);
+  audit::frame(p0, p1, "bevel");
+  kitFrame(p0, p1);
   float r = style == BevelPlain ? 0.0f : f.d(5);
   ImDrawFlags fl = style == BevelRoundedBottom ? ImDrawFlags_RoundCornersBottom
                    : style == BevelRoundedTop  ? ImDrawFlags_RoundCornersTop
@@ -504,7 +596,9 @@ bool wheel(App& a, const PluginTarget& t, int param, const Form& f, float x, flo
   Bound b = bind(a, t, param);
   if (!b.ok) return false;
   ImGui::PushID(param);
-  ImVec2 p0 = f.p(x, y);
+  ImVec2 p0 = f.p(x, y), p1 = f.p(x + w, y + h);
+  fitKitMin(inset::minFor(f.s), p0, p1);  // Q-7 shared inset
+  w = (p1.x - p0.x) / f.s, h = (p1.y - p0.y) / f.s;
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##w", ImVec2(f.d(w), f.d(h)));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
@@ -522,6 +616,7 @@ bool digi(App& a, const PluginTarget& t, int param, const Form& f, float x, floa
   if (!b.ok) return false;
   ImGui::PushID(param);
   ImVec2 p0 = f.p(x, y), p1 = f.p(x + w, y + h);
+  placeKit(p0, p1);  // Q-7 shared inset
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##d", ImVec2(p1.x - p0.x, p1.y - p0.y));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
@@ -903,6 +998,10 @@ View begin(const FormDef& f, float width, float maxScale, const Palette& pal, fl
   v.o = ImGui::GetCursorScreenPos();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(v.o, v.p(static_cast<float>(f.w), static_cast<float>(f.h) + growH), pal.panel, v.px(3));
+  audit::frame(v.o, v.p(static_cast<float>(f.w), static_cast<float>(f.h) + growH), "form");
+  kitFrames.clear();
+  kitScale = v.s;
+  kitFrame(v.o, v.p(static_cast<float>(f.w), static_cast<float>(f.h) + growH));
   return v;
 }
 
@@ -918,6 +1017,12 @@ void textAt(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 c, const char* text, flo
   ImVec2 ts = ImGui::CalcTextSize(text);
   float x = align < 0 ? p0.x + 2 : align > 0 ? p1.x - ts.x - 2 : (p0.x + p1.x - ts.x) * 0.5f;
   float y = (p0.y + p1.y - ts.y) * 0.5f;
+  {  // Q-7: the text keeps off the panel's edges
+    ImVec2 q0(x, y), q1(x + ts.x, y + ts.y);
+    const ImVec2 d = placeKit(q0, q1);
+    x += d.x, y += d.y, p0.x += d.x, p0.y += d.y, p1.x += d.x, p1.y += d.y;
+  }
+  audit::control(ImVec2(x, y), ImVec2(x + ts.x, y + ts.y), "text");
   dl->PushClipRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), true);
   dl->AddText(ImVec2(std::floor(x), std::floor(y)), c, text);
   dl->PopClipRect();
@@ -929,6 +1034,8 @@ void panel(const View& v, const char* name, const Palette& pal, const char* titl
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImU32 fill = c.color >= 0 ? col(c.color) : pal.raised;
   ImVec2 a = v.p0(c), b = v.p1(c);
+  audit::frame(a, b, "panel");
+  kitFrame(a, b);
   dl->AddRectFilled(a, b, fill, v.px(3));
   dl->AddRect(a, b, darken(fill, 0.3f), v.px(3), 0, 1.0f);
   dl->AddLine(ImVec2(a.x + v.px(3), a.y + 1), ImVec2(b.x - v.px(3), a.y + 1), lighten(fill, 0.12f), 1.0f);
@@ -945,6 +1052,8 @@ void bevel(const View& v, const char* name, const Palette& pal) {
   ImU32 fill = c.color >= 0 ? col(c.color) : pal.well;
   float rr = c.style == 1 ? 0.f : v.px(4);
   ImDrawFlags fl = c.style == 3 ? ImDrawFlags_RoundCornersBottom : ImDrawFlags_RoundCornersAll;
+  audit::frame(v.p0(c), v.p1(c), "bevel");
+  kitFrame(v.p0(c), v.p1(c));
   dl->AddRectFilled(v.p0(c), v.p1(c), fill, rr, fl);
   dl->AddRect(v.p0(c), v.p1(c), darken(fill, 0.35f), rr, fl, 1.0f);
 }
@@ -1079,6 +1188,7 @@ bool wheelAt(App& a, const PluginTarget& t, const View& v, const char* like, flo
   ParamView pv = pview(a, t, param);
   if (!pv.d) return false;
   ImVec2 p0 = v.p(x, y), p1 = v.p(x + w, y + h);
+  fitKit(v, p0, p1);
   ImGui::PushID(param);
   ImGui::PushID(like);
   ImGui::SetCursorScreenPos(p0);
@@ -1104,6 +1214,7 @@ bool slider(App& a, const PluginTarget& t, const View& v, const char* name, int 
   ParamView pv = pview(a, t, param);
   if (!pv.d) return false;
   ImVec2 p0 = v.p0(c), p1 = v.p1(c);
+  fitKit(v, p0, p1);
   bool vert = c.h >= c.w;
   ImGui::PushID(param);
   ImGui::PushID(name);
@@ -1139,6 +1250,7 @@ bool selector(App& a, const PluginTarget& t, const View& v, const char* name, in
   int cols = std::max(1, c.cols), rows = std::max(1, c.rows);
   if (cells <= 0) cells = cols * rows;
   ImVec2 p0 = v.p0(c), p1 = v.p1(c);
+  fitKit(v, p0, p1);
   float cw = (p1.x - p0.x) / cols, chh = (p1.y - p0.y) / rows;
   int cur = static_cast<int>(std::lround(pv.v)) - valueOffset;
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1201,6 +1313,7 @@ bool check(App& a, const PluginTarget& t, const View& v, const char* name, int p
   ParamView pv = pview(a, t, param);
   if (!pv.d) return false;
   ImVec2 p0 = v.p0(c), p1 = v.p1(c);
+  fitKit(v, p0, p1);
   ImGui::PushID(param);
   ImGui::PushID(name);
   ImGui::SetCursorScreenPos(p0);
@@ -1228,6 +1341,7 @@ bool check(App& a, const PluginTarget& t, const View& v, const char* name, int p
 bool checkFree(const View& v, const char* name, const Palette& pal, bool on, const char* text, const char* hint) {
   const FormCtl& c = v.c(name);
   ImVec2 p0 = v.p0(c), p1 = v.p1(c);
+  fitKit(v, p0, p1);
   ImGui::PushID(name);
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##cf", ImVec2(p1.x - p0.x, p1.y - p0.y));
@@ -1248,6 +1362,7 @@ bool digi(App& a, const PluginTarget& t, const View& v, const char* name, int pa
   ParamView pv = pview(a, t, param);
   if (!pv.d) return false;
   ImVec2 p0 = v.p0(c), p1 = v.p1(c);
+  fitKit(v, p0, p1);
   ImGui::PushID(param);
   ImGui::PushID(name);
   ImGui::SetCursorScreenPos(p0);
@@ -1266,6 +1381,7 @@ bool combo(App& a, const PluginTarget& t, const View& v, const char* name, int p
   ParamView pv = pview(a, t, param);
   if (!pv.d) return false;
   ImVec2 p0 = v.p0(c), p1 = v.p1(c);
+  fitKit(v, p0, p1);
   ImGui::PushID(param);
   ImGui::PushID(name);
   ImGui::SetCursorScreenPos(p0);
@@ -1300,6 +1416,7 @@ bool combo(App& a, const PluginTarget& t, const View& v, const char* name, int p
 bool comboFree(const View& v, const char* name, const Palette& pal, const char* const* items, int count, int& value, const char* hint) {
   const FormCtl& c = v.c(name);
   ImVec2 p0 = v.p0(c), p1 = v.p1(c);
+  fitKit(v, p0, p1);
   ImGui::PushID(name);
   ImGui::SetCursorScreenPos(p0);
   bool clicked = ImGui::InvisibleButton("##cf", ImVec2(p1.x - p0.x, p1.y - p0.y));

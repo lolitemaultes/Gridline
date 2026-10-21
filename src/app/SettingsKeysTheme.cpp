@@ -344,7 +344,7 @@ void themePreview(App& a) {
   dl->AddRect(o, ImVec2(o.x + w, o.y + h), P.line, theme::kRadiusLg);
   // Toolbar strip.
   dl->AddRectFilled(ImVec2(o.x + 1, o.y + 1), ImVec2(o.x + w - 1, o.y + 30), P.chrome, theme::kRadiusLg, ImDrawFlags_RoundCornersTop);
-  const ui::Icon icons[] = {ui::Icon::Draw, ui::Icon::Paint, ui::Icon::Erase, ui::Icon::Select, ui::Icon::Zoom};
+  const ui::Icon icons[] = {ui::Icon::ToolDraw, ui::Icon::ToolPaint, ui::Icon::ToolDelete, ui::Icon::ToolSelect, ui::Icon::ToolZoom};
   for (int i = 0; i < 5; ++i) {
     const ImVec2 c(o.x + 18 + i * 26.0f, o.y + 15);
     if (i == 0) dl->AddRectFilled(ImVec2(c.x - 11, c.y - 11), ImVec2(c.x + 11, c.y + 11), P.surface700, theme::kRadius);

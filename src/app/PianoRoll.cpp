@@ -270,27 +270,30 @@ void drawPianoRoll(App& a) {
       }
     }
     ui::ToolbarDivider();
-    struct T { ui::Icon icon; Tool tool; const char* hint; uint32_t role; };
-    const T tools[] = {{ui::Icon::Draw, Tool::Draw, "Draw (P): click to add, drag to move, drag the end to resize, right-click deletes", theme::role::kDraw},
-                       {ui::Icon::Paint, Tool::Paint, "Paint (B): drag to paint notes on the grid", theme::role::kPaint},
-                       {ui::Icon::Erase, Tool::Erase, "Delete (D): click or drag over notes to delete", theme::role::kDelete},
-                       {ui::Icon::Select, Tool::Select, "Select (E): drag a box; Ctrl+drag selects with any tool", theme::role::kSelect},
-                       {ui::Icon::Slice, Tool::Slice, "Slice (C): drag across notes to cut them", theme::role::kSlice},
-                       {ui::Icon::Mute, Tool::Mute, "Mute (T): click or drag over notes to mute / unmute them", theme::role::kMute},
-                       {ui::Icon::Play, Tool::Play, "Play (Y): hold and move to hear the notes under the pointer", theme::role::kPlay},
-                       {ui::Icon::Zoom, Tool::Zoom, "Zoom (Z): drag a range to fill the view, click to zoom in, right-click to zoom out", theme::role::kZoom},
-                       {ui::Icon::Detune, Tool::Detune, "Detune (U): drag a note up / down to change its fine pitch (Shift: finer)", theme::role::kSlip}};
+    // Q-12: the shared tool family; tooltips "Name (key): what it does" from the keymap.
+    struct T { ui::Icon icon; Tool tool; const char* name; const char* desc; const char* key; uint32_t role; };
+    const T tools[] = {{ui::Icon::ToolDraw, Tool::Draw, i18n::N_("Draw"), i18n::N_("click to add, drag to move, drag the end to resize, right-click deletes"), "piano.toolDraw", theme::role::kDraw},
+                       {ui::Icon::ToolPaint, Tool::Paint, i18n::N_("Paint"), i18n::N_("paint notes while dragging"), "piano.toolPaint", theme::role::kPaint},
+                       {ui::Icon::ToolDelete, Tool::Erase, i18n::N_("Delete"), i18n::N_("click or drag over notes to delete them"), "piano.toolDelete", theme::role::kDelete},
+                       {ui::Icon::ToolSelect, Tool::Select, i18n::N_("Select"), i18n::N_("drag a box; Ctrl+drag selects with any tool"), "piano.toolSelect", theme::role::kSelect},
+                       {ui::Icon::ToolSlice, Tool::Slice, i18n::N_("Slice"), i18n::N_("drag across notes to cut them"), "piano.toolSlice", theme::role::kSlice},
+                       {ui::Icon::ToolMute, Tool::Mute, i18n::N_("Mute"), i18n::N_("click or drag over notes to mute / unmute them"), "piano.toolMute", theme::role::kMute},
+                       {ui::Icon::ToolPlay, Tool::Play, i18n::N_("Playback"), i18n::N_("hold and move to hear the notes under the pointer"), "piano.toolPlay", theme::role::kPlay},
+                       {ui::Icon::ToolZoom, Tool::Zoom, i18n::N_("Zoom"), i18n::N_("drag a range to fill the view, click zooms in, right-click zooms out"), "piano.toolZoom", theme::role::kZoom},
+                       {ui::Icon::ToolDetune, Tool::Detune, i18n::N_("Detune"), i18n::N_("drag a note up / down to change its fine pitch (Shift: finer)"), "piano.toolDetune", theme::role::kSlip}};
     for (size_t i = 0; i < sizeof tools / sizeof tools[0]; ++i) {
       if (i) ImGui::SameLine(0, 2);
-      if (ui::IconButton(tools[i].hint, tools[i].icon, st.tool == tools[i].tool, fh, tools[i].hint, theme::rgb(tools[i].role)))
+      if (ui::ToolButton(tools[i].key, tools[i].icon, st.tool == tools[i].tool, fh, tools[i].name, tools[i].desc, tools[i].key,
+                         theme::rgb(tools[i].role)))
         st.tool = tools[i].tool;
+      if (st.tool == tools[i].tool) ui::noteActiveTool("piano", static_cast<int>(tools[i].tool), tools[i].name, tools[i].key);
     }
     // Groups to the right of the tools appear only when they fit (no clipping).
     auto roomLeft = []() { return ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::GetItemRectMax().x; };
     if (roomLeft() > fh + 2 + 128 + 18) {
       ui::ToolbarDivider();
-      ui::IconButton("snapicon", ui::Icon::Magnet, st.snap != Snap::None, fh, "Snap to grid (hold Alt while dragging to bypass)",
-                     theme::rgb(theme::role::kSnap));
+      ui::ToolButton("snapicon", ui::Icon::ToolSnap, st.snap != Snap::None, fh, i18n::N_("Snap"),
+                     i18n::N_("snap to the grid chosen beside it (hold Alt while dragging to bypass)"), nullptr, theme::rgb(theme::role::kSnap));
       ImGui::SameLine(0, 2);
       std::string snapLabel = snapName(st.snap);
       if ((st.snap == Snap::Line || st.snap == Snap::Cell) && st.effGrid > 0)
@@ -784,7 +787,10 @@ void drawPianoRoll(App& a) {
   dl->PushClipRect(ImVec2(vMin.x, vMin.y - 4), vMax, true);
   for (size_t i = 0; i < notes.size() && !autoLane; ++i) {
     const Note& n = notes[i];
-    const float span = vMax.y - vMin.y, v = laneValue(n, lane);
+    // Q-10: the bar glides to its new height (display only; the note already has the value).
+    const uint64_t barKey = (static_cast<uint64_t>(chId) << 40) ^ (static_cast<uint64_t>(n.start) << 12) ^ (static_cast<uint64_t>(n.pitch) << 4) ^
+                            static_cast<uint64_t>(lane);
+    const float span = vMax.y - vMin.y, v = static_cast<float>(scrollui::glideBar(barKey, laneValue(n, lane)));
     float x = std::round(xOf(n.start)), yv = vMax.y - span * v, y0 = bip ? vMax.y - span * 0.5f : vMax.y;
     const bool lsel = st.selected.count(i) > 0;
     ImU32 c = lsel ? P.hot : theme::mix(groupColor(n.color, noteCol), P.paper, 0.15f);

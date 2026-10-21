@@ -1,5 +1,6 @@
 // Gridline — application entry: SDL2 window + OpenGL 3 + Dear ImGui, audio
 // device, default layout, typing keyboard, file drops.
+#include "GridlineVersion.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <SDL_syswm.h>
@@ -13,6 +14,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "../engine/ChannelIns.h"
 #include "J59Ui.h"
 #include "FrameProfile.h"
 #include "FrameStats.h"
@@ -48,6 +50,7 @@
 #include "ChopUi.h"
 #include "Shell.h"
 #include "SmoothScrollUi.h"
+#include "ExternalDragUi.h"
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -298,6 +301,8 @@ struct HeldNote {
 //   scroll dx dy (J-67: one trackpad-style two-axis scroll event, wheel units)
 //   momentum dx dy frames (J-67: a decaying scroll stream over the next frames, like an OS fling)
 //   trace on|off (J-67: per frame, the drawn scroll positions to stdout)
+//   J-75 drags from other applications (logical pixels): dragenter x y <file|promise:file|"path with spaces">...,
+//   dragmove x y, drop [x y], dragleave · undo · channels (channel names / samples to stdout)
 std::string devShotPending;
 bool devTrace = false;
 ImVec2 devTraceWheel;  // this frame's wheel input (io clears it at the end of the frame)
@@ -308,7 +313,31 @@ struct DevMomentum {
 struct DevInputLine {
   int frame = 0;
   std::string cmd, a0, a1, a2;
+  std::vector<std::string> args;  // every argument (quotes group words)
 };
+float devDragScale = 1.0f;  // this frame's interface scale (drag commands post window coordinates)
+
+std::vector<std::string> splitArgs(const char* line) {
+  std::vector<std::string> out;
+  std::string cur;
+  bool quoted = false, any = false;
+  for (const char* p = line; *p; ++p) {
+    const char c = *p;
+    if (c == '"') {
+      quoted = !quoted;
+      any = true;
+    } else if (!quoted && (c == ' ' || c == '\t' || c == '\n' || c == '\r')) {
+      if (any) out.push_back(cur);
+      cur.clear();
+      any = false;
+    } else {
+      cur += c;
+      any = true;
+    }
+  }
+  if (any) out.push_back(cur);
+  return out;
+}
 
 std::vector<DevInputLine> loadDevInput(const std::string& path) {
   std::vector<DevInputLine> out;
@@ -319,7 +348,9 @@ std::vector<DevInputLine> loadDevInput(const std::string& path) {
     char c[64] = "", x[512] = "", y[64] = "", z[64] = "";
     int fr = 0;
     if (line[0] == '#' || std::sscanf(line, "%d %63s %511s %63s %63s", &fr, c, x, y, z) < 2) continue;
-    out.push_back({fr, c, x, y, z});
+    std::vector<std::string> args = splitArgs(line);
+    args.erase(args.begin(), args.begin() + static_cast<long>(std::min<size_t>(2, args.size())));
+    out.push_back({fr, c, x, y, z, args});
   }
   std::fclose(f);
   return out;
@@ -433,6 +464,25 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       place.track = std::atoi(l.a1.c_str());
       place.tick = static_cast<Tick>(std::atoi(l.a2.c_str())) * app.doc.song().barTicks();
       browserui::performDrop(app, l.a0, browse::DropTarget::Playlist, place);
+    } else if (l.cmd == "dragenter" && l.args.size() >= 3) {  // J-75
+      std::vector<std::string> files(l.args.begin() + 2, l.args.end());
+      xdragui::devEnter(std::strtof(l.a0.c_str(), nullptr) * devDragScale, std::strtof(l.a1.c_str(), nullptr) * devDragScale, files);
+    } else if (l.cmd == "dragmove") {
+      xdragui::devMove(std::strtof(l.a0.c_str(), nullptr) * devDragScale, std::strtof(l.a1.c_str(), nullptr) * devDragScale);
+    } else if (l.cmd == "drop") {
+      xdragui::devDrop(std::strtof(l.a0.c_str(), nullptr) * devDragScale, std::strtof(l.a1.c_str(), nullptr) * devDragScale, l.args.size() >= 2);
+    } else if (l.cmd == "dragleave") {
+      xdragui::devLeave();
+    } else if (l.cmd == "undo") {
+      app.doc.undo();
+      app.syncEngine();
+    } else if (l.cmd == "channels") {
+      const Song& s = app.doc.song();
+      std::printf("channels frame %d: %zu channels, %zu patterns, undo %zu\n", frame, s.channels.size(), s.patterns.size(), app.doc.history().position());
+      for (const auto& c : s.channels)
+        std::printf("  channel %u %s type %s data %s\n", static_cast<unsigned>(c.id), c.name.c_str(), c.plugin.type.c_str(),
+                    std::filesystem::path(c.plugin.data).filename().string().c_str());
+      std::fflush(stdout);
     } else if (l.cmd == "shot") {
       devShotPending = l.a0;
     } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane") {
@@ -457,7 +507,7 @@ int main(int argc, char** argv) {
   // sandbox; no window, no audio.
   if (int rc = host::childMain(argc, argv); rc >= 0) return rc;
   if (argc >= 2 && std::string(argv[1]) == "--version") {
-    std::printf("Gridline 0.4.0\n");
+    std::printf("Gridline " GRIDLINE_VERSION "\n");
     return 0;
   }
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
@@ -781,6 +831,14 @@ int main(int argc, char** argv) {
       } else if (w == "chanmisc") {  // layout check: channel settings, misc tab
         if (!app.doc.song().channels.empty()) app.settingsChannel = app.doc.song().channels[0].id;
         app.channelTab = 1;
+      } else if (w == "chanenv") {  // layout check: channel settings, envelope page (J-72) of the first channel that has one
+        app.showImportReport = false;
+        for (const auto& ch : app.doc.song().channels)
+          if (insSupported(ch.plugin.type)) {
+            app.settingsChannel = ch.id;
+            app.channelTab = 2;
+            break;
+          }
       } else if (w == "chords") {  // J-36 QA: chord progression editor on the selected pattern / channel (frame 3)
         devChords = true;
       } else if (w == "toast") {  // layout check: notification toasts
@@ -816,6 +874,8 @@ int main(int argc, char** argv) {
           if (!mv.sel.empty()) app.selMixer = *mv.sel.begin();
         }
       }
+    } else if (arg == "--layout-audit" && i + 1 < argc) {  // Q-7: inset check of every editor + contact sheets
+      browserui::beginAuditMode(app, argv[++i]);
     } else if (arg == "--make-thumbs") {  // render every built-in editor into <config>/thumbs (plugin picker)
       browserui::beginThumbMode(app);
     } else if (arg == "--make-thumb" && i + 1 < argc) {
@@ -926,6 +986,8 @@ int main(int argc, char** argv) {
     if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_COCOA) mainNative.handle = static_cast<void*>(wm.info.cocoa.window);
 #endif
   }
+  if (mainNative.valid() && !xdrop::native::install(mainNative.handle))  // J-75: hover, promises, links (macOS)
+    std::fprintf(stderr, "[drop] native drop target unavailable; using SDL drop events\n");
   const bool frameClock = profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
   if (frameClock) SDL_GL_SetSwapInterval(0);
 
@@ -947,10 +1009,21 @@ int main(int argc, char** argv) {
       if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
           ev.window.windowID == SDL_GetWindowID(window) && theme::modeFromSettings(app.settings) == theme::Mode::System)
         theme::applyFromSettings(app.settings, true);
-      if (ev.type == SDL_DROPFILE) {
-        std::string path = ev.drop.file;
+      // J-75: files dropped by other applications. macOS reports them (with
+      // the hover) through xdrop::native; elsewhere SDL reports them on release:
+      // collected, then dropped at the pointer like any drag.
+      if (ev.type == SDL_DROPBEGIN) xdragui::sdlDropBegin();
+      if (ev.type == SDL_DROPFILE || ev.type == SDL_DROPTEXT) {
+        const std::string text = ev.drop.file ? ev.drop.file : "";
         SDL_free(ev.drop.file);
-        browserui::openFile(app, path);  // samples, MIDI, presets, projects, FL files (J-16)
+        if (ev.type == SDL_DROPFILE) xdragui::sdlDropFile(text);
+        else xdragui::sdlDropText(text);
+      }
+      if (ev.type == SDL_DROPCOMPLETE) {
+        int mx = 0, my = 0, wx = 0, wy = 0;
+        SDL_GetGlobalMouseState(&mx, &my);
+        SDL_GetWindowPosition(window, &wx, &wy);
+        xdragui::sdlDropComplete(static_cast<float>(mx - wx), static_cast<float>(my - wy));
       }
       // Typing keyboard (key events straight from SDL so key-up is never missed).
       if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && app.typingKeyboard && !io.WantTextInput &&
@@ -984,6 +1057,7 @@ int main(int argc, char** argv) {
       }
     }
     fstats::since(fstats::Events, statT);
+    xdragui::pump(app);  // J-75: drags from other applications
     if (app.quitRequested) {
       app.quitRequested = false;
       app.guardUnsaved([&running]() { running = false; });
@@ -1036,6 +1110,7 @@ int main(int argc, char** argv) {
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
+    xdragui::feedPointer();  // J-75: the drag position wins over the backend's pointer fallback
     if (fixedDt > 0) io.DeltaTime = static_cast<float>(fixedDt);
     if (winW > 0 && winH > 0) {
       io.DisplaySize = ImVec2(static_cast<float>(winW) / uiScale, static_cast<float>(winH) / uiScale);
@@ -1052,6 +1127,7 @@ int main(int argc, char** argv) {
         }
       }
       if (!devInput.empty()) {
+        devDragScale = uiScale;
         runDevInput(app, devInput, frameNo);
         lastScaledEvent = g.InputEventsNextEventId - 1;  // already in logical pixels
       }
@@ -1060,6 +1136,7 @@ int main(int argc, char** argv) {
     scrollui::beforeNewFrame();
     ImGui::NewFrame();
     scrollui::afterNewFrame();
+    xdragui::beginFrame(app);  // J-75: an external drag is an ImGui drag from outside
     devTraceWheel = ImVec2(io.MouseWheelH, io.MouseWheel);
     {  // splash -> main window: the workspace fades in from the splash surface over the first frames
       static int introFrame = 0;
@@ -1265,6 +1342,7 @@ int main(int argc, char** argv) {
       handleGlobalShortcuts(app);
     }
 
+    xdragui::endFrame(app);  // J-75: a drop no window took opens the files
     {
     prof::Scope psRender("render");
     ImGui::Render();
@@ -1349,5 +1427,5 @@ int main(int argc, char** argv) {
   SDL_GL_DeleteContext(gl);
   SDL_DestroyWindow(window);
   SDL_Quit();
-  return 0;
+  return browserui::auditIssueCount() > 0 ? 1 : 0;  // Q-7: --layout-audit fails on any inset issue
 }

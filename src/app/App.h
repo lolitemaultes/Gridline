@@ -161,7 +161,7 @@ class App {
   ObjectId selMixer = kNoId;
   MixerViewState mixerView;  // mixer layout, meters, multi-selection, armed tracks (J-12)
   ObjectId settingsChannel = kNoId;        // channel settings window target
-  int channelTab = 0;                       // channel settings window tab (0 plugin, 1 misc)
+  int channelTab = 0;                       // channel settings window tab (0 plugin, 1 misc, 2 envelope)
   std::pair<ObjectId, int> fxEditor{kNoId, -1};  // effect editor window target
   PianoRollState piano;
   PlaylistState playlist;

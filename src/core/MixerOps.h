@@ -111,6 +111,13 @@ int growTo(Document& d, int inserts);
 // (refused when the last slot is taken). Controller links follow a moved
 // effect. One undo step.
 bool moveSlotTo(Document& d, ObjectId fromTrack, int fromSlot, ObjectId toTrack, int toSlot, bool copy = false);
+// Q-8: moves the effect in `slot` by `steps` slots (negative = up), like the
+// reference's mouse wheel over an effect slot: it trades places with the
+// slots it passes (empty ones included), clamped to the slot range. Mix,
+// enable and controller links travel with it (Document::moveSlot); sends,
+// sidechains and delay compensation belong to the track and stay. Returns
+// the slot it ends in (== slot when nothing moved). One undo step.
+int stepSlot(Document& d, ObjectId track, int slot, int steps);
 
 // ------------------------------------------------------------ track state ----
 // Mixer track state file: everything but identity and routing (name, colour,

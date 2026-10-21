@@ -6,7 +6,7 @@
 // the first channel. Note record (24 bytes, see FlpPatterns.cpp): u32
 // position, u16 flags (0x4000, +0x08 slide), u16 channel, u32 length (0 =
 // step), u16 key, u16 group, u8 fine (120 = 0, 10 cents), u8, u8 release,
-// u8 colour (low 4 bits), u8 pan (64 = centre), u8 velocity (0..128), u8 mod
+// u8 colour (low 4 bits), u8 pan (64 = centre), u8 velocity (MIDI velocity), u8 mod
 // X, u8 mod Y. Step-sequencer steps are written as step notes (length 0).
 #include <algorithm>
 #include <cmath>
@@ -17,7 +17,7 @@
 namespace gl::flp::xp {
 
 namespace {
-int to127(int v) { return std::clamp(static_cast<int>(std::lround(v * 127.0 / 128.0)), 0, 127); }
+int velocity127(int v) { return std::clamp(v, 0, 127); }  // J-74: same law as FlpPatterns.cpp
 }  // namespace
 
 Note decodeNoteRecord(const uint8_t* r, int, Tick stepLen) {
@@ -28,7 +28,7 @@ Note decodeNoteRecord(const uint8_t* r, int, Tick stepLen) {
   const uint32_t len = u32(8);
   n.length = len == 0 ? stepLen : std::max<Tick>(1, static_cast<Tick>(len));
   n.pitch = std::clamp(u16(12), 0, 127);
-  n.velocity = to127(r[21]);
+  n.velocity = velocity127(r[21]);
   n.pan = std::clamp(static_cast<int>(r[20]) - 64, -kNotePanMax, kNotePanMax);
   n.fine = std::clamp((static_cast<int>(r[16]) - 120) * 10, -kNoteFineMax, kNoteFineMax);
   n.release = std::clamp(static_cast<int>(r[18]), 0, 127);
@@ -61,15 +61,7 @@ Bytes noteRecord(const Note& n, int flChannel, const Bytes* tmpl) {
   r[18] = static_cast<uint8_t>(std::clamp(n.release, 0, 128));
   r[19] = static_cast<uint8_t>((r[19] & 0xF0) | (n.color & 0x0F));
   r[20] = static_cast<uint8_t>(std::clamp(n.pan + 64, 0, 128));
-  {  // velocity 0..127 → 0..128 (the value the importer maps back exactly)
-    int v = std::clamp(static_cast<int>(std::lround(n.velocity * 128.0 / 127.0)), 0, 128);
-    for (int d : {0, -1, 1})
-      if (v + d >= 0 && v + d <= 128 && to127(v + d) == n.velocity) {
-        v += d;
-        break;
-      }
-    r[21] = static_cast<uint8_t>(v);
-  }
+  r[21] = static_cast<uint8_t>(velocity127(n.velocity));  // J-74: the MIDI velocity, as FL stores it
   r[22] = static_cast<uint8_t>(std::clamp(n.modX, 0, 255));
   r[23] = static_cast<uint8_t>(std::clamp(n.modY, 0, 255));
   return r;

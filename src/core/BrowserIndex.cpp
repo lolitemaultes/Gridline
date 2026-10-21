@@ -579,9 +579,10 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
   switch (item.kind) {
     case Kind::Audio:
       switch (target) {
-        case DropTarget::Rack:
+        case DropTarget::Rack: return !targetType.empty() && targetUsesSample ? DropAction::ReplaceSample : DropAction::NewSamplerChannel;
         case DropTarget::Workspace: return DropAction::NewSamplerChannel;
         case DropTarget::Playlist: return DropAction::AudioClip;
+        case DropTarget::Browser: return DropAction::None;
         case DropTarget::MixerTrack:
         case DropTarget::MixerSlot: return DropAction::ConvolverIR;
         case DropTarget::PluginWindow: return targetUsesSample ? DropAction::LoadSample : DropAction::None;
@@ -591,8 +592,8 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
     case Kind::Midi:
       switch (target) {
         case DropTarget::PianoRoll: return DropAction::ImportMidiNotes;
+        case DropTarget::Playlist: return DropAction::MidiPatternClip;
         case DropTarget::Rack:
-        case DropTarget::Playlist:
         case DropTarget::Workspace: return DropAction::ImportMidiChannels;
         default: return DropAction::None;
       }
@@ -610,6 +611,8 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
       return DropAction::None;
     case Kind::Chain:
       return target == DropTarget::MixerTrack || target == DropTarget::MixerSlot ? DropAction::ApplyChain : DropAction::None;
+    case Kind::Folder:
+      return target == DropTarget::Browser || target == DropTarget::Workspace ? DropAction::AddBrowserFolder : DropAction::None;
     default: break;
   }
   return DropAction::None;
@@ -629,6 +632,9 @@ const char* dropActionLabel(DropAction a) {
     case DropAction::ImportMidiChannels: return "Import MIDI (new channels)";
     case DropAction::ImportMidiNotes: return "Import MIDI notes";
     case DropAction::OpenProject: return "Open project";
+    case DropAction::ReplaceSample: return "Replace sample";
+    case DropAction::MidiPatternClip: return "Import MIDI as a pattern clip";
+    case DropAction::AddBrowserFolder: return "Add folder to the browser";
   }
   return "";
 }

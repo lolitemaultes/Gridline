@@ -1,5 +1,6 @@
 // Gridline — Q-5: reverb room visual geometry (see ReverbRoomViz.h).
 #include "ReverbRoomViz.h"
+#include "../core/PluginParams.h"
 #include <algorithm>
 #include <cmath>
 
@@ -238,6 +239,13 @@ void buildDecay(const Look& l, Decay& d) {
     auto lv = [&](double t60) { const float v = decayLevel(t, t60, false); return v + (1.f - v) * fz; };
     d.lo[k] = lv(l.t60Low()), d.mid[k] = lv(l.t60()), d.hi[k] = lv(l.t60High());
   }
+}
+
+int roomDragParam(bool fullModel) { return fullModel ? pp::RvbFRoom : pp::RvbSize; }
+
+double roomDragStep(double norm, float upPx, float spanPx, bool fine) {
+  const double speed = (fine ? 0.125 : 1.0) / (2.0 * std::max(40.0f, spanPx));
+  return std::clamp(norm + static_cast<double>(upPx) * speed, 0.0, 1.0);
 }
 
 }  // namespace gl::roomviz

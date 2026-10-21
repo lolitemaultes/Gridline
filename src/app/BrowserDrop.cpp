@@ -4,17 +4,22 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <cstring>
 #include <map>
+#include <set>
 #include <sstream>
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Json.h"
 #include "../core/TrackModes.h"
+#include "../core/I18n.h"
 #include "../core/MidiFile.h"
+#include "../core/MidiImport.h"
 #include "../core/Presets.h"
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
 #include "App.h"
 #include "BrowserUi.h"
+#include "ExternalDragUi.h"
 #include "PluginUI.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -176,6 +181,7 @@ const Decoded& decodeItem(const std::string& path) {
 const PluginInfo* targetInfo(App& a, DropTarget target, const DropPlace& place) {
   const Song& s = a.doc.song();
   if (target == DropTarget::PluginWindow) return PluginTarget{place.owner, place.pluginSlot}.info(s);
+  if (target == DropTarget::Rack && place.channel != kNoId) return PluginTarget{place.channel, -1}.info(s);  // J-75: a channel row
   if (target == DropTarget::MixerSlot)
     if (const MixerTrack* m = s.mixerTrack(place.mixer); m && place.slot >= 0 && place.slot < kEffectSlots)
       return findPlugin(m->slots[static_cast<size_t>(place.slot)].plugin.type);
@@ -222,32 +228,158 @@ DropAction dropActionFor(App& a, const std::string& path, DropTarget target, con
   return browse::dropAction(d.item, target, ti ? ti->type : "", ti && ti->usesSample);
 }
 
-bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place) {
-  bool done = false;
-  for (const char* type : {"GL_FILE", "GL_ITEM"}) {
-    const ImGuiPayload* peek = ImGui::AcceptDragDropPayload(type, ImGuiDragDropFlags_AcceptPeekOnly | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
-    if (!peek) continue;
-    const std::string path = payloadPath(peek);
-    const DropAction act = dropActionFor(a, path, target, place);
-    if (act == DropAction::None) {
-      const Decoded& d = decodeItem(path);
-      if (!d.ok && !d.error.empty()) ImGui::SetTooltip("%s", d.error.c_str());
-      continue;
-    }
-    ImGui::SetTooltip("%s", browse::dropActionLabel(act));
-    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(type)) {
-      (void)pl;
-      done = performDrop(a, path, target, place);
+// ------------------------------------------------- several files (J-75)
+
+browse::DropItem dropItemFor(const xdrop::Item& it) {
+  browse::DropItem d;
+  if (it.dir) {
+    d.kind = Kind::Folder;
+  } else if (it.pending || it.path.empty()) {
+    d.kind = xdrop::kindOf(it);
+  } else {
+    const Decoded& dec = decodeItem(it.path);
+    d = dec.item;
+    if (!dec.ok && d.kind != Kind::Other) d.kind = Kind::Other;
+  }
+  return d;
+}
+
+namespace {
+
+struct HoverState {
+  HoverPlan plan;
+  int frame = -1;
+} gHover;
+
+// Seconds of audio files, from their headers (hover runs every frame).
+double cachedSeconds(const std::string& path) {
+  static std::map<std::string, double> cache;
+  auto it = cache.find(path);
+  if (it != cache.end()) return it->second;
+  if (cache.size() > 256) cache.clear();
+  double s = xdrop::audioHeaderSeconds(path);
+  if (s < 0) {
+    browse::FileMeta meta;
+    if (index().lookup(path, meta) && meta.seconds > 0) s = meta.seconds;
+  }
+  return cache[path] = s;
+}
+
+std::string targetName(App& a, DropTarget target, const DropPlace& place) {
+  const Song& s = a.doc.song();
+  if (target == DropTarget::Rack && place.channel != kNoId)
+    if (const Channel* c = s.channel(place.channel)) return c->name;
+  if (target == DropTarget::PluginWindow) {
+    if (place.pluginSlot < 0) {
+      if (const Channel* c = s.channel(place.owner)) return c->name;
+    } else if (const PluginInfo* i = PluginTarget{place.owner, place.pluginSlot}.info(s)) {
+      return i->name;
     }
   }
-  return done;
+  return "";
+}
+
+std::vector<xdrop::Item> payloadItems(const ImGuiPayload* pl) {
+  if (pl->IsDataType("GL_FILES") || xdragui::ownsPayload(pl)) return xdragui::items();
+  xdrop::Item it;
+  it.path = payloadPath(pl);
+  it.name = fs::path(it.path).filename().string();
+  return {it};
+}
+
+void drawTargetHighlight(const ImRect& r) {
+  const auto& P = theme::pal();
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  ImRect b = r;
+  b.Expand(-1.5f);
+  dl->AddRectFilled(b.Min, b.Max, theme::withAlpha(P.hot, 0.08f), theme::kRadiusSm);
+  dl->AddRect(b.Min, b.Max, theme::withAlpha(P.hot, 0.85f), theme::kRadiusSm, 0, 2.0f);
+}
+
+}  // namespace
+
+xdrop::Mods currentMods() {
+  const ImGuiIO& io = ImGui::GetIO();
+  xdrop::Mods m;
+  m.shift = io.KeyShift;
+  m.alt = io.KeyAlt;
+  m.ctrl = io.KeyCtrl;
+  return m;
+}
+
+xdrop::Plan planFor(App& a, const std::vector<xdrop::Item>& items, DropTarget target, const DropPlace& place, const xdrop::Mods& mods) {
+  const Song& s = a.doc.song();
+  xdrop::Context ctx;
+  ctx.target = target;
+  if (const PluginInfo* ti = targetInfo(a, target, place)) {
+    ctx.targetType = ti->type;
+    ctx.targetUsesSample = ti->usesSample;
+  }
+  ctx.onChannel = target == DropTarget::Rack && place.channel != kNoId;
+  ctx.targetName = targetName(a, target, place);
+  ctx.track = place.track;
+  ctx.tick = place.tick;
+  ctx.barTicks = std::max<Tick>(1, s.barTicks());
+  ctx.trackCount = std::max(1, static_cast<int>(s.tracks.size()));
+  ctx.fallbackLength = ctx.barTicks;
+  std::vector<browse::DropItem> kinds;
+  for (const xdrop::Item& it : items) {
+    kinds.push_back(dropItemFor(it));
+    Tick len = 0;
+    if (target == DropTarget::Playlist && !it.pending && kinds.back().kind == Kind::Audio) {
+      const double sec = cachedSeconds(it.path);
+      browse::FileMeta meta;
+      const double bpm = previewSync() ? (index().lookup(it.path, meta) && meta.bpm > 0 ? meta.bpm : browse::bpmFromName(it.name)) : 0;
+      if (sec > 0) len = std::max<Tick>(1, static_cast<Tick>(std::llround(sec * (bpm > 0 ? bpm : s.tempo) / 60.0 * s.ppq)));
+    }
+    ctx.lengths.push_back(len);
+  }
+  return xdrop::plan(items, kinds, ctx, mods);
+}
+
+const HoverPlan* hoverPlan(DropTarget target) {
+  if (gHover.frame != ImGui::GetFrameCount() || gHover.plan.target != target) return nullptr;
+  return &gHover.plan;
+}
+
+bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place) {
+  const ImGuiPayload* cur = ImGui::GetDragDropPayload();
+  if (!cur) return false;
+  const char* type = cur->IsDataType("GL_FILE") ? "GL_FILE" : cur->IsDataType("GL_ITEM") ? "GL_ITEM" : cur->IsDataType("GL_FILES") ? "GL_FILES" : nullptr;
+  if (!type) return false;
+  const std::vector<xdrop::Item> items = payloadItems(cur);
+  if (items.empty()) return false;
+  const xdrop::Mods mods = currentMods();
+  const xdrop::Plan p = planFor(a, items, target, place, mods);
+  if (!p.accepted()) {
+    if (!p.label.empty()) {
+      ImGui::SetTooltip("%s", p.label.c_str());
+      a.setHint(p.label);
+      ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
+    }
+    return false;
+  }
+  const ImRect rect = GImGui->DragDropTargetRect;
+  const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(type, ImGuiDragDropFlags_AcceptNoDrawDefaultRect | ImGuiDragDropFlags_AcceptBeforeDelivery);
+  if (!pl) return false;
+  if (!pl->Delivery) {
+    drawTargetHighlight(rect);
+    ImGui::SetTooltip("%s", p.label.c_str());
+    a.setHint(p.label);
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    gHover.plan = HoverPlan{target, p, items};
+    gHover.frame = ImGui::GetFrameCount();
+    return false;
+  }
+  xdragui::markConsumed();
+  return performItems(a, items, target, place, mods);
 }
 
 void pluginWindowDropTarget(App& a, const PluginTarget& t) {
   ImGuiWindow* w = ImGui::GetCurrentWindow();
   if (!w || !ImGui::GetDragDropPayload()) return;
   const ImGuiPayload* pl = ImGui::GetDragDropPayload();
-  if (!pl->IsDataType("GL_FILE") && !pl->IsDataType("GL_ITEM")) return;
+  if (!pl->IsDataType("GL_FILE") && !pl->IsDataType("GL_ITEM") && !pl->IsDataType("GL_FILES")) return;
   if (ImGui::BeginDragDropTargetCustom(w->Rect(), w->ID)) {
     DropPlace place;
     place.owner = t.owner;
@@ -257,14 +389,11 @@ void pluginWindowDropTarget(App& a, const PluginTarget& t) {
   }
 }
 
-bool performDrop(App& a, const std::string& path, DropTarget target, const DropPlace& place) {
+namespace {
+
+// One step of a drop. `made`: the clip an AudioClip / MidiPatternClip step added.
+bool runAction(App& a, const std::string& path, DropAction act, DropTarget target, const DropPlace& place, bool direct, ObjectId* made) {
   const Decoded& d = decodeItem(path);
-  if (!d.ok) {
-    a.notify(d.error.empty() ? "Cannot use " + fs::path(path).filename().string() : d.error, true);
-    return false;
-  }
-  const PluginInfo* ti = targetInfo(a, target, place);
-  const DropAction act = browse::dropAction(d.item, target, ti ? ti->type : "", ti && ti->usesSample);
   const std::string fname = fs::path(path).filename().string();
   switch (act) {
     case DropAction::None:
@@ -299,16 +428,18 @@ bool performDrop(App& a, const std::string& path, DropTarget target, const DropP
         c.track = trackmodes::placeAudioClip(sg, c.track, ch);  // PL-08: audio tracks route it, instrument tracks pass it on
         sg.playlist.push_back(c);
         a.playlist.selected = {c.id};
+        if (made) *made = c.id;
       });
       a.doc.endGroup();
       return true;
     }
+    case DropAction::ReplaceSample:
     case DropAction::LoadSample: {
-      PluginTarget t{place.owner, place.pluginSlot};
+      PluginTarget t = act == DropAction::ReplaceSample ? PluginTarget{place.channel, -1} : PluginTarget{place.owner, place.pluginSlot};
       if (const PluginState* st = t.state(a.doc.song())) {
         PluginState ns = *st;
         ns.data = path;
-        setPluginState(a, t, ns, "load sample");
+        setPluginState(a, t, ns, act == DropAction::ReplaceSample ? "replace sample" : "load sample");
         if (t.isChannel()) a.doc.renameChannel(t.owner, fs::path(path).stem().string());
         return true;
       }
@@ -398,8 +529,36 @@ bool performDrop(App& a, const std::string& path, DropTarget target, const DropP
       return true;
     }
     case DropAction::ImportMidiChannels:
-      a.importMidi(path);
+    case DropAction::MidiPatternClip: {
+      if (act == DropAction::ImportMidiChannels && !direct) {  // one file: the import options dialog
+        a.importMidi(path);
+        return true;
+      }
+      MidiFileData m;
+      std::string err;
+      if (!readMidiFile(path, m, &err)) {
+        a.notify("MIDI import failed: " + err, true);
+        return false;
+      }
+      if (m.format == 0 || m.tracks.size() == 1) splitTracksByChannel(m);
+      MidiImportOptions o;
+      o.placeInPlaylist = act == DropAction::ImportMidiChannels;
+      o.tempo = o.timeSignature = o.markers = false;  // a dropped file adds a pattern; the song keeps its tempo and meter
+      MidiImportResult r;
+      a.doc.editSong("import MIDI", [&](Song& s) { r = importMidiIntoSong(s, m, fs::path(path).stem().string(), o); });
+      if (!r.error.empty() || r.pattern == kNoId) {
+        a.notify("MIDI import: " + (r.error.empty() ? std::string("no notes") : r.error), true);
+        return false;
+      }
+      if (act == DropAction::MidiPatternClip) {
+        const int tracks = std::max(1, static_cast<int>(a.doc.song().tracks.size()));
+        const ObjectId id = a.doc.addClip(r.pattern, std::clamp(place.track, 0, tracks - 1), std::max<Tick>(0, place.tick));
+        if (made) *made = id;
+      }
+      a.selectPattern(r.pattern);
+      a.syncEngine();
       return true;
+    }
     case DropAction::ImportMidiNotes: {
       MidiFileData m;
       std::string err;
@@ -435,12 +594,77 @@ bool performDrop(App& a, const std::string& path, DropTarget target, const DropP
     case DropAction::OpenProject:
       a.guardUnsaved([&a, path]() { a.openProject(path); });
       return true;
+    case DropAction::AddBrowserFolder:
+      addBrowserFolder(a, path);
+      return true;
   }
   return false;
 }
 
+}  // namespace
+
+bool performDrop(App& a, const std::string& path, DropTarget target, const DropPlace& place) {
+  const Decoded& d = decodeItem(path);
+  if (!d.ok) {
+    a.notify(d.error.empty() ? "Cannot use " + fs::path(path).filename().string() : d.error, true);
+    return false;
+  }
+  const PluginInfo* ti = targetInfo(a, target, place);
+  const DropAction act = browse::dropAction(d.item, target, ti ? ti->type : "", ti && ti->usesSample);
+  return runAction(a, path, act, target, place, false, nullptr);
+}
+
+bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget target, const DropPlace& place, const xdrop::Mods& mods) {
+  for (const xdrop::Item& it : items)
+    if (it.pending) {  // promised / downloading files: the drop happens once they are here
+      xdragui::defer(a, items, target, place, mods);
+      return true;
+    }
+  const xdrop::Plan p = planFor(a, items, target, place, mods);
+  if (!p.unsupported.empty()) {
+    std::string names;
+    for (size_t k = 0; k < p.unsupported.size() && k < 3; ++k) names += (k ? ", " : "") + xdrop::displayName(items[p.unsupported[k]]);
+    if (p.unsupported.size() > 3) names += ", …";
+    a.notify(std::string(i18n::tr("Unsupported file type: ")) + names, true);
+  }
+  if (!p.accepted()) {
+    if (p.unsupported.empty()) a.notify(p.label.empty() ? std::string(i18n::tr("Nothing here takes these files")) : p.label, true);
+    return false;
+  }
+  if (p.steps.size() == 1 && p.steps[0].action == DropAction::OpenProject)
+    return runAction(a, items[p.steps[0].item].path, DropAction::OpenProject, target, place, false, nullptr);
+  int midi = 0;
+  for (const xdrop::Step& s : p.steps) midi += s.action == DropAction::ImportMidiChannels;
+  a.doc.beginGroup(p.steps.size() > 1 ? "drop files" : "drop file");
+  bool any = false;
+  std::set<ObjectId> clips;
+  Tick prevEnd = -1;
+  for (const xdrop::Step& s : p.steps) {
+    DropPlace pl = place;
+    pl.track = s.track;
+    pl.tick = s.tick;
+    // One after another: each clip starts where the one before really ends.
+    if (mods.shift && prevEnd >= 0 && (s.action == DropAction::AudioClip || s.action == DropAction::MidiPatternClip)) pl.tick = prevEnd;
+    ObjectId made = kNoId;
+    any = runAction(a, items[s.item].path, s.action, target, pl, midi > 1, &made) || any;
+    if (made != kNoId) {
+      clips.insert(made);
+      const Song& sg = a.doc.song();
+      if (const Clip* c = sg.clip(made)) prevEnd = c->start + sg.clipLength(*c);
+    }
+  }
+  a.doc.endGroup();
+  if (!clips.empty()) a.playlist.selected = clips;
+  if (any && items.size() > 1) a.notify(p.label.rfind(i18n::tr("Drop to "), 0) == 0 ? p.label.substr(std::strlen(i18n::tr("Drop to "))) : p.label);
+  return any;
+}
+
 void openFile(App& a, const std::string& path) {
   const Decoded& d = decodeItem(path);
+  if (fs::is_directory(path)) {
+    addBrowserFolder(a, path);
+    return;
+  }
   if (!d.ok) {
     a.notify(d.error.empty() ? "Cannot open " + fs::path(path).filename().string() : d.error, true);
     return;
@@ -464,6 +688,30 @@ void openFile(App& a, const std::string& path) {
     return;
   }
   performDrop(a, path, DropTarget::Workspace, DropPlace{});
+}
+
+// Several files dropped where no window takes them: each the way a double
+// click in the browser opens it (projects open, samples become channels, …).
+void openFiles(App& a, const std::vector<xdrop::Item>& items) {
+  std::vector<xdrop::Item> rest;
+  for (const xdrop::Item& it : items) {
+    if (it.pending) {
+      xdragui::defer(a, items, DropTarget::Workspace, DropPlace{}, currentMods());
+      return;
+    }
+    const browse::DropItem d = dropItemFor(it);
+    if (d.kind == Kind::Project || d.kind == Kind::Flp) {
+      openFile(a, it.path);
+      return;
+    }
+    rest.push_back(it);
+  }
+  if (rest.size() == 1 && !rest[0].dir) {
+    if (dropItemFor(rest[0]).kind == Kind::Other) a.notify(std::string(i18n::tr("Unsupported file type: ")) + rest[0].name, true);
+    else openFile(a, rest[0].path);
+    return;
+  }
+  performItems(a, rest, DropTarget::Workspace, DropPlace{}, currentMods());
 }
 
 // ----------------------------------------------------------------- preview

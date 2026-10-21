@@ -59,13 +59,18 @@ std::string channelInsText(const std::vector<Event>& events, Bytes fallbackEnv, 
       t.flags &= ~(8 | 64);
     }
   };
-  int k = 0;
+  int k = 0, tracks = 0;
   for (const auto& e : events) {
     if (e.id == 218 && k < InsTargets && e.size >= 56) readTarget(Bytes(e), s.t[k++]), haveEnv = true;
     if (e.id == 219 && e.size >= 24) {
       Bytes b(e);
       s.cutoff = std::clamp(b.i32(12), 0, 256), s.reso = std::clamp(b.i32(16), 0, 256), s.type = std::clamp(b.i32(20), 0, 7);
       haveLevels = true;
+    }
+    if (e.id == 228 && e.size >= 16 && tracks < 2) {  // J-72: velocity, then key tracking (middle, → pan, → mod X, → mod Y)
+      Bytes b(e);
+      for (int j = 0; j < 4; ++j) s.track[tracks][j] = b.i32(4 * static_cast<size_t>(j));
+      ++tracks;
     }
   }
   if (!haveEnv && fallbackEnv.has(0, 68 * InsTargets))

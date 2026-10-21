@@ -1,5 +1,6 @@
 // Gridline — dialogs (file, settings, project info, export, history, about,
 // shortcuts, unsaved changes) and global keyboard shortcuts.
+#include "GridlineVersion.h"
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -708,7 +709,7 @@ void aboutWindow(App& a) {
     };
     centred(a.fontMono, theme::kFontLabel, theme::rgb(0x8A8A8A), "THE GRID, CUT CLEAN");
     ImGui::Dummy(ImVec2(0, theme::kS3));
-    centred(a.fontBold, theme::kFontBody, theme::rgb(0xEDEDED), "Version 0.4.0");
+    centred(a.fontBold, theme::kFontBody, theme::rgb(0xEDEDED), "Version " GRIDLINE_VERSION);
     centred(a.fontRegular, theme::kFontCaption + 1, theme::rgb(0xA3A3A3), "A free, open, pattern-based DAW for everybody.");
     ImGui::Dummy(ImVec2(0, theme::kS3));
     ImVec2 lp = ImGui::GetCursorScreenPos();

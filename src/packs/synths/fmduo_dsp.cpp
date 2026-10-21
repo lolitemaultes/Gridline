@@ -130,6 +130,7 @@ class FmDuoGen final : public Generator {
       v.m[k].target = sus_[k];
     }
     v.ins.start(ins_.get(), sr_, tempo_, ppq_, 0, 0, tick0_ + blockPos_ * tempo_ * ppq_ / (60.0 * sr_));
+    v.ins.setNote(pitch, vel);  // J-72: velocity / key tracking
   }
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)

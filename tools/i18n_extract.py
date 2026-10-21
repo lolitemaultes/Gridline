@@ -47,6 +47,7 @@ def source_files():
     files = glob.glob(os.path.join(ROOT, "src", "app", "*.cpp")) + glob.glob(os.path.join(ROOT, "src", "app", "*.h"))
     files += glob.glob(os.path.join(ROOT, "src", "packs", "*", "*_ui.cpp"))
     files += [os.path.join(ROOT, "src", "core", "Keymap.cpp")]
+    files += [os.path.join(ROOT, "src", "core", "ExternalDrop.cpp")]  # J-75: drop hints ("Drop to add 3 audio clips ...")
     files += [os.path.join(ROOT, "src", "engine", "Chop.cpp")]  # PL-13: chop preset names and hints (N_)
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.cpp"))  # PH-09: the plugin build's own panel and messages
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.mm"))  # J-64: Cocoa views, hosted plugins' windows, Audio Unit

@@ -19,6 +19,7 @@
 #include "../core/I18n.h"
 #include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Presets.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
@@ -27,6 +28,7 @@
 #include "AudioRecordUi.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
+#include "ExternalDragUi.h"
 #include "HostedUi.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -1108,13 +1110,7 @@ void drawBrowser(App& a) {
       const char* h = std::getenv("HOME");
       a.fileDialog.dir = h ? h : ".";
       a.fileDialog.exts = {"/"};  // folder mode
-      a.fileDialog.onOk = [&a](const std::string& path) {
-        if (std::find(folders.begin(), folders.end(), path) == folders.end()) {
-          folders.push_back(path);
-          saveFolders(a);
-          browserui::refreshIndex(a);
-        }
-      };
+      a.fileDialog.onOk = [&a](const std::string& path) { browserui::addBrowserFolder(a, path); };
     }
     ImGui::SameLine(0, theme::kS1);
     if (ui::TextButton("Sync", browserui::previewSync(), 0,
@@ -1143,10 +1139,39 @@ void drawBrowser(App& a) {
       if (ui::IconButton("stopprev", ui::Icon::Stop, true, fh, "Stop the preview")) a.stopPreview();
     }
   }
+  browserui::browserDropTarget(a);  // J-75: folders dragged in from other applications
   ui::EndDockWindow();
 }
 
 namespace browserui {
+void addBrowserFolder(App& a, const std::string& dir) {
+  loadFolders(a);
+  std::error_code ec;
+  if (!fs::is_directory(dir, ec)) {
+    a.notify(std::string(i18n::tr("Not a folder: ")) + dir, true);
+    return;
+  }
+  if (std::find(folders.begin(), folders.end(), dir) != folders.end()) {
+    a.notify(std::string(i18n::tr("Already in the browser: ")) + fs::path(dir).filename().string());
+    return;
+  }
+  folders.push_back(dir);
+  saveFolders(a);
+  refreshIndex(a);
+  a.showBrowser = true;
+  a.notify(std::string(i18n::tr("Added to the browser: ")) + fs::path(dir).filename().string());
+}
+
+void browserDropTarget(App& a) {
+  ImGuiWindow* w = ImGui::GetCurrentWindow();
+  const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+  if (!w || !pl || !xdragui::ownsPayload(pl)) return;  // drags from other applications only
+  if (ImGui::BeginDragDropTargetCustom(w->Rect(), w->ID)) {
+    acceptFileDrop(a, browse::DropTarget::Browser, DropPlace{});
+    ImGui::EndDragDropTarget();
+  }
+}
+
 // J-27: View > Project picker — the browser on its current-project tab.
 void showProjectTab(App& a) {
   tab = TabProject;

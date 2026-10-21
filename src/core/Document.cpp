@@ -827,6 +827,30 @@ bool Document::moveSlot(ObjectId track, int from, int to) {
       if (l.sourceOwner == track && l.sourceSlot >= 0) l.sourceSlot = movedIndex(l.sourceSlot, from, to);
     }
     setModLinks(std::move(links), "move effect");
+    // Q-8: automation clips, pattern event lanes and MIDI controller links
+    // that target a slot parameter of this track follow their effect too.
+    auto remap = [&](ObjectId owner, uint32_t& index) {
+      uint32_t sl = 0;
+      if (owner != track || !slotOf(index, sl)) return false;
+      const uint32_t k = (index - kSlotBase) % kSlotStride;
+      const uint32_t n = kSlotBase + static_cast<uint32_t>(movedIndex(static_cast<int>(sl), from, to)) * kSlotStride + k;
+      if (n == index) return false;
+      index = n;
+      return true;
+    };
+    auto hits = [&](ObjectId owner, uint32_t index) { return remap(owner, index); };  // by value: a dry run
+    bool any = false;
+    for (const auto& c : song_.automations) any = any || hits(c.owner, c.index);
+    for (const auto& p : song_.patterns)
+      for (const auto& l : p.automation) any = any || hits(l.owner, l.index);
+    for (const auto& l : song_.links) any = any || hits(l.owner, l.index);
+    if (any)
+      editSong("move effect", [&](Song& x) {
+        for (auto& c : x.automations) remap(c.owner, c.index);
+        for (auto& p : x.patterns)
+          for (auto& l : p.automation) remap(l.owner, l.index);
+        for (auto& l : x.links) remap(l.owner, l.index);
+      });
   }
   endGroup();
   return ok;

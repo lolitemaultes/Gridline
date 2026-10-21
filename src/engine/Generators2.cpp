@@ -1067,6 +1067,7 @@ class SlicerGen final : public Generator {
     }
     if (k < 0 || k >= nSlices_) return;
     if (param(s, slParam(k, SliceMute)) >= 0.5f) return;
+    semis += pitch - note;  // J-74: the note's fine pitch (the rest after the key) still tunes the slice
     const int cut = static_cast<int>(std::lround(param(s, slParam2(k, SliceCut))));
     for (auto& v : voices_)
       if (v.on && (mono_ || (cut > 0 && v.cut == cut))) v.fadeStep = static_cast<float>(1.0 / std::max(1.0, 0.003 * sr_));

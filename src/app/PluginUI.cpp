@@ -19,6 +19,7 @@
 #include "App.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
+#include "LayoutAudit.h"
 #include "PluginSkin.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -321,6 +322,7 @@ void beginSection(const char* title, float width, float height) {
   ImGui::BeginChild(title, ImVec2(width, height),
                     ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders | (height <= 0 ? ImGuiChildFlags_AutoResizeY : 0),
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  audit::frame(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x, ImGui::GetWindowPos().y + ImGui::GetWindowSize().y), "section");
   if (const skin::Skin* k = skin::active()) {  // plugin skin: section well + caption pill
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
@@ -604,6 +606,7 @@ void typePopup(App& a, ParamId pid, const ParamDesc& d) {
 // Interaction shared by knobs and sliders: drag (vertical or horizontal), wheel,
 // Ctrl+click reset, double-click type, right-click menu. Item must be the last item.
 bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal) {
+  audit::lastItem("param");
   ImGuiIO& io = ImGui::GetIO();
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   bool changed = false;
@@ -776,6 +779,7 @@ void beginPanel(const char* title, float width, float height, const char* cap) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 wp = ImGui::GetWindowPos();
   float w = ImGui::GetWindowSize().x;
+  audit::frame(wp, ImVec2(wp.x + w, wp.y + ImGui::GetWindowSize().y), "section");
   if (const skin::Skin* k = skin::active()) {  // plugin skin: section well + caption pill
     ImVec2 ws = ImGui::GetWindowSize();
     skin::well(dl, wp, ImVec2(wp.x + ws.x, wp.y + ws.y), *k, 4);
@@ -1048,6 +1052,7 @@ bool stepper(App& a, const PluginTarget& t, int param, float width, const char* 
 }
 
 void displayFrame(ImDrawList* dl, ImVec2 p0, ImVec2 p1) {
+  audit::frame(p0, p1, "display");
   const auto& P = pal();
   dl->AddRectFilled(p0, p1, P.surface950, 6);
   dl->AddRect(p0, p1, theme::mix(P.surface950, P.text, 0.08f), 6, 0, 1.0f);
@@ -1236,6 +1241,7 @@ double paramValue(App& a, const PluginTarget& t, int param) { return getParam(a.
 void drawPluginBody(App& a, const PluginTarget& t, float width) {
   const PluginInfo* info = t.info(a.doc.song());
   if (!info) return;
+  skin::resetFrames();  // Q-7: panels of this editor only
   if (isHostedType(info->type)) {  // third-party plugin: editor button + parameter list
     drawHostedEditor(a, t, width);
     return;

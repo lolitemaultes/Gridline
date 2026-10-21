@@ -3,9 +3,10 @@
 </p>
 
 <p align="center">
+  <img alt="Version 0.5.0" src="https://img.shields.io/badge/version-0.5.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
-  <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
 </p>
 
 <p align="center">
@@ -90,7 +91,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 107 test suites
+ctest --test-dir build          # 113 test suites
 ./build/gridline-app            # start the app
 ```
 
@@ -189,7 +190,8 @@ Project files are JSON (`"format": "gridline-project"`). Older files are upgrade
 ## License
 
 Gridline is free software, released under the GNU General Public License v3.0 (see `LICENSE`).
-Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), CLAP headers (MIT), VST3 plug-in interfaces (MIT), dr_libs and stb_vorbis (public domain or MIT-0). See each folder under `third_party/`.
+Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), CLAP headers (MIT), VST3 plug-in interfaces (MIT), dr_libs and stb_vorbis (public domain or MIT-0), nanosvg (zlib). See each folder under `third_party/`.
+The interface icons in `assets/icons/ui/` use geometry from Lucide (ISC) and Tabler Icons (MIT); see `assets/icons/ui/NOTICE.md`.
 
 Gridline is an independent project and is not affiliated with or endorsed by Image-Line. "FL Studio" is a trademark of Image-Line Software and is mentioned only to describe file compatibility.
 

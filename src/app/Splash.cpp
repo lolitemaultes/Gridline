@@ -1,5 +1,6 @@
 // Gridline — splash screen (logo guide §08: lockup, Paper on surface-950, 56 px)
 // with a loading bar driven by the real start-up steps.
+#include "GridlineVersion.h"
 #include <algorithm>
 #include <cmath>
 #include "../core/I18n.h"
@@ -43,7 +44,7 @@ void drawSplash(ImFont* bold, ImFont* mono, float progress, const char* status, 
   ImVec2 ssz = ImGui::CalcTextSize(status);
   dl->AddText(ImVec2(c.x - ssz.x * 0.5f, b0.y + 12), theme::rgb(0x6B6B6B), status);
 
-  const char* ver = "Version 0.4.0";
+  const char* ver = "Version " GRIDLINE_VERSION;
   ImVec2 vsz = ImGui::CalcTextSize(ver);
   dl->AddText(ImVec2(vp->Pos.x + vp->Size.x - vsz.x - 16, vp->Pos.y + vp->Size.y - vsz.y - 14), theme::rgb(0x4A4A4A), ver);
   dl->AddText(ImVec2(vp->Pos.x + 16, vp->Pos.y + vp->Size.y - vsz.y - 14), theme::rgb(0x4A4A4A), i18n::tr("Free and open for everybody"));

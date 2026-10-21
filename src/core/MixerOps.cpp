@@ -413,6 +413,15 @@ int growTo(Document& d, int inserts) {
 
 // ------------------------------------------------------------------ slots ----
 
+int stepSlot(Document& d, ObjectId track, int slot, int steps) {
+  const MixerTrack* t = d.song().mixerTrack(track);
+  if (!t || slot < 0 || slot >= kEffectSlots || t->slots[static_cast<size_t>(slot)].plugin.empty()) return slot;
+  const int to = std::clamp(slot + steps, 0, kEffectSlots - 1);
+  if (to == slot) return slot;
+  d.endGesture();  // each wheel notch is its own undo step
+  return d.moveSlot(track, slot, to) ? to : slot;
+}
+
 bool moveSlotTo(Document& d, ObjectId fromTrack, int fromSlot, ObjectId toTrack, int toSlot, bool copy) {
   const Song& s = d.song();
   const MixerTrack* src = s.mixerTrack(fromTrack);

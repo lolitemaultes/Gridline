@@ -429,6 +429,8 @@ const std::vector<MouseModifier>& mouseModifiers() {
   static const std::vector<MouseModifier> v = {
       {"piano.laneSelectDrag", Context::PianoRoll, N_("Event lane: drag selects notes"), kCtrl},
       {"piano.laneDefaultDrag", Context::PianoRoll, N_("Event lane: drag sets the default value"), kAlt},
+      // Q-8: the reference moves an effect with the plain wheel over its slot (no modifier).
+      {"mixer.slotWheelMove", Context::Mixer, N_("Effect slot: mouse wheel moves the effect up / down"), 0},
   };
   return v;
 }

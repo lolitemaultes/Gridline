@@ -40,7 +40,7 @@ endif()
 
 # gridline_plugin(<target> <format: clap|vst3> <entry source> <Objective-C view class>)
 function(gridline_plugin target format entry viewClass)
-  add_library(${target} MODULE ${entry} ${GRIDLINE_PLUGIN_VIEW_SRC} $<TARGET_OBJECTS:gridline_plugin_common> $<TARGET_OBJECTS:gridline_ui>)
+  add_library(${target} MODULE ${entry} ${GRIDLINE_PLUGIN_VIEW_SRC} $<TARGET_OBJECTS:gridline_plugin_common> $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS})
   target_link_libraries(${target} PRIVATE gridline_core imgui_core rtmidi ${CMAKE_DL_LIBS})
   if(NOT APPLE AND X11_FOUND)
     target_link_libraries(${target} PRIVATE X11::X11)

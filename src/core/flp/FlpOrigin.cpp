@@ -42,7 +42,9 @@ struct Fp {
   Fp& plugin(const PluginState& p) {
     s(p.type).i(static_cast<int64_t>(p.params.size()));
     for (float x : p.params) f(x);
-    return s(p.data);
+    s(p.data);
+    if (!p.ins.empty()) s(p.ins);  // J-72: channel envelopes (state copies, channel events 218 / 219)
+    return *this;
   }
   Fp& point(const AutoPoint& p) { return i(p.pos).f(p.value).f(p.tension).i(static_cast<int>(p.shape)); }
 };
@@ -63,6 +65,7 @@ uint64_t fingerprintChannel(const Channel& c, const IndexMap& m) {
   // settings are channel events.
   if (c.plugin.type == "gl.sampler" || c.plugin.type.empty()) h.plugin(c.plugin);
   else h.s(c.plugin.type);
+  if (!c.plugin.ins.empty() && c.plugin.type != "gl.sampler") h.s(c.plugin.ins);  // J-72: written as events 218 / 219
   h.i(static_cast<int64_t>(c.noteFx.size()));
   for (const auto& n : c.noteFx) h.plugin(n);
   h.i(c.fine).f(c.swingMix).f(c.timeShift).i(c.polyphony).i(c.mono).i(c.porta).f(c.portaTime).i(c.cutGroup).i(c.cutBy);

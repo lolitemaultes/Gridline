@@ -5,7 +5,8 @@
 //   u16 group, u8 fine pitch (120 = 0, 10 cents per unit), u8 (unused),
 //   u8 release velocity (0..128, 64 default; kept as is, 128 → 127), u8 colour / MIDI channel
 //   (low 4 bits; +128 = imported from MIDI), u8 pan (0..128, 64 = centre),
-//   u8 velocity (0..128), u8 mod X, u8 mod Y (0..255, 128 = neutral).
+//   u8 velocity (0..128, 100 default; the MIDI velocity: kept as is, 128 → 127), u8 mod X,
+//   u8 mod Y (0..255, 128 = neutral).
 // Notes of length 0 were entered in the step sequencer.
 #include <algorithm>
 #include <cmath>
@@ -15,8 +16,10 @@ namespace gl::flp {
 
 namespace {
 Rgb flColor(uint32_t v) { return ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF); }
-// FL 0..128 scale → Gridline 0..127.
-int to127(int v) { return std::clamp(static_cast<int>(std::lround(v * 127.0 / 128.0)), 0, 127); }
+// J-74: FL's velocity byte is the MIDI velocity (default 100, sent to plugins as 100); 128 (FL's
+// 100 %) has no MIDI value and plays as 127. It was rescaled ×127/128 before, which turned every
+// default note into 99 and merged 64 / 65.
+int velocity127(int v) { return std::clamp(v, 0, 127); }
 }  // namespace
 
 void importPatterns(Context& c) {
@@ -67,7 +70,7 @@ void importPatterns(Context& c) {
         if (len == 0) ++steps;  // step-sequencer note: plays one step
         n.length = len == 0 ? stepLen : std::max<Tick>(1, c.tick(len));
         n.pitch = std::clamp(key, 0, 127);
-        n.velocity = to127(vel);
+        n.velocity = velocity127(vel);
         n.pan = std::clamp(pan - 64, -kNotePanMax, kNotePanMax);
         n.fine = std::clamp((finePitch - 120) * 10, -kNoteFineMax, kNoteFineMax);
         n.release = std::clamp(rel, 0, 127);  // same scale (FL 0..128, 64 = default)

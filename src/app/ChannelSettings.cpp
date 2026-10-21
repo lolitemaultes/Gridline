@@ -10,6 +10,7 @@
 #include "../core/I18n.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/PluginParams.h"
+#include "../engine/ChannelIns.h"
 #include "App.h"
 #include "HostedUi.h"
 #include "Theme.h"
@@ -373,11 +374,30 @@ void drawChannelSettings(App& a) {
   // Studio channel window: the instrument page and the channel's misc
   // functions (tuning, polyphony, cut groups, echo, layering) on tabs.
   int& tab = a.channelTab;
+  // J-72: instruments that run the channel envelopes get the envelope page
+  // (tab 2, shown between the instrument and the misc page).
+  const bool envPage = info && insSupported(info->type);
+  if (!envPage && tab == 2) tab = 0;
   {
-    const char* tabs[] = {"Plugin", "Misc"};
+    const char* tabs[] = {"Plugin", "Envelope", "Misc"};
     const char* hints[] = {"The instrument's editor, its sample and note processors",
+                           "Envelopes, LFOs and the filter this channel applies to every note",
                            "Tuning, timing, polyphony, cut groups, echo, layering and display group of this channel"};
-    ui::TabStrip("##chtabs", tabs, 2, &tab, hints);
+    if (envPage) {
+      static const int kOf[3] = {0, 2, 1}, kAt[3] = {0, 2, 1};  // visual position <-> tab id
+      int vis = kAt[std::clamp(tab, 0, 2)];
+      if (ui::TabStrip("##chtabs", tabs, 3, &vis, hints)) tab = kOf[vis];
+    } else {
+      const char* two[] = {tabs[0], tabs[2]};
+      const char* twoHints[] = {hints[0], hints[2]};
+      ui::TabStrip("##chtabs", two, 2, &tab, twoHints);
+    }
+  }
+  if (tab == 2) {
+    drawChannelEnvelope(a, id);
+    ImGui::End();
+    if (!open) a.settingsChannel = kNoId;
+    return;
   }
   if (tab == 1) {
     drawNoteSettings(a, id);

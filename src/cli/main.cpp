@@ -3,6 +3,7 @@
 //   gridline info   <project.json>
 //   gridline upgrade <project.json> [-o <out.json>]   rewrite in the current schema
 //   gridline import-flp <project.flp> -o <out.json> [--fl-data DIR]   convert an FL Studio project
+#include "GridlineVersion.h"
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -38,7 +39,7 @@ int mcpMain(int argc, char** argv);       // McpCli.cpp (SC-07)
 namespace {
 void usage() {
   std::fprintf(stderr,
-      "Gridline " "0.4.0" " — clean-room DAW core (Linux-targeted)\n"
+      "Gridline " GRIDLINE_VERSION ", music workstation command line\n"
       "usage:\n"
       "  gridline render <project.json> -o <out.wav|.flac|.mp3|.ogg|.m4a|folder/> [--sr N] [--bits 16|24|32]\n"
       "        [--format wav,flac,mp3,ogg,m4a,mid] [--scope song|pattern:N|range:BAR-BAR] [--loops N]\n"

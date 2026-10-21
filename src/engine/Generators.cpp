@@ -215,7 +215,7 @@ class SynthGen final : public Generator {
   // J-65: reference oscillators — one voice per note (the oldest is taken over
   // when all are busy), the host's note volume (11^(v/100) − 1) / 10 for
   // velocity v/128 and constant-power pan.
-  void refNoteOn(uint32_t id, double pitch, float vel, float pan) {
+  void refNoteOn(uint32_t id, double pitch, float vel, float pan, double modX = 0, double modY = 0) {
     ++clock_;
     Voice* pick = nullptr;
     for (auto& v : voices_)
@@ -235,7 +235,10 @@ class SynthGen final : public Generator {
     v.hostL = static_cast<float>(std::cos(a) * static_cast<long double>(vol));
     v.hostR = static_cast<float>(std::sin(a) * static_cast<long double>(vol));
     v.slide = PitchGlide{};
-    v.ins.start(insSet_.get(), sr_, tempo_, ppq_, 0, 0, songTick());
+    v.ins.start(insSet_.get(), sr_, tempo_, ppq_, modX, modY, songTick());
+    // J-72: the channel envelopes take over the host note gains (constant-power
+    // law of note pan + pan modulation, note volume × volume envelope).
+    if (v.ins.active()) v.ins.setHostGains(std::clamp(pan, -1.0f, 1.0f), static_cast<float>(vol)), v.ins.setNote(pitch, vel);
   }
 
   void onNoteOn(uint32_t id, double pitch, float vel) override {
@@ -258,7 +261,7 @@ class SynthGen final : public Generator {
       v.age = clock_;
       v.npL = v.npR = 1, v.cutOct = v.resoAdd = 0;
       v.slide = PitchGlide{};
-      if (!legato) v.ins.start(insSet_.get(), sr_, tempo_, ppq_, 0, 0, songTick());
+      if (!legato) v.ins.start(insSet_.get(), sr_, tempo_, ppq_, 0, 0, songTick()), v.ins.setNote(pitch, vel);
       return;
     }
     Voice* pick = nullptr;
@@ -294,19 +297,15 @@ class SynthGen final : public Generator {
     v.fenv.level = 0;
     v.fenv.gate(true);
     v.ins.start(insSet_.get(), sr_, tempo_, ppq_, 0, 0, songTick());
+    v.ins.setNote(pitch, vel);
     lastPitch_ = pitch;
   }
 
   bool supportsGlide() const override { return true; }
   bool handlesNotePan() const override { return true; }
   void onNoteOnEx(uint32_t id, double pitch, float vel, const NoteProps& np) override {
-    if (ref_) {
-      refNoteOn(id, pitch, vel, np.pan);
-      if (insSet_)
-        for (auto& v : voices_)
-          if (v.id == id && v.held && v.rOn) v.ins.start(insSet_.get(), sr_, tempo_, ppq_, np.modX - 0.5, np.modY - 0.5, songTick());
-      return;
-    }
+    // Note mod X / Y reach the channel filter as the reference host passes them: (value − ½) · 2, −1..1.
+    if (ref_) return refNoteOn(id, pitch, vel, np.pan, (np.modX - 0.5) * 2.0, (np.modY - 0.5) * 2.0);
     onNoteOn(id, pitch, vel);
     for (auto& v : voices_)
       if (v.id == id && v.held) {
@@ -315,7 +314,8 @@ class SynthGen final : public Generator {
         v.resoAdd = np.modY - 0.5;
         if (insSet_) {  // the channel filter takes the note's mod X / Y instead
           v.cutOct = v.resoAdd = 0;
-          v.ins.start(insSet_.get(), sr_, tempo_, ppq_, np.modX - 0.5, np.modY - 0.5, songTick());
+          v.ins.start(insSet_.get(), sr_, tempo_, ppq_, (np.modX - 0.5) * 2.0, (np.modY - 0.5) * 2.0, songTick());
+          v.ins.setNote(v.target, v.vel);
         }
       }
   }
@@ -462,23 +462,35 @@ class SynthGen final : public Generator {
     float buf[2 * 64];
     for (auto& v : voices_) {
       if (!v.rOn) continue;
+      const bool ins = v.ins.active();
       for (int i = 0; i < n && v.rOn;) {
-        const int m = std::min(n - i, 64 - static_cast<int>(v.ctr & 63));
-        const float cents = static_cast<float>((v.pitch - 60.0 + (v.ins.active() ? v.ins.pitchSemis() : 0.0)) * 100.0);
+        int m = std::min(n - i, 64 - static_cast<int>(v.ctr & 63));
+        float cents;
+        if (ins) {  // a pending tick first: it can move the pitch and end the volume envelope
+          v.ins.sync();
+          if (v.ins.done() && v.relK < 0) v.relK = 0;  // the volume envelope ended: release declick
+          m = std::min(m, v.ins.pitchHold());
+          cents = static_cast<float>((v.pitch - 60.0) * 100.0) + v.ins.pitchCents();
+        } else {
+          cents = static_cast<float>((v.pitch - 60.0) * 100.0);
+        }
         packs::synths::trioref::render(v.rv, refSetup_, *refTab_, cents, buf, m, refSeed_);
         for (int j = 0; j < m; ++j) {
           float l = buf[2 * j], r = buf[2 * j + 1];
-          if (v.ins.active()) {
-            v.ins.process(l, r);
-            if (!v.held && v.ins.done()) v.rOn = false;
-          }
+          float dk = 1.0f;
           if (v.relK >= 0) {
-            const float g = packs::synths::trioref::declick(v.relK++, sr_);
-            l *= g, r *= g;
+            dk = packs::synths::trioref::declick(v.relK++, sr_);
             if (v.relK >= packs::synths::trioref::declickLength(sr_)) v.rOn = false;
           }
-          L[i + j] += static_cast<float>(static_cast<double>(l * v.hostL) * volume_);
-          R[i + j] += static_cast<float>(static_cast<double>(r * v.hostR) * volume_);
+          if (ins) {
+            v.ins.processWith(l, r, dk);
+            L[i + j] += static_cast<float>(static_cast<double>(l) * volume_);
+            R[i + j] += static_cast<float>(static_cast<double>(r) * volume_);
+          } else {
+            l *= dk, r *= dk;
+            L[i + j] += static_cast<float>(static_cast<double>(l * v.hostL) * volume_);
+            R[i + j] += static_cast<float>(static_cast<double>(r * v.hostR) * volume_);
+          }
           if (v.slide.active()) v.slide.advance(v.pitch);
           if (!v.rOn) break;
         }

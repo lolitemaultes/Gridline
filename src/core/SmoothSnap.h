@@ -22,6 +22,9 @@ namespace gl::smooth {
 // Time constant of the ease. 12 ms: 75 % of a step is covered in the first
 // 60 Hz frame, 1 % is left after ~55 ms (the "settle" time).
 constexpr double kTau = 0.012;
+// Q-10: event-lane bars (piano roll property lane, pattern automation lane)
+// glide to a new value in ~75 ms (1 % left): quick, but visibly continuous.
+constexpr double kBarTau = 0.016;
 // Remaining fraction of a step that counts as settled.
 constexpr double kSettleResidual = 0.01;
 

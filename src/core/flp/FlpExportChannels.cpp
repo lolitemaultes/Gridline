@@ -22,6 +22,7 @@
 #include "../Automation.h"
 #include "../AutomationEdit.h"
 #include "../PluginParams.h"
+#include "../../engine/ChannelIns.h"
 #include "FlpExportInternal.h"
 
 namespace gl::flp::xp {
@@ -432,8 +433,9 @@ std::vector<ChanField> channelFields(int type, const Channel& target, int ppq) {
     add(spf(SmpStretchMode), 215, 0, 108, Type::U32, 0, 1);
     add(spf(SmpTimeStretch), 215, 0, 104, Type::I32, -20000, 20000);
     add(spf(SmpPitchShift), 215, 0, 100, Type::I32, -1200, 1200);
-  } else if (target.plugin.type == "gl.synth") {
-    // Trio Synth: FL's channel volume envelope is its amplitude envelope.
+  } else if (target.plugin.type == "gl.synth" && target.plugin.ins.empty()) {
+    // Trio Synth: FL's channel volume envelope is its amplitude envelope
+    // (unless the channel carries its own envelopes, written whole below).
     add([](const Channel& c) { return sp(c, SynAttack); }, 218, 1, 12, Type::I32, 100, 65536);
     add([](const Channel& c) { return sp(c, SynDecay); }, 218, 1, 20, Type::I32, 100, 65536);
     add([](const Channel& c) { return sp(c, SynSustain); }, 218, 1, 24, Type::I32, 0, 128);
@@ -793,10 +795,33 @@ void Exporter::writeChannel(int fl) {
     }
     if (!any) break;
   }
+  // J-72: a plugin channel's own envelopes / LFOs / filter (PluginState::ins)
+  // are FL's channel records, field for field: 218 × 5 (pan, volume, mod X,
+  // mod Y, pitch), the filter words of 219 (cutoff, resonance, type) and the
+  // velocity / key tracking 228 × 2.
+  if (type == kPlugin && !ch.plugin.ins.empty()) {
+    InsSettings st;
+    parseIns(ch.plugin.ins, st);
+    for (int t = 0; t < InsTargets; ++t)
+      if (RawEvent* e = ce.get(218, t); e && e->data.size() >= 68) {
+        const InsTarget& x = st.t[t];
+        const int32_t v[17] = {x.flags,    x.on ? -1 : 0, x.predelay,  x.attack,   x.hold,     x.decay,   x.sustain,  x.release, x.amount,
+                               x.lfoDelay, x.lfoAttack,   x.lfoAmount, x.lfoSpeed, x.lfoShape, x.tensionA, x.tensionD, x.tensionR};
+        for (int k = 0; k < 17; ++k) putI32(e->data, 4 * static_cast<size_t>(k), v[k]);
+      }
+    if (RawEvent* e = ce.get(219); e && e->data.size() >= 24) {
+      putI32(e->data, 12, st.cutoff);
+      putI32(e->data, 16, st.reso);
+      putI32(e->data, 20, st.type);
+    }
+    for (int k = 0; k < 2; ++k)  // velocity / key tracking
+      if (RawEvent* e = ce.get(228, k); e && e->data.size() >= 16)
+        for (int j = 0; j < 4; ++j) putI32(e->data, 4 * static_cast<size_t>(j), st.track[k][j]);
+  }
   // Trio Synth decay = the channel volume envelope's decay + hold (as the
   // importer reads them): the decay knob alone cannot reach every sum, so the
   // hold is searched with it (J-39).
-  if (type == kPlugin && ch.plugin.type == "gl.synth")
+  if (type == kPlugin && ch.plugin.type == "gl.synth" && ch.plugin.ins.empty())
     if (RawEvent* e = ce.get(218, 1); e && e->data.size() >= 32 && getU32(e->data, 4) != 0) {
       Channel cur;
       const float want = static_cast<float>(sp(ch, gl::pp::SynDecay));

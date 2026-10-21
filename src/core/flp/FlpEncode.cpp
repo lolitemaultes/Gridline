@@ -556,6 +556,20 @@ struct Solver {
 
 }  // namespace
 
+// J-72: a plugin state's channel-envelope copy holds the envelopes and the
+// filter only; the velocity / key tracking (event 228) and the timing switch
+// live on the channel, so they do not count as a state mismatch.
+static bool sameInsForState(const std::string& state, const std::string& want) {
+  if (state == want) return true;
+  InsSettings a, b;
+  if (!parseIns(want, b)) return false;
+  parseIns(state, a);
+  for (int k = 0; k < 2; ++k)
+    for (int j = 0; j < 4; ++j) a.track[k][j] = b.track[k][j];
+  a.timing = b.timing;
+  return a == b;
+}
+
 void writeInsCopy(Bytes& b, size_t envAt, size_t levAt, const std::string& ins) {
   InsSettings st;
   if (!ins.empty()) parseIns(ins, st);
@@ -731,7 +745,7 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
   const bool decOk = decodeState(r.flName, t, m, ec);
   // Hosted plugins: the parameters mirror the state (data); compare type and data only.
   const bool hosted = isHostedType(g.type);
-  if (decOk && m.state.type == g.type && (hosted || diffParams(m.state, g).empty()) && sameData(m.state, g) && m.state.ins == g.ins) {
+  if (decOk && m.state.type == g.type && (hosted || diffParams(m.state, g).empty()) && sameData(m.state, g) && sameInsForState(m.state.ins, g.ins)) {
     r.state = t;
     r.hasState = !t.empty();
     const bool stateless = e && e->stateless;
@@ -779,7 +793,7 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
     r.mismatched = fin.type != g.type ? std::vector<int>{-1} : hosted ? std::vector<int>{} : diffParams(fin, g);
     // J-33: channel envelopes / filter (PluginState::ins). J-39: a state that
     // carries none (the channel's own events do: DX10, …) is not a mismatch.
-    r.dataMismatch = !sameData(fin, g) || (fin.ins != g.ins && !fin.ins.empty());
+    r.dataMismatch = !sameData(fin, g) || (!sameInsForState(fin.ins, g.ins) && !fin.ins.empty());
   } else {
     r.mismatched = {-1};
     r.note = "the encoded state does not decode";
