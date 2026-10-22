@@ -1,6 +1,7 @@
 // Gridline tests — J-86: the operating-system layer (core/Platform, core/Net, host/Dylib) on
 // every system the CI builds: folders, environment, child processes, locale-independent numbers,
 // loopback sockets, shared objects, and the project file format under a comma-decimal locale.
+#include <vector>
 #include <chrono>
 #include <clocale>
 #include <cmath>
@@ -129,10 +130,12 @@ void testFiles() {
   std::FILE* c = std::fopen(f.u8string().c_str(), "wb");  // narrow fopen with a UTF-8 name
   expect(c != nullptr, "fopen with a UTF-8 name");
   if (c) std::fclose(c);
-  {  // CPU time is counted in clock ticks (FreeBSD: statistics clock): use some first
+  {  // CPU time and peak RSS are sampled on clock ticks (FreeBSD: statistics clock):
+     // touch some memory and use some CPU until both have been counted
     const auto t0 = std::chrono::steady_clock::now();
-    volatile double sink = 0;
-    while (platform::cpuSeconds() <= 0 && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5))
+    std::vector<char> touched(16u << 20, 1);
+    volatile double sink = touched[touched.size() / 2];
+    while ((platform::cpuSeconds() <= 0 || platform::peakRssMb() <= 1) && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5))
       for (int k = 0; k < 100000; ++k) sink = sink + std::sqrt(static_cast<double>(k));
     expect(platform::cpuSeconds() > 0 && platform::peakRssMb() > 1, "process statistics");
   }
