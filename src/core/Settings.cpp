@@ -112,6 +112,12 @@ Settings::Settings() {
       {"sounds.error", b(true)},
       {"sounds.record_start", b(false)},
       {"sounds.record_stop", b(false)},
+      // J-89: update check (core/Update.h, docs/updates.md).
+      {"update.auto", b(true)},                     // check GitHub for a newer release at startup (once a day)
+      {"update.beta", b(false)},                    // include prereleases
+      {"update.lastCheck", Json::makeNumber(0)},    // seconds since 1970 of the last check (0 = never)
+      {"update.skipVersion", Json::makeString("")}, // "Skip this version"
+      {"update.remindAfter", Json::makeNumber(0)},  // "Remind me later": not offered again before this time
   };
   values_ = defaults_;
 }

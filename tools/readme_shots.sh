@@ -17,7 +17,7 @@ mkdir -p "$OUT/config/gridline"
 OUT="$(cd "$OUT" && pwd)"
 # The browser lists Gridline's demo folder instead of the home folders.
 printf '%s\n' "$G/demo" > "$OUT/config/gridline/browser-folders.txt"
-export XDG_CONFIG_HOME="$OUT/config"
+export GRIDLINE_CONFIG_HOME="$OUT/config"
 export GRIDLINE_NO_PLUGIN_SCAN=1
 APP="$BUILD/gridline-app"
 PY="${PYTHON:-python3}"
@@ -32,7 +32,7 @@ shot() {  # shot NAME "VAR=value ..." args...
   envs=$2
   shift 2
   want "$name" || return 0
-  (cd "$G" && env $envs "$APP" "$@" --fixed-dt 16 --screenshot "$OUT/$name.ppm" >/dev/null 2>&1) || true
+  (cd "$G" && env $envs "$APP" --hidden "$@" --fixed-dt 16 --screenshot "$OUT/$name.ppm" >/dev/null 2>&1) || true
   sips -s format png "$OUT/$name.ppm" --out "$OUT/$name.png" >/dev/null 2>&1 ||
     "$PY" -c "import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2])" "$OUT/$name.ppm" "$OUT/$name.png"
   rm -f "$OUT/$name.ppm"
@@ -49,10 +49,10 @@ shot chords "" "$SONG" --hide rack --edit 5 9 --show chords $S --frames 400
 shot edison "GRIDLINE_EDISON_DEMO=1 GRIDLINE_EDISON_VIEW=spectral" "$SONG" --hide rack --plugin gl.edison $S --frames 400
 shot autoedit "" "$SONG" --hide rack --show autoedit $S --frames 60
 if want picker && [ ! -d "$OUT/config/gridline/thumbs" ]; then  # editor previews for the picker
-  (cd "$G" && "$APP" --make-thumbs --size 1440x900 --frames 100000 --screenshot "$OUT/thumbs.ppm" >/dev/null 2>&1) || true
+  (cd "$G" && "$APP" --hidden --make-thumbs --size 1440x900 --frames 100000 --screenshot "$OUT/thumbs.ppm" >/dev/null 2>&1) || true
   rm -f "$OUT/thumbs.ppm"
 fi
-printf '20 move 54 230\n21 down 0\n22 up 0\n23 move 1500 40\n' > "$OUT/picker-synth.txt"  # sidebar: Synth
+printf '20 move 54 260\n21 down 0\n22 up 0\n23 move 1500 40\n' > "$OUT/picker-synth.txt"  # sidebar: Synth
 shot picker "" "$SONG" --picker $S --frames 400 --dev-input "$OUT/picker-synth.txt"
 # Plugin editors at UI scale 2: instruments (channel window) 1600x1100, effects 1440x900.
 for t in matrixfm harmor wavetable; do
@@ -61,3 +61,15 @@ done
 for t in eq hall amprack; do
   shot "ed_$t" "" "$SONG" --hide rack --plugin "gl.$t" --preset 2 --size 1440x900 --scale 2 --frames 60
 done
+
+# Release shots (docs/images/release-<version>/): the playlist with the song loop
+# marker, clip volume lines and crossfades; the channel rack at 64 steps; effect
+# editors with their live graphics while the song plays; the audio clip menu
+# with its time stretch modes.
+shot rel_playlist "" "$SONG" --show playlist --play $S --frames 330
+shot rel_rack "" "$SONG" --rack steps64 --hide browser $S --frames 120
+for t in reverb delay limiter; do
+  shot "rel_$t" "" "$SONG" --hide rack --plugin "gl.$t" --play --size 1440x900 --scale 2 --frames 700
+done
+printf '30 move 150 106\n50 move 330 106\n60 move 362 140\n70 move 362 166\n' > "$OUT/stretch-hover.txt"  # open "Time stretch", hover Transient
+shot rel_stretch "" "$SONG" --show playlist --menu audioclip $S --frames 150 --dev-input "$OUT/stretch-hover.txt"

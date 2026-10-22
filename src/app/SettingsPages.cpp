@@ -15,6 +15,7 @@
 #include "App.h"
 #include "ScriptUi.h"
 #include "Theme.h"
+#include "UpdateUi.h"
 #include "Widgets.h"
 
 namespace gl {
@@ -87,6 +88,7 @@ void generalSettingsPage(App& a, float fieldW) {
                      tr("Menus, dialogs, settings, hints and editor labels follow the language. To add one, copy assets/i18n/gridline.pot to <code>.po and translate it."));
   ImGui::PopTextWrapPos();
   ui::EndSection();
+  updui::settingsSection(a);  // J-89: automatic update check, beta versions, Check now
 }
 
 // -------------------------------------------------------------------- Files ----

@@ -15,11 +15,27 @@
   written from scratch in C++17 and built to run everywhere.
 </p>
 
+<p align="center">
+  <a href="https://github.com/lolitemaultes/Gridline/releases/latest"><b>Download the latest release</b></a>
+  &nbsp;&middot;&nbsp; Windows, macOS, Linux, FreeBSD, OpenBSD and NetBSD, on x86 and ARM
+</p>
+
 <br>
 
 <p align="center">
   <img src="docs/images/workspace.png" alt="The Gridline workspace: browser, playlist arrangement and mixer" width="100%">
 </p>
+
+## Download
+
+Get the files for your system from the [latest release](https://github.com/lolitemaultes/Gridline/releases/latest):
+
+- **Windows 10 / 11** (x64 and ARM64): `-setup.exe` installer, or a portable `.zip`.
+- **macOS 11 or later**: one `.dmg` with a universal app for Apple Silicon and Intel, the command line tool and the VST3, CLAP and AU plugins.
+- **Linux** (x86_64 and aarch64): `.AppImage` for most distributions, `.deb` for Debian and Ubuntu, `.rpm` for Fedora and openSUSE, or a `.tar.gz`.
+- **FreeBSD, OpenBSD, NetBSD** (x86_64): a `.tar.gz` built and tested on each system.
+
+Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The builds are not signed by Apple or Microsoft: on macOS open the app the first time with right-click, Open; on Windows choose "More info", then "Run anyway" in the SmartScreen prompt. On Wayland Gridline runs natively through SDL; the interfaces of hosted plugins are X11 windows and open through XWayland. The [release notes](https://github.com/lolitemaultes/Gridline/releases/latest) have the install steps for each system.
 
 ## Highlights
 
@@ -78,21 +94,6 @@
   <sub>The plugin picker shows every instrument and effect with a preview of its editor.</sub>
 </p>
 
-## Download
-
-Every [release](https://github.com/lolitemaultes/Gridline/releases) has builds for:
-
-| System | Files |
-|---|---|
-| macOS 11 or later (Apple Silicon and Intel) | `Gridline-<version>-macos-universal.dmg`: the app, the command line tool and the VST3 / CLAP / AU plugins |
-| Windows 10 / 11, x64 and ARM64 | `...-windows-x64-setup.exe` (installer, optional plugins and file types), `...-windows-x64.zip`; the same for `arm64` |
-| Linux x86_64 and aarch64 | `.AppImage` (runs on most distributions), `.deb` (Debian, Ubuntu), `.rpm` (Fedora, openSUSE), `.tar.gz` |
-| FreeBSD, OpenBSD, NetBSD | `.tar.gz` built on each system |
-
-`Gridline-<version>-SHA256SUMS` lists the checksums. The builds are not signed by Apple or Microsoft: on macOS open the app the first time with right-click > Open, on Windows choose "More info" > "Run anyway" in the SmartScreen prompt.
-
-On Wayland Gridline runs natively through SDL; the interfaces of hosted plugins are X11 windows and open through XWayland.
-
 ## Build
 
 Gridline needs CMake, a C++17 compiler and SDL2. Everything else (Dear ImGui, Lua, RtMidi, Signalsmith Stretch, the plugin interfaces and the audio decoders) is bundled in `third_party/`. The CI builds and tests every change on the systems below (`.github/workflows/ci.yml`); `tools/ci/install-deps.sh` installs the dependencies on each.
@@ -110,7 +111,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev libx11-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 126 test suites
+ctest --test-dir build          # 127 test suites
 ./build/gridline-app            # start the app
 ```
 

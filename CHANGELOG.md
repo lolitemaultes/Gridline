@@ -41,6 +41,9 @@ release workflow publishes the section of the tagged version as the release note
 - Downloads for every platform: a macOS disk image (universal app, plugins, command line tool),
   Windows installers and zip files, Linux AppImages, `.deb`, `.rpm` and `.tar.gz`, BSD
   `.tar.gz` archives, all with SHA-256 checksums.
+- Automatic update check: at most once a day Gridline looks for a newer release on GitHub and
+  offers to download it, remind you later or skip that version. Turn it off in Settings, General;
+  Help, Check for updates checks right away.
 - `gridline --version` prints the version.
 
 ## 0.5.1
@@ -59,6 +62,10 @@ release workflow publishes the section of the tagged version as the release note
 - Notifications can be copied and dismissed without clicking through to the playlist.
 - Edited audio is saved to a neutral "Edited audio" folder that the browser lists.
 - FL Studio project export carries Gridline's own instruments and effects with their sound.
+- Interface scale, theme, language, layout reset and audio device changes ask to Keep or
+  Revert, and revert by themselves after 15 seconds.
+- Piano roll keys light up for sounding notes, drum machine pads flash when hit, and the tool
+  strip icons are 16 px.
 
 ## 0.5.0
 

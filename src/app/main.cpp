@@ -56,6 +56,8 @@
 #include "Shell.h"
 #include "SmoothScrollUi.h"
 #include "ExternalDragUi.h"
+#include "UpdateUi.h"
+#include "../host/net/Http.h"
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -536,6 +538,8 @@ int main(int argc, char** argv) {
     std::printf("Gridline " GRIDLINE_VERSION "\n");
     return 0;
   }
+  if (argc >= 2 && std::string(argv[1]) == "--check-updates")  // J-89: result on stdout, no window
+    return http::checkCommand(argc >= 3 && std::string(argv[2]) == "--beta");
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -738,6 +742,7 @@ int main(int argc, char** argv) {
   int profileWarmup = 30;                 // --profile-warmup N: frames not recorded (layout, caches)
   double fixedDt = 0;                     // --fixed-dt ms: fixed UI frame time (J-37 animation frame sequences)
   std::vector<std::string> devHide;       // --hide rack|browser|mixer|playlist|piano: closed once the layout exists
+  updui::Options updateOpts;              // J-89: --no-update-check, --fake-update <version>
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--screenshot" && i + 1 < argc) shotPath = argv[++i];
@@ -978,6 +983,10 @@ int main(int argc, char** argv) {
       devUiScale = std::clamp(static_cast<float>(std::atof(argv[++i])), 0.75f, 2.0f);
     } else if (arg == "--scale" && i + 1 < argc) {
       shotScale = std::clamp(static_cast<float>(std::atof(argv[++i])), 0.5f, 4.0f);
+    } else if (arg == "--no-update-check") {  // J-89
+      updateOpts.disabled = true;
+    } else if (arg == "--fake-update" && i + 1 < argc) {  // J-89 dev check: a made-up newer release is offered (no network)
+      updateOpts.fakeVersion = argv[++i];
     } else if (arg == "--hidden") {
       // J-78: read before the window is created (see startHidden)
     } else if (fs::exists(arg)) {
@@ -1053,6 +1062,13 @@ int main(int argc, char** argv) {
   }
   if (mainNative.valid() && !xdrop::native::install(mainNative.handle))  // J-75: hover, promises, links (macOS)
     std::fprintf(stderr, "[drop] native drop target unavailable; using SDL drop events\n");
+  {  // J-89: update check once the window is up; automated runs never touch the network
+    updateOpts.hidden = startHidden;
+    updateOpts.disabled = updateOpts.disabled || update::disabledByEnvironment();
+    updateOpts.automated = startHidden || !shotPath.empty() || !profilePath.empty() || browserui::thumbMode() || !devInput.empty();
+    updateOpts.openUrl = [](const std::string& url) { return SDL_OpenURL(url.c_str()) == 0; };
+    updui::start(app, updateOpts);
+  }
   const bool frameClock = profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
   if (frameClock) SDL_GL_SetSwapInterval(0);
 
@@ -1513,6 +1529,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "%s %s\n", app.saveProject(devSaveAtExit) && (flpexport::wait(), true) ? "saved" : "could not save", devSaveAtExit.c_str());
   }
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
+  updui::shutdown();           // J-89: a running installer download is cancelled
   closeAllHostedEditors(app);
   if (frameClock) host::native::frameClockStop();
   if (gDevice) SDL_CloseAudioDevice(gDevice);

@@ -31,6 +31,7 @@
 #include "TemplateUi.h"
 #include "FlpExportUi.h"
 #include "J59Ui.h"
+#include "UpdateUi.h"
 #include "Widgets.h"
 #include "Windows.h"
 #include "../core/WheelRoute.h"
@@ -255,7 +256,7 @@ void settingsWindow(App& a) {
   const char* pagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations")};
   const char* blurbs[] = {i18n::N_("Output and input devices, sample rate, buffer and recording"), i18n::N_("Controllers, keyboards and MIDI out"),
                           i18n::N_("Defaults for new projects"), i18n::N_("Automatic backups, autosave and restoring a backup"), i18n::N_("Theme, size and hints"),
-                          i18n::N_("Startup, default template and language"), i18n::N_("Folders and scripting"), i18n::N_("Log and script console"),
+                          i18n::N_("Startup, default template, language and updates"), i18n::N_("Folders and scripting"), i18n::N_("Log and script console"),
                           i18n::N_("Every keyboard shortcut: search, change, reset"), i18n::N_("Dark, light or the system's choice, accent colour and contrast"),
                           i18n::N_("Let AI assistants (MCP clients) inspect and edit the project")};
   constexpr int kPages = 11;
@@ -933,6 +934,7 @@ void drawDialogs(App& a) {
   unsavedPrompt(a);
   confirmPrompt(a);           // J-82: delete clip sources, …
   ui::drawDisplayConfirm(a);  // J-77: Keep / Revert for size, theme, language, layout and audio changes
+  updui::draw(a);             // J-89: update check (startup / Help), its popup
   importReportWindow(a);
   drawPluginManager(a);
   drawRemoteDialog(a);

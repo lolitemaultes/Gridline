@@ -27,6 +27,7 @@
 #include "core/flp/FlpWrapper.h"
 #include "core/Settings.h"
 #include "host/HostedPlugins.h"
+#include "host/net/Http.h"
 #include "host/PluginCheck.h"
 #include "host/Smoke.h"
 #include "host/vst3/Vst3Scan.h"
@@ -42,6 +43,7 @@ void usage() {
       "Gridline " GRIDLINE_VERSION ", music workstation command line\n"
       "usage:\n"
       "  gridline --version                          print the version\n"
+      "  gridline --check-updates [--beta]           ask GitHub for a newer release (docs/updates.md)\n"
       "  gridline render <project.json> -o <out.wav|.flac|.mp3|.ogg|.m4a|folder/> [--sr N] [--bits 16|24|32]\n"
       "        [--format wav,flac,mp3,ogg,m4a,mid] [--scope song|pattern:N|range:BAR-BAR] [--loops N]\n"
       "        [--tail cut|leave|wrap] [--dither none|tpdf|shaped] [--channels stereo|mono|left|right]\n"
@@ -87,6 +89,8 @@ int main(int argc, char** argv) {
     std::printf("Gridline " GRIDLINE_VERSION "\n");
     return 0;
   }
+  if (argc >= 2 && std::strcmp(argv[1], "--check-updates") == 0)  // J-89
+    return gl::http::checkCommand(argc >= 3 && std::strcmp(argv[2], "--beta") == 0);
   if (argc >= 2 && (std::strcmp(argv[1], "--help") == 0 || std::strcmp(argv[1], "-h") == 0 || std::strcmp(argv[1], "help") == 0)) {
     usage();
     return 0;

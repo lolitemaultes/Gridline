@@ -192,8 +192,9 @@ if(APPLE)
   target_link_libraries(gridline_core PUBLIC "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreAudioKit"
                         "-framework AppKit" "-framework Foundation" "-framework Security")
 elseif(WIN32)
-  # Winsock (MCP server), Credential Manager (advapi32), process / memory statistics, windows.
-  target_link_libraries(gridline_core PUBLIC ws2_32 advapi32 psapi user32 gdi32 shell32 ole32 uuid urlmon comctl32)
+  # Winsock (MCP server), Credential Manager (advapi32), process / memory statistics, windows,
+  # WinHTTP (J-89 update check).
+  target_link_libraries(gridline_core PUBLIC ws2_32 advapi32 psapi user32 gdi32 shell32 ole32 uuid urlmon comctl32 winhttp)
 elseif(UNIX)
   find_library(GRIDLINE_RT_LIB rt)  # shm_open lives in librt on Linux / NetBSD; libc elsewhere
   if(GRIDLINE_RT_LIB)
@@ -395,6 +396,13 @@ target_link_libraries(gridline_tests_external_drop PRIVATE gridline_core)
 target_include_directories(gridline_tests_external_drop PRIVATE tests)
 target_compile_options(gridline_tests_external_drop PRIVATE ${GL_WARN})
 add_test(NAME external_drop COMMAND gridline_tests_external_drop WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-89: update check (versions, release JSON, downloads per platform, SHA256SUMS, schedule; no network).
+add_executable(gridline_tests_update tests/test_update.cpp)
+target_link_libraries(gridline_tests_update PRIVATE gridline_core)
+target_include_directories(gridline_tests_update PRIVATE tests)
+target_compile_options(gridline_tests_update PRIVATE ${GL_WARN})
+add_test(NAME update_check COMMAND gridline_tests_update WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(update_check PROPERTIES ENVIRONMENT "GRIDLINE_NO_UPDATE_CHECK=1")
 if(APPLE)
   add_executable(gridline_tests_external_drop_mac tests/test_external_drop_mac.mm)
   target_link_libraries(gridline_tests_external_drop_mac PRIVATE gridline_core "-framework AppKit")

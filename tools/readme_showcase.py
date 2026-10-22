@@ -103,10 +103,10 @@ def main():
     # Audio: the recording three times, overlapping into crossfades.
     for i, b in enumerate((0, 4, 8)):
         clip(6, b, kind="audio", source=vox["id"], length=bar * 4 + (bar // 2 if i < 2 else 0),
-             fadeIn=0.25 if i == 0 else 0.5, fadeOut=0.5)
+             fadeIn=0.25 if i == 0 else 0.5, fadeOut=0.5, gain=(0.55, 0.8, 0.68)[i])
     clip(7, 0, kind="automation", source=auto_id, length=bar * 12)
     song["playlist"] = clips
-    song["markers"] = [{"pos": 0, "name": "Intro"}, {"pos": bar * 4, "name": "Verse"}, {"pos": bar * 8, "name": "Drop"}]
+    song["markers"] = [{"pos": 0, "name": "Intro"}, {"pos": bar * 4, "name": "Verse"}, {"pos": bar * 8, "name": "Drop", "action": 5}]  # 5: song loop marker
     song["nextId"] = nid[0] + 1
     song["info"]["title"] = "Gridline Showcase"
     with open(out, "w") as f:

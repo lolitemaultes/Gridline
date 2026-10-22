@@ -401,7 +401,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -3225,7 +3225,7 @@ msgstr ""
 msgid "Nudge right"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/ExportUi.cpp
+#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/UpdateUi.cpp
 msgid "OK"
 msgstr ""
 
@@ -4330,7 +4330,7 @@ msgid "Start of history"
 msgstr ""
 
 #: src/app/Dialogs.cpp
-msgid "Startup, default template and language"
+msgid "Startup, default template, language and updates"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -6359,6 +6359,10 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Build a ready-to-play loop: style, tempo, key, mood and energy, with parts you can re-roll"
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Check for updates..."
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -9383,6 +9387,178 @@ msgstr ""
 
 #: src/app/TrackModeUi.cpp
 msgid "Track mode"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "A beta version."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Also offer prereleases (may be less stable)"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Ask GitHub now and show the result"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Asking GitHub for the latest release"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Cancel download"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Check for updates automatically"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Check now"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Checking for updates..."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Checking..."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Could not check for updates"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Could not reach GitHub"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Download"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Download installer"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Download opens the release page in your browser."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Downloaded and checked against the release's SHA256SUMS. It is not installed: open it when you are ready."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Downloading %s"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "GitHub could not be reached. Check the internet connection and try again."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "GitHub is busy, try again later"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "GitHub is limiting requests right now. Try again in a while."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Gridline %s is available"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Gridline %s is available (you have %s)"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Include beta versions"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Last checked: "
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Never"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "No release has been published on GitHub yet."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "No release notes."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Offer it again"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Once a day at startup, Gridline asks GitHub for the newest release. Nothing else is sent."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Released %s."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Remind me later"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Show in folder"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Skip this version"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Skipped version: %s"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Something went wrong."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "The check failed"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "The download did not finish: %s"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "This is the newest version."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Turned off: --no-update-check, GRIDLINE_NO_UPDATE_CHECK or CI is set."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "UPDATES"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Update checks are turned off"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Update checks are turned off for this run."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "You're up to date (%s)"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "in"
 msgstr ""
 
 #: src/app/Widgets.cpp
