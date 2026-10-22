@@ -575,6 +575,9 @@ target_compile_definitions(gridline_tests_lv2 PRIVATE GRIDLINE_LV2_DIR="${GRIDLI
                            GRIDLINE_LV2_EXT="${GL_LV2_EXT}" GRIDLINE_CLI_EXE="$<TARGET_FILE:gridline>")
 add_dependencies(gridline_tests_lv2 gridline_lv2_testplug gridline_lv2_testui gridline)
 add_test(NAME lv2_host COMMAND gridline_tests_lv2 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# The plugin-check sweep runs the test plugins against real-time block deadlines: run it alone
+# so a busy parallel ctest on a small CI runner cannot turn load into a failure.
+set_tests_properties(lv2_host PROPERTIES RUN_SERIAL TRUE)
 
 add_executable(gridline_tests_scripting tests/test_scripting.cpp)
 target_link_libraries(gridline_tests_scripting PRIVATE gridline_core)

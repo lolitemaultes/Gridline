@@ -629,7 +629,13 @@ void testPluginCheck() {
         for (const auto& c : ch->array)
           if (c.text("status") == "warn" && (c.text("detail").rfind("peak ", 0) != 0 || c.text("detail").find("denormal") != std::string::npos))
             loadOnly = false;
-      if (s != "pass" && !loadOnly) notes += p.text("name") + ": " + s + "; ";
+      if (s != "pass" && !loadOnly) {
+        notes += p.text("name") + ": " + s + " (";
+        if (const Json* ch = p.find("checks"); ch && ch->is(Json::Type::Array))
+          for (const auto& c : ch->array)
+            if (c.text("status") != "pass") notes += c.text("check") + " " + c.text("status") + ": " + c.text("detail") + "; ";
+        notes += "); ";
+      }
       if (const Json* ch = p.find("checks"); ch && ch->is(Json::Type::Array))
         for (const auto& c : ch->array)
           if (c.text("status") == "fail" || (kOffscreenEditors && c.text("check") == "editor" && c.text("status") != "pass" &&
