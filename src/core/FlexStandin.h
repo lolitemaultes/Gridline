@@ -65,7 +65,7 @@ int categoryOf(const PluginState& s);
 // Gridline engines the stand-ins are built from.
 enum Engine { EAnalog, EKeys, EFm, EDrums, EPlucker, EngineCount };
 const char* engineType(int engine);  // "gl.analog", …
-const char* engineName(int engine);  // "Analog", …
+const char* engineName(int engine);  // the engine's catalogue display name
 int engineOf(int cat);
 
 // Single-piece percussion presets ("Cowbell", "Conga", …): the kit pad that

@@ -20,7 +20,7 @@ ParamDesc ch(const char* n, std::vector<std::string> c, double d) {
 using V = std::vector<std::pair<int, float>>;
 
 PluginInfo vocoder() {
-  PluginInfo p{"gl.vocoder", "Vocoder", "Spectral", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.vocoder", "Cipher", "Spectral", PluginKind::Effect, {}, false, {}};
   p.midiInput = true;  // carrier synth keys from a MIDI port
   p.params.resize(VcCount);
   p.params[VcBands] = ch("Bands", {"4", "8", "12", "16", "24", "32", "48", "64", "96", "128"}, 5);
@@ -143,7 +143,7 @@ PluginInfo pitch() {
 }
 
 PluginInfo pitcher() {
-  PluginInfo p{"gl.pitcher", "Pitch Corrector", "Spectral", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.pitcher", "Plumb", "Spectral", PluginKind::Effect, {}, false, {}};
   p.midiInput = true;  // MIDI target notes / harmony voices from a MIDI port
   p.params.resize(PcCount);
   p.params[PcKey] = ch("Key", {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}, 0);
@@ -205,7 +205,7 @@ PluginInfo pitcher() {
 }
 
 PluginInfo scratcher() {
-  PluginInfo p{"gl.scratcher", "Scratcher", "Spectral", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.scratcher", "Turntable", "Spectral", PluginKind::Effect, {}, false, {}};
   p.params.resize(ScCount);
   p.params[ScHand] = lin("Platter", "%", 0, 1, 0);
   p.params[ScGrab] = tog("Hold platter", 0);
@@ -293,7 +293,7 @@ PluginInfo splitter() {
 }
 
 PluginInfo spreader() {
-  PluginInfo p{"gl.spread", "Spreader", "Spectral", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.spread", "Stereo Spread", "Spectral", PluginKind::Effect, {}, false, {}};
   p.params.resize(SrCount);
   p.params[SrMode] = ch("Method", {"Complement", "Haas", "Chorus", "Mid/Side"}, 0);
   p.params[SrSpread] = lin("Spread", "%", 0, 1, 0.5);

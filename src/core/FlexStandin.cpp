@@ -11,6 +11,8 @@
 #include "../packs/models/models.h"
 #include "../packs/models/strings.h"
 #include "../packs/synths/synths.h"
+#include "PluginBrand.h"
+#include "PluginInfo.h"
 #include "PluginParams.h"
 
 namespace gl::flex {
@@ -41,8 +43,9 @@ const char* engineType(int e) {
   return e >= 0 && e < EngineCount ? t[e] : "gl.analog";
 }
 const char* engineName(int e) {
-  static const char* const t[EngineCount] = {"Analog", "Keys", "FM Synth", "Drum Model", "Plucker"};
-  return e >= 0 && e < EngineCount ? t[e] : "Analog";
+  // J-94: the catalogue's display name (stable pointer: the catalogue never changes).
+  const PluginInfo* info = findPlugin(engineType(e));
+  return info ? info->name.c_str() : engineType(e);
 }
 
 int engineOf(int cat) {

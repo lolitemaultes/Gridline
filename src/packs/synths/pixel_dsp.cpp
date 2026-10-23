@@ -256,6 +256,25 @@ bool preparePixelAux(const PluginState& state, ChannelAux& aux) {
   aux = ChannelAux{};
   auto a = std::make_shared<PixelAux>();
   if (!parsePicture(state.data, a->pic)) parsePicture(pixelToneDefaultData(), a->pic);
+  // J-92: "Max rows" was never read: a taller picture is reduced to that many
+  // rows (each output row averages its band of source rows).
+  const int maxRows = std::clamp(static_cast<int>(std::lround(state.params.size() > PxMaxHeight ? state.params[PxMaxHeight] : 23.0f)), 3, kMaxRows);
+  Picture& pic = a->pic;
+  if (pic.h > maxRows && pic.w > 0) {
+    Picture r;
+    r.w = pic.w, r.h = maxRows;
+    r.rgb.assign(static_cast<size_t>(r.w) * static_cast<size_t>(r.h) * 3, 0);
+    for (int y = 0; y < r.h; ++y) {
+      const int y0 = y * pic.h / r.h, y1 = std::max(y0 + 1, (y + 1) * pic.h / r.h);
+      for (int x = 0; x < r.w; ++x)
+        for (int c = 0; c < 3; ++c) {
+          int sum = 0;
+          for (int sy = y0; sy < y1; ++sy) sum += pic.rgb[(static_cast<size_t>(sy) * static_cast<size_t>(pic.w) + static_cast<size_t>(x)) * 3 + static_cast<size_t>(c)];
+          r.rgb[(static_cast<size_t>(y) * static_cast<size_t>(r.w) + static_cast<size_t>(x)) * 3 + static_cast<size_t>(c)] = static_cast<uint8_t>(sum / (y1 - y0));
+        }
+    }
+    pic = std::move(r);
+  }
   aux.custom = a;
   return true;
 }

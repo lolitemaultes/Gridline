@@ -32,6 +32,23 @@ int hidUsageOfMacKey(uint16_t code);
 uint16_t macKeyOfHidUsage(int usage);
 // HID usage of a Windows virtual-key code (VK_*); 0 when unknown.
 int hidUsageOfWinVk(int vk);
+// HID usage of an X11 keysym (XK_*, the key's unshifted symbol); 0 when unknown.
+int hidUsageOfX11Keysym(unsigned long keysym);
+// KeyMods of an X11 key event's state (ShiftMask, ControlMask, Mod1 = Alt, Mod4 = Super).
+uint32_t modsOfX11State(unsigned state);
+// J-91: keys Gridline takes from a plugin interface that sees them too (the
+// Windows keyboard hook, X11 key events of the interface's windows), where
+// the interface cannot say whether it used a key: only the keys of
+// Gridline's global shortcuts - Space (play / pause), F1-F12 (windows) and
+// Ctrl / Alt chords (save, undo, ...). Letters, digits and the rest stay
+// with the plugin (its computer-keyboard notes, typing in its fields).
+bool forwardsToHost(int usage, uint32_t mods);
+// X11: whether Gridline watches the keys of a window of a plugin's interface,
+// from the event masks other X clients selected on it (XWindowAttributes
+// all_event_masks without Gridline's own): only when one of them takes key
+// presses. A window nobody takes keys on passes them up to Gridline's own
+// window, where SDL reads them (watching it would stop that).
+bool x11WatchesKeys(long otherClientsMask);
 // Gridline's key of a HID usage (Key::None when Gridline has no name for it).
 keys::Key keyOfHidUsage(int usage);
 // The chord a forwarded key makes in Gridline's keymap (Cmd is Gridline's

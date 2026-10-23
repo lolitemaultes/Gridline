@@ -2,6 +2,7 @@
 #include "HostedUi.h"
 #include "MidiUi.h"
 #include "PluginUI.h"
+#include "../core/PluginBrand.h"
 #include "../core/Presets.h"
 #include <algorithm>
 #include <cmath>
@@ -126,6 +127,50 @@ bool compareOnB(const PluginTarget& t) {
 }
 }  // namespace pui
 
+namespace pui {
+uint32_t brandRole(BrandFamily f) {
+  switch (f) {
+    case BrandFamily::Synth: return theme::role::kStamp;
+    case BrandFamily::Sample: return theme::role::kSlice;
+    case BrandFamily::Space: return theme::role::kGraph;
+    case BrandFamily::Dynamics: return theme::role::kMenu;
+    case BrandFamily::Voice: return theme::role::kSnap;
+    case BrandFamily::Structure: return theme::role::kPlay;
+    case BrandFamily::None: break;
+  }
+  return 0;
+}
+
+bool wordmark(App& a, const std::string& type, float size) {
+  const PluginBrand* b = pluginBrand(type);
+  const PluginInfo* info = findPlugin(type);
+  if (!b || b->family == BrandFamily::None || !info || !a.fontBold) return false;
+  // Lower-case name in Inter Bold, tracked like the Gridline lockup
+  // (-3 units at 104), after a family accent bar.
+  std::string word = info->name;
+  for (char& c : word) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  const float track = -size * 3.0f / 104.0f, barW = 3.0f, gap = 7.0f;
+  ImFontBaked* fb = a.fontBold->GetFontBaked(size);
+  float w = 0;
+  for (size_t i = 0; i < word.size(); ++i) w += fb->GetCharAdvance(static_cast<ImWchar>(word[i])) + (i + 1 < word.size() ? track : 0.0f);
+  const float h = std::max(ImGui::GetFrameHeight(), size + 4.0f);
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  ImGui::InvisibleButton("##wordmark", ImVec2(barW + gap + w, h));
+  if (ImGui::IsItemHovered() && b->tagline[0]) ui::Hint(info->name + "  \xC2\xB7  " + b->tagline);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImU32 accent = theme::litRole(brandRole(b->family));
+  dl->AddRectFilled(ImVec2(p.x, p.y + h * 0.2f), ImVec2(p.x + barW, p.y + h * 0.8f), accent);
+  float x = p.x + barW + gap;
+  const float top = p.y + (h - size) * 0.5f;
+  for (char c : word) {
+    const char one[2] = {c, 0};
+    dl->AddText(a.fontBold, size, ImVec2(x, top), pal().text, one);
+    x += fb->GetCharAdvance(static_cast<ImWchar>(c)) + track;
+  }
+  return true;
+}
+}  // namespace pui
+
 void drawPluginHeader(App& a, const PluginTarget& t) {
   const Song& s = a.doc.song();
   const PluginState* st = t.state(s);
@@ -165,9 +210,11 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
   };
   (void)menuOpening;
 
-  ImGui::PushFont(a.fontBold, 15.0f);
-  ImGui::TextUnformatted(info->name.c_str());
-  ImGui::PopFont();
+  if (!pui::wordmark(a, info->type, 18.0f)) {  // J-94: flagships show their wordmark
+    ImGui::PushFont(a.fontBold, 15.0f);
+    ImGui::TextUnformatted(info->name.c_str());
+    ImGui::PopFont();
+  }
   ImGui::SameLine(0, 14);
   if (ui::IconButton("prev", ui::Icon::Left, false, 22, "Previous preset") && !names.empty())
     apply(h.presetIndex <= 0 ? static_cast<int>(names.size()) - 1 : h.presetIndex - 1);
@@ -457,7 +504,7 @@ void drawFreqGrid(ImDrawList* dl, ImVec2 p0, ImVec2 p1, double dbRange, bool lab
       if (f < 20 || f > 20000) continue;
       float x = freqToX(f, p0.x, w);
       dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), m == 1 ? P.gridBar : P.gridStep);
-      if (labels && (m == 1 || m == 2 || m == 5) && x > p0.x + 30) {
+      if (labels && (m == 1 || m == 2 || m == 5) && x > p0.x + 30 && x < p1.x - 28) {  // J-93: never past the right edge
         char buf[16];
         if (f >= 1000)
           std::snprintf(buf, sizeof buf, "%gk", f / 1000);
@@ -471,11 +518,11 @@ void drawFreqGrid(ImDrawList* dl, ImVec2 p0, ImVec2 p1, double dbRange, bool lab
   for (double db = -dbRange; db <= dbRange + 0.01; db += dbRange / 3) {
     float y = p0.y + h * 0.5f - static_cast<float>(db / dbRange) * h * 0.5f;
     dl->AddLine(ImVec2(p0.x, y), ImVec2(p1.x, y), std::fabs(db) < 0.01 ? P.lineStrong : P.gridStep);
-    if (labels && std::fabs(db) > 0.01) {
+    if (labels && std::fabs(db) > 0.01 && std::fabs(db) < dbRange - 0.01) {  // J-93: edge values would sit outside the well
       char buf[16];
       std::snprintf(buf, sizeof buf, "%+.0f", db);
       ImGui::PushFont(app().fontMono, 10.0f);
-      dl->AddText(ImVec2(p0.x + 4, y - 12), P.textFaint, buf);
+      dl->AddText(ImVec2(p0.x + 4, std::max(p0.y + 2, y - 12)), P.textFaint, buf);
       ImGui::PopFont();
     }
   }
@@ -556,12 +603,6 @@ constexpr float kKnobPi = 3.14159265f;
 const float kKnobRadius[3] = {11.0f, 16.0f, 23.0f};
 const float kKnobCell[3] = {54.0f, 68.0f, 86.0f};
 
-void strokeArc(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, ImU32 col, float th) {
-  if (a1 <= a0) return;
-  int segs = std::max(6, static_cast<int>((a1 - a0) * r * 0.35f));
-  dl->PathArcTo(c, r, a0, a1, segs);
-  dl->PathStroke(col, 0, th);
-}
 
 bool isLinked(App& a, ParamId pid) {
   for (const auto& l : a.doc.song().links)
@@ -607,6 +648,7 @@ void typePopup(App& a, ParamId pid, const ParamDesc& d) {
 // Ctrl+click reset, double-click type, right-click menu. Item must be the last item.
 bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal) {
   audit::lastItem("param");
+  audit::bindControl(pid);  // J-92 binding audit
   ImGuiIO& io = ImGui::GetIO();
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   bool changed = false;
@@ -671,32 +713,24 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
 
 void drawDial(ImDrawList* dl, ImVec2 c, float r, double norm, bool bipolar, bool hov, bool act, bool linked, bool learning) {
   const auto& P = pal();
-  if (const skin::Skin* k = skin::active()) {  // plugin skin: reference-style wheel
-    skin::drawWheel(dl, c, r, norm, bipolar, r >= 14, hov || act, *k, act ? k->fillPressed : k->fill);
-    if (linked || learning) dl->AddCircleFilled(ImVec2(c.x + r * 0.82f, c.y - r * 0.82f), 2.5f, learning ? P.danger : k->fill);
-    return;
+  // J-93: one knob face for every editor (skin roles inside plugin skins,
+  // theme roles elsewhere).
+  skin::KnobPaint kp;
+  kp.a0 = kKnobPi * 0.75f, kp.a1 = kKnobPi * 2.25f;
+  kp.an = kp.a0 + static_cast<float>(std::clamp(norm, 0.0, 1.0)) * (kp.a1 - kp.a0);
+  kp.from = bipolar ? (kp.a0 + kp.a1) * 0.5f : kp.a0;
+  kp.hot = hov, kp.active = act;
+  kp.railTh = std::max(2.0f, r * 0.16f);
+  ImU32 mark = P.accent;
+  if (const skin::Skin* k = skin::active()) {
+    kp.rail = k->rail, kp.fill = act ? k->fillPressed : k->fill, kp.cap = k->cap;
+    kp.pointer = k->pointer ? k->pointer : skin::lighten(k->text, 0.25f);
+    mark = k->fill;
+  } else {
+    kp.rail = P.surface900, kp.fill = hov || act ? P.accent : P.paper, kp.cap = P.surface700, kp.pointer = P.text;
   }
-  const float a0 = kKnobPi * 0.75f, a1 = kKnobPi * 2.25f;
-  float an = a0 + static_cast<float>(norm) * (a1 - a0);
-  float th = std::max(2.0f, r * 0.15f);
-  float body = r - th - 1.5f;
-  // Body: soft drop + face.
-  dl->AddCircleFilled(ImVec2(c.x, c.y + 1.0f), body, theme::withAlpha(P.ink, 0.35f), 32);
-  dl->AddCircleFilled(c, body, act ? P.surface600 : hov ? theme::mix(P.surface700, P.surface600, 0.5f) : P.surface700, 32);
-  dl->AddCircle(c, body, theme::mix(P.surface700, P.text, 0.12f), 32, 1.0f);
-  // Track + value arc.
-  strokeArc(dl, c, r - th * 0.5f, a0, a1, P.surface900, th);
-  float from = bipolar ? (a0 + a1) * 0.5f : a0;
-  if (std::fabs(an - from) > 0.004f) strokeArc(dl, c, r - th * 0.5f, std::min(from, an), std::max(from, an), hov || act ? P.accent : P.paper, th);
-  if (bipolar) {
-    ImVec2 top(c.x, c.y - r + 0.5f);
-    dl->AddLine(top, ImVec2(c.x, top.y + th + 1), P.textFaint, 1.0f);
-  }
-  // Pointer.
-  ImVec2 dir(std::cos(an), std::sin(an));
-  dl->AddLine(ImVec2(c.x + dir.x * body * 0.25f, c.y + dir.y * body * 0.25f), ImVec2(c.x + dir.x * (body - 1.5f), c.y + dir.y * (body - 1.5f)),
-              act || hov ? P.paper : P.text, std::max(1.5f, r * 0.11f));
-  if (linked || learning) dl->AddCircleFilled(ImVec2(c.x + r * 0.78f, c.y - r * 0.78f), 2.5f, learning ? P.danger : P.accent);
+  skin::knobFace(dl, c, r, kp);
+  if (linked || learning) dl->AddCircleFilled(ImVec2(c.x + r * 0.8f, c.y - r * 0.8f), 2.5f, learning ? P.danger : mark);
 }
 
 }  // namespace
@@ -798,15 +832,16 @@ void beginPanel(const char* title, float width, float height, const char* cap) {
     ImGui::SetCursorPosY(28);
     return;
   }
-  // Title strip.
-  dl->AddRectFilled(ImVec2(wp.x + 1, wp.y + 1), ImVec2(wp.x + w - 1, wp.y + 22), theme::mix(P.surface800, P.surface700, 0.6f), 6,
-                    ImDrawFlags_RoundCornersTop);
+  // Title strip (J-93: soft shade, accent tick, title, hairline).
+  skin::gradientRect(dl, ImVec2(wp.x + 1, wp.y + 1), ImVec2(wp.x + w - 1, wp.y + 22), theme::mix(P.surface800, P.surface700, 0.75f),
+                     theme::mix(P.surface800, P.surface700, 0.35f), 6, ImDrawFlags_RoundCornersTop);
   dl->AddLine(ImVec2(wp.x + 1, wp.y + 22), ImVec2(wp.x + w - 1, wp.y + 22), theme::mix(P.surface800, P.text, 0.06f));
+  dl->AddRectFilled(ImVec2(wp.x + 9, wp.y + 7), ImVec2(wp.x + 11, wp.y + 16), P.accent, 1);
   // Title text: strip the "##id" suffix.
   std::string tt = title;
   if (size_t h = tt.find("##"); h != std::string::npos) tt.resize(h);
   ImGui::PushFont(app().fontMonoBold, 10.5f);
-  dl->AddText(ImVec2(wp.x + 10, wp.y + 5), P.textDim, tt.c_str());
+  dl->AddText(ImVec2(wp.x + 16, wp.y + 5), P.text, tt.c_str());
   if (cap && *cap) {
     ImVec2 cs = ImGui::CalcTextSize(cap);
     dl->AddText(ImVec2(wp.x + w - 10 - cs.x, wp.y + 5), P.textFaint, cap);
@@ -1054,8 +1089,9 @@ bool stepper(App& a, const PluginTarget& t, int param, float width, const char* 
 void displayFrame(ImDrawList* dl, ImVec2 p0, ImVec2 p1) {
   audit::frame(p0, p1, "display");
   const auto& P = pal();
-  dl->AddRectFilled(p0, p1, P.surface950, 6);
-  dl->AddRect(p0, p1, theme::mix(P.surface950, P.text, 0.08f), 6, 0, 1.0f);
+  skin::gradientRect(dl, p0, p1, theme::mix(P.surface950, P.surface900, 0.15f), P.surface950, 6);
+  dl->AddLine(ImVec2(p0.x + 6, p0.y + 1), ImVec2(p1.x - 6, p0.y + 1), IM_COL32(0, 0, 0, 50), 1.0f);
+  dl->AddRect(p0, p1, theme::mix(P.surface950, P.text, 0.10f), 6, 0, 1.0f);
 }
 
 void drawGrid(ImDrawList* dl, ImVec2 p0, ImVec2 p1, int cols, int rows, bool centreLines) {

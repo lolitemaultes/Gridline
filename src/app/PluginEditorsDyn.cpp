@@ -45,15 +45,22 @@ void transferPlot(ImDrawList* dl, ImVec2 p, float size, double lo, double hi, co
   auto X = [&](double db) { return p.x + pad + static_cast<float>((db - lo) / (hi - lo)) * (size - pad * 2); };
   auto Y = [&](double db) { return p.y + size - pad - static_cast<float>((std::clamp(db, lo, hi) - lo) / (hi - lo)) * (size - pad * 2); };
   for (double db = std::ceil(lo / 12) * 12; db <= hi; db += 12) {
-    dl->AddLine(ImVec2(X(db), p.y + pad), ImVec2(X(db), p.y + size - pad), P.gridStep);
-    dl->AddLine(ImVec2(p.x + pad, Y(db)), ImVec2(p.x + size - pad, Y(db)), P.gridStep);
+    const ImU32 gc = std::fabs(db) < 0.01 ? P.gridBar : P.gridStep;
+    dl->AddLine(ImVec2(X(db), p.y + pad), ImVec2(X(db), p.y + size - pad), gc);
+    dl->AddLine(ImVec2(p.x + pad, Y(db)), ImVec2(p.x + size - pad, Y(db)), gc);
+    if (db > lo + 1 && db < hi - 1) {  // J-93: axis values
+      char b[8];
+      std::snprintf(b, sizeof b, "%.0f", db);
+      monoText(dl, ImVec2(X(db) + 3, p.y + size - pad - 12), theme::withAlpha(P.textFaint, 0.8f), b, 9.0f);
+    }
   }
-  dl->AddLine(ImVec2(X(lo), Y(lo)), ImVec2(X(hi), Y(hi)), P.lineStrong);
+  dl->AddLine(ImVec2(X(lo), Y(lo)), ImVec2(X(hi), Y(hi)), theme::withAlpha(P.lineStrong, 0.6f));
   ImVec2 pts[161];
   for (int i = 0; i <= 160; ++i) {
     double in = lo + (hi - lo) * i / 160.0;
     pts[i] = ImVec2(X(in), Y(f(in)));
   }
+  dl->AddPolyline(pts, 161, theme::withAlpha(P.accent, 0.25f), 0, 5.0f);  // soft glow under the curve
   dl->AddPolyline(pts, 161, P.paper, 0, 2.0f);
   if (liveIn > lo) {
     double in = std::min(static_cast<double>(liveIn), hi);
@@ -121,7 +128,28 @@ void editorMaximizer(App& a, const PluginTarget& t, float width) {
     dragX = std::fabs(io.MousePos.x - x1) < 8 ? 0 : std::fabs(io.MousePos.x - x2) < 8 ? 1 : -1;
     if (dragX < 0) a.doc.setParam(t.pid(MxStage), io.MousePos.x < x1 ? 0 : io.MousePos.x < x2 ? 1 : 2, false);
   }
-  for (int k = 0; k < 2; ++k) dl->AddLine(ImVec2(k ? x2 : x1, sp.y), ImVec2(k ? x2 : x1, sp.y + ssz.y), P.paper, 1.5f);
+  // J-93: crossover lines as slim guides with a grip at the top (lit while hovered / dragged).
+  for (int k = 0; k < 2; ++k) {
+    const float xx = std::round(k ? x2 : x1) + 0.5f;
+    const bool hotK = (ImGui::IsItemActive() && dragX == k) || (ImGui::IsItemHovered() && !ImGui::IsItemActive() && std::fabs(io.MousePos.x - xx) < 8);
+    const ImU32 lc = hotK ? P.accent : theme::withAlpha(P.text, 0.45f);
+    dl->AddLine(ImVec2(xx, sp.y + 1), ImVec2(xx, sp.y + ssz.y - 1), lc, hotK ? 1.5f : 1.0f);
+    dl->AddRectFilled(ImVec2(xx - 3, sp.y + 4), ImVec2(xx + 3, sp.y + 18), lc, 2);
+    char fb[16];
+    const double hz = val(st, k ? MxHighFreq : MxLowFreq, k ? 4000.f : 140.f);
+    if (hz >= 1000) std::snprintf(fb, sizeof fb, "%.2fk", hz / 1000.0);
+    else std::snprintf(fb, sizeof fb, "%.0f", hz);
+    monoText(dl, ImVec2(xx + 6, sp.y + 5), hotK ? P.accent : P.textDim, fb, 10.0f);
+  }
+  if (ImGui::IsItemHovered() && dragX < 0) {  // frequency readout under the mouse
+    char fb[24];
+    const double hz = pui::xToFreq(io.MousePos.x, sp.x, ssz.x);
+    if (hz >= 1000) std::snprintf(fb, sizeof fb, "%.2f kHz", hz / 1000.0);
+    else std::snprintf(fb, sizeof fb, "%.0f Hz", hz);
+    dl->AddLine(ImVec2(std::round(io.MousePos.x) + 0.5f, sp.y + 1), ImVec2(std::round(io.MousePos.x) + 0.5f, sp.y + ssz.y - 1),
+                theme::withAlpha(P.text, 0.18f));
+    monoText(dl, ImVec2(std::min(io.MousePos.x + 6, sp.x + ssz.x - 70), sp.y + ssz.y - 46), P.text, fb, 10.5f);
+  }
   if (ImGui::IsItemActive() && dragX >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1))
     a.doc.setParam(t.pid(dragX ? MxHighFreq : MxLowFreq), pui::xToFreq(io.MousePos.x, sp.x, ssz.x), true);
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
@@ -145,18 +173,18 @@ void editorMaximizer(App& a, const PluginTarget& t, float width) {
   if (stage < 3) {
     static const char* modes[3] = {"Compress", "Off", "Mute"};
     pui::segmented(a, t, MxLowMode + stage, w1 - 22, modes);
-    pui::knob(a, t, MxLowGain + stage, "Gain", pui::KnobSmall, c);
+    pui::knob(a, t, MxLowGain + stage, "Gain", pui::KnobMedium, c);
     ImGui::SameLine(0, 0);
-    pui::knob(a, t, MxLowThresh + stage, "Threshold", pui::KnobSmall, c);
+    pui::knob(a, t, MxLowThresh + stage, "Threshold", pui::KnobMedium, c);
     ImGui::SameLine(0, 0);
-    pui::knob(a, t, MxLowRatio + stage, "Ratio", pui::KnobSmall, c);
+    pui::knob(a, t, MxLowRatio + stage, "Ratio", pui::KnobMedium, c);
     pui::knob(a, t, MxLowWidth + stage, "Width", pui::KnobSmall, c);
     ImGui::SameLine(0, 0);
     pui::knob(a, t, MxLowSat + stage, "Saturate", pui::KnobSmall, c);
   } else {
-    pui::knob(a, t, MxDrive, "Drive", pui::KnobMedium, c);
+    pui::knob(a, t, MxDrive, "Drive", pui::KnobLarge, c);
     ImGui::SameLine(0, 0);
-    pui::knob(a, t, MxCeiling, "Ceiling", pui::KnobMedium, c);
+    pui::knob(a, t, MxCeiling, "Ceiling", pui::KnobLarge, c);
     ImGui::SameLine(0, 0);
     pui::knob(a, t, MxWidth, "Width", pui::KnobMedium, c);
     pui::knob(a, t, MxAmount, "Amount", pui::KnobSmall, c);
@@ -170,9 +198,9 @@ void editorMaximizer(App& a, const PluginTarget& t, float width) {
     ImGui::SameLine(0, 0);
     pui::knob(a, t, MxLowRel + stage, "Release", pui::KnobMedium, c);
   } else {
-    pui::knob(a, t, MxAttack, "Attack", pui::KnobSmall, c);
+    pui::knob(a, t, MxAttack, "Attack", pui::KnobMedium, c);
     ImGui::SameLine(0, 0);
-    pui::knob(a, t, MxRelease, "Release", pui::KnobSmall, c);
+    pui::knob(a, t, MxRelease, "Release", pui::KnobMedium, c);
     pui::knob(a, t, MxRelease2, "Release 2", pui::KnobSmall, c);
     ImGui::SameLine(0, 0);
     ImGui::BeginGroup();

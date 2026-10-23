@@ -89,9 +89,8 @@ LRESULT CALLBACK keyHook(int code, WPARAM vk, LPARAM lp) {
     if (c && focus != c && !isTextField(focus)) {
       const uint32_t mods = modsNow();
       const int vkey = static_cast<int>(vk);
-      const bool global = vkey == VK_SPACE || (vkey >= VK_F1 && vkey <= VK_F12) || (mods & (kKeyCtrl | kKeyAlt));
       const int usage = hidUsageOfWinVk(vkey);
-      if (global && usage) {
+      if (forwardsToHost(usage, mods)) {  // J-91: the same rule as X11 (host/KeyForward.h)
         KeyEvent e;
         e.down = (lp & (1u << 31)) == 0;
         e.repeat = e.down && (lp & (1 << 30)) != 0;
@@ -142,6 +141,7 @@ void keepAbove(const Window& child, const Window& parent, bool on) {
 
 double backingScale(const Window&) { return 1.0; }  // SDL window units are pixels (per-monitor DPI aware)
 long windowNumber(const Window&) { return -1; }
+std::string xResources(const Window&) { return {}; }  // X11 only
 bool captureWindow(const Window&, const std::string&, const unsigned char*, int, int) { return false; }
 
 void watchKeys(void* container) {

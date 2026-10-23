@@ -12,9 +12,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 #include <functional>
+#include <string>
 #include "../core/I18n.h"
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../engine/MEnv.h"
 #include "Theme.h"
 
@@ -38,6 +41,11 @@ struct Opts {
   int modeCount = menv::ModeCount;
   // Extra point-menu items (called inside the popup with the point index; return true when the envelope changed).
   std::function<bool(int)> extraMenu;
+  // J-93: readout text for a position (x units, 0..1 level), shown next to the
+  // hovered / dragged point or the mouse; empty = none.
+  std::function<std::string(double, double)> readout;
+  // J-93: x-unit numbers along the top (every gridEvery lines when > 0).
+  bool xLabels = false;
 };
 
 struct State {
@@ -82,20 +90,46 @@ int edit(const char* id, ImVec2 p0, ImVec2 p1, menv::Env<N>& e, State& st, const
     float y = p0.y + H * r / o.yLines;
     dl->AddLine(ImVec2(p0.x, y), ImVec2(p1.x, y), (o.centreLine && r * 2 == o.yLines) ? sty.gridStrong : sty.grid, 1.0f);
   }
-  // Curve + fill.
+  // Curve + fill (J-93: one anti-aliased polyline over a seamless gradient fill).
   const int S = std::max(64, static_cast<int>(W));
-  ImVec2 prev;
-  for (int i = 0; i <= S; ++i) {
-    double x = o.xMax * i / S;
-    ImVec2 q(X(x), Y(e.eval(x)));
-    if (i) {
-      ImVec2 quad[4] = {prev, q, ImVec2(q.x, p1.y), ImVec2(prev.x, p1.y)};
-      dl->AddConvexPolyFilled(quad, 4, sty.fill);
-      dl->AddLine(prev, q, sty.line, 1.6f);
+  {
+    static thread_local std::vector<ImVec2> pts;
+    pts.resize(static_cast<size_t>(S) + 1);
+    for (int i = 0; i <= S; ++i) {
+      double x = o.xMax * i / S;
+      pts[static_cast<size_t>(i)] = ImVec2(X(x), Y(e.eval(x)));
     }
-    prev = q;
+    const ImDrawListFlags keep = dl->Flags;
+    dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;  // adjacent quads: no seams
+    const int v0 = dl->VtxBuffer.Size;
+    for (int i = 1; i <= S; ++i) {
+      const ImVec2 a = pts[static_cast<size_t>(i - 1)], b = pts[static_cast<size_t>(i)];
+      ImVec2 quad[4] = {a, b, ImVec2(b.x, p1.y), ImVec2(a.x, p1.y)};
+      dl->AddConvexPolyFilled(quad, 4, sty.fill);
+    }
+    dl->Flags = keep;
+    // Fade towards the background at the bottom (the shade keeps the fill's alpha).
+    ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, p0, ImVec2(p0.x, p1.y), theme::mix(sty.fill, sty.line, 0.35f),
+                                                  theme::mix(sty.fill, sty.bg, 0.85f));
+    dl->AddPolyline(pts.data(), S + 1, theme::withAlpha(sty.line, 0.28f), 0, 4.0f);  // soft glow
+    dl->AddPolyline(pts.data(), S + 1, sty.line, 0, 1.8f);
   }
-  if (o.playX >= 0) dl->AddLine(ImVec2(X(o.playX), p0.y), ImVec2(X(o.playX), p1.y), theme::withAlpha(sty.text, 0.8f), 1.0f);
+  if (o.xLabels && o.gridDiv > 0) {
+    const int every = o.gridEvery > 0 ? o.gridEvery : o.gridDiv;
+    const float fsz = ImGui::GetFontSize() * 0.82f;
+    for (int k = 1; k * every < gl + every; ++k) {  // the first beat's number would sit on the y-axis labels
+      const double xv = static_cast<double>(k * every) / o.gridDiv;
+      if (xv >= o.xMax - 1e-9) break;
+      char lb[16];
+      std::snprintf(lb, sizeof lb, "%g", xv + 1.0);
+      dl->AddText(ImGui::GetFont(), fsz, ImVec2(std::round(X(xv) + 4), p0.y + 3), theme::withAlpha(sty.text, 0.5f), lb);
+    }
+  }
+  if (o.playX >= 0) {
+    const float px = std::round(X(o.playX)) + 0.5f;
+    dl->AddLine(ImVec2(px, p0.y), ImVec2(px, p1.y), theme::withAlpha(sty.text, 0.85f), 1.0f);
+    dl->AddTriangleFilled(ImVec2(px - 4, p0.y), ImVec2(px + 4, p0.y), ImVec2(px, p0.y + 5), sty.text);
+  }
   // Interaction.
   ImGui::PushID(id);
   ImGui::SetCursorScreenPos(p0);
@@ -223,8 +257,28 @@ int edit(const char* id, ImVec2 p0, ImVec2 p1, menv::Env<N>& e, State& st, const
   for (int i = 0; i < e.n; ++i) {
     ImVec2 c(X(e.x[i]), Y(e.y[i]));
     bool hot = i == hotPt || i == st.drag;
-    dl->AddCircleFilled(c, hot ? 5.0f : 3.8f, hot ? sty.pointHot : sty.point, 14);
-    dl->AddCircle(c, hot ? 5.0f : 3.8f, IM_COL32(0, 0, 0, 160), 14, 1.0f);
+    const float r = hot ? 5.2f : 4.0f;
+    if (hot) dl->AddCircleFilled(c, r + 4.0f, theme::withAlpha(sty.pointHot, 0.25f), 20);
+    dl->AddCircleFilled(c, r + 1.2f, IM_COL32(0, 0, 0, 150), 18);
+    dl->AddCircleFilled(c, r, hot ? sty.pointHot : sty.point, 18);
+    dl->AddCircleFilled(c, r * 0.42f, theme::withAlpha(sty.line, hot ? 0.0f : 0.9f), 10);
+  }
+  // J-93 readout: the point being dragged / hovered, else the mouse position.
+  if (o.readout && (hov || act)) {
+    const int ri = st.drag >= 0 && st.drag < e.n ? st.drag : hotPt;
+    const double rx = ri >= 0 ? e.x[ri] : toX(m.x), ry = ri >= 0 ? static_cast<double>(e.y[ri]) : toY(m.y);
+    const std::string txt = o.readout(rx, ry);
+    if (!txt.empty()) {
+      const ImVec2 at = ri >= 0 ? ImVec2(X(rx), Y(ry)) : m;
+      const ImVec2 ts = ImGui::CalcTextSize(txt.c_str());
+      ImVec2 b0(at.x + 12, at.y - ts.y - 14);
+      if (b0.x + ts.x + 12 > p1.x - 2) b0.x = at.x - ts.x - 24;
+      if (b0.y < p0.y + 2) b0.y = at.y + 12;
+      const ImVec2 b1(b0.x + ts.x + 12, b0.y + ts.y + 6);
+      dl->AddRectFilled(b0, b1, theme::withAlpha(theme::mix(sty.bg, IM_COL32(0, 0, 0, 255), 0.55f), 0.94f), 3);
+      dl->AddRect(b0, b1, theme::withAlpha(sty.line, 0.6f), 3, 0, 1.0f);
+      dl->AddText(ImVec2(std::round(b0.x + 6), std::round(b0.y + 3)), sty.text, txt.c_str());
+    }
   }
   dl->PopClipRect();
   dl->AddRect(p0, p1, theme::mix(sty.bg, IM_COL32(0, 0, 0, 255), 0.5f), 2, 0, 1.0f);

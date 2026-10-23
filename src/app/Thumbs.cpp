@@ -10,6 +10,8 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <cfloat>
 #include <filesystem>
 #include <map>
 #include <thread>
@@ -22,6 +24,9 @@
 #include "PluginUI.h"
 #include "Theme.h"
 #include "../core/Platform.h"
+#include "../packs/modulation/modulation_ui.h"
+#include "../../third_party/imgui/imgui_internal.h"
+#include "imgui_hooks/ImGuiItemHook.h"
 
 namespace gl::browserui {
 
@@ -65,6 +70,19 @@ struct ThumbRun {
   std::vector<png::Image> cells;
   std::string tsv;
   int editorsWithIssues = 0, issueCount = 0;
+  // J-92: parameter bindings (reads / bound controls per parameter) at width x1,
+  // over the editor as drawn and with every choice / switch value in turn
+  // (pages, modes).
+  bool noteFx = false;
+  audit::Bindings bind;
+  std::string bindTsv;
+  // --binding-crawl: after the three widths, every item of the editor is
+  // clicked once (pages, tabs, selectors) while the bindings keep counting.
+  bool crawl = false, crawling = false, crawled = false, collect = false;
+  std::vector<ImVec2> clicks;
+  std::vector<ImGuiID> clickIds;
+  size_t crawlIdx = 0;
+  int crawlStep = 0;
 };
 constexpr float kAuditFactors[3] = {1.0f, 1.5f, 2.0f};
 ThumbRun run;
@@ -140,6 +158,9 @@ void beginThumbMode(App& a, const std::string& onlyType) {
 
 void beginAuditMode(App& a, const std::string& dir) {
   beginThumbMode(a);
+  for (const auto& p : pluginCatalog())  // J-92: note processors too (binding audit)
+    if (p.kind == PluginKind::NoteFx) run.types.push_back(p.type);
+  run.bindTsv = "type\tindex\tparam\treads\tcontrols\tstate_reads\n";
   run.auditDir = dir;
   std::error_code ec;
   fs::create_directories(dir, ec);
@@ -148,17 +169,128 @@ void beginAuditMode(App& a, const std::string& dir) {
 
 bool thumbMode() { return run.on; }
 
+void setBindingCrawl(bool on) { run.crawl = on; }
+
+namespace {
+// Item hook (ImGuiItemHook.h): items of the editor window, collected on its first draw.
+void onItem(ImGuiID id, ImVec2 a, ImVec2 b) {
+  if (!run.collect) return;
+  ImGuiContext* g = ImGui::GetCurrentContext();
+  ImGuiWindow* w = g ? g->CurrentWindow : nullptr;
+  if (!w || !w->RootWindow || std::strcmp(w->RootWindow->Name, "##thumbgen") != 0 || id == w->ID) return;
+  if (b.x - a.x < 3 || b.y - a.y < 3) return;
+  if (std::find(run.clickIds.begin(), run.clickIds.end(), id) != run.clickIds.end()) return;
+  run.clickIds.push_back(id);
+  run.clicks.push_back(ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f));
+}
+
+// One step of the crawl per frame: press + release queued (ImGui trickles them
+// over two frames), then two frames for the editor to show what the click opened.
+void crawlStep(App& a) {
+  ImGuiIO& io = ImGui::GetIO();
+  if (run.crawlIdx >= run.clicks.size()) {
+    io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    run.crawled = true;
+    return;
+  }
+  if (run.crawlStep == 0) {
+    io.AddMousePosEvent(run.clicks[run.crawlIdx].x, run.clicks[run.crawlIdx].y);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+  }
+  if (++run.crawlStep >= 4) {
+    a.fileDialog.open = false;  // "Load…" buttons: no dialogs in an audit run
+    run.crawlStep = 0;
+    ++run.crawlIdx;
+  }
+}
+
+// The editor of the run's current plugin.
+void drawBody(App& a, float width) {
+  if (run.noteFx) packs::modulation::drawChannelNoteFx(a, run.channel, width);
+  else drawPluginBody(a, run.target, width);
+}
+
+ParamId runParam(int k) { return run.noteFx ? noteFxParam(run.channel, 0, k) : run.target.pid(k); }
+
+void mergeBindings(const audit::Bindings& b) {
+  for (const auto& [k, n] : b.reads) run.bind.reads[k] += n;
+  for (const auto& [k, n] : b.controls) run.bind.controls[k] = std::max(run.bind.controls[k], n);
+  for (const auto& [k, n] : b.stateReads) run.bind.stateReads[k] += n;
+}
+
+// J-92: the editor once more for every value of each choice / switch
+// parameter (pages, modes, sections shown on demand), off-screen.
+void drawVariants(App& a, const PluginInfo& info, float width) {
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x + 50, vp->Pos.y));
+  ImGui::SetNextWindowSize(ImVec2(width + 16, vp->Size.y));
+  if (ImGui::Begin("##bindvariants", nullptr,
+                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
+    int drawn = 0;
+    for (size_t k = 0; k < info.params.size() && drawn < 1500; ++k) {
+      const ParamDesc& d = info.params[k];
+      if (d.kind == ParamKind::Continuous) continue;
+      const ParamId pid = runParam(static_cast<int>(k));
+      const auto cur = getParam(a.doc.song(), pid);
+      if (!cur) continue;
+      const int count = d.kind == ParamKind::Toggle ? 2 : static_cast<int>(std::min<size_t>(d.choices.size(), 16));
+      for (int v = 0; v < count; ++v) {
+        if (v == static_cast<int>(*cur + 0.5)) continue;
+        a.doc.setParam(pid, v, false);
+        ImGui::PushID(static_cast<int>(k * 64 + static_cast<size_t>(v)));
+        ImGui::BeginChild("##v", ImVec2(width + 8, vp->Size.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+        audit::bindBegin();
+        drawBody(a, width);
+        mergeBindings(audit::bindEnd());
+        ImGui::EndChild();
+        ImGui::PopID();
+        ++drawn;
+      }
+      a.doc.setParam(pid, *cur, false);
+    }
+  }
+  ImGui::End();
+}
+
+void writeBindings(const std::string& type) {
+  const PluginInfo* info = findPlugin(type);
+  if (!info) return;
+  for (size_t k = 0; k < info->params.size(); ++k) {
+    const uint64_t key = runParam(static_cast<int>(k)).packed();
+    const auto r = run.bind.reads.find(key);
+    const auto c = run.bind.controls.find(key);
+    std::string name = info->params[k].name;
+    for (char& ch : name)
+      if (ch == '\t') ch = ' ';
+    run.bindTsv += type + "\t" + std::to_string(k) + "\t" + name + "\t" + std::to_string(r == run.bind.reads.end() ? 0 : r->second) + "\t" +
+                   std::to_string(c == run.bind.controls.end() ? 0 : c->second) + "\t" +
+                   std::to_string(run.bind.stateReads.count(static_cast<int>(k)) ? run.bind.stateReads[static_cast<int>(k)] : 0) + "\n";
+  }
+  run.bind = audit::Bindings{};
+}
+}  // namespace
+
 void thumbDraw(App& a) {
   run.drawn = false;
   if (!run.on || run.idx >= run.types.size()) return;
   const std::string& type = run.types[run.idx];
   const PluginInfo* info = findPlugin(type);
   if (!info) return;
+  if (run.crawling && !run.crawled) crawlStep(a);
   if (run.phase == 0) {
+    run.clicks.clear(), run.clickIds.clear();
     run.setup = false;
     a.settingsChannel = kNoId;
     a.fxEditor = {kNoId, -1};
-    if (info->kind == PluginKind::Generator) {
+    run.noteFx = info->kind == PluginKind::NoteFx;
+    if (run.noteFx) {
+      run.channel = a.addInstrument("gl.synth");
+      run.target = PluginTarget{run.channel, -1};
+      a.settingsChannel = kNoId;
+      run.setup = run.channel != kNoId && a.doc.addNoteFx(run.channel, type);
+    } else if (info->kind == PluginKind::Generator) {
       run.channel = a.addInstrument(type);
       run.target = PluginTarget{run.channel, -1};
       a.settingsChannel = kNoId;
@@ -186,9 +318,14 @@ void thumbDraw(App& a) {
   if (ImGui::Begin("##thumbgen", nullptr,
                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking)) {
     if (auditing) {
-      audit::begin();
-      drawPluginBody(a, run.target, width);
-      run.report = audit::end();
+      if (!run.noteFx) audit::begin();  // layout check: plugin editors only
+      if (run.factor == 0) audit::bindBegin();
+      run.collect = run.crawl && !run.crawling && run.factor == 0 && run.phase == 1;
+      if (run.collect) imhook::setItemHook(&onItem);
+      drawBody(a, width);
+      if (run.collect) imhook::setItemHook(nullptr), run.collect = false;
+      if (run.factor == 0) mergeBindings(audit::bindEnd());
+      run.report = run.noteFx ? audit::Report{} : audit::end();
       if (!run.report.issues.empty()) {  // outline what is too close to its panel's edge (contact sheet)
         ImDrawList* fg = ImGui::GetForegroundDrawList();
         for (const auto& is : run.report.issues) {
@@ -207,6 +344,7 @@ void thumbDraw(App& a) {
   }
   ImGui::End();
   ImGui::PopStyleVar(2);
+  if (auditing && run.factor == 0 && run.phase == 2) drawVariants(a, *info, width);
 }
 
 namespace {
@@ -262,14 +400,36 @@ void finishAudit() {
     std::fwrite(run.tsv.data(), 1, run.tsv.size(), f);
     std::fclose(f);
   }
+  if (FILE* f = std::fopen((dir / "param_bindings.tsv").string().c_str(), "wb")) {  // J-92
+    std::fwrite(run.bindTsv.data(), 1, run.bindTsv.size(), f);
+    std::fclose(f);
+  }
   auditIssues() = run.issueCount;
   std::fprintf(stderr, "layout audit: %zu editors, %d with issues at width x1, %d issues in all\n", run.types.size(), run.editorsWithIssues,
                run.issueCount);
 }
 }  // namespace
 
+namespace {
+void teardown(App& a) {
+  if (run.setup && run.channel != kNoId) a.doc.removeChannel(run.channel);
+  else if (run.setup) a.doc.setSlotPlugin(run.target.owner, run.target.slot, "");
+  run.setup = false;
+  a.syncEngine();
+  run.phase = 0;
+  ++run.idx;
+}
+}  // namespace
+
 bool thumbCapture(App& a, int fbW, int fbH) {
   if (!run.on) return true;
+  if (run.crawling) {  // --binding-crawl (see crawlStep)
+    if (!run.crawled) return true;
+    run.crawling = false;
+    writeBindings(run.types[run.idx]);
+    teardown(a);
+    return true;
+  }
   if (run.idx >= run.types.size()) {
     if (!run.auditDir.empty()) finishAudit();
     else std::fprintf(stderr, "thumbnails: %d written\n", run.written);
@@ -291,6 +451,7 @@ bool thumbCapture(App& a, int fbW, int fbH) {
       run.tsv += line;
     }
     run.issueCount += static_cast<int>(r.issues.size());
+    if (run.factor == 0 && !run.crawl) writeBindings(type);
     if (run.factor == 0) {
       if (!r.issues.empty()) ++run.editorsWithIssues;
       png::Image img;
@@ -301,12 +462,12 @@ bool thumbCapture(App& a, int fbW, int fbH) {
       return true;
     }
     run.factor = 0;
-    if (run.setup && run.channel != kNoId) a.doc.removeChannel(run.channel);
-    else if (run.setup) a.doc.setSlotPlugin(run.target.owner, run.target.slot, "");
-    run.setup = false;
-    a.syncEngine();
-    run.phase = 0;
-    ++run.idx;
+    if (run.crawl && run.setup) {  // the widths are done: click through the editor (x1)
+      run.crawling = true, run.crawled = false, run.crawlIdx = 0, run.crawlStep = 0;
+      return true;
+    }
+    if (run.crawl) writeBindings(type);
+    teardown(a);
     return true;
   }
   if (run.phase >= 4) {

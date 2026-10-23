@@ -106,7 +106,7 @@ const char* pocketParamName(int type, int index) {
 }
 
 void appendPocketInfo(std::vector<PluginInfo>& v) {
-  PluginInfo p{"gl.pocketrack", "Pocket Rack", "Multi FX", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.pocketrack", "Pocket FX", "Multi FX", PluginKind::Effect, {}, false, {}};
   p.params.resize(PkCount);
   std::vector<std::string> names;
   for (int t = 0; t < kPkTypes; ++t) {

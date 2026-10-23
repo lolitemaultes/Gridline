@@ -174,6 +174,8 @@ class AlloyGen final : public Generator {
                   std::clamp(0.5f * p_[AlRvRoom] / 100.0f + 0.5f * p_[AlRvDecay] / 200.0f, 0.0f, 1.0f));
     fx_.setKinds(std::clamp(static_cast<int>(p_[AlChOrder]) - 1, 0, 8), static_cast<int>(p_[AlDlMode]) % 2 == 1 ? 1 : 0,
                  std::clamp(static_cast<int>(p_[AlRvColor]), 0, 4), tempo_);
+    // J-92: chorus speed / depth / delay were never read (neutral at their defaults 768 / 512 / 8).
+    fx_.scaleChorus(static_cast<float>(std::exp2((p_[AlChSpeed] - 768.0f) / 256.0f)), p_[AlChDepth] / 512.0f, (p_[AlChDelay] + 1.0f) / 9.0f);
     // Mix EQ.
     for (int k = 0; k < 3; ++k) {
       const double hz = 20.0 * std::pow(1000.0, std::clamp(p_[AlEqFreq1 + k] / 65536.0, 0.0, 1.0));

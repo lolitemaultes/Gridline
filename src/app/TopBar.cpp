@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -21,6 +22,8 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Automation.h"
+#include "../core/Motion.h"
+#include "SmoothScrollUi.h"
 #include "App.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -127,6 +130,30 @@ void patternList(App& a) {
 }  // namespace
 
 // ------------------------------------------------------------ top bar ----
+
+namespace {
+struct DevRect {
+  const char* name;
+  ImVec2 a, b;
+  int frame = -1;
+};
+DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}};
+float gMetroMirror = 1.0f;
+void noteRect(const char* name) {  // the last item's rectangle
+  for (DevRect& r : gDevRects)
+    if (std::strcmp(r.name, name) == 0) r.a = ImGui::GetItemRectMin(), r.b = ImGui::GetItemRectMax(), r.frame = ImGui::GetFrameCount();
+}
+}  // namespace
+
+bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1) {
+  for (const DevRect& r : gDevRects)
+    if (std::strcmp(r.name, name) == 0 && r.frame >= ImGui::GetFrameCount() - 1) {
+      x0 = r.a.x, y0 = r.a.y, x1 = r.b.x, y1 = r.b.y;
+      return true;
+    }
+  return false;
+}
+float topBarMetronomeMirror() { return gMetroMirror; }
 
 float drawTopBar(App& a) {
   const auto& P = pal();
@@ -292,9 +319,11 @@ float drawTopBar(App& a) {
     cx += segW * 3 + 4 + theme::kS2;
     bool playing = a.engine.playing();
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    // J-91: the transport acts when the button goes down (a quick tap or a press that slides off still counts).
     if (ui::IconButton("play", playing ? ui::Icon::Pause : ui::Icon::Play, playing, kBtn, "Play / pause (Space)",
-                       theme::rgb(theme::role::kPlay), theme::rgb(theme::role::kPlay, 0.8f)))
+                       theme::rgb(theme::role::kPlay), theme::rgb(theme::role::kPlay, 0.8f), true))
       playing ? a.engine.pause() : a.startPlayback();
+    noteRect("play");
     if (ImGui::BeginPopupContextItem("##playmenu")) {
       actionLinkMenuItems(a, RemoteAction::PlayPause);
       ImGui::EndPopup();
@@ -307,8 +336,9 @@ float drawTopBar(App& a) {
     cx += kBtn + kInner;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
     menuparity::transportTick(a);  // J-27: where playback starts (stop can return there)
-    if (ui::IconButton("stop", ui::Icon::Stop, false, kBtn, "Stop and return to the set song position (right-click: options)"))
+    if (ui::IconButton("stop", ui::Icon::Stop, false, kBtn, "Stop and return to the set song position (right-click: options)", 0, 0, true))
       menuparity::stopPressed(a);
+    noteRect("stop");
     if (ImGui::BeginPopupContextItem("##stopmenu")) {
       menuparity::stopMenuItems(a);
       ImGui::Separator();
@@ -319,8 +349,9 @@ float drawTopBar(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
     if (ui::IconButton("rec", ui::Icon::Record, a.recordArmed, kBtn,
                        "Record: notes, controller moves and armed mixer inputs (right-click: what to record, punch, count-in)", P.danger,
-                       theme::withAlpha(P.danger, 0.7f)))
+                       theme::withAlpha(P.danger, 0.7f), true))
       a.recordArmed = !a.recordArmed;
+    noteRect("rec");
     if (ImGui::BeginPopupContextItem("##recmenu")) {
       recordOptionsMenu(a);
       ImGui::EndPopup();
@@ -483,7 +514,13 @@ float drawTopBar(App& a) {
     ImGui::EndGroup();
     float cx = rx + kPanelPad + 26 + kInner + 26 + theme::kS2;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
-    if (ui::ToggleIcon("metro", ui::Icon::Metronome, a.metronome, kBtn, "Metronome (Ctrl+M)")) a.metronome = !a.metronome;
+    // J-91: while it clicks, the metronome swings over on every beat (Interface animations).
+    const bool swinging = a.metronome && a.engine.playing() && !a.engine.countingIn() && scrollui::animations();
+    const double beatTicks = static_cast<double>(std::max<Tick>(1, s.beatTicks()));  // the metronome's beat (time signature)
+    const float mirror = static_cast<float>(motion::metronomeSwing(a.engine.position() / beatTicks, s.tempo * s.ppq / beatTicks, swinging));
+    if (ui::ToggleIcon("metro", ui::Icon::Metronome, a.metronome, kBtn, "Metronome (Ctrl+M)", mirror)) a.metronome = !a.metronome;
+    noteRect("metro");
+    gMetroMirror = mirror;
     if (ImGui::BeginPopupContextItem("##metromenu")) {
       actionLinkMenuItems(a, RemoteAction::Metronome);
       ImGui::EndPopup();

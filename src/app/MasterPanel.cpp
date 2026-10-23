@@ -81,7 +81,7 @@ void drawMasterPanel(App& a) {
     }
     ImGui::SameLine(0, theme::kS3);
     if (!has) {
-      if (ui::TextButton("Add to master", true, 0, "Put the chain (EQ, compressor, stereo shaper, limiter, meter) on the master track")) {
+      if (ui::TextButton("Add to master", true, 0, "Put the chain (EQ, compressor, stereo width, limiter, meter) on the master track")) {
         std::string why;
         if (!mastering::installMasterChain(a.doc, ps[static_cast<size_t>(preset)].macros, &why)) a.notify(why, true);
       }

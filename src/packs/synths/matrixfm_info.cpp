@@ -60,7 +60,7 @@ using Values = std::vector<std::pair<int, float>>;
 }  // namespace
 
 PluginInfo matrixFmInfo() {
-  PluginInfo p{"gl.matrixfm", "Matrix FM", "Synth", PluginKind::Generator, {}, false, {}};
+  PluginInfo p{"gl.matrixfm", "Lattice", "Synth", PluginKind::Generator, {}, false, {}};
   auto& q = p.params;
   q.resize(kParamCountAll);
   for (int i = 0; i < kParamCount; ++i) q[static_cast<size_t>(i)] = lin("Reserved", "", 0, 1, 0);

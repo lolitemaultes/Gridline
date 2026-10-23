@@ -1392,6 +1392,14 @@ class MidiOutGen final : public Generator {
       out_->push(static_cast<uint8_t>(0xC0 | ch_), static_cast<uint8_t>(prog - 1), 0);
     }
     prog_ = prog, msb_ = msb, lsb_ = lsb;
+    // J-92: the pitch bend range reaches the receiver as RPN 0 (it was never sent).
+    const int range = std::clamp(static_cast<int>(std::lround(param(s, MoBendRange, 2))), 0, 127);
+    if (range != bendRange_ && out_) {
+      const uint8_t cc = static_cast<uint8_t>(0xB0 | ch_);
+      out_->push(cc, 101, 0), out_->push(cc, 100, 0), out_->push(cc, 6, static_cast<uint8_t>(range)), out_->push(cc, 38, 0);
+      out_->push(cc, 101, 127), out_->push(cc, 100, 127);  // RPN null
+    }
+    bendRange_ = range;
     velScale_ = param(s, MoVelocity, 1);
     velCurve_ = static_cast<int>(param(s, MoVelCurve) + 0.5f);
     // Controller knobs: send when the value changes.
@@ -1459,6 +1467,11 @@ class MidiOutGen final : public Generator {
     if (out_) out_->push(static_cast<uint8_t>(0xB0 | ch_), 123, 0);
   }
   void render(float*, float*, int) override {}
+  // J-92: pitch bend and channel pressure from the keyboard go out on this channel.
+  void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
+    const uint8_t kind = status & 0xF0;
+    if (out_ && (kind == 0xE0 || kind == 0xD0)) out_->push(static_cast<uint8_t>(kind | ch_), d1, d2);
+  }
 
  private:
   struct Held {
@@ -1467,6 +1480,7 @@ class MidiOutGen final : public Generator {
     int vel = 100;
   };
   std::array<Held, 128> held_{};
+  int bendRange_ = 2;  // the receiver's default (General MIDI): announced only when it differs
   MidiOutRing* out_ = nullptr;
   MidiPortBus* bus_ = nullptr;
   int port_ = 0;

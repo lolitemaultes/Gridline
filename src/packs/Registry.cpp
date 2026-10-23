@@ -12,8 +12,9 @@ GL_DECLARE_PACK(utility)
 GL_DECLARE_PACK(creative)
 GL_DECLARE_PACK(edison)
 GL_DECLARE_PACK(flexpack)
+GL_DECLARE_PACK(tideline)
 
-#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack)
+#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack) X(tideline)
 
 namespace gl::packs {
 

@@ -13,6 +13,7 @@
 #include "Mcp.h"
 #include "MidiFile.h"
 #include "Params.h"
+#include "PluginBrand.h"
 #include "PluginInfo.h"
 #include "Presets.h"
 #include "Project.h"
@@ -484,7 +485,8 @@ Json pluginCatalogJson(const std::string& kind, const std::string& query, bool w
     if (!kind.empty() && kind != kindName(p.kind)) return;
     if (!query.empty()) {
       const std::string q = key(query);
-      if (key(p.name).find(q) == std::string::npos && key(p.type).find(q) == std::string::npos && key(p.category).find(q) == std::string::npos)
+      if (key(p.name).find(q) == std::string::npos && key(p.type).find(q) == std::string::npos && key(p.category).find(q) == std::string::npos &&
+          key(pluginKeywords(p.type)).find(q) == std::string::npos)
         return;
     }
     Json j = jobj({{"type", jstr(p.type)},
@@ -493,6 +495,8 @@ Json pluginCatalogJson(const std::string& kind, const std::string& query, bool w
                    {"kind", jstr(kindName(p.kind))},
                    {"parameters", jnum(static_cast<double>(p.params.size()))}});
     if (p.usesSample) j.object["usesSample"] = jbool(true);
+    if (const std::string tl = pluginTagline(p.type); !tl.empty()) j.object["tagline"] = jstr(tl);
+    if (const std::string kw = pluginKeywords(p.type); !kw.empty()) j.object["keywords"] = jstr(kw);
     Json pr = Json::makeArray();
     for (const auto& x : p.presets) pr.array.push_back(jstr(x.name));
     j.object["presets"] = pr;
@@ -1488,9 +1492,10 @@ std::vector<Tool> buildTools() {
   add("get_markers", "read markers", "Song markers: position in beats, name, time signature changes and actions.", noArgs, true, tGetMarkers);
   add("list_plugin_catalog", "list plugins",
       "Built-in instruments, effects and note processors (and scanned third-party plugins): type id, name, category, parameter "
-      "count and factory presets. Use the type id with add_channel, edit_channel and add_plugin.",
+      "count, factory presets, and for flagships (Lattice, Shuttle, Kerf, ...) a tagline; search keywords keep former names "
+      "(\"time gate\", \"matrix fm\") findable. Use the type id with add_channel, edit_channel and add_plugin.",
       objSchema({{"kind", enumP("Only this kind", {"instrument", "effect", "note_fx"})},
-                 {"query", strP("Only plugins whose name, type or category contains this text", 128)},
+                 {"query", strP("Only plugins whose name, type, category or search keywords contain this text", 128)},
                  {"includeParams", boolP("Also list every parameter (large without a query)")}}),
       true, tCatalog);
   add("list_presets", "list presets", "Factory presets and the user's saved presets for a plugin type.",

@@ -143,7 +143,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   }
   // --------------------------------------------------- Formula Controller
   {
-    PluginInfo p = make("gl.formulactl", "Formula Controller", "Controller", E);
+    PluginInfo p = make("gl.formulactl", "Formula Mod", "Controller", E);
     p.params.resize(FmCount);
     p.params[FmA] = lin("a", "%", 0, 1, 0.5);
     p.params[FmB] = lin("b", "%", 0, 1, 0.5);
@@ -157,7 +157,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   }
   // -------------------------------------------------- Envelope Controller
   {
-    PluginInfo p = make("gl.envctl", "Envelope Controller", "Controller", G);
+    PluginInfo p = make("gl.envctl", "Envelope Mod", "Controller", G);
     p.params.resize(EcCount);
     for (int a = 0; a < kEnvArts; ++a) {
       std::string pre = std::string("Env ") + static_cast<char>('A' + a) + " ";
@@ -219,7 +219,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   }
   // -------------------------------------------------- Keyboard Controller
   {
-    PluginInfo p = make("gl.keyctl", "Keyboard Controller", "Controller", G);
+    PluginInfo p = make("gl.keyctl", "Keyboard Mod", "Controller", G);
     p.params.resize(KcCount);
     p.params[KcAttack] = lg("Attack", "s", 0.001, 2, 0.01);
     p.params[KcRelease] = lg("Release", "s", 0.001, 2, 0.05);
@@ -261,7 +261,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   }
   // ------------------------------------------------------ Control Surface
   {
-    PluginInfo p = make("gl.surface", "Control Surface", "Controller", E);
+    PluginInfo p = make("gl.surface", "Control Deck", "Controller", E);
     p.params.resize(SfCountV2);
     for (int k = 0; k < kSurfaceMax; ++k) {
       p.params[surfaceParam(k)] = lin("Control " + std::to_string(k + 1), "%", 0, 1, 0);
@@ -349,7 +349,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   }
   // ---------------------------------------------------------- Key Mapper
   {
-    PluginInfo p = make("gl.keymap", "Key Mapper", "Note FX", N);
+    PluginInfo p = make("gl.keymap", "Key Remap", "Note FX", N);
     p.params.resize(KmCount);
     for (int k = 0; k < 12; ++k) p.params[KmMap + k] = lin(std::string(kNoteNames[k]) + " offset", "", -13, 12, 0);
     std::vector<std::string> notes(kNoteNames, kNoteNames + 12);
@@ -373,7 +373,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   }
   // -------------------------------------------------------- Key Splitter
   {
-    PluginInfo p = make("gl.split", "Key Splitter", "Note FX", N);
+    PluginInfo p = make("gl.split", "Key Zones", "Note FX", N);
     p.params.resize(SpCount);
     static const float lows[kSplitZones] = {0, 60, 0, 0}, highs[kSplitZones] = {59, 127, 127, 127};
     for (int z = 0; z < kSplitZones; ++z) {
@@ -397,7 +397,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   }
   // -------------------------------------------------------- Level Scaler
   {
-    PluginInfo p = make("gl.velscale", "Level Scaler", "Note FX", N);
+    PluginInfo p = make("gl.velscale", "Velocity Scale", "Note FX", N);
     p.params.resize(VsCount);
     p.params[VsTarget] = ch("Target", {"Velocity", "Fine pitch"}, 0);
     p.params[VsCenter] = lin("Centre", "%", 0, 1, 0);
@@ -462,7 +462,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
 
   // ----------------------------------------------------------- Patch Host
   for (int fx = 0; fx < 2; ++fx) {
-    PluginInfo p = make(fx ? "gl.patcherfx" : "gl.patcher", fx ? "Patch Host FX" : "Patch Host", "Utility", fx ? E : G);
+    PluginInfo p = make(fx ? "gl.patcherfx" : "gl.patcher", fx ? "Junction FX" : "Junction", "Utility", fx ? E : G);
     p.params.resize(PhCountV2);
     for (int k = 0; k < kMacros; ++k) p.params[k] = lin("Macro " + std::to_string(k + 1), "%", 0, 1, 0.5);
     p.params[PhMix] = lin("Mix", "%", 0, 1, 1);

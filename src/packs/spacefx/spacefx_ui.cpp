@@ -902,11 +902,32 @@ void bdGraph(App& a, const PluginTarget& t, const PluginState& st, BdUi& u, floa
   float bw = gw / kBdPoints * 0.36f;
   const float* cur = c.v[u.bank][u.target];
   const float* other = c.v[1 - u.bank][u.target];
+  // J-93: shaded bars (bright cap, fading body); the bar under the mouse lights up with a readout.
+  const ImVec2 mouse = ImGui::GetIO().MousePos;
+  const bool overGraph = ImGui::IsItemHovered() && mouse.x >= gx0 && mouse.x <= gx1;
+  int hotBar = -1;
+  if (overGraph) {
+    double f = pui::xToFreq(mouse.x, gx0, gw);
+    hotBar = std::clamp(static_cast<int>(std::lround(std::log(f / 20.0) / std::log(1000.0) * (kBdPoints - 1))), 0, kBdPoints - 1);
+  }
   for (int i = 0; i < kBdPoints; ++i) {
     float x = xOf(i), y = bot - cur[i] * gh;
     float y0 = u.target == BtPan ? bot - 0.5f * gh : bot;
-    dl->AddRectFilled(ImVec2(x - bw, std::min(y, y0)), ImVec2(x + bw, std::max(y, y0) + 1), theme::withAlpha(P.text, 0.7f), 2);
-    dl->AddLine(ImVec2(x - bw, y), ImVec2(x + bw, y), P.paper, 2);
+    const bool hot = i == hotBar;
+    const ImU32 body = hot ? P.accent : P.text;
+    skin::gradientRect(dl, ImVec2(x - bw, std::min(y, y0)), ImVec2(x + bw, std::max(y, y0) + 1), theme::withAlpha(body, hot ? 0.75f : 0.58f),
+                       theme::withAlpha(body, hot ? 0.45f : 0.22f), 2);
+    dl->AddLine(ImVec2(x - bw, y), ImVec2(x + bw, y), hot ? theme::mix(P.accent, P.paper, 0.4f) : P.paper, 2);
+  }
+  if (hotBar >= 0) {
+    char b[48];
+    const double hz = bandPointHz(hotBar);
+    const std::string v = label(cur[hotBar]);
+    if (hz >= 1000) std::snprintf(b, sizeof b, "%.1f kHz  %s", hz / 1000.0, v.c_str());
+    else std::snprintf(b, sizeof b, "%.0f Hz  %s", hz, v.c_str());
+    const float bx = std::min(xOf(hotBar) + bw + 6, gx1 - 110), by = std::max(top + 14, bot - cur[hotBar] * gh - 18);
+    dl->AddRectFilled(ImVec2(bx - 4, by - 2), ImVec2(bx + 104, by + 14), theme::withAlpha(P.surface950, 0.9f), 3);
+    smallText(a, dl, ImVec2(bx, by), P.text, b);
   }
   std::vector<ImVec2> ol, mix;
   double morph = val(st, BdMorph);

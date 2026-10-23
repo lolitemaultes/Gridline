@@ -3,6 +3,113 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` in `CMakeLists.txt`; the
 release workflow publishes the section of the tagged version as the release notes.
 
+## Unreleased
+
+### Fixes from issue #1
+
+- Linux and BSD: the automatic interface scale now follows the desktop's scale setting (Xft.dpi,
+  GDK_SCALE, Qt and Wayland scaling) instead of the panel's physical pixel density, so a 1920x1080
+  laptop at 100% opens at 100%. A new option, Settings > Interface "Follow the system's display
+  scale", can be turned off to set the size yourself.
+- Auto Pan: the pad's live dot used the wrong volume scale and could sit outside the pad. The dot and
+  the setting ring now share one mapping, stay inside the pad and follow the pointer. The X-Y Pad
+  output dot is clamped the same way.
+- Floating windows dragged against the top no longer leave an empty band above their content.
+- Linux: Space, F1 to F12 and Ctrl/Alt shortcuts reach Gridline while a hosted plugin's own window
+  has focus. Windows uses the same rule.
+- The play, stop and record buttons act on press.
+- The metronome icon swings on every beat while the metronome is on and the song plays. A new
+  "Interface animations" switch (Settings > Interface > Motion) turns decorative animations off and
+  follows the system's reduced motion setting.
+
+### Plugin editors
+
+- One shared knob renderer for every built-in editor: anti-aliased rings, hover glow, shaded caps.
+- Refined section headers, recessed value fields, gradient graph fills and hover readouts on the
+  filter, maximizer, band delay and envelope editors.
+- Shuttle: time and volume colour coding, cleaner slot cells and a readout while dragging a point.
+
+### Every parameter checked
+
+- New `gridline param-audit` command and test: every parameter of every built-in plugin is checked
+  for an audible effect, engine use, editor wiring, automation and save/load.
+- Bitcrusher: Downsample now defaults to 1, so the Bits control is audible all the way to 24 bits
+  (the old /4 default masked every depth above about 6). The 8-bit preset keeps its /4.
+- Fixed crashes or runaway output in Crest, Enhance, Lattice ring-mod loops, Octa Filter ALT
+  resonance, and Isoline when an oscillator was switched on during playback.
+- Wired parameters the engines ignored: pitch bend range (Hybrid, DCO and Hex synths), Hex Synth
+  modulation sources, Pocket Synth mod wheel, MIDI Out bend range and pass-through, Spectra Morph
+  chorus rate, Grain Scanner volume and transient hold, Kerf minimum slice gap, Pitch Shifter Hi-fi
+  tempo sync, Alloy and Halftone chorus, Pixel Tone rows, Pedal Rack boost and more.
+- Saw Swarm and Twin VA glide fixes; Note Sequencer ties hold their note.
+- Missing editor controls added (Facet fine tune, Folio program controls); percentage readouts that
+  showed values like "10000%" fixed.
+
+### Plugins renamed
+
+Gridline's built-in plugins now follow one naming system. Flagships carry their own one-word
+names, a family accent and a wordmark in their editor's title bar; everyday studio tools keep
+plain descriptive names (Compressor, Parametric EQ, Arpeggiator). Type ids (`gl.*`) are unchanged,
+so projects, presets, scripts and FL Studio imports keep working; former names stay searchable in
+the plugin picker, the browser and the MCP catalogue (`list_plugin_catalog`), except where a former
+name was also the name of an FL Studio plugin. Existing projects keep the channel names they
+were saved with.
+
+| Before | Now | Type | Tagline |
+|---|---|---|---|
+| Trio Synth | **Tercet** | `gl.synth` | Three oscillators, one clean line. |
+| Drum Pads | **Abacus** | `gl.pads` | Sixteen pads, counted out on a grid. |
+| Slicer | **Kerf** | `gl.slicer` | Cuts loops into slices along the beat. |
+| Wavetable | **Isoline** | `gl.wavetable` | Wavetables scanned like contour lines. |
+| Matrix FM | **Lattice** | `gl.matrixfm` | Six FM operators wired through one modulation grid. |
+| Wave Program | **Folio** | `gl.waveprogram` | Zones, layers and loops bound into one instrument. |
+| Additive | **Facet** | `gl.additive` | Additive synthesis, one harmonic facet at a time. |
+| Resynth | **Halftone** | `gl.harmor` | Resynthesis that prints sound as fields of partials. |
+| Patch Host | **Junction** | `gl.patcher` | Patch plugins together into one instrument. |
+| Patch Host FX | **Junction FX** | `gl.patcherfx` | Patch plugins together into one effect. |
+| Delay | **Tracer** | `gl.delay` | Echoes that trace the beat, from tape to digital. |
+| Hall | **Cloister** | `gl.hall` | Long algorithmic halls with a quiet floor. |
+| Time Gate | **Shuttle** | `gl.timegate` | Redraws time and volume on the grid. |
+| Mastering Dynamics | **Crest** | `gl.master` | Multiband loudness for the master. |
+| Vocoder | **Cipher** | `gl.vocoder` | Speaks any sound through a voice. |
+| Pitch Corrector | **Plumb** | `gl.pitcher` | Pulls every note true to the scale. |
+| Scope | **Graticule** | `gl.scope` | Scope, spectrum and phase on one measured screen. |
+| Audio Editor | **Loupe** | `gl.edison` | The close-up audio editor: waveform, spectrum, markers. |
+| Analog | **Analog Synth** | `gl.analog` | tool |
+| Groove Synth | **Hybrid Synth** | `gl.gms` | tool |
+| Plucker | **Pluck Model** | `gl.plucker` | tool |
+| Envelope Controller | **Envelope Mod** | `gl.envctl` | tool |
+| Keyboard Controller | **Keyboard Mod** | `gl.keyctl` | tool |
+| Formula Controller | **Formula Mod** | `gl.formulactl` | tool |
+| Control Surface | **Control Deck** | `gl.surface` | tool |
+| Soft Clipper | **Clipper** | `gl.clipper` | tool |
+| Stereo Shaper | **Stereo Width** | `gl.stereo` | tool |
+| Low Lifter | **Sub Focus** | `gl.lowlift` | tool |
+| Scratcher | **Turntable** | `gl.scratcher` | tool |
+| Spreader | **Stereo Spread** | `gl.spread` | tool |
+| Hit Looper | **Hit Repeater** | `gl.hitloop` | tool |
+| Amp Rack | **Pedal Rack** | `gl.amprack` | tool |
+| Squeeze | **Pinch** | `gl.squeeze` | tool |
+| Pocket Rack | **Pocket FX** | `gl.pocketrack` | tool |
+| Key Mapper | **Key Remap** | `gl.keymap` | tool |
+| Key Splitter | **Key Zones** | `gl.split` | tool |
+| Level Scaler | **Velocity Scale** | `gl.velscale` | tool |
+| Free Filter | **Biquad Filter** | `gl.freefilter` | tool |
+| Spline Scratcher | **Spline Scratch** | `gl.splinescratch` | tool |
+
+- Editor title strips and the audio editor's window take their titles from the catalogue.
+- The FL Studio import report lists every plugin as "FL plugin → Gridline plugin"; the export
+  report names the Gridline side by its display name and type.
+
+### New plugin
+
+- New effect: Tideline (`gl.tideline`, Dynamics). It is a rhythmic volume ducker with one big Amount
+  dial, 16 pump, sub, trim, reverse and rhythm curves plus a drawable curve, and rates from 1/16
+  to 2 bars (triplet and dotted included). It can follow the tempo or be triggered by audio (track
+  sidechain) or MIDI, in loop or one-shot mode with an end marker. Duration and shift are
+  adjustable, it can duck only the lows or highs, or only the mid or side, and it adds no latency.
+  It exports to FL Studio as a Gross Beat volume envelope. See `docs/plugins/tideline.md`.
+
 ## 0.6.0
 
 ### Pitch and time stretching

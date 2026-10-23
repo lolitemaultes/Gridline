@@ -5,6 +5,7 @@
 // (mode switch, response, rails), filter / amp / mod envelopes and the two
 // LFOs; then voice / glide, arpeggiator, modulation matrix, unison and the
 // effects block along the bottom. Every control is the shared skin kit's.
+#include "../../core/PluginBrand.h"
 #include "../flc_kit.h"
 #include "synths_widgets.h"
 
@@ -112,7 +113,7 @@ void drawAnalogEditor(App& a, const PluginTarget& t, float W) {
   flk::Ctx c{a, t, F, K, dl};
 
   // ---- top strip: name, velocity, master, scope
-  skin::text(dl, F.p(12, 14), K.accent2C(), "ANALOG", F.font(13));
+  skin::text(dl, F.p(12, 14), K.accent2C(), pluginTitle("gl.analog").c_str(), F.font(13));
   flk::text(c, 112, 18, "VELOCITY");
   flk::wheel(c, AnVelAmp, 180, 6, 26, "> Vol");
   flk::wheel(c, AnVelFilter, 222, 6, 26, "> Cut");

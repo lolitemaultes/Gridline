@@ -5,6 +5,7 @@
 // stacked-frame displays and sub / noise, the dual filter with both
 // responses, paged envelope and LFO editors, the modulation matrix and the
 // effects block.
+#include "../../core/PluginBrand.h"
 #include "../flc_kit.h"
 #include "synths_widgets.h"
 
@@ -158,7 +159,7 @@ void drawWavetableEditor(App& a, const PluginTarget& t, float W) {
   flk::Ctx c{a, t, F, K, dl};
 
   // ---- top strip: name, voice, master, macros, scope
-  skin::text(dl, F.p(12, 14), K.select, "WAVETABLE", F.font(13));
+  skin::text(dl, F.p(12, 14), K.select, pluginTitle("gl.wavetable").c_str(), F.font(13));
   static const char* modes[3] = {"POLY", "MONO", "LEGATO"};
   flk::sw(c, WtPlayMode, 120, 14, 150, 18, modes, 3, true);
   flk::text(c, 282, 8, "VOICES");

@@ -7,7 +7,9 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include "XyPadMath.h"
 #include "../core/I18n.h"
+#include "../core/PluginBrand.h"
 #include "../engine/Dsp.h"
 #include "../engine/Effects.h"
 #include "../engine/Program.h"
@@ -328,7 +330,7 @@ void editorPanOMatic(App& a, const PluginTarget& t, float width) {
     dl->AddRectFilled(l0, ImVec2(l0.x + led, l0.y + led), sync ? pal.fill : pal.well, v.px(1.5f));
     sk::textAt(dl, ImVec2(l0.x + led + v.px(2), p0.y), p1, sync ? pal.text : pal.textDim, "SYNC", std::clamp(v.px(6.5f), 8.f, 11.f), -1);
   }
-  {  // pan x volume pad: drag sets both static values; the moving dot shows the LFO
+  {  // pan x volume pad: drag sets both static values (the ring); the dot is where the LFO has them now
     const sk::FormCtl& c = v.c("GridSelect");
     ImVec2 p0 = v.p0(c), p1 = v.p1(c);
     dl->AddRectFilled(p0, p1, sk::col(0x2A2E3A), v.px(3));
@@ -338,27 +340,34 @@ void editorPanOMatic(App& a, const PluginTarget& t, float width) {
       dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), gc);
       dl->AddLine(ImVec2(p0.x, y), ImVec2(p1.x, y), gc);
     }
-    const float vmax = 1.25f;
+    // J-91: one mapping for drawing and dragging (app/XyPadMath.h): pan -1..1 across, volume 0..1.25
+    // (the knob's scale) up; the handles stay inside the pad and under the pointer.
+    const float vmax = 1.25f, ring = v.px(5), inset = ring + std::max(1.f, v.px(1.2f));
+    const xypad::Rect pr{p0.x, p0.y, p1.x, p1.y};
     auto toScr = [&](double pan, double vol) {
-      return ImVec2(p0.x + static_cast<float>((pan + 1) * 0.5) * (p1.x - p0.x), p1.y - static_cast<float>(vol / vmax) * (p1.y - p0.y));
+      ImVec2 q;
+      xypad::toScreen(pr, static_cast<float>((pan + 1) * 0.5), static_cast<float>(vol / vmax), inset, q.x, q.y);
+      return q;
     };
     ImGui::SetCursorScreenPos(p0);
     ImGui::PushID("pad");
     ImGui::InvisibleButton("##pad", ImVec2(p1.x - p0.x, p1.y - p0.y));
     if (ImGui::IsItemActive()) {
-      ImVec2 m = ImGui::GetIO().MousePos;
-      double pan = std::clamp((m.x - p0.x) / (p1.x - p0.x) * 2 - 1, -1.f, 1.f), vol = std::clamp((p1.y - m.y) / (p1.y - p0.y), 0.f, 1.f) * vmax;
-      a.doc.setParam(t.pid(ApStaticPan), pan, true);
-      a.doc.setParam(t.pid(ApStaticVol), vol, true);
+      const ImVec2 m = ImGui::GetIO().MousePos;
+      float nx = 0, ny = 0;
+      xypad::fromScreen(pr, m.x, m.y, inset, nx, ny);
+      a.doc.setParam(t.pid(ApStaticPan), nx * 2.0 - 1.0, true);
+      a.doc.setParam(t.pid(ApStaticVol), ny * vmax, true);
     }
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
-    if (ImGui::IsItemHovered()) a.setHint("Drag: panning (left / right) and volume (up / down)");
+    if (ImGui::IsItemHovered()) a.setHint("Drag: panning (left / right) and volume (up / down). Ring: your setting; dot: where the LFO moves it now");
     ImGui::PopID();
-    ImVec2 sp = toScr(ed::val(st, ApStaticPan), ed::val(st, ApStaticVol, 1));
-    dl->AddCircle(sp, v.px(5), pal.text, 16, std::max(1.f, v.px(1.2f)));
-    float live[2] = {static_cast<float>(ed::val(st, ApStaticPan)), static_cast<float>(ed::val(st, ApStaticVol, 1))};
+    const PluginState now = *t.state(a.doc.song());  // this frame's values (the drag above may have moved them)
+    const double sPan = ed::val(now, ApStaticPan), sVol = ed::val(now, ApStaticVol, 1);
+    float live[2] = {static_cast<float>(sPan), static_cast<float>(sVol)};
     if (!t.isChannel())
       if (auto rt = a.builder.effectRuntime(t.owner, t.slot)) live[0] = rt->bands[0].load(), live[1] = rt->bands[1].load();
+    dl->AddCircle(toScr(sPan, sVol), ring, pal.text, 16, std::max(1.f, v.px(1.2f)));
     dl->AddCircleFilled(toScr(live[0], live[1]), v.px(4), pal.fill, 16);
   }
   sk::end(v);
@@ -369,6 +378,7 @@ void editorFastDist(App& a, const PluginTarget& t, float width) {
   namespace dy = packs::dynamics;
   const PluginState st = *t.state(a.doc.song());
   sk::Palette pal = sk::paletteFrom(fm::kFastdist);
+  pal.panel = sk::darken(pal.panel, 0.38f);  // J-93: deeper reference grey so the white captions read
   pal.text = IM_COL32(0xEE, 0xF0, 0xF2, 255);
   pal.fill = IM_COL32(0xFF, 0xFF, 0xFF, 255);
   sk::View v = sk::begin(fm::kFastdist, width, 2.6f, pal);
@@ -387,8 +397,8 @@ void editorFastDist(App& a, const PluginTarget& t, float width) {
     const sk::FormCtl& c = v.c(k.ctl);
     sk::textAt(dl, v.p(static_cast<float>(c.x - 4), 70), v.p(static_cast<float>(c.x + c.w + 4), 84), pal.text, k.label, std::clamp(v.px(8.f), 9.f, 13.f));
     std::string val = fmtParam(a, t, k.param);
-    sk::textAt(dl, v.p(static_cast<float>(c.x - 6), 86), v.p(static_cast<float>(c.x + c.w + 6), 98), theme::withAlpha(pal.text, 0.6f), val.c_str(),
-               std::clamp(v.px(6.5f), 8.f, 11.f), 0, true);
+    sk::textAt(dl, v.p(static_cast<float>(c.x - 6), 86), v.p(static_cast<float>(c.x + c.w + 6), 98), theme::withAlpha(pal.text, 0.78f), val.c_str(),
+               std::clamp(v.px(7.5f), 9.f, 13.f), 0, true);
   }
   {  // mode A / B
     int type = ed::ival(st, dy::FdType);
@@ -399,7 +409,11 @@ void editorFastDist(App& a, const PluginTarget& t, float width) {
   if (classic) {  // visual: transfer curve, input 0..1 → output (pre, drive, mix, post applied)
     const sk::FormCtl& c = v.c("Visual");
     ImVec2 p0 = v.p0(c), p1 = v.p1(c);
-    dl->AddRectFilled(p0, p1, sk::col(0x1B1A1E));
+    sk::Skin gk0 = pal;
+    gk0.graphBg = sk::col(0x1B1A1E), gk0.graphGrid = IM_COL32(255, 255, 255, 14), gk0.graphGridStrong = IM_COL32(255, 255, 255, 34);
+    sk::graphWell(dl, p0, p1, gk0);
+    sk::graphGrid(dl, p0, p1, gk0, 4, 4);
+    dl->AddLine(ImVec2(p0.x, p1.y), ImVec2(p1.x, p0.y), IM_COL32(255, 255, 255, 30), 1.0f);  // unity reference
     auto gk = [](double x) { return x == 1.0 ? 1.0 : 0.1 * (std::pow(11.0, x) - 1.0); };
     double pre = gk(ed::val(st, dy::FdPreK, 1)), post = gk(ed::val(st, dy::FdPostK, 1)), wet = gk(ed::val(st, dy::FdMixK, 1)) * post;
     double dry = (post - wet) * pre * post;
@@ -408,9 +422,11 @@ void editorFastDist(App& a, const PluginTarget& t, float width) {
     for (int i = 0; i <= 120; ++i) {
       double x = i / 120.0;
       double y = dy::fastDistRef(std::min(1.0, x * pre), type, drive) * wet + x * dry;
-      pts[i] = ImVec2(p0.x + (p1.x - p0.x) * static_cast<float>(x), p1.y - static_cast<float>(std::clamp(y, 0.0, 1.0)) * (p1.y - p0.y));
+      const float m = v.px(4);  // keep the curve off the well's edges
+      pts[i] = ImVec2(p0.x + m + (p1.x - p0.x - 2 * m) * static_cast<float>(x), p1.y - m - static_cast<float>(std::clamp(y, 0.0, 1.0)) * (p1.y - p0.y - 2 * m));
     }
-    dl->AddPolyline(pts, 121, IM_COL32(0xFF, 0xFF, 0xFF, 230), 0, std::max(1.5f, v.px(1.2f)));
+    dl->AddPolyline(pts, 121, IM_COL32(0xFF, 0xFF, 0xFF, 50), 0, std::max(4.0f, v.px(3.5f)));
+    dl->AddPolyline(pts, 121, IM_COL32(0xFF, 0xFF, 0xFF, 235), 0, std::max(1.5f, v.px(1.2f)));
   } else {  // legacy engine: one cycle of a sine through the distortion
     const sk::FormCtl& c = v.c("Visual");
     ImVec2 p0 = v.p0(c), p1 = v.p1(c);
@@ -434,6 +450,7 @@ void editorFastDist(App& a, const PluginTarget& t, float width) {
 void editorStereoEnhancer(App& a, const PluginTarget& t, float width) {
   using namespace pp;
   sk::Palette pal = sk::paletteFrom(fm::kStereoenhancer);
+  pal.panel = sk::darken(pal.panel, 0.38f);  // J-93: deeper reference grey so the white captions read
   pal.text = IM_COL32(0xF6, 0xF8, 0xFA, 255);
   pal.textDim = IM_COL32(0x2C, 0x33, 0x38, 255);
   pal.fill = IM_COL32(0xFF, 0xFF, 0xFF, 255);
@@ -462,7 +479,7 @@ void editorStereoEnhancer(App& a, const PluginTarget& t, float width) {
   sk::textSelector(a, t, v, "InvSelect", StInvert, pal, inv, 3);
   sk::label(v, "PosSelectLabel", pal, "PHASE", -1, true);
   sk::label(v, "InvSelectLabel", pal, "INVERT", 1, true);
-  sk::textAt(dl, v.p0(v.c("LogoLabel")), v.p1(v.c("LogoLabel")), pal.text, "STEREO SHAPER", fs, 0);
+  sk::textAt(dl, v.p0(v.c("LogoLabel")), v.p1(v.c("LogoLabel")), pal.text, pluginTitle("gl.stereo").c_str(), fs, 0);
   sk::wheel(a, t, v, "PanWheel", StPan, pal);
   sk::wheel(a, t, v, "VolWheel", classic ? StVolK : StVolume, pal);
   sk::textAt(dl, v.p0(v.c("PanWheelLabel")), v.p1(v.c("PanWheelLabel")), pal.text, "PAN", fs);

@@ -11,9 +11,11 @@
 #include <memory>
 #include <string>
 #include "../core/I18n.h"
+#include "../core/PluginBrand.h"
 #include "../engine/Program.h"
 #include "../engine/TimeGateSlots.h"
 #include "EnvEditor.h"
+#include "LayoutAudit.h"
 #include "PluginEditorsCommon.h"
 #include "SkinForms.h"
 #include "PluginSkin.h"
@@ -119,19 +121,50 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
   const int selT = ival(st, TgTimeSlot), selV = ival(st, TgVolSlot);
 
   // ---------------------------------------------------------------- left column
+  // J-93: the header / footer plates are raised slate (were flat light grey), the
+  // lanes carry their colour (time green, volume orange) through the whole editor.
+  const ImU32 laneT = pal.accent2, laneV = pal.fill;
   {
     const sk::FormCtl& top = v.c("TopBgPaintBox");
-    dl->AddRectFilledMultiColor(v.p0(top), v.p1(top), sk::col(0x8A9298), sk::col(0x8A9298), sk::col(0x6E767C), sk::col(0x6E767C));
+    sk::gradientRect(dl, v.p0(top), v.p1(top), sk::col(0x34434E), sk::col(0x263139), 0);
+    dl->AddLine(ImVec2(v.p0(top).x, v.p1(top).y - 0.5f), ImVec2(v.p1(top).x, v.p1(top).y - 0.5f), IM_COL32(0, 0, 0, 120), 1.0f);
     const sk::FormCtl& bot = v.c("BottomBgPaintBox");
-    dl->AddRectFilledMultiColor(v.p0(bot), v.p1(bot), sk::col(0x6E767C), sk::col(0x6E767C), sk::col(0x8A9298), sk::col(0x8A9298));
+    sk::gradientRect(dl, v.p0(bot), v.p1(bot), sk::col(0x263139), sk::col(0x34434E), 0);
+    dl->AddLine(ImVec2(v.p0(bot).x, v.p0(bot).y + 0.5f), ImVec2(v.p1(bot).x, v.p0(bot).y + 0.5f), IM_COL32(255, 255, 255, 22), 1.0f);
     sk::bevel(v, "SlotsBevel", pal);
-    sk::textAt(dl, v.p(60, 6), v.p(262, 30), IM_COL32(0x1E, 0x26, 0x2C, 255), "TIME GATE", v.px(15), 0);
-    sk::textAt(dl, v.p(60, 30), v.p(262, 46), IM_COL32(0x2E, 0x36, 0x3C, 255), "time  ·  volume", v.px(9), 0);
+    // Title slot: the catalog / brand title (J-94), lane legend underneath.
+    const std::string titleStr = pluginTitle("gl.timegate");
+    const char* title = titleStr.c_str();
+    {
+      ImGui::PushFont(app().fontBold ? app().fontBold : app().fontRegular, std::clamp(v.px(15.f), 13.f, 30.f));
+      const ImVec2 ts = ImGui::CalcTextSize(title);
+      const ImVec2 c0 = v.p(60, 8), c1 = v.p(262, 30);
+      dl->AddText(ImVec2(std::round((c0.x + c1.x - ts.x) * 0.5f), std::round((c0.y + c1.y - ts.y) * 0.5f)), IM_COL32(0xEE, 0xF2, 0xF4, 255), title);
+      audit::control(ImVec2((c0.x + c1.x - ts.x) * 0.5f, (c0.y + c1.y - ts.y) * 0.5f), ImVec2((c0.x + c1.x + ts.x) * 0.5f, (c0.y + c1.y + ts.y) * 0.5f),
+                     "title");
+      ImGui::PopFont();
+    }
+    {  // legend: ● TIME   ● VOLUME
+      const float fsz = std::clamp(v.px(7.5f), 9.f, 14.f);
+      ImGui::PushFont(app().fontMonoBold, fsz);
+      const char* lt = i18n::tr("TIME");
+      const char* lv = i18n::tr("VOLUME");
+      const float wt = ImGui::CalcTextSize(lt).x, wv = ImGui::CalcTextSize(lv).x, dot = fsz * 0.7f, gap = fsz * 1.4f;
+      const float total = dot + 4 + wt + gap + dot + 4 + wv;
+      const ImVec2 mid((v.p(60, 0).x + v.p(262, 0).x) * 0.5f, v.p(0, 38).y);
+      float x = std::round(mid.x - total * 0.5f);
+      dl->AddCircleFilled(ImVec2(x + dot * 0.5f, mid.y), dot * 0.5f, laneT, 12);
+      dl->AddText(ImVec2(x + dot + 4, std::round(mid.y - fsz * 0.55f)), IM_COL32(0xA8, 0xB4, 0xBC, 255), lt);
+      x += dot + 4 + wt + gap;
+      dl->AddCircleFilled(ImVec2(x + dot * 0.5f, mid.y), dot * 0.5f, laneV, 12);
+      dl->AddText(ImVec2(x + dot + 4, std::round(mid.y - fsz * 0.55f)), IM_COL32(0xA8, 0xB4, 0xBC, 255), lv);
+      ImGui::PopFont();
+    }
   }
   sk::Palette dark = pal;
-  dark.text = IM_COL32(0x16, 0x1C, 0x20, 255);
+  dark.text = IM_COL32(0xA8, 0xB4, 0xBC, 255);
   sk::wheel(a, t, v, "TimeMixWheel", TgTimeMix, pal);
-  sk::textAt(dl, v.p(5, 52), v.p(57, 62), dark.text, "TIME MIX", std::clamp(v.px(7.f), 9.f, 12.f));
+  sk::textAt(dl, v.p(5, 52), v.p(57, 62), dark.text, i18n::tr("TIME MIX"), std::clamp(v.px(7.f), 9.f, 12.f), 0, true);
   if (sk::button(v, "OptionsBtn", pal, false, nullptr, sk::glyphMenu, "Options")) ImGui::OpenPopup("##gbopts");
   if (ImGui::BeginPopup("##gbopts")) {
     auto tog = [&](const char* label, int p) {
@@ -183,11 +216,19 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
     if (ImGui::InvisibleButton("##h", ImVec2(p1.x - p0.x, p1.y - p0.y))) a.doc.setParam(t.pid(TgHold), on ? 0 : 1, false);
     if (ImGui::IsItemHovered()) a.setHint("Hold: repeat the last bar while on");
     ImGui::PopID();
+    // J-93: a lit pad (glow + bright face) when on, a dark recessed pad with a green rim when off.
     ImU32 g = sk::col(0x83E32B);
-    dl->AddRectFilled(p0, p1, on ? g : theme::mix(g, IM_COL32(20, 30, 20, 255), 0.7f), v.px(4));
-    if (on) dl->AddRect(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(g, 0.5f), v.px(5), 0, 2.f);
-    dl->AddRect(p0, p1, IM_COL32(0, 0, 0, 150), v.px(4));
-    sk::textAt(dl, p0, p1, on ? IM_COL32(0x10, 0x20, 0x08, 255) : IM_COL32(0xB0, 0xC8, 0xA0, 255), "HOLD", v.px(12), 0);
+    const bool hovH = ImGui::IsMouseHoveringRect(p0, p1);
+    if (on) {
+      dl->AddRectFilled(ImVec2(p0.x - 3, p0.y - 3), ImVec2(p1.x + 3, p1.y + 3), theme::withAlpha(g, 0.22f), v.px(6));
+      sk::gradientRect(dl, p0, p1, sk::lighten(g, 0.25f), sk::darken(g, 0.12f), v.px(4));
+      dl->AddLine(ImVec2(p0.x + v.px(4), p0.y + 1), ImVec2(p1.x - v.px(4), p0.y + 1), IM_COL32(255, 255, 255, 110), 1.0f);
+    } else {
+      sk::insetField(dl, p0, p1, theme::mix(g, IM_COL32(14, 20, 16, 255), hovH ? 0.78f : 0.84f), v.px(4));
+      dl->AddRect(p0, p1, theme::withAlpha(g, hovH ? 0.7f : 0.45f), v.px(4), 0, 1.0f);
+    }
+    sk::textAt(dl, p0, p1, on ? IM_COL32(0x10, 0x20, 0x08, 255) : theme::mix(g, IM_COL32(255, 255, 255, 255), 0.35f), i18n::tr("HOLD"), v.px(11), 0,
+               true);
   }
   // Slot grids.
   auto grid = [&](bool vol) {
@@ -195,7 +236,14 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
     ImVec2 p0 = v.p0(c), p1 = v.p1(c);
     const float cw = (p1.x - p0.x) / 4, ch = (p1.y - p0.y) / 9;
     const int sel = vol ? selV : selT, play = vol ? playV : playT;
-    sk::textAt(dl, ImVec2(p0.x, p0.y - v.px(11)), ImVec2(p1.x, p0.y - v.px(1)), pal.textDim, vol ? "VOLUME" : "TIME", std::clamp(v.px(7.5f), 9.f, 12.f), -1);
+    {  // section header: lane-coloured tick, title, hairline
+      sk::Skin hk = pal;
+      hk.fill = vol ? laneV : laneT;
+      hk.pillText = IM_COL32(0xC8, 0xD2, 0xD8, 255);
+      hk.textDim = pal.textDim;
+      sk::sectionHeader(dl, ImVec2(p0.x, p0.y - v.px(11)), ImVec2(p1.x, p0.y - v.px(1)), hk, vol ? i18n::tr("VOLUME") : i18n::tr("TIME"),
+                        std::clamp(v.px(7.5f), 9.f, 13.f));
+    }
     ImGui::PushID(vol ? "vgrid" : "tgrid");
     for (int k = 0; k < tg::kSlots; ++k) {
       int cx = k % 4, cy = k / 4;
@@ -236,25 +284,31 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
       }
       const tg::Slot& s = vol ? bank.vol[k] : bank.time[k];
       bool on = sel == k + 1, playing = play == k + 1, shown = ui.volPage == vol && ui.edit[vol ? 1 : 0] == k;
-      ImU32 base = sk::col(0x1E282F);
-      if (on) base = theme::mix(base, vol ? pal.fill : pal.accent2, 0.45f);
-      else if (hov) base = theme::mix(base, IM_COL32(255, 255, 255, 255), 0.08f);
-      dl->AddRectFilled(a0, a1, base, v.px(1.5f));
-      if (playing && !on) dl->AddRect(a0, a1, theme::withAlpha(vol ? pal.fill : pal.accent2, 0.8f), v.px(1.5f), 0, 1.5f);
-      if (shown) dl->AddRect(ImVec2(a0.x + 1, a0.y + 1), ImVec2(a1.x - 1, a1.y - 1), IM_COL32(0xF0, 0xF0, 0xF0, 200), v.px(1.5f), 0, 1.0f);
+      // J-93 cell: shaded face; selected = lane colour face + left bar; playing = lane outline;
+      // being edited = white inner ring. The preview sits in the lower part under the name.
+      const ImU32 lane = vol ? laneV : laneT;
+      const ImU32 face = on ? theme::mix(sk::col(0x1E282F), lane, 0.42f) : hov ? sk::col(0x26323B) : sk::col(0x1C252C);
+      sk::gradientRect(dl, a0, a1, sk::lighten(face, 0.05f), sk::darken(face, 0.06f), v.px(2));
+      if (on) dl->AddRectFilled(a0, ImVec2(a0.x + std::max(2.0f, v.px(2)), a1.y), lane, v.px(2), ImDrawFlags_RoundCornersLeft);
+      if (playing) dl->AddRect(a0, a1, theme::withAlpha(lane, on ? 1.0f : 0.85f), v.px(2), 0, 1.5f);
+      if (shown) dl->AddRect(ImVec2(a0.x + 1.5f, a0.y + 1.5f), ImVec2(a1.x - 1.5f, a1.y - 1.5f), IM_COL32(0xF4, 0xF6, 0xF8, 210), v.px(1.5f), 0, 1.0f);
+      const float nameH = (a1.y - a0.y) * 0.56f;
       if (ui.previews) {
-        ImVec2 pts[24];
-        for (int i = 0; i < 24; ++i) {
-          double x = s.len * i / 23.0;
+        ImVec2 pts[32];
+        const float py0 = a0.y + nameH, py1 = a1.y - 2.5f, px0 = a0.x + v.px(4), px1 = a1.x - 3;
+        for (int i = 0; i < 32; ++i) {
+          double x = s.len * i / 31.0;
           double y = std::clamp(s.eval(x), 0.0, 1.0);
-          pts[i] = ImVec2(a0.x + 2 + (a1.x - a0.x - 4) * i / 23.0f, a1.y - 2 - static_cast<float>(y) * (a1.y - a0.y - 4));
+          pts[i] = ImVec2(px0 + (px1 - px0) * i / 31.0f, py1 - static_cast<float>(y) * (py1 - py0));
         }
-        dl->AddPolyline(pts, 24, theme::withAlpha(on ? IM_COL32(255, 255, 255, 255) : pal.textDim, 0.45f), 0, 1.0f);
+        dl->AddPolyline(pts, 32, theme::withAlpha(on ? IM_COL32(255, 255, 255, 255) : lane, on ? 0.75f : 0.5f), 0, 1.1f);
       }
       char lb[40];
       if (s.name[0]) std::snprintf(lb, sizeof lb, "%s", s.name);
       else std::snprintf(lb, sizeof lb, "%d", k + 1);
-      sk::textAt(dl, ImVec2(a0.x + 2, a0.y), a1, on ? IM_COL32(255, 255, 255, 255) : pal.text, lb, std::clamp(v.px(7.5f), 9.f, 12.f), -1);
+      sk::textAt(dl, ImVec2(a0.x + v.px(3.5f), a0.y), ImVec2(a1.x - 2, ui.previews ? a0.y + nameH : a1.y),
+                 on ? IM_COL32(255, 255, 255, 255) : s.name[0] ? IM_COL32(0xC4, 0xCE, 0xD4, 255) : IM_COL32(0x6E, 0x7C, 0x86, 255), lb,
+                 std::clamp(v.px(7.0f), 9.f, 12.f), -1);
       if (hov) a.setHint(std::string(vol ? "Volume" : "Time") + " slot " + std::to_string(k + 1) + (s.name[0] ? std::string(": ") + s.name : "") +
                          "   (click: select · right-click: menu)");
       ImGui::PopID();
@@ -289,7 +343,7 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
   sk::label(v, "VolRelWheelLabel", pal, "REL");
   sk::label(v, "VolTnsWheelLabel", pal, "TNS");
   sk::wheel(a, t, v, "VolMixWheel", TgVolMix, pal);
-  sk::textAt(dl, v.p(58, 494 + G), v.p(140, 514 + G), dark.text, "VOLUME MIX", std::clamp(v.px(7.f), 9.f, 12.f), -1);
+  sk::textAt(dl, v.p(58, 494 + G), v.p(140, 514 + G), dark.text, i18n::tr("VOLUME MIX"), std::clamp(v.px(7.f), 9.f, 12.f), -1, true);
 
   // ---------------------------------------------------------------- tool strip
   const bool vol = ui.volPage;
@@ -348,15 +402,22 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
     const sk::FormCtl& c = v.c("SnapSel");
     ImVec2 p0 = v.p0(c), p1 = v.p1(c);
     float ch = (p1.y - p0.y) / 7;
-    dl->AddRectFilled(p0, p1, pal.well, v.px(2));
+    sk::insetField(dl, p0, p1, sk::col(0x1A2228), v.px(3));
+    const ImU32 lane = ui.volPage ? laneV : laneT;
     for (int i = 0; i < 7; ++i) {
       ImVec2 a0(p0.x, p0.y + i * ch), a1(p1.x, a0.y + ch);
       ImGui::SetCursorScreenPos(a0);
       ImGui::PushID(400 + i);
       if (ImGui::InvisibleButton("##sn", ImVec2(p1.x - p0.x, ch))) ui.snap = i;
-      if (ImGui::IsItemHovered()) a.setHint(i == 0 ? "Snap off" : std::string("Snap to 1/") + snaps[i] + " beat");
+      const bool hovS = ImGui::IsItemHovered();
+      if (hovS) a.setHint(i == 0 ? "Snap off" : std::string("Snap to 1/") + snaps[i] + " beat");
       ImGui::PopID();
-      if (ui.snap == i) dl->AddRectFilled(ImVec2(a0.x + 1, a0.y + 1), ImVec2(a1.x - 1, a1.y - 1), theme::withAlpha(pal.fill, 0.35f), v.px(2));
+      if (ui.snap == i) {
+        sk::gradientRect(dl, ImVec2(a0.x + 2, a0.y + 2), ImVec2(a1.x - 2, a1.y - 2), theme::withAlpha(lane, 0.42f), theme::withAlpha(lane, 0.26f), v.px(2));
+        dl->AddRect(ImVec2(a0.x + 2, a0.y + 2), ImVec2(a1.x - 2, a1.y - 2), theme::withAlpha(lane, 0.7f), v.px(2), 0, 1.0f);
+      } else if (hovS) {
+        dl->AddRectFilled(ImVec2(a0.x + 2, a0.y + 2), ImVec2(a1.x - 2, a1.y - 2), IM_COL32(255, 255, 255, 16), v.px(2));
+      }
       sk::textAt(dl, a0, a1, ui.snap == i ? IM_COL32(255, 255, 255, 255) : pal.textDim, snaps[i], std::clamp(v.px(8.f), 9.f, 12.f), 0, true);
     }
   }
@@ -375,8 +436,14 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
       if (ImGui::IsItemHovered()) a.setHint(i == 0 ? "Edit the time envelope" : "Edit the volume envelope");
       ImGui::PopID();
       bool on = ui.volPage == (i == 1);
-      dl->AddRectFilled(a0, a1, on ? theme::mix(pal.raised, i ? pal.fill : pal.accent2, 0.5f) : pal.raised, v.px(2));
-      ImU32 gc = on ? IM_COL32(255, 255, 255, 255) : pal.textDim;
+      const ImU32 lane = i ? laneV : laneT;
+      if (on) {
+        sk::gradientRect(dl, a0, a1, theme::mix(pal.raised, lane, 0.62f), theme::mix(pal.raised, lane, 0.42f), v.px(3));
+        dl->AddRect(a0, a1, theme::withAlpha(sk::lighten(lane, 0.2f), 0.9f), v.px(3), 0, 1.0f);
+      } else {
+        sk::raisedFace(dl, a0, a1, pal.raised, v.px(3));
+      }
+      ImU32 gc = on ? IM_COL32(255, 255, 255, 255) : theme::mix(pal.textDim, lane, 0.35f);
       if (i == 0) glyphClock(dl, ImVec2(a0.x + v.px(4), a0.y + v.px(4)), ImVec2(a1.x - v.px(4), a1.y - v.px(4)), gc);
       else glyphVolume(dl, ImVec2(a0.x + v.px(4), a0.y + v.px(5)), ImVec2(a1.x - v.px(4), a1.y - v.px(5)), gc);
     }
@@ -386,16 +453,26 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
   {
     ImVec2 e0 = v.p(298, 5), e1 = v.p(818, 489 + G);
     envui::Style es;
-    es.bg = sk::col(vol ? 0x2B2A33 : 0x24333C);
-    es.grid = theme::withAlpha(IM_COL32(255, 255, 255, 255), 0.05f);
-    es.gridStrong = theme::withAlpha(IM_COL32(255, 255, 255, 255), 0.14f);
-    es.line = vol ? pal.fill : pal.accent2;
-    es.fill = theme::withAlpha(es.line, 0.13f);
-    es.point = IM_COL32(0xF0, 0xF0, 0xF0, 255);
-    es.pointHot = vol ? pal.fill : pal.accent2;
-    es.handle = theme::withAlpha(es.point, 0.7f);
+    es.bg = sk::col(vol ? 0x221F27 : 0x1B252C);
+    es.grid = theme::withAlpha(IM_COL32(255, 255, 255, 255), 0.04f);
+    es.gridStrong = theme::withAlpha(IM_COL32(255, 255, 255, 255), 0.12f);
+    es.line = vol ? laneV : laneT;
+    es.fill = theme::withAlpha(es.line, 0.20f);
+    es.point = IM_COL32(0xF2, 0xF4, 0xF6, 255);
+    es.pointHot = vol ? laneV : laneT;
+    es.handle = theme::withAlpha(es.line, 0.8f);
     es.text = es.point;
     envui::Opts o;
+    o.xLabels = true;
+    // Readout while hovering / dragging (precise editing): position in beats and the lane's value.
+    o.readout = [vol](double x, double y) {
+      char b[64];
+      const double d = tg::delayBeats(y);
+      if (vol) std::snprintf(b, sizeof b, "%s %.2f  ·  %d%%", i18n::tr("beat"), x + 1.0, static_cast<int>(std::lround(y * 100.0)));
+      else if (d < 0.005) std::snprintf(b, sizeof b, "%s %.2f  ·  %s", i18n::tr("beat"), x + 1.0, i18n::tr("live"));
+      else std::snprintf(b, sizeof b, "%s %.2f  ·  -%.2f %s", i18n::tr("beat"), x + 1.0, d, i18n::tr("beats"));
+      return std::string(b);
+    };
     o.xMax = slot.len;
     o.gridDiv = ui.snap > 0 ? static_cast<int>(kSnapDiv[ui.snap]) : 4;
     o.gridEvery = o.gridDiv;
@@ -425,22 +502,30 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
     int r = envui::edit("##gbenv", e0, e1, slot.env, ui.env, o, es);
     if (r & envui::Changed) slotChanged = true;
     if (r & envui::Released) a.doc.endGesture();
-    // Labels: delay scale on the time page.
-    if (!vol) {
+    // Axis labels: delay scale on the time page, level on the volume page (J-93: readable, mono).
+    {
+      const float H = e1.y - e0.y;
+      const float lfs = std::clamp(v.px(8.5f), 10.f, 15.f);
+      const ImU32 lc = theme::withAlpha(es.text, 0.62f);
       for (int i = 0; i <= 8; i += 2) {
-        float y = e1.y - (e1.y - e0.y) * (1.0f - i / 8.0f);
+        if (vol && i % 2) continue;
+        float y = e1.y - H * (1.0f - i / 8.0f);
         char lb[16];
-        std::snprintf(lb, sizeof lb, i == 0 ? "live" : "-%d", i);
-        sk::textAt(dl, ImVec2(e0.x + 3, y - v.px(7)), ImVec2(e0.x + v.px(40), y + v.px(7)), theme::withAlpha(es.text, 0.35f), lb,
-                   std::clamp(v.px(7.f), 9.f, 11.f), -1, true);
+        if (vol) std::snprintf(lb, sizeof lb, "%d%%", 100 - i * 25 / 2);
+        else if (i == 0) std::snprintf(lb, sizeof lb, "%s", i18n::tr("live"));
+        else std::snprintf(lb, sizeof lb, "-%d", i);
+        if (i == 0) y += lfs * 0.6f;  // keep the top label inside
+        if (i == 8) y -= lfs * 0.6f;  // and the bottom one
+        sk::textAt(dl, ImVec2(e0.x + 4, y - v.px(7)), ImVec2(e0.x + v.px(44), y + v.px(7)), lc, lb, lfs, -1, true);
       }
     }
     // Time scroller strip (shows the visible range: the whole slot).
-    ImVec2 s0 = v.p(298, 492 + G), s1 = v.p(653, 505 + G);
-    dl->AddRectFilled(s0, s1, pal.well, v.px(2));
-    dl->AddRectFilled(ImVec2(s0.x + 2, s0.y + 2), ImVec2(s1.x - 2, s1.y - 2), theme::withAlpha(es.line, 0.35f), v.px(2));
+    ImVec2 s0 = v.p(298, 493 + G), s1 = v.p(653, 504 + G);
+    sk::insetField(dl, s0, s1, sk::col(0x1A2228), v.px(3));
+    sk::gradientRect(dl, ImVec2(s0.x + 2, s0.y + 2), ImVec2(s1.x - 2, s1.y - 2), theme::withAlpha(es.line, 0.55f), theme::withAlpha(es.line, 0.32f),
+                     v.px(2));
     char lenTxt[32];
-    std::snprintf(lenTxt, sizeof lenTxt, "%g beats", static_cast<double>(slot.len));
+    std::snprintf(lenTxt, sizeof lenTxt, "%g %s", static_cast<double>(slot.len), i18n::tr("beats"));
     sk::textAt(dl, v.p(660, 491 + G), v.p(818, 506 + G), pal.textDim, lenTxt, std::clamp(v.px(8.f), 9.f, 12.f), 1, true);
   }
 
@@ -475,7 +560,7 @@ void editorGrossBeat(App& a, const PluginTarget& t, float width) {
     if (sk::comboFree(v, "TrigSyncSel", pal, sy, 7, tr, "Slot trigger synchronization")) slot.trig = tr - 1, slotChanged = true;
     if (sk::comboFree(v, "PosSyncSel", pal, ps, 6, po, "Slot position synchronization")) slot.pos = po, slotChanged = true;
   }
-  if (slotChanged) commitSlot(a, t, st, vol, k, slot, "edit time gate slot");
+  if (slotChanged) commitSlot(a, t, st, vol, k, slot, "edit shuttle slot");
   (void)fs;
   sk::end(v);
 }

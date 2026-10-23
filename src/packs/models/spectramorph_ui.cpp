@@ -6,6 +6,7 @@
 // spectral frames over time (darker = quieter, the sustain loop marked); the
 // amp envelope, noise / drive, playback and the effects row.
 #include "../../app/App.h"
+#include "../../core/I18n.h"
 #include "metal_widgets.h"
 
 namespace gl::packs::models::metal {
@@ -153,6 +154,7 @@ void drawSpectraMorph(App& a, const PluginTarget& t, float width) {
   flk::section(c, 490, 308, 264, 86, "Effects");
   flk::tog(c, SmChorusOn, 498, 326, 54, 14, "CHORUS");
   flk::wheel(c, SmChorusDepth, 502, 346, 24, "Dep");
+  flk::wheel(c, SmChorusRate, 529, 346, 24, i18n::tr("Rate"));  // J-92: was missing
   flk::tog(c, SmDelayOn, 560, 326, 50, 14, "DELAY");
   flk::wheel(c, SmDelayTime, 560, 346, 24, "Time");
   flk::wheel(c, SmDelayFb, 588, 346, 24, "Fb");

@@ -135,7 +135,15 @@ void editorFmFl(App& a, const PluginTarget& t, float width) {
     w36(fmParam(o, FmSustain), c0 + dx * 2, y + 122, "SUS");
     w36(fmParam(o, FmRelease), c0 + dx * 3, y + 122, "REL");
     w36(fmExt(o, FmWave), c0, y + 172, "WAVE");
-    w36(fmExt(o, FmThru), c0 + dx, y + 172, "THRU");
+    if (o == 0) {  // J-92: operator 1 is a carrier in every algorithm: its thru level never sounds
+      ImGui::BeginDisabled();
+      w36(fmExt(o, FmThru), c0 + dx, y + 172, "THRU");
+      ImGui::EndDisabled();
+      if (ImGui::IsMouseHoveringRect(F.p(c0 + dx, y + 172), F.p(c0 + dx + 40, y + 222)))
+        a.setHint(i18n::tr("Operator 1 is a carrier in every algorithm, so its thru level has no effect"));
+    } else {
+      w36(fmExt(o, FmThru), c0 + dx, y + 172, "THRU");
+    }
     w36(fmExt(o, FmOffset), c0 + dx * 2, y + 172, "OFFSET");
     w36(fmExt(o, FmPan), c0 + dx * 3, y + 172, "PAN", skin::WheelBigLine | skin::WheelCentered);
     w36(fmExt(o, FmKeyScale), c0, y + 222, "KEY SCL");

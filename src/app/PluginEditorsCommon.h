@@ -14,6 +14,7 @@
 namespace gl::ed {
 
 inline float val(const PluginState& s, int k, float d = 0) {
+  audit::stateRead(k);  // J-92 binding audit
   return k >= 0 && static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : d;
 }
 inline int ival(const PluginState& s, int k, int d = 0) { return static_cast<int>(std::lround(val(s, k, static_cast<float>(d)))); }

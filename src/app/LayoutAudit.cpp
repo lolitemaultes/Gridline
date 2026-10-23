@@ -41,4 +41,36 @@ Report end(float min) {
   return r;
 }
 
+namespace {
+bool binding = false;
+Bindings bind;
+void onRead(ParamId pid) { ++bind.reads[pid.packed()]; }
+}  // namespace
+
+void bindBegin() {
+  bind = Bindings{};
+  binding = true;
+  setParamReadHook(&onRead);
+}
+
+void bindTouch(const ParamId& pid) {
+  if (binding) ++bind.reads[pid.packed()];
+}
+
+void stateRead(int k) {
+  if (binding) ++bind.stateReads[k];
+}
+
+void bindControl(ParamId pid) {
+  if (binding) ++bind.controls[pid.packed()];
+}
+
+Bindings bindEnd() {
+  setParamReadHook(nullptr);
+  binding = false;
+  Bindings b = std::move(bind);
+  bind = Bindings{};
+  return b;
+}
+
 }  // namespace gl::audit

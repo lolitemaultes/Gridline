@@ -33,7 +33,11 @@ EditTarget targetFor(App& a, const PluginTarget& t, float width) {
 EditTarget noteFxTarget(App& a, ObjectId channel, int index, float width) {
   EditTarget e;
   e.a = &a;
-  e.pid = [channel, index](int k) { return noteFxParam(channel, index, k); };
+  e.pid = [channel, index](int k) {
+    const ParamId p = noteFxParam(channel, index, k);
+    audit::bindTouch(p);  // J-92 binding audit
+    return p;
+  };
   App* ap = &a;
   e.set = [ap, channel, index](const PluginState& st, const std::string& label, uint64_t key) {
     ap->doc.setNoteFxState(channel, index, st, label, key);

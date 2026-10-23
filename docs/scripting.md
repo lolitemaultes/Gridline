@@ -6,7 +6,7 @@ Gridline runs Lua 5.4 scripts in a sandbox. There are five places a script can r
 |---|---|---|---|
 | Piano roll scripts | Piano roll > Scripts | `assets/scripts/pianoroll`, `<config>/scripts/pianoroll` | one step per Accept |
 | Project scripts | Tools > Project scripts | `assets/scripts/project`, `<config>/scripts/project` | one step per run |
-| Audio editor scripts | Audio editor > Tools > Scripts | `assets/scripts/audio`, `<config>/scripts/audio` | one step per Accept |
+| Loupe (audio editor) scripts | Loupe > Tools > Scripts | `assets/scripts/audio`, `<config>/scripts/audio` | one step per Accept |
 | Controller scripts | Settings > MIDI, controller type "Script: ..." | `assets/scripts/controllers`, `<config>/scripts/controllers` | controller moves merge |
 | Console | Settings > Debug | `<config>/scripts/console` | one step per line |
 
@@ -49,7 +49,7 @@ A script file starts with header comments:
 -- author: You
 ```
 
-Audio editor scripts may also say `-- target: cursor` (see below).
+Loupe scripts may also say `-- target: cursor` (see below).
 
 A script can declare settings with `form(f)`. Gridline shows them as knobs, menus, check boxes
 and text fields, and passes the values to `apply` by name:
@@ -121,7 +121,7 @@ clamped to the parameter ranges.
 | `pan(i)`, `setPan(i, v)` | -1 (left) .. 1 (right) |
 | `muted(i)`, `setMuted(i, b)` | mute |
 | `pitch(i)`, `setPitch(i, semitones)` | channel pitch |
-| `plugin(i)`, `pluginName(i)` | instrument type id (`gl.synth`) and display name |
+| `plugin(i)`, `pluginName(i)` | instrument type id (`gl.synth`) and display name (`Tercet`); scripts should test the type id, which never changes, not the display name |
 | `setPlugin(i, type)` | replaces the instrument (instrument types only) |
 | `sample(i)` | file name of the channel's sample, or nil (no folders are exposed) |
 | `route(i)`, `setRoute(i, m)` | mixer track the channel plays through |
@@ -285,9 +285,9 @@ Shipped project scripts: `humanize_playlist.lua` (humanize a playlist selection)
 bus), `rename_tracks_by_content.lua` (name tracks after their clips), `section_markers.lua`,
 `tempo_ramp.lua` (tempo automation clip).
 
-## Audio editor scripts
+## Loupe (audio editor) scripts
 
-Audio editor scripts read and rewrite the sample data of the editor's selection. When nothing
+Loupe scripts read and rewrite the sample data of the editor's selection. When nothing
 is selected they work on the whole file; a script with the header `-- target: cursor` works at
 the cursor instead (generators insert their audio there). The script dialog previews the
 result while you change the settings (with a small budget while a control is held), shows the

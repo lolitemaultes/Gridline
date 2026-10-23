@@ -13,6 +13,7 @@
 namespace gl::packs::utility {
 
 inline float val(const PluginState& s, int k, float def = 0.f) {
+  audit::stateRead(k);  // J-92 binding audit
   return k >= 0 && static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : def;
 }
 

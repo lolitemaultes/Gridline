@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <functional>
 #include "../core/I18n.h"
+#include "../core/PluginBrand.h"
 #include "../core/PluginParams.h"
 #include "InstrumentSkin.h"
 #include "PluginEditorsCommon.h"
@@ -240,7 +241,7 @@ void editorTrio(App& a, const PluginTarget& t, float width) {
     if (ImGui::IsItemHovered()) a.setHint("Custom-wave oscillators play one cycle of this sample (click to load)");
   }
   // Title block (Gridline's own name).
-  iskin::text(k, 424, 303, 129, 50, "Trio", 40, rgb(0x7D888E), 2, false, true);
+  iskin::text(k, 424, 303, 129, 50, pluginDisplayName("gl.synth").c_str(), 32, rgb(0x7D888E), 2, false, true);
   iskin::text(k, 424, 349, 129, 24, "SYNTH", 15, rgb(0x5D686E), 2, false, true);
 
   // ---- channel section (envelope · filter · LFO · voice), same palette.

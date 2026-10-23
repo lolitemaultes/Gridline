@@ -178,6 +178,16 @@ class DcoSynth final : public Generator {
     sr_ = ctx.sampleRate > 0 ? ctx.sampleRate : 44100.0;
     tempo_ = ctx.tempo > 0 ? ctx.tempo : 120.0;
     for (int i = 0; i < DcCount; ++i) p_[static_cast<size_t>(i)] = prm(s, i, 0.f);
+    {  // J-92: the manual LFO trigger button (was never read) restarts both LFOs on its press
+      const bool trg = P(DcLfoTrigger) >= 0.5;
+      if (trg && !lfoTrigHeld_)
+        for (int l = 0; l < 2; ++l) {
+          lfoFade_[l] = 0;
+          if (P(l == 0 ? DcLfo1PhaseOn : DcLfo2PhaseOn) >= 0.5) lfoPh_[l] = P(l == 0 ? DcLfo1Phase : DcLfo2Phase);
+          else lfoPh_[l] = 0;
+        }
+      lfoTrigHeld_ = trg;
+    }
     panelOne_ = prmi(s, DcPanel) == PanelOne;
     ref_ = prmi(s, DcModel) == 1;
     for (int r = 0; r < kDcMatrix; ++r) {
@@ -309,6 +319,14 @@ class DcoSynth final : public Generator {
     if (arpOn_) arpRemove(id);
     stopNote(id);
   }
+  // J-92: MIDI pitch bend over the bend range (0..1 = 0..12 semitones, whole
+  // steps); the range parameter was never read.
+  void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
+    if ((status & 0xF0) == 0xE0) bend_ = ((d2 << 7 | d1) - 8192) / 8192.0;
+  }
+  double bendSemis() const { return bend_ * std::floor(std::clamp(P(DcBend), 0.0, 1.0) * 12.0 + 1e-9); }
+  double bend_ = 0;
+  bool lfoTrigHeld_ = false;
   void onGlide(uint32_t id, double pitch, double seconds) override {
     for (auto& v : voices_)
       if (v.on && v.id == id) {
@@ -784,7 +802,7 @@ class DcoSynth final : public Generator {
       return;
     }
     const double lfoA = lfo1, lfoB = lfo2;
-    const double oct = (ci(DcOctave, 3) - 1) * 12.0 + bip(P(DcMasterTune));
+    const double oct = (ci(DcOctave, 3) - 1) * 12.0 + bip(P(DcMasterTune)) + bendSemis();
     auto dcoDepth = [&](int amt, int wide) {
       const double a = vp(v, amt);
       return a * a * (P(wide) >= 0.5 ? 24.0 : 2.0);
@@ -939,7 +957,7 @@ class DcoSynth final : public Generator {
   }
 
   void renderVoiceRef(Voice& v, int n, double e1, double e2, double lfoA, double lfoB) {
-    const double octSt = (ci(DcOctave, 3) - 1) * 12.0 + bip(P(DcMasterTune));
+    const double octSt = (ci(DcOctave, 3) - 1) * 12.0 + bip(P(DcMasterTune)) + bendSemis();
     auto dcoDepth = [&](int amt, int wide) { return tab(kTLfoDco, vp(v, amt)) * (P(wide) >= 0.5 ? 10.0 : 1.0) * 12.0; };
     const double env2P1 = 10.0 * vp(v, DcEnv2ToDco1) * e2 * 12.0, env2P2 = 10.0 * vp(v, DcEnv2ToDco2) * e2 * 12.0;
     const double pitch1 = v.pitch + octSt + dcoDepth(DcLfo1ToDco1, DcLfo1ToDco1Wide) * lfoA +

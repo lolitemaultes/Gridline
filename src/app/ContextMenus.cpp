@@ -671,7 +671,7 @@ void channelContextMenu(App& a, ObjectId id) {
     const PluginInfo* pi = findPlugin(c->plugin.type);
     const bool hasSample = pi && pi->usesSample && !c->plugin.data.empty() && c->plugin.data[0] != '{' &&
                            c->plugin.data.find('\n') == std::string::npos;
-    if (ImGui::MenuItem(i18n::tr("Edit sample in audio editor"), nullptr, false, hasSample)) packs::openAudioEditor(a, c->plugin.data, id);
+    if (ImGui::MenuItem(i18n::tr("Edit sample in Loupe"), nullptr, false, hasSample)) packs::openAudioEditor(a, c->plugin.data, id);
     if (ImGui::MenuItem(i18n::tr("Export sample as WAV..."), nullptr, false, hasSample)) exportui::exportChannelSample(a, id);  // J-20
   }
   if (ImGui::MenuItem(i18n::tr("Select in playlist"))) {
@@ -714,7 +714,7 @@ void channelContextMenu(App& a, ObjectId id) {
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Render to sampled instrument..."))) j59::openRenderSampler(a, id);  // J-59 (RN-08)
-  ui::Hint("Renders the instrument note by note into a multisampled Wave Program");
+  ui::Hint("Renders the instrument note by note into a multisampled Folio instrument");
   if (ImGui::BeginMenu(i18n::tr("Route to mixer track"))) {
     routeMenuItems(a, [c](ObjectId t) { return c->mixerTrack == t; }, [&a, id](ObjectId t) { a.doc.routeChannel(id, t); });
     ImGui::EndMenu();

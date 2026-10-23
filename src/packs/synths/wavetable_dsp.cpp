@@ -569,12 +569,14 @@ class WavetableGen final : public Generator {
         control(v, i);
       }
       double sl = 0, sr = 0;
-      if (o_[0].on) {
+      // J-92: an oscillator switched on while the voice plays has no frames
+      // until the next control step (every 16 samples): skip it until then.
+      if (o_[0].on && v.osc[0].f0) {
         double r = 0;
         sl += oscSample(v.osc[0], o_[0], v.osc[1].last, r);
         sr += r;
       }
-      if (o_[1].on) {
+      if (o_[1].on && v.osc[1].f0) {
         double r = 0;
         sl += oscSample(v.osc[1], o_[1], v.osc[0].last, r);
         sr += r;

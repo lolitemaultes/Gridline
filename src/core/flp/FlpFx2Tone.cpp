@@ -30,6 +30,7 @@
 //                           high gain, crossover, low cut (0..10000), multiband,
 //                           high band, low band.
 //   Distructor, Hardcore    module racks (not decoded: default Amp Rack).
+#include "../PluginBrand.h"
 #include "../../packs/dynamics/dynamics.h"
 #include "../../packs/dynamics/emphasis_ref.h"
 #include "../../packs/dynamics/modrack_ref.h"
@@ -443,7 +444,7 @@ bool decodeRack(Context& c, const std::vector<Event>& evs, PluginMapping& m, con
   // (J-39: also without a state — FL loads the plugin with its defaults)
   fx::begin(m, "gl.amprack");
   m.exact = false;
-  if (pluginState(evs)) c.report.warn(std::string(what) + ": module rack settings not decoded; default Amp Rack used");
+  if (pluginState(evs)) c.report.warn(std::string(what) + ": module rack settings not decoded; default " + pluginDisplayName("gl.amprack") + " used");
   return true;
 }
 

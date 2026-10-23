@@ -157,7 +157,7 @@ PluginInfo waveProgramInfo() {
   q[DwModVal1] = pct("Mod value 1", 0), q[DwModVal2] = pct("Mod value 2", 0), q[DwModVal3] = pct("Mod value 3", 0);
   q[DwModVal4] = pct("Mod value 4", 0);
   q[DwDriveA] = pct("Drive A", 0), q[DwDriveB] = pct("Drive B", 0);
-  PluginInfo p{"gl.waveprogram", "Wave Program", "Sampler", PluginKind::Generator, std::move(q), false, {}};
+  PluginInfo p{"gl.waveprogram", "Folio", "Sampler", PluginKind::Generator, std::move(q), false, {}};
   p.editorWidth = 700;
   return p;
 }

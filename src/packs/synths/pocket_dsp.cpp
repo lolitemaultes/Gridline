@@ -230,6 +230,9 @@ class PocketSynthGen final : public Generator {
     v.tFlt = 0, v.cFlt = dLaw(x_[PkFltR]);
   }
 
+  void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
+    if ((status & 0xF0) == 0xB0 && d1 == 1) wheel_ = d2 / 127.0;  // J-92: mod wheel
+  }
   void onNoteOff(uint32_t id) override {
     int note = -1;
     for (auto& v : v_)
@@ -336,6 +339,7 @@ class PocketSynthGen final : public Generator {
     const double e = 2.0 * x_[PkFltAmount] - 1.0;
     double base = 4 + 10.3 * (x_[PkCutoff] + 0.01 * v.drift) + x_[PkKeyTrack] * (P / 12.0 - 4) + 14 * (v.vel - 0.5) * x_[PkVelTrack];
     if (lfoDest == 0) base += 4 * lam;
+    if (x_[PkWheelDest] < 1) base += 4.0 * wheel_ * x_[PkWheelAmount];  // J-92: mod wheel to cutoff (up to 4 octaves)
     const double lo = std::exp2(base), hi = std::exp2(base + 10 * e);
     const double fc = std::min(20000.0, lo + v.eFlt * (hi - lo));
     const double g = std::clamp(fc / (655.36 * sr_), 0.0, 1.0), q = 1 - g;
@@ -498,7 +502,9 @@ class PocketSynthGen final : public Generator {
         phCos_ = std::cos(2 * M_PI * lfoBlockPhase_(kBlock));
         const int shape = std::min(2, static_cast<int>(2 * x_[PkLfoShape]));
         const double wave = shape == 0 ? std::sin(2 * M_PI * ph) : (shape == 1 ? 1 - 2 * ph : (ph < 0.5 ? 1 : -1));
-        const double a = 2.0 * x_[PkLfoAmount] - 1.0, ac = std::clamp(a, -1.0, 1.0);
+        // J-92: the mod wheel (CC 1) deepens the LFO when "Wheel to" is LFO (was never read).
+        const double a0 = 2.0 * x_[PkLfoAmount] - 1.0;
+        const double a = x_[PkWheelDest] >= 1 ? a0 + (a0 < 0 ? -1.0 : 1.0) * wheel_ * x_[PkWheelAmount] : a0, ac = std::clamp(a, -1.0, 1.0);
         lam_ = ac * ac * wave * (a < 0 ? -1 : 1);
         lfoDest_ = std::min(2, static_cast<int>(2 * x_[PkLfoDest]));
         bool on = false;
@@ -538,6 +544,7 @@ class PocketSynthGen final : public Generator {
   Lcg rngP_{0x12345u, 0x4D66B561u, 0x16C0A8E8u};
   double lfoPhase_ = 0, phPhase_ = 0, lam_ = 0;
   int lfoDest_ = 0;
+  double wheel_ = 0;  // mod wheel (CC 1), 0..1
   // Effects.
   bool delayOn_ = false, chorusOn_ = false, phaserOn_ = false;
   std::vector<float> delay_, chorus_;

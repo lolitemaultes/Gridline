@@ -11,6 +11,7 @@
 #include <memory>
 #include <vector>
 #include "../../app/App.h"
+#include "../../core/PluginBrand.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
 #include "../../engine/Program.h"
@@ -24,7 +25,9 @@ namespace {
 
 using theme::pal;
 
-float val(const PluginState& s, int k) { return k >= 0 && static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : 0.f; }
+float val(const PluginState& s, int k) {
+  audit::stateRead(k);  // J-92 binding audit
+  return k >= 0 && static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : 0.f; }
 
 // Live effect instance of a mixer slot (keeps the runtime alive while drawing).
 struct Live {
@@ -849,7 +852,7 @@ void editorPitcher(App& a, const PluginTarget& t, float width) {
     }
 
   // ---- title strip: name, engine, pitch reference.
-  text(dl, F, 14, 10, "PITCH CORRECTOR", K.text, 10.0f);
+  text(dl, F, 14, 10, pluginTitle("gl.pitcher").c_str(), K.text, 10.0f);
   {
     static const char* models[2] = {"LEGACY", "REFERENCE"};
     sel(a, t, PcModel, F, 300, 8, 120, 16, K, true, models);

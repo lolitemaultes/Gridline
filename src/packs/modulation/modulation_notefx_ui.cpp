@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include "../../core/PluginBrand.h"
 #include "../../engine/NoteFx.h"
 #include "modulation.h"
 #include "modulation_dsp.h"
@@ -253,7 +254,7 @@ void keymapEditor(EditTarget& e) {
   sk::digi(e, KmOctave, F.p(382, 206), F.sz(40, 20), K);
   laneLabel(dl, F, 436, 210, K, "MODE");
   sk::menuBox(e, KmMulti, F.p(472, 206), F.sz(162, 20), K);
-  sk::titleStrip(dl, F, 0, 236, kW, 36, K, "Key Mapper");
+  sk::titleStrip(dl, F, 0, 236, kW, 36, K, pluginDisplayName("gl.keymap").c_str());
   F.end(0, kH);
 }
 
@@ -323,7 +324,7 @@ void splitEditor(EditTarget& e) {
   laneLabel(dl, F, 502, 156, K, "PLAYS ON");
   targetBox(e, zone, F, 502, 170, 166, 22);
   ImGui::PopID();
-  sk::titleStrip(dl, F, 0, 214, kW, 36, K, "Key Splitter");
+  sk::titleStrip(dl, F, 0, 214, kW, 36, K, pluginDisplayName("gl.split").c_str());
   F.end(0, kH);
 }
 
@@ -389,7 +390,7 @@ void velEditor(EditTarget& e) {
   dl->AddLine(ImVec2(p0.x + 1, cy), ImVec2(p1.x - 1, cy), theme::withAlpha(K.text, 0.4f));
   // Title strip with the maximum wheel and reset (the reference keeps its
   // persistence wheel at the strip's right end).
-  sk::titleStrip(dl, F, 0, 348, kW, 42, K, "Level Scaler");
+  sk::titleStrip(dl, F, 0, 348, kW, 42, K, pluginDisplayName("gl.velscale").c_str());
   if (!ref) {
     sk::text(dl, F, 360, 362, K, "MAX", 7.5f);
     sk::wheel(e, VsMax, F.p(386, 354), 30 * F.s, K);
@@ -400,7 +401,7 @@ void velEditor(EditTarget& e) {
     st.params[VsModel] = e.p(VsModel);
     st.params[VsEdit] = e.p(VsEdit);
     st.data = e.st->data;
-    e.set(st, "reset level scaler", 0);
+    e.set(st, "reset velocity scale", 0);
   }
   F.end(0, kH);
 }

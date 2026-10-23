@@ -90,6 +90,12 @@ class ModelFx {
     resize();
   }
   // Same with explicit values (instruments with their own effect controls).
+  // Chorus LFO rate (Hz), for engines with their own rate control.
+  void setChorusRate(float hz) { chRate_ = std::clamp(hz, 0.01f, 20.0f); }
+  // Scales the chorus voicing setKinds chose (rate, depth, base delay); 1 = unchanged.
+  void scaleChorus(float rateMul, float depthMul, float delayMul) {
+    chRate_ = std::clamp(chRate_ * rateMul, 0.01f, 20.0f), chDepth_ *= std::max(0.0f, depthMul), chBase_ = std::clamp(chBase_ * delayMul, 0.0005f, 0.04f);
+  }
   void setDirect(double sr, float chorus, float delay, double delaySec, float feedback, float reverb, float room) {
     sr_ = sr;
     chorus_ = chorus;

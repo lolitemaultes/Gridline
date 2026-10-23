@@ -1076,7 +1076,8 @@ class AutoPanFx final : public Effect {
         if (!primed_) gLL_ = tLL_, gRR_ = tRR_, gRL_ = tRL_, gLR_ = tLR_, primed_ = true;
         free_ += inc * kCtl;
         free_ -= std::floor(free_);
-        lastPan_ = static_cast<float>(p), lastVol_ = static_cast<float>(g);
+        // J-91: the editor's pad shows the volume on the knob's scale (g = 0.1 (11^x - 1)), not the gain.
+        lastPan_ = static_cast<float>(p), lastVol_ = static_cast<float>(std::log(10.0 * g + 1.0) / std::log(11.0));
         ctl_ = kCtl;
       }
       --ctl_;
@@ -1086,7 +1087,7 @@ class AutoPanFx final : public Effect {
       R[i] = static_cast<float>(gRR_ * r + gLR_ * l);
     }
   }
-  int meters(float* out, int max) const override {  // current pan / volume (editor's position display)
+  int meters(float* out, int max) const override {  // current pan (-1 .. 1) / volume on the volume knob's scale (editor's pad)
     if (max < 2) return 0;
     out[0] = lastPan_, out[1] = lastVol_;
     return 2;

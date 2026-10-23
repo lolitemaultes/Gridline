@@ -194,7 +194,7 @@ void toolsItems(App& a) {
       const std::string p = saveLogger(a, mins);
       if (!p.empty()) a.notify("Saved " + fs::path(p).filename().string());
     }
-    if (ImGui::MenuItem(i18n::tr("Open the last minutes in the audio editor"), nullptr, false, on && have > 0)) {
+    if (ImGui::MenuItem(i18n::tr("Open the last minutes in Loupe"), nullptr, false, on && have > 0)) {
       const std::string p = saveLogger(a, mins);
       if (!p.empty()) {
         const ObjectId ch = a.addInstrument("gl.sampler", p);

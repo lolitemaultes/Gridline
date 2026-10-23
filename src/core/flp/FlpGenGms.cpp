@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include "../PluginBrand.h"
 #include "../../packs/synths/gms.h"
 #include "FlpGen.h"
 
@@ -201,7 +202,7 @@ bool decodeGmsFull(Context& c, const std::vector<Event>& events, PluginMapping& 
   m.state = s;
   m.exact = false;
   char buf[256];
-  std::snprintf(buf, sizeof buf, "%s → Groove Synth: waves %s%s, %d effect slot(s), %d parameters", magic.c_str(), waveNames.c_str(),
+  std::snprintf(buf, sizeof buf, "%s → %s: waves %s%s, %d effect slot(s), %d parameters", magic.c_str(), pluginDisplayName("gl.gms").c_str(), waveNames.c_str(),
                 missing ? " (some wave files not found: nearest built-in)" : "", fxOn, count);
   note(c, "GMS", buf);
   // Automation (FL parameter = index, normalized 0..1).

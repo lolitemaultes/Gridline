@@ -2,6 +2,7 @@
 // places its controls at the measured positions of the reference layout
 // (form pixels, scaled to the window) and uses its own palette roles.
 #include "../core/I18n.h"
+#include "../core/PluginBrand.h"
 #include "PluginEditorsDynFl.h"
 #include <map>
 #include "../engine/Dsp.h"
@@ -432,9 +433,14 @@ void editorComp(App& a, const PluginTarget& t, float width) {
   // Gain-reduction meter (horizontal, right end of the strip).
   skin::label(dl, f, 430, 124, 60, 11, "REDUCTION", pillText, 0, 7.0f);
   ImVec2 g0 = f.p(432, 138), g1 = f.p(488, 148);
-  dl->AddRectFilled(g0, g1, hex(0x1E2326), f.d(2));
+  skin::insetField(dl, g0, g1, hex(0x1E2326), f.d(2));
+  for (int db = 6; db < 24; db += 6) {  // J-93: 6 dB ticks so the meter reads at rest
+    const float x = std::round(g1.x - (g1.x - g0.x) * db / 24.0f) + 0.5f;
+    dl->AddLine(ImVec2(x, g0.y + 2), ImVec2(x, g1.y - 2), IM_COL32(255, 255, 255, 28), 1.0f);
+  }
   float k = std::clamp(-m.gr / 24.0f, 0.0f, 1.0f);
-  if (k > 0) dl->AddRectFilled(ImVec2(g1.x - (g1.x - g0.x) * k, g0.y + 1), ImVec2(g1.x - 1, g1.y - 1), pink, f.d(1.5f));
+  if (k > 0)
+    skin::gradientRect(dl, ImVec2(g1.x - (g1.x - g0.x) * k, g0.y + 1), ImVec2(g1.x - 1, g1.y - 1), skin::lighten(pink, 0.2f), pink, f.d(1.5f));
   skin::reserve(f);
 }
 
@@ -472,8 +478,7 @@ void editorClipper(App& a, const PluginTarget& t, float width) {
   skin::label(dl, f, 14, 80, 32, 15, "THRES", lblText, lblBg, 8.5f);
   skin::wheel(a, t, ClpPostGain, f, 62, 32, 46, 46, w);
   skin::label(dl, f, 70, 80, 30, 15, "POST", lblText, lblBg, 8.5f);
-  skin::label(dl, f, 7, 106, 38, 16, "SOFT", hex(0x6C7A80), 0, 13.0f, 0);
-  skin::label(dl, f, 45, 106, 64, 16, "CLIPPER", hex(0x9F9F9F), 0, 13.0f, 0);
+  skin::label(dl, f, 7, 106, 102, 16, pluginTitle("gl.clipper").c_str(), hex(0x9F9F9F), 0, 13.0f, 0);
   // Output meter.
   skin::MeterLook ml;
   ml.bg = hex(0x161C1F);

@@ -328,7 +328,7 @@ void finishJob(App& a) {
       ObjectId ch = a.addInstrument("gl.sampler", file);
       if (ch) a.doc.editChannel(ch, "rename", [&](Channel& c) { c.name = chName; });
       packs::openAudioEditor(a, file, ch);
-      a.notify("Rendered into the audio editor");
+      a.notify("Rendered into Loupe");
       a.uiSound(uisound::Event::Export);
     } else {
       const Tick at = job.start;
@@ -468,7 +468,7 @@ void drawRenderDialog(App& a) {
   ui::BeginSection("DESTINATION", colW);
   {
     formLabel("Render to", 110);
-    const char* dests[] = {"Files", "Audio clip", "Audio editor"};
+    const char* dests[] = {"Files", "Audio clip", "Loupe"};
     ui::Segmented("dest", dests, 3, &dlg.dest, 76);
     if (!files) {
       ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("32-bit float WAV in %s"), theme::fitText(renderedFolder(a).c_str(), colW - 140));

@@ -652,7 +652,7 @@ bool mapFlState(const uint8_t* p, size_t n, const std::string& audioDir, PluginS
     }
     if (note) {
       char b[128];
-      std::snprintf(b, sizeof b, "Edison: %.1f s of audio imported into the audio editor", fl.content.a().seconds());
+      std::snprintf(b, sizeof b, "Edison: %.1f s of audio imported into Loupe", fl.content.a().seconds());
       *note = b;
     }
   } else if (note) {

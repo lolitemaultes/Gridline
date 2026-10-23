@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include "../core/I18n.h"
+#include "../core/PluginBrand.h"
 #include "Keys.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../host/HostedPlugins.h"
@@ -347,7 +348,7 @@ void tile(App& a, const PluginInfo& p, bool fav, ImVec2 pos) {
                       p.category.c_str());
   if (hov) dl->AddRect(pos, b, P.hot, theme::kRadiusLg, 0, 1.5f);
   if (hov)
-    ui::Hint(p.name + " \xC2\xB7 " + p.category + "   (click: " +
+    ui::Hint(p.name + " \xC2\xB7 " + (pluginTagline(p.type).empty() ? std::string() : pluginTagline(p.type) + " \xC2\xB7 ") + p.category + "   (click: " +
              (p.kind == PluginKind::Generator ? "new channel" : p.kind == PluginKind::Effect ? "insert on the selected mixer track" : "add to the selected channel") +
              " \xC2\xB7 drag onto the rack, a mixer strip / slot or the playlist \xC2\xB7 Shift+click keeps the picker open)");
   if (clicked) {

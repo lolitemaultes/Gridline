@@ -535,7 +535,7 @@ class Engine {
         const double L = (B.peakMode && mode_[k] == 0) ? B.ratioMax : 4.0;
         const double Lmax = std::max(B.post * L, B.ceil);
         const double a = -satV / 10.0, p = 20 - 19 * std::log(1 + a) / std::log(101.0);
-        if (curveChanged || Lmax != B.lmax || p != B.p) buildSat(B, Lmax, p);
+        if (curveChanged || std::max(Lmax, 1e-9) != B.lmax || p != B.p) buildSat(B, Lmax, p);
       } else if (B.satMode == 2) {
         const double b = 1 - satV / 1000.0;
         B.th = b * B.ceil, B.wd = std::max(B.ceil - B.th, 1.5259e-5);
@@ -669,8 +669,10 @@ class Engine {
     B.ratioMax = maxOut / M;
   }
   static void buildSat(Band& B, double Lmax, double p) {
-    B.lmax = Lmax, B.p = p;
-    const double top = Lmax / B.ceil;
+    // J-92: post gain and ceiling at 0 (silence) gave Lmax = ceiling = 0: a
+    // NaN table and a NaN read index (crash). Floors keep both finite.
+    B.lmax = std::max(Lmax, 1e-9), B.p = p;
+    const double top = B.lmax / std::max(B.ceil, 1e-9);
     const double norm = std::pow(std::atan(std::pow(top, p)), 1.0 / p);
     for (int j = 0; j <= 65536; ++j) {
       const double u = j / 65536.0 * top;
@@ -684,7 +686,7 @@ class Engine {
     float y;
     if (B.satMode == 1) {
       double pos = ax * 65536.0 / B.lmax;
-      if (pos >= 65536) y = B.sat[65536];
+      if (!(pos < 65536)) y = B.sat[65536];  // also NaN
       else {
         const int i = static_cast<int>(pos);
         const float f = static_cast<float>(pos - i);

@@ -18,6 +18,7 @@
 #include <fstream>
 #include <limits>
 #include <sstream>
+#include "../PluginBrand.h"
 #include "../Arrangements.h"
 #include "../Params.h"
 #include "../Project.h"
@@ -717,7 +718,8 @@ std::string reportText(const ExportReport& rep) {
   for (const auto& [k, v] : rep.counts) os << "  " << k << ": " << v << "\n";
   for (const auto& p : rep.plugins)
     if (p.quality != "verbatim" && p.quality != "exact")
-      os << "  plugin " << p.where << ": " << p.glType << " -> " << (p.flName.empty() ? "-" : p.flName) << " [" << p.quality << "] " << p.note << "\n";
+      os << "  plugin " << p.where << ": " << pluginDisplayName(p.glType) << " (" << p.glType << ") -> " << (p.flName.empty() ? "-" : p.flName)
+         << " [" << p.quality << "] " << p.note << "\n";
   for (const auto& wv : rep.warnings) os << "  warning: " << wv << "\n";
   return os.str();
 }

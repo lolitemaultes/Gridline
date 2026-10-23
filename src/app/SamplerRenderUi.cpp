@@ -260,8 +260,8 @@ void window(App& a) {
     formLabel("Instrument");
     int rep = R.replace ? 1 : 0;
     static const char* const repl[] = {i18n::N_("New channel"), i18n::N_("Replace this channel's")};
-    static const char* const replHints[] = {i18n::N_("Adds a Wave Program channel after this one, on the same mixer track"),
-                                            i18n::N_("Swaps the channel's instrument for the Wave Program (undo brings it back)")};
+    static const char* const replHints[] = {i18n::N_("Adds a Folio channel after this one, on the same mixer track"),
+                                            i18n::N_("Swaps the channel's instrument for Folio (undo brings it back)")};
     if (ui::Segmented("replace", repl, 2, &rep, 150, 0, replHints)) R.replace = rep == 1;
     formLabel("Preset");
     ImGui::Checkbox(i18n::tr("Also save to the preset library (Rendered)"), &R.library);

@@ -1,6 +1,7 @@
 // Gridline — Plucker editor on the reference plucked-string generator's
 // 360 × 156 grid and palette (warm orange panel): the large decay and colour
 // wheels, the three option buttons on the right edge, the name plate.
+#include "../../core/PluginBrand.h"
 #include "../flc_kit.h"
 #include "models_widgets.h"
 #include "strings.h"
@@ -59,7 +60,7 @@ void drawPlucker(App& a, const PluginTarget& t, float width) {
   flk::Ctx c{a, t, F, K, dl};
   ImGui::PushID("gl.plucker");
   dl->AddRectFilled(F.p(3, 124), F.p(164, 149), skin::hex(0x374046), 3 * F.s);
-  skin::text(dl, F.p(12, 127), skin::hex(0xFFCE83), "PLUCKER", F.font(17));
+  skin::text(dl, F.p(12, 127), skin::hex(0xFFCE83), pluginTitle("gl.plucker").c_str(), F.font(17));
   skin::text(dl, F.p(12, 12), K.textDim, "DECAY", F.font(10));
   skin::wheel(a, t, PkDecay, F.p(58, 25), 88 * F.s, K, skin::WheelBigLine);
   skin::text(dl, F.p(160, 34), K.textDim, "COLOUR", F.font(10));

@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include "../PluginBrand.h"
 #include "../../packs/models/harmor.h"
 #include "FlpGen.h"
 
@@ -453,7 +454,7 @@ bool decodeHarmorFull(Context& c, const std::vector<Event>& events, PluginMappin
   m.state = s;
   m.exact = false;
   char buf[256];
-  std::snprintf(buf, sizeof buf, "v%d → Resynth: %d part(s), articulators / shaping curves / FX decoded%s%s", ver, nParts,
+  std::snprintf(buf, sizeof buf, "v%d → %s: %d part(s), articulators / shaping curves / FX decoded%s%s", ver, pluginDisplayName("gl.harmor").c_str(), nParts,
                 images ? ", embedded image layer" : "", external ? (missing ? ", resynthesis from audio (file missing)" : ", resynthesis from audio") : "");
   note(c, "Harmor", buf);
   if (missing) c.report.warn("Harmor: " + std::to_string(missing) + " resynthesis audio file(s) not found");

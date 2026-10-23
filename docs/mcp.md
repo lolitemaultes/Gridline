@@ -130,7 +130,9 @@ gridline mcp --attach [--endpoint FILE]
   and `enabled` for effect slots; `tempo`, `swing`, `masterPitch` for the song. Plugin
   parameters are numbered from 1 or named by their display name. `get_parameters` lists them
   with their ranges; `set_parameter` takes plugin units, or 0..1 with `normalized: true`.
-* Plugin types are ids such as `gl.synth` or `gl.reverb` (`list_plugin_catalog`).
+* Plugin types are ids such as `gl.synth` or `gl.reverb` (`list_plugin_catalog`). Type ids never
+  change; display names do (0.6.1 gave the flagships names such as Tercet for `gl.synth`), and
+  `list_plugin_catalog` finds a plugin by its former name too (`query: "time gate"`).
 
 ## Tools
 

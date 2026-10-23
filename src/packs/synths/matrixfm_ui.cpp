@@ -13,6 +13,7 @@
 #include <map>
 #include <string>
 #include "../../app/App.h"
+#include "../../core/PluginBrand.h"
 #include "../../app/InstrumentSkin.h"
 #include "../../app/Theme.h"
 #include "../PacksUi.h"
@@ -657,7 +658,7 @@ void drawMatrixFmEditor(App& a, const PluginTarget& t, float width) {
     const ImU32 lc = i == 0 ? k.c.fill : i <= kOps ? k.c.fill : i <= kOps + kFilters ? k.c.fill2 : k.c.fill3;
     if (iskin::button(k, id, 5 + i * tw, 4, tw - 3, 22, tabs[i], u.tab == i, 10, lc)) u.tab = i, u.sel = -1;
   }
-  iskin::text(k, 752, 4, 88, 22, "MATRIX FM", 10, k.c.textDim, 1, false, true);
+  iskin::text(k, 752, 4, 88, 22, pluginTitle("gl.matrixfm").c_str(), 10, k.c.textDim, 1, false, true);
   if (u.tab == 0) {
     mainPanel(a, t, k, st);
     artPanel(a, t, k, st, d, u, 236, 108);

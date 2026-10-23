@@ -11,6 +11,10 @@ namespace gl {
 class App;
 
 float drawTopBar(App& a);      // menu + transport; returns height used
+// Dev checks (J-91): where the top bar drew a button last frame ("play", "stop", "rec", "metro"), in
+// logical pixels; false when it is not shown. `mirror`: the metronome glyph's last horizontal scale.
+bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1);
+float topBarMetronomeMirror();
 void drawStatusBar(App& a);    // hint bar + notifications
 void drawBrowser(App& a);
 void drawChannelRack(App& a);

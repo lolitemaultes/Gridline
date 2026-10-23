@@ -262,6 +262,9 @@ class HarmorGen final : public Generator {
     fx_.setDirect(sr_, chorus, delay, prmf(s, FxDlTime, 1.5f) * 60.0 / tempo_, prmf(s, FxDlFeedback, 0.3f), reverb,
                   std::clamp(prmf(s, FxRvDecay, 3.9f) / 9.0f + 0.3f * prmf(s, FxRvRoom, 0.4f), 0.0f, 1.0f));
     fx_.setKinds(0, prmi(s, FxDlMode, 1), 0, tempo_);
+    // J-92: chorus speed / depth / delay were never read (neutral at their defaults 0.75 / 0.5 / 0.0625).
+    fx_.scaleChorus(static_cast<float>(std::exp2((prmf(s, FxChSpeed, 0.75f) - 0.75f) * 4.0f)), prmf(s, FxChDepth, 0.5f) / 0.5f,
+                    (prmf(s, FxChDelay, 0.0625f) + 0.0625f) / 0.125f);
     compType_ = prmi(s, FxCompType, 0), comp_ = prmf(s, FxCompAmount, 0.5f);
     toneA_ = static_cast<float>(1.0 - std::exp(-kTwoPi * prmf(s, FxDistTone, 12000) / sr_));
   }

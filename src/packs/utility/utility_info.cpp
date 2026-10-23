@@ -162,7 +162,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   curveEq(v);
   morphEq(v);
   {
-    PluginInfo p{"gl.freefilter", "Free Filter", "Filter", PluginKind::Effect, {}, false, {}};
+    PluginInfo p{"gl.freefilter", "Biquad Filter", "Filter", PluginKind::Effect, {}, false, {}};
     p.params.resize(FfCount);
     p.params[FfType] = ch("Type", {"Low pass", "Band pass", "High pass", "Notch", "Low shelf", "Peak", "High shelf"}, 0);
     p.params[FfFreq] = lg("Frequency", "Hz", 10, 22000, 1000);
@@ -208,7 +208,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
     v.push_back(p);
   }
   {
-    PluginInfo p{"gl.scope", "Scope", "Visual", PluginKind::Effect, {}, false, {}};
+    PluginInfo p{"gl.scope", "Graticule", "Visual", PluginKind::Effect, {}, false, {}};
     p.params.resize(ScCount);
     p.params[ScMode] = ch("View", {"Wave", "Spectrum", "Sonogram", "Vector", "Meters", "Grid"}, SvGrid);
     p.params[ScGain] = lin("Display gain", "dB", -24, 24, 0);
@@ -224,7 +224,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params[ScAutoView] = tog("Auto view", 0);
     p.params[ScWaveRefresh] = lin("Wave refresh", "ms", 5, 50, 10);
     p.params[ScSplit] = tog("Stereo split", 0);
-    p.params[ScSplitGap] = lin("Split gap", "%", 0, 100, 0);
+    p.params[ScSplitGap] = lin("Split gap", "pct", 0, 100, 0);
     p.params[ScTaper] = tog("Edge taper", 1);
     p.params[ScSmoothZoom] = tog("Smooth zoom", 1);
     p.params[ScSpecRefresh] = lin("Spectrum refresh", "ms", 5, 100, 15);

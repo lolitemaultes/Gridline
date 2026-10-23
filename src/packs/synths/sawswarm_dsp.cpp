@@ -366,6 +366,9 @@ class SawSwarm final : public Generator {
       v.pitch = pitch;
       v.glide.left = 0;
       for (int c = 0; c < 2; ++c) v.f1[c].reset(), v.f2[c].reset();
+    } else {  // J-92: a reused (releasing / stolen) voice took the new note at its OLD pitch
+      v.pitch = pitch;
+      v.glide.left = 0;
     }
     const bool retrig = P(SwUniRetrig) >= 0.5f;
     if (!was || retrig)
@@ -389,7 +392,10 @@ class SawSwarm final : public Generator {
         glideTo(v, pitch, legato);
         if (!legato) v.amp.gate(true), v.eg.gate(true);
       } else {
+        const bool releasing = v.on;
+        const double from = v.pitch;
         start(v, id, pitch, vel, false);
+        if (releasing) v.pitch = from, glideTo(v, pitch, false);  // glides unless "Glide held notes" only
       }
       if (oct) start(v_[1], id, pitch, vel * 0.7f, true);
       return;

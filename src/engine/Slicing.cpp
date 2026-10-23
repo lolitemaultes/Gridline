@@ -14,7 +14,7 @@
 
 namespace gl {
 
-std::vector<int64_t> computeSlices(const Sample& s, int mode, double sensitivity) {
+std::vector<int64_t> computeSlices(const Sample& s, int mode, double sensitivity, double minGapSeconds) {
   std::vector<int64_t> out{0};
   const int64_t n = static_cast<int64_t>(s.frames());
   if (n < 64) return out;
@@ -35,7 +35,7 @@ std::vector<int64_t> computeSlices(const Sample& s, int mode, double sensitivity
     e.push_back(acc / hop);
   }
   double ratio = 1.6 + (1.0 - std::clamp(sensitivity, 0.0, 1.0)) * 8.0;
-  int64_t minGap = static_cast<int64_t>(s.sampleRate * 0.06);
+  int64_t minGap = static_cast<int64_t>(s.sampleRate * std::clamp(minGapSeconds, 0.001, 2.0));  // J-92: was fixed at 60 ms
   for (size_t i = 4; i < e.size() && out.size() < 64; ++i) {
     double avg = 0;
     for (size_t k = i - 4; k < i; ++k) avg += e[k];
@@ -255,7 +255,8 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
     if (st.type == "gl.slicer" && aux.samples[0]) {
       int mode = st.params.size() > SlMode ? static_cast<int>(st.params[SlMode] + 0.5f) : 0;
       double sens = st.params.size() > SlSensitivity ? st.params[SlSensitivity] : 0.5;
-      aux.slices = computeSlices(*aux.samples[0], mode, sens);
+      const double gap = st.params.size() > SlMinGap ? st.params[SlMinGap] : 0.06;  // J-92: "Minimum slice gap" was never read
+      aux.slices = computeSlices(*aux.samples[0], mode, sens, gap);
     }
     return true;
   }

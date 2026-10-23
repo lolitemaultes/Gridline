@@ -23,7 +23,7 @@ double recMaxSeconds(int choice) {
 }
 
 void appendInfos(std::vector<PluginInfo>& v) {
-  PluginInfo p{kType, "Audio Editor", "Misc", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{kType, "Loupe", "Misc", PluginKind::Effect, {}, false, {}};
   p.params.resize(EdCount);
   p.params[EdRecMode] = ch("Record start", {"Now", "On signal", "While signal", "On playback"}, RecOnInput);
   p.params[EdRecMax] = ch("Record limit", {"Unlimited", "1 min", "3 min", "5 min", "10 min", "30 min", "60 min"}, 4);

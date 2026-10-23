@@ -1069,7 +1069,7 @@ class PitchFx final : public SpectralFx {
     int mode = p.choice(PsMode);
     const int engine = std::clamp(p.choice(PsEngine), 0, 3);
     if (engine == kPsHifi) {
-      processHifi(p, L, R, n);
+      processHifi(p, L, R, n, ctx.tempo);
       return;
     }
     if (engine != kPsClassic) mode = 10 + engine * 2 + std::clamp(p.choice(PsDetector), 0, 1);
@@ -1314,7 +1314,7 @@ class PitchFx final : public SpectralFx {
   Hifi* hifi_ = nullptr;
   float hifiOut_[2][256] = {};
 
-  void processHifi(const Params& p, float* L, float* R, int n) {
+  void processHifi(const Params& p, float* L, float* R, int n, double tempo) {
     if (Hifi* h = hifiPending_.load(std::memory_order_acquire); h && hifiRetired_.load(std::memory_order_acquire) == nullptr) {
       hifiPending_.store(nullptr, std::memory_order_release);
       if (hifi_) hifiRetired_.store(hifi_, std::memory_order_release);
@@ -1333,7 +1333,10 @@ class PitchFx final : public SpectralFx {
     const double mix = std::clamp(static_cast<double>(p[PsMix]), 0.0, 1.0);
     const int dmode = std::clamp(p.choice(PsDelayMode), 0, 3);
     const double fb = std::clamp(static_cast<double>(p[PsFeedback]), 0.0, 0.95);
-    const double dly = std::clamp(static_cast<double>(p[PsDelay]) * 0.001 * h->rate, 1.0, static_cast<double>(delay_[0].size() - 8));
+    // J-92: tempo-synced delay (steps) as in the other engines; the Hi-fi engine ignored the sync switch.
+    const double dlyRaw = p.on(PsDelaySync) ? std::clamp(static_cast<double>(p[PsDelaySteps]), 0.0, 16.0) * 15.0 * h->rate / std::max(10.0, tempo)
+                                            : static_cast<double>(p[PsDelay]) * 0.001 * h->rate;
+    const double dly = std::clamp(dlyRaw, 1.0, static_cast<double>(delay_[0].size() - 8));
     if (!h->started) {
       for (int k = 0; k < h->delay; ++k) {
         const auto i = static_cast<size_t>(h->w % h->cap);

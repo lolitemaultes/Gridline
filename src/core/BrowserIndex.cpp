@@ -12,6 +12,7 @@
 #include <sstream>
 #include "../engine/Sample.h"
 #include "Json.h"
+#include "PluginBrand.h"
 #include "Project.h"
 
 namespace gl::browse {
@@ -551,7 +552,8 @@ bool matchesPlugin(const PluginInfo& p, const Query& q, bool favourite) {
     if (favTag ? !favourite : cat.find(t) == std::string::npos) return false;
   }
   if (!q.words.empty()) {
-    const std::string hay = lower(p.name) + " " + cat + " " + lower(p.type);
+    // J-94: former names and function words stay searchable (pluginKeywords).
+    const std::string hay = lower(p.name) + " " + cat + " " + lower(p.type) + " " + pluginKeywords(p.type);
     for (const auto& w : q.words)
       if (hay.find(w) == std::string::npos) return false;
   }

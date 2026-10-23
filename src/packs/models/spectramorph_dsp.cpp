@@ -160,6 +160,7 @@ class SpectraMorphGen final : public Generator {
     fx_.setDirect(sr_, prmi(s, SmChorusOn, 0) ? prmf(s, SmChorusDepth, 0.5f) : 0.0f, prmi(s, SmDelayOn, 0) ? 0.4f : 0.0f,
                   prmf(s, SmDelayTime, 0.3f), prmf(s, SmDelayFb, 0.4f), prmi(s, SmReverbOn, 0) ? prmf(s, SmReverbMix, 0.3f) : 0.0f,
                   prmf(s, SmReverbDecay, 0.5f));
+    fx_.setChorusRate(prmf(s, SmChorusRate, 0.5f));  // J-92: the rate parameter was never read
   }
 
   int nearestZone(int p, double note) const {

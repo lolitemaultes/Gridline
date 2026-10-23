@@ -27,7 +27,7 @@ ParamDesc ch(const std::string& n, std::vector<std::string> c, int d) {
 }  // namespace
 
 PluginInfo gmsInfo() {
-  PluginInfo p{"gl.gms", "Groove Synth", "Synth", PluginKind::Generator, {}, false, {}};
+  PluginInfo p{"gl.gms", "Hybrid Synth", "Synth", PluginKind::Generator, {}, false, {}};
   auto& q = p.params;
   q.resize(GCount);
   q[GVolume] = lin("Volume", "dB", -60, 20, 0);

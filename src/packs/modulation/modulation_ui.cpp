@@ -25,8 +25,8 @@ void drawLinkMenu(App& a, ParamId pid) {
     auto outs = listControllerOutputs(s);
     if (outs.empty()) {
       ImGui::TextDisabled("%s", i18n::tr("No controllers in this project."));
-      ImGui::TextDisabled("%s", i18n::tr("Add Peak Follower, X-Y Pad, Formula Controller,"));
-      ImGui::TextDisabled("%s", i18n::tr("Envelope or Keyboard Controller first."));
+      ImGui::TextDisabled("%s", i18n::tr("Add Peak Follower, X-Y Pad, Formula Mod,"));
+      ImGui::TextDisabled("%s", i18n::tr("Envelope Mod or Keyboard Mod first."));
     }
     for (const auto& o : outs) {
       bool sel = cur && cur->sourceOwner == o.owner && cur->sourceSlot == o.slot && cur->sourceOutput == o.output;

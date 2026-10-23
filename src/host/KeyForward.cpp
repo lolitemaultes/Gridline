@@ -245,4 +245,67 @@ int hidUsageOfWinVk(int vk) {
   }
 }
 
+int hidUsageOfX11Keysym(unsigned long ks) {
+  if (ks >= 0x61 && ks <= 0x7A) return 4 + static_cast<int>(ks - 0x61);        // XK_a..XK_z
+  if (ks >= 0x41 && ks <= 0x5A) return 4 + static_cast<int>(ks - 0x41);        // XK_A..XK_Z
+  if (ks >= 0x31 && ks <= 0x39) return 30 + static_cast<int>(ks - 0x31);       // XK_1..XK_9
+  if (ks == 0x30) return 39;                                                   // XK_0
+  if (ks >= 0xFFBE && ks <= 0xFFC9) return 58 + static_cast<int>(ks - 0xFFBE);  // XK_F1..XK_F12
+  if (ks >= 0xFFB1 && ks <= 0xFFB9) return 89 + static_cast<int>(ks - 0xFFB1);  // XK_KP_1..XK_KP_9
+  switch (ks) {
+    case 0xFF0D: return 40;  // Return
+    case 0xFF1B: return 41;  // Escape
+    case 0xFF08: return 42;  // BackSpace
+    case 0xFF09: return 43;  // Tab
+    case 0x20: return 44;    // space
+    case 0x2D: return 45;    // minus
+    case 0x3D: return 46;    // equal
+    case 0x5B: return 47;    // bracketleft
+    case 0x5D: return 48;    // bracketright
+    case 0x5C: return 49;    // backslash
+    case 0x3B: return 51;    // semicolon
+    case 0x27: return 52;    // apostrophe
+    case 0x60: return 53;    // grave
+    case 0x2C: return 54;    // comma
+    case 0x2E: return 55;    // period
+    case 0x2F: return 56;    // slash
+    case 0xFF63: return 73;  // Insert
+    case 0xFF50: return 74;  // Home
+    case 0xFF55: return 75;  // Prior (page up)
+    case 0xFFFF: return 76;  // Delete
+    case 0xFF57: return 77;  // End
+    case 0xFF56: return 78;  // Next (page down)
+    case 0xFF53: return 79;  // Right
+    case 0xFF51: return 80;  // Left
+    case 0xFF54: return 81;  // Down
+    case 0xFF52: return 82;  // Up
+    case 0xFFAF: return 84;  // KP_Divide
+    case 0xFFAA: return 85;  // KP_Multiply
+    case 0xFFAD: return 86;  // KP_Subtract
+    case 0xFFAB: return 87;  // KP_Add
+    case 0xFF8D: return 88;  // KP_Enter
+    case 0xFFB0: return 98;  // KP_0
+    case 0xFFAE: return 99;  // KP_Decimal
+    default: return 0;
+  }
+}
+
+uint32_t modsOfX11State(unsigned state) {
+  uint32_t m = 0;
+  if (state & 1u) m |= kKeyShift;   // ShiftMask
+  if (state & 4u) m |= kKeyCtrl;    // ControlMask
+  if (state & 8u) m |= kKeyAlt;     // Mod1Mask
+  if (state & 64u) m |= kKeyCmd;    // Mod4Mask (Super)
+  return m;
+}
+
+bool forwardsToHost(int usage, uint32_t mods) {
+  if (usage <= 0) return false;
+  if (usage == 44) return true;                   // Space: play / pause
+  if (usage >= 58 && usage <= 69) return true;    // F1..F12: Gridline's windows
+  return (mods & (kKeyCtrl | kKeyAlt)) != 0 && usage != 224 && usage != 226;  // chords (not a lone modifier)
+}
+
+bool x11WatchesKeys(long otherClientsMask) { return (otherClientsMask & 1L) != 0; }  // KeyPressMask
+
 }  // namespace gl::host

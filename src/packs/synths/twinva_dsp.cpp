@@ -350,6 +350,11 @@ class TwinVa final : public Generator {
     v.vel = vel;
     v.octave = octave;
     v.age = 0;
+    if (wasOn) {  // J-92: a reused (releasing / stolen) voice took the new note at its OLD pitch
+      v.pitch = pitch;
+      v.glide.left = 0;
+      v.target = pitch;
+    }
     if (!wasOn) {
       v.pitch = pitch;
       v.glide.left = 0;
@@ -377,7 +382,10 @@ class TwinVa final : public Generator {
         if (!legato || arpMode_ > 0) v.amp.gate(true), v.eg.gate(true);
         v.held = true;
       } else {
+        const bool releasing = v.on && mono_;
+        const double from = v.pitch;
         startVoice(v, id, pitch, vel, false);
+        if (releasing) v.pitch = from, setTarget(v, pitch, false);  // glides unless "Glide held notes" only
       }
       if (oct) startVoice(v_[1], id, pitch, vel * 0.7f, true);
       return;

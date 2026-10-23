@@ -212,7 +212,7 @@ PluginInfo grainScanInfo() {
 
 // ------------------------------------------------------- Spline Scratcher
 PluginInfo splineScratchInfo() {
-  PluginInfo p{"gl.splinescratch", "Spline Scratcher", "Sampler", PluginKind::Generator, {}, true, {}};
+  PluginInfo p{"gl.splinescratch", "Spline Scratch", "Sampler", PluginKind::Generator, {}, true, {}};
   auto& q = p.params;
   q.resize(SsCount);
   q[SsSpeed] = lin("Speed", "", 0, 1024, 512);

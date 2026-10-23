@@ -32,6 +32,7 @@
 #include <thread>
 #include <vector>
 #include "../core/I18n.h"
+#include "../core/UiScale.h"
 #include "../host/EditorLayout.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
@@ -576,7 +577,13 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
   PluginWindow* raw = &w;
   if (!w.external) {
     w.container = native::createContainer(w.nw, w.L.plugin);
-    editor->setContentScale(native::backingScale(w.nw));
+    {  // macOS: the backing scale; X11 (pixels): the desktop's scale, as Gridline's own interface (J-91)
+      double cs = native::backingScale(w.nw);
+#if !defined(__APPLE__) && !defined(_WIN32)
+      cs = std::max(cs, static_cast<double>(uiscale::detected()));
+#endif
+      editor->setContentScale(cs);
+    }
     editor->requestResize = [raw](int nw, int nh) {
       if (raw->dead) return false;
       if (std::this_thread::get_id() != gUiThread) {  // applied on the next idle

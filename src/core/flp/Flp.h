@@ -80,6 +80,8 @@ struct Report {
   std::vector<std::string> warnings;    // things that could not be imported exactly
   std::map<std::string, int> counts;    // "channels", "notes", "pattern clips", …
   std::map<std::string, int> unmapped;  // plugin internal name → instances without a Gridline equivalent
+  // J-94: "FL plugin → Gridline plugin" (catalogue display names) → instances.
+  std::map<std::string, int> mapped;
   void warn(const std::string& w) { warnings.push_back(w); }
 };
 

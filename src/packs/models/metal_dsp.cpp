@@ -54,6 +54,13 @@ bool prepareMetalAux(const PluginState& state, ChannelAux& aux) {
         it = cache.emplace(aux.sample(0).get(), std::make_pair(aux.sample(0), computeSlices(*aux.sample(0), 0, 0.5))).first;
       }
       aux.slices = it->second.second;
+      // J-92: transient hold (ms): transients closer than this to the previous one are skipped.
+      const double holdMs = state.params.size() > static_cast<size_t>(metal::GsTransHold) ? state.params[metal::GsTransHold] : 228.0;
+      const double gap = std::max(0.0, holdMs) * 0.001 * aux.sample(0)->sampleRate;
+      std::vector<int64_t> kept;
+      for (int64_t s : aux.slices)
+        if (kept.empty() || static_cast<double>(s - kept.back()) >= gap) kept.push_back(s);
+      aux.slices = std::move(kept);
     }
     if (state.type == "gl.splinescratch") {
       auto d = std::make_shared<metal::SplineScratchAux>();

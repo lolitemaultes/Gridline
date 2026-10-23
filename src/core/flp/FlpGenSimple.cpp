@@ -7,6 +7,7 @@
 //   Fruit Kick / BassDrum → Kick ("gl.kick")
 #include <algorithm>
 #include <cmath>
+#include "../PluginBrand.h"
 #include "../PluginParams.h"
 #include "../../packs/modulation/envc.h"
 #include "../../packs/modulation/modulation.h"
@@ -233,7 +234,7 @@ bool decodeBooBass(Context& c, const std::vector<Event>& events, PluginMapping& 
   m.glType = "gl.analog";
   m.state = s;
   m.exact = false;
-  note(c, "BooBass", "approximated by Analog (bass → sub, mid → saw level, treble → cutoff)");
+  note(c, "BooBass", "approximated by " + pluginDisplayName("gl.analog") + " (bass → sub, mid → saw level, treble → cutoff)");
   ParamTable t;
   t.lin(0, sy::AnSubLevel, 0, 1);
   t.fn(1, sy::anOsc(0, sy::OscLevel), [](double n) { return 0.4 + 0.6 * n; });

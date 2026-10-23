@@ -345,14 +345,24 @@ void filterGraph(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p,
     db = dsp::gainToDb(1 - mix + mix * dsp::dbToGain(db));
     pts.push_back(ImVec2(p.x + x, p.y + sz.y * 0.5f - static_cast<float>(std::clamp(db, -30.0, 30.0) / 24) * sz.y * 0.5f));
   }
-  for (size_t i = 0; i + 1 < pts.size(); ++i) {
-    ImVec2 q[4] = {pts[i], pts[i + 1], ImVec2(pts[i + 1].x, p.y + sz.y), ImVec2(pts[i].x, p.y + sz.y)};
-    dl->AddConvexPolyFilled(q, 4, theme::withAlpha(K.fill, 0.10f));
-  }
-  dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), K.graphCurve, 0, 2.0f);
-  ImVec2 node(pui::freqToX(fc, p.x, sz.x), p.y + sz.y * (0.85f - static_cast<float>(reso) * 0.7f));
-  dl->AddCircleFilled(node, 6, act ? K.fillPressed : K.fill);
-  dl->AddCircle(node, 6, skin::lighten(K.fill, 0.4f), 16, 1.2f);
+  skin::curveArea(dl, pts.data(), static_cast<int>(pts.size()), p.y + sz.y, K.graphCurve, 2.0f, 0.20f);
+  // Cutoff / resonance node, drawn inside the well (the drag maps the whole width).
+  ImVec2 node(std::clamp(pui::freqToX(fc, p.x, sz.x), p.x + 9, p.x + sz.x - 9), p.y + sz.y * (0.85f - static_cast<float>(reso) * 0.7f));
+  const bool nodeHot = act || ImGui::IsItemHovered();
+  if (nodeHot) dl->AddCircleFilled(node, 11, theme::withAlpha(K.fill, 0.22f), 24);
+  dl->AddCircleFilled(node, 7, IM_COL32(0, 0, 0, 120), 20);
+  dl->AddCircleFilled(node, 6, act ? K.fillPressed : K.fill, 20);
+  dl->AddCircle(node, 6, skin::lighten(K.fill, 0.4f), 20, 1.2f);
+  if (!act)
+    skin::graphHover(dl, p, ImVec2(p.x + sz.x, p.y + sz.y), K, [&](float fx, float) {
+      const double hz = pui::xToFreq(p.x + fx * sz.x, p.x, sz.x);
+      const size_t i = std::min(pts.size() - 1, static_cast<size_t>(std::max(0.0f, fx * sz.x) / 2));
+      const double db = (p.y + sz.y * 0.5f - pts[i].y) / (sz.y * 0.5f) * 24.0;
+      char b[48];
+      if (hz >= 1000) std::snprintf(b, sizeof b, "%.2f kHz  %+.1f dB", hz / 1000.0, db);
+      else std::snprintf(b, sizeof b, "%.0f Hz  %+.1f dB", hz, db);
+      return std::string(b);
+    });
   dl->PopClipRect();
   if (act && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1)) {
     ImGuiIO& io = ImGui::GetIO();

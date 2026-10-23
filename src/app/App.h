@@ -332,6 +332,7 @@ class App {
     std::string source;                   // file name
     std::vector<std::pair<std::string, int>> counts;
     std::vector<std::pair<std::string, int>> unmapped;
+    std::vector<std::pair<std::string, int>> mapped;  // J-94: "FL plugin → Gridline plugin"
     std::vector<std::string> warnings;
   } importReport;
   void exportMidi(const std::string& path, bool patternOnly);

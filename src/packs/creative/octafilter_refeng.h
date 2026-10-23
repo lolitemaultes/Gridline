@@ -310,7 +310,9 @@ class RefEngine {
         for (int k = 0; k < d.n; ++k) {
           const double f0 = R.p[k][0].v, f1 = R.p[k][0].v + R.p[k][0].step * tick_;
           const double fm = std::max(std::max(f0, f1), 1e-9);
-          const double q = (k == 0 ? R.p[0][1].v : 1.0) * K / fm;
+          // J-92: kept inside the SVF's stable region (q + f < 2): at low
+          // cutoffs K / f grew without bound and the filter blew up (NaN).
+          const double q = std::min((k == 0 ? R.p[0][1].v : 1.0) * K / fm, std::max(0.0, 1.98 - fm));
           R.p[k][1].v = q;
           if (k > 0) R.p[k][1].step = 0;
         }

@@ -447,12 +447,12 @@ def main():
 # Plugin editors: instruments from 3200x2200 captures (the plugin part of the
 # channel window), effects from 2880x1800 captures (the window below its title).
 EDITORS = [
-    ("ed_matrixfm.png", "Matrix FM", (400, 509, 2765, 1869)),
-    ("ed_wavetable.png", "Wavetable", (461, 509, 2704, 1912)),
-    ("ed_harmor.png", "Resynth", (480, 509, 2688, 1997)),
+    ("ed_matrixfm.png", "Lattice", (400, 509, 2765, 1869)),
+    ("ed_wavetable.png", "Isoline", (461, 509, 2704, 1912)),
+    ("ed_harmor.png", "Halftone", (480, 509, 2688, 1997)),
     ("ed_eq.png", "Parametric EQ", (507, 288, 2373, 1267)),
-    ("ed_hall.png", "Hall reverb", (550, 302, 2333, 1250)),
-    ("ed_amprack.png", "Amp rack", (412, 343, 2468, 1207)),
+    ("ed_hall.png", "Cloister", (550, 302, 2333, 1250)),
+    ("ed_amprack.png", "Pedal Rack", (412, 343, 2468, 1207)),
 ]
 # Views from 3200x2000 captures (1600x1000 window at UI scale 2), saved 1600 px wide.
 VIEWS = [
@@ -469,7 +469,7 @@ RELEASE = "0.6.0"
 # Effect editors with live graphics while the song plays (2880x1800 captures).
 RELEASE_EDITORS = [
     ("rel_reverb.png", "Reverb", (530, 449, 2354, 1109)),
-    ("rel_delay.png", "Delay", (508, 452, 2373, 1106)),
+    ("rel_delay.png", "Tracer", (508, 452, 2373, 1106)),
     ("rel_limiter.png", "Limiter", (629, 340, 2254, 1214)),
 ]
 # Views from 3200x2000 captures.

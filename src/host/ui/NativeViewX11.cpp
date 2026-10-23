@@ -1,16 +1,69 @@
 // Gridline — native pieces of a plugin window (X11). Xlib is resolved at run
 // time from the library SDL's X11 driver already loaded, so Gridline links no
 // X11 library itself; without it the plugin attaches to the window directly.
+//
+// Keys (J-66 on X11, J-91): the X server sends a key to the window that has
+// the keyboard - a window of the plugin's interface inside the container -
+// so SDL (and Gridline's shortcuts) never see it. Gridline watches the
+// container's window tree on an X connection of its own: every window of
+// the interface that takes keys (another X client selected KeyPress on it)
+// is selected by Gridline's connection too, and X sends Gridline a copy of
+// each key the interface gets. X cannot tell whether the interface used a
+// key, so only the keys of Gridline's global shortcuts are queued for
+// Gridline (Space, F1-F12, Ctrl / Alt chords: host/KeyForward.h
+// forwardsToHost); the interface keeps getting every key, its text fields
+// included. Windows nobody takes keys on are left alone: their keys go up to
+// Gridline's own window as before (SDL, PluginWindow.cpp routeKey).
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <dlfcn.h>
 #include <cstdint>
+#include <deque>
 #include <initializer_list>
+#include <map>
+#include <set>
+#include <vector>
 #include "NativeView.h"
 
 namespace gl::host::native {
 
 namespace {
 using XWin = unsigned long;
+
+// The Xlib structures used here (layout fixed by the X11 ABI; no X headers needed).
+struct XKeyEv {
+  int type;
+  unsigned long serial;
+  int sendEvent;
+  void* display;
+  XWin window, root, subwindow;
+  unsigned long time;
+  int x, y, xRoot, yRoot;
+  unsigned int state, keycode;
+  int sameScreen;
+};
+union XEv {
+  int type;
+  XKeyEv key;
+  long pad[24];
+};
+struct XWinAttrs {
+  int x, y, width, height, borderWidth, depth;
+  void* visual;
+  XWin root;
+  int cls, bitGravity, winGravity, backingStore;
+  unsigned long backingPlanes, backingPixel;
+  int saveUnder;
+  unsigned long colormap;
+  int mapInstalled, mapState;
+  long allEventMasks, yourEventMask, doNotPropagateMask;
+  int overrideRedirect;
+  void* screen;
+};
+using XErrHandler = int (*)(void*, void*);
+
+constexpr long kKeyPressMask = 1L << 0, kKeyReleaseMask = 1L << 1, kSubstructureNotifyMask = 1L << 19;
+constexpr int kKeyPress = 2, kKeyRelease = 3, kCreateNotify = 16, kMapNotify = 19, kReparentNotify = 21;
+
 struct Xlib {
   XWin (*createSimpleWindow)(void*, XWin, int, int, unsigned, unsigned, unsigned, unsigned long, unsigned long) = nullptr;
   int (*mapWindow)(void*, XWin) = nullptr;
@@ -18,7 +71,20 @@ struct Xlib {
   int (*destroyWindow)(void*, XWin) = nullptr;
   int (*setTransientForHint)(void*, XWin, XWin) = nullptr;
   int (*flush)(void*) = nullptr;
+  char* (*resourceManagerString)(void*) = nullptr;
+  // Keys (J-91).
+  void* (*openDisplay)(const char*) = nullptr;
+  int (*queryTree)(void*, XWin, XWin*, XWin*, XWin**, unsigned*) = nullptr;
+  int (*selectInput)(void*, XWin, long) = nullptr;
+  int (*getWindowAttributes)(void*, XWin, XWinAttrs*) = nullptr;
+  int (*pending)(void*) = nullptr;
+  int (*nextEvent)(void*, XEv*) = nullptr;
+  int (*xfree)(void*) = nullptr;
+  int (*sync)(void*, int) = nullptr;
+  XErrHandler (*setErrorHandler)(XErrHandler) = nullptr;
+  unsigned long (*keycodeToKeysym)(void*, unsigned char, int, int) = nullptr;  // XkbKeycodeToKeysym
   bool ok = false;
+  bool keys = false;
 };
 const Xlib& xlib() {
   static Xlib x = [] {
@@ -37,7 +103,20 @@ const Xlib& xlib() {
     l.destroyWindow = reinterpret_cast<decltype(l.destroyWindow)>(sym("XDestroyWindow"));
     l.setTransientForHint = reinterpret_cast<decltype(l.setTransientForHint)>(sym("XSetTransientForHint"));
     l.flush = reinterpret_cast<decltype(l.flush)>(sym("XFlush"));
+    l.resourceManagerString = reinterpret_cast<decltype(l.resourceManagerString)>(sym("XResourceManagerString"));
+    l.openDisplay = reinterpret_cast<decltype(l.openDisplay)>(sym("XOpenDisplay"));
+    l.queryTree = reinterpret_cast<decltype(l.queryTree)>(sym("XQueryTree"));
+    l.selectInput = reinterpret_cast<decltype(l.selectInput)>(sym("XSelectInput"));
+    l.getWindowAttributes = reinterpret_cast<decltype(l.getWindowAttributes)>(sym("XGetWindowAttributes"));
+    l.pending = reinterpret_cast<decltype(l.pending)>(sym("XPending"));
+    l.nextEvent = reinterpret_cast<decltype(l.nextEvent)>(sym("XNextEvent"));
+    l.xfree = reinterpret_cast<decltype(l.xfree)>(sym("XFree"));
+    l.sync = reinterpret_cast<decltype(l.sync)>(sym("XSync"));
+    l.setErrorHandler = reinterpret_cast<decltype(l.setErrorHandler)>(sym("XSetErrorHandler"));
+    l.keycodeToKeysym = reinterpret_cast<decltype(l.keycodeToKeysym)>(sym("XkbKeycodeToKeysym"));
     l.ok = l.createSimpleWindow && l.mapWindow && l.moveResizeWindow && l.destroyWindow && l.flush;
+    l.keys = l.openDisplay && l.queryTree && l.selectInput && l.getWindowAttributes && l.pending && l.nextEvent && l.xfree && l.sync &&
+             l.setErrorHandler && l.keycodeToKeysym;
     return l;
   }();
   return x;
@@ -45,7 +124,113 @@ const Xlib& xlib() {
 XWin win(const void* p) { return static_cast<XWin>(reinterpret_cast<uintptr_t>(p)); }
 void* ptr(XWin w) { return reinterpret_cast<void*>(static_cast<uintptr_t>(w)); }
 unsigned dim(int v) { return static_cast<unsigned>(v > 1 ? v : 1); }
+
+// ---- keys (J-91)
+struct Watched {
+  std::set<XWin> windows;  // windows of the interface whose keys Gridline gets a copy of
+  std::deque<KeyEvent> queue;
+  int rescanIn = 0;   // frames until the window tree is read again
+  bool dirty = true;  // the tree changed (a window was created / mapped / reparented)
+};
+struct Keys {
+  void* dpy = nullptr;  // Gridline's own connection: its event masks are its own
+  bool tried = false;
+  std::map<XWin, Watched> containers;
+};
+Keys& keyState() {
+  static Keys k;
+  return k;
+}
+void* keyDisplay() {
+  Keys& k = keyState();
+  if (!k.tried) {
+    k.tried = true;
+    if (xlib().keys) k.dpy = xlib().openDisplay(nullptr);
+  }
+  return k.dpy;
+}
+
+// X errors on Gridline's connection (a window of the interface went away
+// between reading the tree and selecting on it) are expected and ignored;
+// errors of other connections go to the handler that was installed before.
+XErrHandler gPrevHandler = nullptr;
+int ignoreOwnErrors(void* d, void* e) {
+  if (d == keyState().dpy) return 0;
+  return gPrevHandler ? gPrevHandler(d, e) : 0;
+}
+struct ErrorGuard {
+  explicit ErrorGuard(void* d) : dpy(d) { gPrevHandler = xlib().setErrorHandler(ignoreOwnErrors); }
+  ~ErrorGuard() {
+    xlib().sync(dpy, 0);  // the errors of the calls above arrive while the guard is installed
+    xlib().setErrorHandler(gPrevHandler);
+  }
+  ErrorGuard(const ErrorGuard&) = delete;
+  ErrorGuard& operator=(const ErrorGuard&) = delete;
+  void* dpy;
+};
+
+// Reads the container's window tree: tree changes are watched on every
+// window, keys on the interface's windows that take keys.
+void scan(void* dpy, XWin container, Watched& w) {
+  const Xlib& x = xlib();
+  ErrorGuard g(dpy);
+  std::vector<XWin> todo{container};
+  std::set<XWin> seen;
+  while (!todo.empty() && seen.size() < 512) {
+    const XWin cur = todo.back();
+    todo.pop_back();
+    if (!seen.insert(cur).second) continue;
+    XWin root = 0, parent = 0, *kids = nullptr;
+    unsigned n = 0;
+    if (x.queryTree(dpy, cur, &root, &parent, &kids, &n)) {
+      for (unsigned i = 0; i < n; ++i) todo.push_back(kids[i]);
+      if (kids) x.xfree(kids);
+    }
+    long mask = kSubstructureNotifyMask;
+    if (cur != container) {
+      XWinAttrs at{};
+      if (x.getWindowAttributes(dpy, cur, &at) && x11WatchesKeys(at.allEventMasks & ~at.yourEventMask)) mask |= kKeyPressMask | kKeyReleaseMask;
+    }
+    x.selectInput(dpy, cur, mask);
+    if (mask & kKeyPressMask) w.windows.insert(cur);
+  }
+  for (auto it = w.windows.begin(); it != w.windows.end();) it = seen.count(*it) ? std::next(it) : w.windows.erase(it);
+}
+
+// Events on Gridline's connection: the copies of global shortcut keys are
+// queued for the container whose interface got them.
+void drain(void* dpy) {
+  const Xlib& x = xlib();
+  Keys& k = keyState();
+  while (x.pending(dpy) > 0) {
+    XEv e{};
+    x.nextEvent(dpy, &e);
+    if (e.type == kCreateNotify || e.type == kMapNotify || e.type == kReparentNotify) {
+      for (auto& kv : k.containers) kv.second.dirty = true;
+      continue;
+    }
+    if (e.type != kKeyPress && e.type != kKeyRelease) continue;
+    for (auto& kv : k.containers) {
+      Watched& w = kv.second;
+      if (!w.windows.count(e.key.window)) continue;
+      const int usage = hidUsageOfX11Keysym(x.keycodeToKeysym(dpy, static_cast<unsigned char>(e.key.keycode), 0, 0));
+      KeyEvent ke;
+      ke.down = e.type == kKeyPress;
+      ke.code = macKeyOfHidUsage(usage);
+      ke.mods = modsOfX11State(e.key.state);
+      if (ke.code != 0xFFFF && forwardsToHost(usage, ke.mods)) w.queue.push_back(ke);
+      break;
+    }
+  }
+}
 }  // namespace
+
+std::string xResources(const Window& w) {
+  const Xlib& x = xlib();
+  if (!x.resourceManagerString || !w.display) return {};
+  const char* r = x.resourceManagerString(w.display);
+  return r ? std::string(r) : std::string();
+}
 
 void* createContainer(const Window& w, const layout::Rect& r) {
   if (!w.handle) return nullptr;
@@ -55,6 +240,7 @@ void* createContainer(const Window& w, const layout::Rect& r) {
   if (!c) return w.handle;
   x.mapWindow(w.display, c);
   x.flush(w.display);
+  watchKeys(ptr(c));
   return ptr(c);
 }
 
@@ -68,6 +254,7 @@ void setContainerFrame(const Window& w, void* container, const layout::Rect& r) 
 void destroyContainer(const Window& w, void* container) {
   const Xlib& x = xlib();
   if (!x.ok || !w.display || !container || container == w.handle) return;
+  unwatchKeys(container);
   x.destroyWindow(w.display, win(container));
   x.flush(w.display);
 }
@@ -84,12 +271,44 @@ double backingScale(const Window&) { return 1.0; }
 long windowNumber(const Window&) { return -1; }
 bool captureWindow(const Window&, const std::string&, const unsigned char*, int, int) { return false; }
 void startDrawStats(void*) {}
-// Keys: X11 plugin windows get their keys from the X server directly; Gridline
-// forwards what reaches its own window (PluginWindow.cpp, Editor::key).
-void watchKeys(void*) {}
-void unwatchKeys(void*) {}
+
+// Keys (J-91, see the top of this file).
+void watchKeys(void* container) {
+  if (!container || !keyDisplay()) return;
+  keyState().containers[win(container)];
+}
+void unwatchKeys(void* container) {
+  Keys& k = keyState();
+  auto it = k.containers.find(win(container));
+  if (it == k.containers.end()) return;
+  if (k.dpy) {
+    ErrorGuard g(k.dpy);
+    for (XWin w : it->second.windows) xlib().selectInput(k.dpy, w, 0);
+    xlib().selectInput(k.dpy, win(container), 0);
+  }
+  k.containers.erase(it);
+}
 bool containerKey(void*, void*, bool) { return false; }
-bool popKey(void*, KeyEvent&) { return false; }
+bool popKey(void* container, KeyEvent& e) {
+  Keys& k = keyState();
+  auto it = k.containers.find(win(container));
+  if (it == k.containers.end() || !k.dpy) return false;
+  Watched& w = it->second;
+  if (w.queue.empty()) {  // once a frame (the caller drains the queue): the tree, then the events
+    if (w.dirty || --w.rescanIn <= 0) {
+      scan(k.dpy, it->first, w);
+      w.dirty = false;
+      w.rescanIn = 60;  // and about once a second: other connections' windows change without telling
+    }
+    drain(k.dpy);
+  }
+  if (w.queue.empty()) return false;
+  e = w.queue.front();
+  w.queue.pop_front();
+  return true;
+}
+// X cannot tell which window of the interface has a text field: the
+// interface keeps every key, Gridline takes only its global shortcuts.
 KeyFocus keyFocus(void*) { return KeyFocus::Host; }
 void saveKeyFocus(void*) {}
 void restoreKeyFocus(void*) {}

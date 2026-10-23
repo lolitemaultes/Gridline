@@ -18,6 +18,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Backup.h"
 #include "../core/I18n.h"
+#include "../core/UiScale.h"
 #include "../core/flp/Flp.h"
 #include "App.h"
 #include "AudioRecordUi.h"
@@ -465,6 +466,16 @@ void settingsWindow(App& a) {
         if (ImGui::IsItemDeactivated() && drag.release(committed, &to)) ui::confirmScale(a, to);
         ui::Hint("Scales the whole interface; asks to keep the new size once you let go");
       }
+#if !defined(__APPLE__)
+      {  // J-91: the desktop's display scale (Xft.dpi, GDK_SCALE, Wayland, Windows DPI) on top of the size above
+        formLabel("");
+        bool follow = st.getBool("ui.scaleAuto");
+        char lbl[96];
+        std::snprintf(lbl, sizeof lbl, i18n::tr("Follow the system's display scale (%d%%)"), static_cast<int>(std::lround(uiscale::detected() * 100.0f)));
+        if (ImGui::Checkbox(lbl, &follow)) st.set("ui.scaleAuto", follow);
+        ui::Hint("On: the interface size is multiplied by the scale set in your system's display settings. Off: the size above is used as it is");
+      }
+#endif
       formLabel("Confirm changes");
       bool autoRevert = st.getBool("ui.confirmAutoRevert");
       if (ImGui::Checkbox(i18n::tr("Revert size, theme, language and audio changes not kept within 15 s"), &autoRevert))
@@ -479,6 +490,13 @@ void settingsWindow(App& a) {
       ui::BeginSection("MOTION");
       const bool reduced = scrollui::systemReducedMotion();
       ImGui::BeginDisabled(reduced);
+      bool anim = st.getBool("ui.animations") && !reduced;
+      formLabel("Animations");
+      if (ImGui::Checkbox(i18n::tr("Interface animations"), &anim)) st.set("ui.animations", anim);
+      ui::Hint("Decorative motion: the metronome swinging in tempo, key and pad lights fading, gliding drags and scrolling. "
+               "Off: everything moves at once, which saves a little CPU");
+      ImGui::EndDisabled();
+      ImGui::BeginDisabled(reduced || !anim);
       bool smoothSnap = st.getBool("ui.smoothSnap") && !reduced;
       bool smoothScroll = st.getBool("ui.smoothScroll") && !reduced, elastic = st.getBool("ui.elasticEdges") && !reduced;
       formLabel("Dragging");
@@ -864,6 +882,7 @@ void importReportWindow(App& a) {
     std::vector<const char*> labels;
     for (const auto& kv : r.counts) labels.push_back(kv.first.c_str());
     for (const auto& kv : r.unmapped) labels.push_back(kv.first.c_str());
+    for (const auto& kv : r.mapped) labels.push_back(kv.first.c_str());
     const float sectionPad = 2 * theme::kS2;
     const float numX = ui::FormColumn(labels.data(), static_cast<int>(labels.size()), 168.0f,
                                       std::max(168.0f, (ImGui::GetContentRegionAvail().x - 2 * sectionPad) * 0.62f), theme::kS6);
@@ -875,6 +894,16 @@ void importReportWindow(App& a) {
       ImGui::PopFont();
     }
     ui::EndSection();
+    if (!r.mapped.empty()) {  // J-94: which Gridline plugin each FL plugin became
+      ui::BeginSection("PLUGINS");
+      for (const auto& [k, v] : r.mapped) {
+        formLabel(k.c_str(), numX);
+        ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
+        ImGui::Text("\xC3\x97%d", v);
+        ImGui::PopFont();
+      }
+      ui::EndSection();
+    }
     if (!r.unmapped.empty()) {
       ui::BeginSection("NO GRIDLINE EQUIVALENT YET");
       for (const auto& [k, v] : r.unmapped) {

@@ -19,7 +19,9 @@ namespace gl::packs::synths::ui2 {
 
 using theme::pal;
 
-inline float val(const PluginState& s, int k) { return k >= 0 && static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : 0.f; }
+inline float val(const PluginState& s, int k) {
+  audit::stateRead(k);  // J-92 binding audit
+  return k >= 0 && static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : 0.f; }
 inline int ival(const PluginState& s, int k) { return static_cast<int>(std::lround(val(s, k))); }
 
 // Compact knob cell: knob + label; the label turns into the value while the

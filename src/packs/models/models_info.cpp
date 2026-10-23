@@ -33,7 +33,7 @@ void fxParams(std::vector<ParamDesc>& p, int base) {
 
 // ------------------------------------------------------------------ Additive
 PluginInfo additive() {
-  PluginInfo p{"gl.additive", "Additive", "Synth", PluginKind::Generator, {}, false, {}};
+  PluginInfo p{"gl.additive", "Facet", "Synth", PluginKind::Generator, {}, false, {}};
   auto& q = p.params;
   q.resize(AdCount);
   std::vector<std::string> spectra = {"Saw", "Square", "Triangle", "Sine", "Pulse", "Organ", "Vowel", "Glass", "Choir", "Random",

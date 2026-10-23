@@ -25,6 +25,7 @@
 #include "McpUi.h"
 #include "ThemeSettings.h"
 #include "../core/I18n.h"
+#include "../core/UiScale.h"
 #include "HostedUi.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
@@ -39,6 +40,7 @@
 #include "../core/Project.h"
 #include "../core/Workspace.h"
 #include "../packs/PacksUi.h"
+#include "DialogLayout.h"
 #include "ExportUi.h"
 #include "../core/MidiFile.h"
 #include "App.h"
@@ -324,6 +326,7 @@ struct DevInputLine {
   std::string cmd, a0, a1, a2;
   std::vector<std::string> args;  // every argument (quotes group words)
 };
+std::pair<int, int> devSdlPointer{0, 0};  // J-91: last "sdlmove" position (window pixels)
 float devDragScale = 1.0f;  // this frame's interface scale (drag commands post window coordinates)
 
 std::vector<std::string> splitArgs(const char* line) {
@@ -433,6 +436,60 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       io.AddMousePosEvent(pointer.x, pointer.y);
     }
     else if (l.cmd == "down" || l.cmd == "up") io.AddMouseButtonEvent(std::atoi(l.a0.c_str()), l.cmd == "down");
+    else if (l.cmd == "sdlmove" || l.cmd == "sdldown" || l.cmd == "sdlup") {
+      // J-91: real SDL mouse events in window pixels (read next frame like the OS's): the path a
+      // click takes through the backend and the interface scale.
+      SDL_Event e{};
+      SDL_Window* w = SDL_GL_GetCurrentWindow();
+      if (l.cmd == "sdlmove") {
+        devSdlPointer = {std::atoi(l.a0.c_str()), std::atoi(l.a1.c_str())};
+        e.type = SDL_MOUSEMOTION;
+        e.motion.windowID = w ? SDL_GetWindowID(w) : 0;
+        e.motion.x = devSdlPointer.first;
+        e.motion.y = devSdlPointer.second;
+      } else {
+        e.type = l.cmd == "sdldown" ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+        e.button.windowID = w ? SDL_GetWindowID(w) : 0;
+        e.button.button = static_cast<Uint8>(std::atoi(l.a0.c_str()) == 1 ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT);
+        e.button.state = l.cmd == "sdldown" ? SDL_PRESSED : SDL_RELEASED;
+        e.button.clicks = 1;
+        e.button.x = devSdlPointer.first;
+        e.button.y = devSdlPointer.second;
+      }
+      SDL_PushEvent(&e);
+      pointer = ImVec2(-FLT_MAX, -FLT_MAX);  // the scripted logical pointer gives way to the SDL one
+    }
+    else if (l.cmd == "sdlat") {  // J-91: the SDL pointer to the centre of a top bar button ("play", "stop", "rec", "metro")
+      float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+      if (topBarButtonRect(l.a0.c_str(), x0, y0, x1, y1)) {
+        devSdlPointer = {static_cast<int>(std::lround((x0 + x1) * 0.5f * devDragScale)), static_cast<int>(std::lround((y0 + y1) * 0.5f * devDragScale))};
+        SDL_Event e{};
+        SDL_Window* w = SDL_GL_GetCurrentWindow();
+        e.type = SDL_MOUSEMOTION;
+        e.motion.windowID = w ? SDL_GetWindowID(w) : 0;
+        e.motion.x = devSdlPointer.first;
+        e.motion.y = devSdlPointer.second;
+        SDL_PushEvent(&e);
+        pointer = ImVec2(-FLT_MAX, -FLT_MAX);
+        std::printf("sdlat frame %d: %s at %d,%d (window pixels, scale %.2f)\n", frame, l.a0.c_str(), devSdlPointer.first, devSdlPointer.second,
+                    static_cast<double>(devDragScale));
+      } else {
+        std::printf("sdlat frame %d: %s not shown\n", frame, l.a0.c_str());
+      }
+      std::fflush(stdout);
+    }
+    else if (l.cmd == "seekbeat") {  // J-91: the song position to a beat of the metronome ("2.5")
+      app.engine.setPosition(static_cast<Tick>(std::strtod(l.a0.c_str(), nullptr) * static_cast<double>(app.doc.song().beatTicks())), false);
+    }
+    else if (l.cmd == "metro") {  // J-91: metronome state and its glyph's swing
+      std::printf("metro frame %d: on %d playing %d mirror %.3f beat %.3f\n", frame, app.metronome ? 1 : 0, app.engine.playing() ? 1 : 0,
+                  static_cast<double>(topBarMetronomeMirror()), app.engine.position() / static_cast<double>(std::max<Tick>(1, app.doc.song().beatTicks())));
+      std::fflush(stdout);
+    }
+    else if (l.cmd == "recording") {
+      std::printf("recording frame %d: armed %d\n", frame, app.recordArmed ? 1 : 0);
+      std::fflush(stdout);
+    }
     else if (l.cmd == "wheel") io.AddMouseWheelEvent(0, std::strtof(l.a0.c_str(), nullptr));
     else if (l.cmd == "scroll") io.AddMouseWheelEvent(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
     else if (l.cmd == "momentum") devMomentum = {std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr), std::atoi(l.a2.c_str())};
@@ -940,6 +997,8 @@ int main(int argc, char** argv) {
       }
     } else if (arg == "--layout-audit" && i + 1 < argc) {  // Q-7: inset check of every editor + contact sheets
       browserui::beginAuditMode(app, argv[++i]);
+    } else if (arg == "--binding-crawl") {  // J-92: --layout-audit also clicks through every editor (param_bindings.tsv)
+      browserui::setBindingCrawl(true);
     } else if (arg == "--make-thumbs") {  // render every built-in editor into <config>/thumbs (plugin picker)
       browserui::beginThumbMode(app);
     } else if (arg == "--make-thumb" && i + 1 < argc) {
@@ -1033,20 +1092,45 @@ int main(int argc, char** argv) {
   const bool useOffscreen = (!shotPath.empty() || !profilePath.empty()) && forcedSize.first > 0 &&
                             offscreen.create(static_cast<int>(static_cast<float>(forcedSize.first) * shotScale),
                                              static_cast<int>(static_cast<float>(forcedSize.second) * shotScale));
-#if !defined(__APPLE__)
-  // Displays without OS scaling (e.g. X11 at high DPI): derive a default scale.
+  // J-91: the system's interface scale (core/UiScale.h): the desktop's own
+  // scale setting, never the panel's physical pixel density.
   float autoDpi = 1.0f;
   {
-    float ddpi = 0;
-    int dw, dh, ww, wh;
-    SDL_GL_GetDrawableSize(window, &dw, &dh);
-    SDL_GetWindowSize(window, &ww, &wh);
-    if (dw == ww && SDL_GetDisplayDPI(SDL_GetWindowDisplayIndex(window), &ddpi, nullptr, nullptr) == 0 && ddpi > 120)
-      autoDpi = std::round(ddpi / 96.0f * 4.0f) / 4.0f;
-  }
+    uiscale::Inputs si;
+#if defined(__APPLE__)
+    si.desktop = uiscale::Desktop::MacOS;
+#elif defined(_WIN32)
+    si.desktop = uiscale::Desktop::Windows;
+    SDL_GetDisplayDPI(SDL_GetWindowDisplayIndex(window), &si.displayDpi, nullptr, nullptr);
 #else
-  const float autoDpi = 1.0f;  // macOS scales points to pixels itself
+    const char* driver = SDL_GetCurrentVideoDriver();
+    si.desktop = driver && std::strcmp(driver, "wayland") == 0 ? uiscale::Desktop::Wayland
+                 : driver && std::strcmp(driver, "x11") == 0  ? uiscale::Desktop::X11
+                                                                : uiscale::Desktop::Other;
+    si.gdkScale = std::getenv("GDK_SCALE");
+    si.gdkDpiScale = std::getenv("GDK_DPI_SCALE");
+    si.qtScaleFactor = std::getenv("QT_SCALE_FACTOR");
+#if defined(SDL_VIDEO_DRIVER_X11)
+    SDL_SysWMinfo wm;
+    SDL_VERSION(&wm.version);
+    if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_X11) {
+      host::native::Window xw;
+      xw.display = static_cast<void*>(wm.info.x11.display);
+      xw.handle = reinterpret_cast<void*>(static_cast<uintptr_t>(wm.info.x11.window));
+      const std::string res = host::native::xResources(xw);
+      si.xftDpi = uiscale::parseXftDpi(res.c_str());
+    }
 #endif
+#endif
+    int dh = 0, wh = 0;
+    SDL_GL_GetDrawableSize(window, &si.drawableW, &dh);
+    SDL_GetWindowSize(window, &si.windowW, &wh);
+    // Off-screen runs (tests, screenshots at a given size) lay out the same on every machine.
+    autoDpi = useOffscreen ? 1.0f : uiscale::systemScale(si);
+    uiscale::setDetected(uiscale::systemScale(si));
+    if (uiscale::systemScale(si) != 1.0f)
+      std::fprintf(stderr, "[ui-scale] system scale %.2f (%s)\n", static_cast<double>(uiscale::systemScale(si)), uiscale::systemScaleSource(si).c_str());
+  }
   ImU32 lastScaledEvent = 0;
   // J-66 (macOS): no blocking vsync swap; the frame clock waits for the
   // display inside the Cocoa run loop, where hosted plugin interfaces live.
@@ -1185,9 +1269,9 @@ int main(int argc, char** argv) {
       fbW = offscreen.w;
       fbH = offscreen.h;
     }
-    float uiScale = (devUiScale > 0 ? devUiScale : static_cast<float>(std::clamp(app.settings.getNumber("ui.scale"), 0.75, 2.0))) * autoDpi;
-    if (uiScale > 1.0f)  // never shrink the logical workspace below the minimum layout size
-      uiScale = std::max(1.0f, std::min({uiScale, static_cast<float>(winW) / 960.0f, static_cast<float>(winH) / 600.0f}));
+    // The user's interface scale, times the system's unless turned off (J-91); --ui-scale is exact.
+    const float uiScale = devUiScale > 0 ? uiscale::effectiveScale(devUiScale, false, 1.0f, winW, winH)
+                                         : uiscale::effectiveScale(app.settings.getNumber("ui.scale"), app.settings.getBool("ui.scaleAuto"), autoDpi, winW, winH);
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
@@ -1217,6 +1301,7 @@ int main(int argc, char** argv) {
     scrollui::beforeNewFrame();
     ImGui::NewFrame();
     scrollui::afterNewFrame();
+    ui::ClampTrackedWindows();  // J-91: floating windows kept in the work area before they are laid out
     ui::wheelFrameBegin();     // J-83: wheel routing over controls in scrolling panes
     xdragui::beginFrame(app);  // J-75: an external drag is an ImGui drag from outside
     devTraceWheel = ImVec2(io.MouseWheelH, io.MouseWheel);

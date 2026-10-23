@@ -40,6 +40,23 @@ void PlaceNextDialog(ImVec2 want, ImGuiCond cond = ImGuiCond_Appearing, ImVec2 m
 void BeginDialogBody(const char* id, int footerRows = 1);
 void EndDialogBody();
 
+// J-91: floating windows (channel and plugin windows, dialogs) stay inside the
+// work area between the top bar and the status bar. The clamp must move a
+// window before it is laid out: moving it after Begin() (0.6.0) left its
+// title bar where the drag put it and pushed only its content down, an empty
+// band under the title bar while a window was dragged against the top
+// (GitHub issue #1).
+// The position of a window of `size` kept in [areaMin, areaMax]: fully
+// inside, or while the user drags it only its title bar (80 x 32 px).
+ImVec2 ClampWindowPos(ImVec2 pos, ImVec2 size, ImVec2 areaMin, ImVec2 areaMax, bool dragging);
+// The work area of the main viewport (between the top bar and the status bar).
+void WorkArea(ImVec2& areaMin, ImVec2& areaMax);
+// Right after Begin(): the current window is clamped from now on, before each
+// frame's layout (and at once on the frame it appears).
+void TrackWindowInViewport();
+// Right after ImGui::NewFrame(), before any Begin(): clamps the tracked windows.
+void ClampTrackedWindows();
+
 // Two-column form: the x (from the window's content start) where controls
 // begin, so the widest label fits with `gap` to spare, never less than `minX`
 // and never more than `maxX`. Labels wider than that are fitted by FormLabelFit.

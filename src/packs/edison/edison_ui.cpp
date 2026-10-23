@@ -2,6 +2,7 @@
 // audio (worker thread), undo, transport, recording, the actions behind the
 // toolbar and menus, the slot editor entry point and the standalone window
 // opened from any sample or audio clip.
+#include "../../core/PluginBrand.h"
 #include "../../app/AudioRecordUi.h"
 #include <algorithm>
 #include <cmath>
@@ -270,14 +271,14 @@ void runEdit(App& a, Session& s, const std::string& label, std::function<Content
       sp->sel = clampRange(next, sp->sel);
       sp->cursor = std::min(sp->cursor, next.frames());
       if (sp->viewStart + sp->viewLen > static_cast<double>(next.frames()) * 1.05 || sp->viewLen <= 0) zoomAll(*sp);
-      applySaved(*ap, *sp, saved.first, saved.second, "Audio editor: " + label);
+      applySaved(*ap, *sp, saved.first, saved.second, "Loupe: " + label);
     };
   });
 }
 
 void applyNow(App& a, Session& s, const std::string& label, const Content& next) {
   s.hist.push(label, next);
-  startCommit(a, s, "Audio editor: " + label);
+  startCommit(a, s, "Loupe: " + label);
 }
 
 void undo(App& a, Session& s) {
@@ -285,7 +286,7 @@ void undo(App& a, Session& s) {
   std::string l = s.hist.undoLabel();
   s.hist.undo();
   s.sel = clampRange(s.cur(), s.sel);
-  startCommit(a, s, "Audio editor: undo " + l);
+  startCommit(a, s, "Loupe: undo " + l);
   say(s, "Undo: " + l);
 }
 
@@ -294,7 +295,7 @@ void redo(App& a, Session& s) {
   std::string l = s.hist.redoLabel();
   s.hist.redo();
   s.sel = clampRange(s.cur(), s.sel);
-  startCommit(a, s, "Audio editor: redo " + l);
+  startCommit(a, s, "Loupe: redo " + l);
   say(s, "Redo: " + l);
 }
 
@@ -426,7 +427,7 @@ std::string currentFile(App& a, Session& s) {
   if (s.job.active()) return "";
   if (s.committed.empty() || s.committed[0] == '\x01' || !fs::exists(s.committed)) {
     auto saved = saveVersion(s.cur(), audioDir(a), displayName(a, s));
-    applySaved(a, s, saved.first, saved.second, "Audio editor: save");
+    applySaved(a, s, saved.first, saved.second, "Loupe: save");
   }
   return s.committed;
 }
@@ -684,7 +685,7 @@ void drawWindows(App& a) {
       continue;
     }
     pump(a, s);
-    const std::string title = "Audio editor  ·  " + ch->name + "###edison-standalone-" + std::to_string(s.channel);
+    const std::string title = pluginDisplayName(kType) + "  ·  " + ch->name + "###edison-standalone-" + std::to_string(s.channel);
     ui::NextFloatingWindowSize(1100 + 24);
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.45f), ImGuiCond_Appearing,

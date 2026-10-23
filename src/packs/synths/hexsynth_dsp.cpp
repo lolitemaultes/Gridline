@@ -159,6 +159,7 @@ class HexSynthGen final : public Generator {
     src[1] = lastVel_;
     src[2] = glfoVal_[0];
     src[3] = glfoVal_[1];
+    src[4] = after_, src[5] = static_cast<float>(bend_);  // J-92: aftertouch / pitch bend sources (were never fed)
     for (int c = 0; c < 128; ++c) src[7 + c] = cc_[c];
     for (int k = 0; k < kModSlots; ++k) {
       const int code = static_cast<int>(std::lround(x_[HxModSource + k]));
@@ -186,6 +187,16 @@ class HexSynthGen final : public Generator {
     }
     internalOn(key, vel / 127.f);
   }
+  // J-92: MIDI pitch bend over the bend range (int(12 x) semitones); the range was never read.
+  void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
+    switch (status & 0xF0) {  // J-92: bend, controllers and pressure feed the modulation sources
+      case 0xE0: bend_ = ((d2 << 7 | d1) - 8192) / 8192.0; break;
+      case 0xB0: cc_[d1 & 127u] = d2 / 127.f; break;
+      case 0xD0: after_ = d1 / 127.f; break;
+      default: break;
+    }
+  }
+  double bend_ = 0;
   void onNoteOff(uint32_t id) override {
     int key = -1;
     for (int i = 0; i < idCount_; ++i)
@@ -591,7 +602,7 @@ class HexSynthGen final : public Generator {
       v.lfo[k] = lfoValue(k, v.lfoPh[k]);
     }
     v.vs = v.first ? v.gv : v.vs + (v.gv - v.vs) * 0.05f;
-    const double S = v.glidePos + v.frac + law::transpose(e(HxTranspose));
+    const double S = v.glidePos + v.frac + law::transpose(e(HxTranspose)) + bend_ * std::floor(12.0 * std::clamp(e(HxBendRange), 0.f, 1.f) + 1e-6);
     const double F = 220.0 * std::exp2(S / 12.0 - 4.75);
     if (v.fadeTicks == 0) {
       const double ar = 0.2236212 / sr_;
@@ -808,6 +819,7 @@ class HexSynthGen final : public Generator {
   const HexAux* aux_ = nullptr;
   float x_[HxCount], e_[HxCount];
   float cc_[128] = {};
+  float after_ = 0;
   uint8_t held_[128];
   uint64_t heldOrder_[128] = {};
   uint64_t heldClock_ = 0, ageClock_ = 0;

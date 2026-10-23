@@ -62,7 +62,7 @@ void addMaxRef(std::vector<ParamDesc>& ps, int base) {
 }
 
 void addMaster(std::vector<PluginInfo>& v) {
-  PluginInfo p{"gl.master", "Mastering Dynamics", "Dynamics", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.master", "Crest", "Dynamics", PluginKind::Effect, {}, false, {}};
   p.params.resize(kMsTotal);
   addMaxRef(p.params, MsRef0);
   p.params[MsLowFreq] = lg("Low / mid split", "Hz", 40, 1000, 160);
@@ -223,7 +223,7 @@ void slotVals(Vals& out, int slot, int type, bool on, float mix = 1.f, std::vect
 }
 
 void addRack(std::vector<PluginInfo>& v) {
-  PluginInfo p{"gl.amprack", "Amp Rack", "Distortion", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.amprack", "Pedal Rack", "Distortion", PluginKind::Effect, {}, false, {}};
   p.params.resize(kRkCount);
   p.params[RkInput] = lin("Input", "dB", -24, 24, 0);
   p.params[RkOutput] = lin("Output", "dB", -24, 24, 0);
@@ -360,7 +360,7 @@ void addDistortions(std::vector<PluginInfo>& v) {
     v.push_back(p);
   }
   {
-    PluginInfo p{"gl.squeeze", "Squeeze", "Distortion", PluginKind::Effect, {}, false, {}};
+    PluginInfo p{"gl.squeeze", "Pinch", "Distortion", PluginKind::Effect, {}, false, {}};
     p.params.resize(SqCount);
     p.params[SqGain] = lin("Gain", "dB", -24, 12, 0);
     p.params[SqMix] = lin("Mix", "%", 0, 1, 1);
@@ -517,7 +517,7 @@ void addTransplit(std::vector<PluginInfo>& v) {
 namespace {
 // J-45 Hit Looper (gl.hitloop).
 void addHitLoop(std::vector<PluginInfo>& v) {
-  PluginInfo p{"gl.hitloop", "Hit Looper", "Delay & reverb", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.hitloop", "Hit Repeater", "Delay & reverb", PluginKind::Effect, {}, false, {}};
   p.params.resize(HlCount);
   static const char* names[22] = {"Dry level", "Loop A level", "Loop B level", "Reverse chance", "Octave chance", "Octave up chance",
                                   "Spread / auto-pan", "Minimum length", "A / B ratio", "Hit sensitivity", "Bounce", "Hold loops",

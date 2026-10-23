@@ -68,6 +68,11 @@ std::optional<ParamDesc> describeParam(const Song& song, ParamId id);
 std::optional<double> getParam(const Song& song, ParamId id);
 // Sets a clamped value. Returns false if the ParamId does not resolve.
 bool setParam(Song& song, ParamId id, double value);
+// J-92 parameter audit (UI thread, dev runs): called with every ParamId that
+// describeParam / getParam resolve, so the editor audit can record which
+// parameters an editor's controls read. nullptr (the default) = off.
+using ParamReadHook = void (*)(ParamId);
+void setParamReadHook(ParamReadHook hook);
 // Display name including the owner, e.g. "Kick › Volume".
 std::string paramDisplayName(const Song& song, ParamId id);
 // All parameters currently present in the song (song params, then per channel).

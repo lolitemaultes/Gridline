@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "../core/Motion.h"
 #include "../core/Settings.h"
 #include "../core/SmoothSnap.h"
 #include "../../third_party/imgui/imgui.h"
@@ -25,6 +26,7 @@ namespace {
 
 smoothscroll::Params gParams;
 bool gSmoothSnap = true;
+bool gAnimations = true;
 smooth::Glides gGlides;
 
 #if !defined(_WIN32)
@@ -82,12 +84,17 @@ bool systemReducedMotion() {
 
 void configure(const Settings& s) {
   const bool reduced = systemReducedMotion();
-  gParams.smooth = s.getBool("ui.smoothScroll") && !reduced;
-  gParams.elastic = s.getBool("ui.elasticEdges") && !reduced;
-  gSmoothSnap = s.getBool("ui.smoothSnap") && !reduced;
+  // J-91: Interface animations is the master switch of all of them.
+  const motion::Switches m = motion::effective(s.getBool("ui.animations"), s.getBool("ui.smoothSnap"), s.getBool("ui.smoothScroll"),
+                                               s.getBool("ui.elasticEdges"), reduced);
+  gParams.smooth = m.smoothScroll;
+  gParams.elastic = m.elastic;
+  gSmoothSnap = m.smoothSnap;
+  gAnimations = m.animations;
 }
 
 bool smoothSnap() { return gSmoothSnap; }
+bool animations() { return gAnimations; }
 
 double glide(uint64_t key, double target, bool dragging, double eps) {
   return gGlides.follow(key, target, ImGui::GetTime(), dragging && gSmoothSnap, eps);

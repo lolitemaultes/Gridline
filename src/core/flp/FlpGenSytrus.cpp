@@ -53,6 +53,7 @@
 #include <cmath>
 #include <cstring>
 #include <string>
+#include "../PluginBrand.h"
 #include "../../packs/synths/matrixfm.h"
 #include "../../packs/synths/matrixfm_data.h"
 #include "../../packs/synths/mfmref.h"
@@ -507,7 +508,7 @@ bool decodeSytrusMatrix(Context& c, const std::vector<Event>& events, PluginMapp
     setp(s, mf::MModel, 0);
   }
   m.state = s;
-  note(c, "Sytrus", "\"" + name + "\" (v" + std::to_string(ver) + ") → Matrix FM: matrix, operators (harmonics, shapes), filters, " +
+  note(c, "Sytrus", "\"" + name + "\" (v" + std::to_string(ver) + ") → " + pluginDisplayName("gl.matrixfm") + ": matrix, operators (harmonics, shapes), filters, " +
                         std::to_string(envs) + " envelopes, " + std::to_string(lfos) + " LFOs, " + std::to_string(maps) +
                         " mapping curves, unison and effects decoded; " + model);
   // Automation: mod X / Y (18 / 19), filter cutoff / resonance (74 parameters per unit from 326).

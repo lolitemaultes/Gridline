@@ -436,6 +436,7 @@ bool App::openFlpProject(const std::string& path, const std::string& shownAs) {
   importReport.source = fs::path(shownAs).filename().string();
   for (const auto& [k, v] : rep.counts) importReport.counts.emplace_back(k, v);
   for (const auto& [k, v] : rep.unmapped) importReport.unmapped.emplace_back(k, v);
+  for (const auto& [k, v] : rep.mapped) importReport.mapped.emplace_back(k, v);
   importReport.warnings = rep.warnings;
   showImportReport = true;
   notify("Opened " + importReport.source);

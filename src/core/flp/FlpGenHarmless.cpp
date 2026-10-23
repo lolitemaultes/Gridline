@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "../PluginBrand.h"
 #include "../../packs/models/models.h"
 #include "FlpGen.h"
 
@@ -231,9 +232,9 @@ bool decodeHarmlessFull(Context& c, const std::vector<Event>& events, PluginMapp
   m.exact = false;
   char buf[240];
   std::snprintf(buf, sizeof buf,
-                "v%d → Additive: colour %d%s, timbre EQ / sub / mask, filter shape %d (%.0f Hz), resonance shape %d, unison %d, phaser, "
+                "v%d → %s: colour %d%s, timbre EQ / sub / mask, filter shape %d (%.0f Hz), resonance shape %d, unison %d, phaser, "
                 "harmonizer, pluck, LFO, FX",
-                version, colour, custom.level.empty() ? "" : " (custom table)", opt[0], HlConv::cutoff(p[54]), opt[1],
+                version, pluginDisplayName("gl.additive").c_str(), colour, custom.level.empty() ? "" : " (custom table)", opt[0], HlConv::cutoff(p[54]), opt[1],
                 std::clamp(p[65], 1, 9));
   note(c, "Harmless", buf);
   // Automation targets (FL parameter = control tag; normalized 0..1 over the control range).

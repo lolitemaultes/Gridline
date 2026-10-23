@@ -24,6 +24,7 @@
 #include "../app/App.h"
 #include "../app/AutomationEditor.h"
 #include "../app/BrowserUi.h"
+#include "../app/DialogLayout.h"
 #include "../app/Shell.h"
 #include "../app/Theme.h"
 #include "../app/ThemeSettings.h"
@@ -232,6 +233,7 @@ void Frame::draw(int winW, int winH, int fbW, int fbH) {
 
   ImGui_ImplOpenGL3_NewFrame();
   ImGui::NewFrame();
+  ui::ClampTrackedWindows();  // J-91: floating windows kept in the work area before they are laid out
   const float topH = drawTopBar(app);
   ImGuiViewport* vp = ImGui::GetMainViewport();
   const ImVec2 dpos(vp->WorkPos.x, vp->WorkPos.y + topH), dsize(vp->WorkSize.x, vp->WorkSize.y - topH - theme::kStatusBarH);

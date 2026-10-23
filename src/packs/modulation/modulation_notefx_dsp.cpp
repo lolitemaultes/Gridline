@@ -347,8 +347,13 @@ class NoteSequencer final : public Stepper {
     displayStep_ = st;
     bool on = prm(s, seqParam(st, SqOn), 1) >= 0.5f;
     bool tie = prm(s, seqParam(st, SqTie)) >= 0.5f;
+    // J-92: a note whose next step is a tie lasts past that step's start (it used
+    // to end first, so a tie never had anything to hold).
+    const bool nextTie = prm(s, seqParam((st + 1) % length, SqTie)) >= 0.5f;
+    const int64_t through = static_cast<int64_t>(std::ceil(stepSamples_)) + 1;
     if (tie && sounding_.n > 0) {  // hold the previous note(s) through this step
       int64_t len = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(stepSamples_ * prm(s, seqParam(st, SqGate), 0.5f) - 1e-9)));
+      if (nextTie) len = std::max(len, through);
       for (int i = 0; i < sounding_.n; ++i) sounding_.v[i].offAt = t + len;
       return;
     }
@@ -361,6 +366,7 @@ class NoteSequencer final : public Stepper {
     float shift = 12.0f * static_cast<float>(iprm(s, seqParam(st, SqOctave))) + static_cast<float>(iprm(s, SqTranspose));
     float vel = prm(s, seqParam(st, SqVelocity), 0.8f);
     int64_t len = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(stepSamples_ * prm(s, seqParam(st, SqGate), 0.5f) - 1e-9)));
+    if (nextTie) len = std::max(len, through);
     auto play = [&](const HeldNotes::N& n) {
       uint32_t id = ctx_->newId();
       out.push(noteOn(off, id, n.pitch + shift, vel, n.color));

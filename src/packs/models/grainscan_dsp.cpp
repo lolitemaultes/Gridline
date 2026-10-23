@@ -141,6 +141,8 @@ class GrainScanGen final : public Generator {
     const double fxDepth = std::clamp(p_[GsFxDepth] / 384.0f, 0.0f, 1.0f);
     const double fxInc = 3.14159265358979 / std::max(4.0, 204.0 - std::clamp(static_cast<double>(p_[GsFxSpeed]), 4.0, 200.0));
     const float randomness = std::clamp(p_[GsRandom] / 256.0f, 0.0f, 1.0f);
+    // J-92: the volume knob was never read (0.8 = the level this engine had before).
+    const float volume = std::clamp(p_[GsVolume], 0.0f, 1.0f) / 0.8f;
     const float stereo = std::clamp(p_[GsStereo] / 64.0f, 0.0f, 1.0f);
     const bool loop = p_[GsLoop] >= 0.5f, freeze = p_[GsHoldOn] >= 0.5f;
     const int trig = static_cast<int>(std::lround(p_[GsTrigger]));
@@ -229,7 +231,7 @@ class GrainScanGen final : public Generator {
           g.pos += g.rate;
           if (++g.age >= g.len) g.on = false;
         }
-        const float gain = target * v.vel;
+        const float gain = target * v.vel * volume;
         L[i] += l * gain;
         R[i] += r * gain;
       }

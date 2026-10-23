@@ -98,6 +98,48 @@ void lcd(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* text, 
 // Graph well: background + border.
 void graphWell(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k);
 
+// ---- J-93 premium editor system ---------------------------------------------
+// One knob face shared by every wheel style (skin wheels, form-unit wheels,
+// reference-kit wheels, pui dials): soft shadow, rounded rail and value arcs,
+// a lit halo while hovered / dragged, a shaded cap with a rim light and a crisp
+// pointer with a round tip. Colours come from the caller (plugin roles).
+struct KnobPaint {
+  ImU32 rail = 0, fill = 0, cap = 0, pointer = 0;
+  float a0 = 0, a1 = 0;  // sweep, screen radians (a0 < a1)
+  float from = 0;        // value arc origin (a0, or the centre for bipolar)
+  float an = 0;          // value angle
+  float railTh = 0;      // ring thickness (0 = r * 0.16)
+  bool ring = true;      // draw the rail + value ring (false: the caller drew its own)
+  bool hot = false, active = false;
+  float capR = 0;        // cap radius (0 = inside the ring)
+  bool machined = false; // turned-metal cap: recessed face inside a bright bezel
+  int dents = 0;         // grip notches around the cap rim
+  bool pointerDot = false;  // short dot pointer near the rim instead of a line
+};
+void knobFace(ImDrawList* dl, ImVec2 c, float r, const KnobPaint& p);
+// Rounded rect with a vertical gradient (top → bottom).
+void gradientRect(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 top, ImU32 bottom, float rounding = 0, ImDrawFlags flags = 0);
+// Recessed field (LCDs, value strips, graph wells, selector slots): `bg` shaded
+// darker at the top, an inner shadow under the top edge, a faint light lip at the bottom.
+void insetField(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 bg, float rounding = 3);
+// Raised face (buttons, caption plates): `bg` shaded lighter at the top with a rim light.
+void raisedFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 bg, float rounding = 3);
+// Circle filled with a vertical gradient (top → bottom), anti-aliased edge.
+void gradientCircle(ImDrawList* dl, ImVec2 c, float r, ImU32 top, ImU32 bottom);
+// Rounded-cap arc (a0 < a1, screen radians).
+void roundArc(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, ImU32 col, float th);
+// Graph panel furniture: subtle grid (cols x rows, optional centre emphasis)
+// and a hover crosshair with a mono readout box near the mouse. `fmt` turns a
+// position (0..1 across, 0..1 up) into the readout text; returns true while hovered.
+void graphGrid(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, int cols, int rows, bool centre = false);
+bool graphHover(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const std::function<std::string(float, float)>& fmt);
+// Response / envelope curve: seamless gradient fill down to baseY (fillAlpha at
+// the curve, fading out), a soft glow and the anti-aliased line on top.
+void curveArea(ImDrawList* dl, const ImVec2* pts, int n, float baseY, ImU32 line, float thick = 2.0f, float fillAlpha = 0.22f);
+// Section header (premium): small-caps title with an accent tick and a
+// hairline to the right edge, drawn inside [p0, p1] (one text line high).
+void sectionHeader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* title, float font = 0);
+
 // Wheel knob bound to a parameter; tl/size in screen px (square).
 bool wheel(App& a, const PluginTarget& t, int param, ImVec2 tl, float size, const Skin& k, int flags = 0, ImU32 fill = 0);
 // Vertical rail slider (fill from bottom, or from the centre for bipolar ranges).

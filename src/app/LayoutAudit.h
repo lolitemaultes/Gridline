@@ -9,8 +9,10 @@
 // sheet <dir>/sheet.png with the problem rectangles outlined, and exits with
 // the number of editors that have issues (0 = clean).
 #pragma once
+#include <map>
 #include <string>
 #include <vector>
+#include "../core/Params.h"
 #include "../../third_party/imgui/imgui.h"
 #include "Inset.h"
 
@@ -30,5 +32,18 @@ struct Report {
 };
 // Closes the collection and checks it (min inset in px).
 Report end(float min = inset::kMinInset);
+
+// J-92 parameter binding audit: while a binding collection is open, every
+// parameter the editor reads (describeParam / getParam, through the core read
+// hook) and every bound control (pui / skin drag controls, ui::ParamKnob /
+// ParamFader) is counted per ParamId.
+struct Bindings {
+  std::map<uint64_t, int> reads;     // ParamId::packed() -> reads
+  std::map<uint64_t, int> controls;  // ParamId::packed() -> bound drag controls
+  std::map<int, int> stateReads;     // parameter index -> reads straight from the state (graphs, grids)
+};
+void bindBegin();
+void bindControl(ParamId pid);
+Bindings bindEnd();
 
 }  // namespace gl::audit

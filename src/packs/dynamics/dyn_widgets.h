@@ -20,6 +20,7 @@ namespace gl::packs::dynamics::ui {
 using theme::pal;
 
 inline float val(const PluginState& s, int k) {
+  audit::stateRead(k);  // J-92 binding audit
   if (k >= 0 && static_cast<size_t>(k) < s.params.size()) return s.params[static_cast<size_t>(k)];
   const PluginInfo* info = findPlugin(s.type);
   return info && k >= 0 && static_cast<size_t>(k) < info->params.size() ? static_cast<float>(info->params[static_cast<size_t>(k)].def) : 0.f;

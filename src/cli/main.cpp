@@ -8,10 +8,14 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <csignal>
 #include <cstring>
 #include <string>
+#include <thread>
+#include <vector>
 #include "engine/Render.h"
 #include "engine/ExportJob.h"
+#include "engine/ParamAudit.h"
 #include "core/MidiFile.h"
 #include "core/MidiImport.h"
 #include "core/ProjectInterop.h"
@@ -32,6 +36,9 @@
 #include "host/Smoke.h"
 #include "host/vst3/Vst3Scan.h"
 #include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <unistd.h>
 
 int benchMain(int argc, char** argv);  // Bench.cpp
 int flpToolsMain(int argc, char** argv);  // FlpTools.cpp (-1 = not one of its commands)
@@ -56,6 +63,9 @@ void usage() {
       "  gridline render-stats <project.json> [--max-seconds S]   QA: render in memory, print level / NaN / clipping\n"
       "  gridline info   <project.json>\n"
       "  gridline plugin-params [type]               built-in plugin catalog (params, ranges, defaults) as JSON\n"
+      "  gridline param-audit [--type T]... [--json F] [--md F] [--baseline F] [--threads N] [--no-combos] [--no-live] [--base k=v;..] [--probe]\n"
+      "  gridline param-audit --relabel <baseline.tsv> <out.tsv>   apply the documented-inert list to a baseline\n"
+      "                                                 does every parameter of every built-in plugin change the output?\n"
       "  gridline upgrade <project.json> [-o <out.json>]\n"
       "  gridline demo    <out.json>                 write the demo song\n"
       "  gridline import-flp <project.flp> -o <out.json> [--fl-data DIR]   convert an FL Studio project\n"
@@ -128,6 +138,102 @@ int main(int argc, char** argv) {
     }
     std::printf("%s\n", gl::jsonStringify(all, 1).c_str());
     return 0;
+  }
+  if (argc >= 5 && std::string(argv[1]) == "param-audit" && std::string(argv[2]) == "--relabel") {
+    // J-92: re-apply the documented-inert list to a baseline written earlier
+    // (rows without effect whose parameter is now documented become "inert").
+    std::ifstream in(argv[3], std::ios::binary);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    std::string out, line;
+    int changed = 0;
+    while (std::getline(ss, line)) {
+      std::vector<std::string> f;
+      size_t a = 0;
+      for (size_t b; (b = line.find('\t', a)) != std::string::npos; a = b + 1) f.push_back(line.substr(a, b - a));
+      f.push_back(line.substr(a));
+      if (f.size() >= 6 && f[3] == "no-effect" && gl::paramaudit::inertReason(f[0], f[2])) {
+        f[3] = std::strncmp(gl::paramaudit::inertReason(f[0], f[2]), "VERIFIED", 8) == 0 ? "verified" : "inert";
+        f.resize(6), f.push_back(gl::paramaudit::inertReason(f[0], f[2]));
+        ++changed;
+        line.clear();
+        for (size_t i = 0; i < f.size(); ++i) line += (i ? "\t" : "") + f[i];
+      }
+      out += line + "\n";
+    }
+    std::ofstream(argv[4], std::ios::binary) << out;
+    std::printf("%d rows relabelled as inert\n", changed);
+    return 0;
+  }
+  if (argc >= 2 && std::string(argv[1]) == "param-audit") {  // J-92 (engine/ParamAudit.h)
+    gl::paramaudit::Options opt;
+    std::vector<std::string> types;
+    std::string json, md, base;
+    int threads = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
+    for (int i = 2; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--type" && i + 1 < argc) types.push_back(argv[++i]);
+      else if (a == "--json" && i + 1 < argc) json = argv[++i];
+      else if (a == "--md" && i + 1 < argc) md = argv[++i];
+      else if (a == "--baseline" && i + 1 < argc) base = argv[++i];
+      else if (a == "--threads" && i + 1 < argc) threads = std::max(1, std::atoi(argv[++i]));
+      else if (a == "--no-combos") opt.combos = false;
+      else if (a == "--no-live") opt.liveness = false;
+      else if (a == "--probe") opt.probeOnly = true;
+      else if (a == "--base" && i + 1 < argc) {  // "k=v,k=v": audit on top of these values
+        for (const auto& row : gl::paramaudit::parseBaseline(std::string("x\t0\tx\tx\t0\t") + argv[++i]))
+          for (const auto& c : row.condition) opt.base.push_back(c);
+      }
+      else {
+        std::fprintf(stderr, "unknown option for param-audit: %s\n", a.c_str());
+        return 2;
+      }
+    }
+    std::signal(SIGSEGV, [](int sig) {  // which plugin crashed the audit
+      const char msg[] = "param-audit: crashed while auditing:\n";
+      (void)!::write(2, msg, sizeof msg - 1);
+      gl::paramaudit::writeActive(2);
+      std::signal(sig, SIG_DFL);
+      std::raise(sig);
+    });
+    size_t shown = 0;
+    auto reports = gl::paramaudit::auditAll(
+        opt,
+        [&](const gl::PluginInfo& p) {
+          if (types.empty()) return true;
+          for (const auto& t : types)
+            if (p.type == t || (t.size() > 1 && t.back() == '*' && p.type.rfind(t.substr(0, t.size() - 1), 0) == 0)) return true;  // "gl.fx*" = prefix
+          return false;
+        },
+        threads,
+        [&](const gl::paramaudit::PluginReport& r) {
+          int c[7] = {};
+          for (const auto& q : r.params) ++c[static_cast<int>(q.status)];
+          std::fprintf(stderr, "[%zu] %-22s %3zu params: %d working, %d combination, %d no effect, %d routing, %d broken, %d inert, %d verified (%.1f s)\n", ++shown,
+                       r.type.c_str(), r.params.size(), c[0], c[1], c[2], c[3], c[4], c[5], c[6], r.seconds);
+        });
+    if (reports.empty()) {
+      std::fprintf(stderr, "no built-in plugin matches\n");
+      return 1;
+    }
+    auto write = [](const std::string& path, const std::string& text) {
+      if (FILE* f = std::fopen(path.c_str(), "wb")) {
+        std::fwrite(text.data(), 1, text.size(), f);
+        std::fclose(f);
+        return true;
+      }
+      std::fprintf(stderr, "cannot write %s\n", path.c_str());
+      return false;
+    };
+    const std::string mdText = gl::paramaudit::toMarkdown(reports);
+    if (!json.empty()) write(json, gl::jsonStringify(gl::paramaudit::toJson(reports), 1));
+    if (!base.empty()) write(base, gl::paramaudit::toBaseline(reports));
+    if (!md.empty()) write(md, mdText);
+    else if (json.empty() && base.empty()) std::printf("%s", mdText.c_str());
+    int bad = 0;
+    for (const auto& r : reports)
+      for (const auto& q : r.params) bad += q.status == gl::paramaudit::Status::Broken || !q.roundTrip || (q.liveTested && !q.live);
+    return bad ? 1 : 0;
   }
   if (int r = flpToolsMain(argc, argv); r >= 0) return r;  // export-flp, flp-roundtrip, flp-encode-check (FlpTools.cpp)
   if (argc >= 3 && std::string(argv[1]) == "vst3-smoke") gl::vst3::smokeMain(argv[2]);
@@ -329,6 +435,10 @@ int main(int argc, char** argv) {
     }
     std::printf("wrote %s\n", out.c_str());
     for (const auto& [k, v] : rep.counts) std::printf("  %-34s %d\n", k.c_str(), v);
+    if (!rep.mapped.empty()) {  // J-94: FL plugin → Gridline plugin, by display name
+      std::printf("  plugins (FL Studio \xE2\x86\x92 Gridline):\n");
+      for (const auto& [k, v] : rep.mapped) std::printf("   %s (%d)\n", k.c_str(), v);
+    }
     if (!rep.unmapped.empty()) {
       std::printf("  plugins without a mapped state:\n");
       for (const auto& [k, v] : rep.unmapped) std::printf("    %-32s x%d\n", k.c_str(), v);

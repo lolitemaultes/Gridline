@@ -501,7 +501,7 @@ void arrangementClipMenu(App& a, ObjectId id) {
       }
       ImGui::EndMenu();
     }
-    if (const Channel* ch = s.channel(c->source); ch && ImGui::MenuItem(i18n::tr("Edit in audio editor"), nullptr, false, !ch->plugin.data.empty()))
+    if (const Channel* ch = s.channel(c->source); ch && ImGui::MenuItem(i18n::tr("Edit in Loupe"), nullptr, false, !ch->plugin.data.empty()))
       packs::openAudioEditor(a, ch->plugin.data, ch->id);  // J-7
     if (ImGui::MenuItem(i18n::tr("Export clip as WAV..."))) exportui::exportClipAudio(a, id);  // J-20
     static uint64_t key = 0x41430000;

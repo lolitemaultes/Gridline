@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include "../../core/I18n.h"
+#include "../../core/PluginBrand.h"
 #include "../flc_kit.h"
 #include "dwave.h"
 
@@ -44,16 +46,25 @@ void drawWaveProgramEditor(App& a, const PluginTarget& t, float W) {
   skin::panel(dl, F.o, F.p(kW, kH), K, 4);
   skin::Scope scope(K);
   flk::Ctx c{a, t, F, K, dl};
-  skin::text(dl, F.p(12, 10), K.accent2C(), "WAVE PROGRAM", F.font(14));
+  skin::text(dl, F.p(12, 10), K.accent2C(), pluginTitle("gl.waveprogram").c_str(), F.font(14));
   char b[200];
   std::snprintf(b, sizeof b, "%s  ·  %zu zones  ·  %s", prog.name.c_str(), prog.zones.size(),
                 prog.playMode == 0 ? "poly" : prog.playMode == 1 ? "mono" : "legato");
   flk::text(c, 150, 14, b);
-  static const int tags[] = {DwMaster, DwGlide, DwLfo1Rate, DwLfo2Rate, DwDelayTime, DwDelayFb, DwRevRoom, DwRevDecay,
-                             DwChoDepth, DwChoRate, DwModVal1, DwModVal2, DwModVal3, DwModVal4, DwDriveA, DwDriveB};
-  static const char* names[] = {"Master", "Glide", "LFO 1", "LFO 2", "Dly time", "Dly fb", "Room", "Decay",
-                                "Cho depth", "Cho rate", "Mod 1", "Mod 2", "Mod 3", "Mod 4", "Drive A", "Drive B"};
-  for (int i = 0; i < 16; ++i) flk::wheel(c, tags[i], 14.f + 86.f * static_cast<float>(i % 8), 40.f + 70.f * static_cast<float>(i / 8), 32, names[i]);
+  // J-92: every program control (LFO phase / attack, delay filters, reverb damping /
+  // diffusion, chorus delay / feedback had none): three rows of nine.
+  static const int tags[] = {DwMaster,    DwGlide,       DwLfo1Rate,     DwLfo1Phase, DwLfo1Attack, DwLfo2Rate, DwLfo2Phase,
+                             DwLfo2Attack, DwDelayTime,  DwDelayFb,      DwDelayLowCut, DwDelayHighCut, DwRevRoom, DwRevDamp,
+                             DwRevDiffusion, DwRevDecay, DwChoDelay,     DwChoDepth,  DwChoRate,    DwChoFb,    DwModVal1,
+                             DwModVal2,   DwModVal3,     DwModVal4,      DwDriveA,    DwDriveB};
+  static const char* names[] = {"Master", "Glide", "LFO 1", i18n::N_("LFO 1 phase"), i18n::N_("LFO 1 fade"), "LFO 2",
+                                i18n::N_("LFO 2 phase"), i18n::N_("LFO 2 fade"), "Dly time", "Dly fb", i18n::N_("Dly low cut"),
+                                i18n::N_("Dly high cut"), "Room", i18n::N_("Damping"), i18n::N_("Diffusion"), "Decay",
+                                i18n::N_("Cho delay"), "Cho depth", "Cho rate", i18n::N_("Cho fb"), "Mod 1", "Mod 2", "Mod 3", "Mod 4",
+                                "Drive A", "Drive B"};
+  constexpr int kTags = static_cast<int>(sizeof tags / sizeof tags[0]);
+  for (int i = 0; i < kTags; ++i)
+    flk::wheel(c, tags[i], 14.f + 76.f * static_cast<float>(i % 9), 34.f + 50.f * static_cast<float>(i / 9), 30, i18n::tr(names[i]));
   // J-68: output peak meter (the channel's live output) next to the title.
   {
     float peak = 0;

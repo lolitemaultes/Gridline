@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <map>
 #include "../../app/ContextMenus.h"
+#include "../../core/I18n.h"
 #include "../../engine/Sample.h"
 #include "../flc_kit.h"
 #include "../../engine/Dsp.h"
@@ -205,6 +206,7 @@ void synthPage(App& a, const PluginTarget& t, const flk::Ctx& c, const flk::Ctx&
   flk::text(c, 756, o + 20, "MODE");
   flk::menu(c, AdPlayMode, 756, o + 32, 80, 20);
   flk::wheel(c, AdGlide, 762, o + 66, 30, "Glide");
+  flk::wheel(c, AdFine, 802, o + 66, 30, i18n::tr("Fine"), skin::WheelBigLine | skin::WheelCentered);  // J-92: fine tune had no control
   vel(c, AdVelPorta, 798, o + 112);
 
   // ---- filter

@@ -31,6 +31,10 @@ void destroyContainer(const Window& w, void* container);
 void keepAbove(const Window& child, const Window& parent, bool on);
 // Device pixels per logical unit of the window (2 on Retina screens).
 double backingScale(const Window& w);
+// The X resource database of the window's display (XResourceManagerString:
+// "Xft.dpi:\t96\n..."), empty when there is none or off X11 (J-91: the
+// desktop's scale setting).
+std::string xResources(const Window& w);
 // Window number for screen capture of just this window (macOS), -1 otherwise.
 long windowNumber(const Window& w);
 // Writes an image of just this window's content to a PNG file: its views

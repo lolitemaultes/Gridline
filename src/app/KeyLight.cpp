@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include "App.h"
+#include "SmoothScrollUi.h"
 #include "Theme.h"
 
 namespace gl::keylight {
@@ -28,7 +29,7 @@ const ChannelLights* lights(App& a, ObjectId channel) {
   if (e.frame != frame) {
     const double now = ImGui::GetTime();
     const float dt = e.frame < 0 ? 0.0f : static_cast<float>(std::clamp(now - e.time, 0.0, 0.25));
-    e.lights.update(rt->keys, dt);
+    e.lights.update(rt->keys, dt, scrollui::animations());  // J-91
     e.frame = frame;
     e.time = now;
   }

@@ -6,18 +6,28 @@
 #include <string>
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Params.h"
+#include "../core/PluginBrand.h"
 #include "../engine/Scope.h"
 
 namespace gl {
 
 class App;
 
+namespace audit {
+void bindTouch(const ParamId& pid);  // LayoutAudit.cpp
+void stateRead(int k);               // an editor read parameter k from the state (graphs, grids)
+}
+
 // Where a plugin lives: a channel's instrument (slot < 0) or a mixer slot.
 struct PluginTarget {
   ObjectId owner = kNoId;
   int slot = -1;
   bool isChannel() const { return slot < 0; }
-  ParamId pid(int k) const { return isChannel() ? channelPluginParam(owner, k) : slotParam(owner, slot, k); }
+  ParamId pid(int k) const {
+    const ParamId p = isChannel() ? channelPluginParam(owner, k) : slotParam(owner, slot, k);
+    audit::bindTouch(p);  // J-92 binding audit (one branch when off)
+    return p;
+  }
   const PluginState* state(const Song& s) const;
   const PluginInfo* info(const Song& s) const;
   uint64_t key() const { return (static_cast<uint64_t>(owner) << 8) ^ static_cast<uint64_t>(slot + 1); }
@@ -34,6 +44,11 @@ void drawPluginHeader(App& a, const PluginTarget& t);
 void drawPluginBody(App& a, const PluginTarget& t, float width);
 
 namespace pui {
+// J-94: accent role (0xRRGGBB) of a brand family; 0 for descriptive tools.
+uint32_t brandRole(BrandFamily f);
+// Flagship wordmark at the cursor (accent bar + lower-case name, tagline on
+// hover). Returns false, drawing nothing, for types without one.
+bool wordmark(App& a, const std::string& type, float size);
 // Panel with a small-caps title; call end() after the contents.
 void beginSection(const char* title, float width, float height = 0);
 void endSection();

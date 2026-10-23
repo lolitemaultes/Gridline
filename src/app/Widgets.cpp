@@ -1,4 +1,5 @@
 #include "Widgets.h"
+#include "DialogLayout.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -8,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui_internal.h"
+#include "LayoutAudit.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "App.h"
 #include "Keys.h"
@@ -142,10 +144,10 @@ void drawIconBox(ImDrawList* dl, Icon icon, ImVec2 c, float box, ImU32 col) {
   icons::draw(dl, iconSvgName(icon), c, icons::standardSize(box), col);
 }
 
-bool IconButton(const char* id, Icon icon, bool active, float size, const char* hint, ImU32 activeCol, ImU32 idleCol) {
+bool IconButton(const char* id, Icon icon, bool active, float size, const char* hint, ImU32 activeCol, ImU32 idleCol, bool onPress) {
   ImGui::PushID(id);
   ImVec2 p = ImGui::GetCursorScreenPos();
-  bool pressed = ImGui::InvisibleButton("##ib", ImVec2(size, size));
+  bool pressed = ImGui::InvisibleButton("##ib", ImVec2(size, size), onPress ? ImGuiButtonFlags_PressedOnClick : ImGuiButtonFlags_None);
   bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const auto& P = pal();
@@ -165,7 +167,7 @@ bool IconButton(const char* id, Icon icon, bool active, float size, const char* 
   return pressed;
 }
 
-bool ToggleIcon(const char* id, Icon icon, bool on, float size, const char* hint) {
+bool ToggleIcon(const char* id, Icon icon, bool on, float size, const char* hint, float mirror) {
   ImGui::PushID(id);
   ImVec2 p = ImGui::GetCursorScreenPos();
   bool pressed = ImGui::InvisibleButton("##ti", ImVec2(size, size));
@@ -177,8 +179,11 @@ bool ToggleIcon(const char* id, Icon icon, bool on, float size, const char* hint
   // On: lit glyph (window / option toggles light up in the view role colour).
   const ImU32 lit = theme::litRole(theme::role::kView);
   ImU32 fg = on ? lit : hov ? P.text : P.textFaint;
-  drawIcon(dl, icon, ImVec2(std::round(p.x + size * 0.5f), std::round(p.y + size * 0.5f - (on ? 1 : 0))),
-           std::round(size * 0.52f), fg);
+  const ImVec2 ic(std::round(p.x + size * 0.5f), std::round(p.y + size * 0.5f - (on ? 1 : 0)));
+  const int v0 = dl->VtxBuffer.Size;
+  drawIcon(dl, icon, ic, std::round(size * 0.52f), fg);
+  if (mirror != 1.0f)  // J-91: the glyph's quad(s) scaled about the centre (mirrored at -1)
+    for (int i = v0; i < dl->VtxBuffer.Size; ++i) dl->VtxBuffer[i].pos.x = ic.x + (dl->VtxBuffer[i].pos.x - ic.x) * mirror;
   if (on) {
     float w = std::round(size * 0.36f);
     float x = std::round(p.x + (size - w) * 0.5f);
@@ -439,6 +444,7 @@ bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, boo
     ImGui::Dummy(ImVec2(radius * 2, radius * 2));
     return false;
   }
+  audit::bindControl(pid);  // J-92 binding audit
   double val = *v;
   bool released = false;
   bool linked = false;
@@ -465,6 +471,7 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   auto d = describeParam(a.doc.song(), pid);
   auto v = getParam(a.doc.song(), pid);
   if (!d || !v) return false;
+  audit::bindControl(pid);  // J-92 binding audit
   ImGui::PushID(id);
   const auto& P = pal();
   ImVec2 p = ImGui::GetCursorScreenPos();
@@ -931,21 +938,6 @@ void NextFloatingWindowSize(float width) {
   ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w, maxH));
 }
 
-void KeepWindowInViewport() {
-  ImGuiViewport* vp = ImGui::GetMainViewport();
-  const ImVec2 pos = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
-  const float x0 = vp->WorkPos.x, x1 = vp->WorkPos.x + vp->WorkSize.x;
-  const float y0 = vp->WorkPos.y + theme::kTopBarH, y1 = vp->WorkPos.y + vp->WorkSize.y - theme::kStatusBarH;
-  ImVec2 p = pos;
-  p.x = std::max(x0, std::min(p.x, x1 - size.x));
-  p.y = std::max(y0, std::min(p.y, y1 - size.y));
-  if (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && ImGui::IsWindowFocused()) {
-    // While the user drags the window, only keep its title bar reachable.
-    p = pos;
-    p.x = std::clamp(p.x, x0 - size.x + 80.0f, x1 - 80.0f);
-    p.y = std::clamp(p.y, y0, y1 - 32.0f);
-  }
-  if (p.x != pos.x || p.y != pos.y) ImGui::SetWindowPos(p);
-}
+void KeepWindowInViewport() { TrackWindowInViewport(); }  // J-91: clamped before layout (DialogLayout.h)
 
 }  // namespace gl::ui

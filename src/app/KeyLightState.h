@@ -42,10 +42,13 @@ struct ChannelLights {
   float flashAge[NoteActivity::kKeys] = {};   // s since the key's last hit
   float flashVel[NoteActivity::kKeys] = {};   // that hit's velocity (0 = no hit yet)
   uint32_t seen[NoteActivity::kKeys] = {};
+  bool down[NoteActivity::kKeys] = {};  // held (or hit) this frame
   bool primed = false;
+  bool animated = true;  // J-91: Interface animations; off: lights switch on and off, no fades
 
   // One UI frame: `dt` seconds since the previous update.
-  void update(const NoteActivity& na, float dt) {
+  void update(const NoteActivity& na, float dt, bool animate = true) {
+    animated = animate;
     for (int k = 0; k < NoteActivity::kKeys; ++k) {
       const uint32_t h = na.hits(k);
       const bool hit = primed && h != seen[k];
@@ -57,16 +60,18 @@ struct ChannelLights {
         flashAge[k] += dt;
         if (flashAge[k] > kFlashAttack + kFlashDecay) flashVel[k] = 0;
       }
-      if (na.held(k) || hit)
+      down[k] = na.held(k) || hit;
+      if (down[k])
         level[k] = 1;
       else
-        level[k] = std::max(0.0f, level[k] - dt / kKeyRelease);
+        level[k] = animate ? std::max(0.0f, level[k] - dt / kKeyRelease) : 0.0f;
     }
     primed = true;
   }
   float key(int k) const { return k < 0 || k >= NoteActivity::kKeys ? 0.f : keyAlpha(level[k]); }
   float flash(int k) const {
     if (k < 0 || k >= NoteActivity::kKeys || flashVel[k] <= 0) return 0;
+    if (!animated) return down[k] ? flashPeak(flashVel[k]) : 0.0f;  // lit while the pad sounds, no fade
     return flashEnvelope(flashAge[k], flashVel[k]);
   }
 };

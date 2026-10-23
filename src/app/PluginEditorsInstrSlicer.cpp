@@ -13,11 +13,13 @@
 //   waveform with the region markers (0, 362, 714×145), region strip (0, 507, 714×56),
 //   keyboard (0, 571, 714×54) with the base note selector (3, 574).
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <map>
 #include "../engine/SlicexEngine.h"
+#include "../core/PluginBrand.h"
 #include "../core/PluginParams.h"
 #include "../engine/Slicing.h"
 #include "InstrumentSkin.h"
@@ -77,10 +79,10 @@ std::vector<int64_t> sliceStarts(const PluginState& st, const Sample* smp) {
     }
     std::sort(out.begin(), out.end());
   } else {
-    static std::map<std::string, std::pair<std::pair<int, float>, std::vector<int64_t>>> cache;
+    static std::map<std::string, std::pair<std::array<float, 3>, std::vector<int64_t>>> cache;
     auto& c = cache[smp->path];
-    std::pair<int, float> key{ed::ival(st, SlMode), ed::val(st, SlSensitivity, 0.5f)};
-    if (c.first != key || c.second.empty()) c.first = key, c.second = computeSlices(*smp, key.first, key.second);
+    const std::array<float, 3> key{static_cast<float>(ed::ival(st, SlMode)), ed::val(st, SlSensitivity, 0.5f), ed::val(st, SlMinGap, 0.06f)};
+    if (c.first != key || c.second.empty()) c.first = key, c.second = computeSlices(*smp, static_cast<int>(key[0]), key[1], key[2]);
     out = c.second;
     if (out.size() > static_cast<size_t>(kMaxSlices)) out.resize(kMaxSlices);
   }
@@ -181,7 +183,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   iskin::wheel(a, t, sk, SlMinGap, 606, 62, 26, sk.c.fill);
   iskin::wheel(a, t, sk, SlVelocity, 638, 62, 26, sk.c.fill);
   iskin::text(sk, 630, 88, 42, 9, "VEL", 7.5f, sk.c.label, 1, false, true);
-  iskin::text(sk, 589, 12, 118, 40, "SLICER", 26, rgb(0xF5781B), 2, false, true);
+  iskin::text(sk, 589, 12, 118, 40, pluginTitle("gl.slicer").c_str(), 26, rgb(0xF5781B), 2, false, true);
 
   // ---- region panel.
   iskin::bevel(sk, 0, 99, kSxW, 198, rgb(0x60686C), 0, 0);

@@ -294,6 +294,17 @@ add_executable(gridline_tests_j1 tests/test_j1.cpp)
 target_link_libraries(gridline_tests_j1 PRIVATE gridline_core)
 target_compile_options(gridline_tests_j1 PRIVATE ${GL_WARN})
 add_test(NAME j1_effects COMMAND gridline_tests_j1 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# J-92: every built-in plugin parameter recorded as working still changes the output
+# (fast check against tests/param_audit_baseline.tsv; full sweep: gridline param-audit).
+add_executable(gridline_tests_plugin_param_audit tests/test_plugin_param_audit.cpp)
+target_link_libraries(gridline_tests_plugin_param_audit PRIVATE gridline_core)
+target_compile_options(gridline_tests_plugin_param_audit PRIVATE ${GL_WARN})
+add_test(NAME plugin_param_audit COMMAND gridline_tests_plugin_param_audit WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(plugin_param_audit PROPERTIES TIMEOUT 900)
+add_executable(gridline_tests_bitcrush_range tests/test_bitcrush_range.cpp)
+target_link_libraries(gridline_tests_bitcrush_range PRIVATE gridline_core)
+target_compile_options(gridline_tests_bitcrush_range PRIVATE ${GL_WARN})
+add_test(NAME bitcrush_range COMMAND gridline_tests_bitcrush_range WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(gridline_tests_j33 tests/test_j33.cpp)
 target_link_libraries(gridline_tests_j33 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j33 PRIVATE tests)
@@ -673,6 +684,12 @@ target_link_libraries(gridline_tests_j87 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j87 PRIVATE tests src)
 target_compile_options(gridline_tests_j87 PRIVATE ${GL_WARN})
 add_test(NAME j87 COMMAND gridline_tests_j87 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-91 (GitHub issue #1): system interface scale, plugin keys on X11 / Windows, Auto Pan pad, motion switches.
+add_executable(gridline_tests_j91 tests/test_j91.cpp)
+target_link_libraries(gridline_tests_j91 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j91 PRIVATE tests src)
+target_compile_options(gridline_tests_j91 PRIVATE ${GL_WARN})
+add_test(NAME j91 COMMAND gridline_tests_j91 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_clip_sources tests/test_clip_sources.cpp)
 target_link_libraries(gridline_tests_clip_sources PRIVATE gridline_core)
 target_include_directories(gridline_tests_clip_sources PRIVATE tests src)
@@ -763,7 +780,10 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   # and the SDL2 platform backend on top for the application.
   add_library(imgui_core STATIC
     third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
-    third_party/imgui/imgui_widgets.cpp third_party/imgui/imgui_demo.cpp third_party/imgui/imgui_impl_opengl3.cpp)
+    third_party/imgui/imgui_widgets.cpp third_party/imgui/imgui_demo.cpp third_party/imgui/imgui_impl_opengl3.cpp
+    src/app/imgui_hooks/ImGuiItemHook.cpp)
+  # J-92: ImGui's item hooks (off unless the editor audit turns them on: one branch per item).
+  target_compile_definitions(imgui_core PUBLIC IMGUI_ENABLE_TEST_ENGINE)
   target_include_directories(imgui_core SYSTEM PUBLIC third_party/imgui)
   target_link_libraries(imgui_core PUBLIC ${CMAKE_DL_LIBS})
   set_target_properties(imgui_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -928,6 +948,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j78_toast_click -P ${CMAKE_SOURCE_DIR}/tests/j78_toast_click.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j78_toast_click PROPERTIES TIMEOUT 300)
+
+    # J-91: the transport buttons answer real (SDL) clicks at 100 / 150 / 200 % and the metronome swings.
+    add_test(NAME j91_transport_click
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j91_transport_click
+                     -P ${CMAKE_SOURCE_DIR}/tests/j91_transport_click.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j91_transport_click PROPERTIES TIMEOUT 300)
 
     # J-83: wheel over a mixer gain fader: thin mixer scrolls, wide adjusts, Ctrl / click / momentum / live resize.
     add_test(NAME j83_mixer_wheel

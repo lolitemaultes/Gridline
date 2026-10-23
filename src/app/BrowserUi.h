@@ -126,6 +126,8 @@ bool thumbMode();
 // controls closer than inset::kMinInset to their panel's edge go to
 // <dir>/layout_audit.tsv, editors (width x1, issues outlined) to <dir>/sheet_NN.png.
 void beginAuditMode(App& a, const std::string& dir);
+// J-92: with --layout-audit, also click every item of each editor (pages, tabs) for the binding audit.
+void setBindingCrawl(bool on);
 // Issues the finished audit found (main's exit status in audit mode).
 int auditIssueCount();
 void thumbDraw(App& a);

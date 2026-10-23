@@ -139,7 +139,7 @@ PluginInfo twinString() {
 
 // --------------------------------------------------------------- Plucker
 PluginInfo plucker() {
-  PluginInfo p{"gl.plucker", "Plucker", "Synth", PluginKind::Generator, {}, false, {}};
+  PluginInfo p{"gl.plucker", "Pluck Model", "Synth", PluginKind::Generator, {}, false, {}};
   auto& q = p.params;
   q.resize(PkCount);
   q[PkDecay] = lin("Decay", "", 0, 256, 128);

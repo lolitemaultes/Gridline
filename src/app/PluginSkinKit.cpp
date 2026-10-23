@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <string>
 #include <unordered_map>
+#include "XyPadMath.h"
 #include "../core/Params.h"
 #include "App.h"
 #include "Inset.h"
@@ -124,9 +125,9 @@ void well(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
   ImU32 w = k.wellC();
   audit::frame(p0, p1, "well");
   noteFrame(p0, p1);
-  dl->AddRectFilled(p0, p1, w, rounding);
+  gradientRect(dl, p0, p1, lighten(w, 0.035f), darken(w, 0.05f), rounding);
   dl->AddRect(p0, p1, theme::withAlpha(darken(k.panel, 0.45f), 0.6f), rounding, 0, 1.0f);
-  dl->AddLine(ImVec2(p0.x + rounding, p0.y + 0.5f), ImVec2(p1.x - rounding, p0.y + 0.5f), theme::withAlpha(lighten(w, 0.14f), 0.8f), 1.0f);
+  dl->AddLine(ImVec2(p0.x + rounding, p0.y + 0.5f), ImVec2(p1.x - rounding, p0.y + 0.5f), theme::withAlpha(lighten(w, 0.16f), 0.7f), 1.0f);
 }
 
 float text(ImDrawList* dl, ImVec2 p, ImU32 col, const char* s, float size) {
@@ -144,7 +145,12 @@ void pill(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* s, fl
   placeKitFrame(p0, p1);
   float h = p1.y - p0.y;
   audit::control(p0, p1, "pill");
-  dl->AddRectFilled(p0, p1, k.pillBgC(), std::min(h * 0.5f, 6.0f));
+  {  // caption plate: soft vertical shade + rim light (J-93)
+    const ImU32 bg = k.pillBgC();
+    const float r = std::min(h * 0.5f, 5.0f);
+    gradientRect(dl, p0, p1, lighten(bg, 0.06f), darken(bg, 0.03f), r);
+    dl->AddLine(ImVec2(p0.x + r, p0.y + 0.5f), ImVec2(p1.x - r, p0.y + 0.5f), theme::withAlpha(lighten(bg, 0.3f), 0.35f), 1.0f);
+  }
   if (!s || !*s) return;
   float fs = font > 0 ? font : std::clamp(h * 0.66f, 9.0f, 13.0f);
   ImGui::PushFont(app().fontMonoBold, fs);
@@ -159,13 +165,21 @@ void valueStrip(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char*
   placeKitFrame(p0, p1);
   float h = p1.y - p0.y;
   audit::control(p0, p1, "value");
-  dl->AddRectFilled(p0, p1, k.valueBgC(), 2);
+  // J-93: dark-text strips (lit value plates) stay lit; light-text strips become recessed readouts.
+  auto lum = [](ImU32 c) {
+    return (0.299f * static_cast<float>((c >> IM_COL32_R_SHIFT) & 0xFF) + 0.587f * static_cast<float>((c >> IM_COL32_G_SHIFT) & 0xFF) +
+            0.114f * static_cast<float>((c >> IM_COL32_B_SHIFT) & 0xFF)) / 255.0f;
+  };
+  const bool litPlate = lum(k.valueTextC()) < 0.4f;
+  if (litPlate) raisedFace(dl, p0, p1, k.valueBgC(), 3);
+  else insetField(dl, p0, p1, darken(k.valueBgC(), 0.25f), 3);
   if (!s || !*s) return;
   float fs = font > 0 ? font : std::clamp(h * 0.72f, 9.0f, 13.0f);
   ImGui::PushFont(app().fontMono, fs);
   ImVec2 ts = ImGui::CalcTextSize(s);
   dl->PushClipRect(p0, p1, true);
-  dl->AddText(ImVec2(std::round(std::max(p0.x + 3, (p0.x + p1.x - ts.x) * 0.5f)), std::round((p0.y + p1.y - ts.y) * 0.5f)), k.valueTextC(), s);
+  dl->AddText(ImVec2(std::round(std::max(p0.x + 3, (p0.x + p1.x - ts.x) * 0.5f)), std::round((p0.y + p1.y - ts.y) * 0.5f)),
+              litPlate ? k.valueTextC() : lighten(k.valueTextC(), 0.12f), s);
   dl->PopClipRect();
   ImGui::PopFont();
 }
@@ -422,8 +436,9 @@ bool xyPad(App& a, const PluginTarget& t, int px, int py, ImVec2 tl, ImVec2 size
     dl->AddLine(ImVec2(x, tl.y + 1), ImVec2(x, p1.y - 1), c);
     dl->AddLine(ImVec2(tl.x + 1, y), ImVec2(p1.x - 1, y), c);
   }
-  float x = tl.x + static_cast<float>(bx.d.toNormalized(bx.val)) * size.x;
-  float y = tl.y + (1 - static_cast<float>(by.d.toNormalized(by.val))) * size.y;
+  float x = 0, y = 0;  // J-91: on the pad even for a value outside the range (app/XyPadMath.h)
+  xypad::toScreen(xypad::Rect{tl.x, tl.y, p1.x, p1.y}, static_cast<float>(bx.d.toNormalized(bx.val)), static_cast<float>(by.d.toNormalized(by.val)),
+                  0.0f, x, y);
   dl->AddLine(ImVec2(x, tl.y + 1), ImVec2(x, p1.y - 1), theme::withAlpha(k.fill, 0.45f));
   dl->AddLine(ImVec2(tl.x + 1, y), ImVec2(p1.x - 1, y), theme::withAlpha(k.fill, 0.45f));
   float r = std::clamp(size.x * 0.035f, 5.0f, 9.0f);

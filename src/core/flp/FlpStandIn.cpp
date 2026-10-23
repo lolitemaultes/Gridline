@@ -10,6 +10,8 @@
 #include "../../engine/Sample.h"
 #include "../../engine/SampledInstrument.h"
 #include "../../engine/Slicing.h"
+#include "../../engine/TimeGateSlots.h"
+#include "../../packs/tideline/tideline.h"
 #include "../../packs/dynamics/dynamics.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/samplers/dwave.h"
@@ -61,6 +63,7 @@ StandInPolicy standInPolicy(const std::string& type) {
     mapped("gl.gate", "Fruity Limiter");
     mapped("gl.maximizer", "Fruity Limiter");
     mapped("gl.scduck", "Fruity Limiter");
+    mapped("gl.tideline", "Gross Beat");
     mapped("gl.drawneq", "Fruity Parametric EQ 2");
     mapped("gl.analyzer", "Wave Candy");
     mapped("gl.bussend", "Fruity Send");
@@ -250,6 +253,44 @@ Mapping mapDucker(const PluginState& g) {
   put(s, LimCompRelease, clampd(prm(g, mo::SdRelease, 0.2f), 0.001, 2));
   put(s, LimSidechain, iprm(g, mo::SdSource) == 0 ? 1 : 0);
   m.note = "compressor section keyed by the sidechain; depth limit not carried";
+  m.ok = true;
+  return m;
+}
+
+// J-95: Tideline → the time gate (exports as Gross Beat) playing its volume
+// envelope only: the curve with Amount, Duration and Shift applied, sampled
+// over a bar-locked slot (one bar, two for the 2-bar rate) and repeated per cycle.
+Mapping mapTideline(const PluginState& g) {
+  using namespace pp;
+  namespace bw = gl::packs::tideline;
+  Mapping m;
+  m.state = defaultPluginState("gl.timegate");
+  PluginState& s = m.state;
+  const int shape = std::clamp(iprm(g, bw::BwShape), 0, bw::kShapeCustom);
+  const int rate = std::clamp(iprm(g, bw::BwRate, bw::kRateDefault), 0, bw::kRateCount - 1);
+  const double cyc = bw::kRateBeats[rate], amount = prm(g, bw::BwAmount, 1), duration = prm(g, bw::BwDuration), shift = prm(g, bw::BwShift);
+  bw::CustomCurve cc;
+  if (g.params.size() >= static_cast<size_t>(bw::BwCount)) bw::customFrom(g.params, cc);
+  auto slot = std::make_unique<tg::Slot>();
+  slot->len = cyc > 4 ? 8.f : 4.f;
+  slot->setName("Tideline");
+  const int cycles = std::max(1, static_cast<int>(std::lround(slot->len / cyc)));
+  const int per = std::clamp((tg::kMaxPts - 2) / cycles, 8, 96);
+  for (int c = 0; c < cycles; ++c)
+    for (int i = 0; i < per; ++i) {
+      const double p = static_cast<double>(i) / per;
+      const double y = bw::applyAmount(bw::curveAt(shape, cc, p + shift, duration), amount);
+      slot->env.add((c + p) * cyc, static_cast<float>(std::clamp(y, 0.0, 1.0)), 0, menv::SingleCurve);
+    }
+  slot->env.add(slot->len, static_cast<float>(bw::applyAmount(bw::curveAt(shape, cc, shift, duration), amount)), 0, menv::SingleCurve);
+  slot->prepare();
+  s.data = "GB2\n" + tg::serialize('V', 0, *slot) + "\n";
+  put(s, TgVolSlot, 0);
+  put(s, TgVolMix, 1);
+  put(s, TgTimeMix, 0);
+  put(s, TgMode, 0);
+  m.note = "volume envelope of the tempo-synced curve; audio / MIDI triggers, band split and mid / side are not carried";
+  if (iprm(g, bw::BwTrigger) != bw::TrigTempo) m.note = "triggered curve exported as its tempo-synced cycle (Gross Beat has no audio / MIDI retrigger here)";
   m.ok = true;
   return m;
 }
@@ -766,6 +807,7 @@ bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o,
       else if (ty == "gl.gate") m = mapGate(p);
       else if (ty == "gl.maximizer") m = mapMaximizer(p);
       else if (ty == "gl.scduck") m = mapDucker(p);
+      else if (ty == "gl.tideline") m = mapTideline(p);
       else if (ty == "gl.drawneq") m = mapCurveEq(p);
       else if (ty == "gl.analyzer") m = mapAnalyzer(p);
       else if (ty == "gl.bussend") {

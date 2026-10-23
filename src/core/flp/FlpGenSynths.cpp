@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdio>
+#include "../PluginBrand.h"
 #include "../PluginParams.h"
 #include "../../packs/synths/synths.h"
 #include "FlpGen.h"
@@ -62,18 +63,18 @@ bool decodeSytrus(Context& c, const std::vector<Event>& events, PluginMapping& m
     setp(s, sy::AnFltMode, sy::FltBp12), setp(s, sy::AnCutoff, 2500), setp(s, sy::AnReso, 0.2), setp(s, sy::AnFltEnv, 0);
     setp(s, sy::AnAmpA, 0.05), setp(s, sy::AnAmpS, 1.0), setp(s, sy::AnAmpR, 0.6);
     setp(s, sy::AnVolume, vol);
-    what = "Analog (filtered noise)";
+    what = pluginDisplayName("gl.analog") + " (filtered noise)";
   } else if (has("pad") || has("string")) {
     s = presetOf2("gl.analog", "Velvet Pad");
     setp(s, sy::AnTranspose, clampd(pitch, -24, 24));
-    what = "Analog (pad)";
+    what = pluginDisplayName("gl.analog") + " (pad)";
   } else {
     // FM: bass patches use a short modulator decay; others an electric-piano-like stack.
     const bool bass = has("bass") || pitch <= -12;
     s = presetOf2("gl.fm", bass ? "FM bass" : "E. piano");
     setp(s, gl::pp::FmOctave, std::clamp(std::round(pitch / 12.0), -3.0, 3.0));
     setp(s, gl::pp::FmVolume, vol);
-    what = bass ? "FM Synth (FM bass)" : "FM Synth";
+    what = pluginDisplayName("gl.fm") + (bass ? " (FM bass)" : "");
   }
   m.glType = s.type;
   m.state = s;

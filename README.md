@@ -45,7 +45,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks.
 
-**128 built-in instruments and effects.** Synths from subtractive to six-operator FM, additive and resynthesis, physical models, samplers and slicers, drum machines, reverbs, delays, dynamics, EQs and modulators. Every one has its own editor.
+**128 built-in instruments and effects.** A family of flagships with their own names: Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching) and Graticule (scope). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities. Every one has its own editor.
 
 **Real plugins, real interfaces.** VST3, CLAP, VST2 and AU instruments and effects open with their own interface, can run sandboxed in a separate process, and are checked by a built-in compatibility sweep.
 
@@ -54,7 +54,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **A mixer that keeps time.** Plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ. Offline renders are bit-identical whatever the buffer size.
 
-**Recording and editing.** Audio input with latency compensation, takes and comping, an audio editor with spectral view, automation clips with curves and an LFO tool, MIDI learn on every control.
+**Recording and editing.** Audio input with latency compensation, takes and comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, MIDI learn on every control.
 
 **Scripting and templates.** Sandboxed Lua scripts for the piano roll and for hardware controllers, project templates, and a background sample browser with tempo and key search.
 
@@ -78,7 +78,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 <td width="50%"><img src="docs/images/automation.png" alt="Automation clip editor"></td>
 </tr>
 <tr>
-<td><b>Audio editor.</b> Waveform and spectral views, markers and regions, time stretch and pitch shift, noise reduction, beat slicing and loudness readouts.</td>
+<td><b>Loupe, the audio editor.</b> Waveform and spectral views, markers and regions, time stretch and pitch shift, noise reduction, beat slicing and loudness readouts.</td>
 <td><b>Automation.</b> Points with thirteen curve shapes, tension handles, an LFO tool, a shape library and recording straight from knob moves.</td>
 </tr>
 </table>
@@ -111,7 +111,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev libx11-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 127 test suites
+ctest --test-dir build          # 133 test suites
 ./build/gridline-app            # start the app
 ```
 

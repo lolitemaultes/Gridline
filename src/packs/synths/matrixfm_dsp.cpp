@@ -92,8 +92,10 @@ const MipTable& squareTable() {
 }
 
 inline float lookup(const float* t, double p) {
-  const double x = p * kTab;
-  const int i = static_cast<int>(x);
+  // J-92: a phase that a runaway feedback / ring-mod loop turned non-finite (or out of
+  // 0..1) read outside the table (crash): clamp to the table.
+  const double x = std::isfinite(p) ? std::clamp(p, 0.0, 1.0) * kTab : 0.0;
+  const int i = std::min(static_cast<int>(x), kTab - 1);
   const float f = static_cast<float>(x - i);
   return t[i] + (t[i + 1] - t[i]) * f;
 }
@@ -978,7 +980,10 @@ class MatrixFmGen final : public Generator {
           v.dcX[k] = w, v.dcY[k] = o;
           w = o;
         }
-        y[k] = static_cast<float>(w * v.amp[k]);
+        // J-92: ring-mod loops (an operator ringing itself or a pair ringing each
+        // other) grew without bound to inf / NaN; operator outputs stay bounded.
+        const double yk = w * v.amp[k];
+        y[k] = static_cast<float>(std::isfinite(yk) ? std::clamp(yk, -16.0, 16.0) : 0.0);
         v.ph[k] += v.inc[k];
         if (v.ph[k] >= 1.0) v.ph[k] -= 1.0, ++v.cyc[k];
         else if (v.ph[k] < 0.0) v.ph[k] += 1.0;

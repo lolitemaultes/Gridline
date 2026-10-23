@@ -178,6 +178,8 @@ double backingScale(const Window& w) {
   return [(NSWindow*)w.handle backingScaleFactor];
 }
 
+std::string xResources(const Window&) { return {}; }  // X11 only
+
 long windowNumber(const Window& w) {
   if (!w.handle) return -1;
   return static_cast<long>([(NSWindow*)w.handle windowNumber]);

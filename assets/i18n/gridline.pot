@@ -166,7 +166,7 @@ msgid "Audio file format"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
-msgid "Audio, into the audio editor (armed tracks)"
+msgid "Audio, into Loupe (armed tracks)"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
@@ -278,7 +278,7 @@ msgid "Monitor"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
-msgid "No free effect slot for the audio editor"
+msgid "No free effect slot for Loupe"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
@@ -314,7 +314,7 @@ msgid "Punch in/out at the time selection"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
-msgid "RENDER STRETCH (AUDIO EDITOR)"
+msgid "RENDER STRETCH (LOUPE)"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
@@ -689,7 +689,7 @@ msgstr ""
 msgid "Shape name"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/samplers/samplers_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Snap"
 msgstr ""
 
@@ -1341,7 +1341,7 @@ msgstr ""
 msgid "TRACKING"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Tempo"
 msgstr ""
 
@@ -1641,7 +1641,7 @@ msgstr ""
 msgid "Beat"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Chop"
 msgstr ""
 
@@ -1813,7 +1813,7 @@ msgstr ""
 msgid "Quarter beat"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/packs/models/spectramorph_ui.cpp
 msgid "Rate"
 msgstr ""
 
@@ -1897,7 +1897,7 @@ msgstr ""
 msgid "Speed to"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Stutter"
 msgstr ""
 
@@ -2690,7 +2690,7 @@ msgid "Edit pattern"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Edit sample in audio editor"
+msgid "Edit sample in Loupe"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -3422,7 +3422,7 @@ msgid "Render to sampled instrument..."
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Renders the instrument note by note into a multisampled Wave Program"
+msgid "Renders the instrument note by note into a multisampled Folio instrument"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -3941,7 +3941,11 @@ msgstr ""
 msgid "Adjust the control"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp
+#: src/app/Dialogs.cpp
+msgid "Animations"
+msgstr ""
+
+#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Audio"
 msgstr ""
 
@@ -3999,6 +4003,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Debug"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Decorative motion: the metronome swinging in tempo, key and pad lights fading, gliding drags and scrolling. Off: everything moves at once, which saves a little CPU"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -4062,6 +4070,10 @@ msgid "Folders and scripting"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Follow the system's display scale (%d%%)"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Frequently (5 minutes + before risky edits)"
 msgstr ""
 
@@ -4114,6 +4126,10 @@ msgid "Interface"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Interface animations"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Interface scale"
 msgstr ""
 
@@ -4141,7 +4157,7 @@ msgstr ""
 msgid "Log and script console"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/ExportUi.cpp src/app/Menus.cpp
+#: src/app/Dialogs.cpp src/app/ExportUi.cpp src/app/Menus.cpp src/packs/tideline/tideline_ui.cpp
 msgid "MIDI"
 msgstr ""
 
@@ -4198,6 +4214,10 @@ msgid "Off while the system asks for reduced motion."
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "On: the interface size is multiplied by the scale set in your system's display settings. Off: the size above is used as it is"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Opened as a Gridline project. Save asks where to keep it, and in which format."
 msgstr ""
 
@@ -4211,6 +4231,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Output latency"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "PLUGINS"
 msgstr ""
 
 #: src/app/Dialogs.cpp src/app/TemplateUi.cpp
@@ -4882,7 +4906,7 @@ msgid "Rendered as an audio clip"
 msgstr ""
 
 #: src/app/ExportUi.cpp
-msgid "Rendered into the audio editor"
+msgid "Rendered into Loupe"
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -5057,7 +5081,7 @@ msgstr ""
 msgid "Not used"
 msgstr ""
 
-#: src/app/FlpExportUi.cpp
+#: src/app/FlpExportUi.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Note"
 msgstr ""
 
@@ -5326,7 +5350,7 @@ msgid "Notes outside the range do not play on this channel (layer splits set it)
 msgstr ""
 
 #: src/app/J31Ui.cpp
-msgid "Open the last minutes in the audio editor"
+msgid "Open the last minutes in Loupe"
 msgstr ""
 
 #: src/app/J31Ui.cpp
@@ -5794,7 +5818,7 @@ msgid "No master chain"
 msgstr ""
 
 #: src/app/MasterPanel.cpp
-msgid "Put the chain (EQ, compressor, stereo shaper, limiter, meter) on the master track"
+msgid "Put the chain (EQ, compressor, stereo width, limiter, meter) on the master track"
 msgstr ""
 
 #: src/app/MasterPanel.cpp
@@ -5925,7 +5949,7 @@ msgstr ""
 msgid "Only the project folder"
 msgstr ""
 
-#: src/app/McpUi.cpp src/app/MidiUi.cpp
+#: src/app/McpUi.cpp src/app/MidiUi.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Port"
 msgstr ""
 
@@ -7714,7 +7738,7 @@ msgid "Edit automation..."
 msgstr ""
 
 #: src/app/Playlist.cpp
-msgid "Edit in audio editor"
+msgid "Edit in Loupe"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -8045,6 +8069,10 @@ msgstr ""
 msgid "Controller %d"
 msgstr ""
 
+#: src/app/PluginEditorsFlSynth2.cpp
+msgid "Operator 1 is a carrier in every algorithm, so its thru level has no effect"
+msgstr ""
+
 #: src/app/PluginEditorsInstr.cpp
 msgid "Tine / Reed / Bright tine / Soft: modelled electric pianos\nGrand / Upright piano: hammered-string models"
 msgstr ""
@@ -8090,6 +8118,10 @@ msgid "Factory content"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
+msgid "HOLD"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "Move slot left"
 msgstr ""
 
@@ -8111,6 +8143,34 @@ msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "Step gate (no volume slot)"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp src/app/TemplateUi.cpp
+msgid "TIME"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "TIME MIX"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "VOLUME"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "VOLUME MIX"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "beat"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "beats"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "live"
 msgstr ""
 
 #: src/app/PluginEditorsTimeRef.cpp
@@ -8430,7 +8490,7 @@ msgid "A key range"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
-msgid "Adds a Wave Program channel after this one, on the same mixer track"
+msgid "Adds a Folio channel after this one, on the same mixer track"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
@@ -8530,7 +8590,7 @@ msgid "Sustain loops"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
-msgid "Swaps the channel's instrument for the Wave Program (undo brings it back)"
+msgid "Swaps the channel's instrument for Folio (undo brings it back)"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
@@ -9194,10 +9254,6 @@ msgid "TEMPLATES"
 msgstr ""
 
 #: src/app/TemplateUi.cpp
-msgid "TIME"
-msgstr ""
-
-#: src/app/TemplateUi.cpp
 msgid "The default template (Settings > General)"
 msgstr ""
 
@@ -9381,7 +9437,7 @@ msgstr ""
 msgid "Show its mixer track"
 msgstr ""
 
-#: src/app/TrackModeUi.cpp
+#: src/app/TrackModeUi.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Stereo"
 msgstr ""
 
@@ -9561,7 +9617,7 @@ msgstr ""
 msgid "in"
 msgstr ""
 
-#: src/app/Widgets.cpp
+#: src/app/Widgets.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Custom"
 msgstr ""
 
@@ -10513,7 +10569,7 @@ msgstr ""
 msgid "Current rate: %.0f Hz"
 msgstr ""
 
-#: src/packs/edison/edison_tools_ui.cpp
+#: src/packs/edison/edison_tools_ui.cpp src/packs/samplers/dwave_ui.cpp
 msgid "Damping"
 msgstr ""
 
@@ -10553,7 +10609,7 @@ msgstr ""
 msgid "Inserted at the cursor (%s)."
 msgstr ""
 
-#: src/packs/edison/edison_tools_ui.cpp
+#: src/packs/edison/edison_tools_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Low cut"
 msgstr ""
 
@@ -10613,7 +10669,7 @@ msgstr ""
 msgid "The tail rings into the following audio (and past the end)."
 msgstr ""
 
-#: src/packs/edison/edison_tools_ui.cpp
+#: src/packs/edison/edison_tools_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Threshold"
 msgstr ""
 
@@ -10659,6 +10715,10 @@ msgstr ""
 
 #: src/packs/flex/flex_ui.cpp
 msgid "The channel keeps the stand-in sound and becomes a normal Gridline instrument."
+msgstr ""
+
+#: src/packs/models/additive_ui.cpp
+msgid "Fine"
 msgstr ""
 
 #: src/packs/modulation/modulation_ctl_ui.cpp
@@ -10770,7 +10830,7 @@ msgid "Number by mixer track"
 msgstr ""
 
 #: src/packs/modulation/modulation_ui.cpp
-msgid "Add Peak Follower, X-Y Pad, Formula Controller,"
+msgid "Add Peak Follower, X-Y Pad, Formula Mod,"
 msgstr ""
 
 #: src/packs/modulation/modulation_ui.cpp
@@ -10786,7 +10846,7 @@ msgid "Controller link settings"
 msgstr ""
 
 #: src/packs/modulation/modulation_ui.cpp
-msgid "Envelope or Keyboard Controller first."
+msgid "Envelope Mod or Keyboard Mod first."
 msgstr ""
 
 #: src/packs/modulation/modulation_ui.cpp
@@ -10811,6 +10871,42 @@ msgstr ""
 
 #: src/packs/modulation/modulation_ui.cpp
 msgid "input = controller (0..1), base = knob value, t, beat"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
+msgid "Cho delay"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
+msgid "Cho fb"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
+msgid "Diffusion"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
+msgid "Dly high cut"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
+msgid "Dly low cut"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
+msgid "LFO 1 fade"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
+msgid "LFO 1 phase"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
+msgid "LFO 2 fade"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
+msgid "LFO 2 phase"
 msgstr ""
 
 #: src/packs/samplers/samplers_ui.cpp
@@ -10909,6 +11005,242 @@ msgstr ""
 msgid "Panel: two DCO"
 msgstr ""
 
+#: src/packs/tideline/tideline_ui.cpp
+msgid "1 bar"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "2 bars"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "AMOUNT"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "AUDIO TRIGGER"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "BAND"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Breath"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "CURVE"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Classic"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Cycle"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Drag left / right to shorten or stretch the duck. Shift+drag moves it against the beat."
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Ducks both channels together"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Ducks the centre only"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Ducks the sides only"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Duration"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Full"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Gap"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Glide"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "High cut"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Highs"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Inhale"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Inhale Long"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Listen: hear only the part being ducked"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Locked to the song position."
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Long"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Loop: repeat the curve until the next trigger (off = one shot with an end marker)"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Lows"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "MIDI TRIGGER"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Mid"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Move the curve earlier by 1/16"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Move the curve later by 1/16"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Notes from a MIDI Out channel"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Nudge the curve earlier (fine)"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Nudge the curve later (fine)"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "One-shot end: the curve holds here until the next trigger"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Point"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Pump"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Reset curve"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Reset the curve's duration, shift and points"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Round"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "SHIFT"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "STEREO"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Shift"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Side"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
+msgid "Smooth"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Split"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Sub Deep"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Sub Soft"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Switch to Audio or MIDI to follow a kick."
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "TEMPO SYNC"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Tension"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Tight"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Trigger: input route"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Trigger: own input"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Trigger: track sidechain"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Trim"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Trim Fade"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "any"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "note"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "port"
+msgstr ""
+
 #: src/packs/utility/utility_bankeq_ui.cpp
 msgid "All bands on"
 msgstr ""
@@ -10939,10 +11271,6 @@ msgstr ""
 
 #: src/packs/utility/utility_ui.cpp
 msgid "Random (gentle)"
-msgstr ""
-
-#: src/packs/utility/utility_ui.cpp
-msgid "Smooth"
 msgstr ""
 
 #: src/packs/utility/utility_ui.cpp

@@ -172,7 +172,7 @@ PluginInfo bandDelay() {
 }
 
 PluginInfo hall() {
-  PluginInfo p{"gl.hall", "Hall", "Delay & reverb", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.hall", "Cloister", "Delay & reverb", PluginKind::Effect, {}, false, {}};
   p.params.resize(HvCount);
   p.params[HvInGain] = lin("Input gain", "dB", -60, 15, 0);
   p.params[HvInLowCut] = lg("Input low cut", "Hz", 20, 5000, 20);

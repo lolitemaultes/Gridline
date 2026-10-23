@@ -26,7 +26,7 @@ ParamDesc ch(const std::string& n, std::vector<std::string> c, int d) {
 }  // namespace
 
 PluginInfo harmorInfo() {
-  PluginInfo p{"gl.harmor", "Resynth", "Synth", PluginKind::Generator, {}, false, {}};
+  PluginInfo p{"gl.harmor", "Halftone", "Synth", PluginKind::Generator, {}, false, {}};
   auto& q = p.params;
   q.resize(HmParamCount);
   const std::vector<std::string> fltTypes = {"Low pass", "Band pass", "Band stop", "High pass", "Soft LP",  "Soft BP",   "Soft BS",

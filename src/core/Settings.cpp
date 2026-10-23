@@ -56,6 +56,8 @@ Settings::Settings() {
       {"transport.jumpQuantize", Json::makeNumber(0)}, // ops::jumpGrid mode (0 = jump at once)
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
       {"ui.scale", Json::makeNumber(1.0)},
+      {"ui.scaleAuto", b(true)},             // J-91: ui.scale is multiplied by the desktop's scale (core/UiScale.h)
+      {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome swing, light fades, glides)
       {"ui.showHints", b(true)},
       {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing

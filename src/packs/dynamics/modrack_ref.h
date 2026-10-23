@@ -539,7 +539,7 @@ class Module {
     };
     const int* p = st_.p;
     const float pa = static_cast<float>(p[2] / 10000.0), col = static_cast<float>(p[1] / 10000.0), pgN = static_cast<float>(p[3] / 10000.0);
-    const bool boost = p[5] / 10000.0 > 0.5;
+    const bool boost = p[5] >= 1;  // J-92: the x100 boost switch is stored 0 / 1 (was compared as 0..10000: never on)
     const float gT = 1.0f + (boost ? 2500.0f : 25.0f) * pa * pa * pa, bT = 1.0f - static_cast<float>(p[0] / 10000.0);
     const float fT = col * col * col, pgT = pgN * pgN;
     const float a = 0.2f + 0.7f * static_cast<float>(p[4] / 10000.0), ia = 1.0f - a;

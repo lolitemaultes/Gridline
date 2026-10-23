@@ -8,7 +8,7 @@
 namespace gl {
 
 // Slice start frames. mode 0 = transients (sensitivity 0..1), 1..4 = 4/8/16/32 equal slices.
-std::vector<int64_t> computeSlices(const Sample& s, int mode, double sensitivity);
+std::vector<int64_t> computeSlices(const Sample& s, int mode, double sensitivity, double minGapSeconds = 0.06);
 
 // Drum Pads data text: one line per pad of bank A (layer 1: path, "" = built-in
 // kit sound, "none" = empty), then keyed lines (pad / layer numbers 1-based):

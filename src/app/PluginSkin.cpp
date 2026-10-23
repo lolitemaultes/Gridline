@@ -1,6 +1,7 @@
 // Gridline — rack skin: per-plugin palettes and vector control styles.
 #include "../core/I18n.h"
 #include "PluginSkin.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include <functional>
 #include <cstring>
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include "Inset.h"
 #include "LayoutAudit.h"
 #include "Theme.h"
+#include "Widgets.h"
 
 namespace gl::skin {
 
@@ -21,12 +23,6 @@ constexpr float kPi = 3.14159265f;
 
 ImU32 lerpCol(ImU32 a, ImU32 b, float t) { return theme::mix(a, b, std::clamp(t, 0.0f, 1.0f)); }
 
-void arc(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, ImU32 col, float th) {
-  if (a1 <= a0) return;
-  int segs = std::max(6, static_cast<int>((a1 - a0) * r * 0.4f));
-  dl->PathArcTo(c, r, a0, a1, segs);
-  dl->PathStroke(col, 0, th);
-}
 
 struct Bound {
   ParamId pid;
@@ -162,14 +158,16 @@ void Form::end(float formW, float formH) const {
 void panel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
   audit::frame(p0, p1, "panel");
   kitFrame(p0, p1);
-  dl->AddRectFilledMultiColor(p0, p1, k.panelHi, k.panelHi, k.panel, k.panel);
+  gradientRect(dl, p0, p1, k.panelHi, k.panel, rounding);
+  dl->AddLine(ImVec2(p0.x + rounding, p0.y + 0.5f), ImVec2(p1.x - rounding, p0.y + 0.5f), theme::withAlpha(lighten(k.panelHi, 0.2f), 0.5f), 1.0f);
   dl->AddRect(p0, p1, darken(k.panel, 0.45f), rounding, 0, 1.0f);
 }
 
 void bevel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
   audit::frame(p0, p1, "bevel");
   kitFrame(p0, p1);
-  dl->AddRectFilled(p0, p1, theme::withAlpha(k.bevel, 0.55f), rounding);
+  gradientRect(dl, p0, p1, theme::withAlpha(k.bevel, 0.66f), theme::withAlpha(k.bevel, 0.48f), rounding);
+  dl->AddLine(ImVec2(p0.x + rounding, p0.y + 1.0f), ImVec2(p1.x - rounding, p0.y + 1.0f), IM_COL32(0, 0, 0, 50), 1.0f);
   dl->AddRect(p0, p1, darken(k.panel, 0.5f), rounding, 0, 1.0f);
   dl->AddLine(ImVec2(p0.x + rounding, p1.y), ImVec2(p1.x - rounding, p1.y), lighten(k.panel, 0.12f), 1.0f);
 }
@@ -187,8 +185,7 @@ void label(ImDrawList* dl, float cx, float y, const char* text, ImU32 col, float
 void lcd(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* text, float size, bool center) {
   placeKit(p0, p1);
   audit::control(p0, p1, "lcd");
-  dl->AddRectFilled(p0, p1, k.lcdBg, 2);
-  dl->AddRect(p0, p1, darken(k.panel, 0.7f), 2, 0, 1.0f);
+  insetField(dl, p0, p1, k.lcdBg, 3);
   ImGui::PushFont(app().fontMono, size);
   ImVec2 ts = ImGui::CalcTextSize(text);
   float x = center ? (p0.x + p1.x - ts.x) * 0.5f : p0.x + 4;
@@ -200,31 +197,210 @@ void lcd(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* text, 
 
 void graphWell(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k) {
   audit::frame(p0, p1, "graph");
-  dl->AddRectFilled(p0, p1, k.graphBg, 2);
-  dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), darken(k.panel, 0.65f), 2, 0, 1.0f);
+  gradientRect(dl, p0, p1, lighten(k.graphBg, 0.035f), darken(k.graphBg, 0.10f), 3);
+  dl->AddLine(ImVec2(p0.x + 2, p0.y + 0.5f), ImVec2(p1.x - 2, p0.y + 0.5f), IM_COL32(0, 0, 0, 60), 1.0f);
+  dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), theme::withAlpha(darken(k.panel, 0.65f), 0.9f), 3, 0, 1.0f);
+  dl->AddLine(ImVec2(p0.x + 2, p1.y + 1.5f), ImVec2(p1.x - 2, p1.y + 1.5f), IM_COL32(255, 255, 255, 12), 1.0f);
+}
+
+// ---- J-93 premium knob face --------------------------------------------------
+namespace {
+int arcSegs(float r, float sweep) { return std::clamp(static_cast<int>(sweep * r * 0.9f), 12, 160); }
+float luma01(ImU32 c) {
+  return (0.299f * static_cast<float>((c >> IM_COL32_R_SHIFT) & 0xFF) + 0.587f * static_cast<float>((c >> IM_COL32_G_SHIFT) & 0xFF) +
+          0.114f * static_cast<float>((c >> IM_COL32_B_SHIFT) & 0xFF)) / 255.0f;
+}
+}  // namespace
+
+void roundArc(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, ImU32 col, float th) {
+  if (a1 < a0) std::swap(a0, a1);
+  if (a1 - a0 < 0.002f) return;
+  dl->PathArcTo(c, r, a0, a1, arcSegs(r, a1 - a0));
+  dl->PathStroke(col, 0, th);
+  const float cr = th * 0.5f;  // round caps
+  const int cs = std::clamp(static_cast<int>(cr * 3.0f), 6, 16);
+  dl->AddCircleFilled(ImVec2(c.x + std::cos(a0) * r, c.y + std::sin(a0) * r), cr, col, cs);
+  dl->AddCircleFilled(ImVec2(c.x + std::cos(a1) * r, c.y + std::sin(a1) * r), cr, col, cs);
+}
+
+void gradientRect(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 top, ImU32 bottom, float rounding, ImDrawFlags flags) {
+  if (p1.x - p0.x < 0.5f || p1.y - p0.y < 0.5f) return;
+  const int v0 = dl->VtxBuffer.Size;
+  // The shade keeps the vertices' alpha: lay the shape down with the colours' alpha.
+  const ImU32 a = std::max((top >> IM_COL32_A_SHIFT) & 0xFF, (bottom >> IM_COL32_A_SHIFT) & 0xFF);
+  dl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, a), rounding, flags);
+  ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, p0, ImVec2(p0.x, p1.y), top, bottom);
+}
+
+void insetField(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 bg, float rounding) {
+  gradientRect(dl, p0, p1, darken(bg, 0.22f), bg, rounding);
+  const float r = std::min(rounding, (p1.y - p0.y) * 0.5f);
+  dl->AddLine(ImVec2(p0.x + r, p0.y + 1.0f), ImVec2(p1.x - r, p0.y + 1.0f), IM_COL32(0, 0, 0, 70), 1.0f);
+  dl->AddRect(p0, p1, theme::withAlpha(darken(bg, 0.6f), 0.9f), rounding, 0, 1.0f);
+  dl->AddLine(ImVec2(p0.x + r, p1.y + 0.5f), ImVec2(p1.x - r, p1.y + 0.5f), IM_COL32(255, 255, 255, 14), 1.0f);
+}
+
+void raisedFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 bg, float rounding) {
+  gradientRect(dl, p0, p1, lighten(bg, 0.07f), darken(bg, 0.06f), rounding);
+  const float r = std::min(rounding, (p1.y - p0.y) * 0.5f);
+  dl->AddLine(ImVec2(p0.x + r, p0.y + 0.5f), ImVec2(p1.x - r, p0.y + 0.5f), theme::withAlpha(lighten(bg, 0.35f), 0.45f), 1.0f);
+  dl->AddRect(p0, p1, theme::withAlpha(darken(bg, 0.45f), 0.8f), rounding, 0, 1.0f);
+}
+
+void gradientCircle(ImDrawList* dl, ImVec2 c, float r, ImU32 top, ImU32 bottom) {
+  if (r <= 0.5f) return;
+  const int v0 = dl->VtxBuffer.Size;
+  const ImU32 a = std::max((top >> IM_COL32_A_SHIFT) & 0xFF, (bottom >> IM_COL32_A_SHIFT) & 0xFF);
+  dl->AddCircleFilled(c, r, IM_COL32(255, 255, 255, a), std::clamp(static_cast<int>(r * 1.6f), 16, 96));
+  ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), top, bottom);
+}
+
+void knobFace(ImDrawList* dl, ImVec2 c, float r, const KnobPaint& p) {
+  if (r < 2.0f) return;
+  const bool lit = p.hot || p.active;
+  const float th = p.railTh > 0 ? p.railTh : std::max(2.0f, r * 0.16f);
+  const float rr = r - th * 0.5f;
+  // Soft contact shadow (two layers).
+  dl->AddCircleFilled(ImVec2(c.x, c.y + r * 0.07f), r * 0.98f, IM_COL32(0, 0, 0, 34), arcSegs(r, 6.3f));
+  dl->AddCircleFilled(ImVec2(c.x, c.y + r * 0.035f), r * 0.92f, IM_COL32(0, 0, 0, 40), arcSegs(r, 6.3f));
+  if (p.ring) {
+    roundArc(dl, c, rr, p.a0, p.a1, p.rail, th);
+    if (std::fabs(p.an - p.from) > 0.003f) {
+      const ImU32 f = p.active ? lighten(p.fill, 0.22f) : p.hot ? lighten(p.fill, 0.12f) : p.fill;
+      if (lit) roundArc(dl, c, rr, p.from, p.an, theme::withAlpha(f, 0.22f), th * 2.2f);  // halo
+      roundArc(dl, c, rr, p.from, p.an, f, th);
+    } else if (std::fabs(p.from - p.a0) > 0.01f) {  // bipolar knob at its centre: a dot marks it
+      dl->AddCircleFilled(ImVec2(c.x + std::cos(p.an) * rr, c.y + std::sin(p.an) * rr), th * 0.42f, theme::withAlpha(p.fill, 0.75f), 10);
+    }
+  }
+  // Cap: vertical shade, rim light on top, dark outline.
+  float capR = p.capR > 0 ? p.capR : r - th - std::max(1.5f, r * 0.08f);
+  if (capR < 2.0f) capR = std::max(2.0f, r * 0.5f);
+  const ImU32 cap = lit ? lighten(p.cap, 0.06f) : p.cap;
+  const bool lightCap = luma01(cap) > 0.6f;
+  dl->AddCircleFilled(ImVec2(c.x, c.y + std::max(0.8f, capR * 0.06f)), capR + 0.6f, IM_COL32(0, 0, 0, 70), arcSegs(capR, 6.3f));
+  gradientCircle(dl, c, capR, lighten(cap, lightCap ? 0.10f : 0.14f), darken(cap, lightCap ? 0.10f : 0.18f));
+  dl->PathArcTo(c, capR - 0.8f, kPi * 1.08f, kPi * 1.92f, arcSegs(capR, kPi));
+  dl->PathStroke(theme::withAlpha(lighten(cap, 0.45f), 0.55f), 0, 1.0f);
+  if (p.dents > 0) {  // grip notches
+    const int n = p.dents;
+    for (int k = 0; k < n; ++k) {
+      const float ak = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(n);
+      const ImVec2 d(std::cos(ak), std::sin(ak));
+      dl->AddLine(ImVec2(c.x + d.x * capR * 0.86f, c.y + d.y * capR * 0.86f), ImVec2(c.x + d.x * (capR - 0.8f), c.y + d.y * (capR - 0.8f)),
+                  theme::withAlpha(darken(cap, 0.45f), 0.8f), 1.0f);
+    }
+  }
+  if (p.machined) {  // recessed face: reversed shade inside a bright bezel
+    const float fr = capR * 0.74f;
+    gradientCircle(dl, c, fr, darken(cap, 0.10f), lighten(cap, 0.16f));
+    dl->AddCircle(c, fr, theme::withAlpha(darken(cap, 0.5f), 0.7f), arcSegs(fr, 6.3f), 1.0f);
+  }
+  dl->AddCircle(c, capR, theme::withAlpha(darken(cap, 0.55f), 0.85f), arcSegs(capR, 6.3f), 1.0f);
+  if (p.pointerDot) {
+    const ImU32 pc = p.active ? lighten(p.pointer, 0.3f) : p.pointer;
+    const ImVec2 q(c.x + std::cos(p.an) * capR * 0.68f, c.y + std::sin(p.an) * capR * 0.68f);
+    dl->AddCircleFilled(q, std::max(1.6f, capR * 0.13f) + 0.8f, IM_COL32(0, 0, 0, 90), 12);
+    dl->AddCircleFilled(q, std::max(1.6f, capR * 0.13f), pc, 12);
+    return;
+  }
+  // Pointer: dark under-stroke, then the pointer with a round tip.
+  const ImVec2 dir(std::cos(p.an), std::sin(p.an));
+  const float lw = std::clamp(capR * 0.13f, 1.6f, 3.6f);
+  const ImVec2 q0(c.x + dir.x * capR * 0.28f, c.y + dir.y * capR * 0.28f), q1(c.x + dir.x * capR * 0.84f, c.y + dir.y * capR * 0.84f);
+  dl->AddLine(q0, q1, IM_COL32(0, 0, 0, 90), lw + 1.6f);
+  const ImU32 pc = p.active ? lighten(p.pointer, 0.3f) : p.pointer;
+  dl->AddLine(q0, q1, pc, lw);
+  dl->AddCircleFilled(q1, lw * 0.5f, pc, 10);
+  dl->AddCircleFilled(q0, lw * 0.5f, pc, 10);
+}
+
+void graphGrid(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, int cols, int rows, bool centre) {
+  const ImU32 g = theme::withAlpha(k.graphGrid ? k.graphGrid : lighten(k.panel, 0.1f), 0.75f);
+  const ImU32 gs = k.graphGridStrong ? k.graphGridStrong : lighten(k.panel, 0.2f);
+  for (int i = 1; i < cols; ++i) {
+    const float x = std::round(p0.x + (p1.x - p0.x) * static_cast<float>(i) / static_cast<float>(cols)) + 0.5f;
+    dl->AddLine(ImVec2(x, p0.y + 1), ImVec2(x, p1.y - 1), centre && i * 2 == cols ? gs : g, 1.0f);
+  }
+  for (int i = 1; i < rows; ++i) {
+    const float y = std::round(p0.y + (p1.y - p0.y) * static_cast<float>(i) / static_cast<float>(rows)) + 0.5f;
+    dl->AddLine(ImVec2(p0.x + 1, y), ImVec2(p1.x - 1, y), centre && i * 2 == rows ? gs : g, 1.0f);
+  }
+}
+
+bool graphHover(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const std::function<std::string(float, float)>& fmt) {
+  const ImVec2 m = ImGui::GetIO().MousePos;
+  if (m.x < p0.x || m.x > p1.x || m.y < p0.y || m.y > p1.y || !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) return false;
+  const ImU32 line = theme::withAlpha(k.graphText ? k.graphText : k.text, 0.35f);
+  dl->AddLine(ImVec2(std::round(m.x) + 0.5f, p0.y + 1), ImVec2(std::round(m.x) + 0.5f, p1.y - 1), line, 1.0f);
+  dl->AddLine(ImVec2(p0.x + 1, std::round(m.y) + 0.5f), ImVec2(p1.x - 1, std::round(m.y) + 0.5f), theme::withAlpha(line, 0.5f), 1.0f);
+  if (!fmt) return true;
+  const std::string s = fmt((m.x - p0.x) / std::max(1.0f, p1.x - p0.x), (p1.y - m.y) / std::max(1.0f, p1.y - p0.y));
+  if (s.empty()) return true;
+  ImGui::PushFont(app().fontMono, 11.0f);
+  const ImVec2 ts = ImGui::CalcTextSize(s.c_str());
+  ImVec2 b0(m.x + 10, m.y - ts.y - 12);
+  if (b0.x + ts.x + 10 > p1.x - 2) b0.x = m.x - ts.x - 20;
+  if (b0.y < p0.y + 2) b0.y = m.y + 10;
+  const ImVec2 b1(b0.x + ts.x + 10, b0.y + ts.y + 6);
+  dl->AddRectFilled(b0, b1, theme::withAlpha(darken(k.graphBg ? k.graphBg : k.panel, 0.5f), 0.92f), 3);
+  dl->AddRect(b0, b1, theme::withAlpha(k.graphText ? k.graphText : k.text, 0.35f), 3, 0, 1.0f);
+  dl->AddText(ImVec2(std::round(b0.x + 5), std::round(b0.y + 3)), k.text, s.c_str());
+  ImGui::PopFont();
+  return true;
+}
+
+void curveArea(ImDrawList* dl, const ImVec2* pts, int n, float baseY, ImU32 line, float thick, float fillAlpha) {
+  if (n < 2) return;
+  float top = baseY;
+  for (int i = 0; i < n; ++i) top = std::min(top, pts[i].y);
+  const ImDrawListFlags keep = dl->Flags;
+  dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;  // adjacent quads: no seams
+  const int v0 = dl->VtxBuffer.Size;
+  const ImU32 fc = theme::withAlpha(line, fillAlpha);
+  for (int i = 1; i < n; ++i) {
+    ImVec2 q[4] = {pts[i - 1], pts[i], ImVec2(pts[i].x, baseY), ImVec2(pts[i - 1].x, baseY)};
+    dl->AddConvexPolyFilled(q, 4, fc);
+  }
+  dl->Flags = keep;
+  if (baseY - top > 1.0f)
+    ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, ImVec2(0, top), ImVec2(0, baseY), line, darken(line, 0.75f));
+  dl->AddPolyline(pts, n, theme::withAlpha(line, 0.22f), 0, thick * 2.6f);
+  dl->AddPolyline(pts, n, line, 0, thick);
+}
+
+void sectionHeader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* title, float font) {
+  placeKitFrame(p0, p1);
+  audit::control(p0, p1, "header");
+  const float h = p1.y - p0.y;
+  const float fs = font > 0 ? font : std::clamp(h * 0.72f, 9.0f, 13.0f);
+  const float cy = std::round((p0.y + p1.y) * 0.5f);
+  dl->AddRectFilled(ImVec2(p0.x, cy - fs * 0.38f), ImVec2(p0.x + 2.0f, cy + fs * 0.38f), k.fill, 1.0f);
+  float x = p0.x + 7.0f;
+  if (title && *title) {
+    ImGui::PushFont(app().fontMonoBold, fs);
+    const ImVec2 ts = ImGui::CalcTextSize(title);
+    dl->PushClipRect(p0, p1, true);
+    dl->AddText(ImVec2(std::round(x), std::round(cy - ts.y * 0.5f)), k.pillTextC(), title);
+    dl->PopClipRect();
+    ImGui::PopFont();
+    x += ts.x + 7.0f;
+  }
+  if (x < p1.x - 4) dl->AddLine(ImVec2(x, cy + 0.5f), ImVec2(p1.x, cy + 0.5f), theme::withAlpha(k.textDim, 0.22f), 1.0f);
 }
 
 void drawWheel(ImDrawList* dl, ImVec2 c, float r, double norm, bool centered, bool bigLine, bool hot, const Skin& k, ImU32 fill) {
-  // Reference style: a dark rail ring around a flat cap; the value fills the
-  // ring (from the start, or from the top for centred knobs) and an indicator
-  // line runs from the cap centre towards the value.
-  const float a0 = kPi * 0.75f, a1 = kPi * 2.25f;
-  float an = a0 + static_cast<float>(std::clamp(norm, 0.0, 1.0)) * (a1 - a0);
-  float th = std::max(2.0f, r * 0.24f);
-  float rr = r - th * 0.5f;
-  dl->AddCircleFilled(ImVec2(c.x, c.y + r * 0.06f), r + 0.5f, theme::withAlpha(darken(k.panel, 0.8f), 0.45f), 32);
-  arc(dl, c, rr, a0, a1, k.rail, th);
-  float from = centered ? kPi * 1.5f : a0;
-  ImU32 f = hot ? lighten(fill, 0.18f) : fill;
-  if (std::fabs(an - from) > 0.003f) arc(dl, c, rr, std::min(from, an), std::max(from, an), f, th);
-  float capR = r - th - 1.0f;
-  dl->AddCircleFilled(c, capR, k.cap, 32);
-  dl->AddCircle(c, capR, lighten(k.cap, 0.12f), 32, 1.0f);
-  ImVec2 dir(std::cos(an), std::sin(an));
-  float lw = bigLine ? std::max(2.0f, r * 0.17f) : std::max(1.4f, r * 0.10f);
-  ImU32 lc = lighten(k.text, hot ? 0.4f : 0.15f);
-  dl->AddLine(ImVec2(c.x + dir.x * capR * (bigLine ? 0.15f : 0.35f), c.y + dir.y * capR * (bigLine ? 0.15f : 0.35f)),
-              ImVec2(c.x + dir.x * (capR - 0.5f), c.y + dir.y * (capR - 0.5f)), lc, lw);
+  // Reference roles (rail ring, value fill from the start or the top for
+  // centred knobs, cap, indicator line) in the shared J-93 knob face.
+  KnobPaint p;
+  p.a0 = kPi * 0.75f, p.a1 = kPi * 2.25f;
+  p.an = p.a0 + static_cast<float>(std::clamp(norm, 0.0, 1.0)) * (p.a1 - p.a0);
+  p.from = centered ? kPi * 1.5f : p.a0;
+  p.rail = k.rail, p.fill = fill ? fill : k.fill, p.cap = k.cap;
+  p.pointer = k.pointer ? k.pointer : lighten(k.text, 0.25f);
+  p.railTh = std::max(2.0f, r * (bigLine ? 0.18f : 0.16f));
+  p.hot = hot;
+  knobFace(dl, c, r, p);
 }
 
 bool wheel(App& a, const PluginTarget& t, int param, ImVec2 tl, float size, const Skin& k, int flags, ImU32 fill) {
@@ -344,17 +520,35 @@ bool switchSel(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size,
   if (hov) a.setHint(b.d.name + ": " + b.d.format(b.d.min + cur) + "   (click to choose · wheel steps)");
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 p1(tl.x + size.x, tl.y + size.y);
-  dl->AddRectFilled(tl, p1, k.lcdBg, 3);
-  dl->AddRect(tl, p1, darken(k.panel, 0.6f), 3, 0, 1.0f);
+  insetField(dl, tl, p1, k.lcdBg, 3);
   float fs = std::clamp((horizontal ? size.y : cell) * 0.62f, 8.0f, 13.0f);
+  {  // J-93: one size that fits every label in its cell (no clipped labels, no mixed sizes)
+    const float room = (horizontal ? cell : size.x) - (horizontal ? 6.0f : 12.0f);
+    ImGui::PushFont(app().fontMonoBold, fs);
+    float widest = 0;
+    for (int i = 0; i < count; ++i) widest = std::max(widest, ImGui::CalcTextSize(labels[i]).x);
+    ImGui::PopFont();
+    if (widest > room && room > 8) fs = std::max(7.0f, fs * room / widest);
+  }
+  const ImVec2 mouse = io.MousePos;
   for (int i = 0; i < count; ++i) {
     ImVec2 c0 = horizontal ? ImVec2(tl.x + cell * i, tl.y) : ImVec2(tl.x, tl.y + cell * i);
     ImVec2 c1 = horizontal ? ImVec2(c0.x + cell, p1.y) : ImVec2(p1.x, c0.y + cell);
     bool on = i == cur;
+    if (i > 0) {  // hairline separators between cells
+      if (horizontal) dl->AddLine(ImVec2(std::round(c0.x) + 0.5f, c0.y + 4), ImVec2(std::round(c0.x) + 0.5f, c1.y - 4), IM_COL32(255, 255, 255, 12));
+      else dl->AddLine(ImVec2(c0.x + 4, std::round(c0.y) + 0.5f), ImVec2(c1.x - 4, std::round(c0.y) + 0.5f), IM_COL32(255, 255, 255, 12));
+    }
     if (on) {
-      dl->AddRectFilled(ImVec2(c0.x + 2, c0.y + 2), ImVec2(c1.x - 2, c1.y - 2), theme::withAlpha(k.select, 0.28f), 2);
-      // indicator LED at the leading edge
-      dl->AddRectFilled(ImVec2(c0.x + 3, (c0.y + c1.y) * 0.5f - 2), ImVec2(c0.x + 6, (c0.y + c1.y) * 0.5f + 2), k.select, 1);
+      const ImVec2 s0(c0.x + 2, c0.y + 2), s1(c1.x - 2, c1.y - 2);
+      gradientRect(dl, s0, s1, theme::withAlpha(k.select, 0.36f), theme::withAlpha(k.select, 0.20f), 2.5f);
+      dl->AddRect(s0, s1, theme::withAlpha(k.select, 0.55f), 2.5f, 0, 1.0f);
+      // indicator LED at the leading edge (with a soft glow)
+      const ImVec2 l0(c0.x + 4, (c0.y + c1.y) * 0.5f - 2.5f), l1(c0.x + 6.5f, (c0.y + c1.y) * 0.5f + 2.5f);
+      dl->AddRectFilled(ImVec2(l0.x - 1.5f, l0.y - 1.5f), ImVec2(l1.x + 1.5f, l1.y + 1.5f), theme::withAlpha(k.select, 0.3f), 2);
+      dl->AddRectFilled(l0, l1, lighten(k.select, 0.2f), 1);
+    } else if (hov && mouse.x >= c0.x && mouse.x < c1.x && mouse.y >= c0.y && mouse.y < c1.y) {
+      dl->AddRectFilled(ImVec2(c0.x + 2, c0.y + 2), ImVec2(c1.x - 2, c1.y - 2), IM_COL32(255, 255, 255, 14), 2.5f);
     }
     ImGui::PushFont(app().fontMonoBold, fs);
     ImVec2 ts = ImGui::CalcTextSize(labels[i]);
@@ -381,9 +575,13 @@ bool check(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, con
   ImDrawList* dl = ImGui::GetWindowDrawList();
   float bs = std::min(size.y, 12.0f);
   ImVec2 b0(tl.x + 1, tl.y + (size.y - bs) * 0.5f), b1(b0.x + bs, b0.y + bs);
-  dl->AddRectFilled(b0, b1, k.lcdBg, 2);
-  dl->AddRect(b0, b1, hov ? k.text : darken(k.panel, 0.6f), 2, 0, 1.0f);
-  if (isOn) dl->AddRectFilled(ImVec2(b0.x + 2.5f, b0.y + 2.5f), ImVec2(b1.x - 2.5f, b1.y - 2.5f), on ? on : k.fill, 1);
+  insetField(dl, b0, b1, k.lcdBg, 2.5f);
+  if (hov) dl->AddRect(b0, b1, theme::withAlpha(k.text, 0.6f), 2.5f, 0, 1.0f);
+  if (isOn) {
+    const ImU32 lc = on ? on : k.fill;
+    dl->AddRectFilled(ImVec2(b0.x + 1.5f, b0.y + 1.5f), ImVec2(b1.x - 1.5f, b1.y - 1.5f), theme::withAlpha(lc, 0.25f), 2);
+    gradientRect(dl, ImVec2(b0.x + 2.5f, b0.y + 2.5f), ImVec2(b1.x - 2.5f, b1.y - 2.5f), lighten(lc, 0.25f), lc, 1.5f);
+  }
   if (text && *text) {
     ImGui::PushFont(app().fontMonoBold, std::clamp(size.y * 0.62f, 8.0f, 12.0f));
     ImVec2 ts = ImGui::CalcTextSize(text);
@@ -422,14 +620,18 @@ bool button(const char* id, ImVec2 tl, ImVec2 size, const Skin& k, const char* t
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 p1(tl.x + size.x, tl.y + size.y);
-  ImU32 bg = on ? theme::withAlpha(k.select, act ? 0.55f : 0.38f) : act ? lighten(k.panelLo, 0.1f) : hov ? lighten(k.panelLo, 0.06f) : k.panelLo;
-  dl->AddRectFilled(tl, p1, bg, 3);
-  dl->AddRect(tl, p1, on ? k.select : darken(k.panel, 0.55f), 3, 0, 1.0f);
+  if (on) {  // lit: the selection colour glows through the face
+    const ImU32 base = theme::mix(k.panelLo, k.select, act ? 0.55f : 0.40f);
+    gradientRect(dl, tl, p1, lighten(base, 0.10f), base, 3);
+    dl->AddRect(tl, p1, theme::withAlpha(lighten(k.select, 0.1f), 0.85f), 3, 0, 1.0f);
+  } else {
+    raisedFace(dl, tl, p1, act ? darken(k.panelLo, 0.05f) : hov ? lighten(k.panelLo, 0.07f) : k.panelLo, 3);
+  }
   if (text && *text) {
     ImGui::PushFont(app().fontMonoBold, font > 0 ? font : std::clamp(size.y * 0.5f, 8.0f, 12.0f));
     ImVec2 ts = ImGui::CalcTextSize(text);
     dl->AddText(ImVec2(std::round((tl.x + p1.x - ts.x) * 0.5f), std::round((tl.y + p1.y - ts.y) * 0.5f)),
-                on ? lighten(k.select, 0.45f) : hov ? k.text : k.textDim, text);
+                on ? lighten(k.select, 0.6f) : hov ? k.text : k.textDim, text);
     ImGui::PopFont();
   }
   return pressed;
@@ -463,11 +665,6 @@ void text(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* s, ImU32 col, float 
   dl->PopClipRect();
 }
 
-void arcAny(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, ImU32 col, float th) {
-  if (a1 < a0) std::swap(a0, a1);
-  if (a1 - a0 < 0.002f) return;
-  arc(dl, c, r, a0, a1, col, th);
-}
 
 }  // namespace
 
@@ -496,7 +693,7 @@ void bevel(ImDrawList* dl, const Form& f, float x, float y, float w, float h, Im
   ImDrawFlags fl = style == BevelRoundedBottom ? ImDrawFlags_RoundCornersBottom
                    : style == BevelRoundedTop  ? ImDrawFlags_RoundCornersTop
                                                : ImDrawFlags_RoundCornersAll;
-  dl->AddRectFilled(p0, p1, col, r, fl);
+  gradientRect(dl, p0, p1, shade(col, 0.035f), shade(col, -0.035f), r, fl);
   if (style != BevelPlain) {  // soft inner edge: lighter top, darker bottom
     dl->AddLine(ImVec2(p0.x + r, p0.y + 0.5f), ImVec2(p1.x - r, p0.y + 0.5f), shade(col, 0.10f), 1.0f);
     dl->AddLine(ImVec2(p0.x + r, p1.y - 0.5f), ImVec2(p1.x - r, p1.y - 0.5f), shade(col, -0.25f), 1.0f);
@@ -510,13 +707,13 @@ void gradient(ImDrawList* dl, const Form& f, float x, float y, float w, float h,
 void label(ImDrawList* dl, const Form& f, float x, float y, float w, float h, const char* s, ImU32 col, ImU32 bg, float px, int align,
            bool bold, bool rounded) {
   ImVec2 p0 = f.p(x, y), p1 = f.p(x + w, y + h);
-  if (bg) dl->AddRectFilled(p0, p1, bg, rounded ? f.d(3) : 0.0f);
+  if (bg) gradientRect(dl, p0, p1, shade(bg, 0.06f), shade(bg, -0.03f), rounded ? f.d(3) : 0.0f);
   text(dl, p0, p1, s, col, f.d(px), align, bold);
 }
 
 void caption(ImDrawList* dl, const Form& f, float x, float y, float w, float h, const char* s, ImU32 col, ImU32 bg) {
   ImVec2 p0 = f.p(x, y), p1 = f.p(x + w, y + h);
-  dl->AddRectFilled(p0, p1, bg, f.d(h * 0.5f));
+  gradientRect(dl, p0, p1, shade(bg, 0.07f), shade(bg, -0.04f), f.d(h * 0.5f));
   text(dl, p0, p1, s, col, f.d(std::min(11.0f, h * 0.68f)), 1, true);
 }
 
@@ -552,12 +749,15 @@ void meter(ImDrawList* dl, const Form& f, float x, float y, float w, float h, fl
 
 void drawWheel(ImDrawList* dl, ImVec2 c, float r, double n, bool centred, bool hov, bool act, const WheelLook& look) {
   n = std::clamp(n, 0.0, 1.0);
-  float th = std::max(2.0f, r * look.railWidth);
-  float rr = r - th * 0.5f;
+  float th = std::max(2.0f, r * std::min(look.railWidth, 0.18f));
   const float kA0 = kPi * 0.5f + look.gap * 0.5f, kA1 = kPi * 2.5f - look.gap * 0.5f;
   float an = kA0 + static_cast<float>(n) * (kA1 - kA0);
   float from = centred ? (kA0 + kA1) * 0.5f : kA0;
   ImU32 fillCol = act ? look.fillPressed : hov ? lerpCol(look.fill, look.fillPressed, 0.4f) : look.fill;
+  KnobPaint p;
+  p.a0 = kA0, p.a1 = kA1, p.from = from, p.an = an;
+  p.rail = look.rail, p.fill = look.fill, p.cap = look.cap, p.pointer = look.pointer;
+  p.railTh = th, p.hot = hov, p.active = act, p.dents = look.dents ? look.dents * 4 : 0;
   if (look.ruler) {  // ruler ticks outside the cap, lit up to the value
     const int ticks = 21;
     for (int k = 0; k < ticks; ++k) {
@@ -568,28 +768,10 @@ void drawWheel(ImDrawList* dl, ImVec2 c, float r, double n, bool centred, bool h
       float r0 = r - th * (major ? 1.0f : 0.6f);
       dl->AddLine(ImVec2(c.x + d.x * r0, c.y + d.y * r0), ImVec2(c.x + d.x * r, c.y + d.y * r), lit ? fillCol : look.rail, major ? 1.6f : 1.0f);
     }
-  } else {  // flat gauge rail and value fill
-    arcAny(dl, c, rr, kA0, kA1, look.rail, th);
-    arcAny(dl, c, rr, from, an, fillCol, th);
+    p.ring = false;
+    p.capR = r - th - std::max(1.5f, r * 0.08f);
   }
-  // Bevelled cap: drop shadow, body, light top-left rim, dark bottom-right rim.
-  float cr = r - th - std::max(1.0f, r * 0.06f);
-  dl->AddCircleFilled(ImVec2(c.x, c.y + cr * 0.08f), cr, IM_COL32(0, 0, 0, 90), 40);
-  dl->AddCircleFilled(c, cr, look.cap, 40);
-  arcAny(dl, c, cr - 0.75f, kPi * 1.0f, kPi * 1.75f, shade(look.cap, 0.22f), 1.2f);
-  arcAny(dl, c, cr - 0.75f, kPi * 0.0f, kPi * 0.75f, shade(look.cap, -0.35f), 1.2f);
-  if (look.dents > 0) {  // cog / dented rim
-    for (int k = 0; k < look.dents * 4; ++k) {
-      float ak = an + 2.0f * kPi * k / (look.dents * 4);
-      ImVec2 d(std::cos(ak), std::sin(ak));
-      dl->AddLine(ImVec2(c.x + d.x * cr * 0.82f, c.y + d.y * cr * 0.82f), ImVec2(c.x + d.x * (cr - 0.5f), c.y + d.y * (cr - 0.5f)),
-                  shade(look.cap, -0.3f), 1.0f);
-    }
-  }
-  // Long pointer from the centre to the cap edge.
-  ImVec2 dir(std::cos(an), std::sin(an));
-  dl->AddLine(ImVec2(c.x + dir.x * cr * 0.12f, c.y + dir.y * cr * 0.12f), ImVec2(c.x + dir.x * (cr - 1.0f), c.y + dir.y * (cr - 1.0f)),
-              look.pointer, std::max(1.5f, r * 0.09f));
+  knobFace(dl, c, r, p);
 }
 
 bool wheel(App& a, const PluginTarget& t, int param, const Form& f, float x, float y, float w, float h, const WheelLook& look) {
@@ -655,8 +837,8 @@ bool tabsImpl(const Form& f, float x, float y, float w, float h, const char* con
     bool hov = ImGui::IsItemHovered();
     ImGui::PopID();
     bool on = sel == i;
-    dl->AddRectFilled(p0, p1, on ? look.btnPressed : hov ? shade(look.btn, 0.06f) : look.btn, f.d(3));
-    if (on) dl->AddRect(p0, p1, shade(look.btnPressed, -0.3f), f.d(3), 0, 1.0f);
+    if (on) insetField(dl, p0, p1, look.btnPressed, f.d(3));
+    else raisedFace(dl, p0, p1, hov ? shade(look.btn, 0.06f) : look.btn, f.d(3));
     text(dl, p0, p1, labels[i], on ? look.textPressed : look.text, f.d(std::min(11.0f, ch * 0.6f)), 1, true);
   }
   return changed;
@@ -726,7 +908,7 @@ bool ledToggle(App& a, const PluginTarget& t, int param, const Form& f, float x,
   if (ImGui::IsItemHovered()) app().setHint(d->name + ": " + (lit ? "on" : "off"));
   ImGui::PopID();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(p0, p1, bg, f.d(3));
+  raisedFace(dl, p0, p1, bg, f.d(3));
   float lr = f.d(std::min(h, 14.0f) * 0.22f);
   ImVec2 lc(p0.x + f.d(7), (p0.y + p1.y) * 0.5f);
   if (txt && *txt) {
@@ -801,7 +983,10 @@ bool button(const Form& f, const char* id, float x, float y, float w, float h, c
   if (hintText && hov) app().setHint(hintText);
   ImGui::PopID();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  if (bg) dl->AddRectFilled(p0, p1, act ? shade(bg, -0.2f) : hov ? shade(bg, 0.1f) : bg, f.d(3));
+  if (bg) {
+    if (act) insetField(dl, p0, p1, shade(bg, -0.1f), f.d(3));
+    else raisedFace(dl, p0, p1, hov ? shade(bg, 0.1f) : bg, f.d(3));
+  }
   if (txt) text(dl, p0, p1, txt, textCol, f.d(std::min(11.0f, h * 0.6f)), 1, true);
   return clicked;
 }
@@ -872,56 +1057,6 @@ float wheelAngle(const FormCtl& c, double n) {
   return -th;                                     // screen convention
 }
 
-void kitArc(ImDrawList* dl, ImVec2 c, float r, float from, float to, ImU32 col, float th) {
-  if (to < from) std::swap(from, to);
-  if (to - from < 0.002f) return;
-  int segs = std::max(6, static_cast<int>((to - from) * r * 0.5f));
-  dl->PathArcTo(c, r, from, to, segs);
-  dl->PathStroke(col, 0, th);
-}
-
-void drawCap(ImDrawList* dl, ImVec2 c, float r, ImU32 base, int style, bool hot, float s) {
-  if (hot) base = lighten(base, 0.08f);
-  dl->AddCircleFilled(ImVec2(c.x, c.y + std::max(1.0f, r * 0.06f)), r, IM_COL32(0, 0, 0, 90), 40);  // drop shadow
-  switch (style) {
-    case CapChrome:
-    case CapChrome2:
-    case CapGearChrome: {
-      if (style == CapGearChrome) {  // dented rim
-        const int dents = 24;
-        for (int k = 0; k < dents; ++k) {
-          float an = 2 * kKitPi * k / dents;
-          dl->AddCircleFilled(ImVec2(c.x + std::cos(an) * r * 0.97f, c.y + std::sin(an) * r * 0.97f), r * 0.09f, darken(base, 0.25f), 8);
-        }
-      }
-      dl->AddCircleFilled(c, r, darken(base, 0.35f), 40);
-      // Concentric bands: light from the top-left.
-      for (int k = 0; k < 6; ++k) {
-        float rr = r * (0.94f - k * 0.13f);
-        float t = static_cast<float>(k) / 6.f;
-        dl->AddCircleFilled(ImVec2(c.x - r * 0.04f * k, c.y - r * 0.05f * k), rr, lighten(base, 0.05f + t * 0.35f), 40);
-      }
-      dl->AddCircle(c, r, darken(base, 0.55f), 40, std::max(1.0f, s * 0.7f));
-      break;
-    }
-    case CapSoftBump: {
-      dl->AddCircleFilled(c, r, base, 40);
-      dl->AddCircleFilled(ImVec2(c.x - r * 0.15f, c.y - r * 0.2f), r * 0.6f, lighten(base, 0.12f), 40);
-      dl->AddCircle(c, r, darken(base, 0.4f), 40, std::max(1.0f, s * 0.7f));
-      break;
-    }
-    case CapBevelled:
-    default: {
-      dl->AddCircleFilled(c, r, darken(base, 0.3f), 40);
-      // Bevel: lighter upper rim, darker lower rim, flat face.
-      kitArc(dl, c, r * 0.9f, kKitPi * 0.95f, kKitPi * 2.05f, lighten(base, 0.35f), std::max(1.0f, r * 0.14f));
-      kitArc(dl, c, r * 0.9f, kKitPi * 0.05f, kKitPi * 0.95f, darken(base, 0.45f), std::max(1.0f, r * 0.14f));
-      dl->AddCircleFilled(c, r * 0.8f, base, 40);
-      dl->AddCircle(c, r, darken(base, 0.6f), 40, std::max(1.0f, s * 0.6f));
-      break;
-    }
-  }
-}
 
 // Standard interaction (pui::dragParamItem) on the last item for a bound parameter.
 bool dragBound(App& a, const PluginTarget& t, int param, float pixels, bool horizontal) {
@@ -1036,9 +1171,9 @@ void panel(const View& v, const char* name, const Palette& pal, const char* titl
   ImVec2 a = v.p0(c), b = v.p1(c);
   audit::frame(a, b, "panel");
   kitFrame(a, b);
-  dl->AddRectFilled(a, b, fill, v.px(3));
+  gradientRect(dl, a, b, lighten(fill, 0.04f), darken(fill, 0.05f), v.px(3));
   dl->AddRect(a, b, darken(fill, 0.3f), v.px(3), 0, 1.0f);
-  dl->AddLine(ImVec2(a.x + v.px(3), a.y + 1), ImVec2(b.x - v.px(3), a.y + 1), lighten(fill, 0.12f), 1.0f);
+  dl->AddLine(ImVec2(a.x + v.px(3), a.y + 1), ImVec2(b.x - v.px(3), a.y + 1), theme::withAlpha(lighten(fill, 0.2f), 0.6f), 1.0f);
   if (title) {
     ImVec2 tb(b.x, a.y + v.px(18));
     dl->AddRectFilled(a, tb, darken(fill, 0.12f), v.px(3), ImDrawFlags_RoundCornersTop);
@@ -1054,21 +1189,25 @@ void bevel(const View& v, const char* name, const Palette& pal) {
   ImDrawFlags fl = c.style == 3 ? ImDrawFlags_RoundCornersBottom : ImDrawFlags_RoundCornersAll;
   audit::frame(v.p0(c), v.p1(c), "bevel");
   kitFrame(v.p0(c), v.p1(c));
-  dl->AddRectFilled(v.p0(c), v.p1(c), fill, rr, fl);
+  gradientRect(dl, v.p0(c), v.p1(c), lighten(fill, 0.035f), darken(fill, 0.05f), rr, fl);
   dl->AddRect(v.p0(c), v.p1(c), darken(fill, 0.35f), rr, fl, 1.0f);
+  dl->AddLine(ImVec2(v.p0(c).x + rr, v.p0(c).y + 0.5f), ImVec2(v.p1(c).x - rr, v.p0(c).y + 0.5f), theme::withAlpha(lighten(fill, 0.18f), 0.5f), 1.0f);
 }
 
 void label(const View& v, const char* name, const Palette& pal, const char* text, int align, bool rounded) {
   const FormCtl& c = v.c(name);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 a = v.p0(c), b = v.p1(c);
-  if (rounded) dl->AddRectFilled(a, b, c.color >= 0 ? col(c.color) : pal.labelBg, v.px(4));
+  if (rounded) {
+    const ImU32 bg = c.color >= 0 ? col(c.color) : pal.labelBg;
+    gradientRect(dl, a, b, lighten(bg, 0.06f), darken(bg, 0.03f), v.px(4));
+    dl->AddLine(ImVec2(a.x + v.px(4), a.y + 0.5f), ImVec2(b.x - v.px(4), a.y + 0.5f), theme::withAlpha(lighten(bg, 0.3f), 0.35f), 1.0f);
+  }
   textAt(dl, a, b, pal.text, text, std::clamp(v.px(9.5f), 10.f, 15.f), align);
 }
 
 void lcd(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Palette& pal, const char* text, int align) {
-  dl->AddRectFilled(p0, p1, pal.lcdBg, 3);
-  dl->AddRect(p0, p1, darken(pal.lcdBg, 0.5f), 3, 0, 1.0f);
+  insetField(dl, p0, p1, pal.lcdBg, 3);
   float h = p1.y - p0.y;
   textAt(dl, ImVec2(p0.x + 3, p0.y), ImVec2(p1.x - 3, p1.y), pal.lcdText, text, std::clamp(h * 0.62f, 10.f, 20.f), align, true);
 }
@@ -1081,30 +1220,35 @@ void drawWheel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const FormCtl& c, const Pal
   ImU32 capC = c.cap >= 0 ? col(c.cap) : pal.cap;
   float an = wheelAngle(c, norm), aStart = wheelAngle(c, 0), aEnd = wheelAngle(c, 1), aMid = wheelAngle(c, 0.5);
   float aFrom = bipolar ? aMid : aStart;
-  float capR = R * 0.74f;
+  // J-93: every rail style ends in the shared knob face (cap, rim light, pointer).
+  KnobPaint kp;
+  kp.rail = rail, kp.fill = fill, kp.cap = capC, kp.pointer = lighten(fill, 0.15f);
+  kp.an = an, kp.from = aFrom, kp.hot = hot;
+  kp.a0 = std::min(aStart, aEnd), kp.a1 = std::max(aStart, aEnd);
+  if (std::fabs(kp.a1 - kp.a0) < 0.01f) kp.a1 = kp.a0 + 2 * kKitPi;
+  kp.machined = c.capStyle == CapChrome || c.capStyle == CapChrome2 || c.capStyle == CapGearChrome;
+  kp.dents = c.capStyle == CapGearChrome ? 24 : 0;
+  kp.ring = false;
+  kp.capR = R * 0.74f;
   switch (c.railStyle) {
     case RailGauge: {
-      float th = std::max(2.f, R * 0.17f), rr = R - th * 0.5f;
-      // aStart > aEnd numerically in screen convention? normalise to increasing order.
-      float s0 = std::min(aStart, aEnd), s1 = std::max(aStart, aEnd);
-      if (std::fabs(s1 - s0) < 0.01f) s1 = s0 + 2 * kKitPi;
-      kitArc(dl, ctr, rr, s0, s1, darken(rail, 0.15f), th);
-      kitArc(dl, ctr, rr, aFrom, an, fill, th);
-      capR = R - th - std::max(1.5f, R * 0.06f);
+      kp.ring = true;
+      kp.railTh = std::max(2.f, R * 0.16f);
+      kp.capR = 0;
       break;
     }
     case RailInterFill:
     case RailInterFillIn: {
       float rr = c.railStyle == RailInterFill ? R * 0.92f : R * 0.86f;
-      float s0 = std::min(aStart, aEnd), s1 = std::max(aStart, aEnd);
-      kitArc(dl, ctr, rr, s0, s1, rail, std::max(1.5f, R * 0.1f));
+      roundArc(dl, ctr, rr, kp.a0, kp.a1, rail, std::max(1.5f, R * 0.08f));
       float lo = std::min(aFrom, an), hi = std::max(aFrom, an);
       if (hi - lo > 0.01f) {
         dl->PathLineTo(ctr);
-        dl->PathArcTo(ctr, rr, lo, hi, std::max(6, static_cast<int>((hi - lo) * rr * 0.4f)));
-        dl->PathFillConvex(theme::withAlpha(fill, 0.55f));
+        dl->PathArcTo(ctr, rr, lo, hi, std::max(12, static_cast<int>((hi - lo) * rr * 0.9f)));
+        dl->PathFillConvex(theme::withAlpha(fill, 0.45f));
+        roundArc(dl, ctr, rr, lo, hi, fill, std::max(1.5f, R * 0.08f));
       }
-      capR = R * 0.66f;
+      kp.capR = R * 0.66f;
       break;
     }
     case RailRulerOut: {
@@ -1117,19 +1261,19 @@ void drawWheel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const FormCtl& c, const Pal
         dl->AddLine(ImVec2(ctr.x + std::cos(a) * r0, ctr.y + std::sin(a) * r0), ImVec2(ctr.x + std::cos(a) * r1, ctr.y + std::sin(a) * r1),
                     b ? lighten(rail, 0.35f) : lighten(rail, 0.15f), std::max(1.0f, s * (b ? 0.9f : 0.6f)));
       }
-      kitArc(dl, ctr, R * 0.98f, aFrom, an, fill, std::max(1.5f, s * 1.2f));
-      capR = R * 0.72f;
+      roundArc(dl, ctr, R * 0.98f, aFrom, an, fill, std::max(1.5f, s * 1.2f));
+      kp.capR = R * 0.72f;
       break;
     }
-    default: break;
+    default: {  // bare cap in the reference: J-93 adds a slim value ring so the setting reads at a glance
+      kp.ring = true;
+      kp.railTh = std::max(1.5f, R * 0.09f);
+      kp.rail = theme::withAlpha(darken(pal.panel, 0.35f), 0.9f);
+      kp.capR = R * 0.76f;
+      break;
+    }
   }
-  drawCap(dl, ctr, capR, capC, c.capStyle, hot, s);
-  // Long-line pointer in the value colour with a light core.
-  ImVec2 dir(std::cos(an), std::sin(an));
-  float th = std::max(1.5f, capR * 0.13f);
-  ImVec2 q0(ctr.x + dir.x * capR * 0.18f, ctr.y + dir.y * capR * 0.18f), q1(ctr.x + dir.x * capR * 0.92f, ctr.y + dir.y * capR * 0.92f);
-  dl->AddLine(q0, q1, IM_COL32(0, 0, 0, 120), th + 1.5f);
-  dl->AddLine(q0, q1, hot ? lighten(fill, 0.4f) : fill, th);
+  knobFace(dl, ctr, R, kp);
 }
 
 void drawSlider(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const FormCtl& c, const Palette& pal, double norm, bool bipolar, bool hot, float s) {
@@ -1279,21 +1423,21 @@ bool selector(App& a, const PluginTarget& t, const View& v, const char* name, in
     ImGui::EndPopup();
   }
   if (hov) app().setHint(pv.d->name + ": " + pv.d->format(cur + valueOffset));
-  dl->AddRectFilled(p0, p1, c.color >= 0 ? col(c.color) : pal.well, v.px(2));
+  insetField(dl, p0, p1, c.color >= 0 ? col(c.color) : pal.well, v.px(3));
   for (int k = 0; k < cells; ++k) {
     int cx = k % cols, cy = k / cols;
     ImVec2 a0(p0.x + cx * cw, p0.y + cy * chh), a1(a0.x + cw, a0.y + chh);
     bool sel = k == cur;
     ImVec2 i0(a0.x + 1, a0.y + 1), i1(a1.x - 1, a1.y - 1);
     if (sel) {
-      dl->AddRectFilled(i0, i1, theme::withAlpha(pal.fill, 0.28f), v.px(2));
-      dl->AddRect(i0, i1, pal.fill, v.px(2), 0, std::max(1.f, v.s * 0.8f));
+      i0 = ImVec2(i0.x + 1, i0.y + 1), i1 = ImVec2(i1.x - 1, i1.y - 1);
+      gradientRect(dl, i0, i1, theme::withAlpha(pal.fill, 0.40f), theme::withAlpha(pal.fill, 0.24f), v.px(2));
+      dl->AddRect(i0, i1, theme::withAlpha(pal.fill, 0.85f), v.px(2), 0, 1.0f);
     } else if (k == hoverCell) {
       dl->AddRectFilled(i0, i1, theme::withAlpha(pal.text, 0.08f), v.px(2));
     }
     if (draw) draw(dl, k, i0, i1, sel);
   }
-  dl->AddRect(p0, p1, darken(pal.panel, 0.4f), v.px(2), 0, 1.0f);
   ImGui::PopID();
   ImGui::PopID();
   return ch;
@@ -1302,9 +1446,14 @@ bool selector(App& a, const PluginTarget& t, const View& v, const char* name, in
 bool textSelector(App& a, const PluginTarget& t, const View& v, const char* name, int param, const Palette& pal, const char* const* labels,
                   int cells, int valueOffset) {
   float fs = std::clamp(v.px(8.5f), 10.f, 14.f);
+  // J-93: unselected labels keep contrast on any slot colour (light reference slots included).
+  const FormCtl& fc = v.c(name);
+  const ImU32 slot = fc.color >= 0 ? col(fc.color) : pal.well;
+  const ImU32 idle = luma(slot) > 0.55f ? darken(slot, 0.62f) : theme::mix(pal.text, slot, 0.42f);
+  const ImU32 on = luma(slot) > 0.55f ? darken(slot, 0.85f) : lighten(pal.text, 0.2f);
   return selector(
       a, t, v, name, param, pal,
-      [&](ImDrawList* dl, int k, ImVec2 p0, ImVec2 p1, bool sel) { textAt(dl, p0, p1, sel ? pal.text : pal.textDim, labels[k], fs, 0); }, cells,
+      [&](ImDrawList* dl, int k, ImVec2 p0, ImVec2 p1, bool sel) { textAt(dl, p0, p1, sel ? on : idle, labels[k], fs, 0); }, cells,
       valueOffset);
 }
 
@@ -1389,14 +1538,13 @@ bool combo(App& a, const PluginTarget& t, const View& v, const char* name, int p
   bool hov = ImGui::IsItemHovered();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImU32 bgc = c.color >= 0 ? col(c.color) : pal.well;
-  dl->AddRectFilled(p0, p1, hov ? lighten(bgc, 0.08f) : bgc, v.px(2));
-  dl->AddRect(p0, p1, darken(bgc, 0.4f), v.px(2), 0, 1.0f);
+  raisedFace(dl, p0, p1, hov ? lighten(bgc, 0.08f) : bgc, v.px(3));
   std::string s = pv.d->format(pv.v);
   float h = p1.y - p0.y;
   textAt(dl, ImVec2(p0.x + v.px(3), p0.y), ImVec2(p1.x - h, p1.y), pal.text, s.c_str(), std::clamp(h * 0.62f, 10.f, 14.f), -1);
   ImVec2 ac(p1.x - h * 0.5f, (p0.y + p1.y) * 0.5f);
-  float aw = h * 0.22f;
-  dl->AddTriangleFilled(ImVec2(ac.x - aw, ac.y - aw * 0.5f), ImVec2(ac.x + aw, ac.y - aw * 0.5f), ImVec2(ac.x, ac.y + aw * 0.7f), pal.textDim);
+  dl->AddLine(ImVec2(std::round(p1.x - h) + 0.5f, p0.y + h * 0.22f), ImVec2(std::round(p1.x - h) + 0.5f, p1.y - h * 0.22f), IM_COL32(0, 0, 0, 70), 1.0f);
+  ui::drawIcon(dl, ui::Icon::ChevronDown, ac, std::max(8.0f, h * 0.5f), hov ? pal.text : pal.textDim);
   if (hov) app().setHint(pv.d->name + ": " + s);
   bool ch = false;
   if (clicked) ImGui::OpenPopup("##cbp");
@@ -1424,14 +1572,13 @@ bool comboFree(const View& v, const char* name, const Palette& pal, const char* 
   tooltipHint(hint);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImU32 bgc = c.color >= 0 ? col(c.color) : pal.well;
-  dl->AddRectFilled(p0, p1, hov ? lighten(bgc, 0.08f) : bgc, v.px(2));
-  dl->AddRect(p0, p1, darken(bgc, 0.4f), v.px(2), 0, 1.0f);
+  raisedFace(dl, p0, p1, hov ? lighten(bgc, 0.08f) : bgc, v.px(3));
   float h = p1.y - p0.y;
   const char* cur = value >= 0 && value < count ? items[value] : "";
   textAt(dl, ImVec2(p0.x + v.px(3), p0.y), ImVec2(p1.x - h, p1.y), pal.text, cur, std::clamp(h * 0.62f, 10.f, 14.f), -1);
   ImVec2 ac(p1.x - h * 0.5f, (p0.y + p1.y) * 0.5f);
-  float aw = h * 0.22f;
-  dl->AddTriangleFilled(ImVec2(ac.x - aw, ac.y - aw * 0.5f), ImVec2(ac.x + aw, ac.y - aw * 0.5f), ImVec2(ac.x, ac.y + aw * 0.7f), pal.textDim);
+  dl->AddLine(ImVec2(std::round(p1.x - h) + 0.5f, p0.y + h * 0.22f), ImVec2(std::round(p1.x - h) + 0.5f, p1.y - h * 0.22f), IM_COL32(0, 0, 0, 70), 1.0f);
+  ui::drawIcon(dl, ui::Icon::ChevronDown, ac, std::max(8.0f, h * 0.5f), hov ? pal.text : pal.textDim);
   bool ch = false;
   if (clicked) ImGui::OpenPopup("##cfp");
   if (ImGui::BeginPopup("##cfp")) {

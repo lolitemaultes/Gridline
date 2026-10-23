@@ -162,6 +162,91 @@ void testPlacement() {
   expect(w && near(w->Pos.x + w->Size.x * 0.5f, 720, 1.0f), "and is centred");
 }
 
+// J-91 (GitHub issue #1): a floating window dragged against the top bar.
+// The drag is real mouse input on the title bar; the window must stop at the
+// top bar with its title bar, background and content together (0.6.0 moved
+// the window after Begin(): the title bar stayed where the mouse put it and
+// only the content was pushed down, an empty band in between).
+struct DragCase {
+  float bandTop = 0;     // inner area top - (window top + title bar): 0 = no band
+  float contentGap = 0;  // content start - inner area top - padding: 0 = attached
+  float top = 0;         // window top
+};
+DragCase dragAgainstTop(bool oldWay) {
+  ImGuiIO& io = ImGui::GetIO();
+  const char* name = oldWay ? "drag old" : "drag new";
+  auto body = [&]() {
+    if (!oldWay) ui::ClampTrackedWindows();
+    ImGui::SetNextWindowPos(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+    ImGui::Begin(name, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+    if (oldWay) {  // 0.6.0 KeepWindowInViewport: clamped after Begin()
+      ImVec2 a0, a1;
+      ui::WorkArea(a0, a1);
+      const ImVec2 p = ui::ClampWindowPos(ImGui::GetWindowPos(), ImGui::GetWindowSize(), a0, a1, true);
+      if (p.x != ImGui::GetWindowPos().x || p.y != ImGui::GetWindowPos().y) ImGui::SetWindowPos(p);
+    } else {
+      ui::TrackWindowInViewport();
+    }
+    ImGui::Button("content", ImVec2(300, 200));
+    ImGui::End();
+  };
+  run(name, body, 30);  // half a second: the press below is not a double click (which would fold the window)
+  ImGuiWindow* w = ImGui::FindWindowByName(name);
+  // Press on the title bar and drag far above the top bar.
+  const ImVec2 grab(w->Pos.x + 60, w->Pos.y + w->TitleBarHeight * 0.5f);
+  io.AddMousePosEvent(grab.x, grab.y);
+  run(name, body, 2);
+  io.AddMouseButtonEvent(0, true);
+  run(name, body, 2);
+  for (int i = 1; i <= 6; ++i) {
+    io.AddMousePosEvent(grab.x, grab.y - 60.0f * static_cast<float>(i));
+    run(name, body, 1);
+  }
+  DragCase d;
+  d.top = w->Pos.y;
+  d.bandTop = w->InnerRect.Min.y - (w->Pos.y + w->TitleBarHeight + w->MenuBarHeight);
+  d.contentGap = w->DC.CursorStartPos.y - w->InnerRect.Min.y - w->WindowPadding.y;
+  io.AddMouseButtonEvent(0, false);
+  run(name, body, 2);
+  return d;
+}
+
+void testDragAgainstTop() {
+  gDisplay = ImVec2(1440, 900);
+  const DragCase old = dragAgainstTop(true);
+  const DragCase now = dragAgainstTop(false);
+  char label[160];
+  std::snprintf(label, sizeof label, "0.6.0 clamp after Begin: the content is pushed %.1f px away from the title bar (the band)",
+                static_cast<double>(old.contentGap));
+  expect(old.contentGap > 20.0f, label);
+  std::snprintf(label, sizeof label, "dragged against the top bar: the window stops at it (top %.1f)", static_cast<double>(now.top));
+  expect(near(now.top, theme::kTopBarH), label);
+  std::snprintf(label, sizeof label, "no band under the title bar (%.1f px)", static_cast<double>(now.bandTop));
+  expect(near(now.bandTop, 0.0f), label);
+  std::snprintf(label, sizeof label, "content attached to the title bar (%.1f px)", static_cast<double>(now.contentGap));
+  expect(near(now.contentGap, 0.0f), label);
+  // At rest: a window left below the screen (the main window shrank) comes back inside before it is drawn.
+  ImGuiWindow* w = ImGui::FindWindowByName("drag new");
+  ImGui::SetWindowPos(w, ImVec2(1300, 880), ImGuiCond_Always);
+  gDisplay = ImVec2(1200, 800);
+  run("drag new", [&]() {
+    ui::ClampTrackedWindows();
+    ImGui::Begin("drag new", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+    ui::TrackWindowInViewport();
+    ImGui::Button("content", ImVec2(300, 200));
+    ImGui::End();
+  }, 2);
+  expect(w->Pos.x + w->Size.x <= 1200.5f && w->Pos.y + w->Size.y <= 800 - theme::kStatusBarH + 0.5f, "a window off the shrunk screen is pulled back inside");
+  expect(near(w->InnerRect.Min.y, w->Pos.y + w->TitleBarHeight), "and drawn in one piece");
+  // The pure clamp: at rest inside; while dragged only the title bar is kept reachable.
+  const ImVec2 a0(0, 48), a1(1000, 700);
+  const ImVec2 r = ui::ClampWindowPos(ImVec2(-50, 10), ImVec2(300, 200), a0, a1, false);
+  expect(near(r.x, 0) && near(r.y, 48), "clamp at rest: inside the area");
+  const ImVec2 d = ui::ClampWindowPos(ImVec2(-250, 680), ImVec2(300, 200), a0, a1, true);
+  expect(near(d.x, -220) && near(d.y, 668), "clamp while dragging: 80 px of width and the 32 px title bar stay reachable");
+  gDisplay = ImVec2(1440, 900);
+}
+
 void testFormLabels() {
   const char* labels[] = {"Channels", "Patterns", "Playlist clips", "Third-party plugin (no installed match)"};
   float col = 0;
@@ -255,6 +340,7 @@ int main() {
   testFooters();
   testDialogBody();
   testPlacement();
+  testDragAgainstTop();
   testFormLabels();
   testTextFit();
   ImGui::DestroyContext();

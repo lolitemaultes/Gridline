@@ -152,12 +152,12 @@ void App::processAudioRecording() {
   // Record filter "into the audio editor": arm the editors of the armed tracks
   // when the record button is armed (they start with playback).
   if (recordArmed && !audioRecArmedPrev && recAudioEditor) {
-    doc.beginGroup("Record into the audio editor");
+    doc.beginGroup("Record into Loupe");
     std::vector<ObjectId> ids;
     for (const auto& m : s.mixer)
       if (m.armed && m.input >= 0) ids.push_back(m.id);
     for (ObjectId id : ids)
-      if (packs::armAudioEditorRecording(*this, id) < 0) notify("No free effect slot for the audio editor", true);
+      if (packs::armAudioEditorRecording(*this, id) < 0) notify("No free effect slot for Loupe", true);
     doc.endGroup();
   }
   audioRecArmedPrev = recordArmed;
@@ -233,7 +233,7 @@ void App::processAudioRecording() {
 void audioRecordFilterMenu(App& a) {
   ImGui::TextDisabled("%s", i18n::tr("What to record"));
   ImGui::MenuItem(i18n::tr("Audio, into the playlist as audio clips"), nullptr, &a.recAudio);
-  ImGui::MenuItem(i18n::tr("Audio, into the audio editor (armed tracks)"), nullptr, &a.recAudioEditor);
+  ImGui::MenuItem(i18n::tr("Audio, into Loupe (armed tracks)"), nullptr, &a.recAudioEditor);
   ImGui::MenuItem(i18n::tr("Notes"), nullptr, &a.recOptions.notes);
   ImGui::MenuItem(i18n::tr("Automation (controller moves)"), nullptr, &a.recOptions.automation);
   if (ImGui::MenuItem(i18n::tr("Everything"))) a.recAudio = a.recOptions.notes = a.recOptions.automation = true;
@@ -529,7 +529,7 @@ void drawClipProperties(App& a) {
     a.doc.editSong("fit clip to tempo", [&](Song& x) { fitClipToTempo(x, id); });
 
   ImGui::Dummy(ImVec2(0, theme::kS1));
-  ui::Label("RENDER STRETCH (AUDIO EDITOR)");
+  ui::Label("RENDER STRETCH (LOUPE)");
   static float rFactor = 1.0f, rSemis = 0.0f;
   static int rAlgo = 0;
   row("Length");

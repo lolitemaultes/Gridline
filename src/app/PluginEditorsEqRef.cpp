@@ -17,6 +17,7 @@
 //   right-click token   band menu (reset, type, order, key = snap to a note)
 #include <map>
 #include "../core/I18n.h"
+#include "../core/PluginBrand.h"
 #include "../engine/Dsp.h"
 #include "../engine/EqDesign.h"
 #include "../engine/LiveGraph.h"
@@ -730,27 +731,24 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
 
   // ================================================================ bottom bar
   {
-    // Wordmark.
-    ImGui::PushFont(a.fontMonoBold, std::clamp(11.0f * s, 11.0f, 18.0f));
-    dl->AddText(F.p(10, 250), skin::hex(0x3F515D), "PARAMETRIC");
-    ImGui::PopFont();
-    ImGui::PushFont(a.fontMonoBold, std::clamp(9.0f * s, 10.0f, 15.0f));
-    dl->AddText(F.p(10, 264), skin::hex(0x4C6170), "EQ");
-    ImGui::PopFont();
+    // Name plate: the catalog display name (J-94 may replace it with a wordmark).
+    {
+      std::string nm = pluginTitle(st.type);
+      for (char& ch : nm) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+      ImGui::PushFont(a.fontMonoBold, std::clamp(10.0f * s, 10.0f, 17.0f));
+      const ImVec2 n0 = F.p(10, 250), n1 = F.p(144, 278);
+      dl->PushClipRect(n0, n1, true);
+      dl->AddText(ImVec2(n0.x, std::round((n0.y + n1.y - ImGui::GetFontSize()) * 0.5f)), skin::hex(0x5A6F7D), nm.c_str());
+      dl->PopClipRect();
+      ImGui::PopFont();
+    }
     // Options (gear).
     ImVec2 op = F.p(150, 247);
     ImVec2 osz(24 * s, 22 * s);
     if (skin::button("##eqopt", op, osz, K, "", false)) ImGui::OpenPopup("##eqoptions");
-    {
-      ImVec2 c(op.x + osz.x * 0.5f, op.y + osz.y * 0.5f);
-      float r = std::min(osz.x, osz.y) * 0.26f;
-      for (int k = 0; k < 8; ++k) {
-        float an = k * 3.14159265f / 4;
-        dl->AddLine(ImVec2(c.x + std::cos(an) * r, c.y + std::sin(an) * r), ImVec2(c.x + std::cos(an) * r * 1.45f, c.y + std::sin(an) * r * 1.45f), K.textDim, 2.0f);
-      }
-      dl->AddCircle(c, r, K.textDim, 16, 2.0f);
-    }
-    if (ImGui::IsItemHovered()) a.setHint("Options");
+    const bool optHov = ImGui::IsItemHovered();
+    ui::drawIcon(dl, ui::Icon::Settings, ImVec2(op.x + osz.x * 0.5f, op.y + osz.y * 0.5f), std::min(osz.x, osz.y) * 0.7f, optHov ? K.text : K.textDim);
+    if (optHov) a.setHint("Options");
     if (ImGui::BeginPopup("##eqoptions")) {
       optionsMenu(a, t, st);
       ImGui::EndPopup();

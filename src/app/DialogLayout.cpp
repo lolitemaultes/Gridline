@@ -32,6 +32,77 @@ float ButtonRowWidth(int count, float width) {
   return count <= 0 ? 0.0f : static_cast<float>(count) * width + static_cast<float>(count - 1) * theme::kS2;
 }
 
+ImVec2 ClampWindowPos(ImVec2 pos, ImVec2 size, ImVec2 a0, ImVec2 a1, bool dragging) {
+  ImVec2 p = pos;
+  if (dragging) {  // while dragged: the title bar stays reachable
+    p.x = std::clamp(p.x, a0.x - size.x + 80.0f, std::max(a0.x - size.x + 80.0f, a1.x - 80.0f));
+    p.y = std::clamp(p.y, a0.y, std::max(a0.y, a1.y - 32.0f));
+  } else {  // at rest: inside (a window larger than the area keeps its top-left corner in)
+    p.x = std::max(a0.x, std::min(p.x, a1.x - size.x));
+    p.y = std::max(a0.y, std::min(p.y, a1.y - size.y));
+  }
+  return p;
+}
+
+void WorkArea(ImVec2& a0, ImVec2& a1) {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  a0 = ImVec2(vp->WorkPos.x, vp->WorkPos.y + theme::kTopBarH);
+  a1 = ImVec2(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y - theme::kStatusBarH);
+}
+
+namespace {
+struct Tracked {
+  ImGuiID id;
+  int frame;  // last frame the window called TrackWindowInViewport
+};
+ImVector<Tracked> gTracked;  // per process; windows of the current ImGui context
+ImGuiContext* gTrackedCtx = nullptr;
+
+// Moved by its title bar, or resized / dragged inside with the mouse (as 0.6.0: a resize past the edge is not pushed back mid-drag).
+bool beingDragged(const ImGuiWindow* w) {
+  const ImGuiContext& g = *GImGui;
+  if (g.MovingWindow && (g.MovingWindow == w || g.MovingWindow->RootWindowDockTree == w)) return true;
+  return g.ActiveIdWindow && g.ActiveIdWindow->RootWindow == w && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+}
+}  // namespace
+
+void TrackWindowInViewport() {
+  ImGuiContext& g = *GImGui;
+  if (gTrackedCtx != &g) gTracked.clear(), gTrackedCtx = &g;
+  ImGuiWindow* w = g.CurrentWindow;
+  if (!w) return;
+  bool found = false;
+  for (Tracked& t : gTracked)
+    if (t.id == w->ID) t.frame = g.FrameCount, found = true;
+  if (!found) gTracked.push_back({w->ID, g.FrameCount});
+  // The frame a window appears its size is new: placed at once (one frame
+  // of content offset at most, never while the user drags it).
+  if (ImGui::IsWindowAppearing() && !beingDragged(w)) {
+    ImVec2 a0, a1;
+    WorkArea(a0, a1);
+    const ImVec2 p = ClampWindowPos(w->Pos, w->Size, a0, a1, false);
+    if (p.x != w->Pos.x || p.y != w->Pos.y) ImGui::SetWindowPos(p);
+  }
+}
+
+void ClampTrackedWindows() {
+  ImGuiContext& g = *GImGui;
+  if (gTrackedCtx != &g) gTracked.clear(), gTrackedCtx = &g;
+  ImVec2 a0, a1;
+  WorkArea(a0, a1);
+  for (int i = 0; i < gTracked.Size;) {
+    ImGuiWindow* w = ImGui::FindWindowByID(gTracked[i].id);
+    if (!w || g.FrameCount - gTracked[i].frame > 2) {  // closed
+      gTracked.erase(gTracked.Data + i);
+      continue;
+    }
+    ++i;
+    if (!w->WasActive || w->Hidden || w->DockIsActive) continue;
+    const ImVec2 p = ClampWindowPos(w->Pos, w->Size, a0, a1, beingDragged(w));
+    if (p.x != w->Pos.x || p.y != w->Pos.y) ImGui::SetWindowPos(w, p, ImGuiCond_Always);
+  }
+}
+
 float DialogMaxHeight() {
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   return std::max(200.0f, vp->WorkSize.y - theme::kTopBarH - theme::kStatusBarH);

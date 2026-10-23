@@ -59,6 +59,8 @@ std::string ParamDesc::format(double v) const {
       std::snprintf(buf, sizeof buf, "%.2f s", v);
   } else if (unit == "ms") {
     std::snprintf(buf, sizeof buf, "%.1f ms", v);
+  } else if (unit == "pct") {  // J-92: the value is already in percent (0..100 ranges)
+    std::snprintf(buf, sizeof buf, "%.0f%%", v);
   } else if (unit == "%") {
     std::snprintf(buf, sizeof buf, "%.0f%%", v * 100.0);
   } else if (unit == "dB") {
@@ -113,7 +115,7 @@ const std::vector<std::string> kShapes = {"Sine", "Triangle", "Saw", "Square", "
 // of more than 1 MB with MSVC (the default stack of a Windows thread).
 GL_NOINLINE void addInfo1(std::vector<PluginInfo>& v) {
   using namespace pp;
-  PluginInfo p{"gl.synth", "Trio Synth", "Synth", PluginKind::Generator, {}, true, {}};
+  PluginInfo p{"gl.synth", "Tercet", "Synth", PluginKind::Generator, {}, true, {}};
   p.presets = {};
   p.params.resize(SynCount);
   p.params[SynOsc1Shape] = ch("Osc 1 shape", kShapes, 2);
@@ -163,7 +165,7 @@ GL_NOINLINE void addInfo1(std::vector<PluginInfo>& v) {
     d.choices.push_back("Custom wave");
     d.max = static_cast<double>(d.choices.size() - 1);
   }
-  p.params[SynModel] = ch("Oscillator model", {"Trio", "Reference"}, 0);
+  p.params[SynModel] = ch("Oscillator model", {"Classic", "Reference"}, 0);
   p.legacyModelParam = SynModel;
   p.usesSample = true;  // custom-wave oscillators read the channel sample
   p.editorWidth = 600;
@@ -364,7 +366,7 @@ GL_NOINLINE void addInfo7(std::vector<PluginInfo>& v) {
 
 GL_NOINLINE void addInfo8(std::vector<PluginInfo>& v) {
   using namespace pp;
-  PluginInfo p{"gl.pads", "Drum Pads", "Drums", PluginKind::Generator, {}, true, {}};
+  PluginInfo p{"gl.pads", "Abacus", "Drums", PluginKind::Generator, {}, true, {}};
   p.params.resize(PadsCount);
   p.params[PadsBaseNote] = lin("Base note", "note", 0, 112, 60);
   p.params[PadsVelocity] = lin("Velocity to level", "%", 0, 1, 0.8);
@@ -531,7 +533,7 @@ GL_NOINLINE void addInfo11(std::vector<PluginInfo>& v) {
 
 GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   using namespace pp;
-  PluginInfo p{"gl.slicer", "Slicer", "Sampler", PluginKind::Generator, {}, true, {}};
+  PluginInfo p{"gl.slicer", "Kerf", "Sampler", PluginKind::Generator, {}, true, {}};
   p.params.resize(SlCount);
   p.params[SlMode] = ch("Slicing", {"Transients", "4", "8", "16", "32", "Manual"}, 0);
   p.params[SlSensitivity] = lin("Sensitivity", "%", 0, 1, 0.5);
@@ -810,7 +812,7 @@ GL_NOINLINE void addInfo19(std::vector<PluginInfo>& v) {
 
 GL_NOINLINE void addInfo20(std::vector<PluginInfo>& v) {
   using namespace pp;
-  PluginInfo p{"gl.delay", "Delay", "Delay & reverb", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.delay", "Tracer", "Delay & reverb", PluginKind::Effect, {}, false, {}};
   p.params.resize(DlyCount);
   p.params[DlySync] = tog("Tempo sync", 1);
   p.params[DlyTime] = ch("Time", {"1/32", "1/16T", "1/16.", "1/16", "1/8T", "1/16..", "1/8", "1/4T", "1/8.", "1/4", "1/4.", "1/2", "1/64", "1/2T", "1/2.", "1 bar"}, 8);
@@ -914,11 +916,11 @@ GL_NOINLINE void addInfo21(std::vector<PluginInfo>& v) {
   p.params[RvbFLowCut] = lg("Low cut (full)", "Hz", 19, 3000, 75);
   p.params[RvbFHighCut] = lin("High cut (full)", "x100 Hz", 5, 221, 40);
   p.params[RvbFPredelay] = lin("Pre-delay (full)", "/384 s", 0, 384, 0);
-  p.params[RvbFRoom] = lin("Room size (full)", "%", 1, 100, 50);
-  p.params[RvbFDiffusion] = lin("Diffusion (full)", "%", 0, 100, 100);
+  p.params[RvbFRoom] = lin("Room size (full)", "pct", 1, 100, 50);
+  p.params[RvbFDiffusion] = lin("Diffusion (full)", "pct", 0, 100, 100);
   p.params[RvbFDecay] = lin("Decay (full)", "x0.1 s", 1, 200, 15);
   p.params[RvbFDamp] = lin("High damping (full)", "x100 Hz", 5, 221, 40);
-  p.params[RvbFBass] = lin("Bass multiplier (full)", "%", 20, 300, 100);
+  p.params[RvbFBass] = lin("Bass multiplier (full)", "pct", 20, 300, 100);
   p.params[RvbFCross] = lg("Crossover (full)", "Hz", 25, 2000, 500);
   p.params[RvbFSep] = lin("Separation (full)", "", -64, 64, 0);
   p.params[RvbFDry] = lin("Dry (full)", "", 0, 160, 128);
@@ -1070,7 +1072,10 @@ GL_NOINLINE void addInfo26(std::vector<PluginInfo>& v) {
   PluginInfo p{"gl.bitcrush", "Bitcrusher", "Distortion", PluginKind::Effect, {}, false, {}};
   p.params.resize(BcCount);
   p.params[BcBits] = lin("Bits", "", 1, 24, 8);
-  p.params[BcDownsample] = lin("Downsample", "", 1, 50, 4);
+  // J-92: default 1 (no rate reduction): at /4 the sample-and-hold error (-12 dB)
+  // masked the quantisation of every depth above ~6 bits, so the Bits knob seemed
+  // capped. The "8-bit" preset keeps its /4.
+  p.params[BcDownsample] = lin("Downsample", "", 1, 50, 1);
   p.params[BcMix] = lin("Mix", "%", 0, 1, 1);
   p.params[BcFilterOn] = tog("Filter", 0);
   p.params[BcFilterType] = ch("Filter type", {"Low pass", "High pass", "Band pass", "Notch"}, 0);
@@ -1083,13 +1088,13 @@ GL_NOINLINE void addInfo26(std::vector<PluginInfo>& v) {
   p.params[BcImpact] = lg("Impact", "s", 0.001, 1, 0.01);
   p.params[BcSquarize] = lin("Squarize", "%", 0, 1, 0);
   p.editorWidth = 680;
-  p.presets = {{"8-bit", {}}, {"Lo-fi", {{BcBits, 12.f}, {BcDownsample, 2.f}}}, {"Destroyed", {{BcBits, 3.f}, {BcDownsample, 20.f}}}};
+  p.presets = {{"8-bit", {{BcDownsample, 4.f}}}, {"Lo-fi", {{BcBits, 12.f}, {BcDownsample, 2.f}}}, {"Destroyed", {{BcBits, 3.f}, {BcDownsample, 20.f}}}};
   v.push_back(p);
 }
 
 GL_NOINLINE void addInfo27(std::vector<PluginInfo>& v) {
   using namespace pp;
-  PluginInfo p{"gl.clipper", "Soft Clipper", "Dynamics", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.clipper", "Clipper", "Dynamics", PluginKind::Effect, {}, false, {}};
   p.params.resize(ClpCount);
   p.params[ClpThreshold] = lin("Threshold", "dB", -42.2, 0, -2.144);
   p.params[ClpPostGain] = lin("Post gain", "dB", -60, 12, 0);
@@ -1105,7 +1110,7 @@ GL_NOINLINE void addInfo27(std::vector<PluginInfo>& v) {
 
 GL_NOINLINE void addInfo28(std::vector<PluginInfo>& v) {
   using namespace pp;
-  PluginInfo p{"gl.stereo", "Stereo Shaper", "Misc", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.stereo", "Stereo Width", "Misc", PluginKind::Effect, {}, false, {}};
   p.params.resize(StCount);
   p.params[StWidth] = lin("Width", "%", 0, 2, 1);
   p.params[StMid] = lin("Mid level", "dB", -24, 12, 0);
@@ -1324,7 +1329,7 @@ GL_NOINLINE void addInfo35(std::vector<PluginInfo>& v) {
 
 GL_NOINLINE void addInfo36(std::vector<PluginInfo>& v) {
   using namespace pp;
-  PluginInfo p{"gl.timegate", "Time Gate", "Modulation", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.timegate", "Shuttle", "Modulation", PluginKind::Effect, {}, false, {}};
   p.params.resize(TgCount);
   p.params[TgMode] = ch("Time effect", {"Off", "Repeat 1/4", "Repeat 1/8", "Repeat 1/16", "Repeat 1/32", "Half speed", "Tape stop", "Reverse"}, 0);
   p.params[TgGateOn] = tog("Gate", 0);
@@ -1440,7 +1445,7 @@ GL_NOINLINE void addInfo38(std::vector<PluginInfo>& v) {
 
 GL_NOINLINE void addInfo39(std::vector<PluginInfo>& v) {
   using namespace pp;
-  PluginInfo p{"gl.lowlift", "Low Lifter", "Filter", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.lowlift", "Sub Focus", "Filter", PluginKind::Effect, {}, false, {}};
   p.params.resize(LlCount);
   p.params[LlCrossover] = lg("Crossover", "Hz", 40, 400, 120);
   p.params[LlLowGain] = lin("Low gain", "dB", -12, 12, 3);

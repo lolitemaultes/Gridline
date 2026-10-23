@@ -503,7 +503,8 @@ class GmsGen final : public Generator {
     }
     volume_ = static_cast<float>(dsp::dbToGain(prm(s, GVolume, 0)) * dsp::dbToGain(prm(s, GLevel, 0)));
     pan_ = prm(s, GPan, 0);
-    pitch_ = prm(s, GPitch, 0) + 12.0 * prmi(s, GOctave, 0);
+    // J-92: pitch bend from a MIDI keyboard, over the bend range (the range was never read).
+    pitch_ = prm(s, GPitch, 0) + 12.0 * prmi(s, GOctave, 0) + bend_ * prm(s, GBend, 2);
     velVol_ = prmb(s, GVelVol);
     ampA_ = prm(s, GAmpA, 0.002f), ampD_ = prm(s, GAmpD, 1.5f), ampS_ = prm(s, GAmpS, 0.8f), ampR_ = prm(s, GAmpR, 0.4f);
     slide_ = prmb(s, GSlide), slideT_ = prm(s, GSlideTime, 0.06f), mono_ = prmb(s, GMono);
@@ -584,6 +585,9 @@ class GmsGen final : public Generator {
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
       if (v.on && v.held && v.id == id) v.held = false, v.stage = 3;
+  }
+  void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
+    if ((status & 0xF0) == 0xE0) bend_ = ((d2 << 7 | d1) - 8192) / 8192.0;  // -1..1 (applied with the next block)
   }
   void onAllOff() override {
     for (auto& v : voices_)
@@ -790,7 +794,7 @@ class GmsGen final : public Generator {
   Voice voices_[kVoices];
   const WaveBank* bank_[kOscs] = {nullptr, nullptr, nullptr};
   double oscSemi_[kOscs] = {0, 0, 0};
-  double sr_ = 44100, tempo_ = 120, pitch_ = 0, lastNote_ = -1;
+  double sr_ = 44100, tempo_ = 120, pitch_ = 0, lastNote_ = -1, bend_ = 0;
   float volume_ = 1, pan_ = 0;
   bool velVol_ = true, slide_ = false, mono_ = false, uniRetrig_ = false, o2Retrig_ = false, o2Inv_ = false;
   double ampA_ = 0.002, ampD_ = 1.5, ampS_ = 0.8, ampR_ = 0.4, slideT_ = 0.06;

@@ -39,11 +39,14 @@ void drawIconBox(ImDrawList* dl, Icon icon, ImVec2 center, float box, ImU32 col)
 // Square icon button; `active` draws it highlighted (Paper fill, or activeCol).
 // Dark theme: the active glyph lights in `activeCol` (tool role colour) or the
 // lit-glyph orange; `idleCol` tints the glyph at rest (e.g. menu buttons).
+// `onPress`: acts when the button goes down (transport, J-91), not on release.
 bool IconButton(const char* id, Icon icon, bool active = false, float size = 26.0f, const char* hint = nullptr,
-                ImU32 activeCol = 0, ImU32 idleCol = 0);
+                ImU32 activeCol = 0, ImU32 idleCol = 0, bool onPress = false);
 // Icon toggle for "show/enable" states: quiet when off, bright icon + accent
 // underline when on (window toggles, metronome, typing keyboard).
-bool ToggleIcon(const char* id, Icon icon, bool on, float size = 28.0f, const char* hint = nullptr);
+// `mirror` scales the glyph horizontally about its centre (-1 .. 1: the
+// metronome's swing, J-91).
+bool ToggleIcon(const char* id, Icon icon, bool on, float size = 28.0f, const char* hint = nullptr, float mirror = 1.0f);
 // Q-6: show / hide toggle for a plugin's window: an open eye while the window
 // is shown (lit), an eye with a slash while it is hidden; the tooltip says
 // what a click does. Returns true when clicked.

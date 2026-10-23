@@ -32,7 +32,9 @@ const skin::Skin& flexSkin() {
 
 constexpr float kW = 1080, kH = 432;
 
-float val(const PluginState& st, int k, float d = 0.5f) { return k < static_cast<int>(st.params.size()) ? st.params[static_cast<size_t>(k)] : d; }
+float val(const PluginState& st, int k, float d = 0.5f) {
+  audit::stateRead(k);  // J-92 binding audit
+  return k < static_cast<int>(st.params.size()) ? st.params[static_cast<size_t>(k)] : d; }
 
 // On / off button over a FLEX switch (stored as a 0..1 value).
 void onButton(App& a, const PluginTarget& t, const skin::Form& F, const skin::Skin& K, int param, float x, float y, float w, const char* text) {

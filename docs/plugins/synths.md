@@ -7,10 +7,10 @@ filter + envelopes, modulation, arpeggiator / effects.
 
 | Type | Name | Covers the role of |
 |---|---|---|
-| `gl.analog` | Analog | three-oscillator "simple synth", mini mono/poly synth, 3-osc subtractive synth with FX, supersaw-style synth (unison), classic poly with arpeggiator, Juno-style DCO poly (pulse + saw + sub, PWM, chorus), bass-guitar and FX-gun sounds (presets) |
-| `gl.wavetable` | Wavetable | wavetable / "growl" style synths, dual-oscillator synth with mod matrix and effects pages, preset-player style macro sounds |
+| `gl.analog` | Analog Synth | three-oscillator "simple synth", mini mono/poly synth, 3-osc subtractive synth with FX, supersaw-style synth (unison), classic poly with arpeggiator, Juno-style DCO poly (pulse + saw + sub, PWM, chorus), bass-guitar and FX-gun sounds (presets) |
+| `gl.wavetable` | Isoline | wavetable / "growl" style synths, dual-oscillator synth with mod matrix and effects pages, preset-player style macro sounds |
 
-## Analog (`gl.analog`)
+## Analog Synth (`gl.analog`)
 
 Signal flow per voice: 3 oscillators × up to 8 unison copies + sub + noise →
 drive → multimode filter (stereo when unison is spread) → amp envelope →
@@ -39,7 +39,7 @@ voice sum → FX strip (drive → chorus → ping-pong delay → reverb) → pan
   Ring Bells, Arp Bubbles, PWM Strings, Wobble Bass, Fingered Bass, Brass
   Section, Laser Zap.
 
-## Wavetable (`gl.wavetable`)
+## Isoline (`gl.wavetable`)
 
 - Two wavetable oscillators. Ten built-in, procedurally generated tables
   (Analog morph, Pulse sweep, Vowels, Harmonic build, Sync sweep, FM sweep,
@@ -64,7 +64,7 @@ voice sum → FX strip (drive → chorus → ping-pong delay → reverb) → pan
 
 - No allocation on the audio thread: voices, scratch buffers are fixed arrays;
   delay/chorus/reverb buffers are sized for 192 kHz in the constructor;
-  wavetables are built once (function-local static) when the first Wavetable
+  wavetables are built once (function-local static) when the first Isoline
   instance is created on the UI thread.
 - Block-size invariance: modulation runs every 16 samples of each voice's own
   clock, free-running LFOs use a global phase advanced per sample, FX are per

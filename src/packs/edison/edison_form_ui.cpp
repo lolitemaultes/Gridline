@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include "../../core/PluginBrand.h"
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
 #include "../../../third_party/imgui/imgui_internal.h"
@@ -321,7 +322,9 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
 
   // ---- title, mute, meters
   {
-    const char* title = "audio editor";
+    std::string word = pluginDisplayName("gl.edison");  // J-94: the catalogue name, lower case
+    for (char& ch : word) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    const char* title = word.c_str();
     const float fs = F.d(17);
     ImVec2 ts = fr->CalcTextSizeA(fs, FLT_MAX, 0, title);
     text(dl, fr, fs, ImVec2(F.p(698, 0).x - ts.x, F.p(0, 6).y), C(col::Text, 0.85f), title);

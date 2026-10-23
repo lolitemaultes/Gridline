@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include "../../app/XyPadMath.h"
 #include "../../core/I18n.h"
 #include "../../engine/LiveGraph.h"
 #include "modulation.h"
@@ -138,19 +139,21 @@ void padArea(EditTarget& e, int px, int py, ImVec2 p0, ImVec2 size, const skin::
     dl->AddLine(ImVec2(p0.x + size.x * g / 8, p0.y + 1), ImVec2(p0.x + size.x * g / 8, p0.y + size.y - 1), c);
     dl->AddLine(ImVec2(p0.x + 1, p0.y + size.y * g / 8), ImVec2(p0.x + size.x - 1, p0.y + size.y * g / 8), c);
   }
-  float x = e.p(px, 0.5f), y = e.p(py, 0.5f);
-  ImVec2 cp(p0.x + x * size.x, p0.y + (1.0f - y) * size.y);
+  // J-91: positions drawn and read through one mapping (app/XyPadMath.h), always inside the pad.
+  const xypad::Rect pr{p0.x, p0.y, p0.x + size.x, p0.y + size.y};
+  ImVec2 cp;
+  xypad::toScreen(pr, e.p(px, 0.5f), e.p(py, 0.5f), 0.0f, cp.x, cp.y);
   dl->AddLine(ImVec2(cp.x, p0.y + 1), ImVec2(cp.x, p0.y + size.y - 1), theme::withAlpha(k.text, 0.35f));
   dl->AddLine(ImVec2(p0.x + 1, cp.y), ImVec2(p0.x + size.x - 1, cp.y), theme::withAlpha(k.text, 0.35f));
   float r = std::clamp(size.x * 0.04f, 6.0f, 11.0f);
   dl->AddCircle(cp, r, k.text, 24, 1.6f);
-  float oy = invertY ? 1.0f - outY : outY;
-  dl->AddCircleFilled(ImVec2(p0.x + outX * size.x, p0.y + (1.0f - oy) * size.y), r * 0.55f, k.accent2C(), 20);
+  ImVec2 op;
+  xypad::toScreen(pr, outX, invertY ? 1.0f - outY : outY, 0.0f, op.x, op.y);
+  dl->AddCircleFilled(op, r * 0.55f, k.accent2C(), 20);
   ImGuiIO& io = ImGui::GetIO();
   if (ImGui::IsItemActive() && e.st) {
     PluginState st = *e.st;
-    st.params[static_cast<size_t>(px)] = std::clamp((io.MousePos.x - p0.x) / size.x, 0.0f, 1.0f);
-    st.params[static_cast<size_t>(py)] = std::clamp(1.0f - (io.MousePos.y - p0.y) / size.y, 0.0f, 1.0f);
+    xypad::fromScreen(pr, io.MousePos.x, io.MousePos.y, 0.0f, st.params[static_cast<size_t>(px)], st.params[static_cast<size_t>(py)]);
     if (io.KeyShift) {  // snap to eighths
       st.params[static_cast<size_t>(px)] = std::round(st.params[static_cast<size_t>(px)] * 8) / 8;
       st.params[static_cast<size_t>(py)] = std::round(st.params[static_cast<size_t>(py)] * 8) / 8;

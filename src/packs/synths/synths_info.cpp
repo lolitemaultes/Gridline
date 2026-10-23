@@ -59,7 +59,7 @@ using Values = std::vector<std::pair<int, float>>;
 
 // ------------------------------------------------------------------ Analog
 PluginInfo analogInfo() {
-  PluginInfo p{"gl.analog", "Analog", "Synth", PluginKind::Generator, {}, false, {}};
+  PluginInfo p{"gl.analog", "Analog Synth", "Synth", PluginKind::Generator, {}, false, {}};
   auto& q = p.params;
   q.resize(AnCount);
   q[AnVolume] = lin("Volume", "%", 0, 1, 0.7);
@@ -188,7 +188,7 @@ PluginInfo analogInfo() {
 
 // --------------------------------------------------------------- Wavetable
 PluginInfo wavetableInfo() {
-  PluginInfo p{"gl.wavetable", "Wavetable", "Synth", PluginKind::Generator, {}, false, {}};
+  PluginInfo p{"gl.wavetable", "Isoline", "Synth", PluginKind::Generator, {}, false, {}};
   auto& q = p.params;
   q.resize(WtCount);
   q[WtVolume] = lin("Volume", "%", 0, 1, 0.7);

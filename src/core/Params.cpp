@@ -1,4 +1,5 @@
 #include "Params.h"
+#include <atomic>
 
 namespace gl {
 
@@ -121,13 +122,21 @@ bool resolve(Song& s, ParamId id, Target& t) {
 
 }  // namespace
 
+namespace {
+std::atomic<ParamReadHook> readHook{nullptr};
+}  // namespace
+
+void setParamReadHook(ParamReadHook hook) { readHook.store(hook, std::memory_order_relaxed); }
+
 std::optional<ParamDesc> describeParam(const Song& song, ParamId id) {
+  if (ParamReadHook h = readHook.load(std::memory_order_relaxed)) h(id);
   Target t;
   if (!resolve(const_cast<Song&>(song), id, t)) return std::nullopt;
   return t.desc;
 }
 
 std::optional<double> getParam(const Song& song, ParamId id) {
+  if (ParamReadHook h = readHook.load(std::memory_order_relaxed)) h(id);
   Target t;
   if (!resolve(const_cast<Song&>(song), id, t)) return std::nullopt;  // read-only use
   if (t.d) return *t.d;
