@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -15,6 +16,7 @@
 #include <thread>
 #include <vector>
 #include "../src/core/PluginInfo.h"
+#include "../src/core/flp/Flp.h"
 #include "../src/engine/ParamAudit.h"
 #include "Check.h"
 #include "Hermetic.h"
@@ -35,9 +37,20 @@ void testBaseline() {
   expect(!text.empty(), "baseline file present");
   const auto rows = paramaudit::parseBaseline(text);
   std::map<std::string, std::vector<const paramaudit::BaselineRow*>> byType;
-  size_t rowsChecked = 0;
-  for (const auto& r : rows)
-    if (r.status == "working" || r.status == "combination") byType[r.type].push_back(&r), ++rowsChecked;
+  size_t rowsChecked = 0, skippedNoData = 0;
+  const std::string factoryData = flp::defaultFactoryData();
+  std::error_code ec;
+  const bool noFactoryData = factoryData.empty() || !std::filesystem::is_directory(std::filesystem::u8path(factoryData), ec);
+  for (const auto& r : rows) {
+    if (r.status != "working" && r.status != "combination") continue;
+    // Sounds read from FL Studio's factory content (Sample Keys' piano, Kick Sculptor's noise
+    // samples) are silent where it is not installed, as on the CI runners: check them only here.
+    if (noFactoryData && (r.type == "gl.samplekeys" || (r.type == "gl.kicksculpt" && r.name.rfind("Noise", 0) == 0))) {
+      ++skippedNoData;
+      continue;
+    }
+    byType[r.type].push_back(&r), ++rowsChecked;
+  }
   // Every built-in plugin is in the baseline (a new plugin needs a baseline refresh).
   size_t missingTypes = 0;
   for (const PluginInfo& info : pluginCatalog()) {
@@ -97,12 +110,15 @@ void testBaseline() {
   for (size_t j = 0; j < jobs.size(); ++j)
     for (size_t i = 0; i < jobs[j].second.size(); ++i) {
       const auto* r = jobs[j].second[i];
-      if (results[j][i] > -80) continue;
+      // Dead = no measurable change. -100 dB, not tighter: a few quiet differences measure
+      // between -80 and -82 dB on arm64 (different float rounding than x86_64).
+      if (results[j][i] > -100) continue;
       ++dead;
       std::printf("# %s #%d %s (%s): no longer changes the output (%.1f dB)\n", r->type.c_str(), r->index, r->name.c_str(), r->status.c_str(),
                   results[j][i]);
     }
   std::printf("# %zu working parameters of %zu plugins checked\n", rowsChecked, jobs.size());
+  if (skippedNoData) std::printf("# %zu parameters skipped: they play FL Studio factory content, not installed here\n", skippedNoData);
   expect(rowsChecked > 3000, "baseline lists the working parameters");
   expect(dead == 0, "every parameter recorded as working still changes the output");
 }
