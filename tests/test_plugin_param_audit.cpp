@@ -7,6 +7,7 @@
 // trip run on a few plugins of each kind.
 #include <algorithm>
 #include <atomic>
+#include <csignal>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -148,9 +149,30 @@ void testFullAudit() {
 
 }  // namespace
 
+namespace {
+const char* volatile phase = "start";
+}
+
 int main() {
+  std::setvbuf(stdout, nullptr, _IONBF, 0);  // keep every line if a platform crashes the run
+  for (int sig : {SIGSEGV, SIGILL, SIGFPE, SIGABRT
+#ifdef SIGBUS
+                  , SIGBUS
+#endif
+       })
+    std::signal(sig, [](int s) {
+      std::fprintf(stderr, "# crashed (signal %d) in phase: %s\n", s, phase);  // diagnostics only: the process ends next
+      paramaudit::writeActive(2);
+      std::signal(s, SIG_DFL);
+      std::raise(s);
+    });
   gl::test::hermeticTestEnv("param_audit");
+  phase = "full audit";
   testFullAudit();
+  phase = "baseline";
   testBaseline();
-  return finish();
+  phase = "finish";
+  const int rc = finish();
+  phase = "exit";
+  return rc;
 }

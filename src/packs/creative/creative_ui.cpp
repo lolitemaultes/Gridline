@@ -399,7 +399,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
       dl->AddPolyline(pts, 8, sk::col(0xFDA73F), ImDrawFlags_Closed, std::max(1.f, v.px(2)));
       int en = 0;
       for (int k = 0; k < kUnits; ++k) en += ed::bval(st, unitParam(k, UEnabled), k == 0) ? 1 : 0;
-      char b[4];
+      char b[12];
       std::snprintf(b, sizeof b, "%d", en);
       sk::textAt(dl, ImVec2(c.x - v.px(10), c.y - v.px(10)), ImVec2(c.x + v.px(10), c.y + v.px(10)), pal.text, b, v.px(11), 0, true);
     }

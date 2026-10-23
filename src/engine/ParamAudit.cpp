@@ -13,7 +13,17 @@
 #include <sstream>
 #include <cstring>
 #include <thread>
+#if defined(_WIN32)
+#include <io.h>
+namespace {
+int rawWrite(int fd, const void* p, size_t n) { return _write(fd, p, static_cast<unsigned>(n)); }  // async-signal-safe write
+}  // namespace
+#else
 #include <unistd.h>
+namespace {
+long rawWrite(int fd, const void* p, size_t n) { return ::write(fd, p, n); }  // async-signal-safe write
+}  // namespace
+#endif
 #include <filesystem>
 #include "../core/AudioBuffer.h"
 #include "../core/Params.h"
@@ -1550,18 +1560,23 @@ thread_local int activeSlot = -1;
 void writeActive(int fd) {
   for (int k = 0; k < kActiveSlots; ++k)
     if (const char* t = activeTypes[k].load()) {
-      (void)!::write(fd, k == activeSlot ? "* auditing " : "  auditing ", 11);  // * = the crashing thread
-      (void)!::write(fd, t, std::strlen(t));
-      (void)!::write(fd, "\n", 1);
+      (void)!rawWrite(fd, k == activeSlot ? "* auditing " : "  auditing ", 11);  // * = the crashing thread
+      (void)!rawWrite(fd, t, std::strlen(t));
+      (void)!rawWrite(fd, "\n", 1);
     }
   // The crashing thread's settings that differ from the defaults (best effort).
+  if (crashState) {
+    (void)!rawWrite(fd, "  rendering ", 12);
+    (void)!rawWrite(fd, crashState->type.c_str(), crashState->type.size());
+    (void)!rawWrite(fd, "\n", 1);
+  }
   if (crashState)
     if (const PluginInfo* info = findPlugin(crashState->type)) {
       char buf[96];
       for (size_t k = 0; k < crashState->params.size() && k < info->params.size(); ++k)
         if (crashState->params[k] != static_cast<float>(info->params[k].def)) {
           const int n = std::snprintf(buf, sizeof buf, "    #%zu %s = %g\n", k, info->params[k].name.c_str(), static_cast<double>(crashState->params[k]));
-          (void)!::write(fd, buf, static_cast<size_t>(std::max(0, std::min(n, static_cast<int>(sizeof buf) - 1))));
+          (void)!rawWrite(fd, buf, static_cast<size_t>(std::max(0, std::min(n, static_cast<int>(sizeof buf) - 1))));
         }
     }
 }

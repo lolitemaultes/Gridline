@@ -147,7 +147,7 @@ void drawIconBox(ImDrawList* dl, Icon icon, ImVec2 c, float box, ImU32 col) {
 bool IconButton(const char* id, Icon icon, bool active, float size, const char* hint, ImU32 activeCol, ImU32 idleCol, bool onPress) {
   ImGui::PushID(id);
   ImVec2 p = ImGui::GetCursorScreenPos();
-  bool pressed = ImGui::InvisibleButton("##ib", ImVec2(size, size), onPress ? ImGuiButtonFlags_PressedOnClick : ImGuiButtonFlags_None);
+  bool pressed = ImGui::InvisibleButton("##ib", ImVec2(size, size), onPress ? static_cast<ImGuiButtonFlags>(ImGuiButtonFlags_PressedOnClick) : static_cast<ImGuiButtonFlags>(ImGuiButtonFlags_None));
   bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const auto& P = pal();

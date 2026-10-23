@@ -38,7 +38,17 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#if defined(_WIN32)
+#include <io.h>
+namespace {
+int rawWrite(int fd, const void* p, size_t n) { return _write(fd, p, static_cast<unsigned>(n)); }  // async-signal-safe write
+}  // namespace
+#else
 #include <unistd.h>
+namespace {
+long rawWrite(int fd, const void* p, size_t n) { return ::write(fd, p, n); }  // async-signal-safe write
+}  // namespace
+#endif
 
 int benchMain(int argc, char** argv);  // Bench.cpp
 int flpToolsMain(int argc, char** argv);  // FlpTools.cpp (-1 = not one of its commands)
@@ -191,7 +201,7 @@ int main(int argc, char** argv) {
     }
     std::signal(SIGSEGV, [](int sig) {  // which plugin crashed the audit
       const char msg[] = "param-audit: crashed while auditing:\n";
-      (void)!::write(2, msg, sizeof msg - 1);
+      (void)!rawWrite(2, msg, sizeof msg - 1);
       gl::paramaudit::writeActive(2);
       std::signal(sig, SIG_DFL);
       std::raise(sig);
