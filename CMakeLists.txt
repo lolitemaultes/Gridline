@@ -278,6 +278,12 @@ target_link_libraries(gridline_tests_smooth_scroll PRIVATE gridline_core)
 target_include_directories(gridline_tests_smooth_scroll PRIVATE tests)
 target_compile_options(gridline_tests_smooth_scroll PRIVATE ${GL_WARN})
 add_test(NAME smooth_scroll COMMAND gridline_tests_smooth_scroll WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# J-99: smooth freehand drawing (stroke fill, one-euro filter, edge-preserving pass, undo grouping).
+add_executable(gridline_tests_draw_smooth tests/test_draw_smooth.cpp)
+target_link_libraries(gridline_tests_draw_smooth PRIVATE gridline_core)
+target_include_directories(gridline_tests_draw_smooth PRIVATE tests)
+target_compile_options(gridline_tests_draw_smooth PRIVATE ${GL_WARN})
+add_test(NAME draw_smooth COMMAND gridline_tests_draw_smooth WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 # J-83: wheel routing over mixer controls (thin mixer scrolls, wide adjusts, momentum, setting).
 add_executable(gridline_tests_wheel_route tests/test_wheel_route.cpp)
 target_link_libraries(gridline_tests_wheel_route PRIVATE gridline_core)
@@ -407,6 +413,12 @@ target_link_libraries(gridline_tests_external_drop PRIVATE gridline_core)
 target_include_directories(gridline_tests_external_drop PRIVATE tests)
 target_compile_options(gridline_tests_external_drop PRIVATE ${GL_WARN})
 add_test(NAME external_drop COMMAND gridline_tests_external_drop WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-97: drop-to-replace on the channel rack (row zones, sample slots, name policy).
+add_executable(gridline_tests_j97 tests/test_j97.cpp)
+target_link_libraries(gridline_tests_j97 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j97 PRIVATE tests)
+target_compile_options(gridline_tests_j97 PRIVATE ${GL_WARN})
+add_test(NAME j97 COMMAND gridline_tests_j97 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-89: update check (versions, release JSON, downloads per platform, SHA256SUMS, schedule; no network).
 add_executable(gridline_tests_update tests/test_update.cpp)
 target_link_libraries(gridline_tests_update PRIVATE gridline_core)
@@ -940,7 +952,9 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND gridline-app --layout-audit ${CMAKE_BINARY_DIR}/layout_audit --size 2400x1600
                      --screenshot ${CMAKE_BINARY_DIR}/layout_audit/frame.ppm --frames 100000 --no-ui-sounds
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-    set_tests_properties(editor_layout_audit PROPERTIES ENVIRONMENT "GRIDLINE_CONFIG_HOME=${CMAKE_BINARY_DIR}/layout_audit_cfg" TIMEOUT 900)
+    # J-103: a failing exit fails the test (ctest checks the code); an abort message on the way out does too.
+    set_tests_properties(editor_layout_audit PROPERTIES ENVIRONMENT "GRIDLINE_CONFIG_HOME=${CMAKE_BINARY_DIR}/layout_audit_cfg" TIMEOUT 900
+                         FAIL_REGULAR_EXPRESSION "terminating due to|mutex lock failed|libc\\+\\+abi")
 
     # J-78: clicks on a notification card never reach the playlist clip below it (hidden off-screen run).
     add_test(NAME j78_toast_click
@@ -969,6 +983,35 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j84_rack_scroll -P ${CMAKE_SOURCE_DIR}/tests/j84_rack_scroll.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j84_rack_scroll PROPERTIES TIMEOUT 300)
+
+    # J-98: Tideline's Split slider keeps its handle under the pointer at 100 / 150 / 200 % (SDL drags).
+    add_test(NAME j98_slider_follow
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j98_slider_follow
+                     -P ${CMAKE_SOURCE_DIR}/tests/j98_slider_follow.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j98_slider_follow PROPERTIES TIMEOUT 300)
+
+    # J-105: Convolver EQ / IR envelope point editing at 100 / 200 % (SDL drags): click adds one point, no painting, undo per gesture, save + load.
+    add_test(NAME j105_conv_points
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j105_conv_points
+                     -P ${CMAKE_SOURCE_DIR}/tests/j105_conv_points.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j105_conv_points PROPERTIES TIMEOUT 300)
+
+    # J-97: browser / external drops onto channel rack rows replace their content (routing, steps, notes kept), insert between rows, undo.
+    add_test(NAME j97_rack_drop
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j97_rack_drop -P ${CMAKE_SOURCE_DIR}/tests/j97_rack_drop.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j97_rack_drop PROPERTIES TIMEOUT 300)
+
+    # J-103: a session (demo copy, playing, an editor open) quit by the user, and the layout audit
+    # without --screenshot, exit with code 0: no background thread runs into static destruction.
+    add_test(NAME j103_clean_exit
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j103_clean_exit -P ${CMAKE_SOURCE_DIR}/tests/j103_clean_exit.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j103_clean_exit PROPERTIES TIMEOUT 900)
   endif()
 
   include(cmake/GridlinePlugins.cmake)  # PH-09: Gridline.clap / Gridline.vst3

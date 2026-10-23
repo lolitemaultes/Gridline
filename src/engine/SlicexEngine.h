@@ -7,8 +7,8 @@
 // (1–3 biquad stages), gated playback with declick, control blocks of 48
 // (or 4, "HQ") samples at 44.1 kHz.
 //
-// Behavioural reimplementation from analysis/rea/agents/j33/slicex_spec.md
-// (Part A) and envc_spec.md (shared envelope / LFO engine).
+// Behavioural reimplementation from behaviour study notes
+// (Part A and the shared envelope / LFO engine).
 //
 // State: gl.slicer data = "<deck A sample file>\n" + writeText(model); the
 // per-region gain / pan / pitch / cut group / delay / end and the master

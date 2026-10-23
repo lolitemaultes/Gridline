@@ -3,12 +3,17 @@
 // controls below) drawn in Gridline's monochrome style.
 #include <complex>
 #include <filesystem>
+#include <functional>
+#include <iterator>
 #include <map>
 #include <vector>
 #include "../PacksUi.h"
+#include "../../app/DrawSmoothUi.h"
 #include "../../engine/Dsp.h"
 #include "../../engine/Program.h"
 #include "sfx_common.h"
+#include "sfx_convolver.h"
+#include "../../core/I18n.h"
 #include "sfx_skin.h"
 #include "sfx_widgets.h"
 #include "sfx_flcurves.h"
@@ -30,68 +35,428 @@ namespace fs = std::filesystem;
 constexpr double kPiD = 3.14159265358979323846;
 
 // ============================================================== Convolver
+// J-105: the IR EQ and the IR envelope are edited with points only (J-99's
+// freehand painting is gone from both views). A click on empty space adds
+// exactly one point and keeps dragging it; a press on a point moves that
+// point (grab offset kept, clamped to the graph and between its neighbours,
+// Shift 10x finer) and never adds one; a double-click on a point deletes it,
+// right-click opens the point / curve menu, Alt-drag on a segment bends it
+// (the end point's tension). Every gesture is one undo step.
+// J-106: each curve is Smooth (SmoothCurve through every point; new curves) or
+// Straight (segments + tension; older states), switched by one title-strip
+// button. Alt-drag only bends Straight segments: on a Smooth curve it does
+// nothing and the hint points at the button (tensions are kept for Straight).
+
+// One point editor's interaction state (per view and plugin instance).
+struct PtEdit {
+  int drag = -1;  // point being moved
+  int bend = -1;  // segment being bent (index of its end point)
+  ImVec2 anchorMouse{0, 0}, anchorPt{0, 0};  // re-anchored when Shift toggles
+  bool fine = false, moved = false;
+  float bendY = 0, bendSign = 1;
+  double bendK = 0;
+  int fresh = -1;  // point added by the last click: the double-click that follows keeps it
+  double freshTime = -1;
+  int menu = -1;      // point the context menu edits (-1: the curve)
+  bool open = false;  // a gesture holds its undo step open
+};
+
 struct ConvUi {
   bool db = true;
   bool eqTab = false;  // impulse view / equalizer view
   const Sample* cached = nullptr;
   int cachedW = 0;
   std::vector<float> colL, colR;  // per-column peaks
-  int drag = -1;
-  int envDrag = -1, eqDrag = -1;  // dragged envelope / EQ point
+  int drag = -1;                  // IR handle: 0 fade-in end, 1 fade-out start, 2 length
+  float grab = 0;                 // handle x minus pointer x at the press
+  PtEdit env, eq;
   const Sample* specOf = nullptr;
-  std::vector<float> specDb;  // IR magnitude (dB) on 240 log bins, 20 Hz .. 20 kHz
+  int specModel = -1;
+  std::vector<float> specDb;  // IR magnitude (dB) on 240 bins along the EQ axis
 };
 std::map<uint64_t, ConvUi> convUi;
+
+bool refModel(const PluginState& st) { return static_cast<int>(val(st, CvModel) + 0.5f) == 1; }
+
+void loadIr(App& a, const PluginTarget& t, const std::string& path) {
+  const PluginState* st = t.state(a.doc.song());
+  if (!st || !isAudioFile(path)) return;
+  PluginState ns = *st;
+  ConvData cd = parseConvData(ns.data);
+  cd.path = path;  // J-97 drop rule: the IR's own settings after the path stay
+  ns.data = formatConvData(cd);
+  if (static_cast<size_t>(CvSource) < ns.params.size()) ns.params[CvSource] = SrcFile;
+  setPluginState(a, t, ns, "load impulse");
+}
 
 void openIrDialog(App& a, const PluginTarget& t, const std::string& cur) {
   a.fileDialog = {};
   a.fileDialog.open = true;
-  a.fileDialog.title = "Load impulse response";
+  a.fileDialog.title = i18n::tr("Load impulse response");
   const char* h = gl::platform::homeEnv();
   a.fileDialog.dir = !cur.empty() ? fs::path(cur).parent_path().string() : (h ? h : ".");
   a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3"};
   PluginTarget tt = t;
-  a.fileDialog.onOk = [&a, tt](const std::string& p) {
-    if (const PluginState* st = tt.state(a.doc.song())) {
-      PluginState ns = *st;
-      ConvData cd = parseConvData(ns.data);
-      cd.path = p;
-      ns.data = formatConvData(cd);
-      ns.params[CvSource] = SrcFile;
-      setPluginState(a, tt, ns, "load impulse");
-    }
-  };
+  a.fileDialog.onOk = [&a, tt](const std::string& p) { loadIr(a, tt, p); };
 }
 
-void irView(App& a, const PluginTarget& t, const PluginState& st, float width, float height) {
-  const auto& P = pal();
-  ConvUi& u = convUi[t.key()];
-  IrView v = convolverIr(st);
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  ImVec2 p = ImGui::GetCursorScreenPos();
-  ImGui::InvisibleButton("##irview", ImVec2(width, height));
-  ImVec2 p1(p.x + width, p.y + height);
-  graphBg(dl, p, p1);
-  // Drop an audio file onto the view to load it.
+// The last item accepts a browser file (audio files load as the impulse).
+// Returns true while a file is dragged over it.
+bool irDropTarget(App& a, const PluginTarget& t) {
+  bool over = false;
   if (ImGui::BeginDragDropTarget()) {
-    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_FILE")) {
-      std::string path(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
-      if (isAudioFile(path)) {
-        PluginState ns = st;
-        ConvData cd = parseConvData(ns.data);
-        cd.path = path;
-        ns.data = formatConvData(cd);
-        ns.params[CvSource] = SrcFile;
-        setPluginState(a, t, ns, "load impulse");
-      }
-    }
+    over = true;
+    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_FILE"))
+      loadIr(a, t, std::string(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize)));
     ImGui::EndDragDropTarget();
   }
+  return over;
+}
+bool fileDragActive() {
+  const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+  return pl && pl->IsDataType("GL_FILE");
+}
+
+// Curve value at t with the active IR build's evaluator (J-106: the same objects
+// the IR build uses, so the drawing is what is heard): Straight = that build's
+// segment shapes, Smooth = SmoothCurve.
+std::vector<double> sampleCurve(bool ref, bool smooth, const std::vector<EnvPoint>& p, double span, int n, double flat) {
+  std::vector<double> out(static_cast<size_t>(n) + 1, flat);
+  if (p.empty()) return out;
+  const detail::ref::EnvEval ev(p, smooth);
+  const ConvCurve cv(p, smooth);
+  for (int i = 0; i <= n; ++i) {
+    const double t = span * i / n;
+    out[static_cast<size_t>(i)] = ref ? ev.at(t) : cv.at(t);
+  }
+  return out;
+}
+double curveAt(bool ref, bool smooth, const std::vector<EnvPoint>& p, double t) {
+  if (p.empty()) return 0.5;
+  return ref ? detail::ref::EnvEval(p, smooth).at(t) : ConvCurve(p, smooth).at(t);
+}
+
+// EQ axes of the two IR builds: x 0..1 <-> Hz, curve value 0..1 <-> dB.
+struct EqAxis {
+  bool ref = false;
+  double hz(double x) const {
+    if (!ref) return convEqHz(x);
+    double lo = 0, hi = 22050;  // the reference axis is monotonic: bisection
+    for (int i = 0; i < 48; ++i) {
+      const double m = 0.5 * (lo + hi);
+      (detail::ref::eqX(m) < x ? lo : hi) = m;
+    }
+    return 0.5 * (lo + hi);
+  }
+  double x(double f) const { return ref ? detail::ref::eqX(f) : std::log(std::max(f, 1.0) / 20.0) / std::log(1000.0); }
+  double db(double v) const { return ref ? 20.0 * std::log10(std::max(1e-6, static_cast<double>(detail::ref::eqGain(v)))) : (v - 0.5) * 36.0; }
+  double v(double d) const { return ref ? std::log(2.0 * std::pow(10.0, d / 20.0) + 1.0) / (2.0 * std::log(3.0)) : 0.5 + d / 36.0; }
+};
+
+std::string hzText(double hz) {
+  char b[32];
+  if (hz >= 1000)
+    std::snprintf(b, sizeof b, hz >= 10000 ? "%.1f kHz" : "%.2f kHz", hz / 1000.0);
+  else
+    std::snprintf(b, sizeof b, "%.0f Hz", hz);
+  return b;
+}
+std::string dbText(double d) {
+  char b[24];
+  if (d < -90)
+    std::snprintf(b, sizeof b, "-inf dB");
+  else
+    std::snprintf(b, sizeof b, "%+.1f dB", std::fabs(d) < 0.05 ? 0.0 : d);
+  return b;
+}
+std::string secText(double s) {
+  char b[24];
+  if (s < 1.0)
+    std::snprintf(b, sizeof b, "%.0f ms", s * 1000.0);
+  else
+    std::snprintf(b, sizeof b, s < 10 ? "%.2f s" : "%.1f s", s);
+  return b;
+}
+
+// Plot rectangle: x p0.x..p1.x = 0..span, y p1.y..p0.y = value 0..1.
+struct Plot {
+  ImVec2 p0{0, 0}, p1{0, 0};
+  double span = 1;
+  float X(double t) const { return p0.x + static_cast<float>(t / span) * (p1.x - p0.x); }
+  float Y(double v) const { return p1.y - static_cast<float>(v) * (p1.y - p0.y); }
+  double T(float x) const { return std::clamp((x - p0.x) / std::max(1.0f, p1.x - p0.x), 0.0f, 1.0f) * span; }
+  double V(float y) const { return std::clamp((p1.y - y) / std::max(1.0f, p1.y - p0.y), 0.0f, 1.0f); }
+  ImVec2 at(const EnvPoint& q) const { return ImVec2(X(q.t), Y(q.v)); }
+};
+
+// Area between a polyline and a horizontal base, `top` alpha at the line fading to `base` alpha.
+void fillToBase(ImDrawList* dl, const std::vector<ImVec2>& pts, float baseY, ImU32 col, float top, float base) {
+  if (pts.size() < 2) return;
+  const ImU32 ct = theme::withAlpha(col, top), cb = theme::withAlpha(col, base);
+  const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+  const int n = static_cast<int>(pts.size()) - 1;
+  dl->PrimReserve(n * 6, n * 4);
+  for (int i = 0; i < n; ++i) {
+    const ImDrawIdx v0 = static_cast<ImDrawIdx>(dl->_VtxCurrentIdx);
+    dl->PrimWriteVtx(pts[static_cast<size_t>(i)], uv, ct);
+    dl->PrimWriteVtx(pts[static_cast<size_t>(i) + 1], uv, ct);
+    dl->PrimWriteVtx(ImVec2(pts[static_cast<size_t>(i) + 1].x, baseY), uv, cb);
+    dl->PrimWriteVtx(ImVec2(pts[static_cast<size_t>(i)].x, baseY), uv, cb);
+    dl->PrimWriteIdx(v0);
+    dl->PrimWriteIdx(static_cast<ImDrawIdx>(v0 + 1));
+    dl->PrimWriteIdx(static_cast<ImDrawIdx>(v0 + 2));
+    dl->PrimWriteIdx(v0);
+    dl->PrimWriteIdx(static_cast<ImDrawIdx>(v0 + 2));
+    dl->PrimWriteIdx(static_cast<ImDrawIdx>(v0 + 3));
+  }
+}
+
+// Anti-aliased curve with a soft glow.
+void glowLine(ImDrawList* dl, const std::vector<ImVec2>& pts, ImU32 col, float th) {
+  if (pts.size() < 2) return;
+  dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), theme::withAlpha(col, 0.10f), 0, th * 4.0f);
+  dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), theme::withAlpha(col, 0.22f), 0, th * 2.2f);
+  dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), col, 0, th);
+}
+
+// Point handle: 0 idle, 1 hovered, 2 dragged (glow on 1 and 2).
+void pointHandle(ImDrawList* dl, ImVec2 c, ImU32 col, int state, float s, bool small) {
+  const float r = (small ? 2.6f : 4.2f) * s;
+  if (state > 0) {
+    dl->AddCircleFilled(c, r * 3.4f, theme::withAlpha(col, state == 2 ? 0.14f : 0.09f), 28);
+    dl->AddCircleFilled(c, r * 2.2f, theme::withAlpha(col, state == 2 ? 0.26f : 0.18f), 24);
+  }
+  const float rr = state > 0 ? r * 1.3f : r;
+  dl->AddCircleFilled(c, rr + 1.6f * s, IM_COL32(0, 0, 0, 150), 20);
+  skin::gradientCircle(dl, c, rr, skin::lighten(col, state == 2 ? 0.55f : 0.30f), state == 2 ? skin::lighten(col, 0.15f) : col);
+  dl->AddCircle(c, rr, theme::withAlpha(skin::lighten(col, 0.6f), 0.55f), 20, 1.0f);
+}
+
+// Mono readout box anchored above `at` (below it near the top), kept inside [c0, c1].
+void readout(App& a, ImDrawList* dl, ImVec2 at, const std::string& s, ImVec2 c0, ImVec2 c1, const skin::Skin& K, float fs, ImU32 edge) {
+  ImGui::PushFont(a.fontMono, fs);
+  const ImVec2 ts = ImGui::CalcTextSize(s.c_str());
+  const float px = std::round(fs * 0.5f), py = std::round(fs * 0.25f);
+  ImVec2 b0(at.x - ts.x * 0.5f - px, at.y - ts.y - 2 * py - fs);
+  if (b0.y < c0.y + 2) b0.y = at.y + fs;
+  b0.x = std::clamp(b0.x, c0.x + 2, std::max(c0.x + 2, c1.x - ts.x - 2 * px - 2));
+  b0 = ImVec2(std::round(b0.x), std::round(b0.y));
+  const ImVec2 b1(b0.x + ts.x + 2 * px, b0.y + ts.y + 2 * py);
+  dl->AddRectFilled(ImVec2(b0.x, b0.y + 1), ImVec2(b1.x, b1.y + 2), IM_COL32(0, 0, 0, 80), 4);
+  dl->AddRectFilled(b0, b1, theme::withAlpha(skin::darken(K.graphBg, 0.45f), 0.94f), 4);
+  dl->AddRect(b0, b1, theme::withAlpha(edge, 0.55f), 4, 0, 1.0f);
+  dl->AddText(ImVec2(b0.x + px, b0.y + py), K.text, s.c_str());
+  ImGui::PopFont();
+}
+
+// Nearest point within r of m, or -1.
+int hitPoint(const Plot& P, const std::vector<EnvPoint>& pts, ImVec2 m, float r) {
+  int hot = -1;
+  float best = r;
+  for (size_t i = 0; i < pts.size(); ++i) {
+    const ImVec2 q = P.at(pts[i]);
+    const float d = std::hypot(m.x - q.x, m.y - q.y);
+    if (d <= best) best = d, hot = static_cast<int>(i);
+  }
+  return hot;
+}
+
+struct PtSpec {
+  Plot pl;
+  float hitR = 9;
+  bool ref = false;
+  bool smooth = false;      // J-106: Smooth curve (no Alt-bend, no straighten)
+  double flat = 0.5;        // value of an empty list (shown as two end points)
+  uint64_t key = 0;         // undo merge key of a gesture
+  const char* what = "";    // undo label of a move
+  const char* unity = "";   // menu item that sets a point to the neutral value
+};
+struct PtHover {
+  int hot = -1, bend = -1;  // hovered point / bendable segment (end point index)
+  bool flat = false;        // the list is empty (its two end points are drawn)
+};
+using PtCommit = std::function<void(const std::vector<EnvPoint>&, const std::string&, uint64_t)>;
+
+// Point interaction on the last item (an InvisibleButton over the plot).
+// `pts` comes in as stored and leaves as drawn (an empty list as its two
+// flat end points); changes go through `commit` (merge key 0 = own step).
+PtHover editPoints(App& a, PtEdit& s, const PtSpec& c, std::vector<EnvPoint>& pts, const PtCommit& commit) {
+  ImGuiIO& io = ImGui::GetIO();
+  const Plot& P = c.pl;
+  const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
+  PtHover h;
+  h.flat = pts.empty();
+  if (h.flat) pts = {EnvPoint{0, c.flat, 0, 0}, EnvPoint{P.span, c.flat, 0, 0}};
+  const int n0 = static_cast<int>(pts.size());
+  if (s.drag >= n0) s.drag = -1;  // the list changed under the gesture (undo, preset)
+  if (s.bend >= n0 || s.bend == 0) s.bend = -1;
+  if (s.fresh >= n0) s.fresh = -1;
+  const ImVec2 m = io.MousePos;
+  if (hovered || active) {
+    h.hot = hitPoint(P, pts, m, c.hitR);
+    if (h.hot < 0 && io.KeyAlt && !c.smooth && pts.size() >= 2)  // tension only shapes Straight segments
+      for (size_t i = 1; i < pts.size(); ++i) {
+        const float xa = P.X(pts[i - 1].t), xb = P.X(pts[i].t);
+        if (m.x < xa || m.x > xb || xb - xa < 3) continue;
+        if (std::fabs(m.y - P.Y(curveAt(c.ref, false, pts, P.T(m.x)))) <= c.hitR * 1.5f) h.bend = static_cast<int>(i);
+        break;
+      }
+  }
+  bool changed = false, cleared = false;
+  std::string label = c.what;
+  uint64_t key = c.key;
+  const double now = ImGui::GetTime();
+  if (ImGui::IsItemActivated()) {
+    a.doc.endGesture();  // every gesture starts its own undo step
+    s.open = false;
+    s.drag = s.bend = -1;
+    s.moved = false;
+    const bool keepFresh = h.hot >= 0 && h.hot == s.fresh && now - s.freshTime < io.MouseDoubleClickTime * 2.0;
+    if (io.MouseClickedCount[0] >= 2 && h.hot >= 0 && !keepFresh) {  // double-click on a point: delete it
+      pts.erase(pts.begin() + h.hot);
+      changed = true, label = "delete point", key = 0;
+      h.hot = s.fresh = -1;
+    } else if (h.bend > 0) {  // Alt on a segment: bend it
+      s.bend = h.bend;
+      s.bendY = m.y, s.bendK = pts[static_cast<size_t>(s.bend)].k;
+      std::vector<EnvPoint> seg = {pts[static_cast<size_t>(s.bend) - 1], pts[static_cast<size_t>(s.bend)]};
+      seg[1].k = 0.5;
+      const double mid = curveAt(c.ref, false, seg, 0.5 * (seg[0].t + seg[1].t)), lin = 0.5 * (seg[0].v + seg[1].v);
+      s.bendSign = mid >= lin ? 1.0f : -1.0f;
+    } else if (h.hot >= 0) {  // on a point: move it (never adds one)
+      s.drag = h.hot;
+      s.anchorMouse = m, s.anchorPt = P.at(pts[static_cast<size_t>(h.hot)]), s.fine = io.KeyShift;
+    } else if (c.smooth && io.KeyAlt) {  // J-106: Alt-drag bends Straight segments only; nothing to do on a Smooth curve
+    } else if (m.x >= P.p0.x && m.x <= P.p1.x && m.y >= P.p0.y && m.y <= P.p1.y) {  // empty space: exactly one new point, dragged from here on
+      EnvPoint q;
+      q.t = P.T(m.x), q.v = P.V(m.y);
+      auto it = std::upper_bound(pts.begin(), pts.end(), q.t, [](double x, const EnvPoint& e) { return x < e.t; });
+      s.drag = static_cast<int>(it - pts.begin());
+      pts.insert(it, q);
+      s.anchorMouse = m, s.anchorPt = P.at(q), s.fine = io.KeyShift;
+      s.fresh = s.drag, s.freshTime = now;
+      changed = true, label = "add point";
+    }
+  }
+  const int n = static_cast<int>(pts.size());
+  if (active && io.MouseDown[0] && s.drag >= 0 && s.drag < n) {
+    if (io.KeyShift != s.fine) s.anchorPt = P.at(pts[static_cast<size_t>(s.drag)]), s.anchorMouse = m, s.fine = io.KeyShift;
+    s.moved = s.moved || m.x != s.anchorMouse.x || m.y != s.anchorMouse.y;
+    if (s.moved) {
+      const float g = s.fine ? 0.1f : 1.0f;
+      const ImVec2 to(s.anchorPt.x + (m.x - s.anchorMouse.x) * g, s.anchorPt.y + (m.y - s.anchorMouse.y) * g);
+      EnvPoint& q = pts[static_cast<size_t>(s.drag)];
+      const double lo = s.drag > 0 ? pts[static_cast<size_t>(s.drag) - 1].t : 0.0;
+      const double hi = s.drag + 1 < n ? pts[static_cast<size_t>(s.drag) + 1].t : P.span;
+      const double nt = std::clamp(P.T(to.x), lo, hi), nv = P.V(to.y);
+      if (nt != q.t || nv != q.v) q.t = nt, q.v = nv, changed = true;
+    }
+  }
+  if (active && io.MouseDown[0] && s.bend > 0 && s.bend < n) {
+    if (io.KeyShift != s.fine) s.bendY = m.y, s.bendK = pts[static_cast<size_t>(s.bend)].k, s.fine = io.KeyShift;
+    const float range = std::max(40.0f, (P.p1.y - P.p0.y) * 0.5f) * (s.fine ? 10.0f : 1.0f);
+    const double k = std::clamp(s.bendK + s.bendSign * (s.bendY - m.y) / range, -1.0, 1.0);
+    if (m.y != s.bendY && k != pts[static_cast<size_t>(s.bend)].k) pts[static_cast<size_t>(s.bend)].k = k, changed = true, label = "bend segment";
+  }
+  if (c.smooth && io.KeyAlt && (hovered || active))
+    a.setHint(i18n::tr("Bending works on straight segments: switch the curve to STRAIGHT (button above the graph)"));
+  // Context menu: the point under the pointer, else the whole curve.
+  if (hovered && !active && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    s.menu = h.hot;
+    ImGui::OpenPopup("##ptmenu");
+  }
+  if (ImGui::BeginPopup("##ptmenu")) {
+    const int i = s.menu < n ? s.menu : -1;
+    if (i >= 0) {
+      EnvPoint& q = pts[static_cast<size_t>(i)];
+      if (ImGui::MenuItem(i18n::tr("Delete point"))) pts.erase(pts.begin() + i), changed = true, label = "delete point", key = 0;
+      else if (ImGui::MenuItem(i18n::tr("Straighten segment"), nullptr, false, !c.smooth && i > 0 && q.k != 0)) q.k = 0, changed = true, label = "straighten segment", key = 0;
+      else if (ImGui::MenuItem(c.unity, nullptr, false, q.v != c.flat)) q.v = c.flat, changed = true, label = "reset point", key = 0;
+      ImGui::Separator();
+    }
+    if (ImGui::MenuItem(i18n::tr("Reset curve"), nullptr, false, !h.flat)) cleared = changed = true, label = "reset curve", key = 0;
+    ImGui::EndPopup();
+  }
+  if (changed) {
+    commit(cleared ? std::vector<EnvPoint>{} : pts, label, key);
+    if (key) s.open = true;
+    if (cleared) pts = {EnvPoint{0, c.flat, 0, 0}, EnvPoint{P.span, c.flat, 0, 0}};
+    h.flat = cleared || (h.flat && !changed);
+    if (!key) a.doc.endGesture();
+  }
+  // End of a gesture: release (also outside the graph), lost focus, deleted point.
+  if ((s.drag >= 0 || s.bend >= 0 || s.open) && (!active || !io.MouseDown[0])) {
+    s.drag = s.bend = -1;
+    s.moved = false;
+    if (s.open) a.doc.endGesture();
+    s.open = false;
+  }
+  return h;
+}
+
+void drawPoints(ImDrawList* dl, const Plot& P, const std::vector<EnvPoint>& pts, const PtEdit& s, const PtHover& h, ImU32 col, float sc) {
+  const bool small = pts.size() > 32;
+  for (size_t i = 0; i < pts.size(); ++i) {
+    const int st = static_cast<int>(i) == s.drag ? 2 : static_cast<int>(i) == h.hot ? 1 : 0;
+    if (st == 0) pointHandle(dl, P.at(pts[i]), col, 0, sc, small);
+  }
+  for (size_t i = 0; i < pts.size(); ++i) {  // the live ones on top
+    const int st = static_cast<int>(i) == s.drag ? 2 : static_cast<int>(i) == h.hot ? 1 : 0;
+    if (st > 0) pointHandle(dl, P.at(pts[i]), col, st, sc, false);
+  }
+}
+
+// Highlights the segment ending at point `b` (Alt hover / bend in progress).
+void segmentGlow(ImDrawList* dl, const Plot& P, const std::vector<EnvPoint>& pts, int b, bool ref, ImU32 col, float sc) {
+  if (b <= 0 || b >= static_cast<int>(pts.size())) return;  // only Straight curves bend (no smooth flag needed)
+  const EnvPoint &q0 = pts[static_cast<size_t>(b) - 1], &q1 = pts[static_cast<size_t>(b)];
+  std::vector<ImVec2> seg;
+  for (int i = 0; i <= 32; ++i) {
+    const double t = q0.t + (q1.t - q0.t) * i / 32.0;
+    seg.push_back(ImVec2(P.X(t), P.Y(curveAt(ref, false, pts, t))));
+  }
+  dl->AddPolyline(seg.data(), static_cast<int>(seg.size()), theme::withAlpha(col, 0.35f), 0, 7.0f * sc);
+  const ImVec2 mid = seg[16];
+  dl->AddCircleFilled(mid, 3.5f * sc, col, 16);
+}
+
+void publishPoints(const char* name, const Plot& P, const std::vector<EnvPoint>& pts, bool flat, const PtEdit& s, const PtHover& h) {
+  pui::DevPoints d;
+  d.x0 = P.p0.x, d.y0 = P.p0.y, d.x1 = P.p1.x, d.y1 = P.p1.y, d.span = P.span;
+  if (!flat)
+    for (const EnvPoint& q : pts) d.pts.push_back({q.t, q.v, q.k});
+  d.drag = s.drag, d.hot = h.hot;
+  pui::devPointsSet(name, d);
+}
+
+// Impulse view: L / R waveform lanes on a time axis, the trim / fade handles,
+// the tempo-length marker and the IR amplitude envelope's points.
+void irView(App& a, const PluginTarget& t, const PluginState& st, ConvUi& u, ImVec2 r0, ImVec2 r1, float sc, const skin::Skin& K) {
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  IrView v = convolverIr(st);
+  const bool ref = refModel(st);
+  const float fs = std::clamp(9.5f * sc, 10.0f, 18.0f);
+  Plot P;
+  P.p0 = ImVec2(r0.x + 46 * sc, r0.y + 22 * sc);
+  P.p1 = ImVec2(r1.x - 14 * sc, r1.y - 22 * sc);
+  const float hitR = std::max(8.0f, 9.0f * sc);
+  ImGui::SetCursorScreenPos(ImVec2(P.p0.x - hitR, P.p0.y - hitR));
+  ImGui::InvisibleButton("##irplot", ImVec2(P.p1.x - P.p0.x + 2 * hitR, P.p1.y - P.p0.y + 2 * hitR));
+  const bool dropping = irDropTarget(a, t);
+  const ImU32 grid = K.graphGrid, gridS = K.graphGridStrong, txt = K.graphText;
+  const ImU32 wave = K.accent2C(), envCol = skin::hex(0xF8AD10), handleCol = K.text;
   if (!v.ir) {
-    const char* msg = v.error.empty() ? "No impulse" : v.error.c_str();
-    ImVec2 ts = ImGui::CalcTextSize(msg);
-    dl->AddText(ImVec2(p.x + (width - ts.x) * 0.5f, p.y + (height - ts.y) * 0.5f), P.textDim, msg);
-    smallText(a, dl, ImVec2(p.x + 10, p1.y - 18), P.textFaint, "Drop an audio file here or press Load");
+    const char* msg = v.error.empty() ? i18n::tr("No impulse") : v.error.c_str();
+    ImGui::PushFont(a.fontBold, std::clamp(12.0f * sc, 11.0f, 22.0f));
+    const ImVec2 ts = ImGui::CalcTextSize(msg);
+    dl->AddText(ImVec2(std::round((r0.x + r1.x - ts.x) * 0.5f), std::round((r0.y + r1.y) * 0.5f - ts.y)), K.textDim, msg);
+    ImGui::PopFont();
+    ImGui::PushFont(a.fontMono, fs);
+    const char* sub = i18n::tr("Drop an audio file here or press LOAD");
+    const ImVec2 ss = ImGui::CalcTextSize(sub);
+    dl->AddText(ImVec2(std::round((r0.x + r1.x - ss.x) * 0.5f), std::round((r0.y + r1.y) * 0.5f + 4 * sc)), txt, sub);
+    ImGui::PopFont();
+    if (dropping || fileDragActive()) dl->AddRect(r0, r1, theme::withAlpha(K.select, dropping ? 0.9f : 0.45f), 5 * sc, 0, 2.0f * sc);
     return;
   }
   const Sample& ir = *v.ir;
@@ -99,33 +464,50 @@ void irView(App& a, const PluginTarget& t, const PluginState& st, float width, f
   // Time axis spans the longest length the current trim allows.
   double avail = std::max(len, std::min(60.0, (v.rawSeconds - val(st, CvStart) * 0.001) * val(st, CvStretch)));
   avail = std::max(avail, 0.02);
-  const float x0 = p.x + 10, x1 = p1.x - 10, w = x1 - x0;
-  auto X = [&](double sec) { return x0 + static_cast<float>(sec / avail) * w; };
-  // Ruler.
-  double step = avail > 6 ? 1.0 : avail > 3 ? 0.5 : avail > 1.2 ? 0.25 : avail > 0.5 ? 0.1 : avail > 0.2 ? 0.05 : 0.01;
-  for (double tt = 0; tt <= avail + 1e-9; tt += step) {
-    float x = X(tt);
-    dl->AddLine(ImVec2(x, p.y + 18), ImVec2(x, p1.y - 6), P.gridStep);
-    char b[24];
-    if (avail < 1.2)
-      std::snprintf(b, sizeof b, "%.0f ms", tt * 1000);
-    else
-      std::snprintf(b, sizeof b, "%.2g s", tt);
-    smallText(a, dl, ImVec2(x + 3, p.y + 5), P.textFaint, b);
+  P.span = avail;
+  const float w = P.p1.x - P.p0.x, top = P.p0.y, bot = P.p1.y;
+  dl->PushClipRect(r0, r1, true);
+  // Time grid + labels (steps at least ~64 px apart).
+  {
+    static const double steps[] = {0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20};
+    double step = steps[std::size(steps) - 1];
+    for (double s : steps)
+      if (s / avail * w >= 64.0f * sc) {
+        step = s;
+        break;
+      }
+    ImGui::PushFont(a.fontMono, fs);
+    for (int i = 0;; ++i) {
+      const double tt = i * step;
+      if (tt > avail + 1e-9) break;
+      const float x = std::round(P.X(tt)) + 0.5f;
+      for (int k = 1; k < 5 && i * step + k * step / 5 < avail; ++k) {
+        const float xm = std::round(P.X(tt + k * step / 5)) + 0.5f;
+        dl->AddLine(ImVec2(xm, bot), ImVec2(xm, bot + 3 * sc), grid, 1.0f);
+      }
+      dl->AddLine(ImVec2(x, top), ImVec2(x, bot), i == 0 ? gridS : grid, 1.0f);
+      dl->AddLine(ImVec2(x, bot), ImVec2(x, bot + 5 * sc), gridS, 1.0f);
+      std::string lb = i == 0 ? std::string("0") : secText(tt);
+      const ImVec2 ts = ImGui::CalcTextSize(lb.c_str());
+      float lx = x - ts.x * 0.5f;
+      lx = std::clamp(lx, P.p0.x - 4 * sc, P.p1.x - ts.x);
+      dl->AddText(ImVec2(std::round(lx), std::round(bot + 6 * sc)), txt, lb.c_str());
+    }
+    ImGui::PopFont();
   }
   // Column peaks (cached per IR / width).
-  int cols = static_cast<int>(w);
-  int used = std::max(1, static_cast<int>(w * len / avail));
+  const int cols = static_cast<int>(w);
+  const int used = std::max(1, static_cast<int>(w * len / avail));
   if (u.cached != v.ir.get() || u.cachedW != cols) {
     u.cached = v.ir.get();
     u.cachedW = cols;
     u.colL.assign(static_cast<size_t>(used), 0.f);
     u.colR.assign(static_cast<size_t>(used), 0.f);
-    size_t n = ir.frames();
+    size_t nf = ir.frames();
     for (int c = 0; c < used; ++c) {
-      size_t a0 = static_cast<size_t>(static_cast<double>(c) / used * n), a1 = std::max(a0 + 1, static_cast<size_t>(static_cast<double>(c + 1) / used * n));
+      size_t a0 = static_cast<size_t>(static_cast<double>(c) / used * nf), a1 = std::max(a0 + 1, static_cast<size_t>(static_cast<double>(c + 1) / used * nf));
       float ml = 0, mr = 0;
-      for (size_t i = a0; i < a1 && i < n; ++i) {
+      for (size_t i = a0; i < a1 && i < nf; ++i) {
         ml = std::max(ml, std::fabs(ir.left[i]));
         mr = std::max(mr, std::fabs(ir.right[i]));
       }
@@ -135,158 +517,236 @@ void irView(App& a, const PluginTarget& t, const PluginState& st, float width, f
   }
   float gmax = 1e-9f;
   for (size_t c = 0; c < u.colL.size(); ++c) gmax = std::max({gmax, u.colL[c], u.colR[c]});
-  const float top = p.y + 22, bot = p1.y - 8, laneH = (bot - top - 6) * 0.5f;
+  const float gap = 4 * sc, laneH = (bot - top - gap) * 0.5f;
+  ImGui::PushFont(a.fontMonoBold, fs);
   for (int lane = 0; lane < 2; ++lane) {
     const std::vector<float>& col = lane ? u.colR : u.colL;
-    float base = top + laneH * (lane + 1) + lane * 6;
-    dl->AddLine(ImVec2(x0, base), ImVec2(x1, base), P.gridBar);
-    smallText(a, dl, ImVec2(x1 - 10, base - laneH + 2), P.textFaint, lane ? "R" : "L");
-    for (size_t c = 0; c < col.size(); ++c) {
-      double n = col[c] / gmax;
-      double hgt = u.db ? std::clamp((20 * std::log10(std::max(1e-6, n)) + 60) / 60, 0.0, 1.0) : n;
-      float x = x0 + static_cast<float>(c);
-      dl->AddLine(ImVec2(x, base), ImVec2(x, base - static_cast<float>(hgt) * laneH), theme::withAlpha(P.text, 0.55f));
+    const float mid = top + laneH * 0.5f + lane * (laneH + gap), half = laneH * 0.5f - 1;
+    dl->AddLine(ImVec2(P.p0.x, mid), ImVec2(P.p1.x, mid), gridS, 1.0f);
+    std::vector<ImVec2> upper, lower;
+    const size_t step = std::max<size_t>(1, col.size() / 600);
+    for (size_t c = 0; c < col.size(); c += step) {
+      const double nrm = col[c] / gmax;
+      const double hgt = u.db ? std::clamp((20 * std::log10(std::max(1e-6, nrm)) + 60) / 60, 0.0, 1.0) : nrm;
+      const float x = P.p0.x + static_cast<float>(c) + 0.5f, d = static_cast<float>(hgt) * half;
+      upper.push_back(ImVec2(x, mid - d));
+      lower.push_back(ImVec2(x, mid + d));
     }
+    fillToBase(dl, upper, mid, wave, 0.55f, 0.18f);
+    fillToBase(dl, lower, mid, wave, 0.55f, 0.18f);
+    if (upper.size() >= 2) {
+      dl->AddPolyline(upper.data(), static_cast<int>(upper.size()), theme::withAlpha(wave, 0.85f), 0, 1.0f);
+      dl->AddPolyline(lower.data(), static_cast<int>(lower.size()), theme::withAlpha(wave, 0.85f), 0, 1.0f);
+    }
+    dl->AddText(ImVec2(std::round(P.p0.x - 12 * sc), std::round(mid - fs * 0.6f)), txt, lane ? "R" : "L");
   }
+  ImGui::PopFont();
   // Region beyond the length.
-  if (X(len) < x1) dl->AddRectFilled(ImVec2(X(len), top - 4), ImVec2(x1, bot), theme::withAlpha(P.surface800, 0.6f));
-  // Envelope overlay (fade in, fade out, tighten) on a 0..1 scale.
-  double fin = val(st, CvFadeIn) * 0.001, fout = val(st, CvFadeOut) * len, tight = val(st, CvTighten) * 9.0;
-  std::vector<ImVec2> env;
-  for (int i = 0; i <= 160; ++i) {
-    double tt = len * i / 160.0, g = 1.0;
-    if (fin > 1e-4 && tt < fin) g *= 0.5 - 0.5 * std::cos(kPiD * tt / fin);
-    if (fout > 1e-4 && len - tt < fout) g *= 0.5 - 0.5 * std::cos(kPiD * (len - tt) / fout);
-    if (tight > 0) g *= std::exp(-tight * tt / len);
-    env.push_back(ImVec2(X(tt), bot - static_cast<float>(g) * (bot - top)));
+  if (P.X(len) < P.p1.x - 1) {
+    const float xl = P.X(len);
+    dl->AddRectFilled(ImVec2(xl, top), ImVec2(P.p1.x, bot), theme::withAlpha(K.graphBg, 0.70f));
+    for (float x = xl - (bot - top); x < P.p1.x; x += 7 * sc)  // hatching
+      dl->AddLine(ImVec2(std::max(x, xl), top + std::max(0.0f, xl - x)), ImVec2(std::min(x + (bot - top), P.p1.x), bot - std::max(0.0f, x + (bot - top) - P.p1.x)),
+                  theme::withAlpha(grid, 0.6f), 1.0f);
   }
-  dl->AddPolyline(env.data(), static_cast<int>(env.size()), P.paper, 0, 1.6f);
+  // Fade / tighten shape over the IR (0..1 scale).
+  const double fin = val(st, CvFadeIn) * 0.001, fout = val(st, CvFadeOut) * len, tight = val(st, CvTighten) * 9.0;
+  {
+    std::vector<ImVec2> env;
+    for (int i = 0; i <= 160; ++i) {
+      double tt = len * i / 160.0, g = 1.0;
+      if (fin > 1e-4 && tt < fin) g *= 0.5 - 0.5 * std::cos(kPiD * tt / fin);
+      if (fout > 1e-4 && len - tt < fout) g *= 0.5 - 0.5 * std::cos(kPiD * (len - tt) / fout);
+      if (tight > 0) g *= std::exp(-tight * tt / len);
+      env.push_back(ImVec2(P.X(tt), bot - static_cast<float>(g) * (bot - top)));
+    }
+    dl->AddPolyline(env.data(), static_cast<int>(env.size()), theme::withAlpha(handleCol, 0.75f), 0, 1.4f * sc);
+  }
   // Tempo-synced length marker.
   if (val(st, CvSync) >= 0.5f) {
     double sec = kConvSyncBeats[std::clamp(static_cast<int>(val(st, CvSyncLen) + 0.5f), 0, 6)] * 60.0 / a.doc.song().tempo;
     if (sec < avail) {
-      float x = X(sec);
-      for (float y = top; y < bot; y += 6) dl->AddLine(ImVec2(x, y), ImVec2(x, y + 3), P.accent, 1.5f);
-      smallText(a, dl, ImVec2(x + 4, bot - 14), P.accent, "sync");
+      float x = P.X(sec);
+      for (float y = top; y < bot; y += 6 * sc) dl->AddLine(ImVec2(x, y), ImVec2(x, y + 3 * sc), K.select, 1.5f);
+      ImGui::PushFont(a.fontMono, fs);
+      dl->AddText(ImVec2(x + 4 * sc, top + 2 * sc), K.select, i18n::tr("tempo"));
+      ImGui::PopFont();
     }
   }
-  // Handles: 0 fade-in end, 1 fade-out start, 2 length.
-  ImVec2 hs[3] = {ImVec2(X(std::min(fin, len)), top), ImVec2(X(len - fout), top), ImVec2(X(len), top + (bot - top) * 0.5f)};
   ImGuiIO& io = ImGui::GetIO();
+  const ImVec2 m = io.MousePos;
+  // IR amplitude envelope points (0.5 = unity). The reference build always applies them.
+  const bool envEdit = val(st, CvEnvOn) >= 0.5f || ref;
+  ConvData cd = parseConvData(st.data);
+  std::vector<EnvPoint> pts = cd.env;
+  const int envHot = envEdit && (ImGui::IsItemHovered() || ImGui::IsItemActive()) ? hitPoint(P, pts.empty() ? std::vector<EnvPoint>{EnvPoint{0, 0.5, 0, 0}, EnvPoint{avail, 0.5, 0, 0}} : pts, m, hitR) : -1;
+  // Trim handles: 0 fade-in end, 1 fade-out start, 2 length.
+  const ImVec2 hs[3] = {ImVec2(P.X(std::min(fin, len)), top), ImVec2(P.X(len - fout), top), ImVec2(P.X(len), top + (bot - top) * 0.5f)};
   int hover = -1;
-  for (int i = 0; i < 3; ++i)
-    if (std::fabs(io.MousePos.x - hs[i].x) < 8 && io.MousePos.y > p.y && io.MousePos.y < p1.y &&
-        (i == 2 || std::fabs(io.MousePos.y - hs[i].y) < 12))
-      hover = i;
-  if (ImGui::IsItemActivated()) u.drag = hover;
+  if ((ImGui::IsItemHovered() || ImGui::IsItemActive()) && envHot < 0 && u.env.drag < 0 && u.env.bend < 0)
+    for (int i = 0; i < 3; ++i)
+      if (std::fabs(m.x - hs[i].x) < hitR && (i == 2 ? (m.y > top - hitR && m.y < bot + hitR) : std::fabs(m.y - hs[i].y) < hitR * 1.4f)) hover = i;
+  if (ImGui::IsItemActivated() && hover >= 0) {
+    u.drag = hover;
+    u.grab = hs[hover].x - m.x;
+  }
   if (ImGui::IsItemActive() && u.drag >= 0) {
-    double tt = std::clamp((io.MousePos.x - x0) / w, 0.0f, 1.0f) * avail;
+    const double tt = P.T(m.x + u.grab);
     if (u.drag == 0) dragParam(a, t, CvFadeIn, std::clamp(tt * 1000.0, 0.0, 500.0));
     if (u.drag == 1) dragParam(a, t, CvFadeOut, std::clamp((len - tt) / len, 0.0, 1.0));
     if (u.drag == 2) dragParam(a, t, CvLength, std::clamp(tt, 0.02, 60.0));
   }
-  if (ImGui::IsItemDeactivated()) {
+  if (u.drag >= 0 && (!ImGui::IsItemActive() || !io.MouseDown[0])) {
     u.drag = -1;
     a.doc.endGesture();
   }
-  static const char* names[3] = {"Fade in", "Fade out", "Length"};
-  for (int i = 0; i < 3; ++i) {
-    bool hot = hover == i || u.drag == i;
-    if (i == 2) {
-      dl->AddLine(ImVec2(hs[i].x, top - 4), ImVec2(hs[i].x, bot), hot ? P.paper : P.textDim, hot ? 2.f : 1.f);
-      dl->AddRectFilled(ImVec2(hs[i].x - 4, hs[i].y - 10), ImVec2(hs[i].x + 4, hs[i].y + 10), hot ? P.paper : P.text, 2);
-    } else {
-      dl->AddRectFilled(ImVec2(hs[i].x - 5, hs[i].y - 5), ImVec2(hs[i].x + 5, hs[i].y + 5), hot ? P.paper : P.text, 2);
+  PtHover h;
+  if (envEdit) {
+    PtSpec c;
+    const int mode = curveModeShown(cd.envMode, cd.env);
+    c.pl = P, c.hitR = hitR, c.ref = ref, c.smooth = curveSmooth(mode), c.flat = 0.5, c.key = gestureKey(t, 0xC0E1), c.what = "edit impulse envelope";
+    c.unity = i18n::tr("Set to unity");
+    // A press on a trim handle belongs to the handle (not a new point).
+    if (u.drag < 0) {
+      h = editPoints(a, u.env, c, pts, [&](const std::vector<EnvPoint>& np, const std::string& lbl, uint64_t key) {
+        PluginState ns = st;
+        ConvData nd = parseConvData(st.data);
+        nd.env = np;
+        nd.envMode = mode;  // a new curve keeps the Smooth it was shown with
+        ns.data = formatConvData(nd);
+        setPluginState(a, t, ns, lbl, key);
+      });
+    } else if (pts.empty()) {
+      pts = {EnvPoint{0, 0.5, 0, 0}, EnvPoint{avail, 0.5, 0, 0}};
+      h.flat = true;
     }
-    if (hot) a.setHint(std::string(names[i]) + "   (drag to edit the impulse envelope)");
-  }
-  char info[96];
-  std::snprintf(info, sizeof info, "%.2f s · %.0f Hz · %s", len, rate, v.paths == 4 ? "true stereo" : "stereo");
-  ImVec2 ts = ImGui::CalcTextSize(info);
-  smallText(a, dl, ImVec2(x1 - ts.x * 0.85f - 6, p1.y - 18), P.textDim, info);
-  // IR amplitude envelope (0.5 = unity): double-click adds a point, drag moves, right-click deletes.
-  if (val(st, CvEnvOn) >= 0.5f && u.drag < 0) {
-    ConvData cd = parseConvData(st.data);
-    auto Y = [&](double vv) { return bot - static_cast<float>(vv) * (bot - top); };
-    auto tOf = [&](float x) { return std::clamp((x - x0) / w, 0.0f, 1.0f) * avail; };
-    auto vOf = [&](float y) { return std::clamp((bot - y) / (bot - top), 0.0f, 1.0f); };
+    // Curve, unity line, points.
+    const std::vector<double> cv = sampleCurve(ref, c.smooth, h.flat ? std::vector<EnvPoint>{} : pts, avail, 240, 0.5);
     std::vector<ImVec2> line;
-    for (int i = 0; i <= 200; ++i) {
-      double tt = avail * i / 200.0;
-      line.push_back(ImVec2(X(tt), Y(cd.env.empty() ? 0.5 : envAt(cd.env, tt))));
+    for (size_t i = 0; i < cv.size(); ++i) line.push_back(ImVec2(P.X(avail * static_cast<double>(i) / 240.0), P.Y(cv[i])));
+    for (float x = P.p0.x; x < P.p1.x; x += 8 * sc) dl->AddLine(ImVec2(x, P.Y(0.5)), ImVec2(std::min(x + 4 * sc, P.p1.x), P.Y(0.5)), theme::withAlpha(envCol, 0.35f), 1.0f);
+    glowLine(dl, line, envCol, 1.8f * sc);
+    segmentGlow(dl, P, pts, u.env.bend > 0 ? u.env.bend : h.bend, ref, envCol, sc);
+    drawPoints(dl, P, pts, u.env, h, envCol, sc);
+    publishPoints("conv.env", P, pts, h.flat, u.env, h);
+  } else {
+    pui::devPointsSet("conv.env", pui::DevPoints{});
+  }
+  // Trim handles on top.
+  static const char* names[3] = {i18n::N_("Fade in"), i18n::N_("Fade out"), i18n::N_("Length")};
+  for (int i = 0; i < 3; ++i) {
+    const bool hot = hover == i || u.drag == i;
+    if (i == 2) {
+      dl->AddLine(ImVec2(hs[i].x, top), ImVec2(hs[i].x, bot), hot ? K.text : theme::withAlpha(K.text, 0.6f), hot ? 2.0f * sc : 1.0f * sc);
+      if (hot) dl->AddRectFilled(ImVec2(hs[i].x - 7 * sc, hs[i].y - 14 * sc), ImVec2(hs[i].x + 7 * sc, hs[i].y + 14 * sc), theme::withAlpha(K.text, 0.15f), 4 * sc);
+      skin::raisedFace(dl, ImVec2(hs[i].x - 4 * sc, hs[i].y - 11 * sc), ImVec2(hs[i].x + 4 * sc, hs[i].y + 11 * sc), hot ? skin::lighten(K.text, 0.2f) : K.textDim, 2 * sc);
+    } else {
+      if (hot) dl->AddCircleFilled(hs[i], 11 * sc, theme::withAlpha(K.text, 0.15f), 24);
+      skin::raisedFace(dl, ImVec2(hs[i].x - 5 * sc, hs[i].y - 5 * sc), ImVec2(hs[i].x + 5 * sc, hs[i].y + 5 * sc), hot ? skin::lighten(K.text, 0.2f) : K.textDim, 2 * sc);
     }
-    dl->AddPolyline(line.data(), static_cast<int>(line.size()), P.accent, 0, 1.8f);
-    dl->AddLine(ImVec2(x0, Y(0.5)), ImVec2(x1, Y(0.5)), theme::withAlpha(P.accent, 0.25f));
-    int hot = -1;
-    for (size_t i = 0; i < cd.env.size(); ++i)
-      if (std::hypot(io.MousePos.x - X(cd.env[i].t), io.MousePos.y - Y(cd.env[i].v)) < 7) hot = static_cast<int>(i);
-    bool changed = false;
-    if (ImGui::IsItemActivated() && hot >= 0) u.envDrag = hot;
-    if (ImGui::IsItemActive() && u.envDrag >= 0 && u.envDrag < static_cast<int>(cd.env.size())) {
-      EnvPoint& q = cd.env[static_cast<size_t>(u.envDrag)];
-      double lo = u.envDrag > 0 ? cd.env[static_cast<size_t>(u.envDrag - 1)].t : 0.0;
-      double hi = u.envDrag + 1 < static_cast<int>(cd.env.size()) ? cd.env[static_cast<size_t>(u.envDrag + 1)].t : avail;
-      q.t = std::clamp(static_cast<double>(tOf(io.MousePos.x)), lo, hi);
-      q.v = vOf(io.MousePos.y);
-      changed = true;
-    }
-    if (ImGui::IsItemDeactivated()) u.envDrag = -1;
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && hot < 0) {
-      if (cd.env.empty()) cd.env = {EnvPoint{0, 0.5, 0}, EnvPoint{avail, 0.5, 0}};
-      EnvPoint q;
-      q.t = tOf(io.MousePos.x);
-      q.v = vOf(io.MousePos.y);
-      cd.env.insert(std::upper_bound(cd.env.begin(), cd.env.end(), q.t, [](double x, const EnvPoint& e) { return x < e.t; }), q);
-      changed = true;
-    }
-    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hot >= 0) {
-      cd.env.erase(cd.env.begin() + hot);
-      changed = true;
-    }
-    for (size_t i = 0; i < cd.env.size(); ++i) {
-      bool h = static_cast<int>(i) == hot || static_cast<int>(i) == u.envDrag;
-      dl->AddCircleFilled(ImVec2(X(cd.env[i].t), Y(cd.env[i].v)), h ? 5.5f : 4.f, h ? P.paper : P.accent);
-    }
-    if (hot >= 0 || ImGui::IsItemHovered())
-      a.setHint("IR envelope: double-click adds a point, drag moves it, right-click deletes (middle line = unity)");
-    if (changed) {
-      PluginState ns = st;
-      ns.data = formatConvData(cd);
-      setPluginState(a, t, ns, "edit impulse envelope", gestureKey(t, 0xC0E1));
+    if (hot) {
+      const int pk = i == 0 ? CvFadeIn : i == 1 ? CvFadeOut : CvLength;
+      a.setHint(std::string(i18n::tr(names[i])) + "   " + i18n::tr("(drag to trim the impulse)"));
+      readout(a, dl, ImVec2(hs[i].x, hs[i].y), std::string(i18n::tr(names[i])) + "  " + fmt(a, t, pk), r0, r1, K, fs, K.text);
     }
   }
+  // Readouts: the point under the pointer / being dragged, else the crosshair.
+  if (envEdit) {
+    const int ri = u.env.drag >= 0 ? u.env.drag : h.hot;
+    if (ri >= 0 && ri < static_cast<int>(pts.size())) {
+      const EnvPoint& q = pts[static_cast<size_t>(ri)];
+      char b[96];
+      std::snprintf(b, sizeof b, "%s  %.0f%%  %s", secText(q.t).c_str(), q.v * 200.0, dbText(20 * std::log10(std::max(1e-6, 2.0 * q.v))).c_str());
+      readout(a, dl, P.at(q), b, r0, r1, K, fs, envCol);
+    } else if (u.env.bend > 0 || h.bend > 0) {
+      const int bi = u.env.bend > 0 ? u.env.bend : h.bend;
+      if (bi < static_cast<int>(pts.size())) {
+        char b[48];
+        std::snprintf(b, sizeof b, "%s %+.2f", i18n::tr("bend"), pts[static_cast<size_t>(bi)].k);
+        readout(a, dl, m, b, r0, r1, K, fs, envCol);
+      }
+    }
+    if ((ImGui::IsItemHovered() || ri >= 0) && !(io.KeyAlt && curveSmooth(curveModeShown(cd.envMode, cd.env))))
+      a.setHint(curveSmooth(curveModeShown(cd.envMode, cd.env))
+                    ? i18n::tr("IR envelope (smooth): click adds a point, drag moves it (Shift: fine), double-click deletes, right-click: menu; STRAIGHT for bendable segments")
+                    : i18n::tr("IR envelope: click adds a point, drag moves it (Shift: fine), double-click deletes, right-click: menu, Alt-drag bends a segment"));
+  }
+  if (ImGui::IsItemHovered() && !ImGui::IsItemActive() && hover < 0 && h.hot < 0 && h.bend < 0 && m.x >= P.p0.x && m.x <= P.p1.x && m.y >= top && m.y <= bot) {
+    dl->AddLine(ImVec2(std::round(m.x) + 0.5f, top), ImVec2(std::round(m.x) + 0.5f, bot), theme::withAlpha(txt, 0.45f), 1.0f);
+    std::string s = secText(P.T(m.x));
+    if (envEdit) {
+      dl->AddLine(ImVec2(P.p0.x, std::round(m.y) + 0.5f), ImVec2(P.p1.x, std::round(m.y) + 0.5f), theme::withAlpha(txt, 0.25f), 1.0f);
+      char b[32];
+      std::snprintf(b, sizeof b, "  %.0f%%", P.V(m.y) * 200.0);
+      s += b;
+    }
+    readout(a, dl, m, s, r0, r1, K, fs, txt);
+  }
+  // Level axis (envelope): x2 / unity / 0.
+  if (envEdit) {
+    ImGui::PushFont(a.fontMono, fs);
+    const char* lv[3] = {"200%", "100%", "0"};
+    for (int i = 0; i < 3; ++i) {
+      const float y = P.Y(1.0 - i * 0.5);
+      const ImVec2 ts = ImGui::CalcTextSize(lv[i]);
+      dl->AddText(ImVec2(std::round(r0.x + 6 * sc), std::round(std::clamp(y - ts.y * 0.5f, r0.y + 2, r1.y - ts.y - 2))), theme::withAlpha(envCol, 0.8f), lv[i]);
+    }
+    ImGui::PopFont();
+  }
+  dl->PopClipRect();
+  if (dropping || fileDragActive()) dl->AddRect(r0, r1, theme::withAlpha(K.select, dropping ? 0.9f : 0.45f), 5 * sc, 0, 2.0f * sc);
 }
 
-// EQ curve applied to the impulse (log 20 Hz .. 20 kHz, ±18 dB) over the IR's spectrum.
-void eqView(App& a, const PluginTarget& t, const PluginState& st, float width, float height) {
-  const auto& P = pal();
-  ConvUi& u = convUi[t.key()];
-  IrView v = convolverIr(st);
+// EQ curve applied to the impulse over the IR's spectrum (log frequency, dB).
+void eqView(App& a, const PluginTarget& t, const PluginState& st, ConvUi& u, ImVec2 r0, ImVec2 r1, float sc, const skin::Skin& K) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  ImVec2 p = ImGui::GetCursorScreenPos();
-  ImGui::InvisibleButton("##eqview", ImVec2(width, height));
-  ImVec2 p1(p.x + width, p.y + height);
-  graphBg(dl, p, p1);
-  const float x0 = p.x + 34, x1 = p1.x - 10, w = x1 - x0, top = p.y + 12, bot = p1.y - 20;
-  auto Xx = [&](double x) { return x0 + static_cast<float>(x) * w; };
-  auto Yv = [&](double vv) { return bot - static_cast<float>(vv) * (bot - top); };
-  for (double f : {50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0}) {
-    float x = Xx(std::log(f / 20.0) / std::log(1000.0));
-    dl->AddLine(ImVec2(x, top), ImVec2(x, bot), P.gridStep);
+  const bool ref = refModel(st);
+  const EqAxis ax{ref};
+  IrView v = convolverIr(st);
+  const float fs = std::clamp(9.5f * sc, 10.0f, 18.0f);
+  Plot P;
+  P.p0 = ImVec2(r0.x + 40 * sc, r0.y + 14 * sc);
+  P.p1 = ImVec2(r1.x - 14 * sc, r1.y - 22 * sc);
+  P.span = 1;
+  const float hitR = std::max(8.0f, 9.0f * sc);
+  ImGui::SetCursorScreenPos(ImVec2(P.p0.x - hitR, P.p0.y - hitR));
+  ImGui::InvisibleButton("##eqplot", ImVec2(P.p1.x - P.p0.x + 2 * hitR, P.p1.y - P.p0.y + 2 * hitR));
+  const bool dropping = irDropTarget(a, t);
+  const ImU32 grid = K.graphGrid, gridS = K.graphGridStrong, txt = K.graphText, curveCol = K.fill;
+  dl->PushClipRect(r0, r1, true);
+  // Frequency grid: 1..9 per decade, decades stronger, labels at 1-2-5.
+  ImGui::PushFont(a.fontMono, fs);
+  for (double dec = 10; dec <= 10000; dec *= 10)
+    for (int k = 1; k <= 9; ++k) {
+      const double f = dec * k;
+      if (f < 20 || f > 20000) continue;
+      const float x = std::round(P.X(ax.x(f))) + 0.5f;
+      dl->AddLine(ImVec2(x, P.p0.y), ImVec2(x, P.p1.y), k == 1 ? gridS : theme::withAlpha(grid, 0.7f), 1.0f);
+    }
+  for (double f : {20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0}) {
+    const float x = P.X(ax.x(f));
     char b[16];
     std::snprintf(b, sizeof b, f >= 1000 ? "%gk" : "%g", f >= 1000 ? f / 1000 : f);
-    smallText(a, dl, ImVec2(x + 2, bot + 4), P.textFaint, b);
+    const ImVec2 ts = ImGui::CalcTextSize(b);
+    dl->AddLine(ImVec2(std::round(x) + 0.5f, P.p1.y), ImVec2(std::round(x) + 0.5f, P.p1.y + 4 * sc), gridS, 1.0f);
+    dl->AddText(ImVec2(std::round(std::clamp(x - ts.x * 0.5f, P.p0.x - 6 * sc, P.p1.x - ts.x + 6 * sc)), std::round(P.p1.y + 6 * sc)), txt, b);
   }
-  for (int db : {-18, -9, 0, 9, 18}) {
-    float y = Yv(0.5 + db / 36.0);
-    dl->AddLine(ImVec2(x0, y), ImVec2(x1, y), db == 0 ? P.gridBar : P.gridStep);
+  // Gain grid.
+  const std::vector<int> dbs = ref ? std::vector<int>{12, 6, 0, -6, -12, -24} : std::vector<int>{18, 12, 6, 0, -6, -12, -18};
+  for (int d : dbs) {
+    const float y = std::round(P.Y(ax.v(d))) + 0.5f;
+    dl->AddLine(ImVec2(P.p0.x, y), ImVec2(P.p1.x, y), d == 0 ? gridS : grid, d == 0 ? 1.5f : 1.0f);
     char b[16];
-    std::snprintf(b, sizeof b, "%+d", db);
-    smallText(a, dl, ImVec2(p.x + 6, y - 6), P.textFaint, b);
+    std::snprintf(b, sizeof b, d == 0 ? "0" : "%+d", d);
+    const ImVec2 ts = ImGui::CalcTextSize(b);
+    dl->AddText(ImVec2(std::round(P.p0.x - ts.x - 8 * sc), std::round(std::clamp(y - ts.y * 0.5f, r0.y + 2, r1.y - ts.y - 2))), d == 0 ? K.textDim : txt, b);
   }
-  // IR magnitude spectrum (cached per IR).
-  if (v.ir && u.specOf != v.ir.get()) {
+  ImGui::PopFont();
+  // IR magnitude spectrum (cached per IR and axis).
+  constexpr int kBins = 240;
+  if (v.ir && (u.specOf != v.ir.get() || u.specModel != (ref ? 1 : 0))) {
     u.specOf = v.ir.get();
+    u.specModel = ref ? 1 : 0;
     constexpr int N = 16384;
     detail::Fft f;
     f.init(N);
@@ -294,85 +754,106 @@ void eqView(App& a, const PluginTarget& t, const PluginState& st, float width, f
     const Sample& ir = *v.ir;
     for (size_t i = 0; i < ir.frames() && i < static_cast<size_t>(N); ++i) buf[2 * i] = 0.5f * (ir.left[i] + ir.right[i]);
     f.run(buf.data(), false);
-    u.specDb.assign(240, -120.f);
-    for (int b = 0; b < 240; ++b) {
-      double fa = convEqHz(b / 240.0), fb = convEqHz((b + 1) / 240.0);
+    u.specDb.assign(kBins, -120.f);
+    for (int b = 0; b < kBins; ++b) {
+      double fa = ax.hz(static_cast<double>(b) / kBins), fb = ax.hz((b + 1.0) / kBins);
       int ka = std::clamp(static_cast<int>(fa * N / ir.sampleRate), 1, N / 2), kb = std::clamp(static_cast<int>(fb * N / ir.sampleRate), ka + 1, N / 2 + 1);
       double e = 0;
       for (int k = ka; k < kb; ++k) e += static_cast<double>(buf[2 * k]) * buf[2 * k] + static_cast<double>(buf[2 * k + 1]) * buf[2 * k + 1];
       u.specDb[static_cast<size_t>(b)] = static_cast<float>(10 * std::log10(std::max(1e-20, e / (kb - ka))));
     }
   }
-  if (!u.specDb.empty()) {
-    float mx = *std::max_element(u.specDb.begin(), u.specDb.end());
+  if (v.ir && !u.specDb.empty()) {
+    // Smoothed (about 1/8 octave) so it reads as a backdrop, not as a second curve.
+    const int nb = static_cast<int>(u.specDb.size());
+    std::vector<float> sm(u.specDb.size());
+    for (int b = 0; b < nb; ++b) {
+      double acc = 0, wsum = 0;
+      for (int j = -4; j <= 4; ++j) {
+        const double wj = 5.0 - std::abs(j);
+        acc += wj * u.specDb[static_cast<size_t>(std::clamp(b + j, 0, nb - 1))], wsum += wj;
+      }
+      sm[static_cast<size_t>(b)] = static_cast<float>(acc / wsum);
+    }
+    const float mx = *std::max_element(sm.begin(), sm.end());
     std::vector<ImVec2> sp;
-    for (size_t b = 0; b < u.specDb.size(); ++b) {
-      double n = std::clamp((u.specDb[b] - mx + 60.0) / 60.0, 0.0, 1.0);
-      sp.push_back(ImVec2(Xx((b + 0.5) / u.specDb.size()), bot - static_cast<float>(n) * (bot - top)));
+    for (int b = 0; b < nb; ++b) {
+      const double nrm = std::clamp((sm[static_cast<size_t>(b)] - mx + 60.0) / 60.0, 0.0, 1.0);
+      sp.push_back(ImVec2(P.X((b + 0.5) / nb), P.p1.y - static_cast<float>(nrm) * (P.p1.y - P.p0.y) * 0.9f));
     }
-    for (size_t i = 0; i + 1 < sp.size(); ++i) {
-      ImVec2 q[4] = {sp[i], sp[i + 1], ImVec2(sp[i + 1].x, bot), ImVec2(sp[i].x, bot)};
-      dl->AddConvexPolyFilled(q, 4, theme::withAlpha(P.text, 0.08f));
-    }
+    fillToBase(dl, sp, P.p1.y, K.accent2C(), 0.13f, 0.01f);
+    dl->AddPolyline(sp.data(), static_cast<int>(sp.size()), theme::withAlpha(K.accent2C(), 0.28f), 0, 1.0f);
   }
-  // Curve + points: double-click adds, drag moves, right-click deletes.
+  // Points.
   ConvData cd = parseConvData(st.data);
-  ImGuiIO& io = ImGui::GetIO();
-  std::vector<ImVec2> line;
-  for (int i = 0; i <= 240; ++i) {
-    double x = i / 240.0;
-    line.push_back(ImVec2(Xx(x), Yv(cd.eq.empty() ? 0.5 : envAt(cd.eq, x))));
-  }
-  dl->AddPolyline(line.data(), static_cast<int>(line.size()), theme::withAlpha(P.accent, 0.4f + 0.6f * val(st, CvEqMix)), 0, 2.0f);
-  int hot = -1;
-  for (size_t i = 0; i < cd.eq.size(); ++i)
-    if (std::hypot(io.MousePos.x - Xx(cd.eq[i].t), io.MousePos.y - Yv(cd.eq[i].v)) < 7) hot = static_cast<int>(i);
-  bool changed = false;
-  auto xOf = [&](float x) { return std::clamp((x - x0) / w, 0.0f, 1.0f); };
-  auto vOf = [&](float y) { return std::clamp((bot - y) / (bot - top), 0.0f, 1.0f); };
-  if (ImGui::IsItemActivated()) u.eqDrag = hot;
-  if (ImGui::IsItemActive() && u.eqDrag >= 0 && u.eqDrag < static_cast<int>(cd.eq.size())) {
-    EnvPoint& q = cd.eq[static_cast<size_t>(u.eqDrag)];
-    double lo = u.eqDrag > 0 ? cd.eq[static_cast<size_t>(u.eqDrag - 1)].t : 0.0;
-    double hi = u.eqDrag + 1 < static_cast<int>(cd.eq.size()) ? cd.eq[static_cast<size_t>(u.eqDrag + 1)].t : 1.0;
-    q.t = std::clamp(static_cast<double>(xOf(io.MousePos.x)), lo, hi);
-    q.v = vOf(io.MousePos.y);
-    changed = true;
-  }
-  if (ImGui::IsItemDeactivated()) u.eqDrag = -1;
-  if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && hot < 0) {
-    if (cd.eq.empty()) cd.eq = {EnvPoint{0, 0.5, 0}, EnvPoint{1, 0.5, 0}};
-    EnvPoint q;
-    q.t = xOf(io.MousePos.x);
-    q.v = vOf(io.MousePos.y);
-    cd.eq.insert(std::upper_bound(cd.eq.begin(), cd.eq.end(), q.t, [](double x, const EnvPoint& e) { return x < e.t; }), q);
-    changed = true;
-  }
-  if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hot >= 0) {
-    cd.eq.erase(cd.eq.begin() + hot);
-    changed = true;
-  }
-  for (size_t i = 0; i < cd.eq.size(); ++i) {
-    bool h = static_cast<int>(i) == hot || static_cast<int>(i) == u.eqDrag;
-    dl->AddCircleFilled(ImVec2(Xx(cd.eq[i].t), Yv(cd.eq[i].v)), h ? 5.5f : 4.f, h ? P.paper : P.accent);
-  }
-  if (hot >= 0) {
-    char b[64];
-    std::snprintf(b, sizeof b, "%.0f Hz  %+.1f dB", convEqHz(cd.eq[static_cast<size_t>(hot)].t), (cd.eq[static_cast<size_t>(hot)].v - 0.5) * 36.0);
-    a.setHint(b);
-  } else if (ImGui::IsItemHovered()) {
-    a.setHint("IR equalizer: double-click adds a point, drag moves it, right-click deletes; EQ MIX blends it in");
-  }
-  if (changed) {
+  std::vector<EnvPoint> pts = cd.eq;
+  PtSpec c;
+  const int mode = curveModeShown(cd.eqMode, cd.eq);
+  c.pl = P, c.hitR = hitR, c.ref = ref, c.smooth = curveSmooth(mode), c.flat = 0.5, c.key = gestureKey(t, 0xC0E2), c.what = "edit impulse EQ";
+  c.unity = i18n::tr("Set to 0 dB");
+  const PtHover h = editPoints(a, u.eq, c, pts, [&](const std::vector<EnvPoint>& np, const std::string& lbl, uint64_t key) {
     PluginState ns = st;
-    ns.data = formatConvData(cd);
-    setPluginState(a, t, ns, "edit impulse EQ", gestureKey(t, 0xC0E2));
+    ConvData nd = parseConvData(st.data);
+    nd.eq = np;
+    nd.eqMode = mode;  // a new curve keeps the Smooth it was shown with
+    ns.data = formatConvData(nd);
+    setPluginState(a, t, ns, lbl, key);
+  });
+  // Curve: gradient fill to 0 dB, glow, line (dimmer while EQ MIX is low).
+  const int nS = std::max(96, static_cast<int>((P.p1.x - P.p0.x) / 2));
+  const std::vector<double> cv = sampleCurve(ref, c.smooth, h.flat ? std::vector<EnvPoint>{} : pts, 1.0, nS, 0.5);
+  std::vector<ImVec2> line;
+  for (int i = 0; i <= nS; ++i) line.push_back(ImVec2(P.X(static_cast<double>(i) / nS), P.Y(cv[static_cast<size_t>(i)])));
+  const float mixA = 0.45f + 0.55f * std::clamp(val(st, CvEqMix), 0.0f, 1.0f);
+  const ImU32 cc = theme::withAlpha(curveCol, mixA);
+  fillToBase(dl, line, P.Y(0.5), curveCol, 0.42f * mixA, 0.05f);
+  glowLine(dl, line, cc, 2.0f * sc);
+  segmentGlow(dl, P, pts, u.eq.bend > 0 ? u.eq.bend : h.bend, ref, curveCol, sc);
+  drawPoints(dl, P, pts, u.eq, h, curveCol, sc);
+  publishPoints("conv.eq", P, pts, h.flat, u.eq, h);
+  // Readouts.
+  ImGuiIO& io = ImGui::GetIO();
+  const ImVec2 m = io.MousePos;
+  const int ri = u.eq.drag >= 0 ? u.eq.drag : h.hot;
+  if (ri >= 0 && ri < static_cast<int>(pts.size())) {
+    const EnvPoint& q = pts[static_cast<size_t>(ri)];
+    std::string s = hzText(ax.hz(q.t)) + "  " + dbText(ax.db(q.v));
+    if (q.k != 0 && !c.smooth) {
+      char b[32];
+      std::snprintf(b, sizeof b, "  %s %+.2f", i18n::tr("bend"), q.k);
+      s += b;
+    }
+    readout(a, dl, P.at(q), s, r0, r1, K, fs, curveCol);
+  } else if (u.eq.bend > 0 || h.bend > 0) {
+    const int bi = u.eq.bend > 0 ? u.eq.bend : h.bend;
+    if (bi < static_cast<int>(pts.size())) {
+      char b[48];
+      std::snprintf(b, sizeof b, "%s %+.2f", i18n::tr("bend"), pts[static_cast<size_t>(bi)].k);
+      readout(a, dl, m, b, r0, r1, K, fs, curveCol);
+    }
+  } else if (ImGui::IsItemHovered() && !ImGui::IsItemActive() && m.x >= P.p0.x && m.x <= P.p1.x && m.y >= P.p0.y && m.y <= P.p1.y) {
+    dl->AddLine(ImVec2(std::round(m.x) + 0.5f, P.p0.y), ImVec2(std::round(m.x) + 0.5f, P.p1.y), theme::withAlpha(txt, 0.45f), 1.0f);
+    dl->AddLine(ImVec2(P.p0.x, std::round(m.y) + 0.5f), ImVec2(P.p1.x, std::round(m.y) + 0.5f), theme::withAlpha(txt, 0.25f), 1.0f);
+    readout(a, dl, m, hzText(ax.hz(P.T(m.x))) + "  " + dbText(ax.db(P.V(m.y))), r0, r1, K, fs, txt);
   }
-  smallText(a, dl, ImVec2(x1 - 150, top + 2), P.textDim, cd.eq.empty() ? "flat - double-click to add points" : "EQ curve");
+  if (h.flat && u.eq.drag < 0) {
+    ImGui::PushFont(a.fontMono, fs);
+    const char* s = i18n::tr("Flat - click to add a point");
+    const ImVec2 ts = ImGui::CalcTextSize(s);
+    dl->AddText(ImVec2(std::round((P.p0.x + P.p1.x - ts.x) * 0.5f), std::round(P.Y(0.5) - ts.y - 8 * sc)), theme::withAlpha(K.textDim, 0.8f), s);
+    ImGui::PopFont();
+  }
+  if ((ImGui::IsItemHovered() || ri >= 0) && !(io.KeyAlt && c.smooth))
+    a.setHint(c.smooth ? i18n::tr("IR equalizer (smooth): click adds a point, drag moves it (Shift: fine), double-click deletes, right-click: menu; STRAIGHT for bendable segments; EQ MIX blends it in")
+                       : i18n::tr("IR equalizer: click adds a point, drag moves it (Shift: fine), double-click deletes, right-click: menu, Alt-drag bends a segment; EQ MIX blends it in"));
+  dl->PopClipRect();
+  if (dropping || fileDragActive()) dl->AddRect(r0, r1, theme::withAlpha(K.select, dropping ? 0.9f : 0.45f), 5 * sc, 0, 2.0f * sc);
 }
 
-// Reference convolver panel 714 × 346: mix / width / delay / processing wheels
-// across the top, impulse tools in the middle row, the impulse view underneath.
+// J-105 layout (form units, 760 x 496): title strip with the view tabs, the
+// large graph (impulse or EQ) with a status line, then SOURCE / SHAPE over
+// SPACE / CHARACTER / OUTPUT sections of knob cells with value readouts.
+// Same parameters and bindings as before.
 const skin::Skin& convSkin() {
   static const skin::Skin k = [] {
     skin::Skin s = skin::Skin::fl(0x2A2F38, 0x323842, 0x545B63, 0x72D703, 0x40484E, 0xACB4BA);
@@ -380,9 +861,86 @@ const skin::Skin& convSkin() {
     s.lcdText = skin::hex(0x9BE84A);
     s.select = skin::hex(0x49B5F5);
     s.accent2 = skin::hex(0x4FB4D0);
+    s.graphBg = skin::hex(0x171B21);
+    s.graphGrid = skin::hex(0x252B33);
+    s.graphGridStrong = skin::hex(0x36404B);
+    s.graphText = skin::hex(0x7D8790);
+    s.graphCurve = skin::hex(0x72D703);
     return s;
   }();
   return k;
+}
+
+// J-106: one button switches the curve on view between Smooth (lit: the curve
+// passes through every point without corners) and Straight (segments, Alt-drag
+// bends them). One click = one undo step; points and tensions are kept, so
+// switching back and forth is lossless.
+void curveModeButton(App& a, const PluginTarget& t, const PluginState& st, bool eq, const skin::Form& F, const skin::Skin& K, ImU32 green) {
+  const ConvData cd = parseConvData(st.data);
+  const bool smooth = curveSmooth(curveModeShown(eq ? cd.eqMode : cd.envMode, eq ? cd.eq : cd.env));
+  const ImVec2 b0 = F.p(338, 12), sz = F.sz(110, 22);
+  ImGui::SetCursorScreenPos(b0);
+  if (ImGui::InvisibleButton("##curvemode", sz)) {
+    PluginState ns = st;
+    ConvData nd = cd;
+    (eq ? nd.eqMode : nd.envMode) = smooth ? CurveStraight : CurveSmooth;
+    ns.data = formatConvData(nd);
+    a.doc.endGesture();
+    setPluginState(a, t, ns, smooth ? "straight curve" : "smooth curve");
+    a.doc.endGesture();
+  }
+  const bool hov = ImGui::IsItemHovered();
+  {  // dev / test hook: the button's rectangle; its one point reads x = v = 1 for Smooth, 0 for Straight
+    pui::DevPoints d;
+    d.x0 = ImGui::GetItemRectMin().x, d.y0 = ImGui::GetItemRectMin().y, d.x1 = ImGui::GetItemRectMax().x, d.y1 = ImGui::GetItemRectMax().y;
+    d.pts.push_back({smooth ? 1.0 : 0.0, smooth ? 1.0 : 0.0, 0.0});
+    pui::devPointsSet("conv.curvemode", d);
+  }
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 b1(b0.x + sz.x, b0.y + sz.y);
+  // Face in the curve's colour family (not the view tabs' blue): green glyph + label when Smooth.
+  const bool act = ImGui::IsItemActive();
+  skin::raisedFace(dl, b0, b1, act ? skin::darken(K.panelLo, 0.05f) : hov ? skin::lighten(K.panelLo, 0.07f) : K.panelLo, 3);
+  if (smooth) dl->AddRect(b0, b1, theme::withAlpha(green, hov ? 0.85f : 0.6f), 3, 0, 1.0f);
+  const ImU32 col = smooth ? skin::lighten(green, hov ? 0.25f : 0.1f) : hov ? K.text : K.textDim;
+  const float ih = std::round(F.u(16));
+  const char* label = smooth ? i18n::tr("SMOOTH") : i18n::tr("STRAIGHT");
+  ImGui::PushFont(a.fontMonoBold, F.font(9.0f));
+  const ImVec2 ts = ImGui::CalcTextSize(label);
+  const float gap = F.u(5), w = ih + gap + ts.x, x0 = std::round((b0.x + b1.x - w) * 0.5f), cy = (b0.y + b1.y) * 0.5f;
+  ui::drawIconBox(dl, smooth ? ui::Icon::CurveSmooth : ui::Icon::CurveStraight, ImVec2(x0 + ih * 0.5f, std::round(cy)), ih, col);
+  dl->AddText(ImVec2(std::round(x0 + ih + gap), std::round(cy - ts.y * 0.5f)), col, label);
+  ImGui::PopFont();
+  if (hov)
+    a.setHint(smooth ? i18n::tr("Smooth curve: passes through every point with no corners. Click for straight segments (Alt-drag bends them)")
+                     : i18n::tr("Straight segments (Alt-drag bends one). Click for a smooth curve through every point"));
+}
+
+// Section well with a premium header.
+void convSection(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& K, const char* title) {
+  skin::well(dl, F.p(x, y), F.p(x + w, y + h), K, 5 * F.s);
+  skin::sectionHeader(dl, F.p(x + 8, y + 5), F.p(x + w - 8, y + 19), K, title, F.font(10.0f));
+}
+// Knob cell: caption, wheel, value readout (form units; cell w x 62 from y).
+void convKnob(App& a, const PluginTarget& t, int k, const skin::Form& F, float x, float y, float w, const skin::Skin& K, const char* cap, ImU32 fill) {
+  using namespace flskin;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::label(dl, F.p(x + w * 0.5f, 0).x, F.p(0, y - 1).y, cap, K.textDim, F.font(8.5f));
+  constexpr float ks = 34;
+  skin::wheel(a, t, k, F.p(x + (w - ks) * 0.5f, y + 11), ks * F.s, K, skin::WheelBigLine, fill);
+  const std::string v = pfmt(a, t, k);
+  const float vw = std::min(w - 6, 54.0f);
+  skin::valueStrip(dl, F.p(x + (w - vw) * 0.5f, y + 48), F.p(x + (w + vw) * 0.5f, y + 63), K, v.c_str(), F.font(8.5f));
+}
+// Row of knob cells spread across [x0, x1].
+void convKnobs(App& a, const PluginTarget& t, const skin::Form& F, float x0, float x1, float y, const skin::Skin& K,
+               std::initializer_list<std::pair<int, const char*>> ks, ImU32 fill) {
+  const float cw = (x1 - x0) / static_cast<float>(ks.size());
+  float x = x0;
+  for (const auto& k : ks) {
+    convKnob(a, t, k.first, F, x, y, cw, K, k.second, fill);
+    x += cw;
+  }
 }
 
 void editorConvolver(App& a, const PluginTarget& t, float width) {
@@ -390,70 +948,146 @@ void editorConvolver(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
   ConvUi& u = convUi[t.key()];
   const skin::Skin& K = convSkin();
-  constexpr float kW = 714, kH = 346;
+  constexpr float kW = 760, kH = 496;
   skin::Form F = skin::Form::fit(width, kW);
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  skin::panel(dl, F.o, F.p(kW, kH), K, 4);
+  skin::panel(dl, F.o, F.p(kW, kH), K, 6 * F.s);
   skin::Scope scope(K);
   const ImU32 teal = skin::hex(0x33C18C), green = skin::hex(0x72D703), orange = skin::hex(0xF8AD10), blue = skin::hex(0x4FB4D0);
-  // Top row: mix, separations, pre-delay, self-convolution, stretch, EQ mix (+ generated-space shape).
-  W(a, t, CvDry, F, 15, 7, 48, K, "DRY", skin::WheelBigLine, teal);
-  W(a, t, CvInWidth, F, 90, 16, 39, K, "IN WIDTH", skin::WheelBigLine, green);
-  W(a, t, CvWet, F, 135, 7, 48, K, "WET", skin::WheelBigLine, green);
-  W(a, t, CvWidth, F, 189, 16, 39, K, "WIDTH", skin::WheelBigLine, green);
-  W(a, t, CvPreDelay, F, 255, 7, 48, K, "DELAY", skin::WheelBigLine, orange);
-  W(a, t, CvSelfConv, F, 313, 7, 48, K, "SELF", skin::WheelBigLine, orange);
-  W(a, t, CvStretch, F, 371, 7, 48, K, "STRETCH", skin::WheelBigLine, orange);
-  W(a, t, CvEqMix, F, 429, 7, 48, K, "EQ MIX", skin::WheelBigLine, orange);
   const bool file = static_cast<int>(val(st, CvSource) + 0.5f) == SrcFile;
-  W(a, t, CvSize, F, 494, 16, 39, K, "SIZE", skin::WheelBigLine, blue);
-  W(a, t, CvTone, F, 545, 16, 39, K, "TONE", skin::WheelBigLine, blue);
-  if (file) dim(dl, F, 490, 12, 98, 56, K);
-  chk(a, t, CvNormalize, F, 600, 5, 100, 15, K, "NORMALIZE");
-  sel(a, t, CvStereo, F, 600, 23, 106, 44, K);
-  // Middle row: impulse source + file tools, trim / fades, IR cuts, view tabs and options.
-  dl->AddLine(F.p(5, 72), F.p(709, 72), skin::darken(K.panel, 0.35f), 1.0f);
-  text(dl, F, 6, 76, "IMPULSE", K.textDim);
-  menu(a, t, CvSource, F, 5, 88, 110, 17, K);
-  if (btn("##loadir", F, 5, 110, 54, 26, K, "LOAD", false)) openIrDialog(a, t, parseConvData(st.data).path);
-  if (ImGui::IsItemHovered()) a.setHint("Load a WAV / FLAC / WavPack impulse response (or drop a file on the view)");
-  if (btn("##irdb", F, 61, 110, 54, 26, K, u.db ? "dB" : "LIN", u.db)) u.db = !u.db;
-  if (ImGui::IsItemHovered()) a.setHint("Impulse display: dB or linear amplitude");
-  box(dl, F, 124, 76, 236, 66, K, nullptr);
-  W(a, t, CvStart, F, 132, 82, 34, K, "START");
-  W(a, t, CvLength, F, 177, 82, 34, K, "LENGTH");
-  W(a, t, CvFadeIn, F, 222, 82, 34, K, "FADE IN");
-  W(a, t, CvFadeOut, F, 267, 82, 34, K, "FADE OUT");
-  W(a, t, CvTighten, F, 312, 82, 34, K, "TIGHTEN");
-  box(dl, F, 366, 76, 100, 66, K, nullptr);
-  W(a, t, CvLowCut, F, 374, 82, 34, K, "LOW CUT", skin::WheelBigLine, blue);
-  W(a, t, CvHighCut, F, 422, 82, 34, K, "HI CUT", skin::WheelBigLine, blue);
-  if (btn("##tabir", F, 476, 76, 114, 20, K, "IMPULSE", !u.eqTab)) u.eqTab = false;
-  if (btn("##tabeq", F, 592, 76, 114, 20, K, "EQUALIZER", u.eqTab)) u.eqTab = true;
-  chk(a, t, CvEnvOn, F, 476, 101, 76, 16, K, "ENVELOPE");
-  if (ImGui::IsItemHovered()) a.setHint("Apply the impulse amplitude envelope (edit it on the impulse view)");
-  chk(a, t, CvReverse, F, 556, 101, 68, 16, K, "REVERSE");
-  menu(a, t, CvStretchMode, F, 628, 100, 78, 17, K);
-  if (ImGui::IsItemHovered()) a.setHint("Stretch: resample (pitch follows) or keep the pitch");
-  chk(a, t, CvSync, F, 476, 123, 100, 16, K, "TEMPO LENGTH");
-  if (val(st, CvSync) >= 0.5f) menu(a, t, CvSyncLen, F, 580, 122, 126, 17, K);
-  // Info line.
+  ImGui::PushID("conv");
+  // ---- Title strip: accent bar + name, view tabs, display option.
   {
-    std::string path = parseConvData(st.data).path;
-    std::string info = file ? (path.empty() ? std::string("No file - drop one on the view") : fs::path(path).filename().string())
-                            : std::string("Generated space - SIZE and TONE shape it");
-    text(dl, F, 6, 152, info.c_str(), K.text, 8.0f);
-    if (val(st, CvLatency) > 0) {
-      char b[48];
-      std::snprintf(b, sizeof b, "reported latency %d smp", static_cast<int>(val(st, CvLatency)));
-      text(dl, F, 560, 152, b, K.textDim, 7.5f);
+    dl->AddRectFilled(F.p(14, 13), F.p(17, 33), green, 1.5f * F.s);
+    const std::string title = pluginTitle("gl.convolver");
+    const float ts = std::clamp(F.u(15.0f), 12.0f, 30.0f);
+    ImFont* bold = a.fontBold ? a.fontBold : a.fontMonoBold;
+    dl->AddText(bold, ts, ImVec2(std::round(F.p(24, 0).x), std::round(F.p(0, 23).y - ts * 0.55f)), K.text, title.c_str());
+    const float tw = bold->CalcTextSizeA(ts, FLT_MAX, 0, title.c_str()).x;
+    ImGui::PushFont(a.fontMono, F.font(8.5f));
+    dl->AddText(ImVec2(std::round(F.p(24, 0).x + tw + F.u(10)), std::round(F.p(0, 23).y - F.font(8.5f) * 0.55f)), K.textDim,
+                i18n::tr("impulse response reverb"));
+    ImGui::PopFont();
+    if (skin::button("##tabir", F.p(470, 12), F.sz(100, 22), K, i18n::tr("IMPULSE"), !u.eqTab, F.font(9.0f))) u.eqTab = false;
+    if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Impulse view: waveform, trim handles and the amplitude envelope"));
+    if (skin::button("##tabeq", F.p(572, 12), F.sz(100, 22), K, i18n::tr("EQUALIZER"), u.eqTab, F.font(9.0f))) u.eqTab = true;
+    if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Equalizer view: the EQ curve applied to the impulse"));
+    {  // dev / test hook: the tab's rectangle ("sdlpt conv.tabeq 0.5 0.5" points at its centre)
+      pui::DevPoints d;
+      d.x0 = ImGui::GetItemRectMin().x, d.y0 = ImGui::GetItemRectMin().y, d.x1 = ImGui::GetItemRectMax().x, d.y1 = ImGui::GetItemRectMax().y;
+      pui::devPointsSet("conv.tabeq", d);
+    }
+    // J-106: curve mode of the curve on view (EQ, or the IR envelope while it is edited).
+    if (u.eqTab || val(st, CvEnvOn) >= 0.5f || refModel(st)) curveModeButton(a, t, st, u.eqTab, F, K, u.eqTab ? K.fill : orange);
+    if (!u.eqTab) {
+      if (skin::button("##irdb", F.p(690, 12), F.sz(56, 22), K, u.db ? "dB" : "LIN", u.db, F.font(9.0f))) u.db = !u.db;
+      if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Impulse display: dB or linear amplitude"));
     }
   }
-  at(F, 0, 171);
-  if (u.eqTab)
-    eqView(a, t, st, F.u(kW), F.u(kH - 171));
-  else
-    irView(a, t, st, F.u(kW), F.u(kH - 171));
+  // ---- Graph + status line.
+  {
+    const ImVec2 r0 = F.p(10, 42), r1 = F.p(750, 268);
+    skin::insetField(dl, r0, r1, K.graphBg, 6 * F.s);
+    if (u.eqTab)
+      eqView(a, t, st, u, r0, r1, F.s, K);
+    else
+      irView(a, t, st, u, r0, r1, F.s, K);
+    ImGui::PushFont(a.fontMono, F.font(8.5f));
+    const float y = std::round(F.p(0, 273).y);
+    std::string left;
+    if (file) {
+      const std::string path = parseConvData(st.data).path;
+      left = path.empty() ? std::string(i18n::tr("No impulse file")) : fs::path(path).filename().string();
+    } else {
+      const ParamDesc* d = desc(a, t, CvSource);
+      left = (d ? d->format(val(st, CvSource)) : std::string()) + "  \xC2\xB7  " + i18n::tr("generated space");
+    }
+    IrView v = convolverIr(st);
+    std::string right;
+    if (v.ir) {
+      char b[96];
+      std::snprintf(b, sizeof b, "%s  \xC2\xB7  %.0f Hz  \xC2\xB7  %s", secText(static_cast<double>(v.ir->frames()) / v.ir->sampleRate).c_str(),
+                    v.ir->sampleRate, v.paths == 4 ? i18n::tr("true stereo") : i18n::tr("stereo"));
+      right = b;
+    }
+    if (val(st, CvLatency) > 0) {
+      char b[48];
+      std::snprintf(b, sizeof b, "  \xC2\xB7  %s %d smp", i18n::tr("latency"), static_cast<int>(val(st, CvLatency)));
+      right += b;
+    }
+    const float rw = ImGui::CalcTextSize(right.c_str()).x;
+    dl->AddText(ImVec2(std::round(F.p(746, 0).x - rw), y), K.textDim, right.c_str());
+    dl->PushClipRect(F.p(14, 270), ImVec2(F.p(746, 0).x - rw - F.u(12), F.p(0, 288).y), true);
+    dl->AddText(ImVec2(std::round(F.p(14, 0).x), y), K.textDim, left.c_str());
+    dl->PopClipRect();
+    ImGui::PopFont();
+  }
+  // ---- SOURCE: impulse choice, file loading / drop zone, normalize, reverse, stereo mode.
+  convSection(dl, F, 10, 292, 280, 94, K, i18n::tr("SOURCE"));
+  menu(a, t, CvSource, F, 18, 314, 168, 18, K);
+  if (skin::button("##loadir", F.p(192, 314), F.sz(90, 18), K, i18n::tr("LOAD..."), false, F.font(8.5f))) openIrDialog(a, t, parseConvData(st.data).path);
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Load a WAV / FLAC / MP3 impulse response (or drop a file on the view)"));
+  {
+    const ImVec2 z0 = F.p(18, 337), z1 = F.p(282, 359);
+    ImGui::SetCursorScreenPos(z0);
+    const bool clicked = ImGui::InvisibleButton("##irdrop", ImVec2(z1.x - z0.x, z1.y - z0.y));
+    const bool hov = ImGui::IsItemHovered();
+    const bool over = irDropTarget(a, t);
+    if (clicked) openIrDialog(a, t, parseConvData(st.data).path);
+    const bool drag = fileDragActive();
+    skin::insetField(dl, z0, z1, over ? theme::mix(K.lcdBg, K.select, 0.25f) : K.lcdBg, 4 * F.s);
+    const ImU32 edge = over ? K.select : drag ? theme::withAlpha(K.select, 0.7f) : hov ? theme::withAlpha(K.text, 0.5f) : theme::withAlpha(K.textDim, 0.35f);
+    for (float x = z0.x + 4; x < z1.x - 4; x += 7 * F.s) {  // dashed outline
+      dl->AddLine(ImVec2(x, z0.y + 1.5f), ImVec2(std::min(x + 3.5f * F.s, z1.x - 4), z0.y + 1.5f), edge, 1.0f);
+      dl->AddLine(ImVec2(x, z1.y - 1.5f), ImVec2(std::min(x + 3.5f * F.s, z1.x - 4), z1.y - 1.5f), edge, 1.0f);
+    }
+    // File glyph.
+    const ImVec2 g0 = F.p(24, 341), g1 = F.p(33, 355);
+    dl->AddRect(g0, g1, file ? K.text : K.textDim, 1.5f, 0, 1.0f);
+    dl->AddLine(ImVec2(g0.x + 2 * F.s, (g0.y + g1.y) * 0.5f), ImVec2(g1.x - 2 * F.s, (g0.y + g1.y) * 0.5f), file ? K.text : K.textDim, 1.0f);
+    std::string path = parseConvData(st.data).path;
+    std::string s = over || drag ? std::string(i18n::tr("Drop to load the impulse"))
+                                 : !path.empty() ? fs::path(path).filename().string() : std::string(i18n::tr("Drop an audio file or click to browse"));
+    ImGui::PushFont(a.fontMono, F.font(8.5f));
+    dl->PushClipRect(F.p(38, 337), F.p(278, 359), true);
+    dl->AddText(ImVec2(std::round(F.p(38, 0).x), std::round((z0.y + z1.y) * 0.5f - F.font(8.5f) * 0.6f)), file && !path.empty() && !over ? K.text : K.textDim, s.c_str());
+    dl->PopClipRect();
+    ImGui::PopFont();
+    if (hov) a.setHint(path.empty() ? i18n::tr("Click to load an impulse response, or drop an audio file here") : path.c_str());
+  }
+  chk(a, t, CvNormalize, F, 18, 365, 84, 16, K, i18n::tr("NORMALIZE"));
+  chk(a, t, CvReverse, F, 106, 365, 72, 16, K, i18n::tr("REVERSE"));
+  menu(a, t, CvStereo, F, 182, 365, 100, 16, K);
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Stereo mode: stereo, true stereo (4 paths) or mono"));
+  // ---- SHAPE: trim, stretch, fades; envelope / tempo length / stretch mode.
+  convSection(dl, F, 298, 292, 452, 94, K, i18n::tr("SHAPE"));
+  convKnobs(a, t, F, 304, 652, 314, K,
+            {{CvStart, i18n::tr("START")}, {CvLength, i18n::tr("LENGTH")}, {CvStretch, i18n::tr("STRETCH")}, {CvFadeIn, i18n::tr("FADE IN")},
+             {CvFadeOut, i18n::tr("FADE OUT")}, {CvTighten, i18n::tr("TIGHTEN")}},
+            orange);
+  chk(a, t, CvEnvOn, F, 658, 311, 86, 16, K, i18n::tr("ENVELOPE"));
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Apply the impulse amplitude envelope (edit its points on the impulse view)"));
+  chk(a, t, CvSync, F, 658, 328, 86, 16, K, i18n::tr("TEMPO LEN"));
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Tempo length: cut the impulse to a note length at the song tempo"));
+  menu(a, t, CvSyncLen, F, 658, 346, 86, 16, K);
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Tempo length: the note length the impulse is cut to (TEMPO LEN on)"));
+  if (val(st, CvSync) < 0.5f) dim(dl, F, 658, 346, 86, 16, K);
+  menu(a, t, CvStretchMode, F, 658, 365, 86, 16, K);
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Stretch: resample (pitch follows) or keep the pitch"));
+  // ---- SPACE (generated impulses), CHARACTER, OUTPUT.
+  convSection(dl, F, 10, 394, 136, 94, K, i18n::tr("SPACE"));
+  convKnobs(a, t, F, 16, 140, 416, K, {{CvSize, i18n::tr("SIZE")}, {CvTone, i18n::tr("TONE")}}, blue);
+  if (file) dim(dl, F, 12, 412, 132, 74, K);
+  convSection(dl, F, 154, 394, 260, 94, K, i18n::tr("CHARACTER"));
+  convKnobs(a, t, F, 160, 408, 416, K,
+            {{CvLowCut, i18n::tr("LOW CUT")}, {CvHighCut, i18n::tr("HI CUT")}, {CvEqMix, i18n::tr("EQ MIX")}, {CvSelfConv, i18n::tr("SELF")}}, blue);
+  convSection(dl, F, 422, 394, 328, 94, K, i18n::tr("OUTPUT"));
+  convKnob(a, t, CvPreDelay, F, 428, 416, 63, K, i18n::tr("PRE-DELAY"), orange);
+  convKnob(a, t, CvInWidth, F, 491, 416, 63, K, i18n::tr("IN WIDTH"), green);
+  convKnob(a, t, CvWidth, F, 554, 416, 63, K, i18n::tr("WIDTH"), green);
+  convKnob(a, t, CvDry, F, 617, 416, 63, K, i18n::tr("DRY"), teal);
+  convKnob(a, t, CvWet, F, 680, 416, 63, K, i18n::tr("WET"), green);
+  ImGui::PopID();
   F.end(kW, kH);
 }
 
@@ -812,8 +1446,6 @@ void editorMultiDelay(App& a, const PluginTarget& t, float width) {
 // ============================================================= Band Delay
 struct BdUi {
   int target = 0, bank = 0;
-  int lastIdx = -1;
-  float lastVal = 0;
 };
 std::map<uint64_t, BdUi> bdUi;
 
@@ -947,39 +1579,38 @@ void bdGraph(App& a, const PluginTarget& t, const PluginState& st, BdUi& u, floa
     return std::clamp(static_cast<int>(std::lround(pos)), 0, kBdPoints - 1);
   };
   bool hov = ImGui::IsItemHovered();
-  if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-    int idx = idxAt(io.MousePos.x);
+  {  // J-99: smooth strokes along the log-frequency axis (Alt: raw; Shift-quantized times stay raw)
+    drawui::Spec spec;
+    spec.surface = "banddelay";
+    spec.p0 = p;
+    spec.p1 = p1;
+    spec.raw = io.KeyShift && u.target == BtDelay;
+    spec.axis.resize(kBdPoints);
+    for (int i = 0; i < kBdPoints; ++i) spec.axis[static_cast<size_t>(i)] = (xOf(i) - gx0) / gw;
     float v = std::clamp((bot - io.MousePos.y) / gh, 0.0f, 1.0f);
-    if (io.KeyShift && u.target == BtDelay) v = std::round(v * 16) / 16;  // quantize times
-    int a0 = u.lastIdx < 0 ? idx : u.lastIdx;
-    float v0 = u.lastIdx < 0 ? v : u.lastVal;
-    int lo = std::min(a0, idx), hi = std::max(a0, idx);
-    for (int i = lo; i <= hi; ++i) {
-      float f = hi == lo ? 1.f : static_cast<float>(i - a0) / static_cast<float>(idx - a0);
-      c.v[u.bank][u.target][i] = v0 + (v - v0) * f;
+    if (spec.raw) v = std::round(v * 16) / 16;  // quantize times
+    const bool drawing = ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    if (const std::vector<float>* res = drawui::stroke(a, ImGui::GetItemID(), drawing, (io.MousePos.x - gx0) / gw, v, c.v[u.bank][u.target], kBdPoints, spec)) {
+      for (int i = 0; i < kBdPoints; ++i) c.v[u.bank][u.target][i] = (*res)[static_cast<size_t>(i)];
+      setCurves(a, t, c, "draw band curve", gestureKey(t, 0xBD00 + static_cast<uint64_t>(u.target)));
     }
-    u.lastIdx = idx;
-    u.lastVal = v;
-    setCurves(a, t, c, "draw band curve", gestureKey(t, 0xBD00 + static_cast<uint64_t>(u.target)));
   }
   if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
     int idx = idxAt(io.MousePos.x);
     c.v[u.bank][u.target][idx] = defaultBandCurves().v[u.bank][u.target][idx];
     setCurves(a, t, c, "reset band");
   }
-  if (ImGui::IsItemDeactivated()) {
-    u.lastIdx = -1;
-    a.doc.endGesture();
-  }
+  if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (hov) {
     int idx = idxAt(io.MousePos.x);
     float x = xOf(idx);
     dl->AddRect(ImVec2(x - bw - 2, top), ImVec2(x + bw + 2, bot), P.accent, 2);
     char b[96];
-    std::snprintf(b, sizeof b, "Band %d · %.0f Hz · %s   (drag to draw, Shift snaps times, right-click resets)", idx + 1, bandPointHz(idx),
+    std::snprintf(b, sizeof b, "Band %d · %.0f Hz · %s   (drag to draw, Alt: raw, Shift snaps times, right-click resets)", idx + 1, bandPointHz(idx),
                   label(cur[idx]).c_str());
     a.setHint(b);
   }
+  drawui::chip(a, "banddelay", p, p1);
 }
 
 // Reference multiband-delay panel 560 × 290: band display on top (with the
@@ -1036,12 +1667,17 @@ void editorBandDelayRef(App& a, const PluginTarget& t, float width) {
     const float x0 = p0.x + u * bw + 2, x1 = p0.x + (u + 1) * bw - 2, yb = p0.y + size.y - 2, yt = yb - y * (size.y - 4);
     dl->AddRectFilled(ImVec2(x0, std::min(yt, yb - 1)), ImVec2(x1, yb), theme::withAlpha(pal().accent, 0.85f));
   }
-  if (ImGui::IsItemActive()) {
-    const ImVec2 m = ImGui::GetIO().MousePos;
-    const int u = std::clamp(static_cast<int>((m.x - p0.x) / bw), 0, mbd::kBands - 1);
-    const float y = std::clamp(1.f - (m.y - p0.y) / size.y, 0.f, 1.f);
+  // J-99: strokes fill every band between samples and are smoothed (Alt: raw); one undo step each.
+  const ImVec2 m = ImGui::GetIO().MousePos;
+  drawui::Spec spec;
+  spec.surface = "banddelay";
+  spec.p0 = p0;
+  spec.p1 = ImVec2(p0.x + size.x, p0.y + size.y);
+  float* row = &v[(bank * 3 + target) * mbd::kBands];
+  if (const std::vector<float>* res = drawui::stroke(a, ImGui::GetItemID(), ImGui::IsItemActive(), (m.x - p0.x) / size.x,
+                                                     std::clamp(1.f - (m.y - p0.y) / size.y, 0.f, 1.f), row, mbd::kBands, spec)) {
     PluginState ns = st;
-    v[(bank * 3 + target) * mbd::kBands + u] = y;
+    for (int u = 0; u < mbd::kBands; ++u) row[u] = (*res)[static_cast<size_t>(u)];
     size_t at = ns.data.find("\nmbd8");
     if (at == std::string::npos) at = ns.data.find("mbd8");
     std::string d = at == std::string::npos ? ns.data : ns.data.substr(0, at);
@@ -1054,6 +1690,7 @@ void editorBandDelayRef(App& a, const PluginTarget& t, float width) {
     ns.data = d;
     setPluginState(a, t, ns, "draw bands", t.key() ^ 0xB0D);
   }
+  drawui::chip(a, "banddelay", spec.p0, spec.p1);
   char cap[64];
   std::snprintf(cap, sizeof cap, "Bank %d  ·  %s", bank + 1, tn[target]);
   pui::caption(cap);

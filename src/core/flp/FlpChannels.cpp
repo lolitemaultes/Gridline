@@ -5,8 +5,8 @@
 // channels the sample settings (region, loop, fades, reverse, filter,
 // envelopes, LFO, time stretch).
 //
-// Field layouts come from analysis/reference/format-flp.md and were checked
-// against the shipped demo projects (see analysis/demos/notes_beta.md).
+// Field layouts come from format notes and were checked
+// against the shipped demo projects (see format notes).
 #include <algorithm>
 #include <cmath>
 #include <cstring>

@@ -11,6 +11,7 @@
 #include <random>
 #include "../../core/Params.h"
 #include "../../engine/Dsp.h"
+#include "../../app/DrawSmoothUi.h"
 #include "utility_widgets.h"
 
 namespace gl::packs::utility {
@@ -256,12 +257,30 @@ void editorCurveEq(App& a, const PluginTarget& t, float width) {
     }
   };
   int nearest = std::clamp(static_cast<int>(std::lround((io.MousePos.x - g0.x) / gw * (kCeBands - 1))), 0, kCeBands - 1);
+  {  // J-99: free drawing goes through the shared smooth stroke (log-frequency points; Alt: raw)
+    const bool pencil = ui.mode == DmFree && act && !ImGui::IsMouseDown(ImGuiMouseButton_Right);
+    drawui::Spec spec;
+    spec.surface = "curveeq";
+    spec.lo = -static_cast<float>(range);
+    spec.hi = static_cast<float>(range);
+    spec.p0 = g0;
+    spec.p1 = g1;
+    spec.chipCorner = 1;
+    spec.axis.resize(kCeBands);
+    for (int b = 0; b < kCeBands; ++b) spec.axis[static_cast<size_t>(b)] = static_cast<double>(b) / (kCeBands - 1);
+    if (const std::vector<float>* res = drawui::stroke(a, ImGui::GetItemID(), pencil, (io.MousePos.x - g0.x) / gw, yDb(io.MousePos.y),
+                                                       &st.params[static_cast<size_t>(cePoint(ui.snap, 0))], kCeBands, spec)) {
+      PluginState ns = st;
+      for (int b = 0; b < kCeBands; ++b) ns.params[static_cast<size_t>(cePoint(ui.snap, b))] = (*res)[static_cast<size_t>(b)];
+      if (ns.params != st.params) setPluginState(a, t, ns, "draw EQ curve", 0x4345514400000000ull ^ (t.key() << 4));
+    }
+  }
   if (ImGui::IsItemActivated()) {
     ui.gesture = gestureKey(t, 0x4345510000000000ull);
     ui.erasing = ImGui::IsMouseDown(ImGuiMouseButton_Right);
     ui.last = ui.lineStart = io.MousePos;
     ui.point = nearest;
-    if (ui.mode == DmFree) {
+    if (ui.mode == DmFree && ui.erasing) {
       PluginState ns = st;
       setPoints(ns, io.MousePos.x, ui.erasing ? 0.f : static_cast<float>(yDb(io.MousePos.y)), io.MousePos.x,
                 ui.erasing ? 0.f : static_cast<float>(yDb(io.MousePos.y)));
@@ -272,7 +291,7 @@ void editorCurveEq(App& a, const PluginTarget& t, float width) {
   if (act) {
     PluginState ns = st;
     bool edit = false;
-    if (ui.mode == DmFree && (io.MousePos.x != ui.last.x || io.MousePos.y != ui.last.y)) {
+    if (ui.mode == DmFree && ui.erasing && (io.MousePos.x != ui.last.x || io.MousePos.y != ui.last.y)) {
       float d0 = ui.erasing ? 0.f : static_cast<float>(yDb(ui.last.y)), d1 = ui.erasing ? 0.f : static_cast<float>(yDb(io.MousePos.y));
       setPoints(ns, ui.last.x, d0, io.MousePos.x, d1);
       ui.last = io.MousePos;
@@ -317,6 +336,7 @@ void editorCurveEq(App& a, const PluginTarget& t, float width) {
                   snapNames[ui.snap], modeHints[ui.mode]);
     a.setHint(buf);
   }
+  if (ui.mode == DmFree) drawui::chip(a, "curveeq", g0, g1, 1);
 
   // ---- bank strip (under the visual): snapshot to draw ----
   skin::well(dl, F.p(10, 205), F.p(392, 233), K, 3 * F.s);

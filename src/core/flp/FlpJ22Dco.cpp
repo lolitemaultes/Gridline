@@ -9,7 +9,7 @@
 // Every decoder walks the state to its exact end and refuses anything else
 // (truncated / unknown layouts), so a decoded state is a fully read one.
 // Layouts (worked out from FL's shipped presets / projects, the reference
-// controls and, for SimSynth, the engine's load routine read with REA):
+// controls and, for SimSynth, the engine's load behaviour):
 //
 // Fruity DX10: i32 version (1 or 2), then i32 per control tag 0..21 (0..65536;
 //   tag 21 octave −3..3) — 92 bytes. Version 2 appends a copy of the channel

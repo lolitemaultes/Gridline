@@ -11,6 +11,7 @@
 #include <memory>
 #include <vector>
 #include "../../app/App.h"
+#include "../../app/DrawSmoothUi.h"
 #include "../../core/PluginBrand.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
@@ -385,17 +386,26 @@ void vxCurveEditor(App& a, const PluginTarget& t, const PluginState& st, const L
     setPluginState(a, t, ns, label, merge ? (0x5643ull << 32) + static_cast<uint64_t>(m) : 0);
   };
   const bool hovered = ImGui::IsItemHovered();
-  if (mode == 1) {  // draw: one point per band, set the band under the mouse
-    if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+  if (mode == 1) {  // draw: one point per band; J-99: strokes fill every band between samples, smoothed (Alt: raw)
+    const bool drawing = ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    std::vector<float> cur(static_cast<size_t>(nb));
+    drawui::Spec spec;
+    spec.surface = "cipher";
+    spec.p0 = p;
+    spec.p1 = p1;
+    spec.chipCorner = 2;
+    spec.axis.resize(static_cast<size_t>(nb));
+    for (int b = 0; b < nb; ++b) {
+      spec.axis[static_cast<size_t>(b)] = static_cast<double>(b) / (nb - 1);
+      cur[static_cast<size_t>(b)] = static_cast<float>(vxEval(pts, spec.axis[static_cast<size_t>(b)]));
+    }
+    if (const std::vector<float>* res = drawui::stroke(a, ImGui::GetItemID(), drawing, mx, my, cur.data(), nb, spec)) {
       if (static_cast<int>(pts.size()) != nb) {
-        std::vector<VxPoint> np(static_cast<size_t>(nb));
-        for (int b = 0; b < nb; ++b) np[static_cast<size_t>(b)] = {b ? 1.0 / (nb - 1) : 0.0, vxEval(pts, static_cast<double>(b) / (nb - 1)), 0};
-        pts = np;
-        ax.resize(pts.size());
-        for (int b = 0; b < nb; ++b) ax[static_cast<size_t>(b)] = static_cast<double>(b) / (nb - 1);
+        pts.assign(static_cast<size_t>(nb), VxPoint{});
+        ax = spec.axis;
+        for (int b = 0; b < nb; ++b) pts[static_cast<size_t>(b)].dx = b ? 1.0 / (nb - 1) : 0.0;
       }
-      int b = std::clamp(static_cast<int>(std::lround(mx * (nb - 1))), 0, nb - 1);
-      pts[static_cast<size_t>(b)].y = my;
+      for (int b = 0; b < nb; ++b) pts[static_cast<size_t>(b)].y = (*res)[static_cast<size_t>(b)];
       commit("Draw vocoder curve", true);
     }
   } else {
@@ -434,9 +444,10 @@ void vxCurveEditor(App& a, const PluginTarget& t, const PluginState& st, const L
   if (hovered) {
     int b = std::clamp(static_cast<int>(std::lround(mx * (nb - 1))), 0, nb - 1);
     std::snprintf(hb, sizeof hb, "Band %d: %s  (%s)", b + 1, vb,
-                  mode == 1 ? "drag to draw per band" : "drag points, double-click adds, right-click deletes");
+                  mode == 1 ? "drag to draw per band, Alt: raw" : "drag points, double-click adds, right-click deletes");
     a.setHint(hb);
   }
+  if (mode == 1) drawui::chip(a, "cipher", p, p1, 2);
 }
 
 void editorVocoderRef(App& a, const PluginTarget& t, float width) {

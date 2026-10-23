@@ -123,5 +123,11 @@ PluginState presetState(const PluginInfo& info, size_t preset);
 PluginState defaultPluginState(const std::string& type);
 // Pads/clamps params to the plugin's descriptor list.
 void normalizePluginState(PluginState& s);
+// J-104: gl.bitcrush states saved before the Rate control held "Downsample N" (a divider
+// of the host rate). They load as Rate = reference / N Hz, the reference being the
+// app's audio rate (44.1 kHz by default and for command-line renders).
+void setLegacyRateReference(double sampleRate);
+double legacyRateReference();
+double bitcrushRateOfDivider(double divider);
 
 }  // namespace gl

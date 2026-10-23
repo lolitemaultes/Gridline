@@ -1,6 +1,6 @@
 // Gridline — J-26: reference frequency shifter for gl.freqshift (FsModel = 1).
 //
-// Study: analysis/demos/specs/j26_freqshift.md. Knob positions (0..1) are the
+// Behaviour study. Knob positions (0..1) are the
 // stored values; the shift law depends on type and range. Per sample: input +
 // soft-limited feedback → 20 Hz high-pass / 20 kHz low-pass → quadrature pair
 // (two all-pass chains) → upper / lower sideband blend per channel (or a ring

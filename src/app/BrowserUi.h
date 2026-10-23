@@ -41,7 +41,8 @@ std::string contentDir(App& a, const char* name);
 
 // ---- drag & drop ----
 struct DropPlace {
-  ObjectId channel = kNoId;   // Rack: channel row under the mouse (optional)
+  ObjectId channel = kNoId;   // Rack: channel row under the mouse (optional): its content is replaced (J-97)
+  int insertAt = -1;          // Rack: between rows: new channels are inserted at this channel index (J-97)
   ObjectId mixer = kNoId;     // MixerTrack / MixerSlot
   int slot = -1;              // MixerSlot
   int track = 0;              // Playlist lane
@@ -56,6 +57,34 @@ browse::DropAction dropActionFor(App& a, const std::string& path, browse::DropTa
 // Between BeginDragDropTarget / EndDragDropTarget: accepts browser files for
 // `target` (only those with an action there; shows the action while hovering).
 bool acceptFileDrop(App& a, browse::DropTarget target, const DropPlace& place);
+// J-97: the same with feedback for targets that draw their own highlight
+// (the channel rack's rows): `hovering` is set while the drag hovers and would
+// be taken; with `highlight` false the default target outline is left out.
+struct DropFeedback {
+  bool highlight = true;
+  bool hovering = false;
+};
+bool acceptFileDrop(App& a, browse::DropTarget target, const DropPlace& place, DropFeedback* fb);
+// J-97: plugins dragged from the browser / plugin picker ("GL_PLUGIN"):
+//   Rack: a channel row -> its instrument is replaced (routing, volume, pan,
+//         steps and notes stay; FL "Replace"); between rows -> a new channel
+//         there; the free area -> a new channel (as before);
+//   Playlist -> a new channel; MixerTrack -> the first free effect slot;
+//   MixerSlot -> that slot; PluginWindow -> replaces the shown instrument /
+//   effect of the same kind. Instruments only go where instruments live and
+//   effects where effects live; elsewhere the drag is refused with a reason.
+// Between BeginDragDropTarget / EndDragDropTarget. One undo step.
+bool acceptPluginDrop(App& a, browse::DropTarget target, const DropPlace& place, DropFeedback* fb = nullptr);
+// What dropping plugin `type` there does ("" = refused, `why` says why).
+std::string pluginDropLabel(App& a, const std::string& type, browse::DropTarget target, const DropPlace& place, std::string* why = nullptr);
+bool performPluginDrop(App& a, const std::string& type, browse::DropTarget target, const DropPlace& place);
+// J-97: loads an audio file into a channel's sample (one undo step). The
+// channel keeps its routing, volume, pan, steps and notes; it is renamed after
+// the file only when its name was automatic (the instrument's name or the old
+// sample's). Other instruments become a sampler holding the file.
+// `keepSampleInstrument`: every instrument that holds a sample keeps it (plugin
+// windows: Tercet's custom wave too); otherwise only the sample players do.
+bool loadChannelSample(App& a, ObjectId channel, const std::string& path, const char* label = "replace sample", bool keepSampleInstrument = false);
 // Plugin window drop zone (whole window): presets of the same plugin, samples
 // for sample-based plugins. Call from the window header.
 void pluginWindowDropTarget(App& a, const PluginTarget& t);

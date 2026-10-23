@@ -1,5 +1,5 @@
 // Gridline — J-26: reference engine of gl.lowlift (LlModel = 1; study
-// analysis/demos/specs/j26_lowlifter.md). The low band (below the crossover,
+// behaviour study notes). The low band (below the crossover,
 // optionally split again at fc/2 and fc/4) is normalised by a held, smoothed
 // peak envelope (floored at full scale), reshaped with a Chebyshev blend
 // (u + s·T2 + s²·T3)/(1 + 2s), high-passed at 20 Hz, optionally diffused by

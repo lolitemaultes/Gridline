@@ -1,5 +1,5 @@
 // Gridline — J-26: the classic tempo delay (gl.delay DlyModel = 2; studies
-// analysis/demos/specs/j26_delay1.md, j26_delay2.md). A stereo line whose
+// behaviour study notes). A stereo line whose
 // write slot is D samples ahead of the read slot: the (matrixed) input is added
 // into the write slot (one side optionally O samples later), each read slot
 // is emptied, fed back (straight or crossed) into the write slot and the slot

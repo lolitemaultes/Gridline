@@ -2,8 +2,10 @@
 // editors per plugin type, and building blocks (sections, knob rows, ADSR,
 // response graphs, spectrum).
 #pragma once
+#include <array>
 #include <functional>
 #include <string>
+#include <vector>
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Params.h"
 #include "../core/PluginBrand.h"
@@ -127,6 +129,31 @@ double paramValue(App& a, const PluginTarget& t, int param);
 // wheel, Shift fine, Ctrl+click reset, double-click type, right-click menu,
 // hint + value tooltip). Custom-drawn controls (PluginSkin) build on it.
 bool dragParamItem(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal);
+// J-98: the same interaction for a slider whose handle is drawn along a track
+// (start .. start + len in screen pixels; vertical tracks run bottom = min):
+// dragging keeps the handle under the pointer (grab offset taken at the click,
+// so a click never jumps; no drift after passing an end), Shift is 8x finer.
+bool dragParamTrack(App& a, ParamId pid, const ParamDesc& d, double& val, float trackStart, float trackLen, bool horizontal);
+// Dev / test hook (--dev-input "ctl" / "sdlctl"): the last drawn track slider of a
+// parameter index (or plugin parameter index of a mixer slot): track (logical px), the cross-axis centre, the normalized value.
+struct DevTrack {
+  float start = 0, len = 0, cross = 0;
+  bool horizontal = true;
+  double norm = 0, value = 0;
+  int frame = -1;
+};
+bool devTrack(uint32_t paramIndex, DevTrack& out);
+// J-105 dev / test hook (--dev-input "sdlpt" / "pts"): the last drawn point editor of a
+// name ("conv.eq", "conv.env"): its plot rectangle (logical px; x0..x1 = 0..span, y1..y0 =
+// value 0..1), its points (t, v, tension), the point being dragged and the hovered one.
+struct DevPoints {
+  float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  double span = 1;
+  std::vector<std::array<double, 3>> pts;
+  int drag = -1, hot = -1, frame = -1;
+};
+void devPointsSet(const std::string& name, const DevPoints& p);
+bool devPoints(const std::string& name, DevPoints& out);
 // A/B compare shared with the header: store the current state in the spare
 // slot, swap current and spare, and which slot is showing.
 void compareStore(App& a, const PluginTarget& t);

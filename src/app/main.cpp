@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 #include "../engine/ChannelIns.h"
+#include "../engine/Sample.h"
+#include "../engine/TimeStretch.h"
 #include "FlpExportUi.h"
 #include "J59Ui.h"
 #include "FrameProfile.h"
@@ -36,6 +38,7 @@
 #include "../../third_party/imgui/imgui_impl_sdl2.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include <cfloat>
+#include <climits>
 #include "../core/ClipSources.h"
 #include "../core/Project.h"
 #include "../core/Workspace.h"
@@ -44,6 +47,7 @@
 #include "ExportUi.h"
 #include "../core/MidiFile.h"
 #include "App.h"
+#include "PluginUI.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
 #include "ContextMenus.h"
@@ -311,9 +315,12 @@ struct HeldNote {
 //   momentum dx dy frames (J-67: a decaying scroll stream over the next frames, like an OS fling)
 //   trace on|off (J-67: per frame, the drawn scroll positions to stdout)
 //   J-75 drags from other applications (logical pixels): dragenter x y <file|promise:file|"path with spaces">...,
-//   dragmove x y, drop [x y], dragleave · undo · channels (channel names / samples to stdout)
+//   dragmove x y, drop [x y], dragleave · undo · channels (channel names / samples / routing / steps to stdout)
+//   (J-97: a "plugin:<type>" item drags a plugin like the browser does)
 //   mixer (J-83: track volumes / pans, the strips pane's scroll and wheel policy to stdout)
 //   rack (J-84: channel rack layout, step scroll, channel volumes / pans, step velocities / pitches to stdout)
+//   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
+//   "discard" drops unsaved changes first, as the prompt's "Don't save")
 std::string devShotPending;
 bool devTrace = false;
 ImVec2 devTraceWheel;  // this frame's wheel input (io clears it at the end of the frame)
@@ -478,10 +485,75 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       }
       std::fflush(stdout);
     }
+    else if (l.cmd == "sdlctl" || l.cmd == "ctl") {
+      // J-98: track sliders. "sdlctl <param> <frac|handle> [px]": the SDL pointer to a point of the
+      // last drawn slider of parameter index <param> (fraction of its track, or its handle) plus px
+      // logical pixels along the track. "ctl <param> <frac> [px]": prints the value and how far
+      // (logical px) the handle is from where the pointer put it (frac, minus the grab offset px).
+      pui::DevTrack tr;
+      const uint32_t idx = static_cast<uint32_t>(std::atoi(l.a0.c_str()));
+      if (!pui::devTrack(idx, tr)) {
+        std::printf("%s frame %d: param %u not shown\n", l.cmd.c_str(), frame, idx);
+      } else if (l.cmd == "sdlctl") {
+        const double f = l.a1 == "handle" ? tr.norm : std::strtod(l.a1.c_str(), nullptr);
+        const double px = l.a2.empty() ? 0.0 : std::strtod(l.a2.c_str(), nullptr);
+        const double along = tr.horizontal ? tr.start + f * tr.len + px : tr.start + (1.0 - f) * tr.len - px;
+        const double x = tr.horizontal ? along : tr.cross, y = tr.horizontal ? tr.cross : along;
+        devSdlPointer = {static_cast<int>(std::lround(x * devDragScale)), static_cast<int>(std::lround(y * devDragScale))};
+        SDL_Event e{};
+        SDL_Window* w = SDL_GL_GetCurrentWindow();
+        e.type = SDL_MOUSEMOTION;
+        e.motion.windowID = w ? SDL_GetWindowID(w) : 0;
+        e.motion.x = devSdlPointer.first;
+        e.motion.y = devSdlPointer.second;
+        SDL_PushEvent(&e);
+        pointer = ImVec2(-FLT_MAX, -FLT_MAX);
+      } else {
+        const double want = std::strtod(l.a1.c_str(), nullptr) - (l.a2.empty() ? 0.0 : std::strtod(l.a2.c_str(), nullptr)) / std::max(1.0f, tr.len);
+        const double off = (tr.norm - std::clamp(want, 0.0, 1.0)) * tr.len;
+        std::printf("ctl frame %d: param %u value %.4f norm %.5f track %.1f px off %.3f px %s\n", frame, idx, tr.value, tr.norm,
+                    static_cast<double>(tr.len), off, std::fabs(off) <= 1.0 ? "ok" : "MISS");
+      }
+      std::fflush(stdout);
+    }
+    else if (l.cmd == "sdlpt" || l.cmd == "pts") {
+      // J-105: point editors (Convolver EQ / IR envelope). "sdlpt <name> <x> <v> [dx dy]": the SDL
+      // pointer to x (0..1 of the editor's span) and value v (0..1), plus logical px; "sdlpt <name>
+      // pt <i> [dx dy]": to point i. "pts <name>": the points, the drag and the undo position.
+      pui::DevPoints g;
+      if (!pui::devPoints(l.a0, g)) {
+        std::printf("%s frame %d: %s not shown\n", l.cmd.c_str(), frame, l.a0.c_str());
+      } else if (l.cmd == "sdlpt") {
+        const auto num = [&](size_t i) { return i < l.args.size() ? std::strtod(l.args[i].c_str(), nullptr) : 0.0; };
+        double fx = 0, fv = 0;
+        if (l.a1 == "pt") {
+          const size_t i = static_cast<size_t>(std::max(0, std::atoi(l.a2.c_str())));
+          if (i < g.pts.size()) fx = g.pts[i][0] / std::max(1e-9, g.span), fv = g.pts[i][1];
+        } else {
+          fx = std::strtod(l.a1.c_str(), nullptr), fv = std::strtod(l.a2.c_str(), nullptr);
+        }
+        const double x = g.x0 + fx * (g.x1 - g.x0) + num(3), y = g.y1 - fv * (g.y1 - g.y0) + num(4);
+        devSdlPointer = {static_cast<int>(std::lround(x * devDragScale)), static_cast<int>(std::lround(y * devDragScale))};
+        SDL_Event e{};
+        SDL_Window* w = SDL_GL_GetCurrentWindow();
+        e.type = SDL_MOUSEMOTION;
+        e.motion.windowID = w ? SDL_GetWindowID(w) : 0;
+        e.motion.x = devSdlPointer.first;
+        e.motion.y = devSdlPointer.second;
+        SDL_PushEvent(&e);
+        pointer = ImVec2(-FLT_MAX, -FLT_MAX);
+      } else {
+        std::printf("pts frame %d: %s n %zu drag %d hot %d undo %zu\n", frame, l.a0.c_str(), g.pts.size(), g.drag, g.hot,
+                    app.doc.history().position());
+        for (size_t i = 0; i < g.pts.size(); ++i)
+          std::printf("  pt %zu x %.4f v %.4f k %.4f\n", i, g.pts[i][0] / std::max(1e-9, g.span), g.pts[i][1], g.pts[i][2]);
+      }
+      std::fflush(stdout);
+    }
     else if (l.cmd == "seekbeat") {  // J-91: the song position to a beat of the metronome ("2.5")
       app.engine.setPosition(static_cast<Tick>(std::strtod(l.a0.c_str(), nullptr) * static_cast<double>(app.doc.song().beatTicks())), false);
     }
-    else if (l.cmd == "metro") {  // J-91: metronome state and its glyph's swing
+    else if (l.cmd == "metro") {  // J-91: metronome state and its glyph's pose (J-97: +1 / -1)
       std::printf("metro frame %d: on %d playing %d mirror %.3f beat %.3f\n", frame, app.metronome ? 1 : 0, app.engine.playing() ? 1 : 0,
                   static_cast<double>(topBarMetronomeMirror()), app.engine.position() / static_cast<double>(std::max<Tick>(1, app.doc.song().beatTicks())));
       std::fflush(stdout);
@@ -549,18 +621,34 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::fflush(stdout);
     } else if (l.cmd == "rack") {  // J-84: channel rack layout, step scroll and values to stdout
       rackDevDump(app, frame);
+    } else if (l.cmd == "quit") {  // J-103: the window's close request (SDL_QUIT), like the user quitting Gridline
+      if (l.a0 == "discard") app.doc.markSaved();  // "quit discard": unsaved changes dropped (as "Don't save")
+      SDL_Event q{};
+      q.type = SDL_QUIT;
+      SDL_PushEvent(&q);
     } else if (l.cmd == "undo") {
       app.doc.undo();
       app.syncEngine();
     } else if (l.cmd == "channels") {
       const Song& s = app.doc.song();
       std::printf("channels frame %d: %zu channels, %zu patterns, undo %zu\n", frame, s.channels.size(), s.patterns.size(), app.doc.history().position());
-      for (const auto& c : s.channels)
-        std::printf("  channel %u %s type %s data %s\n", static_cast<unsigned>(c.id), c.name.c_str(), c.plugin.type.c_str(),
-                    std::filesystem::path(c.plugin.data).filename().string().c_str());
+      const Pattern* pat = s.pattern(app.curPattern);
+      for (const auto& c : s.channels) {
+        // J-97: routing, volume, pan and the current pattern's steps / notes (kept by drop-to-replace).
+        int steps = 0;
+        size_t notes = 0;
+        if (pat) {
+          if (auto it = pat->steps.find(c.id); it != pat->steps.end())
+            for (uint8_t v : it->second) steps += v > 0;
+          if (auto it = pat->notes.find(c.id); it != pat->notes.end()) notes = it->second.size();
+        }
+        std::printf("  channel %u %s type %s data %s mixer %d vol %.3f pan %.3f steps %d notes %zu\n", static_cast<unsigned>(c.id), c.name.c_str(),
+                    c.plugin.type.c_str(), std::filesystem::path(c.plugin.data).filename().string().c_str(), s.mixerIndex(c.mixerTrack),
+                    static_cast<double>(c.gain), static_cast<double>(c.pan), steps, notes);
+      }
       std::fflush(stdout);
     } else if (l.cmd == "shot") {
-      devShotPending = l.a0;
+      devShotPending = l.args.empty() ? l.a0 : l.args[0];  // J-97: a quoted path may hold spaces
     } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane") {
       devPianoCommand(app, l, frame);
     } else if (l.cmd == "dump") {
@@ -732,6 +820,7 @@ int main(int argc, char** argv) {
 
   splash(0.42f, "Starting audio engine");
   app.audioSampleRate = static_cast<int>(app.settings.getNumber("audio.sampleRate"));
+  gl::setLegacyRateReference(app.audioSampleRate);  // J-104: old Bitcrusher "Downsample N" loads as this rate / N
   app.audioBuffer = static_cast<int>(app.settings.getNumber("audio.bufferFrames"));
   app.audioInputDevice = app.settings.getString("audio.inputDevice");
   for (int i = 1; i < argc; ++i)  // screenshot runs never open the microphone
@@ -1550,6 +1639,8 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
     if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
+    // J-103: a --dev-input session without --screenshot counts its frames too (its script ends it with "quit").
+    if (!devInput.empty() && shotPath.empty() && profilePath.empty() && frameNo < INT_MAX) ++frameNo;
     if (devTrace) {  // J-67: the scroll positions this frame was drawn with
       ImGuiContext& g = *ImGui::GetCurrentContext();
       const ImGuiWindow* hw = g.HoveredWindow;
@@ -1613,11 +1704,22 @@ int main(int argc, char** argv) {
     captureHostedStates(app);
     std::fprintf(stderr, "%s %s\n", app.saveProject(devSaveAtExit) && (flpexport::wait(), true) ? "saved" : "could not save", devSaveAtExit.c_str());
   }
+  // J-103: no background thread may run into static teardown (a plugin scan finishing then
+  // locked the destroyed class registry mutex: "mutex lock failed", abort on quit).
+  host::shutdownScan();        // the scanner child is killed; unscanned entries wait for the next start
+  exportui::shutdown();        // a running audio export / render to sampler is cancelled and joined
+  j59::shutdownRenderSampler();
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   updui::shutdown();           // J-89: a running installer download is cancelled
   closeAllHostedEditors(app);
   if (frameClock) host::native::frameClockStop();
   if (gDevice) SDL_CloseAudioDevice(gDevice);
+  if (gInDevice) SDL_CloseAudioDevice(gInDevice);  // (SDL_Quit would too; explicit, like the output)
+  // J-103: the static sample cache's decoders and the clip render thread are joined here,
+  // not by their static destructors (a decode or render still running then would use
+  // statics already destroyed). Offline work after this point decodes / renders inline.
+  sampleCache().shutdown();
+  stretch::shutdownClipRenderer();
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplSDL2_Shutdown();
   ImGui::DestroyContext();

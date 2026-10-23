@@ -1,6 +1,6 @@
 // Gridline — "dynamics" pack, J-42: Pocket Rack module engines (gl.pocketrack).
 // Reference models of the module rack FL Studio ships as "FL Studio Mobile Rack
-// FX" (study: analysis/demos/specs/j35_flsm_rack.md + the J-42 module notes;
+// FX" (behaviour study + the J-42 module notes;
 // own code). Each module gets its normalised parameters (index 0 = enable) and
 // processes a stereo float block in place. Module memory is allocated by
 // prepare(sr) (UI thread through prepareHost, or once when the rate changes);

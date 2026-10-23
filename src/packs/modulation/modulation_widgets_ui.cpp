@@ -3,7 +3,9 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <vector>
 #include "modulation_widgets.h"
+#include "../../app/DrawSmoothUi.h"
 #include "../../app/PluginSkin.h"
 #include "modulation_skin.h"
 
@@ -285,15 +287,38 @@ void barLane(const EditTarget& e, const char* id, int first, int count, int stri
   }
   ImGuiIO& io = ImGui::GetIO();
   if (ImGui::IsItemActivated()) e.a->doc.beginGroup("draw values");
-  if (ImGui::IsItemActive()) {
-    int i = std::clamp(static_cast<int>((io.MousePos.x - p0.x) / bw), 0, count - 1);
-    float n = std::clamp(1.0f - (io.MousePos.y - p0.y - 3) / (size.y - 6), 0.0f, 1.0f);
-    ParamId pid = e.pid(first + i * stride);
-    if (auto d = describeParam(s, pid)) {
-      double v = d->fromNormalized(n);
-      if (io.KeyCtrl) v = d->def;
-      e.a->doc.setParam(pid, v, true);
+  // J-99: fast strokes fill every step between samples. Step lanes stay raw
+  // (no smoothing): each step is a deliberate value (octave, gate, velocity).
+  {
+    std::vector<float> cur(static_cast<size_t>(count), 0.0f);
+    for (int i = 0; i < count; ++i) {
+      ParamId pid = e.pid(first + i * stride);
+      auto d = describeParam(s, pid);
+      auto v = getParam(s, pid);
+      if (d && v) cur[static_cast<size_t>(i)] = static_cast<float>(d->toNormalized(*v));
     }
+    drawui::Spec spec;
+    spec.surface = "steps";
+    spec.raw = true;
+    const float n = std::clamp(1.0f - (io.MousePos.y - p0.y - 3) / (size.y - 6), 0.0f, 1.0f);
+    if (const std::vector<float>* res = drawui::stroke(*e.a, ImGui::GetItemID(), ImGui::IsItemActive() && !io.KeyCtrl,
+                                                       (io.MousePos.x - p0.x) / size.x, n, cur.data(), count, spec)) {
+      const std::vector<uint8_t>& touched = drawui::strokeTouched();
+      for (int i = 0; i < count; ++i) {
+        if (!touched[static_cast<size_t>(i)]) continue;
+        ParamId pid = e.pid(first + i * stride);
+        auto d = describeParam(s, pid);
+        if (!d) continue;
+        const double v = d->fromNormalized((*res)[static_cast<size_t>(i)]);
+        auto old = getParam(s, pid);
+        if (!old || *old != v) e.a->doc.setParam(pid, v, true);
+      }
+    }
+  }
+  if (ImGui::IsItemActive() && io.KeyCtrl) {
+    int i = std::clamp(static_cast<int>((io.MousePos.x - p0.x) / bw), 0, count - 1);
+    ParamId pid = e.pid(first + i * stride);
+    if (auto d = describeParam(s, pid)) e.a->doc.setParam(pid, d->def, true);
   }
   if (ImGui::IsItemDeactivated()) {
     e.a->doc.endGroup();

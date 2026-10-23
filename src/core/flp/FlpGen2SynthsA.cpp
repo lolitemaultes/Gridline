@@ -6,7 +6,7 @@
 //   BeepMap      → gl.imagesynth (embedded picture → canvas, scale, pixel time, switches)
 //
 // Layouts (observed in FL's supplied projects and presets; see
-// analysis/demos/instruments_wave2.md):
+// format notes):
 //   DX10     i32 version, then i32 per control tag 0..21 (0..65536; tag 21 octave −3..3).
 //   MiniSynth "SSLF" + size, then an FLS chunk file: "HEAD" (name) and "DATA" = "0rev"
 //            + 43 floats 0..1 in the plugin's parameter order.

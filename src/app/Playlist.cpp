@@ -1065,6 +1065,13 @@ void drawPlaylist(App& a) {
     }
     const bool pickerHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
     ImGui::EndChild();
+    // J-97: browser items dropped on the picker become clip sources, as on the
+    // rack's free area: samples / presets / instruments a new channel, MIDI a pattern.
+    if (ImGui::BeginDragDropTarget()) {
+      browserui::acceptFileDrop(a, browse::DropTarget::Rack, {});
+      browserui::acceptPluginDrop(a, browse::DropTarget::Rack, {});
+      ImGui::EndDragDropTarget();
+    }
     ImGui::PopStyleVar(2);
     // J-82: a click anywhere else in the playlist takes the focus from the picker.
     if (!pickerHovered && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
@@ -3055,10 +3062,7 @@ void drawPlaylist(App& a) {
       }
       dl->PopClipRect();
     }
-    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PLUGIN")) {  // instruments: a new channel
-      std::string type(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
-      if (const PluginInfo* info = findPlugin(type); info && info->kind == PluginKind::Generator) a.settingsChannel = a.addInstrument(type);
-    }
+    browserui::acceptPluginDrop(a, browse::DropTarget::Playlist, place);  // instruments: a new channel (effects refused, J-97)
     ImGui::EndDragDropTarget();
   }
 

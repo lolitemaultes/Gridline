@@ -13,7 +13,7 @@
 
 namespace gl {
 
-inline constexpr int kProjectSchemaVersion = 6;
+inline constexpr int kProjectSchemaVersion = 8;  // v7 (J-98): gl.bitcrush Bits law; v8 (J-104): Downsample -> Rate (Hz)
 inline constexpr const char* kProjectFormatTag = "gridline-project";
 
 bool loadProject(const std::string& path, Song& out, std::string* err = nullptr);

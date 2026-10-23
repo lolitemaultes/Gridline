@@ -154,7 +154,7 @@ bool decodeMidiOut(Context&, const std::vector<Event>& events, PluginMapping& m)
 }
 
 // ------------------------------------------------------ Envelope Controller
-// Full state (J-41, analysis/rea/agents/j33/envc_spec.md §1): the knob block
+// Full state (J-41, behaviour study notes §1): the knob block
 // becomes the articulator parameters, the per-articulator records (envelope,
 // LFO, five maps, flags, key range) the model text in data; Gridline runs the
 // same articulator engine (model 1). Output k = articulator k.

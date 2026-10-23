@@ -4,7 +4,7 @@
 // (gl.envctl, articulator model) and the Slicex region engine (gl.slicer,
 // region model).
 //
-// Behavioural reimplementation from analysis/rea/agents/j33/envc_spec.md
+// Behavioural reimplementation from behaviour study notes
 // §1–§4 (records, segment playback, LFO oscillator and speed law, maps).
 // The engine runs per control step: one FL tick for the Envelope Controller,
 // one control block for Slicex; dt is the step length in ticks.

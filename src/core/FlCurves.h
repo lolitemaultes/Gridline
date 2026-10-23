@@ -11,7 +11,7 @@
 //  12 double curve 3
 // Tension uses FL's sign: t > 0 bends the segment to a fast start, t < 0 to a
 // slow start (Gridline's automation points store the opposite sign).
-// Behavioural reimplementation from analysis/rea/agents/j33/envc_spec.md §2.4.
+// Behavioural reimplementation from behaviour study notes §2.4.
 #pragma once
 
 namespace gl::flcurve {

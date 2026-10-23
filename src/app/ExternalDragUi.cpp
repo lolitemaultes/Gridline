@@ -4,6 +4,7 @@
 #include <cfloat>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <thread>
 #include "../../third_party/imgui/imgui_internal.h"
@@ -50,6 +51,13 @@ std::vector<xdrop::Item> gSdlItems;  // SDL drop in progress
 bool gSdlCollecting = false;
 
 const ImGuiID kExternId = ImHashStr("#SourceExtern");
+
+// J-97 dev drags of a plugin from the browser: one item named "plugin:<type>"
+// travels as the browser's "GL_PLUGIN" payload (--dev-input only).
+const char* const kDevPlugin = "plugin:";
+bool isDevPlugin(const std::vector<xdrop::Item>& items) {
+  return items.size() == 1 && items[0].path.empty() && !items[0].pending && items[0].name.rfind(kDevPlugin, 0) == 0;
+}
 
 double nowSeconds() { return ImGui::GetTime(); }
 
@@ -107,7 +115,10 @@ void preview() {
 void submitSource() {
   if (!ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceExtern)) return;
   const xdrop::Item& first = st.items.front();
-  if (st.items.size() == 1 && !first.pending && !first.dir) {
+  if (isDevPlugin(st.items)) {
+    const std::string type = first.name.substr(std::strlen(kDevPlugin));
+    ImGui::SetDragDropPayload("GL_PLUGIN", type.data(), type.size(), ImGuiCond_Always);
+  } else if (st.items.size() == 1 && !first.pending && !first.dir) {
     // One file on disk travels like a browser file: every sample slot takes it.
     const char* type = browse::kindOf(first.path) == Kind::Audio ? "GL_FILE" : "GL_ITEM";
     ImGui::SetDragDropPayload(type, first.path.data(), first.path.size(), ImGuiCond_Always);
@@ -249,7 +260,7 @@ void beginFrame(App& a) {
     ++st.hoverFrames;
     if (st.phase == Phase::DropNext) st.dropAfter = true;
     // No window took the drag last frame: what dropping here would do.
-    if (GImGui->DragDropAcceptIdPrev == 0 && !st.items.empty()) {
+    if (GImGui->DragDropAcceptIdPrev == 0 && !st.items.empty() && !isDevPlugin(st.items)) {
       const xdrop::Plan p = browserui::planFor(a, st.items, browse::DropTarget::Workspace, browserui::DropPlace{}, browserui::currentMods());
       if (!p.label.empty()) a.setHint(p.label);
       xdrop::setHoverAccepted(p.accepted());
@@ -276,10 +287,13 @@ void beginFrame(App& a) {
 void endFrame(App& a) {
   if (st.phase == Phase::Deliver) {
     const ImGuiPayload* pl = ImGui::GetDragDropPayload();
-    const bool delivered = st.consumed || (pl && pl->Delivery);
+    // J-97: a target that takes the payload with a plain AcceptDragDropPayload (the sample
+    // slots of plugin editors, the channel settings waveform) ends the drag in its
+    // EndDragDropTarget: the drag is gone, the drop was taken (it used to open the file again).
+    const bool delivered = st.consumed || (pl && pl->Delivery) || !GImGui->DragDropActive;
     if (GImGui->DragDropActive) ImGui::ClearDragDrop();
     const std::vector<xdrop::Item> items = st.items;
-    if (!delivered) browserui::openFiles(a, items);  // dropped where no window takes it
+    if (!delivered && !isDevPlugin(items)) browserui::openFiles(a, items);  // dropped where no window takes it
     reset(Phase::Idle);
     return;
   }
@@ -382,7 +396,9 @@ std::vector<xdrop::Item> devItems(const std::vector<std::string>& files) {
   std::vector<xdrop::Item> out;
   for (const std::string& f : files) {
     xdrop::Item it;
-    if (f.rfind("promise:", 0) == 0) {
+    if (f.rfind(kDevPlugin, 0) == 0) {  // J-97: a plugin from the browser
+      it.name = f;
+    } else if (f.rfind("promise:", 0) == 0) {
       it.url = f.substr(8);  // the source copied on drop (dev only)
       it.name = fs::path(it.url).filename().string();
       it.pending = true;

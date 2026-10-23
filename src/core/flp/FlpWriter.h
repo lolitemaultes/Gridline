@@ -2,7 +2,7 @@
 // event writer (BYTE / WORD / DWORD / DATA events, FLhd + FLdt container) and
 // the "FL origin" event lists the importer keeps for the exporter.
 //
-// Container (analysis/reference/format-flp.md):
+// Container (format notes):
 //   "FLhd" u32 6 | i16 format | u16 channel count | u16 PPQ
 //   "FLdt" u32 size | events
 //   event := u8 id, payload; id 0–63 one byte, 64–127 two, 128–191 four,

@@ -154,7 +154,9 @@ bool switchSel(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size,
 bool check(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, const char* text, ImU32 on = 0);
 // LCD digit selector over a choice / integer parameter (drag or wheel steps);
 // `text` overrides the shown value.
-bool digi(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, const char* text = nullptr, float font = 0);
+// pixels: drag distance for the full range (J-98: the bit depth display uses a longer, finer drag).
+bool digi(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, const char* text = nullptr, float font = 0,
+          float pixels = 60.0f);
 // Free (unbound) button in the skin; returns true when clicked.
 bool button(const char* id, ImVec2 tl, ImVec2 size, const Skin& k, const char* text, bool on, float font = 0);
 // Draws a wheel's face without interaction (for previews / custom bindings).

@@ -12,6 +12,7 @@
 #include <vector>
 #include "../Check.h"
 #include "core/PluginBrand.h"
+#include "core/Params.h"
 #include "core/PluginInfo.h"
 #include "core/Project.h"
 #include "core/Song.h"
@@ -80,6 +81,55 @@ double maxAbsDiff(const std::vector<float>& a, const std::vector<float>& b) {
 }
 
 long beatFrames(double tempo, double beats) { return static_cast<long>(std::llround(beats * 60.0 / tempo * kSr)); }
+
+// J-98 Listen: renders 2 beats at 120 BPM of mid (m1, m2 Hz) + side (s1, s2 Hz) tones,
+// 0.2 each; returns the amplitudes of each tone in the mid / side of the output,
+// at the duck (just after beat 1) and at the end of the cycle (curve back up).
+struct ToneAmps {
+  double duck[4], open[4];  // m1, m2 (in the mid), s1, s2 (in the side)
+};
+double toneAmp(const std::vector<double>& x, long from, long len, double hz) {
+  double re = 0, im = 0, wsum = 0;
+  for (long i = 0; i < len; ++i) {
+    const double w = 0.5 - 0.5 * std::cos(2 * M_PI * i / len);
+    re += x[static_cast<size_t>(from + i)] * w * std::cos(2 * M_PI * hz * i / kSr);
+    im += x[static_cast<size_t>(from + i)] * w * std::sin(2 * M_PI * hz * i / kSr);
+    wsum += w;
+  }
+  return 2 * std::sqrt(re * re + im * im) / wsum;
+}
+ToneAmps listenRender(const PluginState& st, double m1, double m2, double s1, double s2) {
+  auto fx = createEffect("gl.tideline");
+  const long n = beatFrames(120, 2);
+  std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+  for (long i = 0; i < n; ++i) {
+    const double t = i / kSr;
+    const double m = 0.2 * (std::sin(2 * M_PI * m1 * t) + std::sin(2 * M_PI * m2 * t));
+    const double sd = 0.2 * (std::sin(2 * M_PI * s1 * t) + std::sin(2 * M_PI * s2 * t));
+    L[static_cast<size_t>(i)] = static_cast<float>(m + sd);
+    R[static_cast<size_t>(i)] = static_cast<float>(m - sd);
+  }
+  ProcessContext ctx;
+  ctx.sampleRate = kSr;
+  ctx.tempo = 120;
+  ctx.ppq = 96;
+  ctx.playing = true;
+  for (long pos = 0; pos < n; pos += 256) {
+    ctx.tick = pos / kSr * 2.0 * ctx.ppq;
+    fx->process(st, ctx, L.data() + pos, R.data() + pos, static_cast<int>(std::min<long>(256, n - pos)));
+  }
+  std::vector<double> mid(static_cast<size_t>(n)), side(static_cast<size_t>(n));
+  for (size_t i = 0; i < mid.size(); ++i) mid[i] = 0.5 * (L[i] + R[i]), side[i] = 0.5 * (L[i] - R[i]);
+  ToneAmps a{};
+  const long b1 = beatFrames(120, 1), w = 2400;  // 50 ms
+  const double hz[4] = {m1, m2, s1, s2};
+  for (int k = 0; k < 4; ++k) {
+    const std::vector<double>& x = k < 2 ? mid : side;
+    a.duck[k] = toneAmp(x, b1 + 240, w, hz[k]);
+    a.open[k] = toneAmp(x, b1 + beatFrames(120, 0.9), w, hz[k]);
+  }
+  return a;
+}
 
 }  // namespace
 
@@ -503,6 +553,81 @@ int main() {
     b.params[bw::BwBandListen] = 1;
     Run ra = render(a, 120, 9600, 256, 0.5f, 0.5f), rb = render(b, 120, 9600, 256, 0.5f, 0.5f);
     expect(maxAbsDiff(ra.L, rb.L) > 0.01, "Band listen is audible");
+  }
+
+  // ---------------------------------------------------------------- J-98 Listen: solo what is ducked
+  {
+    // Band split at 300 Hz; tones at 60 / 3000 Hz in the mid and 90 / 4000 Hz in the side.
+    // Amount 0.6: the duck is audible (about 0.4 of the level) but not silent.
+    auto st = [](int band, int stereo, bool listen) {
+      PluginState p = fresh();
+      p.params[bw::BwAmount] = 0.6f;
+      p.params[bw::BwBand] = static_cast<float>(band);
+      p.params[bw::BwBandFreq] = 300;
+      p.params[bw::BwStereo] = static_cast<float>(stereo);
+      p.params[bw::BwBandListen] = listen ? 1.f : 0.f;
+      return p;
+    };
+    auto db = [](double v) { return 20 * std::log10(std::max(v, 1e-9) / 0.2); };
+    auto show = [&](const char* name, const ToneAmps& a) {
+      std::printf("# listen %-18s duck dB: m60 %6.1f m3k %6.1f s90 %6.1f s4k %6.1f | open: m60 %6.1f m3k %6.1f s90 %6.1f s4k %6.1f\n", name, db(a.duck[0]),
+                  db(a.duck[1]), db(a.duck[2]), db(a.duck[3]), db(a.open[0]), db(a.open[1]), db(a.open[2]), db(a.open[3]));
+    };
+    const double M1 = 60, M2 = 3000, S1 = 90, S2 = 4000;
+    // Lows, stereo: listen off = highs untouched, lows ducked; on = lows only (still ducked).
+    ToneAmps off = listenRender(st(bw::BandLows, bw::StStereo, false), M1, M2, S1, S2);
+    ToneAmps on = listenRender(st(bw::BandLows, bw::StStereo, true), M1, M2, S1, S2);
+    show("lows stereo off", off);
+    show("lows stereo on", on);
+    expect(db(off.duck[1]) > -1 && db(off.duck[0]) < -4 && db(off.open[0]) > -1.5, "Lows, Listen off: lows ducked, highs pass");
+    expect(db(on.duck[1]) < -50 && db(on.open[1]) < -50 && db(on.duck[3]) < -50, "Lows, Listen on: the high band is muted");
+    expect(std::fabs(db(on.duck[0]) - db(off.duck[0])) < 0.5 && db(on.open[0]) > -1.5 && std::fabs(db(on.duck[2]) - db(off.duck[2])) < 0.5,
+           "Lows, Listen on: the low band plays with the ducking applied");
+    // Highs, stereo.
+    off = listenRender(st(bw::BandHighs, bw::StStereo, false), M1, M2, S1, S2);
+    on = listenRender(st(bw::BandHighs, bw::StStereo, true), M1, M2, S1, S2);
+    show("highs stereo off", off);
+    show("highs stereo on", on);
+    expect(db(off.duck[0]) > -1 && db(off.duck[1]) < -4, "Highs, Listen off: highs ducked, lows pass");
+    expect(db(on.duck[0]) < -50 && db(on.open[0]) < -50 && db(on.duck[2]) < -40, "Highs, Listen on: the low band is muted (90 Hz: LR4 at 300 Hz, -42 dB)");
+    expect(std::fabs(db(on.duck[1]) - db(off.duck[1])) < 0.5 && db(on.open[1]) > -1.5, "Highs, Listen on: the high band plays, ducked");
+    // Full, stereo: everything is ducked, so Listen changes nothing.
+    {
+      Run a = render(st(bw::BandFull, bw::StStereo, false), 120, 9600, 256, 0.5f, 0.3f);
+      Run b = render(st(bw::BandFull, bw::StStereo, true), 120, 9600, 256, 0.5f, 0.3f);
+      expect(maxAbsDiff(a.L, b.L) < 1e-7 && maxAbsDiff(a.R, b.R) < 1e-7, "Full + Stereo: Listen has nothing to solo (no change)");
+    }
+    // Full, mid / side: Listen solos the ducked component.
+    off = listenRender(st(bw::BandFull, bw::StMid, false), M1, M2, S1, S2);
+    on = listenRender(st(bw::BandFull, bw::StMid, true), M1, M2, S1, S2);
+    show("full mid off", off);
+    show("full mid on", on);
+    expect(db(off.duck[2]) > -1 && db(off.duck[0]) < -4, "Full + Mid, Listen off: the side passes");
+    expect(db(on.duck[2]) < -100 && db(on.duck[3]) < -100 && std::fabs(db(on.duck[0]) - db(off.duck[0])) < 0.2,
+           "Full + Mid, Listen on: only the (ducked) mid");
+    on = listenRender(st(bw::BandFull, bw::StSide, true), M1, M2, S1, S2);
+    show("full side on", on);
+    expect(db(on.duck[0]) < -100 && db(on.duck[1]) < -100 && db(on.duck[2]) < -4 && db(on.open[2]) > -1.5, "Full + Side, Listen on: only the (ducked) side");
+    // Lows of the mid / highs of the side.
+    on = listenRender(st(bw::BandLows, bw::StMid, true), M1, M2, S1, S2);
+    show("lows mid on", on);
+    expect(db(on.duck[0]) < -4 && db(on.open[0]) > -1.5 && db(on.duck[1]) < -50 && db(on.duck[2]) < -100 && db(on.duck[3]) < -100,
+           "Lows + Mid, Listen on: only the mid's low band, ducked");
+    on = listenRender(st(bw::BandHighs, bw::StSide, true), M1, M2, S1, S2);
+    show("highs side on", on);
+    expect(db(on.duck[3]) < -4 && db(on.open[3]) > -1.5 && db(on.duck[2]) < -40 && db(on.duck[0]) < -100 && db(on.duck[1]) < -100,
+           "Highs + Side, Listen on: only the side's high band, ducked");
+    // The button is a parameter: automatable (ParamId set / get) and saved with the project.
+    Song s = makeEmptySong();
+    ensureMixer(s, 2);
+    s.mixer[1].slots[0].plugin = fresh();
+    const ObjectId tr = s.mixer[1].id;
+    const ParamId lp = slotParam(tr, 0, bw::BwBandListen);
+    const auto d = describeParam(s, lp);
+    expect(d && d->kind == ParamKind::Toggle && setParam(s, lp, 1.0) && getParam(s, lp).value_or(0) == 1.0, "Listen: an automatable toggle parameter");
+    Json j;
+    Song back;
+    expect(jsonParse(jsonStringify(songToJson(s)), j) && songFromJson(j, back) && getParam(back, lp).value_or(0) == 1.0, "Listen: saved with the project");
   }
 
   // ---------------------------------------------------------------- extremes, presets, state

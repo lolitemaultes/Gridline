@@ -13,6 +13,7 @@
 #include <map>
 #include <string>
 #include "../../app/App.h"
+#include "../../app/DrawSmoothUi.h"
 #include "../../core/PluginBrand.h"
 #include "../../app/InstrumentSkin.h"
 #include "../../app/Theme.h"
@@ -245,7 +246,7 @@ bool curveEditor(const iskin::Skin& k, const char* id, float x, float y, float w
 }
 
 // ------------------------------------------------------------ harmonics
-bool harmonicEditor(const iskin::Skin& k, float x, float y, float w, float h, PatchData& d, int opk, int& scroll) {
+bool harmonicEditor(App& a, const iskin::Skin& k, float x, float y, float w, float h, PatchData& d, int opk, int& scroll) {
   bool changed = false;
   const int shown = 64;
   scroll = std::clamp(scroll, 0, kHarmonics - shown);
@@ -260,14 +261,28 @@ bool harmonicEditor(const iskin::Skin& k, float x, float y, float w, float h, Pa
     const float cw = (a1.x - a0.x) / shown;
     ImGui::SetCursorScreenPos(a0);
     ImGui::InvisibleButton(band == 0 ? "##hlv" : "##hph", ImVec2(a1.x - a0.x, a1.y - a0.y));
-    if (ImGui::IsItemActive()) {
-      const ImVec2 m = ImGui::GetIO().MousePos;
+    const bool reset = ImGui::GetIO().KeyCtrl || ImGui::IsMouseDown(1);
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    float* row = band == 0 ? &lv[static_cast<size_t>(scroll)] : &ph[static_cast<size_t>(scroll)];
+    // J-99: strokes fill every harmonic between samples. Levels are smoothed
+    // (Alt: raw); phases wrap around (0 = 1), so they are filled raw.
+    drawui::Spec spec;
+    spec.surface = "lattice";
+    spec.p0 = a0;
+    spec.p1 = a1;
+    spec.raw = band == 1;
+    if (const std::vector<float>* res = drawui::stroke(a, ImGui::GetItemID(), ImGui::IsItemActive() && !reset, (m.x - a0.x) / (a1.x - a0.x),
+                                                       std::clamp((a1.y - m.y) / (a1.y - a0.y), 0.0f, 1.0f), row, shown, spec)) {
+      for (int i = 0; i < shown; ++i)
+        if (row[i] != (*res)[static_cast<size_t>(i)]) row[i] = (*res)[static_cast<size_t>(i)], changed = true;
+    }
+    if (ImGui::IsItemActive() && reset) {
       const int hi = scroll + std::clamp(static_cast<int>((m.x - a0.x) / cw), 0, shown - 1);
-      float v = std::clamp((a1.y - m.y) / (a1.y - a0.y), 0.0f, 1.0f);
-      if (ImGui::GetIO().KeyCtrl || ImGui::IsMouseDown(1)) v = band == 0 ? (hi == 0 ? 1.f : 0.f) : 0.f;
+      const float v = band == 0 ? (hi == 0 ? 1.f : 0.f) : 0.f;
       float& dst = band == 0 ? lv[static_cast<size_t>(hi)] : ph[static_cast<size_t>(hi)];
       if (dst != v) dst = v, changed = true;
     }
+    if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     for (int i = 0; i < shown; ++i) {
       const int hi = scroll + i;
       const float v = band == 0 ? lv[static_cast<size_t>(hi)] : ph[static_cast<size_t>(hi)];
@@ -276,6 +291,7 @@ bool harmonicEditor(const iskin::Skin& k, float x, float y, float w, float h, Pa
       dl->AddRectFilled(ImVec2(bx + 1, a1.y - v * (a1.y - a0.y)), ImVec2(bx + cw - 1, a1.y), (hi % 2 == 0) ? c : lerp(c, rgb(0x121517), 0.25f));
     }
     caption(k, x, by + bh - 1, 60, band == 0 ? "LEVELS" : "PHASES", 8);
+    if (band == 0) drawui::chip(a, "lattice", a0, a1);
   }
   // Scroll + harmonic numbers.
   char b[48];
@@ -542,7 +558,7 @@ void artPanel(App& a, const PluginTarget& t, const iskin::Skin& k, const PluginS
   }
   const float EY = Y + 18;
   if (isOp && u.target == nArts) {
-    if (harmonicEditor(k, 5, EY, 533, H - 18, d, unit, u.harmScroll)) commit(a, t, st, d, "Edit harmonics", 1);
+    if (harmonicEditor(a, k, 5, EY, 533, H - 18, d, unit, u.harmScroll)) commit(a, t, st, d, "Edit harmonics", 1);
     return;
   }
   // Part row.

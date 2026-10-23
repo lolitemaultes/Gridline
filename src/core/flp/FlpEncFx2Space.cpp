@@ -291,7 +291,10 @@ Encoder convolver() {
       if (!L.ok) return;
     }
     // Time envelopes 0 pan, 1 volume, 2 separation (J-42), then the EQ curve.
-    const std::vector<sx::EnvPoint>* wantK[3] = {&want.pan, &want.env, &want.sep};
+    // J-106: a Smooth curve goes out as straight points that follow it within 0.1 dB.
+    const std::vector<sx::EnvPoint> wantEnv = sx::curveSmooth(want.envMode) ? sx::smoothToSegments(want.env, sx::convEnvErrDb, 0.1) : want.env;
+    const std::vector<sx::EnvPoint> wantEq = sx::curveSmooth(want.eqMode) ? sx::smoothToSegments(want.eq, sx::convEqErrDb, 0.1) : want.eq;
+    const std::vector<sx::EnvPoint>* wantK[3] = {&want.pan, &wantEnv, &want.sep};
     const std::vector<sx::EnvPoint>* haveK[3] = {&have.pan, &have.env, &have.sep};
     for (int k = 0; k < 3; ++k)
       if (pointsKey(*wantK[k]) != pointsKey(*haveK[k])) {
@@ -299,7 +302,7 @@ Encoder convolver() {
         L = convLayout(b);
         if (!L.ok) return;
       }
-    if (pointsKey(want.eq) != pointsKey(have.eq)) writeConvEnvelope(b, L, 4, want.eq);
+    if (pointsKey(wantEq) != pointsKey(have.eq)) writeConvEnvelope(b, L, 4, wantEq);
   };
   return e;
 }

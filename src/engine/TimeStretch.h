@@ -141,6 +141,9 @@ struct ClipRequest {
 RenderedClipPtr renderClip(const ClipRequest& r, bool async);
 // Blocks until every queued clip render is done (tests, exports).
 void waitForPendingRenders();
+// J-103 app quit: drops queued renders and joins the render thread before main() returns
+// (later requests render synchronously). Idempotent.
+void shutdownClipRenderer();
 // Frees the cached renders nothing uses any more (memory pressure, tests).
 void trimClipCache();
 size_t clipCacheBytes();

@@ -382,7 +382,7 @@ int main() {
     noisy.params[KsNoiseS] = 1.0f;
     Out on = hit(noisy);
     expect(on.finite, "kick: noise layer finite");
-    if (!kickNoisePath(0).empty()) expect(brightness(on) > brightness(base), "kick: noise sample layer adds highs");
+    expect(brightness(on) > brightness(base), "kick: noise sample layer adds highs");
     PluginState lvl = s;
     lvl.params[KsLevel] = 0.1f;
     expect(hit(lvl).peak < base.peak * 0.4f, "kick: output level");

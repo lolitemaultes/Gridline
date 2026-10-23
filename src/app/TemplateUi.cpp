@@ -242,7 +242,7 @@ void newProjectWindow(App& a) {
   ImGui::EndChild();
   ui::DialogFooter(ImGui::GetContentRegionAvail().x);
   ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x);
-  if (ui::TextButton("Loop starter...", false, 0, "Build a ready-to-play loop from a style instead (J-59)")) {
+  if (ui::TextButton("Loop starter...", false, 0, "Build a ready-to-play loop from a style instead")) {
     j59::openLoopStarter(a);
     a.showNewProject = false;
   }

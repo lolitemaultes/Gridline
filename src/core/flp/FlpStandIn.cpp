@@ -201,7 +201,7 @@ Mapping mapBitcrush(const PluginState& g) {
   put(s, dy::SqImpactMs, clampd(prm(g, BcImpact, 0.1f) * 1000.0, 0, 1000));
   put(s, dy::SqAmountRef, prm(g, BcPunch));
   put(s, dy::SqGainRef, clampd(dbToGain(prm(g, BcOutput)), 0, 1.2598));
-  m.note = "sample-rate reduction and squarize not carried";
+  m.note = "rate reduction (Rate, anti-alias, smoothing), dither and squarize not carried";
   m.ok = true;
   return m;
 }

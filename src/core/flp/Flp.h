@@ -1,7 +1,7 @@
 // Gridline — FL Studio project (.flp) import: shared reader and import context.
 //
 // The importer is written from the documented container layout
-// (analysis/reference/format-flp.md) and public format notes; no Image-Line
+// (format notes) and public format notes; no Image-Line
 // code is used. Each area lives in its own file and fills the Gridline song:
 //   FlpProject.cpp      project info, tempo, time signature, master pitch
 //   FlpMixer.cpp        inserts, names, colours, levels, routing, slot mix

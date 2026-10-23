@@ -4,7 +4,7 @@
 //   Drumaxx                   → gl.drumkit (16 modelled drum pads)
 //   Fruity DrumSynth Live     → gl.drumkit (the patches of the keys the channel plays)
 //   BassDrum                  → gl.kick
-// Layouts: see analysis/demos/instruments_wave2.md (pads section).
+// Layouts: see format notes (pads section).
 #include <algorithm>
 #include <array>
 #include <cmath>

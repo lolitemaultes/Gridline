@@ -1,5 +1,5 @@
 // Gridline — J-26: reference engines of the classic phaser and flanger
-// (studies analysis/demos/specs/j26_phaser.md, j26_flanger.md). Both run a
+// (behaviour studies). Both run a
 // 4096-entry LFO table with a 24-bit phase (12 bits index, 12 bits fraction,
 // linear interpolation). Knob positions n (0..1) are the inputs; delay lines
 // are fixed-size (no allocation on the audio thread).

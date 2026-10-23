@@ -1,5 +1,5 @@
 // Gridline — "dynamics" pack, J-35: reference engine of gl.emphasis
-// (EmModel = 1; study analysis/demos/specs/j35_emphasis.md).
+// (EmModel = 1; behaviour study).
 //
 // A four-stage look-ahead limiter: optional DC block → (modes 0 / 1) a
 // low / high band analysis that sets a detector knee → input gain, optional

@@ -12,6 +12,7 @@
 //   vst2:<8 hex digits unique id>   au:<type>/<subtype>/<manufacturer>
 //   lv2:<plugin URI> (entry: the .lv2 bundle directory)
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -79,8 +80,10 @@ bool splitType(const std::string& type, std::string& format, std::string& uid);
 std::unique_ptr<Backend> createBackend(const std::string& format, const std::string& entry, const std::string& uid, std::string* err);
 
 // Same in a child process running `exe --scan-plugin <format> <entry> --out
-// <tmp>`; a crash, error exit or timeout gives ok = false.
-ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds = 60);
+// <tmp>`; a crash, error exit or timeout gives ok = false. When `cancel` turns
+// true the child is killed and the result (ok = false) must not be cached (J-103: quit).
+ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds = 60,
+                        const std::atomic<bool>* cancel = nullptr);
 // Entry point of child processes: the scanner (`--scan-plugin`, `--scan-vst3`)
 // and the playback sandbox (`--plugin-sandbox`). Returns the exit code, or -1
 // when the arguments name no child mode.

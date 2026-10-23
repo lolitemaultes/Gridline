@@ -617,7 +617,9 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
   switch (item.kind) {
     case Kind::Audio:
       switch (target) {
-        case DropTarget::Rack: return !targetType.empty() && targetUsesSample ? DropAction::ReplaceSample : DropAction::NewSamplerChannel;
+        case DropTarget::Rack:
+          if (targetType.empty()) return DropAction::NewSamplerChannel;
+          return targetUsesSample ? DropAction::ReplaceSample : DropAction::ReplaceInstrument;
         case DropTarget::Workspace: return DropAction::NewSamplerChannel;
         case DropTarget::Playlist: return DropAction::AudioClip;
         case DropTarget::Browser: return DropAction::None;
@@ -631,7 +633,7 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
       switch (target) {
         case DropTarget::PianoRoll: return DropAction::ImportMidiNotes;
         case DropTarget::Playlist: return DropAction::MidiPatternClip;
-        case DropTarget::Rack:
+        case DropTarget::Rack: return targetType.empty() ? DropAction::ImportMidiChannels : DropAction::ImportMidiNotes;  // J-97: a row takes the notes
         case DropTarget::Workspace: return DropAction::ImportMidiChannels;
         default: return DropAction::None;
       }
@@ -642,8 +644,10 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
       return DropAction::None;
     case Kind::Preset:
       if (target == DropTarget::PluginWindow) return !targetType.empty() && targetType == item.pluginType ? DropAction::ApplyPreset : DropAction::None;
-      if (item.pluginKind == PluginKind::Generator)
+      if (item.pluginKind == PluginKind::Generator) {
+        if (target == DropTarget::Rack && !targetType.empty()) return DropAction::ReplaceFromPreset;  // J-97: a channel row
         return target == DropTarget::Rack || target == DropTarget::Workspace ? DropAction::NewChannelFromPreset : DropAction::None;
+      }
       if (item.pluginKind == PluginKind::Effect)
         return target == DropTarget::MixerTrack || target == DropTarget::MixerSlot ? DropAction::InsertEffectPreset : DropAction::None;
       return DropAction::None;
@@ -673,6 +677,8 @@ const char* dropActionLabel(DropAction a) {
     case DropAction::ReplaceSample: return "Replace sample";
     case DropAction::MidiPatternClip: return "Import MIDI as a pattern clip";
     case DropAction::AddBrowserFolder: return "Add folder to the browser";
+    case DropAction::ReplaceInstrument: return "Replace with a sampler";
+    case DropAction::ReplaceFromPreset: return "Replace instrument from preset";
   }
   return "";
 }

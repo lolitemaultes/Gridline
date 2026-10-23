@@ -1,5 +1,5 @@
 // Gridline — "dynamics" pack, J-26: peak-emphasis limiter of gl.enhance
-// (EnCustom = 2; study analysis/demos/specs/j26_emphasizer.md). Linked peak
+// (EnCustom = 2; behaviour study). Linked peak
 // detector scaled by 1 - e²/2, ~25 ms moving maximum, attack / two-speed
 // release envelope, gain to a -0.1 dB ceiling on a 2 ms look-ahead, then a hard
 // or soft clipper, output gain, optional level matching and a bypass fade.

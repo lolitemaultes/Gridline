@@ -10,6 +10,7 @@
 #include <random>
 #include "../../core/I18n.h"
 #include "../../core/Params.h"
+#include "../../app/DrawSmoothUi.h"
 #include "utility_widgets.h"
 
 namespace gl::packs::utility {
@@ -264,29 +265,57 @@ void editorBankEq(App& a, const PluginTarget& t, float width) {
       cur = static_cast<float>(std::clamp(cur + (v - cur) * w, 0.0, 2.0));
     }
   };
+  // J-99: the pencil (tool 0) goes through the shared smooth stroke: every band
+  // between samples is filled, the pointer is filtered and the painted bands
+  // get a light pass (Alt: raw). The line tool stays exact; the brush is
+  // stamped along the path so fast moves leave no gaps. One undo step per stroke.
+  const bool pencil = tool == 0 && act && !ImGui::IsMouseDown(ImGuiMouseButton_Right);
+  {
+    float cur[kBqBands];
+    for (int b = 0; b < kBqBands; ++b) cur[b] = static_cast<float>(std::clamp(val(st, bqValue(bank, target, b), 1), 0.0f, 2.0f));
+    drawui::Spec spec;
+    spec.surface = "bankeq";
+    spec.lo = 0.0f;
+    spec.hi = 2.0f;
+    spec.p0 = g0;
+    spec.p1 = g1;
+    const double mx = (io.MousePos.x - g0.x) / gw;
+    if (const std::vector<float>* res = drawui::stroke(a, ImGui::GetItemID(), pencil, mx, yV(io.MousePos.y), cur, kBqBands, spec)) {
+      PluginState ns = st;
+      for (int b = 0; b < kBqBands; ++b) bandVal(ns, bank, target, b) = (*res)[static_cast<size_t>(b)];
+      if (ns.params != st.params) setPluginState(a, t, ns, "draw EQ bands", (0x42514550ull << 32) ^ (t.key() << 4));
+    }
+  }
   if (ImGui::IsItemActivated()) {
     ui.gesture = gestureKey(t, 0x42514555ull << 32);
     ui.erasing = ImGui::IsMouseDown(ImGuiMouseButton_Right);
     ui.last = ui.lineStart = io.MousePos;
-    if (tool != 1) {
+    if (tool == 2 || ui.erasing) {
       PluginState ns = st;
       double v = ui.erasing ? 1.0 : yV(io.MousePos.y);
-      if (tool == 0 || ui.erasing) paint(ns, io.MousePos.x, v, io.MousePos.x, v);
+      if (ui.erasing) paint(ns, io.MousePos.x, v, io.MousePos.x, v);
       else brush(ns, io.MousePos.x, v);
       setPluginState(a, t, ns, "draw EQ bands", ui.gesture);
     }
   }
-  if (act) {
-    if (tool == 1 && !ui.erasing) {
-      dl->AddLine(ui.lineStart, io.MousePos, K.select, 1.5f);
-    } else if (io.MousePos.x != ui.last.x || io.MousePos.y != ui.last.y) {
+  if (act && (tool == 2 || ui.erasing)) {
+    if (io.MousePos.x != ui.last.x || io.MousePos.y != ui.last.y) {
       PluginState ns = st;
       double va = ui.erasing ? 1.0 : yV(ui.last.y), vb = ui.erasing ? 1.0 : yV(io.MousePos.y);
-      if (tool == 0 || ui.erasing) paint(ns, ui.last.x, va, io.MousePos.x, vb);
-      else brush(ns, io.MousePos.x, vb);
+      if (ui.erasing) {
+        paint(ns, ui.last.x, va, io.MousePos.x, vb);
+      } else {  // stamp every half band along the path
+        const int steps = std::max(1, static_cast<int>(std::ceil(std::fabs(io.MousePos.x - ui.last.x) / (cellW * 0.5f))));
+        for (int k = 1; k <= steps; ++k) {
+          const float f = static_cast<float>(k) / steps;
+          brush(ns, ui.last.x + (io.MousePos.x - ui.last.x) * f, va + (vb - va) * f);
+        }
+      }
       ui.last = io.MousePos;
       setPluginState(a, t, ns, "draw EQ bands", ui.gesture);
     }
+  } else if (act && tool == 1) {
+    dl->AddLine(ui.lineStart, io.MousePos, K.select, 1.5f);
   }
   if (ImGui::IsItemDeactivated()) {
     if (tool == 1 && !ui.erasing) {
@@ -322,6 +351,7 @@ void editorBankEq(App& a, const PluginTarget& t, float width) {
     a.setHint(buf);
     skin::text(dl, F.p(108, 28), K.text, rd, fs);
   }
+  if (tool == 0) drawui::chip(a, "bankeq", g0, g1);
 
   // ---- bank strip ----
   skin::text(dl, F.p(18, 209), K.textDim, "BANK", fs);

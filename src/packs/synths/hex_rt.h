@@ -19,13 +19,12 @@ struct Spectrum {
 };
 
 // Spectrum of wave selector `w` (1..32); custom (0) comes from the state data.
-// Waves 6..32 are the reference instrument's own spectra, read in place from
-// its installed plugin file (never shipped with Gridline); without it,
-// formula approximations of the same families are used. `exact` (optional)
-// tells which of the two was used.
-Spectrum builtinSpectrum(int w, bool* exact = nullptr);
-// True when the reference instrument's spectra were found on this computer.
-bool referenceSpectraAvailable();
+// Gridline's own wave set, generated from formulas (hexwaves_dsp.cpp): no file
+// is read. Built once, lazily, on first use (UI thread: prepareAux).
+Spectrum builtinSpectrum(int w);
+// Family of selector `w`: an imported selector keeps its family.
+enum class WaveFamily { Custom, Sine, Classic, Tonal, Noise, Formant };
+WaveFamily waveFamily(int w);
 
 // 128 band-limited levels of a 256-sample cycle: level b holds harmonics
 // 1..128 − b. Stored with one guard sample before and two after each cycle

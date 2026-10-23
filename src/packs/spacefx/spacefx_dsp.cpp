@@ -1,6 +1,7 @@
 // Gridline — "spacefx" pack: runtimes and prepared data.
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <map>
 #include "../Packs.h"
 #include "sfx_common.h"
@@ -211,6 +212,21 @@ ConvData parseConvData(const std::string& data) {
       d.pan = parsePoints(line.substr(5));
     } else if (line.compare(0, 5, "#sep ") == 0) {
       d.sep = parsePoints(line.substr(5));
+    } else if (line.compare(0, 6, "#mode ") == 0) {  // J-106: "eq=smooth;env=straight"
+      size_t p = 6;
+      while (p < line.size()) {
+        size_t e = line.find(';', p);
+        if (e == std::string::npos) e = line.size();
+        const std::string it = line.substr(p, e - p);
+        const size_t eqp = it.find('=');
+        if (eqp != std::string::npos) {
+          const std::string k = it.substr(0, eqp), v = it.substr(eqp + 1);
+          const int m = v == "smooth" ? CurveSmooth : v == "straight" ? CurveStraight : CurveAuto;
+          if (k == "eq") d.eqMode = m;
+          else if (k == "env") d.envMode = m;
+        }
+        p = e + 1;
+      }
     }
     if (nl == std::string::npos) break;
     pos = nl + 1;
@@ -220,8 +236,14 @@ ConvData parseConvData(const std::string& data) {
 
 std::string formatConvData(const ConvData& d) {
   std::string s = d.path;
-  if (d.env.empty() && d.eq.empty() && d.pan.empty() && d.sep.empty()) return s;
+  if (d.env.empty() && d.eq.empty() && d.pan.empty() && d.sep.empty() && d.envMode == CurveAuto && d.eqMode == CurveAuto) return s;
   s += "\n#v 1";
+  if (d.envMode != CurveAuto || d.eqMode != CurveAuto) {
+    const auto name = [](int m) { return m == CurveSmooth ? "smooth" : "straight"; };
+    s += "\n#mode ";
+    if (d.eqMode != CurveAuto) s += std::string("eq=") + name(d.eqMode);
+    if (d.envMode != CurveAuto) s += std::string(d.eqMode != CurveAuto ? ";" : "") + "env=" + name(d.envMode);
+  }
   if (!d.env.empty()) {
     s += "\n#env ";
     formatPoints(s, d.env);
@@ -259,10 +281,87 @@ double envAt(const std::vector<EnvPoint>& pts, double t) {
   return a.v + (b.v - a.v) * u;
 }
 
-double convEqDb(const std::vector<EnvPoint>& eq, double hz) {
+double convEqDb(const std::vector<EnvPoint>& eq, double hz, bool smooth) {
   if (eq.empty()) return 0;
   double x = std::log(std::max(hz, 1.0) / 20.0) / std::log(1000.0);
-  return (clampd(envAt(eq, clampd(x, 0, 1)), 0, 1) - 0.5) * 36.0;
+  const double v = smooth ? SmoothCurve(eq).at(clampd(x, 0, 1)) : envAt(eq, clampd(x, 0, 1));
+  return (clampd(v, 0, 1) - 0.5) * 36.0;
+}
+
+// ------------------------------------------------- J-106: smooth curves
+SmoothCurve::SmoothCurve(const std::vector<EnvPoint>& pts) {
+  const size_t n = pts.size();
+  x.resize(n), y.resize(n), m.assign(n, 0.0);
+  for (size_t i = 0; i < n; ++i) x[i] = pts[i].t, y[i] = pts[i].v;
+  if (n < 3) return;  // one segment: zero end slopes (a smoothstep between the two points)
+  // Interior tangents: zero at a local extremum or a vertical step, else the
+  // weighted harmonic mean of the neighbouring secant slopes (Fritsch–Butland),
+  // which keeps every segment monotone (|m| <= 3 × each secant). Ends: zero slope.
+  for (size_t i = 1; i + 1 < n; ++i) {
+    const double h0 = x[i] - x[i - 1], h1 = x[i + 1] - x[i];
+    if (!(h0 > 1e-12) || !(h1 > 1e-12)) continue;
+    const double d0 = (y[i] - y[i - 1]) / h0, d1 = (y[i + 1] - y[i]) / h1;
+    if (d0 * d1 <= 0) continue;
+    const double w1 = 2 * h1 + h0, w2 = h1 + 2 * h0;
+    m[i] = (w1 + w2) / (w1 / d0 + w2 / d1);
+  }
+}
+
+double SmoothCurve::at(double t) const {
+  const size_t n = x.size();
+  if (n == 0) return 0.5;
+  if (t <= x.front()) return y.front();
+  if (t >= x.back()) return y.back();
+  const size_t i = static_cast<size_t>(std::upper_bound(x.begin(), x.end(), t) - x.begin());  // x[i-1] <= t < x[i]
+  const size_t a = i - 1;
+  const double h = x[i] - x[a];
+  if (!(h > 1e-12)) return y[i];
+  const double s = (t - x[a]) / h, s2 = s * s, s3 = s2 * s;
+  const double v = (2 * s3 - 3 * s2 + 1) * y[a] + (s3 - 2 * s2 + s) * h * m[a] + (3 * s2 - 2 * s3) * y[i] + (s3 - s2) * h * m[i];
+  // Monotone by construction; the clamp only removes rounding outside the segment's range.
+  return std::clamp(v, std::min(y[a], y[i]), std::max(y[a], y[i]));
+}
+
+ConvCurve::ConvCurve(const std::vector<EnvPoint>& pts, bool smooth) : p_(&pts), sm_(smooth), sc_(smooth ? pts : std::vector<EnvPoint>{}) {}
+
+namespace {
+double levelDb(double g) { return 20.0 * std::log10(std::max(1e-4, g)); }
+}  // namespace
+double convEqErrDb(double a, double b) {
+  const auto ref = [](double v) { return levelDb((std::pow(3.0, 2.0 * clampd(v, 0, 1)) - 1.0) * 0.5); };  // reference build law
+  return std::max(36.0 * std::fabs(a - b), std::fabs(ref(a) - ref(b)));                                      // editing chain: ±18 dB
+}
+double convEnvErrDb(double a, double b) { return std::fabs(levelDb(2.0 * clampd(a, 0, 1)) - levelDb(2.0 * clampd(b, 0, 1))); }
+
+std::vector<EnvPoint> smoothToSegments(const std::vector<EnvPoint>& pts, double (*errDb)(double, double), double tolDb) {
+  std::vector<EnvPoint> out;
+  if (pts.size() < 2) {
+    for (EnvPoint q : pts) out.push_back(EnvPoint{q.t, q.v, 0, 0});
+    return out;
+  }
+  const SmoothCurve sc(pts);
+  // Recursive bisection of each knot interval until the chord is within tolerance
+  // (checked on 24 interior samples per chord; depth-limited).
+  const std::function<void(double, double, int)> split = [&](double t0, double t1, int depth) {
+    const double v0 = sc.at(t0), v1 = sc.at(t1);
+    bool ok = true;
+    for (int j = 1; j < 24 && ok; ++j) {
+      const double f = j / 24.0, t = t0 + (t1 - t0) * f;
+      ok = errDb(v0 + (v1 - v0) * f, sc.at(t)) <= tolDb;
+    }
+    if (!ok && depth < 16) {
+      const double tm = 0.5 * (t0 + t1);
+      split(t0, tm, depth + 1);
+      out.push_back(EnvPoint{tm, sc.at(tm), 0, 0});
+      split(tm, t1, depth + 1);
+    }
+  };
+  out.push_back(EnvPoint{pts[0].t, pts[0].v, 0, 0});
+  for (size_t i = 1; i < pts.size(); ++i) {
+    if (pts[i].t - pts[i - 1].t > 1e-12) split(pts[i - 1].t, pts[i].t, 0);
+    out.push_back(EnvPoint{pts[i].t, pts[i].v, 0, 0});
+  }
+  return out;
 }
 
 IrView convolverIr(const PluginState& s) {

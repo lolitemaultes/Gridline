@@ -2,7 +2,7 @@
 // decoders (FlpMixer.cpp, FlpEffects.cpp, FlpFx*.cpp).
 //
 // FL value curves used here were established by observation of saved files
-// and of the plugins' own behaviour (notes: analysis/demos/notes_gamma.md);
+// and of the plugins' own behaviour (format notes);
 // the code is original.
 #pragma once
 #include <cmath>

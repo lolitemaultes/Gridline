@@ -1,7 +1,7 @@
 // Gridline — FLP import: mixer inserts (names, colours, flags, levels, strip
 // EQ, slot enable/mix, routing and send levels).
 //
-// Format notes (observed in saved projects; see analysis/demos/notes_gamma.md):
+// Format notes (observed in saved projects):
 // * Inserts are written in index order: master, 1…N, then the "current" track
 //   (FL's extra per-selection track). FL ≤ 21 always writes 127 inserts
 //   (master + 125 + current); FL 25 writes only master + used range + current

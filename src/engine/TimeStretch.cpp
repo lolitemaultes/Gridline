@@ -774,13 +774,22 @@ std::string keyOf(const ClipRequest& r) {
 
 class Renderer {
  public:
-  ~Renderer() {
+  ~Renderer() { shutdown(); }
+
+  // J-103: queued renders are dropped and the worker joined (the clip it is rendering
+  // finishes); later requests render on the calling thread. Idempotent.
+  void shutdown() {
+    std::thread t;
     {
       std::lock_guard<std::mutex> lk(mu_);
       quit_ = true;
+      pending_ -= static_cast<int>(queue_.size());
+      queue_.clear();
+      t = std::move(thread_);
     }
     work_.notify_all();
-    if (thread_.joinable()) thread_.join();
+    idle_.notify_all();
+    if (t.joinable()) t.join();
   }
 
   RenderedClipPtr get(const ClipRequest& r, bool async) {
@@ -796,7 +805,7 @@ class Renderer {
     rc->L.assign(static_cast<size_t>(std::max<int64_t>(0, r.frames)), 0.0f);  // sized before anyone can read it
     rc->R.assign(rc->L.size(), 0.0f);
     cache_[key] = rc;
-    if (!async) {
+    if (!async || quit_) {
       lk.unlock();
       renderInto(*rc, r);
       rc->readyFrames.store(rc->frames(), std::memory_order_release);
@@ -911,6 +920,7 @@ RenderedClipPtr renderClip(const ClipRequest& r, bool async) {
 }
 
 void waitForPendingRenders() { renderer().wait(); }
+void shutdownClipRenderer() { renderer().shutdown(); }
 void trimClipCache() { renderer().trim(); }
 size_t clipCacheBytes() { return renderer().bytes(); }
 

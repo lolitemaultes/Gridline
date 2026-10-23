@@ -23,7 +23,7 @@
 //   Fruity LSD                → gl.midiout    (General MIDI on the system synth → a MIDI Out channel)
 //
 // Layouts were read from FL Studio's own plugin database and preset files
-// (analysis/demos/COVERAGE.md lists the evidence); no Image-Line code is used.
+// (format notes lists the evidence); no Image-Line code is used.
 #include <algorithm>
 #include <cctype>
 #include <cmath>

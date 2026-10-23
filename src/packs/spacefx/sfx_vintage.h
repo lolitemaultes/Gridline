@@ -1,6 +1,6 @@
 // Gridline — "spacefx" pack: J-1 reference models of the Bucket Chorus and
 // the Retro Phaser (included by sfx_mod.h only). Original implementations of
-// the behaviour documented in analysis/demos/specs/j1_vchorus.md / j1_vphaser.md.
+// the behaviour documented in behaviour study notes.
 #pragma once
 #include "sfx_common.h"
 #include "sfx_flcurves.h"

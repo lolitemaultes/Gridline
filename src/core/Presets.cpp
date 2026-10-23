@@ -61,6 +61,9 @@ PluginState stateFrom(const Json& j) {
   if (const Json* p = j.find("params"); p && p->is(Json::Type::Array))
     for (size_t i = 0; i < p->array.size() && i < s.params.size(); ++i)
       if (p->array[i].is(Json::Type::Number)) s.params[i] = static_cast<float>(p->array[i].number);
+  // J-104: a preset saved with fewer parameters keeps that size here, so the migrations in
+  // normalizePluginState (which key on the saved size) apply; it pads the defaults back.
+  if (const Json* p = j.find("params"); p && p->is(Json::Type::Array) && p->array.size() < s.params.size()) s.params.resize(p->array.size());
   s.data = j.text("data");
   s.ins = j.text("ins");
   normalizePluginState(s);

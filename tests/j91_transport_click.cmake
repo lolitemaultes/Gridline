@@ -5,7 +5,8 @@
 # takes: SDL -> Dear ImGui backend -> interface scale), then checks the
 # transport. A press that slides off the button before the release still
 # counts (the transport acts on press). With the metronome on, the metronome
-# glyph swings while playing and rests when stopped.
+# glyph ticks while playing (J-97: a hard snap on each beat, no in-between
+# frames), shows its rest pose when switched on and rests when stopped.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j91_transport_click.cmake
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
@@ -38,6 +39,7 @@ set(script "5 toasts clear
 47 sdlup 0
 49 transport
 50 sdlat metro
+51 seekbeat 0.1
 52 sdldown 0
 53 sdlup 0
 55 metro
@@ -86,9 +88,13 @@ foreach(scale 1 1.5 2)
       message(FATAL_ERROR "FAIL (scale ${scale}): expected \"${e}\". Output:\n${out}")
     endif()
   endforeach()
-  # Swing: while playing, the glyph faces right on even beats and left on odd ones (the
-  # song position is set to the middle of beats 0, 1 and 2 of the one-bar pattern, past the short turn);
-  # after Stop it rests facing right.
+  # J-97: switching the metronome on only shows the rest pose (no animation on toggle).
+  if(NOT out MATCHES "metro frame 55: on 1 playing 1 mirror 1\\.000")
+    message(FATAL_ERROR "FAIL (scale ${scale}): switched on, the metronome should rest facing right. Output:\n${out}")
+  endif()
+  # Tick-tock: while playing, the glyph faces right on the beat it was switched on in and on every
+  # second beat after it, mirrored on the others (the song position is set to beats 0, 1 and 2 of
+  # the one-bar pattern); after Stop it rests facing right. Only +1 / -1 ever show (no turn).
   foreach(pair "62;1" "66;-1" "70;1")
     list(GET pair 0 fr)
     list(GET pair 1 side)
@@ -96,8 +102,14 @@ foreach(scale 1 1.5 2)
       message(FATAL_ERROR "FAIL (scale ${scale}): frame ${fr}: the metronome should face ${side}. Output:\n${out}")
     endif()
   endforeach()
+  string(REGEX MATCHALL "mirror -?[0-9.]+" faces "${out}")
+  foreach(f IN LISTS faces)
+    if(NOT f STREQUAL "mirror 1.000" AND NOT f STREQUAL "mirror -1.000")
+      message(FATAL_ERROR "FAIL (scale ${scale}): an in-between metronome pose (${f}). Output:\n${out}")
+    endif()
+  endforeach()
   if(NOT out MATCHES "metro frame 88: on 1 playing 0 mirror 1\\.000")
     message(FATAL_ERROR "FAIL (scale ${scale}): the metronome does not rest after Stop. Output:\n${out}")
   endif()
-  message(STATUS "ok - scale ${scale}: play / pause / play / stop / record by click, press-and-slide plays, metronome swings and rests")
+  message(STATUS "ok - scale ${scale}: play / pause / play / stop / record by click, press-and-slide plays, metronome snaps and rests")
 endforeach()

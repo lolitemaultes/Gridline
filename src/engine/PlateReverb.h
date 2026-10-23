@@ -1,6 +1,6 @@
 // Gridline — J-26: "plate" reference reverb for gl.reverb (RvbModel = 1).
 //
-// A figure-of-eight plate network (study: analysis/demos/specs/j26_reeverb1.md):
+// A figure-of-eight plate network (behaviour study):
 // mono input → high-cut / low-cut → four input all-passes → pre-delay → two
 // cross-coupled tanks (bass shelf, damping, two all-passes and two delays
 // each, loop gain from the decay time) → seven output taps per side.

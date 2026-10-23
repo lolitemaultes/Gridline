@@ -3,7 +3,7 @@
 //
 // State layouts and value curves were established from FL Studio's own
 // supplied projects and presets and, where noted, from the plugins'
-// behaviour; notes: analysis/demos/effects_wave2.md. The code is original.
+// behaviour; format notes. The code is original.
 #pragma once
 #include <algorithm>
 #include <cmath>

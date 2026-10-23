@@ -514,10 +514,12 @@ float drawTopBar(App& a) {
     ImGui::EndGroup();
     float cx = rx + kPanelPad + 26 + kInner + 26 + theme::kS2;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
-    // J-91: while it clicks, the metronome swings over on every beat (Interface animations).
-    const bool swinging = a.metronome && a.engine.playing() && !a.engine.countingIn() && scrollui::animations();
+    // J-91 / J-97: while it clicks, the metronome snaps over on every beat (a hard tick-tock, no
+    // in-between frames; Interface animations). Toggling it only shows the rest pose.
+    const bool ticking = a.metronome && a.engine.playing() && !a.engine.countingIn() && scrollui::animations();
     const double beatTicks = static_cast<double>(std::max<Tick>(1, s.beatTicks()));  // the metronome's beat (time signature)
-    const float mirror = static_cast<float>(motion::metronomeSwing(a.engine.position() / beatTicks, s.tempo * s.ppq / beatTicks, swinging));
+    static motion::MetronomeTicker ticker;
+    const float mirror = static_cast<float>(ticker.update(a.engine.position() / beatTicks, ticking));
     if (ui::ToggleIcon("metro", ui::Icon::Metronome, a.metronome, kBtn, "Metronome (Ctrl+M)", mirror)) a.metronome = !a.metronome;
     noteRect("metro");
     gMetroMirror = mirror;

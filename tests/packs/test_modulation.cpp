@@ -817,7 +817,7 @@ int main() {
     expect(back.modLinks.size() == 2 && back.modLinks[0].formula == l.formula && back.channel(ch)->noteFx.size() == 2,
            "loaded link keeps its formula; channel keeps its note FX chain");
     Json j = songToJson(d.song());
-    expect(static_cast<int>(j.num("version")) == kProjectSchemaVersion && kProjectSchemaVersion == 6, "projects save as schema v6");
+    expect(static_cast<int>(j.num("version")) == kProjectSchemaVersion && kProjectSchemaVersion == 8, "projects save as schema v8");
     // v4 project (no modLinks / noteFx / sidechain) still loads
     Json old = songToJson(baseDoc().song());
     old.object["version"] = Json::makeNumber(4);

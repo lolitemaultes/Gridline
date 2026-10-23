@@ -352,7 +352,7 @@ bool decodeConvolver(Context& c, const std::vector<Event>& evs, PluginMapping& m
 }
 
 // ------------------------------------------------------------------ Fruity Reeverb → Reverb
-// J-26: plate reference (gl.reverb RvbModel = 1), laws in analysis/demos/specs/j26_reeverb1.md.
+// J-26: plate reference (gl.reverb RvbModel = 1), laws in behaviour study notes.
 // FL ignores states whose first word is above version 1 (the 40-byte float
 // "send" preset), so those load the plugin defaults.
 double rv1LowCut(double v) { return plate::lowCutStep(v); }  // <= 20 = off in the plate

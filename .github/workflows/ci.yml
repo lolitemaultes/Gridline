@@ -18,12 +18,14 @@ env:
 
 jobs:
   consistency:
-    name: Version, icons, line endings
+    name: Version, icons, tree, line endings
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: bash tools/ci/check-version.sh
       - run: python3 tools/make_ico.py --check
+      - name: Tree hygiene (size, junk files, home paths, internal notes)
+        run: bash tools/ci/check-tree.sh
       - name: No CRLF in text files
         run: |
           if git ls-files --eol | grep 'i/crlf' | grep -v 'attr/-text'; then echo "CRLF line endings above"; exit 1; fi

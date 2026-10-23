@@ -1,5 +1,5 @@
 // Gridline — "dynamics" pack, J-35: the pedal board reference (gl.amprack
-// RkModel = 2; study analysis/demos/specs/j35_hardcore.md).
+// RkModel = 2; behaviour study).
 //
 // 30 Hz high-pass → input gain → five boxes (distortion, chorus, flanger,
 // phaser, reverb, delay, noise gate, equalizer, compressor, modulator,

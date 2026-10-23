@@ -338,7 +338,7 @@ inline void stretchKeepPitch(IrBuf& ir, double ratio) {
 }
 
 // Zero-phase spectral gain from the EQ curve, blended with the dry IR by `mix`.
-inline void applyEqCurve(IrBuf& ir, const std::vector<EnvPoint>& eq, double mix) {
+inline void applyEqCurve(IrBuf& ir, const std::vector<EnvPoint>& eq, double mix, bool smooth = false) {
   if (eq.empty() || mix <= 0 || ir.len() == 0) return;
   bool flat = true;
   for (const EnvPoint& q : eq) flat = flat && std::fabs(q.v - 0.5) < 1e-6;
@@ -349,9 +349,12 @@ inline void applyEqCurve(IrBuf& ir, const std::vector<EnvPoint>& eq, double mix)
   Fft f;
   f.init(n);
   std::vector<float> gains(static_cast<size_t>(n / 2 + 1));
+  const ConvCurve cv(eq, smooth);  // J-106: the editor draws the same evaluator
+  const double lx = std::log(1000.0);
   for (int k = 0; k <= n / 2; ++k) {
-    double hz = static_cast<double>(k) * ir.rate / n;
-    gains[static_cast<size_t>(k)] = static_cast<float>(std::pow(10.0, convEqDb(eq, std::max(hz, 1.0)) / 20.0));
+    const double hz = std::max(static_cast<double>(k) * ir.rate / n, 1.0);
+    const double db = (clampd(cv.at(clampd(std::log(hz / 20.0) / lx, 0, 1)), 0, 1) - 0.5) * 36.0;  // = convEqDb
+    gains[static_cast<size_t>(k)] = static_cast<float>(std::pow(10.0, db / 20.0));
   }
   std::vector<float> a(static_cast<size_t>(2 * n));
   for (int p = 0; p < ir.paths; ++p) {
@@ -370,22 +373,30 @@ inline void applyEqCurve(IrBuf& ir, const std::vector<EnvPoint>& eq, double mix)
 }
 
 // ------------------------------------------------- reference IR build (CvModel = 1)
-// J-42, spec analysis/demos/specs/j35_convolver.md: normalise (300 ms RMS peak
+// J-42, spec behaviour study notes: normalise (300 ms RMS peak
 // to 0.05) → pan / volume / separation envelopes → self-convolution, all at the
 // file rate; then per engine rate: stretch + rate conversion to stretch × rate,
 // EQ curve (zero-phase FIR from the smoothed curve, or a plain gain when the
 // curve is flat), trailing-silence trim. Pre-delay runs as an integer delay.
 namespace ref {
 
-// Point envelope with FL's segment shapes (shape and tension of the point ending a segment).
+// Point envelope with FL's segment shapes (shape and tension of the point ending a segment),
+// or (J-106, smooth) the monotone cubic through the points.
 struct EnvEval {
   const std::vector<EnvPoint>* p = nullptr;
   std::vector<menv::Coef> c;
-  explicit EnvEval(const std::vector<EnvPoint>& pts) : p(&pts) {
+  bool smooth = false;
+  SmoothCurve sc{std::vector<EnvPoint>{}};
+  explicit EnvEval(const std::vector<EnvPoint>& pts, bool smoothMode = false) : p(&pts), smooth(smoothMode) {
+    if (smooth) {
+      sc = SmoothCurve(pts);
+      return;
+    }
     for (const EnvPoint& q : pts) c.push_back(menv::coef(static_cast<uint8_t>(std::clamp(q.c, 0, 12)), static_cast<float>(q.k)));
   }
   double at(double t) const {
     const auto& v = *p;
+    if (smooth) return v.empty() ? 0.5 : sc.at(t);
     if (v.empty()) return 0.5;
     if (t < v.front().t) return v.front().v;
     if (t >= v.back().t) return v.back().v;
@@ -483,7 +494,7 @@ inline void envelopes(IrBuf& ir, const ConvData& cd) {
   const bool pan = !cd.pan.empty() && !flatAt(cd.pan, 0.5), vol = !cd.env.empty() && !flatAt(cd.env, 0.5),
              sep = !cd.sep.empty() && !flatAt(cd.sep, 0.5);
   if (!pan && !vol && !sep) return;
-  const EnvEval ep(cd.pan), ev(cd.env), es(cd.sep);
+  const EnvEval ep(cd.pan), ev(cd.env, curveSmooth(cd.envMode)), es(cd.sep);
   float m[4];
   for (size_t i = 0; i < ir.len(); ++i) {
     const double t = static_cast<double>(i) / ir.rate;
@@ -563,7 +574,7 @@ inline const std::vector<double>& smoothKernel() {
 }
 
 // EQ curve on an IR at rate R' (= stretch × engine rate), r = stretch.
-inline void eqCurve(IrBuf& ir, const std::vector<EnvPoint>& eq, double mix, double rp, double r) {
+inline void eqCurve(IrBuf& ir, const std::vector<EnvPoint>& eq, double mix, double rp, double r, bool smooth = false) {
   if (eq.empty() || ir.len() == 0) return;
   if (flatAt(eq, eq.front().v)) {
     if (2.0 * static_cast<float>(eq.front().v) == 1.0) return;
@@ -578,7 +589,7 @@ inline void eqCurve(IrBuf& ir, const std::vector<EnvPoint>& eq, double mix, doub
   while (static_cast<double>(1L << lg) < n2) ++lg;
   lg = std::clamp(lg, 4, 20);
   const int N = 1 << lg;
-  const EnvEval ev(eq);
+  const EnvEval ev(eq, smooth);
   std::vector<double> G(static_cast<size_t>(N + 1));
   for (int i = 0; i <= N; ++i) {
     const double f = static_cast<double>(static_cast<float>(i * rp / (N * 22050.0 * r * 2.0))) * 22050.0;
@@ -627,7 +638,7 @@ inline void buildForRate(IrBuf& ir, const PluginState& s, double rate) {
     for (int p = 0; p < 2; ++p) ir.p[p] = resampleChannel(ir.p[p].data(), len, ir.rate, rp, 64);
   ir.rate = rp;
   const ConvData cd = parseConvData(s.data);
-  eqCurve(ir, cd.eq, clampd(pv(s, CvEqMix, 1), 0, 1), rp, r);
+  eqCurve(ir, cd.eq, clampd(pv(s, CvEqMix, 1), 0, 1), rp, r, curveSmooth(cd.eqMode));
   trimTail(ir);
   ir.rate = rate;  // played at the engine rate
 }
@@ -680,12 +691,14 @@ inline void editIr(IrBuf& ir, const PluginState& s, double maxSeconds) {
       for (size_t i = 0; i < len; ++i) ir.p[p][i] = static_cast<float>((1 - sc) * ir.p[p][i] + sc * c[i] * g);
     }
   // IR amplitude envelope (0.5 = unity, 1 = ×2), then the EQ curve.
-  if (pb(s, CvEnvOn) && cd.env.size() >= 1)
+  if (pb(s, CvEnvOn) && cd.env.size() >= 1) {
+    const ConvCurve cv(cd.env, curveSmooth(cd.envMode));  // J-106: the editor draws the same evaluator
     for (size_t i = 0; i < len; ++i) {
-      float g = static_cast<float>(2.0 * clampd(envAt(cd.env, static_cast<double>(i) / ir.rate), 0, 1));
+      float g = static_cast<float>(2.0 * clampd(cv.at(static_cast<double>(i) / ir.rate), 0, 1));
       for (int p = 0; p < ir.paths; ++p) ir.p[p][i] *= g;
     }
-  applyEqCurve(ir, cd.eq, clampd(pv(s, CvEqMix, 1), 0, 1));
+  }
+  applyEqCurve(ir, cd.eq, clampd(pv(s, CvEqMix, 1), 0, 1), curveSmooth(cd.eqMode));
   // Low / high cut (12 dB/oct each).
   double lc = pv(s, CvLowCut, 20), hc = pv(s, CvHighCut, 20000);
   for (int p = 0; p < ir.paths; ++p) {

@@ -59,6 +59,15 @@ std::string ParamDesc::format(double v) const {
       std::snprintf(buf, sizeof buf, "%.2f s", v);
   } else if (unit == "ms") {
     std::snprintf(buf, sizeof buf, "%.1f ms", v);
+  } else if (unit == "rate") {  // J-104: hold rate; the top of the travel is "Off"
+    if (v >= max - 0.5)
+      return "Off";
+    if (v >= 1000)
+      std::snprintf(buf, sizeof buf, v >= 9995 ? "%.1f kHz" : "%.2f kHz", v / 1000.0);
+    else
+      std::snprintf(buf, sizeof buf, "%.0f Hz", v);
+  } else if (unit == "bits") {  // J-98: fractional bit depths are real (continuous step size): never rounded
+    std::snprintf(buf, sizeof buf, "%.1f bits", v);
   } else if (unit == "pct") {  // J-92: the value is already in percent (0..100 ranges)
     std::snprintf(buf, sizeof buf, "%.0f%%", v);
   } else if (unit == "%") {
@@ -1071,11 +1080,15 @@ GL_NOINLINE void addInfo26(std::vector<PluginInfo>& v) {
   using namespace pp;
   PluginInfo p{"gl.bitcrush", "Bitcrusher", "Distortion", PluginKind::Effect, {}, false, {}};
   p.params.resize(BcCount);
-  p.params[BcBits] = lin("Bits", "", 1, 24, 8);
-  // J-92: default 1 (no rate reduction): at /4 the sample-and-hold error (-12 dB)
-  // masked the quantisation of every depth above ~6 bits, so the Bits knob seemed
-  // capped. The "8-bit" preset keeps its /4.
-  p.params[BcDownsample] = lin("Downsample", "", 1, 50, 1);
+  // J-98: logarithmic knob law: quantisation noise falls 6 dB per bit, so on
+  // music at -18..-12 dBFS 1..8 bits crunch, 8..12 hiss and above ~12 is clean.
+  // The log law gives 1..8 bits 65 % of the travel and 1..12 78 % (it was 30 %
+  // and 48 %). Stored values are bits; schema v7 moves old normalized automation.
+  p.params[BcBits] = lg("Bits", "bits", 1, 24, 8);
+  // J-104: Rate is the main control (hold rate in Hz, log knob, the top of the travel
+  // is "Off"); it replaced "Downsample" (a host-rate divider). 11 kHz by default: the
+  // classic crunch with the bit depth still audible on top of it.
+  p.params[BcRate] = lg("Rate", "rate", kBcRateMin, kBcRateOff, 11025);
   p.params[BcMix] = lin("Mix", "%", 0, 1, 1);
   p.params[BcFilterOn] = tog("Filter", 0);
   p.params[BcFilterType] = ch("Filter type", {"Low pass", "High pass", "Band pass", "Notch"}, 0);
@@ -1087,8 +1100,19 @@ GL_NOINLINE void addInfo26(std::vector<PluginInfo>& v) {
   p.params[BcPreserve] = lg("Preserve", "s", 0.001, 1, 0.001);
   p.params[BcImpact] = lg("Impact", "s", 0.001, 1, 0.01);
   p.params[BcSquarize] = lin("Squarize", "%", 0, 1, 0);
-  p.editorWidth = 680;
-  p.presets = {{"8-bit", {{BcDownsample, 4.f}}}, {"Lo-fi", {{BcBits, 12.f}, {BcDownsample, 2.f}}}, {"Destroyed", {{BcBits, 3.f}, {BcDownsample, 20.f}}}};
+  p.params[BcAntiAlias] = lin("Anti-alias", "%", 0, 1, 0);
+  p.params[BcSmooth] = lin("Smoothing", "%", 0, 1, 0);
+  p.params[BcDither] = lin("Dither", "%", 0, 1, 0);
+  p.editorWidth = 720;
+  // J-104: "8-bit" and "Lo-fi" keep their sound at 44.1 kHz (/4 = 11 025 Hz, /2 = 22 050 Hz).
+  p.presets = {{"8-bit", {{BcRate, 11025.f}}},
+               {"Lo-fi", {{BcBits, 12.f}, {BcRate, 22050.f}}},
+               {"Destroyed", {{BcBits, 3.f}, {BcRate, 2205.f}}},
+               {"Handheld 4-bit", {{BcBits, 4.f}, {BcRate, 5500.f}, {BcSquarize, 0.35f}}},
+               {"Telephone", {{BcBits, 7.f}, {BcRate, 8000.f}, {BcAntiAlias, 1.f}, {BcSmooth, 1.f}, {BcFilterOn, 1.f}, {BcFilterType, 1.f},
+                              {BcFilterFreq, 300.f}, {BcFilterReso, 0.1f}, {BcFilterPos, 1.f}, {BcOutput, 3.f}}},
+               {"Sampler 12-bit", {{BcBits, 12.f}, {BcRate, 26040.f}, {BcAntiAlias, 0.85f}, {BcSmooth, 0.75f}, {BcDither, 0.5f}}},
+               {"Crushed sweep", {{BcBits, 6.f}, {BcRate, 1800.f}, {BcSmooth, 0.3f}, {BcMix, 0.85f}}}};
   v.push_back(p);
 }
 
@@ -1661,6 +1685,19 @@ PluginState presetState(const PluginInfo& info, size_t preset) {
   return s;
 }
 
+namespace {
+std::atomic<double> gLegacyRateRef{44100.0};
+}
+void setLegacyRateReference(double sampleRate) {
+  if (sampleRate >= 8000 && sampleRate <= 768000) gLegacyRateRef.store(sampleRate);
+}
+double legacyRateReference() { return gLegacyRateRef.load(); }
+double bitcrushRateOfDivider(double divider) {
+  const double n = std::clamp(divider, 1.0, 50.0);
+  if (n < 1.0 + 1e-6) return pp::kBcRateOff;  // no reduction: Off
+  return std::clamp(legacyRateReference() / n, pp::kBcRateMin, pp::kBcRateOff);
+}
+
 void normalizePluginState(PluginState& s) {
   // J-53: FLEX channels saved before the stand-ins (Analog / Keys / FM + "flex 1" data) become "gl.flex".
   if (flex::isLegacy(s)) flex::migrateLegacy(s);
@@ -1677,6 +1714,8 @@ void normalizePluginState(PluginState& s) {
     double d = s.params[pp::RvbDecay], size = s.params[pp::RvbSize];
     s.params[pp::RvbDecayTime] = static_cast<float>(0.3 + d * d * 7.0 * (0.5 + size * 0.5));
   }
+  if (s.type == "gl.bitcrush" && oldSize > static_cast<size_t>(pp::BcRate) && oldSize <= static_cast<size_t>(pp::kBcV1Count))
+    s.params[pp::BcRate] = static_cast<float>(bitcrushRateOfDivider(s.params[pp::BcRate]));  // J-104: Downsample N -> host / N Hz
   if (s.type == "gl.autopan" && oldSize > static_cast<size_t>(pp::ApPhase) && oldSize <= static_cast<size_t>(pp::ApClassic))
     s.params[static_cast<size_t>(pp::ApClassic)] = 0;  // pre-κ3 auto pan: synced pan / volume depths
   if (s.type == "gl.stereo" && oldSize > 0 && oldSize <= static_cast<size_t>(pp::StClassic))

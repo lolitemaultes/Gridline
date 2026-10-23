@@ -60,7 +60,8 @@ void sdlDropComplete(float x, float y);
 
 // --dev-input simulated drags: "dragenter x y <file>...", "dragmove x y",
 // "drop [x y]", "dragleave". A file "promise:<path>" is a promised file that
-// arrives (copied into the drop folder) a few frames after the drop.
+// arrives (copied into the drop folder) a few frames after the drop;
+// "plugin:<type>" drags a plugin as the browser does (J-97).
 void devEnter(float x, float y, const std::vector<std::string>& files);
 void devMove(float x, float y);
 void devDrop(float x, float y, bool here);

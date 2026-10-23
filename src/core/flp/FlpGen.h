@@ -10,7 +10,7 @@
 //   FlpGenSamplers.cpp  DirectWave → Multisampler, FLEX → closest instrument
 //
 // All layouts were worked out from observation of saved states (documented in
-// analysis/demos/notes_delta.md); no Image-Line code is used.
+// format notes); no Image-Line code is used.
 #pragma once
 #include <cstdint>
 #include <memory>

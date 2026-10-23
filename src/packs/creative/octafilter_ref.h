@@ -1,5 +1,5 @@
 // Gridline — Octa Filter reference filter cores (J-42, OfModel = 1).
-// Spec: analysis/demos/specs/j35_lovephilter.md (§3, §4, §8) + J-42 notes.
+// Spec: behaviour study notes (§3, §4, §8) + J-42 notes.
 // Per unit and control tick a Design is computed from the unit's cutoff /
 // resonance / gain values; per sample the stage kernels run with linearly
 // ramped coefficients. Everything is fixed-size (no allocation).

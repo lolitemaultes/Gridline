@@ -3,9 +3,7 @@
 // pattern / name data codec.
 #include <algorithm>
 #include <cstdio>
-#include <filesystem>
 #include <sstream>
-#include "../../core/flp/Flp.h"
 #include "../Packs.h"
 #include "drums.h"
 
@@ -19,7 +17,11 @@ const char* const kVelDest[] = {"None",         "Mallet level", "Mallet decay", 
                                 "Low freq",     "Low reso",     "Sine freq",    "Sine decay",   "Sine level",   "Mid freq",
                                 "Mid level",    "Mid reso",     "Mid freq mod", "Mid level mod", "Mid attack",  "High freq",
                                 "High level",   "High reso",    "Lo-fi",        "Hold",         "Pitch"};
+// Reference file stems (import / export matching) and Gridline's own names of
+// the synthesised layers that stand at the same indices.
 const char* const kNoise[] = {"Evolving 1", "Evolving 2", "H-Freq Metal", "Hard Clap", "Lo-Fi Crunch", "Low Bit", "Metallic", "Soft Clap"};
+const char* const kNoiseLabel[] = {"Swept hiss", "Dark sweep", "Bright metal", "Hard clap", "Crunch", "Low bits", "Ring metal", "Soft clap"};
+static_assert(sizeof kNoise == sizeof kNoiseLabel, "one label per noise");
 }  // namespace
 
 int velDestCount() { return static_cast<int>(sizeof kVelDest / sizeof kVelDest[0]); }
@@ -28,13 +30,7 @@ int velDestParam(int k) { return k <= 0 || k >= velDestCount() ? -1 : k + 1; }  
 
 int kickNoiseCount() { return static_cast<int>(sizeof kNoise / sizeof kNoise[0]); }
 const char* kickNoiseName(int k) { return kNoise[std::clamp(k, 0, kickNoiseCount() - 1)]; }
-std::string kickNoisePath(int k) {
-  const std::string data = flp::defaultFactoryData();
-  if (data.empty()) return {};
-  std::filesystem::path p = std::filesystem::path(data) / "Plugins/Fruity/Generators/BassDrum/Noise Samples" / (std::string(kickNoiseName(k)) + ".wav");
-  std::error_code ec;
-  return std::filesystem::is_regular_file(p, ec) ? p.string() : std::string();
-}
+const char* kickNoiseLabel(int k) { return kNoiseLabel[std::clamp(k, 0, kickNoiseCount() - 1)]; }
 int kickNoiseIndex(const std::string& path) {
   size_t s = path.find_last_of("/\\");
   std::string file = s == std::string::npos ? path : path.substr(s + 1);
@@ -265,7 +261,7 @@ PluginInfo kickSculpt() {
   q[KsNoiseMix] = pct("Noise mix", 0.2);
   q[KsNoiseFilter] = pct("Noise filter", 1.0);
   std::vector<std::string> nz;
-  for (int k = 0; k < kickNoiseCount(); ++k) nz.push_back(kickNoiseName(k));
+  for (int k = 0; k < kickNoiseCount(); ++k) nz.push_back(kickNoiseLabel(k));
   q[KsNoiseSample] = ch("Noise sample", nz, 6);
   using V = std::vector<std::pair<int, float>>;
   p.presets.push_back({"Deep Sub Kick", V{{KsDuration, 0.75f}, {KsSub, 1.f}, {KsBase, 0.3f}, {KsPeak, 0.42f}, {KsSlide, 0.35f}, {KsNoiseMix, 0.05f}}});

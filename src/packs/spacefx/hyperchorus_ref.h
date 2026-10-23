@@ -1,5 +1,5 @@
 // Gridline — "spacefx" pack, J-26: reference engine of gl.ensemble
-// (EnModel = 1; study analysis/demos/specs/j26_hyperchorus.md). Two lanes of
+// (EnModel = 1; behaviour study). Two lanes of
 // four voices (the second lane only in 8-line mode); every voice reads its own
 // row of a range table for delay, modulation rate / depth and movement rate.
 // Movement balances each voice's input between the two lines (equal power);

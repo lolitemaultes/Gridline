@@ -17,6 +17,7 @@
 #include "Theme.h"
 #include "Widgets.h"
 #include "PluginUI.h"
+#include "BrowserUi.h"
 #include "Windows.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "../core/Platform.h"
@@ -422,7 +423,7 @@ void drawChannelSettings(App& a) {
     if (ImGui::BeginDragDropTarget()) {
       if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_FILE")) {
         std::string path(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
-        if (isAudioFile(path)) a.doc.editChannel(id, "load sample", [&](Channel& x) { x.plugin.data = path; });
+        if (isAudioFile(path)) browserui::loadChannelSample(a, id, path, "load sample");  // J-97: same name policy as the rack
       }
       ImGui::EndDragDropTarget();
     }

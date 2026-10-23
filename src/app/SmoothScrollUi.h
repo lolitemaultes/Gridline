@@ -30,7 +30,7 @@ bool systemReducedMotion();
 // reduced motion).
 bool smoothSnap();
 // J-91: Settings > Interface > Motion "Interface animations" (ui.animations;
-// off under reduced motion): decorative motion such as the metronome swing
+// off under reduced motion): decorative motion such as the metronome tick
 // and the key / pad light fades. Off also turns the three above off.
 bool animations();
 // Drawn position of a snapped value under a drag: glides to `target` while

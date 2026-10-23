@@ -625,7 +625,7 @@ msgstr ""
 msgid "SCALE"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "SHAPE"
 msgstr ""
 
@@ -637,7 +637,7 @@ msgstr ""
 msgid "SPEED"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "START"
 msgstr ""
 
@@ -689,7 +689,7 @@ msgstr ""
 msgid "Shape name"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/samplers/samplers_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/samplers/samplers_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Snap"
 msgstr ""
 
@@ -1109,12 +1109,44 @@ msgstr ""
 msgid "Try fewer words or filters"
 msgstr ""
 
+#: src/app/BrowserDrop.cpp src/app/ContextMenus.cpp src/app/MixerView.cpp
+msgid "All effect slots are in use"
+msgstr ""
+
 #: src/app/BrowserDrop.cpp src/core/ExternalDrop.cpp
 msgid "Drop to "
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "Drop to add a %s channel"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Drop to insert %s into the first free slot"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Drop to insert %s into this slot"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Drop to insert a %s channel here"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Drop to replace %s with %s"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Effects go into mixer slots"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "Imported"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Instruments go into the channel rack"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -1138,7 +1170,15 @@ msgid "No free effect slot on this track"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "Note effects go into a channel's note effect slots"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "Nothing here takes these files"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "This plugin is not available"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -1177,7 +1217,7 @@ msgstr ""
 msgid "Delay"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "ENVELOPE"
 msgstr ""
 
@@ -1261,7 +1301,7 @@ msgstr ""
 msgid "Notch"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp
 msgid "Off"
 msgstr ""
 
@@ -1426,6 +1466,10 @@ msgid "Group name"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
+msgid "Insert new channel here"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
 msgid "Longer pattern"
 msgstr ""
 
@@ -1443,6 +1487,10 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp
 msgid "No channels yet"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "Notes into %s"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -1467,6 +1515,10 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp
 msgid "Rename this group"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "Replace %s"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -1597,7 +1649,7 @@ msgstr ""
 msgid "%d pieces per clip"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/app/PluginEditorsK3Gb.cpp
 msgid "2 beats"
 msgstr ""
 
@@ -2097,7 +2149,7 @@ msgstr ""
 msgid "Length of one rhythm cycle (it restarts on every chord)"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/plugin/PluginFrame.cpp
+#: src/app/ChordEditorUi.cpp src/app/PluginEditorsK3Gb.cpp src/plugin/PluginFrame.cpp
 msgid "Link"
 msgstr ""
 
@@ -2401,10 +2453,6 @@ msgstr ""
 msgid "Advanced fill..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MixerView.cpp
-msgid "All effect slots are in use"
-msgstr ""
-
 #: src/app/ContextMenus.cpp
 msgid "All other channels"
 msgstr ""
@@ -2681,7 +2729,7 @@ msgstr ""
 msgid "Dock to"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/TopBar.cpp
+#: src/app/ContextMenus.cpp src/app/PluginEditorsK3Gb.cpp src/app/TopBar.cpp
 msgid "Edit"
 msgstr ""
 
@@ -2969,7 +3017,7 @@ msgstr ""
 msgid "Left"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "Length"
 msgstr ""
 
@@ -3994,6 +4042,10 @@ msgid "Created"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "DRAWING"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Dark, light or follow the system, accent colour, contrast"
 msgstr ""
 
@@ -4006,7 +4058,7 @@ msgid "Debug"
 msgstr ""
 
 #: src/app/Dialogs.cpp
-msgid "Decorative motion: the metronome swinging in tempo, key and pad lights fading, gliding drags and scrolling. Off: everything moves at once, which saves a little CPU"
+msgid "Decorative motion: the metronome ticking in tempo, key and pad lights fading, gliding drags and scrolling. Off: everything moves at once, which saves a little CPU"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -4091,6 +4143,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Home folder"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "How much strokes drawn into EQs, band levels, harmonics, waves and tables are smoothed. Each surface has its own on / off switch (the small wave in its corner); hold Alt while drawing for a raw stroke"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -4338,6 +4394,10 @@ msgid "Show hints for the control under the mouse"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Smooth drawing"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Smooth scrolling"
 msgstr ""
 
@@ -4545,6 +4605,14 @@ msgstr ""
 msgid "contrast"
 msgstr ""
 
+#: src/app/DrawSmoothUi.cpp
+msgid "Smooth drawing: off (click to smooth strokes drawn here)"
+msgstr ""
+
+#: src/app/DrawSmoothUi.cpp
+msgid "Smooth drawing: on (click to draw raw here; hold Alt while drawing for one raw stroke)"
+msgstr ""
+
 #: src/app/EditTools.cpp
 msgid "Add a chord under the first note of every bar"
 msgstr ""
@@ -4653,7 +4721,7 @@ msgstr ""
 msgid "Trim overlaps only"
 msgstr ""
 
-#: src/app/EnvEditor.h src/app/PluginEditorsInstrPads.cpp src/packs/modulation/modulation_envart_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/EnvEditor.h src/app/PluginEditorsInstrPads.cpp src/packs/modulation/modulation_envart_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "Delete point"
 msgstr ""
 
@@ -7209,7 +7277,7 @@ msgstr ""
 msgid "EFFECTS"
 msgstr ""
 
-#: src/app/MixerView.cpp
+#: src/app/MixerView.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "EQUALIZER"
 msgstr ""
 
@@ -7457,7 +7525,7 @@ msgstr ""
 msgid "rows"
 msgstr ""
 
-#: src/app/Performance.cpp
+#: src/app/Performance.cpp src/app/PluginEditorsK3Gb.cpp
 msgid "ENGINE"
 msgstr ""
 
@@ -7573,7 +7641,7 @@ msgstr ""
 msgid "Select a pattern and a channel to edit its notes"
 msgstr ""
 
-#: src/app/PianoRoll.cpp
+#: src/app/PianoRoll.cpp src/app/PluginEditorsK3Gb.cpp
 msgid "Slide"
 msgstr ""
 
@@ -7765,11 +7833,11 @@ msgstr ""
 msgid "Fade and volume handles shown"
 msgstr ""
 
-#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp
+#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "Fade in"
 msgstr ""
 
-#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp
+#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "Fade out"
 msgstr ""
 
@@ -8037,7 +8105,7 @@ msgstr ""
 msgid "Histogram"
 msgstr ""
 
-#: src/app/PluginEditorsEqRef.cpp src/app/TopBar.cpp
+#: src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/app/TopBar.cpp
 msgid "Options"
 msgstr ""
 
@@ -8089,6 +8157,14 @@ msgstr ""
 msgid "Reset (straight line)"
 msgstr ""
 
+#: src/app/PluginEditorsK3Gb.cpp src/packs/tideline/tideline_ui.cpp
+msgid "1 bar"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "1 beat"
+msgstr ""
+
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "1 semitone down"
 msgstr ""
@@ -8098,11 +8174,47 @@ msgid "1 semitone up"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
+msgid "1/2 beat"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "1/4 beat"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp src/packs/tideline/tideline_ui.cpp
+msgid "2 bars"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "4 bars"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "4 beats"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "ATTACK"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Back to the envelope"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "Click reduction"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
+msgid "Click to rename the slot"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "Copy slot"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp src/app/PluginUI.cpp src/app/SettingsKeysTheme.cpp
+msgid "Default"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
@@ -8110,7 +8222,31 @@ msgid "Default trigger sync"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
+msgid "Done"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "Edit slot name..."
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Edit the time envelopes"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Edit the volume envelopes"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Engine"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Envelope: copy, paste, clear, flip, reverse, factory content"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "FORCE HOLD"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
@@ -8118,7 +8254,51 @@ msgid "Factory content"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
+msgid "Force hold: start the bar repeat when this slot starts"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Freeze"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Freeze: lock the envelope against edits"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "HOLD"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "HQ resampling"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Hold: repeat the current bar while on (click to toggle)"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Key-held"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Key-held: back to the previous slot when the note is released"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Last bar"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Link: set on time slots (a time slot can pick the volume slot with the same number)"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Link: this time slot also picks the volume slot with the same number"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "MIX"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
@@ -8130,11 +8310,75 @@ msgid "Move slot right"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
+msgid "Next bar"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Note triggers"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "One-shot"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "One-shot: back to the first slot once the envelope has played"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Options: triggering, sound, quick effect and step gate, engine"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "POSITION SYNC"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "Paste slot"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
-msgid "Quick effect (no time slot)"
+msgid "Position sync: where in its envelope a newly started slot begins"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Quick time effect"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "RELEASE"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_form_ui.cpp
+msgid "Remove DC offset"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Run when stopped"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "SCRATCH"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "SMOOTHING"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "SOUND"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Show the slot envelopes in the cells"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Slide: moving a point moves every later point with it"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Slot length: the envelope is stretched to it"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
@@ -8142,7 +8386,27 @@ msgid "Slot name"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
-msgid "Step gate (no volume slot)"
+msgid "Smoothing attack compensation"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Snap: points move on a grid of this many cells per beat"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Step"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Step editing: drag across the graph to draw flat steps of the snap size"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Step gate"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "TENSION"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp src/app/TemplateUi.cpp
@@ -8154,11 +8418,75 @@ msgid "TIME MIX"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
+msgid "TIME SLOT"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "TRIGGER SYNC"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "TRIGGERING"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Time slot"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Time slot playing now (click to edit it)"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Time slots"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Trigger slots from notes"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Trigger sync: when a newly picked slot starts"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Unnamed slot"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "VOLUME"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "VOLUME MIX"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "VOLUME SLOT"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "VOLUME SMOOTHING"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Volume slot"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Volume slot playing now (click to edit it)"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Volume slots"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "Volume smoothing: attack, release and tension of the volume envelope"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "WITHOUT A SLOT"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
@@ -8170,7 +8498,27 @@ msgid "beats"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
+msgid "click to toggle"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "click: play and edit · click again: off · right-click: menu"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "live"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "off"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "on"
+msgstr ""
+
+#: src/app/PluginEditorsK3Gb.cpp
+msgid "playing"
 msgstr ""
 
 #: src/app/PluginEditorsTimeRef.cpp
@@ -8185,7 +8533,7 @@ msgstr ""
 msgid "Room size"
 msgstr ""
 
-#: src/app/PluginEditorsTimeRef.cpp
+#: src/app/PluginEditorsTimeRef.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "SIZE"
 msgstr ""
 
@@ -8385,10 +8733,6 @@ msgstr ""
 msgid "Could not save preset"
 msgstr ""
 
-#: src/app/PluginUI.cpp src/app/SettingsKeysTheme.cpp
-msgid "Default"
-msgstr ""
-
 #: src/app/PluginUI.cpp
 msgid "Enter to save"
 msgstr ""
@@ -8537,7 +8881,7 @@ msgstr ""
 msgid "Notes in between play the nearest sample, transposed"
 msgstr ""
 
-#: src/app/SamplerRenderUi.cpp
+#: src/app/SamplerRenderUi.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "OUTPUT"
 msgstr ""
 
@@ -9202,7 +9546,7 @@ msgid "Free and open for everybody"
 msgstr ""
 
 #: src/app/TemplateUi.cpp
-msgid "Build a ready-to-play loop from a style instead (J-59)"
+msgid "Build a ready-to-play loop from a style instead"
 msgstr ""
 
 #: src/app/TemplateUi.cpp
@@ -9722,11 +10066,31 @@ msgid "import %s as a pattern clip on track %d at bar %d"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
+msgid "insert %d channels from presets here"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "insert %d sampler channels here"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "insert a channel from the preset %s here"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "insert a sampler channel here"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
 msgid "insert the effect preset %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
 msgid "insert the notes of %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "insert the notes of %s into %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
@@ -9750,11 +10114,27 @@ msgid "load the preset %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
-msgid "replace the channel's sample"
+msgid "replace %s with a sampler playing %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
-msgid "replace the sample of %s"
+msgid "replace %s with the preset %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "replace the channel's instrument with a sampler playing %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "replace the channel's instrument with the preset %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "replace the channel's sample with %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "replace the sample of %s with %s"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -10446,10 +10826,6 @@ msgid "Normalize..."
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
-msgid "Remove DC offset"
-msgstr ""
-
-#: src/packs/edison/edison_form_ui.cpp
 msgid "Remove all markers"
 msgstr ""
 
@@ -10691,6 +11067,10 @@ msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
 msgid "Clear brush"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "Drop to load %s into Loupe"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
@@ -10997,20 +11377,256 @@ msgstr ""
 msgid "Unmute all steps"
 msgstr ""
 
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "(drag to trim the impulse)"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Apply the impulse amplitude envelope (edit its points on the impulse view)"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Bending works on straight segments: switch the curve to STRAIGHT (button above the graph)"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "CHARACTER"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Click to load an impulse response, or drop an audio file here"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "DRY"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Drop an audio file here or press LOAD"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Drop an audio file or click to browse"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Drop to load the impulse"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "EQ MIX"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Equalizer view: the EQ curve applied to the impulse"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "FADE IN"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "FADE OUT"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Flat - click to add a point"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "HI CUT"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "IMPULSE"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "IN WIDTH"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "IR envelope (smooth): click adds a point, drag moves it (Shift: fine), double-click deletes, right-click: menu; STRAIGHT for bendable segments"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "IR envelope: click adds a point, drag moves it (Shift: fine), double-click deletes, right-click: menu, Alt-drag bends a segment"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "IR equalizer (smooth): click adds a point, drag moves it (Shift: fine), double-click deletes, right-click: menu; STRAIGHT for bendable segments; EQ MIX blends it in"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "IR equalizer: click adds a point, drag moves it (Shift: fine), double-click deletes, right-click: menu, Alt-drag bends a segment; EQ MIX blends it in"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Impulse display: dB or linear amplitude"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Impulse view: waveform, trim handles and the amplitude envelope"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "LENGTH"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "LOAD..."
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "LOW CUT"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Load a WAV / FLAC / MP3 impulse response (or drop a file on the view)"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Load impulse response"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "NORMALIZE"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "No impulse"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "No impulse file"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "PRE-DELAY"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "REVERSE"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Reset curve"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "SELF"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "SMOOTH"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "SOURCE"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "SPACE"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "STRAIGHT"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "STRETCH"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Set to 0 dB"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Set to unity"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Smooth curve: passes through every point with no corners. Click for straight segments (Alt-drag bends them)"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Stereo mode: stereo, true stereo (4 paths) or mono"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Straight segments (Alt-drag bends one). Click for a smooth curve through every point"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Straighten segment"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Stretch: resample (pitch follows) or keep the pitch"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "TEMPO LEN"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "TIGHTEN"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "TONE"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Tempo length: cut the impulse to a note length at the song tempo"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "Tempo length: the note length the impulse is cut to (TEMPO LEN on)"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "WET"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "WIDTH"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "bend"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "generated space"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "impulse response reverb"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "latency"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "stereo"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "tempo"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "true stereo"
+msgstr ""
+
 #: src/packs/synths/dcosynth_ui.cpp
 msgid "Panel: one DCO (classic)"
 msgstr ""
 
 #: src/packs/synths/dcosynth_ui.cpp
 msgid "Panel: two DCO"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "1 bar"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "2 bars"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -11090,6 +11706,10 @@ msgid "Inhale Long"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
+msgid "Listen: Full band in Stereo ducks everything, so there is nothing to solo. Pick Lows / Highs or Mid / Side."
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
 msgid "Listen: hear only the part being ducked"
 msgstr ""
 
@@ -11147,10 +11767,6 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "Pump"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "Reset curve"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp

@@ -224,8 +224,38 @@ int main() {
     expect(p.steps[0].action == DropAction::NewSamplerChannel && p.steps[1].action == DropAction::NewSamplerChannel, "Shift on a row: new channels");
     c.targetType = "gl.synth";
     c.targetUsesSample = false;
+    c.targetName = "Lead";
     p = xdrop::plan(items, kindsOf(items), c, {});
-    expect(p.steps[0].action == DropAction::NewSamplerChannel, "row of a synth: new channel");
+    expect(p.steps[0].action == DropAction::ReplaceInstrument && p.steps[1].action == DropAction::NewSamplerChannel,
+           "J-97 row of a synth: becomes a sampler with the first file, the rest new channels");
+    expect(contains(p.label, "replace Lead with a sampler playing Kick.wav"), "J-97 hint: replace with a sampler");
+    p = xdrop::plan(items, kindsOf(items), c, shift);
+    expect(p.steps[0].action == DropAction::NewSamplerChannel, "J-97 Shift on a synth row: new channels");
+  }
+  {  // J-97: instrument presets and MIDI on a channel row; inserting between rows
+    std::vector<xdrop::Item> items = {file("Bass.fst"), file("Pad.fst")};
+    std::vector<DropItem> kinds = {kindItem(Kind::Preset, "gl.synth"), kindItem(Kind::Preset, "gl.synth")};
+    xdrop::Context c;
+    c.target = DropTarget::Rack;
+    c.targetType = "gl.sampler";
+    c.targetUsesSample = true;
+    c.onChannel = true;
+    c.targetName = "Kick";
+    xdrop::Plan p = xdrop::plan(items, kinds, c, {});
+    expect(p.steps.size() == 2 && p.steps[0].action == DropAction::ReplaceFromPreset && p.steps[1].action == DropAction::NewChannelFromPreset,
+           "J-97 row: the first preset replaces the instrument, the rest new channels");
+    expect(contains(p.label, "replace Kick with the preset Bass.fst"), "J-97 hint: replace from preset");
+    std::vector<xdrop::Item> midi = {file("Riff.mid")};
+    p = xdrop::plan(midi, kindsOf(midi), c, {});
+    expect(p.steps.size() == 1 && p.steps[0].action == DropAction::ImportMidiNotes && contains(p.label, "into Kick"), "J-97 MIDI on a row: its notes");
+    xdrop::Context gap;
+    gap.target = DropTarget::Rack;
+    gap.insertHere = true;
+    std::vector<xdrop::Item> audio = {file("Kick.wav")};
+    p = xdrop::plan(audio, kindsOf(audio), gap, {});
+    expect(p.steps[0].action == DropAction::NewSamplerChannel && p.label == "Drop to insert a sampler channel here", "J-97 between rows: insert");
+    expect(browse::dropAction(kindItem(Kind::Preset, "gl.delay", PluginKind::Effect), DropTarget::Rack, "gl.sampler", true) == DropAction::None,
+           "J-97 effect preset on a row: refused");
   }
   {
     std::vector<xdrop::Item> items = {file("Kick.wav"), file("song.flp"), file("Pad.wav")};

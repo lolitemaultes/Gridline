@@ -310,4 +310,9 @@ void openRenderSampler(App& a, ObjectId channel) {
 
 void drawRenderSampler(App& a) { window(a); }
 
+void shutdownRenderSampler() {
+  job.cancel = true;
+  if (job.worker.joinable()) job.worker.join();
+}
+
 }  // namespace gl::j59

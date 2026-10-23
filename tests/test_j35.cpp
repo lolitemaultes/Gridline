@@ -1,7 +1,7 @@
 // Gridline — J-35: effects exactness tier E (the hard leftovers). Reference
 // engines and exact decoders for the loudness limiter, the full reverb, the
 // mastering dynamics, the module rack, the pedal board and the mobile rack
-// (studies: analysis/demos/specs/j35_*.md). FL preset checks run only when an
+// (behaviour studies). FL preset checks run only when an
 // FL Studio installation is present.
 #include <algorithm>
 #include <cmath>

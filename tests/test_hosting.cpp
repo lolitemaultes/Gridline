@@ -2,8 +2,10 @@
 // Apple's built-in units), MIDI controllers / programs / multi-output for
 // every format, the out-of-process sandbox, and FL "Fruity Wrapper" import.
 // Uses the in-tree test plugins only (tests/clap, tests/vst2, tests/vst3).
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <functional>
@@ -1386,6 +1388,66 @@ void testSandboxOfflineRender() {
   expect(sb2.frames == sb.frames && sb2.data == sb.data, "offline render: sandboxed, 97-frame blocks + 4 threads identical");
 }
 
+// J-103: quitting while a background plugin scan runs. The scan used to keep going after
+// main() returned and lock the (destroyed) class registry mutex: "mutex lock failed",
+// abort on quit. shutdownScan() kills the scanner child, joins the worker and refuses new
+// scans; a cancelled entry is not cached. Runs last: the scan service stays closed.
+void testScanShutdown() {
+#if defined(_WIN32)
+  std::printf("skip - scan shutdown: POSIX shell scanner stand-in\n");
+#else
+  const std::string dir = gl::test::hermeticTestEnv("hosting") + "/scan-shutdown";
+  fs::create_directories(dir + "/plugins");
+  fs::copy(kClapBundle, dir + "/plugins/" + fs::path(kClapBundle).filename().string(), fs::copy_options::recursive);
+  // A scanner that hangs: only shutdownScan() (killing it) ends the entry in time.
+  const std::string slow = dir + "/slow-scanner.sh";
+  if (FILE* f = std::fopen(slow.c_str(), "w")) {
+    std::fputs("#!/bin/sh\nexec sleep 30\n", f);
+    std::fclose(f);
+  }
+  fs::permissions(slow, fs::perms::owner_all, fs::perm_options::add);
+
+  // scanIsolated: a cancel flag ends a hanging child at once.
+  std::atomic<bool> cancel{false};
+  std::thread flip([&cancel] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    cancel = true;
+  });
+  auto t0 = std::chrono::steady_clock::now();
+  host::ScanResult r = host::scanIsolated(slow, "clap", kClapBundle, 30, &cancel);
+  flip.join();
+  double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  expect(!r.ok && r.error == "cancelled" && took < 5, "scan shutdown: a cancelled isolated scan kills its child at once");
+
+  // The service: only CLAP, the copied test plugin in a user folder; forced so it is scanned.
+  host::PluginPrefs p = host::pluginPrefs();
+  p.extraFolders = {dir + "/plugins"};
+  p.disabledFormats = {"vst3", "vst2", "au", "lv2"};
+  host::setPluginPrefs(p);
+  host::startScan(slow, true);
+  bool scanning = false;
+  for (int i = 0; i < 1000 && !scanning; ++i) {  // until a scanner child runs (discovery done)
+    const host::ScanStatus st = host::scanStatus();
+    scanning = st.running && !st.current.empty();
+    if (!scanning) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  expect(scanning, "scan shutdown: a background scan is running");
+  t0 = std::chrono::steady_clock::now();
+  host::shutdownScan();
+  took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  std::printf("scan shutdown: shutdownScan() took %.3f s\n", took);
+  expect(took < 5, "scan shutdown: shutdownScan() returns at once with a hanging scanner");
+  expect(!host::scanStatus().running, "scan shutdown: no scan running afterwards");
+  bool cachedCancel = false;
+  for (const auto& e : host::cacheEntries()) cachedCancel = cachedCancel || e.error == "cancelled";
+  expect(!cachedCancel, "scan shutdown: the cancelled entry is not cached (scanned again at the next start)");
+  host::startScan(slow, true);
+  expect(!host::scanStatus().running, "scan shutdown: no new scan starts after shutdown");
+  host::shutdownScan();  // idempotent
+  expect(!host::scanStatus().running, "scan shutdown: shutdownScan() twice is harmless");
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -1409,5 +1471,6 @@ int main() {
   testPluginWindowLayout();
   testEditorDefaults();
   testSandboxOfflineRender();
+  testScanShutdown();  // last: the scan service is closed afterwards
   return finish();
 }

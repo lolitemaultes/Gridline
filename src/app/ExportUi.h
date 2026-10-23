@@ -59,6 +59,9 @@ bool writeFlpZip(App& a, const std::string& path, std::function<void(bool)> done
 // for the caller's "Saved" message.
 bool writeGridlineZip(App& a, const std::string& path, std::string* note = nullptr);
 void openMissingSamples(App& a);
+// J-103 app quit: a running audio export is cancelled and its worker joined (not left to
+// the static Job's destructor during static teardown). Idempotent.
+void shutdown();
 // Imports MIDI files (new pattern) and audio files (playlist clip) into the
 // open project; returns false for anything else (projects open through
 // App::openProject, J-52).

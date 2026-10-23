@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
 #include "edison_ui.h"
@@ -377,6 +378,27 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
   ImGui::SetCursorScreenPos(g.p0);
   ImGui::InvisibleButton("lanes", ImVec2(std::max(1.f, g.W()), std::max(1.f, g.p1.y - g.p0.y)),
                          ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+  // J-97: an audio file dragged from the browser (or another application) onto the
+  // waveform loads into Loupe, like "Load audio file..." (one step of Loupe's undo).
+  if (!s.job.active() && ImGui::BeginDragDropTarget()) {
+    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_FILE", ImGuiDragDropFlags_AcceptBeforeDelivery)) {
+      const std::string path(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
+      const std::string name = std::filesystem::path(path).filename().string();
+      if (pl->Delivery) {
+        runEdit(a, s, "Load " + name, [path](const Content& c) {
+          Content n;
+          return loadContent(path, n) ? n : c;
+        });
+      } else {
+        char buf[320];
+        std::snprintf(buf, sizeof buf, i18n::tr("Drop to load %s into Loupe"), name.c_str());
+        ImGui::SetTooltip("%s", buf);
+        a.setHint(buf);
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+      }
+    }
+    ImGui::EndDragDropTarget();
+  }
   const bool hovered = ImGui::IsItemHovered();
   ImGuiIO& io = ImGui::GetIO();
   const double fm0 = std::clamp(g.frameAt(mouse.x), 0.0, n);
@@ -407,7 +429,19 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
       const double hz = hzAtY(s, mouse.y, g.p0.y, g.p1.y);
       const int64_t w = static_cast<int64_t>(std::max(s.rate() * 0.02, g.len / g.W() * 6));
       SpectralRect q{static_cast<int64_t>(fm0) - w / 2, static_cast<int64_t>(fm0) + w / 2, hz / 1.12, hz * 1.12};
-      if (s.brush.empty() || std::llabs(s.brush.back().f0 - q.f0) > w / 3 || std::fabs(std::log(s.brush.back().hz0 / q.hz0)) > 0.04) s.brush.push_back(q);
+      if (s.brush.empty()) {
+        s.brush.push_back(q);
+      } else {  // J-99: stamp along the path from the last cell so fast strokes leave no gaps
+        const SpectralRect b = s.brush.back();
+        const double df = static_cast<double>(q.f0 - b.f0), dlog = std::log(q.hz0 / b.hz0);
+        const int steps = std::min(512, static_cast<int>(std::max(std::fabs(df) / std::max<double>(1.0, w / 3.0), std::fabs(dlog) / 0.04)));
+        for (int k = 1; k <= steps; ++k) {
+          const double u = static_cast<double>(k) / steps;
+          const int64_t f0 = b.f0 + static_cast<int64_t>(std::llround(df * u));
+          const double h0 = b.hz0 * std::exp(dlog * u);
+          s.brush.push_back(SpectralRect{f0, f0 + w, h0, h0 * (q.hz1 / q.hz0)});
+        }
+      }
     } else if (s.dragging) {
       const int64_t f = snapFrame(a, s, g, fm0);
       s.sel = {std::min(s.anchor, f), std::max(s.anchor, f)};

@@ -1,7 +1,7 @@
 // Gridline — "synths" pack, J-22: Warm Trio (gl.warmsynth) runtime.
 //
 // Signal flow and laws follow the reference subtractive synth's engine
-// (studied with REA for behaviour; the code here is Gridline's own):
+// (studied for behaviour; the code here is Gridline's own):
 //   oscillators  a 4096-point single cycle per oscillator, rebuilt when the
 //                shape, width or octave buttons change. Shapes (selector
 //                order): charged pulse with the width knob (2..98 %), rounded

@@ -388,8 +388,11 @@ void stripSlots(App& a, const MixerTrack& t, ImVec2 p, float w) {
     }
     if (ImGui::BeginDragDropTarget()) {
       if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_SLOT")) dropSlot(a, *static_cast<const SlotDrag*>(pl->Data), t.id, k);
-      if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PLUGIN"))
-        a.doc.setSlotPlugin(t.id, k, std::string(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize)));
+      browserui::DropPlace place;  // J-97: effects only (instruments are refused with a reason), browser files too
+      place.mixer = t.id;
+      place.slot = k;
+      browserui::acceptPluginDrop(a, browse::DropTarget::MixerSlot, place);
+      browserui::acceptFileDrop(a, browse::DropTarget::MixerSlot, place);
       ImGui::EndDragDropTarget();
     }
     dl->AddCircleFilled(ImVec2(p.x + 5, y + kExtSlotRowH * 0.5f), 2.0f, info ? (es.enabled ? P.led : P.surface600) : P.surface800, 6);
@@ -493,12 +496,10 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
     ui::Hint(h + "   (click: select \xC2\xB7 Ctrl/Shift: add to selection \xC2\xB7 double-click: rename \xC2\xB7 right-click: track menu \xC2\xB7 drop an effect here)");
   }
   if (ImGui::BeginDragDropTarget()) {
-    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PLUGIN")) {
-      std::string type(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
-      int k = freeSlot(t);
-      if (k >= 0) a.doc.setSlotPlugin(t.id, k, type);
-      else a.notify("All effect slots are in use", true);
-      a.selMixer = t.id;
+    {  // J-97: effects into the first free slot (instruments refused with a reason)
+      browserui::DropPlace place;
+      place.mixer = t.id;
+      browserui::acceptPluginDrop(a, browse::DropTarget::MixerTrack, place);
     }
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_SLOT")) {
       int k = freeSlot(t);
@@ -1475,15 +1476,12 @@ void drawMixer(App& a) {
           ImGui::EndPopup();
         }
         if (ImGui::BeginDragDropTarget()) {
-          if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PLUGIN")) {
-            std::string type(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
-            a.doc.setSlotPlugin(sel->id, k, type);
-          }
           if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_SLOT")) dropSlot(a, *static_cast<const SlotDrag*>(pl->Data), sel->id, k);
-          {  // browser files (J-16)
+          {  // browser files (J-16); plugins: effects only (J-97)
             browserui::DropPlace place;
             place.mixer = sel->id;
             place.slot = k;
+            browserui::acceptPluginDrop(a, browse::DropTarget::MixerSlot, place);
             browserui::acceptFileDrop(a, browse::DropTarget::MixerSlot, place);
           }
           ImGui::EndDragDropTarget();

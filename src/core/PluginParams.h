@@ -381,10 +381,15 @@ enum Dist {
 };
 // "gl.bitcrush"
 enum Bitcrush {
-  BcBits, BcDownsample, BcMix,
+  // J-104: index 1 is the hold rate in Hz (it was "Downsample", a 1..50 divider; states with
+  // fewer than kBcV2Count values are converted by normalizePluginState, automation by schema 8).
+  BcBits, BcRate, BcMix,
   BcFilterOn, BcFilterType, BcFilterFreq, BcFilterReso, BcFilterPos, BcOutput, BcPunch, BcPreserve, BcImpact, BcSquarize,  // 0.5
+  BcAntiAlias, BcSmooth, BcDither,  // J-104: converter filters (0 = none .. 1 = clean) and TPDF dither
   BcCount
 };
+inline constexpr int kBcV1Count = BcSquarize + 1;  // states saved before J-104 (Downsample divider at index 1)
+inline constexpr double kBcRateMin = 50.0, kBcRateOff = 48000.0;  // Rate range; the top of the travel is "Off"
 // "gl.clipper"
 enum Clipper { ClpThreshold, ClpPostGain, ClpCeilingMode, ClpOversample, ClpInput, ClpMix, ClpCount };
 // "gl.stereo"

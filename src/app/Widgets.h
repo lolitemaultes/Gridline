@@ -22,6 +22,10 @@ enum class Icon {
   ToolDraw, ToolPaint, ToolDelete, ToolMute, ToolSlip, ToolSlice, ToolSelect, ToolZoom, ToolPlay, ToolDetune, ToolSnap,
   // J-79: playlist audio clip editing toggles.
   StretchMode, FadeHandles, ZeroCross,
+  // J-100: Shuttle envelope toolbar (step editing, linked slots).
+  StepEdit, LinkSlots,
+  // J-106: Convolver curve mode (smooth curve / straight segments).
+  CurveSmooth, CurveStraight,
   Count  // number of icons (not an icon)
 };
 // Q-12: true for the tool family (playlist / piano roll / automation editor strips).
@@ -45,7 +49,7 @@ bool IconButton(const char* id, Icon icon, bool active = false, float size = 26.
 // Icon toggle for "show/enable" states: quiet when off, bright icon + accent
 // underline when on (window toggles, metronome, typing keyboard).
 // `mirror` scales the glyph horizontally about its centre (-1 .. 1: the
-// metronome's swing, J-91).
+// metronome's tick-tock: +1 / -1, J-91 / J-97).
 bool ToggleIcon(const char* id, Icon icon, bool on, float size = 28.0f, const char* hint = nullptr, float mirror = 1.0f);
 // Q-6: show / hide toggle for a plugin's window: an open eye while the window
 // is shown (lit), an eye with a slash while it is hidden; the tooltip says

@@ -17,8 +17,13 @@
 // automation maps 1:1.
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+namespace gl {
+struct Sample;
+}
 
 namespace gl::packs::models::dr {
 
@@ -76,14 +81,17 @@ enum KickParam {
   KsLevel, KsSampling, KsDuration, KsSub, KsDrive, KsAttack, KsBase, KsPeak, KsSlide,
   KsVarBase, KsVarPeak, KsVarSlide, KsVarPhase, KsClickCut, KsClickFreq, KsClickLevel,
   KsNoiseA, KsNoiseD, KsNoiseS, KsNoiseStart, KsNoisePitch, KsNoiseMix, KsNoiseFilter,
-  KsNoiseSample,  // choice: the reference instrument's noise samples (read from its install)
+  KsNoiseSample,  // choice: one of Gridline's eight synthesised noise layers
   KsCount
 };
 int kickNoiseCount();
-const char* kickNoiseName(int k);  // file stem, e.g. "Metallic"
-// Absolute path of noise sample k inside the reference install ("" when absent).
-std::string kickNoisePath(int k);
-// Noise index of a stored path (by file name), -1 when unknown.
+// Reference file stem of noise k (FL import / export matching only).
+const char* kickNoiseName(int k);
+// Gridline's name of noise layer k (menus).
+const char* kickNoiseLabel(int k);
+// Noise layer k, synthesised once on first use (kicknoise_dsp.cpp; UI thread).
+std::shared_ptr<const Sample> kickNoiseSample(int k);
+// Noise index of a stored reference path (by file name), -1 when unknown.
 int kickNoiseIndex(const std::string& path);
 
 // ------------------------------------------------------------ Sweep Kick

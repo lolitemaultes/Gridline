@@ -1,7 +1,7 @@
 // Gridline — FL Studio import coverage (event catalog + file tally).
 //
 // The catalog records, for every event id found in FL Studio's own shipped
-// projects and presets (analysis/reference/format-flp.md), whether the
+// projects and presets (format notes), whether the
 // importer decodes it and, when it does not, why. Keep it in step with the
 // area importers (FlpProject / FlpChannels / FlpPatterns / FlpMixer /
 // FlpArrangement / FlpPlugins); tests/test_coverage.cpp checks it is complete

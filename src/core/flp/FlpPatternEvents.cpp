@@ -2,7 +2,7 @@
 //
 // Event 223 (inside a pattern) holds control changes recorded into the
 // pattern, 12 bytes each (observed on the supplied projects, see
-// analysis/demos/notes_eta.md):
+// format notes):
 //   u32 position (pattern ticks, ascending), u32 target, i32 value.
 // The target uses the same numbering as automation links (event 227, see
 // FlpArrangement.cpp): channel (high word) + setting (low word), mixer

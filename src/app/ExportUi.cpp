@@ -1167,4 +1167,9 @@ void exportClipAudio(App& a, ObjectId clip) {
   });
 }
 
+void shutdown() {
+  job.cancel = true;
+  if (job.worker.joinable()) job.worker.join();
+}
+
 }  // namespace gl::exportui

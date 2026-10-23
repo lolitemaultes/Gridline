@@ -17,6 +17,7 @@
 #include "Platform.h"
 #include "Json.h"
 #include "Params.h"
+#include "PluginParams.h"
 #include "TrackModes.h"
 
 namespace gl {
@@ -1051,7 +1052,56 @@ bool migrateProjectJson(Json& j, std::string* err) {
   if (v == 3) j.object["version"] = num(4), v = 4;  // v4 adds optional "links"
   if (v == 4) j.object["version"] = num(5), v = 5;  // v5 adds optional "modLinks", "noteFx", send "sidechain"
   if (v == 5) migrateV5(j), v = 6;
+  if (v == 6) j.object["version"] = num(7), v = 7;  // v7: see bitsLawV7 (applied to the loaded song)
+  if (v == 7) j.object["version"] = num(8), v = 8;  // v8: see rateLawV8 (applied to the loaded song)
   return true;
+}
+
+// Moves normalized values that target parameter k of gl.bitcrush slots (automation
+// clips and pattern lanes, MIDI and internal controller link ranges) through law
+// (old normalized -> new normalized), so they play the same values after a
+// descriptor change. Values stored in plugin states are migrated elsewhere.
+static void remapBitcrushNormalized(Song& s, int k, double (*law)(double)) {
+  auto targets = [&](ObjectId owner, uint32_t index) {
+    if (index < kSlotBase || index >= kSlotBase + kSlotStride * static_cast<uint32_t>(kEffectSlots)) return false;
+    const uint32_t slot = (index - kSlotBase) / kSlotStride, q = (index - kSlotBase) % kSlotStride;
+    for (const auto& m : s.mixer)
+      if (m.id == owner) return q == static_cast<uint32_t>(k) && m.slots[slot].plugin.type == "gl.bitcrush";
+    return false;
+  };
+  auto range = [&](float& mn, float& mx, std::vector<AutoPoint>* pts) {
+    const double a0 = mn, a1 = mx, b0 = law(a0), b1 = law(a1);
+    if (pts)
+      for (auto& p : *pts) {
+        const double n = a0 + p.value * (a1 - a0);
+        p.value = b1 != b0 ? static_cast<float>((law(n) - b0) / (b1 - b0)) : p.value;
+      }
+    mn = static_cast<float>(b0), mx = static_cast<float>(b1);
+  };
+  for (auto& c : s.automations)
+    if (targets(c.owner, c.index)) range(c.min, c.max, &c.points);
+  for (auto& pat : s.patterns)
+    for (auto& lane : pat.automation)
+      if (targets(lane.owner, lane.index))
+        for (auto& p : lane.points) p.value = static_cast<float>(law(p.value));
+  for (auto& l : s.links)
+    if (targets(l.owner, l.index)) range(l.min, l.max, nullptr);
+  for (auto& l : s.modLinks)
+    if (targets(l.owner, l.index)) range(l.min, l.max, nullptr);
+}
+
+// v6 -> v7 (J-98): gl.bitcrush's Bits knob changed from a linear (1..24) to a
+// logarithmic law, so most of the travel covers the audible 1..12 bits.
+static double bitsLawV7(double n) { return std::log(1.0 + 23.0 * std::clamp(n, 0.0, 1.0)) / std::log(24.0); }
+
+// v7 -> v8 (J-104): index 1 of gl.bitcrush was "Downsample" (linear 1..50, a host
+// rate divider); it is now Rate in Hz (log 50 Hz .. Off). Old normalized values
+// become the rate reference / N (the plugin states are converted the same way by
+// normalizePluginState). More division is a lower rate, so ranges turn around.
+static double rateLawV8(double n) {
+  const double N = 1.0 + 49.0 * std::clamp(n, 0.0, 1.0);
+  const PluginInfo* info = findPlugin("gl.bitcrush");
+  return info ? info->params[pp::BcRate].toNormalized(bitcrushRateOfDivider(N)) : n;
 }
 
 void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
@@ -1104,6 +1154,7 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
 
 bool songFromJson(const Json& src, Song& out, std::string* err) {
   Json j = src;
+  const int srcVersion = jsonInt<int>(src.num("version", 1));
   if (!migrateProjectJson(j, err)) return false;
   Song s;
   s.mixer.clear();
@@ -1343,6 +1394,8 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     }
   s.nextId = std::max<ObjectId>(jsonInt<ObjectId>(j.num("nextId", 0)), maxId + 1);
   trackmodes::dropStaleLinks(s);  // PL-08: links to deleted mixer tracks / channels
+  if (srcVersion < 7) remapBitcrushNormalized(s, pp::BcBits, bitsLawV7);
+  if (srcVersion < 8) remapBitcrushNormalized(s, pp::BcRate, rateLawV8);
   out = std::move(s);
   return true;
 }

@@ -1,5 +1,5 @@
 // Gridline — "dynamics" pack, J-35: the module rack reference (gl.amprack
-// RkModel = 1; study analysis/demos/specs/j35_distructor.md).
+// RkModel = 1; behaviour study).
 //
 // Up to four modules in series, then an optional soft clip. A module is a
 // distortion (18 algorithms), a filter (22 types), a chorus (the stereo delay

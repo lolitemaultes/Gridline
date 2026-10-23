@@ -359,7 +359,7 @@ int main(int argc, char** argv) {
   if (argc >= 3 && std::string(argv[1]) == "coverage-json") {
     // gridline coverage-json <out.json> [--fl-data DIR]: decodes every plugin
     // in FL's shipped projects, preset library and plugin database and counts
-    // every project event id (analysis/tools/coverage.py builds COVERAGE.md).
+    // every project event id (for the coverage report).
     std::string data;
     for (int i = 3; i + 1 < argc; ++i)
       if (std::strcmp(argv[i], "--fl-data") == 0) data = argv[++i];

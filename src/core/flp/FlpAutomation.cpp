@@ -7,7 +7,7 @@
 //                         f32 tension, u8 curve mode, u8, u8, u8 tension sign
 //   then a trailer (LFO / clip settings, not used).
 // Observed on the shipped demo projects (format 3) and FL's automation-clip
-// presets (formats 1 and 2); see analysis/demos/notes_alpha.md.
+// presets (formats 1 and 2); see format notes.
 #include <algorithm>
 #include <cmath>
 #include "../AutomationEdit.h"

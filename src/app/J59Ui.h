@@ -19,6 +19,8 @@ void openRenderSampler(App& a, ObjectId channel);
 void drawDialogs(App& a);  // per frame (from drawDialogs): both windows
 void drawLoopStarter(App& a);
 void drawRenderSampler(App& a);
+// J-103 app quit: a running render to sampler is cancelled and its worker joined. Idempotent.
+void shutdownRenderSampler();
 
 }  // namespace j59
 }  // namespace gl

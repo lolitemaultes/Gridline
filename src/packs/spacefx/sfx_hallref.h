@@ -1,6 +1,6 @@
 // Gridline — "spacefx" pack: Hall reference model (HvModel = 1; included by
 // sfx_hall.h only). Behaviour follows the J-1 study of the classic big reverb
-// (analysis/demos/specs/j1_luxeverb.md); the implementation is original.
+// (behaviour study notes); the implementation is original.
 //
 //   in ×gain → 1-pole low cut → 1-pole high cut → [feed-forward pitch voices]
 //   → pre-delay → (1−d)·x + d·(8 all-passes per side) → 16-line FDN

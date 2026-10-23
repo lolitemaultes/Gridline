@@ -164,7 +164,11 @@ struct CacheEntry {
   int classes = 0;
 };
 std::vector<CacheEntry> cacheEntries();
-// Waits for a running scan to finish (shutdown).
+// Waits for a running scan to finish (`gridline scan-plugins`).
 void stopScan();
+// J-103 app quit: cancels a running scan (its scanner child is killed; the entries
+// not reached are scanned at the next start), joins the worker and refuses new
+// scans, so no scan thread runs into static destruction. Idempotent.
+void shutdownScan();
 
 }  // namespace gl::host

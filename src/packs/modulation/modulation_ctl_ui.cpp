@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include "../../app/DrawSmoothUi.h"
 #include "../../app/XyPadMath.h"
 #include "../../core/I18n.h"
 #include "../../engine/LiveGraph.h"
@@ -606,20 +607,28 @@ void keyEditor(EditTarget& e) {
                         k == playing ? skin::lighten(K.fill, 0.4f) : theme::withAlpha(K.fill, black ? 0.55f : 0.9f));
     }
     ImGuiIO& io = ImGui::GetIO();
-    if (ImGui::IsItemActive()) {
-      int k = std::clamp(lo + static_cast<int>((io.MousePos.x - p0.x) / bw), lo, hi);
-      vals[static_cast<size_t>(k)] = std::clamp((p0.y + sz.y - 2 - io.MousePos.y) / (sz.y - 4), 0.0f, 1.0f);
-      PluginState st = *e.st;
-      st.data = formatKeyValues(vals);
-      e.set(st, "draw key values", e.key ^ 0x4B455956ull);
+    {  // J-99: strokes fill every key between samples and are smoothed (Alt: raw); one undo step each.
+      drawui::Spec spec;
+      spec.surface = "keyctl";
+      spec.p0 = p0;
+      spec.p1 = ImVec2(p0.x + sz.x, p0.y + sz.y);
+      if (const std::vector<float>* res = drawui::stroke(*e.a, ImGui::GetItemID(), ImGui::IsItemActive(), (io.MousePos.x - p0.x) / sz.x,
+                                                         std::clamp((p0.y + sz.y - 2 - io.MousePos.y) / (sz.y - 4), 0.0f, 1.0f),
+                                                         &vals[static_cast<size_t>(lo)], hi - lo + 1, spec)) {
+        for (int k = lo; k <= hi; ++k) vals[static_cast<size_t>(k)] = (*res)[static_cast<size_t>(k - lo)];
+        PluginState st = *e.st;
+        st.data = formatKeyValues(vals);
+        if (!(st == *e.st)) e.set(st, "draw key values", e.key ^ 0x4B455956ull);
+      }
     }
     if (ImGui::IsItemDeactivated()) e.a->doc.endGesture();
     if (ImGui::IsItemHovered()) {
       int k = std::clamp(lo + static_cast<int>((io.MousePos.x - p0.x) / bw), lo, hi);
       char buf[96];
-      std::snprintf(buf, sizeof buf, "%s: %.0f%%   (drag to draw values)", w::noteName(k).c_str(), vals[static_cast<size_t>(k)] * 100.0);
+      std::snprintf(buf, sizeof buf, "%s: %.0f%%   (drag to draw values, Alt: raw)", w::noteName(k).c_str(), vals[static_cast<size_t>(k)] * 100.0);
       e.a->setHint(buf);
     }
+    drawui::chip(*e.a, "keyctl", p0, ImVec2(p0.x + sz.x, p0.y + sz.y));
   }
   sk::check(e, KcNoteOff, F.p(10, 63), F.sz(110, 20), K, "NOTE OFF VALUE");
   sk::hslider(e, KcNoteOffValue, F.p(124, 61), F.sz(163, 24), K, skin::hex(0x77A9E6));

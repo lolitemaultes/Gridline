@@ -226,24 +226,32 @@ void testMotion() {
   s = effective(true, false, true, false, false);
   expect(s.animations && !s.smoothSnap && s.smoothScroll && !s.elastic, "the single switches still apply under the master");
 
-  // Metronome swing at 140 BPM: right on even beats, left on odd beats, a short eased turn on each beat.
-  expect(metronomeSwing(0.5, 140, true) == 1.0 && metronomeSwing(1.5, 140, true) == -1.0 && metronomeSwing(2.6, 140, true) == 1.0,
-         "faces right on even beats, left on odd beats");
-  expect(metronomeSwing(1.0, 140, true) == 1.0, "a beat starts from the previous side");
-  const double turn = kSwingSeconds * 140 / 60.0;
-  expect(std::fabs(metronomeSwing(1.0 + turn * 0.5, 140, true)) < 1e-9, "half way through the turn: edge on (0)");
-  expect(metronomeSwing(1.0 + turn, 140, true) == -1.0, "the turn ends after kSwingSeconds");
-  bool monotone = true;
-  double prev = 2;
-  for (int i = 0; i <= 50; ++i) {
-    const double v = metronomeSwing(3.0 + turn * i / 50.0, 140, true);  // beat 3 (odd): from +1 over to -1
-    monotone = monotone && v <= prev + 1e-12;
-    prev = v;
+  // J-97: the metronome snaps (hard tick-tock): right on the anchor beat, mirrored on the next, no in-between.
+  expect(metronomeTick(0.5, true, 0) == 1.0 && metronomeTick(1.5, true, 0) == -1.0 && metronomeTick(2.6, true, 0) == 1.0,
+         "faces right on even beats from the anchor, mirrored on odd beats");
+  bool onlyTwoFaces = true;
+  for (int i = 0; i <= 4000; ++i) {
+    const double v = metronomeTick(i / 1000.0, true, 0);
+    onlyTwoFaces = onlyTwoFaces && (v == 1.0 || v == -1.0);
   }
-  expect(monotone, "the turn is smooth (no overshoot, no flicker)");
-  expect(kSwingSeconds * 400 / 60.0 > 0.45 && metronomeSwing(1.0 + 0.45, 400, true) == -1.0, "fast tempos: the turn takes at most 45 % of a beat");
-  expect(metronomeSwing(1.5, 140, false) == 1.0 && metronomeSwing(-1, 140, true) == 1.0 && metronomeSwing(NAN, 140, true) == 1.0,
-         "not swinging (off, stopped, animations off): at rest facing right");
+  expect(onlyTwoFaces, "no intermediate angles: every frame is +1 or -1");
+  expect(metronomeTick(std::nextafter(1.0, 0.0), true, 0) == 1.0 && metronomeTick(1.0, true, 0) == -1.0 &&
+             metronomeTick(std::nextafter(2.0, 0.0), true, 0) == -1.0 && metronomeTick(2.0, true, 0) == 1.0,
+         "the snap lands exactly on the beat boundary");
+  expect(metronomeTick(1.5, false, 0) == 1.0 && metronomeTick(-1, true, 0) == 1.0 && metronomeTick(NAN, true, 0) == 1.0,
+         "not ticking (off, stopped, animations off): at rest facing right");
+
+  // Toggling never animates: switching on mid-beat (here an odd beat) holds the rest pose until the next boundary.
+  MetronomeTicker t;
+  expect(t.update(3.4, false) == 1.0, "metronome off: rest pose");
+  expect(t.update(3.5, true) == 1.0 && t.update(3.99, true) == 1.0, "switched on mid-beat: rest pose, no jump to the mirrored face");
+  expect(t.update(4.0, true) == -1.0 && t.update(4.7, true) == -1.0 && t.update(5.0, true) == 1.0, "then ticks on each beat boundary");
+  expect(t.update(5.2, false) == 1.0, "switched off: back to rest at once");
+  expect(t.update(6.1, false) == 1.0 && t.update(6.2, true) == 1.0 && t.update(7.0, true) == -1.0, "switched on again: rest, then the next beat");
+  MetronomeTicker reduced;  // animations off / reduced motion: the caller passes ticking = false
+  bool still = true;
+  for (int i = 0; i < 100; ++i) still = still && reduced.update(i * 0.25, false) == 1.0;
+  expect(still, "animations off: the icon stays static");
 }
 
 // ------------------------------------------------------------------ lights without animations

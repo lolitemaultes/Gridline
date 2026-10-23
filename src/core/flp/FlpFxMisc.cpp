@@ -2,7 +2,7 @@
 // analyzers, notes and control panels.
 //
 // State layouts were established by comparing saved instances and factory
-// presets (notes: analysis/demos/notes_gamma.md); the code is original.
+// presets (format notes); the code is original.
 //
 // Several of these plugins save envelopes with one shared record layout
 // ("envelope record" below):

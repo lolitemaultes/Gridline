@@ -433,12 +433,12 @@ bool vslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton("##vs", size);
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-  bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, size.y, false);
+  float hh = std::max(6.0f, std::min(size.x * 0.55f, 12.0f));  // handle height
+  float top = tl.y + hh * 0.5f, bot = tl.y + size.y - hh * 0.5f, travel = bot - top;
+  bool changed = pui::dragParamTrack(a, b.pid, b.d, b.val, top, travel, false);  // J-98: handle stays under the pointer
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (!fill) fill = k.fill;
   float cx = std::round(tl.x + size.x * 0.5f);
-  float hh = std::max(6.0f, std::min(size.x * 0.55f, 12.0f));  // handle height
-  float top = tl.y + hh * 0.5f, bot = tl.y + size.y - hh * 0.5f, travel = bot - top;
   float rw = std::max(3.0f, size.x * 0.22f);
   if (ruler)
     for (int i = 0; i <= 10; ++i) {
@@ -474,12 +474,12 @@ bool hslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton("##hs", size);
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-  bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, size.x, true);
+  float hw = std::max(5.0f, std::min(size.y * 0.5f, 8.0f));
+  float l = tl.x + hw * 0.5f, r = tl.x + size.x - hw * 0.5f;
+  bool changed = pui::dragParamTrack(a, b.pid, b.d, b.val, l, r - l, true);  // J-98: handle stays under the pointer
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (!fill) fill = k.fill;
   float cy = std::round(tl.y + size.y * 0.5f);
-  float hw = std::max(5.0f, std::min(size.y * 0.5f, 8.0f));
-  float l = tl.x + hw * 0.5f, r = tl.x + size.x - hw * 0.5f;
   float rh = std::max(3.0f, size.y * 0.25f);
   dl->AddRectFilled(ImVec2(l, cy - rh * 0.5f), ImVec2(r, cy + rh * 0.5f), k.rail, rh * 0.5f);
   float xv = l + static_cast<float>(b.d.toNormalized(b.val)) * (r - l);
@@ -592,7 +592,7 @@ bool check(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, con
   return pressed;
 }
 
-bool digi(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, const char* text, float font) {
+bool digi(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, const char* text, float font, float pixels) {
   Bound b = bind(a, t, param);
   if (!b.ok) return false;
   {  // Q-7 shared inset
@@ -604,7 +604,7 @@ bool digi(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, cons
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton("##dg", size);
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-  bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, 60.0f, false);
+  bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, pixels, false);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   std::string s = text ? std::string(text) : b.d.format(b.val);
   Skin kk = k;

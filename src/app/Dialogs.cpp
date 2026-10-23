@@ -493,7 +493,7 @@ void settingsWindow(App& a) {
       bool anim = st.getBool("ui.animations") && !reduced;
       formLabel("Animations");
       if (ImGui::Checkbox(i18n::tr("Interface animations"), &anim)) st.set("ui.animations", anim);
-      ui::Hint("Decorative motion: the metronome swinging in tempo, key and pad lights fading, gliding drags and scrolling. "
+      ui::Hint("Decorative motion: the metronome ticking in tempo, key and pad lights fading, gliding drags and scrolling. "
                "Off: everything moves at once, which saves a little CPU");
       ImGui::EndDisabled();
       ImGui::BeginDisabled(reduced || !anim);
@@ -526,6 +526,18 @@ void settingsWindow(App& a) {
         }
         ui::Hint("Mouse wheel over controls in scrolling panes (narrow mixer, channel rack with a long pattern or many channels). "
                  "Scrolling: the wheel scrolls the pane; drag, click then wheel, or hold Ctrl and wheel, to change a control or step");
+      }
+      ui::EndSection();
+      // J-99: smooth freehand drawing (app/DrawSmoothUi.h).
+      ui::BeginSection("DRAWING");
+      {
+        formLabel("Smooth drawing");
+        float amt = static_cast<float>(std::clamp(st.getNumber("draw.smoothAmount"), 0.0, 1.0)) * 100.0f;
+        ImGui::SetNextItemWidth(fieldW);
+        if (ImGui::SliderFloat("##drawsmooth", &amt, 0.0f, 100.0f, amt <= 0 ? i18n::tr("Off") : "%.0f%%"))
+          st.set("draw.smoothAmount", static_cast<double>(std::round(amt)) / 100.0);
+        ui::Hint("How much strokes drawn into EQs, band levels, harmonics, waves and tables are smoothed. "
+                 "Each surface has its own on / off switch (the small wave in its corner); hold Alt while drawing for a raw stroke");
       }
       ui::EndSection();
       // J-48: interface sounds.

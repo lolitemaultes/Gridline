@@ -3,7 +3,7 @@
 // Enhancer, Stereo Shaper, Soft Clipper, Fast Dist, WaveShaper).
 //
 // State layouts (observed in saved projects and shipped presets; see
-// analysis/demos/notes_gamma.md). "ints" = little-endian int32:
+// format notes). "ints" = little-endian int32:
 //   Parametric EQ 2  ver(6|8), 36 ints by tag: level 0-6 (±1800 = ±18 dB),
 //                    freq 7-13 (0..65536), width 14-20 (0..65536), type 21-27,
 //                    order 28-34 (-3..3), main level 35; then the A/B spare

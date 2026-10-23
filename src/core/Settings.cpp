@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include "DrawSmooth.h"
 #include "Project.h"
 #include "Platform.h"
 
@@ -57,7 +58,7 @@ Settings::Settings() {
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
       {"ui.scale", Json::makeNumber(1.0)},
       {"ui.scaleAuto", b(true)},             // J-91: ui.scale is multiplied by the desktop's scale (core/UiScale.h)
-      {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome swing, light fades, glides)
+      {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
       {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing
@@ -121,12 +122,15 @@ Settings::Settings() {
       {"update.skipVersion", Json::makeString("")}, // "Skip this version"
       {"update.remindAfter", Json::makeNumber(0)},  // "Remind me later": not offered again before this time
   };
+  // J-99: smooth freehand drawing (core/DrawSmooth.h): one amount, a switch per surface.
+  defaults_["draw.smoothAmount"] = Json::makeNumber(drawsmooth::kDefaultAmount);
+  for (const char* s : drawsmooth::kSurfaces) defaults_[std::string("draw.smooth.") + s] = b(true);
   values_ = defaults_;
 }
 
 std::string Settings::defaultPath() {
   // GRIDLINE_CONFIG_HOME (J-68): an isolated config root for automated runs
-  // (screenshots, agents) that does not touch other tools' XDG configuration;
+  // (screenshots, scripted runs) that does not touch other tools' XDG configuration;
   // else $XDG_CONFIG_HOME, %APPDATA% (Windows) or ~/.config (see core/Platform.h).
   return (fs::path(platform::configRoot()) / "gridline" / "settings.json").string();
 }

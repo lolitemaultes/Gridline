@@ -550,10 +550,7 @@ bool prepareDrumsAux(const PluginState& state, ChannelAux& aux) {
   }
   if (state.type == "gl.kicksculpt") {
     aux = ChannelAux{};
-    for (int k = 0; k < kickNoiseCount(); ++k) {
-      const std::string p = kickNoisePath(k);
-      aux.samples.push_back(p.empty() ? nullptr : sampleCache().get(p));
-    }
+    for (int k = 0; k < kickNoiseCount(); ++k) aux.samples.push_back(kickNoiseSample(k));
     return true;
   }
   if (state.type == "gl.membranepad" || state.type == "gl.sweepkick") {

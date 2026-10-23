@@ -11,7 +11,7 @@
 //   Hyper Chorus       u32 version 2, i32 × 11 (tags 0..10), i32 spare
 //   Fruity Flanger     u32 version 1, i32 × 12 (tags 0..11)
 //   Fruity Flangus     i32 × 8: order, then tags 1..7
-// Value curves: see analysis/demos/notes_gamma.md (Time family).
+// Value curves: see format notes (Time family).
 #include <algorithm>
 #include <cmath>
 #include "../../engine/ClassicDelay.h"

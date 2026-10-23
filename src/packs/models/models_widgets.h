@@ -7,7 +7,9 @@
 #include <initializer_list>
 #include <string>
 #include <utility>
+#include <vector>
 #include "../../app/App.h"
+#include "../../app/DrawSmoothUi.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
 #include "../PacksUi.h"
@@ -73,10 +75,10 @@ inline void caption(App& a, const char* text, ImU32 col = 0) {
 }
 
 // Drawable bar editor over `count` consecutive 0..1 parameters starting at
-// `base`. Drag to draw (strokes are interpolated), right-drag resets to `rest`.
+// `base`. Drag to draw (J-99: filled and smoothed, Alt raw), right-drag resets to `rest`.
 // Returns the hovered bar (or -1).
 inline int barEditor(App& a, const PluginTarget& t, const PluginState& st, int base, int count, ImVec2 size, const char* id,
-                     ImU32 col, float rest = 1.0f, const char* hint = nullptr) {
+                     ImU32 col, float rest = 1.0f, const char* hint = nullptr, const char* surface = "facet") {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 p = ImGui::GetCursorScreenPos();
@@ -96,23 +98,29 @@ inline int barEditor(App& a, const PluginTarget& t, const PluginState& st, int b
     ImU32 c = k == hovered ? P.paper : theme::withAlpha(col, 0.45f + 0.55f * v);
     dl->AddRectFilled(ImVec2(x0 + 1, p.y + size.y - 3 - h), ImVec2(x0 + cw - 1, p.y + size.y - 3), c, 1.5f);
   }
-  static int lastK = -1;
-  static float lastV = 0;
-  if (act) {
-    bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+  // J-99: left-drag strokes are filled between samples and smoothed (Alt: raw); one undo step each.
+  const bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+  const ImGuiID sid = ImGui::GetID("##bars");
+  std::vector<float> cur(static_cast<size_t>(count));
+  for (int k = 0; k < count; ++k) cur[static_cast<size_t>(k)] = std::clamp(val(st, base + k, rest), 0.0f, 1.0f);
+  drawui::Spec spec;
+  spec.surface = surface;
+  spec.p0 = p;
+  spec.p1 = ImVec2(p.x + size.x, p.y + size.y);
+  const double mx = (m.x - p.x) / size.x, my = std::clamp(1 - (m.y - p.y - 3) / (size.y - 6), 0.0f, 1.0f);
+  if (const std::vector<float>* res = drawui::stroke(a, sid, act && !right, mx, my, cur.data(), count, spec)) {
+    PluginState ns = st;
+    for (int i = 0; i < count; ++i) ns.params[static_cast<size_t>(base + i)] = (*res)[static_cast<size_t>(i)];
+    if (ns.params != st.params) setPluginState(a, t, ns, "draw levels", 0x4D4F444C00000000ull ^ (t.key() << 8) ^ static_cast<uint64_t>(base));
+  }
+  static int lastK = -1;  // right-drag reset strokes
+  if (act && right) {
     int k = std::clamp(static_cast<int>((m.x - p.x) / cw), 0, count - 1);
-    float v = right ? rest : std::clamp(1 - (m.y - p.y - 3) / (size.y - 6), 0.0f, 1.0f);
     if (ImGui::IsItemActivated()) lastK = -1;
     PluginState ns = st;
-    int k0 = lastK < 0 ? k : lastK;
-    float v0 = lastK < 0 ? v : lastV;
-    int lo = std::min(k0, k), hi = std::max(k0, k);
-    for (int i = lo; i <= hi; ++i) {
-      float f = hi == lo ? 1.0f : static_cast<float>(i - k0) / static_cast<float>(k - k0);
-      ns.params[static_cast<size_t>(base + i)] = v0 + (v - v0) * f;
-    }
+    const int lo = std::min(lastK < 0 ? k : lastK, k), hi = std::max(lastK < 0 ? k : lastK, k);
+    for (int i = lo; i <= hi; ++i) ns.params[static_cast<size_t>(base + i)] = rest;
     lastK = k;
-    lastV = v;
     if (ns.params != st.params) setPluginState(a, t, ns, "draw levels", 0x4D4F444C00000000ull ^ (t.key() << 8) ^ static_cast<uint64_t>(base));
   }
   if (ImGui::IsItemDeactivated()) {
@@ -125,6 +133,7 @@ inline int barEditor(App& a, const PluginTarget& t, const PluginState& st, int b
                   100.0f * std::clamp(val(st, base + hovered, rest), 0.0f, 1.0f));
     a.setHint(b);
   }
+  drawui::chip(a, surface, spec.p0, spec.p1);
   ImGui::PopID();
   return hovered;
 }

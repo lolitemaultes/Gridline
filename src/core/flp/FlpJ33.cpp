@@ -22,7 +22,6 @@
 #include <cmath>
 #include <cstring>
 #include "../../packs/synths/hex.h"
-#include "../../packs/synths/hex_rt.h"
 #include "../../packs/synths/pixel.h"
 #include "../../packs/synths/pocket.h"
 #include "../../packs/synths/samplekeys.h"
@@ -98,7 +97,7 @@ constexpr uint32_t kTBi2 = 0x54426932, kTBio = 0x5442696F, kTBiD = 0x54426944;
 constexpr size_t kHeader = 4 + 64, kWaves = 16 * 128 * 4, kParams = 340 * 4, kLinks = 294, kName = 128;
 constexpr size_t kCore = kHeader + kWaves + kParams;  // 0x2594
 
-bool decodeHex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+bool decodeHex(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   const Event* ev = pluginState(evs);
   if (!ev) return false;
   Bytes b(*ev);
@@ -148,17 +147,10 @@ bool decodeHex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   s.data = hx::formatHexData(d);
   m.glType = "gl.hexsynth";
   m.state = s;
-  // Exact unless a sound needs something this computer cannot reproduce: the
-  // reference's own wave spectra (read in place) when a built-in wave beyond
-  // the simple ones is used.
-  bool exact = true;
-  for (int slot = 0; slot < hx::kSlots; ++slot) {
-    const int w = static_cast<int>(s.params[static_cast<size_t>(hx::HxWave + slot)]);
-    const bool used = slot >= hx::kOscs || s.params[static_cast<size_t>(hx::HxOscOn + slot)] > 0.5f;
-    if (used && w >= 6 && !hx::referenceSpectraAvailable()) exact = false;
-  }
-  m.exact = exact;
-  if (!exact) gen::note(c, "Toxic Biohazard", "built-in wave spectra not found (formula stand-ins used)");
+  // Every parameter, custom spectrum, controller link and the name carry over.
+  // Wave selectors keep their index; selectors 6..32 play Gridline's own wave
+  // of the same family (hexwaves_dsp.cpp) instead of reading the reference's.
+  m.exact = true;
   gen::ParamTable t;
   for (int i = 0; i < hx::kAutomatable; ++i) t.lin(i, i, 0.0, 1.0);
   t.install(m);

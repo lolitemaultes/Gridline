@@ -105,8 +105,10 @@ struct Download {
   uint64_t token;
   size_t index;
 };
-std::mutex gDlMu;
-std::vector<Download> gDownloads;
+// J-103: never destroyed: a download's completion handler (NSURLSession's queue) may run
+// while static destructors do.
+std::mutex& gDlMu = *new std::mutex;
+std::vector<Download>& gDownloads = *new std::vector<Download>;
 
 void receivePromise(NSFilePromiseReceiver* r, uint64_t token, size_t base, size_t n) {
   const std::string folder = dropFolder();

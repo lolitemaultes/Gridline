@@ -7,3 +7,13 @@ gen2-slicers/
 Testing/
 .DS_Store
 imgui.ini
+# Audio the app writes next to an opened project (Edison takes, recordings)
+demo/Audio/
+demo/Recorded/
+# Editor / IDE files
+.vscode/
+.idea/
+*.swp
+*~
+# Internal planning files never belong in the published tree
+TASKS.md

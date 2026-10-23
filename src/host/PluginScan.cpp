@@ -340,7 +340,8 @@ int childMain(int argc, char** argv) {
   std::_Exit(r.ok ? 0 : 2);
 }
 
-ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds) {
+ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds,
+                        const std::atomic<bool>* cancel) {
   ScanResult r;
   r.format = format;
   r.bundle = entry;
@@ -354,7 +355,25 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     r.error = "cannot start the scanner process";
     return r;
   }
-  const bool done = child.wait(timeoutSeconds);
+  // Waited for in short steps so a quit (cancel) does not wait for a slow plugin.
+  const auto t0 = std::chrono::steady_clock::now();
+  bool done = false, cancelled = false;
+  for (;;) {
+    const double left = timeoutSeconds < 0 ? 1.0 : timeoutSeconds - std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if ((done = child.wait(std::clamp(left, 0.0, 0.05))) || left <= 0) break;
+    if (cancel && cancel->load()) {
+      cancelled = true;
+      break;
+    }
+  }
+  if (cancelled) {
+    child.kill();
+    child.wait();
+    r.error = "cancelled";
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    return r;
+  }
   if (!done) {
     child.kill();
     child.wait();

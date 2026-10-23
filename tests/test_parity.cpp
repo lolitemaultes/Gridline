@@ -300,9 +300,9 @@ int main() {
       Buf d = runFx(st("gl.dist", {{DstMode, static_cast<float>(m)}, {DstExtreme, 1.f}, {DstSoftOut, 1.f}}), sine(100, 8000, 0.5));
       expect(finite(d) && peak(d.l) <= 1.0, ("distortion mode " + std::to_string(m) + " with x100 drive and soft output").c_str());
     }
-    Buf bc = runFx(st("gl.bitcrush", {{BcBits, 24.f}, {BcDownsample, 1.f}, {BcFilterOn, 1.f}, {BcFilterFreq, 300.f}}), sine(5000, N));
+    Buf bc = runFx(st("gl.bitcrush", {{BcBits, 24.f}, {BcRate, static_cast<float>(kBcRateOff)}, {BcFilterOn, 1.f}, {BcFilterFreq, 300.f}}), sine(5000, N));
     expect(rms(bc.l, N / 2) < 0.05, "bitcrusher filter (after) removes highs");
-    Buf bo = runFx(st("gl.bitcrush", {{BcOutput, -6.f}, {BcBits, 24.f}, {BcDownsample, 1.f}}), sine(200, N));
+    Buf bo = runFx(st("gl.bitcrush", {{BcOutput, -6.f}, {BcBits, 24.f}, {BcRate, static_cast<float>(kBcRateOff)}}), sine(200, N));
     expect(std::fabs(rms(bo.l, N / 2) / rms(sine(200, N).l, N / 2) - 0.501) < 0.02, "bitcrusher output gain");
     std::initializer_list<std::pair<int, float>> asym = {{WsBipolar, 0.f}, {0, 0.f}, {1, 0.f}, {2, 0.f}, {3, 0.f}, {4, 0.f}, {5, 0.f}, {6, 0.f}, {7, 0.f}, {WsCenter, 0.f}};
     Buf w = runFx(st("gl.waveshaper", asym), sine(100, N, 0.5));

@@ -1,6 +1,5 @@
-// Gridline — J-26: reference kernels of the classic filter family (studies
-// analysis/demos/specs/j26_filter.md, j26_fastlp.md, j26_bassboost.md,
-// j26_freefilter.md): a 4 Hz two-pole DC remover, a per-sample coefficient
+// Gridline — J-26: reference kernels of the classic filter family (behaviour
+// studies): a 4 Hz two-pole DC remover, a per-sample coefficient
 // ramp, the multi-tap state-variable filter, the one-knob resonant low-pass,
 // the bass booster and the fixed-design biquad. Coefficients that the
 // originals define per sample (independent of the sample rate) stay so.

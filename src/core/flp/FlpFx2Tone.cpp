@@ -120,7 +120,7 @@ bool decodeBassBoost(Context&, const std::vector<Event>& evs, PluginMapping& m) 
 }
 
 // ------------------------------------------------------------------ Squeeze → Squeeze
-// J-26: reference engine (SqModel = 1), laws in analysis/demos/specs/j26_squeeze.md.
+// J-26: reference engine (SqModel = 1), laws in behaviour study notes.
 bool decodeSqueeze(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   Reader r(pluginState(evs));
   if (r.n < 4 + 12 * 4) return false;

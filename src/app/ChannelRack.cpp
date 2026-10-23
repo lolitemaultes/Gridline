@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <set>
 #include "../core/I18n.h"
+#include "../core/ExternalDrop.h"
 #include "../core/RackLayout.h"
 #include "../core/WheelRoute.h"
 #include "Keys.h"
@@ -39,6 +40,7 @@ struct RackShown {
   float scroll = 0, rowsScrollY = 0, rowsScrollMaxY = 0;
   bool wheelScrolls = false;
   float originX = 0, row0Y = -1, viewX0 = 0, graphY = -1;  // screen geometry for scripted input
+  float rowPitch = 0;                                       // J-97: from one row to the next
 };
 RackShown gShown;
 struct RackDev {
@@ -54,17 +56,78 @@ std::vector<uint8_t> rowOf(const Pattern& p, ObjectId ch) {
   return row;
 }
 
-// Accepts instruments and audio files dropped from the browser.
+// Accepts instruments and audio files dropped from the browser on the rack's
+// free area (new channels; rows replace / insert, see rowDropTarget).
 void acceptDrops(App& a) {
   if (ImGui::BeginDragDropTarget()) {
-    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PLUGIN")) {
-      std::string type(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
-      if (const PluginInfo* info = findPlugin(type); info && info->kind == PluginKind::Generator) a.addInstrument(type);
-    }
+    browserui::acceptPluginDrop(a, browse::DropTarget::Rack, {});  // instruments: a new channel
     // Browser files: samples, MIDI, channel presets, projects (J-16).
     browserui::acceptFileDrop(a, browse::DropTarget::Rack, {});
     ImGui::EndDragDropTarget();
   }
+}
+
+// J-97: FL-style drop onto a channel row. The middle of the row replaces the
+// channel's content (sample, instrument, preset; routing / volume / pan /
+// steps / notes stay), its top and bottom edges (and the gap between rows)
+// insert new channels there. Draws the row highlight with a "Replace <name>"
+// badge, or an insertion line.
+void rowDropTarget(App& a, const Channel& c, int index, ImVec2 rp, float rowW, float rowH, float rowGap, float badgeX) {
+  const ImGuiPayload* cur = ImGui::GetDragDropPayload();
+  if (!cur || !(cur->IsDataType("GL_FILE") || cur->IsDataType("GL_ITEM") || cur->IsDataType("GL_FILES") || cur->IsDataType("GL_PLUGIN"))) return;
+  rowGap += ImGui::GetStyle().ItemSpacing.y;  // the rows' pitch: no dead band between two rows
+  const ImRect r(ImVec2(rp.x, rp.y - rowGap * 0.5f), ImVec2(rp.x + rowW, rp.y + rowH + rowGap * 0.5f));
+  if (!ImGui::BeginDragDropTargetCustom(r, ImGui::GetID("##rowdrop"))) return;
+  const xdrop::RowZone zone = xdrop::rowZone(ImGui::GetIO().MousePos.y, r.Min.y, r.GetHeight());
+  browserui::DropPlace place;
+  if (zone == xdrop::RowZone::Replace) place.channel = c.id;
+  else place.insertAt = zone == xdrop::RowZone::Before ? index : index + 1;
+  browserui::DropFeedback fb;
+  fb.highlight = false;
+  browserui::acceptFileDrop(a, browse::DropTarget::Rack, place, &fb);
+  browserui::acceptPluginDrop(a, browse::DropTarget::Rack, place, &fb);
+  ImGui::EndDragDropTarget();
+  if (!fb.hovering) return;
+  // What the row shows: replace (the default), the notes going in, or new channels below (Shift / extra files).
+  bool replace = zone == xdrop::RowZone::Replace, below = zone == xdrop::RowZone::After;
+  auto named = [&c](const char* f) {
+    char buf[256];
+    std::snprintf(buf, sizeof buf, f, c.name.c_str());
+    return std::string(buf);
+  };
+  std::string badge;
+  if (replace) {
+    badge = named(i18n::tr("Replace %s"));
+    if (const browserui::HoverPlan* hp = browserui::hoverPlan(browse::DropTarget::Rack); hp && !hp->plan.steps.empty()) {
+      const browse::DropAction act = hp->plan.steps.front().action;
+      if (act == browse::DropAction::ImportMidiNotes) {
+        badge = named(i18n::tr("Notes into %s"));
+      } else if (act == browse::DropAction::NewSamplerChannel || act == browse::DropAction::NewChannelFromPreset) {
+        replace = false;
+        below = true;
+      }
+    }
+  }
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  const ImU32 hot = P.hot;
+  ImFont* font = ImGui::GetFont();
+  const float fs = theme::kFontCaption + 1;
+  if (replace) {
+    const ImRect b(ImVec2(rp.x + 1, rp.y), ImVec2(rp.x + rowW - 1, rp.y + rowH));
+    dl->AddRectFilled(b.Min, b.Max, theme::withAlpha(hot, 0.14f), theme::kRadiusSm);
+    dl->AddRect(b.Min, b.Max, theme::withAlpha(hot, 0.95f), theme::kRadiusSm, 0, 2.0f);
+  } else {
+    const float y = std::round(below ? rp.y + rowH + rowGap * 0.5f : rp.y - rowGap * 0.5f);
+    dl->AddLine(ImVec2(rp.x + 2, y), ImVec2(rp.x + rowW - 2, y), hot, 3.0f);
+    dl->AddCircleFilled(ImVec2(rp.x + 4, y), 4.0f, hot);
+    badge = i18n::tr("Insert new channel here");
+  }
+  const ImVec2 ts = font->CalcTextSizeA(fs, 1e9f, 0, badge.c_str());
+  const float bh = ts.y + 4, by = replace ? std::round(rp.y + (rowH - bh) * 0.5f) : std::round((below ? rp.y + rowH : rp.y) - bh * 0.5f);
+  const ImVec2 b0(std::round(rp.x + badgeX), by), b1(b0.x + ts.x + 12, by + bh);
+  dl->AddRectFilled(b0, b1, hot, bh * 0.5f);
+  dl->AddText(font, fs, ImVec2(b0.x + 6, b0.y + 2), theme::contrastText(hot), badge.c_str());
 }
 
 // Display group filter of the rack (-1 = all channels). Groups and membership
@@ -413,6 +476,7 @@ void drawChannelRack(App& a) {
     ++shown.rows;
     const float cy = rp.y + rowH * 0.5f;
     if (shown.row0Y < 0) shown.row0Y = cy;
+    shown.rowPitch = rowH + rowGap + ImGui::GetStyle().ItemSpacing.y;
     bool selected = a.selChannels.count(c.id) > 0;
     if (selected) dl->AddRectFilled(rp, ImVec2(rp.x + rowW, rp.y + rowH), theme::withAlpha(P.paper, 0.035f), theme::kRadius);
 
@@ -511,11 +575,7 @@ void drawChannelRack(App& a) {
           ObjectId moving = *static_cast<const ObjectId*>(pl->Data);
           a.doc.moveChannel(moving, static_cast<int>(ci));
         }
-        // J-75: a sample dropped on a sample channel replaces its sample (Shift: a new channel).
-        browserui::DropPlace place;
-        place.channel = c.id;
-        browserui::acceptFileDrop(a, browse::DropTarget::Rack, place);
-        ImGui::EndDragDropTarget();
+        ImGui::EndDragDropTarget();  // browser files / plugins: the whole row (rowDropTarget, J-97)
       }
       const bool open = pluginWindowShown(a, PluginTarget{c.id, -1});
       ImU32 bg = selected ? P.surface600 : hov ? P.surface700 : P.surface800;
@@ -650,6 +710,7 @@ void drawChannelRack(App& a) {
       dl->AddRectFilled(l0, l1, selected ? P.led : theme::mix(P.field, P.led, 0.10f), 2);
       if (selected) dl->AddRectFilled(ImVec2(l0.x - 2, l0.y - 2), ImVec2(l1.x + 2, l1.y + 2), theme::withAlpha(P.led, 0.18f), 3);
     }
+    rowDropTarget(a, c, static_cast<int>(ci), rp, rowW, rowH, rowGap, stepsX + 6);  // J-97: drop to replace / insert
     ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
     ImGui::Dummy(ImVec2(rowW, 0));
     ImGui::PopID();
@@ -929,11 +990,12 @@ void rackDevDump(App& a, int frame) {
   const racklayout::Layout& L = r.layout;
   std::printf("rack frame %d: steps %d avail %.1f nameW %.1f stepW %.1f viewW %.1f scroll %.1f scrollMax %.1f rowsScroll %.1f rowsScrollMax %.1f "
               "wheelScrolls %d rows %d knobRows %d truncated %d undo %zu\n"
-              "  geom originX %.1f row0Y %.1f viewX0 %.1f graphY %.1f\n",
+              "  geom originX %.1f row0Y %.1f viewX0 %.1f graphY %.1f rowPitch %.1f\n",
               frame, L.steps, static_cast<double>(a.rack.lastAvail), static_cast<double>(L.nameW), static_cast<double>(L.stepW),
               static_cast<double>(L.viewW), static_cast<double>(r.scroll), static_cast<double>(L.scrollMax), static_cast<double>(r.rowsScrollY),
               static_cast<double>(r.rowsScrollMaxY), r.wheelScrolls ? 1 : 0, r.rows, r.knobRows, r.truncated, a.doc.history().position(),
-              static_cast<double>(r.originX), static_cast<double>(r.row0Y), static_cast<double>(r.viewX0), static_cast<double>(r.graphY));
+              static_cast<double>(r.originX), static_cast<double>(r.row0Y), static_cast<double>(r.viewX0), static_cast<double>(r.graphY),
+              static_cast<double>(r.rowPitch));
   const Pattern* pat = s.pattern(a.curPattern);
   for (size_t i = 0; i < s.channels.size(); ++i) {
     const Channel& c = s.channels[i];

@@ -282,14 +282,19 @@ thread_local bool tNonBlocking = false;  // see SampleCache::NonBlocking
 SampleCache::NonBlocking::NonBlocking() : prev_(tNonBlocking) { tNonBlocking = true; }
 SampleCache::NonBlocking::~NonBlocking() { tNonBlocking = prev_; }
 
-SampleCache::~SampleCache() {
+SampleCache::~SampleCache() { shutdown(); }
+
+void SampleCache::shutdown() {
+  std::vector<std::thread> workers;
   {
     std::lock_guard<std::mutex> lk(mu_);
     stop_ = true;
     queue_.clear();
+    workers.swap(workers_);
   }
   work_.notify_all();
-  for (auto& t : workers_) t.join();
+  done_.notify_all();
+  for (auto& t : workers) t.join();
 }
 
 // Decodes `path` on this thread (mu_ held on entry and exit; released while decoding).
@@ -308,6 +313,7 @@ SamplePtr SampleCache::decodeLocked(std::unique_lock<std::mutex>& lk, const std:
 }
 
 void SampleCache::enqueueLocked(const std::string& path) {
+  if (stop_) return;  // J-103: shut down: no background decoder starts again
   if (inflight_.count(path) || std::find(queue_.begin(), queue_.end(), path) != queue_.end()) return;
   queue_.push_back(path);
   if (workers_.empty()) {  // background decoders start with the first request

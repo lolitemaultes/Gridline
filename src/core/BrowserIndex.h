@@ -148,6 +148,8 @@ enum class DropAction {
   ReplaceSample,       // audio → the sample of the channel row under the pointer (J-75)
   MidiPatternClip,     // MIDI file → new pattern + its clip at the playlist drop position (J-75)
   AddBrowserFolder,    // folder → a browser folder (J-75)
+  ReplaceInstrument,   // audio → the channel row of another instrument becomes a sampler with it (J-97)
+  ReplaceFromPreset,   // instrument preset → the channel row's instrument (J-97, FL "Replace")
 };
 // What a dragged item is. FL presets (.fst) are decoded first and described
 // by what they contain (plugin preset or chain).
@@ -159,6 +161,10 @@ struct DropItem {
 // `targetType` = the plugin type shown by a PluginWindow target / of the
 // MixerSlot's current effect / of the Rack channel row under the pointer
 // (empty: the rack's free area); `targetUsesSample` = that plugin loads samples.
+// J-97: on a channel row (FL drop-to-replace) audio replaces the row's sample
+// (sample instruments) or turns it into a sampler with the file, an instrument
+// preset replaces its instrument and a MIDI file fills its notes; routing,
+// volume, pan, steps and notes stay.
 DropAction dropAction(const DropItem& item, DropTarget target, const std::string& targetType = "", bool targetUsesSample = false);
 const char* dropActionLabel(DropAction a);  // "New sampler channel", …
 

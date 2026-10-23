@@ -109,7 +109,8 @@ struct Context {
   browse::DropTarget target = browse::DropTarget::Workspace;
   std::string targetType;         // plugin type of the target (channel row / plugin window / mixer slot)
   bool targetUsesSample = false;  // that plugin loads samples
-  bool onChannel = false;         // Rack: over a channel row (replace its sample)
+  bool onChannel = false;         // Rack: over a channel row (replace its sample / instrument)
+  bool insertHere = false;        // Rack: between two rows (new channels are inserted there, J-97)
   std::string targetName;         // channel / plugin / mixer track name (hint text)
   int track = 0;                  // Playlist: track under the pointer (0-based)
   Tick tick = 0;                  // Playlist: snapped position
@@ -136,8 +137,9 @@ struct Plan {
 // `kinds`: per item, what it is (presets decoded by the caller; see
 // browserui::dropItemFor). FL behaviour: several samples dropped on the
 // playlist go on consecutive tracks from the one under the pointer (stacked);
-// Shift lays them one after another on that track. A channel row of a
-// sample-based channel takes one sample (replace); Shift makes new channels.
+// Shift lays them one after another on that track. A channel row takes one
+// sample or instrument preset (J-97: replace its sample, or its instrument);
+// the rest, or everything with Shift, become new channels.
 // A project anywhere opens (the rest of the drop is ignored).
 Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& kinds, const Context& ctx, const Mods& mods);
 
@@ -148,6 +150,31 @@ struct Place {
   Tick tick = 0;
 };
 std::vector<Place> layoutClips(const std::vector<Tick>& lengths, int track, Tick tick, bool sequential, int trackCount);
+
+// J-97: whether a channel's name was given automatically, so replacing its
+// content renames it: empty, the instrument's name (`pluginName`, how new
+// channels are named), or the stem of its sample (`oldData`, a file path).
+// A name the user typed stays.
+bool autoChannelName(const std::string& name, const std::string& pluginName, const std::string& oldData);
+
+// J-97: how a plugin's state data holds its sample, for dropped audio files:
+// Whole = the data is the file path (Sampler, Kerf, Granular, Tercet's custom
+// wave); FirstLine = the path is the first line and the rest the plugin's own
+// settings (scratch moves, spline, convolver envelope), which stay; None = the
+// data cannot take one dropped sample (drum kits, everything else).
+enum class SampleSlot { None, Whole, FirstLine };
+SampleSlot sampleSlot(const std::string& type);
+// `data` with `path` as its sample (sampleSlot(type) != None).
+std::string withSample(const std::string& type, const std::string& data, const std::string& path);
+// A sample dropped on a channel row of this instrument loads into it (the
+// sample players); any other instrument is replaced by a sampler (FL).
+bool rowTakesSample(const std::string& type);
+
+// J-97: where a drag over a channel rack row lands. The top and bottom edge
+// bands (a quarter of the row, at least 4 px, and the gap between rows)
+// insert a new channel before / after the row; the middle replaces it.
+enum class RowZone { Before, Replace, After };
+RowZone rowZone(float y, float rowTop, float rowHeight);
 
 // ------------------------------------------------------------- platform
 namespace native {

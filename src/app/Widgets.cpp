@@ -90,7 +90,8 @@ void Hint(const char* text) {
 }
 bool HintHovered() {
   // While files are dragged (browser / other applications) the status bar says what the drop does (J-75).
-  if (const ImGuiPayload* p = ImGui::GetDragDropPayload(); p && (p->IsDataType("GL_FILE") || p->IsDataType("GL_ITEM") || p->IsDataType("GL_FILES")))
+  if (const ImGuiPayload* p = ImGui::GetDragDropPayload();
+      p && (p->IsDataType("GL_FILE") || p->IsDataType("GL_ITEM") || p->IsDataType("GL_FILES") || p->IsDataType("GL_PLUGIN")))  // J-97: plugins too
     return false;
   return ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 }

@@ -1,5 +1,5 @@
 // Gridline — Octa Filter reference engine (J-42, OfModel = 1).
-// Specs: analysis/demos/specs/j35_lovephilter.md + scratch j42 articulator notes
+// Specs: behaviour study notes + articulator notes
 // (own wording). Differences to the legacy engine: control ticks of 64 (HQ 8)
 // samples at 44.1 kHz scaled to the internal rate; targets built from rest
 // value ⊕ maps (nearest 1025-point tables) ⊕ pattern envelope (song beats,

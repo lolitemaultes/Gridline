@@ -644,9 +644,18 @@ void typePopup(App& a, ParamId pid, const ParamDesc& d) {
   }
 }
 
+// J-98: a slider's drawn track: the drag maps the pointer along it (see dragParamTrack).
+struct Track {
+  float start = 0, len = 0;
+};
+std::map<uint32_t, pui::DevTrack>& devTracks() {
+  static std::map<uint32_t, pui::DevTrack> m;
+  return m;
+}
+
 // Interaction shared by knobs and sliders: drag (vertical or horizontal), wheel,
 // Ctrl+click reset, double-click type, right-click menu. Item must be the last item.
-bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal) {
+bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal, const Track* track = nullptr) {
   audit::lastItem("param");
   audit::bindControl(pid);  // J-92 binding audit
   ImGuiIO& io = ImGui::GetIO();
@@ -655,15 +664,36 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   double n = d.toNormalized(val);
   ImGuiID id = ImGui::GetItemID();
   static std::map<ImGuiID, double> accum;  // choice params step through accumulated motion
+  // Track sliders: the pointer position and the normalized value at the grab (re-anchored when Shift changes).
+  struct Anchor {
+    float pos = 0;
+    double n = 0;
+    bool fine = false;
+  };
+  static Anchor anchor;
+  const float along = horizontal ? io.MousePos.x : io.MousePos.y;
   if (ImGui::IsItemActivated()) {
     accum[id] = n;
+    anchor = {along, n, io.KeyShift};
     if (io.KeyCtrl || io.KeySuper) {
       val = d.def;
       a.doc.setParam(pid, val, false);
       return true;
     }
   }
-  if (act && !(io.KeyCtrl || io.KeySuper)) {
+  if (track && track->len > 1 && act && !(io.KeyCtrl || io.KeySuper)) {
+    if (io.KeyShift != anchor.fine) anchor = {along, n, io.KeyShift};
+    if (along != anchor.pos) {
+      const double dir = horizontal ? 1.0 : -1.0;  // vertical: up raises the value
+      const double nn = std::clamp(anchor.n + dir * (along - anchor.pos) / track->len * (anchor.fine ? 0.125 : 1.0), 0.0, 1.0);
+      const double v = d.fromNormalized(nn);
+      if (v != val) {
+        val = v;
+        a.doc.setParam(pid, val, true);
+        changed = true;
+      }
+    }
+  } else if (act && !(io.KeyCtrl || io.KeySuper)) {
     float delta = horizontal ? io.MouseDelta.x : -io.MouseDelta.y;
     if (delta != 0) {
       double speed = (io.KeyShift ? 0.12 : 1.0) / std::max(40.0f, pixels);
@@ -737,6 +767,38 @@ void drawDial(ImDrawList* dl, ImVec2 c, float r, double norm, bool bipolar, bool
 
 bool dragParamItem(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal) {
   return dragParam(a, pid, d, val, pixels, horizontal);
+}
+bool dragParamTrack(App& a, ParamId pid, const ParamDesc& d, double& val, float trackStart, float trackLen, bool horizontal) {
+  const Track tr{trackStart, trackLen};
+  const bool changed = dragParam(a, pid, d, val, trackLen, horizontal, &tr);
+  DevTrack& dv = devTracks()[pid.index];
+  const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+  dv.start = trackStart, dv.len = trackLen, dv.horizontal = horizontal;
+  dv.cross = horizontal ? (r0.y + r1.y) * 0.5f : (r0.x + r1.x) * 0.5f;
+  dv.norm = d.toNormalized(val), dv.value = val, dv.frame = ImGui::GetFrameCount();
+  return changed;
+}
+bool devTrack(uint32_t paramIndex, DevTrack& out) {
+  // Exact ParamId index, else a plugin parameter index inside a mixer slot (stride 1000): the latest drawn.
+  bool found = false;
+  for (const auto& [k, v] : devTracks())
+    if ((k == paramIndex || (k >= 1000 && k % 1000 == paramIndex)) && (!found || v.frame > out.frame)) out = v, found = true;
+  return found;
+}
+std::map<std::string, DevPoints>& devPointMap() {
+  static std::map<std::string, DevPoints> m;
+  return m;
+}
+void devPointsSet(const std::string& name, const DevPoints& p) {
+  DevPoints& d = devPointMap()[name];
+  d = p;
+  d.frame = ImGui::GetFrameCount();
+}
+bool devPoints(const std::string& name, DevPoints& out) {
+  auto it = devPointMap().find(name);
+  if (it == devPointMap().end()) return false;
+  out = it->second;
+  return true;
 }
 bool paramLinked(App& a, ParamId pid) { return isLinked(a, pid); }
 
@@ -870,7 +932,7 @@ bool hslider(App& a, const PluginTarget& t, int param, const char* label, float 
   const float h = 22;
   ImGui::InvisibleButton("##hs", ImVec2(width, h));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-  bool changed = dragParam(a, pid, *d, val, width * 0.8f, true);
+  bool changed = dragParamTrack(a, pid, *d, val, p.x, width, true);  // J-98: the handle line is drawn at p.x + width * n
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(p, ImVec2(p.x + width, p.y + h), hov || act ? P.surface700 : theme::mix(P.surface800, P.surface700, 0.5f), 4);
   float n = static_cast<float>(d->toNormalized(val));
@@ -906,9 +968,9 @@ bool vslider(App& a, const PluginTarget& t, int param, const char* label, ImVec2
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##vs", size);
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-  bool changed = dragParam(a, pid, *d, val, size.y, false);
-  ImDrawList* dl = ImGui::GetWindowDrawList();
   float cx = p.x + size.x * 0.5f, capH = std::min(14.0f, size.x * 0.7f), travel = size.y - capH;
+  bool changed = dragParamTrack(a, pid, *d, val, p.y + capH * 0.5f, travel, false);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(ImVec2(cx - 2, p.y + capH * 0.5f), ImVec2(cx + 2, p.y + size.y - capH * 0.5f), P.surface950, 2);
   float n = static_cast<float>(d->toNormalized(val));
   bool bip = d->min < 0 && d->max > 0;
@@ -1162,11 +1224,12 @@ bool parseValue(const ParamDesc& d, const std::string& text, double& out) {
       }
     }
   }
+  if (d.unit == "rate" && (s == "off" || s == "max")) return out = d.max, true;  // J-104: Rate "Off" is the top of the travel
   char* end = nullptr;
   double v = std::strtod(s.c_str(), &end);
   if (end == s.c_str()) return false;
   std::string suf = end ? std::string(end) : std::string();
-  if (d.unit == "Hz") {
+  if (d.unit == "Hz" || d.unit == "rate") {
     if (suf == "k" || suf == "khz") v *= 1000.0;
   } else if (d.unit == "s") {
     if (suf == "ms") v *= 0.001;

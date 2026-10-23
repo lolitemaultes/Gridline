@@ -31,12 +31,14 @@ namespace hex {
 
 const std::vector<std::string>& waveNames() {
   static const std::vector<std::string> v = [] {
-    std::vector<std::string> n = {"Custom", "Sine", "Sine + octave", "Sine stack", "Sine fall", "Organ", "Triangle",
-                                  "Triangle soft", "Square", "Square soft", "Pulse narrow", "Pulse thin", "Saw"};
-    for (int i = 1; i <= 7; ++i) n.push_back("Tone " + std::to_string(i));
-    for (int i = 1; i <= 4; ++i) n.push_back("Noise " + std::to_string(i));
-    for (int i = 1; i <= 9; ++i) n.push_back("Gate " + std::to_string(i));
-    return n;
+    // Gridline's own wave set (hexwaves_dsp.cpp), by family: sine recipes,
+    // classic shapes, tonal shapes, bit noise, formant / sync.
+    return std::vector<std::string>{
+        "Custom",      "Sine",         "Sine + octave", "Sine stack",  "Sine fall",   "Organ",       "Triangle",
+        "Twin hump",   "Square",       "Round square",  "Pulse 25%",   "Pulse narrow", "Saw",        "Warm odd",
+        "Half sine",   "Driven sine",  "Octave lead",   "Hollow octave", "Bell",      "Reed",        "Bit noise 1",
+        "Bit noise 2", "Bit noise 3",  "Bit noise 4",   "Formant low", "Formant O",   "Formant U",   "Formant A",
+        "Formant AE",  "Formant E",    "Sync",          "Formant body", "Sync square"};
   }();
   return v;
 }

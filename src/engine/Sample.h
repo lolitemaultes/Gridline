@@ -164,6 +164,10 @@ class SampleCache {
   void waitIdle();
   // Holds queued decodes back (tests: a deterministic "not decoded yet" state).
   void pauseBackground(bool paused);
+  // J-103 app quit: drops queued decodes and joins the background decoders (a running
+  // decode finishes), before main() returns: none runs into static destruction. get()
+  // still decodes on the calling thread; request() queues nothing any more. Idempotent.
+  void shutdown();
 
   // While an instance lives on a thread, get() on that thread behaves like
   // request() (program builds in the app: nothing waits for the disk).

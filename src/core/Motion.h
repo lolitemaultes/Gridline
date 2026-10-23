@@ -1,4 +1,4 @@
-// Gridline - J-91: interface motion switches and the metronome swing.
+// Gridline - J-91: interface motion switches; J-97: the metronome tick.
 //
 // Settings > Interface > Motion "Interface animations" (ui.animations, on by
 // default) is the master switch of decorative motion: off (or while the
@@ -19,12 +19,25 @@ struct Switches {
 // What is on, from the settings and the system's reduced-motion preference.
 Switches effective(bool animations, bool smoothSnap, bool smoothScroll, bool elastic, bool reducedMotion);
 
-// The metronome icon's horizontal scale (-1 .. 1) at song position `beats`
-// (quarter notes) and tempo `bpm`: it faces one way on even beats and the
-// other on odd beats, swinging over on each beat in a short eased turn
-// (kSwingSeconds, at most 45 % of a beat) like a pendulum ticking in tempo.
-// 1 when `swinging` is false (metronome off, transport stopped, animations off).
-constexpr double kSwingSeconds = 0.14;
-double metronomeSwing(double beats, double bpm, bool swinging);
+// The metronome icon's horizontal scale (+1 faces right, -1 mirrored) at song
+// position `beats` (quarter notes or the metronome's beat): a hard tick-tock
+// that snaps over exactly on each beat boundary, with no in-between frames.
+// `anchorBeat` is the beat the ticking started in (metronome switched on or
+// transport started): that beat shows the rest pose (+1), the next one is
+// mirrored, and so on. +1 when `ticking` is false (metronome off, transport
+// stopped, counting in, animations off / reduced motion) or the position is
+// invalid, so toggling the metronome never animates: it just shows the rest pose.
+double metronomeTick(double beats, bool ticking, double anchorBeat);
+
+// Remembers where the ticking started so a toggle (or play) mid-beat holds the
+// rest pose until the next beat boundary instead of jumping to a mirrored face.
+class MetronomeTicker {
+ public:
+  double update(double beats, bool ticking);
+
+ private:
+  bool ticking_ = false;
+  double anchor_ = 0.0;
+};
 
 }  // namespace gl::motion

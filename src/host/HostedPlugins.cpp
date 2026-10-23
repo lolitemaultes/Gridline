@@ -102,20 +102,22 @@ PluginInfo makePluginInfo(const HostedClass& c) {
 }
 
 namespace {
-std::mutex gClassLock;
+// J-103: never destroyed, like the class map and the scan service: plugin threads (scanner,
+// sandbox watchers, editors) may still reach them while static destructors run.
+std::mutex& gClassLock = *new std::mutex;
 std::map<std::string, std::shared_ptr<const HostedClass>>& classMap() {
   static auto* m = new std::map<std::string, std::shared_ptr<const HostedClass>>;
   return *m;
 }
-std::mutex gErrLock;
-std::string gLastError;
+std::mutex& gErrLock = *new std::mutex;
+std::string& gLastError = *new std::string;
 void setError(const std::string& e) {
   std::lock_guard<std::mutex> g(gErrLock);
   gLastError = e;
 }
 std::atomic<uint64_t> gGeneration{0};
-std::mutex gExeLock;
-std::string gChildExe;
+std::mutex& gExeLock = *new std::mutex;
+std::string& gChildExe = *new std::string;
 }  // namespace
 
 std::string lastError() {
@@ -1074,9 +1076,11 @@ struct Service {
   ScanCache cache;
   ScanStatus status;
   std::thread worker;
+  std::atomic<bool> cancel{false};  // J-103: quit: the running scan stops after killing its child
+  bool closed = false;              // J-103: after shutdownScan() no scan starts any more
 };
 Service& service() {
-  static auto* s = new Service;  // never destroyed (the worker may outlive main)
+  static auto* s = new Service;  // never destroyed (shutdownScan() joins the worker before main returns)
   return *s;
 }
 int countFailed(const ScanCache& c) {
@@ -1132,7 +1136,7 @@ void initHosting(const std::string& configDir) {
 void startScan(const std::string& exe, bool force) {
   Service& s = service();
   std::lock_guard<std::mutex> g(s.lock);
-  if (s.status.running || exe.empty()) return;
+  if (s.closed || s.status.running || exe.empty()) return;
   if (s.worker.joinable()) s.worker.join();
   s.status.running = true;
   s.status.done = s.status.total = 0;
@@ -1156,11 +1160,14 @@ void startScan(const std::string& exe, bool force) {
       sv.status.total = static_cast<int>(todo.size());
     }
     for (const auto& [fid, e] : todo) {
+      if (sv.cancel.load()) break;  // J-103: quitting (the rest is scanned at the next start)
       {
         std::lock_guard<std::mutex> g2(sv.lock);
         sv.status.current = e;
       }
-      finishEntry(sv, scanIsolated(exe, fid, e));
+      ScanResult r = scanIsolated(exe, fid, e, 60, &sv.cancel);
+      if (sv.cancel.load()) break;  // a cancelled scan is not a result: never cached
+      finishEntry(sv, std::move(r));
       std::lock_guard<std::mutex> g2(sv.lock);
       ++sv.status.done;
     }
@@ -1175,7 +1182,7 @@ void startScan(const std::string& exe, bool force) {
 void rescanEntry(const std::string& exe, const std::string& format, const std::string& entry) {
   Service& s = service();
   std::lock_guard<std::mutex> g(s.lock);
-  if (s.status.running || exe.empty()) return;
+  if (s.closed || s.status.running || exe.empty()) return;
   if (s.worker.joinable()) s.worker.join();
   s.status.running = true;
   s.status.done = 0;
@@ -1186,7 +1193,8 @@ void rescanEntry(const std::string& exe, const std::string& format, const std::s
       std::lock_guard<std::mutex> g2(sv.lock);
       sv.status.current = entry;
     }
-    finishEntry(sv, scanIsolated(exe, format, entry));
+    ScanResult r = scanIsolated(exe, format, entry, 60, &sv.cancel);
+    if (!sv.cancel.load()) finishEntry(sv, std::move(r));
     std::lock_guard<std::mutex> g2(sv.lock);
     sv.status.done = 1;
     sv.status.current.clear();
@@ -1225,6 +1233,16 @@ void stopScan() {
     t = std::move(s.worker);
   }
   if (t.joinable()) t.join();
+}
+
+void shutdownScan() {
+  Service& s = service();
+  {
+    std::lock_guard<std::mutex> g(s.lock);
+    s.closed = true;
+  }
+  s.cancel = true;
+  stopScan();
 }
 
 }  // namespace gl::host

@@ -1,6 +1,6 @@
 // Gridline — FL Studio import coverage: what the importer does with every
 // project event id, and a tally of FL files (projects, presets) by plugin and
-// event id, used by `gridline coverage-json` (analysis/tools/coverage.py).
+// event id, used by `gridline coverage-json` (coverage report).
 #pragma once
 #include <array>
 #include <cstdint>

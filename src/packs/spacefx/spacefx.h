@@ -65,16 +65,60 @@ struct EnvPoint {
 //   "#v 1", "#env t,v,k;t,v,k;…", "#eq x,v,k;…" (older states hold only the path).
 // J-42: "#pan" / "#sep" (reference build: the source IR's pan and stereo
 // separation envelopes, 0.5 = neutral), optional 4th point field = curve kind.
+// J-106: "#mode eq=smooth;env=straight" holds the curve modes (CurveMode); a curve
+// without an entry is CurveAuto.
+enum CurveMode { CurveAuto = -1, CurveStraight = 0, CurveSmooth = 1 };
 struct ConvData {
   std::string path;
   std::vector<EnvPoint> env, eq, pan, sep;
+  int envMode = CurveAuto, eqMode = CurveAuto;
 };
 ConvData parseConvData(const std::string& data);
 std::string formatConvData(const ConvData& d);
+// J-106 curve modes. Straight: segments bent by the end point's tension (the
+// IR build's segment law). Smooth: one monotone cubic through every point.
+// No stored mode (CurveAuto: older projects, presets, FL imports, programmatic
+// states) is Straight, so they sound as before; the editor gives a new (empty)
+// curve Smooth when its first point is added (curveModeShown).
+inline bool curveSmooth(int mode) { return mode == CurveSmooth; }
+inline int curveModeShown(int mode, const std::vector<EnvPoint>& pts) {
+  return mode != CurveAuto ? mode : pts.empty() ? CurveSmooth : CurveStraight;
+}
+// Smooth mode: monotone piecewise-cubic Hermite interpolation (Fritsch–Carlson
+// PCHIP with Fritsch–Butland harmonic-mean tangents) along the curve's own x
+// axis (log frequency for the EQ, seconds for the envelope). It passes exactly
+// through every point, never leaves the range of the two points around a
+// segment (no overshoot), has zero slope at the first and last point (flat ends,
+// held beyond them) and no corners. Tension (k) and curve kind (c) are ignored
+// (kept for Straight). The editor's drawing and the IR build both evaluate it
+// through this struct (UI thread only; the audio thread never sees curves).
+struct SmoothCurve {
+  explicit SmoothCurve(const std::vector<EnvPoint>& pts);
+  double at(double t) const;
+  std::vector<double> x, y, m;  // knots and tangents
+};
 // Envelope value at t (linear segments bent by tension).
 double envAt(const std::vector<EnvPoint>& pts, double t);
+// Legacy-build curve evaluator: envAt (Straight) or SmoothCurve (Smooth).
+struct ConvCurve {
+  ConvCurve(const std::vector<EnvPoint>& pts, bool smooth);
+  double at(double t) const { return sm_ ? sc_.at(t) : envAt(*p_, t); }
+
+ private:
+  const std::vector<EnvPoint>* p_;
+  bool sm_;
+  SmoothCurve sc_;
+};
 // EQ curve gain (dB) at hz, and the frequency of an x position.
-double convEqDb(const std::vector<EnvPoint>& eq, double hz);
+double convEqDb(const std::vector<EnvPoint>& eq, double hz, bool smooth = false);
+// FL export of a Smooth curve (FL's segments are straight / tension only): plain
+// straight points (k 0, c 0) through the original points plus enough in between
+// that errDb(straight value, smooth value) stays within `tolDb` everywhere.
+std::vector<EnvPoint> smoothToSegments(const std::vector<EnvPoint>& pts, double (*errDb)(double, double), double tolDb);
+// Those errors in dB: EQ values (the worse of the two IR builds' gain laws) and IR
+// amplitude envelope values (×2 at 1); levels floored at -80 dB.
+double convEqErrDb(double a, double b);
+double convEnvErrDb(double a, double b);
 inline double convEqHz(double x) { return 20.0 * std::pow(1000.0, std::clamp(x, 0.0, 1.0)); }
 // FL knob laws (x = 0..1 wheel position).
 inline double convDryGain(double x) { return (std::pow(11.0, x) - 1.0) / 10.0; }

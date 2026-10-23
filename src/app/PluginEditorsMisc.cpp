@@ -1,5 +1,6 @@
 // Gridline — Shaper editor (drawn envelopes + filter), 0.5 rack-panel style.
 #include <map>
+#include "DrawSmoothUi.h"
 #include "PluginEditorsCommon.h"
 
 namespace gl {
@@ -59,13 +60,20 @@ void stepLane(App& a, const PluginTarget& t, const PluginState& st, int base, bo
   }
   dl->AddPolyline(pts, 161, P.paper, 0, 1.6f);
   if (playPh >= 0) dl->AddLine(ImVec2(p.x + playPh * sz.x, p.y), ImVec2(p.x + playPh * sz.x, p.y + sz.y), P.accent, 1.5f);
-  if (ImGui::IsItemActive()) {
-    ImVec2 m = ImGui::GetIO().MousePos;
-    int k = std::clamp(static_cast<int>((m.x - p.x) / cw), 0, kShaperPoints - 1);
-    float v = bipolar ? std::clamp(1 - (m.y - p.y) / sz.y * 2, -1.0f, 1.0f) : std::clamp(1 - (m.y - p.y) / sz.y, 0.0f, 1.0f);
-    PluginState ns = st;
-    ns.params[static_cast<size_t>(base + k)] = v;
-    setPluginState(a, t, ns, "draw envelope", 0x5348000000000000ull ^ t.key() ^ static_cast<uint64_t>(base));
+  {  // J-99: fast strokes fill every step between samples; steps stay raw (each is a deliberate level).
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    const float v = bipolar ? std::clamp(1 - (m.y - p.y) / sz.y * 2, -1.0f, 1.0f) : std::clamp(1 - (m.y - p.y) / sz.y, 0.0f, 1.0f);
+    float cur[kShaperPoints];
+    for (int k = 0; k < kShaperPoints; ++k) cur[k] = val(st, base + k, bipolar ? 0.f : 1.f);
+    drawui::Spec spec;
+    spec.surface = "steps";
+    spec.raw = true;
+    spec.lo = bipolar ? -1.0f : 0.0f;
+    if (const std::vector<float>* res = drawui::stroke(a, ImGui::GetItemID(), ImGui::IsItemActive(), (m.x - p.x) / sz.x, v, cur, kShaperPoints, spec)) {
+      PluginState ns = st;
+      for (int k = 0; k < kShaperPoints; ++k) ns.params[static_cast<size_t>(base + k)] = (*res)[static_cast<size_t>(k)];
+      if (ns.params != st.params) setPluginState(a, t, ns, "draw envelope", 0x5348000000000000ull ^ t.key() ^ static_cast<uint64_t>(base));
+    }
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (ImGui::IsItemHovered()) a.setHint("Draw: drag across the steps");

@@ -379,7 +379,7 @@ int main() {
   {
     namespace fs = std::filesystem;
     const char* env = std::getenv("GRIDLINE_CONVERTED_DIR");
-    fs::path dir = env ? fs::path(env) : fs::path("/Users/lesliemoulatt/Downloads/untitled folder 3/fl-port/analysis/demos/converted");
+    fs::path dir = env ? fs::path(env) : fs::path();  // a folder of converted FL projects (optional)
     int tested = 0;
     std::error_code ec;
     if (fs::is_directory(dir, ec))

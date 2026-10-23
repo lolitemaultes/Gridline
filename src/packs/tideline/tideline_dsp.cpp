@@ -73,10 +73,11 @@ class Tideline final : public Effect {
     const double tau = std::max(0.05, smoothMs) * 0.001;
     const double smA = std::exp(-1.0 / (tau * sr));
 
-    if (band != BandFull && (bandHz != bandHz_ || sr != sr_)) {
+    if (band != BandFull && (bandHz != bandHz_ || sr != bandSr_)) {
       bandL_.set(sr, bandHz);
       bandR_.set(sr, bandHz);
       bandHz_ = bandHz;
+      bandSr_ = sr;
     }
     if (sr != sr_) {
       sr_ = sr;
@@ -180,6 +181,9 @@ class Tideline final : public Effect {
       const double g = gain_;
       double l = L[i], r = R[i];
       // Gain on the whole signal, or on one band of an LR4 split (the other band passes).
+      // Listen (J-98) solos what is being ducked: the band (Lows / Highs) of the
+      // ducked component (both channels, the mid or the side); everything that
+      // passes untouched is muted. Full + Stereo ducks everything: no change.
       auto duck = [&](double v, Lr4& f) {
         if (band == BandFull) return v * g;
         double low, high;
@@ -195,10 +199,10 @@ class Tideline final : public Effect {
         double m = 0.5 * (l + r), sd = 0.5 * (l - r);
         if (stereo == StMid) {
           m = duck(m, bandL_);
-          if (listen && band != BandFull) sd = 0;
+          if (listen) sd = 0;
         } else {
           sd = duck(sd, bandL_);
-          if (listen && band != BandFull) m = 0;
+          if (listen) m = 0;
         }
         l = m + sd;
         r = m - sd;
@@ -252,7 +256,7 @@ class Tideline final : public Effect {
   float peak_ = 0;
   std::array<uint64_t, 2> midiHeld_{};
   Lr4 bandL_, bandR_;
-  double bandHz_ = -1;
+  double bandHz_ = -1, bandSr_ = 0;
   Biquad detHp_, detLp_;
   double detLo_ = -1, detHi_ = -1;
   bool detPrimed_ = false;

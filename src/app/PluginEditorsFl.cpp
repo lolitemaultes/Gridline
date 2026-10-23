@@ -3,6 +3,7 @@
 // width by skin::Form) with the reference palette roles, drawn with the
 // PluginSkin kit.
 #include <map>
+#include "../engine/Bitcrush.h"
 #include "../engine/ClassicModFx.h"
 #include "../engine/FlFilterRef.h"
 #include "../engine/FreqShiftRef.h"
@@ -880,89 +881,231 @@ void editorDistFl(App& a, const PluginTarget& t, float width) {
 }
 
 // ================================================================ Bitcrusher
-// The reference squeezer's 279 × 220 panel: squarize, puncher, filter, mix /
-// gain sliders; the lower right bevel carries the bit depth and rate divider.
-const skin::Skin& crushSkin() {
-  static const skin::Skin k = [] {
-    skin::Skin s = skin::Skin::fl(0x595A5A, 0x767778, 0x3F484D, 0xF2F2F2, 0x595A5A, 0xEAEAEA);
-    s.fillPressed = skin::hex(0xFFA830);
-    s.pillBg = skin::hex(0x3D3D3D);
-    s.pillText = skin::hex(0xEAEAEA);
-    s.rail = skin::hex(0x3F484D);
-    s.handle = skin::hex(0x8B8E97);
-    s.lcdBg = skin::hex(0x2E2F30);
-    s.lcdText = skin::hex(0xFFA830);
-    s.select = skin::hex(0xFFA830);
-    s.graphBg = skin::hex(0x3A3B3C);
-    s.graphCurve = skin::hex(0xF2F2F2);
-    return s;
-  }();
-  return k;
+// J-104: Rate (hold rate in Hz) is the hero control; Bits second. The display
+// runs the engine's own core (engine/Bitcrush.h) on a test wave, so the staircase
+// shows exactly what Rate, Bits, the converter filters and dither do. Dragging
+// the display sideways sets Rate, up / down sets Bits.
+void crushPreview(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p0, ImVec2 sz, double sr) {
+  const auto& P = theme::pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImGui::SetCursorScreenPos(p0);
+  ImGui::InvisibleButton("##crushview", sz);
+  const bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+  const ImVec2 p1(p0.x + sz.x, p0.y + sz.y);
+  pui::displayFrame(dl, p0, p1);
+  const double rate = val(st, BcRate, 11025), bits = std::clamp(static_cast<double>(val(st, BcBits, 8)), 1.0, 24.0);
+  const double aa = val(st, BcAntiAlias), smooth = val(st, BcSmooth), dith = val(st, BcDither), sq = val(st, BcSquarize);
+  const double period = crush::periodFor(rate, sr, kBcRateOff), steps = std::exp2(bits - 1);
+  constexpr double kWindow = 0.006;  // 6 ms on screen: the number of steps shows the rate
+  const int n = std::clamp(static_cast<int>(kWindow * sr), 32, 1200);
+  const double f0 = 2.0 / kWindow;  // two cycles of the test wave
+  auto wave = [&](int i) {
+    const double ph = 2 * 3.14159265358979 * f0 * i / sr;
+    return 0.78 * std::sin(ph) + 0.17 * std::sin(3 * ph + 0.6) + 0.05 * std::sin(9 * ph);
+  };
+  static crush::Crusher core;  // UI thread only
+  core.reset();
+  core.setFilters(sr, period, aa, smooth);
+  static std::vector<float> out;
+  out.assign(static_cast<size_t>(n), 0.f);
+  for (int pass = 0; pass < 3; ++pass)  // settle the filters on the periodic wave, keep the last pass
+    for (int i = 0; i < n; ++i) {
+      double l = wave(i), r = l;
+      core.frame(l, r, period, steps, sq, dith);
+      out[static_cast<size_t>(i)] = static_cast<float>(l);
+    }
+  const float pad = 10, x0 = p0.x + pad, w = sz.x - 2 * pad, yc = (p0.y + p1.y) * 0.5f, hh = sz.y * 0.5f - 18;
+  auto X = [&](double i) { return x0 + static_cast<float>(i / n) * w; };
+  auto Y = [&](double v) { return yc - static_cast<float>(std::clamp(v, -1.2, 1.2)) * hh; };
+  dl->PushClipRect(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p1.y - 1), true);
+  // Quantiser levels while they are coarse enough to see.
+  if (steps <= 40)
+    for (int q = -static_cast<int>(steps); q <= static_cast<int>(steps); ++q) {
+      const float y = std::round(Y(q / steps)) + 0.5f;
+      dl->AddLine(ImVec2(p0.x + 1, y), ImVec2(p1.x - 1, y), q == 0 ? P.gridBar : theme::withAlpha(P.gridStep, 0.7f));
+    }
+  else
+    dl->AddLine(ImVec2(p0.x + 1, yc), ImVec2(p1.x - 1, yc), P.gridBar);
+  // Input wave (thin), then the crushed output as a filled staircase with a bright edge.
+  std::vector<ImVec2> in(static_cast<size_t>(n));
+  for (int i = 0; i < n; ++i) in[static_cast<size_t>(i)] = ImVec2(X(i), Y(wave(i)));
+  dl->AddPolyline(in.data(), n, theme::withAlpha(P.text, 0.28f), 0, 1.2f);
+  const bool stairs = period > 1.5 || steps <= 40;
+  std::vector<ImVec2> edge;
+  edge.reserve(static_cast<size_t>(n) * 2 + 2);
+  for (int i = 0; i < n; ++i) {
+    const float y = Y(out[static_cast<size_t>(i)]);
+    if (stairs && smooth < 0.02) {
+      edge.push_back(ImVec2(X(i), y));
+      edge.push_back(ImVec2(X(i + 1), y));
+    } else {
+      edge.push_back(ImVec2(X(i + 0.5), y));
+    }
+  }
+  {  // area under the output: unsmoothed fills so neighbouring columns leave no seams
+    const ImDrawListFlags fl = dl->Flags;
+    dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;
+    for (size_t k = 0; k + 1 < edge.size(); ++k) {
+      ImVec2 q[4] = {edge[k], edge[k + 1], ImVec2(edge[k + 1].x, yc), ImVec2(edge[k].x, yc)};
+      if (std::fabs(q[0].x - q[1].x) > 0.01f) dl->AddConvexPolyFilled(q, 4, theme::withAlpha(P.accent, 0.18f));
+    }
+    dl->Flags = fl;
+  }
+  dl->AddPolyline(edge.data(), static_cast<int>(edge.size()), theme::withAlpha(P.accent, 0.35f), 0, 4.0f);
+  dl->AddPolyline(edge.data(), static_cast<int>(edge.size()), P.text, 0, 1.6f);
+  dl->PopClipRect();
+  // Captions: holds in the window, levels, the time span.
+  char b[64];
+  const double holds = kWindow * sr / period;
+  if (period <= 1.0) std::snprintf(b, sizeof b, "NO HOLD  \xC2\xB7  %.1f kHz HOST", sr / 1000.0);
+  else std::snprintf(b, sizeof b, "%.1f HOLDS / 6 ms  \xC2\xB7  1 PER %.2f SAMPLES", holds, period);
+  monoText(dl, ImVec2(p0.x + 10, p0.y + 7), P.textDim, b, 10.0f);
+  if (bits < 16) std::snprintf(b, sizeof b, "%.0f LEVELS", std::min(2 * steps + 1, 1e9));
+  else std::snprintf(b, sizeof b, "%.1f BITS", bits);
+  ImGui::PushFont(app().fontMono, 10.0f);
+  const float tw = ImGui::CalcTextSize(b).x;
+  ImGui::PopFont();
+  monoText(dl, ImVec2(p1.x - 10 - tw, p0.y + 7), P.textDim, b, 10.0f);
+  monoText(dl, ImVec2(p0.x + 10, p1.y - 18), hot ? P.textDim : P.textFaint, hot ? "DRAG \xE2\x86\x94 RATE  \xE2\x86\x95 BITS" : "6 ms", 10.0f);
+  // Drag: sideways = Rate (log), vertical = Bits.
+  if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1)) {
+    const PluginInfo* info = findPlugin("gl.bitcrush");
+    const ImVec2 d = ImGui::GetIO().MouseDelta;
+    const double fine = ImGui::GetIO().KeyShift ? 0.125 : 1.0;
+    if (info && d.x != 0) {
+      const ParamDesc& pd = info->params[BcRate];
+      a.doc.setParam(t.pid(BcRate), pd.fromNormalized(std::clamp(pd.toNormalized(rate) + d.x / (sz.x * 1.2) * fine, 0.0, 1.0)), true);
+    }
+    if (info && d.y != 0) {
+      const ParamDesc& pd = info->params[BcBits];
+      a.doc.setParam(t.pid(BcBits), pd.fromNormalized(std::clamp(pd.toNormalized(bits) - d.y / (sz.y * 1.5) * fine, 0.0, 1.0)), true);
+    }
+  }
+  if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+  if (ImGui::IsItemHovered()) a.setHint("Drag sideways to set the rate, up or down to set the bits (Shift: finer)");
 }
 
-void editorBitcrushFl(App& a, const PluginTarget& t, float width) {
+// Big centred value text.
+void heroText(ImDrawList* dl, float cx, float y, const char* text, ImU32 col, float size) {
+  ImGui::PushFont(app().fontMonoBold, size);
+  const ImVec2 ts = ImGui::CalcTextSize(text);
+  dl->AddText(ImVec2(std::round(cx - ts.x * 0.5f), y), col, text);
+  ImGui::PopFont();
+}
+
+void editorBitcrush(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
-  const skin::Skin& K = crushSkin();
-  constexpr float kW = 279, kH = 220;
-  Frame fr(width, kW, kH, 1.7f, K);
-  const skin::Form& F = fr.F;
+  const auto& P = theme::pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  skin::Scope scope(K);
-  auto bev = [&](float x, float y, float w, float h) { dl->AddRectFilled(F.p(x, y), F.p(x + w, y + h), K.wellC(), 2); };
-  bev(5, 5, 98, 50);
-  bev(5, 60, 98, 155);
-  bev(108, 5, 98, 159);
-  bev(108, 169, 165, 46);
-  bev(211, 5, 62, 159);
-  auto rowLabel = [&](float y, const char* id, const char* s) { skin::button(id, F.p(9, y), F.sz(56, 24), K, s, false, F.font(7)); };
-  skin::pill(dl, F.p(9, 7), F.p(89, 21), K, "SQUARIZE", F.font(7.5f));
-  rowLabel(26, "##sqamt", "AMOUNT");
-  skin::wheel(a, t, BcSquarize, F.p(69, 23), 30 * F.s, K);
-  skin::pill(dl, F.p(9, 62), F.p(89, 76), K, "PUNCHER", F.font(7.5f));
-  rowLabel(87, "##pres", "PRESERVE");
-  skin::wheel(a, t, BcPreserve, F.p(69, 84), 30 * F.s, K);
-  rowLabel(120, "##imp", "IMPACT");
-  skin::wheel(a, t, BcImpact, F.p(69, 117), 30 * F.s, K);
-  rowLabel(153, "##puamt", "AMOUNT");
-  skin::wheel(a, t, BcPunch, F.p(69, 150), 30 * F.s, K);
-  {  // Crushed-sine preview.
-    ImVec2 p0 = F.p(9, 185), p1 = F.p(99, 211);
-    skin::graphWell(dl, p0, p1, K);
-    double bits = val(st, BcBits, 8), ds = std::max(1.0, static_cast<double>(val(st, BcDownsample, 4))), sq = val(st, BcSquarize);
-    double steps = std::pow(2.0, bits - 1), hold = 0, cnt = ds;
-    ImVec2 pts[120];
-    for (int i = 0; i < 120; ++i) {
-      double x = std::sin(i / 120.0 * 4 * dsp::kPi) * 0.9;
-      cnt += 0.25;
-      if (cnt >= ds * 0.25) {
-        cnt = 0;
-        double v = sq > 0 ? (x < 0 ? -1 : 1) * std::pow(std::fabs(x), 1 - 0.95 * sq) : x;
-        hold = std::round(v * steps) / steps;
-      }
-      pts[i] = ImVec2(p0.x + 2 + (p1.x - p0.x - 4) * i / 119.0f, (p0.y + p1.y) * 0.5f - static_cast<float>(hold) * ((p1.y - p0.y) * 0.5f - 2));
-    }
-    dl->AddPolyline(pts, 120, K.graphCurve, 0, 1.2f);
+  const double sr = a.engine.sampleRate() > 0 ? a.engine.sampleRate() : 44100.0;
+  const PluginInfo* info = findPlugin("gl.bitcrush");
+  const float gap = 8, topH = 218;
+  const float heroW = 196, bitsW = 150, viewW = width - heroW - bitsW - 2 * gap;
+  ImVec2 o = ImGui::GetCursorScreenPos();
+  // Hero: Rate.
+  pui::beginPanel("RATE", heroW, topH, "HOLD");
+  {
+    const ImVec2 wp = ImGui::GetWindowPos();
+    const float r = 50, cx = wp.x + heroW * 0.5f;
+    ImGui::SetCursorScreenPos(ImVec2(cx - r, wp.y + 30));
+    pui::dial(a, t, BcRate, r);
+    const double rate = val(st, BcRate, 11025);
+    const std::string txt = info ? info->params[BcRate].format(rate) : "";
+    const double period = crush::periodFor(rate, sr, kBcRateOff);
+    heroText(dl, cx, wp.y + 30 + 2 * r + 10, txt.c_str(), period > 1.0 ? P.text : P.textDim, 24.0f);
+    char b[48];
+    if (period > 1.0) std::snprintf(b, sizeof b, "HOST / %.2f", period);
+    else std::snprintf(b, sizeof b, "FULL RATE");
+    ImGui::PushFont(app().fontMono, 10.0f);
+    const float tw = ImGui::CalcTextSize(b).x;
+    ImGui::PopFont();
+    monoText(dl, ImVec2(std::round(cx - tw * 0.5f), wp.y + 30 + 2 * r + 42), P.textFaint, b, 10.0f);
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + 10, wp.y + topH - 8));
+    ImGui::Dummy(ImVec2(1, 1));
   }
-  skin::check(a, t, BcFilterOn, F.p(113, 7), F.sz(71, 17), K, "FILTER", K.fillPressed);
-  skin::menuBox(a, t, BcFilterType, F.p(113, 28), F.sz(87, 22), K, F.font(8));
-  flabel(dl, F, 133, 68, K, "FREQ.", 7);
-  flabel(dl, F, 180, 68, K, "RES.", 7);
-  skin::wheel(a, t, BcFilterFreq, F.p(113, 81), 40 * F.s, K);
-  skin::wheel(a, t, BcFilterReso, F.p(160, 81), 40 * F.s, K);
-  static const char* pos[2] = {"PRE", "POST"};
-  skin::switchSel(a, t, BcFilterPos, F.p(113, 131), F.sz(87, 27), K, pos, 2, true);
-  skin::vslider(a, t, BcMix, F.p(216, 10), F.sz(22, 138), K, 0, false);
-  skin::vslider(a, t, BcOutput, F.p(245, 10), F.sz(22, 138), K, 0, false);
-  flabel(dl, F, 227, 151, K, "MIX", 7);
-  flabel(dl, F, 256, 151, K, "GAIN", 7);
-  flabel(dl, F, 149, 172, K, "BITS", 7);
-  flabel(dl, F, 231, 172, K, "RATE DIV", 7);
-  char b[24];
-  std::snprintf(b, sizeof b, "%.1f", val(st, BcBits, 8));
-  skin::digi(a, t, BcBits, F.p(113, 186), F.sz(72, 22), K, b, F.font(10));
-  std::snprintf(b, sizeof b, "/%.0f", val(st, BcDownsample, 4));
-  skin::digi(a, t, BcDownsample, F.p(194, 186), F.sz(74, 22), K, b, F.font(10));
-  fr.end();
+  pui::endPanel();
+  // Staircase display.
+  crushPreview(a, t, st, ImVec2(o.x + heroW + gap, o.y), ImVec2(viewW, topH), sr);
+  // Bits (second control) + dither.
+  ImGui::SetCursorScreenPos(ImVec2(o.x + heroW + gap + viewW + gap, o.y));
+  pui::beginPanel("BITS", bitsW, topH, "DEPTH");
+  {
+    const ImVec2 wp = ImGui::GetWindowPos();
+    const float r = 32, cx = wp.x + bitsW * 0.5f;
+    ImGui::SetCursorScreenPos(ImVec2(cx - r, wp.y + 30));
+    pui::dial(a, t, BcBits, r);
+    const double bits = val(st, BcBits, 8);
+    char b[32];
+    std::snprintf(b, sizeof b, "%.1f", bits);
+    heroText(dl, cx, wp.y + 30 + 2 * r + 6, b, P.text, 20.0f);
+    const double levels = 2 * std::exp2(bits - 1) + 1;
+    if (levels < 1e6) std::snprintf(b, sizeof b, "BITS \xC2\xB7 %.0f LEVELS", levels);
+    else std::snprintf(b, sizeof b, "BITS");
+    ImGui::PushFont(app().fontMono, 9.5f);
+    const float tw = ImGui::CalcTextSize(b).x;
+    ImGui::PopFont();
+    monoText(dl, ImVec2(std::round(cx - tw * 0.5f), wp.y + 30 + 2 * r + 32), P.textFaint, b, 9.5f);
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + 10, wp.y + 30 + 2 * r + 50));
+    pui::knobInline(a, t, BcDither, "Dither", bitsW - 20, 13);
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + 10, wp.y + topH - 8));
+    ImGui::Dummy(ImVec2(1, 1));
+  }
+  pui::endPanel();
+  ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + topH + gap));
+  // Secondary row: converter filters | character | tone filter | output.
+  const float rowH = 132;
+  const float wConv = std::floor((width - 3 * gap) * 0.24f), wChar = std::floor((width - 3 * gap) * 0.34f), wOut = std::floor((width - 3 * gap) * 0.16f);
+  const float wTone = width - 3 * gap - wConv - wChar - wOut;
+  pui::beginPanel("CONVERTERS", wConv, rowH);
+  {
+    const float c = (wConv - 20) / 2;
+    pui::knob(a, t, BcAntiAlias, "Anti-alias", pui::KnobMedium, c);
+    ImGui::SameLine(0, 0);
+    pui::knob(a, t, BcSmooth, "Smoothing", pui::KnobMedium, c);
+    pui::caption("0% CRUNCH \xC2\xB7 100% CLEAN");
+  }
+  pui::endPanel();
+  ImGui::SameLine(0, gap);
+  pui::beginPanel("CHARACTER", wChar, rowH);
+  {
+    const float c = (wChar - 20) / 4;
+    pui::knob(a, t, BcSquarize, "Squarize", pui::KnobMedium, c);
+    ImGui::SameLine(0, 0);
+    pui::knob(a, t, BcPunch, "Punch", pui::KnobMedium, c);
+    ImGui::SameLine(0, 0);
+    pui::knob(a, t, BcPreserve, "Preserve", pui::KnobMedium, c);
+    ImGui::SameLine(0, 0);
+    pui::knob(a, t, BcImpact, "Impact", pui::KnobMedium, c);
+    pui::caption("PUNCH KEEPS ONSETS CLEAN");
+  }
+  pui::endPanel();
+  ImGui::SameLine(0, gap);
+  pui::beginPanel("TONE", wTone, rowH);
+  {
+    pui::led(a, t, BcFilterOn, "Filter");
+    ImGui::SameLine(0, 10);
+    pui::combo(a, t, BcFilterType, wTone - 96);
+    const float c = (wTone - 20) / 3;
+    pui::knob(a, t, BcFilterFreq, "Freq", pui::KnobSmall, c);
+    ImGui::SameLine(0, 0);
+    pui::knob(a, t, BcFilterReso, "Reso", pui::KnobSmall, c);
+    ImGui::SameLine(0, 0);
+    ImGui::BeginGroup();
+    ImGui::Dummy(ImVec2(0, 8));
+    static const char* pos[2] = {"Pre", "Post"};
+    pui::segmented(a, t, BcFilterPos, c - 6, pos, 1);
+    ImGui::EndGroup();
+  }
+  pui::endPanel();
+  ImGui::SameLine(0, gap);
+  pui::beginPanel("OUTPUT", wOut, rowH);
+  {
+    const float c = (wOut - 20) / 2;
+    pui::knob(a, t, BcMix, "Mix", pui::KnobSmall, c);
+    ImGui::SameLine(0, 0);
+    pui::knob(a, t, BcOutput, "Gain", pui::KnobSmall, c);
+  }
+  pui::endPanel();
 }
 
 // ================================================================ Low Lifter
@@ -1260,7 +1403,7 @@ bool drawFlEditor(App& a, const PluginTarget& t, float width) {
   else if (ty == "gl.tuner") editorTunerFl(a, t, width);
   else if (ty == "gl.gate") editorGateFl(a, t, width);
   else if (ty == "gl.dist") editorDistFl(a, t, width);
-  else if (ty == "gl.bitcrush") editorBitcrushFl(a, t, width);
+  else if (ty == "gl.bitcrush") editorBitcrush(a, t, width);
   else if (ty == "gl.lowlift") editorLowLiftFl(a, t, width);
   else if (ty == "gl.analyzer") editorAnalyzerFl(a, t, width);
   else return false;

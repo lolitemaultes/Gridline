@@ -1,5 +1,5 @@
 // Gridline — "dynamics" pack, J-26: reference engine of gl.effector
-// (EfModel = 1). Study: analysis/demos/specs/j26_effector.md.
+// (EfModel = 1). Behaviour study.
 //
 // Twelve modules in a fixed chain; the selected one gets the input (others
 // with a tail fade their input out and ring on). All settings come from the

@@ -2,7 +2,7 @@
 // automation), audio-clip and automation channels, automation targets,
 // playlist tracks, time markers.
 //
-// Layouts (observed on the shipped demo projects, see analysis/demos/notes_alpha.md):
+// Layouts (observed on the shipped demo projects, see format notes):
 //   233 playlist items, 32/60/80-byte records: u32 position, u16 base (0x5000),
 //       u16 item (> base: pattern item − base, else rack channel), u32 length,
 //       u16 499 − track, u16 group, u16 ?, u16 flags (0x2000 = muted), …,

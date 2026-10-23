@@ -92,7 +92,7 @@ class OverdriveFx final : public DynFx {
   }
 
  private:
-  // Reference engine (study: analysis/demos/specs/j26_bloodoverdrive.md), float arithmetic.
+  // Reference engine (behaviour study), float arithmetic.
   float shape(float x) const {
     float t = std::trunc(32767.0f * x);
     int i = static_cast<int>(std::clamp(t, -32768.0f, 32767.0f));
@@ -361,7 +361,7 @@ class SqueezeFx final : public DynFx {
   }
 
  private:
-  // Reference engine (study: analysis/demos/specs/j26_squeeze.md). Silence
+  // Reference engine (behaviour study). Silence
   // (input below 1e-6 for kQuiet samples running) passes through with the state
   // untouched — counted per sample (J-30: judging each host block made the
   // output depend on the block size).

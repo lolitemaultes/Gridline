@@ -188,6 +188,25 @@ const PluginInfo* targetInfo(App& a, DropTarget target, const DropPlace& place) 
   return nullptr;
 }
 
+// Whether the target plugin takes a dropped sample (J-97): channel rows only
+// for the sample players, plugin windows for every plugin holding a sample.
+bool takesSample(DropTarget target, const PluginInfo* ti) {
+  if (!ti) return false;
+  if (target == DropTarget::Rack) return xdrop::rowTakesSample(ti->type);
+  if (target == DropTarget::PluginWindow) return xdrop::sampleSlot(ti->type) != xdrop::SampleSlot::None;
+  return ti->usesSample;
+}
+
+// Convolver: the impulse source is the "File" choice (the default is a generated space).
+void useFileSource(PluginState& st) {
+  if (st.type != "gl.convolver") return;
+  if (const PluginInfo* ci = findPlugin(st.type))
+    for (size_t i = 0; i < ci->params.size() && i < st.params.size(); ++i)
+      if (ci->params[i].kind == ParamKind::Choice)
+        for (size_t c = 0; c < ci->params[i].choices.size(); ++c)
+          if (ci->params[i].choices[c] == "File") st.params[i] = static_cast<float>(c);
+}
+
 int freeSlot(const MixerTrack& m) {
   for (int k = 0; k < kEffectSlots; ++k)
     if (m.slots[static_cast<size_t>(k)].plugin.empty()) return k;
@@ -204,7 +223,56 @@ std::string payloadPath(const ImGuiPayload* pl) {
   return pl && pl->Data ? std::string(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize)) : std::string();
 }
 
+// J-97: replaces channel `ch`'s content in one undo step: its instrument
+// (`type`; FL "Replace"), optionally with a preset's state and / or a sample.
+// Routing, volume, pan, colour, steps and notes stay (they belong to the
+// channel, not its instrument). The channel takes `newName` only when its old
+// name was automatic (xdrop::autoChannelName).
+bool replaceChannel(App& a, ObjectId ch, const std::string& type, const PluginState* preset, const std::string& sample, const std::string& newName,
+                    const std::string& label) {
+  const Channel* c = a.doc.song().channel(ch);
+  if (!c || !findPlugin(type)) return false;
+  const PluginInfo* oldInfo = findPlugin(c->plugin.type);
+  const bool rename = !newName.empty() && newName != c->name &&
+                      xdrop::autoChannelName(c->name, oldInfo ? oldInfo->name : std::string(),
+                                             xdrop::sampleSlot(c->plugin.type) != xdrop::SampleSlot::None ? c->plugin.data.substr(0, c->plugin.data.find('\n'))
+                                                                                                         : std::string());
+  const bool newType = c->plugin.type != type;
+  a.doc.beginGroup(label);
+  bool ok = !newType || a.doc.setChannelPlugin(ch, type);
+  if (ok && (preset || !sample.empty() || rename))
+    ok = a.doc.editChannel(ch, label, [&](Channel& x) {
+      if (preset) {
+        const std::string keep = x.plugin.data;
+        x.plugin = *preset;
+        if (x.plugin.data.empty()) x.plugin.data = keep;  // presets without their own data keep the sample
+      }
+      if (!sample.empty()) x.plugin.data = xdrop::withSample(x.plugin.type, x.plugin.data, sample);
+      if (rename) x.name = newName;
+    });
+  a.doc.endGroup();
+  return ok;
+}
+
+// Adds a channel (instrument `type`, optional sample) at channel index `at`
+// (< 0: after the selected channel, as the add-channel button does).
+ObjectId addChannelAt(App& a, const std::string& type, const std::string& sample, int at) {
+  a.doc.beginGroup("add channel");
+  const ObjectId id = a.addInstrument(type, sample);
+  if (id != kNoId && at >= 0) a.doc.moveChannel(id, std::min(at, static_cast<int>(a.doc.song().channels.size()) - 1));
+  a.doc.endGroup();
+  return id;
+}
+
 }  // namespace
+
+bool loadChannelSample(App& a, ObjectId channel, const std::string& path, const char* label, bool keepSampleInstrument) {
+  const Channel* c = a.doc.song().channel(channel);
+  if (!c || path.empty()) return false;
+  const bool keep = keepSampleInstrument ? xdrop::sampleSlot(c->plugin.type) != xdrop::SampleSlot::None : xdrop::rowTakesSample(c->plugin.type);
+  const std::string type = keep ? c->plugin.type : std::string("gl.sampler");
+  return replaceChannel(a, channel, type, nullptr, path, fs::path(path).stem().string(), label ? label : "replace sample");
+}
 
 void fileDragSource(const std::string& path, const char* label) {
   if (!ImGui::BeginDragDropSource()) return;
@@ -225,7 +293,7 @@ DropAction dropActionFor(App& a, const std::string& path, DropTarget target, con
   const Decoded& d = decodeItem(path);
   if (!d.ok) return DropAction::None;
   const PluginInfo* ti = targetInfo(a, target, place);
-  return browse::dropAction(d.item, target, ti ? ti->type : "", ti && ti->usesSample);
+  return browse::dropAction(d.item, target, ti ? ti->type : "", takesSample(target, ti));
 }
 
 // ------------------------------------------------- several files (J-75)
@@ -313,9 +381,10 @@ xdrop::Plan planFor(App& a, const std::vector<xdrop::Item>& items, DropTarget ta
   ctx.target = target;
   if (const PluginInfo* ti = targetInfo(a, target, place)) {
     ctx.targetType = ti->type;
-    ctx.targetUsesSample = ti->usesSample;
+    ctx.targetUsesSample = takesSample(target, ti);
   }
   ctx.onChannel = target == DropTarget::Rack && place.channel != kNoId;
+  ctx.insertHere = target == DropTarget::Rack && place.channel == kNoId && place.insertAt >= 0;
   ctx.targetName = targetName(a, target, place);
   ctx.track = place.track;
   ctx.tick = place.tick;
@@ -342,7 +411,9 @@ const HoverPlan* hoverPlan(DropTarget target) {
   return &gHover.plan;
 }
 
-bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place) {
+bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place) { return acceptFileDrop(a, target, place, nullptr); }
+
+bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place, DropFeedback* fb) {
   const ImGuiPayload* cur = ImGui::GetDragDropPayload();
   if (!cur) return false;
   const char* type = cur->IsDataType("GL_FILE") ? "GL_FILE" : cur->IsDataType("GL_ITEM") ? "GL_ITEM" : cur->IsDataType("GL_FILES") ? "GL_FILES" : nullptr;
@@ -363,7 +434,8 @@ bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place) {
   const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(type, ImGuiDragDropFlags_AcceptNoDrawDefaultRect | ImGuiDragDropFlags_AcceptBeforeDelivery);
   if (!pl) return false;
   if (!pl->Delivery) {
-    drawTargetHighlight(rect);
+    if (!fb || fb->highlight) drawTargetHighlight(rect);
+    if (fb) fb->hovering = true;
     ImGui::SetTooltip("%s", p.label.c_str());
     a.setHint(p.label);
     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -379,12 +451,13 @@ void pluginWindowDropTarget(App& a, const PluginTarget& t) {
   ImGuiWindow* w = ImGui::GetCurrentWindow();
   if (!w || !ImGui::GetDragDropPayload()) return;
   const ImGuiPayload* pl = ImGui::GetDragDropPayload();
-  if (!pl->IsDataType("GL_FILE") && !pl->IsDataType("GL_ITEM") && !pl->IsDataType("GL_FILES")) return;
+  if (!pl->IsDataType("GL_FILE") && !pl->IsDataType("GL_ITEM") && !pl->IsDataType("GL_FILES") && !pl->IsDataType("GL_PLUGIN")) return;
   if (ImGui::BeginDragDropTargetCustom(w->Rect(), w->ID)) {
     DropPlace place;
     place.owner = t.owner;
     place.pluginSlot = t.slot;
     acceptFileDrop(a, DropTarget::PluginWindow, place);
+    acceptPluginDrop(a, DropTarget::PluginWindow, place);  // J-97: replace the shown instrument / effect
     ImGui::EndDragDropTarget();
   }
 }
@@ -399,8 +472,17 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
     case DropAction::None:
       return false;
     case DropAction::NewSamplerChannel:
-      a.settingsChannel = a.addInstrument("gl.sampler", path);
+      a.settingsChannel = addChannelAt(a, "gl.sampler", path, target == DropTarget::Rack ? place.insertAt : -1);
       return a.settingsChannel != kNoId;
+    case DropAction::ReplaceInstrument:  // J-97: another instrument's row becomes a sampler with the file
+      if (!replaceChannel(a, place.channel, "gl.sampler", nullptr, path, fs::path(path).stem().string(), "replace with sampler")) return false;
+      a.selectChannel(place.channel);
+      return true;
+    case DropAction::ReplaceFromPreset: {  // J-97: the row's instrument from a preset (FL "Replace")
+      if (d.item.pluginType.empty() || !replaceChannel(a, place.channel, d.item.pluginType, &d.state, "", d.name, "replace instrument")) return false;
+      a.selectChannel(place.channel);
+      return true;
+    }
     case DropAction::AudioClip: {
       SamplePtr s = sampleCache().get(path);
       if (!s || s->frames() == 0) {
@@ -436,11 +518,16 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
     case DropAction::ReplaceSample:
     case DropAction::LoadSample: {
       PluginTarget t = act == DropAction::ReplaceSample ? PluginTarget{place.channel, -1} : PluginTarget{place.owner, place.pluginSlot};
+      if (t.isChannel()) {  // J-97: the channel keeps a name the user gave it
+        if (!loadChannelSample(a, t.owner, path, act == DropAction::ReplaceSample ? "replace sample" : "load sample", act == DropAction::LoadSample)) return false;
+        if (act == DropAction::ReplaceSample) a.selectChannel(t.owner);
+        return true;
+      }
       if (const PluginState* st = t.state(a.doc.song())) {
         PluginState ns = *st;
-        ns.data = path;
-        setPluginState(a, t, ns, act == DropAction::ReplaceSample ? "replace sample" : "load sample");
-        if (t.isChannel()) a.doc.renameChannel(t.owner, fs::path(path).stem().string());
+        ns.data = xdrop::withSample(ns.type, ns.data, path);  // J-97: the plugin's own settings after the path stay
+        useFileSource(ns);
+        setPluginState(a, t, ns, "load sample");
         return true;
       }
       return false;
@@ -457,12 +544,7 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       PluginState ir = defaultPluginState("gl.convolver");
       if (ir.empty()) return false;
       ir.data = path;
-      // Impulse source: the "File" choice (the default is a generated space).
-      if (const PluginInfo* ci = findPlugin("gl.convolver"))
-        for (size_t i = 0; i < ci->params.size() && i < ir.params.size(); ++i)
-          if (ci->params[i].kind == ParamKind::Choice)
-            for (size_t c = 0; c < ci->params[i].choices.size(); ++c)
-              if (ci->params[i].choices[c] == "File") ir.params[i] = static_cast<float>(c);
+      useFileSource(ir);
       a.doc.editMixerTrack(mid, "load impulse response", [&](MixerTrack& t) {
         t.slots[static_cast<size_t>(k)].plugin = ir;
         t.slots[static_cast<size_t>(k)].enabled = true;
@@ -483,7 +565,7 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
     }
     case DropAction::NewChannelFromPreset: {
       a.doc.beginGroup("add channel from preset");
-      ObjectId id = a.addInstrument(d.item.pluginType);
+      ObjectId id = addChannelAt(a, d.item.pluginType, "", target == DropTarget::Rack ? place.insertAt : -1);
       if (id != kNoId) {
         PluginState ns = d.state;
         a.doc.editChannel(id, "", [&](Channel& c) {
@@ -567,7 +649,8 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
         return false;
       }
       const Song& s = a.doc.song();
-      ObjectId pat = a.curPattern, ch = a.selChannel;
+      const ObjectId pat = a.curPattern;
+      const ObjectId ch = target == DropTarget::Rack && place.channel != kNoId ? place.channel : a.selChannel;  // J-97: a rack row
       const Pattern* p = s.pattern(pat);
       if (!p || !s.channel(ch)) {
         a.importMidi(path);
@@ -610,7 +693,7 @@ bool performDrop(App& a, const std::string& path, DropTarget target, const DropP
     return false;
   }
   const PluginInfo* ti = targetInfo(a, target, place);
-  const DropAction act = browse::dropAction(d.item, target, ti ? ti->type : "", ti && ti->usesSample);
+  const DropAction act = browse::dropAction(d.item, target, ti ? ti->type : "", takesSample(target, ti));
   return runAction(a, path, act, target, place, false, nullptr);
 }
 
@@ -639,10 +722,17 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
   bool any = false;
   std::set<ObjectId> clips;
   Tick prevEnd = -1;
+  int inserted = 0;  // J-97: new channels of a rack drop keep the drop order
   for (const xdrop::Step& s : p.steps) {
     DropPlace pl = place;
     pl.track = s.track;
     pl.tick = s.tick;
+    if (target == DropTarget::Rack && (s.action == DropAction::NewSamplerChannel || s.action == DropAction::NewChannelFromPreset)) {
+      // Between rows: at the gap; extra files dropped on a row (or Shift): right below it.
+      const int row = place.channel != kNoId ? a.doc.song().channelIndex(place.channel) : -1;
+      if (place.insertAt >= 0) pl.insertAt = place.insertAt + inserted++;
+      else if (row >= 0) pl.insertAt = row + 1 + inserted++;
+    }
     // One after another: each clip starts where the one before really ends.
     if (mods.shift && prevEnd >= 0 && (s.action == DropAction::AudioClip || s.action == DropAction::MidiPatternClip)) pl.tick = prevEnd;
     ObjectId made = kNoId;
@@ -657,6 +747,185 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
   if (!clips.empty()) a.playlist.selected = clips;
   if (any && items.size() > 1) a.notify(p.label.rfind(i18n::tr("Drop to "), 0) == 0 ? p.label.substr(std::strlen(i18n::tr("Drop to "))) : p.label);
   return any;
+}
+
+// ------------------------------------------------ plugins (GL_PLUGIN, J-97)
+
+namespace {
+
+enum class PlugAct { None, ReplaceChannel, NewChannel, InsertChannel, FreeSlot, Slot };
+
+struct PlugPlan {
+  PlugAct act = PlugAct::None;
+  ObjectId owner = kNoId;  // channel (ReplaceChannel) / mixer track (FreeSlot, Slot)
+  int slot = -1;
+  std::string label, why;
+};
+
+std::string fmtS(const char* f, const std::string& x) {
+  char buf[512];
+  std::snprintf(buf, sizeof buf, f, x.c_str());
+  return buf;
+}
+std::string fmtSS(const char* f, const std::string& x, const std::string& y) {
+  char buf[512];
+  std::snprintf(buf, sizeof buf, f, x.c_str(), y.c_str());
+  return buf;
+}
+
+PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const DropPlace& place) {
+  PlugPlan p;
+  const PluginInfo* info = findPlugin(type);
+  if (!info) {
+    p.why = i18n::tr("This plugin is not available");
+    return p;
+  }
+  const Song& s = a.doc.song();
+  const bool gen = info->kind == PluginKind::Generator, fx = info->kind == PluginKind::Effect;
+  const char* genOnly = i18n::tr("Effects go into mixer slots");
+  const char* fxOnly = i18n::tr("Instruments go into the channel rack");
+  if (info->kind == PluginKind::NoteFx) {
+    p.why = i18n::tr("Note effects go into a channel's note effect slots");
+    return p;
+  }
+  auto slotTarget = [&](ObjectId track, int k) {
+    const MixerTrack* m = s.mixerTrack(track);
+    if (!fx || !m || k < 0 || k >= kEffectSlots) {
+      if (!fx) p.why = fxOnly;
+      return;
+    }
+    p.act = PlugAct::Slot;
+    p.owner = track;
+    p.slot = k;
+    const PluginInfo* cur = findPlugin(m->slots[static_cast<size_t>(k)].plugin.type);
+    p.label = cur ? fmtSS(i18n::tr("Drop to replace %s with %s"), cur->name, info->name)
+                  : fmtS(i18n::tr("Drop to insert %s into this slot"), info->name);
+  };
+  switch (target) {
+    case DropTarget::Rack:
+    case DropTarget::Playlist:
+    case DropTarget::Workspace:
+      if (!gen) {
+        p.why = genOnly;
+        return p;
+      }
+      if (target == DropTarget::Rack && place.channel != kNoId) {
+        if (const Channel* c = s.channel(place.channel)) {
+          p.act = PlugAct::ReplaceChannel;
+          p.owner = c->id;
+          p.label = fmtSS(i18n::tr("Drop to replace %s with %s"), c->name, info->name);
+          return p;
+        }
+      }
+      if (target == DropTarget::Rack && place.insertAt >= 0) {
+        p.act = PlugAct::InsertChannel;
+        p.label = fmtS(i18n::tr("Drop to insert a %s channel here"), info->name);
+        return p;
+      }
+      p.act = PlugAct::NewChannel;
+      p.label = fmtS(i18n::tr("Drop to add a %s channel"), info->name);
+      return p;
+    case DropTarget::MixerTrack: {
+      const MixerTrack* m = s.mixerTrack(mixerOf(a, place));
+      if (!fx || !m) {
+        if (!fx) p.why = fxOnly;
+        return p;
+      }
+      const int k = freeSlot(*m);
+      if (k < 0) {
+        p.why = i18n::tr("All effect slots are in use");
+        return p;
+      }
+      p.act = PlugAct::FreeSlot;
+      p.owner = m->id;
+      p.slot = k;
+      p.label = fmtS(i18n::tr("Drop to insert %s into the first free slot"), info->name);
+      return p;
+    }
+    case DropTarget::MixerSlot:
+      slotTarget(place.mixer, place.slot);
+      return p;
+    case DropTarget::PluginWindow:
+      if (place.pluginSlot >= 0) {
+        slotTarget(place.owner, place.pluginSlot);
+      } else if (const Channel* c = s.channel(place.owner)) {
+        if (!gen) {
+          p.why = genOnly;
+          return p;
+        }
+        p.act = PlugAct::ReplaceChannel;
+        p.owner = c->id;
+        p.label = fmtSS(i18n::tr("Drop to replace %s with %s"), c->name, info->name);
+      }
+      return p;
+    case DropTarget::PianoRoll:
+    case DropTarget::Browser:
+      return p;
+  }
+  return p;
+}
+
+}  // namespace
+
+std::string pluginDropLabel(App& a, const std::string& type, DropTarget target, const DropPlace& place, std::string* why) {
+  const PlugPlan p = planPlugin(a, type, target, place);
+  if (why) *why = p.why;
+  return p.act == PlugAct::None ? std::string() : p.label;
+}
+
+bool performPluginDrop(App& a, const std::string& type, DropTarget target, const DropPlace& place) {
+  const PlugPlan p = planPlugin(a, type, target, place);
+  const PluginInfo* info = findPlugin(type);
+  switch (p.act) {
+    case PlugAct::None:
+      if (!p.why.empty()) a.notify(p.why, true);
+      return false;
+    case PlugAct::ReplaceChannel:
+      if (!replaceChannel(a, p.owner, type, nullptr, "", info ? info->name : type, "replace instrument")) return false;
+      a.selectChannel(p.owner);
+      return true;
+    case PlugAct::NewChannel: {
+      const ObjectId id = a.addInstrument(type);
+      if (target == DropTarget::Playlist) a.settingsChannel = id;
+      return id != kNoId;
+    }
+    case PlugAct::InsertChannel:
+      return addChannelAt(a, type, "", place.insertAt) != kNoId;
+    case PlugAct::FreeSlot:
+    case PlugAct::Slot:
+      if (!a.doc.setSlotPlugin(p.owner, p.slot, type)) return false;
+      a.selMixer = p.owner;
+      return true;
+  }
+  return false;
+}
+
+bool acceptPluginDrop(App& a, DropTarget target, const DropPlace& place, DropFeedback* fb) {
+  const ImGuiPayload* cur = ImGui::GetDragDropPayload();
+  if (!cur || !cur->IsDataType("GL_PLUGIN")) return false;
+  const std::string type = payloadPath(cur);
+  std::string why;
+  const std::string label = pluginDropLabel(a, type, target, place, &why);
+  if (label.empty()) {
+    if (!why.empty()) {
+      ImGui::SetTooltip("%s", why.c_str());
+      a.setHint(why);
+      ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
+    }
+    return false;
+  }
+  const ImRect rect = GImGui->DragDropTargetRect;
+  const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PLUGIN", ImGuiDragDropFlags_AcceptNoDrawDefaultRect | ImGuiDragDropFlags_AcceptBeforeDelivery);
+  if (!pl) return false;
+  if (!pl->Delivery) {
+    if (!fb || fb->highlight) drawTargetHighlight(rect);
+    if (fb) fb->hovering = true;
+    ImGui::SetTooltip("%s", label.c_str());
+    a.setHint(label);
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return false;
+  }
+  return performPluginDrop(a, type, target, place);
 }
 
 void openFile(App& a, const std::string& path) {

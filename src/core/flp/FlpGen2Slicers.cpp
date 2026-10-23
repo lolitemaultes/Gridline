@@ -1,7 +1,7 @@
 // Gridline — FLP import, second wave: Slicex, Fruity Slicer, Fruity Granulizer, Wave Traveller.
 //
 // Layouts (worked out from FL Studio's supplied projects and presets; see
-// analysis/demos/instruments_wave2.md for the full notes):
+// own format notes):
 //   Slicex          0x60-byte header (version, knob integers at 4·(1+tag)),
 //                   byte 0x5F = 1 when the sample is referenced by path only,
 //                   Pascal path at 0x60, then (embedded) u32 length + RIFF/WAVE
@@ -303,7 +303,7 @@ bool decodeSlicexClassic(Context& c, const std::vector<Event>& evs, PluginMappin
 
 
 // ------------------------------------------------------------------ Slicex
-// Full state (J-41, analysis/rea/agents/j33/slicex_spec.md Part A): parsed
+// Full state (J-41, behaviour study notes Part A): parsed
 // whole into the Slicex region model (engine/SlicexEngine.h) that the
 // slicer's region engine (SlEngine = 1) plays; the per-region gain / pan /
 // pitch / cut group / delay / end and the master knobs are also parameters.

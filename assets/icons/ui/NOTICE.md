@@ -33,6 +33,10 @@ caret-up, caret-down, caret-left, caret-right (filled).
 - `detune`: a note with fine-pitch up / down chevrons (detune tool).
 - `fade-handles`: a level rising, holding and falling over the volume line (fade / volume handles toggle).
 - `zero-crossing`: one wave cycle crossing its centre line, the crossing marked (zero-crossing toggle).
+- `stairs`: a level climbing in flat steps (Shuttle envelope step editing).
+- `link-slots`: two open chain halves joined by a bar (Shuttle linked volume slot).
+- `curve-smooth`: a rounded curve through three points (Convolver smooth curve mode).
+- `curve-straight`: straight segments joining three points (Convolver straight curve mode).
 
 The stroke is drawn at least 1.5 logical pixels wide (2 units at 18 px and up) and every icon is
 grid fitted when rasterised: the glyph, then each of its paths, may shift by under half a pixel so

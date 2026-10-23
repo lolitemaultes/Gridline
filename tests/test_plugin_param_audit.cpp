@@ -44,9 +44,9 @@ void testBaseline() {
   const bool noFactoryData = factoryData.empty() || !std::filesystem::is_directory(std::filesystem::u8path(factoryData), ec);
   for (const auto& r : rows) {
     if (r.status != "working" && r.status != "combination") continue;
-    // Sounds read from FL Studio's factory content (Sample Keys' piano, Kick Sculptor's noise
-    // samples) are silent where it is not installed, as on the CI runners: check them only here.
-    if (noFactoryData && (r.type == "gl.samplekeys" || (r.type == "gl.kicksculpt" && r.name.rfind("Noise", 0) == 0))) {
+    // Sounds read from FL Studio's factory content (Sample Keys' piano sets) are silent
+    // where it is not installed, as on the CI runners: check them only here.
+    if (noFactoryData && r.type == "gl.samplekeys") {
       ++skippedNoData;
       continue;
     }

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include "Bitcrush.h"
 #include "LowLifterRef.h"
 #include "../core/PluginParams.h"
 #include "Dsp.h"
@@ -117,19 +118,21 @@ class DistFx final : public Effect {
 };
 
 // ======================================================================= Bitcrusher
+// J-104: Rate (Hz) is the main control: a phase-accumulated sample-and-hold at any
+// rate, with the input read at the exact hold instant; anti-alias / smoothing
+// converter filters, fractional bits with TPDF dither (core in Bitcrush.h).
 class BitcrushFx final : public Effect {
  public:
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     const double sr = ctx.sampleRate;
-    double bits = param(s, BcBits, 8), mix = param(s, BcMix, 1);
-    double ds = std::max(1.0, static_cast<double>(param(s, BcDownsample, 4)));
-    double steps = std::pow(2.0, bits - 1);
+    const double bits = std::clamp(static_cast<double>(param(s, BcBits, 8)), 1.0, 24.0), mix = param(s, BcMix, 1);
+    const double P = crush::periodFor(param(s, BcRate, 11025), sr, kBcRateOff), logP = std::log2(P);
     bool filt = bparam(s, BcFilterOn);
     int ftype = iparam(s, BcFilterType), fpos = iparam(s, BcFilterPos, 1);
     double out = dbToGain(param(s, BcOutput));
     double punch = param(s, BcPunch), preserve = param(s, BcPreserve, 0.001f), impact = param(s, BcImpact, 0.01f);
-    double sq = param(s, BcSquarize);
+    const double sq = param(s, BcSquarize), aa = param(s, BcAntiAlias), sm = param(s, BcSmooth), dither = param(s, BcDither);
     bool punchOn = punch > 0.001 || preserve > 0.0015;
     if (filt)
       for (auto& f : svf_) f.set(sr, param(s, BcFilterFreq, 2000), param(s, BcFilterReso, 0.3f));
@@ -142,8 +145,24 @@ class BitcrushFx final : public Effect {
         default: return low;
       }
     };
+    if (!primed_ || sr != sr_) primed_ = true, sr_ = sr, logP_ = logP, bits_ = bits, period_ = P, steps_ = std::exp2(bits - 1);
+    // Rate and Bits glide (about 8 ms) so automation sweeps are smooth; settled values are exact.
+    const double glide = std::min(1.0, (1.0 - coef(0.008, sr)) * 16);
     double fa = coef(0.0005, sr), fr = coef(0.02, sr), sa = coef(0.02, sr), sr2 = coef(0.3, sr);
     for (int i = 0; i < n; ++i) {
+      if ((tick_++ & 15) == 0) {  // every 16 samples on a grid that runs across blocks (block-size invariant)
+        if (logP_ != logP) {
+          logP_ += (logP - logP_) * glide;
+          if (std::fabs(logP - logP_) < 1e-6) logP_ = logP;
+          period_ = logP_ == logP ? P : std::exp2(logP_);
+        }
+        if (bits_ != bits) {
+          bits_ += (bits - bits_) * glide;
+          if (std::fabs(bits - bits_) < 1e-6) bits_ = bits;
+          steps_ = std::exp2(bits_ - 1);
+        }
+        core_.setFilters(sr, period_, aa, sm);
+      }
       double in[2] = {L[i], R[i]};
       double x[2] = {in[0], in[1]};
       if (filt && fpos == 0) x[0] = filter(0, x[0]), x[1] = filter(1, x[1]);
@@ -159,31 +178,27 @@ class BitcrushFx final : public Effect {
         if (t < preserve) keepDry = 1.0 - t / preserve;
         if (t < impact) lift = 1.0 + punch * 3.0 * (1.0 - t / impact);
       }
-      cnt_ += 1.0;
-      if (cnt_ >= ds) {
-        cnt_ -= ds;
-        for (int c = 0; c < 2; ++c) {
-          double v = x[c];
-          if (sq > 0) v = (v < 0 ? -1 : 1) * std::pow(std::fabs(v), 1.0 - 0.95 * sq);
-          hold_[c] = std::round(v * steps) / steps;
-        }
-      }
+      double y[2] = {x[0], x[1]};
+      core_.frame(y[0], y[1], period_, steps_, sq, dither);
       for (int c = 0; c < 2; ++c) {
-        double y = hold_[c];
-        y = y * (1 - keepDry) + x[c] * keepDry;
-        if (filt && fpos == 1) y = filter(c, y);
-        y *= lift;
-        (c ? R : L)[i] = static_cast<float>((in[c] * (1 - mix) + y * mix) * out);
+        double v = y[c] * (1 - keepDry) + x[c] * keepDry;
+        if (filt && fpos == 1) v = filter(c, v);
+        v *= lift;
+        (c ? R : L)[i] = static_cast<float>((in[c] * (1 - mix) + v * mix) * out);
       }
     }
   }
   void reset() override {
-    cnt_ = 0, hold_[0] = hold_[1] = 0, fast_ = slow_ = 0, since_ = 1e9;
+    core_.reset();
+    fast_ = slow_ = 0, since_ = 1e9, primed_ = false, tick_ = 0;
     for (auto& f : svf_) f.reset();
   }
 
  private:
-  double cnt_ = 0, hold_[2] = {0, 0}, fast_ = 0, slow_ = 0, since_ = 1e9;
+  crush::Crusher core_;
+  uint64_t tick_ = 0;
+  double fast_ = 0, slow_ = 0, since_ = 1e9, sr_ = 0, logP_ = 0, bits_ = 8, period_ = 1, steps_ = 128;
+  bool primed_ = false;
   Svf svf_[2];
 };
 

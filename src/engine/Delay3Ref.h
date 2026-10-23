@@ -1,5 +1,5 @@
 // Gridline — J-35: reference engine of the stereo feedback delay (gl.delay
-// DlyModel = 3; study: analysis/demos/specs/j35_delay3.md). Also the chorus
+// DlyModel = 3; behaviour study). Also the chorus
 // core of the module rack (packs/dynamics).
 //
 // 26 normalised controls (the reference's own order) drive: input wet,

@@ -1,4 +1,4 @@
-// Gridline — J-35: "full" reference reverb (study: analysis/demos/specs/j35_fullreverb.md).
+// Gridline — J-35: "full" reference reverb (behaviour study).
 //
 // A figure-of-eight plate: input high cut / low cut → four input all-passes →
 // pre-delay → two cross-coupled tank halves (bass shelf on a crossover

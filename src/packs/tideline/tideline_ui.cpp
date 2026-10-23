@@ -166,6 +166,17 @@ void curveDisplay(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1, const Liv
   pui::displayFrame(dl, p0, p1);
   const ImVec2 g0(p0.x + 10, p0.y + 22), g1(p1.x - 10, p1.y - 10);
   const float w = g1.x - g0.x, h = g1.y - g0.y;
+  // J-98: the display's x is time within the cycle; the curve drawn at x is the
+  // curve at phase x + Shift (see curveAt below). The engine reports the phase,
+  // so the playhead, the trace, the End marker and the custom points are placed
+  // at phase - Shift (wrapped while looping, clamped in one-shot mode).
+  const bool wraps = trig == TrigTempo || loop;
+  auto phaseToX = [&](double ph) {
+    double x = ph - shift;
+    if (wraps) x -= std::floor(x);
+    return std::clamp(x, 0.0, 1.0);
+  };
+  const float livePos = live.ok && live.pos >= 0 ? static_cast<float>(phaseToX(live.pos)) : -1.0f;
   // grid: sixteenths of the cycle, quarters stronger, gain lines at 25 %
   for (int i = 0; i <= 16; ++i) {
     float x = std::round(g0.x + w * i / 16.0f) + 0.5f;
@@ -179,12 +190,12 @@ void curveDisplay(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1, const Liv
   Trace& tr = traceFor(t);
   const int TB = static_cast<int>(tr.lvl.size());
   for (auto& v : tr.lvl) v *= 0.985f;
-  if (live.ok && live.pos >= 0) {
-    int bi = std::clamp(static_cast<int>(live.pos * TB), 0, TB - 1);
+  if (livePos >= 0) {
+    int bi = std::clamp(static_cast<int>(livePos * TB), 0, TB - 1);
     int from = tr.lastPos >= 0 ? std::clamp(static_cast<int>(tr.lastPos * TB), 0, TB - 1) : bi;
     if (from > bi || bi - from > TB / 2) from = bi;
     for (int k = from; k <= bi; ++k) tr.lvl[static_cast<size_t>(k)] = std::max(tr.lvl[static_cast<size_t>(k)], live.peak);
-    tr.lastPos = live.pos;
+    tr.lastPos = livePos;
   } else {
     tr.lastPos = -1;
   }
@@ -214,7 +225,7 @@ void curveDisplay(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1, const Liv
   // one-shot end marker (triggered modes without loop)
   const bool showEnd = trig != TrigTempo && !loop;
   if (showEnd) {
-    float x = g0.x + w * static_cast<float>(endAt);
+    float x = g0.x + w * static_cast<float>(std::clamp(endAt - shift, 0.0, 1.0));
     dl->AddRectFilled(ImVec2(x, g0.y), g1, theme::withAlpha(P.surface950, 0.55f));
     dl->AddLine(ImVec2(x, g0.y), ImVec2(x, g1.y), P.paper, 1.5f);
     const ImVec2 hp(x - 7, g0.y), hq(x + 7, g0.y + 16);
@@ -223,25 +234,42 @@ void curveDisplay(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1, const Liv
     ImGui::SetCursorScreenPos(ImVec2(x - 8, g0.y));
     ImGui::InvisibleButton("##bwend", ImVec2(16, h));
     if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    if (ImGui::IsItemActive()) {
-      double v = std::clamp((ImGui::GetIO().MousePos.x - g0.x) / w, 0.0f, 1.0f);
-      pui::setParamValue(a, t, BwEnd, v, !ImGui::IsItemActivated());
+    static float grabEnd = 0;  // pointer - marker at the click: no jump when grabbed off centre
+    if (ImGui::IsItemActivated()) grabEnd = ImGui::GetIO().MousePos.x - x, a.doc.endGesture();
+    if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+    if (ImGui::IsItemActive() && !ImGui::IsItemActivated()) {
+      double v = std::clamp((ImGui::GetIO().MousePos.x - grabEnd - g0.x) / w + shift, 0.0, 1.0);
+      pui::setParamValue(a, t, BwEnd, v, true);
     }
     if (ImGui::IsItemHovered()) ui::Tooltip(i18n::tr("One-shot end: the curve holds here until the next trigger"));
   }
   // custom nodes / stretch + move drag on the curve
   if (shape == kShapeCustom) {
+    // A point at time x sounds at phase x0 + (x - x0) * f (Duration stretches
+    // around the first point x0, see customGain), shown at that phase - Shift.
+    const double f = durationFactor(duration);
+    int first = 0;
+    for (int i = 1; i < kNodes; ++i)
+      if (pv(a, t, BwNodeX0 + i) < pv(a, t, BwNodeX0 + first)) first = i;
+    const double x0 = pv(a, t, BwNodeX0 + first);
+    static ImVec2 grab(0, 0);  // pointer - point centre at the click
     for (int i = 0; i < kNodes; ++i) {
       const double x = pv(a, t, BwNodeX0 + i), y = pv(a, t, BwNodeY0 + i);
-      ImVec2 c(g0.x + w * static_cast<float>(x), g1.y - h * static_cast<float>(y));
+      double ph = std::min(1.0, x0 + (x - x0) * f) - shift;
+      if (ph < 0 || ph > 1) ph -= std::floor(ph);
+      ImVec2 c(g0.x + w * static_cast<float>(ph), g1.y - h * static_cast<float>(y));
       ImGui::PushID(i);
       ImGui::SetCursorScreenPos(ImVec2(c.x - 7, c.y - 7));
       ImGui::InvisibleButton("##node", ImVec2(14, 14));
       const bool hv = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
-      if (ac) {
-        ImVec2 m = ImGui::GetIO().MousePos;
-        const bool merge = !ImGui::IsItemActivated();
-        pui::setParamValue(a, t, BwNodeX0 + i, std::clamp((m.x - g0.x) / w, 0.0f, 1.0f), merge);
+      if (ImGui::IsItemActivated()) grab = ImVec2(ImGui::GetIO().MousePos.x - c.x, ImGui::GetIO().MousePos.y - c.y), a.doc.endGesture();
+      if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+      if (ac && !ImGui::IsItemActivated()) {
+        const ImVec2 m(ImGui::GetIO().MousePos.x - grab.x, ImGui::GetIO().MousePos.y - grab.y);
+        double p = std::clamp(static_cast<double>((m.x - g0.x) / w), 0.0, 1.0) + shift;
+        if (p < 0 || p > 1) p -= std::floor(p);
+        const double nx = i == first || p < x0 ? p : x0 + (p - x0) / f;
+        pui::setParamValue(a, t, BwNodeX0 + i, std::clamp(nx, 0.0, 1.0), true);
         pui::setParamValue(a, t, BwNodeY0 + i, std::clamp((g1.y - m.y) / h, 0.0f, 1.0f), true);
       }
       if (hv) {
@@ -263,19 +291,25 @@ void curveDisplay(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1, const Liv
     if (ImGui::IsItemActivated()) {
       moving = ImGui::GetIO().KeyShift;
       startVal = pv(a, t, moving ? BwShift : BwDuration);
+      a.doc.endGesture();
     }
+    if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     if (ImGui::IsItemActive()) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
       const float dx = ImGui::GetMouseDragDelta(0, 0).x / w;
-      if (moving) pui::setParamValue(a, t, BwShift, std::clamp(startVal - dx, -0.5, 0.5), true);
+      if (moving) {  // the curve follows the pointer; Shift is cyclic, so it wraps instead of stopping at +-50 %
+        double v = startVal - dx;
+        v -= std::floor(v + 0.5);
+        pui::setParamValue(a, t, BwShift, std::clamp(v, -0.5, 0.5), true);
+      }
       else pui::setParamValue(a, t, BwDuration, std::clamp(startVal + dx * 2.0, -1.0, 1.0), true);
     }
     if (ImGui::IsItemHovered() && !ImGui::IsItemActive())
       ui::Tooltip(i18n::tr("Drag left / right to shorten or stretch the duck. Shift+drag moves it against the beat."));
   }
   // playhead + live gain
-  if (live.ok && live.pos >= 0) {
-    float x = g0.x + w * std::clamp(live.pos, 0.0f, 1.0f);
+  if (livePos >= 0) {
+    float x = g0.x + w * livePos;
     dl->AddLine(ImVec2(x, g0.y), ImVec2(x, g1.y), theme::withAlpha(P.playhead, 0.9f), 1.5f);
     float y = g1.y - h * std::clamp(live.gain, 0.0f, 1.0f);
     dl->AddCircleFilled(ImVec2(x, y), 5.5f, P.paper, 20);
@@ -493,7 +527,14 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     pills(a, t, BwBand, ImVec2(o.x + 4, by + 16), leftW - 40, 24, bl, 3);
     ImGui::SetCursorScreenPos(ImVec2(o.x + leftW - 30, by + 15));
     const bool listen = pv(a, t, BwBandListen) >= 0.5;
-    if (ui::IconButton("##bwlisten", ui::Icon::Audio, listen, 24, i18n::tr("Listen: hear only the part being ducked")))
+    // J-98: Listen solos what is ducked (the band, of the mid or side when one is
+    // picked). Full band in Stereo ducks everything, so there it changes nothing:
+    // the button stays usable but is drawn faint and says so.
+    const bool solos = static_cast<int>(std::lround(pv(a, t, BwBand))) != BandFull || static_cast<int>(std::lround(pv(a, t, BwStereo))) != StStereo;
+    if (ui::IconButton("##bwlisten", ui::Icon::Audio, listen, 24,
+                       solos ? i18n::tr("Listen: hear only the part being ducked")
+                             : i18n::tr("Listen: Full band in Stereo ducks everything, so there is nothing to solo. Pick Lows / Highs or Mid / Side."),
+                       solos ? 0 : P.textFaint, solos ? 0 : P.textFaint))
       pui::setParamValue(a, t, BwBandListen, listen ? 0.0 : 1.0, false);
     ImGui::SetCursorScreenPos(ImVec2(o.x + 4, by + 46));
     pui::hslider(a, t, BwBandFreq, i18n::tr("Split"), leftW - 8);

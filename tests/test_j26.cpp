@@ -1,7 +1,7 @@
 // Gridline — J-26: effects exactness tier D. Reference engines and exact
 // decoders for the classic reverb, frequency shifter, squeeze, multi effect,
 // overdrive, multi-tap filter, quick low-pass, free filter and bass boost
-// (studies: analysis/demos/specs/j26_*.md). FL preset checks run only when an
+// (behaviour studies). FL preset checks run only when an
 // FL Studio installation is present.
 #include <algorithm>
 #include <cmath>

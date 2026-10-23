@@ -1,6 +1,6 @@
 // Gridline — "dynamics" pack, J-35: reference engine of the mastering
 // dynamics (gl.master MsRefModel = 1, gl.enhance EnCustom = 3; study
-// analysis/demos/specs/j35_maximus.md).
+// behaviour study notes).
 //
 // Low cut (four high-pass biquads) → Linkwitz–Riley style low / mid / high
 // split (IIR, polarity-corrected 12 dB bands) → per band: stereo separation,
