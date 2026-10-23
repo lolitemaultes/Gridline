@@ -3,7 +3,7 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` in `CMakeLists.txt`; the
 release workflow publishes the section of the tagged version as the release notes.
 
-## Unreleased
+## 0.6.1
 
 ### Fixes from issue #1
 
@@ -44,6 +44,8 @@ release workflow publishes the section of the tagged version as the release note
 - Saw Swarm and Twin VA glide fixes; Note Sequencer ties hold their note.
 - Missing editor controls added (Facet fine tune, Folio program controls); percentage readouts that
   showed values like "10000%" fixed.
+- Abacus and the sampler no longer misbehave when a sample's start is set to its very end; the
+  same kind of fix for the slicer's slice ends, plugin event timing and a few editor labels.
 
 ### Plugins renamed
 

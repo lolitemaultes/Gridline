@@ -439,8 +439,8 @@ def main():
                 im = im.resize((1600, round(im.height * 1600 / im.width)), Image.LANCZOS)
             save_png(im, os.path.join(rel, dst))
     banner(root, os.path.join(out, "banner.png"))
-    release_banner(root, os.path.join(out, "release-" + RELEASE + ".png"), RELEASE, "Now on every desktop",
-                   "Downloads for every platform and a new pitch and stretch engine")
+    release_banner(root, os.path.join(out, "release-" + RELEASE + ".png"), RELEASE, "Every knob, checked",
+                   "Tideline, new plugin names, sharper editors and Linux display fixes")
 
 
 # Screenshot crops (tools/readme_shots.sh takes the captures).
@@ -465,7 +465,7 @@ VIEWS = [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.6.0"
+RELEASE = "0.6.1"
 # Effect editors with live graphics while the song plays (2880x1800 captures).
 RELEASE_EDITORS = [
     ("rel_reverb.png", "Reverb", (530, 449, 2354, 1109)),

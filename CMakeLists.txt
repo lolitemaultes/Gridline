@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gridline VERSION 0.6.0 LANGUAGES C CXX)
+project(gridline VERSION 0.6.1 LANGUAGES C CXX)
 
 # Gridline — clean-room DAW. Native Linux target (also builds on macOS for development).
 #   cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
