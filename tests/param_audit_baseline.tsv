@@ -13031,3 +13031,24 @@ gl.tideline	33	Point 5 level	combination	0	1=16
 gl.tideline	34	Point 6 level	combination	0	1=16
 gl.tideline	35	Point 7 level	combination	0	1=16
 gl.tideline	36	Point 8 level	combination	0	1=16
+gl.seltmann	0	Volume	working	0	
+gl.seltmann	1	Pan	working	1	
+gl.seltmann	2	Base note	working	63.5	
+gl.seltmann	3	Key map	working	1	
+gl.seltmann	4	Tempo sync	working	0	
+gl.seltmann	5	Stretch mode	inert	0		engine of the region stretch a worker thread renders after playback asks for a tempo; the audit hears the resampled fallback (covered by test_seltmann)
+gl.seltmann	6	Lock to song	working	0	
+gl.seltmann	7	Monophonic	working	1	
+gl.seltmann	8	Attack	working	500	
+gl.seltmann	9	Decay	combination	2000	10=0
+gl.seltmann	10	Sustain	working	0	
+gl.seltmann	11	Release	working	2000	
+gl.seltmann	12	Declick	working	50	
+gl.seltmann	13	Swing	combination	1	18=2
+gl.seltmann	14	Pitch	working	-24	
+gl.seltmann	15	Velocity to level	working	0	
+gl.seltmann	16	Reverse all	working	1	
+gl.seltmann	17	Gate	combination	0.0500000007	1048578=63.5
+gl.seltmann	18	Pattern speed	combination	2	2=12
+gl.seltmann	19	Cutoff	working	112.468265	
+gl.seltmann	20	Resonance	combination	1	19=20

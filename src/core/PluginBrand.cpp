@@ -22,6 +22,8 @@ const std::vector<PluginBrand>& pluginBrands() {
       {"gl.slicer", F::Sample, "Cuts loops into slices along the beat.", "slicer, beat slicer, loop slicer, chop"},
       {"gl.waveprogram", F::Sample, "Zones, layers and loops bound into one instrument.", "wave program, sampler, multisampler, zones, keymap"},
       {"gl.edison", F::Sample, "The close-up audio editor: waveform, spectrum, markers.", "audio editor, wave editor, recorder, sample editor"},
+      {"gl.seltmann", F::Sample, "Finds the beat in any song and chops it into loops.",
+       "chop, chopper, sample chop, flip, loop maker, microsampling, beat slicer, bpm, tempo detection, sampler, phrase"},
       // ---- flagships: time and space
       {"gl.delay", F::Space, "Echoes that trace the beat, from tape to digital.", "delay, echo, ping pong, tape delay"},
       {"gl.hall", F::Space, "Long algorithmic halls with a quiet floor.", "hall, reverb, hall reverb, space"},

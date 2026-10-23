@@ -341,7 +341,7 @@ msgstr ""
 msgid "Render clip to audio (consolidate)"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp
+#: src/app/AudioRecordUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "SLICE"
 msgstr ""
 
@@ -633,7 +633,7 @@ msgstr ""
 msgid "SHAPE CONTROLS"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "SPEED"
 msgstr ""
 
@@ -641,7 +641,7 @@ msgstr ""
 msgid "START"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/Menus.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/Menus.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Save"
 msgstr ""
 
@@ -689,7 +689,7 @@ msgstr ""
 msgid "Shape name"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/samplers/samplers_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Snap"
 msgstr ""
 
@@ -918,6 +918,10 @@ msgid "No impulses"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "No loops made yet"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "No matches"
 msgstr ""
 
@@ -955,6 +959,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Open / add"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Open in Seltmann"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1067,6 +1075,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Search plugins, presets and files · filters: type:audio|midi|preset|project|effect  tag:kick  bpm:120-130  key:Am  len:<2"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Seltmann loops"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1193,7 +1205,7 @@ msgstr ""
 msgid "Att. curve"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Attack"
 msgstr ""
 
@@ -1201,7 +1213,7 @@ msgstr ""
 msgid "BP"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Cutoff"
 msgstr ""
 
@@ -1209,7 +1221,7 @@ msgstr ""
 msgid "Dec. curve"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Decay"
 msgstr ""
 
@@ -1301,7 +1313,7 @@ msgstr ""
 msgid "Notch"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -1329,7 +1341,7 @@ msgstr ""
 msgid "Period"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Pitch"
 msgstr ""
 
@@ -1345,11 +1357,11 @@ msgstr ""
 msgid "Rel. curve"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Release"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Resonance"
 msgstr ""
 
@@ -1369,7 +1381,7 @@ msgstr ""
 msgid "Smooth timing: per-sample envelopes and LFOs. Switch FL timing on for FL Studio's results."
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Sustain"
 msgstr ""
 
@@ -1381,7 +1393,7 @@ msgstr ""
 msgid "TRACKING"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Tempo"
 msgstr ""
 
@@ -1405,7 +1417,7 @@ msgstr ""
 msgid "Vel. → pan"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/Dialogs.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/Dialogs.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Volume"
 msgstr ""
 
@@ -1537,7 +1549,7 @@ msgstr ""
 msgid "Steps: drag to scroll the pattern (Shift+wheel or a sideways swipe over the steps also scrolls)"
 msgstr ""
 
-#: src/app/ChannelRack.cpp
+#: src/app/ChannelRack.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Swing"
 msgstr ""
 
@@ -1685,7 +1697,7 @@ msgstr ""
 msgid "Audio: cuts at the attacks; patterns: at the note starts"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Bar"
 msgstr ""
 
@@ -1693,7 +1705,7 @@ msgstr ""
 msgid "Beat"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/ChopUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Chop"
 msgstr ""
 
@@ -1773,7 +1785,7 @@ msgstr ""
 msgid "Fades"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ChordEditorUi.cpp
+#: src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Gate"
 msgstr ""
 
@@ -1885,7 +1897,7 @@ msgstr ""
 msgid "Repeat slices of the region with rate, decay, pitch and gate"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Reverse"
 msgstr ""
 
@@ -1897,7 +1909,7 @@ msgstr ""
 msgid "Select clips or a time selection to chop"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Sensitivity"
 msgstr ""
 
@@ -1913,7 +1925,7 @@ msgstr ""
 msgid "Show and play the result in the playlist while you edit"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Slice"
 msgstr ""
 
@@ -1925,7 +1937,7 @@ msgstr ""
 msgid "Slice the clips at the selection edges"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Slices"
 msgstr ""
 
@@ -1949,7 +1961,7 @@ msgstr ""
 msgid "Speed to"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/ChopUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Stutter"
 msgstr ""
 
@@ -2357,7 +2369,7 @@ msgstr ""
 msgid "Use this chord"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/MidiUi.cpp src/app/PianoRoll.cpp
+#: src/app/ChordEditorUi.cpp src/app/MidiUi.cpp src/app/PianoRoll.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Velocity"
 msgstr ""
 
@@ -2729,7 +2741,7 @@ msgstr ""
 msgid "Dock to"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/PluginEditorsK3Gb.cpp src/app/TopBar.cpp
+#: src/app/ContextMenus.cpp src/app/PluginEditorsK3Gb.cpp src/app/TopBar.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Edit"
 msgstr ""
 
@@ -2849,7 +2861,7 @@ msgstr ""
 msgid "Fit length to pattern"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Flip"
 msgstr ""
 
@@ -3009,7 +3021,7 @@ msgstr ""
 msgid "Layers can only hold instrument channels"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Menus.cpp
+#: src/app/ContextMenus.cpp src/app/Menus.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Layout"
 msgstr ""
 
@@ -3017,7 +3029,7 @@ msgstr ""
 msgid "Left"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "Length"
 msgstr ""
 
@@ -3765,7 +3777,7 @@ msgstr ""
 msgid "Stamp"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/J31Ui.cpp
+#: src/app/ContextMenus.cpp src/app/J31Ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Steps"
 msgstr ""
 
@@ -3949,11 +3961,11 @@ msgstr ""
 msgid "Zoom out"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Performance.cpp
+#: src/app/ContextMenus.cpp src/app/Performance.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "bar"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "bars"
 msgstr ""
 
@@ -3993,7 +4005,7 @@ msgstr ""
 msgid "Animations"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Audio"
 msgstr ""
 
@@ -4321,7 +4333,7 @@ msgstr ""
 msgid "Processing threads"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/Menus.cpp
+#: src/app/Dialogs.cpp src/app/Menus.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Project"
 msgstr ""
 
@@ -4865,7 +4877,7 @@ msgstr ""
 msgid "Looks for the files by name in a folder and its sub-folders"
 msgstr ""
 
-#: src/app/ExportUi.cpp
+#: src/app/ExportUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Loops"
 msgstr ""
 
@@ -4925,7 +4937,7 @@ msgstr ""
 msgid "Part names"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/Menus.cpp src/app/TopBar.cpp
+#: src/app/ExportUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Pattern"
 msgstr ""
 
@@ -5013,7 +5025,7 @@ msgstr ""
 msgid "Split playlist tracks"
 msgstr ""
 
-#: src/app/ExportUi.cpp
+#: src/app/ExportUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Start"
 msgstr ""
 
@@ -5681,7 +5693,7 @@ msgstr ""
 msgid "A new project from these settings"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp
+#: src/app/LoopStarterUi.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Ambient"
 msgstr ""
 
@@ -5709,7 +5721,7 @@ msgstr ""
 msgid "Drum and bass"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp
+#: src/app/LoopStarterUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Drums"
 msgstr ""
 
@@ -6077,7 +6089,7 @@ msgstr ""
 msgid "Audio clip channels"
 msgstr ""
 
-#: src/app/MenuParityUi.cpp
+#: src/app/MenuParityUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Auto"
 msgstr ""
 
@@ -6289,7 +6301,7 @@ msgstr ""
 msgid "Replace the channel's notes"
 msgstr ""
 
-#: src/app/MenuParityUi.cpp
+#: src/app/MenuParityUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Resample"
 msgstr ""
 
@@ -7329,7 +7341,7 @@ msgstr ""
 msgid "Mixer routing"
 msgstr ""
 
-#: src/app/MixerView.cpp src/app/TrackModeUi.cpp
+#: src/app/MixerView.cpp src/app/TrackModeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Mono"
 msgstr ""
 
@@ -7609,7 +7621,7 @@ msgstr ""
 msgid "Nothing to edit"
 msgstr ""
 
-#: src/app/PianoRoll.cpp
+#: src/app/PianoRoll.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Pan"
 msgstr ""
 
@@ -7833,11 +7845,11 @@ msgstr ""
 msgid "Fade and volume handles shown"
 msgstr ""
 
-#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "Fade in"
 msgstr ""
 
-#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "Fade out"
 msgstr ""
 
@@ -7845,7 +7857,7 @@ msgstr ""
 msgid "Follow tempo"
 msgstr ""
 
-#: src/app/Playlist.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/Playlist.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Gain"
 msgstr ""
 
@@ -7965,7 +7977,7 @@ msgstr ""
 msgid "Sources no clip in any arrangement uses (audio: channels that play no pattern either)"
 msgstr ""
 
-#: src/app/Playlist.cpp
+#: src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Stretch"
 msgstr ""
 
@@ -8157,7 +8169,7 @@ msgstr ""
 msgid "Reset (straight line)"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "1 bar"
 msgstr ""
 
@@ -8181,11 +8193,11 @@ msgstr ""
 msgid "1/4 beat"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "2 bars"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "4 bars"
 msgstr ""
 
@@ -8317,7 +8329,7 @@ msgstr ""
 msgid "Note triggers"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "One-shot"
 msgstr ""
 
@@ -8393,7 +8405,7 @@ msgstr ""
 msgid "Snap: points move on a grid of this many cells per beat"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Step"
 msgstr ""
 
@@ -10661,7 +10673,7 @@ msgstr ""
 msgid "Copy unit"
 msgstr ""
 
-#: src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp
+#: src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Loop"
 msgstr ""
 
@@ -11377,6 +11389,1062 @@ msgstr ""
 msgid "Unmute all steps"
 msgstr ""
 
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Add a step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Add a step (the next slice)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Assign a slot letter"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Bars and phrases re-ordered (A B A C), and loops"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Base"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Breaks"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Breaks re-cut in eighths and sixteenths, and fills"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Change a step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Choke"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Chop modes, cutting by hand, snapping"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Click again for another take."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Click to play. Drag the grip to take the slice out as audio."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Click to use it; it plays at once."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Creative"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Declick"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Delete step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Drag into the playlist (audio clip), the channel rack (sampler) or the browser"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Drag the slice out as audio"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Drag the slice out as audio: into the playlist, the channel rack or the browser"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Duplicate step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "EDIT"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Edit a step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Eighth-triplet steps"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "FOLLOW THE PROJECT BY"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "For vocals, bass and single lines"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "General stretch for full mixes"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Grid"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Grid chops stay on the bars; cuts never make a slice shorter than half a step (tiny pieces join their neighbour)."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Instant flips that work on anything"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "KEYS PLAY"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Keeps drum hits sharp"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Keys from the base note play the slices in order"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Keys from the base note play the slot letters A, B, C..."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Letters"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Listen to this loop"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Lock to song"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Longer (tie the next unit)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Manual cuts in the waveform: double-click to add a cut, drag a cut to move it, right-click a cut to remove it."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Micro"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Mine"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Name for the current layout"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "No layout matches"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "PADS"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "PATTERN"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "PLAYED BY LETTER"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Page of pads"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Pattern at double speed"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Pattern at half speed"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Pattern at normal speed"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Phrase"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Phrase at bar"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Phrases and sections to drag out as loops"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Pick a slice on the pads or in the waveform. Choke: slices in the same group cut each other off."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Place a slice on a step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Play slice"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Play slot"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Play the slice"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Play this slice backwards"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Playback and the envelope, filter and mix"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Remove a step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Remove the last step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Rest"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Reverse every slice"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "SLICES"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "STEP LENGTH"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "STEPS"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+msgid "STRETCH"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Save the chop settings and the pattern as your own layout"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Saved the layout "
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Search layouts"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Section"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Shorter"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Shuffles, reverses, octave jumps and gates"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Sixteenth-triplet steps"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Slice settings"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Songs: pick the bars to chop in the strip above the waveform (drag the box, or double-click a section)."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Sound"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Sped up or slowed down: the pitch follows (vinyl)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Step length"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Steps not changed: "
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Steps of a beat"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Steps of a sixteenth"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Steps of a thirty-second"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Steps of an eighth"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Steps of half a bar"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Steps of one bar"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Tap the tempo, nudge the grid, meter, bar 1, analyse again"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "The pattern's steps and the step language"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "The selected slice: pitch, gain, fades, start, length, choke, reverse"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Time-stretched: the pitch stays"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Tiny grains in new rhythms and melodies"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Type the steps"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Type the steps: A..Z = slot letters, 1.. = slices, . = rest, ~ = hold. Options after a colon: r reverse, p+7 pitch, g-6 gain dB, l50 length %, x4 stutter, o25 start %. Enter applies."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Wheel: another letter. Right-click: options. Drop a pad here to place its slice."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Your layouts appear here. Save the current one below."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Your own saved layouts"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "a new take each time"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "at"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "key"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "pattern key"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "slice"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid " on the hits"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "A major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "A minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Ab major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Add a pattern with these steps as notes on this channel and place it in the playlist"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Added the pattern to the project: "
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Analyse"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Analyse again"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "B major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "B minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Bar 1"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Bb major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Bb minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Break"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Breaks, loops, full songs, anything. Seltmann finds the tempo and the bars and chops it for you."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "C major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "C minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "C# major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "C# minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "CHOP"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "CONFIDENCE"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Chop size"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Chopping"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "D major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "D minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Double tempo"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Double the tempo: the analysis heard half time"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Drag the pattern out as an audio loop at the project tempo (playlist, channel rack, browser)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Drag the pattern's notes into the piano roll or the playlist"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Drop audio here"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "E major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "E minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Eb major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Eb minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Eighth notes"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "F major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "F minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "F# major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "F# minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Finding the bars and sections"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Fitted to the loop's length (whole bars)."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Follow the project tempo (time-stretched; Edit > Sound has Resample)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Following the beat"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Four beats per bar"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "From Finder or Explorer, Tracklib, the browser, the playlist or the audio editor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "G major"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "G minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "G# minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Half a bar per slice"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Half tempo"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Half the tempo: the analysis heard double time"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Hide the whole-song strip"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "In the waveform: drag the bar-1 flag to move the whole grid, Alt+drag a bar line to stretch the grid between it and bar 1."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "KEY"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Listening for the hits"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Load a song, a loop or any audio file"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Load audio"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Load audio into Seltmann"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Load audio..."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Load..."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "METER"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Made"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Make loops"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Meter"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Move the grid 1 ms earlier"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Move the grid 1 ms later"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Move the grid 10 ms earlier"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Move the grid 10 ms later"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "NUDGE THE GRID"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Nudge the grid"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "One beat per slice"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "One slice per bar"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Original"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Play at the sample's own tempo"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Play the pattern (or hold a key in the octave below the base note)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Reading the file"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Release to analyse"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Render the pattern, the best phrases and the sections as loops at the project tempo into the \"Seltmann loops\" folder"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Run the tempo, beat and section analysis again (keeps the layout)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Send pattern to project"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Send to project"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Set the meter"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Set the tempo"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Show the advanced controls: the slice inspector, manual cuts, the steps, the beat grid, the sound and the loop list"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Show the whole song above the waveform"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Sixteenth notes"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Song"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Stop the pattern"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "TAP"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "TEMPO"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Tap along on the beat; after four taps the tempo follows (bar 1 stays)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Tap tempo"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "The file name's tempo helped."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "The size that suits the material: breaks on their hits in eighths or sixteenths, loops and songs by beats and bars"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "The tempo. Double-click to type it; the grid keeps bar 1 where it is."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "This file cannot be read"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Three beats per bar"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Try another file: WAV, AIFF, FLAC, MP3 or OGG."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Two dotted beats per bar (compound)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Unknown"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "What Seltmann heard. It picks the automatic chop: breaks on their hits, loops and songs by beats and bars, one-shots at their transients."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "at the hits"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "auto:"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "by hand"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "by section"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "chopped"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "equal parts"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "grains"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "loops in the \"Seltmann loops\" folder"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "slices"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "8 bars"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Add a cut"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Bar 1: drag to move the whole grid onto the first downbeat"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Beats (quarter notes)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Chop division"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Chop mode"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Click a slice to play it. Edit > Chop cuts by hand."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Click: play. Double-click: add a cut. Drag a cut to move it, right-click it to remove it."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Click: play. Drag the bar-1 flag to move the grid, Alt+drag a bar line to stretch it."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Cut at the transients (drum hits, note starts)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Cut into equal pieces"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Cut on the beat grid: bars, beats or subdivisions"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Cut where the song's sections change"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Cuts follow the detected sections"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Cuts go where you drop them"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Cuts snap to sixteenths of the beat grid"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Cuts snap to the nearest transient"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Cuts snap to the nearest zero crossing"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Decoding..."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Double-click the waveform to add a cut, drag a cut to move it, right-click to remove it"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Drag the box or its edges to pick the bars to chop, drag elsewhere for a new one, double-click a section to take it"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Drag to move the cut, right-click to remove it"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Eighth-note triplets"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Equal"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Finding the tempo, the beats and the sections"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Grain"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Grain length"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Grains"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Half a bar"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Hit"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Hit sensitivity"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Hits"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Keep the cuts placed by hand"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Manual"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Microsampling grain length (20 to 120 ms is typical)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Microsampling: cut into short grains of a fixed length"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "More sensitive: more, softer hits become cuts"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Move a cut"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Move bar 1"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Move every cut to the nearest zero crossing (no clicks)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Remove a cut"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "SNAP"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Sections"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Select a section"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Select the region"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Sixteenth-note triplets"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Sixty-fourth notes"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Slice count"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Stretch the grid"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "The chop appears here once the analysis is done"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Thirty-second notes"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Zero"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Zero-crossing cuts"
+msgstr ""
+
 #: src/packs/spacefx/spacefx_ui.cpp
 msgid "(drag to trim the impulse)"
 msgstr ""
@@ -11531,10 +12599,6 @@ msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
 msgid "STRAIGHT"
-msgstr ""
-
-#: src/packs/spacefx/spacefx_ui.cpp
-msgid "STRETCH"
 msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp

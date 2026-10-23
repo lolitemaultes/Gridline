@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.6.1" src="https://img.shields.io/badge/version-0.6.1-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.0" src="https://img.shields.io/badge/version-0.7.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -45,7 +45,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks.
 
-**128 built-in instruments and effects.** A family of flagships with their own names: Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching) and Graticule (scope). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities. Every one has its own editor.
+**138 built-in instruments and effects.** A family of flagships with their own names: Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities. Every one has its own editor.
 
 **Real plugins, real interfaces.** VST3, CLAP, VST2 and AU instruments and effects open with their own interface, can run sandboxed in a separate process, and are checked by a built-in compatibility sweep.
 
@@ -111,7 +111,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev libx11-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build          # 133 test suites
+ctest --test-dir build          # 143 test suites
 ./build/gridline-app            # start the app
 ```
 

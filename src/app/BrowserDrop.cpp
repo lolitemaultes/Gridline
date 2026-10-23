@@ -69,7 +69,7 @@ std::vector<std::pair<std::string, bool>> indexRoots(App& a) {
     roots.push_back({(fs::path(fl) / "Demo projects").string(), false});
   }
   roots.push_back({presetRoot(a.configDir()), false});
-  for (const char* d : {"Recorded", "Rendered", "Sliced audio", "Edited audio", "Clipboard files"}) roots.push_back({contentDir(a, d), true});
+  for (const char* d : {"Recorded", "Rendered", "Sliced audio", "Edited audio", "Seltmann loops", "Clipboard files"}) roots.push_back({contentDir(a, d), true});
   // User folders: only those added in the browser (never the default guesses).
   std::ifstream in(fs::path(a.configDir()) / "browser-folders.txt");
   for (std::string l; std::getline(in, l);)

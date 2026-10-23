@@ -3,6 +3,30 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` in `CMakeLists.txt`; the
 release workflow publishes the section of the tagged version as the release notes.
 
+## 0.7.0
+
+### New: Seltmann, the automatic sample chopper (`gl.seltmann`)
+
+- One simple flow: drop audio on Seltmann (from Finder or Explorer, Tracklib, the browser, the
+  playlist or the audio editor, or on a Seltmann row in the channel rack; or "Open in Seltmann" in
+  the browser), it analyses on its own, pick a layout card and it plays. A calm main view: one
+  waveform with the bars and the slices by letter, the tempo with x2 / /2, the chop size (Auto,
+  1 bar ... 1/16), the tempo mode, play, drag handles, Make loops and Send to project, the layout
+  cards and the pads. Everything advanced (slice inspector, manual cuts, steps and the step
+  language, grid tools, sound, loop list) is in a collapsible Edit drawer.
+- Reads any material: breaks and drum loops (also with leading silence, a pickup, hits behind the
+  beat or a ring-out tail), melodic loops, whole songs (sections and phrases), one-shots and
+  ambient textures. Loops lock to their length (whole bars, exact tempo), the tempo and key in
+  the file name are used when they are there, and the automatic chop size suits the material:
+  breaks on their hits in eighths or sixteenths, songs in bars.
+- No more tiny first slice: chops always start on bar 1, and no slice is shorter than half a step.
+- 59 chop layouts in tabs (Flip, Phrase, Breaks, Micro, Creative, Mine), six of them new instant
+  flips; every layout fits breaks, songs and one-shots alike and never refers to a missing slice.
+- Plays as an instrument (slices on keys, the pattern on the octave below, locked to the song,
+  following the project tempo by stretching or resampling); loops out as WAV files, drags into the
+  playlist, rack or piano roll, or a pattern sent to the project.
+- `gridline seltmann-analyse` prints what Seltmann hears in a set of files.
+
 ## 0.6.1
 
 ### Drawing, Convolver and stability

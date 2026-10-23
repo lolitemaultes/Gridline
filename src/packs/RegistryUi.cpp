@@ -13,13 +13,14 @@ GL_DECLARE_PACK_UI(creative)
 GL_DECLARE_PACK_UI(edison)
 GL_DECLARE_PACK_UI(flexpack)
 GL_DECLARE_PACK_UI(tideline)
+GL_DECLARE_PACK_UI(seltmann)
 namespace gl::packs::edison {
 void drawWindows(App& a);
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
 int armTransportRecording(App& a, ObjectId track);
 }  // namespace gl::packs::edison
 
-#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack) X(tideline)
+#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack) X(tideline) X(seltmann)
 
 namespace gl::packs {
 

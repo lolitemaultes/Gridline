@@ -319,6 +319,9 @@ void fileContextMenu(App& a, const std::string& ps) {
   if (ImGui::MenuItem(i18n::tr("Open / add"))) browserui::openFile(a, ps);
   if (browse::kindOf(ps) == Kind::Audio) {
     if (ImGui::MenuItem(i18n::tr("Preview"))) browserui::previewFile(a, ps);
+    if (ImGui::MenuItem(i18n::tr("Open in Seltmann"))) {  // J-107: a new Seltmann channel analyses and chops it
+      a.settingsChannel = a.addInstrument("gl.seltmann", ps);
+    }
     if (ImGui::MenuItem(i18n::tr("Add to playlist as audio clip"))) {
       browserui::DropPlace pl;
       pl.tick = a.engine.position() > 0 ? static_cast<Tick>(a.engine.position()) : 0;
@@ -1090,6 +1093,7 @@ void drawBrowser(App& a) {
     if (all || tab == TabSounds) {
       folderSection(a, "Sliced audio", browserui::contentDir(a, "Sliced audio"), role::kSlip, "No sliced audio", true);
       folderSection(a, "Edited audio", editedDir(a), role::kSlip, "No edited audio", true);
+      folderSection(a, "Seltmann loops", seltmannLoopsDir(a), role::kSlice, "No loops made yet", true);
       sectionUserFolders(a);
     }
     if (tab == TabStarred) sectionStarred(a);

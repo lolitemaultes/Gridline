@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gridline VERSION 0.6.1 LANGUAGES C CXX)
+project(gridline VERSION 0.7.0 LANGUAGES C CXX)
 
 # Gridline — clean-room DAW. Native Linux target (also builds on macOS for development).
 #   cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
@@ -1004,6 +1004,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j97_rack_drop -P ${CMAKE_SOURCE_DIR}/tests/j97_rack_drop.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j97_rack_drop PROPERTIES TIMEOUT 300)
+
+    # J-107: Seltmann's one-step flow: drop a file on the editor -> analysed -> click a layout -> playing.
+    add_test(NAME seltmann_flow
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/seltmann_flow -P ${CMAKE_SOURCE_DIR}/tests/seltmann_flow.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(seltmann_flow PROPERTIES TIMEOUT 300)
 
     # J-103: a session (demo copy, playing, an editor open) quit by the user, and the layout audit
     # without --screenshot, exit with code 0: no background thread runs into static destruction.
