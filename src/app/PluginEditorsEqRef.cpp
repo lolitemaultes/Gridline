@@ -480,7 +480,7 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
     }
     ImGui::PushFont(a.fontMono, fsMid);
     ImVec2 ts = ImGui::CalcTextSize(txt.c_str());
-    float x = std::clamp(io.MousePos.x + 12, g0.x + 4, g1.x - ts.x - 6), y = std::clamp(io.MousePos.y - ts.y - 12, g0.y + 3, g1.y - ts.y - 3);
+    float x = std::clamp(io.MousePos.x + 12, g0.x + 4, std::max(g0.x + 4, g1.x - ts.x - 6)), y = std::clamp(io.MousePos.y - ts.y - 12, g0.y + 3, std::max(g0.y + 3, g1.y - ts.y - 3));
     dl->AddRectFilled(ImVec2(x - 4, y - 2), ImVec2(x + ts.x + 4, y + ts.y + 2), IM_COL32(10, 16, 20, 210), 3);
     dl->AddText(ImVec2(x, y), b >= 0 ? skin::lighten(skin::hex(kBandHex[b]), 0.35f) : K.lcdText, txt.c_str());
     ImGui::PopFont();

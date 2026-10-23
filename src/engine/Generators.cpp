@@ -988,8 +988,8 @@ class SamplerGen final : public Generator {
     if (!sample_) return;
     const double base = sample_->sampleRate / sr_;
     const double len = static_cast<double>(sample_->frames());
-    const double lo = regionLo(), hi = regionHi();
-    const double ls = std::clamp(loopStart_ * (len - 1), lo, hi), le = std::clamp(loopEnd_ * (len - 1), ls + 1, hi);
+    const double lo = regionLo(), hi = std::max(lo + 1, regionHi());  // start offset at (or past) the end: keep lo <= hi
+    const double ls = std::clamp(loopStart_ * (len - 1), lo, hi - 1), le = std::clamp(loopEnd_ * (len - 1), ls + 1, hi);
     const double glideCoef = std::exp(-1.0 / std::max(1.0, glide_ * sr_ * 0.3));
     const double grainLen = 0.05 * sr_;
     static const double minEnd[5] = {0, 0.002, 0.005, 0.005, 0.02};
@@ -1205,8 +1205,8 @@ class SamplerGen final : public Generator {
     }
     int hit = -1;
     const double len = static_cast<double>(g.sample_->frames());
-    const double lo = g.regionLo(), hi = g.regionHi();
-    const auto ls = static_cast<int64_t>(std::clamp(g.loopStart_ * (len - 1), lo, hi));
+    const double lo = g.regionLo(), hi = std::max(lo + 1, g.regionHi());  // keep lo <= hi (start offset at the end)
+    const auto ls = static_cast<int64_t>(std::clamp(g.loopStart_ * (len - 1), lo, hi - 1));
     const auto le = std::max(ls + 1, static_cast<int64_t>(std::clamp(g.loopEnd_ * (len - 1), static_cast<double>(ls) + 1, hi)));
     const auto ilo = static_cast<int64_t>(std::ceil(lo)), ihi = static_cast<int64_t>(std::floor(hi));
     g.rate_ = 1.0;

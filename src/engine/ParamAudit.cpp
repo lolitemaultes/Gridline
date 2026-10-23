@@ -1059,7 +1059,8 @@ bool baseTouches(const std::vector<std::pair<int, double>>& set, int k) {
 // the temp folder: sample instruments get material with transients, pitch,
 // sustain and loop room.
 const std::string& auditSample() {
-  static const std::string path = [] {
+  // Never destroyed: the exit hook below reads it after static destructors have run.
+  static const std::string& path = *new std::string([] {
     std::error_code ec;
     const std::string p = (std::filesystem::temp_directory_path(ec) / ("gridline_param_audit_" + std::to_string(platform::processId()) + ".wav")).string();
     const size_t n = static_cast<size_t>(1.2 * kSr);
@@ -1083,7 +1084,7 @@ const std::string& auditSample() {
       std::filesystem::remove(auditSample(), e);
     });
     return p;
-  }();
+  }());
   return path;
 }
 

@@ -953,7 +953,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   for (int k = 0; k <= 4; ++k) {
     float y = yOf(k / 4.0);
     std::string t = fmtParam(s, pid, clipToParam(ac, k / 4.0));
-    theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(origin.x + 4, std::clamp(y - 7, gMin.y + 1, gMax.y - 14)), axisW - 8,
+    theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(origin.x + 4, std::clamp(y - 7, gMin.y + 1, std::max(gMin.y + 1, gMax.y - 14))), axisW - 8,
                         k == 2 ? P.textDim : P.textFaint, t.c_str());
   }
   dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(origin.x + 6, origin.y + 7), P.textFaint, "VALUE");

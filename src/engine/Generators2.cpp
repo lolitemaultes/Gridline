@@ -222,7 +222,7 @@ class PadsGen final : public Generator {
       v.age = ++clock_;
       double len = static_cast<double>(smp->frames()) - 2;
       double st = std::clamp(static_cast<double>(param(s, padE(pad, PadStart))) + L.start, 0.0, 1.0);
-      double en = std::clamp(L.end, st + 0.001, 1.0);
+      double en = std::clamp(L.end, std::min(st + 0.001, 1.0), 1.0);  // start at the very end: lo must not pass hi
       v.startPos = st * len, v.endPos = en * len;
       v.reverse = (param(s, padP(pad, PadReverse)) >= 0.5f) != L.reverse;
       v.rate = std::pow(2.0, (param(s, padP(pad, PadTune)) + L.tune) / 12.0) * smp->sampleRate / sr_;
@@ -1106,7 +1106,7 @@ class SlicerGen final : public Generator {
     double sliceStart = static_cast<double>(starts_[k]);
     double sliceEnd = !playToEnd_ && k + 1 < nSlices_ ? static_cast<double>(starts_[k + 1]) : static_cast<double>(smp->frames() - 1);
     const double endPos = param(s, slParam2(k, SliceEnd), -1);
-    if (endPos >= 0 && !playToEnd_) sliceEnd = std::clamp(endPos * static_cast<double>(smp->frames()), sliceStart + 1, static_cast<double>(smp->frames() - 1));
+    if (endPos >= 0 && !playToEnd_) sliceEnd = std::clamp(endPos * static_cast<double>(smp->frames()), std::min(sliceStart + 1, static_cast<double>(smp->frames() - 1)), static_cast<double>(smp->frames() - 1));
     v.start = sliceStart + param(s, slParam(k, SliceStart)) * (sliceEnd - sliceStart);
     v.end = sliceEnd;
     v.reverse = reverse_ != (!proc_ && param(s, slParam(k, SliceReverse)) >= 0.5f);  // (processed: reversed offline)

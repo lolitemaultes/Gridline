@@ -347,7 +347,7 @@ void filterGraph(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p,
   }
   skin::curveArea(dl, pts.data(), static_cast<int>(pts.size()), p.y + sz.y, K.graphCurve, 2.0f, 0.20f);
   // Cutoff / resonance node, drawn inside the well (the drag maps the whole width).
-  ImVec2 node(std::clamp(pui::freqToX(fc, p.x, sz.x), p.x + 9, p.x + sz.x - 9), p.y + sz.y * (0.85f - static_cast<float>(reso) * 0.7f));
+  ImVec2 node(std::clamp(pui::freqToX(fc, p.x, sz.x), p.x + 9, std::max(p.x + 9, p.x + sz.x - 9)), p.y + sz.y * (0.85f - static_cast<float>(reso) * 0.7f));
   const bool nodeHot = act || ImGui::IsItemHovered();
   if (nodeHot) dl->AddCircleFilled(node, 11, theme::withAlpha(K.fill, 0.22f), 24);
   dl->AddCircleFilled(node, 7, IM_COL32(0, 0, 0, 120), 20);

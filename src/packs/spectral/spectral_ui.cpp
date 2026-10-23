@@ -1360,7 +1360,7 @@ void editorSplitterLegacy(App& a, const PluginTarget& t, float width) {
     char buf[24];
     std::snprintf(buf, sizeof buf, f[k] >= 1000 ? "%.2fk" : "%.0f", f[k] >= 1000 ? f[k] / 1000 : f[k]);
     float tw = monoWidth(buf);
-    float tx = std::clamp(xs[k + 1] - tw * 0.5f, p.x + 4, p1.x - tw - 4);
+    float tx = std::clamp(xs[k + 1] - tw * 0.5f, p.x + 4, std::max(p.x + 4, p1.x - tw - 4));
     dl->AddRectFilled(ImVec2(tx - 3, p.y + 14), ImVec2(tx + tw + 3, p.y + 28), P.surface800, 3);
     mono(dl, ImVec2(tx, p.y + 15), P.text, buf);
   }
@@ -1550,7 +1550,7 @@ void editorSplitterRef(App& a, const PluginTarget& t, float width) {
     char buf[24];
     std::snprintf(buf, sizeof buf, f[k] >= 1000 ? "%.2fk" : "%.0f", f[k] >= 1000 ? f[k] / 1000 : f[k]);
     float tw = monoWidth(buf);
-    float tx = std::clamp(xs[k + 1] - tw * 0.5f, p.x + 4, p1.x - tw - 4);
+    float tx = std::clamp(xs[k + 1] - tw * 0.5f, p.x + 4, std::max(p.x + 4, p1.x - tw - 4));
     dl->AddRectFilled(ImVec2(tx - 3, p.y + 14), ImVec2(tx + tw + 3, p.y + 28), P.surface800, 3);
     mono(dl, ImVec2(tx, p.y + 15), P.text, buf);
   }

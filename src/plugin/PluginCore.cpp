@@ -403,7 +403,7 @@ void Instance::process(const ProcessArgs& a) {
       }
     }
     int end = a.frames;
-    if (e < a.eventCount) end = std::clamp(a.events[e].offset, pos + 1, a.frames);
+    if (e < a.eventCount) end = std::clamp(a.events[e].offset, std::min(pos + 1, a.frames), a.frames);
     runSlice(a, pos, end - pos, first);
     first = false;
     pos = end;
