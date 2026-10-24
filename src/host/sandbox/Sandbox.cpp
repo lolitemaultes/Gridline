@@ -704,6 +704,15 @@ class SandboxBackend final : public Backend {
     std::lock_guard<std::mutex> g(reasonLock_);
     return reason_;
   }
+  std::string diagnostics() const override {
+    char b[320];
+    std::snprintf(b, sizeof b, "sandbox: blocks sent %u, answered %u, budget missed %u, in flight %d, last wait %.2f ms of %.2f ms (%s), crashed %d",
+                  stSent_.load(std::memory_order_relaxed), shm_ ? shm_->done.load(std::memory_order_relaxed) : 0u,
+                  stMissed_.load(std::memory_order_relaxed), stInflight_.load(std::memory_order_relaxed) ? 1 : 0,
+                  stWaitUs_.load(std::memory_order_relaxed) / 1000.0, stBudgetUs_.load(std::memory_order_relaxed) / 1000.0,
+                  offline_.load(std::memory_order_relaxed) ? "offline" : "real time", crashed_.load() ? 1 : 0);
+    return b;
+  }
 
   bool openEditor(int x, int y) {
     Wr w;
@@ -790,6 +799,7 @@ class SandboxBackend final : public Backend {
         return false;
       }
       inflight_ = false;
+      stInflight_.store(false, std::memory_order_relaxed);
     }
     lateSeconds_ = 0;
     shm_->frames = n;
@@ -800,6 +810,8 @@ class SandboxBackend final : public Backend {
     std::memcpy(static_cast<void*>(shm_->events), events_.get(), sizeof(NoteEvent) * static_cast<size_t>(nEvents_));
     nParams_ = nEvents_ = 0;
     const uint32_t seq = ++seq_;
+    stSent_.store(seq, std::memory_order_relaxed);
+    stBudgetUs_.store(static_cast<uint32_t>(budget * 1e6), std::memory_order_relaxed);
     shm_->request.store(seq, std::memory_order_release);
     const char byte = 1;
 #if defined(_WIN32)
@@ -811,6 +823,9 @@ class SandboxBackend final : public Backend {
     (void)wr;
     for (uint32_t spin = 0;; ++spin) {
       if (shm_->done.load(std::memory_order_acquire) == seq) {
+        stWaitUs_.store(static_cast<uint32_t>(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count()),
+                        std::memory_order_relaxed);
+        stInflight_.store(false, std::memory_order_relaxed);
         silentOut_ = !shm_->ok;
         midiCount_ = std::clamp(shm_->nMidiOut, 0, kMaxMidiOut);
         std::memcpy(static_cast<void*>(midiBuf_.get()), shm_->midiOut, sizeof(MidiOut) * static_cast<size_t>(midiCount_));
@@ -820,6 +835,9 @@ class SandboxBackend final : public Backend {
       if ((spin & 63) == 63) {
         if (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() > budget) {
           inflight_ = true;  // keep waiting next block; output silence now
+          stWaitUs_.store(static_cast<uint32_t>(budget * 1e6), std::memory_order_relaxed);
+          stMissed_.fetch_add(1, std::memory_order_relaxed);
+          stInflight_.store(true, std::memory_order_relaxed);
           return false;
         }
         std::this_thread::yield();
@@ -986,6 +1004,9 @@ class SandboxBackend final : public Backend {
   bool inflight_ = false;
   double lateSeconds_ = 0;
   uint32_t seq_ = 0;
+  // audio thread -> diagnostics() (relaxed: counters for messages only)
+  std::atomic<uint32_t> stSent_{0}, stMissed_{0}, stWaitUs_{0}, stBudgetUs_{0};
+  std::atomic<bool> stInflight_{false};
   std::unique_ptr<ParamChange[]> params_;
   int nParams_ = 0;
   std::unique_ptr<NoteEvent[]> events_;

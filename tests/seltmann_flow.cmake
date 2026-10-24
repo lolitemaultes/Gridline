@@ -7,6 +7,11 @@
 #   3. a click on the first layout card applies the layout and the pattern starts playing.
 # The trace lines come from the editor's GRIDLINE_SELTMANN_TRACE hook. Screenshots: <OUT>/empty.ppm,
 # <OUT>/ready.ppm, <OUT>/playing.ppm.
+# J-108: no frame counts to guess. The script waits ("waitfor", the frame count held) until the
+# editor reports the analysis ready and the engine's first pattern step, with generous upper
+# bounds; the engine runs on SDL's dummy audio driver, so a machine without a sound device (CI
+# containers: no audio server, no /dev/snd, so no audio callback and no step ever played) plays
+# the pattern too, in real time, and nothing sounds on a developer's speakers.
 #   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_test_seltmann> -DOUT=<dir> -P seltmann_flow.cmake
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
@@ -16,6 +21,7 @@ if(NOT rc EQUAL 0 OR NOT EXISTS "${OUT}/Break 96.wav")
 endif()
 set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg")
 set(ENV{GRIDLINE_SELTMANN_TRACE} "1")
+set(ENV{SDL_AUDIODRIVER} "dummy")
 
 function(run tag frames script)
   file(WRITE "${OUT}/${tag}.txt" "${script}")
@@ -50,10 +56,12 @@ set(drop "10 dragenter ${zx} ${zy} \"${OUT}/Break 96.wav\"
 12 dragmove ${zx} ${zy}
 14 dragmove ${zx} ${zy}
 16 drop
+17 waitfor seltmann-ready 120
 ")
-run(ready 240 "${drop}")
+run(ready 30 "${drop}")
 set(last_out "${ready_out}")
 check("the drop loads the file and the editor analyses it" ready_out MATCHES "seltmann: state analysing|seltmann: state ready")
+check("... the analysis finishes in time" ready_out MATCHES "waitfor seltmann-ready: reached")
 string(REGEX MATCH "seltmann: state ready kind ([a-z]+) bpm ([0-9.]+) slices ([0-9]+)" _ "${ready_out}")
 set(kind "${CMAKE_MATCH_1}")
 set(bpm "${CMAKE_MATCH_2}")
@@ -68,9 +76,10 @@ set(cy "${CMAKE_MATCH_3}")
 check("... the layout cards are shown (first: ${card})" cx MATCHES "[0-9]")
 
 # ---- 3. pick a layout: it applies and plays
-run(playing 330 "${drop}240 move ${cx} ${cy}
-244 down 0
-247 up 0
+run(playing 40 "${drop}20 move ${cx} ${cy}
+24 down 0
+27 up 0
+28 waitfor seltmann-playing 60
 ")
 set(last_out "${playing_out}")
 check("clicking \"${card}\" applies the layout" playing_out MATCHES "preset \"${card}\"")

@@ -17,6 +17,7 @@
 #include <functional>
 #include <unordered_map>
 #include "../../app/AudioRecordUi.h"
+#include "../../app/DevSignal.h"
 #include "../../app/BrowserUi.h"
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
@@ -852,6 +853,9 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
     std::snprintf(b, sizeof b, "\nseltmann: play %.0f %.0f", e.playBtn.x, e.playBtn.y);
     line += b;
   }
+  // J-108: scripted runs wait for these ("waitfor seltmann-ready|seltmann-playing <seconds>")
+  if (std::string(state) == "ready") devsig::reach("seltmann-ready");
+  if (e.patternOn && lv.step >= 0) devsig::reach("seltmann-playing");
   if (line != e.lastTrace) {
     std::printf("%s\n", line.c_str());
     std::fflush(stdout);

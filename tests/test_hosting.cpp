@@ -60,6 +60,10 @@ ProcessContext ctx48() {
 // Sandbox data-path checks render offline: on a slow (virtual) machine a real-time block may
 // miss its budget and come back silent, which is the sandbox working as designed.
 bool gOfflineRuns = false;
+struct OfflineScope {
+  OfflineScope() { gOfflineRuns = true; }
+  ~OfflineScope() { gOfflineRuns = false; }
+};
 void runGen(Generator& g, const PluginState& st, std::vector<float>& L, std::vector<float>& R, int n, int block = 256) {
   ChannelAux aux;
   ProcessContext c = ctx48();
@@ -494,6 +498,10 @@ void testAu() {
 // ---------------------------------------------------------------- sandbox
 
 void testSandbox() {
+  // The data-path checks wait for every block (offline rendering, bounded by the sandbox's 30 s
+  // offline budget): a real-time block that misses its budget (4 block lengths: 21 ms for 256
+  // frames at 48 kHz) comes back silent by design, which a loaded CI machine hits now and then.
+  OfflineScope offline;
   host::setChildExecutable(GRIDLINE_CLI_EXE);
   host::setRunInSandbox(kClapSynth, true);
   auto g = createGenerator(kClapSynth);
@@ -583,8 +591,14 @@ void testSandbox() {
     x = in;
     y = in;
     ProcessContext c = ctx48();
+    c.offline = gOfflineRuns;
     fx->processAux(fs1, ChannelAux{}, c, x.data(), y.data(), 256);
-    expect(std::fabs(x[100] - in[84]) < 1e-6f, "sandbox: effect processes audio");
+    host::HostedInstance* fi = host::hostedInstance(fx.get());
+    char why[512];
+    std::snprintf(why, sizeof why, "sandbox: effect processes audio (out[100] %.6f, in[84] %.6f; %s; %s)", static_cast<double>(x[100]),
+                  static_cast<double>(in[84]), fi->backend()->diagnostics().c_str(),
+                  fi->crashed() ? fi->crashReason().c_str() : "running");
+    expect(std::fabs(x[100] - in[84]) < 1e-6f, why);
   }
   host::setRunInSandbox(kClapGain, false);
   host::setRunInSandbox(kClapSynth, false);
@@ -1190,10 +1204,7 @@ void testPresetsAndBypass() {
 
 // Sandbox: MIDI output and modulation travel through shared memory.
 void testSandboxFeatures() {
-  struct OfflineScope {
-    OfflineScope() { gOfflineRuns = true; }
-    ~OfflineScope() { gOfflineRuns = false; }
-  } offline;
+  OfflineScope offline;
   host::setChildExecutable(GRIDLINE_CLI_EXE);
   host::setRunInSandbox(kClapSynth, true);
   auto g = createGenerator(kClapSynth);

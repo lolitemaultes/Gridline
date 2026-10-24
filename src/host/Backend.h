@@ -282,6 +282,9 @@ class Backend {
   // Out-of-process instances: the plugin process died.
   virtual bool crashed() const { return false; }
   virtual std::string crashReason() const { return {}; }
+  // Out-of-process instances: the audio exchange so far, one line for test and log messages
+  // (blocks sent / answered, budgets missed, the last wait against its budget). Empty otherwise.
+  virtual std::string diagnostics() const { return {}; }
   // Notified (UI thread) when the instance is destroyed while an editor shows it.
   std::function<void()> onGoingAway;
 

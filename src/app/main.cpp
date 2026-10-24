@@ -20,6 +20,7 @@
 #include "../engine/ChannelIns.h"
 #include "../engine/Sample.h"
 #include "../engine/TimeStretch.h"
+#include "DevSignal.h"
 #include "FlpExportUi.h"
 #include "J59Ui.h"
 #include "FrameProfile.h"
@@ -321,9 +322,28 @@ struct HeldNote {
 //   rack (J-84: channel rack layout, step scroll, channel volumes / pans, step velocities / pitches to stdout)
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
+//   waitfor <name> <seconds> (J-108: the script and --frames stop counting until the app reports
+//   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s")
 std::string devShotPending;
 bool devTrace = false;
 ImVec2 devTraceWheel;  // this frame's wheel input (io clears it at the end of the frame)
+struct DevWait {
+  std::string name;
+  double seconds = 0;
+  Uint64 start = 0;
+  bool on = false;
+} devWait;
+// J-108: true while a "waitfor" holds the script's frame count (checked once per frame).
+bool devWaitHolds() {
+  if (!devWait.on) return false;
+  const double t = static_cast<double>(SDL_GetPerformanceCounter() - devWait.start) / static_cast<double>(SDL_GetPerformanceFrequency());
+  const bool reached = devsig::reached(devWait.name);
+  if (!reached && t < devWait.seconds) return true;
+  std::printf("waitfor %s: %s after %.2f s\n", devWait.name.c_str(), reached ? "reached" : "timed out", t);
+  std::fflush(stdout);
+  devWait.on = false;
+  return false;
+}
 struct DevMomentum {
   float dx = 0, dy = 0;
   int left = 0;
@@ -436,8 +456,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     devMomentum.dy *= 0.9f;
     --devMomentum.left;
   }
+  static int lastFrame = INT_MIN;  // a "waitfor" holds the frame: its commands run once
+  const bool fresh = frame != lastFrame;
+  lastFrame = frame;
   for (const auto& l : script) {
-    if (l.frame != frame) continue;
+    if (!fresh || l.frame != frame) continue;
     if (l.cmd == "move") {
       pointer = ImVec2(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
       io.AddMousePosEvent(pointer.x, pointer.y);
@@ -626,6 +649,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       SDL_Event q{};
       q.type = SDL_QUIT;
       SDL_PushEvent(&q);
+    } else if (l.cmd == "waitfor") {  // J-108
+      devWait = {l.a0, std::max(0.0, std::strtod(l.a1.c_str(), nullptr)), SDL_GetPerformanceCounter(), true};
     } else if (l.cmd == "undo") {
       app.doc.undo();
       app.syncEngine();
@@ -1639,8 +1664,9 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
     if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
+    const bool devHold = devWaitHolds();  // J-108: "waitfor" keeps the script (and --frames) on this frame
     // J-103: a --dev-input session without --screenshot counts its frames too (its script ends it with "quit").
-    if (!devInput.empty() && shotPath.empty() && profilePath.empty() && frameNo < INT_MAX) ++frameNo;
+    if (!devInput.empty() && shotPath.empty() && profilePath.empty() && frameNo < INT_MAX && !devHold) ++frameNo;
     if (devTrace) {  // J-67: the scroll positions this frame was drawn with
       ImGuiContext& g = *ImGui::GetCurrentContext();
       const ImGuiWindow* hw = g.HoveredWindow;
@@ -1653,7 +1679,7 @@ int main(int argc, char** argv) {
       writePpm(devShotPending.c_str(), fbW, fbH);
       devShotPending.clear();
     }
-    if (!shotPath.empty() && ++frameNo >= shotFrames) {
+    if (!shotPath.empty() && !devHold && ++frameNo >= shotFrames) {
       // Save the rendered frame (binary PPM) and quit — used for visual checks.
       writePpm(shotPath.c_str(), fbW, fbH);
       if (devHostedEditor && !screenshotHostedEditor(devEditorTarget, shotPath + ".editor.png"))
