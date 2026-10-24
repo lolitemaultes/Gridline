@@ -131,8 +131,10 @@ void testLimits() {
   expect(contains(e, "instruction limit"), "limits: coroutines are limited too");
   Limits mem;
   mem.memoryBytes = 8u << 20;
+  mem.instructions = ~0ull;  // only the memory cap may stop it (a slow runner hit the 2 s / 20M defaults first)
+  mem.seconds = 120;
   e = runIn("local t = {} for i = 1, 1e9 do t[i] = string.rep('x', 1000) .. i end", mem);
-  expect(contains(e, "memory"), "limits: memory cap");
+  expect(contains(e, "memory"), ("limits: memory cap (" + e + ")").c_str());
   e = runIn("local s = string.rep('x', 300000) return s:find('y')");
   expect(contains(e, "too long"), "limits: pattern matching on huge subjects refused");
   // A VM is reusable after a stopped call.
