@@ -398,7 +398,7 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     if (!bar && beatPx < 7) continue;
     dl->AddLine(ImVec2(x, bar ? p0.y + 2 : g0.y), ImVec2(x, p1.y - 2), bar ? theme::withAlpha(P.paper, 0.28f) : theme::withAlpha(P.paper, 0.09f), 1);
     if (bar && b < b1 - 1e-6) {
-      char bb[12];
+      char bb[24];
       std::snprintf(bb, sizeof bb, "%lld", (rel - ((rel % bpb) + bpb) % bpb) / bpb + 1);
       dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 3, p0.y + 3), P.textDim, bb);
     }

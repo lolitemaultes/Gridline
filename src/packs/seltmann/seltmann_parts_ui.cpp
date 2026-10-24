@@ -50,7 +50,7 @@ void stepChips(ImDrawList* dl, App& a, ImVec2 p0, float w, const Preset& p) {
   for (size_t i = 0; i < tmp.steps.size(); ++i) {
     const Step& s = tmp.steps[i];
     if (shown >= fit) {
-      char more[16];
+      char more[24];
       std::snprintf(more, sizeof more, "+%zu", tmp.steps.size() - i);
       dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 2, p0.y + 3), P.textDim, more);
       break;
@@ -62,7 +62,7 @@ void stepChips(ImDrawList* dl, App& a, ImVec2 p0, float w, const Preset& p) {
       const int c = s.slot ? s.src : s.src % 12;
       const ImU32 fill = slotColor(c, s.reverse ? 0.45f : 0.9f);
       dl->AddRectFilled(q0, q1, fill, 4);
-      char lb[8];
+      char lb[16];
       if (s.slot) std::snprintf(lb, sizeof lb, "%s", slotName(s.src));
       else std::snprintf(lb, sizeof lb, "%d", s.src + 1);
       textC(dl, a.fontBold, s.slot || s.src < 9 ? 12.0f : 10.0f, ImVec2((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f), theme::contrastText(slotColor(c)), lb);
@@ -277,7 +277,7 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
       }
     }
     if (slot >= 0) dl->AddText(a.fontBold, 18, ImVec2(q0.x + 9, q0.y + 6), ink, slotName(slot));
-    char num[8];
+    char num[16];
     std::snprintf(num, sizeof num, "%d", k + 1);
     textR(dl, a.fontMono, theme::kFontLabel, ImVec2(q1.x - 8, q0.y + 7), theme::withAlpha(ink, 0.8f), num);
     if (s.reverse) dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q0.x + (slot >= 0 ? 26 : 9), q0.y + 10), theme::withAlpha(ink, 0.8f), "R");
@@ -498,7 +498,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
         std::string marks;
         if (s.reverse) marks += "R ";
         if (s.pitch != 0) {
-          char pb[12];
+          char pb[16];
           std::snprintf(pb, sizeof pb, "%+d ", static_cast<int>(std::lround(s.pitch)));
           marks += pb;
         }

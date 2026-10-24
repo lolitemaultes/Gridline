@@ -547,7 +547,7 @@ class SeltmannGen final : public Generator {
     v.hi = std::clamp(mapFrame(s, sl.beatB, static_cast<double>(sl.b)), v.lo + 1, static_cast<double>(s.n));
     if (stepOffset > 0) v.lo = std::min(v.hi - 1, v.lo + (v.hi - v.lo) * stepOffset);
     v.rate = s.rate * std::pow(2.0, (sl.pitch + semis + pitch_) / 12.0);
-    const bool rev = sl.reverse != stepReverse != reverseAll_;
+    const bool rev = (sl.reverse != stepReverse) != reverseAll_;
     v.dir = rev ? -1 : 1;
     v.pos = rev ? v.hi - 1 : v.lo;
     const double velGain = 1.0 - velSens_ + velSens_ * std::clamp(static_cast<double>(vel), 0.0, 1.0);
