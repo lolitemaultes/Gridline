@@ -135,6 +135,31 @@ class Document {
   const UndoStack& history() const { return undo_; }
   void setMaxUndoLevels(size_t n) { undo_.setMaxLevels(n); }
 
+  // --- collaboration (J-111) -------------------------------------------------
+  // While a collaboration session is attached: `historyHook(-1 / +1)` replaces
+  // undo / redo (the session moves the history position with stepHistory() and
+  // changes the song itself, so only the user's own changes are undone), and
+  // `beforeChange` runs before an edit that starts a new history step (so the
+  // session can file the changes made so far under the previous step).
+  std::function<bool(int dir)> historyHook;
+  std::function<void()> beforeChange;
+  // Moves the history position without applying commands (see historyHook).
+  bool stepHistory(int dir);
+  // Replaces the song with a merged state from collaborators: not recorded,
+  // the history is kept (its steps are undone through historyHook).
+  void replaceSong(Song song);
+  // A history step that changes nothing in the song, for a change the
+  // session's historyHook undoes itself (J-111f: the collaborative project's
+  // shared name). Without a session, its undo / redo do nothing.
+  void recordMark(const std::string& label);
+  // Changes the song in place without recording (session housekeeping).
+  void patchSong(const std::function<void(Song&)>& fn) {
+    fn(song_);
+    ++revision_;
+  }
+  // Number of edits made outside groups that started a new history step.
+  uint64_t pushCount() const { return undo_.pushCount(); }
+
   // --- saved state --------------------------------------------------------
   bool modified() const { return undo_.stateSerial() != savedSerial_; }
   void markSaved() { savedSerial_ = undo_.stateSerial(); }

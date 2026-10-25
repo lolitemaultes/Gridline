@@ -25,6 +25,9 @@ bool looksLikeFilePath(const std::string& s);
 // processors, mixer slots, all arrangements). `fn` may change the path; the
 // state is rewritten when it does. Returns the number of references changed.
 int forEachFileRef(Song& song, const std::function<void(std::string& path)>& fn);
+// The file references of one plugin state (same rules as forEachFileRef).
+// Returns true when `fn` changed one.
+bool forEachStateFileRef(PluginState& state, const std::function<void(std::string& path)>& fn);
 // Unique referenced paths, in first-seen order.
 std::vector<std::string> referencedFiles(const Song& song);
 // Referenced files that do not exist (relative paths count as missing).

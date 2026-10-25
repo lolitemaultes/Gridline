@@ -276,6 +276,50 @@ bool TextButton(const char* label, bool active, float width, const char* hint) {
   return r;
 }
 
+bool DangerButton(const char* label, bool armed, float width, const char* hint) {
+  const auto& P = pal();
+  if (armed) {
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(P.danger));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(theme::mix(P.danger, P.paper, 0.12f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::vec(theme::mix(P.danger, P.ink, 0.15f)));
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::contrastText(P.danger)));
+  } else {
+    const float t = P.dark ? 0.10f : 0.08f;
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(theme::mix(P.surface800, P.danger, t)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(theme::mix(P.surface700, P.danger, t + 0.06f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::vec(theme::mix(P.surface600, P.danger, t + 0.10f)));
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::lit(P.danger)));
+  }
+  const bool r = ImGui::Button(tr(label), ImVec2(width, 0));
+  ImGui::PopStyleColor(4);
+  if (hint) {
+    Hint(hint);
+    Tooltip(hint);
+  }
+  return r;
+}
+
+float TextButtonWidth(const char* label) {
+  const char* t = tr(label);
+  return ImGui::CalcTextSize(t, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2;
+}
+
+void StatusDot(ImU32 col, bool pulse) {
+  const float h = ImGui::GetTextLineHeight(), r = 3.5f;
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const float baseOff = ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset;
+  ImGui::Dummy(ImVec2(r * 2 + 2, h));
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  // on the text's line: a frame-aligned line (AlignTextToFramePadding) starts its text lower
+  const ImVec2 c(p.x + r + 1, p.y + baseOff + h * 0.5f);
+  if (pulse) {
+    const float k = 0.5f + 0.5f * static_cast<float>(std::sin(ImGui::GetTime() * 4.0));
+    dl->AddCircleFilled(c, r + 2.5f * k, theme::withAlpha(col, 0.25f * (1 - k)), 16);
+  }
+  dl->AddCircleFilled(c, r, col, 16);
+  ImGui::SameLine(0, theme::kS1 + 2);
+}
+
 bool Segmented(const char* id, const char* const* labels, int count, int* index, float segWidth, float height,
                const char* const* hints) {
   const auto& P = pal();
@@ -704,6 +748,7 @@ struct SectionFrame {
   ImDrawListSplitter split;
   ImVec2 start;
   float right = 0, workMaxX = 0, contentMaxX = 0;
+  float width = 0;  // the width it takes in the layout (its border is drawn 1 px inside)
   std::string caption;
 };
 std::vector<std::unique_ptr<SectionFrame>> gSections;
@@ -715,7 +760,8 @@ void BeginSection(const char* caption, float width) {
   auto f = std::make_unique<SectionFrame>();
   f->start = ImGui::GetCursorScreenPos();
   const float avail = ImGui::GetContentRegionAvail().x;
-  f->right = f->start.x + (width > 0 ? std::min(width, avail) : avail) - 1;  // border stays inside the clip rect
+  f->width = width > 0 ? std::min(width, avail) : avail;
+  f->right = f->start.x + f->width - 1;  // border stays inside the clip rect
   f->caption = caption ? tr(caption) : "";
   f->workMaxX = w->WorkRect.Max.x;
   f->contentMaxX = w->ContentRegionRect.Max.x;
@@ -740,9 +786,11 @@ void EndSection() {
   w->WorkRect.Max.x = f->workMaxX;
   w->ContentRegionRect.Max.x = f->contentMaxX;
   const ImVec2 mx(f->right, ImGui::GetItemRectMax().y);
-  // Reserve the full panel width (fill panels keep auto-resizing windows stable).
+  // Reserve the full panel width (fill panels keep auto-resizing windows stable). J-111h: the whole
+  // width it was given, not the border's: one pixel less made an auto-resizing window (AlwaysAutoResize,
+  // sizes its width to its content) one pixel narrower every frame, down to its minimum width.
   ImGui::SetCursorScreenPos(ImVec2(f->start.x, mx.y));
-  ImGui::Dummy(ImVec2(f->right - f->start.x, 0));
+  ImGui::Dummy(ImVec2(f->width, 0));
   f->split.SetCurrentChannel(w->DrawList, 0);
   const auto& P = pal();
   ImDrawList* dl = w->DrawList;

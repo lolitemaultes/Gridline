@@ -55,5 +55,7 @@ T jsonInt(double v) {
 bool jsonParse(const std::string& src, Json& out, size_t* errPos = nullptr);
 // Serializes with deterministic key order (std::map) and stable formatting.
 std::string jsonStringify(const Json& v, int indent = 2);
+// J-111: one line, no spaces, keys escaped too (wire formats, signatures, codes).
+std::string jsonCompact(const Json& v);
 
 }  // namespace gl

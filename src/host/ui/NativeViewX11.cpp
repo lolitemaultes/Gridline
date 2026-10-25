@@ -16,13 +16,18 @@
 // Gridline's own window as before (SDL, PluginWindow.cpp routeKey).
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <dlfcn.h>
+#include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <initializer_list>
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
 #include "NativeView.h"
+#include "../../core/UiScale.h"
 
 namespace gl::host::native {
 
@@ -232,6 +237,49 @@ std::string xResources(const Window& w) {
   return r ? std::string(r) : std::string();
 }
 
+PointerSize pointerSize(const Window& w) {
+  PointerSize r;
+  double size = 0;
+  // 1. the X resource database (what the desktop writes for the X clients: device pixels)
+  if (w.display) {
+    const std::string res = xResources(w);
+    if (const int n = uiscale::parseXcursorSize(res.c_str()); n > 0) size = n, r.source = "Xcursor.size " + std::to_string(n);
+  }
+  // 2. the environment (sessions set it for every client, Wayland ones too)
+  if (size <= 0)
+    if (const char* e = std::getenv("XCURSOR_SIZE"); e && *e) {
+      const int n = std::atoi(e);
+      if (n >= 8 && n <= 512) size = n, r.source = "XCURSOR_SIZE " + std::to_string(n);
+    }
+  // 3. GNOME's setting (logical pixels; asked once, gsettings reads dconf without a session bus)
+  if (size <= 0) {
+    static int gnome = -1;
+    if (gnome < 0) {
+      gnome = 0;
+      if (std::getenv("GRIDLINE_NO_GSETTINGS") == nullptr)
+        if (FILE* f = popen("gsettings get org.gnome.desktop.interface cursor-size 2>/dev/null", "r")) {
+          char buf[64] = {0};
+          if (std::fgets(buf, sizeof buf, f)) {
+            const char* p = buf;
+            while (*p && (*p < '0' || *p > '9')) ++p;  // "int32 24" or "24"
+            const int n = std::atoi(p);
+            if (n >= 8 && n <= 512) gnome = n;
+          }
+          pclose(f);
+        }
+    }
+    if (gnome > 0) {
+      double k = 1;
+      if (const char* g = std::getenv("GDK_SCALE"); g && *g && w.display) k = std::max(1.0, std::atof(g));  // X11: device pixels
+      size = gnome * k;
+      r.source = "GNOME cursor-size " + std::to_string(gnome);
+    }
+  }
+  if (size <= 0) r.source = "default 24";
+  r.arrowH = uiscale::pointerArrowHeight(uiscale::PointerSystem::Unix, size, 1.0);
+  return r;
+}
+
 void* createContainer(const Window& w, const layout::Rect& r) {
   if (!w.handle) return nullptr;
   const Xlib& x = xlib();
@@ -316,10 +364,17 @@ void* devTestKeyView(void*, int) { return nullptr; }
 bool devSendKey(void*, uint16_t, bool, uint32_t, const char*) { return false; }
 DrawStats takeDrawStats() { return {}; }
 void devDrag(const Window&, void*, int, int, double) {}
+void devPostMouse(const Window&, int, double, double) {}
+void orderAbove(const Window&, const Window&) {}
+void devLiveResize(const Window&, double, double, int) {}
+void devPerformClose(const Window&) {}
+// J-116: X11 has no modal resize loop: ConfigureNotify arrives in the event pump, which returns.
+bool inModalSizeLoop() { return false; }
 bool frameClockStart(const Window&) { return false; }
 void frameClockFollow(const Window&) {}
 void frameClockWait() {}
 void frameClockStop() {}
+void keepAwake(bool) {}
 
 }  // namespace gl::host::native
 #endif

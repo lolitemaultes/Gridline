@@ -7,6 +7,8 @@
 #include <cstdint>
 #include "../../third_party/imgui/imgui.h"
 
+struct ImGuiWindow;
+
 namespace gl::ui {
 
 // Height of what follows a scrolling child at the bottom of a dialog: two kS1
@@ -54,8 +56,21 @@ void WorkArea(ImVec2& areaMin, ImVec2& areaMax);
 // Right after Begin(): the current window is clamped from now on, before each
 // frame's layout (and at once on the frame it appears).
 void TrackWindowInViewport();
-// Right after ImGui::NewFrame(), before any Begin(): clamps the tracked windows.
+// Right after ImGui::NewFrame(), before any Begin(): keeps the tracked windows and
+// every floating panel or editor (the channel rack, the mixer or piano roll undocked,
+// plugin editors, floating dock nodes) in the work area (J-114: not the detached ones,
+// the OS moves those). J-117: an elastic boundary (core/WindowRubber.h): a window
+// dragged past an edge follows with growing resistance and springs back inside once
+// it is let go or the work area shrinks; one that just opened is placed at once.
+// Popups, menus, tooltips and docked windows are never touched.
 void ClampTrackedWindows();
+// J-117: the boundary stretches and springs (Settings > Interface "Elastic edges",
+// off under reduced motion) or is a hard edge. On by default.
+void SetWindowRubber(bool elastic);
+// J-114: right after Begin() of a window that never docks (a plugin or effect editor): it still
+// gets the pop-out / dock-back title-bar button.
+void MarkDetachable();
+bool IsMarkedDetachable(const ImGuiWindow* w);
 
 // Two-column form: the x (from the window's content start) where controls
 // begin, so the widest label fits with `gap` to spare, never less than `minX`
@@ -67,5 +82,8 @@ void FormLabelFit(const char* label, float x, ImU32 col, float gap = 12.0f);
 // Text fitted to `maxW` with an ellipsis; when cut, hovering shows the full
 // text. Uses the frame-padding baseline when `framed`. Returns true when cut.
 bool TextFit(const char* text, float maxW, ImU32 col, bool framed = false);
+// TextFit for paths: the ellipsis goes in the middle, so the root and the last
+// folders stay readable; when cut, hovering shows the whole path.
+bool PathFit(const char* text, float maxW, ImU32 col, bool framed = false);
 
 }  // namespace gl::ui

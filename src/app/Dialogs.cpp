@@ -1,5 +1,6 @@
 // Gridline — dialogs (file, settings, project info, export, history, about,
 // shortcuts, unsaved changes) and global keyboard shortcuts.
+#include "CollabUi.h"
 #include "DisplayConfirmUi.h"
 #include "GridlineVersion.h"
 #include <algorithm>
@@ -36,6 +37,7 @@
 #include "UpdateUi.h"
 #include "Widgets.h"
 #include "Windows.h"
+#include "Viewports.h"
 #include "../core/WheelRoute.h"
 #include "../core/Platform.h"
 
@@ -255,13 +257,14 @@ void settingsWindow(App& a) {
   }
   // J-24 appended General, Files and Debug (tab indices 0..4 stay as they were).
   // J-55 appended Shortcuts and Theme.
-  const char* pagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations")};
+  const char* pagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations"), i18n::N_("Collaboration")};
   const char* blurbs[] = {i18n::N_("Output and input devices, sample rate, buffer and recording"), i18n::N_("Controllers, keyboards and MIDI out"),
                           i18n::N_("Defaults for new projects"), i18n::N_("Automatic backups, autosave and restoring a backup"), i18n::N_("Theme, size and hints"),
                           i18n::N_("Startup, default template, language and updates"), i18n::N_("Folders and scripting"), i18n::N_("Log and script console"),
                           i18n::N_("Every keyboard shortcut: search, change, reset"), i18n::N_("Dark, light or the system's choice, accent colour and contrast"),
-                          i18n::N_("Let AI assistants (MCP clients) inspect and edit the project")};
-  constexpr int kPages = 11;
+                          i18n::N_("Let AI assistants (MCP clients) inspect and edit the project"),
+                          i18n::N_("Your name, contact and picture for collaborators, identity and connection")};
+  constexpr int kPages = 12;
   const char* pages[kPages];
   for (int i = 0; i < kPages; ++i) pages[i] = i18n::tr(pagesEn[i]);
   page = std::clamp(page, 0, kPages - 1);
@@ -413,6 +416,7 @@ void settingsWindow(App& a) {
         a.doc.setMaxUndoLevels(static_cast<size_t>(levels));
       }
       ui::EndSection();
+      collabui::projectSection(a);  // J-111
     }
     if (page == 3) {
       static const char* freq[] = {i18n::N_("Never (remind every 10 minutes)"), i18n::N_("Rarely (every 15 minutes)"), i18n::N_("Occasionally (every 10 minutes)"),
@@ -486,6 +490,18 @@ void settingsWindow(App& a) {
       formLabel("Status bar");
       if (ImGui::Checkbox(i18n::tr("Show hints for the control under the mouse"), &hints)) st.set("ui.showHints", hints);
       hintSettingsPanel(a, fieldW);  // J-24
+      // J-113: windows dragged out of the main window become windows of their own.
+      bool detach = st.getBool("ui.detachWindows") && viewports::available();
+      formLabel("Windows");
+      ImGui::BeginDisabled(!viewports::available());
+      if (ImGui::Checkbox(i18n::tr("Allow windows outside the main window"), &detach)) st.set("ui.detachWindows", detach);
+      ImGui::EndDisabled();
+      ui::Hint("Drag a window by its title bar out of Gridline, onto another monitor if you like. "
+               "Off: every window stays inside the main window");
+      if (!viewports::available()) {
+        formLabel("");
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(viewports::unavailableReason().c_str()));
+      }
       ui::EndSection();
       // J-67: motion (smooth snapping of drags, smooth scrolling, elastic edges).
       ui::BeginSection("MOTION");
@@ -586,6 +602,7 @@ void settingsWindow(App& a) {
     if (page == 6) fileSettingsPage(a, fieldW);
     if (page == 7) debugSettingsPage(a, fieldW);
     if (page == 10) mcpui::settingsPage(a, fieldW);  // SC-07
+    if (page == 11) collabui::settingsPage(a, fieldW);  // J-111
   }
   ImGui::EndChild();
   ImGui::End();
@@ -618,6 +635,7 @@ void infoWindow(App& a) {
     if (ch) v = buf, changed = true;
   };
   ui::BeginSection("PROJECT", 464);
+  collabui::projectNameRow(a, 120);  // J-111f: a collaborative project's shared name (Rename...)
   field("Title", info.title);
   field("Author", info.author);
   field("Genre", info.genre);

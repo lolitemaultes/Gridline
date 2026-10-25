@@ -2,10 +2,14 @@
 #import <AppKit/AppKit.h>
 #include <dlfcn.h>
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <map>
 #include <set>
+#include <string>
+#include <vector>
 #include "NativeView.h"
+#include "../../core/UiScale.h"
 
 // Container view for a plugin's interface: flipped is irrelevant to plugins
 // (they place their own view at the origin), but it must not let the window
@@ -173,12 +177,79 @@ void keepAbove(const Window& child, const Window& parent, bool on) {
   }
 }
 
+void orderAbove(const Window& w, const Window& ref) {
+  if (!w.handle || !ref.handle || w.handle == ref.handle) return;
+  NSWindow* c = (NSWindow*)w.handle;
+  if (![c isVisible]) return;
+  [c orderWindow:NSWindowAbove relativeTo:[(NSWindow*)ref.handle windowNumber]];
+}
+
+bool inModalSizeLoop() {
+  // J-116: AppKit's live-resize tracking runs inside the event pump (the mouse-down on a window
+  // edge does not return until the release); SDL reports windowDidResize: and its 60 Hz
+  // live-resize timer (EXPOSED) from in there.
+  for (NSWindow* w in [NSApp windows])
+    if ([w inLiveResize]) return true;
+  return false;
+}
+
 double backingScale(const Window& w) {
   if (!w.handle) return 1.0;
   return [(NSWindow*)w.handle backingScaleFactor];
 }
 
 std::string xResources(const Window&) { return {}; }  // X11 only
+
+PointerSize pointerSize(const Window&) {
+  PointerSize r;
+  double mult = 1.0;  // System Settings > Accessibility > Display > Pointer size
+  if (CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("mouseDriverCursorSize"), CFSTR("com.apple.universalaccess"))) {
+    double d = 0;
+    if (CFGetTypeID(v) == CFNumberGetTypeID() && CFNumberGetValue(static_cast<CFNumberRef>(v), kCFNumberDoubleType, &d) && d >= 1 && d <= 4) mult = d;
+    CFRelease(v);
+  }
+  @autoreleasepool {
+    NSImage* img = [[NSCursor arrowCursor] image];
+    const NSSize sz = img ? [img size] : NSZeroSize;
+    double visible = 0;
+    if (sz.width >= 4 && sz.height >= 4 && sz.width <= 256 && sz.height <= 256) {
+      // the visible part of the image (the arrow and its outline, not the room for the shadow)
+      const int k = 4;  // samples per point
+      const int W = static_cast<int>(std::ceil(sz.width * k)), H = static_cast<int>(std::ceil(sz.height * k));
+      std::vector<unsigned char> px(static_cast<size_t>(W) * static_cast<size_t>(H) * 4, 0);
+      CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+      CGContextRef ctx = CGBitmapContextCreate(px.data(), static_cast<size_t>(W), static_cast<size_t>(H), 8, static_cast<size_t>(W) * 4, cs,
+                                               kCGImageAlphaPremultipliedLast);
+      CGColorSpaceRelease(cs);
+      if (ctx) {
+        NSGraphicsContext* g = [NSGraphicsContext graphicsContextWithCGContext:ctx flipped:NO];
+        [NSGraphicsContext saveGraphicsState];
+        [NSGraphicsContext setCurrentContext:g];
+        [img drawInRect:NSMakeRect(0, 0, W, H) fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1.0];
+        [NSGraphicsContext restoreGraphicsState];
+        CGContextRelease(ctx);
+        int top = -1, bottom = -1;
+        for (int y = 0; y < H; ++y)
+          for (int x = 0; x < W; ++x)
+            if (px[(static_cast<size_t>(y) * static_cast<size_t>(W) + static_cast<size_t>(x)) * 4 + 3] >= 128) {
+              if (top < 0) top = y;
+              bottom = y;
+              break;
+            }
+        if (top >= 0) visible = static_cast<double>(bottom - top + 1) / k;
+      }
+    }
+    if (visible >= 8) {
+      r.arrowH = visible * mult;
+      r.source = "NSCursor arrow image";
+    } else {
+      r.arrowH = uiscale::pointerArrowHeight(uiscale::PointerSystem::MacOS, sz.height, mult);
+      r.source = sz.height > 0 ? "NSCursor image size" : "macOS default";
+    }
+  }
+  if (mult > 1.0) r.source += " x accessibility pointer size " + std::to_string(mult).substr(0, 4);
+  return r;
+}
 
 long windowNumber(const Window& w) {
   if (!w.handle) return -1;

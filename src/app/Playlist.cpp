@@ -8,6 +8,8 @@
 #include <limits>
 #include <map>
 #include <unordered_map>
+#include "CollabUi.h"
+#include "CursorAnchor.h"
 #include "../core/I18n.h"
 #include "Keys.h"
 #include "ExportUi.h"
@@ -132,13 +134,38 @@ bool gestureAnimates(ClipGesture::Kind k) {
   return k == ClipGesture::Move || k == ClipGesture::Resize || k == ClipGesture::Trim || k == ClipGesture::Slip || k == ClipGesture::Paint;
 }
 
+// J-118: an audio clip's fades along x as drawn (each fade's span in screen
+// px, the curve of fadePath below).
+struct FadeGeom {
+  float inXa = 0, inXb = 0, outXa = 0, outXb = 0;
+  EdgeFade in, out;
+  // Level (0..1) at x from the edges that crossfade with another clip (other
+  // edges and the rest of the clip: 1), the curve the clip plays.
+  float xfGain(float x) const {
+    double g = 1.0;
+    if (in.crossfade && in.len > 0 && inXb - inXa > 0.5f && x < inXb)
+      g *= fadeGain(std::clamp(static_cast<double>((x - inXa) / (inXb - inXa)), 0.0, 1.0), in.shape, in.tension);
+    if (out.crossfade && out.len > 0 && outXb - outXa > 0.5f && x > outXa)
+      g *= fadeGain(std::clamp(static_cast<double>((outXb - x) / (outXb - outXa)), 0.0, 1.0), out.shape, out.tension);
+    return static_cast<float>(std::clamp(g, 0.0, 1.0));
+  }
+};
+
 // Clip rectangles drawn this frame, in drawing (stacking) order (J-37 / J-38).
 struct DrawnClip {
-  int track;
-  float x0, x1, y0, y1, body;  // body: top of the body (below the title bar)
-  size_t ci;                   // playlist index
-  ImU32 rim;
-  bool sel;
+  int track = 0;
+  float x0 = 0, x1 = 0, y0 = 0, y1 = 0, body = 0;  // body: top of the body (below the title bar)
+  size_t ci = 0;                                  // playlist index
+  ImU32 rim = 0;
+  bool sel = false;
+  // J-118: what a crossfade partner lying on this clip needs to redraw its
+  // part of the overlap (the clip as drawn, its colours and fades).
+  Clip clip;
+  float clipX0 = 0;  // x of the clip start (waveform origin)
+  ImU32 bodyCol = 0, headCol = 0, ink = 0;
+  FadeGeom fade;
+  bool audio = false, glide = false;
+  int xfBelow = -1;  // index (drawn list) of the clip this one crossfades on, blended (-1: none)
 };
 
 // Notes (pitch-scaled) from every channel, then steps as ticks at the bottom,
@@ -265,8 +292,10 @@ struct AudioMap {
   double at(double t) const { return sync ? audioStart + (t - start) * syncScale : audioStart + (tm.secondsAt(t) - startSec) * speed; }
 };
 
+// J-118: with `xf`, each column's opacity follows the clip's crossfade level
+// there (a waveform fading out under, or into, its crossfade partner).
 void drawWaveform(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
-                  float pxPerTick, float visX0, float visX1, ImU32 col) {
+                  float pxPerTick, float visX0, float visX1, ImU32 col, const FadeGeom* xf = nullptr) {
   SamplePtr smp = sampleCache().request(ch.plugin.data);  // J-30: never waits for a decode (drawn once ready)
   if (!smp || smp->frames() < 2) return;
   const Peaks& pk = peaksFor(smp);
@@ -293,7 +322,8 @@ void drawWaveform(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& 
     float lo = 0, hi = 0;
     for (long k = b0; k < b1; ++k) lo = std::min(lo, pk.lo[static_cast<size_t>(k)]), hi = std::max(hi, pk.hi[static_cast<size_t>(k)]);
     const float g = c.gain;  // J-79: the waveform follows the clip's gain (louder clips draw taller, clipped at the body)
-    dl->AddLine(ImVec2(x + 0.5f, mid - std::clamp(hi * g, -1.f, 1.f) * half), ImVec2(x + 0.5f, mid - std::clamp(lo * g, -1.f, 1.f) * half + 1), col);
+    const ImU32 cc = xf ? theme::withAlpha(col, 0.1f + 0.9f * xf->xfGain(x + 0.5f)) : col;
+    dl->AddLine(ImVec2(x + 0.5f, mid - std::clamp(hi * g, -1.f, 1.f) * half), ImVec2(x + 0.5f, mid - std::clamp(lo * g, -1.f, 1.f) * half + 1), cc);
   }
 }
 
@@ -594,6 +624,8 @@ void arrangementClipMenu(App& a, ObjectId id) {
   }
 }
 
+PlaylistGeometry devGeom;  // J-118 dev check
+
 // ---- current clip source (J-28) ----
 using browserui::ClipSrcPayload;
 
@@ -611,8 +643,25 @@ pltools::Source currentSource(App& a) {
 void setSource(App& a, const pltools::Source& src) {
   a.playlist.srcKind = src.kind;
   a.playlist.srcId = src.id;
+  a.playlist.brushId = kNoId;  // J-118: a source picked by itself places its natural clip
   if (src.kind == ClipKind::Pattern) a.selectPattern(src.id);
   if (src.kind == ClipKind::Audio) a.selectChannel(src.id);
+}
+
+// J-118: clicking a clip makes it the brush: draw / paint place copies of it.
+void setSourceFromClip(App& a, const Clip& c) {
+  setSource(a, pltools::sourceOf(c));
+  a.playlist.brushId = c.id;
+  a.playlist.brush = c;
+}
+
+// The brush for `src` (the clicked clip as it is now, else as it was when
+// clicked), nullptr when draw / paint place the source's natural clip.
+const Clip* currentBrush(App& a, const pltools::Source& src) {
+  PlaylistState& st = a.playlist;
+  if (st.brushId == kNoId) return nullptr;
+  if (const Clip* live = a.doc.song().clip(st.brushId); live && pltools::sourceOf(*live) == pltools::sourceOf(st.brush)) st.brush = *live;
+  return pltools::sourceOf(st.brush) == src ? &st.brush : nullptr;
 }
 
 void openSource(App& a, const pltools::Source& src) {
@@ -732,6 +781,8 @@ void deleteSourceItems(App& a, ClipKind kind, ObjectId id) {
 }
 
 }  // namespace
+
+const PlaylistGeometry& playlistGeometry() { return devGeom; }
 
 // J-82: deleting clip sources (picker menus, Delete in the picker). Sources
 // the arrangement uses ask first; unused ones go at once. One undo step.
@@ -948,6 +999,7 @@ void drawPlaylist(App& a) {
       for (int k = 0; k < 3; ++k) {
         ImGui::PushID(k);
         const ImVec2 c0(q0.x + 2 + static_cast<float>(k) * tw, ty + 2), c1(c0.x + tw, ty + th - 2);
+        devGeom.tabX[k] = (c0.x + c1.x) * 0.5f, devGeom.tabY = (c0.y + c1.y) * 0.5f;
         ImGui::SetCursorScreenPos(c0);
         if (ImGui::InvisibleButton("##tab", ImVec2(tw, th - 4))) st.pickerTab = k;
         const bool hov = ImGui::IsItemHovered(), on = st.pickerTab == k;
@@ -970,10 +1022,12 @@ void drawPlaylist(App& a) {
     if (selTab != st.pickerTab) st.pickerSel.clear(), selTab = st.pickerTab;
     static ObjectId anchor = kNoId;  // Shift+click range start
     const std::vector<ObjectId> rows = pickerRows(s, st.pickerTab);
+    devGeom.rows.clear();
     auto pickerRow = [&](const pltools::Source& ps, const std::string& name, Rgb color, const char* hint, const std::function<void()>& menu) {
       ImVec2 q = ImGui::GetCursorScreenPos();
       const bool sel = currentSource(a) == ps || st.pickerSel.count(ps.id) > 0;
       float w = ImGui::GetContentRegionAvail().x;
+      devGeom.rows.push_back({static_cast<unsigned>(ps.id), q.x + w * 0.5f, q.y + rowH * 0.5f});
       if (ImGui::InvisibleButton("##pp", ImVec2(w, rowH))) {
         st.pickerFocus = true;
         if (io.KeyShift && anchor != kNoId) {  // range from the anchor
@@ -1125,6 +1179,9 @@ void drawPlaylist(App& a) {
     tr = std::clamp(tr, 0, std::max(0, nTracks - 1));
     return nTracks ? trackY[static_cast<size_t>(tr) + 1] - trackY[static_cast<size_t>(tr)] : trackH;
   };
+  devGeom.x0 = gMin.x - st.scrollX, devGeom.pxPerTick = st.pxPerTick, devGeom.valid = true;
+  devGeom.trackTop.clear(), devGeom.trackH.clear();
+  for (int i = 0; i < nTracks; ++i) devGeom.trackTop.push_back(yOf(i)), devGeom.trackH.push_back(hOf(i));
   auto tickAt = [&](float x) { return timeline::tickAtPx(x - gMin.x + st.scrollX, st.pxPerTick); };
   auto trackAt = [&](float y) {
     float yy = y - gMin.y + st.scrollY;
@@ -1218,6 +1275,20 @@ void drawPlaylist(App& a) {
   }
   scrollui::step(st.axX, st.scrollX, wheelX, notchX, 0.0f, maxScrollX);
   scrollui::step(st.axY, st.scrollY, wheelY, notchY, 0.0f, maxScrollY);
+  if (canchor::collecting()) {  // J-111d: collaborators' pointers in song time and tracks
+    const float pxT = std::max(1e-6f, st.pxPerTick);
+    canchor::publish(canchor::PlaylistRuler, 0, 0, ImVec2(gMin.x - st.scrollX, origin.y), ImVec2(pxT, rulerH), ImVec2(gMin.x, origin.y),
+                     ImVec2(gMax.x, gMin.y));
+    for (int tr = trackAt(gMin.y); tr < nTracks && yOf(tr) < gMax.y; ++tr) {
+      const float y = yOf(tr), h = hOf(tr);
+      if (h < 1) continue;  // folded into its group
+      const uint32_t k = static_cast<uint32_t>(tr);
+      canchor::publish(canchor::PlaylistTrack, k, 0, ImVec2(gMin.x - st.scrollX, y), ImVec2(pxT, h), ImVec2(gMin.x, std::max(y, gMin.y)),
+                       ImVec2(gMax.x, std::min(y + h, gMax.y)));
+      canchor::publish(canchor::PlaylistHeader, k, 0, ImVec2(origin.x, y), ImVec2(headW, h), ImVec2(origin.x, std::max(y, gMin.y)),
+                       ImVec2(gMin.x, std::min(y + h, gMax.y)));
+    }
+  }
 
   // Background & grid: alternate bar shading, then track separators and bar/beat lines.
   dl->PushClipRect(gMin, gMax, true);
@@ -1330,6 +1401,9 @@ void drawPlaylist(App& a) {
       pts[k] = ImVec2(xa + (xb - xa) * f, yb - (yb - yt) * static_cast<float>(g));
     }
   };
+  // J-118: the faint fade curves of a blended crossfade (in the clip's content colour).
+  auto xfCurve = [&](ImU32 ink) { return theme::withAlpha(P.dark ? theme::mix(ink, P.paper, 0.35f) : theme::mix(ink, P.ink, 0.25f), 0.55f); };
+  static const ClipFades kNoFades{};
   // Shade above the curve (the part the fade removes), then the curve itself.
   auto drawFade = [&](const ImVec2* pts, float yt, ImU32 shade, ImU32 line, float thick) {
     for (int k = 0; k + 1 < kFadePts; ++k)
@@ -1388,6 +1462,30 @@ void drawPlaylist(App& a) {
     const ImU32 rim = sel ? P.hot : theme::mix(base, P.ink, muted ? 0.7f : 0.45f);
     ImVec2 a0(std::round(x0) + 1, y + 1), a1(std::max(std::round(x0) + 5, std::round(x1) - 1), y + th - 1);
     const float headH = std::min(15.0f, (a1.y - a0.y) * 0.45f);
+    // J-38: fades as they play (automatic crossfades included).
+    const ClipFades& fd = c.kind == ClipKind::Audio && ci < ccache.fades.size() ? ccache.fades[ci] : kNoFades;
+    const double sec0 = tempoMap.secondsAt(static_cast<double>(c.start));
+    const double dur = tempoMap.secondsAt(static_cast<double>(c.start + len)) - sec0;
+    auto xAtSec = [&](double sec) { return xOfD(tempoMap.tickAtSeconds(sec0 + sec)); };
+    FadeGeom fg;
+    fg.in = fd.in, fg.out = fd.out;
+    fg.inXa = a0.x, fg.inXb = std::min(xAtSec(fd.in.len), a1.x);
+    fg.outXa = std::max(xAtSec(dur - fd.out.len), a0.x), fg.outXb = a1.x;
+    // J-118: a crossfade with the clip beneath (its partner, ending inside
+    // this clip): the overlap shows both clips blended by their fade levels,
+    // one joined cell.
+    int xfBelow = -1;
+    if (c.kind == ClipKind::Audio && fd.in.crossfade && fd.in.partner != kNoId && !gliding) {
+      int budget = 64;
+      for (size_t k = drawn.size(); k-- > 0 && budget-- > 0;) {
+        const DrawnClip& p = drawn[k];
+        if (p.track != lc.track || p.clip.id != fd.in.partner) continue;
+        if (p.audio && !p.glide && p.fade.out.crossfade && p.fade.out.partner == c.id && p.x0 < a0.x && p.x1 > a0.x && p.x1 < a1.x &&
+            std::fabs(p.y0 - a0.y) < 0.5f && std::fabs(p.y1 - a1.y) < 0.5f)
+          xfBelow = static_cast<int>(k);
+        break;
+      }
+    }
     // J-38: stacking. Where this clip lies over clips drawn before it on the
     // track, the grid is redrawn under it (the clip beneath no longer shows
     // through as a muddle of two bodies) and a soft shadow falls from its edge
@@ -1400,6 +1498,10 @@ void drawPlaylist(App& a) {
         if (p.track != lc.track || p.x1 <= a0.x || p.x0 >= a1.x) continue;
         const float ox0 = std::max(p.x0, a0.x), ox1 = std::min(p.x1, a1.x), oy0 = std::max(p.y0, a0.y), oy1 = std::min(p.y1, a1.y);
         if (oy1 - oy0 < 1.0f) continue;
+        if (static_cast<int>(k) == xfBelow) {  // J-118: cleared to the grid (its rim too), redrawn blended below
+          gridPatch(ox0, ox1 + 1.0f, a0.y, a1.y);
+          continue;
+        }
         gridPatch(ox0, ox1, a0.y, a1.y);
         constexpr float kShadow = 7.0f;
         if (a0.x > p.x0 + 1 && a0.x < p.x1)  // our left edge over the clip beneath
@@ -1408,12 +1510,92 @@ void drawPlaylist(App& a) {
           dl->AddRectFilledMultiColor(ImVec2(a1.x, oy0), ImVec2(std::min(p.x1, a1.x + kShadow), oy1), shadow, clear, clear, shadow);
       }
     }
-    dl->AddRectFilled(ImVec2(a0.x, a0.y + headH), a1, body, theme::kRadiusSm, ImDrawFlags_RoundCornersBottom);
-    dl->AddRectFilled(a0, ImVec2(a1.x, a0.y + headH), head, theme::kRadiusSm, ImDrawFlags_RoundCornersTop);
-    drawn.push_back({lc.track, a0.x, a1.x, a0.y, a1.y, a0.y + headH, ci, rim, sel});
+    // Clip content (notes, waveform, curve): lighter than the colour on dark
+    // slate, darker than it on the light variant's pastel bodies.
+    const ImU32 ink = P.dark ? theme::mix(base, P.paper, muted ? 0.0f : 0.45f) : theme::mix(base, P.ink, muted ? 0.15f : 0.42f);
+    // J-118: this clip's share of a crossfade blend with `p` at x (by the levels playing there).
+    auto xfWeight = [&](const DrawnClip& p, float x) {
+      const float gp = p.fade.xfGain(x), gq = fg.xfGain(x);
+      return gp + gq > 1e-4f ? gq / (gp + gq) : 0.5f;
+    };
+    // The crossfade's overlap cut into strips that small every blend reads smooth.
+    auto xfStrips = [&](const DrawnClip& p, const std::function<void(float, float, float, float)>& fn) {
+      const float vx0 = std::max(a0.x, gMin.x - 2), vx1 = std::min(p.x1, gMax.x + 2);
+      const int n = std::clamp(static_cast<int>(std::ceil((vx1 - vx0) / 3.0f)), 1, 96);
+      float wl = xfWeight(p, vx0);
+      for (int k = 0; k < n && vx1 > vx0; ++k) {
+        const float xa = vx0 + (vx1 - vx0) * static_cast<float>(k) / static_cast<float>(n);
+        const float xb = vx0 + (vx1 - vx0) * static_cast<float>(k + 1) / static_cast<float>(n);
+        const float wr = xfWeight(p, xb);
+        fn(xa, xb, wl, wr);
+        wl = wr;
+      }
+    };
+    if (xfBelow < 0) {
+      dl->AddRectFilled(ImVec2(a0.x, a0.y + headH), a1, body, theme::kRadiusSm, ImDrawFlags_RoundCornersBottom);
+      dl->AddRectFilled(a0, ImVec2(a1.x, a0.y + headH), head, theme::kRadiusSm, ImDrawFlags_RoundCornersTop);
+    } else {
+      // J-118: crossfade. Past the overlap the clip is drawn as usual; across
+      // it, body and title bar run on from the clip beneath as one cell, their
+      // colour moving from its colour to this clip's as the levels cross. Both
+      // waveforms show, each as loud as it plays (opacity follows its fade).
+      const DrawnClip& p = drawn[static_cast<size_t>(xfBelow)];
+      const float ox0 = a0.x, ox1 = p.x1;
+      // (Cut at the overlap's end by the clip rectangle, so no anti-aliased
+      // edge leaves a seam where the blend below meets it.)
+      dl->PushClipRect(ImVec2(ox1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1), true);
+      dl->AddRectFilled(ImVec2(ox1 - 4, a0.y + headH), a1, body, theme::kRadiusSm, ImDrawFlags_RoundCornersBottomRight);
+      dl->AddRectFilled(ImVec2(ox1 - 4, a0.y), ImVec2(a1.x, a0.y + headH), head, theme::kRadiusSm, ImDrawFlags_RoundCornersTopRight);
+      dl->PopClipRect();
+      xfStrips(p, [&](float xa, float xb, float wl, float wr) {
+        const ImU32 bl = theme::mix(p.bodyCol, body, wl), br = theme::mix(p.bodyCol, body, wr);
+        const ImU32 hl = theme::mix(p.headCol, head, wl), hr = theme::mix(p.headCol, head, wr);
+        dl->AddRectFilledMultiColor(ImVec2(xa, a0.y + headH), ImVec2(xb, a1.y), bl, br, br, bl);
+        dl->AddRectFilledMultiColor(ImVec2(xa, a0.y), ImVec2(xb, a0.y + headH), hl, hr, hr, hl);
+      });
+      // The waveform beneath, fading out under this one.
+      const ImVec2 pb0(p.x0 + 3, p.body + 2), pb1(p.x1 - 3, p.y1 - 3);
+      if (pb1.y - pb0.y > 4)
+        if (const Channel* pch = s.channel(p.clip.source)) {
+          dl->PushClipRect(ImVec2(std::max(ox0, gMin.x), std::max(p.body, gMin.y)), ImVec2(std::min(ox1, gMax.x), std::min(a1.y, gMax.y)), true);
+          drawWaveform(dl, s, *pch, p.clip, tempoMap, pb0, pb1, p.clipX0, st.pxPerTick, gMin.x, gMax.x, p.ink, &p.fade);
+          dl->PopClipRect();
+        }
+    }
+    {
+      DrawnClip dc;
+      dc.track = lc.track, dc.x0 = a0.x, dc.x1 = a1.x, dc.y0 = a0.y, dc.y1 = a1.y, dc.body = a0.y + headH, dc.ci = ci, dc.rim = rim, dc.sel = sel;
+      dc.clip = c, dc.clipX0 = x0, dc.bodyCol = body, dc.headCol = head, dc.ink = ink, dc.fade = fg;
+      dc.audio = c.kind == ClipKind::Audio, dc.glide = gliding, dc.xfBelow = xfBelow;
+      drawn.push_back(dc);
+    }
     dl->AddLine(ImVec2(a0.x + 1, a0.y + 0.5f), ImVec2(a1.x - 1, a0.y + 0.5f), theme::withAlpha(P.paper, muted ? 0.08f : 0.28f));
     dl->AddLine(ImVec2(a0.x, a0.y + headH), ImVec2(a1.x, a0.y + headH), theme::withAlpha(P.ink, 0.35f));
-    dl->AddRect(a0, a1, rim, theme::kRadiusSm, 0, sel ? 2.0f : 1.0f);
+    if (xfBelow < 0) {
+      dl->AddRect(a0, a1, rim, theme::kRadiusSm, 0, sel ? 2.0f : 1.0f);
+    } else {
+      // J-118: the rim past the overlap; across it only its top and bottom
+      // lines, blended like the cell (no edge inside it). A selected clip
+      // still shows where it starts or ends.
+      const DrawnClip& p = drawn[static_cast<size_t>(xfBelow)];
+      dl->PushClipRect(ImVec2(p.x1, a0.y - 2), ImVec2(a1.x + 2, a1.y + 2), true);
+      dl->AddRect(a0, a1, rim, theme::kRadiusSm, 0, sel ? 2.0f : 1.0f);
+      dl->PopClipRect();
+      xfStrips(p, [&](float xa, float xb, float wl, float wr) {
+        const ImU32 rl = theme::mix(p.rim, rim, wl), rr = theme::mix(p.rim, rim, wr);
+        dl->AddRectFilledMultiColor(ImVec2(xa, a0.y), ImVec2(xb, a0.y + 1), rl, rr, rr, rl);
+        dl->AddRectFilledMultiColor(ImVec2(xa, a1.y - 1), ImVec2(xb, a1.y), rl, rr, rr, rl);
+      });
+      auto extent = [&](float edge) {
+        dl->AddLine(ImVec2(a0.x, a0.y + 1), ImVec2(p.x1, a0.y + 1), P.hot, 2.0f);
+        dl->AddLine(ImVec2(a0.x, a1.y - 1), ImVec2(p.x1, a1.y - 1), P.hot, 2.0f);
+        dl->AddLine(ImVec2(edge, a0.y), ImVec2(edge, a1.y), theme::withAlpha(P.hot, 0.8f), 1.5f);
+      };
+      if (sel) extent(a0.x + 0.75f);
+      if (p.sel) extent(p.x1 - 0.75f);
+    }
+    if (ImU32 fc = 0; const float fl = collabui::flash(a, "playlist/#" + std::to_string(c.id), &fc))  // J-111: a collaborator's change
+      dl->AddRect(ImVec2(a0.x - 1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1), theme::withAlpha(fc, fl), theme::kRadiusSm, 0, 2.5f);
     if (livePlaying) dl->AddRect(ImVec2(a0.x - 1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1), P.accent, theme::kRadiusSm, 0, 2.0f);
     if (liveWaiting)
       dl->AddRect(ImVec2(a0.x - 1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1),
@@ -1454,9 +1636,6 @@ void drawPlaylist(App& a) {
       theme::textEllipsis(dl, a.fontBold, std::min(theme::kFontCaption, headH - 2), ImVec2(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f)),
                           titleR - tx0 - (glyph ? 19 : 10), theme::contrastText(headSolid), title);
     const ImVec2 b0(a0.x + 3, a0.y + headH + 2), b1(a1.x - 3, a1.y - 3);
-    // Clip content (notes, waveform, curve): lighter than the colour on dark
-    // slate, darker than it on the light variant's pastel bodies.
-    const ImU32 ink = P.dark ? theme::mix(base, P.paper, muted ? 0.0f : 0.45f) : theme::mix(base, P.ink, muted ? 0.15f : 0.42f);
     const ImU32 mark = P.dark ? P.paper : theme::mix(base, P.ink, 0.6f);
     bool inside = hovered && io.MousePos.x >= a0.x && io.MousePos.x < a1.x && io.MousePos.y >= a0.y && io.MousePos.y < a1.y && io.MousePos.y >= gMin.y;
     if (loopGlyph) drawLoopGlyph(dl, ImVec2(std::min(a1.x, gMax.x) - 9, a0.y + headH * 0.5f), std::min(4.0f, headH * 0.32f),
@@ -1499,22 +1678,24 @@ void drawPlaylist(App& a) {
         if (c.id == gainGlideClip) {  // J-79: drawn at the gliding gain
           Clip wc = c;
           wc.gain = clipgain::fromDb(gainGlideDb);
-          drawWaveform(dl, s, *s.channel(c.source), wc, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink);
+          drawWaveform(dl, s, *s.channel(c.source), wc, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, xfBelow >= 0 ? &fg : nullptr);
         } else {
-          drawWaveform(dl, s, *s.channel(c.source), c, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink);
+          drawWaveform(dl, s, *s.channel(c.source), c, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, xfBelow >= 0 ? &fg : nullptr);
         }
       }
+      // J-111: the audio file is still arriving from a collaborator: silent placeholder with progress
+      if (float pr = 0; collabui::fileLoading(a, s.channel(c.source)->plugin.data, &pr))
+        collabui::drawLoading(dl, ImVec2(a0.x + 1, a0.y + headH), ImVec2(a1.x - 1, a1.y - 1), pr, false);
       // J-38: fades as they play (automatic crossfades included), with their curve shape.
-      const ClipFades& fd = ci < ccache.fades.size() ? ccache.fades[ci] : ClipFades{};
-      const double sec0 = tempoMap.secondsAt(static_cast<double>(c.start));
-      const double dur = tempoMap.secondsAt(static_cast<double>(c.start + len)) - sec0;
-      auto xAtSec = [&](double sec) { return xOfD(tempoMap.tickAtSeconds(sec0 + sec)); };
       const ImU32 shade = theme::withAlpha(P.ink, P.dark ? 0.30f : 0.16f);
       const ImU32 fline = P.dark ? theme::withAlpha(P.paper, 0.75f) : theme::mix(base, P.ink, 0.65f);
       ImVec2 pts[kFadePts];
       if (fd.in.len > 0 && b1.y - b0.y > 3) {
         fadePath(a0.x, std::min(xAtSec(fd.in.len), a1.x), b0.y, b1.y, fd.in, true, pts);
-        drawFade(pts, b0.y, shade, fline, fd.in.crossfade ? 1.6f : 1.2f);
+        if (xfBelow >= 0)  // J-118: a blended crossfade needs no shade: a faint curve
+          dl->AddPolyline(pts, kFadePts, xfCurve(ink), ImDrawFlags_None, 1.25f);
+        else
+          drawFade(pts, b0.y, shade, fline, fd.in.crossfade ? 1.6f : 1.2f);
       }
       if (fd.out.len > 0 && b1.y - b0.y > 3) {
         fadePath(std::max(xAtSec(dur - fd.out.len), a0.x), a1.x, b0.y, b1.y, fd.out, false, pts);
@@ -1617,13 +1798,25 @@ void drawPlaylist(App& a) {
         const DrawnClip& q = drawn[std::max(iu, iv)];  // drawn later: on top
         const float ox0 = std::max(p.x0, q.x0), ox1 = std::min(p.x1, q.x1);
         if (ox1 - ox0 < 1.0f) continue;
+        const Clip& pc = s.playlist[p.ci];
+        if (q.xfBelow >= 0 && &drawn[static_cast<size_t>(q.xfBelow)] == &p) {
+          // J-118: a blended crossfade: no outline of the clip beneath; its fade-out as a faint curve.
+          const EdgeFade& e = ccache.fades[p.ci].out;
+          const double pEnd = tempoMap.secondsAt(static_cast<double>(pc.start + ccache.len[p.ci]));
+          const float xa = std::max(p.x0, xOfD(tempoMap.tickAtSeconds(pEnd - e.len)));
+          if (p.x1 - xa > 2 && q.body < q.y1 - 6) {
+            ImVec2 pts[kFadePts];
+            fadePath(xa, p.x1, q.body + 2, std::min(p.y1, q.y1) - 3, e, false, pts);
+            dl->AddPolyline(pts, kFadePts, xfCurve(p.ink), ImDrawFlags_None, 1.25f);
+          }
+          continue;
+        }
         const ImU32 ghost = p.sel ? P.hot : theme::withAlpha(P.dark ? theme::mix(p.rim, P.paper, 0.55f) : p.rim, 0.85f);
         dashH(ox0, ox1, std::max(p.y0, q.y0) + 0.5f, ghost);
         dashH(ox0, ox1, std::min(p.y1, q.y1) - 0.5f, ghost);
         if (p.x1 > q.x0 + 1 && p.x1 < q.x1 - 1) dashV(p.x1 - 0.5f, std::max(p.y0, q.y0), std::min(p.y1, q.y1), ghost);
         if (p.x0 > q.x0 + 1 && p.x0 < q.x1 - 1) dashV(p.x0 + 0.5f, std::max(p.y0, q.y0), std::min(p.y1, q.y1), ghost);
         // Crossfade: the fade-out of the clip beneath, drawn over the clip on top.
-        const Clip& pc = s.playlist[p.ci];
         if (pc.kind == ClipKind::Audio && p.ci < ccache.fades.size() && ccache.fades[p.ci].out.len > 0 && q.body < q.y1 - 6 &&
             !clipAnim.contains(pc.id)) {
           const EdgeFade& e = ccache.fades[p.ci].out;
@@ -2583,15 +2776,15 @@ void drawPlaylist(App& a) {
         cg.kind = ClipGesture::Erase;
         group("delete clips");
       } else if (st.tool == Tool::Paint) {
-        if (hc) {  // painting starts from a clip: it becomes the source
-          setSource(a, pltools::sourceOf(*hc));
+        if (hc) {  // painting starts from a clip: it becomes the source (J-118: and the brush)
+          setSourceFromClip(a, *hc);
         }
         const pltools::Source ps = currentSource(a);
         if (pltools::sourceValid(s, ps)) {
           cg.kind = ClipGesture::Paint;
           cg.paintKind = ps.kind;
           cg.paintId = ps.id;
-          cg.paintLen = hc ? s.clipLength(*hc) : pltools::sourceLength(s, ps);
+          cg.paintLen = pltools::brushLength(s, ps, currentBrush(a, ps));
           cg.paintAnchor = hc ? hc->start : std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
           group("paint clips");
         }
@@ -2601,7 +2794,7 @@ void drawPlaylist(App& a) {
           st.selected.insert(hoverClip);
           st.selected = ops::expandClipGroups(s, st.selected);  // J-31: grouped clips are selected together
         }
-        setSource(a, pltools::sourceOf(*hc));  // clicking a clip makes its source current (FL)
+        setSourceFromClip(a, *hc);  // clicking a clip makes it (its source, as it is: J-118) current
         cg.kind = hoverEdge ? ClipGesture::Resize : hoverLeftEdge ? ClipGesture::Trim : ClipGesture::Move;
         // Shift+drag: copies of the selection are dragged, the originals stay
         // (Q-3: made once the pointer actually moves, so a Shift+click adds
@@ -2614,8 +2807,10 @@ void drawPlaylist(App& a) {
         const int tr = trackAt(m.y);
         ObjectId id = kNoId;
         group("add clip");
+        const Clip* brush = currentBrush(a, src);
+        const Clip brushCopy = brush ? *brush : Clip{};
         a.doc.editSong("add clip", [&](Song& x) {
-          Clip c = pltools::makeClip(x, src, tr, at);
+          Clip c = pltools::makeBrushClip(x, src, brush ? &brushCopy : nullptr, tr, at);
           c.id = x.allocateId();
           x.playlist.push_back(c);
           id = c.id;
@@ -2853,10 +3048,12 @@ void drawPlaylist(App& a) {
           if (!pltools::occupied(s, curTrack, t, cg.paintLen)) todo.push_back(t);
         if (todo.empty()) break;
         const Tick len = cg.paintLen;
+        const Clip* brush = currentBrush(a, ps);
+        const Clip brushCopy = brush ? *brush : Clip{};
         std::vector<Clip> painted;
         a.doc.editSong("paint clips", [&](Song& x) {
           for (Tick t : todo) {
-            Clip c = pltools::makeClip(x, ps, curTrack, t);
+            Clip c = pltools::makeBrushClip(x, ps, brush ? &brushCopy : nullptr, curTrack, t);
             if (c.kind != ClipKind::Pattern || len != x.clipLength(c)) c.length = len;
             c.id = x.allocateId();
             x.playlist.push_back(c);

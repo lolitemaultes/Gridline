@@ -124,6 +124,7 @@ void Document::reset(Song song) {
 }
 
 void Document::exec(CommandPtr cmd) {
+  if (beforeChange && groups_.empty() && !undo_.wouldMerge(*cmd)) beforeChange();
   ++revision_;
   if (!groups_.empty()) {
     cmd->apply(song_);
@@ -134,6 +135,7 @@ void Document::exec(CommandPtr cmd) {
 }
 
 void Document::beginGroup(const std::string& label) {
+  if (beforeChange && groups_.empty()) beforeChange();
   groups_.push_back(std::make_unique<GroupCommand>(label));
 }
 
@@ -160,13 +162,30 @@ void Document::cancelGroup() {
   ++revision_;
 }
 
+void Document::recordMark(const std::string& label) {
+  exec(std::make_unique<LambdaCommand>(label, [](Song&) {}, [](Song&) {}));
+}
+
+bool Document::stepHistory(int dir) {
+  if (!groups_.empty() || !undo_.stepPosition(dir)) return false;
+  ++revision_;
+  return true;
+}
+
+void Document::replaceSong(Song song) {
+  song_ = std::move(song);
+  ++revision_;
+}
+
 bool Document::undo() {
+  if (historyHook) return groups_.empty() && undo_.canUndo() && historyHook(-1);
   if (!groups_.empty() || !undo_.undo(song_)) return false;
   ++revision_;
   return true;
 }
 
 bool Document::redo() {
+  if (historyHook) return groups_.empty() && undo_.canRedo() && historyHook(1);
   if (!groups_.empty() || !undo_.redo(song_)) return false;
   ++revision_;
   return true;
@@ -174,6 +193,14 @@ bool Document::redo() {
 
 void Document::jumpTo(size_t position) {
   if (!groups_.empty()) return;
+  if (historyHook) {
+    if (position > undo_.size()) position = undo_.size();
+    while (undo_.position() > position && historyHook(-1)) {
+    }
+    while (undo_.position() < position && historyHook(1)) {
+    }
+    return;
+  }
   undo_.jumpTo(song_, position);
   ++revision_;
 }
@@ -298,7 +325,7 @@ void Document::editSong(const std::string& label, const std::function<void(Song&
 
 ObjectId Document::addChannel(const std::string& name, const std::string& pluginType, int index) {
   Channel c;
-  c.id = song_.nextId;  // allocated in apply so redo reproduces the same ID
+  c.id = song_.peekId();  // allocated in apply so redo reproduces the same ID
   c.name = name;
   c.color = paletteColor(song_.channels.size());
   c.plugin = defaultPluginState(pluginType);
@@ -489,7 +516,7 @@ ObjectId Document::addPattern(const std::string& name, int bars, int stepsPerBar
       static_cast<int>(song_.patterns.size()) >= kMaxPatterns)
     return kNoId;
   Pattern p;
-  p.id = song_.nextId;
+  p.id = song_.peekId();
   p.name = name;
   p.bars = bars;
   p.stepsPerBar = stepsPerBar;
@@ -628,7 +655,7 @@ bool Document::addNote(ObjectId pattern, ObjectId channel, const Note& note) {
 ObjectId Document::addClip(ObjectId pattern, int track, Tick start, Tick length) {
   if (!song_.pattern(pattern) || track < 0 || track >= kMaxPlaylistTracks || start < 0 || length < 0) return kNoId;
   Clip c;
-  c.id = song_.nextId;
+  c.id = song_.peekId();
   c.pattern = pattern;
   c.track = track;
   c.start = start;
@@ -731,7 +758,7 @@ bool Document::setPlaylistTrackCount(int count) {
 
 ObjectId Document::addMixerTrack() {
   if (static_cast<int>(song_.mixer.size()) > kMaxMixerInserts) return kNoId;
-  ObjectId id = song_.nextId;
+  ObjectId id = song_.peekId();
   editSong("add mixer track", [&](Song& s) {
     ensureMixer(s, 0);
     MixerTrack t;

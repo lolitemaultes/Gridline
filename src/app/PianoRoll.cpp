@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include "../core/I18n.h"
+#include "CursorAnchor.h"
 #include "Keys.h"
 #include "KeyLight.h"
 #include "J31Ui.h"
@@ -535,6 +536,17 @@ void drawPianoRoll(App& a) {
   }
   scrollui::step(st.axX, st.scrollX, wheelX, notchX, 0.0f, std::max(0.0f, viewTicks * st.pxPerTick - gridW * 0.5f));
   scrollui::step(st.axY, st.scrollY, wheelY, notchY, 0.0f, std::max(0.0f, 128 * st.rowHeight - gridH));
+  if (canchor::collecting()) {  // J-111d: collaborators' pointers in pattern time and keys (this pattern and channel)
+    const float pxT = std::max(1e-6f, st.pxPerTick), bottom = origin.y + avail.y;
+    const ImVec2 o(gridMin.x - st.scrollX, gridMin.y - st.scrollY);
+    canchor::publish(canchor::PianoGrid, patId, chId, o, ImVec2(pxT, rowH), gridMin, gridMax);
+    canchor::publish(canchor::PianoKeys, patId, chId, ImVec2(origin.x, o.y), ImVec2(keyW, rowH), ImVec2(origin.x, gridMin.y),
+                     ImVec2(gridMin.x, gridMax.y));
+    canchor::publish(canchor::PianoRuler, patId, chId, ImVec2(o.x, origin.y), ImVec2(pxT, rulerH), ImVec2(gridMin.x, origin.y),
+                     ImVec2(gridMax.x, gridMin.y));
+    canchor::publish(canchor::PianoVelocity, patId, chId, ImVec2(o.x, gridMax.y), ImVec2(pxT, std::max(1.0f, bottom - gridMax.y)),
+                     ImVec2(gridMin.x, gridMax.y), ImVec2(gridMax.x, bottom));
+  }
 
   // ---------------- draw: grid ----------------
   dl->PushClipRect(gridMin, gridMax, true);

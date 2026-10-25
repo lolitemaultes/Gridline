@@ -10,6 +10,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "CollabUi.h"
 #include "../core/I18n.h"
 #include "../core/PluginBrand.h"
 #include "Keys.h"
@@ -406,6 +407,7 @@ void drawPluginPicker(App& a) {
   for (const PluginInfo* p : dynamicPlugins()) {
     std::string fmt, uid;
     if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
+    if (!collabui::pluginAllowed(a, p->type)) continue;  // J-111: not in a collaborative project
     all.push_back(p);
   }
   std::vector<Group> groups;

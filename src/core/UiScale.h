@@ -48,6 +48,17 @@ std::string systemScaleSource(const Inputs& in);
 
 // Xft.dpi in an X resource database string (XResourceManagerString), 0 when absent.
 float parseXftDpi(const char* resources);
+// J-111g: Xcursor.size in an X resource database string (8..512), 0 when absent.
+int parseXcursorSize(const char* resources);
+
+// J-111g: collaborators' cursors are drawn the size of this computer's own pointer.
+// The height of the system's arrow (the tip to the end of its tail, outline
+// included) in the window units the nominal size is in, for a nominal pointer size
+// (macOS: the arrow image's height in points; Windows: SM_CYCURSOR; Linux and the
+// BSDs: Xcursor.size / XCURSOR_SIZE / GNOME's cursor-size; 0 = the default) and
+// the accessibility multiplier (macOS "Pointer size"; 0 or 1 = none).
+enum class PointerSystem { MacOS, Windows, Unix };
+double pointerArrowHeight(PointerSystem sys, double nominal, double multiplier);
 
 // The interface scale to use: the user's setting (clamped 0.75 .. 2) times
 // the system scale when `followSystem`; never more than fits a window of

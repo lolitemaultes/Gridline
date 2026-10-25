@@ -72,6 +72,14 @@ std::string toolTip(const char* name, const char* desc, const char* keyId);
 void noteActiveTool(const char* strip, int tool, const char* name, const char* keyId);
 // Text button with fixed width (0 = fit).
 bool TextButton(const char* label, bool active = false, float width = 0.0f, const char* hint = nullptr);
+// Destructive action (leave, stop sharing, reset): the label in the danger
+// colour on the normal face; `armed` (the confirming click) fills the face with
+// the danger colour. Same size and translation rules as TextButton.
+bool DangerButton(const char* label, bool armed = false, float width = 0.0f, const char* hint = nullptr);
+// Width a TextButton / DangerButton with this English label takes (0 = fit).
+float TextButtonWidth(const char* label);
+// Small status lamp (8 px) on the text line, then SameLine: "online", "offline" rows.
+void StatusDot(ImU32 col, bool pulse = false);
 // Segmented control (one of n). Returns true when *index changed.
 bool Segmented(const char* id, const char* const* labels, int count, int* index, float segWidth = 0.0f,
                float height = 0.0f, const char* const* hints = nullptr);

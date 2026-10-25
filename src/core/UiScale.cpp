@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
+#include <string>
 
 namespace gl::uiscale {
 
@@ -76,9 +78,11 @@ std::string systemScaleSource(const Inputs& in) {
   return "default";
 }
 
-float parseXftDpi(const char* res) {
+namespace {
+// A number resource in an X resource database string (lines "name:\tvalue"; any of
+// `names`, the binding written "." or "*"), 0 when absent.
+double parseResource(const char* res, std::initializer_list<const char*> names) {
   if (!res) return 0;
-  // Lines "name:\tvalue"; the resource may be written "Xft.dpi" or "Xft*dpi" (any binding).
   const char* p = res;
   while (*p) {
     const char* eol = std::strchr(p, '\n');
@@ -92,13 +96,38 @@ float parseXftDpi(const char* res) {
     if (colon == std::string::npos) continue;
     std::string name = line.substr(0, colon);
     while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
-    if (name != "Xft.dpi" && name != "Xft*dpi" && name != "*dpi") continue;
+    bool match = false;
+    for (const char* n : names) match = match || name == n;
+    if (!match) continue;
     const char* v = line.c_str() + colon + 1;
     char* end = nullptr;
     const double d = std::strtod(v, &end);
-    if (end != v && std::isfinite(d) && d > 0) return static_cast<float>(d);
+    if (end != v && std::isfinite(d) && d > 0) return d;
   }
   return 0;
+}
+}  // namespace
+
+float parseXftDpi(const char* res) { return static_cast<float>(parseResource(res, {"Xft.dpi", "Xft*dpi", "*dpi"})); }
+
+int parseXcursorSize(const char* res) {
+  const double d = parseResource(res, {"Xcursor.size", "Xcursor*size", "*cursorSize"});
+  return d >= 8 && d <= 512 ? static_cast<int>(d + 0.5) : 0;
+}
+
+double pointerArrowHeight(PointerSystem sys, double nominal, double multiplier) {
+  if (!(nominal > 0)) {
+    switch (sys) {
+      case PointerSystem::MacOS: nominal = 23; break;    // the arrow image, points
+      case PointerSystem::Windows: nominal = 32; break;  // SM_CYCURSOR at 100 %
+      case PointerSystem::Unix: nominal = 24; break;     // Xcursor / GNOME default
+    }
+  }
+  const double m = multiplier > 0 ? std::clamp(multiplier, 1.0, 4.0) : 1.0;
+  double fill = 0.8;  // Adwaita / Yaru / DMZ: the arrow spans about 4/5 of the nominal size
+  if (sys == PointerSystem::MacOS) fill = 0.87;  // the image has room for the shadow below
+  if (sys == PointerSystem::Windows) fill = 0.62;  // the 32 px cell: a 19-20 px arrow
+  return nominal * fill * m;
 }
 
 float effectiveScale(double userScale, bool followSystem, float system, int winW, int winH) {

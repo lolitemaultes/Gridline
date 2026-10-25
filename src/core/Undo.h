@@ -90,6 +90,15 @@ class UndoStack {
   // Stops the next push from merging into the current top (e.g. on mouse-up).
   void breakMerge() { mergeOpen_ = false; }
   void clear();
+  // J-111 (collaboration): true when `cmd`, pushed now, would fold into the top step.
+  bool wouldMerge(const Command& cmd) const {
+    return mergeOpen_ && pos_ > 0 && pos_ == cmds_.size() && cmd.mergeKey() != 0 && cmds_[pos_ - 1]->mergeKey() == cmd.mergeKey();
+  }
+  // J-111: moves the position by one step (-1 undo, +1 redo) without applying or
+  // reverting the command (the collaboration session changes the song itself).
+  bool stepPosition(int dir);
+  // J-111: number of new (not merged) steps pushed so far.
+  uint64_t pushCount() const { return pushCount_; }
 
   // Monotonic counter of the state; equal values mean the same document state
   // (used for the "changed since save" flag).
@@ -104,6 +113,7 @@ class UndoStack {
   bool mergeOpen_ = false;
   uint64_t nextSerial_ = 1;
   uint64_t baseSerial_ = 0;  // serial of the state before cmds_[0]
+  uint64_t pushCount_ = 0;
 };
 
 }  // namespace gl

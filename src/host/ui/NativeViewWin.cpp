@@ -14,7 +14,9 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <string>
 #include "NativeView.h"
+#include "../../core/UiScale.h"
 
 namespace gl::host::native {
 
@@ -142,6 +144,14 @@ void keepAbove(const Window& child, const Window& parent, bool on) {
 double backingScale(const Window&) { return 1.0; }  // SDL window units are pixels (per-monitor DPI aware)
 long windowNumber(const Window&) { return -1; }
 std::string xResources(const Window&) { return {}; }  // X11 only
+
+PointerSize pointerSize(const Window&) {
+  PointerSize r;
+  const int h = GetSystemMetrics(SM_CYCURSOR);  // the cursor cell at the system DPI (32 at 100 %)
+  r.arrowH = uiscale::pointerArrowHeight(uiscale::PointerSystem::Windows, h > 0 ? h : 0, 1.0);
+  r.source = h > 0 ? "SM_CYCURSOR " + std::to_string(h) : std::string("Windows default");
+  return r;
+}
 bool captureWindow(const Window&, const std::string&, const unsigned char*, int, int) { return false; }
 
 void watchKeys(void* container) {
@@ -198,10 +208,23 @@ bool frameClockStart(const Window&) { return false; }  // vsync swap (SDL)
 void frameClockFollow(const Window&) {}
 void frameClockWait() {}
 void frameClockStop() {}
+void keepAwake(bool) {}
 
 void startDrawStats(void*) {}
 DrawStats takeDrawStats() { return {}; }
 void devDrag(const Window&, void*, int, int, double) {}
+void devPostMouse(const Window&, int, double, double) {}
+void orderAbove(const Window&, const Window&) {}
+void devLiveResize(const Window&, double, double, int) {}
+void devPerformClose(const Window&) {}
+
+// J-116: DefWindowProc's modal size / move loop (WM_ENTERSIZEMOVE .. WM_EXITSIZEMOVE) blocks the
+// event pump; SDL keeps sending RESIZED (WM_WINDOWPOSCHANGED) and EXPOSED (its 10 ms timer) then.
+bool inModalSizeLoop() {
+  GUITHREADINFO info{};
+  info.cbSize = sizeof info;
+  return GetGUIThreadInfo(GetCurrentThreadId(), &info) && (info.flags & GUI_INMOVESIZE) != 0;
+}
 
 }  // namespace gl::host::native
 #endif

@@ -7,6 +7,8 @@
 #include <cstring>
 #include <filesystem>
 #include <set>
+#include "CollabUi.h"
+#include "CursorAnchor.h"
 #include "../core/I18n.h"
 #include "../core/ExternalDrop.h"
 #include "../core/RackLayout.h"
@@ -588,6 +590,16 @@ void drawChannelRack(App& a) {
       dl->AddRectFilled(np, ImVec2(np.x + 4, np.y + cellH), theme::content(c.color), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
       theme::textEllipsis(dl, a.fontRegular, nameFont, ImVec2(np.x + 10, std::round(np.y + (cellH - 13) * 0.5f) - 1),
                           nameW - 14, c.muted ? P.textFaint : selected && P.dark ? P.paper : P.text, c.name.c_str());
+      {  // J-111: a collaborator's change flashes; a sample still arriving shows its progress
+        ImU32 fc = 0;
+        if (const float fl = collabui::flash(a, "channels/#" + std::to_string(c.id), &fc); fl > 0)
+          dl->AddRect(ImVec2(np.x - 1, np.y - 1), ImVec2(np.x + nameW + 1, np.y + cellH + 1), theme::withAlpha(fc, fl), theme::kRadiusSm, 0, 2.0f);
+        float pr = 0;
+        if (collabui::fileLoading(a, c.plugin.data, &pr)) {
+          collabui::drawLoading(dl, ImVec2(np.x + 5, np.y + cellH - 4), ImVec2(np.x + nameW - 2, np.y + cellH - 1), pr, true);
+          if (ImGui::IsItemHovered()) ui::Tooltip(i18n::tr("The sample is still arriving from a collaborator: silent until it is here"));
+        }
+      }
       if (ui::HintHovered()) {
         const PluginInfo* info = findPlugin(c.plugin.type);
         ui::Hint(c.name + (info ? "  \xC2\xB7  " + info->name : "") +
@@ -713,6 +725,8 @@ void drawChannelRack(App& a) {
       if (selected) dl->AddRectFilled(ImVec2(l0.x - 2, l0.y - 2), ImVec2(l1.x + 2, l1.y + 2), theme::withAlpha(P.led, 0.18f), 3);
     }
     rowDropTarget(a, c, static_cast<int>(ci), rp, rowW, rowH, rowGap, stepsX + 6);  // J-97: drop to replace / insert
+    // J-111d: a collaborator's pointer on this row (logical px from its start: the row's layout is fixed from the left)
+    canchor::publish(canchor::RackRow, c.id, 0, rp, ImVec2(1.0f, rowH), rp, ImVec2(rp.x + rowW, rp.y + rowH));
     ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
     ImGui::Dummy(ImVec2(rowW, 0));
     ImGui::PopID();

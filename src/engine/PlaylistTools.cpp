@@ -68,6 +68,29 @@ Clip makeClip(const Song& s, const Source& src, int track, Tick start) {
   return c;
 }
 
+Clip makeClipLike(const Clip& brush, int track, Tick start) {
+  Clip c = brush;
+  c.id = kNoId;
+  c.track = track;
+  c.start = std::max<Tick>(0, start);
+  c.muted = false;
+  c.group = kNoId;
+  c.takeGroup = kNoId;
+  c.take = 0;
+  c.launched = false;
+  return c;
+}
+
+Clip makeBrushClip(const Song& s, const Source& src, const Clip* brush, int track, Tick start) {
+  if (brush && sourceOf(*brush) == src && sourceValid(s, src)) return makeClipLike(*brush, track, start);
+  return makeClip(s, src, track, start);
+}
+
+Tick brushLength(const Song& s, const Source& src, const Clip* brush) {
+  if (brush && sourceOf(*brush) == src && sourceValid(s, src)) return std::max<Tick>(1, s.clipLength(*brush));
+  return sourceLength(s, src);
+}
+
 Tick sourceLength(const Song& s, const Source& src) {
   if (!sourceValid(s, src)) return s.beatTicks();
   Clip c;

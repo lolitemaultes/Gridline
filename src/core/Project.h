@@ -21,11 +21,22 @@ bool loadProject(const std::string& path, Song& out, std::string* err = nullptr)
 // leaves a half-written project.
 bool saveProject(const std::string& path, const Song& song, std::string* err = nullptr);
 std::string projectToText(const Song& song);
-Json songToJson(const Song& song);
+// withFlOrigin = false leaves out Song::flOrigin (J-111: collaboration syncs it separately).
+Json songToJson(const Song& song, bool withFlOrigin = true);
 // Accepts any known schema version (migrating it) and validates references.
 bool songFromJson(const Json& j, Song& out, std::string* err = nullptr);
 // Upgrades a parsed project document to the latest schema in place.
 bool migrateProjectJson(Json& j, std::string* err = nullptr);
+
+// J-111: one element of a project document, its references checked against
+// `s` (collaboration applies remote edits element by element). The same code
+// a whole-project load uses. patternFromJson: false for bad dimensions.
+// clipFromJson: 0 ok, 1 dropped (its audio / automation source is missing),
+// -2 its pattern is missing, -3 bad position.
+void channelFromJson(const Json& jc, Channel& c, const Song& s);
+bool patternFromJson(const Json& jp, Pattern& p, const Song& s);
+int clipFromJson(const Json& jc, Clip& c, const Song& s);
+void automationClipFromJson(const Json& ja, AutomationClip& a);
 
 // One mixer track (mixer track state files, J-12). FromJson fills everything
 // but the id; sends keep the ids found in the JSON (callers remap them).

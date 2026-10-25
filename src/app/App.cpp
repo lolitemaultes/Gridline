@@ -3,6 +3,8 @@
 #include "HostedUi.h"
 #include "McpUi.h"
 #include "App.h"
+#include "CollabUi.h"
+#include "../collab/Controller.h"
 #include "../core/NoteTools.h"
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
@@ -62,6 +64,7 @@ App::App() {
 }
 
 App::~App() {
+  collabui::closeSession(*this);  // J-111: the log is synced, collaborators are told
   shutdownControllerScripts();  // onDeinit while the app still exists
   mcpui::shutdown();             // SC-07: stop the assistant server, remove its endpoint file
   presetImport.cancel = true;
@@ -230,6 +233,7 @@ void App::notify(const std::string& english, bool error, const std::string& deta
 
 std::string App::windowTitle() const {
   std::string name = projectFile().empty() ? doc.song().info.title : fs::path(projectFile()).filename().string();
+  if (std::string shared = collabui::projectTitle(*this); !shared.empty()) name = shared;  // J-111f: the collaborative project's name
   return (doc.modified() ? "• " : "") + name + " — Gridline";
 }
 
@@ -288,6 +292,7 @@ void App::applyProjectDefaults(Song& s) const {
 }
 
 void App::startProject(Song s) {
+  collabui::closeSession(*this);  // J-111
   engine.stopToStart();
   engine.panic(false);  // (the project is replaced: no fade over the new one)
   doc.reset(std::move(s));  // the new project is the "saved" baseline, with no history
@@ -350,7 +355,10 @@ void App::applyStartup() {
   }
 }
 
-bool App::openProject(const std::string& path) {
+bool App::openProject(const std::string& pathIn) {
+  // J-111: a collaborative project folder opens its project (with its session)
+  const std::string collabFile = collabui::projectFileIn(pathIn);
+  const std::string& path = collabFile.empty() ? pathIn : collabFile;
   // J-52: FL Studio projects and zipped projects open as projects; MIDI and
   // audio files are imported into the open project.
   switch (openKindOf(path)) {
@@ -361,6 +369,8 @@ bool App::openProject(const std::string& path) {
     case OpenKind::GridlineProject:
     case OpenKind::Unknown: break;
   }
+  // J-111: a collaborative project opens with its session (or asks for an update first)
+  if (bool opened = false; collabui::openIfCollab(*this, path, &opened)) return opened;
   Song s;
   std::string err;
   if (!loadProject(path, s, &err)) {
@@ -369,6 +379,7 @@ bool App::openProject(const std::string& path) {
   }
   engine.stopToStart();
   engine.panic(false);  // (the project is replaced: no fade over the new one)
+  collabui::closeSession(*this);  // J-111
   doc.reset(std::move(s));
   trimSamplesAt_ = now + 1.0;  // J-30
   projectPath = path;
@@ -492,6 +503,10 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
   std::string p = path;
   if (format != SaveFormat::Gridline || fs::path(p).extension().empty()) p = withSaveExtension(p, format);
   auto saved = [this, p, format]() {
+    if (collabui::active(*this)) {  // J-111: a copy; the project stays the collaborative one
+      notify("Saved a copy: " + fs::path(p).filename().string());
+      return;
+    }
     projectPath = p;
     projectFormat = format;
     openedFrom.clear();
@@ -540,6 +555,12 @@ static std::string homeDir() {
 }
 
 void App::save() {
+  if (collabui::active(*this)) {  // J-111: collaborative projects save continuously (op log + project file)
+    if (collab::Session* s = collabui::session(*this)) s->saveNow();
+    doc.markSaved();
+    notify("Saved (collaborative projects save as you work)");
+    return;
+  }
   if (projectPath.empty())
     saveAs();
   else

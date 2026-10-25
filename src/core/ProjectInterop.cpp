@@ -107,6 +107,8 @@ bool looksLikeFilePath(const std::string& s) {
   return kExt.count(lower(s.substr(dot))) > 0;
 }
 
+bool forEachStateFileRef(PluginState& state, const std::function<void(std::string& path)>& fn) { return visitState(state, fn); }
+
 int forEachFileRef(Song& song, const std::function<void(std::string& path)>& fn) {
   int changed = 0;
   for (auto& c : song.channels) {

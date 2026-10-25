@@ -2,3 +2,8 @@ stb_vorbis.c v1.22 (https://github.com/nothings/stb), public domain / MIT (see e
 Used by src/engine/AudioCodecs.cpp to decode Ogg Vorbis samples.
 Local patches (marked GRIDLINE PATCH): comment-header lengths / count validated in start_decoder
 (a corrupt count overflowed the comment array size and wrote past it; found by the J-21 fuzzer).
+
+stb_image.h v2.30 and stb_image_write.h v1.16 (https://github.com/nothings/stb, commit
+2c980bb59875b0d32144a71867fbdebb2f77cd20), public domain / MIT (see end of each file), unmodified.
+Used by src/collab/Profile.cpp only: decode a profile picture (PNG / JPEG) and re-encode it as a
+small JPEG without metadata (J-111).

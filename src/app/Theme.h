@@ -144,5 +144,7 @@ float lockupWidth(float height, ImFont* font);
 void textEllipsis(ImDrawList* dl, ImFont* font, float size, ImVec2 pos, float maxW, ImU32 col, const char* text);
 // Ellipsised copy of `text` that fits maxW at the current font.
 const char* fitText(const char* text, float maxW);
+// Same with the ellipsis in the middle (paths: the start and the end stay).
+const char* fitTextMiddle(const char* text, float maxW);
 
 }  // namespace gl::theme

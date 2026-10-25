@@ -583,7 +583,22 @@ struct Song {
   bool autoCrossfades = true;
   FlOrigin flOrigin;  // FL Studio import data for the FL exporter (see FlOrigin)
 
-  ObjectId allocateId() { return nextId++; }
+  // J-111 (collaboration): object ids are partitioned between collaborators so
+  // two computers never hand out the same id: with idStride > 1 every id this
+  // song allocates is congruent to idSlot modulo idStride. Session state, not
+  // saved and not compared (operator== ignores it).
+  uint32_t idSlot = 0, idStride = 1;
+  // The id allocateId() would return next (nextId itself when not partitioned).
+  ObjectId peekId() const {
+    if (idStride <= 1) return nextId;
+    const ObjectId r = nextId % idStride;
+    return r <= idSlot ? nextId + (idSlot - r) : nextId + (idStride - r) + idSlot;
+  }
+  ObjectId allocateId() {
+    const ObjectId id = peekId();
+    nextId = id + 1;
+    return id;
+  }
 
   Tick barTicks() const {
     return static_cast<Tick>(ppq) * 4 * timeSigNum / timeSigDen;

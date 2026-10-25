@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include "CollabUi.h"
 #include "DisplayConfirmUi.h"
 #include "J59Ui.h"
 #include "ScriptUi.h"
@@ -31,6 +32,7 @@
 #include "Windows.h"
 #include "Keys.h"
 #include "ThemeSettings.h"
+#include "Viewports.h"
 #include "BrowserUi.h"
 #include "MenuParityUi.h"
 
@@ -169,6 +171,8 @@ void menuFile(App& a) {
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Locate missing samples..."))) exportui::openMissingSamples(a);
+  ImGui::Separator();
+  collabui::fileMenu(a);  // J-111
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Project info..."), keys::label("file.projectInfo"))) a.showInfo = true;
   if (ImGui::MenuItem(i18n::tr("Plugin manager..."))) a.showPluginManager = true;
@@ -344,6 +348,8 @@ void menuView(App& a) {
   ImGui::SeparatorText(i18n::tr("Layout"));
   if (ImGui::MenuItem(i18n::tr("Close all windows"), keys::label("view.closeAll"))) a.closeAllWindows();
   if (ImGui::MenuItem(i18n::tr("Close plugin windows"), keys::label("view.closePlugins"))) a.closePluginWindows();
+  if (ImGui::MenuItem(i18n::tr("Bring all windows back into Gridline"), nullptr, false, viewports::detachedCount() > 0))  // J-113
+    viewports::gatherAll();
   if (ImGui::MenuItem(i18n::tr("Reset window layout"), keys::label("view.resetLayout"))) ui::confirmLayoutReset(a);
   ImGui::SeparatorText(i18n::tr("Appearance"));
   bool dark = theme::isDark();

@@ -18,8 +18,8 @@ ImTextureID markTexture(int px);
 // FL-style default workspace in `dockspace`; returns the floating rack rectangle.
 // `alsoLeft`: more windows docked as tabs beside the browser (plugin build: "Host link").
 workspace::Rect buildDefaultLayout(ImGuiID dockspace, ImVec2 size, int channels, const char* alsoLeft = nullptr);
-// A floating window keeps its title bar inside the dock space.
-void keepFloatingInView(const char* name, ImVec2 pos, ImVec2 size);
+// (J-117: floating windows are kept inside the work area by ui::ClampTrackedWindows, before
+// they are laid out; the rack's old clamp after it was drawn moved it away from its title bar.)
 // Side panels scale with the dock space and the central node keeps half of every split.
 void fitDockTree(ImGuiDockNode* node, ImVec2 scale, ImVec2 avail);
 

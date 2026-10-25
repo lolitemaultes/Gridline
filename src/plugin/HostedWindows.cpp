@@ -42,6 +42,8 @@
 #include "../host/HostedPlugins.h"
 #include "PluginCore.h"
 #include "PluginView.h"
+#include "../app/Viewports.h"
+#include "../core/I18n.h"
 
 namespace gl {
 
@@ -311,6 +313,7 @@ void setPluginWindowDevKeys(bool) {}
 void setPluginWindowDevResize(int, int) {}
 
 bool hostedEditorOpen(const PluginTarget& t) { return windowFor(&app(), t) != nullptr; }
+bool hostedEditorUnderMouse(PluginTarget&, float&, float&) { return false; }  // J-111g: no collaboration inside a plugin build
 
 void closeHostedEditor(App& a, const PluginTarget& t) {
   auto it = windows().find(Key{&a, t.key()});
@@ -564,3 +567,12 @@ void closeHostedWindows(Instance& inst) { closeAllHostedEditors(inst.app()); }
 }  // namespace plugin
 
 }  // namespace gl
+
+// J-113: inside a plugin host Gridline lives in the host's window and nothing is detached
+// (app/Viewports.cpp belongs to the application); what the shared interface asks for.
+namespace gl::viewports {
+bool available() { return false; }
+std::string unavailableReason() { return i18n::N_("Not available inside a plugin host."); }
+void gatherAll() {}
+int detachedCount() { return 0; }
+}  // namespace gl::viewports

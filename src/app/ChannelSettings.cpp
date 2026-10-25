@@ -242,6 +242,7 @@ void drawChannelSettings(App& a) {
   }
   bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
   ui::KeepWindowInViewport();
+  ui::MarkDetachable();  // J-114: pops out / docks back like the panels
   if (!vis) {
     ImGui::End();
     if (!open) a.settingsChannel = kNoId;

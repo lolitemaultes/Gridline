@@ -1,0 +1,4 @@
+Monocypher 4.0.2 (https://github.com/LoupVaillant/Monocypher, tag 4.0.2), dual licensed
+BSD-2-Clause or CC0-1.0 (see LICENCE.md). Vendored unmodified: src/monocypher.c and .h.
+Used by src/collab (J-111): X25519 key exchange, EdDSA signatures (BLAKE2b), BLAKE2b hashing and
+key derivation, XChaCha20-Poly1305 authenticated encryption.

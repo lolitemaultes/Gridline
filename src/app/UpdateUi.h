@@ -8,6 +8,7 @@
 #pragma once
 #include <functional>
 #include <string>
+#include "../collab/VersionGate.h"
 
 namespace gl {
 class App;
@@ -34,5 +35,13 @@ void draw(App& a);
 void settingsSection(App& a);
 // At exit: a running download is cancelled.
 void shutdown();
+
+// J-111: the collaboration version gate (its own check against the newest release with a
+// download for this computer, cached for an hour; never per frame). Starts a check when due.
+const collab::GateState& gate(App& a);
+bool gateChecking();
+// The update dialog in "required" mode: `title` ("This is a collaborative project. Update to
+// Gridline 0.8.0 to open it."), the same notes / download / verify, Cancel instead of skip.
+void showRequired(App& a, const std::string& title, const std::string& version);
 
 }  // namespace gl::updui

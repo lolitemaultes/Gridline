@@ -92,6 +92,15 @@ void testUiScale() {
   expect(parseXftDpi("Xcursor.size:\t24\nXft.dpix:\t300\n") == 0.0f, "no Xft.dpi: 0");
   expect(parseXftDpi(nullptr) == 0.0f && parseXftDpi("") == 0.0f, "no resources: 0");
   expect(parseXftDpi("Xft.dpi:\tabc\n") == 0.0f, "malformed value: 0");
+  // J-111g: the system pointer's size (collaborators' cursors are drawn that size)
+  expect(parseXcursorSize("Xft.dpi:\t96\nXcursor.size:\t48\nXcursor.theme:\tYaru\n") == 48, "Xcursor.size parsed among other resources");
+  expect(parseXcursorSize("Xcursor*size: 32") == 32, "Xcursor*size binding");
+  expect(parseXcursorSize("Xft.dpi:\t96\n") == 0 && parseXcursorSize(nullptr) == 0, "no Xcursor.size: 0");
+  expect(parseXcursorSize("Xcursor.size:\t4\n") == 0, "an impossible size: 0");
+  expect(std::fabs(pointerArrowHeight(PointerSystem::Unix, 0, 1) - 19.2) < 0.01, "Linux default (24 px): a 19.2 px arrow");
+  expect(std::fabs(pointerArrowHeight(PointerSystem::Unix, 48, 1) - 38.4) < 0.01, "Linux at 48 px: twice that");
+  expect(std::fabs(pointerArrowHeight(PointerSystem::Windows, 32, 1) - 19.84) < 0.01, "Windows at 100 % (32 px cell): about 20 px");
+  expect(std::fabs(pointerArrowHeight(PointerSystem::MacOS, 23, 2) - 40.02) < 0.01, "macOS image of 23 pt, accessibility size 2: twice the arrow");
   // The user's setting: multiplied by the system scale when following it, used as it is otherwise.
   expect(effectiveScale(1.0, true, 1.0f, 1920, 1000) == 1.0f, "first run on the 100 % laptop: 100 %");
   expect(effectiveScale(1.25, true, 1.0f, 1920, 1000) == 1.25f, "user 125 % on a 100 % desktop: 125 %");

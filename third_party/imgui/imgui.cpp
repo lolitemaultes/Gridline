@@ -4376,6 +4376,9 @@ ImGuiContext::ImGuiContext(ImFontAtlas* shared_font_atlas)
     MouseViewport = MouseLastHoveredViewport = NULL;
     PlatformLastFocusedViewportId = 0;
     ViewportCreatedCount = PlatformWindowsCreatedCount = 0;
+    ViewportLateCreateFilter = NULL; // GRIDLINE PATCH (J-113)
+    CloseRequestFilter = NULL; // GRIDLINE PATCH (J-116)
+    WindowsMovedHook = NULL; // GRIDLINE PATCH (J-117)
     ViewportFocusedStampCount = 0;
 
     NavCursorVisible = false;
@@ -5994,6 +5997,8 @@ void ImGui::NewFrame()
 
     // Handle user moving window with mouse (at the beginning of the frame to avoid input lag or sheering)
     UpdateMouseMovingWindowNewFrame();
+    if (g.WindowsMovedHook != NULL) // GRIDLINE PATCH (J-117): windows kept in bounds before anything (floating dock node hosts included) is laid out
+        g.WindowsMovedHook(&g);
 
     // Background darkening/whitening
     if (GetTopMostPopupModal() != NULL || (g.NavWindowingTarget != NULL && g.NavWindowingHighlightAlpha > 0.0f))
@@ -7800,7 +7805,8 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
         ImGuiItemFlags backup_item_flags = g.CurrentItemFlags;
         g.CurrentItemFlags |= ImGuiItemFlags_NoFocus;
         if (CloseButton(window->GetID("#CLOSE"), close_button_pos))
-            *p_open = false;
+            if (g.CloseRequestFilter == NULL || !g.CloseRequestFilter(window)) // GRIDLINE PATCH (J-116): filter
+                *p_open = false;
         g.CurrentItemFlags = backup_item_flags;
     }
 
@@ -8342,7 +8348,7 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
 
         // Late create viewport if we don't fit within our current host viewport.
         if (window->ViewportAllowPlatformMonitorExtend >= 0 && !window->ViewportOwned && !(window->Viewport->Flags & ImGuiViewportFlags_IsMinimized))
-            if (!window->Viewport->GetMainRect().Contains(window->Rect()))
+            if (!window->Viewport->GetMainRect().Contains(window->Rect()) && (g.ViewportLateCreateFilter == NULL || g.ViewportLateCreateFilter(window))) // GRIDLINE PATCH (J-113): filter
             {
                 // This is based on the assumption that the DPI will be known ahead (same as the DPI of the selection done in UpdateSelectWindowViewport)
                 //ImGuiViewport* old_viewport = window->Viewport;
@@ -19872,7 +19878,7 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
         // Note that TabItemEx() calls TabBarCalcTabID() so our tab item ID will ignore the current ID stack (rightly so)
         bool tab_open = true;
         TabItemEx(tab_bar, window->Name, window->HasCloseButton ? &tab_open : NULL, tab_item_flags, window);
-        if (!tab_open)
+        if (!tab_open && (g.CloseRequestFilter == NULL || !g.CloseRequestFilter(window))) // GRIDLINE PATCH (J-116): filter
             node->WantCloseTabId = window->TabId;
         if (tab_bar->VisibleTabId == window->TabId)
             node->VisibleWindow = window;
@@ -19907,7 +19913,7 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
             PushItemFlag(ImGuiItemFlags_Disabled, true);
             PushStyleColor(ImGuiCol_Text, style.Colors[ImGuiCol_Text] * ImVec4(1.0f,1.0f,1.0f,0.4f));
         }
-        if (CloseButton(host_window->GetID("#CLOSE"), close_button_pos))
+        if (CloseButton(host_window->GetID("#CLOSE"), close_button_pos) && (g.CloseRequestFilter == NULL || tab_bar->Tabs.Size == 0 || tab_bar->Tabs[0].Window == NULL || !g.CloseRequestFilter(tab_bar->Tabs[0].Window))) // GRIDLINE PATCH (J-116): filter
         {
             node->WantCloseAll = true;
             for (int n = 0; n < tab_bar->Tabs.Size; n++)

@@ -156,4 +156,21 @@ void frameClockStop() {
   delete c;
 }
 
+namespace {
+id<NSObject> gAwake = nil;
+}
+
+void keepAwake(bool on) {
+  if (on == (gAwake != nil)) return;
+  if (on) {
+    gAwake = [[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
+                                                            reason:@"Collaborative project: staying connected to collaborators"];
+    [gAwake retain];
+  } else {
+    [[NSProcessInfo processInfo] endActivity:gAwake];
+    [gAwake release];
+    gAwake = nil;
+  }
+}
+
 }  // namespace gl::host::native

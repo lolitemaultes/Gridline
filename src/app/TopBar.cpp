@@ -14,6 +14,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include "CollabUi.h"
 #include "../core/I18n.h"
 #include "ToastText.h"
 #include "McpUi.h"
@@ -441,6 +442,7 @@ float drawTopBar(App& a) {
 
   // ---- right cluster (right-aligned): master · monitor · windows · overflow ----
   float rx = wp.x + W - kPad;
+  if (collabui::active(a) && W > 900) rx = collabui::topBar(a, dl, rx, panelTop, kPanelH);  // J-111: collaborators
   if (overflow) {
     rx -= wMore;
     ImGui::SetCursorScreenPos(ImVec2(rx, btnTop));
@@ -632,6 +634,7 @@ void drawStatusBar(App& a) {
 
   // Right: audio format · project name · unsaved marker.
   std::string proj = a.projectFile().empty() ? "Untitled project" : fs::path(a.projectFile()).filename().string();
+  if (std::string shared = collabui::projectTitle(a); !shared.empty()) proj = shared;  // J-111f
   char audio[48];
   std::snprintf(audio, sizeof audio, "%.1f kHz  \xC2\xB7  %d", a.engine.sampleRate() / 1000.0, a.audioBuffer);
   float rx = wp.x + W - theme::kS3;

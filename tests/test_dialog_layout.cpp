@@ -170,7 +170,8 @@ void testPlacement() {
 struct DragCase {
   float bandTop = 0;     // inner area top - (window top + title bar): 0 = no band
   float contentGap = 0;  // content start - inner area top - padding: 0 = attached
-  float top = 0;         // window top
+  float top = 0;         // window top while dragged
+  float released = 0;    // window top a second after it was let go
 };
 DragCase dragAgainstTop(bool oldWay) {
   ImGuiIO& io = ImGui::GetIO();
@@ -207,7 +208,8 @@ DragCase dragAgainstTop(bool oldWay) {
   d.bandTop = w->InnerRect.Min.y - (w->Pos.y + w->TitleBarHeight + w->MenuBarHeight);
   d.contentGap = w->DC.CursorStartPos.y - w->InnerRect.Min.y - w->WindowPadding.y;
   io.AddMouseButtonEvent(0, false);
-  run(name, body, 2);
+  run(name, body, 60);
+  d.released = w->Pos.y;
   return d;
 }
 
@@ -219,25 +221,44 @@ void testDragAgainstTop() {
   std::snprintf(label, sizeof label, "0.6.0 clamp after Begin: the content is pushed %.1f px away from the title bar (the band)",
                 static_cast<double>(old.contentGap));
   expect(old.contentGap > 20.0f, label);
-  std::snprintf(label, sizeof label, "dragged against the top bar: the window stops at it (top %.1f)", static_cast<double>(now.top));
-  expect(near(now.top, theme::kTopBarH), label);
+  // J-117: dragged 360 px past the top bar it follows only a little way (elastic, damped) ...
+  std::snprintf(label, sizeof label, "dragged against the top bar: the window stretches only a little past it (top %.1f)", static_cast<double>(now.top));
+  expect(now.top < theme::kTopBarH && now.top > theme::kTopBarH - 48.0f, label);
+  // ... and springs back onto it once let go.
+  std::snprintf(label, sizeof label, "let go: it springs back to the top bar (top %.1f)", static_cast<double>(now.released));
+  expect(near(now.released, theme::kTopBarH), label);
   std::snprintf(label, sizeof label, "no band under the title bar (%.1f px)", static_cast<double>(now.bandTop));
   expect(near(now.bandTop, 0.0f), label);
   std::snprintf(label, sizeof label, "content attached to the title bar (%.1f px)", static_cast<double>(now.contentGap));
   expect(near(now.contentGap, 0.0f), label);
-  // At rest: a window left below the screen (the main window shrank) comes back inside before it is drawn.
+  // At rest: a window left below the screen (the main window shrank) comes back inside, moved
+  // before it is drawn (J-117: springing back over a few frames).
   ImGuiWindow* w = ImGui::FindWindowByName("drag new");
-  ImGui::SetWindowPos(w, ImVec2(1300, 880), ImGuiCond_Always);
-  gDisplay = ImVec2(1200, 800);
-  run("drag new", [&]() {
+  auto rest = [&]() {
     ui::ClampTrackedWindows();
     ImGui::Begin("drag new", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
     ui::TrackWindowInViewport();
     ImGui::Button("content", ImVec2(300, 200));
     ImGui::End();
-  }, 2);
-  expect(w->Pos.x + w->Size.x <= 1200.5f && w->Pos.y + w->Size.y <= 800 - theme::kStatusBarH + 0.5f, "a window off the shrunk screen is pulled back inside");
+  };
+  ImGui::SetWindowPos(w, ImVec2(1300, 880), ImGuiCond_Always);  // put outside by code: back inside at once
+  run("drag new", rest, 1);
+  expect(w->Pos.x + w->Size.x <= 1440.5f && w->Pos.y + w->Size.y <= 900 - theme::kStatusBarH + 0.5f, "a window put outside by code is placed inside before it is drawn");
+  ImGui::SetWindowPos(w, ImVec2(1100, 600), ImGuiCond_Always);  // resting near the bottom-right corner ...
+  run("drag new", rest, 3);
+  gDisplay = ImVec2(1200, 800);  // ... when the screen shrinks
+  run("drag new", rest, 2);
+  const float midway = w->Pos.x;
+  expect(midway < 1100 && midway > 1200 - w->Size.x, "a window off the shrunk screen springs back (on its way after two frames)");
+  expect(near(w->InnerRect.Min.y, w->Pos.y + w->TitleBarHeight), "and is drawn in one piece meanwhile");
+  run("drag new", rest, 30);
+  expect(w->Pos.x + w->Size.x <= 1200.5f && w->Pos.y + w->Size.y <= 800 - theme::kStatusBarH + 0.5f, "half a second later it is fully inside");
   expect(near(w->InnerRect.Min.y, w->Pos.y + w->TitleBarHeight), "and drawn in one piece");
+  ui::SetWindowRubber(false);  // elastic edges off: straight back, before it is drawn
+  ImGui::SetWindowPos(w, ImVec2(1300, 880), ImGuiCond_Always);
+  run("drag new", rest, 1);
+  expect(w->Pos.x + w->Size.x <= 1200.5f && w->Pos.y + w->Size.y <= 800 - theme::kStatusBarH + 0.5f, "elastic edges off: back inside at once");
+  ui::SetWindowRubber(true);
   // The pure clamp: at rest inside; while dragged only the title bar is kept reachable.
   const ImVec2 a0(0, 48), a1(1000, 700);
   const ImVec2 r = ui::ClampWindowPos(ImVec2(-50, 10), ImVec2(300, 200), a0, a1, false);
@@ -321,6 +342,28 @@ void testTextFit() {
   expect(w1 <= 160 + 0.5f, "the cut path fits its width");
 }
 
+// Paths are cut in the middle: the start and the last folder / file name stay.
+void testPathFit() {
+  const char* path = "/Users/somebody/Music/Gridline/Collaborative projects/A very long project name/Song";
+  bool cut = false, whole = true;
+  float w = 0;
+  std::string shown;
+  run("pathfit", [&]() {
+    ImGui::Begin("pathfit", nullptr, ImGuiWindowFlags_NoSavedSettings);
+    whole = !ui::PathFit("/tmp/short", 300, theme::pal().text);
+    cut = ui::PathFit(path, 220, theme::pal().text);
+    w = ImGui::GetItemRectSize().x;
+    shown = theme::fitTextMiddle(path, 220);
+    ImGui::End();
+  });
+  expect(whole, "a short path is shown whole");
+  expect(cut, "a long path is cut");
+  expect(w <= 220 + 0.5f, "the cut path fits its width");
+  expect(shown.rfind("/Users", 0) == 0, "the cut path keeps its start");
+  expect(shown.size() >= 5 && shown.compare(shown.size() - 5, 5, "/Song") == 0, "the cut path keeps its end");
+  expect(shown.find("\xE2\x80\xA6") != std::string::npos, "the cut path has an ellipsis in the middle");
+}
+
 }  // namespace
 
 int main() {
@@ -343,6 +386,7 @@ int main() {
   testDragAgainstTop();
   testFormLabels();
   testTextFit();
+  testPathFit();
   ImGui::DestroyContext();
   return finish();
 }

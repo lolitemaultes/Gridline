@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <memory>
@@ -17,6 +18,7 @@
 #include "../core/Platform.h"
 #include "../core/Settings.h"
 #include "../core/Update.h"
+#include "../collab/VersionGate.h"
 #include "../host/net/Http.h"
 #include "App.h"
 #include "DialogLayout.h"
@@ -74,6 +76,20 @@ struct State {
   update::Fetcher fetch;
   update::Downloader download;
   std::string downloadDir;  // "" = the user's Downloads folder
+  // J-111: the collaboration version gate (its own check, cached an hour) and the
+  // "update required" mode of the dialog (no skip / remind: Update or Cancel).
+  bool required = false;
+  std::string requiredTitle;
+  std::string requiredVersion;
+  struct GateJob {
+    std::mutex mu;
+    bool done = false;
+    collab::GateState result;
+  };
+  std::shared_ptr<GateJob> gateJob;
+  collab::GateState gate;
+  bool gateLoaded = false;
+  std::string fakeLatest;  // GRIDLINE_FAKE_LATEST / --fake-update: a made-up newest release (no network)
 };
 
 State& S() {
@@ -179,7 +195,7 @@ void collect(App& a) {
     update::savePrefs(a.settings, p);
     a.settings.save(Settings::defaultPath());
   }
-  if (manual) {
+  if (manual || s.required) {
     if (r.status == update::Status::Available) {
       offer(r);
     } else {
@@ -269,7 +285,8 @@ void drawAvailable(App& a) {
   const std::string v = update::toString(r.version);
   char buf[256];
   std::snprintf(buf, sizeof buf, tr("Gridline %s is available (you have %s)"), v.c_str(), GRIDLINE_VERSION);
-  title(a, buf);
+  title(a, s.required && !s.requiredTitle.empty() ? s.requiredTitle : std::string(buf));
+  if (s.required) dimLine(buf, P.textDim);
   std::string sub = r.prerelease || !r.version.pre.empty() ? tr("A beta version.") : std::string();
   if (r.published.size() >= 10) {
     std::snprintf(buf, sizeof buf, tr("Released %s."), r.published.substr(0, 10).c_str());
@@ -337,6 +354,10 @@ void drawAvailable(App& a) {
     ImGui::Dummy(ImVec2(0, theme::kS1));
     dimLine(tr("Download opens the release page in your browser."), P.textFaint);
   }
+  if (s.required && collab::installKind() != collab::InstallKind::Official) {
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+    dimLine(tr("Or update from your software store when it arrives there."), P.textDim);
+  }
   ImGui::Dummy(ImVec2(kDialogW, theme::kS2));
 
   // Footer: Skip on the left; Remind me later, the installer, Download on the right.
@@ -346,11 +367,20 @@ void drawAvailable(App& a) {
   const float wSkip = buttonW("Skip this version"), wLater = buttonW("Remind me later"), wMid = mid ? buttonW(mid) : 0.0f,
               wGo = buttonW("Download");
   const float x0 = ImGui::GetCursorPosX();
-  bool skip = ui::TextButton("Skip this version", false, wSkip);
-  ImGui::SameLine(0, 0);
-  const float right = wLater + (mid ? wMid + theme::kS2 : 0.0f) + wGo + theme::kS2;
-  ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX() + theme::kS2, x0 + kDialogW - right));
-  bool later = ui::TextButton("Remind me later", false, wLater) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  bool skip = false, later = false, cancelRequired = false;
+  if (s.required) {
+    // J-111: an update is required for collaboration: no skipping, just not now
+    const float wCancel = buttonW("Cancel");
+    const float right = wCancel + (mid ? wMid + theme::kS2 : 0.0f) + wGo + theme::kS2;
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x0 + kDialogW - right));
+    cancelRequired = ui::TextButton("Cancel", false, wCancel) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  } else {
+    skip = ui::TextButton("Skip this version", false, wSkip);
+    ImGui::SameLine(0, 0);
+    const float right = wLater + (mid ? wMid + theme::kS2 : 0.0f) + wGo + theme::kS2;
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX() + theme::kS2, x0 + kDialogW - right));
+    later = ui::TextButton("Remind me later", false, wLater) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  }
   bool midPressed = false;
   if (mid) {
     ImGui::SameLine(0, theme::kS2);
@@ -360,7 +390,11 @@ void drawAvailable(App& a) {
   bool go = ui::TextButton("Download", true, wGo) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
 
   update::Prefs p = update::loadPrefs(a.settings);
-  if (skip) {
+  if (cancelRequired) {
+    if (s.dl && !s.dl->done) s.dl->cancel = true;
+    s.required = false;
+    closeDialog();
+  } else if (skip) {
     update::skipVersion(p, r);
     update::savePrefs(a.settings, p);
     a.settings.save(Settings::defaultPath());
@@ -400,6 +434,27 @@ void drawResult(App& a) {
   const auto& P = pal();
   const update::CheckResult& r = s.shown;
   const bool ok = r.status == update::Status::UpToDate || r.status == update::Status::NoRelease;
+  if (s.required) {
+    // J-111: the newest release could not be fetched just now: point at the releases page
+    title(a, s.requiredTitle);
+    dimLine(tr("Couldn't check for updates right now. The releases page has every download."), P.textDim);
+    if (collab::installKind() != collab::InstallKind::Official)
+      dimLine(tr("Or update from your software store when it arrives there."), P.textDim);
+    ImGui::Dummy(ImVec2(kDialogW, theme::kS1 + theme::kS2));
+    const float wc = buttonW("Cancel"), wp2 = buttonW("Open the releases page");
+    rightAlign(wc + wp2 + theme::kS2);
+    const bool cancel = ui::TextButton("Cancel", false, wc) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    ImGui::SameLine(0, theme::kS2);
+    if (ui::TextButton("Open the releases page", true, wp2)) {
+      openPage(update::kReleasesPage);
+      s.required = false;
+      closeDialog();
+    } else if (cancel) {
+      s.required = false;
+      closeDialog();
+    }
+    return;
+  }
   title(a, ok ? outcomeText(r) : std::string(tr("Could not check for updates")));
   switch (r.status) {
     case update::Status::NoRelease: dimLine(tr("No release has been published on GitHub yet."), P.textDim); break;
@@ -441,6 +496,14 @@ void start(App& a, const Options& o) {
   s.started = true;
   s.fetch = http::fetcher();
   s.download = http::downloader();
+  if (const char* fl = std::getenv("GRIDLINE_FAKE_LATEST"); fl && *fl) s.fakeLatest = fl;  // J-111 screenshots
+  if (!o.fakeVersion.empty()) s.fakeLatest = o.fakeVersion;
+  if (!s.fakeLatest.empty() && o.fakeVersion.empty()) {
+    const update::Release r = update::fakeRelease(s.fakeLatest);
+    s.fetch = update::fakeFetcher(r);
+    s.download = update::fakeDownloader();
+    s.downloadDir = (fs::path(a.configDir()) / "dev-downloads").string();
+  }
   if (!o.fakeVersion.empty()) {  // dev: a made-up release, no network
     const update::Release r = update::fakeRelease(o.fakeVersion);
     s.fetch = update::fakeFetcher(r);
@@ -521,6 +584,82 @@ void draw(App& a) {
     case Dialog::None: ImGui::CloseCurrentPopup(); break;
   }
   ImGui::EndPopup();
+}
+
+// ---- J-111: collaboration version gate ----------------------------------------
+const collab::GateState& gate(App& a) {
+  State& s = S();
+  const int64_t now = wallNow();
+  collab::VersionGate g(a.settings, GRIDLINE_VERSION);
+  if (!s.gateLoaded) {
+    s.gateLoaded = true;
+    s.gate = g.state(now);
+  }
+  if (s.gateJob) {
+    std::lock_guard<std::mutex> lk(s.gateJob->mu);
+    if (s.gateJob->done) {
+      s.gate = s.gateJob->result;
+      g.store(s.gate);
+      a.settings.save(Settings::defaultPath());
+      s.gateJob.reset();
+    }
+  }
+  const bool network = s.started && (!s.opt.automated || !s.fakeLatest.empty()) && (!s.opt.disabled || !s.fakeLatest.empty());
+  // its own check: the popup's "skip" / "remind later" / automatic-off do not apply here
+  if (network && !s.gateJob && (g.due(now) || !s.fakeLatest.empty()) && s.gate.checkedAt != now) {
+    auto job = std::make_shared<State::GateJob>();
+    s.gateJob = job;
+    const update::Fetcher fetch = s.fetch;
+    const std::string cur = GRIDLINE_VERSION;
+    Settings* st = &a.settings;
+    collab::GateState cached = s.gate;
+    std::thread([job, fetch, cur, now, cached, st] {
+      // the check runs on a copy of the cached decision (no settings access off the UI thread)
+      (void)st;
+      const update::HttpResult r = fetch(update::kListUrl);
+      collab::GateState out = cached;
+      std::vector<update::Release> rel;
+      std::string err;
+      if (r.offline || r.status == 0) {
+        out.couldNotCheck = true;
+        out.detail = "offline";
+      } else if (r.status == 403 || r.status == 429) {
+        out.couldNotCheck = true;
+        out.detail = "rate limited";
+      } else if (r.status != 200 || !update::parseReleases(r.body, rel, &err)) {
+        out.couldNotCheck = true;
+        out.detail = "failed";
+      } else {
+        out = collab::evaluate(rel, cur, update::currentTarget());
+        out.checkedAt = now;
+      }
+      std::lock_guard<std::mutex> lk(job->mu);
+      job->result = out;
+      job->done = true;
+    }).detach();
+    s.gate.checkedAt = now;  // not again this second
+  }
+  if (!network) s.gate.couldNotCheck = s.gate.latest.empty();
+  return s.gate;
+}
+
+bool gateChecking() { return S().gateJob != nullptr; }
+
+void showRequired(App& a, const std::string& titleText, const std::string& version) {
+  State& s = S();
+  if (!s.started) return;
+  s.required = true;
+  s.requiredTitle = titleText;
+  s.requiredVersion = version;
+  if ((s.opt.disabled || s.opt.automated) && s.fakeLatest.empty()) {
+    s.shown = update::CheckResult{};
+    s.shown.status = update::Status::Offline;
+    s.shown.current = GRIDLINE_VERSION;
+    showDialog(Dialog::Result);
+    return;
+  }
+  startJob(a, true);
+  if (s.job) showDialog(Dialog::Checking);
 }
 
 void settingsSection(App& a) {

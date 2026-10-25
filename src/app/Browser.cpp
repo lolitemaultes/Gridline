@@ -16,6 +16,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "CollabUi.h"
 #include "../core/I18n.h"
 #include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
@@ -501,7 +502,15 @@ void installedPlugins(App& a, float indent) {
   for (const PluginInfo* p : dynamicPlugins()) {
     std::string fmt, uid;
     if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
+    if (!collabui::pluginAllowed(a, p->type)) continue;  // J-111: not in a collaborative project
     list.push_back(p);
+  }
+  if (collabui::active(a)) {
+    ImGui::Indent(indent);
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Plugins that are not part of Gridline are hidden in a collaborative project."));
+    ImGui::PopTextWrapPos();
+    ImGui::Unindent(indent);
   }
   const host::PluginPrefs prefs = host::pluginPrefs();
   auto group = [&prefs](const PluginInfo* p) {
@@ -777,6 +786,7 @@ int searchResults(App& a, const std::string& text) {
   for (const PluginInfo* p : dynamicPlugins()) {
     std::string fmt, uid;
     if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
+    if (!collabui::pluginAllowed(a, p->type)) continue;  // J-111
     if (browse::matchesPlugin(*p, q, prefs.favourites.count(p->type) > 0)) plugs.push_back(p);
   }
   if (!plugs.empty() && sectionHeader("Plugins##res", static_cast<int>(plugs.size()), true, role::kDraw, ui::Icon::Plug)) {

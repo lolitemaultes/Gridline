@@ -2583,6 +2583,9 @@ struct ImGuiContext
     ImRect                  PlatformMonitorsFullWorkRect;       // Bounding box of all platform monitors
     int                     ViewportCreatedCount;               // Unique sequential creation counter (mostly for testing/debugging)
     int                     PlatformWindowsCreatedCount;        // Unique sequential creation counter (mostly for testing/debugging)
+    bool                  (*ViewportLateCreateFilter)(ImGuiWindow* window); // GRIDLINE PATCH (J-113): when set, a window that stops fitting its host viewport gets its own only if this returns true
+    bool                  (*CloseRequestFilter)(ImGuiWindow* window); // GRIDLINE PATCH (J-116): when set, a close button (title bar, dock tab, dock node) does not close the window if this returns true
+    void                  (*WindowsMovedHook)(ImGuiContext* ctx);     // GRIDLINE PATCH (J-117): when set, called in NewFrame() once the window dragged with the mouse was moved and before floating dock nodes are laid out (the app keeps windows in bounds there)
     int                     ViewportFocusedStampCount;          // Every time the front-most window changes, we stamp its viewport with an incrementing counter
 
     // Keyboard/Gamepad Navigation

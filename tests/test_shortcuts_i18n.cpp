@@ -263,6 +263,8 @@ std::vector<fs::path> uiSources() {
       for (const auto& e : fs::directory_iterator(d.path()))
         if (e.path().filename().string().find("_ui.cpp") != std::string::npos) v.push_back(e.path());
   v.push_back("src/core/Keymap.cpp");
+  for (const auto& e : fs::directory_iterator("src/collab"))  // J-111
+    if (e.path().extension() == ".cpp") v.push_back(e.path());
   std::sort(v.begin(), v.end());
   return v;
 }

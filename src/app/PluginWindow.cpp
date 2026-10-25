@@ -90,9 +90,14 @@ native::Window nativeOf(SDL_Window* w) {
   return n;
 }
 
-lay::Rect workArea() {
+// The usable area of the main window's display or (J-113) of the display holding the
+// remembered position `at`, so an editor left on another monitor reopens there.
+lay::Rect workArea(const std::pair<int, int>* at = nullptr) {
   int d = gMainWin ? SDL_GetWindowDisplayIndex(gMainWin) : 0;
   SDL_Rect r;
+  const SDL_Point p{at ? at->first + 40 : 0, at ? at->second + 12 : 0};  // a point on its title bar
+  for (int n = 0, count = at ? SDL_GetNumVideoDisplays() : 0; n < count; ++n)
+    if (SDL_GetDisplayBounds(n, &r) == 0 && SDL_PointInRect(&p, &r)) d = n;
   if (SDL_GetDisplayUsableBounds(d < 0 ? 0 : d, &r) != 0) return lay::Rect{0, 0, 1440, 900};
   return lay::Rect{r.x, r.y, r.w, r.h};
 }
@@ -489,6 +494,23 @@ void setPluginWindowDevResize(int w, int h) {
 
 bool hostedEditorOpen(const PluginTarget& t) { return windowFor(t) != nullptr; }
 
+bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy) {
+  SDL_Window* f = SDL_GetMouseFocus();
+  if (!f) return false;
+  for (const auto& [key, w] : windows()) {
+    if (!w || w->dead || w->win != f) continue;
+    int mx = 0, my = 0, ww = 0, wh = 0;
+    SDL_GetMouseState(&mx, &my);  // relative to the window with the mouse focus
+    SDL_GetWindowSize(f, &ww, &wh);
+    if (ww <= 0 || wh <= 0) return false;
+    t = w->target;
+    fx = std::clamp(static_cast<float>(mx) / static_cast<float>(ww), 0.0f, 1.0f);
+    fy = std::clamp(static_cast<float>(my) / static_cast<float>(wh), 0.0f, 1.0f);
+    return true;
+  }
+  return false;
+}
+
 void closeHostedEditor(App& a, const PluginTarget& t) {
   auto it = windows().find(t.key());
   if (it == windows().end()) return;
@@ -535,7 +557,7 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
   w.backend = b;
   w.external = editor->external();
   const auto place = places().find(t.key());
-  const lay::Rect work = workArea();
+  const lay::Rect work = workArea(place != places().end() ? &place->second : nullptr);
   const std::string title = cls.name + "  \xC2\xB7  " + hostedTargetName(a, t);
   Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN;
 

@@ -110,7 +110,7 @@ sudo apt install cmake libsdl2-dev libasound2-dev libjack-jackd2-dev libx11-dev
 # FreeBSD: pkg install cmake ninja sdl2 libX11 sndio    OpenBSD: pkg_add cmake ninja sdl2
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake --build build -j4           # a fixed job count: a bare -j starts every compile at once and can run out of memory
 ctest --test-dir build          # 143 test suites
 ./build/gridline-app            # start the app
 ```
@@ -221,7 +221,7 @@ Project files are JSON (`"format": "gridline-project"`). Older files are upgrade
 ## License
 
 Gridline is free software, released under the GNU General Public License v3.0 (see `LICENSE`).
-Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), Signalsmith Stretch and Signalsmith Linear (MIT, time stretching and pitch shifting), CLAP headers (MIT), VST3 plug-in interfaces (MIT), dr_libs and stb_vorbis (public domain or MIT-0), nanosvg (zlib). See each folder under `third_party/`.
+Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), Signalsmith Stretch and Signalsmith Linear (MIT, time stretching and pitch shifting), CLAP headers (MIT), VST3 plug-in interfaces (MIT), dr_libs and stb_vorbis (public domain or MIT-0), nanosvg (zlib), and for collaborative projects libjuice and libplum (MPL-2.0), Monocypher (BSD-2-Clause or CC0) and stb_image (public domain or MIT). See `third_party/NOTICE.md` and each folder under `third_party/`.
 The interface icons in `assets/icons/ui/` use geometry from Lucide (ISC) and Tabler Icons (MIT); see `assets/icons/ui/NOTICE.md`.
 
 Gridline is an independent project and is not affiliated with or endorsed by Image-Line. "FL Studio" is a trademark of Image-Line Software and is mentioned only to describe file compatibility.

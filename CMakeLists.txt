@@ -178,9 +178,84 @@ if(NOT MSVC)
   set_source_files_properties(${CMAKE_BINARY_DIR}/generated/McpDocs.cpp PROPERTIES COMPILE_OPTIONS "-Wno-overlength-strings")
 endif()
 list(APPEND GRIDLINE_CORE_SRC ${CMAKE_BINARY_DIR}/generated/McpDocs.cpp)
+# ---- J-111: collaborative projects (src/collab) ----
+# The replicated document, op log, profiles and the protocol are plain C++ in the core library.
+# Networking: libjuice 1.7.4 (MPL-2.0, ICE / STUN / TURN, vendored unmodified), libplum 0.6.0
+# (MPL-2.0, router port mapping) and Monocypher 4.0.2
+# (BSD-2-Clause / CC0, X25519, EdDSA, BLAKE2b, XChaCha20-Poly1305, vendored unmodified).
+# GRIDLINE_COLLAB=OFF leaves libjuice out (collaboration then works only between peers in one
+# process, i.e. the tests; the app reports that networking is not built in).
+option(GRIDLINE_COLLAB "Collaborative projects over the network (libjuice)" ON)
+file(GLOB GRIDLINE_COLLAB_SRC CONFIGURE_DEPENDS src/collab/*.cpp)
+list(APPEND GRIDLINE_CORE_SRC ${GRIDLINE_COLLAB_SRC})
+add_library(gridline_monocypher STATIC third_party/monocypher/monocypher.c)
+target_include_directories(gridline_monocypher SYSTEM PUBLIC third_party/monocypher)
+target_compile_options(gridline_monocypher PRIVATE ${GL_NOWARN})
+set_target_properties(gridline_monocypher PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(gridline_stbimage STATIC third_party/stb/gridline_stb_image.c)
+target_compile_options(gridline_stbimage PRIVATE ${GL_NOWARN})
+set_target_properties(gridline_stbimage PROPERTIES POSITION_INDEPENDENT_CODE ON)
+find_package(Threads REQUIRED)
+if(GRIDLINE_COLLAB)
+  file(GLOB GRIDLINE_JUICE_SRC CONFIGURE_DEPENDS third_party/libjuice/src/*.c)
+  add_library(gridline_juice STATIC ${GRIDLINE_JUICE_SRC})
+  target_include_directories(gridline_juice SYSTEM PUBLIC third_party/libjuice/include)
+  target_include_directories(gridline_juice PRIVATE third_party/libjuice/include/juice third_party/libjuice/src)
+  target_compile_definitions(gridline_juice PUBLIC JUICE_STATIC PRIVATE JUICE_EXPORTS USE_NETTLE=0 JUICE_ENABLE_LOCALHOST_ADDRESS=1 $<$<CONFIG:Release>:RELEASE=1>)
+  target_compile_options(gridline_juice PRIVATE ${GL_NOWARN})
+  set_target_properties(gridline_juice PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 11)
+  target_link_libraries(gridline_juice PRIVATE Threads::Threads)
+  if(WIN32)
+    target_link_libraries(gridline_juice PUBLIC ws2_32 bcrypt)
+  endif()
+  # libplum 0.6.0 (MPL-2.0, vendored unmodified): router port mapping (PCP / NAT-PMP / UPnP-IGD).
+  file(GLOB GRIDLINE_PLUM_SRC CONFIGURE_DEPENDS third_party/libplum/src/*.c)
+  add_library(gridline_plum STATIC ${GRIDLINE_PLUM_SRC})
+  target_include_directories(gridline_plum SYSTEM PUBLIC third_party/libplum/include)
+  target_include_directories(gridline_plum PRIVATE third_party/libplum/include/plum third_party/libplum/src)
+  target_compile_definitions(gridline_plum PUBLIC PLUM_STATIC PRIVATE PLUM_EXPORTS $<$<CONFIG:Release>:RELEASE=1>)
+  # libjuice and libplum share internal helper names (addr.c, udp.c, timestamp.c): the plum copies
+  # are renamed at compile time so both link into one program (sources unmodified).
+  target_compile_definitions(gridline_plum PRIVATE
+    addr_get_len=gl_plum_addr_get_len
+    addr_get_port=gl_plum_addr_get_port
+    addr_is_any=gl_plum_addr_is_any
+    addr_is_equal=gl_plum_addr_is_equal
+    addr_is_local=gl_plum_addr_is_local
+    addr_map_inet6_v4mapped=gl_plum_addr_map_inet6_v4mapped
+    addr_record_is_equal=gl_plum_addr_record_is_equal
+    addr_record_to_string=gl_plum_addr_record_to_string
+    addr_resolve=gl_plum_addr_resolve
+    addr_set_port=gl_plum_addr_set_port
+    addr_to_string=gl_plum_addr_to_string
+    addr_unmap_inet6_v4mapped=gl_plum_addr_unmap_inet6_v4mapped
+    current_timestamp=gl_plum_current_timestamp
+    udp_create_socket=gl_plum_udp_create_socket
+    udp_get_bound_addr=gl_plum_udp_get_bound_addr
+    udp_get_local_addr=gl_plum_udp_get_local_addr
+    udp_get_port=gl_plum_udp_get_port
+    udp_recvfrom=gl_plum_udp_recvfrom
+    udp_sendto=gl_plum_udp_sendto
+    udp_sendto_self=gl_plum_udp_sendto_self
+    udp_set_diffserv=gl_plum_udp_set_diffserv)
+  target_compile_options(gridline_plum PRIVATE ${GL_NOWARN})
+  set_target_properties(gridline_plum PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 11)
+  target_link_libraries(gridline_plum PRIVATE Threads::Threads)
+  if(WIN32)
+    target_link_libraries(gridline_plum PUBLIC ws2_32 iphlpapi bcrypt)
+  endif()
+endif()
 add_library(gridline_core STATIC ${GRIDLINE_CORE_SRC})
 set_target_properties(gridline_core PROPERTIES POSITION_INDEPENDENT_CODE ON)  # also linked into the plugin bundles (PH-09)
 target_include_directories(gridline_core PUBLIC src)
+# J-111: build id = the commit (collaborators must run the same build); GRIDLINE_BUILD_ID overrides it.
+if(NOT GRIDLINE_BUILD_ID)
+  execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                  OUTPUT_VARIABLE GRIDLINE_BUILD_ID OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE _glGitRes)
+  if(NOT _glGitRes EQUAL 0 OR NOT GRIDLINE_BUILD_ID)
+    set(GRIDLINE_BUILD_ID "unknown")
+  endif()
+endif()
 configure_file(cmake/Version.h.in ${CMAKE_BINARY_DIR}/generated/GridlineVersion.h @ONLY)
 target_include_directories(gridline_core PUBLIC ${CMAKE_BINARY_DIR}/generated)
 target_include_directories(gridline_core SYSTEM PUBLIC third_party)
@@ -194,7 +269,7 @@ if(APPLE)
 elseif(WIN32)
   # Winsock (MCP server), Credential Manager (advapi32), process / memory statistics, windows,
   # WinHTTP (J-89 update check).
-  target_link_libraries(gridline_core PUBLIC ws2_32 advapi32 psapi user32 gdi32 shell32 ole32 uuid urlmon comctl32 winhttp)
+  target_link_libraries(gridline_core PUBLIC ws2_32 bcrypt advapi32 psapi user32 gdi32 shell32 ole32 uuid urlmon comctl32 winhttp)
 elseif(UNIX)
   find_library(GRIDLINE_RT_LIB rt)  # shm_open lives in librt on Linux / NetBSD; libc elsewhere
   if(GRIDLINE_RT_LIB)
@@ -203,9 +278,13 @@ elseif(UNIX)
 endif()
 target_compile_options(gridline_core PRIVATE ${GL_WARN})
 find_package(Threads REQUIRED)
-target_link_libraries(gridline_core PUBLIC Threads::Threads vst3_pluginterfaces gridline_lua ${CMAKE_DL_LIBS})
+target_link_libraries(gridline_core PUBLIC Threads::Threads vst3_pluginterfaces gridline_lua gridline_monocypher gridline_stbimage ${CMAKE_DL_LIBS})
+if(GRIDLINE_COLLAB)
+  target_link_libraries(gridline_core PUBLIC gridline_juice gridline_plum)
+  target_compile_definitions(gridline_core PUBLIC GRIDLINE_COLLAB_NET=1)
+endif()
 
-add_executable(gridline src/cli/main.cpp src/cli/Bench.cpp src/cli/FlpTools.cpp src/cli/McpCli.cpp)
+add_executable(gridline src/cli/main.cpp src/cli/Bench.cpp src/cli/FlpTools.cpp src/cli/McpCli.cpp src/cli/CollabCli.cpp)
 target_link_libraries(gridline PRIVATE gridline_core)
 
 add_executable(gridline_tests tests/test_engine.cpp)
@@ -425,6 +504,37 @@ target_link_libraries(gridline_tests_update PRIVATE gridline_core)
 target_include_directories(gridline_tests_update PRIVATE tests)
 target_compile_options(gridline_tests_update PRIVATE ${GL_WARN})
 add_test(NAME update_check COMMAND gridline_tests_update WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-111: collaboration core (replicated document, sessions, undo locality, op log, files, policy,
+# relay, conflicts and admin review, signatures, profiles), all in memory with fixed seeds.
+add_executable(gridline_tests_collab tests/test_collab.cpp)
+target_link_libraries(gridline_tests_collab PRIVATE gridline_core)
+target_include_directories(gridline_tests_collab PRIVATE tests)
+target_compile_options(gridline_tests_collab PRIVATE ${GL_WARN})
+add_test(NAME collab COMMAND gridline_tests_collab WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(collab PROPERTIES TIMEOUT 600)
+# J-111: encrypted reliable link (loss, reordering, tampering), invites, reply / expiry / reuse, the
+# version gate between peers, relaying through a collaborator, introductions, reconnects (in memory).
+add_executable(gridline_tests_collab_net tests/test_collab_net.cpp)
+target_link_libraries(gridline_tests_collab_net PRIVATE gridline_core)
+target_include_directories(gridline_tests_collab_net PRIVATE tests)
+target_compile_options(gridline_tests_collab_net PRIVATE ${GL_WARN})
+add_test(NAME collab_net COMMAND gridline_tests_collab_net WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(collab_net PROPERTIES TIMEOUT 600)
+# J-111: sound and playback stay on each computer (two collaborators with real engines, offline).
+add_executable(gridline_tests_collab_local tests/test_collab_local.cpp)
+target_link_libraries(gridline_tests_collab_local PRIVATE gridline_core)
+target_include_directories(gridline_tests_collab_local PRIVATE tests)
+target_compile_options(gridline_tests_collab_local PRIVATE ${GL_WARN})
+add_test(NAME collab_local COMMAND gridline_tests_collab_local WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(collab_local PROPERTIES TIMEOUT 600)
+# J-111: two gridline processes, separate configs, real ICE on this computer (no server).
+if(GRIDLINE_COLLAB)
+  add_test(NAME j111_collab_processes
+           COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:gridline> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                   -DOUT=${CMAKE_BINARY_DIR}/j111_collab -P ${CMAKE_SOURCE_DIR}/tests/j111_collab.cmake
+           WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(j111_collab_processes PROPERTIES TIMEOUT 400)
+endif()
 set_tests_properties(update_check PROPERTIES ENVIRONMENT "GRIDLINE_NO_UPDATE_CHECK=1")
 if(APPLE)
   add_executable(gridline_tests_external_drop_mac tests/test_external_drop_mac.mm)
@@ -728,6 +838,22 @@ target_link_libraries(gridline_tests_j112 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j112 PRIVATE tests src)
 target_compile_options(gridline_tests_j112 PRIVATE ${GL_WARN})
 add_test(NAME j112_play_stops_plugins COMMAND gridline_tests_j112 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-113: detachable windows: saved positions recovered onto the monitors, re-anchored, title bars kept reachable.
+add_executable(gridline_tests_j113 tests/test_j113.cpp)
+target_include_directories(gridline_tests_j113 PRIVATE tests src)
+target_compile_options(gridline_tests_j113 PRIVATE ${GL_WARN})
+add_test(NAME j113_window_placement COMMAND gridline_tests_j113 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-117: the elastic boundary of floating windows inside the main window (core/WindowRubber.h).
+add_executable(gridline_tests_j117 tests/test_j117.cpp src/core/SmoothScroll.cpp)
+target_include_directories(gridline_tests_j117 PRIVATE tests src)
+target_compile_options(gridline_tests_j117 PRIVATE ${GL_WARN})
+add_test(NAME j117_window_rubber COMMAND gridline_tests_j117 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-118: the playlist's clip brush: a clicked clip paints as it is (engine/PlaylistTools.h).
+add_executable(gridline_tests_j118 tests/test_j118.cpp)
+target_link_libraries(gridline_tests_j118 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j118 PRIVATE tests src)
+target_compile_options(gridline_tests_j118 PRIVATE ${GL_WARN})
+add_test(NAME j118_paint_brush COMMAND gridline_tests_j118 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-91 (GitHub issue #1): system interface scale, plugin keys on X11 / Windows, Auto Pan pad, motion switches.
 add_executable(gridline_tests_j91 tests/test_j91.cpp)
 target_link_libraries(gridline_tests_j91 PRIVATE gridline_core)
@@ -927,7 +1053,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   add_test(NAME q13_icons COMMAND gridline_tests_icons WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
   # J-54: dialog layout checks, headless Dear ImGui (no window, no renderer).
-  add_executable(gridline_tests_dialog_layout tests/test_dialog_layout.cpp src/app/DialogLayout.cpp src/app/Theme.cpp)
+  add_executable(gridline_tests_dialog_layout tests/test_dialog_layout.cpp src/app/DialogLayout.cpp src/app/Theme.cpp src/core/SmoothScroll.cpp)
   target_link_libraries(gridline_tests_dialog_layout PRIVATE imgui)
   target_include_directories(gridline_tests_dialog_layout PRIVATE src tests)
   target_compile_options(gridline_tests_dialog_layout PRIVATE ${GL_WARN})
@@ -941,14 +1067,15 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
 
   # The interface (every window and editor) is compiled once and used by the
   # application and by the plugin build (PH-09). main.cpp and PluginWindow.cpp
-  # (SDL windows) belong to the application only.
+  # (SDL windows), Viewports.cpp (J-113: detached windows) and LiveResize.cpp (J-116) belong to the application only.
   file(GLOB GRIDLINE_APP_SRC CONFIGURE_DEPENDS src/app/*.cpp src/packs/RegistryUi.cpp src/packs/*/*_ui.cpp)
-  list(REMOVE_ITEM GRIDLINE_APP_SRC ${CMAKE_SOURCE_DIR}/src/app/main.cpp ${CMAKE_SOURCE_DIR}/src/app/PluginWindow.cpp)
+  list(REMOVE_ITEM GRIDLINE_APP_SRC ${CMAKE_SOURCE_DIR}/src/app/main.cpp ${CMAKE_SOURCE_DIR}/src/app/PluginWindow.cpp
+       ${CMAKE_SOURCE_DIR}/src/app/Viewports.cpp ${CMAKE_SOURCE_DIR}/src/app/LiveResize.cpp)
   add_library(gridline_ui OBJECT ${GRIDLINE_APP_SRC})
   target_link_libraries(gridline_ui PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
   target_compile_options(gridline_ui PRIVATE ${GL_WARN_LOOSE})
   set_target_properties(gridline_ui PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS})
+  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp src/app/Viewports.cpp src/app/LiveResize.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS})
   target_link_libraries(gridline-app PRIVATE gridline_core imgui rtmidi)
   if(APPLE)
     target_link_libraries(gridline-app PRIVATE objc)  # plugin editor windows (NSView of an SDL window)
@@ -1045,6 +1172,45 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j97_rack_drop PROPERTIES TIMEOUT 300)
 
+    # J-113: detached windows kept across runs and recovered, Space and the typing keyboard from a
+    # detached window, focus moving between Gridline's windows keeping held keys, J-97 drops into a
+    # detached channel rack, dialogs over it (J-116: detaching, docking back, live resize: j116_detach_app).
+    add_test(NAME j113_detach_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j113_detach -P ${CMAKE_SOURCE_DIR}/tests/j113_detach.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j113_detach_app PROPERTIES TIMEOUT 300 SKIP_REGULAR_EXPRESSION "SKIP: ")
+
+    # J-116 (replaces J-114's detach on drop): only the pop-out button detaches (a panel dragged past
+    # the edge and released outside stays inside); moved / resized by the OS, never docked by being
+    # moved (OS title bar or its own); docked back by the dock-back button, its OS close button and
+    # "Bring all windows back"; live resize draws one frame per size step at the new size (SDL's
+    # event watch from a blocked pump); fixed-size editors; the setting off.
+    add_test(NAME j116_detach_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j116_detach -P ${CMAKE_SOURCE_DIR}/tests/j116_detach.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j116_detach_app PROPERTIES TIMEOUT 300 SKIP_REGULAR_EXPRESSION "SKIP: ")
+
+    # J-117: floating windows inside the main window have an elastic boundary (dragged past an
+    # edge they follow with damped overshoot, released they spring back inside; a shrunk main
+    # window pulls them back), the pop-out button stays beside the close button whatever the
+    # window's position, and docking by dragging still works.
+    add_test(NAME j117_rubber_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j117_rubber -P ${CMAKE_SOURCE_DIR}/tests/j117_rubber.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j117_rubber_app PROPERTIES TIMEOUT 300)
+
+    # J-118: the clip brush: click a trimmed audio clip, paint copies of it as it is (length,
+    # audio start, fades, gain, pitch, reverse); a sample picked in the picker paints at its
+    # natural length; one undo step per paint. Crossfade screenshots at 1x / 2x, light / dark.
+    add_test(NAME j118_paint_brush_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j118_paint_brush -P ${CMAKE_SOURCE_DIR}/tests/j118_paint_brush.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j118_paint_brush_app PROPERTIES TIMEOUT 300)
+
     # J-107: Seltmann's one-step flow: drop a file on the editor -> analysed -> click a layout -> playing.
     add_test(NAME seltmann_flow
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
@@ -1067,6 +1233,45 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j112_play_stops_plugins -P ${CMAKE_SOURCE_DIR}/tests/j112_play_stops_plugins.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j112_play_stops_plugins_app PROPERTIES TIMEOUT 300)
+
+    # J-111: two app windows (hidden, own configs, the app's network settings) collaborate through
+    # dev-input "collab" commands: join after a delay, edits converge, both quit and reopen
+    # (project file / folder) and reconnect by themselves; a join whose ICE connects late still works.
+    if(GRIDLINE_COLLAB)
+      add_test(NAME j111_collab_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j111_collab_app
+                       -P ${CMAKE_SOURCE_DIR}/tests/j111_collab_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(j111_collab_app PROPERTIES TIMEOUT 900)
+      # J-111e: an admin removes someone whose project is open; private copy; leave > keep / delete.
+      add_test(NAME j111e_collab_remove_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j111e_collab_remove_app
+                       -P ${CMAKE_SOURCE_DIR}/tests/j111e_collab_remove_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(j111e_collab_remove_app PROPERTIES TIMEOUT 900)
+      # J-111d: collaborators' cursors: a simulated collaborator's cursor drawn on top of a floating
+      # window (pixel read back) and faded where its spot is not shown; two app windows of other
+      # sizes and interface scales map a cursor to the same playlist spot and the same button.
+      add_test(NAME j111d_collab_cursors
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j111d_collab_cursors
+                       -P ${CMAKE_SOURCE_DIR}/tests/j111d_collab_cursors.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(j111d_collab_cursors PROPERTIES TIMEOUT 600)
+      # J-111f: a live rename reaches the other window (name, title, file, Recent collaborative
+      # projects); a rename made while the other Gridline was closed arrives when both are open again.
+      add_test(NAME j111_rename_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j111_rename_app
+                       -P ${CMAKE_SOURCE_DIR}/tests/j111_rename_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(j111_rename_app PROPERTIES TIMEOUT 900)
+      # J-111h: no window changes size after it opened (Share this project, renaming in place,
+      # Project info, a window sizing itself to a full-width section), at a large and a small size.
+      add_test(NAME j111h_dialog_stable
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j111h_dialog_stable
+                       -P ${CMAKE_SOURCE_DIR}/tests/j111h_dialog_stable.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(j111h_dialog_stable PROPERTIES TIMEOUT 600)
+    endif()
 
     # J-103: a session (demo copy, playing, an editor open) quit by the user, and the layout audit
     # without --screenshot, exit with code 0: no background thread runs into static destruction.

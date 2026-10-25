@@ -90,18 +90,6 @@ workspace::Rect buildDefaultLayout(ImGuiID dockspace, ImVec2 size, int channels,
   return L.rack;
 }
 
-// Floating windows (the rack) stay reachable when the main window shrinks:
-// their title bar and some of their width remain inside the dock space.
-void keepFloatingInView(const char* name, ImVec2 pos, ImVec2 size) {
-  ImGuiWindow* w = ImGui::FindWindowByName(name);
-  if (!w || w->DockIsActive || !w->WasActive || w->Hidden) return;
-  ImVec2 p = w->Pos;
-  const float keep = std::min(w->Size.x, 160.0f);
-  p.x = std::clamp(p.x, pos.x - (w->Size.x - keep), std::max(pos.x, pos.x + size.x - keep));
-  p.y = std::clamp(p.y, pos.y, std::max(pos.y, pos.y + size.y - 40.0f));
-  if (p.x != w->Pos.x || p.y != w->Pos.y) ImGui::SetWindowPos(w, p, ImGuiCond_Always);
-}
-
 // Keeps the docked workspace usable while the window is resized. ImGui keeps
 // side panels at a fixed pixel size and gives all the change to the central
 // node (playlist), so shrinking a large window could squeeze the playlist to

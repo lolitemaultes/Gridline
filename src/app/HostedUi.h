@@ -41,6 +41,9 @@ void setHostedSandbox(App& a, const std::string& type, bool on);
 // Gridline's parameter panel.
 bool openHostedEditor(App& a, const PluginTarget& t);  // false (with a toast) when it cannot open
 bool hostedEditorOpen(const PluginTarget& t);
+// J-111g: the plugin window the mouse pointer is over (collaborators' cursors):
+// its plugin and the pointer's fraction of the window. False when none.
+bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy);
 void closeHostedEditor(App& a, const PluginTarget& t);
 void closeAllHostedEditors(App& a);
 // Window events for plugin windows (input to their control bar, close,

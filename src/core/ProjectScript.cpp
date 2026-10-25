@@ -804,7 +804,7 @@ int addSourceClip(lua_State* L, ClipKind kind, ObjectId source) {
   charge(L, kCostStruct);
   const Song& s = song(L);
   if (kind == ClipKind::Audio && len == 0) len = s.barTicks();
-  ObjectId id = s.nextId;
+  ObjectId id = s.peekId();
   doc(L).editSong(kind == ClipKind::Audio ? "add audio clip" : "add automation clip", [&](Song& x) {
     Clip c;
     c.id = x.allocateId();

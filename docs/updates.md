@@ -75,7 +75,8 @@ A check is a single HTTPS request to the GitHub API:
 (`/releases?per_page=20` when beta versions are included). The only headers Gridline adds are
 `User-Agent: Gridline/<version>`, `Accept: application/vnd.github+json` and
 `X-GitHub-Api-Version: 2022-11-28`. No identifier, account, settings, project information,
-system details or usage statistics are sent, and Gridline has no telemetry. No cookies are kept.
+system details or usage statistics are sent, and Gridline has no telemetry. Collaborative projects
+(docs/collaboration.md) make the same request for their version check, at most once an hour. No cookies are kept.
 GitHub sees the request like any visit to its website, including your IP address; see GitHub's
 privacy statement. "Download installer" fetches the release's `SHA256SUMS` file and the installer
 from GitHub the same way.

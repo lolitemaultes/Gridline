@@ -85,8 +85,16 @@ msgstr ""
 msgid "Reverted to"
 msgstr ""
 
-#: src/app/App.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/J31Ui.cpp src/app/MenuParityUi.cpp src/packs/edison/edison_ui.cpp
+#: src/app/App.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/J31Ui.cpp src/app/MenuParityUi.cpp src/packs/edison/edison_ui.cpp
 msgid "Saved"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Saved (collaborative projects save as you work)"
+msgstr ""
+
+#: src/app/App.cpp
+msgid "Saved a copy"
 msgstr ""
 
 #: src/app/App.cpp
@@ -105,7 +113,7 @@ msgstr ""
 msgid "%s · %.0f Hz · %.2f s"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/app/TrackModeUi.cpp
+#: src/app/AudioRecordUi.cpp src/app/CollabUi.cpp src/app/MidiUi.cpp src/app/TrackModeUi.cpp
 msgid "(none)"
 msgstr ""
 
@@ -401,7 +409,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -421,7 +429,7 @@ msgstr ""
 msgid "Control to start"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/McpUi.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/McpUi.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
 msgid "Copy"
 msgstr ""
 
@@ -993,11 +1001,15 @@ msgstr ""
 msgid "Plugins"
 msgstr ""
 
+#: src/app/Browser.cpp
+msgid "Plugins that are not part of Gridline are hidden in a collaborative project."
+msgstr ""
+
 #: src/app/Browser.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/MidiUi.cpp
 msgid "Presets"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp
+#: src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp
 msgid "Preview"
 msgstr ""
 
@@ -1109,7 +1121,7 @@ msgstr ""
 msgid "Stop the preview"
 msgstr ""
 
-#: src/app/Browser.cpp
+#: src/app/Browser.cpp src/app/CollabUi.cpp
 msgid "Sync"
 msgstr ""
 
@@ -1321,7 +1333,7 @@ msgstr ""
 msgid "Off"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/ChordEditorUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/PluginUI.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/PluginUI.cpp
 msgid "On"
 msgstr ""
 
@@ -1345,7 +1357,7 @@ msgstr ""
 msgid "Period"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Pitch"
 msgstr ""
 
@@ -1397,7 +1409,7 @@ msgstr ""
 msgid "TRACKING"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Tempo"
 msgstr ""
 
@@ -1421,7 +1433,7 @@ msgstr ""
 msgid "Vel. → pan"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/Dialogs.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Volume"
 msgstr ""
 
@@ -1555,6 +1567,10 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Swing"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "The sample is still arriving from a collaborator: silent until it is here"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -2085,11 +2101,11 @@ msgstr ""
 msgid "Chords"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp
 msgid "Close"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
 msgid "Colour"
 msgstr ""
 
@@ -2373,7 +2389,7 @@ msgstr ""
 msgid "Use this chord"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/MidiUi.cpp src/app/PianoRoll.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/MidiUi.cpp src/app/PianoRoll.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Velocity"
 msgstr ""
 
@@ -2407,6 +2423,1718 @@ msgstr ""
 
 #: src/app/ChordEditorUi.cpp
 msgid "unlinked"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d changes awaiting the admin's review"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d changes need your review"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d days ago"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d files, %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d h ago"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d min ago"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d of %d online"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d of your changes not seen yet"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d s ago"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%d versions"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s in all"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s is a normal project now."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s is a normal project on this computer now. Nothing syncs any more."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s is now a collaborative project in its own folder; your original project is unchanged. Invite someone from the Collaboration panel."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s is offline: they find out the next time they connect to anyone in the project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s joined"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s removed you, %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s renamed the project to %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s stopped sharing %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s stopped sharing it, %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s stops syncing at once, on every computer in the project, and can't connect again. Invites they have stop working."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s was removed from the project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "%s's computer can't be reached directly yet"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "(deleted)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "(no name)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "1 change awaiting the admin's review"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "1 change needs your review"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "1 hour"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "15 minutes"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "24 hours"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A PNG or JPEG; it is cropped to a square and made small (256 px). You can also drop a picture here"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A code works once, for one person."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A collaborator"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A collaborator online with you both relays changes. A TURN server (Settings > Collaboration) or a reconnect code can also help."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A name is needed before you can host or join."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A new empty project; the folder stays as it is"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A new folder: the project and every audio file it uses are copied into it. Your project file stays as it is."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A new invite code for them"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A new invite code: they join again and stay the same member"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A normal project in a new folder: the music and its audio, nothing shared"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A normal project of its own: its shared history is deleted, nothing syncs."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "A one-time invite that lets them back in (only an admin's invite does)"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/collab/Session.cpp
+msgid "A project needs a name."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Admin: %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Also rename the project folder on this computer"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Another computer might not have them, and their settings can't be merged. Replace or remove them, then try again."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Asks two STUN servers for your public address, tries the router's automatic port opening and looks for IPv6"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Audio files in the project folder that nothing uses any more."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Audio files nothing in the project, its history, undo or Sync review uses"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Automatic port"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Automation '%s'"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Both sides changed the same things. The newest change is in place; choose what to keep. Nothing is lost."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "COLLABORATION"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "CONNECTING"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "CONNECTION"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Cancel invite"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Changes awaiting the admin's review"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Changes made while apart need your review"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Changes made while you were apart"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Channel '%s'"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/UpdateUi.cpp
+msgid "Checking for updates..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Choose a display name first: collaborators see it."
+msgstr ""
+
+#: src/app/CollabUi.cpp src/collab/Controller.cpp
+msgid "Choose a display name in Settings > Collaboration first."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Choose picture..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Choose the project's folder (the one with the .gridline-collab folder)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Choose where the new folder goes"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Choose..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Clean up unused audio..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Clean up unused audio?"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Click to rename the project for everyone"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Clip '%s'"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Close project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Close project leaves the folder %s as it is. It stays in your collaborative projects until you forget it."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Close the collaborative project first."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Collaborate on this project..."
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/Dialogs.cpp
+msgid "Collaboration"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Collaboration..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Collaborative project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Collaborators"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Collaborators on other versions are refused when you connect."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Compare it with %s by phone or chat. If it matches, nobody is in between."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Compare it with them by phone or chat. If it matches, nobody is in between."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Connect"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Connected to %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Connecting to the inviter..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Connecting..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Connection: %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Contact email"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Copies the project into the folder and shares it from there"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Copy fingerprint"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Copy the fingerprint, to compare with a collaborator by phone or chat"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Copy the invite code"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Could not make the private copy"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Could not open the collaborative project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Couldn't check for updates"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Couldn't connect directly"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Couldn't connect directly to %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Create invite"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Cursors"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginUI.cpp src/app/SettingsKeysTheme.cpp
+msgid "Default"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Delete it"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Deleted: the shared history and the other members' names and pictures (%s)."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Display name"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Drop a PNG or JPEG here to use it as your picture"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Each collaborator keeps their copy and can keep it as a private project. Whoever is offline finds out the next time they are online with someone who knows."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Each computer's project file becomes %s."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Each person keeps their own windows and transport; only the project is shared."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Enter or clicking away renames it for everyone; Esc keeps the old name."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Every change merged by itself."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Every computer keeps the whole project, so you can always keep working"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Everyone sees the new name: now if they are online, or the next time you are online together."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Everyone you invite sees this name. The folder is named after it."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Exchange reconnect codes with them (chat, email)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Expires"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/SettingsPages.cpp
+msgid "FOLDERS"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/Dialogs.cpp
+msgid "Files"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Finding this computer's network addresses."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Fingerprint"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp
+msgid "Folder"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Folders keep their names (yours is \"%s\")."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Follow their playhead"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "For %s only: they come back as the same member."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "For every change:"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "For everyone: nothing syncs any more, and nobody can join."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "For everyone: nothing syncs any more; each person keeps their copy"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "For example: the project is finished"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Forget %s?"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Freed %s."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "From"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Goes on by itself once a collaborator has your changes"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Gridline %s is out. You'll need it next time you open this project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Hear and see this side for a moment (not saved, not sent)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "How collaborators see you. Kept on this computer, not in any project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "IDENTITY"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "INVITE"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "INVITE CODE"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "INVITE SOMEONE"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Invite again"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Invite code"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Invite from %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Invite someone else"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Invited by %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "It leaves this list. Nothing on disk changes."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "It leaves this list. The folder %s stays as a normal project; its shared history and the other members' names are deleted."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "It starts with gridline-invite: and came by chat, email or a file."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "JOIN"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Join"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Join a collaborative project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Join collaborative project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Join collaborative project..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Joined %s. Changes now sync both ways."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Joining %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Keep a private copy to go on working alone: a normal project in a new folder with the music and its audio, without the shared history or anyone's details."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Keep a private copy..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Keep all of %s's"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Keep it as a normal project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Keep newest"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Keep oldest"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Keep this one"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Kept: everything the project, the shared history, undo / redo or Sync review still refers to. Collaborators' copies are not touched."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Last synced"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Later"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Leave %s?"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Leave now and nobody gets them. Wait for sync goes on as soon as a collaborator has them."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Leave project..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Left (%d)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Left the project"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+msgid "Length"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Let Gridline ask my router to open a port automatically"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Loading"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Make admin"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Make collaborative"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Make it a normal project?"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Make this a private copy"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Makes a one-time code for one person"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Missing"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/packs/edison/edison_tools_ui.cpp
+msgid "Mix"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Mixer track '%s'"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "More: fingerprint, admin, follow their playhead"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Moved or renamed it? Choose the folder where it is now"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
+msgid "Mute"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "NOTE FROM %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "NOTE TO THEM (OPTIONAL)"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp
+msgid "Name"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Names are at most %d characters: the rest is left out."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "New collaborative project..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "New keys make you a new person to your collaborators."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "New keys: collaborators have to invite you again to every project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "No collaborator has confirmed %d of your changes yet."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Nobody else is in the project any more."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Nobody has synced with you for %d days."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Nobody has synced with you since %s."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Nobody is online. They need to open the project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "None on this computer yet. Projects you share or join appear here."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Not found at %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Not shared any more"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Nothing is deleted by itself. Keep it shared, or make it a normal project on this computer."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Nothing resolved yet"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Nothing syncs any more, so editing is off here. Playback keeps going."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Nothing to clean up: every audio file is used by the project, its history, undo or Sync review."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Nothing to review"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Off: nobody sees it. On: sent only to collaborators, encrypted; never written into project files or logs"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Offline"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Online"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Only if they can't connect directly: they then get a reply code to send you."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Only on this computer"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Only you, the admin, can do this."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Open"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Open collaborative project..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Open the Collaboration panel"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Open the original"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Opened %s (collaborative). Reconnecting to collaborators..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Opens it and reconnects to the others (they need it open too)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Optional"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "PEOPLE"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "PLUGINS THAT CAN'T BE SHARED"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "PNG or JPEG, or drop one on the circle"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/PianoRoll.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Pan"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
+msgid "Paste"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Paste the code from the clipboard"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Pattern '%s'"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Peer to peer, no server: changes travel while two computers are online together."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "People who are no longer in the project. Their earlier changes stay."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Picture"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Plugin parameter"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Position"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Preparing"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Preparing the invite"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Previewing %s's side: not saved or sent"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Previewing a side: not saved or sent"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Private copy saved in %s."
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/Menus.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Project name"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "RECONNECT"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Reaching %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Receive the project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Receiving the project: %d of %d changes"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Recent collaborative projects"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Reconnect with a code..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Reconnect..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Reconnects when they open the project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Relays the encrypted connection when both networks block direct connections. Only needed for strict networks"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp
+msgid "Remove"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Remove %s from %s?"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Remove from project..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Remove picture"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Removed"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Removed (%d)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Removed by %s, %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Removed or left (%d)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Removes them for everyone"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Rename"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/Playlist.cpp src/packs/edison/edison_wave_ui.cpp
+msgid "Rename..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Renames the project for everyone"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Renames the project for everyone in it"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Reply code"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Required to host or join"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Reset identity"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Reset identity..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Resolved"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Resolved changes appear here."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Restore this one"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "SAFETY CODE"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "SECTION"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "SHARE THIS PROJECT"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "STUN server"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Save as file..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Section probe"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Send %s your code and paste theirs. Codes only carry network addresses; your keys check the connection."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Send level"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Send them this reply code; they paste it into their invite."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Send this code to the person you are inviting. It works once."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Share my email with collaborators"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Shared name"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Shared with %d people"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Sharing"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Show collaborators' cursors"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Shown to them with the removal. Everyone in the project can read it."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Some changes made while you were apart touch the same things. Review them in Sync review."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Someone"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Someone is connecting..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Someone shared a project with you: paste their invite code."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Stays: the project and its audio (%s) in %s, as a normal project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Stop preview"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Stop sharing %s?"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Stop sharing..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Stops joining; nothing is kept"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Sync review"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Syncing %d changes"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "THIS PROJECT"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "TURN relay"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Take it off this list"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Take it off this list; the folder stays as a normal project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Telling your collaborators"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Tells this computer its public address. The server sees your IP address, nothing else"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Test"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Test my connection"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Testing..."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "That didn't work."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "That file could not be read."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "That folder already exists: the project is added to what is in it."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "That folder already holds a collaborative project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "That folder already holds a collaborative project: choose another place or name."
+msgstr ""
+
+#: src/app/CollabUi.cpp src/collab/Controller.cpp
+msgid "That folder already holds another collaborative project. Choose another folder."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "That folder is not a collaborative project (it has no .gridline-collab folder)."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "That is not an email address."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "That is not an invite code."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The admin"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The admin chooses what to keep. Until then the newest change is in place."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The colour of your cursor on your collaborators' screens"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The files are deleted from this computer, not moved to the Trash."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The folder %s (%s) goes to the Trash, with its audio. Empty the Trash to free the space."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The folder already has this name."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The folder becomes \"%s\". Only your copy: collaborators' folders stay as they are. Gridline reopens the project and reconnects."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The last invite expired. Make a new one."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The original"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The others keep working on it without you. Only a new invite brings you back."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The project and its audio files are copied here and kept up to date."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The project folder is now %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The project is now called %s for everyone."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The same collaborative project is also at another place on this computer. Both can't sync as you, so only one of them can be the shared one."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The shared one; this copy stays untouched."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Their changes from before stay, with their name in Sync review."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Their changes from before stay, with their name in Sync review. Nothing they do now reaches the project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Their changes so far stay, and Sync review still shows they made them. Anything they change from now on is dropped."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Their clock differs from this computer's: times are approximate."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Their code"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Their copy on their own computer stays theirs: Gridline can't take back what they already have."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "There is no undo. To bring them back, re-invite them (People > Removed)."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "There is no undo: to work together again, make the project collaborative again and invite everyone."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "They are on Gridline %s and you are on %s: you both need the same version."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "They have to invite you again to every collaborative project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This build of Gridline has no collaboration networking."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This copy"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This copy becomes the shared one; don't open the original as shared again."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This folder is a copy"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This invite expired: ask for a new code."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This is a collaborative project. Update to Gridline %s to open it."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This is a collaborative project: choose a display name in Settings > Collaboration, then open it again."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This project uses plugins that are not part of Gridline."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This takes a moment."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "To leave, make someone else admin first (the ... menu next to them)."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Track"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Try again from another network, ask a collaborator who is online with the inviter to invite you, or set a TURN server in Settings > Collaboration."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "UDP blocked"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "UPnP-IGD, NAT-PMP or PCP: a temporary mapping while a collaborative project is open, removed when it closes"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Up to date for collaboration"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Update"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Update required (%s)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Update to Gridline %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Update to Gridline %s to collaborate"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Update to Gridline %s to use collaborative features."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Use an invite code you were sent"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Use reply"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Use this folder instead"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Valid for"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Version"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "WHAT GOES"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "WHAT HAPPENS"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "WHAT YOU CAN DO"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "WHERE TO STORE IT"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Wait for sync"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Waiting for a collaborator to receive them"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Waiting for the inviter: send them the reply code (Join window)."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Waiting for them to join"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Where the project's folder is made"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Where to store it"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Work on this project together"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "YOUR COLLABORATIVE PROJECTS"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "YOUR COPY"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "YOUR PROFILE"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "You already have this project here. Joining opens it and reconnects you; nothing is copied again."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "You are the admin. Make someone else admin first (the ... menu next to them), then leave."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "You are the admin: this stops sharing for everyone. They keep their copies."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "You are the admin: you resolve conflicting changes."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "You leave the project; the others keep it and learn it when they are online with you or someone who knows."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "You left %s. Its folder is in the Trash."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "You stop syncing; keep your copy as a normal project or delete it"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "You were removed from %s by %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Your code"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "a collaborator"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "about"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "added %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "added it"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "admin"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "an item"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "and %d more"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "and %s more"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "audio %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "click: the Collaboration panel"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "clip"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "collab demo"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "cone NAT (hole punching works)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "deleted %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "direct"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "expired: ask for a new code"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "expires in %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "just now"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "last synced"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "moved it"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "named the project %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "never"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "newest"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "no"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "no NAT"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "none (same network only)"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "not with anyone yet"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/PluginEditorsK3Gb.cpp
+msgid "off"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "offline"
+msgstr ""
+
+#: src/app/CollabUi.cpp src/app/PluginEditorsK3Gb.cpp
+msgid "on"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "online"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "online through %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "optional: turn.example.org"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "password"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "relayed through %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "removed %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "renamed the project from %s to %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "restored it"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "shared history %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "symmetric NAT"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "the admin"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "the project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "this computer"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "this project"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "unknown"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "user"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "with a collaborator %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "you"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -2937,7 +4665,7 @@ msgstr ""
 msgid "Import MIDI file..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/collab/Session.cpp
 msgid "Insert"
 msgstr ""
 
@@ -3031,10 +4759,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Left"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
-msgid "Length"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -3145,10 +4869,6 @@ msgstr ""
 msgid "Minimum"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/packs/edison/edison_tools_ui.cpp
-msgid "Mix"
-msgstr ""
-
 #: src/app/ContextMenus.cpp src/app/Menus.cpp
 msgid "Mixer track"
 msgstr ""
@@ -3197,10 +4917,6 @@ msgstr ""
 msgid "Move up"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
-msgid "Mute"
-msgstr ""
-
 #: src/app/ContextMenus.cpp src/core/Keymap.cpp
 msgid "Mute / unmute selected clips"
 msgstr ""
@@ -3219,10 +4935,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Muted notes"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp
-msgid "Name"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -3319,10 +5031,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
 msgid "Paint"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
-msgid "Paste"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -3437,10 +5145,6 @@ msgstr ""
 msgid "Randomize..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp
-msgid "Remove"
-msgstr ""
-
 #: src/app/ContextMenus.cpp
 msgid "Remove effect"
 msgstr ""
@@ -3471,10 +5175,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Rename, colour and icon"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/app/Menus.cpp src/app/Playlist.cpp src/packs/edison/edison_wave_ui.cpp
-msgid "Rename..."
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/MixerView.cpp
@@ -4006,6 +5706,10 @@ msgid "Adjust the control"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Allow windows outside the main window"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Animations"
 msgstr ""
 
@@ -4098,6 +5802,10 @@ msgid "Don't save"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Drag a window by its title bar out of Gridline, onto another monitor if you like. Off: every window stays inside the main window"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Dragging"
 msgstr ""
 
@@ -4123,10 +5831,6 @@ msgstr ""
 
 #: src/app/Dialogs.cpp src/app/ExportUi.cpp
 msgid "File name"
-msgstr ""
-
-#: src/app/Dialogs.cpp
-msgid "Files"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -4337,10 +6041,6 @@ msgstr ""
 msgid "Processing threads"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/Menus.cpp src/packs/seltmann/seltmann_ui.cpp
-msgid "Project"
-msgstr ""
-
 #: src/app/Dialogs.cpp src/core/Keymap.cpp
 msgid "Project info"
 msgstr ""
@@ -4493,8 +6193,16 @@ msgstr ""
 msgid "Wheel over controls"
 msgstr ""
 
+#: src/app/Dialogs.cpp src/app/DisplayConfirmUi.cpp src/app/Menus.cpp
+msgid "Windows"
+msgstr ""
+
 #: src/app/Dialogs.cpp
 msgid "Your changes will be lost if you don't save them."
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Your name, contact and picture for collaborators, identity and connection"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -4573,7 +6281,7 @@ msgstr ""
 msgid "Light"
 msgstr ""
 
-#: src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+#: src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/collab/Session.cpp src/core/Keymap.cpp
 msgid "Mixer"
 msgstr ""
 
@@ -4603,10 +6311,6 @@ msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp
 msgid "Revert"
-msgstr ""
-
-#: src/app/DisplayConfirmUi.cpp src/app/Menus.cpp
-msgid "Windows"
 msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp
@@ -4835,10 +6539,6 @@ msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "FILE NAME AND LOCATION"
-msgstr ""
-
-#: src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp
-msgid "Folder"
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -6493,6 +8193,10 @@ msgstr ""
 msgid "Backup settings..."
 msgstr ""
 
+#: src/app/Menus.cpp
+msgid "Bring all windows back into Gridline"
+msgstr ""
+
 #: src/app/Menus.cpp src/app/SettingsPages.cpp
 msgid "Browse templates..."
 msgstr ""
@@ -7657,10 +9361,6 @@ msgstr ""
 msgid "Nothing to edit"
 msgstr ""
 
-#: src/app/PianoRoll.cpp src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Pan"
-msgstr ""
-
 #: src/app/PianoRoll.cpp src/app/Playlist.cpp
 msgid "Playback"
 msgstr ""
@@ -8261,10 +9961,6 @@ msgstr ""
 msgid "Copy slot"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/app/PluginUI.cpp src/app/SettingsKeysTheme.cpp
-msgid "Default"
-msgstr ""
-
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "Default trigger sync"
 msgstr ""
@@ -8555,14 +10251,6 @@ msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "live"
-msgstr ""
-
-#: src/app/PluginEditorsK3Gb.cpp
-msgid "off"
-msgstr ""
-
-#: src/app/PluginEditorsK3Gb.cpp
-msgid "on"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
@@ -9434,10 +11122,6 @@ msgid "Detail"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
-msgid "FOLDERS"
-msgstr ""
-
-#: src/app/SettingsPages.cpp
 msgid "File > New from template"
 msgstr ""
 
@@ -9866,10 +11550,6 @@ msgid "Check now"
 msgstr ""
 
 #: src/app/UpdateUi.cpp
-msgid "Checking for updates..."
-msgstr ""
-
-#: src/app/UpdateUi.cpp
 msgid "Checking..."
 msgstr ""
 
@@ -9879,6 +11559,10 @@ msgstr ""
 
 #: src/app/UpdateUi.cpp
 msgid "Could not reach GitHub"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Couldn't check for updates right now. The releases page has every download."
 msgstr ""
 
 #: src/app/UpdateUi.cpp
@@ -9950,6 +11634,14 @@ msgid "Once a day at startup, Gridline asks GitHub for the newest release. Nothi
 msgstr ""
 
 #: src/app/UpdateUi.cpp
+msgid "Open the releases page"
+msgstr ""
+
+#: src/app/UpdateUi.cpp
+msgid "Or update from your software store when it arrives there."
+msgstr ""
+
+#: src/app/UpdateUi.cpp
 msgid "Released %s."
 msgstr ""
 
@@ -10009,6 +11701,22 @@ msgstr ""
 msgid "in"
 msgstr ""
 
+#: src/app/Viewports.cpp
+msgid "Dock back into Gridline"
+msgstr ""
+
+#: src/app/Viewports.cpp
+msgid "Not available on Wayland. Start Gridline with SDL_VIDEODRIVER=x11 to use it through XWayland."
+msgstr ""
+
+#: src/app/Viewports.cpp
+msgid "Not available with this display system."
+msgstr ""
+
+#: src/app/Viewports.cpp
+msgid "Pop out into its own window"
+msgstr ""
+
 #: src/app/Widgets.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Custom"
 msgstr ""
@@ -10027,6 +11735,258 @@ msgstr ""
 
 #: src/app/main.cpp
 msgid "Saved the project"
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "A folder with that name is already there. Rename or move it first."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "No collaborative project is open."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "Only the project admin can stop sharing."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "That folder holds a collaborative project. Choose another one."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "That folder holds a different project."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "The folder could not be renamed (is a file in it open in another program?)"
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "This copy never received the project. Ask a member for a new invite and join again (into the same folder)."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "This folder is a copy of a collaborative project that is also at another place on this computer."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "This is a collaborative project. Update Gridline to open it."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "This project is no longer shared."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "This project uses plugins that are not part of Gridline, so it can't be collaborative:"
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "You are not a member of this collaborative project. Ask a member for an invite."
+msgstr ""
+
+#: src/collab/Controller.cpp
+msgid "You are the admin. Make someone else admin first, or stop sharing."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "%1 is on Gridline %2; update to collaborate."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "%1 is on a different build of Gridline %2. Use the same build to collaborate."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "%1 needs to update Gridline (to %2) before joining."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "%1 stopped sharing this project."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "Couldn't connect directly. Your network or theirs blocks peer-to-peer connections."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "Networking is not available in this build."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "The connection was refused."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "The invite code is damaged. Ask for a new one."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "The invitee"
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This code is for another project."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This code is from someone who is not a member of this project."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This invite has expired. Ask for a new one."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This invite is no longer open."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This invite was already used. Ask for a new one."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This is not a Gridline invite code."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This is not a Gridline reconnect code."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This is not a Gridline reply code."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This reply belongs to another invite."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "You were removed from this project by %1. Only a new invite from an admin brings you back."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "Your collaborator"
+msgstr ""
+
+#: src/collab/Lifecycle.cpp
+msgid "Cannot create the folder"
+msgstr ""
+
+#: src/collab/Lifecycle.cpp
+msgid "Could not move the folder to the Trash"
+msgstr ""
+
+#: src/collab/Lifecycle.cpp
+msgid "Could not move the folder to the trash (it is on another disk). Delete it yourself if you want it gone."
+msgstr ""
+
+#: src/collab/Lifecycle.cpp
+msgid "Could not remove the collaboration history"
+msgstr ""
+
+#: src/collab/Lifecycle.cpp
+msgid "Moving to the Recycle Bin is not available here. Delete the folder yourself if you want it gone."
+msgstr ""
+
+#: src/collab/Lifecycle.cpp
+msgid "Some audio files could not be copied."
+msgstr ""
+
+#: src/collab/Lifecycle.cpp
+msgid "The folder does not exist."
+msgstr ""
+
+#: src/collab/NetTest.cpp
+msgid "Automatic port opening works on this router."
+msgstr ""
+
+#: src/collab/NetTest.cpp
+msgid "IPv6 is available: connections to collaborators with IPv6 often need no traversal at all."
+msgstr ""
+
+#: src/collab/NetTest.cpp
+msgid "No IPv6 on this network."
+msgstr ""
+
+#: src/collab/NetTest.cpp
+msgid "No STUN server answered: this network may block UDP. Collaborators on the same network can still connect; others need a TURN server (Settings > Collaboration)."
+msgstr ""
+
+#: src/collab/NetTest.cpp
+msgid "The router does not open ports automatically (or the option is off)."
+msgstr ""
+
+#: src/collab/NetTest.cpp
+msgid "Your public address is known; the router's behaviour could not be tested."
+msgstr ""
+
+#: src/collab/NetTest.cpp
+msgid "Your router gives every destination a different public port (symmetric NAT): direct connections to people behind similar routers will fail. A collaborator who reaches you both, or a TURN server, still works."
+msgstr ""
+
+#: src/collab/NetTest.cpp
+msgid "Your router keeps one public address for every destination: direct connections should work with most collaborators."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "A file of the project arrived damaged three times and was not used"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Cannot create the project folder"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Changes made to the project file outside a collaboration session were added."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Channel"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "External plugins can't be used in a collaborative project"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Master"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Only the project admin can resolve conflicts."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "The collaboration snapshot is damaged."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "The collaborative project could not be read"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "The project hasn't arrived yet."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "The project owner stopped sharing this project. Your copy stays on this computer."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "This folder is not a collaborative project."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "This project no longer syncs, so it can't be renamed for everyone."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "note processor"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "slot"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
@@ -13011,6 +14971,10 @@ msgstr ""
 
 #: src/plugin/HostedWindows.cpp
 msgid "No window for its interface on this system"
+msgstr ""
+
+#: src/plugin/HostedWindows.cpp
+msgid "Not available inside a plugin host."
 msgstr ""
 
 #: src/plugin/HostedWindows.cpp

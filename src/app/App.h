@@ -30,6 +30,9 @@
 struct ImFont;
 
 namespace gl {
+namespace collab {
+class Controller;
+}
 
 // Grid snap choices shared by the piano roll and playlist.
 
@@ -103,6 +106,11 @@ struct PlaylistState {
   // J-28: FL-style playlist controls.
   ClipKind srcKind = ClipKind::Pattern;  // current clip source (what draw / paint place);
   ObjectId srcId = kNoId;                //   patterns follow App::curPattern
+  // J-118: the clip brush: the clip last clicked (kNoId: none, the source's
+  // natural clip). Draw / paint place copies of it while it is a clip of the
+  // current source; `brush` keeps its settings for when it is deleted.
+  ObjectId brushId = kNoId;
+  Clip brush;
   int pickerTab = 0;                     // clip source picker: 0 patterns, 1 audio, 2 automation
   bool pickerOpen = true;                // picker panel shown (Alt+P)
   // J-82: picker selection (Ctrl+click adds, Shift+click a range) of the
@@ -159,6 +167,9 @@ class App {
   // PH-09: extra entries for a parameter's context menu (plugin build: host macros).
   std::function<void(ParamId)> extraParamMenu;
   Document doc;
+  // J-111: collaborative projects (app/CollabUi.h); made on first use.
+  std::unique_ptr<collab::Controller> collab;
+  bool showCollab = false, showJoin = false, showSyncReview = false;
   AudioEngine engine{44100.0};
   ProgramBuilder builder;
   Settings settings;

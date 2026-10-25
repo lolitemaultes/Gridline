@@ -58,6 +58,7 @@ Settings::Settings() {
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
       {"ui.scale", Json::makeNumber(1.0)},
       {"ui.scaleAuto", b(true)},             // J-91: ui.scale is multiplied by the desktop's scale (core/UiScale.h)
+      {"ui.detachWindows", b(true)},         // J-113: windows can be dragged out of the main window
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
       {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s
@@ -121,6 +122,17 @@ Settings::Settings() {
       {"update.lastCheck", Json::makeNumber(0)},    // seconds since 1970 of the last check (0 = never)
       {"update.skipVersion", Json::makeString("")}, // "Skip this version"
       {"update.remindAfter", Json::makeNumber(0)},  // "Remind me later": not offered again before this time
+      // J-111: collaboration (src/collab, docs/collaboration.md). The profile itself lives in <config>/gridline/collab.
+      {"collab.stunHost", Json::makeString("stun.l.google.com")},  // address discovery ("" = same network only)
+      {"collab.stunPort", Json::makeNumber(19302)},
+      {"collab.turnHost", Json::makeString("")},    // optional relay server (password: secret store)
+      {"collab.turnPort", Json::makeNumber(3478)},
+      {"collab.turnUser", Json::makeString("")},
+      {"collab.portMapping", b(true)},              // ask the router for a temporary port (UPnP-IGD / NAT-PMP / PCP)
+      {"collab.showCursors", b(true)},              // draw collaborators' cursors
+      {"collab.inviteMinutes", Json::makeNumber(60)},  // invite lifetime
+      {"collab.latestVersion", Json::makeString("")},  // newest eligible release seen by the collaboration version check
+      {"collab.latestCheckedAt", Json::makeNumber(0)},  // when (seconds since 1970)
   };
   // J-99: smooth freehand drawing (core/DrawSmooth.h): one amount, a switch per surface.
   defaults_["draw.smoothAmount"] = Json::makeNumber(drawsmooth::kDefaultAmount);

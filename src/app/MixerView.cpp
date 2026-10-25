@@ -9,6 +9,8 @@
 #include <functional>
 #include <map>
 #include <set>
+#include "CollabUi.h"
+#include "CursorAnchor.h"
 #include "../core/I18n.h"
 #include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
@@ -446,6 +448,7 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
   const MixerTrack* sel = cx0.focus;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImGui::PushID(static_cast<int>(t.id));
+  canchor::publishRect(canchor::MixerStrip, t.id, 0, p, ImVec2(p.x + stripW, p.y + stripH));  // J-111d: collaborators' pointers
   const bool isSel = t.id == a.selMixer;
   const bool inSel = isSel || v.sel.count(t.id);
   const float cx = p.x + stripW * 0.5f;
@@ -459,6 +462,8 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
     dl->AddRect(p, ImVec2(p.x + stripW, p.y + stripH), theme::withAlpha(P.hot, 0.55f), theme::kRadius);
   else if (inSel)
     dl->AddRect(p, ImVec2(p.x + stripW, p.y + stripH), theme::withAlpha(P.hot, 0.3f), theme::kRadius);
+  if (ImU32 fc = 0; const float fl = collabui::flash(a, "mixer/#" + std::to_string(t.id), &fc))  // J-111: a collaborator's change
+    dl->AddRect(ImVec2(p.x - 1, p.y - 1), ImVec2(p.x + stripW + 1, p.y + stripH + 1), theme::withAlpha(fc, fl), theme::kRadius, 0, 2.0f);
   const float plateH = 36.0f;
   dl->AddRectFilled(ImVec2(p.x + 2, p.y + 2), ImVec2(p.x + stripW - 2, p.y + plateH), theme::mix(P.field, tc, 0.22f), theme::kRadiusSm);
   dl->AddRectFilled(ImVec2(p.x + 2, p.y + 2), ImVec2(p.x + stripW - 2, p.y + 4), tc, theme::kRadiusSm, ImDrawFlags_RoundCornersTop);
@@ -1464,6 +1469,8 @@ void drawMixer(App& a) {
         theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(b0.x + 8, std::round(b0.y + (rowH - 2 - 13) * 0.5f) - 1), bw - 26 - latW,
                             info ? (es.enabled ? P.text : P.textFaint) : P.textFaint, info ? info->name.c_str() : i18n::tr("Empty slot"));
         ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(b0.x + bw - 11, b0.y + (rowH - 2) * 0.5f), 10, P.textFaint);
+        if (float pr = 0; info && collabui::fileLoading(a, es.plugin.data, &pr))  // J-111: an impulse response still arriving
+          collabui::drawLoading(dl, ImVec2(b0.x + 2, b0.y + rowH - 6), ImVec2(b0.x + bw - 2, b0.y + rowH - 3), pr, true);
         ui::Hint(info ? "Click to replace \xC2\xB7 double-click to open \xC2\xB7 right-click for options \xC2\xB7 wheel moves it up / down \xC2\xB7 drag to reorder or onto another track (Ctrl copies)"
                       : "Click to insert an effect (or drop one from the browser)");
         ImGui::SetNextWindowSizeConstraints(ImVec2(bw, 0), ImVec2(320, 460));
@@ -1634,6 +1641,7 @@ void drawEffectEditor(App& a) {
   }
   if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking)) {
     ui::KeepWindowInViewport();
+    ui::MarkDetachable();  // J-114: pops out / docks back like the panels
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
       a.focusPluginOwner = target.owner;  // controller template knobs follow the focused plugin
       a.focusPluginSlot = target.slot;

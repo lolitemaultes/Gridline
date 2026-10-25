@@ -29,6 +29,20 @@ Tick sourceLength(const Song& s, const Source& src);
 // The source a clip plays.
 Source sourceOf(const Clip& c);
 
+// J-118: the clip brush. Clicking a clip in the playlist makes it the current
+// source *as it is*: draw / paint then place copies of that clip (its length,
+// content offset / audio start and end, fades, gain, pitch, stretch, tempo
+// sync and reverse), not a fresh clip of its source. Picking a source in the
+// picker (or a menu) drops the brush: new clips of it get its natural length.
+// A copy of `brush` at (track, start): every clip setting kept; a new clip
+// (id unset), not muted, in no group, not a recording take, not launched.
+Clip makeClipLike(const Clip& brush, int track, Tick start);
+// The clip draw / paint place for `src`: a copy of `brush` when it is a clip
+// of `src` (nullptr: none), else makeClip.
+Clip makeBrushClip(const Song& s, const Source& src, const Clip* brush, int track, Tick start);
+// Length of the clips draw / paint place for `src` (brush: its length).
+Tick brushLength(const Song& s, const Source& src, const Clip* brush);
+
 // Move: selected clips by dt ticks and dtr tracks. The shift is limited so
 // that no clip starts before 0 or leaves [0, trackCount); clips may not enter
 // or leave a locked track (`locked[track]` != 0) — then nothing moves.

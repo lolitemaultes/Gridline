@@ -27,6 +27,8 @@
 #include "FrameStats.h"
 #include "McpUi.h"
 #include "ThemeSettings.h"
+#include "LiveResize.h"
+#include "Viewports.h"
 #include "../core/I18n.h"
 #include "../core/UiScale.h"
 #include "HostedUi.h"
@@ -48,6 +50,7 @@
 #include "ExportUi.h"
 #include "../core/MidiFile.h"
 #include "App.h"
+#include "CollabUi.h"
 #include "PluginUI.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
@@ -345,6 +348,23 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   J-112: playvia remote (the Play / Pause remote / MIDI action) · startsong (a start that is not the Play command, as a
 //   playlist click) · playstate (transport, plugin playback, stop epoch, the focused window to stdout) · focus <window>;
 //   reported each frame for waitfor: transport-playing / transport-stopped, plugin-playback
+//   J-111: collab profile <name> · collab new <folder> · collab invite <file> [minutes] · collab join <code file> <folder>
+//   (waits for the file) · collab open <file|folder> · collab edit <channel name> · collab reconnect-code <file> ·
+//   collab reconnect <file> · collab stall <seconds> · collab report <file> (JSON: shared song digest, members, connected, unseen,
+//   name, title) · collab links · J-111f: collab new <folder> [name] · collab rename "<name>" · collab rename-window ·
+//   collab name-window · collab project-info [rename] · collab demo-rename "<name>" (the --show collab-demo collaborator renames);
+//   J-111h: collab share-name "<name>" · collab share-folder <dir> · collab share · collab rename-type "<name>" [folder] ·
+//   collab rename-ok · collab demo-cursor-edge <window> <cover> <dx> · collab window settings|info|none ·
+//   collab section-probe · windows [frames] (window positions and sizes to stdout);
+//   waitfor signals collab-active / -ready / -invite-ready / -joined / -join-failed / -connected / -all-connected /
+//   -synced / -members:<n> / -channel:<name> / -name:<project name>
+//   J-111d: collab point <window> <kind> <a> <b> <cx> <cy> (the pointer to a cursor anchor, CursorAnchor.h) ·
+//   collab demo-cursor <same> (the simulated collaborator's pointer, --show collab-cursors) · collab cursors <file>
+//   (JSON: cursors shown and what each is over here) · collab pixel <file>; signals collab-cursor:<kind>:shown|hidden,
+//   collab-cursor-window:<window>:shown|hidden
+//   J-111g: collab picture <file|#RRGGBB> · collab panel · collab pictures <file> (JSON: members' pictures announced,
+//   received, kept, drawn, a pixel) · collab open-editor chN · collab demo-cursor-plugin chN|none · collab trace-reset;
+//   signal collab-picture:<name>
 //   waitfor <name> <seconds> (J-108: the script and --frames stop counting until the app reports
 //   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s")
 std::string devShotPending;
@@ -466,6 +486,22 @@ void devPianoCommand(App& app, const DevInputLine& l, int frame) {
   std::fflush(stdout);
 }
 
+// J-111h: "windows [frames]": the main window's size and every shown root window's position and size
+// (this frame, or each of the next `frames` frames) to stdout, to see a window's size change over frames.
+int devWindowsLeft = 0;
+void devDumpWindows(int frame) {
+  const ImGuiContext& g = *ImGui::GetCurrentContext();
+  int ww = 0, wh = 0;
+  if (SDL_Window* w = SDL_GL_GetCurrentWindow()) SDL_GetWindowSize(w, &ww, &wh);
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  std::printf("windows frame %d: main %dx%d viewport %.0fx%.0f\n", frame, ww, wh, static_cast<double>(vp->Size.x), static_cast<double>(vp->Size.y));
+  for (const ImGuiWindow* w : g.Windows)
+    if (w->WasActive && !w->Hidden && !(w->Flags & ImGuiWindowFlags_ChildWindow) && !w->DockIsActive)
+      std::printf("  window \"%s\" pos %.1f,%.1f size %.1fx%.1f\n", ui::stableWindowName(w->Name), static_cast<double>(w->Pos.x),
+                  static_cast<double>(w->Pos.y), static_cast<double>(w->Size.x), static_cast<double>(w->Size.y));
+  std::fflush(stdout);
+}
+
 void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   ImGuiIO& io = ImGui::GetIO();
   // The scripted pointer stays put between commands (the backend would
@@ -482,8 +518,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   static int lastFrame = INT_MIN;  // a "waitfor" holds the frame: its commands run once
   const bool fresh = frame != lastFrame;
   lastFrame = frame;
+  if (fresh && devWindowsLeft > 0) {
+    --devWindowsLeft;
+    devDumpWindows(frame);
+  }
   for (const auto& l : script) {
     if (!fresh || l.frame != frame) continue;
+    if (viewports::devCommand(app, l.cmd, l.args, frame)) continue;  // J-113
     if (l.cmd == "move") {
       pointer = ImVec2(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
       io.AddMousePosEvent(pointer.x, pointer.y);
@@ -649,6 +690,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       // main window losing focus (to another application or window).
       SDL_Event e{};
       SDL_Window* w = SDL_GL_GetCurrentWindow();
+      if (l.cmd == "focuslost" && !l.a0.empty()) w = SDL_GetWindowFromID(viewports::sdlWindowOf(l.a0));  // J-113: "focuslost <window>"
       if (l.cmd == "focuslost") {
         e.type = SDL_WINDOWEVENT;
         e.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
@@ -733,8 +775,17 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       SDL_Event q{};
       q.type = SDL_QUIT;
       SDL_PushEvent(&q);
+    } else if (l.cmd == "collab") {  // J-111: collaboration (CollabUi.h)
+      ImVec2 to;
+      if (collabui::devCommand(app, l.args, frame, &to)) {  // "collab point": the pointer to an anchor
+        pointer = to;
+        io.AddMousePosEvent(to.x, to.y);
+      }
     } else if (l.cmd == "waitfor") {  // J-108
-      devWait = {l.a0, std::max(0.0, std::strtod(l.a1.c_str(), nullptr)), SDL_GetPerformanceCounter(), true};
+      // (J-111f: a quoted name may hold spaces, "collab-name:Night Drive")
+      const std::string& name = l.args.empty() ? l.a0 : l.args[0];
+      const std::string& secs = l.args.size() > 1 ? l.args[1] : l.a1;
+      devWait = {name, std::max(0.0, std::strtod(secs.c_str(), nullptr)), SDL_GetPerformanceCounter(), true};
     } else if (l.cmd == "undo") {
       app.doc.undo();
       app.syncEngine();
@@ -756,18 +807,34 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                     static_cast<double>(c.gain), static_cast<double>(c.pan), steps, notes);
       }
       std::fflush(stdout);
+    } else if (l.cmd == "windows") {  // J-111h: windows [frames]
+      devWindowsLeft = std::max(1, std::atoi(l.a0.c_str()));
     } else if (l.cmd == "shot") {
       devShotPending = l.args.empty() ? l.a0 : l.args[0];  // J-97: a quoted path may hold spaces
     } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane") {
       devPianoCommand(app, l, frame);
     } else if (l.cmd == "dump") {
       const Song& s = app.doc.song();
-      std::printf("dump frame %d: %zu clips, %zu selected\n", frame, s.playlist.size(), app.playlist.selected.size());
+      std::printf("dump frame %d: %zu clips, %zu selected, undo %zu\n", frame, s.playlist.size(), app.playlist.selected.size(),
+                  app.doc.history().position());
       for (const auto& c : s.playlist)
-        std::printf("  clip %u kind %d track %d start %lld len %lld offset %lld audioStart %.6f muted %d pattern %u group %u sel %d\n",
+        std::printf("  clip %u kind %d track %d start %lld len %lld offset %lld audioStart %.6f muted %d pattern %u group %u sel %d"
+                    " source %u audioEnd %.6f fadeIn %.6f fadeOut %.6f gain %.4f pitch %.2f stretch %.4f reverse %d\n",
                     static_cast<unsigned>(c.id), static_cast<int>(c.kind), c.track, static_cast<long long>(c.start),
                     static_cast<long long>(s.clipLength(c)), static_cast<long long>(c.offset), c.audioStart, c.muted ? 1 : 0,
-                    static_cast<unsigned>(c.pattern), static_cast<unsigned>(c.group), app.playlist.selected.count(c.id) ? 1 : 0);
+                    static_cast<unsigned>(c.pattern), static_cast<unsigned>(c.group), app.playlist.selected.count(c.id) ? 1 : 0,
+                    static_cast<unsigned>(c.source), c.audioEnd, c.fadeIn, c.fadeOut, static_cast<double>(c.gain),
+                    static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0);
+      std::fflush(stdout);
+    } else if (l.cmd == "plgeom") {  // J-118: the playlist's geometry (Windows.h PlaylistGeometry)
+      const PlaylistGeometry& g = playlistGeometry();
+      std::printf("plgeom frame %d: valid %d x0 %.3f pxPerTick %.6f tabs %.1f %.1f %.1f tabY %.1f\n", frame, g.valid ? 1 : 0,
+                  static_cast<double>(g.x0), static_cast<double>(g.pxPerTick), static_cast<double>(g.tabX[0]),
+                  static_cast<double>(g.tabX[1]), static_cast<double>(g.tabX[2]), static_cast<double>(g.tabY));
+      for (size_t i = 0; i < g.trackTop.size(); ++i)
+        std::printf("  track %zu top %.1f h %.1f\n", i, static_cast<double>(g.trackTop[i]), static_cast<double>(g.trackH[i]));
+      for (const auto& r : g.rows)
+        std::printf("  row %u x %.1f y %.1f\n", r.id, static_cast<double>(r.x), static_cast<double>(r.y));
       std::fflush(stdout);
     }
   }
@@ -834,6 +901,7 @@ int main(int argc, char** argv) {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
+  io.IniFilename = nullptr;  // layout.ini is loaded once the main window is placed (below)
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   io.ConfigWindowsMoveFromTitleBarOnly = true;
   io.ConfigDragClickToInputText = true;
@@ -870,6 +938,7 @@ int main(int argc, char** argv) {
   theme::apply(true);
   ImGui_ImplSDL2_InitForOpenGL(window, gl);
   ImGui_ImplOpenGL3_Init(glsl);
+  viewports::install(window, gl, {startHidden});  // J-113: detachable windows
   if (startHidden) {
     // J-78: automated runs keep their own clipboard (a scripted click on a
     // notification must not replace what the user copied); stdout shows it.
@@ -924,7 +993,6 @@ int main(int argc, char** argv) {
     std::error_code ec;
     fs::create_directories(app.configDir(), ec);
   }
-  io.IniFilename = iniPath.c_str();
   bool firstRun = !fs::exists(iniPath);
 
   splash(0.42f, "Starting audio engine");
@@ -986,6 +1054,7 @@ int main(int argc, char** argv) {
   std::string devScript;                  // --script id: J-24 piano roll script window (frame 3) on the --edit target
   bool devPlaylistOnly = false;           // --show playlist: other panels closed
   bool devMixerOnly = false;              // --show mixer: the mixer fills the window
+  std::string devCollabDemo;              // --show collab-demo / collab-review / collab-demo-panel (J-111)
   float shotScale = 1.0f;                 // --scale F: framebuffer scale of an off-screen shot (HiDPI check)
   float devUiScale = 0.0f;                // --ui-scale F: interface scale for this run only (not saved; J-54 layout checks)
   std::string devSaveAtExit;  // --save-at-exit path: project saved when the run ends (plugin state round trips)
@@ -1110,6 +1179,12 @@ int main(int argc, char** argv) {
       else if (w == "keys") app.showSettings = true, app.settingsTab = 8;   // J-55 shortcut editor
       else if (w == "theme") app.showSettings = true, app.settingsTab = 9;  // J-55 theme page
       else if (w == "integrations") app.showSettings = true, app.settingsTab = 10;  // SC-07 AI assistants page
+      else if (w == "collab-settings") app.showSettings = true, app.settingsTab = 11;  // J-111 Collaboration page
+      else if (w == "collab") app.showCollab = true;                                // J-111 panel (no session)
+      else if (w == "collab-join") gl::collabui::openJoin(app);                      // J-111 join dialog
+      else if (w == "collab-demo" || w == "collab-review" || w == "collab-demo-panel" || w == "collab-cursors") {  // J-111: a simulated collaborator
+        devCollabDemo = w;
+      }
       else if (w == "mcplog") gl::mcpui::showActivity();                            // SC-07 activity log
       else if (w == "newproject") app.showNewProject = true;
       else if (w == "loopstarter") gl::j59::openLoopStarter(app);  // J-59
@@ -1342,6 +1417,21 @@ int main(int argc, char** argv) {
     if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_WINDOWS) mainNative.handle = static_cast<void*>(wm.info.win.window);
 #endif
   }
+  // J-111g: collaborators' cursors are drawn the size of this computer's pointer
+  // (host/ui/NativeView.h pointerSize; X11 reads the main window's display).
+  host::native::Window pointerNative = mainNative;
+#if defined(SDL_VIDEO_DRIVER_X11) && !defined(__APPLE__) && !defined(_WIN32)
+  {
+    SDL_SysWMinfo wm;
+    SDL_VERSION(&wm.version);
+    if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_X11) {
+      pointerNative.display = static_cast<void*>(wm.info.x11.display);
+      pointerNative.handle = reinterpret_cast<void*>(static_cast<uintptr_t>(wm.info.x11.window));
+    }
+  }
+#endif
+  host::native::PointerSize pointerSize;
+  double pointerAt = -1;
   if (mainNative.valid() && !xdrop::native::install(mainNative.handle))  // J-75: hover, promises, links (macOS)
     std::fprintf(stderr, "[drop] native drop target unavailable; using SDL drop events\n");
   {  // J-89: update check once the window is up; automated runs never touch the network
@@ -1349,97 +1439,35 @@ int main(int argc, char** argv) {
     updateOpts.disabled = updateOpts.disabled || update::disabledByEnvironment();
     updateOpts.automated = startHidden || !shotPath.empty() || !profilePath.empty() || browserui::thumbMode() || !devInput.empty();
     updateOpts.openUrl = [](const std::string& url) { return SDL_OpenURL(url.c_str()) == 0; };
+    collabui::setOpenUrl(updateOpts.openUrl);  // J-111e: Show in Finder / Files
     updui::start(app, updateOpts);
   }
   const bool frameClock = profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
   if (frameClock) SDL_GL_SetSwapInterval(0);
+  // The saved layout, read now that the main window is where it will be (J-113: detached
+  // windows are saved relative to it), then saved there on exit.
+  viewports::setVirtualMonitors(useOffscreen);
+  ImGui::LoadIniSettingsFromDisk(iniPath.c_str());
+  io.IniFilename = iniPath.c_str();
 
   std::map<SDL_Keycode, HeldNote> held;
   std::string lastTitle;
   bool running = true;
   Uint64 t0 = SDL_GetPerformanceCounter();
-  while (running) {
-    prof::beginFrame();
-    SDL_Event ev;
-    uint64_t statT = fstats::stamp();
-    while (SDL_PollEvent(&ev)) {
-      ImGui_ImplSDL2_ProcessEvent(&ev);
-      if (hostedEditorEvent(app, ev)) continue;  // plugin editor windows
-      if (ev.type == SDL_QUIT || (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE &&
-                                  ev.window.windowID == SDL_GetWindowID(window)))
-        app.quitRequested = true;
-      // J-55: "Follow system" picks up a desktop appearance change when Gridline is focused again.
-      if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
-          ev.window.windowID == SDL_GetWindowID(window) && theme::modeFromSettings(app.settings) == theme::Mode::System)
-        theme::applyFromSettings(app.settings, true);
-      // J-75: files dropped by other applications. macOS reports them (with
-      // the hover) through xdrop::native; elsewhere SDL reports them on release:
-      // collected, then dropped at the pointer like any drag.
-      if (ev.type == SDL_DROPBEGIN) xdragui::sdlDropBegin();
-      if (ev.type == SDL_DROPFILE || ev.type == SDL_DROPTEXT) {
-        const std::string text = ev.drop.file ? ev.drop.file : "";
-        SDL_free(ev.drop.file);
-        if (ev.type == SDL_DROPFILE) xdragui::sdlDropFile(text);
-        else xdragui::sdlDropText(text);
-      }
-      if (ev.type == SDL_DROPCOMPLETE) {
-        int mx = 0, my = 0, wx = 0, wy = 0;
-        SDL_GetGlobalMouseState(&mx, &my);
-        SDL_GetWindowPosition(window, &wx, &wy);
-        xdragui::sdlDropComplete(static_cast<float>(mx - wx), static_cast<float>(my - wy));
-      }
-      // J-109: the window lost focus (another application, a plugin window,
-      // a key released over another window): no key-up will come, so every
-      // note held from the interface ends now (typed keys, clicked keys, pads).
-      if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST &&
-          ev.window.windowID == SDL_GetWindowID(window)) {
-        releaseTypedNotes(app, held);
-        app.engine.releaseLiveNotes();
-      }
-      // A held typed note ends on its key-up whatever changed meanwhile
-      // (a modifier pressed, a text field focused, the typing keyboard switched off).
-      if (ev.type == SDL_KEYUP && held.count(ev.key.keysym.sym) && !(app.typingKeyboard && !io.WantTextInput &&
-                                                                     !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)))) {
-        const SDL_Keycode k = ev.key.keysym.sym;
-        const ObjectId chId = held[k].channel;
-        held.erase(k);
-        for (int p : app.typing.keyUp(typingKey(k))) {
-          app.engine.noteOff(chId, p);
-          app.playedNoteOff(chId, p);
-        }
-      }
-      // Typing keyboard (key events straight from SDL so key-up is never missed).
-      if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && app.typingKeyboard && !io.WantTextInput &&
-          !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT))) {
-        SDL_Keycode k = ev.key.keysym.sym;
-        int key = typingKey(k);
-        const bool down = ev.type == SDL_KEYDOWN && !ev.key.repeat;
-        if (down && app.stepRecord && !app.engine.playing() && (k == SDLK_RIGHT || k == SDLK_BACKSPACE)) {
-          if (k == SDLK_RIGHT)
-            app.stepRecorder.rest();
-          else
-            app.stepRecorder.backspace(app.doc, app.curPattern, app.selChannel);
-        }
-        if (key > 0 && app.selChannel != kNoId) {
-          if (down) {
-            std::vector<int> on = app.typing.keyDown(key);
-            for (int p : on) {
-              app.engine.noteOn(app.selChannel, p, app.typing.velocity / 127.0f);
-              app.playedNoteOn(app.selChannel, p, app.typing.velocity);
-            }
-            if (!on.empty()) held[k] = {app.selChannel, 0, 0};
-          } else if (ev.type == SDL_KEYUP) {
-            ObjectId chId = held.count(k) ? held[k].channel : app.selChannel;
-            held.erase(k);
-            for (int p : app.typing.keyUp(key)) {
-              app.engine.noteOff(chId, p);
-              app.playedNoteOff(chId, p);
-            }
-          }
-        }
-      }
+  // One complete frame after the events: tick, interface, render and swap of every window. The
+  // main loop draws it after each event pump; J-116: SDL's event watch also draws it from inside
+  // a pump the window system blocks while a window is resized (`live`, see LiveResize.h).
+  auto frame = [&](bool live) {
+    liveresize::frameBegin(live);
+    uint64_t statT = 0;
+    // J-109: Gridline lost focus (another application, a plugin window, a key released
+    // over another window): no key-up will come, so every note held from the interface
+    // ends now (typed keys, clicked keys, pads). J-113: not when the focus only moved
+    // between the main window and a detached one.
+    if (viewports::takeAppFocusLost()) {
+      releaseTypedNotes(app, held);
+      app.engine.releaseLiveNotes();
     }
-    fstats::since(fstats::Events, statT);
     xdragui::pump(app);  // J-75: drags from other applications
     if (app.quitRequested) {
       app.quitRequested = false;
@@ -1456,6 +1484,7 @@ int main(int argc, char** argv) {
       prof::Scope ps("tick");
       fstats::Timer ft(fstats::Tick);
       app.tick(now);
+      collabui::frame(app, now);  // J-111: network, collaborators' edits, saving
       pumpHostedPlugins(app);
       app.processMidi();
       app.processAudioRecording();  // J-8
@@ -1485,8 +1514,10 @@ int main(int argc, char** argv) {
     const float uiScale = devUiScale > 0 ? uiscale::effectiveScale(devUiScale, false, 1.0f, winW, winH)
                                          : uiscale::effectiveScale(app.settings.getNumber("ui.scale"), app.settings.getBool("ui.scaleAuto"), autoDpi, winW, winH);
 
+    viewports::setAllowed(app.settings.getBool("ui.detachWindows"));
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
+    if (winW > 0 && winH > 0) viewports::beginFrame(uiScale, ImVec2(static_cast<float>(winW) / uiScale, static_cast<float>(winH) / uiScale));
     xdragui::feedPointer();  // J-75: the drag position wins over the backend's pointer fallback
     if (fixedDt > 0) io.DeltaTime = static_cast<float>(fixedDt);
     if (winW > 0 && winH > 0) {
@@ -1509,11 +1540,19 @@ int main(int argc, char** argv) {
         lastScaledEvent = g.InputEventsNextEventId - 1;  // already in logical pixels
       }
     }
+    if (pointerAt < 0 || now - pointerAt >= 3.0) {  // J-111g: the system pointer's size (Settings may change it)
+      pointerSize = host::native::pointerSize(pointerNative);
+      pointerAt = now;
+    }
+    collabui::setPointerSize(static_cast<float>(pointerSize.arrowH) / uiScale, pointerSize.source);
     scrollui::configure(app.settings);  // J-67: smooth scrolling / elastic edges for every ImGui scroll region
+    ui::SetWindowRubber(scrollui::params().elastic);  // J-117: the same switch for the windows' elastic boundary
     scrollui::beforeNewFrame();
     ImGui::NewFrame();
+    viewports::afterNewFrame();
     scrollui::afterNewFrame();
-    ui::ClampTrackedWindows();  // J-91: floating windows kept in the work area before they are laid out
+    collabui::beginFrame(app);  // J-111d: pointer anchors collected while the windows draw
+    ui::ClampTrackedWindows();  // J-91 / J-117: floating windows kept in the work area (elastic) before they are laid out
     ui::wheelFrameBegin();     // J-83: wheel routing over controls in scrolling panes
     xdragui::beginFrame(app);  // J-75: an external drag is an ImGui drag from outside
     devTraceWheel = ImVec2(io.MouseWheelH, io.MouseWheel);
@@ -1548,8 +1587,13 @@ int main(int argc, char** argv) {
     ImGuiID dockId = ImGui::GetID("GridlineDock");
     // J-28: saved layouts from before the current default are replaced once.
     const bool migrate = static_cast<int>(app.settings.getNumber("ui.layoutVersion")) < workspace::kLayoutVersion;
-    if (firstRun || migrate || app.resetLayout || !ImGui::DockBuilderGetNode(dockId)) {
+    // Dev layout options (--show mixer / playlist, --hide) ask for the default layout they adjust,
+    // whatever layout.ini holds (it is read since J-113).
+    static bool devLayout = devMixerOnly || devPlaylistOnly || !devHide.empty();
+    if (firstRun || migrate || app.resetLayout || devLayout || !ImGui::DockBuilderGetNode(dockId)) {
+      devLayout = false;
       const ImVec2 inner(dsize.x - 8, dsize.y - 8);  // dock host padding
+      if (app.resetLayout) viewports::gatherAll();  // J-113: detached windows come back too
       const workspace::Rect r = buildDefaultLayout(dockId, inner, static_cast<int>(app.doc.song().channels.size()));
       rackPlacement = {dpos.x + 4 + r.x, dpos.y + 4 + r.y, r.w, r.h};
       placeRack = true;
@@ -1582,7 +1626,9 @@ int main(int argc, char** argv) {
         fitDockTree(ImGui::DockBuilderGetNode(dockId), ImVec2(avail.x / lastDock.x, avail.y / lastDock.y), avail);
       lastDock = avail;
     }
+    viewports::beginDockSpace(dockId);  // J-114: tab bars get the pop-out / dock-back button
     ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
+    viewports::endDockSpace();
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(3);
@@ -1627,7 +1673,6 @@ int main(int argc, char** argv) {
           placeRack = false;
         }
       }
-      keepFloatingInView("Channel rack", dpos, dsize);
       rackDevAfter(app, frameNo);
     }
     {
@@ -1645,6 +1690,7 @@ int main(int argc, char** argv) {
       drawAutomationEditor(app);
       drawDialogs(app);
       browserui::drawPluginPicker(app);
+      collabui::draw(app);  // J-111
     }
     browserui::thumbDraw(app);
     if (!devMenu.empty()) drawDevMenu(app, devMenu);
@@ -1655,6 +1701,11 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "[plugin-window] toggled: %s\n", hostedEditorOpen(devEditorTarget) ? "open" : "closed");
     }
     if (devAutoEdit && frameNo == 2) devAutomationEditor(app, devAutoEdit);
+    if (!devCollabDemo.empty() && frameNo == 2) {  // J-111
+      gl::collabui::startDemo(app, (std::filesystem::path(app.configDir()) / "collab-demo").string(), devCollabDemo == "collab-cursors" || devCollabDemo == "collab-demo-panel");
+      if (devCollabDemo == "collab-review") app.showSyncReview = true;
+      if (devCollabDemo == "collab-demo-panel") app.showCollab = true;
+    }
     if (devExport && frameNo == 2) {
       if (devExport == 1) gl::exportui::openRender(app, gl::exportui::Preset::Stems);
       if (devExport == 2) gl::exportui::openRender(app, gl::exportui::Preset::PatternReplace);
@@ -1751,8 +1802,10 @@ int main(int argc, char** argv) {
 
     xdragui::endFrame(app);  // J-75: a drop no window took opens the files
     ui::wheelFrameEnd();     // J-83
+    collabui::drawCursors(app);  // J-111: collaborators' cursors, last: on top of every window, popup and menu
     {
     prof::Scope psRender("render");
+    viewports::drawTitleButtons();  // J-114
     ImGui::Render();
     if (useOffscreen) offscreen.use(true);
     glViewport(0, 0, fbW, fbH);
@@ -1765,6 +1818,7 @@ int main(int argc, char** argv) {
     if (!devInput.empty()) {  // J-112: for "waitfor"
       devsig::reach(app.engine.playing() ? "transport-playing" : "transport-stopped");
       if (app.engine.pluginPlaybackActive()) devsig::reach("plugin-playback");
+      collabui::devFrame(app);  // J-111: collab-connected, collab-joined, collab-synced, ...
     }
     const bool devHold = devWaitHolds();  // J-108: "waitfor" keeps the script (and --frames) on this frame
     // J-103: a --dev-input session without --screenshot counts its frames too (its script ends it with "quit").
@@ -1791,12 +1845,13 @@ int main(int argc, char** argv) {
     if (useOffscreen) offscreen.use(false);
     fstats::since(fstats::Ui, statT);
     statT = fstats::stamp();
+    viewports::renderWindows();  // J-113: the detached windows
     SDL_GL_SwapWindow(window);
     fstats::since(fstats::Present, statT);
     statT = fstats::stamp();
     renderHostedEditors(app);  // control bars of open plugin windows
     fstats::since(fstats::PluginWindows, statT);
-    if (frameClock) {  // J-66: wait for the next refresh inside the run loop (plugin interfaces draw meanwhile)
+    if (frameClock && !live) {  // J-66: wait for the next refresh inside the run loop (plugin interfaces draw meanwhile; not from a blocked pump, J-116)
       statT = fstats::stamp();
       static unsigned followTick = 0;
       if ((++followTick & 63u) == 1u) host::native::frameClockFollow(mainNative);  // the window may move to another display
@@ -1819,9 +1874,91 @@ int main(int argc, char** argv) {
         lastTitle = title;
       }
     }
+    liveresize::frameEnd();
+  };
+  liveresize::install(window, [&frame]() { frame(true); });
+  while (running) {
+    prof::beginFrame();
+    SDL_Event ev;
+    uint64_t statT = fstats::stamp();
+    liveresize::pumpBegin();
+    while (SDL_PollEvent(&ev)) {
+      ImGui_ImplSDL2_ProcessEvent(&ev);
+      viewports::onEvent(ev);  // J-113: focus over Gridline's windows, minimise
+      if (hostedEditorEvent(app, ev)) continue;  // plugin editor windows
+      if (ev.type == SDL_QUIT || (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE &&
+                                  ev.window.windowID == SDL_GetWindowID(window)))
+        app.quitRequested = true;
+      // J-55: "Follow system" picks up a desktop appearance change when Gridline is focused again.
+      if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
+          ev.window.windowID == SDL_GetWindowID(window) && theme::modeFromSettings(app.settings) == theme::Mode::System)
+        theme::applyFromSettings(app.settings, true);
+      // J-75: files dropped by other applications. macOS reports them (with
+      // the hover) through xdrop::native; elsewhere SDL reports them on release:
+      // collected, then dropped at the pointer like any drag.
+      if (ev.type == SDL_DROPBEGIN) xdragui::sdlDropBegin();
+      if (ev.type == SDL_DROPFILE || ev.type == SDL_DROPTEXT) {
+        const std::string text = ev.drop.file ? ev.drop.file : "";
+        SDL_free(ev.drop.file);
+        if (ev.type == SDL_DROPFILE) xdragui::sdlDropFile(text);
+        else xdragui::sdlDropText(text);
+      }
+      if (ev.type == SDL_DROPCOMPLETE) {
+        int mx = 0, my = 0, wx = 0, wy = 0;
+        SDL_GetGlobalMouseState(&mx, &my);
+        SDL_GetWindowPosition(window, &wx, &wy);
+        xdragui::sdlDropComplete(static_cast<float>(mx - wx), static_cast<float>(my - wy));
+      }
+      // A held typed note ends on its key-up whatever changed meanwhile
+      // (a modifier pressed, a text field focused, the typing keyboard switched off).
+      if (ev.type == SDL_KEYUP && held.count(ev.key.keysym.sym) && !(app.typingKeyboard && !io.WantTextInput &&
+                                                                     !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)))) {
+        const SDL_Keycode k = ev.key.keysym.sym;
+        const ObjectId chId = held[k].channel;
+        held.erase(k);
+        for (int p : app.typing.keyUp(typingKey(k))) {
+          app.engine.noteOff(chId, p);
+          app.playedNoteOff(chId, p);
+        }
+      }
+      // Typing keyboard (key events straight from SDL so key-up is never missed).
+      if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && app.typingKeyboard && !io.WantTextInput &&
+          !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT))) {
+        SDL_Keycode k = ev.key.keysym.sym;
+        int key = typingKey(k);
+        const bool down = ev.type == SDL_KEYDOWN && !ev.key.repeat;
+        if (down && app.stepRecord && !app.engine.playing() && (k == SDLK_RIGHT || k == SDLK_BACKSPACE)) {
+          if (k == SDLK_RIGHT)
+            app.stepRecorder.rest();
+          else
+            app.stepRecorder.backspace(app.doc, app.curPattern, app.selChannel);
+        }
+        if (key > 0 && app.selChannel != kNoId) {
+          if (down) {
+            std::vector<int> on = app.typing.keyDown(key);
+            for (int p : on) {
+              app.engine.noteOn(app.selChannel, p, app.typing.velocity / 127.0f);
+              app.playedNoteOn(app.selChannel, p, app.typing.velocity);
+            }
+            if (!on.empty()) held[k] = {app.selChannel, 0, 0};
+          } else if (ev.type == SDL_KEYUP) {
+            ObjectId chId = held.count(k) ? held[k].channel : app.selChannel;
+            held.erase(k);
+            for (int p : app.typing.keyUp(key)) {
+              app.engine.noteOff(chId, p);
+              app.playedNoteOff(chId, p);
+            }
+          }
+        }
+      }
+    }
+    liveresize::pumpEnd();
+    fstats::since(fstats::Events, statT);
+    frame(false);
     prof::endFrame();
     fstats::endFrame();
   }
+  liveresize::uninstall();
   if (!profilePath.empty()) {
     std::string label = std::to_string(forcedSize.first) + "x" + std::to_string(forcedSize.second);
     if (prof::writeJson(profilePath, label))

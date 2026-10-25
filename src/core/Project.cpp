@@ -439,26 +439,7 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
     for (const auto& ja : arr->array) {
       AutomationClip a;
       if (!takeId(ja, a.id)) return fail(err, "automation clip has missing or duplicate id");
-      a.name = ja.text("name", "Automation");
-      a.color = color(ja, a.color);
-      a.owner = jsonInt<ObjectId>(std::max(0.0, ja.num("owner", 0)));
-      a.index = jsonInt<uint32_t>(std::max(0.0, ja.num("index", 0)));
-      a.min = static_cast<float>(std::clamp(ja.num("min", 0), 0.0, 1.0));
-      a.max = static_cast<float>(std::clamp(ja.num("max", 1), 0.0, 1.0));
-      a.loop = std::max<Tick>(0, jsonTick(ja.num("loop", 0)));
-      a.flCurves = flag(ja, "flCurves");
-      if (const Json* pts = ja.find("points"); pts && pts->is(Json::Type::Array))
-        for (const auto& jp : pts->array) {
-          if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;
-          auto at = [&](size_t i, double d) { return i < jp.array.size() && jp.array[i].is(Json::Type::Number) ? jp.array[i].number : d; };
-          AutoPoint p;
-          p.pos = std::max<Tick>(0, jsonTick(at(0, 0)));
-          p.value = static_cast<float>(std::clamp(at(1, 0.5), 0.0, 1.0));
-          p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
-          p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
-          a.points.push_back(p);
-        }
-      std::stable_sort(a.points.begin(), a.points.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.pos < y.pos; });
+      automationClipFromJson(ja, a);
       s.automations.push_back(std::move(a));
     }
   if (const Json* arr = j.find("markers"); arr && arr->is(Json::Type::Array))
@@ -833,7 +814,7 @@ Json mixerTrackToJson(const MixerTrack& m) {
   return jm;
 }
 
-Json songToJson(const Song& s) {
+Json songToJson(const Song& s, bool withFlOrigin) {
   Json j = Json::makeObject();
   j.object["format"] = str(kProjectFormatTag);
   j.object["version"] = num(kProjectSchemaVersion);
@@ -1011,7 +992,7 @@ Json songToJson(const Song& s) {
     j.object["patternGroups"] = std::move(groups);
   }
   songExtrasToJson(s, j);  // live area, arrangements (see block above)
-  if (!s.flOrigin.empty()) {  // FL Studio import data for the FL exporter (J-34)
+  if (withFlOrigin && !s.flOrigin.empty()) {  // FL Studio import data for the FL exporter (J-34)
     Json fo = Json::makeObject();
     for (const auto& [k, v] : s.flOrigin.blobs) fo.object[k] = str(b64Encode(v));
     j.object["flOrigin"] = std::move(fo);
@@ -1152,6 +1133,107 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   m.group = jm.text("group");
 }
 
+// ---- J-111: one element at a time. Collaboration applies a collaborator's
+// edit to the open song element by element; `s` is the song the references
+// are checked against (the song being read, or the open song). The same code
+// as a whole-project load, so both give the same element.
+void channelFromJson(const Json& jc, Channel& c, const Song& s) {
+  c.name = jc.text("name", "Channel");
+  c.color = color(jc, c.color);
+  c.plugin = pluginFromJson(jc.find("plugin"));
+  c.gain = static_cast<float>(std::clamp(jc.num("gain", 0.78), 0.0, 1.25));
+  c.pan = static_cast<float>(std::clamp(jc.num("pan", 0.0), -1.0, 1.0));
+  c.muted = flag(jc, "muted");
+  c.pitch = jsonInt<int>(std::clamp(jc.num("pitch", 0), -24.0, 24.0));
+  c.mixerTrack = jsonInt<ObjectId>(jc.num("mixerTrack", 0));
+  if (!s.mixerTrack(c.mixerTrack)) c.mixerTrack = s.masterId();
+  if (const Json* ao = jc.find("auxOuts"); ao && ao->is(Json::Type::Array))
+    for (const auto& jt : ao->array) {
+      ObjectId t = jt.is(Json::Type::Number) ? jsonInt<ObjectId>(jt.number) : kNoId;
+      c.auxOuts.push_back(t != kNoId && s.mixerTrack(t) ? t : kNoId);
+      if (c.auxOuts.size() >= 32) break;
+    }
+  c.midiOutPort = jsonInt<int>(std::clamp(jc.num("midiOutPort", -1.0), -1.0, 255.0));
+  c.midiInPort = jsonInt<int>(std::clamp(jc.num("midiInPort", -1.0), -1.0, 255.0));
+  if (const Json* fx = jc.find("noteFx"); fx && fx->is(Json::Type::Array))
+    for (const auto& jf : fx->array) {
+      PluginState ps = pluginFromJson(&jf);
+      const PluginInfo* pi = findPlugin(ps.type);
+      if (pi && pi->kind == PluginKind::NoteFx && c.noteFx.size() < static_cast<size_t>(kMaxNoteFx))
+        c.noteFx.push_back(std::move(ps));
+    }
+  channelExtrasFromJson(jc, c);
+}
+
+bool patternFromJson(const Json& jp, Pattern& p, const Song& s) {
+  p.name = jp.text("name", "Pattern");
+  p.color = color(jp, p.color);
+  p.stepsPerBar = jsonInt<int>(jp.num("stepsPerBar", 16));
+  p.bars = jsonInt<int>(jp.num("bars", 1));
+  if (p.stepsPerBar <= 0 || p.stepsPerBar > kMaxStepsPerBar || p.bars <= 0 || p.bars > kMaxPatternBars) return false;
+  forRows(jp, "steps", [&](ObjectId ch, const Json& v) {
+    if (!s.channel(ch) || !v.is(Json::Type::Array)) return;
+    std::vector<uint8_t> row;
+    for (const auto& e : v.array) {
+      double x = e.is(Json::Type::Number) ? e.number : 0;
+      row.push_back(static_cast<uint8_t>(x < 0 ? 0 : (x > 127 ? 127 : x)));
+    }
+    p.steps[ch] = std::move(row);
+  });
+  forRows(jp, "notes", [&](ObjectId ch, const Json& v) {
+    if (!s.channel(ch) || !v.is(Json::Type::Array)) return;
+    std::vector<Note> ns;
+    for (const auto& e : v.array) {
+      Note n;
+      n.start = std::max<Tick>(0, jsonTick(e.num("start", 0)));
+      n.length = std::max<Tick>(1, jsonTick(e.num("length", s.ppq)));
+      n.pitch = jsonInt<int>(std::clamp(e.num("pitch", 60), 0.0, 127.0));
+      n.velocity = jsonInt<int>(std::clamp(e.num("velocity", 100), 0.0, 127.0));
+      noteFromJson(e, n);
+      ns.push_back(n);
+    }
+    p.notes[ch] = std::move(ns);
+  });
+  patternExtrasFromJson(jp, p, s);  // pattern automation (see block above)
+  return true;
+}
+
+int clipFromJson(const Json& jc, Clip& c, const Song& s) {
+  c.pattern = jsonInt<ObjectId>(jc.num("pattern", 0));
+  c.track = jsonInt<int>(jc.num("track", 0));
+  c.start = jsonTick(jc.num("start", 0));
+  c.length = jsonTick(jc.num("length", 0));
+  clipArrangementFromJson(jc, c);
+  if (c.kind == ClipKind::Audio && !s.channel(c.source)) return 1;
+  if (c.kind == ClipKind::Automation && !s.automation(c.source)) return 1;
+  if (c.kind == ClipKind::Pattern && !s.pattern(c.pattern)) return -2;
+  if (c.track < 0 || c.track >= kMaxPlaylistTracks || c.start < 0 || c.length < 0) return -3;
+  return 0;
+}
+
+void automationClipFromJson(const Json& ja, AutomationClip& a) {
+  a.name = ja.text("name", "Automation");
+  a.color = color(ja, a.color);
+  a.owner = jsonInt<ObjectId>(std::max(0.0, ja.num("owner", 0)));
+  a.index = jsonInt<uint32_t>(std::max(0.0, ja.num("index", 0)));
+  a.min = static_cast<float>(std::clamp(ja.num("min", 0), 0.0, 1.0));
+  a.max = static_cast<float>(std::clamp(ja.num("max", 1), 0.0, 1.0));
+  a.loop = std::max<Tick>(0, jsonTick(ja.num("loop", 0)));
+  a.flCurves = flag(ja, "flCurves");
+  if (const Json* pts = ja.find("points"); pts && pts->is(Json::Type::Array))
+    for (const auto& jp : pts->array) {
+      if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;
+      auto at = [&](size_t i, double d) { return i < jp.array.size() && jp.array[i].is(Json::Type::Number) ? jp.array[i].number : d; };
+      AutoPoint p;
+      p.pos = std::max<Tick>(0, jsonTick(at(0, 0)));
+      p.value = static_cast<float>(std::clamp(at(1, 0.5), 0.0, 1.0));
+      p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
+      p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
+      a.points.push_back(p);
+    }
+  std::stable_sort(a.points.begin(), a.points.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.pos < y.pos; });
+}
+
 bool songFromJson(const Json& src, Song& out, std::string* err) {
   Json j = src;
   const int srcVersion = jsonInt<int>(src.num("version", 1));
@@ -1222,31 +1304,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     for (const auto& jc : chans->array) {
       Channel c;
       if (!takeId(jc, c.id)) return fail(err, "channel has missing or duplicate id");
-      c.name = jc.text("name", "Channel");
-      c.color = color(jc, c.color);
-      c.plugin = pluginFromJson(jc.find("plugin"));
-      c.gain = static_cast<float>(std::clamp(jc.num("gain", 0.78), 0.0, 1.25));
-      c.pan = static_cast<float>(std::clamp(jc.num("pan", 0.0), -1.0, 1.0));
-      c.muted = flag(jc, "muted");
-      c.pitch = jsonInt<int>(std::clamp(jc.num("pitch", 0), -24.0, 24.0));
-      c.mixerTrack = jsonInt<ObjectId>(jc.num("mixerTrack", 0));
-      if (!s.mixerTrack(c.mixerTrack)) c.mixerTrack = s.masterId();
-      if (const Json* ao = jc.find("auxOuts"); ao && ao->is(Json::Type::Array))
-        for (const auto& jt : ao->array) {
-          ObjectId t = jt.is(Json::Type::Number) ? jsonInt<ObjectId>(jt.number) : kNoId;
-          c.auxOuts.push_back(t != kNoId && s.mixerTrack(t) ? t : kNoId);
-          if (c.auxOuts.size() >= 32) break;
-        }
-      c.midiOutPort = jsonInt<int>(std::clamp(jc.num("midiOutPort", -1.0), -1.0, 255.0));
-      c.midiInPort = jsonInt<int>(std::clamp(jc.num("midiInPort", -1.0), -1.0, 255.0));
-      if (const Json* fx = jc.find("noteFx"); fx && fx->is(Json::Type::Array))
-        for (const auto& jf : fx->array) {
-          PluginState ps = pluginFromJson(&jf);
-          const PluginInfo* pi = findPlugin(ps.type);
-          if (pi && pi->kind == PluginKind::NoteFx && c.noteFx.size() < static_cast<size_t>(kMaxNoteFx))
-            c.noteFx.push_back(std::move(ps));
-        }
-      channelExtrasFromJson(jc, c);
+      channelFromJson(jc, c, s);
       s.channels.push_back(c);
     }
     // Channel extras that reference other objects: drop layer children that do
@@ -1265,35 +1323,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     for (const auto& jp : pats->array) {
       Pattern p;
       if (!takeId(jp, p.id)) return fail(err, "pattern has missing or duplicate id");
-      p.name = jp.text("name", "Pattern");
-      p.color = color(jp, p.color);
-      p.stepsPerBar = jsonInt<int>(jp.num("stepsPerBar", 16));
-      p.bars = jsonInt<int>(jp.num("bars", 1));
-      if (p.stepsPerBar <= 0 || p.stepsPerBar > kMaxStepsPerBar || p.bars <= 0 || p.bars > kMaxPatternBars) return fail(err, "bad pattern dims");
-      forRows(jp, "steps", [&](ObjectId ch, const Json& v) {
-        if (!s.channel(ch) || !v.is(Json::Type::Array)) return;
-        std::vector<uint8_t> row;
-        for (const auto& e : v.array) {
-          double x = e.is(Json::Type::Number) ? e.number : 0;
-          row.push_back(static_cast<uint8_t>(x < 0 ? 0 : (x > 127 ? 127 : x)));
-        }
-        p.steps[ch] = std::move(row);
-      });
-      forRows(jp, "notes", [&](ObjectId ch, const Json& v) {
-        if (!s.channel(ch) || !v.is(Json::Type::Array)) return;
-        std::vector<Note> ns;
-        for (const auto& e : v.array) {
-          Note n;
-          n.start = std::max<Tick>(0, jsonTick(e.num("start", 0)));
-          n.length = std::max<Tick>(1, jsonTick(e.num("length", s.ppq)));
-          n.pitch = jsonInt<int>(std::clamp(e.num("pitch", 60), 0.0, 127.0));
-          n.velocity = jsonInt<int>(std::clamp(e.num("velocity", 100), 0.0, 127.0));
-          noteFromJson(e, n);
-          ns.push_back(n);
-        }
-        p.notes[ch] = std::move(ns);
-      });
-      patternExtrasFromJson(jp, p, s);  // pattern automation (see block above)
+      if (!patternFromJson(jp, p, s)) return fail(err, "bad pattern dims");
       s.patterns.push_back(std::move(p));
     }
   }
@@ -1329,15 +1359,10 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     for (const auto& jc : clips->array) {
       Clip c;
       if (!takeId(jc, c.id)) return fail(err, "clip has missing or duplicate id");
-      c.pattern = jsonInt<ObjectId>(jc.num("pattern", 0));
-      c.track = jsonInt<int>(jc.num("track", 0));
-      c.start = jsonTick(jc.num("start", 0));
-      c.length = jsonTick(jc.num("length", 0));
-      clipArrangementFromJson(jc, c);  // arrangement fields; audio / automation clips with a missing source are dropped
-      if (c.kind == ClipKind::Audio && !s.channel(c.source)) continue;
-      if (c.kind == ClipKind::Automation && !s.automation(c.source)) continue;
-      if (c.kind == ClipKind::Pattern && !s.pattern(c.pattern)) return fail(err, "clip references missing pattern");
-      if (c.track < 0 || c.track >= kMaxPlaylistTracks || c.start < 0 || c.length < 0) return fail(err, "bad clip position");
+      const int ok = clipFromJson(jc, c, s);  // arrangement fields; audio / automation clips with a missing source are dropped
+      if (ok == 1) continue;
+      if (ok == -2) return fail(err, "clip references missing pattern");
+      if (ok == -3) return fail(err, "bad clip position");
       if (static_cast<size_t>(c.track) >= s.tracks.size()) s.tracks.resize(static_cast<size_t>(c.track) + 1);
       s.playlist.push_back(c);
     }

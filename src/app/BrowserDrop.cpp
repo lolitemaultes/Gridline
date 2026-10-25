@@ -19,6 +19,7 @@
 #include "../core/flp/FlpPresets.h"
 #include "App.h"
 #include "BrowserUi.h"
+#include "CollabUi.h"
 #include "ExternalDragUi.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -976,6 +977,10 @@ bool acceptPluginDrop(App& a, DropTarget target, const DropPlace& place, DropFee
 }
 
 void openFile(App& a, const std::string& path) {
+  if (!collabui::projectFileIn(path).empty()) {  // J-111: a collaborative project folder opens
+    a.guardUnsaved([&a, path] { a.openProject(path); });
+    return;
+  }
   const Decoded& d = decodeItem(path);
   if (fs::is_directory(path)) {
     addBrowserFolder(a, path);
@@ -1016,7 +1021,7 @@ void openFiles(App& a, const std::vector<xdrop::Item>& items) {
       return;
     }
     const browse::DropItem d = dropItemFor(it);
-    if (d.kind == Kind::Project || d.kind == Kind::Flp) {
+    if (d.kind == Kind::Project || d.kind == Kind::Flp || (it.dir && !collabui::projectFileIn(it.path).empty())) {
       openFile(a, it.path);
       return;
     }

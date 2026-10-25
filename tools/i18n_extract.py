@@ -4,11 +4,11 @@
     python3 tools/i18n_extract.py            # writes assets/i18n/gridline.pot
     python3 tools/i18n_extract.py --check    # exit 1 when the template is out of date
 
-Collected (src/app, src/packs/*/*_ui.cpp, src/core/Keymap.cpp, src/core/ProjectFiles.cpp, src/engine/Chop.cpp, src/plugin .cpp and .mm):
+Collected (src/app, src/packs/*/*_ui.cpp, src/collab, src/core/Keymap.cpp, src/core/ProjectFiles.cpp, src/engine/Chop.cpp, src/plugin .cpp and .mm):
   * i18n::tr("...") and i18n::N_("...") literals (N_ marks text translated later);
   * the English text handed to the widgets that translate themselves:
     ui::Hint, ui::Tooltip, ui::Label, ui::BeginSection, ui::TextButton (label, hint),
-    ui::IconButton / ui::ToggleIcon (hint), ui::EmptyState, formLabel / label,
+    ui::DangerButton (label, hint), ui::IconButton / ui::ToggleIcon (hint), ui::EmptyState, formLabel / label,
     dialogTitle, openPrompt, roleColour, ui::BeginDockWindow / ui::windowTitle (window titles),
     ui::confirmTheme (what changed; confirmation titles are marked N_),
     browser sectionHeader / folderSection / emptyLine;
@@ -29,7 +29,7 @@ OUT = os.path.join(ROOT, "assets", "i18n", "gridline.pot")
 
 # function name -> argument indexes holding English text (None = every literal argument)
 HELPERS = {
-    "Hint": [0], "Tooltip": [0], "Label": [0], "BeginSection": [0], "TextButton": [0, 3], "IconButton": [4],
+    "Hint": [0], "Tooltip": [0], "Label": [0], "BeginSection": [0], "TextButton": [0, 3], "DangerButton": [0, 3], "IconButton": [4],
     "ToggleIcon": [4], "EmptyState": [3, 4], "formLabel": [0], "label": [0], "dialogTitle": [1, 2],
     "openPrompt": [0], "roleColour": [1, 2], "BeginDockWindow": [0], "windowTitle": [0],
     "sectionHeader": [0], "folderSection": [1, 4], "emptyLine": [0], "notify": [0],
@@ -55,6 +55,7 @@ def source_files():
     files += [os.path.join(ROOT, "src", "engine", "Chop.cpp")]  # PL-13: chop preset names and hints (N_)
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.cpp"))  # PH-09: the plugin build's own panel and messages
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.mm"))  # J-64: Cocoa views, hosted plugins' windows, Audio Unit
+    files += glob.glob(os.path.join(ROOT, "src", "collab", "*.cpp"))  # J-111: collaboration messages (codes, refusals, connection test)
     return sorted(files)
 
 

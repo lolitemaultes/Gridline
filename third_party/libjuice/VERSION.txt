@@ -1,0 +1,7 @@
+libjuice 1.7.4 (https://github.com/paullouisageneau/libjuice, tag v1.7.4), MPL-2.0 (see LICENSE).
+Vendored unmodified: src/, include/ and LICENSE only (tests, fuzzer and build files left out).
+Built by Gridline's CMakeLists.txt as a static library (target gridline_juice) for the collaboration
+feature (J-111): ICE (host, server-reflexive, peer-reflexive and TURN relayed candidates).
+MPL-2.0 is compatible with Gridline's GPL-3.0 (MPL-2.0 section 3.3; these files carry no
+"Incompatible With Secondary Licenses" notice). Source of any modification must stay available
+under the MPL; Gridline makes none.

@@ -18,6 +18,7 @@
 #include <string>
 #include <cstdio>
 #include <cstdlib>
+#include <unistd.h>
 #include "NativeView.h"
 
 namespace gl::host::native {
@@ -153,6 +154,70 @@ void devDrag(const Window& w, void* container, int x, int y, double seconds) {
                                           }
                                         }];
   [[NSRunLoop mainRunLoop] addTimer:t forMode:NSRunLoopCommonModes];
+}
+
+void devPostMouse(const Window& w, int kind, double x, double y) {
+  if (!w.handle) return;
+  NSWindow* win = (NSWindow*)w.handle;
+  const NSRect content = [win contentRectForFrameRect:[win frame]];
+  const NSPoint p = NSMakePoint(x, content.size.height - y);  // window base coordinates (bottom-left)
+  const NSEventType t = kind == 1 ? NSEventTypeLeftMouseDown : kind == 2 ? NSEventTypeLeftMouseDragged : kind == 3 ? NSEventTypeLeftMouseUp : NSEventTypeMouseMoved;
+  NSEvent* e = [NSEvent mouseEventWithType:t
+                                  location:p
+                             modifierFlags:0
+                                 timestamp:[[NSProcessInfo processInfo] systemUptime]
+                              windowNumber:[win windowNumber]
+                                   context:nil
+                               eventNumber:0
+                                clickCount:kind == 1 || kind == 3 ? 1 : 0
+                                  pressure:kind == 1 || kind == 2 ? 1.0f : 0.0f];
+  [win sendEvent:e];  // dispatched now, like AppKit does for the window under (or holding) the pointer
+}
+
+void devLiveResize(const Window& w, double dx, double dy, int steps) {
+  if (!w.handle || steps <= 0) return;
+  NSWindow* win = (NSWindow*)w.handle;
+  const NSRect f = [win frame];
+  const NSPoint start = NSMakePoint(f.size.width - 1, 1);  // the bottom-right corner, window base coordinates
+  const double t0 = [[NSProcessInfo processInfo] systemUptime];
+  auto make = [&](NSEventType t, NSPoint p, double at, NSInteger number) {
+    return [NSEvent mouseEventWithType:t
+                              location:p
+                         modifierFlags:0
+                             timestamp:at
+                          windowNumber:number
+                               context:nil
+                           eventNumber:0
+                            clickCount:t == NSEventTypeLeftMouseDragged ? 0 : 1
+                              pressure:t == NSEventTypeLeftMouseUp ? 0.0f : 1.0f];
+  };
+  // The mouse-down enters AppKit's resize tracking on this thread (it returns on the release);
+  // the drags and the release arrive meanwhile, ~60 per second like a hand-held mouse, posted
+  // from another thread (-postEvent:atStart: may be called from any thread; queued all at once
+  // AppKit would coalesce them into one step).
+  NSMutableArray* events = [NSMutableArray array];
+  // Window base coordinates, read against the window's frame when AppKit takes each drag: the
+  // right edge stays at the window's x origin, the bottom edge moves the origin along with the
+  // pointer, so each drag lies one step below the (moved) bottom edge.
+  NSPoint p = start;
+  for (int k = 1; k <= steps; ++k) {
+    p = NSMakePoint(start.x + dx * k / steps, start.y - dy / steps);
+    [events addObject:make(NSEventTypeLeftMouseDragged, p, t0 + 0.016 * k, [win windowNumber])];
+  }
+  [events addObject:make(NSEventTypeLeftMouseUp, p, t0 + 0.016 * (steps + 1), [win windowNumber])];
+  [events retain];
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+    for (NSEvent* e in events) {
+      usleep(16000);
+      [NSApp postEvent:e atStart:NO];
+    }
+    [events release];
+  });
+  [win sendEvent:make(NSEventTypeLeftMouseDown, start, t0, [win windowNumber])];
+}
+
+void devPerformClose(const Window& w) {
+  if (w.handle) [(NSWindow*)w.handle performClose:nil];
 }
 
 DrawStats takeDrawStats() {

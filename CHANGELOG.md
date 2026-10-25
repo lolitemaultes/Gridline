@@ -3,6 +3,173 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` in `CMakeLists.txt`; the
 release workflow publishes the section of the tagged version as the release notes.
 
+## Unreleased
+
+### Collaboration: rename in place
+
+- The Collaboration panel no longer has a Rename... button: the project's name at the top is the
+  field. A faint box shows around it on hover; click it to edit, then Enter or clicking anywhere
+  else renames the project for everyone, and Escape keeps the old name.
+
+### New: windows outside the main window
+
+- Every panel (mixer, channel rack, playlist, piano roll, browser, ...) and every Gridline plugin
+  editor has a small pop-out button in its title bar or tab bar: "Pop out into its own window". It
+  opens where it was last outside, or beside the main window with the panel's size. The button is
+  the only way to detach: dragging a window by its title bar or tab works exactly as before
+  (docking, dock targets, Shift keeps it floating), even past the edge of the main window.
+- A detached window is an ordinary window of your system: move it by its title bar, resize it by
+  its edges and corner (never smaller than the panel allows; fixed-size editors stay fixed). Its
+  contents follow the resize live, on every system. Moving it over the main window never docks it.
+- To bring it back: its "Dock back into Gridline" button, or its own close button (the red button
+  on macOS, X on Windows and Linux, Cmd+W): either docks it back where it was, it stays open.
+- Space, shortcuts, the typing keyboard, text fields and drag and drop (browser items, files from
+  other applications, J-97 drop-to-replace on the channel rack) work in detached windows. Moving
+  between Gridline's windows no longer releases held keys; switching to another application still
+  does.
+- Detached windows reopen where they were, on the same monitor (saved with your window layout,
+  never in the project); a window left on a monitor that is gone comes back on one that is there.
+  View > Bring all windows back into Gridline returns them all; minimising the main window hides
+  them. Dialogs open over the window they were opened from.
+- Settings > Interface > "Allow windows outside the main window" (on by default). Off: everything
+  stays inside, exactly as before. Not available with the native Wayland driver (XWayland works)
+  or inside a plugin host.
+- Plugin editor windows (VST3, CLAP, AU, ...) reopen on the monitor you left them on.
+- Fixed: the window layout (panel sizes, docking, the rack's position) was saved but never
+  loaded; it now comes back at the next start.
+- Fixed: resizing the main window on macOS and Windows showed its last picture stretched until the
+  mouse was let go; it now redraws continuously while you resize.
+
+### Windows inside the main window stay inside it
+
+- Floating windows inside Gridline (the channel rack, the mixer or piano roll when undocked, a
+  group of tabs floating together, plugin editors, dialogs) can no longer be dragged off the edge
+  and lost. Dragged past an edge of the work area (the top bar, the status bar, the sides) they
+  follow with growing resistance, a little way only, and spring back inside when let go, the same
+  elastic feel as scrolling past the end of a list. A window larger than the work area keeps its
+  title bar and left side in reach. Making the main window smaller brings the windows back inside
+  it. Docking by dragging works as before, also on the targets by the main window's edges. With
+  "Elastic edges" off (Settings > Interface, or reduced motion) the edge is a hard stop. Windows
+  outside the main window (popped out) are not affected.
+- Fixed: the pop-out button of the channel rack came away from its title bar (drawn up to ~60 px
+  to the right of the close button) while the rack was dragged past the edge of the main window.
+
+### Playlist: paint the clip you clicked, clearer crossfades
+
+- Clicking a clip in the playlist now makes that clip, as it is, what the draw and paint tools
+  place. A resized or trimmed audio clip paints with its length, its start in the sample, its fades
+  and fade curves, gain, pitch, stretch, tempo sync and reverse; pattern and automation clips keep
+  their length and offset. Painted copies are new clips: not muted, in no group. Before, a click
+  with the draw tool placed the whole sample at its full length.
+- Picking a pattern, sample or automation in the picker (or the source menu) still places it at
+  its natural length, with default settings.
+- Where two audio clips on a track crossfade, the overlap now shows both clips blended the way
+  they play: the outgoing clip's waveform fades out as the incoming one fades in, and the colour of
+  the body and title bar moves from one clip to the other, so the pair reads as one cell with no
+  edge or outline in the middle. The two fade curves are drawn as faint lines. A selected clip
+  still shows where it starts and ends. Only the drawing changed; the crossfade sounds as before.
+
+### New: collaborative projects (preview, J-111)
+
+- Work on one project together, live, on the same network or across the internet, peer to peer:
+  no server and no account. Each person keeps their own windows and transport; channels, notes,
+  the playlist, the mixer, automation, Gridline plugin settings and audio files sync in a fraction
+  of a second. See docs/collaboration.md.
+- Invite with a one-time code that expires (15 minutes to 24 hours); the invitee pastes it in File >
+  Join collaborative project... and chooses where the project folder goes. A reply code covers
+  routers that need both sides to open the connection. Members reconnect by themselves, through
+  each other, or with a reconnect code.
+- Connections: direct (same network, IPv6), hole punching (ICE with STUN), automatic router port
+  opening (UPnP-IGD, NAT-PMP, PCP; can be turned off), through another collaborator, or an optional
+  TURN relay. "Test my connection" reports the router's behaviour, port opening and IPv6.
+- End-to-end encrypted (X25519, XChaCha20-Poly1305), changes signed by their authors (EdDSA),
+  safety codes and fingerprints to compare. Nothing goes anywhere but to invited people and the
+  STUN / TURN server you configure.
+- The project saves itself continuously (a crash-safe log with compaction) and stays a normal
+  project folder; audio files are stored and sent once, by content, with a silent "Loading"
+  placeholder until they have arrived and been checked.
+- Colour-coded cursors in the windows you both have open, collaborators in the top bar,
+  remote changes flash in their author's colour, "Follow their playhead".
+- Collaborators' cursors (J-111d) point at the same thing on every screen whatever the window size,
+  layout, interface scale, scroll or zoom: a playlist track and time, a piano roll key and time, a
+  channel rack row, a mixer strip, or the button, knob or step under the pointer. They draw on top
+  of every window, floating window, popup and menu, fade out quickly where that spot isn't shown
+  (a closed or hidden window, another tab or pattern, scrolled away) and back in where it is. The
+  cursor is a plain pointer arrow in the collaborator's colour with a thin white rim and a soft
+  shadow, sharp at any scale; the name tag is gone (the colour says who it is).
+- Collaborators' cursors and pictures (J-111g): the arrow is the size of your own mouse pointer
+  (macOS, Linux and Windows pointer size settings) with softer, rounded corners and a thinner
+  outline; it no longer blinks out and in while someone moves between windows (it waits a moment
+  before fading, and moves to another window without fading); a plugin editor you have open hides
+  the cursors of people who are not in that same plugin. Collaborators' profile pictures now
+  actually arrive (they were announced but never sent), update when changed, and are kept for
+  offline members and reopened projects.
+- Sound stays on each computer: playback, held keys, previews, plugins playing on their own,
+  recording, solo, record arm, input monitoring and plugins' listening switches are never shared,
+  and a collaborator's edits never make sound on yours.
+- Undo undoes only your own changes. Offline work is normal: changes travel the next time two
+  computers that have them are online together, also through a third collaborator. Changes made to
+  the same thing while apart go to the admin's Sync review (who, when, before and after, each side's
+  change log, preview, keep, restore later).
+- Settings > Collaboration: display name, optional contact email (shared only if you allow it),
+  profile picture (cropped, made small and stripped of metadata), colour, identity fingerprint,
+  connection settings.
+- Only Gridline's own plugins in a collaborative project: projects with VST3, VST2, CLAP, AU or LV2
+  plugins can't become collaborative (each one is listed), and such plugins are hidden and refused
+  in a collaborative project.
+- Collaboration needs the newest Gridline: behind the newest release, the buttons are greyed out
+  with an Update button, and collaborative projects ask for the update before they open. Peers on
+  different versions or builds are refused politely when they connect.
+- The Collaboration panel, Join window and Sync review follow the Settings window's layout: section
+  panels, a label column, short captions, lit primary and red destructive buttons. People are listed
+  with their picture, "you" / "admin" badges, a status lamp (online direct / relayed, connecting,
+  offline with the last sync) and Reconnect / Invite again for those offline; invites show their
+  state (preparing, the code with a countdown, joined with a large safety code, expired); long
+  folders are cut in the middle with the full path on hover; the Join window shows its steps.
+- Removing someone (J-111e): the admin removes a member from the "..." menu in People, with an
+  optional note. The removal is signed and checked on every computer: they can't connect, be
+  relayed or join with old invites any more, and anything they change after the removal is dropped
+  everywhere, while their earlier work stays (with their name in Sync review). With the project
+  open they see "You were removed from ... by ..." with Keep a private copy / Close project
+  (editing stops, playback doesn't); offline, they learn it the next time they connect. Removed
+  (n) in People shows who, when and why, with Re-invite for the admin. The collaboration protocol
+  is now version 2.
+- What happens to the files (J-111e): Leave asks whether to keep the folder as a normal project or
+  move it to the Trash, with sizes, and offers Wait for sync when some changes aren't confirmed
+  yet. Stop sharing reaches everyone (also later, when someone offline reconnects) and is never
+  undone by an old copy. Your collaborative projects marks removed, stopped and missing projects
+  (Keep a private copy, Locate, Forget); a copied folder can't sync next to the original. This
+  project shows the folder (Show in Finder / Files), its size and history, and Clean up unused
+  audio; after 30 days without anyone it offers to make the project a normal one. Ending a project
+  deletes the other members' cached details on this computer. docs/collaboration.md: "Removing
+  someone" and "What happens to the files".
+- `gridline collab-run` runs a collaborative session without a window (scripts and tests).
+- Collaborative projects have a shared name (J-111f). "Make this project collaborative..." asks for it
+  first (prefilled from the open project; any language, at most 80 characters). Any member renames
+  it from the Collaboration panel's header, Project info or Project settings > Collaboration
+  ("Rename..."). Online collaborators see the new name at once (window title, panel, top bar, a
+  notice "Sam renamed the project to ..."); the others get it when they catch up. Renames made
+  while apart on both sides go to the Sync review like other conflicting changes. A rename is one
+  undo step. Each computer's project file is renamed to match (made safe as a file name; another
+  file is never replaced; case-only renames work on macOS and Windows); folders keep their names
+  unless you choose "Also rename the project folder on this computer". Exports, Recent files and
+  Recent collaborative projects use the new name, and projects with the same name are told apart by
+  their folder. A project file renamed by hand is still found.
+- Sharing and renaming in place (J-111h): the Collaboration panel's "Share this project" section
+  holds the name (prefilled, checked as you type) and the folder (next to the project file by
+  default, Choose...) with a caption of what happens, and "Make collaborative": no separate name
+  window any more. Rename... turns the panel's title, or the Shared name row of Project info and
+  Project settings, into a name field with Rename / Cancel and the "Also rename the project folder
+  on this computer" option under it. Fixed: a dialog that sizes itself to its content (the old
+  name window) shrank by a pixel every frame for over a second after it opened: sections reserved
+  one pixel less than their width.
+- Collaborators' cursors go behind your windows (J-111h): every window you have open in front of
+  the one a cursor points into covers it (Settings, Project info, the Collaboration panel, dialogs,
+  the floating channel rack, mixer or piano roll, popups and menus), cut at the window's edge, not
+  faded; in that same window it is drawn on top. Behind a modal it is dimmed with everything else.
+- New third-party code: libjuice 1.7.4 and libplum 0.6.0 (MPL-2.0), Monocypher 4.0.2 (BSD-2-Clause
+  or CC0), stb_image 2.30 and stb_image_write 1.16 (public domain or MIT); see third_party/NOTICE.md.
+
 ## 0.7.0
 
 ### New: Seltmann, the automatic sample chopper (`gl.seltmann`)

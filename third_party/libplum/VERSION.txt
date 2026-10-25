@@ -1,0 +1,8 @@
+libplum 0.6.0 (https://github.com/paullouisageneau/libplum, tag v0.6.0), MPL-2.0 (see LICENSE).
+Vendored unmodified: src/, include/ and LICENSE only. Built by Gridline's CMakeLists.txt as a
+static library (target gridline_plum) for the collaboration feature (J-111): asks the router for a
+temporary UDP port mapping (PCP, NAT-PMP or UPnP-IGD) so a collaborator can reach this computer
+when hole punching alone fails; the mapping is removed when the session ends. The "dummy TLS"
+certificate helper is never configured (no request leaves the local network for it).
+MPL-2.0 is compatible with Gridline's GPL-3.0 (MPL-2.0 section 3.3; no "Incompatible With
+Secondary Licenses" notice).

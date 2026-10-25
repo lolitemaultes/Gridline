@@ -35,6 +35,22 @@ struct PianoLaneGeometry {
 };
 const PianoLaneGeometry& pianoLaneGeometry();
 void drawPlaylist(App& a);
+// J-118 dev check (--dev-input "plgeom"): the playlist as drawn last frame, in
+// logical pixels: x of tick t = x0 + t * pxPerTick; track i spans
+// [trackTop[i], trackTop[i] + trackH[i]); the picker's tabs and rows
+// (centre points; rows of the shown tab: source id).
+struct PlaylistGeometry {
+  float x0 = 0, pxPerTick = 0;
+  std::vector<float> trackTop, trackH;
+  float tabX[3] = {0, 0, 0}, tabY = 0;
+  struct Row {
+    unsigned id;
+    float x, y;
+  };
+  std::vector<Row> rows;
+  bool valid = false;
+};
+const PlaylistGeometry& playlistGeometry();
 void drawMixer(App& a);
 // J-83 dev check (--dev-input "mixer"): the strips pane's vertical scroll as
 // drawn last frame, and whether the plain wheel scrolls the mixer there.

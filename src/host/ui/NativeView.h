@@ -29,12 +29,32 @@ void destroyContainer(const Window& w, void* container);
 // Keeps `child` above `parent` (FL-style floating plugin windows): an AppKit
 // child window / an X11 transient. `on` = false undoes it before closing.
 void keepAbove(const Window& child, const Window& parent, bool on);
+// J-114 (macOS): `w`, when shown, ordered just above `ref` without being activated (a detached
+// Gridline window kept above the main window when that comes forward). Elsewhere a no-op:
+// keepAbove's ownership does it.
+void orderAbove(const Window& w, const Window& ref);
+// J-116: the window system runs a modal size / move loop of one of this application's windows
+// right now (macOS: a window is in live resize; Windows: the UI thread is in move / size mode).
+// The main loop is blocked inside the event pump then. False where no such loop exists (X11).
+bool inModalSizeLoop();
 // Device pixels per logical unit of the window (2 on Retina screens).
 double backingScale(const Window& w);
 // The X resource database of the window's display (XResourceManagerString:
 // "Xft.dpi:\t96\n..."), empty when there is none or off X11 (J-91: the
 // desktop's scale setting).
 std::string xResources(const Window& w);
+// J-111g: the system's mouse pointer, so collaborators' cursors are drawn its size:
+// the height of its arrow (the tip to the end of the tail, outline included) in the
+// window units of `w` (points on macOS, pixels on Windows and X11, logical pixels on
+// Wayland). macOS: the arrow cursor's image (its visible part) times the
+// accessibility pointer size; Windows: SM_CYCURSOR; X11: Xcursor.size, XCURSOR_SIZE,
+// GNOME's cursor-size, else 24 (core/UiScale.h pointerArrowHeight). `source` names
+// where the size came from (reports). Never 0: a default when nothing says.
+struct PointerSize {
+  double arrowH = 0;
+  std::string source;
+};
+PointerSize pointerSize(const Window& w);
 // Window number for screen capture of just this window (macOS), -1 otherwise.
 long windowNumber(const Window& w);
 // Writes an image of just this window's content to a PNG file: its views
@@ -87,6 +107,10 @@ bool frameClockStart(const Window& w);
 void frameClockFollow(const Window& w);
 void frameClockWait();
 void frameClockStop();
+// J-111: while `on` (a collaborative session is open), the system must not
+// throttle Gridline in the background (macOS App Nap: timers and the run loop
+// slowed when the window is hidden or covered). No-op elsewhere.
+void keepAwake(bool on);
 
 // Dev measurement (`--frame-stats`, macOS): drawing done by plugin
 // interfaces since the last take. startDrawStats hooks the interface's view
@@ -103,5 +127,17 @@ DrawStats takeDrawStats();
 // Dev measurement: a mouse drag at (x, y) of the container (top-left based),
 // up and down like a knob being turned, for `seconds`, as posted user input.
 void devDrag(const Window& w, void* container, int x, int y, double seconds);
+// Dev (J-114): one left-button mouse event as the window system would deliver it to `w`
+// (kind 0 moved, 1 down, 2 dragged, 3 up) at (x, y) of its content, top-left based, in
+// window units; may be outside the window (a drag continuing past its edge). Goes
+// through AppKit and SDL's own event handling; the system pointer does not move.
+void devPostMouse(const Window& w, int kind, double x, double y);
+// Dev (J-116, macOS): the user resizing `w` by its bottom-right corner: a mouse-down on the corner
+// followed by `steps` drags (dx, dy window units in all, right / down positive) and the release,
+// through AppKit's own live-resize tracking (the system pointer does not move). Returns once the
+// resize is over. No-op elsewhere.
+void devLiveResize(const Window& w, double dx, double dy, int steps);
+// Dev (J-116, macOS): what the window's red close button does (-[NSWindow performClose:]). No-op elsewhere.
+void devPerformClose(const Window& w);
 
 }  // namespace gl::host::native

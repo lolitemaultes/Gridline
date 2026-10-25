@@ -359,6 +359,15 @@ SamplePtr SampleCache::get(const std::string& path) {
   return decodeLocked(lk, path);
 }
 
+void SampleCache::forget(const std::string& path) {
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    failed_.erase(path);
+    cache_.erase(path);
+  }
+  gen_.fetch_add(1, std::memory_order_acq_rel);
+}
+
 SamplePtr SampleCache::request(const std::string& path) {
   if (path.empty()) return nullptr;
   if (path.rfind("builtin:", 0) == 0) {

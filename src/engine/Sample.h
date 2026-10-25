@@ -168,6 +168,9 @@ class SampleCache {
   // decode finishes), before main() returns: none runs into static destruction. get()
   // still decodes on the calling thread; request() queues nothing any more. Idempotent.
   void shutdown();
+  // J-111: a file that failed to load (not there yet) has arrived: the next
+  // get() / request() tries again, and generation() changes so the app rebuilds.
+  void forget(const std::string& path);
 
   // While an instance lives on a thread, get() on that thread behaves like
   // request() (program builds in the app: nothing waits for the disk).

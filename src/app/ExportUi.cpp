@@ -36,6 +36,7 @@
 #include "../engine/Sample.h"
 #include "../packs/PacksUi.h"
 #include "App.h"
+#include "CollabUi.h"
 #include "ContextMenus.h"
 #include "FlpExportUi.h"
 #include "HostedUi.h"
@@ -151,6 +152,8 @@ std::string renderedFolder(const App& a) {
 }
 
 std::string projectName(const App& a) {
+  // J-111f: a collaborative project's shared name (what everyone calls it) names its exports
+  if (std::string shared = collabui::projectTitle(a); !shared.empty()) return shared;
   const std::string t = a.doc.song().info.title;
   if (!t.empty() && t != "Untitled") return t;
   if (!a.projectFile().empty()) return projectStemOf(a.projectFile());

@@ -409,6 +409,48 @@ void textEllipsis(ImDrawList* dl, ImFont* font, float size, ImVec2 pos, float ma
   if (!s.empty()) dl->AddText(font, size, pos, col, s.c_str());
 }
 
+namespace {
+// Middle ellipsis: the start and the end stay (a path keeps its root and its
+// last folders / file name), the middle gives way.
+std::string fitMiddleImpl(ImFont* font, float size, const char* text, float maxW) {
+  auto width = [&](const char* b, const char* e) { return font->CalcTextSizeA(size, 1e9f, 0, b, e).x; };
+  const size_t len = std::strlen(text);
+  const char* end = text + len;
+  if (width(text, end) <= maxW) return text;
+  const char* ell = "\xE2\x80\xA6";  // …
+  const float ew = width(ell, ell + 3);
+  if (maxW <= ew) return "";
+  auto back = [&](size_t i) {  // to a UTF-8 boundary at or before i
+    while (i > 0 && i < len && (static_cast<unsigned char>(text[i]) & 0xC0) == 0x80) --i;
+    return i;
+  };
+  // kept characters: 40% from the start, 60% from the end (the end names the thing)
+  auto fits = [&](size_t n, std::string* out) {
+    const size_t head = back(n * 2 / 5), tail = back(len - (n - n * 2 / 5));
+    if (width(text, text + head) + ew + width(text + tail, end) > maxW) return false;
+    if (out) *out = std::string(text, head) + ell + std::string(text + tail, end);
+    return true;
+  };
+  size_t lo = 0, hi = len;
+  while (lo < hi) {
+    const size_t mid = (lo + hi + 1) / 2;
+    if (fits(mid, nullptr)) lo = mid;
+    else hi = mid - 1;
+  }
+  std::string out = ell;
+  fits(lo, &out);
+  return out;
+}
+}  // namespace
+
+const char* fitTextMiddle(const char* text, float maxW) {
+  static std::string buf[4];
+  static int slot = 0;
+  slot = (slot + 1) & 3;
+  buf[slot] = fitMiddleImpl(ImGui::GetFont(), ImGui::GetFontSize(), text, maxW);
+  return buf[slot].c_str();
+}
+
 const char* fitText(const char* text, float maxW) {
   static std::string buf[4];
   static int slot = 0;

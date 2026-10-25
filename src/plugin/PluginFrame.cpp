@@ -287,7 +287,6 @@ void Frame::draw(int winW, int winH, int fbW, int fbH) {
       ImGui::SetWindowSize(rw, ImVec2(rack_[2], rack_[3]), ImGuiCond_Always);
       placeRack_ = false;
     }
-  shell::keepFloatingInView("Channel rack", dpos, dsize);
   drawMixer(app);
   drawChannelSettings(app);
   drawEffectEditor(app);

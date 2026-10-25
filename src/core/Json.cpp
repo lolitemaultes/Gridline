@@ -221,6 +221,64 @@ bool jsonParse(const std::string& src, Json& out, size_t* errPos) {
   return ok;
 }
 
+namespace {
+void escapeTo(const std::string& in, std::string& out) {
+  out += '"';
+  for (char c : in) {
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\t': out += "\\t"; break;
+      case '\r': out += "\\r"; break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20) {
+          char esc[8];
+          std::snprintf(esc, sizeof esc, "\\u%04x", static_cast<unsigned>(static_cast<unsigned char>(c)));
+          out += esc;
+        } else {
+          out += c;
+        }
+    }
+  }
+  out += '"';
+}
+
+void compact(const Json& v, std::string& out) {
+  switch (v.type) {
+    case Json::Type::Array:
+      out += '[';
+      for (size_t k = 0; k < v.array.size(); ++k) {
+        if (k) out += ',';
+        compact(v.array[k], out);
+      }
+      out += ']';
+      break;
+    case Json::Type::Object: {
+      out += '{';
+      bool first = true;
+      for (const auto& [key, val] : v.object) {
+        if (!first) out += ',';
+        first = false;
+        escapeTo(key, out);
+        out += ':';
+        compact(val, out);
+      }
+      out += '}';
+      break;
+    }
+    case Json::Type::String: escapeTo(v.str, out); break;
+    default: emit(v, out, 0, 0); break;
+  }
+}
+}  // namespace
+
+std::string jsonCompact(const Json& v) {
+  std::string out;
+  compact(v, out);
+  return out;
+}
+
 std::string jsonStringify(const Json& v, int indent) {
   std::string out;
   emit(v, out, indent, 0);

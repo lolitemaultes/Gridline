@@ -15,6 +15,7 @@ void UndoStack::pushApplied(CommandPtr cmd) {
   }
   cmds_.push_back(std::move(cmd));
   serials_.push_back(nextSerial_++);
+  ++pushCount_;
   pos_ = cmds_.size();
   mergeOpen_ = true;
   trim();
@@ -30,6 +31,13 @@ bool UndoStack::undo(Song& song) {
 bool UndoStack::redo(Song& song) {
   if (!canRedo()) return false;
   cmds_[pos_++]->apply(song);
+  mergeOpen_ = false;
+  return true;
+}
+
+bool UndoStack::stepPosition(int dir) {
+  if (dir < 0 ? !canUndo() : !canRedo()) return false;
+  pos_ = dir < 0 ? pos_ - 1 : pos_ + 1;
   mergeOpen_ = false;
   return true;
 }
