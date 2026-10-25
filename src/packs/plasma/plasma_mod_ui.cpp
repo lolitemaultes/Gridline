@@ -406,7 +406,7 @@ void lfo(Ctx& c) {
     if (pts.size() > 2) c.dl->AddLine(P(pts.size() - 1), P(0), theme::withAlpha(c.P.accent, 0.35f), std::max(1.f, c.s(1.2f)));
     for (size_t i = 0; i < pts.size(); ++i) {
       c.dl->AddCircleFilled(P(i), c.s(static_cast<int>(i) == hot ? 4.5f : 3.4f), static_cast<int>(i) == hot ? c.P.text : c.P.accent);
-      char b2[4];
+      char b2[16];
       std::snprintf(b2, sizeof b2, "%d", static_cast<int>(i) + 1);
       c.dl->AddText(c.a.fontBold, font(c, 7.5f), ImVec2(P(i).x + c.s(5), P(i).y - c.s(11)), c.P.textDim, b2);
     }

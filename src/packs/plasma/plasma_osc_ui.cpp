@@ -3,6 +3,7 @@
 // name, type, output route), a display (table / sample / grain / spectrum
 // view, or the unison or options panel) and two knob rows.
 #include <algorithm>
+#include <initializer_list>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -267,22 +268,23 @@ void unisonPanel(Ctx& c, int o, float x, float y, float w) {
 void optionsPanel(Ctx& c, int o, float x, float y, float w, float h) {
   const int type = vali(c, oscP(o, O_Type));
   std::vector<int> ks = {O_PitchTrack, O_PitchMode, O_Ratio, O_HzOffset, O_PhaseMemory, O_Smooth, O_KeyMin, O_KeyMax, O_VelMin, O_VelMax};
+  auto front = [&ks](std::initializer_list<int> l) {  // (no vector::insert: GCC 11 misreads it as an overflow)
+    std::vector<int> n(l);
+    for (const int k : ks) n.push_back(k);
+    ks.swap(n);
+  };
   if (type == OscSample || type == OscGranular || type == OscSpectral) {
-    const std::vector<int> smp = {O_Start, O_End, O_Reverse, O_ScanSync, O_ScanBpm, O_ScanKey, O_LoopXfade, O_RelLoop, O_Slice, O_SliceMode};
-    ks.insert(ks.begin(), smp.begin(), smp.end());
+    front({O_Start, O_End, O_Reverse, O_ScanSync, O_ScanBpm, O_ScanKey, O_LoopXfade, O_RelLoop, O_Slice, O_SliceMode});
   }
   if (type == OscGranular) {
-    const std::vector<int> g = {O_GDensMode, O_GLenMode, O_GMaxGrains, O_GReverse, O_GWinShape, O_GWinSkew, O_GWinParam, O_GRndWin, O_GRndSkew,
-                                O_GRndWarp, O_GRndWarp2};
-    ks.insert(ks.begin(), g.begin(), g.end());
+    front({O_GDensMode, O_GLenMode, O_GMaxGrains, O_GReverse, O_GWinShape, O_GWinSkew, O_GWinParam, O_GRndWin, O_GRndSkew,
+           O_GRndWarp, O_GRndWarp2});
   }
   if (type == OscSpectral) {
-    const std::vector<int> sp = {O_SLo, O_SHi, O_SPhaseLock, O_STransients};
-    ks.insert(ks.begin(), sp.begin(), sp.end());
+    front({O_SLo, O_SHi, O_SPhaseLock, O_STransients});
   }
   if (type == OscMultisample) {
-    const std::vector<int> ms = {O_MEnvOn, O_MDelay, O_MAttack, O_MHold, O_MDecay, O_MSustain, O_MRelease};
-    ks.insert(ks.begin(), ms.begin(), ms.end());
+    front({O_MEnvOn, O_MDelay, O_MAttack, O_MHold, O_MDecay, O_MSustain, O_MRelease});
   }
   // scroll when it does not fit
   const float rowH = 19, colW = (w - 12) / 2;

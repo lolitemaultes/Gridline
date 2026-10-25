@@ -775,7 +775,7 @@ void pianoRoll(Ctx& c, ClipSlot& cs) {
     panelRect(c, kCw + 2, ky, kRollX - kCw - 4, keyH - 0.5f, black ? c.P.keyBlack : c.P.keyWhite);
     if (pc == 0 || c.u.clipFold) {
       static const char* const nn[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-      char t[8];
+      char t[16];
       std::snprintf(t, sizeof t, "%s%d", nn[pc], k / 12 - 2);
       text(c, kCw + 4, ky + (keyH - 9) * 0.5f - 0.5f, t, black ? c.P.keyWhite : c.P.keyBlack, 7, true);
     }

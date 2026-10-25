@@ -222,7 +222,7 @@ void matrixRow(Ctx& c, int s, float y) {
   panelRect(c, kGutter + 1, y, kW - 2 * kGutter - 2, kMxRowH - 1, (s & 1) ? c.P.panel : c.P.panelLo);
   const float cy = y + kMxRowH * 0.5f;
   // slot number + drag grip
-  char num[4];
+  char num[16];
   std::snprintf(num, sizeof num, "%d", s + 1);
   textC(c, 15, cy - 5, num, c.P.textFaint, 8, true);
   const float fh = 20, fy = cy - fh * 0.5f;

@@ -14,6 +14,7 @@
 // uses the app's defaults instead: the public STUN server, router port mapping
 // and no loopback candidates.
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -48,6 +49,9 @@ std::string songHash(const Song& in) { return collab::sharedSongDigest(in); }
 }  // namespace
 
 int collabMain(int argc, char** argv) {
+#ifdef SIGPIPE
+  ::signal(SIGPIPE, SIG_IGN);  // a closed pipe or peer fails the write instead of ending the run (tests pipe two runs together)
+#endif
   std::string folder, name = "Peer", create, joinFile, inviteOut, edits, audio, report, stun;
   bool fresh = false, netTest = false, appNet = false, reopen = false;
   double iceDelay = 0;
