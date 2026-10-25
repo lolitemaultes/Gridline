@@ -27,14 +27,12 @@
 #include "engine/Sample.h"
 
 // ---- allocation counter (realtime-safety checks) ----
-// The stack of the first counted allocation is kept (where <execinfo.h>
-// exists) and printed when a no-allocation check fails, so a failure on a CI
-// machine says where it came from.
-#if !defined(_WIN32) && defined(__has_include)
-#if __has_include(<execinfo.h>)
+// The stack of the first counted allocation is kept (where CMake found a
+// linkable backtrace(): glibc, macOS, libexecinfo on the BSDs) and printed when
+// a no-allocation check fails, so a failure on a CI machine says where it came from.
+#if defined(GL_HAVE_BACKTRACE) && !defined(_WIN32)
 #include <execinfo.h>
 #define GL_J109_BACKTRACE 1
-#endif
 #endif
 namespace {
 thread_local bool gCount = false;
