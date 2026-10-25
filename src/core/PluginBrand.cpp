@@ -17,6 +17,8 @@ const std::vector<PluginBrand>& pluginBrands() {
       {"gl.wavetable", F::Synth, "Wavetables scanned like contour lines.", "wavetable, wavetable synth, morph"},
       {"gl.additive", F::Synth, "Additive synthesis, one harmonic facet at a time.", "additive, additive synth, harmonics, partials"},
       {"gl.harmor", F::Synth, "Resynthesis that prints sound as fields of partials.", "resynth, resynthesis, additive, image synth, partials"},
+      {"gl.plasma", F::Synth, "Wavetables, grains and spectra, routed through a deep matrix.",
+       "plasma, wavetable, wavetable synth, hybrid synth, granular, spectral, supersaw, bass, preset import"},
       // ---- flagships: samples and beats
       {"gl.pads", F::Sample, "Sixteen pads, counted out on a grid.", "drum pads, drum machine, pad sampler, kit"},
       {"gl.slicer", F::Sample, "Cuts loops into slices along the beat.", "slicer, beat slicer, loop slicer, chop"},

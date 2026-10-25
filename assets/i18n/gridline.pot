@@ -293,11 +293,11 @@ msgstr ""
 msgid "No mixer track is armed for audio"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/MidiUi.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/MidiUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "None"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ExportUi.cpp src/app/Playlist.cpp src/packs/edison/edison_wave_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/ExportUi.cpp src/app/Playlist.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_wted_ui.cpp
 msgid "Normalize"
 msgstr ""
 
@@ -521,7 +521,7 @@ msgstr ""
 msgid "Flip horizontally"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/PluginEditorsK3.cpp src/app/PluginEditorsK3Gb.cpp
+#: src/app/AutomationEditor.cpp src/app/PluginEditorsK3.cpp src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_mod_ui.cpp
 msgid "Flip vertically"
 msgstr ""
 
@@ -649,7 +649,7 @@ msgstr ""
 msgid "START"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/Menus.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/Menus.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Save"
 msgstr ""
 
@@ -1329,7 +1329,7 @@ msgstr ""
 msgid "Notch"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -1641,7 +1641,7 @@ msgstr ""
 msgid "Layer: this channel's notes also play on the checked channels"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/ChannelSettings.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/samplers/samplers_ui.cpp
 msgid "Load sample..."
 msgstr ""
 
@@ -1917,7 +1917,7 @@ msgstr ""
 msgid "Repeat slices of the region with rate, decay, pitch and gate"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_mod_ui.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Reverse"
 msgstr ""
 
@@ -2149,7 +2149,7 @@ msgstr ""
 msgid "Instead of %s:"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/MidiUi.cpp src/packs/utility/utility_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/MidiUi.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/utility/utility_ui.cpp
 msgid "Invert"
 msgstr ""
 
@@ -3157,7 +3157,7 @@ msgstr ""
 msgid "NOTE TO THEM (OPTIONAL)"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/packs/plasma/plasma_seq_ui.cpp src/packs/plasma/plasma_wted_ui.cpp
 msgid "Name"
 msgstr ""
 
@@ -3393,7 +3393,7 @@ msgstr ""
 msgid "Relays the encrypted connection when both networks block direct connections. Only needed for strict networks"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Remove"
 msgstr ""
 
@@ -4261,7 +4261,7 @@ msgstr ""
 msgid "By name"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/ContextMenus.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Bypass"
 msgstr ""
 
@@ -4489,7 +4489,7 @@ msgstr ""
 msgid "Effect chain"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/ContextMenus.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Effects"
 msgstr ""
 
@@ -5001,7 +5001,7 @@ msgstr ""
 msgid "Nudge right"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/UpdateUi.cpp
+#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/UpdateUi.cpp src/packs/plasma/plasma_ui.cpp
 msgid "OK"
 msgstr ""
 
@@ -7689,7 +7689,7 @@ msgstr ""
 msgid "Claude Desktop: add this server to claude_desktop_config.json. It starts a bridge that connects to the running Gridline."
 msgstr ""
 
-#: src/app/McpUi.cpp src/app/PluginEditorsK3Gb.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp
+#: src/app/McpUi.cpp src/app/PluginEditorsK3Gb.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp src/packs/plasma/plasma_mod_ui.cpp src/packs/plasma/plasma_osc_ui.cpp
 msgid "Clear"
 msgstr ""
 
@@ -9957,7 +9957,7 @@ msgstr ""
 msgid "Click to rename the slot"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_seq_ui.cpp
 msgid "Copy slot"
 msgstr ""
 
@@ -10077,7 +10077,7 @@ msgstr ""
 msgid "POSITION SYNC"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_seq_ui.cpp
 msgid "Paste slot"
 msgstr ""
 
@@ -10093,7 +10093,7 @@ msgstr ""
 msgid "RELEASE"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_wted_ui.cpp
 msgid "Remove DC offset"
 msgstr ""
 
@@ -10473,7 +10473,7 @@ msgstr ""
 msgid "Enter to save"
 msgstr ""
 
-#: src/app/PluginUI.cpp
+#: src/app/PluginUI.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Factory"
 msgstr ""
 
@@ -12809,7 +12809,7 @@ msgstr ""
 msgid "Invert polarity"
 msgstr ""
 
-#: src/packs/edison/edison_form_ui.cpp
+#: src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_osc_ui.cpp
 msgid "Load audio file..."
 msgstr ""
 
@@ -13259,6 +13259,318 @@ msgstr ""
 
 #: src/packs/modulation/modulation_ui.cpp
 msgid "input = controller (0..1), base = knob value, t, beat"
+msgstr ""
+
+#: src/packs/plasma/plasma_browser_ui.cpp
+msgid "Could not save the preset"
+msgstr ""
+
+#: src/packs/plasma/plasma_browser_ui.cpp
+msgid "Save to the preset library (folders with /)"
+msgstr ""
+
+#: src/packs/plasma/plasma_browser_ui.cpp
+msgid "Saved the preset"
+msgstr ""
+
+#: src/packs/plasma/plasma_browser_ui.cpp
+msgid "Search"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "All 24 effect slots are in use"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "Clear this rack"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "Copy this rack"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+msgid "Load impulse response"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "Load impulse response..."
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "Lock effects (keep them when loading presets)"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "Paste (adds to this rack)"
+msgstr ""
+
+#: src/packs/plasma/plasma_mod_ui.cpp
+msgid "Copy shape"
+msgstr ""
+
+#: src/packs/plasma/plasma_mod_ui.cpp
+msgid "Paste shape"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Clear (use the wavetable)"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Direct out"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Edit wavetable..."
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Factory tables"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Filter 1"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Filter 1 + 2"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Filter 2"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Load multisample"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Load multisample (.sfz)..."
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Load noise sample"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Load sample"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp src/packs/plasma/plasma_wted_ui.cpp
+msgid "Load wavetable"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Load wavetable (.wav)..."
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Main"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Without a sample the wavetable plays:"
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "12-TET (clear)"
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "Aux source curve"
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "Clear every slot"
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "Load tuning"
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "Load tuning (.tun)..."
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "Sort: used slots first"
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "Source curve"
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "Straight"
+msgstr ""
+
+#: src/packs/plasma/plasma_seq_ui.cpp
+msgid "Clear notes"
+msgstr ""
+
+#: src/packs/plasma/plasma_seq_ui.cpp
+msgid "Copy clip"
+msgstr ""
+
+#: src/packs/plasma/plasma_seq_ui.cpp
+msgid "Double the length"
+msgstr ""
+
+#: src/packs/plasma/plasma_seq_ui.cpp
+msgid "Paste clip"
+msgstr ""
+
+#: src/packs/plasma/plasma_seq_ui.cpp
+msgid "Reset slot"
+msgstr ""
+
+#: src/packs/plasma/plasma_seq_ui.cpp
+msgid "Start offset (beats)"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Add modulation"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Arpeggiator panel"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Automation, MIDI link..."
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Browse presets..."
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Clear the modulation matrix"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Clip editor"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Could not import the preset"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Edit wavetable (Osc A)"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Envelopes"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Import Serum 2 preset"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Import Serum 2 preset..."
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Init"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "LFOs"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Remove all effects"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Swap warps"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Apply to this frame only"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "By brightness"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "By level"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Clear (sine)"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Could not read the wavetable"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Could not write the file"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Crossfade"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Export wavetable"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Exported the wavetable"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Keep every second frame"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Mirror (second half reversed)"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Normalize (each frame)"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Normalize (whole table)"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Remove the frames after this one"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Remove the frames before this one"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Remove this frame"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Resize"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Reverse frame order"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Reverse order"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Smooth (keep harmonics)"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Spectral"
 msgstr ""
 
 #: src/packs/samplers/dwave_ui.cpp
@@ -14547,10 +14859,6 @@ msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
 msgid "Load a WAV / FLAC / MP3 impulse response (or drop a file on the view)"
-msgstr ""
-
-#: src/packs/spacefx/spacefx_ui.cpp
-msgid "Load impulse response"
 msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp

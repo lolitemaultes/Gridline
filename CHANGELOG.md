@@ -5,6 +5,26 @@ release workflow publishes the section of the tagged version as the release note
 
 ## Unreleased
 
+### New: Plasma, a wavetable hybrid synth (`gl.plasma`)
+
+- Three oscillators (wavetable, multisample, sample, granular or spectral) with two warp slots
+  each (103 modes, among them FM / PD / AM / RM between sources and spectral warps), unison up to
+  16 voices, a sub oscillator, a noise layer (19 noises or your own file) and two filters with 106
+  types. Each source picks the filter(s) it feeds or goes straight to the effects.
+- Modulation: 4 envelopes, 10 LFOs (drawn shapes with loop points, path and chaos modes, sample
+  and hold), 8 macros, velocity and note curves, MPE and more as sources; a 64-slot matrix with
+  curves, smoothing and an auxiliary source. Drag a source onto any knob, or use the knob's menu.
+- Three effect racks with up to 24 modules (distortion, flanger, phaser, chorus, delay,
+  compressor, reverb, EQ, filter, hyper / dimension, frequency shifter, convolution, utility and
+  band splitters), an arpeggiator with 12 pattern slots and a clip player with 12 clips (piano
+  roll, automation lanes, recording).
+- A wavetable editor: harmonics and phases, brushes, snap grid, processing, morphing between
+  frames, formulas, WAV import and export.
+- Opens Serum 2 presets (`.SerumPreset`) and Serum 1 `.fxp` files from your own folders and turns
+  them into Plasma sounds, with a report of anything approximated or not found; a preset browser
+  lists them next to the factory presets and your library. Projects that host the original plugin
+  keep hosting it. See `docs/plugins/plasma.md`.
+
 ### Collaboration: rename in place
 
 - The Collaboration panel no longer has a Rename... button: the project's name at the top is the
