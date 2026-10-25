@@ -245,8 +245,8 @@ int collabMain(int argc, char** argv) {
   std::error_code ec;
   if (fs::exists(fs::path(folder) / "Audio", ec))
     for (const auto& e : fs::directory_iterator(fs::path(folder) / "Audio", ec)) audioFiles += e.is_regular_file() ? 1 : 0;
-  bool connected = false;
-  for (const auto& [site, pv] : s->peers()) connected = connected || pv.connected;
+  // connected during the run (at the end the other process may already have quit and said bye)
+  const bool connected = connectedAt >= 0;
   Json r = Json::makeObject();
   r.object["name"] = Json::makeString(name);
   r.object["ready"] = Json::makeNumber(s->ready() ? 1 : 0);

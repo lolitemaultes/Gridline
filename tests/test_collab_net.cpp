@@ -13,6 +13,7 @@
 #include "collab/CollabSim.h"
 #include "collab/Hub.h"
 #include "collab/Link.h"
+#include "core/Platform.h"
 #include "collab/Transport.h"
 #include "collab/Controller.h"
 #include "collab/VersionGate.h"
@@ -744,8 +745,8 @@ void testLifecycle() {
   // 2b. join again, then leave and delete (to the trash; the test trash in the scratch folder)
   joinB(root + "/Sam/Again");
   frames(5);
-  setenv("GRIDLINE_TEST_TRASH_DIR", (root + "/trash").c_str(), 1);
-  setenv("GRIDLINE_TEST_TRASH_ROOT", root.c_str(), 1);
+  platform::setEnv("GRIDLINE_TEST_TRASH_DIR", (root + "/trash").c_str());
+  platform::setEnv("GRIDLINE_TEST_TRASH_ROOT", root.c_str());
   expect(cb.session() && cb.requestLeave(db, Controller::LeaveMode::Delete, &err), "leave (delete)");
   frames(10, [&] { return !cb.leaving(); });
   r = cb.takeLeaveResult();
