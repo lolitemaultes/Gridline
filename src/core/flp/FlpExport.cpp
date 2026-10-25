@@ -18,6 +18,7 @@
 #include <fstream>
 #include <limits>
 #include <sstream>
+#include "../PluginStandIn.h"
 #include "../PluginBrand.h"
 #include "../Arrangements.h"
 #include "../Params.h"
@@ -637,6 +638,7 @@ bool exportPrepared(const Song& song, const StandInResult* standIns, Bytes& out,
 bool exportFlp(const Song& song, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
   // J-80: Gridline-only plugins → their stand-ins, on a copy.
   Song work = song;
+  standin::restoreAll(work);  // missing Serum / Kickstart: exported as the plugin itself (PluginStandIn.h)
   StandInResult sr;
   StandInOptions so;
   so.sampleDir = opt.renderInstruments ? opt.sampleDir : std::string();

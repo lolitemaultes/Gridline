@@ -134,7 +134,14 @@ const Decoded& decodeItem(const std::string& path) {
   Decoded d;
   d.item.kind = browse::kindOf(path);
   d.name = fs::path(path).stem().string();
-  if (d.item.kind == Kind::Preset) {
+  if (d.item.kind == Kind::Preset && isForeignPresetFile(path)) {  // Serum presets: Plasma opens them
+    d.item.pluginType = foreignPresetType(path);
+    if (const PluginInfo* info = findPlugin(d.item.pluginType)) {
+      d.item.pluginKind = info->kind;
+      d.ok = loadPreset(path, d.item.pluginType, d.state);
+    }
+    if (!d.ok) d.item.kind = Kind::Other, d.error = "Not a Serum preset Plasma can open";
+  } else if (d.item.kind == Kind::Preset) {
     std::ifstream in(path, std::ios::binary);
     std::stringstream ss;
     ss << in.rdbuf();

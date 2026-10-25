@@ -452,6 +452,16 @@ std::string modelToData(const Model& m) {
     for (const auto& s : m.tags) t.array.push_back(str(s));
     r.object["tags"] = t;
   }
+  if (!m.openFormat.empty()) {
+    Json o = Json::makeObject();
+    o.object["format"] = str(m.openFormat);
+    Json notes = Json::makeArray(), missing = Json::makeArray();
+    for (const auto& s : m.openNotes) notes.array.push_back(str(s));
+    for (const auto& s : m.openMissing) missing.array.push_back(str(s));
+    o.object["notes"] = notes;
+    o.object["missing"] = missing;
+    r.object["openReport"] = o;
+  }
   r.object["mpeXYZ"] = boolean(m.mpeXYZtoMacros);
   r.object["mpeYZ"] = boolean(m.mpeYZtoMacros);
   r.object["mpeYWheel"] = boolean(m.mpeYtoModWheel);
@@ -674,6 +684,14 @@ bool modelFromData(const std::string& data, Model& m) {
   if (const Json* t = r.find("tags"); t && t->is(Json::Type::Array))
     for (const auto& e : t->array)
       if (e.is(Json::Type::String) && m.tags.size() < 32) m.tags.push_back(e.str);
+  if (const Json* o = r.find("openReport"); o && o->is(Json::Type::Object)) {
+    m.openFormat = o->text("format");
+    for (const char* key : {"notes", "missing"})
+      if (const Json* a = o->find(key); a && a->is(Json::Type::Array))
+        for (const auto& e : a->array)
+          if (e.is(Json::Type::String) && m.openNotes.size() + m.openMissing.size() < 256)
+            (key[0] == 'n' ? m.openNotes : m.openMissing).push_back(e.str.substr(0, 512));
+  }
   m.mpeXYZtoMacros = getBool(r, "mpeXYZ", false);
   m.mpeYZtoMacros = getBool(r, "mpeYZ", false);
   m.mpeYtoModWheel = getBool(r, "mpeYWheel", false);

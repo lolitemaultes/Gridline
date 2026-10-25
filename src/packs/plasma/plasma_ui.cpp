@@ -1288,7 +1288,7 @@ bool curveEditor(Ctx& c, const char* id, Curve& cv, float x, float y, float w, f
   return changed;
 }
 
-// ================================================================== presets / import
+// ================================================================== presets / open
 void previewKey(Ctx& c, int key, bool on) {
   if (!c.t.isChannel()) return;
   if (on) c.a.engine.noteOn(c.t.owner, key, 0.8f);
@@ -1318,36 +1318,37 @@ void applyPreset(Ctx& c, const std::vector<std::pair<int, float>>& values, const
   setPluginState(c.a, c.t, ns, "Load preset");
 }
 
-bool importFile(Ctx& c, const std::string& path) {
+std::string openReportText(const Model& m) {
+  if (m.openFormat.empty()) return "";
+  std::string t = std::string(i18n::tr("Opened from")) + ": " + m.openFormat;
+  if (!m.openNotes.empty()) {
+    t += std::string("\n\n") + i18n::tr("Approximated") + ":";
+    for (const auto& n : m.openNotes) t += "\n  - " + n;
+  }
+  if (!m.openMissing.empty()) {
+    t += std::string("\n\n") + i18n::tr("Files not found (install the content or add its folder in the preset browser)") + ":";
+    for (const auto& n : m.openMissing) t += "\n  - " + n;
+  }
+  return t;
+}
+
+bool openPreset(Ctx& c, const std::string& path) {
   PluginState ns;
   ImportReport rep;
-  const bool ok = importSerumPreset(path, ns, rep);
-  std::string msg;
-  if (!ok) {
-    msg = std::string(i18n::tr("Could not import the preset")) + ":\n" + rep.error;
-  } else {
-    if (c.m.lockFx) {
-      Model m = defaultModel();
-      modelFromData(ns.data, m);
-      keepLockedFx(c, ns, m);
-      ns.data = modelToData(m);
-    }
-    setPluginState(c.a, c.t, ns, "Import preset");
-    char b[160];
-    std::snprintf(b, sizeof b, "%s\n%d values mapped, %d left out.", rep.presetName.c_str(), rep.mapped, rep.skipped);
-    msg = b;
-    if (!rep.approximated.empty()) {
-      msg += "\n\nApproximated:";
-      for (const auto& n : rep.approximated) msg += "\n  \xE2\x80\xA2 " + n;
-    }
-    if (!rep.missingFiles.empty()) {
-      msg += "\n\nFiles not found (install the content or place it next to the preset):";
-      for (const auto& n : rep.missingFiles) msg += "\n  \xE2\x80\xA2 " + n;
-    }
+  if (!openPresetFile(path, ns, rep)) {
+    c.a.notify(std::string(i18n::tr("Could not open the preset")) + ": " + rep.error, true);
+    return false;
   }
-  c.u.importMsg = msg;
-  c.u.importOpen = true;
-  return ok;
+  Model m = defaultModel();
+  modelFromData(ns.data, m);
+  if (m.presetName.empty()) m.presetName = rep.presetName.empty() ? fs::u8path(path).stem().string() : rep.presetName;
+  keepLockedFx(c, ns, m);
+  ns.data = modelToData(m);
+  setPluginState(c.a, c.t, ns, "Open preset");
+  if (!m.openNotes.empty() || !m.openMissing.empty())
+    c.a.notify(std::string(i18n::tr("Opened")) + " " + m.presetName + ": " + i18n::tr("some settings are approximated (see the info mark)"), false,
+               openReportText(m));
+  return true;
 }
 
 void editState(App& a, const PluginTarget& t, const char* label, const std::function<void(PluginState&, Model&)>& fn) {
@@ -1384,23 +1385,27 @@ void openFile(Ctx& c, const char* title, const std::vector<std::string>& exts,
 
 std::shared_ptr<const Aux> auxOf(const Ctx& c) { return buildAux(c.st); }
 
-void importDialog(Ctx& c) {
+void openPresetDialog(Ctx& c) {
   App& a = c.a;
   const PluginTarget t = c.t;
   a.fileDialog = {};
   a.fileDialog.open = true;
-  a.fileDialog.title = i18n::tr("Import Serum 2 preset");
-  const auto roots = defaultSerumRoots();
-  std::string dir = roots.empty() ? "" : roots.front() + "/Presets";
+  a.fileDialog.title = i18n::tr("Open preset");
+  static std::string lastDir;
   std::error_code ec;
-  if (dir.empty() || !fs::is_directory(dir, ec)) {
-    const char* h = std::getenv("HOME");
-    dir = h ? h : ".";
+  if (lastDir.empty() || !fs::is_directory(lastDir, ec)) {
+    const auto roots = defaultSerumRoots();
+    lastDir = roots.empty() ? "" : roots.front();
+    if (lastDir.empty() || !fs::is_directory(lastDir, ec)) {
+      const char* h = std::getenv("HOME");
+      lastDir = h ? h : ".";
+    }
   }
-  a.fileDialog.dir = dir;
-  a.fileDialog.exts = {".serumpreset", ".fxp"};
+  a.fileDialog.dir = lastDir;
+  a.fileDialog.exts = openableExtensions();  // every type Plasma opens, in one filter
   Ui* u = &c.u;
   a.fileDialog.onOk = [&a, t, u](const std::string& p) {
+    lastDir = fs::u8path(p).parent_path().string();
     const PluginState* st = t.state(a.doc.song());
     if (!st) return;
     Model m;
@@ -1408,7 +1413,7 @@ void importDialog(Ctx& c) {
     PluginState copy = *st;
     const skin::Form F;
     Ctx c2{a, t, F, ImGui::GetWindowDrawList(), copy, m, *u, pal(), {}, false};
-    importFile(c2, p);
+    openPreset(c2, p);
   };
 }
 
@@ -1457,7 +1462,7 @@ void presetMenu(Ctx& c) {
     ImGui::EndMenu();
   }
   ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Import Serum 2 preset..."))) importDialog(c);
+  if (ImGui::MenuItem(i18n::tr("Open preset..."))) openPresetDialog(c);
   if (ImGui::MenuItem(i18n::tr("Browse presets..."))) c.u.browser = 1;
 }
 
@@ -1495,7 +1500,7 @@ void header(Ctx& c) {
   {
     ImGui::SetCursorScreenPos(c.p(px, 8));
     if (ImGui::InvisibleButton("##brw", c.F.sz(20, 22))) c.u.browser = c.u.browser ? 0 : 1;
-    if (ImGui::IsItemHovered()) c.a.setHint("Preset browser: Plasma presets and your Serum 2 presets");
+    if (ImGui::IsItemHovered()) c.a.setHint("Preset browser: Plasma presets and your Serum presets");
     iconBrowse(c.dl, c.p(px + 10, 19), c.s(11), ImGui::IsItemHovered() || c.u.browser ? P.accent : P.textDim);
     std::string name = c.m.presetName.empty() ? std::string("Init") : c.m.presetName;
     ImGui::SetCursorScreenPos(c.p(px + 24, 8));
@@ -1503,6 +1508,24 @@ void header(Ctx& c) {
     const bool hv = ImGui::IsItemHovered();
     c.dl->AddRectFilled(c.p(px + 24, 8), c.p(px + pw - 46, 30), hv ? P.panelHi : P.well, c.s(2));
     text(c, px + 31, 13, name.c_str(), P.accent, 10.5f, true);
+    if (!c.m.openFormat.empty()) {  // opened from a Serum preset / state: its report on hover
+      const float ix = px + pw - 66;
+      const bool approx = !c.m.openNotes.empty() || !c.m.openMissing.empty();
+      ImGui::SetCursorScreenPos(c.p(ix - 7, 12));
+      ImGui::InvisibleButton("##openinfo", c.F.sz(14, 14));
+      const bool ih = ImGui::IsItemHovered();
+      const ImU32 col = ih ? P.text : (approx ? P.mod : P.textFaint);
+      c.dl->AddCircle(c.p(ix, 19), c.s(5.5f), col, 16, std::max(1.0f, c.s(1.1f)));
+      c.dl->AddLine(c.p(ix, 18), c.p(ix, 22.5f), col, std::max(1.0f, c.s(1.3f)));
+      c.dl->AddCircleFilled(c.p(ix, 15.8f), c.s(0.9f), col);
+      if (ih) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(c.s(420));
+        ImGui::TextUnformatted(openReportText(c.m).c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+      }
+    }
     iconArrow(c.dl, c.p(px + pw - 54, 19), c.s(7), 3, P.textDim);
     if (ImGui::BeginPopup("##presets")) {
       presetMenu(c);
@@ -1831,22 +1854,6 @@ Model& modelFor(const PluginTarget& t, const std::string& data) {
   return e.m;
 }
 
-void importReport(Ctx& c) {
-  if (c.u.importOpen) {
-    ImGui::OpenPopup("Plasma import");
-    c.u.importOpen = false;
-  }
-  ImGui::SetNextWindowSizeConstraints(ImVec2(c.s(360), 0), ImVec2(c.s(560), c.s(520)));
-  if (ImGui::BeginPopupModal("Plasma import", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-    ImGui::PushTextWrapPos(c.s(540));
-    ImGui::TextUnformatted(c.u.importMsg.c_str());
-    ImGui::PopTextWrapPos();
-    ImGui::Spacing();
-    if (ImGui::Button(i18n::tr("OK"), ImVec2(c.s(90), 0))) ImGui::CloseCurrentPopup();
-    ImGui::EndPopup();
-  }
-}
-
 }  // namespace
 
 }  // namespace ui
@@ -1902,7 +1909,6 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   if (u.mapping) mappingPanel(c);
   layoutLayer(2);
   if (u.browser) presetBrowser(c);
-  importReport(c);
   layoutReport(c);
   c.dl->AddRect(F.o, F.p(kW, kH), c.P.line, 0);
   F.end(kW, kH);

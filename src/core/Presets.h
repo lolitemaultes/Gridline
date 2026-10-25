@@ -27,6 +27,11 @@ std::string presetRoot(const std::string& configDir);
 // All presets for a plugin type, recursively, sorted by folder then name.
 std::vector<PresetEntry> listPresets(const std::string& root, const std::string& type);
 bool loadPreset(const std::string& file, const std::string& type, PluginState& out);
+// Preset files of other synths that a built-in plugin opens (Serum ".SerumPreset"
+// / ".fxp" -> Plasma): the plugin type, "" for others. loadPreset reads them
+// for that type.
+std::string foreignPresetType(const std::string& file);
+bool isForeignPresetFile(const std::string& file);
 // `relName` may contain folders ("FL Studio/Fruity Reeverb 2/Large hall").
 // Saves params and data. `source` is an optional note (e.g. where it came from).
 bool savePreset(const std::string& root, const PluginState& st, const std::string& relName, const std::string& source = "",

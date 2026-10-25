@@ -1,12 +1,16 @@
 // Gridline — "plasma" pack: the preset browser (covers the page and the lower
 // panel). Sources: the factory presets, the user's Gridline preset library
-// for Plasma, and the user's own Serum 2 / Serum preset folders (imported on
-// load). Click: select, double-click / Enter: load, Up / Down: step and load.
+// for Plasma, and the Serum library: the user's Serum 2 / Serum preset folders
+// (indexed in the background, plasma_library_dsp.cpp), opened through the same
+// path as any preset file. Click: select, double-click / Enter: open, Up /
+// Down: step and open.
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <iterator>
 #include <map>
+#include <set>
 #include "../../core/I18n.h"
 #include "../../core/Presets.h"
 #include "plasma_ui.h"
@@ -30,6 +34,7 @@ std::string lower(std::string s) {
   for (char& ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
   return s;
 }
+std::string lowerExt(const std::string& file) { return lower(fs::u8path(file).extension().u8string()); }
 
 std::vector<Entry> scan(const App& a, const std::string& src) {
   std::vector<Entry> out;
@@ -44,47 +49,53 @@ std::vector<Entry> scan(const App& a, const std::string& src) {
     for (const auto& e : listPresets(presetRoot(a.configDir()), kType)) out.push_back({e.name, e.folder.empty() ? "User" : e.folder, 2, -1, e.file});
     return out;
   }
-  std::error_code ec;
-  if (!fs::is_directory(src, ec)) return out;
-  const fs::path base(src);
-  for (fs::recursive_directory_iterator it(base, fs::directory_options::skip_permission_denied, ec), end; it != end && !ec; it.increment(ec)) {
-    if (!it->is_regular_file(ec)) continue;
-    const std::string ext = lower(it->path().extension().string());
-    if (ext != ".serumpreset" && ext != ".fxp") continue;
-    const std::string rel = it->path().parent_path().lexically_relative(base).generic_string();
-    out.push_back({it->path().stem().string(), rel == "." ? "" : rel, 3, -1, it->path().string()});
-    if (out.size() >= 20000) break;
-  }
-  std::sort(out.begin(), out.end(), [](const Entry& p, const Entry& q) {
-    return p.folder != q.folder ? p.folder < q.folder : lower(p.name) < lower(q.name);
-  });
   return out;
 }
 
-// Serum preset folders: each root's "Presets" folder (or the root) and its sub-folders.
+std::string libraryCache(const App& a) { return (fs::u8path(a.configDir()) / "plasma-library.json").u8string(); }
+
+// Serum library scopes: "serum:" (all), "serum:<root>", "serum:<root>\n<bank>" (and below).
+constexpr const char* kSerum = "serum:";
+bool isSerumScope(const std::string& key) { return key.compare(0, 6, kSerum) == 0; }
+
+std::vector<Entry> libraryEntries(const LibrarySnapshot& snap, const std::string& key) {
+  std::vector<Entry> out;
+  std::string root = key.substr(6), bank;
+  if (const size_t nl = root.find('\n'); nl != std::string::npos) bank = root.substr(nl + 1), root = root.substr(0, nl);
+  for (const auto& p : snap.presets) {
+    if (!root.empty() && p.root != root) continue;
+    if (!bank.empty() && p.bank != bank && p.bank.compare(0, bank.size() + 1, bank + "/") != 0) continue;
+    const std::string label = fs::u8path(p.root).filename().u8string();
+    out.push_back({p.name, p.bank.empty() ? label : p.bank, 3, -1, p.file});
+  }
+  return out;
+}
+
+// The library's folders: each root, its banks and their sub-folders.
 struct Folder {
-  std::string label, path;
+  std::string label, key;
   int depth = 0;
 };
-std::vector<Folder> serumFolders() {
+std::vector<Folder> libraryFolders(const LibrarySnapshot& snap) {
   std::vector<Folder> f;
-  std::error_code ec;
-  for (const auto& r : defaultSerumRoots()) {
-    fs::path p = fs::path(r) / "Presets";
-    if (!fs::is_directory(p, ec)) p = r;
-    std::string label = fs::path(r).filename().string();
-    f.push_back({label.empty() ? r : label, p.string(), 0});
-    std::vector<fs::path> subs;
-    for (fs::directory_iterator it(p, fs::directory_options::skip_permission_denied, ec), end; it != end && !ec; it.increment(ec))
-      if (it->is_directory(ec)) subs.push_back(it->path());
-    std::sort(subs.begin(), subs.end());
-    for (const auto& s : subs) {
-      f.push_back({s.filename().string(), s.string(), 1});
-      std::vector<fs::path> subs2;
-      for (fs::directory_iterator it(s, fs::directory_options::skip_permission_denied, ec), end; it != end && !ec; it.increment(ec))
-        if (it->is_directory(ec)) subs2.push_back(it->path());
-      std::sort(subs2.begin(), subs2.end());
-      for (const auto& s2 : subs2) f.push_back({s2.filename().string(), s2.string(), 2});
+  std::string lastRoot;
+  std::set<std::string> banks;
+  for (const auto& p : snap.presets) {
+    if (p.root != lastRoot) {
+      lastRoot = p.root;
+      const std::string label = fs::u8path(p.root).filename().u8string();
+      f.push_back({label.empty() ? p.root : label, kSerum + p.root, 0});
+      banks.clear();
+    }
+    if (p.bank.empty()) continue;
+    // the bank and its first sub-folder level
+    const size_t s1 = p.bank.find('/');
+    const std::string top = p.bank.substr(0, s1);
+    if (banks.insert(top).second) f.push_back({top, kSerum + p.root + "\n" + top, 1});
+    if (s1 != std::string::npos) {
+      const size_t s2 = p.bank.find('/', s1 + 1);
+      const std::string sub = p.bank.substr(0, s2);
+      if (banks.insert(sub).second) f.push_back({sub.substr(s1 + 1), kSerum + p.root + "\n" + sub, 2});
     }
   }
   return f;
@@ -113,25 +124,13 @@ void load(Ctx& c, const Entry& e, std::string& msg) {
     } else {
       msg = "Could not read " + e.file;
     }
-  } else {
-    PluginState st;
-    ImportReport rep;
-    if (!importSerumPreset(e.file, st, rep)) {
-      msg = std::string("Could not import:\n") + rep.error;
-      return;
-    }
-    applyPreset(c, valuesOf(st), st.data, rep.presetName.empty() ? e.name : rep.presetName);
-    char b[200];
-    std::snprintf(b, sizeof b, "%s\n%s%s\n\n%d values mapped, %d left out.", rep.format.c_str(), rep.author.empty() ? "" : "by ",
-                  rep.author.c_str(), rep.mapped, rep.skipped);
-    msg = b;
-    if (!rep.approximated.empty()) {
-      msg += "\n\nApproximated:";
-      for (const auto& n : rep.approximated) msg += "\n\xE2\x80\xA2 " + n;
-    }
-    if (!rep.missingFiles.empty()) {
-      msg += "\n\nFiles not found:";
-      for (const auto& n : rep.missingFiles) msg += "\n\xE2\x80\xA2 " + n;
+  } else {  // Serum presets: the same Open path as the file dialog and drops
+    if (openPreset(c, e.file)) {
+      Model m = defaultModel();
+      if (const PluginState* st = c.t.state(c.a.doc.song())) modelFromData(st->data, m);
+      msg = openReportText(m);
+    } else {
+      msg = "Could not open " + e.file;
     }
   }
 }
@@ -143,14 +142,25 @@ void presetBrowser(Ctx& c) {
   if (u.browserDir.empty()) u.browserDir = "factory";
   static std::map<std::string, std::vector<Entry>> cache;
   static std::vector<Folder> folders;
-  static bool foldersInit = false;
+  static uint64_t libGen = ~uint64_t(0);
   static int sel = -1;
   static std::string infoText;
   static std::string lastDir;
-  if (!foldersInit) folders = serumFolders(), foldersInit = true;
-  if (!cache.count(u.browserDir)) cache[u.browserDir] = scan(c.a, u.browserDir);
+  static std::string lastScope;  // Serum scope of the list (searches cover the whole library)
+  // the library index: listed at once from the cache, rescanned in the background
+  const std::string libCache = libraryCache(c.a);
+  libraryRefresh(libCache);
+  const auto snap = librarySnapshot();
+  if (snap->generation != libGen) {
+    libGen = snap->generation;
+    folders = libraryFolders(*snap);
+    for (auto it = cache.begin(); it != cache.end();) it = isSerumScope(it->first) ? cache.erase(it) : std::next(it);
+  }
+  const std::string scope = isSerumScope(u.browserDir) && !u.browserFilter.empty() ? std::string(kSerum) : u.browserDir;
+  if (!cache.count(scope)) cache[scope] = isSerumScope(scope) ? libraryEntries(*snap, scope) : scan(c.a, scope);
   if (lastDir != u.browserDir) sel = -1, infoText.clear(), lastDir = u.browserDir;
-  const std::vector<Entry>& all = cache[u.browserDir];
+  if (lastScope != scope) sel = -1, lastScope = scope;
+  const std::vector<Entry>& all = cache[scope];
 
   panelRect(c, 0, kTopY, kW, kStripY - kTopY, c.P.frame);
   // three frames: folders | list | preset info
@@ -176,12 +186,54 @@ void presetBrowser(Ctx& c) {
   item("fac", "Factory", "factory", 0);
   item("usr", "User presets", "user", 0);
   y += 8;
-  caption(c, 10, kSideW - 10, y, "SERUM 2 (IMPORT)");
+  caption(c, 10, kSideW - 10, y, snap->indexing ? "SERUM LIBRARY (INDEXING\xE2\x80\xA6)" : "SERUM LIBRARY");
   y += 18;
+  static char addPath[512] = "";
+  auto bottomButtons = [&](float by) {
+    const float bw = (kSideW - 36) * 0.5f;
+    if (button(c, "open", 16, by, bw, 20, "OPEN A FILE\xE2\x80\xA6", false, 8)) openPresetDialog(c);
+    if (ImGui::IsItemHovered()) c.a.setHint("Open a Plasma preset, a Serum 2 preset (.SerumPreset) or a Serum preset (.fxp)");
+    if (button(c, "addf", 20 + bw, by, bw, 20, "ADD FOLDER\xE2\x80\xA6", false, 8)) addPath[0] = 0, ImGui::OpenPopup("##addfolder");
+    if (ImGui::IsItemHovered()) c.a.setHint("Add a folder of Serum presets to the library (its wavetables and samples are found there too)");
+    if (ImGui::BeginPopup("##addfolder")) {
+      ImGui::TextUnformatted(i18n::tr("Folder with Serum presets"));
+      ImGui::SetNextItemWidth(c.s(320));
+      if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+      const bool enter = ImGui::InputText("##fp", addPath, sizeof addPath, ImGuiInputTextFlags_EnterReturnsTrue);
+      std::error_code ec;
+      if ((enter || ImGui::Button(i18n::tr("Add"))) && addPath[0]) {
+        if (fs::is_directory(fs::u8path(addPath), ec)) {
+          auto extra = extraSerumFolders();
+          if (std::find(extra.begin(), extra.end(), std::string(addPath)) == extra.end()) extra.push_back(addPath);
+          setExtraSerumFolders(extra);
+          librarySaveFolders(libCache);
+          libraryRefresh(libCache, true);
+        } else {
+          c.a.notify(std::string(i18n::tr("Not a folder")) + ": " + addPath, true);
+        }
+        ImGui::CloseCurrentPopup();
+      }
+      const auto extra = extraSerumFolders();
+      if (!extra.empty()) {
+        ImGui::Separator();
+        ImGui::TextUnformatted(i18n::tr("Added folders (click to remove)"));
+        for (const auto& f : extra)
+          if (ImGui::Selectable(f.c_str())) {
+            std::vector<std::string> keep;
+            for (const auto& g : extra)
+              if (g != f) keep.push_back(g);
+            setExtraSerumFolders(keep);
+            librarySaveFolders(libCache);
+            libraryRefresh(libCache, true);
+          }
+      }
+      ImGui::EndPopup();
+    }
+  };
   if (folders.empty()) {
-    text(c, 16, y + 2, "No Serum preset folders found", c.P.textFaint, 8, true);
+    text(c, 16, y + 2, snap->indexing ? "Looking for Serum presets\xE2\x80\xA6" : "No Serum preset folders found", c.P.textFaint, 8, true);
     y += 18;
-    if (button(c, "imp", 16, y, kSideW - 32, 20, "IMPORT A FILE\xE2\x80\xA6", false, 8)) importDialog(c);
+    bottomButtons(y);
   } else {
     // the folder list scrolls with the wheel when it is long
     static float scroll = 0;
@@ -189,20 +241,22 @@ void presetBrowser(Ctx& c) {
     ImGui::SetCursorScreenPos(c.p(0, top));
     ImGui::InvisibleButton("##fsc", c.F.sz(kSideW, bottom - top));
     const bool hvList = ImGui::IsItemHovered();
-    const float total = static_cast<float>(folders.size()) * 21;
+    const float total = static_cast<float>(folders.size() + 1) * 21;
     if (hvList && ImGui::GetIO().MouseWheel != 0) scroll -= ImGui::GetIO().MouseWheel * 42;
     scroll = std::clamp(scroll, 0.f, std::max(0.f, total - (bottom - top)));
     c.dl->PushClipRect(c.p(0, top), c.p(kSideW, bottom), true);
     y = top - scroll;
+    if (y + 21 >= top && y <= bottom) item("sall", "All Serum presets", kSerum, 0);
+    else y += 21;
     for (size_t i = 0; i < folders.size(); ++i) {
       if (y + 21 < top || y > bottom) {
         y += 21;
         continue;
       }
-      item(("sf" + std::to_string(i)).c_str(), folders[i].label, folders[i].path, folders[i].depth);
+      item(("sf" + std::to_string(i)).c_str(), folders[i].label, folders[i].key, folders[i].depth);
     }
     c.dl->PopClipRect();
-    if (button(c, "imp", 16, kStripY - 28, kSideW - 32, 20, "IMPORT A FILE\xE2\x80\xA6", false, 8)) importDialog(c);
+    bottomButtons(kStripY - 28);
   }
 
   // ---- top bar: search, count, save, refresh, close
@@ -212,8 +266,8 @@ void presetBrowser(Ctx& c) {
     std::snprintf(fb, sizeof fb, "%s", u.browserFilter.c_str());
     if (inputField(c, "bsearch", x, ty, 300, 20, fb, sizeof fb, i18n::tr("Search"))) u.browserFilter = fb, sel = -1;
     if (button(c, "refresh", x + 310, ty, 66, 20, "REFRESH", false, 8)) {
-      cache.erase(u.browserDir);
-      folders = serumFolders();
+      cache.clear();
+      libraryRefresh(libCache, true);
       return;
     }
     static char saveName[96] = "";
@@ -304,7 +358,7 @@ void presetBrowser(Ctx& c) {
         const float ty = p0.y + (rowH - fsz) * 0.5f;
         dl->AddText(f, fsz, ImVec2(p0.x + c.s(10), ty), on ? c.P.text : c.P.textDim, e.name.c_str());
         dl->AddText(f, fsz, ImVec2(p0.x + c.s(lw * 0.55f), ty), c.P.textFaint, e.folder.c_str());
-        const char* src = e.kind <= 1 ? "Factory" : e.kind == 2 ? "Library" : "Serum";
+        const char* src = e.kind <= 1 ? "Factory" : e.kind == 2 ? "Library" : lowerExt(e.file) == ".fxp" ? "Serum" : "Serum 2";
         dl->AddText(f, fsz, ImVec2(p0.x + c.s(lw - 70), ty), e.kind == 3 ? c.P.mod : c.P.textFaint, src);
         ImGui::PopID();
       }
@@ -325,7 +379,10 @@ void presetBrowser(Ctx& c) {
   ImGui::PopStyleColor();
   ImGui::PopStyleVar(2);
   if (shown.empty())
-    textC(c, lx + lw * 0.5f, ly + 60, u.browserDir == "user" ? "No saved presets yet: SAVE AS stores the current sound here" : "No presets here",
+    textC(c, lx + lw * 0.5f, ly + 60,
+          u.browserDir == "user" ? "No saved presets yet: SAVE AS stores the current sound here"
+          : isSerumScope(scope) && snap->indexing ? "Indexing the Serum library\xE2\x80\xA6"
+                                                    : "No presets here",
           c.P.textFaint, 9, true);
   if (loadNow && sel >= 0 && sel < static_cast<int>(shown.size())) load(c, all[static_cast<size_t>(shown[static_cast<size_t>(sel)])], infoText);
 
@@ -337,8 +394,8 @@ void presetBrowser(Ctx& c) {
       const auto& e = all[static_cast<size_t>(shown[static_cast<size_t>(sel)])];
       text(c, x + 10, iy + 28, e.name.c_str(), c.P.text, 11, true);
       text(c, x + 10, iy + 46, e.folder.c_str(), c.P.textDim, 8.5f, true);
-      if (button(c, "load", x + 10, iy + 64, 80, 22, "LOAD", true, 8.5f)) load(c, e, infoText);
-      if (ImGui::IsItemHovered()) c.a.setHint(e.kind == 3 ? "Import this Serum preset into Plasma" : "Load this preset");
+      if (button(c, "load", x + 10, iy + 64, 80, 22, "OPEN", true, 8.5f)) load(c, e, infoText);
+      if (ImGui::IsItemHovered()) c.a.setHint("Open this preset");
     } else {
       text(c, x + 10, iy + 30, "Select a preset", c.P.textFaint, 9, true);
     }
@@ -356,7 +413,7 @@ void presetBrowser(Ctx& c) {
       ImGui::PopStyleColor();
     }
     char hint[64];
-    std::snprintf(hint, sizeof hint, "%s", "Enter / double-click: load \xC2\xB7 Up / Down: audition");
+    std::snprintf(hint, sizeof hint, "%s", "Enter / double-click: open \xC2\xB7 Up / Down: audition");
     textC(c, x + w * 0.5f, kStripY - 22, hint, c.P.textFaint, 7.5f, true);
   }
 }

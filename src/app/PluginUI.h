@@ -38,7 +38,14 @@ struct PluginTarget {
 };
 
 // Replaces the whole plugin state as one undo step (mergeKey folds drags).
+// A stand-in (core/PluginStandIn.h) keeps the plugin it replaces while its
+// type stays the same: presets and edits of the stand-in keep the original.
 void setPluginState(App& a, const PluginTarget& t, const PluginState& st, const std::string& label, uint64_t mergeKey = 0);
+// Stand-ins: keeps the built-in plugin for good (drops the replaced plugin and its state).
+void keepStandIn(App& a, const PluginTarget& t);
+// Stand-ins: a slim note above the editor ("Serum 2 is not installed: Plasma
+// plays its sound"), what is approximated on hover, and "Replace with ...".
+void drawStandInNote(App& a, const PluginTarget& t, float width);
 
 // Header bar: preset navigation/menu, A/B compare, reset (+ bypass/mix for effects).
 void drawPluginHeader(App& a, const PluginTarget& t);

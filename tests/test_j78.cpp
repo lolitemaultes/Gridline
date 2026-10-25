@@ -171,10 +171,10 @@ void testLarge() {
   m.tracks.resize(600);
   expect(roundTrip(m, why), "large project (300 channels, 1100 patterns, 140 inserts, 600 tracks) exports (" + why + ")");
   // Hosted plugin states (installed or not).
-  Song h = withChannel(PluginState{"vst3:0123456789ABCDEF0123456789ABCDEF", {0.5f, 0.25f}, "", ""});
+  Song h = withChannel(PluginState{"vst3:0123456789ABCDEF0123456789ABCDEF", {0.5f, 0.25f}, "", "", ""});
   ensureMixer(h);
-  h.mixer[1].slots[0].plugin = PluginState{"au:aufx,dely,appl", {}, "", ""};
-  h.mixer[1].slots[1].plugin = PluginState{"clap:com.example.thing", {1.0f}, "garbage", ""};
+  h.mixer[1].slots[0].plugin = PluginState{"au:aufx,dely,appl", {}, "", "", ""};
+  h.mixer[1].slots[1].plugin = PluginState{"clap:com.example.thing", {1.0f}, "garbage", "", ""};
   expect(roundTrip(h, why), "hosted plugin placeholders export (" + why + ")");
 }
 

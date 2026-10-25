@@ -38,6 +38,10 @@ bool patternFromJson(const Json& jp, Pattern& p, const Song& s);
 int clipFromJson(const Json& jc, Clip& c, const Song& s);
 void automationClipFromJson(const Json& ja, AutomationClip& a);
 
+// One plugin state as the project document stores it ("plugin" objects).
+Json pluginStateToJson(const PluginState& p);
+PluginState pluginStateFromJson(const Json& j);
+
 // One mixer track (mixer track state files, J-12). FromJson fills everything
 // but the id; sends keep the ids found in the JSON (callers remap them).
 Json mixerTrackToJson(const MixerTrack& m);

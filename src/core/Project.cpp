@@ -18,6 +18,7 @@
 #include "Json.h"
 #include "Params.h"
 #include "PluginParams.h"
+#include "PluginStandIn.h"
 #include "TrackModes.h"
 
 namespace gl {
@@ -197,6 +198,10 @@ Json pluginToJson(const PluginState& p) {
   j.object["params"] = std::move(params);
   if (!p.data.empty()) j.object["data"] = str(p.data);
   if (!p.ins.empty()) j.object["ins"] = str(p.ins);
+  if (!p.original.empty()) {  // stand-ins: the plugin they replace (PluginStandIn.h)
+    Json o;
+    if (jsonParse(p.original, o) && o.is(Json::Type::Object)) j.object["original"] = std::move(o);
+  }
   return j;
 }
 
@@ -311,6 +316,7 @@ PluginState pluginFromJson(const Json* j) {
   p.type = j->text("type");
   p.data = j->text("data");
   p.ins = j->text("ins");
+  if (const Json* o = j->find("original"); o && o->is(Json::Type::Object)) p.original = jsonCompact(*o);
   if (const Json* a = j->find("params"); a && a->is(Json::Type::Array))
     for (const auto& v : a->array) p.params.push_back(static_cast<float>(v.is(Json::Type::Number) ? v.number : 0));
   normalizePluginState(p);
@@ -748,6 +754,9 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
 // ---------------------------------------------------- end pattern automation, arrangements, live --
 
 }  // namespace
+
+Json pluginStateToJson(const PluginState& p) { return pluginToJson(p); }
+PluginState pluginStateFromJson(const Json& j) { return pluginFromJson(&j); }
 
 Json mixerTrackToJson(const MixerTrack& m) {
   Json jm = Json::makeObject();
@@ -1238,6 +1247,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   Json j = src;
   const int srcVersion = jsonInt<int>(src.num("version", 1));
   if (!migrateProjectJson(j, err)) return false;
+  if (!standin::resolving()) standin::resolveProjectJson(j);  // missing Serum / Kickstart <-> stand-ins
   Song s;
   s.mixer.clear();
   if (const Json* info = j.find("info"); info && info->is(Json::Type::Object)) {

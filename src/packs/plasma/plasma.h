@@ -16,6 +16,7 @@
 // editor; the runtime converts with the functions below.
 #pragma once
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -442,6 +443,10 @@ struct Model {
   std::string tuningName;
   std::string presetName, author, description;
   std::vector<std::string> tags;
+  // Report of the Serum preset / state this sound was opened from (shown by
+  // the info mark next to the preset name; empty for Plasma's own presets).
+  std::string openFormat;
+  std::vector<std::string> openNotes, openMissing;
   bool mpeXYZtoMacros = false, mpeYZtoMacros = false, mpeYtoModWheel = false, mpeBendToX = false;
   bool lockFx = false;
 };
@@ -562,7 +567,60 @@ bool importSerumPreset(const std::string& path, PluginState& out, ImportReport& 
                        const std::vector<std::string>& searchRoots = {});
 bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, ImportReport& rep,
                       const std::vector<std::string>& searchRoots = {});
-std::vector<std::string> defaultSerumRoots();  // the user's Serum content folders that exist
+std::vector<std::string> defaultSerumRoots();  // the user's Serum content folders that exist (+ extra folders)
+// Serum 1 / Serum 2 preset folders looked for on this system (macOS, Windows,
+// Linux Wine prefixes), existing or not.
+std::vector<std::string> serumRootCandidates();
+// Folders the user added (Plasma browser settings): searched like the defaults.
+void setExtraSerumFolders(const std::vector<std::string>& folders);
+std::vector<std::string> extraSerumFolders();
+
+// ---- opening presets: one path for every format
+// Plasma's own presets (.plasmapreset / Gridline preset JSON), Serum 2
+// presets (.SerumPreset) and Serum 1 presets (.fxp), detected by content
+// (the extension only breaks ties). `rep.format` names what was read;
+// Serum presets also keep their report in the Model (openFormat / openNotes).
+bool openPresetBytes(const std::vector<uint8_t>& bytes, const std::string& fileName, PluginState& out, ImportReport& rep,
+                     const std::vector<std::string>& searchRoots = {});
+bool openPresetFile(const std::string& path, PluginState& out, ImportReport& rep, const std::vector<std::string>& searchRoots = {});
+// True when the file name has an extension the open path reads.
+bool isOpenableName(const std::string& fileName);
+const std::vector<std::string>& openableExtensions();  // ".plasmapreset", ".serumpreset", ".fxp", ".json"
+
+// ---- Serum stand-ins (core/PluginStandIn.h)
+// The state of a hosted Serum / Serum 2 instance (VST3 component state, AU
+// class info, VST2 chunk) as a Plasma state.
+bool serumStateToPlasma(const PluginState& hosted, PluginState& out, ImportReport& rep);
+// Automation link of parameter `index` of the hosted instance (`hosted.type`
+// order) to a Plasma parameter: `curve` = Plasma normalized values at
+// original values i / (curve.size() - 1). False when Plasma has no equivalent.
+bool serumParamLink(const PluginState& hosted, int index, int& plasmaParam, std::vector<float>& curve, std::string& title);
+// Parameter count / name of the hosted Serum type (0 / "" when unknown).
+int serumParamCount(const std::string& type);
+std::string serumParamName(const std::string& type, int index);
+// Parameter index of a plugin parameter id (VST3 / AU id; VST2: the index) or -1.
+int serumParamIndexOfId(const std::string& type, uint32_t id);
+
+// ---- Serum preset library (preset browser; plasma_library_dsp.cpp)
+struct LibraryPreset {
+  std::string name, bank;  // bank: folder below the root's preset folder ("" = top)
+  std::string root, file;  // content root (defaultSerumRoots) and preset file
+  bool serum2 = false;     // .SerumPreset (else Serum 1 .fxp)
+};
+struct LibrarySnapshot {
+  std::vector<std::string> roots;
+  std::vector<LibraryPreset> presets;  // by root, bank, name
+  bool indexing = false;               // a rescan is running (presets: the previous index)
+  uint64_t generation = 0;             // changes with every new index
+};
+// Starts a background rescan of the library (at most every 15 s unless
+// `force`); the first call lists the index kept in `cacheFile` at once.
+void libraryRefresh(const std::string& cacheFile, bool force = false);
+std::shared_ptr<const LibrarySnapshot> librarySnapshot();
+// Keeps the user's added folders (extraSerumFolders) in the cache file.
+void librarySaveFolders(const std::string& cacheFile);
+// Blocking scan of preset files below the roots (tests, the background index).
+std::vector<LibraryPreset> scanLibrary(const std::vector<std::string>& roots, const std::atomic<bool>* cancel = nullptr);
 // Decoders used by the import (exposed for tests).
 bool zstdDecompress(const uint8_t* src, size_t n, std::vector<uint8_t>& out, std::string* err = nullptr);
 bool cborDecode(const uint8_t* src, size_t n, Json& out, std::string* err = nullptr);

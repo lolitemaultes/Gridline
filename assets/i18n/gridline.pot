@@ -77,7 +77,7 @@ msgstr ""
 msgid "Nothing to export: the"
 msgstr ""
 
-#: src/app/App.cpp
+#: src/app/App.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Opened"
 msgstr ""
 
@@ -5009,7 +5009,7 @@ msgstr ""
 msgid "Nudge right"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/UpdateUi.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/UpdateUi.cpp
 msgid "OK"
 msgstr ""
 
@@ -6821,7 +6821,7 @@ msgstr ""
 msgid "An FL Studio export is already running"
 msgstr ""
 
-#: src/app/FlpExportUi.cpp
+#: src/app/FlpExportUi.cpp src/app/PluginUI.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Approximated"
 msgstr ""
 
@@ -10337,7 +10337,7 @@ msgstr ""
 msgid "No failed plugins."
 msgstr ""
 
-#: src/app/PluginManager.cpp
+#: src/app/PluginManager.cpp src/packs/plasma/plasma_browser_ui.cpp
 msgid "Not a folder"
 msgstr ""
 
@@ -10486,6 +10486,10 @@ msgid "Factory"
 msgstr ""
 
 #: src/app/PluginUI.cpp
+msgid "Keep the built-in plugin for good: the missing plugin and its saved settings are removed from the project"
+msgstr ""
+
+#: src/app/PluginUI.cpp
 msgid "Library"
 msgstr ""
 
@@ -10506,6 +10510,14 @@ msgid "Previous preset"
 msgstr ""
 
 #: src/app/PluginUI.cpp
+msgid "Read from"
+msgstr ""
+
+#: src/app/PluginUI.cpp
+msgid "Replace with"
+msgstr ""
+
+#: src/app/PluginUI.cpp
 msgid "Save as a user preset"
 msgstr ""
 
@@ -10515,6 +10527,10 @@ msgstr ""
 
 #: src/app/PluginUI.cpp
 msgid "Search presets"
+msgstr ""
+
+#: src/app/PluginUI.cpp
+msgid "The plugin and its own settings are kept unchanged: the project opens with it again once it is installed."
 msgstr ""
 
 #: src/app/PluginWindow.cpp
@@ -10829,7 +10845,7 @@ msgstr ""
 msgid "Active tools, toggles, tab marks and LCD digits"
 msgstr ""
 
-#: src/app/SettingsKeysTheme.cpp src/app/TopBar.cpp
+#: src/app/SettingsKeysTheme.cpp src/app/TopBar.cpp src/packs/plasma/plasma_browser_ui.cpp
 msgid "Add"
 msgstr ""
 
@@ -13270,7 +13286,15 @@ msgid "input = controller (0..1), base = knob value, t, beat"
 msgstr ""
 
 #: src/packs/plasma/plasma_browser_ui.cpp
+msgid "Added folders (click to remove)"
+msgstr ""
+
+#: src/packs/plasma/plasma_browser_ui.cpp
 msgid "Could not save the preset"
+msgstr ""
+
+#: src/packs/plasma/plasma_browser_ui.cpp
+msgid "Folder with Serum presets"
 msgstr ""
 
 #: src/packs/plasma/plasma_browser_ui.cpp
@@ -13462,7 +13486,7 @@ msgid "Clip editor"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
-msgid "Could not import the preset"
+msgid "Could not open the preset"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
@@ -13474,11 +13498,7 @@ msgid "Envelopes"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
-msgid "Import Serum 2 preset"
-msgstr ""
-
-#: src/packs/plasma/plasma_ui.cpp
-msgid "Import Serum 2 preset..."
+msgid "Files not found (install the content or add its folder in the preset browser)"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
@@ -13490,11 +13510,27 @@ msgid "LFOs"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
+msgid "Open preset"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Open preset..."
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "Opened from"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
 msgid "Remove all effects"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
 msgid "Swap warps"
+msgstr ""
+
+#: src/packs/plasma/plasma_ui.cpp
+msgid "some settings are approximated (see the info mark)"
 msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp

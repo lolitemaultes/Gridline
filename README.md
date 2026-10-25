@@ -198,6 +198,7 @@ Gridline opens FL Studio projects (`.flp`), FL Studio zipped loop packages (`.zi
 
 - channels, patterns, notes, playlist clips, automation, markers and mixer routing are imported;
 - FL Studio's own instruments and effects are mapped to their Gridline equivalents with their settings;
+- a Serum, Serum 2, Kickstart or Kickstart 2 that is not installed plays through Plasma or Tideline, with the plugin and its settings kept for when it is installed (installed plugins are always hosted as themselves);
 - third-party plugins load as the installed plugin with their saved state, or stay as placeholders until the plugin is installed;
 - **File, Import, FL Studio presets** converts the presets of a local FL Studio installation into Gridline's preset library on your computer.
 

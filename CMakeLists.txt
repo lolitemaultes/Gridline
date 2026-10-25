@@ -776,6 +776,12 @@ target_link_libraries(gridline_tests_j78 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j78 PRIVATE tests src)
 target_compile_options(gridline_tests_j78 PRIVATE ${GL_WARN})
 add_test(NAME j78 COMMAND gridline_tests_j78 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# Stand-ins for missing Serum / Kickstart (Plasma / Tideline) and Plasma's one Open path for preset files.
+add_executable(gridline_tests_standin tests/test_standin.cpp)
+target_link_libraries(gridline_tests_standin PRIVATE gridline_core)
+target_include_directories(gridline_tests_standin PRIVATE tests src)
+target_compile_options(gridline_tests_standin PRIVATE ${GL_WARN})
+add_test(NAME standin COMMAND gridline_tests_standin WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-31: chord progression editor core, groups & loops, recording extras, key markers, quantized jumps.
 add_executable(gridline_tests_j31 tests/test_j31.cpp)
 target_link_libraries(gridline_tests_j31 PRIVATE gridline_core)

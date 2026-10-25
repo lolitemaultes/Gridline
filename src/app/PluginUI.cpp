@@ -3,6 +3,7 @@
 #include "MidiUi.h"
 #include "PluginUI.h"
 #include "../core/PluginBrand.h"
+#include "../core/PluginStandIn.h"
 #include "../core/Presets.h"
 #include <algorithm>
 #include <cmath>
@@ -63,11 +64,56 @@ const ScopeTap* PluginTarget::inputTap(App& a) const {
   return rt ? &rt->inTap : nullptr;
 }
 
-void setPluginState(App& a, const PluginTarget& t, const PluginState& st, const std::string& label, uint64_t mergeKey) {
+void setPluginState(App& a, const PluginTarget& t, const PluginState& st0, const std::string& label, uint64_t mergeKey) {
+  PluginState st = st0;
+  if (const PluginState* cur = t.state(a.doc.song()); cur && st.original.empty() && !cur->original.empty() && cur->type == st.type)
+    st.original = cur->original;  // a stand-in stays one (PluginStandIn.h)
   if (t.isChannel())
     a.doc.editChannel(t.owner, label, [&](Channel& c) { c.plugin = st; }, mergeKey);
   else
     a.doc.editMixerTrack(t.owner, label, [&](MixerTrack& m) { m.slots[static_cast<size_t>(t.slot)].plugin = st; }, mergeKey);
+}
+
+void keepStandIn(App& a, const PluginTarget& t) {
+  const PluginState* cur = t.state(a.doc.song());
+  if (!cur || cur->original.empty()) return;
+  const std::string label = std::string("Replace with ") + (findPlugin(cur->type) ? findPlugin(cur->type)->name : cur->type);
+  if (t.isChannel())
+    a.doc.editChannel(t.owner, label, [&](Channel& c) { c.plugin.original.clear(); });
+  else
+    a.doc.editMixerTrack(t.owner, label, [&](MixerTrack& m) { m.slots[static_cast<size_t>(t.slot)].plugin.original.clear(); });
+}
+
+void drawStandInNote(App& a, const PluginTarget& t, float width) {
+  const PluginState* cur = t.state(a.doc.song());
+  if (!cur || cur->original.empty()) return;
+  const auto& P = pal();
+  const PluginState st = *cur;
+  const std::string what = standin::describe(st);
+  const PluginInfo* info = findPlugin(st.type);
+  const std::string keep = std::string(i18n::tr("Replace with")) + " " + (info ? info->name : st.type);
+  ImGui::PushID("standin");
+  ImGui::AlignTextToFramePadding();
+  ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.textDim));
+  ImGui::TextUnformatted(what.c_str());
+  ImGui::PopStyleColor();
+  if (ImGui::IsItemHovered()) {
+    standin::Original o;
+    standin::fromText(st.original, o);
+    std::string tip = i18n::tr("The plugin and its own settings are kept unchanged: the project opens with it again once it is installed.");
+    if (!o.format.empty()) tip += std::string("\n\n") + i18n::tr("Read from") + ": " + o.format;
+    if (!o.notes.empty()) {
+      tip += std::string("\n\n") + i18n::tr("Approximated") + ":";
+      for (const auto& n : o.notes) tip += "\n  - " + n;
+    }
+    ImGui::SetTooltip("%s", tip.c_str());
+  }
+  const float bw = ImGui::CalcTextSize(keep.c_str()).x + ImGui::GetStyle().FramePadding.x * 2;
+  ImGui::SameLine(std::max(ImGui::GetCursorPosX(), width - bw - 4));
+  if (ImGui::SmallButton(keep.c_str())) keepStandIn(a, t);
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("%s", i18n::tr("Keep the built-in plugin for good: the missing plugin and its saved settings are removed from the project"));
+  ImGui::PopID();
 }
 
 // ------------------------------------------------------------------ presets

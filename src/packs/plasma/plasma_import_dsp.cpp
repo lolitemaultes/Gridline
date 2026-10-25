@@ -1,5 +1,6 @@
-// Gridline — "plasma" pack: import of the user's own Serum 2 presets
-// (.SerumPreset) into a Plasma state. The container is a small JSON header
+// Gridline: "plasma" pack, opening the user's own Serum presets
+// (.SerumPreset, Serum 1 .fxp through plasma_serum_dsp.cpp) as a Plasma
+// state. The Serum 2 container is a small JSON header
 // followed by a zstd frame holding a CBOR map of module states; both decoders
 // are implemented here (RFC 8878 zstd, RFC 8949 CBOR). Values are mapped
 // module by module onto Plasma's parameters and data model; wavetables,
@@ -14,9 +15,12 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <set>
 #include "../../core/Json.h"
+#include "../../core/Platform.h"
 #include "plasma.h"
+#include "plasma_serum.h"
 
 namespace gl::packs::plasma {
 
@@ -804,6 +808,7 @@ struct Importer {
   ImportReport& rep;
   Model m;
   std::vector<std::string> roots;
+  bool files = true;  // false: no file lookups (automation link probes)
   std::set<std::string> notes;
   std::map<int, int> fxSlotOf;  // Serum FX instance id (rack * 100 + index) -> Plasma slot
   std::array<int, 3> oscType{};
@@ -852,7 +857,7 @@ struct Importer {
 
   // ---------------------------------------------------------------- files
   std::string resolve(const std::string& rel, std::initializer_list<const char*> subdirs) {
-    if (rel.empty()) return "";
+    if (rel.empty() || !files) return "";
     std::string r = rel;
     std::replace(r.begin(), r.end(), '\\', '/');
     while (!r.empty() && r[0] == '/') r.erase(0, 1);
@@ -1740,77 +1745,116 @@ std::vector<uint8_t> readFile(const std::string& path, std::string& err) {
 
 }  // namespace
 
-std::vector<std::string> defaultSerumRoots() {
+std::vector<std::string> serumRootCandidates() {
   std::vector<std::string> c;
-  const char* home = std::getenv("HOME");
+  const char* homeVar = platform::homeEnv();
+  const std::string home = homeVar ? homeVar : "";
 #if defined(_WIN32)
-  if (const char* pd = std::getenv("PROGRAMDATA")) c.push_back(std::string(pd) + "\\Xfer\\Serum 2 Presets");
-  if (const char* up = std::getenv("USERPROFILE")) c.push_back(std::string(up) + "\\Documents\\Xfer\\Serum 2 Presets");
+  if (const char* pd = std::getenv("PROGRAMDATA")) {
+    c.push_back(std::string(pd) + "\\Xfer\\Serum 2 Presets");
+    c.push_back(std::string(pd) + "\\Xfer\\Serum Presets");
+  }
+  if (const char* up = std::getenv("USERPROFILE")) {
+    c.push_back(std::string(up) + "\\Documents\\Xfer\\Serum 2 Presets");
+    c.push_back(std::string(up) + "\\Documents\\Xfer\\Serum Presets");
+  }
 #else
   c.push_back("/Library/Audio/Presets/Xfer Records/Serum 2 Presets");
-  if (home) {
-    c.push_back(std::string(home) + "/Library/Audio/Presets/Xfer Records/Serum 2 Presets");
-    c.push_back(std::string(home) + "/Documents/Xfer/Serum 2 Presets");
-    c.push_back(std::string(home) + "/.wine/drive_c/ProgramData/Xfer/Serum 2 Presets");
+  c.push_back("/Library/Audio/Presets/Xfer Records/Serum Presets");
+  if (!home.empty()) {
+    c.push_back(home + "/Library/Audio/Presets/Xfer Records/Serum 2 Presets");
+    c.push_back(home + "/Library/Audio/Presets/Xfer Records/Serum Presets");
+    c.push_back(home + "/Documents/Xfer/Serum 2 Presets");
+    c.push_back(home + "/Documents/Xfer/Serum Presets");
+    // Wine prefixes (Linux): the Windows installers' folders
+    std::string wine = home + "/.wine";
+    if (const char* wp = std::getenv("WINEPREFIX"); wp && *wp) wine = wp;
+    c.push_back(wine + "/drive_c/ProgramData/Xfer/Serum 2 Presets");
+    c.push_back(wine + "/drive_c/ProgramData/Xfer/Serum Presets");
+    std::error_code ec;
+    const fs::path users = fs::path(wine) / "drive_c" / "users";
+    if (fs::is_directory(users, ec))
+      for (const auto& u : fs::directory_iterator(users, fs::directory_options::skip_permission_denied, ec)) {
+        c.push_back((u.path() / "Documents" / "Xfer" / "Serum 2 Presets").string());
+        c.push_back((u.path() / "Documents" / "Xfer" / "Serum Presets").string());
+      }
   }
 #endif
+  return c;
+}
+
+std::vector<std::string> defaultSerumRoots() {
   std::vector<std::string> out;
   std::error_code ec;
-  for (const auto& p : c)
-    if (fs::is_directory(p, ec)) out.push_back(p);
+  for (const auto& p : serumRootCandidates())
+    if (fs::is_directory(fs::u8path(p), ec)) out.push_back(p);
+  for (const auto& p : extraSerumFolders())
+    if (fs::is_directory(fs::u8path(p), ec) && std::find(out.begin(), out.end(), p) == out.end()) out.push_back(p);
   return out;
 }
 
-bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, ImportReport& rep, const std::vector<std::string>& searchRoots) {
-  rep = ImportReport{};
-  const size_t n = bytes.size();
-  if (n >= 4 && std::memcmp(bytes.data(), "CcnK", 4) == 0) {
-    rep.format = "Serum 1 preset (.fxp)";
-    rep.error = "Serum 1 presets (.fxp) store a private binary state that cannot be read; open the preset in Serum 2 and save it as a .SerumPreset";
+namespace {
+std::mutex gExtraMutex;
+std::vector<std::string> gExtraFolders;
+}  // namespace
+
+void setExtraSerumFolders(const std::vector<std::string>& folders) {
+  std::lock_guard<std::mutex> lk(gExtraMutex);
+  gExtraFolders = folders;
+}
+std::vector<std::string> extraSerumFolders() {
+  std::lock_guard<std::mutex> lk(gExtraMutex);
+  return gExtraFolders;
+}
+
+namespace serum {
+
+int filterKeyCount() { return kFilterKeyCount; }
+const char* filterKey(int i) { return i >= 0 && i < kFilterKeyCount ? kFilterKeys[i] : ""; }
+const char* warpKey(int i) { return i >= 0 && i < 70 ? kWarpKeys[i] : ""; }
+
+bool decodeXferJson(const uint8_t* p, size_t n, Json& meta, Json& root, std::string& err) {
+  if (n < 17 + 8 || std::memcmp(p, "XferJson", 8) != 0 || p[8] != 0) {
+    err = "not a Serum 2 preset";
     return false;
   }
-  if (n < 17 + 8 || std::memcmp(bytes.data(), "XferJson", 8) != 0 || bytes[8] != 0) {
-    rep.error = "not a Serum 2 preset";
-    return false;
-  }
-  rep.format = "Serum 2 preset";
   uint64_t ml = 0;
-  for (int i = 0; i < 8; ++i) ml |= static_cast<uint64_t>(bytes[9 + static_cast<size_t>(i)]) << (8 * i);
+  for (int i = 0; i < 8; ++i) ml |= static_cast<uint64_t>(p[9 + static_cast<size_t>(i)]) << (8 * i);
   if (ml > n - 17 || n - 17 - ml < 8) {
-    rep.error = "damaged preset header";
+    err = "damaged preset header";
     return false;
   }
-  Json meta;
-  const std::string metaText(reinterpret_cast<const char*>(bytes.data() + 17), static_cast<size_t>(ml));
+  const std::string metaText(reinterpret_cast<const char*>(p + 17), static_cast<size_t>(ml));
   if (!jsonParse(metaText, meta) || meta.type != Json::Type::Object) {
-    rep.error = "damaged preset header";
+    err = "damaged preset header";
     return false;
   }
   const size_t body = 17 + static_cast<size_t>(ml);
-  const uint32_t rawSize = bytes[body] | (bytes[body + 1] << 8) | (bytes[body + 2] << 16) | (static_cast<uint32_t>(bytes[body + 3]) << 24);
+  const uint32_t rawSize = p[body] | (p[body + 1] << 8) | (p[body + 2] << 16) | (static_cast<uint32_t>(p[body + 3]) << 24);
   std::vector<uint8_t> raw;
-  std::string err;
-  if (!zstdDecompress(bytes.data() + body + 8, n - body - 8, raw, &err)) {
-    rep.error = err;
-    return false;
-  }
+  if (!zstdDecompress(p + body + 8, n - body - 8, raw, &err)) return false;
   if (raw.size() != rawSize) {
-    rep.error = "damaged compressed data (size mismatch)";
+    err = "damaged compressed data (size mismatch)";
     return false;
   }
-  Json root;
   if (!cborDecode(raw.data(), raw.size(), root, &err) || root.type != Json::Type::Object) {
-    rep.error = err.empty() ? "damaged preset data" : err;
+    if (err.empty()) err = "damaged preset data";
     return false;
   }
+  return true;
+}
+
+void runImporter(const Json& meta, const Json& root, PluginState& out, ImportReport& rep, const std::vector<std::string>& roots, bool files) {
   out = defaultPluginState(kType);
   Importer im{out, rep};
   if (!im.info) {
     rep.error = "Plasma is not available";
-    return false;
+    rep.ok = false;
+    return;
   }
   im.m = defaultModel();
-  im.roots = searchRoots.empty() ? defaultSerumRoots() : searchRoots;
+  im.files = files;
+  im.roots = files ? (roots.empty() ? defaultSerumRoots() : roots) : std::vector<std::string>{};
   rep.presetName = meta.text("presetName", root.text("presetName"));
   rep.author = meta.text("presetAuthor", root.text("presetAuthor"));
   im.m.presetName = rep.presetName;
@@ -1828,10 +1872,42 @@ bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, Impor
   im.xshaper(root);
   im.matrix(root);
   im.sequencers(root);
-  out.data = modelToData(im.m);
-  rep.approximated.assign(im.notes.begin(), im.notes.end());
+  rep.approximated.insert(rep.approximated.end(), im.notes.begin(), im.notes.end());
+  std::sort(rep.approximated.begin(), rep.approximated.end());
+  rep.approximated.erase(std::unique(rep.approximated.begin(), rep.approximated.end()), rep.approximated.end());
+  im.m.openFormat = rep.format.empty() ? "Serum preset" : rep.format;
+  im.m.openNotes = rep.approximated;
+  im.m.openMissing = rep.missingFiles;
+  if (files) out.data = modelToData(im.m);
   rep.ok = true;
-  return true;
+}
+
+}  // namespace serum
+
+bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, ImportReport& rep, const std::vector<std::string>& searchRoots) {
+  rep = ImportReport{};
+  const size_t n = bytes.size();
+  Json meta, root;
+  std::string err;
+  if (n >= 4 && std::memcmp(bytes.data(), "CcnK", 4) == 0) {
+    rep.format = "Serum 1 preset (.fxp)";
+    serum::Serum1 s1;
+    if (!serum::decodeSerum1(bytes.data(), n, s1, err)) {
+      rep.error = err;
+      return false;
+    }
+    std::vector<std::string> notes;
+    serum::serum1Root(s1, meta, root, notes);
+    rep.approximated = notes;
+  } else {
+    rep.format = "Serum 2 preset";
+    if (!serum::decodeXferJson(bytes.data(), n, meta, root, err)) {
+      rep.error = err;
+      return false;
+    }
+  }
+  serum::runImporter(meta, root, out, rep, searchRoots, true);
+  return rep.ok;
 }
 
 bool importSerumPreset(const std::string& path, PluginState& out, ImportReport& rep, const std::vector<std::string>& searchRoots) {

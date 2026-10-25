@@ -112,8 +112,13 @@ struct PluginState {
   // engine/ChannelIns.h text; empty = none). Kept with the instrument so
   // presets and channel copies carry them.
   std::string ins;
+  // Stand-ins (core/PluginStandIn.h): the third-party plugin this built-in
+  // state replaces while it is not installed (compact JSON; empty = none).
+  std::string original;
 
-  bool operator==(const PluginState& o) const { return type == o.type && params == o.params && data == o.data && ins == o.ins; }
+  bool operator==(const PluginState& o) const {
+    return type == o.type && params == o.params && data == o.data && ins == o.ins && original == o.original;
+  }
   bool empty() const { return type.empty(); }
 };
 

@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <string>
 #include <vector>
 
 namespace gl::packs::tideline {
@@ -221,5 +223,23 @@ inline double applyAmount(double curve, double amount) { return 1.0 - std::clamp
 // UI side channel (Effect::meters): [0] cycle position 0..1 (-1 idle),
 // [1] current gain 0..1, [2] trigger flash 0..1, [3] output peak 0..1.
 inline constexpr int kMeterCount = 4;
+
+// ---- Kickstart stand-in (core/PluginStandIn.h): a missing Kickstart /
+// Kickstart 2 opens as Tideline. The plugin's saved state (a JUCE value tree
+// in its VST3 / AU / VST2 state) is read for the loop length, the selected
+// curve (redrawn as Tideline's custom curve), mix, band and trigger settings.
+struct KickstartReport {
+  std::string format, error;
+  std::vector<std::string> notes;  // what Tideline only approximates
+};
+// Tideline parameters for a hosted Kickstart state (`type`: hosted type,
+// `data`: its saved state, `hosted`: its saved parameter values).
+bool kickstartToTideline(const std::string& type, const std::string& data, const std::vector<float>& hosted,
+                         std::vector<float>& out, KickstartReport& rep);
+// Parameter `index` of the hosted type -> Tideline parameter + normalized
+// value curve (17 points over the original's 0..1). False: no counterpart.
+// Parameter index of a plugin parameter id (VST3 / AU id; VST2: the index) or -1.
+int kickstartParamIndexOfId(const std::string& type, uint32_t id);
+bool kickstartParamLink(const std::string& type, int index, int& param, std::vector<float>& curve, std::string& title);
 
 }  // namespace gl::packs::tideline

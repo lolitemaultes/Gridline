@@ -68,6 +68,29 @@ smooths every gain change, so it doesn't click.
 Every control can be automated and linked to a MIDI controller, and each one has the usual right-click
 menu. The presets menu in the plugin header holds the 11 factory presets and your own presets.
 
+## Stand-in for a missing Kickstart
+
+Installed plugins are always hosted as themselves. When a project (a Gridline project or an FL
+Studio project) uses Kickstart or Kickstart 2 and the plugin is not installed, Tideline plays it
+instead and the original plugin with its saved state stays in the project untouched; once the
+plugin is installed, the project opens with it again. The plugin window shows a short note with
+**Replace with Tideline** to keep Tideline for good.
+
+What is read from Kickstart 2's saved state:
+
+- the loop length (1/8, 1/4, 1/2 or a bar) becomes the Rate;
+- the selected curve is redrawn with Tideline's eight custom points (Shape: Custom). This is an
+  approximation: Kickstart's curve segments are not reproduced exactly;
+- Mix becomes Amount; the band switch and solo become Band (Lows) and Listen, with the band
+  frequency on Tideline's 20 Hz to 5.12 kHz scale (approximate);
+- the one-shot end of the curve becomes One-shot end; trigger smoothing becomes 1 ms Smoothing;
+- MIDI triggering listens to any note.
+
+Automation and controller links of Loop Length, Band On, Band Frequency and Mix follow to Rate,
+Band, Split and Amount; the curve selection has no single counterpart and its automation is kept
+aside. Kickstart 1 is read the same way when its state has the same layout, otherwise only its
+parameters are used and Tideline's Pump shape plays.
+
 ## FL Studio export
 
 When you export to an FL Studio project, Tideline becomes a Gross Beat volume envelope. The

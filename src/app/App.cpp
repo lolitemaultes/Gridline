@@ -8,6 +8,7 @@
 #include "../core/NoteTools.h"
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
+#include "../core/PluginStandIn.h"
 #include "../core/Presets.h"
 #include <algorithm>
 #include <cctype>
@@ -394,7 +395,14 @@ bool App::openProject(const std::string& pathIn) {
   engine.setMode(doc.song().playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
   rackReveal.quietSwitch(engine.mode());  // J-77: opening a project does not count as choosing PAT
   syncEngine();
-  notify("Opened " + fs::path(path).filename().string());
+  if (const auto lines = standin::summary(doc.song()); !lines.empty()) {  // missing Serum / Kickstart: played by built-ins
+    std::string details;
+    for (const auto& l : lines) details += (details.empty() ? "" : "\n") + l;
+    notify("Opened " + fs::path(path).filename().string() + ": " + lines.front() + (lines.size() > 1 ? " (+" + std::to_string(lines.size() - 1) + ")" : ""),
+           false, details);
+  } else {
+    notify("Opened " + fs::path(path).filename().string());
+  }
   uiSound(uisound::Event::Open);
   return true;
 }

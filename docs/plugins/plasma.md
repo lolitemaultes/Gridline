@@ -4,10 +4,11 @@ Plasma is a wavetable-centred hybrid synthesizer: three main oscillators that ea
 wavetable, a multisample, a sample, a granular cloud or a spectral resynthesis, plus a sub
 oscillator and a noise layer, two filters, a 64-slot modulation matrix, three effect racks, an
 arpeggiator and a clip player. It also opens presets made for Serum 2 (and Serum 1 `.fxp`
-files) from your own folders and converts them into Plasma sounds.
+files) from your own folders and converts them into Plasma sounds, and it plays projects whose
+Serum or Serum 2 is not installed (see "Stand-in for a missing Serum" below).
 
 Plasma is in the plugin picker under Synths. Its code, factory wavetables, presets and artwork
-are original. Import reads your own preset and content files when you open them; nothing from
+are original. Opening a Serum preset reads your own preset and content files; nothing from
 another product ships with Gridline.
 
 ## Layout
@@ -16,7 +17,7 @@ The editor follows the familiar arrangement of this kind of synth, so presets an
 for it translate directly:
 
 - **Header**: OSC, MIX, FX, MATRIX and GLOBAL pages, the preset name with < > and its menu
-  (Init, Factory, your library, Import, Browse), author and notes, MENU, undo / redo, the MAIN
+  (Init, Factory, your library, Open preset, Browse), author and notes, MENU, undo / redo, the MAIN
   volume and the output meter. Undo / redo are Gridline's own (the same history as Ctrl+Z /
   Ctrl+Shift+Z, from the main window or Plasma's popped-out window): every gesture is one step, a
   knob drag, a wheel turn, one stroke on a shape or table, a rack change, a preset load.
@@ -100,19 +101,55 @@ field (`x` runs -1..1 across the cycle, `y` 0..1 across the table, `in` is the c
   shows only the keys in use and the headphones button auditions notes as you place them.
 - MIDI OUT sends the clip player's (or the clip and arp's) notes on to the channel's MIDI output.
 
-## Presets and import
+## Presets
+
+There is one way to open a preset, whatever made it: Plasma presets, Serum 2 presets
+(`.SerumPreset`) and Serum 1 presets (`.fxp`) are recognised by their content and open the same
+way from every place:
+
+- **Open preset...** in the preset menu (the file dialog lists every supported type at once);
+- the preset browser (double-click, Enter, or Up / Down to step through and audition);
+- dragging a file (from the browser panel or the desktop) onto Plasma's window, or onto the
+  channel rack for a new Plasma channel; double-clicking one in the browser panel;
+- the plugin header's preset menu and anything else that loads a preset for Plasma.
 
 The preset browser (the list icon next to the preset name) shows the factory presets, your
-Gridline preset library for Plasma (SAVE AS stores the current sound there) and the Serum 2 /
-Serum preset folders it finds on this computer. Double-click or Enter loads; Up / Down step
-through the list and load as you go.
+Gridline preset library for Plasma (SAVE AS stores the current sound there) and the **Serum
+library**: the Serum 2 and Serum preset folders found on this computer (macOS, Windows, and Wine
+prefixes on Linux), grouped by folder and bank, plus folders you add with ADD FOLDER. The library
+is indexed in the background and kept in a cache, so it lists at once and refreshes when files
+change (REFRESH rescans now). Typing in the search field while a Serum folder is selected searches
+the whole library.
 
-Importing a `.SerumPreset` or `.fxp` maps oscillators, warps, unison, filters, envelopes, LFOs
-(including drawn shapes), macros, the matrix, the effect racks, the arpeggiator and clips onto
-Plasma. Wavetables, samples and impulse responses that a preset references are looked up in your
-Serum content folders. The import report lists what was approximated and any files that were not
-found. A project or FL Studio project that hosts the real plugin keeps hosting it; Plasma never
-replaces it on its own.
+Opening a Serum preset maps oscillators, warps, unison, filters, envelopes, LFOs (including drawn
+shapes), macros, the matrix, the effect racks, the arpeggiator and clips onto Plasma. Wavetables,
+samples and impulse responses that a preset references are looked up in your Serum content
+folders and the folders you added. When something is approximated or a file was not found, a
+short notice says so; the full report stays with the sound: hover the small info mark next to the
+preset name.
+
+Serum 1 presets go through the same mapping: their 299 parameters, modulation matrix, effect
+order, LFO shapes, wavetable and noise names and macro names are read from the preset. Serum 1's
+Chaos sources, the Sync Window and Mirror warps and LFO trigger modes have no exact counterpart and
+are listed in the report.
+
+## Stand-in for a missing Serum
+
+Installed plugins are always hosted as themselves: Plasma never replaces an installed Serum.
+When a project (a Gridline project or an FL Studio project) uses Serum or Serum 2 and the plugin
+is not installed, Plasma plays it instead:
+
+- the plugin's saved state is read (Serum 2's VST3 or Audio Unit state, Serum 1's VST2 chunk) and
+  mapped onto Plasma as when you open the preset;
+- automation clips, pattern automation and controller links of the plugin's parameters move to the
+  matching Plasma parameters, with their values converted. Parameters without a counterpart keep
+  their automation aside;
+- the original plugin and its saved state are kept in the project untouched. When the plugin is
+  installed again, the project opens with it, its state and its automation as before. Exporting
+  to FL Studio writes the original plugin;
+- the plugin window shows a short note ("Serum 2 is not installed: Plasma plays its sound") with
+  what is approximated on hover, and **Replace with Plasma** keeps Plasma for good (the missing
+  plugin and its saved settings are then removed from the project).
 
 ## Performance
 

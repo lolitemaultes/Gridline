@@ -6,6 +6,7 @@
 #include <functional>
 #include <set>
 #include "../../packs/samplers/dwave.h"
+#include "../PluginStandIn.h"
 #include "../ProjectInterop.h"
 #include "FlpStandIn.h"
 #include "../Zip.h"
@@ -116,6 +117,7 @@ bool exportFlpZip(const Song& song, const std::string& zipPath, const std::strin
   // J-80: Gridline-only plugins → stand-ins; rendered samples go into the
   // package (rendered in a temporary folder, removed afterwards).
   Song work = song;
+  standin::restoreAll(work);  // missing Serum / Kickstart: exported as the plugin itself (PluginStandIn.h)
   StandInResult sr;
   StandInOptions so;
   std::error_code ec;

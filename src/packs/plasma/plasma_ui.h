@@ -66,8 +66,6 @@ struct Ui {
   int browser = 0;       // preset browser open (0 = closed)
   std::string browserDir;
   std::string browserFilter;
-  std::string importMsg;  // last import report (shown in a popup)
-  bool importOpen = false;
   int heldKey = -1;
   std::string devPreset;  // dev (screenshots): factory preset applied on the first frame
   bool prefBubbles = true, prefLive = true, wt3d = false;  // editor preferences (GLOBAL page)
@@ -245,9 +243,13 @@ void mappingPanel(Ctx& c);
 
 // Keyboard preview (channel instruments).
 void previewKey(Ctx& c, int key, bool on);
-// Opens the Serum 2 import file dialog; the report is shown in a popup.
-void importDialog(Ctx& c);
-bool importFile(Ctx& c, const std::string& path);
+// The one Open path for preset files: Plasma presets, Serum 2 (.SerumPreset)
+// and Serum 1 (.fxp) presets, detected by content. What Serum presets only
+// approximate stays with the sound (the info mark next to the preset name).
+void openPresetDialog(Ctx& c);
+bool openPreset(Ctx& c, const std::string& path);
+// Report text of the current sound's Serum origin ("" when none).
+std::string openReportText(const Model& m);
 // Edits the current state outside a frame (file dialogs): fn changes the
 // parameters and / or the model; one undo step.
 void editState(App& a, const PluginTarget& t, const char* label, const std::function<void(PluginState&, Model&)>& fn);

@@ -25,3 +25,7 @@ library carries an "Incompatible With Secondary Licenses" notice. Their source f
 (libplum's internal helper names are renamed at compile time so both link into one program, see
 CMakeLists.txt); the MPL requires that the source of these files stays available, which this
 repository does.
+
+Not vendored, but credited: the layout of Serum 1 `.fxp` / VST2 chunks that Plasma reads
+(`src/packs/plasma/plasma_serum_dsp.cpp`: parameter order, modulation source ids, menu orders)
+follows the format notes of serum2vital (https://github.com/btesser/serum2vital, GPL-3.0).

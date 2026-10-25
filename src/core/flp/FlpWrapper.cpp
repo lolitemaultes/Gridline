@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <memory>
 #include <set>
 #include "../../host/HostedPlugins.h"
+#include "../PluginStandIn.h"
 #include "FlpGen2.h"
 
 namespace gl::flp {
@@ -163,7 +165,7 @@ bool parseWrapper(const uint8_t* p, size_t n, WrapperInfo& w) {
 WrapperMatch matchWrapper(const WrapperInfo& w) {
   WrapperMatch m;
   const std::string saved = w.savedType();
-  if (!saved.empty() && host::hostedClass(saved)) {
+  if (!saved.empty() && host::hostedClass(saved) && !standin::hidden(saved, w.name)) {
     m.type = saved;
     m.byId = true;
     m.stateKept = true;
@@ -175,7 +177,7 @@ WrapperMatch matchWrapper(const WrapperInfo& w) {
   std::shared_ptr<const host::HostedClass> sameFormat, other;
   std::set<std::string> vendors;  // vendors of the name matches
   for (const auto& c : host::hostedClasses()) {
-    if (c->instrument != w.instrument || fold(c->name) != name) continue;
+    if (c->instrument != w.instrument || fold(c->name) != name || standin::hidden(c->type, c->name)) continue;
     if (!vendor.empty() && !c->vendor.empty() && fold(c->vendor).find(vendor) == std::string::npos && vendor.find(fold(c->vendor)) == std::string::npos)
       continue;
     vendors.insert(fold(c->vendor));
@@ -260,6 +262,42 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m, 
     if (flWrapped(c, evs, fm) && !fm.glType.empty()) {
       m = fm;
       c.report.counts["hosted plugins: FL plugins wrapped as VST \xE2\x86\x92 built-in"]++;
+      return true;
+    }
+  }
+  // Not installed, of a family with a built-in stand-in (Serum -> Plasma,
+  // Kickstart -> Tideline): the stand-in plays it, keeping the plugin and its
+  // untouched state for when it is installed (core/PluginStandIn.h).
+  if (const standin::Family fam = standin::familyOf(w.savedType(), w.name, w.vendor); fam != standin::Family::None) {
+    auto orig = std::make_shared<PluginState>();
+    orig->type = w.savedType();
+    orig->data = w.data;
+    PluginState st;
+    if (standin::makeStandIn(*orig, w.name, w.vendor, st)) {
+      m.glType = st.type;
+      m.state = st;
+      m.exact = false;
+      c.report.counts["hosted plugins: missing, opened with a built-in stand-in"]++;
+      c.report.warn(label + ": not installed; " + standin::standInName(fam) + " plays it (approximate), the plugin and its settings are kept");
+      const std::vector<uint32_t> ids = w.paramIds;
+      const bool byIndex = w.format != WrapperInfo::Vst3;
+      auto link = [fam, orig, ids, byIndex](int fl, standin::ParamLink& l) {
+        if (fl < 0) return false;
+        const uint32_t id = byIndex ? static_cast<uint32_t>(fl) : (static_cast<size_t>(fl) < ids.size() ? ids[static_cast<size_t>(fl)] : 0xFFFFFFFFu);
+        const int k = standin::paramIndexOfId(fam, orig->type, id);
+        return k >= 0 && standin::paramLink(fam, *orig, k, l);
+      };
+      m.param = [link](int fl) {
+        standin::ParamLink l;
+        return link(fl, l) ? l.standin : -1;
+      };
+      const std::string type = st.type;
+      m.value = [link, type](int fl, double v) {
+        standin::ParamLink l;
+        const PluginInfo* info = findPlugin(type);
+        if (!info || !link(fl, l) || l.standin >= static_cast<int>(info->params.size())) return v;
+        return info->params[static_cast<size_t>(l.standin)].fromNormalized(l.map(static_cast<float>(v)));
+      };
       return true;
     }
   }

@@ -23,9 +23,21 @@ release workflow publishes the section of the tagged version as the release note
 - A wavetable editor: harmonics and phases, brushes, snap grid, processing, morphing between
   frames, formulas, WAV import and export.
 - Opens Serum 2 presets (`.SerumPreset`) and Serum 1 `.fxp` files from your own folders and turns
-  them into Plasma sounds, with a report of anything approximated or not found; a preset browser
-  lists them next to the factory presets and your library. Projects that host the original plugin
-  keep hosting it. See `docs/plugins/plasma.md`.
+  them into Plasma sounds. There is one Open path for every preset type (the preset menu's Open
+  preset..., the browser, drag and drop, the plugin header's preset menu); what was approximated
+  or not found stays with the sound behind an info mark next to the preset name. The browser's
+  Serum library lists the Serum 2 and Serum preset folders found on this computer (and folders you
+  add), indexed in the background, grouped by bank and searchable as a whole. Projects that host
+  the original plugin keep hosting it. See `docs/plugins/plasma.md`.
+
+### Stand-ins for a missing Serum or Kickstart
+
+- A project (Gridline or FL Studio) whose Serum or Serum 2 is not installed plays it with Plasma;
+  a missing Kickstart or Kickstart 2 plays with Tideline. The plugin's saved state is mapped onto
+  the stand-in, automation and controller links follow, and the original plugin with its state is
+  kept untouched: once it is installed, the project opens with it again. Installed plugins are
+  never substituted. The plugin window notes the stand-in, and Replace with Plasma / Tideline
+  keeps it for good. See `docs/plugins/plasma.md` and `docs/plugins/tideline.md`.
 
 ### Plugin windows: the channel strip hides
 

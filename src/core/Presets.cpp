@@ -8,6 +8,7 @@
 #include "AutomationEdit.h"
 #include "Json.h"
 #include "Project.h"
+#include "../packs/plasma/plasma.h"
 
 namespace gl {
 
@@ -90,11 +91,22 @@ std::vector<PresetEntry> listPresets(const std::string& root, const std::string&
 }
 
 bool loadPreset(const std::string& file, const std::string& type, PluginState& out) {
+  if (type == packs::plasma::kType && isForeignPresetFile(file)) {  // Serum presets open in Plasma
+    packs::plasma::ImportReport rep;
+    return packs::plasma::openPresetFile(file, out, rep);
+  }
   Json j;
   if (!readJson(file, j) || j.text("type") != type) return false;
   out = stateFrom(j);
   return true;
 }
+
+std::string foreignPresetType(const std::string& file) {
+  std::string e = fs::u8path(file).extension().string();
+  for (char& ch : e) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  return e == ".serumpreset" || e == ".fxp" ? packs::plasma::kType : "";
+}
+bool isForeignPresetFile(const std::string& file) { return !foreignPresetType(file).empty(); }
 
 bool savePreset(const std::string& root, const PluginState& st, const std::string& relName, const std::string& source, bool exact) {
   fs::path file = fs::path(root) / st.type / (relName + ".json");

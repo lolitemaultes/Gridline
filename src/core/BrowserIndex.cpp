@@ -140,6 +140,7 @@ Kind kindOf(const std::string& path) {
   if (e == ".flp") return Kind::Flp;
   if (e == ".zip") return Kind::Project;  // J-52: zipped project / FL Studio zipped loop package
   if (e == ".fst") return Kind::Fst;
+  if (e == ".serumpreset" || e == ".fxp") return Kind::Preset;  // Serum presets: opened by Plasma
   if (e == ".fsc") return Kind::Score;
   if (e == ".json") {
     const std::string l = lower(fs::path(path).generic_string());

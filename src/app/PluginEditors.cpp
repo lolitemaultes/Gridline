@@ -49,6 +49,7 @@ bool drawFlSynthEditor(App& a, const PluginTarget& t, float width);  // PluginEd
 bool drawCustomEditor(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());
   if (!st) return false;
+  drawStandInNote(a, t, width);  // a missing Serum / Kickstart played by a built-in (PluginStandIn.h)
   if (drawInstrumentEditorJ2(a, t, width)) return true;
   if (drawFlEditor(a, t, width)) return true;
   if (drawFlSynthEditor(a, t, width)) return true;
