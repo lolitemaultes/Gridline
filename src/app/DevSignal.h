@@ -14,5 +14,7 @@ inline std::set<std::string>& reachedNames() {
 }
 inline void reach(const std::string& name) { reachedNames().insert(name); }
 inline bool reached(const std::string& name) { return reachedNames().count(name) != 0; }
+// J-110: "forget <name>": the next waitfor waits for the condition to be reported again.
+inline void forget(const std::string& name) { reachedNames().erase(name); }
 
 }  // namespace gl::devsig

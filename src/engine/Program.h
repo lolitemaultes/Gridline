@@ -78,6 +78,9 @@ struct ChannelRuntime {
   int pendingCount = 0;
   std::atomic<float> level{0};  // recent output peak, for the UI
   std::atomic<int> lastStep{-1};
+  // J-110: the instrument reported a voice sounding after its last block
+  // (Generator::active(); editors' own Play buttons follow it).
+  std::atomic<bool> sounding{false};
   NoteActivity keys;  // J-77: sounding keys + per-key hits (piano roll keyboard, pad flashes)
   ScopeTap tap;  // channel output (pre-fader)
   MidiOutRing midiOut;  // MIDI Out channels

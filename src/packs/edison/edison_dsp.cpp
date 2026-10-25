@@ -161,6 +161,12 @@ void EdisonFx::reset() {
   scrubVel_ = 0;
 }
 
+void EdisonFx::stopSound() {
+  startReq_.store(false);
+  rplaying_ = false;
+  playing_.store(false);
+}
+
 void EdisonFx::play(int64_t from, int64_t to, bool loop) {
   from_.store(std::max<int64_t>(0, from));
   to_.store(to);

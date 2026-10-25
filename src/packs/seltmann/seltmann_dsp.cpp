@@ -321,6 +321,7 @@ class SeltmannGen final : public Generator {
   int displayStep() const override { return display_.load(std::memory_order_relaxed); }
   double liveFrame() const { return liveFrame_.load(std::memory_order_relaxed); }
   double livePattern() const { return livePat_.load(std::memory_order_relaxed); }
+  bool patternRunning() const { return patRun_.load(std::memory_order_relaxed); }
 
   // Offline renders: a private warp render to use instead of the service.
   void forceRender(const Render* r) { forced_ = r; }
@@ -405,7 +406,7 @@ class SeltmannGen final : public Generator {
 
   void onNoteOff(uint32_t id) override {
     if (patOn_ && id == patId_) {
-      patOn_ = false;
+      setPat(false);
       for (auto& v : voices_)
         if (v.on && v.pattern) release(v);
       display_.store(-1, std::memory_order_relaxed);
@@ -417,17 +418,17 @@ class SeltmannGen final : public Generator {
       }
   }
   void onCut(uint32_t id) override {
-    if (patOn_ && id == patId_) patOn_ = false;
+    if (patOn_ && id == patId_) setPat(false);
     for (auto& v : voices_)
       if (v.on && (v.id == id || v.pattern)) startKill(v);
   }
   void onAllOff() override {
-    patOn_ = false;
+    setPat(false);
     for (auto& v : voices_)
       if (v.on) release(v);
   }
   void onKill() override {
-    patOn_ = false;
+    setPat(false);
     for (auto& v : voices_) v.on = false;
     display_.store(-1, std::memory_order_relaxed);
   }
@@ -460,7 +461,7 @@ class SeltmannGen final : public Generator {
     const int note = static_cast<int>(std::lround(pitch));
     const double fine = pitch - note;
     if (note >= base_ - 12 && note < base_) {  // pattern keys (latched even before the prepared data arrives)
-      patOn_ = true;
+      setPat(true);
       patId_ = id;
       patSemis_ = note - (base_ - 12) + fine;
       patVel_ = vel;
@@ -756,6 +757,14 @@ class SeltmannGen final : public Generator {
   int nextStep_ = 0, nextSub_ = 0;
   std::atomic<int> display_{-1};
   std::atomic<double> liveFrame_{-1}, livePat_{-1};
+  std::atomic<bool> patRun_{false};  // J-110: patOn_ for the editor's Play button
+
+  // The pattern starts / stops (from step 1 on its next start: noteOnImpl).
+  void setPat(bool on) {
+    patOn_ = on;
+    patRun_.store(on, std::memory_order_relaxed);
+    if (!on) livePat_.store(-1, std::memory_order_relaxed);
+  }
 
   // UI side channel: the source frame under the newest voice, the pattern position.
   void publish() {
@@ -834,6 +843,7 @@ bool liveView(const Generator* g, LiveView& out) {
   out.slice = displaySliceOf(d);
   out.srcFrame = sg->liveFrame();
   out.patternPos = sg->livePattern();
+  out.patternRunning = sg->patternRunning();
   return true;
 }
 

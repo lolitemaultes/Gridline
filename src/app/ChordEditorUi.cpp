@@ -21,6 +21,7 @@
 #include "App.h"
 #include "ContextMenus.h"
 #include "J31Ui.h"
+#include "RunLatch.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -57,7 +58,7 @@ struct Session {
   std::set<int> held;
   std::vector<int> learned;  // the most notes held at once since the last release of all
   // Preview: progression playback and the chord held by a click.
-  bool playing = false;
+  RunLatch pv;  // J-110: Stop / panic / focus loss end the preview (the engine released its notes)
   double pvT0 = 0;
   Tick pvFrom = 0;
   int pvChord = -1;
@@ -191,20 +192,25 @@ void soundChord(App& a, size_t i, std::vector<int>& held) {
 }
 
 void startPreview(App& a, size_t from) {
-  S.playing = true;
+  S.pv.start(a.engine);
   S.pvT0 = a.now;
   S.pvFrom = ch::chordStart(S.prog, from);
   S.pvChord = -1;
 }
 
 void stopPreview(App& a) {
-  S.playing = false;
+  S.pv.stop();
   S.pvChord = -1;
   releaseHeld(a, S.pvHeld);
 }
 
 void tickPreview(App& a) {
-  if (!S.playing) return;
+  if (S.pv.sync(a.engine, true) != RunLatch::End::None) {  // stopped from outside: its notes are already released
+    S.pvChord = -1;
+    S.pvHeld.clear();
+    return;
+  }
+  if (!S.pv.on) return;
   const Song& s = a.doc.song();
   const double ticks = (a.now - S.pvT0) * s.tempo * s.ppq / 60.0 + static_cast<double>(S.pvFrom);
   const int i = ch::chordAt(S.prog, static_cast<Tick>(ticks));
@@ -443,7 +449,7 @@ void chordLane(App& a, float height) {
   const ImGuiIO& io = ImGui::GetIO();
   int hoverChord = -1;
   bool hoverEdge = false;
-  const int playing = S.playing ? S.pvChord : -1;
+  const int playing = S.pv.on ? S.pvChord : -1;
   for (size_t i = 0; i < S.prog.chords.size(); ++i) {
     const ch::Chord& c = S.prog.chords[i];
     const float x0 = xOf(ch::chordStart(S.prog, i)) + 1, x1 = xOf(ch::chordStart(S.prog, i) + ch::chordLength(S.prog, i)) - 1;
@@ -699,9 +705,9 @@ void generatorRow(App& a) {
     });
   }
   ImGui::SameLine(0, theme::kS3);
-  if (ui::IconButton("##play", S.playing ? ui::Icon::Stop : ui::Icon::Play, S.playing, theme::kControlH,
-                     S.playing ? "Stop the preview" : "Play the progression on the target channel")) {
-    if (S.playing)
+  if (ui::IconButton("##play", S.pv.on ? ui::Icon::Stop : ui::Icon::Play, S.pv.on, theme::kControlH,
+                     S.pv.on ? "Stop the preview" : "Play the progression on the target channel")) {
+    if (S.pv.on)
       stopPreview(a);
     else
       startPreview(a, S.sel.empty() ? 0 : *S.sel.begin());

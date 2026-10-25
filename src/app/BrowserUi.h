@@ -19,6 +19,15 @@ struct PluginTarget;
 
 namespace browserui {
 
+// The playlist picker's drag of a clip source ("GL_CLIPSRC": ClipKind, id).
+// J-110: an audio clip source (a recorded take, a render, an edited or
+// Seltmann loop in the picker) dropped on a plugin window or a channel row
+// loads its file there like a browser audio file.
+struct ClipSrcPayload {
+  int kind;
+  ObjectId id;
+};
+
 // ---- content index ----
 browse::Index& index();
 // Loads the cache and starts indexing once (no-op in thumbnail mode).

@@ -74,7 +74,9 @@ void acceptDrops(App& a) {
 // badge, or an insertion line.
 void rowDropTarget(App& a, const Channel& c, int index, ImVec2 rp, float rowW, float rowH, float rowGap, float badgeX) {
   const ImGuiPayload* cur = ImGui::GetDragDropPayload();
-  if (!cur || !(cur->IsDataType("GL_FILE") || cur->IsDataType("GL_ITEM") || cur->IsDataType("GL_FILES") || cur->IsDataType("GL_PLUGIN"))) return;
+  if (!cur || !(cur->IsDataType("GL_FILE") || cur->IsDataType("GL_ITEM") || cur->IsDataType("GL_FILES") || cur->IsDataType("GL_PLUGIN") ||
+                cur->IsDataType("GL_CLIPSRC")))  // J-110: audio clip sources (recordings) from the playlist picker
+    return;
   rowGap += ImGui::GetStyle().ItemSpacing.y;  // the rows' pitch: no dead band between two rows
   const ImRect r(ImVec2(rp.x, rp.y - rowGap * 0.5f), ImVec2(rp.x + rowW, rp.y + rowH + rowGap * 0.5f));
   if (!ImGui::BeginDragDropTargetCustom(r, ImGui::GetID("##rowdrop"))) return;

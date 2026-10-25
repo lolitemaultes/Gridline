@@ -54,6 +54,7 @@
 #include "ContextMenus.h"
 #include "EditTools.h"
 #include "J31Ui.h"
+#include "MenuParityUi.h"
 #include "ScriptUi.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -331,13 +332,16 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   trace on|off (J-67: per frame, the drawn scroll positions to stdout)
 //   J-75 drags from other applications (logical pixels): dragenter x y <file|promise:file|"path with spaces">...,
 //   dragmove x y, drop [x y], dragleave · undo · channels (channel names / samples / routing / steps to stdout)
-//   (J-97: a "plugin:<type>" item drags a plugin like the browser does)
+//   (J-97: a "plugin:<type>" item drags a plugin like the browser does; J-110: "clipsrc:last" (the newest audio
+//   clip source, a take just recorded) or "clipsrc:<channel index>" drags it like the playlist picker does)
 //   mixer (J-83: track volumes / pans, the strips pane's scroll and wheel policy to stdout)
 //   rack (J-84: channel rack layout, step scroll, channel volumes / pans, step velocities / pitches to stdout)
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
 //   J-109: sdlkey <key> down|up [ctrl|super] · focuslost · typing on|off · noteon|noteoff <channel index> <pitch> ·
 //   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing)
+//   J-110: stopvia button|menu|remote (the Stop button's action, Tools > Stop all sound, a MIDI controller's /
+//   remote Stop) · epoch (the engine's stop epoch to stdout) · forget <name> (a later waitfor <name> waits for it anew)
 //   waitfor <name> <seconds> (J-108: the script and --frames stop counting until the app reports
 //   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s")
 std::string devShotPending;
@@ -665,6 +669,17 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         if (l.cmd == "noteon") app.engine.noteOn(chs[ci].id, std::atoi(l.a1.c_str()), 0.9f);
         else app.engine.noteOff(chs[ci].id, std::atoi(l.a1.c_str()));
       }
+    } else if (l.cmd == "stopvia") {  // J-110: the other ways to stop
+      if (l.a0 == "menu") menuparity::panicPressed(app);
+      else if (l.a0 == "remote") app.runAction(RemoteAction::Stop);
+      else menuparity::stopPressed(app);
+      std::printf("stopvia frame %d: %s epoch %u\n", frame, l.a0.c_str(), app.engine.stopEpoch());
+      std::fflush(stdout);
+    } else if (l.cmd == "forget") {
+      devsig::forget(l.a0);
+    } else if (l.cmd == "epoch") {
+      std::printf("epoch frame %d: %u playing %d\n", frame, app.engine.stopEpoch(), app.engine.playing() ? 1 : 0);
+      std::fflush(stdout);
     } else if (l.cmd == "previewfile") {  // J-109: the browser's sample preview
       app.previewSample(l.args.empty() ? l.a0 : l.args[0]);  // (a quoted path may hold spaces)
     } else if (l.cmd == "sound") {  // J-109: what is sounding (output peak since the last "sound")
@@ -674,9 +689,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::fflush(stdout);
     } else if (l.cmd == "audio") {
       browserui::DropPlace place;
-      place.track = std::atoi(l.a1.c_str());
-      place.tick = static_cast<Tick>(std::atoi(l.a2.c_str())) * app.doc.song().barTicks();
-      browserui::performDrop(app, l.a0, browse::DropTarget::Playlist, place);
+      // (J-110: a quoted path may hold spaces)
+      const bool q = l.args.size() >= 3;
+      place.track = std::atoi((q ? l.args[1] : l.a1).c_str());
+      place.tick = static_cast<Tick>(std::atoi((q ? l.args[2] : l.a2).c_str())) * app.doc.song().barTicks();
+      browserui::performDrop(app, q ? l.args[0] : l.a0, browse::DropTarget::Playlist, place);
     } else if (l.cmd == "dragenter" && l.args.size() >= 3) {  // J-75
       std::vector<std::string> files(l.args.begin() + 2, l.args.end());
       xdragui::devEnter(std::strtof(l.a0.c_str(), nullptr) * devDragScale, std::strtof(l.a1.c_str(), nullptr) * devDragScale, files);

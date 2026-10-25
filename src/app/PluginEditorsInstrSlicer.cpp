@@ -16,6 +16,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include "../engine/SlicexEngine.h"
@@ -24,6 +25,7 @@
 #include "../engine/Slicing.h"
 #include "InstrumentSkin.h"
 #include "PluginEditorsCommon.h"
+#include "RunLatch.h"
 #include "../core/Platform.h"
 
 namespace gl {
@@ -38,6 +40,29 @@ using iskin::rgb;
 namespace fs = std::filesystem;
 
 constexpr float kSxW = 714, kSxH = 625;
+
+// J-110: the deck's Play (one region played at a time, whichever instance).
+struct SlicerPlay {
+  RunLatch latch;
+  ObjectId ch = kNoId;
+  int key = -1;
+};
+SlicerPlay& slicerPlay() {
+  static SlicerPlay p;
+  return p;
+}
+bool slicerSounding(App& a, ObjectId ch) {
+  const auto rt = a.builder.channelRuntime(ch);
+  return rt && rt->sounding.load(std::memory_order_relaxed);
+}
+// Stop / panic / focus loss: off at once (the engine released the key); the
+// region came to its end: off, and its key is let go.
+void syncSlicerPlay(App& a) {
+  SlicerPlay& pl = slicerPlay();
+  const RunLatch::End end = pl.latch.sync(a.engine, slicerSounding(a, pl.ch));
+  if (end == RunLatch::End::Finished && pl.key >= 0) a.engine.noteOff(pl.ch, pl.key);
+  if (end != RunLatch::End::None) pl.key = -1;
+}
 
 iskin::Palette slicexPalette() {
   iskin::Palette p;
@@ -281,18 +306,46 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   // ---- deck bar.
   iskin::bevel(sk, 0, 296, kSxW, 66, rgb(0x293136), 0, 0);
   {
-    // Transport: play the selected region / stop.
-    static int playing = -1;
-    if (iskin::button(sk, "##play", 38, 299, 31, 30, "", playing >= 0, 9) && t.isChannel() && nSl > 0) {
-      if (playing >= 0) a.engine.noteOff(t.owner, playing), playing = -1;
-      else playing = sliceKey(k), a.engine.noteOn(t.owner, playing, 0.9f);
+    // Transport: play the selected region / stop. J-110: the button follows
+    // what sounds: the engine's Stop / panic / focus loss (stop epoch) and the
+    // region ending by itself (the channel falls silent).
+    SlicerPlay& pl = slicerPlay();
+    syncSlicerPlay(a);
+    const bool playing = pl.latch.on && pl.ch == t.owner;
+    auto stopPlay = [&]() {
+      if (pl.key >= 0) a.engine.noteOff(pl.ch, pl.key);
+      pl.latch.stop();
+      pl.key = -1;
+    };
+    if (iskin::button(sk, "##play", 38, 299, 31, 30, "", playing, 9) && t.isChannel() && nSl > 0) {
+      if (playing) {
+        stopPlay();
+      } else {
+        if (pl.latch.on) stopPlay();  // (another instance's region)
+        pl.ch = t.owner;
+        pl.key = sliceKey(k);
+        a.engine.noteOn(pl.ch, pl.key, 0.9f);
+        pl.latch.start(a.engine);
+      }
     }
     {
       ImVec2 c = sk.at(53.5f, 314);
       float r = sk.px(6);
-      dl->AddTriangleFilled(ImVec2(c.x - r * 0.6f, c.y - r), ImVec2(c.x - r * 0.6f, c.y + r), ImVec2(c.x + r, c.y), playing >= 0 ? rgb(0x293136) : sk.c.text);
+      dl->AddTriangleFilled(ImVec2(c.x - r * 0.6f, c.y - r), ImVec2(c.x - r * 0.6f, c.y + r), ImVec2(c.x + r, c.y), playing ? rgb(0x293136) : sk.c.text);
     }
-    if (iskin::button(sk, "##stop", 69, 299, 31, 30, "", false, 9) && playing >= 0 && t.isChannel()) a.engine.noteOff(t.owner, playing), playing = -1;
+    if (iskin::button(sk, "##stop", 69, 299, 31, 30, "", false, 9) && playing && t.isChannel()) stopPlay();
+    static const bool trace = std::getenv("GRIDLINE_KERF_TRACE") != nullptr;
+    if (trace) {  // J-110 dev check: the play button's place and state (printed when it changes)
+      static std::string last;
+      const ImVec2 pc = sk.at(53.5f, 314);
+      char b[96];
+      std::snprintf(b, sizeof b, "kerf: play %.0f %.0f on %d", static_cast<double>(pc.x), static_cast<double>(pc.y), pl.latch.on && pl.ch == t.owner ? 1 : 0);
+      if (last != b) {
+        last = b;
+        std::printf("%s\n", b);
+        std::fflush(stdout);
+      }
+    }
     dl->AddRectFilled(sk.at(79, 309), sk.at(89, 319), sk.c.text);
     // Load / auto-slice / even slices / manual / clear markers.
     if (iskin::button(sk, "##load", 160, 300, 50, 30, "LOAD", false, 8.5f)) {

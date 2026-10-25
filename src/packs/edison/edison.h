@@ -394,6 +394,9 @@ class EdisonFx : public Effect {
   void process(const PluginState& state, const ProcessContext& ctx, float* L, float* R, int n) override;
   void processAux(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R, int n) override;
   void reset() override;
+  // J-110: the user's Stop ends the editor's playback in the slot (the
+  // editor's Play button reads isPlaying(), so it shows stopped).
+  void stopSound() override;
   float meter() const override { return 0.0f; }
 
   // ---- UI thread -------------------------------------------------------------

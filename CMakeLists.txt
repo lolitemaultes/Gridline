@@ -702,6 +702,12 @@ target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j109 PRIVATE tests src)
 target_compile_options(gridline_tests_j109 PRIVATE ${GL_WARN})
 add_test(NAME j109_stop_sound COMMAND gridline_tests_j109 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-110: plugins' own play / run states (Seltmann's pattern, one-shots, Shuttle, Loupe) follow Stop.
+add_executable(gridline_tests_j110 tests/test_j110.cpp)
+target_link_libraries(gridline_tests_j110 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j110 PRIVATE tests src)
+target_compile_options(gridline_tests_j110 PRIVATE ${GL_WARN})
+add_test(NAME j110_play_state COMMAND gridline_tests_j110 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-91 (GitHub issue #1): system interface scale, plugin keys on X11 / Windows, Auto Pan pad, motion switches.
 add_executable(gridline_tests_j91 tests/test_j91.cpp)
 target_link_libraries(gridline_tests_j91 PRIVATE gridline_core)
@@ -1025,6 +1031,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/seltmann_flow -P ${CMAKE_SOURCE_DIR}/tests/seltmann_flow.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(seltmann_flow PROPERTIES TIMEOUT 300)
+
+    # J-110: Seltmann's pattern Play button follows every Stop (button, Space, panic, Tools menu,
+    # MIDI / remote, focus loss) and plays again with one click.
+    add_test(NAME j110_play_state_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j110_play_state -P ${CMAKE_SOURCE_DIR}/tests/j110_play_state.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j110_play_state_app PROPERTIES TIMEOUT 300)
 
     # J-103: a session (demo copy, playing, an editor open) quit by the user, and the layout audit
     # without --screenshot, exit with code 0: no background thread runs into static destruction.

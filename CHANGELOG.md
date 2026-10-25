@@ -35,6 +35,13 @@ release workflow publishes the section of the tagged version as the release note
   released with their normal tails. Press Stop again to silence everything at once, delay and reverb
   tails included, with a short fade so nothing clicks; "Panic: stop all sound" is also in the Stop
   button's menu (Ctrl+H). Keys held when Gridline loses focus no longer get stuck.
+- Plugins' own Play buttons follow Stop: Seltmann's pattern button (and Kerf's region play, the
+  chord editor's preview) shows stopped as soon as Stop, Space, Stop twice, Tools > Stop all sound,
+  a MIDI controller's Stop or a focus loss silences it, starts again from the first step with one
+  click, and goes off by itself when the sound ends. Stop also ends the audio editor's playback in
+  a mixer slot, Shuttle's free-running bar repeat and the effects inside Junction FX. Recordings,
+  renders and loops dragged from the playlist's clip list now load into Seltmann (and onto channel
+  rows) like browser audio files.
 
 ## 0.6.1
 

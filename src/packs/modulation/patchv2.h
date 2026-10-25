@@ -106,6 +106,8 @@ class PatchV2Runtime {
   void noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props);
   void noteOff(uint32_t id);
   void allOff();
+  // J-110: the user's Stop: every note off, hosted effects end their own playback.
+  void stopSound();
   void kill();
   bool active() const;
   // Renders n (<= 256) frames: instruments add into L / R (`instrument`),

@@ -302,10 +302,28 @@ void auditionStop(App& a, const PluginTarget& t, Ed& e) {
 
 void togglePattern(App& a, const PluginTarget& t, Ed& e) {
   if (!t.isChannel()) return;
-  const int key = baseNote(a, t) - 12;
-  if (e.patternOn) a.engine.noteOff(t.owner, key);
-  else a.engine.noteOn(t.owner, key, 0.9f);
-  e.patternOn = !e.patternOn;
+  if (e.pattern.on) {
+    if (e.patternKey >= 0) a.engine.noteOff(t.owner, e.patternKey);  // (the key it started with: the base note may have moved)
+    e.pattern.stop();
+    e.patternKey = -1;
+    return;
+  }
+  // Starts from step 1 (the instrument restarts the pattern on its key).
+  e.patternKey = baseNote(a, t) - 12;
+  a.engine.noteOn(t.owner, e.patternKey, 0.9f);
+  e.pattern.start(a.engine);
+}
+
+// J-110: the Play button follows what plays. Stop (once or twice), Space,
+// Tools > Stop all sound, a MIDI / remote Stop and a focus loss move the
+// engine's stop epoch (the engine released the pattern's key); the
+// instrument's running flag covers the rest (killed, replaced, ended).
+void syncPattern(App& a, const PluginTarget& t, Ed& e, const LiveView& lv) {
+  const RunLatch::End end = e.pattern.sync(a.engine, lv.patternRunning);
+  if (end == RunLatch::End::None) return;
+  if (end == RunLatch::End::Finished && e.patternKey >= 0 && t.isChannel()) a.engine.noteOff(t.owner, e.patternKey);
+  e.patternKey = -1;
+  if (end == RunLatch::End::Stopped) e.auditionKey = -1;  // (released by the engine too)
 }
 
 // ------------------------------------------------------------------ renders
@@ -518,7 +536,7 @@ void applyLayout(App& a, const PluginTarget& t, Ed& e, const Preset& p, bool pla
   commitWith(a, t, e, m, params, (std::string(i18n::tr("Layout")) + ": " + p.name).c_str());
   e.selSlice = 0;
   e.selStep = -1;
-  if (play && !e.patternOn) togglePattern(a, t, e);
+  if (play && !e.pattern.on) togglePattern(a, t, e);
 }
 
 void openLoadDialog(App& a, const PluginTarget& t, Ed& e) {
@@ -569,7 +587,8 @@ void drawEmpty(App& a, const PluginTarget& t, Ed& e, ImVec2 z0, ImVec2 z1) {
   e.zone0 = z0, e.zone1 = z1;
   // a file being dragged over the window lights the zone (the whole window takes the drop)
   const ImGuiPayload* pl = ImGui::GetDragDropPayload();
-  const bool dragging = pl && (pl->IsDataType("GL_FILE") || pl->IsDataType("GL_FILES") || pl->IsDataType("GL_ITEM"));
+  const bool dragging = pl && (pl->IsDataType("GL_FILE") || pl->IsDataType("GL_FILES") || pl->IsDataType("GL_ITEM") ||
+                               pl->IsDataType("GL_CLIPSRC"));  // J-110: recordings from the playlist picker
   const bool over = dragging && ImGui::IsMouseHoveringRect(z0, z1, false);
   skin::insetField(dl, z0, z1, over ? theme::mix(P.well, accent(), 0.08f) : P.well, theme::kRadiusLg);
   // dashed outline
@@ -826,9 +845,9 @@ void drawControls(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W) {
   }
   rx -= 50;
   e.playBtn = ImVec2(rx + 22, o.y + 22);
-  if (button("##splay", ImVec2(rx, o.y + 1), ImVec2(44, 44), "", e.patternOn,
-             e.patternOn ? i18n::N_("Stop the pattern") : i18n::N_("Play the pattern (or hold a key in the octave below the base note)"),
-             static_cast<int>(e.patternOn ? ui::Icon::Stop : ui::Icon::Play), !e.patternOn))
+  if (button("##splay", ImVec2(rx, o.y + 1), ImVec2(44, 44), "", e.pattern.on,
+             e.pattern.on ? i18n::N_("Stop the pattern") : i18n::N_("Play the pattern (or hold a key in the octave below the base note)"),
+             static_cast<int>(e.pattern.on ? ui::Icon::Stop : ui::Icon::Play), !e.pattern.on))
     togglePattern(a, t, e);
 }
 
@@ -837,9 +856,9 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
   static const bool on = std::getenv("GRIDLINE_SELTMANN_TRACE") != nullptr;
   if (!on) return;
   char b[512];
-  std::snprintf(b, sizeof b, "seltmann: state %s kind %s bpm %.2f slices %zu preset \"%s\" pattern %d playing %d", state,
+  std::snprintf(b, sizeof b, "seltmann: state %s kind %s bpm %.2f slices %zu preset \"%s\" pattern %d playing %d running %d", state,
                 e.hasModel ? kindName(e.m.grid.kind) : "-", e.hasModel ? e.m.grid.bpm : 0.0, e.hasModel ? e.m.slices.size() : 0,
-                e.hasModel ? e.m.preset.c_str() : "", e.patternOn ? 1 : 0, e.patternOn && lv.step >= 0 ? 1 : 0);
+                e.hasModel ? e.m.preset.c_str() : "", e.pattern.on ? 1 : 0, e.pattern.on && lv.step >= 0 ? 1 : 0, lv.patternRunning ? 1 : 0);
   std::string line = b;
   if (std::string(state) == "empty") {
     std::snprintf(b, sizeof b, "\nseltmann: zone %.0f %.0f %.0f %.0f", e.zone0.x, e.zone0.y, e.zone1.x, e.zone1.y);
@@ -855,7 +874,8 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
   }
   // J-108: scripted runs wait for these ("waitfor seltmann-ready|seltmann-playing <seconds>")
   if (std::string(state) == "ready") devsig::reach("seltmann-ready");
-  if (e.patternOn && lv.step >= 0) devsig::reach("seltmann-playing");
+  if (e.pattern.on && lv.step >= 0) devsig::reach("seltmann-playing");
+  if (std::string(state) == "ready" && !e.pattern.on && !lv.patternRunning) devsig::reach("seltmann-stopped");  // J-110
   if (line != e.lastTrace) {
     std::printf("%s\n", line.c_str());
     std::fflush(stdout);
@@ -1004,7 +1024,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     if (e.path != before) {
       e.selSlice = 0, e.selStep = -1, e.rendered.clear(), e.padPage = 0;
       e.job.reset();
-      if (e.patternOn) togglePattern(a, t, e);
+      if (e.pattern.on) togglePattern(a, t, e);
     }
   }
   if (!e.path.empty() && (!e.job || e.job->path != e.path)) e.job = requestAnalysis(e.path);
@@ -1026,7 +1046,10 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     if (const char* lay = std::getenv("GRIDLINE_SELTMANN_LAYOUT"); lay && *lay && e.m.preset != lay)
       for (const auto& p : factoryPresets())
         if (p.name == lay) applyLayout(a, t, e, p, false);
-    if (const char* pl = std::getenv("GRIDLINE_SELTMANN_PLAY"); pl && *pl == '1' && !e.patternOn && e.job && e.job->state == 1) togglePattern(a, t, e);
+    if (const char* pl = std::getenv("GRIDLINE_SELTMANN_PLAY"); pl && *pl == '1' && !e.autoPlayed && !e.pattern.on && e.job && e.job->state == 1) {
+      e.autoPlayed = true;  // (once: after a Stop the button stays stopped)
+      togglePattern(a, t, e);
+    }
   }
   if (e.loopJob && e.loopJob->finished) {
     char b[160];
@@ -1039,6 +1062,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   const float W = std::max(width, 1040.0f);
   const ImVec2 o = ImGui::GetCursorScreenPos();
   const LiveView lv = live(a, t);
+  syncPattern(a, t, e, lv);
   const float heroH = 276, waveH = 150, gap = 12;
   if (!e.hasModel) {
     // drop zone (empty), progress (analysing) or a message (unreadable)

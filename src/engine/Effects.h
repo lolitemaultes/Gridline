@@ -34,6 +34,11 @@ class Effect {
     process(state, ctx, L, R, n);
   }
   virtual void reset() = 0;
+  // J-110: the user's Stop (transport button, Space, a MIDI / remote / host
+  // Stop; also a focus loss's release): end the playback this effect started
+  // itself (an editor's Play, a free-running bar repeat). Its tails and other
+  // state stay; reset() is the panic. Audio thread: no allocation, no locks.
+  virtual void stopSound() {}
   // Gain reduction etc. for the UI (dB, <= 0); 0 when not applicable.
   virtual float meter() const { return 0.0f; }
   // Additional per-band meters (e.g. multiband gain reduction); returns count written.

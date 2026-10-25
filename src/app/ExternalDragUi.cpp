@@ -4,12 +4,15 @@
 #include <cfloat>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <thread>
 #include "../../third_party/imgui/imgui_internal.h"
+#include "../core/ClipSources.h"
 #include "../core/I18n.h"
 #include "App.h"
+#include "BrowserUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -55,9 +58,13 @@ const ImGuiID kExternId = ImHashStr("#SourceExtern");
 // J-97 dev drags of a plugin from the browser: one item named "plugin:<type>"
 // travels as the browser's "GL_PLUGIN" payload (--dev-input only).
 const char* const kDevPlugin = "plugin:";
-bool isDevPlugin(const std::vector<xdrop::Item>& items) {
-  return items.size() == 1 && items[0].path.empty() && !items[0].pending && items[0].name.rfind(kDevPlugin, 0) == 0;
+// J-110: "clipsrc:last" / "clipsrc:<channel index>" travels as the playlist
+// picker's "GL_CLIPSRC" payload of that channel's audio clip source.
+const char* const kDevClipSrc = "clipsrc:";
+bool isDevToken(const std::vector<xdrop::Item>& items, const char* prefix) {
+  return items.size() == 1 && items[0].path.empty() && !items[0].pending && items[0].name.rfind(prefix, 0) == 0;
 }
+bool isDevPlugin(const std::vector<xdrop::Item>& items) { return isDevToken(items, kDevPlugin) || isDevToken(items, kDevClipSrc); }
 
 double nowSeconds() { return ImGui::GetTime(); }
 
@@ -112,10 +119,22 @@ void preview() {
   ui::DragPreview(icon, text.c_str(), k == Kind::Audio ? theme::rgb(theme::role::kPaint) : 0);
 }
 
-void submitSource() {
+void submitSource(App& a) {
   if (!ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceExtern)) return;
   const xdrop::Item& first = st.items.front();
-  if (isDevPlugin(st.items)) {
+  if (isDevToken(st.items, kDevClipSrc)) {
+    const auto& chs = a.doc.song().channels;
+    const std::string w = first.name.substr(std::strlen(kDevClipSrc));
+    ObjectId id = kNoId;
+    if (w == "last") {  // the newest audio clip source (a take just recorded)
+      for (const Channel& c : chs)
+        if (ops::isAudioClipSource(c) && (id == kNoId || c.id > id)) id = c.id;
+    } else if (const long i = std::atol(w.c_str()); i >= 0 && i < static_cast<long>(chs.size())) {
+      id = chs[static_cast<size_t>(i)].id;
+    }
+    const browserui::ClipSrcPayload pl{static_cast<int>(ClipKind::Audio), id};
+    ImGui::SetDragDropPayload("GL_CLIPSRC", &pl, sizeof pl, ImGuiCond_Always);
+  } else if (isDevPlugin(st.items)) {
     const std::string type = first.name.substr(std::strlen(kDevPlugin));
     ImGui::SetDragDropPayload("GL_PLUGIN", type.data(), type.size(), ImGuiCond_Always);
   } else if (st.items.size() == 1 && !first.pending && !first.dir) {
@@ -256,7 +275,7 @@ void beginFrame(App& a) {
       cancel(a, true);
       return;
     }
-    submitSource();
+    submitSource(a);
     ++st.hoverFrames;
     if (st.phase == Phase::DropNext) st.dropAfter = true;
     // No window took the drag last frame: what dropping here would do.
@@ -396,7 +415,7 @@ std::vector<xdrop::Item> devItems(const std::vector<std::string>& files) {
   std::vector<xdrop::Item> out;
   for (const std::string& f : files) {
     xdrop::Item it;
-    if (f.rfind(kDevPlugin, 0) == 0) {  // J-97: a plugin from the browser
+    if (f.rfind(kDevPlugin, 0) == 0 || f.rfind(kDevClipSrc, 0) == 0) {  // J-97: a plugin from the browser (J-110: a clip source)
       it.name = f;
     } else if (f.rfind("promise:", 0) == 0) {
       it.url = f.substr(8);  // the source copied on drop (dev only)

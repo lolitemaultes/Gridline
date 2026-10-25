@@ -125,6 +125,7 @@ class TimeGateK3 final : public Effect {
     const double ca = coefOf(attMs * 0.001 * 0.70710678), cr = coefOf(relMs * 0.001 * 0.70710678);
     const double tens = param(s, TgTension);
     const bool holdParam = bparam(s, TgHold), freeRun = bparam(s, TgFreeRun);
+    freeRun_ = freeRun;
     const int defTrig = std::clamp(iparam(s, TgTrigSync), 0, 5);
     const int declick = iparam(s, TgDeclick, 1);
     const double xfLen = declick == 0 ? 0 : (declick == 1 ? 0.002 : 0.012) * sr_;
@@ -301,6 +302,12 @@ class TimeGateK3 final : public Effect {
     lastL_ = n ? L[n - 1] : 0.f, lastR_ = n ? R[n - 1] : 0.f;
   }
 
+  // J-110: Stop. Stopped, a synced Shuttle is dry already (and drops its
+  // slot / hold state); free-running it would keep repeating the bar it holds
+  // and the slots' patterns from before the Stop: start over from silence.
+  void stopSound() override {
+    if (freeRun_) reset();
+  }
   void reset() override {
     std::fill(bl_.begin(), bl_.end(), 0.f);
     std::fill(br_.begin(), br_.end(), 0.f);
@@ -402,6 +409,7 @@ class TimeGateK3 final : public Effect {
   size_t dataHash_ = 0;
   double sr_ = 0, gate_ = 1, v1_ = 1, v2_ = 1, xfRp_ = 0, xfLeft_ = 0, lastRp_ = 0, free_ = 0, holdT0_ = 0, forceNextAt_ = -1;
   bool haveRp_ = false, holdOn_ = false, forceHold_ = false, fadeDone_ = false;
+  bool freeRun_ = false;  // J-110: free-running (plays on while the transport is stopped)
   float lastL_ = 0, lastR_ = 0, phase_ = -1, vphase_ = -1;
   BankState bs_[2];
   DcBlock dc_[2];

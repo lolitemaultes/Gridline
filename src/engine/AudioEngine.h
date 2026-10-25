@@ -142,6 +142,15 @@ class AudioEngine {
   // the next block (a project being replaced).
   void panic(bool declick = true);
   bool panicking() const { return panicUi_.load(std::memory_order_relaxed); }
+  // J-110: the stop epoch. Bumped by every silencing Stop: releaseAllNotes()
+  // (so the first Stop), releaseLiveNotes() (a focus loss), panic() and a
+  // host's Stop (plugin build). An editor with its own Play / preview / run
+  // toggle keeps the value it saw when it started (RunLatch, app/RunLatch.h);
+  // a different value now means its sound was stopped: it shows stopped.
+  uint32_t stopEpoch() const { return stopEpoch_.load(std::memory_order_acquire); }
+  // UI thread: the sample preview playing now is `s` (an editor's own preview,
+  // not one started since by the browser or another editor).
+  bool previewingSample(const Sample* s) const { return s && previewing_.load() && previewOwner_.get() == s; }
   uint32_t panicsDone() const { return panicsDone_.load(std::memory_order_relaxed); }
   // Peak of the output since the last call (dev checks).
   float takeOutputPeak() { return outPeakRecent_.exchange(0.f, std::memory_order_relaxed); }
@@ -458,6 +467,7 @@ class AudioEngine {
   int panicLeft_ = 0, panicTotal_ = 0;
   std::atomic<bool> panicUi_{false};
   std::atomic<uint32_t> panicsDone_{0};
+  std::atomic<uint32_t> stopEpoch_{0};  // J-110 (UI thread and the audio thread's host Stop)
   std::atomic<float> outPeakRecent_{0};
   // Two-stage Stop (UI thread): anything that may start sound bumps
   // activity_ (also from the MIDI thread); a Stop with no activity since the

@@ -127,6 +127,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   std::memset(cL, 0, sizeof(float) * static_cast<size_t>(n));
   std::memset(cR, 0, sizeof(float) * static_cast<size_t>(n));
   rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, cL, cR, n);
+  rt->sounding.store(rt->gen->active(), std::memory_order_relaxed);
   if (livePieceCount_ > 0 && tMode_ == PlayMode::Live) {  // live mode: launched audio clips on this channel
     for (int k = 0; k < livePieceCount_; ++k) {
       const LivePiece& lp = livePieces_[k];

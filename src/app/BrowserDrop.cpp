@@ -355,6 +355,30 @@ std::vector<xdrop::Item> payloadItems(const ImGuiPayload* pl) {
   return {it};
 }
 
+// J-110: the file of an audio clip source dragged from the playlist picker.
+// Empty (with `why`) when it is not audio or its file is not complete on disk
+// yet (a take still being written: the recorder writes it when it stops).
+std::vector<xdrop::Item> clipSourceItems(App& a, const ImGuiPayload* pl, std::string& why) {
+  if (!pl || !pl->Data || pl->DataSize != static_cast<int>(sizeof(ClipSrcPayload))) return {};
+  ClipSrcPayload ps{};
+  std::memcpy(&ps, pl->Data, sizeof ps);
+  if (ps.kind != static_cast<int>(ClipKind::Audio)) return {};
+  const Channel* ch = a.doc.song().channel(ps.id);
+  if (!ch || ch->plugin.data.empty()) return {};
+  std::string path = ch->plugin.data;
+  if (const size_t nl = path.find('\n'); nl != std::string::npos) path.resize(nl);
+  std::error_code ec;
+  const bool written = fs::is_regular_file(path, ec) && fs::file_size(path, ec) > 44 && !ec;
+  if (!written || (a.audioRecSession && a.audioRecFinishing)) {
+    why = i18n::tr("This recording is still being written: drop it again in a moment");
+    return {};
+  }
+  xdrop::Item it;
+  it.path = path;
+  it.name = fs::path(path).filename().string();
+  return {it};
+}
+
 void drawTargetHighlight(const ImRect& r) {
   const auto& P = theme::pal();
   ImDrawList* dl = ImGui::GetForegroundDrawList();
@@ -416,9 +440,30 @@ bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place) { return 
 bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place, DropFeedback* fb) {
   const ImGuiPayload* cur = ImGui::GetDragDropPayload();
   if (!cur) return false;
-  const char* type = cur->IsDataType("GL_FILE") ? "GL_FILE" : cur->IsDataType("GL_ITEM") ? "GL_ITEM" : cur->IsDataType("GL_FILES") ? "GL_FILES" : nullptr;
+  // J-110: the playlist picker's audio clip sources (recordings, renders, loops)
+  // load into a plugin window or onto a channel row like browser audio files.
+  const bool clipSrc = cur->IsDataType("GL_CLIPSRC") && (target == DropTarget::PluginWindow || (target == DropTarget::Rack && place.channel != kNoId));
+  const char* type = cur->IsDataType("GL_FILE")    ? "GL_FILE"
+                     : cur->IsDataType("GL_ITEM")  ? "GL_ITEM"
+                     : cur->IsDataType("GL_FILES") ? "GL_FILES"
+                     : clipSrc                     ? "GL_CLIPSRC"
+                                                   : nullptr;
   if (!type) return false;
-  const std::vector<xdrop::Item> items = payloadItems(cur);
+  std::vector<xdrop::Item> items;
+  if (clipSrc) {
+    std::string why;
+    items = clipSourceItems(a, cur, why);
+    if (items.empty()) {
+      if (!why.empty()) {
+        ImGui::SetTooltip("%s", why.c_str());
+        a.setHint(why);
+        ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
+      }
+      return false;
+    }
+  } else {
+    items = payloadItems(cur);
+  }
   if (items.empty()) return false;
   const xdrop::Mods mods = currentMods();
   const xdrop::Plan p = planFor(a, items, target, place, mods);
@@ -451,7 +496,9 @@ void pluginWindowDropTarget(App& a, const PluginTarget& t) {
   ImGuiWindow* w = ImGui::GetCurrentWindow();
   if (!w || !ImGui::GetDragDropPayload()) return;
   const ImGuiPayload* pl = ImGui::GetDragDropPayload();
-  if (!pl->IsDataType("GL_FILE") && !pl->IsDataType("GL_ITEM") && !pl->IsDataType("GL_FILES") && !pl->IsDataType("GL_PLUGIN")) return;
+  if (!pl->IsDataType("GL_FILE") && !pl->IsDataType("GL_ITEM") && !pl->IsDataType("GL_FILES") && !pl->IsDataType("GL_PLUGIN") &&
+      !pl->IsDataType("GL_CLIPSRC"))  // J-110: audio clip sources from the playlist picker
+    return;
   if (ImGui::BeginDragDropTargetCustom(w->Rect(), w->ID)) {
     DropPlace place;
     place.owner = t.owner;

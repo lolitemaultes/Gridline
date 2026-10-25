@@ -60,9 +60,9 @@ jobs:
       - name: Tests
         run: |
           if [ "${{ matrix.gui }}" = "ON" ]; then
-            xvfb-run -a -s "-screen 0 2560x1700x24" ctest --test-dir build -j4 --timeout 1500
+            xvfb-run -a -s "-screen 0 2560x1700x24" ctest --test-dir build -j4 --timeout 1500 --output-on-failure
           else
-            ctest --test-dir build -j4 --timeout 1500
+            ctest --test-dir build -j4 --timeout 1500 --output-on-failure
           fi
       - name: Smoke
         run: bash tools/ci/smoke.sh build/gridline
@@ -78,7 +78,7 @@ jobs:
       - run: sudo sh tools/ci/install-deps.sh apt
       - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_WERROR=ON -DGRIDLINE_GUI_TESTS=OFF
       - run: cmake --build build -j4 -- -k 0
-      - run: ctest --test-dir build -j4 --timeout 1500
+      - run: ctest --test-dir build -j4 --timeout 1500 --output-on-failure
       - run: bash tools/ci/smoke.sh build/gridline
 
   macos:
@@ -97,7 +97,7 @@ jobs:
       - run: sh tools/ci/install-deps.sh brew
       - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_WERROR=ON -DGRIDLINE_GUI_TESTS=OFF
       - run: cmake --build build -j4 -- -k 0
-      - run: ctest --test-dir build -j3 --timeout 1500
+      - run: ctest --test-dir build -j3 --timeout 1500 --output-on-failure
       - run: bash tools/ci/smoke.sh build/gridline
 
   macos-universal:
@@ -114,7 +114,7 @@ jobs:
           lipo -archs build/gridline | grep -q 'x86_64 arm64\|arm64 x86_64'
           lipo -archs build/gridline-app | grep -q 'x86_64 arm64\|arm64 x86_64'
           otool -L build/gridline-app | grep -vi sdl
-      - run: ctest --test-dir build -j3 --timeout 1500
+      - run: ctest --test-dir build -j3 --timeout 1500 --output-on-failure
       - run: arch -x86_64 build/gridline --version
       - run: bash tools/ci/smoke.sh build/gridline
 
@@ -149,7 +149,7 @@ jobs:
         run: cmake --build build -j4 -- -k 0
       - name: Tests
         if: matrix.test
-        run: ctest --test-dir build -j4 --timeout 1500
+        run: ctest --test-dir build -j4 --timeout 1500 --output-on-failure
       - name: Where failed tests crash (debugger stacks)
         if: failure() && matrix.test
         shell: pwsh

@@ -120,6 +120,11 @@ class PatchRuntime {
     for (int i = 0; i < kPatchNodes; ++i)
       if (gen_[i]) gen_[i]->allNotesOff(0);
   }
+  void stopSound() {  // J-110: the user's Stop
+    allOff();
+    for (int i = 0; i < kPatchNodes; ++i)
+      if (fx_[i]) fx_[i]->stopSound();
+  }
   void kill() {
     for (int i = 0; i < kPatchNodes; ++i) {
       if (gen_[i]) gen_[i]->kill();
@@ -335,6 +340,11 @@ class PatchHostEffect final : public Effect {
   void reset() override {
     rt_.kill();
     v2_.kill();
+  }
+  // J-110: Stop reaches the hosted plugins (their notes, their own playback).
+  void stopSound() override {
+    rt_.stopSound();
+    v2_.stopSound();
   }
   // Sum over the serial stages of the latest hosted effect in each (macros
   // applied as the runtime does). A node's undelayed dry part is mixed back

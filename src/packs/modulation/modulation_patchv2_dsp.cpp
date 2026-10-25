@@ -508,6 +508,12 @@ void PatchV2Runtime::allOff() {
     if (g) g->allNotesOff(0);
 }
 
+void PatchV2Runtime::stopSound() {
+  allOff();
+  for (auto& f : d_->fxs)
+    if (f) f->stopSound();
+}
+
 void PatchV2Runtime::kill() {
   for (auto& g : d_->gens)
     if (g) g->kill();

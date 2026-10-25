@@ -595,10 +595,7 @@ void arrangementClipMenu(App& a, ObjectId id) {
 }
 
 // ---- current clip source (J-28) ----
-struct ClipSrcPayload {
-  int kind;
-  ObjectId id;
-};
+using browserui::ClipSrcPayload;
 
 bool isAudioSource(const Channel& ch) { return ops::isAudioClipSource(ch); }
 

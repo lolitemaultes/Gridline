@@ -354,13 +354,20 @@ void AudioEngine::noteOff(ObjectId channel, int pitch) {
 }
 void AudioEngine::panic(bool declick) {
   panicUi_.store(true, std::memory_order_relaxed);  // (before the command: the audio thread clears it)
+  stopEpoch_.fetch_add(1, std::memory_order_acq_rel);
   Cmd c{Cmd::Panic};
   c.value = declick ? 1.f : 0.f;
   send(c);
   if (previewOwner_) preview(nullptr);
 }
-void AudioEngine::releaseAllNotes() { send({Cmd::ReleaseAll}); }
-void AudioEngine::releaseLiveNotes() { send({Cmd::ReleaseLive}); }
+void AudioEngine::releaseAllNotes() {
+  send({Cmd::ReleaseAll});
+  stopEpoch_.fetch_add(1, std::memory_order_acq_rel);
+}
+void AudioEngine::releaseLiveNotes() {
+  send({Cmd::ReleaseLive});
+  stopEpoch_.fetch_add(1, std::memory_order_acq_rel);
+}
 bool AudioEngine::stopPressed() {
   const uint32_t act = activity_.load(std::memory_order_relaxed);
   if (!playing_.load() && stopArmed_ && act == stopActivity_) {
@@ -1307,6 +1314,11 @@ void AudioEngine::releaseEverything(const Program* p) {
     ch.rt->gen->allNotesOff(0);
     ch.rt->keys.clear();
   }
+  // J-110: playback the mixer's effects started themselves (an audio editor's
+  // Play in a slot, a free-running bar repeat) ends too; their tails ring on.
+  for (const auto& m : p->mixer)
+    for (const auto& sl : m.slots)
+      if (sl.rt && sl.rt->fx) sl.rt->fx->stopSound();
   resetMidiState();
 }
 
@@ -1875,6 +1887,7 @@ void AudioEngine::followHost(const Program* p) {
   } else if (!h.playing && tPlaying_) {
     releaseAll(p, 0, true);
     releaseEverything(p);  // J-109: the host's Stop silences live / MIDI notes too
+    stopEpoch_.fetch_add(1, std::memory_order_acq_rel);  // J-110: editors' own Play buttons show stopped
     tPlaying_ = false;
     landAt(target);
     pendJump_ = false;

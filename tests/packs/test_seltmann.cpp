@@ -31,6 +31,7 @@
 #include "core/WavWriter.h"
 #include "engine/Generators.h"
 #include "packs/Packs.h"
+#include "packs/edison/edison.h"
 #include "packs/seltmann/seltmann.h"
 #include "seltmann_synth.h"
 
@@ -1217,6 +1218,19 @@ int main(int argc, char** argv) {
     sp.late = 0.01;
     const auto song = seltsynth::loop(sp);
     return sm::writeLoopWav(argv[2], song.sample->left, song.sample->right.vec(), song.sample->sampleRate) ? 0 : 1;
+  }
+  if (only == "writetake" && argc > 2) {  // J-110: the same break as a recorded take (32-bit float, Loupe's WAV writer)
+    seltsynth::LoopSpec sp;
+    sp.bpm = 96;
+    sp.bars = 2;
+    sp.late = 0.01;
+    const auto song = seltsynth::loop(sp);
+    packs::edison::Audio au;
+    au.rate = song.sample->sampleRate;
+    au.channels = 2;
+    au.L = song.sample->left;
+    au.R = song.sample->right.vec();
+    return packs::edison::writeWavFile(argv[2], packs::edison::makeContent(au), 32) ? 0 : 1;
   }
   if (only.empty() || only == "tempo") testTempo();
   if (only.empty() || only == "sections") testSections();

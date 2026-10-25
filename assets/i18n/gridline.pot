@@ -1194,6 +1194,10 @@ msgid "This plugin is not available"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "This recording is still being written: drop it again in a moment"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "Unsupported file type: "
 msgstr ""
 

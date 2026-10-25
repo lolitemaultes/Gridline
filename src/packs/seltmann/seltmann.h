@@ -383,11 +383,14 @@ inline int displaySliceOf(int v) { return v < 0 ? -1 : v % 4096 - 1; }
 
 // What an instance is playing (UI thread, read from the audio thread's atomics):
 // the step and slice last started, the source frame under the newest voice
-// (-1 = silent) and the position in the pattern (0..1, -1 = not running).
+// (-1 = silent), the position in the pattern (0..1, -1 = not running) and
+// whether the pattern runs (J-110: latched by its key; cleared by the key's
+// release, Stop, the panic, a focus loss's release).
 struct LiveView {
   int step = -1, slice = -1;
   double srcFrame = -1;
   double patternPos = -1;
+  bool patternRunning = false;
 };
 bool liveView(const Generator* g, LiveView& out);
 

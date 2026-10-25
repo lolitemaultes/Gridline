@@ -194,7 +194,8 @@ void pump(App& a, Session& s) {
     }
   }
   // Standalone preview playback ends on its own.
-  if (s.pvPlaying && !a.engine.previewing()) s.pvPlaying = false;
+  // J-110: also when Stop (or another preview: the browser's) took the preview over.
+  if (s.pvPlaying && !a.engine.previewingSample(s.pvSample.get())) s.pvPlaying = false;
 }
 
 }  // namespace

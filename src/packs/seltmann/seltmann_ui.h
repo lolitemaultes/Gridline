@@ -16,6 +16,7 @@
 #include <vector>
 #include "../../app/App.h"
 #include "../../app/PluginUI.h"
+#include "../../app/RunLatch.h"
 #include "../../third_party/imgui/imgui.h"
 #include "seltmann.h"
 
@@ -54,7 +55,12 @@ struct Ed {
   double dragA = 0, dragB = 0, dragGrab = 0;
   int dragBeat = -1;          // grid stretch (Alt+drag a bar line)
   int auditionKey = -1;       // key held for an audition
-  bool patternOn = false;     // pattern audition running
+  // J-110: the pattern's Play button. It follows the engine (Stop, panic,
+  // focus loss: RunLatch) and the instrument's own running flag
+  // (LiveView::patternRunning); patternKey = the key that latched it.
+  RunLatch pattern;
+  int patternKey = -1;
+  bool autoPlayed = false;    // dev hook GRIDLINE_SELTMANN_PLAY: started once
   std::vector<double> taps;
   uint32_t seed = 1;
   std::vector<Preset> user;
@@ -127,6 +133,8 @@ void openLoadDialog(App& a, const PluginTarget& t, Ed& e);
 void auditionStart(App& a, const PluginTarget& t, Ed& e, int slice);
 void auditionStop(App& a, const PluginTarget& t, Ed& e);
 void togglePattern(App& a, const PluginTarget& t, Ed& e);
+// J-110: each frame, the Play button follows the engine and the instrument.
+void syncPattern(App& a, const PluginTarget& t, Ed& e, const LiveView& lv);
 std::string loopsDir(App& a);
 // Renders an item to a file (cached); kinds: "pattern", "slice:<k>", "span:<b0>:<b1>:<name>", "midi".
 std::string renderItem(App& a, const PluginTarget& t, Ed& e, const std::string& item, const std::string& label);
