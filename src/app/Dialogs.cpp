@@ -992,7 +992,7 @@ void handleGlobalShortcuts(App& a) {
   ImGuiIO& io = ImGui::GetIO();
   if (io.WantTextInput) return;
   using keys::pressed;
-  if (pressed("transport.play")) a.engine.playing() ? menuparity::stopPressed(a) : a.startPlayback();  // J-109: Stop releases everything
+  if (pressed("transport.play")) a.engine.playing() ? menuparity::stopPressed(a) : (void)menuparity::playPressed(a);  // J-109: Stop releases everything; J-112: stops plugin playback first
   if (pressed("edit.undo")) a.doc.undo();
   if (pressed("edit.redo")) a.doc.redo();
   if (pressed("edit.history")) a.showHistory = !a.showHistory;

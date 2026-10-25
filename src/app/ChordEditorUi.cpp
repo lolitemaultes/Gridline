@@ -177,7 +177,9 @@ void releaseHeld(App& a, std::vector<int>& held) {
   held.clear();
 }
 
-void soundChord(App& a, size_t i, std::vector<int>& held) {
+// own: the progression preview (J-112: plugin playback, which Play stops
+// while the transport is stopped); otherwise a chord held by a click.
+void soundChord(App& a, size_t i, std::vector<int>& held, bool own = false) {
   releaseHeld(a, held);
   if (i >= S.prog.chords.size()) return;
   const auto v = ch::voice(S.prog, i);
@@ -186,7 +188,9 @@ void soundChord(App& a, size_t i, std::vector<int>& held) {
   if (c.main && S.withMain) ps = v.main;
   if (c.bass && S.withBass && v.bass >= 0) ps.push_back(v.bass);
   for (int p : ps) {
-    a.engine.noteOn(S.chan, p, static_cast<float>(S.prog.perf.velocity) / 127.0f);
+    const float vel = static_cast<float>(S.prog.perf.velocity) / 127.0f;
+    if (own) a.engine.ownNoteOn(S.chan, p, vel, AudioEngine::OwnPlay::ChordPreview);
+    else a.engine.noteOn(S.chan, p, vel);
     held.push_back(p);
   }
 }
@@ -220,7 +224,7 @@ void tickPreview(App& a) {
   }
   if (i != S.pvChord) {
     S.pvChord = i;
-    soundChord(a, static_cast<size_t>(i), S.pvHeld);
+    soundChord(a, static_cast<size_t>(i), S.pvHeld, true);
   }
 }
 

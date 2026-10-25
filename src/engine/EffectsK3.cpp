@@ -153,6 +153,7 @@ class TimeGateK3 final : public Effect {
       lastL_ = n ? L[n - 1] : 0.f, lastR_ = n ? R[n - 1] : 0.f;
       for (auto& b : bs_) b.cur = 0, b.lastWant = -1, b.pending = -1, b.oneShotAt = -1;
       holdOn_ = false;
+      ownSound_ = false;
       phase_ = -1;
       return;
     }
@@ -300,7 +301,13 @@ class TimeGateK3 final : public Effect {
       ++wc_;
     }
     lastL_ = n ? L[n - 1] : 0.f, lastR_ = n ? R[n - 1] : 0.f;
+    // J-112: free-running with the transport stopped, a held bar that sounds
+    // is Shuttle's own playback (a hold of silence, or one after Stop, is not).
+    ownSound_ = false;
+    if (freeRun && !ctx.playing && holdOn_)
+      for (int i = 0; i < n && !ownSound_; ++i) ownSound_ = std::fabs(L[i]) > 1e-4f || std::fabs(R[i]) > 1e-4f;
   }
+  bool ownPlayback() const override { return ownSound_; }
 
   // J-110: Stop. Stopped, a synced Shuttle is dry already (and drops its
   // slot / hold state); free-running it would keep repeating the bar it holds
@@ -309,6 +316,7 @@ class TimeGateK3 final : public Effect {
     if (freeRun_) reset();
   }
   void reset() override {
+    ownSound_ = false;
     std::fill(bl_.begin(), bl_.end(), 0.f);
     std::fill(br_.begin(), br_.end(), 0.f);
     gate_ = v1_ = v2_ = 1;
@@ -410,6 +418,7 @@ class TimeGateK3 final : public Effect {
   double sr_ = 0, gate_ = 1, v1_ = 1, v2_ = 1, xfRp_ = 0, xfLeft_ = 0, lastRp_ = 0, free_ = 0, holdT0_ = 0, forceNextAt_ = -1;
   bool haveRp_ = false, holdOn_ = false, forceHold_ = false, fadeDone_ = false;
   bool freeRun_ = false;  // J-110: free-running (plays on while the transport is stopped)
+  bool ownSound_ = false;  // J-112: the last block repeated a held bar that sounds, transport stopped
   float lastL_ = 0, lastR_ = 0, phase_ = -1, vphase_ = -1;
   BankState bs_[2];
   DcBlock dc_[2];

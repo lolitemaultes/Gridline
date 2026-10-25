@@ -119,6 +119,14 @@ class AudioEngine {
   void setLoopRange(Tick start, Tick end);
   void noteOn(ObjectId channel, int pitch, float velocity);
   void noteOff(ObjectId channel, int pitch);
+  // J-112: a key an editor's own Play holds (Seltmann's pattern button, Kerf's
+  // region play, the chord editor's progression preview): a live note like
+  // noteOn(), released by noteOff() as usual, that also counts as plugin
+  // playback (see pluginPlaybackActive()) while its channel sounds, and is
+  // released by stopPluginPlayback(). `source`: OwnPlay::EditorKey or
+  // OwnPlay::ChordPreview (what the hint names).
+  enum class OwnPlay : uint8_t { None = 0, Instrument, Effect, EditorKey, ChordPreview, EditorPreview };
+  void ownNoteOn(ObjectId channel, int pitch, float velocity, OwnPlay source = OwnPlay::EditorKey);
   // J-109: the Stop the user presses (transport button, Space, the stop
   // shortcut, a MIDI controller / remote stop). FL-style, in two stages:
   //  - first press (while playing, or after anything new started sounding):
@@ -148,6 +156,33 @@ class AudioEngine {
   // toggle keeps the value it saw when it started (RunLatch, app/RunLatch.h);
   // a different value now means its sound was stopped: it shows stopped.
   uint32_t stopEpoch() const { return stopEpoch_.load(std::memory_order_acquire); }
+  // J-112: plugin playback = a plugin making sound through its own playback,
+  // not the transport's: an instrument running its own sequence
+  // (Generator::ownPlayback(): Seltmann's pattern), an effect playing on its
+  // own (Effect::ownPlayback(): Loupe's Play in a mixer slot, Shuttle's
+  // free-running bar repeat), a key held by an editor's own Play (ownNoteOn,
+  // while its channel sounds: Kerf's region, the chord preview) or an editor's
+  // own sample preview (preview(s, true): Loupe standalone). NOT: keys played
+  // live (typed, clicked, pads, a MIDI keyboard), the browser's preview
+  // (preview(s)), effect tails, the transport itself. The audio thread
+  // publishes it after every block; lock-free, UI thread. False while a
+  // stopPluginPlayback() is on its way to the audio thread.
+  struct OwnPlayback {
+    OwnPlay kind = OwnPlay::None;
+    ObjectId id = kNoId;  // the channel (Instrument, EditorKey, ChordPreview) or the mixer track (Effect)
+    int slot = -1;        // Effect: the mixer slot
+  };
+  bool pluginPlaybackActive() const { return pluginPlayback().kind != OwnPlay::None; }
+  OwnPlayback pluginPlayback() const;
+  // J-112 (UI thread): stops every plugin playback, with normal releases
+  // and tails (the first Stop's way, nothing else): the editors' own keys and
+  // the live keys on an instrument running its own sequence are released,
+  // the instrument's sequence stops (Generator::stopOwnPlayback), an effect
+  // playing on its own gets Effect::stopSound(), an editor's own preview
+  // stops. The stop epoch moves, so every editor's Play button (RunLatch)
+  // shows stopped. The transport, live keys elsewhere, the browser's preview
+  // and the two-stage Stop (J-109) are left as they are.
+  void stopPluginPlayback();
   // UI thread: the sample preview playing now is `s` (an editor's own preview,
   // not one started since by the browser or another editor).
   bool previewingSample(const Sample* s) const { return s && previewing_.load() && previewOwner_.get() == s; }
@@ -167,7 +202,8 @@ class AudioEngine {
   ObjectId liveActive(int track) const;
   ObjectId liveQueued(int track) const;
   // Plays a sample directly to the output (browser preview); nullptr stops it.
-  void preview(SamplePtr sample);
+  // J-112: `own` = an editor's own Play (Loupe standalone), plugin playback.
+  void preview(SamplePtr sample, bool own = false);
   bool previewing() const { return previewing_.load(); }
   void setMetronome(bool on) { metronome_.store(on); }
   // MIDI input (called from the MIDI driver thread; single producer).
@@ -332,7 +368,7 @@ class AudioEngine {
  private:
   struct Cmd {
     enum Kind { Play, Stop, Pause, Mode, Pattern, Position, NoteOn, NoteOff, Panic, Loop, Preview, LoopRange,
-                Launch, Release, LiveStop, LiveStopAll, Jump, ReleaseAll, ReleaseLive } kind;
+                Launch, Release, LiveStop, LiveStopAll, Jump, ReleaseAll, ReleaseLive, StopOwn } kind;
     ObjectId id = kNoId;
     int pitch = 0;
     float value = 0;
@@ -387,6 +423,9 @@ class AudioEngine {
   // J-109 (audio thread): releaseAllNotes / releaseLiveNotes / the panic.
   void releaseEverything(const Program* p);
   void releaseLive(const Program* p);
+  // J-112 (audio thread): Cmd::StopOwn, and what pluginPlayback() reads.
+  void stopOwn(const Program* p);
+  void publishOwn(const Program* p);
   void resetMidiState();
   void beginPanic();
   void applyPanicFade(const Program* p, float* L, float* R, int n);
@@ -458,6 +497,7 @@ class AudioEngine {
   struct LiveKey {
     ObjectId ch;
     int16_t pitch;
+    OwnPlay own;  // J-112: held by an editor's own Play (None: a live key)
   };
   static constexpr int kMaxLiveKeys = 256;
   LiveKey liveKeys_[kMaxLiveKeys] = {};
@@ -468,6 +508,11 @@ class AudioEngine {
   std::atomic<bool> panicUi_{false};
   std::atomic<uint32_t> panicsDone_{0};
   std::atomic<uint32_t> stopEpoch_{0};  // J-110 (UI thread and the audio thread's host Stop)
+  // J-112: plugin playback published by the audio thread (kind << 40 | slot << 32 | id),
+  // the stops asked for (UI) and done (audio thread), the preview's owner.
+  std::atomic<uint64_t> ownPlay_{0};
+  std::atomic<uint32_t> ownStopReq_{0}, ownStopDone_{0};
+  std::atomic<bool> previewOwn_{false};
   std::atomic<float> outPeakRecent_{0};
   // Two-stage Stop (UI thread): anything that may start sound bumps
   // activity_ (also from the MIDI thread); a Stop with no activity since the

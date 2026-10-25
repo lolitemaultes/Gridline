@@ -310,7 +310,7 @@ void togglePattern(App& a, const PluginTarget& t, Ed& e) {
   }
   // Starts from step 1 (the instrument restarts the pattern on its key).
   e.patternKey = baseNote(a, t) - 12;
-  a.engine.noteOn(t.owner, e.patternKey, 0.9f);
+  a.engine.ownNoteOn(t.owner, e.patternKey, 0.9f);  // J-112: the editor's own Play (plugin playback)
   e.pattern.start(a.engine);
 }
 

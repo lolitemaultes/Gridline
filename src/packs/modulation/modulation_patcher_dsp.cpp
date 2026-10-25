@@ -125,6 +125,18 @@ class PatchRuntime {
     for (int i = 0; i < kPatchNodes; ++i)
       if (fx_[i]) fx_[i]->stopSound();
   }
+  // J-112: a hosted plugin playing on its own; Play (transport stopped) stops it.
+  bool ownPlayback() const {
+    for (int i = 0; i < kPatchNodes; ++i)
+      if ((gen_[i] && gen_[i]->ownPlayback()) || (fx_[i] && fx_[i]->ownPlayback())) return true;
+    return false;
+  }
+  void stopOwnPlayback() {
+    for (int i = 0; i < kPatchNodes; ++i) {
+      if (gen_[i] && gen_[i]->ownPlayback()) gen_[i]->stopOwnPlayback();
+      if (fx_[i] && fx_[i]->ownPlayback()) fx_[i]->stopSound();
+    }
+  }
   void kill() {
     for (int i = 0; i < kPatchNodes; ++i) {
       if (gen_[i]) gen_[i]->kill();
@@ -216,6 +228,11 @@ class PatchRuntime {
 class PatchHostGenerator final : public Generator {
  public:
   bool active() const override { return v2on_ ? v2_.active() : rt_.active(); }
+  bool ownPlayback() const override { return v2on_ ? v2_.ownPlayback() : rt_.ownPlayback(); }  // J-112
+  void stopOwnPlayback() override {
+    rt_.stopOwnPlayback();
+    v2_.stopOwnPlayback();
+  }
 
  protected:
   void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& props) override {
@@ -346,6 +363,8 @@ class PatchHostEffect final : public Effect {
     rt_.stopSound();
     v2_.stopSound();
   }
+  // J-112: a hosted effect / instrument playing on its own (Loupe, Shuttle, Seltmann inside).
+  bool ownPlayback() const override { return rt_.ownPlayback() || v2_.ownPlayback(); }
   // Sum over the serial stages of the latest hosted effect in each (macros
   // applied as the runtime does). A node's undelayed dry part is mixed back
   // in, so a serial node counts while its wet part dominates (mix >= 50 %);

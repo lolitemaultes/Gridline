@@ -6090,6 +6090,10 @@ msgid "%d logged note events"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "%s is playing on its own: Play stops it, press again to play (Space)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "All sound stopped"
 msgstr ""
 
@@ -6382,6 +6386,10 @@ msgid "Stop returns to the set position"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Stopped %s"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Swing mix for selected (type in)..."
 msgstr ""
 
@@ -6423,6 +6431,22 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Unlock every playlist track"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "a plugin"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "press Play again to play the pattern"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "press Play again to play the song"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "the chord preview"
 msgstr ""
 
 #: src/app/Menus.cpp

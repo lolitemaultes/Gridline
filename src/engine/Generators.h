@@ -176,6 +176,13 @@ class Generator {
   void process(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R,
                int n);
   virtual bool active() const = 0;  // any voice sounding
+  // J-112: the instrument plays on its own (its own sequence, not notes it is
+  // given: Seltmann's latched pattern). Audio thread, after a block; the
+  // engine publishes it as plugin playback (AudioEngine::pluginPlayback).
+  virtual bool ownPlayback() const { return false; }
+  // J-112: stop that playback with a normal release (Play pressed while the
+  // transport is stopped). Audio thread, between blocks; no allocation.
+  virtual void stopOwnPlayback() {}
   // MIDI Out channels send their notes here (set once by the program builder).
   virtual void setMidiOut(MidiOutRing*) {}
   // Hosted plugins: called on the UI thread every time a Program is built,

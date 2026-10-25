@@ -42,6 +42,15 @@ release workflow publishes the section of the tagged version as the release note
   a mixer slot, Shuttle's free-running bar repeat and the effects inside Junction FX. Recordings,
   renders and loops dragged from the playlist's clip list now load into Seltmann (and onto channel
   rows) like browser audio files.
+- Play stops a plugin playing on its own first: with the pattern or song stopped, pressing Play
+  (Space, the Play button, a MIDI controller's or remote Play / Pause) while Seltmann's pattern,
+  Kerf's region play, the chord editor's preview, Loupe's Play (in a mixer slot or on its own),
+  Shuttle's free-running held bar or one of them inside Junction FX is sounding stops that playback
+  (with its normal release, tails ring on) and leaves Gridline stopped; the next Play plays the
+  pattern or song as usual. This works whichever window has the focus; the hint line says what was
+  stopped and the Play button's tooltip says so beforehand. Keys you hold, the browser's sample
+  preview (it plays on over the song) and effect tails do not count, and starting the song any other
+  way (the playlist's play tool, a launched live clip, external sync) still lets the plugin play along.
 
 ## 0.6.1
 

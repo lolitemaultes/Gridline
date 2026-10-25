@@ -397,6 +397,8 @@ class EdisonFx : public Effect {
   // J-110: the user's Stop ends the editor's playback in the slot (the
   // editor's Play button reads isPlaying(), so it shows stopped).
   void stopSound() override;
+  // J-112: the editor's Play sounding in the slot is plugin playback.
+  bool ownPlayback() const override { return playing_.load(std::memory_order_relaxed); }
   float meter() const override { return 0.0f; }
 
   // ---- UI thread -------------------------------------------------------------

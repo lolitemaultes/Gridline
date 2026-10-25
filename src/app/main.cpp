@@ -342,6 +342,9 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing)
 //   J-110: stopvia button|menu|remote (the Stop button's action, Tools > Stop all sound, a MIDI controller's /
 //   remote Stop) · epoch (the engine's stop epoch to stdout) · forget <name> (a later waitfor <name> waits for it anew)
+//   J-112: playvia remote (the Play / Pause remote / MIDI action) · startsong (a start that is not the Play command, as a
+//   playlist click) · playstate (transport, plugin playback, stop epoch, the focused window to stdout) · focus <window>;
+//   reported each frame for waitfor: transport-playing / transport-stopped, plugin-playback
 //   waitfor <name> <seconds> (J-108: the script and --frames stop counting until the app reports
 //   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s")
 std::string devShotPending;
@@ -674,6 +677,19 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       else if (l.a0 == "remote") app.runAction(RemoteAction::Stop);
       else menuparity::stopPressed(app);
       std::printf("stopvia frame %d: %s epoch %u\n", frame, l.a0.c_str(), app.engine.stopEpoch());
+      std::fflush(stdout);
+    } else if (l.cmd == "playvia") {  // J-112
+      if (l.a0 == "remote") app.runAction(RemoteAction::PlayPause);
+      else menuparity::playPressed(app);
+    } else if (l.cmd == "startsong") {
+      app.startPlayback();
+    } else if (l.cmd == "focus") {
+      app.focusWindow = l.args.empty() ? l.a0 : l.args[0];
+    } else if (l.cmd == "playstate") {
+      const ImGuiContext& g = *ImGui::GetCurrentContext();
+      const ImGuiWindow* nav = g.NavWindow ? g.NavWindow->RootWindow : nullptr;
+      std::printf("playstate frame %d: playing %d own %d epoch %u focus \"%s\"\n", frame, app.engine.playing() ? 1 : 0,
+                  static_cast<int>(app.engine.pluginPlayback().kind), app.engine.stopEpoch(), nav ? nav->Name : "-");
       std::fflush(stdout);
     } else if (l.cmd == "forget") {
       devsig::forget(l.a0);
@@ -1746,6 +1762,10 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
     if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
+    if (!devInput.empty()) {  // J-112: for "waitfor"
+      devsig::reach(app.engine.playing() ? "transport-playing" : "transport-stopped");
+      if (app.engine.pluginPlaybackActive()) devsig::reach("plugin-playback");
+    }
     const bool devHold = devWaitHolds();  // J-108: "waitfor" keeps the script (and --frames) on this frame
     // J-103: a --dev-input session without --screenshot counts its frames too (its script ends it with "quit").
     if (!devInput.empty() && shotPath.empty() && profilePath.empty() && frameNo < INT_MAX && !devHold) ++frameNo;

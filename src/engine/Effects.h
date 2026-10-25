@@ -39,6 +39,11 @@ class Effect {
   // itself (an editor's Play, a free-running bar repeat). Its tails and other
   // state stay; reset() is the panic. Audio thread: no allocation, no locks.
   virtual void stopSound() {}
+  // J-112: the effect is making sound through its own playback right now
+  // (an editor's Play in the slot, a free-running bar repeat), so Play with
+  // the transport stopped calls stopSound() instead of starting the song.
+  // Audio thread, after a block.
+  virtual bool ownPlayback() const { return false; }
   // Gain reduction etc. for the UI (dB, <= 0); 0 when not applicable.
   virtual float meter() const { return 0.0f; }
   // Additional per-band meters (e.g. multiband gain reduction); returns count written.

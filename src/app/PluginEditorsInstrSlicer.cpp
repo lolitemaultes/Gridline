@@ -324,7 +324,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         if (pl.latch.on) stopPlay();  // (another instance's region)
         pl.ch = t.owner;
         pl.key = sliceKey(k);
-        a.engine.noteOn(pl.ch, pl.key, 0.9f);
+        a.engine.ownNoteOn(pl.ch, pl.key, 0.9f);  // J-112: the deck's own Play (plugin playback)
         pl.latch.start(a.engine);
       }
     }

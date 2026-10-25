@@ -5,7 +5,8 @@
 # "seltmann-playing" = the button lit and a pattern step played; "seltmann-stopped" = the button
 # off and the instrument's pattern flag clear):
 #   1. Play, then the transport Stop button's action: stopped at once; one click plays again;
-#   2. Space starts the song while the pattern plays (it keeps playing), Space again stops: stopped;
+#   2. the song started from elsewhere (as a playlist click) while the pattern plays (it keeps playing;
+#      J-112: Play / Space with the transport stopped would stop the pattern instead), Space stops: stopped;
 #   3. Stop twice (the second one is the panic): stopped; one click plays again;
 #   4. Tools > Stop all sound; 5. a MIDI controller's (remote) Stop; 6. the window losing focus;
 #   7. a recorded take dragged from the playlist picker loads into Seltmann (analysed).
@@ -78,8 +79,8 @@ endfunction()
 click(30 c1)
 stopby(40 "stopvia button" s1)
 click(50 c2)
-# Space: the song starts while the pattern plays (the pattern keeps playing), Space again stops.
-set(sp "60 key space
+# The song starts (not by Play: J-112) while the pattern plays (the pattern keeps playing), Space stops.
+set(sp "60 startsong
 62 epoch
 70 forget seltmann-stopped
 72 waitfor seltmann-stopped 0.5
@@ -110,7 +111,7 @@ set(want
   "waitfor seltmann-playing: reached"   # 1. one click plays
   "waitfor seltmann-stopped: reached"   #    Stop: stopped at once
   "waitfor seltmann-playing: reached"   #    one click plays again
-  "waitfor seltmann-stopped: timed out" # 2. Space starts the song: the pattern keeps playing
+  "waitfor seltmann-stopped: timed out" # 2. the song starts: the pattern keeps playing
   "waitfor seltmann-stopped: reached"   #    Space stops: stopped
   "waitfor seltmann-playing: reached"   #    one click plays
   "waitfor seltmann-stopped: reached"   # 3. Stop twice (panic): stopped
@@ -122,7 +123,7 @@ set(want
   "waitfor seltmann-stopped: reached"   # 6. focus lost
   "waitfor seltmann-playing: reached")
 set(names "first click plays" "Stop: the button shows stopped" "one click plays again after Stop"
-          "Space starts the song: the pattern keeps playing" "Space stops: stopped" "one click plays"
+          "the song starts: the pattern keeps playing" "Space stops: stopped" "one click plays"
           "Stop twice (panic): stopped" "one click plays after the panic" "Tools > Stop all sound: stopped"
           "one click plays" "MIDI / remote Stop: stopped" "one click plays" "focus lost: stopped" "one click plays")
 list(LENGTH want n)
@@ -140,13 +141,13 @@ foreach(i RANGE ${last})
   endif()
   message(STATUS "ok - ${nm}")
 endforeach()
-# Space really played the song (the transport ran while the pattern did).
+# The song really played (the transport ran while the pattern did).
 string(REGEX MATCHALL "epoch frame [0-9]+: [0-9]+ playing [01]" ep "${flow_out}")
 list(GET ep 0 e0)
 if(NOT e0 MATCHES "playing 1")
-  message(FATAL_ERROR "FAIL: Space did not start the song (${e0}). Output:\n${flow_out}")
+  message(FATAL_ERROR "FAIL: the song did not start (${e0}). Output:\n${flow_out}")
 endif()
-message(STATUS "ok - Space started the song while the pattern played")
+message(STATUS "ok - the song started while the pattern played")
 
 # ---- 7. A recorded take (the playlist picker's audio clip source of a recording: a 32-bit float
 # WAV in the "Recorded" folder, as the recorder writes it) dragged onto the empty Seltmann: it

@@ -125,7 +125,7 @@ void App::runAction(RemoteAction action, bool fromMmc) {
       if (engine.playing()) {
         if (!fromMmc) engine.pause();
       } else {
-        startPlayback();
+        menuparity::playPressed(*this);  // J-112: plugin playback sounding: stopped instead
       }
       break;
     case RemoteAction::Stop: menuparity::stopPressed(*this); break;  // J-109: twice = panic

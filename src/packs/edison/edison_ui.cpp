@@ -315,7 +315,7 @@ void play(App& a, Session& s) {
   // Standalone (or the engine has not picked the new version yet): preview.
   Audio part = extract(s.cur().a(), {from, to});
   s.pvSample = toSample(part, "");
-  a.engine.preview(s.pvSample);
+  a.engine.preview(s.pvSample, true);  // J-112: Loupe's own Play (plugin playback)
   s.pvPlaying = true;
   s.pvT0 = ImGui::GetTime();
   s.pvFrom = from;

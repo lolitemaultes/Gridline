@@ -224,7 +224,7 @@ void drawScriptDialog(App& a, Session& s) {
   if (ImGui::Button(i18n::tr("Play preview"), ImVec2(110, 0))) {
     stopPlay(a, s);
     r.pv = toSample(r.last.preview, "");
-    a.engine.preview(r.pv);
+    a.engine.preview(r.pv, true);  // J-112: Loupe's own playback
   }
   ImGui::EndDisabled();
   ImGui::SameLine();

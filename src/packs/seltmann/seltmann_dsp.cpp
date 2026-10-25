@@ -417,6 +417,17 @@ class SeltmannGen final : public Generator {
         release(v);
       }
   }
+  // J-112: the pattern is the instrument's own playback (latched by its key,
+  // from the editor's Play or a keyboard): Play with the transport stopped
+  // ends it with a normal release, like the key's release.
+  bool ownPlayback() const override { return patOn_; }
+  void stopOwnPlayback() override {
+    if (!patOn_) return;
+    setPat(false);
+    for (auto& v : voices_)
+      if (v.on && v.pattern) release(v);
+    display_.store(-1, std::memory_order_relaxed);
+  }
   void onCut(uint32_t id) override {
     if (patOn_ && id == patId_) setPat(false);
     for (auto& v : voices_)

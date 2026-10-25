@@ -320,9 +320,11 @@ float drawTopBar(App& a) {
     bool playing = a.engine.playing();
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
     // J-91: the transport acts when the button goes down (a quick tap or a press that slides off still counts).
-    if (ui::IconButton("play", playing ? ui::Icon::Pause : ui::Icon::Play, playing, kBtn, "Play / pause (Space)",
+    // J-112: while a plugin plays on its own (transport stopped), Play stops it first; the tooltip says so.
+    const std::string playTip = menuparity::playButtonHint(a);
+    if (ui::IconButton("play", playing ? ui::Icon::Pause : ui::Icon::Play, playing, kBtn, playTip.empty() ? i18n::N_("Play / pause (Space)") : playTip.c_str(),
                        theme::rgb(theme::role::kPlay), theme::rgb(theme::role::kPlay, 0.8f), true))
-      playing ? a.engine.pause() : a.startPlayback();
+      playing ? a.engine.pause() : (void)menuparity::playPressed(a);
     noteRect("play");
     if (ImGui::BeginPopupContextItem("##playmenu")) {
       actionLinkMenuItems(a, RemoteAction::PlayPause);

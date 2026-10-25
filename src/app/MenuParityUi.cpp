@@ -6,6 +6,7 @@
 #include "MenuParityUi.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -452,6 +453,80 @@ void stopPressed(App& a) {
   if (a.engine.stopPressed()) a.notify("All sound stopped");
 }
 
+// ---- J-112: Play while a plugin plays on its own -----------------------------
+//
+// The rule: Play pressed while the transport (pattern or song) is STOPPED and
+// a plugin is making sound through its own playback (Seltmann's pattern, Kerf's
+// region play, the chord editor's progression preview, Loupe's Play in a slot
+// or standalone, Shuttle's free-running held bar, the same inside Junction FX;
+// see AudioEngine::pluginPlayback) does not start the transport: it stops that
+// playback (AudioEngine::stopPluginPlayback: normal releases, tails ring on;
+// the editors' Play buttons follow through the stop epoch) and says so on the
+// hint line. The next Play starts the pattern / song as always. It applies to
+// the Play command only: Space, the transport's Play button, the Play / Pause
+// remote, MIDI controller, MMC and controller-script action; whichever window
+// has the focus. Anything else that starts the transport (a playlist click
+// with the play tool, "Play the group", a launched live clip, external sync)
+// leaves plugin playback running alongside, as J-110 made it. Not plugin
+// playback (Play starts the transport as before): keys held live (typed,
+// clicked, pads, a MIDI keyboard), the browser's sample preview (it plays on
+// over the song until it ends), effect tails after a Stop. Playing: Play is
+// Pause / Stop as before (not here).
+namespace {
+std::string gPlayHint;
+double gPlayHintUntil = 0;
+
+std::string ownPlaybackName(App& a, const AudioEngine::OwnPlayback& o) {
+  using OP = AudioEngine::OwnPlay;
+  const Song& s = a.doc.song();
+  auto pluginName = [](const std::string& type, const std::string& fallback) {
+    const PluginInfo* pi = findPlugin(type);
+    return pi && !pi->name.empty() ? pi->name : fallback;
+  };
+  switch (o.kind) {
+    case OP::Instrument:
+    case OP::EditorKey:
+      if (const Channel* c = s.channel(o.id)) return pluginName(c->plugin.type, c->name);
+      break;
+    case OP::ChordPreview: return i18n::tr("the chord preview");
+    case OP::Effect:
+      if (const MixerTrack* m = s.mixerTrack(o.id); m && o.slot >= 0 && o.slot < static_cast<int>(m->slots.size()))
+        return pluginName(m->slots[static_cast<size_t>(o.slot)].plugin.type, i18n::tr("a plugin"));
+      break;
+    case OP::EditorPreview: return pluginName("gl.edison", i18n::tr("a plugin"));
+    case OP::None: break;
+  }
+  return i18n::tr("a plugin");
+}
+}  // namespace
+
+bool playPressed(App& a) {
+  if (a.engine.playing()) return false;
+  const AudioEngine::OwnPlayback own = a.engine.pluginPlayback();
+  if (own.kind == AudioEngine::OwnPlay::None) {
+    a.startPlayback();
+    return true;
+  }
+  a.engine.stopPluginPlayback();
+  char b[256];
+  std::snprintf(b, sizeof b, i18n::tr("Stopped %s"), ownPlaybackName(a, own).c_str());
+  gPlayHint = std::string(b) + "   (" +
+              i18n::tr(a.engine.mode() == PlayMode::Song ? "press Play again to play the song" : "press Play again to play the pattern") + ")";
+  gPlayHintUntil = a.now + 4.0;
+  std::printf("play: stopped plugin playback (%s)\n", ownPlaybackName(a, own).c_str());  // (dev checks read it)
+  std::fflush(stdout);
+  return false;
+}
+
+std::string playButtonHint(App& a) {
+  if (a.engine.playing()) return "";
+  const AudioEngine::OwnPlayback own = a.engine.pluginPlayback();
+  if (own.kind == AudioEngine::OwnPlay::None) return "";
+  char b[256];
+  std::snprintf(b, sizeof b, i18n::tr("%s is playing on its own: Play stops it, press again to play (Space)"), ownPlaybackName(a, own).c_str());
+  return b;
+}
+
 void panicPressed(App& a) {
   a.engine.stop();
   a.engine.panic();
@@ -459,6 +534,7 @@ void panicPressed(App& a) {
 }
 
 void transportTick(App& a) {
+  if (!gPlayHint.empty() && a.now < gPlayHintUntil && a.hint.empty()) a.setHint(gPlayHint);  // J-112
   if (heldPitches.size() >= 2 && a.settings.getBool("ui.showPlayedChords")) {
     std::vector<Note> held;
     for (int p : heldPitches) held.push_back(Note(0, 1, p, 100));

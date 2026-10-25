@@ -346,6 +346,37 @@ void AudioEngine::noteOn(ObjectId channel, int pitch, float velocity) {
   send(c);
   activity_.fetch_add(1, std::memory_order_relaxed);
 }
+void AudioEngine::ownNoteOn(ObjectId channel, int pitch, float velocity, OwnPlay source) {
+  Cmd c{Cmd::NoteOn};
+  c.id = channel;
+  c.pitch = pitch;
+  c.value = velocity;
+  c.tick2 = static_cast<double>(source);  // J-112: an editor's own Play holds it
+  send(c);
+  activity_.fetch_add(1, std::memory_order_relaxed);
+}
+AudioEngine::OwnPlayback AudioEngine::pluginPlayback() const {
+  OwnPlayback o;
+  // A stop on its way: nothing (the next Play plays; the audio thread
+  // republishes after it ran the stop).
+  if (ownStopDone_.load(std::memory_order_acquire) != ownStopReq_.load(std::memory_order_acquire)) return o;
+  const uint64_t v = ownPlay_.load(std::memory_order_acquire);
+  if (v != 0) {
+    o.kind = static_cast<OwnPlay>((v >> 40) & 0xFF);
+    o.slot = static_cast<int>((v >> 32) & 0xFF);
+    o.id = static_cast<ObjectId>(v & 0xFFFFFFFFu);
+  } else if (previewOwn_.load(std::memory_order_relaxed) && previewing_.load()) {
+    o.kind = OwnPlay::EditorPreview;
+  }
+  return o;
+}
+void AudioEngine::stopPluginPlayback() {
+  if (previewOwn_.load(std::memory_order_relaxed) && previewOwner_) preview(nullptr);
+  Cmd c{Cmd::StopOwn};
+  c.pitch = static_cast<int>(ownStopReq_.fetch_add(1, std::memory_order_acq_rel) + 1);
+  send(c);
+  stopEpoch_.fetch_add(1, std::memory_order_acq_rel);  // J-110: the editors' Play buttons show stopped
+}
 void AudioEngine::noteOff(ObjectId channel, int pitch) {
   Cmd c{Cmd::NoteOff};
   c.id = channel;
@@ -523,9 +554,10 @@ void AudioEngine::drainMidi(const Program* p) {
   mTail_.store(t, std::memory_order_release);
 }
 
-void AudioEngine::preview(SamplePtr sample) {
+void AudioEngine::preview(SamplePtr sample, bool own) {
   if (previewOwner_) retiredSamples_.push_back({previewOwner_, blocks_.load() + 2});
   previewOwner_ = std::move(sample);
+  previewOwn_.store(own && previewOwner_ != nullptr, std::memory_order_relaxed);
   Cmd c{Cmd::Preview};
   c.sample = previewOwner_.get();
   send(c);
@@ -913,7 +945,9 @@ void AudioEngine::drain(const Program* p) {
         while (k < liveKeyCount_ && !(liveKeys_[k].ch == c.id && liveKeys_[k].pitch == key)) ++k;
         if (c.kind == Cmd::NoteOn) {
           liveOn(p, ch, id, static_cast<float>(c.pitch), c.value, 0);
-          if (k == liveKeyCount_ && liveKeyCount_ < kMaxLiveKeys) liveKeys_[liveKeyCount_++] = {c.id, key};
+          const OwnPlay own = static_cast<OwnPlay>(static_cast<int>(c.tick2));  // J-112 (ownNoteOn)
+          if (k == liveKeyCount_ && liveKeyCount_ < kMaxLiveKeys) liveKeys_[liveKeyCount_++] = {c.id, key, own};
+          else if (k < liveKeyCount_) liveKeys_[k].own = own;  // (pressed again: the newest press says whose it is)
         } else {
           liveOff(p, ch, id);
           if (k < liveKeyCount_) liveKeys_[k] = liveKeys_[--liveKeyCount_];
@@ -926,6 +960,11 @@ void AudioEngine::drain(const Program* p) {
         break;
       case Cmd::ReleaseLive:
         if (p) releaseLive(p);
+        break;
+      case Cmd::StopOwn:
+        if (p) stopOwn(p);
+        ownPlay_.store(0, std::memory_order_relaxed);  // (republished after this block)
+        ownStopDone_.store(static_cast<uint32_t>(c.pitch), std::memory_order_release);
         break;
       case Cmd::Launch:
       case Cmd::Release:
@@ -1025,6 +1064,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   readDeviceInput(n);
   if (!p) {
     if (panicLeft_ > 0) killEverything(nullptr);
+    publishOwn(nullptr);
     return;
   }
 
@@ -1278,6 +1318,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     }
   }
   applyPanicFade(p, L, R, n);
+  publishOwn(p);  // J-112
   storeMax(outPeakL_, peakOf(L, n));
   storeMax(outPeakR_, peakOf(R, n));
   storeMax(outPeakRecent_, std::max(peakOf(L, n), peakOf(R, n)));
@@ -1320,6 +1361,68 @@ void AudioEngine::releaseEverything(const Program* p) {
     for (const auto& sl : m.slots)
       if (sl.rt && sl.rt->fx) sl.rt->fx->stopSound();
   resetMidiState();
+}
+
+// ---- J-112: plugin playback (Play while the transport is stopped stops it) --
+
+void AudioEngine::stopOwn(const Program* p) {
+  // Instruments running their own sequence: their live keys go too (the key
+  // that latched it, an audition held on it: the editor forgets them when
+  // its RunLatch sees the stop epoch move).
+  auto ownGen = [p](ObjectId id) {
+    const int ci = p->channelIndex(id);
+    if (ci < 0) return false;
+    const ProgChannel& ch = p->channels[static_cast<size_t>(ci)];
+    return ch.rt && ch.rt->gen && ch.rt->gen->ownPlayback();
+  };
+  for (int k = 0; k < liveKeyCount_;) {
+    const LiveKey key = liveKeys_[k];
+    if (key.own == OwnPlay::None && !ownGen(key.ch)) {
+      ++k;
+      continue;
+    }
+    const int ci = p->channelIndex(key.ch);
+    if (ci >= 0) {
+      const ProgChannel& ch = p->channels[static_cast<size_t>(ci)];
+      if (ch.rt && (ch.rt->gen || !ch.layer.empty())) liveOff(p, ch, kLiveNoteBit | static_cast<uint32_t>(key.pitch));
+    }
+    liveKeys_[k] = liveKeys_[--liveKeyCount_];
+  }
+  liveHeldUi_.store(liveKeyCount_, std::memory_order_relaxed);
+  for (const auto& ch : p->channels)
+    if (ch.rt && ch.rt->gen && ch.rt->gen->ownPlayback()) ch.rt->gen->stopOwnPlayback();  // (a MIDI key latched it)
+  for (const auto& m : p->mixer)
+    for (const auto& sl : m.slots)
+      if (sl.rt && sl.rt->fx && sl.rt->fx->ownPlayback()) sl.rt->fx->stopSound();  // J-110's Stop: tails ring on
+}
+
+void AudioEngine::publishOwn(const Program* p) {
+  auto pack = [](OwnPlay kind, ObjectId id, int slot) {
+    return static_cast<uint64_t>(kind) << 40 | static_cast<uint64_t>(slot & 0xFF) << 32 | static_cast<uint64_t>(id);
+  };
+  uint64_t v = 0;
+  if (p) {
+    for (size_t ci = 0; ci < p->channels.size() && !v; ++ci) {
+      const ProgChannel& ch = p->channels[ci];
+      if (ch.rt && ch.rt->gen && ch.rt->gen->ownPlayback()) v = pack(OwnPlay::Instrument, ch.id, 0);
+    }
+    for (int k = 0; k < liveKeyCount_ && !v; ++k) {
+      if (liveKeys_[k].own == OwnPlay::None) continue;
+      const int ci = p->channelIndex(liveKeys_[k].ch);
+      if (ci < 0) continue;
+      const ProgChannel& ch = p->channels[static_cast<size_t>(ci)];
+      if (ch.rt && ch.rt->sounding.load(std::memory_order_relaxed)) v = pack(liveKeys_[k].own, ch.id, 0);
+    }
+    for (const auto& m : p->mixer) {
+      if (v) break;
+      for (size_t si = 0; si < m.slots.size(); ++si)
+        if (m.slots[si].rt && m.slots[si].rt->fx && m.slots[si].rt->fx->ownPlayback()) {
+          v = pack(OwnPlay::Effect, m.id, static_cast<int>(si));
+          break;
+        }
+    }
+  }
+  ownPlay_.store(v, std::memory_order_release);
 }
 
 void AudioEngine::beginPanic() {

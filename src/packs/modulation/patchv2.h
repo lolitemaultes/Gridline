@@ -108,6 +108,9 @@ class PatchV2Runtime {
   void allOff();
   // J-110: the user's Stop: every note off, hosted effects end their own playback.
   void stopSound();
+  // J-112: a hosted plugin playing on its own (Generator / Effect::ownPlayback), and stopping it.
+  bool ownPlayback() const;
+  void stopOwnPlayback();
   void kill();
   bool active() const;
   // Renders n (<= 256) frames: instruments add into L / R (`instrument`),

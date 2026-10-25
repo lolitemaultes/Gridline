@@ -708,6 +708,12 @@ target_link_libraries(gridline_tests_j110 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j110 PRIVATE tests src)
 target_compile_options(gridline_tests_j110 PRIVATE ${GL_WARN})
 add_test(NAME j110_play_state COMMAND gridline_tests_j110 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-112: Play while the transport is stopped and a plugin plays on its own stops that playback first.
+add_executable(gridline_tests_j112 tests/test_j112.cpp)
+target_link_libraries(gridline_tests_j112 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j112 PRIVATE tests src)
+target_compile_options(gridline_tests_j112 PRIVATE ${GL_WARN})
+add_test(NAME j112_play_stops_plugins COMMAND gridline_tests_j112 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-91 (GitHub issue #1): system interface scale, plugin keys on X11 / Windows, Auto Pan pad, motion switches.
 add_executable(gridline_tests_j91 tests/test_j91.cpp)
 target_link_libraries(gridline_tests_j91 PRIVATE gridline_core)
@@ -1039,6 +1045,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j110_play_state -P ${CMAKE_SOURCE_DIR}/tests/j110_play_state.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j110_play_state_app PROPERTIES TIMEOUT 300)
+
+    # J-112: Space / the Play button / the remote Play while Seltmann's pattern plays (transport stopped) stop the
+    # pattern and leave the transport stopped; the next Play plays the song. Window focused or not.
+    add_test(NAME j112_play_stops_plugins_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j112_play_stops_plugins -P ${CMAKE_SOURCE_DIR}/tests/j112_play_stops_plugins.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j112_play_stops_plugins_app PROPERTIES TIMEOUT 300)
 
     # J-103: a session (demo copy, playing, an editor open) quit by the user, and the layout audit
     # without --screenshot, exit with code 0: no background thread runs into static destruction.

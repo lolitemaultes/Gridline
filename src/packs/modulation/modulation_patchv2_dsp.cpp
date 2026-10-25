@@ -514,6 +514,21 @@ void PatchV2Runtime::stopSound() {
     if (f) f->stopSound();
 }
 
+bool PatchV2Runtime::ownPlayback() const {
+  for (const auto& g : d_->gens)
+    if (g && g->ownPlayback()) return true;
+  for (const auto& f : d_->fxs)
+    if (f && f->ownPlayback()) return true;
+  return false;
+}
+
+void PatchV2Runtime::stopOwnPlayback() {
+  for (auto& g : d_->gens)
+    if (g && g->ownPlayback()) g->stopOwnPlayback();
+  for (auto& f : d_->fxs)
+    if (f && f->ownPlayback()) f->stopSound();
+}
+
 void PatchV2Runtime::kill() {
   for (auto& g : d_->gens)
     if (g) g->kill();
