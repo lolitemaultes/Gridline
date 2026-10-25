@@ -796,7 +796,7 @@ void testInviteName() {
   w.run(1.0);
   b.peer.s->saveNow();
   expect(b.peer.s->ready() && b.peer.s->projectName() == "Renamed after the invite" && a.peer.s->projectName() == "Renamed after the invite" &&
-             b.peer.s->projectFile() == b.peer.folder + "/Renamed after the invite.gridline.json" && std::filesystem::exists(b.peer.s->projectFile()) &&
+             sim::samePath(b.peer.s->projectFile(), b.peer.folder + "/Renamed after the invite.gridline.json") && std::filesystem::exists(b.peer.s->projectFile()) &&
              told == 0,
          "after the first sync the joiner has the project's current name (the invite's never overwrites it, no rename notice)");
   InviteInfo fresh;
@@ -830,10 +830,10 @@ void testControllerRename() {
   expect(c.rename("Album opener", &err), "the controller renames the open project");
   c.frame(0.1);
   auto known = c.knownProjects();
-  expect(!known.empty() && known.front().name == "Album opener" && known.front().folder == folder, "Recent collaborative projects shows the new name");
-  expect(c.folderForName() == parent + "/Album opener", "the folder keeps its name unless asked");
+  expect(!known.empty() && known.front().name == "Album opener" && sim::samePath(known.front().folder, folder), "Recent collaborative projects shows the new name");
+  expect(sim::samePath(c.folderForName(), parent + "/Album opener"), "the folder keeps its name unless asked");
   std::string now;
-  expect(c.renameFolder(doc, &now, &err) && now == parent + "/Album opener" && c.session() && c.session()->config().folder == now &&
+  expect(c.renameFolder(doc, &now, &err) && sim::samePath(now, parent + "/Album opener") && c.session() && c.session()->config().folder == now &&
              std::filesystem::exists(now + "/Album opener.gridline.json") && !std::filesystem::exists(folder),
          "asked to, the folder takes the name; the project reopens from it");
   known = c.knownProjects();
@@ -849,7 +849,7 @@ void testControllerRename() {
   c.rename("Taken", &err);
   c.frame(0.3);
   err.clear();
-  expect(!c.renameFolder(doc, &now, &err) && !err.empty() && c.session() && c.session()->config().folder == parent + "/ALBUM OPENER",
+  expect(!c.renameFolder(doc, &now, &err) && !err.empty() && c.session() && sim::samePath(c.session()->config().folder, parent + "/ALBUM OPENER"),
          "a folder of that name is never replaced");
   c.close();
 }

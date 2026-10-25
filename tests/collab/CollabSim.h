@@ -26,6 +26,12 @@ inline std::string tmpDir(const std::string& name) {
   return p.string();
 }
 
+// Paths compared by their elements, not their spelling: on Windows the
+// product builds native paths (backslashes) while tests append "/name".
+inline bool samePath(const std::string& a, const std::string& b) {
+  return fs::path(a).lexically_normal() == fs::path(b).lexically_normal();
+}
+
 struct Clock {
   uint64_t ms = 1'800'000'000'000ull;
 };

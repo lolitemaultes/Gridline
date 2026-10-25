@@ -494,7 +494,7 @@ void testFiles() {
   t.a.doc.editChannel(ch, "sample", [&](Channel& c) { c.plugin.data = src; });
   t.a.s->frame(t.net.now);
   const std::string localA = t.a.doc.song().channel(ch)->plugin.data;
-  expect(localA.find(t.a.folder) == 0 && localA.find("/Audio/") != std::string::npos, "an added file is copied into the project's Audio folder");
+  expect(samePath(std::filesystem::path(localA).parent_path().string(), t.a.folder + "/Audio"), "an added file is copied into the project's Audio folder");
   const std::string hashName = std::filesystem::path(localA).filename().string();
   expect(hashName.size() == 64 + 4 && hashName.substr(64) == ".wav", "content addressed by SHA-256");
   // the collaborator sees the reference first: placeholder until the file is verified
@@ -1157,13 +1157,17 @@ void testExport() {
   a.nextId = b.nextId = 0;
   a.idSlot = b.idSlot = 0;
   a.idStride = b.idStride = 1;
-  std::string ta = jsonStringify(songToJson(a), 0), tb = jsonStringify(songToJson(b), 0);
-  const std::string from = (std::filesystem::path(folder) / "Audio").lexically_normal().generic_string();
-  const std::string to = (std::filesystem::path(dest) / "Audio").lexically_normal().generic_string();
-  for (size_t p = ta.find(from); p != std::string::npos; p = ta.find(from, p)) ta.replace(p, from.size(), to);
+  // the shared copy's audio folder becomes the private copy's (by path elements: native separators on Windows)
+  const std::string from = folder + "/Audio", to = dest + "/Audio";
+  forEachFileRef(a, [&](std::string& p) {
+    const std::filesystem::path f(p);
+    if (samePath(f.parent_path().string(), from)) p = (std::filesystem::path(to) / f.filename()).lexically_normal().string();
+  });
+  const std::string ta = jsonStringify(songToJson(a), 0), tb = jsonStringify(songToJson(b), 0);
   expect(ta == tb, "its musical content is identical (only the audio folder differs)");
   const Channel* lc = loaded.channel(ch);
-  expect(lc && lc->plugin.data.rfind(to, 0) == 0 && std::filesystem::exists(lc->plugin.data), "its audio files were copied with it");
+  expect(lc && samePath(std::filesystem::path(lc->plugin.data).parent_path().string(), to) && std::filesystem::exists(lc->plugin.data),
+         "its audio files were copied with it");
   expect(tb.find(id.fingerprint()) == std::string::npos && tb.find(siteHex(id.site())) == std::string::npos, "no member identity in the project file");
   // in place (Leave > keep): the history goes, the music stays
   s.reset();
@@ -1228,7 +1232,7 @@ void testRenameLive() {
   expect(t.a.s->projectName() == "Night Drive" && t.c.s->projectName() == "Night Drive", "the new name reaches everyone");
   expect(projectFilesIn(t.a.folder) == std::vector<std::string>{"Night Drive.gridline.json"} &&
              projectFilesIn(t.c.folder) == std::vector<std::string>{"Night Drive.gridline.json"} &&
-             t.c.s->projectFile() == t.c.folder + "/Night Drive.gridline.json" && Session::projectNameOf(t.c.folder) == "Night Drive" &&
+             samePath(t.c.s->projectFile(), t.c.folder + "/Night Drive.gridline.json") && Session::projectNameOf(t.c.folder) == "Night Drive" &&
              Session::projectFileOf(t.c.folder) == t.c.s->projectFile(),
          "each computer's project file is renamed to match (and collab.json records it)");
   Song plain;
@@ -1280,7 +1284,7 @@ void testRenameLive() {
   for (Peer* p : t.all()) p->s->saveNow();
   std::string mine;
   readFileText(t.c.folder + "/Taken.gridline.json", mine);
-  expect(mine == "{\"mine\":1}" && t.c.s->projectFile() == t.c.folder + "/Taken (2).gridline.json" &&
+  expect(mine == "{\"mine\":1}" && samePath(t.c.s->projectFile(), t.c.folder + "/Taken (2).gridline.json") &&
              std::filesystem::exists(t.c.s->projectFile()) && projectFilesIn(t.a.folder) == std::vector<std::string>{"Taken.gridline.json"},
          "a file of another name is never replaced (the project file takes \"Taken (2)\")");
   expect(converged(t), "the songs stay the same throughout");
@@ -1297,7 +1301,7 @@ void testRenameOffline() {
   run(t.net, {&t.a}, t.clock, 0.5);
   std::string err;
   t.b.s = Session::open(t.b.doc, config(bFolder, t.b.id, "Sam", &t.clock), &err);
-  expect(t.b.s && t.b.s->projectName() == "Song" && t.b.s->projectFile() == bFolder + "/Song.gridline.json", "B reopens under the old name");
+  expect(t.b.s && t.b.s->projectName() == "Song" && samePath(t.b.s->projectFile(), bFolder + "/Song.gridline.json"), "B reopens under the old name");
   if (!t.b.s) return;
   std::vector<std::string> told;
   t.b.s->onRenamed = [&](const std::string&, const std::string& after, SiteId) { told.push_back(after); };
@@ -1311,7 +1315,7 @@ void testRenameOffline() {
   // the file is found by the folder, whatever it is called: renamed by hand while closed, with a stale record
   t.b.s.reset();
   std::filesystem::rename(bFolder + "/While you were away.gridline.json", bFolder + "/renamed by hand.gridline.json");
-  expect(Session::projectFileOf(bFolder) == bFolder + "/renamed by hand.gridline.json", "the project file is found in its folder after a rename");
+  expect(samePath(Session::projectFileOf(bFolder), bFolder + "/renamed by hand.gridline.json"), "the project file is found in its folder after a rename");
   t.b.s = Session::open(t.b.doc, config(bFolder, t.b.id, "Sam", &t.clock), &err);
   expect(t.b.s && t.b.s->projectName() == "While you were away" && projectFilesIn(bFolder) == std::vector<std::string>{"While you were away.gridline.json"},
          "opening it renames it back after the project's name");
@@ -1324,13 +1328,13 @@ void testRenameOffline() {
   j.object.erase("file");
   j.object.erase("name");
   writeFileDurable(bFolder + "/.gridline-collab/collab.json", jsonStringify(j, 2));
-  expect(Session::projectNameOf(bFolder).empty() && Session::projectFileOf(bFolder) == bFolder + "/While you were away.gridline.json",
+  expect(Session::projectNameOf(bFolder).empty() && samePath(Session::projectFileOf(bFolder), bFolder + "/While you were away.gridline.json"),
          "a folder without a name record still finds its file");
   t.b.s = Session::open(t.b.doc, config(bFolder, t.b.id, "Sam", &t.clock), &err);
   expect(t.b.s && t.b.s->projectName() == "While you were away", "...and opens with the project's name");
   // the static fallback: no record at all, nothing written yet
   const std::string empty = tmpDir("rename_none");
-  expect(Session::projectFileOf(empty) == empty + "/Project.gridline.json", "no record, no file: Project.gridline.json");
+  expect(samePath(Session::projectFileOf(empty), empty + "/Project.gridline.json"), "no record, no file: Project.gridline.json");
 }
 
 void testRenameConflict() {

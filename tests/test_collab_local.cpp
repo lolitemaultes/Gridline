@@ -256,9 +256,31 @@ void testRemoteDeleteWhileSounding(Pair& p) {
   expect(p.rb.run(0.5) < 1e-4f, "... cleanly (silent afterwards)");
 }
 
+// The digest that tells whether two computers converged: each refers to its own
+// Audio folder, spelt the way its system spells paths.
+void testSongDigest() {
+  const std::string hash(64, 'a');
+  auto withSample = [&](const std::string& path) {
+    Document d;
+    d.reset(makeEmptySong());
+    const ObjectId ch = d.addChannel("Loop", "gl.sampler");
+    d.editChannel(ch, "sample", [&](Channel& c) { c.plugin.data = path; });
+    return sharedSongDigest(d.song());
+  };
+  const std::string alex = withSample("/srv/alex/Song/Audio/" + hash + ".wav");
+  expect(alex == withSample("/Volumes/Music/Song (2)/Audio/" + hash + ".wav") && alex == withSample("Audio/" + hash + ".wav"),
+         "the song digest does not depend on where each computer keeps the project");
+  expect(alex != withSample("/srv/alex/Song/Audio/" + std::string(64, 'b') + ".wav"), "...but on the file it refers to");
+#ifdef _WIN32
+  expect(alex == withSample("D:\\Projects\\Song\\Audio\\" + hash + ".wav") && alex == withSample("C:/Music/Sam/Song/Audio/" + hash + ".wav"),
+         "Windows paths (either separator) give the same digest");
+#endif
+}
+
 }  // namespace
 
 int main() {
+  testSongDigest();
   Pair p;
   expect(p.b.s->ready(), "two collaborators with their own audio engines");
   testLocalPlayback(p);
