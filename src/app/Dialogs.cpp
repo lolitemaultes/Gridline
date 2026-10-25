@@ -15,6 +15,7 @@
 #include "ScriptUi.h"
 #include "Keys.h"
 #include "J31Ui.h"
+#include "MenuParityUi.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Backup.h"
 #include "../core/I18n.h"
@@ -991,7 +992,7 @@ void handleGlobalShortcuts(App& a) {
   ImGuiIO& io = ImGui::GetIO();
   if (io.WantTextInput) return;
   using keys::pressed;
-  if (pressed("transport.play")) a.engine.playing() ? a.engine.stop() : a.startPlayback();
+  if (pressed("transport.play")) a.engine.playing() ? menuparity::stopPressed(a) : a.startPlayback();  // J-109: Stop releases everything
   if (pressed("edit.undo")) a.doc.undo();
   if (pressed("edit.redo")) a.doc.redo();
   if (pressed("edit.history")) a.showHistory = !a.showHistory;

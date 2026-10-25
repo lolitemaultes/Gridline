@@ -18,6 +18,7 @@
 #include "core/Project.h"
 #include "core/flp/Flp.h"
 #include "core/flp/FlpWrapper.h"
+#include "engine/AudioEngine.h"
 #include "engine/Render.h"
 #include "host/EditorLayout.h"
 #include "host/HostedPlugins.h"
@@ -995,6 +996,48 @@ void testTransport() {
   }
 }
 
+// J-109: Stop releases a hosted instrument's notes (note-offs for every note
+// sent, sustain off, All Notes Off on every MIDI channel); the second Stop
+// (panic) adds All Sound Off. The engine plays the plugin as the app does.
+void testStopReleasesHosted() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  expect(cp != nullptr, "J-109: CLAP probe reachable");
+  if (!cp) return;
+  Document d(makeEmptySong());
+  ObjectId ch = d.addChannel("clap", kClapSynth);
+  ProgramBuilder builder;
+  builder.setSampleRate(48000);
+  AudioEngine eng{48000};
+  eng.setProgram(builder.build(d.song()));
+  std::vector<float> L(256), R(256);
+  auto run = [&](int blocks) {
+    float pk = 0;
+    for (int b = 0; b < blocks; ++b) {
+      eng.process(L.data(), R.data(), 256);
+      for (int i = 0; i < 256; ++i) pk = std::max(pk, std::max(std::fabs(L[i]), std::fabs(R[i])));
+    }
+    return pk;
+  };
+  run(4);
+  eng.noteOn(ch, 69, 0.9f);  // a preview key
+  eng.midiEvent(0x90, 72, 100);  // and a note from a MIDI keyboard (selected channel)
+  eng.setMidiTarget(ch);
+  eng.midiEvent(0x90, 74, 100);
+  const float playing = run(8);
+  const int offs0 = cp->noteOffs, ano0 = cp->allNotesOff, aso0 = cp->allSoundOff, sus0 = cp->sustainOff;
+  expect(playing > 0.05f, "J-109: the hosted synth sounds from a live note");
+  expect(!eng.stopPressed(), "J-109: first Stop is a release, not a panic");
+  const float after = run(8);
+  expect(cp->noteOffs - offs0 >= 2, "J-109: Stop sends the hosted plugin a note-off for every note Gridline sent it");
+  expect(cp->allNotesOff - ano0 >= 16 && cp->sustainOff - sus0 >= 16, "J-109: Stop sends sustain off + All Notes Off (CC 123) on all 16 MIDI channels");
+  expect(cp->allSoundOff == aso0, "J-109: the first Stop does not send All Sound Off");
+  expect(after < 1e-6f || run(4) < 1e-6f, "J-109: the hosted synth is silent after Stop");
+  expect(eng.stopPressed(), "J-109: Stop again while stopped is the panic");
+  run(4);
+  expect(cp->allSoundOff - aso0 >= 16, "J-109: the panic sends All Sound Off (CC 120) on all 16 MIDI channels");
+  expect(eng.panicsDone() == 1 && !eng.panicking(), "J-109: the panic completed");
+}
+
 // Sidechain from the mixer: a sidechain send feeds a hosted effect's sidechain input.
 void testSidechainRender() {
   auto render = [](float sideParam) {
@@ -1473,6 +1516,7 @@ int main() {
   testWrapper();
   testTransport();
   testSidechainRender();
+  testStopReleasesHosted();
   testMidiOutRouting();
   testSampleAccurate();
   testLatencyChange();

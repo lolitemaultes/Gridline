@@ -12,4 +12,9 @@ struct GridlineClapProbe {
   int latencyRestarts = 0;
   uint32_t lastFrames = 0;
   int views = 0;  // interfaces attached now (macOS)
+  // J-109: note-offs and channel-mode controllers the synth received.
+  int noteOffs = 0;
+  int allNotesOff = 0;  // CC 123 (any channel)
+  int allSoundOff = 0;  // CC 120 (any channel)
+  int sustainOff = 0;   // CC 64 = 0
 };

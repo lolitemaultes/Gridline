@@ -279,7 +279,11 @@ void AudioEngine::setInterpolation(int quality) {
   interp_ = std::clamp(quality, 0, 7);
   if (interp_ >= 2) sincKernel(samplerSincPoints(interp_));
 }
-void AudioEngine::play() { send({Cmd::Play}); playing_ = true; }
+void AudioEngine::play() {
+  send({Cmd::Play});
+  playing_ = true;
+  activity_.fetch_add(1, std::memory_order_relaxed);
+}
 double AudioEngine::stopTarget() const {
   if (returnToSeek_.load(std::memory_order_relaxed)) return seekTick_.load(std::memory_order_relaxed);
   return mode_.load() == PlayMode::Song && uiLoopB_ > uiLoopA_ ? uiLoopA_ : 0.0;
@@ -340,6 +344,7 @@ void AudioEngine::noteOn(ObjectId channel, int pitch, float velocity) {
   c.pitch = pitch;
   c.value = velocity;
   send(c);
+  activity_.fetch_add(1, std::memory_order_relaxed);
 }
 void AudioEngine::noteOff(ObjectId channel, int pitch) {
   Cmd c{Cmd::NoteOff};
@@ -347,13 +352,35 @@ void AudioEngine::noteOff(ObjectId channel, int pitch) {
   c.pitch = pitch;
   send(c);
 }
-void AudioEngine::panic() { send({Cmd::Panic}); }
+void AudioEngine::panic(bool declick) {
+  panicUi_.store(true, std::memory_order_relaxed);  // (before the command: the audio thread clears it)
+  Cmd c{Cmd::Panic};
+  c.value = declick ? 1.f : 0.f;
+  send(c);
+  if (previewOwner_) preview(nullptr);
+}
+void AudioEngine::releaseAllNotes() { send({Cmd::ReleaseAll}); }
+void AudioEngine::releaseLiveNotes() { send({Cmd::ReleaseLive}); }
+bool AudioEngine::stopPressed() {
+  const uint32_t act = activity_.load(std::memory_order_relaxed);
+  if (!playing_.load() && stopArmed_ && act == stopActivity_) {
+    panic();  // the second Stop: silence, whatever is still ringing
+    return true;
+  }
+  stop();
+  releaseAllNotes();
+  if (previewOwner_) preview(nullptr);
+  stopArmed_ = true;
+  stopActivity_ = activity_.load(std::memory_order_relaxed);
+  return false;
+}
 
 void AudioEngine::launchClip(ObjectId clip) {
   Cmd c{Cmd::Launch};
   c.id = clip;
   send(c);
   playing_ = true;
+  activity_.fetch_add(1, std::memory_order_relaxed);
 }
 void AudioEngine::releaseClip(ObjectId clip) {
   Cmd c{Cmd::Release};
@@ -378,6 +405,7 @@ void AudioEngine::midiEvent(uint8_t status, uint8_t d1, uint8_t d2) {
   if (h - mTail_.load(std::memory_order_acquire) >= kMidiQueue) return;  // full: drop
   mqueue_[h % kMidiQueue] = {status, d1, d2};
   mHead_.store(h + 1, std::memory_order_release);
+  if ((status & 0xF0) == 0x90 && d2 > 0) activity_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void AudioEngine::drainMidi(const Program* p) {
@@ -495,6 +523,7 @@ void AudioEngine::preview(SamplePtr sample) {
   c.sample = previewOwner_.get();
   send(c);
   previewing_ = previewOwner_ != nullptr;
+  if (previewOwner_) activity_.fetch_add(1, std::memory_order_relaxed);
   collectGarbage();
 }
 
@@ -872,12 +901,25 @@ void AudioEngine::drain(const Program* p) {
         const ProgChannel& ch = p->channels[static_cast<size_t>(ci)];
         if (!ch.rt || (!ch.rt->gen && ch.layer.empty())) break;
         uint32_t id = kLiveNoteBit | static_cast<uint32_t>(c.pitch & 0x7F);
-        if (c.kind == Cmd::NoteOn)
+        const int16_t key = static_cast<int16_t>(c.pitch & 0x7F);
+        int k = 0;
+        while (k < liveKeyCount_ && !(liveKeys_[k].ch == c.id && liveKeys_[k].pitch == key)) ++k;
+        if (c.kind == Cmd::NoteOn) {
           liveOn(p, ch, id, static_cast<float>(c.pitch), c.value, 0);
-        else
+          if (k == liveKeyCount_ && liveKeyCount_ < kMaxLiveKeys) liveKeys_[liveKeyCount_++] = {c.id, key};
+        } else {
           liveOff(p, ch, id);
+          if (k < liveKeyCount_) liveKeys_[k] = liveKeys_[--liveKeyCount_];
+        }
+        liveHeldUi_.store(liveKeyCount_, std::memory_order_relaxed);
         break;
       }
+      case Cmd::ReleaseAll:
+        if (p) releaseEverything(p);
+        break;
+      case Cmd::ReleaseLive:
+        if (p) releaseLive(p);
+        break;
       case Cmd::Launch:
       case Cmd::Release:
       case Cmd::LiveStop:
@@ -893,16 +935,10 @@ void AudioEngine::drain(const Program* p) {
         }
         break;
       case Cmd::Panic:
-        if (p)
-          for (const auto& ch : p->channels)
-            if (ch.rt && ch.rt->gen) {
-              ch.rt->gen->kill();
-              ch.rt->keys.clear();
-              ch.rt->pendingCount = 0;
-              ch.rt->inbox.clear();
-              for (const auto& nf : ch.noteFx)
-                if (nf.rt) nf.rt->fx->reset();
-            }
+        if (c.value > 0.5f)
+          beginPanic();
+        else
+          killEverything(p);
         break;
     }
   }
@@ -980,7 +1016,10 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   std::memset(L, 0, sizeof(float) * static_cast<size_t>(n));
   std::memset(R, 0, sizeof(float) * static_cast<size_t>(n));
   readDeviceInput(n);
-  if (!p) return;
+  if (!p) {
+    if (panicLeft_ > 0) killEverything(nullptr);
+    return;
+  }
 
   // --- transport & sequencing ---
   const double blockTick = tickAt(p, anchorTick_, static_cast<double>(clock_));
@@ -1231,8 +1270,87 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       pvPos_ += rate;
     }
   }
+  applyPanicFade(p, L, R, n);
   storeMax(outPeakL_, peakOf(L, n));
   storeMax(outPeakR_, peakOf(R, n));
+  storeMax(outPeakRecent_, std::max(peakOf(L, n), peakOf(R, n)));
+}
+
+// ---- J-109: Stop releases everything; the second Stop (panic) silences ------
+
+void AudioEngine::resetMidiState() {
+  for (int n = 0; n < 128; ++n) {
+    midiNoteCh_[n] = kNoId;
+    sustained_[n] = sostenutoHeld_[n] = sostenutoOff_[n] = false;
+  }
+  sustain_ = sostenuto_ = soft_ = false;
+}
+
+void AudioEngine::releaseLive(const Program* p) {
+  for (int k = 0; k < liveKeyCount_; ++k) {
+    const int ci = p->channelIndex(liveKeys_[k].ch);
+    if (ci < 0) continue;
+    const ProgChannel& ch = p->channels[static_cast<size_t>(ci)];
+    if (ch.rt && (ch.rt->gen || !ch.layer.empty())) liveOff(p, ch, kLiveNoteBit | static_cast<uint32_t>(liveKeys_[k].pitch));
+  }
+  liveKeyCount_ = 0;
+  liveHeldUi_.store(0, std::memory_order_relaxed);
+}
+
+void AudioEngine::releaseEverything(const Program* p) {
+  releaseLive(p);
+  releaseAll(p, 0, true);  // sequenced notes; note processors drop what they latch / hold
+  for (const auto& ch : p->channels) {
+    if (!ch.rt || !ch.rt->gen) continue;
+    // Every voice of the instrument, whoever started it (MIDI input, layers,
+    // note processor output, hosted MIDI routing): a normal release.
+    ch.rt->gen->allNotesOff(0);
+    ch.rt->keys.clear();
+  }
+  resetMidiState();
+}
+
+void AudioEngine::beginPanic() {
+  if (panicLeft_ > 0) return;
+  panicTotal_ = panicLeft_ = std::max(1, static_cast<int>(sr_ * 0.005));  // 5 ms declick
+  panicUi_.store(true, std::memory_order_relaxed);
+}
+
+void AudioEngine::applyPanicFade(const Program* p, float* L, float* R, int n) {
+  if (panicLeft_ <= 0) return;
+  for (int i = 0; i < n; ++i) {
+    const float g = panicLeft_ > 0 ? static_cast<float>(panicLeft_) / static_cast<float>(panicTotal_) : 0.f;
+    L[i] *= g * g;
+    R[i] *= g * g;
+    if (panicLeft_ > 0) --panicLeft_;
+  }
+  if (panicLeft_ == 0) killEverything(p);
+}
+
+void AudioEngine::killEverything(const Program* p) {
+  panicLeft_ = 0;
+  if (p) {
+    for (const auto& ch : p->channels) {
+      if (!ch.rt || !ch.rt->gen) continue;
+      ch.rt->gen->kill();  // hosted instruments: note-offs, All Notes Off, All Sound Off
+      ch.rt->keys.clear();
+      ch.rt->pendingCount = 0;
+      ch.rt->inbox.clear();
+      for (const auto& nf : ch.noteFx)
+        if (nf.rt) nf.rt->fx->reset();
+    }
+    for (const auto& m : p->mixer)  // delay / reverb tails, every track
+      for (const auto& sl : m.slots)
+        if (sl.rt && sl.rt->fx) sl.rt->fx->reset();
+  }
+  liveKeyCount_ = 0;
+  liveHeldUi_.store(0, std::memory_order_relaxed);
+  resetMidiState();
+  pvSample_ = nullptr;
+  previewing_.store(false);
+  clickLeft_ = 0;
+  panicUi_.store(false, std::memory_order_relaxed);
+  panicsDone_.fetch_add(1, std::memory_order_relaxed);
 }
 
 // ---- Live mode: clip launching ----------------------------------------------
@@ -1756,6 +1874,7 @@ void AudioEngine::followHost(const Program* p) {
     pendJump_ = false;
   } else if (!h.playing && tPlaying_) {
     releaseAll(p, 0, true);
+    releaseEverything(p);  // J-109: the host's Stop silences live / MIDI notes too
     tPlaying_ = false;
     landAt(target);
     pendJump_ = false;

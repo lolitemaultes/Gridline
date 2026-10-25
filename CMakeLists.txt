@@ -696,6 +696,12 @@ target_link_libraries(gridline_tests_j87 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j87 PRIVATE tests src)
 target_compile_options(gridline_tests_j87 PRIVATE ${GL_WARN})
 add_test(NAME j87 COMMAND gridline_tests_j87 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-109: Stop releases every sound outside the song; Stop twice (panic) silences tails too.
+add_executable(gridline_tests_j109 tests/test_j109.cpp)
+target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j109 PRIVATE tests src)
+target_compile_options(gridline_tests_j109 PRIVATE ${GL_WARN})
+add_test(NAME j109_stop_sound COMMAND gridline_tests_j109 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-91 (GitHub issue #1): system interface scale, plugin keys on X11 / Windows, Auto Pan pad, motion switches.
 add_executable(gridline_tests_j91 tests/test_j91.cpp)
 target_link_libraries(gridline_tests_j91 PRIVATE gridline_core)
@@ -969,6 +975,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/j91_transport_click.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j91_transport_click PROPERTIES TIMEOUT 300)
+
+    # J-109: Stop releases preview keys, typed keys (also on focus loss) and the browser preview; Stop twice = panic.
+    add_test(NAME j109_stop_sound_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DCLI=$<TARGET_FILE:gridline>
+                     -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json -DOUT=${CMAKE_BINARY_DIR}/j109_stop_sound
+                     -P ${CMAKE_SOURCE_DIR}/tests/j109_stop_sound.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j109_stop_sound_app PROPERTIES TIMEOUT 300)
 
     # J-83: wheel over a mixer gain fader: thin mixer scrolls, wide adjusts, Ctrl / click / momentum / live resize.
     add_test(NAME j83_mixer_wheel

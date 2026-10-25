@@ -128,7 +128,7 @@ void App::runAction(RemoteAction action, bool fromMmc) {
         startPlayback();
       }
       break;
-    case RemoteAction::Stop: engine.stop(); break;
+    case RemoteAction::Stop: menuparity::stopPressed(*this); break;  // J-109: twice = panic
     case RemoteAction::Record:
       recordArmed = !recordArmed;
       notify(recordArmed ? "Recording armed" : "Recording off");

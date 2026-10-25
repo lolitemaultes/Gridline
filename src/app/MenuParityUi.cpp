@@ -24,6 +24,7 @@
 #include "ContextMenus.h"
 #include "ExportUi.h"
 #include "Midi.h"
+#include "Keys.h"
 #include "ScriptUi.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -440,9 +441,22 @@ void timeFormatMenu(App& a) {
 void stopMenuItems(App& a) {
   const bool on = a.settings.getBool("transport.rememberSeek");
   if (ImGui::MenuItem(i18n::tr("Stop returns to the set position"), nullptr, on)) a.settings.set("transport.rememberSeek", !on);
+  if (ImGui::MenuItem(i18n::tr("Panic: stop all sound"), keys::label("tools.stopSound"))) panicPressed(a);
+  ui::Hint(i18n::tr("Silences everything at once: every note, delay and reverb tails, previews and plugins (pressing Stop twice does the same)"));
 }
 
-void stopPressed(App& a) { a.engine.stop(); }  // J-49: the engine returns to the seek position
+// J-49: the engine returns to the seek position. J-109: the first Stop also
+// releases every sounding note (previews, held keys, pads, MIDI input) and
+// stops the sample preview; Stop again while stopped is the panic.
+void stopPressed(App& a) {
+  if (a.engine.stopPressed()) a.notify("All sound stopped");
+}
+
+void panicPressed(App& a) {
+  a.engine.stop();
+  a.engine.panic();
+  a.notify("All sound stopped");
+}
 
 void transportTick(App& a) {
   if (heldPitches.size() >= 2 && a.settings.getBool("ui.showPlayedChords")) {

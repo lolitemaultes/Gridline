@@ -80,10 +80,7 @@ std::vector<ObjectId> selectedChannels(const App& a) {
   return out;
 }
 
-void stopSound(App& a) {
-  a.engine.panic();
-  a.notify("All sound stopped");
-}
+void stopSound(App& a) { menuparity::panicPressed(a); }  // J-109: stops the transport too
 
 }  // namespace
 

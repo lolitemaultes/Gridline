@@ -125,6 +125,7 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
     }
     case CLAP_EVENT_NOTE_OFF: {
       auto* n = reinterpret_cast<const clap_event_note_t*>(h);
+      ++gProbe.noteOffs;
       if (n->note_id == s->noteId || n->note_id == -1) s->amp = 0;
       if (s->echo.load() >= 0.5 && out) echoNote(n, out);
       break;
@@ -155,6 +156,9 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
         ++s->notes;
       }
       if (st == 0x80 || (st == 0x90 && m->data[2] == 0)) s->amp = 0;
+      if (st == 0xB0 && m->data[1] == 123) ++gProbe.allNotesOff, s->amp = 0;
+      if (st == 0xB0 && m->data[1] == 120) ++gProbe.allSoundOff, s->amp = 0;
+      if (st == 0xB0 && m->data[1] == 64 && m->data[2] == 0) ++gProbe.sustainOff;
       if (st == 0xB0 && m->data[1] == 20 && out) {  // behave like an edit in the plugin's own editor
         clap_event_param_gesture_t g{};
         g.header = {sizeof g, h->time, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_GESTURE_BEGIN, 0};

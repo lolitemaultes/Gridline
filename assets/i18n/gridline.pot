@@ -6086,6 +6086,10 @@ msgid "%d logged note events"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "All sound stopped"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Audio clip channels"
 msgstr ""
 
@@ -6246,6 +6250,10 @@ msgid "Other devices follow Gridline's tempo and transport (MIDI clock on the MI
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Panic: stop all sound"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Pitch and speed change together, like a turntable (band-limited, no aliasing)"
 msgstr ""
 
@@ -6350,6 +6358,10 @@ msgid "Show played chords in the hint bar"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Silences everything at once: every note, delay and reverb tails, previews and plugins (pressing Stop twice does the same)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Single voices, vocals, bass and leads: tighter timing"
 msgstr ""
 
@@ -6427,10 +6439,6 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "All playlist tracks..."
-msgstr ""
-
-#: src/app/Menus.cpp
-msgid "All sound stopped"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -9702,7 +9710,7 @@ msgid "Song position (right-click: bars and beats, minutes and seconds, or timec
 msgstr ""
 
 #: src/app/TopBar.cpp
-msgid "Stop and return to the set song position (right-click: options)"
+msgid "Stop and return to the set song position; press again to silence everything (right-click: options)"
 msgstr ""
 
 #: src/app/TopBar.cpp

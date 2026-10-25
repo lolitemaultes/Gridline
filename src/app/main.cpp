@@ -306,6 +306,20 @@ struct HeldNote {
   double startTick;
 };
 
+// J-109: ends every note held on the typing keyboard (on the channel each key started it on).
+void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
+  for (const auto& [k, h] : held)
+    for (int p : app.typing.keyUp(typingKey(k))) {
+      app.engine.noteOff(h.channel, p);
+      app.playedNoteOff(h.channel, p);
+    }
+  for (int p : app.typing.releaseAll()) {  // (keys not in `held`)
+    app.engine.noteOff(app.selChannel, p);
+    app.playedNoteOff(app.selChannel, p);
+  }
+  held.clear();
+}
+
 // J-28 dev check: scripted input for interaction checks (--dev-input file).
 // One command per line, "<frame> <command> <args>", in logical pixels:
 //   move x y · down b · up b · mod ctrl|shift|alt|super 0|1 (super = Cmd: Ctrl + click is a right click on macOS) · wheel dy · key <letter>
@@ -322,6 +336,8 @@ struct HeldNote {
 //   rack (J-84: channel rack layout, step scroll, channel volumes / pans, step velocities / pitches to stdout)
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
+//   J-109: sdlkey <key> down|up [ctrl|super] · focuslost · typing on|off · noteon|noteoff <channel index> <pitch> ·
+//   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing)
 //   waitfor <name> <seconds> (J-108: the script and --frames stop counting until the app reports
 //   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s")
 std::string devShotPending;
@@ -620,6 +636,41 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "transport") {
       std::printf("transport frame %d: pos %.0f playing %d seek %.0f mode %d\n", frame, app.engine.position(), app.engine.playing() ? 1 : 0,
                   app.engine.seekPosition(), static_cast<int>(app.engine.mode()));
+      std::fflush(stdout);
+    } else if (l.cmd == "sdlkey" || l.cmd == "focuslost") {
+      // J-109: a real SDL key down / up ("sdlkey z down", "sdlkey z up ctrl") or the
+      // main window losing focus (to another application or window).
+      SDL_Event e{};
+      SDL_Window* w = SDL_GL_GetCurrentWindow();
+      if (l.cmd == "focuslost") {
+        e.type = SDL_WINDOWEVENT;
+        e.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+        e.window.windowID = w ? SDL_GetWindowID(w) : 0;
+      } else {
+        const bool down = l.a1 != "up";
+        e.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+        e.key.windowID = w ? SDL_GetWindowID(w) : 0;
+        e.key.state = down ? SDL_PRESSED : SDL_RELEASED;
+        e.key.keysym.sym = l.a0.empty() ? 0 : static_cast<SDL_Keycode>(l.a0[0]);
+        e.key.keysym.scancode = SDL_GetScancodeFromKey(e.key.keysym.sym);
+        e.key.keysym.mod = static_cast<Uint16>(l.a2 == "ctrl" ? KMOD_LCTRL : l.a2 == "super" ? KMOD_LGUI : KMOD_NONE);
+      }
+      SDL_PushEvent(&e);
+    } else if (l.cmd == "typing") {  // J-109: the typing keyboard on / off
+      app.typingKeyboard = l.a0 != "off";
+    } else if (l.cmd == "noteon" || l.cmd == "noteoff") {  // J-109: a live note on channel <index> (pads, preview keys)
+      const auto& chs = app.doc.song().channels;
+      const size_t ci = static_cast<size_t>(std::max(0, std::atoi(l.a0.c_str())));
+      if (ci < chs.size()) {
+        if (l.cmd == "noteon") app.engine.noteOn(chs[ci].id, std::atoi(l.a1.c_str()), 0.9f);
+        else app.engine.noteOff(chs[ci].id, std::atoi(l.a1.c_str()));
+      }
+    } else if (l.cmd == "previewfile") {  // J-109: the browser's sample preview
+      app.previewSample(l.args.empty() ? l.a0 : l.args[0]);  // (a quoted path may hold spaces)
+    } else if (l.cmd == "sound") {  // J-109: what is sounding (output peak since the last "sound")
+      std::printf("sound frame %d: peak %.6f live %d previewing %d panics %u playing %d\n", frame,
+                  static_cast<double>(app.engine.takeOutputPeak()), app.engine.liveHeld(), app.engine.previewing() ? 1 : 0,
+                  app.engine.panicsDone(), app.engine.playing() ? 1 : 0);
       std::fflush(stdout);
     } else if (l.cmd == "audio") {
       browserui::DropPlace place;
@@ -1304,6 +1355,26 @@ int main(int argc, char** argv) {
         SDL_GetWindowPosition(window, &wx, &wy);
         xdragui::sdlDropComplete(static_cast<float>(mx - wx), static_cast<float>(my - wy));
       }
+      // J-109: the window lost focus (another application, a plugin window,
+      // a key released over another window): no key-up will come, so every
+      // note held from the interface ends now (typed keys, clicked keys, pads).
+      if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST &&
+          ev.window.windowID == SDL_GetWindowID(window)) {
+        releaseTypedNotes(app, held);
+        app.engine.releaseLiveNotes();
+      }
+      // A held typed note ends on its key-up whatever changed meanwhile
+      // (a modifier pressed, a text field focused, the typing keyboard switched off).
+      if (ev.type == SDL_KEYUP && held.count(ev.key.keysym.sym) && !(app.typingKeyboard && !io.WantTextInput &&
+                                                                     !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)))) {
+        const SDL_Keycode k = ev.key.keysym.sym;
+        const ObjectId chId = held[k].channel;
+        held.erase(k);
+        for (int p : app.typing.keyUp(typingKey(k))) {
+          app.engine.noteOff(chId, p);
+          app.playedNoteOff(chId, p);
+        }
+      }
       // Typing keyboard (key events straight from SDL so key-up is never missed).
       if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && app.typingKeyboard && !io.WantTextInput &&
           !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT))) {
@@ -1345,13 +1416,7 @@ int main(int argc, char** argv) {
       app.audioReopen = false;
       openAudio(app);
     }
-    if (!app.typingKeyboard && app.typing.anyHeld()) {
-      for (int p : app.typing.releaseAll()) {
-        app.engine.noteOff(app.selChannel, p);
-        app.playedNoteOff(app.selChannel, p);
-      }
-      held.clear();
-    }
+    if (!app.typingKeyboard && app.typing.anyHeld()) releaseTypedNotes(app, held);
 
     double now = static_cast<double>(SDL_GetPerformanceCounter() - t0) / static_cast<double>(SDL_GetPerformanceFrequency());
     {

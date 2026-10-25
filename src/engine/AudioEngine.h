@@ -119,7 +119,34 @@ class AudioEngine {
   void setLoopRange(Tick start, Tick end);
   void noteOn(ObjectId channel, int pitch, float velocity);
   void noteOff(ObjectId channel, int pitch);
-  void panic();  // all sound off
+  // J-109: the Stop the user presses (transport button, Space, the stop
+  // shortcut, a MIDI controller / remote stop). FL-style, in two stages:
+  //  - first press (while playing, or after anything new started sounding):
+  //    stop() plus releaseAllNotes() and the sample preview stopped;
+  //  - pressed again with nothing new since (the transport already stopped):
+  //    panic(). Returns true when it panicked.
+  bool stopPressed();
+  // Releases every sounding note on every channel with its normal release
+  // (sequenced, live / preview keys, pads, MIDI input, note processors and the
+  // notes they hold); hosted instruments get note-offs for every note they
+  // were sent, sustain off and All Notes Off (CC 123) on all MIDI channels.
+  void releaseAllNotes();
+  // Releases only the notes played from Gridline's own interface (clicked /
+  // typed keys, pads, auditions): the window lost focus, a key-up went
+  // elsewhere. Notes held on a MIDI controller keep sounding.
+  void releaseLiveNotes();
+  // All sound off: the output fades out over a few milliseconds (no click),
+  // then every voice is killed, every effect's state (delay / reverb tails)
+  // is cleared on every mixer track, hosted plugins get All Sound Off
+  // (CC 120) and the sample preview stops. declick = false: at once, with
+  // the next block (a project being replaced).
+  void panic(bool declick = true);
+  bool panicking() const { return panicUi_.load(std::memory_order_relaxed); }
+  uint32_t panicsDone() const { return panicsDone_.load(std::memory_order_relaxed); }
+  // Peak of the output since the last call (dev checks).
+  float takeOutputPeak() { return outPeakRecent_.exchange(0.f, std::memory_order_relaxed); }
+  // Notes held from the interface (live notes) right now (audio thread count; tests / dev checks).
+  int liveHeld() const { return liveHeldUi_.load(std::memory_order_relaxed); }
   // Live mode: launch / release (gate pads) a live-area clip, stop a track or
   // every track. Launches start on the track's launch grid; a launch while
   // stopped starts the transport.
@@ -296,7 +323,7 @@ class AudioEngine {
  private:
   struct Cmd {
     enum Kind { Play, Stop, Pause, Mode, Pattern, Position, NoteOn, NoteOff, Panic, Loop, Preview, LoopRange,
-                Launch, Release, LiveStop, LiveStopAll, Jump } kind;
+                Launch, Release, LiveStop, LiveStopAll, Jump, ReleaseAll, ReleaseLive } kind;
     ObjectId id = kNoId;
     int pitch = 0;
     float value = 0;
@@ -348,6 +375,13 @@ class AudioEngine {
     return static_cast<int64_t>(std::ceil(clockMap(p).samplesBetween(anchor, tick, sr_) - 1e-9));
   }
   void drainMidi(const Program* p);
+  // J-109 (audio thread): releaseAllNotes / releaseLiveNotes / the panic.
+  void releaseEverything(const Program* p);
+  void releaseLive(const Program* p);
+  void resetMidiState();
+  void beginPanic();
+  void applyPanicFade(const Program* p, float* L, float* R, int n);
+  void killEverything(const Program* p);
   // Mixer graph of one block (AudioEngineGraph.cpp).
   void runGraph(const Program* p, int n);
   static void graphJob(void* self, int worker);
@@ -410,6 +444,27 @@ class AudioEngine {
   bool sostenutoOff_[128] = {};   // their key was released while the pedal was down
   uint8_t midiNoteSrc_[128] = {}; // MIDI channel each sounding MIDI note came from
   float bend_[16] = {};           // current pitch bend per MIDI channel (semitones)
+  // J-109: notes held from the interface (Cmd::NoteOn / NoteOff), by channel
+  // id and key, so they can be released together (audio thread).
+  struct LiveKey {
+    ObjectId ch;
+    int16_t pitch;
+  };
+  static constexpr int kMaxLiveKeys = 256;
+  LiveKey liveKeys_[kMaxLiveKeys] = {};
+  int liveKeyCount_ = 0;
+  std::atomic<int> liveHeldUi_{0};
+  // The panic's declick fade (audio thread) and its state for the UI.
+  int panicLeft_ = 0, panicTotal_ = 0;
+  std::atomic<bool> panicUi_{false};
+  std::atomic<uint32_t> panicsDone_{0};
+  std::atomic<float> outPeakRecent_{0};
+  // Two-stage Stop (UI thread): anything that may start sound bumps
+  // activity_ (also from the MIDI thread); a Stop with no activity since the
+  // previous one while stopped is the second press.
+  std::atomic<uint32_t> activity_{0};
+  uint32_t stopActivity_ = 0;
+  bool stopArmed_ = false;
   // Count-in and sync output.
   int64_t countInLeft_ = 0, countInTotal_ = 0, countInBeat_ = 1;
   std::atomic<bool> countingIn_{false};

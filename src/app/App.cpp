@@ -289,7 +289,7 @@ void App::applyProjectDefaults(Song& s) const {
 
 void App::startProject(Song s) {
   engine.stopToStart();
-  engine.panic();
+  engine.panic(false);  // (the project is replaced: no fade over the new one)
   doc.reset(std::move(s));  // the new project is the "saved" baseline, with no history
   trimSamplesAt_ = now + 1.0;  // J-30: the old project's samples leave the cache once its program is retired
   projectPath.clear();
@@ -368,7 +368,7 @@ bool App::openProject(const std::string& path) {
     return false;
   }
   engine.stopToStart();
-  engine.panic();
+  engine.panic(false);  // (the project is replaced: no fade over the new one)
   doc.reset(std::move(s));
   trimSamplesAt_ = now + 1.0;  // J-30
   projectPath = path;
@@ -416,7 +416,7 @@ bool App::openFlpProject(const std::string& path, const std::string& shownAs) {
     return false;
   }
   engine.stopToStart();
-  engine.panic();
+  engine.panic(false);  // (the project is replaced: no fade over the new one)
   doc.reset(std::move(s));
   trimSamplesAt_ = now + 1.0;  // J-30
   // Not a Gridline file yet: Save asks where and in which format, so the

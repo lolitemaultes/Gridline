@@ -848,11 +848,20 @@ class HostedGenerator final : public Generator {
     e.channel = static_cast<int8_t>(s & 0x0F);
     queue(e, eventOffset());
   }
+  // J-109: every note Gridline sent ends, then sustain off and All Notes Off
+  // (CC 123) on every MIDI channel, for notes the plugin holds by itself
+  // (its own arpeggiator / latch, notes a controller's raw MIDI started).
   void onAllOff() override {
     for (auto& n : notes_)
       if (n.used) stopNote(n.id, 0.5f);
+    channelMessages(false);
   }
-  void onKill() override { onAllOff(); }
+  // Panic: the same plus All Sound Off (CC 120): tails end too.
+  void onKill() override {
+    for (auto& n : notes_)
+      if (n.used) stopNote(n.id, 0.0f);
+    channelMessages(true);
+  }
   void configure(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx) override {
     (void)aux;
     sampleRate_ = ctx.sampleRate;
@@ -899,7 +908,7 @@ class HostedGenerator final : public Generator {
   void queue(const NoteEvent& e, int offset) {
     if (entered_)
       core_->queueEvent(e, offset);
-    else if (deferredCount_ < 256)
+    else if (deferredCount_ < kDeferred)
       deferred_[deferredCount_++] = e;
   }
   void clearAux(int from, int n) {
@@ -957,6 +966,24 @@ class HostedGenerator final : public Generator {
     queue(e, eventOffset());
     n->used = false;
   }
+  void channelMessages(bool soundOff) {
+    if (!core_->backend()->hasEventInput()) return;
+    for (int ch = 0; ch < 16; ++ch) {
+      NoteEvent e;
+      e.type = NoteEvent::Midi;
+      e.channel = static_cast<int8_t>(ch);
+      e.midi[0] = static_cast<uint8_t>(0xB0 | ch);
+      e.midi[1] = 64;  // sustain pedal up
+      e.midi[2] = 0;
+      queue(e, eventOffset());
+      e.midi[1] = 123;  // All Notes Off
+      queue(e, eventOffset());
+      if (soundOff) {
+        e.midi[1] = 120;  // All Sound Off
+        queue(e, eventOffset());
+      }
+    }
+  }
   // Glides: one tuning value every 32 samples of the block (render span n).
   void emitGlides(int n) {
     for (auto& nt : notes_) {
@@ -979,7 +1006,8 @@ class HostedGenerator final : public Generator {
 
   std::unique_ptr<Core> core_;
   double sampleRate_ = 44100;
-  NoteEvent deferred_[256];  // events from outside a block (kill, panic): sent with the next one
+  static constexpr int kDeferred = 512;
+  NoteEvent deferred_[kDeferred];  // events from outside a block (kill, panic): sent with the next one
   int deferredCount_ = 0;
   bool entered_ = false;
   Note notes_[256];
@@ -1000,7 +1028,10 @@ class HostedEffect final : public Effect {
     (void)aux;
     run(state, ctx, L, R, n);
   }
-  void reset() override {}
+  // J-109 (audio thread: panic, bad output): a plugin's tails are its own
+  // state; effects that take MIDI get All Notes Off / All Sound Off with the
+  // next block.
+  void reset() override { soundOff_ = true; }
   void setSideIo(const SideIo& io) override { io_ = io; }
   void prepareHost(const PluginState& state, double sampleRate) override { core_->prepareHost(state, sampleRate); }
   int latencySamples() const override { return core_->totalLatency(); }
@@ -1018,12 +1049,26 @@ class HostedEffect final : public Effect {
     if (!core_->enter()) return;  // reconfiguring: pass through
     core_->beginBlock(ctx);
     core_->sendParams(state);
+    if (soundOff_) {
+      soundOff_ = false;
+      if (p->hasEventInput())
+        for (int ch = 0; ch < 16; ++ch)
+          for (uint8_t cc : {uint8_t{123}, uint8_t{120}}) {
+            NoteEvent e;
+            e.type = NoteEvent::Midi;
+            e.channel = static_cast<int8_t>(ch);
+            e.midi[0] = static_cast<uint8_t>(0xB0 | ch);
+            e.midi[1] = cc;
+            core_->queueEvent(e, 0);
+          }
+    }
     core_->run(n, L, R, io_.scL, io_.scR, L, R, false, nullptr, 0, 0);
     core_->leave();
   }
 
   std::unique_ptr<Core> core_;
   SideIo io_;
+  bool soundOff_ = false;  // (audio thread) send All Sound Off with the next block
 };
 
 std::unique_ptr<Core> makeCore(const std::string& type) {

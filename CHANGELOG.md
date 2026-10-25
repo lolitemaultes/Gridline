@@ -27,6 +27,15 @@ release workflow publishes the section of the tagged version as the release note
   playlist, rack or piano roll, or a pattern sent to the project.
 - `gridline seltmann-analyse` prints what Seltmann hears in a set of files.
 
+### Stop silences everything
+
+- Stop now stops every sound, not only the song: notes from the piano roll and channel keyboards,
+  typed keys, a MIDI keyboard (sustain pedal included), drum and Seltmann pads, the arpeggiator,
+  the browser and audio editor previews, and installed plugins (note-offs plus All Notes Off) are
+  released with their normal tails. Press Stop again to silence everything at once, delay and reverb
+  tails included, with a short fade so nothing clicks; "Panic: stop all sound" is also in the Stop
+  button's menu (Ctrl+H). Keys held when Gridline loses focus no longer get stuck.
+
 ## 0.6.1
 
 ### Drawing, Convolver and stability

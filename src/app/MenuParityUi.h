@@ -35,7 +35,8 @@ void knobItems(App& a, ParamId pid);                            // knob menu (te
 std::string positionText(App& a, double tick);  // song position in the chosen time format
 void timeFormatMenu(App& a);                    // right-click on the song position
 void stopMenuItems(App& a);                     // right-click on the stop button
-void stopPressed(App& a);                       // the stop button (remember seek time)
+void stopPressed(App& a);                       // the stop button (remember seek time; J-109: twice = panic)
+void panicPressed(App& a);                      // J-109: stop and silence everything now
 void transportTick(App& a);                     // per frame: playback start position
 
 // ---- MIDI input ----
