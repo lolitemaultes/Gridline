@@ -123,13 +123,16 @@ struct HeldNotes {
       if (v[i].id == id) return true;
     return false;
   }
-  // Sorted copy: by pitch (ascending) or in the order played.
+  // Sorted copy: by pitch (ascending) or in the order played. A stable
+  // insertion sort in place: std::stable_sort takes a temporary buffer from the
+  // heap (libstdc++ always does, even for two notes), on the audio thread.
   int sorted(N* out, bool byPitch) const {
-    std::copy(v, v + n, out);
-    if (byPitch)
-      std::stable_sort(out, out + n, [](const N& a, const N& b) { return a.pitch < b.pitch; });
-    else
-      std::stable_sort(out, out + n, [](const N& a, const N& b) { return a.order < b.order; });
+    auto before = [byPitch](const N& a, const N& b) { return byPitch ? a.pitch < b.pitch : a.order < b.order; };
+    for (int i = 0; i < n; ++i) {
+      int j = i;
+      for (; j > 0 && before(v[i], out[j - 1]); --j) out[j] = out[j - 1];
+      out[j] = v[i];
+    }
     return n;
   }
 };

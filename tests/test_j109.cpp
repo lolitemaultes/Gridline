@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <new>
@@ -26,17 +27,54 @@
 #include "engine/Sample.h"
 
 // ---- allocation counter (realtime-safety checks) ----
+// The stack of the first counted allocation is kept (where <execinfo.h>
+// exists) and printed when a no-allocation check fails, so a failure on a CI
+// machine says where it came from.
+#if !defined(_WIN32) && defined(__has_include)
+#if __has_include(<execinfo.h>)
+#include <execinfo.h>
+#define GL_J109_BACKTRACE 1
+#endif
+#endif
 namespace {
 thread_local bool gCount = false;
 std::atomic<long> gAllocs{0};
+#ifdef GL_J109_BACKTRACE
+void* gFrames[48];
+int gFrameCount = -1;  // -1: armed, nothing captured yet
+#endif
+void counted(std::size_t n) {
+  gAllocs.fetch_add(1, std::memory_order_relaxed);
+#ifdef GL_J109_BACKTRACE
+  if (gFrameCount < 0) {
+    gCount = false;  // (backtrace may allocate the first time)
+    gFrameCount = backtrace(gFrames, 48);
+    gCount = true;
+  }
+#endif
+  (void)n;
+}
+void armTrace() {
+#ifdef GL_J109_BACKTRACE
+  gFrameCount = -1;
+#endif
+}
+void printTrace() {
+#ifdef GL_J109_BACKTRACE
+  if (gFrameCount <= 0) return;
+  std::fprintf(stderr, "# first allocation on the audio thread:\n");
+  std::fflush(stderr);
+  backtrace_symbols_fd(gFrames, gFrameCount, 2);
+#endif
+}
 }  // namespace
 void* operator new(std::size_t n) {
-  if (gCount) gAllocs.fetch_add(1, std::memory_order_relaxed);
+  if (gCount) counted(n);
   if (void* p = std::malloc(n ? n : 1)) return p;
   throw std::bad_alloc();
 }
 void* operator new[](std::size_t n) {
-  if (gCount) gAllocs.fetch_add(1, std::memory_order_relaxed);
+  if (gCount) counted(n);
   if (void* p = std::malloc(n ? n : 1)) return p;
   throw std::bad_alloc();
 }
@@ -63,6 +101,7 @@ struct Rig {
   std::vector<float> bl = std::vector<float>(kBlock), br = std::vector<float>(kBlock);
   long allocs = 0;
   explicit Rig(const Song& s) {
+    armTrace();
     builder.setSampleRate(kSr);
     eng.setProgram(builder.build(s));
     L.reserve(1 << 22);
@@ -79,6 +118,15 @@ struct Rig {
       L.insert(L.end(), bl.begin(), bl.end());
       R.insert(R.end(), br.begin(), br.end());
     }
+  }
+  void resetAllocs() {
+    allocs = 0;
+    armTrace();
+  }
+  // No allocation since the start (or resetAllocs); else prints where the first one came from.
+  bool noAllocs() const {
+    if (allocs != 0) printTrace();
+    return allocs == 0;
   }
   size_t mark() const { return L.size(); }
   float peak(size_t from, size_t to) const {
@@ -115,7 +163,7 @@ void testPreviewNote() {
   rig.run(secs(2.0));
   expect(rig.peakFrom(rig.mark() - secs(0.2)) < 1e-4f, "first Stop: silence after the release tail");
   expect(rig.eng.liveHeld() == 0, "first Stop: no live note held any more");
-  expect(rig.allocs == 0, "preview note + Stop: no allocation on the audio thread");
+  expect(rig.noAllocs(), "preview note + Stop: no allocation on the audio thread");
 }
 
 // 2. A note into a reverb + delay: first Stop releases (the tails ring on),
@@ -131,7 +179,7 @@ void testPanicClearsTails() {
   rig.eng.play();
   rig.eng.noteOn(ch, 60, 1.0f);
   rig.run(secs(0.3));
-  rig.allocs = 0;  // (only Stop and the panic are measured here)
+  rig.resetAllocs();  // (only Stop and the panic are measured here)
   rig.eng.noteOff(ch, 60);
   rig.run(secs(0.3));
   expect(!rig.eng.stopPressed(), "tails: first Stop releases");
@@ -156,7 +204,7 @@ void testPanicClearsTails() {
   rig.run(secs(0.1));
   rig.eng.noteOff(ch, 60);
   expect(rig.peakFrom(s4) > 0.01f, "after a panic the channel plays again");
-  expect(rig.allocs == 0, "tails + panic: no allocation on the audio thread");
+  expect(rig.noAllocs(), "tails + panic: no allocation on the audio thread");
 }
 
 // 3. A pad (drum kit pad: one-shot) and an arpeggiated held key.
@@ -173,7 +221,7 @@ void testPadAndArp() {
   rig.eng.stopPressed();
   rig.run(secs(3.0));
   expect(rig.peakFrom(rig.mark() - secs(0.25)) < 1e-4f, "pad + arpeggiator: silent after Stop (the arpeggiator stops making notes)");
-  expect(rig.allocs == 0, "pad + arpeggiator + Stop: no allocation on the audio thread");
+  expect(rig.noAllocs(), "pad + arpeggiator + Stop: no allocation on the audio thread");
 }
 
 // 4. The browser's sample preview.
@@ -193,7 +241,7 @@ void testBrowserPreview() {
   const size_t at = rig.mark();
   rig.run(secs(0.1));
   expect(rig.peakFrom(at) < 1e-7f, "browser preview: silent after Stop");
-  expect(rig.allocs == 0, "browser preview + Stop: no allocation on the audio thread");
+  expect(rig.noAllocs(), "browser preview + Stop: no allocation on the audio thread");
 }
 
 // 5. MIDI input: a held key with the sustain pedal down; a focus loss does not
@@ -222,7 +270,7 @@ void testMidiAndFocus() {
   rig.eng.midiEvent(0x80, 69, 0);  // the pedal state was reset by Stop: the release ends it
   rig.run(secs(2.0));
   expect(rig.peakFrom(rig.mark() - secs(0.2)) < 1e-4f, "MIDI: after Stop the sustain pedal no longer holds new notes");
-  expect(rig.allocs == 0, "MIDI + focus + Stop: no allocation on the audio thread");
+  expect(rig.noAllocs(), "MIDI + focus + Stop: no allocation on the audio thread");
 }
 
 // 6. The two-stage rule: anything new between two Stops makes the next one a
@@ -244,7 +292,7 @@ void testTwoStages() {
   expect(rig.eng.stopPressed(), "two stages: further Stops keep silencing");
   rig.run(kBlock * 4);
   expect(rig.eng.panicsDone() == 2, "two stages: each panic completes");
-  expect(rig.allocs == 0, "two stages: no allocation on the audio thread");
+  expect(rig.noAllocs(), "two stages: no allocation on the audio thread");
 }
 
 }  // namespace

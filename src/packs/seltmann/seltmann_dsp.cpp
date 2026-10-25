@@ -391,6 +391,8 @@ class SeltmannGen final : public Generator {
     if (aux_ && sync_ == SyncStretch) {
       if (forced_) {
         render_ = forced_;
+      } else if (ctx.offline && aux_->warp) {
+        render_ = offlineRender();
       } else if (aux_->warp) {
         aux_->warp->wanted.store(tempo_, std::memory_order_relaxed);
         const Render* r = aux_->warp->current.load(std::memory_order_acquire);
@@ -745,6 +747,13 @@ class SeltmannGen final : public Generator {
   const SeltmannAux* aux_ = nullptr;
   const Render* render_ = nullptr;
   const Render* forced_ = nullptr;
+  // Offline renders (export, not the realtime audio thread): a private warp
+  // render made here, so the output never depends on when the worker thread
+  // finishes (the stretched sound would start at a random point of the render).
+  std::unique_ptr<Render> own_;
+  std::vector<std::unique_ptr<Render>> ownOld_;  // replaced, still read by voices
+  std::shared_ptr<WarpSlot> ownFor_;  // the slot own_ was made from (kept alive: no reused address)
+  double ownTempo_ = 0, ownPrevTempo_ = 0;
   std::array<Voice, kMaxVoices> voices_{};
   uint64_t ageCounter_ = 0;
   double sr_ = 44100, tempo_ = 120, tick_ = 0;
@@ -775,6 +784,27 @@ class SeltmannGen final : public Generator {
     patOn_ = on;
     patRun_.store(on, std::memory_order_relaxed);
     if (!on) livePat_.store(-1, std::memory_order_relaxed);
+  }
+
+  // The private render for this tempo (offline only: allocates and stretches).
+  // While the tempo moves, the plain resampled source plays, as in real time.
+  const Render* offlineRender() {
+    ownOld_.erase(std::remove_if(ownOld_.begin(), ownOld_.end(),
+                                 [&](const std::unique_ptr<Render>& r) {
+                                   for (const auto& v : voices_)
+                                     if (v.on && v.L == r->L.data()) return false;
+                                   return true;
+                                 }),
+                  ownOld_.end());
+    const bool mine = ownFor_ == aux_->warp, settled = ownPrevTempo_ == tempo_;
+    ownPrevTempo_ = tempo_;
+    if (mine && std::fabs(ownTempo_ - tempo_) < 1e-4) return own_.get();  // (null: too long to stretch)
+    if (mine && !settled) return nullptr;
+    if (own_) ownOld_.push_back(std::move(own_));
+    own_ = makeRender(*aux_->warp, tempo_);
+    ownFor_ = aux_->warp;
+    ownTempo_ = tempo_;
+    return own_.get();
   }
 
   // UI side channel: the source frame under the newest voice, the pattern position.
