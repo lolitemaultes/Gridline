@@ -364,7 +364,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   collab-cursor-window:<window>:shown|hidden
 //   J-111g: collab picture <file|#RRGGBB> · collab panel · collab pictures <file> (JSON: members' pictures announced,
 //   received, kept, drawn, a pixel) · collab open-editor chN · collab demo-cursor-plugin chN|none · collab trace-reset;
-//   signal collab-picture:<name>
+//   signals collab-picture:<name> (drawn here), collab-picture-kept:<name> (kept on this computer, the one drawn)
 //   waitfor <name> <seconds> (J-108: the script and --frames stop counting until the app reports
 //   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s")
 std::string devShotPending;

@@ -11,6 +11,7 @@
 #      Alex sees one person left.
 #   4. Lee joins, then leaves and deletes his copy: the folder is in the (test) trash.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j111e_collab_remove_app.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")

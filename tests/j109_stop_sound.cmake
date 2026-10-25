@@ -9,6 +9,7 @@
 #   4. plays the song, stops with Space (a release, not a panic), clicks Stop again: the panic
 #      (all sound off, tails cleared): silence.
 #   cmake -DAPP=<gridline-app> -DCLI=<gridline> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j109_stop_sound.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
 set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg")

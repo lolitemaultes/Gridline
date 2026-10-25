@@ -11,6 +11,7 @@
 # undo step), Alt-drag bends only Straight segments, switching back keeps the tensions, and the mode
 # survives save + load.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j105_conv_points.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
 set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg")

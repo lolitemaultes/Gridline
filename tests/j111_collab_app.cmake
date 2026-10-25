@@ -13,6 +13,7 @@
 # Also: Sam's join is held back (GRIDLINE_COLLAB_TEST_ICE_DELAY, 32 s: ICE that connects only after the
 # old 30 s handshake budget ran out) in a second run of step 1 and must still connect.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j111_collab_app.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")

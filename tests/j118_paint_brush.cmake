@@ -11,6 +11,7 @@
 #   4. undo removes that last clip in one step.
 # Screenshot of the playlist with the crossfade: <OUT>/brush.ppm.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j118_paint_brush.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")

@@ -2076,7 +2076,13 @@ void Session::frame(double now) {
   requestFiles();
   pumpFileSends();
   sendPresence(now);
-  for (auto& [site, pv] : peers_) askAvatar(site, pv);  // J-111g: pictures still missing
+  for (auto& [site, pv] : peers_) {
+    // Their hello can come before their member record (a joiner catching up): who they are (the
+    // key their picture is kept under on this computer) is learnt once the record is here.
+    if (pv.fingerprint.empty())
+      if (const Member* mem = member(site)) pv.fingerprint = mem->fingerprint();
+    askAvatar(site, pv);  // J-111g: pictures still missing
+  }
   // version vectors: stability (compaction, conflict index) and "unseen" counts
   if (now - lastVvSend_ >= 5.0) {
     lastVvSend_ = now;

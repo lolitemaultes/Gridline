@@ -9,6 +9,7 @@
 #   resize: wide adjusts, then the window shrinks to the thin layout and the
 #     same wheel scrolls instead (no restart).
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j83_mixer_wheel.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
 set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg")

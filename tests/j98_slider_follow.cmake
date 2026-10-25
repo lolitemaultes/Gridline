@@ -6,6 +6,7 @@
 # (minus the offset at which it was grabbed): no 1.25x gain, no drift after
 # passing either end, no jump on a click, Shift drags 8x finer.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j98_slider_follow.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
 set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg")

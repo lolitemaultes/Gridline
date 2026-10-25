@@ -8,6 +8,7 @@
 #      request (dev-input "quit") at frame 90; settings are still saved on the way out.
 #   2. the editor layout audit as run by hand (no --screenshot): it ends through main()'s return.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j103_clean_exit.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 configure_file("${DEMO}" "${OUT}/demo copy.gridline.json" COPYONLY)

@@ -11,6 +11,7 @@
 # and for each, every window's position and size and the main window's size over 60 frames after it
 # settled: none may change.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j111h_dialog_stable.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")

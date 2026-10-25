@@ -8,6 +8,7 @@
 # glyph ticks while playing (J-97: a hard snap on each beat, no in-between
 # frames), shows its rest pose when switched on and rests when stopped.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j91_transport_click.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
 set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg")

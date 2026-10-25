@@ -12,6 +12,7 @@
 #   7. a join whose ICE connects only after 32 s (--ice-delay: past the old 30 s handshake budget,
 #      which made the inviter admit a joiner that had already given up) connects and converges.
 #   cmake -DCLI=<gridline> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j111_collab.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 execute_process(COMMAND "${CLI}" render "${DEMO}" -o "${OUT}/loop.wav" RESULT_VARIABLE rc OUTPUT_QUIET ERROR_VARIABLE err)

@@ -13,6 +13,7 @@
 # Every replaced channel keeps its mixer track, volume, pan, steps and notes.
 # Screenshots of the replace highlight and the insertion line: <OUT>/replace.ppm, <OUT>/insert.ppm.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j97_rack_drop.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 file(READ "${DEMO}" demo)  # a copy: the demo song is never opened (or saved over) in place

@@ -11,6 +11,7 @@
 #   4. Tools > Stop all sound; 5. a MIDI controller's (remote) Stop; 6. the window losing focus;
 #   7. a recorded take dragged from the playlist picker loads into Seltmann (analysed).
 #   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_test_seltmann> -DOUT=<dir> -P j110_play_state.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
 execute_process(COMMAND "${TESTBIN}" writeloop "${OUT}/Break 96.wav" RESULT_VARIABLE rc)

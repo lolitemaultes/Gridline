@@ -27,7 +27,7 @@ struct State {
   std::function<void()> frame;
   SDL_threadID thread = 0;
   bool installed = false, inPump = false, inFrame = false, live = false, simModal = false;
-  Uint64 pumpStart = 0, lastFrame = 0;
+  Uint64 pumpStart = 0, lastFrame = 0, lastFrameEnd = 0;  // the last frame's start and end
   std::map<Uint32, std::pair<int, int>> sizes;  // every Gridline window's size at the start of the last frame
   std::vector<std::function<void()>> dev;
   int liveFrames = 0;
@@ -63,7 +63,9 @@ int SDLCALL watch(void*, SDL_Event* e) {
   const std::pair<int, int> now = sizeOf(e->window.windowID);
   const auto was = L.sizes.find(e->window.windowID);
   const bool changed = was == L.sizes.end() || was->second != now;
-  if (!live::shouldDraw(kind, L.inPump, L.inFrame, modal, secondsSince(L.pumpStart), changed, secondsSince(L.lastFrame))) return 0;
+  if (!live::shouldDraw(kind, L.inPump, L.inFrame, modal, secondsSince(L.pumpStart), changed, secondsSince(L.lastFrame),
+                        secondsSince(L.lastFrameEnd)))
+    return 0;
   // The backend learns about the new size now (it reads the event from the queue again later,
   // which only asks it to read the same size once more). It acts on RESIZED only, and SDL
   // reports SIZE_CHANGED first (from inside its RESIZED handling): that one is passed as RESIZED.
@@ -122,6 +124,7 @@ void frameBegin(bool live) {
 
 void frameEnd() {
   L.inFrame = false;
+  L.lastFrameEnd = SDL_GetPerformanceCounter();
   L.live = false;
 }
 

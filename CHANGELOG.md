@@ -59,6 +59,8 @@ release workflow publishes the section of the tagged version as the release note
   loaded; it now comes back at the next start.
 - Fixed: resizing the main window on macOS and Windows showed its last picture stretched until the
   mouse was let go; it now redraws continuously while you resize.
+  On a slow or busy computer each step of a resize no longer draws the same picture several times
+  over.
 
 ### Windows inside the main window stay inside it
 
@@ -123,7 +125,8 @@ release workflow publishes the section of the tagged version as the release note
   before fading, and moves to another window without fading); a plugin editor you have open hides
   the cursors of people who are not in that same plugin. Collaborators' profile pictures now
   actually arrive (they were announced but never sent), update when changed, and are kept for
-  offline members and reopened projects.
+  offline members and reopened projects (also when you join and someone's greeting reaches you
+  before their membership record: their picture was shown but never kept).
 - Sound stays on each computer: playback, held keys, previews, plugins playing on their own,
   recording, solo, record arm, input monitoring and plugins' listening switches are never shared,
   and a collaborator's edits never make sound on yours.

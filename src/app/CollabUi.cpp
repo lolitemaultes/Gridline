@@ -3633,7 +3633,11 @@ void devFrame(App& a) {
     tmp.avatar = bytes;
     const auto it = u.drawnAvatars.find(tmp.avatarHash());
     const PeerView* pv = s->peer(m.site);
-    if (it != u.drawnAvatars.end() && it->second.frame == ImGui::GetFrameCount() && pv) devsig::reach("collab-picture:" + pv->profile.name);
+    if (it != u.drawnAvatars.end() && it->second.frame == ImGui::GetFrameCount() && pv) {
+      devsig::reach("collab-picture:" + pv->profile.name);
+      const Profile* known = ctlOf(a).profiles().known(m.fingerprint());
+      if (known && known->avatarHash() == tmp.avatarHash()) devsig::reach("collab-picture-kept:" + pv->profile.name);
+    }
   }
   devsig::reach("collab-active");
   if (s->ready()) devsig::reach("collab-ready");

@@ -13,6 +13,7 @@
 #      button and a mixer strip; Sam's copy of the cursor is over the same track and time, over the
 #      same button, and hidden for the mixer.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j111d_collab_cursors.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")
@@ -344,7 +345,7 @@ set(B "5 collab profile Sam
 61 collab cursors \"${OUT}/b-mixer.json\"
 62 collab panel
 63 waitfor collab-picture:Alex 30
-64 waitfor never 0.5
+64 waitfor collab-picture-kept:Alex 30
 65 collab pictures \"${OUT}/b-pictures1.json\"
 66 waitfor never 9
 67 collab pictures \"${OUT}/b-pictures2.json\"

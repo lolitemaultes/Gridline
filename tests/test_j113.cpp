@@ -142,21 +142,27 @@ void testLiveResizeGate() {
   using live::Kind;
   using live::shouldDraw;
   // macOS live resize / Windows' size loop: every size step that changes the size draws at once.
-  expect(shouldDraw(Kind::Resize, true, false, true, 0.0, true, 0.0), "modal loop: a new size draws a frame at once");
-  expect(!shouldDraw(Kind::Resize, true, false, true, 0.2, false, 0.001), "SIZE_CHANGED then RESIZED of one step: one frame, not two");
-  expect(!shouldDraw(Kind::Expose, true, false, true, 0.2, false, 0.001), "the view's EXPOSED right after the step's frame: no second frame");
-  expect(shouldDraw(Kind::Expose, true, false, true, 0.2, false, 0.017), "the 60 Hz live-resize timer (held still): keeps drawing");
-  expect(shouldDraw(Kind::Move, true, false, true, 0.2, false, 0.020), "Windows' modal move loop (10 ms timer): every other tick draws");
-  expect(!shouldDraw(Kind::Expose, true, false, true, 0.2, false, 0.008), "the live-resize timer between two drag steps: no extra frame");
+  expect(shouldDraw(Kind::Resize, true, false, true, 0.0, true, 0.0, 0.0), "modal loop: a new size draws a frame at once");
+  expect(!shouldDraw(Kind::Resize, true, false, true, 0.2, false, 0.001, 0.001), "SIZE_CHANGED then RESIZED of one step: one frame, not two");
+  expect(!shouldDraw(Kind::Expose, true, false, true, 0.2, false, 0.001, 0.001), "the view's EXPOSED right after the step's frame: no second frame");
+  expect(shouldDraw(Kind::Expose, true, false, true, 0.2, false, 0.017, 0.017), "the 60 Hz live-resize timer (held still): keeps drawing");
+  expect(shouldDraw(Kind::Move, true, false, true, 0.2, false, 0.020, 0.020), "Windows' modal move loop (10 ms timer): every other tick draws");
+  expect(!shouldDraw(Kind::Expose, true, false, true, 0.2, false, 0.008, 0.008), "the live-resize timer between two drag steps: no extra frame");
   // Never from inside a frame, never outside the pump.
-  expect(!shouldDraw(Kind::Resize, true, true, true, 0.2, true, 1.0), "inside a frame (re-entrancy): never");
-  expect(!shouldDraw(Kind::Resize, false, false, true, 0.2, true, 1.0), "outside the event pump: never");
+  expect(!shouldDraw(Kind::Resize, true, true, true, 0.2, true, 1.0, 1.0), "inside a frame (re-entrancy): never");
+  expect(!shouldDraw(Kind::Resize, false, false, true, 0.2, true, 1.0, 1.0), "outside the event pump: never");
   // X11 / Wayland / the BSDs: no modal loop, the pump returns and the main loop draws the new size.
-  expect(!shouldDraw(Kind::Resize, true, false, false, 0.001, true, 0.016), "non-blocking pump: the main loop draws it (no double frame)");
-  expect(!shouldDraw(Kind::Expose, true, false, false, 0.001, false, 1.0), "non-blocking pump: an expose waits for the main loop");
+  expect(!shouldDraw(Kind::Resize, true, false, false, 0.001, true, 0.016, 0.016), "non-blocking pump: the main loop draws it (no double frame)");
+  expect(!shouldDraw(Kind::Expose, true, false, false, 0.001, false, 1.0, 1.0), "non-blocking pump: an expose waits for the main loop");
   // A pump blocked by a loop the platform does not report still redraws.
-  expect(shouldDraw(Kind::Resize, true, false, false, 0.08, true, 0.0), "pump blocked for 80 ms: draws");
-  expect(!shouldDraw(Kind::Resize, true, false, false, 0.03, true, 0.0), "pump busy for 30 ms: not blocked yet");
+  expect(shouldDraw(Kind::Resize, true, false, false, 0.08, true, 0.0, 0.0), "pump blocked for 80 ms: draws");
+  expect(!shouldDraw(Kind::Resize, true, false, false, 0.03, true, 0.0, 0.0), "pump busy for 30 ms: not blocked yet");
+  // A slow frame (130 ms: a loaded machine, software GL): the step's own later events, arriving as
+  // that frame ends, draw nothing more; the timer a moment later (held still) still draws.
+  expect(!shouldDraw(Kind::Resize, true, false, true, 0.2, false, 0.130, 0.0002), "slow frame: the step's RESIZED right after it: no second frame");
+  expect(!shouldDraw(Kind::Expose, true, false, true, 0.2, false, 0.131, 0.0004), "slow frame: the step's EXPOSED right after it: no second frame");
+  expect(shouldDraw(Kind::Expose, true, false, true, 0.2, false, 0.147, 0.017), "slow frame: the 60 Hz timer once it has ended: draws");
+  expect(shouldDraw(Kind::Resize, true, false, true, 0.2, true, 0.130, 0.0001), "slow frame: the next step's new size: draws at once");
 }
 
 void testSplitAndIni() {

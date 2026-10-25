@@ -16,8 +16,12 @@
 //   once; for an expose / move (Windows' and macOS's live-resize timers, a modal move) or a size
 //   event of an unchanged size (SDL reports SIZE_CHANGED then RESIZED, then the view's EXPOSED, for
 //   one step; macOS's 60 Hz live-resize timer lands between two drag steps) only when
-//   `minInterval` has passed since the last frame: one frame per step, and still ~60 frames a
-//   second while the window is held still (Windows' 10 ms timer: every other tick).
+//   `minInterval` has passed since the last frame began: one frame per step, and still ~60
+//   frames a second while the window is held still (Windows' 10 ms timer: every other tick);
+// - and, for those, not right as the last frame ends (`settle`): a frame slower than
+//   `minInterval` (a loaded machine, software GL) would otherwise be followed at once by one more
+//   frame for each of the step's own SIZE_CHANGED / RESIZED / EXPOSED (and on X11 the size SDL
+//   reports while the frame resized the window), each as slow, all at the size just drawn.
 #pragma once
 
 namespace gl::live {
@@ -27,14 +31,16 @@ enum class Kind { Resize, Expose, Move };
 struct Gate {
   double blockedAfter = 0.05;  // s: a pump that has not returned for this long is blocked
   double minInterval = 0.014;  // s: frames for timer / expose / move events at most this often (~70 Hz)
+  double settle = 0.005;       // s: and not within this long of the last frame's end
 };
 
+// sinceLastFrame: since the last frame began; sinceLastFrameEnd: since it ended.
 inline bool shouldDraw(Kind kind, bool inPump, bool inFrame, bool modal, double pumpElapsed, bool sizeChanged, double sinceLastFrame,
-                       const Gate& g = Gate{}) {
+                       double sinceLastFrameEnd, const Gate& g = Gate{}) {
   if (!inPump || inFrame) return false;
   if (!modal && pumpElapsed < g.blockedAfter) return false;
   if (kind == Kind::Resize && sizeChanged) return true;
-  return sinceLastFrame >= g.minInterval;
+  return sinceLastFrame >= g.minInterval && sinceLastFrameEnd >= g.settle;
 }
 
 }  // namespace gl::live

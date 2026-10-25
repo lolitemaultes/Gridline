@@ -64,5 +64,13 @@ if [ -n "$homes" ]; then
   fi
 fi
 
+# Test scripts run with "cmake -P" get no policies of their own: without cmake_minimum_required,
+# CMake 3.x (Ubuntu 24.04's 3.28) keeps old behaviours newer CMake has dropped (CMP0054: a quoted
+# "keep" compared as the variable keep), so a script could pass on one machine and fail on another.
+for f in tests/*.cmake; do
+  [ -f "$f" ] || continue
+  grep -q '^cmake_minimum_required(' "$f" || complain "$f: a cmake -P test script needs cmake_minimum_required(VERSION 3.16) (the project's policies)"
+done
+
 if [ "$fail" != 0 ]; then exit 1; fi
 echo "check-tree: ${#files[@]} tracked files OK"

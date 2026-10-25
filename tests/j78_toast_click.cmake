@@ -6,6 +6,7 @@
 # frame 3 shows one) the clip must be unchanged; without one (control run) the
 # same input must change it, so the test cannot pass vacuously.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j78_toast_click.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
 file(READ "${DEMO}" demo)

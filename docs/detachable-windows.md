@@ -129,8 +129,11 @@ gate in `src/core/LiveResize.h`, unit-tested in `j113_window_placement`):
     (`host::native::inModalSizeLoop`), or the pump has not returned for 50 ms;
   - a size event that changes the window's size from the size it was last drawn at draws at once;
     other events (the platform's live-resize timers, a modal move, SDL's `SIZE_CHANGED` + `RESIZED`
-    pair and the view's `EXPOSED` for one step) only if 14 ms passed since the last frame: one
-    frame per size step, ~60 frames a second while the window is held still.
+    pair and the view's `EXPOSED` for one step) only if 14 ms passed since the last frame began
+    and 5 ms since it ended: one frame per size step, ~60 frames a second while the window is held
+    still. (The second condition matters when a frame takes longer than 14 ms, on a loaded
+    machine or with software GL: the step's own later events then arrive as its frame ends, and
+    each drew another frame of the same size.)
 - The ImGui backend sees the event before the frame (it acts on `RESIZED` only, so `SIZE_CHANGED`
   is passed to it as `RESIZED`): a detached viewport reads its new size, the main window reads
   `SDL_GetWindowSize` / `SDL_GL_GetDrawableSize` as every frame does, so the frame uses the new

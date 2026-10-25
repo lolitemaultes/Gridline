@@ -16,11 +16,15 @@
 #   5. its OS close button docks it back where it was (the panel stays open) and Gridline keeps
 #      running; a floating window (the channel rack) closed outside floats where it was; its own
 #      (Gridline) X in the title bar does the same;
-#   6. live resize: each size step of a blocked pump draws exactly one frame, at that step's size;
+#   6. live resize: each size step of a blocked pump draws, while the pump is still blocked, a
+#      frame at that step's size (the content follows the drag); how many frames a step gets
+#      depends on how long a frame takes on this machine, so it is not counted here (one per step,
+#      not one per event: the gate's own test, testLiveResizeGate in tests/test_j113.cpp);
 #   7. a fixed-size editor pops out fixed-size; "Bring all windows back" docks everything; the
 #      button is gone with detaching off.
 # Skipped, with the reason, where windows cannot be created outside the main one.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j116_detach.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")
@@ -297,7 +301,7 @@ if(NOT x1_docked EQUAL 1 OR NOT x1_vp EQUAL 0 OR NOT xOk OR NOT x1_detached EQUA
 endif()
 ok("Gridline's own X in a detached panel's title bar docks it back too; it stays open")
 
-# ---- 6. live resize: one frame per size step, drawn at that step's size ----
+# ---- 6. live resize: every size step drawn at that step's size, while the pump is blocked ----
 math(EXPR lw "${g_w} + 240")
 math(EXPR lh "${g_h} - 120")
 run(live btn 60 "${popClick}20 liveresize Mixer ${lw} ${lh} 6
@@ -311,24 +315,28 @@ foreach(l IN LISTS lines)
   if(NOT CMAKE_MATCH_2 EQUAL CMAKE_MATCH_4 OR NOT CMAKE_MATCH_3 EQUAL CMAKE_MATCH_5)
     fail("live resize step ${CMAKE_MATCH_1}: drawn at ${CMAKE_MATCH_4}x${CMAKE_MATCH_5}, the window was ${CMAKE_MATCH_2}x${CMAKE_MATCH_3} (a stretched old frame)")
   endif()
-  if(NOT CMAKE_MATCH_6 EQUAL 1)
-    fail("live resize step ${CMAKE_MATCH_1}: ${CMAKE_MATCH_6} frames for one step (want exactly one)")
+  if(CMAKE_MATCH_6 LESS 1)
+    fail("live resize step ${CMAKE_MATCH_1}: no frame while the pump was blocked (the content did not follow the drag)")
   endif()
   math(EXPR steps "${steps} + 1")
 endforeach()
 if(NOT steps EQUAL 6)
   fail("live resize: ${steps} of 6 steps reported")
 endif()
-if(NOT out MATCHES "liveresize frame 40: live-frames 6 recent 6 avg-ms ([0-9.]+) max-ms ([0-9.]+)")
-  fail("live resize: the watch should have drawn 6 frames")
+if(NOT out MATCHES "liveresize frame 40: live-frames ([0-9]+) recent [0-9]+ avg-ms ([0-9.]+) max-ms ([0-9.]+)")
+  fail("live resize: no live-resize statistics")
 endif()
-set(avg ${CMAKE_MATCH_1})
-set(mx ${CMAKE_MATCH_2})
+set(liveN ${CMAKE_MATCH_1})
+set(avg ${CMAKE_MATCH_2})
+set(mx ${CMAKE_MATCH_3})
+if(liveN LESS 6)
+  fail("live resize: the watch drew ${liveN} frames for 6 steps")
+endif()
 win(lr 42 "Mixer")
 if(NOT lr_w EQUAL lw OR NOT lr_h EQUAL lh OR NOT lr_vp GREATER 0)
   fail("after the live resize the mixer should be ${lw}x${lh} (${lr_w}x${lr_h})")
 endif()
-ok("live resize (blocked event pump): every size step drew exactly one frame at its new size (avg ${avg} ms, max ${mx} ms per frame)")
+ok("live resize (blocked event pump): every size step drew at its new size, ${liveN} frames for 6 steps (avg ${avg} ms, max ${mx} ms per frame)")
 
 # ---- 7. a fixed-size editor; "Bring all windows back"; detaching off ----
 run(pop3 btn 70 "6 popout channelsettings

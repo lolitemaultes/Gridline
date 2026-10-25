@@ -7,6 +7,7 @@
 #   3. both open it again (Sam from the file his Recent files remembers): Sam catches up and gets the
 #      new name, title and file.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j111_rename_app.cmake
+cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")
