@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -1005,7 +1006,43 @@ void drawDialogs(App& a) {
   fileDialog(a);
 }
 
+namespace {
+struct WheelGesture {
+  bool open = false;  // the pointer gesture was opened by the wheel
+  double at = 0;      // last wheel step
+};
+WheelGesture& wheelGesture(const App& a) {
+  static std::map<const App*, WheelGesture> m;  // (Gridline as a plugin: one App per instance)
+  return m[&a];
+}
+constexpr double kWheelGestureIdle = 0.4;  // seconds without a wheel step that end a wheel turn
+}  // namespace
+
+void pointerGestureFrame(App& a) {
+  const ImGuiIO& io = ImGui::GetIO();
+  WheelGesture& w = wheelGesture(a);
+  if (ImGui::IsAnyMouseDown()) {
+    if (w.open) a.doc.endPointerGesture(), w.open = false;  // a press after a wheel turn is a gesture of its own
+    if (!a.doc.inPointerGesture()) a.doc.beginPointerGesture();
+  } else if (io.MouseWheel != 0 || io.MouseWheelH != 0) {
+    if (!a.doc.inPointerGesture()) a.doc.beginPointerGesture(), w.open = true;
+    if (w.open) w.at = a.now;
+  }
+}
+
+namespace {
+// After the frame's editors ran: the release (or a pause of the wheel) ends the gesture.
+void endPointerGesture(App& a) {
+  if (ImGui::IsAnyMouseDown() || !a.doc.inPointerGesture()) return;
+  WheelGesture& w = wheelGesture(a);
+  if (w.open && a.now - w.at < kWheelGestureIdle && a.now >= w.at) return;
+  a.doc.endPointerGesture();
+  w.open = false;
+}
+}  // namespace
+
 void handleGlobalShortcuts(App& a) {
+  endPointerGesture(a);
   if (menuShortcuts(a)) return;
   ImGuiIO& io = ImGui::GetIO();
   if (io.WantTextInput) return;

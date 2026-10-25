@@ -188,7 +188,8 @@ void moreButton(Ctx& c, const char* id, float x, float y, const std::vector<int>
                 const char* hint = nullptr);
 
 // ---- modulation
-// Drag handle that drops a modulation source on knobs (circle arrows icon).
+// Drag handle that drops a modulation source on knobs. It draws as a small live
+// meter of the source's current output (no button look).
 void sourceHandle(Ctx& c, int src, float cx, float cy, float r);
 // Accepts a dropped source on the last item for parameter k.
 void dropTarget(Ctx& c, int k);
@@ -224,7 +225,10 @@ void iconPower(ImDrawList* dl, ImVec2 c, float r, ImU32 col);
 void iconSave(ImDrawList* dl, ImVec2 c, float s, ImU32 col);
 void iconBrowse(ImDrawList* dl, ImVec2 c, float s, ImU32 col);
 void iconClose(ImDrawList* dl, ImVec2 c, float s, ImU32 col);
-void iconSource(ImDrawList* dl, ImVec2 c, float r, ImU32 col);
+// Source meter: a 270 degree gauge (gap at the bottom, like the knobs). v is
+// -1..1 from the top centre when bipolar, else 0..1 from the lower left; idle
+// draws the track only.
+void iconSourceMeter(ImDrawList* dl, ImVec2 c, float r, float v, bool bipolar, bool idle, ImU32 track, ImU32 lit);
 
 // ---- pages / panels (plasma_*_ui.cpp)
 void oscPage(Ctx& c);

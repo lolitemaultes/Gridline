@@ -1400,7 +1400,7 @@ bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& 
     push(S.focusId ? S.focusId : SDL_GetWindowID(S.main), SDL_WINDOWEVENT_FOCUS_LOST);
     if (to) push(to, SDL_WINDOWEVENT_FOCUS_GAINED);
     std::printf("focusmove frame %d: %s window %u\n", frame, args.empty() ? "" : args[0].c_str(), static_cast<unsigned>(to));
-  } else if (cmd == "sdlkeyin") {  // sdlkeyin <window> <key> down|up: a real SDL key event typed into that window
+  } else if (cmd == "sdlkeyin") {  // sdlkeyin <window> <key> down|up [mods]: a real SDL key event typed into that window
     SDL_Event e{};
     const bool down = args.size() < 3 || args[2] != "up";
     e.type = down ? SDL_KEYDOWN : SDL_KEYUP;
@@ -1409,6 +1409,9 @@ bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& 
     const std::string k = args.size() > 1 ? args[1] : "";
     e.key.keysym.sym = k == "space" ? SDLK_SPACE : k.empty() ? 0 : static_cast<SDL_Keycode>(k[0]);
     e.key.keysym.scancode = SDL_GetScancodeFromKey(e.key.keysym.sym);
+    const std::string m = args.size() > 3 ? args[3] : "";  // optional modifiers: "ctrl", "super", "shift", joined with '+'
+    e.key.keysym.mod = static_cast<Uint16>((m.find("ctrl") != std::string::npos ? KMOD_LCTRL : 0) | (m.find("super") != std::string::npos ? KMOD_LGUI : 0) |
+                                           (m.find("shift") != std::string::npos ? KMOD_LSHIFT : 0));
     SDL_PushEvent(&e);
   } else if (cmd == "vpshot") {
     if (args.size() >= 2) S.shots.emplace_back(args[0], args[1]);

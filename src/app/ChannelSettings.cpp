@@ -21,6 +21,9 @@
 #include "Windows.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "../core/Platform.h"
+#include "ChannelStrip.h"
+#include "SmoothScrollUi.h"
+#include <map>
 
 namespace gl {
 
@@ -61,6 +64,70 @@ static void drawWaveform(App& a, const SamplePtr& smp, ImVec2 size, float startF
   dl->AddText(ImVec2(p.x + 8, p.y + 6), P.textDim, info);
   ImGui::PopFont();
 }
+
+// ---- Channel strip state (ChannelStrip.h): per application, its slide and the
+// content height measured when it was last drawn; dev checks read StripDev.
+namespace {
+struct StripDev {
+  float frac = 0, shownH = 0, fullH = 0, keyW = 0, belowY = 0;
+  bool moving = false, drawn = false, open = false, setting = false;
+  int dumpLeft = 0, dumpFrame = 0;
+  ImVec2 eyeMin, eyeMax, clipMin, clipMax, keysMin, keysMax, volMin, volMax, winPos, winSize;
+};
+StripDev& stripDev() {
+  static StripDev d;
+  return d;
+}
+struct StripState {
+  chstrip::Reveal reveal;
+  float contentH = 0;
+};
+StripState& stripState(App& a) {
+  static std::map<const App*, StripState> m;
+  StripState& st = m[&a];
+  if (!st.reveal.ready) st.reveal.reset(a.settings.getBool("ui.channelStrip"));
+  return st;
+}
+// Dev check ("strip [frames]"): the strip's state as drawn this frame.
+void stripDevPrint(int frame) {
+  const StripDev& d = stripDev();
+  if (!d.open) {
+    std::printf("strip frame %d: window closed\n", frame);
+  } else {
+    std::printf("strip frame %d: setting %d frac %.4f moving %d shown %.1f full %.1f drawn %d eye %.1f %.1f %.1f %.1f window %.1f %.1f %.1f %.1f below %.1f\n",
+                frame, d.setting ? 1 : 0, static_cast<double>(d.frac), d.moving ? 1 : 0, static_cast<double>(d.shownH), static_cast<double>(d.fullH),
+                d.drawn ? 1 : 0, static_cast<double>(d.eyeMin.x), static_cast<double>(d.eyeMin.y), static_cast<double>(d.eyeMax.x),
+                static_cast<double>(d.eyeMax.y), static_cast<double>(d.winPos.x), static_cast<double>(d.winPos.y), static_cast<double>(d.winSize.x),
+                static_cast<double>(d.winSize.y), static_cast<double>(d.belowY));
+    if (d.drawn)
+      std::printf("  clip %.1f %.1f %.1f %.1f keys %.1f %.1f %.1f %.1f keyw %.1f vol %.1f %.1f %.1f %.1f\n", static_cast<double>(d.clipMin.x),
+                  static_cast<double>(d.clipMin.y), static_cast<double>(d.clipMax.x), static_cast<double>(d.clipMax.y), static_cast<double>(d.keysMin.x),
+                  static_cast<double>(d.keysMin.y), static_cast<double>(d.keysMax.x), static_cast<double>(d.keysMax.y), static_cast<double>(d.keyW),
+                  static_cast<double>(d.volMin.x), static_cast<double>(d.volMin.y), static_cast<double>(d.volMax.x), static_cast<double>(d.volMax.y));
+  }
+  std::fflush(stdout);
+}
+void stripDevFrame() {
+  StripDev& d = stripDev();
+  if (d.dumpLeft <= 0) return;
+  --d.dumpLeft;
+  stripDevPrint(d.dumpFrame++);
+}
+chstrip::Reveal& stripReveal(App& a) { return stripState(a).reveal; }
+float& stripContentH(App& a) {
+  float& h = stripState(a).contentH;
+  // Before the strip was first drawn: a label row (ui::Label) over the 48 px
+  // keyboard (the knobs are as tall). Exact at any scale; should a knob style
+  // ever make it taller, the first drawn frame measures it.
+  if (h <= 0) {
+    ImGui::PushFont(a.fontMono, theme::kFontLabel);
+    const float label = ImGui::GetTextLineHeight();
+    ImGui::PopFont();
+    h = label + ImGui::GetStyle().ItemSpacing.y + 48.0f;
+  }
+  return h;
+}
+}  // namespace
 
 // ---- Note settings: tuning, time, polyphony / porta, cut groups, echo,
 // layer children and display group of a channel.
@@ -221,91 +288,16 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ImGui::EndGroup();
 }
 
-void drawChannelSettings(App& a) {
-  routePluginWindows(a);  // installed plugins open as themselves
-  if (a.settingsChannel == kNoId) return;
-  const Song& s = a.doc.song();
-  const Channel* c = s.channel(a.settingsChannel);
-  if (!c) {
-    a.settingsChannel = kNoId;
-    return;
-  }
-  const PluginInfo* info = findPlugin(c->plugin.type);
-  std::string title = c->name + "###channelsettings";
-  bool open = true;
-  // Wide instrument editors (PluginInfo::editorWidth) widen the window.
-  const float winW = std::max(624.0f, (info && info->editorWidth > 0 ? info->editorWidth : 600.0f) + 24.0f);
-  ui::NextFloatingWindowSize(winW);
-  {
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-  }
-  bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
-  ui::KeepWindowInViewport();
-  ui::MarkDetachable();  // J-114: pops out / docks back like the panels
-  if (!vis) {
-    ImGui::End();
-    if (!open) a.settingsChannel = kNoId;
-    return;
-  }
-  const ObjectId id = c->id;
-  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
-    a.focusPluginOwner = id;  // controller template knobs follow the focused plugin
-    a.focusPluginSlot = -1;
-  }
-
-  // Header: colour, name, instrument, routing.
+// The strip's content: volume / pan / pitch knobs and a two-octave preview
+// keyboard, as one group (its height is the strip's content height).
+static void drawStripContent(App& a, ObjectId id, StripDev& sd) {
   const auto& P = pal();
-  uint32_t col = c->color;
-  const float fh = ImGui::GetFrameHeight();
-  if (ui::ColorSwatch("col", &col, ImVec2(fh, fh))) a.doc.editChannel(id, "change channel colour", [&](Channel& x) { x.color = col; });
-  ui::Hint("Channel colour");
-  ImGui::SameLine(0, theme::kS2);
-  static char nameBuf[128];
-  static ObjectId nameFor = kNoId;
-  if (nameFor != id || !ImGui::IsAnyItemActive()) {
-    std::snprintf(nameBuf, sizeof nameBuf, "%s", c->name.c_str());
-    nameFor = id;
-  }
-  ImGui::SetNextItemWidth(200);
-  if (ImGui::InputText("##name", nameBuf, sizeof nameBuf, ImGuiInputTextFlags_EnterReturnsTrue) ||
-      (ImGui::IsItemDeactivatedAfterEdit()))
-    if (c->name != nameBuf) a.doc.renameChannel(id, nameBuf);
-  ui::FocusRing();
-  ui::Hint("Channel name");
-  ImGui::SameLine(0, theme::kS2);
-  if (ui::BeginCombo("##inst", info ? info->name.c_str() : (c->isLayer() ? "Layer" : "None"), 170)) {
-    std::string cat;
-    for (const auto& p : pluginCatalog()) {
-      if (p.kind != PluginKind::Generator) continue;
-      if (p.category != cat) {
-        cat = p.category;
-        ui::Label(cat.c_str());
-      }
-      if (ImGui::Selectable(p.name.c_str(), p.type == c->plugin.type)) a.doc.setChannelPlugin(id, p.type);
-    }
-    ImGui::EndCombo();
-  }
-  ui::Hint("Instrument");
-  ImGui::SameLine(0, theme::kS2);
-  int mi = std::max(0, s.mixerIndex(c->mixerTrack));
-  std::string mlabel = mi == 0 ? "Master" : std::to_string(mi) + "  " + mixerTrackName(s, static_cast<size_t>(mi));
-  if (ui::BeginCombo("##route", ("\xE2\x86\x92 " + mlabel).c_str(), std::max(120.0f, ImGui::GetContentRegionAvail().x))) {
-    for (size_t i = 0; i < s.mixer.size(); ++i) {
-      std::string l = (i == 0 ? std::string("Master") : std::to_string(i) + "  " + mixerTrackName(s, i)) + "##" + std::to_string(i);
-      if (ImGui::Selectable(l.c_str(), static_cast<int>(i) == mi)) a.doc.routeChannel(id, s.mixer[i].id);
-    }
-    ImGui::EndCombo();
-  }
-  ui::Hint("Mixer track this channel plays through");
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-  ImGui::Separator();
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-
-  // Strip: volume / pan / pitch + a one-octave preview keyboard.
+  ImGui::BeginGroup();
   ImGui::BeginGroup();
   ui::Label("CHANNEL");
   ui::ParamKnob("vol", channelParam(id, ChannelParam::Volume), 16.0f, "Volume");
+  sd.volMin = ImGui::GetItemRectMin();
+  sd.volMax = ImGui::GetItemRectMax();
   ImGui::SameLine(0, theme::kS4);
   ui::ParamKnob("pan", channelParam(id, ChannelParam::Pan), 16.0f, "Pan", true);
   ImGui::SameLine(0, theme::kS4);
@@ -377,9 +369,151 @@ void drawChannelSettings(App& a) {
         dl->AddRectFilled(ImVec2(bx, p.y), ImVec2(bx + bw, p.y + bh), fill, 2, ImDrawFlags_RoundCornersBottom);
       }
     ui::Hint("Click or drag across the keys to audition the instrument (C3..B4)");
+    sd.keysMin = p;
+    sd.keysMax = ImVec2(p.x + kw * kWhite, p.y + kh);
+    sd.keyW = kw;
   }
   ImGui::EndGroup();
+  ImGui::EndGroup();
+}
+
+bool channelStripDevCommand(const std::string& cmd, const std::vector<std::string>& args, int frame) {
+  if (cmd != "strip") return false;
+  // strip [frames]: the state drawn this frame and the next `frames` frames (the
+  // dump comes from the drawing, after this frame's input).
+  StripDev& d = stripDev();
+  d.dumpLeft = 1 + (args.empty() ? 0 : std::max(0, std::atoi(args[0].c_str())));
+  d.dumpFrame = frame;
+  return true;
+}
+
+void drawChannelSettings(App& a) {
+  routePluginWindows(a);  // installed plugins open as themselves
+  stripDev().open = false;
+  if (a.settingsChannel == kNoId) return;
+  const Song& s = a.doc.song();
+  const Channel* c = s.channel(a.settingsChannel);
+  if (!c) {
+    a.settingsChannel = kNoId;
+    return;
+  }
+  const PluginInfo* info = findPlugin(c->plugin.type);
+  std::string title = c->name + "###channelsettings";
+  bool open = true;
+  // Wide instrument editors (PluginInfo::editorWidth) widen the window.
+  const float winW = std::max(624.0f, (info && info->editorWidth > 0 ? info->editorWidth : 600.0f) + 24.0f);
+  ui::NextFloatingWindowSize(winW);
+  {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  }
+  bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
+  ui::KeepWindowInViewport();
+  ui::MarkDetachable();  // J-114: pops out / docks back like the panels
+  if (!vis) {
+    ImGui::End();
+    if (!open) a.settingsChannel = kNoId;
+    return;
+  }
+  const ObjectId id = c->id;
+  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
+    a.focusPluginOwner = id;  // controller template knobs follow the focused plugin
+    a.focusPluginSlot = -1;
+  }
+
+  // Header: colour, name, instrument, routing.
+  const auto& P = pal();
+  uint32_t col = c->color;
+  const float fh = ImGui::GetFrameHeight();
+  if (ui::ColorSwatch("col", &col, ImVec2(fh, fh))) a.doc.editChannel(id, "change channel colour", [&](Channel& x) { x.color = col; });
+  ui::Hint("Channel colour");
+  ImGui::SameLine(0, theme::kS2);
+  static char nameBuf[128];
+  static ObjectId nameFor = kNoId;
+  if (nameFor != id || !ImGui::IsAnyItemActive()) {
+    std::snprintf(nameBuf, sizeof nameBuf, "%s", c->name.c_str());
+    nameFor = id;
+  }
+  ImGui::SetNextItemWidth(200);
+  if (ImGui::InputText("##name", nameBuf, sizeof nameBuf, ImGuiInputTextFlags_EnterReturnsTrue) ||
+      (ImGui::IsItemDeactivatedAfterEdit()))
+    if (c->name != nameBuf) a.doc.renameChannel(id, nameBuf);
+  ui::FocusRing();
+  ui::Hint("Channel name");
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::BeginCombo("##inst", info ? info->name.c_str() : (c->isLayer() ? "Layer" : "None"), 170)) {
+    std::string cat;
+    for (const auto& p : pluginCatalog()) {
+      if (p.kind != PluginKind::Generator) continue;
+      if (p.category != cat) {
+        cat = p.category;
+        ui::Label(cat.c_str());
+      }
+      if (ImGui::Selectable(p.name.c_str(), p.type == c->plugin.type)) a.doc.setChannelPlugin(id, p.type);
+    }
+    ImGui::EndCombo();
+  }
+  ui::Hint("Instrument");
+  ImGui::SameLine(0, theme::kS2);
+  int mi = std::max(0, s.mixerIndex(c->mixerTrack));
+  std::string mlabel = mi == 0 ? "Master" : std::to_string(mi) + "  " + mixerTrackName(s, static_cast<size_t>(mi));
+  if (ui::BeginCombo("##route", ("\xE2\x86\x92 " + mlabel).c_str(), std::max(120.0f, ImGui::GetContentRegionAvail().x - fh - theme::kS2))) {
+    for (size_t i = 0; i < s.mixer.size(); ++i) {
+      std::string l = (i == 0 ? std::string("Master") : std::to_string(i) + "  " + mixerTrackName(s, i)) + "##" + std::to_string(i);
+      if (ImGui::Selectable(l.c_str(), static_cast<int>(i) == mi)) a.doc.routeChannel(id, s.mixer[i].id);
+    }
+    ImGui::EndCombo();
+  }
+  ui::Hint("Mixer track this channel plays through");
+  // The channel strip's show / hide eye (the mixer's eye icon and button).
+  ImGui::SameLine(0, theme::kS2);
+  const bool stripOn = a.settings.getBool("ui.channelStrip");
+  if (ui::IconButton("##strip", ui::eyeIcon(stripOn), stripOn, fh,
+                     stripOn ? "Hide the channel strip (volume, pan, pitch, keyboard)" : "Show the channel strip (volume, pan, pitch, keyboard)"))
+    a.settings.set("ui.channelStrip", !stripOn);
+  StripDev& sd = stripDev();
+  sd.eyeMin = ImGui::GetItemRectMin();
+  sd.eyeMax = ImGui::GetItemRectMax();
   ImGui::Dummy(ImVec2(0, theme::kS1));
+  ImGui::Separator();
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+
+  // Strip: volume / pan / pitch + a two-octave preview keyboard, shown with the
+  // header's eye (ChannelStrip.h): it slides down from under the header into a
+  // clipped area that grows with it, and back up when hidden.
+  chstrip::Reveal& rv = stripReveal(a);
+  const double now = ImGui::GetTime();
+  rv.set(a.settings.getBool("ui.channelStrip"), now, scrollui::animations());
+  const float frac = static_cast<float>(rv.at(now));
+  const float sp = ImGui::GetStyle().ItemSpacing.y;
+  // The strip's full height: its content (measured when drawn) and the gaps
+  // around it, as the window had it before the strip could hide.
+  float& contentH = stripContentH(a);
+  const float fullH = contentH + theme::kS1 + 2 * sp;
+  const float shownH = std::round(frac * fullH);
+  sd.frac = frac;
+  sd.moving = rv.moving(now);
+  sd.shownH = shownH;
+  sd.fullH = fullH;
+  sd.drawn = false;
+  if (shownH >= 1.0f) {
+    ImGui::BeginChild("##chstrip", ImVec2(ImGui::GetContentRegionAvail().x, shownH), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
+    sd.drawn = true;
+    sd.clipMin = ImGui::GetWindowPos();
+    sd.clipMax = ImVec2(sd.clipMin.x + ImGui::GetWindowWidth(), sd.clipMin.y + shownH);
+    ImGui::SetCursorPosY(shownH - fullH);  // slid up by the part not shown yet
+    drawStripContent(a, id, sd);
+    contentH = ImGui::GetItemRectSize().y;
+    ImGui::EndChild();
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - sp);  // the area is exactly shownH high
+  }
+  sd.open = true;
+  sd.setting = a.settings.getBool("ui.channelStrip");
+  sd.winPos = ImGui::GetWindowPos();
+  sd.winSize = ImGui::GetWindowSize();
+  sd.belowY = ImGui::GetCursorScreenPos().y;  // where the tabs start (moves with the strip)
+  stripDevFrame();
 
   // Studio channel window: the instrument page and the channel's misc
   // functions (tuning, polyphony, cut groups, echo, layering) on tabs.

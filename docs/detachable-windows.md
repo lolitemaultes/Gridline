@@ -244,6 +244,10 @@ a window is detached.
 
 - Keys: SDL key events carry the detached window's id; Gridline's shortcuts (Space / the J-112
   play rule, undo, save, …), the typing keyboard and text fields work from every window.
+  Undo / redo typed into a popped-out plugin editor undo its knob drags and drawn edits like in
+  the main window (one step per gesture: `Document::beginPointerGesture`, opened by
+  `pointerGestureFrame` after `ImGui::NewFrame` and closed after the frame of the release; the
+  detached windows share the main window's ImGui context, so a press there is the same gesture).
 - Drag and drop: ImGui payloads are global (browser → rack, J-97 drop-to-replace, playlist
   drags across windows). Files from other applications arrive through `SDL_DROPFILE` on any
   Gridline window; the macOS native drop target (hover highlight, promises, links) stays on the
@@ -321,7 +325,10 @@ says so ("Start Gridline with SDL_VIDEODRIVER=x11 to use it through XWayland"). 
   focus moving between Gridline windows keeps held keys, focus lost to another application
   releases them; J-97 drops into a detached rack; dialogs over the window they come from;
   `layout.ini` persistence (including Home / Out), re-anchoring, recovery, the setting off.
-- Both app tests report `SKIP: <reason>` where windows cannot be created outside the main one.
+- `plugin_undo_app` (real app, hidden): Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y / Cmd+Z on plugin editor
+  edits (Plasma knob drag, wheel turn, LFO shape strokes; Wavetable; a Delay insert), and typed
+  into Plasma's popped-out window (`sdlkeyin <window> <key> down|up [mods]`).
+- The app tests report `SKIP: <reason>` where windows cannot be created outside the main one.
 - `j117_window_rubber` (unit): the resting range (a window larger than the area keeps its
   top-left in), the damped drag (1:1 inside, monotonic, always less out than the pointer, bounded
   by 48 px), the spring (no overshoot, the same duration at 30 / 60 / 144 / 240 fps, one 50 ms step

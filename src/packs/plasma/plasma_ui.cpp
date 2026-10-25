@@ -385,14 +385,23 @@ void iconClose(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
   dl->AddLine(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), col, th);
   dl->AddLine(ImVec2(c.x - h, c.y + h), ImVec2(c.x + h, c.y - h), col, th);
 }
-void iconSource(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  // a ring with an open gap and an arrow head: "drag me onto a control"
-  const float th = std::max(1.3f, r * 0.24f);
-  dl->PathArcTo(c, r, 0.35f, 5.6f, 20);
-  dl->PathStroke(col, 0, th);
-  const ImVec2 tip(c.x + std::cos(0.35f) * r, c.y + std::sin(0.35f) * r);
-  dl->AddTriangleFilled(ImVec2(tip.x + r * 0.45f, tip.y - r * 0.15f), ImVec2(tip.x - r * 0.45f, tip.y - r * 0.15f), ImVec2(tip.x, tip.y + r * 0.45f),
-                        col);
+void iconSourceMeter(ImDrawList* dl, ImVec2 c, float r, float v, bool bipolar, bool idle, ImU32 track, ImU32 lit) {
+  constexpr float a0 = 3.14159265f * 0.75f, a1 = 3.14159265f * 2.25f, mid = (a0 + a1) * 0.5f;
+  const float th = std::max(1.0f, r * 0.2f), thLit = std::max(1.5f, r * 0.36f);
+  dl->PathArcTo(c, r, a0, a1, 24);
+  dl->PathStroke(track, 0, th);
+  if (bipolar) {  // the zero mark at the top
+    dl->AddLine(ImVec2(c.x, c.y - r - th), ImVec2(c.x, c.y - r + th * 1.5f), track, th);
+  }
+  if (idle || (!bipolar && v < 0.005f)) return;  // a unipolar source at zero reads as the empty track
+  const float from = bipolar ? mid : a0;
+  const float to = bipolar ? mid + std::clamp(v, -1.f, 1.f) * (a1 - mid) : a0 + std::clamp(v, 0.f, 1.f) * (a1 - a0);
+  const float lo = std::min(from, to), hi = std::max(from, to);
+  if (hi - lo > 0.02f) {
+    dl->PathArcTo(c, r, lo, hi, std::max(2, static_cast<int>((hi - lo) * 6.f)));
+    dl->PathStroke(lit, 0, thLit);
+  }
+  dl->AddCircleFilled(ImVec2(c.x + std::cos(to) * r, c.y + std::sin(to) * r), thLit * 0.75f, lit);  // the value head
 }
 
 // ================================================================== controls
@@ -1055,14 +1064,19 @@ void sourceHandle(Ctx& c, int src, float cx, float cy, float r) {
   ImGui::SetCursorScreenPos(ImVec2(C.x - R - c.s(2), C.y - R - c.s(2)));
   ImGui::InvisibleButton("##src", ImVec2(R * 2 + c.s(4), R * 2 + c.s(4)));
   const bool hov = ImGui::IsItemHovered();
-  // live activity: the ring brightens with the source's output
-  float lv = 0;
-  if (c.hasLive) {
-    if (src >= SrcLfo1 && src < SrcLfo1 + kLfos) lv = std::fabs(c.live.lfo[src - SrcLfo1]);
-    else if (src >= SrcEnv1 && src <= SrcEnv4) lv = c.live.env[src - SrcEnv1];
-    else if (src >= SrcMacro1 && src < SrcMacro1 + kMacros) lv = valf(c, macroP(src - SrcMacro1));
+  if (hov || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);  // a grip, not a button
+  // live meter of the source's output (the lead note, or the global value)
+  float raw = 0;
+  bool idle = !c.hasLive;
+  if (c.hasLive && src > SrcNone && src < SourceCount) raw = c.live.source[src];
+  if (src >= SrcMacro1 && src <= SrcMacro8 && !c.hasLive) raw = valf(c, macroP(src - SrcMacro1)), idle = false;
+  if (c.hasLive && (src >= SrcLfo1 && src <= SrcLfo10Y)) {  // a per-note LFO with no note sounding rests
+    const int l = (src - SrcLfo1) % kLfos;
+    if (c.live.voices == 0 && vali(c, lfoP(l, L_Mode)) != LfoFree && val(c, lfoP(l, L_Mono)) < 0.5) idle = true;
   }
-  iconSource(c.dl, C, R, hov ? c.P.mod : theme::mix(c.P.textFaint, c.P.mod, std::clamp(lv, 0.f, 1.f)));
+  bool bip = false;
+  const float mv = sourceMeterValue(src, raw, bip);
+  iconSourceMeter(c.dl, C, R, mv, bip, idle, hov ? c.P.textDim : c.P.textFaint, c.P.mod);
   if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
     ImGui::SetDragDropPayload("PLASMA_SRC", &src, sizeof(int));
     const ImVec2 m = ImGui::GetIO().MousePos;

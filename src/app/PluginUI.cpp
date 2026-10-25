@@ -648,6 +648,10 @@ void typePopup(App& a, ParamId pid, const ParamDesc& d) {
 struct Track {
   float start = 0, len = 0;
 };
+std::map<uint64_t, pui::DevItem>& devItems() {
+  static std::map<uint64_t, pui::DevItem> m;
+  return m;
+}
 std::map<uint32_t, pui::DevTrack>& devTracks() {
   static std::map<uint32_t, pui::DevTrack> m;
   return m;
@@ -658,6 +662,11 @@ std::map<uint32_t, pui::DevTrack>& devTracks() {
 bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal, const Track* track = nullptr) {
   audit::lastItem("param");
   audit::bindControl(pid);  // J-92 binding audit
+  {
+    pui::DevItem& di = devItems()[pid.packed()];
+    const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+    di = {r0.x, r0.y, r1.x, r1.y, ImGui::GetFrameCount()};
+  }
   ImGuiIO& io = ImGui::GetIO();
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   bool changed = false;
@@ -797,6 +806,12 @@ void devPointsSet(const std::string& name, const DevPoints& p) {
 bool devPoints(const std::string& name, DevPoints& out) {
   auto it = devPointMap().find(name);
   if (it == devPointMap().end()) return false;
+  out = it->second;
+  return true;
+}
+bool devItem(ParamId pid, DevItem& out) {
+  auto it = devItems().find(pid.packed());
+  if (it == devItems().end()) return false;
   out = it->second;
   return true;
 }

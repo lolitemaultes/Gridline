@@ -49,6 +49,22 @@ class Document {
   // endGesture() (e.g. mouse-up) unless merge is false.
   bool setParam(ParamId id, double value, bool merge = true);
   void endGesture() { undo_.breakMerge(); }
+  // One pointer gesture (mouse press .. release) = one undo step, whatever the editor under
+  // the pointer does: the first edit made during it starts a step and every later edit joins
+  // that step (a knob drag, a drawn shape, a drag that changes several parameters or the
+  // plugin's data each frame). An undo / redo during the gesture ends the joining. The UI
+  // opens it at the frame the press is seen and closes it after the frame of the release.
+  void beginPointerGesture();
+  void endPointerGesture();
+  bool inPointerGesture() const { return pointerGesture_; }
+  // Folds the edits `fn` makes into the newest history step when that step is still the one
+  // whose state serial is `serial` (nothing was edited, undone or redone since; serial 0 never
+  // matches); otherwise they are recorded as usual. True when folded. (A hosted plugin's state
+  // captured after its own edit gesture: one undo step for both.)
+  bool amendStep(uint64_t serial, const std::function<void()>& fn);
+  // The state serial right after the latest undo / redo / jump (0 before any): equal to
+  // history().stateSerial() while nothing was edited since.
+  uint64_t moveSerial() const { return moveSerial_; }
   // Called after every successful setParam (automation recording listens here).
   std::function<void(ParamId, double)> paramObserver;
   // The parameter most recently changed through setParam and a counter that
@@ -165,7 +181,7 @@ class Document {
   void markSaved() { savedSerial_ = undo_.stateSerial(); }
 
  private:
-  void exec(CommandPtr cmd);
+  void exec(CommandPtr cmd, bool mayJoin = true);
   // Records a change of song.modLinks (no-op when equal).
   void setModLinks(std::vector<ModLink> after, const std::string& label);
   Song song_;
@@ -176,6 +192,9 @@ class Document {
   ParamId lastTouched_;
   ParamId prevTouched_;
   uint64_t touchSerial_ = 0;
+  bool pointerGesture_ = false;
+  uint64_t gestureSerial_ = 0;  // state serial of the step the current pointer gesture made (0: none yet)
+  uint64_t moveSerial_ = 0;
 };
 
 }  // namespace gl

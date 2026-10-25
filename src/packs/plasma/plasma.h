@@ -512,7 +512,11 @@ struct LiveView {
   int arpStep = -1;
   double clipPos = -1;
   float filterCut[kFilters] = {};       // modulated cutoff (Hz, lead note)
+  float source[SourceCount] = {};       // each modulation source's raw output (lead note, or global)
 };
+// How a source meter shows a raw source value: bipolar sources (LFOs, pitch bend,
+// audio-rate sources) return -1..1 centred on zero, the rest 0..1 from zero.
+float sourceMeterValue(int src, float raw, bool& bipolar);
 // Reads the running instance's live data (false when g is not a Plasma instance).
 bool liveView(const Generator* g, LiveView& out);
 // Audition / preview from the editor (UI thread): queued for the audio thread.

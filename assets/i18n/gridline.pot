@@ -1629,6 +1629,10 @@ msgstr ""
 msgid "ECHO"
 msgstr ""
 
+#: src/app/ChannelSettings.cpp
+msgid "Hide the channel strip (volume, pan, pitch, keyboard)"
+msgstr ""
+
 #: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/SamplerRenderUi.cpp
 msgid "Instrument"
 msgstr ""
@@ -1659,6 +1663,10 @@ msgstr ""
 
 #: src/app/ChannelSettings.cpp src/app/SettingsKeysTheme.cpp
 msgid "PREVIEW"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "Show the channel strip (volume, pan, pitch, keyboard)"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp

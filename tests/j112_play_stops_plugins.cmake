@@ -14,6 +14,9 @@
 cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
+# The plugin window's channel strip shown (hidden by default): the window stays as tall as the
+# screen allows whatever the editor shows, so Seltmann's Play button never moves between runs.
+file(WRITE "${OUT}/cfg/gridline/settings.json" "{\"version\": 1, \"values\": {\"ui.channelStrip\": true}}\n")
 execute_process(COMMAND "${TESTBIN}" writeloop "${OUT}/Break 96.wav" RESULT_VARIABLE rc)
 if(NOT rc EQUAL 0 OR NOT EXISTS "${OUT}/Break 96.wav")
   message(FATAL_ERROR "FAIL: could not write the synthetic break (${rc})")

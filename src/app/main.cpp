@@ -356,6 +356,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   J-111h: collab share-name "<name>" · collab share-folder <dir> · collab share · collab rename-type "<name>" [folder] ·
 //   collab rename-ok · collab demo-cursor-edge <window> <cover> <dx> · collab window settings|info|none ·
 //   collab section-probe · windows [frames] (window positions and sizes to stdout);
+//   strip [frames] (the plugin window's channel strip: shown fraction, heights, eye button and window rects; Windows.h);
 //   waitfor signals collab-active / -ready / -invite-ready / -joined / -join-failed / -connected / -all-connected /
 //   -synced / -members:<n> / -channel:<name> / -name:<project name>
 //   J-111d: collab point <window> <kind> <a> <b> <cx> <cy> (the pointer to a cursor anchor, CursorAnchor.h) ·
@@ -502,6 +503,16 @@ void devDumpWindows(int frame) {
   std::fflush(stdout);
 }
 
+// SDL key modifiers of a dev key command: "ctrl", "super", "shift", "alt", joined with '+'.
+int devKeyMods(const std::string& m) {
+  int r = KMOD_NONE;
+  if (m.find("ctrl") != std::string::npos) r |= KMOD_LCTRL;
+  if (m.find("super") != std::string::npos) r |= KMOD_LGUI;
+  if (m.find("shift") != std::string::npos) r |= KMOD_LSHIFT;
+  if (m.find("alt") != std::string::npos) r |= KMOD_LALT;
+  return r;
+}
+
 void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   ImGuiIO& io = ImGui::GetIO();
   // The scripted pointer stays put between commands (the backend would
@@ -525,6 +536,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   for (const auto& l : script) {
     if (!fresh || l.frame != frame) continue;
     if (viewports::devCommand(app, l.cmd, l.args, frame)) continue;  // J-113
+    if (channelStripDevCommand(l.cmd, l.args, frame)) continue;      // the plugin window's channel strip
     if (l.cmd == "move") {
       pointer = ImVec2(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
       io.AddMousePosEvent(pointer.x, pointer.y);
@@ -702,7 +714,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         e.key.state = down ? SDL_PRESSED : SDL_RELEASED;
         e.key.keysym.sym = l.a0.empty() ? 0 : static_cast<SDL_Keycode>(l.a0[0]);
         e.key.keysym.scancode = SDL_GetScancodeFromKey(e.key.keysym.sym);
-        e.key.keysym.mod = static_cast<Uint16>(l.a2 == "ctrl" ? KMOD_LCTRL : l.a2 == "super" ? KMOD_LGUI : KMOD_NONE);
+        e.key.keysym.mod = static_cast<Uint16>(devKeyMods(l.a2));  // "ctrl", "super", "shift", "ctrl+shift"...
       }
       SDL_PushEvent(&e);
     } else if (l.cmd == "typing") {  // J-109: the typing keyboard on / off
@@ -789,6 +801,38 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "undo") {
       app.doc.undo();
       app.syncEngine();
+    } else if (l.cmd == "atparam" || l.cmd == "plug") {
+      // "atparam <k> [dx dy]": the scripted pointer to the centre of the last drawn control of
+      // parameter k of the open plugin editor (the --plugin / --fx / --chan target), plus logical px.
+      // "plug [k...]": the undo position, the labels around it, a hash of the plugin's data and
+      // the values of parameters k (undo tests for plugin editors).
+      const bool slot = app.fxEditor.first != kNoId && app.fxEditor.second >= 0;
+      auto pidOf = [&](const std::string& k) {
+        const int i = std::atoi(k.c_str());
+        return slot ? slotParam(app.fxEditor.first, app.fxEditor.second, i) : channelPluginParam(app.settingsChannel, i);
+      };
+      if (l.cmd == "atparam") {
+        pui::DevItem it;
+        if (!pui::devItem(pidOf(l.a0), it)) {
+          std::printf("atparam frame %d: param %s not shown\n", frame, l.a0.c_str());
+        } else {
+          pointer = ImVec2((it.x0 + it.x1) * 0.5f + std::strtof(l.a1.c_str(), nullptr), (it.y0 + it.y1) * 0.5f + std::strtof(l.a2.c_str(), nullptr));
+          io.AddMousePosEvent(pointer.x, pointer.y);
+          std::printf("atparam frame %d: param %s at %.1f %.1f\n", frame, l.a0.c_str(), static_cast<double>(pointer.x), static_cast<double>(pointer.y));
+        }
+      } else {
+        const Song& s = app.doc.song();
+        const Channel* ch = slot ? nullptr : s.channel(app.settingsChannel);
+        const MixerTrack* mt = slot ? s.mixerTrack(app.fxEditor.first) : nullptr;
+        const PluginState* st = ch ? &ch->plugin : mt ? &mt->slots[static_cast<size_t>(app.fxEditor.second)].plugin : nullptr;
+        const UndoStack& h = app.doc.history();
+        std::printf("plug frame %d: undo %zu of %zu undoLabel \"%s\" redoLabel \"%s\" data %016llx\n", frame, h.position(), h.size(),
+                    h.undoLabel().c_str(), h.redoLabel().c_str(),
+                    static_cast<unsigned long long>(st ? std::hash<std::string>{}(st->data) : 0));
+        for (const std::string& k : l.args)
+          std::printf("  param %s %.6f\n", k.c_str(), getParam(s, pidOf(k)).value_or(-1.0));
+      }
+      std::fflush(stdout);
     } else if (l.cmd == "channels") {
       const Song& s = app.doc.song();
       std::printf("channels frame %d: %zu channels, %zu patterns, undo %zu\n", frame, s.channels.size(), s.patterns.size(), app.doc.history().position());
@@ -1549,6 +1593,7 @@ int main(int argc, char** argv) {
     ui::SetWindowRubber(scrollui::params().elastic);  // J-117: the same switch for the windows' elastic boundary
     scrollui::beforeNewFrame();
     ImGui::NewFrame();
+    pointerGestureFrame(app);  // one undo step per pointer gesture, in every editor
     viewports::afterNewFrame();
     scrollui::afterNewFrame();
     collabui::beginFrame(app);  // J-111d: pointer anchors collected while the windows draw

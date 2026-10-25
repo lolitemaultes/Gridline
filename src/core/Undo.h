@@ -46,6 +46,17 @@ class GroupCommand final : public Command {
  public:
   explicit GroupCommand(std::string label) : label_(std::move(label)) {}
   void add(CommandPtr c) { parts_.push_back(std::move(c)); }
+  // Adds `c` (already applied), folding it into the newest part with the same merge key when
+  // that part accepts it (a drag inside a gesture step stays one part, not one per frame).
+  void addMerged(CommandPtr c) {
+    if (c->mergeKey() != 0)
+      for (auto it = parts_.rbegin(); it != parts_.rend(); ++it)
+        if ((*it)->mergeKey() == c->mergeKey()) {
+          if ((*it)->mergeWith(*c)) return;
+          break;
+        }
+    parts_.push_back(std::move(c));
+  }
   bool empty() const { return parts_.empty(); }
   void apply(Song& s) override {
     for (auto& c : parts_) c->apply(s);
@@ -97,6 +108,12 @@ class UndoStack {
   // J-111: moves the position by one step (-1 undo, +1 redo) without applying or
   // reverting the command (the collaboration session changes the song itself).
   bool stepPosition(int dir);
+  // Records `cmd` (already applied) as a part of the newest step instead of a step of its own
+  // (the later edits of one pointer gesture; Document::beginPointerGesture). Needs the
+  // position at the end of the history; the step keeps its label. Like a merge, the state
+  // serial changes and pushCount() does not.
+  bool canAmend() const { return pos_ > 0 && pos_ == cmds_.size(); }
+  void amendTop(CommandPtr cmd);
   // J-111: number of new (not merged) steps pushed so far.
   uint64_t pushCount() const { return pushCount_; }
 

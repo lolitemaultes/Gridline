@@ -432,7 +432,9 @@ class PlasmaGen final : public Generator {
     std::atomic<float> oscPos[kOscs], env[kEnvs], envTime[kEnvs], lfo[kLfos], lfoPh[kLfos], fx[kFxSlots], outL{0}, outR{0}, mod[kModSlots], cut[kFilters];
     std::atomic<int> envStage[kEnvs], oscOn[kOscs];
     std::atomic<double> clipPos{-1};
+    std::atomic<float> src[SourceCount];  // every modulation source's output (lead note / global)
     Live() {
+      for (auto& v : src) v.store(0);
       for (auto& v : oscPos) v.store(0);
       for (auto& v : env) v.store(0);
       for (auto& v : envTime) v.store(0);
@@ -1048,6 +1050,11 @@ class PlasmaGen final : public Generator {
     }
     if (s >= SrcMacro1 && s <= SrcMacro8) return G(macroP(s - SrcMacro1));
     return 0;
+  }
+  // Per-note properties that stay meaningful after the note ends (velocity, key, ...).
+  static bool heldNoteSource(int s) {
+    return s == SrcVelo || s == SrcNote || s == SrcReleaseVelo || s == SrcAlt1 || s == SrcAlt2 || s == SrcRandDiscrete || s == SrcRand1 ||
+           s == SrcRand2 || s == SrcVoiceIndex;
   }
   static bool bipolarSource(int s) {
     return s == SrcPitchBend || (s >= SrcNoise && s <= SrcSub) || s == SrcFilter1 || s == SrcFilter2;
@@ -1947,6 +1954,12 @@ class PlasmaGen final : public Generator {
       live_.lfoPh[l].store(static_cast<float>(s.phase), std::memory_order_relaxed);
     }
     for (int s = 0; s < kModSlots; ++s) live_.mod[s].store(n ? n->modOut[s] : gmodOut_[s], std::memory_order_relaxed);
+    // every source as the matrix sees it for the lead note (the source meters on the tabs);
+    // with no note sounding, per-note properties keep the last note's value
+    for (int s = SrcNone + 1; s < SourceCount; ++s) {
+      if (!n && heldNoteSource(s)) continue;
+      live_.src[s].store(sourceValue(n, s), std::memory_order_relaxed);
+    }
     if (bank_)
       for (int s = 0; s < kFxSlots; ++s)
         live_.fx[s].store(bank_->unit[static_cast<size_t>(s)] ? fxMeter(*bank_->unit[static_cast<size_t>(s)]) : 0.f, std::memory_order_relaxed);
@@ -2039,7 +2052,24 @@ bool liveView(const Generator* g, LiveView& out) {
   out.outL = out.outR = l.outL.load(std::memory_order_relaxed);
   out.arpStep = l.arpStep.load(std::memory_order_relaxed);
   out.clipPos = l.clipPos.load(std::memory_order_relaxed);
+  for (int s = 0; s < SourceCount; ++s) out.source[s] = l.src[s].load(std::memory_order_relaxed);
   return true;
+}
+
+float sourceMeterValue(int src, float raw, bool& bipolar) {
+  if (!std::isfinite(raw)) raw = 0;
+  // already signed: pitch bend and the audio-rate sources
+  if (src == SrcPitchBend || (src >= SrcNoise && src <= SrcSub) || src == SrcFilter1 || src == SrcFilter2) {
+    bipolar = true;
+    return std::clamp(raw, -1.f, 1.f);
+  }
+  // 0..1 outputs that swing around the middle: LFOs (X and Y), the voice spread, MPE X
+  if ((src >= SrcLfo1 && src <= SrcLfo10Y) || src == SrcVoiceMod1 || src == SrcVoiceMod2 || src == SrcExprX) {
+    bipolar = true;
+    return std::clamp(raw * 2.f - 1.f, -1.f, 1.f);
+  }
+  bipolar = false;
+  return std::clamp(raw, 0.f, 1.f);
 }
 
 void previewNote(Generator* g, int key, bool on) {

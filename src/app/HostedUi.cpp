@@ -55,13 +55,43 @@ std::vector<PluginTarget> hostedTargets(const Song& s) {
   return v;
 }
 
-// Stores captured plugin state in the song (one undoable step per capture).
+// Target key -> state serial of the history step the plugin's own latest edits made (its
+// interface's parameter gestures, read-back values, captured state).
+std::map<uint64_t, uint64_t> gOwnStep;
+
+// Takes a change the plugin reported (its state, its values read back) into the song:
+//  - right after the plugin's own edits (nothing else edited, undone or redone since): into
+//    that same undo step, so one gesture in its interface stays one undo step;
+//  - while nothing was edited since an undo / redo: without a step of its own (the plugin only
+//    follows what the undo / redo restored; a new step would throw the redo history away);
+//  - otherwise as an undo step of its own.
+void takeOver(App& a, const PluginTarget& t, const PluginState& ns, const char* label, uint64_t mergeKey) {
+  const uint64_t serial = a.doc.history().stateSerial();
+  auto own = gOwnStep.find(t.key());
+  if (own != gOwnStep.end() && own->second == serial) {
+    a.doc.amendStep(serial, [&] { setPluginState(a, t, ns, label); });
+  } else if (a.doc.moveSerial() != 0 && a.doc.moveSerial() == serial) {
+    a.doc.patchSong([&](Song& s) {
+      if (t.isChannel()) {
+        if (Channel* c = s.channel(t.owner)) c->plugin = ns;
+      } else if (MixerTrack* m = s.mixerTrack(t.owner); m && t.slot < static_cast<int>(m->slots.size())) {
+        m->slots[static_cast<size_t>(t.slot)].plugin = ns;
+      }
+    });
+    return;
+  } else {
+    setPluginState(a, t, ns, label, mergeKey);
+  }
+  gOwnStep[t.key()] = a.doc.history().stateSerial();
+}
+
+// Stores captured plugin state in the song (see takeOver).
 void storeState(App& a, const PluginTarget& t, const std::string& data) {
   const PluginState* st = t.state(a.doc.song());
   if (!st || st->data == data) return;
   PluginState ns = *st;
   ns.data = data;
-  setPluginState(a, t, ns, "plugin state", t.key() ^ 0x7374617465ull);
+  takeOver(a, t, ns, "plugin state", t.key() ^ 0x7374617465ull);
 }
 
 std::map<uint64_t, double> gCaptureDue;  // target key → time of the pending state capture
@@ -97,6 +127,7 @@ void pumpHostedPlugins(App& a) {
       continue;
     }
     for (const auto& e : u.edits) a.doc.setParam(t.pid(e.index), e.value, true);
+    if (!u.edits.empty()) gOwnStep[t.key()] = a.doc.history().stateSerial();
     if (u.gestureEnd) a.doc.endGesture();
     if (u.readback) {
       const PluginState* st = t.state(a.doc.song());
@@ -104,7 +135,7 @@ void pumpHostedPlugins(App& a) {
         PluginState ns = *st;
         ns.params = u.values;
         normalizePluginState(ns);
-        setPluginState(a, t, ns, "plugin parameters", t.key() ^ 0x706172616d73ull);
+        takeOver(a, t, ns, "plugin parameters", t.key() ^ 0x706172616d73ull);
       }
     }
     if (u.captureState && !gCaptureDue.count(t.key())) gCaptureDue[t.key()] = a.now + 0.4;

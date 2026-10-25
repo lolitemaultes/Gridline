@@ -387,6 +387,46 @@ void testUndoLocality() {
          "undo of a delete restores the channel and its notes everywhere");
 }
 
+// Plugin editors (user report: Ctrl+Z after a knob turn in a plugin): a plugin parameter drag and
+// a plugin data edit (Plasma's tables, shapes, rack) are each one undo step that reverts only
+// your own change, for everyone.
+void testPluginUndo() {
+  Trio t(9, "plugundo", false);
+  const ObjectId ch = t.a.doc.addChannel("Plasma", "gl.plasma");
+  settle(t.net, {&t.a, &t.b}, t.clock);
+  const double v0 = *getParam(t.a.doc.song(), channelPluginParam(ch, 0));
+  for (int i = 1; i <= 12; ++i) {  // a knob drag: many changes, one gesture
+    t.a.s->setGesture(true);
+    t.a.doc.setParam(channelPluginParam(ch, 0), v0 + i * 0.02, true);
+    run(t.net, {&t.a, &t.b}, t.clock, 0.016);
+  }
+  t.a.doc.endGesture();
+  t.a.s->setGesture(false);
+  settle(t.net, {&t.a, &t.b}, t.clock);
+  // the collaborator turns another knob of the same plugin meanwhile
+  t.b.doc.setParam(channelPluginParam(ch, 1), 0.25, false);
+  settle(t.net, {&t.a, &t.b}, t.clock);
+  expect(std::abs(*getParam(t.b.doc.song(), channelPluginParam(ch, 0)) - (v0 + 0.24)) < 1e-6, "a plugin knob drag reaches the collaborator");
+  t.a.doc.undo();
+  settle(t.net, {&t.a, &t.b}, t.clock);
+  expect(std::abs(*getParam(t.a.doc.song(), channelPluginParam(ch, 0)) - v0) < 1e-6 &&
+             std::abs(*getParam(t.b.doc.song(), channelPluginParam(ch, 0)) - v0) < 1e-6,
+         "undo of a plugin knob drag reverts the whole drag, for everyone");
+  expect(std::abs(*getParam(t.a.doc.song(), channelPluginParam(ch, 1)) - 0.25) < 1e-6, "the collaborator's knob on the same plugin stays");
+  t.a.doc.redo();
+  settle(t.net, {&t.a, &t.b}, t.clock);
+  expect(std::abs(*getParam(t.b.doc.song(), channelPluginParam(ch, 0)) - (v0 + 0.24)) < 1e-6, "redo brings the plugin knob back");
+  // plugin data (not a parameter): one step, undone everywhere
+  const std::string d0 = t.a.doc.song().channel(ch)->plugin.data;
+  t.a.doc.editChannel(ch, "Draw wavetable", [](Channel& c) { c.plugin.data = "{\"x\":1}"; });
+  settle(t.net, {&t.a, &t.b}, t.clock);
+  expect(t.b.doc.song().channel(ch)->plugin.data == "{\"x\":1}", "a plugin data edit reaches the collaborator");
+  t.a.doc.undo();
+  settle(t.net, {&t.a, &t.b}, t.clock);
+  expect(t.a.doc.song().channel(ch)->plugin.data == d0 && t.b.doc.song().channel(ch)->plugin.data == d0 && converged(t, false),
+         "undo of a plugin data edit reverts it for everyone");
+}
+
 void testOpLog() {
   const std::string dir = tmpDir("oplog");
   {
@@ -1412,6 +1452,7 @@ int main() {
   if (const char* more = std::getenv("GRIDLINE_COLLAB_SEEDS"))
     for (uint32_t k = 1; k <= static_cast<uint32_t>(std::atoi(more)); ++k) testFuzz(1000u + k * 7919u);
   testUndoLocality();
+  testPluginUndo();
   testOpLog();
   testReopen();
   testFiles();

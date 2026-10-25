@@ -17,7 +17,9 @@ for it translate directly:
 
 - **Header**: OSC, MIX, FX, MATRIX and GLOBAL pages, the preset name with < > and its menu
   (Init, Factory, your library, Import, Browse), author and notes, MENU, undo / redo, the MAIN
-  volume and the output meter.
+  volume and the output meter. Undo / redo are Gridline's own (the same history as Ctrl+Z /
+  Ctrl+Shift+Z, from the main window or Plasma's popped-out window): every gesture is one step, a
+  knob drag, a wheel turn, one stroke on a shape or table, a rack change, a preset load.
 - **Page** (top half): the selected page.
 - **Lower panel** (OSC, MIX, FX and GLOBAL pages): eight macros, ENV 1-4, LFO 1-10 (six tabs in
   view, arrows for the rest), VELO and NOTE curves, and the voicing controls. The ARP button in
@@ -26,9 +28,12 @@ for it translate directly:
   transpose, key, scale, swing, trigger octave, a playable keyboard and portamento (always /
   scaled, time and curve).
 
-Every knob takes modulation: drag a source's handle (the small circle next to an envelope, LFO,
-macro, VELO / NOTE tab) onto a knob, or right-click a knob and pick a source. The ring around the
-knob shows the amount; Alt-drag on the ring changes it. The same context menu lists the knob's
+Every knob takes modulation: drag a source's handle (the small meter next to an envelope, LFO,
+macro, VELO / NOTE tab) onto a knob, or right-click a knob and pick a source. The handle is a live
+meter of the source's output for the newest note (or the global value for mono LFOs, macros and
+other global sources): LFOs swing around the top centre, envelopes, velocity and note fill from
+the lower left. Velocity and note keep the last note's value; a per-note LFO rests while no note
+sounds. The ring around the knob shows the amount; Alt-drag on the ring changes it. The same context menu lists the knob's
 slots (amount, bypass, remove) and offers automation and MIDI links.
 
 ## Oscillators (OSC page)

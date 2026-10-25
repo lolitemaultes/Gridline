@@ -1376,6 +1376,58 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> junk = {'X', 'f', 'e', 'r', 1, 2, 3};
     expect(!pl::importSerumBytes(junk, st2, bad) && !bad.error.empty(), "damaged file is rejected with a message");
   }
+  // ---- source meters: the live display channel follows an LFO, an envelope and the velocity
+  {
+    PluginState s = base();
+    setP(s, pl::lfoP(0, pl::L_Mode), pl::LfoRetrig);
+    setP(s, pl::lfoP(0, pl::L_Bpm), 0);
+    setP(s, pl::lfoP(0, pl::L_Rate), 0.4f);
+    setP(s, pl::envP(0, pl::E_Attack), static_cast<float>(pl::envTimeInv(0.3)));
+    setP(s, pl::envP(0, pl::E_Decay), static_cast<float>(pl::envTimeInv(0.3)));
+    setP(s, pl::envP(0, pl::E_Sustain), 0.5f);
+    setP(s, pl::envP(0, pl::E_Release), static_cast<float>(pl::envTimeInv(0.3)));
+    auto g = packs::createGenerator(s.type);
+    ChannelAux aux;
+    packs::prepareAux(s, aux);
+    g->prepareHost(s, kSr);
+    ProcessContext ctx;
+    ctx.sampleRate = kSr;
+    ctx.tempo = 120;
+    ctx.ppq = 96;
+    std::vector<float> L(256), R(256);
+    pl::LiveView lv;
+    float lfoMin = 2, lfoMax = -2, envPeak = 0, envAtOff = 0, envMinRel = 2, envEarlyRel = 0, envEnd = 1, velHeld = 0;
+    bool lfoBip = false, envUni = false, envRises = true;
+    float prevEnv = 0;
+    const int total = static_cast<int>(kSr * 3), offAt = static_cast<int>(kSr * 2);
+    for (int pos = 0; pos < total; pos += 256) {
+      if (pos == 0) g->noteOn(1, 60, 0.6f, 0);
+      if (pos == offAt) g->noteOff(1, 0);
+      g->process(s, aux, ctx, L.data(), R.data(), 256);
+      if (!pl::liveView(g.get(), lv)) break;
+      bool bip = false;
+      const float lf = pl::sourceMeterValue(pl::SrcLfo1, lv.source[pl::SrcLfo1], bip);
+      lfoBip = bip;
+      const float ev = pl::sourceMeterValue(pl::SrcEnv1, lv.source[pl::SrcEnv1], bip);
+      envUni = !bip;
+      if (pos < offAt) lfoMin = std::min(lfoMin, lf), lfoMax = std::max(lfoMax, lf);
+      if (pos < static_cast<int>(kSr * 0.25)) envRises = envRises && ev >= prevEnv - 1e-6f;
+      envPeak = std::max(envPeak, ev);
+      if (pos + 256 >= offAt && pos < offAt) envAtOff = ev;
+      if (pos > offAt + static_cast<int>(kSr * 0.1) && pos < offAt + static_cast<int>(kSr * 0.3)) envMinRel = std::min(envMinRel, ev);
+      if (pos >= offAt + static_cast<int>(kSr * 0.04) && pos < offAt + static_cast<int>(kSr * 0.04) + 256) envEarlyRel = ev;
+      envEnd = ev;
+      prevEnv = ev;
+      velHeld = lv.source[pl::SrcVelo];
+    }
+    std::printf("# meters: lfo %.2f..%.2f env peak %.2f at off %.2f release %.2f / %.2f end %.3f velo %.2f\n", lfoMin, lfoMax, envPeak, envAtOff, envEarlyRel, envMinRel, envEnd,
+                velHeld);
+    expect(lfoBip && lfoMin < -0.8f && lfoMax > 0.8f, "LFO meter swings both ways around zero");
+    expect(envUni && envRises && envPeak > 0.95f, "envelope meter rises to the peak in the attack");
+    expect(envAtOff > 0.2f && envEarlyRel > 0.02f && envEarlyRel < envAtOff && envMinRel < envAtOff * 0.5f, "envelope meter falls in the release");
+    expect(envEnd < 0.01f, "envelope meter rests at zero after the release");
+    expect(std::fabs(velHeld - 0.6f) < 0.05f, "velocity meter keeps the last note's velocity");
+  }
   // ---- every parameter acts (the audit's VERIFIED entries)
   cov::run(*info);
   return finish();

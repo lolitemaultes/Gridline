@@ -143,6 +143,13 @@ struct DevTrack {
   int frame = -1;
 };
 bool devTrack(uint32_t paramIndex, DevTrack& out);
+// Dev / test hook (--dev-input "atparam" / "plug"): the last drawn control of any kind (knob,
+// slider, custom dragParam item) bound to a parameter: its rectangle in ImGui screen coordinates.
+struct DevItem {
+  float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  int frame = -1;
+};
+bool devItem(ParamId pid, DevItem& out);
 // J-105 dev / test hook (--dev-input "sdlpt" / "pts"): the last drawn point editor of a
 // name ("conv.eq", "conv.env"): its plot rectangle (logical px; x0..x1 = 0..span, y1..y0 =
 // value 0..1), its points (t, v, tension), the point being dragged and the hovered one.

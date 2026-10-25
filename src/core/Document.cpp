@@ -123,15 +123,48 @@ void Document::reset(Song song) {
   ++revision_;
 }
 
-void Document::exec(CommandPtr cmd) {
-  if (beforeChange && groups_.empty() && !undo_.wouldMerge(*cmd)) beforeChange();
+void Document::exec(CommandPtr cmd, bool mayJoin) {
+  const bool join = mayJoin && groups_.empty() && pointerGesture_ && gestureSerial_ != 0 && undo_.canAmend() &&
+                    undo_.stateSerial() == gestureSerial_;
+  if (beforeChange && groups_.empty() && !join && !undo_.wouldMerge(*cmd)) beforeChange();
   ++revision_;
   if (!groups_.empty()) {
     cmd->apply(song_);
     groups_.back()->add(std::move(cmd));
     return;
   }
-  undo_.push(song_, std::move(cmd));
+  if (join) {
+    cmd->apply(song_);
+    undo_.amendTop(std::move(cmd));
+  } else {
+    undo_.push(song_, std::move(cmd));
+  }
+  if (pointerGesture_ && mayJoin) gestureSerial_ = undo_.stateSerial();
+}
+
+void Document::beginPointerGesture() {
+  pointerGesture_ = true;
+  gestureSerial_ = 0;
+}
+
+void Document::endPointerGesture() {
+  if (!pointerGesture_) return;
+  pointerGesture_ = false;
+  gestureSerial_ = 0;
+  undo_.breakMerge();  // the next gesture starts a step of its own (editors that never said so)
+}
+
+bool Document::amendStep(uint64_t serial, const std::function<void()>& fn) {
+  if (!groups_.empty() || serial == 0 || !undo_.canAmend() || undo_.stateSerial() != serial) {
+    fn();
+    return false;
+  }
+  groups_.push_back(std::make_unique<GroupCommand>(""));
+  fn();
+  auto g = std::move(groups_.back());
+  groups_.pop_back();
+  if (!g->empty()) undo_.amendTop(std::move(g));
+  return true;
 }
 
 void Document::beginGroup(const std::string& label) {
@@ -148,9 +181,15 @@ void Document::endGroup() {
     groups_.back()->add(std::move(g));  // already applied
     return;
   }
-  undo_.breakMerge();
-  undo_.pushApplied(std::move(g));
-  undo_.breakMerge();
+  const bool join = pointerGesture_ && gestureSerial_ != 0 && undo_.canAmend() && undo_.stateSerial() == gestureSerial_;
+  if (join) {
+    undo_.amendTop(std::move(g));
+  } else {
+    undo_.breakMerge();
+    undo_.pushApplied(std::move(g));
+    undo_.breakMerge();
+  }
+  if (pointerGesture_) gestureSerial_ = undo_.stateSerial();
 }
 
 void Document::cancelGroup() {
@@ -163,12 +202,13 @@ void Document::cancelGroup() {
 }
 
 void Document::recordMark(const std::string& label) {
-  exec(std::make_unique<LambdaCommand>(label, [](Song&) {}, [](Song&) {}));
+  exec(std::make_unique<LambdaCommand>(label, [](Song&) {}, [](Song&) {}), false);
 }
 
 bool Document::stepHistory(int dir) {
   if (!groups_.empty() || !undo_.stepPosition(dir)) return false;
   ++revision_;
+  moveSerial_ = undo_.stateSerial();
   return true;
 }
 
@@ -181,6 +221,7 @@ bool Document::undo() {
   if (historyHook) return groups_.empty() && undo_.canUndo() && historyHook(-1);
   if (!groups_.empty() || !undo_.undo(song_)) return false;
   ++revision_;
+  moveSerial_ = undo_.stateSerial();
   return true;
 }
 
@@ -188,6 +229,7 @@ bool Document::redo() {
   if (historyHook) return groups_.empty() && undo_.canRedo() && historyHook(1);
   if (!groups_.empty() || !undo_.redo(song_)) return false;
   ++revision_;
+  moveSerial_ = undo_.stateSerial();
   return true;
 }
 
@@ -203,6 +245,7 @@ void Document::jumpTo(size_t position) {
   }
   undo_.jumpTo(song_, position);
   ++revision_;
+  moveSerial_ = undo_.stateSerial();
 }
 
 // --- generic edits ----------------------------------------------------------------

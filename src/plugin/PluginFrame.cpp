@@ -233,6 +233,7 @@ void Frame::draw(int winW, int winH, int fbW, int fbH) {
 
   ImGui_ImplOpenGL3_NewFrame();
   ImGui::NewFrame();
+  pointerGestureFrame(app);  // one undo step per pointer gesture, in every editor
   ui::ClampTrackedWindows();  // J-91: floating windows kept in the work area before they are laid out
   const float topH = drawTopBar(app);
   ImGuiViewport* vp = ImGui::GetMainViewport();

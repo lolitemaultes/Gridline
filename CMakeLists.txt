@@ -1192,6 +1192,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j116_detach_app PROPERTIES TIMEOUT 300 SKIP_REGULAR_EXPRESSION "SKIP: ")
 
+    # Plugin editors: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y / Cmd+Z undo and redo knob drags, wheel turns and
+    # drawn shapes (plugin data) as one step per gesture, in the main window and in a detached plugin window.
+    add_test(NAME plugin_undo_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/plugin_undo_app -P ${CMAKE_SOURCE_DIR}/tests/plugin_undo_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(plugin_undo_app PROPERTIES TIMEOUT 300 SKIP_REGULAR_EXPRESSION "SKIP: ")
+
     # J-117: floating windows inside the main window have an elastic boundary (dragged past an
     # edge they follow with damped overshoot, released they spring back inside; a shrunk main
     # window pulls them back), the pop-out button stays beside the close button whatever the
@@ -1210,6 +1218,15 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j118_paint_brush -P ${CMAKE_SOURCE_DIR}/tests/j118_paint_brush.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j118_paint_brush_app PROPERTIES TIMEOUT 300)
+
+    # The plugin window's channel strip (volume, pan, pitch, preview keyboard): hidden by default,
+    # the header's eye slides it in and out, the window's size is stable after the slide, the
+    # keyboard and knobs work while shown, and the choice survives a restart.
+    add_test(NAME plugin_strip_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/plugin_strip -P ${CMAKE_SOURCE_DIR}/tests/plugin_strip.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(plugin_strip_app PROPERTIES TIMEOUT 300)
 
     # J-107: Seltmann's one-step flow: drop a file on the editor -> analysed -> click a layout -> playing.
     add_test(NAME seltmann_flow

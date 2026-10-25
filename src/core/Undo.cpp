@@ -21,6 +21,23 @@ void UndoStack::pushApplied(CommandPtr cmd) {
   trim();
 }
 
+void UndoStack::amendTop(CommandPtr cmd) {
+  if (!canAmend()) {
+    pushApplied(std::move(cmd));
+    return;
+  }
+  CommandPtr& top = cmds_[pos_ - 1];
+  if (auto* g = dynamic_cast<GroupCommand*>(top.get())) {
+    g->addMerged(std::move(cmd));
+  } else if (!(top->mergeKey() != 0 && top->mergeKey() == cmd->mergeKey() && top->mergeWith(*cmd))) {
+    auto group = std::make_unique<GroupCommand>(top->label());
+    group->add(std::move(top));
+    group->add(std::move(cmd));
+    top = std::move(group);
+  }
+  serials_[pos_ - 1] = nextSerial_++;
+}
+
 bool UndoStack::undo(Song& song) {
   if (!canUndo()) return false;
   cmds_[--pos_]->revert(song);

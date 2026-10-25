@@ -203,7 +203,8 @@ member. Inviting the person again also works (see above).
   (with their name and colour), so it also shows while they are offline and after you reopen the
   project.
 * **Undo** undoes only your own changes. If a collaborator changed the same thing after you, your
-  undo leaves their change alone.
+  undo leaves their change alone. This holds in plugin editors too: a knob drag or a drawn shape
+  is one step, and your undo leaves a collaborator's knob on the same plugin as it is.
 * **Playback is your own.** Pressing Play plays the song on your computer only. To listen along,
   right-click a collaborator in the Collaboration panel and choose **Follow their playhead**: your
   transport follows theirs until you choose it again.

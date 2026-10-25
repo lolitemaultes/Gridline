@@ -14,6 +14,8 @@ release workflow publishes the section of the tagged version as the release note
 - Modulation: 4 envelopes, 10 LFOs (drawn shapes with loop points, path and chaos modes, sample
   and hold), 8 macros, velocity and note curves, MPE and more as sources; a 64-slot matrix with
   curves, smoothing and an auxiliary source. Drag a source onto any knob, or use the knob's menu.
+  Each source's drag handle on the ENV, LFO, VELO / NOTE tabs and the macros is a small live
+  meter of its current output.
 - Three effect racks with up to 24 modules (distortion, flanger, phaser, chorus, delay,
   compressor, reverb, EQ, filter, hyper / dimension, frequency shifter, convolution, utility and
   band splitters), an arpeggiator with 12 pattern slots and a clip player with 12 clips (piano
@@ -24,6 +26,36 @@ release workflow publishes the section of the tagged version as the release note
   them into Plasma sounds, with a report of anything approximated or not found; a preset browser
   lists them next to the factory presets and your library. Projects that host the original plugin
   keep hosting it. See `docs/plugins/plasma.md`.
+
+### Plugin windows: the channel strip hides
+
+- The strip at the top of a plugin's channel window (volume, pan, pitch and the preview keyboard)
+  is now hidden by default, which leaves more room for the plugin's editor. The eye button at the
+  right of the window's header row (the same eye the mixer uses to show and hide a plugin's
+  window) shows it: it slides down in about 140 ms and slides back up when you hide it again. The
+  knobs and the keyboard work exactly as before while it is shown.
+- The choice is global and remembered (Settings key `ui.channelStrip`): every plugin window opens
+  with the strip shown or hidden the way you left it. With Interface animations off, or when the
+  system asks for reduced motion, it switches at once.
+- The window grows and shrinks with the strip, docked or popped out into its own window. Installed
+  plugins (VST3, CLAP, AU, ...) that open their own interface do so in a window without this strip,
+  so their view never moves.
+
+### Undo in plugin editors: one step per gesture
+
+- Ctrl+Z (Cmd+Z on macOS) undoes, and Ctrl+Shift+Z / Ctrl+Y redo, what you did in any Gridline
+  plugin editor, also in a plugin window popped out of the main window and while the keyboard is
+  in that window. Text fields keep their own undo while you type in them.
+- Every gesture is one undo step, whatever the editor: a knob or slider drag, a turn of the mouse
+  wheel over a control (the steps of one turn), a typed value, a menu pick, one stroke on a drawn
+  shape (Plasma's LFO shapes and curves, wavetable editor, clip and arp editors), an effect added,
+  removed or moved in a rack, a preset loaded. Before, two strokes on the same shape could merge
+  into one step, one stroke could leave two steps (a parameter and the shape apart), and each
+  wheel step was a step of its own.
+- External plugins (VST3, CLAP, AU, VST2): an edit gesture in the plugin's own interface and the
+  plugin state it reports right after are one undo step, and the plugin following an undo or
+  redo no longer adds a step that threw the redo history away.
+- In a collaborative project undo still takes back only your own changes, plugin edits included.
 
 ### Collaboration: rename in place
 
