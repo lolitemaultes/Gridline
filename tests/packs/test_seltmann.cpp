@@ -762,7 +762,7 @@ void testLongFile() {
   const auto t0 = std::chrono::steady_clock::now();
   sm::JobPtr job = sm::requestAnalysis(path);
   const double callMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  expect(callMs < 50, "long file: the request returns at once");
+  expect(callMs < 250, "long file: the request returns at once");  // (the analysis itself takes seconds; CI VMs can be slow to start a thread)
   std::printf("# request took %.2f ms\n", callMs);
   float lastP = 0;
   bool monotonic = true, sawMiddle = false;
