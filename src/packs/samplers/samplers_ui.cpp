@@ -880,8 +880,8 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
         ed.sel = 0;
         commitMap(a, t, nm, "change soundfont preset");
       };
-      if (iskin::button(k, "##sfp", 415, 13, 22, 18, "<", false, 9)) pick(cur - 1);
-      if (iskin::button(k, "##sfn", 439, 13, 22, 18, ">", false, 9)) pick(cur + 1);
+      if (iskin::button(k, "##sfp", 415, 13, 22, 18, GL_ICON_LABEL("chevron-left", "<"), false, 9)) pick(cur - 1);
+      if (iskin::button(k, "##sfn", 439, 13, 22, 18, GL_ICON_LABEL("chevron-right", ">"), false, 9)) pick(cur + 1);
     }
   }
   if (iskin::button(k, "##dwauto", 525, 13, 66, 18, "AUTO-MAP", false, 8)) autoMap(m.zones), commitMap(a, t, m, "auto-map zones");

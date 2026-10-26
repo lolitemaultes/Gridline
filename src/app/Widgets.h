@@ -26,6 +26,19 @@ enum class Icon {
   StepEdit, LinkSlots,
   // J-106: Convolver curve mode (smooth curve / straight segments).
   CurveSmooth, CurveStraight,
+  // Gridline originals replacing hand-drawn glyphs (assets/icons/ui, NOTICE.md):
+  // generic, windows, track header, playlist, mixer track icons, plugin
+  // categories, plugin editor glyphs, Edison.
+  ChevronLeft, ChevronUp, Check, Slash, Ring, Power, Question, Info, PlusMinus, ListBullets, GripDots, Star,
+  StarFilled, WindowPopout, WindowDockin, Speaker, SpeakerWaves, InputJack, LoopArrows, ClipAutomation, ClipPattern,
+  TrackKick, TrackSnare, TrackHats, TrackPercussion, TrackBass, TrackKeys, TrackSynth, TrackPad, TrackGuitar,
+  TrackVocal, TrackEffects, TrackReverb, TrackDelay, TrackBus, TrackSidechain, TrackOutput, CatSynth, CatDrums,
+  CatSampler, CatController, CatMidi, CatDelay, CatDynamics, CatFilter, CatEq, CatDistortion, CatModulation,
+  CatSpectral, CatStereo, CatPitch, CatUtility, StoreTray, SwapArrows, DisplayBar, DisplayPeaks, DisplayEnvelope,
+  DisplayLevels, DisplayDots, DisplayBars, DisplayLine, Snowflake, SlideArrow, Sine, DiceTwo, CirclesApart,
+  CirclesMerged, EdisonLoopSet, EdisonLoop, Flag, Trim, SliceWave, FadeIn, FadeOut, Normalize, ReverbTail, Blur,
+  EqCurve, EnvelopePoints, Stretch, Denoise, SendOut, Scrub, Follow, SpeakerSmall, SpeakerSmallOff, ScrollTo,
+  Headphones,
   Count  // number of icons (not an icon)
 };
 // Q-12: true for the tool family (playlist / piano roll / automation editor strips).
@@ -40,6 +53,34 @@ const char* iconSvgName(Icon icon);
 void drawIcon(ImDrawList* dl, Icon icon, ImVec2 center, float size, ImU32 col);
 // Same, `box` = the SVG's 24-unit box (snapped to a standard size).
 void drawIconBox(ImDrawList* dl, Icon icon, ImVec2 center, float box, ImU32 col);
+// The icon fitted to an older glyph's footprint: drawn as large as its ink (the
+// pixels it covers, stroke included) fits in `inkMin`..`inkMax`, the ink centred
+// there. Where an SVG replaced a hand-drawn glyph, pass the old glyph's ink
+// bounds, so the icon never draws bigger than the glyph it replaced.
+void drawIconFit(ImDrawList* dl, Icon icon, ImVec2 inkMin, ImVec2 inkMax, ImU32 col);
+// Same, the ink box given by its centre and size.
+inline void drawIconFitC(ImDrawList* dl, Icon icon, ImVec2 c, ImVec2 ink, ImU32 col) {
+  drawIconFit(dl, icon, ImVec2(c.x - ink.x * 0.5f, c.y - ink.y * 0.5f), ImVec2(c.x + ink.x * 0.5f, c.y + ink.y * 0.5f), col);
+}
+// An icon drawn on an older glyph's unit grid (icons::drawGlyph): one old unit
+// of `unitPx` logical px is 10 SVG units around the centre `c`; fitted to the
+// old glyph's ink (its geometry plus half `oldStroke`), never bigger.
+void drawIconGlyph(ImDrawList* dl, Icon icon, ImVec2 c, float unitPx, float oldStroke, ImU32 col);
+// Icon labels: a text button caption that is an icon. GL_ICON_LABEL("chevron-left", "<")
+// is the SVG chevron-left, laid out and sized like the text "<" in the button's font
+// (it fits the character's ink bounds). Button helpers that draw a caption take
+// these: they measure labelText(s) and draw it with drawLabel().
+#define GL_ICON_LABEL(svg, text) "\x1b" svg "\x1f" text
+// The text an icon label stands for ("<" above), or `s` itself.
+const char* labelText(const char* s);
+// Draws the caption `s` at `pos` (as ImDrawList::AddText with `font` / `size`):
+// an icon label draws its SVG over the ink of its text, anything else draws as text.
+void drawLabel(ImDrawList* dl, ImFont* font, float size, ImVec2 pos, ImU32 col, const char* s);
+// Same with the current font and size.
+void drawLabel(ImDrawList* dl, ImVec2 pos, ImU32 col, const char* s);
+// Installs the current ImGui context's glyph hook (ImGui's own arrows, check
+// marks, close crosses and step buttons as SVG icons); call once per context.
+void installGlyphHook();
 // Square icon button; `active` draws it highlighted (Paper fill, or activeCol).
 // Dark theme: the active glyph lights in `activeCol` (tool role colour) or the
 // lit-glyph orange; `idleCol` tints the glyph at rest (e.g. menu buttons).

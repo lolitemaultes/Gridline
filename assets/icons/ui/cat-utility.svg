@@ -1,0 +1,7 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: plugin category: two fader tracks with caps (utility) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M9 4.5 L9 19.5" opacity="0.5" />
+  <path d="M15 4.5 L15 19.5" opacity="0.5" />
+  <rect x="7" y="12.5" width="4" height="2.5" rx="0.7" fill="currentColor" stroke="none" />
+  <rect x="13" y="7.5" width="4" height="2.5" rx="0.7" fill="currentColor" stroke="none" />
+</svg>

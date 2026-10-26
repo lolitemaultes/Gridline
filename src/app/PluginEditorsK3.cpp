@@ -169,8 +169,8 @@ void editorFlangus(App& a, const PluginTarget& t, float width) {
     std::snprintf(b, sizeof b, "%d", ord);
     sk::textAt(dl, ImVec2(p0.x, p0.y + v.px(16)), ImVec2(p1.x, p1.y - v.px(16)), pal.fill, b, v.px(16), 0, true);
     float cx = (p0.x + p1.x) * 0.5f, aw = v.px(5);
-    dl->AddTriangleFilled(ImVec2(cx - aw, p0.y + v.px(11)), ImVec2(cx + aw, p0.y + v.px(11)), ImVec2(cx, p0.y + v.px(5)), pal.textDim);
-    dl->AddTriangleFilled(ImVec2(cx - aw, p1.y - v.px(11)), ImVec2(cx + aw, p1.y - v.px(11)), ImVec2(cx, p1.y - v.px(5)), pal.textDim);
+    ui::drawIconFit(dl, ui::Icon::Up, ImVec2(cx - aw, p0.y + v.px(5)), ImVec2(cx + aw, p0.y + v.px(11)), pal.textDim);
+    ui::drawIconFit(dl, ui::Icon::Down, ImVec2(cx - aw, p1.y - v.px(11)), ImVec2(cx + aw, p1.y - v.px(5)), pal.textDim);
     const sk::FormCtl& l = v.c("ChOrderWheelLabel");
     sk::textAt(dl, v.p(static_cast<float>(l.x - 4), static_cast<float>(l.y - 2)), v.p(static_cast<float>(l.x + l.w + 4), static_cast<float>(l.y + l.h + 4)),
                pal.text, "VOICES", std::clamp(v.px(7.f), 10.f, 13.f));
@@ -464,10 +464,10 @@ void editorStereoEnhancer(App& a, const PluginTarget& t, float width) {
   {  // wider / merged glyphs under the separation knob
     ImVec2 a0 = v.p0(v.c("SepWheelPlusLabel")), a1 = v.p1(v.c("SepWheelPlusLabel"));
     float m = (a0.y + a1.y) * 0.5f, cx = (a0.x + a1.x) * 0.5f, r = v.px(3);
-    dl->AddCircle(ImVec2(cx - r * 1.4f, m), r, pal.text, 10, 1.2f), dl->AddCircle(ImVec2(cx + r * 1.4f, m), r, pal.text, 10, 1.2f);
+    ui::drawIconGlyph(dl, ui::Icon::CirclesApart, ImVec2(cx, m), r * 2.4f, 1.2f, pal.text);
     ImVec2 b0 = v.p0(v.c("SepWheelMinLabel")), b1 = v.p1(v.c("SepWheelMinLabel"));
     float bx = (b0.x + b1.x) * 0.5f, bm = (b0.y + b1.y) * 0.5f;
-    dl->AddCircle(ImVec2(bx - r * 0.5f, bm), r, pal.text, 10, 1.2f), dl->AddCircle(ImVec2(bx + r * 0.5f, bm), r, pal.text, 10, 1.2f);
+    ui::drawIconGlyph(dl, ui::Icon::CirclesMerged, ImVec2(bx, bm), r * 1.5f, 1.2f, pal.text);
   }
   static const char* pos[2] = {"PRE", "POST"};
   sk::textSelector(a, t, v, "PosSelect", StFxPos, pal, pos, 2);

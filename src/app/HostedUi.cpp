@@ -433,7 +433,7 @@ void header(App& a, const PluginTarget& t, host::HostedInstance* hi, const Plugi
 
   // Presets: previous / next / browser.
   const int np = presetCount(hi);
-  if (skin::button(F, "##pp", 280, 44, 18, 20, "<", L.btn, L.btnText, "Previous preset") && np > 0) {
+  if (skin::button(F, "##pp", 280, 44, 18, 20, GL_ICON_LABEL("chevron-left", "<"), L.btn, L.btnText, "Previous preset") && np > 0) {
     w.preset = w.preset <= 0 ? np - 1 : w.preset - 1;
     selectPreset(a, t, hi, w.preset);
   }
@@ -442,7 +442,7 @@ void header(App& a, const PluginTarget& t, host::HostedInstance* hi, const Plugi
                    "The plugin's own programs and preset library") &&
       np > 0)
     ImGui::OpenPopup("##wrapperPresets");
-  if (skin::button(F, "##pnx", 498, 44, 18, 20, ">", L.btn, L.btnText, "Next preset") && np > 0) {
+  if (skin::button(F, "##pnx", 498, 44, 18, 20, GL_ICON_LABEL("chevron-right", ">"), L.btn, L.btnText, "Next preset") && np > 0) {
     w.preset = (w.preset + 1) % np;
     selectPreset(a, t, hi, w.preset);
   }

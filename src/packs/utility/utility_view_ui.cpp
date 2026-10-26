@@ -1213,14 +1213,14 @@ void editorNotes(App& a, const PluginTarget& t, float width) {
   const float fs = F.font(7.5f);
   dl->AddRectFilled(F.p(0, 192), F.p(kW, kH), skin::hex(0xB8BEC3));
   dl->AddLine(F.p(0, 192), F.p(kW, 192), skin::hex(0x9AA1A6), 1.0f);
-  if (skin::button("##prev", F.p(2, 194), F.sz(14, 15), K, "<", false, fs)) setPage(page - 1);
+  if (skin::button("##prev", F.p(2, 194), F.sz(14, 15), K, GL_ICON_LABEL("chevron-left", "<"), false, fs)) setPage(page - 1);
   if (ImGui::IsItemHovered()) a.setHint("Previous page");
   {
     char buf[16];
     std::snprintf(buf, sizeof buf, "PAGE %d", page + 1);
     skin::lcd(dl, F.p(18, 194), F.p(62, 209), K, buf, fs);
   }
-  if (skin::button("##next", F.p(64, 194), F.sz(14, 15), K, ">", false, fs)) setPage(page + 1);
+  if (skin::button("##next", F.p(64, 194), F.sz(14, 15), K, GL_ICON_LABEL("chevron-right", ">"), false, fs)) setPage(page + 1);
   if (ImGui::IsItemHovered()) a.setHint("Next page");
   {
     ImVec2 q = F.p(82, 195), q1 = F.p(272, 208);

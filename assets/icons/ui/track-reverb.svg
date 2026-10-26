@@ -1,0 +1,7 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: mixer track icon: a source with expanding arcs (reverb) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="5" cy="12" r="2.4" fill="currentColor" stroke="none" />
+  <path d="M8.11 8.08 A5 5 0 0 1 8.11 15.92" />
+  <path d="M10.91 4.56 A9.5 9.5 0 0 1 10.91 19.44" />
+  <path d="M13.7 1.03 A14 14 0 0 1 13.7 22.97" />
+</svg>

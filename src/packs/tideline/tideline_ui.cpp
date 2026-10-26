@@ -406,9 +406,7 @@ void shiftRow(App& a, const PluginTarget& t, ImVec2 p0, float w) {
     dl->AddRect(q0, q1, P.line, theme::kRadius);
     const ImVec2 c((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f);
     if (bs[k].icon == ui::Icon::Chevron) {  // fine: small chevron pointing the way
-      const float d = k == 1 ? -1.0f : 1.0f;
-      dl->AddLine(ImVec2(c.x - 3 * d, c.y - 5), ImVec2(c.x + 3 * d, c.y), P.text, 1.6f);
-      dl->AddLine(ImVec2(c.x + 3 * d, c.y), ImVec2(c.x - 3 * d, c.y + 5), P.text, 1.6f);
+      ui::drawIconFit(dl, k == 1 ? ui::Icon::ChevronLeft : ui::Icon::Chevron, ImVec2(c.x - 3.8f, c.y - 5.3f), ImVec2(c.x + 3.8f, c.y + 5.3f), P.text);
     } else {
       ui::drawIcon(dl, bs[k].icon, c, 14, P.text);
     }

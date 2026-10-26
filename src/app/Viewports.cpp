@@ -752,22 +752,12 @@ void dump(int frame) {
 // ---- the pop-out / dock-back button ----
 
 // One small monochrome glyph, ImGui's close-button weight: a window frame with an arrow leaving
-// it to the upper right (pop out) or coming into it (dock back in).
+// it to the upper right (pop out) or coming into it (dock back in). SVG icons
+// (window-popout / window-dockin) on the old glyph's grid: the box spans -1..1.
 void drawGlyph(ImDrawList* dl, const ImRect& bb, bool dockIn, ImU32 col) {
   const float s = bb.GetWidth();
   const float t = std::max(1.0f, std::round(s / 13.0f));
-  auto P = [&](float fx, float fy) { return ImVec2(std::floor(bb.Min.x + fx * s) + 0.5f, std::floor(bb.Min.y + fy * s) + 0.5f); };
-  // The frame, open at its top-right corner where the arrow passes.
-  dl->AddLine(P(0.50f, 0.30f), P(0.20f, 0.30f), col, t);
-  dl->AddLine(P(0.20f, 0.30f), P(0.20f, 0.80f), col, t);
-  dl->AddLine(P(0.20f, 0.80f), P(0.70f, 0.80f), col, t);
-  dl->AddLine(P(0.70f, 0.80f), P(0.70f, 0.50f), col, t);
-  const ImVec2 a = P(0.42f, 0.58f), b = P(0.84f, 0.16f);
-  dl->AddLine(a, b, col, t);
-  const ImVec2 tip = dockIn ? a : b;
-  const float hl = 0.26f * s * (dockIn ? -1.0f : 1.0f);  // the head's two strokes point back along the shaft
-  dl->AddLine(tip, ImVec2(tip.x - hl, tip.y), col, t);
-  dl->AddLine(tip, ImVec2(tip.x, tip.y + hl), col, t);
+  ui::drawIconGlyph(dl, dockIn ? ui::Icon::WindowDockin : ui::Icon::WindowPopout, bb.GetCenter(), s * 0.5f, t, col);
 }
 
 const char* buttonTip(bool out) { return out ? i18n::tr("Dock back into Gridline") : i18n::tr("Pop out into its own window"); }

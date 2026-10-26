@@ -93,6 +93,23 @@ long blur(const std::vector<uint8_t>& a) {
 
 }  // namespace
 
+bool geometryBounds(const char* svgText, float out[4], bool* stroked) {
+  if (!svgText) return false;
+  Parsed p(svgText);
+  if (!p.img) return false;
+  bool any = false, st = false;
+  for (NSVGshape* s = p.img->shapes; s; s = s->next) {
+    if (!(s->flags & NSVG_FLAGS_VISIBLE)) continue;
+    if (!any) out[0] = s->bounds[0], out[1] = s->bounds[1], out[2] = s->bounds[2], out[3] = s->bounds[3];
+    out[0] = std::min(out[0], s->bounds[0]), out[1] = std::min(out[1], s->bounds[1]);
+    out[2] = std::max(out[2], s->bounds[2]), out[3] = std::max(out[3], s->bounds[3]);
+    st = st || s->stroke.type != NSVG_PAINT_NONE;
+    any = true;
+  }
+  if (stroked) *stroked = st;
+  return any;
+}
+
 bool rasterize(const char* svgText, int px, float strokeDevicePx, std::vector<uint8_t>& alpha) {
   if (!svgText || px <= 0) return false;
   Parsed p(svgText);
@@ -167,7 +184,7 @@ int Atlas::indexOf(const std::string& name) const {
 }
 
 int Atlas::devicePx(float logicalPx) const {
-  return std::max(4, static_cast<int>(std::lround(logicalPx * density_)));
+  return std::max(3, static_cast<int>(std::lround(logicalPx * density_)));
 }
 
 void Atlas::clear() {
@@ -216,22 +233,34 @@ bool Atlas::place(int w, int h, Rect& out) {
 
 const Atlas::Rect* Atlas::get(const std::string& name, float logicalPx) { return get(indexOf(name), logicalPx); }
 
-const Atlas::Rect* Atlas::get(int svgIndex, float logicalPx) {
+const Atlas::Rect* Atlas::get(int svgIndex, float logicalPx, float strokeDevicePx) {
   int n = 0;
   const SvgSource* src = embeddedSvgs(&n);
   if (svgIndex < 0 || svgIndex >= n) return nullptr;
   const int px = std::min(devicePx(logicalPx), kPage - 2 * kPad);
-  const uint64_t key = (static_cast<uint64_t>(svgIndex) << 32) | static_cast<uint32_t>(px);
+  const uint32_t q = strokeDevicePx > 0 ? static_cast<uint32_t>(std::lround(strokeDevicePx * 4.0f)) & 0xFFFFu : 0u;  // quarter px
+  const uint64_t key = (static_cast<uint64_t>(svgIndex) << 32) | (static_cast<uint64_t>(q) << 16) | static_cast<uint32_t>(px);
   auto it = rects_.find(key);
   if (it != rects_.end()) return it->second.page >= 0 ? &it->second : nullptr;
   Rect r;
   std::vector<uint8_t> a;
   ++rasterCount_;
-  if (rasterize(src[svgIndex].svg, px, strokePx(static_cast<float>(px) / density_, density_), a) &&
+  const float stroke = q ? static_cast<float>(q) * 0.25f : strokePx(static_cast<float>(px) / density_, density_);
+  if (rasterize(src[svgIndex].svg, px, stroke, a) &&
       place(px + 2 * kPad, px + 2 * kPad, r)) {
     r.x += kPad;
     r.y += kPad;
     r.size = px;
+    r.inkX0 = r.inkY0 = px;
+    for (int y = 0; y < px; ++y)
+      for (int x = 0; x < px; ++x)
+        if (a[static_cast<size_t>(y) * px + x] >= kInkAlpha) {
+          r.inkX0 = std::min(r.inkX0, x);
+          r.inkY0 = std::min(r.inkY0, y);
+          r.inkX1 = std::max(r.inkX1, x + 1);
+          r.inkY1 = std::max(r.inkY1, y + 1);
+        }
+    if (r.inkX1 <= r.inkX0) r.inkX0 = r.inkY0 = r.inkX1 = r.inkY1 = 0;
     Page& pg = pages_[static_cast<size_t>(r.page)];
     for (int y = 0; y < px; ++y)
       std::memcpy(&pg.alpha[static_cast<size_t>(r.y + y) * kPage + static_cast<size_t>(r.x)], &a[static_cast<size_t>(y) * px],

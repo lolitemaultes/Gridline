@@ -146,7 +146,7 @@ void editorCurveEq(App& a, const PluginTarget& t, float width) {
 
   // ---- settings strip (above the visual): curve tools, draw mode, latency ----
   skin::well(dl, F.p(10, 5), F.p(392, 27), K, 3 * F.s);
-  if (skin::button("##cetools", F.p(14, 7), F.sz(24, 18), K, "=", false, fs)) ImGui::OpenPopup("##cetools");
+  if (skin::button("##cetools", F.p(14, 7), F.sz(24, 18), K, GL_ICON_LABEL("menu", "="), false, fs)) ImGui::OpenPopup("##cetools");
   if (ImGui::IsItemHovered()) a.setHint("Curve tools: flat, invert, smooth, random, copy between snapshots");
   if (ImGui::BeginPopup("##cetools")) {
     PluginState ns = st;

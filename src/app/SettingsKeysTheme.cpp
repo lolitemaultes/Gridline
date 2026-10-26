@@ -432,7 +432,7 @@ void themeSettingsPage(App& a, float fieldW) {
       ImDrawList* dl = ImGui::GetWindowDrawList();
       dl->AddRectFilled(q, ImVec2(q.x + 22, q.y + 22), theme::rgb(col), 4);
       if (t.accent == presets[i]) dl->AddRect(ImVec2(q.x - 2, q.y - 2), ImVec2(q.x + 24, q.y + 24), P.text, 5.0f, ImDrawFlags_None, 2.0f);
-      if (i == 0) dl->AddLine(ImVec2(q.x + 5, q.y + 17), ImVec2(q.x + 17, q.y + 5), theme::contrastText(theme::rgb(col)), 1.5f);
+      if (i == 0) ui::drawIconGlyph(dl, ui::Icon::Slash, ImVec2(q.x + 11, q.y + 11), 6.0f / 0.8f, 1.5f, theme::contrastText(theme::rgb(col)));
       ImGui::PopID();
     }
     ImGui::SameLine(0, theme::kS2);

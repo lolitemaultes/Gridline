@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: a small loudspeaker with one wave (sound on) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="6" y="10" width="3" height="4" fill="currentColor" stroke="none" />
+  <path d="M9 10 L13 6.5 L13 17.5 L9 14 Z" fill="currentColor" stroke="none" />
+  <path d="M17.46 7.41 A6.4 6.4 0 0 1 17.46 16.59" />
+</svg>

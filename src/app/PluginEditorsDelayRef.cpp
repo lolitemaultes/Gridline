@@ -308,7 +308,7 @@ void editorDelayRef(App& a, const PluginTarget& t, float width) {
     }
     skin::lcd(dl, F.p(73, 97), F.p(121, 112), K, buf, fsV);
     // Divisions menu (the reference's wheel "Set" submenu).
-    if (sync && skin::button("##divs", F.p(123, 97), ImVec2(11 * s, 15 * s), K, "v", false, fsL)) ImGui::OpenPopup("##dlydivs");
+    if (sync && skin::button("##divs", F.p(123, 97), ImVec2(11 * s, 15 * s), K, GL_ICON_LABEL("chevron-down", "v"), false, fsL)) ImGui::OpenPopup("##dlydivs");
     if (sync && ImGui::IsItemHovered()) a.setHint("Set the time to a musical division");
     if (ImGui::BeginPopup("##dlydivs")) {
       int cur = ival(st, DlyTicks, 192);

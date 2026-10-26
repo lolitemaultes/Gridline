@@ -1,0 +1,8 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: a ramp through four points (automation clips) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 18 L10 7 L15.5 13 L22 5" />
+  <circle cx="2" cy="18" r="1.2" fill="currentColor" stroke="none" />
+  <circle cx="10" cy="7" r="1.2" fill="currentColor" stroke="none" />
+  <circle cx="15.5" cy="13" r="1.2" fill="currentColor" stroke="none" />
+  <circle cx="22" cy="5" r="1.2" fill="currentColor" stroke="none" />
+</svg>

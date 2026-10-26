@@ -8,6 +8,7 @@
 #include <filesystem>
 #include "../../app/App.h"
 #include "metal_widgets.h"
+#include "../../app/Widgets.h"
 
 namespace gl::packs::models::metal {
 
@@ -159,8 +160,8 @@ void drawSplineScratch(App& a, const PluginTarget& t, float width) {
   {
     const ImVec2 k0 = F.p(0, 162), k1 = F.p(252, 224);
     dl->AddRectFilled(k0, k1, skin::hex(bgr(8024943)), 2);
-    if (flk::btn(c, "##octdn", 228, 146, 12, 14, "<", false)) u.oct = std::max(0, u.oct - 1);
-    if (flk::btn(c, "##octup", 238, 146, 12, 14, ">", false)) u.oct = std::min(8, u.oct + 1);
+    if (flk::btn(c, "##octdn", 228, 146, 12, 14, GL_ICON_LABEL("chevron-left", "<"), false)) u.oct = std::max(0, u.oct - 1);
+    if (flk::btn(c, "##octup", 238, 146, 12, 14, GL_ICON_LABEL("chevron-right", ">"), false)) u.oct = std::min(8, u.oct + 1);
     const int first = u.oct * 12, whites = 14;
     const float kw = (k1.x - k0.x) / whites;
     static const int wsemi[7] = {0, 2, 4, 5, 7, 9, 11};

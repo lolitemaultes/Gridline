@@ -38,13 +38,23 @@ float strokePx(float logicalPx, float density);
 // Returns false when the SVG does not parse.
 bool rasterize(const char* svgText, int px, float strokeDevicePx, std::vector<uint8_t>& alpha);
 
+// Geometry bounds of the SVG's shapes in viewBox units (stroke not included):
+// out = {minX, minY, maxX, maxY}; *stroked = any shape is stroked. False when
+// the SVG does not parse or draws nothing.
+bool geometryBounds(const char* svgText, float out[4], bool* stroked);
+
 class Atlas {
  public:
   static constexpr int kPage = 512;  // page edge, texels
   static constexpr int kPad = 1;     // empty texels around each icon (bilinear safety)
   struct Rect {
     int page = -1, x = 0, y = 0, size = 0;  // texels; size = device px of the 24-unit box
+    // Ink bounds inside the box (device px, exclusive end): texels with at least
+    // kInkAlpha coverage. Used to fit an icon to the footprint of the glyph it
+    // replaces (IconTexture.h drawFit). Empty (0,0,0,0) for a blank icon.
+    int inkX0 = 0, inkY0 = 0, inkX1 = 0, inkY1 = 0;
   };
+  static constexpr int kInkAlpha = 16;  // coverage counted as ink (any visible edge texel)
   struct Page {
     std::vector<uint8_t> alpha;              // kPage * kPage coverage
     int shelfY = 0, shelfH = 0, cursorX = 0;  // shelf packer
@@ -66,8 +76,9 @@ class Atlas {
   // The icon's rect, rasterising it on first use at this size. nullptr when
   // the icon is unknown or does not fit.
   const Rect* get(const std::string& name, float logicalPx);
-  // Same, by index into embeddedSvgs().
-  const Rect* get(int svgIndex, float logicalPx);
+  // Same, by index into embeddedSvgs(). `strokeDevicePx` > 0 replaces the
+  // stroke rule's width (device px): used to fit icons to glyphs drawn thinner.
+  const Rect* get(int svgIndex, float logicalPx, float strokeDevicePx = 0);
   int indexOf(const std::string& name) const;
 
   const std::vector<Page>& pages() const { return pages_; }

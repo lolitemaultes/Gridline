@@ -302,10 +302,10 @@ bool button(const char* id, ImVec2 tl, ImVec2 size, const skin::Skin& k, const c
   dl->AddLine(ImVec2(tl.x + 3, tl.y + 1), ImVec2(p1.x - 3, tl.y + 1), theme::withAlpha(IM_COL32_WHITE, 0.06f));
   if (s && *s) {
     ImGui::PushFont(app().fontMonoBold, std::clamp(size.y * 0.5f, 9.0f, 12.5f));
-    ImVec2 ts = ImGui::CalcTextSize(s);
+    ImVec2 ts = ImGui::CalcTextSize(ui::labelText(s));
     dl->PushClipRect(tl, p1, true);
-    dl->AddText(ImVec2(std::round(std::max(tl.x + 3, (tl.x + p1.x - ts.x) * 0.5f)), std::round((tl.y + p1.y - ts.y) * 0.5f)),
-                on ? skin::lighten(k.select, 0.45f) : hov ? k.text : k.textDim, s);
+    ui::drawLabel(dl, ImVec2(std::round(std::max(tl.x + 3, (tl.x + p1.x - ts.x) * 0.5f)), std::round((tl.y + p1.y - ts.y) * 0.5f)),
+                  on ? skin::lighten(k.select, 0.45f) : hov ? k.text : k.textDim, s);
     dl->PopClipRect();
     ImGui::PopFont();
   }
@@ -410,7 +410,7 @@ bool menuBox(const EditTarget& e, int param, ImVec2 tl, ImVec2 size, const skin:
   ImGui::PopFont();
   ImVec2 ac(p1.x - aw * 0.5f - 3, (tl.y + p1.y) * 0.5f);
   float r = std::min(4.0f, size.y * 0.18f);
-  dl->AddTriangleFilled(ImVec2(ac.x - r, ac.y - r * 0.5f), ImVec2(ac.x + r, ac.y - r * 0.5f), ImVec2(ac.x, ac.y + r * 0.7f), k.textDim);
+  ui::drawIconFit(dl, ui::Icon::Down, ImVec2(ac.x - r, ac.y - r * 0.5f), ImVec2(ac.x + r, ac.y + r * 0.7f), k.textDim);
   if (ImGui::BeginPopup("##mbp")) {
     for (int i = 0; i < n; ++i) {
       std::string nm = b.d.format(b.d.min + i);

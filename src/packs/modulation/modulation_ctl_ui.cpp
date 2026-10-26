@@ -344,7 +344,7 @@ void formulaEditor(EditTarget& e) {
       }
     ImGui::EndPopup();
   }
-  if (sk::button("##help", F.p(414, 159), F.sz(26, 29), K, "?")) ImGui::OpenPopup("##fhelp");
+  if (sk::button("##help", F.p(414, 159), F.sz(26, 29), K, GL_ICON_LABEL("question", "?"))) ImGui::OpenPopup("##fhelp");
   if (ImGui::BeginPopup("##fhelp")) {
     ImGui::PushFont(e.a->fontMono, 11.5f);
     ImGui::TextUnformatted(i18n::tr("Variables: a b c (knobs, 0..1)  t (seconds)  beat  bar  tempo"));
@@ -553,13 +553,13 @@ void envEditor(EditTarget& e) {
   sk::panelBox(dl, F, 4, 308, 362, 88, K, "ENVELOPE");
   const int np = std::clamp(e.ip(envParam(art, EaNumPoints), 4), 2, kEnvPoints);
   sk::text(dl, F, 12, 334, K, "POINTS", 8.0f);
-  if (sk::button("##less", F.p(64, 330), F.sz(22, 22), K, "-") && np > 2) e.setParam(envParam(art, EaNumPoints), np - 1, false);
+  if (sk::button("##less", F.p(64, 330), F.sz(22, 22), K, GL_ICON_LABEL("minus", "-")) && np > 2) e.setParam(envParam(art, EaNumPoints), np - 1, false);
   {
     char buf[8];
     std::snprintf(buf, sizeof buf, "%d", np);
     skin::lcd(dl, F.p(90, 330), F.p(118, 352), K, buf, F.font(10.0f));
   }
-  if (sk::button("##more", F.p(122, 330), F.sz(22, 22), K, "+") && np < kEnvPoints) e.setParam(envParam(art, EaNumPoints), np + 1, false);
+  if (sk::button("##more", F.p(122, 330), F.sz(22, 22), K, GL_ICON_LABEL("plus", "+")) && np < kEnvPoints) e.setParam(envParam(art, EaNumPoints), np + 1, false);
   sk::text(dl, F, 160, 334, K, "SUSTAIN", 8.0f);
   sk::menuBox(e, envParam(art, EaSustain), F.p(220, 330), F.sz(136, 22), K);
   sk::check(e, envParam(art, EaLoop), F.p(12, 364), F.sz(200, 20), K, "LOOP TO SUSTAIN");
@@ -705,7 +705,7 @@ void cvEditor(EditTarget& e) {
     sk::menuBox(e, side ? CvRightSrc : CvLeftSrc, F.p(x + 26, 110), F.sz(104, 23), K);
     sk::wheelL(e, side ? CvRightOfs : CvLeftOfs, F, x + 33, 146, 90, K, "OFFSET");
     const int bp = side ? CvRightBipolar : CvLeftBipolar;
-    sk::toggle(e, bp, F.p(x + 52, 254), F.sz(52, 34), K, e.p(bp) >= 0.5f ? "+/-" : "+");
+    sk::toggle(e, bp, F.p(x + 52, 254), F.sz(52, 34), K, e.p(bp) >= 0.5f ? GL_ICON_LABEL("plus-minus", "+/-") : GL_ICON_LABEL("plus", "+"));
     sk::wheelL(e, side ? CvRightScale : CvLeftScale, F, x + 38, 300, 80, K, "SCALE");
     skin::pill(dl, F.p(x + 22, 400), F.p(x + 134, 418), K, side ? "RIGHT VOLTAGE" : "LEFT VOLTAGE", F.font(8.0f));
     ImGui::PopID();

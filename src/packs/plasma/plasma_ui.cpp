@@ -18,6 +18,7 @@
 #include "../../core/Song.h"
 #include "../../engine/Program.h"
 #include "../PacksUi.h"
+#include "../../app/Widgets.h"
 
 namespace gl::packs::plasma {
 
@@ -161,7 +162,7 @@ ImFont* pick(const Ctx& c, bool bold) { return bold ? (c.a.fontBold ? c.a.fontBo
 ImVec2 measure(const Ctx& c, const char* s, float px, bool bold) {
   ImFont* f = pick(c, bold);
   if (!f) return ImVec2(0, 0);
-  return f->CalcTextSizeA(font(c, px), 1e9f, 0, s);
+  return f->CalcTextSizeA(font(c, px), 1e9f, 0, ::gl::ui::labelText(s));  // an icon label measures as its text
 }
 // ---- layout check (dev / test aid): every text and knob rect of a frame, per layer
 struct LayoutItem {
@@ -186,9 +187,9 @@ void layoutAdd(const Ctx& c, ImVec2 a, ImVec2 b, bool knob, const char* s) {
 void put(const Ctx& c, ImVec2 pos, const char* s, ImU32 col, float px, bool bold) {
   ImFont* f = pick(c, bold);
   const ImVec2 at(std::round(pos.x), std::round(pos.y));
-  c.dl->AddText(f, font(c, px), at, col, s);
+  ::gl::ui::drawLabel(c.dl, f, font(c, px), at, col, s);
   if (layoutOn() && s && *s && (col >> 24) > 0x40) {
-    const ImVec2 sz = f->CalcTextSizeA(font(c, px), 1e9f, 0, s);
+    const ImVec2 sz = f->CalcTextSizeA(font(c, px), 1e9f, 0, ::gl::ui::labelText(s));
     // glyph box without the line gap: 15 % of the size top and bottom
     layoutAdd(c, ImVec2(at.x + 0.5f, at.y + sz.y * 0.18f), ImVec2(at.x + sz.x - 0.5f, at.y + sz.y * 0.85f), false, s);
   }
@@ -334,56 +335,40 @@ void fitLabel(const Ctx& c, float cx, float y, float maxW, const char* s, ImU32 
 void cellLabel(const Ctx& c, float cx, float y, const char* s, float maxW) { fitLabel(c, cx, y, maxW, s, c.P.label, 9.0f, true); }
 
 // ================================================================== icons
+// Icons: SVG icons (assets/icons/ui) fitted to the old vector glyphs' ink.
 void iconArrow(ImDrawList* dl, ImVec2 c, float s, int dir, ImU32 col) {
-  const float h = s * 0.5f;
-  ImVec2 a, b, d;
-  switch (dir) {
-    case 0: a = ImVec2(c.x + h * 0.5f, c.y - h), b = ImVec2(c.x - h * 0.5f, c.y), d = ImVec2(c.x + h * 0.5f, c.y + h); break;
-    case 1: a = ImVec2(c.x - h * 0.5f, c.y - h), b = ImVec2(c.x + h * 0.5f, c.y), d = ImVec2(c.x - h * 0.5f, c.y + h); break;
-    case 2: a = ImVec2(c.x - h, c.y + h * 0.5f), b = ImVec2(c.x, c.y - h * 0.5f), d = ImVec2(c.x + h, c.y + h * 0.5f); break;
-    default: a = ImVec2(c.x - h, c.y - h * 0.5f), b = ImVec2(c.x, c.y + h * 0.5f), d = ImVec2(c.x + h, c.y - h * 0.5f); break;
-  }
-  dl->AddLine(a, b, col, std::max(1.2f, s * 0.14f));
-  dl->AddLine(b, d, col, std::max(1.2f, s * 0.14f));
+  // An open chevron, h / 2 deep and s long, of two flat-ended strokes (half width e):
+  // their corners reach 0.45 e along the length; across the depth they ink only
+  // slivers of pixel, so the depth is taken without them.
+  const float h = s * 0.5f, e = std::max(1.2f, s * 0.14f) * 0.5f;
+  static const ::gl::ui::Icon kDir[4] = {::gl::ui::Icon::ChevronLeft, ::gl::ui::Icon::Chevron, ::gl::ui::Icon::ChevronUp, ::gl::ui::Icon::ChevronDown};
+  const bool horiz = dir == 0 || dir == 1;
+  const ImVec2 half = horiz ? ImVec2(h * 0.5f, h + e * 0.45f) : ImVec2(h + e * 0.45f, h * 0.5f);
+  ::gl::ui::drawIconFit(dl, kDir[std::clamp(dir, 0, 3)], ImVec2(c.x - half.x, c.y - half.y), ImVec2(c.x + half.x, c.y + half.y), col);
 }
 void iconGear(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  const int teeth = 8;
-  for (int i = 0; i < teeth; ++i) {
-    const float a = 6.2831853f * i / teeth;
-    dl->AddLine(ImVec2(c.x + std::cos(a) * r * 0.55f, c.y + std::sin(a) * r * 0.55f), ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r), col,
-                std::max(1.5f, r * 0.32f));
-  }
-  dl->AddCircleFilled(c, r * 0.68f, col);
-  dl->AddCircleFilled(c, r * 0.28f, theme::withAlpha(IM_COL32(0, 0, 0, 255), 0.55f));
+  const float e = r;  // flat-ended teeth out to r
+  ::gl::ui::drawIconFit(dl, ::gl::ui::Icon::Settings, ImVec2(c.x - e, c.y - e), ImVec2(c.x + e, c.y + e), col);
 }
 void iconPencil(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  const float h = s * 0.5f;
-  dl->AddLine(ImVec2(c.x - h * 0.7f, c.y + h * 0.7f), ImVec2(c.x + h * 0.6f, c.y - h * 0.6f), col, std::max(1.5f, s * 0.2f));
-  dl->AddTriangleFilled(ImVec2(c.x - h * 0.95f, c.y + h * 0.95f), ImVec2(c.x - h * 0.85f, c.y + h * 0.45f), ImVec2(c.x - h * 0.45f, c.y + h * 0.85f), col);
+  const float h = s * 0.5f, e = std::max(1.5f, s * 0.2f) * 0.5f * 0.71f;  // flat-ended shaft to (0.6, -0.6) h, tip at (-0.95, 0.95) h
+  ::gl::ui::drawIconFit(dl, ::gl::ui::Icon::Draw, ImVec2(c.x - h * 0.95f, c.y - h * 0.6f - e), ImVec2(c.x + h * 0.6f + e, c.y + h * 0.95f), col);
 }
 void iconPower(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  dl->PathArcTo(c, r, -1.5708f + 0.75f, -1.5708f + 6.2832f - 0.75f, 18);
-  dl->PathStroke(col, 0, std::max(1.3f, r * 0.22f));
-  dl->AddLine(ImVec2(c.x, c.y - r * 1.15f), ImVec2(c.x, c.y - r * 0.15f), col, std::max(1.3f, r * 0.22f));
+  const float e = std::max(1.3f, r * 0.22f) * 0.5f;  // a ring of r, its stem from 1.15 r above the centre
+  ::gl::ui::drawIconFit(dl, ::gl::ui::Icon::Power, ImVec2(c.x - r - e, c.y - r * 1.15f - e), ImVec2(c.x + r + e, c.y + r + e), col);
 }
 void iconSave(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  const float h = s * 0.5f;
-  dl->AddRect(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), col, 1.5f, 0, std::max(1.2f, s * 0.12f));
-  dl->AddRectFilled(ImVec2(c.x - h * 0.5f, c.y - h), ImVec2(c.x + h * 0.4f, c.y - h * 0.3f), col);
-  dl->AddRectFilled(ImVec2(c.x - h * 0.55f, c.y + h * 0.15f), ImVec2(c.x + h * 0.55f, c.y + h * 0.75f), col);
+  const float e = s * 0.5f + std::max(1.2f, s * 0.12f) * 0.5f;  // a square of s, outlined
+  ::gl::ui::drawIconFit(dl, ::gl::ui::Icon::Save, ImVec2(c.x - e, c.y - e), ImVec2(c.x + e, c.y + e), col);
 }
 void iconBrowse(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  const float h = s * 0.5f, th = std::max(1.2f, s * 0.12f);
-  for (int i = 0; i < 4; ++i) {
-    const float y = c.y - h * 0.75f + i * h * 0.5f;
-    dl->AddLine(ImVec2(c.x - h * 0.55f, y), ImVec2(c.x + h, y), col, th);
-    dl->AddRectFilled(ImVec2(c.x - h, y - th), ImVec2(c.x - h * 0.75f, y + th), col);
-  }
+  const float h = s * 0.5f, th = std::max(1.2f, s * 0.12f);  // four bulleted lines, 0.75 h above and below
+  ::gl::ui::drawIconFit(dl, ::gl::ui::Icon::ListBullets, ImVec2(c.x - h, c.y - h * 0.75f - th), ImVec2(c.x + h + th * 0.5f, c.y + h * 0.75f + th), col);
 }
 void iconClose(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  const float h = s * 0.4f, th = std::max(1.2f, s * 0.14f);
-  dl->AddLine(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), col, th);
-  dl->AddLine(ImVec2(c.x - h, c.y + h), ImVec2(c.x + h, c.y - h), col, th);
+  const float e = s * 0.4f + std::max(1.2f, s * 0.14f) * 0.5f;
+  ::gl::ui::drawIconFit(dl, ::gl::ui::Icon::Close, ImVec2(c.x - e, c.y - e), ImVec2(c.x + e, c.y + e), col);
 }
 void iconSourceMeter(ImDrawList* dl, ImVec2 c, float r, float v, bool bipolar, bool idle, ImU32 track, ImU32 lit) {
   constexpr float a0 = 3.14159265f * 0.75f, a1 = 3.14159265f * 2.25f, mid = (a0 + a1) * 0.5f;
@@ -921,7 +906,7 @@ void moreButton(Ctx& c, const char* id, float x, float y, const std::vector<int>
   if (ImGui::InvisibleButton("##more", c.F.sz(18, 16))) ImGui::OpenPopup("##morepop");
   const bool hv = ImGui::IsItemHovered();
   c.dl->AddRectFilled(c.p(x, y), c.p(x + 18, y + 16), hv ? c.P.headOn : c.P.head, c.s(2));
-  for (int i = 0; i < 3; ++i) c.dl->AddCircleFilled(c.p(x + 5 + i * 4, y + 8), c.s(1.3f), hv ? c.P.text : c.P.textDim);
+  ::gl::ui::drawIconFit(c.dl, ::gl::ui::Icon::More, c.p(x + 3.7f, y + 6.7f), c.p(x + 14.3f, y + 9.3f), hv ? c.P.text : c.P.textDim);
   if (hv) c.a.setHint(hint ? hint : "More settings");
   if (ImGui::BeginPopup("##morepop")) {
     paramRows(c, ks);
@@ -1586,10 +1571,10 @@ void header(Ctx& c) {
       if (ImGui::InvisibleButton("##ur", c.F.sz(28, 26))) (void)(i == 0 ? c.a.doc.undo() : c.a.doc.redo());
       const bool h = ImGui::IsItemHovered();
       c.dl->AddRectFilled(c.p(x + i * 30.0f, 36), c.p(x + i * 30.0f + 28, 62), h ? P.headOn : P.head, c.s(3));
+      // The SVG undo / redo in the old arc-and-arrow glyph's ink (a ring of 5.5 with an arrow head above it).
       const ImVec2 q = c.p(x + i * 30.0f + 14, 49);
-      c.dl->PathArcTo(q, c.s(5.5f), i == 0 ? -2.6f : -0.55f, i == 0 ? 1.9f : 3.7f, 14);
-      c.dl->PathStroke(h ? P.text : P.textDim, 0, std::max(1.3f, c.s(1.4f)));
-      iconArrow(c.dl, ImVec2(q.x + (i == 0 ? -c.s(5) : c.s(5)), q.y - c.s(4)), c.s(5), i == 0 ? 0 : 1, h ? P.text : P.textDim);
+      ::gl::ui::drawIconFit(c.dl, i == 0 ? ::gl::ui::Icon::Undo : ::gl::ui::Icon::Redo, ImVec2(q.x - c.s(6.2f), q.y - c.s(7)),
+                            ImVec2(q.x + c.s(6.2f), q.y + c.s(6.2f)), h ? P.text : P.textDim);
       if (h) c.a.setHint(i == 0 ? "Undo" : "Redo");
       ImGui::PopID();
     }

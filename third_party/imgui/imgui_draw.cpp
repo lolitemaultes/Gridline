@@ -6067,6 +6067,13 @@ void ImGui::RenderArrow(ImDrawList* draw_list, ImVec2 pos, ImU32 col, ImGuiDir d
         IM_ASSERT(0);
         break;
     }
+    ImGuiContext* gctx = GImGui; // GRIDLINE PATCH (SVG icons): the app's arrow in the triangle's bounds
+    if (gctx && gctx->GlyphHook)
+    {
+        const ImVec2 p0 = center + a, p1 = center + b, p2 = center + c;
+        if (gctx->GlyphHook(draw_list, (int)dir, ImVec2(ImMin(p0.x, ImMin(p1.x, p2.x)), ImMin(p0.y, ImMin(p1.y, p2.y))), ImVec2(ImMax(p0.x, ImMax(p1.x, p2.x)), ImMax(p0.y, ImMax(p1.y, p2.y))), col))
+            return;
+    }
     draw_list->AddTriangleFilled(center + a, center + b, center + c, col);
 }
 
@@ -6086,6 +6093,9 @@ void ImGui::RenderCheckMark(ImDrawList* draw_list, ImVec2 pos, ImU32 col, float 
     float third = sz / 3.0f;
     float bx = pos.x + third;
     float by = pos.y + sz - third * 0.5f;
+    ImGuiContext* gctx = GImGui; // GRIDLINE PATCH (SVG icons): the app's check mark in the stroke's bounds
+    if (gctx && gctx->GlyphHook && gctx->GlyphHook(draw_list, 4, ImVec2(bx - third, by - third * 2.0f), ImVec2(bx + third * 2.0f, by), col))
+        return;
     draw_list->PathLineTo(ImVec2(bx - third, by - third));
     draw_list->PathLineTo(ImVec2(bx, by));
     draw_list->PathLineTo(ImVec2(bx + third * 2.0f, by - third * 2.0f));

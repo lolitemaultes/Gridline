@@ -1,0 +1,20 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: decaying hits between slice lines (slice) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M7.5 5 L7.5 19" />
+  <path d="M12 5 L12 19" />
+  <path d="M16.5 5 L16.5 19" />
+  <path d="M5.5 6.5 L5.5 17.5" opacity="0.8" />
+  <path d="M6.5 7.93 L6.5 16.07" opacity="0.8" />
+  <path d="M7.5 8.98 L7.5 15.02" opacity="0.8" />
+  <path d="M8.5 9.76 L8.5 14.24" opacity="0.8" />
+  <path d="M9.5 10.34 L9.5 13.66" opacity="0.8" />
+  <path d="M10.5 7.27 L10.5 16.73" opacity="0.8" />
+  <path d="M11.5 8.49 L11.5 15.51" opacity="0.8" />
+  <path d="M12.5 9.4 L12.5 14.6" opacity="0.8" />
+  <path d="M13.5 10.08 L13.5 13.92" opacity="0.8" />
+  <path d="M14.5 10.57 L14.5 13.43" opacity="0.8" />
+  <path d="M15.5 7.93 L15.5 16.07" opacity="0.8" />
+  <path d="M16.5 8.98 L16.5 15.02" opacity="0.8" />
+  <path d="M17.5 9.76 L17.5 14.24" opacity="0.8" />
+  <path d="M18.5 10.34 L18.5 13.66" opacity="0.8" />
+</svg>

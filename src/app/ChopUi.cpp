@@ -182,7 +182,7 @@ void drawPlan(App& a, float w, float h) {
       dl->AddLine(ImVec2(x0 + 0.5f, p0.y + pad), ImVec2(x0 + 0.5f, p1.y - pad), theme::withAlpha(lit, 0.9f));
       if (stp.reverse && x1 - x0 > 7) {
         const float cy = y0 + 5, cx = 0.5f * (x0 + xp);
-        dl->AddTriangleFilled(ImVec2(cx - 3, cy), ImVec2(cx + 2, cy - 3), ImVec2(cx + 2, cy + 3), hot);
+        ui::drawIconFit(dl, ui::Icon::Left, ImVec2(cx - 3, cy - 3), ImVec2(cx + 2, cy + 3), hot);
       }
     }
     // Pitch ramp (±24 semitones over the height), speed ramp dashed.

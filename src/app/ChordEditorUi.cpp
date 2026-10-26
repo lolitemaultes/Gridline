@@ -580,14 +580,14 @@ void chordLane(App& a, float height) {
 bool stepper(const char* id, int* v, int lo, int hi, const char* fmt) {
   ImGui::PushID(id);
   bool ch = false;
-  if (ui::TextButton("-", false, 22) && *v > lo) --*v, ch = true;
+  if (ui::TextButton(GL_ICON_LABEL("minus", "-"), false, 22) && *v > lo) --*v, ch = true;
   ImGui::SameLine(0, 2);
   char b[32];
   std::snprintf(b, sizeof b, fmt, *v);
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted(b);
   ImGui::SameLine(0, 2);
-  if (ui::TextButton("+", false, 22) && *v < hi) ++*v, ch = true;
+  if (ui::TextButton(GL_ICON_LABEL("plus", "+"), false, 22) && *v < hi) ++*v, ch = true;
   ImGui::PopID();
   return ch;
 }

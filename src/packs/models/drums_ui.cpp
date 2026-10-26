@@ -240,12 +240,12 @@ void drawKit(App& a, const PluginTarget& t, float width) {
   flk::text(c, 444, 472, "KEY");
   {
     const std::string kn = P.key < 0 ? "--" : noteName(P.key);
-    if (flk::btn(c, "##keydn", 466, 468, 14, 18, "<", false)) {
+    if (flk::btn(c, "##keydn", 466, 468, 14, 18, GL_ICON_LABEL("chevron-left", "<"), false)) {
       P.key = P.key <= 0 ? -1 : P.key - 1;
       changed = true;
     }
     flk::lcd(c, 482, 468, 34, 18, kn.c_str());
-    if (flk::btn(c, "##keyup", 518, 468, 14, 18, ">", false)) {
+    if (flk::btn(c, "##keyup", 518, 468, 14, 18, GL_ICON_LABEL("chevron-right", ">"), false)) {
       P.key = std::min(127, P.key < 0 ? 60 : P.key + 1);
       changed = true;
     }
@@ -254,12 +254,12 @@ void drawKit(App& a, const PluginTarget& t, float width) {
   {
     char b[8];
     std::snprintf(b, sizeof b, "%d", P.length);
-    if (flk::btn(c, "##lendn", 560, 468, 14, 18, "<", false)) {
+    if (flk::btn(c, "##lendn", 560, 468, 14, 18, GL_ICON_LABEL("chevron-left", "<"), false)) {
       P.length = std::max(0, P.length - 1);
       changed = true;
     }
     flk::lcd(c, 576, 468, 28, 18, b);
-    if (flk::btn(c, "##lenup", 606, 468, 14, 18, ">", false)) {
+    if (flk::btn(c, "##lenup", 606, 468, 14, 18, GL_ICON_LABEL("chevron-right", ">"), false)) {
       P.length = std::min(kKitSteps, P.length + 1);
       changed = true;
     }

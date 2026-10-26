@@ -75,7 +75,7 @@ void editorFlangerFl(App& a, const PluginTarget& t, float width) {
     skin::captionWell(dl, F, c1, 105, bw, bh, K, "INV FEEDBACK", F.font(7.5f), 54);
     const double fb = ref ? (bval(st, FlgInvFb) ? -1.0 : 1.0) : val(st, FlgFeedback, 0.5f);
     ImGui::PushID("invfb");
-    if (skin::button("##invfb", F.p(c1 + 6, 110), F.sz(40, 34), K, fb < 0 ? "-" : "+", fb < 0, F.font(12))) {
+    if (skin::button("##invfb", F.p(c1 + 6, 110), F.sz(40, 34), K, fb < 0 ? GL_ICON_LABEL("minus", "-") : GL_ICON_LABEL("plus", "+"), fb < 0, F.font(12))) {
       if (ref) pui::setParamValue(a, t, FlgInvFb, fb < 0 ? 0 : 1);
       else pui::setParamValue(a, t, FlgFeedback, -fb);
     }

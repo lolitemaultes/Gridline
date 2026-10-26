@@ -944,6 +944,7 @@ int main(int argc, char** argv) {
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
+  ui::installGlyphHook();  // ImGui's own arrows, checks and crosses as SVG icons from the first frame
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = nullptr;  // layout.ini is loaded once the main window is placed (below)
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;

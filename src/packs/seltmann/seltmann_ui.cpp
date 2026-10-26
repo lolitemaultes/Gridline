@@ -228,9 +228,8 @@ bool fieldKnob(App& a, const char* id, ImVec2 tl, float& v, float mn, float mx, 
   return changed;
 }
 
-void grip(ImDrawList* dl, ImVec2 c, ImU32 col) {
-  for (int i = -1; i <= 1; ++i)
-    for (int j = 0; j < 2; ++j) dl->AddCircleFilled(ImVec2(c.x + (j ? 2.5f : -2.5f), c.y + i * 4.0f), 1.3f, col, 8);
+void grip(ImDrawList* dl, ImVec2 c, ImU32 col) {  // grip-dots.svg on the old px grid (5.5 px per unit)
+  ui::drawIconGlyph(dl, ui::Icon::GripDots, c, 5.5f, 0.0f, col);
 }
 
 // ------------------------------------------------------------------ model edits

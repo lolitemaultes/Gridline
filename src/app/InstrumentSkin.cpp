@@ -8,6 +8,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "App.h"
 #include "Theme.h"
+#include "Widgets.h"
 
 namespace gl::iskin {
 
@@ -100,12 +101,12 @@ void text(const Skin& k, float x, float y, float w, float h, const char* s, floa
   ImDrawList* dl = k.dl();
   ImFont* f = fontFor(mono, bold);
   float fs = std::max(8.0f, size * k.s);
-  ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0, s);
+  ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0, ui::labelText(s));  // an icon label measures as its text
   ImVec2 a = k.at(x, y), b = k.at(x + w, y + h);
   float tx = align == 1 ? (a.x + b.x - ts.x) * 0.5f : align == 2 ? b.x - ts.x : a.x;
   float ty = (a.y + b.y - ts.y) * 0.5f;
   dl->PushClipRect(ImVec2(a.x - 1, a.y - 2), ImVec2(b.x + 1, b.y + 2), true);
-  dl->AddText(f, fs, ImVec2(std::floor(tx), std::floor(ty)), col, s);
+  ui::drawLabel(dl, f, fs, ImVec2(std::floor(tx), std::floor(ty)), col, s);
   dl->PopClipRect();
 }
 
@@ -516,37 +517,28 @@ void wave(ImDrawList* dl, const Sample* smp, ImVec2 p0, ImVec2 p1, ImU32 col, do
 
 // ---------------------------------------------------------------------------- glyphs
 
+// Glyphs: SVG icons fitted to the old vector glyphs' ink.
 void glyphPan(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), col, 1.2f);
-  dl->AddTriangleFilled(ImVec2(c.x - r - 1, c.y), ImVec2(c.x - r * 0.45f, c.y - r * 0.45f), ImVec2(c.x - r * 0.45f, c.y + r * 0.45f), col);
-  dl->AddTriangleFilled(ImVec2(c.x + r + 1, c.y), ImVec2(c.x + r * 0.45f, c.y - r * 0.45f), ImVec2(c.x + r * 0.45f, c.y + r * 0.45f), col);
+  ui::drawIconFit(dl, ui::Icon::StretchMode, ImVec2(c.x - r - 1, c.y - r * 0.45f), ImVec2(c.x + r + 1, c.y + r * 0.45f), col);
 }
 
 void glyphInvert(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  // A sine cycle mirrored: half-wave up then down, with a flip arrow.
-  ImVec2 pts[17];
-  for (int i = 0; i < 17; ++i) {
-    float u = i / 16.0f;
-    pts[i] = ImVec2(c.x - r + 2 * r * u, c.y + std::sin(u * 2 * kPi) * r * 0.55f);
-  }
-  dl->AddPolyline(pts, 17, col, 0, 1.6f);
-  dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), theme::withAlpha(col, 0.4f), 1.0f);
+  // A sine cycle over its centre line (sine.svg on the old unit grid: r per unit, 1.6 px line).
+  ui::drawIconGlyph(dl, ui::Icon::Sine, c, r, 1.6f, col);
 }
 
 void glyphArrow(ImDrawList* dl, ImVec2 c, float r, ImU32 col, int dir) {
-  ImVec2 a, b, d;
-  switch (dir) {
-    case 0: a = ImVec2(c.x - r * 0.6f, c.y), b = ImVec2(c.x + r * 0.4f, c.y - r * 0.7f), d = ImVec2(c.x + r * 0.4f, c.y + r * 0.7f); break;
-    case 1: a = ImVec2(c.x + r * 0.6f, c.y), b = ImVec2(c.x - r * 0.4f, c.y - r * 0.7f), d = ImVec2(c.x - r * 0.4f, c.y + r * 0.7f); break;
-    case 2: a = ImVec2(c.x, c.y - r * 0.6f), b = ImVec2(c.x - r * 0.7f, c.y + r * 0.4f), d = ImVec2(c.x + r * 0.7f, c.y + r * 0.4f); break;
-    default: a = ImVec2(c.x, c.y + r * 0.6f), b = ImVec2(c.x - r * 0.7f, c.y - r * 0.4f), d = ImVec2(c.x + r * 0.7f, c.y - r * 0.4f); break;
-  }
-  dl->AddTriangleFilled(a, b, d, col);
+  // Filled carets in the old triangles' bounds (1 x 1.4 r, pointing `dir`).
+  static const ui::Icon kDir[4] = {ui::Icon::Left, ui::Icon::Right, ui::Icon::Up, ui::Icon::Down};
+  const bool horiz = dir == 0 || dir == 1;
+  const float lo = dir == 0 || dir == 2 ? 0.6f : 0.4f, hi = dir == 0 || dir == 2 ? 0.4f : 0.6f;
+  const ImVec2 a = horiz ? ImVec2(c.x - r * lo, c.y - r * 0.7f) : ImVec2(c.x - r * 0.7f, c.y - r * lo);
+  const ImVec2 b = horiz ? ImVec2(c.x + r * hi, c.y + r * 0.7f) : ImVec2(c.x + r * 0.7f, c.y + r * hi);
+  ui::drawIconFit(dl, kDir[std::clamp(dir, 0, 3)], a, b, col);
 }
 
 void glyphFolder(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x - r * 0.1f, c.y - r * 0.3f), col, 1.0f);
-  dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.35f), ImVec2(c.x + r, c.y + r * 0.65f), col, 1.5f);
+  ui::drawIconFit(dl, ui::Icon::Folder, ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x + r, c.y + r * 0.65f), col);
 }
 
 }  // namespace gl::iskin

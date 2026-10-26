@@ -259,17 +259,10 @@ void monitorArea(App& a, const PluginTarget& t, const PluginState& st, MaxUi& u,
   skin::hint(a, "Output spectrum and bands · click a band to edit it · drag a split line to move it");
 }
 
-void glyphDots(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(ImVec2(c.x + i * s * 0.22f, c.y), s * 0.08f, col);
-}
-void glyphBars(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  for (int i = -1; i <= 1; ++i) dl->AddRectFilled(ImVec2(c.x + i * s * 0.22f - 1, c.y - s * (0.1f + 0.1f * (i + 1))), ImVec2(c.x + i * s * 0.22f + 1, c.y + s * 0.3f), col);
-}
-void glyphLine(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  ImVec2 p[4] = {ImVec2(c.x - s * 0.35f, c.y + s * 0.2f), ImVec2(c.x - s * 0.1f, c.y - s * 0.2f), ImVec2(c.x + s * 0.1f, c.y + s * 0.05f),
-                 ImVec2(c.x + s * 0.35f, c.y - s * 0.25f)};
-  dl->AddPolyline(p, 4, col, 0, 1.3f);
-}
+// Display-layer glyphs: SVG icons on the old glyphs' grid (half the glyph box per unit).
+void glyphDots(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { ::gl::ui::drawIconGlyph(dl, ::gl::ui::Icon::DisplayDots, c, s * 0.5f, 0.0f, col); }
+void glyphBars(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { ::gl::ui::drawIconGlyph(dl, ::gl::ui::Icon::DisplayBars, c, s * 0.47f, 0.0f, col); }  // a shade inside: the bars sit on part pixels at 1.5x
+void glyphLine(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { ::gl::ui::drawIconGlyph(dl, ::gl::ui::Icon::DisplayLine, c, s * 0.5f, 1.3f, col); }
 
 }  // namespace
 

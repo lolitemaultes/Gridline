@@ -1950,8 +1950,7 @@ void joinSteps(App& a, int current) {
     if (cur) dl->AddCircleFilled(c, r, theme::mix(P.surface800, P.hot, P.dark ? 0.22f : 0.16f), 20);
     dl->AddCircle(c, r, col, 20, 1.5f);
     if (done) {
-      dl->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x - 1, c.y + 3), col, 1.6f);
-      dl->AddLine(ImVec2(c.x - 1, c.y + 3), ImVec2(c.x + 4, c.y - 3), col, 1.6f);
+      ui::drawIconFit(dl, ui::Icon::Check, ImVec2(c.x - 4.8f, c.y - 3.8f), ImVec2(c.x + 4.8f, c.y + 3.8f), col);
     } else {
       char n[4];
       std::snprintf(n, sizeof n, "%d", i + 1);

@@ -4378,6 +4378,7 @@ ImGuiContext::ImGuiContext(ImFontAtlas* shared_font_atlas)
     ViewportCreatedCount = PlatformWindowsCreatedCount = 0;
     ViewportLateCreateFilter = NULL; // GRIDLINE PATCH (J-113)
     CloseRequestFilter = NULL; // GRIDLINE PATCH (J-116)
+    GlyphHook = NULL; // GRIDLINE PATCH (SVG icons)
     WindowsMovedHook = NULL; // GRIDLINE PATCH (J-117)
     ViewportFocusedStampCount = 0;
 

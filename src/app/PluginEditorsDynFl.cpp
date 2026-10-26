@@ -69,11 +69,10 @@ void spareButtons(App& a, const PluginTarget& t, const skin::Form& f, float x, f
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (skin::button(f, "store", x, y, 24, 24, nullptr, bg, fg, "Store in spare state")) ui.spare = st.params;
   {  // glyph: arrow down into a tray
-    ImVec2 c = f.p(x + 12, y + 12);
-    float s = f.d(5);
-    dl->AddLine(ImVec2(c.x, c.y - s), ImVec2(c.x, c.y + s * 0.4f), fg, 1.5f);
-    dl->AddTriangleFilled(ImVec2(c.x - s * 0.6f, c.y), ImVec2(c.x + s * 0.6f, c.y), ImVec2(c.x, c.y + s * 0.7f), fg);
-    dl->AddLine(ImVec2(c.x - s, c.y + s), ImVec2(c.x + s, c.y + s), fg, 1.5f);
+    // The old glyph's ink: flat-ended strokes from the stem top (c.y - s) to the tray (c.y + s, 1.5 px), s either side.
+    const ImVec2 c = f.p(x + 12, y + 12);
+    const float s = f.d(5);
+    ui::drawIconFit(dl, ui::Icon::StoreTray, ImVec2(c.x - s, c.y - s), ImVec2(c.x + s, c.y + s + 0.75f), fg);
   }
   if (skin::button(f, "flip", x + 26, y, 24, 24, nullptr, bg, fg, "Flip with spare state (A/B compare)") && !ui.spare.empty()) {
     PluginState ns = st;
@@ -84,31 +83,16 @@ void spareButtons(App& a, const PluginTarget& t, const skin::Form& f, float x, f
     setPluginState(a, t, ns, "flip with spare state");
   }
   {  // glyph: two opposing arrows
-    ImVec2 c = f.p(x + 38, y + 12);
-    float s = f.d(5);
-    dl->AddLine(ImVec2(c.x - s, c.y - s * 0.45f), ImVec2(c.x + s, c.y - s * 0.45f), fg, 1.5f);
-    dl->AddTriangleFilled(ImVec2(c.x + s * 1.2f, c.y - s * 0.45f), ImVec2(c.x + s * 0.4f, c.y - s), ImVec2(c.x + s * 0.4f, c.y + s * 0.1f), fg);
-    dl->AddLine(ImVec2(c.x - s, c.y + s * 0.45f), ImVec2(c.x + s, c.y + s * 0.45f), fg, 1.5f);
-    dl->AddTriangleFilled(ImVec2(c.x - s * 1.2f, c.y + s * 0.45f), ImVec2(c.x - s * 0.4f, c.y - s * 0.1f), ImVec2(c.x - s * 0.4f, c.y + s), fg);
+    ui::drawIconGlyph(dl, ui::Icon::SwapArrows, f.p(x + 38, y + 12), f.d(5) * 1.2f, 1.5f, fg);
   }
 }
 
-// Display-option glyphs.
-void glyphBar(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { dl->AddRectFilled(ImVec2(c.x - 1, c.y - s * 0.35f), ImVec2(c.x + 1, c.y + s * 0.35f), col); }
-void glyphPeaks(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  for (int i = -2; i <= 2; ++i) {
-    float h = s * (0.15f + 0.08f * static_cast<float>((i * 7 + 11) % 4));
-    dl->AddRectFilled(ImVec2(c.x + i * s * 0.14f - 0.6f, c.y + s * 0.3f - h), ImVec2(c.x + i * s * 0.14f + 0.6f, c.y + s * 0.3f), col);
-  }
-}
-void glyphEnv(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  ImVec2 p[5] = {ImVec2(c.x - s * 0.4f, c.y - s * 0.2f), ImVec2(c.x - s * 0.15f, c.y + s * 0.25f), ImVec2(c.x + s * 0.05f, c.y - s * 0.05f),
-                 ImVec2(c.x + s * 0.2f, c.y + s * 0.15f), ImVec2(c.x + s * 0.4f, c.y - s * 0.25f)};
-  dl->AddPolyline(p, 5, col, 0, 1.4f);
-}
-void glyphLevels(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-  dl->AddLine(ImVec2(c.x - s * 0.35f, c.y - s * 0.12f), ImVec2(c.x + s * 0.35f, c.y - s * 0.12f), col, 1.4f);
-  dl->AddLine(ImVec2(c.x - s * 0.35f, c.y + s * 0.12f), ImVec2(c.x + s * 0.35f, c.y + s * 0.12f), col, 1.4f);
+// Display-option glyphs: SVG icons on the old glyphs' grid (half the glyph box per unit).
+void glyphBar(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { ui::drawIconGlyph(dl, ui::Icon::DisplayBar, c, s * 0.5f, 0.0f, col); }
+void glyphPeaks(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { ui::drawIconGlyph(dl, ui::Icon::DisplayPeaks, c, s * 0.5f, 0.0f, col); }
+void glyphEnv(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { ui::drawIconGlyph(dl, ui::Icon::DisplayEnvelope, c, s * 0.5f, 1.4f, col); }
+void glyphLevels(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {  // old: two flat-ended 1.4 px bars, 0.35 s either side
+  ui::drawIconFit(dl, ui::Icon::DisplayLevels, ImVec2(c.x - s * 0.35f, c.y - s * 0.12f - 0.7f), ImVec2(c.x + s * 0.35f, c.y + s * 0.12f + 0.7f), col);
 }
 
 // ======================================================================= Limiter

@@ -440,7 +440,7 @@ void editorGranularFl(App& a, const PluginTarget& t, float width) {
     a.doc.setParam(t.pid(GrPosition), std::clamp((ImGui::GetIO().MousePos.x - p0.x) / sw, 0.0f, 1.0f), true);
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (ImGui::IsItemHovered()) a.setHint("Drag to set the grain position · drop an audio file to load");
-  if (skin::button("##gopen", F.p(362, 401), F.sz(22, 16), K, "...", false, lf(F, 8))) {
+  if (skin::button("##gopen", F.p(362, 401), F.sz(22, 16), K, GL_ICON_LABEL("ellipsis", "..."), false, lf(F, 8))) {
     PluginTarget tt = t;
     openSampleDialog(a, "Load sample", [&a, tt](const std::string& path) {
       const PluginState* cur = tt.state(a.doc.song());
@@ -507,9 +507,9 @@ void editorMidiOutFl(App& a, const PluginTarget& t, float width) {
     if (pages > 1) {
       char pl[32];
       std::snprintf(pl, sizeof pl, "Page %d / %d", moPage + 1, pages);
-      if (skin::button("##pgp", F.p(360, 14), F.sz(20, 18), K, "<", false, lf(F, 8))) moPage = std::max(0, moPage - 1);
+      if (skin::button("##pgp", F.p(360, 14), F.sz(20, 18), K, GL_ICON_LABEL("chevron-left", "<"), false, lf(F, 8))) moPage = std::max(0, moPage - 1);
       skin::text(dl, F.p(384, 16), K.textDim, pl, lf(F, 7.0f));
-      if (skin::button("##pgn", F.p(440, 14), F.sz(20, 18), K, ">", false, lf(F, 8))) moPage = std::min(pages - 1, moPage + 1);
+      if (skin::button("##pgn", F.p(440, 14), F.sz(20, 18), K, GL_ICON_LABEL("chevron-right", ">"), false, lf(F, 8))) moPage = std::min(pages - 1, moPage + 1);
     }
   }
   for (int i = 0; i < 9; ++i) {

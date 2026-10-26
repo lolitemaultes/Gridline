@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: a headband over two ear cups (audition) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 12 A8 8 0 0 1 20 12" />
+  <rect x="2" y="12" width="4" height="7" fill="currentColor" stroke="none" />
+  <rect x="18" y="12" width="4" height="7" fill="currentColor" stroke="none" />
+</svg>

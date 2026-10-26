@@ -28,7 +28,30 @@ float toolIconBox(float button);
 // device pixels and maps texels 1:1, so the glyph stays crisp.
 void draw(ImDrawList* dl, int svgIndex, ImVec2 c, float logicalPx, ImU32 col);
 void draw(ImDrawList* dl, const char* svgName, ImVec2 c, float logicalPx, ImU32 col);
-// The current ImGui context's atlas (created on first use).
+// Draws the embedded SVG `svgIndex` as large as fits its ink (the texels it
+// actually covers, stroke included, as rasterised at this density) inside the
+// logical-px box `inkMin`..`inkMax`, the ink centred on the box. Used where an
+// SVG replaces an older glyph: pass the old glyph's ink bounds and the new one
+// never draws bigger. Tinted `col`, pixel-snapped like draw(). When no size
+// fits (a glyph a few pixels across) the smallest is drawn, or with
+// `onlyIfFits` nothing, and false is returned so the caller draws the old glyph.
+bool drawFit(ImDrawList* dl, int svgIndex, ImVec2 inkMin, ImVec2 inkMax, ImU32 col, bool onlyIfFits = false);
+bool drawFit(ImDrawList* dl, const char* svgName, ImVec2 inkMin, ImVec2 inkMax, ImU32 col, bool onlyIfFits = false);
+// The ink of font glyph `ch` drawn at `pos` (as AddText places it), logical px:
+// the texels of the font atlas at least half covered. False when not visible.
+bool glyphInk(ImFont* font, float size, ImWchar ch, ImVec2 pos, ImVec2* inkMin, ImVec2* inkMax);
+// Draws an SVG authored on an older glyph's unit grid: one old unit is 10 SVG
+// units around the viewBox centre (12, 12), so SVG x = 12 + 10 * u. `unitPx` is
+// the old unit in logical px and `oldStroke` the old line width (0 for filled
+// glyphs): the icon is fitted (drawFit) to the old glyph's ink, its geometry
+// bounds at that scale plus 0.35 of the old stroke, so it lands where the old
+// glyph was and never draws bigger, whatever the SVG stroke rule makes of it.
+void drawGlyph(ImDrawList* dl, const char* svgName, ImVec2 c, float unitPx, float oldStroke, ImU32 col);
+// The current ImGui context's atlas (created on first use). Creating it also
+// installs the context's ImGui glyph hook (GRIDLINE PATCH in imgui_internal.h):
+// ImGui's own arrows, check marks, close crosses and step "-" / "+" are then
+// drawn as SVG icons (caret-*, check, x, minus, plus) in their old ink bounds.
+// Call it once when a context is created so the first frame has the hook.
 Atlas& atlas();
 // Number of atlas page textures registered with the current context.
 int textureCount();

@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: a level ramp falling over its base line (fade out) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M19 18 L5 6 L5 18 Z" fill="currentColor" stroke="none" opacity="0.38" />
+  <path d="M19 18 L5 6" />
+  <path d="M5 18 L19 18" />
+</svg>

@@ -323,6 +323,7 @@ bool createSurface(PluginWindow& w) {
   SDL_GL_SetSwapInterval(0);  // the main window paces the frames
   w.ctx = ImGui::CreateContext(atlas);
   ImGui::SetCurrentContext(w.ctx);
+  ui::installGlyphHook();
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = nullptr;
   io.LogFilename = nullptr;

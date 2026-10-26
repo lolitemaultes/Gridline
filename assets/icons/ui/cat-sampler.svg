@@ -1,0 +1,16 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: plugin category: a waveform drawn as bars (samplers) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4.5 9.78 L4.5 14.22" />
+  <path d="M5.75 7.56 L5.75 16.44" />
+  <path d="M7 8.17 L7 15.83" />
+  <path d="M8.25 7.28 L8.25 16.72" />
+  <path d="M9.5 6.34 L9.5 17.66" />
+  <path d="M10.75 7.6 L10.75 16.4" />
+  <path d="M12 4.5 L12 19.5" />
+  <path d="M13.25 9.03 L13.25 14.97" />
+  <path d="M14.5 5.25 L14.5 18.75" />
+  <path d="M15.75 10.8 L15.75 13.2" />
+  <path d="M17 6.43 L17 17.57" />
+  <path d="M18.25 10.06 L18.25 13.94" />
+  <path d="M19.5 7.85 L19.5 16.15" />
+</svg>

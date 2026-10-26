@@ -13,6 +13,7 @@
 #include "../../core/WavWriter.h"
 #include "plasma_dsp.h"
 #include "plasma_ui.h"
+#include "../../app/Widgets.h"
 
 namespace gl::packs::plasma::ui {
 
@@ -728,7 +729,7 @@ void wtEditor(Ctx& c) {
     }
     const float px = x0 + 6 + std::min(nf - sc, vis) * w;
     if (nf < kMaxFrames && sc + vis >= nf && px + 40 < x1) {
-      if (button(c, "addf", px + 4, kFramesY + 12, 34, 30, "+", false, 13)) {
+      if (button(c, "addf", px + 4, kFramesY + 12, 34, 30, GL_ICON_LABEL("plus", "+"), false, 13)) {
         next = F;
         next.push_back(F.back());
         did = "Add frame";
@@ -747,13 +748,13 @@ void wtEditor(Ctx& c) {
     char t[16];
     std::snprintf(t, sizeof t, "/ %d", nf);
     text(c, 68, y + 6, t, c.P.text, 9.5f, true);
-    if (button(c, "minus", 104, y, 22, 22, "\xE2\x80\x93", false, 11) && nf > 1) {
+    if (button(c, "minus", 104, y, 22, 22, GL_ICON_LABEL("minus", "\xE2\x80\x93"), false, 11) && nf > 1) {
       next = F;
       next.erase(next.begin() + u.wtFrame);
       did = "Remove frame";
     }
     if (ImGui::IsItemHovered()) c.a.setHint("Remove this frame");
-    if (button(c, "plus", 128, y, 22, 22, "+", false, 11) && nf < kMaxFrames) {
+    if (button(c, "plus", 128, y, 22, 22, GL_ICON_LABEL("plus", "+"), false, 11) && nf < kMaxFrames) {
       next = F;
       next.insert(next.begin() + u.wtFrame + 1, cur);
       did = "Duplicate frame";
@@ -779,7 +780,7 @@ void wtEditor(Ctx& c) {
       const ImVec2 q = c.p(bx + 31, y + 11);
       const float s = c.s(5);
       const ImU32 gc = c.P.textDim;
-      if (i == 0) c.dl->AddRect(ImVec2(q.x - s, q.y - s * 0.6f), ImVec2(q.x + s * 0.4f, q.y + s * 0.8f), gc), c.dl->AddRect(ImVec2(q.x - s * 0.4f, q.y - s), ImVec2(q.x + s, q.y + s * 0.4f), gc);
+      if (i == 0) ::gl::ui::drawIconFit(c.dl, ::gl::ui::Icon::Clone, ImVec2(q.x - s - 0.5f, q.y - s - 0.5f), ImVec2(q.x + s + 0.5f, q.y + s * 0.8f + 0.5f), gc);
       if (i == 1) c.dl->AddRect(ImVec2(q.x - s * 0.2f, q.y - s), ImVec2(q.x + s, q.y + s), gc), iconArrow(c.dl, ImVec2(q.x - s * 0.7f, q.y), s * 1.4f, 1, gc);
       if (i == 2) c.dl->AddRect(ImVec2(q.x - s, q.y - s * 0.8f), ImVec2(q.x + s * 0.4f, q.y + s * 0.8f), gc), iconClose(c.dl, ImVec2(q.x + s * 0.6f, q.y + s * 0.5f), s * 0.9f, gc);
       if (i == 3) c.dl->AddRect(ImVec2(q.x - s * 1.4f, q.y - s * 0.5f), ImVec2(q.x - s * 0.4f, q.y + s * 0.5f), gc), c.dl->AddRect(ImVec2(q.x + s * 0.4f, q.y - s * 0.5f), ImVec2(q.x + s * 1.4f, q.y + s * 0.5f), gc);

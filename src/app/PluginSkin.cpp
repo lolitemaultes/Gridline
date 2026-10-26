@@ -629,9 +629,9 @@ bool button(const char* id, ImVec2 tl, ImVec2 size, const Skin& k, const char* t
   }
   if (text && *text) {
     ImGui::PushFont(app().fontMonoBold, font > 0 ? font : std::clamp(size.y * 0.5f, 8.0f, 12.0f));
-    ImVec2 ts = ImGui::CalcTextSize(text);
-    dl->AddText(ImVec2(std::round((tl.x + p1.x - ts.x) * 0.5f), std::round((tl.y + p1.y - ts.y) * 0.5f)),
-                on ? lighten(k.select, 0.6f) : hov ? k.text : k.textDim, text);
+    ImVec2 ts = ImGui::CalcTextSize(ui::labelText(text));
+    ui::drawLabel(dl, ImVec2(std::round((tl.x + p1.x - ts.x) * 0.5f), std::round((tl.y + p1.y - ts.y) * 0.5f)),
+                  on ? lighten(k.select, 0.6f) : hov ? k.text : k.textDim, text);
     ImGui::PopFont();
   }
   return pressed;
@@ -651,7 +651,8 @@ ImFont* uiFont(bool bold) {
 
 void text(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* s, ImU32 col, float px, int align, bool bold) {
   ImFont* fnt = uiFont(bold);
-  ImVec2 ts = fnt ? fnt->CalcTextSizeA(px, 1e6f, 0, s) : ImGui::CalcTextSize(s);
+  const char* shown = ui::labelText(s);  // an icon label measures as its text
+  ImVec2 ts = fnt ? fnt->CalcTextSizeA(px, 1e6f, 0, shown) : ImGui::CalcTextSize(shown);
   float x = align == 0 ? p0.x + 2 : align == 2 ? p1.x - ts.x - 2 : (p0.x + p1.x - ts.x) * 0.5f;
   float y = (p0.y + p1.y - ts.y) * 0.5f;
   {  // Q-7: the text itself keeps off the panel's edges
@@ -661,7 +662,7 @@ void text(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* s, ImU32 col, float 
   }
   audit::control(ImVec2(x, y), ImVec2(x + ts.x, y + ts.y), "text");
   dl->PushClipRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), true);
-  dl->AddText(fnt, px, ImVec2(std::floor(x), std::floor(y)), col, s);
+  ui::drawLabel(dl, fnt ? fnt : ImGui::GetFont(), px, ImVec2(std::floor(x), std::floor(y)), col, s);
   dl->PopClipRect();
 }
 
@@ -1002,7 +1003,8 @@ bool menuButton(const Form& f, const char* id, float x, float y, float w, float 
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImU32 c = hov ? shade(col, 0.3f) : col;
   float cx = (p0.x + p1.x) * 0.5f, cy = (p0.y + p1.y) * 0.5f, hw = (p1.x - p0.x) * 0.3f, gap = (p1.y - p0.y) * 0.22f;
-  for (int i = -1; i <= 1; ++i) dl->AddLine(ImVec2(cx - hw, cy + gap * i), ImVec2(cx + hw, cy + gap * i), c, std::max(1.2f, f.d(1.5f)));
+  const float th = std::max(1.2f, f.d(1.5f)) * 0.5f;  // the SVG menu icon in the old three bars' ink
+  ui::drawIconFit(dl, ui::Icon::Menu, ImVec2(cx - hw, cy - gap - th), ImVec2(cx + hw, cy + gap + th), c);  // flat bar ends
   return clicked;
 }
 
@@ -1149,7 +1151,7 @@ void textAt(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 c, const char* text, flo
   if (!text || !*text) return;
   ImFont* font = mono ? app().fontMono : app().fontRegular;
   ImGui::PushFont(font, size);
-  ImVec2 ts = ImGui::CalcTextSize(text);
+  ImVec2 ts = ImGui::CalcTextSize(ui::labelText(text));  // an icon label measures as its text
   float x = align < 0 ? p0.x + 2 : align > 0 ? p1.x - ts.x - 2 : (p0.x + p1.x - ts.x) * 0.5f;
   float y = (p0.y + p1.y - ts.y) * 0.5f;
   {  // Q-7: the text keeps off the panel's edges
@@ -1159,7 +1161,7 @@ void textAt(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 c, const char* text, flo
   }
   audit::control(ImVec2(x, y), ImVec2(x + ts.x, y + ts.y), "text");
   dl->PushClipRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), true);
-  dl->AddText(ImVec2(std::floor(x), std::floor(y)), c, text);
+  ui::drawLabel(dl, ImVec2(std::floor(x), std::floor(y)), c, text);
   dl->PopClipRect();
   ImGui::PopFont();
 }
@@ -1619,40 +1621,28 @@ bool button(const View& v, const char* name, const Palette& pal, bool on, const 
 }
 
 // ------------------------------------------------------------------ glyphs
+// The small kit glyphs are SVG icons fitted to the old vector glyphs' ink.
 void glyphMenu(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 c) {
-  float h = b.y - a.y;
-  for (int k = 0; k < 3; ++k) {
-    float y = a.y + h * (0.25f + 0.25f * k);
-    dl->AddLine(ImVec2(a.x + 1, y), ImVec2(b.x - 1, y), c, 1.5f);
-  }
+  float h = b.y - a.y;  // three 1.5 px bars at a quarter, half and three quarters of the box
+  ui::drawIconFit(dl, ui::Icon::Menu, ImVec2(a.x + 1, a.y + h * 0.25f - 0.75f), ImVec2(b.x - 1, a.y + h * 0.75f + 0.75f), c);
 }
 void glyphSnow(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 c) {
   ImVec2 m((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
   float r = std::min(b.x - a.x, b.y - a.y) * 0.45f;
-  for (int k = 0; k < 3; ++k) {
-    float an = kKitPi * k / 3;
-    dl->AddLine(ImVec2(m.x - std::cos(an) * r, m.y - std::sin(an) * r), ImVec2(m.x + std::cos(an) * r, m.y + std::sin(an) * r), c, 1.3f);
-  }
+  ui::drawIconGlyph(dl, ui::Icon::Snowflake, m, r, 1.3f, c);
 }
 void glyphMagnet(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 c) {
   ImVec2 m((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-  float r = std::min(b.x - a.x, b.y - a.y) * 0.38f;
-  dl->PathArcTo(ImVec2(m.x, m.y), r, 0, kKitPi, 12);
-  dl->PathStroke(c, 0, 2.f);
-  dl->AddLine(ImVec2(m.x - r, m.y), ImVec2(m.x - r, m.y - r), c, 2.f);
-  dl->AddLine(ImVec2(m.x + r, m.y), ImVec2(m.x + r, m.y - r), c, 2.f);
+  float r = std::min(b.x - a.x, b.y - a.y) * 0.38f;  // old: a U of radius r, flat-ended legs r tall, 2 px
+  ui::drawIconFit(dl, ui::Icon::Magnet, ImVec2(m.x - r - 1, m.y - r), ImVec2(m.x + r + 1, m.y + r + 0.5f), c);
 }
 void glyphSteps(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 c) {
-  float w = b.x - a.x, h = b.y - a.y;
-  ImVec2 pts[7] = {ImVec2(a.x, b.y - h * 0.15f), ImVec2(a.x + w * 0.33f, b.y - h * 0.15f), ImVec2(a.x + w * 0.33f, a.y + h * 0.5f),
-                   ImVec2(a.x + w * 0.66f, a.y + h * 0.5f), ImVec2(a.x + w * 0.66f, a.y + h * 0.15f), ImVec2(b.x, a.y + h * 0.15f), ImVec2(b.x, a.y + h * 0.15f)};
-  dl->AddPolyline(pts, 6, c, 0, 1.5f);
+  float h = b.y - a.y;  // old: a staircase from 15 % to 85 % of the box, 1.5 px
+  ui::drawIconFit(dl, ui::Icon::StepEdit, ImVec2(a.x - 0.75f, a.y + h * 0.15f - 0.75f), ImVec2(b.x + 0.75f, b.y - h * 0.15f + 0.75f), c);
 }
 void glyphSlide(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 c) {
-  float m = (a.y + b.y) * 0.5f;
-  dl->AddLine(ImVec2(a.x, m), ImVec2(b.x, m), c, 1.5f);
-  dl->AddTriangleFilled(ImVec2(b.x, m), ImVec2(b.x - 4, m - 3.5f), ImVec2(b.x - 4, m + 3.5f), c);
-  dl->AddCircleFilled(ImVec2(a.x + 3, m), 2.5f, c);
+  // old: a line across the box, a 4 x 7 px head at the right, a 2.5 px dot 3 px in
+  ui::drawIconFit(dl, ui::Icon::SlideArrow, ImVec2(a.x, (a.y + b.y) * 0.5f - 3.5f), ImVec2(b.x, (a.y + b.y) * 0.5f + 3.5f), c);
 }
 void glyphWave(ImDrawList* dl, int shape, ImVec2 a, ImVec2 b, ImU32 c, float th) {
   ImVec2 pts[33];

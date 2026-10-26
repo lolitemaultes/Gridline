@@ -204,10 +204,10 @@ void drawStepBass(App& a, const PluginTarget& t, float width) {
     bool changed = false;
     char buf[16];
     flk::text(c, 430, 427, "STEPS");
-    if (flk::btn(c, "##lenm", 470, 422, 18, 18, "-", false) && sv.length > 1) --sv.length, changed = true;
+    if (flk::btn(c, "##lenm", 470, 422, 18, 18, GL_ICON_LABEL("minus", "-"), false) && sv.length > 1) --sv.length, changed = true;
     std::snprintf(buf, sizeof buf, "%d", sv.length);
     flk::lcd(c, 490, 422, 30, 18, buf);
-    if (flk::btn(c, "##lenp", 522, 422, 18, 18, "+", false) && sv.length < 16) ++sv.length, changed = true;
+    if (flk::btn(c, "##lenp", 522, 422, 18, 18, GL_ICON_LABEL("plus", "+"), false) && sv.length < 16) ++sv.length, changed = true;
     flk::text(c, 12, 471, "PITCH", K.textDim, 7);
     flk::text(c, 12, 492, "GATE", K.textDim, 7);
     flk::text(c, 12, 513, "SLIDE", K.textDim, 7);

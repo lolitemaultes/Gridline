@@ -331,7 +331,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     {
       ImVec2 c = sk.at(53.5f, 314);
       float r = sk.px(6);
-      dl->AddTriangleFilled(ImVec2(c.x - r * 0.6f, c.y - r), ImVec2(c.x - r * 0.6f, c.y + r), ImVec2(c.x + r, c.y), playing ? rgb(0x293136) : sk.c.text);
+      ui::drawIconFit(dl, ui::Icon::Play, ImVec2(c.x - r * 0.6f, c.y - r), ImVec2(c.x + r, c.y + r), playing ? rgb(0x293136) : sk.c.text);
     }
     if (iskin::button(sk, "##stop", 69, 299, 31, 30, "", false, 9) && playing && t.isChannel()) stopPlay();
     static const bool trace = std::getenv("GRIDLINE_KERF_TRACE") != nullptr;
@@ -346,7 +346,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         std::fflush(stdout);
       }
     }
-    dl->AddRectFilled(sk.at(79, 309), sk.at(89, 319), sk.c.text);
+    ui::drawIconFit(dl, ui::Icon::Stop, sk.at(79, 309), sk.at(89, 319), sk.c.text);
     // Load / auto-slice / even slices / manual / clear markers.
     if (iskin::button(sk, "##load", 160, 300, 50, 30, "LOAD", false, 8.5f)) {
       PluginTarget tt = t;

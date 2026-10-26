@@ -1,0 +1,5 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: plugin category: an EQ bell with its handle (equalisers) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3.5 14.49 L3.94 14.48 L4.37 14.46 L4.81 14.42 L5.24 14.37 L5.68 14.28 L6.12 14.15 L6.55 13.95 L6.99 13.67 L7.42 13.29 L7.86 12.79 L8.29 12.17 L8.73 11.44 L9.17 10.62 L9.6 9.73 L10.04 8.84 L10.47 8.01 L10.91 7.31 L11.35 6.8 L11.78 6.53 L12.22 6.53 L12.65 6.8 L13.09 7.31 L13.53 8.01 L13.96 8.84 L14.4 9.73 L14.83 10.62 L15.27 11.44 L15.71 12.17 L16.14 12.79 L16.58 13.29 L17.01 13.67 L17.45 13.95 L17.88 14.15 L18.32 14.28 L18.76 14.37 L19.19 14.42 L19.63 14.46 L20.06 14.48 L20.5 14.49" />
+  <circle cx="12" cy="6.5" r="1.5" fill="currentColor" stroke="none" />
+</svg>

@@ -222,22 +222,8 @@ Tick drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, 
 // Q-1: loop glyph (two arrows chasing round a rounded loop), for the title
 // bar of a clip that repeats its pattern.
 void drawLoopGlyph(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  const float k = 1.3f;
-  dl->PathArcTo(c, r, 3.5f, 6.0f, 8);
-  dl->PathStroke(col, ImDrawFlags_None, k);
-  dl->PathArcTo(c, r, 0.35f, 2.85f, 8);
-  dl->PathStroke(col, ImDrawFlags_None, k);
-  // arrowheads at the end of each arc (pointing along the turn)
-  auto head = [&](float ang) {
-    const ImVec2 p(c.x + std::cos(ang) * r, c.y + std::sin(ang) * r);
-    const ImVec2 t(-std::sin(ang), std::cos(ang));  // tangent (direction of travel)
-    const ImVec2 n(std::cos(ang), std::sin(ang));
-    const float s = r * 0.75f;
-    dl->AddTriangleFilled(ImVec2(p.x + t.x * s, p.y + t.y * s), ImVec2(p.x + n.x * s * 0.8f, p.y + n.y * s * 0.8f),
-                          ImVec2(p.x - n.x * s * 0.8f, p.y - n.y * s * 0.8f), col);
-  };
-  head(6.0f);
-  head(2.85f);
+  // SVG (loop-arrows) on the old glyph's grid: r to one unit, 1.3 px arcs.
+  ui::drawIconGlyph(dl, ui::Icon::LoopArrows, c, r / 0.82f, 1.3f, col);
 }
 
 // ---- audio clip waveforms: min/max per block of frames, cached per sample ----
@@ -685,21 +671,9 @@ std::string sourceName(const Song& s, const pltools::Source& src) {
 // Pattern: step bars; audio: a wave; automation: a ramp with points.
 void drawKindGlyph(ImDrawList* dl, ClipKind kind, ImVec2 c, float size, ImU32 col) {
   const float h = size * 0.5f;
-  if (kind == ClipKind::Audio) {
-    ui::drawIcon(dl, ui::Icon::Wave, c, size, col);
-  } else if (kind == ClipKind::Automation) {
-    const ImVec2 p0(c.x - h, c.y + h * 0.6f), p1(c.x - h * 0.2f, c.y - h * 0.5f), p2(c.x + h * 0.35f, c.y + h * 0.1f), p3(c.x + h, c.y - h * 0.7f);
-    dl->AddLine(p0, p1, col, 1.4f);
-    dl->AddLine(p1, p2, col, 1.4f);
-    dl->AddLine(p2, p3, col, 1.4f);
-    for (ImVec2 p : {p0, p1, p2, p3}) dl->AddCircleFilled(p, 1.8f, col);
-  } else {
-    for (int k = 0; k < 3; ++k) {
-      const float x = c.x - h + 1 + static_cast<float>(k) * (size - 2) / 3.0f;
-      dl->AddRectFilled(ImVec2(x, c.y - h * 0.7f), ImVec2(x + (size - 2) / 3.0f - 2, c.y + h * 0.7f), col, 1.0f);
-    }
-    dl->AddRectFilled(ImVec2(c.x - h, c.y + h * 0.7f), ImVec2(c.x + h, c.y + h * 0.7f + 1.5f), col);
-  }
+  if (kind == ClipKind::Audio) ui::drawIcon(dl, ui::Icon::Wave, c, size, col);
+  else if (kind == ClipKind::Automation) ui::drawIconGlyph(dl, ui::Icon::ClipAutomation, c, h, 1.4f, col);
+  else ui::drawIconGlyph(dl, ui::Icon::ClipPattern, c, h, 0.0f, col);  // drawn at 12 px: one unit = 6 px
 }
 
 // Breadcrumb menu: every clip source by kind.
@@ -955,7 +929,7 @@ void drawPlaylist(App& a) {
       // Separator chevron.
       ImVec2 q = ImGui::GetCursorScreenPos();
       ImGui::Dummy(ImVec2(14, fh));
-      tdl->AddTriangleFilled(ImVec2(q.x + 5, q.y + fh * 0.5f - 4), ImVec2(q.x + 5, q.y + fh * 0.5f + 4), ImVec2(q.x + 9, q.y + fh * 0.5f), P.textFaint);
+      ui::drawIconFit(tdl, ui::Icon::Right, ImVec2(q.x + 5, q.y + fh * 0.5f - 4), ImVec2(q.x + 9, q.y + fh * 0.5f + 4), P.textFaint);
       ImGui::SameLine(0, 0);
       return pressed;
     };
@@ -1629,8 +1603,8 @@ void drawPlaylist(App& a) {
       const float gx = tx0 + 7, gy = a0.y + headH * 0.5f;
       const bool hotGlyph = hovered && std::fabs(io.MousePos.x - gx) < 7 && io.MousePos.y >= a0.y && io.MousePos.y < a0.y + headH;
       if (hotGlyph) hoverMenuGlyph = c.id;
-      dl->AddTriangleFilled(ImVec2(gx - 3.5f, gy - 2), ImVec2(gx + 3.5f, gy - 2), ImVec2(gx, gy + 2.5f),
-                            hotGlyph ? P.hot : theme::withAlpha(theme::contrastText(headSolid), 0.8f));
+      ui::drawIconFit(dl, ui::Icon::Down, ImVec2(gx - 3.5f, gy - 2), ImVec2(gx + 3.5f, gy + 2.5f),
+                      hotGlyph ? P.hot : theme::withAlpha(theme::contrastText(headSolid), 0.8f));
     }
     if (titleR - tx0 > 12)
       theme::textEllipsis(dl, a.fontBold, std::min(theme::kFontCaption, headH - 2), ImVec2(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f)),
@@ -2037,9 +2011,9 @@ void drawPlaylist(App& a) {
     if (t.groupSize > 0) {  // group: fold arrow
       ImVec2 c(nameX + 4, nameY + 7);
       if (t.folded)
-        dl->AddTriangleFilled(ImVec2(c.x - 3, c.y - 4), ImVec2(c.x - 3, c.y + 4), ImVec2(c.x + 3, c.y), P.textDim);
+        ui::drawIconFit(dl, ui::Icon::Right, ImVec2(c.x - 3, c.y - 4), ImVec2(c.x + 3, c.y + 4), P.textDim);
       else
-        dl->AddTriangleFilled(ImVec2(c.x - 4, c.y - 2), ImVec2(c.x + 4, c.y - 2), ImVec2(c.x, c.y + 3), P.textDim);
+        ui::drawIconFit(dl, ui::Icon::Down, ImVec2(c.x - 4, c.y - 2), ImVec2(c.x + 4, c.y + 3), P.textDim);
       nameX += 12;
     }
     const float lineY = roomy ? h1.y - 8.0f : nameY + 7.0f;  // handle / switch line
@@ -2056,8 +2030,7 @@ void drawPlaylist(App& a) {
     const bool handleHot = hovHead && !ledHot && io.MousePos.x >= hc0.x - 2 && io.MousePos.x < hc0.x + 20 && std::fabs(io.MousePos.y - lineY) < 7;
     if (handleHot) headHandle = tr;
     if (roomy || th >= 22)
-      for (int d = 0; d < 3; ++d)
-        dl->AddCircleFilled(ImVec2(hc0.x + 4 + static_cast<float>(d) * 4.5f, lineY + 1), 1.2f, handleHot || dragTrack == tr ? P.hot : P.textFaint, 6);
+      ui::drawIconFit(dl, ui::Icon::More, ImVec2(hc0.x + 2.8f, lineY - 0.2f), ImVec2(hc0.x + 14.2f, lineY + 2.2f), handleHot || dragTrack == tr ? P.hot : P.textFaint);
     const float nameRight = roomy ? h1.x - 6 : h1.x - 22;
     if (roomy || th >= 18) {
       float nx = roomy ? nameX : nameX + 18;
@@ -2073,7 +2046,7 @@ void drawPlaylist(App& a) {
       }
     }
     if (liveMode && a.engine.liveActive(tr) != kNoId)  // live: a clip plays on this track
-      dl->AddTriangleFilled(ImVec2(h1.x - 30, lineY - 4), ImVec2(h1.x - 30, lineY + 4), ImVec2(h1.x - 24, lineY), P.accent);
+      ui::drawIconFit(dl, ui::Icon::Play, ImVec2(h1.x - 30, lineY - 4), ImVec2(h1.x - 24, lineY + 4), P.accent);
     if (t.locked) ui::drawIcon(dl, ui::Icon::Lock, ImVec2(h1.x - (liveMode ? 42 : 26), lineY), 11, P.textDim);
     if (nearEdge) {
       const float gx = (h0.x + h1.x) * 0.5f;
@@ -2177,9 +2150,7 @@ void drawPlaylist(App& a) {
       case 4: ui::drawIcon(dl, ui::Icon::Plus, b.c, 10.0f, col); break;
       case 5: ui::drawIcon(dl, ui::Icon::Close, b.c, 9.0f, col); break;
       case 6: {  // double arrow
-        dl->AddLine(ImVec2(x - 5, y), ImVec2(x + 5, y), col, 1.3f);
-        dl->AddTriangleFilled(ImVec2(x - 7, y), ImVec2(x - 3.5f, y - 3), ImVec2(x - 3.5f, y + 3), col);
-        dl->AddTriangleFilled(ImVec2(x + 7, y), ImVec2(x + 3.5f, y + 3), ImVec2(x + 3.5f, y - 3), col);
+        ui::drawIconFit(dl, ui::Icon::StretchMode, ImVec2(x - 7, y - 3), ImVec2(x + 7, y + 3), col);
         break;
       }
       default: break;

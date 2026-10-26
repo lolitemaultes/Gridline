@@ -179,6 +179,12 @@ int main() {
         icons::draw(dl, ui::iconSvgName(static_cast<ui::Icon>(i)), ImVec2(20.0f + i * 3.3f, 40.0f), 20.0f, IM_COL32_WHITE);
       ImGui::Render();
     };
+    // The atlas installs the glyph hook (ImGui's own arrows, checks, crosses as
+    // SVG icons); ImGui's implicit debug window would draw them from frame 2,
+    // so this count covers icons::draw alone.
+    icons::atlas();
+    expect(ImGui::GetCurrentContext()->GlyphHook != nullptr, "the atlas installs ImGui's glyph hook");
+    ImGui::GetCurrentContext()->GlyphHook = nullptr;
     frame(1.0f);
     icons::Atlas& at = icons::atlas();
     const int first = at.rasterCount();

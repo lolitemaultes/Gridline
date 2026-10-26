@@ -18,6 +18,7 @@
 #include "../flc_kit.h"
 #include "harmor.h"
 #include "models.h"
+#include "../../app/Widgets.h"
 
 namespace gl::packs::models {
 
@@ -308,8 +309,8 @@ void globalSection(const flk::Ctx& c, const flk::Ctx& cO, HmUi& u) {
 
 void envPage(App& a, const PluginTarget& t, const PluginState& st, PatchData& d, const flk::Ctx& c, HmUi& u) {
   // Target list: articulators then shaping curves.
-  if (flk::btn(c, "tgtPrev", 396, 342, 18, 20, "<", false)) u.target = (u.target + kArts + kShapes - 1) % (kArts + kShapes);
-  if (flk::btn(c, "tgtNext", 572, 342, 18, 20, ">", false)) u.target = (u.target + 1) % (kArts + kShapes);
+  if (flk::btn(c, "tgtPrev", 396, 342, 18, 20, GL_ICON_LABEL("chevron-left", "<"), false)) u.target = (u.target + kArts + kShapes - 1) % (kArts + kShapes);
+  if (flk::btn(c, "tgtNext", 572, 342, 18, 20, GL_ICON_LABEL("chevron-right", ">"), false)) u.target = (u.target + 1) % (kArts + kShapes);
   const bool isShape = u.target >= kArts;
   char name[64];
   std::snprintf(name, sizeof name, "%s%s", isShape ? "SHAPE: " : "", isShape ? kShapeNames[u.target - kArts] : kArtNames[u.target]);

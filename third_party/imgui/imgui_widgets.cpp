@@ -933,6 +933,9 @@ bool ImGui::CloseButton(ImGuiID id, const ImVec2& pos)
     const ImVec2 cross_center = bb.GetCenter() - ImVec2(0.5f, 0.5f);
     const float cross_extent = g.FontSize * 0.5f * 0.7071f - 1.0f;
     const float cross_thickness = 1.0f * (float)(int)g.Style._MainScale; // FIXME-DPI
+    // GRIDLINE PATCH (SVG icons): the app's cross in the same bounds (the strokes' end points)
+    if (g.GlyphHook && g.GlyphHook(window->DrawList, 5, cross_center - ImVec2(cross_extent, cross_extent), cross_center + ImVec2(cross_extent, cross_extent), cross_col))
+        return pressed;
     window->DrawList->AddLine(cross_center + ImVec2(+cross_extent, +cross_extent), cross_center + ImVec2(-cross_extent, -cross_extent), cross_col, cross_thickness);
     window->DrawList->AddLine(cross_center + ImVec2(+cross_extent, -cross_extent), cross_center + ImVec2(-cross_extent, +cross_extent), cross_col, cross_thickness);
 
@@ -3818,6 +3821,31 @@ void ImGui::SetNextItemRefVal(ImGuiDataType data_type, void* p_data)
 
 // Note: p_data, p_step, p_step_fast are _pointers_ to a memory address holding the data. For an Input widget, p_step and p_step_fast are optional.
 // Read code of e.g. InputFloat(), InputInt() etc. or examples in 'Demo->Widgets->Data Types' to understand how to use this function directly.
+// GRIDLINE PATCH (SVG icons): a step button whose "-" / "+" is drawn by the app's
+// glyph hook inside the ink bounds of the font's character (falls back to the text).
+static bool StepGlyphButton(const char* label, int glyph, const ImVec2& size)
+{
+    using namespace ImGui;
+    ImGuiContext& g = *GImGui;
+    if (!g.GlyphHook)
+        return ButtonEx(label, size);
+    PushID(label);
+    const bool pressed = ButtonEx("##step", size);
+    PopID();
+    const ImRect bb(g.LastItemData.Rect);
+    const ImVec2 ts = CalcTextSize(label);
+    const ImVec2 pos(bb.Min.x + ImMax(0.0f, (bb.GetWidth() - ts.x) * g.Style.ButtonTextAlign.x), bb.Min.y + ImMax(0.0f, (bb.GetHeight() - ts.y) * g.Style.ButtonTextAlign.y));
+    const ImFontGlyph* fg = g.FontBaked ? g.FontBaked->FindGlyph((ImWchar)label[0]) : NULL;
+    if (fg && fg->Visible)
+    {
+        const float k = g.FontSize / g.FontBaked->Size;
+        if (g.GlyphHook(g.CurrentWindow->DrawList, glyph, ImVec2(pos.x + fg->X0 * k, pos.y + fg->Y0 * k), ImVec2(pos.x + fg->X1 * k, pos.y + fg->Y1 * k), GetColorU32(ImGuiCol_Text)))
+            return pressed;
+    }
+    RenderText(pos, label);
+    return pressed;
+}
+
 bool ImGui::InputScalar(const char* label, ImGuiDataType data_type, void* p_data, const void* p_step, const void* p_step_fast, const char* format, ImGuiInputTextFlags flags)
 {
     ImGuiWindow* window = GetCurrentWindow();
@@ -3890,13 +3918,13 @@ bool ImGui::InputScalar(const char* label, ImGuiDataType data_type, void* p_data
             BeginDisabled();
         PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
         SameLine(0, style.ItemInnerSpacing.x);
-        if (ButtonEx("-", ImVec2(button_size, button_size)))
+        if (StepGlyphButton("-", 6, ImVec2(button_size, button_size))) // GRIDLINE PATCH (SVG icons)
         {
             DataTypeApplyOp(data_type, '-', p_data, p_data, g.IO.KeyCtrl && p_step_fast ? p_step_fast : p_step);
             value_changed = ret = true;
         }
         SameLine(0, style.ItemInnerSpacing.x);
-        if (ButtonEx("+", ImVec2(button_size, button_size)))
+        if (StepGlyphButton("+", 7, ImVec2(button_size, button_size))) // GRIDLINE PATCH (SVG icons)
         {
             DataTypeApplyOp(data_type, '+', p_data, p_data, g.IO.KeyCtrl && p_step_fast ? p_step_fast : p_step);
             value_changed = ret = true;

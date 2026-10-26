@@ -69,6 +69,20 @@ release workflow publishes the section of the tagged version as the release note
   redo no longer adds a step that threw the redo history away.
 - In a collaborative project undo still takes back only your own changes, plugin edits included.
 
+### Every icon is an SVG
+
+- The icons that were still drawn as shapes in code or as text characters are now SVG icons from
+  the same set as the rest of the interface: ImGui's tree, combo and menu arrows, check marks,
+  close crosses and step buttons; the mixer track icons and plugin category glyphs; the track
+  header arm, input and monitor glyphs; playlist clip, loop and fold glyphs; the plugin window
+  header's gear, power and preset arrows; the pop out / dock in button; Edison's toolbar; Plasma's
+  arrows, gear, pencil, power, save, browse, close, more, undo, redo and audition buttons; and the
+  "<", ">", "+", "-", "?", "i" and "=" captions on plugin editor buttons. 88 new icons are drawn
+  for Gridline on the same 24-unit grid (`assets/icons/ui/NOTICE.md`).
+- Each one is fitted into the pixels the old glyph covered, so nothing grows and no layout or
+  click area moves; colours, hover, lit and disabled states and both themes are as before. A
+  caption too small for its icon (a 2 px minus) stays text.
+
 ### Collaboration: rename in place
 
 - The Collaboration panel no longer has a Rename... button: the project's name at the top is the

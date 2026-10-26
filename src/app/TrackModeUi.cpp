@@ -50,21 +50,13 @@ std::string mixerLabel(const Song& s, const MixerTrack& m) {
   return "Insert " + std::to_string(idx) + (m.name.empty() ? std::string() : "  " + m.name);
 }
 
-void inputGlyph(ImDrawList* dl, ImVec2 c, ImU32 col) {  // a small jack: ring + stem
-  dl->AddCircle(c, 3.2f, col, 12, 1.3f);
-  dl->AddLine(ImVec2(c.x + 3.2f, c.y), ImVec2(c.x + 6.5f, c.y), col, 1.3f);
-}
+// SVG icons on the old glyphs' px grids (input-jack: 6.5 px units, 1.3 px lines;
+// speaker: 6 / 7.5 px units, waves 1.2 px).
+void inputGlyph(ImDrawList* dl, ImVec2 c, ImU32 col) { ui::drawIconGlyph(dl, ui::Icon::InputJack, c, 6.5f, 1.3f, col); }
 
 void speakerGlyph(ImDrawList* dl, ImVec2 c, ImU32 col, bool waves) {
-  dl->AddRectFilled(ImVec2(c.x - 5, c.y - 2), ImVec2(c.x - 2.5f, c.y + 2), col);
-  dl->AddTriangleFilled(ImVec2(c.x - 2.5f, c.y - 2), ImVec2(c.x + 1.5f, c.y - 5), ImVec2(c.x + 1.5f, c.y + 5), col);
-  dl->AddTriangleFilled(ImVec2(c.x - 2.5f, c.y - 2), ImVec2(c.x - 2.5f, c.y + 2), ImVec2(c.x + 1.5f, c.y + 5), col);
-  if (waves) {
-    dl->PathArcTo(ImVec2(c.x + 1.5f, c.y), 3.5f, -0.9f, 0.9f, 8);
-    dl->PathStroke(col, 0, 1.2f);
-    dl->PathArcTo(ImVec2(c.x + 1.5f, c.y), 6.0f, -0.8f, 0.8f, 10);
-    dl->PathStroke(col, 0, 1.2f);
-  }
+  if (waves) ui::drawIconGlyph(dl, ui::Icon::SpeakerWaves, c, 7.5f, 1.2f, col);
+  else ui::drawIconGlyph(dl, ui::Icon::Speaker, c, 6.0f, 0.0f, col);
 }
 
 }  // namespace
@@ -183,8 +175,8 @@ int drawHeader(App& a, ImDrawList* dl, int track, float x0, float x1, float line
     const ImVec2 arm(x1 - 7, lineY);
     if (arm.x - 6 < x0) return kNone;
     const bool armHot = hot(arm, 7);
-    dl->AddCircleFilled(arm, 5.0f, m->armed ? P.danger : theme::mix(P.ink, P.surface800, 0.4f), 16);
-    dl->AddCircle(arm, 5.0f, armHot ? P.hot : m->armed ? theme::mix(P.danger, P.paper, 0.3f) : P.textFaint, 16, 1.2f);
+    ui::drawIconFitC(dl, ui::Icon::Record, arm, ImVec2(10, 10), m->armed ? P.danger : theme::mix(P.ink, P.surface800, 0.4f));
+    ui::drawIconFitC(dl, ui::Icon::Ring, arm, ImVec2(11.2f, 11.2f), armHot ? P.hot : m->armed ? theme::mix(P.danger, P.paper, 0.3f) : P.textFaint);
     if (armHot) over = kArm;
     const ImVec2 mon(arm.x - 17, lineY);
     if (mon.x - 7 > x0) {

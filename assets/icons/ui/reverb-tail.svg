@@ -1,0 +1,9 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: bars dying away (reverb) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 18 L6 10.2" />
+  <path d="M8.4 18 L8.4 13.03" />
+  <path d="M10.8 18 L10.8 14.83" />
+  <path d="M13.2 18 L13.2 15.98" />
+  <path d="M15.6 18 L15.6 16.71" />
+  <path d="M18 18 L18 17.18" />
+</svg>

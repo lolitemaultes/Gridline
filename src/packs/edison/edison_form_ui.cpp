@@ -10,6 +10,7 @@
 #include "../../core/PluginBrand.h"
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
+#include "../../app/Widgets.h"
 #include "../../../third_party/imgui/imgui_internal.h"
 #include "edison_ui.h"
 
@@ -26,155 +27,50 @@ enum Glyph {
   GStretch, GDenoise, GSend, GPlay, GPause, GStop, GRec, GScrub, GLoop, GFollow, GSpeaker, GSpeakerOff, GScroll
 };
 
-void line(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 c, float t) { dl->AddLine(a, b, c, t); }
-
 // Vector glyph inside [a, b].
 void glyph(ImDrawList* dl, int g, ImVec2 a, ImVec2 b, ImU32 c) {
+  // SVG icons (assets/icons/ui) in the old vector glyphs' places: the glyph box
+  // spans -1..1 (half its shorter side per unit), lines max(1.2, 9 % of it).
   const float w = b.x - a.x, h = b.y - a.y, s = std::min(w, h);
   const ImVec2 m((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-  const float t = std::max(1.2f, s * 0.09f);
-  auto P = [&](float x, float y) { return ImVec2(m.x + x * s * 0.5f, m.y + y * s * 0.5f); };
+  const float t = std::max(1.2f, s * 0.09f), u = s * 0.5f;
+  // Shared icons whose geometry differs: fitted to the old glyph's ink box (units).
+  auto fit = [&](ui::Icon icon, float x0, float y0, float x1, float y1, bool stroked) {
+    const float e = stroked ? t * 0.5f : 0.0f;
+    ui::drawIconFit(dl, icon, ImVec2(m.x + x0 * u - e, m.y + y0 * u - e), ImVec2(m.x + x1 * u + e, m.y + y1 * u + e), c);
+  };
+  // Drawn on the old grid, fitted to the geometry alone: the old strokes are flat-ended
+  // lines, so their ends add nothing (and at 2x a share of the width is a whole pixel).
+  auto own = [&](ui::Icon icon) { ui::drawIconGlyph(dl, icon, m, u, 0.0f, c); };
   switch (g) {
-    case GUndo:
-    case GRedo: {
-      const float d = g == GUndo ? 1.f : -1.f;
-      dl->PathArcTo(P(0, 0.15f), s * 0.3f, g == GUndo ? 3.4f : -0.26f, g == GUndo ? 6.6f : 2.94f, 12);
-      dl->PathStroke(c, 0, t);
-      ImVec2 tip = P(-0.62f * d, 0.05f);
-      dl->AddTriangleFilled(tip, P(-0.62f * d + 0.35f * d, -0.28f), P(-0.62f * d + 0.38f * d, 0.3f), c);
-      break;
-    }
-    case GCopy:
-      dl->AddRect(P(-0.55f, -0.6f), P(0.25f, 0.3f), c, 1.5f, 0, t);
-      dl->AddRect(P(-0.2f, -0.25f), P(0.6f, 0.65f), c, 1.5f, 0, t);
-      break;
-    case GLoopSet:
-    case GLoop: {
-      dl->PathArcTo(m, s * 0.38f, 0.5f, 5.6f, 16);
-      dl->PathStroke(c, 0, t);
-      dl->AddTriangleFilled(P(0.55f, 0.05f), P(0.95f, 0.05f), P(0.75f, 0.45f), c);
-      if (g == GLoopSet) line(dl, P(-0.15f, -0.15f), P(0.15f, 0.15f), c, t), line(dl, P(-0.15f, 0.15f), P(0.15f, -0.15f), c, t);
-      break;
-    }
-    case GMarker:
-      line(dl, P(-0.3f, -0.7f), P(-0.3f, 0.7f), c, t);
-      dl->AddTriangleFilled(P(-0.3f, -0.7f), P(0.5f, -0.45f), P(-0.3f, -0.2f), c);
-      break;
-    case GTrim:
-      line(dl, P(-0.7f, 0), P(0.7f, 0), skin::lighten(c, 0) & 0x80FFFFFF, t);
-      line(dl, P(-0.45f, -0.7f), P(-0.45f, 0.7f), c, t);
-      line(dl, P(0.45f, -0.7f), P(0.45f, 0.7f), c, t);
-      for (float x = -0.3f; x <= 0.31f; x += 0.15f) line(dl, P(x, -0.4f * std::cos(x * 5)), P(x, 0.4f * std::cos(x * 5)), c, t * 0.8f);
-      break;
-    case GSlice:
-      for (int k = -1; k <= 1; ++k) line(dl, P(k * 0.45f, -0.7f), P(k * 0.45f, 0.7f), c, t * 0.8f);
-      for (float x = -0.65f; x < 0.66f; x += 0.1f) {
-        float amp = 0.55f * std::exp(-3.f * std::fmod(x + 0.65f, 0.45f));
-        line(dl, P(x, -amp), P(x, amp), c, t * 0.6f);
-      }
-      break;
-    case GSave:
-      dl->AddRect(P(-0.6f, -0.6f), P(0.6f, 0.6f), c, 1.5f, 0, t);
-      dl->AddRectFilled(P(-0.35f, -0.6f), P(0.3f, -0.15f), c);
-      dl->AddRect(P(-0.35f, 0.15f), P(0.35f, 0.6f), c, 0, 0, t);
-      break;
-    case GFadeIn:
-    case GFadeOut: {
-      const float d = g == GFadeIn ? 1.f : -1.f;
-      dl->AddTriangleFilled(P(-0.7f * d, 0.6f), P(0.7f * d, -0.6f), P(0.7f * d, 0.6f), skin::lighten(c, 0) & 0x60FFFFFF);
-      line(dl, P(-0.7f * d, 0.6f), P(0.7f * d, -0.6f), c, t);
-      line(dl, P(-0.7f, 0.6f), P(0.7f, 0.6f), c, t);
-      break;
-    }
-    case GNormalize:
-      line(dl, P(-0.7f, -0.6f), P(0.7f, -0.6f), c, t);
-      line(dl, P(-0.7f, 0.6f), P(0.7f, 0.6f), c, t);
-      for (float x = -0.55f; x <= 0.56f; x += 0.12f) {
-        float amp = 0.55f * std::fabs(std::sin(x * 7.f));
-        line(dl, P(x, -amp), P(x, amp), c, t * 0.7f);
-      }
-      break;
-    case GReverb:
-      for (int k = 0; k < 6; ++k) {
-        float x = -0.6f + k * 0.24f, amp = 0.65f * std::exp(-0.45f * k);
-        line(dl, P(x, 0.6f), P(x, 0.6f - 1.2f * amp), c, t);
-      }
-      break;
-    case GBlur:
-      for (int k = 0; k < 3; ++k) dl->AddCircle(m, s * (0.15f + 0.17f * k), skin::lighten(c, 0) & (k == 0 ? 0xFFFFFFFF : k == 1 ? 0xA0FFFFFF : 0x60FFFFFF), 16, t);
-      break;
-    case GEq: {
-      ImVec2 pts[24];
-      for (int k = 0; k < 24; ++k) {
-        float x = -0.7f + 1.4f * k / 23.f;
-        pts[k] = P(x, -0.45f * std::sin(x * 3.5f) * std::exp(-x * x));
-      }
-      dl->AddPolyline(pts, 24, c, 0, t);
-      line(dl, P(-0.7f, 0.6f), P(0.7f, 0.6f), skin::lighten(c, 0) & 0x70FFFFFF, t * 0.7f);
-      break;
-    }
-    case GEnvelope: {
-      ImVec2 e[5] = {P(-0.7f, 0.6f), P(-0.4f, -0.5f), P(0.0f, -0.1f), P(0.35f, -0.25f), P(0.7f, 0.6f)};
-      dl->AddPolyline(e, 5, c, 0, t);
-      for (auto& q : e) dl->AddCircleFilled(q, t * 1.4f, c);
-      break;
-    }
-    case GStretch:
-      line(dl, P(-0.75f, 0), P(0.75f, 0), c, t);
-      dl->AddTriangleFilled(P(-0.75f, 0), P(-0.4f, -0.3f), P(-0.4f, 0.3f), c);
-      dl->AddTriangleFilled(P(0.75f, 0), P(0.4f, -0.3f), P(0.4f, 0.3f), c);
-      line(dl, P(-0.15f, -0.65f), P(-0.15f, 0.65f), c, t * 0.7f);
-      line(dl, P(0.15f, -0.65f), P(0.15f, 0.65f), c, t * 0.7f);
-      break;
-    case GDenoise:
-      for (int k = 0; k < 9; ++k) {
-        float x = -0.6f + k * 0.15f;
-        float amp = (k == 4) ? 0.65f : 0.12f + 0.06f * static_cast<float>((k * 7) % 3);
-        line(dl, P(x, -amp), P(x, amp), c, t * 0.8f);
-      }
-      break;
-    case GSend:
-      dl->AddRect(P(-0.7f, -0.3f), P(0.2f, 0.3f), c, 1.5f, 0, t);
-      dl->AddTriangleFilled(P(0.75f, 0), P(0.3f, -0.4f), P(0.3f, 0.4f), c);
-      break;
-    case GPlay:
-      dl->AddTriangleFilled(P(-0.4f, -0.55f), P(0.6f, 0), P(-0.4f, 0.55f), c);
-      break;
-    case GPause:
-      dl->AddRectFilled(P(-0.45f, -0.5f), P(-0.12f, 0.5f), c);
-      dl->AddRectFilled(P(0.12f, -0.5f), P(0.45f, 0.5f), c);
-      break;
-    case GStop:
-      dl->AddRectFilled(P(-0.45f, -0.45f), P(0.45f, 0.45f), c, 1.5f);
-      break;
-    case GRec:
-      dl->AddCircleFilled(m, s * 0.3f, c, 20);
-      break;
-    case GScrub:
-      for (int k = 0; k < 7; ++k) {
-        float x = -0.6f + k * 0.2f, amp = 0.15f + 0.4f * std::fabs(std::sin(k * 1.3f));
-        line(dl, P(x, -amp), P(x, amp), c, t * 0.8f);
-      }
-      dl->AddTriangleFilled(P(-0.1f, -0.8f), P(0.1f, -0.8f), P(0, -0.6f), c);
-      break;
-    case GFollow:
-      dl->AddCircle(P(-0.25f, 0), s * 0.22f, c, 12, t);
-      dl->AddCircle(P(0.25f, 0), s * 0.22f, c, 12, t);
-      break;
-    case GSpeaker:
-    case GSpeakerOff:
-      dl->AddRectFilled(P(-0.6f, -0.2f), P(-0.3f, 0.2f), c);
-      dl->AddTriangleFilled(P(-0.3f, -0.2f), P(0.1f, -0.55f), P(0.1f, 0.55f), c);
-      dl->AddTriangleFilled(P(-0.3f, -0.2f), P(0.1f, 0.55f), P(-0.3f, 0.2f), c);
-      if (g == GSpeakerOff)
-        line(dl, P(0.25f, -0.3f), P(0.65f, 0.3f), c, t), line(dl, P(0.25f, 0.3f), P(0.65f, -0.3f), c, t);
-      else
-        dl->PathArcTo(P(0.1f, 0), s * 0.32f, -0.8f, 0.8f, 8), dl->PathStroke(c, 0, t);
-      break;
-    case GScroll:
-      dl->AddTriangleFilled(P(-0.35f, -0.4f), P(0.35f, 0), P(-0.35f, 0.4f), c);
-      line(dl, P(0.45f, -0.45f), P(0.45f, 0.45f), c, t);
-      break;
+    case GUndo: fit(ui::Icon::Undo, -0.62f, -0.45f, 0.6f, 0.34f, true); break;
+    case GRedo: fit(ui::Icon::Redo, -0.6f, -0.45f, 0.62f, 0.34f, true); break;
+    case GCopy: fit(ui::Icon::Clone, -0.55f, -0.6f, 0.6f, 0.65f, true); break;
+    case GLoopSet: own(ui::Icon::EdisonLoopSet); break;
+    case GLoop: own(ui::Icon::EdisonLoop); break;
+    case GMarker: own(ui::Icon::Flag); break;
+    case GTrim: own(ui::Icon::Trim); break;
+    case GSlice: own(ui::Icon::SliceWave); break;
+    case GSave: fit(ui::Icon::Save, -0.6f, -0.6f, 0.6f, 0.6f, true); break;
+    case GFadeIn: own(ui::Icon::FadeIn); break;
+    case GFadeOut: own(ui::Icon::FadeOut); break;
+    case GNormalize: own(ui::Icon::Normalize); break;
+    case GReverb: ui::drawIconGlyph(dl, ui::Icon::ReverbTail, m, u, 0.0f, c); break;  // flat bar ends: no stroke past them
+    case GBlur: own(ui::Icon::Blur); break;
+    case GEq: own(ui::Icon::EqCurve); break;
+    case GEnvelope: own(ui::Icon::EnvelopePoints); break;
+    case GStretch: own(ui::Icon::Stretch); break;
+    case GDenoise: own(ui::Icon::Denoise); break;
+    case GSend: own(ui::Icon::SendOut); break;
+    case GPlay: fit(ui::Icon::Play, -0.4f, -0.55f, 0.6f, 0.55f, false); break;
+    case GPause: fit(ui::Icon::Pause, -0.45f, -0.5f, 0.45f, 0.5f, false); break;
+    case GStop: fit(ui::Icon::Stop, -0.45f, -0.45f, 0.45f, 0.45f, false); break;
+    case GRec: fit(ui::Icon::Record, -0.6f, -0.6f, 0.6f, 0.6f, false); break;
+    case GScrub: own(ui::Icon::Scrub); break;
+    case GFollow: own(ui::Icon::Follow); break;
+    case GSpeaker: own(ui::Icon::SpeakerSmall); break;
+    case GSpeakerOff: own(ui::Icon::SpeakerSmallOff); break;
+    case GScroll: ui::drawIconGlyph(dl, ui::Icon::ScrollTo, m, u, 0.0f, c); break;  // flat bar ends
     default: break;
   }
 }
@@ -229,7 +125,7 @@ void paramCombo(App& a, Session& s, const skin::Form& F, ImDrawList* dl, ImFont*
   ImGui::InvisibleButton(id, ImVec2(p1.x - p0.x, p1.y - p0.y));
   const bool en = s.slot;
   lcd(F, dl, f, x, y, w - 9, h, cur.c_str(), en ? C(col::LcdText) : C(col::TextDim));
-  dl->AddTriangleFilled(F.p(x + w - 7.5f, y + h * 0.4f), F.p(x + w - 1.5f, y + h * 0.4f), F.p(x + w - 4.5f, y + h * 0.65f), C(col::Glyph));
+  ui::drawIconFit(dl, ui::Icon::Down, F.p(x + w - 7.5f, y + h * 0.4f), F.p(x + w - 1.5f, y + h * 0.65f), C(col::Glyph));
   if (ImGui::IsItemHovered()) app().setHint(hint), ImGui::SetTooltip("%s", hint);
   if (en && ImGui::IsItemClicked()) ImGui::OpenPopup(id);
   if (ImGui::BeginPopup(id)) {

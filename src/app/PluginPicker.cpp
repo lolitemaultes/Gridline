@@ -30,8 +30,6 @@ namespace role = theme::role;
 
 namespace {
 
-constexpr float kPi = 3.14159265f;
-
 bool pickerOpen = false;
 bool pickerFocusSearch = false;
 bool hiddenForDrag = false;  // the picker steps aside while one of its tiles is dragged
@@ -110,120 +108,37 @@ uint32_t categoryRole(const std::string& category, int kind) {
 }
 
 void drawStar(ImDrawList* dl, ImVec2 c, float r, ImU32 col, bool filled) {
-  ImVec2 pts[10];
-  for (int i = 0; i < 10; ++i) {
-    const float ang = -kPi / 2 + static_cast<float>(i) * kPi / 5;
-    const float rr = i % 2 ? r * 0.45f : r;
-    pts[i] = ImVec2(c.x + std::cos(ang) * rr, c.y + std::sin(ang) * rr);
-  }
-  if (filled) {
-    // Concave: fan of triangles from the centre.
-    for (int i = 0; i < 10; ++i) dl->AddTriangleFilled(c, pts[i], pts[(i + 1) % 10], col);
-  } else {
-    dl->AddPolyline(pts, 10, col, ImDrawFlags_Closed, 1.2f);
-  }
+  // SVG star / star-filled on the old glyph's grid: r to one unit, 1.2 px outline.
+  ui::drawIconGlyph(dl, filled ? ui::Icon::StarFilled : ui::Icon::Star, c, r, filled ? 0.0f : 1.2f, col);
 }
 
 void drawCategoryGlyph(ImDrawList* dl, const std::string& category, int kind, ImVec2 c, float size, ImU32 col) {
+  // SVG icons (assets/icons/ui/cat-*.svg) on the old glyphs' grid: one unit is
+  // half of `size`, lines max(1.2, size / 17) px.
   const float h = size * 0.5f, th = std::max(1.2f, size / 17.0f);
-  auto P = [&](float x, float y) { return ImVec2(c.x + x * h, c.y + y * h); };
-  auto curve = [&](auto fn, float x0, float x1, int n = 40) {
-    ImVec2 pts[64];
-    n = std::min(n, 64);
-    for (int i = 0; i < n; ++i) {
-      float x = x0 + (x1 - x0) * static_cast<float>(i) / static_cast<float>(n - 1);
-      pts[i] = P(x, fn(x));
-    }
-    dl->AddPolyline(pts, n, col, 0, th);
-  };
+  ui::Icon icon = ui::Icon::Plug;
   switch (glyphOf(category, kind)) {
-    case Glyph::Synth:  // saw wave
-      dl->AddLine(P(-0.8f, 0.4f), P(-0.25f, -0.45f), col, th);
-      dl->AddLine(P(-0.25f, -0.45f), P(-0.25f, 0.4f), col, th);
-      dl->AddLine(P(-0.25f, 0.4f), P(0.3f, -0.45f), col, th);
-      dl->AddLine(P(0.3f, -0.45f), P(0.3f, 0.4f), col, th);
-      dl->AddLine(P(0.3f, 0.4f), P(0.8f, -0.35f), col, th);
-      break;
-    case Glyph::Drums:  // pads
-      for (int y = 0; y < 2; ++y)
-        for (int x = 0; x < 2; ++x) {
-          ImVec2 a = P(-0.7f + x * 0.75f, -0.7f + y * 0.75f), b = P(-0.05f + x * 0.75f, -0.05f + y * 0.75f);
-          if (x == y) dl->AddRectFilled(a, b, col, size * 0.04f);
-          else dl->AddRect(a, b, col, size * 0.04f, 0, th);
-        }
-      break;
-    case Glyph::Sampler:  // waveform
-      for (int i = 0; i < 13; ++i) {
-        float x = -0.75f + i * 0.125f;
-        float a = (0.15f + 0.65f * std::fabs(std::sin(static_cast<float>(i) * 1.7f + 0.4f))) * (1.0f - std::fabs(x) * 0.6f);
-        dl->AddLine(P(x, -a), P(x, a), col, th);
-      }
-      break;
-    case Glyph::Controller:  // knob
-      dl->PathArcTo(c, h * 0.62f, kPi * 0.75f, kPi * 2.25f, 32);
-      dl->PathStroke(col, 0, th);
-      dl->AddCircleFilled(c, h * 0.38f, col);
-      dl->AddLine(c, P(0.3f, -0.42f), pal().surface900, th * 1.4f);
-      break;
-    case Glyph::Midi:  // notes
-      dl->AddCircleFilled(P(-0.35f, 0.45f), h * 0.2f, col);
-      dl->AddCircleFilled(P(0.4f, 0.3f), h * 0.2f, col);
-      dl->AddLine(P(-0.17f, 0.45f), P(-0.17f, -0.55f), col, th);
-      dl->AddLine(P(0.58f, 0.3f), P(0.58f, -0.7f), col, th);
-      dl->AddLine(P(-0.17f, -0.55f), P(0.58f, -0.7f), col, th * 2.2f);
-      break;
-    case Glyph::Delay:  // decaying taps
-      for (int i = 0; i < 5; ++i) {
-        float x = -0.7f + i * 0.35f, a = 0.75f * std::pow(0.68f, static_cast<float>(i));
-        dl->AddRectFilled(P(x - 0.09f, 0.6f - a * 1.6f), P(x + 0.09f, 0.6f), theme::withAlpha(col, 1.0f - 0.15f * static_cast<float>(i)));
-      }
-      break;
-    case Glyph::Dynamics:  // transfer curve with knee
-      dl->AddRect(P(-0.75f, -0.75f), P(0.75f, 0.75f), theme::withAlpha(col, 0.35f), 0, 0, th * 0.7f);
-      dl->AddLine(P(-0.75f, 0.75f), P(0.05f, -0.05f), col, th);
-      dl->AddLine(P(0.05f, -0.05f), P(0.75f, -0.3f), col, th);
-      break;
-    case Glyph::Filter:  // low-pass
-      curve([](float x) { return x < 0.1f ? -0.3f : -0.3f + (x - 0.1f) * (x - 0.1f) * 2.4f; }, -0.8f, 0.75f);
-      break;
-    case Glyph::Eq:  // bell
-      curve([](float x) { return 0.25f - 0.8f * std::exp(-x * x * 9.0f); }, -0.85f, 0.85f);
-      dl->AddCircleFilled(P(0, -0.55f), th * 1.8f, col);
-      break;
-    case Glyph::Distortion:  // clipped sine
-      curve([](float x) { return std::clamp(-0.9f * std::sin(x * kPi * 1.25f), -0.45f, 0.45f); }, -0.8f, 0.8f);
-      break;
-    case Glyph::Modulation:  // two detuned sines
-      curve([](float x) { return 0.4f * std::sin(x * kPi * 1.5f); }, -0.8f, 0.8f);
-      curve([](float x) { return 0.4f * std::sin(x * kPi * 1.5f + 1.2f); }, -0.8f, 0.8f);
-      break;
+    case Glyph::Synth: icon = ui::Icon::CatSynth; break;
+    case Glyph::Drums: icon = ui::Icon::CatDrums; break;
+    case Glyph::Sampler: icon = ui::Icon::CatSampler; break;
+    case Glyph::Controller: icon = ui::Icon::CatController; break;
+    case Glyph::Midi: icon = ui::Icon::CatMidi; break;
+    case Glyph::Delay: icon = ui::Icon::CatDelay; break;
+    case Glyph::Dynamics: icon = ui::Icon::CatDynamics; break;
+    case Glyph::Filter: icon = ui::Icon::CatFilter; break;
+    case Glyph::Eq: icon = ui::Icon::CatEq; break;
+    case Glyph::Distortion: icon = ui::Icon::CatDistortion; break;
+    case Glyph::Modulation: icon = ui::Icon::CatModulation; break;
     case Glyph::Spectral:
-    case Glyph::Visual: {  // spectrum bars
-      const float hs[7] = {0.35f, 0.7f, 1.0f, 0.8f, 0.55f, 0.65f, 0.3f};
-      for (int i = 0; i < 7; ++i) {
-        float x = -0.72f + i * 0.24f;
-        dl->AddRectFilled(P(x - 0.07f, 0.65f - hs[i] * 1.2f), P(x + 0.07f, 0.65f), col, 1);
-      }
-      break;
-    }
-    case Glyph::Stereo:
-      dl->AddCircle(P(-0.25f, 0), h * 0.5f, col, 28, th);
-      dl->AddCircle(P(0.25f, 0), h * 0.5f, col, 28, th);
-      break;
-    case Glyph::Pitch:
-      dl->AddTriangleFilled(P(-0.35f, -0.15f), P(0.0f, -0.7f), P(0.35f, -0.15f), col);
-      dl->AddTriangleFilled(P(-0.35f, 0.15f), P(0.0f, 0.7f), P(0.35f, 0.15f), theme::withAlpha(col, 0.6f));
-      break;
-    case Glyph::Utility:  // fader
-      dl->AddLine(P(-0.3f, -0.75f), P(-0.3f, 0.75f), theme::withAlpha(col, 0.5f), th);
-      dl->AddLine(P(0.3f, -0.75f), P(0.3f, 0.75f), theme::withAlpha(col, 0.5f), th);
-      dl->AddRectFilled(P(-0.5f, 0.05f), P(-0.1f, 0.3f), col, 1);
-      dl->AddRectFilled(P(0.1f, -0.45f), P(0.5f, -0.2f), col, 1);
-      break;
+    case Glyph::Visual: icon = ui::Icon::CatSpectral; break;
+    case Glyph::Stereo: icon = ui::Icon::CatStereo; break;
+    case Glyph::Pitch: icon = ui::Icon::CatPitch; break;
+    case Glyph::Utility: icon = ui::Icon::CatUtility; break;
     case Glyph::Plug:
       ui::drawIcon(dl, ui::Icon::Plug, c, size * 0.7f, col);
-      break;
+      return;
   }
+  ui::drawIconGlyph(dl, icon, c, h, th, col);
 }
 
 void togglePluginPicker() {

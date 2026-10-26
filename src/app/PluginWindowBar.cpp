@@ -63,21 +63,11 @@ void centredText(ImDrawList* dl, ImFont* f, float size, ImVec2 p0, ImVec2 p1, Im
   dl->AddText(f, size, ImVec2(std::round((p0.x + p1.x - ts.x) * 0.5f), std::round((p0.y + p1.y - ts.y) * 0.5f)), col, text);
 }
 
-void drawGear(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  for (int k = 0; k < 8; ++k) {
-    const float a = static_cast<float>(k) * 3.14159265f / 4.0f;
-    const ImVec2 d(std::cos(a), std::sin(a));
-    dl->AddLine(ImVec2(c.x + d.x * r * 0.55f, c.y + d.y * r * 0.55f), ImVec2(c.x + d.x * r, c.y + d.y * r), col, 2.6f);
-  }
-  dl->AddCircle(c, r * 0.62f, col, 16, 2.0f);
-  dl->AddCircleFilled(c, r * 0.22f, col, 10);
-}
+// SVG icons in the old vector glyphs' footprints (gear: 8 teeth to r at 2.6 px;
+// power: a ring of r with its stem 1.5 px above it, 1.8 px lines).
+void drawGear(ImDrawList* dl, ImVec2 c, float r, ImU32 col) { ui::drawIconFitC(dl, ui::Icon::Settings, c, ImVec2(r * 2 + 2.6f, r * 2 + 2.6f), col); }
 
-void drawPower(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  dl->PathArcTo(c, r, -3.14159265f * 0.5f + 0.75f, 3.14159265f * 1.5f - 0.75f, 18);
-  dl->PathStroke(col, 0, 1.8f);
-  dl->AddLine(ImVec2(c.x, c.y - r - 1.5f), ImVec2(c.x, c.y - 1.0f), col, 1.8f);
-}
+void drawPower(ImDrawList* dl, ImVec2 c, float r, ImU32 col) { ui::drawIconGlyph(dl, ui::Icon::Power, c, r * 7.0f / 5.5f, 1.8f, col); }
 
 void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
   App& a = *w.app;
@@ -108,7 +98,7 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
   boxAt(dl, p0, p1, ImGui::IsItemHovered() ? K.btnHov : K.btn, K.edge);
   {
     const ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
-    dl->AddTriangleFilled(ImVec2(c.x + 3, c.y - 5), ImVec2(c.x + 3, c.y + 5), ImVec2(c.x - 4, c.y), np > 0 ? K.text : K.faint);
+    ui::drawIconFit(dl, ui::Icon::Left, ImVec2(c.x - 4, c.y - 5), ImVec2(c.x + 3, c.y + 5), np > 0 ? K.text : K.faint);
   }
   R(lay::kBarPreset, p0, p1);
   if (barButton("##preset", B.items[lay::kBarPreset], 0) && np > 0) ImGui::OpenPopup("##presets");
@@ -127,7 +117,7 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
   boxAt(dl, p0, p1, ImGui::IsItemHovered() ? K.btnHov : K.btn, K.edge);
   {
     const ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
-    dl->AddTriangleFilled(ImVec2(c.x - 3, c.y - 5), ImVec2(c.x - 3, c.y + 5), ImVec2(c.x + 4, c.y), np > 0 ? K.text : K.faint);
+    ui::drawIconFit(dl, ui::Icon::Right, ImVec2(c.x - 3, c.y - 5), ImVec2(c.x + 4, c.y + 5), np > 0 ? K.text : K.faint);
   }
   if (ImGui::BeginPopup("##presets")) {
     if (hi->programCount() > 0) ImGui::TextDisabled("%s", i18n::tr("Programs"));

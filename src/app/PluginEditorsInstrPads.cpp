@@ -391,8 +391,8 @@ void drawLayers(App& a, const PluginTarget& t, const iskin::Skin& k, const Plugi
   {  // padlock glyph
     ImVec2 c = k.at(531.5f, 84);
     float r = k.px(4);
-    k.dl()->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.2f), ImVec2(c.x + r, c.y + r), ui.lockLayers ? rgb(0x262F34) : k.c.textDim, 1);
-    k.dl()->AddCircle(ImVec2(c.x, c.y - r * 0.4f), r * 0.65f, ui.lockLayers ? rgb(0x262F34) : k.c.textDim, 12, 1.2f);
+    // The SVG lock in the old padlock's ink (body to r, shackle ring of 0.65 r above it).
+    ui::drawIconFit(k.dl(), ui::Icon::Lock, ImVec2(c.x - r, c.y - r * 1.05f - 0.6f), ImVec2(c.x + r, c.y + r), ui.lockLayers ? rgb(0x262F34) : k.c.textDim);
   }
   if (ImGui::IsItemHovered()) a.setHint("Lock layers: velocity ranges move together");
   // Test strip: click a velocity to audition the pad at it.
@@ -421,9 +421,7 @@ void drawLayers(App& a, const PluginTarget& t, const iskin::Skin& k, const Plugi
     ImVec2 c = k.at(771.5f, 83);
     const float r = k.px(4.5f);
     const ImU32 gc = mode != LayerStack ? rgb(0x262F34) : k.c.textDim;
-    k.dl()->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), gc, 1.5f, 0, 1.2f);
-    k.dl()->AddCircleFilled(ImVec2(c.x - r * 0.4f, c.y - r * 0.4f), 1.2f, gc);
-    k.dl()->AddCircleFilled(ImVec2(c.x + r * 0.4f, c.y + r * 0.4f), 1.2f, gc);
+    ui::drawIconGlyph(k.dl(), ui::Icon::DiceTwo, c, r, 1.2f, gc);
     if (ImGui::IsItemHovered()) a.setHint("Overlapping layers: all at once, or one at a time (cycle / random)");
     if (ImGui::BeginPopup("##trigmode")) {
       static const char* names[5] = {"All layers", "Cycle", "Cycle backward", "Random", "Random (avoid previous)"};

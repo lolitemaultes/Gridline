@@ -284,9 +284,9 @@ bool stripArmButton(App& a, const MixerTrack& t, ImVec2 pos) {
   const ImVec2 c(pos.x + 8, pos.y + 7);
   const bool rolling = a.engine.recordingOn() && t.armed;
   const ImU32 ring = t.armed ? P.danger : hov ? P.text : P.textFaint;
-  dl->AddCircleFilled(c, 5.0f, t.armed ? theme::withAlpha(P.danger, rolling ? 0.55f + 0.45f * static_cast<float>(std::fabs(std::sin(a.now * 4))) : 0.85f)
-                                       : P.field);
-  dl->AddCircle(c, 5.0f, ring, 0, 1.2f);
+  ui::drawIconFitC(dl, ui::Icon::Record, c, ImVec2(10, 10),
+                   t.armed ? theme::withAlpha(P.danger, rolling ? 0.55f + 0.45f * static_cast<float>(std::fabs(std::sin(a.now * 4))) : 0.85f) : P.field);
+  ui::drawIconFitC(dl, ui::Icon::Ring, c, ImVec2(11.2f, 11.2f), ring);
   if (clicked) toggleArm(a, t.id);
   return clicked;
 }

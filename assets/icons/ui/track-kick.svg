@@ -1,0 +1,5 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: mixer track icon: a drum head with a beater dot (kick) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="8.5" />
+  <circle cx="12" cy="12" r="2.8" fill="currentColor" stroke="none" />
+</svg>

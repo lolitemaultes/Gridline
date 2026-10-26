@@ -213,7 +213,7 @@ void drawLivePads(App& a) {
       if (on) dl->AddRect(q, q1, P.accent, theme::kRadiusSm, 0, 2.0f);
       if (waiting) dl->AddRect(q, q1, theme::withAlpha(P.accent, 0.35f + 0.65f * pulse), theme::kRadiusSm, 0, 2.0f);
       theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(q.x + 6, q.y + 6), padW - 18, theme::contrastText(fill), nm.c_str());
-      if (on) dl->AddTriangleFilled(ImVec2(q.x + 7, q1.y - 16), ImVec2(q.x + 7, q1.y - 6), ImVec2(q.x + 15, q1.y - 11), theme::contrastText(fill));
+      if (on) ui::drawIconFit(dl, ui::Icon::Play, ImVec2(q.x + 7, q1.y - 16), ImVec2(q.x + 15, q1.y - 6), theme::contrastText(fill));
       ui::Hint("Press to launch (on the track's launch grid) \xC2\xB7 right-click the track's stop button for its live settings");
       ImGui::PopID();
     }

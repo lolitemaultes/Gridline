@@ -1,0 +1,5 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: one sine cycle over its centre line (phase invert) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 12 L3.25 14.1 L4.5 15.89 L5.75 17.08 L7 17.5 L8.25 17.08 L9.5 15.89 L10.75 14.1 L12 12 L13.25 9.9 L14.5 8.11 L15.75 6.92 L17 6.5 L18.25 6.92 L19.5 8.11 L20.75 9.9 L22 12" />
+  <path d="M2 12 L22 12" opacity="0.4" />
+</svg>

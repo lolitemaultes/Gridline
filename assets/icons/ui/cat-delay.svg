@@ -1,0 +1,8 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: plugin category: decaying taps (delays) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4.1" y="6" width="1.8" height="12" fill="currentColor" stroke="none" />
+  <rect x="7.6" y="9.84" width="1.8" height="8.16" fill="currentColor" stroke="none" opacity="0.85" />
+  <rect x="11.1" y="12.45" width="1.8" height="5.55" fill="currentColor" stroke="none" opacity="0.7" />
+  <rect x="14.6" y="14.23" width="1.8" height="3.77" fill="currentColor" stroke="none" opacity="0.55" />
+  <rect x="18.1" y="15.43" width="1.8" height="2.57" fill="currentColor" stroke="none" opacity="0.4" />
+</svg>

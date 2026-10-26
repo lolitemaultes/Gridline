@@ -7,6 +7,7 @@
 #include <map>
 #include "../../core/I18n.h"
 #include "plasma_ui.h"
+#include "../../app/Widgets.h"
 
 namespace gl::packs::plasma::ui {
 
@@ -139,8 +140,8 @@ void slotRow(Ctx& c, bool clip) {
     panelRect(c, sx + 0.5f, y + 64, w - 1, 24, act ? c.P.accentSoft : (gh ? c.P.panelHi : c.P.panelLo));
     const ImVec2 q = c.p(sx + w * 0.5f, y + 76);
     const float r = c.s(4.5f);
-    c.dl->AddTriangleFilled(ImVec2(q.x - r * 0.7f, q.y - r), ImVec2(q.x - r * 0.7f, q.y + r), ImVec2(q.x + r, q.y),
-                            act ? (live ? c.P.good : c.P.accent) : (gh ? c.P.text : c.P.textFaint));
+    ::gl::ui::drawIconFit(c.dl, ::gl::ui::Icon::Play, ImVec2(q.x - r * 0.7f, q.y - r), ImVec2(q.x + r, q.y + r),
+                          act ? (live ? c.P.good : c.P.accent) : (gh ? c.P.text : c.P.textFaint));
     if (gh) c.a.setHint(std::string("Play this ") + (clip ? "clip" : "pattern") + " (the trigger octave on the keyboard also picks slots)");
     ImGui::PopID();
   }
@@ -722,10 +723,7 @@ void pianoRoll(Ctx& c, ClipSlot& cs) {
     // headphones glyph
     const ImVec2 q = c.p(kCw + 34 + (kRollX - kCw - 36) * 0.5f, kRollY + kRulerH + 8.5f);
     const ImU32 col = c.u.clipAudition ? c.P.accent : c.P.textDim;
-    c.dl->PathArcTo(q, c.s(4), 3.14159f, 6.28318f, 10);
-    c.dl->PathStroke(col, 0, c.s(1.2f));
-    c.dl->AddRectFilled(ImVec2(q.x - c.s(5), q.y), ImVec2(q.x - c.s(3), q.y + c.s(3.5f)), col);
-    c.dl->AddRectFilled(ImVec2(q.x + c.s(3), q.y), ImVec2(q.x + c.s(5), q.y + c.s(3.5f)), col);
+    ::gl::ui::drawIconGlyph(c.dl, ::gl::ui::Icon::Headphones, q, c.s(5), c.s(1.2f), col);
   }
   if (ImGui::IsItemHovered()) c.a.setHint("Audition: hear notes while you place them");
   // start / end markers (clip start offset, clip length)
@@ -879,7 +877,7 @@ void pianoRoll(Ctx& c, ClipSlot& cs) {
       tx += tw + 2;
       ImGui::PopID();
     }
-    if (button(c, "addlane", tx, y1 + 3, 22, 18, "+", false, 10)) ImGui::OpenPopup("##addlane");
+    if (button(c, "addlane", tx, y1 + 3, 22, 18, GL_ICON_LABEL("plus", "+"), false, 10)) ImGui::OpenPopup("##addlane");
     if (ImGui::BeginPopup("##addlane")) {
       int out = -2;
       if (destMenuItems(c, out) && out >= 0 && cs.lanes.size() < 32) {

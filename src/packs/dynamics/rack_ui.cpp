@@ -118,9 +118,9 @@ void pedal(App& a, const PluginTarget& t, const PluginState& st, const flk::Ctx&
   float fy = y + h - 58;
   dl->AddLine(F.p(x + 6, fy), F.p(x + w - 6, fy), skin::darken(K.wellC(), 0.3f));
   if (type != RmEmpty) flk::wheel(c, rkParam(s, RsMix), x + 10, fy + 8, 30, "Mix");
-  if (flk::btn(c, "##left", x + w - 58, fy + 16, 22, 20, "<", false) && s > 0) setPluginState(a, t, swapped(st, s, s - 1), "Move rack module");
+  if (flk::btn(c, "##left", x + w - 58, fy + 16, 22, 20, GL_ICON_LABEL("chevron-left", "<"), false) && s > 0) setPluginState(a, t, swapped(st, s, s - 1), "Move rack module");
   if (ImGui::IsItemHovered()) a.setHint("Move module left");
-  if (flk::btn(c, "##right", x + w - 32, fy + 16, 22, 20, ">", false) && s + 1 < kRackSlots)
+  if (flk::btn(c, "##right", x + w - 32, fy + 16, 22, 20, GL_ICON_LABEL("chevron-right", ">"), false) && s + 1 < kRackSlots)
     setPluginState(a, t, swapped(st, s, s + 1), "Move rack module");
   if (ImGui::IsItemHovered()) a.setHint("Move module right");
   ImGui::PopID();

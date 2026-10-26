@@ -9,6 +9,7 @@
 #include <filesystem>
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
+#include "../../app/Widgets.h"
 #include "edison_ui.h"
 #include "../../app/SmoothScrollUi.h"
 
@@ -558,13 +559,13 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
   float x = b0.x + 4;
   const float bh = b1.y - b0.y - 4, by = b0.y + 2;
   auto chip = [&](const char* id, const char* label, bool on, const char* hint) {
-    ImVec2 ts = fm->CalcTextSizeA(fs, FLT_MAX, 0, label);
+    ImVec2 ts = fm->CalcTextSizeA(fs, FLT_MAX, 0, ui::labelText(label));  // an icon label measures as its text
     const float w = ts.x + 14;
     ImGui::SetCursorScreenPos(ImVec2(x, by));
     ImGui::InvisibleButton(id, ImVec2(w, bh));
     const bool hv = ImGui::IsItemHovered();
     dl->AddRectFilled(ImVec2(x, by), ImVec2(x + w, by + bh), on ? C(col::Lit, 0.85f) : hv ? C(col::BtnHi) : C(col::Btn), 3);
-    dl->AddText(fm, fs, ImVec2(x + 7, by + (bh - ts.y) * 0.5f), on ? C(col::Lcd) : C(col::Text), label);
+    ui::drawLabel(dl, fm, fs, ImVec2(x + 7, by + (bh - ts.y) * 0.5f), on ? C(col::Lcd) : C(col::Text), label);
     if (hv && hint) a.setHint(hint);
     x += w + 4;
     return ImGui::IsItemClicked();
@@ -578,8 +579,8 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
   if (chip("v_snap", kSnap[s.snap], s.snap != 0, "Snap: off / zero crossings / markers / beats (Shift+Alt while dragging: no snap)")) s.snap = (s.snap + 1) % 4;
   if (chip("v_time", s.barsTime ? "BAR:BEAT" : "MIN:SEC", false, "Time display")) s.barsTime = !s.barsTime;
   x += 6;
-  if (chip("z_out", "-", false, "Zoom out (-)")) zoomBy(s, 2.0, s.viewStart + s.viewLen * 0.5);
-  if (chip("z_in", "+", false, "Zoom in (+)")) zoomBy(s, 0.5, s.viewStart + s.viewLen * 0.5);
+  if (chip("z_out", GL_ICON_LABEL("minus", "-"), false, "Zoom out (-)")) zoomBy(s, 2.0, s.viewStart + s.viewLen * 0.5);
+  if (chip("z_in", GL_ICON_LABEL("plus", "+"), false, "Zoom in (+)")) zoomBy(s, 0.5, s.viewStart + s.viewLen * 0.5);
   if (chip("z_sel", "SEL", false, "Zoom to the selection")) zoomTo(s, s.sel);
   if (chip("z_all", "ALL", false, "Show everything (0)")) zoomAll(s);
   // Readouts (right).

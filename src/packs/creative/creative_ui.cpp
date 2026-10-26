@@ -438,7 +438,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
       tog("Reference engine", OfModel);
       ImGui::EndPopup();
     }
-    if (sk::button(v, "InfoBtn", pal, false, "i", {}, "About")) ImGui::OpenPopup("##ofinfo");
+    if (sk::button(v, "InfoBtn", pal, false, GL_ICON_LABEL("info", "i"), {}, "About")) ImGui::OpenPopup("##ofinfo");
     if (ImGui::BeginPopup("##ofinfo")) {
       ImGui::TextUnformatted(i18n::tr("Octa Filter: eight filter units with envelopes, LFOs and X / Y / follower maps."));
       ImGui::EndPopup();

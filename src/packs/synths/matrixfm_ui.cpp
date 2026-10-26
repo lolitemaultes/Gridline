@@ -20,6 +20,7 @@
 #include "../PacksUi.h"
 #include "matrixfm.h"
 #include "matrixfm_data.h"
+#include "../../app/Widgets.h"
 
 namespace gl::packs::synths {
 
@@ -297,8 +298,8 @@ bool harmonicEditor(App& a, const iskin::Skin& k, float x, float y, float w, flo
   char b[48];
   std::snprintf(b, sizeof b, "HARMONICS %d-%d", scroll + 1, scroll + shown);
   iskin::text(k, x + 80, y + h - 14, 200, 14, b, 9, k.c.textDim, 0);
-  if (iskin::button(k, "##hl", x + w - 70, y + h - 15, 32, 14, "<", false, 9)) scroll -= 32;
-  if (iskin::button(k, "##hr", x + w - 34, y + h - 15, 32, 14, ">", false, 9)) scroll += 32;
+  if (iskin::button(k, "##hl", x + w - 70, y + h - 15, 32, 14, GL_ICON_LABEL("chevron-left", "<"), false, 9)) scroll -= 32;
+  if (iskin::button(k, "##hr", x + w - 34, y + h - 15, 32, 14, GL_ICON_LABEL("chevron-right", ">"), false, 9)) scroll += 32;
   if (iskin::button(k, "##hsine", x + w - 140, y + h - 15, 64, 14, "SINE", false, 9)) {
     lv.fill(0.f), ph.fill(0.f), lv[0] = 1.f;
     changed = true;

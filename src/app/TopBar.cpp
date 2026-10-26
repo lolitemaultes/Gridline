@@ -779,8 +779,7 @@ static void drawNotifications(App& a, ImVec2 wp, float W, float fs) {
     fg->AddRectFilled(ImVec2(c0.x, c0.y), ImVec2(c0.x + 3, c1.y), theme::withAlpha(lamp, alpha), theme::kRadiusLg, ImDrawFlags_RoundCornersLeft);
     const ImVec2 lc(c0.x + 18, (c0.y + c1.y) * 0.5f);
     if (copied) {  // a tick in place of the lamp
-      const ImVec2 tick[3] = {ImVec2(lc.x - 4.5f, lc.y), ImVec2(lc.x - 1.5f, lc.y + 3.5f), ImVec2(lc.x + 4.5f, lc.y - 3.5f)};
-      fg->AddPolyline(tick, 3, theme::withAlpha(P.led, alpha), ImDrawFlags_None, 2.0f);
+      ui::drawIconFit(fg, ui::Icon::Check, ImVec2(lc.x - 5.5f, lc.y - 4.5f), ImVec2(lc.x + 5.5f, lc.y + 4.5f), theme::withAlpha(P.led, alpha));
     } else {
       fg->AddCircleFilled(lc, 4.0f, theme::withAlpha(lamp, alpha), 12);
     }

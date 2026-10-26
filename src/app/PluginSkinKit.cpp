@@ -15,6 +15,7 @@
 #include "LayoutAudit.h"
 #include "PluginSkin.h"
 #include "Theme.h"
+#include "Widgets.h"
 
 namespace gl::skin {
 
@@ -293,7 +294,7 @@ bool menuBox(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
   ImGui::PopFont();
   ImVec2 ac(p1.x - aw * 0.5f - 2, (tl.y + p1.y) * 0.5f);
   float r = std::min(4.0f, size.y * 0.18f);
-  dl->AddTriangleFilled(ImVec2(ac.x - r, ac.y - r * 0.5f), ImVec2(ac.x + r, ac.y - r * 0.5f), ImVec2(ac.x, ac.y + r * 0.7f), k.textDim);
+  ui::drawIconFit(dl, ui::Icon::Down, ImVec2(ac.x - r, ac.y - r * 0.5f), ImVec2(ac.x + r, ac.y + r * 0.7f), k.textDim);
   if (ImGui::BeginPopup("##mbpop")) {
     for (int i = 0; i < n; ++i) {
       std::string nm = b.d.format(b.d.min + i);

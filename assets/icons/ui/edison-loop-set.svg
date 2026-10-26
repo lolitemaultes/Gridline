@@ -1,0 +1,7 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: a loop arrow round a cross (set the loop from the selection) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M18.67 15.64 A7.6 7.6 0 1 1 17.89 7.2" />
+  <path d="M17.5 12.5 L21.5 12.5 L19.5 16.5 Z" fill="currentColor" stroke="none" />
+  <path d="M10.5 10.5 L13.5 13.5" />
+  <path d="M10.5 13.5 L13.5 10.5" />
+</svg>

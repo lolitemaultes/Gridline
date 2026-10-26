@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: three step bars (pattern clips) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3.67" y="5" width="2.22" height="14" rx="1" fill="currentColor" stroke="none" />
+  <rect x="9.22" y="5" width="2.22" height="14" rx="1" fill="currentColor" stroke="none" />
+  <rect x="14.78" y="5" width="2.22" height="14" rx="1" fill="currentColor" stroke="none" />
+</svg>

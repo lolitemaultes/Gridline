@@ -145,6 +145,54 @@ void drawIconBox(ImDrawList* dl, Icon icon, ImVec2 c, float box, ImU32 col) {
   icons::draw(dl, iconSvgName(icon), c, icons::standardSize(box), col);
 }
 
+void drawIconFit(ImDrawList* dl, Icon icon, ImVec2 inkMin, ImVec2 inkMax, ImU32 col) {
+  icons::drawFit(dl, iconSvgName(icon), inkMin, inkMax, col);
+}
+
+void drawIconGlyph(ImDrawList* dl, Icon icon, ImVec2 c, float unitPx, float oldStroke, ImU32 col) {
+  icons::drawGlyph(dl, iconSvgName(icon), c, unitPx, oldStroke, col);
+}
+
+const char* labelText(const char* s) {
+  if (!s || s[0] != '\x1b') return s;
+  const char* t = std::strchr(s, '\x1f');
+  return t ? t + 1 : s + std::strlen(s);
+}
+
+void drawLabel(ImDrawList* dl, ImFont* font, float size, ImVec2 pos, ImU32 col, const char* s) {
+  if (!s) return;
+  if (s[0] != '\x1b') {
+    dl->AddText(font, size, pos, col, s);
+    return;
+  }
+  const char* text = labelText(s);
+  const std::string svg(s + 1, static_cast<size_t>(text - 1 - (s + 1)));
+  // Ink bounds of the text the icon stands for, as AddText would draw it.
+  if (!font) font = ImGui::GetFont();
+  ImFontBaked* baked = font ? font->GetFontBaked(size) : nullptr;
+  if (!baked) return;
+  const float k = size / baked->Size;
+  // AddText snaps the start to whole pixels (truncating), then advances by the glyphs' widths.
+  pos = ImVec2(static_cast<float>(static_cast<int>(pos.x)), static_cast<float>(static_cast<int>(pos.y)));
+  float x = pos.x, x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+  for (const char* c = text; *c;) {
+    unsigned int ch = 0;
+    c += ImTextCharFromUtf8(&ch, c, nullptr);
+    const ImFontGlyph* g = baked->FindGlyph(static_cast<ImWchar>(ch));
+    if (!g) continue;
+    ImVec2 a, b;
+    if (icons::glyphInk(font, size, static_cast<ImWchar>(ch), ImVec2(x, pos.y), &a, &b))
+      x0 = std::min(x0, a.x), y0 = std::min(y0, a.y), x1 = std::max(x1, b.x), y1 = std::max(y1, b.y);
+    x += g->AdvanceX * k;
+  }
+  // Text too small for its icon (a 2 px minus) stays text.
+  if (x1 <= x0 || !icons::drawFit(dl, svg.c_str(), ImVec2(x0, y0), ImVec2(x1, y1), col, true)) dl->AddText(font, size, pos, col, text);
+}
+
+void drawLabel(ImDrawList* dl, ImVec2 pos, ImU32 col, const char* s) { drawLabel(dl, ImGui::GetFont(), ImGui::GetFontSize(), pos, col, s); }
+
+void installGlyphHook() { icons::atlas(); }
+
 bool IconButton(const char* id, Icon icon, bool active, float size, const char* hint, ImU32 activeCol, ImU32 idleCol, bool onPress) {
   ImGui::PushID(id);
   ImVec2 p = ImGui::GetCursorScreenPos();
@@ -267,7 +315,20 @@ bool TextButton(const char* label, bool active, float width, const char* hint) {
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::vec(theme::mix(P.surface600, P.hot, t + 0.04f)));
     ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.hot));
   }
-  bool r = ImGui::Button(tr(label), ImVec2(width, 0));
+  bool r = false;
+  if (label && label[0] == '\x1b') {  // icon label: the SVG where the text would be
+    const char* text = labelText(label);
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    const ImGuiStyle& st = ImGui::GetStyle();
+    ImGui::PushID(label);
+    r = ImGui::Button("##icon", ImVec2(width > 0 ? width : ts.x + st.FramePadding.x * 2, 0));
+    ImGui::PopID();
+    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    const ImVec2 pos(a.x + std::max(0.0f, (b.x - a.x - ts.x) * st.ButtonTextAlign.x), a.y + std::max(0.0f, (b.y - a.y - ts.y) * st.ButtonTextAlign.y));
+    drawLabel(ImGui::GetWindowDrawList(), pos, ImGui::GetColorU32(ImGuiCol_Text), label);
+  } else {
+    r = ImGui::Button(tr(label), ImVec2(width, 0));
+  }
   if (active) ImGui::PopStyleColor(4);
   if (hint) {
     Hint(hint);
@@ -300,7 +361,7 @@ bool DangerButton(const char* label, bool armed, float width, const char* hint) 
 }
 
 float TextButtonWidth(const char* label) {
-  const char* t = tr(label);
+  const char* t = label && label[0] == '\x1b' ? labelText(label) : tr(label);
   return ImGui::CalcTextSize(t, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2;
 }
 

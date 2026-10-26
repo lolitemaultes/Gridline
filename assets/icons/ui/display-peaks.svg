@@ -1,0 +1,8 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: five short peak bars (display option) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="5.48" y="13.4" width="1.85" height="4.6" fill="currentColor" stroke="none" />
+  <rect x="8.28" y="15" width="1.85" height="3" fill="currentColor" stroke="none" />
+  <rect x="11.08" y="10.2" width="1.85" height="7.8" fill="currentColor" stroke="none" />
+  <rect x="13.88" y="11.8" width="1.85" height="6.2" fill="currentColor" stroke="none" />
+  <rect x="16.68" y="13.4" width="1.85" height="4.6" fill="currentColor" stroke="none" />
+</svg>
