@@ -48,6 +48,10 @@ App* setCurrentApp(App* a) {
 App::App() {
   gApp = this;
   std::string err;
+  {
+    std::error_code ec;
+    freshInstall_ = !fs::exists(Settings::defaultPath(), ec);
+  }
   settings.load(Settings::defaultPath(), &err);
   BackupPolicy pol;
   pol.frequency = static_cast<BackupFrequency>(static_cast<int>(settings.getNumber("backup.frequency")));
@@ -378,6 +382,15 @@ std::string App::languageDir() const { return assetsDir.empty() ? std::string() 
 void App::applyStartup() {
   applySettingsHooks();
   templates(true);
+  // J-135: the demo song greets a new install, once; later launches follow the setting.
+  if (!settings.getBool("general.demoShown")) {
+    settings.set("general.demoShown", true);
+    settings.save(Settings::defaultPath());
+    if (freshInstall_) {
+      newFromTemplate("demo");
+      return;
+    }
+  }
   const std::string mode = settings.getString("general.startup");
   if (mode == "empty") {
     newFromTemplate("");
@@ -825,7 +838,7 @@ void App::newFromTemplate(const std::string& which) {
     s = makeEmptySong();
     applyProjectDefaults(s);
   } else if (which == "demo") {
-    s = makeDemoSong();
+    s = makeDemoTrack();  // J-135: the "Gridline" demo song
   } else {
     std::string err;
     if (!loadTemplate(which, s, &err)) {

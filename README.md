@@ -68,6 +68,8 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 </tr>
 </table>
 
+**Demo song.** File > New from template > Demo song (or Help > Load demo song) opens "Gridline", a 4:25 liquid drum & bass track at 174 BPM made only with the built-in instruments, effects and automation: no samples. It is a full project to take apart, from the felted wooden mallet lead and the moving reese to the rain bed, the buses, the sidechains and the automation lanes. `gridline demo song.json` writes it to a file; `tools/make_demo_song.py` is the script that composes it.
+
 ## A closer look
 
 <table>

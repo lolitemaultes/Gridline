@@ -412,7 +412,7 @@ int main(int argc, char** argv) {
   std::string project = argv[2];
   if (cmd == "demo") {  // gridline demo <out.json>
     std::string err;
-    if (!gl::saveProject(project, gl::makeDemoSong(), &err)) {
+    if (!gl::saveProject(project, gl::makeDemoTrack(), &err)) {
       std::fprintf(stderr, "error: %s\n", err.c_str());
       return 1;
     }

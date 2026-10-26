@@ -1,6 +1,7 @@
 #include "Demo.h"
 #include "Document.h"
 #include "PluginParams.h"
+#include "Project.h"
 
 namespace gl {
 
@@ -126,6 +127,23 @@ Song makeDemoSong() {
   d.editPlaylistTrack(1, "", [](PlaylistTrack& t) { t.name = "Bass"; t.color = 0xA56CD8; });
   d.editPlaylistTrack(2, "", [](PlaylistTrack& t) { t.name = "Chords"; t.color = 0x7A6FE0; });
   return d.song();
+}
+
+bool loadDemoTrack(Song& out, std::string* err) {
+  const std::string_view text = demoSongJson();
+  Json j;
+  size_t pos = 0;
+  if (!jsonParse(std::string(text), j, &pos)) {
+    if (err) *err = "demo song: JSON syntax error at byte " + std::to_string(pos);
+    return false;
+  }
+  return songFromJson(j, out, err);
+}
+
+Song makeDemoTrack() {
+  Song s;
+  if (loadDemoTrack(s)) return s;
+  return makeDemoSong();
 }
 
 }  // namespace gl

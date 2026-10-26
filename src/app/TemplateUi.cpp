@@ -37,13 +37,14 @@ std::vector<Entry> entries(App& a, bool rescan) {
                  "Four drum voices and a synth, each on its own mixer track, with an empty pattern. Uses your project defaults.", "",
                  false});
   out.push_back({std::string(kBuiltinCat) + "/Demo song", "Demo song", kBuiltinCat,
-                 "A short arranged song that shows the channel rack, piano roll, playlist and mixer at work.", "", false});
+                 "\"Gridline\": a full liquid drum & bass song, made only with the built-in instruments, effects and automation.", "",
+                 false});
   for (const auto& t : a.templates(rescan)) out.push_back({t.category + "/" + t.name, t.name, t.category, t.description, t.path, t.user});
   return out;
 }
 
 Song entrySong(App& a, const Entry& e, std::string* err) {
-  if (e.path.empty()) return e.name == "Demo song" ? makeDemoSong() : a.starterSong();
+  if (e.path.empty()) return e.name == "Demo song" ? makeDemoTrack() : a.starterSong();
   Song s;
   if (!loadTemplate(e.path, s, err)) return Song{};
   return s;

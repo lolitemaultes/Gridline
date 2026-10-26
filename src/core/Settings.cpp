@@ -81,6 +81,7 @@ Settings::Settings() {
       {"ui.layoutVersion", Json::makeNumber(0)},  // J-28: default workspace version the saved layout.ini was built with
       // J-24: general, file, project defaults, backup / autosave, hints, debug, scripting.
       {"general.startup", Json::makeString("template")},   // "template" | "empty" | "last"
+      {"general.demoShown", b(false)},                       // J-135: the first launch has opened the demo song
       {"general.defaultTemplate", Json::makeString("")},   // "<Category>/<Name>" ("" = built-in starter kit)
       {"general.language", Json::makeString("en")},        // i18n code ("en", "pseudo", catalogue stem)
       {"keys.bindings", Json::makeString("")},             // J-55: shortcut overrides, JSON (keys::Keymap::serialize)

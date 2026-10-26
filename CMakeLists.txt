@@ -183,6 +183,13 @@ if(NOT MSVC)
   set_source_files_properties(${CMAKE_BINARY_DIR}/generated/McpDocs.cpp PROPERTIES COMPILE_OPTIONS "-Wno-overlength-strings")
 endif()
 list(APPEND GRIDLINE_CORE_SRC ${CMAKE_BINARY_DIR}/generated/McpDocs.cpp)
+# J-135: the demo song "Gridline" (assets/demo/Gridline.gridline.json, made by tools/make_demo_song.py)
+# is compiled in as bytes, so every program and package opens it without looking for files.
+set(GRIDLINE_DEMO_JSON ${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GRIDLINE_DEMO_JSON} ${CMAKE_SOURCE_DIR}/cmake/EmbedDemo.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/EmbedDemo.cmake)
+gridline_embed_demo(${GRIDLINE_DEMO_JSON} ${CMAKE_BINARY_DIR}/generated/DemoSongData.cpp)
+list(APPEND GRIDLINE_CORE_SRC ${CMAKE_BINARY_DIR}/generated/DemoSongData.cpp)
 # ---- J-111: collaborative projects (src/collab) ----
 # The replicated document, op log, profiles and the protocol are plain C++ in the core library.
 # Networking: libjuice 1.7.4 (MPL-2.0, ICE / STUN / TURN, vendored unmodified), libplum 0.6.0
@@ -790,6 +797,13 @@ target_link_libraries(gridline_tests_j78 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j78 PRIVATE tests src)
 target_compile_options(gridline_tests_j78 PRIVATE ${GL_WARN})
 add_test(NAME j78 COMMAND gridline_tests_j78 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-135: the "Gridline" demo song loads, has its section markers and renders on target (loudness, true peak).
+add_executable(gridline_tests_demo_song tests/test_demo_song.cpp)
+target_link_libraries(gridline_tests_demo_song PRIVATE gridline_core)
+target_include_directories(gridline_tests_demo_song PRIVATE tests src)
+target_compile_options(gridline_tests_demo_song PRIVATE ${GL_WARN})
+add_test(NAME j135_demo_song COMMAND gridline_tests_demo_song WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(j135_demo_song PROPERTIES TIMEOUT 900)
 # Stand-ins for missing Serum / Kickstart (Plasma / Tideline) and Plasma's one Open path for preset files.
 add_executable(gridline_tests_standin tests/test_standin.cpp)
 target_link_libraries(gridline_tests_standin PRIVATE gridline_core)

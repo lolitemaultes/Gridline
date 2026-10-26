@@ -442,7 +442,8 @@ class App {
   Song starterSong() const;  // built-in starter kit: four drum voices and a synth
   // New-project defaults from the settings (tempo, PPQ, time signature, author, pattern length).
   void applyProjectDefaults(Song& s) const;
-  // Settings > General > On startup (after main has set assetsDir).
+  // Settings > General > On startup (after main has set assetsDir). The very first launch on a
+  // machine (no settings file yet) opens the demo song instead, once.
   void applyStartup();
   // Log level / log file and language from the settings.
   void applySettingsHooks();
@@ -455,6 +456,7 @@ class App {
  private:
   uint64_t builtRevision_ = ~0ull;
   uint64_t builtSampleGen_ = 0;   // SampleCache::generation() of the last build (J-30)
+  bool freshInstall_ = false;     // no settings file existed when the app started (J-135)
   double trimSamplesAt_ = -1;     // drop the replaced project's samples from the cache at this time (J-30)
   int64_t lastBackupCheck_ = 0;
   SamplePtr preview_;

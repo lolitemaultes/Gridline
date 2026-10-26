@@ -99,6 +99,22 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   light mode, your accent and role colours, and each plugin's own palette where the style uses one.
 - The Theme page is now grouped as Appearance, Controls and Sounds.
 
+### New demo song: "Gridline"
+
+- Demo song (File > New from template, or Help > Load demo song) now opens "Gridline", a 4:25
+  atmospheric liquid drum & bass track at 174 BPM in D-flat major, made only with the built-in
+  instruments, effects and automation (no samples). It has eight sections, each a named marker:
+  Intro, Verse, Chorus, Verse 2, Bridge, Breakdown, Chorus 2 and Outro. The lead is a felted
+  wooden mallet built from the Graphite interface sound and plays its motif. Underneath are a
+  moving reese over a mono sub, a synthesised rain bed with distant thunder, and buses with
+  sidechains. In the second chorus the felt keys answer the mallet's hook. Automation lanes shape
+  every section.
+- It is mixed and mastered to -9.9 LUFS with a true peak of -1.1 dBTP. The song is compiled into
+  the programs, so it opens instantly on every system and package without looking for files,
+  and it renders the same every time.
+- `gridline demo out.json` writes the same song. `tools/make_demo_song.py` is the script that
+  composes it, and test `j135_demo_song` checks its markers, loudness and true peak.
+
 ### Stand-ins for a missing Serum or Kickstart
 
 - A project (Gridline or FL Studio) whose Serum or Serum 2 is not installed plays it with Plasma;
