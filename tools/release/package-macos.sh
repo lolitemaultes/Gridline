@@ -47,9 +47,20 @@ codesign --verify --deep --strict "$app"
 
 dmg="$OUT/Gridline-$VER-macos-$LABEL.dmg"
 rm -f "$dmg"
-for attempt in 1 2 3 4 5; do  # hdiutil is flaky on CI machines ("resource busy")
-  if hdiutil create -volname "Gridline $VER" -srcfolder "$ROOT" -ov -format UDZO -fs HFS+ "$dmg"; then break; fi
-  sleep 5
-done
+# The window design (background, icon layout, volume icon; tools/release/dmg, make_dmg.py) needs
+# dmgbuild (GRIDLINE_PYTHON: a python3 that has it). Without it the image is plain, or an error
+# with GRIDLINE_DMG_REQUIRE_LAYOUT=1 (release.yml).
+PY="${GRIDLINE_PYTHON:-python3}"
+if "$PY" -c "import dmgbuild" 2>/dev/null; then
+  "$PY" "$SRC/tools/release/make_dmg.py" "$ROOT" "$dmg" "Gridline $VER"
+elif [ "${GRIDLINE_DMG_REQUIRE_LAYOUT:-0}" = "1" ]; then
+  echo "dmgbuild is missing (pip install dmgbuild): no disk image window design" >&2; exit 1
+else
+  echo "warning: dmgbuild is missing (pip install dmgbuild): plain disk image without the window design" >&2
+  for attempt in 1 2 3 4 5; do  # hdiutil is flaky on CI machines ("resource busy")
+    if hdiutil create -volname "Gridline $VER" -srcfolder "$ROOT" -ov -format UDZO -fs HFS+ "$dmg"; then break; fi
+    sleep 5
+  done
+fi
 test -s "$dmg"
 echo "$dmg"

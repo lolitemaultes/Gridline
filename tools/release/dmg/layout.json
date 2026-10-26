@@ -1,0 +1,28 @@
+{
+  "window": [
+    720,
+    520
+  ],
+  "icon_size": 96,
+  "text_size": 12,
+  "main": {
+    "Gridline.app": [
+      196,
+      272
+    ],
+    "Applications": [
+      524,
+      272
+    ]
+  },
+  "extras": {
+    "y": 434,
+    "pitch": 150,
+    "order": [
+      "Plugins",
+      "gridline",
+      "README.txt"
+    ]
+  },
+  "direction": "studio"
+}

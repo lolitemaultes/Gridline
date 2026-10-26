@@ -43,12 +43,10 @@ DefaultDirName={autopf}\Gridline
 DefaultGroupName=Gridline
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\gridline-app.exe
-SetupIconFile=..\..\assets\icons\Gridline.ico
 OutputDir={#OutDir}
 OutputBaseFilename=Gridline-{#AppVersion}-windows-{#Arch}-setup
 Compression=lzma2/max
 SolidCompression=yes
-WizardStyle=modern
 PrivilegesRequired=admin
 ChangesAssociations=yes
 #if Arch == "arm64"
@@ -58,6 +56,36 @@ ArchitecturesInstallIn64BitMode=arm64
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 #endif
+
+;---- Look (J-134): Gridline's installer design, made by tools/make_installer_art.py ----
+; Dark wizard (Inno Setup 6.6 or later), the art at every DPI scale (Setup picks the best match),
+; the welcome page, the license as information and the setup / uninstall icon.
+SetupIconFile=art\setup.ico
+DisableWelcomePage=no
+#if Ver >= EncodeVer(6, 6, 0)
+WizardStyle=modern dark includetitlebar hidebevels
+WizardImageFile=art\wizard-100.png,art\wizard-125.png,art\wizard-150.png,art\wizard-175.png,art\wizard-200.png,art\wizard-225.png,art\wizard-250.png
+WizardSmallImageFile=art\wizard-small-100.png,art\wizard-small-125.png,art\wizard-small-150.png,art\wizard-small-175.png,art\wizard-small-200.png,art\wizard-small-225.png,art\wizard-small-250.png
+WizardImageBackColor=$0B0B0B
+#else
+  #pragma message "Inno Setup 6.6 or later is needed for Gridline's installer design; building the plain wizard"
+WizardStyle=modern
+#endif
+#if FileExists(AddBackslash(SourcePath) + "..\..\LICENSE")
+InfoBeforeFile=..\..\LICENSE
+#endif
+
+[Messages]
+WelcomeLabel1=Welcome to Gridline
+WelcomeLabel2=Setup installs [name/ver], the free, open source music workstation, on this computer.%n%nClose other programs before you continue.
+WizardInfoBefore=License
+InfoBeforeLabel=Gridline is free software under the GNU General Public License, version 3.
+InfoBeforeClickLabel=You do not need to accept it to use Gridline: it gives you the right to share and change Gridline. Click Next to continue.
+FinishedHeadingLabel=Gridline is ready
+FinishedLabelNoIcons=Gridline is installed on this computer.
+FinishedLabel=Gridline is installed on this computer. Open it any time from the Start menu.
+ClickFinish=Click Finish to close Setup.
+;---- end of the look ----
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

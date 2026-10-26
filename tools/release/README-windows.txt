@@ -1,4 +1,7 @@
-Gridline @VERSION@ for Windows (@ARCH@, Windows 10 or 11)
+GRIDLINE  @VERSION@
+The free, open source music workstation
+Windows 10 or 11, @ARCH@
+========================================================================
 
 Run
   gridline-app.exe   the application
@@ -18,4 +21,5 @@ Plugins (optional)
       plugins\CLAP\Gridline-assets      -> C:\Program Files\Common Files\CLAP
 
 Settings live in %APPDATA%\gridline.
-More: https://github.com/lolitemaultes/Gridline
+========================================================================
+https://github.com/lolitemaultes/Gridline

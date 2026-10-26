@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Gridline for software centres (GNOME Software, KDE Discover) and AppImage tools: AppStream
+     metadata, installed to share/metainfo. Every published release gets a <release> entry here
+     (release.yml checks it and validates the file with appstreamcli; docs/releasing.md). -->
+<component type="desktop-application">
+  <id>org.gridline.Gridline</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Gridline</name>
+  <summary>Pattern-based music workstation</summary>
+  <developer id="org.gridline">
+    <name>Gridline</name>
+  </developer>
+
+  <description>
+    <p>
+      Gridline is a free, open source music workstation built around patterns. Sketch beats in the
+      channel rack, write melodies and chords in the piano roll, arrange patterns, audio and
+      automation in the playlist and mix everything on a full mixer.
+    </p>
+    <p>Highlights:</p>
+    <ul>
+      <li>Channel rack, step sequencer and piano roll with chord and scale tools</li>
+      <li>Playlist for patterns, audio clips and automation, with time stretching</li>
+      <li>Mixer with inserts, sends, routing and a built-in effects collection</li>
+      <li>Built-in instruments, from samplers and drum machines to the Plasma wavetable synth</li>
+      <li>Hosts VST3, CLAP, VST2 and LV2 plugins, and runs as a VST3 and CLAP plugin itself</li>
+      <li>Opens and saves FL Studio projects</li>
+      <li>Live collaboration: make music together over the network</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">gridline.desktop</launchable>
+  <provides>
+    <binary>gridline-app</binary>
+    <binary>gridline</binary>
+    <mediatype>application/x-gridline-project</mediatype>
+  </provides>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Midi</category>
+    <category>Sequencer</category>
+  </categories>
+  <keywords>
+    <keyword>DAW</keyword>
+    <keyword>music</keyword>
+    <keyword>sequencer</keyword>
+    <keyword>beat</keyword>
+    <keyword>piano roll</keyword>
+    <keyword>synthesizer</keyword>
+  </keywords>
+
+  <url type="homepage">https://github.com/lolitemaultes/Gridline</url>
+  <url type="bugtracker">https://github.com/lolitemaultes/Gridline/issues</url>
+  <url type="vcs-browser">https://github.com/lolitemaultes/Gridline</url>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#f2f2f2</color>
+    <color type="primary" scheme_preference="dark">#0b0b0b</color>
+  </branding>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>The workspace: channel rack, playlist and mixer</caption>
+      <image type="source" width="1600" height="1000">https://raw.githubusercontent.com/lolitemaultes/Gridline/main/docs/images/workspace.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Piano roll</caption>
+      <image type="source" width="1600" height="1506">https://raw.githubusercontent.com/lolitemaultes/Gridline/main/docs/images/piano-roll.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Plasma, the wavetable synth</caption>
+      <image type="source" width="1600" height="997">https://raw.githubusercontent.com/lolitemaultes/Gridline/main/docs/images/plasma.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Built-in effects</caption>
+      <image type="source" width="1760" height="763">https://raw.githubusercontent.com/lolitemaultes/Gridline/main/docs/images/editors.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Making music together</caption>
+      <image type="source" width="1600" height="662">https://raw.githubusercontent.com/lolitemaultes/Gridline/main/docs/images/collaboration.png</image>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1"/>
+
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <releases>
+    <release version="0.7.0-beta.1" date="2026-10-26" type="development">
+      <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.7.0-beta.1</url>
+    </release>
+    <release version="0.6.1" date="2026-10-24">
+      <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.6.1</url>
+    </release>
+    <release version="0.6.0" date="2026-10-22">
+      <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.6.0</url>
+    </release>
+  </releases>
+</component>

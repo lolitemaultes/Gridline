@@ -305,6 +305,17 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   preview (it plays on over the song) and effect tails do not count, and starting the song any other
   way (the playlist's play tool, a launched live clip, external sync) still lets the plugin play along.
 
+### Installers in Gridline's design
+
+- The macOS disk image opens as a designed window: a dark Gridline header, Gridline and the
+  Applications folder side by side with a drag hint between them, the plugins, command line tool
+  and read me in a row below, a Retina background and Gridline's own disk icon.
+- The Windows setup is dark, with Gridline artwork for every display scale, a welcome page, the
+  license shown as information, a Gridline setup icon and clearer wording.
+- Linux packages carry AppStream metadata (description, screenshots, releases), so software
+  centres such as GNOME Software and KDE Discover show Gridline properly.
+- The read me files in every download start with a short Gridline header.
+
 ## 0.6.1
 
 ### Drawing, Convolver and stability

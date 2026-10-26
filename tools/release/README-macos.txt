@@ -1,4 +1,7 @@
-Gridline @VERSION@ for macOS (Apple Silicon and Intel, macOS 11 or later)
+GRIDLINE  @VERSION@
+The free, open source music workstation
+macOS 11 or later, Apple Silicon and Intel
+========================================================================
 
 Install
   Drag Gridline.app onto the Applications folder.
@@ -22,4 +25,5 @@ Command line
   Copy it somewhere on your PATH, e.g. /usr/local/bin.
 
 Settings live in ~/.config/gridline.
-More: https://github.com/lolitemaultes/Gridline
+========================================================================
+https://github.com/lolitemaultes/Gridline

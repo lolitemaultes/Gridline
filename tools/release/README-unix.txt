@@ -1,4 +1,7 @@
-Gridline @VERSION@ for @SYSTEM@ (@ARCH@)
+GRIDLINE  @VERSION@
+The free, open source music workstation
+@SYSTEM@, @ARCH@
+========================================================================
 
 Contents (an install tree; extract anywhere, or into /usr/local):
   bin/gridline-app                 the application
@@ -13,4 +16,5 @@ Wayland: Gridline runs natively through SDL; the interfaces of hosted plugins ar
 and open through XWayland.
 
 Settings live in $XDG_CONFIG_HOME/gridline (~/.config/gridline).
-More: https://github.com/lolitemaultes/Gridline
+========================================================================
+https://github.com/lolitemaultes/Gridline

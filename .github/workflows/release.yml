@@ -107,7 +107,12 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_BUNDLED_SDL2=ON -DGRIDLINE_DEV_ASSETS=OFF \
             "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DGRIDLINE_GUI_TESTS=OFF
           cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap gridline_au
+      - name: Disk image window tools (dmgbuild)
+        run: python3 -m venv "$RUNNER_TEMP/dmgvenv" && "$RUNNER_TEMP/dmgvenv/bin/pip" install --quiet dmgbuild==1.6.7
       - name: Disk image
+        env:
+          GRIDLINE_PYTHON: ${{ runner.temp }}/dmgvenv/bin/python
+          GRIDLINE_DMG_REQUIRE_LAYOUT: "1"
         run: bash tools/release/package-macos.sh build "$VER" dist universal
       - name: Check
         run: |
@@ -126,6 +131,8 @@ jobs:
           test "$("$root/Gridline.app/Contents/MacOS/gridline-app" --version)" = "Gridline $VER"
           test "$(arch -x86_64 "$root/gridline" --version)" = "Gridline $VER"
           hdiutil attach -nobrowse -readonly -mountpoint /tmp/gldmg "dist/Gridline-$VER-macos-universal.dmg"
+          "$RUNNER_TEMP/dmgvenv/bin/python" tools/release/make_dmg.py --check /tmp/gldmg  # background, layout, volume icon
+          codesign --verify --deep --strict /tmp/gldmg/Gridline.app
           bash tools/ci/smoke.sh /tmp/gldmg/gridline "$VER"
           GRIDLINE_CONFIG_HOME="$RUNNER_TEMP/cfg" /tmp/gldmg/Gridline.app/Contents/MacOS/gridline-app --hidden --size 800x600 \
             --screenshot "$RUNNER_TEMP/app.ppm" --frames 5 --no-ui-sounds && test -s "$RUNNER_TEMP/app.ppm" || echo "::warning::no window server for the app check"
@@ -200,11 +207,15 @@ jobs:
       - name: Installer (Inno Setup)
         shell: pwsh
         run: |
-          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
-            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6"
-            if (-not (Test-Path "$iscc\ISCC.exe")) { choco install innosetup --no-progress -y | Out-Null }
-            $env:PATH = "$iscc;$env:PATH"
-          }
+          # Inno Setup 6.6 or later: the dark wizard and the PNG art (gridline.iss, J-134).
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6"
+          function IsccVersion { if (Test-Path "$iscc\ISCC.exe") { [version](((Get-Item "$iscc\ISCC.exe").VersionInfo.ProductVersion) -replace '[^0-9.].*', '') } else { [version]"0.0" } }
+          $have = IsccVersion
+          if ($have -lt [version]"6.6.0") { choco upgrade innosetup --no-progress -y | Out-Null }
+          $have = IsccVersion
+          Write-Output "Inno Setup $have"
+          if ($have -lt [version]"6.6.0") { throw "Inno Setup $have is older than 6.6.0" }
+          $env:PATH = "$iscc;$env:PATH"
           $stage = (Resolve-Path $env:STAGE).Path
           $out = (Resolve-Path dist).Path
           iscc /Q "/DAppVersion=$env:VER" "/DAppNumVersion=$env:VERNUM" "/DArch=${{ matrix.arch }}" "/DStage=$stage" "/DOutDir=$out" tools\windows\gridline.iss
@@ -299,6 +310,14 @@ jobs:
           sed -e "s/@VERSION@/$VER/g" -e "s/@SYSTEM@/Linux/g" -e "s/@ARCH@/${{ matrix.arch }}/g" -e "s/@DEPS@/libasound2, libjack optional/g" \
             tools/release/README-unix.txt > "stage/$name/README.txt"
           tar -C stage -czf "dist/$name.tar.gz" "$name"
+      - name: Desktop entry and AppStream metadata
+        run: |
+          desktop-file-validate assets/linux/gridline.desktop
+          grep -q "<release version=\"$VER\"" assets/linux/org.gridline.Gridline.metainfo.xml ||
+            { echo "::error::assets/linux/org.gridline.Gridline.metainfo.xml has no <release version=\"$VER\"> (docs/releasing.md)"; exit 1; }
+          # A current appstreamcli (Fedora); errors fail, warnings and hints are printed.
+          docker run --rm -v "$PWD:/w" -w /w fedora:latest sh -c \
+            'dnf install -y -q appstream > /dev/null && { appstreamcli validate --no-net --explain assets/linux/org.gridline.Gridline.metainfo.xml > as.txt 2>&1; cat as.txt; ! grep -q "^E:" as.txt; }'
       - name: AppImage
         run: |
           arch="${{ matrix.arch }}"
@@ -338,6 +357,7 @@ jobs:
           bash tools/ci/smoke.sh /usr/bin/gridline "$VER"
           sudo apt-get remove -y -q gridline
           tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "bin/gridline-app"
+          dpkg-deb -c "$deb" | grep -q "usr/share/metainfo/org.gridline.Gridline.metainfo.xml"
       - name: The .rpm installs on Fedora
         run: |
           docker run --rm -v "$PWD:/w" -w /w fedora:latest sh -c \

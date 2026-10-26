@@ -37,6 +37,9 @@ CHANGELOG section say the full version. In the shields.io badge URL a `-` is wri
 2. Name the CHANGELOG section `## 0.7.0-beta.1` (all changes since the last release; for
    `beta.2`, rename the section and add to it) and update the README badge
    (`alt="Version 0.7.0-beta.1"`, `.../badge/version-0.7.0--beta.1-...`).
+   Add `<release version="0.7.0-beta.1" date="<release day>" type="development">` at the top of
+   `<releases>` in `assets/linux/org.gridline.Gridline.metainfo.xml` (software centres on Linux;
+   the release workflow checks it).
 3. `bash tools/ci/check-version.sh 0.7.0-beta.1`, then run the workflow with `dry_run` on the
    branch and check the files it uploads.
 4. Push the tag `v0.7.0-beta.1`.
@@ -55,8 +58,21 @@ not offered the beta; people with the box ticked read the release list and are (
    `.../badge/version-0.7.0-...`. Each version has exactly one section: a beta's section holds
    everything since the last release, and there is never a separate `## 0.7.0` heading waiting
    below it.
-3. Check, dry run and push the tag `v0.7.0`.
+3. Add `<release version="0.7.0" date="<release day>">` at the top of `<releases>` in
+   `assets/linux/org.gridline.Gridline.metainfo.xml` (keep the beta entries below it).
+4. Check, dry run and push the tag `v0.7.0`.
 
 Without a label the release is a normal GitHub release marked "Latest". It is offered to
 everyone, including people on a 0.7.0 beta (a beta sorts before its release). For the next
 version, raise `project(VERSION)` and start again with a label or without one.
+
+## Installer design
+
+The disk image window, the Windows setup wizard art and the setup icon are made by
+`tools/make_installer_art.py` (Pillow) from the brand: `tools/release/dmg/` (background at 1x and
+2x, `layout.json`) and `tools/windows/art/`. `tools/release/make_dmg.py` writes the disk image
+with its window (dmgbuild: Finder view settings without Finder or AppleScript, so it runs on CI);
+`make_dmg.py --check <mount point>` checks a mounted image. The Windows installer needs Inno Setup
+6.6 or later for its dark wizard and art. After a brand change, run
+`python3 tools/make_installer_art.py` (`--preview <dir>` writes mock-ups of every design
+direction; `--check` fails when the committed files are out of date).
