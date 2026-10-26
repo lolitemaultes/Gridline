@@ -3,6 +3,8 @@
 // tracks, manual track latency, threaded-processing switch, RMS meters, stem
 // renders, effect moves between tracks (with undo), track state files,
 // groups, docking and project round trips of the new fields.
+#include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -334,6 +336,8 @@ int main() {
     // Workers run with real-time scheduling, so a busy machine can't preempt
     // one mid-block (that stalled the audio thread for whole 10 ms quanta and
     // showed as 200-300% audio load while nothing was playing).
+    // (each worker counts itself once it runs; a slow machine may not have started one yet)
+    for (int i = 0; i < 200 && r4.engine.realtimeWorkers() < 3; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     expect(r4.engine.workerThreads() == 3 && r4.engine.realtimeWorkers() == 3, "worker threads run with real-time scheduling");
 #endif
     auto rt = r4.builder.mixerRuntime(th.mixer[1].id);
