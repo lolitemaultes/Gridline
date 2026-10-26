@@ -12,7 +12,10 @@
 #      the main window, as before);
 #   4. a detached window is saved in layout.ini (the user's config) and comes back where it
 #      was; re-anchored when the main window starts elsewhere; recovered onto a monitor when
-#      saved off every monitor; brought back inside with "Allow windows outside" off.
+#      saved off every monitor; brought back inside with "Allow windows outside" off;
+#   5. plugin windows (a channel's window, an effect editor) are never outside by themselves:
+#      popped out, closed and opened again they open inside; left popped out (saved so), the
+#      next start opens them inside, at once or later; the mixer still comes back detached.
 # Where the platform cannot create windows outside the main one (Wayland, no backend
 # support) the test is skipped with the reason.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j113_detach.cmake
@@ -302,3 +305,82 @@ if(NOT s_vp EQUAL 0 OR s_x LESS 0 OR right GREATER 1440 OR NOT out MATCHES "enab
   fail("started with detaching off: the saved detached mixer should open inside the main window (${s_x} ${s_w}, viewport ${s_vp})")
 endif()
 ok("started with \"Allow windows outside\" off: a window saved outside opens inside")
+
+# ---- 5. plugin windows open inside the main window, whatever was saved or left ----
+# A plugin window (a channel's window, an insert's editor) is outside the main window only while
+# it stays open after its pop-out button: closed and opened again in the same session, or saved
+# outside and opened after a restart (the project opened with it), it opens inside. Panels keep
+# coming back detached as above (the mixer here).
+set(pini "${OUT}/cfg_plugwin/gridline/layout.ini")
+# plugin(<prefix> <frame>): the channel window -> <prefix>_cs*, the effect editor -> <prefix>_fx*,
+# the mixer -> <prefix>_mxvp.
+function(plugin prefix frame)
+  win(t ${frame} "channelsettings")
+  set(${prefix}_csvp ${t_vp} PARENT_SCOPE)
+  set(${prefix}_csx ${t_x} PARENT_SCOPE)
+  set(${prefix}_csw ${t_w} PARENT_SCOPE)
+  win(t ${frame} "fxeditor")
+  set(${prefix}_fxvp ${t_vp} PARENT_SCOPE)
+  set(${prefix}_fxx ${t_x} PARENT_SCOPE)
+  set(${prefix}_fxw ${t_w} PARENT_SCOPE)
+  win(t ${frame} "Mixer")
+  set(${prefix}_mxvp ${t_vp} PARENT_SCOPE)
+endfunction()
+# inside(<prefix> <what>): both plugin windows in the main window (viewport 0, within its width).
+function(inside prefix what)
+  math(EXPR csr "${${prefix}_csx} + ${${prefix}_csw}")
+  math(EXPR fxr "${${prefix}_fxx} + ${${prefix}_fxw}")
+  if(NOT ${prefix}_csvp EQUAL 0 OR NOT ${prefix}_fxvp EQUAL 0 OR ${prefix}_csx LESS 0 OR csr GREATER 1440 OR ${prefix}_fxx LESS 0 OR fxr GREATER 1440)
+    fail("${what}: the plugin windows should open inside the main window (channel window viewport ${${prefix}_csvp} x ${${prefix}_csx}..${csr}, effect editor viewport ${${prefix}_fxvp} x ${${prefix}_fxx}..${fxr})")
+  endif()
+endfunction()
+run(pwopen plugwin 80 "6 popout channelsettings
+8 popout fxeditor
+10 detach Mixer 1600 120 900 380
+20 viewports
+22 plugwin close
+26 viewports
+30 plugwin chan 5
+32 plugwin fx 1 9
+44 viewports
+46 popout channelsettings
+48 popout fxeditor
+60 viewports
+" --chan 5 --plugin gl.delay)
+plugin(p0 20)
+if(NOT p0_csvp GREATER 0 OR NOT p0_fxvp GREATER 0 OR NOT p0_mxvp GREATER 0)
+  fail("the pop-out button should pop the plugin windows out (viewports ${p0_csvp} ${p0_fxvp}, mixer ${p0_mxvp})")
+endif()
+string(REGEX MATCH "viewports frame 26:[^\n]*\n(  [^\n]*\n)*" d26 "${out}")
+if(d26 MATCHES "window \"channelsettings\"" OR d26 MATCHES "window \"fxeditor\"")
+  fail("plugwin close should close both plugin windows")
+endif()
+plugin(p1 44)
+inside(p1 "closed while popped out and opened again")
+if(NOT p1_mxvp GREATER 0)
+  fail("the mixer should stay detached while plugin windows close and open (viewport ${p1_mxvp})")
+endif()
+ok("a popped-out plugin window closed and opened again in the same session opens inside")
+plugin(p2 60)
+if(NOT p2_csvp GREATER 0 OR NOT p2_fxvp GREATER 0)
+  fail("popped out again: the plugin windows should be outside (viewports ${p2_csvp} ${p2_fxvp})")
+endif()
+ok("the pop-out button pops them out again")
+file(READ "${pini}" ptext)
+if(NOT ptext MATCHES "\\[Window\\]\\[channelsettings\\]\nViewportPos=" OR NOT ptext MATCHES "\\[Window\\]\\[fxeditor\\]\nViewportPos=")
+  fail("left popped out, layout.ini should hold the plugin windows outside (the case under test):\n${ptext}")
+endif()
+# Started again (the project opened again) with the plugin windows open from the start.
+run(pwrestart plugwin 30 "16 viewports\n" keep --chan 5 --plugin gl.delay)
+plugin(p3 16)
+inside(p3 "started again with them saved outside")
+if(NOT p3_mxvp GREATER 0)
+  fail("after the restart the mixer should come back detached as before (viewport ${p3_mxvp})")
+endif()
+ok("saved popped out, started again: the plugin windows open inside (the mixer comes back detached)")
+# The same saved layout, the plugin windows opened later in the session.
+file(WRITE "${pini}" "${ptext}")
+run(pwlater plugwin 50 "2 plugwin close\n20 plugwin chan 5\n22 plugwin fx 1 9\n36 viewports\n" keep --plugin gl.delay)
+plugin(p4 36)
+inside(p4 "started again with them saved outside, opened later")
+ok("saved popped out, started again and opened later: the plugin windows open inside")

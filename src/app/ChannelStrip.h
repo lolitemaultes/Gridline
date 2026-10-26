@@ -1,8 +1,9 @@
 // Gridline - the channel strip of a plugin window (volume, pan, pitch and the
 // preview keyboard at the top of the channel settings window) shows and hides
-// with the eye button in the window's header row. Hidden by default; the
-// choice is global (Settings key "ui.channelStrip", saved with the settings)
-// rather than per window, so every plugin window opens the same way.
+// with the eye button in the window's header row. It never shows by itself:
+// hidden whenever the window opens (after a restart, with a project, closed
+// and opened again, another channel), shown only by the eye for that window
+// while it stays open. The choice is never saved (ChannelSettings.cpp).
 //
 // Showing it slides the strip down from under the header (ease-out, about
 // 140 ms), hiding it slides it back up; the strip's area is clipped while it
@@ -34,7 +35,7 @@ struct Reveal {
   double from = 0.0;    // fraction when the current slide started
   double start = 0.0;   // when it started
   double span = 0.0;    // its length in seconds (0: no slide)
-  bool ready = false;   // initialised from the setting
+  bool ready = false;   // initialised (hidden)
 
   // The fraction shown at `now`.
   double at(double now) const {
@@ -43,7 +44,7 @@ struct Reveal {
     return from + (to - from) * easeOut((now - start) / span);
   }
   bool moving(double now) const { return span > 0.0 && now - start < span; }
-  // Starts at `shown` with no slide (window opened, settings loaded).
+  // Starts at `shown` with no slide (the window opened).
   void reset(bool shown) {
     target = shown;
     from = shown ? 1.0 : 0.0;

@@ -1160,6 +1160,41 @@ int detachedCount() {
   return n;
 }
 
+// Plugin windows open inside the main window. ImGui would otherwise put a window back in the
+// viewport it had: one restored from layout.ini (ApplyWindowSettings: its saved ViewportId and
+// ViewportPos make WindowSelectViewport create an OS window for it), or one closed while popped
+// out (it keeps its ViewportId, its position outside and the NoAutoMerge class flag), and the
+// end of afterNewFrame would then flag it detached again. Called before its Begin(): it is
+// still drawn as last frame left it when it was open last frame.
+void openAttached(const char* name) {
+  if (!S.installed || !name || !ImGui::GetCurrentContext()) return;
+  ImGuiViewportP* m = static_cast<ImGuiViewportP*>(ImGui::GetMainViewport());
+  const place::Rect area = workArea();
+  auto centred = [&](float w, float h) {
+    return ImVec2(std::round(area.x + std::max(0.0f, (area.w - w) * 0.5f)), std::round(area.y + std::max(0.0f, (area.h - h) * 0.5f)));
+  };
+  if (ImGuiWindow* w = ImGui::FindWindowByName(name)) {
+    if (w->Active || w->WasActive) return;  // open: popped out stays popped out
+    const bool out = flagged(w) || (w->Viewport && !isMain(w->Viewport)) || isDetachedId(w->ViewportId) || !mainRect().Contains(w->Rect());
+    if (!out) return;
+    setDetachedFlag(w, false);
+    S.homing.erase(w->ID);
+    if (w->Viewport && !isMain(w->Viewport)) ImGui::SetWindowViewport(w, m);
+    w->ViewportId = m->ID;
+    w->ViewportPos = m->Pos;
+    w->ViewportOwned = false;
+    w->Pos = centred(w->SizeFull.x, w->SizeFull.y);  // inside, so ImGui keeps it there (it centres itself as it appears)
+    return;
+  }
+  // Not created yet this run: a layout.ini that saved it outside is not followed.
+  ImGuiWindowSettings* s = ImGui::FindWindowSettingsByID(ImHashStr(name));
+  if (!s || !isDetachedId(s->ViewportId)) return;
+  const ImVec2 p = centred(s->Size.x, s->Size.y);
+  s->ViewportId = m->ID;
+  s->ViewportPos = ImVec2ih(0, 0);
+  s->Pos = ImVec2ih(static_cast<short>(p.x), static_cast<short>(p.y));
+}
+
 void gatherAll() {
   if (!ImGui::GetCurrentContext()) return;
   ImGuiContext& g = *GImGui;

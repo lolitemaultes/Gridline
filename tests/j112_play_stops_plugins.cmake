@@ -14,9 +14,6 @@
 cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg")
-# The plugin window's channel strip shown (hidden by default): the window stays as tall as the
-# screen allows whatever the editor shows, so Seltmann's Play button never moves between runs.
-file(WRITE "${OUT}/cfg/gridline/settings.json" "{\"version\": 1, \"values\": {\"ui.channelStrip\": true}}\n")
 execute_process(COMMAND "${TESTBIN}" writeloop "${OUT}/Break 96.wav" RESULT_VARIABLE rc)
 if(NOT rc EQUAL 0 OR NOT EXISTS "${OUT}/Break 96.wav")
   message(FATAL_ERROR "FAIL: could not write the synthetic break (${rc})")
@@ -26,8 +23,11 @@ set(ENV{XDG_CONFIG_HOME} "${OUT}/cfg")
 set(ENV{GRIDLINE_SELTMANN_TRACE} "1")
 set(ENV{SDL_AUDIODRIVER} "dummy")
 
+# The plugin window's channel strip shown in every run (hidden whenever a window opens; "strip on"
+# shows it at once): the window stays as tall as the screen allows whatever the editor shows, so
+# Seltmann's Play button never moves between runs.
 function(run tag frames script)
-  file(WRITE "${OUT}/${tag}.txt" "${script}")
+  file(WRITE "${OUT}/${tag}.txt" "1 strip on\n${script}")
   execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --plugin gl.seltmann --size 1440x960 --frames ${frames} --screenshot "${OUT}/${tag}.ppm"
                           --dev-input "${OUT}/${tag}.txt"
                   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 280)

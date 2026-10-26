@@ -79,6 +79,13 @@ bool ownsWindow(Uint32 sdlId);
 // J-116: the SDL ids of every detached window's OS window.
 std::vector<Uint32> windowIds();
 
+// Plugin windows (a channel's window, an insert's editor): call right before their
+// ImGui::Begin(name). A plugin window is outside the main window only while it stays
+// open after its pop-out button: one that is about to open (it was not drawn last
+// frame) opens inside the main window, whatever layout.ini saved (a restart, another
+// project) or where it was when it was closed. Open, it is left where it is.
+void openAttached(const char* name);
+
 // View > Bring all windows back into Gridline.
 void gatherAll();
 // Detached windows (own OS windows) right now.

@@ -22,6 +22,7 @@
 #include "../packs/modulation/modulation_ui.h"
 #include "../core/Platform.h"
 #include "ChannelStrip.h"
+#include "Viewports.h"
 #include "SmoothScrollUi.h"
 #include <map>
 
@@ -65,12 +66,13 @@ static void drawWaveform(App& a, const SamplePtr& smp, ImVec2 size, float startF
   ImGui::PopFont();
 }
 
-// ---- Channel strip state (ChannelStrip.h): per application, its slide and the
-// content height measured when it was last drawn; dev checks read StripDev.
+// ---- Channel strip state (ChannelStrip.h): per application, whether the open
+// window shows it, its slide and the content height measured when it was last
+// drawn; dev checks read StripDev.
 namespace {
 struct StripDev {
   float frac = 0, shownH = 0, fullH = 0, keyW = 0, belowY = 0;
-  bool moving = false, drawn = false, open = false, setting = false;
+  bool moving = false, drawn = false, open = false, shown = false;
   int dumpLeft = 0, dumpFrame = 0;
   ImVec2 eyeMin, eyeMax, clipMin, clipMax, keysMin, keysMax, volMin, volMax, winPos, winSize;
 };
@@ -81,12 +83,32 @@ StripDev& stripDev() {
 struct StripState {
   chstrip::Reveal reveal;
   float contentH = 0;
+  bool shown = false;        // the eye's choice for the open window (never saved)
+  bool open = false;         // the window was open the last time drawChannelSettings ran
+  ObjectId channel = kNoId;  // the channel it was open for
+  int devSet = -1;           // dev "strip on|off": applied when the window is next drawn
 };
 StripState& stripState(App& a) {
   static std::map<const App*, StripState> m;
   StripState& st = m[&a];
-  if (!st.reveal.ready) st.reveal.reset(a.settings.getBool("ui.channelStrip"));
+  if (!st.reveal.ready) st.reveal.reset(false);
   return st;
+}
+// Every frame the window is open: opened (or now showing another channel), the
+// strip starts hidden, without a slide.
+void stripOpened(App& a, ObjectId channel) {
+  StripState& st = stripState(a);
+  if (!st.open || st.channel != channel) {
+    st.shown = false;
+    st.reveal.reset(false);
+  }
+  st.open = true;
+  st.channel = channel;
+  if (st.devSet >= 0) {
+    st.shown = st.devSet == 1;
+    st.reveal.reset(st.shown);
+    st.devSet = -1;
+  }
 }
 // Dev check ("strip [frames]"): the strip's state as drawn this frame.
 void stripDevPrint(int frame) {
@@ -94,8 +116,8 @@ void stripDevPrint(int frame) {
   if (!d.open) {
     std::printf("strip frame %d: window closed\n", frame);
   } else {
-    std::printf("strip frame %d: setting %d frac %.4f moving %d shown %.1f full %.1f drawn %d eye %.1f %.1f %.1f %.1f window %.1f %.1f %.1f %.1f below %.1f\n",
-                frame, d.setting ? 1 : 0, static_cast<double>(d.frac), d.moving ? 1 : 0, static_cast<double>(d.shownH), static_cast<double>(d.fullH),
+    std::printf("strip frame %d: on %d frac %.4f moving %d shown %.1f full %.1f drawn %d eye %.1f %.1f %.1f %.1f window %.1f %.1f %.1f %.1f below %.1f\n",
+                frame, d.shown ? 1 : 0, static_cast<double>(d.frac), d.moving ? 1 : 0, static_cast<double>(d.shownH), static_cast<double>(d.fullH),
                 d.drawn ? 1 : 0, static_cast<double>(d.eyeMin.x), static_cast<double>(d.eyeMin.y), static_cast<double>(d.eyeMax.x),
                 static_cast<double>(d.eyeMax.y), static_cast<double>(d.winPos.x), static_cast<double>(d.winPos.y), static_cast<double>(d.winSize.x),
                 static_cast<double>(d.winSize.y), static_cast<double>(d.belowY));
@@ -377,12 +399,35 @@ static void drawStripContent(App& a, ObjectId id, StripDev& sd) {
   ImGui::EndGroup();
 }
 
-bool channelStripDevCommand(const std::string& cmd, const std::vector<std::string>& args, int frame) {
+bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args, int frame) {
+  if (cmd == "plugwin") {
+    // plugwin chan <index> | fx <mixer index> <slot> | close: opens a channel's
+    // window or an insert's editor, or closes every plugin window.
+    const Song& s = a.doc.song();
+    const std::string what = args.empty() ? "" : args[0];
+    if (what == "chan" && args.size() > 1) {
+      const size_t ci = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+      if (ci < s.channels.size()) a.settingsChannel = s.channels[ci].id;
+    } else if (what == "fx" && args.size() > 2) {
+      const size_t mi = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+      if (mi < s.mixer.size()) a.fxEditor = {s.mixer[mi].id, std::atoi(args[2].c_str())};
+    } else if (what == "close") {
+      a.closePluginWindows();
+    }
+    return true;
+  }
   if (cmd != "strip") return false;
-  // strip [frames]: the state drawn this frame and the next `frames` frames (the
-  // dump comes from the drawing, after this frame's input).
+  // strip [on|off] [frames]: "on" / "off" show or hide the strip at once (no
+  // slide) when the window is next drawn, a test set-up; then the state drawn
+  // this frame and the next `frames` frames (the dump comes from the drawing,
+  // after this frame's input).
+  size_t n = 0;
+  if (!args.empty() && (args[0] == "on" || args[0] == "off")) {
+    stripState(a).devSet = args[0] == "on" ? 1 : 0;
+    n = 1;
+  }
   StripDev& d = stripDev();
-  d.dumpLeft = 1 + (args.empty() ? 0 : std::max(0, std::atoi(args[0].c_str())));
+  d.dumpLeft = 1 + (args.size() <= n ? 0 : std::max(0, std::atoi(args[n].c_str())));
   d.dumpFrame = frame;
   return true;
 }
@@ -390,16 +435,18 @@ bool channelStripDevCommand(const std::string& cmd, const std::vector<std::strin
 void drawChannelSettings(App& a) {
   routePluginWindows(a);  // installed plugins open as themselves
   stripDev().open = false;
-  if (a.settingsChannel == kNoId) return;
   const Song& s = a.doc.song();
-  const Channel* c = s.channel(a.settingsChannel);
+  const Channel* c = a.settingsChannel == kNoId ? nullptr : s.channel(a.settingsChannel);
   if (!c) {
     a.settingsChannel = kNoId;
+    stripState(a).open = false;  // closed: the strip is hidden when it opens again
+    stripDevFrame();             // (dev) "window closed"
     return;
   }
   const PluginInfo* info = findPlugin(c->plugin.type);
   std::string title = c->name + "###channelsettings";
   bool open = true;
+  stripOpened(a, c->id);  // opened (or another channel): the strip starts hidden
   // Wide instrument editors (PluginInfo::editorWidth) widen the window.
   const float winW = std::max(624.0f, (info && info->editorWidth > 0 ? info->editorWidth : 600.0f) + 24.0f);
   ui::NextFloatingWindowSize(winW);
@@ -407,6 +454,7 @@ void drawChannelSettings(App& a) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   }
+  viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
   ui::KeepWindowInViewport();
   ui::MarkDetachable();  // J-114: pops out / docks back like the panels
@@ -467,10 +515,11 @@ void drawChannelSettings(App& a) {
   ui::Hint("Mixer track this channel plays through");
   // The channel strip's show / hide eye (the mixer's eye icon and button).
   ImGui::SameLine(0, theme::kS2);
-  const bool stripOn = a.settings.getBool("ui.channelStrip");
+  StripState& strip = stripState(a);
+  const bool stripOn = strip.shown;
   if (ui::IconButton("##strip", ui::eyeIcon(stripOn), stripOn, fh,
                      stripOn ? "Hide the channel strip (volume, pan, pitch, keyboard)" : "Show the channel strip (volume, pan, pitch, keyboard)"))
-    a.settings.set("ui.channelStrip", !stripOn);
+    strip.shown = !stripOn;
   StripDev& sd = stripDev();
   sd.eyeMin = ImGui::GetItemRectMin();
   sd.eyeMax = ImGui::GetItemRectMax();
@@ -483,7 +532,7 @@ void drawChannelSettings(App& a) {
   // clipped area that grows with it, and back up when hidden.
   chstrip::Reveal& rv = stripReveal(a);
   const double now = ImGui::GetTime();
-  rv.set(a.settings.getBool("ui.channelStrip"), now, scrollui::animations());
+  rv.set(strip.shown, now, scrollui::animations());
   const float frac = static_cast<float>(rv.at(now));
   const float sp = ImGui::GetStyle().ItemSpacing.y;
   // The strip's full height: its content (measured when drawn) and the gaps
@@ -509,7 +558,7 @@ void drawChannelSettings(App& a) {
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - sp);  // the area is exactly shownH high
   }
   sd.open = true;
-  sd.setting = a.settings.getBool("ui.channelStrip");
+  sd.shown = strip.shown;
   sd.winPos = ImGui::GetWindowPos();
   sd.winSize = ImGui::GetWindowSize();
   sd.belowY = ImGui::GetCursorScreenPos().y;  // where the tabs start (moves with the strip)

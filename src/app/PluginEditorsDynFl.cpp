@@ -382,7 +382,9 @@ void editorComp(App& a, const PluginTarget& t, float width) {
       dl->PathArcTo(cc, r - f.d(1.6f), a0, an, 40);
       dl->PathStroke(pink, 0, f.d(3.2f));
       dl->AddCircleFilled(cc, r - f.d(5), w.cap, 32);
-      dl->AddLine(cc, ImVec2(cc.x + std::cos(an) * (r - f.d(6)), cc.y + std::sin(an) * (r - f.d(6))), w.pointer, f.d(1.6f));
+      dl->PathLineTo(cc);  // a path: AddLine is half a pixel off centre
+      dl->PathLineTo(ImVec2(cc.x + std::cos(an) * (r - f.d(6)), cc.y + std::sin(an) * (r - f.d(6))));
+      dl->PathStroke(w.pointer, 0, f.d(1.6f));
     }
   }
   // Sidechain input selector inside the gain cell; options button in the type cell.

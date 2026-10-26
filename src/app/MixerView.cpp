@@ -32,6 +32,7 @@
 #include "../engine/StripEq.h"
 #include "../core/SmoothSnap.h"
 #include "SmoothScrollUi.h"
+#include "Viewports.h"
 
 namespace gl {
 
@@ -1639,6 +1640,7 @@ void drawEffectEditor(App& a) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   }
+  viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking)) {
     ui::KeepWindowInViewport();
     ui::MarkDetachable();  // J-114: pops out / docks back like the panels

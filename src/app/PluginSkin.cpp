@@ -304,13 +304,18 @@ void knobFace(ImDrawList* dl, ImVec2 c, float r, const KnobPaint& p) {
     dl->AddCircleFilled(q, std::max(1.6f, capR * 0.13f), pc, 12);
     return;
   }
-  // Pointer: dark under-stroke, then the pointer with a round tip.
+  // Pointer: dark under-stroke, then the pointer with round ends. Stroked as a path, not AddLine:
+  // AddLine shifts its ends by half a pixel, which put the round caps off the line (a bent pointer).
   const ImVec2 dir(std::cos(p.an), std::sin(p.an));
   const float lw = std::clamp(capR * 0.13f, 1.6f, 3.6f);
   const ImVec2 q0(c.x + dir.x * capR * 0.28f, c.y + dir.y * capR * 0.28f), q1(c.x + dir.x * capR * 0.84f, c.y + dir.y * capR * 0.84f);
-  dl->AddLine(q0, q1, IM_COL32(0, 0, 0, 90), lw + 1.6f);
+  dl->PathLineTo(q0);
+  dl->PathLineTo(q1);
+  dl->PathStroke(IM_COL32(0, 0, 0, 90), 0, lw + 1.6f);
   const ImU32 pc = p.active ? lighten(p.pointer, 0.3f) : p.pointer;
-  dl->AddLine(q0, q1, pc, lw);
+  dl->PathLineTo(q0);
+  dl->PathLineTo(q1);
+  dl->PathStroke(pc, 0, lw);
   dl->AddCircleFilled(q1, lw * 0.5f, pc, 10);
   dl->AddCircleFilled(q0, lw * 0.5f, pc, 10);
 }

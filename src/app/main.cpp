@@ -356,7 +356,8 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   J-111h: collab share-name "<name>" · collab share-folder <dir> · collab share · collab rename-type "<name>" [folder] ·
 //   collab rename-ok · collab demo-cursor-edge <window> <cover> <dx> · collab window settings|info|none ·
 //   collab section-probe · windows [frames] (window positions and sizes to stdout);
-//   strip [frames] (the plugin window's channel strip: shown fraction, heights, eye button and window rects; Windows.h);
+//   strip [on|off] [frames] (the plugin window's channel strip: shown fraction, heights, eye button and window rects; Windows.h) ·
+//   plugwin chan <index> | fx <mixer index> <slot> | close (opens / closes plugin windows);
 //   waitfor signals collab-active / -ready / -invite-ready / -joined / -join-failed / -connected / -all-connected /
 //   -synced / -members:<n> / -channel:<name> / -name:<project name>
 //   J-111d: collab point <window> <kind> <a> <b> <cx> <cy> (the pointer to a cursor anchor, CursorAnchor.h) ·
@@ -536,7 +537,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   for (const auto& l : script) {
     if (!fresh || l.frame != frame) continue;
     if (viewports::devCommand(app, l.cmd, l.args, frame)) continue;  // J-113
-    if (channelStripDevCommand(l.cmd, l.args, frame)) continue;      // the plugin window's channel strip
+    if (pluginWindowDevCommand(app, l.cmd, l.args, frame)) continue;  // plugin windows, their channel strip
     if (l.cmd == "move") {
       pointer = ImVec2(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
       io.AddMousePosEvent(pointer.x, pointer.y);

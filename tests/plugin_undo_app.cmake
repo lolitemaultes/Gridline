@@ -6,7 +6,8 @@
 #   2. Plasma: two strokes on an LFO shape (plugin data, not a parameter) are two undo steps, and
 #      Ctrl+Z takes back only the second (before: the two strokes merged into one step);
 #   3. another pack's plugin (Wavetable, an instrument) and a mixer insert (Delay): knob drag, undo,
-#      redo; a wheel turn of several steps over the Delay's knob is one step (before: one per step);
+#      redo; a wheel turn of several steps over the Delay's knob is one step (before: one per step), and
+#      two turns with a pause between them are two;
 #   4. Plasma popped out into a window of its own, the keyboard in that window: Ctrl+Z / Cmd+Z
 #      undo and Ctrl+Shift+Z redoes (skipped where windows cannot be detached).
 # "atparam <k>" puts the pointer on the last drawn control of parameter k of the open editor;
@@ -24,8 +25,8 @@ file(WRITE "${OUT}/fixture.gridline.json" "${demo}")
 function(run tag frames script)
   file(REMOVE_RECURSE "${OUT}/cfg_${tag}")
   file(MAKE_DIRECTORY "${OUT}/cfg_${tag}")
-  # the channel strip shown (hidden by default): the LFO strokes below use the layout with it
-  file(WRITE "${OUT}/cfg_${tag}/gridline/settings.json" "{\"version\": 1, \"values\": {\"ui.channelStrip\": true}}\n")
+  # the channel strip shown (hidden whenever a window opens): the LFO strokes below use the layout with it
+  set(script "1 strip on\n${script}")
   set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg_${tag}")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
   execute_process(COMMAND "${APP}" "${OUT}/fixture.gridline.json" --hidden --no-ui-sounds --size 1440x900 --frames ${frames}
@@ -163,8 +164,11 @@ ok("Plasma: each stroke on an LFO shape (plugin data) is one undo step; Ctrl+Z /
 knobscript(ks 0)
 run(wavetable 72 "${ks}" --plugin gl.wavetable)
 checkknob("Wavetable (synths pack)" 0)
+# The wheel run uses a fixed frame time (--fixed-dt 16, the clock the wheel pause is measured on),
+# so it does not depend on how fast the machine draws: steps 6 frames (96 ms) apart are one turn;
+# then, after Cmd+Z, two turns with a pause of 34 frames (544 ms) between them are two steps.
 knobscript(ks 3)
-run(delay 160 "${ks}70 atparam 3
+run(delay 250 "${ks}70 atparam 3
 72 wheel 1
 78 wheel 1
 84 wheel 1
@@ -173,7 +177,11 @@ run(delay 160 "${ks}70 atparam 3
 152 sdlkey z down super
 153 sdlkey z up
 158 plug 3
-" --plugin gl.delay)
+160 wheel 1
+166 wheel 1
+200 wheel 1
+240 plug 3
+" --plugin gl.delay --fixed-dt 16)
 checkknob("Delay (mixer insert)" 3)
 plug(w0 66 3)
 plug(w1 90 3)
@@ -186,7 +194,12 @@ endif()
 if(NOT w3_v STREQUAL w0_v)
   fail("Cmd+Z should undo the whole wheel turn (${w2_v} -> ${w3_v}, want ${w0_v})")
 endif()
-ok("a wheel turn of several steps is one undo step (Cmd+Z takes it back)")
+plug(w4 240 3)
+math(EXPR want "${w3_pos} + 2")
+if(w4_v STREQUAL w3_v OR NOT w4_pos EQUAL want)
+  fail("two wheel turns with a pause between them should be two undo steps (${w3_v} -> ${w4_v}, position ${w3_pos} -> ${w4_pos})")
+endif()
+ok("a wheel turn of several steps is one undo step (Cmd+Z takes it back); a pause starts another")
 
 # ---- 4. Plasma in a window of its own, the keyboard there ----
 drag(d 0 18)

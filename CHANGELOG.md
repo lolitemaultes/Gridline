@@ -46,8 +46,9 @@ release workflow publishes the section of the tagged version as the release note
   right of the window's header row (the same eye the mixer uses to show and hide a plugin's
   window) shows it: it slides down in about 140 ms and slides back up when you hide it again. The
   knobs and the keyboard work exactly as before while it is shown.
-- The choice is global and remembered (Settings key `ui.channelStrip`): every plugin window opens
-  with the strip shown or hidden the way you left it. With Interface animations off, or when the
+- It never shows by itself: a plugin window always opens with the strip hidden (after a restart,
+  with a project, and when you close the window and open it again). The eye shows it for that
+  window while it stays open; nothing of it is saved. With Interface animations off, or when the
   system asks for reduced motion, it switches at once.
 - The window grows and shrinks with the strip, docked or popped out into its own window. Installed
   plugins (VST3, CLAP, AU, ...) that open their own interface do so in a window without this strip,
@@ -105,8 +106,12 @@ release workflow publishes the section of the tagged version as the release note
   other applications, J-97 drop-to-replace on the channel rack) work in detached windows. Moving
   between Gridline's windows no longer releases held keys; switching to another application still
   does.
-- Detached windows reopen where they were, on the same monitor (saved with your window layout,
+- Detached panels reopen where they were, on the same monitor (saved with your window layout,
   never in the project); a window left on a monitor that is gone comes back on one that is there.
+- Gridline's plugin windows (a channel's window, an effect editor) are outside the main window
+  only while they stay open after you popped them out. Opened again, after a restart, with a
+  project, or after you closed one that was popped out, they always open inside the main window;
+  the pop-out button puts them back where they last were outside.
   View > Bring all windows back into Gridline returns them all; minimising the main window hides
   them. Dialogs open over the window they were opened from.
 - Settings > Interface > "Allow windows outside the main window" (on by default). Off: everything

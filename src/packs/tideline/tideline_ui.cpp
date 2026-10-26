@@ -141,8 +141,9 @@ void amountDial(App& a, const PluginTarget& t, ImVec2 c, float r, const Live& li
   // pointer
   const float ang = a0 + (a1 - a0) * n;
   const ImVec2 dir(std::cos(ang), std::sin(ang));
-  dl->AddLine(ImVec2(c.x + dir.x * br * 0.68f, c.y + dir.y * br * 0.68f), ImVec2(c.x + dir.x * br * 0.94f, c.y + dir.y * br * 0.94f),
-              accent(), 4.0f);
+  dl->PathLineTo(ImVec2(c.x + dir.x * br * 0.68f, c.y + dir.y * br * 0.68f));  // a path: AddLine is half a pixel off centre
+  dl->PathLineTo(ImVec2(c.x + dir.x * br * 0.94f, c.y + dir.y * br * 0.94f));
+  dl->PathStroke(accent(), 0, 4.0f);
   // value in the centre
   char b[16];
   std::snprintf(b, sizeof b, "%d%%", static_cast<int>(std::lround(val * 100)));

@@ -20,6 +20,11 @@ namespace gl::collab {
 namespace {
 
 constexpr double kMemberRetrySec = 120;  // a member link that did not connect starts again (fresh agent, same port)
+// A join's ICE gets as long: after 5 s the joiner is offered a reply code to pass to the inviter
+// by hand (a chat message), and a slow or relayed network may connect late. 45 s abandoned a
+// join while that reply was still on its way, and left a join whose ICE connected after 32 s
+// only 13 s (J-111 step 7 on a loaded CI runner).
+constexpr double kJoinIceSec = 120;
 
 std::string keyHex(const crypto::Key& k) { return crypto::toHex(k.data(), 32); }
 bool hexKey(const std::string& h, crypto::Key& k) {
@@ -1003,12 +1008,12 @@ void Hub::poll(double nowSec) {
       l.dead = true;
       l.error = closeWhy;
     }
-    // Links that never open: ICE gets 45 s for a join (2 min for a member link,
-    // which then starts again at once with a fresh agent on the same port, so a
+    // Links that never open: ICE gets 2 min (kJoinIceSec for a join; a member link
+    // then starts again at once with a fresh agent on the same port, so a
     // collaborator who comes online finds it), the handshake 35 s after ICE.
     const double age = now_ - l.created;
     const bool handshakeOver = l.started && l.sl->state() != SecureLink::State::Handshake && l.sl->state() != SecureLink::State::Open;
-    const double iceLimit = l.kind == LinkRec::Kind::Member ? kMemberRetrySec : 45.0;
+    const double iceLimit = l.kind == LinkRec::Kind::Member ? kMemberRetrySec : kJoinIceSec;
     const bool tooLong = handshakeOver || (l.iceAt < 0 ? age > iceLimit : now_ - l.iceAt > 35);
     if (!l.up && !l.dead && l.kind != LinkRec::Kind::InviteHost && l.sl->state() != SecureLink::State::Open && tooLong) {
       l.dead = true;

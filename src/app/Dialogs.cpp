@@ -1009,13 +1009,18 @@ void drawDialogs(App& a) {
 namespace {
 struct WheelGesture {
   bool open = false;  // the pointer gesture was opened by the wheel
-  double at = 0;      // last wheel step
+  double at = 0;      // last wheel step (ImGui's frame clock: --fixed-dt makes it exact)
+  int frame = 0;      // the frame of the last wheel step
 };
 WheelGesture& wheelGesture(const App& a) {
   static std::map<const App*, WheelGesture> m;  // (Gridline as a plugin: one App per instance)
   return m[&a];
 }
-constexpr double kWheelGestureIdle = 0.4;  // seconds without a wheel step that end a wheel turn
+// A wheel turn ends after both this long and this many frames without a wheel step. The frame
+// count keeps one turn together on a slow or stalled frame rate (a frame that takes longer than
+// the pause cannot show that the wheel stopped); the time keeps a real pause between turns.
+constexpr double kWheelGestureIdle = 0.4;
+constexpr int kWheelGestureIdleFrames = 8;
 }  // namespace
 
 void pointerGestureFrame(App& a) {
@@ -1026,7 +1031,7 @@ void pointerGestureFrame(App& a) {
     if (!a.doc.inPointerGesture()) a.doc.beginPointerGesture();
   } else if (io.MouseWheel != 0 || io.MouseWheelH != 0) {
     if (!a.doc.inPointerGesture()) a.doc.beginPointerGesture(), w.open = true;
-    if (w.open) w.at = a.now;
+    if (w.open) w.at = ImGui::GetTime(), w.frame = ImGui::GetFrameCount();
   }
 }
 
@@ -1035,7 +1040,12 @@ namespace {
 void endPointerGesture(App& a) {
   if (ImGui::IsAnyMouseDown() || !a.doc.inPointerGesture()) return;
   WheelGesture& w = wheelGesture(a);
-  if (w.open && a.now - w.at < kWheelGestureIdle && a.now >= w.at) return;
+  if (w.open) {
+    const double now = ImGui::GetTime();
+    const int frames = ImGui::GetFrameCount() - w.frame;
+    const bool idle = (now - w.at >= kWheelGestureIdle || now < w.at) && (frames >= kWheelGestureIdleFrames || frames < 0);
+    if (!idle) return;
+  }
   a.doc.endPointerGesture();
   w.open = false;
 }

@@ -1,5 +1,5 @@
-<!-- Lucide "pause" v1.60.0, ISC licence (LICENSE.lucide.txt). Customised for Gridline: filled. -->
+<!-- Lucide "pause" v1.60.0, ISC licence (LICENSE.lucide.txt). Customised for Gridline: filled; 14-unit bars (16 with the stroke) to match the stop, play and record glyphs. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" />
-  <rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" />
+  <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
+  <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
 </svg>

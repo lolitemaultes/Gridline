@@ -339,7 +339,7 @@ void testInviteFlow() {
   Machine c;
   w.make(c, "Kim");
   joinWith(w, c, code, "hub_c");
-  w.run(50.0);
+  w.run(125.0);  // (a join's ICE gets 2 min before it fails)
   expect(c.hub->joinView().status == Hub::JoinStatus::Refused || c.hub->joinView().status == Hub::JoinStatus::Failed,
          "a used invite does not let a second person in");
   expect(a.peer.s->members().size() == 2, "the refused person did not become a member");

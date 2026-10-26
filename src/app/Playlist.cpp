@@ -668,12 +668,12 @@ std::string sourceName(const Song& s, const pltools::Source& src) {
   return s.pattern(src.id) ? s.pattern(src.id)->name : "(none)";
 }
 
-// Pattern: step bars; audio: a wave; automation: a ramp with points.
+// Pattern: step bars; audio: a wave; automation: a ramp with points. Each fitted by its ink into
+// the same `size` px square, centred, so the three read as one set whatever their SVG geometry.
 void drawKindGlyph(ImDrawList* dl, ClipKind kind, ImVec2 c, float size, ImU32 col) {
+  const ui::Icon icon = kind == ClipKind::Audio ? ui::Icon::Wave : kind == ClipKind::Automation ? ui::Icon::ClipAutomation : ui::Icon::ClipPattern;
   const float h = size * 0.5f;
-  if (kind == ClipKind::Audio) ui::drawIcon(dl, ui::Icon::Wave, c, size, col);
-  else if (kind == ClipKind::Automation) ui::drawIconGlyph(dl, ui::Icon::ClipAutomation, c, h, 1.4f, col);
-  else ui::drawIconGlyph(dl, ui::Icon::ClipPattern, c, h, 0.0f, col);  // drawn at 12 px: one unit = 6 px
+  ui::drawIconFit(dl, icon, ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), col);
 }
 
 // Breadcrumb menu: every clip source by kind.
@@ -2142,10 +2142,13 @@ void drawPlaylist(App& a) {
     const ImU32 col = b.on ? P.hot : hot ? P.text : P.textDim;
     const float x = b.c.x, y = b.c.y;
     switch (b.id) {
-      // J-79: the editing toggles in the J-76 icon family (16 px SVG box).
-      case 0: ui::drawIconBox(dl, ui::Icon::StretchMode, b.c, 16.0f, col); break;
-      case 1: ui::drawIconBox(dl, ui::Icon::FadeHandles, b.c, 16.0f, col); break;
-      case 2: ui::drawIconBox(dl, ui::Icon::ZeroCross, b.c, 16.0f, col); break;
+      // J-79: the editing toggles in the J-76 icon family, each fitted by its ink into the same
+      // 11 px square: clear of the 16 px cell's edges and one size across the three.
+      case 0: case 1: case 2: {
+        const ui::Icon icon = b.id == 0 ? ui::Icon::StretchMode : b.id == 1 ? ui::Icon::FadeHandles : ui::Icon::ZeroCross;
+        ui::drawIconFit(dl, icon, ImVec2(x - 5.5f, y - 5.5f), ImVec2(x + 5.5f, y + 5.5f), col);
+        break;
+      }
       case 3: ui::drawIcon(dl, st.pickerOpen ? ui::Icon::Left : ui::Icon::Right, b.c, 10.0f, col); break;
       case 4: ui::drawIcon(dl, ui::Icon::Plus, b.c, 10.0f, col); break;
       case 5: ui::drawIcon(dl, ui::Icon::Close, b.c, 9.0f, col); break;

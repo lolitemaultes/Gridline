@@ -57,11 +57,13 @@ void drawMixer(App& a);
 float mixerStripsScrollY();
 bool mixerWheelScrolls();
 void drawChannelSettings(App& a);
-// Dev check (--dev-input "strip [frames]"): the channel strip of the channel
-// settings window (ChannelStrip.h) as drawn this frame and the next `frames`
-// frames: setting, shown fraction, heights, the eye button, window, keyboard
-// and volume knob rects. True when `cmd` was this command.
-bool channelStripDevCommand(const std::string& cmd, const std::vector<std::string>& args, int frame);
+// Dev checks (--dev-input): "strip [on|off] [frames]", the channel strip of the
+// channel settings window (ChannelStrip.h) as drawn this frame and the next
+// `frames` frames: shown, shown fraction, heights, the eye button, window,
+// keyboard and volume knob rects ("on" / "off" first show or hide it at once,
+// a test set-up); "plugwin chan <index> | fx <mixer index> <slot> | close"
+// opens or closes plugin windows. True when `cmd` was one of them.
+bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args, int frame);
 void drawChannelEnvelope(App& a, ObjectId channel);  // channel envelope / LFO / filter page (J-72)
 void drawEffectEditor(App& a);
 void drawDialogs(App& a);
@@ -81,7 +83,8 @@ void setLiveArea(App& a, Tick end);                // 0 removes it      // file 
 void handleGlobalShortcuts(App& a);
 // One undo step per pointer gesture in every editor (Document::beginPointerGesture): opened
 // right after ImGui::NewFrame when a mouse button is down or the wheel turns, closed by
-// handleGlobalShortcuts after the frame of the release (a wheel burst: after 0.4 s without wheel).
+// handleGlobalShortcuts after the frame of the release (a wheel burst: after 0.4 s and 8 frames
+// without wheel).
 void pointerGestureFrame(App& a);
 // Knob grid for a plugin's parameters (effects and instruments).
 void pluginParamGrid(App& a, const PluginInfo& info, const std::function<ParamId(int)>& pidOf, float width);

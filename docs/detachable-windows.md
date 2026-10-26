@@ -51,6 +51,31 @@ Tooltips go through `tr()`.
 - Outside, the same button docks it back where it was.
 - Hidden when "Allow windows outside the main window" is off or detaching is unavailable
   (native Wayland, the plugin build).
+
+### Plugin windows open inside
+
+Gridline's plugin windows (a channel's window, `###channelsettings`, and an insert's editor,
+`###fxeditor`: built-in plugins and hosted plugins drawn in Gridline's own panel) are outside the
+main window only while they stay open after their pop-out button was clicked. A plugin window
+that opens always opens attached, inside the main window, as it would by default:
+
+- not popped out when Gridline starts or a project opens, even when `layout.ini` saved it
+  outside (ImGui would restore it there: `ApplyWindowSettings` copies the saved `ViewportId` /
+  `ViewportPos` and `WindowSelectViewport` then creates an OS window for it);
+- not popped out when it is closed while outside and opened again in the same session (ImGui
+  would put it back in a viewport of its own: the window keeps its `ViewportId`, its position
+  outside and the `NoAutoMerge` class flag; `afterNewFrame` would then flag it detached again).
+
+`viewports::openAttached(name)` runs right before their `ImGui::Begin`. A window that was drawn
+last frame is left alone (popped out stays popped out). One about to appear loses the detached
+flag and is put in the main viewport, centred in the work area (it then centres itself as it
+appears); one not created yet in this run has its saved window settings pointed at the main
+viewport instead. Its last place outside (`[Out:]`) is kept: the pop-out button puts it back
+there. The X of a popped-out plugin window docks it back like a panel's (J-116); closing it
+otherwise (View > Close plugin windows, for example) closes it. While it stays open
+it stays where it is, also when it switches to another channel or slot (the same window). Panels are unchanged: a panel
+left detached comes back detached. Installed plugins' own interfaces always open in OS windows
+of their own (`PluginWindow.cpp`, below) and have no pop-out button, so this does not apply.
 - Docked panels use ImGui's dock-node window-menu slot (`style.WindowMenuButtonPosition` is set
   to Right only while the dock nodes update, so nothing else changes): Gridline replaces the
   menu (`ImGuiContext::DockNodeWindowMenuHandler`) by the toggle and draws its icon over the slot.
@@ -236,8 +261,8 @@ a window is detached.
   just above it without activating it (`host::native::orderAbove`, `orderWindow:NSWindowAbove
   relativeTo:`). They come forward with the app, Cmd-` cycles them, moving the main window leaves
   them where they are.
-- Closing the main window quits (detached windows close with it, the layout is saved: they reopen
-  detached next time only if they were left detached). Minimising it hides them; restoring shows
+- Closing the main window quits (detached windows close with it, the layout is saved: panels
+  reopen detached next time only if they were left detached; plugin windows always open inside). Minimising it hides them; restoring shows
   them again without stealing the focus.
 
 ## Input
@@ -324,7 +349,10 @@ says so ("Start Gridline with SDL_VIDEODRIVER=x11 to use it through XWayland"). 
 - `j113_detach_app` (real app, hidden): Space and the typing keyboard from a detached window,
   focus moving between Gridline windows keeps held keys, focus lost to another application
   releases them; J-97 drops into a detached rack; dialogs over the window they come from;
-  `layout.ini` persistence (including Home / Out), re-anchoring, recovery, the setting off.
+  `layout.ini` persistence (including Home / Out), re-anchoring, recovery, the setting off;
+  plugin windows (the channel window, an effect editor) popped out, closed and opened again
+  (`plugwin close`, `plugwin chan <i>`, `plugwin fx <m> <s>`) open inside, and saved outside they
+  open inside after a restart, at once or later, while the mixer still comes back detached.
 - `plugin_undo_app` (real app, hidden): Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y / Cmd+Z on plugin editor
   edits (Plasma knob drag, wheel turn, LFO shape strokes; Wavetable; a Delay insert), and typed
   into Plasma's popped-out window (`sdlkeyin <window> <key> down|up [mods]`).
@@ -376,7 +404,10 @@ says so ("Start Gridline with SDL_VIDEODRIVER=x11 to use it through XWayland"). 
 8. Click the main window: the detached windows stay above it. Move the main window: they stay
    where they are. Minimise the main window: they hide; restore: they come back.
 9. Quit with windows detached (closing the main window), restart: they reopen where they were.
-   Unplug the second monitor and restart: they open fully visible on the remaining one.
+   Unplug the second monitor and restart: they open fully visible on the remaining one. A
+   channel's window or an effect editor left popped out opens inside the main window after the
+   restart, and so does one closed while popped out and opened again; its pop-out button puts it
+   back where it last was outside.
 10. View > Layout > Bring all windows back into Gridline: everything docks back.
 11. Settings > Interface: turn "Allow windows outside the main window" off: everything is inside,
     no pop-out buttons, dragging past the edge is elastic as with it on.

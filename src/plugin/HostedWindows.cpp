@@ -575,4 +575,5 @@ bool available() { return false; }
 std::string unavailableReason() { return i18n::N_("Not available inside a plugin host."); }
 void gatherAll() {}
 int detachedCount() { return 0; }
+void openAttached(const char*) {}
 }  // namespace gl::viewports

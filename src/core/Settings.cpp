@@ -77,7 +77,6 @@ Settings::Settings() {
       {"theme.brightness", Json::makeNumber(0)},     // -1 .. 1
       {"ui.mixerWheel", Json::makeNumber(2)},  // J-83: wheel over mixer controls: 0 adjust, 1 scroll the mixer, 2 auto (scroll when narrow)
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide
-      {"ui.channelStrip", b(false)},  // plugin windows show the channel strip (volume, pan, pitch, keyboard); app/ChannelStrip.h
       {"ui.layoutVersion", Json::makeNumber(0)},  // J-28: default workspace version the saved layout.ini was built with
       // J-24: general, file, project defaults, backup / autosave, hints, debug, scripting.
       {"general.startup", Json::makeString("template")},   // "template" | "empty" | "last"
@@ -167,6 +166,9 @@ bool Settings::load(const std::string& path, std::string* err) {
       auto d = defaults_.find(k);
       if (d == defaults_.end() || d->second.type == val.type) values_[k] = val;
     }
+  // Retired: the channel strip of plugin windows is no longer remembered (it opens
+  // hidden, app/ChannelStrip.h); older files that still have it load as before.
+  values_.erase("ui.channelStrip");
   return true;
 }
 

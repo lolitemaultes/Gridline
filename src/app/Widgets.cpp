@@ -272,12 +272,17 @@ bool ToolButton(const char* id, Icon icon, bool active, float size, const char* 
   else if (hov) dl->AddRectFilled(p, q1, P.surface700, theme::kRadius);
   if (active) {
     dl->AddRect(p, q1, theme::withAlpha(lit, P.dark ? 0.35f : 0.55f), theme::kRadius);
-    const float uw = std::round(size * 0.42f), ux = std::round(p.x + (size - uw) * 0.5f);
-    dl->AddRectFilled(ImVec2(ux, q1.y - 3), ImVec2(ux + uw, q1.y - 2), lit, 1.0f);  // lit underline
+    // lit underline, as the top bar's window toggles draw it (ToggleIcon): 2 px, 36 % of the cell
+    const float uw = std::round(size * 0.36f), ux = std::round(p.x + (size - uw) * 0.5f);
+    dl->AddRectFilled(ImVec2(ux, q1.y - 4), ImVec2(ux + uw, q1.y - 2), lit, 1.0f);
   }
   const ImU32 fg = active ? lit : held || hov ? P.text : P.textDim;
-  // J-77: sized like the top-bar toggles (16 px SVG box in a 24 px control, icons::toolIconBox).
-  drawIconBox(dl, icon, ImVec2(p.x + size * 0.5f, p.y + size * 0.5f - (active ? 1.0f : 0.0f)), icons::toolIconBox(size), fg);
+  // Every tool's ink fits the same square (12 px in a 24 px control), centred: the SVGs fill their
+  // 24-unit grid differently (the pencil reaches the corners, the brush is narrow), so drawing them in
+  // one SVG box made them different sizes and put some on the underline.
+  const float ink = std::round(icons::toolIconBox(size) * 0.75f);
+  const ImVec2 ic(p.x + size * 0.5f, p.y + size * 0.5f - (active ? 1.0f : 0.0f));
+  drawIconFit(dl, icon, ImVec2(ic.x - ink * 0.5f, ic.y - ink * 0.5f), ImVec2(ic.x + ink * 0.5f, ic.y + ink * 0.5f), fg);
   if (hov) {
     const std::string tip = toolTip(name, desc, keyId);
     app().setHint(tip);
@@ -500,8 +505,9 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   if (std::fabs(an - from) > 0.01f)
     arc(dl, c, radius - th * 0.5f, std::min(from, an), std::max(from, an), act || hov ? P.hot : ringRest, th);
   ImVec2 dir(std::cos(an), std::sin(an));
-  dl->AddLine(ImVec2(c.x + dir.x * radius * 0.15f, c.y + dir.y * radius * 0.15f),
-              ImVec2(c.x + dir.x * (radius - th - 3.0f), c.y + dir.y * (radius - th - 3.0f)), hov || act ? P.paper : P.text, 2.0f);
+  dl->PathLineTo(ImVec2(c.x + dir.x * radius * 0.15f, c.y + dir.y * radius * 0.15f));  // a path: AddLine is half a pixel off centre
+  dl->PathLineTo(ImVec2(c.x + dir.x * (radius - th - 3.0f), c.y + dir.y * (radius - th - 3.0f)));
+  dl->PathStroke(hov || act ? P.paper : P.text, 0, 2.0f);
   if (label) {
     ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(labelFs, 1e9f, 0, label);
     dl->AddText(ImGui::GetFont(), labelFs, ImVec2(std::round(c.x - ts.x * 0.5f), p.y + radius * 2.0f + 2.0f), P.textDim, label);

@@ -99,15 +99,19 @@ if(NOT v_alex2_song STREQUAL v_sam2_song OR v_alex2_song STREQUAL v_alex_song)
 endif()
 message(STATUS "reopened: reconnected, song ${v_alex2_song}")
 
-# 7. ICE that connects late (32 s after joining) still joins.
+# 7. ICE that connects late (32 s after joining) still joins. Sam has 28 s after that to connect,
+# sync and report, Alex stays 12 s longer (a loaded runner); the connection log (GRIDLINE_COLLAB_DEBUG)
+# goes into the failure message with the timeline of both.
 execute_process(
-  COMMAND ${CMAKE_COMMAND} -E env GRIDLINE_CONFIG_HOME=${OUT}/cfgC
+  COMMAND ${CMAKE_COMMAND} -E env GRIDLINE_CONFIG_HOME=${OUT}/cfgC GRIDLINE_COLLAB_DEBUG=1
           "${CLI}" collab-run --folder "${OUT}/Alex3" --name Alex --create "${DEMO}" --invite-out "${OUT}/invite3.txt"
-          --seconds 62 --edits host --report "${OUT}/alex3.json"
-  COMMAND ${CMAKE_COMMAND} -E env GRIDLINE_CONFIG_HOME=${OUT}/cfgD
+          --seconds 72 --edits host --report "${OUT}/alex3.json"
+  COMMAND ${CMAKE_COMMAND} -E env GRIDLINE_CONFIG_HOME=${OUT}/cfgD GRIDLINE_COLLAB_DEBUG=1
           "${CLI}" collab-run --folder "${OUT}/Sam3" --name Sam --join "${OUT}/invite3.txt" --ice-delay 32
-          --seconds 50 --edits guest --report "${OUT}/sam3.json"
-  RESULTS_VARIABLE rcs3 OUTPUT_QUIET ERROR_VARIABLE err3 TIMEOUT 150)
+          --seconds 60 --edits guest --report "${OUT}/sam3.json"
+  RESULTS_VARIABLE rcs3 OUTPUT_QUIET ERROR_VARIABLE err3 TIMEOUT 170)
+# the log without the repeated packets
+string(REGEX REPLACE "[^\n]*(H2 repeated|send of [0-9]+ bytes failed|Send while ICE is not connected|poll gap)[^\n]*\n" "" err3 "${err3}")
 foreach(who alex3 sam3)
   if(NOT EXISTS "${OUT}/${who}.json")
     message(FATAL_ERROR "${who} wrote no report (exit codes ${rcs3}): ${err3}")
