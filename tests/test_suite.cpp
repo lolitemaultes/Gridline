@@ -45,6 +45,8 @@ namespace {
 
 const std::string kClap = GRIDLINE_SUITE_CLAP;
 const std::string kVst3 = GRIDLINE_SUITE_VST3;
+const std::string kMiniClap = GRIDLINE_MINI_CLAP;
+const std::string kMiniVst3 = GRIDLINE_MINI_VST3;
 constexpr double kSr = 48000.0;
 constexpr int kBlock = 512;
 constexpr uint32_t kMixId = 0x00100000, kBypassId = 0x00100001;
@@ -55,10 +57,14 @@ constexpr uint32_t kMixId = 0x00100000, kBypassId = 0x00100001;
 const std::set<std::string> kNeedsMaterial = {"gl.sampler",      "gl.slicer",     "gl.granular", "gl.samplekeys",
                                               "gl.multisampler", "gl.waveprogram", "gl.scratch",  "gl.grainscan",
                                               "gl.splinescratch", "gl.seltmann",  "gl.imagesynth", "gl.pads"};
-const std::set<std::string> kSilentFx = {"gl.mute", "gl.vocoder"};
+// Rewind plays the previous segment backwards: its first beat (longer than the test signal) is silent.
+const std::set<std::string> kSilentFx = {"gl.mute", "gl.vocoder", "gl.minirewind"};
 // Effects whose DSP reads the sidechain (SideIo::scL or a sidechain input parameter).
 const std::set<std::string> kSidechainFx = {"gl.comp", "gl.limiter", "gl.vocoder", "gl.scduck",
-                                            "gl.hall", "gl.tideline", "gl.transplit", "gl.hitloop"};
+                                            "gl.hall", "gl.tideline", "gl.transplit", "gl.hitloop",
+                                            "gl.minipress", "gl.minilatch", "gl.miniclang"};
+// Members played in a quick run (besides each suite's first).
+const std::set<std::string> kQuickPlay = {"gl.comp", "gl.scduck", "gl.reverb", "gl.fm", "gl.minipress", "gl.miniecho"};
 
 float peak(const std::vector<float>& v, size_t from = 0) {
   float p = 0;
@@ -126,15 +132,17 @@ std::string auData(const std::string& state, const suite::Member& m) {
   return "au1:" + host::base64Encode(out);
 }
 
-// Registers every unit of "Gridline Suite.component" in this process
-// (nothing is installed): Gridline's AU host then finds them like installed ones.
-bool registerAu() {
-  const std::string bin = std::string(GRIDLINE_SUITE_AU) + "/Contents/MacOS/Gridline Suite";
+// Registers every unit of a suite's .component in this process (nothing is
+// installed): Gridline's AU host then finds them like installed ones.
+bool registerAu(const std::string& suiteId, const std::string& bundle) {
+  const suite::Suite* su = suite::findSuite(suiteId);
+  if (!su) return false;
+  const std::string bin = bundle + "/Contents/MacOS/" + su->name;
   void* h = host::dl::open(bin, nullptr, true);
   auto factory = h ? host::toFunction<AudioComponentFactoryFunction>(host::dl::sym(h, "GridlineSuiteAUFactory")) : nullptr;
   if (!factory) return false;
   bool ok = true;
-  for (const suite::Member& m : suite::members("gridline")) {
+  for (const suite::Member& m : suite::members(suiteId)) {
     const AudioComponentDescription d{m.auType, m.auSubtype, suite::kAuManufacturer, 0, 0};
     CFStringRef name = CFStringCreateWithCString(nullptr, ("Gridline: " + m.name).c_str(), kCFStringEncodingUTF8);
     ok = AudioComponentRegister(&d, name, 0x00000700, factory) != nullptr && ok;
@@ -155,9 +163,10 @@ std::string vst3Key(const suite::Member& m) {
 
 // ---------------------------------------------------------------- identities
 
-void testIdentities() {
-  const auto& ms = suite::members("gridline");
-  expect(ms.size() >= 100, "suite: Gridline Suite has its members");
+void testIdentities(const std::string& suiteId, size_t minMembers) {
+  const auto& ms = suite::members(suiteId);
+  const std::string label = suiteId == "gridline" ? "suite: " : "suite " + suiteId + ": ";
+  expect(ms.size() >= minMembers, (label + "has its members").c_str());
   std::set<std::string> clap, vst3, au, names;
   int inst = 0, fx = 0;
   bool shapes = true, stable = true, sidechain = true;
@@ -178,25 +187,26 @@ void testIdentities() {
     sidechain = sidechain && (m.sidechain == (kSidechainFx.count(m.type) > 0));
     if (m.sidechain != (kSidechainFx.count(m.type) > 0)) std::printf("# sidechain mismatch: %s\n", m.type.c_str());
   }
-  std::printf("# suite: %d instruments, %d effects\n", inst, fx);
+  std::printf("# suite %s: %d instruments, %d effects\n", suiteId.c_str(), inst, fx);
   expect(clap.size() == ms.size() && vst3.size() == ms.size() && au.size() == ms.size() && names.size() == ms.size(),
-         "suite: CLAP ids, VST3 class ids, AU codes and names are unique");
-  expect(shapes, "suite: ids follow the documented scheme (org.gridline.suite.<name>, GRIDLINESUIT + hash, GrLn lower-case subtype)");
-  expect(stable, "suite: the VST3 / AU identity is the FNV-1a hash of the type alone");
-  expect(sidechain, "suite: sidechain members are the effects whose DSP reads the sidechain");
+         (label + "CLAP ids, VST3 class ids, AU codes and names are unique").c_str());
+  expect(shapes, (label + "ids follow the documented scheme (org.gridline.suite.<name>, GRIDLINESUIT + hash, GrLn lower-case subtype)").c_str());
+  expect(stable, (label + "the VST3 / AU identity is the FNV-1a hash of the type alone").c_str());
+  expect(sidechain, (label + "sidechain members are the effects whose DSP reads the sidechain").c_str());
   // Gridline's own plugins: CLAP org.gridline.gridline(-fx), VST3 GRIDLINEPLUG 1/2, AU GrIn / GrFx.
   bool clash = false;
   for (const auto& m : ms) {
     clash = clash || m.clapId == "org.gridline.gridline" || m.clapId == "org.gridline.gridline-fx" || m.vst3Uid[2] == 0x504C5547u ||
             m.auSubtype == 0x4772496Eu || m.auSubtype == 0x47724678u;
   }
-  expect(!clash, "suite: no identity collides with Gridline / Gridline FX");
+  expect(!clash, (label + "no identity collides with Gridline / Gridline FX").c_str());
   // Lookups.
   bool lookups = true;
   for (const auto& m : ms)
     lookups = lookups && suite::byClapId(m.clapId) == &m && suite::byVst3Uid(m.vst3Uid) == &m && suite::byAu(m.auType, m.auSubtype) == &m &&
               suite::findMember(m.type) == &m;
-  expect(lookups, "suite: lookups by CLAP id, VST3 uid, AU code and type");
+  expect(lookups, (label + "lookups by CLAP id, VST3 uid, AU code and type").c_str());
+  if (suiteId != "gridline") return;
   // Every built-in plugin is either a member or excluded with a reason.
   bool accounted = true;
   for (const PluginInfo& p : pluginCatalog()) {
@@ -205,6 +215,22 @@ void testIdentities() {
     accounted = accounted && (member != !suite::exclusionReason(p).empty());
   }
   expect(accounted, "suite: every built-in plugin is a member or excluded with a reason");
+}
+
+// Identities stay unique across all suites (a host sees every bundle at once).
+void testAcrossSuites() {
+  std::set<std::string> clap, vst3, au;
+  size_t n = 0;
+  for (const suite::Suite& s : suite::suites())
+    for (const auto& m : suite::members(s.id)) {
+      clap.insert(m.clapId);
+      vst3.insert(vst3Key(m));
+      au.insert(auKey(m));
+      ++n;
+    }
+  std::printf("# suites: %zu members in %zu suites\n", n, suite::suites().size());
+  expect(suite::findSuite("mini") && suite::members("mini").size() == 35, "suite mini: Gridline Suite Mini holds its 35 effects");
+  expect(clap.size() == n && vst3.size() == n && au.size() == n, "suites: CLAP ids, VST3 class ids and AU codes are unique across every suite");
 }
 
 // ---------------------------------------------------------------- one format
@@ -326,9 +352,9 @@ std::vector<float> renderFx(Inst& i, int frames, float scGain = 0.f) {
   return L;
 }
 
-void testFormat(const FormatRun& fr, const std::string& bundle, bool full) {
-  const auto& ms = suite::members("gridline");
-  const std::string tag = "suite " + fr.format + ": ";
+void testFormat(const std::string& suiteId, const FormatRun& fr, const std::string& bundle, bool full) {
+  const auto& ms = suite::members(suiteId);
+  const std::string tag = suiteId == "gridline" ? "suite " + fr.format + ": " : "suite " + suiteId + " " + fr.format + ": ";
   auto name = [&](const std::string& s) { return tag + s; };
   const auto t0 = std::chrono::steady_clock::now();
 
@@ -348,7 +374,7 @@ void testFormat(const FormatRun& fr, const std::string& bundle, bool full) {
   expect(scanOk && classes == ms.size(), name("scan finds every member").c_str());
   for (const auto& r : scans) host::registerScanResult(r);
 
-  int described = 0, silentInst = 0, badFx = 0, roundTrips = 0, compatible = 0, automated = 0, instantiated = 0;
+  int described = 0, silentInst = 0, badFx = 0, roundTrips = 0, compatible = 0, automated = 0, instantiated = 0, played = 0;
   std::vector<std::string> problems;
   for (const auto& m : ms) {
     const std::string key = fr.key(m);
@@ -380,10 +406,11 @@ void testFormat(const FormatRun& fr, const std::string& bundle, bool full) {
       problems.push_back(m.type + " description (name '" + c->name + "', vendor '" + c->vendor + "', params " + std::to_string(c->params.size()) +
                          ", in " + std::to_string(c->inputChannels) + ", sidechain " + std::to_string(c->sidechainChannels) + ", events " +
                          std::to_string(c->eventInput) + ")");
-    if (!full && &m != &ms.front() && m.type != "gl.comp" && m.type != "gl.scduck" && m.type != "gl.reverb" && m.type != "gl.fm") continue;
+    if (!full && &m != &ms.front() && !kQuickPlay.count(m.type)) continue;
 
     if (const char* only = std::getenv("GRIDLINE_SUITE_ONLY"))  // debugging one member
       if (m.type != only) continue;
+    ++played;
     const std::string pluginType = fr.format + ":" + key;
     Inst a = make(pluginType, m.instrument);
     if (!a.hi) {
@@ -462,7 +489,7 @@ void testFormat(const FormatRun& fr, const std::string& bundle, bool full) {
       ++automated;
     }
   }
-  const size_t expectN = full ? ms.size() : 5;
+  const size_t expectN = static_cast<size_t>(played);
   expect(described == static_cast<int>(ms.size()), name("every member: name, vendor Gridline, buses and named parameters").c_str());
   expect(instantiated == static_cast<int>(expectN), name("members instantiate").c_str());
   expect(silentInst == 0, name("instruments: a note makes sound (sample players: finite)").c_str());
@@ -472,7 +499,7 @@ void testFormat(const FormatRun& fr, const std::string& bundle, bool full) {
   expect(automated == static_cast<int>(expectN), name("host automation reaches the plugin's parameter").c_str());
   for (const auto& s : problems) std::printf("# %s problem: %s\n", fr.format.c_str(), s.c_str());
   const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-  std::printf("# %s: %zu members, %.1f s\n", fr.format.c_str(), expectN, secs);
+  std::printf("# %s %s: %zu members, %.1f s\n", suiteId.c_str(), fr.format.c_str(), expectN, secs);
 }
 
 // Mix and sidechain through the host (CLAP).
@@ -546,14 +573,21 @@ int main(int argc, char** argv) {
   std::setvbuf(stdout, nullptr, _IONBF, 0);  // a crash keeps every line printed so far
   // "--quick": every member is scanned, a few are played (the full run plays all of them in every format).
   const bool quick = argc > 1 && std::strcmp(argv[1], "--quick") == 0;
-  testIdentities();
-  testFormat({"clap", clapKey, clapWrap}, kClap, true);
-  testFormat({"vst3", vst3Key, vst3Wrap}, kVst3, !quick);
+  testIdentities("gridline", 100);
+  testIdentities("mini", 35);
+  testAcrossSuites();
+  testFormat("gridline", {"clap", clapKey, clapWrap}, kClap, true);
+  testFormat("gridline", {"vst3", vst3Key, vst3Wrap}, kVst3, !quick);
+  testFormat("mini", {"clap", clapKey, clapWrap}, kMiniClap, true);
+  testFormat("mini", {"vst3", vst3Key, vst3Wrap}, kMiniVst3, !quick);
   testMixAndSidechain();
-  testEditors("clap", {"org.gridline.suite.synth", "org.gridline.suite.comp", "org.gridline.suite.reverb", "org.gridline.suite.plasma", "org.gridline.suite.eq"});
+  testEditors("clap", {"org.gridline.suite.synth", "org.gridline.suite.comp", "org.gridline.suite.reverb", "org.gridline.suite.plasma", "org.gridline.suite.eq",
+                       "org.gridline.suite.minipress", "org.gridline.suite.minipulse"});
 #if defined(__APPLE__)
-  expect(registerAu(), "suite au: Gridline Suite.component's units registered in this process (not installed)");
-  testFormat({"au", auKey, auData}, GRIDLINE_SUITE_AU, !quick);
+  expect(registerAu("gridline", GRIDLINE_SUITE_AU), "suite au: Gridline Suite.component's units registered in this process (not installed)");
+  testFormat("gridline", {"au", auKey, auData}, GRIDLINE_SUITE_AU, !quick);
+  expect(registerAu("mini", GRIDLINE_MINI_AU), "suite mini au: Gridline Suite Mini.component's units registered in this process (not installed)");
+  testFormat("mini", {"au", auKey, auData}, GRIDLINE_MINI_AU, !quick);
   testEditors("au", {"aumu/kcxv/GrLn", "aufx/pyjy/GrLn"});
 #endif
   return finish();

@@ -653,7 +653,7 @@ void editorFpc(App& a, const PluginTarget& t, float width) {
   cap(503, 35, "1-SHOT");
   // Note: click → menu (learn from the keyboard strip / base note mapping).
   {
-    iskin::text(k, 556, 44, 36, 13, "NOTE", 7.5f, k.c.label, 2, false, true);
+    iskin::text(k, 556, 42, 36, 13, "NOTE", 7.5f, k.c.label, 2, false, true);  // J-128: on the switch captions line
     iskin::digi(a, t, k, padE(pad, PadNote), 594, 42, 46, 16, [&](double v) {
       int n = static_cast<int>(std::lround(v));
       return n < 0 ? ed::noteName(padNoteOf(st, pad)) + "*" : ed::noteName(n);

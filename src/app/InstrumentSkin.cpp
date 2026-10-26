@@ -7,6 +7,7 @@
 #include <map>
 #include "../../third_party/imgui/imgui_internal.h"
 #include "App.h"
+#include "LayoutAudit.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -68,7 +69,7 @@ Skin begin(float width, float formW, float formH, const Palette& pal) {
   k.o = ImGui::GetCursorScreenPos();
   k.s = width / formW;
   k.c = pal;
-  (void)formH;
+  audit::group(k.o, k.at(formW, formH), "form");  // J-128
   return k;
 }
 
@@ -80,6 +81,7 @@ void end(const Skin& k, float formH) {
 void background(const Skin& k, float x, float y, float w, float h, ImU32 top, ImU32 bottom, float round) {
   ImDrawList* dl = k.dl();
   ImVec2 a = k.at(x, y), b = k.at(x + w, y + h);
+  audit::group(a, b, "panel");  // J-128: a section for the alignment check
   if (round > 0) {
     // Rounded: solid blend, then the gradient inset by the radius.
     dl->AddRectFilled(a, b, lerp(top, bottom, 0.5f), k.px(round));
@@ -92,6 +94,7 @@ void background(const Skin& k, float x, float y, float w, float h, ImU32 top, Im
 void bevel(const Skin& k, float x, float y, float w, float h, ImU32 fill, ImU32 edge, float round) {
   ImDrawList* dl = k.dl();
   ImVec2 a = k.at(x, y), b = k.at(x + w, y + h);
+  audit::group(a, b, "bevel");  // J-128
   dl->AddRectFilled(a, b, fill, k.px(round));
   if (edge) dl->AddRect(a, b, edge, k.px(round), 0, 1.0f);
 }
@@ -106,7 +109,7 @@ void text(const Skin& k, float x, float y, float w, float h, const char* s, floa
   float tx = align == 1 ? (a.x + b.x - ts.x) * 0.5f : align == 2 ? b.x - ts.x : a.x;
   float ty = (a.y + b.y - ts.y) * 0.5f;
   dl->PushClipRect(ImVec2(a.x - 1, a.y - 2), ImVec2(b.x + 1, b.y + 2), true);
-  ui::drawLabel(dl, f, fs, ImVec2(std::floor(tx), std::floor(ty)), col, s);
+  ui::drawLabel(dl, f, fs, ImVec2(std::round(tx), std::round(ty)), col, s);  // J-128: nearest pixel
   dl->PopClipRect();
 }
 

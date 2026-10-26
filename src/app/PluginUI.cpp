@@ -187,34 +187,6 @@ uint32_t brandRole(BrandFamily f) {
   return 0;
 }
 
-bool wordmark(App& a, const std::string& type, float size) {
-  const PluginBrand* b = pluginBrand(type);
-  const PluginInfo* info = findPlugin(type);
-  if (!b || b->family == BrandFamily::None || !info || !a.fontBold) return false;
-  // Lower-case name in Inter Bold, tracked like the Gridline lockup
-  // (-3 units at 104), after a family accent bar.
-  std::string word = info->name;
-  for (char& c : word) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  const float track = -size * 3.0f / 104.0f, barW = 3.0f, gap = 7.0f;
-  ImFontBaked* fb = a.fontBold->GetFontBaked(size);
-  float w = 0;
-  for (size_t i = 0; i < word.size(); ++i) w += fb->GetCharAdvance(static_cast<ImWchar>(word[i])) + (i + 1 < word.size() ? track : 0.0f);
-  const float h = std::max(ImGui::GetFrameHeight(), size + 4.0f);
-  const ImVec2 p = ImGui::GetCursorScreenPos();
-  ImGui::InvisibleButton("##wordmark", ImVec2(barW + gap + w, h));
-  if (ImGui::IsItemHovered() && b->tagline[0]) ui::Hint(info->name + "  \xC2\xB7  " + b->tagline);
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  const ImU32 accent = theme::litRole(brandRole(b->family));
-  dl->AddRectFilled(ImVec2(p.x, p.y + h * 0.2f), ImVec2(p.x + barW, p.y + h * 0.8f), accent);
-  float x = p.x + barW + gap;
-  const float top = p.y + (h - size) * 0.5f;
-  for (char c : word) {
-    const char one[2] = {c, 0};
-    dl->AddText(a.fontBold, size, ImVec2(x, top), pal().text, one);
-    x += fb->GetCharAdvance(static_cast<ImWchar>(c)) + track;
-  }
-  return true;
-}
 }  // namespace pui
 
 void drawPluginHeader(App& a, const PluginTarget& t) {
@@ -256,7 +228,7 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
   };
   (void)menuOpening;
 
-  if (!pui::wordmark(a, info->type, 18.0f)) {  // J-94: flagships show their wordmark
+  if (!pui::wordmark(a, info->type, 18.0f)) {  // J-130: every built-in plugin shows its wordmark; hosted plugins their name
     ImGui::PushFont(a.fontBold, 15.0f);
     ImGui::TextUnformatted(info->name.c_str());
     ImGui::PopFont();
@@ -564,7 +536,9 @@ void drawFreqGrid(ImDrawList* dl, ImVec2 p0, ImVec2 p1, double dbRange, bool lab
   for (double db = -dbRange; db <= dbRange + 0.01; db += dbRange / 3) {
     float y = p0.y + h * 0.5f - static_cast<float>(db / dbRange) * h * 0.5f;
     dl->AddLine(ImVec2(p0.x, y), ImVec2(p1.x, y), std::fabs(db) < 0.01 ? P.lineStrong : P.gridStep);
-    if (labels && std::fabs(db) > 0.01 && std::fabs(db) < dbRange - 0.01) {  // J-93: edge values would sit outside the well
+    // J-128: a short grid labels only the inner lines (its lines are closer than a label is tall)
+    const bool roomy = h / 6 >= 13 || std::fabs(db) < dbRange * 0.5;
+    if (labels && roomy && std::fabs(db) > 0.01 && std::fabs(db) < dbRange - 0.01) {  // J-93: edge values would sit outside the well
       char buf[16];
       std::snprintf(buf, sizeof buf, "%+.0f", db);
       ImGui::PushFont(app().fontMono, 10.0f);
@@ -825,6 +799,7 @@ bool dragParamItem(App& a, ParamId pid, const ParamDesc& d, double& val, float p
 }
 bool dragParamTrack(App& a, ParamId pid, const ParamDesc& d, double& val, float trackStart, float trackLen, bool horizontal) {
   const Track tr{trackStart, trackLen};
+  audit::nextKind(align::kSlider);  // J-128
   const bool changed = dragParam(a, pid, d, val, trackLen, horizontal, &tr);
   DevTrack& dv = devTracks()[pid.index];
   const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
@@ -880,6 +855,7 @@ bool knobImpl(App& a, const PluginTarget& t, int param, const char* label, float
   ImGui::SetCursorScreenPos(ImVec2(p.x + (cell - radius * 2) * 0.5f, p.y));
   ImGui::InvisibleButton("##k", ImVec2(radius * 2, radius * 2));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  audit::nextKind(align::kKnob);  // J-128
   bool changed = dragParam(a, pid, *d, val, 160.0f, false);
   bool bip = d->min < 0 && d->max > 0;
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -888,13 +864,13 @@ bool knobImpl(App& a, const PluginTarget& t, int param, const char* label, float
   if (text) {
     std::string vs = d->format(val);
     ImGui::PushFont(a.fontMono, 10.5f);
-    ImVec2 ts = ImGui::CalcTextSize(vs.c_str());
+    ImVec2 ts = ui::TextSizeExact(vs.c_str());
     float y = p.y + radius * 2 + 3;
     dl->AddText(ImVec2(p.x + (cell - ts.x) * 0.5f, y), act ? pal().paper : pal().text, vs.c_str());
     ImGui::PopFont();
     const char* lbl = label ? label : d->name.c_str();
     ImGui::PushFont(nullptr, 12.0f);
-    ts = ImGui::CalcTextSize(lbl);
+    ts = ui::TextSizeExact(lbl);
     float lx = p.x + std::max(0.0f, (cell - ts.x) * 0.5f);
     dl->PushClipRect(ImVec2(p.x - 2, y), ImVec2(p.x + cell + 2, y + 40), true);
     dl->AddText(ImVec2(lx, y + 14), pal().textDim, lbl);
@@ -1009,7 +985,7 @@ bool hslider(App& a, const PluginTarget& t, int param, const char* label, float 
   ImGui::PopFont();
   std::string vs = d->format(val);
   ImGui::PushFont(a.fontMono, 10.5f);
-  ImVec2 ts = ImGui::CalcTextSize(vs.c_str());
+  ImVec2 ts = ui::TextSizeExact(vs.c_str());
   dl->AddText(ImVec2(p.x + width - ts.x - 7, p.y + 5), P.text, vs.c_str());
   ImGui::PopFont();
   ImGui::PopID();
@@ -1045,11 +1021,11 @@ bool vslider(App& a, const PluginTarget& t, int param, const char* label, ImVec2
   if (label) {
     std::string vs = d->format(val);
     ImGui::PushFont(a.fontMono, 10.0f);
-    ImVec2 ts = ImGui::CalcTextSize(vs.c_str());
+    ImVec2 ts = ui::TextSizeExact(vs.c_str());
     dl->AddText(ImVec2(cx - ts.x * 0.5f, p.y + size.y + 3), P.text, vs.c_str());
     ImGui::PopFont();
     ImGui::PushFont(nullptr, 11.5f);
-    ts = ImGui::CalcTextSize(label);
+    ts = ui::TextSizeExact(label);
     dl->AddText(ImVec2(cx - ts.x * 0.5f, p.y + size.y + 16), P.textDim, label);
     ImGui::PopFont();
     ImGui::Dummy(ImVec2(size.x, 30));
@@ -1069,7 +1045,7 @@ bool led(App& a, const PluginTarget& t, int param, const char* label) {
   const char* lbl = label ? label : d->name.c_str();
   ImGui::PushID(param);
   ImVec2 p = ImGui::GetCursorScreenPos();
-  ImVec2 ts = ImGui::CalcTextSize(lbl);
+  ImVec2 ts = ui::TextSizeExact(lbl);
   ImVec2 sz(ts.x + 26, 22);
   bool pressed = ImGui::InvisibleButton("##led", sz);
   bool hov = ImGui::IsItemHovered();
@@ -1126,7 +1102,7 @@ bool segmented(App& a, const PluginTarget& t, int param, float width, const char
       dl->AddRectFilled(ImVec2(q.x + 2, q.y + 2), ImVec2(q.x + cw - 2, q.y + h - 2), P.surface700, 4);
     if (on && sk) dl->AddRectFilled(ImVec2(q.x + 4, q.y + h * 0.5f - 2), ImVec2(q.x + 7, q.y + h * 0.5f + 2), sk->select, 1);
     const char* lbl = labels ? labels[i] : d->choices[static_cast<size_t>(i)].c_str();
-    ImVec2 ts = ImGui::CalcTextSize(lbl);
+    ImVec2 ts = ui::TextSizeExact(lbl);
     dl->PushClipRect(q, ImVec2(q.x + cw, q.y + h), true);
     ImU32 onText = sk ? skin::lighten(sk->select, 0.4f) : P.ink;
     dl->AddText(ImVec2(q.x + std::max(3.0f, (cw - ts.x) * 0.5f), q.y + (h - ts.y) * 0.5f), on ? onText : hov ? P.text : P.textDim, lbl);
@@ -1201,7 +1177,7 @@ bool stepper(App& a, const PluginTarget& t, int param, float width, const char* 
   ui::drawIcon(dl, ui::Icon::Right, ImVec2(p.x + width - 9, p.y + h * 0.5f), 9, P.textDim);
   std::string vs = d->format(val);
   ImGui::PushFont(a.fontMono, 11.0f);
-  ImVec2 ts = ImGui::CalcTextSize(vs.c_str());
+  ImVec2 ts = ui::TextSizeExact(vs.c_str());
   dl->AddText(ImVec2(p.x + (width - ts.x) * 0.5f, p.y + (h - ts.y) * 0.5f), P.text, vs.c_str());
   ImGui::PopFont();
   if (hov) a.setHint(d->name + ": " + vs + "   (click left/right or wheel)");

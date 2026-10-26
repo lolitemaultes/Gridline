@@ -1,6 +1,8 @@
 // Gridline: built-in stand-ins for a few third-party plugins that are not
 // installed (user decision, see AGENTS.md). Serum and Serum 2 open as Plasma
-// ("gl.plasma"), Kickstart and Kickstart 2 as Tideline ("gl.tideline").
+// ("gl.plasma"), Kickstart and Kickstart 2 as Tideline ("gl.tideline"), and
+// the Kilohearts single effects as their Gridline Suite Mini counterparts
+// (packs/mini/mini_khs.h: one table of identifiers and parameter mappings).
 //
 // A stand-in is an ordinary built-in plugin state whose PluginState::original
 // holds the plugin it replaces: its type, parameters and its own state, never
@@ -27,17 +29,21 @@ struct Song;
 
 namespace gl::standin {
 
-enum class Family { None, Serum1, Serum2, Kickstart1, Kickstart2 };
+enum class Family { None, Serum1, Serum2, Kickstart1, Kickstart2, Kilohearts };
 
 // The family of a hosted type (by its plugin ids, else by name + vendor).
 Family familyOf(const std::string& type, const std::string& name = "", const std::string& vendor = "");
-const char* familyName(Family f);       // "Serum", "Serum 2", "Kickstart", "Kickstart 2"
-const char* standInType(Family f);      // "gl.plasma", "gl.tideline" ("" for None)
-const char* standInName(Family f);      // "Plasma", "Tideline"
+const char* familyName(Family f);       // "Serum", "Serum 2", "Kickstart", "Kickstart 2", "Kilohearts"
+const char* standInType(Family f);      // "gl.plasma", "gl.tideline" ("" for None and Kilohearts: one per plugin)
+const char* standInName(Family f);      // "Plasma", "Tideline", "Gridline Suite Mini"
+// The stand-in of one plugin: its built-in type ("gl.minipress") and the
+// name the plugin goes by ("kHs Compressor"; the family name for the others).
+std::string standInTypeOf(const std::string& type, const std::string& name = "", const std::string& vendor = "");
+std::string pluginNameOf(const std::string& type, const std::string& name = "", const std::string& vendor = "");
 
 // Plugins treated as not installed: the environment variable
 // GRIDLINE_HIDE_PLUGINS (comma-separated hosted types, plugin names or
-// family words: "serum", "kickstart", "all") plus setHiddenPlugins (tests).
+// family words: "serum", "kickstart", "kilohearts", "all") plus setHiddenPlugins (tests).
 void setHiddenPlugins(const std::vector<std::string>& entries);
 bool hidden(const std::string& type, const std::string& name = "");
 // The hosted class is registered (scanned) and not hidden.
@@ -93,7 +99,8 @@ bool makeStandIn(const PluginState& orig, const std::string& name, const std::st
 bool isStandIn(const PluginState& s);
 // The original state kept by a stand-in (empty when none).
 PluginState originalState(const PluginState& s);
-// UI text: "Serum 2 is not installed: Plasma plays its sound" and the notes.
+// UI text: "Serum 2 is not installed: Plasma plays its sound" ("Not installed:
+// kHs Compressor, using Gridline Suite Mini Press" for Kilohearts) and the notes.
 std::string describe(const PluginState& s);
 std::vector<std::string> notes(const PluginState& s);
 // One line per stand-in of the song ("Serum 2 (Lead) is not installed: Plasma plays it").

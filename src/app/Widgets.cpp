@@ -10,6 +10,7 @@
 #include <vector>
 #include "../../third_party/imgui/imgui_internal.h"
 #include "LayoutAudit.h"
+#include "AlignAudit.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "App.h"
 #include "Keys.h"
@@ -153,6 +154,12 @@ void drawIconGlyph(ImDrawList* dl, Icon icon, ImVec2 c, float unitPx, float oldS
   icons::drawGlyph(dl, iconSvgName(icon), c, unitPx, oldStroke, col);
 }
 
+ImVec2 TextSizeExact(const char* s) {
+  ImFont* f = ImGui::GetFont();
+  if (!f || !s) return ImVec2(0, ImGui::GetFontSize());
+  return f->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0.0f, s, ImGui::FindRenderedTextEnd(s));
+}
+
 const char* labelText(const char* s) {
   if (!s || s[0] != '\x1b') return s;
   const char* t = std::strchr(s, '\x1f');
@@ -172,8 +179,8 @@ void drawLabel(ImDrawList* dl, ImFont* font, float size, ImVec2 pos, ImU32 col, 
   ImFontBaked* baked = font ? font->GetFontBaked(size) : nullptr;
   if (!baked) return;
   const float k = size / baked->Size;
-  // AddText snaps the start to whole pixels (truncating), then advances by the glyphs' widths.
-  pos = ImVec2(static_cast<float>(static_cast<int>(pos.x)), static_cast<float>(static_cast<int>(pos.y)));
+  // AddText snaps the start to the nearest whole pixel (J-128), then advances by the glyphs' widths.
+  pos = ImVec2(std::floor(pos.x + 0.5f), std::floor(pos.y + 0.5f));
   float x = pos.x, x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
   for (const char* c = text; *c;) {
     unsigned int ch = 0;
@@ -196,8 +203,13 @@ void installGlyphHook() { icons::atlas(); }
 bool IconButton(const char* id, Icon icon, bool active, float size, const char* hint, ImU32 activeCol, ImU32 idleCol, bool onPress) {
   ImGui::PushID(id);
   ImVec2 p = ImGui::GetCursorScreenPos();
-  bool pressed = ImGui::InvisibleButton("##ib", ImVec2(size, size), onPress ? static_cast<ImGuiButtonFlags>(ImGuiButtonFlags_PressedOnClick) : static_cast<ImGuiButtonFlags>(ImGuiButtonFlags_None));
-  bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+  // J-128: after a taller item on the same line (combo, text button), centre on
+  // the row instead of hanging from its top; the next item keeps the row's top.
+  ImGuiWindow* win = ImGui::GetCurrentWindow();
+  const float lineH = win->DC.IsSameLine ? win->DC.CurrLineSize.y : 0.0f;
+  const float dy = lineH > size + 1.0f && lineH < size * 2.0f ? std::floor((lineH - size) * 0.5f) : 0.0f;
+  if (dy > 0) p.y += dy, ImGui::SetCursorScreenPos(p);
+  bool pressed = ImGui::InvisibleButton("##ib", ImVec2(size, size), onPress ? static_cast<ImGuiButtonFlags>(ImGuiButtonFlags_PressedOnClick) : static_cast<ImGuiButtonFlags>(ImGuiButtonFlags_None));  bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const auto& P = pal();
   // Studio look (both themes): an active button keeps a quiet raised face and
@@ -449,7 +461,10 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   float w = std::max(radius * 2.0f, label ? ImGui::GetFont()->CalcTextSizeA(labelFs, 1e9f, 0, label).x : 0.0f);
   ImVec2 p = ImGui::GetCursorScreenPos();
   float labelH = label ? labelFs + 2.0f : 0.0f;
-  ImGui::InvisibleButton("##knob", ImVec2(w, radius * 2.0f + labelH + 2));
+  // J-128: without a label the item is exactly the face, so the item's centre is the
+  // knob's centre (rows of bare knobs line up with the controls beside them).
+  alignaudit::nextKind(align::kKnob);  // J-128 panel audit: a dial, not a button
+  ImGui::InvisibleButton("##knob", ImVec2(w, radius * 2.0f + (label ? labelH + 2 : 0.0f)));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   const WheelGate wg = wheelGate();  // J-83
   bool changed = false;

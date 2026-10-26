@@ -248,6 +248,7 @@ endif()
 
 # J-131: the plugin suites (one line each; ids, names and bundle ids as in core/PluginSuite.cpp kSuites).
 gridline_suite(gridline "Gridline Suite" org.gridline.GridlineSuite)
+gridline_suite(mini "Gridline Suite Mini" org.gridline.GridlineSuiteMini)
 
 # ---- installing (never done by the build or the tests) ----
 # The plugins are installed with `--component plugins` only, unless GRIDLINE_INSTALL_PLUGINS is
@@ -328,9 +329,12 @@ target_link_libraries(gridline_tests_suite PRIVATE gridline_core)
 target_include_directories(gridline_tests_suite PRIVATE tests)
 target_compile_options(gridline_tests_suite PRIVATE ${GL_WARN})
 target_compile_definitions(gridline_tests_suite PRIVATE GRIDLINE_SUITE_CLAP="${GRIDLINE_PLUGIN_DIR}/Gridline Suite.clap"
-                           GRIDLINE_SUITE_VST3="${GRIDLINE_PLUGIN_DIR}/Gridline Suite.vst3")
-add_dependencies(gridline_tests_suite gridline_suite_gridline)
+                           GRIDLINE_SUITE_VST3="${GRIDLINE_PLUGIN_DIR}/Gridline Suite.vst3"
+                           GRIDLINE_MINI_CLAP="${GRIDLINE_PLUGIN_DIR}/Gridline Suite Mini.clap"
+                           GRIDLINE_MINI_VST3="${GRIDLINE_PLUGIN_DIR}/Gridline Suite Mini.vst3")
+add_dependencies(gridline_tests_suite gridline_suite_gridline gridline_suite_mini)
 if(APPLE)
-  target_compile_definitions(gridline_tests_suite PRIVATE GRIDLINE_SUITE_AU="${GRIDLINE_PLUGIN_DIR}/Gridline Suite.component")
+  target_compile_definitions(gridline_tests_suite PRIVATE GRIDLINE_SUITE_AU="${GRIDLINE_PLUGIN_DIR}/Gridline Suite.component"
+                             GRIDLINE_MINI_AU="${GRIDLINE_PLUGIN_DIR}/Gridline Suite Mini.component")
 endif()
 add_test(NAME suite COMMAND gridline_tests_suite WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

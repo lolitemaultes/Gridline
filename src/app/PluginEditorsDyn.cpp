@@ -48,7 +48,8 @@ void transferPlot(ImDrawList* dl, ImVec2 p, float size, double lo, double hi, co
     const ImU32 gc = std::fabs(db) < 0.01 ? P.gridBar : P.gridStep;
     dl->AddLine(ImVec2(X(db), p.y + pad), ImVec2(X(db), p.y + size - pad), gc);
     dl->AddLine(ImVec2(p.x + pad, Y(db)), ImVec2(p.x + size - pad, Y(db)), gc);
-    if (db > lo + 1 && db < hi - 1) {  // J-93: axis values
+    const bool clearOfIn = X(db) + 3 + 6.0f * (db < 0 ? 3 : 1) < p.x + size - 26;  // J-128: not under the IN caption
+    if (db > lo + 1 && db < hi - 1 && clearOfIn) {                                   // J-93: axis values
       char b[8];
       std::snprintf(b, sizeof b, "%.0f", db);
       monoText(dl, ImVec2(X(db) + 3, p.y + size - pad - 12), theme::withAlpha(P.textFaint, 0.8f), b, 9.0f);

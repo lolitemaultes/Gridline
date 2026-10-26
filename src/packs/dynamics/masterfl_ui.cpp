@@ -414,7 +414,10 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
   skin::switchSel(a, t, S(X(MxEnvMode), RB(maxref::TSusMode)), f, 373, 292, 54, 28, hex(0x272C2E), hex(0xB9BFC3), envModes);
   skin::wheel(a, t, S(X(MxRelease2), RB(maxref::TRel2)), f, 258, 330, 46, 40, wEnv);
   skin::label(dl, f, 264, 369, 34, 12, "REL 2", lbl, lblBg, 7.5f);
-  if (!drawn) skin::label(dl, f, 312, 330, 110, 40, "Curve, Rel 2 and Peak/RMS apply to drawn curves", hex(0xC9D5D4, 0.6f), 0, 7.0f, 1, false);
+  if (!drawn) {  // J-128: three lines in the 110 x 40 box (one line was cut off)
+    static const char* note[3] = {"Curve, Rel 2 and", "Peak/RMS apply", "to drawn curves"};
+    for (int i = 0; i < 3; ++i) skin::label(dl, f, 312, 331 + i * 12.5f, 110, 12.5f, note[i], hex(0xC9D5D4, 0.6f), 0, 7.0f, 1, false);
+  }
   // ---- global
   skin::wheel(a, t, S(MsLookahead, RG(4)), f, 437, 218, 46, 46, wEnv);
   skin::label(dl, f, 435, 264, 50, 15, "LMH DEL", lbl, lblBg, 7.5f);

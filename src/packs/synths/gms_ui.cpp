@@ -64,40 +64,53 @@ void synthPage(App& a, const PluginTarget& t, const PluginState& st, const flk::
     const int wave = static_cast<int>(std::lround(k < kOscs ? st.params[static_cast<size_t>(osc(k, OsWave))] : 0));
     std::string file = wave == WvFile ? (wf.path[k].empty() ? "(no file)" : std::filesystem::path(wf.path[k]).stem().string()) : "";
     if (!file.empty()) flk::lcd(c, x + 8, o + 46, 130, 16, file.c_str());
-    flk::digi(c, osc(k, OsSemi), x + 12, o + 74, 36, 20);
-    flk::textC(c, x + 30, o + 98, "SEMI");
-    flk::wheel(c, osc(k, OsCents), x + 58, o + 70, 30, "Cents", skin::WheelBigLine | skin::WheelCentered);
-    if (k > 0) flk::wheel(cB, k == 1 ? GOsc2Mix : GOsc3Mix, x + 98, o + 68, 34, "Mix");
-    if (k == 1) {
-      flk::wheel(c, GOsc2Phase, x + 12, o + 118, 28, "Phase");
-      flk::chk(c, GOsc2Retrig, x + 54, o + 120, 80, 13, "RESET");
-      flk::chk(c, GOsc2Invert, x + 54, o + 138, 80, 13, "INVERT");
+    {
+      // J-128: semitone box, cents and mix on one centre line (o + 85), captions on one line.
+      const flk::Row row(c, o + 68, 34);
+      flk::digi(c, osc(k, OsSemi), x + 12, o + 75, 36, 20);
+      flk::textC(c, x + 30, o + 103.5f, "SEMI", 0, 7.5f);
+      flk::wheel(c, osc(k, OsCents), x + 58, o + 70, 30, "Cents", skin::WheelBigLine | skin::WheelCentered);
+      if (k > 0) flk::wheel(cB, k == 1 ? GOsc2Mix : GOsc3Mix, x + 98, o + 68, 34, "Mix");
     }
-    if (k == 0) {
-      flk::text(c, x + 12, o + 120, "OSC 2 MODULATES 1:");
-      flk::menu(c, GModKind, x + 12, o + 134, 70, 20);
-      flk::wheel(cR, GModAmt, x + 96, o + 120, 34, "Amount");
+    {
+      const flk::Row row(c, o + 118, 34);  // J-128: the lower wheels of the three oscillators on one line
+      if (k == 1) {
+        flk::wheel(c, GOsc2Phase, x + 12, o + 118, 28, "Phase");
+        flk::chk(c, GOsc2Retrig, x + 54, o + 120, 80, 13, "RESET");
+        flk::chk(c, GOsc2Invert, x + 54, o + 138, 80, 13, "INVERT");
+      }
+      if (k == 0) {
+        flk::text(c, x + 12, o + 120, "OSC 2 MODULATES 1:");
+        flk::menu(c, GModKind, x + 12, o + 134, 70, 20);
+        flk::wheel(cR, GModAmt, x + 96, o + 118, 34, "Amount");
+      }
+      if (k == 2) flk::wheel(c, GNoise, x + 12, o + 118, 30, "Noise");
     }
-    if (k == 2) flk::wheel(c, GNoise, x + 12, o + 118, 30, "Noise");
   }
   // ---- unison
   flk::section(c, 454, o + 4, 200, 166, "UNISON");
-  flk::digi(cG, GUniVoices, 466, o + 30, 30, 22);
-  flk::textC(c, 481, o + 56, "VOICES");
-  flk::wheel(cG, GUniDetune, 510, o + 26, 36, "Detune");
-  flk::wheel(cG, GUniStereo, 560, o + 26, 36, "Stereo");
-  flk::wheel(cG, GUniPhase, 608, o + 26, 36, "Phase");
+  {
+    const flk::Row row(c, o + 26, 36);  // J-128: voices box centred on the wheels' line
+    flk::digi(cG, GUniVoices, 466, o + 33, 30, 22);
+    flk::textC(c, 481, o + 63.5f, "VOICES", 0, 7.5f);
+    flk::wheel(cG, GUniDetune, 510, o + 26, 36, "Detune");
+    flk::wheel(cG, GUniStereo, 560, o + 26, 36, "Stereo");
+    flk::wheel(cG, GUniPhase, 608, o + 26, 36, "Phase");
+  }
   flk::chk(c, GUniRetrig, 466, o + 110, 120, 13, "PHASE RESET");
   // ---- master
   flk::section(c, 658, o + 4, 298, 166, "MASTER");
-  flk::wheel(c, GVolume, 670, o + 24, 42, "Volume");
-  flk::wheel(c, GLevel, 724, o + 28, 34, "Level", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(c, GPan, 770, o + 28, 34, "Pan", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(c, GPitch, 816, o + 28, 34, "Pitch", skin::WheelBigLine | skin::WheelCentered);
-  flk::digi(c, GOctave, 866, o + 34, 30, 20);
-  flk::textC(c, 881, o + 58, "OCT");
-  flk::digi(c, GBend, 910, o + 34, 30, 20);
-  flk::textC(c, 925, o + 58, "BEND");
+  {
+    const flk::Row row(c, o + 24, 42);  // J-128: one centre line (o + 45), one caption line
+    flk::wheel(c, GVolume, 670, o + 24, 42, "Volume");
+    flk::wheel(c, GLevel, 724, o + 28, 34, "Level", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(c, GPan, 770, o + 28, 34, "Pan", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(c, GPitch, 816, o + 28, 34, "Pitch", skin::WheelBigLine | skin::WheelCentered);
+    flk::digi(c, GOctave, 866, o + 35, 30, 20);
+    flk::textC(c, 881, o + 67.5f, "OCT", 0, 7.5f);
+    flk::digi(c, GBend, 910, o + 35, 30, 20);
+    flk::textC(c, 925, o + 67.5f, "BEND", 0, 7.5f);
+  }
   flk::chk(c, GMono, 670, o + 104, 70, 13, "MONO");
   flk::chk(c, GSlide, 670, o + 122, 70, 13, "SLIDE");
   flk::wheel(c, GSlideTime, 748, o + 104, 30, "Slide");
@@ -107,9 +120,12 @@ void synthPage(App& a, const PluginTarget& t, const PluginState& st, const flk::
   flk::section(c, 4, o + 174, 330, 166, "FILTER");
   static const char* kTypes[3] = {"LP", "BP", "HP"};
   flk::sw(c, GFltType, 16, o + 196, 30, 66, kTypes, 3);
-  flk::wheel(cB, GCutoff, 64, o + 196, 60, "Cutoff");
-  flk::wheel(cB, GReso, 140, o + 204, 44, "Reso");
-  flk::wheel(cB, GKey, 200, o + 210, 34, "Key");
+  {
+    const flk::Row row(c, o + 196, 60);  // J-128: cutoff, reso and key on one centre line
+    flk::wheel(cB, GCutoff, 64, o + 196, 60, "Cutoff");
+    flk::wheel(cB, GReso, 140, o + 204, 44, "Reso");
+    flk::wheel(cB, GKey, 200, o + 210, 34, "Key");
+  }
   flk::text(c, 16, o + 296, "LADDER 4-POLE  ·  2X OVERSAMPLED");
   // ---- amp envelope
   flk::section(c, 338, o + 174, 618, 166, "AMP ENVELOPE");
@@ -126,9 +142,12 @@ void synthPage(App& a, const PluginTarget& t, const PluginState& st, const flk::
     char title[16];
     std::snprintf(title, sizeof title, "ENV %d", k + 1);
     flk::section(c, x, o + 344, 186, 172, title);
-    flk::wheel(cG, eg(k, EgAmt), x + 12, o + 364, 40, "Amount", skin::WheelBigLine | skin::WheelCentered);
-    flk::wheel(cG, eg(k, EgAtt), x + 66, o + 368, 34, "Attack");
-    flk::wheel(cG, eg(k, EgDec), x + 116, o + 368, 34, "Decay");
+    {
+      const flk::Row row(c, o + 364, 40);  // J-128
+      flk::wheel(cG, eg(k, EgAmt), x + 12, o + 364, 40, "Amount", skin::WheelBigLine | skin::WheelCentered);
+      flk::wheel(cG, eg(k, EgAtt), x + 66, o + 368, 34, "Attack");
+      flk::wheel(cG, eg(k, EgDec), x + 116, o + 368, 34, "Decay");
+    }
     flk::text(c, x + 12, o + 438, "TARGET");
     flk::menu(c, eg(k, EgDest), x + 12, o + 452, 160, 20);
   }
@@ -137,8 +156,11 @@ void synthPage(App& a, const PluginTarget& t, const PluginState& st, const flk::
     char title[16];
     std::snprintf(title, sizeof title, "LFO %d", k + 1);
     flk::section(c, x, o + 344, 232, 172, title);
-    flk::wheel(cR, lfo(k, LfAmt), x + 12, o + 364, 40, "Amount", skin::WheelBigLine | skin::WheelCentered);
-    flk::wheel(cR, lfo(k, LfRate), x + 66, o + 368, 34, "Rate");
+    {
+      const flk::Row row(c, o + 364, 40);  // J-128
+      flk::wheel(cR, lfo(k, LfAmt), x + 12, o + 364, 40, "Amount", skin::WheelBigLine | skin::WheelCentered);
+      flk::wheel(cR, lfo(k, LfRate), x + 66, o + 368, 34, "Rate");
+    }
     flk::menu(c, lfo(k, LfShape), x + 116, o + 364, 104, 20);
     flk::menu(c, lfo(k, LfSync), x + 116, o + 390, 104, 20);
     flk::menu(c, lfo(k, LfDiv), x + 116, o + 416, 104, 20);
@@ -147,7 +169,10 @@ void synthPage(App& a, const PluginTarget& t, const PluginState& st, const flk::
     flk::menu(c, lfo(k, LfDest), x + 12, o + 460, 208, 20);
   }
   flk::section(c, 856, o + 344, 100, 172, "VELOCITY");
-  flk::wheel(c, GVelAmt, 882, o + 364, 44, "Amount", skin::WheelBigLine | skin::WheelCentered);
+  {
+    const flk::Row row(c, o + 362, 44);  // J-128: on the envelope / LFO rows' centre line (o + 384)
+    flk::wheel(c, GVelAmt, 882, o + 362, 44, "Amount", skin::WheelBigLine | skin::WheelCentered);
+  }
   flk::menu(c, GVelDest, 864, o + 440, 84, 20);
 }
 

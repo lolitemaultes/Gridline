@@ -797,20 +797,20 @@ void dwZonePage(App& a, const PluginTarget& t, const iskin::Skin& k, float ox, f
   iskin::wheel(a, t, k, MsLfoPitch, ox + 486, oy + 40, 30, grn, iskin::WheelBigLine);
   iskin::wheel(a, t, k, MsLfoCutoff, ox + 430, oy + 96, 30, grn, iskin::WheelBigLine);
   iskin::wheel(a, t, k, MsLfoAmp, ox + 486, oy + 96, 30, grn, iskin::WheelBigLine);
-  iskin::text(k, ox + 416, oy + 71, 64, 10, "RATE", 7.5f, k.c.textDim, 1, false, true);
-  iskin::text(k, ox + 472, oy + 71, 64, 10, "> PITCH", 7.5f, k.c.textDim, 1, false, true);
-  iskin::text(k, ox + 416, oy + 127, 64, 10, "> CUTOFF", 7.5f, k.c.textDim, 1, false, true);
-  iskin::text(k, ox + 472, oy + 127, 64, 10, "> VOLUME", 7.5f, k.c.textDim, 1, false, true);
+  iskin::text(k, ox + 413, oy + 71, 64, 10, "RATE", 7.5f, k.c.textDim, 1, false, true);  // J-128: labels centred on their wheels (x + 15)
+  iskin::text(k, ox + 469, oy + 71, 64, 10, "> PITCH", 7.5f, k.c.textDim, 1, false, true);
+  iskin::text(k, ox + 413, oy + 127, 64, 10, "> CUTOFF", 7.5f, k.c.textDim, 1, false, true);
+  iskin::text(k, ox + 469, oy + 127, 64, 10, "> VOLUME", 7.5f, k.c.textDim, 1, false, true);
   dwTabs(k, "##zt4", ox + 538, oy + 5, 124, {"MOD ENV"}, ui.zoneTab[4]);
   panel(539, 122);
   iskin::wheel(a, t, k, MsModAttack, ox + 556, oy + 40, 30, grn, iskin::WheelBigLine);
   iskin::wheel(a, t, k, MsModDecay, ox + 612, oy + 40, 30, grn, iskin::WheelBigLine);
   iskin::wheel(a, t, k, MsModPitch, ox + 556, oy + 96, 30, grn, iskin::WheelBigLine);
   iskin::wheel(a, t, k, MsEnvAmount, ox + 612, oy + 96, 30, grn, iskin::WheelBigLine);
-  iskin::text(k, ox + 542, oy + 71, 64, 10, "ATTACK", 7.5f, k.c.textDim, 1, false, true);
-  iskin::text(k, ox + 598, oy + 71, 64, 10, "DECAY", 7.5f, k.c.textDim, 1, false, true);
-  iskin::text(k, ox + 542, oy + 127, 64, 10, "> PITCH", 7.5f, k.c.textDim, 1, false, true);
-  iskin::text(k, ox + 598, oy + 127, 64, 10, "> CUTOFF", 7.5f, k.c.textDim, 1, false, true);
+  iskin::text(k, ox + 539, oy + 71, 64, 10, "ATTACK", 7.5f, k.c.textDim, 1, false, true);
+  iskin::text(k, ox + 595, oy + 71, 64, 10, "DECAY", 7.5f, k.c.textDim, 1, false, true);
+  iskin::text(k, ox + 539, oy + 127, 64, 10, "> PITCH", 7.5f, k.c.textDim, 1, false, true);
+  iskin::text(k, ox + 595, oy + 127, 64, 10, "> CUTOFF", 7.5f, k.c.textDim, 1, false, true);
   // Bottom strip: zone label + path.
   std::string info = zoneLabel(z) + "   " + noteName(z.lo) + "-" + noteName(z.hi) + "  vel " + std::to_string(z.vlo) + "-" + std::to_string(z.vhi) +
                      "  root " + noteName(z.root);

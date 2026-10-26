@@ -238,6 +238,7 @@ const InertDoc kInert[] = {
     {"gl.envctl", "Env * point *", "VERIFIED: simple engine with that many points and sustain off"},
     {"gl.envctl", "Env * LFO rate", "VERIFIED: simple engine with the LFO on and free (not synced)"},
     {"gl.gms", "DELAY Tone", "VERIFIED: filters the feedback, audible from the second echo on"},
+    {"gl.minihalt", "Start Time", "VERIFIED: shapes the spin-up after Run is switched back on (a static state never restarts)"},
     {"gl.grainscan", "Transient hold", "VERIFIED: with Key to = Transient (J-92 fix: now read)"},
     {"gl.hall", "Env sidechain", "VERIFIED: needs the sidechain input and an envelope target"},
     {"gl.harmor", "B F1 freq", "VERIFIED: part B on with its filter set"},

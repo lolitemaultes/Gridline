@@ -73,6 +73,10 @@ void drawIconGlyph(ImDrawList* dl, Icon icon, ImVec2 c, float unitPx, float oldS
 #define GL_ICON_LABEL(svg, text) "\x1b" svg "\x1f" text
 // The text an icon label stands for ("<" above), or `s` itself.
 const char* labelText(const char* s);
+// J-128: size of `s` in the current font without ImGui::CalcTextSize's rounding
+// up of the width (which pulls every centred label up to half a pixel left):
+// for centring text on a control.
+ImVec2 TextSizeExact(const char* s);
 // Draws the caption `s` at `pos` (as ImDrawList::AddText with `font` / `size`):
 // an icon label draws its SVG over the ink of its text, anything else draws as text.
 void drawLabel(ImDrawList* dl, ImFont* font, float size, ImVec2 pos, ImU32 col, const char* s);

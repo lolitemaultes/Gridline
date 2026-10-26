@@ -89,37 +89,48 @@ void drawModel(App& a, const PluginTarget& t, const skin::Form& F, ImDrawList* d
   const Cap caps[] = {{38, 104, "Mallet"}, {150, 106, "Membrane"}, {262, 50, "Low cut"},     {316, 48, "Sine"},
                       {368, 126, "Middle"}, {506, 52, "High"},      {562, 50, "Output"}, {618, 140, "Velocity · parameter / value"}};
   for (const auto& k : caps) flk::section(c, X(k.x), Y(42), k.w, 162, k.s);
-  flk::wheel(c, base + MdMalletAmp, X(47), Y(63), 30, "Level");
-  flk::wheel(c, base + MdMalletDecay, X(99), Y(63), 30, "Decay");
-  flk::wheel(c, base + MdMalletNoise, X(47), Y(113), 30, "Noise");
-  flk::wheel(c, base + MdMalletNoiseRp, X(99), Y(113), 30, "Pattern");
   flk::chk(c, base + MdMalletRetrig, X(48), Y(166), 70, 20, "RETRIG");
-  flk::wheel(cB, base + MdMemDecay, X(159), Y(61), 32, "Decay");
-  flk::wheel(cB, base + MdMemCutoff, X(214), Y(61), 32, "Cutoff");
-  flk::wheel(cB, base + MdTension, X(159), Y(110), 32, "Tension");
-  flk::wheel(cB, base + MdPhase, X(214), Y(110), 32, "Phase");
-  flk::wheel(cB, base + MdMaterial, X(159), Y(160), 32, "Material");
-  flk::wheel(cB, base + MdSize, X(214), Y(160), 32, "Size");
-  flk::wheel(cB, base + MdShape, X(271), Y(160), 32, "Shape");
-  flk::wheel(c, base + MdLowFreq, X(272), Y(63), 30, "Freq");
-  flk::wheel(c, base + MdLowReso, X(272), Y(113), 30, "Reso");
-  flk::wheel(c, base + MdSofFreq, X(324), Y(63), 30, "Freq");
-  flk::wheel(c, base + MdSofDecay, X(324), Y(113), 30, "Decay");
-  flk::wheel(c, base + MdSofLevel, X(324), Y(160), 30, "Level");
-  flk::wheel(c, base + MdMidFreq, X(376), Y(63), 30, "Freq");
-  flk::wheel(c, base + MdMidLevel, X(376), Y(113), 30, "Level");
-  flk::wheel(c, base + MdMidRes, X(376), Y(160), 30, "Reso");
-  flk::wheel(c, base + MdMidFreqMod, X(427), Y(63), 30, "Frq mod", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(c, base + MdMidLevelMod, X(427), Y(113), 30, "Lvl mod", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(c, base + MdMidAttack, X(427), Y(160), 30, "Attack");
+  // J-128: three rows across every section, each on one centre line and one
+  // label line (the 30 and 32 unit wheels used to sit 1 to 2 units apart).
+  {
+    const flk::Row row(c, Y(61), 32);
+    flk::wheel(c, base + MdMalletAmp, X(47), Y(63), 30, "Level");
+    flk::wheel(c, base + MdMalletDecay, X(99), Y(63), 30, "Decay");
+    flk::wheel(cB, base + MdMemDecay, X(159), Y(61), 32, "Decay");
+    flk::wheel(cB, base + MdMemCutoff, X(214), Y(61), 32, "Cutoff");
+    flk::wheel(c, base + MdLowFreq, X(272), Y(63), 30, "Freq");
+    flk::wheel(c, base + MdSofFreq, X(324), Y(63), 30, "Freq");
+    flk::wheel(c, base + MdMidFreq, X(376), Y(63), 30, "Freq");
+    flk::wheel(c, base + MdMidFreqMod, X(427), Y(63), 30, "Frq mod", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(c, base + MdHighFreq, X(516), Y(63), 30, "Freq");
+    flk::wheel(cB, base + MdHold, X(570), Y(61), 32, "Hold");
+  }
+  {
+    const flk::Row row(c, Y(110), 32);
+    flk::wheel(c, base + MdMalletNoise, X(47), Y(113), 30, "Noise");
+    flk::wheel(c, base + MdMalletNoiseRp, X(99), Y(113), 30, "Pattern");
+    flk::wheel(cB, base + MdTension, X(159), Y(110), 32, "Tension");
+    flk::wheel(cB, base + MdPhase, X(214), Y(110), 32, "Phase");
+    flk::wheel(c, base + MdLowReso, X(272), Y(113), 30, "Reso");
+    flk::wheel(c, base + MdSofDecay, X(324), Y(113), 30, "Decay");
+    flk::wheel(c, base + MdMidLevel, X(376), Y(113), 30, "Level");
+    flk::wheel(c, base + MdMidLevelMod, X(427), Y(113), 30, "Lvl mod", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(c, base + MdHighLevel, X(516), Y(113), 30, "Level");
+    flk::wheel(cB, base + MdLofi, X(570), Y(110), 32, "Lo-fi");
+  }
+  {
+    const flk::Row row(c, Y(160), 32);
+    flk::wheel(cB, base + MdMaterial, X(159), Y(160), 32, "Material");
+    flk::wheel(cB, base + MdSize, X(214), Y(160), 32, "Size");
+    flk::wheel(cB, base + MdShape, X(271), Y(160), 32, "Shape");
+    flk::wheel(c, base + MdSofLevel, X(324), Y(160), 30, "Level");
+    flk::wheel(c, base + MdMidRes, X(376), Y(160), 30, "Reso");
+    flk::wheel(c, base + MdMidAttack, X(427), Y(160), 30, "Attack");
+    flk::wheel(c, base + MdHighRes, X(516), Y(160), 30, "Reso");
+    flk::wheel(cB, base + MdPitch, X(570), Y(160), 32, "Pitch", skin::WheelBigLine | skin::WheelCentered);
+  }
   static const char* rep[] = {"-", "2", "3", "4"};
   flk::sw(c, base + MdRetrig, X(467), Y(110), 22, 66, rep, 4);
-  flk::wheel(c, base + MdHighFreq, X(516), Y(63), 30, "Freq");
-  flk::wheel(c, base + MdHighLevel, X(516), Y(113), 30, "Level");
-  flk::wheel(c, base + MdHighRes, X(516), Y(160), 30, "Reso");
-  flk::wheel(cB, base + MdHold, X(570), Y(61), 32, "Hold");
-  flk::wheel(cB, base + MdLofi, X(570), Y(110), 32, "Lo-fi");
-  flk::wheel(cB, base + MdPitch, X(570), Y(160), 32, "Pitch", skin::WheelBigLine | skin::WheelCentered);
   for (int r = 0; r < 4; ++r) {
     flk::menu(c, base + MdVelSrc1 + r, X(625), Y(70 + 34 * r), 88, 20);
     skin::wheel(a, t, base + MdVelAmt1 + r, F.p(X(723), Y(66 + 34 * r)), 26 * F.s, padSkin(), skin::WheelBigLine);

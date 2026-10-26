@@ -31,6 +31,7 @@
 #include "Viewports.h"
 #include "../core/I18n.h"
 #include "../core/UiScale.h"
+#include "AlignAudit.h"
 #include "HostedUi.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
@@ -192,7 +193,7 @@ void openAudio(App& a) {
   // J-48: the device is still paused, so the callback cannot be reading the clips.
   gUiSounds = nullptr;
   if (!a.uiSoundsDisabled && !a.assetsDir.empty()) {
-    a.uiSounds.loadAll((fs::path(a.assetsDir) / "sounds").string(), have.freq);
+    a.loadSoundTheme(have.freq, true);  // J-133: the chosen sound theme (assets/sounds/<theme>/)
     gUiSounds = &a.uiSounds;
   }
   std::snprintf(buf, sizeof buf, "Running on %s via %s: %d Hz, %d-frame buffer.", name ? name : "the default device",
@@ -1103,6 +1104,7 @@ int main(int argc, char** argv) {
   bool devMixerOnly = false;              // --show mixer: the mixer fills the window
   std::string devCollabDemo;              // --show collab-demo / collab-review / collab-demo-panel (J-111)
   float shotScale = 1.0f;                 // --scale F: framebuffer scale of an off-screen shot (HiDPI check)
+  std::string devAlignAudit;              // --align-audit <file> (J-128)
   float devUiScale = 0.0f;                // --ui-scale F: interface scale for this run only (not saved; J-54 layout checks)
   std::string devSaveAtExit;  // --save-at-exit path: project saved when the run ends (plugin state round trips)
   std::string devSaveAt;      // --save-at path: project saved at frame 3 (J-78: the notification shows in the shot)
@@ -1317,6 +1319,8 @@ int main(int argc, char** argv) {
       }
     } else if (arg == "--layout-audit" && i + 1 < argc) {  // Q-7: inset check of every editor + contact sheets
       browserui::beginAuditMode(app, argv[++i]);
+    } else if (arg == "--align-audit" && i + 1 < argc) {  // J-128: alignment check of every window on the last frame (TSV)
+      devAlignAudit = argv[++i];
     } else if (arg == "--binding-crawl") {  // J-92: --layout-audit also clicks through every editor (param_bindings.tsv)
       browserui::setBindingCrawl(true);
     } else if (arg == "--make-thumbs") {  // render every built-in editor into <config>/thumbs (plugin picker)
@@ -1597,6 +1601,8 @@ int main(int argc, char** argv) {
     ui::SetWindowRubber(scrollui::params().elastic);  // J-117: the same switch for the windows' elastic boundary
     scrollui::beforeNewFrame();
     ImGui::NewFrame();
+    const bool alignFrame = !devAlignAudit.empty() && !shotPath.empty() && frameNo == shotFrames - 1;
+    if (alignFrame) alignaudit::begin();  // J-128
     pointerGestureFrame(app);  // one undo step per pointer gesture, in every editor
     viewports::afterNewFrame();
     scrollui::afterNewFrame();
@@ -1855,6 +1861,7 @@ int main(int argc, char** argv) {
     {
     prof::Scope psRender("render");
     viewports::drawTitleButtons();  // J-114
+    if (alignFrame) alignaudit::finish(devAlignAudit);  // J-128
     ImGui::Render();
     if (useOffscreen) offscreen.use(true);
     glViewport(0, 0, fbW, fbH);

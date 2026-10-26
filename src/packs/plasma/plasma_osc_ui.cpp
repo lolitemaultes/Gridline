@@ -437,7 +437,7 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
       char b[32];
       const int frames = mip ? mip->frames : 1;
       std::snprintf(b, sizeof b, "%d / %d", 1 + static_cast<int>(std::lround(pos * (frames - 1))), frames);
-      text(c, x0 + 7, kDispB - 18, b, c.P.textDim, 8, true);
+      labelBeside(c, x0 + 7, kDispB - 18, 16, b, c.P.textDim, 8);  // J-128: on the PHASE / RAND baseline
     }
     // edit (pencil)
     ImGui::SetCursorScreenPos(c.p(x1 - 22, gy + 2));
@@ -615,13 +615,14 @@ void subColumn(Ctx& c) {
   // shapes: 2 x 3 icons
   const int cur = vali(c, subP(S_Shape));
   for (int i = 0; i < SubShapeCount; ++i) {
-    const float bx = x0 + 6 + (i % 2) * 33.f, by = kDispY + 46 + (i / 2) * 34.f;
+    // J-128: three rows between CRS and the phase box (they ran 7 px into it)
+    const float bx = x0 + 6 + (i % 2) * 33.f, by = kDispY + 43 + (i / 2) * 30.f;
     ImGui::PushID(i);
     ImGui::SetCursorScreenPos(c.p(bx, by));
-    if (ImGui::InvisibleButton("##sh", c.F.sz(31, 30))) setv(c, subP(S_Shape), i);
+    if (ImGui::InvisibleButton("##sh", c.F.sz(31, 28))) setv(c, subP(S_Shape), i);
     const bool hv = ImGui::IsItemHovered(), on = i == cur;
-    c.dl->AddRectFilled(c.p(bx, by), c.p(bx + 31, by + 30), on ? c.P.accentSoft : (hv ? c.P.panelHi : c.P.panelLo), c.s(2));
-    c.dl->AddRect(c.p(bx, by), c.p(bx + 31, by + 30), on ? theme::withAlpha(c.P.accent, 0.6f) : c.P.line, c.s(2));
+    c.dl->AddRectFilled(c.p(bx, by), c.p(bx + 31, by + 28), on ? c.P.accentSoft : (hv ? c.P.panelHi : c.P.panelLo), c.s(2));
+    c.dl->AddRect(c.p(bx, by), c.p(bx + 31, by + 28), on ? theme::withAlpha(c.P.accent, 0.6f) : c.P.line, c.s(2));
     ImVec2 prev;
     for (int q = 0; q <= 24; ++q) {
       const float t = q / 24.f;
@@ -634,7 +635,7 @@ void subColumn(Ctx& c) {
         case SubSquare: y = t < 0.5f ? 0.85f : -0.85f; break;
         default: y = t < 0.25f ? 0.85f : -0.85f; break;
       }
-      const ImVec2 p = c.p(bx + 3.5f + t * 24, by + 15 - y * 9);
+      const ImVec2 p = c.p(bx + 3.5f + t * 24, by + 14 - y * 9);
       if (q) c.dl->AddLine(prev, p, on ? c.P.accent : c.P.textDim, std::max(1.2f, c.s(1.3f)));
       prev = p;
     }

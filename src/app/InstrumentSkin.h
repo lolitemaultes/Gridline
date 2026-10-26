@@ -55,6 +55,16 @@ struct Skin {
   skin::Skin shared(ImU32 capOverride = 0) const;
 };
 
+// J-128: a row of wheels of mixed sizes on one centre line (see skin::RowScope):
+// the tallest (`tallest` form px) starts at form y `top`, labels drawn with
+// labelY() sit `gap` under it.
+struct Row : skin::RowScope {
+  Row(const Skin& k, float top, float tallest, float gap = 1.0f)
+      : skin::RowScope(k.at(0, top + tallest * 0.5f).y, k.at(0, top + tallest + gap).y) {}
+};
+// The label line (form px) of the active row, or `fallback` outside a row.
+inline float labelY(const Skin& k, float fallback) { return skin::rowActive() ? (skin::rowLabelY() - k.o.y) / k.s : fallback; }
+
 // Starts a canvas at the cursor that maps a formW × formH form onto `width`
 // screen pixels; reserves the space (call end() to move the cursor below).
 Skin begin(float width, float formW, float formH, const Palette& pal);

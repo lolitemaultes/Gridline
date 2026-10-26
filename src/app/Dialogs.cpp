@@ -559,44 +559,7 @@ void settingsWindow(App& a) {
                  "Each surface has its own on / off switch (the small wave in its corner); hold Alt while drawing for a raw stroke");
       }
       ui::EndSection();
-      // J-48: interface sounds.
-      ui::BeginSection("INTERFACE SOUNDS");
-      bool snd = st.getBool("sounds.enabled");
-      formLabel("Interface sounds");
-      if (ImGui::Checkbox(i18n::tr("Play short sounds for startup, saving, exports, imports and errors"), &snd)) st.set("sounds.enabled", snd);
-      ui::Hint("Quiet while the song plays or records, except errors. Never recorded or exported.");
-      ImGui::BeginDisabled(!snd);
-      formLabel("Volume");
-      float vol = static_cast<float>(st.getNumber("sounds.volume")) * 100.0f;
-      ImGui::SetNextItemWidth(fieldW);
-      if (ImGui::SliderFloat("##uisndvol", &vol, 0.0f, 100.0f, "%.0f%%")) st.set("sounds.volume", static_cast<double>(vol) / 100.0);
-      // J-54: the Play column clears the widest sound name (checkbox square + gap included).
-      float playX = fieldW + 140;
-      for (int i = 0; i < uisound::kEventCount; ++i)
-        playX = std::max(playX, 168 + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x +
-                                    ImGui::CalcTextSize(uisound::eventLabel(static_cast<uisound::Event>(i))).x + theme::kS3);
-      for (int i = 0; i < uisound::kEventCount; ++i) {
-        const auto e = static_cast<uisound::Event>(i);
-        bool on = st.getBool(uisound::settingKey(e));
-        formLabel(i == 0 ? "Sounds" : "");
-        ImGui::PushID(i);
-        if (ImGui::Checkbox(uisound::eventLabel(e), &on)) st.set(uisound::settingKey(e), on);
-        ImGui::SameLine(playX);
-        ImGui::BeginDisabled(a.uiSoundsDisabled || !a.uiSounds.hasClip(e));
-        if (ui::TextButton("Play", false, 48, "Preview this sound")) {
-          a.uiSounds.setVolume(static_cast<float>(st.getNumber("sounds.volume")));
-          a.uiSounds.trigger(e);
-        }
-        ImGui::EndDisabled();
-        ImGui::PopID();
-      }
-      ImGui::EndDisabled();
-      if (a.uiSoundsDisabled) {
-        ImGui::PushTextWrapPos(0);
-        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Interface sounds are turned off for this session (--no-ui-sounds or GRIDLINE_NO_UI_SOUNDS)."));
-        ImGui::PopTextWrapPos();
-      }
-      ui::EndSection();
+      // J-48 interface sounds: moved to Settings > Theme > Sounds (J-133, SoundThemeUi.cpp).
     }
     if (page == 5) generalSettingsPage(a, fieldW);
     if (page == 8) shortcutSettingsPage(a, fieldW);

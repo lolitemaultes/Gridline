@@ -140,6 +140,22 @@ void curveArea(ImDrawList* dl, const ImVec2* pts, int n, float baseY, ImU32 line
 // hairline to the right edge, drawn inside [p0, p1] (one text line high).
 void sectionHeader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* title, float font = 0);
 
+// ---- J-128 layout rows ------------------------------------------------------
+// While a RowScope is alive, every wheel placed by top-left (wheel() below and
+// the editors' wrappers over it: flk::wheel, iskin::wheel) sits on the row's
+// centre line whatever its size, and the labels those wrappers draw under it
+// sit on the row's label line (screen px; geometry from grid::Row). Rows nest.
+class RowScope {
+ public:
+  RowScope(float cy, float labelY);
+  ~RowScope();
+  RowScope(const RowScope&) = delete;
+  RowScope& operator=(const RowScope&) = delete;
+};
+bool rowActive();
+float rowCentre();
+float rowLabelY();
+
 // Wheel knob bound to a parameter; tl/size in screen px (square).
 bool wheel(App& a, const PluginTarget& t, int param, ImVec2 tl, float size, const Skin& k, int flags = 0, ImU32 fill = 0);
 // Vertical rail slider (fill from bottom, or from the centre for bipolar ranges).

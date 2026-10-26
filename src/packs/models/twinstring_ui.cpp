@@ -125,23 +125,29 @@ void drawTwinString(App& a, const PluginTarget& t, float width) {
                   law::tsCombPeriods(val(st, TsCombRatio, 0.5f)));
     flk::lcd(c, 274, 17, 207, 36, buf);
   }
-  flk::wheel(c, TsTranspose, 574, 18, 28, "Transp", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(c, TsTune, 634, 18, 28, "Fine", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(c, TsLevel, 695, 12, 36, "Level");
+  {
+    const flk::Row row(c, 12, 36);  // J-128: one centre line, one label line
+    flk::wheel(c, TsTranspose, 574, 18, 28, "Transp", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(c, TsTune, 634, 18, 28, "Fine", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(c, TsLevel, 695, 12, 36, "Level");
+  }
   meterBox(c, t, 767, 17, 69, 37);
 
   // ---- exciter column
   flk::section(c, 4, 64, 196, 290, "EXCITER");
   flk::vsl(c, TsNoiseLevel, 18, 100, 27, 150, "Noise");
-  flk::wheel(c, TsNoiseRate, 19, 290, 26, "Rate");
   flk::wheel(c, TsHiCut, 86, 84, 45, "Hi cut");
   flk::wheel(c, TsHiRes, 86, 150, 45, "Reso");
   flk::wheel(c, TsDrive, 86, 216, 45, "Drive");
-  flk::wheel(c, TsLoCut, 86, 282, 45, "Lo cut");
   flk::wheel(c, TsHiAtk, 146, 84, 45, "Attack");
   flk::wheel(c, TsHiDec, 146, 150, 45, "Decay");
   flk::wheel(c, TsHiSus, 146, 216, 45, "Sustain");
-  flk::wheel(c, TsLoRes, 146, 282, 45, "Reso");
+  {
+    const flk::Row row(c, 282, 45);  // J-128: the noise rate on the bottom row's centre line
+    flk::wheel(c, TsNoiseRate, 19, 290, 26, "Rate");
+    flk::wheel(c, TsLoCut, 86, 282, 45, "Lo cut");
+    flk::wheel(c, TsLoRes, 146, 282, 45, "Reso");
+  }
 
   // ---- strings block
   flk::section(c, 206, 64, 342, 290, "STRINGS");
@@ -150,10 +156,13 @@ void drawTwinString(App& a, const PluginTarget& t, float width) {
     const int b = s ? TsS2Decay : TsS1Decay;
     const float y = s ? 296.0f : 84.0f;
     flk::text(c, 214, s ? 286.0f : 74.0f + 10, s ? "B" : "A", K.select, 9);
-    flk::wheel(c, b, 224, y, 36, "Decay");
-    flk::wheel(c, b + 3, 280, y, 36, "Damping");
-    flk::wheel(c, b + 4, 340, y + 6, 28, "Shape");
-    flk::wheel(c, b + 2, 392, y + 6, 28, "Offset");
+    {
+      const flk::Row row(c, y, 36);  // J-128: shape / offset on the decay wheels' centre line
+      flk::wheel(c, b, 224, y, 36, "Decay");
+      flk::wheel(c, b + 3, 280, y, 36, "Damping");
+      flk::wheel(c, b + 4, 340, y + 6, 28, "Shape");
+      flk::wheel(c, b + 2, 392, y + 6, 28, "Offset");
+    }
     flk::sw(c, b + 1, 228, s ? 262.0f : 140.0f, 30, 14, inv, 2, true);
   }
   flk::text(c, 226, 202, "B RATIO");
@@ -192,12 +201,14 @@ void drawTwinString(App& a, const PluginTarget& t, float width) {
     flk::text(c, 704, y + 6, n, K.textDim, 7.5f);
     skin::wheel(a, t, TsResFb1 + k, F.p(712, y), 20 * F.s, K, skin::WheelBigLine);
     flk::hsl(c, TsResFreq1 + k, 738, y + 2, 86, 16);
-    flk::chk(c, TsResOn1 + k, 830, y + 1, 16, 16, nullptr);
+    flk::chk(c, TsResOn1 + k, 830, y + 2, 16, 16, nullptr);  // J-128: centred on the band's wheel
   }
   flk::text(c, 706, 334, "FDBK      FREQUENCY      ON", K.textDim, 7);
 
   // ---- modulation row
   flk::section(c, 4, 360, 847, 96, "MODULATION");
+  {
+  const flk::Row modRow(c, 390, 30);  // J-128: envelope wheels and mod amounts on one centre line
   flk::wheel(c, TsEgA, 16, 392, 28, "A");
   flk::wheel(c, TsEgD, 54, 392, 28, "D");
   flk::wheel(c, TsEgS, 92, 392, 28, "S");
@@ -208,9 +219,10 @@ void drawTwinString(App& a, const PluginTarget& t, float width) {
   for (int k = 0; k < kTsMods; ++k) {
     const float x = 232.0f + 76.0f * k;
     flk::menu(c, tsMod(k, TmSource), x, 372, 70, 13);
-    skin::wheel(a, t, tsMod(k, TmAmount), F.p(x + 4, 390), 30 * F.s, K, skin::WheelBigLine);
+    skin::wheel(a, t, tsMod(k, TmAmount), F.p(x + 4, 390), 30 * F.s, K, skin::WheelBigLine);  // (on modRow)
     flk::sw(c, tsMod(k, TmNegative), x + 40, 398, 26, 14, sign, 2, true);
     flk::menu(c, tsMod(k, TmDest), x, 430, 70, 13);
+  }
   }
 
   // ---- effects row

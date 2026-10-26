@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <thread>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <set>
@@ -401,6 +402,14 @@ class App {
   bool scanByUser = false;           // the running plugin scan was started from the UI (its end gets a sound)
   // Plays an interface sound if the settings and the muting rules allow it.
   bool uiSound(uisound::Event e);
+  // J-133: sound themes (setting "sound.theme", assets/sounds/<theme>/). Called when the
+  // device opens (sync: the device is paused) and when the setting changes (async: the
+  // clips load on a worker thread and are handed to the player when ready, see tick()).
+  void loadSoundTheme(double deviceRate, bool sync);
+  // Plays one event of any theme (Settings preview), at the interface-sound volume.
+  bool previewSoundTheme(const std::string& theme, uisound::Event e = uisound::Event::Startup);
+  std::string uiSoundTheme;          // theme of the clips installed or loading ("" = none yet)
+  double uiSoundRate = 0;            // device rate the clips were loaded for
 
   double now = 0;  // seconds since start (frame time)
   std::string browserSearch;  // text put into the browser's search field once (--browser-search)
@@ -458,6 +467,7 @@ class App {
   bool autosaving_ = false;      // J-48: autosave writes quietly
   bool wasRecording_ = false;    // J-48: record start / stop sounds
   bool wasScanning_ = false;     // J-48: plugin scan finished sound
+  std::future<std::unique_ptr<uisound::Bank>> soundThemeLoad_;  // J-133: theme loading off the UI thread
 };
 
 App& app();  // the single application instance

@@ -173,6 +173,17 @@ void App::tick(double t) {
     }
     wasScanning_ = scanning;
   }
+  {  // J-133: sound theme switches take effect at once (clips load on a worker thread)
+    if (soundThemeLoad_.valid() && soundThemeLoad_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      std::unique_ptr<uisound::Bank> b = soundThemeLoad_.get();
+      if (b && b->theme == uiSoundTheme && b->rate == uiSoundRate) uiSounds.install(std::move(b));  // else stale: reloads below
+      else uiSoundTheme.clear();
+    }
+    if (uiSoundRate > 0 && !soundThemeLoad_.valid() &&
+        uisound::resolveTheme(settings.getString(uisound::kThemeKey)) != uiSoundTheme)
+      loadSoundTheme(uiSoundRate, false);
+    uiSounds.collect();
+  }
   // Marker actions (J-11) run in the audio engine at the exact sample (J-85).
   engine.collectGarbage();
   toasts.erase(std::remove_if(toasts.begin(), toasts.end(), [&](const Toast& x) { return x.until < now; }), toasts.end());
@@ -211,6 +222,28 @@ bool App::uiSound(uisound::Event e) {
   if (!uisound::shouldPlay(e, c) || !uiSoundGate.allow(e, now)) return false;
   uiSounds.setVolume(static_cast<float>(settings.getNumber("sounds.volume")));
   return uiSounds.trigger(e);
+}
+
+void App::loadSoundTheme(double deviceRate, bool sync) {
+  if (uiSoundsDisabled || assetsDir.empty() || deviceRate <= 0) return;
+  uiSoundRate = deviceRate;
+  uiSoundTheme = uisound::resolveTheme(settings.getString(uisound::kThemeKey));
+  const std::string dir = (fs::path(assetsDir) / "sounds").string();
+  if (sync) {
+    uiSounds.install(uisound::loadTheme(dir, uiSoundTheme, deviceRate));
+    return;
+  }
+  soundThemeLoad_ = std::async(std::launch::async, [dir, theme = uiSoundTheme, deviceRate] {
+    return uisound::loadTheme(dir, theme, deviceRate);
+  });
+}
+
+bool App::previewSoundTheme(const std::string& theme, uisound::Event e) {
+  if (uiSoundsDisabled || assetsDir.empty() || uiSoundRate <= 0) return false;
+  uisound::Clip c;
+  if (!uisound::loadThemeClip((fs::path(assetsDir) / "sounds").string(), theme, e, uiSoundRate, c)) return false;
+  uiSounds.setVolume(static_cast<float>(settings.getNumber("sounds.volume")));
+  return uiSounds.preview(std::move(c));
 }
 
 void App::notify(const std::string& english, bool error, const std::string& details) {

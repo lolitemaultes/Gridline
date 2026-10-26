@@ -1293,7 +1293,8 @@ void editorSplitterLegacy(App& a, const PluginTarget& t, float width) {
       if (m == 1 || m == 2 || m == 5) {
         char buf[16];
         std::snprintf(buf, sizeof buf, fq >= 1000 ? "%gk" : "%g", fq >= 1000 ? fq / 1000 : fq);
-        mono(dl, ImVec2(x + 3, p1.y - 14), P.textFaint, buf);
+        const float tx = x + 3 + monoWidth(buf) > p1.x - 2 ? x - 3 - monoWidth(buf) : x + 3;  // J-128: the last one inside the display
+        mono(dl, ImVec2(tx, p1.y - 14), P.textFaint, buf);
       }
     }
   for (int dbv = -18; dbv <= 18; dbv += 6) {
@@ -1486,7 +1487,8 @@ void editorSplitterRef(App& a, const PluginTarget& t, float width) {
       if (m == 1 || m == 2 || m == 5) {
         char buf[16];
         std::snprintf(buf, sizeof buf, fq >= 1000 ? "%gk" : "%g", fq >= 1000 ? fq / 1000 : fq);
-        mono(dl, ImVec2(x + 3, p1.y - 14), P.textFaint, buf);
+        const float tx = x + 3 + monoWidth(buf) > p1.x - 2 ? x - 3 - monoWidth(buf) : x + 3;  // J-128: the last one inside the display
+        mono(dl, ImVec2(tx, p1.y - 14), P.textFaint, buf);
       }
     }
   auto yOf = [&](double dbv) { return p.y + sz.y * 0.5f - static_cast<float>(std::clamp(dbv, -24.0, 24.0) / 24.0) * sz.y * 0.5f; };

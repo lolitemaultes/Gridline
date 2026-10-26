@@ -1,0 +1,9 @@
+# J-128 alignment gate: scopes whose count of a rule may rise above the baseline.
+# Only free-form layouts belong here (keyboards, curve and envelope editors, XY pads),
+# never a row of knobs. Every line needs a justification.
+# scope	rule	justification
+gl.splinescratch	overlap	keyboard: the black keys sit over the white keys by design
+gl.multisampler	clip	key-zone map: each zone's sample name is clipped to its own zone on purpose
+gl.waveshaper	overlap	free-form curve editor: points and handles sit inside the curve area
+gl.matrixfm	overlap	free-form envelope editor: the RESET button floats inside the envelope area
+gl.octafilter	overlap	notes text field: its scrolling child area registers as a second item over the field

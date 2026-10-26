@@ -174,7 +174,7 @@ void bevel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) 
 
 void label(ImDrawList* dl, float cx, float y, const char* text, ImU32 col, float size) {
   ImGui::PushFont(app().fontMonoBold, size);
-  ImVec2 ts = ImGui::CalcTextSize(text);
+  ImVec2 ts = ui::TextSizeExact(text);
   ImVec2 q0(cx - ts.x * 0.5f, y), q1(cx + ts.x * 0.5f, y + ts.y);
   placeKit(q0, q1);  // Q-7: off the panel's edges
   dl->AddText(ImVec2(std::round(q0.x), std::round(q0.y)), col, text);
@@ -187,7 +187,7 @@ void lcd(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* text, 
   audit::control(p0, p1, "lcd");
   insetField(dl, p0, p1, k.lcdBg, 3);
   ImGui::PushFont(app().fontMono, size);
-  ImVec2 ts = ImGui::CalcTextSize(text);
+  ImVec2 ts = ui::TextSizeExact(text);
   float x = center ? (p0.x + p1.x - ts.x) * 0.5f : p0.x + 4;
   dl->PushClipRect(p0, p1, true);
   dl->AddText(ImVec2(std::round(x), std::round((p0.y + p1.y - ts.y) * 0.5f)), k.lcdText, text);
@@ -343,7 +343,7 @@ bool graphHover(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const std::
   const std::string s = fmt((m.x - p0.x) / std::max(1.0f, p1.x - p0.x), (p1.y - m.y) / std::max(1.0f, p1.y - p0.y));
   if (s.empty()) return true;
   ImGui::PushFont(app().fontMono, 11.0f);
-  const ImVec2 ts = ImGui::CalcTextSize(s.c_str());
+  const ImVec2 ts = ui::TextSizeExact(s.c_str());
   ImVec2 b0(m.x + 10, m.y - ts.y - 12);
   if (b0.x + ts.x + 10 > p1.x - 2) b0.x = m.x - ts.x - 20;
   if (b0.y < p0.y + 2) b0.y = m.y + 10;
@@ -384,7 +384,7 @@ void sectionHeader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const ch
   float x = p0.x + 7.0f;
   if (title && *title) {
     ImGui::PushFont(app().fontMonoBold, fs);
-    const ImVec2 ts = ImGui::CalcTextSize(title);
+    const ImVec2 ts = ui::TextSizeExact(title);
     dl->PushClipRect(p0, p1, true);
     dl->AddText(ImVec2(std::round(x), std::round(cy - ts.y * 0.5f)), k.pillTextC(), title);
     dl->PopClipRect();
@@ -408,14 +408,30 @@ void drawWheel(ImDrawList* dl, ImVec2 c, float r, double norm, bool centered, bo
   knobFace(dl, c, r, p);
 }
 
+namespace {
+struct RowState {
+  float cy = 0, labelY = 0;
+};
+std::vector<RowState> rowStack;
+}  // namespace
+RowScope::RowScope(float cy, float labelY) { rowStack.push_back(RowState{cy, labelY}); }
+RowScope::~RowScope() {
+  if (!rowStack.empty()) rowStack.pop_back();
+}
+bool rowActive() { return !rowStack.empty(); }
+float rowCentre() { return rowStack.empty() ? 0.0f : rowStack.back().cy; }
+float rowLabelY() { return rowStack.empty() ? 0.0f : rowStack.back().labelY; }
+
 bool wheel(App& a, const PluginTarget& t, int param, ImVec2 tl, float size, const Skin& k, int flags, ImU32 fill) {
   Bound b = bind(a, t, param);
   if (!b.ok) return false;
+  if (rowActive()) tl.y = rowCentre() - size * 0.5f;  // J-128: on the row's centre line
   fitKitSquare(inset::minFor(kitScale), tl, size);
   ImGui::PushID(param);
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton("##w", ImVec2(size, size));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  audit::nextKind(align::kKnob);  // J-128
   bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, 170.0f, false);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   bool centred = (flags & WheelCentered) || (b.d.min < 0 && b.d.max > 0);
@@ -556,7 +572,7 @@ bool switchSel(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size,
       dl->AddRectFilled(ImVec2(c0.x + 2, c0.y + 2), ImVec2(c1.x - 2, c1.y - 2), IM_COL32(255, 255, 255, 14), 2.5f);
     }
     ImGui::PushFont(app().fontMonoBold, fs);
-    ImVec2 ts = ImGui::CalcTextSize(labels[i]);
+    ImVec2 ts = ui::TextSizeExact(labels[i]);
     dl->PushClipRect(c0, c1, true);
     dl->AddText(ImVec2(std::round((c0.x + c1.x - ts.x) * 0.5f + (horizontal ? 0 : 3)), std::round((c0.y + c1.y - ts.y) * 0.5f)),
                 on ? lighten(k.select, 0.35f) : k.textDim, labels[i]);
@@ -589,7 +605,7 @@ bool check(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, con
   }
   if (text && *text) {
     ImGui::PushFont(app().fontMonoBold, std::clamp(size.y * 0.62f, 8.0f, 12.0f));
-    ImVec2 ts = ImGui::CalcTextSize(text);
+    ImVec2 ts = ui::TextSizeExact(text);
     dl->AddText(ImVec2(b1.x + 5, std::round(tl.y + (size.y - ts.y) * 0.5f)), isOn ? k.text : k.textDim, text);
     ImGui::PopFont();
   }
@@ -609,6 +625,7 @@ bool digi(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, cons
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton("##dg", size);
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  audit::nextKind(align::kField);  // J-128
   bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, pixels, false);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   std::string s = text ? std::string(text) : b.d.format(b.val);
@@ -634,7 +651,7 @@ bool button(const char* id, ImVec2 tl, ImVec2 size, const Skin& k, const char* t
   }
   if (text && *text) {
     ImGui::PushFont(app().fontMonoBold, font > 0 ? font : std::clamp(size.y * 0.5f, 8.0f, 12.0f));
-    ImVec2 ts = ImGui::CalcTextSize(ui::labelText(text));
+    ImVec2 ts = ui::TextSizeExact(ui::labelText(text));
     ui::drawLabel(dl, ImVec2(std::round((tl.x + p1.x - ts.x) * 0.5f), std::round((tl.y + p1.y - ts.y) * 0.5f)),
                   on ? lighten(k.select, 0.6f) : hov ? k.text : k.textDim, text);
     ImGui::PopFont();
@@ -667,7 +684,7 @@ void text(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* s, ImU32 col, float 
   }
   audit::control(ImVec2(x, y), ImVec2(x + ts.x, y + ts.y), "text");
   dl->PushClipRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), true);
-  ui::drawLabel(dl, fnt ? fnt : ImGui::GetFont(), px, ImVec2(std::floor(x), std::floor(y)), col, s);
+  ui::drawLabel(dl, fnt ? fnt : ImGui::GetFont(), px, ImVec2(std::round(x), std::round(y)), col, s);  // J-128: nearest pixel
   dl->PopClipRect();
 }
 
@@ -790,6 +807,7 @@ bool wheel(App& a, const PluginTarget& t, int param, const Form& f, float x, flo
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##w", ImVec2(f.d(w), f.d(h)));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  audit::nextKind(align::kKnob);  // J-128
   bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, 200.0f, false);
   ImGui::PopID();
   float r = f.d(std::min(w, h)) * 0.5f - 1.0f;
@@ -808,6 +826,7 @@ bool digi(App& a, const PluginTarget& t, int param, const Form& f, float x, floa
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##d", ImVec2(p1.x - p0.x, p1.y - p0.y));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  audit::nextKind(align::kField);  // J-128
   bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, 60.0f, false);
   ImGui::PopID();
   std::string s;
@@ -1156,7 +1175,7 @@ void textAt(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 c, const char* text, flo
   if (!text || !*text) return;
   ImFont* font = mono ? app().fontMono : app().fontRegular;
   ImGui::PushFont(font, size);
-  ImVec2 ts = ImGui::CalcTextSize(ui::labelText(text));  // an icon label measures as its text
+  ImVec2 ts = ui::TextSizeExact(ui::labelText(text));  // an icon label measures as its text
   float x = align < 0 ? p0.x + 2 : align > 0 ? p1.x - ts.x - 2 : (p0.x + p1.x - ts.x) * 0.5f;
   float y = (p0.y + p1.y - ts.y) * 0.5f;
   {  // Q-7: the text keeps off the panel's edges
@@ -1166,7 +1185,7 @@ void textAt(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 c, const char* text, flo
   }
   audit::control(ImVec2(x, y), ImVec2(x + ts.x, y + ts.y), "text");
   dl->PushClipRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), true);
-  ui::drawLabel(dl, ImVec2(std::floor(x), std::floor(y)), c, text);
+  ui::drawLabel(dl, ImVec2(std::round(x), std::round(y)), c, text);  // J-128: nearest pixel
   dl->PopClipRect();
   ImGui::PopFont();
 }
@@ -1345,6 +1364,7 @@ bool wheelAt(App& a, const PluginTarget& t, const View& v, const char* like, flo
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##w", ImVec2(std::max(1.f, p1.x - p0.x), std::max(1.f, p1.y - p0.y)));
   bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+  audit::nextKind(align::kKnob);  // J-128
   bool ch = dragBound(a, t, param, 180.f, false);
   if (ch) pv = pview(a, t, param);
   drawWheel(ImGui::GetWindowDrawList(), p0, p1, c, pal, pv.norm, pv.bipolar, hot, v.s);
@@ -1385,6 +1405,7 @@ bool slider(App& a, const PluginTarget& t, const View& v, const char* name, int 
       ch = true;
     }
   }
+  audit::nextKind(align::kSlider);  // J-128
   ch |= dragBound(a, t, param, vert ? (p1.y - p0.y) : (p1.x - p0.x), !vert);
   if (ch) pv = pview(a, t, param);
   drawSlider(ImGui::GetWindowDrawList(), p0, p1, c, pal, pv.norm, pv.bipolar, hot, v.s);
@@ -1523,6 +1544,7 @@ bool digi(App& a, const PluginTarget& t, const View& v, const char* name, int pa
   ImGui::PushID(name);
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##d", ImVec2(p1.x - p0.x, p1.y - p0.y));
+  audit::nextKind(align::kField);  // J-128
   bool ch = dragBound(a, t, param, 120.f, false);
   if (ch) pv = pview(a, t, param);
   std::string s = fmt ? fmt(pv.v) : pv.d->format(pv.v);

@@ -422,7 +422,7 @@ float drawTopBar(App& a) {
     dl->AddRectFilled(p, ImVec2(p.x + patW, p.y + kBtn), open ? P.surface700 : hov ? P.surface800 : P.surface950, theme::kRadius);
     dl->AddRect(p, ImVec2(p.x + patW, p.y + kBtn), open ? P.accent : P.line, theme::kRadius);
     if (cur) dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8), ImVec2(p.x + 12, p.y + kBtn - 8), theme::rgb(cur->color), 2);
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 20, std::round(p.y + (kBtn - theme::kFontBody) * 0.5f) - 1),
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 20, std::round(p.y + (kBtn - theme::kFontBody) * 0.5f)),
                         patW - 20 - 24, P.text, cur ? cur->name.c_str() : "No pattern");
     ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(p.x + patW - 13, p.y + kBtn * 0.5f), 12, P.textDim);
     ui::Hint("Selected pattern: click to choose, scroll to step (edited by the channel rack and piano roll)");

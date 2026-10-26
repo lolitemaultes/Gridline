@@ -5822,8 +5822,11 @@ begin:
         return;
     if ((draw_list->Flags & ImDrawListFlags_TextNoPixelSnap) == 0)
     {
-        x = IM_TRUNC(x);
-        y = IM_TRUNC(y);
+        // Gridline (J-128): round to the nearest pixel instead of truncating, so text
+        // centred at a fractional position (labels under knobs, captions in cells) is
+        // off by at most half a pixel either way, not up to a whole pixel to the left.
+        x = ImFloor(x + 0.5f);
+        y = ImFloor(y + 0.5f);
     }
 
     if (!text_end)

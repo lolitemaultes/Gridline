@@ -546,9 +546,9 @@ void lfo(Ctx& c) {
       setv(c, lfoP(l, L_Shape), ((cur - 1 + step + n) % n) + 1);
     }
     choiceBox(c, lfoP(l, L_Dir), gx + 202, y, 70, 18);
-    text(c, gx + 280, y + 4, "X", c.P.textFaint, 8, true);
+    labelBeside(c, gx + 280, y, 18, "X", c.P.textFaint, 8);
     stepper(c, lfoP(l, L_GridX), gx + 290, y, 34, 18);
-    text(c, gx + 330, y + 4, "Y", c.P.textFaint, 8, true);
+    labelBeside(c, gx + 330, y, 18, "Y", c.P.textFaint, 8);
     stepper(c, lfoP(l, L_GridY), gx + 340, y, 34, 18);
   }
   // bottom row: host anchor, rate block, rise / delay / smooth / phase
@@ -558,13 +558,13 @@ void lfo(Ctx& c) {
     const float bx = kLfoX + 64, bw = 240;
     wellRect(c, bx, ky - 17, bw, 34, 4);
     const bool bpm = val(c, lfoP(l, L_Bpm)) >= 0.5;
-    ImGui::SetCursorScreenPos(c.p(bx + 4, ky - 12));
+    ImGui::SetCursorScreenPos(c.p(bx + 4, ky - 13));  // J-128: the TRIP / DOT row
     if (ImGui::InvisibleButton("##bpm", c.F.sz(44, 20))) setv(c, lfoP(l, L_Bpm), bpm ? 0 : 1);
     text(c, bx + 8, ky - 7, "BPM", bpm ? c.P.accent : c.P.textFaint, 8.5f, true);
     text(c, bx + 32, ky - 7, "HZ", bpm ? c.P.textFaint : c.P.accent, 8.5f, true);
     if (ImGui::IsItemHovered()) c.a.setHint("Rate in tempo divisions or in Hz");
     knob(c, lfoP(l, L_Rate), bx + 76, ky - 3, 12.0f, nullptr, KnobNoLabel);
-    cellLabel(c, bx + 76, ky + 21, "RATE");
+    cellLabel(c, bx + 76, ky + 20, "RATE");  // J-128: on the RISE / DELAY label line
     const std::string rv = ptext(c, lfoP(l, L_Rate));
     textC(c, bx + 128, ky - 7, rv.c_str(), c.P.accent, 9.5f, true);
     toggleBtn(c, lfoP(l, L_Trip), bx + 160, ky - 13, 36, 20, "TRIP", 7.5f);
@@ -601,8 +601,8 @@ void scalars(Ctx& c) {
   hline(c, kVelX + 4, kVelX + kVelW - 7, vy + 16.5f, c.P.line);
   text(c, kVelX + 8, vy + 2, "VOICING", c.P.label, 9, true);
   moreButton(c, "voicemore", kVelX + kVelW - 27, vy, {G_Priority, G_SameNote}, {}, "Voice priority and one voice per key");
-  checkBox(c, G_Mono, kVelX + 8, vy + 26, "MONO", 8.5f);
-  text(c, kVelX + 76, vy + 26, "POLY", c.P.label, 8.5f, true);
+  checkBox(c, G_Mono, kVelX + 8, vy + 27, "MONO", 8.5f);  // J-128: on the POLY baseline
+  labelBeside(c, kVelX + 76, vy + 22, 18, "POLY", c.P.label, 8.5f);  // J-128: on the stepper baseline
   stepper(c, G_Poly, kVelX + 102, vy + 22, 40, 18);
   checkBox(c, G_Legato, kVelX + 8, vy + 52, "LEGATO", 8.5f);
   char b[32];

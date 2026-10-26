@@ -127,9 +127,9 @@ void oscSection(const flk::Ctx& c, const PluginState& st, int k, float x0) {
   flk::section(c, x0, 52, 442, 210, k == 0 ? "OSC A" : "OSC B");
   flk::chk(c, wtOsc(k, WoOn), x0 + 60, 55, 46, 12, "ON");
   (void)st;
-  flk::text(c, x0 + 116, 57, "TABLE");
+  flk::textBeside(c, x0 + 116, 54, 17, "TABLE");
   flk::menu(c, wtOsc(k, WoTable), x0 + 152, 54, 120, 17);
-  flk::text(c, x0 + 284, 57, "WARP");
+  flk::textBeside(c, x0 + 284, 54, 17, "WARP");
   flk::menu(c, wtOsc(k, WoWarp), x0 + 314, 54, 120, 17);
   ImGui::SetCursorScreenPos(c.F.p(x0 + 8, 76));
   tableDisplay(c.a, c.t, k, c.F.sz(426, 82));

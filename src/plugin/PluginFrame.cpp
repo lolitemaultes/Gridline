@@ -138,14 +138,21 @@ void drawHostLink(Instance& inst) {
   ImGui::End();
 }
 
-// J-130 hook: the suite's logo in a Gridline Suite editor (bottom right,
-// `height` logical pixels). Returns false while the suite has no logo; the
-// editor then shows nothing there.
+// J-130: the suite's Tile logo in a Gridline Suite editor, right-aligned on
+// its own row under the editor, `height` logical pixels tall; the suite's name
+// shows on hover. Returns false (nothing drawn) when there is no such logo.
 bool drawSuiteLogo(App& a, const char* suiteName, float height) {
   (void)a;
-  (void)suiteName;
-  (void)height;
-  return false;
+  const bool mini = suiteName && std::string(suiteName).find("Mini") != std::string::npos;
+  const ImVec2 sz = pui::suiteLogoSize(height, mini);
+  if (sz.x <= 0) return false;
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const float x = p.x + std::max(0.0f, ImGui::GetContentRegionAvail().x - sz.x);
+  ImGui::SetCursorScreenPos(ImVec2(x, p.y));
+  ImGui::InvisibleButton(mini ? "Gridline Suite Mini##suitelogo" : "Gridline Suite##suitelogo", sz);
+  if (ImGui::IsItemHovered()) ui::Hint(mini ? "Gridline Suite Mini" : "Gridline Suite");
+  pui::suiteLogo(ImGui::GetWindowDrawList(), ImVec2(x, p.y), height, mini);
+  return true;
 }
 
 // Gridline Suite: the sampler's sample (load button, file name), as in the
@@ -249,7 +256,7 @@ void Frame::drawSingle(int winW, int winH, int fbW, int fbH) {
       drawPluginHeader(app, target);
       drawPluginBody(app, target, width);
     }
-    drawSuiteLogo(app, "Gridline Suite", 14.0f);
+    drawSuiteLogo(app, info.type.rfind("gl.mini", 0) == 0 ? "Gridline Suite Mini" : "Gridline Suite", 14.0f);
     // The editor's natural size: auto-resize clamps the window to the display,
     // which is the view at the current zoom, so a larger editor would never be
     // measured (and would be cut off instead of zoomed to fit).

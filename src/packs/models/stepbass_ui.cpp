@@ -141,31 +141,38 @@ void drawStepBass(App& a, const PluginTarget& t, float width) {
 
   // ---- main wheels
   flk::section(c, 6, 70, 688, 82, "VOICE");
-  flk::wheel(c, SbTune, 24, 80, 50, "Tuning", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(c, SbWave, 128, 80, 50, "Saw-Pulse");
   flk::chk(c, SbClassicPulse, 88, 132, 36, 12, "OLD");
-  flk::wheel(c, SbCutoff, 200, 80, 50, "Cutoff");
-  flk::wheel(c, SbReso, 272, 80, 50, "Reso");
-  flk::wheel(c, SbEnvMod, 343, 80, 50, "Env mod");
-  flk::wheel(c, SbDecay, 414, 80, 50, "Decay");
-  flk::wheel(c, SbAccent, 486, 80, 50, "Accent");
-  flk::wheel(c, SbVolume, 598, 76, 58, "Volume");
+  {
+    // J-128: one centre line and one label line (the volume wheel is larger), the
+    // filter wheels 72 units apart.
+    const flk::Row row(c, 76, 58);
+    flk::wheel(c, SbTune, 24, 80, 50, "Tuning", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(c, SbWave, 128, 80, 50, "Saw-Pulse");
+    flk::wheel(c, SbCutoff, 200, 80, 50, "Cutoff");
+    flk::wheel(c, SbReso, 272, 80, 50, "Reso");
+    flk::wheel(c, SbEnvMod, 344, 80, 50, "Env mod");
+    flk::wheel(c, SbDecay, 416, 80, 50, "Decay");
+    flk::wheel(c, SbAccent, 488, 80, 50, "Accent");
+    flk::wheel(c, SbVolume, 598, 76, 58, "Volume");
+  }
 
   // ---- tweaks + distortion
   flk::section(c, 6, 160, 420, 92, "TWEAKS");
+  // J-128: seven equal steps from the delay column (21) to the reverb column (346).
+  constexpr float kStep = (346.0f - 21.0f) / 6.0f;
   flk::wheel(c, SbHighPass, 21, 189, 40, "High pass");
-  flk::wheel(c, SbMinDecay, 75, 189, 40, "Min dec");
-  flk::wheel(c, SbKeyFollow, 129, 189, 40, "Key flw");
-  flk::wheel(c, SbLfoPw, 183, 189, 40, "PWM amt");
-  flk::wheel(c, SbLfoRate, 237, 189, 40, "PWM rate");
-  flk::wheel(c, SbPulseWidth, 291, 189, 40, "Width");
+  flk::wheel(c, SbMinDecay, 21 + kStep, 189, 40, "Min dec");
+  flk::wheel(c, SbKeyFollow, 21 + 2 * kStep, 189, 40, "Key flw");
+  flk::wheel(c, SbLfoPw, 21 + 3 * kStep, 189, 40, "PWM amt");
+  flk::wheel(c, SbLfoRate, 21 + 4 * kStep, 189, 40, "PWM rate");
+  flk::wheel(c, SbPulseWidth, 21 + 5 * kStep, 189, 40, "Width");
   flk::wheel(c, SbClicks, 346, 189, 40, "Clicks");
   flk::section(c, 432, 160, 262, 92, "");
   flk::chk(c, SbDistOn, 445, 166, 90, 14, "DISTORTION");
   flk::wheel(c, SbDistHp, 456, 189, 40, "High pass");
   flk::wheel(c, SbDistDrive, 511, 189, 40, "Drive");
   flk::wheel(c, SbDistTone, 566, 189, 40, "Tone");
-  flk::wheel(c, SbDistVolume, 622, 189, 40, "Volume");
+  flk::wheel(c, SbDistVolume, 621, 189, 40, "Volume");  // J-128: 55 units apart like the others
 
   // ---- delay + reverb
   flk::section(c, 6, 258, 312, 150, "");
@@ -184,13 +191,13 @@ void drawStepBass(App& a, const PluginTarget& t, float width) {
   flk::wheel(c, SbRevPredelay, 456, 288, 40, "Predelay");
   flk::wheel(c, SbRevPreFb, 511, 288, 40, "Pre fdbk");
   flk::wheel(c, SbRevSize, 566, 288, 40, "Size");
-  flk::wheel(c, SbRevDiffusion, 622, 288, 40, "Diffuse");
+  flk::wheel(c, SbRevDiffusion, 621, 288, 40, "Diffuse");
   flk::wheel(c, SbRevDecay, 346, 349, 40, "Decay");
   flk::wheel(c, SbRevHiDamp, 401, 349, 40, "Damp");
   flk::wheel(c, SbRevWidth, 456, 349, 40, "Width");
   flk::wheel(c, SbRevDry, 511, 349, 40, "Dry");
   flk::wheel(c, SbRevEr, 566, 349, 40, "Early");
-  flk::wheel(c, SbRevWet, 622, 349, 40, "Wet");
+  flk::wheel(c, SbRevWet, 621, 349, 40, "Wet");
 
   // ---- sequencer
   flk::section(c, 6, 414, 688, 180, "");

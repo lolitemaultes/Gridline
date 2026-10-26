@@ -55,9 +55,15 @@ void drawPluginBody(App& a, const PluginTarget& t, float width);
 namespace pui {
 // J-94: accent role (0xRRGGBB) of a brand family; 0 for descriptive tools.
 uint32_t brandRole(BrandFamily f);
-// Flagship wordmark at the cursor (accent bar + lower-case name, tagline on
-// hover). Returns false, drawing nothing, for types without one.
+// J-130: the plugin's wordmark (Tile logo, PluginWordmark.cpp) at the cursor, as
+// one item of max(frame height, size + 4) px; the name (and tagline) shows on
+// hover. Returns false, drawing nothing, for types without one (hosted plugins).
 bool wordmark(App& a, const std::string& type, float size);
+// J-130: the "Gridline Suite" / "Gridline Suite Mini" logo, `height` px tall
+// with its top-left at `pos` (drawn only); returns its width, 0 when missing.
+float suiteLogo(ImDrawList* dl, ImVec2 pos, float height, bool mini);
+// Its size at `height` (0, 0 when missing).
+ImVec2 suiteLogoSize(float height, bool mini);
 // Panel with a small-caps title; call end() after the contents.
 void beginSection(const char* title, float width, float height = 0);
 void endSection();

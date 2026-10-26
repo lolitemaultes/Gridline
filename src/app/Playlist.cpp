@@ -922,7 +922,7 @@ void drawPlaylist(App& a) {
       const bool hov = clickable && ImGui::IsItemHovered();
       ImDrawList* tdl = ImGui::GetWindowDrawList();
       if (hov) tdl->AddRectFilled(p, ImVec2(p.x + tw + 4, p.y + fh), theme::withAlpha(P.paper, 0.06f), theme::kRadiusSm);
-      theme::textEllipsis(tdl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 2, std::round(p.y + (fh - theme::kFontBody) * 0.5f) - 1), tw + 1,
+      theme::textEllipsis(tdl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 2, std::round(p.y + (fh - theme::kFontBody) * 0.5f)), tw + 1,
                           hov ? P.text : col, text.c_str());
       if (hint) ui::Hint(hint);
       ImGui::SameLine(0, 0);

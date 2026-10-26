@@ -266,7 +266,7 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m, 
     }
   }
   // Not installed, of a family with a built-in stand-in (Serum -> Plasma,
-  // Kickstart -> Tideline): the stand-in plays it, keeping the plugin and its
+  // Kickstart -> Tideline, Kilohearts -> Gridline Suite Mini): the stand-in plays it, keeping the plugin and its
   // untouched state for when it is installed (core/PluginStandIn.h).
   if (const standin::Family fam = standin::familyOf(w.savedType(), w.name, w.vendor); fam != standin::Family::None) {
     auto orig = std::make_shared<PluginState>();
@@ -278,7 +278,9 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m, 
       m.state = st;
       m.exact = false;
       c.report.counts["hosted plugins: missing, opened with a built-in stand-in"]++;
-      c.report.warn(label + ": not installed; " + standin::standInName(fam) + " plays it (approximate), the plugin and its settings are kept");
+      const PluginInfo* si = findPlugin(st.type);
+      const std::string by = fam == standin::Family::Kilohearts ? "Gridline Suite Mini " + (si ? si->name : st.type) : std::string(standin::standInName(fam));
+      c.report.warn(label + ": not installed; " + by + " plays it (approximate), the plugin and its settings are kept");
       const std::vector<uint32_t> ids = w.paramIds;
       const bool byIndex = w.format != WrapperInfo::Vst3;
       auto link = [fam, orig, ids, byIndex](int fl, standin::ParamLink& l) {

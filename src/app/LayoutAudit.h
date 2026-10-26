@@ -14,7 +14,10 @@
 #include <vector>
 #include "../core/Params.h"
 #include "../../third_party/imgui/imgui.h"
+#include "AlignCheck.h"
 #include "Inset.h"
+
+struct ImGuiWindow;
 
 namespace gl::audit {
 
@@ -24,12 +27,37 @@ void frame(ImVec2 p0, ImVec2 p1, const char* what);
 void control(ImVec2 p0, ImVec2 p1, const char* what);
 // The last ImGui item as a control.
 void lastItem(const char* what);
+// J-128: a panel / section that groups controls for the alignment check only
+// (rows, baselines and columns are compared inside the innermost group); not
+// part of the Q-7 inset check.
+void group(ImVec2 p0, ImVec2 p1, const char* what);
+// J-128: every ImGui item drawn while the collection is open (item hook): the
+// controls no helper registered (custom buttons, selectors) join the alignment
+// check. Child windows are skipped.
+void item(unsigned id, ImVec2 p0, ImVec2 p1);
+// J-128: the kind (align::Kind) of the next control registered through
+// lastItem / control (knob helpers mark their dial, sliders their track).
+void nextKind(uint8_t kind);
 
 struct Report {
   std::vector<inset::Rect> frames, controls;
   std::vector<std::string> frameWhat, controlWhat;
   std::vector<inset::Issue> issues;
+  // J-128 alignment: controls with their kind and clip rectangle, text runs
+  // read back from the draw lists (collectText), and the findings.
+  std::vector<uint8_t> controlKind;
+  std::vector<inset::Rect> controlClip;
+  align::Scene scene;
+  std::vector<align::Finding> findings;
 };
+// J-128: every text run drawn in `root` and its child windows this frame
+// (glyph quads of the font atlas grouped into runs: layout box, baseline,
+// size, clipped), appended to the open collection. Call before end().
+void collectText(ImGuiWindow* root);
+// Same for any window: the runs as a list (panel audit, --align-audit).
+std::vector<align::Text> textRuns(ImGuiWindow* root);
+// Scene of a collection (controls that are not text holders, frames, texts).
+align::Scene sceneOf(const Report& r);
 // Closes the collection and checks it (min inset in px).
 Report end(float min = inset::kMinInset);
 

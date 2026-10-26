@@ -116,6 +116,8 @@ Settings::Settings() {
       {"sounds.error", b(true)},
       {"sounds.record_start", b(false)},
       {"sounds.record_stop", b(false)},
+      // J-133: sound theme, a folder under assets/sounds ("graphite" | "prism" | "tine" | "signal" | "classic").
+      {"sound.theme", Json::makeString("graphite")},
       // J-89: update check (core/Update.h, docs/updates.md).
       {"update.auto", b(true)},                     // check GitHub for a newer release at startup (once a day)
       {"update.beta", b(false)},                    // include prereleases

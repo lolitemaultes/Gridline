@@ -122,6 +122,9 @@ void text(const Ctx& c, float x, float y, const char* s, ImU32 col, float px = 9
 void textC(const Ctx& c, float cx, float y, const char* s, ImU32 col, float px = 9.0f, bool bold = false);
 void textR(const Ctx& c, float rx, float y, const char* s, ImU32 col, float px = 9.0f, bool bold = false);
 void textMid(const Ctx& c, float x0, float x1, float cy, const char* s, ImU32 col, float px = 9.0f, bool bold = false);
+// J-128: bold text at form x beside a field box (boxY, boxH), on the baseline
+// of the field's own value (9 px bold, centred in the box).
+void labelBeside(const Ctx& c, float x, float boxY, float boxH, const char* s, ImU32 col, float px = 8.5f);
 float textW(const Ctx& c, const char* s, float px = 9.0f, bool bold = false);  // form units
 
 // ---- surfaces

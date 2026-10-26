@@ -44,6 +44,49 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   offers to copy it into your plug-in folders and keeps it up to date (Settings, Files, Gridline
   Suite, or `gridline suite install`). See `docs/gridline-suite.md`.
 
+### Sound themes for the interface sounds
+
+- The interface sounds were redesigned and come in five themes: Graphite (warm wood, the
+  default), Prism (struck crystal), Tine (electric piano), Signal (clean electronics) and
+  Classic (the earlier glass sounds). Pick one in Settings > Theme > Sounds, where each theme
+  and each sound has a preview button; the switch takes effect at once, no restart needed. All
+  themes share one motif and the same loudness per event, stay at least 3 dB below full scale,
+  and the volume and per-sound switches apply to every theme.
+
+### New: Gridline Suite Mini, 35 compact effects
+
+- A second suite of small single-purpose effects, each one plain word: Trim, Breadth, Skew,
+  Weave (utility); Bands, Sieve, Rungs, Scorch, Vowel, Tines, Chime (tone); Press, Ceiling,
+  Shear, Pack, Span, Latch, Punch (dynamics); Burn, Bend, Warp, Crumble, Clang (drive); Slide,
+  Interval (pitch); Double, Crowd, Jet, Orbit (motion); Echo, Volley, Vault, Rewind, Halt,
+  Pulse (time). They sit under Gridline Suite Mini in the effect picker.
+- Every editor is the same compact card: a title strip with the family colour, a display that
+  explains the effect (response curve over the live spectrum, transfer curve, gain reduction,
+  delay taps, decay, speed curve, a vowel pad, 16 clickable gate steps), one knob grid and one
+  option row. 2 to 6 factory presets each.
+- Press, Latch and Clang can follow the track's sidechain input. Ceiling (2 ms look-ahead),
+  Pack (10 ms), Shear, Burn, Bend and Warp report their latency for delay compensation.
+- Gridline Suite Mini is also a plugin bundle for other music programs: `Gridline Suite Mini.vst3`,
+  `.clap` and `.component` (macOS), installed with the Gridline Suite.
+- A project that uses one of the Kilohearts single effects that is not installed on this computer
+  opens with its Gridline Suite Mini counterpart in the slot (Compressor as Press, Delay as Echo,
+  and so on for all 35). The saved values carry over where the settings mean the same thing, the
+  rest starts from the Mini defaults, and automation follows. Opening the project says which
+  plugin is missing and what plays instead, and the slot shows a marker. The original plugin and
+  its own state are kept untouched in the project, so a computer that has it installed hosts the
+  real plugin again. An installed plugin is always hosted as itself.
+
+### Every plugin has its own wordmark
+
+- Every built-in instrument and effect now shows a designed text logo at the top left of its
+  editor in place of the plain name: a tile in the plugin's family colour with its own small
+  pictogram cut out of it (an arcade for Cloister, a plumb bob for Plumb, formant bars for
+  Cipher), then the name in the Gridline logo lettering. Gridline Suite and Gridline Suite Mini
+  have suite logos of their own. Hover a wordmark to see the name and tagline.
+- The wordmarks are drawn from vector sources at the exact pixel size of your interface scale and
+  display, so they stay sharp at 100 %, 150 % and 200 %. They take their colours from the theme,
+  so they also read well on the light theme.
+
 ### Stand-ins for a missing Serum or Kickstart
 
 - A project (Gridline or FL Studio) whose Serum or Serum 2 is not installed plays it with Plasma;
@@ -83,6 +126,19 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   plugin state it reports right after are one undo step, and the plugin following an undo or
   redo no longer adds a step that threw the redo history away.
 - In a collaborative project undo still takes back only your own changes, plugin edits included.
+
+### Tidier layouts in plugin editors and panels
+
+- Knobs in a row now share one centre line and their labels one baseline, labels sit centred
+  under their knobs, and captions beside menus and value boxes sit on the field's own text line,
+  in the built-in plugin editors and the app panels, at 100, 150 and 200 % UI scale. Text is
+  placed to the nearest pixel instead of being cut down, so centred labels no longer lean left.
+- Fixed overlaps and cut-off text: Plasma's sub oscillator shapes ran into the phase box,
+  Halftone's FX rail ran under the clip menu, Saw Swarm's matrix knobs and SYNC button touched
+  their neighbours, Retro Phaser's dB scale labels collided, the Maximizer's axis value sat under
+  its IN caption, and a note in Crest and Band Splitter's last frequency label were cut off. The channel rack's pattern length buttons sit on one line again.
+- A layout check now runs in the test suite: it measures every editor's rows, labels, gaps,
+  baselines, overlaps and cut-off text and fails when a change makes any of them worse.
 
 ### Every icon is an SVG
 

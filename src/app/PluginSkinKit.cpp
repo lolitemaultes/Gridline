@@ -133,7 +133,7 @@ void well(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
 
 float text(ImDrawList* dl, ImVec2 p, ImU32 col, const char* s, float size) {
   ImGui::PushFont(app().fontMonoBold, size);
-  float w = ImGui::CalcTextSize(s).x;
+  float w = ui::TextSizeExact(s).x;
   ImVec2 q1(p.x + w, p.y + size);
   placeKitFrame(p, q1);  // Q-7: off the panel's edges
   audit::control(p, q1, "text");
@@ -155,7 +155,7 @@ void pill(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* s, fl
   if (!s || !*s) return;
   float fs = font > 0 ? font : std::clamp(h * 0.66f, 9.0f, 13.0f);
   ImGui::PushFont(app().fontMonoBold, fs);
-  ImVec2 ts = ImGui::CalcTextSize(s);
+  ImVec2 ts = ui::TextSizeExact(s);
   dl->PushClipRect(p0, p1, true);
   dl->AddText(ImVec2(std::round(std::max(p0.x + 3, (p0.x + p1.x - ts.x) * 0.5f)), std::round((p0.y + p1.y - ts.y) * 0.5f)), k.pillTextC(), s);
   dl->PopClipRect();
@@ -177,7 +177,7 @@ void valueStrip(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char*
   if (!s || !*s) return;
   float fs = font > 0 ? font : std::clamp(h * 0.72f, 9.0f, 13.0f);
   ImGui::PushFont(app().fontMono, fs);
-  ImVec2 ts = ImGui::CalcTextSize(s);
+  ImVec2 ts = ui::TextSizeExact(s);
   dl->PushClipRect(p0, p1, true);
   dl->AddText(ImVec2(std::round(std::max(p0.x + 3, (p0.x + p1.x - ts.x) * 0.5f)), std::round((p0.y + p1.y - ts.y) * 0.5f)),
               litPlate ? k.valueTextC() : lighten(k.valueTextC(), 0.12f), s);
@@ -190,7 +190,7 @@ void groupCaption(ImDrawList* dl, const Form& F, float x0, float x1, float y, co
   ImVec2 c = F.p((x0 + x1) * 0.5f, y + 4);
   dl->AddLine(F.p(x0, y + 4), F.p(x1, y + 4), darken(k.panel, 0.25f), 1.0f);
   ImGui::PushFont(app().fontMonoBold, fs);
-  ImVec2 ts = ImGui::CalcTextSize(s);
+  ImVec2 ts = ui::TextSizeExact(s);
   float top = c.y - ts.y * 0.5f;
   dl->AddRectFilled(ImVec2(c.x - ts.x * 0.5f - 4, top), ImVec2(c.x + ts.x * 0.5f + 4, top + ts.y), k.panel);
   dl->AddText(ImVec2(std::round(c.x - ts.x * 0.5f), std::round(top)), k.textDim, s);
@@ -286,7 +286,7 @@ bool menuBox(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
   float fs = font > 0 ? font : std::clamp(size.y * 0.62f, 9.0f, 13.0f);
   std::string v = b.d.format(b.d.min + cur);
   ImGui::PushFont(app().fontMono, fs);
-  ImVec2 ts = ImGui::CalcTextSize(v.c_str());
+  ImVec2 ts = ui::TextSizeExact(v.c_str());
   float aw = std::min(size.y * 0.8f, 14.0f);
   dl->PushClipRect(tl, ImVec2(p1.x - aw, p1.y), true);
   dl->AddText(ImVec2(std::round(tl.x + 5), std::round((tl.y + p1.y - ts.y) * 0.5f)), k.lcdText, v.c_str());
@@ -615,7 +615,7 @@ int keyboard(const char* id, ImVec2 tl, ImVec2 size, int lo, int hi, const Skin&
         char buf[32];
         std::snprintf(buf, sizeof buf, "%d", n / 12 - 1);
         ImGui::PushFont(app().fontMono, std::clamp(ww * 0.7f, 8.0f, 10.0f));
-        ImVec2 ts = ImGui::CalcTextSize(buf);
+        ImVec2 ts = ui::TextSizeExact(buf);
         dl->AddText(ImVec2((a0.x + a1.x - ts.x) * 0.5f, a1.y - ts.y - 2), darken(k.panel, 0.3f), buf);
         ImGui::PopFont();
       }

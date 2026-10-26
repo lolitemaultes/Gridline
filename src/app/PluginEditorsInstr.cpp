@@ -150,13 +150,15 @@ void trioOscRow(App& a, const PluginTarget& t, const iskin::Skin& k, const Plugi
     std::snprintf(buf, sizeof buf, "%d", ed::ival(st, coarseP[o]));
     iskin::text(k, 325, 41 + dy, 24, 16, buf, 13, rgb(0xE8EDF0), 1, true, true);
   }
+  // J-128: fine / pan / mix 4 px apart on the coarse wheel's centre line (the
+  // 70 px mix wheel used to overlap the pan wheel by 5 px).
   iskin::wheel(a, t, k, fineP[o], 372, 21 + dy, 56, k.c.fill, iskin::WheelCentered);
-  iskin::wheel(a, t, k, SynOsc1Pan + o, 436, 21 + dy, 56, k.c.fill2, iskin::WheelCentered);
+  iskin::wheel(a, t, k, SynOsc1Pan + o, 432, 21 + dy, 56, k.c.fill2, iskin::WheelCentered);
   // Mix level (osc 2 / 3 in the reference; osc 1's level sits in the same column).
   if (o == 0) {
-    iskin::wheel(a, t, k, levelP[o], 494, 21 + dy, 56, lerp(k.c.fill2, k.c.cap, 0.35f));
+    iskin::wheel(a, t, k, levelP[o], 492, 21 + dy, 56, lerp(k.c.fill2, k.c.cap, 0.35f));
   } else {
-    iskin::wheel(a, t, k, levelP[o], 487, 14 + dy, 70, k.c.fill2);
+    iskin::wheel(a, t, k, levelP[o], 492, 17 + dy, 64, k.c.fill2);
   }
   ImGui::PopID();
 }
@@ -167,7 +169,7 @@ void trioCaptions(const iskin::Skin& k, float y, bool mixIcon) {
   iskin::text(k, 256, y, 44, 15, "DETUNE", 10.5f, k.c.label, 1, false, true);
   iskin::text(k, 314, y, 46, 15, "COARSE", 12, k.c.label, 1, false, true);
   iskin::text(k, 377, y, 46, 15, "FINE", 12, k.c.label, 1, false, true);
-  iskin::glyphPan(dl, k.at(464, y + 7.5f), k.px(8), rgb(0x2D383E));
+  iskin::glyphPan(dl, k.at(460, y + 7.5f), k.px(8), rgb(0x2D383E));
   if (mixIcon) {  // mix: a small level wedge
     ImVec2 a0 = k.at(512, y + 12), a1 = k.at(532, y + 12), a2 = k.at(532, y + 3);
     dl->AddTriangleFilled(a0, a1, a2, rgb(0x2D383E));
@@ -199,7 +201,7 @@ void trioEnvGraph(const iskin::Skin& k, const PluginState& st, float x, float y,
 void cwheel(App& a, const PluginTarget& t, const iskin::Skin& k, int param, float x, float y, const char* cap, ImU32 fill,
             float size = 40) {
   iskin::wheel(a, t, k, param, x, y, size, fill);
-  iskin::text(k, x - 8, y + size + 1, size + 16, 12, cap, 9.5f, k.c.textDim, 1, false, true);
+  iskin::text(k, x - 8, iskin::labelY(k, y + size + 1), size + 16, 12, cap, 9.5f, k.c.textDim, 1, false, true);  // J-128: row label line
 }
 
 void editorTrio(App& a, const PluginTarget& t, float width) {
@@ -223,7 +225,7 @@ void editorTrio(App& a, const PluginTarget& t, float width) {
   }
   iskin::check(a, t, k, SynHQ, 84, 336, 45, 31, "HQ", 11);
   iskin::wheel(a, t, k, SynPhaseRand, 134, 321, 60, k.c.fill2, 0, rgb(0x556067));
-  iskin::text(k, 211, 344, 64, 15, "PHASE RAND", 10.5f, k.c.textDim, 0, false, true);
+  iskin::text(k, 211, 344, 64, 15, "PHASE RAND", 11, k.c.textDim, 0, false, true);  // J-128: same size as AM OSC 3 / HQ
   // Extra modulation routings (Trio): osc 3 mode and osc 2 → osc 1, as LCD selectors.
   iskin::text(k, 286, 318, 62, 12, "OSC 3 MODE", 9, k.c.textDim, 0, false, true);
   iskin::digi(a, t, k, SynOsc3Mode, 286, 331, 62, 18, {}, 10.5f);
@@ -260,8 +262,11 @@ void editorTrio(App& a, const PluginTarget& t, float width) {
   cwheel(a, t, k, SynRelease, 140, y0 + 72, "REL", env, 30);
   section(184, 196, "FILTER");
   iskin::digi(a, t, k, SynFilterType, 190, y0 + 23, 76, 16, {}, 10);
-  cwheel(a, t, k, SynCutoff, 192, y0 + 46, "CUT", k.c.fill2, 34);
-  cwheel(a, t, k, SynResonance, 236, y0 + 46, "RES", k.c.fill2, 34);
+  {
+    const iskin::Row row(k, y0 + 44, 34);  // J-128: on the LFO row's centre line
+    cwheel(a, t, k, SynCutoff, 192, y0 + 44, "CUT", k.c.fill2, 34);
+    cwheel(a, t, k, SynResonance, 236, y0 + 44, "RES", k.c.fill2, 34);
+  }
   cwheel(a, t, k, SynFilterEnv, 280, y0 + 24, "ENV", k.c.fill3, 30);
   cwheel(a, t, k, SynFilterDecay, 320, y0 + 24, "E.DEC", k.c.fill3, 30);
   cwheel(a, t, k, SynKeyTrack, 280, y0 + 80, "KEY", k.c.fill3, 30);
@@ -269,10 +274,13 @@ void editorTrio(App& a, const PluginTarget& t, float width) {
   section(384, 170, "LFO \xC2\xB7 VOICE");
   iskin::digi(a, t, k, SynLfoTarget, 390, y0 + 23, 76, 16, {}, 10);
   iskin::digi(a, t, k, SynLfoShape, 470, y0 + 23, 78, 16, {}, 10);
+  {
+  const iskin::Row lfoRow(k, y0 + 46, 30, 3);  // J-128: labels on the filter row's label line
   cwheel(a, t, k, SynLfoRate, 392, y0 + 46, "RATE", k.c.fill, 30);
   cwheel(a, t, k, SynLfoAmount, 432, y0 + 46, "AMT", k.c.fill, 30);
   cwheel(a, t, k, SynGlide, 472, y0 + 46, "GLIDE", k.c.fill, 30);
   cwheel(a, t, k, SynNoise, 512, y0 + 46, "NOISE", k.c.fill, 30);
+  }
   iskin::text(k, 390, y0 + 96, 50, 12, "VOICES", 9, k.c.textDim, 0, false, true);
   iskin::digi(a, t, k, SynVoices, 390, y0 + 109, 44, 18, [](double v) { return std::to_string(static_cast<int>(std::lround(v))); }, 11);
   cwheel(a, t, k, SynVolume, 472, y0 + 92, "VOLUME", k.c.fill2, 30);
@@ -333,26 +341,27 @@ void editorKeys(App& a, const PluginTarget& t, float width) {
   iskin::text(k, 160, 35, 48, 9, "VOLUME", 8, k.c.textDim, 1, false, true);
   iskin::wheel(a, t, k, KyKeyPan, 214, 8, 28, k.c.fill2);
   iskin::text(k, 204, 35, 48, 9, "KEY PAN", 8, k.c.textDim, 1, false, true);
-  iskin::digi(a, t, k, KyVelCurve, 254, 13, 64, 17, {}, 9.5f);
-  iskin::text(k, 254, 32, 64, 10, "VEL CURVE", 8, k.c.textDim, 1, false, true);
+  iskin::digi(a, t, k, KyVelCurve, 254, 10, 64, 17, {}, 9.5f);         // J-128: centred on the sound-set box
+  iskin::text(k, 254, 35, 64, 9, "VEL CURVE", 8, k.c.textDim, 1, false, true);  // on the header labels' line
   // Group captions.
   auto group = [&](float x, float w, const char* s) {
     iskin::text(k, x, 47, w, 10, s, 9, k.c.label, 1, false, true);
     k.dl()->AddLine(k.at(x + 2, 58), k.at(x + w - 2, 58), rgb(0x3A3A3A), 1.0f);
   };
+  // J-128: wheels 15 px apart inside a group, 21 px between groups.
   group(10, 108, "ENVELOPE");
-  group(131, 108, "DRIVE \xC2\xB7 LFO");
-  group(251, 106, "MUFFLE");
+  group(130, 108, "DRIVE \xC2\xB7 LFO");
+  group(250, 108, "MUFFLE");
   group(420, 52, "TUNE");
   auto w = [&](int param, float x, float y, const char* cap, int flags = iskin::WheelBigLine) {
     iskin::wheel(a, t, k, param, x, y, 42, k.c.fill, flags);
     iskin::text(k, x - 10, y + 42, 62, 12, cap, 8.5f, k.c.textDim, 1, false, true);
   };
   w(KyDecay, 14, 62, "DECAY");
-  w(KyRelease, 72, 62, "RELEASE");
-  w(KyDrive, 135, 62, "OVERDRIVE");
-  w(KyTremRate, 192, 62, "LFO RATE");
-  w(KyVelMuffle, 255, 62, "VEL");
+  w(KyRelease, 71, 62, "RELEASE");
+  w(KyDrive, 134, 62, "OVERDRIVE");
+  w(KyTremRate, 191, 62, "LFO RATE");
+  w(KyVelMuffle, 254, 62, "VEL");
   w(KyMuffle, 311, 62, "MUFFLE");
   w(KyTune, 425, 62, "TUNE");
   // Row 2.
@@ -362,12 +371,12 @@ void editorKeys(App& a, const PluginTarget& t, float width) {
     if (iskin::button(k, "##trem", 3, 167, 31, 12, "TREM", !pan, 7.5f)) a.doc.setParam(t.pid(KyModMode), 0, false);
     if (iskin::button(k, "##apan", 36, 167, 31, 12, "PAN", pan, 7.5f)) a.doc.setParam(t.pid(KyModMode), 1, false);
   }
-  w(KyStereo, 72, 124, "SPREAD");
-  w(KyTreble, 135, 124, "TREBLE");
-  w(KyStretch, 192, 124, "STRETCH");
-  w(KyVelHardness, 255, 124, "VEL");
+  w(KyStereo, 71, 124, "SPREAD");
+  w(KyTreble, 134, 124, "TREBLE");
+  w(KyStretch, 191, 124, "STRETCH");
+  w(KyVelHardness, 254, 124, "VEL");
   w(KyHardness, 311, 124, "HARDNESS");
-  w(KyVelocity, 364, 124, "VEL SENS");
+  w(KyVelocity, 368, 124, "VEL SENS");
   w(KyDetune, 425, 124, "DETUNE");
   // Keyboard.
   iskin::KeyColors kc;

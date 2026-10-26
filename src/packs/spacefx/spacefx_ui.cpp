@@ -1962,9 +1962,9 @@ void editorHallRef(App& a, const PluginTarget& t, float width) {
   box(dl, F, 464, 8, 232, 214, K, ff ? "PITCH VOICES" : "FEEDBACK", 22);
   box(dl, F, 702, 8, 232, 214, K, "OUTPUT", 22);
   box(dl, F, 6, 232, 284, 210, K, "ENVELOPE", 22);
-  chk(a, t, HvOn, F, 136, 11, 60, 16, K, "ON");
+  chk(a, t, HvOn, F, 136, 10, 60, 16, K, "ON");  // J-128: on the section title line
   if (ImGui::IsItemHovered()) a.setHint("Reverb section on (off clears the tail)");
-  chk(a, t, HvFbOn, F, 472, 11, 56, 16, K, "ON");
+  chk(a, t, HvFbOn, F, 472, 10, 56, 16, K, "ON");
   menu(a, t, HvFbMode, F, 584, 31, 104, 13, K);
   // Input.
   VV(a, t, HvInGain, F, 18, 63, 32, 128, K, "GAIN");
@@ -1976,7 +1976,7 @@ void editorHallRef(App& a, const PluginTarget& t, float width) {
   WV(a, t, HvSize, F, 283, 63, 36, K, "SIZE");
   WV(a, t, HvDiffusion, F, 342, 63, 36, K, "DIFFUSE");
   WV(a, t, HvCharacter, F, 401, 63, 36, K, "CHARACTER");
-  hallTimeCell(a, t, st, HvPreDelay, HvPreSync, HvPreTicks, F, 224, 155, K, "PRE-DELAY", 262, 193);
+  hallTimeCell(a, t, st, HvPreDelay, HvPreSync, HvPreTicks, F, 224, 155, K, "PRE-DELAY", 262, 190);  // J-128: T on the label line
   WV(a, t, HvModDepth, F, 283, 155, 36, K, "MOD AMT");
   WV(a, t, HvModFreq, F, 342, 155, 36, K, "MOD FREQ");
   {
@@ -2002,7 +2002,7 @@ void editorHallRef(App& a, const PluginTarget& t, float width) {
     WV(a, t, HvFbLowCut, F, 475, 155, 36, K, "LO CUT");
     VV(a, t, HvFbPitch, F, 534, 63, 32, 128, K, "PITCH");
     VV(a, t, HvFbGain, F, 589, 63, 32, 128, K, "GAIN");
-    hallTimeCell(a, t, st, HvFbDelay, HvFbSync, HvFbTicks, F, 644, 63, K, "DELAY", 672, 101);
+    hallTimeCell(a, t, st, HvFbDelay, HvFbSync, HvFbTicks, F, 644, 63, K, "DELAY", 672, 98);
     WV(a, t, HvFbMix, F, 644, 155, 36, K, "SOURCE");
     if (ImGui::IsItemHovered()) a.setHint("Shimmer source: reverb input (0 %) ↔ reverb tail (100 %)");
   } else {
@@ -2011,14 +2011,14 @@ void editorHallRef(App& a, const PluginTarget& t, float width) {
     WV(a, t, HvFfPitch2, F, 532, 155, 36, K, "PITCH 2");
     WV(a, t, HvFfAmp1, F, 587, 63, 36, K, "LEVEL 1");
     WV(a, t, HvFfAmp2, F, 587, 155, 36, K, "LEVEL 2");
-    hallTimeCell(a, t, st, HvFfDelay1, HvFfSync1, HvFfTicks1, F, 644, 63, K, "DELAY 1", 674, 101);
-    hallTimeCell(a, t, st, HvFfDelay2, HvFfSync2, HvFfTicks2, F, 644, 155, K, "DELAY 2", 674, 193);
+    hallTimeCell(a, t, st, HvFfDelay1, HvFfSync1, HvFfTicks1, F, 644, 63, K, "DELAY 1", 674, 98);
+    hallTimeCell(a, t, st, HvFfDelay2, HvFfSync2, HvFfTicks2, F, 644, 155, K, "DELAY 2", 674, 190);
   }
   if (val(st, HvFbOn) < 0.5f) dim(dl, F, 466, 48, 228, 172, K);
   // Output.
   VV(a, t, HvDry, F, 717, 63, 32, 128, K, "DRY");
   VV(a, t, HvWet, F, 772, 63, 32, 128, K, "WET");
-  tog(a, t, HvLimiter, F, 806, 193, 14, 14, K, "L");
+  tog(a, t, HvLimiter, F, 806, 191, 14, 14, K, "L");  // J-128: on the WET label line
   if (ImGui::IsItemHovered()) a.setHint("Limit the reverb output");
   WV(a, t, HvEqFreq, F, 827, 63, 36, K, "PEAK FREQ");
   WV(a, t, HvEqGain, F, 886, 63, 36, K, "PEAK GAIN");
@@ -2570,7 +2570,7 @@ void editorPhaser(App& a, const PluginTarget& t, float width) {
     VV(a, t, VpFreqMin, F, 23, dy + 71, 26, 106, KS, "MIN");
     VV(a, t, VpFreqMax, F, 57, dy + 71, 26, 106, KS, "MAX");
   }
-  if (ref) chk(a, t, VpHq, F, 92, dy + 130, 40, 17, K, "HQ", red);
+  if (ref) chk(a, t, VpHq, F, 92, dy + 130, 32, 17, K, "HQ", red);  // J-128: clear of the FEEDBACK rail
   chk(a, t, VpManual, F, 92, dy + 163, 60, 17, K, "MANUAL", red);
   VV(a, t, VpFeedback, F, 125, dy + 71, 32, 86, KS, "FEEDBACK");
   // LFO.

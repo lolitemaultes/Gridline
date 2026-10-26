@@ -67,9 +67,11 @@ WizardStyle=modern dark includetitlebar hidebevels
 WizardImageFile=art\wizard-100.png,art\wizard-125.png,art\wizard-150.png,art\wizard-175.png,art\wizard-200.png,art\wizard-225.png,art\wizard-250.png
 WizardSmallImageFile=art\wizard-small-100.png,art\wizard-small-125.png,art\wizard-small-150.png,art\wizard-small-175.png,art\wizard-small-200.png,art\wizard-small-225.png,art\wizard-small-250.png
 WizardImageBackColor=$0B0B0B
-#else
+#elif defined(PlainWizard)
   #pragma message "Inno Setup 6.6 or later is needed for Gridline's installer design; building the plain wizard"
 WizardStyle=modern
+#else
+  #error Inno Setup 6.6 or later is needed for Gridline's installer design (or pass /DPlainWizard for the plain wizard)
 #endif
 #if FileExists(AddBackslash(SourcePath) + "..\..\LICENSE")
 InfoBeforeFile=..\..\LICENSE
@@ -104,10 +106,13 @@ Source: "{#Stage}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recur
 Source: "{#Stage}\plugins\VST3\Gridline.vst3\*"; DestDir: "{commoncf64}\VST3\Gridline.vst3"; Tasks: plugins; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Stage}\plugins\CLAP\Gridline.clap"; DestDir: "{commoncf64}\CLAP"; Tasks: plugins; Flags: ignoreversion
 Source: "{#Stage}\plugins\CLAP\Gridline-assets\*"; DestDir: "{commoncf64}\CLAP\Gridline-assets"; Tasks: plugins; Flags: ignoreversion recursesubdirs createallsubdirs
-; Gridline Suite (Gridline's instruments and effects as plugins for other hosts): always installed.
+; Gridline Suite and Gridline Suite Mini (Gridline's instruments and effects as plugins for other hosts): always installed.
 Source: "{#Stage}\plugins\VST3\Gridline Suite.vst3\*"; DestDir: "{commoncf64}\VST3\Gridline Suite.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Stage}\plugins\CLAP\Gridline Suite.clap"; DestDir: "{commoncf64}\CLAP"; Flags: ignoreversion
 Source: "{#Stage}\plugins\CLAP\Gridline Suite-assets\*"; DestDir: "{commoncf64}\CLAP\Gridline Suite-assets"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#Stage}\plugins\VST3\Gridline Suite Mini.vst3\*"; DestDir: "{commoncf64}\VST3\Gridline Suite Mini.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#Stage}\plugins\CLAP\Gridline Suite Mini.clap"; DestDir: "{commoncf64}\CLAP"; Flags: ignoreversion
+Source: "{#Stage}\plugins\CLAP\Gridline Suite Mini-assets\*"; DestDir: "{commoncf64}\CLAP\Gridline Suite Mini-assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Gridline"; Filename: "{app}\gridline-app.exe"; WorkingDir: "{app}"

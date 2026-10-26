@@ -25,6 +25,7 @@
 #include "TrackIcons.h"
 #include "../core/MixerLayout.h"
 #include "../core/MixerOps.h"
+#include "../core/PluginStandIn.h"
 #include "../core/WheelRoute.h"
 #include "../core/WavWriter.h"
 #include "../engine/Render.h"
@@ -1467,13 +1468,22 @@ void drawMixer(App& a) {
           dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(b0.x + bw - 20 - latW + 6, std::round(b0.y + (rowH - 2 - theme::kFontLabel) * 0.5f)),
                       P.accent, ls.c_str());
         }
-        theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(b0.x + 8, std::round(b0.y + (rowH - 2 - 13) * 0.5f) - 1), bw - 26 - latW,
+        // J-132: a stand-in for a plugin that is not installed carries a lit marker before the chevron.
+        const bool standIn = info && !es.plugin.original.empty();
+        const float markW = standIn ? 10.0f : 0.0f;
+        theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(b0.x + 8, std::round(b0.y + (rowH - 2 - 13) * 0.5f) - 1), bw - 26 - latW - markW,
                             info ? (es.enabled ? P.text : P.textFaint) : P.textFaint, info ? info->name.c_str() : i18n::tr("Empty slot"));
+        if (standIn) {
+          const ImVec2 c(std::round(b0.x + bw - 20 - latW - 2), std::round(b0.y + (rowH - 2) * 0.5f));
+          dl->AddCircle(c, 3.5f, P.hot, 12, 1.5f);
+          dl->AddCircleFilled(c, 1.5f, P.hot, 8);
+        }
         ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(b0.x + bw - 11, b0.y + (rowH - 2) * 0.5f), 10, P.textFaint);
         if (float pr = 0; info && collabui::fileLoading(a, es.plugin.data, &pr))  // J-111: an impulse response still arriving
           collabui::drawLoading(dl, ImVec2(b0.x + 2, b0.y + rowH - 6), ImVec2(b0.x + bw - 2, b0.y + rowH - 3), pr, true);
         ui::Hint(info ? "Click to replace \xC2\xB7 double-click to open \xC2\xB7 right-click for options \xC2\xB7 wheel moves it up / down \xC2\xB7 drag to reorder or onto another track (Ctrl copies)"
                       : "Click to insert an effect (or drop one from the browser)");
+        if (standIn && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", standin::describe(es.plugin).c_str());  // what plays instead
         ImGui::SetNextWindowSizeConstraints(ImVec2(bw, 0), ImVec2(320, 460));
         if (ImGui::BeginPopup("##fxlist")) {
           effectList(a, sel->id, k, es.plugin.type);
@@ -1503,7 +1513,7 @@ void drawMixer(App& a) {
         if (info) {
           ImGui::SetCursorScreenPos(ImVec2(b0.x + bw + 4, q.y + (rowH - 20) * 0.5f));
           ui::ParamKnob("mix", slotMixParam(sel->id, k), 10.0f);
-          ImGui::SetCursorScreenPos(ImVec2(b0.x + bw + 4 + 20 + 4, q.y + 2));
+          ImGui::SetCursorScreenPos(ImVec2(b0.x + bw + 4 + 20 + 4, q.y + (rowH - 22) * 0.5f));  // J-128: on the row's centre line
           bool editing = pluginWindowShown(a, PluginTarget{sel->id, k});
           if (ui::EyeToggle("edit", editing, 22)) togglePluginWindow(a, PluginTarget{sel->id, k});  // Q-6
         }

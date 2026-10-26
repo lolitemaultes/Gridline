@@ -103,15 +103,15 @@ void drawWarmSynthEditor(App& a, const PluginTarget& t, float W) {
   flk::text(c, 347, 111, "FILTER", K.text, 9.0f);
   flk::chk(c, WmSvfOn, 380, 103, 21, 16, "");
   envView(c, st, WmSvfA, 433, 104, 121, 34);
-  for (int i = 0; i < 4; ++i) flk::wheel(c, WmSvfA + i, 347 + 43.f * i, 145, 34, adsr[i]);
-  flk::wheel(c, WmSvfEnv, 519, 145, 34, "Env", skin::WheelBigLine | skin::WheelCentered);
+  for (int i = 0; i < 4; ++i) flk::wheel(c, WmSvfA + i, 347 + 43.f * i, 143, 34, adsr[i]);  // J-128: on OSC 2's row
+  flk::wheel(c, WmSvfEnv, 519, 143, 34, "Env", skin::WheelBigLine | skin::WheelCentered);
   flk::wheel(c, WmSvfLfo, 347, 195, 34, "LFO", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(c, WmSvfKb, 390, 194, 34, "Key");
+  flk::wheel(c, WmSvfKb, 390, 195, 34, "Key");
   flk::chk(c, WmTrackAmp, 479, 195, 75, 16, "TRACK AMP");
-  flk::wheel(c, WmCut, 347, 243, 34, "Cut");
-  flk::wheel(c, WmEmph, 390, 243, 34, "Emph");
-  flk::wheel(c, WmSvfHigh, 433, 243, 34, "High");
-  flk::wheel(c, WmSvfBand, 476, 243, 34, "Band");
+  flk::wheel(c, WmCut, 347, 240, 34, "Cut");  // J-128: on OSC 3's row
+  flk::wheel(c, WmEmph, 390, 240, 34, "Emph");
+  flk::wheel(c, WmSvfHigh, 433, 240, 34, "High");
+  flk::wheel(c, WmSvfBand, 476, 240, 34, "Band");
 
   // ---- LFO
   flk::text(c, 347, 303, "LFO", K.text, 9.0f);

@@ -673,6 +673,11 @@ target_link_libraries(gridline_tests_j73 PRIVATE gridline_core)
 target_compile_options(gridline_tests_j73 PRIVATE ${GL_WARN})
 add_test(NAME j73_ui_polish COMMAND gridline_tests_j73 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# J-128: layout alignment checker (rows, labels, gaps, baselines, overlaps, clipping) and its regression gate.
+add_executable(gridline_tests_align_check tests/test_align_check.cpp)
+target_compile_options(gridline_tests_align_check PRIVATE ${GL_WARN})
+add_test(NAME j128_align_check COMMAND gridline_tests_align_check WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # LV2 hosting (PH-04): an in-tree test bundle (three plugins, their interfaces,
 # presets) plus a presets-only bundle, built into test-lv2/ (never installed).
 set(GRIDLINE_LV2_DIR ${CMAKE_BINARY_DIR}/test-lv2)
@@ -1051,10 +1056,20 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
             -P ${CMAKE_SOURCE_DIR}/cmake/EmbedIcons.cmake
     DEPENDS ${GRIDLINE_UI_SVGS} ${CMAKE_SOURCE_DIR}/cmake/EmbedIcons.cmake
     COMMENT "Embedding interface icons")
+  # J-130: plugin wordmarks (assets/wordmarks/*.svg, made by tools/wordmarks/make_wordmarks.py),
+  # embedded the same way and rasterised per colour role at the exact device height.
+  file(GLOB GRIDLINE_WORDMARK_SVGS CONFIGURE_DEPENDS assets/wordmarks/*.svg)
+  set(GRIDLINE_WORDMARK_DATA ${CMAKE_BINARY_DIR}/generated/WordmarkData.cpp)
+  add_custom_command(OUTPUT ${GRIDLINE_WORDMARK_DATA}
+    COMMAND ${CMAKE_COMMAND} -DWORDMARK_DIR=${CMAKE_SOURCE_DIR}/assets/wordmarks -DOUT=${GRIDLINE_WORDMARK_DATA}
+            -P ${CMAKE_SOURCE_DIR}/cmake/EmbedWordmarks.cmake
+    DEPENDS ${GRIDLINE_WORDMARK_SVGS} ${CMAKE_SOURCE_DIR}/cmake/EmbedWordmarks.cmake
+    COMMENT "Embedding plugin wordmarks")
   add_library(gridline_nanosvg OBJECT src/app/icons/NanoSvgImpl.cpp)
   target_compile_options(gridline_nanosvg PRIVATE ${GL_NOWARN})  # vendored code
   set_target_properties(gridline_nanosvg PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  add_library(gridline_icons OBJECT src/app/icons/IconAtlas.cpp src/app/icons/IconTexture.cpp src/app/icons/IconNames.cpp ${GRIDLINE_ICON_DATA})
+  add_library(gridline_icons OBJECT src/app/icons/IconAtlas.cpp src/app/icons/IconTexture.cpp src/app/icons/IconNames.cpp ${GRIDLINE_ICON_DATA}
+              src/app/icons/Wordmark.cpp ${GRIDLINE_WORDMARK_DATA})
   target_include_directories(gridline_icons PRIVATE src/app/icons)
   target_link_libraries(gridline_icons PRIVATE imgui_core)
   target_compile_options(gridline_icons PRIVATE ${GL_WARN})
@@ -1066,6 +1081,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   target_include_directories(gridline_tests_icons PRIVATE src tests)
   target_compile_options(gridline_tests_icons PRIVATE ${GL_WARN})
   add_test(NAME q13_icons COMMAND gridline_tests_icons WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  # J-130: every catalogue plugin has a wordmark that parses, rasterises and carries its name.
+  add_executable(gridline_tests_wordmarks tests/test_wordmarks.cpp ${GRIDLINE_ICON_OBJS})
+  target_link_libraries(gridline_tests_wordmarks PRIVATE imgui_core gridline_core)
+  target_include_directories(gridline_tests_wordmarks PRIVATE src tests)
+  target_compile_options(gridline_tests_wordmarks PRIVATE ${GL_WARN})
+  add_test(NAME j130_wordmarks COMMAND gridline_tests_wordmarks WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
   # J-54: dialog layout checks, headless Dear ImGui (no window, no renderer).
   add_executable(gridline_tests_dialog_layout tests/test_dialog_layout.cpp src/app/DialogLayout.cpp src/app/Theme.cpp src/core/SmoothScroll.cpp)
@@ -1127,7 +1148,11 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      --screenshot ${CMAKE_BINARY_DIR}/layout_audit/frame.ppm --frames 100000 --no-ui-sounds
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     # J-103: a failing exit fails the test (ctest checks the code); an abort message on the way out does too.
-    set_tests_properties(editor_layout_audit PROPERTIES ENVIRONMENT "GRIDLINE_CONFIG_HOME=${CMAKE_BINARY_DIR}/layout_audit_cfg" TIMEOUT 900
+    # J-128: also fails on alignment findings above tests/alignment_baseline.tsv that
+    # tests/alignment_allowlist.tsv does not justify (AlignCheck.h gate()).
+    set_tests_properties(editor_layout_audit PROPERTIES ENVIRONMENT
+                         "GRIDLINE_CONFIG_HOME=${CMAKE_BINARY_DIR}/layout_audit_cfg;GRIDLINE_ALIGN_BASELINE=${CMAKE_SOURCE_DIR}/tests/alignment_baseline.tsv;GRIDLINE_ALIGN_ALLOW=${CMAKE_SOURCE_DIR}/tests/alignment_allowlist.tsv"
+                         TIMEOUT 900
                          FAIL_REGULAR_EXPRESSION "terminating due to|mutex lock failed|libc\\+\\+abi")
 
     # J-78: clicks on a notification card never reach the playlist clip below it (hidden off-screen run).

@@ -138,26 +138,30 @@ int suiteCliMain(int argc, char** argv) {
   // gridline suite status|install|remove
   const std::string what = argc >= 3 ? argv[2] : "status";
   const bool json = flag(argc, argv, "--json");
-  gl::suite::InstallStatus st = gl::suite::installStatus("gridline");
-  if (what == "status") {
-    printInstall(st, json);
-    return 0;
-  }
-  std::string err;
-  if (what == "install") {
-    if (!gl::suite::install(st, &err)) {
-      std::fprintf(stderr, "could not install the Gridline Suite: %s\n", err.c_str());
-      return 1;
-    }
-  } else if (what == "remove") {
-    if (!gl::suite::remove(st, &err)) {
-      std::fprintf(stderr, "could not remove the Gridline Suite: %s\n", err.c_str());
-      return 1;
-    }
-  } else {
+  // Every suite the build makes (Gridline Suite, Gridline Suite Mini), one after the other.
+  if (what != "status" && what != "install" && what != "remove") {
     std::fprintf(stderr, "usage: gridline suite status|install|remove [--json]\n");
     return 2;
   }
-  printInstall(gl::suite::installStatus("gridline"), json);
-  return 0;
+  int rc = 0;
+  for (const gl::suite::Suite& su : gl::suite::suites()) {
+    gl::suite::InstallStatus st = gl::suite::installStatus(su.id);
+    if (what == "status") {
+      printInstall(st, json);
+      continue;
+    }
+    std::string err;
+    if (what == "install" && !gl::suite::install(st, &err)) {
+      std::fprintf(stderr, "could not install the %s: %s\n", su.name, err.c_str());
+      rc = 1;
+      continue;
+    }
+    if (what == "remove" && !gl::suite::remove(st, &err)) {
+      std::fprintf(stderr, "could not remove the %s: %s\n", su.name, err.c_str());
+      rc = 1;
+      continue;
+    }
+    printInstall(gl::suite::installStatus(su.id), json);
+  }
+  return rc;
 }

@@ -59,7 +59,7 @@ inline bool WV(App& a, const PluginTarget& t, int k, const Form& F, float x, flo
 inline bool V(App& a, const PluginTarget& t, int k, const Form& F, float x, float y, float w, float h, const Skin& K, const char* lbl, ImU32 fill = 0,
               bool ruler = true) {
   bool ch = skin::vslider(a, t, k, F.p(x, y), F.sz(w, h), K, fill, ruler);
-  if (lbl && *lbl) cap(ImGui::GetWindowDrawList(), F, x + w * 0.5f, y + h + 2, lbl, K.textDim);
+  if (lbl && *lbl) cap(ImGui::GetWindowDrawList(), F, x + w * 0.5f, y + h + 1.5f, lbl, K.textDim);  // J-128: the wheel label gap
   return ch;
 }
 // Same, with the value in a strip above.

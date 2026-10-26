@@ -1,4 +1,4 @@
-// Gridline: stand-ins for missing Serum / Kickstart instances (see PluginStandIn.h).
+// Gridline: stand-ins for missing Serum / Kickstart / Kilohearts instances (see PluginStandIn.h).
 #include "PluginStandIn.h"
 #include <algorithm>
 #include <cmath>
@@ -8,8 +8,10 @@
 #include <memory>
 #include <mutex>
 #include "../host/HostedPlugins.h"
+#include "../packs/mini/mini_khs.h"
 #include "../packs/plasma/plasma.h"
 #include "../packs/tideline/tideline.h"
+#include "I18n.h"
 #include "Params.h"
 #include "Project.h"
 #include "Song.h"
@@ -56,6 +58,32 @@ std::vector<std::string> hiddenEntries() {
 thread_local int noResolve = 0;
 
 bool isSerum(Family f) { return f == Family::Serum1 || f == Family::Serum2; }
+bool isKick(Family f) { return f == Family::Kickstart1 || f == Family::Kickstart2; }
+
+namespace khs = packs::mini::khs;
+
+// "%s" placeholders filled in order (translated texts keep their own word order).
+std::string fill(const std::string& text, const std::vector<std::string>& args) {
+  std::string out;
+  size_t a = 0;
+  for (size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '%' && i + 1 < text.size() && text[i + 1] == 's' && a < args.size()) {
+      out += args[a++];
+      ++i;
+    } else {
+      out += text[i];
+    }
+  }
+  return out;
+}
+
+// "Not installed: kHs Compressor, using Gridline Suite Mini Press" (where: the track, or "").
+std::string khsLine(const std::string& plugin, const std::string& miniType, const std::string& where) {
+  const PluginInfo* info = findPlugin(miniType);
+  const std::string mini = info ? info->name : miniType;
+  const std::string p = where.empty() ? plugin : plugin + " (" + where + ")";
+  return fill(i18n::tr("Not installed: %s, using Gridline Suite Mini %s"), {p, mini});
+}
 
 Json parse(const std::string& text) {
   Json j;
@@ -196,8 +224,10 @@ bool cachedLink(Family f, const PluginState& orig, int index, ParamLink& out) {
   bool ok = false;
   if (isSerum(f)) {
     ok = packs::plasma::serumParamLink(orig, index, l.standin, l.curve, l.title);
-  } else if (f == Family::Kickstart1 || f == Family::Kickstart2) {
+  } else if (isKick(f)) {
     ok = packs::tideline::kickstartParamLink(orig.type, index, l.standin, l.curve, l.title);
+  } else if (f == Family::Kilohearts) {
+    if (const khs::Product* p = khs::find(orig.type)) ok = khs::paramLink(*p, orig.type, orig.params.size(), index, l.standin, l.curve, l.title);
   }
   ok = ok && l.standin >= 0 && l.curve.size() >= 2;
   static std::mutex m2;
@@ -207,9 +237,11 @@ bool cachedLink(Family f, const PluginState& orig, int index, ParamLink& out) {
   return ok;
 }
 
-int paramCount(Family f, const std::string& type) {
+int paramCount(Family f, const std::string& type, size_t saved) {
   if (isSerum(f)) return packs::plasma::serumParamCount(type);
-  if (f == Family::Kickstart1 || f == Family::Kickstart2) return 12;
+  if (isKick(f)) return 12;
+  if (f == Family::Kilohearts)
+    if (const khs::Product* p = khs::find(type)) return static_cast<int>(khs::hostedList(*p, type, saved).size());
   return 0;
 }
 
@@ -291,7 +323,7 @@ void restoreSlot(Json& project, Slot& s, const Original& o, std::vector<std::str
     if (std::find(done.begin(), done.end(), r.item) != done.end()) continue;
     int k;
     if (!targets(*r.item, s, k)) continue;
-    const int n = paramCount(f, o.type);
+    const int n = paramCount(f, o.type, o.params.size());
     bool moved = false;
     for (int i = 0; i < n && !moved; ++i) {
       ParamLink l;
@@ -310,7 +342,7 @@ void restoreSlot(Json& project, Slot& s, const Original& o, std::vector<std::str
       if (auto at = p.object.find("automation"); at != p.object.end() && at->second.is(Json::Type::Array))
         at->second.array.erase(std::remove_if(at->second.array.begin(), at->second.array.end(), [](const Json& j) { return j.num("owner", 0) < 0; }),
                                at->second.array.end());
-  if (report) report->push_back(std::string(familyName(f)) + (s.name.empty() ? "" : " (" + s.name + ")") + ": the installed plugin replaces " + standinType);
+  if (report) report->push_back(pluginNameOf(o.type, o.name, o.vendor) + (s.name.empty() ? "" : " (" + s.name + ")") + ": the installed plugin replaces " + standinType);
 }
 
 // Missing original -> stand-in, automation items moved (recorded in the Original).
@@ -321,7 +353,7 @@ void convertSlot(Json& project, Slot& s, std::vector<std::string>* report) {
   if (!makeStandIn(orig, "", "", st)) return;
   Original o;
   fromText(st.original, o);
-  o.name = familyName(f);
+  o.name = pluginNameOf(orig.type);
   std::vector<Ref> rs = refs(project);
   for (auto& r : rs) {
     int k;
@@ -350,7 +382,10 @@ void convertSlot(Json& project, Slot& s, std::vector<std::string>* report) {
                                at->second.array.end());
   st.original = toText(o);
   *s.plugin = pluginStateToJson(st);
-  if (report) report->push_back(std::string(familyName(f)) + (s.name.empty() ? "" : " (" + s.name + ")") + " is not installed: opens as " + standInName(f));
+  if (report) {
+    if (f == Family::Kilohearts) report->push_back(khsLine(o.name, st.type, s.name));
+    else report->push_back(std::string(familyName(f)) + (s.name.empty() ? "" : " (" + s.name + ")") + " is not installed: opens as " + standInName(f));
+  }
 }
 
 }  // namespace
@@ -368,7 +403,9 @@ Family familyOf(const std::string& type, const std::string& name, const std::str
   };
   for (const auto& [id, f] : ids)
     if (type == id) return f;
+  if (khs::find(type)) return Family::Kilohearts;
   if (name.empty() || !isHostedType(type)) return Family::None;
+  if (khs::find("", name, vendor)) return Family::Kilohearts;
   // By name + vendor (FL projects name the plugin; other builds have other ids).
   const std::string n = fold(name), v = fold(vendor);
   const bool xfer = v.empty() || v.find("xfer") != std::string::npos;
@@ -387,18 +424,38 @@ const char* familyName(Family f) {
     case Family::Serum2: return "Serum 2";
     case Family::Kickstart1: return "Kickstart";
     case Family::Kickstart2: return "Kickstart 2";
+    case Family::Kilohearts: return "Kilohearts";
     default: return "";
   }
 }
 const char* standInType(Family f) {
   if (isSerum(f)) return packs::plasma::kType;
-  if (f == Family::Kickstart1 || f == Family::Kickstart2) return "gl.tideline";
+  if (isKick(f)) return "gl.tideline";
   return "";
 }
 const char* standInName(Family f) {
   if (isSerum(f)) return "Plasma";
-  if (f == Family::Kickstart1 || f == Family::Kickstart2) return "Tideline";
+  if (isKick(f)) return "Tideline";
+  if (f == Family::Kilohearts) return "Gridline Suite Mini";
   return "";
+}
+
+std::string standInTypeOf(const std::string& type, const std::string& name, const std::string& vendor) {
+  const Family f = familyOf(type, name, vendor);
+  if (f == Family::Kilohearts) {
+    const khs::Product* p = khs::find(type, name, vendor);
+    return p ? p->mini : "";
+  }
+  return standInType(f);
+}
+
+std::string pluginNameOf(const std::string& type, const std::string& name, const std::string& vendor) {
+  const Family f = familyOf(type, name, vendor);
+  if (f == Family::Kilohearts) {
+    const khs::Product* p = khs::find(type, name, vendor);
+    return p ? p->name : name;
+  }
+  return f != Family::None ? familyName(f) : name;
 }
 
 void setHiddenPlugins(const std::vector<std::string>& entries) {
@@ -414,7 +471,9 @@ bool hidden(const std::string& type, const std::string& name) {
     const std::string le = fold(e);
     if (e == type || (!name.empty() && le == fold(name))) return true;
     if (f == Family::None) continue;
-    if (le == "all" || (le == "serum" && isSerum(f)) || (le == "kickstart" && !isSerum(f))) return true;
+    if (le == "all" || (le == "serum" && isSerum(f)) || (le == "kickstart" && isKick(f)) ||
+        ((le == "kilohearts" || le == "khs") && f == Family::Kilohearts))
+      return true;
   }
   return false;
 }
@@ -474,8 +533,18 @@ bool fromText(const std::string& text, Original& o) {
 }
 
 // ------------------------------------------------------------------ conversion
-bool convert(Family f, const PluginState& orig, Conversion& out) {
+namespace {
+bool convertNamed(Family f, const PluginState& orig, const std::string& name, const std::string& vendor, Conversion& out) {
   out = Conversion{};
+  if (f == Family::Kilohearts) {
+    const khs::Product* p = khs::find(orig.type, name, vendor);
+    if (!p) {
+      out.error = "not in the Kilohearts table";
+      return false;
+    }
+    out.format = std::string(p->name) + " (saved parameters)";
+    return khs::toMini(*p, orig.type, orig.params, out.state, out.notes);
+  }
   if (isSerum(f)) {
     packs::plasma::ImportReport rep;
     const bool ok = packs::plasma::serumStateToPlasma(orig, out.state, rep);
@@ -485,7 +554,7 @@ bool convert(Family f, const PluginState& orig, Conversion& out) {
     for (const auto& m : rep.missingFiles) out.notes.push_back("Missing file: " + m);
     return ok;
   }
-  if (f == Family::Kickstart1 || f == Family::Kickstart2) {
+  if (isKick(f)) {
     packs::tideline::KickstartReport rep;
     out.state = defaultPluginState("gl.tideline");
     const bool ok = packs::tideline::kickstartToTideline(orig.type, orig.data, orig.params, out.state.params, rep);
@@ -498,6 +567,9 @@ bool convert(Family f, const PluginState& orig, Conversion& out) {
   out.error = "no stand-in for this plugin";
   return false;
 }
+}  // namespace
+
+bool convert(Family f, const PluginState& orig, Conversion& out) { return convertNamed(f, orig, "", "", out); }
 
 float ParamLink::map(float n) const {
   if (curve.empty()) return n;
@@ -523,7 +595,9 @@ bool paramLink(Family f, const PluginState& orig, int index, ParamLink& out) { r
 
 int paramIndexOfId(Family f, const std::string& type, uint32_t id) {
   if (isSerum(f)) return packs::plasma::serumParamIndexOfId(type, id);
-  if (f == Family::Kickstart1 || f == Family::Kickstart2) return packs::tideline::kickstartParamIndexOfId(type, id);
+  if (isKick(f)) return packs::tideline::kickstartParamIndexOfId(type, id);
+  if (f == Family::Kilohearts)
+    if (const khs::Product* p = khs::find(type)) return khs::paramIndexOfId(*p, type, id);
   return -1;
 }
 
@@ -532,10 +606,10 @@ bool makeStandIn(const PluginState& orig, const std::string& name, const std::st
   const Family f = familyOf(orig.type, name, vendor);
   if (f == Family::None) return false;
   Conversion c;
-  if (!convert(f, orig, c)) return false;
+  if (!convertNamed(f, orig, name, vendor, c)) return false;
   Original o;
   o.type = orig.type;
-  o.name = name.empty() ? familyName(f) : name;
+  o.name = name.empty() ? pluginNameOf(orig.type, name, vendor) : name;
   o.vendor = vendor;
   o.params = orig.params;
   o.data = orig.data;
@@ -566,6 +640,7 @@ std::string describe(const PluginState& s) {
   Original o;
   if (!fromText(s.original, o)) return "";
   const Family f = familyOf(o.type, o.name, o.vendor);
+  if (f == Family::Kilohearts) return khsLine(o.name.empty() ? pluginNameOf(o.type) : o.name, s.type, "");
   const std::string n = f != Family::None ? familyName(f) : o.name;
   const std::string si = f != Family::None ? standInName(f) : s.type;
   return n + " is not installed: " + si + " plays its sound";
@@ -583,6 +658,10 @@ std::vector<std::string> summary(const Song& song) {
     Original o;
     if (p.original.empty() || !fromText(p.original, o)) return;
     const Family f = familyOf(o.type, o.name, o.vendor);
+    if (f == Family::Kilohearts) {
+      out.push_back(khsLine(o.name.empty() ? pluginNameOf(o.type) : o.name, p.type, where));
+      return;
+    }
     out.push_back(std::string(f != Family::None ? familyName(f) : o.name.c_str()) + (where.empty() ? "" : " (" + where + ")") + " is not installed: " +
                   (f != Family::None ? standInName(f) : p.type.c_str()) + " plays it");
   };

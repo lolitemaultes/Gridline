@@ -80,6 +80,9 @@ StandInPolicy standInPolicy(const std::string& type) {
   const PluginInfo* pi = findPlugin(type);
   if (pi && pi->kind == PluginKind::Generator) return {StandInKind::Rendered, "", ""};
   if (pi && pi->legacyModelParam >= 0) return {StandInKind::Mapped, "", ""};  // its reference engine's FL plugin
+  if (pi && pi->category == "Gridline Suite Mini")  // J-132
+    return {StandInKind::Neutral, "",
+            "Gridline Suite Mini effect: its settings have no FL stock counterpart; the slot stays neutral (render the track to keep the sound)"};
   return {StandInKind::Neutral, "", "no FL counterpart"};
 }
 

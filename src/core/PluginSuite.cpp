@@ -13,7 +13,7 @@ namespace {
 // ---- suites: one line each (the bundle: cmake/GridlinePlugins.cmake gridline_suite()) ----
 const std::vector<Suite> kSuites = {
     {"gridline", "Gridline Suite", "org.gridline.GridlineSuite"},
-    // J-132: {"mini", "Gridline Suite Mini", "org.gridline.GridlineSuiteMini"},
+    {"mini", "Gridline Suite Mini", "org.gridline.GridlineSuiteMini"},
 };
 
 // ---- members of other suites than "gridline": one line per plugin ----
@@ -22,7 +22,42 @@ struct Assignment {
   const char* suite;
 };
 const Assignment kAssignments[] = {
-    // {"gl.<name>", "mini"},
+    // J-132: Gridline Suite Mini
+    {"gl.minitrim", "mini"},
+    {"gl.minibreadth", "mini"},
+    {"gl.miniskew", "mini"},
+    {"gl.miniweave", "mini"},
+    {"gl.minibands", "mini"},
+    {"gl.minisieve", "mini"},
+    {"gl.minirungs", "mini"},
+    {"gl.miniscorch", "mini"},
+    {"gl.minivowel", "mini"},
+    {"gl.minitines", "mini"},
+    {"gl.minichime", "mini"},
+    {"gl.minipress", "mini"},
+    {"gl.miniceiling", "mini"},
+    {"gl.minishear", "mini"},
+    {"gl.minipack", "mini"},
+    {"gl.minispan", "mini"},
+    {"gl.minilatch", "mini"},
+    {"gl.minipunch", "mini"},
+    {"gl.miniburn", "mini"},
+    {"gl.minibend", "mini"},
+    {"gl.miniwarp", "mini"},
+    {"gl.minicrumble", "mini"},
+    {"gl.miniclang", "mini"},
+    {"gl.minislide", "mini"},
+    {"gl.miniinterval", "mini"},
+    {"gl.minidouble", "mini"},
+    {"gl.minicrowd", "mini"},
+    {"gl.minijet", "mini"},
+    {"gl.miniorbit", "mini"},
+    {"gl.miniecho", "mini"},
+    {"gl.minivolley", "mini"},
+    {"gl.minivault", "mini"},
+    {"gl.minirewind", "mini"},
+    {"gl.minihalt", "mini"},
+    {"gl.minipulse", "mini"},
     {nullptr, nullptr},
 };
 
@@ -46,6 +81,7 @@ const Exclusion kExcluded[] = {
 // checks the list against sideInParam.
 const char* const kSidechain[] = {
     "gl.comp", "gl.limiter", "gl.vocoder", "gl.scduck", "gl.hall", "gl.tideline", "gl.transplit", "gl.hitloop",
+    "gl.minipress", "gl.minilatch", "gl.miniclang",
 };
 
 // AU subtype overrides for a (future) hash collision: the type that came
@@ -95,6 +131,41 @@ void categorize(Member& m) {
       {"gl.analyzer", {"Fx|Analyzer", "analyzer", "Analyzer"}},
       {"gl.tuner", {"Fx|Analyzer", "analyzer", "Analyzer"}},
       {"gl.freqshift", {"Fx|Modulation", "frequency-shifter", "Modulation"}},
+      // J-132: Gridline Suite Mini (Trim keeps the utility default)
+      {"gl.minibreadth", {"Fx|Spatial", "utility", "Imaging"}},
+      {"gl.miniskew", {"Fx|Spatial", "utility", "Imaging"}},
+      {"gl.miniweave", {"Fx|Spatial", "utility", "Imaging"}},
+      {"gl.minibands", {"Fx|EQ", "equalizer", "EQ"}},
+      {"gl.minisieve", {"Fx|Filter", "filter", "Filter"}},
+      {"gl.minirungs", {"Fx|Filter", "filter", "Filter"}},
+      {"gl.miniscorch", {"Fx|Filter", "filter", "Filter"}},
+      {"gl.minivowel", {"Fx|Filter", "filter", "Filter"}},
+      {"gl.minitines", {"Fx|Filter", "filter", "Filter"}},
+      {"gl.minichime", {"Fx|Filter", "filter", "Filter"}},
+      {"gl.minipress", {"Fx|Dynamics", "compressor", "Dynamics"}},
+      {"gl.miniceiling", {"Fx|Dynamics", "limiter", "Dynamics"}},
+      {"gl.minishear", {"Fx|Distortion", "distortion", "Distortion"}},
+      {"gl.minipack", {"Fx|Dynamics", "compressor", "Dynamics"}},
+      {"gl.minispan", {"Fx|Dynamics", "compressor", "Dynamics"}},
+      {"gl.minilatch", {"Fx|Dynamics", "gate", "Dynamics"}},
+      {"gl.minipunch", {"Fx|Dynamics", "transient-shaper", "Dynamics"}},
+      {"gl.miniburn", {"Fx|Distortion", "distortion", "Distortion"}},
+      {"gl.minibend", {"Fx|Distortion", "distortion", "Distortion"}},
+      {"gl.miniwarp", {"Fx|Distortion", "distortion", "Distortion"}},
+      {"gl.minicrumble", {"Fx|Distortion", "distortion", "Distortion"}},
+      {"gl.miniclang", {"Fx|Modulation", "ring-modulator", "Modulation"}},
+      {"gl.minislide", {"Fx|Modulation", "frequency-shifter", "Modulation"}},
+      {"gl.miniinterval", {"Fx|Pitch Shift", "pitch-shifter", "Pitch"}},
+      {"gl.minidouble", {"Fx|Modulation", "chorus", "Modulation"}},
+      {"gl.minicrowd", {"Fx|Modulation", "chorus", "Modulation"}},
+      {"gl.minijet", {"Fx|Modulation", "flanger", "Modulation"}},
+      {"gl.miniorbit", {"Fx|Modulation", "phaser", "Modulation"}},
+      {"gl.miniecho", {"Fx|Delay", "delay", "Delay"}},
+      {"gl.minivolley", {"Fx|Delay", "delay", "Delay"}},
+      {"gl.minivault", {"Fx|Reverb", "reverb", "Reverb"}},
+      {"gl.minirewind", {"Fx|Delay", "glitch", "Delay"}},
+      {"gl.minihalt", {"Fx", "glitch", "Effects"}},
+      {"gl.minipulse", {"Fx|Modulation", "glitch", "Modulation"}},
   };
   static const std::map<std::string, Cat> kByCategory = {
       {"Drums", {"Instrument|Drum", "drum", "Drums"}},

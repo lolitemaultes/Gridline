@@ -5,6 +5,7 @@
 // keyboard, and the entry point.
 #include "plasma_ui.h"
 #include "plasma_dsp.h"
+#include "../../app/LayoutAudit.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -230,6 +231,11 @@ void textR(const Ctx& c, float rx, float y, const char* s, ImU32 col, float px, 
   const ImVec2 q = c.p(rx, y);
   put(c, ImVec2(q.x - sz.x, q.y), s, col, px, bold);
 }
+void labelBeside(const Ctx& c, float x, float boxY, float boxH, const char* s, ImU32 col, float px) {
+  ImFont* f = pick(c, true);
+  const float vTop = std::round(c.p(0, boxY + boxH * 0.5f).y - measure(c, "0", 9.0f, true).y * 0.5f);
+  put(c, ImVec2(c.p(x, 0).x, vTop + f->GetFontBaked(font(c, 9.0f))->Ascent - f->GetFontBaked(font(c, px))->Ascent), s, col, px, true);
+}
 void textMid(const Ctx& c, float x0, float x1, float cy, const char* s, ImU32 col, float px, bool bold) {
   const ImVec2 sz = measure(c, s, px, bold);
   const ImVec2 a = c.p(x0, cy), b = c.p(x1, cy);
@@ -251,6 +257,7 @@ void wellRect(const Ctx& c, float x, float y, float w, float h, float r) {
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
   c.dl->AddRectFilled(a, b, c.P.well, c.s(r));
   c.dl->AddRect(a, b, c.P.line, c.s(r));
+  gl::audit::group(a, b, "well");  // J-128: rows are checked per panel
 }
 void hline(const Ctx& c, float x0, float x1, float y, ImU32 col) {
   const ImVec2 a = c.p(x0, y), b = c.p(x1, y);
@@ -286,6 +293,7 @@ void frameBox(const Ctx& c, float x, float y, float w, float h, ImU32 fill) {
   const ImVec2 a = c.p(x + g, y + g), b = c.p(x + w - g, y + h - g);
   // no outline: a cell reads as a cell through the dark gutter around it and its tone
   c.dl->AddRectFilled(a, b, fill ? fill : c.P.panel, c.s(2.0f));
+  gl::audit::group(a, b, "cell");  // J-128: rows are checked per panel
 }
 float moduleFrame(Ctx& c, float x, float y, float w, float h, float headH, const char* title, int enable, bool lit, ImU32 fill, bool centre) {
   frameBox(c, x, y, w, h, fill);
@@ -315,6 +323,7 @@ void deck(const Ctx& c, float x, float y, float w, float h) {
 }
 void insetFrame(const Ctx& c, float x, float y, float w, float h, int cols, int rows, bool centre) {
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
+  gl::audit::group(a, b, "inset");  // J-128: rows are checked per panel
   skin::gradientRect(c.dl, a, b, c.P.well, c.P.wellHi, c.s(2));
   if (cols > 0 || rows > 0) gridLines(c, x, y, w, h, cols, rows, centre);
   // inner top shade + border
@@ -722,11 +731,15 @@ bool valueBox(Ctx& c, int k, float x, float y, float w, float h, const char* lab
   c.dl->AddRectFilled(a, b, act ? c.P.panelLo : c.P.well, c.s(2));
   c.dl->AddRect(a, b, hov || act ? c.P.lineHi : c.P.line, c.s(2));
   float vx0 = x;
+  const std::string s = override ? std::string(override) : paramText(k, v, &c.st.params);
   if (label && *label) {
-    text(c, x + 4, y + (h - 10) * 0.5f, label, c.P.textDim, 8.5f, true);
+    // J-128: the label sits on the value's baseline (textMid centres the value)
+    ImFont* f = pick(c, true);
+    const float vTop = std::round(c.p(0, y + h * 0.5f).y - measure(c, s.c_str(), 9.0f, true).y * 0.5f);
+    const float lTop = vTop + f->GetFontBaked(font(c, 9.0f))->Ascent - f->GetFontBaked(font(c, 8.5f))->Ascent;
+    put(c, ImVec2(c.p(x + 4, 0).x, lTop), label, c.P.textDim, 8.5f, true);
     vx0 = x + 6 + textW(c, label, 8.5f, true);
   }
-  const std::string s = override ? std::string(override) : paramText(k, v, &c.st.params);
   textMid(c, vx0, x + w, y + h * 0.5f, s.c_str(), c.P.accent, 9.0f, true);
   if (!modSlotsFor(c, k).empty()) c.dl->AddRectFilled(ImVec2(b.x - c.s(4), a.y + c.s(2)), ImVec2(b.x - c.s(2), b.y - c.s(2)), c.P.mod, 1);
   if (hov) c.a.setHint(paramLongName(k) + ": " + paramText(k, v, &c.st.params) + "   (drag \xC2\xB7 double-click: type \xC2\xB7 right-click: menu)");
@@ -845,7 +858,7 @@ int tabs(Ctx& c, const char* id, float x, float y, float w, float h, const std::
     const float tx = x + tw * i;
     ImGui::PushID(i);
     ImGui::SetCursorScreenPos(c.p(tx, y));
-    if (ImGui::InvisibleButton("##t", c.F.sz(tw - (srcBase >= 0 ? 16 : 0), h))) clicked = i;
+    if (ImGui::InvisibleButton("##t", c.F.sz(tw - (srcBase >= 0 ? 18 : 0), h))) clicked = i;  // J-128: clear of the drag handle (it spans tw - 17 .. tw - 3)
     const bool hov = ImGui::IsItemHovered();
     const bool on = i == cur;
     {  // separate boxes with a gap; the current tab is lit and points into its panel
@@ -1796,7 +1809,7 @@ void strip(Ctx& c) {
     ImGui::InvisibleButton("##pc", c.F.sz(gw, gh), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     double pv = val(c, G_PortaCurve);
     interact(c, G_PortaCurve, pv, 120, false);
-    cellLabel(c, gx + gw * 0.5f, gy + gh + 4.5f, "CURVE");
+    cellLabel(c, gx + gw * 0.5f, gy + gh + 3.5f, "CURVE");  // J-128: on the PORTA label line
   }
 }
 

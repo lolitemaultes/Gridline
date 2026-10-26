@@ -16,6 +16,7 @@
 #include "App.h"
 #include "Keys.h"
 #include "SettingsPages.h"
+#include "SoundThemeUi.h"
 #include "Theme.h"
 #include "ThemeSettings.h"
 #include "Widgets.h"
@@ -489,6 +490,11 @@ void themeSettingsPage(App& a, float fieldW) {
 
   ui::BeginSection(tr("PREVIEW"));
   themePreview(a);
+  ui::EndSection();
+
+  // J-133: interface sounds and the sound theme (J-129 may move this into its own Sounds group).
+  ui::BeginSection(tr("SOUNDS"));
+  uisound::drawThemeSettings(a, fieldW);
   ui::EndSection();
 
   if (ui::TextButton(tr("Reset theme"), false, 0, tr("Theme colours, contrast and brightness back to the defaults (the dark / light choice stays)"))) {

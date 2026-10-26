@@ -34,6 +34,17 @@ namespace fs = std::filesystem;
 
 namespace {
 
+std::string readText(const char* path) {  // a whole small text file ("" when missing)
+  std::string s;
+  if (FILE* f = std::fopen(path, "rb")) {
+    char buf[4096];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);
+    std::fclose(f);
+  }
+  return s;
+}
+
 std::string safeName(const std::string& type) {
   std::string s;
   for (char c : type) s += std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == '_' ? c : '_';
@@ -70,6 +81,10 @@ struct ThumbRun {
   std::vector<png::Image> cells;
   std::string tsv;
   int editorsWithIssues = 0, issueCount = 0;
+  // J-128 alignment findings (AlignCheck.h): alignment.tsv, per width.
+  std::string alignTsv;
+  int alignCount[3] = {0, 0, 0}, alignEditors = 0;
+  std::vector<align::Count> alignCounts;
   // J-92: parameter bindings (reads / bound controls per parameter) at width x1,
   // over the editor as drawn and with every choice / switch value in turn
   // (pages, modes).
@@ -160,11 +175,17 @@ void beginAuditMode(App& a, const std::string& dir) {
   beginThumbMode(a);
   for (const auto& p : pluginCatalog())  // J-92: note processors too (binding audit)
     if (p.kind == PluginKind::NoteFx) run.types.push_back(p.type);
+  if (const char* only = std::getenv("GRIDLINE_AUDIT_ONLY")) {  // J-128 dev aid: audit only these types (comma separated)
+    const std::string list = std::string(",") + only + ",";
+    run.types.erase(std::remove_if(run.types.begin(), run.types.end(), [&](const std::string& t) { return list.find("," + t + ",") == std::string::npos; }),
+                    run.types.end());
+  }
   run.bindTsv = "type\tindex\tparam\treads\tcontrols\tstate_reads\n";
   run.auditDir = dir;
   std::error_code ec;
   fs::create_directories(dir, ec);
   run.tsv = "type\twidth_factor\tissues\tcontrol\tframe\tgap_px\tside\n";
+  run.alignTsv = "type\twidth_factor\trule\toff_px\tat\tdetail\n";
 }
 
 bool thumbMode() { return run.on; }
@@ -174,6 +195,7 @@ void setBindingCrawl(bool on) { run.crawl = on; }
 namespace {
 // Item hook (ImGuiItemHook.h): items of the editor window, collected on its first draw.
 void onItem(ImGuiID id, ImVec2 a, ImVec2 b) {
+  audit::item(id, a, b);  // J-128: alignment check (no-op unless a collection is open)
   if (!run.collect) return;
   ImGuiContext* g = ImGui::GetCurrentContext();
   ImGuiWindow* w = g ? g->CurrentWindow : nullptr;
@@ -321,18 +343,26 @@ void thumbDraw(App& a) {
       if (!run.noteFx) audit::begin();  // layout check: plugin editors only
       if (run.factor == 0) audit::bindBegin();
       run.collect = run.crawl && !run.crawling && run.factor == 0 && run.phase == 1;
-      if (run.collect) imhook::setItemHook(&onItem);
+      imhook::setItemHook(&onItem);  // crawl clicks (run.collect) + J-128 alignment items
       drawBody(a, width);
-      if (run.collect) imhook::setItemHook(nullptr), run.collect = false;
+      imhook::setItemHook(nullptr), run.collect = false;
+      if (!run.noteFx) audit::collectText(ImGui::GetCurrentWindow());  // J-128: text runs for the alignment check
       if (run.factor == 0) mergeBindings(audit::bindEnd());
       run.report = run.noteFx ? audit::Report{} : audit::end();
-      if (!run.report.issues.empty()) {  // outline what is too close to its panel's edge (contact sheet)
+      if (!run.report.issues.empty() && !std::getenv("GRIDLINE_AUDIT_NOMARK")) {  // outline what is too close to its panel's edge (contact sheet)
         ImDrawList* fg = ImGui::GetForegroundDrawList();
         for (const auto& is : run.report.issues) {
           const inset::Rect& f = run.report.frames[is.frame];
           const inset::Rect& c = run.report.controls[is.control];
           fg->AddRect(ImVec2(f.x0, f.y0), ImVec2(f.x1, f.y1), IM_COL32(255, 160, 0, 140), 0, 0, 1.0f);
           fg->AddRect(ImVec2(c.x0 - 1, c.y0 - 1), ImVec2(c.x1 + 1, c.y1 + 1), IM_COL32(255, 40, 40, 255), 0, 0, 2.0f);
+        }
+      }
+      if (!run.report.findings.empty() && !std::getenv("GRIDLINE_AUDIT_NOMARK")) {  // J-128: alignment findings in magenta
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        for (const auto& f : run.report.findings) {
+          fg->AddRect(ImVec2(f.a.x0 - 1, f.a.y0 - 1), ImVec2(f.a.x1 + 1, f.a.y1 + 1), IM_COL32(255, 0, 220, 230), 0, 0, 1.5f);
+          if (f.b.w() > 0) fg->AddRect(ImVec2(f.b.x0 - 1, f.b.y0 - 1), ImVec2(f.b.x1 + 1, f.b.y1 + 1), IM_COL32(0, 220, 255, 200), 0, 0, 1.0f);
         }
       }
     } else {
@@ -400,13 +430,34 @@ void finishAudit() {
     std::fwrite(run.tsv.data(), 1, run.tsv.size(), f);
     std::fclose(f);
   }
+  if (FILE* f = std::fopen((dir / "alignment.tsv").string().c_str(), "wb")) {  // J-128
+    std::fwrite(run.alignTsv.data(), 1, run.alignTsv.size(), f);
+    std::fclose(f);
+  }
   if (FILE* f = std::fopen((dir / "param_bindings.tsv").string().c_str(), "wb")) {  // J-92
     std::fwrite(run.bindTsv.data(), 1, run.bindTsv.size(), f);
+    std::fclose(f);
+  }
+  if (FILE* f = std::fopen((dir / "alignment_counts.tsv").string().c_str(), "wb")) {  // J-128: a baseline candidate
+    const std::string s = align::countsTsv(run.alignCounts);
+    std::fwrite(s.data(), 1, s.size(), f);
     std::fclose(f);
   }
   auditIssues() = run.issueCount;
   std::fprintf(stderr, "layout audit: %zu editors, %d with issues at width x1, %d issues in all\n", run.types.size(), run.editorsWithIssues,
                run.issueCount);
+  std::fprintf(stderr, "alignment audit: %d editors with findings at width x1; findings x1 %d, x1.5 %d, x2 %d\n", run.alignEditors, run.alignCount[0],
+               run.alignCount[1], run.alignCount[2]);
+  // J-128 regression gate: GRIDLINE_ALIGN_BASELINE / GRIDLINE_ALIGN_ALLOW (AlignCheck.h gate()).
+  if (const char* base = std::getenv("GRIDLINE_ALIGN_BASELINE"); base && !fs::exists(fs::path(base))) {
+    std::fprintf(stderr, "alignment gate: no baseline at %s (skipped)\n", base);
+  } else if (base) {
+    const char* allow = std::getenv("GRIDLINE_ALIGN_ALLOW");
+    const auto bad = align::gate(run.alignCounts, readText(base), allow ? readText(allow) : std::string());
+    for (const std::string& b : bad) std::fprintf(stderr, "alignment regression: %s\n", b.c_str());
+    std::fprintf(stderr, "alignment gate: %zu regressions (see alignment.tsv)\n", bad.size());
+    auditIssues() += static_cast<int>(bad.size());
+  }
 }
 }  // namespace
 
@@ -451,11 +502,29 @@ bool thumbCapture(App& a, int fbW, int fbH) {
       run.tsv += line;
     }
     run.issueCount += static_cast<int>(r.issues.size());
+    for (const auto& f : r.findings) {  // J-128
+      char ab[96];
+      std::snprintf(ab, sizeof ab, "%.1f,%.1f %.1fx%.1f", static_cast<double>(f.a.x0 - run.pos.x), static_cast<double>(f.a.y0 - run.pos.y),
+                    static_cast<double>(f.a.w()), static_cast<double>(f.a.h()));
+      char off[24];
+      std::snprintf(off, sizeof off, "%.2f", static_cast<double>(f.off));
+      run.alignTsv += type + "\t" + std::to_string(kAuditFactors[run.factor]).substr(0, 3) + "\t" + f.rule + "\t" + off + "\t" + ab + "\t" + f.detail + "\n";
+    }
+    align::tally(run.alignCounts, type, r.findings);  // the regression gate's counts (all widths)
+    run.alignCount[run.factor] += static_cast<int>(r.findings.size());
+    if (run.factor == 0 && !r.findings.empty()) ++run.alignEditors;
     if (run.factor == 0 && !run.crawl) writeBindings(type);
     if (run.factor == 0) {
       if (!r.issues.empty()) ++run.editorsWithIssues;
       png::Image img;
-      if (grab(fbW, fbH, img)) run.cells.push_back(png::resize(img, kCellW, std::max(1, img.height * kCellW / img.width)));
+      if (grab(fbW, fbH, img)) {
+        run.cells.push_back(png::resize(img, kCellW, std::max(1, img.height * kCellW / img.width)));
+        if (std::getenv("GRIDLINE_AUDIT_FULL")) {  // J-128 dev aid: each editor at full size (review sheets)
+          std::error_code ec;
+          fs::create_directories(fs::path(run.auditDir) / "full", ec);
+          png::writeFile((fs::path(run.auditDir) / "full" / (safeName(type) + ".png")).string(), img);
+        }
+      }
     }
     if (++run.factor < 3) {
       run.phase = 1;  // same plugin, next width

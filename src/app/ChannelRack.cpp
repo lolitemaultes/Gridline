@@ -288,7 +288,7 @@ void drawChannelRack(App& a) {
       ImVec2 p = ImGui::GetCursorScreenPos();
       ImGui::Dummy(ImVec2(nameW, fh));
       if (pat) dl->AddRectFilled(ImVec2(p.x, p.y + 5), ImVec2(p.x + 4, p.y + fh - 5), theme::rgb(pat->color), 1);
-      theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(p.x + 10, p.y + (fh - theme::kFontBody) * 0.5f - 1), nameW - 14,
+      theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(p.x + 10, std::round(p.y + (fh - theme::kFontBody) * 0.5f)), nameW - 14,
                           P.text, pat ? pat->name.c_str() : "No pattern");
       ui::Hint("Pattern being edited (pick another in the top bar or the playlist)");
     }
@@ -330,18 +330,20 @@ void drawChannelRack(App& a) {
     }
     if (pat && showLen) {
       rx -= wLen;
-      ImGui::SetCursorScreenPos(ImVec2(rx, rowY));
+      // J-128: both buttons on the read-out's centre line
+      const float by = rowY + std::floor((fh - 20) * 0.5f);
+      ImGui::SetCursorScreenPos(ImVec2(rx, by));
       int bars = pat->bars;
       if (ui::IconButton("barsdn", ui::Icon::Minus, false, 20, "Shorter pattern") && bars > 1)
         a.doc.setPatternLength(pat->id, bars - 1, pat->stepsPerBar);
-      ImGui::SameLine(0, 0);
       char buf[24];
       std::snprintf(buf, sizeof buf, "%d bar%s", bars, bars == 1 ? "" : "s");
-      ImVec2 q = ImGui::GetCursorScreenPos();
+      const ImVec2 q(rx + 20, rowY);
+      ImGui::SetCursorScreenPos(q);
       ImGui::Dummy(ImVec2(50, fh));
       ui::Lcd(dl, ImVec2(q.x + 1, q.y + 2), ImVec2(48, fh - 4), buf, ImGui::IsItemHovered(), false);
       ui::Hint("Pattern length in bars");
-      ImGui::SameLine(0, 0);
+      ImGui::SetCursorScreenPos(ImVec2(rx + 70, by));
       if (ui::IconButton("barsup", ui::Icon::Plus, false, 20, "Longer pattern") && bars < 64)
         a.doc.setPatternLength(pat->id, bars + 1, pat->stepsPerBar);
     }

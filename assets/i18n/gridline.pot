@@ -1009,7 +1009,7 @@ msgstr ""
 msgid "Presets"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp
+#: src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/SoundThemeUi.cpp
 msgid "Preview"
 msgstr ""
 
@@ -1433,7 +1433,7 @@ msgstr ""
 msgid "Vel. → pan"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/SoundThemeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Volume"
 msgstr ""
 
@@ -5077,7 +5077,7 @@ msgstr ""
 msgid "Place loop"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/DisplayConfirmUi.cpp src/app/LoopStarterUi.cpp
+#: src/app/ContextMenus.cpp src/app/DisplayConfirmUi.cpp src/app/LoopStarterUi.cpp src/app/SoundThemeUi.cpp
 msgid "Play"
 msgstr ""
 
@@ -5890,10 +5890,6 @@ msgid "INPUT / OUTPUT"
 msgstr ""
 
 #: src/app/Dialogs.cpp
-msgid "INTERFACE SOUNDS"
-msgstr ""
-
-#: src/app/Dialogs.cpp
 msgid "Import FL Studio presets"
 msgstr ""
 
@@ -5915,14 +5911,6 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Interface scale"
-msgstr ""
-
-#: src/app/Dialogs.cpp
-msgid "Interface sounds"
-msgstr ""
-
-#: src/app/Dialogs.cpp
-msgid "Interface sounds are turned off for this session (--no-ui-sounds or GRIDLINE_NO_UI_SOUNDS)."
 msgstr ""
 
 #: src/app/Dialogs.cpp src/app/Menus.cpp src/core/Keymap.cpp
@@ -6029,10 +6017,6 @@ msgstr ""
 msgid "Parent folder"
 msgstr ""
 
-#: src/app/Dialogs.cpp
-msgid "Play short sounds for startup, saving, exports, imports and errors"
-msgstr ""
-
 #: src/app/Dialogs.cpp src/app/Menus.cpp src/app/MixerView.cpp
 msgid "Plugin delay compensation"
 msgstr ""
@@ -6042,19 +6026,11 @@ msgid "Presets appear in each plugin's preset menu under Library ▸ FL Studio, 
 msgstr ""
 
 #: src/app/Dialogs.cpp
-msgid "Preview this sound"
-msgstr ""
-
-#: src/app/Dialogs.cpp
 msgid "Processing threads"
 msgstr ""
 
 #: src/app/Dialogs.cpp src/core/Keymap.cpp
 msgid "Project info"
-msgstr ""
-
-#: src/app/Dialogs.cpp
-msgid "Quiet while the song plays or records, except errors. Never recorded or exported."
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -6127,10 +6103,6 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Snapped drags (clips, notes, selections, points, cut lines) glide from grid line to grid line"
-msgstr ""
-
-#: src/app/Dialogs.cpp
-msgid "Sounds"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -11014,6 +10986,10 @@ msgid "Right-click"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
+msgid "SOUNDS"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
 msgid "Search commands or keys"
 msgstr ""
 
@@ -11295,6 +11271,38 @@ msgstr ""
 
 #: src/app/SettingsPages.cpp
 msgid "Your name"
+msgstr ""
+
+#: src/app/SoundThemeUi.cpp
+msgid "Interface sounds"
+msgstr ""
+
+#: src/app/SoundThemeUi.cpp
+msgid "Interface sounds are turned off for this session (--no-ui-sounds or GRIDLINE_NO_UI_SOUNDS)."
+msgstr ""
+
+#: src/app/SoundThemeUi.cpp
+msgid "Play short sounds for startup, saving, exports, imports and errors"
+msgstr ""
+
+#: src/app/SoundThemeUi.cpp
+msgid "Play this theme's startup sound"
+msgstr ""
+
+#: src/app/SoundThemeUi.cpp
+msgid "Preview this sound"
+msgstr ""
+
+#: src/app/SoundThemeUi.cpp
+msgid "Quiet while the song plays or records, except errors. Never recorded or exported."
+msgstr ""
+
+#: src/app/SoundThemeUi.cpp
+msgid "Sound theme"
+msgstr ""
+
+#: src/app/SoundThemeUi.cpp
+msgid "Sounds"
 msgstr ""
 
 #: src/app/Splash.cpp
@@ -11817,7 +11825,7 @@ msgstr ""
 msgid "You're up to date (%s)"
 msgstr ""
 
-#: src/app/UpdateUi.cpp
+#: src/app/UpdateUi.cpp src/packs/mini/mini_ui.cpp
 msgid "in"
 msgstr ""
 
@@ -12713,6 +12721,10 @@ msgstr ""
 msgid "Zoom tool"
 msgstr ""
 
+#: src/core/PluginStandIn.cpp
+msgid "Not installed: %s, using Gridline Suite Mini %s"
+msgstr ""
+
 #: src/core/ProjectFiles.cpp
 msgid "All projects (.gridline.json, .flp, .zip)"
 msgstr ""
@@ -13223,6 +13235,66 @@ msgstr ""
 
 #: src/packs/flex/flex_ui.cpp
 msgid "The channel keeps the stand-in sound and becomes a normal Gridline instrument."
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "carrier: sidechain input"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "drive"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "dynamics"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "every partial moves by the same Hz"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "front"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "left side late"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "motion"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "open"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "out"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "pitch"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "right side late"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "speed"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "time"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "tone"
+msgstr ""
+
+#: src/packs/mini/mini_ui.cpp
+msgid "utility"
 msgstr ""
 
 #: src/packs/models/additive_ui.cpp
@@ -15459,6 +15531,14 @@ msgstr ""
 
 #: src/plugin/PluginFrame.cpp
 msgid "Gridline FX (effect)"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Gridline Suite"
+msgstr ""
+
+#: src/plugin/PluginFrame.cpp
+msgid "Gridline Suite Mini"
 msgstr ""
 
 #: src/plugin/PluginFrame.cpp

@@ -5,6 +5,7 @@
 #pragma once
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include "../app/App.h"
@@ -31,6 +32,18 @@ inline std::string upper(const char* s) {
 // Small-caps text at form (x, y), left aligned.
 inline void text(const Ctx& c, float x, float y, const char* s, ImU32 col = 0, float px = 8.0f) {
   skin::text(c.dl, c.F.p(x, y), col ? col : c.K.textDim, s, c.F.font(px));
+}
+// J-128: a caption beside a field box (menu / digit box, `boxH` form units tall
+// at form y `boxY`) on the baseline of the field's own text (mono, `fieldPx`,
+// centred in the box) instead of hanging from a hand-picked top.
+inline void textBeside(const Ctx& c, float x, float boxY, float boxH, const char* s, ImU32 col = 0, float px = 8.0f, float fieldPx = 8.5f) {
+  const float fs = c.F.font(fieldPx), cs = c.F.font(px);
+  ImVec2 b0 = c.F.p(x, boxY), b1 = c.F.p(x + 1, boxY + boxH);
+  skin::placeKitFrame(b0, b1);  // where the field itself lands (Q-7 inset)
+  const float y0 = b0.y, y1 = b1.y;
+  const float fieldBase = std::round((y0 + y1 - fs) * 0.5f) + c.a.fontMono->GetFontBaked(fs)->Ascent;
+  const float top = fieldBase - c.a.fontMonoBold->GetFontBaked(cs)->Ascent;
+  skin::text(c.dl, ImVec2(c.F.p(x, 0).x, top), col ? col : c.K.textDim, s, cs);
 }
 // Small-caps text centred on form x.
 inline void textC(const Ctx& c, float cx, float y, const char* s, ImU32 col = 0, float px = 8.0f) {
@@ -59,9 +72,19 @@ inline bool wheel(const Ctx& c, int param, float x, float y, float size, const c
     auto v = getParam(c.a.doc.song(), c.t.pid(param));
     if (d && v) s = d->format(*v);
   }
-  if (!s.empty()) skin::label(c.dl, c.F.p(x + size * 0.5f, 0).x, c.F.p(0, y + size + 1.5f).y, s.c_str(), hot ? c.K.text : c.K.textDim, c.F.font(7.5f));
+  const float ly = skin::rowActive() ? skin::rowLabelY() : c.F.p(0, y + size + 1.5f).y;  // J-128: the row's label line
+  if (!s.empty()) skin::label(c.dl, c.F.p(x + size * 0.5f, 0).x, ly, s.c_str(), hot ? c.K.text : c.K.textDim, c.F.font(7.5f));
   return ch;
 }
+
+// J-128: a row of wheels of mixed sizes. While it lives, flk::wheel (and any
+// skin::wheel) sits on one centre line and its label on one label line: the
+// tallest wheel (`tallest` form units) starts at form y `top`, the labels
+// `gap` under it. The y given to the wheels inside is ignored.
+struct Row : skin::RowScope {
+  Row(const Ctx& c, float top, float tallest, float gap = 1.5f)
+      : skin::RowScope(c.F.p(0, top + tallest * 0.5f).y, c.F.p(0, top + tallest + gap).y) {}
+};
 
 // Vertical rail slider (w × h) with its label underneath (value while hot).
 inline bool vsl(const Ctx& c, int param, float x, float y, float w, float h, const char* label, ImU32 fill = 0) {

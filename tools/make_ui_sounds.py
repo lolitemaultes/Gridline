@@ -21,12 +21,13 @@ Usage:
   --out     where finished WAVs go: <out>/<set>/<event>.wav
   --images  also write waveform + spectrogram PNGs (needs ffmpeg)
   --report  JSON with the measurements of every file
-  --install the app's sounds (assets/sounds/<event>.wav) from the rendered options:
+  --install the classic theme (assets/sounds/classic/<event>.wav) from the options:
             a set name for every event ("glass"), optionally with per-event picks
             ("glass,open=felt,save=precision"). Renders first unless --no-render.
 
-The app plays assets/sounds/<event>.wav (engine/UiSounds.h); the shipped files
-are placeholders until the final picks are installed with --install.
+The app plays assets/sounds/<theme>/<event>.wav (engine/UiSounds.h). J-133 adds
+tools/synth_ui_sounds.py, which synthesises the J-133 option families purely in
+code (no build needed) and verifies them; this script stays for the J-48 sets.
 
 No third-party Python packages; ffmpeg is used only for the true-peak check and
 the optional images.
@@ -537,7 +538,7 @@ def main():
                 picks[ev] = st
             else:
                 base = item
-        dst_dir = os.path.join(here, "assets", "sounds")
+        dst_dir = os.path.join(here, "assets", "sounds", "classic")  # J-133: the classic theme
         for ev in EVENTS:
             st = picks.get(ev, base)
             if not st:

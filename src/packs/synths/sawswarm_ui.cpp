@@ -113,7 +113,7 @@ void drawSawSwarmEditor(App& a, const PluginTarget& t, float width) {
   panel(k, 20, 170, 268, 92, "OSCILLATOR");
   W(SwNoise, 35, 197, 52, "NOISE");
   W(SwSyncFreq, 99, 197, 52, "SYNC FREQ");
-  C(SwSyncOn, 145, 193, "SYNC");
+  C(SwSyncOn, 156, 193, "SYNC");  // J-128: clear of the SYNC FREQ wheel
   sw2(a, t, k, SwSubRetrig, 195, 207, "ON", "OFF", "RETRIG");
   sw2(a, t, k, SwSubInvert, 233, 207, "ON", "OFF", "INVERT");
   sw2(a, t, k, SwSubSquare, 268, 207, "ON", "OFF", "SQUARE");
@@ -193,7 +193,7 @@ void drawSawSwarmEditor(App& a, const PluginTarget& t, float width) {
     const float y0 = (m % 2 == 0) ? 536.f : 566.f;
     ImGui::PushID(m);
     combo(a, t, k, SwModSrc1 + m, x0, y0, 60, 22);
-    iskin::wheel(a, t, k, SwModAmt1 + m, x0 + 66, y0 - 6, 32, k.c.fill3, iskin::WheelCentered);
+    iskin::wheel(a, t, k, SwModAmt1 + m, x0 + 68, y0 - 3, 28, k.c.fill3, iskin::WheelCentered);  // J-128: centred on the combos, rows 30 apart
     combo(a, t, k, SwModDest1 + m, x0 + 104, y0, 90, 22);
     ImGui::PopID();
   }

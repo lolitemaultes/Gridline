@@ -47,21 +47,21 @@ void editorKickFl(App& a, const PluginTarget& t, float width) {
   }
   auto w1 = [&](int p, float x, float y, const char* l) { wheelL(a, t, p, F, x, y, 40, K, K, l); };
   // Row 1 (reference strip).
-  w1(KickPitch, 17, 13, "MAX");
-  w1(KickEndPitch, 74, 13, "MIN");
-  w1(KickSweep, 132, 13, "DECAY");
+  w1(KickPitch, 17, 12, "MAX");  // J-128: every row on one line (the left block sat 1 unit low)
+  w1(KickEndPitch, 74, 12, "MIN");
+  w1(KickSweep, 132, 12, "DECAY");
   w1(KickDecay, 198, 12, "AMP DECAY");
   w1(KickClick, 261, 12, "CLICK");
   w1(KickDrive, 325, 12, "DIST");
   // Row 2: sweep curve, sub, attack · noise · click tone · distortion tone.
-  w1(KickSweepCurve, 17, 88, "CURVE");
-  w1(KickSub, 74, 88, "SUB");
-  w1(KickAttack, 132, 88, "ATTACK");
+  w1(KickSweepCurve, 17, 87, "CURVE");
+  w1(KickSub, 74, 87, "SUB");
+  w1(KickAttack, 132, 87, "ATTACK");
   w1(KickNoise, 198, 87, "NOISE");
   w1(KickClickTone, 261, 87, "CLK TONE");
   w1(KickTone, 325, 87, "TONE");
   // Row 3: variation + key tracking + preview · noise decay · click length · volume.
-  w1(KickVariation, 12, 163, "VARIATION");
+  w1(KickVariation, 12, 162, "VARIATION");
   skin::check(a, t, KickKeyTrack, F.p(60, 160), F.sz(60, 12), K, "KEY TRK");
   waveWell(dl, F.p(60, 175), F.p(178, 220), K, renderPreview(t, st, std::min(1.2, val(st, KickDecay, 0.45f) * 2.2 + 0.05)));
   w1(KickNoiseDecay, 198, 162, "N. DECAY");
@@ -116,7 +116,11 @@ void drumOsc(App& a, const PluginTarget& t, const skin::Form& F, float y, float 
   for (int i = 0; i < 2; ++i) {
     if (sl[i].param < 0) continue;
     float sy = y + 20 + i * 20;
-    skin::text(dl, F.p(154, sy + 1), K.textDim, sl[i].label, lf(F, 7.0f));
+    {  // J-128: the caption on the read-out's baseline (same mono metrics, centred like skin::lcd)
+      ImVec2 b0 = F.p(407, sy - 1), b1 = F.p(460, sy + 16);
+      skin::placeKitFrame(b0, b1);
+      skin::text(dl, ImVec2(F.p(154, 0).x, std::round((b0.y + b1.y - lf(F, 7.0f)) * 0.5f)), K.textDim, sl[i].label, lf(F, 7.0f));
+    }
     dl->AddRectFilled(F.p(185, sy - 1), F.p(404, sy + 16), skin::darken(K.panel, 0.7f), 2);
     skin::hslider(a, t, sl[i].param, F.p(186, sy), F.sz(217, 14), K, skin::hex(0x9A2A2A));
     if (auto d = describeParam(a.doc.song(), t.pid(sl[i].param))) {

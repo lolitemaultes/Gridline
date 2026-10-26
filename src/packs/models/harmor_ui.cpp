@@ -174,7 +174,7 @@ void topSection(App& a, const PluginTarget& t, const PluginState& st, const Patc
   flk::wheel(c, P(PfPhase), 22, 24, 28, "Phase");
   flk::wheel(c, P(PfPhaseRand), 22, 66, 28, "Rand", skin::WheelBigLine | skin::WheelCentered);
   harmonicBars(c, d.part[static_cast<size_t>(p)].shapes[ShTimbre1], 0.25f, 60, 22, 70, 46, true);
-  flk::wheel(c, P(PfTimbreMix), 140, 22, 36, "Mix");
+  flk::wheel(c, P(PfTimbreMix), 140, 20, 36, "Mix");  // J-128: centre on the Phase wheel's line
   harmonicBars(c, d.part[static_cast<size_t>(p)].shapes[ShTimbre2], 0.25f, 186, 22, 70, 46, true);
   flk::text(c, 60, 74, "T1");
   flk::text(c, 186, 74, "T2");
@@ -188,15 +188,17 @@ void topSection(App& a, const PluginTarget& t, const PluginState& st, const Patc
   flk::vsl(c, P(PfProtect), 360, 28, 15, 56, "PROT");
   flk::vsl(c, P(PfClip), 384, 28, 15, 56, "CLIP");
   flk::menu(c, P(PfClipMode), 360, 8, 62, 16);
-  flk::vsl(c, P(PfFxMix), 412, 12, 15, 72, "FX");
-  flk::vsl(c, P(PfVolume), 434, 12, 15, 72, "VOL");
-  flk::vsl(c, P(PfEnvVolume), 456, 12, 15, 72, "ENV");
+  flk::vsl(c, P(PfFxMix), 412, 28, 15, 56, "FX");  // J-128: the rails share one span (FX ran under the clip menu)
+  flk::vsl(c, P(PfVolume), 434, 28, 15, 56, "VOL");
+  flk::vsl(c, P(PfEnvVolume), 456, 28, 15, 56, "ENV");
   flk::wheel(c, P(PfAutoGain), 484, 14, 28, "Auto");
   flk::chk(c, P(PfVelAttTime), 478, 58, 46, 12, "V>A");
   flk::chk(c, P(PfVelAttLen), 478, 72, 46, 12, "V>AS");
   flk::chk(c, P(PfVelRelLen), 478, 86, 46, 12, "V>R");
   // Blur + tremolo.
   flk::section(c, 4, 112, 380, 72, "BLUR · TREMOLO");
+  {
+  const flk::Row row(c, 126, 32);  // J-128: one centre line, one label line
   flk::wheel(cV, P(PfBlurMix), 14, 130, 28, "Mix");
   flk::wheel(cV, P(PfTBlurAtt), 52, 128, 30, "T att");
   flk::wheel(cV, P(PfTBlurDec), 92, 128, 30, "T dec");
@@ -206,27 +208,33 @@ void topSection(App& a, const PluginTarget& t, const PluginState& st, const Patc
   flk::wheel(cO, P(PfTremolo), 252, 126, 32, "Trem");
   flk::wheel(cO, P(PfTremHz), 294, 128, 28, "Speed");
   flk::wheel(cO, P(PfTremGap), 334, 128, 28, "Gap");
+  }
   // Prism + harmonizer.
   flk::section(c, 4, 188, 376, 70, "PRISM · HARMONIZER");
+  {
+  const flk::Row row(c, 200, 40);
   flk::wheel(c, P(PfPrism), 16, 204, 34, "Prism", skin::WheelBigLine | skin::WheelCentered);
   flk::chk(c, P(PfPrismMul), 58, 214, 54, 12, "MULT");
   flk::wheel(cG, P(PfHzMix), 128, 200, 40, "Mix");
   flk::wheel(cG, P(PfHzWidth), 178, 204, 32, "Width");
   flk::wheel(cG, P(PfHzStrength), 220, 206, 28, "Str");
-  flk::digi(c, P(PfHzShift), 262, 206, 26, 18, "SH");
-  flk::digi(c, P(PfHzShiftStep), 292, 206, 26, 18);
-  flk::digi(c, P(PfHzGap), 322, 206, 26, 18, "GP");
-  flk::digi(c, P(PfHzGapStep), 352, 206, 24, 18);
+  }
+  flk::digi(c, P(PfHzShift), 262, 211, 26, 18, "SH");
+  flk::digi(c, P(PfHzShiftStep), 292, 211, 26, 18);
+  flk::digi(c, P(PfHzGap), 322, 211, 26, 18, "GP");
+  flk::digi(c, P(PfHzGapStep), 352, 211, 24, 18);
   // Pitch.
   flk::section(c, 4, 262, 540, 70, "PITCH");
   flk::digi(c, P(PfFreqMul), 16, 280, 46, 18);
-  flk::text(c, 66, 284, "/");
+  flk::text(c, 66, 285, "/");
   flk::digi(c, P(PfFreqDiv), 76, 280, 22, 18);
-  flk::text(c, 16, 304, "FREQ");
+  flk::text(c, 16, 305.5f, "FREQ");  // J-128: on the wheels' label line
   flk::digi(c, P(PfDetMul), 116, 280, 46, 18);
-  flk::text(c, 166, 284, "/");
+  flk::text(c, 166, 285, "/");
   flk::digi(c, P(PfDetDiv), 176, 280, 22, 18);
-  flk::text(c, 116, 304, "DETUNE");
+  flk::text(c, 116, 305.5f, "DETUNE");
+  {
+  const flk::Row row(c, 272, 32);
   flk::wheel(c, P(PfPitchArt), 214, 274, 28, "Env rng", skin::WheelBigLine | skin::WheelCentered);
   flk::wheel(cO, P(PfVibrato), 262, 272, 32, "Vib");
   flk::wheel(cO, P(PfVibHz), 304, 274, 28, "Speed");
@@ -235,6 +243,7 @@ void topSection(App& a, const PluginTarget& t, const PluginState& st, const Patc
   flk::wheel(c, P(PfPortaTime), 414, 274, 28, "Glide");
   flk::wheel(c, P(PfPortaLimit), 454, 274, 28, "Limit");
   flk::wheel(c, P(PfPredelay), 496, 274, 28, "Delay");
+  }
   // Unison.
   flk::section(c, 388, 112, 156, 146, "UNISON");
   flk::digi(cG, P(PfUniOrder), 398, 134, 24, 22);
@@ -251,6 +260,7 @@ void topSection(App& a, const PluginTarget& t, const PluginState& st, const Patc
     flk::chk(c, F(PfF1Adapt), 556, y0 + 20, 52, 12, "ADAPT");
     flk::menu(c, F(PfF1Type), 650, y0 + 14, 108, 20);
     flk::menu(c, F(PfF1ResType), 813, y0 + 14, 108, 20);
+    const flk::Row row(c, y0 + 44, 46);
     flk::wheel(cG, F(PfF1Env), 566, y0 + 44, 44, "Env", skin::WheelBigLine | skin::WheelCentered);
     flk::wheel(cG, F(PfF1Key), 626, y0 + 54, 28, "Key", skin::WheelBigLine | skin::WheelCentered);
     flk::wheel(cG, F(PfF1Width), 662, y0 + 52, 32, "Width");
@@ -264,6 +274,7 @@ void topSection(App& a, const PluginTarget& t, const PluginState& st, const Patc
   flk::wheel(c, P(PfFMix), 772, 88, 24, "Mix", skin::WheelBigLine | skin::WheelCentered);
   // Pluck + phaser.
   flk::section(c, 550, 260, 470, 72, "PLUCK · PHASER");
+  const flk::Row row(c, 268, 42);
   flk::wheel(cV, P(PfPluck), 566, 270, 40, "Pluck");
   flk::menu(c, P(PfPhType), 620, 268, 66, 18);
   static const char* kSc[3] = {"OCT", "HZ", "HARM"};

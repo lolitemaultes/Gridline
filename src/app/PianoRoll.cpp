@@ -253,7 +253,7 @@ void drawPianoRoll(App& a) {
       ImDrawList* tdl = ImGui::GetWindowDrawList();
       tdl->AddRectFilled(p, ImVec2(p.x + chanW, p.y + fh), open || hov ? theme::mix(P.field, P.surface700, 0.5f) : P.field, theme::kRadius);
       if (chan) tdl->AddRectFilled(ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + 10, p.y + fh - 6), theme::rgb(chan->color), 2);
-      theme::textEllipsis(tdl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 16, std::round(p.y + (fh - theme::kFontBody) * 0.5f) - 1),
+      theme::textEllipsis(tdl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 16, std::round(p.y + (fh - theme::kFontBody) * 0.5f)),
                           chanW - 36, P.text, chan ? chan->name.c_str() : "No channel");
       ui::drawIcon(tdl, ui::Icon::ChevronDown, ImVec2(p.x + chanW - 12, p.y + fh * 0.5f), 11, P.textDim);
       ui::Hint("Channel being edited");
@@ -777,7 +777,7 @@ void drawPianoRoll(App& a) {
     // Corner above the keyboard: pattern name.
     dl->AddRectFilled(origin, ImVec2(gridMin.x, r1.y), P.dark ? P.field : P.surface950);
     dl->AddLine(ImVec2(origin.x, r1.y - 1), ImVec2(gridMin.x, r1.y - 1), P.dark ? P.ink : P.lineStrong);
-    theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(origin.x + 8, origin.y + 7), keyW - 12, P.textFaint, "NOTES");
+    theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(origin.x + 8, origin.y + 4), keyW - 12, P.textFaint, "NOTES");  // J-128: on the bar numbers' line
   }
 
   // ---------------- velocity lane ----------------

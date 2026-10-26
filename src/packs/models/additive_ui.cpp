@@ -174,19 +174,25 @@ void synthPage(App& a, const PluginTarget& t, const flk::Ctx& c, const flk::Ctx&
   flk::section(c, 248, o + 2, 336, 70, "MASK");
   ImGui::SetCursorScreenPos(c.F.p(256, o + 16));
   barEditor(a, t, *t.state(a.doc.song()), AdMaskBase, kAdMask, c.F.sz(214, 50), "mask", c.K.accent2C(), 1.0f, "Harmonic mask (repeats every 12 partials)");
-  flk::wheel(c, AdMaskMix, 478, o + 12, 36, "Mix");
-  flk::wheel(cO, AdMaskLfo, 528, o + 16, 30, "LFO", skin::WheelBigLine | skin::WheelCentered);
+  {
+    const flk::Row row(c, o + 12, 36);  // J-128: one centre line, one label line
+    flk::wheel(c, AdMaskMix, 478, o + 12, 36, "Mix");
+    flk::wheel(cO, AdMaskLfo, 528, o + 16, 30, "LFO", skin::WheelBigLine | skin::WheelCentered);
+  }
 
   // ---- volume envelope, tremolo, pluck
   flk::section(c, 248, o + 76, 336, 80, "ENVELOPE  ·  PLUCK");
-  flk::wheel(cO, AdTremolo, 256, o + 92, 30, "Trem");
-  flk::wheel(c, AdAttack, 296, o + 88, 34, "Att");
-  flk::wheel(c, AdDecay, 336, o + 88, 34, "Dec");
-  flk::wheel(c, AdRelease, 376, o + 88, 34, "Rel");
+  {
+    const flk::Row row(c, o + 86, 38);  // J-128: tremolo, envelope and pluck wheels on one line
+    flk::wheel(cO, AdTremolo, 256, o + 92, 30, "Trem");
+    flk::wheel(c, AdAttack, 296, o + 88, 34, "Att");
+    flk::wheel(c, AdDecay, 336, o + 88, 34, "Dec");
+    flk::wheel(c, AdRelease, 376, o + 88, 34, "Rel");
+    flk::wheel(cP, AdPluckTime, 420, o + 86, 38, "Pluck");
+    flk::wheel(cP, AdPluck, 466, o + 92, 28, "Amt");
+  }
   vel(c, AdVelAtt, 298, o + 138);
   vel(c, AdVelRel, 378, o + 138);
-  flk::wheel(cP, AdPluckTime, 420, o + 86, 38, "Pluck");
-  flk::wheel(cP, AdPluck, 466, o + 92, 28, "Amt");
   vel(c, AdVelPluck, 424, o + 138);
   flk::chk(c, AdPluckMask, 502, o + 84, 78, 13, "MASKED");
   flk::chk(c, AdPluckAlt, 502, o + 100, 78, 13, "ALT");
@@ -212,19 +218,22 @@ void synthPage(App& a, const PluginTarget& t, const flk::Ctx& c, const flk::Ctx&
   // ---- filter
   flk::section(c, 22, o + 160, 614, 128, "FILTER");
   flk::chk(c, AdFEnvAdaptive, 30, o + 184, 58, 13, "ADAPT");
-  flk::wheel(cG, AdFEnvAtt, 94, o + 170, 40, "Att");
-  flk::wheel(cG, AdFEnvDec, 138, o + 170, 40, "Dec");
+  {
+    const flk::Row row(c, o + 166, 50);  // J-128: the filter's top wheels on one centre line (o + 191)
+    flk::wheel(cG, AdFEnvAtt, 94, o + 170, 40, "Att");
+    flk::wheel(cG, AdFEnvDec, 138, o + 170, 40, "Dec");
+    flk::wheel(cG, AdFEnvAmt, 184, o + 166, 50, "Env", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(cO, AdLfoCutoff, 272, o + 176, 30, "LFO", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(cG, AdFltKey, 306, o + 176, 30, "Key");
+    flk::wheel(cG, AdFltWidth, 340, o + 174, 34, "Width");
+    flk::wheel(cG, AdFltCutoff, 384, o + 166, 50, "Cutoff");
+    flk::wheel(cP, AdFltReso, 442, o + 171, 40, "Reso");
+    flk::wheel(cP, AdResOffset, 492, o + 176, 30, "Ofs", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(cP, AdResOsc, 526, o + 176, 30, "Osc");
+  }
   flk::wheel(cG, AdFEnvAttSlope, 99, o + 232, 30, "Slope", skin::WheelBigLine | skin::WheelCentered);
   flk::wheel(cG, AdFEnvDecSlope, 143, o + 232, 30, "Slope", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(cG, AdFEnvAmt, 184, o + 166, 50, "Env", skin::WheelBigLine | skin::WheelCentered);
   vel(c, AdVelFEnv, 194, o + 236);
-  flk::wheel(cO, AdLfoCutoff, 272, o + 176, 30, "LFO", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(cG, AdFltKey, 306, o + 176, 30, "Key");
-  flk::wheel(cG, AdFltWidth, 340, o + 174, 34, "Width");
-  flk::wheel(cG, AdFltCutoff, 384, o + 166, 50, "Cutoff");
-  flk::wheel(cP, AdFltReso, 442, o + 171, 40, "Reso");
-  flk::wheel(cP, AdResOffset, 492, o + 176, 30, "Ofs", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(cP, AdResOsc, 526, o + 176, 30, "Osc");
   flk::menu(c, AdFltType, 272, o + 240, 112, 20);
   flk::menu(c, AdResType, 446, o + 240, 90, 20);
   static const char* kScale[2] = {"OCT", "HZ"};
@@ -246,11 +255,14 @@ void synthPage(App& a, const PluginTarget& t, const flk::Ctx& c, const flk::Ctx&
 
   // ---- phaser
   flk::section(c, 22, o + 292, 300, 120, "PHASER");
-  flk::wheel(cL, AdPhMix, 94, o + 298, 50, "Mix");
-  flk::wheel(cL, AdPhDensity, 148, o + 303, 40, "Width");
-  flk::wheel(cL, AdPhOffset, 192, o + 303, 40, "Offset");
-  flk::wheel(cL, AdPhSpeed, 236, o + 306, 34, "Motion", skin::WheelBigLine | skin::WheelCentered);
-  flk::wheel(cL, AdPhKey, 278, o + 308, 30, "Key", skin::WheelBigLine | skin::WheelCentered);
+  {
+    const flk::Row row(c, o + 298, 50);  // J-128: one label line under the mixed sizes
+    flk::wheel(cL, AdPhMix, 94, o + 298, 50, "Mix");
+    flk::wheel(cL, AdPhDensity, 148, o + 303, 40, "Width");
+    flk::wheel(cL, AdPhOffset, 192, o + 303, 40, "Offset");
+    flk::wheel(cL, AdPhSpeed, 236, o + 306, 34, "Motion", skin::WheelBigLine | skin::WheelCentered);
+    flk::wheel(cL, AdPhKey, 278, o + 308, 30, "Key", skin::WheelBigLine | skin::WheelCentered);
+  }
   flk::menu(c, AdPhType, 30, o + 366, 66, 20);
   flk::sw(c, AdPhScale, 104, o + 368, 40, 13, kScale, 2, true);
   flk::wheel(cO, AdPhWidthLfo, 153, o + 362, 30, "LFO", skin::WheelBigLine | skin::WheelCentered);
@@ -258,9 +270,12 @@ void synthPage(App& a, const PluginTarget& t, const flk::Ctx& c, const flk::Ctx&
 
   // ---- harmonizer
   flk::section(c, 326, o + 292, 310, 120, "HARMONIZER");
-  flk::wheel(cV, AdHzMix, 380, o + 298, 50, "Mix");
-  flk::wheel(cV, AdHzWidth, 434, o + 303, 40, "Width");
-  flk::wheel(cV, AdHzStrength, 478, o + 308, 30, "Str");
+  {
+    const flk::Row row(c, o + 298, 50);  // J-128
+    flk::wheel(cV, AdHzMix, 380, o + 298, 50, "Mix");
+    flk::wheel(cV, AdHzWidth, 434, o + 303, 40, "Width");
+    flk::wheel(cV, AdHzStrength, 478, o + 308, 30, "Str");
+  }
   flk::menu(c, AdHzType, 520, o + 300, 108, 20);
   flk::menu(c, AdHzPos, 520, o + 326, 108, 20);
   flk::wheel(cO, AdHzWidthLfo, 424, o + 362, 30, "LFO", skin::WheelBigLine | skin::WheelCentered);
@@ -269,13 +284,17 @@ void synthPage(App& a, const PluginTarget& t, const flk::Ctx& c, const flk::Ctx&
   // ---- LFO
   flk::section(c, 640, o + 292, 202, 120, "LFO");
   flk::menu(c, AdLfoShape, 650, o + 368, 108, 20);
-  flk::wheel(cO, AdLfoAttack, 694, o + 306, 30, "Fade");
-  flk::wheel(cO, AdLfoRate, 744, o + 298, 50, "Speed");
+  {
+    const flk::Row row(c, o + 298, 50);  // J-128: fade on the speed wheel's centre line
+    flk::wheel(cO, AdLfoAttack, 694, o + 306, 30, "Fade");
+    flk::wheel(cO, AdLfoRate, 744, o + 298, 50, "Speed");
+  }
   flk::chk(c, AdLfoGlobal, 650, o + 394, 70, 13, "GLOBAL");
   flk::chk(c, AdLfoTempo, 764, o + 394, 70, 13, "TEMPO");
 
   // ---- effects
   flk::section(c, 22, o + 418, 820, 78, "EFFECTS");
+  const flk::Row fxRow(c, o + 428, 38);  // J-128: one centre line, one label line
   flk::menu(c, AdChType, 30, o + 434, 90, 20);
   flk::wheel(cV, AdFx + FxChorus, 126, o + 428, 38, "Chorus");
   flk::menu(c, AdDelType, 182, o + 434, 86, 20);
@@ -287,8 +306,8 @@ void synthPage(App& a, const PluginTarget& t, const flk::Ctx& c, const flk::Ctx&
   flk::wheel(cV, AdFx + FxRoomSize, 550, o + 432, 30, "Room");
   flk::menu(c, AdCompType, 600, o + 434, 76, 20);
   flk::wheel(c, AdComp, 684, o + 428, 38, "Comp");
-  flk::digi(c, AdVoices, 760, o + 434, 30, 20);
-  flk::textC(c, 775, o + 458, "VOICES");
+  flk::digi(c, AdVoices, 760, o + 437, 30, 20);
+  flk::textC(c, 775, o + 467.5f, "VOICES", 0, 7.5f);  // J-128: on the wheels' label line
 }
 
 void partialsPage(App& a, const PluginTarget& t, const PluginState& st, const flk::Ctx& c, const flk::Ctx& cG, const flk::Ctx& cO,
@@ -351,8 +370,11 @@ void partialsPage(App& a, const PluginTarget& t, const PluginState& st, const fl
   flk::wheel(cO, AdHzWidthLfo, 450, o + 382, 38, "> Harm", skin::WheelBigLine | skin::WheelCentered);
   flk::wheel(cO, AdTremolo, 520, o + 382, 38, "Tremolo");
   flk::menu(c, AdLfoShape, 600, o + 386, 110, 20);
-  flk::wheel(cO, AdLfoRate, 730, o + 376, 44, "Rate");
-  flk::wheel(cO, AdLfoAttack, 790, o + 382, 34, "Fade");
+  {
+    const flk::Row row(c, o + 379, 44);  // J-128: on the depth wheels' centre line (o + 401)
+    flk::wheel(cO, AdLfoRate, 730, o + 379, 44, "Rate");
+    flk::wheel(cO, AdLfoAttack, 790, o + 384, 34, "Fade");
+  }
 }
 
 }  // namespace

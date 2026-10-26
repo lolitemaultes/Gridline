@@ -15244,3 +15244,207 @@ gl.seltmann	17	Gate	combination	0.0500000007	1048578=63.5
 gl.seltmann	18	Pattern speed	combination	2	2=12
 gl.seltmann	19	Cutoff	working	112.468265	
 gl.seltmann	20	Resonance	combination	1	19=20
+gl.minitrim	0	Gain	working	36	
+gl.minitrim	1	Flip Left	working	1	
+gl.minitrim	2	Flip Right	working	1	
+gl.minibreadth	0	Width	working	0	
+gl.minibreadth	1	Mid	working	0	
+gl.minibreadth	2	Pan	working	1	
+gl.minibreadth	3	Mono Below	working	200	
+gl.miniskew	0	Delay	working	2	
+gl.miniskew	1	Side	working	0	
+gl.miniskew	2	Balance	working	1	
+gl.miniweave	0	Left to Left	working	-1	
+gl.miniweave	1	Right to Left	working	1	
+gl.miniweave	2	Left to Right	working	1	
+gl.miniweave	3	Right to Right	working	-1	
+gl.minibands	0	Low	working	18	
+gl.minibands	1	Mid	working	18	
+gl.minibands	2	High	working	18	
+gl.minibands	3	Low Split	working	40	
+gl.minibands	4	High Split	working	12000	
+gl.minisieve	0	Type	working	1	
+gl.minisieve	1	Cutoff	working	20	
+gl.minisieve	2	Q	working	18	
+gl.minisieve	3	Gain	combination	-24	0=4
+gl.minisieve	4	Slope	working	3	
+gl.minirungs	0	Cutoff	working	20000	
+gl.minirungs	1	Resonance	working	1	
+gl.minirungs	2	Drive	working	18	
+gl.minirungs	3	Mode	working	2	
+gl.minirungs	4	Mix	working	0	
+gl.miniscorch	0	Type	working	2	
+gl.miniscorch	1	Cutoff	working	20	
+gl.miniscorch	2	Q	working	20	
+gl.miniscorch	3	Drive	working	1	
+gl.miniscorch	4	Flavour	working	2	
+gl.miniscorch	5	Mix	working	0	
+gl.minivowel	0	Open	working	0	
+gl.minivowel	1	Front	working	0	
+gl.minivowel	2	Sharpness	working	0	
+gl.minivowel	3	Shift	working	-12	
+gl.minivowel	4	Mix	working	0	
+gl.minitines	0	Frequency	working	8000	
+gl.minitines	1	Feedback	working	-0.95	
+gl.minitines	2	Damp	working	1	
+gl.minitines	3	Stereo	working	6	
+gl.minitines	4	Polarity	working	1	
+gl.minitines	5	Mix	working	0	
+gl.minichime	0	Note	working	60	
+gl.minichime	1	Decay	working	5	
+gl.minichime	2	Bright	working	0	
+gl.minichime	3	Partials	working	2	
+gl.minichime	4	Mix	working	0	
+gl.minipress	0	Threshold	working	0	
+gl.minipress	1	Ratio	working	1	
+gl.minipress	2	Attack	working	200	
+gl.minipress	3	Release	working	5	
+gl.minipress	4	Knee	working	24	
+gl.minipress	5	Makeup	working	24	
+gl.minipress	6	Detect	working	1	
+gl.minipress	7	Sidechain	combination	1	-1=1
+gl.miniceiling	0	Input	working	24	
+gl.miniceiling	1	Ceiling	working	-12	
+gl.miniceiling	2	Release	working	1000	
+gl.minishear	0	Drive	working	24	
+gl.minishear	1	Ceiling	working	-24	
+gl.minishear	2	Softness	working	1	
+gl.minishear	3	Output	working	12	
+gl.minipack	0	Threshold	working	0	
+gl.minipack	1	Amount	working	0	
+gl.minipack	2	Attack	working	10	
+gl.minipack	3	Release	working	5	
+gl.minipack	4	Link	working	0	
+gl.minipack	5	Detect	working	1	
+gl.minispan	0	Low Threshold	combination	0	1=1
+gl.minispan	1	Low Amount	working	-1	
+gl.minispan	2	High Threshold	combination	-40	3=20
+gl.minispan	3	High Ratio	working	20	
+gl.minispan	4	Speed	combination	0	1=1
+gl.minispan	5	Output	working	24	
+gl.minilatch	0	Threshold	working	0	
+gl.minilatch	1	Hysteresis	combination	20	0=0
+gl.minilatch	2	Attack	working	100	
+gl.minilatch	3	Hold	combination	1000	0=0
+gl.minilatch	4	Release	combination	5	6=1
+gl.minilatch	5	Floor	working	0	
+gl.minilatch	6	Flip	working	1	
+gl.minilatch	7	Sidechain	combination	1	-1=1
+gl.minipunch	0	Attack	working	1	
+gl.minipunch	1	Sustain	working	1	
+gl.minipunch	2	Speed	combination	0.25	0=1
+gl.minipunch	3	Output	working	12	
+gl.minipunch	4	Clip	working	1	
+gl.miniburn	0	Drive	working	36	
+gl.miniburn	1	Type	working	3	
+gl.miniburn	2	Bias	working	1	
+gl.miniburn	3	Tone	working	1	
+gl.miniburn	4	Output	working	12	
+gl.miniburn	5	Mix	working	0	
+gl.minibend	0	Shape	working	5	
+gl.minibend	1	Amount	working	0	
+gl.minibend	2	Drive	working	24	
+gl.minibend	3	Edge	working	2	
+gl.minibend	4	Mix	working	0	
+gl.miniwarp	0	Drive	working	1	
+gl.miniwarp	1	Tone	working	10000	
+gl.miniwarp	2	Bias	working	-1	
+gl.miniwarp	3	Stereo	working	1	
+gl.miniwarp	4	Mix	working	0	
+gl.minicrumble	0	Rate	working	200	
+gl.minicrumble	1	Bits	working	1	
+gl.minicrumble	2	Jitter	working	1	
+gl.minicrumble	3	Smooth	working	1	
+gl.minicrumble	4	Dither	combination	1	1=1
+gl.minicrumble	5	Mix	working	0	
+gl.miniclang	0	Frequency	working	1	
+gl.miniclang	1	Shape	working	3	
+gl.miniclang	2	Bias	working	1	
+gl.miniclang	3	Spread	working	0.25	
+gl.miniclang	4	Source	working	1	
+gl.miniclang	5	Mix	working	0	
+gl.minislide	0	Shift	working	-2000	
+gl.minislide	1	Stereo	working	75	
+gl.minislide	2	Feedback	working	0.9	
+gl.minislide	3	Mix	working	0	
+gl.miniinterval	0	Pitch	working	24	
+gl.miniinterval	1	Fine	working	100	
+gl.miniinterval	2	Grain	working	63.2455532	
+gl.miniinterval	3	Jitter	combination	1	0=24
+gl.miniinterval	4	Mix	working	0	
+gl.minidouble	0	Delay	working	6.32455532	
+gl.minidouble	1	Depth	working	0	
+gl.minidouble	2	Rate	working	0.05	
+gl.minidouble	3	Voices	working	1	
+gl.minidouble	4	Spread	working	0	
+gl.minidouble	5	Mix	working	1	
+gl.minicrowd	0	Voices	working	2	
+gl.minicrowd	1	Detune	working	0	
+gl.minicrowd	2	Spread	working	1	
+gl.minicrowd	3	Motion	working	1	
+gl.minicrowd	4	Mix	working	0	
+gl.minijet	0	Delay	working	0.1	
+gl.minijet	1	Depth	working	0	
+gl.minijet	2	Rate	working	10	
+gl.minijet	3	Feedback	working	-0.95	
+gl.minijet	4	Stereo	working	1	
+gl.minijet	5	Mix	working	1	
+gl.miniorbit	0	Stages	working	4	
+gl.miniorbit	1	Centre	working	8000	
+gl.miniorbit	2	Depth	working	0	
+gl.miniorbit	3	Rate	working	8	
+gl.miniorbit	4	Feedback	working	-0.9	
+gl.miniorbit	5	Stereo	working	1	
+gl.miniorbit	6	Mix	working	0	
+gl.miniecho	0	Time	combination	1	1=0
+gl.miniecho	1	Sync	working	0	
+gl.miniecho	2	Note	working	1	
+gl.miniecho	3	Feedback	combination	1	1=0
+gl.miniecho	4	Ping Pong	working	1	
+gl.miniecho	5	Tone	working	1	
+gl.miniecho	6	Duck	working	1	
+gl.miniecho	7	Mix	working	1	
+gl.minivolley	0	Time	working	10	
+gl.minivolley	1	Ratio	working	0.25	
+gl.minivolley	2	Feedback	working	1	
+gl.minivolley	3	Cross	working	1	
+gl.minivolley	4	Tone	working	1	
+gl.minivolley	5	Mix	working	1	
+gl.minivault	0	Size	working	0	
+gl.minivault	1	Decay	working	0.2	
+gl.minivault	2	Damp	working	1	
+gl.minivault	3	Pre-delay	working	100	
+gl.minivault	4	Width	working	0	
+gl.minivault	5	Early	working	1	
+gl.minivault	6	Mix	working	1	
+gl.minirewind	0	Length	combination	30	1=0
+gl.minirewind	1	Sync	working	0	
+gl.minirewind	2	Note	working	0	
+gl.minirewind	3	Fade	working	0.5	
+gl.minirewind	4	Mix	working	0	
+gl.minihalt	0	Run	working	0	
+gl.minihalt	1	Stop Time	combination	20	0=0
+gl.minihalt	2	Start Time	verified	0		VERIFIED: shapes the spin-up after Run is switched back on (a static state never restarts)
+gl.minihalt	3	Curve	combination	0.25	0=0
+gl.minipulse	0	Step 1	working	0	
+gl.minipulse	1	Step 2	working	1	
+gl.minipulse	2	Step 3	working	0	
+gl.minipulse	3	Step 4	working	1	
+gl.minipulse	4	Step 5	working	0	
+gl.minipulse	5	Step 6	combination	1	16=1
+gl.minipulse	6	Step 7	combination	0	16=1
+gl.minipulse	7	Step 8	combination	1	16=3
+gl.minipulse	8	Step 9	combination	0	16=3
+gl.minipulse	9	Step 10	combination	1	16=3
+gl.minipulse	10	Step 11	combination	0	16=3
+gl.minipulse	11	Step 12	combination	1	16=3
+gl.minipulse	12	Step 13	combination	0	16=3
+gl.minipulse	13	Step 14	combination	1	16=3
+gl.minipulse	14	Step 15	combination	0	1048592=4
+gl.minipulse	15	Step 16	combination	1	1048592=4
+gl.minipulse	16	Rate	working	0	
+gl.minipulse	17	Attack	working	200	
+gl.minipulse	18	Release	working	500	
+gl.minipulse	19	Floor	working	0	
+gl.minipulse	20	Swing	working	1	
+gl.minipulse	21	Mix	working	0	
