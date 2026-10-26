@@ -39,8 +39,9 @@ CENTRES = (40.0, 80.0)
 INSET = 24.0
 
 SIZES = (16, 24, 32, 48, 64, 96, 128, 256, 512, 1024)
-ICNS = (  # (type, pixel size)
-    (b"icp4", 16), (b"icp5", 32), (b"icp6", 48), (b"ic07", 128), (b"ic08", 256),
+ICNS = (  # (type, pixel size): the set Apple's iconutil writes. 16 and 32 px are ARGB (ic04 / ic05), not PNG:
+    # macOS decodes PNG in the small icp4 / icp5 slots unreliably (the keychain prompt's badge came out as noise).
+    (b"ic04", 16), (b"ic05", 32), (b"ic07", 128), (b"ic08", 256),
     (b"ic09", 512), (b"ic10", 1024), (b"ic11", 32), (b"ic12", 64), (b"ic13", 256), (b"ic14", 512),
 )
 
@@ -264,10 +265,36 @@ def png_bytes(im):
     return b.getvalue()
 
 
+def icns_rle(channel):
+    """icns run-length coding of one channel: n < 0x80 copies n + 1 bytes, n >= 0x80 repeats one byte n - 125 times."""
+    out = bytearray()
+    i, n = 0, len(channel)
+    while i < n:
+        run = 1
+        while i + run < n and run < 130 and channel[i + run] == channel[i]:
+            run += 1
+        if run >= 3:
+            out += bytes((run + 125, channel[i]))
+            i += run
+            continue
+        j = i
+        while j < n and j - i < 128 and not (j + 2 < n and channel[j] == channel[j + 1] == channel[j + 2]):
+            j += 1
+        out += bytes((j - i - 1,)) + channel[i:j]
+        i = j
+    return bytes(out)
+
+
+def argb_bytes(im):
+    px = im.convert("RGBA").tobytes()
+    a, r, g, b = px[3::4], px[0::4], px[1::4], px[2::4]
+    return b"ARGB" + b"".join(icns_rle(c) for c in (a, r, g, b))
+
+
 def write_icns(path, images):
     chunks = b""
     for t, s in ICNS:
-        data = png_bytes(images[s])
+        data = argb_bytes(images[s]) if t in (b"ic04", b"ic05") else png_bytes(images[s])
         chunks += t + struct.pack(">I", len(data) + 8) + data
     with open(path, "wb") as f:
         f.write(b"icns" + struct.pack(">I", len(chunks) + 8) + chunks)

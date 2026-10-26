@@ -8,6 +8,13 @@
 // Parameters are the 16 macros; the state is the whole project; the editor
 // is Gridline's interface (NSView / X11 child window), resizable.
 //
+// J-131: built with GRIDLINE_SUITE="<suite id>", the same entry point is a
+// Gridline Suite bundle: one class per member of the suite (core/PluginSuite.h),
+// each one built-in instrument or effect with its own parameters (effects add
+// Mix and Bypass), state and editor. Instruments: notes in, stereo out.
+// Effects: stereo in (+ a sidechain bus for the effects that read one), stereo
+// out (+ notes in for MIDI effects).
+//
 // MIDI controllers: VST 3 delivers notes as events but controllers, channel
 // pressure and pitch bend only as parameters. IMidiMapping assigns each of
 // them, per MIDI channel, to a hidden parameter (16 x 130: CC 0-127, channel
@@ -40,6 +47,9 @@
 #include "pluginterfaces/vst/vstspeaker.h"
 #include "PluginCore.h"
 #include "PluginView.h"
+#ifdef GRIDLINE_SUITE
+#include "../core/PluginSuite.h"
+#endif
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -136,7 +146,7 @@ class RefCounted {
 
 class GridlineView final : public RefCounted, public IPlugView, public IPlugViewContentScaleSupport, public Linux::ITimerHandler {
  public:
-  explicit GridlineView(Instance& inst) : inst_(inst) {}
+  explicit GridlineView(Instance& inst) : inst_(inst) { inst.preferredViewSize(w_, h_); }
   ~GridlineView() override { removed(); }
   GRIDLINE_REFCOUNT
   tresult PLUGIN_API queryInterface(const TUID iid, void** obj) override {
@@ -201,8 +211,10 @@ class GridlineView final : public RefCounted, public IPlugView, public IPlugView
   }
   tresult PLUGIN_API onSize(ViewRect* r) override {
     if (!r) return kInvalidArgument;
-    w_ = std::max<int32>(r->getWidth(), gl::plugin::kMinViewW);
-    h_ = std::max<int32>(r->getHeight(), gl::plugin::kMinViewH);
+    int minW = 0, minH = 0;
+    inst_.minViewSize(minW, minH);
+    w_ = std::max<int>(r->getWidth(), minW);
+    h_ = std::max<int>(r->getHeight(), minH);
     if (view_) view_->setSize(w_, h_);
     return kResultOk;
   }
@@ -214,8 +226,16 @@ class GridlineView final : public RefCounted, public IPlugView, public IPlugView
   tresult PLUGIN_API canResize() override { return kResultTrue; }
   tresult PLUGIN_API checkSizeConstraint(ViewRect* r) override {
     if (!r) return kInvalidArgument;
-    if (r->getWidth() < gl::plugin::kMinViewW) r->right = r->left + gl::plugin::kMinViewW;
-    if (r->getHeight() < gl::plugin::kMinViewH) r->bottom = r->top + gl::plugin::kMinViewH;
+    int minW = 0, minH = 0, cw = 0, ch = 0;
+    inst_.minViewSize(minW, minH);
+    inst_.editorContent(cw, ch);
+    if (inst_.single() && cw > 0 && ch > 0) {  // a suite editor zooms at its own proportions
+      const double z = std::clamp(std::min(static_cast<double>(r->getWidth()) / cw, static_cast<double>(r->getHeight()) / ch), 0.5, 3.0);
+      r->right = r->left + static_cast<int32>(std::lround(cw * z));
+      r->bottom = r->top + static_cast<int32>(std::lround(ch * z));
+    }
+    if (r->getWidth() < minW) r->right = r->left + minW;
+    if (r->getHeight() < minH) r->bottom = r->top + minH;
     return kResultTrue;
   }
   tresult PLUGIN_API setContentScaleFactor(ScaleFactor factor) override {
@@ -233,7 +253,7 @@ class GridlineView final : public RefCounted, public IPlugView, public IPlugView
   std::unique_ptr<gl::plugin::View> view_;
   IPlugFrame* frame_ = nullptr;
   Linux::IRunLoop* runLoop_ = nullptr;
-  int32 w_ = gl::plugin::kDefaultViewW, h_ = gl::plugin::kDefaultViewH;
+  int w_ = gl::plugin::kDefaultViewW, h_ = gl::plugin::kDefaultViewH;
   double scale_ = 0;
 };
 
@@ -241,7 +261,9 @@ class GridlineView final : public RefCounted, public IPlugView, public IPlugView
 
 class Component final : public RefCounted, public IComponent, public IAudioProcessor, public IEditController, public IMidiMapping {
  public:
-  explicit Component(Variant v) : variant_(v) {
+  // `type`: a Gridline Suite member ("" = the Gridline workstation).
+  Component(Variant v, std::string type, bool sidechain, bool midiInput)
+      : variant_(v), type_(std::move(type)), sidechain_(sidechain), midiInput_(midiInput) {
     for (auto& m : midiValues_) m.store(0.f, std::memory_order_relaxed);
     for (int ch = 0; ch < 16; ++ch) midiValues_[ch * kMidiCtrls + kPitchBend].store(0.5f, std::memory_order_relaxed);
   }
@@ -264,7 +286,11 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
   // ---- IPluginBase (shared by IComponent and IEditController) ----
   tresult PLUGIN_API initialize(FUnknown*) override {
     if (inst_) return kResultOk;
-    inst_ = std::make_unique<Instance>(variant_);
+    inst_ = type_.empty() ? std::make_unique<Instance>(variant_) : std::make_unique<Instance>(variant_, type_);
+    if (!type_.empty() && !inst_->single()) {  // not a plugin of this build
+      inst_.reset();
+      return kResultFalse;
+    }
     inst_->onLatencyChanged = [this]() {
       // During setActive the host reads getLatencySamples() afterwards anyway.
       if (handler_ && !inSetActive_) handler_->restartComponent(kLatencyChanged);
@@ -272,12 +298,25 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
     inst_->onMacrosChanged = [this]() {
       if (handler_) handler_->restartComponent(kParamValuesChanged);
     };
-    inst_->onMacroEdited = [this](int k, double v) {
-      if (!handler_) return;
-      handler_->beginEdit(static_cast<ParamID>(k));
-      handler_->performEdit(static_cast<ParamID>(k), v);
-      handler_->endEdit(static_cast<ParamID>(k));
-    };
+    if (inst_->single()) {  // J-131: edits come inside their gestures
+      inst_->onMacroEdited = [this](int k, double v) {
+        if (handler_) handler_->performEdit(inst_->paramId(k), v);
+      };
+      inst_->onParamGesture = [this](int k, bool begin) {
+        if (!handler_) return;
+        if (begin)
+          handler_->beginEdit(inst_->paramId(k));
+        else
+          handler_->endEdit(inst_->paramId(k));
+      };
+    } else {
+      inst_->onMacroEdited = [this](int k, double v) {
+        if (!handler_) return;
+        handler_->beginEdit(static_cast<ParamID>(k));
+        handler_->performEdit(static_cast<ParamID>(k), v);
+        handler_->endEdit(static_cast<ParamID>(k));
+      };
+    }
 #if defined(__APPLE__)
     // Main-thread housekeeping while no editor is open (the run loop of the host's main thread).
     CFRunLoopTimerContext ctx{};
@@ -304,9 +343,9 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
   tresult PLUGIN_API getControllerClassId(TUID) override { return kResultFalse; }  // single component
   tresult PLUGIN_API setIoMode(IoMode) override { return kResultOk; }
   int32 PLUGIN_API getBusCount(MediaType type, BusDirection dir) override {
-    if (type == kEvent) return dir == kInput ? 1 : 0;
-    if (variant_ == Variant::Effect) return dir == kInput ? 2 : 1;
-    return dir == kInput ? 0 : 1 + kExtraOutputs;
+    if (type == kEvent) return dir == kInput && takesNotes() ? 1 : 0;
+    if (variant_ == Variant::Effect) return dir == kInput ? (sidechain_ ? 2 : 1) : 1;
+    return dir == kInput ? 0 : (type_.empty() ? 1 + kExtraOutputs : 1);
   }
   tresult PLUGIN_API getBusInfo(MediaType type, BusDirection dir, int32 index, BusInfo& bus) override {
     if (index < 0 || index >= getBusCount(type, dir)) return kInvalidArgument;
@@ -482,12 +521,13 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
 
   // ---- IEditController ----
   tresult PLUGIN_API setComponentState(IBStream*) override { return kResultOk; }  // one object: setState did it
-  int32 PLUGIN_API getParameterCount() override { return kMacros + kMidiParams; }
+  int32 PLUGIN_API getParameterCount() override { return inst_ ? inst_->paramCount() + midiParams() : 0; }
   tresult PLUGIN_API getParameterInfo(int32 index, ParameterInfo& info) override {
-    if (index < 0 || index >= kMacros + kMidiParams || !inst_) return kInvalidArgument;
+    if (!inst_ || index < 0 || index >= getParameterCount()) return kInvalidArgument;
     info = ParameterInfo{};
-    if (index >= kMacros) {  // hidden MIDI controller parameter (IMidiMapping)
-      const int k = index - kMacros, ch = k / kMidiCtrls, ctrl = k % kMidiCtrls;
+    const int own = inst_->paramCount();
+    if (index >= own) {  // hidden MIDI controller parameter (IMidiMapping)
+      const int k = index - own, ch = k / kMidiCtrls, ctrl = k % kMidiCtrls;
       char name[48];
       if (ctrl < 128)
         std::snprintf(name, sizeof name, "MIDI CC %d (ch %d)", ctrl, ch + 1);
@@ -502,13 +542,24 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
       info.flags = ParameterInfo::kIsHidden;
       return kResultOk;
     }
-    info.id = static_cast<ParamID>(index);
-    setString(info.title, inst_->macroName(index));
-    setString(info.shortTitle, "M" + std::to_string(index + 1));
-    info.stepCount = 0;
-    info.defaultNormalizedValue = 0;
+    info.id = inst_->paramId(index);
     info.unitId = 0;  // the root unit
     info.flags = ParameterInfo::kCanAutomate;
+    if (!inst_->single()) {
+      setString(info.title, inst_->macroName(index));
+      setString(info.shortTitle, "M" + std::to_string(index + 1));
+      info.stepCount = 0;
+      info.defaultNormalizedValue = 0;
+      return kResultOk;
+    }
+    const gl::plugin::HostParam h = inst_->paramInfo(index);
+    setString(info.title, h.name);
+    setString(info.shortTitle, h.name);
+    setString(info.units, h.unit);
+    info.stepCount = inst_->paramSteps(index);
+    info.defaultNormalizedValue = h.def;
+    if (h.bypass) info.flags |= ParameterInfo::kIsBypass;
+    if (h.choice) info.flags |= ParameterInfo::kIsList;
     return kResultOk;
   }
   tresult PLUGIN_API getParamStringByValue(ParamID id, ParamValue v, String128 s) override {
@@ -519,13 +570,21 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
       setString(s, std::to_string(x));
       return kResultOk;
     }
-    if (id >= static_cast<ParamID>(kMacros) || !inst_) return kInvalidArgument;
-    setString(s, inst_->macroText(static_cast<int>(id), v));
+    const int k = inst_ ? inst_->paramIndex(id) : -1;
+    if (k < 0) return kInvalidArgument;
+    setString(s, inst_->paramText(k, v));
     return kResultOk;
   }
   tresult PLUGIN_API getParamValueByString(ParamID id, TChar* text, ParamValue& v) override {
-    if ((id >= static_cast<ParamID>(kMacros) && !isMidiParam(id)) || !text) return kInvalidArgument;
+    const int own = inst_ ? inst_->paramIndex(id) : -1;
+    if ((own < 0 && !isMidiParam(id)) || !text) return kInvalidArgument;
     const std::string t = narrow(text);
+    if (own >= 0) {
+      double n = 0;
+      if (!inst_->paramFromText(own, t, n)) return kResultFalse;
+      v = n;
+      return kResultOk;
+    }
     char* end = nullptr;
     double x = std::strtod(t.c_str(), &end);
     if (end == t.c_str()) return kResultFalse;
@@ -534,31 +593,37 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
       v = ctrl == kPitchBend ? std::clamp((x + 8192.0) / 16383.0, 0.0, 1.0) : std::clamp(x / 127.0, 0.0, 1.0);
       return kResultOk;
     }
-    if (end && *end == '%') x /= 100.0;
-    v = std::clamp(x, 0.0, 1.0);
-    return kResultOk;
+    return kResultFalse;
   }
-  ParamValue PLUGIN_API normalizedParamToPlain(ParamID, ParamValue v) override { return v; }
-  ParamValue PLUGIN_API plainParamToNormalized(ParamID, ParamValue v) override { return v; }
+  ParamValue PLUGIN_API normalizedParamToPlain(ParamID id, ParamValue v) override {
+    const int k = inst_ && inst_->single() ? inst_->paramIndex(id) : -1;
+    return k >= 0 ? inst_->paramToPlain(k, v) : v;
+  }
+  ParamValue PLUGIN_API plainParamToNormalized(ParamID id, ParamValue v) override {
+    const int k = inst_ && inst_->single() ? inst_->paramIndex(id) : -1;
+    return k >= 0 ? inst_->paramFromPlain(k, v) : v;
+  }
   ParamValue PLUGIN_API getParamNormalized(ParamID id) override {
     if (isMidiParam(id)) return midiValues_[id - kMidiBase].load(std::memory_order_relaxed);
-    if (!inst_ || id >= static_cast<ParamID>(kMacros)) return 0;
+    const int k = inst_ ? inst_->paramIndex(id) : -1;
+    if (k < 0) return 0;
     idleSoon();
-    return inst_->macroValue(static_cast<int>(id));
+    return inst_->paramValue(k);
   }
   tresult PLUGIN_API setParamNormalized(ParamID id, ParamValue v) override {
     if (isMidiParam(id)) {  // the controller's last value (the MIDI arrives through process)
       midiValues_[id - kMidiBase].store(static_cast<float>(std::clamp(v, 0.0, 1.0)), std::memory_order_relaxed);
       return kResultOk;
     }
-    if (!inst_ || id >= static_cast<ParamID>(kMacros)) return kInvalidArgument;
-    inst_->setMacroValue(static_cast<int>(id), v);
+    const int k = inst_ ? inst_->paramIndex(id) : -1;
+    if (k < 0) return kInvalidArgument;
+    inst_->setParamValue(k, v);
     return kResultOk;
   }
 
   // ---- IMidiMapping ----
   tresult PLUGIN_API getMidiControllerAssignment(int32 busIndex, int16 channel, CtrlNumber ctrl, ParamID& id) override {
-    if (busIndex != 0 || channel < 0 || channel > 15 || ctrl < 0 || ctrl >= kMidiCtrls) return kResultFalse;
+    if (!takesNotes() || busIndex != 0 || channel < 0 || channel > 15 || ctrl < 0 || ctrl >= kMidiCtrls) return kResultFalse;
     id = kMidiBase + static_cast<ParamID>(channel * kMidiCtrls + ctrl);
     return kResultTrue;
   }
@@ -572,6 +637,9 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
   }
 
  private:
+  // Instruments, MIDI effects and the Gridline workstation take notes.
+  bool takesNotes() const { return type_.empty() || variant_ == Variant::Instrument || midiInput_; }
+  int midiParams() const { return takesNotes() ? kMidiParams : 0; }
   void idle() {
     if (inst_) inst_->idle();
     lastIdle_ = seconds();
@@ -584,7 +652,7 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
     const int n = addParamEvents(d, 0);
     for (int i = 0; i < n; ++i)
       if (events_[i].kind == GlEvent::Macro)
-        inst_->setMacroValue(events_[i].macro, events_[i].value);
+        inst_->setParamValue(events_[i].macro, events_[i].value);
       else  // no audio this call: the controller takes effect with the next block
         inst_->queueMidi(events_[i].midi);
   }
@@ -597,8 +665,9 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
       IParamValueQueue* q = pc->getParameterData(i);
       if (!q) continue;
       const ParamID id = q->getParameterId();
-      const bool macro = id < static_cast<ParamID>(kMacros);
-      if (!macro && !isMidiParam(id)) continue;
+      const int index = inst_->paramIndex(id);
+      const bool macro = index >= 0;
+      if (!macro && (!isMidiParam(id) || !takesNotes())) continue;
       const int32 points = q->getPointCount();
       for (int32 k = 0; k < points && n < kMaxEvents; ++k) {
         int32 off = 0;
@@ -608,7 +677,7 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
         e.offset = std::max<int32>(0, std::min<int32>(off, std::max<int32>(0, d.numSamples - 1)));
         if (macro) {
           e.kind = GlEvent::Macro;
-          e.macro = static_cast<int>(id);
+          e.macro = index;
           e.value = static_cast<float>(v);
         } else {
           e.kind = GlEvent::Midi;
@@ -622,6 +691,8 @@ class Component final : public RefCounted, public IComponent, public IAudioProce
   }
 
   Variant variant_;
+  std::string type_;
+  bool sidechain_ = true, midiInput_ = false;
   std::unique_ptr<Instance> inst_;
   IComponentHandler* handler_ = nullptr;
   double sampleRate_ = 44100.0;
@@ -658,7 +729,11 @@ class Factory final : public RefCounted, public IPluginFactory2 {
     info->flags = PFactoryInfo::kUnicode;
     return kResultOk;
   }
+#ifndef GRIDLINE_SUITE
   int32 PLUGIN_API countClasses() override { return 2; }
+#else
+  int32 PLUGIN_API countClasses() override { return static_cast<int32>(gl::suite::members(GRIDLINE_SUITE).size()); }
+#endif
   tresult PLUGIN_API getClassInfo(int32 index, PClassInfo* info) override {
     PClassInfo2 i2{};
     if (getClassInfo2(index, &i2) != kResultOk) return kInvalidArgument;
@@ -669,6 +744,36 @@ class Factory final : public RefCounted, public IPluginFactory2 {
     std::snprintf(info->name, sizeof info->name, "%s", i2.name);
     return kResultOk;
   }
+#ifdef GRIDLINE_SUITE
+  tresult PLUGIN_API getClassInfo2(int32 index, PClassInfo2* info) override {
+    const auto& ms = gl::suite::members(GRIDLINE_SUITE);
+    if (index < 0 || index >= static_cast<int32>(ms.size())) return kInvalidArgument;
+    const gl::suite::Member& m = ms[static_cast<size_t>(index)];
+    *info = PClassInfo2{};
+    std::memcpy(info->cid, FUID(m.vst3Uid[0], m.vst3Uid[1], m.vst3Uid[2], m.vst3Uid[3]).toTUID(), sizeof(TUID));
+    info->cardinality = PClassInfo::kManyInstances;
+    std::snprintf(info->category, sizeof info->category, "%s", kVstAudioEffectClass);
+    std::snprintf(info->name, sizeof info->name, "%s", m.name.c_str());
+    std::snprintf(info->subCategories, sizeof info->subCategories, "%s", m.vst3Category.c_str());
+    std::snprintf(info->vendor, sizeof info->vendor, "Gridline");
+    std::snprintf(info->version, sizeof info->version, "%s", GRIDLINE_VERSION_STRING);
+    std::snprintf(info->sdkVersion, sizeof info->sdkVersion, "VST 3.8.0");
+    return kResultOk;
+  }
+  tresult PLUGIN_API createInstance(FIDString cid, FIDString iid, void** obj) override {
+    *obj = nullptr;
+    FUnknown* inst = nullptr;
+    for (const gl::suite::Member& m : gl::suite::members(GRIDLINE_SUITE))
+      if (same(cid, FUID(m.vst3Uid[0], m.vst3Uid[1], m.vst3Uid[2], m.vst3Uid[3]))) {
+        inst = static_cast<IComponent*>(new Component(m.instrument ? Variant::Instrument : Variant::Effect, m.type, m.sidechain, m.midiInput));
+        break;
+      }
+    if (!inst) return kNoInterface;
+    const tresult r = inst->queryInterface(iid, obj);
+    inst->release();
+    return r;
+  }
+#else
   tresult PLUGIN_API getClassInfo2(int32 index, PClassInfo2* info) override {
     if (index < 0 || index > 1) return kInvalidArgument;
     *info = PClassInfo2{};
@@ -686,14 +791,15 @@ class Factory final : public RefCounted, public IPluginFactory2 {
     *obj = nullptr;
     FUnknown* inst = nullptr;
     if (same(cid, kInstrumentUid))
-      inst = static_cast<IComponent*>(new Component(Variant::Instrument));
+      inst = static_cast<IComponent*>(new Component(Variant::Instrument, "", true, false));
     else if (same(cid, kEffectUid))
-      inst = static_cast<IComponent*>(new Component(Variant::Effect));
+      inst = static_cast<IComponent*>(new Component(Variant::Effect, "", true, false));
     if (!inst) return kNoInterface;
     const tresult r = inst->queryInterface(iid, obj);
     inst->release();
     return r;
   }
+#endif
 };
 
 }  // namespace

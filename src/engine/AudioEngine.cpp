@@ -38,6 +38,8 @@ AudioEngine::AudioEngine(double sampleRate) : sr_(sampleRate), queue_(kQueue) {
   scratch_.resize(WorkerPool::kMaxThreads);
   for (auto& r : bendRange_) r.store(2.0f);
   for (auto& m : macro_) m.store(-1.f);
+  for (auto& m : hostParam_) m.store(-1.f);
+  for (auto& d : hostDirty_) d.store(0);
   clockOut_.out = &syncRing_;
   inQueue_.assign(kInputQueueFrames * kMaxInputChannels, 0.f);
   inBuf_.assign(kMaxInputChannels, std::vector<float>(kMaxBlock, 0.f));
@@ -1676,6 +1678,7 @@ void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick) {
     }
     applyLinkValue(p, l, lr.value);
   }
+  if (p->hasHostBank) applyHostBank(p);  // J-131
   // PH-09: host macros (the plugin's host parameters), before automation clips.
   if (p->hasMacros)
     for (size_t k = 0; k < p->macros.size(); ++k) {
@@ -1762,6 +1765,34 @@ void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double nor
       case ProgLink::MixEqFreq: p->mixer[static_cast<size_t>(l.mixer)].eq.freq[static_cast<size_t>(l.param)] = fv; break;
       case ProgLink::MixEqQ: p->mixer[static_cast<size_t>(l.mixer)].eq.q[static_cast<size_t>(l.param)] = fv; break;
       case ProgLink::MixSend: p->mixer[static_cast<size_t>(l.mixer)].sends[static_cast<size_t>(l.param)].second = fv; break;
+    }
+  }
+}
+
+// J-131: changed host parameters (all set ones when the Program is new) into
+// the bank plugin's live parameters.
+void AudioEngine::applyHostBank(const Program* p) {
+  const ProgLink& b = p->hostBank;
+  std::vector<float>* params = nullptr;
+  if (b.kind == ProgLink::ChanPlugin)
+    params = &p->channels[static_cast<size_t>(b.chan)].live.params;
+  else
+    params = &p->mixer[static_cast<size_t>(b.mixer)].slots[static_cast<size_t>(b.slot)].live.params;
+  const std::vector<ParamDesc>& descs = p->hostBankInfo->params;
+  const size_t n = std::min({params->size(), descs.size(), static_cast<size_t>(kMaxHostParams)});
+  const bool all = p != bankProg_;
+  bankProg_ = p;
+  for (size_t w = 0; w * 64 < n; ++w) {
+    uint64_t bits = hostDirty_[w].exchange(0, std::memory_order_acquire);
+    if (all) bits = ~uint64_t{0};
+    for (size_t bit = 0; bits; ++bit, bits >>= 1) {
+      if (!(bits & 1)) continue;
+      const size_t k = w * 64 + bit;
+      if (k >= n) break;
+      const float v = hostParam_[k].load(std::memory_order_relaxed);
+      if (v < 0.f) continue;
+      const ParamDesc& d = descs[k];
+      (*params)[k] = static_cast<float>(d.clamp(d.fromNormalized(v > 1.f ? 1.0 : static_cast<double>(v))));
     }
   }
 }

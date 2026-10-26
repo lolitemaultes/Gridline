@@ -67,6 +67,7 @@
 #include "Shell.h"
 #include "SmoothScrollUi.h"
 #include "ExternalDragUi.h"
+#include "SuiteUi.h"
 #include "UpdateUi.h"
 #include "../host/net/Http.h"
 
@@ -1487,6 +1488,7 @@ int main(int argc, char** argv) {
     updateOpts.openUrl = [](const std::string& url) { return SDL_OpenURL(url.c_str()) == 0; };
     collabui::setOpenUrl(updateOpts.openUrl);  // J-111e: Show in Finder / Files
     updui::start(app, updateOpts);
+    suiteui::start(app, updateOpts.automated);  // J-131: Gridline Suite into the plug-in folders
   }
   const bool frameClock = profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
   if (frameClock) SDL_GL_SetSwapInterval(0);

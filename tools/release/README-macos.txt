@@ -19,6 +19,12 @@ Plugins (optional)
       Gridline.component  -> ~/Library/Audio/Plug-Ins/Components   (Audio Unit)
   then remove the quarantine flag from them the same way (xattr -dr com.apple.quarantine <bundle>).
 
+Gridline Suite
+  Gridline's instruments and effects as plugins for other music programs (VST3, CLAP, Audio
+  Unit) travel inside Gridline.app. The first time Gridline starts it offers to copy them into
+  ~/Library/Audio/Plug-Ins; Settings > Files > Gridline Suite (or: gridline suite install)
+  does it later.
+
 Command line
   "gridline" is the command line tool (render projects, convert FL Studio projects, MCP server):
       ./gridline --help

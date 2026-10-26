@@ -15,6 +15,7 @@
 #include "App.h"
 #include "ScriptUi.h"
 #include "Theme.h"
+#include "SuiteUi.h"
 #include "UpdateUi.h"
 #include "Widgets.h"
 
@@ -154,6 +155,7 @@ void fileSettingsPage(App& a, float fieldW) {
              " controller scripts");
   }
   ui::EndSection();
+  suiteui::settingsSection(a);  // J-131: Gridline Suite in the plug-in folders
 }
 
 // -------------------------------------------------------------------- Debug ----

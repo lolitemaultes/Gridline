@@ -11,6 +11,13 @@
 // plugin state in "data"); transport comes from the host callbacks; MIDI and
 // scheduled parameter changes apply at their sample offsets; latency is the
 // project's; the Cocoa view is Gridline's interface.
+//
+// J-131: built with GRIDLINE_SUITE="<suite id>", the component is a Gridline
+// Suite bundle instead: one AudioComponent per member of the suite
+// (core/PluginSuite.h; Info.plist from `gridline suite-info --plist`), each one
+// built-in instrument (aumu) or effect (aufx; aumf when it takes MIDI) with
+// its own parameters, factory presets, state and view. Effects with a
+// sidechain have a second input element.
 #if defined(__APPLE__)
 #import <AudioToolbox/AUCocoaUIView.h>
 #import <AudioToolbox/AudioToolbox.h>
@@ -29,6 +36,23 @@
 #include <vector>
 #include "PluginCore.h"
 #include "PluginView.h"
+#ifdef GRIDLINE_SUITE
+#include "../core/PluginInfo.h"
+#include "../core/PluginSuite.h"
+#endif
+
+// Objective-C class names are global in a process: each bundle has its own.
+#ifndef GRIDLINE_AU_FACTORY_CLASS
+#define GRIDLINE_AU_FACTORY_CLASS GridlineAuViewFactory
+#endif
+#ifndef GRIDLINE_AU_VIEW_CLASS
+#define GRIDLINE_AU_VIEW_CLASS GridlineAuView
+#endif
+#ifndef GRIDLINE_AU_FACTORY
+#define GRIDLINE_AU_FACTORY GridlineAUFactory
+#endif
+#define GRIDLINE_AU_STR2(x) #x
+#define GRIDLINE_AU_STR(x) GRIDLINE_AU_STR2(x)
 
 using gl::plugin::Instance;
 using gl::plugin::kExtraOutputs;
@@ -106,9 +130,9 @@ class EventRing {
 
 }  // namespace
 
-@interface GridlineAuViewFactory : NSObject <AUCocoaUIBase>
+@interface GRIDLINE_AU_FACTORY_CLASS : NSObject <AUCocoaUIBase>
 @end
-@interface GridlineAuView : NSView {
+@interface GRIDLINE_AU_VIEW_CLASS : NSView {
  @public
   AuPlugin* owner;
   gl::plugin::View* view;
@@ -126,11 +150,13 @@ struct AuInterface {
 
 class AuPlugin : public AuInterface {
  public:
-  explicit AuPlugin(Variant v) : variant_(v) {
+  // `type`: a Gridline Suite member ("" = the Gridline workstation), with its codes.
+  AuPlugin(Variant v, std::string type, OSType auType, OSType auSubtype, bool sidechain, bool midiInput)
+      : variant_(v), type_(std::move(type)), auType_(auType), auSubtype_(auSubtype), sidechain_(sidechain) {
     iface.Open = &AuPlugin::open;
     iface.Close = &AuPlugin::close;
-    // MIDI selectors for the instrument only (an effect that takes MIDI is an 'aumf').
-    iface.Lookup = v == Variant::Effect ? &AuPlugin::lookupEffect : &AuPlugin::lookupInstrument;
+    // MIDI selectors for the instrument and for effects that take MIDI (an 'aumf').
+    iface.Lookup = v == Variant::Effect && !midiInput ? &AuPlugin::lookupEffect : &AuPlugin::lookupInstrument;
     iface.reserved = nullptr;
     outFormats_.assign(static_cast<size_t>(outputCount()), canonical(sampleRate_, 2));
     inFormats_.assign(static_cast<size_t>(inputCount()), canonical(sampleRate_, 2));
@@ -144,12 +170,14 @@ class AuPlugin : public AuInterface {
     }
     if (contextName_) CFRelease(contextName_);
     if (presetName_) CFRelease(presetName_);
+    for (AUPreset& pr : factory_)
+      if (pr.presetName) CFRelease(pr.presetName);
     inst_.reset();
   }
 
   Instance* instance() { return inst_.get(); }
-  void addView(GridlineAuView* v) { views_.push_back(v); }
-  void removeView(GridlineAuView* v) { views_.erase(std::remove(views_.begin(), views_.end(), v), views_.end()); }
+  void addView(GRIDLINE_AU_VIEW_CLASS* v) { views_.push_back(v); }
+  void removeView(GRIDLINE_AU_VIEW_CLASS* v) { views_.erase(std::remove(views_.begin(), views_.end(), v), views_.end()); }
 
  private:
   struct Listener {
@@ -166,29 +194,66 @@ class AuPlugin : public AuInterface {
     AudioUnitConnection connection{nullptr, 0, 0};
   };
 
-  int inputCount() const { return variant_ == Variant::Effect ? 2 : 0; }  // main + sidechain
-  int outputCount() const { return variant_ == Variant::Effect ? 1 : 1 + kExtraOutputs; }
+  int inputCount() const { return variant_ == Variant::Effect ? (sidechain_ ? 2 : 1) : 0; }  // main + sidechain
+  int outputCount() const { return variant_ == Variant::Effect || !type_.empty() ? 1 : 1 + kExtraOutputs; }
+  int paramCount() const { return inst_ ? inst_->paramCount() : 0; }
+  // AU values: stepped parameters (toggles, choices) count their steps; the
+  // others are normalized 0..1 (their text is the real value). No allocation.
+  double toNormalized(int k, double v) const {
+    const int steps = inst_->paramSteps(k);
+    if (steps > 0) return inst_->paramFromPlain(k, std::clamp(std::round(v), 0.0, static_cast<double>(steps)));
+    return std::clamp(v, 0.0, 1.0);
+  }
+  float fromNormalized(int k, double n) const {
+    const int steps = inst_->paramSteps(k);
+    if (steps > 0) return static_cast<float>(std::clamp(std::round(inst_->paramToPlain(k, n)), 0.0, static_cast<double>(steps)));
+    return static_cast<float>(std::clamp(n, 0.0, 1.0));
+  }
+  void refreshParams() {
+    for (int k = 0; k < paramCount(); ++k) params_[static_cast<size_t>(k)].store(fromNormalized(k, inst_->paramValue(k)));
+  }
   static AuPlugin* self(void* p) { return static_cast<AuPlugin*>(reinterpret_cast<AuInterface*>(p)); }
 
   // ---------------------------------------------------------------- component
   static OSStatus open(void* p, AudioComponentInstance unit) {
     AuPlugin* s = self(p);
     s->unit_ = unit;
-    s->inst_ = std::make_unique<Instance>(s->variant_);
-    for (int k = 0; k < kMacros; ++k) s->params_[k].store(static_cast<float>(s->inst_->macroValue(k)));
+    s->inst_ = s->type_.empty() ? std::make_unique<Instance>(s->variant_) : std::make_unique<Instance>(s->variant_, s->type_);
+    if (!s->type_.empty() && !s->inst_->single()) return kAudioUnitErr_FailedInitialization;  // not a plugin of this build
+    s->params_.reset(new std::atomic<float>[static_cast<size_t>(s->paramCount())]);
+    s->refreshParams();
     s->inst_->onLatencyChanged = [s]() { s->notify(kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0); };
-    s->inst_->onMacrosChanged = [s]() { s->notify(kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0); };
-    s->inst_->onMacroEdited = [s](int k, double v) {
-      s->params_[k].store(static_cast<float>(v));
-      AudioUnitParameter prm{s->unit_, static_cast<AudioUnitParameterID>(k), kAudioUnitScope_Global, 0};
-      AudioUnitEvent ev{};
-      ev.mArgument.mParameter = prm;
-      ev.mEventType = kAudioUnitEvent_BeginParameterChangeGesture;
-      AUEventListenerNotify(nullptr, nullptr, &ev);
-      AUParameterListenerNotify(nullptr, nullptr, &prm);
-      ev.mEventType = kAudioUnitEvent_EndParameterChangeGesture;
-      AUEventListenerNotify(nullptr, nullptr, &ev);
-    };
+    if (s->inst_->single()) {  // J-131: the plugin's own parameters; edits come inside their gestures
+      s->inst_->onMacrosChanged = [s]() {
+        s->refreshParams();
+        AudioUnitParameter any{s->unit_, kAUParameterListener_AnyParameter, kAudioUnitScope_Global, 0};
+        AUParameterListenerNotify(nullptr, nullptr, &any);
+      };
+      s->inst_->onMacroEdited = [s](int k, double v) {
+        s->params_[static_cast<size_t>(k)].store(s->fromNormalized(k, v));
+        AudioUnitParameter prm{s->unit_, s->inst_->paramId(k), kAudioUnitScope_Global, 0};
+        AUParameterListenerNotify(nullptr, nullptr, &prm);
+      };
+      s->inst_->onParamGesture = [s](int k, bool begin) {
+        AudioUnitEvent ev{};
+        ev.mArgument.mParameter = AudioUnitParameter{s->unit_, s->inst_->paramId(k), kAudioUnitScope_Global, 0};
+        ev.mEventType = begin ? kAudioUnitEvent_BeginParameterChangeGesture : kAudioUnitEvent_EndParameterChangeGesture;
+        AUEventListenerNotify(nullptr, nullptr, &ev);
+      };
+    } else {
+      s->inst_->onMacrosChanged = [s]() { s->notify(kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0); };
+      s->inst_->onMacroEdited = [s](int k, double v) {
+        s->params_[static_cast<size_t>(k)].store(static_cast<float>(v));
+        AudioUnitParameter prm{s->unit_, static_cast<AudioUnitParameterID>(k), kAudioUnitScope_Global, 0};
+        AudioUnitEvent ev{};
+        ev.mArgument.mParameter = prm;
+        ev.mEventType = kAudioUnitEvent_BeginParameterChangeGesture;
+        AUEventListenerNotify(nullptr, nullptr, &ev);
+        AUParameterListenerNotify(nullptr, nullptr, &prm);
+        ev.mEventType = kAudioUnitEvent_EndParameterChangeGesture;
+        AUEventListenerNotify(nullptr, nullptr, &ev);
+      };
+    }
     // Main-thread housekeeping while no view is open.
     CFRunLoopTimerContext ctx{};
     ctx.info = s;
@@ -314,12 +379,24 @@ class AuPlugin : public AuInterface {
         sz = sizeof(Float64);
         break;
       case kAudioUnitProperty_ParameterList:
-        sz = global ? sizeof(AudioUnitParameterID) * kMacros : 0;
+        sz = global ? static_cast<UInt32>(sizeof(AudioUnitParameterID) * static_cast<size_t>(s->paramCount())) : 0;
         break;
       case kAudioUnitProperty_ParameterInfo:
         if (!global) return kAudioUnitErr_InvalidScope;
-        if (el >= static_cast<UInt32>(kMacros)) return kAudioUnitErr_InvalidElement;
+        if (s->inst_->paramIndex(el) < 0) return kAudioUnitErr_InvalidElement;
         sz = sizeof(AudioUnitParameterInfo);
+        break;
+      case kAudioUnitProperty_ParameterValueStrings: {  // choices' names
+        if (!global) return kAudioUnitErr_InvalidScope;
+        const int k = s->inst_->paramIndex(el);
+        if (k < 0 || !s->inst_->single() || s->inst_->paramInfo(k).choices.empty()) return kAudioUnitErr_InvalidProperty;
+        sz = sizeof(CFArrayRef);
+        break;
+      }
+      case kAudioUnitProperty_FactoryPresets:
+        if (!global) return kAudioUnitErr_InvalidScope;
+        if (!s->inst_->single()) return kAudioUnitErr_InvalidProperty;
+        sz = sizeof(CFArrayRef);
         break;
       case kAudioUnitProperty_ParameterStringFromValue:
         if (!global) return kAudioUnitErr_InvalidScope;
@@ -426,7 +503,8 @@ class AuPlugin : public AuInterface {
       case kAudioUnitProperty_MaximumFramesPerSlice: return put(out, size, s->maxFrames_);
       case kAudioUnitProperty_Latency:
         return put(out, size, static_cast<Float64>(s->inst_->latency()) / std::max(1.0, s->sampleRate_));
-      case kAudioUnitProperty_TailTime: return put(out, size, static_cast<Float64>(0));
+      // Suite effects ring on (reverbs, delays): hosts keep rendering after the input stops.
+      case kAudioUnitProperty_TailTime: return put(out, size, static_cast<Float64>(!s->type_.empty() && s->variant_ == Variant::Effect ? 10.0 : 0.0));
       case kAudioUnitProperty_ParameterList: {
         if (scope != kAudioUnitScope_Global) {
           if (size) *size = 0;
@@ -434,49 +512,83 @@ class AuPlugin : public AuInterface {
         }
         if (!out || !size || *size < need) return kAudioUnitErr_InvalidPropertyValue;
         auto* ids = static_cast<AudioUnitParameterID*>(out);
-        for (int k = 0; k < kMacros; ++k) ids[k] = static_cast<AudioUnitParameterID>(k);
+        for (int k = 0; k < s->paramCount(); ++k) ids[k] = s->inst_->paramId(k);
         *size = need;
         return noErr;
       }
       case kAudioUnitProperty_ParameterInfo: {
         AudioUnitParameterInfo pi{};
-        const std::string name = s->inst_->macroName(static_cast<int>(el));
-        std::snprintf(pi.name, sizeof pi.name, "%s", name.c_str());
-        pi.cfNameString = CFStringCreateWithCString(nullptr, name.c_str(), kCFStringEncodingUTF8);
+        const int k = s->inst_->paramIndex(el);
+        const gl::plugin::HostParam h = s->inst_->paramInfo(k);
+        std::snprintf(pi.name, sizeof pi.name, "%s", h.name.c_str());
+        pi.cfNameString = CFStringCreateWithCString(nullptr, h.name.c_str(), kCFStringEncodingUTF8);
         pi.flags = kAudioUnitParameterFlag_IsReadable | kAudioUnitParameterFlag_IsWritable | kAudioUnitParameterFlag_HasCFNameString |
                    kAudioUnitParameterFlag_CFNameRelease;
         pi.unit = kAudioUnitParameterUnit_Generic;
         pi.minValue = 0;
         pi.maxValue = 1;
         pi.defaultValue = 0;
+        if (s->inst_->single()) {
+          pi.flags |= kAudioUnitParameterFlag_ValuesHaveStrings;
+          const int steps = s->inst_->paramSteps(k);
+          if (steps > 0) {
+            pi.unit = h.toggle ? kAudioUnitParameterUnit_Boolean : kAudioUnitParameterUnit_Indexed;
+            pi.maxValue = static_cast<AudioUnitParameterValue>(steps);
+          }
+          pi.defaultValue = s->fromNormalized(k, h.def);
+        }
         return put(out, size, pi);
+      }
+      case kAudioUnitProperty_ParameterValueStrings: {
+        const gl::plugin::HostParam h = s->inst_->paramInfo(s->inst_->paramIndex(el));
+        CFMutableArrayRef arr = CFArrayCreateMutable(nullptr, static_cast<CFIndex>(h.choices.size()), &kCFTypeArrayCallBacks);
+        for (const std::string& c : h.choices) {
+          CFStringRef str = CFStringCreateWithCString(nullptr, c.c_str(), kCFStringEncodingUTF8);
+          CFArrayAppendValue(arr, str);
+          CFRelease(str);
+        }
+        return put(out, size, static_cast<CFArrayRef>(arr));  // the caller releases it
+      }
+      case kAudioUnitProperty_FactoryPresets: {
+        s->makeFactoryPresets();
+        CFMutableArrayRef arr = CFArrayCreateMutable(nullptr, static_cast<CFIndex>(s->factory_.size()), nullptr);
+        for (AUPreset& pr : s->factory_) CFArrayAppendValue(arr, &pr);
+        return put(out, size, static_cast<CFArrayRef>(arr));  // the caller releases it (the presets stay ours)
       }
       case kAudioUnitProperty_ParameterStringFromValue: {
         if (!out || !size || *size < need) return kAudioUnitErr_InvalidPropertyValue;
         auto* sv = static_cast<AudioUnitParameterStringFromValue*>(out);
-        if (sv->inParamID >= static_cast<AudioUnitParameterID>(kMacros)) return kAudioUnitErr_InvalidParameter;
-        const double v = sv->inValue ? *sv->inValue : s->params_[sv->inParamID].load();
-        sv->outString = CFStringCreateWithCString(nullptr, s->inst_->macroText(static_cast<int>(sv->inParamID), v).c_str(), kCFStringEncodingUTF8);
+        const int k = s->inst_->paramIndex(sv->inParamID);
+        if (k < 0) return kAudioUnitErr_InvalidParameter;
+        const double v = sv->inValue ? *sv->inValue : s->params_[static_cast<size_t>(k)].load();
+        sv->outString = CFStringCreateWithCString(nullptr, s->inst_->paramText(k, s->toNormalized(k, v)).c_str(), kCFStringEncodingUTF8);
         *size = need;
         return noErr;
       }
       case kAudioUnitProperty_ParameterValueFromString: {
         if (!out || !size || *size < need) return kAudioUnitErr_InvalidPropertyValue;
         auto* vs = static_cast<AudioUnitParameterValueFromString*>(out);
-        if (vs->inParamID >= static_cast<AudioUnitParameterID>(kMacros) || !vs->inString) return kAudioUnitErr_InvalidParameter;
-        double x = CFStringGetDoubleValue(vs->inString);
-        if (CFStringFind(vs->inString, CFSTR("%"), 0).location != kCFNotFound) x /= 100.0;
-        vs->outValue = static_cast<AudioUnitParameterValue>(std::clamp(x, 0.0, 1.0));
+        const int k = s->inst_->paramIndex(vs->inParamID);
+        if (k < 0 || !vs->inString) return kAudioUnitErr_InvalidParameter;
+        char text[256];
+        if (!CFStringGetCString(vs->inString, text, sizeof text, kCFStringEncodingUTF8)) return kAudioUnitErr_InvalidPropertyValue;
+        double n = 0;
+        if (!s->inst_->paramFromText(k, text, n)) return kAudioUnitErr_InvalidPropertyValue;
+        vs->outValue = s->fromNormalized(k, n);
         *size = need;
         return noErr;
       }
       case kAudioUnitProperty_HostCallbacks: return put(out, size, s->host_);
-      case kAudioUnitProperty_SetRenderCallback: return put(out, size, s->inputs_[el].callback);
-      case kAudioUnitProperty_MakeConnection: return put(out, size, s->inputs_[el].connection);
+      case kAudioUnitProperty_SetRenderCallback:
+        if (el >= s->inputs_.size()) return kAudioUnitErr_InvalidElement;
+        return put(out, size, s->inputs_[el].callback);
+      case kAudioUnitProperty_MakeConnection:
+        if (el >= s->inputs_.size()) return kAudioUnitErr_InvalidElement;
+        return put(out, size, s->inputs_[el].connection);
       case kAudioUnitProperty_CocoaUI: {
         AudioUnitCocoaViewInfo info{};
         info.mCocoaAUViewBundleLocation = bundleUrl();
-        info.mCocoaAUViewClass[0] = CFStringCreateWithCString(nullptr, "GridlineAuViewFactory", kCFStringEncodingUTF8);
+        info.mCocoaAUViewClass[0] = CFStringCreateWithCString(nullptr, GRIDLINE_AU_STR(GRIDLINE_AU_FACTORY_CLASS), kCFStringEncodingUTF8);
         if (!info.mCocoaAUViewBundleLocation) {
           CFRelease(info.mCocoaAUViewClass[0]);
           return kAudioUnitErr_InvalidProperty;
@@ -490,7 +602,7 @@ class AuPlugin : public AuInterface {
       case kAudioUnitProperty_LastRenderError: return put(out, size, static_cast<UInt32>(0));
       case kAudioUnitProperty_BypassEffect: return put(out, size, static_cast<UInt32>(s->bypass_.load() ? 1 : 0));
       case kAudioUnitProperty_PresentPreset: {
-        AUPreset pr{-1, s->presetName_ ? static_cast<CFStringRef>(CFRetain(s->presetName_)) : CFSTR("Untitled")};
+        AUPreset pr{s->presetNumber_, s->presetName_ ? static_cast<CFStringRef>(CFRetain(s->presetName_)) : CFSTR("Untitled")};
         return put(out, size, pr);
       }
       case kAudioUnitProperty_ContextName: {
@@ -558,6 +670,7 @@ class AuPlugin : public AuInterface {
         std::memcpy(&s->host_, in, std::min<size_t>(size, sizeof(HostCallbackInfo)));
         break;
       case kAudioUnitProperty_SetRenderCallback: {
+        if (el >= s->inputs_.size()) return kAudioUnitErr_InvalidElement;
         Input& i = s->inputs_[el];
         if (in && size >= sizeof(AURenderCallbackStruct))
           i.callback = *static_cast<const AURenderCallbackStruct*>(in);
@@ -567,6 +680,7 @@ class AuPlugin : public AuInterface {
         break;
       }
       case kAudioUnitProperty_MakeConnection: {
+        if (el >= s->inputs_.size()) return kAudioUnitErr_InvalidElement;
         Input& i = s->inputs_[el];
         if (in && size >= sizeof(AudioUnitConnection))
           i.connection = *static_cast<const AudioUnitConnection*>(in);
@@ -595,9 +709,18 @@ class AuPlugin : public AuInterface {
       case kAudioUnitProperty_PresentPreset: {
         if (size < sizeof(AUPreset)) return kAudioUnitErr_InvalidPropertyValue;
         const AUPreset& pr = *static_cast<const AUPreset*>(in);
-        if (pr.presetNumber >= 0) return kAudioUnitErr_InvalidPropertyValue;  // no factory presets
+        if (pr.presetNumber >= 0) {  // a factory preset (suite plugins)
+          s->makeFactoryPresets();
+          if (static_cast<size_t>(pr.presetNumber) >= s->factory_.size() || !s->inst_->loadFactoryPreset(pr.presetNumber))
+            return kAudioUnitErr_InvalidPropertyValue;
+          if (s->presetName_) CFRelease(s->presetName_);
+          s->presetName_ = static_cast<CFStringRef>(CFRetain(s->factory_[static_cast<size_t>(pr.presetNumber)].presetName));
+          s->presetNumber_ = pr.presetNumber;
+          break;
+        }
         if (s->presetName_) CFRelease(s->presetName_);
         s->presetName_ = pr.presetName ? static_cast<CFStringRef>(CFRetain(pr.presetName)) : nullptr;
+        s->presetNumber_ = -1;
         break;
       }
       case kAudioUnitProperty_ContextName: {
@@ -667,40 +790,44 @@ class AuPlugin : public AuInterface {
   static OSStatus getParameter(void* p, AudioUnitParameterID id, AudioUnitScope scope, AudioUnitElement, AudioUnitParameterValue* out) {
     AuPlugin* s = self(p);
     if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-    if (id >= static_cast<AudioUnitParameterID>(kMacros)) return kAudioUnitErr_InvalidParameter;
+    const int k = s->inst_ ? s->inst_->paramIndex(id) : -1;
+    if (k < 0) return kAudioUnitErr_InvalidParameter;
     if (!out) return kAudio_ParamError;
-    *out = s->params_[id].load();
+    *out = s->params_[static_cast<size_t>(k)].load();
     return noErr;
   }
   static OSStatus setParameter(void* p, AudioUnitParameterID id, AudioUnitScope scope, AudioUnitElement, AudioUnitParameterValue v, UInt32 offset) {
     AuPlugin* s = self(p);
     if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-    if (id >= static_cast<AudioUnitParameterID>(kMacros)) return kAudioUnitErr_InvalidParameter;
-    s->queueMacro(static_cast<int>(id), v, offset);
+    const int k = s->inst_ ? s->inst_->paramIndex(id) : -1;
+    if (k < 0) return kAudioUnitErr_InvalidParameter;
+    s->queueMacro(k, v, offset);
     return noErr;
   }
   static OSStatus scheduleParameters(void* p, const AudioUnitParameterEvent* evs, UInt32 n) {
     AuPlugin* s = self(p);
     for (UInt32 i = 0; evs && i < n; ++i) {
       const AudioUnitParameterEvent& e = evs[i];
-      if (e.scope != kAudioUnitScope_Global || e.parameter >= static_cast<AudioUnitParameterID>(kMacros)) return kAudioUnitErr_InvalidParameter;
+      const int k = s->inst_ ? s->inst_->paramIndex(e.parameter) : -1;
+      if (e.scope != kAudioUnitScope_Global || k < 0) return kAudioUnitErr_InvalidParameter;
       if (e.eventType == kParameterEvent_Immediate)
-        s->queueMacro(static_cast<int>(e.parameter), e.eventValues.immediate.value, e.eventValues.immediate.bufferOffset);
+        s->queueMacro(k, e.eventValues.immediate.value, e.eventValues.immediate.bufferOffset);
       else  // ramps: their end value at their start (the engine smooths macro changes)
-        s->queueMacro(static_cast<int>(e.parameter), e.eventValues.ramp.endValue,
+        s->queueMacro(k, e.eventValues.ramp.endValue,
                       static_cast<UInt32>(std::max<SInt32>(0, e.eventValues.ramp.startBufferOffset)));
     }
     return noErr;
   }
+  // Host parameter k (index) set to the AU value v.
   void queueMacro(int k, float v, UInt32 offset) {
-    v = std::clamp(v, 0.f, 1.f);
-    params_[k].store(v);
+    const double n = toNormalized(k, v);
+    params_[static_cast<size_t>(k)].store(fromNormalized(k, n));
     gl::plugin::Event e;
     e.kind = gl::plugin::Event::Macro;
     e.macro = k;
-    e.value = v;
+    e.value = static_cast<float>(n);
     e.offset = static_cast<int>(offset);
-    if (!initialized_ || !events_.push(e)) inst_->setMacroValue(k, v);
+    if (!initialized_ || !events_.push(e)) inst_->setParamValue(k, n);
   }
   static OSStatus midiEvent(void* p, UInt32 status, UInt32 d1, UInt32 d2, UInt32 offset) {
     AuPlugin* s = self(p);
@@ -722,6 +849,8 @@ class AuPlugin : public AuInterface {
 
   // Pulls input bus `bus` into inBuf_; false when nothing is connected.
   OSStatus pullInput(int bus, AudioUnitRenderActionFlags* flags, const AudioTimeStamp* ts, UInt32 frames, bool& connected) {
+    connected = false;
+    if (bus >= static_cast<int>(inputs_.size())) return noErr;  // J-131: suite effects without a sidechain have one input bus
     Input& in = inputs_[static_cast<size_t>(bus)];
     connected = in.callback.inputProc || in.connection.sourceAudioUnit;
     if (!connected) return noErr;
@@ -859,8 +988,16 @@ class AuPlugin : public AuInterface {
   }
 
   // ---------------------------------------------------------------- state
-  OSType subtype() const { return variant_ == Variant::Effect ? kSubEffect : kSubInstrument; }
-  OSType type() const { return variant_ == Variant::Effect ? kAudioUnitType_Effect : kAudioUnitType_MusicDevice; }
+  OSType subtype() const { return auSubtype_ ? auSubtype_ : variant_ == Variant::Effect ? kSubEffect : kSubInstrument; }
+  OSType type() const { return auType_ ? auType_ : variant_ == Variant::Effect ? kAudioUnitType_Effect : kAudioUnitType_MusicDevice; }
+  // The plugin's factory presets as AU presets (suite plugins; made once).
+  void makeFactoryPresets() {
+    if (madeFactory_ || !inst_ || !inst_->pluginInfo()) return;
+    madeFactory_ = true;
+    const auto& ps = inst_->pluginInfo()->presets;
+    for (size_t i = 0; i < ps.size(); ++i)
+      factory_.push_back(AUPreset{static_cast<SInt32>(i), CFStringCreateWithCString(nullptr, ps[i].name.c_str(), kCFStringEncodingUTF8)});
+  }
 
   CFDictionaryRef classInfo() {
     CFMutableDictionaryRef d = CFDictionaryCreateMutable(nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
@@ -899,7 +1036,8 @@ class AuPlugin : public AuInterface {
     CFTypeRef name = CFDictionaryGetValue(d, CFSTR(kAUPresetNameKey));
     if (presetName_) CFRelease(presetName_);
     presetName_ = name && CFGetTypeID(name) == CFStringGetTypeID() ? static_cast<CFStringRef>(CFRetain(name)) : nullptr;
-    for (int k = 0; k < kMacros; ++k) params_[k].store(static_cast<float>(inst_->macroValue(k)));
+    refreshParams();
+    presetNumber_ = -1;
     // Hosts and views read the parameters again.
     AudioUnitParameter any{unit_, kAUParameterListener_AnyParameter, kAudioUnitScope_Global, 0};
     AUParameterListenerNotify(nullptr, nullptr, &any);
@@ -917,12 +1055,18 @@ class AuPlugin : public AuInterface {
   }
 
   void detachViews() {
-    std::vector<GridlineAuView*> v = views_;
-    for (GridlineAuView* view : v) [view detachGridline];
+    std::vector<GRIDLINE_AU_VIEW_CLASS*> v = views_;
+    for (GRIDLINE_AU_VIEW_CLASS* view : v) [view detachGridline];
     views_.clear();
   }
 
   Variant variant_;
+  std::string type_;
+  OSType auType_ = 0, auSubtype_ = 0;
+  bool sidechain_ = true;
+  std::vector<AUPreset> factory_;
+  bool madeFactory_ = false;
+  SInt32 presetNumber_ = -1;
   AudioComponentInstance unit_ = nullptr;
   std::unique_ptr<Instance> inst_;
   CFRunLoopTimerRef timer_ = nullptr;
@@ -939,7 +1083,7 @@ class AuPlugin : public AuInterface {
   int nListeners_ = 0;
   Notify notify_[kMaxListeners];
   std::atomic<int> nNotify_{0};
-  std::atomic<float> params_[kMacros];
+  std::unique_ptr<std::atomic<float>[]> params_;  // AU value of each host parameter
   EventRing events_;
   gl::plugin::Event evBuf_[kMaxEvents];
   std::vector<float> inBuf_, outBuf_;
@@ -948,14 +1092,14 @@ class AuPlugin : public AuInterface {
   uint32_t delivered_ = 0;
   CFStringRef presetName_ = nullptr;
   CFStringRef contextName_ = nullptr;
-  std::vector<GridlineAuView*> views_;
+  std::vector<GRIDLINE_AU_VIEW_CLASS*> views_;
 };
 
 }  // namespace
 
 // ---------------------------------------------------------------- Cocoa view
 
-@implementation GridlineAuView
+@implementation GRIDLINE_AU_VIEW_CLASS
 - (BOOL)isFlipped {
   return YES;
 }
@@ -985,7 +1129,7 @@ class AuPlugin : public AuInterface {
 }
 @end
 
-@implementation GridlineAuViewFactory
+@implementation GRIDLINE_AU_FACTORY_CLASS
 - (unsigned)interfaceVersion {
   return 0;
 }
@@ -998,15 +1142,19 @@ class AuPlugin : public AuInterface {
   if (AudioUnitGetProperty(unit, kGridlineInstanceProperty, kAudioUnitScope_Global, 0, &plugin, &sz) != noErr || !plugin || !plugin->instance())
     return nil;
   if (!gl::plugin::viewSupported(gl::plugin::WindowApi::Cocoa)) return nil;
-  const int w = size.width >= gl::plugin::kMinViewW ? static_cast<int>(size.width) : gl::plugin::kDefaultViewW;
-  const int h = size.height >= gl::plugin::kMinViewH ? static_cast<int>(size.height) : gl::plugin::kDefaultViewH;
-  GridlineAuView* v = [[[GridlineAuView alloc] initWithFrame:NSMakeRect(0, 0, w, h)] autorelease];
+  int minW = 0, minH = 0, prefW = 0, prefH = 0;
+  plugin->instance()->minViewSize(minW, minH);
+  plugin->instance()->preferredViewSize(prefW, prefH);
+  // (A suite editor opens at its own size.)
+  const int w = size.width >= minW && !plugin->instance()->single() ? static_cast<int>(size.width) : prefW;
+  const int h = size.height >= minH && !plugin->instance()->single() ? static_cast<int>(size.height) : prefH;
+  GRIDLINE_AU_VIEW_CLASS* v = [[[GRIDLINE_AU_VIEW_CLASS alloc] initWithFrame:NSMakeRect(0, 0, w, h)] autorelease];
   std::unique_ptr<gl::plugin::View> gv = gl::plugin::createView(*plugin->instance());
   if (!gv) return nil;
   gv->setSize(w, h);
-  GridlineAuView* weak = v;
-  gv->requestResize = [weak](int nw, int nh) {
-    [weak setFrameSize:NSMakeSize(std::max(nw, gl::plugin::kMinViewW), std::max(nh, gl::plugin::kMinViewH))];
+  GRIDLINE_AU_VIEW_CLASS* weak = v;
+  gv->requestResize = [weak, minW, minH](int nw, int nh) {
+    [weak setFrameSize:NSMakeSize(std::max(nw, minW), std::max(nh, minH))];
     return true;
   };
   if (!gv->attach(v)) return nil;
@@ -1021,8 +1169,16 @@ class AuPlugin : public AuInterface {
 
 // ---------------------------------------------------------------- factory
 
-extern "C" __attribute__((visibility("default"))) void* GridlineAUFactory(const AudioComponentDescription* desc) {
+#ifndef GRIDLINE_SUITE
+extern "C" __attribute__((visibility("default"))) void* GRIDLINE_AU_FACTORY(const AudioComponentDescription* desc) {
   const Variant v = desc && desc->componentSubType == kSubEffect ? Variant::Effect : Variant::Instrument;
-  return &(new AuPlugin(v))->iface;
+  return &(new AuPlugin(v, "", 0, 0, true, false))->iface;
 }
+#else
+extern "C" __attribute__((visibility("default"))) void* GRIDLINE_AU_FACTORY(const AudioComponentDescription* desc) {
+  const gl::suite::Member* m = desc ? gl::suite::byAu(desc->componentType, desc->componentSubType) : nullptr;
+  if (!m || m->suite != GRIDLINE_SUITE) return nullptr;
+  return &(new AuPlugin(m->instrument ? Variant::Instrument : Variant::Effect, m->type, m->auType, m->auSubtype, m->sidechain, m->midiInput))->iface;
+}
+#endif
 #endif

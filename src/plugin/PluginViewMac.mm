@@ -204,7 +204,10 @@ std::string& clipboardText() {
 // Instance) or the control bar of a hosted plugin's window.
 class MacView final : public View {
  public:
-  explicit MacView(Instance& inst) : inst_(&inst), own_(std::make_unique<Frame>(inst)), surface_(own_.get()) {}
+  explicit MacView(Instance& inst) : inst_(&inst), own_(std::make_unique<Frame>(inst)), surface_(own_.get()) {
+    inst.minViewSize(minW_, minH_);  // J-131: a suite editor is sized by its plugin
+    inst.preferredViewSize(w_, h_);
+  }
   // A bar: no minimum size, no instance housekeeping.
   MacView(Surface& s, int w, int h) : surface_(&s), minW_(1), minH_(1), w_(w), h_(h) {}
   ~MacView() override { detach(); }
@@ -418,8 +421,14 @@ class MacView final : public View {
  private:
   // Dev check: GRIDLINE_PLUGIN_SHOT=<file.ppm> saves the 60th frame (our own GL surface only).
   void devShot(int w, int h) {
-    static const char* path = std::getenv("GRIDLINE_PLUGIN_SHOT");
-    if (!path || frames_ != 60 || w <= 0 || h <= 0) return;
+    static const char* shot = std::getenv("GRIDLINE_PLUGIN_SHOT");
+    static const int at = std::getenv("GRIDLINE_PLUGIN_SHOT_FRAME") ? std::atoi(std::getenv("GRIDLINE_PLUGIN_SHOT_FRAME")) : 60;
+    if (!shot || frames_ != at || w <= 0 || h <= 0) return;
+    // "{type}" in the name: the suite plugin's type (one file per editor).
+    std::string name = shot;
+    if (const size_t at = name.find("{type}"); at != std::string::npos)
+      name.replace(at, 6, inst_ && inst_->pluginInfo() ? inst_->pluginInfo()->type : std::string("gridline"));
+    const char* path = name.c_str();
     std::vector<unsigned char> px(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px.data());

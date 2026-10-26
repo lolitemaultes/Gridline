@@ -858,7 +858,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     prog->links.push_back(std::move(pl));
   }
   // --- PH-09: host macros (plugin build) ---
-  prog->macros.assign(static_cast<size_t>(kHostMacros), ProgMacro{});
+  prog->macros.assign(std::min(macroTargets_.size(), static_cast<size_t>(kHostMacros)), ProgMacro{});
   for (size_t k = 0; k < macroTargets_.size() && k < static_cast<size_t>(kHostMacros); ++k) {
     const ParamId target = macroTargets_[k];
     ProgMacro& m = prog->macros[k];
@@ -869,6 +869,15 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     linkRts[key] = m.target.rt;
     m.valid = true;
     prog->hasMacros = true;
+  }
+  // --- J-131: host parameter bank (single-plugin build) ---
+  if (bankTarget_.owner != kNoId && resolveTarget(song, *prog, bankTarget_, prog->hostBank) &&
+      (prog->hostBank.kind == ProgLink::ChanPlugin || prog->hostBank.kind == ProgLink::SlotParam)) {
+    const PluginState* st = prog->hostBank.kind == ProgLink::ChanPlugin
+                                ? &prog->channels[static_cast<size_t>(prog->hostBank.chan)].plugin
+                                : &prog->mixer[static_cast<size_t>(prog->hostBank.mixer)].slots[static_cast<size_t>(prog->hostBank.slot)].plugin;
+    prog->hostBankInfo = findPlugin(st->type);
+    prog->hasHostBank = prog->hostBankInfo != nullptr;
   }
   // --- automation clips (arrangement): one lane per automated parameter ---
   // Tempo automation becomes the tempo map instead (song mode).

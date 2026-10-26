@@ -35,6 +35,7 @@
 #include "TemplateUi.h"
 #include "FlpExportUi.h"
 #include "J59Ui.h"
+#include "SuiteUi.h"
 #include "UpdateUi.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -996,6 +997,7 @@ void drawDialogs(App& a) {
   confirmPrompt(a);           // J-82: delete clip sources, …
   ui::drawDisplayConfirm(a);  // J-77: Keep / Revert for size, theme, language, layout and audio changes
   updui::draw(a);             // J-89: update check (startup / Help), its popup
+  suiteui::draw(a);           // J-131: Gridline Suite, first-launch question
   importReportWindow(a);
   drawPluginManager(a);
   drawRemoteDialog(a);

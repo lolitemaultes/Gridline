@@ -145,8 +145,10 @@ class Frame final : public Surface {
   void* imguiContext() const { return ctx_; }
 
  private:
+  void drawSingle(int winW, int winH, int fbW, int fbH);  // J-131: one built-in plugin's editor
   Instance& inst_;
   void* ctx_ = nullptr;  // ImGuiContext*
+  int pendingResize_ = 0;  // frames left for the host to take a requested size
   bool rendererReady_ = false;
   bool layoutDone_ = false;
   bool placeRack_ = false;

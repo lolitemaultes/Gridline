@@ -138,7 +138,10 @@ WindowApi nativeWindowApi() { return WindowApi::X11; }
 // with its Instance) or the control bar of a hosted plugin's window.
 class X11View final : public View {
  public:
-  explicit X11View(Instance& inst) : inst_(&inst), own_(std::make_unique<Frame>(inst)), surface_(own_.get()) {}
+  explicit X11View(Instance& inst) : inst_(&inst), own_(std::make_unique<Frame>(inst)), surface_(own_.get()) {
+    inst.minViewSize(minW_, minH_);  // J-131: a suite editor is sized by its plugin
+    inst.preferredViewSize(w_, h_);
+  }
   // A bar: no minimum size, no instance housekeeping.
   X11View(Surface& s, int w, int h) : surface_(&s), minW_(1), minH_(1), w_(w), h_(h) {}
   ~X11View() override { detach(); }

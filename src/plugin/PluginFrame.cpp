@@ -29,8 +29,12 @@
 #include "../app/Theme.h"
 #include "../app/ThemeSettings.h"
 #include "../app/Widgets.h"
+#include "../app/PluginUI.h"
 #include "../app/Windows.h"
 #include "../core/I18n.h"
+#include "../core/Platform.h"
+#include "../engine/ChannelIns.h"
+#include "../engine/Sample.h"
 #include "../packs/PacksUi.h"
 #include "PluginCore.h"
 #include "PluginView.h"
@@ -134,9 +138,145 @@ void drawHostLink(Instance& inst) {
   ImGui::End();
 }
 
+// J-130 hook: the suite's logo in a Gridline Suite editor (bottom right,
+// `height` logical pixels). Returns false while the suite has no logo; the
+// editor then shows nothing there.
+bool drawSuiteLogo(App& a, const char* suiteName, float height) {
+  (void)a;
+  (void)suiteName;
+  (void)height;
+  return false;
+}
+
+// Gridline Suite: the sampler's sample (load button, file name), as in the
+// channel window.
+void drawSampleRow(App& a, ObjectId id) {
+  const Channel* c = a.doc.song().channel(id);
+  if (!c) return;
+  const bool pick = ui::TextButton("Load sample...", false, 0, "Choose an audio file for this channel");
+  if (ImGui::BeginDragDropTarget()) {
+    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_FILE")) {
+      std::string path(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
+      if (isAudioFile(path)) a.doc.editChannel(id, "load sample", [&](Channel& x) { x.plugin.data = path; });
+    }
+    ImGui::EndDragDropTarget();
+  }
+  if (pick) {
+    a.fileDialog = {};
+    a.fileDialog.open = true;
+    a.fileDialog.title = "Load sample";
+    a.fileDialog.dir = c->plugin.data.empty() ? (gl::platform::homeEnv() ? gl::platform::homeEnv() : ".") : fs::u8path(c->plugin.data).parent_path().string();
+    a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3"};
+    a.fileDialog.onOk = [&a, id](const std::string& p) {
+      a.doc.editChannel(id, "load sample", [&](Channel& x) { x.plugin.data = p; });
+      if (!sampleCache().get(p)) a.notify("Cannot decode " + p, true);
+    };
+  }
+  if (!c->plugin.data.empty()) {
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(theme::pal().textDim), "%s", fs::u8path(c->plugin.data).filename().string().c_str());
+    if (!sampleCache().request(c->plugin.data)) {
+      ImGui::SameLine();
+      ImGui::TextColored(theme::vec(theme::pal().danger), "%s", i18n::tr("missing"));
+    }
+  }
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+}
+
 }  // namespace
 
 Frame::Frame(Instance& inst) : inst_(inst) {}
+
+// J-131: one built-in plugin (Gridline Suite): its editor alone, as Gridline's
+// plugin window shows it (menu, preset header, editor; instruments with
+// channel envelopes also get the Envelope page), scaled to the host's window.
+void Frame::drawSingle(int winW, int winH, int fbW, int fbH) {
+  App& app = inst_.app();
+  const PluginInfo& info = *inst_.pluginInfo();
+  ImGuiIO& io = ImGui::GetIO();
+  const double now = nowSeconds();
+  io.DeltaTime = last_ > 0 && now > last_ ? static_cast<float>(std::min(0.25, now - last_)) : 1.0f / 60.0f;
+  last_ = now;
+  app.hint.clear();
+  int cw = 0, ch = 0;
+  inst_.editorContent(cw, ch);
+  float zoom = inst_.editorZoom();
+  if (pendingResize_ > 0) --pendingResize_;
+  if (cw > 0 && ch > 0) {
+    const bool fits = std::fabs(cw * zoom - static_cast<float>(winW)) <= 2.f && std::fabs(ch * zoom - static_cast<float>(winH)) <= 2.f;
+    if (fits) {
+      pendingResize_ = 0;
+    } else if (pendingResize_ == 0) {  // the host or the user resized the window: the editor zooms to fit
+      inst_.setEditorZoom(std::min(static_cast<float>(winW) / static_cast<float>(cw), static_cast<float>(winH) / static_cast<float>(ch)));
+      zoom = inst_.editorZoom();
+    }
+  }
+  uiScale_ = zoom;
+  io.DisplaySize = ImVec2(static_cast<float>(winW) / zoom, static_cast<float>(winH) / zoom);
+  io.DisplayFramebufferScale = ImVec2(static_cast<float>(fbW) / io.DisplaySize.x, static_cast<float>(fbH) / io.DisplaySize.y);
+
+  ImGui_ImplOpenGL3_NewFrame();
+  ImGui::NewFrame();
+  pointerGestureFrame(app);  // one undo step per pointer gesture
+  const ObjectId owner = inst_.pluginOwner();
+  const PluginTarget target{owner, inst_.pluginSlot()};
+  app.focusPluginOwner = target.owner;
+  app.focusPluginSlot = target.slot;
+  const ImVec2 at(cw > 0 ? std::max(0.f, (io.DisplaySize.x - static_cast<float>(cw)) * 0.5f) : 0.f,
+                  ch > 0 ? std::max(0.f, (io.DisplaySize.y - static_cast<float>(ch)) * 0.5f) : 0.f);
+  ImGui::SetNextWindowPos(at);
+  ImVec2 size(0, 0);
+  if (ImGui::Begin("##suite", nullptr,
+                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                       ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+    const float width = info.editorWidth > 0 ? info.editorWidth : (info.type == "gl.eq" ? 780.0f : 600.0f);
+    int tab = inst_.editorTab();
+    const bool envPage = target.isChannel() && insSupported(info.type);
+    if (envPage) {
+      const char* tabs[] = {"Plugin", "Envelope"};
+      const char* hints[] = {"The instrument's editor", "Envelopes, LFOs and the filter this channel applies to every note"};
+      tab = std::clamp(tab, 0, 1);
+      if (ui::TabStrip("##suitetabs", tabs, 2, &tab, hints)) inst_.setEditorTab(tab);
+    }
+    if (envPage && tab == 1) {
+      drawChannelEnvelope(app, owner);
+    } else {
+      if (target.isChannel() && info.type == "gl.sampler") drawSampleRow(app, owner);
+      menuButton("suitemenu", target.isChannel() ? "Instrument menu: presets, state" : "Effect menu: presets, state",
+                 [&app, target]() { pluginWindowMenu(app, target.owner, target.slot); });
+      ImGui::SameLine(0, 8);
+      drawPluginHeader(app, target);
+      drawPluginBody(app, target, width);
+    }
+    drawSuiteLogo(app, "Gridline Suite", 14.0f);
+    // The editor's natural size: auto-resize clamps the window to the display,
+    // which is the view at the current zoom, so a larger editor would never be
+    // measured (and would be cut off instead of zoomed to fit).
+    const ImGuiWindow* win = ImGui::GetCurrentWindow();
+    size = ImVec2(win->ContentSizeIdeal.x + win->WindowPadding.x * 2, win->ContentSizeIdeal.y + win->WindowPadding.y * 2);
+  }
+  ImGui::End();
+  drawDialogs(app);
+  if (size.x > 1 && size.y > 1 && inst_.setEditorContent(static_cast<int>(std::ceil(size.x)), static_cast<int>(std::ceil(size.y)))) {
+    int w = 0, h = 0;
+    inst_.preferredViewSize(w, h);
+    if (View* v = inst_.editorView(); v && v->requestResize && (w != winW || h != winH)) {
+      pendingResize_ = 30;  // the host answers within a few frames (or not: the editor then fits the window)
+      v->requestResize(w, h);
+    }
+  }
+  app.quitRequested = false;
+
+  ImGui::Render();
+  glViewport(0, 0, fbW, fbH);
+  const ImVec4 bg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+  glClearColor(bg.x, bg.y, bg.z, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+  ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+  inst_.syncParams();
+  app.syncEngine();
+}
 Frame::~Frame() { shutdown(); }
 
 void Frame::makeCurrent() {
@@ -184,9 +324,9 @@ bool Frame::init(const char* glslVersion) {
   std::error_code ec;
   fs::create_directories(app.configDir(), ec);
   iniPath_ = (fs::path(app.configDir()) / "plugin-layout.ini").string();
-  io.IniFilename = iniPath_.c_str();
+  io.IniFilename = inst_.single() ? nullptr : iniPath_.c_str();  // a suite editor has no layout to keep
   rendererReady_ = ImGui_ImplOpenGL3_Init(glslVersion);
-  app.extraParamMenu = [this](ParamId pid) { macroMenu(inst_, pid); };
+  if (!inst_.single()) app.extraParamMenu = [this](ParamId pid) { macroMenu(inst_, pid); };
   if (prev) ImGui::SetCurrentContext(prev);
   return rendererReady_;
 }
@@ -216,6 +356,10 @@ int Frame::cursor() const {
 void Frame::draw(int winW, int winH, int fbW, int fbH) {
   if (!ctx_ || !rendererReady_ || winW <= 0 || winH <= 0) return;
   makeCurrent();
+  if (inst_.single()) {
+    drawSingle(winW, winH, fbW, fbH);
+    return;
+  }
   App& app = inst_.app();
   ImGuiIO& io = ImGui::GetIO();
   const double now = nowSeconds();

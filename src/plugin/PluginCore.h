@@ -12,6 +12,14 @@
 // automates the macro and the engine applies it every 64-sample control
 // block. The plugin state is the whole project (JSON, sample references by
 // path) plus the macro links and the plugin settings.
+//
+// J-131 (Gridline Suite): an Instance can also be one built-in plugin on its
+// own (Instance(variant, "gl.<name>")): the App then runs a minimal project
+// (the instrument on one channel, or the effect in insert 1's first slot with
+// the host input on insert 1 and the sidechain on insert 2), the host
+// parameters are the plugin's own parameters (+ Mix and Bypass for effects),
+// the state is the plugin's state as Gridline stores it, and the editor is the
+// plugin's editor alone.
 #pragma once
 #include <atomic>
 #include <cstdint>
@@ -20,6 +28,7 @@
 #include <string>
 #include <vector>
 #include "../core/Params.h"
+#include "../core/PluginInfo.h"
 
 namespace gl {
 class App;
@@ -44,9 +53,25 @@ struct Event {
   enum Kind : uint8_t { Midi, Macro } kind = Midi;
   int offset = 0;  // frame in the block
   uint8_t midi[3] = {0, 0, 0};
-  int macro = 0;
+  int macro = 0;    // Macro: host parameter index (macro, or the plugin's parameter)
   float value = 0;  // Macro: normalized
 };
+
+// A host parameter as the formats describe it.
+struct HostParam {
+  std::string name, shortName, unit;
+  double def = 0;        // normalized default
+  int steps = 0;         // 0 = continuous, else number of steps (choices - 1)
+  bool bypass = false;   // the effect's bypass switch
+  bool toggle = false, choice = false, logScale = false;
+  double min = 0, max = 1;  // plain range (Audio Units show plain values)
+  std::vector<std::string> choices;
+};
+
+// J-131: parameter ids of the single-plugin effects' extra parameters (the
+// plugin's own parameters use their index as id).
+inline constexpr uint32_t kMixParamId = 0x00100000;
+inline constexpr uint32_t kBypassParamId = 0x00100001;
 
 struct Transport {
   bool valid = false;  // the host sent transport information
@@ -75,6 +100,8 @@ struct ProcessArgs {
 class Instance {
  public:
   explicit Instance(Variant v);
+  // J-131: one built-in plugin (`type` "gl.<name>"); variant Instrument for generators.
+  Instance(Variant v, const std::string& type);
   ~Instance();
   Instance(const Instance&) = delete;
   Instance& operator=(const Instance&) = delete;
@@ -110,6 +137,9 @@ class Instance {
 
   std::string saveState();
   bool loadState(const std::string& data, std::string* err = nullptr);
+  // J-131: factory preset i of the single plugin (PluginInfo::presets), as the
+  // editor's preset menu loads it (the loaded sample stays). Main thread.
+  bool loadFactoryPreset(int i);
 
   // Macros.
   std::string macroName(int k) const;    // "Macro 1"
@@ -128,6 +158,46 @@ class Instance {
   MidiMode midiMode() const { return midiMode_; }
   void setMidiMode(MidiMode m);
 
+  // ---- host parameters (J-131: both kinds; the Gridline workstation's are the macros) ----
+  bool single() const { return info_ != nullptr; }
+  const PluginInfo* pluginInfo() const { return info_; }
+  int paramCount() const;
+  uint32_t paramId(int index) const;
+  int paramIndex(uint32_t id) const;  // -1 = no such parameter
+  HostParam paramInfo(int index) const;
+  // Steps of a stepped parameter (toggle 1, choice count - 1; 0 = continuous):
+  // its plain value is the step 0..steps. Any thread (no allocation).
+  int paramSteps(int index) const;
+  double paramValue(int index) const;                  // normalized
+  void setParamValue(int index, double normalized);    // any thread (audio: no allocation)
+  std::string paramText(int index, double normalized) const;
+  bool paramFromText(int index, const std::string& text, double& normalized) const;
+  double paramToPlain(int index, double normalized) const;
+  double paramFromPlain(int index, double plain) const;
+  // Single plugin: a parameter edit in the editor is a gesture (begin, values
+  // through onMacroEdited, end); several parameters changed at once (preset,
+  // undo, state) are announced with onMacrosChanged instead.
+  std::function<void(int index, bool begin)> onParamGesture;
+  // Single plugin: doc <-> host parameters (main thread; idle() and the editor call it).
+  void syncParams();
+  // The editor has a control under the pointer held (main thread).
+  void setUiGesture(bool active) { uiGesture_ = active; }
+
+  // ---- editor size (logical pixels) ----
+  void preferredViewSize(int& w, int& h) const;
+  void minViewSize(int& w, int& h) const;
+  // Single plugin: the editor's content size at zoom 1 (measured when drawn);
+  // true when it changed. Zoom is the editor's scale (host resize, menu).
+  bool setEditorContent(int w, int h);
+  void editorContent(int& w, int& h) const;
+  float editorZoom() const { return zoom_; }
+  void setEditorZoom(float z);
+  int editorTab() const { return editorTab_; }
+  void setEditorTab(int t) { editorTab_ = t; }
+  // The channel (instrument) or mixer track (effect) holding the plugin.
+  ObjectId pluginOwner() const { return owner_; }
+  int pluginSlot() const { return info_ && variant_ == Variant::Effect ? 0 : -1; }
+
   // ---- audio thread ----
   void process(const ProcessArgs& a);
   // A MIDI message outside process() (parameter flush): applies at the next block.
@@ -136,8 +206,14 @@ class Instance {
   bool followingHost() const;
 
  private:
+  void init();
   void applyMidiRouting();
   void publishMacros();  // links → program builder (rebuild)
+  void setupSingle();    // J-131: the minimal project of a single plugin
+  const PluginState* singleState() const;
+  std::string saveSingle();
+  bool loadSingle(const std::string& data, std::string* err);
+  void resetHostValues();  // host values := the project's values
   void runSlice(const ProcessArgs& a, int from, int len, bool first);
 
   static constexpr int kChunk = 1024;  // frames per engine call (interleaved input buffer)
@@ -155,6 +231,19 @@ class Instance {
   std::atomic<float> macroValues_[kMacros];
   uint64_t routedRevision_ = ~0ull;
   ObjectId routedSel_ = 0;
+  // J-131: single plugin.
+  const PluginInfo* info_ = nullptr;
+  ObjectId owner_ = kNoId;         // channel (instrument) / insert 1 (effect)
+  int nParams_ = 0;                // the plugin's parameters (host parameters 0..n-1)
+  std::unique_ptr<std::atomic<float>[]> hostNorm_;      // last value of each host parameter (normalized)
+  std::unique_ptr<std::atomic<uint64_t>[]> hostDirty_;  // set by the host, not in the project yet
+  std::vector<double> synced_;     // value the project and the host agreed on (normalized)
+  std::vector<char> gesture_;      // gesture open for the host
+  uint64_t syncedRevision_ = ~0ull;
+  bool uiGesture_ = false;
+  int editorW_ = 0, editorH_ = 0;
+  float zoom_ = 1.0f;
+  int editorTab_ = 0;
 };
 
 // Finds the assets folder for a plugin binary (bundle Resources, then the

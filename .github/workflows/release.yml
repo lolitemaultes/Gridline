@@ -106,7 +106,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_BUNDLED_SDL2=ON -DGRIDLINE_DEV_ASSETS=OFF \
             "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DGRIDLINE_GUI_TESTS=OFF
-          cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap gridline_au
+          cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap gridline_au gridline_suite_gridline
       - name: Disk image window tools (dmgbuild)
         run: python3 -m venv "$RUNNER_TEMP/dmgvenv" && "$RUNNER_TEMP/dmgvenv/bin/pip" install --quiet dmgbuild==1.6.7
       - name: Disk image
@@ -127,6 +127,16 @@ jobs:
             b="$(plutil -extract CFBundleVersion raw "$p/Contents/Info.plist")"
             echo "$p: $v ($b)"; test "$v" = "$VERNUM"; test "$b" = "$VERNUM"  # numbers only (macOS)
           done
+          # Gridline Suite inside the app (installed into ~/Library/Audio/Plug-Ins on first launch).
+          suite="$root/Gridline.app/Contents/Resources/Suite"
+          for p in "Gridline Suite.vst3" "Gridline Suite.clap" "Gridline Suite.component"; do
+            test "$(plutil -extract CFBundleShortVersionString raw "$suite/$p/Contents/Info.plist")" = "$VERNUM"
+            lipo -archs "$suite/$p/Contents/MacOS/Gridline Suite" | grep -q arm64
+            lipo -archs "$suite/$p/Contents/MacOS/Gridline Suite" | grep -q x86_64
+            grep -q "^Gridline Suite $VER " "$suite/$p/Contents/Resources/gridline-suite.txt"
+          done
+          plutil -extract AudioComponents raw "$suite/Gridline Suite.component/Contents/Info.plist"
+          "$root/Gridline.app/Contents/MacOS/gridline" suite status
           if otool -L "$root/Gridline.app/Contents/MacOS/gridline-app" | grep -q libSDL2; then echo "SDL2 must be built in"; exit 1; fi
           test "$("$root/Gridline.app/Contents/MacOS/gridline-app" --version)" = "Gridline $VER"
           test "$(arch -x86_64 "$root/gridline" --version)" = "Gridline $VER"
@@ -170,7 +180,7 @@ jobs:
           if [ "${{ matrix.arch }}" = "arm64" ]; then extra="-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"; fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DGRIDLINE_BUNDLED_SDL2=ON \
             -DGRIDLINE_DEV_ASSETS=OFF -DGRIDLINE_GUI_TESTS=OFF $extra
-          cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap
+          cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap gridline_suite_gridline
       - name: Stage
         run: |
           name="Gridline-$VER-windows-${{ matrix.arch }}"
@@ -182,13 +192,18 @@ jobs:
           cp build/plugins/Gridline.clap "$stage/plugins/CLAP/"
           cp -r build/plugins/Gridline-assets "$stage/plugins/CLAP/"
           rm -rf "$stage/plugins/VST3/Gridline.vst3/Contents/Resources/assets/sounds/src" "$stage/plugins/CLAP/Gridline-assets/sounds/src"
+          # Gridline Suite (always installed into Common Files\VST3 and Common Files\CLAP)
+          cp -r "build/plugins/Gridline Suite.vst3" "$stage/plugins/VST3/"
+          cp "build/plugins/Gridline Suite.clap" "$stage/plugins/CLAP/"
+          cp -r "build/plugins/Gridline Suite-assets" "$stage/plugins/CLAP/"
+          rm -rf "$stage/plugins/VST3/Gridline Suite.vst3/Contents/Resources/assets/sounds/src" "$stage/plugins/CLAP/Gridline Suite-assets/sounds/src"
           sed -e "s/@VERSION@/$VER/g" -e "s/@ARCH@/${{ matrix.arch }}/g" tools/release/README-windows.txt | sed 's/$/\r/' > "$stage/README.txt"
           echo "STAGE=$stage" >> "$GITHUB_ENV"
           echo "NAME=$name" >> "$GITHUB_ENV"
       - name: Check version resources
         shell: pwsh
         run: |
-          foreach ($f in @("$env:STAGE/gridline.exe", "$env:STAGE/gridline-app.exe", "$env:STAGE/plugins/CLAP/Gridline.clap")) {
+          foreach ($f in @("$env:STAGE/gridline.exe", "$env:STAGE/gridline-app.exe", "$env:STAGE/plugins/CLAP/Gridline.clap", "$env:STAGE/plugins/CLAP/Gridline Suite.clap")) {
             $v = (Get-Item $f).VersionInfo
             Write-Output "$f : $($v.ProductVersion) / $($v.FileVersion)"
             if ($v.ProductVersion -ne $env:VER) { throw "version resource of $f is $($v.ProductVersion), expected $env:VER" }
@@ -216,7 +231,13 @@ jobs:
               Get-ChildItem -Path $root -Directory -Filter "Inno Setup*" -ErrorAction SilentlyContinue | ForEach-Object {
                 $exe = Join-Path $_.FullName "ISCC.exe"
                 if (Test-Path $exe) {
-                  $v = [version](((Get-Item $exe).VersionInfo.ProductVersion) -replace '[^0-9.].*', '')
+                  $vi = (Get-Item $exe).VersionInfo
+                  $v = [version]"$($vi.FileMajorPart).$($vi.FileMinorPart).$($vi.FileBuildPart)"
+                  if ($v -eq [version]"0.0.0") {  # no numeric file version: the product string, e.g. "6.6.1"
+                    $m = [regex]::Match("$($vi.ProductVersion) $($vi.FileVersion)", '\d+\.\d+(\.\d+)?')
+                    if ($m.Success) { $v = [version]$m.Value }
+                  }
+                  Write-Host "  $exe : file $($vi.FileVersion), product $($vi.ProductVersion) -> $v"
                   if (-not $best -or $v -gt $best.Version) { $best = [pscustomobject]@{ Dir = $_.FullName; Version = $v } }
                 }
               }
@@ -225,7 +246,7 @@ jobs:
             $best
           }
           $found = FindIscc
-          if ($found.Version -lt [version]"6.6.0") { choco upgrade innosetup --no-progress -y | Out-Null; $found = FindIscc }
+          if ($found.Version -lt [version]"6.6.0") { choco upgrade innosetup --no-progress -y | Select-Object -Last 3 | Write-Host; $found = FindIscc }
           Write-Output "Inno Setup $($found.Version) in $($found.Dir)"
           if ($found.Version -lt [version]"6.6.0") { throw "Inno Setup $($found.Version) is older than 6.6.0" }
           $iscc = $found.Dir
@@ -247,6 +268,10 @@ jobs:
           if ($out -ne "Gridline $env:VER") { throw "installed gridline.exe says $out" }
           if (-not (Test-Path "$env:CommonProgramFiles\VST3\Gridline.vst3")) { throw "VST3 plugin not installed" }
           if (-not (Test-Path "$env:CommonProgramFiles\CLAP\Gridline.clap")) { throw "CLAP plugin not installed" }
+          if (-not (Test-Path "$env:CommonProgramFiles\VST3\Gridline Suite.vst3")) { throw "Gridline Suite VST3 not installed" }
+          if (-not (Test-Path "$env:CommonProgramFiles\CLAP\Gridline Suite.clap")) { throw "Gridline Suite CLAP not installed" }
+          if (-not (Test-Path "$env:CommonProgramFiles\CLAP\Gridline Suite-assets")) { throw "Gridline Suite CLAP assets not installed" }
+          & "$dir\gridline.exe" suite status
           if (-not (Test-Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Gridline\Gridline.lnk")) { throw "no Start menu entry" }
           $p = Start-Process -Wait -PassThru "$dir\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART"
           if ($p.ExitCode -ne 0) { throw "uninstall exit $($p.ExitCode)" }
@@ -311,7 +336,7 @@ jobs:
           # Built on the oldest supported Ubuntu (22.04): the binaries run on newer glibc systems.
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DGRIDLINE_DEV_ASSETS=OFF \
             -DGRIDLINE_INSTALL_PLUGINS=ON -DGRIDLINE_GUI_TESTS=OFF
-          cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap
+          cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap gridline_suite_gridline
       - name: Packages (.deb, .rpm, .tar.gz)
         run: |
           mkdir -p dist
@@ -339,6 +364,11 @@ jobs:
           chmod +x linuxdeploy
           rm -rf AppDir
           DESTDIR="$PWD/AppDir" cmake --install build
+          # The AppImage carries the Gridline Suite in usr/share/gridline/suite; Gridline offers to
+          # copy it into ~/.vst3 and ~/.clap on first launch (hosts cannot scan inside the image).
+          mkdir -p AppDir/usr/share/gridline/suite
+          mv "AppDir/usr/lib/vst3/Gridline Suite.vst3" "AppDir/usr/lib/clap/Gridline Suite.clap" "AppDir/usr/lib/clap/Gridline Suite-assets" \
+            AppDir/usr/share/gridline/suite/
           rm -rf AppDir/usr/share/gridline/assets/sounds/src AppDir/usr/lib/vst3 AppDir/usr/lib/clap
           desktop=AppDir/usr/share/applications/gridline.desktop
           echo "X-AppImage-Version=$VER" >> "$desktop"
@@ -356,6 +386,8 @@ jobs:
           test "$("$app" --version)" = "Gridline $VER"
           (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$app" --appimage-extract > /dev/null)
           grep -x "X-AppImage-Version=$VER" "$RUNNER_TEMP/squashfs-root/gridline.desktop"
+          test -f "$RUNNER_TEMP/squashfs-root/usr/share/gridline/suite/Gridline Suite.clap"
+          test -d "$RUNNER_TEMP/squashfs-root/usr/share/gridline/suite/Gridline Suite.vst3"
           bash tools/ci/smoke.sh "$RUNNER_TEMP/squashfs-root/usr/bin/gridline" "$VER"
           xvfb-run -a sh -c "GRIDLINE_CONFIG_HOME=$RUNNER_TEMP/cfg $app --hidden --size 800x600 --screenshot $RUNNER_TEMP/app.ppm --frames 5 --no-ui-sounds"
           test -s "$RUNNER_TEMP/app.ppm"
@@ -368,10 +400,14 @@ jobs:
           sudo apt-get install -y -q "./$deb"
           test "$(/usr/bin/gridline --version)" = "Gridline $VER"
           test -f /usr/lib/vst3/Gridline.vst3/Contents/$arch-linux/Gridline.so
+          test -f "/usr/lib/vst3/Gridline Suite.vst3/Contents/$arch-linux/Gridline Suite.so"
+          test -f "/usr/lib/clap/Gridline Suite.clap"
+          /usr/bin/gridline suite status | grep -q "installed for all users"
           bash tools/ci/smoke.sh /usr/bin/gridline "$VER"
           sudo apt-get remove -y -q gridline
           tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "bin/gridline-app"
           dpkg-deb -c "$deb" | grep -q "usr/share/metainfo/org.gridline.Gridline.metainfo.xml"
+          tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "lib/clap/Gridline Suite.clap"
       - name: The .rpm installs on Fedora
         run: |
           docker run --rm -v "$PWD:/w" -w /w fedora:latest sh -c \

@@ -56,6 +56,8 @@ int flpToolsMain(int argc, char** argv);  // FlpTools.cpp (-1 = not one of its c
 int mcpMain(int argc, char** argv);       // McpCli.cpp (SC-07)
 int collabMain(int argc, char** argv);    // CollabCli.cpp (J-111)
 
+int suiteCliMain(int argc, char** argv);  // SuiteCli.cpp (J-131)
+
 namespace {
 void usage() {
   std::fprintf(stderr,
@@ -75,6 +77,8 @@ void usage() {
       "  gridline render-stats <project.json> [--max-seconds S]   QA: render in memory, print level / NaN / clipping\n"
       "  gridline info   <project.json>\n"
       "  gridline plugin-params [type]               built-in plugin catalog (params, ranges, defaults) as JSON\n"
+      "  gridline suite-info [suite] [--json] [--excluded]   Gridline Suite members and their plugin ids\n"
+      "  gridline suite status|install|remove [--json]   the Gridline Suite in your plug-in folders\n"
       "  gridline param-audit [--type T]... [--json F] [--md F] [--baseline F] [--threads N] [--no-combos] [--no-live] [--base k=v;..] [--probe]\n"
       "  gridline param-audit --relabel <baseline.tsv> <out.tsv>   apply the documented-inert list to a baseline\n"
       "                                                 does every parameter of every built-in plugin change the output?\n"
@@ -126,6 +130,7 @@ int main(int argc, char** argv) {
   if (argc >= 2 && std::string(argv[1]) == "mcp") return mcpMain(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "collab-run") return collabMain(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "seltmann-analyse") return gl::packs::seltmann::cliMain(argc, argv);  // J-107
+  if (argc >= 2 && (std::string(argv[1]) == "suite-info" || std::string(argv[1]) == "suite")) return suiteCliMain(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "plugin-params") {
     // Built-in plugin catalog as JSON (type, kind, params with range / default /
     // choices): tools that write projects by hand (tools/make_ui_sounds.py) fill

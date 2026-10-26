@@ -78,6 +78,20 @@ void testSecretFile() {
   expect(!st.set("../escape", "x") && !st.set("", "x") && !st.set(".hidden", "x"), "secrets: names cannot leave the folder");
   expect(st.remove("mcp-token") && !st.get("mcp-token", v), "secrets: remove");
   expect(secrets::defaultBackend() == secrets::Backend::File, "secrets: tests never use the Keychain");
+  {  // An isolated config root alone keeps secrets out of the Keychain (no macOS password prompt for dev builds).
+    const std::string saved = std::getenv("GRIDLINE_SECRET_STORE") ? std::getenv("GRIDLINE_SECRET_STORE") : "";
+    const bool hadHome = std::getenv("GRIDLINE_CONFIG_HOME") != nullptr;
+    gl::platform::unsetEnv("GRIDLINE_SECRET_STORE");
+    gl::platform::setEnv("GRIDLINE_CONFIG_HOME", dir.parent_path().string().c_str(), false);
+    expect(secrets::defaultBackend() == secrets::Backend::File, "secrets: GRIDLINE_CONFIG_HOME keeps the Keychain out");
+#if defined(__APPLE__) || defined(_WIN32)
+    gl::platform::setEnv("GRIDLINE_SECRET_STORE", "keychain");
+    expect(secrets::defaultBackend() == secrets::Backend::Keychain, "secrets: GRIDLINE_SECRET_STORE=keychain overrides");
+#endif
+    if (saved.empty()) gl::platform::unsetEnv("GRIDLINE_SECRET_STORE");
+    else gl::platform::setEnv("GRIDLINE_SECRET_STORE", saved.c_str());
+    if (!hadHome) gl::platform::unsetEnv("GRIDLINE_CONFIG_HOME");
+  }
 }
 
 void testMigration() {

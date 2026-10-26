@@ -104,6 +104,10 @@ Source: "{#Stage}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recur
 Source: "{#Stage}\plugins\VST3\Gridline.vst3\*"; DestDir: "{commoncf64}\VST3\Gridline.vst3"; Tasks: plugins; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Stage}\plugins\CLAP\Gridline.clap"; DestDir: "{commoncf64}\CLAP"; Tasks: plugins; Flags: ignoreversion
 Source: "{#Stage}\plugins\CLAP\Gridline-assets\*"; DestDir: "{commoncf64}\CLAP\Gridline-assets"; Tasks: plugins; Flags: ignoreversion recursesubdirs createallsubdirs
+; Gridline Suite (Gridline's instruments and effects as plugins for other hosts): always installed.
+Source: "{#Stage}\plugins\VST3\Gridline Suite.vst3\*"; DestDir: "{commoncf64}\VST3\Gridline Suite.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#Stage}\plugins\CLAP\Gridline Suite.clap"; DestDir: "{commoncf64}\CLAP"; Flags: ignoreversion
+Source: "{#Stage}\plugins\CLAP\Gridline Suite-assets\*"; DestDir: "{commoncf64}\CLAP\Gridline Suite-assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Gridline"; Filename: "{app}\gridline-app.exe"; WorkingDir: "{app}"

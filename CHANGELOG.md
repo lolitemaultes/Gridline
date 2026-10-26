@@ -32,6 +32,18 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   add), indexed in the background, grouped by bank and searchable as a whole. Projects that host
   the original plugin keep hosting it. See `docs/plugins/plasma.md`.
 
+### New: the Gridline Suite, Gridline's plugins in any DAW
+
+- Every built-in instrument and effect that works on its own is now also a plugin for other music
+  programs, in one bundle per format: `Gridline Suite.vst3` and `Gridline Suite.clap` on every
+  system and `Gridline Suite.component` (Audio Unit) on macOS. Each plugin has its own name,
+  vendor Gridline, a category, its automatable parameters with value text, factory presets, a
+  sidechain input where the effect uses one, latency reporting, its resizable Gridline editor, and
+  the same state as inside Gridline. The suite is installed with the application: by the Windows
+  installer and the Linux packages, and on macOS, with the AppImage and the archives Gridline
+  offers to copy it into your plug-in folders and keeps it up to date (Settings, Files, Gridline
+  Suite, or `gridline suite install`). See `docs/gridline-suite.md`.
+
 ### Stand-ins for a missing Serum or Kickstart
 
 - A project (Gridline or FL Studio) whose Serum or Serum 2 is not installed plays it with Plasma;

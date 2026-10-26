@@ -9,7 +9,7 @@ msgstr ""
 msgid "Backup failed"
 msgstr ""
 
-#: src/app/App.cpp src/app/BrowserDrop.cpp src/app/ChannelSettings.cpp src/app/ExportUi.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/App.cpp src/app/BrowserDrop.cpp src/app/ChannelSettings.cpp src/app/ExportUi.cpp src/packs/samplers/samplers_ui.cpp src/plugin/PluginFrame.cpp
 msgid "Cannot decode"
 msgstr ""
 
@@ -1609,7 +1609,7 @@ msgstr ""
 msgid "Channel name"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp
+#: src/app/ChannelSettings.cpp src/plugin/PluginFrame.cpp
 msgid "Choose an audio file for this channel"
 msgstr ""
 
@@ -1645,7 +1645,7 @@ msgstr ""
 msgid "Layer: this channel's notes also play on the checked channels"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/ChannelSettings.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/samplers/samplers_ui.cpp src/plugin/PluginFrame.cpp
 msgid "Load sample..."
 msgstr ""
 
@@ -1677,7 +1677,7 @@ msgstr ""
 msgid "This channel is cut by notes of channels in this group (same number in both = cuts itself)"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp
+#: src/app/ChannelSettings.cpp src/plugin/PluginFrame.cpp
 msgid "missing"
 msgstr ""
 
@@ -3401,7 +3401,7 @@ msgstr ""
 msgid "Relays the encrypted connection when both networks block direct connections. Only needed for strict networks"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/app/SuiteUi.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Remove"
 msgstr ""
 
@@ -11301,6 +11301,106 @@ msgstr ""
 msgid "Free and open for everybody"
 msgstr ""
 
+#: src/app/SuiteUi.cpp
+msgid "Ask again the next time Gridline starts"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Copies it into your plug-in folders at startup when this Gridline carries a newer version"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Copy the suite into your plug-in folders"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Copying..."
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Delete the copies in your plug-in folders"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Don't copy the suite; Settings can still install it"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "GRIDLINE SUITE"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Gridline Suite installed: rescan plugins in your other music programs to find it"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Gridline Suite removed from your plug-in folders"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Gridline Suite: "
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Gridline's instruments and effects also work as plugins in other music programs (VST3, CLAP and, on macOS, Audio Unit). Gridline can copy them into your plug-in folders now and keep them up to date."
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Gridline's instruments and effects as plugins for other music programs (VST3, CLAP and, on macOS, Audio Unit)."
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Install"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Install the Gridline Suite?"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Installed for all users"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Installed in your plug-in folders"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Installed, from another Gridline version"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Keep the Gridline Suite installed and up to date"
+msgstr ""
+
+#: src/app/SuiteUi.cpp src/app/UpdateUi.cpp
+msgid "Never"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Not installed: other music programs do not see it yet"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Not now"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Not part of this copy of Gridline (a build folder)"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Removed from your plug-in folders"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Update the Gridline Suite?"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "You can change this later in Settings, Files, Gridline Suite."
+msgstr ""
+
 #: src/app/TemplateUi.cpp
 msgid "Build a ready-to-play loop from a style instead"
 msgstr ""
@@ -11635,10 +11735,6 @@ msgstr ""
 
 #: src/app/UpdateUi.cpp
 msgid "Last checked: "
-msgstr ""
-
-#: src/app/UpdateUi.cpp
-msgid "Never"
 msgstr ""
 
 #: src/app/UpdateUi.cpp

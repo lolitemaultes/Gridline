@@ -30,6 +30,18 @@ ditto "$SRC/assets" "$app/Contents/Resources/assets"
 rm -rf "$app/Contents/Resources/assets/sounds/src"
 cp "$SRC/assets/icons/Gridline.icns" "$app/Contents/Resources/Gridline.icns"
 
+# The Gridline Suite (Gridline's instruments and effects as plugins for other music programs)
+# travels inside the app: Gridline installs it into ~/Library/Audio/Plug-Ins on first launch
+# (with the user's consent), and `gridline suite install` does the same from a terminal.
+SUITE_BUNDLES=("Gridline Suite.vst3" "Gridline Suite.clap" "Gridline Suite.component")
+rm -rf "$app/Contents/Resources/Suite"
+mkdir -p "$app/Contents/Resources/Suite"
+for p in "${SUITE_BUNDLES[@]}"; do
+  test -d "$BUILD/plugins/$p" || { echo "missing $BUILD/plugins/$p (build target gridline_suite_gridline)" >&2; exit 1; }
+  ditto "$BUILD/plugins/$p" "$app/Contents/Resources/Suite/$p"
+  rm -rf "$app/Contents/Resources/Suite/$p/Contents/Resources/assets/sounds/src"
+done
+
 for p in Gridline.vst3 Gridline.clap Gridline.component; do
   ditto "$BUILD/plugins/$p" "$ROOT/Plugins/$p"
   rm -rf "$ROOT/Plugins/$p/Contents/Resources/assets/sounds/src"
@@ -40,6 +52,7 @@ ln -s /Applications "$ROOT/Applications"
 
 # Ad hoc signatures (inside out: nested code first).
 codesign --force --sign - --timestamp=none "$app/Contents/MacOS/gridline"
+for p in "${SUITE_BUNDLES[@]}"; do codesign --force --sign - --timestamp=none "$app/Contents/Resources/Suite/$p"; done
 codesign --force --sign - --timestamp=none "$app"  # no hardened runtime: it would refuse unsigned plugins
 for p in Gridline.vst3 Gridline.clap Gridline.component; do codesign --force --sign - --timestamp=none "$ROOT/Plugins/$p"; done
 codesign --force --sign - --timestamp=none "$ROOT/gridline"

@@ -2152,6 +2152,7 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
     ns.data = st->data;
     setPluginState(a, t, ns, "paste plugin state");
   }
+  if (a.singlePlugin) return;  // J-131: the plugin alone in another host
   ImGui::Separator();
   if (t.isChannel()) {
     const Channel* c = s.channel(owner);

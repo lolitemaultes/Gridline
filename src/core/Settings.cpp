@@ -122,6 +122,7 @@ Settings::Settings() {
       {"update.lastCheck", Json::makeNumber(0)},    // seconds since 1970 of the last check (0 = never)
       {"update.skipVersion", Json::makeString("")}, // "Skip this version"
       {"update.remindAfter", Json::makeNumber(0)},  // "Remind me later": not offered again before this time
+      {"suite.install", Json::makeString("ask")},   // J-131: Gridline Suite into the plug-in folders: ask, yes, no
       // J-111: collaboration (src/collab, docs/collaboration.md). The profile itself lives in <config>/gridline/collab.
       {"collab.stunHost", Json::makeString("stun.l.google.com")},  // address discovery ("" = same network only)
       {"collab.stunPort", Json::makeNumber(19302)},

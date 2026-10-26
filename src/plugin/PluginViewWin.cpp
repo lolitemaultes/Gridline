@@ -180,7 +180,10 @@ WindowApi nativeWindowApi() { return WindowApi::Win32; }
 // or the control bar of a hosted plugin's window.
 class WinView final : public View {
  public:
-  explicit WinView(Instance& inst) : inst_(&inst), own_(std::make_unique<Frame>(inst)), surface_(own_.get()), timer_(true) {}
+  explicit WinView(Instance& inst) : inst_(&inst), own_(std::make_unique<Frame>(inst)), surface_(own_.get()), timer_(true) {
+    inst.minViewSize(minW_, minH_);  // J-131: a suite editor is sized by its plugin
+    inst.preferredViewSize(w_, h_);
+  }
   // A bar: no minimum size, no instance housekeeping, drawn by its window's tick().
   WinView(Surface& s, int w, int h) : surface_(&s), minW_(1), minH_(1), w_(w), h_(h) {}
   ~WinView() override { detach(); }

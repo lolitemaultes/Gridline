@@ -31,7 +31,7 @@
 Get the files for your system from the [latest release](https://github.com/lolitemaultes/Gridline/releases/latest):
 
 - **Windows 10 / 11** (x64 and ARM64): `-setup.exe` installer, or a portable `.zip`.
-- **macOS 11 or later**: one `.dmg` with a universal app for Apple Silicon and Intel, the command line tool and the VST3, CLAP and AU plugins.
+- **macOS 11 or later**: one `.dmg` with a universal app for Apple Silicon and Intel, the command line tool and the VST3, CLAP and AU plugins. Every download also carries the [Gridline Suite](docs/gridline-suite.md), Gridline's instruments and effects as plugins for other DAWs.
 - **Linux** (x86_64 and aarch64): `.AppImage` for most distributions, `.deb` for Debian and Ubuntu, `.rpm` for Fedora and openSUSE, or a `.tar.gz`.
 - **FreeBSD, OpenBSD, NetBSD** (x86_64): a `.tar.gz` built and tested on each system.
 
@@ -230,6 +230,23 @@ cmake --install build --component plugins --prefix /usr    # or install for a pa
 
 The **Host link** panel (a tab beside the browser) shows the transport, MIDI and output settings, the reported latency and the 16 macros. `gridline plugin-check Gridline` runs the compatibility sweep on the built bundles once they are in the plugin cache.
 
+### Gridline Suite
+
+Every Gridline download also carries the **Gridline Suite**: Gridline's own instruments and effects, each as a plugin of its own for any DAW (vendor "Gridline"), in one bundle per format: `Gridline Suite.vst3`, `Gridline Suite.clap` and, on macOS, `Gridline Suite.component`. Each plugin is the same DSP and the same editor as inside Gridline:
+
+- **Parameters:** every parameter of the plugin, named, with its range, steps and value text (`1.20 kHz`, `-6.0 dB`), automatable; effects add **Mix** and **Bypass**.
+- **Instruments** take MIDI; **effects** have a sidechain input where the effect uses one (Compressor, Limiter, Sidechain Ducker, Cipher, Cloister, Tideline, Transient Split, Hit Repeater); effects that play from notes (Cipher, Plumb, Tideline) also take MIDI.
+- **Presets:** the factory presets in the editor's preset menu (and as Audio Unit factory presets).
+- **State** is the plugin's state as Gridline saves it, so a sound moves between Gridline and another host unchanged. Latency is reported to the host.
+- **Editor:** the plugin's own editor from Gridline, resizable (it zooms to the window) and sharp on HiDPI screens.
+
+The installers put the suite where hosts find it: the Windows installer into `Common Files\VST3` and `Common Files\CLAP`, the `.deb` and `.rpm` into `/usr/lib/vst3` and `/usr/lib/clap`. On macOS, with the AppImage and with the `.tar.gz` builds, Gridline asks on first launch whether to copy the suite into your plug-in folders and keeps it up to date (**Settings, Files, Gridline Suite**, or `gridline suite status|install|remove`). The members, their identifiers and the folders per system are in [docs/gridline-suite.md](docs/gridline-suite.md).
+
+```sh
+cmake --build build --target gridline_suite_gridline   # build/plugins/Gridline Suite.{vst3,clap,component}
+build/gridline suite-info gridline                     # members, identifiers and categories
+```
+
 ## FL Studio project compatibility
 
 Gridline opens FL Studio projects (`.flp`), FL Studio zipped loop packages (`.zip`) and presets (`.fst`), so existing work can be brought across. **File, Open** (or drag and drop) opens `.flp` and `.zip` files like any project; saving one asks where to keep it and in which format, so the original is never overwritten unasked:
@@ -246,6 +263,7 @@ Projects can also be saved back to `.flp` with **File, Export, FL Studio project
 
 - [Collaborative projects](docs/collaboration.md): inviting, joining, connections, offline work, removing someone, privacy.
 - [Windows outside the main window](docs/detachable-windows.md) and [the plugin window's channel strip](docs/plugin-window.md).
+- [The Gridline Suite](docs/gridline-suite.md): Gridline's instruments and effects as plugins for other DAWs, and where they are installed.
 - [Plasma](docs/plugins/plasma.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md) and [the synths pack](docs/plugins/synths.md).
 - [Lua scripting](docs/scripting.md), [AI assistants (MCP)](docs/mcp.md) and [the update check](docs/updates.md).
 - [CHANGELOG.md](CHANGELOG.md) lists what changed in each version.

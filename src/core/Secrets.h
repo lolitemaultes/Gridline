@@ -14,7 +14,8 @@ class Settings;
 namespace secrets {
 
 enum class Backend { Keychain, File };
-// Keychain on macOS unless GRIDLINE_SECRET_STORE=file; File elsewhere.
+// Keychain on macOS unless GRIDLINE_SECRET_STORE=file or GRIDLINE_CONFIG_HOME is set
+// (GRIDLINE_SECRET_STORE=keychain overrides the latter); File elsewhere.
 Backend defaultBackend();
 const char* backendName(Backend b);  // "macOS Keychain" / "private file"
 

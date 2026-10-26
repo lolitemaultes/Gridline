@@ -30,6 +30,10 @@ Backend defaultBackend() {
 #if defined(__APPLE__) || defined(_WIN32)
   const char* e = std::getenv("GRIDLINE_SECRET_STORE");
   if (e && std::string(e) == "file") return Backend::File;
+  // An isolated config root (automated runs, portable setups) keeps its secrets beside it, never in the
+  // user's Keychain / Credential Manager: a fresh build reading the user's item makes macOS ask for the password.
+  const char* home = std::getenv("GRIDLINE_CONFIG_HOME");
+  if (home && *home && !(e && std::string(e) == "keychain")) return Backend::File;
   return Backend::Keychain;
 #else
   return Backend::File;

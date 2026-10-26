@@ -7,23 +7,36 @@
 // Extensions: audio ports, note ports, params (16 macros), state (the whole
 // project), latency, render (offline), GUI (Cocoa / X11, resizable) and the
 // host's timer support (X11 editor redraws, idle work).
+//
+// J-131: built with GRIDLINE_SUITE="<suite id>", the same entry point is a
+// Gridline Suite bundle instead: one plugin per member of the suite
+// (core/PluginSuite.h), each one built-in instrument or effect with its own
+// parameters (the effects add Mix and Bypass), its own state and editor.
+// Instruments: notes in, stereo out. Effects: stereo in (+ a sidechain input
+// for the effects that read one), stereo out (+ notes in for MIDI effects).
 #include <atomic>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
 #include "clap/clap.h"
+#include "EditQueue.h"
 #include "PluginCore.h"
 #include "PluginView.h"
+#ifdef GRIDLINE_SUITE
+#include "../core/PluginSuite.h"
+#endif
 
 using namespace gl::plugin;
 
 namespace {
 
+#ifndef GRIDLINE_SUITE
 const char* const kFeaturesInstrument[] = {CLAP_PLUGIN_FEATURE_INSTRUMENT, CLAP_PLUGIN_FEATURE_SYNTHESIZER, CLAP_PLUGIN_FEATURE_SAMPLER,
                                            CLAP_PLUGIN_FEATURE_DRUM_MACHINE, CLAP_PLUGIN_FEATURE_STEREO, nullptr};
 const char* const kFeaturesEffect[] = {CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, CLAP_PLUGIN_FEATURE_MIXING, CLAP_PLUGIN_FEATURE_STEREO, nullptr};
@@ -34,6 +47,42 @@ const clap_plugin_descriptor_t kDescInstrument = {
 const clap_plugin_descriptor_t kDescEffect = {
     CLAP_VERSION_INIT, "org.gridline.gridline-fx", "Gridline FX", "Gridline", "https://github.com/lolitemaultes/Gridline", "", "",
     GRIDLINE_VERSION_STRING, "The Gridline workstation as an effect: the input runs through mixer insert 1.", kFeaturesEffect};
+#else
+// The suite's descriptors, made once from the suite's members.
+struct SuiteDescs {
+  std::vector<const gl::suite::Member*> members;
+  std::vector<clap_plugin_descriptor_t> descs;
+  std::deque<std::string> text;                   // descriptor strings (stable addresses)
+  std::deque<std::vector<const char*>> features;  // nullptr-terminated lists
+};
+const SuiteDescs& suiteDescs() {
+  static const SuiteDescs d = [] {
+    SuiteDescs s;
+    for (const auto& m : gl::suite::members(GRIDLINE_SUITE)) s.members.push_back(&m);
+    const gl::suite::Suite* suite = gl::suite::findSuite(GRIDLINE_SUITE);
+    const std::string suiteName = suite ? suite->name : "Gridline Suite";
+    for (const gl::suite::Member* m : s.members) {
+      auto& f = s.features.emplace_back();
+      for (const auto& x : m->clapFeatures) f.push_back(s.text.emplace_back(x).c_str());
+      f.push_back(nullptr);
+      clap_plugin_descriptor_t c = {};
+      c.clap_version = CLAP_VERSION_INIT;
+      c.id = m->clapId.c_str();
+      c.name = m->name.c_str();
+      c.vendor = "Gridline";
+      c.url = "https://github.com/lolitemaultes/Gridline";
+      c.manual_url = "";
+      c.support_url = "";
+      c.version = GRIDLINE_VERSION_STRING;
+      c.description = s.text.emplace_back(m->name + (m->instrument ? ", an instrument" : ", an effect") + " of the " + suiteName + ".").c_str();
+      c.features = f.data();
+      s.descs.push_back(c);
+    }
+    return s;
+  }();
+  return d;
+}
+#endif
 
 constexpr int kMaxEvents = 4096;
 constexpr uint32_t kIdleTimerMs = 30;
@@ -46,11 +95,14 @@ struct Plugin {
   const clap_host_timer_support_t* hostTimer = nullptr;
   const clap_host_gui_t* hostGui = nullptr;
   Variant variant;
+  std::string type;  // J-131: the suite member's type ("" = the Gridline workstation)
+  bool sidechain = true, midiInput = false, extraOutputs = true;
   std::unique_ptr<Instance> inst;
   std::unique_ptr<View> view;
   clap_id timer = CLAP_INVALID_ID;
   bool activeNow = false;
-  std::atomic<uint32_t> edited{0};    // macros changed on the main thread: told to the host from process / flush
+  EditQueue edits;                    // parameters changed on the main thread: told to the host from process / flush
+  std::atomic<bool> rescan{false};    // too many at once: the host reads every value again (main thread)
   std::atomic<bool> latencyDirty{false};
   int64_t samplesSinceCallback = 0;    // audio thread: idle requests without a host timer
   int idleEvery = 2048;
@@ -59,6 +111,22 @@ struct Plugin {
 };
 
 Plugin* self(const clap_plugin_t* p) { return static_cast<Plugin*>(p->plugin_data); }
+
+// ---------------------------------------------------------------- values
+
+// CLAP values: stepped parameters (toggles, choices) count their steps
+// (0, 1, ...); the others are normalized 0..1 (their text is the real value).
+// (Audio thread too: no allocation.)
+double toNormalized(const Instance& inst, int index, double v) {
+  const int steps = inst.paramSteps(index);
+  if (steps > 0) return inst.paramFromPlain(index, std::clamp(std::round(v), 0.0, static_cast<double>(steps)));
+  return std::clamp(v, 0.0, 1.0);
+}
+double fromNormalized(const Instance& inst, int index, double n) {
+  const int steps = inst.paramSteps(index);
+  if (steps > 0) return std::clamp(std::round(inst.paramToPlain(index, n)), 0.0, static_cast<double>(steps));
+  return std::clamp(n, 0.0, 1.0);
+}
 
 // ---------------------------------------------------------------- events
 
@@ -107,10 +175,11 @@ int translate(Plugin& pl, const clap_input_events_t* in) {
       }
       case CLAP_EVENT_PARAM_VALUE: {
         const auto* pv = reinterpret_cast<const clap_event_param_value_t*>(h);
-        if (pv->param_id >= static_cast<clap_id>(kMacros)) continue;
+        const int index = pl.inst->paramIndex(pv->param_id);
+        if (index < 0) continue;
         e.kind = Event::Macro;
-        e.macro = static_cast<int>(pv->param_id);
-        e.value = static_cast<float>(pv->value);
+        e.macro = index;
+        e.value = static_cast<float>(toNormalized(*pl.inst, index, pv->value));
         break;
       }
       default: continue;
@@ -120,32 +189,49 @@ int translate(Plugin& pl, const clap_input_events_t* in) {
   return n;
 }
 
-// Macros changed on the main thread → parameter value events for the host.
+// Parameters changed on the main thread → value and gesture events for the host.
 void pushEdits(Plugin& pl, const clap_output_events_t* out) {
-  uint32_t bits = pl.edited.exchange(0);
-  if (!bits || !out) return;
-  for (int k = 0; k < kMacros; ++k) {
-    if (!(bits & (1u << k))) continue;
-    clap_event_param_value_t ev{};
-    ev.header.size = sizeof ev;
-    ev.header.time = 0;
-    ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
-    ev.header.type = CLAP_EVENT_PARAM_VALUE;
-    ev.header.flags = 0;
-    ev.param_id = static_cast<clap_id>(k);
-    ev.note_id = -1;
-    ev.port_index = ev.channel = ev.key = -1;
-    ev.value = pl.inst->macroValue(k);
-    out->try_push(out, &ev.header);
+  if (!out) return;
+  EditQueue::Kind k;
+  int index = 0;
+  while (pl.edits.pop(k, index)) {
+    if (index < 0 || index >= pl.inst->paramCount()) continue;
+    if (k == EditQueue::Value) {
+      clap_event_param_value_t ev{};
+      ev.header.size = sizeof ev;
+      ev.header.time = 0;
+      ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+      ev.header.type = CLAP_EVENT_PARAM_VALUE;
+      ev.header.flags = 0;
+      ev.param_id = pl.inst->paramId(index);
+      ev.note_id = -1;
+      ev.port_index = ev.channel = ev.key = -1;
+      ev.value = fromNormalized(*pl.inst, index, pl.inst->paramValue(index));
+      out->try_push(out, &ev.header);
+    } else {
+      clap_event_param_gesture_t ev{};
+      ev.header.size = sizeof ev;
+      ev.header.time = 0;
+      ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+      ev.header.type = k == EditQueue::Begin ? CLAP_EVENT_PARAM_GESTURE_BEGIN : CLAP_EVENT_PARAM_GESTURE_END;
+      ev.header.flags = 0;
+      ev.param_id = pl.inst->paramId(index);
+      out->try_push(out, &ev.header);
+    }
   }
+}
+
+void queueEdit(Plugin& pl, EditQueue::Kind k, int index) {
+  if (!pl.edits.push(k, index)) pl.rescan.store(true);
+  if (pl.hostParams) pl.hostParams->request_flush(pl.host);
 }
 
 // ---------------------------------------------------------------- audio ports
 
 uint32_t portsCount(const clap_plugin_t* p, bool isInput) {
   const Plugin& pl = *self(p);
-  if (pl.variant == Variant::Effect) return isInput ? 2 : 1;
-  return isInput ? 0 : static_cast<uint32_t>(1 + kExtraOutputs);
+  if (pl.variant == Variant::Effect) return isInput ? (pl.sidechain ? 2 : 1) : 1;
+  return isInput ? 0 : static_cast<uint32_t>(pl.extraOutputs ? 1 + kExtraOutputs : 1);
 }
 
 bool portsGet(const clap_plugin_t* p, uint32_t index, bool isInput, clap_audio_port_info_t* info) {
@@ -168,9 +254,12 @@ bool portsGet(const clap_plugin_t* p, uint32_t index, bool isInput, clap_audio_p
 
 const clap_plugin_audio_ports_t kAudioPorts = {portsCount, portsGet};
 
-uint32_t notePortsCount(const clap_plugin_t*, bool isInput) { return isInput ? 1 : 0; }
-bool notePortsGet(const clap_plugin_t*, uint32_t index, bool isInput, clap_note_port_info_t* info) {
-  if (!isInput || index != 0) return false;
+uint32_t notePortsCount(const clap_plugin_t* p, bool isInput) {
+  const Plugin& pl = *self(p);
+  return isInput && (pl.type.empty() || pl.variant == Variant::Instrument || pl.midiInput) ? 1 : 0;
+}
+bool notePortsGet(const clap_plugin_t* p, uint32_t index, bool isInput, clap_note_port_info_t* info) {
+  if (!isInput || index != 0 || notePortsCount(p, true) == 0) return false;
   *info = clap_note_port_info_t{};
   info->id = 0;
   info->supported_dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
@@ -182,44 +271,61 @@ const clap_plugin_note_ports_t kNotePorts = {notePortsCount, notePortsGet};
 
 // ---------------------------------------------------------------- params
 
-uint32_t paramsCount(const clap_plugin_t*) { return static_cast<uint32_t>(kMacros); }
+uint32_t paramsCount(const clap_plugin_t* p) { return static_cast<uint32_t>(self(p)->inst->paramCount()); }
 bool paramsInfo(const clap_plugin_t* p, uint32_t index, clap_param_info_t* info) {
-  if (index >= static_cast<uint32_t>(kMacros)) return false;
+  const Instance& inst = *self(p)->inst;
+  if (index >= static_cast<uint32_t>(inst.paramCount())) return false;
+  const int k = static_cast<int>(index);
+  const HostParam h = inst.paramInfo(k);
   *info = clap_param_info_t{};
-  info->id = index;
+  info->id = inst.paramId(k);
   info->flags = CLAP_PARAM_IS_AUTOMATABLE;
   info->cookie = nullptr;
-  std::snprintf(info->name, sizeof info->name, "%s", self(p)->inst->macroName(static_cast<int>(index)).c_str());
-  std::snprintf(info->module, sizeof info->module, "Macros");
+  std::snprintf(info->name, sizeof info->name, "%s", h.name.c_str());
   info->min_value = 0.0;
   info->max_value = 1.0;
-  info->default_value = 0.0;
+  info->default_value = h.def;
+  if (!inst.single()) {
+    std::snprintf(info->module, sizeof info->module, "Macros");
+    return true;
+  }
+  if (const int steps = inst.paramSteps(k); steps > 0) {
+    info->flags |= CLAP_PARAM_IS_STEPPED;
+    if (h.choice) info->flags |= CLAP_PARAM_IS_ENUM;
+    if (h.bypass) info->flags |= CLAP_PARAM_IS_BYPASS;
+    info->max_value = steps;
+    info->default_value = fromNormalized(inst, k, h.def);
+  }
   return true;
 }
 bool paramsValue(const clap_plugin_t* p, clap_id id, double* out) {
-  if (id >= static_cast<clap_id>(kMacros)) return false;
-  *out = self(p)->inst->macroValue(static_cast<int>(id));
+  const Instance& inst = *self(p)->inst;
+  const int k = inst.paramIndex(id);
+  if (k < 0) return false;
+  *out = fromNormalized(inst, k, inst.paramValue(k));
   return true;
 }
 bool paramsToText(const clap_plugin_t* p, clap_id id, double value, char* out, uint32_t size) {
-  if (id >= static_cast<clap_id>(kMacros) || !out || size == 0) return false;
-  std::snprintf(out, size, "%s", self(p)->inst->macroText(static_cast<int>(id), value).c_str());
+  const Instance& inst = *self(p)->inst;
+  const int k = inst.paramIndex(id);
+  if (k < 0 || !out || size == 0) return false;
+  std::snprintf(out, size, "%s", inst.paramText(k, toNormalized(inst, k, value)).c_str());
   return true;
 }
-bool paramsFromText(const clap_plugin_t*, clap_id id, const char* text, double* out) {
-  if (id >= static_cast<clap_id>(kMacros) || !text) return false;
-  char* end = nullptr;
-  double v = std::strtod(text, &end);
-  if (end == text) return false;
-  if (end && *end == '%') v /= 100.0;
-  *out = std::clamp(v, 0.0, 1.0);
+bool paramsFromText(const clap_plugin_t* p, clap_id id, const char* text, double* out) {
+  const Instance& inst = *self(p)->inst;
+  const int k = inst.paramIndex(id);
+  if (k < 0 || !text) return false;
+  double n = 0;
+  if (!inst.paramFromText(k, text, n)) return false;
+  *out = fromNormalized(inst, k, n);
   return true;
 }
 void paramsFlush(const clap_plugin_t* p, const clap_input_events_t* in, const clap_output_events_t* out) {
   Plugin& pl = *self(p);
   const int n = translate(pl, in);
   for (int i = 0; i < n; ++i)
-    if (pl.events[i].kind == Event::Macro) pl.inst->setMacroValue(pl.events[i].macro, pl.events[i].value);
+    if (pl.events[i].kind == Event::Macro) pl.inst->setParamValue(pl.events[i].macro, pl.events[i].value);
   pushEdits(pl, out);
 }
 const clap_plugin_params_t kParams = {paramsCount, paramsInfo, paramsValue, paramsToText, paramsFromText, paramsFlush};
@@ -252,10 +358,14 @@ bool stateLoad(const clap_plugin_t* p, const clap_istream_t* s) {
 }
 const clap_plugin_state_t kState = {stateSave, stateLoad};
 
-// ---------------------------------------------------------------- latency, render
+// ---------------------------------------------------------------- latency, tail, render
 
 uint32_t latencyGet(const clap_plugin_t* p) { return static_cast<uint32_t>(std::max(0, self(p)->inst->latency())); }
 const clap_plugin_latency_t kLatency = {latencyGet};
+
+// Effects keep sounding after their input stops (reverbs, delays): the host keeps calling process.
+uint32_t tailGet(const clap_plugin_t*) { return static_cast<uint32_t>(INT32_MAX); }
+const clap_plugin_tail_t kTail = {tailGet};
 
 bool renderRealtime(const clap_plugin_t*) { return false; }
 bool renderSet(const clap_plugin_t* p, clap_plugin_render_mode mode) {
@@ -266,10 +376,15 @@ const clap_plugin_render_t kRender = {renderRealtime, renderSet};
 
 // ---------------------------------------------------------------- timer
 
+void mainThreadWork(Plugin& pl) {
+  pl.inst->idle();
+  if (pl.rescan.exchange(false) && pl.hostParams) pl.hostParams->rescan(pl.host, CLAP_PARAM_RESCAN_VALUES);
+}
+
 void onTimer(const clap_plugin_t* p, clap_id) {
   Plugin& pl = *self(p);
   if (pl.view) pl.view->tick();
-  pl.inst->idle();
+  mainThreadWork(pl);
 }
 const clap_plugin_timer_support_t kTimer = {onTimer};
 
@@ -318,22 +433,36 @@ bool guiGetSize(const clap_plugin_t* p, uint32_t* w, uint32_t* h) {
   return true;
 }
 bool guiCanResize(const clap_plugin_t*) { return true; }
-bool guiResizeHints(const clap_plugin_t*, clap_gui_resize_hints_t* hints) {
+bool guiResizeHints(const clap_plugin_t* p, clap_gui_resize_hints_t* hints) {
+  const Instance& inst = *self(p)->inst;
+  int cw = 0, ch = 0;
+  inst.editorContent(cw, ch);
   hints->can_resize_horizontally = true;
   hints->can_resize_vertically = true;
-  hints->preserve_aspect_ratio = false;
-  hints->aspect_ratio_width = hints->aspect_ratio_height = 0;
+  // A suite editor zooms: it keeps its proportions.
+  hints->preserve_aspect_ratio = inst.single() && cw > 0 && ch > 0;
+  hints->aspect_ratio_width = hints->preserve_aspect_ratio ? static_cast<uint32_t>(cw) : 0;
+  hints->aspect_ratio_height = hints->preserve_aspect_ratio ? static_cast<uint32_t>(ch) : 0;
   return true;
 }
-bool guiAdjustSize(const clap_plugin_t*, uint32_t* w, uint32_t* h) {
-  *w = std::max<uint32_t>(*w, kMinViewW);
-  *h = std::max<uint32_t>(*h, kMinViewH);
+bool guiAdjustSize(const clap_plugin_t* p, uint32_t* w, uint32_t* h) {
+  const Instance& inst = *self(p)->inst;
+  int minW = 0, minH = 0, cw = 0, ch = 0;
+  inst.minViewSize(minW, minH);
+  inst.editorContent(cw, ch);
+  if (inst.single() && cw > 0 && ch > 0) {  // the zoom that fits, at the editor's proportions
+    const double z = std::clamp(std::min(static_cast<double>(*w) / cw, static_cast<double>(*h) / ch), 0.5, 3.0);
+    *w = static_cast<uint32_t>(std::lround(cw * z));
+    *h = static_cast<uint32_t>(std::lround(ch * z));
+  }
+  *w = std::max<uint32_t>(*w, static_cast<uint32_t>(minW));
+  *h = std::max<uint32_t>(*h, static_cast<uint32_t>(minH));
   return true;
 }
 bool guiSetSize(const clap_plugin_t* p, uint32_t w, uint32_t h) {
   Plugin& pl = *self(p);
   if (!pl.view) return false;
-  pl.view->setSize(static_cast<int>(std::max<uint32_t>(w, kMinViewW)), static_cast<int>(std::max<uint32_t>(h, kMinViewH)));
+  pl.view->setSize(static_cast<int>(w), static_cast<int>(h));  // (the view keeps its minimum)
   return true;
 }
 bool guiSetParent(const clap_plugin_t* p, const clap_window_t* window) {
@@ -371,7 +500,8 @@ bool pluginInit(const clap_plugin_t* p) {
   pl.hostParams = static_cast<const clap_host_params_t*>(h->get_extension(h, CLAP_EXT_PARAMS));
   pl.hostTimer = static_cast<const clap_host_timer_support_t*>(h->get_extension(h, CLAP_EXT_TIMER_SUPPORT));
   pl.hostGui = static_cast<const clap_host_gui_t*>(h->get_extension(h, CLAP_EXT_GUI));
-  pl.inst = std::make_unique<Instance>(pl.variant);
+  pl.inst = pl.type.empty() ? std::make_unique<Instance>(pl.variant) : std::make_unique<Instance>(pl.variant, pl.type);
+  if (!pl.type.empty() && !pl.inst->single()) return false;  // not a plugin of this build
   pl.inst->onLatencyChanged = [&pl]() {
     // The host takes a new latency while the plugin is deactivated.
     if (!pl.activeNow && pl.hostLatency)
@@ -382,10 +512,8 @@ bool pluginInit(const clap_plugin_t* p) {
   pl.inst->onMacrosChanged = [&pl]() {
     if (pl.hostParams) pl.hostParams->rescan(pl.host, CLAP_PARAM_RESCAN_VALUES | CLAP_PARAM_RESCAN_TEXT);
   };
-  pl.inst->onMacroEdited = [&pl](int k, double) {
-    pl.edited.fetch_or(1u << k);
-    if (pl.hostParams) pl.hostParams->request_flush(pl.host);
-  };
+  pl.inst->onMacroEdited = [&pl](int k, double) { queueEdit(pl, EditQueue::Value, k); };
+  pl.inst->onParamGesture = [&pl](int k, bool begin) { queueEdit(pl, begin ? EditQueue::Begin : EditQueue::End, k); };
   if (pl.hostTimer && pl.hostTimer->register_timer) pl.hostTimer->register_timer(h, kIdleTimerMs, &pl.timer);
   return true;
 }
@@ -429,7 +557,7 @@ clap_process_status pluginProcess(const clap_plugin_t* p, const clap_process_t* 
   float* xr[kExtraOutputs];
   if (pl.variant == Variant::Instrument) {
     int extra = 0;
-    for (uint32_t b = 1; b < pr->audio_outputs_count && extra < kExtraOutputs; ++b) {
+    for (uint32_t b = 1; pl.extraOutputs && b < pr->audio_outputs_count && extra < kExtraOutputs; ++b) {
       const clap_audio_buffer_t& ob = pr->audio_outputs[b];
       if (ob.channel_count < 1 || !ob.data32) break;
       xl[extra] = ob.data32[0];
@@ -444,7 +572,7 @@ clap_process_status pluginProcess(const clap_plugin_t* p, const clap_process_t* 
       a.inL = pr->audio_inputs[0].data32[0];
       a.inR = pr->audio_inputs[0].channel_count > 1 ? pr->audio_inputs[0].data32[1] : a.inL;
     }
-    if (pr->audio_inputs_count > 1 && pr->audio_inputs[1].channel_count > 0 && pr->audio_inputs[1].data32) {
+    if (pl.sidechain && pr->audio_inputs_count > 1 && pr->audio_inputs[1].channel_count > 0 && pr->audio_inputs[1].data32) {
       a.scL = pr->audio_inputs[1].data32[0];
       a.scR = pr->audio_inputs[1].channel_count > 1 ? pr->audio_inputs[1].data32[1] : a.scL;
     }
@@ -473,25 +601,26 @@ clap_process_status pluginProcess(const clap_plugin_t* p, const clap_process_t* 
 }
 
 const void* pluginExtension(const clap_plugin_t* p, const char* id) {
+  const Plugin& pl = *self(p);
   if (!std::strcmp(id, CLAP_EXT_AUDIO_PORTS)) return &kAudioPorts;
   if (!std::strcmp(id, CLAP_EXT_NOTE_PORTS)) return &kNotePorts;
   if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &kParams;
   if (!std::strcmp(id, CLAP_EXT_STATE)) return &kState;
   if (!std::strcmp(id, CLAP_EXT_LATENCY)) return &kLatency;
+  if (!std::strcmp(id, CLAP_EXT_TAIL) && !pl.type.empty() && pl.variant == Variant::Effect) return &kTail;
   if (!std::strcmp(id, CLAP_EXT_RENDER)) return &kRender;
   if (!std::strcmp(id, CLAP_EXT_TIMER_SUPPORT)) return &kTimer;
   if (!std::strcmp(id, CLAP_EXT_GUI) && viewSupported(nativeWindowApi())) return &kGui;
-  (void)p;
   return nullptr;
 }
 
-void pluginOnMainThread(const clap_plugin_t* p) { self(p)->inst->idle(); }
+void pluginOnMainThread(const clap_plugin_t* p) { mainThreadWork(*self(p)); }
 
-const clap_plugin_t* createPlugin(const clap_host_t* host, Variant v) {
+Plugin* newPlugin(const clap_host_t* host, Variant v, const clap_plugin_descriptor_t* desc) {
   auto* pl = new Plugin(v);
   pl->host = host;
   clap_plugin_t& c = pl->plugin;
-  c.desc = v == Variant::Effect ? &kDescEffect : &kDescInstrument;
+  c.desc = desc;
   c.plugin_data = pl;
   c.init = pluginInit;
   c.destroy = pluginDestroy;
@@ -503,21 +632,44 @@ const clap_plugin_t* createPlugin(const clap_host_t* host, Variant v) {
   c.process = pluginProcess;
   c.get_extension = pluginExtension;
   c.on_main_thread = pluginOnMainThread;
-  return &c;
+  return pl;
 }
 
 // ---------------------------------------------------------------- factory
 
+#ifndef GRIDLINE_SUITE
 uint32_t factoryCount(const clap_plugin_factory_t*) { return 2; }
 const clap_plugin_descriptor_t* factoryDescriptor(const clap_plugin_factory_t*, uint32_t index) {
   return index == 0 ? &kDescInstrument : index == 1 ? &kDescEffect : nullptr;
 }
 const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host_t* host, const char* id) {
   if (!host || !id || !clap_version_is_compatible(host->clap_version)) return nullptr;
-  if (!std::strcmp(id, kDescInstrument.id)) return createPlugin(host, Variant::Instrument);
-  if (!std::strcmp(id, kDescEffect.id)) return createPlugin(host, Variant::Effect);
+  if (!std::strcmp(id, kDescInstrument.id)) return &newPlugin(host, Variant::Instrument, &kDescInstrument)->plugin;
+  if (!std::strcmp(id, kDescEffect.id)) return &newPlugin(host, Variant::Effect, &kDescEffect)->plugin;
   return nullptr;
 }
+#else
+uint32_t factoryCount(const clap_plugin_factory_t*) { return static_cast<uint32_t>(suiteDescs().descs.size()); }
+const clap_plugin_descriptor_t* factoryDescriptor(const clap_plugin_factory_t*, uint32_t index) {
+  const SuiteDescs& d = suiteDescs();
+  return index < d.descs.size() ? &d.descs[index] : nullptr;
+}
+const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host_t* host, const char* id) {
+  if (!host || !id || !clap_version_is_compatible(host->clap_version)) return nullptr;
+  const SuiteDescs& d = suiteDescs();
+  for (size_t i = 0; i < d.members.size(); ++i) {
+    const gl::suite::Member& m = *d.members[i];
+    if (m.clapId != id) continue;
+    Plugin* pl = newPlugin(host, m.instrument ? Variant::Instrument : Variant::Effect, &d.descs[i]);
+    pl->type = m.type;
+    pl->sidechain = m.sidechain;
+    pl->midiInput = m.midiInput;
+    pl->extraOutputs = false;
+    return &pl->plugin;
+  }
+  return nullptr;
+}
+#endif
 const clap_plugin_factory_t kFactory = {factoryCount, factoryDescriptor, factoryCreate};
 
 bool entryInit(const char*) { return true; }

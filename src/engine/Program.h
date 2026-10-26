@@ -50,6 +50,9 @@ inline constexpr int kAudioBuses = 8;  // named buses for bus send / return effe
 inline constexpr int kEngineMaxBlock = 1024;  // largest block the engine renders at once
 // PH-09: host parameters of the plugin build that can be linked to any parameter.
 inline constexpr int kHostMacros = 16;
+// J-131: host parameters of a single-plugin build (Gridline Suite): one per parameter of
+// the plugin (index = parameter index), applied when they change.
+inline constexpr int kMaxHostParams = 4096;
 
 // Per-object CPU time (opt-in profiling, see AudioEngine::setProfiling):
 // nanoseconds spent, accumulated by the audio thread / workers; the UI
@@ -420,10 +423,15 @@ struct Program {
   std::vector<ProgAutoLane> autos;
   TempoMap tempoMap, flatMap;
   // Links and automation are evaluated on a fixed control-block grid.
-  bool controlGrid() const { return !links.empty() || !autos.empty() || hasPatternAutos || hasMacros; }
+  bool controlGrid() const { return !links.empty() || !autos.empty() || hasPatternAutos || hasMacros || hasHostBank; }
   // PH-09: host macros (index = macro) and whether any is linked.
   std::vector<ProgMacro> macros;
   bool hasMacros = false;
+  // J-131: the plugin whose parameters the host parameters drive (target fields of
+  // parameter 0; ProgramBuilder::setHostParamBank) and its descriptors.
+  ProgLink hostBank;
+  bool hasHostBank = false;
+  const PluginInfo* hostBankInfo = nullptr;
   bool hasCutGroups = false;    // some channel cuts channels (cut groups)
   bool hasPatternAutos = false;  // some pattern or live clip carries automation
   // Live mode: the live area's clips and the tracks they sit on.
@@ -472,6 +480,9 @@ class ProgramBuilder {
   // linked); compiled into Program::macros by the next build.
   void setHostMacros(const std::vector<ParamId>& targets) { macroTargets_ = targets; }
   const std::vector<ParamId>& hostMacros() const { return macroTargets_; }
+  // J-131: host parameter k drives parameter k of the plugin at `firstParam`
+  // (channelPluginParam(ch, 0) / slotParam(track, slot, 0)); kNoId owner = none.
+  void setHostParamBank(ParamId firstParam) { bankTarget_ = firstParam; }
   // True when a hosted plugin's reported latency differs from the one the
   // last Program was compensated for (the caller rebuilds).
   bool latencyChanged() const;
@@ -499,6 +510,7 @@ class ProgramBuilder {
   bool pdc_ = true;
   bool asyncSamples_ = false;
   std::vector<ParamId> macroTargets_;
+  ParamId bankTarget_;
   // Plugin delay compensation: computes latencies and fills ProgMixer::inputs
   // and the task graph (ProgramGraph.cpp).
   void compileGraph(Program& prog);

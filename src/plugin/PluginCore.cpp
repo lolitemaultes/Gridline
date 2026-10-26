@@ -55,6 +55,7 @@ std::string findPluginAssets() {
     cands.push_back(bin / ".." / "Resources" / "assets");
     cands.push_back(bin / "assets");
     cands.push_back(bin / "Gridline-assets");
+    cands.push_back(bin / (fs::u8path(self).stem().string() + "-assets"));  // J-131: "Gridline Suite-assets"
   }
 #ifdef GRIDLINE_SOURCE_ASSETS
   cands.emplace_back(GRIDLINE_SOURCE_ASSETS);
@@ -82,7 +83,14 @@ Instance* Instance::of(const App* a) {
   return nullptr;
 }
 
-Instance::Instance(Variant v) : variant_(v) {
+Instance::Instance(Variant v) : variant_(v) { init(); }
+
+Instance::Instance(Variant v, const std::string& type) : variant_(v) {
+  info_ = findPlugin(type);
+  init();
+}
+
+void Instance::init() {
   instances().push_back(this);
   for (auto& m : macroValues_) m.store(-1.f);
   App* prev = setCurrentApp(nullptr);
@@ -94,12 +102,15 @@ Instance::Instance(Variant v) : variant_(v) {
   a.applySettingsHooks();  // language from the assets folder
   // Installed plugins the application scanned (its plugin cache and
   // per-plugin options) load inside the Gridline plugin too.
+  // (A Gridline Suite plugin is one built-in: no installed plugins.)
   static bool hosting = false;
-  if (!hosting) {
+  if (!hosting && !info_) {
     hosting = true;
     host::initHosting(a.configDir());
   }
-  if (variant_ == Variant::Effect) {
+  if (info_) {
+    setupSingle();
+  } else if (variant_ == Variant::Effect) {
     a.startProject(effectSong(a));
     a.selMixer = a.doc.song().mixer.size() > 1 ? a.doc.song().mixer[1].id : a.doc.song().masterId();
   }
@@ -163,6 +174,7 @@ void Instance::idle() {
   App& a = *app_;
   a.tick(nowSeconds());
   pumpHostedPlugins(a);
+  if (info_) syncParams();  // J-131: host values <-> the project, before the program rebuild
   a.syncEngine();
   applyMidiRouting();
   // Linked parameters that disappeared (channel or effect deleted) unlink.
@@ -244,6 +256,7 @@ std::string Instance::macroText(int k, double normalized) const {
 
 std::string Instance::saveState() {
   makeCurrent();
+  if (info_) return saveSingle();
   App& a = *app_;
   captureHostedStates(a);  // hosted plugins' own states into the song
   Json j = Json::makeObject();
@@ -278,6 +291,7 @@ std::string Instance::saveState() {
 
 bool Instance::loadState(const std::string& data, std::string* err) {
   makeCurrent();
+  if (info_) return loadSingle(data, err);
   App& a = *app_;
   Json j;
   if (!jsonParse(data, j) || !j.is(Json::Type::Object) || j.text("format") != kStateFormat) {
@@ -396,6 +410,8 @@ void Instance::process(const ProcessArgs& a) {
       const Event& ev = a.events[e++];
       if (ev.kind == Event::Midi)
         eng.midiEvent(ev.midi[0], ev.midi[1], ev.midi[2]);
+      else if (info_)
+        setParamValue(ev.macro, ev.value);  // J-131: the plugin's own parameters
       else if (ev.macro >= 0 && ev.macro < kMacros) {
         const float v = std::clamp(ev.value, 0.f, 1.f);
         macroValues_[ev.macro].store(v, std::memory_order_relaxed);

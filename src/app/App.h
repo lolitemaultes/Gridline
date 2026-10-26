@@ -166,6 +166,9 @@ class App {
   bool embedded = false;
   // PH-09: extra entries for a parameter's context menu (plugin build: host macros).
   std::function<void(ParamId)> extraParamMenu;
+  // J-131: one built-in plugin on its own (Gridline Suite in another host):
+  // plugin menus keep the plugin's own items (no channel / slot operations).
+  bool singlePlugin = false;
   Document doc;
   // J-111: collaborative projects (app/CollabUi.h); made on first use.
   std::unique_ptr<collab::Controller> collab;

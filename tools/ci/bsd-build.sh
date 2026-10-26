@@ -37,6 +37,9 @@ if [ -n "${GRIDLINE_PACKAGE:-}" ]; then
   cmake --install build --prefix "$PWD/dist/$name"
   cmake --install build --prefix "$PWD/dist/$name" --component plugins
   rm -rf "dist/$name/share/gridline/assets/sounds/src"
+  # Gridline Suite (installed with the programs: lib/vst3, lib/clap)
+  test -f "dist/$name/lib/clap/Gridline Suite.clap"
+  test -d "dist/$name/lib/vst3/Gridline Suite.vst3"
   deps="sndio for MIDI"
   sed -e "s/@VERSION@/$GRIDLINE_PACKAGE/g" -e "s/@SYSTEM@/$(uname -s) $(uname -r)/g" -e "s/@ARCH@/$arch/g" -e "s/@DEPS@/$deps/g" \
     tools/release/README-unix.txt > "dist/$name/README.txt"

@@ -348,6 +348,15 @@ class AudioEngine {
     if (k >= 0 && k < kHostMacros) macro_[k].store(v, std::memory_order_relaxed);
   }
   float hostMacro(int k) const { return k >= 0 && k < kHostMacros ? macro_[k].load(std::memory_order_relaxed) : -1.f; }
+  // J-131: host parameter k of a single-plugin build (normalized 0..1; negative = not
+  // set): applied to parameter k of the bank's plugin at the next control block when
+  // it changes, and to every set parameter when a new Program starts. Any thread.
+  void setHostParam(int k, float v) {
+    if (k < 0 || k >= kMaxHostParams) return;
+    hostParam_[k].store(v, std::memory_order_relaxed);
+    hostDirty_[k >> 6].fetch_or(uint64_t{1} << (k & 63), std::memory_order_release);
+  }
+  float hostParam(int k) const { return k >= 0 && k < kMaxHostParams ? hostParam_[k].load(std::memory_order_relaxed) : -1.f; }
   // Extra outputs: copies of mixer tracks' output (post fader) for each frame
   // process() renders. mixer[k] = mixer track index (out of range: silence).
   struct OutputTaps {
@@ -689,6 +698,11 @@ class AudioEngine {
   TempoMap hostMap_;
   std::atomic<bool> hostFollowUi_{false};
   std::atomic<float> macro_[kHostMacros];
+  // J-131: host parameter bank.
+  std::atomic<float> hostParam_[kMaxHostParams];
+  std::atomic<uint64_t> hostDirty_[kMaxHostParams / 64];
+  const Program* bankProg_ = nullptr;
+  void applyHostBank(const Program* p);
   const OutputTaps* taps_ = nullptr;
 };
 
