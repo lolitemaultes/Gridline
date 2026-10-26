@@ -208,13 +208,27 @@ jobs:
         shell: pwsh
         run: |
           # Inno Setup 6.6 or later: the dark wizard and the PNG art (gridline.iss, J-134).
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6"
-          function IsccVersion { if (Test-Path "$iscc\ISCC.exe") { [version](((Get-Item "$iscc\ISCC.exe").VersionInfo.ProductVersion) -replace '[^0-9.].*', '') } else { [version]"0.0" } }
-          $have = IsccVersion
-          if ($have -lt [version]"6.6.0") { choco upgrade innosetup --no-progress -y | Out-Null }
-          $have = IsccVersion
-          Write-Output "Inno Setup $have"
-          if ($have -lt [version]"6.6.0") { throw "Inno Setup $have is older than 6.6.0" }
+          # (newer releases install under Program Files or a "Inno Setup 7" folder: take the newest ISCC found)
+          function FindIscc {
+            $best = $null
+            foreach ($root in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, "$env:LOCALAPPDATA\Programs")) {
+              if (-not $root) { continue }
+              Get-ChildItem -Path $root -Directory -Filter "Inno Setup*" -ErrorAction SilentlyContinue | ForEach-Object {
+                $exe = Join-Path $_.FullName "ISCC.exe"
+                if (Test-Path $exe) {
+                  $v = [version](((Get-Item $exe).VersionInfo.ProductVersion) -replace '[^0-9.].*', '')
+                  if (-not $best -or $v -gt $best.Version) { $best = [pscustomobject]@{ Dir = $_.FullName; Version = $v } }
+                }
+              }
+            }
+            if (-not $best) { $best = [pscustomobject]@{ Dir = ""; Version = [version]"0.0" } }
+            $best
+          }
+          $found = FindIscc
+          if ($found.Version -lt [version]"6.6.0") { choco upgrade innosetup --no-progress -y | Out-Null; $found = FindIscc }
+          Write-Output "Inno Setup $($found.Version) in $($found.Dir)"
+          if ($found.Version -lt [version]"6.6.0") { throw "Inno Setup $($found.Version) is older than 6.6.0" }
+          $iscc = $found.Dir
           $env:PATH = "$iscc;$env:PATH"
           $stage = (Resolve-Path $env:STAGE).Path
           $out = (Resolve-Path dist).Path
