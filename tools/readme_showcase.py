@@ -1,14 +1,44 @@
 #!/usr/bin/env python3
 """Build the README showcase project: Gridline's demo song (demo/demo.gridline.json)
 grown into a fuller 12-bar arrangement with lead, pad and arp parts, an audio
-clip track (the demo's own recording) and an automation clip.
+clip track (a chord texture generated here) and an automation clip.
 
 Usage: python3 tools/readme_showcase.py OUT.gridline.json [gridline root]
 Used by tools/readme_shots.sh; the result is not part of the repository.
 """
 import json
+import math
 import os
+import random
+import struct
 import sys
+import wave
+
+
+def texture_wav(path, bpm):
+    """A four-bar swelling chord texture (A minor), written next to the project."""
+    sr = 44100
+    secs = 4 * 4 * 60.0 / bpm
+    n = int(sr * secs)
+    freqs = (220.0, 261.63, 329.63, 440.0, 523.25)
+    rnd = random.Random(7)
+    frames = bytearray()
+    lp = 0.0
+    for i in range(n):
+        t = i / sr
+        beat = (t * bpm / 60.0) % 1.0
+        env = (1.0 - math.exp(-t * 3.0)) * (0.55 + 0.45 * math.cos(beat * math.pi) ** 2)
+        lp += 0.08 * (rnd.uniform(-1, 1) - lp)
+        v = sum(math.sin(2 * math.pi * f * t + k) for k, f in enumerate(freqs)) / len(freqs)
+        v = env * (0.75 * v + 0.6 * lp) * min(1.0, (secs - t) * 4.0)
+        x = int(max(-1.0, min(1.0, v * 0.8)) * 32767)
+        frames += struct.pack("<hh", x, x)
+    with wave.open(path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(bytes(frames))
+    return path
 
 
 def main():
@@ -43,8 +73,7 @@ def main():
     lead = add_channel("Lead", "gl.sawswarm", 0xE0A040, 9)
     pad = add_channel("Pad", "gl.twinstring", 0x6A8CD8, 10)
     arp = add_channel("Arp", "gl.pluck", 0x48C0A8, 11)
-    wav = os.path.join(root, "demo", "Audio", "Edison")
-    wav = os.path.join(wav, sorted(os.listdir(wav))[0])
+    wav = texture_wav(os.path.join(os.path.dirname(os.path.abspath(out)), "showcase-texture.wav"), song.get("tempo", 128))
     vox = add_channel("Texture", "gl.sampler", 0xC070C0, 12, data=wav, audio=True)
 
     def add_pattern(name, color, bars, notes):

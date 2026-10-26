@@ -234,6 +234,124 @@ void checking() {
   expect(userAgent() == std::string("Gridline/") + GRIDLINE_VERSION, "user agent");
 }
 
+// J-125: the compiled version (GRIDLINE_VERSION = numbers + "-" + label) and the update
+// decisions around the real 0.7.0-beta.1 prerelease.
+void builtVersion() {
+  const std::string pre = GRIDLINE_VERSION_PRE, numeric = GRIDLINE_VERSION_NUMERIC;
+  expect(std::string(GRIDLINE_VERSION) == (pre.empty() ? numeric : numeric + "-" + pre), "full version = numbers [+ '-' label]");
+  const Version v = parseVersion(GRIDLINE_VERSION), n = parseVersion(numeric);
+  expect(v.valid && v.major == GRIDLINE_VERSION_MAJOR && v.minor == GRIDLINE_VERSION_MINOR && v.patch == GRIDLINE_VERSION_PATCH,
+         "the version's numbers are project(VERSION)");
+  expect(v.pre == pre && n.valid && n.pre.empty() && toString(v) == GRIDLINE_VERSION, "label split off, round trip");
+  expect(std::to_string(v.major) + "." + std::to_string(v.minor) + "." + std::to_string(v.patch) == numeric, "numbers only: x.y.z");
+  expect(pre.empty() ? compare(v, n) == 0 : compare(v, n) < 0, "a prerelease sorts before its release");
+  const Version b = parseVersion("0.7.0-beta.1");
+  expect(b.valid && b.major == 0 && b.minor == 7 && b.patch == 0 && b.pre == "beta.1" && toString(b) == "0.7.0-beta.1", "0.7.0-beta.1 parts");
+}
+
+// GitHub, as the update check sees it: /releases/latest answers the newest release that is not a
+// draft or prerelease (a prerelease is published with --latest=false), /releases all of them.
+Fetcher github(const std::vector<Release>& rs) {
+  return [rs](const std::string& url) {
+    HttpResult h;
+    h.status = 200;
+    if (url == kListUrl) {
+      h.body = "[";
+      for (size_t i = 0; i < rs.size(); ++i) h.body += (i ? "," : "") + releaseJson(rs[i]);
+      h.body += "]";
+    } else if (url == kLatestUrl) {
+      const Release* latest = nullptr;
+      for (const Release& r : rs)
+        if (!r.draft && !r.prerelease && (!latest || compare(r.version, latest->version) > 0)) latest = &r;
+      if (latest) h.body = releaseJson(*latest);
+      else h.status = 404;
+    } else {
+      h.status = 404;
+    }
+    return h;
+  };
+}
+
+std::string offered(const std::vector<Release>& rs, const char* current, bool beta) {
+  const CheckResult c = check(github(rs), current, beta);
+  if (c.status == Status::Available) return toString(c.release.version);
+  return c.status == Status::UpToDate || c.status == Status::NoRelease ? "-" : "error";
+}
+
+void prereleases() {
+  const Release v061 = fakeRelease("0.6.1"), b1 = fakeRelease("0.7.0-beta.1"), b2 = fakeRelease("0.7.0-beta.2"), v070 = fakeRelease("0.7.0");
+  expect(b1.prerelease && b1.tag == "v0.7.0-beta.1" && !v061.prerelease, "the beta is a GitHub pre-release tagged v0.7.0-beta.1");
+
+  // The beta is out; 0.6.1 is the newest release.
+  const std::vector<Release> now = {b1, v061};
+  expect(offered(now, "0.6.1", false) == "-", "0.6.1, beta off: 0.7.0-beta.1 is not offered");
+  expect(offered(now, "0.6.1", true) == "0.7.0-beta.1", "0.6.1, beta on: 0.7.0-beta.1 is offered");
+  expect(offered(now, "0.6.0", false) == "0.6.1" && offered(now, "0.5.1", false) == "0.6.1", "older stable users, beta off: 0.6.1, not the beta");
+  expect(offered(now, "0.7.0-beta.1", false) == "-" && offered(now, "0.7.0-beta.1", true) == "-", "the beta itself is up to date");
+  expect(offered({v061}, "0.7.0-beta.1", false) == "-" && offered({v061}, "0.7.0-beta.1", true) == "-",
+         "a beta user is never offered an older stable (0.6.1)");
+
+  // A second beta.
+  const std::vector<Release> second = {b2, b1, v061};
+  expect(offered(second, "0.7.0-beta.1", true) == "0.7.0-beta.2", "0.7.0-beta.1, beta on: 0.7.0-beta.2 is offered");
+  expect(offered(second, "0.7.0-beta.1", false) == "-", "0.7.0-beta.1, beta off: no beta, no older stable");
+  expect(offered(second, "0.6.1", true) == "0.7.0-beta.2", "0.6.1, beta on: the newest beta");
+
+  // 0.7.0 final.
+  const std::vector<Release> released = {v070, b2, b1, v061};
+  expect(offered(released, "0.7.0-beta.1", false) == "0.7.0", "0.7.0-beta.1, beta off: 0.7.0 is offered");
+  expect(offered(released, "0.7.0-beta.1", true) == "0.7.0", "0.7.0-beta.1, beta on: 0.7.0 is offered");
+  expect(offered(released, "0.7.0-beta.2", false) == "0.7.0", "0.7.0-beta.2: 0.7.0 is offered");
+  expect(offered(released, "0.6.1", false) == "0.7.0" && offered(released, "0.6.1", true) == "0.7.0", "0.6.1: 0.7.0 on both channels");
+  expect(offered(released, "0.7.0", true) == "-" && offered(released, "0.7.0", false) == "-", "0.7.0 is not offered its betas");
+
+  // Even if a prerelease were marked latest by mistake, the stable channel skips it.
+  Fetcher wrongLatest = [&](const std::string& url) {
+    HttpResult h;
+    h.status = 200;
+    h.body = url == kLatestUrl ? releaseJson(b1) : "[]";
+    return h;
+  };
+  expect(check(wrongLatest, "0.6.1", false).status == Status::NoRelease, "a prerelease answered as latest is not offered on the stable channel");
+  Release unflagged = b1;
+  unflagged.prerelease = false;  // flag missing, the tag still says beta
+  expect(offered({unflagged, v061}, "0.6.1", true) == "0.7.0-beta.1", "beta on: a beta tag is offered without the flag");
+  const std::vector<Release> mixed = {unflagged, v061};
+  const Release* stablePick = pickRelease(mixed, false);
+  expect(stablePick && toString(stablePick->version) == "0.6.1", "beta off: a beta tag is a prerelease even without the flag");
+
+  // The beta's downloads (the release workflow's file names) are found for every system.
+  Release real = b1;
+  real.assets.clear();
+  for (const char* n : {"Gridline-0.7.0-beta.1-macos-universal.dmg", "Gridline-0.7.0-beta.1-windows-x64-setup.exe",
+                        "Gridline-0.7.0-beta.1-windows-x64.zip", "Gridline-0.7.0-beta.1-windows-arm64-setup.exe",
+                        "Gridline-0.7.0-beta.1-windows-arm64.zip", "Gridline-0.7.0-beta.1-linux-x86_64.AppImage",
+                        "Gridline-0.7.0-beta.1-linux-aarch64.AppImage", "Gridline-0.7.0-beta.1-linux-x86_64.tar.gz",
+                        "Gridline-0.7.0-beta.1-linux-amd64.deb", "Gridline-0.7.0-beta.1-linux-x86_64.rpm",
+                        "Gridline-0.7.0-beta.1-freebsd-x86_64.tar.gz", "Gridline-0.7.0-beta.1-openbsd-x86_64.tar.gz",
+                        "Gridline-0.7.0-beta.1-netbsd-x86_64.tar.gz", "Gridline-0.7.0-beta.1-SHA256SUMS"}) {
+    Asset a;
+    a.name = n;
+    a.url = std::string("https://github.com/lolitemaultes/Gridline/releases/download/v0.7.0-beta.1/") + n;
+    real.assets.push_back(a);
+  }
+  auto pick = [&](const char* os, const char* arch) {
+    const Asset* a = pickAsset(real, Target{os, arch});
+    return a ? a->name : std::string("-");
+  };
+  expect(pick("macos", "aarch64") == "Gridline-0.7.0-beta.1-macos-universal.dmg", "beta: macOS disk image");
+  expect(pick("windows", "x86_64") == "Gridline-0.7.0-beta.1-windows-x64-setup.exe" &&
+             pick("windows", "aarch64") == "Gridline-0.7.0-beta.1-windows-arm64-setup.exe",
+         "beta: Windows setups");
+  expect(pick("linux", "x86_64") == "Gridline-0.7.0-beta.1-linux-x86_64.AppImage" &&
+             pick("linux", "aarch64") == "Gridline-0.7.0-beta.1-linux-aarch64.AppImage",
+         "beta: Linux AppImages");
+  expect(pick("freebsd", "x86_64") == "Gridline-0.7.0-beta.1-freebsd-x86_64.tar.gz" &&
+             pick("netbsd", "x86_64") == "Gridline-0.7.0-beta.1-netbsd-x86_64.tar.gz",
+         "beta: BSD tarballs");
+  expect(checksumAsset(real) && checksumAsset(real)->name == "Gridline-0.7.0-beta.1-SHA256SUMS", "beta: SHA256SUMS");
+}
+
 void schedule() {
   const int64_t day = 24 * 3600, t0 = 1800000000;
   Prefs p;
@@ -338,6 +456,8 @@ int main() {
   parsing();
   checksums();
   checking();
+  builtVersion();
+  prereleases();
   schedule();
   installer();
   return finish();

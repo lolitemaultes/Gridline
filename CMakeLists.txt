@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(gridline VERSION 0.7.0 LANGUAGES C CXX)
+# Prerelease label: "beta.1" makes this Gridline 0.7.0-beta.1 (published as a GitHub pre-release);
+# empty ("") for a release. The version is set only here (cmake/GridlineVersion.cmake, docs/releasing.md).
+set(GRIDLINE_VERSION_PRE "beta.1")
+include(cmake/GridlineVersion.cmake)
+gridline_version_forms(${PROJECT_VERSION} "${GRIDLINE_VERSION_PRE}" GRIDLINE_VERSION)
 
 # Gridline — clean-room DAW. Native Linux target (also builds on macOS for development).
 #   cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
@@ -504,6 +509,10 @@ target_link_libraries(gridline_tests_update PRIVATE gridline_core)
 target_include_directories(gridline_tests_update PRIVATE tests)
 target_compile_options(gridline_tests_update PRIVATE ${GL_WARN})
 add_test(NAME update_check COMMAND gridline_tests_update WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-125: the forms of the version (0.7.0-beta.1, 0.7.0, 0.7.0~beta.1, rpm Release) agree in CMake,
+# tools/release/version.sh, GridlineVersion.h, `gridline --version`, the Info.plists and .rc files.
+add_test(NAME version_forms COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR} -DBIN=${CMAKE_BINARY_DIR} -DCLI=$<TARGET_FILE:gridline>
+                                    -P ${CMAKE_SOURCE_DIR}/tests/version_forms.cmake)
 # J-111: collaboration core (replicated document, sessions, undo locality, op log, files, policy,
 # relay, conflicts and admin review, signatures, profiles), all in memory with fixed seeds.
 add_executable(gridline_tests_collab tests/test_collab.cpp)
@@ -1100,7 +1109,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     set(GRIDLINE_APP_BUNDLE ${CMAKE_BINARY_DIR}/Gridline.app)
     file(MAKE_DIRECTORY ${GRIDLINE_APP_BUNDLE}/Contents/MacOS ${GRIDLINE_APP_BUNDLE}/Contents/Resources)
     file(WRITE ${GRIDLINE_APP_BUNDLE}/Contents/Info.plist
-         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleName</key><string>Gridline</string>\n<key>CFBundleDisplayName</key><string>Gridline</string>\n<key>CFBundleExecutable</key><string>gridline-app</string>\n<key>CFBundleIdentifier</key><string>org.gridline.Gridline</string>\n<key>CFBundleIconFile</key><string>Gridline</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>${PROJECT_VERSION}</string>\n<key>CFBundleVersion</key><string>${PROJECT_VERSION}</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.music</string>\n<key>LSMinimumSystemVersion</key><string>${GL_MACOS_MIN}</string>\n<key>NSHighResolutionCapable</key><true/>\n<key>NSMicrophoneUsageDescription</key><string>Gridline records audio from your input devices.</string>\n</dict></plist>\n")
+         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleName</key><string>Gridline</string>\n<key>CFBundleDisplayName</key><string>Gridline</string>\n<key>CFBundleExecutable</key><string>gridline-app</string>\n<key>CFBundleIdentifier</key><string>org.gridline.Gridline</string>\n<key>CFBundleIconFile</key><string>Gridline</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>${GRIDLINE_VERSION_NUMERIC}</string>\n<key>CFBundleVersion</key><string>${GRIDLINE_VERSION_NUMERIC}</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.music</string>\n<key>LSMinimumSystemVersion</key><string>${GL_MACOS_MIN}</string>\n<key>NSHighResolutionCapable</key><true/>\n<key>NSMicrophoneUsageDescription</key><string>Gridline records audio from your input devices.</string>\n</dict></plist>\n")
     add_custom_command(TARGET gridline-app POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/icons/Gridline.icns
               ${GRIDLINE_APP_BUNDLE}/Contents/Resources/Gridline.icns
@@ -1374,7 +1383,12 @@ endif()
 if(UNIX AND NOT APPLE)
   set(CPACK_PACKAGE_NAME gridline)
   set(CPACK_PACKAGE_VENDOR "Gridline")
-  set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+  # Package versions: numbers for CPack, 0.7.0~beta.1 for Debian (sorts before 0.7.0), Version
+  # 0.7.0 + Release 0.1.beta.1 for rpm; the file names carry the full version.
+  set(CPACK_PACKAGE_VERSION ${GRIDLINE_VERSION_NUMERIC})
+  set(CPACK_DEBIAN_PACKAGE_VERSION ${GRIDLINE_VERSION_DEB})
+  set(CPACK_RPM_PACKAGE_VERSION ${GRIDLINE_VERSION_NUMERIC})
+  set(CPACK_RPM_PACKAGE_RELEASE ${GRIDLINE_VERSION_RPM_RELEASE})
   set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Pattern-based music workstation")
   set(CPACK_PACKAGE_DESCRIPTION "Gridline is a pattern-based digital audio workstation: channel rack, piano roll, playlist, mixer, built-in instruments and effects, VST3 / CLAP / VST2 / LV2 plugin hosting, and FL Studio project import and export.")
   set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/lolitemaultes/Gridline")
@@ -1388,13 +1402,13 @@ if(UNIX AND NOT APPLE)
     set(_gl_deb_arch amd64)
     set(_gl_rpm_arch x86_64)
   endif()
-  set(CPACK_PACKAGE_FILE_NAME "Gridline-${PROJECT_VERSION}-linux-${_gl_rpm_arch}")
+  set(CPACK_PACKAGE_FILE_NAME "Gridline-${GRIDLINE_VERSION_FULL}-linux-${_gl_rpm_arch}")
   set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE ${_gl_deb_arch})
-  set(CPACK_DEBIAN_FILE_NAME "Gridline-${PROJECT_VERSION}-linux-${_gl_deb_arch}.deb")
+  set(CPACK_DEBIAN_FILE_NAME "Gridline-${GRIDLINE_VERSION_FULL}-linux-${_gl_deb_arch}.deb")
   set(CPACK_DEBIAN_PACKAGE_SECTION sound)
   set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
   set(CPACK_RPM_PACKAGE_ARCHITECTURE ${_gl_rpm_arch})
-  set(CPACK_RPM_FILE_NAME "Gridline-${PROJECT_VERSION}-linux-${_gl_rpm_arch}.rpm")
+  set(CPACK_RPM_FILE_NAME "Gridline-${GRIDLINE_VERSION_FULL}-linux-${_gl_rpm_arch}.rpm")
   set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-or-later")
   set(CPACK_RPM_PACKAGE_GROUP "Applications/Multimedia")
   set(CPACK_RPM_PACKAGE_URL "https://github.com/lolitemaultes/Gridline")

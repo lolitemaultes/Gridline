@@ -13,7 +13,7 @@
                   release screenshots (--shots): playlist, channel rack,
                   stretch modes and a sheet of effect editors.
   workspace.png, piano-roll.png, chord-editor.png, audio-editor.png,
-  automation.png, plugin-picker.png
+  automation.png, plugin-picker.png, plasma.png, collaboration.png
                   crops of screenshots taken with gridline-app (see --shots and
                   tools/readme_shots.sh).
   editors.png     a contact sheet of built-in plugin editors (--shots).
@@ -314,8 +314,9 @@ def banner(root, out, w=1280, h=380):
     save_png(_finish(img, W, H, k, 28 * k), out)
 
 
-def release_banner(root, out, version, headline, subline, w=1280, h=380):
-    """Release header in the same family: small lockup, the version large, a headline."""
+def release_banner(root, out, version, headline, subline, w=1280, h=380, tag=None, label="RELEASE"):
+    """Release header in the same family: small lockup, the version large, a headline.
+    A prerelease sets `tag` (e.g. "BETA 1"): an outlined chip on the version's baseline."""
     k = 2
     W, H = w * k, h * k
     quad = [(W * 0.57, H * 0.12), (W * 1.13, H * -0.08), (W * 1.05, H * 1.20), (W * 0.51, H * 0.88)]
@@ -326,11 +327,25 @@ def release_banner(root, out, version, headline, subline, w=1280, h=380):
     ly = 62 * k
     _lockup(img, root, lx, ly, mh, halo=0.06)
     mono = font(root, "JetBrainsMono-Regular.ttf", 13 * k)
-    tracked(d, (lx + 2 * k, ly + mh + 30 * k), "RELEASE", mono, (110, 110, 110), 3.0 * k)
+    tracked(d, (lx + 2 * k, ly + mh + 30 * k), label, mono, (110, 110, 110), 3.0 * k)
     big = font(root, "Inter-Bold.ttf", 132 * k)
     vb = d.textbbox((0, 0), version, font=big)
     vy = ly + mh + 52 * k - vb[1]
     _tracked_word(img, (lx - 4 * k, vy), version, big, PAPER, -0.03 * 132 * k)
+    if tag:
+        vw = text_width(d, version, big, -0.03 * 132 * k)
+        tf = font(root, "JetBrainsMono-Bold.ttf", 21 * k)
+        tw = text_width(d, tag, tf, 3.0 * k)
+        px, ph = 20 * k, 46 * k
+        cx = lx - 4 * k + vw + 30 * k
+        cy = vy + vb[3] - ph - 4 * k
+        chip = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        cd = ImageDraw.Draw(chip)
+        cd.rounded_rectangle([cx, cy, cx + tw + 2 * px, cy + ph], radius=ph / 2, fill=(255, 255, 255, 18),
+                             outline=(255, 255, 255, 200), width=2 * k)
+        img.alpha_composite(chip)
+        tb = d.textbbox((0, 0), tag, font=tf)
+        tracked(d, (cx + px, cy + (ph - (tb[3] - tb[1])) / 2 - tb[1]), tag, tf, (235, 235, 235), 3.0 * k)
     hy = vy + vb[3] + 18 * k
     head = font(root, "Inter-SemiBold.ttf", 30 * k)
     d.text((lx, hy), headline, font=head, fill=(235, 235, 235))
@@ -439,17 +454,16 @@ def main():
                 im = im.resize((1600, round(im.height * 1600 / im.width)), Image.LANCZOS)
             save_png(im, os.path.join(rel, dst))
     banner(root, os.path.join(out, "banner.png"))
-    release_banner(root, os.path.join(out, "release-" + RELEASE + ".png"), RELEASE, "Every knob, checked",
-                   "Tideline, new plugin names, sharper editors and Linux display fixes")
+    release_banner(root, os.path.join(out, "release-" + RELEASE + ".png"), *RELEASE_BANNER, **RELEASE_BANNER_OPTS)
 
 
 # Screenshot crops (tools/readme_shots.sh takes the captures).
 # Plugin editors: instruments from 3200x2200 captures (the plugin part of the
-# channel window), effects from 2880x1800 captures (the window below its title).
+# channel window, channel strip hidden), effects from 2880x1800 captures (the window below its title).
 EDITORS = [
-    ("ed_matrixfm.png", "Lattice", (400, 509, 2765, 1869)),
-    ("ed_wavetable.png", "Isoline", (461, 509, 2704, 1912)),
-    ("ed_harmor.png", "Halftone", (480, 509, 2688, 1997)),
+    ("ed_matrixfm.png", "Lattice", (410, 462, 2756, 1706)),
+    ("ed_wavetable.png", "Isoline", (462, 454, 2706, 1754)),
+    ("ed_harmor.png", "Halftone", (484, 462, 2682, 1830)),
     ("ed_eq.png", "Parametric EQ", (507, 288, 2373, 1267)),
     ("ed_hall.png", "Cloister", (550, 302, 2333, 1250)),
     ("ed_amprack.png", "Pedal Rack", (412, 343, 2468, 1207)),
@@ -462,10 +476,17 @@ VIEWS = [
     ("chords.png", "chord-editor.png", (592, 525, 2595, 1520)),
     ("autoedit.png", "automation.png", (978, 488, 2720, 1635)),
     ("picker.png", "plugin-picker.png", None),
+    ("collab.png", "collaboration.png", (0, 0, 3200, 1324)),
 ]
+# Plasma's editor from its channel window (a 3200x2200 capture), saved 1600 px wide.
+VIEWS.append(("plasma.png", "plasma.png", (390, 454, 2778, 1942)))
 
 # The release banner and screenshots of this version.
-RELEASE = "0.6.1"
+RELEASE = "0.7.0-beta.1"
+# The banner: version as set, headline, subline; a prerelease adds its tag and label.
+RELEASE_BANNER = ("0.7.0", "Make music together",
+                  "Live collaboration, windows on every monitor and a sharper interface")
+RELEASE_BANNER_OPTS = {"tag": "BETA 1", "label": "PRE-RELEASE"}
 # Effect editors with live graphics while the song plays (2880x1800 captures).
 RELEASE_EDITORS = [
     ("rel_reverb.png", "Reverb", (530, 449, 2354, 1109)),

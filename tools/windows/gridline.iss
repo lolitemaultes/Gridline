@@ -1,11 +1,20 @@
 ; Gridline installer for Windows (Inno Setup 6). Built by .github/workflows/release.yml:
-;   iscc /DAppVersion=0.6.0 /DArch=x64 /DStage=<folder> /DOutDir=<folder> tools\windows\gridline.iss
+;   iscc /DAppVersion=0.7.0-beta.1 /DArch=x64 /DStage=<folder> /DOutDir=<folder> tools\windows\gridline.iss
+; AppVersion is the full version (names, titles); Windows' version fields take numbers only, so
+; AppNumVersion is its numeric part (0.7.0), taken from AppVersion when it is not given.
 ; <Stage> holds gridline-app.exe, gridline.exe, assets\ and plugins\{VST3,CLAP}.
 ; The installer is not code signed: Windows SmartScreen asks for confirmation ("More info",
 ; "Run anyway").
 
 #ifndef AppVersion
   #error AppVersion is required
+#endif
+#ifndef AppNumVersion
+  #if Pos("-", AppVersion) > 0
+    #define AppNumVersion Copy(AppVersion, 1, Pos("-", AppVersion) - 1)
+  #else
+    #define AppNumVersion AppVersion
+  #endif
 #endif
 #ifndef Arch
   #define Arch "x64"
@@ -25,8 +34,10 @@ AppVerName=Gridline {#AppVersion}
 AppPublisher=Gridline
 AppPublisherURL=https://github.com/lolitemaultes/Gridline
 AppSupportURL=https://github.com/lolitemaultes/Gridline/issues
-VersionInfoVersion={#AppVersion}.0
-VersionInfoProductVersion={#AppVersion}
+VersionInfoVersion={#AppNumVersion}.0
+VersionInfoProductVersion={#AppNumVersion}.0
+VersionInfoTextVersion={#AppVersion}
+VersionInfoProductTextVersion={#AppVersion}
 VersionInfoDescription=Gridline {#AppVersion} setup
 DefaultDirName={autopf}\Gridline
 DefaultGroupName=Gridline

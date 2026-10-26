@@ -6,8 +6,9 @@
 #
 # BUILD_DIR holds gridline-app; OUT_DIR receives the raw captures (PNG) and the
 # showcase project. With shot names, only those captures are retaken. The app
-# runs with its own config folder inside OUT_DIR (no personal settings, no
-# plugin scan), so the shots are the same on every machine.
+# runs with its own config and home folders inside OUT_DIR (no personal
+# settings, no plugin scan, no preset libraries of other products), so the
+# shots are the same on every machine.
 set -e
 G="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$(cd "$1" && pwd)"
@@ -19,6 +20,9 @@ OUT="$(cd "$OUT" && pwd)"
 printf '%s\n' "$G/demo" > "$OUT/config/gridline/browser-folders.txt"
 export GRIDLINE_CONFIG_HOME="$OUT/config"
 export GRIDLINE_NO_PLUGIN_SCAN=1
+export GRIDLINE_HIDE_PLUGINS=all
+mkdir -p "$OUT/home"
+export HOME="$OUT/home"
 APP="$BUILD/gridline-app"
 PY="${PYTHON:-python3}"
 SONG="$OUT/showcase.gridline.json"
@@ -54,6 +58,13 @@ if want picker && [ ! -d "$OUT/config/gridline/thumbs" ]; then  # editor preview
 fi
 printf '20 move 54 260\n21 down 0\n22 up 0\n23 move 1500 40\n' > "$OUT/picker-synth.txt"  # sidebar: Synth
 shot picker "" "$SONG" --picker $S --frames 400 --dev-input "$OUT/picker-synth.txt"
+# Plasma with a factory preset; a collaborative session with a simulated
+# collaborator (the panel, their cursor over the playlist).
+export GL_PLASMA_PRESET="Reese Growl"  # a name with a space: exported, not passed through shot's env list
+shot plasma "" "$SONG" --hide rack --plugin gl.plasma --size 1600x1100 --scale 2 --frames 90
+unset GL_PLASMA_PRESET
+printf '200 move 640 203\n202 down 0\n204 move 700 203\n206 move 820 203\n208 move 880 203\n210 up 0\n212 move 1590 990\n' > "$OUT/collab-panel.txt"  # the panel to the right
+shot collab "" "$SONG" --hide rack --show collab-demo-panel $S --frames 400 --dev-input "$OUT/collab-panel.txt"
 # Plugin editors at UI scale 2: instruments (channel window) 1600x1100, effects 1440x900.
 for t in matrixfm harmor wavetable; do
   shot "ed_$t" "" "$SONG" --hide rack --plugin "gl.$t" --size 1600x1100 --scale 2 --frames 60

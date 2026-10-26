@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Builds the macOS disk image from a build folder (release.yml; works on any build):
 #   tools/release/package-macos.sh <build dir> <version> <out dir> [arch label]
+# <version> is the full version (0.7.0-beta.1): the file name, the volume name and the README.
+# The bundles' Info.plist versions are the numbers only (0.7.0), written by the build.
 # The image holds Gridline.app (the app, the command line tool and the assets inside), the
 # plugins (Gridline.vst3 / .clap / .component), the command line tool and a README. Everything
 # is signed ad hoc (no Developer ID: users open it with right-click > Open the first time).

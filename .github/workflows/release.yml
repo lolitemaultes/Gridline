@@ -2,9 +2,15 @@ name: Release
 
 # Builds the downloads for every platform, checks them (version strings, the programs start and
 # render on their own system) and publishes them as the GitHub release "Gridline <version>".
-#   - a tag v<version> (version = project(VERSION) in CMakeLists.txt) publishes;
+#   - a tag v<version> publishes; <version> is the full version from the top of CMakeLists.txt:
+#     project(VERSION 0.7.0) plus GRIDLINE_VERSION_PRE ("beta.1" gives 0.7.0-beta.1, "" gives 0.7.0);
+#   - with a prerelease label the release is a GitHub pre-release and never "Latest", so only
+#     people with "Include beta versions" ticked are offered it (docs/updates.md);
 #   - "Run workflow" with dry_run (the default) only uploads the files as workflow artifacts.
-# The version comes only from CMakeLists.txt; a tag that does not match it fails the run.
+# The version comes only from CMakeLists.txt (tools/release/version.sh); a tag that does not match
+# it fails the run. File names, --version and the tag use the full version; macOS bundle versions,
+# Windows version numbers and the rpm Version use the numbers only. How to cut a beta and the final
+# release: docs/releasing.md.
 on:
   push:
     tags: ["v*"]
@@ -30,16 +36,29 @@ jobs:
     name: Version
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.v.outputs.version }}
+      version: ${{ steps.v.outputs.version }}            # 0.7.0-beta.1 / 0.7.0
+      numeric: ${{ steps.v.outputs.numeric }}            # 0.7.0
+      deb: ${{ steps.v.outputs.deb }}                    # 0.7.0~beta.1 / 0.7.0
+      rpm_release: ${{ steps.v.outputs.rpm_release }}    # 0.1.beta.1 / 1
+      prerelease: ${{ steps.v.outputs.prerelease }}      # true / false
       publish: ${{ steps.v.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         name: Version from CMakeLists.txt
         run: |
-          ver="$(sed -n 's/^project(gridline VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt)"
-          test -n "$ver" || { echo "::error::no project(VERSION) in CMakeLists.txt"; exit 1; }
-          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          forms="$(bash tools/release/version.sh)" || { echo "::error::no valid version at the top of CMakeLists.txt"; exit 1; }
+          eval "$forms"
+          ver="$full"
+          prerelease=false
+          if [ -n "$pre" ]; then prerelease=true; fi
+          {
+            echo "version=$full"
+            echo "numeric=$numeric"
+            echo "deb=$deb"
+            echo "rpm_release=$rpm_release"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
           publish=false
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             if [ "${GITHUB_REF_NAME}" != "v$ver" ]; then
@@ -54,7 +73,7 @@ jobs:
             exit 1
           fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "Gridline $ver (publish: $publish)"
+          echo "Gridline $ver (numbers $numeric, prerelease: $prerelease, publish: $publish)"
       - name: The version agrees everywhere (README badge, CHANGELOG)
         run: bash tools/ci/check-version.sh "${{ steps.v.outputs.version }}"
       - name: Release notes from CHANGELOG.md
@@ -65,6 +84,7 @@ jobs:
             on { print }' CHANGELOG.md > notes.md
           test -s notes.md || { echo "::error::CHANGELOG.md has no section ## $ver"; exit 1; }
           if grep -q $'\xe2\x80\x94' notes.md; then echo "::error::em dash in the release notes"; exit 1; fi
+          if grep -q $'\xe2\x80\x93' notes.md; then echo "::error::en dash in the release notes"; exit 1; fi
           cat notes.md
       - uses: actions/upload-artifact@v4
         with:
@@ -78,6 +98,7 @@ jobs:
     timeout-minutes: 90
     env:
       VER: ${{ needs.version.outputs.version }}
+      VERNUM: ${{ needs.version.outputs.numeric }}
     steps:
       - uses: actions/checkout@v4
       - run: brew install --quiet ninja || true
@@ -98,7 +119,8 @@ jobs:
           done
           for p in "$root/Gridline.app" "$root/Plugins/Gridline.vst3" "$root/Plugins/Gridline.clap" "$root/Plugins/Gridline.component"; do
             v="$(plutil -extract CFBundleShortVersionString raw "$p/Contents/Info.plist")"
-            echo "$p: $v"; test "$v" = "$VER"
+            b="$(plutil -extract CFBundleVersion raw "$p/Contents/Info.plist")"
+            echo "$p: $v ($b)"; test "$v" = "$VERNUM"; test "$b" = "$VERNUM"  # numbers only (macOS)
           done
           if otool -L "$root/Gridline.app/Contents/MacOS/gridline-app" | grep -q libSDL2; then echo "SDL2 must be built in"; exit 1; fi
           test "$("$root/Gridline.app/Contents/MacOS/gridline-app" --version)" = "Gridline $VER"
@@ -126,6 +148,7 @@ jobs:
           - { arch: arm64, msvc: amd64_arm64, test: false }
     env:
       VER: ${{ needs.version.outputs.version }}
+      VERNUM: ${{ needs.version.outputs.numeric }}
     defaults:
       run:
         shell: bash
@@ -162,6 +185,8 @@ jobs:
             $v = (Get-Item $f).VersionInfo
             Write-Output "$f : $($v.ProductVersion) / $($v.FileVersion)"
             if ($v.ProductVersion -ne $env:VER) { throw "version resource of $f is $($v.ProductVersion), expected $env:VER" }
+            $num = "$($v.FileMajorPart).$($v.FileMinorPart).$($v.FileBuildPart)"
+            if ($num -ne $env:VERNUM) { throw "binary file version of $f is $num, expected $env:VERNUM" }
           }
           $dll = Get-ChildItem -Recurse "$env:STAGE/plugins/VST3/Gridline.vst3/Contents" -Filter Gridline.vst3 | Where-Object { -not $_.PSIsContainer }
           if ($dll.VersionInfo.ProductVersion -ne $env:VER) { throw "VST3 version resource" }
@@ -182,7 +207,7 @@ jobs:
           }
           $stage = (Resolve-Path $env:STAGE).Path
           $out = (Resolve-Path dist).Path
-          iscc /Q "/DAppVersion=$env:VER" "/DArch=${{ matrix.arch }}" "/DStage=$stage" "/DOutDir=$out" tools\windows\gridline.iss
+          iscc /Q "/DAppVersion=$env:VER" "/DAppNumVersion=$env:VERNUM" "/DArch=${{ matrix.arch }}" "/DStage=$stage" "/DOutDir=$out" tools\windows\gridline.iss
           if (-not (Test-Path "dist\Gridline-$env:VER-windows-${{ matrix.arch }}-setup.exe")) { throw "no installer" }
           $v = (Get-Item "dist\Gridline-$env:VER-windows-${{ matrix.arch }}-setup.exe").VersionInfo.ProductVersion
           Write-Output "installer version: $v"
@@ -246,6 +271,9 @@ jobs:
           - { arch: aarch64, os: ubuntu-22.04-arm }
     env:
       VER: ${{ needs.version.outputs.version }}
+      VERNUM: ${{ needs.version.outputs.numeric }}
+      DEBVER: ${{ needs.version.outputs.deb }}
+      RPMREL: ${{ needs.version.outputs.rpm_release }}
       APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - uses: actions/checkout@v4
@@ -300,9 +328,10 @@ jobs:
           test -s "$RUNNER_TEMP/app.ppm"
           deb="$(ls dist/*.deb)"; rpm="$(ls dist/*.rpm)"
           dpkg-deb -f "$deb" Package Version Architecture Depends
-          test "$(dpkg-deb -f "$deb" Version)" = "$VER"
-          rpm -qp --queryformat '%{NAME} %{VERSION} %{ARCH}\n' "$rpm"
-          test "$(rpm -qp --queryformat '%{VERSION}' "$rpm")" = "$VER"
+          test "$(dpkg-deb -f "$deb" Version)" = "$DEBVER"   # 0.7.0~beta.1 sorts before 0.7.0
+          rpm -qp --queryformat '%{NAME} %{VERSION} %{RELEASE} %{ARCH}\n' "$rpm"
+          test "$(rpm -qp --queryformat '%{VERSION}' "$rpm")" = "$VERNUM"
+          test "$(rpm -qp --queryformat '%{RELEASE}' "$rpm")" = "$RPMREL"  # 0.1.beta.1 (Fedora prerelease) / 1
           sudo apt-get install -y -q "./$deb"
           test "$(/usr/bin/gridline --version)" = "Gridline $VER"
           test -f /usr/lib/vst3/Gridline.vst3/Contents/$arch-linux/Gridline.so
@@ -378,6 +407,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VER: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -401,4 +431,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v$VER" --repo "$GITHUB_REPOSITORY" --title "Gridline $VER" --notes-file notes.md --verify-tag files/*
+          # A prerelease label: a GitHub pre-release, never "Latest" (/releases/latest, which the
+          # stable update check reads, keeps answering the newest release).
+          if [ "$PRERELEASE" = "true" ]; then kind=(--prerelease --latest=false); else kind=(--latest); fi
+          gh release create "v$VER" --repo "$GITHUB_REPOSITORY" --title "Gridline $VER" --notes-file notes.md --verify-tag "${kind[@]}" files/*

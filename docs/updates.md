@@ -50,7 +50,9 @@ Settings > General > Updates:
 
 * **Check for updates automatically** (on by default): the startup check.
 * **Include beta versions** (off by default): also offer prereleases (versions such as
-  `0.7.0-beta.1`). Drafts are never offered.
+  `0.7.0-beta.1`). Drafts are never offered. Betas are published as GitHub pre-releases, which
+  `/releases/latest` never answers, so they reach only people with this box ticked
+  (docs/releasing.md).
 * **Last checked**: the time of the last successful check, with **Check now**.
 
 ## Turning it off

@@ -1,9 +1,11 @@
 # Changelog
 
-All notable changes to Gridline. Versions follow `project(VERSION)` in `CMakeLists.txt`; the
-release workflow publishes the section of the tagged version as the release notes.
+All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
+`CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
-## Unreleased
+## 0.7.0-beta.1
+
+This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.
 
 ### New: Plasma, a wavetable hybrid synth (`gl.plasma`)
 
@@ -255,8 +257,6 @@ release workflow publishes the section of the tagged version as the release note
   faded; in that same window it is drawn on top. Behind a modal it is dimmed with everything else.
 - New third-party code: libjuice 1.7.4 and libplum 0.6.0 (MPL-2.0), Monocypher 4.0.2 (BSD-2-Clause
   or CC0), stb_image 2.30 and stb_image_write 1.16 (public domain or MIT); see third_party/NOTICE.md.
-
-## 0.7.0
 
 ### New: Seltmann, the automatic sample chopper (`gl.seltmann`)
 
