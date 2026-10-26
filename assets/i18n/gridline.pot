@@ -5721,6 +5721,10 @@ msgstr ""
 msgid "Animations"
 msgstr ""
 
+#: src/app/Dialogs.cpp
+msgid "Appearance (dark or light, colours, contrast), control style and sounds"
+msgstr ""
+
 #: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Audio"
 msgstr ""
@@ -5775,10 +5779,6 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Dark, light or follow the system, accent colour, contrast"
-msgstr ""
-
-#: src/app/Dialogs.cpp
-msgid "Dark, light or the system's choice, accent colour and contrast"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -8149,7 +8149,7 @@ msgstr ""
 msgid "All playlist tracks..."
 msgstr ""
 
-#: src/app/Menus.cpp
+#: src/app/Menus.cpp src/app/SettingsKeysTheme.cpp
 msgid "Appearance"
 msgstr ""
 
@@ -10878,6 +10878,14 @@ msgid "Change shortcuts..."
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
+msgid "Changes how knobs, faders, buttons, meters and displays are drawn everywhere. Sizes stay the same."
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Classic"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
 msgid "Command"
 msgstr ""
 
@@ -10886,7 +10894,19 @@ msgid "Contrast"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
+msgid "Control style"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Controls"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
 msgid "Ctrl+wheel / Alt+wheel"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Dark glass, values as light"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -10918,6 +10938,18 @@ msgid "Every shortcut back to the default map"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
+msgid "Flat lines, one accent"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Graphite"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Hairline"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
 msgid "Hint"
 msgstr ""
 
@@ -10935,6 +10967,14 @@ msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Lower octave (C to B)"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Lumen"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Machined, lit by Paper"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -10978,7 +11018,7 @@ msgid "Reset all"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
-msgid "Reset theme"
+msgid "Reset colours"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -11006,7 +11046,19 @@ msgid "Shortcuts act in the window shown in brackets. A window's own shortcut wi
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
+msgid "Slate"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
 msgid "Song position"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp src/app/SoundThemeUi.cpp
+msgid "Sounds"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Studio slate, one finish"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -11022,6 +11074,10 @@ msgid "Text and lines against the panels"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
+msgid "The earlier look"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
 msgid "The playback line in the playlist and the editors"
 msgstr ""
 
@@ -11034,7 +11090,7 @@ msgid "The theme's own colour"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
-msgid "Theme colours, contrast and brightness back to the defaults (the dark / light choice stays)"
+msgid "Theme colours, contrast and brightness back to the defaults (dark / light, control style and sounds stay)"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -11299,10 +11355,6 @@ msgstr ""
 
 #: src/app/SoundThemeUi.cpp
 msgid "Sound theme"
-msgstr ""
-
-#: src/app/SoundThemeUi.cpp
-msgid "Sounds"
 msgstr ""
 
 #: src/app/Splash.cpp
@@ -15227,10 +15279,6 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "CURVE"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "Classic"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp

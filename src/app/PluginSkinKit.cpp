@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <string>
 #include <unordered_map>
+#include "Look.h"
 #include "XyPadMath.h"
 #include "../core/Params.h"
 #include "App.h"
@@ -126,6 +127,7 @@ void well(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
   ImU32 w = k.wellC();
   audit::frame(p0, p1, "well");
   noteFrame(p0, p1);
+  if (look::styled()) return look::hookSection(dl, p0, p1, w);  // J-129 control style
   gradientRect(dl, p0, p1, lighten(w, 0.035f), darken(w, 0.05f), rounding);
   dl->AddRect(p0, p1, theme::withAlpha(darken(k.panel, 0.45f), 0.6f), rounding, 0, 1.0f);
   dl->AddLine(ImVec2(p0.x + rounding, p0.y + 0.5f), ImVec2(p1.x - rounding, p0.y + 0.5f), theme::withAlpha(lighten(w, 0.16f), 0.7f), 1.0f);
@@ -624,6 +626,12 @@ int keyboard(const char* id, ImVec2 tl, ImVec2 size, int lo, int hi, const Skin&
 }
 
 void meter(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float db, float rangeDb, bool reduction) {
+  if (look::styled()) {  // J-129 control style
+    look::Meter m;
+    m.reduction = reduction, m.l = reduction ? std::clamp(-db / rangeDb, 0.0f, 1.0f) : look::dbNorm(db, rangeDb);
+    look::meter(dl, p0, p1, m);
+    return;
+  }
   dl->AddRectFilled(p0, p1, k.lcdBg, 2);
   const float h = p1.y - p0.y - 2;
   const int segs = std::max(4, static_cast<int>(h / 4));
@@ -641,6 +649,7 @@ void meter(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float db, float 
 }
 
 void ledDot(ImDrawList* dl, ImVec2 c, float r, bool on, const Skin& k, ImU32 onCol) {
+  if (look::styled()) return look::led(dl, c, r, on, 0, onCol);  // J-129 control style
   ImU32 col = onCol ? onCol : k.fill;
   if (on) dl->AddCircleFilled(c, r * 1.9f, theme::withAlpha(col, 0.22f), 16);
   dl->AddCircleFilled(c, r, on ? col : k.lcdBg, 16);

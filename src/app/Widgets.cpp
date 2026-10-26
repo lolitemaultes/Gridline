@@ -1,3 +1,4 @@
+#include "Look.h"
 #include "Widgets.h"
 #include "DialogLayout.h"
 #include <algorithm>
@@ -200,6 +201,39 @@ void drawLabel(ImDrawList* dl, ImVec2 pos, ImU32 col, const char* s) { drawLabel
 
 void installGlyphHook() { icons::atlas(); }
 
+namespace {
+// J-129: look:: face state of a button.
+int faceState(bool hov, bool held, bool on) { return (hov ? look::Hover : 0) | (held ? look::Active : 0) | (on ? look::On : 0); }
+
+// J-129: under a control style, an ImGui::Button's frame is drawn by the style
+// (same rect, ImGui's own frame made transparent); `id` is the button's id
+// in the current ID stack, `text` what it shows.
+struct StyledButtonFace {
+  bool on = false;
+  StyledButtonFace(ImGuiID id, const char* text, float width, bool lit) {
+    if (!look::styled()) return;
+    on = true;
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const ImVec2 ts = ImGui::CalcTextSize(text, nullptr, true);
+    const ImVec2 sz = ImGui::CalcItemSize(ImVec2(width, 0), ts.x + st.FramePadding.x * 2, ts.y + st.FramePadding.y * 2);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const ImGuiContext& g = *GImGui;
+    const bool hov = g.HoveredIdPreviousFrame == id, held = g.ActiveId == id;
+    const int dis = (g.CurrentItemFlags & ImGuiItemFlags_Disabled) ? look::Disabled : 0;
+    look::hookFace(ImGui::GetWindowDrawList(), p, ImVec2(p.x + sz.x, p.y + sz.y), theme::kRadius, faceState(hov, held, lit) | dis, pal().hot, true);
+    const ImVec4 clear(0, 0, 0, 0);
+    ImGui::PushStyleColor(ImGuiCol_Button, clear);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, clear);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, clear);
+  }
+  ~StyledButtonFace() {
+    if (on) ImGui::PopStyleColor(3);
+  }
+  StyledButtonFace(const StyledButtonFace&) = delete;
+  StyledButtonFace& operator=(const StyledButtonFace&) = delete;
+};
+}  // namespace
+
 bool IconButton(const char* id, Icon icon, bool active, float size, const char* hint, ImU32 activeCol, ImU32 idleCol, bool onPress) {
   ImGui::PushID(id);
   ImVec2 p = ImGui::GetCursorScreenPos();
@@ -217,8 +251,12 @@ bool IconButton(const char* id, Icon icon, bool active, float size, const char* 
   const ImU32 glyph = activeCol ? theme::lit(activeCol) : P.hot;
   ImU32 bg = held ? P.surface600 : active ? theme::mix(hov ? P.surface700 : P.surface800, glyph, P.dark ? 0.10f : 0.14f) : hov ? P.surface700 : 0;
   ImU32 fg = active ? glyph : hov ? P.text : idleCol ? theme::lit(idleCol) : P.textDim;
-  if (bg) dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), bg, theme::kRadius);
-  if (active) dl->AddRect(p, ImVec2(p.x + size, p.y + size), theme::withAlpha(fg, P.dark ? 0.28f : 0.45f), theme::kRadius);
+  if (look::styled()) {  // J-129 control style
+    look::hookFace(dl, p, ImVec2(p.x + size, p.y + size), theme::kRadius, faceState(hov, held, active), active ? glyph : 0, false);
+  } else {
+    if (bg) dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), bg, theme::kRadius);
+    if (active) dl->AddRect(p, ImVec2(p.x + size, p.y + size), theme::withAlpha(fg, P.dark ? 0.28f : 0.45f), theme::kRadius);
+  }
   drawIcon(dl, icon, ImVec2(std::round(p.x + size * 0.5f), std::round(p.y + size * 0.5f)), std::round(size * 0.56f), fg);
   if (hint) {
     Hint(hint);
@@ -236,9 +274,10 @@ bool ToggleIcon(const char* id, Icon icon, bool on, float size, const char* hint
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const auto& P = pal();
   ImU32 bg = held ? P.surface600 : hov ? P.surface700 : on ? P.surface800 : 0;
-  if (bg) dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), bg, theme::kRadius);
   // On: lit glyph (window / option toggles light up in the view role colour).
   const ImU32 lit = theme::litRole(theme::role::kView);
+  if (look::styled()) look::hookFace(dl, p, ImVec2(p.x + size, p.y + size), theme::kRadius, faceState(hov, held, on), lit, false);  // J-129 control style
+  else if (bg) dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), bg, theme::kRadius);
   ImU32 fg = on ? lit : hov ? P.text : P.textFaint;
   const ImVec2 ic(std::round(p.x + size * 0.5f), std::round(p.y + size * 0.5f - (on ? 1 : 0)));
   const int v0 = dl->VtxBuffer.Size;
@@ -279,11 +318,12 @@ bool ToolButton(const char* id, Icon icon, bool active, float size, const char* 
   const ImU32 lit = roleCol ? theme::lit(roleCol) : P.hot;
   const ImVec2 q1(p.x + size, p.y + size);
   // Faces: pressed (deepest), active (tinted by the tool's role colour), hover.
-  if (held) dl->AddRectFilled(p, q1, P.surface600, theme::kRadius);
+  if (look::styled()) look::hookFace(dl, p, q1, theme::kRadius, faceState(hov, held, active), lit, false);  // J-129 control style
+  else if (held) dl->AddRectFilled(p, q1, P.surface600, theme::kRadius);
   else if (active) dl->AddRectFilled(p, q1, theme::mix(hov ? P.surface700 : P.surface800, lit, P.dark ? 0.14f : 0.16f), theme::kRadius);
   else if (hov) dl->AddRectFilled(p, q1, P.surface700, theme::kRadius);
   if (active) {
-    dl->AddRect(p, q1, theme::withAlpha(lit, P.dark ? 0.35f : 0.55f), theme::kRadius);
+    if (!look::styled()) dl->AddRect(p, q1, theme::withAlpha(lit, P.dark ? 0.35f : 0.55f), theme::kRadius);
     // lit underline, as the top bar's window toggles draw it (ToggleIcon): 2 px, 36 % of the cell
     const float uw = std::round(size * 0.36f), ux = std::round(p.x + (size - uw) * 0.5f);
     dl->AddRectFilled(ImVec2(ux, q1.y - 4), ImVec2(ux + uw, q1.y - 2), lit, 1.0f);
@@ -338,12 +378,17 @@ bool TextButton(const char* label, bool active, float width, const char* hint) {
     const ImVec2 ts = ImGui::CalcTextSize(text);
     const ImGuiStyle& st = ImGui::GetStyle();
     ImGui::PushID(label);
-    r = ImGui::Button("##icon", ImVec2(width > 0 ? width : ts.x + st.FramePadding.x * 2, 0));
+    {
+      const float bw = width > 0 ? width : ts.x + st.FramePadding.x * 2;
+      const StyledButtonFace face(ImGui::GetID("##icon"), "", bw, active);  // J-129 control style
+      r = ImGui::Button("##icon", ImVec2(bw, 0));
+    }
     ImGui::PopID();
     const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
     const ImVec2 pos(a.x + std::max(0.0f, (b.x - a.x - ts.x) * st.ButtonTextAlign.x), a.y + std::max(0.0f, (b.y - a.y - ts.y) * st.ButtonTextAlign.y));
     drawLabel(ImGui::GetWindowDrawList(), pos, ImGui::GetColorU32(ImGuiCol_Text), label);
   } else {
+    const StyledButtonFace face(ImGui::GetID(tr(label)), tr(label), width, active);  // J-129 control style
     r = ImGui::Button(tr(label), ImVec2(width, 0));
   }
   if (active) ImGui::PopStyleColor(4);
@@ -412,8 +457,11 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
     for (int i = 0; i < count; ++i) w = std::max(w, ImGui::CalcTextSize(labels[i]).x + pad * 2);
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(p, ImVec2(p.x + w * count + 4, p.y + height), P.field, theme::kRadius);
-  if (!P.dark) dl->AddRect(p, ImVec2(p.x + w * count + 4, p.y + height), P.line, theme::kRadius);
+  if (look::styled()) look::hookInset(dl, p, ImVec2(p.x + w * count + 4, p.y + height), theme::kRadius, P.field);  // J-129 control style
+  else {
+    dl->AddRectFilled(p, ImVec2(p.x + w * count + 4, p.y + height), P.field, theme::kRadius);
+    if (!P.dark) dl->AddRect(p, ImVec2(p.x + w * count + 4, p.y + height), P.line, theme::kRadius);
+  }
   bool changed = false;
   for (int i = 0; i < count; ++i) {
     ImGui::PushID(i);
@@ -426,7 +474,9 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
     bool hov = ImGui::IsItemHovered();
     bool on = *index == i;
     const ImU32 onBg = theme::mix(P.dark ? P.surface700 : P.surface800, P.hot, 0.14f);
-    if (on)
+    if (look::styled()) {
+      if (on || hov) look::hookFace(dl, q, ImVec2(q.x + w, q.y + height - 4), std::max(1.0f, theme::kRadius - 1), on ? look::On : look::Hover, P.hot, false);
+    } else if (on)
       dl->AddRectFilled(q, ImVec2(q.x + w, q.y + height - 4), onBg, std::max(1.0f, theme::kRadius - 1));
     else if (hov)
       dl->AddRectFilled(q, ImVec2(q.x + w, q.y + height - 4), P.surface700, std::max(1.0f, theme::kRadius - 1));
@@ -509,6 +559,12 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   float a0 = kPi * 0.75f, a1 = kPi * 2.25f;
   float an = a0 + static_cast<float>(d.toNormalized(*value)) * (a1 - a0);
   const float th = radius >= 14.0f ? 2.5f : 2.0f;
+  if (look::styled()) {  // J-129 control style
+    look::Knob lk;
+    lk.norm = static_cast<float>(d.toNormalized(*value)), lk.bipolar = bipolar, lk.state = (hov ? look::Hover : 0) | (act ? look::Active : 0);
+    lk.size = radius >= 20 ? 2 : radius >= 13 ? 1 : 0;
+    look::knob(dl, c, radius, lk);
+  } else {
   // Wheel: dark cap with a lighter top edge, rail ring, value ring (light at
   // rest, lit orange while touched), indicator line.
   const ImU32 cap = act ? P.surface600 : hov ? P.surface700 : P.surface800;
@@ -523,6 +579,7 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   dl->PathLineTo(ImVec2(c.x + dir.x * radius * 0.15f, c.y + dir.y * radius * 0.15f));  // a path: AddLine is half a pixel off centre
   dl->PathLineTo(ImVec2(c.x + dir.x * (radius - th - 3.0f), c.y + dir.y * (radius - th - 3.0f)));
   dl->PathStroke(hov || act ? P.paper : P.text, 0, 2.0f);
+  }
   if (label) {
     ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(labelFs, 1e9f, 0, label);
     dl->AddText(ImGui::GetFont(), labelFs, ImVec2(std::round(c.x - ts.x * 0.5f), p.y + radius * 2.0f + 2.0f), P.textDim, label);
@@ -632,6 +689,11 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   float t0 = p.y + capH * 0.5f, t1 = p.y + size.y - capH * 0.5f;
   double cur = d->toNormalized(*getParam(a.doc.song(), pid));
   float y = std::round(p.y + static_cast<float>(1.0 - cur) * travel);
+  if (look::styled()) {  // J-129 control style
+    look::Fader lf;
+    lf.norm = static_cast<float>(cur), lf.state = (hov ? look::Hover : 0) | (act ? look::Active : 0);
+    look::fader(dl, ImVec2(p.x - 8, p.y - 4), ImVec2(p.x + size.x + 8, p.y + size.y + 4), lf);
+  } else {
   // Track (sunken slot) with a value fill below the cap: neutral at rest, accent while touched.
   dl->AddRectFilled(ImVec2(cx - 2, t0), ImVec2(cx + 2, t1), P.surface950, 2);
   dl->AddRectFilled(ImVec2(cx - 1, y + capH * 0.5f), ImVec2(cx + 1, t1),
@@ -651,6 +713,7 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   dl->AddRectFilled(ImVec2(p.x + 3, y + 1), ImVec2(p.x + size.x - 3, y + capH + 1), theme::withAlpha(P.ink, 0.35f), 3);
   dl->AddRectFilled(ImVec2(p.x + 3, y), ImVec2(p.x + size.x - 3, y + capH), capCol, 3);
   dl->AddLine(ImVec2(p.x + 6, y + capH * 0.5f), ImVec2(p.x + size.x - 6, y + capH * 0.5f), P.surface900, 2);
+  }
   if (hov || act) {
     std::string txt = d->name + ": " + d->format(*getParam(a.doc.song(), pid));
     if (wg.hint) txt += std::string("   ") + wheelHintText();
@@ -688,6 +751,12 @@ void Meter(ImGuiID key, float peakL, float peakR, ImVec2 size, bool vertical) {
     return std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);
   };
   const float zero = toPos(1.0f), warn = toPos(0.5f);  // 0 dBFS and -6 dBFS
+  if (look::styled()) {  // J-129 control style
+    look::Meter m;
+    m.vertical = vertical, m.l = toPos(s.l), m.r = toPos(s.r), m.peakL = toPos(s.holdL), m.peakR = toPos(s.holdR);
+    look::meter(dl, p, ImVec2(p.x + size.x, p.y + size.y), m);
+    return;
+  }
   for (int ch = 0; ch < 2; ++ch) {
     float v = toPos(ch == 0 ? s.l : s.r), hold = toPos(ch == 0 ? s.holdL : s.holdR);
     if (vertical) {
@@ -877,10 +946,13 @@ void EndSection() {
   const auto& P = pal();
   ImDrawList* dl = w->DrawList;
   const ImU32 face = P.dark ? theme::mix(P.surface900, P.field, 0.38f) : theme::mix(P.surface900, P.surface800, 0.55f);
-  dl->AddRectFilled(f->start, mx, face, theme::kRadiusLg);
-  dl->AddRect(f->start, mx, P.dark ? theme::withAlpha(P.ink, 0.45f) : P.line, theme::kRadiusLg);
-  if (P.dark)  // lower lip catches the light: the box reads as recessed into the slate
-    dl->AddLine(ImVec2(f->start.x + 3, mx.y), ImVec2(mx.x - 3, mx.y), theme::withAlpha(P.paper, 0.06f));
+  if (look::styled()) look::hookSection(dl, f->start, mx, face);  // J-129 control style
+  else {
+    dl->AddRectFilled(f->start, mx, face, theme::kRadiusLg);
+    dl->AddRect(f->start, mx, P.dark ? theme::withAlpha(P.ink, 0.45f) : P.line, theme::kRadiusLg);
+    if (P.dark)  // lower lip catches the light: the box reads as recessed into the slate
+      dl->AddLine(ImVec2(f->start.x + 3, mx.y), ImVec2(mx.x - 3, mx.y), theme::withAlpha(P.paper, 0.06f));
+  }
   if (!f->caption.empty()) {
     App& a = app();
     theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(f->start.x + kSectionPad, f->start.y + 5),
@@ -959,6 +1031,7 @@ void DragPreview(Icon icon, const char* text, ImU32 tint) {
 }
 
 void Led(ImDrawList* dl, ImVec2 c, float r, bool on, float level) {
+  if (look::styled()) return look::led(dl, c, r, on, level);  // J-129 control style
   const auto& P = pal();
   // Studio LED (both themes): green lamp, brighter with activity; off = dark
   // (light theme: pale) lens with a thin rim.
@@ -976,6 +1049,7 @@ void Led(ImDrawList* dl, ImVec2 c, float r, bool on, float level) {
 }
 
 void StepPad(ImDrawList* dl, ImVec2 a, ImVec2 b, bool on, bool alt, bool hovered, ImU32 tint, float vel) {
+  if (look::styled()) return look::stepPad(dl, a, b, on, alt, vel, false, hovered ? look::Hover : 0, look::hookTint(tint));  // J-129 control style
   const auto& P = pal();
   const float r = std::min(theme::kRadius, (b.x - a.x) * 0.25f);
   if (!on) {
@@ -999,6 +1073,7 @@ void Lcd(ImDrawList* dl, ImVec2 p, ImVec2 size, const char* text, bool hovered, 
   const auto& P = pal();
   App& a = app();
   const ImU32 lcdBg = P.dark ? P.field : P.surface950;
+  if (look::styled()) return look::field(dl, p, ImVec2(p.x + size.x, p.y + size.y), text, (hovered ? look::Hover : 0) | (active ? look::Active : 0), -1, true);  // J-129
   dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), active ? P.surface700 : hovered ? theme::mix(lcdBg, P.surface800, 0.5f) : lcdBg,
                     theme::kRadius);
   dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), active ? P.accent : P.line, theme::kRadius);

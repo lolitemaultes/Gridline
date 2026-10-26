@@ -19,6 +19,9 @@ void hintSettingsPanel(App& a, float fieldW);
 // read-only shortcut list of Help > Keyboard shortcuts.
 void shortcutSettingsPage(App& a, float fieldW);
 void themeSettingsPage(App& a, float fieldW);
+// J-129: the Theme page's Sounds group (Appearance / Controls / Sounds): the
+// interface sounds and the sound theme (J-133).
+void themeSoundsGroup(App& a, float fieldW);
 void shortcutReference(App& a);
 
 }  // namespace gl

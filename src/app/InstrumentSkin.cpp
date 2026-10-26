@@ -1,4 +1,5 @@
 // Gridline — instrument editor skin (see InstrumentSkin.h).
+#include "Look.h"
 #include "KeyLight.h"
 #include "InstrumentSkin.h"
 #include <algorithm>
@@ -82,6 +83,7 @@ void background(const Skin& k, float x, float y, float w, float h, ImU32 top, Im
   ImDrawList* dl = k.dl();
   ImVec2 a = k.at(x, y), b = k.at(x + w, y + h);
   audit::group(a, b, "panel");  // J-128: a section for the alignment check
+  if (look::styled()) return look::hookPanel(dl, a, b, top);  // J-129 control style
   if (round > 0) {
     // Rounded: solid blend, then the gradient inset by the radius.
     dl->AddRectFilled(a, b, lerp(top, bottom, 0.5f), k.px(round));
@@ -95,6 +97,7 @@ void bevel(const Skin& k, float x, float y, float w, float h, ImU32 fill, ImU32 
   ImDrawList* dl = k.dl();
   ImVec2 a = k.at(x, y), b = k.at(x + w, y + h);
   audit::group(a, b, "bevel");  // J-128
+  if (look::styled()) return look::hookSection(dl, a, b, fill);  // J-129 control style
   dl->AddRectFilled(a, b, fill, k.px(round));
   if (edge) dl->AddRect(a, b, edge, k.px(round), 0, 1.0f);
 }
@@ -128,6 +131,14 @@ void drawWheel(const Skin& k, ImVec2 p, float S, double n, bool centered, ImU32 
   ImDrawList* dl = k.dl();
   ImVec2 c(p.x + S * 0.5f, p.y + S * 0.5f);
   float r = S * 0.5f;
+  if (look::styled()) {  // J-129 control style
+    look::Knob lk;
+    lk.norm = static_cast<float>(n), lk.bipolar = centered, lk.state = (hov ? look::Hover : 0) | (act ? look::Active : 0);
+    lk.size = r >= 20 ? 2 : r >= 13 ? 1 : 0, lk.tint.value = look::hookTint(fill);
+    (void)flags, (void)cap;
+    look::knob(dl, c, r, lk);
+    return;
+  }
   const float a0 = kPi * 0.75f, a1 = kPi * 2.25f;
   float an = a0 + static_cast<float>(n) * (a1 - a0);
   float th = std::max(2.0f, r * 0.16f);

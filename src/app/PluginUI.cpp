@@ -1,3 +1,4 @@
+#include "Look.h"
 #include "../core/I18n.h"
 #include "HostedUi.h"
 #include "MidiUi.h"
@@ -971,7 +972,8 @@ bool hslider(App& a, const PluginTarget& t, int param, const char* label, float 
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   bool changed = dragParamTrack(a, pid, *d, val, p.x, width, true);  // J-98: the handle line is drawn at p.x + width * n
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(p, ImVec2(p.x + width, p.y + h), hov || act ? P.surface700 : theme::mix(P.surface800, P.surface700, 0.5f), 4);
+  if (look::styled()) look::hookInset(dl, p, ImVec2(p.x + width, p.y + h), 4, hov || act ? P.surface700 : theme::mix(P.surface800, P.surface700, 0.5f));  // J-129
+  else dl->AddRectFilled(p, ImVec2(p.x + width, p.y + h), hov || act ? P.surface700 : theme::mix(P.surface800, P.surface700, 0.5f), 4);
   float n = static_cast<float>(d->toNormalized(val));
   bool bip = d->min < 0 && d->max > 0;
   float x0 = bip ? p.x + width * static_cast<float>(d->toNormalized(0)) : p.x;
@@ -1008,9 +1010,14 @@ bool vslider(App& a, const PluginTarget& t, int param, const char* label, ImVec2
   float cx = p.x + size.x * 0.5f, capH = std::min(14.0f, size.x * 0.7f), travel = size.y - capH;
   bool changed = dragParamTrack(a, pid, *d, val, p.y + capH * 0.5f, travel, false);
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(ImVec2(cx - 2, p.y + capH * 0.5f), ImVec2(cx + 2, p.y + size.y - capH * 0.5f), P.surface950, 2);
   float n = static_cast<float>(d->toNormalized(val));
   bool bip = d->min < 0 && d->max > 0;
+  if (look::styled()) {  // J-129 control style
+    look::Slider ls;
+    ls.norm = n, ls.bipolar = bip, ls.vertical = true, ls.state = (hov ? look::Hover : 0) | (act ? look::Active : 0);
+    look::slider(dl, p, ImVec2(p.x + size.x, p.y + size.y), ls);
+  } else {
+  dl->AddRectFilled(ImVec2(cx - 2, p.y + capH * 0.5f), ImVec2(cx + 2, p.y + size.y - capH * 0.5f), P.surface950, 2);
   float y0 = p.y + capH * 0.5f + (1.0f - (bip ? static_cast<float>(d->toNormalized(0)) : 0.0f)) * travel;
   float yv = p.y + capH * 0.5f + (1.0f - n) * travel;
   dl->AddRectFilled(ImVec2(cx - 2, std::min(y0, yv)), ImVec2(cx + 2, std::max(y0, yv)), P.accent, 2);
@@ -1018,6 +1025,7 @@ bool vslider(App& a, const PluginTarget& t, int param, const char* label, ImVec2
   float yc = p.y + (1.0f - n) * travel;
   dl->AddRectFilled(ImVec2(p.x + 1, yc), ImVec2(p.x + size.x - 1, yc + capH), act ? P.paper : hov ? P.text : P.textDim, 3);
   dl->AddLine(ImVec2(p.x + 4, yc + capH * 0.5f), ImVec2(p.x + size.x - 4, yc + capH * 0.5f), P.surface900, 2);
+  }
   if (label) {
     std::string vs = d->format(val);
     ImGui::PushFont(a.fontMono, 10.0f);
@@ -1050,11 +1058,16 @@ bool led(App& a, const PluginTarget& t, int param, const char* label) {
   bool pressed = ImGui::InvisibleButton("##led", sz);
   bool hov = ImGui::IsItemHovered();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  if (hov) dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), P.surface700, 4);
   ImVec2 c(p.x + 10, p.y + sz.y * 0.5f);
-  if (on) dl->AddCircleFilled(c, 7.0f, theme::withAlpha(P.accent, 0.25f), 16);
-  dl->AddCircleFilled(c, 4.5f, on ? P.accent : P.surface950, 16);
-  dl->AddCircle(c, 4.5f, on ? theme::mix(P.accent, P.paper, 0.3f) : P.lineStrong, 16, 1.0f);
+  if (look::styled()) {  // J-129 control style
+    if (hov) look::hookFace(dl, p, ImVec2(p.x + sz.x, p.y + sz.y), 4, look::Hover, 0, false);
+    look::led(dl, c, 4.5f, on, 0, P.accent);
+  } else {
+    if (hov) dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), P.surface700, 4);
+    if (on) dl->AddCircleFilled(c, 7.0f, theme::withAlpha(P.accent, 0.25f), 16);
+    dl->AddCircleFilled(c, 4.5f, on ? P.accent : P.surface950, 16);
+    dl->AddCircle(c, 4.5f, on ? theme::mix(P.accent, P.paper, 0.3f) : P.lineStrong, 16, 1.0f);
+  }
   dl->AddText(ImVec2(p.x + 20, p.y + (sz.y - ts.y) * 0.5f), on ? P.text : P.textDim, lbl);
   if (pressed) a.doc.setParam(pid, on ? 0 : 1, false);
   if (hov) a.setHint(d->name + ": " + (on ? "on" : "off") + "   (click to switch)");
@@ -1083,7 +1096,9 @@ bool segmented(App& a, const PluginTarget& t, int param, float width, const char
   ImVec2 p0 = ImGui::GetCursorScreenPos();
   int rows = (n + cols - 1) / cols;
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(p0, ImVec2(p0.x + cw * cols, p0.y + h * rows), P.surface950, 5);
+  const bool styled = look::styled();  // J-129 control style
+  if (styled) look::hookInset(dl, p0, ImVec2(p0.x + cw * cols, p0.y + h * rows), 5, P.surface950);
+  else dl->AddRectFilled(p0, ImVec2(p0.x + cw * cols, p0.y + h * rows), P.surface950, 5);
   for (int i = 0; i < n; ++i) {
     int r = i / cols, c = i % cols;
     ImVec2 q(p0.x + c * cw, p0.y + r * h);
@@ -1096,7 +1111,10 @@ bool segmented(App& a, const PluginTarget& t, int param, float width, const char
     bool hov = ImGui::IsItemHovered();
     bool on = i == cur;
     const skin::Skin* sk = skin::active();
-    if (on)
+    if (styled) {
+      if (on || hov)
+        look::hookFace(dl, ImVec2(q.x + 2, q.y + 2), ImVec2(q.x + cw - 2, q.y + h - 2), 4, (on ? look::On : 0) | (hov ? look::Hover : 0), sk ? sk->select : P.hot, false);
+    } else if (on)
       dl->AddRectFilled(ImVec2(q.x + 2, q.y + 2), ImVec2(q.x + cw - 2, q.y + h - 2), sk ? theme::withAlpha(sk->select, 0.32f) : P.text, sk ? 2.0f : 4.0f);
     else if (hov)
       dl->AddRectFilled(ImVec2(q.x + 2, q.y + 2), ImVec2(q.x + cw - 2, q.y + h - 2), P.surface700, 4);
@@ -1104,7 +1122,7 @@ bool segmented(App& a, const PluginTarget& t, int param, float width, const char
     const char* lbl = labels ? labels[i] : d->choices[static_cast<size_t>(i)].c_str();
     ImVec2 ts = ui::TextSizeExact(lbl);
     dl->PushClipRect(q, ImVec2(q.x + cw, q.y + h), true);
-    ImU32 onText = sk ? skin::lighten(sk->select, 0.4f) : P.ink;
+    ImU32 onText = sk ? skin::lighten(sk->select, 0.4f) : styled ? P.hot : P.ink;
     dl->AddText(ImVec2(q.x + std::max(3.0f, (cw - ts.x) * 0.5f), q.y + (h - ts.y) * 0.5f), on ? onText : hov ? P.text : P.textDim, lbl);
     dl->PopClipRect();
     if (hov) a.setHint(d->name + ": " + d->choices[static_cast<size_t>(i)]);
@@ -1187,6 +1205,7 @@ bool stepper(App& a, const PluginTarget& t, int param, float width, const char* 
 
 void displayFrame(ImDrawList* dl, ImVec2 p0, ImVec2 p1) {
   audit::frame(p0, p1, "display");
+  if (look::styled()) return look::hookWell(dl, p0, p1, 0);  // J-129 control style
   const auto& P = pal();
   skin::gradientRect(dl, p0, p1, theme::mix(P.surface950, P.surface900, 0.15f), P.surface950, 6);
   dl->AddLine(ImVec2(p0.x + 6, p0.y + 1), ImVec2(p1.x - 6, p0.y + 1), IM_COL32(0, 0, 0, 50), 1.0f);
@@ -1208,6 +1227,12 @@ void drawGrid(ImDrawList* dl, ImVec2 p0, ImVec2 p1, int cols, int rows, bool cen
 }
 
 void levelMeter(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float db, bool reduction, float rangeDb) {
+  if (look::styled()) {  // J-129 control style
+    look::Meter m;
+    m.reduction = reduction, m.l = reduction ? std::clamp(-db / rangeDb, 0.0f, 1.0f) : look::dbNorm(db, rangeDb);
+    look::meter(dl, p0, p1, m);
+    return;
+  }
   const auto& P = pal();
   dl->AddRectFilled(p0, p1, P.surface950, 3);
   float h = p1.y - p0.y - 2;

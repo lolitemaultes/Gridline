@@ -78,6 +78,10 @@ void tweaksToSettings(const Tweaks& t, Settings& s) {
   s.set("theme.brightness", static_cast<double>(t.brightness));
 }
 
+ui::ControlStyle controlStyleFromSettings(const Settings& s) { return ui::controlStyleFromText(s.getString("theme.controls")); }
+
+void controlStyleToSettings(ui::ControlStyle c, Settings& s) { s.set("theme.controls", ui::controlStyleName(c)); }
+
 void resetThemeSettings(Settings& s) { tweaksToSettings(Tweaks{}, s); }
 
 bool systemPrefersDark() {
@@ -113,6 +117,7 @@ void applyFromSettings(const Settings& s, bool requerySystem) {
   const Tweaks t = tweaksFromSettings(s);
   if (t != tweaks()) setTweaks(t);  // re-applies the current base
   apply(dark);
+  ui::setControlStyle(controlStyleFromSettings(s));  // drawn from the next frame on, open plugin windows too
 }
 
 }  // namespace gl::theme

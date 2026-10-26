@@ -4,9 +4,11 @@
 //   theme.mode        "dark" | "light" | "system"  ("" = from ui.darkTheme, older settings)
 //   theme.accent / theme.hot / theme.led / theme.playhead   "#RRGGBB" ("" = theme default)
 //   theme.contrast / theme.brightness                       -1 .. 1
+//   theme.controls    "slate" | "graphite" | "hairline" | "lumen" | "classic" (J-129; unknown = slate)
 #pragma once
 #include <cstdint>
 #include <string>
+#include "ControlStyle.h"
 #include "Theme.h"
 
 namespace gl {
@@ -21,6 +23,9 @@ Mode modeFromSettings(const Settings& s);
 void modeToSettings(Mode m, Settings& s);  // also keeps ui.darkTheme in step
 Tweaks tweaksFromSettings(const Settings& s);
 void tweaksToSettings(const Tweaks& t, Settings& s);
+// Control style (J-129): how knobs, faders, buttons, meters and displays are drawn.
+ui::ControlStyle controlStyleFromSettings(const Settings& s);
+void controlStyleToSettings(ui::ControlStyle c, Settings& s);
 // Removes every theme setting (mode stays dark / light as it was).
 void resetThemeSettings(Settings& s);
 
@@ -32,7 +37,7 @@ uint32_t parseColour(const std::string& text);
 // Unknown = dark (Gridline's default look). Runs a short query: call on start,
 // on changing the setting and when the window regains focus, not per frame.
 bool systemPrefersDark();
-// Resolves the mode and applies palette + tweaks. The desktop is asked once
+// Resolves the mode and applies palette + tweaks and the control style. The desktop is asked once
 // and then only when requerySystem is set (mode chosen, window focused again).
 void applyFromSettings(const Settings& s, bool requerySystem = false);
 

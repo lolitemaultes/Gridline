@@ -232,6 +232,17 @@ void testApplyFirst() {
   reapplied = applied;
   cf.abandon();
   expect(take(st, themeKeys()) == before && applied == reapplied && !cf.pending(), "quit while asking: earlier settings, no re-apply");
+  // J-129: the control style is a theme key: applied at once, Revert brings the earlier style back.
+  {
+    const Snapshot cFrom = take(st, themeKeys());
+    st.set("theme.controls", "lumen");
+    const Snapshot cTo = take(st, themeKeys());
+    restore(st, cFrom);
+    cf.request(snapshotChange(st, "theme", "t", "Control style", "Slate", "Lumen", cFrom, cTo, Preview::Theme, nullptr), 0);
+    expect(st.getString("theme.controls") == "lumen", "control style: applied at once");
+    cf.revert();
+    expect(st.getString("theme.controls") == "slate", "control style Revert: slate back");
+  }
   // Language: applied at once, reverts.
   const Snapshot lFrom = take(st, {{"general.language", 's'}});
   Settings tmp;

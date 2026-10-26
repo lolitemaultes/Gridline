@@ -1155,6 +1155,18 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                          TIMEOUT 900
                          FAIL_REGULAR_EXPRESSION "terminating due to|mutex lock failed|libc\\+\\+abi")
 
+    # J-129: every built-in editor renders in every control style (thumbnail run, hidden, isolated config).
+    foreach(style classic slate graphite hairline lumen)
+      add_test(NAME j129_style_${style}
+               COMMAND gridline-app --hidden --no-ui-sounds --no-update-check --look ${style} --make-thumbs --size 1600x1100
+                       --screenshot ${CMAKE_BINARY_DIR}/j129_style_${style}/frame.ppm --frames 100000
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(j129_style_${style} PROPERTIES
+                           ENVIRONMENT "GRIDLINE_CONFIG_HOME=${CMAKE_BINARY_DIR}/j129_style_${style};GRIDLINE_NO_PLUGIN_SCAN=1;GRIDLINE_HIDE_PLUGINS=all"
+                           TIMEOUT 600 PASS_REGULAR_EXPRESSION "thumbnails: [1-9][0-9]* written"
+                           FAIL_REGULAR_EXPRESSION "Assertion|assert|terminating due to|libc\\+\\+abi")
+    endforeach()
+
     # J-78: clicks on a notification card never reach the playlist clip below it (hidden off-screen run).
     add_test(NAME j78_toast_click
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/demo/demo.gridline.json

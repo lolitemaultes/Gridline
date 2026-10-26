@@ -1,7 +1,8 @@
 // Gridline - J-55 theme page: mode (dark / light / follow system) and the
 // user's tweaks (accent and role colours, contrast, brightness) persist in the
 // settings, apply to the palette and the ImGui style, keep the role colours
-// distinct, and reset. Headless Dear ImGui (no window, no renderer).
+// distinct, and reset. J-129: the control style (theme.controls) defaults to
+// slate, reads unknown text as slate, round-trips and applies. Headless Dear ImGui (no window, no renderer).
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -112,6 +113,35 @@ int main() {
   theme::modeToSettings(theme::Mode::System, st2);
   theme::applyFromSettings(st2, true);
   expect(theme::isDark() == theme::systemPrefersDark(), "follow system applies the desktop's choice");
+
+  // J-129: control style.
+  {
+    Settings cs;
+    expect(cs.getString("theme.controls") == "slate" && theme::controlStyleFromSettings(cs) == ui::ControlStyle::Slate,
+           "controls: default slate");
+    const ui::ControlStyle all[] = {ui::ControlStyle::Classic, ui::ControlStyle::Graphite, ui::ControlStyle::Hairline,
+                                    ui::ControlStyle::Lumen, ui::ControlStyle::Slate};
+    const std::string cpath = (dir / "controls.json").string();
+    for (ui::ControlStyle c : all) {
+      theme::controlStyleToSettings(c, cs);
+      Settings back;
+      expect(cs.save(cpath) && back.load(cpath) && theme::controlStyleFromSettings(back) == c &&
+                 back.getString("theme.controls") == ui::controlStyleName(c),
+             (std::string("controls round trip: ") + ui::controlStyleName(c)).c_str());
+      theme::applyFromSettings(back);
+      expect(ui::controlStyle() == c && ui::styledControls() == (c != ui::ControlStyle::Classic),
+             (std::string("controls applied: ") + ui::controlStyleName(c)).c_str());
+    }
+    cs.set("theme.controls", "chrome");
+    expect(theme::controlStyleFromSettings(cs) == ui::ControlStyle::Slate, "controls: unknown value = slate");
+    cs.set("theme.controls", "");
+    expect(theme::controlStyleFromSettings(cs) == ui::ControlStyle::Slate, "controls: empty = slate");
+    {
+      const ui::ControlStyleScope scope(ui::ControlStyle::Lumen);
+      expect(ui::controlStyle() == ui::ControlStyle::Lumen, "controls: a preview scope draws its own style");
+    }
+    expect(ui::controlStyle() == ui::ControlStyle::Slate, "controls: back to the setting after the preview");
+  }
 
   std::error_code ec;
   fs::remove_all(dir, ec);

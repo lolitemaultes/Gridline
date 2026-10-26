@@ -1,4 +1,5 @@
 // Gridline — rack skin: per-plugin palettes and vector control styles.
+#include "Look.h"
 #include "../core/I18n.h"
 #include "PluginSkin.h"
 #include "../../third_party/imgui/imgui_internal.h"
@@ -158,6 +159,7 @@ void Form::end(float formW, float formH) const {
 void panel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
   audit::frame(p0, p1, "panel");
   kitFrame(p0, p1);
+  if (look::styled()) return look::hookPanel(dl, p0, p1, k.panel);  // J-129 control style
   gradientRect(dl, p0, p1, k.panelHi, k.panel, rounding);
   dl->AddLine(ImVec2(p0.x + rounding, p0.y + 0.5f), ImVec2(p1.x - rounding, p0.y + 0.5f), theme::withAlpha(lighten(k.panelHi, 0.2f), 0.5f), 1.0f);
   dl->AddRect(p0, p1, darken(k.panel, 0.45f), rounding, 0, 1.0f);
@@ -166,6 +168,7 @@ void panel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) 
 void bevel(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float rounding) {
   audit::frame(p0, p1, "bevel");
   kitFrame(p0, p1);
+  if (look::styled()) return look::hookSection(dl, p0, p1, k.bevel);  // J-129 control style
   gradientRect(dl, p0, p1, theme::withAlpha(k.bevel, 0.66f), theme::withAlpha(k.bevel, 0.48f), rounding);
   dl->AddLine(ImVec2(p0.x + rounding, p0.y + 1.0f), ImVec2(p1.x - rounding, p0.y + 1.0f), IM_COL32(0, 0, 0, 50), 1.0f);
   dl->AddRect(p0, p1, darken(k.panel, 0.5f), rounding, 0, 1.0f);
@@ -197,6 +200,7 @@ void lcd(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const char* text, 
 
 void graphWell(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k) {
   audit::frame(p0, p1, "graph");
+  if (look::styled()) return look::hookWell(dl, p0, p1, k.graphBg);  // J-129 control style
   gradientRect(dl, p0, p1, lighten(k.graphBg, 0.035f), darken(k.graphBg, 0.10f), 3);
   dl->AddLine(ImVec2(p0.x + 2, p0.y + 0.5f), ImVec2(p1.x - 2, p0.y + 0.5f), IM_COL32(0, 0, 0, 60), 1.0f);
   dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), theme::withAlpha(darken(k.panel, 0.65f), 0.9f), 3, 0, 1.0f);
@@ -233,6 +237,7 @@ void gradientRect(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 top, ImU32 bottom,
 }
 
 void insetField(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 bg, float rounding) {
+  if (look::styled()) return look::hookInset(dl, p0, p1, rounding, bg);  // J-129 control style
   gradientRect(dl, p0, p1, darken(bg, 0.22f), bg, rounding);
   const float r = std::min(rounding, (p1.y - p0.y) * 0.5f);
   dl->AddLine(ImVec2(p0.x + r, p0.y + 1.0f), ImVec2(p1.x - r, p0.y + 1.0f), IM_COL32(0, 0, 0, 70), 1.0f);
@@ -241,6 +246,7 @@ void insetField(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 bg, float rounding) 
 }
 
 void raisedFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 bg, float rounding) {
+  if (look::styled()) return look::hookRaised(dl, p0, p1, rounding, bg, 0);  // J-129 control style
   gradientRect(dl, p0, p1, lighten(bg, 0.07f), darken(bg, 0.06f), rounding);
   const float r = std::min(rounding, (p1.y - p0.y) * 0.5f);
   dl->AddLine(ImVec2(p0.x + r, p0.y + 0.5f), ImVec2(p1.x - r, p0.y + 0.5f), theme::withAlpha(lighten(bg, 0.35f), 0.45f), 1.0f);
@@ -257,6 +263,17 @@ void gradientCircle(ImDrawList* dl, ImVec2 c, float r, ImU32 top, ImU32 bottom) 
 
 void knobFace(ImDrawList* dl, ImVec2 c, float r, const KnobPaint& p) {
   if (r < 2.0f) return;
+  if (look::styled()) {  // J-129 control style
+    look::Knob k;
+    const float sweep = std::max(0.01f, p.a1 - p.a0);
+    k.norm = std::clamp((p.an - p.a0) / sweep, 0.0f, 1.0f);
+    k.bipolar = p.from > p.a0 + 0.01f;
+    k.state = (p.hot ? look::Hover : 0) | (p.active ? look::Active : 0);
+    k.size = r >= 20 ? 2 : r >= 13 ? 1 : 0;
+    k.tint.value = look::hookTint(p.fill);
+    look::knob(dl, c, r, k);
+    return;
+  }
   const bool lit = p.hot || p.active;
   const float th = p.railTh > 0 ? p.railTh : std::max(2.0f, r * 0.16f);
   const float rr = r - th * 0.5f;
@@ -357,6 +374,7 @@ bool graphHover(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, const std::
 
 void curveArea(ImDrawList* dl, const ImVec2* pts, int n, float baseY, ImU32 line, float thick, float fillAlpha) {
   if (n < 2) return;
+  if (look::styled()) return look::curve(dl, pts, n, baseY, look::hookTint(line), fillAlpha > 0);  // J-129 control style
   float top = baseY;
   for (int i = 0; i < n; ++i) top = std::min(top, pts[i].y);
   const ImDrawListFlags keep = dl->Flags;
@@ -459,6 +477,14 @@ bool vslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
   bool changed = pui::dragParamTrack(a, b.pid, b.d, b.val, top, travel, false);  // J-98: handle stays under the pointer
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (!fill) fill = k.fill;
+  if (look::styled()) {  // J-129 control style
+    look::Slider s;
+    s.vertical = true, s.norm = static_cast<float>(b.d.toNormalized(b.val)), s.bipolar = b.d.min < 0 && b.d.max > 0;
+    s.state = (hov ? look::Hover : 0) | (act ? look::Active : 0), s.tint.value = look::hookTint(fill);
+    look::slider(dl, ImVec2(tl.x, top - 6), ImVec2(tl.x + size.x, bot + 6), s);
+    ImGui::PopID();
+    return changed;
+  }
   float cx = std::round(tl.x + size.x * 0.5f);
   float rw = std::max(3.0f, size.x * 0.22f);
   if (ruler)
@@ -500,6 +526,14 @@ bool hslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
   bool changed = pui::dragParamTrack(a, b.pid, b.d, b.val, l, r - l, true);  // J-98: handle stays under the pointer
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (!fill) fill = k.fill;
+  if (look::styled()) {  // J-129 control style
+    look::Slider s;
+    s.norm = static_cast<float>(b.d.toNormalized(b.val)), s.bipolar = b.d.min < 0 && b.d.max > 0;
+    s.state = (hov ? look::Hover : 0) | (act ? look::Active : 0), s.tint.value = look::hookTint(fill);
+    look::slider(dl, ImVec2(l - 6, tl.y), ImVec2(r + 6, tl.y + size.y), s);
+    ImGui::PopID();
+    return changed;
+  }
   float cy = std::round(tl.y + size.y * 0.5f);
   float rh = std::max(3.0f, size.y * 0.25f);
   dl->AddRectFilled(ImVec2(l, cy - rh * 0.5f), ImVec2(r, cy + rh * 0.5f), k.rail, rh * 0.5f);
@@ -560,7 +594,9 @@ bool switchSel(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size,
       if (horizontal) dl->AddLine(ImVec2(std::round(c0.x) + 0.5f, c0.y + 4), ImVec2(std::round(c0.x) + 0.5f, c1.y - 4), IM_COL32(255, 255, 255, 12));
       else dl->AddLine(ImVec2(c0.x + 4, std::round(c0.y) + 0.5f), ImVec2(c1.x - 4, std::round(c0.y) + 0.5f), IM_COL32(255, 255, 255, 12));
     }
-    if (on) {
+    if (look::styled() && on) {  // J-129 control style
+      look::hookFace(dl, ImVec2(c0.x + 2, c0.y + 2), ImVec2(c1.x - 2, c1.y - 2), 2.5f, look::On, k.select, false);
+    } else if (on) {
       const ImVec2 s0(c0.x + 2, c0.y + 2), s1(c1.x - 2, c1.y - 2);
       gradientRect(dl, s0, s1, theme::withAlpha(k.select, 0.36f), theme::withAlpha(k.select, 0.20f), 2.5f);
       dl->AddRect(s0, s1, theme::withAlpha(k.select, 0.55f), 2.5f, 0, 1.0f);
@@ -642,7 +678,9 @@ bool button(const char* id, ImVec2 tl, ImVec2 size, const Skin& k, const char* t
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 p1(tl.x + size.x, tl.y + size.y);
-  if (on) {  // lit: the selection colour glows through the face
+  if (look::styled() && on) {  // J-129 control style
+    look::hookFace(dl, tl, p1, 3, look::On | (hov ? look::Hover : 0) | (act ? look::Active : 0), k.select, true);
+  } else if (on) {  // lit: the selection colour glows through the face
     const ImU32 base = theme::mix(k.panelLo, k.select, act ? 0.55f : 0.40f);
     gradientRect(dl, tl, p1, lighten(base, 0.10f), base, 3);
     dl->AddRect(tl, p1, theme::withAlpha(lighten(k.select, 0.1f), 0.85f), 3, 0, 1.0f);
@@ -751,6 +789,12 @@ void bracket(ImDrawList* dl, const Form& f, float x0, float x1, float y, ImU32 c
 
 void meter(ImDrawList* dl, const Form& f, float x, float y, float w, float h, float db, const MeterLook& look, bool reduction) {
   ImVec2 p0 = f.p(x, y), p1 = f.p(x + w, y + h);
+  if (look::styled()) {  // J-129 control style
+    look::Meter m;
+    m.reduction = reduction, m.l = reduction ? std::clamp(-db / look.rangeDb, 0.0f, 1.0f) : look::dbNorm(db, look.rangeDb);
+    look::meter(dl, p0, p1, m);
+    return;
+  }
   dl->AddRectFilled(p0, p1, look.bg, f.d(1.5f));
   float k = reduction ? std::clamp(-db / look.rangeDb, 0.0f, 1.0f) : std::clamp(1.0f + db / look.rangeDb, 0.0f, 1.0f);
   if (k <= 0) return;
@@ -1631,8 +1675,13 @@ bool buttonAt(const View& v, const char* id, float x, float y, float w, float h,
   ImU32 base = on ? theme::mix(pal.raised, pal.fill, 0.45f) : pal.raised;
   if (act) base = darken(base, 0.15f);
   else if (hov) base = lighten(base, 0.1f);
-  dl->AddRectFilled(p0, p1, base, v.px(2.5f));
-  dl->AddRect(p0, p1, on ? pal.fill : darken(pal.raised, 0.45f), v.px(2.5f), 0, 1.0f);
+  if (look::styled()) {  // J-129 control style
+    if (on) look::hookFace(dl, p0, p1, v.px(2.5f), look::On | (hov ? look::Hover : 0) | (act ? look::Active : 0), pal.fill, true);
+    else look::hookRaised(dl, p0, p1, v.px(2.5f), base, act ? look::Active : hov ? look::Hover : 0);
+  } else {
+    dl->AddRectFilled(p0, p1, base, v.px(2.5f));
+    dl->AddRect(p0, p1, on ? pal.fill : darken(pal.raised, 0.45f), v.px(2.5f), 0, 1.0f);
+  }
   ImU32 fg = on ? IM_COL32(255, 255, 255, 255) : pal.text;
   if (glyph) glyph(dl, ImVec2(p0.x + v.px(3), p0.y + v.px(3)), ImVec2(p1.x - v.px(3), p1.y - v.px(3)), fg);
   if (text && *text) textAt(dl, p0, p1, fg, text, std::clamp((p1.y - p0.y) * 0.5f, 10.f, 14.f), 0);

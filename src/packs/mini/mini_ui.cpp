@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include "../../app/App.h"
+#include "../../app/Look.h"
 #include "../../app/PluginEditorsCommon.h"
 #include "../../app/PluginUI.h"
 #include "../../app/Theme.h"
@@ -539,6 +540,10 @@ void drawDisplay(App& a, const PluginTarget& t, const PluginState& s, const Plug
       if (ImGui::InvisibleButton("##step", ImVec2(sw, h))) pui::setParamValue(a, t, pulse::Step0 + k, on ? 0.0 : 1.0);
       ImGui::PopID();
       const bool hov = ImGui::IsItemHovered();
+      if (look::styled()) {  // J-129 control style
+        look::stepPad(w.dl, b0, b1, on, (k / 4) % 2 != 0, 1.f, false, hov ? look::Hover : 0, look::hookTint(col));
+        continue;
+      }
       w.dl->AddRectFilled(b0, b1, on ? col : (k / 4) % 2 ? P.stepOffAlt : P.stepOff, 3.f);
       if (hov) w.dl->AddRect(b0, b1, P.text, 3.f);
     }

@@ -1,7 +1,8 @@
 // Gridline - J-55 settings pages: the keyboard shortcut editor (every command
 // of the central keymap, searchable, rebind with conflict check, reset) and
 // the theme page (dark / light / follow system, accent and role colours,
-// contrast, brightness, live preview). Also the read-only shortcut reference
+// contrast, brightness, live preview; J-129: grouped as Appearance / Controls /
+// Sounds, with the control style picker). Also the read-only shortcut reference
 // shown by Help > Keyboard shortcuts (F1).
 #include <algorithm>
 #include <cctype>
@@ -9,7 +10,9 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include "ControlStyle.h"
 #include "DisplayConfirmUi.h"
+#include "Look.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/I18n.h"
 #include "../core/Keymap.h"
@@ -389,11 +392,100 @@ void themePreview(App& a) {
   ImGui::Dummy(ImVec2(w, h));
 }
 
+// Group heading of the Theme page: a title over a rule.
+void groupHeading(App& a, const char* title, bool first = false) {
+  if (!first) ImGui::Dummy(ImVec2(0, theme::kS3));
+  ImGui::PushFont(a.fontBold, theme::kFontTitle);
+  ImGui::TextUnformatted(tr(title));
+  ImGui::PopFont();
+  const ImVec2 q = ImGui::GetCursorScreenPos();
+  ImGui::GetWindowDrawList()->AddLine(ImVec2(q.x, q.y), ImVec2(q.x + ImGui::GetContentRegionAvail().x, q.y), pal().line, 1.0f);
+  ImGui::Dummy(ImVec2(0, theme::kS2));
+}
+
+// One card of the control style picker: the style's own knob, fader and a
+// live meter, its name and a line about it. Returns true when clicked.
+bool styleCard(App& a, ui::ControlStyle s, bool selected, float w, float h) {
+  static const char* const kTitles[] = {i18n::N_("Classic"), i18n::N_("Graphite"), i18n::N_("Hairline"), i18n::N_("Lumen"),
+                                        i18n::N_("Slate")};
+  static const char* const kBlurbs[] = {i18n::N_("The earlier look"), i18n::N_("Machined, lit by Paper"),
+                                        i18n::N_("Flat lines, one accent"), i18n::N_("Dark glass, values as light"),
+                                        i18n::N_("Studio slate, one finish")};
+  const int i = static_cast<int>(s);
+  const auto& P = pal();
+  ImGui::PushID(i);
+  const ImVec2 o = ImGui::GetCursorScreenPos();
+  const bool clicked = ImGui::InvisibleButton("card", ImVec2(w, h));
+  const bool hov = ImGui::IsItemHovered();
+  ui::Hint(tr(kBlurbs[i]));
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float ph = h - 40.0f;  // preview area
+  {
+    const ui::ControlStyleScope scope(s);
+    const ImVec2 p0(o.x, o.y), p1(o.x + w, o.y + ph);
+    look::panel(dl, p0, p1);
+    const double t = ImGui::GetTime();
+    look::Knob k;
+    k.norm = 0.62f, k.size = 1, k.state = hov ? look::Hover : 0;
+    k.modDepth = 0.18f, k.modNow = 0.62f + 0.12f * static_cast<float>(std::sin(t * 1.7));
+    look::knob(dl, ImVec2(o.x + w * 0.3f, o.y + ph * 0.5f), std::min(18.0f, ph * 0.3f), k);
+    look::Fader f;
+    f.norm = 0.72f;
+    look::fader(dl, ImVec2(o.x + w * 0.56f, o.y + 10), ImVec2(o.x + w * 0.56f + 18, o.y + ph - 10), f);
+    look::Meter m;
+    const float lv = 0.55f + 0.3f * static_cast<float>(std::sin(t * 3.1) * std::sin(t * 1.3));
+    m.l = lv, m.r = lv * 0.9f, m.peakL = 0.86f, m.peakR = 0.82f;
+    look::meter(dl, ImVec2(o.x + w * 0.78f, o.y + 10), ImVec2(o.x + w * 0.78f + 12, o.y + ph - 10), m);
+  }
+  dl->AddText(a.fontBold, theme::kFontBody, ImVec2(o.x + 2, o.y + ph + 5), selected ? P.text : P.textDim, tr(kTitles[i]));
+  dl->PushClipRect(ImVec2(o.x, o.y + ph), ImVec2(o.x + w, o.y + h), true);  // long translations stay in the card
+  dl->AddText(ImVec2(o.x + 2, o.y + ph + 22), P.textFaint, tr(kBlurbs[i]));
+  dl->PopClipRect();
+  if (selected || hov)
+    dl->AddRect(ImVec2(o.x - 3, o.y - 3), ImVec2(o.x + w + 3, o.y + ph + 3), selected ? P.accent : P.lineStrong, theme::kRadius + 2, 0,
+                selected ? 2.0f : 1.0f);
+  ImGui::PopID();
+  return clicked;
+}
+
+// The control style picker: one live card per style, applied at once
+// (everywhere, open plugin windows too) with Keep / Revert.
+void controlStylePicker(App& a) {
+  Settings& st = a.settings;
+  const ui::ControlStyle cur = theme::controlStyleFromSettings(st);
+  const ui::ControlStyle order[] = {ui::ControlStyle::Slate, ui::ControlStyle::Graphite, ui::ControlStyle::Hairline,
+                                    ui::ControlStyle::Lumen, ui::ControlStyle::Classic};
+  const float avail = ImGui::GetContentRegionAvail().x, gap = theme::kS3;
+  const int perRow = avail >= 5 * 150.0f + 4 * gap ? 5 : avail >= 3 * 150.0f + 2 * gap ? 3 : 2;
+  const float w = std::floor((avail - gap * static_cast<float>(perRow - 1)) / static_cast<float>(perRow)), h = 132.0f;
+  for (int n = 0; n < 5; ++n) {
+    if (n % perRow) ImGui::SameLine(0, gap);
+    else if (n) ImGui::Dummy(ImVec2(0, theme::kS1));
+    if (styleCard(a, order[n], order[n] == cur, w, h) && order[n] != cur) {
+      const dispconf::Snapshot before = dispconf::take(st, dispconf::themeKeys());
+      theme::controlStyleToSettings(order[n], st);
+      applyTheme(a);
+      ui::confirmTheme(a, before, "Control style");
+    }
+  }
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  ImGui::TextColored(theme::vec(pal().textFaint), "%s",
+                     tr("Changes how knobs, faders, buttons, meters and displays are drawn everywhere. Sizes stay the same."));
+}
+
 }  // namespace
+
+// The Sounds group: interface sounds and the sound theme (J-133).
+void themeSoundsGroup(App& a, float fieldW) {
+  ui::BeginSection(tr("SOUNDS"));
+  uisound::drawThemeSettings(a, fieldW);
+  ui::EndSection();
+}
 
 void themeSettingsPage(App& a, float fieldW) {
   Settings& st = a.settings;
   const auto& P = pal();
+  groupHeading(a, i18n::N_("Appearance"), true);
   ui::BeginSection(tr("APPEARANCE"));
   {
     label("Theme");
@@ -492,17 +584,20 @@ void themeSettingsPage(App& a, float fieldW) {
   themePreview(a);
   ui::EndSection();
 
-  // J-133: interface sounds and the sound theme (J-129 may move this into its own Sounds group).
-  ui::BeginSection(tr("SOUNDS"));
-  uisound::drawThemeSettings(a, fieldW);
-  ui::EndSection();
-
-  if (ui::TextButton(tr("Reset theme"), false, 0, tr("Theme colours, contrast and brightness back to the defaults (the dark / light choice stays)"))) {
+  // Colours only: the dark / light choice, the control style and the sound theme stay.
+  if (ui::TextButton(tr("Reset colours"), false, 0,
+                     tr("Theme colours, contrast and brightness back to the defaults (dark / light, control style and sounds stay)"))) {
     const dispconf::Snapshot before = dispconf::take(st, dispconf::themeKeys());
     theme::resetThemeSettings(st);
     applyTheme(a);
     ui::confirmTheme(a, before, "Theme reset");  // J-77: colours and adjustments can come back
   }
+
+  groupHeading(a, i18n::N_("Controls"));
+  controlStylePicker(a);
+
+  groupHeading(a, i18n::N_("Sounds"));
+  themeSoundsGroup(a, fieldW);
 }
 
 }  // namespace gl

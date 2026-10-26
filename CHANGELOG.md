@@ -87,6 +87,18 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   display, so they stay sharp at 100 %, 150 % and 200 %. They take their colours from the theme,
   so they also read well on the light theme.
 
+### New: control styles (Settings > Theme > Controls)
+
+- Choose how knobs, faders, buttons, meters, fields and displays are drawn, in the main window and
+  every plugin editor: Slate (the default: the studio slate look with one consistent finish),
+  Graphite (machined graphite with recessed Paper light, the material of the app icon), Hairline
+  (flat lines with one accent), Lumen (dark glass, values drawn as light) or Classic (the look
+  before control styles). Each card in the picker is a live preview; a new style applies at once,
+  open plugin windows included, and can be kept or reverted like the other theme settings.
+- Styles change drawing only: sizes, layouts and click areas stay the same. They follow dark or
+  light mode, your accent and role colours, and each plugin's own palette where the style uses one.
+- The Theme page is now grouped as Appearance, Controls and Sounds.
+
 ### Stand-ins for a missing Serum or Kickstart
 
 - A project (Gridline or FL Studio) whose Serum or Serum 2 is not installed plays it with Plasma;

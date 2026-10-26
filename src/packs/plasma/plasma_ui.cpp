@@ -4,6 +4,7 @@
 // page tabs and preset row, the bottom strip with wheels, CLIP / ARP, scale and
 // keyboard, and the entry point.
 #include "plasma_ui.h"
+#include "../../app/Look.h"
 #include "plasma_dsp.h"
 #include "../../app/LayoutAudit.h"
 #include <algorithm>
@@ -255,9 +256,10 @@ void panelRect(const Ctx& c, float x, float y, float w, float h, ImU32 col, floa
 }
 void wellRect(const Ctx& c, float x, float y, float w, float h, float r) {
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
+  gl::audit::group(a, b, "well");  // J-128: rows are checked per panel
+  if (look::styled()) return look::hookWell(c.dl, a, b, c.P.well);  // J-129 control style
   c.dl->AddRectFilled(a, b, c.P.well, c.s(r));
   c.dl->AddRect(a, b, c.P.line, c.s(r));
-  gl::audit::group(a, b, "well");  // J-128: rows are checked per panel
 }
 void hline(const Ctx& c, float x0, float x1, float y, ImU32 col) {
   const ImVec2 a = c.p(x0, y), b = c.p(x1, y);
@@ -291,9 +293,10 @@ void layoutLayer(int layer) { gLayer = layer; }
 void frameBox(const Ctx& c, float x, float y, float w, float h, ImU32 fill) {
   const float g = kGutter;
   const ImVec2 a = c.p(x + g, y + g), b = c.p(x + w - g, y + h - g);
+  gl::audit::group(a, b, "cell");  // J-128: rows are checked per panel
+  if (look::styled()) return look::hookSection(c.dl, a, b, fill ? fill : c.P.panel);  // J-129 control style
   // no outline: a cell reads as a cell through the dark gutter around it and its tone
   c.dl->AddRectFilled(a, b, fill ? fill : c.P.panel, c.s(2.0f));
-  gl::audit::group(a, b, "cell");  // J-128: rows are checked per panel
 }
 float moduleFrame(Ctx& c, float x, float y, float w, float h, float headH, const char* title, int enable, bool lit, ImU32 fill, bool centre) {
   frameBox(c, x, y, w, h, fill);

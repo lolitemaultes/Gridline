@@ -1,5 +1,6 @@
 // Gridline — application entry: SDL2 window + OpenGL 3 + Dear ImGui, audio
 // device, default layout, typing keyboard, file drops.
+#include "Look.h"
 #include "GridlineVersion.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -1105,6 +1106,7 @@ int main(int argc, char** argv) {
   std::string devCollabDemo;              // --show collab-demo / collab-review / collab-demo-panel (J-111)
   float shotScale = 1.0f;                 // --scale F: framebuffer scale of an off-screen shot (HiDPI check)
   std::string devAlignAudit;              // --align-audit <file> (J-128)
+  int devGallery = -1, devGalleryPage = 1;  // J-129 --gallery
   float devUiScale = 0.0f;                // --ui-scale F: interface scale for this run only (not saved; J-54 layout checks)
   std::string devSaveAtExit;  // --save-at-exit path: project saved when the run ends (plugin state round trips)
   std::string devSaveAt;      // --save-at path: project saved at frame 3 (J-78: the notification shows in the shot)
@@ -1360,6 +1362,15 @@ int main(int argc, char** argv) {
     } else if (arg == "--no-ui-sounds") {  // J-48: handled before the audio device opens
     } else if (arg == "--lang" && i + 1 < argc) {  // J-55 dev check: interface language for this run only (not saved)
       i18n::setLanguage(argv[++i], app.languageDir());
+    } else if (arg == "--gallery" && i + 1 < argc) {  // J-129 dev: element gallery of a look ("graphite", "lumen:2", ...)
+      std::string g = argv[++i];
+      const size_t colon = g.find(':');
+      if (colon != std::string::npos) devGalleryPage = std::atoi(g.c_str() + colon + 1), g.resize(colon);
+      look::Dir d{};
+      if (look::parseDir(g.c_str(), d)) devGallery = static_cast<int>(d);
+    } else if (arg == "--look" && i + 1 < argc) {  // J-129 dev: draw the shared elements in a candidate look
+      look::Dir d{};
+      if (look::parseDir(argv[++i], d)) ui::forceControlStyle(d);
     } else if (arg == "--light") {
       theme::apply(false);
     } else if (arg == "--ui-scale" && i + 1 < argc) {
@@ -1862,6 +1873,7 @@ int main(int argc, char** argv) {
     prof::Scope psRender("render");
     viewports::drawTitleButtons();  // J-114
     if (alignFrame) alignaudit::finish(devAlignAudit);  // J-128
+    if (devGallery >= 0) look::drawGallery(static_cast<look::Dir>(devGallery), ImGui::GetTime(), devGalleryPage);  // J-129
     ImGui::Render();
     if (useOffscreen) offscreen.use(true);
     glViewport(0, 0, fbW, fbH);

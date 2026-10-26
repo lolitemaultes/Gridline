@@ -263,7 +263,7 @@ void settingsWindow(App& a) {
   const char* blurbs[] = {i18n::N_("Output and input devices, sample rate, buffer and recording"), i18n::N_("Controllers, keyboards and MIDI out"),
                           i18n::N_("Defaults for new projects"), i18n::N_("Automatic backups, autosave and restoring a backup"), i18n::N_("Theme, size and hints"),
                           i18n::N_("Startup, default template, language and updates"), i18n::N_("Folders and scripting"), i18n::N_("Log and script console"),
-                          i18n::N_("Every keyboard shortcut: search, change, reset"), i18n::N_("Dark, light or the system's choice, accent colour and contrast"),
+                          i18n::N_("Every keyboard shortcut: search, change, reset"), i18n::N_("Appearance (dark or light, colours, contrast), control style and sounds"),
                           i18n::N_("Let AI assistants (MCP clients) inspect and edit the project"),
                           i18n::N_("Your name, contact and picture for collaborators, identity and connection")};
   constexpr int kPages = 12;

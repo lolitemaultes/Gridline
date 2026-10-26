@@ -117,7 +117,8 @@ void restore(Settings& st, const Snapshot& snap) {
 
 const std::vector<Key>& themeKeys() {
   static const std::vector<Key> k = {{"theme.mode", 's'},   {"ui.darkTheme", 'b'},     {"theme.accent", 's'},     {"theme.hot", 's'},
-                                     {"theme.led", 's'},    {"theme.playhead", 's'},   {"theme.contrast", 'n'},   {"theme.brightness", 'n'}};
+                                     {"theme.led", 's'},    {"theme.playhead", 's'},   {"theme.contrast", 'n'},   {"theme.brightness", 'n'},
+                                     {"theme.controls", 's'}};
   return k;
 }
 
