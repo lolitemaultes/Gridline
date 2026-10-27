@@ -489,6 +489,13 @@ void AudioEngine::drainMidi(const Program* p) {
       const uint32_t sn = midiSnap_.load(std::memory_order_relaxed);
       if (sn & 0xFFF) pitch = snapToScaleMask(pitch, static_cast<int>(sn >> 12), static_cast<uint16_t>(sn & 0xFFF));
     }
+    if (kind == 0x90 || kind == 0x80) {  // J-150: instruments that decode notes themselves
+      const ProgChannel* rc = chan(routed(mch));
+      if (rc && rc->rt->gen && rc->rt->gen->rawMidi()) {
+        rc->rt->gen->midi(m.s, m.a, m.b, 0);
+        continue;
+      }
+    }
     if (kind == 0x90 && m.b > 0) {
       if (midiNoteCh_[pitch] != kNoId) release(pitch);  // retrigger
       ObjectId ch = routed(mch);

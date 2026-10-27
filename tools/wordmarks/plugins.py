@@ -70,6 +70,7 @@ P = {
     'gl.splinescratch': ('sample', 'scratch', 'Scratch sampler with drawn spline motion'),
     'gl.flex': ('synth', 'standin', 'Preset stand-in for legacy channels'),
     'gl.seltmann': ('sample', 'chop', 'Finds the beat in a song and chops it into loops'),
+    'gl.platter': ('sample', 'platter', 'DJ deck: scratch, cue and sync any track'),
     'gl.plasma': ('synth', 'plasma', 'Wavetable / granular / spectral hybrid synth'),
     'gl.eq': ('tone', 'eqbell', 'Parametric EQ'),
     'gl.filter': ('tone', 'lowpass', 'Multimode filter'),

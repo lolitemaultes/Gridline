@@ -9,6 +9,7 @@
 #include "../core/MidiTemplates.h"
 #include "../core/Project.h"
 #include "../engine/AudioEngine.h"
+#include "../packs/platter/platter.h"
 
 namespace gl {
 
@@ -34,6 +35,7 @@ double nowSec() {
 double MidiManager::clockNow() { return nowSec(); }
 
 MidiManager::MidiManager(AudioEngine& engine) : engine_(engine) {
+  packs::platter::hub::setTapped(true);  // J-150: DJ decks read every input from the hub
   sender_ = std::thread([this] { senderLoop(); });
 }
 
@@ -270,8 +272,10 @@ void MidiManager::onMessage(const std::string& port, int portNumber, const std::
     return;
   }
   if (s < 0x80) return;
+  const uint32_t deck = packs::platter::hub::deviceId(port);
+  packs::platter::hub::push(deck, s, a, b);  // J-150: DJ decks
   const int kind = s & 0xF0;
-  bool toEngine = true;
+  bool toEngine = !packs::platter::hub::claimed(deck);  // a deck's controller plays no notes
   if (kind == 0x90 && b > 0) {
     if (!notes) toEngine = false;
     b = static_cast<uint8_t>(applyVelocityCurve(static_cast<VelocityCurve>(velCurve_.load()), b, fixedVel_.load()));
@@ -315,6 +319,39 @@ void MidiManager::sendRaw(const std::vector<unsigned char>& m) {
   if (!out_ || !out_->isPortOpen()) return;
   try {
     out_->sendMessage(&m);
+  } catch (const RtMidiError&) {
+  }
+}
+
+void MidiManager::sendTo(const std::string& device, const std::vector<unsigned char>& m) {
+  if (device.empty() || m.empty()) return;
+  std::lock_guard<std::mutex> lk(outMu_);
+  RtMidiOut* o = nullptr;
+  for (auto& d : devOuts_)
+    if (d.first == device) o = d.second.get();
+  if (!o) {
+    try {
+      auto x = makeMidiOut();
+      int pick = -1;
+      for (unsigned k = 0; k < x->getPortCount(); ++k) {
+        const std::string n = x->getPortName(k);
+        if (n == device) {
+          pick = static_cast<int>(k);
+          break;
+        }
+        if (pick < 0 && (n.find(device) != std::string::npos || device.find(n) != std::string::npos)) pick = static_cast<int>(k);
+      }
+      if (pick >= 0) x->openPort(static_cast<unsigned>(pick), "Gridline Deck Out");
+      devOuts_.emplace_back(device, std::move(x));
+      o = devOuts_.back().second.get();
+    } catch (const RtMidiError&) {
+      devOuts_.emplace_back(device, nullptr);
+      return;
+    }
+  }
+  if (!o || !o->isPortOpen()) return;
+  try {
+    o->sendMessage(&m);
   } catch (const RtMidiError&) {
   }
 }

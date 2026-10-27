@@ -12,6 +12,7 @@
 #include "ChordEditorUi.h"
 #include "J31Ui.h"
 #include "../core/Automation.h"
+#include "../packs/PacksUi.h"
 
 namespace gl {
 
@@ -317,6 +318,9 @@ void App::processMidi() {
       remoteListening = false;
       continue;
     }
+
+    // J-150: a controller bound to a DJ deck drives the deck (which reads the device itself).
+    if (packs::claimMidi(*this, e.port)) continue;
 
     // Controller script of the device (J-24) sees the message first.
     if (controllerScriptMidi(*this, e.port, m)) {

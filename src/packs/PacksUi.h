@@ -15,6 +15,9 @@ bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
 // a mixer track to record while the transport plays (one is inserted into the
 // first free slot when the track has none). Returns the slot, -1 = no room.
 int armAudioEditorRecording(App& a, ObjectId track);
+// J-150: true when a pack takes this device's MIDI for itself (a DJ deck bound to
+// the controller, or learning a control): the app's links and templates skip it.
+bool claimMidi(App& a, const std::string& device);
 
 }  // namespace gl::packs
 

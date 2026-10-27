@@ -57,7 +57,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 
 ## Members
 
-117 plugins: 49 instruments and 68 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
+118 plugins: 50 instruments and 68 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
 
 ### Instruments
 
@@ -111,6 +111,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Grain Scanner | `gl.grainscan` | Sampler | `42FB5F62` | `ehjo` | 23 | 4 |  |
 | Spline Scratch | `gl.splinescratch` | Sampler | `10B6BE51` | `ng3f` | 8 | 3 |  |
 | Seltmann | `gl.seltmann` | Sampler | `A19C8FCA` | `mtkg` | 21 | 6 |  |
+| Platter | `gl.platter` | Sampler | `74A19BB4` | `q8wc` | 23 | 5 | Takes MIDI from DJ controllers |
 | Plasma | `gl.plasma` | Synth | `F95755DE` | `cw2s` | 2192 | 24 |  |
 
 ### Effects

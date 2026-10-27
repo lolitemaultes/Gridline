@@ -409,7 +409,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -617,7 +617,7 @@ msgstr ""
 msgid "Repeat the points every loop length when the clip is longer"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/Menus.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginSkin.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/packs/edison/edison_tools_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/Menus.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginSkin.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/packs/edison/edison_tools_ui.cpp src/packs/platter/platter_ui.cpp src/packs/samplers/samplers_ui.cpp
 msgid "Reset"
 msgstr ""
 
@@ -649,7 +649,7 @@ msgstr ""
 msgid "START"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/Menus.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/Menus.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Save"
 msgstr ""
 
@@ -1121,7 +1121,7 @@ msgstr ""
 msgid "Stop the preview"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/CollabUi.cpp
+#: src/app/Browser.cpp src/app/CollabUi.cpp src/packs/platter/platter_ui.cpp
 msgid "Sync"
 msgstr ""
 
@@ -1825,7 +1825,7 @@ msgstr ""
 msgid "Fades"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Gate"
 msgstr ""
 
@@ -1957,7 +1957,7 @@ msgstr ""
 msgid "Share of each slice that sounds"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/packs/platter/platter_deck_ui.cpp
 msgid "Sharp"
 msgstr ""
 
@@ -5481,7 +5481,7 @@ msgstr ""
 msgid "Slide and portamento"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Playlist.cpp
+#: src/app/ContextMenus.cpp src/app/Playlist.cpp src/packs/platter/platter_ui.cpp
 msgid "Slip"
 msgstr ""
 
@@ -5977,7 +5977,7 @@ msgstr ""
 msgid "MISSING FILES"
 msgstr ""
 
-#: src/app/Dialogs.cpp
+#: src/app/Dialogs.cpp src/packs/platter/platter_deck_ui.cpp
 msgid "MIXER"
 msgstr ""
 
@@ -6317,7 +6317,7 @@ msgstr ""
 msgid "Lumen"
 msgstr ""
 
-#: src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/collab/Session.cpp src/core/Keymap.cpp
+#: src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/collab/Session.cpp src/core/Keymap.cpp src/packs/platter/platter_ui.cpp
 msgid "Mixer"
 msgstr ""
 
@@ -6461,7 +6461,7 @@ msgstr ""
 msgid "Roll new random values"
 msgstr ""
 
-#: src/app/EditTools.cpp
+#: src/app/EditTools.cpp src/packs/platter/platter_deck_ui.cpp
 msgid "SYNC"
 msgstr ""
 
@@ -6769,7 +6769,7 @@ msgstr ""
 msgid "Split playlist tracks"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Start"
 msgstr ""
 
@@ -9177,7 +9177,7 @@ msgstr ""
 msgid "Zoom to ticks (snap turns free)"
 msgstr ""
 
-#: src/app/MidiUi.cpp
+#: src/app/MidiUi.cpp src/packs/platter/platter_ui.cpp
 msgid "Any device"
 msgstr ""
 
@@ -9953,7 +9953,7 @@ msgstr ""
 msgid "Porta"
 msgstr ""
 
-#: src/app/PianoRoll.cpp
+#: src/app/PianoRoll.cpp src/packs/platter/platter_ui.cpp
 msgid "Quantize"
 msgstr ""
 
@@ -10829,11 +10829,11 @@ msgstr ""
 msgid "WITHOUT A SLOT"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/platter/platter_deck_ui.cpp
 msgid "beat"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "beats"
 msgstr ""
 
@@ -10997,7 +10997,7 @@ msgstr ""
 msgid "Favourites are listed first in the browser"
 msgstr ""
 
-#: src/app/PluginManager.cpp
+#: src/app/PluginManager.cpp src/packs/platter/platter_deck_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Filter"
 msgstr ""
 
@@ -12245,7 +12245,7 @@ msgstr ""
 msgid "Translations are catalogues in assets/i18n (gettext .po or JSON); Pseudo shows which texts are translatable and where they clip"
 msgstr ""
 
-#: src/app/SettingsPages.cpp
+#: src/app/SettingsPages.cpp src/packs/platter/platter_ui.cpp
 msgid "Transport"
 msgstr ""
 
@@ -12465,7 +12465,7 @@ msgstr ""
 msgid "Rendering plugin thumbnails in the background"
 msgstr ""
 
-#: src/app/TopBar.cpp
+#: src/app/TopBar.cpp src/packs/platter/platter_ui.cpp
 msgid "BPM"
 msgstr ""
 
@@ -13777,7 +13777,7 @@ msgstr ""
 msgid "Copy unit"
 msgstr ""
 
-#: src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+#: src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Loop"
 msgstr ""
 
@@ -14573,7 +14573,7 @@ msgstr ""
 msgid "Source curve"
 msgstr ""
 
-#: src/packs/plasma/plasma_pages_ui.cpp
+#: src/packs/plasma/plasma_pages_ui.cpp src/packs/platter/platter_deck_ui.cpp
 msgid "Straight"
 msgstr ""
 
@@ -14751,6 +14751,838 @@ msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp
 msgid "Smooth (keep harmonics)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "A hot cue key plays while held"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "A hot cue key starts the deck; it keeps playing"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Arm take recording"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Brake"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "CROSSFADER"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "CUE"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "CURVE"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Cues, loops and jumps land on the beat"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Delete take"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Disarm take recording"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Double the loop size (and a running loop)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Drag the record round to scratch: clockwise plays, back plays backwards."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Drag the waveform to scratch. Scroll to zoom."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Drop a track on the deck"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "FADER CURVE"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "FEEL"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Fader"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Full level a sixth of the way up: fast cuts"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "HAND ON"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "HI"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "HOT CUES"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Halve the loop size (and a running loop)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Hand"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "High"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Hold to hear the take. Right-click to delete it."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "IN"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Its tempo and beats are found and it plays in time with the project. The padlock lets it run free."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Jump ahead"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Jump ahead by the loop size"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Jump back"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Jump back by the loop size"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Jump to this hot cue (hold while stopped to preview). Shift+click clears it."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "KEYS"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "KILL"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Keep the track's pitch when its tempo changes (off while you scratch)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Key lock off"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Key lock on"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Kill the band (click again to bring it back)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "LOOP"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "LOW"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Laying the beat grid"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Linear"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Listening for the beats"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Load a track..."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Locked to the project's tempo and beat. Click the padlock to let the track run at its own tempo."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Loop in: mark the start here"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Loop out: loop from the in point to here (again: exit)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Loop the next beats (the size above); again to exit"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Low"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "MID"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Mid"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "No takes yet: arm, press record in Gridline and play the deck. Each pass becomes a note on keys C2 to B3."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "OUT"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "On: touching the jog wheel's top grabs the record. Off: it nudges the tempo, like a CD player."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "PITCH"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "PLATTER"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "PLAY"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Pitch fader: down plays faster, up slower (double-click: centre). With sync on it nudges the tempo off the project's."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "QUANTIZE"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Recording a take"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Release to load the track"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Res"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Running at the track's own tempo (pitch fader). Click to lock it to the project again."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "SHIFT+CLICK CLEARS"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "SLIP"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Set a hot cue here"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
+msgid "Smooth"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Smooth / cut"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Soft start: fine control at the bottom"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Start or stop the motor (the record spins up and brakes like a turntable)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Stopped: set the cue here, or hold to preview from it. Playing: back to the cue."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "TEMPO"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "TRACK"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Take"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Takes armed"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Takes off"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "The crossfader does not touch this deck"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "The track keeps running underneath while you scratch, loop or reverse; let go and it carries on in time."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "The whole track: click to jump"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "This deck is side A (left)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "This deck is side B (right)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "This file cannot be read"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Thru"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "Trigger"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Trim"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Try another file: WAV, AIFF, FLAC, MP3 or OGG."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "UNLOCKED"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "VINYL"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "While Gridline records, an armed deck records what you play on it (scratches, cuts, cues) as a take: a note in the pattern that replays it exactly, with no controller."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "follows the project"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp
+msgid "own tempo"
+msgstr ""
+
+#: src/packs/platter/platter_tick_ui.cpp
+msgid "All 24 take keys of this deck are used: delete a take to record another"
+msgstr ""
+
+#: src/packs/platter/platter_tick_ui.cpp
+msgid "Record a deck take"
+msgstr ""
+
+#: src/packs/platter/platter_tick_ui.cpp
+msgid "Set a cue on the deck"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Analyse the track"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Another controller"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Any side: you teach it each control"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Auto loop"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Back to start"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Back to the profile's own mapping"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Beat jump back"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Beat jump forward"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Bind this control to the next thing you touch on the controller"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "CONTROLLER MAPPING"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Channel fader"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Choose the DJ controller that drives this deck"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear a control"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear all"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear hot cue 1"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear hot cue 2"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear hot cue 3"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear hot cue 4"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear hot cue 5"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear hot cue 6"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear hot cue 7"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear hot cue 8"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Clear mapping"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Controller..."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Crossfader"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Cue"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "DECK"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "DECK A"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "DECK B"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "DECK SIDE"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Deck controller"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Deck without a controller"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Drop a track here, or load one"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "EQ high"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "EQ low"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "EQ mid"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Finding the tempo and the beats..."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Hot cue 1"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Hot cue 2"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Hot cue 3"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Hot cue 4"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Hot cue 5"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Hot cue 6"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Hot cue 7"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Hot cue 8"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "How many steps the jog wheel sends per turn (drag or scroll). A smaller number scratches faster."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "JOG TICKS / TURN"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Jog"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Jog platter"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Jog resolution"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Jog search"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Jog side (nudge)"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Jog touch"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Key lock"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "LED feedback"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "LED feedback: off"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "LED feedback: on"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Learn"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Learn a control"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Left deck"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Light the controller's buttons and pads from the deck"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Load a preset..."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Load a track"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Load a track onto the deck"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Load mapping preset"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Load..."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Loop / 2"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Loop in"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Loop out"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Loop x 2"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "MAPPING PRESETS"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "MIDI INPUT"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Map the deck to the controller's jog wheel, buttons, faders and pads"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Mapping"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Mapping preset saved"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Modes"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Move or press the control on your controller... (Esc cancels)"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "No controller"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "No presets saved yet"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "No track loaded"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Nothing is mapped: teach each control with MIDI learn."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Own mapping"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Pads"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Pick a controller profile and the deck side"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Pick the controller and the deck side this channel plays. Every control can be remapped later."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Pitch bend +"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Pitch bend -"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Pitch fader"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Play / pause"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Play the deck with the mouse, the keys and automation. Map controls yourself any time."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Preset name"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Remove every binding (learn from scratch)"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Remove this control's bindings"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Reset mapping"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Reverse (held)"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Right deck"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Save this mapping as a preset file"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Shift"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Show every deck control and the MIDI it answers to: learn, clear, presets"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "The host's MIDI input"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "The mapping preset could not be saved"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Track loaded"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Two decks, eight pads per deck, 1024 jog ticks per turn."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Two decks, eight pads per deck, 128 jog ticks per turn."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Two decks, four pads per deck, two-band EQ, 248 jog ticks per turn."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Use a DJ controller for this deck?"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Use this controller"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Vinyl mode"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "left"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "not mapped"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "recording a take"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "right"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "take"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "takes"
 msgstr ""
 
 #: src/packs/samplers/dwave_ui.cpp
@@ -15662,10 +16494,6 @@ msgid "Load audio..."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
-msgid "Load..."
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
 msgid "METER"
 msgstr ""
 
@@ -15782,10 +16610,6 @@ msgid "TAP"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
-msgid "TEMPO"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
 msgid "Tap along on the beat; after four taps the tempo follows (bar 1 stays)"
 msgstr ""
 
@@ -15806,15 +16630,7 @@ msgid "The tempo. Double-click to type it; the grid keeps bar 1 where it is."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
-msgid "This file cannot be read"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
 msgid "Three beats per bar"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
-msgid "Try another file: WAV, AIFF, FLAC, MP3 or OGG."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
@@ -16334,10 +17150,6 @@ msgid "Breath"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
-msgid "CURVE"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
 msgid "Cycle"
 msgstr ""
 
@@ -16418,10 +17230,6 @@ msgid "MIDI TRIGGER"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
-msgid "Mid"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
 msgid "Move the curve earlier by 1/16"
 msgstr ""
 
@@ -16470,15 +17278,7 @@ msgid "STEREO"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
-msgid "Shift"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
 msgid "Side"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
-msgid "Smooth"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -16515,10 +17315,6 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "Trigger: track sidechain"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "Trim"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp

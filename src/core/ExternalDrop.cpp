@@ -261,7 +261,7 @@ bool autoChannelName(const std::string& name, const std::string& pluginName, con
 SampleSlot sampleSlot(const std::string& type) {
   // J-107: Seltmann is a sample player too (a bare path in its data = a new file to analyse)
   if (type == "gl.sampler" || type == "gl.slicer" || type == "gl.granular" || type == "gl.synth" || type == "gl.seltmann") return SampleSlot::Whole;
-  if (type == "gl.scratch" || type == "gl.grainscan" || type == "gl.splinescratch" || type == "gl.convolver") return SampleSlot::FirstLine;
+  if (type == "gl.scratch" || type == "gl.grainscan" || type == "gl.splinescratch" || type == "gl.convolver" || type == "gl.platter") return SampleSlot::FirstLine;
   return SampleSlot::None;
 }
 

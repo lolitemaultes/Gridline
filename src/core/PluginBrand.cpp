@@ -26,6 +26,8 @@ const std::vector<PluginBrand>& pluginBrands() {
       {"gl.edison", F::Sample, "The close-up audio editor: waveform, spectrum, markers.", "audio editor, wave editor, recorder, sample editor"},
       {"gl.seltmann", F::Sample, "Finds the beat in any song and chops it into loops.",
        "chop, chopper, sample chop, flip, loop maker, microsampling, beat slicer, bpm, tempo detection, sampler, phrase"},
+      {"gl.platter", F::Sample, "One deck of a DJ setup: scratch, cue and mix any track in time.",
+       "scratch, turntable, vinyl, dj, deck, ddj, controller, jog, cue, beatmatch, sync"},
       // ---- flagships: time and space
       {"gl.delay", F::Space, "Echoes that trace the beat, from tape to digital.", "delay, echo, ping pong, tape delay"},
       {"gl.hall", F::Space, "Long algorithmic halls with a quiet floor.", "hall, reverb, hall reverb, space"},

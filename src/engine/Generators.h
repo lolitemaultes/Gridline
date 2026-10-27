@@ -197,6 +197,9 @@ class Generator {
   // feeds playlist audio clips (no notes in any pattern), so instruments can
   // skip per-note resources (the sampler's stretch voices).
   virtual void setClipOnly(bool clipOnly) { (void)clipOnly; }
+  // J-150: live MIDI notes reach this instrument as raw messages (onMidi), not
+  // as notes (DJ decks decode their controller's notes themselves).
+  virtual bool rawMidi() const { return false; }
   // Processing latency in samples (for plugin delay compensation).
   virtual int latencySamples() const { return 0; }
   // Latency with `state` at `sampleRate` (UI thread, Program build; see

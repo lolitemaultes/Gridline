@@ -21,6 +21,16 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### New
 
+- Platter, a new instrument in the Gridline Suite: one deck of a DJ setup on a channel. Drop in a
+  track and it finds the tempo and beat grid and plays in time with the project (the padlock
+  frees it to its own tempo), with key lock, a platter you scratch with the mouse or a jog wheel,
+  waveform, cue and play, eight hot cues, loops and beat jumps, pitch fader, three-band EQ with
+  kills, filter, channel fader and crossfader. On first open it asks whether to use a DJ
+  controller: ready mappings for the Pioneer DDJ-200, Hercules Inpulse 200 and Numark Mixtrack
+  Pro FX (either deck side, with LEDs that follow the deck), or no controller and your own MIDI
+  learn mapping. Mappings are saved with the project and as presets. While Gridline records,
+  what you play on the deck is kept as a take: a note in the pattern that replays the scratch
+  exactly. Every control can be automated. The older Turntable effect is unchanged.
 - A welcome screen, Gridline's new home: recent projects in a large grid, each tile with a
   sketch of the project's arrangement (or its pattern, channels or mixer), when it was last
   opened, its tempo and length. The first tile starts a new project. Open a project from disk,

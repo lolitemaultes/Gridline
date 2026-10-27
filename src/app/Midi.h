@@ -71,6 +71,9 @@ class MidiManager {
   std::vector<RemoteAction> pollActions();
   void send(uint8_t s, uint8_t a, uint8_t b);  // to the selected output
   void sendRaw(const std::vector<unsigned char>& bytes);
+  // J-150: to the output of a given device (controller LEDs), opened on first
+  // use; the output named like the input, or one whose name contains it.
+  void sendTo(const std::string& device, const std::vector<unsigned char>& bytes);
 
   MidiInputConfig* inputConfig(const std::string& name);
   const MidiInputConfig* inputConfig(const std::string& name) const;
@@ -117,6 +120,7 @@ class MidiManager {
   AudioEngine& engine_;
   std::vector<std::unique_ptr<Port>> ins_;
   std::unique_ptr<RtMidiOut> out_;
+  std::vector<std::pair<std::string, std::unique_ptr<RtMidiOut>>> devOuts_;  // sendTo (under outMu_)
   std::mutex outMu_;
   std::mutex mu_;
   std::vector<MidiEvent> pending_;
