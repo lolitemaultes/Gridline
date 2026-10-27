@@ -19,6 +19,8 @@
 #include <mutex>
 #include "../../engine/MEnv.h"
 #include "../../engine/Resample.h"
+#include "../../engine/TimeStretch.h"
+#include "../../engine/pitch/Kernel.h"
 #include "sfx_common.h"
 
 namespace gl::packs::spacefx::detail {
@@ -224,28 +226,15 @@ inline IrBuf generateSpace(int src, double size, double tone, bool trueStereo) {
   return ir;
 }
 
-// Cubic-interpolated resample of every path by `ratio` (output length = len * ratio).
+// Band-limited resample of every path by `ratio` (output length = len * ratio).
+// J-140: the shared offline kernel (was cubic with a biquad pre-filter).
 inline void resampleIr(IrBuf& ir, double ratio) {
   if (std::fabs(ratio - 1.0) < 1e-9 || ir.len() == 0) return;
   size_t n = static_cast<size_t>(static_cast<double>(ir.len()) * ratio);
   for (int p = 0; p < ir.paths; ++p) {
     const std::vector<float>& x = ir.p[p];
     std::vector<float> y(n);
-    // Low-pass before decimating to limit aliasing.
-    std::vector<float> src = x;
-    if (ratio < 1.0) {
-      biquadRun(src, dsp::Biquad::LowPass, ir.rate, 0.45 * ir.rate * ratio, 0.6, 0);
-      biquadRun(src, dsp::Biquad::LowPass, ir.rate, 0.45 * ir.rate * ratio, 0.6, 0);
-    }
-    auto at = [&](long i) { return i >= 0 && static_cast<size_t>(i) < src.size() ? src[static_cast<size_t>(i)] : 0.f; };
-    for (size_t i = 0; i < n; ++i) {
-      double pos = static_cast<double>(i) / ratio;
-      long k = static_cast<long>(pos);
-      float f = static_cast<float>(pos - static_cast<double>(k));
-      float xm1 = at(k - 1), x0 = at(k), x1 = at(k + 1), x2 = at(k + 2);
-      float c1 = 0.5f * (x1 - xm1), c2 = xm1 - 2.5f * x0 + 2.f * x1 - 0.5f * x2, c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
-      y[i] = ((c3 * f + c2) * f + c1) * f + x0;
-    }
+    pitch::resample(x.data(), static_cast<int64_t>(x.size()), 0.0, 1.0 / ratio, y.data(), static_cast<int64_t>(n));
     ir.p[p] = std::move(y);
   }
 }
@@ -277,10 +266,30 @@ inline double energy(const std::vector<float>& x) {
   return e;
 }
 
-// Time stretch that keeps the spectrum (phase vocoder, 2048-point frames,
-// 4x overlap): output frame m reads the input at m·hop/ratio and advances
-// each bin's phase by the input's own phase step over one hop.
+// Time stretch that keeps the spectrum. J-140: the shared stretch engine
+// (Auto mode: the direct sound stays sharp, the tail without phasing), paths
+// in stereo pairs; the phase vocoder below is kept as the reference.
+inline void stretchKeepPitchPv(IrBuf& ir, double ratio);
 inline void stretchKeepPitch(IrBuf& ir, double ratio) {
+  if (std::fabs(ratio - 1.0) < 1e-9 || ir.len() < 16) return;
+  const auto inLen = static_cast<int64_t>(ir.len());
+  const auto outLen = static_cast<int64_t>(static_cast<double>(inLen) * ratio);
+  stretch::Settings set;
+  set.mode = stretch::Mode::Auto;
+  for (int p = 0; p < ir.paths; p += 2) {
+    const int nch = p + 1 < ir.paths ? 2 : 1;
+    std::vector<float> y[2];
+    const float* in[2] = {ir.p[p].data(), nch == 2 ? ir.p[p + 1].data() : nullptr};
+    float* out[2] = {nullptr, nullptr};
+    for (int c = 0; c < nch; ++c) y[c].assign(static_cast<size_t>(std::max<int64_t>(0, outLen)), 0.f), out[c] = y[c].data();
+    stretch::process(in, nch, inLen, out, outLen, ir.rate, set);
+    for (int c = 0; c < nch; ++c) ir.p[p + c] = std::move(y[c]);
+  }
+}
+// Phase vocoder reference (2048-point frames, 4x overlap): output frame m reads
+// the input at m·hop/ratio and advances each bin's phase by the input's own
+// phase step over one hop.
+inline void stretchKeepPitchPv(IrBuf& ir, double ratio) {
   if (std::fabs(ratio - 1.0) < 1e-9 || ir.len() < 16) return;
   constexpr int N = 2048, H = N / 4;
   Fft f;

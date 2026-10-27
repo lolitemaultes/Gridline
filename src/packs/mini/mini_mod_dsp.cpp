@@ -291,7 +291,9 @@ class Interval final : public MiniFx {
       for (int c = 0; c < 2; ++c) {
         const double x = *io[c];
         d_[c].push(static_cast<float>(x));
-        const double y = w1 * d_[c].read(2.0 + off_[0] + p_ * G) + w2 * d_[c].read(2.0 + off_[1] + q * G);
+        // J-140: band-limited taps at the pitch ratio (were Hermite: aliased upward).
+        const pitch::SincTable& tab = pitch::table(pitch::Quality::Compact);
+        const double y = w1 * d_[c].band(2.0 + off_[0] + p_ * G, ratio, tab) + w2 * d_[c].band(2.0 + off_[1] + q * G, ratio, tab);
         *io[c] = static_cast<float>(x * (1.0 - wet) + y * wet);
       }
     }

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include "../../engine/pitch/Kernel.h"
 #include "plasma_dsp.h"
 
 namespace gl::packs::plasma {
@@ -30,14 +31,11 @@ inline int harmLevel(double h) {  // mip level that keeps at most h harmonics
   const int l = static_cast<int>(std::ceil(std::log2(1024.0 / h)));
   return std::clamp(l, 0, MipTable::kLevels - 1);
 }
-inline float cubicAt(const float* d, int64_t n, double pos) {
+// J-140: band-limited sample read (was Catmull-Rom: aliasing when pitched up),
+// the compact shared kernel (unison voices); rate in frames per output frame.
+inline float sampleAt(const float* d, int64_t n, double pos, double rate) {
   if (n <= 0) return 0;
-  const int64_t i = static_cast<int64_t>(std::floor(pos));
-  const float t = static_cast<float>(pos - static_cast<double>(i));
-  auto at = [&](int64_t k) { return k < 0 || k >= n ? 0.f : d[k]; };
-  const float y0 = at(i - 1), y1 = at(i), y2 = at(i + 1), y3 = at(i + 2);
-  const float c1 = 0.5f * (y2 - y0), c2 = y0 - 2.5f * y1 + 2.f * y2 - 0.5f * y3, c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
-  return ((c3 * t + c2) * t + c1) * t + y1;
+  return pitch::read(d, n, pos, std::fabs(rate), pitch::table(pitch::Quality::Compact));
 }
 float window(int shape, double t, float skew, float param) {  // t 0..1 over the grain
   if (skew != 0) {  // skew moves the peak
@@ -294,15 +292,15 @@ void OscVoice::samplePlay(const OscSet& s, float& l, float& r) {
     double& pos = play_[u];
     const double rate = std::exp2((s.pitch + s.det[u] - center) / 12.0) * rootRate * s.scan;
     const double step = (s.reverse ? -rate : rate) * dirU_[u];
-    float xl = cubicAt(dl, n, pos), xr = dr == dl ? xl : cubicAt(dr, n, pos);
+    float xl = sampleAt(dl, n, pos, step), xr = dr == dl ? xl : sampleAt(dr, n, pos, step);
     // loop crossfade: near the loop end, blend towards the loop start
     if (loopMode == 1 && s.loopXfade > 0 && !s.reverse) {
       const double xf = (le - ls) * s.loopXfade * 0.5;
       if (pos > le - xf && xf > 1) {
         const double w = (pos - (le - xf)) / xf;
         const double p2 = ls - (le - pos);
-        xl = lerpf(xl, cubicAt(dl, n, p2), static_cast<float>(w));
-        xr = lerpf(xr, dr == dl ? cubicAt(dl, n, p2) : cubicAt(dr, n, p2), static_cast<float>(w));
+        xl = lerpf(xl, sampleAt(dl, n, p2, step), static_cast<float>(w));
+        xr = lerpf(xr, dr == dl ? sampleAt(dl, n, p2, step) : sampleAt(dr, n, p2, step), static_cast<float>(w));
       }
     }
     pos += step;
@@ -388,7 +386,7 @@ void OscVoice::granular(const OscSet& s, float& l, float& r) {
     wsum += std::fabs(w), ws[0] += std::fabs(w) * g.warp[0], ws[1] += std::fabs(w) * g.warp[1];
     double p = g.pos;
     if (p < 0 || p >= static_cast<double>(n)) p = std::fmod(std::fmod(p, static_cast<double>(n)) + static_cast<double>(n), static_cast<double>(n));
-    const float xl = cubicAt(dl, n, p), xr = dr == dl ? xl : cubicAt(dr, n, p);
+    const float xl = sampleAt(dl, n, p, g.inc), xr = dr == dl ? xl : sampleAt(dr, n, p, g.inc);
     sl += xl * w * g.pl;
     sr += xr * w * g.pr;
     g.pos += g.inc;
@@ -777,11 +775,20 @@ void NoiseVoice::tick(const NoiseSrc* n, const Sample* file, double rate, bool o
   } else {
     return;
   }
-  const int64_t i = static_cast<int64_t>(pos);
-  const float t = static_cast<float>(pos - static_cast<double>(i));
-  const int64_t j = i + 1 >= len ? 0 : i + 1;
-  float xl = dl[i] + (dl[j] - dl[i]) * t;
-  float xr = dr == dl ? xl : dr[i] + (dr[j] - dr[i]) * t;
+  // J-140: band-limited read (was linear), wrapping like the position does.
+  const pitch::SincTable& tab = pitch::table(pitch::Quality::Compact);
+  auto wrapRead = [&](const float* d) {
+    float o;
+    pitch::readWith<1>(
+        [d, len](int64_t k, int) {
+          k %= len;
+          return d[k < 0 ? k + len : k];
+        },
+        pos, std::fabs(rate), tab, &o);
+    return o;
+  };
+  float xl = wrapRead(dl);
+  float xr = dr == dl ? xl : wrapRead(dr);
   pos += rate;
   if (pos >= static_cast<double>(len)) {
     if (oneShot || (n && !n->loop && !file)) done = true;

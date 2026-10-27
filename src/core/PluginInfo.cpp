@@ -218,7 +218,7 @@ GL_NOINLINE void addInfo2(std::vector<PluginInfo>& v) {
   p.params[SmpLoopXfade] = lin("Loop crossfade", "%", 0, 0.5, 0);
   p.params[SmpDeclick] = ch("Declick", {"Off", "Out only", "Transient", "Generic", "Smooth"}, 0);
   // J-87: engine/TimeStretch modes (0 = resample; the others keep the pitch apart from the speed).
-  p.params[SmpStretchMode] = ch("Time mode", {"Resample", "Auto", "Mono / vocal", "Transient", "Formant keep"}, 0);
+  p.params[SmpStretchMode] = ch("Time mode", {"Resample", "Auto", "Mono / vocal", "Transient", "Formant keep", "Voice", "Beats"}, 0);
   p.params[SmpPitchShift] = lin("Pitch shift", "ct", -1200, 1200, 0);
   p.params[SmpTimeStretch] = lg("Time stretch", "times", 0.25, 4, 1);
   p.params[SmpEnvDelay] = lin("Env delay", "s", 0, 5, 0);

@@ -23,6 +23,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Automation.h"
+#include "../core/LevelMeter.h"
 #include "../core/Motion.h"
 #include "SmoothScrollUi.h"
 #include "App.h"
@@ -111,6 +112,43 @@ void panel(ImDrawList* dl, float x, float w, float top) {
   dl->AddRectFilled(ImVec2(x, top), ImVec2(x + w, top + kPanelH), P.surface900, theme::kRadiusLg);
   if (P.dark) dl->AddLine(ImVec2(x + 3, top + 0.5f), ImVec2(x + w - 3, top + 0.5f), theme::withAlpha(P.paper, 0.07f));
   dl->AddRect(ImVec2(x, top), ImVec2(x + w, top + kPanelH), P.dark ? theme::withAlpha(P.ink, 0.5f) : P.line, theme::kRadiusLg);
+}
+
+// J-143: the OUT meter. The master bus peak per channel (left on top, right
+// below) with the shared ballistics, on the mixer master meter's -60..+6 dB
+// scale and zones (green to -6 dB, amber to 0 dB, red only past full scale),
+// a hold marker per channel, a faint 0 dB line and a clip lamp at the end
+// that lights only on real overs. Nothing is lit in silence.
+void outMeter(ImDrawList* dl, ImVec2 p, ImVec2 size, const LevelMeter& m) {
+  const auto& P = pal();
+  const float lampW = 4.0f, lampGap = 2.0f;
+  const float bw = std::floor(size.x - lampW - lampGap);
+  const ImU32 well = P.dark ? P.surface950 : theme::mix(P.surface800, P.ink, 0.12f);
+  dl->AddRectFilled(p, ImVec2(p.x + bw, p.y + size.y), well, 2);
+  const float inner = bw - 2;
+  auto xAt = [&](float db) { return p.x + 1 + std::round(LevelMeter::toPos(db) * inner); };
+  const float x0 = p.x + 1, xWarn = xAt(-6.0f), xZero = xAt(0.0f);
+  // The headroom past 0 dBFS reads as a dim red zone, so the scale is legible at rest.
+  dl->AddRectFilled(ImVec2(xZero, p.y + 1), ImVec2(p.x + bw - 1, p.y + size.y - 1), theme::withAlpha(P.meterHigh, 0.14f));
+  const float rowH = std::floor((size.y - 3) * 0.5f);
+  for (int ch = 0; ch < 2; ++ch) {
+    const float y0 = p.y + 1 + static_cast<float>(ch) * (rowH + 1), y1 = y0 + rowH;
+    const float lv = m.levelDb(ch);
+    if (lv > LevelMeter::kFloorDb) {
+      const float xe = xAt(lv);
+      if (xe > x0) dl->AddRectFilled(ImVec2(x0, y0), ImVec2(std::min(xe, xWarn), y1), P.meterLow);
+      if (xe > xWarn) dl->AddRectFilled(ImVec2(xWarn, y0), ImVec2(std::min(xe, xZero), y1), P.meterMid);
+      if (xe > xZero) dl->AddRectFilled(ImVec2(xZero, y0), ImVec2(xe, y1), P.meterHigh);
+    }
+    const float hd = m.holdDb(ch);
+    if (hd > LevelMeter::kFloorDb) {
+      const float hx = std::max(x0 + 1, xAt(hd));
+      dl->AddRectFilled(ImVec2(hx - 1, y0), ImVec2(hx, y1), hd > 0.0f ? P.meterHigh : P.text);
+    }
+  }
+  dl->AddLine(ImVec2(xZero + 0.5f, p.y + 1), ImVec2(xZero + 0.5f, p.y + size.y - 1), theme::withAlpha(P.textFaint, 0.7f), 1.0f);
+  const ImVec2 l0(p.x + bw + lampGap, p.y), l1(p.x + size.x, p.y + size.y);
+  dl->AddRectFilled(l0, l1, m.clipping() ? P.danger : well, 1.5f);
 }
 
 void patternList(App& a) {
@@ -238,7 +276,7 @@ float drawTopBar(App& a) {
     measure(true);
     setWidths();
   }
-  // Menus stay visible as long as possible (the mark always opens them too).
+  // Menus stay visible as long as possible (a right click on the mark opens them too).
   const G hideOrder[] = {Monitor, Master, Windows, Pos, Pat, Menus, Tempo};
   for (G g : hideOrder)
     if (required() > W) show[g] = false;
@@ -250,10 +288,12 @@ float drawTopBar(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(x, btnTop));
     ImGui::InvisibleButton("##mark", ImVec2(kBtn, kBtn));
     bool mh = ImGui::IsItemHovered() || ImGui::IsPopupOpen("##mainmenu");
-    // Mark as the main menu button (guide §08 B: 28 px, hover 0.8 opacity).
+    // Mark as the home button (guide §08 B: 28 px, hover 0.8 opacity). J-141: a click shows the
+    // welcome launcher (the project stays open behind it); a right click opens the main menu.
     theme::drawMark(dl, ImVec2(x, btnTop), kBtn, P.logo, P.chrome, mh ? 0.8f : 1.0f);
-    ui::Hint("Main menu");
-    if (ImGui::IsItemClicked()) ImGui::OpenPopup("##mainmenu");
+    ui::Hint("Home: recent projects and templates (right-click: main menu)");
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) a.home.showHome(a.now);
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##mainmenu");
     ImGui::SetNextWindowPos(ImVec2(x, wp.y + h - 2));
     if (ImGui::BeginPopup("##mainmenu")) {
       for (const auto& m : kMenus)
@@ -473,13 +513,16 @@ float drawTopBar(App& a) {
     }
     rx -= kGap;
   }
+  // J-143: the master bus peaks since the last frame (a take, read here only, once per frame,
+  // whether the meter is on the bar, in the overflow popup or hidden).
+  static LevelMeter out;
+  out.update(a.engine.takeMasterPeakL(), a.engine.takeMasterPeakR(), ImGui::GetIO().DeltaTime);
   // Two rows: OUT + stereo peak meter, CPU + load bar and percentage.
   auto monitor = [&](ImVec2 p, float w) {
     const float lf = theme::kFontLabel, labelW = 26.0f;
     const float rowH = 10.0f;
     dl->AddText(a.fontMono, lf, ImVec2(p.x, p.y), P.textFaint, "OUT");
-    ImGui::SetCursorScreenPos(ImVec2(p.x + labelW, p.y + 1));
-    ui::Meter(ImGui::GetID("##master"), a.engine.masterPeakL(), a.engine.masterPeakR(), ImVec2(w - labelW, rowH - 2), false);
+    outMeter(dl, ImVec2(p.x + labelW, p.y + 1), ImVec2(w - labelW, rowH - 1), out);
     // J-61: an overloaded engine reads as a full meter (100 %), never more.
     const float load = std::clamp(a.engine.cpuLoad(), 0.0f, 1.0f);
     char cpu[16];
@@ -701,6 +744,13 @@ void drawStatusBar(App& a) {
 // J-78: long messages wrap (up to four lines); a click copies the English
 // message and its details to the clipboard ("Copied" for a second), the x
 // dismisses the card, and a hovered card stays up.
+static void drawNotifications(App& a, ImVec2 wp, float W, float fs);
+
+void drawNotificationCards(App& a) {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  drawNotifications(a, ImVec2(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - theme::kS2), vp->WorkSize.x, theme::kFontCaption);
+}
+
 static void drawNotifications(App& a, ImVec2 wp, float W, float fs) {
   if (a.toasts.empty()) return;
   const auto& P = pal();

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include "../core/Params.h"
+#include "ClipHeaderHit.h"
 #include "MidiUi.h"
 
 namespace gl {
@@ -16,6 +17,7 @@ float drawTopBar(App& a);      // menu + transport; returns height used
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1);
 float topBarMetronomeMirror();
 void drawStatusBar(App& a);    // hint bar + notifications
+void drawNotificationCards(App& a);  // J-141: the notification cards alone (the launcher has no status bar)
 void drawBrowser(App& a);
 void drawChannelRack(App& a);
 // J-84 dev checks: --rack <spec> (comma separated: steps<N> pattern length,
@@ -48,6 +50,12 @@ struct PlaylistGeometry {
     float x, y;
   };
   std::vector<Row> rows;
+  // J-142: every clip drawn, with its title strip's menu arrow and name box.
+  struct ClipHead {
+    unsigned id;
+    clipheader::Geom g;
+  };
+  std::vector<ClipHead> clips;
   bool valid = false;
 };
 const PlaylistGeometry& playlistGeometry();
@@ -86,6 +94,8 @@ void handleGlobalShortcuts(App& a);
 // handleGlobalShortcuts after the frame of the release (a wheel burst: after 0.4 s and 8 frames
 // without wheel).
 void pointerGestureFrame(App& a);
+// J-141: the frame-end half of it (handleGlobalShortcuts runs it; the launcher has no shortcuts pass).
+void pointerGestureFrameEnd(App& a);
 // Knob grid for a plugin's parameters (effects and instruments).
 void pluginParamGrid(App& a, const PluginInfo& info, const std::function<ParamId(int)>& pidOf, float width);
 

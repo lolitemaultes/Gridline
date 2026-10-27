@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include "../../engine/pitch/Kernel.h"
 #include "../Packs.h"
 #include "drums.h"
 #include "drums_ref.h"
@@ -416,8 +417,9 @@ class KickSculptGen final : public Generator {
         if (noise_ && mix > 0) {
           const size_t at = static_cast<size_t>(v.nzPos);
           if (at + 1 < noise_->frames()) {
-            const float fr = v.nzPos - static_cast<float>(at);
-            nz = noise_->left[at] * (1 - fr) + noise_->left[at + 1] * fr;
+            // J-140: band-limited read at the noise pitch (was linear).
+            nz = pitch::read(noise_->left.data(), static_cast<int64_t>(noise_->frames()), v.nzPos, v.nzRate,
+                             pitch::table(pitch::Quality::Realtime));
             v.nzPos += v.nzRate;
           }
           if (v.nzRise) {

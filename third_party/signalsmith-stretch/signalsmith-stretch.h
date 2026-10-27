@@ -1024,7 +1024,10 @@ private:
 				Sample targetE = getFormant(freqToBand(outputF));
 
 				Sample formantRatio = targetE/(inputE + Sample(1e-30));
-				Sample energyRatio = formantRatio;
+				// Gridline (J-140): bounded to +12 dB. Bins above the input's
+				// bandwidth (envelope near zero) were boosted by up to 80 dB when
+				// formants moved up, turning the empty top octave into loud hiss.
+				Sample energyRatio = std::min(formantRatio, Sample(16));
 
 				for (int c = 0; c < channels; ++c) {
 					Band *bins = bandsForChannel(c);

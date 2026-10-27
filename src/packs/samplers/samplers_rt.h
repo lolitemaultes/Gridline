@@ -3,6 +3,7 @@
 // samples[0] is a pack-private Sample subclass tagged by its path.
 #pragma once
 #include "samplers.h"
+#include "../../engine/pitch/Kernel.h"
 
 namespace gl::packs::samplers {
 
@@ -97,28 +98,6 @@ float prm(const PluginState& s, int i, float d = 0.f) {
   return i < static_cast<int>(s.params.size()) ? s.params[static_cast<size_t>(i)] : d;
 }
 
-constexpr int kSincTaps = 8, kSincPhases = 256;
-const std::array<float, (kSincPhases + 1) * kSincTaps>& sincTable() {
-  static const auto t = [] {
-    std::array<float, (kSincPhases + 1) * kSincTaps> a{};
-    for (int p = 0; p <= kSincPhases; ++p) {
-      double frac = static_cast<double>(p) / kSincPhases, sum = 0;
-      double w[kSincTaps];
-      for (int j = 0; j < kSincTaps; ++j) {
-        double x = (j - 3) - frac;
-        double sinc = std::fabs(x) < 1e-9 ? 1.0 : std::sin(kPi * x) / (kPi * x);
-        double u = (x + 4.0) / 8.0;  // 0..1 across the window
-        double win = 0.42 - 0.5 * std::cos(dsp::kTwoPi * u) + 0.08 * std::cos(2 * dsp::kTwoPi * u);
-        w[j] = sinc * win;
-        sum += w[j];
-      }
-      for (int j = 0; j < kSincTaps; ++j) a[static_cast<size_t>(p * kSincTaps + j)] = static_cast<float>(w[j] / sum);
-    }
-    return a;
-  }();
-  return t;
-}
-
 // Sample reader: clamps at the ends, wraps past the loop end while looping.
 struct Reader {
   const float* d = nullptr;
@@ -130,28 +109,22 @@ struct Reader {
     if (i >= n) i = n - 1;
     return d[i];
   }
-  float read(double pos, int mode) const {
+  // rate: source frames per output frame. J-140: Cubic and Sinc read through
+  // the shared band-limited kernel (Compact and Realtime), whose cutoff follows
+  // the rate (no aliasing pitched up, no images pitched down); Linear stays the
+  // plain lo-fi read it always was (a deliberate choice).
+  float read(double pos, int mode, double rate) const {
     int64_t i = static_cast<int64_t>(std::floor(pos));
     float f = static_cast<float>(pos - static_cast<double>(i));
     if (mode == InterpLinear) {
       float a = at(i), b = at(i + 1);
       return a + (b - a) * f;
     }
-    if (mode == InterpSinc) {
-      const auto& t = sincTable();
-      float ph = f * kSincPhases;
-      int p0 = static_cast<int>(ph);
-      float pf = ph - static_cast<float>(p0);
-      const float* w0 = &t[static_cast<size_t>(p0 * kSincTaps)];
-      const float* w1 = &t[static_cast<size_t>(std::min(p0 + 1, kSincPhases) * kSincTaps)];
-      float acc = 0;
-      for (int j = 0; j < kSincTaps; ++j) acc += at(i - 3 + j) * (w0[j] + (w1[j] - w0[j]) * pf);
-      return acc;
-    }
-    // 4-point Catmull-Rom.
-    float xm = at(i - 1), x0 = at(i), x1 = at(i + 1), x2 = at(i + 2);
-    float c1 = 0.5f * (x1 - xm), c2 = xm - 2.5f * x0 + 2.f * x1 - 0.5f * x2, c3 = 0.5f * (x2 - xm) + 1.5f * (x0 - x1);
-    return ((c3 * f + c2) * f + c1) * f + x0;
+    if (pitch::exactFrame(pos, rate)) return at(i);
+    float o;
+    pitch::readWith<1>([this](int64_t k, int) { return at(k); }, pos, std::fabs(rate),
+                       pitch::table(mode == InterpSinc ? pitch::Quality::Realtime : pitch::Quality::Compact), &o);
+    return o;
   }
 };
 
@@ -221,7 +194,7 @@ constexpr int kChunk = 128;
 // =========================================================================
 class MultiSamplerGen final : public Generator {
  public:
-  MultiSamplerGen() { (void)sincTable(); }
+  MultiSamplerGen() { (void)pitch::table(pitch::Quality::Realtime); }
   bool active() const override {
     for (const auto& v : voices_)
       if (v.on) return true;
@@ -543,13 +516,13 @@ class MultiSamplerGen final : public Generator {
       }
       const bool wrap = v.looping && z.loop != LoopBounce;
       rl.wrap = rr.wrap = wrap;
-      float l = rl.read(v.pos, interp_), r = rr.read(v.pos, interp_);
+      float l = rl.read(v.pos, interp_, v.rate), r = rr.read(v.pos, interp_, v.rate);
       if (wrap && zr.xf > 0 && v.dir > 0 && v.pos >= static_cast<double>(zr.le - zr.xf)) {
         double w = (v.pos - static_cast<double>(zr.le - zr.xf)) / static_cast<double>(zr.xf);
         double back = v.pos - static_cast<double>(zr.le - zr.ls);
         float c0 = static_cast<float>(std::cos(w * kPi * 0.5)), c1 = static_cast<float>(std::sin(w * kPi * 0.5));
-        l = l * c0 + rl.read(back, interp_) * c1;
-        r = r * c0 + rr.read(back, interp_) * c1;
+        l = l * c0 + rl.read(back, interp_, v.rate) * c1;
+        r = r * c0 + rr.read(back, interp_, v.rate) * c1;
       }
       if (v.ftype != FiltOff) {
         double bl, hl, br, hr;
@@ -771,9 +744,10 @@ class ScratchGen final : public Generator {
         }
         double speed = std::fabs(v.pos - v.lastPos);
         v.lastPos = v.pos;
-        float l = rl.read(v.pos, interp_), r = rr.read(v.pos, interp_);
-        // Fast motion: one-pole low-pass against aliasing (cutoff ~ Nyquist / speed).
-        double c = speed > 1.0 ? std::exp(-dsp::kTwoPi * 0.45 / speed) : 0.0;
+        float l = rl.read(v.pos, interp_, speed), r = rr.read(v.pos, interp_, speed);
+        // Fast motion, Linear reads: one-pole low-pass against aliasing (cutoff
+        // ~ Nyquist / speed). The band-limited reads (J-140) need none.
+        double c = speed > 1.0 && interp_ == InterpLinear ? std::exp(-dsp::kTwoPi * 0.45 / speed) : 0.0;
         v.lpL = l + (v.lpL - l) * c;
         v.lpR = r + (v.lpR - r) * c;
         int step = std::min(kMuteSteps - 1, static_cast<int>(v.t * kMuteSteps));

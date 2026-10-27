@@ -8,6 +8,7 @@
 #include <vector>
 #include "../../engine/Dsp.h"
 #include "../../engine/Effects.h"
+#include "../../engine/pitch/Kernel.h"
 #include "spacefx.h"
 
 namespace gl::packs::spacefx::detail {
@@ -70,6 +71,9 @@ struct Ring {
     size_t i = static_cast<size_t>(d);
     float f = static_cast<float>(d - static_cast<double>(i));
     return at(i) + (at(i + 1) - at(i)) * f;
+  }  // J-140: band-limited read with the head moving `rate` samples per sample.
+  float band(double d, double rate, const pitch::SincTable& t) const {
+    return pitch::readBack(b.data(), mask, w, clampd(d, 1.0, static_cast<double>(b.size() - 3)), rate, t);
   }
 };
 

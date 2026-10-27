@@ -9,6 +9,7 @@
 #include <vector>
 #include "../../engine/Dsp.h"
 #include "../../engine/Effects.h"
+#include "../../engine/pitch/Kernel.h"
 #include "dynamics.h"
 
 namespace gl::packs::dynamics {
@@ -288,6 +289,10 @@ struct DelayLine {
     double f = d - static_cast<double>(i);
     double a = buf[(w - i) & mask], b = buf[(w - i - 1) & mask];
     return a + (b - a) * f;
+  }
+  // J-140: band-limited fractional delay with the head moving `rate` samples per sample.
+  double band(double d, double rate, const pitch::SincTable& t) const {
+    return pitch::readBack(buf.data(), mask, w, clampd(d, 1.0, static_cast<double>(mask - 2)), rate, t);
   }
   size_t capacity() const { return mask; }
   void reset() {

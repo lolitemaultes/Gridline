@@ -213,7 +213,7 @@ class Rewind final : public MiniFx {
       for (int ch = 0; ch < 2; ++ch) {
         const double x = *io[ch];
         d_[ch].push(static_cast<float>(x));
-        const double y = d_[ch].read(2.0 * pos_ + 2.0) * g;
+        const double y = d_[ch].band(2.0 * pos_ + 2.0, 1.0, pitch::table(pitch::Quality::Realtime)) * g;  // J-140: band-limited
         *io[ch] = static_cast<float>(x * (1.0 - wet) + y * wet);
       }
     }
@@ -285,9 +285,10 @@ class Halt final : public MiniFx {
           y = x;
         } else if (mode_ == Catching) {
           const double t = std::min(1.0, xf_ / xfN);
-          y = (1.0 - t) * d_[c].read(lag_ + 1.0) + t * x;
+          y = (1.0 - t) * d_[c].band(lag_ + 1.0, 1.0, pitch::table(pitch::Quality::Realtime)) + t * x;
         } else {
-          y = d_[c].read(lag_ + 1.0) * gain;
+          // J-140: band-limited at the tape speed (Hermite imaged at slow speeds).
+          y = d_[c].band(lag_ + 1.0, speed_, pitch::table(pitch::Quality::Realtime)) * gain;
         }
         *io[c] = static_cast<float>(y);
       }

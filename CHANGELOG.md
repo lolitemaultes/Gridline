@@ -3,6 +3,64 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
+## Unreleased
+
+### Pitch and time engine
+
+- One shared pitch and time engine behind every pitch or tempo change: audio clips, the
+  sampler and sample editors, the audio editor, browser previews, granular and sample
+  oscillators, and the pitch, delay, scratch and stutter effects. Pitched material no longer
+  folds back as aliasing (high tones an octave up drop from full level to below -80 dB).
+- New time stretch modes: Voice keeps the character of a voice or a bass line while its pitch
+  changes, and Beats keeps drum hits sharp with no pre-echo. Both are offered in the clip,
+  sampler and audio editor menus; projects saved earlier keep the modes they had.
+- Formant-keeping modes now keep their loudness without new clipping: a shifted voice or bass
+  no longer overshoots full scale.
+- Fixes: sample playback at high pitch settings stays clean, a clip stretched in realtime stays
+  in tune, and the audio editor plays and scrubs cleanly at any speed.
+
+### New
+
+- A welcome screen, Gridline's new home: recent projects in a large grid, each tile with a
+  sketch of the project's arrangement (or its pattern, channels or mixer), when it was last
+  opened, its tempo and length. The first tile starts a new project. Open a project from disk,
+  start from a template or the demo song, search, and tidy the list (remove a project, remove
+  missing ones, show a project in its folder) from the same place. Fully keyboard driven.
+- A click on the Gridline logo now shows the welcome screen, with the open project marked and a
+  Back to project button; a right click still opens the main menu. Opening another project from
+  there asks about unsaved changes first.
+- Gridline starts on the welcome screen. The first launch still opens the demo song, and
+  projects opened from files, the command line or a drop go straight in. Settings > General >
+  On startup: Show the welcome screen turns it off.
+- Sketches are cached in the settings folder and made when a project is saved or opened, so the
+  welcome screen opens at once; the recent list keeps up to 24 projects.
+
+### Changed
+
+- Playlist: with several audio clips selected, changing one clip's level, fades, fade curves or
+  pitch changes every selected clip by the same amount. A +2 dB drag adds 2 dB to each clip, a
+  longer fade-in lengthens each clip's own fade-in by the same time, and clips keep their
+  differences. Each clip stops at its own limits while the others keep moving. One drag is one
+  undo step. Reset sets every selected clip back to the default; a typed value goes to the
+  clicked clip and moves the others by the same difference.
+- Playlist: a right-click on a clip's title strip deletes the clip like a right-click on its body
+  (right-drag deletes across clips from there too). Only the clip's name and its small menu arrow
+  open the clip menu, and the name highlights where a right-click opens it.
+
+### Fixed
+
+- The OUT meter in the top bar is now a real master output meter: it shows the master track after
+  its effects and fader (the same level as the mixer's master meter), on the same dB scale, with a
+  steady fall that does not depend on the frame rate, a short peak hold per channel and a clip lamp
+  that lights only above 0 dBFS. It used to hold on to the loudest moment ever played, so it stayed
+  lit after the music stopped, and it also counted the metronome click.
+- Meters no longer show a lit peak marker at the bottom of the scale in silence; the mixer meters
+  fall a little more calmly and hold each channel's peak on its own.
+
+### Removed
+
+- The "Song sketch" project template (and its Songwriting category).
+
 ## 0.7.0-beta.2
 
 This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.

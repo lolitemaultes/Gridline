@@ -122,7 +122,7 @@ option(GRIDLINE_GUI_TESTS "Register the tests that open (hidden) application win
 
 # ---- core + engine (no UI dependencies) ----
 # Plugin packs (src/packs/<pack>/): *_info/*_dsp go into the core library, *_ui into the app.
-file(GLOB GRIDLINE_CORE_SRC CONFIGURE_DEPENDS src/core/*.cpp src/core/flp/*.cpp src/engine/*.cpp src/packs/Registry.cpp
+file(GLOB GRIDLINE_CORE_SRC CONFIGURE_DEPENDS src/core/*.cpp src/core/flp/*.cpp src/engine/*.cpp src/engine/pitch/*.cpp src/packs/Registry.cpp
      src/packs/*/*_info.cpp src/packs/*/*_dsp.cpp src/host/*.cpp src/host/*/*.cpp)
 # Plugin hosting on macOS: Audio Units, Cocoa plugin views, sandbox windows (Objective-C++).
 if(APPLE)
@@ -315,6 +315,12 @@ add_test(NAME engine COMMAND gridline_tests WORKING_DIRECTORY ${CMAKE_SOURCE_DIR
 add_test(NAME m1_foundations COMMAND gridline_tests_m1 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_test(NAME plugin_parity COMMAND gridline_tests_parity WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_test(NAME menus COMMAND gridline_tests_menus WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# J-141: welcome launcher logic (start-up plan, state machine, recents, sketches + cache, layout audit).
+add_executable(gridline_tests_launcher tests/test_launcher.cpp)
+target_link_libraries(gridline_tests_launcher PRIVATE gridline_core)
+target_include_directories(gridline_tests_launcher PRIVATE src tests)
+target_compile_options(gridline_tests_launcher PRIVATE ${GL_WARN})
+add_test(NAME j141_launcher COMMAND gridline_tests_launcher WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_editing_tools tests/test_editing_tools.cpp)
 target_link_libraries(gridline_tests_editing_tools PRIVATE gridline_core)
 target_compile_options(gridline_tests_editing_tools PRIVATE ${GL_WARN})
@@ -516,6 +522,12 @@ target_link_libraries(gridline_tests_j97 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j97 PRIVATE tests)
 target_compile_options(gridline_tests_j97 PRIVATE ${GL_WARN})
 add_test(NAME j97 COMMAND gridline_tests_j97 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-143: the OUT meter (level meter ballistics, master bus peak) and the shipped templates.
+add_executable(gridline_tests_j143 tests/test_j143.cpp)
+target_link_libraries(gridline_tests_j143 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j143 PRIVATE tests)
+target_compile_options(gridline_tests_j143 PRIVATE ${GL_WARN})
+add_test(NAME j143_out_meter COMMAND gridline_tests_j143 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 # J-89: update check (versions, release JSON, downloads per platform, SHA256SUMS, schedule; no network).
 add_executable(gridline_tests_update tests/test_update.cpp)
 target_link_libraries(gridline_tests_update PRIVATE gridline_core)
@@ -839,6 +851,11 @@ target_link_libraries(gridline_tests_j79 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j79 PRIVATE tests src)
 target_compile_options(gridline_tests_j79 PRIVATE ${GL_WARN})
 add_test(NAME j79 COMMAND gridline_tests_j79 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_executable(gridline_tests_clip_multi_edit tests/test_clip_multi_edit.cpp)
+target_link_libraries(gridline_tests_clip_multi_edit PRIVATE gridline_core)
+target_include_directories(gridline_tests_clip_multi_edit PRIVATE tests src)
+target_compile_options(gridline_tests_clip_multi_edit PRIVATE ${GL_WARN})
+add_test(NAME clip_multi_edit COMMAND gridline_tests_clip_multi_edit WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-85: one-step song loop markers; marker actions in the audio engine (sample-exact).
 add_executable(gridline_tests_j85 tests/test_j85.cpp)
 target_link_libraries(gridline_tests_j85 PRIVATE gridline_core)
@@ -1178,8 +1195,9 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   if(GRIDLINE_GUI_TESTS)
     # Q-7: every built-in editor at widths x1 / x1.5 / x2, no control within
     # inset::kMinInset px of its panel's edge (off-screen run; isolated config).
+    # Hidden window: the desktop cursor cannot hover a control and show its readout.
     add_test(NAME editor_layout_audit
-             COMMAND gridline-app --layout-audit ${CMAKE_BINARY_DIR}/layout_audit --size 2400x1600
+             COMMAND gridline-app --hidden --layout-audit ${CMAKE_BINARY_DIR}/layout_audit --size 2400x1600
                      --screenshot ${CMAKE_BINARY_DIR}/layout_audit/frame.ppm --frames 100000 --no-ui-sounds
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     # J-103: a failing exit fails the test (ctest checks the code); an abort message on the way out does too.
@@ -1306,6 +1324,15 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j118_paint_brush_app PROPERTIES TIMEOUT 300)
 
+    # J-142: relative volume / fade drags across a selection of audio clips (one undo step each),
+    # a single clip edited alone, and right-clicks on a clip's title strip: the name box and the
+    # menu arrow open the clip menu, the rest of the strip deletes like the body (right-drag too).
+    add_test(NAME j142_clip_edits_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j142_clip_edits -P ${CMAKE_SOURCE_DIR}/tests/j142_clip_edits.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j142_clip_edits_app PROPERTIES TIMEOUT 300)
+
     # The plugin window's channel strip (volume, pan, pitch, preview keyboard): hidden by default,
     # the header's eye slides it in and out, the window's size is stable after the slide, the
     # keyboard and knobs work while shown, and the choice survives a restart.
@@ -1384,6 +1411,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j103_clean_exit -P ${CMAKE_SOURCE_DIR}/tests/j103_clean_exit.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j103_clean_exit PROPERTIES TIMEOUT 900)
+    # J-141: the welcome launcher: logo shows it, Esc returns, tiles open projects, unsaved changes ask first.
+    add_test(NAME j141_launcher_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j141_launcher_app -P ${CMAKE_SOURCE_DIR}/tests/j141_launcher_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j141_launcher_app PROPERTIES TIMEOUT 600)
   endif()
 
   include(cmake/GridlinePlugins.cmake)  # PH-09: Gridline.clap / Gridline.vst3

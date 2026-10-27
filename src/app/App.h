@@ -15,6 +15,7 @@
 #include "../core/Timeline.h"
 #include "../core/Backup.h"
 #include "../core/Document.h"
+#include "../core/Launcher.h"
 #include "../core/MidiRecord.h"
 #include "../engine/AudioRecord.h"
 #include "../core/MidiTemplates.h"
@@ -183,7 +184,9 @@ class App {
   std::string openedFrom;   // J-52: FL project / zip the song was opened from (projectPath "")
   // The file the project is known by: projectPath, else openedFrom.
   const std::string& projectFile() const { return projectPath.empty() ? openedFrom : projectPath; }
-  std::vector<std::string> recentFiles;
+  std::vector<std::string> recentFiles;  // most recent first (recent.txt)
+  // J-141: the welcome launcher (app/LauncherUi.h): shown at start-up and from the logo.
+  launcher::State home;
 
   void syncEngine();  // rebuild the engine program after edits
   void forceRebuild() { builtRevision_ = ~0ull; }  // the next syncEngine() rebuilds (PH-09: macro links)
@@ -393,6 +396,16 @@ class App {
   std::string windowTitle() const;
   std::string configDir() const;
   void addRecent(const std::string& path);
+  // J-141: recent list management (the launcher): saved at once.
+  bool removeRecent(const std::string& path);
+  size_t removeMissingRecents();
+  void clearRecents();
+  int64_t recentOpenedAt(const std::string& path) const;  // Unix seconds, 0 = unknown
+  // J-141: Close project (launcher): asks about unsaved changes, then shows the launcher
+  // with no project open.
+  void closeProject();
+  // J-141: the launcher's sketch cache folder (<config>/launcher/sketches).
+  std::string sketchCacheDir() const;
 
   // ---- J-48 interface sounds (engine/UiSounds.h) ----
   uisound::Player uiSounds;          // mixed after the master in the audio callback (main.cpp)
@@ -444,7 +457,8 @@ class App {
   void applyProjectDefaults(Song& s) const;
   // Settings > General > On startup (after main has set assetsDir). The very first launch on a
   // machine (no settings file yet) opens the demo song instead, once.
-  void applyStartup();
+  // J-141: `plainLaunch` (no command-line arguments) lets the welcome launcher show.
+  void applyStartup(bool plainLaunch = false);
   // Log level / log file and language from the settings.
   void applySettingsHooks();
   std::string languageDir() const;  // assets/i18n: translation catalogues
@@ -457,6 +471,10 @@ class App {
   uint64_t builtRevision_ = ~0ull;
   uint64_t builtSampleGen_ = 0;   // SampleCache::generation() of the last build (J-30)
   bool freshInstall_ = false;     // no settings file existed when the app started (J-135)
+  std::map<std::string, int64_t> recentTimes_;  // J-141: last opened / saved per recent path
+  void saveRecents();
+  bool openProjectFile(const std::string& path);  // openProject without the launcher hand-over
+  void rememberSketch(const std::string& path);  // J-141: the open song's sketch for the launcher
   double trimSamplesAt_ = -1;     // drop the replaced project's samples from the cache at this time (J-30)
   int64_t lastBackupCheck_ = 0;
   SamplePtr preview_;

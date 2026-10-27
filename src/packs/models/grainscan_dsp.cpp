@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include "../../engine/Dsp.h"
+#include "../../engine/pitch/Kernel.h"
 #include "metal.h"
 #include "metal_rt.h"
 
@@ -215,16 +216,22 @@ class GrainScanGen final : public Generator {
           else if (g.age < g.att + g.hold) e = 1.0f;
           else e = 1.0f - static_cast<float>(g.age - g.att - g.hold) / static_cast<float>(g.att);
           // linear ramps (overlapping windows sum to 1 at the default spacing)
+          // J-140: band-limited read at the grain's rate (was linear), wrapping
+          // round the sample like the grain positions do.
           auto rd = [&](const std::vector<float>& ch, double at) {
-            at = std::fmod(at, frames);
-            if (at < 0) at += frames;
-            // J-36: fmod(-tiny) + frames rounds to frames: index one past the end (ASan, test_determinism).
-            if (!(at < frames)) at = 0;
             if (ch.empty()) return 0.0f;
-            const size_t i0 = std::min(static_cast<size_t>(at), ch.size() - 1);
-            const size_t i1 = i0 + 1 < ch.size() ? i0 + 1 : 0;
-            const float f = static_cast<float>(at - static_cast<double>(i0));
-            return ch[i0] + (ch[i1] - ch[i0]) * f;
+            const auto n = static_cast<int64_t>(ch.size());
+            at = std::fmod(at, static_cast<double>(n));
+            if (at < 0) at += static_cast<double>(n);
+            if (!(at < static_cast<double>(n))) at = 0;  // J-36: fmod(-tiny) + n rounds to n
+            float o;
+            pitch::readWith<1>(
+                [&ch, n](int64_t k, int) {
+                  k %= n;
+                  return ch[static_cast<size_t>(k < 0 ? k + n : k)];
+                },
+                at, std::fabs(g.rate), pitch::table(pitch::Quality::Compact), &o);
+            return o;
           };
           l += rd(smp->left, g.pos) * e * g.panL;
           r += rd(smp->right, g.pos + g.rOff) * e * g.panR;

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <vector>
+#include "../../engine/pitch/Kernel.h"
 
 namespace gl::packs::spectral::blk {
 
@@ -233,6 +234,18 @@ struct Ring {
     float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
     float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
     return ((c3 * t + c2) * t + c1) * t + x0;
+  }
+  // J-140: band-limited read with the head moving `rate` samples per sample
+  // (the shared kernel; anti-aliased when reading fast). Samples after `newest`
+  // (not yet written) read as the newest one.
+  float band(double pos, double rate, int64_t newest, const pitch::SincTable& t = pitch::table(pitch::Quality::Compact)) const {
+    if (pitch::exactFrame(pos, rate)) {
+      const auto i = static_cast<int64_t>(std::floor(pos + 0.5));
+      return at(i > newest ? newest : i);
+    }
+    float o;
+    pitch::readWith<1>([this, newest](int64_t i, int) { return at(i > newest ? newest : i); }, pos, std::fabs(rate), t, &o);
+    return o;
   }
 };
 
@@ -513,6 +526,7 @@ struct PsVoice {
 // largest peak 0.75..1.1 periods after the previous mark), two-period Hann
 // grains re-emitted at the voice's spacing and resampled by its formant
 // factor. Unvoiced input uses 256-sample grains every 128 samples (transparent).
+// J-140: grain reads are band-limited (were linear).
 class PsolaCh {
  public:
   static constexpr int kRing = 1 << 16, kMarks = 128, kHann = 4096, kVoices = 4;
@@ -618,7 +632,7 @@ class PsolaCh {
     for (int64_t k = c0; k <= c1; ++k) {
       double off = static_cast<double>(k) - centre;
       int wi = std::clamp(static_cast<int>((off + half) * inv), 0, kHann);
-      out_.at(k) += static_cast<float>(src_.linear(static_cast<double>(src) + off * g) * hann_[static_cast<size_t>(wi)] * gain);
+      out_.at(k) += static_cast<float>(src_.band(static_cast<double>(src) + off * g, g, w_ - 1) * hann_[static_cast<size_t>(wi)] * gain);
     }
   }
   Ring src_, ana_, out_;
@@ -687,7 +701,8 @@ class JumpShifter {
 
 // Stereo granular shifter: a new grain every L / density samples (+ random
 // spacing), read at the pitch ratio from behind the write head (room for an
-// upward shift, + random offset), Hann window, up to 20 grains.
+// upward shift, + random offset), Hann window, up to 20 grains. J-140: grain
+// reads are band-limited at the grain rate (were Hermite: aliased upward).
 class GrainCloud {
  public:
   static constexpr int kRing = 1 << 17, kGrains = 20, kWin = 1024;
@@ -730,8 +745,8 @@ class GrainCloud {
       if (!g.on) continue;
       double t = g.age / g.len;
       float wv = win_[static_cast<size_t>(std::clamp(static_cast<int>(t * kWin), 0, kWin))];
-      sl += l_.cubic(g.pos) * wv;
-      sr += r_.cubic(g.pos) * wv;
+      sl += l_.band(g.pos, g.inc, w_ - 1) * wv;
+      sr += r_.band(g.pos, g.inc, w_ - 1) * wv;
       g.pos += g.inc;
       if (++g.age >= g.len) g.on = false;
     }

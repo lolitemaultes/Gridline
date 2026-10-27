@@ -67,6 +67,10 @@ inline std::string label(float gain) {
 struct Drag {
   bool fine = false, free = false;
   double detentPx = kDetentPx;
+  // J-142: the drag of one clip in a multi-selection. The pointer's travel is
+  // not stopped at the range's ends, so dbUnbounded() keeps following it (the
+  // other clips go on moving); db() and gain() stay within the range.
+  bool unbounded = false;
 
   void begin(double db, bool fineMod = false, bool freeMod = false, double upPxNow = 0) {
     fine = fineMod, free = freeMod, last_ = upPxNow;
@@ -88,6 +92,8 @@ struct Drag {
     return std::min(kMaxDb, dbOf(v_));
   }
   float gain() const { return fromDb(db()); }
+  // The value the pointer points at, past either end of the range (see `unbounded`).
+  double dbUnbounded() const { return dbOf(v_); }
 
  private:
   double v_ = 0, last_ = 0;
@@ -105,7 +111,7 @@ struct Drag {
     return 0.0;
   }
   // One pixel below the bottom is silence; nothing goes further.
-  double clampPos(double v) const { return std::clamp(v, posOf(kMinDb) - 1.0, posOf(kMaxDb)); }
+  double clampPos(double v) const { return unbounded ? v : std::clamp(v, posOf(kMinDb) - 1.0, posOf(kMaxDb)); }
 };
 
 }  // namespace gl::clipgain

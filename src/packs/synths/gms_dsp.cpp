@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include "../../engine/Sample.h"
+#include "../../engine/pitch/Kernel.h"
 #include "../Packs.h"
 #include "gms.h"
 #include "synths_common.h"
@@ -61,11 +62,22 @@ BankPtr makeBank(const std::vector<float>& cycleIn) {
   if (cycleIn.size() < 2) return b;
   std::vector<std::complex<double>> spec(kCycle);
   const double step = static_cast<double>(cycleIn.size()) / kCycle;
+  // J-140: band-limited, wrapping resample of the cycle (was linear).
+  const auto n = static_cast<int64_t>(cycleIn.size());
+  const pitch::SincTable& tab = pitch::table(pitch::Quality::Offline);
   for (int i = 0; i < kCycle; ++i) {
-    const double x = i * step;
-    const size_t i0 = static_cast<size_t>(x) % cycleIn.size(), i1 = (i0 + 1) % cycleIn.size();
-    const double f = x - std::floor(x);
-    spec[static_cast<size_t>(i)] = cycleIn[i0] * (1 - f) + cycleIn[i1] * f;
+    float v;
+    if (static_cast<int64_t>(cycleIn.size()) == kCycle) {
+      v = cycleIn[static_cast<size_t>(i)];
+    } else {
+      pitch::readWith<1>(
+          [&cycleIn, n](int64_t k, int) {
+            k %= n;
+            return cycleIn[static_cast<size_t>(k < 0 ? k + n : k)];
+          },
+          i * step, step, tab, &v);
+    }
+    spec[static_cast<size_t>(i)] = v;
   }
   fft(spec, false);
   // Normalise so the full-band table peaks at 1.

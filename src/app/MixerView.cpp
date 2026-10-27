@@ -25,6 +25,7 @@
 #include "HostedUi.h"
 #include "TrackIcons.h"
 #include "../core/MixerLayout.h"
+#include "../core/LevelMeter.h"
 #include "../core/MixerOps.h"
 #include "../core/PluginStandIn.h"
 #include "../core/WheelRoute.h"
@@ -261,21 +262,18 @@ constexpr float kWaveH = 24.0f;
 
 // Meter with peak / RMS / both modes, optional peak hold and a dB scale.
 void stripMeter(ImGuiID key, float pl, float pr, float rl, float rr, ImVec2 size, const MixerViewState& v, bool scale) {
-  struct State {
-    float l = 0, r = 0, rl = 0, rr = 0, holdL = 0, holdR = 0;
-    double holdT = 0;
+  // J-143: the shared ballistics (the top bar OUT meter runs the same on the master bus).
+  struct Pair {
+    LevelMeter peak, rms;
   };
-  static std::map<ImGuiID, State> states;
-  State& s = states[key];
-  const float decay = std::exp(-ImGui::GetIO().DeltaTime * 6.0f);
-  s.l = std::max(pl, s.l * decay);
-  s.r = std::max(pr, s.r * decay);
-  s.rl = std::max(rl, s.rl * decay);
-  s.rr = std::max(rr, s.rr * decay);
-  const double now = ImGui::GetTime();
-  if (s.l >= s.holdL || s.r >= s.holdR || now - s.holdT > 1.5) {
-    s.holdL = s.l, s.holdR = s.r, s.holdT = now;
-  }
+  static std::map<ImGuiID, Pair> pairs;
+  Pair& mp = pairs[key];
+  const float dt = ImGui::GetIO().DeltaTime;
+  mp.peak.update(pl, pr, dt);
+  mp.rms.update(rl, rr, dt);
+  struct {
+    float l, r, rl, rr, holdL, holdR;
+  } s{mp.peak.level(0), mp.peak.level(1), mp.rms.level(0), mp.rms.level(1), mp.peak.hold(0), mp.peak.hold(1)};
   const auto& P = pal();
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImGui::Dummy(size);
@@ -291,8 +289,8 @@ void stripMeter(ImGuiID key, float pl, float pr, float rl, float rr, ImVec2 size
     const bool rms = v.meterMode == MixerViewState::Rms;
     m.l = toPos(rms ? s.rl : s.l), m.r = toPos(rms ? s.rr : s.r);
     if (v.meterMode == MixerViewState::PeakRms) m.rmsL = toPos(s.rl), m.rmsR = toPos(s.rr);
-    if (v.peakHold) m.peakL = toPos(s.holdL), m.peakR = toPos(s.holdR);
-    m.clip = s.holdL > 1.0f || s.holdR > 1.0f;
+    if (v.peakHold) m.peakL = s.holdL > 0 ? toPos(s.holdL) : -1.0f, m.peakR = s.holdR > 0 ? toPos(s.holdR) : -1.0f;
+    m.clip = mp.peak.clipping();
     look::meter(dl, p, ImVec2(p.x + size.x, p.y + size.y), m);
   }
   for (int ch = 0; ch < 2 && !look::styled(); ++ch) {

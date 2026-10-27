@@ -7,7 +7,7 @@
 //   2. per channel, per frame:
 //      time warp ("pogo") [0..512, 256 = off], a = |v − 256| / 256: read
 //        position p = a·w(n) + (1 − a)·n with w(n) = N·sin(n/N · π/2) above 256
-//        and N + N·asin(n/N − 1)·2/π below; 4-point Hermite read of the
+//        and N + N·asin(n/N − 1)·2/π below; band-limited read (J-140) of the
 //        stereo-delayed copy;
 //      ring modulation [mix 0..256, freq 0..256]: x·(1 − m) + m·x·sin(φ),
 //        φ advancing (f + 8)·44100 / 5760 Hz, starting at 90° per channel;
@@ -31,6 +31,7 @@
 #include <mutex>
 #include "../core/PluginInfo.h"
 #include "../core/PluginParams.h"
+#include "pitch/Kernel.h"
 
 namespace gl {
 
@@ -163,16 +164,17 @@ SamplePtr precomputeSample(const SamplePtr& in, const SamplePrecomputeFx& fx) {
     for (long n = 0; n <= N; ++n) {
       double v = x[static_cast<size_t>(n)];
       if (pogo != 256) {
-        double w;
-        if (pogo < 256) w = static_cast<double>(N) * std::asin(static_cast<double>(n) / N - 1.0) * 0.6366197723675814 + N;
-        else w = static_cast<double>(N) * std::sin(static_cast<double>(n) / N * 1.5707963267948966);
-        const double p = a * w + (1.0 - a) * n;
-        const long i = static_cast<long>(p);
-        const double f = p - static_cast<double>(i);
-        auto at = [&](long k) { return k >= 0 && k <= N ? static_cast<double>(src[static_cast<size_t>(k)]) : 0.0; };
-        const double xm1 = i < 1 ? 0.0 : at(i - 1), x0 = at(i), x1 = at(i + 1), x2 = at(i + 2);
-        const double A = ((x0 - x1) * 3.0 - xm1 + x2) * 0.5, B = (x1 * 2.0 + xm1) - (x0 * 5.0 + x2) * 0.5, C = (x1 - xm1) * 0.5;
-        v = ((A * f + B) * f + C) * f + x0;
+        auto warp = [&](double m) {
+          const double w = pogo < 256 ? static_cast<double>(N) * std::asin(m / N - 1.0) * 0.6366197723675814 + N
+                                      : static_cast<double>(N) * std::sin(m / N * 1.5707963267948966);
+          return a * w + (1.0 - a) * m;
+        };
+        const double p = warp(static_cast<double>(n));
+        // J-140: band-limited read at the warp's local speed (was Hermite:
+        // aliasing where the warp runs faster than 1:1, up to about 1.6).
+        const double rate = std::fabs(warp(static_cast<double>(std::min(n + 1, N))) - warp(static_cast<double>(std::max(n - 1, 0L)))) /
+                            std::max(1.0, static_cast<double>(std::min(n + 1, N) - std::max(n - 1, 0L)));
+        v = pitch::read(src.data(), N + 1, p, std::clamp(rate, 1e-3, pitch::kMaxRate), pitch::table(pitch::Quality::Offline));
       }
       if (mix > 0) {
         const double ring = std::sin(2.0 * kPi * std::floor(phase) / 16384.0) * v * mix;

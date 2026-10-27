@@ -42,7 +42,7 @@ bool setClipStretch(Song& song, ObjectId clip, double timeFactor, bool keepPitch
 // stretch mode the channel already has.
 bool setClipStretchMode(Song& song, ObjectId clip, double timeFactor, int mode);
 // Rendered stretch through the audio editor's stretch (mode: 0 elastic, 1
-// transient, 2 tape). Writes the result into `dir` on a new channel and points
+// transient, 2 tape, 3 mono, 4 formant, 5 voice, 6 beats). Writes the result into `dir` on a new channel and points
 // the clip at it (stretch reset to 1). Returns the file ("" = failed).
 std::string renderClipStretch(Song& song, ObjectId clip, double timeFactor, double semitones, int mode,
                               const std::string& dir);

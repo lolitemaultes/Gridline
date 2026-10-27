@@ -6,6 +6,7 @@
 #include <cstring>
 #include "Dsp.h"
 #include "Resample.h"
+#include "pitch/Kernel.h"
 #include "../packs/edison/edison.h"
 
 namespace gl {
@@ -557,6 +558,7 @@ void AudioEngine::drainMidi(const Program* p) {
 }
 
 void AudioEngine::preview(SamplePtr sample, bool own) {
+  (void)pitch::table(pitch::Quality::Realtime);  // J-140: built here (UI thread), read by the preview
   if (previewOwner_) retiredSamples_.push_back({previewOwner_, blocks_.load() + 2});
   previewOwner_ = std::move(sample);
   previewOwn_.store(own && previewOwner_ != nullptr, std::memory_order_relaxed);
@@ -1277,6 +1279,10 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     R[i] = mR[i];
     bad = bad || !std::isfinite(L[i]) || !std::isfinite(R[i]);
   }
+  if (!bad) {  // J-143: the OUT meter reads the master bus (no metronome click, no browser preview)
+    storeMax(outPeakL_, peakOf(mL, n));
+    storeMax(outPeakR_, peakOf(mR, n));
+  }
   if (bad) {  // never send NaN/inf to the speakers; reset the DSP that produced it
     std::memset(L, 0, sizeof(float) * static_cast<size_t>(n));
     std::memset(R, 0, sizeof(float) * static_cast<size_t>(n));
@@ -1306,6 +1312,9 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     const Sample& smp = *pvSample_;
     double rate = smp.sampleRate / sr_;
     size_t len = smp.frames();
+    // J-140: files at another rate play through the band-limited reader
+    // (was linear: dull top, aliasing from 96 kHz files); same rate: exact.
+    const pitch::SincTable& tab = pitch::table(pitch::Quality::Realtime);
     for (int i = 0; i < n; ++i) {
       size_t p0 = static_cast<size_t>(pvPos_);
       if (p0 + 1 >= len) {
@@ -1313,16 +1322,19 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
         previewing_.store(false);
         break;
       }
-      float fr = static_cast<float>(pvPos_ - static_cast<double>(p0));
-      L[i] += 0.8f * (smp.left[p0] + (smp.left[p0 + 1] - smp.left[p0]) * fr);
-      R[i] += 0.8f * (smp.right[p0] + (smp.right[p0 + 1] - smp.right[p0]) * fr);
+      float l, r;
+      if (pitch::exactFrame(pvPos_, rate)) {
+        l = smp.left[p0], r = smp.right[p0];
+      } else {
+        pitch::read2(smp.left.data(), smp.right.data(), static_cast<int64_t>(len), pvPos_, rate, tab, l, r);
+      }
+      L[i] += 0.8f * l;
+      R[i] += 0.8f * r;
       pvPos_ += rate;
     }
   }
   applyPanicFade(p, L, R, n);
   publishOwn(p);  // J-112
-  storeMax(outPeakL_, peakOf(L, n));
-  storeMax(outPeakR_, peakOf(R, n));
   storeMax(outPeakRecent_, std::max(peakOf(L, n), peakOf(R, n)));
 }
 

@@ -17,6 +17,7 @@
 #include "../core/Presets.h"
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
+#include "../engine/pitch/Kernel.h"
 #include "App.h"
 #include "BrowserUi.h"
 #include "CollabUi.h"
@@ -1087,13 +1088,9 @@ void previewFile(App& a, const std::string& path) {
     const size_t n = static_cast<size_t>(static_cast<double>(s->frames()) / ratio);
     r->left.resize(n);
     r->right.resize(n);
-    for (size_t i = 0; i < n; ++i) {
-      const double x = static_cast<double>(i) * ratio;
-      const size_t i0 = std::min(static_cast<size_t>(x), s->frames() - 1), i1 = std::min(i0 + 1, s->frames() - 1);
-      const float f = static_cast<float>(x - static_cast<double>(i0));
-      r->left[i] = s->left[i0] + (s->left[i1] - s->left[i0]) * f;
-      r->right[i] = s->right[i0] + (s->right[i1] - s->right[i0]) * f;
-    }
+    // J-140: band-limited (was linear: aliasing when sped up, dull when slowed).
+    pitch::resample2(s->left.data(), s->right.data(), static_cast<int64_t>(s->frames()), 0.0, ratio, r->left.data(), r->right.data(),
+                     static_cast<int64_t>(n), pitch::Quality::Offline);
     last = r;
     lastKey = key;
   }

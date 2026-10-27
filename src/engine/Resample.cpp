@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <mutex>
+#include "pitch/Kernel.h"
 
 namespace gl {
 
@@ -20,47 +21,12 @@ double sinc(double x) { return std::fabs(x) < 1e-12 ? 1.0 : std::sin(kPi * x) / 
 
 }  // namespace
 
+// J-140: one kernel family for every conversion (engine/pitch/Kernel.h):
+// up to 16 half taps the realtime Kaiser kernel, above it the offline one
+// (48 zero crossings, beta 10: about 100 dB of image / alias rejection; the
+// Blackman kernel this replaced reached about 75 dB).
 std::vector<float> resampleChannel(const float* in, size_t frames, double fromRate, double toRate, int halfTaps) {
-  std::vector<float> out;
-  if (frames == 0 || fromRate <= 0 || toRate <= 0) return out;
-  const double ratio = toRate / fromRate;
-  const size_t outN = static_cast<size_t>(std::llround(static_cast<double>(frames) * ratio));
-  out.assign(outN, 0.0f);
-  if (std::fabs(ratio - 1.0) < 1e-12) {
-    std::copy(in, in + std::min(frames, outN), out.begin());
-    return out;
-  }
-  halfTaps = std::clamp(halfTaps, 4, 256);
-  // Cutoff (in input-rate cycles): the lower Nyquist, with a small guard band.
-  const double cut = std::min(1.0, ratio) * (1.0 - 1.5 / halfTaps);
-  const double width = std::ceil(halfTaps / std::min(1.0, ratio));  // kernel half-width, input samples
-  constexpr int kRes = 512;                                         // table steps per input sample
-  const size_t tn = static_cast<size_t>(width * kRes) + 2;
-  std::vector<double> kern(tn);
-  for (size_t i = 0; i < tn; ++i) {
-    const double x = static_cast<double>(i) / kRes;
-    kern[i] = x >= width ? 0.0 : cut * sinc(cut * x) * blackman(x / width);
-  }
-  const auto W = static_cast<int64_t>(width);
-  const auto N = static_cast<int64_t>(frames);
-  for (size_t j = 0; j < outN; ++j) {
-    const double t = static_cast<double>(j) / ratio;
-    const auto i0 = static_cast<int64_t>(std::floor(t));
-    double acc = 0, wsum = 0;
-    for (int64_t k = i0 - W + 1; k <= i0 + W; ++k) {
-      const double x = std::fabs(t - static_cast<double>(k)) * kRes;
-      const auto xi = static_cast<size_t>(x);
-      if (xi + 1 >= tn) continue;
-      const double fr = x - static_cast<double>(xi);
-      const double w = kern[xi] + (kern[xi + 1] - kern[xi]) * fr;
-      wsum += w;
-      if (k >= 0 && k < N) acc += w * in[k];
-    }
-    // Normalised by the kernel's DC gain at this phase (all taps, also those
-    // hanging over the ends), so constant signals pass at exactly unity.
-    out[j] = static_cast<float>(wsum > 1e-9 ? acc / wsum : acc);
-  }
-  return out;
+  return pitch::convert(in, frames, fromRate, toRate, halfTaps <= 16 ? pitch::Quality::Realtime : pitch::Quality::Offline);
 }
 
 AudioBuffer resampleBuffer(const AudioBuffer& in, double fromRate, double toRate, int halfTaps) {

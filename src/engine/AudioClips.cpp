@@ -14,6 +14,13 @@
 // the sample count since the clip's first sample; the grains above are the
 // fallback while it renders and while the channel pitch is automated. Plain
 // clips read the source through a band-limited windowed-sinc kernel.
+//
+// J-140: the grains read through the shared band-limited kernel too (no
+// aliasing when pitched up), and each grain is shifted by up to 10 ms to where
+// its start best continues the grain before it (WSOLA, Verhelst & Roelands):
+// tones keep their phase across grains instead of beating. The alignment is
+// the one piece of state (ProgAudioClip::rtGrain); after a jump the first
+// grain plays where the time map puts it.
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -25,6 +32,51 @@ namespace {
 constexpr double kGrainHop = 0.030;    // seconds between grain starts (grain length = 2 hops)
 constexpr double kDeclick = 0.002;     // minimum fade at clip edges, seconds
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kAlignTol = 0.010;    // seconds a grain may move to line up with the previous one
+
+// Source frame of source time `sec` (reverse clips read from the end).
+inline double frameOf(const Sample& s, double sec, bool reverse) {
+  const double f = sec * s.sampleRate;
+  return reverse ? static_cast<double>(s.frames() - 1) - f : f;
+}
+
+// WSOLA: the offset (seconds of source time) that best lines the start of a
+// grain at source time `nominal` up with the source at `cont` (where the
+// previous grain is when the new one starts), over `span` seconds.
+double alignGrain(const Sample& s, bool reverse, double nominal, double cont, double span) {
+  const auto n = static_cast<int64_t>(s.frames());
+  const auto len = static_cast<int64_t>(span * s.sampleRate);
+  const auto tol = static_cast<int64_t>(kAlignTol * s.sampleRate);
+  if (len < 16 || tol < 1 || n < 2) return 0.0;
+  const int64_t stride = std::max<int64_t>(1, len / 256);
+  const auto a0 = static_cast<int64_t>(std::llround(frameOf(s, cont, reverse)));
+  const auto b0 = static_cast<int64_t>(std::llround(frameOf(s, nominal, reverse)));
+  const int64_t dir = reverse ? -1 : 1;
+  auto mono = [&](int64_t i) { return i >= 0 && i < n ? 0.5 * (s.left[static_cast<size_t>(i)] + s.right[static_cast<size_t>(i)]) : 0.0; };
+  auto score = [&](int64_t lag) {
+    double ab = 0, bb = 0;
+    for (int64_t j = 0; j < len; j += stride) {
+      const double x = mono(a0 + dir * j), y = mono(b0 + lag + dir * j);
+      ab += x * y, bb += y * y;
+    }
+    return bb > 1e-12 ? ab / std::sqrt(bb) : -1e30;
+  };
+  int64_t best = 0;
+  double bs = score(0);
+  if (bs <= -1e29) return 0.0;  // silence: nothing to line up
+  for (int64_t lag = -tol; lag <= tol; lag += 4)
+    if (const double v = score(lag); v > bs) bs = v, best = lag;
+  const int64_t c = best;
+  for (int64_t lag = c - 3; lag <= c + 3; ++lag)
+    if (lag != c && std::llabs(lag) <= tol)
+      if (const double v = score(lag); v > bs) bs = v, best = lag;
+  // Sub-sample lag (parabola through the peak): the grains read through the
+  // band-limited kernel, so a fraction of a frame is honoured.
+  double frac = 0;
+  const double ym = score(best - 1), yp = score(best + 1), den = ym - 2 * bs + yp;
+  if (ym > -1e29 && yp > -1e29 && den < -1e-12) frac = std::clamp(0.5 * (ym - yp) / den, -0.5, 0.5);
+  return (static_cast<double>(best) + frac) * static_cast<double>(dir) / s.sampleRate;
+}
 
 // Band-limited read (J-87): plain clips, sample-rate conversion.
 inline void readFrameSinc(const Sample& s, double sec, bool reverse, float& l, float& r, const stretch::SincTable& t, double rate) {
@@ -45,25 +97,6 @@ inline void readFrameSinc(const Sample& s, double sec, bool reverse, float& l, f
   stretch::readSinc2(s.left.data(), s.right.data(), static_cast<int64_t>(s.frames()), f, rate, t, l, r);
 }
 
-inline void readFrame(const Sample& s, double sec, bool reverse, float& l, float& r) {
-  double f = sec * s.sampleRate;
-  const double last = static_cast<double>(s.frames() - 1);
-  if (reverse) f = last - f;
-  if (!(f >= -1e-6) || f > last + 1e-6) {  // tolerate rounding at the edges
-    l = r = 0.f;
-    return;
-  }
-  f = std::clamp(f, 0.0, last);
-  size_t i = static_cast<size_t>(f);
-  if (i + 1 >= s.frames()) {
-    l = s.left[i];
-    r = s.right[i];
-    return;
-  }
-  float fr = static_cast<float>(f - static_cast<double>(i));
-  l = s.left[i] + (s.left[i + 1] - s.left[i]) * fr;
-  r = s.right[i] + (s.right[i + 1] - s.right[i]) * fr;
-}
 }  // namespace
 
 void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& map, double sr, double anchorTick,
@@ -71,6 +104,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
   if (clips.empty() || len <= 0) return;
   const double chanRatio = pitchSemis != 0 ? std::pow(2.0, pitchSemis / 12.0) : 1.0;
   const stretch::SincTable& rt = stretch::sincTable(stretch::Quality::Realtime);  // built by the program builder
+  const stretch::SincTable& compact = stretch::sincTable(stretch::Quality::Compact);
   const double t0 = map.tickAfterSamples(anchorTick, static_cast<double>(clock), sr);
   const double t1 = map.tickAfterSamples(anchorTick, static_cast<double>(clock + len), sr);
   const double sec0 = map.secondsAt(t0);
@@ -129,23 +163,38 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
       } else {
         // Grains k (starting at k·H) and k − 1 overlap at u.
         const int64_t k = static_cast<int64_t>(std::floor(u / kGrainHop));
+        const double inRate = (c.granular ? c.pitch : c.speed) * chanRatio;  // source seconds per playback second, in a grain
         if (k != cachedGrain) {
           for (int q = 0; q < 2; ++q) {
             double uk = static_cast<double>(k - q) * kGrainHop;
             double tk = c.secPerTick > 0 ? map.tickAtSeconds(c.startSec + uk) : 0.0;
             // The grain overlapping the clip start is placed so that it reads the
             // clip start exactly at u = 0 (no lost or smeared first transient).
-            grainSrc[q] = uk < 0 ? c.srcStart + uk * (c.granular ? c.pitch : c.speed) * chanRatio : srcAt(uk, tk);
+            grainSrc[q] = uk < 0 ? c.srcStart + uk * inRate : srcAt(uk, tk);
+          }
+          // J-140: grain k - 1 as it was aligned (when it was the last one
+          // placed); grain k lined up with it.
+          if (c.rtGrain == k) {
+            grainSrc[0] = c.rtGrainSrc[0], grainSrc[1] = c.rtGrainSrc[1];
+          } else {
+            // Only a grain that starts now is moved (playback went on from the
+            // grain before); after a jump or a new program it plays as mapped.
+            if (c.rtGrain == k - 1) {
+              grainSrc[1] = c.rtGrainSrc[0];
+              if (k > 0) grainSrc[0] += alignGrain(s, c.reverse, grainSrc[0], grainSrc[1] + kGrainHop * inRate, kGrainHop * inRate);
+            }
+            c.rtGrain = k, c.rtGrainSrc[0] = grainSrc[0], c.rtGrainSrc[1] = grainSrc[1];
           }
           cachedGrain = k;
         }
+        const double grainRate = inRate * s.sampleRate / sr;  // source frames per output frame
         for (int q = 0; q < 2; ++q) {
           double du = u - static_cast<double>(k - q) * kGrainHop;  // time inside the grain (0 … 2H)
-          double src = grainSrc[q] + du * (c.granular ? c.pitch : c.speed) * chanRatio;
+          double src = grainSrc[q] + du * inRate;
           if (src >= c.srcEnd || src < -1e-7) continue;
           double w = std::sin(kPi * du / (2.0 * kGrainHop));
           float gl = 0.f, gr = 0.f;
-          readFrame(s, src, c.reverse, gl, gr);
+          readFrameSinc(s, src, c.reverse, gl, gr, compact, grainRate);
           l += static_cast<float>(w * w) * gl;
           r += static_cast<float>(w * w) * gr;
         }

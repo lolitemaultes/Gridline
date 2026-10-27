@@ -241,24 +241,27 @@ int main() {
   // ------------------------------------------------------------ modes, FL mapping
   {
     expect(stretch::modeOf(0) == stretch::Mode::Resample && stretch::modeOf(1) == stretch::Mode::Auto &&
-               stretch::modeOf(4) == stretch::Mode::Formant && stretch::modeOf(99) == stretch::Mode::Formant &&
+               stretch::modeOf(4) == stretch::Mode::Formant && stretch::modeOf(5) == stretch::Mode::Voice &&
+               stretch::modeOf(6) == stretch::Mode::Beats && stretch::modeOf(99) == stretch::Mode::Beats &&
                stretch::modeOf(-3) == stretch::Mode::Resample && stretch::modeOf(NAN) == stretch::Mode::Resample,
-           "time modes: parameter values clamp to the five modes");
+           "time modes: parameter values clamp to the seven modes");
     bool all = true;
     for (int m = 0; m < static_cast<int>(stretch::Mode::Count); ++m)
       all = all && stretch::modeFromFl(stretch::flCodeOf(static_cast<stretch::Mode>(m))) == static_cast<stretch::Mode>(m);
     expect(all, "every mode exports as an FL method that imports back as the same mode");
     expect(stretch::modeFromFl(0) == stretch::Mode::Resample && stretch::modeFromFl(-1) == stretch::Mode::Auto &&
                stretch::modeFromFl(5) == stretch::Mode::Auto && stretch::modeFromFl(2) == stretch::Mode::Mono &&
-               stretch::modeFromFl(9) == stretch::Mode::Mono && stretch::modeFromFl(3) == stretch::Mode::Transient &&
-               stretch::modeFromFl(7) == stretch::Mode::Transient && stretch::modeFromFl(-2) == stretch::Mode::Formant,
-           "FL methods map to the closest mode (stretch / auto → Auto, mono / speech → Mono, slice / transient → Transient, pro → Formant)");
+               stretch::modeFromFl(9) == stretch::Mode::Voice && stretch::modeFromFl(3) == stretch::Mode::Beats &&
+               stretch::modeFromFl(4) == stretch::Mode::Beats && stretch::modeFromFl(7) == stretch::Mode::Transient &&
+               stretch::modeFromFl(-2) == stretch::Mode::Formant,
+           "FL methods map to the closest mode (stretch / auto → Auto, mono → Mono, speech → Voice, slice → Beats, transient → Transient, pro → Formant)");
   }
 
   // ------------------------------------------------------------ offline engine: pitch accuracy
   {
     double worst = 0;
-    for (stretch::Mode m : {stretch::Mode::Auto, stretch::Mode::Mono, stretch::Mode::Transient, stretch::Mode::Formant})
+    for (stretch::Mode m : {stretch::Mode::Auto, stretch::Mode::Mono, stretch::Mode::Transient, stretch::Mode::Formant, stretch::Mode::Voice,
+                            stretch::Mode::Beats})
       for (double f : {110.0, 440.0, 1500.0})
         for (double st : {-12.0, -5.0, -1.0, 1.0, 5.0, 12.0}) {
           std::vector<float> x = tone(f, 2.0), y(x.size());

@@ -1469,7 +1469,7 @@ msgstr ""
 msgid "Click to add this channel to the selection"
 msgstr ""
 
-#: src/app/ChannelRack.cpp src/app/LoopStarterUi.cpp src/app/TemplateUi.cpp
+#: src/app/ChannelRack.cpp src/app/LauncherUi.cpp src/app/LoopStarterUi.cpp src/app/TemplateUi.cpp
 msgid "Create"
 msgstr ""
 
@@ -2445,6 +2445,10 @@ msgstr ""
 msgid "unlinked"
 msgstr ""
 
+#: src/app/ClipMultiUi.cpp
+msgid "%d selected clips: each moves by the same amount"
+msgstr ""
+
 #: src/app/CollabUi.cpp
 msgid "%d changes awaiting the admin's review"
 msgstr ""
@@ -2453,7 +2457,7 @@ msgstr ""
 msgid "%d changes need your review"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherUi.cpp
 msgid "%d days ago"
 msgstr ""
 
@@ -2461,11 +2465,11 @@ msgstr ""
 msgid "%d files, %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherUi.cpp
 msgid "%d h ago"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherUi.cpp
 msgid "%d min ago"
 msgstr ""
 
@@ -2729,7 +2733,7 @@ msgstr ""
 msgid "Clip '%s'"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherUi.cpp
 msgid "Close project"
 msgstr ""
 
@@ -3273,7 +3277,7 @@ msgstr ""
 msgid "Only you, the admin, can do this."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherUi.cpp
 msgid "Open"
 msgstr ""
 
@@ -4269,7 +4273,7 @@ msgstr ""
 msgid "Backwards (time)"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/MenuParityUi.cpp
 msgid "Beats"
 msgstr ""
 
@@ -6093,7 +6097,7 @@ msgstr ""
 msgid "Scrolling past the start or end of a view stretches a little and springs back"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/Menus.cpp
+#: src/app/Dialogs.cpp src/app/LauncherUi.cpp src/app/Menus.cpp
 msgid "Settings"
 msgstr ""
 
@@ -6653,7 +6657,7 @@ msgstr ""
 msgid "Part names"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ExportUi.cpp src/app/LauncherUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Pattern"
 msgstr ""
 
@@ -6741,7 +6745,7 @@ msgstr ""
 msgid "Split playlist tracks"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ExportUi.cpp src/app/LauncherUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Start"
 msgstr ""
 
@@ -7309,6 +7313,210 @@ msgstr ""
 msgid "minutes"
 msgstr ""
 
+#: src/app/LauncherUi.cpp
+msgid "%.1f BPM"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "%d BPM"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "%d bar"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "%d bars"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Apr"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Aug"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Back to project"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Cannot find"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Clear the list"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Copy path"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Dec"
+msgstr ""
+
+#: src/app/LauncherUi.cpp src/app/Menus.cpp
+msgid "Demo song"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "FL Studio project"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Feb"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Four drums and a synth, ready to play"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Hear what Gridline can do"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Jan"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Jul"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Jun"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Just now"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "LIBRARY"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Mar"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "May"
+msgstr ""
+
+#: src/app/LauncherUi.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp
+msgid "New project"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Not found"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Not saved yet"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Nothing matches the search."
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Nov"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "OPEN"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Oct"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Open now"
+msgstr ""
+
+#: src/app/LauncherUi.cpp src/app/Menus.cpp
+msgid "Open..."
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Recent"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Recent list"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Recent projects"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Remove from list"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Remove missing projects"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Removed from recent projects"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Removed missing projects from the list"
+msgstr ""
+
+#: src/app/LauncherUi.cpp src/packs/plasma/plasma_browser_ui.cpp
+msgid "Search"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Sep"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Show in Explorer"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Show in Files"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Show in Finder"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Start a new project, open one from disk, or begin from a template."
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Starter kit"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Templates"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Untitled project"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Yesterday"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Your projects will appear here."
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Zipped project"
+msgstr ""
+
 #: src/app/Live.cpp
 msgid "Arrangement: the playlist being edited and played · new, duplicate, rename, delete"
 msgstr ""
@@ -7842,6 +8050,10 @@ msgid "Bars : steps : ticks"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Beats (loops)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Chord of the %s: %s"
 msgstr ""
 
@@ -7891,6 +8103,10 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Drum loops and percussion: every hit re-attacked from the original"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Drums and loops: every hit copied as it is, nothing smeared or doubled"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -8146,6 +8362,18 @@ msgid "Unlock every playlist track"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Vocals, speech and solo instruments: natural pitch shifts with the formants kept, no phasing"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Voice"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Voice (formants kept)"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "a plugin"
 msgstr ""
 
@@ -8259,10 +8487,6 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Debug log and script console..."
-msgstr ""
-
-#: src/app/Menus.cpp
-msgid "Demo song"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -8402,10 +8626,6 @@ msgid "Open recent"
 msgstr ""
 
 #: src/app/Menus.cpp
-msgid "Open..."
-msgstr ""
-
-#: src/app/Menus.cpp
 msgid "Pattern as MIDI file..."
 msgstr ""
 
@@ -8451,6 +8671,10 @@ msgstr ""
 
 #: src/app/Menus.cpp src/core/Keymap.cpp
 msgid "Quit"
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Recent projects, templates and the demo song (also a click on the Gridline logo)"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -8579,6 +8803,10 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Unsolo all mixer tracks"
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Welcome screen"
 msgstr ""
 
 #: src/app/Menus.cpp src/app/MixerView.cpp
@@ -9470,7 +9698,19 @@ msgid "paint notes while dragging"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "%d selected clips"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "(Shift: fine, Alt: no stop at 0 dB, double-click: 0 dB)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "(every selected clip by the same amount)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "(right-click the name: clip menu · right-click elsewhere on the clip: delete)"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -11302,6 +11542,14 @@ msgid "Show folder"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
+msgid "Show the welcome screen"
+msgstr ""
+
+#: src/app/SettingsPages.cpp
+msgid "Start on the welcome screen: recent projects, templates and the demo song. Projects opened from files go straight in."
+msgstr ""
+
+#: src/app/SettingsPages.cpp
 msgid "Starter kit (built in)"
 msgstr ""
 
@@ -11327,6 +11575,10 @@ msgstr ""
 
 #: src/app/SettingsPages.cpp
 msgid "Used by File > New (Ctrl+N) and at startup"
+msgstr ""
+
+#: src/app/SettingsPages.cpp
+msgid "WITHOUT THE WELCOME SCREEN"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
@@ -11485,10 +11737,6 @@ msgstr ""
 msgid "Existing categories"
 msgstr ""
 
-#: src/app/TemplateUi.cpp src/core/Keymap.cpp
-msgid "New project"
-msgstr ""
-
 #: src/app/TemplateUi.cpp
 msgid "New project from"
 msgstr ""
@@ -11570,7 +11818,7 @@ msgid "Help"
 msgstr ""
 
 #: src/app/TopBar.cpp
-msgid "Main menu"
+msgid "Home: recent projects and templates (right-click: main menu)"
 msgstr ""
 
 #: src/app/TopBar.cpp
@@ -13531,10 +13779,6 @@ msgstr ""
 
 #: src/packs/plasma/plasma_browser_ui.cpp
 msgid "Saved the preset"
-msgstr ""
-
-#: src/packs/plasma/plasma_browser_ui.cpp
-msgid "Search"
 msgstr ""
 
 #: src/packs/plasma/plasma_fx_ui.cpp

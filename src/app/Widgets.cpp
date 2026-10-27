@@ -21,6 +21,7 @@
 #include "Theme.h"
 #include "icons/IconTexture.h"
 #include "../core/I18n.h"
+#include "../core/LevelMeter.h"
 #include "../core/WheelRoute.h"
 
 namespace gl::ui {
@@ -853,25 +854,13 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
 }
 
 void Meter(ImGuiID key, float peakL, float peakR, ImVec2 size, bool vertical) {
-  struct State {
-    float l = 0, r = 0, holdL = 0, holdR = 0;
-    double holdT = 0;
-  };
-  static std::map<ImGuiID, State> states;
-  State& s = states[key];
-  float dt = ImGui::GetIO().DeltaTime;
-  float decay = std::exp(-dt * 6.0f);
-  s.l = std::max(peakL, s.l * decay);
-  s.r = std::max(peakR, s.r * decay);
-  double now = ImGui::GetTime();
-  if (s.l >= s.holdL || s.r >= s.holdR || now - s.holdT > 1.5) {
-    s.holdL = s.l;
-    s.holdR = s.r;
-    s.holdT = now;
-  }
+  // J-143: the shared ballistics (instant attack, dB release by elapsed time, per-channel hold).
+  static std::map<ImGuiID, LevelMeter> states;
+  LevelMeter& s = states[key];
+  s.update(peakL, peakR, ImGui::GetIO().DeltaTime);
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImGui::Dummy(size);
-  DrawMeter(ImGui::GetWindowDrawList(), p, size, s.l, s.r, s.holdL, s.holdR, vertical);
+  DrawMeter(ImGui::GetWindowDrawList(), p, size, s.level(0), s.level(1), s.hold(0), s.hold(1), vertical);
 }
 
 // J-137: the drawing of Meter alone (gains: 1 = 0 dBFS).
@@ -884,7 +873,10 @@ void DrawMeter(ImDrawList* dl, ImVec2 p, ImVec2 size, float gainL, float gainR, 
   const float zero = toPos(1.0f), warn = toPos(0.5f);  // 0 dBFS and -6 dBFS
   if (look::styled()) {  // J-129 control style
     look::Meter m;
-    m.vertical = vertical, m.l = toPos(gainL), m.r = toPos(gainR), m.peakL = toPos(holdL), m.peakR = toPos(holdR);
+    m.vertical = vertical, m.l = toPos(gainL), m.r = toPos(gainR);
+    // J-143: no hold marker at rest (it used to sit lit at the floor in silence); red only on overs.
+    m.peakL = holdL > 1e-3f ? toPos(holdL) : -1.0f, m.peakR = holdR > 1e-3f ? toPos(holdR) : -1.0f;
+    m.clip = holdL > 1.0f || holdR > 1.0f;
     look::meter(dl, p, ImVec2(p.x + size.x, p.y + size.y), m);
     return;
   }

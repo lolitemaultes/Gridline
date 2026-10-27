@@ -193,6 +193,10 @@ struct ProgAudioClip {
   // channel pitch is still `hqSemis`; the realtime grains cover the rest.
   stretch::RenderedClipPtr hq;
   double hqSemis = 0;
+  // J-140: the realtime grains' alignment (audio thread only): the last grain
+  // placed and the source positions (seconds) of it and the one before.
+  mutable int64_t rtGrain = -(int64_t{1} << 62);
+  mutable double rtGrainSrc[2] = {0, 0};
 };
 
 // Adds a channel's audio clips to L/R for block samples [from, from + len),

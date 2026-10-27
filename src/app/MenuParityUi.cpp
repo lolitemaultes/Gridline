@@ -77,7 +77,12 @@ void declickItems(App& a, const std::vector<ObjectId>& chans) {
     i18n::N_("Drum loops and percussion: every hit re-attacked from the original"),
     i18n::N_("Pitch shift that keeps a voice's character (no chipmunk effect)"),
     i18n::N_("Auto (general)"), i18n::N_("Transient (drums)"), i18n::N_("Tape (varispeed)"),
-    i18n::N_("Realtime (band-limited sinc)")};
+    i18n::N_("Realtime (band-limited sinc)"),
+    // J-140: the Voice and Beats modes.
+    i18n::N_("Voice"), i18n::N_("Beats"),
+    i18n::N_("Vocals, speech and solo instruments: natural pitch shifts with the formants kept, no phasing"),
+    i18n::N_("Drums and loops: every hit copied as it is, nothing smeared or doubled"), i18n::N_("Voice (formants kept)"),
+    i18n::N_("Beats (loops)")};
 
 void timeModeItems(App& a) {
   const auto sel = selectedClipsOfKind(a, ClipKind::Audio);

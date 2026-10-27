@@ -617,8 +617,10 @@ class SynthGen final : public Generator {
 // processing (normalize, DC, polarity, swap, fades), declick modes, time
 // modes (J-87: Resample reads through a band-limited windowed-sinc kernel;
 // the stretch modes give every voice its own engine/TimeStretch voice, pitch
-// independent of speed; a voice without one falls back to the two-head grain
-// reader), AHDSR with delay/hold, per-voice filter with its own envelope, LFO,
+// independent of speed; J-140: spectral up to kStretchVoices notes, the light
+// time-domain engine past that; only while a new pool is being swapped in do
+// sounding notes finish on the two-head grain reader), AHDSR with delay/hold,
+// per-voice filter with its own envelope, LFO,
 // pan, glide.
 class SamplerGen final : public Generator {
  public:
@@ -635,7 +637,10 @@ class SamplerGen final : public Generator {
     delete retired_.exchange(nullptr, std::memory_order_acq_rel);
     const stretch::Mode m = stretch::modeOf(param(s, pp::SmpStretchMode));
     if (clipOnly_) return;  // playlist clips render offline (engine/TimeStretch); no notes to stretch
-    const int count = std::clamp(static_cast<int>(param(s, pp::SmpVoices, 32) + 0.5f), 1, kStretchVoices);  // more notes: grains
+    // J-140: one stretch voice per note slot. Spectral modes give the first
+    // kStretchVoices notes the spectral engine and the rest the light
+    // (time-domain) one; the time-domain modes are light already.
+    const int count = std::clamp(static_cast<int>(param(s, pp::SmpVoices, 32) + 0.5f), 1, 32);
     if (m == stretch::Mode::Resample) {
       uiMode_ = m;
       return;  // the pool (if any) stays until a stretch mode needs another one
@@ -645,9 +650,10 @@ class SamplerGen final : public Generator {
     pool->mode = m;
     pool->rate = sampleRate;
     pool->voices.resize(static_cast<size_t>(count));
-    for (auto& v : pool->voices) {
+    for (size_t i = 0; i < pool->voices.size(); ++i) {
+      auto& v = pool->voices[i];
       v = std::make_unique<stretch::Voice>();
-      v->prepare(2, sampleRate, m, 8.0, 8.0);
+      v->prepare(2, sampleRate, m, 8.0, 8.0, i >= static_cast<size_t>(kStretchVoices));
     }
     delete pending_.exchange(pool, std::memory_order_acq_rel);  // a pool never picked up is dropped
     uiMode_ = m, uiRate_ = sampleRate, uiCount_ = count;
@@ -694,7 +700,6 @@ class SamplerGen final : public Generator {
     using namespace pp;
     sr_ = ctx.sampleRate;
     interp_ = ctx.interp;
-    kernel_ = interp_ >= 2 ? &sincKernel(samplerSincPoints(interp_)) : nullptr;
     if (aux.sample().get() != sample_.get()) {  // new sample: restart the amortised analysis scan
       sample_ = aux.sample();
       scan_ = 0, peak_ = 0, sumL_ = sumR_ = 0, analysed_ = false;
@@ -730,7 +735,7 @@ class SamplerGen final : public Generator {
     declick_ = std::clamp(static_cast<int>(param(s, SmpDeclick) + 0.5f), 0, 4);
     stretchMode_ = stretch::modeOf(param(s, SmpStretchMode));
     onsets_ = aux.slices.data();  // J-87: the sample's onsets (prepared with the aux in Auto / Transient)
-    onsetN_ = stretchMode_ == stretch::Mode::Auto || stretchMode_ == stretch::Mode::Transient ? aux.slices.size() : 0;
+    onsetN_ = stretch::usesOnsets(stretchMode_) ? aux.slices.size() : 0;
     stretch_ = stretchMode_ != stretch::Mode::Resample;
     if (StretchPool* p = pending_.load(std::memory_order_acquire)) {  // J-87: a new pool from prepareHost
       if (!active_ || retired_.load(std::memory_order_acquire) == nullptr) {
@@ -902,22 +907,16 @@ class SamplerGen final : public Generator {
     if (fr < 1e-9 && rate_ <= 1.000001) {  // on a sample, not reading faster: exact
       l = (sl[p0] - dcL_) * gain_;
       r = (sr[p0] - dcR_) * gain_;
-    } else if (interp_ == 0) {
-      // J-87: band-limited windowed sinc, cutoff following the read rate
-      // (pitching up never aliases); was linear interpolation.
-      float a, b;
-      stretch::readSinc2(sl, sr, static_cast<int64_t>(sample_->left.size()), p, rate_, *bl_, a, b);
-      l = (a - dcL_) * gain_;
-      r = (b - dcR_) * gain_;
-    } else if (interp_ >= 2 && rate_ > 1.0) {  // offline sinc qualities: band-limited when reading faster
-      float a, b;
-      stretch::readSinc2(sl, sr, static_cast<int64_t>(sample_->left.size()), p, rate_, *blOff_, a, b);
-      l = (a - dcL_) * gain_;
-      r = (b - dcR_) * gain_;
     } else {
-      interpolate(p0, fr, l, r);
-      l = (l - dcL_) * gain_;
-      r = (r - dcR_) * gain_;
+      // J-87 / J-140: band-limited windowed sinc, cutoff following the read
+      // rate (pitching up never aliases, pitching down never images). Live
+      // playback uses the realtime kernel; every offline render quality
+      // (RenderInterp 1 … 7) the offline one: the Hermite and Blackman-sinc
+      // kernels these replaced aliased when reading faster than 1:1.
+      float a, b;
+      stretch::readSinc2(sl, sr, static_cast<int64_t>(sample_->left.size()), p, rate_, interp_ == 0 ? *bl_ : *blOff_, a, b);
+      l = (a - dcL_) * gain_;
+      r = (b - dcR_) * gain_;
     }
     if (swap_) std::swap(l, r);
     if (fadeIn_ <= 0 && fadeOutAmt_ <= 0) return;  // J-30: no region fades, no per-sample division (gain 1)
@@ -927,48 +926,6 @@ class SamplerGen final : public Generator {
     if (fadeIn_ > 0 && rel < fadeIn_) g *= std::max(0.0, rel / fadeIn_);
     if (fadeOutAmt_ > 0 && rel > 1 - fadeOutAmt_) g *= std::max(0.0, (1 - rel) / fadeOutAmt_);
     l *= g, r *= g;
-  }
-
-  // High-quality reads for offline renders (RenderInterp): 4-point Hermite,
-  // or a windowed-sinc kernel (sample ends clamp).
-  void interpolate(size_t p0, double fr, double& l, double& r) const {
-    const auto& sl = sample_->left;
-    const auto& sr = sample_->right;
-    const auto last = static_cast<int64_t>(sl.size()) - 1;
-    auto at = [last](int64_t i) { return static_cast<size_t>(std::clamp<int64_t>(i, 0, last)); };
-    const auto i0 = static_cast<int64_t>(p0);
-    if (!kernel_) {  // Hermite (Catmull-Rom)
-      auto herm = [fr](double xm1, double x0, double x1, double x2) {
-        const double c1 = 0.5 * (x1 - xm1), c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2, c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
-        return ((c3 * fr + c2) * fr + c1) * fr + x0;
-      };
-      l = herm(sl[at(i0 - 1)], sl[at(i0)], sl[at(i0 + 1)], sl[at(i0 + 2)]);
-      r = herm(sr[at(i0 - 1)], sr[at(i0)], sr[at(i0 + 1)], sr[at(i0 + 2)]);
-      return;
-    }
-    const SincKernel& k = *kernel_;
-    const double ph = fr * k.phases;
-    const int r0 = std::min(k.phases - 1, static_cast<int>(ph));
-    const float w1 = static_cast<float>(ph - r0);
-    const float* a = k.row(r0);
-    const float* b = k.row(r0 + 1);
-    const int64_t first = i0 - k.points / 2 + 1;
-    double accL = 0, accR = 0;
-    if (first >= 0 && first + k.points - 1 <= last) {
-      for (int t = 0; t < k.points; ++t) {
-        const double w = a[t] + (b[t] - a[t]) * w1;
-        accL += w * sl[static_cast<size_t>(first + t)];
-        accR += w * sr[static_cast<size_t>(first + t)];
-      }
-    } else {
-      for (int t = 0; t < k.points; ++t) {
-        const double w = a[t] + (b[t] - a[t]) * w1;
-        accL += w * sl[at(first + t)];
-        accR += w * sr[at(first + t)];
-      }
-    }
-    l = accL;
-    r = accR;
   }
 
   // Read with the loop crossfade applied (forward loops only).
@@ -1163,7 +1120,7 @@ class SamplerGen final : public Generator {
 
  private:
   // ---- J-87 stretch voices
-  static constexpr int kStretchVoices = 8;
+  static constexpr int kStretchVoices = 8;  // spectral budget (notes); the rest are light voices
   struct StretchPool {
     stretch::Mode mode = stretch::Mode::Auto;
     double rate = 0;
@@ -1262,7 +1219,6 @@ class SamplerGen final : public Generator {
   double rate_ = 1;                       // J-87: current read rate (resample reads; cutoff)
   const stretch::SincTable* bl_ = &stretch::sincTable(stretch::Quality::Realtime);
   const stretch::SincTable* blOff_ = &stretch::sincTable(stretch::Quality::Offline);
-  const SincKernel* kernel_ = nullptr;    // sinc qualities
   double pitchShift_ = 0, timeStretch_ = 1, delay_ = 0, hold_ = 0;
   double cutoff_ = 20000, reso_ = 0, fenvAmt_ = 0, velCut_ = 0, keyCut_ = 0, lfoRate_ = 2, lfoAmt_ = 0, lfoDelay_ = 0;
   double panL_ = 1, panR_ = 1, velVol_ = 1, glide_ = 0.001;

@@ -20,13 +20,6 @@ float param(const PluginState& s, int i, float dflt = 0.f) {
   return i >= 0 && i < static_cast<int>(s.params.size()) ? s.params[static_cast<size_t>(i)] : dflt;
 }
 
-inline float interp(const std::vector<float>& v, double pos) {
-  size_t i0 = static_cast<size_t>(pos);
-  if (i0 + 1 >= v.size()) return i0 < v.size() ? v[i0] : 0.f;
-  float fr = static_cast<float>(pos - static_cast<double>(i0));
-  return v[i0] + (v[i0 + 1] - v[i0]) * fr;
-}
-
 // J-87: band-limited read (windowed sinc, cutoff following the read rate) for
 // pitched sample playback: no aliasing when pitched up, no dulling between
 // samples. Exact on whole frames.
@@ -1339,8 +1332,19 @@ class GranularGen final : public Generator {
         double w = ph < edge ? 0.5 - 0.5 * std::cos(kPi * ph / edge) : ph > 1 - edge ? 0.5 - 0.5 * std::cos(kPi * (1 - ph) / edge) : 1.0;
         double a = w * v.env.level * v.vel * vol_ * 0.35;
         if (g.pos >= len - 1) g.pos = 0;
-        outL += interp(sm.left, g.pos) * a * g.gl;
-        outR += interp(sm.right, g.pos) * a * g.gr;
+        // J-140: band-limited grain reads (compact kernel: many grains),
+        // wrapping round the sample like the grain positions do.
+        float o[2];
+        const auto n = static_cast<int64_t>(sm.frames());
+        pitch::readWith<2>(
+            [&sm, n](int64_t i, int c) {
+              int64_t k = i % n;
+              if (k < 0) k += n;
+              return (c ? sm.right : sm.left)[static_cast<size_t>(k)];
+            },
+            g.pos, std::fabs(g.rate), pitch::table(pitch::Quality::Compact), o);
+        outL += o[0] * a * g.gl;
+        outR += o[1] * a * g.gr;
         g.pos += g.rate;
         g.t += 1;
         if (g.t >= g.len) g.on = false;

@@ -1025,6 +1025,8 @@ void endPointerGesture(App& a) {
 }
 }  // namespace
 
+void pointerGestureFrameEnd(App& a) { endPointerGesture(a); }
+
 void handleGlobalShortcuts(App& a) {
   endPointerGesture(a);
   if (menuShortcuts(a)) return;

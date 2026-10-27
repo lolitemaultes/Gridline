@@ -2,6 +2,7 @@
 // (song mode), song markers in the ruler.
 #include <algorithm>
 #include <cmath>
+#include <cfloat>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -17,6 +18,9 @@
 #include "../core/Arrangements.h"
 #include "../core/Automation.h"
 #include "../core/ClipGain.h"
+#include "../core/ClipMultiEdit.h"
+#include "ClipHeaderHit.h"
+#include "ClipMultiUi.h"
 #include "../core/Fades.h"
 #include "../core/TrackModes.h"
 #include "../core/MenuOpsExtra.h"
@@ -523,19 +527,26 @@ void arrangementClipMenu(App& a, ObjectId id) {
     static uint64_t key = 0x41430000;
     // J-79: FL's clip gain range (-96 .. +36 dB, the bottom is silence), same value as the volume line.
     float gainDb = static_cast<float>(std::max(clipgain::kMinDb, clipgain::toDb(c->gain)));
+    // J-142: with the clip in a multi-selection each field moves every selected audio clip by the same amount.
+    using clipmulti::Param;
     ImGui::SetNextItemWidth(160);
-    if (ImGui::DragFloat(i18n::tr("Gain"), &gainDb, 0.1f, static_cast<float>(clipgain::kMinDb), static_cast<float>(clipgain::kMaxDb), "%.1f dB"))
+    if (!clipui::multiDrag(a, id, Param::GainDb, i18n::tr("Gain"), gainDb, 0.1f, static_cast<float>(clipgain::kMinDb),
+                           static_cast<float>(clipgain::kMaxDb), "%.1f dB", 1.0, "clip gain", key) &&
+        ImGui::DragFloat(i18n::tr("Gain"), &gainDb, 0.1f, static_cast<float>(clipgain::kMinDb), static_cast<float>(clipgain::kMaxDb), "%.1f dB"))
       a.doc.editClip(id, "clip gain", [&](Clip& x) { x.gain = clipgain::fromDb(gainDb <= clipgain::kMinDb ? clipgain::kMinDb - 0.1 : gainDb); }, key);
     float cents = c->pitch;
     ImGui::SetNextItemWidth(160);
-    if (ImGui::DragFloat(i18n::tr("Pitch"), &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
+    if (!clipui::multiDrag(a, id, Param::Pitch, i18n::tr("Pitch"), cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct", 1.0, "clip pitch", key + 1) &&
+        ImGui::DragFloat(i18n::tr("Pitch"), &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
       a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = cents; }, key + 1);
     float fi = static_cast<float>(c->fadeIn * 1000.0), fo = static_cast<float>(c->fadeOut * 1000.0);
     ImGui::SetNextItemWidth(160);
-    if (ImGui::DragFloat(i18n::tr("Fade in"), &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
+    if (!clipui::multiDrag(a, id, Param::FadeIn, i18n::tr("Fade in"), fi, 1.0f, 0.0f, 60000.0f, "%.0f ms", 1000.0, "clip fade in", key + 2) &&
+        ImGui::DragFloat(i18n::tr("Fade in"), &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
       a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0, x.fadeInManual = true; }, key + 2);
     ImGui::SetNextItemWidth(160);
-    if (ImGui::DragFloat(i18n::tr("Fade out"), &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
+    if (!clipui::multiDrag(a, id, Param::FadeOut, i18n::tr("Fade out"), fo, 1.0f, 0.0f, 60000.0f, "%.0f ms", 1000.0, "clip fade out", key + 3) &&
+        ImGui::DragFloat(i18n::tr("Fade out"), &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
       a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 3);
     if (ImGui::MenuItem(i18n::tr("Reverse"), nullptr, c->reverse)) a.doc.editClip(id, "reverse clip", [](Clip& x) { x.reverse = !x.reverse; });
     if (ImGui::MenuItem(i18n::tr("Follow tempo"), nullptr, c->syncBpm > 0)) {
@@ -1154,7 +1165,7 @@ void drawPlaylist(App& a) {
     return nTracks ? trackY[static_cast<size_t>(tr) + 1] - trackY[static_cast<size_t>(tr)] : trackH;
   };
   devGeom.x0 = gMin.x - st.scrollX, devGeom.pxPerTick = st.pxPerTick, devGeom.valid = true;
-  devGeom.trackTop.clear(), devGeom.trackH.clear();
+  devGeom.trackTop.clear(), devGeom.trackH.clear(), devGeom.clips.clear();
   for (int i = 0; i < nTracks; ++i) devGeom.trackTop.push_back(yOf(i)), devGeom.trackH.push_back(hOf(i));
   auto tickAt = [&](float x) { return timeline::tickAtPx(x - gMin.x + st.scrollX, st.pxPerTick); };
   auto trackAt = [&](float y) {
@@ -1309,6 +1320,7 @@ void drawPlaylist(App& a) {
     dl->AddRectFilled(ImVec2(std::max(gMin.x, xOf(songLen)), gMin.y), gMax, theme::withAlpha(P.surface950, 0.35f));
   // Clips.
   ObjectId hoverClip = kNoId, hoverMenuGlyph = kNoId;
+  clipheader::Zone hoverZone = clipheader::Zone::None;  // J-142: where on hoverClip the pointer is
   bool hoverEdge = false, hoverLeftEdge = false, hoverBody = false;
   // Audio clip fade handles (J-8; J-38: tension handles, crossfade partners):
   // 1 = fade-in length, 2 = fade-out length, 3 = fade-in tension, 4 = fade-out tension.
@@ -1600,16 +1612,34 @@ void drawPlaylist(App& a) {
     // Title bar: menu glyph (click: clip menu, like FL's clip icon), then the name.
     const float tx0 = titleL;
     const bool glyph = titleGlyph && titleR - tx0 > 34 && headH >= 9;
+    // J-142: the title strip's hit geometry, exactly as drawn: the menu arrow
+    // and the name box (its text plus a little padding). A right-click there
+    // opens the clip menu; anywhere else on the strip it deletes, like the body.
+    const bool nameShown = titleR - tx0 > 12;
+    const float nameSize = std::min(theme::kFontCaption, headH - 2);
+    const ImVec2 namePos(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f));
+    const float nameMaxW = titleR - tx0 - (glyph ? 19 : 10);
+    clipheader::Geom hg;
+    hg.x0 = a0.x, hg.y0 = a0.y, hg.x1 = a1.x, hg.y1 = a1.y, hg.headH = headH;
+    if (glyph) hg.setMenu(tx0 + 7);
+    if (nameShown && nameMaxW > 0) {
+      ImFont* nf = a.fontBold ? a.fontBold : ImGui::GetFont();
+      hg.setName(namePos.x, nf->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, title).x, nameMaxW);
+    }
+    devGeom.clips.push_back({static_cast<unsigned>(c.id), hg});
+    const clipheader::Zone zone = hovered && io.MousePos.y >= gMin.y ? clipheader::hit(hg, io.MousePos.x, io.MousePos.y) : clipheader::Zone::None;
     if (glyph) {
       const float gx = tx0 + 7, gy = a0.y + headH * 0.5f;
-      const bool hotGlyph = hovered && std::fabs(io.MousePos.x - gx) < 7 && io.MousePos.y >= a0.y && io.MousePos.y < a0.y + headH;
+      const bool hotGlyph = zone == clipheader::Zone::Menu;
       if (hotGlyph) hoverMenuGlyph = c.id;
       ui::drawIconFit(dl, ui::Icon::Down, ImVec2(gx - 3.5f, gy - 2), ImVec2(gx + 3.5f, gy + 2.5f),
                       hotGlyph ? P.hot : theme::withAlpha(theme::contrastText(headSolid), 0.8f));
     }
-    if (titleR - tx0 > 12)
-      theme::textEllipsis(dl, a.fontBold, std::min(theme::kFontCaption, headH - 2), ImVec2(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f)),
-                          titleR - tx0 - (glyph ? 19 : 10), theme::contrastText(headSolid), title);
+    if (zone == clipheader::Zone::Name && hg.hasName)  // the name box under the pointer (its hit area)
+      dl->AddRectFilled(ImVec2(hg.nameX0, a0.y + 1.5f), ImVec2(hg.nameX1, a0.y + headH - 0.5f), theme::withAlpha(theme::contrastText(headSolid), 0.16f),
+                        theme::kRadiusSm);
+    if (nameShown)
+      theme::textEllipsis(dl, a.fontBold, nameSize, namePos, nameMaxW, theme::contrastText(headSolid), title);
     const ImVec2 b0(a0.x + 3, a0.y + headH + 2), b1(a1.x - 3, a1.y - 3);
     const ImU32 mark = P.dark ? P.paper : theme::mix(base, P.ink, 0.6f);
     bool inside = hovered && io.MousePos.x >= a0.x && io.MousePos.x < a1.x && io.MousePos.y >= a0.y && io.MousePos.y < a1.y && io.MousePos.y >= gMin.y;
@@ -1732,6 +1762,8 @@ void drawPlaylist(App& a) {
     dl->PopClipRect();
     if (inside) {
       hoverClip = c.id;
+      hoverZone = zone;  // J-142 (the top clip owns the pointer: a covered clip's arrow does not open)
+      hoverMenuGlyph = zone == clipheader::Zone::Menu ? c.id : kNoId;
       float edge = std::min(8.0f, (a1.x - a0.x) * 0.3f);
       hoverEdge = io.MousePos.x > a1.x - edge;
       hoverLeftEdge = !hoverEdge && io.MousePos.x < a0.x + edge;
@@ -2196,6 +2228,8 @@ void drawPlaylist(App& a) {
       a.setHint(where + "   (drag a point · drag a ring: curve tension · double-click: add point · right-click a point: delete · double-click the title: editor)");
     else if (hoverMenuGlyph != kNoId)
       a.setHint(where + "   (click: clip menu)");
+    else if (hc && hoverZone == clipheader::Zone::Name)  // J-142
+      a.setHint(where + "   " + i18n::tr("(right-click the name: clip menu \xC2\xB7 right-click elsewhere on the clip: delete)"));
     else if (hc && st.tool == Tool::Draw)
       a.setHint(where + std::string("   (drag: move · edges: resize / trim") + (hc->kind == ClipKind::Audio ? (st.stretchResize ? " (stretching)" : "") : "") +
                 (hc->kind == ClipKind::Pattern ? " · stretch past the end: loop · left edge: loop start" : "") +
@@ -2390,7 +2424,7 @@ void drawPlaylist(App& a) {
   if (inGrid && editTool && trackLocked(trackAt(m.y))) {
     if (hovered) a.setHint("This track is locked (track menu \xE2\x86\x92 Lock)");
     if (lClick && hoverMenuGlyph == kNoId) lClick = false;
-    if (rClick && !(hc && m.y < yOf(hc->track) + std::min(16.0f, (hOf(hc->track) - 4) * 0.45f) + 2)) rClick = false;
+    if (rClick && !(hc && clipheader::opensMenu(hoverZone))) rClick = false;  // only the clip menu opens there
   }
   // Fade handle drags (J-8; J-38: tension, crossfades): one undo step per drag.
   // Dragging a length stores the fade on the clip (it stops following the
@@ -2398,6 +2432,9 @@ void drawPlaylist(App& a) {
   // partner so the pair keeps its level.
   static ObjectId fadeMenuClip = kNoId;
   static int fadeMenuIn = 1;
+  // J-142: the selected clips a fade drag moves with the clip under the pointer
+  // (captured at the press; a single clip when it is not part of a selection).
+  static clipmulti::Snapshot fadeDragSnap;
   const uint64_t fadeKey = 0x46414445ull ^ (static_cast<uint64_t>(fadeDragClip) << 8);
   if (fadeDragClip != kNoId) {
     const Clip* fc = s.clip(fadeDragClip);
@@ -2407,7 +2444,23 @@ void drawPlaylist(App& a) {
       const int kind = fadeDragKind;
       const ObjectId id = fadeDragClip, mirror = fadeDragMirror;
       char b[96];
-      if (kind <= 2) {
+      const clipmulti::Entry* anchor = fadeDragSnap.find(id);
+      const size_t many = fadeDragSnap.clips.size();
+      if (kind <= 2 && many > 1 && anchor) {
+        // J-142: every selected clip's fade grows by the time this one's does
+        // (from the pointer, before this clip's own limits), each clamped to
+        // its own length.
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        const double sec0 = tempoMap.secondsAt(static_cast<double>(fc->start));
+        const double dur = tempoMap.secondsAt(static_cast<double>(fc->start + s.clipLength(*fc))) - sec0;
+        const double at = tempoMap.secondsAt(static_cast<double>(std::max<Tick>(0, tickAt(m.x)))) - sec0;
+        const double raw = kind == 1 ? at : dur - at;
+        clipmulti::offset(a.doc, kind == 1 ? "clip fade in" : "clip fade out", fadeDragSnap, raw - anchor->base, fadeKey);
+        const Clip* now = s.clip(id);
+        const double v = now ? (kind == 1 ? now->fadeIn : now->fadeOut) : 0.0;
+        std::snprintf(b, sizeof b, "Fade %s: %.0f ms, %+.0f ms on %zu clips", kind == 1 ? "in" : "out", v * 1000.0,
+                      (std::clamp(raw, anchor->lo, anchor->hi) - anchor->base) * 1000.0, many);
+      } else if (kind <= 2) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
         const double sec0 = tempoMap.secondsAt(static_cast<double>(fc->start));
         const double dur = tempoMap.secondsAt(static_cast<double>(fc->start + s.clipLength(*fc))) - sec0;
@@ -2418,6 +2471,13 @@ void drawPlaylist(App& a) {
           else x.fadeOut = v, x.fadeOutManual = true;
         }, fadeKey);
         std::snprintf(b, sizeof b, "Fade %s: %.0f ms (set by hand; right-click the handle: automatic, curve)", kind == 1 ? "in" : "out", v * 1000.0);
+      } else if (many > 1 && anchor) {
+        // J-142: every selected clip's curve bends by the same amount on the
+        // handle's scale (each tied crossfade partner mirrors its clip).
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        const double d = -static_cast<double>(m.y - fadeDragY0) / 70.0;
+        clipmulti::offset(a.doc, "fade curve", fadeDragSnap, d, fadeKey, 0.03);
+        std::snprintf(b, sizeof b, "Fade curve: %+.0f %% on %zu clips", d * 100.0, many);
       } else {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
         // J-43: drag up = louder (FL's positive tension); the handle moves on FL's
@@ -2445,7 +2505,12 @@ void drawPlaylist(App& a) {
                                  : "Drag up / down: fade curve \xC2\xB7 double-click: plain curve \xC2\xB7 right-click: fade menu");
     if (lClick) {
       const Clip* hcf = s.clip(fadeHoverClip);
-      if (fadeHoverKind >= 3 && hcf && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      if (fadeHoverKind >= 3 && hcf && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) &&
+          clipmulti::isMulti(s, st.selected, fadeHoverClip, clipmulti::Param::FadeInCurve)) {
+        // J-142: a reset reaches every selected clip (and each tied partner).
+        const clipmulti::Param fp = fadeHoverKind == 3 ? clipmulti::Param::FadeInCurve : clipmulti::Param::FadeOutCurve;
+        clipmulti::setAll(a.doc, "plain fade curve", clipmulti::capture(s, clipui::targets(a, fadeHoverClip, fp), fp, fadeHoverClip), 0.0);
+      } else if (fadeHoverKind >= 3 && hcf && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         const ObjectId id = fadeHoverClip, mirror = fadeHoverMirror;
         const int kind = fadeHoverKind;
         a.doc.editClips("plain fade curve", [&](std::vector<Clip>& v) {
@@ -2460,6 +2525,11 @@ void drawPlaylist(App& a) {
         fadeDragMirror = fadeHoverMirror;
         fadeDragY0 = m.y;
         fadeDragT0 = hcf ? fadeTensionToUi(fadeHoverKind == 3 ? hcf->fadeInTension : hcf->fadeOutTension) : 0.0f;
+        const clipmulti::Param fp = fadeHoverKind == 1 ? clipmulti::Param::FadeIn
+                                    : fadeHoverKind == 2 ? clipmulti::Param::FadeOut
+                                    : fadeHoverKind == 3 ? clipmulti::Param::FadeInCurve
+                                                         : clipmulti::Param::FadeOutCurve;
+        fadeDragSnap = clipmulti::capture(s, clipui::targets(a, fadeHoverClip, fp), fp, fadeHoverClip);
       }
       lClick = false;
     }
@@ -2476,6 +2546,8 @@ void drawPlaylist(App& a) {
   static ObjectId gainMenuClip = kNoId;
   static float gainClipboard = 1.0f;
   static float gainTypeDb = 0.0f;
+  // J-142: the selected clips a volume drag moves with the clip under the pointer.
+  static clipmulti::Snapshot gainDragSnap;
   const uint64_t gainKey = 0x4741494Eull ^ (static_cast<uint64_t>(gainDragClip) << 8);
   if (gainDragClip != kNoId) {
     const Clip* gc = s.clip(gainDragClip);
@@ -2486,12 +2558,24 @@ void drawPlaylist(App& a) {
       if (fine != gainDrag.fine || free != gainDrag.free)  // a modifier changed: continue from here at the new rate
         gainDrag.begin(std::max(clipgain::kMinDb - 0.1, clipgain::toDb(gc->gain)), fine, free, up);
       const float g = clipgain::fromDb(gainDrag.move(up));
-      if (g != gc->gain) {
-        const ObjectId id = gc->id;
-        a.doc.editClip(id, "clip volume", [g](Clip& x) { x.gain = g; }, gainKey);
+      const clipmulti::Entry* anchor = gainDragSnap.find(gc->id);
+      if (gainDragSnap.clips.size() > 1 && anchor) {
+        // J-142: every selected clip moves by the same number of dB (from the
+        // pointer, past this clip's own limits), each clamped at its own.
+        const double d = gainDrag.dbUnbounded() - anchor->base;
+        clipmulti::offset(a.doc, "clip volume", gainDragSnap, d, gainKey);
+        char b[48];
+        std::snprintf(b, sizeof b, "%+.1f dB", std::clamp(anchor->base + d, anchor->lo, anchor->hi) - anchor->base);
+        a.setHint(i18n::tr("Clip volume") + std::string(": ") + clipgain::label(g) + "   " + b + "   " +
+                  i18n::tr("(every selected clip by the same amount)"));
+      } else {
+        if (g != gc->gain) {
+          const ObjectId id = gc->id;
+          a.doc.editClip(id, "clip volume", [g](Clip& x) { x.gain = g; }, gainKey);
+        }
+        a.setHint(i18n::tr("Clip volume") + std::string(": ") + clipgain::label(g) + "   " +
+                  i18n::tr("(Shift: fine, Alt: no stop at 0 dB, double-click: 0 dB)"));
       }
-      a.setHint(i18n::tr("Clip volume") + std::string(": ") + clipgain::label(g) + "   " +
-                i18n::tr("(Shift: fine, Alt: no stop at 0 dB, double-click: 0 dB)"));
     } else {
       a.doc.endGesture();
       gainDragClip = kNoId;
@@ -2504,11 +2588,14 @@ void drawPlaylist(App& a) {
                 i18n::tr("drag up / down \xC2\xB7 double-click: 0 dB \xC2\xB7 right-click: volume menu"));
     if (lClick) {
       const Clip* hcg = s.clip(gainHoverClip);
-      if (hcg && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-        a.doc.editClip(gainHoverClip, "reset clip volume", [](Clip& x) { x.gain = 1.0f; });
+      const std::vector<ObjectId> gainTargets = clipui::targets(a, gainHoverClip, clipmulti::Param::GainDb);
+      if (hcg && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {  // J-142: every selected clip back to 0 dB
+        clipmulti::setAll(a.doc, "reset clip volume", clipmulti::capture(s, gainTargets, clipmulti::Param::GainDb, gainHoverClip), 0.0);
       } else if (hcg) {
         gainDragClip = gainHoverClip;
         gainDragY0 = m.y;
+        gainDragSnap = clipmulti::capture(s, gainTargets, clipmulti::Param::GainDb, gainHoverClip);
+        gainDrag.unbounded = gainDragSnap.clips.size() > 1;  // J-142: the others keep moving past this clip's limits
         gainDrag.begin(std::max(clipgain::kMinDb - 0.1, clipgain::toDb(hcg->gain)), io.KeyShift, io.KeyAlt);
         gainGlideClip = hcg->id;
         gainGlideDb = gainDrag.db();
@@ -2527,9 +2614,15 @@ void drawPlaylist(App& a) {
       ImGui::CloseCurrentPopup();
     } else {
       const ObjectId id = gc->id;
+      // J-142: with the clip in a multi-selection, reset and paste set every
+      // selected clip; a typed value is an offset (the clicked clip gets the
+      // value, the others move by the same number of dB).
+      const std::vector<ObjectId> gainTargets = clipui::targets(a, id, clipmulti::Param::GainDb);
+      auto gainSnap = [&] { return clipmulti::capture(s, gainTargets, clipmulti::Param::GainDb, id); };
       ImGui::TextDisabled("%s %s", i18n::tr("Clip volume"), clipgain::label(gc->gain).c_str());
+      if (gainTargets.size() > 1) ImGui::TextDisabled(i18n::tr("%d selected clips"), static_cast<int>(gainTargets.size()));
       ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Reset to 0 dB"))) a.doc.editClip(id, "reset clip volume", [](Clip& x) { x.gain = 1.0f; });
+      if (ImGui::MenuItem(i18n::tr("Reset to 0 dB"))) clipmulti::setAll(a.doc, "reset clip volume", gainSnap(), 0.0);
       if (ImGui::MenuItem(i18n::tr("Normalize"))) {
         a.doc.editSong("normalize clip", [id](Song& x) {
           if (normalizeClip(x, id) > 0)
@@ -2556,17 +2649,16 @@ void drawPlaylist(App& a) {
       }
       ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Copy value"))) gainClipboard = gc->gain;
-      if (ImGui::MenuItem(i18n::tr("Paste value"))) {
-        const float g = gainClipboard;
-        a.doc.editClip(id, "paste clip volume", [g](Clip& x) { x.gain = g; });
-      }
+      if (ImGui::MenuItem(i18n::tr("Paste value")))
+        clipmulti::setAll(a.doc, "paste clip volume", gainSnap(), std::max(clipgain::kMinDb - 0.1, clipgain::toDb(gainClipboard)));
       if (ImGui::BeginMenu(i18n::tr("Type in value"))) {
         if (ImGui::IsWindowAppearing()) gainTypeDb = static_cast<float>(std::max(clipgain::kMinDb, clipgain::toDb(gc->gain)));
         ImGui::SetNextItemWidth(120);
         if (ImGui::InputFloat("dB##gaintype", &gainTypeDb, 0.5f, 3.0f, "%.1f", ImGuiInputTextFlags_EnterReturnsTrue)) {
           const double db = std::clamp(static_cast<double>(gainTypeDb), clipgain::kMinDb, clipgain::kMaxDb);
-          const float g = clipgain::fromDb(db <= clipgain::kMinDb ? clipgain::kMinDb - 0.1 : db);
-          a.doc.editClip(id, "clip volume", [g](Clip& x) { x.gain = g; });
+          const clipmulti::Snapshot snap = gainSnap();
+          if (const clipmulti::Entry* e = snap.find(id))  // the typed value for this clip, the same difference for the others
+            clipmulti::offset(a.doc, "clip volume", snap, (db <= clipgain::kMinDb ? clipgain::kMinDb - 0.1 : db) - e->base);
           ImGui::CloseCurrentPopup();
         }
         ImGui::EndMenu();
@@ -2590,18 +2682,38 @@ void drawPlaylist(App& a) {
           const EdgeFade& o = in ? ccache.fades[static_cast<size_t>(pi)].out : ccache.fades[static_cast<size_t>(pi)].in;
           tied = o.len > 0 && std::fabs(o.len - e.len) < 1e-6;
         }
+      // J-142: with the clip in a multi-selection the menu sets that edge on
+      // every selected audio clip (each tied partner follows its own clip).
+      const std::vector<ObjectId> edgeClips = clipui::targets(a, id, in ? clipmulti::Param::FadeIn : clipmulti::Param::FadeOut);
       auto editEdge = [&](const char* label, const std::function<void(Clip&, bool /*in*/)>& fn, bool alsoPartner) {
+        std::set<ObjectId> ids(edgeClips.begin(), edgeClips.end()), partners;
+        ids.insert(id);
+        if (alsoPartner)
+          for (ObjectId k : ids) {
+            const int ki = s.clipIndex(k);
+            if (ki < 0 || static_cast<size_t>(ki) >= ccache.fades.size()) continue;
+            const EdgeFade& ke = in ? ccache.fades[static_cast<size_t>(ki)].in : ccache.fades[static_cast<size_t>(ki)].out;
+            if (!ke.crossfade || ke.partner == kNoId) continue;
+            const int pi = s.clipIndex(ke.partner);
+            if (pi < 0 || static_cast<size_t>(pi) >= ccache.fades.size()) continue;
+            const EdgeFade& o = in ? ccache.fades[static_cast<size_t>(pi)].out : ccache.fades[static_cast<size_t>(pi)].in;
+            if (o.len > 0 && std::fabs(o.len - ke.len) < 1e-6) partners.insert(ke.partner);
+          }
         a.doc.editClips(label, [&](std::vector<Clip>& v) {
           for (Clip& x : v) {
-            if (x.id == id) fn(x, in);
-            if (alsoPartner && partner != kNoId && x.id == partner) fn(x, !in);
+            if (ids.count(x.id)) fn(x, in);
+            if (partners.count(x.id)) fn(x, !in);
           }
         });
       };
       ImGui::TextDisabled("%s", in ? "Fade in" : "Fade out");
       if (e.crossfade && ImGui::MenuItem(i18n::tr("Automatic crossfade"), nullptr, e.automatic, s.autoCrossfades)) {
-        if (e.automatic)  // keep the current length, set by hand from now on
-          editEdge("fade set by hand", [len = e.len](Clip& x, bool i) { (i ? x.fadeIn : x.fadeOut) = len, (i ? x.fadeInManual : x.fadeOutManual) = true; }, false);
+        if (e.automatic) {  // keep each clip's current length, set by hand from now on
+          std::map<ObjectId, double> lens;
+          for (size_t k = 0; k < s.playlist.size() && k < ccache.fades.size(); ++k)
+            lens[s.playlist[k].id] = in ? ccache.fades[k].in.len : ccache.fades[k].out.len;
+          editEdge("fade set by hand", [&lens](Clip& x, bool i) { (i ? x.fadeIn : x.fadeOut) = lens[x.id], (i ? x.fadeInManual : x.fadeOutManual) = true; }, false);
+        }
         else
           editEdge("automatic crossfade", [](Clip& x, bool i) { (i ? x.fadeIn : x.fadeOut) = 0, (i ? x.fadeInManual : x.fadeOutManual) = false; }, false);
       }
@@ -2688,9 +2800,8 @@ void drawPlaylist(App& a) {
           if (q && k >= 0 && static_cast<size_t>(k) < q->points.size()) q->points.erase(q->points.begin() + k);
         });
       }
-    } else if (inGrid && rClick && hc && m.y < yOf(hc->track) + std::min(16.0f, (hOf(hc->track) - 4) * 0.45f) + 2 && st.tool != Tool::Erase &&
-               st.tool != Tool::Paint) {
-      menuClip = hoverClip;  // right-click on the clip's title bar: clip menu
+    } else if (inGrid && rClick && hc && clipheader::opensMenu(hoverZone)) {
+      menuClip = hoverClip;  // J-142: right-click on the clip's name box: clip menu (the rest of the title strip deletes)
       ImGui::OpenPopup("##clipmenu");
     } else if (inGrid && rClick && st.tool == Tool::Zoom) {
       st.zoomRequest /= 1.5f;

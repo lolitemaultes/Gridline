@@ -11,6 +11,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include "../../engine/pitch/Kernel.h"
 #include "plasma_dsp.h"
 
 namespace gl::packs::plasma {
@@ -400,13 +401,17 @@ std::shared_ptr<const Table> tableFromFrames(const std::vector<std::vector<float
     float* dst = t->data.data() + static_cast<size_t>(f) * kFrameSize;
     if (src.size() == static_cast<size_t>(kFrameSize)) {
       std::copy(src.begin(), src.end(), dst);
-    } else if (!src.empty()) {  // resample one cycle (linear, wrap)
+    } else if (!src.empty()) {  // resample one cycle (J-140: band-limited, wrapping; was linear)
       const double r = static_cast<double>(src.size()) / kFrameSize;
-      for (int i = 0; i < kFrameSize; ++i) {
-        const double x = i * r;
-        const size_t a = static_cast<size_t>(x) % src.size(), b = (a + 1) % src.size();
-        dst[i] = static_cast<float>(src[a] + (src[b] - src[a]) * (x - std::floor(x)));
-      }
+      const auto n = static_cast<int64_t>(src.size());
+      const pitch::SincTable& tab = pitch::table(pitch::Quality::Offline);
+      for (int i = 0; i < kFrameSize; ++i)
+        pitch::readWith<1>(
+            [&src, n](int64_t k, int) {
+              k %= n;
+              return src[static_cast<size_t>(k < 0 ? k + n : k)];
+            },
+            i * r, r, tab, dst + i);
     }
   }
   return t;

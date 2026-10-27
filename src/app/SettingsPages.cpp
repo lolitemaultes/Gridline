@@ -37,6 +37,12 @@ std::string langDir(const App& a) { return a.languageDir(); }
 void generalSettingsPage(App& a, float fieldW) {
   Settings& st = a.settings;
   ui::BeginSection(tr("ON STARTUP"));
+  {  // J-141: the welcome launcher (recent projects, templates); also a click on the logo
+    bool on = st.getBool("general.launcher");
+    if (ImGui::Checkbox(tr("Show the welcome screen"), &on)) st.set("general.launcher", on);
+    ui::Hint("Start on the welcome screen: recent projects, templates and the demo song. Projects opened from files go straight in.");
+  }
+  if (st.getBool("general.launcher")) ui::Label("WITHOUT THE WELCOME SCREEN");
   {
     static const char* modes[] = {"template", "empty", "last"};
     static const char* names[] = {"Open the default template", "Start with an empty project", "Reopen the last project"};

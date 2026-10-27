@@ -14,13 +14,71 @@
 #include <thread>
 #include <signalsmith-stretch/signalsmith-stretch.h>
 #include "../core/Automation.h"
+#include "Dsp.h"
+#include "pitch/Level.h"
+#include "pitch/Psola.h"
+#include "pitch/TdStretch.h"
 
 namespace gl::stretch {
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
-using Engine = signalsmith::stretch::SignalsmithStretch<float>;
+using Spectral = signalsmith::stretch::SignalsmithStretch<float>;
 constexpr long kSeed = 0x6c696e65;  // fixed: renders are reproducible
+
+// J-140: the time-domain modes. Beats runs the WSOLA engine
+// (engine/pitch/TdStretch); Voice runs pitch-synchronous overlap-add
+// (engine/pitch/Psola), which also keeps the formants in place.
+// Modes that keep the formants in place (and the loudness with them).
+bool keepsFormants(Mode m) { return m == Mode::Formant || m == Mode::Voice; }
+
+// The stretch core of a mode behind the streaming calls the engines share
+// (seek, process, flush).
+class Engine {
+ public:
+  enum Kind { kSpectral, kWsola, kPsola };
+  explicit Engine(long seed) : ss(seed) {}
+  Spectral ss;
+  pitch::TdStretch td;
+  pitch::Psola ps;
+  Kind kind = kSpectral;
+  bool useTd() const { return kind != kSpectral; }
+  template <class F>
+  decltype(auto) with(F&& f) {
+    switch (kind) {
+      case kWsola: return f(td);
+      case kPsola: return f(ps);
+      default: return f(ss);
+    }
+  }
+  void reset() {
+    with([](auto& e) { e.reset(); });
+  }
+  int outputSeekLength(float r) {
+    return with([r](auto& e) { return static_cast<int>(e.outputSeekLength(r)); });
+  }
+  int inputLatency() {
+    return with([](auto& e) { return static_cast<int>(e.inputLatency()); });
+  }
+  int outputLatency() {
+    return with([](auto& e) { return static_cast<int>(e.outputLatency()); });
+  }
+  int blockSamples() {
+    return with([](auto& e) { return static_cast<int>(e.blockSamples()); });
+  }
+  template <class In>
+  void outputSeek(In&& in, int len) {
+    with([&](auto& e) { e.outputSeek(in, len); });
+  }
+  template <class In, class Out>
+  void process(In&& in, int inN, Out&& out, int outN) {
+    with([&](auto& e) { e.process(in, inN, out, outN); });
+  }
+  template <class Out>
+  void flush(Out&& out, int outN, float rate) {
+    with([&](auto& e) { e.flush(out, outN, rate); });
+  }
+};
 
 struct Config {
   double block, interval;  // seconds
@@ -35,9 +93,20 @@ Config configOf(Mode m, bool offline) {
   }
 }
 
-void setup(Engine& e, int nch, double sr, Mode m, bool offline) {
+void setup(Engine& e, int nch, double sr, Mode m, bool offline, bool light = false) {
+  if (m == Mode::Voice) {
+    e.kind = Engine::kPsola;
+    e.ps.configure(nch, sr);
+    return;
+  }
+  if (m == Mode::Beats || light) {
+    e.kind = Engine::kWsola;
+    e.td.configure(nch, sr, m == Mode::Beats || m == Mode::Transient ? pitch::TdStretch::beats() : pitch::TdStretch::general());
+    return;
+  }
+  e.kind = Engine::kSpectral;
   const Config c = configOf(m, offline);
-  e.configure(nch, std::max(64, static_cast<int>(sr * c.block)), std::max(16, static_cast<int>(sr * c.interval)));
+  e.ss.configure(nch, std::max(64, static_cast<int>(sr * c.block)), std::max(16, static_cast<int>(sr * c.interval)));
 }
 
 // Pitch is never left to the engine's own transposition (its partials can
@@ -46,12 +115,17 @@ void setup(Engine& e, int nch, double sr, Mode m, bool offline) {
 // engine moves the formants by the inverse of that resampling first, so they
 // end where they started (plus the formant control).
 void applyPitch(Engine& e, Mode m, double pitch, double formantSemis) {
-  e.setTransposeFactor(1.0f);
+  if (e.kind == Engine::kPsola) {
+    e.ps.setFormantFactor(std::pow(2.0, formantSemis / 12.0) / pitch);
+    return;
+  }
+  if (e.kind == Engine::kWsola) return;
+  e.ss.setTransposeFactor(1.0f);
   if (m == Mode::Formant) {
-    e.setFormantFactor(static_cast<float>(std::pow(2.0, formantSemis / 12.0) / pitch), false);
-    e.setFormantBase(0);
+    e.ss.setFormantFactor(static_cast<float>(std::pow(2.0, formantSemis / 12.0) / pitch), false);
+    e.ss.setFormantBase(0);
   } else {
-    e.setFormantFactor(1.0f, false);
+    e.ss.setFormantFactor(1.0f, false);
   }
 }
 
@@ -79,16 +153,6 @@ struct OutView {
   Ch operator[](int c) const { return Ch{y[c] + offset}; }
 };
 
-double kaiserI0(double x) {
-  double s = 1, t = 1, q = x * x / 4;
-  for (int k = 1; k < 64; ++k) {
-    t *= q / (static_cast<double>(k) * k);
-    s += t;
-    if (t < 1e-12 * s) break;
-  }
-  return s;
-}
-
 // Progress of an offline render: every output frame below `done` is final.
 using Progress = std::function<void(int64_t done)>;
 
@@ -101,8 +165,13 @@ void resample2(const float* l, const float* r, int64_t n, double start, double r
 void plain(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, double sr, const Settings& s,
            const Progress* pr = nullptr) {
   if (outLen <= 0) return;
+  const bool level = keepsFormants(s.mode);  // J-140: formant shifts keep the loudness
   if (std::fabs(s.pitch - 1.0) < 1e-12) {
-    stretchOnly(in, nch, n, out, outLen, sr, s, pr);
+    stretchOnly(in, nch, n, out, outLen, sr, s, level ? nullptr : pr);
+    if (level) {
+      pitch::matchLevel(out, nch, outLen, in, n, [&](int64_t q) { return static_cast<double>(q) * static_cast<double>(n) / static_cast<double>(outLen); }, sr);
+      if (pr && *pr) (*pr)(outLen);
+    }
     return;
   }
   const SincTable& t = sincTable(Quality::Offline);
@@ -115,7 +184,7 @@ void plain(const float* const* in, int nch, int64_t n, float* const* out, int64_
   // silent. The resampler follows the stretch as it progresses (it reads
   // `reach` frames ahead of each position).
   int64_t doneOut = 0;
-  const double reach = t.zeroCrossings / (std::min(1.0, 1.0 / s.pitch) * 0.97) + 2;
+  const double reach = pitch::reach(s.pitch, t) + 1;
   auto resampleTo = [&](int64_t upTo) {
     upTo = std::clamp<int64_t>(upTo, doneOut, outLen);
     if (upTo <= doneOut) return;
@@ -127,14 +196,19 @@ void plain(const float* const* in, int nch, int64_t n, float* const* out, int64_
         for (int c = 0; c < nch; ++c) out[c][j] = readSinc(mp[static_cast<size_t>(c)], mid, p, s.pitch, t);
     }
     doneOut = upTo;
-    if (pr && *pr) (*pr)(doneOut);
+    if (pr && *pr && !level) (*pr)(doneOut);
   };
   const Progress midProgress = [&](int64_t midDone) {
     if (midDone >= midUsed) return;  // the end: below, with the silence after it
     resampleTo(static_cast<int64_t>(std::floor((static_cast<double>(midDone) - reach) / s.pitch)));
   };
-  stretchOnly(in, nch, n, mp.data(), std::max<int64_t>(1, midUsed), sr, s, pr ? &midProgress : nullptr);
+  stretchOnly(in, nch, n, mp.data(), std::max<int64_t>(1, midUsed), sr, s, pr && !level ? &midProgress : nullptr);
   resampleTo(outLen);
+  if (level) {
+    // On the band-limited result: what the resampler removed must not count.
+    pitch::matchLevel(out, nch, outLen, in, n, [&](int64_t q) { return static_cast<double>(q) * static_cast<double>(n) / static_cast<double>(outLen); }, sr);
+    if (pr && *pr) (*pr)(outLen);
+  }
 }
 
 void stretchOnly(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, double sr, const Settings& s,
@@ -297,6 +371,8 @@ const char* modeName(Mode m) {
     case Mode::Mono: return "Mono / vocal";
     case Mode::Transient: return "Transient";
     case Mode::Formant: return "Formant keep";
+    case Mode::Voice: return "Voice";
+    case Mode::Beats: return "Beats";
     default: return "?";
   }
 }
@@ -308,6 +384,8 @@ const char* modeHint(Mode m) {
     case Mode::Mono: return "Single voices, vocals, bass and leads: tighter timing";
     case Mode::Transient: return "Drum loops and percussion: every hit re-attacked from the original";
     case Mode::Formant: return "Pitch shift that keeps a voice's character (no chipmunk effect)";
+    case Mode::Voice: return "Vocals, speech and solo instruments: natural pitch shifts with the formants kept, no phasing";
+    case Mode::Beats: return "Drums and loops: every hit copied as it is, nothing smeared or doubled";
     default: return "";
   }
 }
@@ -323,10 +401,12 @@ Mode modeFromFl(int code) {
     case 0: return Mode::Resample;
     case 2:   // e3 mono
     case 8:   // e2 mono
-    case 9:   // e2 speech
       return Mode::Mono;
+    case 9:   // e2 speech
+      return Mode::Voice;
     case 3:   // slice stretch
     case 4:   // slice map
+      return Mode::Beats;
     case 7:   // e2 transient
       return Mode::Transient;
     case -2:  // stretch pro (formant control)
@@ -340,8 +420,10 @@ int flCodeOf(Mode m) {
   switch (m) {
     case Mode::Resample: return 0;
     case Mode::Mono: return 2;       // e3 mono
-    case Mode::Transient: return 3;  // slice stretch
+    case Mode::Transient: return 7;  // e2 transient
     case Mode::Formant: return -2;   // stretch pro
+    case Mode::Voice: return 9;      // e2 speech
+    case Mode::Beats: return 3;      // slice stretch
     default: return -1;              // stretch
   }
 }
@@ -377,7 +459,7 @@ std::vector<int64_t> detectOnsets(const float* x, int64_t n, double sr, double s
   for (double v : env) peak = std::max(peak, v);
   const double floor = peak * std::pow(10.0, -45.0 / 20.0) + 1e-9;
   int64_t last = -1000000;
-  for (int64_t k = 12; k + 6 < m; ++k) {
+  for (int64_t k = 26; k + 6 < m; ++k) {
     // Level before: the mean over the 10 ms ending 1 ms before; after: the max over the next 5 ms.
     double before = 0, hfBefore = 0;
     for (int64_t j = k - 11; j < k - 1; ++j) before += env[static_cast<size_t>(j)], hfBefore += hf[static_cast<size_t>(j)];
@@ -385,6 +467,13 @@ std::vector<int64_t> detectOnsets(const float* x, int64_t n, double sr, double s
     double after = 0, hfAfter = 0;
     for (int64_t j = k; j < k + 5; ++j) after = std::max(after, env[static_cast<size_t>(j)]), hfAfter = std::max(hfAfter, hf[static_cast<size_t>(j)]);
     if (after < floor || after < jump * (before + 1e-9) || hfAfter < jump * 0.7 * (hfBefore + 1e-9)) continue;
+    // J-140: the attack must also rise clearly above the loudest moment of the
+    // 25 ms before (longer than one period down to 40 Hz): every pulse of a
+    // low, buzzy tone (bass, voice, pulse waves) jumped over the mean level
+    // and was taken for a new hit, chopping sustained notes into 30 ms pieces.
+    double peakBefore = 0;
+    for (int64_t j = k - 26; j < k - 1; ++j) peakBefore = std::max(peakBefore, env[static_cast<size_t>(j)]);
+    if (after < std::sqrt(jump) * peakBefore) continue;
     if (k - last < 30) continue;  // 30 ms apart at least
     // Attack start: the first sample of block k−1 … k+4 whose level passes
     // 10 % of the post-onset level (1 ms early, so nothing is cut).
@@ -451,13 +540,14 @@ void processP(const float* const* in, int nch, int64_t n, float* const* out, int
   Settings t = s;
   t.pitch = std::clamp(s.pitch, 1.0 / 16.0, 16.0);
   const bool sameTime = outLen == n;
-  if (sameTime && std::fabs(t.pitch - 1.0) < 1e-9 && (t.mode != Mode::Formant || std::fabs(t.formant) < 1e-9)) {
+  if (sameTime && std::fabs(t.pitch - 1.0) < 1e-9 && (!keepsFormants(t.mode) || std::fabs(t.formant) < 1e-9)) {
     for (int c = 0; c < nch; ++c) std::copy(in[c], in[c] + n, out[c]);
     return;
   }
   switch (t.mode) {
-    case Mode::Transient: withTransients(in, nch, n, out, outLen, sr, t, 0.75, pr); break;
-    case Mode::Auto: withTransients(in, nch, n, out, outLen, sr, t, 0.25, pr); break;
+    case Mode::Transient:
+    case Mode::Beats:
+    case Mode::Auto: withTransients(in, nch, n, out, outLen, sr, t, onsetSensitivity(t.mode), pr); break;
     default: plain(in, nch, n, out, outLen, sr, t, pr); break;
   }
 }
@@ -516,136 +606,31 @@ void processMapped(const float* const* in, int nch, int64_t n, float* const* out
     std::vector<float*> mp(static_cast<size_t>(nch));
     for (int c = 0; c < nch; ++c) mp[static_cast<size_t>(c)] = m[static_cast<size_t>(c)].data();
     // Intermediate frame q plays at output time q / pitch.
-    mappedCore(in, nch, n, mp.data(), mid, sr, s, pitch, [&](int64_t q) {
+    const auto midSrc = [&](int64_t q) {
       const double t = static_cast<double>(q) / pitch;
       const auto j = static_cast<int64_t>(std::floor(t));
       const double a = srcAt(j);
       return a + (t - static_cast<double>(j)) * (srcAt(j + 1) - a);
-    });
+    };
+    mappedCore(in, nch, n, mp.data(), mid, sr, s, pitch, midSrc);
     if (nch == 2)
       resample2(mp[0], mp[1], mid, 0.0, pitch, out[0], out[1], outLen);
     else
       for (int c = 0; c < nch; ++c) resample(mp[static_cast<size_t>(c)], mid, 0.0, pitch, out[c], outLen);
+    // On the band-limited result: what the resampler removed must not count.
+    if (keepsFormants(s.mode)) pitch::matchLevel(out, nch, outLen, in, n, srcAt, sr);
     return;
   }
   mappedCore(in, nch, n, out, outLen, sr, s, 1.0, srcAt);
+  if (keepsFormants(s.mode)) pitch::matchLevel(out, nch, outLen, in, n, srcAt, sr);
 }
 
 // ------------------------------------------------------------- resampling
 
-const SincTable& sincTable(Quality q) {
-  static const SincTable rt = [] {
-    SincTable t;
-    t.zeroCrossings = 16, t.phases = 512;
-    const double beta = 7.5;
-    const size_t len = static_cast<size_t>(t.zeroCrossings * t.phases) + 2;
-    t.table.resize(len);
-    for (size_t i = 0; i < len; ++i) {
-      const double x = static_cast<double>(i) / t.phases;
-      const double r = x / t.zeroCrossings;
-      const double win = r >= 1 ? 0.0 : kaiserI0(beta * std::sqrt(1 - r * r)) / kaiserI0(beta);
-      const double sinc = x == 0 ? 1.0 : std::sin(kPi * x) / (kPi * x);
-      t.table[i] = static_cast<float>(sinc * win);
-    }
-    return t;
-  }();
-  static const SincTable off = [] {
-    SincTable t;
-    t.zeroCrossings = 48, t.phases = 1024;
-    const double beta = 10.0;
-    const size_t len = static_cast<size_t>(t.zeroCrossings * t.phases) + 2;
-    t.table.resize(len);
-    for (size_t i = 0; i < len; ++i) {
-      const double x = static_cast<double>(i) / t.phases;
-      const double r = x / t.zeroCrossings;
-      const double win = r >= 1 ? 0.0 : kaiserI0(beta * std::sqrt(1 - r * r)) / kaiserI0(beta);
-      const double sinc = x == 0 ? 1.0 : std::sin(kPi * x) / (kPi * x);
-      t.table[i] = static_cast<float>(sinc * win);
-    }
-    return t;
-  }();
-  return q == Quality::Offline ? off : rt;
-}
-
-namespace {
-// Cutoff (fraction of the input Nyquist): the output Nyquist when reading
-// faster than 1:1, with a guard band for the kernel's transition.
-inline double cutoffOf(double rate, const SincTable& t) {
-  const double guard = t.zeroCrossings >= 32 ? 0.97 : 0.94;
-  return std::min(1.0, 1.0 / std::clamp(rate, 1e-6, 8.0)) * guard;
-}
-}  // namespace
-
-namespace {
-// The kernel walk shared by every reader: weights for the taps around `pos`
-// (table position stepped per tap, no per-tap division), applied to up to two
-// channels at once, normalised by their sum (DC exact). Taps outside [0, n)
-// read zero; the common case (all inside) skips the bounds tests.
-template <int C>
-inline void sincTaps(const float* const* x, int64_t n, double pos, double rate, const SincTable& t, float* out) {
-  const double fc = cutoffOf(rate, t);
-  const double hw = t.zeroCrossings / fc;
-  const auto i0 = static_cast<int64_t>(std::ceil(pos - hw)), i1 = static_cast<int64_t>(std::floor(pos + hw));
-  const float* tab = t.table.data();
-  const auto last = static_cast<double>(t.table.size() - 2);
-  const double step = fc * t.phases;  // table steps per input sample
-  double acc[2] = {0, 0}, wsum = 0;
-  const bool inside = i0 >= 0 && i1 < n;
-  // Left half: i ≤ pos, table position (pos − i)·fc·phases decreasing.
-  const auto ic = static_cast<int64_t>(std::floor(pos));
-  double tp = (pos - static_cast<double>(i0)) * step;
-  for (int64_t i = i0; i <= std::min(ic, i1); ++i, tp -= step) {
-    const double q = tp < 0 ? 0 : (tp > last ? last : tp);
-    const auto k = static_cast<size_t>(q);
-    const double w = tab[k] + (tab[k + 1] - tab[k]) * (q - static_cast<double>(k));
-    wsum += w;
-    if (inside || (i >= 0 && i < n))
-      for (int c = 0; c < C; ++c) acc[c] += w * x[c][i];
-  }
-  // Right half: i > pos, table position (i − pos)·fc·phases increasing.
-  tp = (static_cast<double>(ic + 1) - pos) * step;
-  for (int64_t i = ic + 1; i <= i1; ++i, tp += step) {
-    const double q = tp > last ? last : tp;
-    const auto k = static_cast<size_t>(q);
-    const double w = tab[k] + (tab[k + 1] - tab[k]) * (q - static_cast<double>(k));
-    wsum += w;
-    if (inside || (i >= 0 && i < n))
-      for (int c = 0; c < C; ++c) acc[c] += w * x[c][i];
-  }
-  for (int c = 0; c < C; ++c) out[c] = wsum > 1e-9 ? static_cast<float>(acc[c] / wsum) : 0.0f;
-}
-}  // namespace
-
-float readSinc(const float* x, int64_t n, double pos, double rate, const SincTable& t) {
-  const float* xs[1] = {x};
-  float o;
-  sincTaps<1>(xs, n, pos, rate, t, &o);
-  return o;
-}
-
-void readSinc2(const float* l, const float* r, int64_t n, double pos, double rate, const SincTable& t, float& outL, float& outR) {
-  const float* xs[2] = {l, r};
-  float o[2];
-  sincTaps<2>(xs, n, pos, rate, t, o);
-  outL = o[0], outR = o[1];
-}
-
-void resample(const float* x, int64_t n, double start, double rate, float* out, int64_t outLen, Quality q) {
-  const SincTable& t = sincTable(q);
-  const float* xs[1] = {x};
-  for (int64_t j = 0; j < outLen; ++j) sincTaps<1>(xs, n, start + static_cast<double>(j) * rate, rate, t, out + j);
-}
-
 namespace {
 // Two channels in one pass (one weight computation for both).
 void resample2(const float* l, const float* r, int64_t n, double start, double rate, float* outL, float* outR, int64_t outLen) {
-  const SincTable& t = sincTable(Quality::Offline);
-  const float* xs[2] = {l, r};
-  float o[2];
-  for (int64_t j = 0; j < outLen; ++j) {
-    sincTaps<2>(xs, n, start + static_cast<double>(j) * rate, rate, t, o);
-    outL[j] = o[0], outR[j] = o[1];
-  }
+  pitch::resample2(l, r, n, start, rate, outL, outR, outLen, Quality::Offline);
 }
 }  // namespace
 
@@ -968,11 +953,54 @@ struct Voice::Impl {
   int inCap = 0, midCap = 0;
   static constexpr int kChunk = 256;   // engine output frames per process call
   static constexpr int kXfade = 48;    // segment crossfade (mid frames)
+  // J-140 Formant mode: cumulative input energy by input frame (ring), so
+  // each engine chunk's level can follow the source span it came from.
+  bool followLevel = false;
+  pitch::LevelFollower level;
+  std::vector<double> esum;
+  std::vector<float> apk;  // per input frame: the largest |sample| of the channels (ring, as esum)
+  int64_t emask = 0;
+  double ecum = 0;
+  // The engine output as the pitch resampler will leave it (its band limit),
+  // for the level measure: content above the output Nyquist frequency must
+  // not count. Two low-pass sections per channel, set for lpPitch.
+  dsp::Biquad lp[2][2];
+  double lpPitch = 0;
+  double peakIn(double a, double b) const {
+    const auto i0 = std::clamp<int64_t>(static_cast<int64_t>(std::floor(a)), std::max<int64_t>(0, inTotal - emask), inTotal);
+    const auto i1 = std::clamp<int64_t>(static_cast<int64_t>(std::ceil(b)), i0, inTotal);
+    float p = 0;
+    for (int64_t i = i0; i < i1; ++i) p = std::max(p, apk[static_cast<size_t>(i & emask)]);
+    return p;
+  }
+  double energyAt(double x) const {
+    const auto i = std::clamp<int64_t>(static_cast<int64_t>(std::llround(x)), std::max<int64_t>(0, inTotal - emask), inTotal);
+    return esum[static_cast<size_t>(i & emask)];
+  }
   int pull(Reader rd, void* ctx, int frames, bool resume) {
     float* d[2] = {in[0].data(), in[1].data()};
     const int on = rd(ctx, d, frames, resume);
+    if (followLevel) {
+      for (int k = 0; k < frames; ++k) {
+        double e = 0;
+        for (int c = 0; c < channels; ++c) e += static_cast<double>(in[c][static_cast<size_t>(k)]) * in[c][static_cast<size_t>(k)];
+        ecum += e / channels;
+        esum[static_cast<size_t>((inTotal + k + 1) & emask)] = ecum;
+        float pk = 0;
+        for (int c = 0; c < channels; ++c) pk = std::max(pk, std::fabs(in[c][static_cast<size_t>(k)]));
+        apk[static_cast<size_t>((inTotal + k) & emask)] = pk;
+      }
+    }
     inTotal += frames;
     return on;
+  }
+  void resetLevel() {
+    ecum = 0;
+    if (followLevel) esum[0] = 0;
+    level.reset();
+    for (auto& ch : lp)
+      for (auto& s : ch) s.clear();
+    lpPitch = 0;
   }
   void noteOnset(int on, int frames, double perMid) {
     if (on < 0 || boundary >= 0) return;
@@ -991,6 +1019,8 @@ struct Voice::Impl {
     // The new segment starts at the onset, aligned (no pre-echo of the hit).
     engine.reset();
     inTotal = 0, inAcc = 0, xAtFilled = 0, boundary = -1;
+    ecum = 0;
+    if (followLevel) esum[0] = 0;
     const int seek = std::min(inCap, engine.outputSeekLength(static_cast<float>(std::max(1e-3, perMid))));
     const int on = pull(rd, ctx, seek, true);
     const float* ip[2] = {in[0].data(), in[1].data()};
@@ -1016,6 +1046,31 @@ struct Voice::Impl {
       const float* ip[2] = {in[0].data(), in[1].data()};
       float* op[2] = {mid[0].data() + filled, mid[1].data() + filled};
       engine.process(ip, k, op, m);
+      if (followLevel) {
+        const double a = xAtFilled, b = xAtFilled + perMid * m;
+        const double srcMs = b - a > 0.5 ? (energyAt(b) - energyAt(a)) / (b - a) : 0.0;
+        // Measured as it will be heard: band-limited like the resampler
+        // leaves it when pitching up (a formant-keeping engine's mid signal
+        // can carry content the resampler removes).
+        const bool band = pitch > 1.02;
+        if (band && std::fabs(pitch - lpPitch) > 1e-3) {
+          const double fc = 0.45 * sampleRate / pitch;
+          for (auto& ch : lp) {
+            ch[0].set(dsp::Biquad::LowPass, sampleRate, fc, 0.5412, 0);
+            ch[1].set(dsp::Biquad::LowPass, sampleRate, fc, 1.3066, 0);
+          }
+          lpPitch = pitch;
+        }
+        double outMs = 0, outPk = 0;
+        for (int c = 0; c < channels; ++c)
+          for (int j = 0; j < m; ++j) {
+            const double v = band ? lp[c][1].process(lp[c][0].process(op[c][j])) : op[c][j];
+            outMs += v * v;
+            outPk = std::max(outPk, std::fabs(v));
+          }
+        const double srcPk = b - a > 0.5 ? peakIn(a, b) : 0.0;
+        level.apply(op, channels, m, srcMs, outMs / (channels * m), outPk > 1e-9 && srcPk > 0 ? srcPk / outPk : 0.0);
+      }
       if (atkPos < atkLen) {
         const int x = atkLen - atkHold;
         for (int c = 0; c < channels; ++c)
@@ -1052,22 +1107,35 @@ struct Voice::Impl {
 Voice::Voice() : impl_(std::make_unique<Impl>()) {}
 Voice::~Voice() = default;
 
-void Voice::prepare(int channels, double sampleRate, Mode mode, double maxPitch, double maxSpeed) {
+void Voice::prepare(int channels, double sampleRate, Mode mode, double maxPitch, double maxSpeed, bool light) {
   mode_ = mode == Mode::Resample ? Mode::Auto : mode;
   Impl& m = *impl_;
   m.channels = std::clamp(channels, 1, 2);
   m.sampleRate = sampleRate;
   m.maxPitch = std::max(1.0, maxPitch);
   m.maxSpeed = std::max(1.0, maxSpeed);
-  setup(m.engine, m.channels, sampleRate, mode_, false);
+  setup(m.engine, m.channels, sampleRate, mode_, false, light);
   applyPitch(m.engine, mode_, 1.0, 0.0);
   const SincTable& t = sincTable(Quality::Realtime);
   // mid: render steps at the top pitch, the resampler's reach, slack for compaction.
-  const int hw = static_cast<int>(std::ceil(t.zeroCrossings / 0.94 * m.maxPitch)) + 4;
+  const int hw = pitch::maxReach(m.maxPitch, t) + 4;
   m.midCap = 8 * (Impl::kChunk + hw) + static_cast<int>(2048 * m.maxPitch);
   // in: the engine's start-up input, or one chunk at the top input rate.
   const double perMid = m.maxSpeed * m.maxPitch;  // speed / pitch at the lowest pitch
   m.inCap = std::max({m.engine.outputSeekLength(static_cast<float>(perMid)), static_cast<int>(std::ceil(perMid * Impl::kChunk)), Impl::kXfade}) + 16;
+  m.followLevel = keepsFormants(mode_);
+  m.level.setRate(sampleRate);
+  if (m.followLevel) {
+    int64_t cap = 1;
+    while (cap < 2 * static_cast<int64_t>(m.inCap) + 4096) cap <<= 1;
+    m.esum.assign(static_cast<size_t>(cap), 0.0);
+    m.apk.assign(static_cast<size_t>(cap), 0.0f);
+    m.emask = cap - 1;
+  } else {
+    m.esum.clear();
+    m.apk.clear();
+    m.emask = 0;
+  }
   for (int c = 0; c < 2; ++c) {
     m.mid[c].assign(static_cast<size_t>(m.midCap), 0.0f);
     m.in[c].assign(static_cast<size_t>(m.inCap), 0.0f);
@@ -1089,13 +1157,14 @@ void Voice::reset() {
   m.boundary = -1;
   m.tailLen = m.tailPos = 0;
   m.atkHold = m.atkLen = m.atkPos = 0;
+  m.resetLevel();
 }
 
 int Voice::lookahead(double speed, double pitch) const {
   pitch = std::max(1e-3, pitch);
   const double perMid = speed / pitch;
   const SincTable& t = sincTable(Quality::Realtime);
-  const double hw = t.zeroCrossings / (std::min(1.0, 1.0 / pitch) * 0.94);
+  const double hw = pitch::reach(pitch, t);
   return static_cast<int>(std::ceil(impl_->engine.outputSeekLength(static_cast<float>(perMid)) + (hw + Impl::kChunk) * perMid)) + 2;
 }
 
@@ -1117,9 +1186,9 @@ void Voice::render(float* const* out, int n, double speed, double pitch, double 
   Impl& m = *impl_;
   pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
   speed = std::clamp(speed, 0.0, m.maxSpeed);
-  if (mode_ == Mode::Formant) applyPitch(m.engine, mode_, pitch, formantSemis);
+  if (keepsFormants(mode_)) applyPitch(m.engine, mode_, pitch, formantSemis);
   const SincTable& t = sincTable(Quality::Realtime);
-  const int hw = static_cast<int>(std::ceil(t.zeroCrossings / (std::min(1.0, 1.0 / pitch) * 0.94))) + 1;
+  const int hw = pitch::reach(pitch, t);
   int done = 0;
   while (done < n) {
     // Output frames per step, bounded so mid never overflows.

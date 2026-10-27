@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include "../../engine/Dsp.h"
+#include "../../engine/pitch/Kernel.h"
 #include "../Packs.h"
 #include "edison.h"
 
@@ -241,12 +242,19 @@ void EdisonFx::run(const PluginState& state, const Sample* src, const ProcessCon
   for (int i = 0; i < n; ++i) {
     float l = mute ? 0.f : L[i], r = mute ? 0.f : R[i];
     if (scrub || rplaying_) {
-      const int64_t k = static_cast<int64_t>(std::floor(rpos_));
-      const double f = rpos_ - static_cast<double>(k);
-      if (k >= 0 && k + 1 < frames) {
-        const size_t u = static_cast<size_t>(k);
-        l += g * static_cast<float>(src->left[u] + (src->left[u + 1] - src->left[u]) * f);
-        r += g * static_cast<float>(src->right[u] + (src->right[u + 1] - src->right[u]) * f);
+      // J-140: band-limited read at the playback or scrub speed (was linear:
+      // other-rate files and fast scrubs aliased); whole frames at 1:1 stay exact.
+      if (rpos_ >= 0 && rpos_ < static_cast<double>(frames)) {
+        const double rate = scrub ? std::fabs(scrubVel_) : step;
+        float sl, sr;
+        if (pitch::exactFrame(rpos_, rate)) {
+          const auto u = static_cast<size_t>(std::min<int64_t>(frames - 1, std::llround(rpos_)));
+          sl = src->left[u], sr = src->right[u];
+        } else {
+          pitch::read2(src->left.data(), src->right.data(), frames, rpos_, rate, pitch::table(pitch::Quality::Realtime), sl, sr);
+        }
+        l += g * sl;
+        r += g * sr;
       }
       if (scrub) {
         scrubVel_ += (vTarget - scrubVel_) * 0.002;

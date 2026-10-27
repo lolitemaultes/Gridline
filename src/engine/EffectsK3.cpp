@@ -15,6 +15,7 @@
 #include "EffectsK3.h"
 #include "GrossBeatRef.h"
 #include "TimeGateSlots.h"
+#include "pitch/Kernel.h"
 
 namespace gl {
 
@@ -28,38 +29,6 @@ float param(const PluginState& s, int i, float dflt = 0.f) {
 int iparam(const PluginState& s, int i, int dflt = 0) { return static_cast<int>(std::lround(param(s, i, static_cast<float>(dflt)))); }
 bool bparam(const PluginState& s, int i, bool dflt = false) { return param(s, i, dflt ? 1.f : 0.f) >= 0.5f; }
 
-// Lanczos-windowed sinc kernels (8 and 16 taps), 512 fractional phases.
-struct SincTable {
-  static constexpr int kPhases = 512;
-  std::vector<float> k8, k16;
-  SincTable() {
-    auto build = [](std::vector<float>& t, int taps) {
-      t.assign(static_cast<size_t>((kPhases + 1) * taps), 0.f);
-      const int half = taps / 2;
-      for (int ph = 0; ph <= kPhases; ++ph) {
-        double frac = static_cast<double>(ph) / kPhases;
-        double sum = 0;
-        for (int k = 0; k < taps; ++k) {
-          double x = (k - (half - 1)) - frac;  // tap offsets -(half-1) .. half
-          double v;
-          if (std::fabs(x) < 1e-9) v = 1;
-          else if (std::fabs(x) >= half) v = 0;
-          else v = std::sin(kPi * x) / (kPi * x) * std::sin(kPi * x / half) / (kPi * x / half);
-          t[static_cast<size_t>(ph * taps + k)] = static_cast<float>(v);
-          sum += v;
-        }
-        for (int k = 0; k < taps; ++k) t[static_cast<size_t>(ph * taps + k)] = static_cast<float>(t[static_cast<size_t>(ph * taps + k)] / sum);
-      }
-    };
-    build(k8, 8);
-    build(k16, 16);
-  }
-};
-const SincTable& sinc() {
-  static const SincTable t;
-  return t;
-}
-
 }  // namespace
 
 // ======================================================================= Time Gate
@@ -69,7 +38,6 @@ class TimeGateK3 final : public Effect {
   TimeGateK3() : factory_(std::make_unique<tg::Bank>()), bank_(std::make_unique<tg::Bank>()) {
     tg::factory(*factory_);
     *bank_ = *factory_;
-    (void)sinc();
   }
 
   // Slot trigger from a note (MIDI trigger option): time slots 60..95, volume slots 24..59.
@@ -222,11 +190,11 @@ class TimeGateK3 final : public Effect {
           xfRp_ = lastRp_ + 1;
           xfLeft_ = xfLen;
         }
-        read(rp, hq, tl, tr);
+        read(rp, hq, haveRp_ ? std::min(8.0, std::fabs(rp - lastRp_)) : 1.0, tl, tr);
         if (xfLeft_ > 0) {
           double ol, orr;
           xfRp_ += 1;
-          read(xfRp_, hq, ol, orr);
+          read(xfRp_, hq, 1.0, ol, orr);
           double f = xfLeft_ / xfLen;
           double w = 0.5 - 0.5 * std::cos(kPi * f);  // raised cosine
           tl = tl * (1 - w) + ol * w, tr = tr * (1 - w) + orr * w;
@@ -236,12 +204,12 @@ class TimeGateK3 final : public Effect {
         timeActive = true;
         phase_ = static_cast<float>(pos);
       } else if (holdOn_) {
-        read(std::round(live), false, tl, tr);
+        read(std::round(live), false, 1.0, tl, tr);
         timeActive = true;
         haveRp_ = false;
       } else if (ctx.playing && mode > 0) {  // 0.5 quick modes
         double inBar = std::fmod(beat, 4.0);
-        auto back = [&](double beatsAgo) { read(std::round(static_cast<double>(wc_) - beatsAgo * spb), false, tl, tr); };
+        auto back = [&](double beatsAgo) { read(std::round(static_cast<double>(wc_) - beatsAgo * spb), false, 1.0, tl, tr); };
         if (mode >= 1 && mode <= 4) {
           const double slice = mode == 1 ? 1.0 : mode == 2 ? 0.5 : mode == 3 ? 0.25 : 0.125;
           back(inBar - std::fmod(inBar, slice));
@@ -384,30 +352,29 @@ class TimeGateK3 final : public Effect {
       bs_[1].start = Sv > 0 ? beat - std::fmod(beat, Sv) : beat;
     }
   }
-  void read(double rp, bool hq, double& l, double& r) const {
-    const size_t N = bl_.size();
-    double fl = std::floor(rp);
-    double frac = rp - fl;
-    long long i0 = static_cast<long long>(fl);
-    if (frac < 1e-9) {
-      size_t ix = static_cast<size_t>((i0 % static_cast<long long>(N) + static_cast<long long>(N)) % static_cast<long long>(N));
+  // Ring read at `rp` with the head moving `rate` frames per output frame.
+  // J-140: the shared band-limited kernel (compact, or realtime when hq),
+  // anti-aliased when the head runs fast (was a fixed 8 / 16-tap Lanczos).
+  void read(double rp, bool hq, double rate, double& l, double& r) const {
+    const auto N = static_cast<long long>(bl_.size());
+    const double fl = std::floor(rp);
+    const auto i0 = static_cast<long long>(fl);
+    if (rp - fl < 1e-9 && rate <= 1.000001) {
+      const auto ix = static_cast<size_t>((i0 % N + N) % N);
       l = bl_[ix], r = br_[ix];
       return;
     }
-    const SincTable& T = sinc();
-    const int taps = hq ? 16 : 8, half = taps / 2;
-    const std::vector<float>& tab = hq ? T.k16 : T.k8;
-    int ph = static_cast<int>(std::lround(frac * SincTable::kPhases));
-    const float* k = &tab[static_cast<size_t>(ph * taps)];
-    double sl = 0, sr = 0;
-    for (int j = 0; j < taps; ++j) {
-      long long idx = i0 + j - (half - 1);
-      // Never read samples not yet written (future): clamp to the newest.
-      if (idx > static_cast<long long>(wc_)) idx = static_cast<long long>(wc_);
-      size_t ix = static_cast<size_t>((idx % static_cast<long long>(N) + static_cast<long long>(N)) % static_cast<long long>(N));
-      sl += bl_[ix] * k[j], sr += br_[ix] * k[j];
-    }
-    l = sl, r = sr;
+    const auto newest = static_cast<long long>(wc_);
+    float o[2];
+    pitch::readWith<2>(
+        [this, N, newest](int64_t idx, int c) {
+          // Never read samples not yet written (future): clamp to the newest.
+          if (idx > newest) idx = newest;
+          const auto ix = static_cast<size_t>((idx % N + N) % N);
+          return c == 0 ? bl_[ix] : br_[ix];
+        },
+        rp, rate, pitch::table(hq ? pitch::Quality::Realtime : pitch::Quality::Compact), o);
+    l = o[0], r = o[1];
   }
   double coefOf(double seconds) const { return seconds <= 0 ? 0.0 : std::exp(-1.0 / std::max(1e-9, seconds * sr_)); }
 

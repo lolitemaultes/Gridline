@@ -14,7 +14,7 @@ enum class SrcQuality : int { Fast = 8, Good = 16, Best = 64 };
 
 // Converts `in` (any channel count) from `fromRate` to `toRate`. The output
 // has round(frames × to / from) frames. Downsampling low-passes at the new
-// Nyquist frequency (anti-aliasing). Blackman-windowed sinc, offline only.
+// Nyquist frequency (anti-aliasing). Kaiser-windowed sinc (engine/pitch), offline only.
 AudioBuffer resampleBuffer(const AudioBuffer& in, double fromRate, double toRate, int halfTaps = 32);
 std::vector<float> resampleChannel(const float* in, size_t frames, double fromRate, double toRate, int halfTaps = 32);
 

@@ -19,6 +19,9 @@
 #include <filesystem>
 #include <fstream>
 #include "../core/Demo.h"
+#include "../core/ProjectPreview.h"
+#include "../core/Recents.h"
+#include "LauncherUi.h"
 #include "../core/I18n.h"
 #include "../core/Keymap.h"
 #include "../core/Log.h"
@@ -61,14 +64,17 @@ App::App() {
   backups = std::make_unique<BackupManager>(pol);
   doc.setMaxUndoLevels(static_cast<size_t>(std::max(1.0, settings.getNumber("undo.maxLevels"))));
   applySettingsHooks();
-  // Recent files.
-  std::ifstream rf(fs::path(configDir()) / "recent.txt");
-  for (std::string line; std::getline(rf, line);)
-    if (!line.empty()) recentFiles.push_back(line);
+  // Recent files (J-141: with the times they were last opened, for the launcher).
+  {
+    recents::List rl = recents::load(configDir());
+    recentFiles = std::move(rl.paths);
+    recentTimes_ = std::move(rl.opened);
+  }
   newProject();
 }
 
 App::~App() {
+  launcherui::shutdown();        // J-141: the sketch worker
   collabui::closeSession(*this);  // J-111: the log is synced, collaborators are told
   shutdownControllerScripts();  // onDeinit while the app still exists
   mcpui::shutdown();             // SC-07: stop the assistant server, remove its endpoint file
@@ -83,14 +89,71 @@ App::~App() {
 
 std::string App::configDir() const { return fs::path(Settings::defaultPath()).parent_path().string(); }
 
+static int64_t unixNow() {
+  return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+void App::saveRecents() {
+  if (embedded) return;  // PH-09: the host owns the project
+  recents::List l;
+  l.paths = recentFiles;
+  l.opened = recentTimes_;
+  recents::save(configDir(), l);
+}
+
 void App::addRecent(const std::string& path) {
-  recentFiles.erase(std::remove(recentFiles.begin(), recentFiles.end(), path), recentFiles.end());
-  recentFiles.insert(recentFiles.begin(), path);
-  if (recentFiles.size() > 12) recentFiles.resize(12);
-  std::error_code ec;
-  fs::create_directories(configDir(), ec);
-  std::ofstream wf(fs::path(configDir()) / "recent.txt");
-  for (const auto& r : recentFiles) wf << r << "\n";
+  recents::List l;
+  l.paths = std::move(recentFiles);
+  l.opened = std::move(recentTimes_);
+  l.touch(path, unixNow());
+  recentFiles = std::move(l.paths);
+  recentTimes_ = std::move(l.opened);
+  saveRecents();
+}
+
+bool App::removeRecent(const std::string& path) {
+  const auto it = std::find(recentFiles.begin(), recentFiles.end(), path);
+  if (it == recentFiles.end()) return false;
+  recentFiles.erase(it);
+  recentTimes_.erase(path);
+  saveRecents();
+  return true;
+}
+
+size_t App::removeMissingRecents() {
+  recents::List l;
+  l.paths = std::move(recentFiles);
+  l.opened = std::move(recentTimes_);
+  const size_t n = l.pruneMissing([](const std::string& p) { return recents::exists(p); });
+  recentFiles = std::move(l.paths);
+  recentTimes_ = std::move(l.opened);
+  if (n) saveRecents();
+  return n;
+}
+
+void App::clearRecents() {
+  recentFiles.clear();
+  recentTimes_.clear();
+  saveRecents();
+}
+
+int64_t App::recentOpenedAt(const std::string& path) const {
+  const auto it = recentTimes_.find(path);
+  return it == recentTimes_.end() ? 0 : it->second;
+}
+
+std::string App::sketchCacheDir() const { return (fs::path(configDir()) / "launcher" / "sketches").string(); }
+
+void App::rememberSketch(const std::string& path) {
+  if (embedded || path.empty()) return;
+  launcherui::rememberSketch(*this, path, preview::make(doc.song()));
+}
+
+void App::closeProject() {
+  guardUnsaved([this]() {
+    newProject();
+    home.projectClosed(now);
+  });
 }
 
 int App::processingThreads() const {
@@ -270,6 +333,7 @@ void App::notify(const std::string& english, bool error, const std::string& deta
 }
 
 std::string App::windowTitle() const {
+  if (home.visible() && !home.projectOpen()) return "Gridline";  // J-141: the launcher, no project open
   std::string name = projectFile().empty() ? doc.song().info.title : fs::path(projectFile()).filename().string();
   if (std::string shared = collabui::projectTitle(*this); !shared.empty()) name = shared;  // J-111f: the collaborative project's name
   return (doc.modified() ? "• " : "") + name + " — Gridline";
@@ -348,6 +412,7 @@ void App::startProject(Song s) {
   engine.setMode(song.playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
   rackReveal.quietSwitch(engine.mode());  // J-77: a new project does not count as choosing PAT
   syncEngine();
+  home.projectOpened(now);  // J-141: the launcher gives way to the new project
 }
 
 std::string App::templatesDir() const { return (fs::path(configDir()) / "templates").string(); }
@@ -379,30 +444,46 @@ void App::applySettingsHooks() {
 
 std::string App::languageDir() const { return assetsDir.empty() ? std::string() : (fs::path(assetsDir) / "i18n").string(); }
 
-void App::applyStartup() {
+void App::applyStartup(bool plainLaunch) {
   applySettingsHooks();
   templates(true);
-  // J-135: the demo song greets a new install, once; later launches follow the setting.
-  if (!settings.getBool("general.demoShown")) {
+  // J-135: the demo song greets a new install, once; J-141: then the welcome launcher
+  // (plain launches) or Settings > General > On startup.
+  launcher::StartupInputs in;
+  in.plainLaunch = plainLaunch;
+  in.freshInstall = freshInstall_;
+  in.demoShown = settings.getBool("general.demoShown");
+  in.launcherOn = settings.getBool("general.launcher");
+  in.startupMode = settings.getString("general.startup");
+  {
+    std::error_code ec;
+    in.lastExists = !recentFiles.empty() && fs::exists(recentFiles.front(), ec);
+  }
+  in.defaultTemplate = !settings.getString("general.defaultTemplate").empty();
+  const launcher::StartupPlan plan = launcher::planStartup(in);
+  if (plan.markDemoShown) {
     settings.set("general.demoShown", true);
     settings.save(Settings::defaultPath());
-    if (freshInstall_) {
-      newFromTemplate("demo");
-      return;
-    }
   }
-  const std::string mode = settings.getString("general.startup");
-  if (mode == "empty") {
-    newFromTemplate("");
-  } else if (mode == "last" && !recentFiles.empty()) {
-    std::error_code ec;
-    if (fs::exists(recentFiles.front(), ec)) openProject(recentFiles.front());
-  } else if (!settings.getString("general.defaultTemplate").empty()) {
-    newProject();
+  switch (plan.action) {
+    case launcher::StartAction::Demo: newFromTemplate("demo"); break;
+    case launcher::StartAction::Empty: newFromTemplate(""); break;
+    case launcher::StartAction::Last: openProject(recentFiles.front()); break;
+    case launcher::StartAction::Template: newProject(); break;
+    case launcher::StartAction::None: break;
   }
+  if (plan.showLauncher) home.showAtStartup(now);
 }
 
 bool App::openProject(const std::string& pathIn) {
+  // J-141: whatever opened (a project, or a file imported into the project), the
+  // launcher gives way to it.
+  const bool ok = openProjectFile(pathIn);
+  if (ok) home.projectOpened(now);
+  return ok;
+}
+
+bool App::openProjectFile(const std::string& pathIn) {
   // J-111: a collaborative project folder opens its project (with its session)
   const std::string collabFile = collabui::projectFileIn(pathIn);
   const std::string& path = collabFile.empty() ? pathIn : collabFile;
@@ -433,6 +514,7 @@ bool App::openProject(const std::string& pathIn) {
   projectFormat = SaveFormat::Gridline;
   openedFrom.clear();
   addRecent(path);
+  rememberSketch(path);  // J-141
   curPattern = doc.song().patterns.empty() ? kNoId : doc.song().patterns[0].id;
   selChannel = doc.song().channels.empty() ? kNoId : doc.song().channels[0].id;
   selChannels = {selChannel};
@@ -490,6 +572,8 @@ bool App::openFlpProject(const std::string& path, const std::string& shownAs) {
   projectFormat = SaveFormat::Gridline;
   openedFrom = shownAs;
   addRecent(shownAs);
+  rememberSketch(shownAs);  // J-141
+  home.projectOpened(now);
   curPattern = doc.song().patterns.empty() ? kNoId : doc.song().patterns[0].id;
   selChannel = doc.song().channels.empty() ? kNoId : doc.song().channels[0].id;
   selChannels = {selChannel};
@@ -566,6 +650,7 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
     openedFrom.clear();
     doc.markSaved();
     addRecent(p);
+    rememberSketch(p);  // J-141: the launcher's tile shows what was saved
   };
   try {  // J-78: an unexpected failure is reported, never a crash that loses the open project
     switch (format) {

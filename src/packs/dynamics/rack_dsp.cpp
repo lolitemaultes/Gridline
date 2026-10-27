@@ -910,7 +910,8 @@ class EffectorFx final : public DynFx {
           double win = 0.5 - 0.5 * std::cos(kTwoPi * t / len);
           double back = writeAbs_ - (grainStart_[g] + t * rate);
           back = clampd(back, 1.0, static_cast<double>(grain_[0].capacity() - 4));
-          for (int c = 0; c < 2; ++c) out[c] += grain_[c].frac(back) * win;
+          // J-140: band-limited grain reads at the grain rate (were linear).
+          for (int c = 0; c < 2; ++c) out[c] += grain_[c].band(back, rate, pitch::table(pitch::Quality::Compact)) * win;
         }
         grainPos_ += 1.0;
         if (grainPos_ >= len * 64.0) grainPos_ = std::fmod(grainPos_, len);

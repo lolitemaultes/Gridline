@@ -263,8 +263,11 @@ class AudioEngine {
   // Samples between the transport and the master output (plugin delay
   // compensation) for the current program.
   int outputLatency() const;
-  float masterPeakL() const { return outPeakL_.load(); }
-  float masterPeakR() const { return outPeakR_.load(); }
+  // J-143: peak of the master bus (post master effects and fader, the level
+  // the mixer's master meter shows) since the UI last read it. A "take": each
+  // read resets it, so it never sticks at the loudest moment ever played.
+  float takeMasterPeakL() { return outPeakL_.exchange(0.f, std::memory_order_relaxed); }
+  float takeMasterPeakR() { return outPeakR_.exchange(0.f, std::memory_order_relaxed); }
 
   // ---- audio input & recording (J-8) ----
   // Device input: the capture callback pushes interleaved frames (single

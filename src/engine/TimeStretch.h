@@ -16,7 +16,11 @@
 //   Transient  drum loops, percussive material: short blocks and every
 //              detected onset re-attacked from the original audio;
 //   Formant    pitch shift that keeps the spectral envelope (voices keep
-//              their character instead of sounding chipmunk / giant).
+//              their character instead of sounding chipmunk / giant);
+//   Voice      (J-140) time-domain pitch-synchronous engine for single
+//              voices and speech: no phasiness, formants kept;
+//   Beats      (J-140) time-domain WSOLA engine for drums and loops, every
+//              onset restarts it: hits are copied, never re-synthesised.
 // Offline renders (clips, slices, the editor) use higher overlap than the
 // realtime voices (sampler notes, the Pitch Shifter).
 #pragma once
@@ -27,6 +31,7 @@
 #include <string>
 #include <vector>
 #include "Sample.h"
+#include "pitch/Kernel.h"
 
 namespace gl {
 class TempoMap;
@@ -34,13 +39,17 @@ class TempoMap;
 
 namespace gl::stretch {
 
-enum class Mode : int { Resample = 0, Auto, Mono, Transient, Formant, Count };
+// Parameter values are stored in projects: new modes are appended (J-140: Voice, Beats).
+enum class Mode : int { Resample = 0, Auto, Mono, Transient, Formant, Voice, Beats, Count };
 // English names (the UI wraps them in i18n::tr).
 const char* modeName(Mode m);
 const char* modeHint(Mode m);
 // SmpStretchMode parameter value → mode (clamped).
 Mode modeOf(double paramValue);
 inline bool keepsPitch(Mode m) { return m != Mode::Resample; }
+// Modes whose engines restart at the sound's onsets, and their detection sensitivity.
+inline bool usesOnsets(Mode m) { return m == Mode::Auto || m == Mode::Transient || m == Mode::Beats; }
+inline double onsetSensitivity(Mode m) { return m == Mode::Transient ? 0.75 : m == Mode::Beats ? 0.6 : 0.25; }
 
 // FL Studio's stored stretch method (channel parameters 215, offset 108):
 // 0 resample, -1 stretch, -2 stretch pro, 1 e3 generic, 2 e3 mono, 3 slice
@@ -72,36 +81,27 @@ std::vector<int64_t> detectOnsets(const float* x, int64_t n, double sampleRate, 
 // Onsets of a sample (channel mix), cached per sample and sensitivity (UI thread).
 std::shared_ptr<const std::vector<int64_t>> onsetsOf(const SamplePtr& s, double sensitivity);
 
-// ---- band-limited resampling ----
+// ---- band-limited resampling (engine/pitch/Kernel.h) ----
 
 // Windowed-sinc interpolation (Kaiser window) with the cutoff following the
-// read rate, so pitching up never aliases. Realtime: 16 zero crossings per
-// side; offline: 48.
-struct SincTable {
-  int zeroCrossings = 0;
-  int phases = 0;            // table steps per zero crossing
-  std::vector<float> table;  // zeroCrossings · phases + 2 entries of sinc · window over [0, zc]
-  // Kernel value at x zero crossings from the centre (|x| ≤ zc).
-  float at(double x) const {
-    x = x < 0 ? -x : x;
-    const double p = x * phases;
-    const auto i = static_cast<size_t>(p);
-    if (i + 1 >= table.size()) return 0.f;
-    const float f = static_cast<float>(p - static_cast<double>(i));
-    return table[i] + (table[i + 1] - table[i]) * f;
-  }
-};
-enum class Quality { Realtime, Offline };
-const SincTable& sincTable(Quality q);  // built once; call on a non-realtime thread first
+// read rate, so pitching up never aliases. Realtime: 24 zero crossings per
+// side (8 above rate 6); offline: 48. One implementation: pitch::.
+using SincTable = pitch::SincTable;
+using Quality = pitch::Quality;
+inline const SincTable& sincTable(Quality q) { return pitch::table(q); }  // built once; call on a non-realtime thread first
 
 // One frame read at fractional position `pos` of x[0, n) (zero outside) for a
 // read rate `rate` (input frames per output frame; > 1 lowers the cutoff).
 // Realtime safe once sincTable(q) exists.
-float readSinc(const float* x, int64_t n, double pos, double rate, const SincTable& t);
-void readSinc2(const float* l, const float* r, int64_t n, double pos, double rate, const SincTable& t, float& outL, float& outR);
+inline float readSinc(const float* x, int64_t n, double pos, double rate, const SincTable& t) { return pitch::read(x, n, pos, rate, t); }
+inline void readSinc2(const float* l, const float* r, int64_t n, double pos, double rate, const SincTable& t, float& outL, float& outR) {
+  pitch::read2(l, r, n, pos, rate, t, outL, outR);
+}
 
 // Offline resampling of a whole channel: out[j] = x(start + j · rate).
-void resample(const float* x, int64_t n, double start, double rate, float* out, int64_t outLen, Quality q = Quality::Offline);
+inline void resample(const float* x, int64_t n, double start, double rate, float* out, int64_t outLen, Quality q = Quality::Offline) {
+  pitch::resample(x, n, start, rate, out, outLen, q);
+}
 
 // ---- rendered playlist clips ----
 
@@ -169,7 +169,9 @@ class Voice {
   Voice(const Voice&) = delete;
   Voice& operator=(const Voice&) = delete;
   // maxPitch / maxSpeed bound the buffers (frequency ratio, input frames per output frame).
-  void prepare(int channels, double sampleRate, Mode mode, double maxPitch = 8.0, double maxSpeed = 8.0);
+  // light: a spectral mode runs on the time-domain engine (WSOLA) instead, a
+  // fraction of the cost, for voices past a spectral budget (J-140).
+  void prepare(int channels, double sampleRate, Mode mode, double maxPitch = 8.0, double maxSpeed = 8.0, bool light = false);
   bool prepared() const { return prepared_; }
   Mode mode() const { return mode_; }
   // Begins a sound: the first rendered frame is the reader's first frame

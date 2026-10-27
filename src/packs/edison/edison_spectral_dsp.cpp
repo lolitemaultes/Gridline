@@ -7,6 +7,7 @@
 #include <cstdint>
 #include "../../engine/Dsp.h"
 #include "../../engine/TimeStretch.h"
+#include "../../engine/pitch/Kernel.h"
 #include "edison.h"
 #include "edison_internal.h"
 
@@ -133,37 +134,14 @@ Audio resampleAudio(const Audio& a, double newRate, int quality) {
   const int64_t n = a.frames();
   const int64_t outN = static_cast<int64_t>(std::llround(static_cast<double>(n) * ratio));
   o.resize(outN);
-  quality = std::clamp(quality, 0, 2);
-  const int half = quality == 0 ? 8 : quality == 1 ? 32 : 96;
-  const double beta = quality == 0 ? 6.0 : quality == 1 ? 8.6 : 10.0;
-  const double fc = std::min(1.0, ratio) * (quality == 0 ? 0.90 : quality == 1 ? 0.95 : 0.975);
-  // Kernel table h(t), t in input samples, P steps per sample.
-  const int P = 512;
-  std::vector<double> tab(static_cast<size_t>(half * P + 2));
-  for (int j = 0; j <= half * P + 1; ++j) {
-    double t = static_cast<double>(j) / P;
-    double s = t == 0 ? 1.0 : std::sin(kPi * fc * t) / (kPi * fc * t);
-    tab[static_cast<size_t>(j)] = fc * s * kaiser(t / half, beta);
-  }
-  auto h = [&](double t) {
-    t = std::fabs(t) * P;
-    int j = static_cast<int>(t);
-    if (j >= half * P) return 0.0;
-    double f = t - j;
-    return tab[static_cast<size_t>(j)] + (tab[static_cast<size_t>(j + 1)] - tab[static_cast<size_t>(j)]) * f;
-  };
-  const int chans = a.channels == 1 ? 1 : 2;
-  for (int64_t i = 0; i < outN; ++i) {
-    const double c = static_cast<double>(i) / ratio;
-    const int64_t k0 = static_cast<int64_t>(std::floor(c)) - half + 1, k1 = static_cast<int64_t>(std::floor(c)) + half;
-    double sL = 0, sR = 0;
-    for (int64_t k = std::max<int64_t>(0, k0); k <= std::min<int64_t>(n - 1, k1); ++k) {
-      const double w = h(c - static_cast<double>(k));
-      sL += w * a.L[static_cast<size_t>(k)];
-      if (chans == 2) sR += w * a.R[static_cast<size_t>(k)];
-    }
-    o.L[static_cast<size_t>(i)] = static_cast<float>(sL);
-    o.R[static_cast<size_t>(i)] = static_cast<float>(chans == 2 ? sR : sL);
+  // J-140: the shared band-limited kernel (was a private Kaiser sinc).
+  // Fast = realtime table, Normal and Best = offline table.
+  const pitch::Quality q = std::clamp(quality, 0, 2) == 0 ? pitch::Quality::Realtime : pitch::Quality::Offline;
+  if (a.channels == 1) {
+    pitch::resample(a.L.data(), n, 0.0, 1.0 / ratio, o.L.data(), outN, q);
+    o.R = o.L;
+  } else {
+    pitch::resample2(a.L.data(), a.R.data(), n, 0.0, 1.0 / ratio, o.L.data(), o.R.data(), outN, q);
   }
   return o;
 }
@@ -187,6 +165,8 @@ const char* stretchName(Stretch s) {
     case Stretch::Tape: return "Tape (varispeed)";
     case Stretch::Mono: return "Mono / vocal";
     case Stretch::Formant: return "Formant keep";
+    case Stretch::Voice: return "Voice (formants kept)";
+    case Stretch::Beats: return "Beats (loops)";
     default: return "?";
   }
 }
@@ -211,6 +191,8 @@ Audio stretchAudio(const Audio& a, double timeFactor, double semitones, Stretch 
   set.mode = mode == Stretch::Transient ? stretch::Mode::Transient
              : mode == Stretch::Mono    ? stretch::Mode::Mono
              : mode == Stretch::Formant ? stretch::Mode::Formant
+             : mode == Stretch::Voice   ? stretch::Mode::Voice
+             : mode == Stretch::Beats   ? stretch::Mode::Beats
                                         : stretch::Mode::Auto;
   set.pitch = P;
   const int nch = a.channels == 1 ? 1 : 2;

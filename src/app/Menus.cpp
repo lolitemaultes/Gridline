@@ -89,6 +89,9 @@ void stopSound(App& a) { menuparity::panicPressed(a); }  // J-109: stops the tra
 // ---------------------------------------------------------------- menus ----
 
 void menuFile(App& a) {
+  if (ImGui::MenuItem(i18n::tr("Welcome screen"))) a.home.showHome(a.now);  // J-141
+  ui::Hint("Recent projects, templates and the demo song (also a click on the Gridline logo)");
+  ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("New"), keys::label("file.new"))) a.guardUnsaved([&a]() { a.newProject(); });
   if (ImGui::BeginMenu(i18n::tr("New from template"))) {
     if (ImGui::MenuItem(i18n::tr("Browse templates..."))) a.showNewProject = true;
@@ -121,7 +124,7 @@ void menuFile(App& a) {
         a.guardUnsaved([&a, path]() { a.openProject(path); });
       }
     ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Clear list"))) a.recentFiles.clear();
+    if (ImGui::MenuItem(i18n::tr("Clear list"))) a.clearRecents();
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Revert to last backup"), nullptr, false, a.backups != nullptr)) a.revertToLastBackup();

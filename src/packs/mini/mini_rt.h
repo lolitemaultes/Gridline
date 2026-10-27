@@ -9,6 +9,7 @@
 #include <vector>
 #include "../../engine/Dsp.h"
 #include "../../engine/Effects.h"
+#include "../../engine/pitch/Kernel.h"
 #include "mini.h"
 
 namespace gl::packs::mini::rt {
@@ -88,6 +89,10 @@ struct Ring {
     size_t i = static_cast<size_t>(d);
     float f = static_cast<float>(d - static_cast<double>(i));
     return at(i) + (at(i + 1) - at(i)) * f;
+  }  // J-140: band-limited read with the head moving `rate` samples per sample
+  // (the shared kernel), d clamped like read().
+  float band(double d, double rate, const pitch::SincTable& t) const {
+    return pitch::readBack(b.data(), mask, w, std::clamp(d, 1.0, maxDelay()), rate, t);
   }
 };
 

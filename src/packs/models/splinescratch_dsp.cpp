@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include "../../engine/Dsp.h"
+#include "../../engine/pitch/Kernel.h"
 #include "metal.h"
 #include "metal_rt.h"
 
@@ -112,15 +113,17 @@ class SplineScratchGen final : public Generator {
           const double lo = std::min(a, b) * (frames - 1), hi = std::max(a, b) * (frames - 1);
           pos = std::clamp(pos, lo, hi);
         }
+        const double speed = v.lastPos < 0 ? 1.0 : std::fabs(pos - v.lastPos);  // source frames per output frame
         v.lastPos = pos;
         const float target = v.released ? 0.0f : 1.0f;
         v.env += (target - v.env) * (v.released ? rK : aK);
         v.gate += ((ssSoundOn(p, static_cast<float>(x)) ? 1.0f : 0.0f) - v.gate) * gK;
         const float vol = ssEval(p.vol, static_cast<float>(std::min(1.0, x))) * v.gate * v.env * v.vel * volume_;
-        const size_t i0 = static_cast<size_t>(std::clamp(pos, 0.0, frames - 2));
-        const float f = static_cast<float>(std::clamp(pos - static_cast<double>(i0), 0.0, 1.0));
-        const float l = smp->left[i0] + (smp->left[i0 + 1] - smp->left[i0]) * f;
-        const float r = smp->right[i0] + (smp->right[i0 + 1] - smp->right[i0]) * f;
+        // J-140: band-limited read at the head's speed (was linear: scratches
+        // faster than 1:1 aliased).
+        float l, r;
+        pitch::read2(smp->left.data(), smp->right.data(), static_cast<int64_t>(smp->frames()), std::clamp(pos, 0.0, frames - 1), speed,
+                     pitch::table(pitch::Quality::Realtime), l, r);
         L[i] += l * vol;
         R[i] += r * vol;
         v.t += 1.0 / sr_;

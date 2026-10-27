@@ -71,6 +71,7 @@
 #include "SmoothScrollUi.h"
 #include "ExternalDragUi.h"
 #include "SuiteUi.h"
+#include "LauncherUi.h"
 #include "UpdateUi.h"
 #include "../host/net/Http.h"
 
@@ -333,7 +334,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   move x y · down b · up b · mod ctrl|shift|alt|super 0|1 (super = Cmd: Ctrl + click is a right click on macOS) · wheel dy · key <letter>
 //   audio <wav> <track> <bar> (browser drop path) · dump (playlist clips to stdout)
 //   shot <out.ppm> (J-37: this frame is saved once rendered — frame sequences)
-//   key space (J-49) · key escape, notes (Q-3: piano roll notes to stdout) · transport (J-49: song position / playing / seek position to stdout)
+//   key space (J-49) · key escape · key left|right|up|down|enter|delete|tab (J-141), notes (Q-3: piano roll notes to stdout) · transport (J-49: song position / playing / seek position to stdout)
 //   scroll dx dy (J-67: one trackpad-style two-axis scroll event, wheel units)
 //   momentum dx dy frames (J-67: a decaying scroll stream over the next frames, like an OS fling)
 //   trace on|off (J-67: per frame, the drawn scroll positions to stdout)
@@ -343,6 +344,8 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   clip source, a take just recorded) or "clipsrc:<channel index>" drags it like the playlist picker does)
 //   mixer (J-83: track volumes / pans, the strips pane's scroll and wheel policy to stdout)
 //   rack (J-84: channel rack layout, step scroll, channel volumes / pans, step velocities / pitches to stdout)
+//   launcher [home|back|close] (J-141: the welcome launcher's state and tiles to stdout, or show it / leave it /
+//   Close project); signals launcher-shown / launcher-hidden
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
 //   J-109: sdlkey <key> down|up [ctrl|super] · focuslost · typing on|off · noteon|noteoff <channel index> <pitch> ·
@@ -686,6 +689,12 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "key" && l.a0 == "escape") {  // Q-3: cancel a drag
       io.AddKeyEvent(ImGuiKey_Escape, true);
       io.AddKeyEvent(ImGuiKey_Escape, false);
+    } else if (l.cmd == "key" && (l.a0 == "left" || l.a0 == "right" || l.a0 == "up" || l.a0 == "down" || l.a0 == "enter" || l.a0 == "delete" || l.a0 == "tab")) {
+      // J-141: launcher keyboard checks
+      const ImGuiKey k = l.a0 == "left" ? ImGuiKey_LeftArrow : l.a0 == "right" ? ImGuiKey_RightArrow : l.a0 == "up" ? ImGuiKey_UpArrow
+                       : l.a0 == "down" ? ImGuiKey_DownArrow : l.a0 == "enter" ? ImGuiKey_Enter : l.a0 == "tab" ? ImGuiKey_Tab : ImGuiKey_Delete;
+      io.AddKeyEvent(k, true);
+      io.AddKeyEvent(k, false);
     } else if (l.cmd == "notes") {  // Q-3: the piano roll's notes (current pattern, selected channel) and selection
       const Song& s = app.doc.song();
       const Pattern* p = s.pattern(app.curPattern);
@@ -862,6 +871,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       devShotPending = l.args.empty() ? l.a0 : l.args[0];  // J-97: a quoted path may hold spaces
     } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane") {
       devPianoCommand(app, l, frame);
+    } else if (l.cmd == "launcher") {  // J-141: launcher [home|back|close]: the launcher's state and tiles to stdout
+      if (l.a0 == "home") app.home.showHome(app.now);
+      else if (l.a0 == "back") app.home.back(app.now);
+      else if (l.a0 == "close") app.closeProject();
+      else launcherui::devReport(app);
     } else if (l.cmd == "dump") {
       const Song& s = app.doc.song();
       std::printf("dump frame %d: %zu clips, %zu selected, undo %zu\n", frame, s.playlist.size(), app.playlist.selected.size(),
@@ -884,6 +898,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         std::printf("  track %zu top %.1f h %.1f\n", i, static_cast<double>(g.trackTop[i]), static_cast<double>(g.trackH[i]));
       for (const auto& r : g.rows)
         std::printf("  row %u x %.1f y %.1f\n", r.id, static_cast<double>(r.x), static_cast<double>(r.y));
+      for (const auto& c : g.clips)  // J-142: clip, title strip, menu arrow and name box spans (0 0 when not drawn)
+        std::printf("  clip %u x %.1f %.1f y %.1f %.1f head %.1f menu %.1f %.1f name %.1f %.1f\n", c.id, static_cast<double>(c.g.x0),
+                    static_cast<double>(c.g.x1), static_cast<double>(c.g.y0), static_cast<double>(c.g.y1), static_cast<double>(c.g.headH),
+                    static_cast<double>(c.g.hasMenu ? c.g.menuX0 : 0), static_cast<double>(c.g.hasMenu ? c.g.menuX1 : 0),
+                    static_cast<double>(c.g.hasName ? c.g.nameX0 : 0), static_cast<double>(c.g.hasName ? c.g.nameX1 : 0));
       std::fflush(stdout);
     }
   }
@@ -1070,10 +1089,14 @@ int main(int argc, char** argv) {
   {  // J-24: Settings > General > On startup (screenshot runs keep the built-in starter project)
     bool shot = false;
     for (int i = 1; i < argc; ++i) shot = shot || std::string(argv[i]) == "--screenshot";
+    // J-141: a plain launch (no files, no options; macOS may add a -psn_ process serial) may show
+    // the welcome launcher; files and options (tests, tools) keep opening straight into a project.
+    bool plainLaunch = true;
+    for (int i = 1; i < argc; ++i) plainLaunch = plainLaunch && std::string(argv[i]).rfind("-psn_", 0) == 0;
     if (shot)
       app.applySettingsHooks();
     else
-      app.applyStartup();
+      app.applyStartup(plainLaunch && !app.embedded);
   }
   {  // Opened with files (file manager, "Open with", the Linux desktop entry's %F): no options,
      // only paths; the first project among them opens.
@@ -1119,6 +1142,8 @@ int main(int argc, char** argv) {
   double fixedDt = 0;                     // --fixed-dt ms: fixed UI frame time (J-37 animation frame sequences)
   std::vector<std::string> devHide;       // --hide rack|browser|mixer|playlist|piano: closed once the layout exists
   updui::Options updateOpts;              // J-89: --no-update-check, --fake-update <version>
+  int devLauncher = -1;                   // J-141: --show launcher (0) / launcher-templates (1)
+  bool argProject = false;                // a project path on the command line opened
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--screenshot" && i + 1 < argc) shotPath = argv[++i];
@@ -1204,6 +1229,8 @@ int main(int argc, char** argv) {
     } else if (arg == "--show" && i + 1 < argc) {  // open a window for layout checks
       std::string w = argv[++i];
       if (w == "about") app.showAbout = true;
+      else if (w == "launcher") devLauncher = 0;            // J-141: the welcome launcher
+      else if (w == "launcher-templates") devLauncher = 1;  // ... on its Templates view
       else if (w == "settings") app.showSettings = true;
       else if (w == "shortcuts") app.showShortcuts = true;
       else if (w == "export") app.showExport = true;
@@ -1388,8 +1415,13 @@ int main(int argc, char** argv) {
     } else if (arg == "--hidden") {
       // J-78: read before the window is created (see startHidden)
     } else if (fs::exists(arg)) {
-      app.openProject(arg);
+      argProject = app.openProject(arg) || argProject;
     }
+  }
+  if (devLauncher >= 0) {  // J-141: with a project argument, that project stays open behind it
+    launcherui::setView(devLauncher);
+    if (argProject) app.home.showHome(app.now);
+    else app.home.showAtStartup(app.now);
   }
   int frameNo = 0;
   int liveFrames = 0;  // J-48: frames drawn (startup sound after the third)
@@ -1636,6 +1668,14 @@ int main(int argc, char** argv) {
       }
     }
 
+    // J-141: the welcome launcher replaces the project view while it shows (the project stays
+    // open behind it); dialogs, settings and notifications still draw over it.
+    const bool homeShown = app.home.visible();
+    if (homeShown) {
+      prof::Scope ps("launcher");
+      launcherui::draw(app);
+    } else {
+    launcherui::drawReturnFade(app);
     float topH = 0;
     {
       prof::Scope ps("topbar");
@@ -1755,6 +1795,7 @@ int main(int argc, char** argv) {
       drawEffectEditor(app);
       packs::drawWindows(app);  // pack-owned windows (audio editor) and their background work
     }
+    }  // J-141: !homeShown
     {
       prof::Scope ps("dialogs");
       drawAutomationEditor(app);
@@ -1864,10 +1905,12 @@ int main(int argc, char** argv) {
       if (app.stepRecord) h += " · step record: → rest, ⌫ back";
       app.setHint(h);
     }
-    {
+    if (!homeShown) {
       prof::Scope ps("statusbar");
       drawStatusBar(app);
       handleGlobalShortcuts(app);
+    } else {
+      pointerGestureFrameEnd(app);
     }
 
     xdragui::endFrame(app);  // J-75: a drop no window took opens the files

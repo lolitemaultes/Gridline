@@ -4,6 +4,7 @@
 #include "J31Ui.h"
 #include "AudioRecordUi.h"
 #include "ChopUi.h"
+#include "ClipMultiUi.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -468,16 +469,20 @@ void drawClipProperties(App& a) {
   ui::Label("LEVEL");
   float gainDb = c.gain > 0 ? 20.0f * std::log10(c.gain) : -60.0f;
   row("Gain");
-  if (ImGui::DragFloat("##gain", &gainDb, 0.1f, -60.0f, 24.0f, "%.1f dB"))
+  using clipmulti::Param;  // J-142: in a multi-selection each field moves every selected audio clip by the same amount
+  if (!clipui::multiDrag(a, id, Param::GainDb, "##gain", gainDb, 0.1f, -60.0f, 24.0f, "%.1f dB", 1.0, "clip gain", key) &&
+      ImGui::DragFloat("##gain", &gainDb, 0.1f, -60.0f, 24.0f, "%.1f dB"))
     a.doc.editClip(id, "clip gain", [&](Clip& x) { x.gain = gainDb <= -60.0f ? 0.0f : std::pow(10.0f, gainDb / 20.0f); }, key);
   ImGui::SameLine(0, theme::kS1);
   if (ui::TextButton("Normalize")) a.doc.editSong("normalize clip", [&](Song& x) { normalizeClip(x, id, 0.0); });
   float fi = static_cast<float>(c.fadeIn * 1000.0), fo = static_cast<float>(c.fadeOut * 1000.0);
   row("Fade in");
-  if (ImGui::DragFloat("##fi", &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
+  if (!clipui::multiDrag(a, id, Param::FadeIn, "##fi", fi, 1.0f, 0.0f, 60000.0f, "%.0f ms", 1000.0, "clip fade in", key + 1) &&
+      ImGui::DragFloat("##fi", &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
     a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0, x.fadeInManual = true; }, key + 1);
   row("Fade out");
-  if (ImGui::DragFloat("##fo", &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
+  if (!clipui::multiDrag(a, id, Param::FadeOut, "##fo", fo, 1.0f, 0.0f, 60000.0f, "%.0f ms", 1000.0, "clip fade out", key + 2) &&
+      ImGui::DragFloat("##fo", &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
     a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 2);
   bool rev = c.reverse;
   row("Reverse");
@@ -487,7 +492,8 @@ void drawClipProperties(App& a) {
   ui::Label("PITCH & TIME");
   float cents = c.pitch;
   row("Pitch");
-  if (ImGui::DragFloat("##pitch", &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
+  if (!clipui::multiDrag(a, id, Param::Pitch, "##pitch", cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct", 1.0, "clip pitch", key + 3) &&
+      ImGui::DragFloat("##pitch", &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
     a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = cents; }, key + 3);
   const bool keep = ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) && ch->plugin.params[pp::SmpStretchMode] >= 0.5f;
   // J-87: the channel's time mode (engine/TimeStretch).
@@ -537,9 +543,13 @@ void drawClipProperties(App& a) {
   ImGui::DragFloat("##rf", &rFactor, 0.005f, 0.25f, 4.0f, "x %.3f");
   row("Pitch");
   ImGui::DragFloat("##rs", &rSemis, 0.05f, -24.0f, 24.0f, "%+.2f st");
-  const char* algos[] = {"Elastic", "Transient", "Tape"};
+  // J-140: Voice and Beats render through the shared engine too (Stretch enum 5, 6).
+  const char* algos[] = {"Elastic", "Transient", "Tape", "Voice", "Beats"};
+  static const int kAlgoMode[] = {0, 1, 2, 5, 6};
+  static int rSeg = 0;
   row("Algorithm");
-  ui::Segmented("##ralgo", algos, 3, &rAlgo, 64);
+  ui::Segmented("##ralgo", algos, 5, &rSeg, 52);
+  rAlgo = kAlgoMode[std::clamp(rSeg, 0, 4)];
   ImGui::Dummy(ImVec2(110 - ImGui::GetStyle().ItemSpacing.x, 0));
   ImGui::SameLine();
   if (ui::TextButton("Render", false, 0, "Writes a stretched copy of the audio and points the clip at it")) {

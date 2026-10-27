@@ -864,6 +864,7 @@ class VocoderFx final : public SpectralFx {
 
 // ============================================================ Pitch shifter
 // Delay-line shifter: two taps sweep a window with complementary sin^2 gains.
+// J-140: the taps read band-limited at the pitch ratio (were Hermite).
 struct DelayShifter {
   blk::Ring buf;
   int64_t w = 0;
@@ -881,7 +882,7 @@ struct DelayShifter {
     p2 -= std::floor(p2);
     double d1 = 2.0 + phase * win, d2 = 2.0 + p2 * win;
     double g1 = std::sin(kPi * phase), g2 = std::sin(kPi * p2);
-    float y = static_cast<float>(buf.cubic(static_cast<double>(w) - d1) * g1 * g1 + buf.cubic(static_cast<double>(w) - d2) * g2 * g2);
+    float y = static_cast<float>(buf.band(static_cast<double>(w) - d1, ratio, w) * g1 * g1 + buf.band(static_cast<double>(w) - d2, ratio, w) * g2 * g2);
     ++w;
     return y;
   }
@@ -1908,7 +1909,7 @@ class PitcherFx final : public SpectralFx {
       double off = static_cast<double>(k) - centre;  // -half..half
       double wpos = (off + half) * inv * kHann;
       int wi = std::clamp(static_cast<int>(wpos), 0, kHann);
-      double s = in_.linear(static_cast<double>(src) + off * g) * hann_[static_cast<size_t>(wi)] * gain;
+      double s = in_.band(static_cast<double>(src) + off * g, g, w_ - 1) * hann_[static_cast<size_t>(wi)] * gain;  // J-140: band-limited (was linear)
       outL_.at(k) += static_cast<float>(s * pl);
       outR_.at(k) += static_cast<float>(s * pr);
     }
@@ -2023,12 +2024,15 @@ class ScratchFx final : public SpectralFx {
       double g = std::min(1.0, std::fabs(vel_));
       gain_ += (g - gain_) * 0.01;
       double pos = static_cast<double>(w_) - lag_;
-      double dl = buf_[0].cubic(pos), dr = buf_[1].cubic(pos);
+      // J-140: band-limited deck reads at the platter speed (were Hermite:
+      // fast scratches aliased).
+      const pitch::SincTable& deckTab = pitch::table(pitch::Quality::Realtime);
+      double dl = buf_[0].band(pos, vel_, w_, deckTab), dr = buf_[1].band(pos, vel_, w_, deckTab);
       if (xfade_ > 0) {
         double t = xfade_ / xfadeLen_;
         double op = static_cast<double>(w_) - xfadeFrom_;
-        dl = dl * (1 - t) + buf_[0].cubic(op) * t;
-        dr = dr * (1 - t) + buf_[1].cubic(op) * t;
+        dl = dl * (1 - t) + buf_[0].band(op, 1.0, w_, deckTab) * t;
+        dr = dr * (1 - t) + buf_[1].band(op, 1.0, w_, deckTab) * t;
         xfade_ -= 1;
       }
       dl *= gain_;

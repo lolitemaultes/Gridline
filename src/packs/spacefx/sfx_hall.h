@@ -202,14 +202,16 @@ class HallFx final : public Effect {
           y[j + len] = a - b;
         }
   }
-  // Two crossfaded read heads sweeping a short window (classic delay-line pitch shifter).
+  // Two crossfaded read heads sweeping a short window (classic delay-line pitch
+  // shifter). J-140: the heads read band-limited at the ratio (were Hermite).
   double pitchShift() {
     const double W = 0.06 * sr_;
     pitchPh_ += (1.0 - pitchRatio_) / W;
     pitchPh_ -= std::floor(pitchPh_);
     double p2 = pitchPh_ + 0.5;
     p2 -= std::floor(p2);
-    double a = pitch_.read(2 + pitchPh_ * W), b = pitch_.read(2 + p2 * W);
+    const pitch::SincTable& tab = pitch::table(pitch::Quality::Compact);
+    double a = pitch_.band(2 + pitchPh_ * W, pitchRatio_, tab), b = pitch_.band(2 + p2 * W, pitchRatio_, tab);
     double wa = std::sin(kPi * pitchPh_), wb = std::sin(kPi * p2);
     return a * wa * wa + b * wb * wb;
   }
