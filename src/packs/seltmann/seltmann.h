@@ -281,6 +281,34 @@ int addCut(Model& m, int64_t frame);    // returns the new slice index (-1 none)
 bool removeCut(Model& m, int slice);    // merges slice into the previous one
 bool moveCut(Model& m, int slice, int64_t frame);  // moves the start of `slice`
 
+// J-149 regions and the sequence. A region is a slice; its letter is its place in
+// time (A = the first, ... Z, then AA, AB ...). The natural sequence plays every
+// region once in order (A B C D ...), each step as long as its region.
+inline constexpr int kMaxSplit = 16;
+inline constexpr const char* kEditedName = "Custom";  // pattern name once the sequence is edited by hand
+std::string regionName(int region);  // "A".."Z", "AA".. ("-" for none)
+// The steps play every region once, in order, with no rests.
+bool isNaturalOrder(const Model& m);
+// Splits region `x` into `parts` equal pieces: the first keeps the letter, the
+// next ones take the following letters and every later letter moves on by
+// parts - 1. Every step that plays x becomes the pieces in order (backwards
+// for a reversed step), each 1/parts of the step: the step unit is refined
+// when needed so the timing (and the sound) stays the same. The chop becomes
+// Manual. False (nothing changed) when x is not there or a piece would be too
+// short or the slice / step limits would be passed.
+bool splitRegion(Model& m, int x, int parts);
+// Deletes region `x` by joining it to its neighbour: the previous region (the
+// first region joins the next one). Never reaches outside the chopped region:
+// only neighbouring slices join. A step on x right after (first region: right
+// before) a step on the neighbour joins that step (lengths add); any other
+// step on x plays the joined region from x's part. Later letters move down by
+// one. The chop becomes Manual. False when there is a single region.
+bool mergeRegion(Model& m, int x);
+// Moves step `from` to the insertion point `to` (0..steps, before removal).
+bool moveStep(Model& m, int from, int to);
+// The natural sequence again: every region once, in order (lengths follow the regions).
+void naturalPattern(Model& m);
+
 // Grid corrections. All keep the grid sorted and inside the file.
 void gridSetBpm(Analysis& g, double bpm, double anchorFrame);  // straight grid through the anchor
 void gridDouble(Analysis& g);

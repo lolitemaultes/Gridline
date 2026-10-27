@@ -1,5 +1,5 @@
 // Gridline — "seltmann" pack: the editor's waveform parts. The waveform (the
-// region with its bar grid and the slices coloured by slot letter; cut and grid
+// region with its bar grid and the regions coloured by their letter; cut and grid
 // editing open up in the Edit drawer's Chop / Grid tabs), the slim whole-song
 // strip (sections and the region being chopped, songs only, can be hidden) and
 // the chop settings of the drawer (mode, division / sensitivity / count / grain
@@ -365,12 +365,11 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
   // slice tints
   for (int k = 0; k < n; ++k) {
     const auto& s = m.slices[static_cast<size_t>(k)];
-    const int slot = sliceSlot(m, k);
     const float x0 = X(static_cast<double>(s.start)), x1 = X(static_cast<double>(s.end));
     const bool sel = k == e.selSlice, playing = k == lv.slice;
     const float al = playing ? 0.26f : sel ? 0.18f : (k % 2 ? 0.05f : 0.09f);
-    dl->AddRectFilled(ImVec2(x0, p0.y + 2), ImVec2(x1, p1.y - 2), slot >= 0 ? slotColor(slot, al) : theme::withAlpha(P.paper, al * 0.6f));
-    if (sel) dl->AddRectFilled(ImVec2(x0 + 1, p0.y + 2), ImVec2(x1 - 1, p0.y + 5), slot >= 0 ? slotColor(slot) : accent(), 1);
+    dl->AddRectFilled(ImVec2(x0, p0.y + 2), ImVec2(x1, p1.y - 2), regionColor(k, al));
+    if (sel) dl->AddRectFilled(ImVec2(x0 + 1, p0.y + 2), ImVec2(x1 - 1, p0.y + 5), regionColor(k), 1);
   }
   // waveform coloured per slice
   int k = 0;
@@ -379,8 +378,7 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     while (k + 1 < n && m.slices[static_cast<size_t>(k + 1)].start <= f0) ++k;
     float mn, mx, rms;
     range(e, smp.get(), f0, f1, mn, mx, rms);
-    const int slot = n ? sliceSlot(m, k) : -1;
-    const ImU32 col = slot >= 0 ? slotColor(slot, 1.0f) : theme::withAlpha(P.text, 0.8f);
+    const ImU32 col = n ? regionColor(k, 1.0f) : theme::withAlpha(P.text, 0.8f);
     const float x = g0.x + px + 0.5f;
     dl->AddLine(ImVec2(x, mid - std::max(0.5f, mx * half)), ImVec2(x, mid - std::min(-0.5f, mn * half)), theme::withAlpha(col, 0.45f), 1.0f);
     const float rh = std::max(0.5f, std::min(1.0f, rms * 1.41f) * half);
@@ -444,6 +442,10 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     e.dragBeat = -1;
     auditionStop(a, t, e);
   }
+  if (!editCuts && hv && n > 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    e.selSlice = under;
+    openRegionMenu(e, under, -1);
+  }
   if (editCuts && hv && ImGui::IsMouseDoubleClicked(0) && !ImGui::GetIO().KeyAlt) {
     Model nm = e.m;
     const int at = addCut(nm, snapFrame(nm, smp.get(), static_cast<int64_t>(fm), nm.chop.snap));
@@ -455,14 +457,11 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
   if (hv && !ImGui::IsItemActive()) {
     const auto& s = m.slices.empty() ? Slice{} : m.slices[static_cast<size_t>(under)];
     char b[128];
-    const int slot = sliceSlot(m, under);
-    std::snprintf(b, sizeof b, "%s %d%s%s  ·  %.3f s", i18n::tr("Slice"), under + 1, slot >= 0 ? "  ·  " : "", slot >= 0 ? slotName(slot) : "",
-                  static_cast<double>(s.end - s.start) / m.srcRate);
+    std::snprintf(b, sizeof b, "%s %s  \xC2\xB7  %.3f s", i18n::tr("Region"), regionName(under).c_str(), static_cast<double>(s.end - s.start) / m.srcRate);
     const char* how = editCuts ? i18n::tr("Click: play. Double-click: add a cut. Drag a cut to move it, right-click it to remove it.")
                       : editGrid ? i18n::tr("Click: play. Drag the bar-1 flag to move the grid, Alt+drag a bar line to stretch it.")
-                                 : i18n::tr("Click a slice to play it. Edit > Chop cuts by hand.");
+                                 : i18n::tr("Click a region to play it. Right-click: split or delete it.");
     ui::Tooltip((std::string(b) + "\n" + how).c_str());
-    ui::Tooltip(b);
   }
   // bar 1 flag (drag moves the whole grid)
   {
@@ -527,10 +526,10 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
   for (int q = 0; q < n; ++q) {
     const auto& s = m.slices[static_cast<size_t>(q)];
     const float x0 = X(static_cast<double>(s.start)), x1 = X(static_cast<double>(s.end));
-    const int slot = sliceSlot(m, q);
-    if (slot < 0 || x1 - x0 < 16) continue;
+    const std::string L = regionName(q);
     const float fs = x1 - x0 >= 30 ? 15.0f : 12.0f;
-    dl->AddText(a.fontBold, fs, ImVec2(x0 + 5, g1.y - fs - 3), slotColor(slot), slotName(slot));
+    if (x1 - x0 < (L.size() > 1 ? 24.0f : 16.0f)) continue;
+    dl->AddText(a.fontBold, fs, ImVec2(x0 + 5, g1.y - fs - 3), regionColor(q), L.c_str());
   }
   // playhead
   if (lv.srcFrame >= ra && lv.srcFrame <= rb) {

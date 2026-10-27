@@ -147,6 +147,10 @@ void SecureLink::handleH1(const std::string& d, uint64_t now) {
   bool ok = true;
   Json reply = hs_.accept ? hs_.accept(hello, sI, ok) : hs_.hello;
   if (!reply.is(Json::Type::Object)) reply = Json::makeObject();
+  if (!ok && reply.num("silent", 0) != 0) {  // J-146: no answer at all (a presence probe while hidden); the link keeps waiting
+    debugf("%s H1 left unanswered", tag.c_str());
+    return;
+  }
   reply.object["ok"] = Json::makeNumber(ok ? 1 : 0);
   const crypto::Key ee = crypto::dh(ePriv_, eIk), se = crypto::dh(ePriv_, sI);
   const crypto::Key k2 = crypto::kdf(k1, "gridline-hs2", crypto::keyString(ePub_) + crypto::keyString(ee) + crypto::keyString(se));

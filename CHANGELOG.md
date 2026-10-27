@@ -37,6 +37,13 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Favourite projects on the welcome screen: the heart button on a project's tile (or its menu,
   or the F key) marks it, and a heart badge shows on its tile. Favourites are never pushed off
   the recent list by newer projects and stay when the list is cleared.
+- A Collaborative view on the welcome screen: join with a code, start a new collaborative
+  project or share the open one, and every collaborative project on this computer as a tile with
+  its members' pictures, your role, the Sync review or unsent changes waiting, missing folders,
+  needed updates and, above all, who is working on it right now. Presence is checked directly
+  with your collaborators, encrypted and only while the view is shown, with no server; a silent
+  computer shows as not reachable, never as offline. The collaboration settings are right there
+  too, with a new Show that I am online to collaborators option.
 
 ### Changed
 
@@ -61,6 +68,16 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Playlist: a right-click on a clip's title strip deletes the clip like a right-click on its body
   (right-drag deletes across clips from there too). Only the clip's name and its small menu arrow
   open the clip menu, and the name highlights where a right-click opens it.
+- Seltmann: a new Sequence lane under the waveform. After a drop the regions play in order,
+  A B C D, and each region keeps its letter in the waveform, the pads and the lane. Drag a block
+  to put the sequence in your own order (Alt+Left and Alt+Right move the selected one).
+  Right-click a block, a region in the waveform or a pad to split the region into 2 to 8 equal
+  parts: the first part keeps its letter and the later letters move on, so splitting B in
+  A B C D gives A B C D E. Delete joins a region to its neighbour (the first one to the next)
+  without ever reaching past the chopped region. Splits and joins keep the loop sounding the
+  same, every edit is one undo step, and projects saved earlier open and play as before.
+- Seltmann: the editor follows Gridline's look: panel title strips, segmented selectors and the
+  control styles, with the controls row lined up on one baseline.
 
 ### Fixed
 

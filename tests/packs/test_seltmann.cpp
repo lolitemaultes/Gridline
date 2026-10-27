@@ -7,7 +7,8 @@
 // background analysis of long files. J-107: any material (breaks with late
 // hits, leading silence, pickups, tails, odd tempos, one-shots, ambient pads,
 // songs): no degenerate slices, loop-length tempo fit, file-name tempo prior,
-// automatic chop size, every layout on every kind, drop rules.
+// automatic chop size, every layout on every kind, drop rules. J-149: regions split
+// and deleted (joined) from the sequence, the sequence reordered, old states.
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -460,6 +461,213 @@ void testPatterns() {
         expect(m2.pattern.steps == m.pattern.steps && m2.slices.size() == m.slices.size(), "user preset: load gives the same layout");
       }
     expect(found, "user preset: listed");
+  }
+}
+
+// ------------------------------------------------------------------ J-149 regions and the sequence
+std::vector<int> stepOrder(const sm::Model& m) {
+  std::vector<int> o;
+  for (const auto& st : m.pattern.steps) o.push_back(sm::stepSlice(m.pattern, st, static_cast<int>(m.slices.size())));
+  return o;
+}
+std::vector<int> stepUnits(const sm::Model& m) {
+  std::vector<int> o;
+  for (const auto& st : m.pattern.steps) o.push_back(1 + st.ties);
+  return o;
+}
+bool tiles(const sm::Model& m) {  // the regions tile the chopped region, no gaps
+  if (m.slices.empty() || m.slices.front().start != m.regionStart || m.slices.back().end != m.regionEnd) return false;
+  for (size_t i = 1; i < m.slices.size(); ++i)
+    if (m.slices[i].start != m.slices[i - 1].end || m.slices[i].end <= m.slices[i].start) return false;
+  return true;
+}
+// Energy of the difference between two renders, as a share of the first one's energy (-1: different lengths).
+double renderDiff(const sm::Model& a, const sm::Model& b, SamplePtr src) {
+  sm::RenderOpts o;
+  o.sampleRate = 44100;
+  o.tempo = 120;
+  o.sync = sm::SyncOriginal;
+  std::vector<float> L0, R0, L1, R1;
+  if (!sm::renderPatternLoop(a, src, o, L0, R0) || !sm::renderPatternLoop(b, src, o, L1, R1) || L0.size() != L1.size()) return -1;
+  double e0 = 0, ed = 0;
+  for (size_t i = 0; i < L0.size(); ++i) e0 += double(L0[i]) * L0[i], ed += double(L0[i] - L1[i]) * (L0[i] - L1[i]);
+  return e0 > 0 ? ed / e0 : -1;
+}
+
+void testRegions() {
+  expect(sm::regionName(0) == "A" && sm::regionName(3) == "D" && sm::regionName(25) == "Z" && sm::regionName(26) == "AA" &&
+             sm::regionName(27) == "AB" && sm::regionName(52) == "BA" && sm::regionName(-1) == "-",
+         "regions: letters A..Z, then AA, AB ...");
+  seltsynth::Spec sp;
+  sp.bpm = 120;
+  sp.bars = 8;
+  sp.seed = 21;
+  const auto song = seltsynth::make(sp);
+  SamplePtr src = song.sample;
+  // A B C D: four one-bar regions on a straight grid (exact frames)
+  sm::Model base;
+  base.srcFrames = static_cast<int64_t>(src->frames());
+  base.srcRate = 44100;
+  base.grid = sm::flatGrid(*src, 120);
+  base.chop.mode = sm::ChopGrid;
+  base.chop.division = sm::Div1Bar;
+  base.chop.zeroCross = false;
+  sm::setRegionBars(base, 1, 4);
+  sm::rechop(base, src.get());
+  sm::straightPattern(base);
+  const int64_t r0 = base.regionStart, r1 = base.regionEnd;
+  expect(base.slices.size() == 4 && sm::isNaturalOrder(base) && stepOrder(base) == std::vector<int>{0, 1, 2, 3},
+         "sequence: after the chop it plays A B C D in order");
+  {
+    sm::Analysis an;
+    sm::analyse(*src, an);
+    const sm::Model d = sm::defaultModel(*src, an);
+    expect(sm::isNaturalOrder(d), "sequence: a dropped file starts in natural order");
+  }
+  const double beats0 = base.pattern.beats();
+
+  // ---- split B in half: A B C D -> A B C D E (B and C are B's halves)
+  {
+    sm::Model m = base;
+    const sm::Slice b = m.slices[1];
+    expect(sm::splitRegion(m, 1, 2), "split: B in half");
+    expect(m.slices.size() == 5 && m.slices[1].start == b.start && m.slices[2].end == b.end && m.slices[1].end == m.slices[2].start &&
+               m.slices[1].end == b.start + (b.end - b.start) / 2,
+           "split: the first half keeps B, the second half is the new C");
+    expect(m.slices[3].start == base.slices[2].start && m.slices[4].start == base.slices[3].start, "split: old C, D are now D, E");
+    expect(tiles(m) && m.regionStart == r0 && m.regionEnd == r1, "split: the regions still tile the chopped region");
+    expect(stepOrder(m) == std::vector<int>{0, 1, 2, 3, 4} && sm::isNaturalOrder(m), "split: the sequence follows (A B C D E)");
+    expect(std::fabs(m.pattern.unitBeats - 2.0) < 1e-9 && stepUnits(m) == std::vector<int>{2, 1, 1, 2, 2} &&
+               std::fabs(m.pattern.beats() - beats0) < 1e-9,
+           "split: halves get half a step, the pattern length stays");
+    expect(m.chop.mode == sm::ChopManual && m.pattern.name == sm::kEditedName, "split: the chop is by hand now, the sequence edited");
+    const double d = renderDiff(base, m, src);
+    std::printf("# split render difference: %.5f of the energy\n", d);
+    expect(d >= 0 && d < 0.02, "split: the loop sounds the same (same length, < 2% difference)");
+    sm::Model r;
+    std::string path;
+    expect(sm::parseData(sm::formatData("/x/a.wav", m), path, r) && r.slices == m.slices && r.pattern.steps == m.pattern.steps &&
+               std::fabs(r.pattern.unitBeats - m.pattern.unitBeats) < 1e-9 && r.pattern.name == m.pattern.name,
+           "split: saved and loaded back");
+    // a tempo fix re-chops the hand cuts and keeps the edited sequence
+    sm::Model k = m;
+    sm::gridNudge(k.grid, 10);
+    sm::rechopKeepPattern(k, src.get());
+    expect(k.slices.size() == 5 && k.pattern.steps == m.pattern.steps, "split: a re-chop with the same regions keeps the sequence");
+  }
+  // ---- split into three: the step unit is refined, every other step keeps its length
+  {
+    sm::Model m = base;
+    expect(sm::splitRegion(m, 0, 3) && m.slices.size() == 6 && tiles(m), "split: A in thirds");
+    expect(stepOrder(m) == std::vector<int>{0, 1, 2, 3, 4, 5} && stepUnits(m) == std::vector<int>{1, 1, 1, 3, 3, 3} &&
+               std::fabs(m.pattern.beats() - beats0) < 1e-9,
+           "split: thirds (A B C, then D E F are the old B C D)");
+    sm::Model q = m;
+    expect(sm::splitRegion(q, 0, 2) && std::fabs(q.pattern.beats() - beats0) < 1e-9 && q.slices.size() == 7 && tiles(q),
+           "split again: halves of a third, the pattern length stays");
+  }
+  // ---- repeated letters: every occurrence becomes the pieces
+  {
+    sm::Model m = base;
+    sm::patternFromText("1 2 1 3", m.pattern);
+    m.pattern.name = sm::kEditedName;
+    expect(sm::splitRegion(m, 0, 2), "split: A that plays twice");
+    expect(stepOrder(m) == std::vector<int>{0, 1, 2, 0, 1, 3} && std::fabs(m.pattern.beats() - beats0) < 1e-9,
+           "split: A B A C -> A B C A B D (each A is both halves)");
+  }
+  // ---- a reversed step plays the pieces backwards
+  {
+    sm::Model m = base;
+    sm::patternFromText("1 2:r 3 4", m.pattern);
+    expect(sm::splitRegion(m, 1, 2) && stepOrder(m) == std::vector<int>{0, 2, 1, 3, 4} && m.pattern.steps[1].reverse &&
+               m.pattern.steps[2].reverse,
+           "split: a reversed B plays C then B, both reversed");
+  }
+  // ---- slot letters (layouts) resolve to their regions first
+  {
+    sm::Model m = base;
+    sm::patternFromText("A B A C", m.pattern);
+    expect(sm::splitRegion(m, 1, 2) && stepOrder(m) == std::vector<int>{0, 1, 2, 0, 3}, "split: layout letters follow the regions");
+  }
+  // ---- limits
+  {
+    sm::Model m = base;
+    expect(!sm::splitRegion(m, 1, 1) && !sm::splitRegion(m, 1, sm::kMaxSplit + 1) && !sm::splitRegion(m, 9, 2) && m.slices.size() == 4,
+           "split: bad counts and missing regions change nothing");
+    m.slices[1].end = m.slices[1].start + 40;  // (a tiny region: pieces would be too short)
+    m.slices[2].start = m.slices[1].end;
+    expect(!sm::splitRegion(m, 1, 2), "split: no pieces shorter than the shortest slice");
+  }
+  // ---- delete (join) regions
+  {
+    sm::Model m = base;
+    expect(sm::mergeRegion(m, 2), "delete C");
+    expect(m.slices.size() == 3 && m.slices[1].start == base.slices[1].start && m.slices[1].end == base.slices[2].end && tiles(m) &&
+               m.regionStart == r0 && m.regionEnd == r1,
+           "delete C: B and C join (B keeps its letter), the region stays the same");
+    expect(stepOrder(m) == std::vector<int>{0, 1, 2} && stepUnits(m) == std::vector<int>{1, 2, 1} && std::fabs(m.pattern.beats() - beats0) < 1e-9,
+           "delete C: the sequence is A B C, B as long as both");
+    const double d = renderDiff(base, m, src);
+    std::printf("# join render difference: %.5f of the energy\n", d);
+    expect(d >= 0 && d < 0.02, "delete C: the loop sounds the same");
+  }
+  {
+    sm::Model m = base;
+    expect(sm::mergeRegion(m, 0) && m.slices.size() == 3 && m.slices[0].start == r0 && m.slices[0].end == base.slices[1].end && tiles(m) &&
+               stepOrder(m) == std::vector<int>{0, 1, 2} && stepUnits(m) == std::vector<int>{2, 1, 1},
+           "delete A (the first): it joins B, the joined region is A");
+  }
+  {
+    sm::Model m = base;
+    expect(sm::mergeRegion(m, 3) && m.slices.size() == 3 && m.slices[2].start == base.slices[2].start && m.slices[2].end == r1 && tiles(m) &&
+               stepOrder(m) == std::vector<int>{0, 1, 2} && stepUnits(m) == std::vector<int>{1, 1, 2},
+           "delete D (the last): it joins C, never past the region's end");
+  }
+  {
+    sm::Model m = base;
+    sm::patternFromText("3 1", m.pattern);  // C on its own
+    expect(sm::mergeRegion(m, 2) && stepOrder(m) == std::vector<int>{1, 0} && std::fabs(m.pattern.steps[0].offset - 0.5f) < 1e-6,
+           "delete C: a C on its own plays the joined region from C's half");
+    sm::Model one = base;
+    while (one.slices.size() > 1) sm::mergeRegion(one, 1);
+    expect(one.slices.size() == 1 && one.slices[0].start == r0 && one.slices[0].end == r1 && stepOrder(one) == std::vector<int>{0},
+           "delete down to one region: the whole region, one step");
+    expect(!sm::mergeRegion(one, 0), "a single region cannot be deleted");
+    sm::Model r;
+    std::string path;
+    expect(sm::splitRegion(one, 0, 4) && sm::parseData(sm::formatData("/x/a.wav", one), path, r) && r.slices.size() == 4 &&
+               stepOrder(r) == std::vector<int>{0, 1, 2, 3},
+           "one region split in four: A B C D again");
+  }
+  // ---- reorder
+  {
+    sm::Model m = base;
+    expect(sm::moveStep(m, 0, 4) && stepOrder(m) == std::vector<int>{1, 2, 3, 0} && !sm::isNaturalOrder(m) && m.pattern.name == sm::kEditedName,
+           "reorder: A to the end (B C D A)");
+    expect(sm::moveStep(m, 3, 1) && stepOrder(m) == std::vector<int>{1, 0, 2, 3}, "reorder: A between B and C");
+    expect(!sm::moveStep(m, 1, 1) && !sm::moveStep(m, 1, 2) && !sm::moveStep(m, 9, 0) && !sm::moveStep(m, 0, 9), "reorder: no-op and bad moves");
+    sm::Model k = m;
+    sm::gridNudge(k.grid, 10);
+    sm::rechopKeepPattern(k, src.get());
+    expect(stepOrder(k) == std::vector<int>{1, 0, 2, 3}, "reorder: a tempo fix keeps the order");
+    expect(sm::splitRegion(m, 0, 2) && stepOrder(m) == std::vector<int>{2, 0, 1, 3, 4}, "reorder then split: B A C D -> C A B D E");
+    sm::naturalPattern(m);
+    expect(sm::isNaturalOrder(m) && std::fabs(m.pattern.beats() - beats0) < 1e-9 && stepUnits(m) == std::vector<int>{1, 1, 2, 2, 2},
+           "reset: the natural order again, steps as long as their regions");
+  }
+  // ---- old projects: a straight pattern (saved before J-149) loads and re-chops as before
+  {
+    const std::string old =
+        "seltmann 1\nsrc 352800 44100\nanalysed 0\nregion 88200 264600\nchop 0 3 0.5 8 60 1 0 0 0\nslices 2\n"
+        "s 88200 176400 0 0 0 0 0 0 1 0\ns 176400 264600 0 0 0 0 0 0 1 0\npattern 4 Straight\nslots 0 1 -1\nsteps 1 2\npreset \n";
+    sm::Model m;
+    expect(sm::modelFromText(old, m) && m.slices.size() == 2 && stepOrder(m) == std::vector<int>{0, 1} && m.pattern.name == "Straight" &&
+               sm::isNaturalOrder(m),
+           "old state: loads, A B");
+    m.grid = sm::flatGrid(*src, 120);
+    m.chop.division = sm::DivHalf;
+    sm::rechopKeepPattern(m, src.get());
+    expect(m.slices.size() == 4 && sm::isNaturalOrder(m) && m.pattern.name == "Straight", "old state: a new chop size starts the natural order");
   }
 }
 
@@ -1236,6 +1444,7 @@ int main(int argc, char** argv) {
   if (only.empty() || only == "sections") testSections();
   if (only.empty() || only == "model") testModel();
   if (only.empty() || only == "patterns") testPatterns();
+  if (only.empty() || only == "regions") testRegions();
   if (only.empty() || only == "instrument") testInstrument();
   if (only.empty() || only == "renders") testRenders();
   if (only.empty() || only == "long") testLongFile();

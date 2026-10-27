@@ -40,6 +40,7 @@ enum class Icon {
   EqCurve, EnvelopePoints, Stretch, Denoise, SendOut, Scrub, Follow, SpeakerSmall, SpeakerSmallOff, ScrollTo,
   Headphones,
   Heart, HeartFilled,  // J-148: favourite projects (welcome screen)
+  People,  // J-146: collaborators (the welcome screen's Collaborative view)
   Count  // number of icons (not an icon)
 };
 // Q-12: true for the tool family (playlist / piano roll / automation editor strips).

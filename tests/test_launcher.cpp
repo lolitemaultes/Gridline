@@ -268,11 +268,14 @@ void layoutCheck(bool ok, const char* what, float w, float h, float sc, const ch
   if (++auditFails <= 12) std::printf("# layout: %s at %.0fx%.0f scale %.2f (%s)\n", what, w, h, sc, view);
 }
 
-void auditOne(float W, float H, float sc, const std::vector<launcher::Item>& items, bool back, const char* view) {
+void auditOne(float W, float H, float sc, const std::vector<launcher::Item>& items, bool back, const char* view, int views = 2) {
   launcher::LayoutIn in;
   in.width = W;
   in.height = H;
   in.items = items;
+  in.views = views;
+  for (launcher::Item it : items)
+    if (it == launcher::Item::Block) in.blockH.push_back(640);  // J-146: the inline settings panel
   in.hasBack = back;
   in.titleW = 200;
   in.backW = 170;
@@ -330,6 +333,8 @@ void testLayoutAudit() {
   std::vector<Item> many(26, Item::Tile);
   std::vector<Item> tpl = {Item::Section, Item::Tile, Item::Tile, Item::Section, Item::Tile, Item::Tile, Item::Section, Item::Tile, Item::Section,
                            Item::Tile, Item::Tile, Item::Tile};
+  // J-146: the Collaborative view (action tiles, projects, then the settings panel)
+  std::vector<Item> collab = {Item::Tile, Item::Tile, Item::Tile, Item::Tile, Item::Tile, Item::Section, Item::Block};
   int runs = 0;
   for (const auto& [w, h] : sizes)
     for (double sc : scales) {
@@ -340,7 +345,8 @@ void testLayoutAudit() {
         auditOne(W, H, s, few, back, "few");
         auditOne(W, H, s, many, back, "many");
         auditOne(W, H, s, tpl, back, "templates");
-        runs += 4;
+        auditOne(W, H, s, collab, back, "collaborative", 3);
+        runs += 5;
       }
     }
   std::printf("# layout audit: %d layouts\n", runs);
@@ -364,6 +370,19 @@ void testLayoutAudit() {
   in.width = 1440;
   L = launcher::layout(in);
   expect(L.items[2].y >= L.items[1].b() && L.items[3].y >= L.items[2].b() && L.items[3].x == 0, "a section starts a new row");
+  // J-146: a block takes a full row of its own height; the third view adds a rail row and a header icon
+  in.items = {Item::Tile, Item::Section, Item::Block, Item::Tile};
+  in.blockH = {500};
+  in.views = 3;
+  L = launcher::layout(in);
+  expect(L.items[2].x == 0 && L.items[2].w >= L.grid.w - in.scrollbar - 6.5f && L.items[2].h == 500 && L.items[3].y >= L.items[2].b() && L.contentH >= L.items[3].b() - 0.5f,
+         "a block is a full-width row of its height; what follows starts below it");
+  int viewRows = 0;
+  for (const auto& r : L.railRows) viewRows += r.first == launcher::RailRow::View;
+  expect(viewRows == 3, "three views in the rail (Recent, Templates, Collaborative)");
+  in.width = 700;
+  L = launcher::layout(in);
+  expect(L.headerIcons.size() == 7, "narrow window: a header icon for the Collaborative view too");
 }
 
 }  // namespace

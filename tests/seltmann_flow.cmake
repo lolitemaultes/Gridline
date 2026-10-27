@@ -4,7 +4,9 @@
 #   2. a synthetic 2-bar break dropped on it (the same ImGui drag a file from Finder, Tracklib or
 #      the browser makes) loads into Seltmann and is analysed on its own: a break at its tempo,
 #      chopped automatically;
-#   3. a click on the first layout card applies the layout and the pattern starts playing.
+#   3. a click on the first layout card applies the layout and the pattern starts playing;
+#   4. J-149: the sequence starts in order (A B C ...); Alt+Right moves the selected step, Delete over
+#      the lane deletes the region under the pointer (it joins its neighbour).
 # The trace lines come from the editor's GRIDLINE_SELTMANN_TRACE hook. Screenshots: <OUT>/empty.ppm,
 # <OUT>/ready.ppm, <OUT>/playing.ppm.
 # J-108: no frame counts to guess. The script waits ("waitfor", the frame count held) until the
@@ -86,6 +88,27 @@ set(last_out "${playing_out}")
 check("clicking \"${card}\" applies the layout" playing_out MATCHES "preset \"${card}\"")
 check("... and the pattern plays" playing_out MATCHES "preset \"${card}\" pattern 1")
 check("... the engine reports the pattern's steps" playing_out MATCHES "preset \"${card}\" pattern 1 playing 1")
-foreach(f empty ready playing)
+# ---- 4. J-149: the sequence: in order after the drop; reorder with Alt+Right; Delete joins a region
+check("the sequence starts in order" ready_out MATCHES "slices 16 [^\n]*order \"A B C D E F G H I J K L M N O P\"")
+string(REGEX MATCH "seltmann: seq 0 ([0-9]+) ([0-9]+)" _ "${ready_out}")
+set(s0x "${CMAKE_MATCH_1}")
+set(s0y "${CMAKE_MATCH_2}")
+string(REGEX MATCH "seltmann: seq 3 ([0-9]+) ([0-9]+)" _ "${ready_out}")
+set(s3x "${CMAKE_MATCH_1}")
+check("... the sequence blocks are shown" s0x MATCHES "[0-9]" AND s3x MATCHES "[0-9]")
+run(sequence 44 "${drop}20 move ${s0x} ${s0y}
+22 down 0
+23 up 0
+25 mod alt 1
+26 key right
+27 mod alt 0
+30 move ${s3x} ${s0y}
+32 key delete
+36 move 10 10
+")
+set(last_out "${sequence_out}")
+check("Alt+Right moves A after B" sequence_out MATCHES "slices 16 [^\n]*order \"B A C D E F G H I J K L M N O P\"")
+check("... Delete joins D into C (15 regions, letters re-packed)" sequence_out MATCHES "slices 15 [^\n]*order \"B A C D E F G H I J K L M N O\"")
+foreach(f empty ready playing sequence)
   check("screenshot ${f}.ppm written" EXISTS "${OUT}/${f}.ppm")
 endforeach()

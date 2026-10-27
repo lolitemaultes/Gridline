@@ -63,9 +63,8 @@ void stepChips(ImDrawList* dl, App& a, ImVec2 p0, float w, const Preset& p) {
       const ImU32 fill = slotColor(c, s.reverse ? 0.45f : 0.9f);
       dl->AddRectFilled(q0, q1, fill, 4);
       char lb[16];
-      if (s.slot) std::snprintf(lb, sizeof lb, "%s", slotName(s.src));
-      else std::snprintf(lb, sizeof lb, "%d", s.src + 1);
-      textC(dl, a.fontBold, s.slot || s.src < 9 ? 12.0f : 10.0f, ImVec2((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f), theme::contrastText(slotColor(c)), lb);
+      std::snprintf(lb, sizeof lb, "%s", s.slot ? slotName(s.src) : regionName(s.src).c_str());  // (layouts: letters = regions in order)
+      textC(dl, a.fontBold, s.slot || s.src < 26 ? 12.0f : 10.0f, ImVec2((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f), theme::contrastText(slotColor(c)), lb);
       if (s.stutter > 1) dl->AddLine(ImVec2(q0.x + 3, q1.y - 2), ImVec2(q1.x - 3, q1.y - 2), theme::withAlpha(theme::contrastText(slotColor(c)), 0.7f), 1);
     }
     x += cw + gap;
@@ -196,7 +195,7 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const int n = e.hasModel ? static_cast<int>(e.m.slices.size()) : 0;
   char cap[48];
-  std::snprintf(cap, sizeof cap, "%d %s", n, n == 1 ? i18n::tr("SLICE") : i18n::tr("SLICES"));
+  std::snprintf(cap, sizeof cap, "%d %s", n, n == 1 ? i18n::tr("REGION") : i18n::tr("REGIONS"));
   panel(dl, a, p0, p1, i18n::tr("PADS"), cap);
   if (!e.hasModel) return;
   const int cols = 4, rows = std::clamp((n + cols - 1) / cols, 2, 4), per = cols * rows;
@@ -227,8 +226,8 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
       continue;
     }
     const auto& s = e.m.slices[static_cast<size_t>(k)];
-    const int slot = sliceSlot(e.m, k);
     const bool sel = k == e.selSlice, playing = k == lv.slice;
+    const std::string L = regionName(k);
     ImGui::PushID(k);
     ImGui::SetCursorScreenPos(q0);
     ImGui::InvisibleButton("##pad", ImVec2(cw, ch));
@@ -243,23 +242,28 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
       auditionStop(a, t, e);
       ImGui::SetDragDropPayload("GL_SELT_SLICE", &k, sizeof k);
       char b[48];
-      std::snprintf(b, sizeof b, "%s %d", i18n::tr("Slice"), k + 1);
-      ui::DragPreview(ui::Icon::Wave, b, slot >= 0 ? slotColor(slot) : accent());
+      std::snprintf(b, sizeof b, "%s %s", i18n::tr("Region"), L.c_str());
+      ui::DragPreview(ui::Icon::Wave, b, regionColor(k));
       ImGui::EndDragDropSource();
     }
+    if (hv && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+      e.selSlice = k;
+      openRegionMenu(e, k, -1);
+    }
     if (hv && !ImGui::IsItemActive()) {
-      char b[200];
+      char b[240];
+      const int slot = sliceSlot(e.m, k);
       const int key = slotsMap ? (slot >= 0 ? base + slot : -1) : base + k;
-      std::snprintf(b, sizeof b, "%s %d%s%s  ·  %s %s  ·  %.3f s\n%s", i18n::tr("Slice"), k + 1, slot >= 0 ? "  ·  " : "", slot >= 0 ? slotName(slot) : "",
-                    i18n::tr("key"), key >= 0 && key <= 127 ? noteName(key).c_str() : "-", static_cast<double>(s.end - s.start) / e.m.srcRate,
-                    i18n::tr("Click to play. Drag the grip to take the slice out as audio."));
+      std::snprintf(b, sizeof b, "%s %s  \xC2\xB7  %s %s  \xC2\xB7  %.3f s\n%s", i18n::tr("Region"), L.c_str(), i18n::tr("key"),
+                    key >= 0 && key <= 127 ? noteName(key).c_str() : "-", static_cast<double>(s.end - s.start) / e.m.srcRate,
+                    i18n::tr("Click to play. Right-click: split or delete. Drag the grip to take it out as audio."));
       ui::Tooltip(b);
     }
-    const ImU32 face = slot >= 0 ? slotColor(slot, playing ? 1.0f : hv ? 0.85f : 0.7f) : (hv ? P.surface600 : P.surface700);
+    const ImU32 face = regionColor(k, playing ? 1.0f : hv ? 0.85f : 0.7f);
     skin::raisedFace(dl, q0, q1, face, theme::kRadiusLg);
     if (playing) dl->AddRect(ImVec2(q0.x - 2, q0.y - 2), ImVec2(q1.x + 2, q1.y + 2), theme::withAlpha(P.paper, 0.9f), theme::kRadiusLg + 2, 0, 2.0f);
     else if (sel) dl->AddRect(ImVec2(q0.x - 1.5f, q0.y - 1.5f), ImVec2(q1.x + 1.5f, q1.y + 1.5f), accent(), theme::kRadiusLg + 1, 0, 2.0f);
-    const ImU32 ink = slot >= 0 ? theme::contrastText(slotColor(slot)) : P.text;
+    const ImU32 ink = theme::contrastText(regionColor(k));
     if (smp) {
       const float wy0 = q1.y - ch * 0.45f, wy1 = q1.y - 6;
       const float mid = (wy0 + wy1) * 0.5f, half = (wy1 - wy0) * 0.5f;
@@ -276,11 +280,8 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
         dl->AddLine(ImVec2(xx, mid - hh), ImVec2(xx, mid + hh), theme::withAlpha(ink, 0.55f), 1.2f);
       }
     }
-    if (slot >= 0) dl->AddText(a.fontBold, 18, ImVec2(q0.x + 9, q0.y + 6), ink, slotName(slot));
-    char num[16];
-    std::snprintf(num, sizeof num, "%d", k + 1);
-    textR(dl, a.fontMono, theme::kFontLabel, ImVec2(q1.x - 8, q0.y + 7), theme::withAlpha(ink, 0.8f), num);
-    if (s.reverse) dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q0.x + (slot >= 0 ? 26 : 9), q0.y + 10), theme::withAlpha(ink, 0.8f), "R");
+    dl->AddText(a.fontBold, 18, ImVec2(q0.x + 9, q0.y + 6), ink, L.c_str());
+    if (s.reverse) dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q0.x + 13 + 11 * static_cast<float>(L.size()), q0.y + 10), theme::withAlpha(ink, 0.8f), "R");
     ImGui::PopID();
   }
   // drag handle on the selected pad: the slice out as audio
@@ -296,10 +297,9 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
       if (h && !ImGui::IsItemActive()) ui::Tooltip(i18n::tr("Drag the slice out as audio"));
       if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
       char lab[32];
-      std::snprintf(lab, sizeof lab, "slice %d", e.selSlice + 1);
+      std::snprintf(lab, sizeof lab, "region %s", regionName(e.selSlice).c_str());
       dragOut(a, t, e, "slice:" + std::to_string(e.selSlice), lab);
-      const int slot = sliceSlot(e.m, e.selSlice);
-      grip(dl, g, slot >= 0 ? theme::withAlpha(theme::contrastText(slotColor(slot)), h ? 1.0f : 0.65f) : P.text);
+      grip(dl, g, theme::withAlpha(theme::contrastText(regionColor(e.selSlice)), h ? 1.0f : 0.65f));
     }
   }
 }
@@ -313,14 +313,14 @@ void drawSlice(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
   if (e.m.slices.empty()) return;
   e.selSlice = std::clamp(e.selSlice, 0, static_cast<int>(e.m.slices.size()) - 1);
   Slice s = e.m.slices[static_cast<size_t>(e.selSlice)];
-  const int slot = sliceSlot(e.m, e.selSlice);
+  const std::string L = regionName(e.selSlice);
   float x = p0.x;
   const float y = p0.y;
   // badge, name, length, play + drag
-  dl->AddRectFilled(ImVec2(x, y), ImVec2(x + 40, y + 40), slot >= 0 ? slotColor(slot) : P.surface600, theme::kRadiusLg);
-  textC(dl, a.fontBold, 20, ImVec2(x + 20, y + 20), slot >= 0 ? theme::contrastText(slotColor(slot)) : P.text, slot >= 0 ? slotName(slot) : "-");
+  skin::raisedFace(dl, ImVec2(x, y), ImVec2(x + 40, y + 40), regionColor(e.selSlice), theme::kRadiusLg);
+  textC(dl, a.fontBold, 20, ImVec2(x + 20, y + 20), theme::contrastText(regionColor(e.selSlice)), L.c_str());
   char b[96];
-  std::snprintf(b, sizeof b, "%s %d", i18n::tr("Slice"), e.selSlice + 1);
+  std::snprintf(b, sizeof b, "%s %s", i18n::tr("Region"), L.c_str());
   dl->AddText(a.fontBold, theme::kFontBody + 1, ImVec2(x + 52, y + 1), P.text, b);
   std::snprintf(b, sizeof b, "%.3f s  ·  %s %s", static_cast<double>(s.end - s.start) / e.m.srcRate, i18n::tr("at"),
                 fmtTime(static_cast<double>(s.start) / e.m.srcRate).c_str());
@@ -329,19 +329,26 @@ void drawSlice(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
     auditionStart(a, t, e, e.selSlice);
   if (ImGui::IsItemDeactivated()) auditionStop(a, t, e);
   char lab[32];
-  std::snprintf(lab, sizeof lab, "slice %d", e.selSlice + 1);
+  std::snprintf(lab, sizeof lab, "region %s", L.c_str());
   dragChip(a, t, e, "##sdragslice", ImVec2(x + 48, y + 52), 30, "WAV", "slice:" + std::to_string(e.selSlice), lab,
            i18n::N_("Drag the slice out as audio: into the playlist, the channel rack or the browser"));
-  // slot letter
-  groupLabel(dl, a, ImVec2(x, y + 94), i18n::N_("PLAYED BY LETTER"));
+  // J-149: split / delete the region (letters follow)
+  groupLabel(dl, a, ImVec2(x, y + 94), i18n::N_("REGION"));
   {
-    static const char* const letters[8] = {"A", "B", "C", "D", "E", "F", "G", "H"};
-    int cur = slot >= 0 && slot < 8 ? slot : -1;
-    if (pills(a, "##sslot", ImVec2(x, y + 110), 200, 26, letters, 8, cur, nullptr, true) && cur >= 0) {
-      Model nm = e.m;
-      nm.pattern.slots[static_cast<size_t>(cur)] = e.selSlice;
-      commit(a, t, e, nm, i18n::N_("Assign a slot letter"));
+    static const int parts[3] = {2, 3, 4};
+    static const char* const txt[3] = {"1/2", "1/3", "1/4"};
+    static const char* const hint[3] = {i18n::N_("Split the region in half (the next letters move on)"), i18n::N_("Split the region in three"),
+                                        i18n::N_("Split the region in four")};
+    for (int i = 0; i < 3; ++i) {
+      char id[16];
+      std::snprintf(id, sizeof id, "##ssplit%d", parts[i]);
+      if (button(id, ImVec2(x + i * 44, y + 110), ImVec2(40, 24), txt[i], false, hint[i])) splitRegionUi(a, t, e, e.selSlice, parts[i]);
     }
+    const bool can = e.m.slices.size() > 1;
+    if (button("##sdelreg", ImVec2(x + 136, y + 110), ImVec2(64, 24), i18n::N_("Delete"), false,
+               can ? i18n::N_("Delete the region: it joins its neighbour (the first one joins the next)") : i18n::N_("The last region cannot be deleted")) &&
+        can)
+      deleteRegionUi(a, t, e, e.selSlice);
   }
   // knobs
   x = p0.x + 240;
@@ -368,7 +375,7 @@ void drawSlice(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
     else e.m = nm;  // live while dragging; written on release
   }
   dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x, y + 94), P.textDim,
-              i18n::tr("Pick a slice on the pads or in the waveform. Choke: slices in the same group cut each other off."));
+              i18n::tr("Pick a region on the pads, in the waveform or in the sequence. Choke: regions in the same group cut each other off."));
   (void)p1;
 }
 
@@ -417,6 +424,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
       m.pattern.steps.size() > 1) {
     Model nm = m;
     nm.pattern.steps.pop_back();
+    markEdited(nm);
     commit(a, t, e, nm, i18n::N_("Remove a step"));
   }
   if (button("##splus", ImVec2(x + 34, p0.y + 16), ImVec2(30, 26), "", false, i18n::N_("Add a step (the next slice)"), static_cast<int>(ui::Icon::Plus)) &&
@@ -426,6 +434,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
     st.slot = false;
     st.src = static_cast<int>(nm.pattern.steps.size()) % std::max(1, static_cast<int>(nm.slices.size()));
     nm.pattern.steps.push_back(st);
+    markEdited(nm);
     commit(a, t, e, nm, i18n::N_("Add a step"));
   }
   // ---- steps
@@ -442,7 +451,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
     u += 1 + s.ties;
     const ImVec2 q0(x0 + 1.5f, sy0), q1(x1 - 1.5f, sy1);
     const int k = stepSlice(m.pattern, s, nSl);
-    const int colorSlot = s.src == kRest ? -1 : s.slot ? s.src : (sliceSlot(m, k) >= 0 ? sliceSlot(m, k) : k % 12);
+    const int colorSlot = s.src == kRest ? -1 : k;
     const bool playing = i == lv.step, sel = i == e.selStep;
     ImGui::PushID(1000 + i);
     ImGui::SetCursorScreenPos(q0);
@@ -455,6 +464,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
       const int dir = ImGui::GetIO().MouseWheel > 0 ? 1 : -1;
       const int lim = st.slot ? std::min(kSlotCount, std::max(1, nSl)) : std::max(1, nSl);
       st.src = ((st.src + dir) % lim + lim) % lim;
+      markEdited(nm);
       commit(a, t, e, nm, i18n::N_("Change a step"), 0x5E17E000ull + static_cast<uint64_t>(i));
     }
     if (ImGui::BeginDragDropTarget()) {
@@ -465,6 +475,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
         const int let = sliceSlot(nm, slice);
         if (let >= 0) st.slot = true, st.src = let;
         else st.slot = false, st.src = slice;
+        markEdited(nm);
         commit(a, t, e, nm, i18n::N_("Place a slice on a step"));
       }
       ImGui::EndDragDropTarget();
@@ -491,8 +502,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
       const ImU32 ink = theme::contrastText(slotColor(colorSlot));
       const float cw = q1.x - q0.x;
       char lb[16];
-      if (s.slot) std::snprintf(lb, sizeof lb, "%s", slotName(s.src));
-      else std::snprintf(lb, sizeof lb, "%d", s.src + 1);
+      std::snprintf(lb, sizeof lb, "%s", regionName(k).c_str());
       if (cw >= 12) textC(dl, a.fontBold, cw >= 26 ? 16.0f : 12.0f, ImVec2((q0.x + q1.x) * 0.5f, q0.y + (q1.y - q0.y) * 0.4f), ink, lb);
       if (cw >= 26) {
         std::string marks;
@@ -530,10 +540,10 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
         }
         ImGui::EndMenu();
       }
-      if (ImGui::BeginMenu(i18n::tr("Play slice"))) {
+      if (ImGui::BeginMenu(i18n::tr("Play region"))) {
         for (int l = 0; l < nSl && l < 128; ++l) {
           char lb[16];
-          std::snprintf(lb, sizeof lb, "%d", l + 1);
+          std::snprintf(lb, sizeof lb, "%s", regionName(l).c_str());
           if (ImGui::MenuItem(lb, nullptr, !st.slot && st.src == l)) st.slot = false, st.src = l, ch = true;
         }
         ImGui::EndMenu();
@@ -569,6 +579,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
         structural = true;
         e.selStep = -1;
       }
+      if (ch || structural) markEdited(nm);
       if (ch || structural) commit(a, t, e, nm, i18n::N_("Edit a step"), structural ? 0 : 0x5E17F000ull + static_cast<uint64_t>(i));
       ImGui::EndPopup();
     }
@@ -592,7 +603,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
     const bool enter = ImGui::InputText("##sdsl", e.dsl, sizeof e.dsl, ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::PopFont();
     if (ImGui::IsItemHovered() && !ImGui::IsItemActive())
-      ui::Tooltip(i18n::tr("Type the steps: A..Z = slot letters, 1.. = slices, . = rest, ~ = hold. Options after a colon: r reverse, "
+      ui::Tooltip(i18n::tr("Type the steps: 1, 2, 3 ... = the regions A, B, C ... in order; A..Z = layout letters; . = rest, ~ = hold. Options after a colon: r reverse, "
                            "p+7 pitch, g-6 gain dB, l50 length %, x4 stutter, o25 start %. Enter applies."));
     if (enter || ImGui::IsItemDeactivatedAfterEdit()) {
       Pattern p = m.pattern;
@@ -600,6 +611,7 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
       if (patternFromText(e.dsl, p, &err)) {
         Model nm = m;
         nm.pattern.steps = p.steps;
+        markEdited(nm);
         commit(a, t, e, nm, i18n::N_("Type the steps"));
       } else {
         a.notify(std::string(i18n::tr("Steps not changed: ")) + err, true);

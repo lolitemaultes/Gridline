@@ -546,6 +546,221 @@ bool moveCut(Model& m, int k, int64_t f) {
   return true;
 }
 
+// ------------------------------------------------------------------ regions (J-149)
+std::string regionName(int k) {
+  if (k < 0) return "-";
+  if (k < 26) return std::string(1, static_cast<char>('A' + k));
+  k -= 26;
+  std::string s;
+  s += static_cast<char>('A' + (k / 26) % 26);
+  s += static_cast<char>('A' + k % 26);
+  return s;
+}
+
+bool isNaturalOrder(const Model& m) {
+  const int n = static_cast<int>(m.slices.size());
+  int next = 0;
+  for (const auto& st : m.pattern.steps) {
+    if (st.src == kRest) return false;
+    if (stepSlice(m.pattern, st, n) != next) return false;
+    ++next;
+  }
+  return next == n;
+}
+
+namespace {
+
+// Every step as the slice it plays (slot letters resolved), so region edits can renumber them.
+void resolveSteps(Model& m) {
+  const int n = static_cast<int>(m.slices.size());
+  for (auto& st : m.pattern.steps) {
+    if (st.src == kRest) continue;
+    st.src = std::max(0, stepSlice(m.pattern, st, n));
+    st.slot = false;
+  }
+}
+
+void identitySlots(Model& m) {
+  m.pattern.slots.assign(kSlotCount, -1);
+  for (int k = 0; k < kSlotCount && k < static_cast<int>(m.slices.size()); ++k) m.pattern.slots[static_cast<size_t>(k)] = k;
+}
+
+// After a region edit: the chop is by hand now (later re-chops keep the cuts) and a
+// straight pattern is "edited" (its step lengths follow the regions, not one unit).
+void afterRegionEdit(Model& m) {
+  m.chop.mode = ChopManual;
+  m.chop.autoSize = false;
+  identitySlots(m);
+  if (m.preset.empty() && m.pattern.name == "Straight") m.pattern.name = kEditedName;
+}
+
+int64_t gcd64(int64_t a, int64_t b) {
+  while (b) {
+    const int64_t t = a % b;
+    a = b, b = t;
+  }
+  return a;
+}
+
+}  // namespace
+
+bool splitRegion(Model& m, int x, int parts) {
+  const int n = static_cast<int>(m.slices.size());
+  if (x < 0 || x >= n || parts < 2 || parts > kMaxSplit) return false;
+  if (n + parts - 1 > kMaxSlices) return false;
+  const Slice src = m.slices[static_cast<size_t>(x)];
+  const int64_t len = src.end - src.start;
+  if (len / parts < std::max<int64_t>(16, static_cast<int64_t>(m.srcRate * 0.004))) return false;
+  resolveSteps(m);
+  // the step grid: every step on x must divide into `parts` whole units
+  int64_t f = 1;
+  for (const auto& st : m.pattern.steps)
+    if (st.src == x) {
+      const int64_t L = 1 + st.ties;
+      const int64_t need = parts / gcd64(L, parts);
+      f = f / gcd64(f, need) * need;  // lcm
+    }
+  const bool refine = f > 1 && m.pattern.unitBeats / static_cast<double>(f) >= 1.0 / 64 - 1e-12;
+  if (refine) {
+    m.pattern.unitBeats /= static_cast<double>(f);
+    for (auto& st : m.pattern.steps) st.ties = static_cast<int>((1 + st.ties) * f - 1);
+  }
+  // count the steps first (the pattern has a size limit)
+  size_t total = 0;
+  for (const auto& st : m.pattern.steps) total += st.src == x ? static_cast<size_t>(parts) : 1;
+  if (total > static_cast<size_t>(kMaxSteps)) return false;
+  // slices: x becomes `parts` equal pieces, later slices move up
+  std::vector<Slice> pieces;
+  for (int p = 0; p < parts; ++p) {
+    Slice s = src;
+    s.start = src.start + len * p / parts;
+    s.end = p + 1 == parts ? src.end : src.start + len * (p + 1) / parts;
+    s.offset = 0, s.length = 1;
+    if (p > 0) s.fadeIn = 0;
+    if (p + 1 < parts) s.fadeOut = 0;
+    pieces.push_back(s);
+  }
+  m.slices.erase(m.slices.begin() + x);
+  m.slices.insert(m.slices.begin() + x, pieces.begin(), pieces.end());
+  // steps: every step on x becomes the pieces in order (backwards for a reversed step)
+  std::vector<Step> out;
+  out.reserve(total);
+  for (const auto& st : m.pattern.steps) {
+    if (st.src == kRest || st.src < x) {
+      out.push_back(st);
+      continue;
+    }
+    if (st.src > x) {
+      Step s = st;
+      s.src += parts - 1;
+      out.push_back(s);
+      continue;
+    }
+    const int L = 1 + st.ties;
+    for (int p = 0; p < parts; ++p) {
+      Step s = st;
+      const int piece = st.reverse ? parts - 1 - p : p;
+      s.src = x + piece;
+      // whole units shared out (exact when the grid was refined; else as even as possible, at least one)
+      const int u0 = L * p / parts, u1 = L * (p + 1) / parts;
+      s.ties = std::max(1, u1 - u0) - 1;
+      s.offset = p == 0 ? std::min(0.9f, st.offset * static_cast<float>(parts)) : 0.0f;
+      if (s.offset >= 0.9f) s.offset = 0;
+      out.push_back(s);
+    }
+  }
+  m.pattern.steps.swap(out);
+  afterRegionEdit(m);
+  return true;
+}
+
+bool mergeRegion(Model& m, int x) {
+  const int n = static_cast<int>(m.slices.size());
+  if (x < 0 || x >= n || n < 2) return false;
+  const int lo = x == 0 ? 0 : x - 1, hi = lo + 1;
+  const int keep = x == 0 ? hi : lo;  // the neighbour's settings stay
+  resolveSteps(m);
+  const double lenLo = static_cast<double>(m.slices[static_cast<size_t>(lo)].end - m.slices[static_cast<size_t>(lo)].start);
+  const double lenHi = static_cast<double>(m.slices[static_cast<size_t>(hi)].end - m.slices[static_cast<size_t>(hi)].start);
+  const double tot = std::max(1.0, lenLo + lenHi);
+  Slice merged = m.slices[static_cast<size_t>(keep)];
+  merged.start = m.slices[static_cast<size_t>(lo)].start;
+  merged.end = m.slices[static_cast<size_t>(hi)].end;
+  merged.fadeIn = m.slices[static_cast<size_t>(lo)].fadeIn;
+  merged.fadeOut = m.slices[static_cast<size_t>(hi)].fadeOut;
+  m.slices[static_cast<size_t>(lo)] = merged;
+  m.slices.erase(m.slices.begin() + hi);
+  auto plain = [](const Step& s) { return !s.reverse && s.stutter == 1 && s.length >= 0.999f && s.offset < 0.001f; };
+  std::vector<Step> out;
+  out.reserve(m.pattern.steps.size());
+  const auto& in = m.pattern.steps;
+  for (size_t i = 0; i < in.size(); ++i) {
+    Step s = in[i];
+    if (s.src == kRest || s.src < lo) {
+      out.push_back(s);
+      continue;
+    }
+    if (s.src > hi) {
+      --s.src;
+      out.push_back(s);
+      continue;
+    }
+    if (s.src == lo && i + 1 < in.size() && in[i + 1].src == hi && plain(s) && plain(in[i + 1]) && s.pitch == in[i + 1].pitch &&
+        s.gain == in[i + 1].gain) {
+      // the pair played in order: one step as long as both
+      s.ties += 1 + in[i + 1].ties;
+      out.push_back(s);
+      ++i;
+      continue;
+    }
+    if (s.src == hi) {
+      // on its own: the merged region from where this part starts
+      s.offset = static_cast<float>(std::min(0.9, (lenLo + s.offset * lenHi) / tot));
+      s.src = lo;
+    } else {
+      s.offset = static_cast<float>(s.offset * lenLo / tot);
+    }
+    out.push_back(s);
+  }
+  m.pattern.steps.swap(out);
+  afterRegionEdit(m);
+  return true;
+}
+
+bool moveStep(Model& m, int from, int to) {
+  const int n = static_cast<int>(m.pattern.steps.size());
+  if (from < 0 || from >= n || to < 0 || to > n) return false;
+  if (to == from || to == from + 1) return false;
+  Step s = m.pattern.steps[static_cast<size_t>(from)];
+  m.pattern.steps.erase(m.pattern.steps.begin() + from);
+  if (to > from) --to;
+  m.pattern.steps.insert(m.pattern.steps.begin() + to, s);
+  if (m.preset.empty() && m.pattern.name == "Straight") m.pattern.name = kEditedName;
+  return true;
+}
+
+void naturalPattern(Model& m) {
+  if (m.chop.mode != ChopManual) {
+    straightPattern(m);
+    return;
+  }
+  // regions cut by hand: the steps follow their lengths (named as edited, so a later
+  // re-chop of the same cuts keeps them instead of laying one unit per step)
+  const double u = std::max(1.0 / 64, m.pattern.unitBeats);
+  m.pattern.name = m.preset.empty() ? kEditedName : m.pattern.name;
+  m.pattern.steps.clear();
+  identitySlots(m);
+  for (int k = 0; k < static_cast<int>(m.slices.size()) && k < kMaxSteps; ++k) {
+    const auto& sl = m.slices[static_cast<size_t>(k)];
+    const double beats = beatAt(m.grid, static_cast<double>(sl.end)) - beatAt(m.grid, static_cast<double>(sl.start));
+    Step st;
+    st.slot = false;
+    st.src = k;
+    st.ties = std::max(1, static_cast<int>(std::lround(beats / u))) - 1;
+    m.pattern.steps.push_back(st);
+  }
+}
+
 void straightPattern(Model& m) {
   const int bpb = std::max(1, m.grid.beatsPerBar);
   const int n = static_cast<int>(m.slices.size());
@@ -582,8 +797,13 @@ void foldSteps(Model& m) {
 }
 
 void rechopKeepPattern(Model& m, const Sample* s) {
+  const size_t before = m.slices.size();
   rechop(m, s);
-  if (m.preset.empty()) straightPattern(m);
+  // J-149: a sequence edited by hand (split / joined regions, a new order) stays when the
+  // re-chop keeps the region count (tempo and grid fixes); a new count starts the natural
+  // order again. The straight pattern and the layouts behave as before.
+  const bool edited = m.preset.empty() && m.pattern.name != "Straight";
+  if (m.preset.empty() && !(edited && m.slices.size() == before)) straightPattern(m);
   else foldSteps(m);
 }
 

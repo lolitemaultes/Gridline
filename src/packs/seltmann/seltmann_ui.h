@@ -6,6 +6,8 @@
 //                          region strip for songs, the chop settings (drawer)
 //   seltmann_parts_ui.cpp  the layout picker (cards), the pads and the Edit
 //                          drawer (slice, chop, steps, grid, sound, loops)
+//   seltmann_seq_ui.cpp    J-149: the sequence (A B C D ...): drag to reorder,
+//                          right-click a region to split it or delete it
 // UI thread only.
 #pragma once
 #include <atomic>
@@ -78,6 +80,14 @@ struct Ed {
   std::string lastTrace;
   ImVec2 zone0, zone1, playBtn;
   std::vector<std::pair<std::string, ImVec2>> cards;  // visible layout cards (name, centre)
+  // J-149 sequence lane
+  int seqDrag = -1;           // step being dragged to a new place (-1 none)
+  int seqDrop = -1;           // insertion point under the pointer while dragging
+  int seqPress = -1;          // step pressed (click or the start of a drag)
+  int menuStep = -1, menuRegion = -1;  // what the open region menu acts on
+  bool menuWant = false;               // open it this frame
+  std::vector<ImVec2> seqCentres;      // block centres (scripted input, trace)
+  ImVec2 seq0, seq1;                   // the lane
 };
 Ed& ed(const PluginTarget& t);
 
@@ -85,6 +95,7 @@ Ed& ed(const PluginTarget& t);
 ImU32 accent();                       // Sample family accent
 ImU32 slotColor(int slot, float alpha = 1.0f);
 int sliceSlot(const Model& m, int slice);  // first slot letter that plays the slice (-1 none)
+ImU32 regionColor(int region, float alpha = 1.0f);  // J-149: a region's colour (by its letter)
 void textC(ImDrawList* dl, ImFont* f, float size, ImVec2 c, ImU32 col, const char* s);
 void textR(ImDrawList* dl, ImFont* f, float size, ImVec2 rightTop, ImU32 col, const char* s);
 std::string fmtTime(double seconds);
@@ -152,5 +163,17 @@ void drawPresets(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1);   
 void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const LiveView& lv);
 void drawDrawer(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const LiveView& lv);   // Edit drawer
 void drawGridTools(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1);                   // drawer: grid tab
+void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const LiveView& lv);  // J-149: the sequence lane
+
+// ---- J-149 region edits (one undo step each)
+void splitRegionUi(App& a, const PluginTarget& t, Ed& e, int region, int parts);
+void deleteRegionUi(App& a, const PluginTarget& t, Ed& e, int region);
+// Menu items for a region: Split into 2..8, Delete (joins the neighbour). Inside an open popup.
+void regionMenuItems(App& a, const PluginTarget& t, Ed& e, int region);
+// Opens the region menu for `region` (step = the sequence step it came from, -1 none); drawn by drawRegionMenu.
+void openRegionMenu(Ed& e, int region, int step);
+void drawRegionMenu(App& a, const PluginTarget& t, Ed& e);
+// Marks the sequence as edited by hand (re-chops that keep the regions keep it).
+void markEdited(Model& m);
 
 }  // namespace gl::packs::seltmann::sui

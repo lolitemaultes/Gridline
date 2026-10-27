@@ -85,7 +85,7 @@ struct Message {
   std::string encode() const;
   static bool decode(const std::string& wire, Message& out);
 };
-inline constexpr int kProtocolVersion = 2;  // 2: membership records, removal / end notices (J-111e)
+inline constexpr int kProtocolVersion = 3;  // 2: membership records, removal / end notices (J-111e); 3: presence probes (J-146)
 // Streams of a link: 0 = control + ops (first), 1 = bulk (snapshots, files, avatars).
 inline constexpr int kStreamControl = 0;
 inline constexpr int kStreamBulk = 1;

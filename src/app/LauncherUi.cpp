@@ -26,6 +26,7 @@
 #include "App.h"
 #include "DevSignal.h"
 #include "Keys.h"
+#include "LauncherCollab.h"
 #include "SmoothScrollUi.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -197,7 +198,7 @@ Tile tileOf(TileKind k) {
 }
 
 struct UiState {
-  int view = 0;  // 0 recent, 1 templates
+  int view = 0;  // 0 recent, 1 templates, 2 collaborative (J-146)
   char search[128] = {};
   int focus = 0;         // tile index (keyboard)
   bool keyNav = false;   // focus ring shown (after keyboard use)
@@ -806,7 +807,19 @@ void rememberSketch(App& a, const std::string& path, preview::Sketch k) {
   store().put(path, std::move(k), a.now, true);
 }
 
-void setView(int view) { ui_().view = std::clamp(view, 0, 1); }
+void setView(int view) { ui_().view = std::clamp(view, 0, 2); }
+
+bool drawSketchKey(App& a, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const std::string& key, float alpha) {
+  Store& st = store();
+  if (key.empty()) return false;
+  if (key[0] != '@') st.request(key);
+  const SEntry* e = st.get(key);
+  if (!e || e->st != SState::Ready) return false;
+  float fa = scrollui::animations() ? ease(static_cast<float>((a.now - e->readyAt) / 0.25)) : 1.0f;
+  if (ImGui::GetFrameCount() - ui_().shownFrame > 14) fa = std::max(fa, 0.999f);
+  drawSketch(dl, p0, p1, e->k, fa * alpha);
+  return true;
+}
 
 void shutdown() { store().stop(); }
 
@@ -831,7 +844,9 @@ void devReport(App& a) {
               a.home.projectOpen() ? 1 : 0, S.view, static_cast<int>(S.tiles.size()), a.confirmDiscard || ImGui::GetTopMostPopupModal() ? 1 : 0, a.doc.modified() ? 1 : 0,
               fs::path(a.projectFile()).filename().string().c_str(), a.windowTitle().c_str());
   std::printf("launcher menu=%s\n", S.menuShown && a.home.visible() ? S.menu.name.c_str() : "-");  // J-148: the tile menu shown
+  if (S.view == 2) launchercollab::devReport(a);  // J-146
   for (const Tile& t : S.tiles) {
+    if (S.view == 2) break;  // (J-146: the rows above say it)
     if (!t.key.empty() && t.key[0] == '#') continue;
     const SEntry* e = t.sketch.empty() ? nullptr : store().get(t.sketch);
     std::printf("tile kind=%d name=%s open=%d missing=%d fav=%d sketch=%s meta=%s\n", static_cast<int>(t.kind), t.name.c_str(), t.open ? 1 : 0,
@@ -865,7 +880,15 @@ void draw(App& a) {
   std::vector<Tile> tiles;
   std::vector<launcher::Item> items;
   std::vector<std::string> sections;
-  buildTiles(a, tiles, items, sections);
+  std::vector<float> blockH;
+  if (S.view == 2) {  // J-146: the Collaborative view fills the grid itself
+    launchercollab::update(a, S.search);
+    launchercollab::items(items, blockH);
+    tiles.assign(items.size(), Tile{});
+  } else {
+    buildTiles(a, tiles, items, sections);
+  }
+  const launchercollab::Look look{C.card, C.cardHover, C.thumb, C.line, C.lineHover, C.text, C.dim, C.faint, C.accent, C.danger, C.fill, C.fillHover};
   for (const Tile& t : tiles)
     if (!t.sketch.empty() && t.sketch != "@current" && t.sketch != "@starter" && !t.missing) st.request(t.sketch);
 
@@ -887,17 +910,19 @@ void draw(App& a) {
   if (ImGui::GetFrameCount() == S.shownFrame) ImGui::SetWindowFocus();  // keys go to the launcher at once
 
   // ---- layout ----
-  const char* title = S.view == 0 ? tr("Recent projects") : tr("Templates");
+  const char* title = S.view == 0 ? tr("Recent projects") : S.view == 1 ? tr("Templates") : tr("Collaborative projects");
+  const float noteW = S.view == 2 ? launchercollab::titleNoteWidth(a) : 0.0f;  // J-146: presence pill
   launcher::LayoutIn in;
   in.width = vp->WorkSize.x;
   in.height = vp->WorkSize.y;
   in.items = items;
   in.hasBack = a.home.projectOpen();
-  in.titleW = measure(a.fontBold, 22, title).x + 40;  // + the list menu button
+  in.titleW = measure(a.fontBold, 22, title).x + (S.view == 2 ? (noteW > 0 ? noteW + 14 : 0) : 40);  // + the list menu button / presence pill
   in.backW = measure(a.fontRegular, theme::kFontBody, tr("Back to project")).x + 66;
   in.brandW = theme::lockupWidth(28, a.fontBold);
   in.actions = 3;
-  in.views = 2;
+  in.views = 3;
+  in.blockH = blockH;
   in.scrollbar = ImGui::GetStyle().ScrollbarSize;
   const launcher::Layout L = launcher::layout(in);
   auto scr = [&](const Rect& r) { return ImVec2(o.x + r.x, o.y + r.y); };
@@ -905,9 +930,10 @@ void draw(App& a) {
   // ---- rail / narrow header ----
   const int nRecent = static_cast<int>(a.recentFiles.size());
   const int nTemplates = static_cast<int>(a.templates().size()) + 2;
-  char cntR[16], cntT[16];
+  char cntR[16], cntT[16], cntC[16];
   std::snprintf(cntR, sizeof cntR, "%d", nRecent);
   std::snprintf(cntT, sizeof cntT, "%d", nTemplates);
+  std::snprintf(cntC, sizeof cntC, "%d", launchercollab::projectCount(a));
   if (L.rail) {
     dl->AddRectFilled(scr(L.railRect), ImVec2(o.x + L.railRect.r(), o.y + L.railRect.b()), C.rail);
     dl->AddLine(ImVec2(o.x + L.railRect.r() - 0.5f, o.y), ImVec2(o.x + L.railRect.r() - 0.5f, o.y + L.railRect.b()), C.railEdge);
@@ -928,6 +954,7 @@ void draw(App& a) {
         case launcher::RailRow::View:
           if (view == 0 && railRow(a, "##vrecent", sr, ui::Icon::ListBullets, tr("Recent"), cntR, S.view == 0)) S.view = 0, S.focus = 0;
           if (view == 1 && railRow(a, "##vtpl", sr, ui::Icon::Clone, tr("Templates"), cntT, S.view == 1)) S.view = 1, S.focus = 0;
+          if (view == 2 && railRow(a, "##vcollab", sr, ui::Icon::People, tr("Collaborative"), cntC, S.view == 2)) S.view = 2, S.focus = 0;
           ++view;
           break;
         case launcher::RailRow::Settings:
@@ -953,8 +980,9 @@ void draw(App& a) {
                      {"##ndemo", ui::Icon::SpeakerWaves, i18n::N_("Demo song"), false},
                      {"##nrecent", ui::Icon::ListBullets, i18n::N_("Recent projects"), S.view == 0},
                      {"##ntpl", ui::Icon::Clone, i18n::N_("Templates"), S.view == 1},
+                     {"##ncollab", ui::Icon::People, i18n::N_("Collaborative projects"), S.view == 2},
                      {"##nset", ui::Icon::Settings, i18n::N_("Settings"), false}};
-    for (size_t i = 0; i < L.headerIcons.size() && i < 6; ++i) {
+    for (size_t i = 0; i < L.headerIcons.size() && i < 7; ++i) {
       ImGui::SetCursorScreenPos(scr(L.headerIcons[i]));
       const bool hit = ui::IconButton(btn[i].id, btn[i].icon, btn[i].active, L.headerIcons[i].w, btn[i].hint);
       ui::Tooltip(btn[i].hint);  // (no status bar here for the hint)
@@ -964,7 +992,8 @@ void draw(App& a) {
         if (i == 2) openTile(a, tileOf(TileKind::Demo));
         if (i == 3) S.view = 0, S.focus = 0;
         if (i == 4) S.view = 1, S.focus = 0;
-        if (i == 5) a.showSettings = true;
+        if (i == 5) S.view = 2, S.focus = 0;
+        if (i == 6) a.showSettings = true;
       }
     }
   }
@@ -974,7 +1003,8 @@ void draw(App& a) {
     const ImVec2 tp = scr(L.title);
     const float ty = std::round(tp.y + (L.title.h - 22) * 0.5f);
     const float tw = measure(a.fontBold, 22, title).x;
-    textAt(dl, a.fontBold, 22, ImVec2(tp.x, ty), C.text, title, L.title.w - 36);
+    textAt(dl, a.fontBold, 22, ImVec2(tp.x, ty), C.text, title, L.title.w - (S.view == 2 ? 0 : 36));
+    if (S.view == 2 && noteW > 0 && L.title.w >= tw + noteW + 14) launchercollab::drawTitleNote(a, dl, ImVec2(tp.x + tw + 14, tp.y), L.title.h, look);
     if (S.view == 0 && L.title.w >= tw + 36) {
       ImGui::SetCursorScreenPos(ImVec2(tp.x + tw + 8, std::round(tp.y + (L.title.h - 24) * 0.5f)));
       const bool hit = ui::IconButton("##listmenu", ui::Icon::More, ImGui::IsPopupOpen("##launcherListMenu"), 24, i18n::N_("Recent list"));
@@ -1056,6 +1086,22 @@ void draw(App& a) {
     for (size_t i = 0; i < items.size(); ++i) {
       const Rect& r = L.items[i];
       const ImVec2 p(base.x + r.x, base.y + r.y);
+      if (S.view == 2) {  // J-146
+        const float sy = ImGui::GetScrollY();
+        const bool visible = r.b() + ring >= sy && r.y <= sy + L.grid.h + ring;
+        const bool tile = items[i] == launcher::Item::Tile;
+        if ((visible || items[i] == launcher::Item::Block) && launchercollab::drawItem(a, static_cast<int>(i), p, r, L, tile && ti == S.focus, S.keyNav, look))
+          activate = static_cast<int>(i);
+        if (tile) {
+          if (S.scrollToFocus && ti == S.focus) {
+            if (r.y < sy) ImGui::SetScrollY(std::max(0.0f, r.y - 8));
+            else if (r.b() + 2 * ring > sy + L.grid.h) ImGui::SetScrollY(r.b() + 2 * ring - L.grid.h + 8);
+            S.scrollToFocus = false;
+          }
+          ++ti;
+        }
+        continue;
+      }
       if (items[i] == launcher::Item::Section) {
         const std::string up = [&] {
           std::string s = tiles[i].name;
@@ -1083,7 +1129,7 @@ void draw(App& a) {
       const char* l2 = tr("Start a new project, open one from disk, or begin from a template.");
       gdl->AddText(a.fontBold, theme::kFontBody, ImVec2(base.x + 2, y), C.dim, l1);
       gdl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(base.x + 2, y + 22), C.faint, l2);
-    } else if (nTiles == 0 && S.search[0]) {
+    } else if (nTiles == 0 && S.search[0] && S.view != 2) {
       gdl->AddText(a.fontRegular, theme::kFontBody, ImVec2(base.x + 2, base.y + 6), C.dim, tr("Nothing matches the search."));
     }
     ImGui::SetCursorScreenPos(ImVec2(base.x, base.y + L.contentH + ring));
@@ -1092,7 +1138,8 @@ void draw(App& a) {
   ImGui::EndChild();
   ImGui::PopStyleColor();
   ImGui::PopStyleVar();
-  tileMenu(a);
+  if (S.view == 2) launchercollab::menus(a), S.menuShown = false;
+  else tileMenu(a);
 
   // ---- keyboard ----
   const bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
@@ -1114,16 +1161,20 @@ void draw(App& a) {
       if (ImGui::IsKeyPressed(ImGuiKey_End) && nTiles) S.focus = nTiles - 1, S.keyNav = true, S.scrollToFocus = true;
       if (nTiles && S.keyNav && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter) || ImGui::IsKeyPressed(ImGuiKey_Space)))
         activate = tileIdx[static_cast<size_t>(S.focus)];
-      if (nTiles && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && S.keyNav)
+      if (nTiles && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && S.keyNav && S.view != 2)
         removeTile(a, tiles[static_cast<size_t>(tileIdx[static_cast<size_t>(S.focus)])]);
       if (nTiles && S.keyNav && (ImGui::IsKeyPressed(ImGuiKey_Menu) || (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F10)))) {
-        const Tile& t = tiles[static_cast<size_t>(tileIdx[static_cast<size_t>(S.focus)])];
-        if (t.kind != TileKind::New) S.menu = t, S.openMenu = true;
+        if (S.view == 2) {
+          launchercollab::openMenu(tileIdx[static_cast<size_t>(S.focus)]);
+        } else {
+          const Tile& t = tiles[static_cast<size_t>(tileIdx[static_cast<size_t>(S.focus)])];
+          if (t.kind != TileKind::New) S.menu = t, S.openMenu = true;
+        }
       }
-      // J-148: F toggles the focused project's favourite mark.
-      if (nTiles && S.keyNav && io.KeyMods == ImGuiMod_None && ImGui::IsKeyPressed(ImGuiKey_F, false))
+      // J-148: F toggles the focused project's favourite mark (recent projects only).
+      if (nTiles && S.keyNav && S.view == 0 && io.KeyMods == ImGuiMod_None && ImGui::IsKeyPressed(ImGuiKey_F, false))
         toggleFavourite(a, tiles[static_cast<size_t>(tileIdx[static_cast<size_t>(S.focus)])]);
-      if (ImGui::IsKeyPressed(ImGuiKey_Tab)) S.view = 1 - S.view, S.focus = 0;
+      if (ImGui::IsKeyPressed(ImGuiKey_Tab)) S.view = (S.view + (io.KeyShift ? 2 : 1)) % 3, S.focus = 0;
       if (keys::pressed("file.new")) openTile(a, tileOf(TileKind::New));
       if (keys::pressed("file.open")) a.openDialog();
       if (ImGui::IsKeyPressed(ImGuiKey_F) && io.KeyMods == ImGuiMod_Ctrl) S.focusSearch = true;
@@ -1138,7 +1189,10 @@ void draw(App& a) {
     }
   }
   if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) S.keyNav = false;
-  if (activate >= 0) openTile(a, tiles[static_cast<size_t>(activate)]);
+  if (activate >= 0) {
+    if (S.view == 2) launchercollab::activate(a, activate);
+    else openTile(a, tiles[static_cast<size_t>(activate)]);
+  }
 
   ImGui::End();
 

@@ -192,6 +192,7 @@ void Hub::setSession(Session* s) {
   }
   session_ = s;
   stateLoaded_ = false;
+  openedWall_ = s ? wallSec() : 0;  // J-146: "working on it since"
   join_ = JoinView();
   if (session_) {
     session_->sendFn = [this](SiteId to, int stream, const std::string& wire) { sendTo(to, stream, wire); };
@@ -221,6 +222,9 @@ Json Hub::helloJson() const {
   h.object["build"] = Json::makeString(version_.build);
   h.object["profile"] = profileWire(profile_);
   if (session_) h.object["project"] = Json::makeString(session_->projectId());
+  // J-146: "Show that I am online" off, said on every link (invite links too): the others never
+  // list this member in their presence answers
+  if (!sharePresence_) h.object["presence"] = Json::makeNumber(0);
   return h;
 }
 
@@ -330,32 +334,122 @@ Hub::LinkRec* Hub::directLink(SiteId peer) {
   return nullptr;
 }
 
-crypto::Key Hub::memberPsk(const Member& m) const {
-  const crypto::Key shared = crypto::dh(id_.dhSecret, m.dhPublic);
-  return crypto::kdf(shared, "gridline-member", session_ ? session_->projectId() : std::string());
+crypto::Key memberLinkPsk(const crypto::Identity& me, const crypto::Key& theirDh, const std::string& projectId) {
+  const crypto::Key shared = crypto::dh(me.dhSecret, theirDh);
+  return crypto::kdf(shared, "gridline-member", projectId);
 }
 
-EndpointConfig Hub::memberEndpoint(SiteId peer, const crypto::Key& psk, bool initiator) {
+std::string memberLinkHsid(const crypto::Key& psk) {
+  const crypto::Key hid = crypto::kdf(psk, "hsid");
+  return std::string(reinterpret_cast<const char*>(hid.data()), 16);
+}
+
+EndpointConfig memberLinkEndpoint(const crypto::Key& psk, bool initiator, uint16_t localPort) {
   EndpointConfig ec;
   ec.ufrag = credHex(crypto::kdf(psk, initiator ? "ufrag-i" : "ufrag-r"), 8);
   ec.pwd = credHex(crypto::kdf(psk, initiator ? "pwd-i" : "pwd-r"), 32);
   ec.remoteUfrag = credHex(crypto::kdf(psk, initiator ? "ufrag-r" : "ufrag-i"), 8);
   ec.remotePwd = credHex(crypto::kdf(psk, initiator ? "pwd-r" : "pwd-i"), 32);
   ec.controlling = initiator;
-  ec.localPort = net_[peer].localPort;
+  ec.localPort = localPort;
   return ec;
+}
+
+crypto::Key Hub::memberPsk(const Member& m) const {
+  return memberLinkPsk(id_, m.dhPublic, session_ ? session_->projectId() : std::string());
+}
+
+EndpointConfig Hub::memberEndpoint(SiteId peer, const crypto::Key& psk, bool initiator) {
+  return memberLinkEndpoint(psk, initiator, net_[peer].localPort);
+}
+
+// ---------------------------------------------------------------- presence (J-146) ----
+void Hub::setSharePresence(bool on) {
+  std::lock_guard<std::recursive_mutex> lk(mu_);
+  sharePresence_ = on;
+}
+
+void Hub::noteActivity(int64_t wallSec) {
+  std::lock_guard<std::recursive_mutex> lk(mu_);
+  activityWall_ = std::max(activityWall_, wallSec);
+}
+
+// What a member's welcome screen may learn about this open project (member links only:
+// these travel encrypted to that member). Off ("Show that I am online" unticked): only
+// "presence": 0, which a prober takes as no information.
+void Hub::presenceFields(Json& hello, SiteId except) const {
+  if (!session_) return;
+  if (!sharePresence_) {
+    hello.object["presence"] = Json::makeNumber(0);
+    return;
+  }
+  const int64_t wall = wallSec();
+  hello.object["since"] = Json::makeNumber(static_cast<double>(openedWall_ ? openedWall_ : wall));
+  const int64_t act = std::max(activityWall_, openedWall_);
+  hello.object["idle"] = Json::makeNumber(static_cast<double>(act ? std::max<int64_t>(0, wall - act) : 0));
+  // Who is linked here right now, except members who keep their presence private (their own
+  // hello said "presence": 0) and members reached through someone else (their choice is not
+  // known here): nobody is shown online through another member against their wish.
+  std::set<SiteId> with;
+  for (const auto& [id, l] : links_)
+    if (l->up && !l->dead && l->peer && l->sl->state() == SecureLink::State::Open && l->sl->remoteHello().num("presence", 1) != 0) with.insert(l->peer);
+  Json w = Json::makeArray();
+  for (SiteId s : with)
+    if (s != except && s != id_.site() && !shunned(s)) w.array.push_back(Json::makeString(siteHex(s)));
+  hello.object["with"] = std::move(w);
+}
+
+// A member's welcome screen asks whether this project is open here (a member-link
+// handshake with "probe"): always refused, never opened. The reasons it understands:
+// "presence" (open here), "version" (open on another Gridline: no update popup here,
+// nobody tried to collaborate), the removal / end notice, "noticed".
+Json Hub::probeAnswer(SiteId peer, const Json& theirs, bool& ok) {
+  ok = false;
+  if (!sharePresence_) {  // not shown as online: no answer at all (the link keeps waiting)
+    ++probesIgnored_;
+    Json silent = Json::makeObject();
+    silent.object["silent"] = Json::makeNumber(1);
+    return silent;
+  }
+  Json reply = helloJson();
+  if (siteFromHex(theirs.text("site")) != peer || !session_) {
+    reply.object["reason"] = Json::makeString("identity");
+    return reply;
+  }
+  if (session_->stopped()) {
+    reply.object["reason"] = Json::makeString("noticed");
+    return reply;
+  }
+  const Json n = session_->noticeFor(peer);
+  if (!n.is(Json::Type::Null)) {  // removed (or the project ended): the signed notice, as for any link
+    for (const auto& [k, v] : n.object) reply.object[k] = v;
+    return reply;
+  }
+  ++probesAnswered_;
+  VersionInfo tv;
+  tv.app = theirs.text("app");
+  tv.protocol = static_cast<int>(theirs.num("protocol", 0));
+  tv.build = theirs.text("build");
+  if (!versionsMatch(tv, version_)) {
+    reply.object["reason"] = Json::makeString("version");
+    reply.object["name"] = Json::makeString(cleanName(profile_.name));
+    return reply;
+  }
+  reply.object["reason"] = Json::makeString("presence");
+  presenceFields(reply, peer);
+  return reply;
 }
 
 SecureLink::Hs Hub::memberHs(SiteId peer, bool initiator, const Member& m) {
   SecureLink::Hs hs;
   hs.initiator = initiator;
   hs.psk = memberPsk(m);
-  const crypto::Key hid = crypto::kdf(hs.psk, "hsid");
-  hs.hsid = std::string(reinterpret_cast<const char*>(hid.data()), 16);
+  hs.hsid = memberLinkHsid(hs.psk);
   hs.me = id_;
   hs.remoteDh = m.dhPublic;
   hs.remoteDhKnown = true;
   hs.hello = helloJson();
+  presenceFields(hs.hello, peer);  // J-146: a member's welcome screen may be the one answering
   // J-111e: a removed member's link only carries the news (they learn it even if they were offline)
   if (session_) {
     const Json n = session_->noticeFor(peer);
@@ -363,6 +457,7 @@ SecureLink::Hs Hub::memberHs(SiteId peer, bool initiator, const Member& m) {
   }
   const std::string who = m.name;
   hs.accept = [this, peer, who](const Json& theirs, const crypto::Key&, bool& ok) {
+    if (theirs.num("probe", 0) != 0) return probeAnswer(peer, theirs, ok);  // J-146
     Json reply = helloJson();
     if (session_ && session_->stopped()) {  // removed / ended / left here: no links any more
       if (const Json* n = theirs.find("notice")) session_->learnNotice(*n);
@@ -968,7 +1063,12 @@ void Hub::poll(double nowSec) {
       const Json& r = l.sl->refusal();
       const std::string reason = r.text("reason");
       std::string msg;
-      if (reason == "version") {
+      const bool probe = reason == "probe" || reason == "presence" || (reason == "version" && !l.initiator && l.kind == LinkRec::Kind::Member);
+      if (probe) {
+        // J-146: a presence probe (we answered one, or a welcome screen answered our waiting
+        // link): nothing failed; the link waits again at once
+        net_[l.peer].nextTry = now_ + 1;
+      } else if (reason == "version") {
         VersionInfo tv;
         tv.app = r.text("app");
         tv.protocol = static_cast<int>(r.num("protocol", 0));

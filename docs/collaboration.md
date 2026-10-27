@@ -516,6 +516,66 @@ hidden (loading a big project, a modal file dialog). On macOS Gridline also asks
 put it to sleep (App Nap) while a collaborative project is open; the computer itself may still go
 to sleep.
 
+## Collaborative projects on the welcome screen
+
+The welcome screen has a **Collaborative** view (in the left rail, or the people icon in a
+narrow window; Tab cycles Recent, Templates and Collaborative). It shows:
+
+* **Join with a code**: the Join window, ready for the invite a collaborator sent you (and the
+  reply code when their computer can't be reached at once).
+* **New collaborative project**, and **Share the open project** when a project that is not
+  collaborative yet is open.
+* Every collaborative project this computer knows, as a tile with a sketch of its arrangement,
+  the members' pictures, your role (**ADMIN** on projects you share), and one line about what
+  matters most: removed or no longer shared, a folder that moved, an update Gridline needs, open
+  Sync review items, **who is working on it right now**, changes not sent yet, when someone was
+  last seen working on it, or when it last synced. A **LIVE** label and green rings mark the
+  people working on it now; hover a tile for every member, or a picture for one.
+* A tile's menu: Open (or Back to project), Invite someone and Reconnect codes (admins), Show in
+  Finder / Files, Copy folder path, Leave project or Stop sharing (with the usual questions), and
+  Remove from this list. A removed or stopped project offers Keep a private copy and Forget; a
+  moved folder offers Locate.
+* The collaboration settings, the same as Settings > Collaboration: profile, picture, colour,
+  presence, connection, the TURN relay, port opening and Test my connection.
+
+## Presence on the welcome screen
+
+How the welcome screen knows who is working on a project without opening it and without a
+server (J-146).
+
+* **Cards.** While a collaborative project is open, Gridline keeps a small summary of it in the
+  settings folder (`collab/projects/<id>.card.json`): the members, their keys and states, your
+  role, changes not confirmed yet, open Sync review items and the version record. The welcome
+  screen reads these; a project never opened with this version shows "Open it once to see its
+  members".
+* **Presence checks.** While the Collaborative view is shown, Gridline checks each member of
+  each project directly. A check is the same encrypted handshake members use to reconnect (the
+  keys come from the two members' identities and the project), refused on purpose: the other
+  side's Gridline, if it has the project open, answers "open since 14:02, idle 3 min, with Sam"
+  inside the encrypted handshake. Nothing is opened, synced or shown on their side. Only members
+  can complete the handshake or read the answer; anyone else meets silence.
+* **Schedule.** At most four checks at once. A member who answered is asked again after 20 s,
+  someone on another version after 2 min, silence after 15 s, then 30 s, 1 min, 2 min and every
+  5 min. Checks stop 2 s after the view is hidden; nothing runs in the background otherwise.
+* **No answer is never "offline".** A network that blocks direct connections looks exactly like
+  a computer that is off. Gridline says "Not reachable right now" and adds when the person was
+  last seen working on it. Someone you can't reach who works with someone you can reach is shown
+  through that person's answer.
+* **Show that I am online to collaborators** (on by default). Off: Gridline answers no checks,
+  tells the others' Gridline on every connection so they never list you in their answers, and
+  checks nobody either. This is a courtesy between Gridline users, not a secret: modified
+  software could still notice that a project is open, because that is how reconnecting works
+  without a server.
+* **Versions.** Checks are part of the collaboration protocol (version 3). A member on another
+  Gridline answers with its version only ("Has it open in Gridline 0.7.2") and never sees an
+  update message because of a check. When this computer needs an update, no checks run.
+* **Removed.** A member who was removed learns it from a check (the admin's signed notice), the
+  same way as when opening the project.
+* **Stale answers.** An answer counts as "now" for 45 s.
+* **Limits without a server.** Gridline can't know that someone is offline, can't see a member
+  nobody it can reach is connected to, and only knows members it has met (opening the project
+  once refreshes the card).
+
 ## Settings > Collaboration
 
 * **Display name**, **contact email** (optional) and **Share my email with collaborators** (off by
@@ -526,6 +586,8 @@ to sleep.
 * **Colour**: the colour of your cursor on other screens and of your entry in the People list.
 * **Fingerprint**: your identity, to compare with a collaborator by phone or chat. **Reset
   identity** makes new keys; you then have to be invited again to every collaborative project.
+* **Show that I am online to collaborators**: whether your collaborators' welcome screens can see
+  that you are working on a project (see Presence on the welcome screen).
 * **Connection**: collaboration version status, automatic port opening, the STUN server, an
   optional TURN relay (the password is kept in the system's secure store), **Test my connection**.
 
@@ -550,7 +612,8 @@ to sleep.
   author's id and the name they had at the time; never an email or a picture.
 * When a project ends for this computer (you leave, are removed, or sharing stops), Gridline
   deletes what it kept about that project's other members on this computer (cached names and
-  pictures, the project's connection records). A normal project made from it (keep, private copy)
+  pictures, the project's connection records, its welcome-screen card and who was seen working on
+  it). A normal project made from it (keep, private copy)
   contains no identities at all.
 
 ## Limits

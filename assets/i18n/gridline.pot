@@ -349,7 +349,7 @@ msgstr ""
 msgid "Render clip to audio (consolidate)"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/AudioRecordUi.cpp
 msgid "SLICE"
 msgstr ""
 
@@ -465,7 +465,7 @@ msgstr ""
 msgid "Cut"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Delete"
 msgstr ""
 
@@ -1901,7 +1901,7 @@ msgstr ""
 msgid "Play on"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Play region"
 msgstr ""
 
@@ -1965,7 +1965,7 @@ msgstr ""
 msgid "Show and play the result in the playlist while you edit"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Slice"
 msgstr ""
 
@@ -3061,7 +3061,7 @@ msgstr ""
 msgid "Keep a private copy to go on working alone: a normal project in a new folder with the music and its audio, without the shared history or anyone's details."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
 msgid "Keep a private copy..."
 msgstr ""
 
@@ -3105,7 +3105,7 @@ msgstr ""
 msgid "Leave now and nobody gets them. Wait for sync goes on as soon as a collaborator has them."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
 msgid "Leave project..."
 msgstr ""
 
@@ -3262,6 +3262,10 @@ msgid "Offline"
 msgstr ""
 
 #: src/app/CollabUi.cpp
+msgid "On: the members of a project see on their welcome screen when you have it open (asked over the encrypted member link). Off: nobody is told, and your welcome screen does not ask about others either"
+msgstr ""
+
+#: src/app/CollabUi.cpp
 msgid "Online"
 msgstr ""
 
@@ -3277,7 +3281,7 @@ msgstr ""
 msgid "Only you, the admin, can do this."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
 msgid "Open"
 msgstr ""
 
@@ -3315,6 +3319,10 @@ msgstr ""
 
 #: src/app/CollabUi.cpp
 msgid "PNG or JPEG, or drop one on the circle"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "PRESENCE"
 msgstr ""
 
 #: src/app/CollabUi.cpp src/app/PianoRoll.cpp src/packs/seltmann/seltmann_parts_ui.cpp
@@ -3423,6 +3431,10 @@ msgstr ""
 
 #: src/app/CollabUi.cpp
 msgid "Remove %s from %s?"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Remove %s from this list?"
 msgstr ""
 
 #: src/app/CollabUi.cpp
@@ -3558,6 +3570,10 @@ msgid "Show collaborators' cursors"
 msgstr ""
 
 #: src/app/CollabUi.cpp
+msgid "Show that I am online to collaborators"
+msgstr ""
+
+#: src/app/CollabUi.cpp
 msgid "Shown to them with the removal. Everyone in the project can read it."
 msgstr ""
 
@@ -3565,7 +3581,7 @@ msgstr ""
 msgid "Some changes made while you were apart touch the same things. Review them in Sync review."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
 msgid "Someone"
 msgstr ""
 
@@ -3589,7 +3605,7 @@ msgstr ""
 msgid "Stop sharing %s?"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
 msgid "Stop sharing..."
 msgstr ""
 
@@ -3677,7 +3693,7 @@ msgstr ""
 msgid "That is not an invite code."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
 msgid "The admin"
 msgstr ""
 
@@ -3699,6 +3715,10 @@ msgstr ""
 
 #: src/app/CollabUi.cpp
 msgid "The folder already has this name."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "The folder and its collaboration stay as they are. Opening the folder adds it back."
 msgstr ""
 
 #: src/app/CollabUi.cpp
@@ -3985,7 +4005,7 @@ msgstr ""
 msgid "added it"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
 msgid "admin"
 msgstr ""
 
@@ -4037,12 +4057,16 @@ msgstr ""
 msgid "expires in %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
 msgid "just now"
 msgstr ""
 
 #: src/app/CollabUi.cpp
 msgid "last synced"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "launcher collab demo"
 msgstr ""
 
 #: src/app/CollabUi.cpp
@@ -6589,7 +6613,7 @@ msgstr ""
 msgid "Interpolation of sampler channels while rendering"
 msgstr ""
 
-#: src/app/ExportUi.cpp
+#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp
 msgid "Locate..."
 msgstr ""
 
@@ -6745,7 +6769,7 @@ msgstr ""
 msgid "Split playlist tracks"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/LauncherUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Start"
 msgstr ""
 
@@ -7313,6 +7337,334 @@ msgstr ""
 msgid "minutes"
 msgstr ""
 
+#: src/app/LauncherCollab.cpp
+msgid "%d others"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%lld LIVE"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%lld TO REVIEW"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%lld UNSENT"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%lld changes not sent yet"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%lld changes to review"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%lld days ago"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%lld h ago"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%lld members"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%lld min ago"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%s are working on it now"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%s is working on it now"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%s removed you"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "%s stopped sharing it"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "1 LIVE"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "1 change not sent yet"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "1 change to review"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "ADMIN"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Also in Settings > Collaboration"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "Back to project"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "CHECKING"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp src/app/UpdateUi.cpp
+msgid "Checking..."
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Collaboration settings"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Connected now"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Copy folder path"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Folder not found. Moved or renamed?"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Forget..."
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Gridline is open, not this project"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Has it open in Gridline %s"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Invite someone..."
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Join one with the code a collaborator sends you, or make one and invite people."
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Join with a code"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Keeps presence private"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "LIVE"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "MISSING"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Make %s collaborative"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "NOT SHARED"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Needs Gridline %s"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "New collaborative project"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "No answer does not mean offline: some networks block the check."
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "No collaborative projects on this computer yet."
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Nobody reachable right now"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Not checked"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Not connected"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "Not found"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Not reachable right now"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "OPEN HERE"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Only you so far"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Open here"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Open it once to see its members"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "PRESENCE OFF"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Paste the invite a collaborator sent you"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Presence is off: collaborators do not see that you are working on a project, and you do not see them"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Presence is off: turn on \"Show that I am online\" below to see who is here."
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Projects on this computer"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "REMOVED"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Reconnect codes..."
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Remove from this list..."
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Share the open project"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "Show in Explorer"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "Show in Files"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "Show in Finder"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Someone was here %s"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Start empty, then invite people"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Synced %s"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "UPDATE NEEDED"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "Untitled project"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Was working on it %s"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Who is working on your collaborative projects right now, checked directly with them while this view is open"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Working on it now"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "Working on it now, since %s"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "You"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "You are a member"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "You are its admin"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "You, on another computer"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "You, open here"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "and"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "idle %lld min"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "last seen %s"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "seen by %s"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "synced %s"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "yesterday"
+msgstr ""
+
 #: src/app/LauncherUi.cpp
 msgid "%.1f BPM"
 msgstr ""
@@ -7338,10 +7690,6 @@ msgid "Aug"
 msgstr ""
 
 #: src/app/LauncherUi.cpp
-msgid "Back to project"
-msgstr ""
-
-#: src/app/LauncherUi.cpp
 msgid "Cannot find"
 msgstr ""
 
@@ -7351,6 +7699,14 @@ msgstr ""
 
 #: src/app/LauncherUi.cpp
 msgid "Clear the list"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Collaborative"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "Collaborative projects"
 msgstr ""
 
 #: src/app/LauncherUi.cpp
@@ -7418,10 +7774,6 @@ msgid "New project"
 msgstr ""
 
 #: src/app/LauncherUi.cpp
-msgid "Not found"
-msgstr ""
-
-#: src/app/LauncherUi.cpp
 msgid "Not saved yet"
 msgstr ""
 
@@ -7486,18 +7838,6 @@ msgid "Sep"
 msgstr ""
 
 #: src/app/LauncherUi.cpp
-msgid "Show in Explorer"
-msgstr ""
-
-#: src/app/LauncherUi.cpp
-msgid "Show in Files"
-msgstr ""
-
-#: src/app/LauncherUi.cpp
-msgid "Show in Finder"
-msgstr ""
-
-#: src/app/LauncherUi.cpp
 msgid "Start a new project, open one from disk, or begin from a template."
 msgstr ""
 
@@ -7507,10 +7847,6 @@ msgstr ""
 
 #: src/app/LauncherUi.cpp
 msgid "Templates"
-msgstr ""
-
-#: src/app/LauncherUi.cpp
-msgid "Untitled project"
 msgstr ""
 
 #: src/app/LauncherUi.cpp
@@ -10397,7 +10733,7 @@ msgstr ""
 msgid "Snap: points move on a grid of this many cells per beat"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Step"
 msgstr ""
 
@@ -10497,7 +10833,7 @@ msgstr ""
 msgid "beat"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "beats"
 msgstr ""
 
@@ -12319,10 +12655,6 @@ msgstr ""
 
 #: src/app/UpdateUi.cpp
 msgid "Check now"
-msgstr ""
-
-#: src/app/UpdateUi.cpp
-msgid "Checking..."
 msgstr ""
 
 #: src/app/UpdateUi.cpp
@@ -14554,10 +14886,6 @@ msgid "Add a step (the next slice)"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Assign a slot letter"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Bars and phrases re-ordered (A B A C), and loops"
 msgstr ""
 
@@ -14590,7 +14918,7 @@ msgid "Click again for another take."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Click to play. Drag the grip to take the slice out as audio."
+msgid "Click to play. Right-click: split or delete. Drag the grip to take it out as audio."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -14610,6 +14938,10 @@ msgid "Delete step"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Delete the region: it joins its neighbour (the first one joins the next)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Drag into the playlist (audio clip), the channel rack (sampler) or the browser"
 msgstr ""
 
@@ -14621,7 +14953,7 @@ msgstr ""
 msgid "Drag the slice out as audio: into the playlist, the channel rack or the browser"
 msgstr ""
 
-#: src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Duplicate step"
 msgstr ""
 
@@ -14722,10 +15054,6 @@ msgid "PATTERN"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "PLAYED BY LETTER"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Page of pads"
 msgstr ""
 
@@ -14754,15 +15082,11 @@ msgid "Phrases and sections to drag out as loops"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Pick a slice on the pads or in the waveform. Choke: slices in the same group cut each other off."
+msgid "Pick a region on the pads, in the waveform or in the sequence. Choke: regions in the same group cut each other off."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Place a slice on a step"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Play slice"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -14782,6 +15106,18 @@ msgid "Playback and the envelope, filter and mix"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "REGION"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "REGIONS"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Region"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Remove a step"
 msgstr ""
 
@@ -14798,14 +15134,10 @@ msgid "Reverse every slice"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "SLICES"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "STEP LENGTH"
 msgstr ""
 
-#: src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "STEPS"
 msgstr ""
 
@@ -14858,6 +15190,18 @@ msgid "Sped up or slowed down: the pitch follows (vinyl)"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Split the region in four"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Split the region in half (the next letters move on)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Split the region in three"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Step length"
 msgstr ""
 
@@ -14894,6 +15238,10 @@ msgid "Tap the tempo, nudge the grid, meter, bar 1, analyse again"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "The last region cannot be deleted"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "The pattern's steps and the step language"
 msgstr ""
 
@@ -14914,7 +15262,7 @@ msgid "Type the steps"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Type the steps: A..Z = slot letters, 1.. = slices, . = rest, ~ = hold. Options after a colon: r reverse, p+7 pitch, g-6 gain dB, l50 length %, x4 stutter, o25 start %. Enter applies."
+msgid "Type the steps: 1, 2, 3 ... = the regions A, B, C ... in order; A..Z = layout letters; . = rest, ~ = hold. Options after a colon: r reverse, p+7 pitch, g-6 gain dB, l50 length %, x4 stutter, o25 start %. Enter applies."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -14947,6 +15295,130 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "slice"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "BAR"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "BARS"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Click to hear it. Drag to move it. Right-click: split or delete the region."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Delete region"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Duplicate a step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "IN ORDER"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Later letters move on."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Move a step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Only this step leaves the sequence; the region stays (use Delete to join regions)."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Play backwards"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Play every region once, in order (A B C D ...), each as long as its region"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Remove from the sequence"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Reset order"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Reset the order"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Reset to A B C D order"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Reverse a step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Right-click: split, delete"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "SEQUENCE"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "STEP"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Split"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "The last region cannot be deleted."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "The region joins its neighbour (the first one joins the next). The chopped region stays the same."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "The sequence already plays every region in order"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "This region is too short to split that many times"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Too short for that many parts."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "YOUR ORDER"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "equal parts"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "into"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "joins"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "keeps the first part; the next parts become"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "region"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
@@ -15047,6 +15519,10 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
 msgid "D minor"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "DRAG OUT"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
@@ -15374,10 +15850,6 @@ msgid "chopped"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
-msgid "equal parts"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
 msgid "grains"
 msgstr ""
 
@@ -15414,7 +15886,7 @@ msgid "Chop mode"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "Click a slice to play it. Edit > Chop cuts by hand."
+msgid "Click a region to play it. Right-click: split or delete it."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
@@ -16007,10 +16479,6 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
 msgid "Smooth"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "Split"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp

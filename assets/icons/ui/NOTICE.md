@@ -95,6 +95,7 @@ mirror the Lucide chevrons; the ImGui arrow, check, close and step glyphs draw t
 - `list-bullets`: four bulleted lines (browse a list).
 - `loop-arrows`: two arrows chasing round a loop (a clip that repeats).
 - `normalize`: a sound raised to two level lines (normalise).
+- `people`: one person in front of another (collaborators).
 - `plus-minus`: a plus over a minus (bipolar).
 - `power`: a power symbol: an open ring with a stem (on / bypass).
 - `question`: a question mark on its own (help).

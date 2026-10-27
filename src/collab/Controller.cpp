@@ -179,7 +179,14 @@ void Controller::preferFolder(const std::string& folder) {
 // Emails are never written to disk (Profile.cpp), so there are none to purge.
 void Controller::purgePrivate(const std::string& projectId, const std::vector<std::string>& fingerprints) {
   std::error_code ec;
-  if (!projectId.empty()) fs::remove(fs::path(profiles_.dir()) / "projects" / (projectId + ".json"), ec);
+  if (!projectId.empty()) {
+    fs::remove(fs::path(profiles_.dir()) / "projects" / (projectId + ".json"), ec);
+    // J-146: the project's card (members, their keys) and who was seen working on it
+    fs::remove(fs::path(profiles_.dir()) / "projects" / (projectId + ".card.json"), ec);
+    fs::remove(fs::path(profiles_.dir()) / "projects" / (projectId + ".seen.json"), ec);
+    seen_.erase(projectId);
+    if (presence_) presence_->forget(projectId);
+  }
   for (const auto& fp : fingerprints)
     if (!fp.empty() && fp.find('/') == std::string::npos && fp != profiles_.identity().fingerprint())
       fs::remove(fs::path(profiles_.dir()) / "peers" / (fp + ".json"), ec);
@@ -206,6 +213,7 @@ void Controller::startHub() {
   p.color = profiles_.color();
   hub_ = std::make_unique<Hub>(std::move(fabric), profiles_.identity(), p, version, (fs::path(profiles_.dir()) / "projects").string());
   if (testIceDelaySec > 0) hub_->testIceDelaySec = testIceDelaySec;
+  hub_->setSharePresence(showOnline_);  // J-146
   hub_->onNotice = [this](const std::string& t, bool e) {
     if (onNotice) onNotice(t, e);
   };
@@ -239,6 +247,7 @@ bool Controller::create(Document& doc, const std::string& folder, const std::str
   }
   close();
   session_ = Session::create(doc, sessionConfig(folder, name), err);
+  if (session_) stopProbes(session_->projectId());
   if (!session_) return false;
   startHub();
   remember();
@@ -284,6 +293,7 @@ bool Controller::open(Document& doc, const std::string& folder, std::string* err
         return false;
       }
     }
+  stopProbes(cj.text("id"));  // J-146: its own Hub takes over the ports
   session_ = Session::open(doc, sessionConfig(folder, name), err);
   if (!session_) return false;
   if (session_->replica().visible({"song"}) && !session_->member(session_->site())) {
@@ -309,6 +319,7 @@ bool Controller::join(Document& doc, const InviteInfo& info, const std::string& 
     return false;
   }
   close();
+  stopProbes(info.projectId);  // J-146
   // Re-invited (this computer already has the project): open that copy and
   // connect with the invite; the inviter knows us already, so nobody new is
   // added and nothing is copied again. A copy that never received the project
@@ -349,6 +360,7 @@ bool Controller::join(Document& doc, const InviteInfo& info, const std::string& 
 
 void Controller::close() {
   if (leave_.active) finishLeave();  // quitting / opening another project: the leave completes now
+  writeCardNow();  // J-146: the welcome screen shows it as it was when it closed
   if (hub_) hub_->setSession(nullptr);
   hub_.reset();
   session_.reset();
@@ -361,6 +373,8 @@ void Controller::frame(double now) {
   captureExit();
   updateKnownName();  // J-111f
   cachePictures(now);  // J-111g
+  cardFrame(now);      // J-146
+  presenceFrame(now);
   if (leave_.active) {
     if (leave_.started < 0) {
       leave_.started = now;
@@ -588,6 +602,120 @@ void Controller::setProfile(const Profile& p) {
   wire.color = profiles_.color();
   if (session_) session_->setProfile(wire);
   if (hub_) hub_->setProfile(wire);
+}
+
+}  // namespace gl::collab
+
+// ---- J-146: the welcome screen's Collaborative view ----
+namespace gl::collab {
+
+void Controller::setShowOnline(bool on) {
+  if (showOnline_ == on && (!presence_ || presence_->enabled() == on)) return;
+  showOnline_ = on;
+  if (hub_) hub_->setSharePresence(on);
+  if (presence_) presence_->setEnabled(on);
+}
+
+PresenceProber& Controller::presence() {
+  if (!presence_) {
+    std::unique_ptr<Fabric> fabric = fabricFactory ? fabricFactory() : (net.enabled ? makeJuiceFabric(net) : nullptr);
+    Profile p = profiles_.profile();
+    p.color = profiles_.color();
+    presence_ = std::make_unique<PresenceProber>(std::move(fabric), profiles_.identity(), p, version);
+    presence_->setEnabled(showOnline_);
+  }
+  return *presence_;
+}
+
+void Controller::stopProbes(const std::string& projectId) {
+  if (presence_ && !projectId.empty()) presence_->forget(projectId);
+}
+
+void Controller::writeCardNow() {
+  if (!session_ || !session_->ready() || session_->stopped() || session_->projectId().empty()) return;
+  const ProjectCard c = cardOf(*session_, session_->wallNowMs());
+  Json j = cardToJson(c);
+  j.object.erase("saved");
+  std::string text = jsonCompact(j);
+  // members connected now were seen working on it now
+  const int64_t nowSec = static_cast<int64_t>(session_->wallNowMs() / 1000);
+  auto& seen = seen_[c.id];
+  if (seen.empty()) seen = readSeen(profiles_.dir(), c.id);
+  bool seenChanged = false;
+  for (const auto& [site, pv] : session_->peers())
+    if (pv.connected && (seen[site] == 0 || nowSec - seen[site] >= 30)) {
+      seen[site] = nowSec;
+      seenChanged = true;
+    }
+  if (seenChanged) writeSeen(profiles_.dir(), c.id, seen);
+  if (text == cardText_) return;
+  cardText_ = text;
+  writeCard(profiles_.dir(), c);
+}
+
+void Controller::cardFrame(double now) {
+  if (!session_ || (cardAt_ >= 0 && now - cardAt_ < 3.0 && now >= cardAt_)) return;
+  cardAt_ = now;
+  writeCardNow();
+}
+
+void Controller::presenceFrame(double now) {
+  if (!presence_) return;
+  presence_->poll(now);  // (does nothing while the welcome screen's view is not shown)
+  if (presence_->takeChanged()) {
+    // fresh "working now" answers update the last-seen cache
+    for (const auto& k : knownProjects()) {
+      const auto* rs = presence_->results(k.id);
+      if (!rs) continue;
+      auto& seen = seen_[k.id];
+      if (seen.empty()) seen = readSeen(profiles_.dir(), k.id);
+      bool changed = false;
+      for (const auto& [site, r] : *rs)
+        if (r.state == PresenceState::Working && r.checkedAt > 0 && r.checkedAt - seen[site] >= 30) {
+          seen[site] = r.checkedAt;
+          changed = true;
+        }
+      if (changed) writeSeen(profiles_.dir(), k.id, seen);
+    }
+  }
+}
+
+std::map<std::string, ProjectCard> Controller::cards() const {
+  std::map<std::string, ProjectCard> out;
+  for (const auto& k : knownProjects()) {
+    ProjectCard c;
+    if (readCard(profiles_.dir(), k.id, c)) out[k.id] = std::move(c);
+  }
+  return out;
+}
+
+std::vector<ListProject> Controller::listProjects() const {
+  std::vector<ListProject> out;
+  for (const auto& k : knownProjects()) {
+    ListProject l;
+    l.id = k.id;
+    l.name = k.name;
+    l.folder = k.folder;
+    l.openedMs = k.openedMs;
+    l.state = k.state == KnownProject::State::Removed   ? ListProject::State::Removed
+              : k.state == KnownProject::State::Ended   ? ListProject::State::Ended
+              : k.state == KnownProject::State::Missing ? ListProject::State::Missing
+                                                        : ListProject::State::Active;
+    l.byName = k.byName;
+    l.reason = k.reason;
+    l.at = k.at;
+    out.push_back(std::move(l));
+  }
+  return out;
+}
+
+std::map<std::string, std::map<SiteId, int64_t>> Controller::seen() const {
+  std::map<std::string, std::map<SiteId, int64_t>> out;
+  for (const auto& k : knownProjects()) {
+    auto it = seen_.find(k.id);
+    out[k.id] = it != seen_.end() && !it->second.empty() ? it->second : readSeen(profiles_.dir(), k.id);
+  }
+  return out;
 }
 
 }  // namespace gl::collab

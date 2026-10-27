@@ -567,6 +567,14 @@ target_include_directories(gridline_tests_collab_local PRIVATE tests)
 target_compile_options(gridline_tests_collab_local PRIVATE ${GL_WARN})
 add_test(NAME collab_local COMMAND gridline_tests_collab_local WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(collab_local PROPERTIES TIMEOUT 600)
+# J-146: presence on the welcome screen (authenticated probes both ways, strangers, removed,
+# hidden, other versions, no answer, transitive), project cards and the list model (in memory).
+add_executable(gridline_tests_collab_presence tests/test_collab_presence.cpp)
+target_link_libraries(gridline_tests_collab_presence PRIVATE gridline_core)
+target_include_directories(gridline_tests_collab_presence PRIVATE tests)
+target_compile_options(gridline_tests_collab_presence PRIVATE ${GL_WARN})
+add_test(NAME j146_collab_presence COMMAND gridline_tests_collab_presence WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(j146_collab_presence PROPERTIES TIMEOUT 600)
 # J-111: two gridline processes, separate configs, real ICE on this computer (no server).
 if(GRIDLINE_COLLAB)
   add_test(NAME j111_collab_processes
@@ -1423,6 +1431,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j141_launcher_app -P ${CMAKE_SOURCE_DIR}/tests/j141_launcher_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j141_launcher_app PROPERTIES TIMEOUT 600)
+    # J-146: the welcome screen's Collaborative view: rail, tiles, Join, live presence (simulated collaborators).
+    add_test(NAME j146_launcher_collab_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j146_launcher_collab_app
+                     -P ${CMAKE_SOURCE_DIR}/tests/j146_launcher_collab_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j146_launcher_collab_app PROPERTIES TIMEOUT 600)
   endif()
 
   include(cmake/GridlinePlugins.cmake)  # PH-09: Gridline.clap / Gridline.vst3

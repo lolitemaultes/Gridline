@@ -135,6 +135,7 @@ Settings::Settings() {
       {"collab.turnPort", Json::makeNumber(3478)},
       {"collab.turnUser", Json::makeString("")},
       {"collab.portMapping", b(true)},              // ask the router for a temporary port (UPnP-IGD / NAT-PMP / PCP)
+      {"collab.showOnline", b(true)},               // J-146: answer collaborators' presence checks (and check theirs)
       {"collab.showCursors", b(true)},              // draw collaborators' cursors
       {"collab.inviteMinutes", Json::makeNumber(60)},  // invite lifetime
       {"collab.latestVersion", Json::makeString("")},  // newest eligible release seen by the collaboration version check

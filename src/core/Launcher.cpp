@@ -70,7 +70,16 @@ void placeItems(const LayoutIn& in, Layout& L, float avail) {
   L.tileH = L.thumbH + kCaptionH;
   float y = 0;
   int col = 0;
+  size_t block = 0;
   for (Item it : in.items) {
+    if (it == Item::Block) {  // J-146: a full-width panel on rows of its own
+      if (col > 0) y += L.tileH + kGap, col = 0;
+      const float h = block < in.blockH.size() ? std::max(0.0f, in.blockH[block]) : 0.0f;
+      ++block;
+      L.items.push_back({0, y, avail, h});
+      y += h + kGap;
+      continue;
+    }
     if (it == Item::Section) {
       if (col > 0) y += L.tileH + kGap, col = 0;
       L.items.push_back({0, y, avail, kSectionH});

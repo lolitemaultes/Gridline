@@ -6,6 +6,7 @@
 // core/Launcher.h; this file draws it and keeps the sketches (core/ProjectPreview.h).
 #pragma once
 #include <string>
+#include "../../third_party/imgui/imgui.h"
 #include "../core/ProjectPreview.h"
 
 namespace gl {
@@ -21,8 +22,11 @@ void drawReturnFade(App& a);
 // The sketch of a project just opened or saved (no disk read): kept for the launcher and
 // written to the cache in the background.
 void rememberSketch(App& a, const std::string& path, preview::Sketch k);
-// 0 = Recent, 1 = Templates (dev: --show launcher-templates).
+// 0 = Recent, 1 = Templates, 2 = Collaborative (dev: --show launcher-templates / launcher-collab).
 void setView(int view);
+// J-146: the sketch kept for `key` (a project file, or "@current") drawn into p0..p1 (asked for on
+// first use); false while there is none yet.
+bool drawSketchKey(App& a, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const std::string& key, float alpha);
 // Dev check (--dev-input "launcher"): the launcher's state and tiles to stdout.
 void devReport(App& a);
 // Stops the sketch worker (App's destructor).

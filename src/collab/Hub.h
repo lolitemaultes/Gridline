@@ -70,6 +70,13 @@ bool parseInviteCode(const std::string& code, InviteInfo& out, std::string* err 
 // What kind of code a pasted text is: 'i' invite, 'r' reply, 'c' reconnect, 0 none.
 char codeKind(const std::string& text);
 
+// J-146: a member link's key, handshake id and ICE credentials. The Hub's member links and
+// the welcome screen's presence probes (Presence.h) build the same ones, so a probe meets
+// the link a collaborator's open project keeps waiting for this member.
+crypto::Key memberLinkPsk(const crypto::Identity& me, const crypto::Key& theirDh, const std::string& projectId);
+std::string memberLinkHsid(const crypto::Key& psk);
+EndpointConfig memberLinkEndpoint(const crypto::Key& psk, bool initiator, uint16_t localPort);
+
 class Hub {
  public:
   Hub(std::unique_ptr<Fabric> fabric, const crypto::Identity& id, Profile profile, VersionInfo version, std::string stateDir);
@@ -142,6 +149,18 @@ class Hub {
   };
   std::vector<LinkView> links() const;
   LinkView link(SiteId site) const;
+
+  // ---- J-146: presence on collaborators' welcome screens (docs: "Presence on the welcome screen") ----
+  // "Show that I am online to collaborators": on, a member's presence probe is refused with
+  // a presence answer (since when the project is open, idle time, who is linked); off, it
+  // gets no answer at all and our member hellos say "presence": 0.
+  void setSharePresence(bool on);
+  bool sharePresence() const { return sharePresence_; }
+  // The user did something (the idle time in presence answers).
+  void noteActivity(int64_t wallSec);
+  // Statistics (tests): presence probes answered / met in silence.
+  int probesAnswered() const { return probesAnswered_; }
+  int probesIgnored() const { return probesIgnored_; }
 
   std::function<void(const std::string& text, bool error)> onNotice;
   struct Refusal {
@@ -228,6 +247,8 @@ class Hub {
   EndpointConfig memberEndpoint(SiteId peer, const crypto::Key& psk, bool initiator);
   void startMemberLink(SiteId peer, bool initiator, const std::string& remoteDesc);
   Json helloJson() const;
+  void presenceFields(Json& hello, SiteId except) const;  // J-146: since / idle / with (member links only)
+  Json probeAnswer(SiteId peer, const Json& theirs, bool& ok);  // J-146: a presence probe's refusal
   bool checkVersion(const Json& theirHello, const std::string& who, Json* refusal);
   bool shunned(SiteId peer) const;  // removed or departed: no links, relay or introductions
   static bool isNotice(const std::string& wire);
@@ -260,6 +281,10 @@ class Hub {
   std::map<SiteId, double> shunnedSince_;  // removed / departed: their links close after a short grace (the notice goes out)
   double now_ = 0, lastPeers_ = -1, lastSave_ = -1, lastPoll_ = -1;
   bool stateLoaded_ = false;
+  // J-146 presence
+  bool sharePresence_ = true;
+  int64_t openedWall_ = 0, activityWall_ = 0;
+  int probesAnswered_ = 0, probesIgnored_ = 0;
   // network thread (real networks); mu_ guards everything above
   mutable std::recursive_mutex mu_;
   std::shared_ptr<Wake> wake_ = std::make_shared<Wake>();

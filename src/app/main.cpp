@@ -1142,7 +1142,8 @@ int main(int argc, char** argv) {
   double fixedDt = 0;                     // --fixed-dt ms: fixed UI frame time (J-37 animation frame sequences)
   std::vector<std::string> devHide;       // --hide rack|browser|mixer|playlist|piano: closed once the layout exists
   updui::Options updateOpts;              // J-89: --no-update-check, --fake-update <version>
-  int devLauncher = -1;                   // J-141: --show launcher (0) / launcher-templates (1)
+  int devLauncher = -1;                   // J-141: --show launcher (0) / launcher-templates (1) / launcher-collab (2, J-146)
+  bool devLauncherCollabDemo = false;     // J-146: --show launcher-collab-demo (simulated collaborators)
   bool argProject = false;                // a project path on the command line opened
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -1231,6 +1232,8 @@ int main(int argc, char** argv) {
       if (w == "about") app.showAbout = true;
       else if (w == "launcher") devLauncher = 0;            // J-141: the welcome launcher
       else if (w == "launcher-templates") devLauncher = 1;  // ... on its Templates view
+      else if (w == "launcher-collab") devLauncher = 2;     // J-146: ... on its Collaborative view
+      else if (w == "launcher-collab-demo") devLauncher = 2, devLauncherCollabDemo = true;  // ... with simulated collaborators
       else if (w == "settings") app.showSettings = true;
       else if (w == "shortcuts") app.showShortcuts = true;
       else if (w == "export") app.showExport = true;
@@ -1420,6 +1423,7 @@ int main(int argc, char** argv) {
   }
   if (devLauncher >= 0) {  // J-141: with a project argument, that project stays open behind it
     launcherui::setView(devLauncher);
+    if (devLauncherCollabDemo) gl::collabui::startLauncherDemo(app, (std::filesystem::path(app.configDir()) / "launcher-collab-demo").string());
     if (argProject) app.home.showHome(app.now);
     else app.home.showAtStartup(app.now);
   }

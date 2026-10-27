@@ -11,6 +11,8 @@
 #include <vector>
 #include "../core/Document.h"
 #include "Hub.h"
+#include "Presence.h"
+#include "ProjectList.h"
 #include "Profile.h"
 #include "Session.h"
 
@@ -114,6 +116,24 @@ class Controller {
   // Where renameFolder() would move the folder ("" when it already has the name).
   std::string folderForName() const;
 
+  // ---- J-146: the welcome screen's Collaborative view ----
+  const std::string& collabDir() const { return profiles_.dir(); }
+  // "Show that I am online to collaborators" (settings: collab.showOnline): the open
+  // project's Hub answers presence probes, and this computer probes others, only when on.
+  void setShowOnline(bool on);
+  bool showOnline() const { return showOnline_; }
+  // The presence prober (made on first use; its own sockets, never the open project's).
+  PresenceProber& presence();
+  bool hasPresence() const { return presence_ != nullptr; }
+  // The open project's card, written now (also every few seconds while it is open and on close).
+  void writeCardNow();
+  // The cards of the known projects (from disk, cached by file time).
+  std::map<std::string, ProjectCard> cards() const;
+  // "Last seen working on it" per project (probes and sessions).
+  std::map<std::string, std::map<SiteId, int64_t>> seen() const;
+  // The known projects as the list model takes them (ProjectList.h).
+  std::vector<ListProject> listProjects() const;
+
   std::function<void(const std::string&, bool)> onNotice;
   std::function<void(const Hub::Refusal&)> onVersionRefusal;
   std::function<void(const std::vector<Flash>&)> onRemoteChange;
@@ -144,6 +164,15 @@ class Controller {
   ProfileStore profiles_;
   std::unique_ptr<Session> session_;
   std::unique_ptr<Hub> hub_;
+  // J-146
+  void cardFrame(double now);
+  void presenceFrame(double now);
+  void stopProbes(const std::string& projectId);
+  std::unique_ptr<PresenceProber> presence_;
+  bool showOnline_ = true;
+  double cardAt_ = -1;
+  std::string cardText_;
+  std::map<std::string, std::map<SiteId, int64_t>> seen_;  // loaded per project on use
 };
 
 }  // namespace gl::collab

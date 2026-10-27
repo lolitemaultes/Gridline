@@ -68,8 +68,9 @@ struct Rect {
   }
 };
 
-// Grid items in order: tiles, and section headers (a full row label, then a new row).
-enum class Item { Tile, Section };
+// Grid items in order: tiles, section headers (a full row label, then a new row) and
+// blocks (J-146: a full-width panel of a given height, e.g. the inline collaboration settings).
+enum class Item { Tile, Section, Block };
 
 // Rail rows (wide layout): brand, actions, the library label, views, settings, version.
 enum class RailRow { Brand, Action, Label, View, Settings, Version };
@@ -84,6 +85,7 @@ struct LayoutIn {
   int actions = 3;             // rail action rows
   int views = 2;               // rail view rows
   float scrollbar = 10;        // room the grid's scrollbar takes when the tiles overflow
+  std::vector<float> blockH;   // J-146: the height of each Block item, in order (missing: 0)
 };
 
 // Tile metrics (design tokens).

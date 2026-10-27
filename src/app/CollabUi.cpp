@@ -26,6 +26,7 @@
 #include "../collab/LocalState.h"
 #include "../collab/NetTest.h"
 #include "../collab/VersionGate.h"
+#include "../core/Demo.h"
 #include "../core/I18n.h"
 #include "../core/Platform.h"
 #include "../core/Png.h"
@@ -224,6 +225,25 @@ struct Ui {
   bool exitChoosing = false;    // the folder chooser of "Keep a private copy" is up
   std::string exitErr;
   std::string dupFolder, dupOf;  // open refused: a copy of a project that is also elsewhere
+  // J-146: a welcome-screen action that needs its project open (invite, reconnect, leave, stop
+  // sharing) waits here until that project is open and ready
+  std::string afterOpenId;
+  int afterOpenAct = 0;
+  double afterOpenUntil = -1;
+  double activityAt = -1;  // the last activity told to the Hub (presence answers' idle time)
+  // J-146 dev (--show launcher-collab-demo): simulated collaborators on an in-memory network
+  struct LauncherDemo {
+    struct Sim {  // a collaborator: their own controller, profile and project, in this process
+      std::string label;
+      Document doc;
+      std::unique_ptr<Controller> ctl;
+    };
+    std::shared_ptr<MemFabric::Shared> net;
+    std::vector<std::unique_ptr<Sim>> sims;
+    Document mine;  // this user's projects while the demo is set up (the app's project stays)
+    double offset = 0;  // the setup ran ahead of the app's clock by this much
+  };
+  std::unique_ptr<LauncherDemo> ldemo;
 };
 
 Ui& U() {
@@ -1928,6 +1948,7 @@ void finishJoin(App& a) {
   a.addRecent(a.projectPath);
   afterProjectReplaced(a);
   a.notify(fmt1(tr("Joined %s. Changes now sync both ways."), s->projectName()));
+  a.home.projectOpened(a.now);  // J-146: joined from the welcome screen: the project shows
   devsig::reach("collab-joined");
   a.showJoin = false;
   a.showCollab = true;
@@ -3056,11 +3077,42 @@ void frame(App& a, double now) {
   // whose channel / sample a collaborator removed or replaced stops cleanly
   const OwnPlaySig own = s ? ownPlaySignature(a.engine, a.doc.song()) : OwnPlaySig();
   const uint64_t applied = s ? s->incrementalApplies() + s->fullApplies() : 0;
+  // J-146: presence (answers to collaborators' welcome screens; this computer's own checks)
+  c.setShowOnline(a.settings.getBool("collab.showOnline"));
+  if (Hub* h = c.hub()) {
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool input = io.MouseDelta.x != 0 || io.MouseDelta.y != 0 || io.MouseDown[0] || io.MouseDown[1] || io.InputQueueCharacters.Size > 0 ||
+                       io.MouseWheel != 0 || ImGui::IsAnyItemActive();
+    if (input && (u.activityAt < 0 || now - u.activityAt >= 1.0)) {
+      u.activityAt = now;
+      h->noteActivity(static_cast<int64_t>(std::time(nullptr)));
+    }
+  }
+  if (u.ldemo) {  // simulated collaborators (dev): their projects stay open and answer
+    for (auto& sim : u.ldemo->sims) sim->ctl->frame(now + u.ldemo->offset);
+  }
   c.frame(now);
   leaveFinished(a);  // J-111e
   s = c.session();
   if (!s) return;
   finishJoin(a);
+  // J-146: a welcome-screen action waiting for its project to open
+  if (!u.afterOpenId.empty()) {
+    if (now > u.afterOpenUntil) {
+      u.afterOpenId.clear();
+    } else if (s->ready() && s->projectId() == u.afterOpenId && !a.home.visible()) {
+      a.showCollab = true;
+      switch (static_cast<ProjectAction>(u.afterOpenAct)) {
+        case ProjectAction::Invite:
+          if (Hub* h = c.hub()) inviteAgain(*h);
+          break;
+        case ProjectAction::Leave: u.leaveDialog = 1, u.leaveMode = 0, u.leaveWait = false, u.leaveErr.clear(); break;
+        case ProjectAction::StopSharing: u.leaveDialog = 2, u.leaveErr.clear(); break;
+        default: break;
+      }
+      u.afterOpenId.clear();
+    }
+  }
   if (s->incrementalApplies() + s->fullApplies() != applied) stopOwnPlaybackIfChanged(a.engine, a.doc.song(), own);
   if (s->ready()) a.doc.markSaved();  // saved continuously (op log + project file)
   // J-111f: the project file was renamed after the shared name: the window, Recent files and saves follow it
@@ -4550,6 +4602,19 @@ void settingsPage(App& a, float fieldW) {
   }
   ui::EndSection();
 
+  ui::BeginSection(tr("PRESENCE"));  // J-146
+  label("Online");
+  {
+    bool on = a.settings.getBool("collab.showOnline");
+    if (ImGui::Checkbox(tr("Show that I am online to collaborators"), &on)) {
+      a.settings.set("collab.showOnline", on);
+      c.setShowOnline(on);
+    }
+    ui::Hint("On: the members of a project see on their welcome screen when you have it open (asked over the encrypted member link). "
+             "Off: nobody is told, and your welcome screen does not ask about others either");
+  }
+  ui::EndSection();
+
   ui::BeginSection(tr("CONNECTION"));
   Settings& st = a.settings;
   label("Version");
@@ -4622,6 +4687,198 @@ void settingsPage(App& a, float fieldW) {
   label("Test");
   netTestBlock(a, 168.0f);
   ui::EndSection();
+}
+
+// ---- J-146: the welcome screen's Collaborative view (LauncherCollab.cpp) ----
+void drawPersonAvatar(App& a, ImDrawList* dl, ImVec2 c, float r, const std::string& name, uint32_t color, const std::string& jpeg, int online) {
+  drawAvatar(a, dl, c, r, name, color, jpeg, online);
+}
+
+void projectAction(App& a, ProjectAction act, const std::string& projectId, const std::string& folder, const std::string& name, int state) {
+  Ui& u = U();
+  Controller& c = ctlOf(a);
+  Session* s = c.session();
+  const bool openHere = s && s->projectId() == projectId && a.home.projectOpen();
+  switch (act) {
+    case ProjectAction::Open:
+      if (openHere) a.home.back(a.now);
+      else a.guardUnsaved([&a, folder] { a.openProject(folder); });
+      break;
+    case ProjectAction::Invite:
+    case ProjectAction::Reconnect:
+    case ProjectAction::Leave:
+    case ProjectAction::StopSharing:
+      // these live in the Collaboration panel of the open project: open it (or go back to it), then the panel
+      u.afterOpenId = projectId;
+      u.afterOpenAct = static_cast<int>(act);
+      u.afterOpenUntil = a.now + 20.0;
+      if (openHere) a.home.back(a.now);
+      else a.guardUnsaved([&a, folder] { a.openProject(folder); });
+      break;
+    case ProjectAction::Locate: {
+      const std::string id = projectId;
+      chooseFolder(a, "Where is the project folder now?", fs::path(folder).parent_path().string(), [&a, id](const std::string& dir) {
+        std::string err;
+        if (!ctlOf(a).locateProject(id, dir, &err)) a.notify(err, true);
+      });
+      break;
+    }
+    case ProjectAction::KeepCopy: keepCopyOfFolder(a, folder, name); break;
+    case ProjectAction::Forget:
+      if (state == 0) {  // still shared: off this list only, nothing on disk changes
+        if (openHere) break;
+        a.confirm = {};
+        a.confirm.open = true;
+        a.confirm.title = fmt1(tr("Remove %s from this list?"), name);
+        a.confirm.subtitle = tr("The folder and its collaboration stay as they are. Opening the folder adds it back.");
+        a.confirm.okLabel = "Remove";
+        const std::string f = folder;
+        a.confirm.action = [&a, f] { ctlOf(a).forgetProject(f); };
+      } else {
+        Controller::KnownProject k;
+        k.id = projectId;
+        k.name = name;
+        k.folder = folder;
+        k.state = state == 1   ? Controller::KnownProject::State::Removed
+                  : state == 2 ? Controller::KnownProject::State::Ended
+                               : Controller::KnownProject::State::Missing;
+        forgetPrompt(a, k);
+      }
+      break;
+    case ProjectAction::Reveal: revealFolder(folder); break;
+    case ProjectAction::CopyPath: ImGui::SetClipboardText(folder.c_str()); break;
+  }
+}
+
+void joinWithCode(App& a, const std::string& code) {
+  openJoin(a);
+  Ui& u = U();
+  if (!u.joining && !code.empty()) std::snprintf(u.codeBuf, sizeof u.codeBuf, "%s", code.c_str());
+}
+
+void newCollaborative(App& a) {
+  a.guardUnsaved([&a] {
+    a.newProject();
+    makeCollaborative(a);
+  });
+}
+
+void shareOpenProject(App& a) {
+  a.home.back(a.now);
+  if (active(a)) a.showCollab = true;
+  else makeCollaborative(a);
+}
+
+void startLauncherDemo(App& a, const std::string& folder) {
+  Ui& u = U();
+  std::error_code ec;
+  fs::remove_all(folder, ec);
+  fs::create_directories(folder, ec);
+  auto d = std::make_unique<Ui::LauncherDemo>();
+  d->net = MemFabric::makeNet();
+  auto net = d->net;
+  Controller& me = ctlOf(a);
+  me.fabricFactory = [net] { return std::make_unique<MemFabric>(net, "Riley"); };
+  Profile mp = me.profiles().profile();
+  if (mp.name.empty()) mp.name = "Riley";
+  mp.color = 0x4FB8B0;
+  me.setProfile(mp);
+  auto sim = [&](const std::string& label, uint32_t color) -> Ui::LauncherDemo::Sim& {
+    auto x = std::make_unique<Ui::LauncherDemo::Sim>();
+    x->label = label;
+    x->ctl = std::make_unique<Controller>((fs::path(folder) / (label + "-config")).string());
+    x->ctl->fabricFactory = [net, label] { return std::make_unique<MemFabric>(net, label); };
+    Profile p = x->ctl->profiles().profile();
+    p.name = label;
+    p.color = color;
+    x->ctl->setProfile(p);
+    d->sims.push_back(std::move(x));
+    return *d->sims.back();
+  };
+  Ui::LauncherDemo::Sim& sam = sim("Sam", 0xD8775A);
+  Ui::LauncherDemo::Sim& kim = sim("Kim", 0x8E7CE0);
+  Ui::LauncherDemo::Sim& alex = sim("Alex", 0x6CB86A);
+  Ui::LauncherDemo::Sim& lee = sim("Lee", 0xD9B44A);
+  lee.ctl->setShowOnline(false);  // Lee keeps presence hidden: never "offline", just not known
+  double t = a.now;
+  auto run = [&](double sec, const std::function<bool()>& until) {
+    for (const double end = t + sec; t < end; t += 0.02) {
+      me.frame(t);
+      for (auto& x : d->sims) x->ctl->frame(t);
+      if (until && until()) return true;
+    }
+    return false;
+  };
+  auto song = [](int seed, double tempo) {
+    Song sg = makeDemoTrack();
+    sg.tempo = tempo;
+    std::vector<Clip> keep;
+    for (const Clip& cl : sg.playlist)
+      if ((cl.track * 7 + static_cast<int>(cl.start / 384) * 3 + seed) % 5 != 0 && (seed % 2 == 0 || cl.start < 384 * 4 * 48)) keep.push_back(cl);
+    sg.playlist = keep;
+    return sg;
+  };
+  auto invite = [&](Controller& host, Controller& guest, Document& doc, const std::string& where) {
+    if (!host.hub()) return false;
+    const std::string id = host.hub()->createInvite(60);
+    if (!run(30, [&] { const auto* v = host.hub()->invite(id); return v && v->status == Hub::InviteStatus::Ready; })) return false;
+    InviteInfo info;
+    std::string err;
+    if (!parseInviteCode(host.hub()->invite(id)->code, info, &err) || !guest.join(doc, info, where, &err)) return false;
+    const bool ok = run(40, [&] { return guest.session() && guest.session()->ready(); });
+    run(1.0, nullptr);
+    return ok;
+  };
+  std::string err;
+  bool ok = true;
+  const fs::path mine = fs::path(folder) / "Riley";
+  // Night Drive: mine (admin); Sam works on it now; Kim was here a moment ago and left
+  d->mine.reset(song(1, 124));
+  ok = ok && me.create(d->mine, (mine / "Night Drive").string(), "Night Drive", &err);
+  ok = ok && invite(me, *sam.ctl, sam.doc, (fs::path(folder) / "Sam" / "Night Drive").string());
+  ok = ok && invite(me, *kim.ctl, kim.doc, (fs::path(folder) / "Kim" / "Night Drive").string());
+  if (ok) {
+    kim.ctl->close();
+    run(2.0, nullptr);
+    me.close();
+  }
+  // Glass Choir: Alex's (I joined); Alex works on it now, Lee too but hidden
+  alex.doc.reset(song(2, 96));
+  ok = ok && alex.ctl->create(alex.doc, (fs::path(folder) / "Alex" / "Glass Choir").string(), "Glass Choir", &err);
+  ok = ok && invite(*alex.ctl, me, d->mine, (mine / "Glass Choir").string());
+  ok = ok && invite(*alex.ctl, *lee.ctl, lee.doc, (fs::path(folder) / "Lee" / "Glass Choir").string());
+  if (ok) me.close();
+  // Tape Loops: mine; nobody reachable; a sync review and offline changes wait
+  d->mine.reset(song(3, 82));
+  ok = ok && me.create(d->mine, (mine / "Tape Loops").string(), "Tape Loops", &err);
+  ok = ok && invite(me, *sam.ctl, sam.doc, (fs::path(folder) / "Sam" / "Tape Loops").string());
+  if (ok) {
+    const std::string pid = me.session()->projectId();
+    sam.ctl->close();
+    run(0.5, nullptr);
+    me.close();
+    ProjectCard card;
+    if (readCard(me.collabDir(), pid, card)) {
+      card.review = 2;
+      card.pending = 5;
+      writeCard(me.collabDir(), card);
+    }
+    // Sam goes back to Night Drive (joining Tape Loops closed it on Sam's side)
+    sam.doc.reset(makeEmptySong());
+    ok = sam.ctl->open(sam.doc, (fs::path(folder) / "Sam" / "Night Drive").string(), &err);
+    run(1.0, nullptr);
+  }
+  // Old Sketches: mine, alone; its folder moved outside Gridline
+  d->mine.reset(song(4, 140));
+  ok = ok && me.create(d->mine, (mine / "Old Sketches").string(), "Old Sketches", &err);
+  if (ok) {
+    me.close();
+    fs::rename(mine / "Old Sketches", mine / "Old Sketches moved", ec);
+  }
+  if (!ok) a.notify("launcher collab demo: " + (err.empty() ? std::string("setup did not finish") : err), true);
+  d->offset = t - a.now;
+  u.ldemo = std::move(d);
+  devsig::reach("launcher-collab-demo");
 }
 
 }  // namespace gl::collabui

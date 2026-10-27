@@ -86,4 +86,22 @@ void startDemo(App& a, const std::string& folder, bool quietReview = false);
 // pointerSize over the interface scale): collaborators' cursors are drawn this size.
 void setPointerSize(float logicalH, const std::string& source);
 
+// ---- J-146: the welcome screen's Collaborative view (LauncherCollab.cpp) ----
+// A person's round picture (or initials on their colour); `online` 1 / 0 draws a presence dot, -1 none.
+void drawPersonAvatar(App& a, ImDrawList* dl, ImVec2 c, float r, const std::string& name, uint32_t color, const std::string& jpeg, int online);
+// What a project tile's menu does, with the panel's semantics and confirmations. Actions that
+// need the project open (invite, reconnect code, leave, stop sharing) open it first.
+// `state`: 0 active, 1 removed, 2 no longer shared, 3 folder missing (collab::ListProject::State).
+enum class ProjectAction { Open, Invite, Reconnect, Leave, StopSharing, Locate, KeepCopy, Forget, Reveal, CopyPath };
+void projectAction(App& a, ProjectAction act, const std::string& projectId, const std::string& folder, const std::string& name, int state);
+// The Join window, with `code` filled in ("" = empty).
+void joinWithCode(App& a, const std::string& code);
+// A new empty project made collaborative (File > New collaborative project...).
+void newCollaborative(App& a);
+// The open project: back to it, the Collaboration panel's "Share this project" ready.
+void shareOpenProject(App& a);
+// Dev / screenshots (--show launcher-collab-demo): collaborative projects with simulated
+// collaborators in this process (in-memory network) who answer presence probes for real.
+void startLauncherDemo(App& a, const std::string& folder);
+
 }  // namespace gl::collabui
