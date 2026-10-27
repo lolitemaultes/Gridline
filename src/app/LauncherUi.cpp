@@ -187,6 +187,7 @@ struct Tile {
   std::string name, meta, tip;
   std::string sketch;  // sketch key ("" = none)
   bool missing = false, open = false;
+  bool fav = false;  // J-148: a favourite project (heart badge)
 };
 
 Tile tileOf(TileKind k) {
@@ -208,6 +209,7 @@ struct UiState {
   bool wasVisible = false;
   Tile menu;              // the tile whose menu is open
   bool openMenu = false;
+  bool menuShown = false;  // the tile menu was drawn last frame (dev report)
   std::map<std::string, std::pair<bool, double>> exists;  // path -> (exists, checked at)
   std::vector<Tile> tiles;  // last frame's tiles (dev report)
 };
@@ -228,6 +230,7 @@ bool fileExists(const std::string& path, double now) {
 
 struct Colors {
   ImU32 bg, rail, railEdge, card, cardHover, thumb, line, lineHover, text, dim, faint, accent, danger, logo, fill, fillHover;
+  ImU32 heart;  // J-148: the favourite heart (a warm rose that reads on both themes)
 };
 Colors colors() {
   const auto& P = theme::pal();
@@ -258,6 +261,7 @@ Colors colors() {
   c.accent = P.accent;
   c.danger = P.danger;
   c.logo = P.logo;
+  c.heart = P.dark ? IM_COL32(240, 86, 110, 255) : IM_COL32(214, 48, 78, 255);
   return c;
 }
 
@@ -393,6 +397,7 @@ void buildTiles(App& a, std::vector<Tile>& tiles, std::vector<launcher::Item>& i
       t.missing = !fileExists(p, a.now);
       t.open = !openFile.empty() && p == openFile;
       t.sketch = t.open ? "@current" : p;
+      t.fav = a.isFavouriteProject(p);
       add(t);
     }
     if (a.recentFiles.empty() && !a.home.projectOpen() && !S.search[0]) {
@@ -620,17 +625,26 @@ void removeTile(App& a, const Tile& t) {
   if (a.removeRecent(t.key)) a.notify("Removed from recent projects: " + t.name);
 }
 
+// J-148: favourite on / off (the tile menu, the tile's heart button, the F key).
+void toggleFavourite(App& a, const Tile& t) {
+  if (t.kind != TileKind::Recent) return;
+  a.setFavouriteProject(t.key, !t.fav);
+}
+
 void tileMenu(App& a) {
   UiState& S = ui_();
   if (S.openMenu) {
     ImGui::OpenPopup("##launcherTileMenu");
     S.openMenu = false;
   }
-  if (!ImGui::BeginPopup("##launcherTileMenu")) return;
+  S.menuShown = ImGui::BeginPopup("##launcherTileMenu");
+  if (!S.menuShown) return;
   const Tile& t = S.menu;
   if (t.kind == TileKind::Recent || t.kind == TileKind::Current) {
     if (ImGui::MenuItem(t.open ? tr("Back to project") : tr("Open"), nullptr, false, !t.missing)) openTile(a, t);
     if (t.kind == TileKind::Recent) {
+      if (ImGui::MenuItem(t.fav ? tr("Remove from favourites") : tr("Add to favourites"))) toggleFavourite(a, t);
+      ImGui::Separator();
       if (ImGui::MenuItem(tr(revealLabel()), nullptr, false, !t.missing)) http::reveal(t.key);
       if (ImGui::MenuItem(tr("Copy path"))) ImGui::SetClipboardText(t.key.c_str());
       ImGui::Separator();
@@ -731,8 +745,21 @@ bool drawTile(App& a, int index, const Tile& t, ImVec2 p, const launcher::Layout
   dl->AddRect(p, p1, edge, r, 0, t.open ? 1.5f : 1.0f);
   if (focused && S.keyNav) dl->AddRect(ImVec2(p.x - 3, p.y - 3), ImVec2(p1.x + 3, p1.y + 3), C.accent, r + 3, 0, 2.0f);
   if (held) dl->AddRectFilled(p, p1, theme::withAlpha(P.ink, P.dark ? 0.10f : 0.04f), r);
-  // Hover: the tile's menu button (not on the new-project tile).
-  if (t.kind != TileKind::New && (hov || (ImGui::IsPopupOpen("##launcherTileMenu") && S.menu.key == t.key && S.menu.kind == t.kind))) {
+  // J-148: a favourite wears a heart badge in the thumbnail's top-left corner.
+  if (t.fav) {
+    const float bd = 26;
+    const ImVec2 h0(t0.x + 8, t0.y + 8);
+    dl->AddRectFilled(h0, ImVec2(h0.x + bd, h0.y + bd), theme::withAlpha(C.card, 0.92f), bd * 0.5f);
+    ui::drawIcon(dl, ui::Icon::HeartFilled, ImVec2(h0.x + bd * 0.5f, h0.y + bd * 0.5f + 0.5f), 14, C.heart);
+  }
+  // Hover: the tile's buttons, top right (not on the new-project tile): a heart (favourite,
+  // recent projects only) and the menu. They stay while pressed: the tile reports no hover
+  // while one of its buttons is the active item, and a button that is not submitted on the
+  // frame the mouse is released never reports the click.
+  const ImGuiID moreId = ImGui::GetID("##more"), favId = ImGui::GetID("##fav");
+  const ImGuiID activeId = ImGui::GetActiveID();
+  const bool menuOpen = ImGui::IsPopupOpen("##launcherTileMenu") && S.menu.key == t.key && S.menu.kind == t.kind;
+  if (t.kind != TileKind::New && (hov || menuOpen || activeId == moreId || activeId == favId)) {
     const float bs = 26;
     const ImVec2 m0(t1.x - bs - 8, t0.y + 8);
     ImGui::SetCursorScreenPos(m0);
@@ -741,9 +768,31 @@ bool drawTile(App& a, int index, const Tile& t, ImVec2 p, const launcher::Layout
       S.openMenu = true;
     }
     const bool mh = ImGui::IsItemHovered();
+    if (mh) ImGui::SetTooltip("%s", tr("More"));
     dl->AddRectFilled(m0, ImVec2(m0.x + bs, m0.y + bs), theme::withAlpha(mh ? C.cardHover : C.card, 0.92f), theme::kRadius + 1);
     ui::drawIcon(dl, ui::Icon::More, ImVec2(m0.x + bs * 0.5f, m0.y + bs * 0.5f), 14, mh ? C.text : C.dim);
-    if (mh) activated = false;
+    bool fh = false;
+    if (t.kind == TileKind::Recent && !t.fav) {
+      const ImVec2 f0(m0.x - bs - 6, m0.y);
+      ImGui::SetCursorScreenPos(f0);
+      if (ImGui::InvisibleButton("##fav", ImVec2(bs, bs))) toggleFavourite(a, t);
+      fh = ImGui::IsItemHovered();
+      if (fh) ImGui::SetTooltip("%s", tr("Add to favourites"));
+      dl->AddRectFilled(f0, ImVec2(f0.x + bs, f0.y + bs), theme::withAlpha(fh ? C.cardHover : C.card, 0.92f), theme::kRadius + 1);
+      ui::drawIcon(dl, fh ? ui::Icon::HeartFilled : ui::Icon::Heart, ImVec2(f0.x + bs * 0.5f, f0.y + bs * 0.5f + 0.5f), 14,
+                   fh ? C.heart : C.dim);
+    }
+    if (mh || fh) activated = false;
+  }
+  // The heart badge doubles as the "remove from favourites" button.
+  if (t.fav && t.kind == TileKind::Recent) {
+    const float bd = 26;
+    ImGui::SetCursorScreenPos(ImVec2(t0.x + 8, t0.y + 8));
+    if (ImGui::InvisibleButton("##unfav", ImVec2(bd, bd))) toggleFavourite(a, t);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", tr("Remove from favourites"));
+      activated = false;
+    }
   }
   ImGui::PopID();
   return activated;
@@ -781,11 +830,12 @@ void devReport(App& a) {
   std::printf("launcher visible=%d open=%d view=%d tiles=%d prompt=%d modified=%d project=%s title=%s\n", a.home.visible() ? 1 : 0,
               a.home.projectOpen() ? 1 : 0, S.view, static_cast<int>(S.tiles.size()), a.confirmDiscard || ImGui::GetTopMostPopupModal() ? 1 : 0, a.doc.modified() ? 1 : 0,
               fs::path(a.projectFile()).filename().string().c_str(), a.windowTitle().c_str());
+  std::printf("launcher menu=%s\n", S.menuShown && a.home.visible() ? S.menu.name.c_str() : "-");  // J-148: the tile menu shown
   for (const Tile& t : S.tiles) {
     if (!t.key.empty() && t.key[0] == '#') continue;
     const SEntry* e = t.sketch.empty() ? nullptr : store().get(t.sketch);
-    std::printf("tile kind=%d name=%s open=%d missing=%d sketch=%s meta=%s\n", static_cast<int>(t.kind), t.name.c_str(), t.open ? 1 : 0,
-                t.missing ? 1 : 0, !e ? "none" : e->st == SState::Ready ? "ready" : e->st == SState::Pending ? "pending" : "failed", t.meta.c_str());
+    std::printf("tile kind=%d name=%s open=%d missing=%d fav=%d sketch=%s meta=%s\n", static_cast<int>(t.kind), t.name.c_str(), t.open ? 1 : 0,
+                t.missing ? 1 : 0, t.fav ? 1 : 0, !e ? "none" : e->st == SState::Ready ? "ready" : e->st == SState::Pending ? "pending" : "failed", t.meta.c_str());
   }
   std::fflush(stdout);
 }
@@ -935,7 +985,10 @@ void draw(App& a) {
           const size_t n = a.removeMissingRecents();
           if (n) a.notify("Removed missing projects from the list");
         }
-        if (ImGui::MenuItem(tr("Clear the list"), nullptr, false, !a.recentFiles.empty())) a.clearRecents();
+        // J-148: favourites stay when the list is cleared.
+        const bool favs = a.favouriteProjectCount() > 0;
+        if (ImGui::MenuItem(favs ? tr("Clear all but favourites") : tr("Clear the list"), nullptr, false, a.recentFiles.size() > a.favouriteProjectCount()))
+          a.clearRecents();
         ImGui::EndPopup();
       }
     }
@@ -1067,6 +1120,9 @@ void draw(App& a) {
         const Tile& t = tiles[static_cast<size_t>(tileIdx[static_cast<size_t>(S.focus)])];
         if (t.kind != TileKind::New) S.menu = t, S.openMenu = true;
       }
+      // J-148: F toggles the focused project's favourite mark.
+      if (nTiles && S.keyNav && io.KeyMods == ImGuiMod_None && ImGui::IsKeyPressed(ImGuiKey_F, false))
+        toggleFavourite(a, tiles[static_cast<size_t>(tileIdx[static_cast<size_t>(S.focus)])]);
       if (ImGui::IsKeyPressed(ImGuiKey_Tab)) S.view = 1 - S.view, S.focus = 0;
       if (keys::pressed("file.new")) openTile(a, tileOf(TileKind::New));
       if (keys::pressed("file.open")) a.openDialog();

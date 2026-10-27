@@ -16,6 +16,7 @@
 #include "Keys.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../host/HostedPlugins.h"
+#include "../host/PluginGroups.h"
 #include "../host/PluginPrefs.h"
 #include "../host/PluginScan.h"
 #include "App.h"
@@ -322,6 +323,7 @@ void drawPluginPicker(App& a) {
   for (const PluginInfo* p : dynamicPlugins()) {
     std::string fmt, uid;
     if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
+    if (!host::listedInBrowser(p->type)) continue;  // J-147: one format per plugin, no Gridline Suite builds
     if (!collabui::pluginAllowed(a, p->type)) continue;  // J-111: not in a collaborative project
     all.push_back(p);
   }

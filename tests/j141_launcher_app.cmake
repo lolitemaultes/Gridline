@@ -5,6 +5,7 @@
 #      open project stays.
 #   2. --show launcher with no project: the launcher with nothing open; Esc cannot leave it;
 #      the new-project tile starts a project and the launcher gives way.
+#   3. The keyboard. 4. (J-148) A tile's heart and menu buttons.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j141_launcher_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -119,4 +120,35 @@ if(NOT stillB LESS 0)
   message(FATAL_ERROR "FAIL (keys): the removed project is still in recent.txt:\n${recent}")
 endif()
 message(STATUS "ok - removal saved to recent.txt")
+# 4. J-148: a tile's hover buttons. The heart marks Song B a favourite (badge, saved to
+#    favourite-projects.txt); the menu button opens the tile's menu (it once did nothing: the
+#    button vanished on the frame the mouse was released). Tile 2 spans x 600..912 from y 92:
+#    the menu button is centred at (890, 114), the heart 32 px to its left.
+file(WRITE "${OUT}/cfg/gridline/recent.txt" "${OUT}/Song B.gridline.json\n${OUT}/Song A.gridline.json\n")
+file(REMOVE "${OUT}/cfg/gridline/favourite-projects.txt")
+file(WRITE "${OUT}/d.txt"
+  "6 move 700 200\n8 move 858 114\n12 down 0\n14 up 0\n"
+  "18 launcher\n"
+  "20 move 700 200\n22 move 890 114\n26 down 0\n28 up 0\n"
+  "32 launcher\n"
+  "34 quit discard\n")
+execute_process(COMMAND "${APP}" --show launcher --hidden --no-ui-sounds --no-update-check --size 1280x800 --ui-scale 1
+                        --dev-input "${OUT}/d.txt"
+                RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "FAIL (4): gridline-app exited with ${rc}:\n${err}")
+endif()
+expectReports(tilebuttons "${out}" "visible=1 open=0" "visible=1 open=0")
+string(REGEX MATCHALL "launcher menu=[^\n]*" menus "${out}")
+if(NOT menus STREQUAL "launcher menu=-;launcher menu=Song B")
+  message(FATAL_ERROR "FAIL (menu): expected no menu after the heart click, then Song B's menu; got \"${menus}\"")
+endif()
+if(NOT out MATCHES "name=Song B [^\n]*fav=1" OR out MATCHES "name=Song A [^\n]*fav=1")
+  message(FATAL_ERROR "FAIL (favourite): Song B is not the one favourite:\n${out}")
+endif()
+file(READ "${OUT}/cfg/gridline/favourite-projects.txt" favs)
+if(NOT favs STREQUAL "${OUT}/Song B.gridline.json\n")
+  message(FATAL_ERROR "FAIL (favourite): favourite-projects.txt is \"${favs}\"")
+endif()
+message(STATUS "ok - tile heart and menu buttons")
 message(STATUS "PASS")

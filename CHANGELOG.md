@@ -34,9 +34,24 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   On startup: Show the welcome screen turns it off.
 - Sketches are cached in the settings folder and made when a project is saved or opened, so the
   welcome screen opens at once; the recent list keeps up to 24 projects.
+- Favourite projects on the welcome screen: the heart button on a project's tile (or its menu,
+  or the F key) marks it, and a heart badge shows on its tile. Favourites are never pushed off
+  the recent list by newer projects and stay when the list is cleared.
 
 ### Changed
 
+- The plugin manager is redesigned. Each plugin is one row with the formats it is installed in
+  (VST3, CLAP, AU, VST2, LV2) shown as tags, a clean category (Synth, Drums, Reverb, Analyzer and
+  so on) instead of raw format strings, a star for favourites and a sortable table. Choose a
+  preferred format, or pick one per plugin; the browser and the plugin picker now list each
+  plugin once, in that format (a setting lists every format again). Gridline Suite builds are
+  kept in a collapsed group and no longer appear in the browser, since the same plugins are
+  built in. A details panel shows every format with its version and location, scan problems
+  with retry, the sandbox switch, a category override and Add to project. The view tabs show
+  counts, the search can be cleared, the folder list shows the home folder as ~, marks missing
+  folders and can remove your own, Add folder opens a folder chooser, failed plugins can be
+  retried one by one, and the arrow keys move through the list. Favourites and sandbox
+  settings carry over unchanged.
 - Playlist: with several audio clips selected, changing one clip's level, fades, fade curves or
   pitch changes every selected clip by the same amount. A +2 dB drag adds 2 dB to each clip, a
   longer fade-in lengthens each clip's own fade-in by the same time, and clips keep their
@@ -49,6 +64,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- Welcome screen: the menu button on a project tile now opens the tile's menu.
 - The OUT meter in the top bar is now a real master output meter: it shows the master track after
   its effects and fader (the same level as the mixer's master meter), on the same dB scale, with a
   steady fall that does not depend on the frame rate, a short peak hold per channel and a clip lamp

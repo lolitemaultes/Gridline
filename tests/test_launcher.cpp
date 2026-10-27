@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include "Check.h"
@@ -162,6 +163,42 @@ Song arrangementSong() {
   d.addClip(p2, 3, bar * 2, bar * 6);  // ends at bar 8
   d.addClip(p2, 12, bar);
   return d.song();
+}
+
+// J-148: favourite projects survive newer projects, clearing, reloads; removing or a
+// missing file drops the mark.
+void testFavourites(const std::string& dir) {
+  recents::List l;
+  for (int i = 0; i < 5; ++i) l.touch("/f" + std::to_string(i), 100 + i);
+  expect(!l.setFavourite("/not-listed", true) && l.favourites.empty(), "favourites: only listed projects");
+  expect(l.setFavourite("/f0", true) && !l.setFavourite("/f0", true) && l.isFavourite("/f0"), "favourites: marked once");
+  for (int i = 0; i < 40; ++i) l.touch("/n" + std::to_string(i), 1000 + i);
+  expect(l.paths.size() == recents::kMaxRecent + 1 && l.isFavourite("/f0") &&
+             std::find(l.paths.begin(), l.paths.end(), "/f0") != l.paths.end() && std::find(l.paths.begin(), l.paths.end(), "/f1") == l.paths.end(),
+         "favourites: never pushed off by newer projects (the others are capped)");
+  l.touch("/f0", 5000);
+  expect(l.paths[0] == "/f0" && l.isFavourite("/f0") && l.paths.size() == recents::kMaxRecent + 1, "favourites: reopening keeps the mark");
+  expect(recents::save(dir, l), "favourites: saved");
+  recents::List r = recents::load(dir);
+  expect(r.paths == l.paths && r.favourites == l.favourites && r.openedAt("/f0") == 5000, "favourites: reloaded as saved");
+  expect(r.clearKeepingFavourites() == recents::kMaxRecent && r.paths.size() == 1 && r.paths[0] == "/f0", "favourites: Clear keeps them");
+  expect(r.setFavourite("/f0", false) && !r.isFavourite("/f0") && r.paths.size() == 1, "favourites: unmarked, still listed");
+  r.setFavourite("/f0", true);
+  expect(r.remove("/f0") && r.favourites.empty(), "favourites: removing the project drops the mark");
+  recents::List m;
+  m.touch("/gone", 1), m.setFavourite("/gone", true);
+  expect(m.pruneMissing([](const std::string&) { return false; }) == 1 && m.favourites.empty(), "favourites: missing projects lose the mark");
+  // A favourites file listing a path that is not in recent.txt is ignored; a favourite beyond
+  // the cap in recent.txt still loads.
+  {
+    std::ofstream(fs::path(dir) / "favourite-projects.txt") << "/stray\n/old\n";
+    std::ofstream rf(fs::path(dir) / "recent.txt");
+    for (int i = 0; i < 30; ++i) rf << "/r" << i << "\n";
+    rf << "/old\n";
+  }
+  r = recents::load(dir);
+  expect(r.paths.size() == recents::kMaxRecent + 1 && r.paths.back() == "/old" && r.isFavourite("/old") && !r.isFavourite("/stray"),
+         "favourites: loaded past the cap; strays ignored");
 }
 
 void testSketch(const std::string& dir) {
@@ -336,6 +373,7 @@ int main() {
   testStartupPlan();
   testStateMachine();
   testRecents((fs::path(dir) / "recents").string());
+  testFavourites((fs::path(dir) / "favourites").string());
   fs::create_directories(fs::path(dir) / "sketch");
   testSketch((fs::path(dir) / "sketch").string());
   testLayoutAudit();

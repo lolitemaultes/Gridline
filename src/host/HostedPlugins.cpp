@@ -1224,28 +1224,37 @@ void startScan(const std::string& exe, bool force) {
   });
 }
 
-void rescanEntry(const std::string& exe, const std::string& format, const std::string& entry) {
+void rescanEntry(const std::string& exe, const std::string& format, const std::string& entry) { rescanEntries(exe, {{format, entry}}); }
+
+void rescanEntries(const std::string& exe, const std::vector<std::pair<std::string, std::string>>& entries) {
   Service& s = service();
   std::lock_guard<std::mutex> g(s.lock);
-  if (s.closed || s.status.running || exe.empty()) return;
+  if (s.closed || s.status.running || exe.empty() || entries.empty()) return;
   if (s.worker.joinable()) s.worker.join();
   s.status.running = true;
   s.status.done = 0;
-  s.status.total = 1;
-  s.worker = std::thread([exe, format, entry]() {
+  s.status.total = static_cast<int>(entries.size());
+  s.worker = std::thread([exe, entries]() {
     Service& sv = service();
-    {
+    for (const auto& [format, entry] : entries) {
+      if (sv.cancel.load()) break;
+      {
+        std::lock_guard<std::mutex> g2(sv.lock);
+        sv.status.current = entry;
+      }
+      ScanResult r = scanIsolated(exe, format, entry, 60, &sv.cancel);
+      if (sv.cancel.load()) break;
+      finishEntry(sv, std::move(r));
       std::lock_guard<std::mutex> g2(sv.lock);
-      sv.status.current = entry;
+      ++sv.status.done;
     }
-    ScanResult r = scanIsolated(exe, format, entry, 60, &sv.cancel);
-    if (!sv.cancel.load()) finishEntry(sv, std::move(r));
     std::lock_guard<std::mutex> g2(sv.lock);
-    sv.status.done = 1;
     sv.status.current.clear();
     sv.status.running = false;
   });
 }
+
+uint64_t hostedClassesGeneration() { return gGeneration.load(); }
 
 ScanStatus scanStatus() {
   Service& s = service();

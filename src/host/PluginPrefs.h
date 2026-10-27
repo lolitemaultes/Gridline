@@ -46,9 +46,16 @@ struct PluginPrefs {
   std::set<std::string> favourites;           // plugin types (hosted or built-in)
   std::map<std::string, std::string> categories;  // plugin type → user category
   std::map<std::string, HostOptions> options;     // hosted type → processing options (non-default only)
+  // J-147: the format the browser lists when a plugin is installed in several
+  // ("" = the default order, PluginGroups.h), the types picked per plugin
+  // instead, and whether the browser lists every format anyway.
+  std::string preferredFormat;
+  std::set<std::string> preferTypes;
+  bool browserAllFormats = false;
   bool operator==(const PluginPrefs& o) const {
     return extraFolders == o.extraFolders && disabledFormats == o.disabledFormats && sandbox == o.sandbox && favourites == o.favourites &&
-           categories == o.categories && options == o.options;
+           categories == o.categories && options == o.options && preferredFormat == o.preferredFormat && preferTypes == o.preferTypes &&
+           browserAllFormats == o.browserAllFormats;
   }
 };
 

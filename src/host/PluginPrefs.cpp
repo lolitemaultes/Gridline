@@ -73,6 +73,9 @@ void save(const Store& s) {
     opts.object[k] = std::move(x);
   }
   j.object["options"] = std::move(opts);
+  if (!s.prefs.preferredFormat.empty()) j.object["preferredFormat"] = Json::makeString(s.prefs.preferredFormat);
+  if (!s.prefs.preferTypes.empty()) j.object["preferTypes"] = strings(s.prefs.preferTypes);
+  if (s.prefs.browserAllFormats) j.object["browserAllFormats"] = jbool(true);
   std::error_code ec;
   fs::create_directories(fs::path(s.file).parent_path(), ec);
   writeFileAtomic(s.file, jsonStringify(j, 1));  // per-writer temp name (several instances share the file)
@@ -109,6 +112,9 @@ void loadPluginPrefs(const std::string& configDir) {
           h.genericEditor = readBool(v, "genericEditor", h.genericEditor);
           s.prefs.options[k] = h;
         }
+      s.prefs.preferredFormat = j.text("preferredFormat");
+      for (auto& x : readStrings(j, "preferTypes")) s.prefs.preferTypes.insert(x);
+      s.prefs.browserAllFormats = readBool(j, "browserAllFormats", false);
     }
   }
   ++s.generation;

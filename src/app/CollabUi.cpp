@@ -818,9 +818,8 @@ void openRename(App& a, int where) {
 void afterFolderRenamed(App& a, const std::string& oldFile) {
   Session* s = a.collab ? a.collab->session() : nullptr;
   if (!s) return;
-  a.recentFiles.erase(std::remove(a.recentFiles.begin(), a.recentFiles.end(), oldFile), a.recentFiles.end());
   a.projectPath = s->projectFile();
-  a.addRecent(a.projectPath);
+  a.moveRecent(oldFile, a.projectPath);
   afterProjectReplaced(a);
 }
 
@@ -3067,9 +3066,9 @@ void frame(App& a, double now) {
   // J-111f: the project file was renamed after the shared name: the window, Recent files and saves follow it
   if (s->ready() && !u.joining && !a.projectPath.empty() && a.projectPath != s->projectFile() &&
       fs::path(a.projectPath).parent_path() == fs::path(s->projectFile()).parent_path()) {
-    a.recentFiles.erase(std::remove(a.recentFiles.begin(), a.recentFiles.end(), a.projectPath), a.recentFiles.end());
+    const std::string oldFile = a.projectPath;
     a.projectPath = s->projectFile();
-    a.addRecent(a.projectPath);
+    a.moveRecent(oldFile, a.projectPath);
   }
   if (s->takeReviewRequest() && !(u.demo && u.demo->quietReview)) {
     a.showSyncReview = true;

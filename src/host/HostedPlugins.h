@@ -57,6 +57,8 @@ void registerScanResult(const ScanResult& r);
 std::shared_ptr<const HostedClass> hostedClass(const std::string& type);
 // Every registered class (latest registration of each type).
 std::vector<std::shared_ptr<const HostedClass>> hostedClasses();
+// Increments whenever a class is registered (J-147: cached views rebuild).
+uint64_t hostedClassesGeneration();
 PluginInfo makePluginInfo(const HostedClass& c);
 HostedClass makeHostedClass(const ScannedClass& c, const std::string& bundle, const std::string& format = "vst3");
 
@@ -147,6 +149,9 @@ void initHosting(const std::string& configDir);
 void startScan(const std::string& exe, bool force = false);
 // Rescans one entry (plugin manager "retry").
 void rescanEntry(const std::string& exe, const std::string& format, const std::string& entry);
+// Rescans several entries ({format, entry}) one after another (plugin manager
+// "Retry all", "Rescan" of a plugin installed in several formats).
+void rescanEntries(const std::string& exe, const std::vector<std::pair<std::string, std::string>>& entries);
 struct ScanStatus {
   bool running = false;
   int done = 0, total = 0;

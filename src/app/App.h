@@ -16,6 +16,7 @@
 #include "../core/Backup.h"
 #include "../core/Document.h"
 #include "../core/Launcher.h"
+#include "../core/Recents.h"
 #include "../core/MidiRecord.h"
 #include "../engine/AudioRecord.h"
 #include "../core/MidiTemplates.h"
@@ -399,8 +400,14 @@ class App {
   // J-141: recent list management (the launcher): saved at once.
   bool removeRecent(const std::string& path);
   size_t removeMissingRecents();
-  void clearRecents();
+  void clearRecents();  // J-148: favourites stay
   int64_t recentOpenedAt(const std::string& path) const;  // Unix seconds, 0 = unknown
+  // J-148: favourite projects (a heart on their launcher tile; never pushed off the list).
+  bool isFavouriteProject(const std::string& path) const { return recentFavourites_.count(path) != 0; }
+  bool setFavouriteProject(const std::string& path, bool on);
+  // The project moved (renamed folder or file): its entry moves to the front, favourite mark kept.
+  void moveRecent(const std::string& oldPath, const std::string& newPath);
+  size_t favouriteProjectCount() const { return recentFavourites_.size(); }
   // J-141: Close project (launcher): asks about unsaved changes, then shows the launcher
   // with no project open.
   void closeProject();
@@ -472,7 +479,11 @@ class App {
   uint64_t builtSampleGen_ = 0;   // SampleCache::generation() of the last build (J-30)
   bool freshInstall_ = false;     // no settings file existed when the app started (J-135)
   std::map<std::string, int64_t> recentTimes_;  // J-141: last opened / saved per recent path
+  std::set<std::string> recentFavourites_;       // J-148: favourite projects (listed paths)
   void saveRecents();
+  // J-148: the recent list as one value (taken from / given back to the members above).
+  recents::List takeRecents();
+  void putRecents(recents::List&& l);
   bool openProjectFile(const std::string& path);  // openProject without the launcher hand-over
   void rememberSketch(const std::string& path);  // J-141: the open song's sketch for the launcher
   double trimSamplesAt_ = -1;     // drop the replaced project's samples from the cache at this time (J-30)

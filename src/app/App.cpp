@@ -67,8 +67,7 @@ App::App() {
   // Recent files (J-141: with the times they were last opened, for the launcher).
   {
     recents::List rl = recents::load(configDir());
-    recentFiles = std::move(rl.paths);
-    recentTimes_ = std::move(rl.opened);
+    putRecents(std::move(rl));
   }
   newProject();
 }
@@ -98,43 +97,71 @@ void App::saveRecents() {
   recents::List l;
   l.paths = recentFiles;
   l.opened = recentTimes_;
+  l.favourites = recentFavourites_;
   recents::save(configDir(), l);
 }
 
-void App::addRecent(const std::string& path) {
+recents::List App::takeRecents() {
   recents::List l;
   l.paths = std::move(recentFiles);
   l.opened = std::move(recentTimes_);
-  l.touch(path, unixNow());
+  l.favourites = std::move(recentFavourites_);
+  recentFiles.clear(), recentTimes_.clear(), recentFavourites_.clear();
+  return l;
+}
+
+void App::putRecents(recents::List&& l) {
   recentFiles = std::move(l.paths);
   recentTimes_ = std::move(l.opened);
+  recentFavourites_ = std::move(l.favourites);
+}
+
+void App::addRecent(const std::string& path) {
+  recents::List l = takeRecents();
+  l.touch(path, unixNow());
+  putRecents(std::move(l));
   saveRecents();
 }
 
 bool App::removeRecent(const std::string& path) {
-  const auto it = std::find(recentFiles.begin(), recentFiles.end(), path);
-  if (it == recentFiles.end()) return false;
-  recentFiles.erase(it);
-  recentTimes_.erase(path);
-  saveRecents();
-  return true;
+  recents::List l = takeRecents();
+  const bool ok = l.remove(path);
+  putRecents(std::move(l));
+  if (ok) saveRecents();
+  return ok;
 }
 
 size_t App::removeMissingRecents() {
-  recents::List l;
-  l.paths = std::move(recentFiles);
-  l.opened = std::move(recentTimes_);
+  recents::List l = takeRecents();
   const size_t n = l.pruneMissing([](const std::string& p) { return recents::exists(p); });
-  recentFiles = std::move(l.paths);
-  recentTimes_ = std::move(l.opened);
+  putRecents(std::move(l));
   if (n) saveRecents();
   return n;
 }
 
 void App::clearRecents() {
-  recentFiles.clear();
-  recentTimes_.clear();
+  recents::List l = takeRecents();
+  l.clearKeepingFavourites();
+  putRecents(std::move(l));
   saveRecents();
+}
+
+void App::moveRecent(const std::string& oldPath, const std::string& newPath) {
+  recents::List l = takeRecents();
+  const bool fav = l.isFavourite(oldPath);
+  l.remove(oldPath);
+  l.touch(newPath, unixNow());
+  if (fav) l.setFavourite(newPath, true);
+  putRecents(std::move(l));
+  saveRecents();
+}
+
+bool App::setFavouriteProject(const std::string& path, bool on) {
+  recents::List l = takeRecents();
+  const bool changed = l.setFavourite(path, on);
+  putRecents(std::move(l));
+  if (changed) saveRecents();
+  return changed;
 }
 
 int64_t App::recentOpenedAt(const std::string& path) const {

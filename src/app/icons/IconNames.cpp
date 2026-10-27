@@ -167,6 +167,8 @@ const char* iconSvgName(Icon icon) {
     case Icon::SpeakerSmallOff: return "speaker-small-off";
     case Icon::ScrollTo: return "scroll-to";
     case Icon::Headphones: return "headphones";
+    case Icon::Heart: return "heart";
+    case Icon::HeartFilled: return "heart-filled";
     case Icon::Count: break;
   }
   return nullptr;

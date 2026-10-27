@@ -88,6 +88,8 @@ mirror the Lucide chevrons; the ImGui arrow, check, close and step glyphs draw t
 - `follow`: two linked rings (follow the playhead).
 - `grip-dots`: two columns of three dots (drag handle).
 - `headphones`: a headband over two ear cups (audition).
+- `heart`: a heart outline (favourite project).
+- `heart-filled`: a heart, filled (favourite project set).
 - `info`: a lower-case i on its own (information).
 - `input-jack`: a jack plug: a ring with a stem (audio input).
 - `list-bullets`: four bulleted lines (browse a list).

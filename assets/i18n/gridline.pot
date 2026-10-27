@@ -773,7 +773,7 @@ msgstr ""
 msgid "Add folder..."
 msgstr ""
 
-#: src/app/Browser.cpp src/app/PluginManager.cpp src/app/PluginPicker.cpp
+#: src/app/Browser.cpp src/app/LauncherUi.cpp src/app/PluginManager.cpp src/app/PluginPicker.cpp
 msgid "Add to favourites"
 msgstr ""
 
@@ -801,7 +801,7 @@ msgstr ""
 msgid "Channel presets"
 msgstr ""
 
-#: src/app/Browser.cpp
+#: src/app/Browser.cpp src/app/PluginManager.cpp
 msgid "Clear search"
 msgstr ""
 
@@ -1005,7 +1005,7 @@ msgstr ""
 msgid "Plugins that are not part of Gridline are hidden in a collaborative project."
 msgstr ""
 
-#: src/app/Browser.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/MidiUi.cpp
+#: src/app/Browser.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/MidiUi.cpp src/app/PluginManager.cpp
 msgid "Presets"
 msgstr ""
 
@@ -1037,7 +1037,7 @@ msgstr ""
 msgid "Remove from browser"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/PluginPicker.cpp
+#: src/app/Browser.cpp src/app/LauncherUi.cpp src/app/PluginPicker.cpp
 msgid "Remove from favourites"
 msgstr ""
 
@@ -1241,7 +1241,7 @@ msgstr ""
 msgid "Decay"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/PluginManager.cpp
 msgid "Delay"
 msgstr ""
 
@@ -1357,7 +1357,7 @@ msgstr ""
 msgid "Period"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Pitch"
 msgstr ""
 
@@ -1645,7 +1645,7 @@ msgstr ""
 msgid "Hide the channel strip (volume, pan, pitch, keyboard)"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/SamplerRenderUi.cpp
+#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp
 msgid "Instrument"
 msgstr ""
 
@@ -1689,7 +1689,7 @@ msgstr ""
 msgid "This channel is cut by notes of channels in this group (same number in both = cuts itself)"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/plugin/PluginFrame.cpp
+#: src/app/ChannelSettings.cpp src/app/PluginManager.cpp src/plugin/PluginFrame.cpp
 msgid "missing"
 msgstr ""
 
@@ -1705,7 +1705,7 @@ msgstr ""
 msgid "2 beats"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/packs/edison/edison_form_ui.cpp
 msgid "All"
 msgstr ""
 
@@ -4077,7 +4077,7 @@ msgstr ""
 msgid "not with anyone yet"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/PluginEditorsK3Gb.cpp
+#: src/app/CollabUi.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp
 msgid "off"
 msgstr ""
 
@@ -4513,7 +4513,7 @@ msgstr ""
 msgid "Effect chain"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/ContextMenus.cpp src/app/PluginManager.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Effects"
 msgstr ""
 
@@ -5945,7 +5945,7 @@ msgstr ""
 msgid "Log and script console"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/ExportUi.cpp src/app/Menus.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/Dialogs.cpp src/app/ExportUi.cpp src/app/Menus.cpp src/app/PluginManager.cpp src/packs/tideline/tideline_ui.cpp
 msgid "MIDI"
 msgstr ""
 
@@ -7346,6 +7346,10 @@ msgid "Cannot find"
 msgstr ""
 
 #: src/app/LauncherUi.cpp
+msgid "Clear all but favourites"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
 msgid "Clear the list"
 msgstr ""
 
@@ -7403,6 +7407,10 @@ msgstr ""
 
 #: src/app/LauncherUi.cpp
 msgid "May"
+msgstr ""
+
+#: src/app/LauncherUi.cpp
+msgid "More"
 msgstr ""
 
 #: src/app/LauncherUi.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp
@@ -7645,7 +7653,7 @@ msgstr ""
 msgid "Drum and bass"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/LoopStarterUi.cpp src/app/PluginManager.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Drums"
 msgstr ""
 
@@ -9225,7 +9233,7 @@ msgstr ""
 msgid "Allow threaded processing (off: the track always runs on the audio thread)"
 msgstr ""
 
-#: src/app/MixerView.cpp
+#: src/app/MixerView.cpp src/app/PluginManager.cpp
 msgid "Automatic"
 msgstr ""
 
@@ -10125,7 +10133,7 @@ msgstr ""
 msgid "Stored in the spare state"
 msgstr ""
 
-#: src/app/PluginEditorsEqRef.cpp src/app/PluginManager.cpp
+#: src/app/PluginEditorsEqRef.cpp
 msgid "Type"
 msgstr ""
 
@@ -10522,23 +10530,55 @@ msgid "SIZE"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "%d plugins  ·  %d failed"
+msgid "%d plugin failed to scan"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "%s  ·  %zu parameters  ·  %zu programs  ·  %s%s"
+msgid "%d plugins failed to scan"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Add a folder (path)"
+msgid "(some formats)"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Add folder"
+msgid "(type to change)"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Also search this folder for VST3, CLAP and VST2 plugins"
+msgid "A Gridline Suite build of a plugin that is built into Gridline, made for other applications. Use the built-in version in Gridline; the browser does not list these builds."
+msgstr ""
+
+#: src/app/PluginManager.cpp src/app/SettingsKeysTheme.cpp src/app/TopBar.cpp src/packs/plasma/plasma_browser_ui.cpp
+msgid "Add"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Add a plugin folder"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Add to project"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Also search this folder for plugins of every format"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Analyzer"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Automatic (VST3, CLAP, AU, LV2, VST2)"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Built in"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "CATEGORY"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -10546,11 +10586,63 @@ msgid "Category"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Category (e.g. Bass, Drums)"
+msgid "Choose a folder to search for plugins"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Fav"
+msgid "Clear the search (Esc)"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Click: list this format in the browser"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "DETAILS"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Default folder for "
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Distortion"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Dynamics"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "EQ"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Effect"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Every plugin scanned cleanly"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Every plugin scanned cleanly."
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Every scan runs in its own process, so a plugin that crashes here cannot take Gridline down."
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "FORMATS"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Failed"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Failed plugins"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -10558,11 +10650,27 @@ msgid "Favourite"
 msgstr ""
 
 #: src/app/PluginManager.cpp
+msgid "Favourite: listed first in the browser (click to remove)"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Favourites"
+msgstr ""
+
+#: src/app/PluginManager.cpp
 msgid "Favourites are listed first in the browser"
 msgstr ""
 
 #: src/app/PluginManager.cpp
+msgid "Filter"
+msgstr ""
+
+#: src/app/PluginManager.cpp
 msgid "Find plugins"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Forget the pick: the preferred format setting decides"
 msgstr ""
 
 #: src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp
@@ -10570,11 +10678,75 @@ msgid "Format"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Listed and scanned (click to switch off)"
+msgid "Formats"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "No failed plugins."
+msgid "From the preferred format setting. Click a format to pick it for this plugin."
+msgstr ""
+
+#: src/app/PluginManager.cpp src/plugin/PluginFrame.cpp
+msgid "Gridline Suite"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Gridline Suite builds (%d)"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Gridline's own plugins as VST3 / CLAP / AU builds for other applications. Gridline uses the built-in versions, so the browser does not list these."
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "In"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "In and out"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Instruments"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Instruments: a new channel. Effects: the next free slot of the selected mixer track (double-click a row does the same)"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Keys"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "LOCATION"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "List every format in the browser"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Mastering"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Modulation"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "No failed plugins"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "No failed plugins match"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "No free effect slot on the selected mixer track"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "No plugin selected"
 msgstr ""
 
 #: src/app/PluginManager.cpp src/packs/plasma/plasma_browser_ui.cpp
@@ -10582,11 +10754,55 @@ msgid "Not a folder"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Not scanned, hidden from the browser (click to switch on)"
+msgid "Not found on this computer: nothing to scan here"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Plugin"
+msgid "Not listed in the browser"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Nothing failed to scan."
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Off: not scanned, hidden everywhere (click to switch on)"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Off: one entry per plugin in the browser and the plugin picker"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "On: scanned and listed (click to switch off)"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Out"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Outputs"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Parameters"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Paste a folder path"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Picked for this plugin. Projects keep the format they were made with."
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Plugin and reason"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Plugin id"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -10594,7 +10810,11 @@ msgid "Plugin manager"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Reason"
+msgid "Preferred format"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "REASON"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -10606,23 +10826,47 @@ msgid "Rescan all"
 msgstr ""
 
 #: src/app/PluginManager.cpp
+msgid "Rescan this plugin"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Restoration"
+msgstr ""
+
+#: src/app/PluginManager.cpp
 msgid "Retry"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Run in sandbox"
+msgid "Reverb"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Run in sandbox (own process)"
+msgid "Run in a sandbox"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Runs this plugin in its own process: a crash silences it instead of closing Gridline"
+msgid "Runs in a sandbox: its own process, so a crash cannot close Gridline"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Sandbox"
+msgid "Runs the plugin in its own process: if it crashes, it goes silent instead of closing Gridline. Uses a little more CPU."
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "SAFETY"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "SCAN"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "SEARCH FOLDERS"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Sampler"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -10630,7 +10874,23 @@ msgid "Scan this plugin again"
 msgstr ""
 
 #: src/app/PluginManager.cpp
+msgid "Scanned without problems"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Scanned; %d other format failed"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Scanned; %d other formats failed"
+msgstr ""
+
+#: src/app/PluginManager.cpp
 msgid "Scanning %d / %d"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Scans every format of this plugin again"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -10642,15 +10902,99 @@ msgid "Scans new and updated plugins in the folders below (each in its own proce
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Scans this plugin again"
+msgid "Search name, vendor, category, format"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Search name, vendor, category"
+msgid "Search plugins"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Select a plugin to see its details."
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Show the plugins that crashed, hung or failed to load"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Sidechain"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Some formats of this plugin run in a sandbox"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Spatial"
+msgstr ""
+
+#: src/app/PluginManager.cpp src/packs/plasma/plasma_wted_ui.cpp
+msgid "Spectral"
+msgstr ""
+
+#: src/app/PluginManager.cpp src/app/TrackModeUi.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Stereo"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Synth"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "The browser lists each plugin once, in this format when it is installed in several (each plugin can override it)"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "The browser lists this format"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Try another word, or clear the search."
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "USER"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Unknown error"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Unknown vendor"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Use the preferred format"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Utility"
 msgstr ""
 
 #: src/app/PluginManager.cpp
 msgid "Vendor"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Yes"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Your folder: searched for every format"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "browser lists"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "plugin"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "plugins"
 msgstr ""
 
 #: src/app/PluginPicker.cpp
@@ -11083,10 +11427,6 @@ msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Active tools, toggles, tab marks and LCD digits"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp src/app/TopBar.cpp src/packs/plasma/plasma_browser_ui.cpp
-msgid "Add"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -11947,10 +12287,6 @@ msgstr ""
 
 #: src/app/TrackModeUi.cpp
 msgid "Show its mixer track"
-msgstr ""
-
-#: src/app/TrackModeUi.cpp src/packs/tideline/tideline_ui.cpp
-msgid "Stereo"
 msgstr ""
 
 #: src/app/TrackModeUi.cpp
@@ -14085,10 +14421,6 @@ msgstr ""
 msgid "Smooth (keep harmonics)"
 msgstr ""
 
-#: src/packs/plasma/plasma_wted_ui.cpp
-msgid "Spectral"
-msgstr ""
-
 #: src/packs/samplers/dwave_ui.cpp
 msgid "Cho delay"
 msgstr ""
@@ -15831,10 +16163,6 @@ msgstr ""
 
 #: src/plugin/PluginFrame.cpp
 msgid "Gridline FX (effect)"
-msgstr ""
-
-#: src/plugin/PluginFrame.cpp
-msgid "Gridline Suite"
 msgstr ""
 
 #: src/plugin/PluginFrame.cpp
