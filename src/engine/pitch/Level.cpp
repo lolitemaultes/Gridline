@@ -86,15 +86,40 @@ void LevelFollower::apply(float* const* y, int nch, int m, double srcMs, double 
   double target = gain_;
   if (out_[1] > kSilent && src_[1] > kSilent) target = std::clamp(std::sqrt(src_[1] / out_[1]), kMinGain, kMaxGain);
   // Move a third of the way per block (about 20 ms at 256-frame blocks), ramped.
-  double next = gain_ * std::pow(target / gain_, 1.0 / 3.0);
-  // Never far above the source's own peak (no new clipping): a boost the
-  // block's peak cannot take is held down for the whole block.
-  const double lim = peakLimit > 0 ? std::max(1.0, kPeakRoom * peakLimit) : kMaxGain;
-  next = std::min(next, lim);
-  const double from = std::min(gain_, lim);
-  for (int j = 0; j < m; ++j) {
-    const double g = from + (next - from) * (j + 1) / m;
-    for (int c = 0; c < nch; ++c) y[c][j] = static_cast<float>(y[c][j] * g);
+  const double next = gain_ * std::pow(target / gain_, 1.0 / 3.0);
+  // J-145: never far above the source's own peak (no new clipping), as a
+  // limiter, not a step: each frame has the bound that keeps it within the
+  // room (the block's peak frame gets kPeakRoom × peakLimit, quieter frames
+  // more). The applied gain moves at most attack_ per frame towards a bound,
+  // looking ahead within the block so it gets there in time, and recovers at
+  // release_. It starts where the last block ended: it never steps.
+  double pk = 0;
+  if (peakLimit > 0)
+    for (int c = 0; c < nch; ++c)
+      for (int j = 0; j < m; ++j) pk = std::max(pk, static_cast<double>(std::fabs(y[c][j])));
+  const double room = pk > 1e-12 ? std::max(1.0, kPeakRoom * peakLimit) * pk : 0.0;  // the largest |output| allowed
+  auto boundAt = [&](int j) {
+    if (room <= 0) return kMaxGain;
+    double v = 0;
+    for (int c = 0; c < nch; ++c) v = std::max(v, static_cast<double>(std::fabs(y[c][j])));
+    return v * kMaxGain > room ? std::max(1.0, room / v) : kMaxGain;
+  };
+  const int reach = static_cast<int>(std::ceil(kMaxGain / attack_));  // further ahead, no bound pulls the gain down
+  double env[kStep];
+  for (int s0 = 0; s0 < m; s0 += kStep) {
+    const int s1 = std::min(m, s0 + kStep);
+    // Look-ahead bound: env[j] = min over k >= j of bound(k) + attack_ × (k - j).
+    double e = kMaxGain;
+    for (int j = std::min(m, s1 + reach) - 1; j >= s0; --j) {
+      e = std::min(boundAt(j), e + attack_);
+      if (j < s1) env[j - s0] = e;
+    }
+    for (int j = s0; j < s1; ++j) {
+      const double want = gain_ + (next - gain_) * (j + 1) / m;
+      const double g = std::max(std::min({want, env[j - s0], applied_ + release_}), applied_ - attack_);
+      applied_ = g;
+      for (int c = 0; c < nch; ++c) y[c][j] = static_cast<float>(y[c][j] * g);
+    }
   }
   gain_ = next;
 }

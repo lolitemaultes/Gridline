@@ -46,6 +46,13 @@ struct SignalsmithStretch {
 		return int(stft.synthesisLatency() + _splitComputation*stft.defaultInterval());
 	}
 	
+	// Gridline (J-145): onset phase reset. When > 0, a bin whose input energy
+	// grows by more than this factor from one block to the next (a new note
+	// or hit) takes the input's phase instead of the predicted one, as a phase
+	// vocoder with transient handling does; at a time factor of 1 it then stays
+	// in phase with the input. 0 (the default) keeps the original behaviour.
+	Sample onsetPhaseReset = 0;
+
 	void reset() {
 		stft.reset(0.1);
 		stashedInput = stft.input;
@@ -85,6 +92,7 @@ struct SignalsmithStretch {
 		smoothedEnergy.resize(bands);
 		outputMap.resize(bands);
 		channelPredictions.resize(channels*bands);
+		phaseResetBins.assign(size_t(channels*bands), 0); // Gridline (J-145)
 
 		blockProcess = {};
 		formantMetric.resize(bands + 2);
@@ -603,6 +611,7 @@ private:
 		}
 	};
 	std::vector<Prediction> channelPredictions;
+	std::vector<unsigned char> phaseResetBins; // Gridline (J-145): bins taking the input phase this block
 	Prediction * predictionsForChannel(int c) {
 		return channelPredictions.data() + c*bands;
 	}
@@ -714,6 +723,10 @@ private:
 				Complex freqTwist = _impl::mul<true>(prediction.input, prevInput);
 				Complex phase = _impl::mul(outputBin.output, freqTwist);
 				outputBin.output = phase/(std::max(prevEnergy, prediction.energy) + noiseFloor);
+				// Gridline (J-145): onset phase reset
+				const bool resetBin = onsetPhaseReset > 0 && prediction.energy > onsetPhaseReset*prevEnergy + noiseFloor;
+				phaseResetBins[size_t(c*bands + b)] = resetBin;
+				if (resetBin) outputBin.output = prediction.input/(std::sqrt(_impl::norm(prediction.input)) + noiseFloor);
 			}
 			return;
 		}
@@ -743,6 +756,9 @@ private:
 
 				Complex phase = 0;
 				auto mapPoint = outputMap[b];
+				if (phaseResetBins[size_t(maxChannel*bands + b)]) { // Gridline (J-145): the input's phase
+					phase = prediction.input;
+				} else {
 
 				// Upwards vertical steps
 				if (b > 0) {
@@ -784,6 +800,7 @@ private:
 						phase += _impl::mul<true>(longUpBin.output, longVerticalTwist);
 					}
 				}
+				} // Gridline (J-145)
 
 				outputBin.output = prediction.makeOutput(phase);
 				

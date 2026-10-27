@@ -80,6 +80,14 @@ void processMapped(const float* const* in, int nch, int64_t n, float* const* out
 std::vector<int64_t> detectOnsets(const float* x, int64_t n, double sampleRate, double sensitivity);
 // Onsets of a sample (channel mix), cached per sample and sensitivity (UI thread).
 std::shared_ptr<const std::vector<int64_t>> onsetsOf(const SamplePtr& s, double sensitivity);
+// J-145: the harmonic part of a sample (pitch/Hpss.h, at the onsets of
+// onsetsOf(s, sensitivity)), for the realtime hybrid stretch (Voice::start
+// with harmonic); the rest of the sample is its percussive part. Cached per
+// sample and sensitivity (UI thread). Null for an empty sample
+// or one longer than kHarmonicMaxSeconds (the split is not worth the wait:
+// such samples stretch on one continuous engine).
+constexpr double kHarmonicMaxSeconds = 120.0;
+SamplePtr harmonicOf(const SamplePtr& s, double sensitivity);
 
 // ---- band-limited resampling (engine/pitch/Kernel.h) ----
 
@@ -156,12 +164,13 @@ size_t clipCacheBytes();
 // render() and reset() are realtime safe (no allocation, no locks).
 class Voice {
  public:
-  // Pulls the next `frames` input frames into dst[0 .. channels) (zeros past
-  // the end of the sound). Transients: a reader may stop at an onset — it
-  // returns that frame's index in dst (and delivers silence from there on)
-  // — and the voice restarts its engine exactly there, so the hit is never
-  // smeared ahead of itself; the restart's first pull passes resume = true
-  // (continue from the onset). Return −1 otherwise.
+  // Pulls the next `frames` input frames into dst[0], dst[1] (zeros past the
+  // end of the sound; both are written, also for one channel). dst has four
+  // channels: a sound started with `harmonic` also writes its harmonic part
+  // (harmonicOf) into dst[2], dst[3]. Returns the index in dst of the first
+  // onset (a hit) among the frames, −1 if none; reading always goes on
+  // (J-145: no reader stops at onsets any more). `resume` is always false
+  // (kept for the signature).
   using Reader = int (*)(void* ctx, float* const* dst, int frames, bool resume);
 
   Voice();
@@ -177,8 +186,14 @@ class Voice {
   // Begins a sound: the first rendered frame is the reader's first frame
   // (no latency). speed = input frames per output frame, pitch = frequency
   // ratio. attack: the first milliseconds come straight from the input.
-  void start(Reader rd, void* ctx, double speed, double pitch, bool attack = true);
-  // n output frames (any n). Speed and pitch may change between calls.
+  // harmonic (J-145, the onset modes Auto / Transient / Beats): the reader
+  // supplies the harmonic part and reports onsets; the voice then runs the
+  // hybrid stretch (the harmonic part through one continuous engine, the
+  // rest restarted at each hit, see process()). Without it the onset modes
+  // run one continuous engine.
+  void start(Reader rd, void* ctx, double speed, double pitch, bool attack = true, bool harmonic = false);
+  // n output frames (any n). Speed and pitch may change between calls; a
+  // pitch change ramps across the call (no stepped pitch).
   void render(float* const* out, int n, double speed, double pitch, double formantSemis, Reader rd, void* ctx);
   // Input frames the voice reads ahead of what it has played (at these settings).
   int lookahead(double speed, double pitch) const;

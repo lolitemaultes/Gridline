@@ -31,9 +31,17 @@ class TdStretch {
   static Preset beats() { return {0.035, 0.010}; }
   static Preset general() { return {0.046, 0.0116}; }
   static Preset light() { return {0.040, 0.010}; }
+  // J-145: the percussive part of the hybrid stretch (hits and their decays).
+  static Preset percussive() { return {0.030, 0.010}; }
 
   void configure(int channels, double sampleRate, Preset p);
   void reset();
+  // J-145: input frames from `end` on (counted from the last outputSeek) are
+  // never read: grains that would reach past it re-read the frames just
+  // before it instead (aligned like any grain), so the output keeps going
+  // at its level up to a cut there, with nothing of what follows leaking
+  // ahead (a restart at the next hit). Negative: no end.
+  void setInputEnd(int64_t end) { end_ = end < 0 ? kNoEnd : end; }
   int channels() const { return channels_; }
   // Input frames to give outputSeek() (the lookahead), any rate.
   int outputSeekLength(float /*rate*/) const { return seek_; }
@@ -115,6 +123,8 @@ class TdStretch {
   int64_t outPos_ = 0;    // output frames produced
   int64_t nextGrain_ = 0; // output index of the next grain
   int64_t prevSrc_ = 0;   // source start of the previous grain
+  static constexpr int64_t kNoEnd = INT64_MAX / 4;
+  int64_t end_ = kNoEnd;  // input frames from here on are never read (setInputEnd)
   bool first_ = true;
 };
 

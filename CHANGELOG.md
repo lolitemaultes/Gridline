@@ -19,6 +19,25 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Fixes: sample playback at high pitch settings stays clean, a clip stretched in realtime stays
   in tune, and the audio editor plays and scrubs cleanly at any speed.
 
+### Cleaner time stretching
+
+- The Auto, Transient and Beats modes now stretch the hits and the tone under them separately:
+  a bass line or chord holds its level through every drum hit instead of dropping out ahead
+  of it (dips of up to 13 dB are now one to two decibels), and hits stay sharp with nothing
+  ahead of them. This applies to clip renders, tempo-synced clips, the sampler and slices.
+- A plucked or struck note in Auto and Transient decays smoothly from its attack: the dip and
+  swell where the attack handed over to the stretched sound are gone.
+- Beats mode keeps low notes and dense chords steady instead of wobbling, square and other
+  stepped waves no longer overshoot when stretched, and hits in tempo-synced clips land where
+  the tempo map puts them through tempo changes.
+- Fewer clicks in realtime stretching: sampler voices no longer restart the whole sound at each
+  hit, held notes no longer ripple at large stretch factors, pitch automation glides instead
+  of stepping, and a stretched note ends with a short fade.
+- Formant-keeping modes no longer click when a loud moment arrives after a quiet one: the level
+  matching eases its gain down ahead of the peak instead of dropping it in one step.
+- Audio clips crossfade smoothly when playback moves between the prepared render and the
+  realtime path (for example while the channel pitch changes), instead of clicking.
+
 ### Voice mode on real voices
 
 - Voice mode rebuilt for real singing and speech. A shifted voice no longer keeps a ringing

@@ -30,19 +30,29 @@ void matchLevel(float* const* y, int nch, int64_t len, const float* const* x, in
 // an audible amplitude modulation.)
 class LevelFollower {
  public:
-  void setRate(double sampleRate) { tau_ = 0.05 * (sampleRate > 0 ? sampleRate : 44100.0); }
+  void setRate(double sampleRate) {
+    const double sr = sampleRate > 0 ? sampleRate : 44100.0;
+    tau_ = 0.05 * sr;
+    attack_ = 1.0 / (0.001 * sr);  // the peak limit: one unit of gain per ms down
+    release_ = 1.0 / (0.02 * sr);  // and per 20 ms back up
+  }
   void reset() {
-    gain_ = 1.0;
+    gain_ = applied_ = 1.0;
     src_[0] = src_[1] = out_[0] = out_[1] = 0.0;
   }
   // Applies the gain to y[c][0, m) (in place). srcMs: mean square of the
   // source span, outMs: of the block before the gain (as it will be heard:
   // band-limited like the output). peakLimit: the source span's peak over
   // the block's peak; a boost stays within 3 dB over that (0: no limit).
+  // J-145: the gain is continuous across blocks; the peak limit pulls it down
+  // along a short ramp ahead of the frames that need it (a limiter), never
+  // as a step at a block's start.
   void apply(float* const* y, int nch, int m, double srcMs, double outMs, double peakLimit = 0);
 
  private:
-  double gain_ = 1.0, src_[2] = {0, 0}, out_[2] = {0, 0}, tau_ = 1323.0;
+  static constexpr int kStep = 256;  // frames per look-ahead pass (a stack buffer: no allocation)
+  double gain_ = 1.0, applied_ = 1.0, src_[2] = {0, 0}, out_[2] = {0, 0}, tau_ = 1323.0;
+  double attack_ = 1.0 / 44.1, release_ = 1.0 / 882.0;
 };
 
 }  // namespace gl::pitch

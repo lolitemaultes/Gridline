@@ -46,6 +46,7 @@ void TdStretch::reset() {
   outPos_ = 0;
   nextGrain_ = 0;
   prevSrc_ = 0;
+  end_ = kNoEnd;
   first_ = true;
 }
 
@@ -58,14 +59,19 @@ float TdStretch::mono(int64_t i) const {
 int64_t TdStretch::search(int64_t nominal, int64_t ref) const {
   const int L = hop_;  // the overlap the new grain shares with the previous one
   const int64_t oldest = written_ - cap_ + 1;
-  if (ref < oldest || ref + L > written_) return nominal;
-  int64_t lo = std::max(nominal - tol_, oldest), hi = std::min<int64_t>(nominal + tol_, written_ - n_);
-  if (hi < lo) return std::clamp<int64_t>(nominal, oldest, std::max<int64_t>(oldest, written_ - n_));
+  const int64_t last = std::min(written_, end_) - n_;  // the latest grain start that reads nothing past the input end
+  if (ref < oldest || ref + L > written_) return nominal;  // (render keeps nominal within the input end)
+  int64_t lo = std::max(nominal - tol_, oldest), hi = std::min<int64_t>(nominal + tol_, last);
+  if (hi < lo) return std::clamp<int64_t>(nominal, oldest, std::max<int64_t>(oldest, last));
   // Coarse: every 4th lag, every 4th frame; then ±4 frames at every 2nd frame.
+  // J-145: on the slope (first difference) of the mix: every partial counts
+  // in proportion to its frequency, so a loud low tone (a kick's body) does
+  // not decide alone where the harmonics above it line up. The difference
+  // spans the stride, so a step between two sampled frames still counts.
   auto score = [&](int64_t s, int stride) {
     double ab = 0, bb = 0;
     for (int i = 0; i < L; i += stride) {
-      const double a = mono(ref + i), b = mono(s + i);
+      const double a = mono(ref + i) - mono(ref + i - stride), b = mono(s + i) - mono(s + i - stride);
       ab += a * b, bb += b * b;
     }
     return ab / std::sqrt(bb + 1e-12);
@@ -129,7 +135,8 @@ void TdStretch::render(int m, double rate, double anaEnd) {
   // Grains that start inside this step.
   while (nextGrain_ < outPos_ + m) {
     const double nominalPos = ana_ + static_cast<double>(nextGrain_ - outPos_) * rate;
-    const auto nominal = static_cast<int64_t>(std::llround(nominalPos));
+    // Never past the input end (setInputEnd): the last grains re-read the frames before it.
+    const auto nominal = std::min(static_cast<int64_t>(std::llround(nominalPos)), std::max<int64_t>(0, end_ - n_));
     const int64_t src = first_ ? nominal : search(nominal, prevSrc_ + hop_);
     addGrain(nextGrain_, src);
     first_ = false;

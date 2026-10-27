@@ -197,6 +197,11 @@ struct ProgAudioClip {
   // placed and the source positions (seconds) of it and the one before.
   mutable int64_t rtGrain = -(int64_t{1} << 62);
   mutable double rtGrainSrc[2] = {0, 0};
+  mutable double rtGrainRate[2] = {1, 1};  // J-145: their read rates (source s per playback s)
+  // J-145: the share of the render in the output (0 grains ... 1 render) and
+  // the frame it applies to next: switches between the two crossfade.
+  mutable double rtMix = 0;
+  mutable int64_t rtMixAt = -(int64_t{1} << 62);
 };
 
 // Adds a channel's audio clips to L/R for block samples [from, from + len),

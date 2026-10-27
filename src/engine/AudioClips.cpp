@@ -21,6 +21,11 @@
 // tones keep their phase across grains instead of beating. The alignment is
 // the one piece of state (ProgAudioClip::rtGrain); after a jump the first
 // grain plays where the time map puts it.
+//
+// J-145: switching between the render and the grains (the render catching up
+// with playback, the channel pitch moving off the render's pitch and back)
+// crossfades over 10 ms instead of jumping between two differently stretched
+// signals (ProgAudioClip::rtMix); after a jump playback starts on either.
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -33,6 +38,7 @@ constexpr double kGrainHop = 0.030;    // seconds between grain starts (grain le
 constexpr double kDeclick = 0.002;     // minimum fade at clip edges, seconds
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kAlignTol = 0.010;    // seconds a grain may move to line up with the previous one
+constexpr double kSwitchFade = 0.010;  // seconds: render <-> grains crossfade
 
 // Source frame of source time `sec` (reverse clips read from the end).
 inline double frameOf(const Sample& s, double sec, bool reverse) {
@@ -133,11 +139,15 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     const double nIn = fadeSamples(c.fadeIn, sr), nOut = fadeSamples(c.fadeOut, sr);
     int64_t cachedGrain = std::numeric_limits<int64_t>::min();
     double grainSrc[2] = {0, 0};
+    double grainIn[2] = {1, 1};  // J-145: each grain's read rate (fixed for its life)
     // J-87: the offline render, while it applies.
     // (A render in progress publishes its finished start: frames below hqReady.)
-    const stretch::RenderedClip* hq = c.hq && std::fabs(pitchSemis - c.hqSemis) < 1e-6 ? c.hq.get() : nullptr;
+    // J-145: a render at another pitch still plays while the grains fade in.
+    const stretch::RenderedClip* hq = c.hq.get();
+    const bool hqPitch = hq && std::fabs(pitchSemis - c.hqSemis) < 1e-6;
     const int64_t hqReady = hq ? hq->readyFrames.load(std::memory_order_acquire) : 0;
     const int64_t hqFrames = hq ? hq->frames() : 0;
+    const double mixStep = 1.0 / std::max(1.0, kSwitchFade * sr);
     const int64_t first = sampleOf(static_cast<double>(c.start));  // block index of the clip's first sample
     const double readRate = c.speed * s.sampleRate / sr;              // source frames per output frame (plain reads)
     for (int64_t i = a; i < b; ++i) {
@@ -150,16 +160,21 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
       if (g <= 0.0) continue;
       float l = 0.f, r = 0.f;
       const int64_t m = i - first;
-      if (hq && m < hqReady) {
-        if (m < 0) continue;
-        l = hq->L[static_cast<size_t>(m)];
-        r = hq->R[static_cast<size_t>(m)];
-      } else if (hq && hqReady >= hqFrames) {
-        continue;  // past the render's end: silence
+      // The render's frame, if it has one here (past its end: silence).
+      float hl = 0.f, hr = 0.f;
+      const bool hqHas = hq && m >= 0 && (m < hqReady || hqReady >= hqFrames);
+      if (hqHas && m < hqReady) hl = hq->L[static_cast<size_t>(m)], hr = hq->R[static_cast<size_t>(m)];
+      const double target = hqHas && hqPitch ? 1.0 : 0.0;
+      double mix = c.rtMixAt == m ? c.rtMix : target;  // after a jump: no fade
+      mix = mix < target ? std::min(target, mix + mixStep) : std::max(target, mix - mixStep);
+      if (!hqHas) mix = 0;
+      c.rtMix = mix, c.rtMixAt = m + 1;
+      if (hqPitch && m < 0) continue;
+      if (mix >= 1.0) {
+        l = hl, r = hr;
       } else if (!c.granular && chanRatio == 1.0) {
         double src = srcAt(u, t0 + (t1 - t0) * static_cast<double>(i) / static_cast<double>(len));
-        if (src >= c.srcEnd) continue;
-        readFrameSinc(s, src, c.reverse, l, r, rt, c.secPerTick > 0 ? 1.0 : readRate);
+        if (src < c.srcEnd) readFrameSinc(s, src, c.reverse, l, r, rt, c.secPerTick > 0 ? 1.0 : readRate);
       } else {
         // Grains k (starting at k·H) and k − 1 overlap at u.
         const int64_t k = static_cast<int64_t>(std::floor(u / kGrainHop));
@@ -174,23 +189,28 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
           }
           // J-140: grain k - 1 as it was aligned (when it was the last one
           // placed); grain k lined up with it.
+          grainIn[0] = grainIn[1] = inRate;
           if (c.rtGrain == k) {
             grainSrc[0] = c.rtGrainSrc[0], grainSrc[1] = c.rtGrainSrc[1];
+            grainIn[0] = c.rtGrainRate[0], grainIn[1] = c.rtGrainRate[1];
           } else {
             // Only a grain that starts now is moved (playback went on from the
             // grain before); after a jump or a new program it plays as mapped.
             if (c.rtGrain == k - 1) {
-              grainSrc[1] = c.rtGrainSrc[0];
-              if (k > 0) grainSrc[0] += alignGrain(s, c.reverse, grainSrc[0], grainSrc[1] + kGrainHop * inRate, kGrainHop * inRate);
+              grainSrc[1] = c.rtGrainSrc[0], grainIn[1] = c.rtGrainRate[0];
+              if (k > 0) grainSrc[0] += alignGrain(s, c.reverse, grainSrc[0], grainSrc[1] + kGrainHop * grainIn[1], kGrainHop * inRate);
             }
             c.rtGrain = k, c.rtGrainSrc[0] = grainSrc[0], c.rtGrainSrc[1] = grainSrc[1];
+            c.rtGrainRate[0] = grainIn[0], c.rtGrainRate[1] = grainIn[1];
           }
           cachedGrain = k;
         }
-        const double grainRate = inRate * s.sampleRate / sr;  // source frames per output frame
+        // A rate change (channel pitch) applies from the next grain on: a grain
+        // that changed its rate midway would jump in its source.
         for (int q = 0; q < 2; ++q) {
+          const double grainRate = grainIn[q] * s.sampleRate / sr;  // source frames per output frame
           double du = u - static_cast<double>(k - q) * kGrainHop;  // time inside the grain (0 … 2H)
-          double src = grainSrc[q] + du * inRate;
+          double src = grainSrc[q] + du * grainIn[q];
           if (src >= c.srcEnd || src < -1e-7) continue;
           double w = std::sin(kPi * du / (2.0 * kGrainHop));
           float gl = 0.f, gr = 0.f;
@@ -198,6 +218,12 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
           l += static_cast<float>(w * w) * gl;
           r += static_cast<float>(w * w) * gr;
         }
+      }
+      if (mix > 0.0 && mix < 1.0) {  // crossfading (equal gain: both carry the same sound)
+        // An S-curve over the linear ramp: no corner where the fade starts or ends.
+        const double w = mix * mix * (3.0 - 2.0 * mix);
+        l = static_cast<float>(w * hl + (1.0 - w) * l);
+        r = static_cast<float>(w * hr + (1.0 - w) * r);
       }
       L[from + i] += l * static_cast<float>(g);
       R[from + i] += r * static_cast<float>(g);
