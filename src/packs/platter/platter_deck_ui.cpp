@@ -35,7 +35,7 @@ constexpr float kPi = 3.14159265358979f;
 // Waveform panel rows.
 constexpr float kOvH = 22, kWaveH = 84, kPhaseH = 16, kRowGap = 4;
 // Deck rows.
-constexpr float kPad = 12, kHeadH = 50, kBodyH = 258, kPerfH = 84, kLoopH = 30, kGap = 10;
+constexpr float kPad = 12, kHeadH = 50, kBodyH = 280, kPerfH = 84, kLoopH = 30, kGap = 10;
 
 double srcRateOf(const DeckModel& m) { return m.srcRate > 0 ? m.srcRate : 44100.0; }
 
@@ -533,12 +533,14 @@ void drawControls(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2
     if (button(id, ImVec2(p0.x, y), ImVec2(w, 24), kModes[k].label, on(a, t, kp), kModes[k].hint)) flip(a, t, kp);
     y += 28;
   }
-  // motor and hand feel
-  y = std::max(y + 4, p1.y - pui::knobCellHeight(pui::KnobSmall));
-  const float cell = std::floor(w / 3);
+  // the motor (start, brake), then the hand (feel, jog sensitivity)
+  const float kh = pui::knobCellHeight(pui::KnobSmall);
+  y = std::max(y + 4, p1.y - 2 * kh);
+  const float cell = std::floor(w / 2);
   pui::knobAt(a, t, deckParam(d, DStartTime), ImVec2(p0.x, y), i18n::tr("Start"), pui::KnobSmall, cell);
   pui::knobAt(a, t, deckParam(d, DStopTime), ImVec2(p0.x + cell, y), i18n::tr("Brake"), pui::KnobSmall, cell);
-  pui::knobAt(a, t, deckParam(d, DFeel), ImVec2(p0.x + 2 * cell, y), i18n::tr("Hand"), pui::KnobSmall, cell);
+  pui::knobAt(a, t, deckParam(d, DFeel), ImVec2(p0.x, y + kh), i18n::tr("Hand"), pui::KnobSmall, cell);
+  pui::knobAt(a, t, deckParam(d, DJog), ImVec2(p0.x + cell, y + kh), i18n::tr("Jog"), pui::KnobSmall, cell);
   (void)e;
 }
 

@@ -19,6 +19,19 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Fixes: sample playback at high pitch settings stays clean, a clip stretched in realtime stays
   in tune, and the audio editor plays and scrubs cleanly at any speed.
 
+### Platter scratching
+
+- Scratching on Platter now follows the hand closely: a baby scratch lags the hand by about
+  4 ms instead of 7 ms and keeps its shape, and reversals are crisp.
+- Jog wheel and mouse moves no longer step or buzz. Each jog tick is placed at the moment it
+  arrived instead of at the start of the audio block, and the record's speed changes smoothly
+  between moves, so slow drags on a coarse jog wheel play as one tone instead of a stutter.
+- A record held still by the hand is silent, with no creep or rumble after a stop.
+- New per-deck Jog knob (next to Hand) sets how far the record moves for each jog tick, from
+  0.25x to 2x. The default is 0.8x, a little less sensitive than before. Projects saved
+  earlier load with the default.
+- Hand feel now ranges from loose (smoothest on coarse jog wheels) to tight (least lag).
+
 ### Cleaner time stretching
 
 - The Auto, Transient and Beats modes now stretch the hits and the tone under them separately:

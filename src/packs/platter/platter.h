@@ -66,7 +66,10 @@ enum DeckParam {
   DFeel,        // 0..1 hand tracking: loose .. tight
   DXfSide,      // choice: Thru / A / B (crossfader assign)
   DLoopSize,    // choice: 1/8 .. 32 beats (auto loop and beat jump)
-  DCount
+  DCount,       // (deck B's block: PDeckB .. PDeckB + DCount - 1)
+  // Added after the block (J-154); their ids follow the mixer's, see deckParam.
+  DJog = DCount,  // 0.25..2 jog sensitivity: record travel per jog tick (1 = one turn per turn)
+  DAll
 };
 // Parameter ids. 0..22 are J-150's single deck (deck A and the mixer values it
 // had); deck B's block and the new mixer values follow (ids never move).
@@ -99,12 +102,16 @@ enum Param {
   PMaster,      // mixer: master level, dB -40..6 (the bottom is off)
   PXfCut,       // mixer: crossfader cut mode (the sharpest curve)
   PXfReverse,   // mixer: crossfader reverse
+  PJogA,        // 46 (J-154): deck A jog sensitivity
+  PJogB,        // deck B jog sensitivity
   PCount
 };
 // The parameter id of deck `deck`'s parameter `d`.
 constexpr int deckParam(int deck, int d) {
+  if (d == DJog) return deck == 0 ? static_cast<int>(PJogA) : static_cast<int>(PJogB);
   return deck == 0 ? (d < DXfSide ? d : d == DXfSide ? static_cast<int>(PXfSide) : static_cast<int>(PLoopSize)) : static_cast<int>(PDeckB) + d;
 }
+inline constexpr double kJogSensDefault = 0.8;  // a little less than one turn per turn
 // Deck (0 / 1) of a parameter id and its DeckParam in `d`; -1 for mixer parameters.
 int deckOfParam(int p, int& d);
 
@@ -359,7 +366,10 @@ void setTapped(bool on);
 bool tapped();
 uint64_t head();
 // Message `index` (head() - size() .. head() - 1); false when it was overwritten.
-bool read(uint64_t index, uint32_t& device, uint8_t& status, uint8_t& d1, uint8_t& d2);
+// `ns` (when given): when it arrived (steady clock, nanoseconds; see nowNs).
+bool read(uint64_t index, uint32_t& device, uint8_t& status, uint8_t& d1, uint8_t& d2, int64_t* ns = nullptr);
+// The steady clock the hub stamps messages with (nanoseconds).
+int64_t nowNs();
 inline constexpr uint64_t kSize = 4096;
 // Devices bound to a setup (UI thread sets them every frame): their notes do not
 // play the selected instrument and the app's templates and links leave them alone.

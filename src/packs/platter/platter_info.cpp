@@ -43,6 +43,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
     at(DFeel) = lin(k + "hand feel", "%", 0, 1, 0.5);
     at(DXfSide) = ch(k + "crossfader side", {"Thru", "A", "B"}, d == 0 ? XfA : XfB);
     at(DLoopSize) = ch(k + "loop size", {"1/8", "1/4", "1/2", "1", "2", "4", "8", "16", "32"}, 5);
+    at(DJog) = lin(k + "jog sensitivity", "times", 0.25, 2, kJogSensDefault);
   }
   p.params[PXfader] = lin("Crossfader", "", 0, 1, 0.5);
   p.params[PXfCurve] = lin("Crossfader curve", "%", 0, 1, 0.5);

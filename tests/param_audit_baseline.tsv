@@ -12631,6 +12631,8 @@ gl.platter	42	Sync to	inert	0		what a synced deck follows: the other deck needs 
 gl.platter	43	Master level	working	-40	
 gl.platter	44	Crossfader cut	combination	1	19=0
 gl.platter	45	Crossfader reverse	combination	1	17=1
+gl.platter	46	A jog sensitivity	inert	0		how far a jog tick moves the record (needs a controller; covered by test_platter)
+gl.platter	47	B jog sensitivity	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
 gl.pluck	0	Decay	working	0.1	
 gl.pluck	1	Damping	working	0	
 gl.pluck	2	Brightness	working	0	

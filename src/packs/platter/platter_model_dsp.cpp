@@ -70,6 +70,10 @@ int deckOfParam(int p, int& d) {
     d = DLoopSize;
     return 0;
   }
+  if (p == PJogA || p == PJogB) {
+    d = DJog;
+    return p == PJogA ? 0 : 1;
+  }
   return -1;
 }
 

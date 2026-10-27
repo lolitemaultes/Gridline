@@ -5,17 +5,27 @@
 // same audio for any block size and a recorded take replays sample for sample.
 // Both decks share the step grid: a note that cuts a step cuts it on both.
 // Per step each deck decides where its read head ends (hand tracking, motor,
-// loops, jumps) and its level; inside the step the head moves at a constant
-// speed, every sample read through Gridline's band-limited kernel at that
-// speed (any direction, down to zero), so a direction change is a continuous
-// stop and turn, never a click. Jumps crossfade from a ghost reader that keeps
-// the old motion for a few milliseconds.
+// loops, jumps) and its level; inside the step the head moves on a cubic
+// (Hermite) path whose speed starts at the speed the last step ended with and
+// ends at this step's mean speed, so the speed never jumps (the curve depends
+// on the stored positions only: takes replay it exactly). Every sample is read
+// through Gridline's band-limited kernel at its own speed (any direction, down
+// to zero), so a direction change is a continuous stop and turn, never a
+// click. Jumps crossfade from a ghost reader that keeps the old motion for a
+// few milliseconds.
 //
 // Physics (per deck):
-//   hand    the platter follows the hand through an alpha-beta tracker (a
-//           critically damped second-order loop; Hand feel sets its
-//           bandwidth), which turns coarse jog ticks or mouse moves into a
-//           smooth position and speed;
+//   hand    jog ticks and mouse moves are hand events at their own sample time
+//           (controller MIDI and editor moves are stamped when they arrive and
+//           laid out over the next block, so a block's ticks are not bunched
+//           at its start). The hand's speed comes from the timing of the
+//           events over the current stroke (restarted when the hand turns);
+//           the reference runs on from the last event at that speed for about
+//           one event interval (a wheel that sends no tick has not turned a
+//           whole tick), then stops. The platter follows the reference with a
+//           stiff critically damped loop (Hand feel sets its bandwidth) that
+//           is fed the hand's speed, so it tracks a steady stroke without lag,
+//           turns crisply, and stands still (silent) while the hand holds it;
 //   motor   playing pulls the platter to its speed at a torque set by Start
 //           time, stopping brakes it at Stop time; a throw keeps its speed and
 //           the motor catches it;
@@ -169,6 +179,7 @@ struct Shared {
   double sr = 44100, tempo = 120, blockTick = 0;
   int ppq = 96;
   uint64_t clock = 0, blockClock = 0;
+  double evAt = 0;  // sample time of the input being handled (hand events use it)
   bool transport = false;
   std::array<float, PCount> p{}, ctlVal{};
   std::array<uint64_t, PCount> ctlUntil{};
@@ -224,7 +235,7 @@ class Deck {
     fileIdx_ = dm_ ? dm_->file : -1;
     if (dm_) adoptMarks(fileChanged);
     if (fileChanged) {
-      motor_ = false, vel_ = 0, hand_ = false, softHand_ = false, ghost_.left = 0, loopOn_ = false;
+      motor_ = false, vel_ = 0, hand_ = false, softHand_ = false, ghost_.left = 0, loopOn_ = false, fresh_ = true;
       cuePreview_ = false, hotPreview_ = -1, noteHot_ = -1, censor_ = false, slipping_ = false;
       jumpPending_ = false;
       pos_ = src_ ? cue_ : 0;
@@ -304,7 +315,11 @@ class Deck {
     target = std::clamp(target, -srcRate() * 2, frames() + srcRate() * 2);
     jumpTo_ = target;
     jumpPending_ = true;
-    if (hand_) handPos_ = target, trX_ = target;
+    if (hand_) {
+      handBase_ += target - handPos_;
+      handPos_ = target, trX_ = target;
+      handRestart(target, sh_->evAt);
+    }
   }
   void startMotor(bool instant) {
     if (!motor_ && on(DSync) && on(DQuantize) && loaded() && !hand_) {
@@ -425,13 +440,106 @@ class Deck {
     if (loopOn_) loopSet(frameAt(model(), beatAt(model(), loopIn_) + size), frameAt(model(), beatAt(model(), loopOut_) + size));
   }
 
+  // ---------------------------------------------------------------- the hand
+  // Bandwidth of the platter's loop around the hand (radians per sample): Hand
+  // feel, 16 .. 64 Hz (loose: smoothest on a coarse jog wheel; tight: the
+  // least lag, best with a fine wheel or the mouse).
+  double handW() const {
+    const double f = 16.0 * std::pow(4.0, std::clamp(static_cast<double>(P(DFeel)), 0.0, 1.0));
+    return 2 * kPi * f / sh_->sr;
+  }
+  // Jog sensitivity: record travel per jog tick (1 = the record turns as far as the wheel).
+  double jogSens() const { return std::clamp(static_cast<double>(P(DJog)), 0.25, 2.0); }
+  // The hand reference starts again at `h`, standing still from `at`.
+  void handRestart(double h, double at) {
+    refH_ = lastEvH_ = h;
+    refV_ = 0;
+    refT_ = refStop_ = lastEvT_ = at;
+    histN_ = 0;
+    runDir_ = 0;
+    ivl_ = 0;
+  }
+  // The hand moved to handPos_ at sample time `at` (the event's own time).
+  // `exact`: an exact position (the mouse), not a count of jog ticks.
+  void handEvent(double at, bool exact) {
+    const double sr = sh_->sr;
+    const double H = handPos_;
+    const double d = H - lastEvH_;
+    at = std::max(at, lastEvT_);
+    if (d == 0) {
+      // the mouse is still where it was: the hand stopped (a jog wheel says
+      // nothing when it stands, so its reference stops on its own)
+      if (exact && at > lastEvT_ + 0.002 * sr) handRestart(H, at);
+      return;
+    }
+    const int dir = d > 0 ? 1 : -1;
+    const double maxGap = 0.08 * sr;  // a longer gap: the stroke starts from rest
+    const double gap = at - lastEvT_;
+    const bool fromRest = histN_ == 0 || gap > maxGap;
+    if (dir != runDir_ || fromRest) {
+      // a new stroke (or a turn): it left the last place at most maxGap ago
+      // (and not much less than 4 ms ago: a wheel that ticks back right away
+      // has only just crossed the tick it turned on)
+      ivl_ = std::clamp(gap, 0.004 * sr, maxGap);
+      histT_[0] = at - ivl_;
+      histH_[0] = lastEvH_;
+      histN_ = 1;
+      runDir_ = dir;
+    } else if (gap > 0) {
+      ivl_ += 0.3 * (std::min(gap, maxGap) - ivl_);
+    }
+    if (gap > 0 || histN_ < 2) {
+      if (histN_ == kHist) {
+        for (int i = 1; i < kHist; ++i) histT_[static_cast<size_t>(i - 1)] = histT_[static_cast<size_t>(i)], histH_[static_cast<size_t>(i - 1)] = histH_[static_cast<size_t>(i)];
+        --histN_;
+      }
+      histT_[static_cast<size_t>(histN_)] = at, histH_[static_cast<size_t>(histN_)] = H;
+      ++histN_;
+    } else {
+      histH_[static_cast<size_t>(histN_ - 1)] = H;  // the same moment: one event
+    }
+    // the speed over a window of the stroke (about two event intervals); a
+    // hand turns a record at most about ten times its speed
+    const double win = std::clamp(2.0 * ivl_, 0.003 * sr, 0.02 * sr);
+    int j = histN_ - 2;
+    while (j > 0 && at - histT_[static_cast<size_t>(j - 1)] <= win) --j;
+    const double dt = std::max(1.0, at - histT_[static_cast<size_t>(j)]);
+    double v = (H - histH_[static_cast<size_t>(j)]) / dt;
+    if (exact && histN_ >= 3) {
+      // exact positions: the speed at the last one from a parabola through the
+      // last three (it sees the hand slow down into a turn)
+      const size_t k = static_cast<size_t>(histN_ - 1);
+      const double t0 = histT_[k - 2], t1 = histT_[k - 1], t2 = histT_[k];
+      if (t1 - t0 >= 0.001 * sr && t2 - t1 >= 0.001 * sr) {
+        const double q = histH_[k - 2] * (t2 - t1) / ((t0 - t1) * (t0 - t2)) + histH_[k - 1] * (t2 - t0) / ((t1 - t0) * (t1 - t2)) +
+                         histH_[k] * (2 * t2 - t0 - t1) / ((t2 - t0) * (t2 - t1));
+        v = q * dir > 0 ? q : 0.0;
+      }
+    }
+    const double vMax = 10.0 * unity();
+    // (the first move from rest has no speed to go on yet: the platter just goes there)
+    refV_ = fromRest ? 0.0 : std::clamp(v, -vMax, vMax);
+    refH_ = H;
+    refT_ = at;
+    // it runs on for about one event interval (no event since: the hand
+    // stopped), and never further than this event moved it
+    double run = std::clamp(gap > 0 ? std::min(gap, maxGap) : ivl_, 0.001 * sr, 0.08 * sr);
+    if (refV_ != 0) run = std::min(run, std::fabs(d / refV_));
+    refStop_ = at + run;
+    lastEvT_ = at;
+    lastEvH_ = H;
+  }
   void handDown() {
     if (!loaded()) return;
     if (!hand_) {
       hand_ = true;
-      handPos_ = trX_ = jumpPending_ ? jumpTo_ : pos_;
+      trX_ = jumpPending_ ? jumpTo_ : pos_;
       trV_ = vel_;
+      // the hand takes the record's motion: it comes to rest where the loop
+      // stops it without swinging back (x + v / w)
+      handPos_ = trX_ + trV_ / handW();
       handBase_ = handPos_;
+      handRestart(handPos_, sh_->evAt);
     }
     softHand_ = false;
   }
@@ -454,7 +562,8 @@ class Deck {
         handDown();
         softHand_ = true;
       }
-      handPos_ += ticks * framesPerTick() * 0.5;
+      handPos_ += ticks * framesPerTick() * 0.5 * jogSens();
+      handEvent(sh_->evAt, false);
       softUntil_ = sh_->clock + static_cast<uint64_t>(sh_->sr * 0.08);
     }
   }
@@ -484,8 +593,10 @@ class Deck {
         else if (!e.down) handUp();
         break;
       case CtlJogPlatter:
-        if (hand_ && !softHand_) handPos_ += e.ticks * framesPerTick();
-        else if (sh_->clock >= rimMuteUntil_ || !on(DVinyl)) nudgeTicks(e.ticks);
+        if (hand_ && !softHand_) {
+          handPos_ += e.ticks * framesPerTick() * jogSens();
+          handEvent(sh_->evAt, false);
+        } else if (sh_->clock >= rimMuteUntil_ || !on(DVinyl)) nudgeTicks(e.ticks);
         break;
       case CtlJogRim:
         if (!hand_ && sh_->clock >= rimMuteUntil_) nudgeTicks(e.ticks);
@@ -555,7 +666,10 @@ class Deck {
       }
       case CmdHandDown: handDown(); break;
       case CmdHandMove:
-        if (hand_) handPos_ = handBase_ + c.v * srcRate() * kSecondsPerRev;
+        if (hand_) {
+          handPos_ = handBase_ + c.v * srcRate() * kSecondsPerRev;
+          handEvent(sh_->evAt, true);
+        }
         break;
       case CmdHandUp: handUp(); break;
       case CmdSeek: jump(c.v); break;
@@ -595,6 +709,7 @@ class Deck {
     motor_ = false, hand_ = false, softHand_ = false, vel_ = 0, cuePreview_ = false, hotPreview_ = -1, playLatched_ = false, noteHot_ = -1;
     censor_ = false, bend_ = 0, nudge_ = 0;
     ghost_.left = 0;
+    fresh_ = true;
   }
   bool active() const { return rs() && (motor_ || hand_ || std::fabs(vel_) > 1e-9 || ghost_.left > 0 || inTake_); }
 
@@ -602,6 +717,7 @@ class Deck {
   // The deck plays its stream of a take (null: it stays silent for the take).
   void startTake(const TakeStream* s, const Sample* src) {
     inTake_ = true;
+    fresh_ = true;  // (the take's first step is straight, as it was when it was recorded)
     stream_ = s && s->on && src ? s : nullptr;
     takeSrc_ = stream_ ? src : nullptr;
     hand_ = softHand_ = false;
@@ -668,10 +784,12 @@ class Deck {
     }
     return g;
   }
-  // Level that follows the platter's speed (a record makes no sound standing still).
+  // Level that follows the platter's speed below half speed (a cartridge's
+  // output follows the stylus speed: a record crawling past is faint, one
+  // standing still is silent).
   double speedGain(double rate) const {
     const double r = std::fabs(rate) / std::max(1e-9, unity());
-    return std::sqrt(std::min(1.0, r / 0.5));
+    return std::min(1.0, r / 0.5);
   }
 
   // Before the step: what the other deck may lock to.
@@ -767,15 +885,33 @@ class Deck {
         jumpPending_ = false;
       }
       if (hand_) {
-        // alpha-beta tracker, critically damped, bandwidth from Hand feel (4 .. 16 Hz)
-        const double f = 4.0 * std::pow(4.0, std::clamp(static_cast<double>(P(DFeel)), 0.0, 1.0));
-        const double wT = 2 * kPi * f * fLen / sh_->sr;
-        const double alpha = std::min(1.0, 2.0 * wT), beta = std::min(1.0, wT * wT);
+        // the platter follows the hand's reference: a critically damped loop
+        // fed the reference's speed, solved exactly over the step (in two
+        // pieces when the reference stops inside it)
         if (jumped) trX_ = start;
-        const double pred = trX_ + trV_ * fLen;
-        const double r = handPos_ - pred;
-        trX_ = pred + alpha * r;
-        trV_ += beta * r / fLen;
+        const double w = handW();
+        const double t0 = static_cast<double>(clock), t1 = t0 + fLen;
+        // x'' = w^2 (h - x) - 2 w x': on a reference moving at `slope` the
+        // platter settles 2 slope / w behind it; its response never swings
+        // past the hand and back (the hand stops: the record stops)
+        auto follow = [&](double a, double b) {
+          const double slope = a < refStop_ ? refV_ : 0.0, lag = 2 * (1.0 - kFeedFwd) * slope / w;
+          const double ha = refH_ + refV_ * (std::min(a, refStop_) - refT_);
+          const double hb = refH_ + refV_ * (std::min(b, refStop_) - refT_);
+          const double e0 = trX_ - ha + lag, ed0 = trV_ - slope, T = b - a;
+          const double k = std::exp(-w * T), c = ed0 + w * e0;
+          trX_ = hb - lag + (e0 + c * T) * k;
+          trV_ = slope + (ed0 - w * c * T) * k;
+        };
+        if (refStop_ > t0 && refStop_ < t1) {
+          follow(t0, refStop_);
+          follow(refStop_, t1);
+        } else {
+          follow(t0, t1);
+        }
+        // at rest: exactly still (silent)
+        const double rest = refH_ + refV_ * (refStop_ - refT_);
+        if (t1 >= refStop_ && std::fabs(trX_ - rest) < 1e-3 && std::fabs(trV_) < 1e-6) trX_ = rest, trV_ = 0;
         x1 = trX_;
         v1 = trV_;
         flags |= TfHand;
@@ -838,11 +974,18 @@ class Deck {
     if (wantKey) flags |= TfKeyLock;
     else flags &= static_cast<uint8_t>(~TfKeyLock);
 
+    // the path inside the step: its speed starts where the last step's ended
+    // (after a jump, at a fresh start and on a take's first step: straight)
+    const double m0 = jumped || fresh_ ? rate : tan_;
     planStep(len, x0, start, x1, rate, v0, v1, jumped, wantKey, gain);
+    plan_.m0 = m0;
+    plan_.lin = m0 == rate;
+    fresh_ = false;
 
     // state for the next step
     if (!hand_) vel_ = v1;
     prevRate_ = rate;
+    tan_ = rate;
     lastSpeedGain_ = plan_.sg1;
     pos_ = x1;
     if (slipping_ && motor_) slipPos_ += baseSpeed() * fLen;
@@ -924,7 +1067,9 @@ class Deck {
     if (plan_.silent || at <= 0 || at >= plan_.len) return;
     const Plan& Pl = plan_;
     const double u = static_cast<double>(at) / Pl.len;
-    pos_ = Pl.start + (Pl.x1 - Pl.start) * u;
+    double spd = Pl.rate;
+    pos_ = pathAt(Pl, u, spd);
+    tan_ = spd;
     if (Pl.hand) trX_ = pos_;
     else if (!inTake_) vel_ = Pl.v0 + (Pl.v1 - Pl.v0) * u;
     lastGain_ = static_cast<float>(Pl.g0 + (Pl.g1 - Pl.g0) * u);
@@ -960,14 +1105,15 @@ class Deck {
       if (Pl.key) {
         l = kl[0][c], r = kl[1][c];
       } else {
-        const double p = Pl.start + (Pl.x1 - Pl.start) * u;
-        if (pitch::exactFrame(p, Pl.rate)) {  // whole frames at normal speed: the file itself
+        double spd = Pl.rate;
+        const double p = pathAt(Pl, u, spd);
+        if (pitch::exactFrame(p, spd)) {  // whole frames at normal speed: the file itself
           const auto k = static_cast<int64_t>(std::floor(p + 0.5));
           const bool in = k >= 0 && k < n;
           l = in ? xs[0][k] : 0.0, r = in ? xs[1][k] : 0.0;
         } else {
           float o[2];
-          pitch::readArrays<2>(xs, n, p, std::max(std::fabs(Pl.rate), 1e-6), tab, o);
+          pitch::readArrays<2>(xs, n, p, std::max(std::fabs(spd), 1e-6), tab, o);
           l = o[0], r = o[1];
         }
       }
@@ -1115,6 +1261,14 @@ class Deck {
   double pos_ = 0, vel_ = 0, prevRate_ = 0;
   bool motor_ = false, hand_ = false, softHand_ = false, censor_ = false, shift_ = false;
   double handPos_ = 0, handBase_ = 0, trX_ = 0, trV_ = 0;
+  // the hand reference: from the last event (refH_ at refT_) on at refV_ until refStop_
+  double refH_ = 0, refV_ = 0, refT_ = 0, refStop_ = 0, lastEvT_ = 0, lastEvH_ = 0, ivl_ = 0;
+  static constexpr int kHist = 24;
+  static constexpr double kFeedFwd = 0.5;
+  std::array<double, kHist> histT_{}, histH_{};
+  int histN_ = 0, runDir_ = 0;
+  double tan_ = 0;     // speed at the start of the next step
+  bool fresh_ = true;  // the next step starts straight
   uint64_t softUntil_ = 0, rimMuteUntil_ = 0;
   double nudge_ = 0, bend_ = 0;
   int searchTicks_ = 0;
@@ -1143,10 +1297,24 @@ class Deck {
     bool silent = true, key = false, hand = false, hp = false;
     int len = kStep;
     double start = 0, x1 = 0, rate = 0, v0 = 0, v1 = 0, sg0 = 0, sg1 = 0, ghostRate = 1;
+    double m0 = 0;    // speed at the step's start (it ends at `rate`)
+    bool lin = true;  // m0 == rate: a straight path
     double g0 = 0, g1 = 0;
     const Sample* src = nullptr;  // the file the step reads (a take that ends mid-step keeps it to the step's end)
     double eqH = 1, eqM = 1, eqL = 1, trim = 1, wetT = 0, fg = 0.5, fk = 1.4, smooth = 0.01;
   };
+  // Read position at `u` (0..1) of a planned step and the speed there (frames per
+  // sample): a cubic Hermite path from the start speed m0 to the mean speed.
+  static double pathAt(const Plan& Pl, double u, double& spd) {
+    const double c = Pl.x1 - Pl.start;
+    if (Pl.lin) {
+      spd = Pl.rate;
+      return Pl.start + c * u;
+    }
+    const double L = static_cast<double>(Pl.len), u2 = u * u, u3 = u2 * u;
+    spd = Pl.m0 * (3 * u2 - 4 * u + 1) + Pl.rate * (4 * u - 3 * u2);
+    return Pl.start + (u3 - 2 * u2 + u) * L * Pl.m0 + (3 * u2 - 2 * u3) * c + (u3 - u2) * c;
+  }
   Plan plan_;
   float peak_ = 0, pre_ = 0;
   Ghost ghost_;
@@ -1213,6 +1381,7 @@ class PlatterGen final : public Generator {
     const size_t h = cmdHead_.load(std::memory_order_relaxed);
     if (h - cmdTail_.load(std::memory_order_acquire) >= cmds_.size()) return false;
     cmds_[h % cmds_.size()] = c;
+    cmdNs_[h % cmds_.size()] = hub::nowNs();
     cmdHead_.store(h + 1, std::memory_order_release);
     return true;
   }
@@ -1276,9 +1445,10 @@ class PlatterGen final : public Generator {
       if ((kind == 0x90 || kind == 0x80) && !boundNote(status, d1)) key(d1, kind == 0x90 && d2 > 0);
       return;
     }
-    // plugin builds: the host's MIDI is the controller
+    // plugin builds: the host's MIDI is the controller (on its own sample)
     InEvent ev[16];
     const int n = sh_.aux ? decoderRaw_.feed(sh_.aux->m.map, status, d1, d2, ev, 16) : 0;
+    sh_.evAt = static_cast<double>(sh_.clock);
     for (int i = 0; i < n; ++i) input(ev[i]);
     if (n == 0 && (kind == 0x90 || kind == 0x80)) key(d1, kind == 0x90 && d2 > 0);
   }
@@ -1308,6 +1478,27 @@ class PlatterGen final : public Generator {
     sh_.ppq = std::max(1, ctx.ppq);
     sh_.blockTick = ctx.tick;
     sh_.blockClock = sh_.clock;
+    // Input that arrived while the last block played (controller MIDI, editor
+    // moves) is handled now, but the hand takes it at the sample time it
+    // arrived (that far before this block's start), so a block's jog ticks
+    // keep their spacing (offline renders: all at the block's start).
+    // The block's start in wall time: a callback runs late now and then, never
+    // early, so the offset between the two clocks follows the earliest ones
+    // (and drifts slowly).
+    const bool live = !ctx.offline;
+    const double c = static_cast<double>(sh_.clock);
+    if (live) {
+      const double off = c - static_cast<double>(hub::nowNs()) * sh_.sr * 1e-9;
+      if (!clockOffOk_ || std::fabs(off - clockOff_) > 0.1 * sh_.sr || off > clockOff_) clockOff_ = off;
+      else clockOff_ += 0.002 * (off - clockOff_);
+      clockOffOk_ = true;
+    }
+    auto arrival = [&](int64_t ns) {
+      double at = c;
+      if (live && ns > 0) at = std::clamp(static_cast<double>(ns) * sh_.sr * 1e-9 + clockOff_, c - 0.05 * sh_.sr, c);
+      lastArrival_ = std::clamp(std::max(at, lastArrival_), c - 0.05 * sh_.sr, c);
+      return lastArrival_;
+    };
     sh_.transport = ctx.playing;
     recording_ = ctx.recording && ctx.playing && !ctx.offline;
     // aux (model): a new one adopts its cues unless a deck set newer ones
@@ -1353,11 +1544,13 @@ class PlatterGen final : public Generator {
       for (; hubPos_ < head; ++hubPos_) {
         uint32_t dev = 0;
         uint8_t st = 0, a = 0, b = 0;
-        if (!hub::read(hubPos_, dev, st, a, b)) continue;
+        int64_t ns = 0;
+        if (!hub::read(hubPos_, dev, st, a, b, &ns)) continue;
         if (want != 0 && dev != want) continue;
         noteRaw(st, a, b);
         if (!sh_.aux) continue;
         const int n = decoderHub_.feed(sh_.aux->m.map, st, a, b, ev, 16);
+        sh_.evAt = arrival(ns);
         for (int i = 0; i < n; ++i) input(ev[i]);
       }
     } else {
@@ -1377,6 +1570,7 @@ class PlatterGen final : public Generator {
     if (!recording_) capStartAt_ = -1;
     // editor commands
     for (size_t t = cmdTail_.load(std::memory_order_relaxed); t != cmdHead_.load(std::memory_order_acquire); ++t) {
+      sh_.evAt = arrival(cmdNs_[t % cmds_.size()]);
       command(cmds_[t % cmds_.size()]);
       cmdTail_.store(t + 1, std::memory_order_release);
     }
@@ -1542,6 +1736,7 @@ class PlatterGen final : public Generator {
       e.startRate[d] = k.vel_;
       e.pt[d].pos = k.jumpPending_ ? k.jumpTo_ : k.pos_;
       e.gain[d] = k.lastGain_;
+      k.fresh_ = true;  // the take's first step is straight (its replay starts so)
       if (k.keyOn_) k.keyRestart_ = true;  // the key lock engine starts fresh with the take (replays match)
     }
     pushCapture(e);
@@ -1718,7 +1913,11 @@ class PlatterGen final : public Generator {
   Decoder decoderHub_, decoderRaw_;
   uint64_t hubPos_ = 0;
   std::array<Cmd, 256> cmds_{};
+  std::array<int64_t, 256> cmdNs_{};  // arrival times (hub::nowNs)
   std::atomic<size_t> cmdHead_{0}, cmdTail_{0};
+  double lastArrival_ = 0;  // sample time of the last controller / editor input (they stay in order)
+  double clockOff_ = 0;     // sample clock minus wall clock (samples)
+  bool clockOffOk_ = false;
 
   // published
   std::atomic<float> pubMasterL_{0}, pubMasterR_{0};

@@ -14809,6 +14809,10 @@ msgstr ""
 msgid "JUMP"
 msgstr ""
 
+#: src/packs/platter/platter_deck_ui.cpp src/packs/platter/platter_ui.cpp
+msgid "Jog"
+msgstr ""
+
 #: src/packs/platter/platter_deck_ui.cpp
 msgid "Jump ahead by the loop size"
 msgstr ""
@@ -15275,10 +15279,6 @@ msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
 msgid "JOG TICKS / TURN"
-msgstr ""
-
-#: src/packs/platter/platter_ui.cpp
-msgid "Jog"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
