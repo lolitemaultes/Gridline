@@ -1363,6 +1363,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(seltmann_flow PROPERTIES TIMEOUT 300)
 
+    # J-151: Platter's two decks: the controller question, both decks playing, the crossfader.
+    add_test(NAME platter_flow
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_platter>
+                     -DOUT=${CMAKE_BINARY_DIR}/platter_flow -P ${CMAKE_SOURCE_DIR}/tests/platter_flow.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(platter_flow PROPERTIES TIMEOUT 300)
+
     # J-110: Seltmann's pattern Play button follows every Stop (button, Space, panic, Tools menu,
     # MIDI / remote, focus loss) and plays again with one click.
     add_test(NAME j110_play_state_app

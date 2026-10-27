@@ -91,6 +91,13 @@ struct PluginInfo {
   // Appended "model" choice param (pack plugins): states saved before it existed
   // (shorter param vectors) normalise it to 0 = legacy; new instances use its default.
   int legacyModelParam = -1;
+  // J-151: the channel window shows the note processor panel under the editor
+  // (instruments whose notes are commands, like a DJ setup's cue keys, leave it
+  // out while the channel has none).
+  bool noteFxPanel = true;
+  // > 0: the editor reflows down to this width when the main window is narrower
+  // than editorWidth (the channel window follows it instead of overflowing).
+  float editorMinWidth = 0;
 };
 inline constexpr int kMaxSendOutputs = 4;
 inline constexpr int kRouteIndexAlways = -2;  // PluginInfo::routeModeParam

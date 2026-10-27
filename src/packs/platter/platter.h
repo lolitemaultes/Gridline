@@ -1,26 +1,31 @@
-// Gridline — "platter" pack: Platter (gl.platter), one deck of a DJ setup as a
-// channel-rack instrument. Shared by the catalogue, the model, the runtime, the
-// editor and the tests.
+// Gridline — "platter" pack: Platter (gl.platter), a DJ setup as a channel-rack
+// instrument: two decks and a mixer between them (or one deck, as a layout).
+// Shared by the catalogue, the model, the runtime, the editor and the tests.
 //
-//   model     the beat grid (from the shared tempo analysis), the cue, eight hot
-//             cues, the loop, the controller set-up (profile, side, device and an
-//             editable binding list) and the recorded takes; stored as text in
-//             PluginState::data after the audio file's path.
-//   mapping   controller profiles (Pioneer DDJ-200 left / right, Hercules
-//             DJControl Inpulse 200, Numark Mixtrack Pro FX, generic learn) and
-//             the decoder that turns raw MIDI into deck controls.
-//   runtime   the deck: platter physics (hand tracking, motor start / brake,
+//   model     per deck: the track (an entry of the model's file list), the beat
+//             grid (from the shared tempo analysis), the cue, eight hot cues and
+//             the last loop; the layout, the controller set-up (profile, device
+//             and an editable binding list whose entries target deck A, deck B
+//             or the mixer) and the recorded takes. Stored as text in
+//             PluginState::data after deck A's track path (the first line).
+//   mapping   controller profiles (Pioneer DDJ-200, Hercules DJControl Inpulse
+//             200, Numark Mixtrack Pro FX: both sides at once, or one side on
+//             one deck; generic learn) and the decoder that turns raw MIDI into
+//             deck and mixer controls.
+//   runtime   the decks: platter physics (hand tracking, motor start / brake,
 //             throws, nudges), band-limited reads at any speed and direction,
-//             tempo sync through the beat grid, cue / hot cues / loops / slip /
-//             key lock, the DJ EQ, filter, channel fader and crossfader, and the
-//             take recorder / player.
+//             tempo sync through the beat grid (to the project or to the other
+//             deck), cue / hot cues / loops / slip / key lock, the DJ EQ and
+//             filter per channel; the mixer: channel faders, crossfader (curve,
+//             cut, reverse), master; the take recorder / player.
 //   hub       controller MIDI from the device driver threads to every deck, lock
 //             free, whichever channel is selected.
 //
-// Takes: while Gridline records, an armed deck captures the exact path of its
-// read head (position, level and flags every control step). The take is stored
-// in the model and a note on the take's key is written into the pattern; that
-// note replays the performance sample for sample.
+// Takes: while Gridline records, an armed setup captures the exact path of both
+// read heads (position, level and flags every control step) and the mixer moves
+// that are not in those levels. The take is stored in the model (with the files
+// it was played on) and a note on the take's key is written into the pattern;
+// that note replays the performance sample for sample.
 #pragma once
 #include <array>
 #include <atomic>
@@ -37,50 +42,91 @@ class Generator;
 namespace gl::packs::platter {
 
 inline constexpr const char* kType = "gl.platter";
+inline constexpr int kDecks = 2;
 
 // ------------------------------------------------------------------ parameters
+// One deck's parameters (the order of deck B's block).
+enum DeckParam {
+  DVolume = 0,  // channel fader 0..1
+  DTrim,        // dB -12..12
+  DEqHigh,      // dB -26..6 (the bottom is a kill)
+  DEqMid,
+  DEqLow,
+  DFilter,      // -1..1: low-pass to the left, high-pass to the right
+  DFilterRes,   // 0..1
+  DPitch,       // -1..1 pitch fader (times the range)
+  DPitchRange,  // choice: 4 %, 8 %, 16 %, 50 %
+  DSync,        // toggle: tempo locked (to the project or the other deck)
+  DKeyLock,     // toggle: the pitch stays when the tempo changes
+  DQuantize,    // toggle: cues, loops and jumps snap to the beat
+  DSlip,        // toggle: slip mode
+  DVinyl,       // toggle: the platter top scratches (off: it nudges)
+  DStartTime,   // s 0..3 motor spin-up
+  DStopTime,    // s 0..3 brake
+  DFeel,        // 0..1 hand tracking: loose .. tight
+  DXfSide,      // choice: Thru / A / B (crossfader assign)
+  DLoopSize,    // choice: 1/8 .. 32 beats (auto loop and beat jump)
+  DCount
+};
+// Parameter ids. 0..22 are J-150's single deck (deck A and the mixer values it
+// had); deck B's block and the new mixer values follow (ids never move).
 enum Param {
-  PVolume = 0,   // channel fader 0..1
-  PTrim,         // dB -12..12
-  PEqHigh,       // dB -26..6 (the bottom is a kill)
+  PVolume = 0,  // deck A ...
+  PTrim,
+  PEqHigh,
   PEqMid,
   PEqLow,
-  PFilter,       // -1..1: low-pass to the left, high-pass to the right
-  PFilterRes,    // 0..1
-  PPitch,        // -1..1 pitch fader (times the range)
-  PPitchRange,   // choice: 4 %, 8 %, 16 %, 50 %
-  PSync,         // toggle: tempo locked to the project
-  PKeyLock,      // toggle: the pitch stays when the tempo changes
-  PQuantize,     // toggle: cues, loops and jumps snap to the beat
-  PSlip,         // toggle: slip mode
-  PVinyl,        // toggle: the platter top scratches (off: it nudges)
-  PStartTime,    // s 0..3 motor spin-up
-  PStopTime,     // s 0..3 brake
-  PFeel,         // 0..1 hand tracking: loose .. tight
-  PXfader,       // 0..1 crossfader (0 = side A)
-  PXfSide,       // choice: Thru / A / B
-  PXfCurve,      // 0..1 smooth (constant power) .. sharp (scratch cut)
-  PFaderCurve,   // choice: Smooth / Linear / Sharp
-  PNoteMode,     // choice: Gate / Trigger (notes on the hot cue keys)
-  PLoopSize,     // choice: 1/8 .. 32 beats (auto loop and beat jump)
+  PFilter,
+  PFilterRes,
+  PPitch,
+  PPitchRange,
+  PSync,
+  PKeyLock,
+  PQuantize,
+  PSlip,
+  PVinyl,
+  PStartTime,
+  PStopTime,
+  PFeel,
+  PXfader,      // mixer: crossfader 0..1 (0 = side A)
+  PXfSide,      // deck A: crossfader assign
+  PXfCurve,     // mixer: 0..1 smooth (constant power) .. sharp (scratch cut)
+  PFaderCurve,  // mixer: channel fader curve, Smooth / Linear / Sharp
+  PNoteMode,    // mixer: Gate / Trigger (notes on the hot cue keys)
+  PLoopSize,    // deck A: loop size
+  PDeckB,       // 23: deck B's block, DeckParam order
+  PSyncTo = PDeckB + DCount,  // mixer: Project / Other deck
+  PMaster,      // mixer: master level, dB -40..6 (the bottom is off)
+  PXfCut,       // mixer: crossfader cut mode (the sharpest curve)
+  PXfReverse,   // mixer: crossfader reverse
   PCount
 };
+// The parameter id of deck `deck`'s parameter `d`.
+constexpr int deckParam(int deck, int d) {
+  return deck == 0 ? (d < DXfSide ? d : d == DXfSide ? static_cast<int>(PXfSide) : static_cast<int>(PLoopSize)) : static_cast<int>(PDeckB) + d;
+}
+// Deck (0 / 1) of a parameter id and its DeckParam in `d`; -1 for mixer parameters.
+int deckOfParam(int p, int& d);
+
 enum PitchRange { Range4 = 0, Range8, Range16, Range50, RangeCount };
 enum XfSide { XfThru = 0, XfA, XfB };
 enum FaderCurve { FcSmooth = 0, FcLinear, FcSharp };
 enum NoteMode { NoteGate = 0, NoteTrigger };
+enum SyncTo { SyncProject = 0, SyncDeck };
 inline constexpr int kLoopSizes = 9;
 double loopBeats(int index);        // 0.125 .. 32
 const char* loopLabel(int index);   // "1/8" .. "32"
 double pitchRangeOf(int range);     // 0.04 .. 0.5
+inline constexpr double kMasterOffDb = -40.0;
 
 inline constexpr int kHotCues = 8;
 inline constexpr int kStep = 32;                // control step (output samples)
 inline constexpr double kSecondsPerRev = 1.8;   // 33 1/3 rpm
-inline constexpr int kHotKeyFirst = 60;         // notes 60..67 = hot cues 1..8
+inline constexpr int kHotKeyFirst = 60;         // notes 60..67 = deck A hot cues 1..8
+inline constexpr int kHotKeyFirstB = 72;        // notes 72..79 = deck B hot cues 1..8
 inline constexpr int kTakeKeyFirst = 36;        // notes 36..59 = takes 1..24
 inline constexpr int kTakeKeys = 24;
-inline constexpr int kMaxBindings = 192;
+inline constexpr int kMaxBindings = 256;
 
 // EQ / fader values of a normalized controller position (EQ: centre = 0 dB, bottom = kill).
 double eqDbOf(double norm);
@@ -98,6 +144,7 @@ enum Control : uint8_t {
   CtlLoopIn, CtlLoopOut, CtlLoopAuto, CtlLoopHalve, CtlLoopDouble, CtlJumpBack, CtlJumpFwd,
   CtlSlip, CtlVinyl, CtlQuantize, CtlCensor, CtlJumpStart, CtlBendDown, CtlBendUp,
   CtlLoaded,  // output only (the "track loaded" lamp)
+  CtlMaster,  // mixer: master level
   CtlCount
 };
 enum ControlType : uint8_t { TypeButton = 0, TypeAbsolute, TypeRelative, TypeOutput };
@@ -106,10 +153,13 @@ struct ControlInfo {
   const char* name;   // English name (the UI translates)
   ControlType type;
   const char* group;  // "Transport", "Jog", "Mixer", "Pads", "Loop", "Modes"
-  int param;          // parameter it moves (absolute controls, mode toggles), -1 = none
+  int param;          // DeckParam it moves (deck controls) or Param (mixer controls), -1 = none
+  bool mixer;         // a mixer control (one for both decks)
 };
 const ControlInfo& controlInfo(int c);
 int controlById(const std::string& id);  // CtlNone when unknown
+// The parameter id a control moves on `deck` (-1 none).
+int controlParam(int c, int deck);
 
 // ------------------------------------------------------------------ mapping
 enum MsgKind : uint8_t { MkNote = 0, MkCC, MkCC14 };
@@ -124,23 +174,26 @@ struct Binding {
   uint8_t enc = EncAbs;
   bool invert = false;
   uint8_t layer = LayerAny;
+  uint8_t deck = 0;      // 0 deck A, 1 deck B (mixer controls ignore it)
   bool operator==(const Binding& o) const;
 };
 // LED feedback: `status` / `num` is sent with `on` or `off` when the source changes.
 struct Led {
   uint8_t control = CtlNone;  // state source (play, cue, sync, hot cue k, loaded ...)
   uint8_t status = 0x90, num = 0, on = 0x7F, off = 0x00;
+  uint8_t deck = 0;
   bool operator==(const Led& o) const;
 };
+inline constexpr int kSideBoth = 2;  // Mapping::side: the whole controller (deck 1 -> A, deck 2 -> B)
 struct Mapping {
   std::string profile;        // profile id ("" = no controller)
-  int side = 0;               // 0 left deck, 1 right deck
+  int side = kSideBoth;       // 0 left deck, 1 right deck (on deck A), kSideBoth both
   std::string device;         // MIDI input name ("" = any device)
   double ticksPerRev = 128;   // jog resolution
   bool feedback = true;       // send LED feedback
   std::vector<Binding> bindings;
   std::vector<Led> leds;
-  std::vector<std::vector<uint8_t>> init;  // sent once when the deck binds (queries, modes)
+  std::vector<std::vector<uint8_t>> init;  // sent once when the setup binds (queries, modes)
   bool operator==(const Mapping& o) const;
   bool empty() const { return bindings.empty(); }
 };
@@ -153,14 +206,15 @@ struct Profile {
 };
 const std::vector<Profile>& profiles();
 const Profile* findProfile(const std::string& id);
-// The full mapping of a profile for one side (an empty mapping for "generic").
+// The full mapping of a profile: one side (0 / 1) on deck A, or kSideBoth (deck 1
+// on A, deck 2 on B, the mixer once). An empty mapping for "generic".
 Mapping profileMapping(const std::string& id, int side);
 // Profile id that matches a device name ("" = none).
 std::string profileForDevice(const std::string& deviceName);
 // "Note 0x0B ch 1", "CC 0x22 ch 1 relative", "CC 0x13 / 0x33 ch 1" (English, for the binding list).
 std::string bindingText(const Binding& b);
 // A binding learned from one message (absolute CC 7 bit, note, or a relative CC when `relative`).
-Binding learnBinding(int control, uint8_t status, uint8_t d1, uint8_t d2, bool relative);
+Binding learnBinding(int control, uint8_t status, uint8_t d1, uint8_t d2, bool relative, int deck = 0);
 // Mapping preset files (<dir>/<name>.gpmap): the mapping as text.
 std::string mappingToText(const Mapping& m);
 bool mappingFromText(const std::string& text, Mapping& m);
@@ -172,23 +226,25 @@ std::vector<std::string> mappingPresetFiles(const std::string& dir);  // full pa
 struct InEvent {
   uint8_t control = CtlNone;
   uint8_t type = TypeButton;
+  uint8_t deck = 0;     // target deck (mixer controls: 0)
   bool down = false;    // buttons
   float value = 0;      // absolute: 0..1
   int ticks = 0;        // relative: signed detents
 };
-// Turns raw MIDI into deck controls with a mapping (no allocation; any thread
-// that owns the decoder). 14 bit controls combine MSB and LSB.
+// Turns raw MIDI into deck and mixer controls with a mapping (no allocation;
+// any thread that owns the decoder). 14 bit controls combine MSB and LSB.
+// Shift is held per deck.
 class Decoder {
  public:
   void reset();
   // Returns how many events were written to out (at most max).
   int feed(const Mapping& m, uint8_t status, uint8_t d1, uint8_t d2, InEvent* out, int max);
-  bool shift() const { return shift_; }
+  bool shift(int deck = 0) const { return shift_[deck & 1]; }
 
  private:
   std::array<uint8_t, kMaxBindings> msb_{};
   std::array<uint8_t, kMaxBindings> lsb_{};
-  bool shift_ = false;
+  bool shift_[2] = {false, false};
 };
 
 // ------------------------------------------------------------------ takes
@@ -200,6 +256,23 @@ struct TakePoint {
   uint8_t flags = 0;
   bool operator==(const TakePoint& o) const;
 };
+// One deck's part of a take.
+struct TakeStream {
+  bool on = false;
+  int file = -1;              // Model::files index of the track it was played on
+  double startPos = 0;        // read position before the first point
+  double startRate = 0;       // read speed before the first point (frames per sample)
+  float startGain = 1;
+  std::vector<TakePoint> pts;
+  bool operator==(const TakeStream& o) const;
+};
+// A mixer value that changed at a step of the take (trim, EQ, filter, master).
+struct TakeMove {
+  uint32_t step = 0;
+  uint8_t param = 0;  // Param id
+  float value = 0;
+  bool operator==(const TakeMove& o) const { return step == o.step && param == o.param && value == o.value; }
+};
 struct Take {
   int key = kTakeKeyFirst;
   std::string name;
@@ -208,50 +281,71 @@ struct Take {
   double tempo = 120;         // project tempo it was recorded at
   int ppq = 96;
   Tick startTick = 0, lengthTicks = 0;  // where it was recorded (song or pattern ticks)
-  double startPos = 0;        // read position before the first point
-  double startRate = 0;       // read speed before the first point (frames per sample)
-  float startGain = 1;
-  std::vector<TakePoint> pts;
+  std::array<TakeStream, kDecks> s;
+  std::vector<TakeMove> moves;          // sorted by step
   bool operator==(const Take& o) const;
-  double seconds() const { return sampleRate > 0 ? static_cast<double>(pts.size()) * step / sampleRate : 0; }
+  size_t steps() const;
+  double seconds() const { return sampleRate > 0 ? static_cast<double>(steps()) * step / sampleRate : 0; }
 };
+// Parameters a take records as moves.
+inline constexpr int kMoveParams = 13;
+const std::array<uint8_t, kMoveParams>& moveParams();
 // Compact text of the points (delta, zero-run and varint coded, base64).
 std::string encodePoints(const std::vector<TakePoint>& pts);
 bool decodePoints(const std::string& text, std::vector<TakePoint>& pts);
+std::string encodeMoves(const std::vector<TakeMove>& mv);
+bool decodeMoves(const std::string& text, std::vector<TakeMove>& mv);
 // Free take key (kTakeKeyFirst.., -1 when all are used).
 int freeTakeKey(const std::vector<Take>& takes);
 
 // ------------------------------------------------------------------ model
-struct Model {
+struct DeckModel {
+  int file = -1;                 // Model::files index of the track (-1 = empty deck)
   int64_t srcFrames = 0;
   double srcRate = 0;
   bool analysed = false;         // the grid comes from the analysis (else a flat 120 BPM grid)
-  seltmann::Analysis grid;       // beats, bpm, beatsPerBar, bar1 (the rest is not stored)
+  seltmann::Analysis grid;       // beats, bpm, beatsPerBar, bar1, key (the rest is not stored)
   double cue = 0;                // main cue (source frame)
   std::array<double, kHotCues> hot{};  // source frames, < 0 = not set
   double loopIn = -1, loopOut = -1;    // the last loop (frames, -1 none)
+  DeckModel() { hot.fill(-1); }
+  bool operator==(const DeckModel& o) const;
+};
+enum Layout { LayoutOne = 1, LayoutTwo = 2 };
+struct Model {
+  std::vector<std::string> files;  // every track the model refers to (decks, takes)
+  std::array<DeckModel, kDecks> deck;
+  int layout = LayoutTwo;
   bool asked = false;            // the controller question was answered
   bool armed = true;             // records takes while Gridline records
   Mapping map;
   std::vector<Take> takes;
-  Model() { hot.fill(-1); }
   bool operator==(const Model& o) const;
+  bool twoDecks() const { return layout != LayoutOne; }
+  // The track of a deck ("" = empty).
+  std::string trackOf(int d) const;
 };
-// "<path>\n<model>" <-> path + model. A bare path yields hasModel = false.
+// "<path>\n<model>" <-> path + model. A bare path yields hasModel = false (the
+// model then holds deck A's file only). Deck A's file is always the first line:
+// a different first line (a drop on the channel) is deck A's new track.
 std::string pathOf(const std::string& data);
 bool parseData(const std::string& data, std::string& path, Model& m);
 std::string formatData(const std::string& path, const Model& m);
 std::string modelToText(const Model& m);
 bool modelFromText(const std::string& text, Model& m);
-// A model for a sample and its analysis (grid, cue on the first downbeat).
-Model defaultModel(const Sample& s, const seltmann::Analysis& a, bool analysed);
-// Keeps the controller set-up of `keep`, the rest from `fresh` (a new file; takes stay with the old file).
-Model carryOver(const Model& keep, const Model& fresh);
-// Beat helpers over the stored grid.
-double beatAt(const Model& m, double frame);
-double frameAt(const Model& m, double beat);
-double nearestBeatFrame(const Model& m, double frame);
-double bpmOf(const Model& m);
+// File list index of `path` (added when missing).
+int fileIndex(Model& m, const std::string& path);
+// Drops files no deck and no take refers to (indices are renumbered).
+void pruneFiles(Model& m);
+// A deck model for a sample and its analysis (grid, cue on the first downbeat).
+DeckModel deckModel(const Sample& s, const seltmann::Analysis& a, bool analysed);
+// Puts `path` on deck `d` with `fresh` (its grid and cues); the rest of the model stays.
+void loadTrack(Model& m, int d, const std::string& path, const DeckModel& fresh);
+// Beat helpers over a deck's stored grid.
+double beatAt(const DeckModel& m, double frame);
+double frameAt(const DeckModel& m, double beat);
+double nearestBeatFrame(const DeckModel& m, double frame);
+double bpmOf(const DeckModel& m);
 
 // ------------------------------------------------------------------ hub (controller MIDI)
 namespace hub {
@@ -267,7 +361,7 @@ uint64_t head();
 // Message `index` (head() - size() .. head() - 1); false when it was overwritten.
 bool read(uint64_t index, uint32_t& device, uint8_t& status, uint8_t& d1, uint8_t& d2);
 inline constexpr uint64_t kSize = 4096;
-// Devices bound to a deck (UI thread sets them every frame): their notes do not
+// Devices bound to a setup (UI thread sets them every frame): their notes do not
 // play the selected instrument and the app's templates and links leave them alone.
 inline constexpr int kClaims = 8;
 void setClaimed(const uint32_t* ids, int count);
@@ -280,7 +374,6 @@ struct LiveView {
   bool loaded = false;
   double pos = 0;           // read position (source frames)
   double speed = 0;         // read speed relative to the file's own speed (1 = original)
-  double angle = 0;         // platter angle (turns)
   bool playing = false;     // motor on
   bool touched = false;     // a hand is on the platter (controller or mouse)
   bool slipping = false;
@@ -292,15 +385,28 @@ struct LiveView {
   std::array<double, kHotCues> hot{};
   bool sync = false, keylock = false, slip = false, vinyl = true, quantize = true;
   bool keylockActive = false;  // the key lock engine is in use right now
+  bool following = false;      // synced to the other deck right now
   double tempo = 0;            // effective BPM
+  double beat = 0;             // beat position at pos (the deck's grid)
   int take = -1;               // take key playing (-1 none)
   bool capturing = false;      // recording a take
-  float level = 0;             // output peak of the last block
+  float pre = 0;               // channel level before the fader (peak of the last block)
+  float level = 0;             // channel level after fader and crossfader
   bool shift = false;
-  uint32_t rawSeq = 0;         // last raw MIDI message the deck saw (learn)
+  uint32_t rawSeq = 0;         // last raw MIDI message the setup saw (learn)
   uint8_t raw[3] = {0, 0, 0};
 };
-bool liveView(const Generator* g, LiveView& out);
+bool liveView(const Generator* g, int deck, LiveView& out);
+inline bool liveView(const Generator* g, LiveView& out) { return liveView(g, 0, out); }
+// The mixer's live values.
+struct MixView {
+  bool valid = false;
+  float masterL = 0, masterR = 0;  // output peaks of the last block
+  bool transport = false;          // the project plays
+  double songBeat = 0;             // the project's beat at the end of the last block
+  double tempo = 120;              // project tempo
+};
+bool mixView(const Generator* g, MixView& out);
 
 // Controller-moved values for the editor to write into the parameters (and the
 // automation recorder). `seq` grows when the controller moved it.
@@ -316,9 +422,9 @@ struct Marks {
   std::array<double, kHotCues> hot{};
   double loopIn = -1, loopOut = -1;
 };
-bool marks(const Generator* g, Marks& out);
+bool marks(const Generator* g, int deck, Marks& out);
 
-// Commands from the editor (UI thread) to the deck.
+// Commands from the editor (UI thread) to a deck.
 enum CmdKind : uint8_t {
   CmdButton = 0,   // control a, down = v != 0
   CmdHandDown,     // mouse on the platter (grabs the record where it is)
@@ -331,18 +437,25 @@ enum CmdKind : uint8_t {
 struct Cmd {
   uint8_t kind = CmdButton;
   uint8_t a = 0;
+  uint8_t deck = 0;
   double v = 0, w = 0;
 };
 bool command(Generator* g, const Cmd& c);
 
-// Recorded material handed from the deck to the editor (UI thread drains it).
+// Recorded material handed from the setup to the editor (UI thread drains it).
 struct CaptureEvent {
-  enum Kind : uint8_t { Start = 0, Point, End, Lost } kind = Point;
-  TakePoint pt;
+  enum Kind : uint8_t { Start = 0, Point, Move, End, Lost } kind = Point;
+  uint8_t streams = 0;    // Start: decks with a track (bit d)
+  uint8_t param = 0;      // Move
+  float value = 0;        // Move
+  uint32_t step = 0;      // Move
+  TakePoint pt[kDecks];   // Point: both decks; Start: pt[d].pos = start position
+  int file[kDecks] = {-1, -1};      // Start
+  double startRate[kDecks] = {0, 0};  // Start
+  float gain[kDecks] = {1, 1};      // Start
   double tick = 0;        // Start / End: tick (song or pattern)
-  double tempo = 0, sampleRate = 0, startRate = 0;
+  double tempo = 0, sampleRate = 0;
   int ppq = 0;
-  float gain = 1;
 };
 // Takes up to `max` events; returns how many.
 int drainCapture(Generator* g, CaptureEvent* out, int max);

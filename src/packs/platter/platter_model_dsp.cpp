@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -50,58 +51,80 @@ double eqNormOf(double db) {
   return 0.5 * (lo + hi);
 }
 
-// ================================================================== controls
+// ================================================================== parameters / controls
+int deckOfParam(int p, int& d) {
+  d = -1;
+  if (p >= PDeckB && p < PDeckB + DCount) {
+    d = p - PDeckB;
+    return 1;
+  }
+  if (p >= 0 && p < PXfader) {
+    d = p;
+    return 0;
+  }
+  if (p == PXfSide) {
+    d = DXfSide;
+    return 0;
+  }
+  if (p == PLoopSize) {
+    d = DLoopSize;
+    return 0;
+  }
+  return -1;
+}
+
 const ControlInfo& controlInfo(int c) {
   static const ControlInfo k[CtlCount] = {
-      {"none", "None", TypeButton, "", -1},
-      {"play", "Play / pause", TypeButton, "Transport", -1},
-      {"cue", "Cue", TypeButton, "Transport", -1},
-      {"sync", "Sync", TypeButton, "Transport", PSync},
-      {"keylock", "Key lock", TypeButton, "Modes", PKeyLock},
-      {"shift", "Shift", TypeButton, "Transport", -1},
-      {"touch", "Jog touch", TypeButton, "Jog", -1},
-      {"jog", "Jog platter", TypeRelative, "Jog", -1},
-      {"rim", "Jog side (nudge)", TypeRelative, "Jog", -1},
-      {"search", "Jog search", TypeRelative, "Jog", -1},
-      {"pitch", "Pitch fader", TypeAbsolute, "Mixer", PPitch},
-      {"volume", "Channel fader", TypeAbsolute, "Mixer", PVolume},
-      {"xfader", "Crossfader", TypeAbsolute, "Mixer", PXfader},
-      {"eqhigh", "EQ high", TypeAbsolute, "Mixer", PEqHigh},
-      {"eqmid", "EQ mid", TypeAbsolute, "Mixer", PEqMid},
-      {"eqlow", "EQ low", TypeAbsolute, "Mixer", PEqLow},
-      {"filter", "Filter", TypeAbsolute, "Mixer", PFilter},
-      {"trim", "Trim", TypeAbsolute, "Mixer", PTrim},
-      {"hot1", "Hot cue 1", TypeButton, "Pads", -1},
-      {"hot2", "Hot cue 2", TypeButton, "Pads", -1},
-      {"hot3", "Hot cue 3", TypeButton, "Pads", -1},
-      {"hot4", "Hot cue 4", TypeButton, "Pads", -1},
-      {"hot5", "Hot cue 5", TypeButton, "Pads", -1},
-      {"hot6", "Hot cue 6", TypeButton, "Pads", -1},
-      {"hot7", "Hot cue 7", TypeButton, "Pads", -1},
-      {"hot8", "Hot cue 8", TypeButton, "Pads", -1},
-      {"hotclear1", "Clear hot cue 1", TypeButton, "Pads", -1},
-      {"hotclear2", "Clear hot cue 2", TypeButton, "Pads", -1},
-      {"hotclear3", "Clear hot cue 3", TypeButton, "Pads", -1},
-      {"hotclear4", "Clear hot cue 4", TypeButton, "Pads", -1},
-      {"hotclear5", "Clear hot cue 5", TypeButton, "Pads", -1},
-      {"hotclear6", "Clear hot cue 6", TypeButton, "Pads", -1},
-      {"hotclear7", "Clear hot cue 7", TypeButton, "Pads", -1},
-      {"hotclear8", "Clear hot cue 8", TypeButton, "Pads", -1},
-      {"loopin", "Loop in", TypeButton, "Loop", -1},
-      {"loopout", "Loop out", TypeButton, "Loop", -1},
-      {"loopauto", "Auto loop", TypeButton, "Loop", -1},
-      {"loophalve", "Loop / 2", TypeButton, "Loop", -1},
-      {"loopdouble", "Loop x 2", TypeButton, "Loop", -1},
-      {"jumpback", "Beat jump back", TypeButton, "Loop", -1},
-      {"jumpfwd", "Beat jump forward", TypeButton, "Loop", -1},
-      {"slip", "Slip", TypeButton, "Modes", PSlip},
-      {"vinyl", "Vinyl mode", TypeButton, "Modes", PVinyl},
-      {"quantize", "Quantize", TypeButton, "Modes", PQuantize},
-      {"censor", "Reverse (held)", TypeButton, "Transport", -1},
-      {"jumpstart", "Back to start", TypeButton, "Transport", -1},
-      {"benddown", "Pitch bend -", TypeButton, "Transport", -1},
-      {"bendup", "Pitch bend +", TypeButton, "Transport", -1},
-      {"loaded", "Track loaded", TypeOutput, "Transport", -1},
+      {"none", "None", TypeButton, "", -1, false},
+      {"play", "Play / pause", TypeButton, "Transport", -1, false},
+      {"cue", "Cue", TypeButton, "Transport", -1, false},
+      {"sync", "Sync", TypeButton, "Transport", DSync, false},
+      {"keylock", "Key lock", TypeButton, "Modes", DKeyLock, false},
+      {"shift", "Shift", TypeButton, "Transport", -1, false},
+      {"touch", "Jog touch", TypeButton, "Jog", -1, false},
+      {"jog", "Jog platter", TypeRelative, "Jog", -1, false},
+      {"rim", "Jog side (nudge)", TypeRelative, "Jog", -1, false},
+      {"search", "Jog search", TypeRelative, "Jog", -1, false},
+      {"pitch", "Pitch fader", TypeAbsolute, "Mixer", DPitch, false},
+      {"volume", "Channel fader", TypeAbsolute, "Mixer", DVolume, false},
+      {"xfader", "Crossfader", TypeAbsolute, "Mixer", PXfader, true},
+      {"eqhigh", "EQ high", TypeAbsolute, "Mixer", DEqHigh, false},
+      {"eqmid", "EQ mid", TypeAbsolute, "Mixer", DEqMid, false},
+      {"eqlow", "EQ low", TypeAbsolute, "Mixer", DEqLow, false},
+      {"filter", "Filter", TypeAbsolute, "Mixer", DFilter, false},
+      {"trim", "Trim", TypeAbsolute, "Mixer", DTrim, false},
+      {"hot1", "Hot cue 1", TypeButton, "Pads", -1, false},
+      {"hot2", "Hot cue 2", TypeButton, "Pads", -1, false},
+      {"hot3", "Hot cue 3", TypeButton, "Pads", -1, false},
+      {"hot4", "Hot cue 4", TypeButton, "Pads", -1, false},
+      {"hot5", "Hot cue 5", TypeButton, "Pads", -1, false},
+      {"hot6", "Hot cue 6", TypeButton, "Pads", -1, false},
+      {"hot7", "Hot cue 7", TypeButton, "Pads", -1, false},
+      {"hot8", "Hot cue 8", TypeButton, "Pads", -1, false},
+      {"hotclear1", "Clear hot cue 1", TypeButton, "Pads", -1, false},
+      {"hotclear2", "Clear hot cue 2", TypeButton, "Pads", -1, false},
+      {"hotclear3", "Clear hot cue 3", TypeButton, "Pads", -1, false},
+      {"hotclear4", "Clear hot cue 4", TypeButton, "Pads", -1, false},
+      {"hotclear5", "Clear hot cue 5", TypeButton, "Pads", -1, false},
+      {"hotclear6", "Clear hot cue 6", TypeButton, "Pads", -1, false},
+      {"hotclear7", "Clear hot cue 7", TypeButton, "Pads", -1, false},
+      {"hotclear8", "Clear hot cue 8", TypeButton, "Pads", -1, false},
+      {"loopin", "Loop in", TypeButton, "Loop", -1, false},
+      {"loopout", "Loop out", TypeButton, "Loop", -1, false},
+      {"loopauto", "Auto loop", TypeButton, "Loop", -1, false},
+      {"loophalve", "Loop / 2", TypeButton, "Loop", -1, false},
+      {"loopdouble", "Loop x 2", TypeButton, "Loop", -1, false},
+      {"jumpback", "Beat jump back", TypeButton, "Loop", -1, false},
+      {"jumpfwd", "Beat jump forward", TypeButton, "Loop", -1, false},
+      {"slip", "Slip", TypeButton, "Modes", DSlip, false},
+      {"vinyl", "Vinyl mode", TypeButton, "Modes", DVinyl, false},
+      {"quantize", "Quantize", TypeButton, "Modes", DQuantize, false},
+      {"censor", "Reverse (held)", TypeButton, "Transport", -1, false},
+      {"jumpstart", "Back to start", TypeButton, "Transport", -1, false},
+      {"benddown", "Pitch bend -", TypeButton, "Transport", -1, false},
+      {"bendup", "Pitch bend +", TypeButton, "Transport", -1, false},
+      {"loaded", "Track loaded", TypeOutput, "Transport", -1, false},
+      {"master", "Master level", TypeAbsolute, "Mixer", PMaster, true},
   };
   return k[c >= 0 && c < CtlCount ? c : 0];
 }
@@ -112,11 +135,19 @@ int controlById(const std::string& id) {
   return CtlNone;
 }
 
+int controlParam(int c, int deck) {
+  const ControlInfo& ci = controlInfo(c);
+  if (ci.param < 0) return -1;
+  return ci.mixer ? ci.param : deckParam(deck & 1, ci.param);
+}
+
 bool Binding::operator==(const Binding& o) const {
   return control == o.control && kind == o.kind && channel == o.channel && num == o.num && lsb == o.lsb && enc == o.enc && invert == o.invert &&
-         layer == o.layer;
+         layer == o.layer && deck == o.deck;
 }
-bool Led::operator==(const Led& o) const { return control == o.control && status == o.status && num == o.num && on == o.on && off == o.off; }
+bool Led::operator==(const Led& o) const {
+  return control == o.control && status == o.status && num == o.num && on == o.on && off == o.off && deck == o.deck;
+}
 bool Mapping::operator==(const Mapping& o) const {
   return profile == o.profile && side == o.side && device == o.device && ticksPerRev == o.ticksPerRev && feedback == o.feedback &&
          bindings == o.bindings && leds == o.leds && init == o.init;
@@ -312,13 +343,49 @@ Mapping mixtrackProFx(int n) {
 
 }  // namespace
 
-Mapping profileMapping(const std::string& id, int side) {
-  side = std::clamp(side, 0, 1);
-  Mapping m;
+namespace {
+
+// One side of a profile, every binding on deck A (false for "generic" / unknown ids).
+bool oneSide(const std::string& id, int side, Mapping& m) {
   if (id == "ddj200") m = ddj200(side);
   else if (id == "inpulse200") m = inpulse200(side);
   else if (id == "mixtrackprofx") m = mixtrackProFx(side);
-  else m.ticksPerRev = 128;
+  else return false;
+  return true;
+}
+
+}  // namespace
+
+Mapping profileMapping(const std::string& id, int side) {
+  side = std::clamp(side, 0, kSideBoth);
+  Mapping m;
+  if (side == kSideBoth) {
+    // the whole controller: the left side drives deck A, the right side deck B, the
+    // mixer controls they share (the crossfader) and the set-up messages once
+    Mapping right;
+    if (oneSide(id, 0, m) && oneSide(id, 1, right)) {
+      for (Binding b : right.bindings) {
+        if (controlInfo(b.control).mixer) {
+          bool dup = false;
+          for (const Binding& x : m.bindings) dup = dup || (x.control == b.control && x.kind == b.kind && x.channel == b.channel && x.num == b.num);
+          if (dup) continue;
+        }
+        b.deck = 1;
+        m.bindings.push_back(b);
+      }
+      for (Led l : right.leds) {
+        l.deck = 1;
+        m.leds.push_back(l);
+      }
+      for (const auto& msg : right.init)
+        if (std::find(m.init.begin(), m.init.end(), msg) == m.init.end()) m.init.push_back(msg);
+    } else {
+      m = Mapping{};
+      m.ticksPerRev = 128;
+    }
+  } else if (!oneSide(id, side, m)) {
+    m.ticksPerRev = 128;
+  }
   m.profile = id;
   m.side = side;
   return m;
@@ -362,9 +429,10 @@ std::string bindingText(const Binding& b) {
   return s;
 }
 
-Binding learnBinding(int control, uint8_t status, uint8_t d1, uint8_t d2, bool relative) {
+Binding learnBinding(int control, uint8_t status, uint8_t d1, uint8_t d2, bool relative, int deck) {
   Binding b;
   b.control = static_cast<uint8_t>(control);
+  b.deck = static_cast<uint8_t>(controlInfo(control).mixer ? 0 : deck & 1);
   b.channel = static_cast<int8_t>(status & 0x0F);
   b.num = d1 & 0x7F;
   const int kind = status & 0xF0;
@@ -387,7 +455,7 @@ Binding learnBinding(int control, uint8_t status, uint8_t d1, uint8_t d2, bool r
 void Decoder::reset() {
   msb_.fill(0);
   lsb_.fill(0);
-  shift_ = false;
+  shift_[0] = shift_[1] = false;
 }
 
 int Decoder::feed(const Mapping& m, uint8_t status, uint8_t d1, uint8_t d2, InEvent* out, int max) {
@@ -401,16 +469,19 @@ int Decoder::feed(const Mapping& m, uint8_t status, uint8_t d1, uint8_t d2, InEv
   for (size_t i = 0; i < count; ++i) {
     const Binding& b = m.bindings[i];
     if (b.control != CtlShift || b.kind != MkNote || !note || b.num != d1 || (b.channel >= 0 && b.channel != ch)) continue;
-    shift_ = down;
+    shift_[b.deck & 1] = down;
   }
   for (size_t i = 0; i < count && n < max; ++i) {
     const Binding& b = m.bindings[i];
     if (b.channel >= 0 && b.channel != ch) continue;
-    if (b.layer == LayerPlain && shift_ && b.control != CtlShift) continue;
-    if (b.layer == LayerShift && !shift_) continue;
-    const ControlType t = controlInfo(b.control).type;
+    const ControlInfo& ci = controlInfo(b.control);
+    const int dk = ci.mixer ? 0 : (b.deck & 1);
+    if (b.layer == LayerPlain && shift_[dk] && b.control != CtlShift) continue;
+    if (b.layer == LayerShift && !shift_[dk]) continue;
+    const ControlType t = ci.type;
     InEvent e;
     e.control = b.control;
+    e.deck = static_cast<uint8_t>(dk);
     e.type = static_cast<uint8_t>(t);
     if (b.kind == MkNote) {
       if (!note || b.num != d1) continue;
@@ -479,12 +550,12 @@ void mappingLines(std::ostringstream& o, const Mapping& m) {
   o << b;
   o << "dev " << m.device << "\n";
   for (const auto& x : m.bindings) {
-    std::snprintf(b, sizeof b, "bind %s %d %d %d %d %d %d %d\n", controlInfo(x.control).id, x.kind, x.channel, x.num, x.lsb, x.enc, x.invert ? 1 : 0,
-                  x.layer);
+    std::snprintf(b, sizeof b, "bind %s %d %d %d %d %d %d %d %d\n", controlInfo(x.control).id, x.kind, x.channel, x.num, x.lsb, x.enc, x.invert ? 1 : 0,
+                  x.layer, x.deck);
     o << b;
   }
   for (const auto& l : m.leds) {
-    std::snprintf(b, sizeof b, "led %s %d %d %d %d\n", controlInfo(l.control).id, l.status, l.num, l.on, l.off);
+    std::snprintf(b, sizeof b, "led %s %d %d %d %d %d\n", controlInfo(l.control).id, l.status, l.num, l.on, l.off, l.deck);
     o << b;
   }
   for (const auto& i : m.init) o << "init " << hexBytes(i) << "\n";
@@ -497,7 +568,7 @@ bool mappingLine(const std::string& key, std::istringstream& ls, const std::stri
     int fb = 1;
     ls >> prof >> m.side >> m.ticksPerRev >> fb;
     m.profile = prof == "-" ? "" : prof;
-    m.side = std::clamp(m.side, 0, 1);
+    m.side = std::clamp(m.side, 0, kSideBoth);
     if (!(m.ticksPerRev >= 8 && m.ticksPerRev <= 100000)) m.ticksPerRev = 128;
     m.feedback = fb != 0;
     return true;
@@ -508,8 +579,9 @@ bool mappingLine(const std::string& key, std::istringstream& ls, const std::stri
   }
   if (key == "bind") {
     std::string id;
-    int kind = 0, chn = -1, num = 0, lsb = 0, enc = 0, inv = 0, layer = 0;
+    int kind = 0, chn = -1, num = 0, lsb = 0, enc = 0, inv = 0, layer = 0, deck = 0;
     ls >> id >> kind >> chn >> num >> lsb >> enc >> inv >> layer;
+    if (!(ls >> deck)) deck = 0;  // (J-150 lines have no deck: deck A)
     const int c = controlById(id);
     if (c == CtlNone || m.bindings.size() >= static_cast<size_t>(kMaxBindings)) return true;
     Binding x;
@@ -521,13 +593,15 @@ bool mappingLine(const std::string& key, std::istringstream& ls, const std::stri
     x.enc = static_cast<uint8_t>(std::clamp(enc, 0, 3));
     x.invert = inv != 0;
     x.layer = static_cast<uint8_t>(std::clamp(layer, 0, 2));
+    x.deck = static_cast<uint8_t>(controlInfo(c).mixer ? 0 : std::clamp(deck, 0, 1));
     m.bindings.push_back(x);
     return true;
   }
   if (key == "led") {
     std::string id;
-    int st = 0x90, num = 0, on = 0x7F, off = 0;
+    int st = 0x90, num = 0, on = 0x7F, off = 0, deck = 0;
     ls >> id >> st >> num >> on >> off;
+    if (!(ls >> deck)) deck = 0;
     const int c = controlById(id);
     if (c == CtlNone) return true;
     Led l;
@@ -536,6 +610,7 @@ bool mappingLine(const std::string& key, std::istringstream& ls, const std::stri
     l.num = static_cast<uint8_t>(std::clamp(num, 0, 127));
     l.on = static_cast<uint8_t>(std::clamp(on, 0, 127));
     l.off = static_cast<uint8_t>(std::clamp(off, 0, 127));
+    l.deck = static_cast<uint8_t>(std::clamp(deck, 0, 1));
     m.leds.push_back(l);
     return true;
   }
@@ -553,7 +628,7 @@ bool mappingLine(const std::string& key, std::istringstream& ls, const std::stri
 
 std::string mappingToText(const Mapping& m) {
   std::ostringstream o;
-  o << "platter-mapping 1\n";
+  o << "platter-mapping 2\n";
   mappingLines(o, m);
   return o.str();
 }
@@ -606,10 +681,30 @@ std::vector<std::string> mappingPresetFiles(const std::string& dir) {
 
 // ================================================================== take points
 bool TakePoint::operator==(const TakePoint& o) const { return pos == o.pos && from == o.from && gain == o.gain && flags == o.flags; }
+bool TakeStream::operator==(const TakeStream& o) const {
+  return on == o.on && file == o.file && startPos == o.startPos && startRate == o.startRate && startGain == o.startGain && pts == o.pts;
+}
 bool Take::operator==(const Take& o) const {
   return key == o.key && name == o.name && sampleRate == o.sampleRate && step == o.step && tempo == o.tempo && ppq == o.ppq &&
-         startTick == o.startTick && lengthTicks == o.lengthTicks && startPos == o.startPos && startRate == o.startRate &&
-         startGain == o.startGain && pts == o.pts;
+         startTick == o.startTick && lengthTicks == o.lengthTicks && s == o.s && moves == o.moves;
+}
+size_t Take::steps() const {
+  size_t n = 0;
+  for (const auto& x : s)
+    if (x.on) n = std::max(n, x.pts.size());
+  return n;
+}
+
+const std::array<uint8_t, kMoveParams>& moveParams() {
+  static const std::array<uint8_t, kMoveParams> k = [] {
+    std::array<uint8_t, kMoveParams> v{};
+    int i = 0;
+    for (int d = 0; d < kDecks; ++d)
+      for (int x : {DTrim, DEqHigh, DEqMid, DEqLow, DFilter, DFilterRes}) v[static_cast<size_t>(i++)] = static_cast<uint8_t>(deckParam(d, x));
+    v[static_cast<size_t>(i)] = PMaster;
+    return v;
+  }();
+  return k;
 }
 
 namespace {
@@ -761,6 +856,45 @@ bool decodePoints(const std::string& text, std::vector<TakePoint>& pts) {
   return true;
 }
 
+// Moves: per move varint(step delta), the parameter id, the value's 32 bits
+// (little endian; replay needs the exact float), base64.
+std::string encodeMoves(const std::vector<TakeMove>& mv) {
+  std::vector<uint8_t> o;
+  uint32_t last = 0;
+  for (const auto& m : mv) {
+    putVar(o, m.step >= last ? m.step - last : 0);
+    last = std::max(last, m.step);
+    o.push_back(m.param);
+    uint32_t bits = 0;
+    std::memcpy(&bits, &m.value, 4);
+    for (int k = 0; k < 4; ++k) o.push_back(static_cast<uint8_t>(bits >> (8 * k)));
+  }
+  return b64(o);
+}
+
+bool decodeMoves(const std::string& text, std::vector<TakeMove>& mv) {
+  mv.clear();
+  std::vector<uint8_t> d;
+  if (!unb64(text, d)) return false;
+  size_t i = 0;
+  uint64_t step = 0;
+  while (i < d.size()) {
+    uint64_t dt = 0;
+    if (!getVar(d, i, dt) || i + 5 > d.size()) return false;
+    step += dt;
+    if (step > 0xFFFFFFFFull) return false;
+    TakeMove m;
+    m.step = static_cast<uint32_t>(step);
+    m.param = d[i++];
+    uint32_t bits = 0;
+    for (int k = 0; k < 4; ++k) bits |= static_cast<uint32_t>(d[i++]) << (8 * k);
+    std::memcpy(&m.value, &bits, 4);
+    if (m.param >= PCount || !std::isfinite(m.value)) return false;
+    mv.push_back(m);
+  }
+  return true;
+}
+
 int freeTakeKey(const std::vector<Take>& takes) {
   for (int k = kTakeKeyFirst; k < kTakeKeyFirst + kTakeKeys; ++k) {
     bool used = false;
@@ -771,10 +905,18 @@ int freeTakeKey(const std::vector<Take>& takes) {
 }
 
 // ================================================================== model
+bool DeckModel::operator==(const DeckModel& o) const {
+  return file == o.file && srcFrames == o.srcFrames && srcRate == o.srcRate && analysed == o.analysed && grid.beats == o.grid.beats &&
+         grid.bpm == o.grid.bpm && grid.beatsPerBar == o.grid.beatsPerBar && grid.bar1 == o.grid.bar1 && grid.key == o.grid.key &&
+         grid.minor == o.grid.minor && cue == o.cue && hot == o.hot && loopIn == o.loopIn && loopOut == o.loopOut;
+}
 bool Model::operator==(const Model& o) const {
-  return srcFrames == o.srcFrames && srcRate == o.srcRate && analysed == o.analysed && grid.beats == o.grid.beats && grid.bpm == o.grid.bpm &&
-         grid.beatsPerBar == o.grid.beatsPerBar && grid.bar1 == o.grid.bar1 && cue == o.cue && hot == o.hot && loopIn == o.loopIn &&
-         loopOut == o.loopOut && asked == o.asked && armed == o.armed && map == o.map && takes == o.takes;
+  return files == o.files && deck == o.deck && layout == o.layout && asked == o.asked && armed == o.armed && map == o.map && takes == o.takes;
+}
+std::string Model::trackOf(int d) const {
+  if (d < 0 || d >= kDecks) return {};
+  const int f = deck[static_cast<size_t>(d)].file;
+  return f >= 0 && f < static_cast<int>(files.size()) ? files[static_cast<size_t>(f)] : std::string{};
 }
 
 std::string pathOf(const std::string& data) {
@@ -782,10 +924,10 @@ std::string pathOf(const std::string& data) {
   return nl == std::string::npos ? data : data.substr(0, nl);
 }
 
-std::string modelToText(const Model& m) {
-  std::ostringstream o;
+namespace {
+
+void deckLines(std::ostringstream& o, const DeckModel& m) {
   char b[256];
-  o << "platter 1\n";
   std::snprintf(b, sizeof b, "src %lld %.3f %d\n", static_cast<long long>(m.srcFrames), m.srcRate, m.analysed ? 1 : 0);
   o << b;
   const auto& g = m.grid;
@@ -806,6 +948,8 @@ std::string modelToText(const Model& m) {
     }
     o << "\n";
   }
+  std::snprintf(b, sizeof b, "key %d %d\n", g.key, g.minor ? 1 : 0);
+  o << b;
   std::snprintf(b, sizeof b, "cue %.4f\n", m.cue);
   o << b;
   o << "hot";
@@ -814,14 +958,101 @@ std::string modelToText(const Model& m) {
     o << b;
   }
   o << "\n";
-  std::snprintf(b, sizeof b, "loop %.4f %.4f\nflags %d %d\n", m.loopIn, m.loopOut, m.asked ? 1 : 0, m.armed ? 1 : 0);
+  std::snprintf(b, sizeof b, "loop %.4f %.4f\n", m.loopIn, m.loopOut);
   o << b;
+}
+
+// One deck line into m; false when the line is not a deck line.
+bool deckLine(const std::string& key, std::istringstream& ls, DeckModel& m) {
+  if (key == "src") {
+    long long f = 0;
+    int an = 0;
+    ls >> f >> m.srcRate >> an;
+    m.srcFrames = std::max(0LL, f);
+    if (!(m.srcRate >= 0 && m.srcRate < 1e7)) m.srcRate = 0;
+    m.analysed = an != 0;
+    m.grid.frames = m.srcFrames;
+    m.grid.sampleRate = m.srcRate;
+  } else if (key == "grid") {
+    std::string kind;
+    ls >> m.grid.bpm >> m.grid.beatsPerBar >> m.grid.bar1 >> kind;
+    m.grid.beatsPerBar = std::clamp(m.grid.beatsPerBar, 1, 16);
+    m.grid.beats.clear();
+    if (kind == "reg") {
+      double first = 0, period = 0;
+      size_t n = 0;
+      ls >> first >> period >> n;
+      if (period > 1 && n < 2000000)
+        for (size_t i = 0; i < n; ++i) m.grid.beats.push_back(first + period * static_cast<double>(i));
+    } else if (kind == "list") {
+      size_t n = 0;
+      ls >> n;
+      for (size_t i = 0; i < n && i < 2000000; ++i) {
+        double x = 0;
+        if (!(ls >> x)) break;
+        m.grid.beats.push_back(x);
+      }
+      std::sort(m.grid.beats.begin(), m.grid.beats.end());
+    }
+    if (!(m.grid.bpm > 1 && m.grid.bpm < 1000)) m.grid.bpm = 120;
+    m.grid.bar1 = std::clamp(m.grid.bar1, 0, std::max(0, static_cast<int>(m.grid.beats.size()) - 1));
+  } else if (key == "key") {
+    int k = -1, mi = 0;
+    ls >> k >> mi;
+    m.grid.key = std::clamp(k, -1, 11);
+    m.grid.minor = mi != 0;
+  } else if (key == "cue") {
+    ls >> m.cue;
+  } else if (key == "hot") {
+    for (auto& h : m.hot)
+      if (!(ls >> h)) h = -1;
+  } else if (key == "loop") {
+    ls >> m.loopIn >> m.loopOut;
+    if (!(m.loopOut > m.loopIn)) m.loopIn = m.loopOut = -1;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+bool takeHeaderOk(const Take& t) {
+  return t.key >= kTakeKeyFirst && t.key < kTakeKeyFirst + kTakeKeys && t.sampleRate > 1000 && t.sampleRate < 1e7 && t.step >= 1 &&
+         t.step <= 4096 && t.tempo > 1 && t.tempo < 10000;
+}
+
+Take* takeOf(Model& m, int key) {
+  for (auto& t : m.takes)
+    if (t.key == key) return &t;
+  return nullptr;
+}
+
+}  // namespace
+
+std::string modelToText(const Model& m) {
+  std::ostringstream o;
+  char b[256];
+  o << "platter 2\n";
+  std::snprintf(b, sizeof b, "layout %d\nflags %d %d\n", m.layout, m.asked ? 1 : 0, m.armed ? 1 : 0);
+  o << b;
+  for (const auto& f : m.files) o << "file " << f << "\n";
+  for (int d = 0; d < kDecks; ++d) {
+    const DeckModel& dm = m.deck[static_cast<size_t>(d)];
+    o << "deck " << d << " " << dm.file << "\n";
+    deckLines(o, dm);
+  }
   mappingLines(o, m.map);
   for (const auto& t : m.takes) {
-    std::snprintf(b, sizeof b, "take %d %.3f %d %.6f %d %lld %lld %.6f %.9f %.6f %zu ", t.key, t.sampleRate, t.step, t.tempo, t.ppq,
-                  static_cast<long long>(t.startTick), static_cast<long long>(t.lengthTicks), t.startPos, t.startRate,
-                  static_cast<double>(t.startGain), t.pts.size());
-    o << b << encodePoints(t.pts) << "\n";
+    std::snprintf(b, sizeof b, "take2 %d %.3f %d %.6f %d %lld %lld\n", t.key, t.sampleRate, t.step, t.tempo, t.ppq,
+                  static_cast<long long>(t.startTick), static_cast<long long>(t.lengthTicks));
+    o << b;
+    for (int d = 0; d < kDecks; ++d) {
+      const TakeStream& x = t.s[static_cast<size_t>(d)];
+      if (!x.on) continue;
+      std::snprintf(b, sizeof b, "tstream %d %d %d %.6f %.9f %.6f %zu ", t.key, d, x.file, x.startPos, x.startRate,
+                    static_cast<double>(x.startGain), x.pts.size());
+      o << b << encodePoints(x.pts) << "\n";
+    }
+    if (!t.moves.empty()) o << "tmoves " << t.key << " " << t.moves.size() << " " << encodeMoves(t.moves) << "\n";
     o << "tname " << t.key << " " << t.name << "\n";
   }
   return o.str();
@@ -831,101 +1062,154 @@ bool modelFromText(const std::string& text, Model& m) {
   std::istringstream in(text);
   std::string line;
   if (!std::getline(in, line) || line.rfind("platter ", 0) != 0) return false;
+  const int version = std::atoi(line.c_str() + 8);
   m = Model{};
   bool any = false;
+  int cur = 0;  // deck the src / grid / cue lines belong to
+  if (version < 2) m.deck[0].file = 0;  // J-150: one deck on the first line's track
   while (std::getline(in, line)) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
     std::istringstream ls(line);
     std::string key;
     ls >> key;
-    if (key == "src") {
-      long long f = 0;
-      int an = 0;
-      ls >> f >> m.srcRate >> an;
-      m.srcFrames = std::max(0LL, f);
-      m.analysed = an != 0;
-      m.grid.frames = m.srcFrames;
-      m.grid.sampleRate = m.srcRate;
-      any = true;
-    } else if (key == "grid") {
-      std::string kind;
-      ls >> m.grid.bpm >> m.grid.beatsPerBar >> m.grid.bar1 >> kind;
-      m.grid.beatsPerBar = std::clamp(m.grid.beatsPerBar, 1, 16);
-      m.grid.beats.clear();
-      if (kind == "reg") {
-        double first = 0, period = 0;
-        size_t n = 0;
-        ls >> first >> period >> n;
-        if (period > 1 && n < 2000000)
-          for (size_t i = 0; i < n; ++i) m.grid.beats.push_back(first + period * static_cast<double>(i));
-      } else if (kind == "list") {
-        size_t n = 0;
-        ls >> n;
-        for (size_t i = 0; i < n && i < 2000000; ++i) {
-          double x = 0;
-          if (!(ls >> x)) break;
-          m.grid.beats.push_back(x);
-        }
-        std::sort(m.grid.beats.begin(), m.grid.beats.end());
-      }
-      if (!(m.grid.bpm > 1 && m.grid.bpm < 1000)) m.grid.bpm = 120;
-      m.grid.bar1 = std::clamp(m.grid.bar1, 0, std::max(0, static_cast<int>(m.grid.beats.size()) - 1));
-    } else if (key == "cue") {
-      ls >> m.cue;
-    } else if (key == "hot") {
-      for (auto& h : m.hot)
-        if (!(ls >> h)) h = -1;
-    } else if (key == "loop") {
-      ls >> m.loopIn >> m.loopOut;
-      if (!(m.loopOut > m.loopIn)) m.loopIn = m.loopOut = -1;
+    if (key == "layout") {
+      int l = LayoutTwo;
+      ls >> l;
+      m.layout = l == LayoutOne ? LayoutOne : LayoutTwo;
+    } else if (key == "file") {
+      if (m.files.size() < 256) m.files.push_back(line.size() > 5 ? line.substr(5) : std::string{});
+    } else if (key == "deck") {
+      int d = 0, f = -1;
+      ls >> d >> f;
+      cur = std::clamp(d, 0, kDecks - 1);
+      m.deck[static_cast<size_t>(cur)].file = f;
+    } else if (deckLine(key, ls, m.deck[static_cast<size_t>(cur)])) {
+      if (key == "src") any = true;
     } else if (key == "flags") {
       int a = 0, r = 1;
       ls >> a >> r;
       m.asked = a != 0;
       m.armed = r != 0;
-    } else if (key == "take") {
+    } else if (key == "take") {  // J-150: deck A's stream on the first file
       Take t;
       long long st = 0, len = 0;
       float sg = 1;
       size_t n = 0;
       std::string data;
-      ls >> t.key >> t.sampleRate >> t.step >> t.tempo >> t.ppq >> st >> len >> t.startPos >> t.startRate >> sg >> n >> data;
+      TakeStream& x = t.s[0];
+      ls >> t.key >> t.sampleRate >> t.step >> t.tempo >> t.ppq >> st >> len >> x.startPos >> x.startRate >> sg >> n >> data;
       t.startTick = st;
       t.lengthTicks = std::max(0LL, len);
-      t.startGain = sg;
-      if (t.key < kTakeKeyFirst || t.key >= kTakeKeyFirst + kTakeKeys || !(t.sampleRate > 1000) || t.step < 1 || t.step > 4096 ||
-          !(t.tempo > 1))
-        continue;
-      if (!decodePoints(data, t.pts) || t.pts.size() != n) continue;
-      bool dup = false;
-      for (const auto& o : m.takes) dup = dup || o.key == t.key;
-      if (!dup) m.takes.push_back(std::move(t));
+      x.startGain = sg;
+      x.on = true;
+      x.file = 0;
+      if (!takeHeaderOk(t) || takeOf(m, t.key)) continue;
+      if (!decodePoints(data, x.pts) || x.pts.size() != n) continue;
+      m.takes.push_back(std::move(t));
+    } else if (key == "take2") {
+      Take t;
+      long long st = 0, len = 0;
+      ls >> t.key >> t.sampleRate >> t.step >> t.tempo >> t.ppq >> st >> len;
+      t.startTick = st;
+      t.lengthTicks = std::max(0LL, len);
+      if (!takeHeaderOk(t) || takeOf(m, t.key)) continue;
+      m.takes.push_back(std::move(t));
+    } else if (key == "tstream") {
+      int k = 0, d = 0, f = -1;
+      float sg = 1;
+      size_t n = 0;
+      std::string data;
+      TakeStream x;
+      ls >> k >> d >> f >> x.startPos >> x.startRate >> sg >> n >> data;
+      Take* t = takeOf(m, k);
+      if (!t || d < 0 || d >= kDecks || !decodePoints(data, x.pts) || x.pts.size() != n) continue;
+      x.on = true;
+      x.file = f;
+      x.startGain = sg;
+      t->s[static_cast<size_t>(d)] = std::move(x);
+    } else if (key == "tmoves") {
+      int k = 0;
+      size_t n = 0;
+      std::string data;
+      ls >> k >> n >> data;
+      Take* t = takeOf(m, k);
+      std::vector<TakeMove> mv;
+      if (t && decodeMoves(data, mv) && mv.size() == n) t->moves = std::move(mv);
     } else if (key == "tname") {
       int k = 0;
       ls >> k;
       std::string rest;
       std::getline(ls, rest);
       if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
-      for (auto& t : m.takes)
-        if (t.key == k) t.name = rest;
+      if (Take* t = takeOf(m, k)) t->name = rest;
     } else {
       mappingLine(key, ls, line, m.map);
     }
   }
-  return any;
+  // takes without a stream are dropped; indices out of the file list are empty
+  m.takes.erase(std::remove_if(m.takes.begin(), m.takes.end(), [](const Take& t) { return t.steps() == 0; }), m.takes.end());
+  if (version >= 2) {
+    const int nf = static_cast<int>(m.files.size());
+    for (auto& d : m.deck)
+      if (d.file >= nf) d.file = -1;
+    for (auto& t : m.takes)
+      for (auto& x : t.s)
+        if (x.file >= nf) x.file = -1;
+  }
+  return any || !m.files.empty();
+}
+
+int fileIndex(Model& m, const std::string& path) {
+  for (size_t i = 0; i < m.files.size(); ++i)
+    if (m.files[i] == path) return static_cast<int>(i);
+  m.files.push_back(path);
+  return static_cast<int>(m.files.size()) - 1;
+}
+
+void pruneFiles(Model& m) {
+  std::vector<int> used(m.files.size(), 0);
+  auto mark = [&](int f) {
+    if (f >= 0 && f < static_cast<int>(used.size())) used[static_cast<size_t>(f)] = 1;
+  };
+  for (const auto& d : m.deck) mark(d.file);
+  for (const auto& t : m.takes)
+    for (const auto& x : t.s)
+      if (x.on) mark(x.file);
+  std::vector<int> to(m.files.size(), -1);
+  std::vector<std::string> keep;
+  for (size_t i = 0; i < m.files.size(); ++i)
+    if (used[i]) {
+      to[i] = static_cast<int>(keep.size());
+      keep.push_back(m.files[i]);
+    }
+  auto remap = [&](int f) { return f >= 0 && f < static_cast<int>(to.size()) ? to[static_cast<size_t>(f)] : -1; };
+  for (auto& d : m.deck) d.file = remap(d.file);
+  for (auto& t : m.takes)
+    for (auto& x : t.s) x.file = remap(x.file);
+  m.files = std::move(keep);
 }
 
 bool parseData(const std::string& data, std::string& path, Model& m) {
   const size_t nl = data.find('\n');
   path = nl == std::string::npos ? data : data.substr(0, nl);
-  if (nl == std::string::npos) return false;
-  return modelFromText(data.substr(nl + 1), m);
+  const bool has = nl != std::string::npos && modelFromText(data.substr(nl + 1), m);
+  if (!has) m = Model{};
+  if (m.files.empty() && !path.empty()) m.files.push_back(path);  // J-150 state / bare path
+  if (m.trackOf(0) != path) {
+    // the first line changed (a drop on the channel, a relink): deck A's new track,
+    // its grid and cues come with the next analysis
+    DeckModel fresh;
+    if (!path.empty()) fresh.file = fileIndex(m, path);
+    m.deck[0] = fresh;
+    pruneFiles(m);
+  }
+  return has;
 }
 
 std::string formatData(const std::string& path, const Model& m) { return path + "\n" + modelToText(m); }
 
-Model defaultModel(const Sample& s, const seltmann::Analysis& a, bool analysed) {
-  Model m;
+DeckModel deckModel(const Sample& s, const seltmann::Analysis& a, bool analysed) {
+  DeckModel m;
   m.srcFrames = static_cast<int64_t>(s.frames());
   m.srcRate = s.sampleRate;
   m.analysed = analysed;
@@ -935,6 +1219,8 @@ Model defaultModel(const Sample& s, const seltmann::Analysis& a, bool analysed) 
   m.grid.beats = a.beats;
   m.grid.beatsPerBar = std::clamp(a.beatsPerBar, 1, 16);
   m.grid.bar1 = std::clamp(a.bar1, 0, std::max(0, static_cast<int>(a.beats.size()) - 1));
+  m.grid.key = analysed ? a.key : -1;
+  m.grid.minor = analysed && a.minor;
   if (m.grid.beats.empty()) m.grid.beats.push_back(0);
   // the cue sits on the first downbeat of the audible part
   double cue = m.grid.beats[static_cast<size_t>(m.grid.bar1)];
@@ -949,18 +1235,18 @@ Model defaultModel(const Sample& s, const seltmann::Analysis& a, bool analysed) 
   return m;
 }
 
-Model carryOver(const Model& keep, const Model& fresh) {
-  Model m = fresh;
-  m.asked = keep.asked;
-  m.armed = keep.armed;
-  m.map = keep.map;
-  return m;  // (takes belong to the file they were played on)
+void loadTrack(Model& m, int d, const std::string& path, const DeckModel& fresh) {
+  if (d < 0 || d >= kDecks) return;
+  DeckModel x = fresh;
+  x.file = path.empty() ? -1 : fileIndex(m, path);
+  m.deck[static_cast<size_t>(d)] = std::move(x);
+  pruneFiles(m);
 }
 
-double beatAt(const Model& m, double frame) { return seltmann::beatAt(m.grid, frame); }
-double frameAt(const Model& m, double beat) { return seltmann::frameAt(m.grid, beat); }
-double nearestBeatFrame(const Model& m, double frame) { return frameAt(m, std::round(beatAt(m, frame))); }
-double bpmOf(const Model& m) { return m.grid.bpm > 1 ? m.grid.bpm : 120.0; }
+double beatAt(const DeckModel& m, double frame) { return seltmann::beatAt(m.grid, frame); }
+double frameAt(const DeckModel& m, double beat) { return seltmann::frameAt(m.grid, beat); }
+double nearestBeatFrame(const DeckModel& m, double frame) { return frameAt(m, std::round(beatAt(m, frame))); }
+double bpmOf(const DeckModel& m) { return m.grid.bpm > 1 ? m.grid.bpm : 120.0; }
 
 bool TakeBuilder::feed(const CaptureEvent& e) {
   switch (e.kind) {
@@ -971,15 +1257,26 @@ bool TakeBuilder::feed(const CaptureEvent& e) {
       take.tempo = e.tempo;
       take.ppq = e.ppq;
       take.startTick = static_cast<Tick>(std::llround(e.tick));
-      take.startPos = e.pt.pos;
-      take.startRate = e.startRate;
-      take.startGain = e.gain;
-      take.pts.reserve(4096);
+      for (int d = 0; d < kDecks; ++d) {
+        if (!(e.streams & (1u << d))) continue;
+        TakeStream& x = take.s[static_cast<size_t>(d)];
+        x.on = true;
+        x.file = e.file[d];
+        x.startPos = e.pt[d].pos;
+        x.startRate = e.startRate[d];
+        x.startGain = e.gain[d];
+        x.pts.reserve(4096);
+      }
       active = true;
       lost = false;
       return false;
     case CaptureEvent::Point:
-      if (active) take.pts.push_back(e.pt);
+      if (active)
+        for (int d = 0; d < kDecks; ++d)
+          if (take.s[static_cast<size_t>(d)].on) take.s[static_cast<size_t>(d)].pts.push_back(e.pt[d]);
+      return false;
+    case CaptureEvent::Move:
+      if (active) take.moves.push_back(TakeMove{e.step, e.param, e.value});
       return false;
     case CaptureEvent::Lost:  // an end after dropped points: no take
       lost = true;
@@ -989,7 +1286,7 @@ bool TakeBuilder::feed(const CaptureEvent& e) {
       if (!active) return false;
       active = false;
       take.lengthTicks = std::max<Tick>(1, static_cast<Tick>(std::llround(e.tick)) - take.startTick);
-      return !take.pts.empty() && !lost;
+      return take.steps() > 0 && !lost;
   }
   return false;
 }

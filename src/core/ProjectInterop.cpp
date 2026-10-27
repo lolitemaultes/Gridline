@@ -61,12 +61,28 @@ bool visitState(PluginState& st, const std::function<void(std::string&)>& fn) {
   const PluginInfo* info = findPlugin(st.type);
   if (info && info->usesSample && st.data.find('\n') != std::string::npos) {
     // "<sample file>\n<model>" (J-41 slicer region model): the first line.
+    // J-151: and every later line "file <path>" (models that refer to more
+    // files: a DJ setup's second deck and the tracks its takes were played on).
     const size_t nl = st.data.find('\n');
     std::string first = st.data.substr(0, nl);
     const std::string before = first;
     if (!first.empty()) fn(first);
-    if (first == before) return false;
-    st.data = first + st.data.substr(nl);
+    std::string rest = st.data.substr(nl);
+    bool restChanged = false;
+    for (size_t at = rest.find("\nfile "); at != std::string::npos; at = rest.find("\nfile ", at + 1)) {
+      const size_t from = at + 6;
+      size_t end = rest.find('\n', from);
+      if (end == std::string::npos) end = rest.size();
+      std::string path = rest.substr(from, end - from);
+      const std::string was = path;
+      if (!path.empty()) fn(path);
+      if (path != was && path.find('\n') == std::string::npos) {
+        rest.replace(from, end - from, path);
+        restChanged = true;
+      }
+    }
+    if (first == before && !restChanged) return false;
+    st.data = first + rest;
     return true;
   }
   if ((info && info->usesSample) || looksLikeFilePath(st.data)) {

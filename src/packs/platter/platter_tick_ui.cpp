@@ -1,9 +1,9 @@
-// Gridline — "platter" pack: per frame, for every deck in the project (its
+// Gridline — "platter" pack: per frame, for every setup in the project (its
 // editor open or not): parameters the controller moved are written into the
-// project (and recorded as automation while Gridline records), cues the deck set
-// itself are saved, recorded takes go into the deck and a note on the take's key
-// into the pattern, the controller's LEDs follow the deck, and the devices bound
-// to decks are claimed (their notes play no instrument, the app's templates and
+// project (and recorded as automation while Gridline records, unless a take
+// holds them), cues a deck set itself are saved, recorded takes go into the
+// setup and a note on the take's key into the pattern, the controller's LEDs
+// follow both decks, and the devices bound to setups are claimed (their notes play no instrument, the app's templates and
 // links leave them alone). UI thread.
 #include <algorithm>
 #include <cmath>
@@ -34,7 +34,7 @@ bool gLearning = false;  // last frame's learningNow()
 struct DeckState {
   const Generator* gen = nullptr;
   std::array<uint32_t, PCount> mirSeen{};
-  uint32_t marksSeen = 0;
+  std::array<uint32_t, kDecks> marksSeen{};
   TakeBuilder builder;
   std::vector<CaptureEvent> buf;
   std::unordered_map<uint32_t, uint8_t> ledSent;  // (status << 8 | num) -> value sent
@@ -54,7 +54,7 @@ void writeModel(App& a, ObjectId ch, DeckState& d, const Model& m, const char* l
   const PluginState* sp = t.state(a.doc.song());
   if (!sp) return;
   PluginState st = *sp;
-  st.data = formatData(d.path, m);
+  st.data = formatData(m.trackOf(0), m);
   setPluginState(a, t, st, i18n::tr(label), mergeKey);
   d.m = m;
   d.data = st.data;
@@ -87,7 +87,7 @@ bool takeKey(int pitch) { return pitch >= kTakeKeyFirst && pitch < kTakeKeyFirst
 
 // A finished take: into the deck, and a note on its key at the place it was played.
 void storeTake(App& a, const Channel& c, DeckState& d, Take take) {
-  if (!d.hasModel || take.pts.empty()) return;
+  if (!d.hasModel || take.steps() == 0) return;
   const bool song = a.engine.mode() == PlayMode::Song;
   const ObjectId pattern = a.recorder.active() ? a.recorder.pattern() : a.curPattern;
   if (!a.doc.song().pattern(pattern)) return;
@@ -109,7 +109,7 @@ void storeTake(App& a, const Channel& c, DeckState& d, Take take) {
                 m.takes.end());
   const int key = freeTakeKey(m.takes);
   if (key < 0) {
-    a.notify(i18n::tr("All 24 take keys of this deck are used: delete a take to record another"), true);
+    a.notify(i18n::tr("All 24 take keys of this setup are used: delete a take to record another"), true);
     return;
   }
   int number = 1;
@@ -121,6 +121,10 @@ void storeTake(App& a, const Channel& c, DeckState& d, Take take) {
   char nm[32];
   std::snprintf(nm, sizeof nm, "Take %d", number);
   take.name = nm;
+  // (a stream whose file is gone plays nothing)
+  for (auto& x : take.s)
+    if (x.on && (x.file < 0 || x.file >= static_cast<int>(m.files.size()))) x = TakeStream{};
+  if (take.steps() == 0) return;
   m.takes.push_back(std::move(take));
   a.doc.editPattern(pattern, i18n::tr("Record a deck take"), [&](Pattern& p) {
     auto& notes = p.notes[c.id];
@@ -181,18 +185,21 @@ void tick(App& a) {
     if (c.plugin.data != d.data) {
       d.data = c.plugin.data;
       Model m;
-      d.hasModel = parseData(c.plugin.data, d.path, m);
-      d.m = d.hasModel ? std::move(m) : Model{};
+      parseData(c.plugin.data, d.path, m);  // (a bare path is a model with deck A's track)
+      d.hasModel = !c.plugin.data.empty();
+      d.m = std::move(m);
     }
     const PluginTarget t{c.id, -1};
     Mirror mr;
     mirror(g, mr);
-    Marks mk;
-    marks(g, mk);
-    if (d.gen != g) {  // a new deck instance: start from what it has now
+    Marks mk[kDecks];
+    for (int k = 0; k < kDecks; ++k) marks(g, k, mk[k]);
+    LiveView lvA;
+    liveView(g, 0, lvA);
+    if (d.gen != g) {  // a new setup instance: start from what it has now
       d.gen = g;
       d.mirSeen = mr.seq;
-      d.marksSeen = mk.seq;
+      for (int k = 0; k < kDecks; ++k) d.marksSeen[static_cast<size_t>(k)] = mk[k].seq;
       d.builder = TakeBuilder{};
       d.ledSent.clear();
       d.initFor.clear();
@@ -203,20 +210,23 @@ void tick(App& a) {
       if (mr.seq[i] == d.mirSeen[i]) continue;
       d.mirSeen[i] = mr.seq[i];
       pui::setParamValue(a, t, k, mr.value[i], true);
-      if (info && a.recorder.active() && !automationRecording())
+      // (while a take captures, the take holds the move: no automation as well)
+      if (info && a.recorder.active() && !automationRecording() && !lvA.capturing)
         a.recorder.controller(t.pid(k), info->params[i].toNormalized(mr.value[i]), a.engine.position());
     }
-    // cues the deck set -> the model
-    if (mk.seq != d.marksSeen) {
-      d.marksSeen = mk.seq;
-      if (d.hasModel) {
-        Model m = d.m;
-        m.cue = mk.cue;
-        m.hot = mk.hot;
-        m.loopIn = mk.loopIn;
-        m.loopOut = mk.loopOut;
-        if (!(m == d.m)) writeModel(a, c.id, d, m, i18n::N_("Set a cue on the deck"), 0x9A7710ull ^ c.id);
-      }
+    // cues a deck set -> the model
+    for (int k = 0; k < kDecks; ++k) {
+      const auto ki = static_cast<size_t>(k);
+      if (mk[k].seq == d.marksSeen[ki]) continue;
+      d.marksSeen[ki] = mk[k].seq;
+      if (!d.hasModel || d.m.deck[ki].file < 0) continue;
+      Model m = d.m;
+      DeckModel& dm = m.deck[ki];
+      dm.cue = mk[k].cue;
+      dm.hot = mk[k].hot;
+      dm.loopIn = mk[k].loopIn;
+      dm.loopOut = mk[k].loopOut;
+      if (!(m == d.m)) writeModel(a, c.id, d, m, i18n::N_("Set a cue on the deck"), (0x9A7710ull + ki) ^ c.id);
     }
     // takes
     if (d.buf.empty()) d.buf.resize(4096);
@@ -233,10 +243,10 @@ void tick(App& a) {
       for (const auto& msg : d.m.map.init) a.midi->sendTo(d.m.map.device, std::vector<unsigned char>(msg.begin(), msg.end()));
     }
     if (!d.m.map.feedback) continue;
-    LiveView lv;
-    if (!liveView(g, lv)) continue;
+    LiveView lv[kDecks];
+    for (int k = 0; k < kDecks; ++k) liveView(g, k, lv[k]);
     for (const Led& l : d.m.map.leds) {
-      const uint8_t v = ledState(l.control, lv) ? l.on : l.off;
+      const uint8_t v = ledState(l.control, lv[l.deck & 1]) ? l.on : l.off;
       const uint32_t key = static_cast<uint32_t>(l.status) << 8 | l.num;
       auto it = d.ledSent.find(key);
       if (it != d.ledSent.end() && it->second == v) continue;

@@ -448,7 +448,11 @@ void drawChannelSettings(App& a) {
   bool open = true;
   stripOpened(a, c->id);  // opened (or another channel): the strip starts hidden
   // Wide instrument editors (PluginInfo::editorWidth) widen the window.
-  const float winW = std::max(624.0f, (info && info->editorWidth > 0 ? info->editorWidth : 600.0f) + 24.0f);
+  float editorW = info && info->editorWidth > 0 ? info->editorWidth : 600.0f;
+  if (info && info->editorMinWidth > 0)  // J-151: reflowing editors follow a narrower main window
+    editorW = std::clamp(ImGui::GetMainViewport()->WorkSize.x - 96.0f, std::min(info->editorMinWidth, editorW), editorW);
+  editorW = std::floor(editorW);
+  const float winW = std::max(624.0f, editorW + 24.0f);
   ui::NextFloatingWindowSize(winW);
   {
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -642,9 +646,11 @@ void drawChannelSettings(App& a) {
     menuButton("plmenu", "Instrument menu: presets, state, channel", [&a, id]() { pluginWindowMenu(a, id, -1); });
     ImGui::SameLine(0, 8);
     drawPluginHeader(a, target);
-    drawPluginBody(a, target, info->editorWidth > 0 ? info->editorWidth : 600.0f);
+    drawPluginBody(a, target, editorW);
   }
-  packs::modulation::drawChannelNoteFx(a, id, 600.0f);  // note processors (arpeggiator, chords, ...)
+  // note processors (arpeggiator, chords, ...); J-151: not for instruments that leave them out (while none is set)
+  if (const Channel* cc = a.doc.song().channel(id); !info || info->noteFxPanel || (cc && !cc->noteFx.empty()))
+    packs::modulation::drawChannelNoteFx(a, id, 600.0f);
   ImGui::End();
   if (!open) a.settingsChannel = kNoId;
 }

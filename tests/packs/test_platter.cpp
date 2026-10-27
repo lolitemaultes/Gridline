@@ -1,10 +1,14 @@
-// Gridline — "platter" pack tests: Platter (gl.platter), the DJ deck.
-// Controller decoding from synthetic bytes (DDJ-200 both decks, Inpulse 200,
-// Mixtrack Pro FX, learn), mappings and models as text and preset files, the
-// platter physics (hand tracking, motor start / brake, throws), click-free
-// direction changes, band-limited reads at speed, key lock, tempo sync and beat
-// phase, block-size invariance, no allocation on the audio thread, takes that
-// replay sample for sample, project save / load, and the old Turntable effect.
+// Gridline — "platter" pack tests: Platter (gl.platter), the two-deck DJ setup.
+// Controller decoding from synthetic bytes (DDJ-200 one side and the whole
+// controller, Inpulse 200, Mixtrack Pro FX, learn), mappings and models as text
+// and preset files, the platter physics (hand tracking, motor start / brake,
+// throws), click-free direction changes, band-limited reads at speed, key lock,
+// tempo sync (to the project and deck to deck) and beat phase, the mixer
+// (channels, crossfader assign / curve / cut / reverse, master), block-size
+// invariance, no allocation on the audio thread (two decks, key lock,
+// scratching), takes of both decks and the mixer moves that replay sample for
+// sample, single-deck (J-150) states, project save / load, and the old
+// Turntable effect.
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -21,6 +25,7 @@
 #include "core/ExternalDrop.h"
 #include "core/PluginInfo.h"
 #include "core/Project.h"
+#include "core/ProjectInterop.h"
 #include "core/Song.h"
 #include "core/WavWriter.h"
 #include "engine/Effects.h"
@@ -68,6 +73,7 @@ double music(int64_t i, int c, double bpm) {
   return x;
 }
 
+// A Platter setup (both decks and the mixer); the tests mostly play deck A.
 struct Deck {
   std::unique_ptr<Generator> g;
   PluginState st;
@@ -79,14 +85,23 @@ struct Deck {
   std::vector<float> L, R;
 };
 
-// A deck on `path` with a flat grid at `bpm` (cue at 0) and the DDJ-200 left mapping.
-Deck makeDeck(const std::string& path, double bpm, const std::function<void(PluginState&, pl::Model&)>& tweak = nullptr) {
+// A deck model on `path` with a flat grid at `bpm` (cue at 0).
+pl::DeckModel flatDeck(const std::string& path, double bpm) {
+  SamplePtr src = sampleCache().get(path);
+  pl::DeckModel dm = pl::deckModel(*src, gl::packs::seltmann::flatGrid(*src, bpm), true);
+  dm.cue = 0;
+  return dm;
+}
+
+// A setup with `path` on deck A (and `pathB` on deck B when given), flat grids,
+// and the DDJ-200 mapped as a whole (left side deck A, right side deck B).
+Deck makeDeck(const std::string& path, double bpm, const std::function<void(PluginState&, pl::Model&)>& tweak = nullptr,
+              const std::string& pathB = "", double bpmB = 120) {
   Deck d;
   d.path = path;
-  SamplePtr src = sampleCache().get(path);
-  d.m = pl::defaultModel(*src, gl::packs::seltmann::flatGrid(*src, bpm), true);
-  d.m.cue = 0;
-  d.m.map = pl::profileMapping("ddj200", 0);
+  pl::loadTrack(d.m, 0, path, flatDeck(path, bpm));
+  if (!pathB.empty()) pl::loadTrack(d.m, 1, pathB, flatDeck(pathB, bpmB));
+  d.m.map = pl::profileMapping("ddj200", pl::kSideBoth);
   d.st = defaultPluginState(pl::kType);
   if (tweak) tweak(d.st, d.m);
   d.st.data = pl::formatData(path, d.m);
@@ -115,20 +130,36 @@ void run(Deck& d, int64_t frames, int block, const std::function<void(Deck&, int
   }
 }
 
-pl::LiveView view(const Deck& d) {
+pl::LiveView view(const Deck& d, int deck = 0) {
   pl::LiveView v;
-  pl::liveView(d.g.get(), v);
+  pl::liveView(d.g.get(), deck, v);
   return v;
 }
-void cmd(Deck& d, uint8_t kind, uint8_t a = 0, double v = 0, double w = 0) {
+void cmd(Deck& d, uint8_t kind, uint8_t a = 0, double v = 0, double w = 0, int deck = 0) {
   pl::Cmd c;
   c.kind = kind;
   c.a = a;
+  c.deck = static_cast<uint8_t>(deck);
   c.v = v;
   c.w = w;
   pl::command(d.g.get(), c);
 }
-void button(Deck& d, int control, bool down) { cmd(d, pl::CmdButton, static_cast<uint8_t>(control), down ? 1 : 0); }
+void button(Deck& d, int control, bool down, int deck = 0) { cmd(d, pl::CmdButton, static_cast<uint8_t>(control), down ? 1 : 0, 0, deck); }
+// Captured take of a recording setup (after recording stopped).
+bool drainTake(Deck& d, pl::Take& out) {
+  pl::TakeBuilder tb;
+  std::vector<pl::CaptureEvent> evs(40000);
+  bool done = false;
+  for (int n; (n = pl::drainCapture(d.g.get(), evs.data(), static_cast<int>(evs.size()))) > 0;)
+    for (int i = 0; i < n; ++i) done = tb.feed(evs[static_cast<size_t>(i)]) || done;
+  out = tb.take;
+  return done;
+}
+double maxDiff(const std::vector<float>& a, const std::vector<float>& b, size_t from, size_t to) {
+  double m = 0;
+  for (size_t i = from; i < std::min({to, a.size(), b.size()}); ++i) m = std::max(m, static_cast<double>(std::fabs(a[i] - b[i])));
+  return m;
+}
 
 double maxStep(const std::vector<float>& x, size_t from, size_t to) {
   double m = 0;
@@ -170,6 +201,18 @@ void testCatalogue() {
   s.params.resize(5);
   normalizePluginState(s);
   expect(static_cast<int>(s.params.size()) == pl::PCount, "short parameter lists are completed");
+  // parameter ids: deck A keeps J-150's ids, deck B and the new mixer values follow
+  expect(pl::PCount == 46 && pl::PDeckB == 23, "parameter ids: 23 from the single deck, deck B and the mixer after them");
+  for (int d = 0; d < pl::DCount; ++d) {
+    int dd = -1;
+    expect(pl::deckOfParam(pl::deckParam(0, d), dd) == 0 && dd == d, "deck A parameter ids map back");
+    expect(pl::deckOfParam(pl::deckParam(1, d), dd) == 1 && dd == d, "deck B parameter ids map back");
+    expect(p->params[static_cast<size_t>(pl::deckParam(1, d))].name.rfind("B ", 0) == 0, "deck B parameters are named for deck B");
+  }
+  int dd = -1;
+  for (int k : {pl::PXfader, pl::PXfCurve, pl::PFaderCurve, pl::PNoteMode, pl::PSyncTo, pl::PMaster, pl::PXfCut, pl::PXfReverse})
+    expect(pl::deckOfParam(k, dd) < 0, "mixer parameters belong to no deck");
+  expect(!p->noteFxPanel && p->editorMinWidth > 0, "no note processors panel; the editor reflows in a narrower window");
 }
 
 // ------------------------------------------------------------------ controller decoding
@@ -256,6 +299,62 @@ void testDecoding() {
   expect(is(feed(d3, learned, 0x92, 0x24, 0x7F), pl::CtlCue), "learned button decodes");
 }
 
+// The whole controller: the left side drives deck A, the right side deck B, the mixer once.
+void testDecodingBoth() {
+  const pl::Mapping both = pl::profileMapping("ddj200", pl::kSideBoth);
+  expect(both.side == pl::kSideBoth, "DDJ-200: the whole controller");
+  int xf = 0, xfDeck = 0;
+  for (const auto& b : both.bindings)
+    if (b.control == pl::CtlXfader) ++xf, xfDeck += b.deck;
+  expect(xf == 1 && xfDeck == 0, "the crossfader is mapped once (a mixer control)");
+  int init = 0;
+  for (const auto& i : both.init) init += i.empty() ? 0 : 1;
+  expect(init == 1, "the set-up message is sent once");
+  pl::Decoder d;
+  d.reset();
+  auto e = feed(d, both, 0x90, 0x0B, 0x7F);
+  expect(is(e, pl::CtlPlay) && e[0].deck == 0, "left play: deck A");
+  e = feed(d, both, 0x91, 0x0B, 0x7F);
+  expect(is(e, pl::CtlPlay) && e[0].deck == 1, "right play: deck B");
+  e = feed(d, both, 0xB1, 0x22, 0x43);
+  expect(is(e, pl::CtlJogPlatter) && e[0].deck == 1 && e[0].ticks == 3, "right jog: deck B");
+  e = feed(d, both, 0xB6, 0x17, 0x20);
+  expect(is(e, pl::CtlFilter) && e[0].deck == 0, "left filter: deck A");
+  e = feed(d, both, 0xB6, 0x18, 0x20);
+  expect(is(e, pl::CtlFilter) && e[0].deck == 1, "right filter: deck B");
+  e = feed(d, both, 0xB6, 0x1F, 0x7F);
+  expect(is(e, pl::CtlXfader) && e[0].deck == 0, "crossfader: one event for the mixer");
+  e = feed(d, both, 0x99, 0x02, 0x7F);
+  expect(is(e, pl::CtlHot3) && e[0].deck == 1, "right pads: deck B's hot cues");
+  // shift is per deck
+  feed(d, both, 0x91, 0x3F, 0x7F);
+  expect(d.shift(1) && !d.shift(0), "shift on the right holds deck B's shift only");
+  feed(d, both, 0x91, 0x3F, 0x00);
+  expect(!d.shift(1), "shift released");
+  // LEDs go to the side of their deck
+  bool lampB = false, lampA = false;
+  for (const auto& l : both.leds) {
+    lampA = lampA || (l.control == pl::CtlPlay && l.deck == 0 && l.status == 0x90);
+    lampB = lampB || (l.control == pl::CtlPlay && l.deck == 1 && l.status == 0x91);
+  }
+  expect(lampA && lampB, "play LEDs: deck A on the left, deck B on the right");
+  // learn: deck controls keep their deck, mixer controls belong to no deck
+  expect(pl::learnBinding(pl::CtlCue, 0x92, 0x24, 0x7F, false, 1).deck == 1, "learn on deck B: a deck B binding");
+  expect(pl::learnBinding(pl::CtlXfader, 0xB2, 0x24, 0x40, false, 1).deck == 0, "learn the crossfader: a mixer binding");
+  expect(pl::controlInfo(pl::CtlXfader).mixer && pl::controlInfo(pl::CtlMaster).mixer && !pl::controlInfo(pl::CtlVolume).mixer,
+         "the crossfader and the master are mixer controls");
+  expect(pl::controlParam(pl::CtlVolume, 1) == pl::deckParam(1, pl::DVolume) && pl::controlParam(pl::CtlXfader, 1) == pl::PXfader,
+         "controls move their deck's parameter (mixer controls the mixer's)");
+  // the mapping text keeps the deck of every binding and LED
+  pl::Mapping back;
+  expect(pl::mappingFromText(pl::mappingToText(both), back) && back == both, "whole-controller mapping text round trip");
+  const std::string dir = (tmpDir() / "maps2").string();
+  expect(pl::saveMappingPreset(dir, "Both Sides", both), "whole-controller preset: save");
+  const auto files = pl::mappingPresetFiles(dir);
+  pl::Mapping back2;
+  expect(!files.empty() && pl::loadMappingPreset(files[0], back2) && back2 == both, "whole-controller preset: load");
+}
+
 // ------------------------------------------------------------------ text forms
 void testText() {
   for (const char* id : {"ddj200", "inpulse200", "mixtrackprofx"})
@@ -290,36 +389,81 @@ void testText() {
   const std::string enc = pl::encodePoints(pts);
   expect(pl::decodePoints(enc, back2) && back2 == pts, "take points: exact round trip");
   std::printf("# 3000 take points: %zu bytes of text\n", enc.size());
-  // model
+  // take moves round trip exactly
+  std::vector<pl::TakeMove> mv;
+  for (int i = 0; i < 200; ++i) mv.push_back(pl::TakeMove{static_cast<uint32_t>(i * 37), pl::moveParams()[static_cast<size_t>(i % pl::kMoveParams)], static_cast<float>(std::sin(i * 0.3) * 7.0)});
+  std::vector<pl::TakeMove> mvb;
+  expect(pl::decodeMoves(pl::encodeMoves(mv), mvb) && mvb == mv, "take moves: exact round trip");
+  // model (both decks)
   pl::Model md;
-  md.srcFrames = 441000;
-  md.srcRate = 44100;
-  md.analysed = true;
-  for (int i = 0; i < 20; ++i) md.grid.beats.push_back(1000.0 + i * 22050.0);
-  md.grid.bpm = 120;
-  md.grid.beatsPerBar = 4;
-  md.grid.bar1 = 1;
-  md.cue = 23050;
-  md.hot[2] = 67150;
-  md.loopIn = 1000, md.loopOut = 89200;
+  md.files = {"/x/song.wav", "/x/other track.wav", "/x/old.wav"};
+  pl::DeckModel& a = md.deck[0];
+  a.file = 0;
+  a.srcFrames = 441000;
+  a.srcRate = 44100;
+  a.analysed = true;
+  for (int i = 0; i < 20; ++i) a.grid.beats.push_back(1000.0 + i * 22050.0);
+  a.grid.bpm = 120;
+  a.grid.beatsPerBar = 4;
+  a.grid.bar1 = 1;
+  a.cue = 23050;
+  a.hot[2] = 67150;
+  a.loopIn = 1000, a.loopOut = 89200;
+  pl::DeckModel& b = md.deck[1];
+  b.file = 1;
+  b.srcFrames = 882000;
+  b.srcRate = 48000;
+  b.analysed = false;
+  for (int i = 0; i < 9; ++i) b.grid.beats.push_back(500.25 + i * 22000.5 + (i == 4 ? 3.0 : 0.0));  // an irregular grid
+  b.grid.bpm = 128;
+  b.grid.beatsPerBar = 4;
+  b.grid.bar1 = 2;
+  b.grid.key = 9;
+  b.grid.minor = true;
+  b.cue = 500.25;
+  b.hot[0] = 44001, b.hot[7] = 600000;
   md.asked = true;
   md.armed = false;
-  md.map = pl::profileMapping("ddj200", 0);
+  md.map = pl::profileMapping("ddj200", pl::kSideBoth);
   md.map.device = "DDJ-200";
   pl::Take t;
   t.key = 37;
   t.name = "Chirps";
-  t.pts = pts;
   t.startTick = 384;
   t.lengthTicks = 768;
-  t.startPos = 1000;
+  t.s[0].on = true;
+  t.s[0].file = 0;
+  t.s[0].pts = pts;
+  t.s[0].startPos = 1000;
+  t.s[1].on = true;
+  t.s[1].file = 2;  // a track no deck holds any more
+  t.s[1].pts = pts;
+  t.s[1].startPos = 2000.5;
+  t.s[1].startRate = 1.25;
+  t.s[1].startGain = 0.5f;
+  t.moves = mv;
   md.takes.push_back(t);
   pl::Model mb;
   std::string path;
-  expect(pl::parseData(pl::formatData("/x/song.wav", md), path, mb) && path == "/x/song.wav" && mb == md, "model text round trip (grid, cues, mapping, takes)");
-  expect(pl::pathOf(pl::formatData("/x/song.wav", md)) == "/x/song.wav", "the path is the first line");
+  expect(pl::parseData(pl::formatData("/x/song.wav", md), path, mb) && path == "/x/song.wav" && mb == md,
+         "model text round trip (both decks, grids, cues, mapping, takes of both decks and the mixer)");
+  expect(pl::pathOf(pl::formatData("/x/song.wav", md)) == "/x/song.wav", "the path is deck A's track (the first line)");
+  md.layout = pl::LayoutOne;
+  expect(pl::parseData(pl::formatData("/x/song.wav", md), path, mb) && mb.layout == pl::LayoutOne && !mb.twoDecks(), "the one-deck layout is kept");
+  // a new first line (audio dropped on the channel): deck A's new track, deck B and the takes stay
+  expect(pl::parseData(pl::formatData("/x/dropped.wav", md), path, mb) && mb.trackOf(0) == "/x/dropped.wav" && mb.trackOf(1) == "/x/other track.wav" &&
+             mb.deck[1] == md.deck[1] && mb.takes.size() == 1 && mb.files[static_cast<size_t>(mb.takes[0].s[0].file)] == "/x/song.wav",
+         "a dropped file replaces deck A's track only");
+  // files: pruned when nothing refers to them
+  pl::Model pm = md;
+  pm.takes.clear();
+  pl::pruneFiles(pm);
+  expect(pm.files.size() == 2 && pm.trackOf(0) == "/x/song.wav" && pm.trackOf(1) == "/x/other track.wav", "unused files are pruned");
+  pl::loadTrack(pm, 1, "/x/song.wav", pl::DeckModel{});
+  expect(pm.files.size() == 1 && pm.deck[1].file == 0, "both decks on one track share its file");
   pl::Model bare;
-  expect(!pl::parseData("/x/song.wav", path, bare) && path == "/x/song.wav", "a bare path has no model");
+  expect(!pl::parseData("/x/song.wav", path, bare) && path == "/x/song.wav" && bare.trackOf(0) == "/x/song.wav" && bare.trackOf(1).empty(),
+         "a bare path has no model (the track on deck A)");
 }
 
 // ------------------------------------------------------------------ playback
@@ -444,7 +588,6 @@ void testScratch(const std::string& sinePath) {
     s.params[pl::PSync] = 0;
     s.params[pl::PKeyLock] = 0;
   });
-  d.m.cue = 0;
   run(d, 64, 64, [](Deck& dd, int64_t, int) { cmd(dd, pl::CmdHandDown); });
   // the mouse moves the record back and forth (2 Hz, about 1.1x peak speed); direction changes 4 times a second
   run(d, static_cast<int64_t>(2 * kSr), 64, [](Deck& dd, int64_t pos, int) {
@@ -519,7 +662,7 @@ void testSync(const std::string& path100) {
   expect(std::fabs(v.speed - 1.25) < 0.01, "sync: a 100 BPM track plays at 1.25x in a 125 BPM project");
   expect(std::fabs(v.tempo - 125) < 0.01, "sync: the deck shows the project tempo");
   const double songBeat = d.ctx.tick / d.ctx.ppq + 256.0 / kSr * 125 / 60;  // end of the last block
-  const double deckBeat = pl::beatAt(d.m, v.pos);
+  const double deckBeat = pl::beatAt(d.m.deck[0], v.pos);
   double err = (deckBeat - std::floor(deckBeat)) - (songBeat - std::floor(songBeat));
   err -= std::round(err);
   std::printf("# sync phase error %.4f beats\n", err);
@@ -589,7 +732,7 @@ void testCues(const std::string& path) {
   run(d, 256, 256);
   expect(std::fabs(view(d).hot[1] - 66150) < 1, "hot cue 2 stored");
   pl::Marks mk;
-  pl::marks(d.g.get(), mk);
+  pl::marks(d.g.get(), 0, mk);
   expect(mk.seq > 0 && std::fabs(mk.hot[1] - 66150) < 1, "the deck reports the marks it set (the editor saves them)");
   button(d, pl::CtlPlay, true);
   run(d, 4410, 256);
@@ -629,16 +772,11 @@ void testTakes(const std::string& path, bool keyLock) {
     });
     d.ctx.recording = false;
     run(d, 256, 256);
-    pl::TakeBuilder tb;
-    std::vector<pl::CaptureEvent> evs(40000);
-    bool done = false;
-    for (int n; (n = pl::drainCapture(d.g.get(), evs.data(), static_cast<int>(evs.size()))) > 0;)
-      for (int i = 0; i < n; ++i) done = tb.feed(evs[static_cast<size_t>(i)]) || done;
-    expect(done, keyLock ? "take captured (key lock)" : "take captured");
-    take = tb.take;
+    expect(drainTake(d, take), keyLock ? "take captured (key lock)" : "take captured");
     live = d.L;
   }
-  expect(take.startTick == 0 && take.pts.size() >= static_cast<size_t>(frames / pl::kStep), "take: starts on the beat, covers the recording");
+  expect(take.startTick == 0 && take.s[0].on && !take.s[1].on && take.s[0].pts.size() >= static_cast<size_t>(frames / pl::kStep),
+         "take: starts on the beat, covers the recording (deck A only: deck B is empty)");
   take.key = pl::kTakeKeyFirst;
   // the take replays on its key, with no controller
   Deck r = makeDeck(path, 120, [&](PluginState& s, pl::Model& m) {
@@ -654,7 +792,7 @@ void testTakes(const std::string& path, bool keyLock) {
   run(r, frames, 300, [](Deck& dd, int64_t pos, int) {
     if (pos == 0) dd.g->noteOn(7, pl::kTakeKeyFirst, 1.f, 0);
   });
-  const size_t n = static_cast<size_t>(take.pts.size()) * pl::kStep;
+  const size_t n = static_cast<size_t>(take.steps()) * pl::kStep;
   double diff = 0;
   size_t first = n;
   for (size_t i = 0; i < std::min({n, live.size(), r.L.size()}); ++i) {
@@ -666,6 +804,41 @@ void testTakes(const std::string& path, bool keyLock) {
   std::printf("# take replay difference %.2e over %zu samples\n", diff, n);
   expect(diff < 1e-5, keyLock ? "take: replays sample for sample (key lock)" : "take: replays sample for sample (scratches, fader cuts)");
   expect(rms(live, 20000, 70000) > 0.02, "take: the scratch sounds");
+  // the same take written by J-150 (a single-deck "take" line) replays the same
+  if (!keyLock) {
+    char b[256];
+    const pl::TakeStream& x = take.s[0];
+    std::string v1 = path + "\nplatter 1\n";
+    std::snprintf(b, sizeof b, "src %lld %.3f 1\n", static_cast<long long>(r.m.deck[0].srcFrames), r.m.deck[0].srcRate);
+    v1 += b;
+    const auto& g = r.m.deck[0].grid;
+    std::snprintf(b, sizeof b, "grid %.6f %d %d reg %.6f %.6f %zu\n", g.bpm, g.beatsPerBar, g.bar1, g.beats[0], g.beats[1] - g.beats[0], g.beats.size());
+    v1 += b;
+    v1 += "cue 0.0000\nhot -1 -1 -1 -1 -1 -1 -1 -1\nloop -1 -1\nflags 1 1\nmap ddj200 0 128.000 1\ndev \n";
+    std::snprintf(b, sizeof b, "take %d %.3f %d %.6f %d %lld %lld %.6f %.9f %.6f %zu ", take.key, take.sampleRate, take.step, take.tempo, take.ppq,
+                  static_cast<long long>(take.startTick), static_cast<long long>(take.lengthTicks), x.startPos, x.startRate,
+                  static_cast<double>(x.startGain), x.pts.size());
+    v1 += b + pl::encodePoints(x.pts) + "\n";
+    pl::Model old;
+    std::string op;
+    expect(pl::parseData(v1, op, old) && old.takes.size() == 1 && old.takes[0].s[0] == x && old.takes[0].s[0].file == 0 && !old.takes[0].s[1].on &&
+               old.takes[0].moves.empty(),
+           "a J-150 take line: deck A's stream on the track");
+    Deck o = makeDeck(path, 120);
+    o.st.data = v1;
+    o.st.params.resize(23);  // J-150 had 23 parameters
+    normalizePluginState(o.st);
+    o.st.params[pl::PXfSide] = pl::XfThru;  // J-150's default assign
+    packs::prepareAux(o.st, o.aux);
+    o.g->prepareHost(o.st, kSr);
+    o.ctx.playing = true;
+    run(o, frames, 300, [](Deck& dd, int64_t pos, int) {
+      if (pos == 0) dd.g->noteOn(7, pl::kTakeKeyFirst, 1.f, 0);
+    });
+    const double d1 = maxDiff(live, o.L, 0, n);
+    std::printf("# J-150 take replay difference %.2e\n", d1);
+    expect(d1 < 1e-5, "a J-150 take replays sample for sample");
+  }
 }
 
 // ------------------------------------------------------------------ audio thread
@@ -680,6 +853,313 @@ void testNoAlloc(const std::string& path) {
   expect(gAllocs.load() == 0, "no allocation in process() (play, scratch, key lock, cues)");
 }
 
+// ------------------------------------------------------------------ two decks and the mixer
+// Both decks playing their own tempo (no sync, no key lock, instant start): `tweak` sets the mixer.
+std::vector<float> mixRun(const std::string& a, const std::string& b, const std::function<void(PluginState&)>& tweak, int64_t frames = 22050) {
+  Deck d = makeDeck(
+      a, 120,
+      [&](PluginState& s, pl::Model&) {
+        for (int k = 0; k < pl::kDecks; ++k) {
+          s.params[static_cast<size_t>(pl::deckParam(k, pl::DSync))] = 0;
+          s.params[static_cast<size_t>(pl::deckParam(k, pl::DKeyLock))] = 0;
+          s.params[static_cast<size_t>(pl::deckParam(k, pl::DStartTime))] = 0;
+        }
+        if (tweak) tweak(s);
+      },
+      b, 100);
+  d.g->prepareHost(d.st, kSr);
+  button(d, pl::CtlPlay, true, 0);
+  button(d, pl::CtlPlay, true, 1);
+  run(d, frames, 256);
+  return d.L;
+}
+
+void testMixer(const std::string& a, const std::string& b) {
+  auto vol = [](int deck, float v) {
+    return [deck, v](PluginState& s) { s.params[static_cast<size_t>(pl::deckParam(deck, pl::DVolume))] = v; };
+  };
+  const std::vector<float> both = mixRun(a, b, nullptr);
+  const std::vector<float> onlyA = mixRun(a, b, vol(1, 0));
+  const std::vector<float> onlyB = mixRun(a, b, vol(0, 0));
+  std::vector<float> sum(both.size());
+  for (size_t i = 0; i < sum.size(); ++i) sum[i] = onlyA[i] + onlyB[i];
+  // (from the second step: a fader set before the first play fades from unity over one step)
+  const size_t S = 2 * pl::kStep;
+  std::printf("# mix: both decks vs the sum of each alone %.2e\n", maxDiff(both, sum, S, both.size()));
+  expect(rms(onlyA, 2000, 22050) > 0.05 && rms(onlyB, 2000, 22050) > 0.05, "mixer: each deck sounds on its own");
+  expect(maxDiff(both, sum, S, both.size()) < 1e-5, "mixer: both decks play at once, summed");
+  // crossfader: A assigned left, B right; all the way to A silences B
+  auto xf = [](float x, float cut, float rev) {
+    return [x, cut, rev](PluginState& s) {
+      s.params[pl::PXfader] = x;
+      s.params[pl::PXfCut] = cut;
+      s.params[pl::PXfReverse] = rev;
+    };
+  };
+  expect(maxDiff(mixRun(a, b, xf(0, 0, 0)), onlyA, S, both.size()) < 1e-6, "crossfader at A: deck B is silent");
+  expect(maxDiff(mixRun(a, b, xf(1, 0, 0)), onlyB, S, both.size()) < 1e-6, "crossfader at B: deck A is silent");
+  expect(maxDiff(mixRun(a, b, xf(0, 0, 1)), onlyB, S, both.size()) < 1e-6, "crossfader reverse: the A end plays deck B");
+  // cut: a hair off the end brings the other deck in fully (the scratch cut)
+  expect(maxDiff(mixRun(a, b, xf(0.01f, 1, 0)), both, S, both.size()) < 1e-5, "crossfader cut: the other deck is fully in just off the end");
+  const std::vector<float> smooth = mixRun(a, b, [](PluginState& s) {
+    s.params[pl::PXfader] = 0.01f;
+    s.params[pl::PXfCurve] = 0;
+  });
+  expect(rms(smooth, 2000, 22050) < rms(both, 2000, 22050) * 0.9, "smooth curve: the other deck is still low just off the end");
+  // Thru ignores the crossfader
+  const std::vector<float> thru = mixRun(a, b, [](PluginState& s) {
+    s.params[pl::PXfader] = 0;
+    s.params[static_cast<size_t>(pl::deckParam(1, pl::DXfSide))] = pl::XfThru;
+  });
+  expect(maxDiff(thru, both, S, both.size()) < 1e-6, "Thru: a deck ignores the crossfader");
+  // master: -6.02 dB halves the output, the bottom is off
+  const std::vector<float> half = mixRun(a, b, [](PluginState& s) { s.params[pl::PMaster] = static_cast<float>(20 * std::log10(0.5)); });
+  double err = 0;
+  for (size_t i = S; i < both.size(); ++i) err = std::max(err, static_cast<double>(std::fabs(half[i] - 0.5f * both[i])));
+  expect(err < 1e-5, "master: -6 dB halves the output");
+  expect(rms(mixRun(a, b, [](PluginState& s) { s.params[pl::PMaster] = static_cast<float>(pl::kMasterOffDb); }), S, both.size()) == 0.0,
+         "master at the bottom: off");
+  // a master move ramps (no click)
+  Deck d = makeDeck(a, 120, [](PluginState& s, pl::Model&) {
+    s.params[pl::PSync] = 0;
+    s.params[pl::PStartTime] = 0;
+  });
+  button(d, pl::CtlPlay, true);
+  run(d, 11025, 256);
+  d.st.params[pl::PMaster] = static_cast<float>(pl::kMasterOffDb);
+  run(d, 11025, 256);
+  expect(maxStep(d.L, 1000, d.L.size()) < 0.08 && rms(d.L, 20000, 22050) == 0.0, "master: a move ramps, then off");
+  pl::MixView mv;
+  expect(pl::mixView(d.g.get(), mv) && mv.valid, "mix view");
+  // the levels the editor meters
+  Deck e = makeDeck(a, 120, [](PluginState& s, pl::Model&) { s.params[static_cast<size_t>(pl::deckParam(1, pl::DStartTime))] = 0; }, b, 100);
+  button(e, pl::CtlPlay, true, 1);
+  run(e, 4410, 256);
+  expect(view(e, 1).pre > 0.05f && view(e, 1).level > 0.05f && view(e, 0).pre == 0.f, "meters: deck B's channel level, deck A silent");
+  // one-deck layout: deck B is not played
+  Deck o = makeDeck(
+      a, 120,
+      [](PluginState& s, pl::Model& m) {
+        s.params[static_cast<size_t>(pl::deckParam(1, pl::DStartTime))] = 0;
+        m.layout = pl::LayoutOne;
+      },
+      b, 100);
+  button(o, pl::CtlPlay, true, 1);
+  run(o, 4410, 256);
+  expect(rms(o.L, 0, o.L.size()) == 0.0, "one-deck layout: deck B stays silent");
+}
+
+// Deck B synced to deck A (Sync to: Other deck): it plays at A's tempo, on A's beat.
+void testSyncDeck(const std::string& path120, const std::string& path100) {
+  Deck d = makeDeck(
+      path120, 120,
+      [](PluginState& s, pl::Model&) {
+        s.params[pl::PSyncTo] = pl::SyncDeck;
+        s.params[pl::PSync] = 0;  // A runs free: +8 % on its fader
+        s.params[pl::PPitchRange] = pl::Range16;
+        s.params[pl::PPitch] = 0.5f;
+        s.params[pl::PKeyLock] = 0;
+        s.params[static_cast<size_t>(pl::deckParam(1, pl::DKeyLock))] = 0;
+      },
+      path100, 100);
+  d.ctx.tempo = 90;  // the project's tempo is not the one followed
+  d.ctx.playing = true;
+  button(d, pl::CtlPlay, true, 0);
+  run(d, 4410, 256);
+  button(d, pl::CtlPlay, true, 1);
+  run(d, static_cast<int64_t>(3 * kSr), 256);
+  const pl::LiveView a = view(d, 0), b = view(d, 1);
+  std::printf("# deck sync: A %.3f BPM, B %.3f BPM (speed %.4f)\n", a.tempo, b.tempo, b.speed);
+  expect(std::fabs(a.tempo - 129.6) < 0.05, "deck A: its own tempo with the pitch fader");
+  expect(b.following && std::fabs(b.tempo - a.tempo) < 0.05 && std::fabs(b.speed - 1.296) < 0.005, "deck B follows deck A's tempo");
+  double err = (b.beat - std::floor(b.beat)) - (a.beat - std::floor(a.beat));
+  err -= std::round(err);
+  std::printf("# deck sync phase error %.4f beats\n", err);
+  expect(std::fabs(err) < 0.02, "deck B's beats land on deck A's");
+  // both synced: A follows the project, B follows A
+  d.st.params[pl::PSync] = 1;
+  run(d, static_cast<int64_t>(2 * kSr), 256);
+  expect(std::fabs(view(d, 0).tempo - 90) < 0.05 && std::fabs(view(d, 1).tempo - 90) < 0.05 && !view(d, 0).following,
+         "both synced: A leads at the project tempo");
+  // sync to the project: B ignores deck A
+  d.st.params[pl::PSync] = 0;
+  d.st.params[pl::PSyncTo] = pl::SyncProject;
+  run(d, static_cast<int64_t>(2 * kSr), 256);
+  expect(std::fabs(view(d, 1).tempo - 90) < 0.05 && !view(d, 1).following, "sync to the project: deck B follows the project");
+}
+
+// A take of both decks and the mixer replays sample for sample.
+void testTakesBoth(const std::string& a, const std::string& b, bool keyLock) {
+  pl::Take take;
+  std::vector<float> live;
+  const int64_t frames = 120000;
+  auto setup = [keyLock](PluginState& s, pl::Model&) {
+    for (int k = 0; k < pl::kDecks; ++k) s.params[static_cast<size_t>(pl::deckParam(k, pl::DKeyLock))] = keyLock ? 1.f : 0.f;
+  };
+  {
+    Deck d = makeDeck(a, 120, setup, b, 100);
+    d.g->prepareHost(d.st, kSr);
+    d.ctx.playing = true;
+    d.ctx.recording = true;
+    run(d, frames, 128, [](Deck& dd, int64_t pos, int n) {
+      auto at = [&](int64_t f, const std::function<void(int)>& fn) {
+        if (f >= pos && f < pos + n) fn(static_cast<int>(f - pos));
+      };
+      at(10, [&](int o) { dd.g->midi(0x90, 0x0B, 0x7F, o); });  // A plays
+      at(15, [&](int o) { dd.g->midi(0x91, 0x0B, 0x7F, o); });  // B plays
+      // A: a scratch
+      at(20000, [&](int o) { dd.g->midi(0x90, 0x36, 0x7F, o); });
+      for (int k = 0; k < 60; ++k) at(20100 + k * 400, [&](int o) { dd.g->midi(0xB0, 0x22, (k / 15) % 2 ? 0x3D : 0x43, o); });
+      at(45000, [&](int o) { dd.g->midi(0x90, 0x36, 0x00, o); });
+      // B: a nudge and a scratch
+      for (int k = 0; k < 8; ++k) at(30000 + k, [&](int o) { dd.g->midi(0xB1, 0x21, 0x44, o); });
+      at(60000, [&](int o) { dd.g->midi(0x91, 0x36, 0x7F, o); });
+      for (int k = 0; k < 50; ++k) at(60100 + k * 350, [&](int o) { dd.g->midi(0xB1, 0x22, (k / 10) % 2 ? 0x3C : 0x44, o); });
+      at(80000, [&](int o) { dd.g->midi(0x91, 0x36, 0x00, o); });
+      // mixer: crossfader moves, EQ kill on A, B's filter and channel fader
+      at(25000, [&](int o) { dd.g->midi(0xB6, 0x1F, 0x08, o); });
+      at(35000, [&](int o) { dd.g->midi(0xB6, 0x1F, 0x7F, o); });
+      at(50000, [&](int o) { dd.g->midi(0xB6, 0x1F, 0x40, o); });
+      at(40000, [&](int o) { dd.g->midi(0xB0, 0x0F, 0x00, o); });  // A: low EQ all the way down
+      at(70000, [&](int o) { dd.g->midi(0xB0, 0x0F, 0x40, o); });
+      at(55000, [&](int o) { dd.g->midi(0xB6, 0x18, 0x18, o); });  // B: filter
+      at(90000, [&](int o) { dd.g->midi(0xB6, 0x18, 0x40, o); });
+      at(85000, [&](int o) { dd.g->midi(0xB1, 0x13, 0x20, o); });  // B: channel fader
+      // the master level from the project (automation)
+      if (pos <= 95000 && pos + n > 95000) dd.st.params[pl::PMaster] = -9.f;
+    });
+    d.ctx.recording = false;
+    run(d, 256, 256);
+    expect(drainTake(d, take), keyLock ? "two-deck take captured (key lock)" : "two-deck take captured");
+    live = d.L;
+  }
+  bool master = false, eq = false, filt = false, xfm = false;
+  for (const auto& m : take.moves) {
+    master = master || (m.param == pl::PMaster && m.value == -9.f);
+    eq = eq || (m.param == pl::PEqLow && m.value < -20.f);
+    filt = filt || m.param == pl::deckParam(1, pl::DFilter);
+    xfm = xfm || m.param == pl::PXfader;
+  }
+  expect(take.s[0].on && take.s[1].on && take.s[0].file == 0 && take.s[1].file == 1, "take: a stream for each deck, on its own track");
+  expect(master && eq && filt && !xfm, "take: mixer moves (master, EQ, filter) recorded; fader and crossfader in the stream gains");
+  take.key = pl::kTakeKeyFirst + 1;
+  // replay on a fresh setup: the decks stopped, defaults in every parameter
+  Deck r = makeDeck(
+      a, 120,
+      [&](PluginState& s, pl::Model& m) {
+        setup(s, m);
+        m.takes.push_back(take);
+      },
+      b, 100);
+  pl::Model back;
+  std::string p;
+  expect(pl::parseData(r.st.data, p, back) && back.takes.size() == 1 && back.takes[0] == take, "two-deck take: stored in the project data");
+  r.g->prepareHost(r.st, kSr);
+  r.ctx.playing = true;
+  run(r, frames, 300, [](Deck& dd, int64_t pos, int) {
+    if (pos == 0) dd.g->noteOn(7, pl::kTakeKeyFirst + 1, 1.f, 0);
+  });
+  const size_t n = static_cast<size_t>(take.steps()) * pl::kStep;
+  size_t first = n;
+  for (size_t i = 0; i < std::min({n, live.size(), r.L.size()}); ++i)
+    if (std::fabs(live[i] - r.L[i]) > 1e-5f) {
+      first = i;
+      break;
+    }
+  if (first < n) std::printf("# first difference at sample %zu: %.4f vs %.4f\n", first, live[first], r.L[first]);
+  const double diff = maxDiff(live, r.L, 0, n);
+  std::printf("# two-deck take replay difference %.2e over %zu samples\n", diff, n);
+  expect(diff < 1e-5, keyLock ? "two-deck take: replays sample for sample (key lock)" : "two-deck take: replays sample for sample (both decks, mixer moves)");
+  expect(rms(live, 60000, 80000) > 0.02 && rms(live, 96000, 110000) > 0.005, "two-deck take: both decks sound");
+  // the take plays its own tracks: with another track on deck B it replays the same
+  Deck q = makeDeck(a, 120, [&](PluginState& s, pl::Model& m) {
+    setup(s, m);
+    pl::Take t2 = take;
+    t2.s[1].file = pl::fileIndex(m, b);
+    m.takes.push_back(t2);
+  });
+  q.g->prepareHost(q.st, kSr);
+  q.ctx.playing = true;
+  run(q, frames, 300, [](Deck& dd, int64_t pos, int) {
+    if (pos == 0) dd.g->noteOn(7, pl::kTakeKeyFirst + 1, 1.f, 0);
+  });
+  if (!keyLock) expect(maxDiff(live, q.L, 0, n) < 1e-5, "a take replays its own tracks, whatever the decks hold now");
+}
+
+// A J-150 state (single deck, "platter 1", 23 parameters) plays as deck A, unchanged.
+void testOldState(const std::string& path) {
+  SamplePtr src = sampleCache().get(path);
+  char b[256];
+  std::string v1 = path + "\nplatter 1\n";
+  std::snprintf(b, sizeof b, "src %lld %.3f 1\ngrid 120.000000 4 1 reg 0.000000 22050.000000 20\n", static_cast<long long>(src->left.size()), kSr);
+  v1 += b;
+  v1 += "cue 0.0000\nhot 44100.0000 -1 -1 -1 -1 -1 -1 -1\nloop -1 -1\nflags 1 0\nmap ddj200 1 128.000 1\ndev DDJ-200\n";
+  v1 += "bind play 0 1 11 0 0 0 0\nled play 145 11 127 0\n";
+  pl::Model m;
+  std::string p;
+  expect(pl::parseData(v1, p, m) && p == path && m.files.size() == 1 && m.deck[0].file == 0 && m.deck[1].file < 0,
+         "J-150 state: deck A on its track, deck B empty");
+  expect(m.deck[0].hot[0] == 44100 && m.deck[0].grid.beats.size() == 20 && m.asked && !m.armed && m.twoDecks(), "J-150 state: grid, cues, flags");
+  expect(m.map.side == 1 && m.map.bindings.size() == 1 && m.map.bindings[0].deck == 0 && m.map.bindings[0].channel == 1 && m.map.leds.size() == 1,
+         "J-150 mapping: the right side drives deck A");
+  // plays exactly like J-150's deck: the output is the file
+  Deck d = makeDeck(path, 120);
+  d.st = defaultPluginState(pl::kType);
+  d.st.params.resize(23);
+  normalizePluginState(d.st);
+  expect(static_cast<int>(d.st.params.size()) == pl::PCount, "J-150 parameters are completed");
+  d.st.params[pl::PSync] = 0;
+  d.st.params[pl::PKeyLock] = 0;
+  d.st.params[pl::PStartTime] = 0;
+  d.st.params[pl::PXfSide] = pl::XfThru;
+  d.st.data = v1;
+  d.aux = ChannelAux{};
+  packs::prepareAux(d.st, d.aux);
+  d.g->prepareHost(d.st, kSr);
+  run(d, 4410, 256);
+  d.g->midi(0x91, 0x0B, 0x7F, 0);  // its own mapping: right-side play
+  run(d, 44100, 256);
+  double err = 1;
+  for (size_t lag = 4410; lag < 4410 + pl::kStep; ++lag) {
+    double e = 0;
+    for (size_t i = lag + 512; i < 44100; ++i) e = std::max(e, static_cast<double>(std::fabs(d.L[i] - src->left[i - lag])));
+    err = std::min(err, e);
+  }
+  std::printf("# J-150 state play error %.2e\n", err);
+  expect(err < 1e-5, "J-150 state: the deck plays the file sample for sample (no change in level)");
+  expect(std::fabs(view(d, 0).hot[0] - 44100) < 1 && !view(d, 1).loaded, "J-150 state: hot cues on deck A, nothing on deck B");
+}
+
+// Two decks playing, key lock, scratching, mixer moves: still no allocation.
+void testNoAllocBoth(const std::string& a, const std::string& b) {
+  Deck d = makeDeck(a, 120, nullptr, b, 100);
+  d.g->prepareHost(d.st, kSr);
+  d.ctx.playing = true;
+  run(d, 512, 256);
+  d.g->midi(0x91, 0x0B, 0x7F, 0);
+  run(d, 512, 256);
+  gAllocs = 0;
+  run(
+      d, 60000, 256,
+      [](Deck& dd, int64_t pos, int n) {
+        performance(dd, pos, n);
+        auto at = [&](int64_t f, const std::function<void(int)>& fn) {
+          if (f >= pos && f < pos + n) fn(static_cast<int>(f - pos));
+        };
+        at(5000, [&](int o) { dd.g->midi(0x91, 0x36, 0x7F, o); });
+        for (int k = 0; k < 40; ++k) at(5100 + k * 300, [&](int o) { dd.g->midi(0xB1, 0x22, k < 20 ? 0x44 : 0x3B, o); });
+        at(18000, [&](int o) { dd.g->midi(0x91, 0x36, 0x00, o); });
+        at(20000, [&](int o) { dd.g->midi(0xB6, 0x1F, 0x10, o); });
+        at(26000, [&](int o) { dd.g->midi(0xB0, 0x0F, 0x00, o); });
+        at(32000, [&](int o) { dd.g->midi(0xB6, 0x18, 0x10, o); });
+        at(36000, [&](int o) { dd.g->noteOn(1, pl::kHotKeyFirstB + 1, 1.f, o); });
+      },
+      true);
+  std::printf("# allocations during process (two decks): %ld\n", gAllocs.load());
+  expect(gAllocs.load() == 0, "no allocation in process() (two decks, key lock, scratching, mixer)");
+  expect(view(d, 0).keylockActive || view(d, 1).keylockActive, "key lock engines in use");
+}
+
 // ------------------------------------------------------------------ project, old effect
 void testProject(const std::string& path) {
   Song s;
@@ -687,13 +1167,15 @@ void testProject(const std::string& path) {
   c.id = s.allocateId();
   c.plugin = defaultPluginState(pl::kType);
   pl::Model m;
-  SamplePtr src = sampleCache().get(path);
-  m = pl::defaultModel(*src, gl::packs::seltmann::flatGrid(*src, 120), true);
+  pl::loadTrack(m, 0, path, flatDeck(path, 120));
+  pl::loadTrack(m, 1, path, flatDeck(path, 120));
   m.map = pl::profileMapping("generic", 0);
   m.map.bindings.push_back(pl::learnBinding(pl::CtlPlay, 0x93, 0x10, 0x7F, false));
   m.asked = true;
   c.plugin.data = pl::formatData(path, m);
   c.plugin.params[pl::PPitch] = 0.25f;
+  c.plugin.params[static_cast<size_t>(pl::deckParam(1, pl::DPitch))] = -0.5f;
+  c.plugin.params[pl::PMaster] = -3.f;
   s.channels.push_back(c);
   const std::string proj = (tmpDir() / "deck.gridline.json").string();
   std::string err;
@@ -702,6 +1184,29 @@ void testProject(const std::string& path) {
   expect(loadProject(proj, t, &err), "project with a deck loads");
   const Channel* tc = t.channel(c.id);
   expect(tc && tc->plugin.data == c.plugin.data && tc->plugin.params == c.plugin.params, "save / load: mapping, grid and parameters come back");
+  // every track of the setup is a file reference (collect, relink): both decks and the takes' tracks
+  {
+    PluginState st = c.plugin;
+    pl::Model fm;
+    pl::loadTrack(fm, 0, "/old/a.wav", pl::DeckModel{});
+    pl::loadTrack(fm, 1, "/old/b.wav", pl::DeckModel{});
+    pl::Take tk;
+    tk.s[0].on = true;
+    tk.s[0].file = pl::fileIndex(fm, "/old/c.wav");
+    tk.s[0].pts.resize(4);
+    fm.takes.push_back(tk);
+    st.data = pl::formatData("/old/a.wav", fm);
+    std::vector<std::string> seen;
+    forEachStateFileRef(st, [&](std::string& f) {
+      seen.push_back(f);
+      f = "/new" + f.substr(4);
+    });
+    pl::Model back;
+    std::string p0;
+    expect(seen.size() == 4 && pl::parseData(st.data, p0, back) && p0 == "/new/a.wav" && back.trackOf(0) == "/new/a.wav" &&
+               back.trackOf(1) == "/new/b.wav" && back.files.size() == 3 && back.files[2] == "/new/c.wav",
+           "file references: deck A, deck B and a take's track are relinked");
+  }
   // the old Turntable effect is untouched
   const PluginInfo* old = findPlugin("gl.scratcher");
   expect(old && old->kind == PluginKind::Effect && old->name == "Turntable", "the old gl.scratcher effect is still there");
@@ -736,6 +1241,16 @@ void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 int main(int argc, char** argv) {
+  // (platter_flow.cmake) writetrack <path> <bpm>: 12 s of music-like material at that tempo
+  if (argc > 3 && std::string(argv[1]) == "writetrack") {
+    const double bpm = std::atof(argv[3]);
+    const auto n = static_cast<size_t>(12 * kSr);
+    AudioBuffer b(2, n);
+    for (size_t i = 0; i < n; ++i)
+      for (int c = 0; c < 2; ++c) b.data[static_cast<size_t>(c) * n + i] = static_cast<float>(music(static_cast<int64_t>(i), c, bpm));
+    writeWav(argv[2], b, static_cast<int>(kSr), 24);
+    return fs::exists(argv[2]) ? 0 : 1;
+  }
   const std::string only = argc > 1 ? argv[1] : "";
   const std::string music120 = writeTrack("music120.wav", 12, [](int64_t i, int c) { return music(i, c, 120); });
   const std::string music100 = writeTrack("music100.wav", 12, [](int64_t i, int c) { return music(i, c, 100); });
@@ -744,6 +1259,7 @@ int main(int argc, char** argv) {
   auto want = [&](const char* n) { return only.empty() || only == n; };
   if (want("catalogue")) testCatalogue();
   if (want("decode")) testDecoding();
+  if (want("decode")) testDecodingBoth();
   if (want("text")) testText();
   if (want("play")) testPlay(music120);
   if (want("physics")) testPhysics(music120);
@@ -758,6 +1274,14 @@ int main(int argc, char** argv) {
     testTakes(music120, true);
   }
   if (want("alloc")) testNoAlloc(music120);
+  if (want("alloc")) testNoAllocBoth(music120, music100);
+  if (want("mixer")) testMixer(music120, music100);
+  if (want("syncdeck")) testSyncDeck(music120, music100);
+  if (want("takes2")) {
+    testTakesBoth(music120, music100, false);
+    testTakesBoth(music120, music100, true);
+  }
+  if (want("old")) testOldState(music120);
   if (want("project")) testProject(music120);
   return finish();
 }

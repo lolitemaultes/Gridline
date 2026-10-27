@@ -12585,29 +12585,52 @@ gl.plasma	2188	FX 24 Param 25	verified	0		VERIFIED: an effect slot acts with a m
 gl.plasma	2189	FX 24 Param 26	verified	0		VERIFIED: an effect slot acts with a module type on it; each parameter acts for a module that has it (parameter coverage test)
 gl.plasma	2190	FX 24 Param 27	verified	0		VERIFIED: an effect slot acts with a module type on it; each parameter acts for a module that has it (parameter coverage test)
 gl.plasma	2191	FX 24 Param 28	inert	0		reserved column of the effect slot (no module uses 28 parameters)
-gl.platter	0	Channel fader	working	0	
-gl.platter	1	Trim	working	12	
-gl.platter	2	EQ high	working	-26	
-gl.platter	3	EQ mid	working	-26	
-gl.platter	4	EQ low	working	-26	
-gl.platter	5	Filter	working	-1	
-gl.platter	6	Filter resonance	combination	1	5=1
-gl.platter	7	Pitch fader	combination	-1	9=0
-gl.platter	8	Pitch range	combination	0	9=0;7=1
-gl.platter	9	Tempo sync	working	0	
-gl.platter	10	Key lock	working	0	
-gl.platter	11	Quantize	inert	0		snaps cue, hot cue and loop presses to the beat (needs a press; covered by test_platter)
-gl.platter	12	Slip	inert	0		acts while the platter is held or a loop runs (needs a scratch; covered by test_platter)
-gl.platter	13	Vinyl mode	inert	0		what touching the jog top does (needs a controller; covered by test_platter)
-gl.platter	14	Start time	inert	0		motor spin-up after play is pressed (needs a press; covered by test_platter)
-gl.platter	15	Stop time	inert	0		motor brake after pause or a throw (needs a press; covered by test_platter)
-gl.platter	16	Hand feel	inert	0		how closely the platter follows the hand (needs a scratch; covered by test_platter)
-gl.platter	17	Crossfader	combination	1	18=1
-gl.platter	18	Crossfader side	combination	1	17=1
-gl.platter	19	Crossfader curve	combination	0	18=2
-gl.platter	20	Fader curve	combination	1	0=0.75;1=6;2=-2;3=-2;4=-2;5=0.5;6=0.75;7=0.5;9=1;10=1;11=1;12=1;13=1;14=2.25;15=2.25;16=0.75;17=0.75;19=0.75
+gl.platter	0	A channel fader	working	0	
+gl.platter	1	A trim	working	12	
+gl.platter	2	A EQ high	working	-26	
+gl.platter	3	A EQ mid	working	-26	
+gl.platter	4	A EQ low	working	-26	
+gl.platter	5	A filter	working	-1	
+gl.platter	6	A filter resonance	combination	1	5=1
+gl.platter	7	A pitch fader	working	-1	
+gl.platter	8	A pitch range	combination	0	7=1
+gl.platter	9	A tempo sync	working	0	
+gl.platter	10	A key lock	working	0	
+gl.platter	11	A quantize	inert	0		snaps cue, hot cue and loop presses to the beat (needs a press; covered by test_platter)
+gl.platter	12	A slip	inert	0		acts while the platter is held or a loop runs (needs a scratch; covered by test_platter)
+gl.platter	13	A vinyl mode	inert	0		what touching the jog top does (needs a controller; covered by test_platter)
+gl.platter	14	A start time	working	3	
+gl.platter	15	A stop time	combination	3	7=1
+gl.platter	16	A hand feel	inert	0		how closely the platter follows the hand (needs a scratch; covered by test_platter)
+gl.platter	17	Crossfader	working	1	
+gl.platter	18	A crossfader side	combination	0	17=1
+gl.platter	19	Crossfader curve	working	0	
+gl.platter	20	Fader curve	combination	1	0=0.75;1=6;2=-2;3=-2;4=-2;5=0.5;6=0.75;7=0.5;9=1;10=1;11=1;12=1;13=1;14=2.25;15=2.25;16=0.75;17=0.75;19=0.75;23=0.75;24=6;25=-2;26=-2;27=-2;28=0.5;29=0.75;30=0.5;32=1;33=1;34=1;35=1;36=1;37=2.25;38=2.25;39=0.75;43=-5.5;44=1;45=1
 gl.platter	21	Note mode	inert	0		how notes on the hot cue keys play (needs notes; covered by test_platter)
-gl.platter	22	Loop size	inert	0		length of the auto loop and beat jumps (needs a press; covered by test_platter)
+gl.platter	22	A loop size	inert	0		length of the auto loop and beat jumps (needs a press; covered by test_platter)
+gl.platter	23	B channel fader	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	24	B trim	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	25	B EQ high	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	26	B EQ mid	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	27	B EQ low	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	28	B filter	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	29	B filter resonance	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	30	B pitch fader	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	31	B pitch range	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	32	B tempo sync	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	33	B key lock	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	34	B quantize	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	35	B slip	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	36	B vinyl mode	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	37	B start time	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	38	B stop time	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	39	B hand feel	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	40	B crossfader side	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	41	B loop size	inert	0		deck B's controls: the audit plays a track on deck A only (covered by test_platter)
+gl.platter	42	Sync to	inert	0		what a synced deck follows: the other deck needs a second track (covered by test_platter)
+gl.platter	43	Master level	working	-40	
+gl.platter	44	Crossfader cut	combination	1	19=0
+gl.platter	45	Crossfader reverse	combination	1	17=1
 gl.pluck	0	Decay	working	0.1	
 gl.pluck	1	Damping	working	0	
 gl.pluck	2	Brightness	working	0	
