@@ -106,7 +106,8 @@ bool selector(App& a, const PluginTarget& t, const Skin& k, int param, float x, 
 bool digi(App& a, const PluginTarget& t, const Skin& k, int param, float x, float y, float w, float h,
           const std::function<std::string(double)>& fmt = {}, float size = 0);
 // The same controls over a free value (zone settings and other data that is not
-// a plugin parameter): drag, wheel, Ctrl+click resets to d.def. True on change.
+// a plugin parameter): drag, wheel, Ctrl+click resets to d.def, double-click
+// resets (types at the default), right-click menu (J-136). True on change.
 bool wheelValue(App& a, const Skin& k, const char* id, double& v, const ParamDesc& d, float x, float y, float size, ImU32 fill,
                 int flags = 0, ImU32 cap = 0);
 bool sliderValue(App& a, const Skin& k, const char* id, double& v, const ParamDesc& d, float x, float y, float w, float h, ImU32 fill,

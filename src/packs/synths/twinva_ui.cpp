@@ -58,7 +58,8 @@ void drawTwinVaEditor(App& a, const PluginTarget& t, float width) {
   auto B = [&](int p, float x, float y, const char* cap) { toggleCap(a, t, k, p, x, y, 31, 31, cap); };
 
   // Title strip.
-  iskin::text(k, 16, 14, 200, 22, "TWIN VA", 16, k.c.fill, 0, false, true);
+  if (!pui::titleWordmarkIn(k.dl(), "gl.twinva", k.at(16, 14), k.at(16 + 200, 14 + 22), k.px(16), 0, k.c.text))  // J-136: the wordmark
+    iskin::text(k, 16, 14, 200, 22, "TWIN VA", 16, k.c.fill, 0, false, true);
   iskin::bevel(k, 240, 14, 240, 22, k.c.panel, k.c.panelLine, 3);
   {
     std::string name = dataLine(st.data, "name");

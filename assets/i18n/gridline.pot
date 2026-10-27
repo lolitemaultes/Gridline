@@ -505,7 +505,7 @@ msgstr ""
 msgid "Edit events"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/PluginUI.cpp
+#: src/app/AutomationEditor.cpp src/app/Widgets.cpp
 msgid "Enter to apply · Esc to cancel"
 msgstr ""
 
@@ -721,7 +721,7 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/PluginUI.cpp
+#: src/app/AutomationEditor.cpp src/app/InstrumentSkin.cpp src/app/PluginEditorsTimeRef.cpp src/app/PluginUI.cpp src/app/Widgets.cpp src/packs/plasma/plasma_ui.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Type a value..."
 msgstr ""
 
@@ -1558,6 +1558,14 @@ msgid "Shorter pattern"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
+msgid "Song swing moves steps and piano roll notes (right-click: steps only)"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "Song swing moves steps only (right-click: piano roll notes too)"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
 msgid "Steps per bar"
 msgstr ""
 
@@ -1567,6 +1575,10 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Swing"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "Swing piano roll notes"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -5701,7 +5713,7 @@ msgstr ""
 msgid "A change that makes the interface hard to use or cuts the sound goes back by itself"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/SettingsKeysTheme.cpp
+#: src/app/Dialogs.cpp
 msgid "APPEARANCE"
 msgstr ""
 
@@ -6217,6 +6229,10 @@ msgstr ""
 msgid "Change reverted: it was not confirmed in time"
 msgstr ""
 
+#: src/app/DisplayConfirmUi.cpp src/app/SettingsKeysTheme.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Classic"
+msgstr ""
+
 #: src/app/DisplayConfirmUi.cpp src/app/LoopStarterUi.cpp src/app/SettingsKeysTheme.cpp
 msgid "Dark"
 msgstr ""
@@ -6235,6 +6251,14 @@ msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp
 msgid "Goes back to the earlier setting in %d s unless you keep it."
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/SettingsKeysTheme.cpp
+msgid "Graphite"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/SettingsKeysTheme.cpp
+msgid "Hairline"
 msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp
@@ -6259,6 +6283,10 @@ msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp src/app/SettingsKeysTheme.cpp
 msgid "Light"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/SettingsKeysTheme.cpp
+msgid "Lumen"
 msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/collab/Session.cpp src/core/Keymap.cpp
@@ -6291,6 +6319,10 @@ msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp
 msgid "Revert"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp src/app/SettingsKeysTheme.cpp
+msgid "Slate"
 msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp
@@ -10242,10 +10274,6 @@ msgid "(drag up / down · Shift fine · double-click reset · wheel steps)"
 msgstr ""
 
 #: src/app/PluginEditorsTimeRef.cpp
-msgid "Reset room size"
-msgstr ""
-
-#: src/app/PluginEditorsTimeRef.cpp
 msgid "Room size"
 msgstr ""
 
@@ -10881,10 +10909,6 @@ msgstr ""
 msgid "Changes how knobs, faders, buttons, meters and displays are drawn everywhere. Sizes stay the same."
 msgstr ""
 
-#: src/app/SettingsKeysTheme.cpp src/packs/tideline/tideline_ui.cpp
-msgid "Classic"
-msgstr ""
-
 #: src/app/SettingsKeysTheme.cpp
 msgid "Command"
 msgstr ""
@@ -10942,14 +10966,6 @@ msgid "Flat lines, one accent"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
-msgid "Graphite"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
-msgid "Hairline"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
 msgid "Hint"
 msgstr ""
 
@@ -10967,10 +10983,6 @@ msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Lower octave (C to B)"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
-msgid "Lumen"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -11026,10 +11038,6 @@ msgid "Right-click"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
-msgid "SOUNDS"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
 msgid "Search commands or keys"
 msgstr ""
 
@@ -11043,10 +11051,6 @@ msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Shortcuts act in the window shown in brackets. A window's own shortcut wins over a global one while that window has focus."
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
-msgid "Slate"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -11899,6 +11903,10 @@ msgstr ""
 
 #: src/app/Widgets.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Custom"
+msgstr ""
+
+#: src/app/Widgets.cpp
+msgid "drag · Shift fine · Ctrl+click reset · double-click reset, at default type · right-click menu"
 msgstr ""
 
 #: src/app/Widgets.h

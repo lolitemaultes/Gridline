@@ -126,7 +126,8 @@ void drawStepBass(App& a, const PluginTarget& t, float width) {
   ImGui::PushID("gl.stepbass");
 
   // ---- header: name, program, sequence key
-  skin::text(dl, F.p(14, 10), K.select, "STEP BASS", F.font(16));
+  if (!pui::titleWordmark(dl, "gl.stepbass", F.p(14, 10), F.font(16)))  // J-136: the wordmark
+    skin::text(dl, F.p(14, 10), K.select, "STEP BASS", F.font(16));
   flk::text(c, 54, 50, "PROGRAM");
   flk::digi(c, SbProgram, 95, 45, 40, 19);
   flk::text(c, 150, 50, "SEQ KEY");

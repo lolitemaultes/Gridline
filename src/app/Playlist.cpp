@@ -1569,10 +1569,11 @@ void drawPlaylist(App& a) {
       if (p.sel) extent(p.x1 - 0.75f);
     }
     if (ImU32 fc = 0; const float fl = collabui::flash(a, "playlist/#" + std::to_string(c.id), &fc))  // J-111: a collaborator's change
-      dl->AddRect(ImVec2(a0.x - 1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1), theme::withAlpha(fc, fl), theme::kRadiusSm, 0, 2.5f);
-    if (livePlaying) dl->AddRect(ImVec2(a0.x - 1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1), P.accent, theme::kRadiusSm, 0, 2.0f);
+      dl->AddRect(ImVec2(a0.x + 1.25f, a0.y + 1.25f), ImVec2(a1.x - 1.25f, a1.y - 1.25f), theme::withAlpha(fc, fl), theme::kRadiusSm, 0, 2.5f);
+    // J-137: the outlines lie inside the clip (a clip on bar 1 touches the grid's clip edge, which cut them).
+    if (livePlaying) dl->AddRect(ImVec2(a0.x + 1, a0.y + 1), ImVec2(a1.x - 1, a1.y - 1), P.accent, theme::kRadiusSm, 0, 2.0f);
     if (liveWaiting)
-      dl->AddRect(ImVec2(a0.x - 1, a0.y - 1), ImVec2(a1.x + 1, a1.y + 1),
+      dl->AddRect(ImVec2(a0.x + 1, a0.y + 1), ImVec2(a1.x - 1, a1.y - 1),
                   theme::withAlpha(P.accent, 0.35f + 0.65f * (0.5f + 0.5f * std::sin(static_cast<float>(a.now) * 8.0f))), theme::kRadiusSm, 0, 2.0f);
     dl->PushClipRect(ImVec2(std::max(a0.x, gMin.x), std::max(a0.y, gMin.y)), ImVec2(std::min(a1.x, gMax.x), std::min(a1.y, gMax.y)), true);
     const std::string mutedName = c.muted ? *ccache.name[ci] + "  (muted)" : std::string();
@@ -1948,7 +1949,11 @@ void drawPlaylist(App& a) {
       const bool live = songLoop && static_cast<int>(i) == loopMk;
       const ImU32 ink = live ? P.hot : mk.timeSigNum > 0 ? P.textDim : P.text;
       dl->AddRectFilled(f0, f1, hov || dragged ? P.surface600 : P.surface700, 2, ImDrawFlags_RoundCornersRight);
-      dl->AddLine(ImVec2(x, rY + 2), ImVec2(x, gMin.y - 1), songLoop ? theme::withAlpha(P.hot, live ? 1.0f : 0.5f) : ink, songLoop ? 2.0f : 1.5f);
+      // J-139: the marker's tick is the chip's own left edge, only as tall as the chip, in a quiet
+      // role colour (the loop marker keeps its lit colour, softer when it is not the active one).
+      const ImU32 tick = songLoop ? theme::withAlpha(P.hot, live ? 0.85f : 0.45f)
+                                  : theme::withAlpha(mk.timeSigNum > 0 ? P.textFaint : P.textDim, hov || dragged ? 0.8f : 0.55f);
+      dl->AddRectFilled(ImVec2(x, f0.y), ImVec2(x + 2, f1.y), tick);
       if (songLoop) ui::drawIconBox(dl, ui::Icon::Loop, ImVec2(x + 4 + glyph * 0.5f, (f0.y + f1.y) * 0.5f), 12.0f, live ? P.hot : P.textDim);
       dl->AddText(mk.timeSigNum > 0 ? a.fontMono : a.fontRegular, theme::kFontLabel, ImVec2(x + 4 + glyph, f0.y), live ? P.text : ink,
                   lbl.c_str());

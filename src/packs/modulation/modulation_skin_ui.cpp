@@ -457,7 +457,8 @@ void panelBox(ImDrawList* dl, const skin::Form& F, float x, float y, float w, fl
   }
 }
 
-void titleStrip(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k, const char* title) {
+void titleStrip(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k, const char* title,
+                const char* type) {
   ImVec2 p0 = F.p(x, y), p1 = F.p(x + w, y + h);
   dl->AddRectFilled(p0, p1, k.panelLo, 0);
   float big = std::clamp(h * 0.62f * F.s, 14.0f, 34.0f);
@@ -467,7 +468,8 @@ void titleStrip(ImDrawList* dl, const skin::Form& F, float x, float y, float w, 
   ImGui::PopFont();
   ImGui::PushFont(app().fontMonoBold, F.font(10.0f));
   ImVec2 tt = ImGui::CalcTextSize(title);
-  dl->AddText(ImVec2(std::round(p0.x + 14 * F.s + ts.x), std::round(p1.y - tt.y - 6 * F.s)), k.textDim, title);
+  const ImVec2 tp(std::round(p0.x + 14 * F.s + ts.x), std::round(p1.y - tt.y - 6 * F.s));
+  if (!type || !pui::titleWordmark(dl, type, tp, F.font(10.0f), k.text)) dl->AddText(tp, k.textDim, title);
   ImGui::PopFont();
 }
 

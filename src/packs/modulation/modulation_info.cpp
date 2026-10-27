@@ -338,6 +338,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params[SqSwing] = lin("Swing", "%", 0, 0.75, 0);
     p.params[SqTranspose] = lin("Transpose", "st", -24, 24, 0);
     p.params[SqThru] = tog("Pass held notes", 0);
+    p.params[SqVelMode] = ch("Velocity", {"Step x played", "Step only"}, SvScale);
     p.presets = {{"Rolling triad", {}},
                  {"Octave pulse", {{seqParam(1, SqOctave), 1}, {seqParam(3, SqOctave), 1}, {seqParam(5, SqOctave), 1},
                                    {seqParam(7, SqOctave), 1}, {SqLength, 8}}},

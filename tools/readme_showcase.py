@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the README showcase project: Gridline's demo song (demo/demo.gridline.json)
+"""Build the README showcase project: the test song (tests/fixtures/test_song.gridline.json)
 grown into a fuller 12-bar arrangement with lead, pad and arp parts, an audio
 clip track (a chord texture generated here) and an automation clip.
 
@@ -45,7 +45,7 @@ def main():
     out = sys.argv[1]
     root = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     root = os.path.abspath(root)
-    song = json.load(open(os.path.join(root, "demo", "demo.gridline.json")))
+    song = json.load(open(os.path.join(root, "tests", "fixtures", "test_song.gridline.json")))
     ppq = song["ppq"]
     bar = ppq * 4
     nid = [max(song["nextId"], 1000)]

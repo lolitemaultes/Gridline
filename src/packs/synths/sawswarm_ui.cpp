@@ -77,7 +77,8 @@ void drawSawSwarmEditor(App& a, const PluginTarget& t, float width) {
   auto C = [&](int p, float x, float y, const char* cap) { toggleCap(a, t, k, p, x, y, 30, 28, cap); };
 
   // Title / top strip.
-  iskin::text(k, 26, 10, 200, 26, "SAW SWARM", 17, k.c.text, 0, false, true);
+  if (!pui::titleWordmarkIn(k.dl(), "gl.sawswarm", k.at(26, 10), k.at(26 + 200, 10 + 26), k.px(17), 0, k.c.text))  // J-136: the wordmark
+    iskin::text(k, 26, 10, 200, 26, "SAW SWARM", 17, k.c.text, 0, false, true);
   {
     std::string name = dataLine(st.data, "name");
     iskin::bevel(k, 230, 12, 300, 22, rgb(0x171717), k.c.panelLine, 3);

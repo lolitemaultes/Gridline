@@ -291,7 +291,7 @@ int main() {
   {
     gl::Song v1;
     std::string err;
-    expect(gl::loadProject("demo/song.json", v1, &err), "v1 demo project loads (migrated)");
+    expect(gl::loadProject("tests/fixtures/v1_song.json", v1, &err), "v1 project loads (migrated)");
     expect(v1.ppq == 96 && v1.channels.size() == 3 && v1.channels[0].id >= gl::kFirstObjectId,
            "migration assigns IDs and default PPQ");
     bool refsOk = !v1.playlist.empty();

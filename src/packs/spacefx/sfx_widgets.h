@@ -89,6 +89,9 @@ inline void xyPad(App& a, const PluginTarget& t, int px, int py, ImVec2 size, co
   ImGui::PushID(px * 131 + py);
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##xy", size);
+  static double pressX = 0, pressY = 0;  // J-136: the values before the first press of a double-click
+  if (ImGui::IsItemActivated() && !ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+    pressX = val(*stp, px), pressY = val(*stp, py);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 p1(p.x + size.x, p.y + size.y);
   graphBg(dl, p, p1);
@@ -106,12 +109,45 @@ inline void xyPad(App& a, const PluginTarget& t, int px, int py, ImVec2 size, co
     st.params[static_cast<size_t>(py)] = static_cast<float>(dy->fromNormalized(ny));
     setPluginState(a, t, st, std::string("edit ") + title, gestureKey(t, static_cast<uint64_t>(px * 977 + py)));
   }
+  // J-136: double-click resets both axes; when both already are at their
+  // defaults it opens the type-in of the horizontal one (right-click: either).
+  bool typeX = false, typeY = false;
   if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-    PluginState st = *stp;
-    st.params[static_cast<size_t>(px)] = static_cast<float>(dx->def);
-    st.params[static_cast<size_t>(py)] = static_cast<float>(dy->def);
-    setPluginState(a, t, st, std::string("reset ") + title);
+    if (dx->isDefault(pressX) && dy->isDefault(pressY)) {
+      typeX = true;
+    } else {
+      a.doc.endGesture();
+      PluginState st = *t.state(a.doc.song());
+      st.params[static_cast<size_t>(px)] = static_cast<float>(dx->def);
+      st.params[static_cast<size_t>(py)] = static_cast<float>(dy->def);
+      setPluginState(a, t, st, std::string("reset ") + title);
+      a.doc.endGesture();
+    }
   }
+  if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##xymenu");
+  if (ImGui::BeginPopup("##xymenu")) {
+    const PluginState& now = *t.state(a.doc.song());
+    const bool atDef = dx->isDefault(val(now, px)) && dy->isDefault(val(now, py));
+    if (ImGui::MenuItem(i18n::tr("Reset to default"), nullptr, false, !atDef)) {
+      PluginState st = now;
+      st.params[static_cast<size_t>(px)] = static_cast<float>(dx->def);
+      st.params[static_cast<size_t>(py)] = static_cast<float>(dy->def);
+      setPluginState(a, t, st, std::string("reset ") + title);
+      a.doc.endGesture();
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem((dx->name + "...").c_str())) typeX = true;
+    if (ImGui::MenuItem((dy->name + "...").c_str())) typeY = true;
+    ImGui::EndPopup();
+  }
+  ImGui::PushID("x");
+  if (typeX) ImGui::OpenPopup("##type");
+  ui::ParamTypePopup(t.pid(px), *dx);
+  ImGui::PopID();
+  ImGui::PushID("y");
+  if (typeY) ImGui::OpenPopup("##type");
+  ui::ParamTypePopup(t.pid(py), *dy);
+  ImGui::PopID();
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   const PluginState& cur = *t.state(a.doc.song());
   float cx = p.x + 6 + static_cast<float>(dx->toNormalized(val(cur, px))) * (size.x - 12);
@@ -122,7 +158,7 @@ inline void xyPad(App& a, const PluginTarget& t, int px, int py, ImVec2 size, co
   dl->AddCircleFilled(ImVec2(cx, cy), hot ? 6.f : 5.f, ImGui::IsItemActive() ? P.accent : P.paper);
   smallText(a, dl, ImVec2(p.x + 7, p.y + 5), P.textFaint, title);
   if (hot) a.setHint(std::string(title) + ": " + dx->name + " " + dx->format(val(cur, px)) + " · " + dy->name + " " + dy->format(val(cur, py)) +
-                     "   (drag; double-click resets)");
+                     "   (drag \xC2\xB7 double-click reset, at default type \xC2\xB7 right-click menu)");
   ImGui::PopID();
 }
 

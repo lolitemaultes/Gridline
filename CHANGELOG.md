@@ -3,9 +3,25 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
-## 0.7.0-beta.1
+## 0.7.0-beta.2
 
 This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.
+
+### New since 0.7.0-beta.1
+
+- The Gridline Suite: Gridline's instruments and effects as VST3, CLAP and Audio Unit plugins
+  for other DAWs, plus Gridline Suite Mini, 35 compact effects.
+- Control styles: Slate (the new default), Graphite, Hairline, Lumen and Classic, chosen in
+  Settings > Theme, and sound themes for the interface sounds (Graphite by default).
+- Every built-in plugin shows its own wordmark, in its window header and in its own editor.
+- Knobs: double-click resets to the default, or opens the value box when the knob is already
+  there; the right-click menu starts with Reset to default.
+- Swing that feels right: smooth at every setting, and piano roll notes swing as well as steps.
+- A new demo song, "Gridline", which opens once on the first launch of a new install.
+- Installers in Gridline's design on macOS and Windows, and AppStream metadata on Linux.
+- Fixes: faders centred on their tracks in every style, highlights and outlines no longer cut
+  off at the edge of their panel, a tidier Theme page, quieter song markers in the playlist, and
+  the details below.
 
 ### New: Plasma, a wavetable hybrid synth (`gl.plasma`)
 
@@ -86,6 +102,21 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
 - The wordmarks are drawn from vector sources at the exact pixel size of your interface scale and
   display, so they stay sharp at 100 %, 150 % and 200 %. They take their colours from the theme,
   so they also read well on the light theme.
+- The plugins' own interfaces show the wordmark too: Plasma's header, and every editor that
+  printed its name as plain text in its title strip or name plate (Isoline, Kerf, Abacus, Keys,
+  Tercet, Lattice, Convolver, Stereo Width, Clipper, Plumb, Loupe, the note processors and more).
+  The name stays as text only where a plugin has no wordmark.
+
+### Knobs: double-click resets, then types
+
+- Double-click any knob or slider in a built-in plugin to put it back to its default value, as
+  one undo step. When it already is at its default, the double-click opens the box where you type
+  a value instead.
+- Right-click a knob or slider: Reset to default is now the first item of its menu, greyed out
+  when the value already is the default. The other items (type a value, automation, links, MIDI
+  control) stay. Ctrl+click still resets.
+- This works the same in every built-in editor, Plasma's own knobs, its arpeggiator knobs (which
+  now reset to their real defaults), faders, the Seltmann slice knobs and the X / Y pads included.
 
 ### New: control styles (Settings > Theme > Controls)
 
@@ -98,6 +129,31 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
 - Styles change drawing only: sizes, layouts and click areas stay the same. They follow dark or
   light mode, your accent and role colours, and each plugin's own palette where the style uses one.
 - The Theme page is now grouped as Appearance, Controls and Sounds.
+- Fixed on the Theme page: the selection ring of the first and last style card was cut off; the
+  style previews now show the real knob, fader and meter of each style at their real size,
+  centred in the card, so a wide window no longer spreads them apart; the cards wrap to fewer
+  columns on a narrow page; long names and descriptions end with an ellipsis instead of being
+  cut; the sound theme and sound rows keep their Preview and Play buttons inside the page; the
+  colour preview's toolbar no longer overlaps itself on a narrow page; in the light theme the
+  style previews show the light surfaces the plugin windows really use; and the Keep or Revert
+  prompt for a style change names both styles and previews each one.
+- Fixed: the outline of the playing step in the channel rack was cut off on its left edge in
+  the first column. Selection, focus and highlight outlines on rack steps, mixer strips, playlist
+  clips and fields are now drawn inside their control in every style, so a neighbouring control
+  or a pane edge can no longer cover or cut them.
+- Mixer strip meters follow the control style too, like every other meter.
+- Fixed: fader caps sat to the side of their track. In Slate the cap was 3 px left of the slot
+  (mixer strips, the Theme page preview, plugin faders), and in Graphite, Hairline and Lumen the
+  whole fader sat 4 px left of its place. In every style the cap, the slot, the value fill, the
+  ruler and the unity mark now share one centre line, on whole pixels, at every interface scale;
+  the ruler shows on both sides of the slot, and the cap lines up exactly with the tick of its
+  value. Sliders in plugin editors are centred on their slot the same way.
+
+### Playlist: quieter song markers
+
+- A song marker (Intro, Verse, Chorus and so on) no longer draws a bright line through the whole
+  ruler. Its tick is now the left edge of the marker's label, only as tall as the label, in a
+  soft shade of the theme's text colour (the loop marker keeps its lit colour).
 
 ### New demo song: "Gridline"
 
@@ -109,11 +165,43 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   moving reese over a mono sub, a synthesised rain bed with distant thunder, and buses with
   sidechains. In the second chorus the felt keys answer the mallet's hook. Automation lanes shape
   every section.
-- It is mixed and mastered to -9.9 LUFS with a true peak of -1.1 dBTP. The song is compiled into
+- It is mixed and mastered to -10 LUFS with a true peak of -1.2 dBTP. The song is compiled into
   the programs, so it opens instantly on every system and package without looking for files,
   and it renders the same every time.
+- The demo song opens by itself once, on the first launch of a new install. Later launches
+  follow Settings > General > On startup.
 - `gridline demo out.json` writes the same song. `tools/make_demo_song.py` is the script that
   composes it, and test `j135_demo_song` checks its markers, loudness and true peak.
+- The earlier 16-bar house demo is gone from the programs. The tests keep it as their own test
+  song (`tests/fixtures/`), and the command line examples in the README now start from
+  `gridline demo song.json`.
+
+### Swing that feels right
+
+- Song swing now moves piano roll notes as well as channel rack steps. Inside every pair of
+  steps, counted from the bar line, the off-beat moves later by the swing amount and everything
+  between moves in proportion, so 16ths swing like steps while 32nds and triplets bend with them.
+  Notes keep their written positions in the piano roll; only playback swings. Channel swing mix
+  and truncated swing apply to notes too. Imported projects whose source swung steps only keep
+  doing so; right-click the Swing label in the channel rack to choose.
+- The swing knob is smooth: swung steps and notes are placed between ticks and played to the
+  sample, so every percent of the knob is heard, at any PPQ. Before, small amounts did nothing
+  and the knob moved in coarse jumps.
+- The loop starter now writes its parts straight and leaves the swing to the song setting.
+  MIDI export writes straight notes, as before.
+- Note Sequencer and Arpeggiator steps follow the song grid while the song plays: a key pressed
+  a little late or early still swings in time, and after the song loops the steps land on the
+  grid again. Turning the swing knob takes effect from the next step.
+- Note Sequencer: swing pairs restart with each pass of the pattern, so odd lengths keep the
+  first step straight. A new Velocity choice: Step x played (new default) scales each step's
+  velocity by how hard the key is played; Step only plays the step velocity as before. Projects
+  saved earlier keep Step only. A step at velocity 0 rests.
+- Arpeggiator: a fixed velocity of 0 rests instead of sending silent notes, and Accent first in
+  Chord mode accents one chord per cycle instead of every chord.
+- Drum sequencer steps no longer drift from the tempo, odd-length patterns stay on the grid with
+  swing, and the Plasma arpeggiator now swings on the song grid when it follows the song.
+  Plasma's clip player no longer skips the first notes of a loop, and the Drum Model's driven
+  pads now respond to velocity.
 
 ### Stand-ins for a missing Serum or Kickstart
 
@@ -201,7 +289,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
 - To bring it back: its "Dock back into Gridline" button, or its own close button (the red button
   on macOS, X on Windows and Linux, Cmd+W): either docks it back where it was, it stays open.
 - Space, shortcuts, the typing keyboard, text fields and drag and drop (browser items, files from
-  other applications, J-97 drop-to-replace on the channel rack) work in detached windows. Moving
+  other applications, drop-to-replace on the channel rack) work in detached windows. Moving
   between Gridline's windows no longer releases held keys; switching to another application still
   does.
 - Detached panels reopen where they were, on the same monitor (saved with your window layout,
@@ -252,7 +340,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   edge or outline in the middle. The two fade curves are drawn as faint lines. A selected clip
   still shows where it starts and ends. Only the drawing changed; the crossfade sounds as before.
 
-### New: collaborative projects (preview, J-111)
+### New: collaborative projects (preview)
 
 - Work on one project together, live, on the same network or across the internet, peer to peer:
   no server and no account. Each person keeps their own windows and transport; channels, notes,
@@ -273,14 +361,14 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   placeholder until they have arrived and been checked.
 - Colour-coded cursors in the windows you both have open, collaborators in the top bar,
   remote changes flash in their author's colour, "Follow their playhead".
-- Collaborators' cursors (J-111d) point at the same thing on every screen whatever the window size,
+- Collaborators' cursors point at the same thing on every screen whatever the window size,
   layout, interface scale, scroll or zoom: a playlist track and time, a piano roll key and time, a
   channel rack row, a mixer strip, or the button, knob or step under the pointer. They draw on top
   of every window, floating window, popup and menu, fade out quickly where that spot isn't shown
   (a closed or hidden window, another tab or pattern, scrolled away) and back in where it is. The
   cursor is a plain pointer arrow in the collaborator's colour with a thin white rim and a soft
   shadow, sharp at any scale; the name tag is gone (the colour says who it is).
-- Collaborators' cursors and pictures (J-111g): the arrow is the size of your own mouse pointer
+- Collaborators' cursors and pictures: the arrow is the size of your own mouse pointer
   (macOS, Linux and Windows pointer size settings) with softer, rounded corners and a thinner
   outline; it no longer blinks out and in while someone moves between windows (it waits a moment
   before fading, and moves to another window without fading); a plugin editor you have open hides
@@ -310,7 +398,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   offline with the last sync) and Reconnect / Invite again for those offline; invites show their
   state (preparing, the code with a countdown, joined with a large safety code, expired); long
   folders are cut in the middle with the full path on hover; the Join window shows its steps.
-- Removing someone (J-111e): the admin removes a member from the "..." menu in People, with an
+- Removing someone: the admin removes a member from the "..." menu in People, with an
   optional note. The removal is signed and checked on every computer: they can't connect, be
   relayed or join with old invites any more, and anything they change after the removal is dropped
   everywhere, while their earlier work stays (with their name in Sync review). With the project
@@ -318,7 +406,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   (editing stops, playback doesn't); offline, they learn it the next time they connect. Removed
   (n) in People shows who, when and why, with Re-invite for the admin. The collaboration protocol
   is now version 2.
-- What happens to the files (J-111e): Leave asks whether to keep the folder as a normal project or
+- What happens to the files: Leave asks whether to keep the folder as a normal project or
   move it to the Trash, with sizes, and offers Wait for sync when some changes aren't confirmed
   yet. Stop sharing reaches everyone (also later, when someone offline reconnects) and is never
   undone by an old copy. Your collaborative projects marks removed, stopped and missing projects
@@ -328,7 +416,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   deletes the other members' cached details on this computer. docs/collaboration.md: "Removing
   someone" and "What happens to the files".
 - `gridline collab-run` runs a collaborative session without a window (scripts and tests).
-- Collaborative projects have a shared name (J-111f). "Make this project collaborative..." asks for it
+- Collaborative projects have a shared name. "Make this project collaborative..." asks for it
   first (prefilled from the open project; any language, at most 80 characters). Any member renames
   it from the Collaboration panel's header, Project info or Project settings > Collaboration
   ("Rename..."). Online collaborators see the new name at once (window title, panel, top bar, a
@@ -339,7 +427,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   unless you choose "Also rename the project folder on this computer". Exports, Recent files and
   Recent collaborative projects use the new name, and projects with the same name are told apart by
   their folder. A project file renamed by hand is still found.
-- Sharing and renaming in place (J-111h): the Collaboration panel's "Share this project" section
+- Sharing and renaming in place: the Collaboration panel's "Share this project" section
   holds the name (prefilled, checked as you type) and the folder (next to the project file by
   default, Choose...) with a caption of what happens, and "Make collaborative": no separate name
   window any more. Rename... turns the panel's title, or the Shared name row of Project info and
@@ -347,7 +435,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   on this computer" option under it. Fixed: a dialog that sizes itself to its content (the old
   name window) shrank by a pixel every frame for over a second after it opened: sections reserved
   one pixel less than their width.
-- Collaborators' cursors go behind your windows (J-111h): every window you have open in front of
+- Collaborators' cursors go behind your windows: every window you have open in front of
   the one a cursor points into covers it (Settings, Project info, the Collaboration panel, dialogs,
   the floating channel rack, mixer or piano roll, popups and menus), cut at the window's edge, not
   faded; in that same window it is drawn on top. Behind a modal it is dimmed with everything else.
@@ -411,6 +499,8 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
 - Linux packages carry AppStream metadata (description, screenshots, releases), so software
   centres such as GNOME Software and KDE Discover show Gridline properly.
 - The read me files in every download start with a short Gridline header.
+- macOS: the small Gridline icon in the system's password prompts (for example when Gridline
+  reads the access token of its AI assistant connection) is sharp instead of noisy.
 
 ## 0.6.1
 

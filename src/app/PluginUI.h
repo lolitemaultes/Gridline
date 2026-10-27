@@ -59,6 +59,22 @@ uint32_t brandRole(BrandFamily f);
 // one item of max(frame height, size + 4) px; the name (and tagline) shows on
 // hover. Returns false, drawing nothing, for types without one (hosted plugins).
 bool wordmark(App& a, const std::string& type, float size);
+// J-136: the same wordmark drawn only, `height` px tall with its top-left at
+// `pos`, for editors that paint their own scaled title strip. Returns its
+// width, 0 (drawing nothing) for types without one.
+float wordmarkAt(ImDrawList* dl, const std::string& type, ImVec2 pos, float height, ImU32 word = 0);
+// Its size at `height` (0, 0 when there is none).
+ImVec2 wordmarkSize(const std::string& type, float height);
+// J-136: the wordmark in place of a title text a skin drew at `pos` with font
+// size `fontSize`: kTitleWordmarkScale times as tall, centred on that text
+// line, so it takes about the width the capitals took. `word` (when not 0)
+// colours the name on a surface the theme's text colour does not suit. False,
+// drawing nothing, without a wordmark (the caller draws its text instead).
+inline constexpr float kTitleWordmarkScale = 1.45f;
+bool titleWordmark(ImDrawList* dl, const std::string& type, ImVec2 pos, float fontSize, ImU32 word = 0);
+// The same inside the rect a skin gave its title text (r0..r1, align 0 left,
+// 1 centre, 2 right; centred vertically), shrunk to fit the rect.
+bool titleWordmarkIn(ImDrawList* dl, const std::string& type, ImVec2 r0, ImVec2 r1, float fontSize, int align, ImU32 word = 0);
 // J-130: the "Gridline Suite" / "Gridline Suite Mini" logo, `height` px tall
 // with its top-left at `pos` (drawn only); returns its width, 0 when missing.
 float suiteLogo(ImDrawList* dl, ImVec2 pos, float height, bool mini);

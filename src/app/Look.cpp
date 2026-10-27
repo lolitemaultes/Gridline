@@ -307,7 +307,8 @@ void Painter::knob(ImDrawList* dl, ImVec2 c, float r, const Knob& k) {
 void Painter::slider(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Slider& s) {
   const bool v = s.vertical;
   const float th = 4.0f;
-  const ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+  // J-139: the slot's centre line on the pixel grid, so the slot, fill and handle share it.
+  const ImVec2 c(v ? geom::sliderCentre(p0.x, p1.x, th) : (p0.x + p1.x) * 0.5f, v ? (p0.y + p1.y) * 0.5f : geom::sliderCentre(p0.y, p1.y, th));
   const ImVec2 a = v ? ImVec2(c.x - th * 0.5f, p0.y + 6) : ImVec2(p0.x + 6, c.y - th * 0.5f);
   const ImVec2 b = v ? ImVec2(c.x + th * 0.5f, p1.y - 6) : ImVec2(p1.x - 6, c.y + th * 0.5f);
   sunken(dl, a, b, th * 0.5f, tk.well);
@@ -331,26 +332,29 @@ void Painter::slider(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Slider& s) {
 }
 
 void Painter::fader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Fader& f) {
-  const float w = p1.x - p0.x;
-  const float tx = p0.x + w * 0.5f;
-  const float y0 = p0.y + 10, y1 = p1.y - 10;
-  // dB ruler.
+  // J-139: cap, slot and ruler share one centre line (LookGeom.h); the cap used to sit 3 px left of the slot.
+  const bool hasMeter = f.meterL >= 0;
+  const geom::FaderGeom g = geom::fader(p0.x, p0.y, p1.x, p1.y, f.norm, geom::kSlateFader, hasMeter);
+  const float tx = g.tx;
+  // dB ruler (both sides of the slot; left only with a meter beside it). 0.8 = unity.
   const float marks[] = {0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f};
+  const float ti = geom::kSlateFader.tickIn, to = g.tickOut(geom::kSlateFader.tickOut);
   for (float m : marks) {
-    const float y = std::round(y1 - (y1 - y0) * m) + 0.5f;
-    dl->AddLine(ImVec2(tx - 14, y), ImVec2(tx - 9, y), m == 0.8f ? tk.text : tk.textFaint, 1.0f);
+    const float y = g.tickY(m);
+    const ImU32 c = m == 0.8f ? tk.text : tk.textFaint;
+    dl->AddLine(ImVec2(tx - to, y), ImVec2(tx - ti, y), c, 1.0f);
+    if (g.ticksRight) dl->AddLine(ImVec2(tx + ti, y), ImVec2(tx + to, y), c, 1.0f);
   }
-  sunken(dl, ImVec2(tx - 2, y0), ImVec2(tx + 2, y1), 2, tk.well);
+  sunken(dl, ImVec2(g.trackX0, g.y0), ImVec2(g.trackX1, g.y1), 2, tk.well);
   // Meters right of the track.
-  if (f.meterL >= 0) {
+  if (hasMeter) {
     Meter m;
     m.l = f.meterL, m.r = f.meterR, m.peakL = f.peakL, m.peakR = f.peakR;
-    meter(dl, ImVec2(tx + 9, y0), ImVec2(tx + 19, y1), m);
+    meter(dl, ImVec2(tx + 9, g.y0), ImVec2(tx + 19, g.y1), m);
   }
-  const float y = y1 - (y1 - y0) * f.norm;
-  const ImVec2 h0(tx - 11, y - 12), h1(tx + 5, y + 12);
+  const ImVec2 h0(g.capX0, g.capY0), h1(g.capX1, g.capY1);
   raised(dl, h0, h1, 2, f.state);
-  dl->AddLine(ImVec2(h0.x + 2, y + 0.5f), ImVec2(h1.x - 2, y + 0.5f), tk.text, 1.0f);
+  dl->AddLine(ImVec2(h0.x + 2, g.y), ImVec2(h1.x - 2, g.y), tk.text, 1.0f);
 }
 
 void Painter::meter(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Meter& m) {
@@ -534,7 +538,8 @@ void Painter::stepPad(ImDrawList* dl, ImVec2 p0, ImVec2 p1, bool on, bool alt, f
     gradRect(dl, p0, p1, lighten(base, (state & Hover) ? 0.12f : 0.05f), base, tk.radiusSm);
   }
   dl->AddRect(p0, p1, tk.faceLine, tk.radiusSm);
-  if (playing) dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), tk.hot, tk.radiusSm + 1, 0, 1.5f);
+  // J-137: highlights stay inside the pad (a step viewport or a grid's clip never cuts them, neighbours never cover them).
+  if (playing) dl->AddRect(ImVec2(p0.x + 0.75f, p0.y + 0.75f), ImVec2(p1.x - 0.75f, p1.y - 0.75f), tk.hot, tk.radiusSm, 0, 1.5f);
 }
 void Painter::pad(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* lbl, float glow, int state, ImU32 tint) {
   raised(dl, p0, p1, tk.radius, state);

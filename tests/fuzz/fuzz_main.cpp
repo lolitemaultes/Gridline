@@ -12,7 +12,7 @@
 //   targets: flp fst project sample midi browser-index zip lua (J-36: zip, lua, project seeds with J-31 fields)
 //            song-flp (J-46: mutated Gridline songs → FLP export with / without origin → re-import)
 //            fx-preset (J-46: mutated FL effect presets → decoder → DSP blocks → FLP export → re-import)
-//            lua-project (J-57: project scripts over the demo song; one undo step, rollback, undo to the start)
+//            lua-project (J-57: project scripts over the test song; one undo step, rollback, undo to the start)
 //            lua-audio (J-57: audio editor scripts over a stereo selection)
 //
 // With no corpus the target's built-in seeds are used (ctest smoke run).
@@ -40,7 +40,7 @@
 #include "core/ProjectScript.h"
 #include "core/SongTools.h"
 #include "core/Zip.h"
-#include "core/Demo.h"
+#include "../fixtures/TestSong.h"
 #include "core/Json.h"
 #include "core/MidiFile.h"
 #include "core/PluginInfo.h"
@@ -103,14 +103,14 @@ Bytes seedFlp() {
 }
 
 Bytes seedProject() {
-  std::string t = gl::projectToText(gl::makeDemoSong());
+  std::string t = gl::projectToText(gl::makeTestSong());
   return Bytes(t.begin(), t.end());
 }
 
 // J-36: a project using the J-31 fields (pattern / clip / note groups, step
 // loops, key ranges, key markers, recording point, solo-alone).
 Bytes seedProjectGroups() {
-  gl::Document d(gl::makeDemoSong());
+  gl::Document d(gl::makeTestSong());
   const gl::Song& s = d.song();
   std::vector<gl::ObjectId> pats;
   for (const auto& p : s.patterns) pats.push_back(p.id);
@@ -263,7 +263,7 @@ Bytes seedBrowserIndex() {
 // declickers, clip groups, markers with actions, FL icons, insert lock /
 // separator, and the J-42 effects in mixer slots.
 Bytes seedSongFlp(bool variant) {  // variant: automatic crossfades off, kick channels
-  gl::Document d(gl::makeDemoSong());
+  gl::Document d(gl::makeTestSong());
   const gl::ObjectId ch = d.addChannel("loop", "gl.sampler");
   d.editSong("qa", [&](gl::Song& x) {
     for (auto& c : x.channels)
@@ -420,7 +420,7 @@ std::vector<Target> targets() {
            }
          }
          // A light song (cheap encoders) around the decoded plugin.
-         gl::Song s = gl::makeDemoSong();
+         gl::Song s = gl::makeTestSong();
          for (auto& ch : s.channels) ch.plugin = gl::defaultPluginState("gl.sampler");
          for (auto& m : s.mixer)
            for (auto& sl : m.slots) sl = gl::EffectSlot{};
@@ -537,7 +537,7 @@ std::vector<Target> targets() {
        [](const std::string& p) {
          Bytes b = readAll(p);
          const std::string src(b.begin(), b.end());
-         static const gl::Song demo = gl::makeDemoSong();
+         static const gl::Song demo = gl::makeTestSong();
          gl::Document doc(demo);
          doc.setMaxUndoLevels(1u << 20);
          gl::script::SimpleProjectHost host(doc);

@@ -1,4 +1,5 @@
 #include "Look.h"
+#include "LookGeom.h"
 #include "Widgets.h"
 #include "DialogLayout.h"
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include "AlignAudit.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "App.h"
+#include "PluginUI.h"
 #include "Keys.h"
 #include "Windows.h"
 #include "Theme.h"
@@ -118,8 +120,10 @@ void Tooltip(const char* text) {
 void FocusRing() {
   if (!ImGui::IsItemActive()) return;
   ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-  ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1), pal().accent,
-                                      ImGui::GetStyle().FrameRounding + 1, 0, 1.5f);
+  // J-137: drawn over the field's own border (inside its rectangle), so a field against a pane
+  // or section edge keeps its whole ring.
+  ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x + 0.75f, a.y + 0.75f), ImVec2(b.x - 0.75f, b.y - 0.75f), pal().accent,
+                                      ImGui::GetStyle().FrameRounding, 0, 1.5f);
 }
 
 namespace {
@@ -503,6 +507,133 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
   return changed;
 }
 
+// ---- J-136: reset and type-in shared by every parameter control ----
+
+double ValueAtPress(double current) {
+  // The value at the first press of a double-click on the last item: the
+  // second press lands on the same item and reads the value from before the
+  // first one, so a press that nudged the value still counts as "default".
+  static ImGuiID lastId = 0;
+  static double first = 0, latest = 0;
+  const ImGuiID id = ImGui::GetItemID();
+  if (ImGui::IsItemActivated()) {
+    first = id == lastId && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) ? latest : current;
+    latest = current;
+    lastId = id;
+  }
+  return id == lastId ? first : current;
+}
+
+bool DoubleClicked(const ParamDesc& d, double pressed, ParamDoubleClick* action) {
+  if (!ImGui::IsItemHovered() || !ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) return false;
+  if (action) *action = paramDoubleClick(d, pressed);
+  return true;
+}
+
+bool ResetMenuItem(const ParamDesc& d, double value) {
+  const std::string label = std::string(i18n::tr("Reset to default")) + "  (" + d.format(d.def) + ")";
+  return ImGui::MenuItem(label.c_str(), nullptr, false, !d.isDefault(value));
+}
+
+bool ParamDoubleClickReset(ParamId pid, const ParamDesc& d, double& val, double pressed) {
+  ParamDoubleClick act = ParamDoubleClick::Type;
+  if (!DoubleClicked(d, pressed, &act)) return false;
+  if (act == ParamDoubleClick::Type) {
+    ImGui::OpenPopup("##type");
+    return false;
+  }
+  App& a = app();
+  a.doc.endGesture();  // the first press is a gesture of its own
+  val = d.def;
+  a.doc.setParam(pid, val, false);
+  a.doc.endGesture();
+  return true;
+}
+
+bool ParamResetMenuItem(ParamId pid, const ParamDesc& d, double& val) {
+  if (!ResetMenuItem(d, val)) return false;
+  App& a = app();
+  val = d.def;
+  a.doc.setParam(pid, val, false);
+  a.doc.endGesture();
+  return true;
+}
+
+namespace {
+// Body of the type-in popups: the text field; true with `out` on Enter.
+bool typeField(const ParamDesc& d, double current, double& out) {
+  static char buf[64];
+  if (ImGui::IsWindowAppearing()) {
+    std::snprintf(buf, sizeof buf, "%s", d.format(current).c_str());
+    ImGui::SetKeyboardFocusHere();
+  }
+  ImGui::TextDisabled("%s", d.name.c_str());
+  ImGui::SetNextItemWidth(150);
+  bool done = false;
+  if (ImGui::InputText("##v", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
+    double v;
+    if (pui::parseValue(d, buf, v)) out = d.clamp(v), done = true;
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::TextDisabled("%s", i18n::tr("Enter to apply \xC2\xB7 Esc to cancel"));
+  return done;
+}
+}  // namespace
+
+void ParamTypePopup(ParamId pid, const ParamDesc& d) {
+  if (!ImGui::BeginPopup("##type")) return;
+  App& a = app();
+  const auto cur = getParam(a.doc.song(), pid);
+  double v = 0;
+  if (typeField(d, cur ? *cur : d.def, v)) {
+    a.doc.setParam(pid, v, false);
+    a.doc.endGesture();
+  }
+  ImGui::EndPopup();
+}
+
+bool ValueTypePopup(const ParamDesc& d, double* value) {
+  if (!ImGui::BeginPopup("##type")) return false;
+  double v = 0;
+  const bool done = typeField(d, *value, v);
+  if (done) *value = v;
+  ImGui::EndPopup();
+  return done;
+}
+
+const char* ParamControlHint() {
+  return i18n::tr("drag \xC2\xB7 Shift fine \xC2\xB7 Ctrl+click reset \xC2\xB7 double-click reset, at default type \xC2\xB7 right-click menu");
+}
+
+// J-137: the drawing of Knob alone (the Theme page previews draw the real control).
+void DrawKnob(ImDrawList* dl, ImVec2 c, float radius, float norm, bool bipolar, bool hov, bool act) {
+  const auto& P = pal();
+  float a0 = kPi * 0.75f, a1 = kPi * 2.25f;
+  float an = a0 + norm * (a1 - a0);
+  const float th = radius >= 14.0f ? 2.5f : 2.0f;
+  if (look::styled()) {  // J-129 control style
+    look::Knob lk;
+    lk.norm = norm, lk.bipolar = bipolar, lk.state = (hov ? look::Hover : 0) | (act ? look::Active : 0);
+    lk.size = radius >= 20 ? 2 : radius >= 13 ? 1 : 0;
+    look::knob(dl, c, radius, lk);
+  } else {
+  // Wheel: dark cap with a lighter top edge, rail ring, value ring (light at
+  // rest, lit orange while touched), indicator line.
+  const ImU32 cap = act ? P.surface600 : hov ? P.surface700 : P.surface800;
+  dl->AddCircleFilled(c, radius - th - 1.0f, cap, 32);
+  if (P.dark) dl->AddCircle(c, radius - th - 1.5f, theme::withAlpha(P.paper, 0.10f), 32, 1.0f);
+  arc(dl, c, radius - th * 0.5f, a0, a1, P.dark ? P.field : P.line, th);
+  float from = bipolar ? (a0 + a1) * 0.5f : a0;
+  const ImU32 ringRest = P.knobFill;
+  if (std::fabs(an - from) > 0.01f)
+    arc(dl, c, radius - th * 0.5f, std::min(from, an), std::max(from, an), act || hov ? P.hot : ringRest, th);
+  ImVec2 dir(std::cos(an), std::sin(an));
+  dl->PathLineTo(ImVec2(c.x + dir.x * radius * 0.15f, c.y + dir.y * radius * 0.15f));  // a path: AddLine is half a pixel off centre
+  dl->PathLineTo(ImVec2(c.x + dir.x * (radius - th - 3.0f), c.y + dir.y * (radius - th - 3.0f)));
+  dl->PathStroke(hov || act ? P.paper : P.text, 0, 2.0f);
+  }
+}
+
 bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const char* label, bool bipolar,
           bool* released, const std::function<void()>& extraMenu) {
   ImGui::PushID(id);
@@ -516,6 +647,7 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   alignaudit::nextKind(align::kKnob);  // J-128 panel audit: a dial, not a button
   ImGui::InvisibleButton("##knob", ImVec2(w, radius * 2.0f + (label ? labelH + 2 : 0.0f)));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  const double pressed = ValueAtPress(*value);
   const WheelGate wg = wheelGate();  // J-83
   bool changed = false;
   double n = d.toNormalized(*value);
@@ -546,75 +678,55 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
     }
     if (released) *released = true;
   }
-  if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-    *value = d.def;
-    changed = true;
-    if (released) *released = true;
+  ParamDoubleClick dbl = ParamDoubleClick::Type;
+  if (DoubleClicked(d, pressed, &dbl)) {  // J-136: reset, or type when already the default
+    if (dbl == ParamDoubleClick::Reset) {
+      *value = d.def;
+      changed = true;
+      if (released) *released = true;
+    } else {
+      ImGui::OpenPopup("##type");
+    }
   }
   if (released && ImGui::IsItemDeactivated()) *released = true;
 
   // Draw: track arc 270°, value arc, pointer dot.
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 c(p.x + w * 0.5f, p.y + radius);
-  float a0 = kPi * 0.75f, a1 = kPi * 2.25f;
-  float an = a0 + static_cast<float>(d.toNormalized(*value)) * (a1 - a0);
-  const float th = radius >= 14.0f ? 2.5f : 2.0f;
-  if (look::styled()) {  // J-129 control style
-    look::Knob lk;
-    lk.norm = static_cast<float>(d.toNormalized(*value)), lk.bipolar = bipolar, lk.state = (hov ? look::Hover : 0) | (act ? look::Active : 0);
-    lk.size = radius >= 20 ? 2 : radius >= 13 ? 1 : 0;
-    look::knob(dl, c, radius, lk);
-  } else {
-  // Wheel: dark cap with a lighter top edge, rail ring, value ring (light at
-  // rest, lit orange while touched), indicator line.
-  const ImU32 cap = act ? P.surface600 : hov ? P.surface700 : P.surface800;
-  dl->AddCircleFilled(c, radius - th - 1.0f, cap, 32);
-  if (P.dark) dl->AddCircle(c, radius - th - 1.5f, theme::withAlpha(P.paper, 0.10f), 32, 1.0f);
-  arc(dl, c, radius - th * 0.5f, a0, a1, P.dark ? P.field : P.line, th);
-  float from = bipolar ? (a0 + a1) * 0.5f : a0;
-  const ImU32 ringRest = P.knobFill;
-  if (std::fabs(an - from) > 0.01f)
-    arc(dl, c, radius - th * 0.5f, std::min(from, an), std::max(from, an), act || hov ? P.hot : ringRest, th);
-  ImVec2 dir(std::cos(an), std::sin(an));
-  dl->PathLineTo(ImVec2(c.x + dir.x * radius * 0.15f, c.y + dir.y * radius * 0.15f));  // a path: AddLine is half a pixel off centre
-  dl->PathLineTo(ImVec2(c.x + dir.x * (radius - th - 3.0f), c.y + dir.y * (radius - th - 3.0f)));
-  dl->PathStroke(hov || act ? P.paper : P.text, 0, 2.0f);
-  }
+  DrawKnob(dl, c, radius, static_cast<float>(d.toNormalized(*value)), bipolar, hov, act);
   if (label) {
     ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(labelFs, 1e9f, 0, label);
     dl->AddText(ImGui::GetFont(), labelFs, ImVec2(std::round(c.x - ts.x * 0.5f), p.y + radius * 2.0f + 2.0f), P.textDim, label);
   }
   std::string txt = d.name + ": " + d.format(*value);
-  if (hov || act) app().setHint(txt + "   (drag · Shift fine · double-click reset · right-click type)" + (wg.hint ? std::string("   ") + wheelHintText() : ""));
+  if (hov || act) app().setHint(txt + "   (" + ParamControlHint() + ")" + (wg.hint ? std::string("   ") + wheelHintText() : ""));
   if (act) ImGui::SetTooltip("%s", d.format(*value).c_str());
   if (wg.hint) Tooltip("Drag to change, Ctrl+wheel to fine-tune");  // J-83: the wheel scrolls the pane here
 
-  // Type-in value.
-  if (ImGui::IsItemClicked(ImGuiMouseButton_Right) || (ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyAlt))
-    ImGui::OpenPopup("##type");
-  if (ImGui::BeginPopup("##type")) {
-    static double typed = 0;
-    if (ImGui::IsWindowAppearing()) typed = *value;
-    ImGui::TextUnformatted(d.name.c_str());
-    ImGui::SetNextItemWidth(140);
-    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-    if (ImGui::InputDouble("##v", &typed, 0, 0, "%.4g", ImGuiInputTextFlags_EnterReturnsTrue)) {
-      *value = d.clamp(typed);
-      changed = true;
-      if (released) *released = true;
-      ImGui::CloseCurrentPopup();
-    }
-    if (ImGui::Button(i18n::tr("Reset to default"))) {
+  // J-136: right-click menu with the reset first, then type, then the
+  // caller's items; Alt+click types directly.
+  if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##kmenu");
+  if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyAlt) ImGui::OpenPopup("##type");
+  bool wantType = false;
+  if (ImGui::BeginPopup("##kmenu")) {
+    ImGui::TextDisabled("%s", d.name.c_str());
+    ImGui::Separator();
+    if (ResetMenuItem(d, *value)) {
       *value = d.def;
       changed = true;
       if (released) *released = true;
-      ImGui::CloseCurrentPopup();
     }
+    if (ImGui::MenuItem(i18n::tr("Type a value..."))) wantType = true;
     if (extraMenu) {
       ImGui::Separator();
       extraMenu();
     }
     ImGui::EndPopup();
+  }
+  if (wantType) ImGui::OpenPopup("##type");
+  if (ValueTypePopup(d, value)) {
+    changed = true;
+    if (released) *released = true;
   }
   ImGui::PopID();
   return changed;
@@ -650,6 +762,40 @@ bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, boo
   return ch;
 }
 
+// J-137: the drawing of ParamFader alone (norm / defNorm 0..1: the value and the default mark).
+void DrawFader(ImDrawList* dl, ImVec2 p, ImVec2 size, float norm, float defNorm, bool hov, bool act) {
+  const auto& P = pal();
+  if (look::styled()) {  // J-129 control style (the painter's rect: the control plus 8 / 4 px, LookGeom.h)
+    look::Fader lf;
+    lf.norm = norm, lf.state = (hov ? look::Hover : 0) | (act ? look::Active : 0);
+    look::fader(dl, ImVec2(p.x - 8, p.y - 4), ImVec2(p.x + size.x + 8, p.y + size.y + 4), lf);
+    return;
+  }
+  // J-139: every part on one centre line cx (the cap used the unrounded centre, half a pixel off the
+  // slot on odd widths), and the cap's centre rounded like the ticks (LookGeom.h).
+  const float capH = 18.0f;
+  const look::geom::ClassicFader g = look::geom::classicFader(p.x, p.y, size.x, size.y, norm, capH);
+  const float cx = g.cx, L = g.left, R = g.right, yc = g.yc;
+  // Track (sunken slot) with a value fill below the cap: neutral at rest, accent while touched.
+  dl->AddRectFilled(ImVec2(cx - 2, g.t0), ImVec2(cx + 2, g.t1), P.surface950, 2);
+  dl->AddRectFilled(ImVec2(cx - 1, yc), ImVec2(cx + 1, g.t1), act || hov ? theme::withAlpha(P.hot, 0.9f) : P.lineStrong, 1);
+  // Scale ticks every eighth of the travel + the default (unity) mark.
+  for (int i = 0; i <= 8; ++i) {
+    float ty = g.tickY(static_cast<float>(i) / 8.0f);
+    dl->AddLine(ImVec2(L + 1, ty), ImVec2(L + 4, ty), P.line, 1);
+    dl->AddLine(ImVec2(R - 4, ty), ImVec2(R - 1, ty), P.line, 1);
+  }
+  float uy = g.tickY(defNorm);
+  dl->AddLine(ImVec2(L, uy), ImVec2(L + 6, uy), P.textFaint, 1);
+  dl->AddLine(ImVec2(R - 6, uy), ImVec2(R, uy), P.textFaint, 1);
+  // Cap: raised block with a centre grip line.
+  ImU32 capCol = act ? theme::mix(P.knobFill, P.hot, 0.35f) : hov ? P.knobFill : theme::mix(P.textDim, P.surface600, 0.35f);
+  if (!P.dark) capCol = act ? theme::mix(P.surface800, P.hot, 0.3f) : hov ? P.paper : P.surface800;
+  dl->AddRectFilled(ImVec2(L + 3, g.capY0 + 1), ImVec2(R - 3, g.capY1 + 1), theme::withAlpha(P.ink, 0.35f), 3);
+  dl->AddRectFilled(ImVec2(L + 3, g.capY0), ImVec2(R - 3, g.capY1), capCol, 3);
+  dl->AddLine(ImVec2(L + 6, yc), ImVec2(R - 6, yc), P.surface900, 2);
+}
+
 bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   App& a = app();
   auto d = describeParam(a.doc.song(), pid);
@@ -657,10 +803,10 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   if (!d || !v) return false;
   audit::bindControl(pid);  // J-92 binding audit
   ImGui::PushID(id);
-  const auto& P = pal();
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##fader", size);
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  const double pressed = ValueAtPress(*v);
   const WheelGate wg = wheelGate();  // J-83: the thin mixer scrolls under the pointer
   ImGuiIO& io = ImGui::GetIO();
   double n = d->toNormalized(*v);
@@ -675,47 +821,28 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
     a.doc.setParam(pid, d->fromNormalized(std::clamp(n + io.MouseWheel * 0.02 * wg.scale, 0.0, 1.0)), true);
     a.doc.endGesture();
   }
-  if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-    a.doc.setParam(pid, d->def, false);
-    changed = true;
+  {  // J-136: double-click resets, or types when already the default
+    double cv = *v;
+    if (ParamDoubleClickReset(pid, *d, cv, pressed)) changed = true;
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
-  if (ImGui::BeginPopupContextItem("##fadermenu")) {  // values, controller links
+  bool wantType = false;
+  if (ImGui::BeginPopupContextItem("##fadermenu")) {  // reset, type, values, controller links
+    ImGui::TextDisabled("%s", d->name.c_str());
+    ImGui::Separator();
+    double cv = getParam(a.doc.song(), pid).value_or(d->def);
+    if (ParamResetMenuItem(pid, *d, cv)) changed = true;
+    if (ImGui::MenuItem(i18n::tr("Type a value..."))) wantType = true;
+    ImGui::Separator();
     knobContextMenu(a, pid);
     ImGui::EndPopup();
   }
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  float cx = std::round(p.x + size.x * 0.5f);
-  float t0 = p.y + capH * 0.5f, t1 = p.y + size.y - capH * 0.5f;
-  double cur = d->toNormalized(*getParam(a.doc.song(), pid));
-  float y = std::round(p.y + static_cast<float>(1.0 - cur) * travel);
-  if (look::styled()) {  // J-129 control style
-    look::Fader lf;
-    lf.norm = static_cast<float>(cur), lf.state = (hov ? look::Hover : 0) | (act ? look::Active : 0);
-    look::fader(dl, ImVec2(p.x - 8, p.y - 4), ImVec2(p.x + size.x + 8, p.y + size.y + 4), lf);
-  } else {
-  // Track (sunken slot) with a value fill below the cap: neutral at rest, accent while touched.
-  dl->AddRectFilled(ImVec2(cx - 2, t0), ImVec2(cx + 2, t1), P.surface950, 2);
-  dl->AddRectFilled(ImVec2(cx - 1, y + capH * 0.5f), ImVec2(cx + 1, t1),
-                    act || hov ? theme::withAlpha(P.hot, 0.9f) : P.lineStrong, 1);
-  // Scale ticks every eighth of the travel + the default (unity) mark.
-  for (int i = 0; i <= 8; ++i) {
-    float ty = std::round(t0 + (t1 - t0) * i / 8.0f);
-    dl->AddLine(ImVec2(p.x + 1, ty), ImVec2(p.x + 4, ty), P.line, 1);
-    dl->AddLine(ImVec2(p.x + size.x - 4, ty), ImVec2(p.x + size.x - 1, ty), P.line, 1);
-  }
-  float uy = std::round(t0 + static_cast<float>(1.0 - d->toNormalized(d->def)) * travel);
-  dl->AddLine(ImVec2(p.x, uy), ImVec2(p.x + 6, uy), P.textFaint, 1);
-  dl->AddLine(ImVec2(p.x + size.x - 6, uy), ImVec2(p.x + size.x, uy), P.textFaint, 1);
-  // Cap: raised block with a centre grip line.
-  ImU32 capCol = act ? theme::mix(P.knobFill, P.hot, 0.35f) : hov ? P.knobFill : theme::mix(P.textDim, P.surface600, 0.35f);
-  if (!P.dark) capCol = act ? theme::mix(P.surface800, P.hot, 0.3f) : hov ? P.paper : P.surface800;
-  dl->AddRectFilled(ImVec2(p.x + 3, y + 1), ImVec2(p.x + size.x - 3, y + capH + 1), theme::withAlpha(P.ink, 0.35f), 3);
-  dl->AddRectFilled(ImVec2(p.x + 3, y), ImVec2(p.x + size.x - 3, y + capH), capCol, 3);
-  dl->AddLine(ImVec2(p.x + 6, y + capH * 0.5f), ImVec2(p.x + size.x - 6, y + capH * 0.5f), P.surface900, 2);
-  }
+  if (wantType) ImGui::OpenPopup("##type");
+  ParamTypePopup(pid, *d);
+  DrawFader(ImGui::GetWindowDrawList(), p, size, static_cast<float>(d->toNormalized(*getParam(a.doc.song(), pid))),
+            static_cast<float>(d->toNormalized(d->def)), hov, act);
   if (hov || act) {
-    std::string txt = d->name + ": " + d->format(*getParam(a.doc.song(), pid));
+    std::string txt = d->name + ": " + d->format(*getParam(a.doc.song(), pid)) + "   (" + ParamControlHint() + ")";
     if (wg.hint) txt += std::string("   ") + wheelHintText();
     app().setHint(txt);
     if (act) ImGui::SetTooltip("%s", d->format(*getParam(a.doc.song(), pid)).c_str());
@@ -742,10 +869,14 @@ void Meter(ImGuiID key, float peakL, float peakR, ImVec2 size, bool vertical) {
     s.holdR = s.r;
     s.holdT = now;
   }
-  const auto& P = pal();
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImGui::Dummy(size);
-  ImDrawList* dl = ImGui::GetWindowDrawList();
+  DrawMeter(ImGui::GetWindowDrawList(), p, size, s.l, s.r, s.holdL, s.holdR, vertical);
+}
+
+// J-137: the drawing of Meter alone (gains: 1 = 0 dBFS).
+void DrawMeter(ImDrawList* dl, ImVec2 p, ImVec2 size, float gainL, float gainR, float holdL, float holdR, bool vertical) {
+  const auto& P = pal();
   auto toPos = [](float g) {  // dB scale -60..+6
     float db = g > 1e-6f ? 20.0f * std::log10(g) : -100.0f;
     return std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);
@@ -753,12 +884,12 @@ void Meter(ImGuiID key, float peakL, float peakR, ImVec2 size, bool vertical) {
   const float zero = toPos(1.0f), warn = toPos(0.5f);  // 0 dBFS and -6 dBFS
   if (look::styled()) {  // J-129 control style
     look::Meter m;
-    m.vertical = vertical, m.l = toPos(s.l), m.r = toPos(s.r), m.peakL = toPos(s.holdL), m.peakR = toPos(s.holdR);
+    m.vertical = vertical, m.l = toPos(gainL), m.r = toPos(gainR), m.peakL = toPos(holdL), m.peakR = toPos(holdR);
     look::meter(dl, p, ImVec2(p.x + size.x, p.y + size.y), m);
     return;
   }
   for (int ch = 0; ch < 2; ++ch) {
-    float v = toPos(ch == 0 ? s.l : s.r), hold = toPos(ch == 0 ? s.holdL : s.holdR);
+    float v = toPos(ch == 0 ? gainL : gainR), hold = toPos(ch == 0 ? holdL : holdR);
     if (vertical) {
       float w = std::floor((size.x - 1) * 0.5f);
       ImVec2 a(p.x + ch * (w + 1), p.y), b(a.x + w, p.y + size.y);
@@ -1046,6 +1177,12 @@ void Led(ImDrawList* dl, ImVec2 c, float r, bool on, float level) {
   dl->AddCircleFilled(c, r, theme::mix(theme::mix(P.led, P.field, P.dark ? 0.25f : 0.05f), theme::mix(P.led, P.paper, 0.35f), lv), 16);
   dl->AddCircle(c, r, P.dark ? theme::withAlpha(P.ink, 0.45f) : theme::mix(P.led, P.ink, 0.35f), 16, 1.0f);
   dl->AddCircleFilled(ImVec2(c.x - r * 0.3f, c.y - r * 0.3f), r * 0.32f, theme::withAlpha(P.paper, 0.35f), 8);
+}
+
+void StepPlayOutline(ImDrawList* dl, ImVec2 a, ImVec2 b) {
+  constexpr float kTh = 1.5f;  // the stroke straddles its path: inset by half of it
+  dl->AddRect(ImVec2(a.x + kTh * 0.5f, a.y + kTh * 0.5f), ImVec2(b.x - kTh * 0.5f, b.y - kTh * 0.5f), pal().playhead,
+              std::min(theme::kRadius, (b.x - a.x) * 0.25f), 0, kTh);
 }
 
 void StepPad(ImDrawList* dl, ImVec2 a, ImVec2 b, bool on, bool alt, bool hovered, ImU32 tint, float vel) {

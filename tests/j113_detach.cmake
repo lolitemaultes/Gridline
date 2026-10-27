@@ -27,7 +27,7 @@ set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
 file(READ "${DEMO}" demo)  # a copy: the demo song is never opened (or saved over) in place
 file(WRITE "${OUT}/fixture.gridline.json" "${demo}")
 get_filename_component(src "${DEMO}" DIRECTORY)
-configure_file("${src}/../assets/sounds/classic/open.wav" "${OUT}/Snap.wav" COPYONLY)
+configure_file("${src}/../../assets/sounds/classic/open.wav" "${OUT}/Snap.wav" COPYONLY)
 
 # run(<tag> <frames> <script> [keep] [extra args...]): config ${OUT}/cfg_<cfg>, fresh unless "keep".
 function(run tag cfg frames script)

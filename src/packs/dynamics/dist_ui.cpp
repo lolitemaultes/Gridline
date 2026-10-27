@@ -180,7 +180,8 @@ void editorTransplit(App& a, const PluginTarget& t, float width) {
   section(c, st, 1, 492);
 
   // Bottom strip: name, Gridline's band split / drive / mix / gain, switches.
-  skin::text(dl, F.p(8, 349), K.textDim, "TRANSIENT SPLIT", F.font(10.0f));
+  if (!pui::titleWordmark(dl, "gl.transplit", F.p(8, 349), F.font(10.0f), K.text))  // J-136: the wordmark
+    skin::text(dl, F.p(8, 349), K.textDim, "TRANSIENT SPLIT", F.font(10.0f));
   struct Small {
     int param;
     const char* cap;

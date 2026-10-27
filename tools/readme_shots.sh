@@ -16,8 +16,8 @@ OUT="$2"
 shift 2
 mkdir -p "$OUT/config/gridline"
 OUT="$(cd "$OUT" && pwd)"
-# The browser lists Gridline's demo folder instead of the home folders.
-printf '%s\n' "$G/demo" > "$OUT/config/gridline/browser-folders.txt"
+# The browser lists Gridline's demo song folder instead of the home folders.
+printf '%s\n' "$G/assets/demo" > "$OUT/config/gridline/browser-folders.txt"
 export GRIDLINE_CONFIG_HOME="$OUT/config"
 export GRIDLINE_NO_PLUGIN_SCAN=1
 export GRIDLINE_HIDE_PLUGINS=all
@@ -73,14 +73,12 @@ for t in eq hall amprack; do
   shot "ed_$t" "" "$SONG" --hide rack --plugin "gl.$t" --preset 2 --size 1440x900 --scale 2 --frames 60
 done
 
-# Release shots (docs/images/release-<version>/): the playlist with the song loop
-# marker, clip volume lines and crossfades; the channel rack at 64 steps; effect
-# editors with their live graphics while the song plays; the audio clip menu
-# with its time stretch modes.
-shot rel_playlist "" "$SONG" --show playlist --play $S --frames 330
-shot rel_rack "" "$SONG" --rack steps64 --hide browser $S --frames 120
-for t in reverb delay limiter; do
-  shot "rel_$t" "" "$SONG" --hide rack --plugin "gl.$t" --play --size 1440x900 --scale 2 --frames 700
+# Release shots (docs/images/release-<version>/): the Theme page with the
+# control styles, the demo song's arrangement and a few Gridline Suite Mini editors.
+printf '40 move 800 600\n45 wheel -5\n55 move 1590 990\n' > "$OUT/theme-scroll.txt"  # down to Controls
+shot rel_theme "" "$SONG" --hide rack --show theme $S --frames 120 --dev-input "$OUT/theme-scroll.txt"
+if want rel_demo; then "$BUILD/gridline" demo "$OUT/demo.gridline.json" >/dev/null; fi
+shot rel_demo "" "$OUT/demo.gridline.json" --hide rack --show playlist --zoom 0.38 $S --frames 120
+for t in minipress miniecho minichime; do
+  shot "rel_$t" "" "$SONG" --hide rack --plugin "gl.$t" --size 1440x900 --scale 2 --frames 60
 done
-printf '30 move 150 106\n50 move 330 106\n60 move 362 140\n70 move 362 166\n' > "$OUT/stretch-hover.txt"  # open "Time stretch", hover Transient
-shot rel_stretch "" "$SONG" --show playlist --menu audioclip $S --frames 150 --dev-input "$OUT/stretch-hover.txt"

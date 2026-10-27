@@ -90,7 +90,8 @@ void drawPanelTwo(App& a, const PluginTarget& t, const PluginState& st, float W)
   flk::wheel(c, DcMasterTune, 725, 15, 24, "Tune", skin::WheelBigLine | skin::WheelCentered);
   flk::wheel(c, DcVolume, 761, 15, 24, "Vol");
   flk::wheel(c, DcPan, 797, 15, 24, "Pan", skin::WheelBigLine | skin::WheelCentered);
-  skin::text(dl, F.p(842, 18), K.accent2C(), "DCO SYNTH", F.font(15));
+  if (!pui::titleWordmark(dl, "gl.dcosynth", F.p(842, 18), F.font(15)))  // J-136: the wordmark
+    skin::text(dl, F.p(842, 18), K.accent2C(), "DCO SYNTH", F.font(15));
   ImGui::SetCursorScreenPos(F.p(250, 8));
   liveScope(a, t, F.sz(360, 38));
 
@@ -358,7 +359,8 @@ void drawPanelOne(App& a, const PluginTarget& t, float W) {
   static const char* oct[3] = {"-1", "0", "+1"};
   flk::sw(c, DcOctave, 85, 18, 60, 18, oct, 3, true);
   flk::wheel(c, DcVolume, 884, 16, 24, "Vol");
-  skin::text(dl, F.p(930, 18), K.accent2C(), "DCO SYNTH", F.font(15));
+  if (!pui::titleWordmark(dl, "gl.dcosynth", F.p(930, 18), F.font(15)))  // J-136: the wordmark
+    skin::text(dl, F.p(930, 18), K.accent2C(), "DCO SYNTH", F.font(15));
   ImGui::SetCursorScreenPos(F.p(300, 8));
   liveScope(a, t, F.sz(480, 34));
   // Arpeggiator.

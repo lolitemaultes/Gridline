@@ -5,7 +5,7 @@
 //  - offline renders with latent effects are sample-identical to the same
 //    song without them;
 //  - latency changes while running cross-fade and settle on exact alignment;
-//  - any processing thread count gives bit-identical output (demo song and
+//  - any processing thread count gives bit-identical output (test song and
 //    converted FL projects when present locally);
 //  - profiling counters fill when enabled.
 #include <chrono>
@@ -16,7 +16,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
-#include "../src/core/Demo.h"
+#include "fixtures/TestSong.h"
 #include "../src/core/Document.h"
 #include "../src/core/PluginParams.h"
 #include "../src/core/Project.h"
@@ -365,8 +365,8 @@ int main() {
     return ok && ref.frames > 0;
   };
   {
-    Song demo = makeDemoSong();
-    expect(checkParallel(demo, "demo", true), "demo song: 2/4/8 threads bit-identical to 1");
+    Song demo = makeTestSong();
+    expect(checkParallel(demo, "demo", true), "test song: 2/4/8 threads bit-identical to 1");
     // Small blocks (and the 64-sample control grid of linked songs) also agree.
     RenderOptions o;
     o.blockSize = 64;
@@ -374,7 +374,7 @@ int main() {
     AudioBuffer a = renderSong(demo, o);
     o.threads = 4;
     AudioBuffer b = renderSong(demo, o);
-    expect(sameBuffers(a, b), "demo song, 64-frame blocks: 4 threads bit-identical");
+    expect(sameBuffers(a, b), "test song, 64-frame blocks: 4 threads bit-identical");
   }
   {
     namespace fs = std::filesystem;

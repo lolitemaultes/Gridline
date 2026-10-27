@@ -159,7 +159,8 @@ void drawWavetableEditor(App& a, const PluginTarget& t, float W) {
   flk::Ctx c{a, t, F, K, dl};
 
   // ---- top strip: name, voice, master, macros, scope
-  skin::text(dl, F.p(12, 14), K.select, pluginTitle("gl.wavetable").c_str(), F.font(13));
+  if (!pui::titleWordmark(dl, "gl.wavetable", F.p(12, 14), F.font(13)))  // J-136: the wordmark
+    skin::text(dl, F.p(12, 14), K.select, pluginTitle("gl.wavetable").c_str(), F.font(13));
   static const char* modes[3] = {"POLY", "MONO", "LEGATO"};
   flk::sw(c, WtPlayMode, 120, 14, 150, 18, modes, 3, true);
   flk::text(c, 282, 8, "VOICES");

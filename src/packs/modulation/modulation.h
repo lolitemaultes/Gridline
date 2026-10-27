@@ -118,7 +118,10 @@ enum SeqStepField { SqOn, SqNote, SqOctave, SqVelocity, SqGate, SqTie, SqFields 
 inline constexpr int seqParam(int step, int field) { return step * SqFields + field; }
 inline constexpr int SqLength = kSeqSteps * SqFields;
 inline constexpr int SqRate = SqLength + 1, SqSwing = SqLength + 2, SqTranspose = SqLength + 3, SqThru = SqLength + 4;
-inline constexpr int SqCount = SqLength + 5;
+// J-138: how step velocity meets the played velocity. Appended; states saved before it load as SvStep.
+inline constexpr int SqVelMode = SqLength + 5;
+enum SeqVelMode { SvScale, SvStep };  // step x played velocity, or the step velocity alone
+inline constexpr int SqCount = SqLength + 6;
 // "gl.keymap" — Key Mapper (per pitch class offset, scale snap, transpose).
 inline constexpr int KmMap = 0;  // 12 offsets (-13 = muted .. +12)
 enum KeyMap { KmRoot = 12, KmScale, KmSnap, KmTranspose, KmOctave, KmMulti, KmCount };

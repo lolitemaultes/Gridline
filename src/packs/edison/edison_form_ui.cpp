@@ -223,7 +223,9 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     const char* title = word.c_str();
     const float fs = F.d(17);
     ImVec2 ts = fr->CalcTextSizeA(fs, FLT_MAX, 0, title);
-    text(dl, fr, fs, ImVec2(F.p(698, 0).x - ts.x, F.p(0, 6).y), C(col::Text, 0.85f), title);
+    // J-136: the wordmark, right-aligned where the lower-case name sat
+    if (!pui::titleWordmarkIn(dl, "gl.edison", F.p(560, 3), F.p(698, 30), fs * 1.2f, 2, C(col::Text, 0.85f)))
+      text(dl, fr, fs, ImVec2(F.p(698, 0).x - ts.x, F.p(0, 6).y), C(col::Text, 0.85f), title);
     const std::string nm = s.slot ? "slot editor" : "sample editor";
     ImVec2 ns = fm->CalcTextSizeA(F.font(7), FLT_MAX, 0, nm.c_str());
     text(dl, fm, F.font(7), ImVec2(F.p(698, 0).x - ns.x, F.p(0, 31).y), C(col::TextDim), nm.c_str());

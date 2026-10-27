@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CLI smoke test: version, help, demo song render, FLP export and re-import of demo/.
+# CLI smoke test: version, help, writing the demo song, and render, FLP export and re-import of the test song.
 #   tools/ci/smoke.sh <path to the gridline CLI> [expected version]
 set -euo pipefail
 GL="${1:?path to the gridline CLI}"
@@ -23,17 +23,17 @@ fi
 
 "$GL" demo "$OUT/written-demo.json"
 nonempty "$OUT/written-demo.json"
-"$GL" info "$SRC/demo/demo.gridline.json"
-"$GL" render "$SRC/demo/demo.gridline.json" -o "$OUT/demo.wav" --sr 44100 --bits 16
+"$GL" info "$SRC/tests/fixtures/test_song.gridline.json"
+"$GL" render "$SRC/tests/fixtures/test_song.gridline.json" -o "$OUT/demo.wav" --sr 44100 --bits 16
 nonempty "$OUT/demo.wav"
-"$GL" render-stats "$SRC/demo/demo.gridline.json" --max-seconds 8
-"$GL" export-flp "$SRC/demo/demo.gridline.json" -o "$OUT/demo.flp"
+"$GL" render-stats "$SRC/tests/fixtures/test_song.gridline.json" --max-seconds 8
+"$GL" export-flp "$SRC/tests/fixtures/test_song.gridline.json" -o "$OUT/demo.flp"
 nonempty "$OUT/demo.flp"
 "$GL" import-flp "$OUT/demo.flp" -o "$OUT/demo-back.json"
 nonempty "$OUT/demo-back.json"
 "$GL" info "$OUT/demo-back.json"
 "$GL" render "$OUT/demo-back.json" -o "$OUT/demo-back.wav" --sr 44100 --bits 16
 nonempty "$OUT/demo-back.wav"
-"$GL" export-midi "$SRC/demo/demo.gridline.json" -o "$OUT/demo.mid"
+"$GL" export-midi "$SRC/tests/fixtures/test_song.gridline.json" -o "$OUT/demo.mid"
 nonempty "$OUT/demo.mid"
 echo "smoke: ok ($OUT)"

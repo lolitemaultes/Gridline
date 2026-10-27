@@ -149,7 +149,8 @@ void drawPad(App& a, const PluginTarget& t, float width) {
   flk::Ctx c{a, t, F, K, dl};
   ImGui::PushID("gl.membranepad");
   // Header: name LCD, fundamental readout, output wheel, audition tile.
-  flk::text(c, 16, 14, "MEMBRANE PAD", K.text, 10);
+  if (!pui::titleWordmark(c.dl, "gl.membranepad", c.F.p(16, 14), c.F.font(10), c.K.text))  // J-136: the wordmark
+    flk::text(c, 16, 14, "MEMBRANE PAD", K.text, 10);
   flk::lcd(c, 150, 10, 220, 20, st.data.empty() ? "<user patch>" : st.data.c_str());
   float p[MdCount];
   for (int k = 0; k < MdCount; ++k) p[k] = ui2::val(st, PdModel + k);
@@ -195,7 +196,8 @@ void drawKit(App& a, const PluginTarget& t, float width) {
   u.bank = std::clamp(u.bank, 0, 1);
   u.pattern = std::clamp(u.pattern, 0, kKitPatterns - 1);
   u.page = std::clamp(u.page, 0, 3);
-  flk::text(c, 30, 30, "MEMBRANE KIT", K.text, 10);
+  if (!pui::titleWordmark(c.dl, "gl.membranekit", c.F.p(30, 30), c.F.font(10), c.K.text))  // J-136: the wordmark
+    flk::text(c, 30, 30, "MEMBRANE KIT", K.text, 10);
   flk::lcd(c, 150, 26, 300, 22, d.kitName.empty() ? "<user kit>" : d.kitName.c_str());
   // ---- channel pads
   skin::well(dl, F.p(29, 57), F.p(609, 287), K, 4 * F.s);
@@ -378,7 +380,8 @@ void drawKick(App& a, const PluginTarget& t, float width) {
   flk::Ctx cM{a, t, F, kickMid(), dl};
   flk::Ctx cN{a, t, F, kickNoise(), dl};
   ImGui::PushID("gl.kicksculpt");
-  flk::text(c, 10, 6, "KICK SCULPTOR", K.text, 9);
+  if (!pui::titleWordmark(c.dl, "gl.kicksculpt", c.F.p(10, 6), c.F.font(9), c.K.text))  // J-136: the wordmark
+    flk::text(c, 10, 6, "KICK SCULPTOR", K.text, 9);
   if (!st.data.empty()) flk::lcd(c, 120, 4, 160, 14, st.data.c_str());
   // Arcs (decoration): the pitch arc and the click arc the wheels sit on.
   dl->PathArcTo(F.p(150, 260), 120 * F.s, 3.3f, 4.6f, 32);

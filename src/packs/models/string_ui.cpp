@@ -145,7 +145,8 @@ void drawStringModel(App& a, const PluginTarget& t, float width) {
   flk::Ctx c{a, t, F, K, dl};
   ImGui::PushID("gl.string");
   // ---- top: name, exciter LCD menu, voices, volume, level meter
-  skin::text(dl, F.p(16, 22), K.select, "STRING MODEL", F.font(13));
+  if (!pui::titleWordmark(dl, "gl.string", F.p(16, 22), F.font(13)))  // J-136: the wordmark
+    skin::text(dl, F.p(16, 22), K.select, "STRING MODEL", F.font(13));
   flk::text(c, 210, 18, "EXCITER");
   flk::menu(c, StExciter, 274, 17, 207, 22);
   flk::text(c, 520, 12, "VOICES");

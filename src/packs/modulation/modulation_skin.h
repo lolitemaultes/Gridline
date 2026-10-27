@@ -54,7 +54,9 @@ skin::Form openForm(const EditTarget& e, const skin::Skin& k, float formW, float
 // Sober panel (rounded, well colour) with its caption at the top left (form units).
 void panelBox(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k, const char* caption = nullptr);
 // Note processor title strip: large faint class word + plugin name (form units).
-void titleStrip(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k, const char* title);
+// J-136: `type` (when given) draws the plugin's wordmark in place of `title`.
+void titleStrip(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const skin::Skin& k, const char* title,
+                const char* type = nullptr);
 // Small text label in form units (left-aligned unless centred).
 void text(ImDrawList* dl, const skin::Form& F, float x, float y, const skin::Skin& k, const char* s, float px = 8.0f, bool centre = false,
           ImU32 col = 0);

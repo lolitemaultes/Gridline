@@ -140,45 +140,62 @@ void Arp::run(const ArpSlot& s, const float* off, int n, double sr, double tempo
   const int wrapPitch = s.wrapPitch + static_cast<int>(std::lround(off[11] * 24));
   const int cyclesPerStep = std::clamp(s.rangeWrap + 1 + static_cast<int>(std::lround(off[12] * 3)), 1, 8);
   const bool phantom = off[13] > 0.5f;
-  // swing: odd steps start late (0.5 = straight, 1 = a third of a step late), on rates at or below the swing division
+  // swing (0.5 = straight, 1 = the second division of each pair starts a third
+  // of a division late), on rates at or below the swing division. Each pair of
+  // swing divisions is warped piecewise linearly: its midpoint moves late, its
+  // ends stay put, so finer steps follow smoothly and never overtake each other.
   const double sw = std::clamp((swing - 0.5) * 2.0, 0.0, 1.0) / 3.0;
   const bool swingOn = sw > 0 && s.bpm && stepBeats <= swingDivBeats(swingDiv) * 1.001;
-  // steps per swing division: the steps of every second division start late
-  const int swingSteps = swingOn ? std::max(1, static_cast<int>(std::lround(swingDivBeats(swingDiv) / stepBeats))) : 1;
+  const double div = swingOn ? swingDivBeats(swingDiv) / stepBeats : 1.0;  // steps per swing division
+  auto swungAt = [&](double g) {  // grid position (steps) -> swung position (steps)
+    if (!swingOn) return g;
+    const double pair = std::floor(g / (2.0 * div) + 1e-9) * 2.0 * div, u = g - pair, mid = div * (1.0 + sw);
+    return pair + (u < div ? u * mid / div : mid + (u - div) * (2.0 * div - mid) / div);
+  };
+  // Synced to a running song (retrigger on launch off): the step grid is the
+  // song's (phase_ counts song steps); otherwise it starts at the trigger.
+  const bool songGrid = s.bpm && playing && !s.retrigLaunch;
   auto restart = [&]() {
     pos_ = 0, repeat_ = 0, transStep_ = 0, transDir_ = 1, cycles_ = 0, step_ = 0;
     cycle_.clear();
     if (s.veloRetrig) veloCur_ = 1;
   };
+  // J-138: phase_ = position on the step grid (steps), next_ = grid index of the next step.
+  auto join = [&]() {  // on the song grid: the next step is the first grid step from here
+    phase_ = beat / stepBeats;
+    next_ = std::ceil(phase_ - 1e-6);
+  };
   if (first_) {
     restart();
     veloCur_ = 1;
-    if (s.bpm && playing && s.retrigLaunch == false) phase_ = std::fmod(beat / stepBeats, 1.0);
-    else phase_ = 1.0;  // fire immediately
+    if (songGrid) join();
+    else phase_ = 0, next_ = 0;  // fire immediately; the grid starts here
     retrigAcc_ = 0;
     first_ = false;
   } else if (newNote_ && (s.retrigNote || (s.retrigFirst && heldCount_ == 1))) {
     restart();
-    phase_ = 1.0;
+    phase_ = 0, next_ = 0;
+  } else if (songGrid && std::fabs(beat / stepBeats - phase_) > 0.5) {
+    join();  // the song jumped (loop, seek) or the rate changed: back onto its grid
   }
   newNote_ = false;
   for (int i = 0; i < n; ++i) {
-    phase_ += stepsPerSample;
     if (s.retrigRate) {
       retrigAcc_ += beatsPerSample;
       if (retrigAcc_ >= retrigBeats) {
         retrigAcc_ -= retrigBeats;
         restart();
-        phase_ = 1.0;
+        phase_ = 0, next_ = 0;
       }
     }
     if (gateLeft_ > 0) {
       gateLeft_ -= stepsPerSample;
       if (gateLeft_ <= 0 && s.shape != ArpChord) stopAll(i);
     }
-    const double need = 1.0 + (swingOn ? (((step_ / swingSteps) & 1) ? sw : -sw) : 0.0);
-    if (phase_ < need) continue;
-    phase_ -= need;
+    const bool due = phase_ >= swungAt(next_) - 1e-9;
+    phase_ += stepsPerSample;
+    if (!due) continue;
+    next_ += 1;
     // next step
     if (repeat_ <= 0) {
       if (cycle_.empty() || pos_ >= static_cast<int>(cycle_.size())) {
@@ -341,23 +358,26 @@ void ClipPlayer::run(const ClipSlot& c, const float* off, int n, double sr, doub
   const double blockBeats = beatsPerSample * n;
   const double a = pos_, b = pos_ + blockBeats * dir_;
   auto inWindow = [&](double t, double lo, double hi) { return lo <= hi ? (t >= lo && t < hi) : (t > hi && t <= lo); };
-  // note-ons and note-offs inside the block
-  for (const auto& nt : c.notes) {
-    if (nt.mute) continue;
-    const double s0 = swung(nt.start), e0 = s0 + nt.len;
-    const int k = std::clamp(nt.key + trans, 0, 127);
-    if (inWindow(s0, a, b)) {
-      const int at = std::clamp(static_cast<int>(std::fabs(s0 - a) / beatsPerSample), 0, n - 1);
-      if (on_[static_cast<size_t>(k)]) out.push({k, 0, false, at});
-      out.push({k, std::clamp(nt.vel * (c.veloTrig ? trigVel_ / 0.8f : 1.f), 0.02f, 1.f), true, at});
-      on_[static_cast<size_t>(k)] = 1;
+  // note-ons and note-offs in clip positions [lo, hi), the window starting `base` samples into the block
+  auto scan = [&](double lo, double hi, double base) {
+    for (const auto& nt : c.notes) {
+      if (nt.mute) continue;
+      const double s0 = swung(nt.start), e0 = s0 + nt.len;
+      const int k = std::clamp(nt.key + trans, 0, 127);
+      if (inWindow(s0, lo, hi)) {
+        const int at = std::clamp(static_cast<int>(base + std::fabs(s0 - lo) / beatsPerSample), 0, n - 1);
+        if (on_[static_cast<size_t>(k)]) out.push({k, 0, false, at});
+        out.push({k, std::clamp(nt.vel * (c.veloTrig ? trigVel_ / 0.8f : 1.f), 0.02f, 1.f), true, at});
+        on_[static_cast<size_t>(k)] = 1;
+      }
+      if (on_[static_cast<size_t>(k)] && inWindow(e0, lo, hi)) {
+        const int at = std::clamp(static_cast<int>(base + std::fabs(e0 - lo) / beatsPerSample), 0, n - 1);
+        out.push({k, 0, false, at});
+        on_[static_cast<size_t>(k)] = 0;
+      }
     }
-    if (on_[static_cast<size_t>(k)] && inWindow(e0, a, b)) {
-      const int at = std::clamp(static_cast<int>(std::fabs(e0 - a) / beatsPerSample), 0, n - 1);
-      out.push({k, 0, false, at});
-      on_[static_cast<size_t>(k)] = 0;
-    }
-  }
+  };
+  scan(a, b, 0);
   // automation lanes
   for (int l = 0; l < std::min(laneCount, static_cast<int>(c.lanes.size())); ++l) {
     const auto& pts = c.lanes[static_cast<size_t>(l)].pts;
@@ -386,7 +406,17 @@ void ClipPlayer::run(const ClipSlot& c, const float* off, int n, double sr, doub
   }
   // loop handling per mode
   if (pos_ >= len || pos_ < 0) {
-    stopAll(n - 1);
+    // J-138: a plain forward loop wraps inside the block: notes end at the clip
+    // end and the next pass's first notes play in the rest of the block (they
+    // used to be skipped whenever the loop did not end on a block boundary).
+    const bool wrapFwd = c.mode == 0 && dir_ > 0 && !finishing_ && pos_ >= len && pos_ - len < len;
+    const double wrapAt = std::clamp((len - a) / beatsPerSample, 0.0, static_cast<double>(n - 1));
+    stopAll(wrapFwd ? static_cast<int>(wrapAt) : n - 1);
+    if (wrapFwd) {
+      pos_ -= len;
+      scan(0.0, pos_, wrapAt);
+      return;
+    }
     if (finishing_) {
       running_ = false, finishing_ = false;
       return;

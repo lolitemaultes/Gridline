@@ -18,3 +18,8 @@ function(gridline_embed_demo in out)
   endif()
   file(WRITE "${out}" "${src}")
 endfunction()
+
+# Script mode (build.sh): cmake -DIN=<json> -DOUT=<cpp> -P cmake/EmbedDemo.cmake
+if(CMAKE_SCRIPT_MODE_FILE AND DEFINED IN AND DEFINED OUT)
+  gridline_embed_demo("${IN}" "${OUT}")
+endif()

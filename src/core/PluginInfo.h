@@ -38,7 +38,17 @@ struct ParamDesc {
   double fromNormalized(double n) const;
   // Human-readable value, e.g. "1.20 kHz", "-6.0 dB", "Saw".
   std::string format(double v) const;
+  // J-136: true when v sits on the default (within kDefaultEpsilon of the
+  // normalized range), so a double-click types instead of resetting.
+  static constexpr double kDefaultEpsilon = 1e-4;
+  bool isDefault(double v) const;
 };
+
+// J-136: what a double-click does on a parameter knob or slider, the same in
+// every editor: reset to the default when the value differs from it (one undo
+// step), else open the type-in popup.
+enum class ParamDoubleClick { Reset, Type };
+ParamDoubleClick paramDoubleClick(const ParamDesc& d, double value);
 
 // NoteFx: note processors placed on a channel before its instrument (Channel::noteFx).
 enum class PluginKind { Generator, Effect, NoteFx };

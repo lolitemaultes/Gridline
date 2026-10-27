@@ -19,8 +19,8 @@ file(MAKE_DIRECTORY "${OUT}")
 file(READ "${DEMO}" demo)  # a copy: the demo song is never opened (or saved over) in place
 file(WRITE "${OUT}/fixture.gridline.json" "${demo}")
 get_filename_component(src "${DEMO}" DIRECTORY)
-configure_file("${src}/../assets/sounds/classic/open.wav" "${OUT}/Snap.wav" COPYONLY)
-configure_file("${src}/../assets/sounds/classic/save.wav" "${OUT}/Tick.wav" COPYONLY)
+configure_file("${src}/../../assets/sounds/classic/open.wav" "${OUT}/Snap.wav" COPYONLY)
+configure_file("${src}/../../assets/sounds/classic/save.wav" "${OUT}/Tick.wav" COPYONLY)
 file(WRITE "${OUT}/presets/gl.synth/Warm Bass.json" "{\"format\": \"gridline-preset\", \"type\": \"gl.synth\", \"params\": []}\n")
 
 function(run tag frames script)

@@ -98,7 +98,7 @@ void arpEditor(EditTarget& e) {
   sk::panelBox(dl, F, 392, 116, 200, 80, K, "VELOCITY");
   sk::selector(e, ArVelMode, F.p(400, 134), F.sz(116, 56), K, nullptr, 1);
   sk::wheelL(e, ArVelocity, F, 536, 136, 34, K, "FIXED");
-  sk::titleStrip(dl, F, 0, 202, kW, 36, K, "Arpeggiator");
+  sk::titleStrip(dl, F, 0, 202, kW, 36, K, "Arpeggiator", "gl.arp");
   F.end(0, kH);
 }
 
@@ -141,7 +141,7 @@ void chordEditor(EditTarget& e) {
   sk::wheelL(e, ChStrum, F, 356, lowY + 18, 36, K, "STRUM");
   sk::wheelL(e, ChVelSpread, F, 406, lowY + 18, 36, K, "VEL SPRD");
   sk::selector(e, ChStrumDir, F.p(456, lowY + 24), F.sz(128, 22), K);
-  sk::titleStrip(dl, F, 0, kH - 36, kW, 36, K, "Chord Generator");
+  sk::titleStrip(dl, F, 0, kH - 36, kW, 36, K, "Chord Generator", "gl.chord");
   F.end(0, kH);
 }
 
@@ -164,6 +164,9 @@ void seqEditor(EditTarget& e) {
   sk::wheelL(e, SqSwing, F, 74, 70, 36, K, "SWING");
   sk::wheelL(e, SqTranspose, F, 46, 128, 36, K, "TRANSPOSE");
   sk::check(e, SqThru, F.p(14, 190), F.sz(112, 18), K, "PASS HELD");
+  sk::menuBox(e, SqVelMode, F.p(14, 248), F.sz(110, 20), K);
+  if (ImGui::IsItemHovered())
+    e.a->setHint("Velocity: Step x played scales each step's velocity by how hard the key is played; Step only plays the step velocity");
   {
     char buf[24];
     std::snprintf(buf, sizeof buf, "STEP %d / %d", pos >= 0 ? pos + 1 : 0, len);
@@ -213,7 +216,7 @@ void seqEditor(EditTarget& e) {
   w::barLane(e, "vel", seqParam(0, SqVelocity), kSeqSteps, SqFields, F.sz(gw, 62), false, pos);
   ImGui::SetCursorScreenPos(F.p(gx, 194));
   w::barLane(e, "gate", seqParam(0, SqGate), kSeqSteps, SqFields, F.sz(gw, 46), false, pos);
-  sk::titleStrip(dl, F, 0, 282, kW, 36, K, "Note Sequencer");
+  sk::titleStrip(dl, F, 0, 282, kW, 36, K, "Note Sequencer", "gl.notesq");
   F.end(0, kH);
 }
 
@@ -254,7 +257,7 @@ void keymapEditor(EditTarget& e) {
   sk::digi(e, KmOctave, F.p(382, 206), F.sz(40, 20), K);
   laneLabel(dl, F, 436, 210, K, "MODE");
   sk::menuBox(e, KmMulti, F.p(472, 206), F.sz(162, 20), K);
-  sk::titleStrip(dl, F, 0, 236, kW, 36, K, pluginDisplayName("gl.keymap").c_str());
+  sk::titleStrip(dl, F, 0, 236, kW, 36, K, pluginDisplayName("gl.keymap").c_str(), "gl.keymap");
   F.end(0, kH);
 }
 
@@ -324,7 +327,7 @@ void splitEditor(EditTarget& e) {
   laneLabel(dl, F, 502, 156, K, "PLAYS ON");
   targetBox(e, zone, F, 502, 170, 166, 22);
   ImGui::PopID();
-  sk::titleStrip(dl, F, 0, 214, kW, 36, K, pluginDisplayName("gl.split").c_str());
+  sk::titleStrip(dl, F, 0, 214, kW, 36, K, pluginDisplayName("gl.split").c_str(), "gl.split");
   F.end(0, kH);
 }
 
@@ -390,7 +393,7 @@ void velEditor(EditTarget& e) {
   dl->AddLine(ImVec2(p0.x + 1, cy), ImVec2(p1.x - 1, cy), theme::withAlpha(K.text, 0.4f));
   // Title strip with the maximum wheel and reset (the reference keeps its
   // persistence wheel at the strip's right end).
-  sk::titleStrip(dl, F, 0, 348, kW, 42, K, pluginDisplayName("gl.velscale").c_str());
+  sk::titleStrip(dl, F, 0, 348, kW, 42, K, pluginDisplayName("gl.velscale").c_str(), "gl.velscale");
   if (!ref) {
     sk::text(dl, F, 360, 362, K, "MAX", 7.5f);
     sk::wheel(e, VsMax, F.p(386, 354), 30 * F.s, K);
@@ -440,7 +443,7 @@ void colourEditor(EditTarget& e) {
     targetBox(e, t, F, 426, 26 + t * 22, 120, 19, "(none)");
     ImGui::PopID();
   }
-  sk::titleStrip(dl, F, 0, 218, kW, 36, K, "Colour Router");
+  sk::titleStrip(dl, F, 0, 218, kW, 36, K, "Colour Router", "gl.colormap");
   F.end(0, kH);
 }
 
@@ -510,7 +513,7 @@ void scriptEditor(EditTarget& e) {
   ImGui::PopFont();
   sk::text(dl, F, 8, 298, K, "Lines: pitch = ...   velocity = ...   play = ...   (# starts a comment)", 7.0f);
   sk::text(dl, F, 8, 312, K, "Inputs: pitch vel color a b c beat t n     e.g.  play = rand() < a", 7.0f);
-  sk::titleStrip(dl, F, 0, 334, kW, 46, K, "Note Script");
+  sk::titleStrip(dl, F, 0, 334, kW, 46, K, "Note Script", "gl.notescript");
   F.end(0, kH);
 }
 

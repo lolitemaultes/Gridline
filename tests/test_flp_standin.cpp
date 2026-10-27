@@ -9,7 +9,7 @@
 #include <iterator>
 #include <map>
 #include <string>
-#include "../src/core/Demo.h"
+#include "fixtures/TestSong.h"
 #include "../src/core/PluginInfo.h"
 #include "../src/core/Project.h"
 #include "../src/core/ProjectInterop.h"
@@ -40,18 +40,18 @@ std::string readAll(const fs::path& p) {
   return std::string(std::istreambuf_iterator<char>(f), {});
 }
 
-// The demo project file (as `gridline export-flp demo/demo.gridline.json`).
+// The test song file (as `gridline export-flp tests/fixtures/test_song.gridline.json`).
 Song demoFile() {
   Song s;
   std::string err;
-  if (!loadProject(std::string(GRIDLINE_SOURCE_DIR) + "/demo/demo.gridline.json", s, &err)) s = makeDemoSong();
+  if (!loadProject(std::string(GRIDLINE_SOURCE_DIR) + "/tests/fixtures/test_song.gridline.json", s, &err)) s = makeTestSong();
   return s;
 }
 
 // A small song with one instance of `type`: its only channel playing two
 // notes (instrument) or a slot of insert 1 (effect; the channel goes there).
 Song oneOf(const PluginInfo& pi) {
-  Song s = makeDemoSong();
+  Song s = makeTestSong();
   s.channels.resize(1);
   Channel& c = s.channels[0];
   c.name = "Probe";

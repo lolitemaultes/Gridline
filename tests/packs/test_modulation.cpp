@@ -465,9 +465,9 @@ int main() {
     auto o = ons(ref);
     const double step = 0.25 * 96 * (44100.0 * 60.0 / (120.0 * 96));  // 1/16 at 120 BPM = 5512.5 samples
     bool timing = !o.empty();
-    for (size_t k = 0; k < o.size(); ++k)
-      timing = timing && o[k].at == 1000 + static_cast<int64_t>(std::ceil(k * step - 1e-9));
-    expect(timing, "arpeggiator steps land exactly on the 1/16 grid from the first note");
+    for (size_t k = 0; k < o.size(); ++k)  // J-138: the first step sounds with the key, the rest on the song's grid
+      timing = timing && o[k].at == (k == 0 ? 1000 : static_cast<int64_t>(std::ceil(static_cast<double>(k) * step - 1e-9)));
+    expect(timing, "arpeggiator steps land exactly on the song's 1/16 grid after the first note");
     expect(o.size() == 11, "arpeggiator plays every step until release (11 steps)");
     expect(o.size() >= 4 && o[0].m.pitch == 60 && o[1].m.pitch == 64 && o[2].m.pitch == 67 && o[3].m.pitch == 60,
            "arpeggiator up pattern");
@@ -495,7 +495,7 @@ int main() {
     for (size_t i = 0; udOk && i < want.size(); ++i) udOk = ud[i].m.pitch == want[i];
     expect(udOk, "arpeggiator up-down over two octaves");
     arp.params[mod::ArDirection] = mod::AdChord;
-    auto chord = ons(runFx(arp, aux, in, 6000, 256));
+    auto chord = ons(runFx(arp, aux, in, 5000, 256));  // one step (the next falls on the grid at 5513)
     expect(chord.size() == 6 && chord[0].at == chord[5].at, "arpeggiator chord mode plays all held notes per step");
     // latch keeps running after release
     PluginState latch = defaultPluginState("gl.arp");
@@ -509,6 +509,23 @@ int main() {
     expect(so.size() >= 3 && so[1].at == static_cast<int64_t>(std::ceil(step * 1.25 - 1e-9)) &&
                so[2].at == static_cast<int64_t>(std::ceil(step * 2 - 1e-9)),
            "swing delays odd steps by swing x half a step");
+    // J-138: velocity modes
+    PluginState vm = defaultPluginState("gl.arp");
+    std::vector<FxEvent> two = {on(0, 1, 60, 0.5f), on(0, 2, 64, 0.5f), off(30000, 1), off(30000, 2)};
+    auto played = ons(runFx(vm, aux, two, 30000, 256));
+    expect(played.size() >= 2 && near(played[0].m.velocity, 0.5, 1e-6), "arpeggiator: as played");
+    vm.params[mod::ArVelMode] = 1;
+    vm.params[mod::ArVelocity] = 0.3f;
+    auto fixedV = ons(runFx(vm, aux, two, 30000, 256));
+    expect(fixedV.size() == played.size() && near(fixedV[1].m.velocity, 0.3, 1e-6), "arpeggiator: fixed velocity");
+    vm.params[mod::ArVelocity] = 0.0f;
+    auto silent = runFx(vm, aux, two, 30000, 256);
+    expect(silent.empty(), "arpeggiator: fixed velocity 0 rests (no velocity-0 notes)");
+    vm.params[mod::ArVelMode] = 2;
+    vm.params[mod::ArDirection] = mod::AdChord;
+    auto acc = ons(runFx(vm, aux, two, 30000, 256));
+    expect(acc.size() >= 6 && acc[0].m.velocity > 0.6f && acc[2].m.velocity < 0.45f && acc[4].m.velocity > 0.6f,
+           "arpeggiator: accent first, chord mode accents one chord per cycle");
   }
 
   // ------------------------- 9. arpeggiator in the engine: render is block-size invariant
@@ -573,6 +590,96 @@ int main() {
     expect(o.size() == 5 && o[0].m.pitch == 60 && o[1].m.pitch == 64 && o[2].m.pitch == 67 && o[3].m.pitch == 76,
            "sequencer: steps pick held notes by index (lowest first), rests skip, octave shift");
     expect(o.size() >= 4 && o[3].at == static_cast<int64_t>(std::ceil(4 * 5512.5 - 1e-9)), "sequencer: step 5 on the grid");
+  }
+
+  // ------------- 11b. J-138: sequencer swing on the song grid, per-pattern pairs, velocity modes
+  {
+    NoteFxAux aux;
+    const double step = 5512.5;  // 1/16 at 120 BPM
+    auto at = [&](double steps) { return static_cast<int64_t>(std::ceil(steps * step - 1e-9)); };
+    PluginState q = defaultPluginState("gl.notesq");
+    q.params[mod::SqSwing] = 0.5f;
+    auto late = ons(runFx(q, aux, {on(400, 1, 60), off(60000, 1)}, 60000, 256));
+    bool grid = late.size() >= 6 && late[0].at == 400;
+    for (size_t k = 1; grid && k < 6; ++k) grid = late[k].at == at(static_cast<double>(k) + (k % 2 ? 0.25 : 0.0));
+    expect(grid, "sequencer: a key pressed late still swings on the song grid");
+    auto early = ons(runFx(q, aux, {on(at(2) - 400, 1, 60), off(60000, 1)}, 60000, 256));
+    expect(early.size() >= 3 && early[0].at == at(2) - 400 && early[1].at == at(3.25) && early[2].at == at(4),
+           "sequencer: a key pressed just early counts as the next grid step");
+    expect(sameEvents(runFx(q, aux, {on(400, 1, 60), off(60000, 1)}, 60000, 37), runFx(q, aux, {on(400, 1, 60), off(60000, 1)}, 60000, 1024)),
+           "sequencer: grid timing is block-size invariant");
+    PluginState three = q;
+    three.params[mod::SqLength] = 3;
+    auto t3 = ons(runFx(three, aux, {on(0, 1, 60), off(at(7.5), 1)}, at(7.5), 256));
+    const double want3[] = {0, 1.25, 2, 3, 4.25, 5, 6, 7.25};
+    bool pairs = t3.size() == 8;
+    for (size_t k = 0; pairs && k < 8; ++k) pairs = t3[k].at == at(want3[k]);
+    expect(pairs, "sequencer: swing pairs restart with each pass of an odd-length pattern");
+    // Turning the swing knob while it plays: the next steps follow at once.
+    {
+      auto fx = createNoteFx("gl.notesq");
+      PluginState live = defaultPluginState("gl.notesq");
+      uint32_t ids = 1;
+      NoteBuffer in, res;
+      std::vector<int64_t> starts;
+      for (int64_t pos = 0; pos < at(8); pos += 256) {
+        if (pos >= at(3.5)) live.params[mod::SqSwing] = 0.5f;
+        in.clear(), res.clear();
+        if (pos == 0) in.push(on(0, 1, 60).m);
+        NoteFxContext ctx;
+        ctx.from = 0, ctx.len = 256, ctx.clock = pos, ctx.spt = 44100.0 * 60.0 / (120.0 * 96), ctx.playing = true, ctx.idCounter = &ids;
+        fx->process(live, aux, ctx, in, res);
+        for (int i = 0; i < res.count; ++i)
+          if (res.ev[i].kind == NoteMsg::On) starts.push_back(pos + res.ev[i].offset);
+      }
+      expect(starts.size() >= 6 && starts[1] == at(1) && starts[3] == at(3) && starts[5] == at(5.25),
+             "sequencer: swing changed during playback applies to the next steps");
+    }
+    // The song loops back: the next step lands on the grid at the loop start.
+    {
+      auto fx = createNoteFx("gl.notesq");
+      PluginState st = defaultPluginState("gl.notesq");
+      uint32_t ids = 1;
+      NoteBuffer in, res;
+      std::vector<int64_t> starts;
+      const int64_t wrap = 155 * 128;  // about 3.6 steps; the loop point falls on a block edge, as the engine splits there
+      for (int64_t pos = 0; pos < wrap + at(2.5); pos += 128) {
+        in.clear(), res.clear();
+        if (pos == 0) in.push(on(0, 1, 60).m);
+        NoteFxContext ctx;
+        const int64_t songPos = pos < wrap ? pos : pos - wrap;  // transport sample position
+        ctx.from = 0, ctx.len = 128, ctx.clock = songPos, ctx.spt = 44100.0 * 60.0 / (120.0 * 96), ctx.playing = true, ctx.idCounter = &ids;
+        fx->process(st, aux, ctx, in, res);
+        for (int i = 0; i < res.count; ++i)
+          if (res.ev[i].kind == NoteMsg::On) starts.push_back(pos + res.ev[i].offset);
+      }
+      expect(starts.size() == 7 && starts[4] == wrap && starts[5] == wrap + at(1) && starts[6] == wrap + at(2),
+             "sequencer: after the song loops back, steps continue on the grid from the loop start");
+    }
+    // Velocity: step x played (new default) or the step alone (states saved before the choice).
+    PluginState v = defaultPluginState("gl.notesq");
+    expect(v.params[mod::SqVelMode] == mod::SvScale, "sequencer: new instances scale the played velocity");
+    for (int k = 0; k < mod::kSeqSteps; ++k) v.params[static_cast<size_t>(mod::seqParam(k, mod::SqVelocity))] = k % 2 ? 0.5f : 1.0f;
+    auto sv = ons(runFx(v, aux, {on(0, 1, 60, 0.6f), off(at(3.5), 1)}, at(4), 256));
+    expect(sv.size() == 4 && near(sv[0].m.velocity, 0.6, 1e-5) && near(sv[1].m.velocity, 0.3, 1e-5),
+           "sequencer: step velocity scales the played velocity");
+    auto loud = ons(runFx(v, aux, {on(0, 1, 60, 1.0f), off(at(3.5), 1)}, at(4), 256));
+    expect(loud.size() == 4 && loud[1].m.velocity > sv[1].m.velocity, "sequencer: harder playing, louder steps");
+    v.params[mod::SqVelMode] = mod::SvStep;
+    auto fixed = ons(runFx(v, aux, {on(0, 1, 60, 0.2f), off(at(3.5), 1)}, at(4), 256));
+    expect(fixed.size() == 4 && near(fixed[0].m.velocity, 1.0, 1e-5) && near(fixed[1].m.velocity, 0.5, 1e-5),
+           "sequencer: 'Step only' plays the step velocity");
+    PluginState old = defaultPluginState("gl.notesq");
+    old.params.resize(static_cast<size_t>(mod::SqVelMode));  // saved before the choice existed
+    normalizePluginState(old);
+    expect(old.params.size() == static_cast<size_t>(mod::SqCount) && old.params[mod::SqVelMode] == mod::SvStep,
+           "sequencer: older saved states keep playing the step velocity alone");
+    v.params[mod::SqVelMode] = mod::SvScale;
+    v.params[static_cast<size_t>(mod::seqParam(1, mod::SqVelocity))] = 0.0f;
+    auto zero = runFx(v, aux, {on(0, 1, 60, 0.8f), off(at(3.5), 1)}, at(5), 256);
+    int onsN = 0, offsN = 0;
+    for (const auto& e : zero) (e.m.kind == NoteMsg::On ? onsN : offsN) += 1;
+    expect(ons(zero).size() == 3 && ons(zero)[1].at == at(2) && onsN == offsN, "sequencer: a step at velocity 0 rests; every note is released");
   }
 
   // ------------------------------------------------------------ 12. key mapper

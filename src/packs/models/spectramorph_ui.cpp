@@ -56,7 +56,8 @@ void drawSpectraMorph(App& a, const PluginTarget& t, float width) {
   if (!any) d = factoryMorph(), d.name = "(built-in programs)";
   ImGui::PushID("gl.spectramorph");
   // ---- top bar
-  skin::text(dl, F.p(12, 14), K.select, "SPECTRA MORPH", F.font(13));
+  if (!pui::titleWordmark(dl, "gl.spectramorph", F.p(12, 14), F.font(13)))  // J-136: the wordmark
+    skin::text(dl, F.p(12, 14), K.select, "SPECTRA MORPH", F.font(13));
   flk::lcd(c, 150, 12, 230, 20, d.name.empty() ? "(untitled)" : d.name.c_str());
   flk::wheel(c, SmVolume, 400, 6, 30, "Volume");
   flk::wheel(c, SmTranspose, 448, 6, 30, "Trans", skin::WheelBigLine | skin::WheelCentered);

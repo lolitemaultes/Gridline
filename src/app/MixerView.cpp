@@ -13,6 +13,7 @@
 #include "CursorAnchor.h"
 #include "../core/I18n.h"
 #include "Keys.h"
+#include "Look.h"
 #include "../../third_party/imgui/imgui.h"
 #include "App.h"
 #include "AudioRecordUi.h"
@@ -285,7 +286,16 @@ void stripMeter(ImGuiID key, float pl, float pr, float rl, float rr, ImVec2 size
   };
   const float zero = toPos(1.0f), warn = toPos(0.5f);
   const float w = std::floor((size.x - 1) * 0.5f);
-  for (int ch = 0; ch < 2; ++ch) {
+  if (look::styled()) {  // J-137: the strip meters follow the control style like every other meter
+    look::Meter m;
+    const bool rms = v.meterMode == MixerViewState::Rms;
+    m.l = toPos(rms ? s.rl : s.l), m.r = toPos(rms ? s.rr : s.r);
+    if (v.meterMode == MixerViewState::PeakRms) m.rmsL = toPos(s.rl), m.rmsR = toPos(s.rr);
+    if (v.peakHold) m.peakL = toPos(s.holdL), m.peakR = toPos(s.holdR);
+    m.clip = s.holdL > 1.0f || s.holdR > 1.0f;
+    look::meter(dl, p, ImVec2(p.x + size.x, p.y + size.y), m);
+  }
+  for (int ch = 0; ch < 2 && !look::styled(); ++ch) {
     const float pk = toPos(ch == 0 ? s.l : s.r), rm = toPos(ch == 0 ? s.rl : s.rr), hold = toPos(ch == 0 ? s.holdL : s.holdR);
     const float v0 = v.meterMode == MixerViewState::Rms ? rm : pk;
     ImVec2 a0(p.x + static_cast<float>(ch) * (w + 1), p.y), b0(a0.x + w, p.y + size.y);
@@ -460,12 +470,13 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
   const ImU32 bodyC = inSel ? theme::mix(P.surface700, P.paper, 0.04f) : P.surface800;
   dl->AddRectFilled(p, ImVec2(p.x + stripW, p.y + stripH), theme::mix(bodyC, P.ink, 0.35f), theme::kRadius);
   dl->AddRectFilled(p, ImVec2(p.x + stripW, p.y + stripH - 1), bodyC, theme::kRadius);
+  // J-137: outlines lie inside the strip (the first strip touches the pane's clip edge, which cut half of them).
   if (isSel)
-    dl->AddRect(p, ImVec2(p.x + stripW, p.y + stripH), theme::withAlpha(P.hot, 0.55f), theme::kRadius);
+    dl->AddRect(ImVec2(p.x + 0.5f, p.y + 0.5f), ImVec2(p.x + stripW - 0.5f, p.y + stripH - 0.5f), theme::withAlpha(P.hot, 0.55f), theme::kRadius);
   else if (inSel)
-    dl->AddRect(p, ImVec2(p.x + stripW, p.y + stripH), theme::withAlpha(P.hot, 0.3f), theme::kRadius);
+    dl->AddRect(ImVec2(p.x + 0.5f, p.y + 0.5f), ImVec2(p.x + stripW - 0.5f, p.y + stripH - 0.5f), theme::withAlpha(P.hot, 0.3f), theme::kRadius);
   if (ImU32 fc = 0; const float fl = collabui::flash(a, "mixer/#" + std::to_string(t.id), &fc))  // J-111: a collaborator's change
-    dl->AddRect(ImVec2(p.x - 1, p.y - 1), ImVec2(p.x + stripW + 1, p.y + stripH + 1), theme::withAlpha(fc, fl), theme::kRadius, 0, 2.0f);
+    dl->AddRect(ImVec2(p.x + 1, p.y + 1), ImVec2(p.x + stripW - 1, p.y + stripH - 1), theme::withAlpha(fc, fl), theme::kRadius, 0, 2.0f);
   const float plateH = 36.0f;
   dl->AddRectFilled(ImVec2(p.x + 2, p.y + 2), ImVec2(p.x + stripW - 2, p.y + plateH), theme::mix(P.field, tc, 0.22f), theme::kRadiusSm);
   dl->AddRectFilled(ImVec2(p.x + 2, p.y + 2), ImVec2(p.x + stripW - 2, p.y + 4), tc, theme::kRadiusSm, ImDrawFlags_RoundCornersTop);

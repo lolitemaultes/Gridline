@@ -208,7 +208,8 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   iskin::wheel(a, t, sk, SlMinGap, 606, 62, 26, sk.c.fill);
   iskin::wheel(a, t, sk, SlVelocity, 638, 62, 26, sk.c.fill);
   iskin::text(sk, 630, 88, 42, 9, "VEL", 7.5f, sk.c.label, 1, false, true);
-  iskin::text(sk, 589, 12, 118, 40, pluginTitle("gl.slicer").c_str(), 26, rgb(0xF5781B), 2, false, true);
+  if (!pui::titleWordmarkIn(sk.dl(), "gl.slicer", sk.at(589, 12), sk.at(589 + 118, 12 + 40), sk.px(26), 2, sk.c.text))  // J-136: the wordmark
+    iskin::text(sk, 589, 12, 118, 40, pluginTitle("gl.slicer").c_str(), 26, rgb(0xF5781B), 2, false, true);
 
   // ---- region panel.
   iskin::bevel(sk, 0, 99, kSxW, 198, rgb(0x60686C), 0, 0);

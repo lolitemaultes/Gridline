@@ -739,7 +739,7 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   if ((e.flags & kNoteSlide) && glides) {
     if (rt->pendingCount == 0 || rt->lastPitch < 0) return;
     const float shift = e.pitch - rt->lastPitch;
-    const double secs = static_cast<double>(std::max<Tick>(1, e.off - e.on)) * spt / sr_;
+    const double secs = std::max(1.0, noteOffTick(e) - noteOnTick(e)) * spt / sr_;
     for (int i = 0; i < rt->pendingCount; ++i)
       gen->glide(rt->pending[i].id, rt->pending[i].pitch + shift + ch.pitchOffset, secs, offset);
     return;
@@ -770,7 +770,7 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
         }
       gen->glide(kept.id, e.pitch + ch.pitchOffset, ch.portaTime, offset);
       rt->keys.retarget(kept.id, e.pitch);
-      kept.off = e.off;
+      kept.off = noteOffTick(e);
       kept.pitch = e.pitch;
       kept.at = at;
       rt->pending[0] = kept;
@@ -801,7 +801,7 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   }
   ChannelRuntime::Pending pd;
   pd.id = id;
-  pd.off = e.off;
+  pd.off = noteOffTick(e);
   pd.at = at;
   pd.pitch = e.pitch;
   rt->pending[rt->pendingCount++] = pd;
@@ -1023,7 +1023,7 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
     auto it = std::lower_bound(evs->begin(), evs->end(), static_cast<Tick>(std::floor(tLo)),
                                [](const NoteEv& e, Tick t) { return e.on < t; });
     for (; it != evs->end() && static_cast<double>(it->on) <= tHi; ++it) {
-      int64_t s = sampleOf(static_cast<double>(it->on));
+      int64_t s = sampleOf(noteOnTick(*it));
       if (s < c0 || s >= c1) continue;
       if (nStarts >= kMaxBlockStarts) break;
       starts_[static_cast<size_t>(nStarts++)] = {s, static_cast<int>(ci), &*it};
@@ -1038,7 +1038,7 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
       ChannelRuntime* rt = ch.rt.get();
       if (!rt || !rt->gen) continue;
       for (int i = 0; i < rt->pendingCount;) {
-        int64_t s = sampleOf(static_cast<double>(rt->pending[i].off));
+        int64_t s = sampleOf(rt->pending[i].off);
         if (s < lim) {
           int off = s < c0 ? from : from + static_cast<int>(s - c0);
           sendOff(ch, rt->pending[i].id, off);
@@ -1568,7 +1568,7 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
     auto it = std::lower_bound(lc.notes.begin(), lc.notes.end(), static_cast<Tick>(std::floor(ca)) - 1,
                                [](const ProgLiveClip::Ev& e, Tick t) { return e.e.on < t; });
     for (; it != lc.notes.end() && static_cast<double>(it->e.on) < cb + 1.0; ++it) {
-      const int64_t s = sampleOf(static_cast<double>(origin + it->e.on));
+      const int64_t s = sampleOf(static_cast<double>(origin) + noteOnTick(it->e));
       if (s < sa || s >= sb) continue;
       if (it->channel < 0 || static_cast<size_t>(it->channel) >= p->channels.size()) continue;
       const ProgChannel& ch = p->channels[static_cast<size_t>(it->channel)];

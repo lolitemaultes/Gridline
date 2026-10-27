@@ -54,6 +54,52 @@ bool wordmark(App& a, const std::string& type, float size) {
   return true;
 }
 
+float wordmarkAt(ImDrawList* dl, const std::string& type, ImVec2 pos, float height, ImU32 word) {
+  ImVec2 sz;
+  if (!icons::wordmark::size(type, height, &sz)) return 0;
+  icons::wordmark::Colours c = wordmarkColours(type);
+  if (word) c.word = word;
+  icons::wordmark::draw(dl, type, pos, height, c);
+  return sz.x;
+}
+
+ImVec2 wordmarkSize(const std::string& type, float height) {
+  ImVec2 sz(0, 0);
+  if (!icons::wordmark::size(type, height, &sz)) return ImVec2(0, 0);
+  return sz;
+}
+
+namespace {
+// A title wordmark `h` px tall at `at`, with the name and tagline as the hint
+// on hover (as in the editor header).
+bool titleAt(ImDrawList* dl, const std::string& type, ImVec2 at, float h, ImU32 word) {
+  at = ImVec2(std::round(at.x), std::round(at.y));
+  const float w = wordmarkAt(dl, type, at, h, word);
+  if (w <= 0) return false;
+  if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(at, ImVec2(at.x + w, at.y + h))) {
+    const std::string name = pluginDisplayName(type), tag = pluginTagline(type);
+    app().setHint(tag.empty() ? name : name + "  \xC2\xB7  " + tag);
+  }
+  return true;
+}
+}  // namespace
+
+bool titleWordmark(ImDrawList* dl, const std::string& type, ImVec2 pos, float fontSize, ImU32 word) {
+  const float h = std::round(fontSize * kTitleWordmarkScale);
+  return titleAt(dl, type, ImVec2(pos.x, pos.y - (h - fontSize) * 0.5f), h, word);
+}
+
+bool titleWordmarkIn(ImDrawList* dl, const std::string& type, ImVec2 r0, ImVec2 r1, float fontSize, int align, ImU32 word) {
+  const ImVec2 unit = wordmarkSize(type, 24.0f);
+  if (unit.x <= 0) return false;
+  float h = std::min(std::round(fontSize * kTitleWordmarkScale), r1.y - r0.y);
+  h = std::floor(std::min(h, (r1.x - r0.x) * 24.0f / unit.x));
+  if (h < 6) return false;
+  const float w = wordmarkSize(type, h).x;
+  const float x = align == 1 ? (r0.x + r1.x - w) * 0.5f : align == 2 ? r1.x - w : r0.x;
+  return titleAt(dl, type, ImVec2(x, (r0.y + r1.y - h) * 0.5f), h, word);
+}
+
 float suiteLogo(ImDrawList* dl, ImVec2 pos, float height, bool mini) {
   const std::string key = mini ? "suite-mini" : "suite";
   ImVec2 sz;

@@ -3,6 +3,7 @@
 // a soft bloom), modulation is a second, cooler light that travels; live data
 // (meters, scopes, phases) glows and leaves short trails. The plugin's role
 // colour becomes its light, so each plugin keeps its own hue.
+#include <algorithm>
 #include <cstdio>
 
 #include "LookPaint.h"
@@ -120,7 +121,8 @@ class Lumen : public Painter {
   void slider(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Slider& s) override {
     const bool v = s.vertical;
     const float th = 4.0f;
-    const ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+    // J-139: the slot's centre line on the pixel grid (slot, fill and handle share it).
+    const ImVec2 c(v ? geom::sliderCentre(p0.x, p1.x, th) : (p0.x + p1.x) * 0.5f, v ? (p0.y + p1.y) * 0.5f : geom::sliderCentre(p0.y, p1.y, th));
     const ImVec2 a = v ? ImVec2(c.x - th * 0.5f, p0.y + 7) : ImVec2(p0.x + 7, c.y - th * 0.5f);
     const ImVec2 b = v ? ImVec2(c.x + th * 0.5f, p1.y - 7) : ImVec2(p1.x - 7, c.y + th * 0.5f);
     sunken(dl, a, b, th * 0.5f, tk.well);
@@ -150,27 +152,34 @@ class Lumen : public Painter {
   }
 
   void fader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Fader& f) override {
-    const float tx = std::round((p0.x + p1.x) * 0.5f) - 4;
-    const float y0 = p0.y + 14, y1 = p1.y - 14;
+    // J-139: centred on the control (moved left only to make room for a meter), one centre line (LookGeom.h).
+    const bool hasMeter = f.meterL >= 0;
+    const geom::FaderGeom g = geom::fader(p0.x, p0.y, p1.x, p1.y, f.norm, geom::kLumenFader, hasMeter);
+    const float tx = g.tx;
+    const float to = g.tickOut(geom::kLumenFader.tickOut);
     for (int i = 0; i <= 10; ++i) {
-      const float y = std::round(y1 - (y1 - y0) * static_cast<float>(i) / 10.0f) + 0.5f;
-      dl->AddLine(ImVec2(tx - 15, y), ImVec2(tx - (i % 2 ? 11 : 9), y), i == 8 ? tk.text : tk.textFaint, 1.0f);
+      const float y = g.tickY(static_cast<float>(i) / 10.0f);
+      const float ti = i % 2 ? 11.0f : geom::kLumenFader.tickIn;
+      if (ti >= to) continue;
+      const ImU32 c = i == 8 ? tk.text : tk.textFaint;
+      dl->AddLine(ImVec2(tx - to, y), ImVec2(tx - ti, y), c, 1.0f);
+      if (g.ticksRight) dl->AddLine(ImVec2(tx + ti, y), ImVec2(tx + to, y), c, 1.0f);
     }
-    sunken(dl, ImVec2(tx - 2, y0), ImVec2(tx + 2, y1), 2, tk.well);
-    const float y = std::round(y1 - (y1 - y0) * f.norm);
+    sunken(dl, ImVec2(g.trackX0, g.y0), ImVec2(g.trackX1, g.y1), 2, tk.well);
+    const float y = g.y;
     // The fader's light comes up while it is touched; at rest the travel is a quiet ember.
-    if (f.state & (Hover | Active)) lightBar(dl, ImVec2(tx - 1, y), ImVec2(tx + 1, y1), true, tk.value, 1);
-    else dl->AddRectFilled(ImVec2(tx - 1, y), ImVec2(tx + 1, y1), alpha(tk.value, 0.28f), 1);
-    if (f.meterL >= 0) {
+    if (f.state & (Hover | Active)) lightBar(dl, ImVec2(tx - 1, y), ImVec2(tx + 1, g.y1), true, tk.value, 1);
+    else dl->AddRectFilled(ImVec2(tx - 1, y), ImVec2(tx + 1, g.y1), alpha(tk.value, 0.28f), 1);
+    if (hasMeter) {
       Meter m;
       m.l = f.meterL, m.r = f.meterR, m.peakL = f.peakL, m.peakR = f.peakR;
-      meter(dl, ImVec2(tx + 13, y0), ImVec2(tx + 23, y1), m);
+      meter(dl, ImVec2(tx + 13, g.y0), ImVec2(tx + 23, g.y1), m);
     }
-    const ImVec2 h0(tx - 11, y - 13), h1(tx + 11, y + 13);
+    const ImVec2 h0(g.capX0, g.capY0), h1(g.capX1, g.capY1);
     raised(dl, h0, h1, 4, f.state);
     const ImU32 lc = (f.state & Active) ? tipOf(tk.value) : tk.value;
-    dl->AddRectFilled(ImVec2(h0.x + 3, y - 4), ImVec2(h1.x - 3, y + 4), alpha(lc, 0.12f), 2);
-    dl->AddLine(ImVec2(h0.x + 3, y + 0.5f), ImVec2(h1.x - 3, y + 0.5f), lc, 1.5f);
+    dl->AddRectFilled(ImVec2(h0.x + 3, y - 4.5f), ImVec2(h1.x - 3, y + 4.5f), alpha(lc, 0.12f), 2);
+    dl->AddLine(ImVec2(h0.x + 3, y), ImVec2(h1.x - 3, y), lc, 1.0f);
   }
 
   void meter(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Meter& m) override {
@@ -238,7 +247,7 @@ class Lumen : public Painter {
       const int s = dl->VtxBuffer.Size;
       dl->AddRectFilled(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p1.y - 1), alpha(col, 0.3f), tk.radius - 1);
       shadeV(dl, s, p0.y, p1.y, alpha(col, 0.05f), alpha(col, 0.35f));
-      dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), alpha(col, 0.18f), tk.radius + 1, 0, 2.0f);
+      dl->AddRect(ImVec2(p0.x + 1.5f, p0.y + 1.5f), ImVec2(p1.x - 1.5f, p1.y - 1.5f), alpha(col, 0.18f), std::max(0.0f, tk.radius - 1), 0, 2.0f);  // J-137: inside
       dl->AddRect(p0, p1, alpha(col, 0.7f), tk.radius);
       dl->AddLine(ImVec2(p0.x + 8, p1.y - 1), ImVec2(p1.x - 8, p1.y - 1), tipOf(col), 1.5f);
     }
@@ -310,7 +319,7 @@ class Lumen : public Painter {
   }
   void dropdown(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* txt, int state) override {
     sunken(dl, p0, p1, tk.radius, (state & Hover) ? rgb(0x0F1216) : tk.field);
-    if (state & (Active | Focus)) dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), alpha(tk.hot, 0.6f), tk.radius + 1, 0, 1.5f);
+    if (state & (Active | Focus)) dl->AddRect(ImVec2(p0.x + 0.75f, p0.y + 0.75f), ImVec2(p1.x - 0.75f, p1.y - 0.75f), alpha(tk.hot, 0.6f), tk.radius, 0, 1.5f);  // J-137: inside
     textIn(dl, Font::Body, 13, ImVec2(p0.x + 10, p0.y), ImVec2(p1.x - 22, p1.y), (state & Disabled) ? tk.textFaint : tk.text, txt, 0);
     ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(p1.x - 12, (p0.y + p1.y) * 0.5f), 10, (state & (Hover | Active)) ? tk.hot : tk.textDim);
   }
@@ -332,7 +341,7 @@ class Lumen : public Painter {
   }
   void field(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* txt, int state, int caret, bool lcd) override {
     sunken(dl, p0, p1, tk.radiusSm, tk.field);
-    if (state & (Active | Focus)) dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), alpha(tk.hot, 0.6f), tk.radiusSm + 1, 0, 1.5f);
+    if (state & (Active | Focus)) dl->AddRect(ImVec2(p0.x + 0.75f, p0.y + 0.75f), ImVec2(p1.x - 0.75f, p1.y - 0.75f), alpha(tk.hot, 0.6f), tk.radiusSm, 0, 1.5f);  // J-137: inside
     const Font f = lcd ? Font::MonoBold : Font::Mono;
     const float fs = lcd ? std::min(18.0f, (p1.y - p0.y) * 0.62f) : 13;
     const ImU32 tc = (state & Disabled) ? tk.textFaint : lcd ? tk.fieldText : tk.text;
@@ -352,25 +361,25 @@ class Lumen : public Painter {
   void stepPad(ImDrawList* dl, ImVec2 p0, ImVec2 p1, bool on, bool alt, float vel, bool playing, int state, ImU32 tint) override {
     const ImU32 col = roleOr(tint, tk.value);
     if (on) {
-      dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), alpha(col, 0.12f * vel), tk.radiusSm + 2);
       const int s = dl->VtxBuffer.Size;
       dl->AddRectFilled(p0, p1, col, tk.radiusSm);
       shadeV(dl, s, p0.y, p1.y, mix(dimOf(col), tipOf(col), vel), mix(darken(col, 0.7f), col, vel * 0.8f));
       dl->AddLine(ImVec2(p0.x + 2, p0.y + 0.5f), ImVec2(p1.x - 2, p0.y + 0.5f), alpha(IM_COL32_WHITE, 0.4f * vel), 1.0f);
+      // J-137: the emitted edge is drawn inside the pad (an outer glow was clipped by the rack's step viewport).
+      dl->AddRect(ImVec2(p0.x + 0.5f, p0.y + 0.5f), ImVec2(p1.x - 0.5f, p1.y - 0.5f), alpha(tipOf(col), 0.45f * vel), tk.radiusSm);
     } else {
       gradRect(dl, p0, p1, alt ? rgb(0x2A2629) : rgb(0x22282E), alt ? rgb(0x1A1719) : rgb(0x161A1E), tk.radiusSm);
       dl->AddRect(p0, p1, alpha(IM_COL32_WHITE, (state & Hover) ? 0.16f : 0.06f), tk.radiusSm);
     }
     if (playing) {
-      dl->AddRectFilled(ImVec2(p0.x - 3, p0.y - 3), ImVec2(p1.x + 3, p1.y + 3), alpha(IM_COL32_WHITE, 0.08f), tk.radiusSm + 3);
-      dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), alpha(IM_COL32_WHITE, 0.7f), tk.radiusSm + 1, 0, 1.0f);
+      dl->AddRectFilled(p0, p1, alpha(IM_COL32_WHITE, 0.08f), tk.radiusSm);  // J-137: inside the pad
+      dl->AddRect(ImVec2(p0.x + 0.5f, p0.y + 0.5f), ImVec2(p1.x - 0.5f, p1.y - 0.5f), alpha(IM_COL32_WHITE, 0.7f), tk.radiusSm, 0, 1.0f);
     }
   }
   void pad(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* lbl, float glow, int state, ImU32 tint) override {
     const ImU32 col = roleOr(tint, tk.hot);
     raised(dl, p0, p1, tk.radius, state);
     if (glow > 0) {
-      dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 4), ImVec2(p1.x + 4, p1.y + 4), alpha(col, 0.10f * glow), tk.radius + 4);
       const int s = dl->VtxBuffer.Size;
       dl->AddRectFilled(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p1.y - 1), alpha(col, 0.6f * glow), tk.radius);
       shadeV(dl, s, p0.y, p1.y, alpha(tipOf(col), 0.65f * glow), alpha(col, 0.2f * glow));

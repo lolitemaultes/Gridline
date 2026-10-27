@@ -56,10 +56,8 @@ bool drawCustomEditor(App& a, const PluginTarget& t, float width) {
   if (drawK3Editor(a, t, width)) return true;
   if (drawCustomEditor3(a, t, width)) return true;
   if (packs::drawEditor(a, t, width)) return true;
-  if (const PluginInfo* info = findPlugin(st->type)) {
-    std::string title = info->name;
-    for (char& c : title) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    editorKnobRow(a, t, width, title.c_str());
+  if (findPlugin(st->type)) {  // J-136: the header above shows the wordmark; no second name as text
+    editorKnobRow(a, t, width, "PARAMETERS");
     return true;
   }
   return false;

@@ -211,6 +211,17 @@ int main() {
     bool swung = false;
     for (const auto& e : ev) swung = swung || e.on == 24 + 6;  // half of the full swing (12 ticks)
     expect(swung, "channel swing mix scales the song swing");
+    // Odd steps per bar: swing pairs restart at each bar line, so bar 2's downbeat stays on the grid.
+    Pattern odd = s.patterns[0];
+    odd.bars = 2, odd.stepsPerBar = 5;
+    odd.notes.clear(), odd.stepProps.clear(), odd.stepLoop.clear();
+    odd.steps[a] = std::vector<uint8_t>(10, 0);
+    odd.steps[a][1] = odd.steps[a][5] = odd.steps[a][6] = 100;
+    c.swingMix = 1.0f;
+    ev = compilePatternChannel(s, odd, a);
+    const Tick st = s.ticksPerStep(odd);
+    expect(ev.size() == 3 && ev[0].on == st + st / 2 && ev[1].on == 5 * st && ev[2].on == 6 * st + st / 2,
+           "swing pairs restart at each bar line");
   }
   {
     Song s = baseSong();

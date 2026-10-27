@@ -122,7 +122,8 @@ void drawFmDuoEditor(App& a, const PluginTarget& t, float W) {
   modPanel(c, st, FdM2Coarse, 358, "MODULATION 2", false);
 
   flk::section(c, 180, 205, 354, 31, "");
-  skin::text(dl, F.p(190, 212), K.accent2C(), "FM DUO", F.font(14));
+  if (!pui::titleWordmark(dl, "gl.fmduo", F.p(190, 212), F.font(14)))  // J-136: the wordmark
+    skin::text(dl, F.p(190, 212), K.accent2C(), "FM DUO", F.font(14));
   flk::text(c, 300, 218, "CARRIER + TWO MODULATORS", K.textDim, 8.0f);
   skin::keyboard("##duokb", F.p(2, 238), F.sz(532, 99), 36, 96, K);
   F.end(kW, kH);

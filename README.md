@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.7.0-beta.1" src="https://img.shields.io/badge/version-0.7.0--beta.1-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.0-beta.2" src="https://img.shields.io/badge/version-0.7.0--beta.2-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -47,7 +47,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks.
 
-**139 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities. Every one has its own editor, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step.
+**174 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
 
 **Real plugins, real interfaces.** VST3, CLAP, VST2, AU and LV2 instruments and effects open with their own interface, can run sandboxed in a separate process, and are checked by a built-in compatibility sweep. Edits made in a plugin's own interface can be undone too.
 
@@ -56,9 +56,11 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 </td>
 <td width="50%" valign="top">
 
-**A mixer that keeps time.** Plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ. Offline renders are bit-identical whatever the buffer size.
+**A mixer that keeps time.** Smooth swing for steps and notes alike, plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ. Offline renders are bit-identical whatever the buffer size.
 
 **Recording and editing.** Audio input with latency compensation, takes and comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, MIDI learn on every control.
+
+**Your look, your sounds.** Five control styles (Slate, the default, plus Graphite, Hairline, Lumen and Classic), light and dark themes with your own accent and role colours, and sound themes for the interface sounds, all in Settings > Theme.
 
 **Windows on every monitor.** Pop the mixer, piano roll, browser or any Gridline plugin editor out into a window of its own and put it on another screen. Detached panels come back where you left them; a plugin window opens inside the main window again until you pop it out.
 
@@ -68,7 +70,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 </tr>
 </table>
 
-**Demo song.** File > New from template > Demo song (or Help > Load demo song) opens "Gridline", a 4:25 liquid drum & bass track at 174 BPM made only with the built-in instruments, effects and automation: no samples. It is a full project to take apart, from the felted wooden mallet lead and the moving reese to the rain bed, the buses, the sidechains and the automation lanes. `gridline demo song.json` writes it to a file; `tools/make_demo_song.py` is the script that composes it.
+**Demo song.** File > New from template > Demo song (or Help > Load demo song) opens "Gridline", a 4:25 liquid drum & bass track (it also greets a new install on its first launch) at 174 BPM made only with the built-in instruments, effects and automation: no samples. It is a full project to take apart, from the felted wooden mallet lead and the moving reese to the rain bed, the buses, the sidechains and the automation lanes. `gridline demo song.json` writes it to a file; `tools/make_demo_song.py` is the script that composes it.
 
 ## A closer look
 
@@ -146,7 +148,7 @@ sudo apt install build-essential cmake pkg-config libsdl2-dev libgl-dev libasoun
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4           # a fixed job count: a bare -j starts every compile at once and can run out of memory
-ctest --test-dir build          # 170 tests
+ctest --test-dir build          # 187 tests
 ./build/gridline-app            # start the app
 ```
 
@@ -166,16 +168,17 @@ Audio goes through SDL (Core Audio, WASAPI, ALSA / PulseAudio / PipeWire / JACK,
 ## Command line
 
 ```sh
-build/gridline info    demo/song.json                       # inspect a project
-build/gridline render  demo/song.json -o out.wav --bits 24  # render to audio (also .flac, .mp3, .ogg, .m4a, --stems)
-build/gridline export-midi demo/song.json -o song.mid       # write a MIDI file
+build/gridline demo    song.json                            # write the demo song to a project file
+build/gridline info    song.json                            # inspect a project
+build/gridline render  song.json -o out.wav --bits 24       # render to audio (also .flac, .mp3, .ogg, .m4a, --stems)
+build/gridline export-midi song.json -o song.mid            # write a MIDI file
 build/gridline import-midi song.mid -o song.json            # read a MIDI file
-build/gridline zip     demo/song.json -o song.zip           # project plus samples
-build/gridline export-flp-zip demo/song.json -o song.zip    # FL Studio zipped loop package
+build/gridline zip     song.json -o song.zip                # project plus samples
+build/gridline export-flp-zip song.json -o song.zip         # FL Studio zipped loop package
 build/gridline plugin-check --all --json report.json        # plugin compatibility sweep
-build/gridline bench   demo/song.json                       # load, save and render timings
+build/gridline bench   song.json                            # load, save and render timings
 build/gridline seltmann-analyse loop.wav                    # tempo, kind and slices Seltmann hears
-build/gridline mcp     demo/song.json                       # MCP server for AI assistants (docs/mcp.md)
+build/gridline mcp     song.json                            # MCP server for AI assistants (docs/mcp.md)
 build/gridline collab-run --test-connection                 # router type, port mapping and IPv6 for collaboration
 ```
 
@@ -197,7 +200,7 @@ build/gridline collab-run --test-connection                 # router type, port 
 - **The sandbox** runs a plugin in its own process. Audio and events travel through shared memory with a lock-free handshake. If the plugin crashes, Gridline keeps playing, the plugin is silenced and you can reload it.
 - **What plugins get from the host:** transport and tempo, sample-accurate notes and parameter changes, sidechain input, MIDI output into other channels, offline render mode, latency reporting into delay compensation, CLAP parameter modulation and preset discovery.
 - **LV2:** Gridline reads each bundle's Turtle files itself (no lilv). Control ports become parameters with their ranges, enumerations, toggles and logarithmic scales; MIDI travels in atom sequences both ways; plugins get `time:Position`, the worker, state (saved in the project), options with the block sizes, `lv2:enabled` bypass and `lv2:freeWheeling` during exports; the latency port feeds delay compensation; `lv2:Preset`s, also from other bundles, appear as the plugin's presets. Plugin interfaces open in the plugin window: CocoaUI on macOS, WindowsUI on Windows, X11UI on Linux and the BSDs, and external (kxstudio) interfaces in their own window. The Windows and X11 interface paths are built and unit-tested on CI but have not been used by hand yet; everything else is tested with in-tree test plugins on every system.
-- **Missing Serum or Kickstart:** a project whose Serum or Serum 2 is not installed plays it with Plasma, and a missing Kickstart or Kickstart 2 plays with Tideline. The saved state is mapped onto the stand-in and automation follows; the original plugin and its state stay in the project untouched, so a computer that has the plugin installed hosts it again. **Replace with Plasma** (or Tideline) in the plugin window keeps the stand-in for good. Installed plugins are always hosted as themselves.
+- **Missing Serum, Kickstart or Kilohearts effects:** a project whose Serum or Serum 2 is not installed plays it with Plasma, a missing Kickstart or Kickstart 2 plays with Tideline, and a missing Kilohearts single effect plays with its Gridline Suite Mini counterpart. The saved state is mapped onto the stand-in and automation follows; the original plugin and its state stay in the project untouched, so a computer that has the plugin installed hosts it again. **Replace with Plasma** (or Tideline) in the plugin window keeps the stand-in for good. Installed plugins are always hosted as themselves.
 - **Compatibility sweep:** `gridline plugin-check` loads every scanned plugin at several sample rates and buffer sizes, feeds it silence, noise and notes, checks for invalid output, round-trips its state, sweeps its parameters and opens and closes its editor.
 
 Interfaces: the VST 3 SDK interface headers (`third_party/vst3/pluginterfaces`, MIT), the CLAP headers (`third_party/clap`, MIT) and the LV2 specification headers (`third_party/lv2`, ISC). VST2 support uses Gridline's own description of the binary interface (`src/host/vst2/Vst2Abi.h`); no VST2 SDK code is included. No plugin binaries are shipped.
@@ -234,7 +237,7 @@ The **Host link** panel (a tab beside the browser) shows the transport, MIDI and
 
 ### Gridline Suite
 
-Every Gridline download also carries the **Gridline Suite**: Gridline's own instruments and effects, each as a plugin of its own for any DAW (vendor "Gridline"), in one bundle per format: `Gridline Suite.vst3`, `Gridline Suite.clap` and, on macOS, `Gridline Suite.component`. Each plugin is the same DSP and the same editor as inside Gridline:
+Every Gridline download also carries the **Gridline Suite**: Gridline's own instruments and effects, each as a plugin of its own for any DAW (vendor "Gridline"), in one bundle per format: `Gridline Suite.vst3`, `Gridline Suite.clap` and, on macOS, `Gridline Suite.component`. Gridline Suite Mini, 35 compact effects, ships beside it in the same way (`Gridline Suite Mini.vst3`, `.clap`, `.component`). Each plugin is the same DSP and the same editor as inside Gridline:
 
 - **Parameters:** every parameter of the plugin, named, with its range, steps and value text (`1.20 kHz`, `-6.0 dB`), automatable; effects add **Mix** and **Bypass**.
 - **Instruments** take MIDI; **effects** have a sidechain input where the effect uses one (Compressor, Limiter, Sidechain Ducker, Cipher, Cloister, Tideline, Transient Split, Hit Repeater); effects that play from notes (Cipher, Plumb, Tideline) also take MIDI.

@@ -479,7 +479,8 @@ void editorStereoEnhancer(App& a, const PluginTarget& t, float width) {
   sk::textSelector(a, t, v, "InvSelect", StInvert, pal, inv, 3);
   sk::label(v, "PosSelectLabel", pal, "PHASE", -1, true);
   sk::label(v, "InvSelectLabel", pal, "INVERT", 1, true);
-  sk::textAt(dl, v.p0(v.c("LogoLabel")), v.p1(v.c("LogoLabel")), pal.text, pluginTitle("gl.stereo").c_str(), fs, 0);
+  if (!pui::titleWordmarkIn(dl, "gl.stereo", v.p0(v.c("LogoLabel")), v.p1(v.c("LogoLabel")), fs * 1.3f, 0, pal.text))  // J-136
+    sk::textAt(dl, v.p0(v.c("LogoLabel")), v.p1(v.c("LogoLabel")), pal.text, pluginTitle("gl.stereo").c_str(), fs, 0);
   sk::wheel(a, t, v, "PanWheel", StPan, pal);
   sk::wheel(a, t, v, "VolWheel", classic ? StVolK : StVolume, pal);
   sk::textAt(dl, v.p0(v.c("PanWheelLabel")), v.p1(v.c("PanWheelLabel")), pal.text, "PAN", fs);

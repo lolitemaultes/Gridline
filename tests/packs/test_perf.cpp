@@ -10,7 +10,7 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "../../src/core/Demo.h"
+#include "../fixtures/TestSong.h"
 #include "../../src/core/Document.h"
 #include "../../src/core/PluginInfo.h"
 #include "../../src/core/PluginParams.h"
@@ -106,7 +106,7 @@ int main() {
 
   // ---- whole-song undo steps are deltas ----
   {
-    Document doc(makeDemoSong());
+    Document doc(makeTestSong());
     const Song s0 = doc.song();
     doc.editSong("tempo", [](Song& s) { s.tempo = 99; });
     const Song s1 = doc.song();
@@ -147,7 +147,7 @@ int main() {
 
   // ---- renders are identical for 1 and 4 threads and any block size ----
   {
-    Song s = makeDemoSong();
+    Song s = makeTestSong();
     RenderOptions o;
     o.threads = 1;
     AudioBuffer a = renderSong(s, o);

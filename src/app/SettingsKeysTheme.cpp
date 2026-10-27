@@ -19,8 +19,10 @@
 #include "App.h"
 #include "Keys.h"
 #include "SettingsPages.h"
+#include "SmoothScrollUi.h"
 #include "SoundThemeUi.h"
 #include "Theme.h"
+#include "ThemeLayout.h"
 #include "ThemeSettings.h"
 #include "Widgets.h"
 
@@ -340,41 +342,54 @@ uint32_t rgbOf(ImU32 c) { return ((c >> IM_COL32_R_SHIFT) & 0xFF) << 16 | ((c >>
 
 // A small studio scene drawn with the live palette: toolbar with lit tools,
 // step pads, LEDs, an LCD field, a grid with a selection and the song position.
-void themePreview(App& a) {
+void themePreview() {
   const auto& P = pal();
   const float w = ImGui::GetContentRegionAvail().x, h = 132.0f;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 o = ImGui::GetCursorScreenPos();
   dl->AddRectFilled(o, ImVec2(o.x + w, o.y + h), P.surface900, theme::kRadiusLg);
   dl->AddRect(o, ImVec2(o.x + w, o.y + h), P.line, theme::kRadiusLg);
-  // Toolbar strip.
+  // Toolbar strip. J-137: its parts follow one another and stop at the right
+  // edge, so a narrow page shows fewer of them instead of overlapping or
+  // cutting one in half.
   dl->AddRectFilled(ImVec2(o.x + 1, o.y + 1), ImVec2(o.x + w - 1, o.y + 30), P.chrome, theme::kRadiusLg, ImDrawFlags_RoundCornersTop);
+  const float right = o.x + w - theme::kS3;
+  float x = o.x + 7;
   const ui::Icon icons[] = {ui::Icon::ToolDraw, ui::Icon::ToolPaint, ui::Icon::ToolDelete, ui::Icon::ToolSelect, ui::Icon::ToolZoom};
-  for (int i = 0; i < 5; ++i) {
-    const ImVec2 c(o.x + 18 + i * 26.0f, o.y + 15);
+  for (int i = 0; i < 5 && x + 22 <= right; ++i, x += 26) {
+    const ImVec2 c(x + 11, o.y + 15);
     if (i == 0) dl->AddRectFilled(ImVec2(c.x - 11, c.y - 11), ImVec2(c.x + 11, c.y + 11), P.surface700, theme::kRadius);
     ui::drawIcon(dl, icons[i], c, 14, i == 0 ? theme::lit(P.hot) : P.textDim);
   }
-  // LCD field.
-  const ImVec2 f0(o.x + 156, o.y + 5), f1(o.x + 236, o.y + 25);
-  dl->AddRectFilled(f0, f1, P.field, theme::kRadiusSm);
-  dl->AddText(a.fontMono, theme::kFontNumber + 1, ImVec2(f0.x + 8, f0.y + 3), P.hot, "140.000");
+  x += theme::kS2;
+  // LCD field (the real LCD drawing of the control style).
+  if (x + 80 <= right) {
+    ui::Lcd(dl, ImVec2(x, o.y + 5), ImVec2(80, 20), "140.000", false, false);
+    x += 80 + theme::kS3;
+  }
   // LEDs.
-  for (int i = 0; i < 3; ++i) ui::Led(dl, ImVec2(o.x + 256 + i * 16.0f, o.y + 15), 4.5f, i != 1);
+  if (x + 40 <= right) {
+    for (int i = 0; i < 3; ++i) ui::Led(dl, ImVec2(x + 5 + i * 16.0f, o.y + 15), 4.5f, i != 1);
+    x += 40 + theme::kS3;
+  }
   // Text levels.
   {
-    float tx = o.x + 310;
     const struct { const char* t; ImU32 c; } levels[] = {{tr("Text"), P.text}, {tr("Caption"), P.textDim}, {tr("Hint"), P.textFaint}};
     for (const auto& l : levels) {
-      dl->AddText(ImVec2(tx, o.y + 7), l.c, l.t);
-      tx += ImGui::CalcTextSize(l.t).x + theme::kS3;
+      const float tw = ImGui::CalcTextSize(l.t).x;
+      if (x + tw > right) break;
+      dl->AddText(ImVec2(x, o.y + 7), l.c, l.t);
+      x += tw + theme::kS3;
     }
   }
-  // Step pads.
+  // Step pads as the channel rack draws them: a channel colour, and the step
+  // under the song position outlined inside its pad (ui::StepPlayOutline).
   for (int i = 0; i < 16; ++i) {
-    const float x = o.x + 12 + i * 20.0f;
-    if (x + 18 > o.x + w * 0.5f) break;
-    ui::StepPad(dl, ImVec2(x, o.y + 42), ImVec2(x + 17, o.y + 62), i % 4 == 0 || i == 6, (i / 4) % 2 == 1, false, 0, 1.0f);
+    const float sx = o.x + 12 + i * 20.0f;
+    if (sx + 18 > o.x + w * 0.5f) break;
+    const ImVec2 s0(sx, o.y + 42), s1(sx + 17, o.y + 62);
+    ui::StepPad(dl, s0, s1, i % 4 == 0 || i == 6, (i / 4) % 2 == 1, false, theme::rgb(0x5FA8D3), 1.0f);
+    if (i == 9) ui::StepPlayOutline(dl, s0, s1);
   }
   // Grid well with a selection and the song position.
   const ImVec2 g0(o.x + 12, o.y + 72), g1(o.x + w - 12, o.y + h - 10);
@@ -404,7 +419,16 @@ void groupHeading(App& a, const char* title, bool first = false) {
 }
 
 // One card of the control style picker: the style's own knob, fader and a
-// live meter, its name and a line about it. Returns true when clicked.
+// meter, its name and a line about it. Returns true when clicked.
+//
+// J-137: everything stays inside the card's own rectangle (the selection ring
+// too: it was drawn 3 px outside and the page's clip cut it on the first and
+// last card). The controls are the real ones (ui::DrawKnob / DrawFader /
+// DrawMeter, the code the mixer and the editors draw with), at their real
+// sizes, centred as one group: a wider card adds room around them, it never
+// stretches or spreads them. Their layout never depends on time; only the
+// meter level moves, and only while interface animations are on. Geometry:
+// ThemeLayout.h (checked headless by tests/test_theme_layout.cpp).
 bool styleCard(App& a, ui::ControlStyle s, bool selected, float w, float h) {
   static const char* const kTitles[] = {i18n::N_("Classic"), i18n::N_("Graphite"), i18n::N_("Hairline"), i18n::N_("Lumen"),
                                         i18n::N_("Slate")};
@@ -419,31 +443,36 @@ bool styleCard(App& a, ui::ControlStyle s, bool selected, float w, float h) {
   const bool hov = ImGui::IsItemHovered();
   ui::Hint(tr(kBlurbs[i]));
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  const float ph = h - 40.0f;  // preview area
+  const themelayout::Card L = themelayout::card(o.x, o.y, w, h);
+  auto v2 = [](float x, float y) { return ImVec2(x, y); };
+  dl->PushClipRect(o, ImVec2(o.x + w, o.y + h), true);  // nothing leaves the card
   {
     const ui::ControlStyleScope scope(s);
-    const ImVec2 p0(o.x, o.y), p1(o.x + w, o.y + ph);
-    look::panel(dl, p0, p1);
-    const double t = ImGui::GetTime();
-    look::Knob k;
-    k.norm = 0.62f, k.size = 1, k.state = hov ? look::Hover : 0;
-    k.modDepth = 0.18f, k.modNow = 0.62f + 0.12f * static_cast<float>(std::sin(t * 1.7));
-    look::knob(dl, ImVec2(o.x + w * 0.3f, o.y + ph * 0.5f), std::min(18.0f, ph * 0.3f), k);
-    look::Fader f;
-    f.norm = 0.72f;
-    look::fader(dl, ImVec2(o.x + w * 0.56f, o.y + 10), ImVec2(o.x + w * 0.56f + 18, o.y + ph - 10), f);
-    look::Meter m;
-    const float lv = 0.55f + 0.3f * static_cast<float>(std::sin(t * 3.1) * std::sin(t * 1.3));
-    m.l = lv, m.r = lv * 0.9f, m.peakL = 0.86f, m.peakR = 0.82f;
-    look::meter(dl, ImVec2(o.x + w * 0.78f, o.y + 10), ImVec2(o.x + w * 0.78f + 12, o.y + ph - 10), m);
+    const ImVec2 p0 = v2(L.preview.x0, L.preview.y0), p1 = v2(L.preview.x1, L.preview.y1);
+    // The surface an editor of this style has in the current base theme (in the light theme every
+    // style keeps the light surfaces and only the controls change, as in the plugin windows).
+    look::hookPanel(dl, p0, p1, P.surface800);
+    // Real sizes; scaled down (uniformly) only if a card is ever narrower than the group.
+    ui::DrawKnob(dl, v2((L.knob.x0 + L.knob.x1) * 0.5f, (L.knob.y0 + L.knob.y1) * 0.5f), (L.knob.x1 - L.knob.x0) * 0.5f, 0.62f, false, hov, false);
+    ui::DrawFader(dl, v2(L.fader.x0, L.fader.y0), v2(L.fader.x1 - L.fader.x0, L.fader.y1 - L.fader.y0), 0.72f, 0.8f, false, false);
+    float lv = 0.42f;  // a still level (gain 0.42, about -8 dB)
+    if (scrollui::animations()) {
+      const double t = ImGui::GetTime();
+      lv = 0.42f + 0.16f * static_cast<float>(std::sin(t * 3.1) * std::sin(t * 1.3));
+    }
+    ui::DrawMeter(dl, v2(L.meter.x0, L.meter.y0), v2(L.meter.x1 - L.meter.x0, L.meter.y1 - L.meter.y0), lv, lv * 0.85f, 0.71f, 0.63f);
   }
-  dl->AddText(a.fontBold, theme::kFontBody, ImVec2(o.x + 2, o.y + ph + 5), selected ? P.text : P.textDim, tr(kTitles[i]));
-  dl->PushClipRect(ImVec2(o.x, o.y + ph), ImVec2(o.x + w, o.y + h), true);  // long translations stay in the card
-  dl->AddText(ImVec2(o.x + 2, o.y + ph + 22), P.textFaint, tr(kBlurbs[i]));
+  // Selection / hover ring around the preview, inside the card.
+  if (selected || hov) {
+    const float th = selected ? 2.0f : 1.0f;
+    dl->AddRect(v2(L.ring.x0 + th * 0.5f, L.ring.y0 + th * 0.5f), v2(L.ring.x1 - th * 0.5f, L.ring.y1 - th * 0.5f), selected ? P.accent : P.lineStrong,
+                theme::kRadius + 2, 0, th);
+  }
+  // Name and line: fitted to the card with an ellipsis (the hint has the whole line).
+  const float tw = L.title.x1 - L.title.x0;
+  theme::textEllipsis(dl, a.fontBold, theme::kFontBody, v2(L.title.x0, L.title.y0), tw, selected ? P.text : P.textDim, tr(kTitles[i]));
+  theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, v2(L.title.x0, L.title.y0 + 18), tw, P.textFaint, tr(kBlurbs[i]));
   dl->PopClipRect();
-  if (selected || hov)
-    dl->AddRect(ImVec2(o.x - 3, o.y - 3), ImVec2(o.x + w + 3, o.y + ph + 3), selected ? P.accent : P.lineStrong, theme::kRadius + 2, 0,
-                selected ? 2.0f : 1.0f);
   ImGui::PopID();
   return clicked;
 }
@@ -456,12 +485,12 @@ void controlStylePicker(App& a) {
   const ui::ControlStyle order[] = {ui::ControlStyle::Slate, ui::ControlStyle::Graphite, ui::ControlStyle::Hairline,
                                     ui::ControlStyle::Lumen, ui::ControlStyle::Classic};
   const float avail = ImGui::GetContentRegionAvail().x, gap = theme::kS3;
-  const int perRow = avail >= 5 * 150.0f + 4 * gap ? 5 : avail >= 3 * 150.0f + 2 * gap ? 3 : 2;
-  const float w = std::floor((avail - gap * static_cast<float>(perRow - 1)) / static_cast<float>(perRow)), h = 132.0f;
+  const int perRow = themelayout::cardsPerRow(avail, gap);  // 5, 3 (3 + 2), 2 (2 + 2 + 1) or 1
+  const float w = themelayout::cardWidth(avail, gap);
   for (int n = 0; n < 5; ++n) {
     if (n % perRow) ImGui::SameLine(0, gap);
     else if (n) ImGui::Dummy(ImVec2(0, theme::kS1));
-    if (styleCard(a, order[n], order[n] == cur, w, h) && order[n] != cur) {
+    if (styleCard(a, order[n], order[n] == cur, w, themelayout::kCardH) && order[n] != cur) {
       const dispconf::Snapshot before = dispconf::take(st, dispconf::themeKeys());
       theme::controlStyleToSettings(order[n], st);
       applyTheme(a);
@@ -469,15 +498,17 @@ void controlStylePicker(App& a) {
     }
   }
   ImGui::Dummy(ImVec2(0, theme::kS1));
+  ImGui::PushTextWrapPos(0);
   ImGui::TextColored(theme::vec(pal().textFaint), "%s",
                      tr("Changes how knobs, faders, buttons, meters and displays are drawn everywhere. Sizes stay the same."));
+  ImGui::PopTextWrapPos();
 }
 
 }  // namespace
 
 // The Sounds group: interface sounds and the sound theme (J-133).
 void themeSoundsGroup(App& a, float fieldW) {
-  ui::BeginSection(tr("SOUNDS"));
+  ui::BeginSection(nullptr);  // J-137: the group heading above names it (no second SOUNDS caption)
   uisound::drawThemeSettings(a, fieldW);
   ui::EndSection();
 }
@@ -486,7 +517,7 @@ void themeSettingsPage(App& a, float fieldW) {
   Settings& st = a.settings;
   const auto& P = pal();
   groupHeading(a, i18n::N_("Appearance"), true);
-  ui::BeginSection(tr("APPEARANCE"));
+  ui::BeginSection(nullptr);  // J-137: the group heading above names it (no second APPEARANCE caption)
   {
     label("Theme");
     int m = static_cast<int>(theme::modeFromSettings(st));
@@ -581,7 +612,7 @@ void themeSettingsPage(App& a, float fieldW) {
   }
 
   ui::BeginSection(tr("PREVIEW"));
-  themePreview(a);
+  themePreview();
   ui::EndSection();
 
   // Colours only: the dark / light choice, the control style and the sound theme stay.

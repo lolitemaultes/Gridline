@@ -841,6 +841,7 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   j.object["timeSigNum"] = num(s.timeSigNum);
   j.object["timeSigDen"] = num(s.timeSigDen);
   j.object["swing"] = num(s.swing);
+  if (!s.swingNotes) j.object["swingNotes"] = boolean(false);  // J-138
   j.object["masterPitch"] = num(s.masterPitch);
   if (!s.autoCrossfades) j.object["autoCrossfades"] = boolean(false);  // J-38
   j.object["nextId"] = num(s.nextId);
@@ -1268,6 +1269,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   s.timeSigDen = jsonInt<int>(j.num("timeSigDen", 4));
   if (s.timeSigNum < 1 || s.timeSigDen < 1) return fail(err, "bad time signature");
   s.swing = static_cast<float>(std::clamp(j.num("swing", 0), 0.0, 1.0));
+  s.swingNotes = flag(j, "swingNotes", true);  // J-138
   s.masterPitch = static_cast<float>(std::clamp(j.num("masterPitch", 0), -12.0, 12.0));
   s.autoCrossfades = flag(j, "autoCrossfades", true);  // J-38
 

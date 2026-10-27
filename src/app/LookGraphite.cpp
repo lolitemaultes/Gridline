@@ -4,6 +4,7 @@
 // floor, exactly like the # cut into the icon. Monochrome by default: Paper is
 // the value, the lit-orange role marks modulation and "on", green stays for
 // LEDs and meters. Per-plugin colours tint the Paper floor lightly.
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -139,7 +140,8 @@ class Graphite : public Painter {
   void slider(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Slider& s) override {
     const bool v = s.vertical;
     const float th = 6.0f;
-    const ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+    // J-139: the slot's centre line on the pixel grid (slot, fill and handle share it).
+    const ImVec2 c(v ? geom::sliderCentre(p0.x, p1.x, th) : (p0.x + p1.x) * 0.5f, v ? (p0.y + p1.y) * 0.5f : geom::sliderCentre(p0.y, p1.y, th));
     const ImVec2 a = v ? ImVec2(c.x - th * 0.5f, p0.y + 8) : ImVec2(p0.x + 8, c.y - th * 0.5f);
     const ImVec2 b = v ? ImVec2(c.x + th * 0.5f, p1.y - 8) : ImVec2(p1.x - 8, c.y + th * 0.5f);
     sunken(dl, a, b, th * 0.5f, tk.rail);
@@ -167,30 +169,33 @@ class Graphite : public Painter {
   }
 
   void fader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Fader& f) override {
-    const float tx = std::round((p0.x + p1.x) * 0.5f) - 4;
-    const float y0 = p0.y + 14, y1 = p1.y - 14;
+    // J-139: centred on the control (moved left only to make room for a meter), one centre line (LookGeom.h).
+    const bool hasMeter = f.meterL >= 0;
+    const geom::FaderGeom g = geom::fader(p0.x, p0.y, p1.x, p1.y, f.norm, geom::kGraphiteFader, hasMeter);
+    const float tx = g.tx;
     const float marks[] = {0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f};
+    const float ti = geom::kGraphiteFader.tickIn, to = g.tickOut(geom::kGraphiteFader.tickOut);
     for (float m : marks) {
-      const float y = std::round(y1 - (y1 - y0) * m) + 0.5f;
-      dl->AddLine(ImVec2(tx - 17, y), ImVec2(tx - 11, y), m == 0.8f ? tk.text : tk.textFaint, 1.0f);
+      const float y = g.tickY(m);
+      const ImU32 c = m == 0.8f ? tk.text : tk.textFaint;
+      dl->AddLine(ImVec2(tx - to, y), ImVec2(tx - ti, y), c, 1.0f);
+      if (g.ticksRight) dl->AddLine(ImVec2(tx + ti, y), ImVec2(tx + to, y), c, 1.0f);
     }
-    sunken(dl, ImVec2(tx - 3, y0), ImVec2(tx + 3, y1), 3, tk.rail);
-    if (f.meterL >= 0) {
+    sunken(dl, ImVec2(g.trackX0, g.y0), ImVec2(g.trackX1, g.y1), 3, tk.rail);
+    if (hasMeter) {
       Meter m;
       m.l = f.meterL, m.r = f.meterR, m.peakL = f.peakL, m.peakR = f.peakR;
-      meter(dl, ImVec2(tx + 14, y0), ImVec2(tx + 26, y1), m);
+      meter(dl, ImVec2(tx + 14, g.y0), ImVec2(tx + 26, g.y1), m);
     }
-    const float y = std::round(y1 - (y1 - y0) * f.norm);
-    const ImVec2 h0(tx - 12, y - 15), h1(tx + 12, y + 15);
+    const float y = g.y;
+    const ImVec2 h0(g.capX0, g.capY0), h1(g.capX1, g.capY1);
     raised(dl, h0, h1, 4, f.state);
-    // Grip: three engraved lines and the Paper index line.
-    for (int i = -2; i <= 2; i += 2) {
-      if (i == 0) continue;
-      const float yy = y + static_cast<float>(i) * 3.5f;
-      dl->AddLine(ImVec2(h0.x + 4, yy + 0.5f), ImVec2(h1.x - 4, yy + 0.5f), IM_COL32(0, 0, 0, 150), 1.0f);
-      dl->AddLine(ImVec2(h0.x + 4, yy + 1.5f), ImVec2(h1.x - 4, yy + 1.5f), alpha(IM_COL32_WHITE, 0.08f), 1.0f);
+    // Grip: engraved lines 4 px above and below the Paper index line.
+    for (float d : {-4.0f, 4.0f}) {
+      dl->AddLine(ImVec2(h0.x + 4, y + d), ImVec2(h1.x - 4, y + d), IM_COL32(0, 0, 0, 150), 1.0f);
+      dl->AddLine(ImVec2(h0.x + 4, y + d + 1), ImVec2(h1.x - 4, y + d + 1), alpha(IM_COL32_WHITE, 0.08f), 1.0f);
     }
-    dl->AddRectFilled(ImVec2(h0.x + 2, y - 1), ImVec2(h1.x - 2, y + 1), (f.state & Active) ? rgb(0xFFFFFF) : rgb(0xE6E6E6), 1);
+    dl->AddRectFilled(ImVec2(h0.x + 2, y - 1.5f), ImVec2(h1.x - 2, y + 1.5f), (f.state & Active) ? rgb(0xFFFFFF) : rgb(0xE6E6E6), 1);
   }
 
   void meter(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Meter& m) override {
@@ -370,7 +375,7 @@ class Graphite : public Painter {
       for (float x = p0.x + 6; x < p1.x; x += 6) dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), alpha(IM_COL32_WHITE, 0.018f), 1.0f);
       dl->PopClipRect();
     }
-    if (state & (Active | Focus)) dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), alpha(tk.hot, 0.85f), tk.radiusSm + 1, 0, 1.5f);
+    if (state & (Active | Focus)) dl->AddRect(ImVec2(p0.x + 0.75f, p0.y + 0.75f), ImVec2(p1.x - 0.75f, p1.y - 0.75f), alpha(tk.hot, 0.85f), tk.radiusSm, 0, 1.5f);  // J-137: inside
     const Font f = lcd ? Font::MonoBold : Font::Mono;
     const float fs = lcd ? std::min(18.0f, (p1.y - p0.y) * 0.62f) : 13;
     const ImU32 tc = (state & Disabled) ? tk.textFaint : (state & Hover) ? rgb(0xFFFFFF) : lcd ? rgb(0xF2F2F2) : tk.text;
@@ -396,9 +401,9 @@ class Graphite : public Painter {
       dl->AddLine(ImVec2(p0.x + 2, p0.y + 0.5f), ImVec2(p1.x - 2, p0.y + 0.5f), alpha(IM_COL32_WHITE, 0.18f), 1.0f);
       dl->AddRect(p0, p1, tk.faceLine, tk.radiusSm);
     }
-    if (playing) {
-      dl->AddRect(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), alpha(tk.hot, 0.35f), tk.radiusSm + 2, 0, 3.0f);
-      dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1), tk.hot, tk.radiusSm + 1, 0, 1.2f);
+    if (playing) {  // J-137: the ring sits inside the pad (never clipped by a step viewport or covered by a neighbour)
+      dl->AddRect(ImVec2(p0.x + 0.6f, p0.y + 0.6f), ImVec2(p1.x - 0.6f, p1.y - 0.6f), tk.hot, tk.radiusSm, 0, 1.2f);
+      dl->AddRect(ImVec2(p0.x + 2.0f, p0.y + 2.0f), ImVec2(p1.x - 2.0f, p1.y - 2.0f), alpha(tk.hot, 0.35f), std::max(0.0f, tk.radiusSm - 1), 0, 1.5f);
     }
   }
   void pad(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* lbl, float glow, int state, ImU32 tint) override {
@@ -407,7 +412,7 @@ class Graphite : public Painter {
       const ImVec2 a(p0.x + 5, p0.y + 5), b(p1.x - 5, p1.y - 22);
       sunken(dl, a, b, 3, tk.rail);
       floorRect(dl, ImVec2(a.x + 1.5f, a.y + 1.5f), ImVec2(b.x - 1.5f, b.y - 1.5f), 2, tint, glow);
-      dl->AddRectFilled(ImVec2(p0.x - 3, p0.y - 3), ImVec2(p1.x + 3, p1.y + 3), alpha(floorTop(tint), 0.07f * glow), tk.radius + 3);
+      dl->AddRect(ImVec2(p0.x + 0.5f, p0.y + 0.5f), ImVec2(p1.x - 0.5f, p1.y - 0.5f), alpha(floorTop(tint), 0.35f * glow), tk.radius);  // J-137: inside
     } else {
       sunken(dl, ImVec2(p0.x + 5, p0.y + 5), ImVec2(p1.x - 5, p1.y - 22), 3, tk.rail);
     }

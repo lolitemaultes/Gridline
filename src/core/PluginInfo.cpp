@@ -35,6 +35,15 @@ double ParamDesc::fromNormalized(double n) const {
   return clamp(min + n * (max - min));
 }
 
+bool ParamDesc::isDefault(double v) const {
+  if (v != v) return false;
+  return std::fabs(toNormalized(v) - toNormalized(def)) <= kDefaultEpsilon;
+}
+
+ParamDoubleClick paramDoubleClick(const ParamDesc& d, double value) {
+  return d.isDefault(value) ? ParamDoubleClick::Type : ParamDoubleClick::Reset;
+}
+
 std::string ParamDesc::format(double v) const {
   v = clamp(v);
   char buf[64];
@@ -1722,6 +1731,8 @@ void normalizePluginState(PluginState& s) {
     s.params[static_cast<size_t>(pp::StClassic)] = 0;  // pre-κ3 stereo shaper: width / mid-side engine
   if (s.type == "gl.stereomatrix" && oldSize > 0 && oldSize <= 9)  // pre-κ3 stereo matrix: linear gains (SmClassic = 9)
     s.params[9] = 0;
+  if (s.type == "gl.notesq" && oldSize > 0 && oldSize <= 101)  // J-138: pre-choice sequencer (SqVelMode = 101): step velocity only
+    s.params[101] = 1;
   if (s.type == "gl.swirl" && oldSize > 0 && oldSize <= 15)  // pre-κ3 swirl: legacy engine (SwModel = 15)
     s.params[15] = 0;
   if (s.type == "gl.fastdist" && oldSize > 0 && oldSize <= 9)  // pre-κ3 clip dist: keep the clip / fold engine (FdClassic = 9)

@@ -243,7 +243,8 @@ void editorTrio(App& a, const PluginTarget& t, float width) {
     if (ImGui::IsItemHovered()) a.setHint("Custom-wave oscillators play one cycle of this sample (click to load)");
   }
   // Title block (Gridline's own name).
-  iskin::text(k, 424, 303, 129, 50, pluginDisplayName("gl.synth").c_str(), 32, rgb(0x7D888E), 2, false, true);
+  if (!pui::titleWordmarkIn(k.dl(), "gl.synth", k.at(424, 303), k.at(424 + 129, 303 + 50), k.px(32), 2, rgb(0x7D888E)))  // J-136: the wordmark
+    iskin::text(k, 424, 303, 129, 50, pluginDisplayName("gl.synth").c_str(), 32, rgb(0x7D888E), 2, false, true);
   iskin::text(k, 424, 349, 129, 24, "SYNTH", 15, rgb(0x5D686E), 2, false, true);
 
   // ---- channel section (envelope · filter · LFO · voice), same palette.
@@ -327,7 +328,8 @@ void editorKeys(App& a, const PluginTarget& t, float width) {
   iskin::background(k, 0, 0, kKeysW, kKeysH, k.c.bgTop, k.c.bgBottom, 4);
   iskin::bevel(k, 0, 183, kKeysW, 87, rgb(0x252525), 0, 0);
   // Title.
-  iskin::text(k, 14, 6, 120, 32, "KEYS", 26, rgb(0xD8D8D4), 0, false, true);
+  if (!pui::titleWordmarkIn(k.dl(), "gl.keys", k.at(14, 6), k.at(14 + 120, 6 + 32), k.px(26), 0, rgb(0xD8D8D4)))  // J-136: the wordmark
+    iskin::text(k, 14, 6, 120, 32, "KEYS", 26, rgb(0xD8D8D4), 0, false, true);
   // Sound set (model) selector + info.
   iskin::digi(a, t, k, KyModel, 328, 9, 127, 19, {}, 10.5f);
   iskin::bevel(k, 456, 9, 16, 19, k.c.lcdBg, k.c.panelLine, 2);

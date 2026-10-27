@@ -237,9 +237,18 @@ void fileDialog(App& a) {
   ImGui::EndPopup();
 }
 
+ImVec2 gDevSettingsSize(0, 0);  // --settings-size (J-137)
+
+}  // namespace
+
+void setDevSettingsSize(float w, float h) { gDevSettingsSize = ImVec2(w, h); }
+
+namespace {
+
 void settingsWindow(App& a) {
   if (!a.showSettings) return;
   centerNext(ImVec2(860, 560), ImVec2(660, 360));
+  if (gDevSettingsSize.x > 0) ImGui::SetNextWindowSize(gDevSettingsSize, ImGuiCond_Always);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   bool vis = ImGui::Begin(ui::windowTitle("Settings").c_str(), &a.showSettings, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();

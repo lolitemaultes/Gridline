@@ -32,11 +32,18 @@ bool sameArp(const ArpSlot& p, const ArpSlot& q) {
 
 void sectionTitle(const Ctx& c, float x0, float x1, float y, const char* t) { caption(c, x0, x1, y, t); }
 
-// A knob bound to a float of the model (range lo..hi); commits one undo step per drag.
-bool dataKnob(Ctx& c, const char* id, float& v, float lo, float hi, float cx, float cy, const char* label, const std::string& valueText, int what) {
-  float n = hi > lo ? (v - lo) / (hi - lo) : 0.f;
-  if (knobFree(c, id, n, cx, cy, 13.5f, label, false, valueText.c_str())) {
-    v = lo + std::clamp(n, 0.f, 1.f) * (hi - lo);
+// The value a data knob shows: range, default (ArpSlot's), unit and mapping.
+ParamDesc dataDesc(const char* name, double lo, double hi, double def, const char* unit = "", ParamScale scale = ParamScale::Linear) {
+  ParamDesc d;
+  d.name = name, d.unit = unit, d.min = lo, d.max = hi, d.def = def, d.scale = scale;
+  return d;
+}
+
+// A knob bound to a float of the model (described by d); commits one undo step per drag.
+bool dataKnob(Ctx& c, const char* id, float& v, const ParamDesc& d, float cx, float cy, const char* label, const std::string& valueText, int what) {
+  float n = static_cast<float>(d.toNormalized(v));
+  if (knobFree(c, id, n, cx, cy, 13.5f, label, false, valueText.c_str(), d)) {
+    v = static_cast<float>(d.fromNormalized(std::clamp(n, 0.f, 1.f)));
     commit(c, label, what);
     return true;
   }
@@ -277,7 +284,10 @@ void arpPanel(Ctx& c) {
       const int nd = static_cast<int>(dn.size()) - 1;
       // the division list runs from long to short: the knob turns faster to the right
       float rn = static_cast<float>(nd) - r;
-      if (dataKnob(c, "rate", rn, 0, static_cast<float>(nd), x + 72, ry + 1, "RATE", dn[static_cast<size_t>(std::clamp(a.rate, 0, nd))], 8300)) {
+      ParamDesc rd = dataDesc("Rate", 0, nd, nd - ArpSlot{}.rate);
+      rd.kind = ParamKind::Choice;
+      for (int i = nd; i >= 0; --i) rd.choices.push_back(dn[static_cast<size_t>(i)]);
+      if (dataKnob(c, "rate", rn, rd, x + 72, ry + 1, "RATE", dn[static_cast<size_t>(std::clamp(a.rate, 0, nd))], 8300)) {
         a.rate = std::clamp(nd - static_cast<int>(std::lround(rn)), 0, nd);
         commit(c, "Arp rate", 8300);
       }
@@ -285,9 +295,9 @@ void arpPanel(Ctx& c) {
     } else {
       char b[24];
       std::snprintf(b, sizeof b, "%.2f Hz", static_cast<double>(a.hz));
-      float hzn = std::log2(std::max(0.05f, a.hz) / 0.05f) / std::log2(400.f);
-      if (dataKnob(c, "hz", hzn, 0, 1, x + 72, ry + 1, "RATE", b, 8301)) {
-        a.hz = 0.05f * std::pow(400.f, hzn);
+      float hz = std::max(0.05f, a.hz);  // 0.05 .. 20 Hz on a log travel
+      if (dataKnob(c, "hz", hz, dataDesc("Rate", 0.05, 20.0, ArpSlot{}.hz, "Hz", ParamScale::Log), x + 72, ry + 1, "RATE", b, 8301)) {
+        a.hz = hz;
         commit(c, "Arp rate", 8301);
       }
       textC(c, x + 116, ry - 5, b, c.P.accent, 9.5f, true);
@@ -307,12 +317,12 @@ void arpPanel(Ctx& c) {
     float pb = a.patternBeats;
     char b[24];
     std::snprintf(b, sizeof b, "%g beats", static_cast<double>(pb));
-    if (dataKnob(c, "plen", pb, 0.25f, 16.f, px + 24, y0 + 44, "LENGTH", b, 8310)) {
+    if (dataKnob(c, "plen", pb, dataDesc("Pattern length", 0.25, 16.0, ArpSlot{}.patternBeats, "beats"), px + 24, y0 + 44, "LENGTH", b, 8310)) {
       a.patternBeats = std::round(pb * 4.f) / 4.f;
       commit(c, "Pattern length", 8310);
     }
     std::snprintf(b, sizeof b, "x%.2f", static_cast<double>(a.patTime));
-    dataKnob(c, "ptime", a.patTime, 0.0625f, 4.f, px + 84, y0 + 44, "STEP LEN", b, 8311);
+    dataKnob(c, "ptime", a.patTime, dataDesc("Step length", 0.0625, 4.0, ArpSlot{}.patTime, "times"), px + 84, y0 + 44, "STEP LEN", b, 8311);
     const char* wraps[] = {"Octave", "Interval", "Repeat", "Skip"};
     dropField(c, "wrap", px, y0 + 82, 130, 18, (std::string("Wrap: ") + wraps[std::clamp(a.wrap, 0, 3)]).c_str(), [&] {
       for (int i = 0; i < 4; ++i)
@@ -369,17 +379,17 @@ void arpPanel(Ctx& c) {
       char b[24];
       float off = static_cast<float>(a.offset);
       std::snprintf(b, sizeof b, "%d", a.offset);
-      if (dataKnob(c, "off", off, -16, 16, x + 84, y0 + 72, "OFFSET", b, 8320)) a.offset = static_cast<int>(std::lround(off)), commit(c, "Arp offset", 8320);
+      if (dataKnob(c, "off", off, dataDesc("Offset", -16, 16, ArpSlot{}.offset), x + 84, y0 + 72, "OFFSET", b, 8320)) a.offset = static_cast<int>(std::lround(off)), commit(c, "Arp offset", 8320);
       textC(c, x + 84, y0 + 30, b, c.P.accent, 9, true);
       float rep = static_cast<float>(a.repeats);
       std::snprintf(b, sizeof b, "%s", a.repeats <= 0 ? "INF" : std::to_string(a.repeats).c_str());
-      if (dataKnob(c, "rep", rep, 0, 16, x + 134, y0 + 72, "REPEATS", b, 8321)) a.repeats = std::max(0, static_cast<int>(std::lround(rep))), commit(c, "Arp repeats", 8321);
+      if (dataKnob(c, "rep", rep, dataDesc("Repeats", 0, 16, ArpSlot{}.repeats), x + 134, y0 + 72, "REPEATS", b, 8321)) a.repeats = std::max(0, static_cast<int>(std::lround(rep))), commit(c, "Arp repeats", 8321);
       textC(c, x + 134, y0 + 30, b, c.P.accent, 9, true);
       std::snprintf(b, sizeof b, "%.0f%%", a.gate * 100.0);
-      dataKnob(c, "gate", a.gate, 0.05f, 2.f, x + 184, y0 + 72, "GATE", b, 8322);
+      dataKnob(c, "gate", a.gate, dataDesc("Gate", 0.05, 2.0, ArpSlot{}.gate, "%"), x + 184, y0 + 72, "GATE", b, 8322);
       textC(c, x + 184, y0 + 30, b, c.P.accent, 9, true);
       std::snprintf(b, sizeof b, "%.0f%%", a.chance * 100.0);
-      dataKnob(c, "chance", a.chance, 0, 1, x + 234, y0 + 72, "CHANCE", b, 8323);
+      dataKnob(c, "chance", a.chance, dataDesc("Chance", 0, 1, ArpSlot{}.chance, "%"), x + 234, y0 + 72, "CHANCE", b, 8323);
       textC(c, x + 234, y0 + 30, b, c.P.accent, 9, true);
       dataCheck(c, "pre", a.chancePre, x + 190, y0 + 106, "CHANCE BEFORE REPEATS", 7.5f);
     }
@@ -401,9 +411,9 @@ void arpPanel(Ctx& c) {
       dataCheck(c, "vr", a.veloRetrig, x + 44, y0 + 26, "RETRIG");
       char b[24];
       std::snprintf(b, sizeof b, "%.0f%%", a.veloDecay * 100.0);
-      dataKnob(c, "vd", a.veloDecay, 0, 1, x + 26, y0 + 72, "DECAY", b, 8330);
+      dataKnob(c, "vd", a.veloDecay, dataDesc("Velocity decay", 0, 1, ArpSlot{}.veloDecay, "%"), x + 26, y0 + 72, "DECAY", b, 8330);
       std::snprintf(b, sizeof b, "%.0f%%", a.veloTarget * 100.0);
-      dataKnob(c, "vt", a.veloTarget, 0, 1, x + 76, y0 + 72, "TARGET", b, 8331);
+      dataKnob(c, "vt", a.veloTarget, dataDesc("Velocity target", 0, 1, ArpSlot{}.veloTarget, "%"), x + 76, y0 + 72, "TARGET", b, 8331);
     }
     // modulation offsets (parameters: the matrix and automation move them)
     moreButton(c, "arpmod", kW - 28, kSlotY - 22, {G_ArpRate, G_ArpShift, G_ArpRange, G_ArpOffset, G_ArpRepeats, G_ArpGate, G_ArpChance, G_ArpRetrigRate,

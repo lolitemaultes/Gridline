@@ -335,8 +335,23 @@ NoteEv makeEv(Tick on, Tick off, float pitch, float velocity) {
 void sortEvents(std::vector<NoteEv>& v) {
   std::stable_sort(v.begin(), v.end(), [](const NoteEv& a, const NoteEv& b) {
     if (a.on != b.on) return a.on < b.on;
+    if (a.onFrac != b.onFrac) return a.onFrac < b.onFrac;
     return (a.flags & kNoteSlide) < (b.flags & kNoteSlide);
   });
+}
+
+// Sets a start / end tick with its fraction (J-138).
+void setOn(NoteEv& e, double t) {
+  const double f = std::floor(t);
+  e.on = static_cast<Tick>(f);
+  e.onFrac = static_cast<float>(t - f);
+  if (e.onFrac >= 1.0f) e.on += 1, e.onFrac = 0;
+}
+void setOff(NoteEv& e, double t) {
+  const double f = std::floor(t);
+  e.off = static_cast<Tick>(f);
+  e.offFrac = static_cast<float>(t - f);
+  if (e.offFrac >= 1.0f) e.off += 1, e.offFrac = 0;
 }
 
 // Deterministic per-note choice for random layers (same result on every build).
@@ -369,6 +384,20 @@ void addLayerNotes(const Song& song, const Pattern& p, const Channel& target, in
 
 }  // namespace
 
+double swingWarp(double x, double swing, Tick stepTicks, int stepsPerBar) {
+  if (!(swing > 0) || stepTicks <= 0 || stepsPerBar <= 0) return x;
+  const double st = static_cast<double>(stepTicks), pair = 2.0 * st;
+  const double bar = st * static_cast<double>(stepsPerBar);
+  const double barStart = std::floor(x / bar) * bar;
+  const double u = x - barStart;
+  const double pairStart = std::floor(u / pair) * pair;
+  if (pairStart + pair > bar + 1e-9) return x;  // odd steps per bar: the last step has no partner
+  const double v = u - pairStart;
+  const double mid = st * (1.0 + 0.5 * std::min(swing, 1.0));  // where the off-beat step starts
+  const double w = v < st ? v * (mid / st) : mid + (v - st) * ((pair - mid) / st);
+  return barStart + pairStart + w;
+}
+
 std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, const Channel& c) {
   std::vector<NoteEv> out;
   const ObjectId channel = c.id;
@@ -379,30 +408,39 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
   size_t loop = 0;
   if (auto lt = p.stepLoop.find(channel); lt != p.stepLoop.end() && lt->second > 0 && static_cast<size_t>(lt->second) < total)
     loop = static_cast<size_t>(lt->second);
+  // Song swing x the channel's share (J-138: steps and piano-roll notes alike).
+  const double swing = std::clamp(static_cast<double>(song.swing) * static_cast<double>(c.swingMix), 0.0, 1.0);
   if (auto it = p.steps.find(channel); it != p.steps.end() && stepTicks > 0) {
     const auto& row = it->second;
-    const float swing = song.swing * c.swingMix;
     // J-11: per-step pitch, properties and shift (graph / keyboard editor).
     const std::vector<StepProps>* props = nullptr;
     if (auto pt = p.stepProps.find(channel); pt != p.stepProps.end()) props = &pt->second;
+    // J-31 / J-138: a swung step keeps its length (or, truncated, still ends where the
+    // unswung step ends); its start follows the swing warp, to a fraction of a tick.
     for (size_t s = 0; s < total; ++s) {
       const size_t src = loop ? s % loop : s;
       if (src >= row.size() || row[src] == 0) continue;
       const Tick grid = static_cast<Tick>(s) * stepTicks;
-      Tick on = grid;
-      if (s % 2 == 1) on += static_cast<Tick>(swing * static_cast<float>(stepTicks) * 0.5f);  // swing
-      // J-31 truncated swing: a swung step still ends where the unswung step ends.
-      const Tick end = c.swingTruncate ? std::max(on + 1, grid + stepTicks) : on + stepTicks;
+      double on = swingWarp(static_cast<double>(grid), swing, stepTicks, p.stepsPerBar);
+      const double gridEnd = static_cast<double>(grid + stepTicks);
+      auto stepEnd = [&](double start) {
+        return c.swingTruncate ? std::max(start + 1.0, gridEnd) : start + static_cast<double>(stepTicks);
+      };
       if (!props || src >= props->size() || (*props)[src].isDefault()) {
-        out.push_back(makeEv(on, end, 60.0f, static_cast<float>(row[src]) / 127.0f));
+        NoteEv e = makeEv(0, 0, 60.0f, static_cast<float>(row[src]) / 127.0f);
+        setOn(e, on);
+        setOff(e, stepEnd(on));
+        out.push_back(e);
         continue;
       }
       const StepProps& sp = (*props)[src];
       const Tick shift = stepTicks * sp.shift / kStepShiftMax;
-      on += shift;
-      NoteEv e = makeEv(on, c.swingTruncate ? std::max(on + 1, end) : end + shift,
-                        static_cast<float>(sp.pitch < 0 ? 60 : sp.pitch) + static_cast<float>(sp.fine) / 100.0f,
+      const double end = stepEnd(on);
+      on += static_cast<double>(shift);
+      NoteEv e = makeEv(0, 0, static_cast<float>(sp.pitch < 0 ? 60 : sp.pitch) + static_cast<float>(sp.fine) / 100.0f,
                         static_cast<float>(row[src]) / 127.0f);
+      setOn(e, on);
+      setOff(e, c.swingTruncate ? std::max(on + 1.0, end) : end + static_cast<double>(shift));
       e.props.pan = static_cast<float>(sp.pan) / static_cast<float>(kNotePanMax);
       e.props.release = sp.release == kNoteReleaseDefault ? 0.5f : static_cast<float>(sp.release) / 127.0f;
       e.props.modX = sp.modX == kNoteModCentre ? 0.5f : static_cast<float>(sp.modX) / static_cast<float>(kNoteModMax + 1);
@@ -419,6 +457,14 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       if (loopTicks > 0 && (n.start >= loopTicks || n.start + rep >= patLen)) break;
       NoteEv e = makeEv(n.start + rep, n.start + rep + n.length, static_cast<float>(n.pitch) + static_cast<float>(n.fine) / 100.0f,
                         static_cast<float>(n.velocity) / 127.0f);
+      if (swing > 0 && stepTicks > 0 && song.swingNotes) {  // J-138: notes swing with the steps (written positions stay straight)
+        const double on = swingWarp(static_cast<double>(e.on), swing, stepTicks, p.stepsPerBar);
+        const double end = swingWarp(static_cast<double>(e.off), swing, stepTicks, p.stepsPerBar);
+        // Truncated: the note ends where its warped end falls. Otherwise it is never shorter than written.
+        const double minLen = std::min(1.0, static_cast<double>(n.length));
+        setOn(e, on);
+        setOff(e, c.swingTruncate ? std::max(end, on + minLen) : std::max(end, on + static_cast<double>(n.length)));
+      }
       e.props.pan = static_cast<float>(n.pan) / static_cast<float>(kNotePanMax);
       e.props.release = static_cast<float>(n.release) / 127.0f;
       e.props.modX = static_cast<float>(n.modX) / static_cast<float>(kNoteModMax + 1);
@@ -978,7 +1024,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
           if (e.on < ps.content || e.on >= ps.content + ps.len) continue;
           NoteEv x = e;
           x.on = clip.start + ps.at + (e.on - ps.content);
-          x.off = std::min(clip.start + ps.at + (e.off - ps.content), clip.start + len);
+          x.off = clip.start + ps.at + (e.off - ps.content);
+          if (noteOffTick(x) > static_cast<double>(clip.start + len)) x.off = clip.start + len, x.offFrac = 0;
           prog->channels[ci].song.push_back(x);
         }
   }
@@ -1000,10 +1047,11 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
               x.channel = static_cast<int>(ci);
               x.e = e;
               x.e.on = ps.at + (e.on - ps.content);
-              x.e.off = std::min(ps.at + (e.off - ps.content), lc.length);
+              x.e.off = ps.at + (e.off - ps.content);
+              if (noteOffTick(x.e) > static_cast<double>(lc.length)) x.e.off = lc.length, x.e.offFrac = 0;
               lc.notes.push_back(x);
             }
-      std::stable_sort(lc.notes.begin(), lc.notes.end(), [](const ProgLiveClip::Ev& a, const ProgLiveClip::Ev& b) { return a.e.on < b.e.on; });
+      std::stable_sort(lc.notes.begin(), lc.notes.end(), [](const ProgLiveClip::Ev& a, const ProgLiveClip::Ev& b) { return noteOnTick(a.e) < noteOnTick(b.e); });
     } else if (clip.kind == ClipKind::Audio) {
       int ci = song.channelIndex(clip.source);
       Clip at0 = clip;
@@ -1037,7 +1085,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       return song.clip(prog->liveClips[static_cast<size_t>(a)].clip)->start < song.clip(prog->liveClips[static_cast<size_t>(b)].clip)->start;
     });
   for (auto& pc : prog->channels) {
-    std::stable_sort(pc.song.begin(), pc.song.end(), [](const NoteEv& a, const NoteEv& b) { return a.on < b.on; });
+    std::stable_sort(pc.song.begin(), pc.song.end(), [](const NoteEv& a, const NoteEv& b) { return noteOnTick(a) < noteOnTick(b); });
     std::stable_sort(pc.audio.begin(), pc.audio.end(), [](const ProgAudioClip& a, const ProgAudioClip& b) { return a.start < b.start; });
   }
 

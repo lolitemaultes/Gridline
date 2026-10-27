@@ -38,6 +38,7 @@ class DrumGen final : public Generator {
     int pulseLen = 1;
     float amp = 1, gl = 1, gr = 1, click = 0, noise = 0, noiseEnv = 0, noiseDec = 0.999f, wires = 0;
     float follow = 0, peak = 0, fade = 1, fadeStep = 0, drive = 0;
+    float level = 1, velGain = 1;  // pad level and velocity gain (amp = level x velGain)
     Svf nf;
     Noise rng;
   };
@@ -124,7 +125,9 @@ class DrumGen final : public Generator {
       norm += v.g[k];
     }
     for (int k = 0; k < v.modes; ++k) v.g[k] *= 1.6f / std::max(1.0f, norm * 0.6f);
-    v.amp = prmf(s, drumPad(pad, DpLevel), 0.8f) * velGain;
+    v.level = prmf(s, drumPad(pad, DpLevel), 0.8f);
+    v.velGain = velGain;
+    v.amp = v.level * velGain;
     double l, r;
     panGains(prmf(s, drumPad(pad, DpPan), 0), l, r);
     v.gl = static_cast<float>(l);
@@ -182,10 +185,14 @@ class DrumGen final : public Generator {
         nz = static_cast<float>(band) * env * v.noise * 1.5f;
         v.noiseEnv *= v.noiseDec;
       }
-      float o = (y + nz + clk) * v.amp;
+      float o;
       if (v.drive > 0) {
+        // J-138: the drive saturates at the pad level, then velocity sets the
+        // loudness (applied before the drive, it was flattened back to full level).
         float k = 1 + v.drive * 10;
-        o = std::tanh(o * k) / std::tanh(k) * (0.6f + 0.4f / (1 + v.drive));
+        o = std::tanh((y + nz + clk) * v.level * k) / std::tanh(k) * (0.6f + 0.4f / (1 + v.drive)) * v.velGain;
+      } else {
+        o = (y + nz + clk) * v.amp;
       }
       o *= v.fade;
       v.fade = std::max(0.0f, v.fade - v.fadeStep);

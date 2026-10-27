@@ -13,7 +13,7 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "../../src/core/Demo.h"
+#include "../fixtures/TestSong.h"
 #include "../../src/core/Document.h"
 #include "../../src/core/PluginInfo.h"
 #include "../../src/core/PluginParams.h"
@@ -251,7 +251,7 @@ int main() {
 
   // ---- Project JSON round trip.
   {
-    Document d(makeDemoSong());
+    Document d(makeTestSong());
     const ObjectId a = d.addChannel("Trio classic", "gl.synth");
     const ObjectId b = d.addChannel("Trio smooth", "gl.synth");
     d.editChannel(a, "ins", [](Channel& c) { c.plugin.ins = formatIns(richSettings(InsTiming::Classic)); });

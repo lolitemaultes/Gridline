@@ -130,7 +130,8 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
                float height = 0.0f, const char* const* hints = nullptr);
 
 // Knob bound to a document parameter: drag vertically (Shift = fine), wheel,
-// double-click resets, Alt+click / right-click type a value. One undo step per gesture.
+// double-click resets (types at the default, J-136), Alt+click types, right-click
+// menu (reset, type, links, automation). One undo step per gesture.
 bool ParamKnob(const char* id, ParamId pid, float radius = 14.0f, const char* label = nullptr, bool bipolar = false);
 // Vertical fader bound to a parameter.
 bool ParamFader(const char* id, ParamId pid, ImVec2 size);
@@ -180,8 +181,41 @@ void wheelFrameEnd();
 bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const char* label, bool bipolar,
           bool* released = nullptr, const std::function<void()>& extraMenu = nullptr);
 
+// ---- J-136: reset and type-in, the same on every parameter knob and slider ----
+// Double-click: back to the default when the value differs from it (one undo
+// step), else the type-in popup. Right-click menu: "Reset to default" first,
+// greyed when the value already is the default. Ctrl+click reset stays.
+//
+// The value when the last item's double-click began: call right after the
+// control's item, before the control changes the value this frame (a press
+// that nudges the value does not turn the double-click into a reset).
+double ValueAtPress(double current);
+// The double-click on the last item: Reset (when `pressed` differs from the
+// default) or Type (when it is the default); false without a double-click.
+bool DoubleClicked(const ParamDesc& d, double pressed, ParamDoubleClick* action);
+// "Reset to default" for a control's right-click menu (greyed at the default).
+bool ResetMenuItem(const ParamDesc& d, double value);
+// Bound to a document parameter: the double-click resets pid (one undo step;
+// returns true, `val` = the default) or opens the popup "##type" (false).
+bool ParamDoubleClickReset(ParamId pid, const ParamDesc& d, double& val, double pressed);
+// The menu item above for pid; true (and `val` = default) when chosen.
+bool ParamResetMenuItem(ParamId pid, const ParamDesc& d, double& val);
+// The type-in popup "##type" for pid (open it with ImGui::OpenPopup("##type")).
+void ParamTypePopup(ParamId pid, const ParamDesc& d);
+// The same popup over a free value: true when a value was entered.
+bool ValueTypePopup(const ParamDesc& d, double* value);
+// Hint text of the mouse gestures of a parameter control.
+const char* ParamControlHint();
+
 // Stereo peak meter with hold; `key` keeps the per-meter decay state.
 void Meter(ImGuiID key, float peakL, float peakR, ImVec2 size, bool vertical = true);
+
+// J-137: the drawing alone of Knob / ParamKnob, ParamFader and Meter, in the
+// control style in use (a ControlStyleScope picks another). The Theme page's
+// style previews draw with these, so a preview is the real control.
+void DrawKnob(ImDrawList* dl, ImVec2 centre, float radius, float norm, bool bipolar, bool hov, bool act);
+void DrawFader(ImDrawList* dl, ImVec2 p, ImVec2 size, float norm, float defNorm, bool hov, bool act);
+void DrawMeter(ImDrawList* dl, ImVec2 p, ImVec2 size, float gainL, float gainR, float holdL, float holdR, bool vertical = true);
 
 // Small coloured swatch that opens a palette popup; returns true when changed.
 bool ColorSwatch(const char* id, uint32_t* rgb, ImVec2 size);
@@ -252,6 +286,10 @@ void Led(ImDrawList* dl, ImVec2 center, float radius, bool on, float level = 0.0
 // Step button (channel rack): rounded pad with a top bevel; `alt` = the
 // alternate 4-step group tint; `on` lights it (tinted by `tint`), `vel` 0..1.
 void StepPad(ImDrawList* dl, ImVec2 a, ImVec2 b, bool on, bool alt, bool hovered, ImU32 tint, float vel);
+// J-137: the song-position outline of a step pad (the step playing now), drawn
+// inside the pad's own rectangle: the step viewport's clip and the controls
+// beside the first step never cut or cover it.
+void StepPlayOutline(ImDrawList* dl, ImVec2 a, ImVec2 b);
 // Number LCD (tempo, song position): mono bold, centred in a sunken field.
 void Lcd(ImDrawList* dl, ImVec2 pos, ImVec2 size, const char* text, bool hovered, bool active);
 

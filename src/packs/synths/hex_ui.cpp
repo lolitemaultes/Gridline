@@ -150,7 +150,8 @@ void drawHexSynthEditor(App& a, const PluginTarget& t, float W) {
 
   // ---- header
   flk::section(c, 4, 4, 972, 40, "");
-  skin::text(dl, F.p(14, 15), K.accent2C(), "HEX SYNTH", F.font(15));
+  if (!pui::titleWordmark(dl, "gl.hexsynth", F.p(14, 15), F.font(15)))  // J-136: the wordmark
+    skin::text(dl, F.p(14, 15), K.accent2C(), "HEX SYNTH", F.font(15));
   {
     HexData d;
     parseHexData(st.data, d);

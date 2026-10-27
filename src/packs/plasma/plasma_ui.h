@@ -160,7 +160,10 @@ void layoutLayer(int layer);
 enum KnobFlags { KnobBipolar = 1, KnobNoLabel = 2, KnobSmall = 4, KnobValue = 8 };
 bool knob(Ctx& c, int k, float cx, float cy, float r, const char* label, int flags = 0);
 // Free (unbound) knob over a float 0..1 (or -1..1 when bipolar); for data edits.
-bool knobFree(Ctx& c, const char* id, float& v, float cx, float cy, float r, const char* label, bool bipolar, const char* valueText);
+// `d` describes the value the knob shows (v = d.toNormalized(value)): its
+// default for the double-click reset and the type-in (J-136).
+bool knobFree(Ctx& c, const char* id, float& v, float cx, float cy, float r, const char* label, bool bipolar, const char* valueText,
+              const ParamDesc& d);
 bool hfader(Ctx& c, int k, float x, float y, float w, float h);
 bool vfader(Ctx& c, int k, float x, float y, float w, float h);
 bool led(Ctx& c, int k, float x, float y, float size = 9);

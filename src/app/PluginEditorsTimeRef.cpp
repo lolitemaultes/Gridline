@@ -329,9 +329,9 @@ void decayVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const RoomAnim& r, const 
 }
 
 // Q-9: the room view drives the room size like the reference (a press on
-// its view drags the size wheel): vertical drag (Shift fine), Ctrl+click or
-// double-click reset, wheel steps, right-click the parameter menu through the
-// size control. One undo step per gesture; automation and recording go
+// its view drags the size wheel): vertical drag (Shift fine), Ctrl+click
+// reset, double-click reset (types at the default, J-136), wheel steps,
+// right-click reset / type. One undo step per gesture; automation and recording go
 // through Document::setParam like every knob.
 void roomControl(App& a, const PluginTarget& t, int param, ImVec2 p0, ImVec2 p1, const RoomInk& ink) {
   const Song& s = a.doc.song();
@@ -345,10 +345,11 @@ void roomControl(App& a, const PluginTarget& t, int param, ImVec2 p0, ImVec2 p1,
   const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   ImGuiIO& io = ImGui::GetIO();
   static double norm = 0;  // accumulated position during the gesture
+  const double pressed = ui::ValueAtPress(*v);
   if (ImGui::IsItemActivated()) norm = d->toNormalized(*v);
-  if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-    a.doc.setParam(pid, d->def, false);
-    a.doc.endGesture();
+  double cur0 = *v;
+  if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && hov) {
+    if (ui::ParamDoubleClickReset(pid, *d, cur0, pressed)) norm = d->toNormalized(cur0);
   } else if (ImGui::IsItemActivated() && (io.KeyCtrl || io.KeySuper)) {
     a.doc.setParam(pid, d->def, false);
   } else if (act && !(io.KeyCtrl || io.KeySuper) && io.MouseDelta.y != 0) {
@@ -362,10 +363,17 @@ void roomControl(App& a, const PluginTarget& t, int param, ImVec2 p0, ImVec2 p1,
     if (nv != *v) a.doc.setParam(pid, nv, false);
   }
   if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##roommenu");
+  bool wantType = false;
   if (ImGui::BeginPopup("##roommenu")) {
-    if (ImGui::MenuItem(i18n::tr("Reset room size"))) a.doc.setParam(pid, d->def, false);
+    ImGui::TextDisabled("%s", d->name.c_str());
+    ImGui::Separator();
+    double cur = getParam(a.doc.song(), pid).value_or(d->def);
+    ui::ParamResetMenuItem(pid, *d, cur);
+    if (ImGui::MenuItem(i18n::tr("Type a value..."))) wantType = true;
     ImGui::EndPopup();
   }
+  if (wantType) ImGui::OpenPopup("##type");
+  ui::ParamTypePopup(pid, *d);
   if (hov || act) {
     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     ImDrawList* dl = ImGui::GetWindowDrawList();

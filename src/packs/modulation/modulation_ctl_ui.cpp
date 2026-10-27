@@ -690,7 +690,8 @@ void cvEditor(EditTarget& e) {
   const bool on = e.p(CvEnable) >= 0.5f;
   sk::check(e, CvEnable, F.p(14, 6), F.sz(52, 20), K, "ON");
   sk::text(dl, F, 70, 10, K, on ? "DC OUT: DC-COUPLED INTERFACE ONLY" : "OUTPUT OFF", 7.0f, false, on ? skin::hex(0xFFC097) : K.textDim);
-  skin::pill(dl, F.p(30, 32), F.p(272, 56), K, "VOLTAGE OUT", F.font(10.0f));
+  if (!pui::titleWordmarkIn(dl, "gl.cvctl", F.p(30, 32), F.p(272, 56), F.font(10.0f) * 1.4f, 1, K.text))  // J-136: the wordmark
+    skin::pill(dl, F.p(30, 32), F.p(272, 56), K, "VOLTAGE OUT", F.font(10.0f));
   sk::selector(e, CvPitchScale, F.p(18, 62), F.sz(128, 18), K);
   sk::selector(e, CvRange, F.p(152, 62), F.sz(132, 18), K);
   sk::text(dl, F, 18, 88, K, "CLOCK", 7.0f);

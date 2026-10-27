@@ -7755,6 +7755,7 @@ gl.notesq	97	Rate	working	0
 gl.notesq	98	Swing	working	0.75	
 gl.notesq	99	Transpose	working	24	
 gl.notesq	100	Pass held notes	working	1	
+gl.notesq	101	Velocity	working	1	
 gl.octafilter	0	Master level	working	0	
 gl.octafilter	1	Master LFO level	inert	0	
 gl.octafilter	2	Follower level	inert	0	

@@ -26,8 +26,11 @@ constexpr float kAppear = 0.18f;  // s: fade-in of the dialog
 // ---- previews
 
 // A miniature window (title strip, a line of text, a button, a knob, meters)
-// at `r` times the current interface size, top-left at `p`.
-void mockPanel(App& a, ImDrawList* dl, ImVec2 p, float r, const theme::Palette& P) {
+// at `r` times the current interface size, top-left at `p`. J-137: with
+// `style` >= 0 the knob and the meter are the real controls drawn in that
+// control style (the palette in use must be P), so a control style change
+// shows its two styles side by side.
+void mockPanel(App& a, ImDrawList* dl, ImVec2 p, float r, const theme::Palette& P, int style = -1) {
   const float w = std::round(108 * r), h = std::round(70 * r);
   dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), P.surface800, theme::kRadius * r);
   dl->AddRect(p, ImVec2(p.x + w, p.y + h), P.lineStrong, theme::kRadius * r);
@@ -39,6 +42,12 @@ void mockPanel(App& a, ImDrawList* dl, ImVec2 p, float r, const theme::Palette& 
   dl->AddRectFilled(b0, b1, P.surface700, theme::kRadius * r);
   dl->AddText(a.fontRegular, theme::kFontCaption * r, ImVec2(b0.x + 7 * r, b0.y + 2 * r), P.text, tr("Play"));
   const ImVec2 kc(p.x + 70 * r, p.y + 53 * r);
+  if (style >= 0) {
+    const ControlStyleScope scope(static_cast<ControlStyle>(style));
+    DrawKnob(dl, kc, 9 * r, 0.62f, false, false, false);
+    DrawMeter(dl, ImVec2(p.x + 86 * r, p.y + 24 * r), ImVec2(11 * r, 38 * r), 0.42f, 0.36f, 0.71f, 0.63f);
+    return;
+  }
   dl->AddCircleFilled(kc, 8 * r, P.surface950);
   dl->PathArcTo(kc, 8 * r, 2.4f, 5.4f, 16);
   dl->PathStroke(P.accent, 0, 2 * r);
@@ -46,6 +55,13 @@ void mockPanel(App& a, ImDrawList* dl, ImVec2 p, float r, const theme::Palette& 
     const float x = p.x + (86 + i * 6) * r, top = p.y + (26 + i * 9) * r;
     dl->AddRectFilled(ImVec2(x, top), ImVec2(x + 3 * r, p.y + 62 * r), P.meterLow, 1);
   }
+}
+
+// The control style of a settings snapshot.
+ControlStyle styleOf(const dispconf::Snapshot& s) {
+  Settings tmp;
+  dispconf::restore(tmp, s);
+  return theme::controlStyleFromSettings(tmp);
 }
 
 void scalePreview(App& a, const dispconf::Change& c) {
@@ -91,7 +107,12 @@ void themePreview(App& a, const dispconf::Change& c) {
     const theme::Palette P = paletteOf(*snaps[k]);
     const float x = o.x + k * (colW + theme::kS4);
     dl->AddRectFilled(ImVec2(x, o.y), ImVec2(x + colW, o.y + boxH), P.surface950, theme::kRadiusLg);
-    mockPanel(a, dl, ImVec2(std::round(x + (colW - 108) * 0.5f), o.y + 6), 1.0f, P);
+    // J-137: the real controls in each side's control style when that side's colours are the ones
+    // in use (a control style change); a colour change keeps the drawn miniature in its own colours.
+    const theme::Palette& now = pal();
+    const bool livePal = P.surface800 == now.surface800 && P.accent == now.accent && P.text == now.text && P.knobFill == now.knobFill &&
+                         P.hot == now.hot && P.meterLow == now.meterLow && P.dark == now.dark;
+    mockPanel(a, dl, ImVec2(std::round(x + (colW - 108) * 0.5f), o.y + 6), 1.0f, P, livePal ? static_cast<int>(styleOf(*snaps[k])) : -1);
     dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 2, o.y + boxH + 4), pal().textDim, caps[k]);
   }
   ImGui::Dummy(ImVec2(kDialogW, boxH + theme::kFontLabel + 8));
@@ -244,6 +265,9 @@ std::string themeText(const dispconf::Snapshot& s) {
   char buf[48];
   if (std::fabs(c) > 0.005) std::snprintf(buf, sizeof buf, ", %+.0f%% %s", c * 100, tr("contrast")), t += buf;
   if (std::fabs(b) > 0.005) std::snprintf(buf, sizeof buf, ", %+.0f%% %s", b * 100, tr("brightness")), t += buf;
+  // J-137: and the control style (a style change read "Dark -> Dark").
+  static const char* const kStyles[] = {i18n::N_("Classic"), i18n::N_("Graphite"), i18n::N_("Hairline"), i18n::N_("Lumen"), i18n::N_("Slate")};
+  t += std::string(" \xC2\xB7 ") + tr(kStyles[static_cast<int>(theme::controlStyleFromSettings(tmp))]);
   return t;
 }
 }  // namespace

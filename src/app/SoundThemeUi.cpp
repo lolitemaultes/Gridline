@@ -6,6 +6,7 @@
 #include "../core/I18n.h"
 #include "../engine/UiSounds.h"
 #include "App.h"
+#include "DialogLayout.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -50,21 +51,34 @@ void drawThemeSettings(App& a, float fieldW) {
   ImGui::BeginDisabled(!snd);
 
   // Theme: one row per theme, a radio button, its description and a preview.
+  // J-137: the columns are measured from where the controls start and end on
+  // this page (screen positions): the Preview button never runs past the
+  // section, a description that does not fit is shortened (whole on hover).
   const std::string cur = resolveTheme(st.getString(kThemeKey));
-  float nameW = 0;
-  for (int i = 0; i < kThemeCount; ++i) nameW = std::max(nameW, ImGui::CalcTextSize(themeName(i)).x);
-  const float descX = 168 + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + nameW + theme::kS3;
-  float previewX = descX + theme::kS3;
-  for (int i = 0; i < kThemeCount; ++i) previewX = std::max(previewX, descX + ImGui::CalcTextSize(themeLine(i)).x + theme::kS3);
+  const ImGuiStyle& gs = ImGui::GetStyle();
+  float nameW = 0, lineW = 0;
+  for (int i = 0; i < kThemeCount; ++i) {
+    nameW = std::max(nameW, ImGui::CalcTextSize(themeName(i)).x);
+    lineW = std::max(lineW, ImGui::CalcTextSize(themeLine(i)).x);
+  }
+  const float previewW = std::max(64.0f, ImGui::CalcTextSize(tr("Preview")).x + 2 * gs.FramePadding.x);
   for (int i = 0; i < kThemeCount; ++i) {
     label(i == 0 ? "Sound theme" : "");
+    const float x0 = ImGui::GetCursorScreenPos().x, right = x0 + ImGui::GetContentRegionAvail().x;
+    const float descX = x0 + ImGui::GetFrameHeight() + gs.ItemInnerSpacing.x + nameW + theme::kS3;
+    const float buttonX = std::max(x0, std::min(descX + lineW + theme::kS3, right - previewW));
     ImGui::PushID(i);
     if (ImGui::RadioButton(themeName(i), cur == themeId(i))) st.set(kThemeKey, std::string(themeId(i)));  // App::tick loads it
-    ImGui::SameLine(descX);
-    ImGui::TextColored(theme::vec(P.textFaint), "%s", themeLine(i));
-    ImGui::SameLine(previewX);
+    const float y = ImGui::GetItemRectMin().y;
+    if (buttonX - theme::kS3 - descX >= 40.0f) {  // room for a description
+      ImGui::SameLine(0, 0);
+      ImGui::SetCursorScreenPos(ImVec2(descX, y));
+      ui::TextFit(themeLine(i), buttonX - theme::kS3 - descX, P.textFaint, true);
+    }
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorScreenPos(ImVec2(std::max(buttonX, ImGui::GetCursorScreenPos().x + theme::kS2), y));
     ImGui::BeginDisabled(a.uiSoundsDisabled);
-    if (ui::TextButton(tr("Preview"), false, 64, tr("Play this theme's startup sound"))) a.previewSoundTheme(themeId(i));
+    if (ui::TextButton(tr("Preview"), false, previewW, tr("Play this theme's startup sound"))) a.previewSoundTheme(themeId(i));
     ImGui::EndDisabled();
     ImGui::PopID();
   }
@@ -74,20 +88,24 @@ void drawThemeSettings(App& a, float fieldW) {
   ImGui::SetNextItemWidth(fieldW);
   if (ImGui::SliderFloat("##uisndvol", &vol, 0.0f, 100.0f, "%.0f%%")) st.set("sounds.volume", static_cast<double>(vol) / 100.0);
 
-  // Per-event switches; the Play column clears the widest name (checkbox square + gap included).
-  float playX = fieldW + 140;
-  for (int i = 0; i < kEventCount; ++i)
-    playX = std::max(playX, 168 + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x +
-                                ImGui::CalcTextSize(eventName(static_cast<Event>(i))).x + theme::kS3);
+  // Per-event switches; the Play column clears the widest name (checkbox square + gap included)
+  // and stays inside the section (J-137: screen positions, like the theme rows above).
+  float eventW = 0;
+  for (int i = 0; i < kEventCount; ++i) eventW = std::max(eventW, ImGui::CalcTextSize(eventName(static_cast<Event>(i))).x);
+  const float playW = std::max(48.0f, ImGui::CalcTextSize(tr("Play")).x + 2 * gs.FramePadding.x);
   for (int i = 0; i < kEventCount; ++i) {
     const auto e = static_cast<Event>(i);
     bool on = st.getBool(settingKey(e));
     label(i == 0 ? "Sounds" : "");
+    const float x0 = ImGui::GetCursorScreenPos().x, right = x0 + ImGui::GetContentRegionAvail().x;
+    const float playX = std::min(x0 + std::max(fieldW - playW, ImGui::GetFrameHeight() + gs.ItemInnerSpacing.x + eventW + theme::kS3), right - playW);
     ImGui::PushID(100 + i);
     if (ImGui::Checkbox(eventName(e), &on)) st.set(settingKey(e), on);
-    ImGui::SameLine(playX);
+    const float y = ImGui::GetItemRectMin().y;
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorScreenPos(ImVec2(std::max(playX, ImGui::GetCursorScreenPos().x + theme::kS2), y));
     ImGui::BeginDisabled(a.uiSoundsDisabled || !a.uiSounds.hasClip(e));
-    if (ui::TextButton(tr("Play"), false, 48, tr("Preview this sound"))) {
+    if (ui::TextButton(tr("Play"), false, playW, tr("Preview this sound"))) {
       a.uiSounds.setVolume(static_cast<float>(st.getNumber("sounds.volume")));
       a.uiSounds.trigger(e);
     }

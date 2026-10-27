@@ -41,7 +41,8 @@ void drawPixelToneEditor(App& a, const PluginTarget& t, float W) {
   skin::panel(dl, F.o, F.p(kW, kH), K, 4);
   skin::Scope scope(K);
   flk::Ctx c{a, t, F, K, dl};
-  skin::text(dl, F.p(12, 10), K.accent2C(), "PIXEL TONE", F.font(14));
+  if (!pui::titleWordmark(dl, "gl.pixeltone", F.p(12, 10), F.font(14)))  // J-136: the wordmark
+    skin::text(dl, F.p(12, 10), K.accent2C(), "PIXEL TONE", F.font(14));
 
   // Picture.
   static thread_local std::string cacheKey;

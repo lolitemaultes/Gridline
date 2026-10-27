@@ -261,27 +261,35 @@ class MembraneKitGen final : public Generator {
   struct Seq {
     bool on = false;
     uint32_t id = 0;
-    int pattern = 0, step = 0;
-    double pos = 0;  // samples into the current step
+    int pattern = 0, step = 0;  // step: the next step to play
+    double pos = 0;  // 16ths since the start of the current pass of the pattern
     float vel = 1;
   };
   // Advances the sequencer by one sample; fires a step's cells at its start.
+  // Steps keep to a 16th grid that starts at the trigger key (positions are
+  // kept as fractions, so the pattern never drifts from the tempo); swing
+  // delays the second step of each pair, counted from the pattern start (the
+  // last step of an odd-length pattern has no partner and stays on the grid).
   void stepSequencer() {
     const KitPattern& P = data_->d.pattern[seq_.pattern];
-    const double sixteenth = sr_ * 15.0 / tempo_;
-    const double len = sixteenth * ((seq_.step & 1) ? 1.0 - swing_ * 0.5 : 1.0 + swing_ * 0.5);
-    if (seq_.pos == 0.0) {
+    const int len = std::max(1, P.length);
+    if (seq_.step >= len) {  // the pattern got shorter while playing: start its next pass
+      seq_.pos -= seq_.step;
+      seq_.step = 0;
+    }
+    const double at = seq_.step + ((seq_.step & 1) ? swing_ * 0.5 : 0.0);
+    if (seq_.pos >= at - 1e-9) {
       uiStep_.store(seq_.step, std::memory_order_relaxed);
       for (int c = 0; c < kKitPads; ++c) {
         const uint8_t cell = P.cell[c][seq_.step % kKitSteps];
         if (cell & 0x80) strikeChannel(c, seq_.vel * static_cast<float>(cell & 0x7F) / 127.0f);
       }
+      if (++seq_.step >= len) {
+        seq_.step = 0;
+        seq_.pos -= len;
+      }
     }
-    seq_.pos += 1.0;
-    if (seq_.pos >= len) {
-      seq_.pos = 0.0;
-      seq_.step = (seq_.step + 1) % std::max(1, P.length);
-    }
+    seq_.pos += tempo_ / (sr_ * 15.0);
   }
 
   std::array<MembraneVoice, kVoices> voices_;

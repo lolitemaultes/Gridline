@@ -863,7 +863,8 @@ void editorPitcher(App& a, const PluginTarget& t, float width) {
     }
 
   // ---- title strip: name, engine, pitch reference.
-  text(dl, F, 14, 10, pluginTitle("gl.pitcher").c_str(), K.text, 10.0f);
+  if (!pui::titleWordmark(dl, "gl.pitcher", F.p(14, 10), F.font(10.0f), K.text))  // J-136: the wordmark
+    text(dl, F, 14, 10, pluginTitle("gl.pitcher").c_str(), K.text, 10.0f);
   {
     static const char* models[2] = {"LEGACY", "REFERENCE"};
     sel(a, t, PcModel, F, 300, 8, 120, 16, K, true, models);

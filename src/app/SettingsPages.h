@@ -23,5 +23,8 @@ void themeSettingsPage(App& a, float fieldW);
 // interface sounds and the sound theme (J-133).
 void themeSoundsGroup(App& a, float fieldW);
 void shortcutReference(App& a);
+// J-137 dev check (--settings-size WxH): the settings window at this size
+// (logical px; still bounded by the window's minimum), for layout checks.
+void setDevSettingsSize(float w, float h);
 
 }  // namespace gl

@@ -107,7 +107,10 @@ void importProject(Context& c) {
       case 197: s.info.url = e.text(); break;
       case 206: s.info.genre = e.text(); break;
       case 207: s.info.author = e.text(); break;
-      case 11: s.swing = static_cast<float>(std::clamp(e.value() / 128.0, 0.0, 1.0)); break;  // main swing 0..128
+      case 11:  // main swing 0..128; it swings steps only (J-138: piano-roll notes stay straight)
+        s.swing = static_cast<float>(std::clamp(e.value() / 128.0, 0.0, 1.0));
+        s.swingNotes = false;
+        break;
       case 237:  // creation date and time spent, both as day counts (day 0 = 1899-12-30)
         if (e.size >= 16) {
           const double created = e.f64(0), spent = e.f64(8);

@@ -172,6 +172,15 @@ struct Sounding {
 
 // Base for processors driven by a step clock (arpeggiator, sequencer): walks
 // a segment event by event in sample order.
+//
+// J-138: steps sit on the song's step grid while the transport plays. The first
+// step sounds when the first key goes down; it counts as the grid step nearest
+// to that moment, and the following steps fall on the grid from there, so a key
+// pressed a little late or early still swings in time. Swing delays the second
+// step of every pair (counted from the start of the pattern, see swingStep) by
+// swing x half a step, read from the knob as each step is scheduled. When the
+// song position jumps (loop, seek) the next step lands on the next grid step.
+// With the transport stopped the grid starts at the first key.
 class Stepper : public NoteFx {
  public:
   void process(const PluginState& s, const NoteFxAux& aux, const NoteFxContext& ctx, const NoteBuffer& in,
@@ -179,11 +188,25 @@ class Stepper : public NoteFx {
     (void)aux;
     state_ = &s;
     ctx_ = &ctx;
-    double stepTicks = rateBeats(prm(s, rateParam(), 4)) * ctx.ppq;
+    const double stepTicks = std::max(1e-6, rateBeats(prm(s, rateParam(), 4)) * ctx.ppq);
     stepSamples_ = std::max(1.0, stepTicks * ctx.spt);
     int idx = 0;
-    int64_t segStart = clock_;
+    const int64_t segStart = clock_;
     const int64_t segEnd = clock_ + ctx.len;
+    if (running_) {
+      const double now = ctx.tickAt(ctx.from);
+      if (ctx.playing != gridPlaying_ || std::fabs(now - expectTick_) > 0.5) {  // position jumped: back onto the grid
+        const double left = std::max(0.0, slotTick_ - expectTick_);
+        gridPlaying_ = ctx.playing;
+        slotTick_ = ctx.playing ? std::ceil(now / stepTicks - 1e-9) * stepTicks : now + std::min(left, stepTicks);
+        originTick_ = ctx.playing ? 0.0 : slotTick_;
+      } else if (std::fabs(stepTicks - slotSize_) > 1e-9) {  // rate changed: the next step of the new grid
+        const double last = slotTick_ - slotSize_;
+        slotTick_ = originTick_ + (std::floor((last - originTick_) / stepTicks + 1e-6) + 1.0) * stepTicks;
+      }
+      slotSize_ = stepTicks;
+      schedule(segStart, segStart);
+    }
     for (;;) {
       int64_t tIn = idx < in.count ? segStart + (in.ev[idx].offset - ctx.from) : INT64_MAX;
       int64_t tOff = sounding_.nextOff();
@@ -193,17 +216,17 @@ class Stepper : public NoteFx {
       int off = ctx.from + static_cast<int>(t - segStart);
       if (tOff <= t) sounding_.endDue(t, off, out);  // ends first, so a step can retrigger
       while (idx < in.count && segStart + (in.ev[idx].offset - ctx.from) == t) {
-        input(in.ev[idx], off, t, out);
+        input(in.ev[idx], off, t, segStart, stepTicks, out);
         ++idx;
       }
       if (running_ && nextStep_ <= t) {
         step(off, t, out);
         ++stepIndex_;
-        stepPos_ += stepSamples_ * (1.0 + swingOffset(stepIndex_) - swingOffset(stepIndex_ - 1));
-        nextStep_ = static_cast<int64_t>(std::ceil(stepPos_ - 1e-9));
-        if (nextStep_ <= t) nextStep_ = t + 1;
+        slotTick_ += stepTicks;
+        schedule(segStart, t + 1);
       }
     }
+    expectTick_ = ctx.tickAt(ctx.end());
     clock_ = segEnd;
   }
   void reset() override {
@@ -221,17 +244,26 @@ class Stepper : public NoteFx {
   virtual bool latchOn() const { return false; }
   virtual bool passThru() const { return false; }
   virtual void step(int off, int64_t t, NoteBuffer& out) = 0;
+  // Position of step k in its swing pairs (the second of each pair swings).
+  virtual int64_t swingStep(int64_t k) const { return k; }
 
-  double swingOffset(int64_t k) const {  // odd steps are delayed by swing x half a step
-    return (k % 2 == 1) ? prm(*state_, swingParam()) * 0.5 : 0.0;
+  // Sample (processor clock) of the step after the ones played: its grid tick plus swing.
+  void schedule(int64_t segStart, int64_t earliest) {
+    const double sw = swingStep(stepIndex_) % 2 == 1 ? std::clamp(static_cast<double>(prm(*state_, swingParam())), 0.0, 1.0) * 0.5 : 0.0;
+    const double tick = slotTick_ + sw * slotSize_;
+    nextStep_ = std::max(earliest, segStart + (ctx_->offsetOf(tick) - ctx_->from));
   }
-  void start(int64_t t) {
+  void start(int64_t t, int64_t segStart, double stepTicks) {
+    const double now = ctx_->tickAt(ctx_->from + (t - segStart));
     running_ = true;
     stepIndex_ = 0;
-    stepPos_ = static_cast<double>(t);
-    nextStep_ = t;
+    gridPlaying_ = ctx_->playing;
+    slotSize_ = stepTicks;
+    originTick_ = ctx_->playing ? 0.0 : now;
+    slotTick_ = ctx_->playing ? std::round(now / stepTicks) * stepTicks : now;  // the grid step this key stands for
+    nextStep_ = t;  // the first step sounds with the key
   }
-  void input(const NoteMsg& m, int off, int64_t t, NoteBuffer& out) {
+  void input(const NoteMsg& m, int off, int64_t t, int64_t segStart, double stepTicks, NoteBuffer& out) {
     if (m.kind == NoteMsg::AllOff) {
       sounding_.endAll(off, out);
       held_.n = phys_.n = 0;
@@ -245,7 +277,7 @@ class Stepper : public NoteFx {
       phys_.add(m);
       held_.add(m);
       if (passThru()) out.push(noteOn(off, m.id, m.pitch, m.velocity, m.color));
-      if (!running_) start(t);
+      if (!running_) start(t, segStart, stepTicks);
       return;
     }
     // note-off
@@ -261,9 +293,10 @@ class Stepper : public NoteFx {
   const NoteFxContext* ctx_ = nullptr;
   HeldNotes held_, phys_;
   Sounding sounding_;
-  bool running_ = false;
+  bool running_ = false, gridPlaying_ = false;
   int64_t clock_ = 0, nextStep_ = 0, stepIndex_ = 0;
-  double stepPos_ = 0, stepSamples_ = 1;
+  double stepSamples_ = 1;
+  double slotTick_ = 0, slotSize_ = 1, originTick_ = 0, expectTick_ = 0;  // song ticks (J-138)
   int displayStep_ = -1;
   Rng rng_;
 };
@@ -296,8 +329,10 @@ class Arpeggiator final : public Stepper {
     if (dir == AdChord) {
       for (int oct = 0; oct < range; ++oct)
         for (int i = 0; i < cnt; ++i) {
+          const float v = vel(notes[i], k);  // J-138: accents follow the steps (they used to accent every chord)
+          if (!(v > 0.0f)) continue;         // velocity 0 rests
           uint32_t id = ctx_->newId();
-          out.push(noteOn(off, id, notes[i].pitch + 12.0f * oct + transpose, vel(notes[i], 0), notes[i].color));
+          out.push(noteOn(off, id, notes[i].pitch + 12.0f * oct + transpose, v, notes[i].color));
           sounding_.add(id, t + len);
         }
       displayStep_ = static_cast<int>(k % 16);
@@ -327,10 +362,12 @@ class Arpeggiator final : public Stepper {
     }
     const HeldNotes::N& n = notes[idx % cnt];
     float pitch = n.pitch + 12.0f * static_cast<float>(idx / cnt) + transpose;
-    uint32_t id = ctx_->newId();
-    out.push(noteOn(off, id, pitch, vel(n, k), n.color));
-    sounding_.add(id, t + len);
     displayStep_ = static_cast<int>(idx);
+    const float v = vel(n, k);
+    if (!(v > 0.0f)) return;  // velocity 0 (fixed velocity 0, or a key played at 0): the step rests
+    uint32_t id = ctx_->newId();
+    out.push(noteOn(off, id, pitch, v, n.color));
+    sounding_.add(id, t + len);
   }
 
  private:
@@ -343,9 +380,12 @@ class NoteSequencer final : public Stepper {
   int rateParam() const override { return SqRate; }
   int swingParam() const override { return SqSwing; }
   bool passThru() const override { return prm(*state_, SqThru) >= 0.5f; }
+  int length() const { return std::clamp(iprm(*state_, SqLength, 16), 1, kSeqSteps); }
+  // Swing pairs restart with every pass of the pattern (J-138: odd lengths keep step 1 straight).
+  int64_t swingStep(int64_t k) const override { return k % length(); }
   void step(int off, int64_t t, NoteBuffer& out) override {
     const PluginState& s = *state_;
-    int length = std::clamp(iprm(s, SqLength, 16), 1, kSeqSteps);
+    int length = this->length();
     int st = static_cast<int>(stepIndex_ % length);
     displayStep_ = st;
     bool on = prm(s, seqParam(st, SqOn), 1) >= 0.5f;
@@ -367,10 +407,15 @@ class NoteSequencer final : public Stepper {
     if (cnt == 0) return;
     int sel = iprm(s, seqParam(st, SqNote));
     float shift = 12.0f * static_cast<float>(iprm(s, seqParam(st, SqOctave))) + static_cast<float>(iprm(s, SqTranspose));
-    float vel = prm(s, seqParam(st, SqVelocity), 0.8f);
+    // J-138: step velocity scales the played velocity (accents follow how hard the keys
+    // are played), or replaces it (SvStep, the behaviour of states saved before the choice).
+    const float stepVel = prm(s, seqParam(st, SqVelocity), 0.8f);
+    const bool scale = iprm(s, SqVelMode, SvStep) == SvScale;
     int64_t len = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(stepSamples_ * prm(s, seqParam(st, SqGate), 0.5f) - 1e-9)));
     if (nextTie) len = std::max(len, through);
     auto play = [&](const HeldNotes::N& n) {
+      const float vel = scale ? stepVel * n.vel : stepVel;
+      if (!(vel > 0.0f)) return;  // velocity 0: the step rests (no silent note to hold a voice)
       uint32_t id = ctx_->newId();
       out.push(noteOn(off, id, n.pitch + shift, vel, n.color));
       sounding_.add(id, t + len);

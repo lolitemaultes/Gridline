@@ -21,7 +21,7 @@
 #include <vector>
 #include "core/Platform.h"
 #include "Check.h"
-#include "core/Demo.h"
+#include "fixtures/TestSong.h"
 #include "core/PluginInfo.h"
 #include "core/Project.h"
 #include "core/flp/FlpEncode.h"
@@ -86,11 +86,11 @@ bool encodable(const PluginInfo& p) {
   return flp::enc::nativeEncoder(defaultPluginState(p.type)) != nullptr;
 }
 
-// The demo song plus `synths` plugin channels and `effects` mixer slots
+// The test song plus `synths` plugin channels and `effects` mixer slots
 // (encodable types in turn / at random) and `delays` Band Delays.
 Song makeSong(uint64_t seed, int synths, int effects, int delays, int tweaks) {
   Rng r{seed * 0x9E3779B97F4A7C15ull + 1};
-  Song s = makeDemoSong();
+  Song s = makeTestSong();
   std::vector<std::string> gens, fxs;
   for (const auto& p : pluginCatalog()) {
     if (!encodable(p)) continue;
@@ -143,7 +143,7 @@ double exportSeconds(const Song& s, flp::Bytes& out, flp::ExportReport& rep) { r
 // Every encodable generator (or effect) once, with a few knobs turned.
 Song everyType(uint64_t seed, PluginKind kind) {
   Rng r{seed * 0x9E3779B97F4A7C15ull + 7};
-  Song s = makeDemoSong();
+  Song s = makeTestSong();
   std::vector<PluginState> fx;
   for (const auto& p : pluginCatalog()) {
     if (!encodable(p) || p.kind != kind) continue;

@@ -197,10 +197,12 @@ void drawSlider(const Skin& k, ImVec2 p, ImVec2 sz, float n, float c0, bool cent
 }
 
 // Interaction for a free value: drag (vertical or horizontal), wheel, Ctrl+click
-// resets to the default, tooltip with the formatted value. Item = last item.
+// resets to the default, double-click resets (types at the default) and the
+// right-click menu (J-136), tooltip with the formatted value. Item = last item.
 bool dragValue(App& a, double& v, const ParamDesc& d, float pixels, bool horizontal) {
   ImGuiIO& io = ImGui::GetIO();
   const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  const double pressed = ui::ValueAtPress(v);
   bool changed = false;
   ImGuiID id = ImGui::GetItemID();
   static std::map<ImGuiID, double> accum;
@@ -224,8 +226,27 @@ bool dragValue(App& a, double& v, const ParamDesc& d, float pixels, bool horizon
     double nv = d.fromNormalized(std::clamp(d.toNormalized(v) + io.MouseWheel * (io.KeyShift ? 0.005 : 0.025), 0.0, 1.0));
     if (nv != v) v = nv, changed = true;
   }
+  ParamDoubleClick dbl = ParamDoubleClick::Type;
+  if (ui::DoubleClicked(d, pressed, &dbl)) {
+    if (dbl == ParamDoubleClick::Reset) {
+      v = d.def, accum[id] = d.toNormalized(v), changed = true;
+    } else {
+      ImGui::OpenPopup("##type");
+    }
+  }
+  if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##vmenu");
+  bool wantType = false;
+  if (ImGui::BeginPopup("##vmenu")) {
+    ImGui::TextDisabled("%s", d.name.c_str());
+    ImGui::Separator();
+    if (ui::ResetMenuItem(d, v)) v = d.def, changed = true;
+    if (ImGui::MenuItem(i18n::tr("Type a value..."))) wantType = true;
+    ImGui::EndPopup();
+  }
+  if (wantType) ImGui::OpenPopup("##type");
+  if (ui::ValueTypePopup(d, &v)) changed = true;
   if (hov || act) {
-    a.setHint(d.name + ": " + d.format(v) + "   (drag · Shift fine · Ctrl+click reset)");
+    a.setHint(d.name + ": " + d.format(v) + "   (" + ui::ParamControlHint() + ")");
     if (act || ImGui::GetCurrentContext()->HoveredIdTimer > 0.5f) ImGui::SetTooltip("%s", d.format(v).c_str());
   }
   return changed;

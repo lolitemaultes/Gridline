@@ -489,7 +489,8 @@ void editorFreqShiftFl(App& a, const PluginTarget& t, float width) {
     char buf[40];
     std::snprintf(buf, sizeof buf, "%+.2f Hz", hz);
     skin::pill(dl, F.p(272, 37), F.p(445, 65), K, buf, F.font(13));
-    skin::text(dl, F.p(300, 12), K.textDim, "FREQ SHIFTER", F.font(9));
+    if (!pui::titleWordmark(dl, "gl.freqshift", F.p(300, 12), F.font(9), K.text))  // J-136: the wordmark
+      skin::text(dl, F.p(300, 12), K.textDim, "FREQ SHIFTER", F.font(9));
     static const char* md[2] = {"LEGACY", "REF"};
     skin::switchSel(a, t, FsModel, F.p(372, 8), F.sz(76, 16), K, md, 2, true);
   }

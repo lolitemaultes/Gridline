@@ -95,28 +95,34 @@ class Hairline : public Painter {
     }
     // Handle: a short bar across the line.
     const ImU32 hc = (s.state & Disabled) ? tk.textFaint : (s.state & Active) ? rgb(0xFFFFFF) : tk.text;
-    if (v) dl->AddRectFilled(ImVec2(c.x - 6, q - 1), ImVec2(c.x + 6, q + 1), hc);
-    else dl->AddRectFilled(ImVec2(q - 1, c.y - 6), ImVec2(q + 1, c.y + 6), hc);
+    // J-139: 13 px across, centred on the half-pixel line.
+    if (v) dl->AddRectFilled(ImVec2(c.x - 6.5f, q - 1), ImVec2(c.x + 6.5f, q + 1), hc);
+    else dl->AddRectFilled(ImVec2(q - 1, c.y - 6.5f), ImVec2(q + 1, c.y + 6.5f), hc);
   }
 
   void fader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Fader& f) override {
-    const float tx = std::floor((p0.x + p1.x) * 0.5f) - 4 + 0.5f;
-    const float y0 = p0.y + 12, y1 = p1.y - 12;
+    // J-139: centred on the control (moved left only to make room for a meter), one centre line (LookGeom.h).
+    const bool hasMeter = f.meterL >= 0;
+    const geom::FaderGeom g = geom::fader(p0.x, p0.y, p1.x, p1.y, f.norm, geom::kHairlineFader, hasMeter);
+    const float tx = g.tx;  // a half pixel: the 1 px line is crisp
+    const float ti = geom::kHairlineFader.tickIn;
     for (int i = 0; i <= 20; ++i) {
-      const float m = static_cast<float>(i) / 20.0f;
-      const float y = std::round(y1 - (y1 - y0) * m) + 0.5f;
+      const float y = g.tickY(static_cast<float>(i) / 20.0f);
       const bool major = i % 4 == 0;
-      dl->AddLine(ImVec2(tx - (major ? 14 : 10), y), ImVec2(tx - 7, y), i == 16 ? tk.text : major ? tk.textDim : tk.textFaint, 1.0f);
+      const float to = g.tickOut(major ? geom::kHairlineFader.tickOut : ti + 3);
+      const ImU32 c = i == 16 ? tk.text : major ? tk.textDim : tk.textFaint;
+      dl->AddLine(ImVec2(tx - to, y), ImVec2(tx - ti, y), c, 1.0f);
+      if (g.ticksRight) dl->AddLine(ImVec2(tx + ti, y), ImVec2(tx + to, y), c, 1.0f);
     }
-    dl->AddLine(ImVec2(tx, y0), ImVec2(tx, y1), tk.rail, 1.0f);
-    if (f.meterL >= 0) {
+    dl->AddLine(ImVec2(tx, g.y0), ImVec2(tx, g.y1), tk.rail, 1.0f);
+    if (hasMeter) {
       Meter m;
       m.l = f.meterL, m.r = f.meterR, m.peakL = f.peakL, m.peakR = f.peakR;
-      meter(dl, ImVec2(tx + 12, y0), ImVec2(tx + 19, y1), m);
+      meter(dl, ImVec2(tx + 12, g.y0), ImVec2(tx + 19, g.y1), m);
     }
-    const float y = std::round(y1 - (y1 - y0) * f.norm) + 0.5f;
-    dl->AddLine(ImVec2(tx, y), ImVec2(tx, y1), (f.state & Active) ? tk.value : tk.textDim, 2.0f);
-    const ImVec2 h0(tx - 10, y - 8), h1(tx + 10, y + 8);
+    const float y = g.y;
+    dl->AddLine(ImVec2(tx, y), ImVec2(tx, g.y1), (f.state & Active) ? tk.value : tk.textDim, 2.0f);
+    const ImVec2 h0(g.capX0, g.capY0), h1(g.capX1, g.capY1);
     dl->AddRectFilled(h0, h1, tk.panelBot, 2);
     dl->AddRect(h0, h1, (f.state & (Hover | Active)) ? tk.text : tk.textDim, 2);
     dl->AddLine(ImVec2(h0.x + 3, y), ImVec2(h1.x - 3, y), (f.state & Active) ? tk.value : tk.text, 1.0f);
@@ -271,7 +277,7 @@ class Hairline : public Painter {
       dl->AddRectFilled(p0, p1, alt ? rgb(0x22262A) : rgb(0x1C1F22), tk.radiusSm);
       if (state & Hover) dl->AddRect(snap(p0), ImVec2(std::floor(p1.x) - 0.5f, std::floor(p1.y) - 0.5f), tk.textDim, tk.radiusSm);
     }
-    if (playing) dl->AddRectFilled(ImVec2(p0.x, p1.y + 3), ImVec2(p1.x, p1.y + 5), tk.hot);
+    if (playing) dl->AddRectFilled(ImVec2(p0.x + 2, p1.y - 3), ImVec2(p1.x - 2, p1.y - 1), tk.hot);  // J-137: inside the pad
   }
   void pad(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* lbl, float glow, int state, ImU32 tint) override {
     const ImU32 c = roleOr(tint, tk.hot);

@@ -188,6 +188,10 @@ bool fieldKnob(App& a, const char* id, ImVec2 tl, float& v, float mn, float mx, 
   ImGui::SetCursorScreenPos(tl);
   ImGui::InvisibleButton(id, ImVec2(cell, 2 * r + 30));
   const bool hv = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
+  ParamDesc d;  // J-136: the shared reset / type-in over this free value
+  d.name = i18n::tr(label), d.min = mn, d.max = mx, d.def = def;
+  const double pressed = ui::ValueAtPress(v);
+  const bool deactivated = ImGui::IsItemDeactivated();
   bool changed = false;
   if (ac && ImGui::IsMouseDragging(0, 0)) {
     const float dy = -ImGui::GetIO().MouseDelta.y;
@@ -200,12 +204,31 @@ bool fieldKnob(App& a, const char* id, ImVec2 tl, float& v, float mn, float mx, 
     changed = true;
     if (released) *released = true;
   }
-  if (hv && ImGui::IsMouseDoubleClicked(0)) {
-    v = def;
+  ImGui::PushID(id);
+  double dv = v;
+  bool set = false, wantType = false;
+  ParamDoubleClick dbl = ParamDoubleClick::Type;
+  if (ui::DoubleClicked(d, pressed, &dbl)) {  // reset; at the default, type a value
+    if (dbl == ParamDoubleClick::Reset) dv = def, set = true;
+    else wantType = true;
+  }
+  if (hv && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##fkmenu");
+  if (ImGui::BeginPopup("##fkmenu")) {
+    ImGui::TextDisabled("%s", d.name.c_str());
+    ImGui::Separator();
+    if (ui::ResetMenuItem(d, v)) dv = def, set = true;
+    if (ImGui::MenuItem(i18n::tr("Type a value..."))) wantType = true;
+    ImGui::EndPopup();
+  }
+  if (wantType) ImGui::OpenPopup("##type");
+  if (ui::ValueTypePopup(d, &dv)) set = true;
+  ImGui::PopID();
+  if (set) {
+    v = static_cast<float>(dv);
     changed = true;
     if (released) *released = true;
   }
-  if (released && ImGui::IsItemDeactivated()) *released = true;
+  if (released && deactivated) *released = true;
   char vb[32];
   std::snprintf(vb, sizeof vb, fmt, static_cast<double>(v));
   if (hv || ac) ui::Tooltip(vb);

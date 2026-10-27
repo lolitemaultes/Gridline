@@ -240,6 +240,7 @@ class Arp {
   std::vector<int> sorted_, cycle_, played_;
   int pos_ = 0, step_ = 0, repeat_ = 0, transStep_ = 0;
   double phase_ = 0, gateLeft_ = -1;
+  double next_ = 0;  // grid index (steps) of the next step
   int sounding_[16];
   int soundingN_ = 0;
   float veloCur_ = 1;

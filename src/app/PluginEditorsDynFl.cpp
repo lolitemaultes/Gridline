@@ -464,7 +464,8 @@ void editorClipper(App& a, const PluginTarget& t, float width) {
   skin::label(dl, f, 14, 80, 32, 15, "THRES", lblText, lblBg, 8.5f);
   skin::wheel(a, t, ClpPostGain, f, 62, 32, 46, 46, w);
   skin::label(dl, f, 70, 80, 30, 15, "POST", lblText, lblBg, 8.5f);
-  skin::label(dl, f, 7, 106, 102, 16, pluginTitle("gl.clipper").c_str(), hex(0x9F9F9F), 0, 13.0f, 0);
+  if (!pui::titleWordmarkIn(dl, "gl.clipper", f.p(7, 106), f.p(109, 122), f.d(13.0f), 0, hex(0xD8D8D8)))  // J-136: the wordmark
+    skin::label(dl, f, 7, 106, 102, 16, pluginTitle("gl.clipper").c_str(), hex(0x9F9F9F), 0, 13.0f, 0);
   // Output meter.
   skin::MeterLook ml;
   ml.bg = hex(0x161C1F);

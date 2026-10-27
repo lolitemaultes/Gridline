@@ -49,6 +49,7 @@ struct RackDev {
   int steps = 0;
   float w = 0, h = 0, scroll = -1;
   bool dock = false;
+  int playStep = -1;  // J-137 "play<k>": the song-position outline on step k (stills of the play highlight)
 } gRackDev;
 
 std::vector<uint8_t> rowOf(const Pattern& p, ObjectId ch) {
@@ -355,6 +356,16 @@ void drawChannelRack(App& a) {
       ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, rowY));
       ImGui::AlignTextToFramePadding();
       ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Swing"));
+      // J-138: song swing moves steps and piano roll notes; projects from .flp files swing steps only.
+      ui::Hint(a.doc.song().swingNotes ? "Song swing moves steps and piano roll notes (right-click: steps only)"
+                                       : "Song swing moves steps only (right-click: piano roll notes too)");
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##swingnotes");
+      if (ImGui::BeginPopup("##swingnotes")) {
+        const bool notes = a.doc.song().swingNotes;
+        if (ImGui::MenuItem(i18n::tr("Swing piano roll notes"), nullptr, notes))
+          a.doc.editSong(notes ? "swing steps only" : "swing notes too", [](Song& x) { x.swingNotes = !x.swingNotes; });
+        ImGui::EndPopup();
+      }
     }
   }
   ui::EndToolbar();
@@ -395,6 +406,7 @@ void drawChannelRack(App& a) {
     Tick st = s.ticksPerStep(*pat);
     if (st > 0) playStep = static_cast<int>(a.engine.position() / static_cast<double>(st));
   }
+  if (gRackDev.playStep >= 0) playStep = gRackDev.playStep;  // dev stills (--rack play<k>)
   // Step scroll: kept in range (shorter pattern, wider rack); while the
   // pattern plays the view pages along with the playing step.
   scrollui::clampOuter(a.rack.axStep, a.rack.stepScroll, 0, L.scrollMax);
@@ -595,7 +607,7 @@ void drawChannelRack(App& a) {
       {  // J-111: a collaborator's change flashes; a sample still arriving shows its progress
         ImU32 fc = 0;
         if (const float fl = collabui::flash(a, "channels/#" + std::to_string(c.id), &fc); fl > 0)
-          dl->AddRect(ImVec2(np.x - 1, np.y - 1), ImVec2(np.x + nameW + 1, np.y + cellH + 1), theme::withAlpha(fc, fl), theme::kRadiusSm, 0, 2.0f);
+          dl->AddRect(ImVec2(np.x + 1, np.y + 1), ImVec2(np.x + nameW - 1, np.y + cellH - 1), theme::withAlpha(fc, fl), theme::kRadiusSm, 0, 2.0f);  // J-137: inside
         float pr = 0;
         if (collabui::fileLoading(a, c.plugin.data, &pr)) {
           collabui::drawLoading(dl, ImVec2(np.x + 5, np.y + cellH - 4), ImVec2(np.x + nameW - 2, np.y + cellH - 1), pr, true);
@@ -699,7 +711,7 @@ void drawChannelRack(App& a) {
             dl->AddTriangleFilled(ImVec2(q1.x - 6, q.y + 1), ImVec2(q1.x - 1, q.y + 1), ImVec2(q1.x - 1, q.y + 6),
                                   theme::withAlpha(theme::rgb(theme::role::kGraph), 0.9f));
         }
-        if (k == playStep) dl->AddRect(ImVec2(q.x - 1, q.y - 1), ImVec2(q1.x + 1, q1.y + 1), P.playhead, theme::kRadius, 0, 1.5f);
+        if (k == playStep) ui::StepPlayOutline(dl, q, q1);  // J-137: inside the pad (the step viewport's clip cut the first column's left edge)
         if (hov)
           app().setHint("Step " + std::to_string(k + 1) +
                         (v ? " \xC2\xB7 velocity " + std::to_string(v) + " (" + (wg.hint ? i18n::tr("click or Ctrl+wheel to change") : i18n::tr("scroll to change")) + ")"
@@ -976,6 +988,7 @@ void rackDevSpec(const std::string& spec) {
     if (k.rfind("steps", 0) == 0) gRackDev.steps = std::atoi(k.c_str() + 5);
     else if (k.rfind("scroll", 0) == 0) gRackDev.scroll = static_cast<float>(std::atof(k.c_str() + 6));
     else if (k == "dock") gRackDev.dock = true;
+    else if (k.rfind("play", 0) == 0) gRackDev.playStep = std::atoi(k.c_str() + 4);
     else if (k.rfind("w", 0) == 0) gRackDev.w = static_cast<float>(std::atof(k.c_str() + 1));
     else if (k.rfind("h", 0) == 0) gRackDev.h = static_cast<float>(std::atof(k.c_str() + 1));
     i = j + 1;

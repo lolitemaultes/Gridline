@@ -1,6 +1,7 @@
 // Gridline — application entry: SDL2 window + OpenGL 3 + Dear ImGui, audio
 // device, default layout, typing keyboard, file drops.
 #include "Look.h"
+#include "SettingsPages.h"
 #include "GridlineVersion.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -1193,6 +1194,9 @@ int main(int argc, char** argv) {
     } else if (arg == "--size" && i + 1 < argc) {
       int w = 0, h = 0;
       if (std::sscanf(argv[++i], "%dx%d", &w, &h) == 2 && w > 0 && h > 0) forcedSize = {w, h};
+    } else if (arg == "--settings-size" && i + 1 < argc) {  // J-137: settings window size for layout checks
+      int w = 0, h = 0;
+      if (std::sscanf(argv[++i], "%dx%d", &w, &h) == 2 && w > 0 && h > 0) setDevSettingsSize(static_cast<float>(w), static_cast<float>(h));
     } else if (arg == "--resize" && i + 1 < argc) {
       // Dev check for live resizing: switch to this size halfway through --frames.
       int w = 0, h = 0;

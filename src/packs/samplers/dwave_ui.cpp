@@ -46,7 +46,8 @@ void drawWaveProgramEditor(App& a, const PluginTarget& t, float W) {
   skin::panel(dl, F.o, F.p(kW, kH), K, 4);
   skin::Scope scope(K);
   flk::Ctx c{a, t, F, K, dl};
-  skin::text(dl, F.p(12, 10), K.accent2C(), pluginTitle("gl.waveprogram").c_str(), F.font(14));
+  if (!pui::titleWordmark(dl, "gl.waveprogram", F.p(12, 10), F.font(14)))  // J-136: the wordmark
+    skin::text(dl, F.p(12, 10), K.accent2C(), pluginTitle("gl.waveprogram").c_str(), F.font(14));
   char b[200];
   std::snprintf(b, sizeof b, "%s  ·  %zu zones  ·  %s", prog.name.c_str(), prog.zones.size(),
                 prog.playMode == 0 ? "poly" : prog.playMode == 1 ? "mono" : "legato");

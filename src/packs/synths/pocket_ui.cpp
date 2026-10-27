@@ -94,7 +94,9 @@ void drawPocketSynthEditor(App& a, const PluginTarget& t, float W) {
   skin::Scope scope(K);
   flk::Ctx c{a, t, F, K, dl};
 
-  skin::text(dl, F.p(12, 10), K.accent2C(), "POCKET SYNTH", F.font(14));
+  if (!pui::titleWordmark(dl, "gl.pocketsynth", F.p(12, 10), F.font(14)))  // J-136: the wordmark
+
+    skin::text(dl, F.p(12, 10), K.accent2C(), "POCKET SYNTH", F.font(14));
   flk::lcd(c, 130, 8, 140, 16, readout(PkOscKind, val(st, PkOscKind)).c_str());
 
   flk::section(c, 4, 30, 150, 124, "Voice");

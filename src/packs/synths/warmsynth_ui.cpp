@@ -124,7 +124,8 @@ void drawWarmSynthEditor(App& a, const PluginTarget& t, float W) {
 
   // ---- key strip + name
   skin::keyboard("##warmkb", F.p(4, 300), F.sz(315, 72), 36, 84, K);
-  skin::text(dl, F.p(440, 360), K.accent2C(), "WARM TRIO", F.font(10));
+  if (!pui::titleWordmark(dl, "gl.warmsynth", F.p(440, 360), F.font(10), K.text))  // J-136: the wordmark
+    skin::text(dl, F.p(440, 360), K.accent2C(), "WARM TRIO", F.font(10));
   F.end(kW, kH);
   ImGui::PopID();
 }

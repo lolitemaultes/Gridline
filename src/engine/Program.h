@@ -33,6 +33,9 @@ namespace gl {
 
 struct NoteEv {
   Tick on = 0, off = 0;
+  // J-138: fractions of a tick (0 <= frac < 1) added to on / off. Swing places notes between
+  // ticks, so the swing amount moves them smoothly at any PPQ; the engine schedules in samples.
+  float onFrac = 0, offFrac = 0;
   float pitch = 60;
   float velocity = 0.8f;
   NoteProps props;     // pan, release velocity, mod X / Y, colour
@@ -73,7 +76,7 @@ struct ChannelRuntime {
   bool primed = false;
   struct Pending {
     uint32_t id;
-    Tick off;
+    double off;         // end tick (with its fraction)
     int64_t at = 0;     // absolute start sample (cut groups spare notes that start together)
     float pitch = 60;   // played pitch without the channel offset (slides are relative to it)
   };
@@ -536,6 +539,13 @@ class ProgramBuilder {
 std::vector<NoteEv> compilePatternChannel(const Song& song, const Pattern& p, ObjectId channel);
 // The same for one channel's own notes only (no layer parents).
 std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, const Channel& c);
+// J-138: song swing as a time warp of pattern tick `x` (steps and piano-roll notes alike):
+// inside each pair of steps, counted from the bar line, the pair's midpoint moves
+// `swing` x half a step later and the pair's ends stay put. Odd steps per bar leave
+// the bar's last step straight. swing 0 returns x unchanged.
+double swingWarp(double x, double swing, Tick stepTicks, int stepsPerBar);
+inline double noteOnTick(const NoteEv& e) { return static_cast<double>(e.on) + e.onFrac; }
+inline double noteOffTick(const NoteEv& e) { return static_cast<double>(e.off) + e.offFrac; }
 
 // Data an instrument or effect needs besides its parameters (samples, slices,
 // pack data), prepared on the UI thread. Used by the builder and plugin hosts.

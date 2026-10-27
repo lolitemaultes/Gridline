@@ -1,5 +1,5 @@
 // Gridline — J-78 tests: FL Studio project export hunt (every plugin type at
-// default / minimum / maximum, loop starters, the demo song, long and large
+// default / minimum / maximum, loop starters, the test song, long and large
 // projects, unicode names, hosted plugins), FLP file writing (paths with
 // spaces / unicode, overwrite, read-only folders, error text), save types
 // (Gridline zipped project beside the FL Studio zipped loop package) and
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 #include "Check.h"
-#include "core/Demo.h"
+#include "fixtures/TestSong.h"
 #include "core/Document.h"
 #include "core/FlexStandin.h"
 #include "core/MenuOps.h"
@@ -125,14 +125,14 @@ void testLoopStarters() {
     }
   expect(bad == 0, "every loop starter style and form exports");
   std::string why;
-  expect(roundTrip(makeDemoSong(), why), "demo song exports (" + why + ")");
+  expect(roundTrip(makeTestSong(), why), "test song exports (" + why + ")");
   expect(roundTrip(makeEmptySong(), why), "empty project exports (" + why + ")");
   Song bare;  // no mixer at all
   expect(roundTrip(bare, why), "project without a mixer exports (" + why + ")");
 }
 
 void testLarge() {
-  Song s = makeDemoSong();
+  Song s = makeTestSong();
   s.info.title = "Ünïcödé 曲 🎵";
   for (auto& c : s.channels) c.name += " — ñ";
   // Very long: clips far into the song.
@@ -178,12 +178,12 @@ void testLarge() {
   expect(roundTrip(h, why), "hosted plugin placeholders export (" + why + ")");
 }
 
-// The demo song with what the later tracks added: chopped clips (J-60),
+// The test song with what the later tracks added: chopped clips (J-60),
 // looping clips with offsets and copies (J-69), smooth-timing channel
 // envelopes (J-72), a FLEX stand-in (J-53), automation (looping), clip /
 // pattern / channel groups, markers of every kind, track modes (J-56).
 Song featureSong() {
-  Song s = makeDemoSong();
+  Song s = makeTestSong();
   Document d;
   d.reset(s);
   std::vector<ObjectId> pat;
@@ -402,7 +402,7 @@ bool filePermsEnforced(const std::string& scratch) {
 }
 
 void testFlpFileWriting() {
-  const Song s = makeDemoSong();
+  const Song s = makeTestSong();
   flp::ExportOptions o;
   flp::ExportReport rep;
   std::string err;

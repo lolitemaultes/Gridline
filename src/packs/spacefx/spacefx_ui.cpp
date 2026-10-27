@@ -958,14 +958,21 @@ void editorConvolver(App& a, const PluginTarget& t, float width) {
   ImGui::PushID("conv");
   // ---- Title strip: accent bar + name, view tabs, display option.
   {
-    dl->AddRectFilled(F.p(14, 13), F.p(17, 33), green, 1.5f * F.s);
+    // J-136: the wordmark (Tile logo) in place of the accent bar and name
     const std::string title = pluginTitle("gl.convolver");
     const float ts = std::clamp(F.u(15.0f), 12.0f, 30.0f);
     ImFont* bold = a.fontBold ? a.fontBold : a.fontMonoBold;
-    dl->AddText(bold, ts, ImVec2(std::round(F.p(24, 0).x), std::round(F.p(0, 23).y - ts * 0.55f)), K.text, title.c_str());
-    const float tw = bold->CalcTextSizeA(ts, FLT_MAX, 0, title.c_str()).x;
+    const float wh = std::round(ts * pui::kTitleWordmarkScale);
+    float tw = pui::wordmarkAt(dl, "gl.convolver", ImVec2(std::round(F.p(14, 0).x), std::round(F.p(0, 23).y - wh * 0.5f)), wh, K.text);
+    float tx = F.p(14, 0).x;
+    if (tw <= 0) {
+      dl->AddRectFilled(F.p(14, 13), F.p(17, 33), green, 1.5f * F.s);
+      dl->AddText(bold, ts, ImVec2(std::round(F.p(24, 0).x), std::round(F.p(0, 23).y - ts * 0.55f)), K.text, title.c_str());
+      tw = bold->CalcTextSizeA(ts, FLT_MAX, 0, title.c_str()).x;
+      tx = F.p(24, 0).x;
+    }
     ImGui::PushFont(a.fontMono, F.font(8.5f));
-    dl->AddText(ImVec2(std::round(F.p(24, 0).x + tw + F.u(10)), std::round(F.p(0, 23).y - F.font(8.5f) * 0.55f)), K.textDim,
+    dl->AddText(ImVec2(std::round(tx + tw + F.u(10)), std::round(F.p(0, 23).y - F.font(8.5f) * 0.55f)), K.textDim,
                 i18n::tr("impulse response reverb"));
     ImGui::PopFont();
     if (skin::button("##tabir", F.p(470, 12), F.sz(100, 22), K, i18n::tr("IMPULSE"), !u.eqTab, F.font(9.0f))) u.eqTab = false;

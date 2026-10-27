@@ -125,7 +125,7 @@ class Slate : public Painter {
       dl->AddLine(ImVec2(p0.x + 2, p0.y + 0.5f), ImVec2(p1.x - 2, p0.y + 0.5f), alpha(IM_COL32_WHITE, 0.14f), 1.0f);
     }
     dl->AddRect(p0, p1, tk.faceLine, tk.radiusSm);
-    if (playing) dl->AddRectFilled(ImVec2(p0.x + 3, p1.y + 2), ImVec2(p1.x - 3, p1.y + 4), lighten(tk.led, 0.2f), 1);
+    if (playing) dl->AddRectFilled(ImVec2(p0.x + 3, p1.y - 4), ImVec2(p1.x - 3, p1.y - 2), lighten(tk.led, 0.2f), 1);  // J-137: inside the pad
   }
   void section(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* title) override {
     sunken(dl, p0, p1, tk.radius, tk.section);
@@ -160,14 +160,15 @@ class Current : public Painter {
   }
   void sunken(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 fill) override { skin::insetField(dl, p0, p1, fill, r); }
   void knob(ImDrawList* dl, ImVec2 c, float r, const Knob& k) override {
-    skin::KnobPaint kp;
+    // J-137: the knob the interface draws in this style (ui::Knob), so previews match it.
     const theme::Palette& p = theme::pal();
-    kp.rail = p.surface900, kp.fill = (k.state & (Hover | Active)) ? p.accent : p.paper, kp.cap = p.surface700, kp.pointer = p.text;
-    if (k.state & Disabled) kp.fill = p.textFaint;
-    kp.a0 = kA0, kp.a1 = kA1, kp.from = k.bipolar ? angleOf(0.5f) : kA0, kp.an = angleOf(k.norm);
-    kp.hot = k.state & Hover, kp.active = k.state & Active;
-    skin::knobFace(dl, c, r, kp);
+    ui::DrawKnob(dl, c, r, k.norm, k.bipolar, k.state & Hover, k.state & Active);
     if (k.modNow >= 0) dl->AddCircleFilled(ImVec2(c.x + std::cos(angleOf(k.modNow)) * r, c.y + std::sin(angleOf(k.modNow)) * r), 3, p.accent, 12);
+  }
+  // J-137: the mixer fader the interface draws in this style (ui::ParamFader; its rect is the
+  // control's own plus the 8 / 4 px margin a styled fader is given).
+  void fader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Fader& f) override {
+    ui::DrawFader(dl, ImVec2(p0.x + 8, p0.y + 4), ImVec2(p1.x - p0.x - 16, p1.y - p0.y - 8), f.norm, 0.8f, f.state & Hover, f.state & Active);
   }
   void meter(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Meter& m) override {
     if (!m.vertical) {
@@ -183,7 +184,7 @@ class Current : public Painter {
   }
   void stepPad(ImDrawList* dl, ImVec2 p0, ImVec2 p1, bool on, bool alt, float vel, bool playing, int state, ImU32 tint) override {
     ui::StepPad(dl, p0, p1, on, alt, state & Hover, tint, vel);
-    if (playing) dl->AddRect(p0, p1, theme::pal().playhead, 2, 0, 1.5f);
+    if (playing) ui::StepPlayOutline(dl, p0, p1);
   }
   void field(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* txt, int state, int caret, bool lcd) override {
     if (lcd) ui::Lcd(dl, p0, ImVec2(p1.x - p0.x, p1.y - p0.y), txt, state & Hover, state & Active);

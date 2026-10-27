@@ -731,8 +731,8 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
 
   // ================================================================ bottom bar
   {
-    // Name plate: the catalog display name (J-94 may replace it with a wordmark).
-    {
+    // Name plate: the plugin's wordmark (J-136); the display name without one.
+    if (!pui::titleWordmarkIn(dl, st.type, F.p(10, 250), F.p(144, 278), std::clamp(10.0f * s, 10.0f, 17.0f) * 1.2f, 0, skin::hex(0xC9D4DA))) {
       std::string nm = pluginTitle(st.type);
       for (char& ch : nm) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
       ImGui::PushFont(a.fontMonoBold, std::clamp(10.0f * s, 10.0f, 17.0f));

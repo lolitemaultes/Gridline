@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 #include "../../src/core/BrowserIndex.h"
-#include "../../src/core/Demo.h"
+#include "../fixtures/TestSong.h"
 #include "../../src/core/PluginBrand.h"
 #include "../../src/core/PluginInfo.h"
 #include "../../src/core/Project.h"
@@ -202,7 +202,7 @@ void testFlReports() {
   const std::string text = flp::reportText(rep);
   expect(text.find("Shuttle (gl.timegate) -> Gross Beat") != std::string::npos, "export report: Gridline display name and type");
 
-  Song s = makeDemoSong();
+  Song s = makeTestSong();
   s.channels.resize(1);
   s.channels[0].name = "Probe";
   s.channels[0].mixerTrack = s.mixer[1].id;

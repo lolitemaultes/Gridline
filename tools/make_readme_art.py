@@ -444,7 +444,7 @@ def main():
         # Release screenshots (docs/images/release-<version>/).
         rel = os.path.join(out, "release-" + RELEASE)
         os.makedirs(rel, exist_ok=True)
-        contact_sheet(root, shots, RELEASE_EDITORS, os.path.join(rel, "effects.png"), cols=1, cell_w=800)
+        contact_sheet(root, shots, RELEASE_EDITORS, os.path.join(rel, "suite-mini.png"), cols=3, cell_w=600)
         for src, dst, box in RELEASE_VIEWS:
             p = os.path.join(shots, src)
             if not os.path.exists(p):
@@ -482,24 +482,22 @@ VIEWS = [
 VIEWS.append(("plasma.png", "plasma.png", (390, 454, 2778, 1942)))
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.0-beta.1"
+RELEASE = "0.7.0-beta.2"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.0", "Make music together",
-                  "Live collaboration, windows on every monitor and a sharper interface")
-RELEASE_BANNER_OPTS = {"tag": "BETA 1", "label": "PRE-RELEASE"}
-# Effect editors with live graphics while the song plays (2880x1800 captures).
+RELEASE_BANNER = ("0.7.0", "Play it your way",
+                  "Gridline Suite in any DAW, control styles, smooth swing and a new demo song")
+RELEASE_BANNER_OPTS = {"tag": "BETA 2", "label": "PRE-RELEASE"}
+# Gridline Suite Mini editors (2880x1800 captures, the window below its title), one sheet.
 RELEASE_EDITORS = [
-    ("rel_reverb.png", "Reverb", (530, 449, 2354, 1109)),
-    ("rel_delay.png", "Tracer", (508, 452, 2373, 1106)),
-    ("rel_limiter.png", "Limiter", (629, 340, 2254, 1214)),
+    ("rel_minipress.png", "Press", (970, 296, 1910, 1262)),
+    ("rel_miniecho.png", "Echo", (970, 380, 1910, 1178)),
+    ("rel_minichime.png", "Chime", (970, 432, 1910, 1126)),
 ]
-# Views from 3200x2000 captures.
+# Views from 3200x2000 captures: the Settings window on its Theme page, the playlist.
 RELEASE_VIEWS = [
-    ("rel_playlist.png", "playlist.png", (352, 230, 2290, 1835)),
-    ("rel_rack.png", "channel-rack.png", (680, 397, 2080, 1488)),
-    ("rel_stretch.png", "stretch-modes.png", (0, 130, 1560, 700)),
+    ("rel_theme.png", "control-styles.png", (746, 470, 2442, 1578)),
+    ("rel_demo.png", "demo-song.png", None),
 ]
-
 
 if __name__ == "__main__":
     main()

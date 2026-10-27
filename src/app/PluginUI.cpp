@@ -631,38 +631,18 @@ bool isLinked(App& a, ParamId pid) {
   return false;
 }
 
-// Shared right-click menu for parameter controls.
+// Shared right-click menu for parameter controls: J-136 reset to default
+// first (greyed at the default), type, automation, links.
 void paramMenu(App& a, ParamId pid, const ParamDesc& d, bool* wantType) {
   ImGui::TextDisabled("%s", d.name.c_str());
   ImGui::Separator();
-  std::string reset = "Reset  (" + d.format(d.def) + ")";
-  if (ImGui::MenuItem(reset.c_str())) a.doc.setParam(pid, d.def, false);
+  double cur = getParam(a.doc.song(), pid).value_or(d.def);
+  ui::ParamResetMenuItem(pid, d, cur);
   if (ImGui::MenuItem(i18n::tr("Type a value..."))) *wantType = true;
   ImGui::Separator();
   automationMenuItems(a, pid);  // J-5: create / edit automation, edit events, record
   ImGui::Separator();
   remoteLinkMenuItems(a, pid);  // MIDI remote control (MidiUi.cpp)
-}
-
-// Type-in popup (opened by the caller with OpenPopup("##type")).
-void typePopup(App& a, ParamId pid, const ParamDesc& d) {
-  static char buf[64];
-  if (ImGui::BeginPopup("##type")) {
-    if (ImGui::IsWindowAppearing()) {
-      std::string cur = d.format(*getParam(a.doc.song(), pid));
-      std::snprintf(buf, sizeof buf, "%s", cur.c_str());
-      ImGui::SetKeyboardFocusHere();
-    }
-    ImGui::TextDisabled("%s", d.name.c_str());
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::InputText("##v", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
-      double v;
-      if (pui::parseValue(d, buf, v)) a.doc.setParam(pid, v, false);
-      ImGui::CloseCurrentPopup();
-    }
-    ImGui::TextDisabled("%s", i18n::tr("Enter to apply · Esc to cancel"));
-    ImGui::EndPopup();
-  }
 }
 
 // J-98: a slider's drawn track: the drag maps the pointer along it (see dragParamTrack).
@@ -679,7 +659,8 @@ std::map<uint32_t, pui::DevTrack>& devTracks() {
 }
 
 // Interaction shared by knobs and sliders: drag (vertical or horizontal), wheel,
-// Ctrl+click reset, double-click type, right-click menu. Item must be the last item.
+// Ctrl+click reset, double-click reset (type when already the default, J-136),
+// right-click menu. Item must be the last item.
 bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal, const Track* track = nullptr) {
   audit::lastItem("param");
   audit::bindControl(pid);  // J-92 binding audit
@@ -690,6 +671,7 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   }
   ImGuiIO& io = ImGui::GetIO();
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  const double pressed = ui::ValueAtPress(val);
   bool changed = false;
   double n = d.toNormalized(val);
   ImGuiID id = ImGui::GetItemID();
@@ -748,16 +730,21 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
       changed = true;
     }
   }
-  bool wantType = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+  if (ui::ParamDoubleClickReset(pid, d, val, pressed)) {  // J-136: or opens "##type" at the default
+    changed = true;
+    accum[id] = d.toNormalized(val);  // a drag that follows starts from the default
+    anchor = {along, accum[id], io.KeyShift};
+  }
+  bool wantType = false;
   if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##pmenu");
   if (ImGui::BeginPopup("##pmenu")) {
     paramMenu(a, pid, d, &wantType);
     ImGui::EndPopup();
   }
   if (wantType) ImGui::OpenPopup("##type");
-  typePopup(a, pid, d);
+  ui::ParamTypePopup(pid, d);
   if (hov || act) {
-    a.setHint(d.name + ": " + d.format(val) + "   (drag · Shift fine · Ctrl+click reset · double-click type · right-click menu)");
+    a.setHint(d.name + ": " + d.format(val) + "   (" + ui::ParamControlHint() + ")");
     if (act || ImGui::GetCurrentContext()->HoveredIdTimer > 0.5f) {
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(7, 4));
       ImGui::BeginTooltip();

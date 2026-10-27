@@ -956,7 +956,7 @@ class Song:
         for ch in self.c.values():
             ch["gain"] = ch["gain"] * 10 ** (TRIM / 40)
         db = {"kick": 0, "snare": 7.7, "clap": -1.5, "hats": 6.5, "perc": 1.5, "wood": -2, "drum_bus": 0, "sub": -1.5,
-              "reese": -0.5, "bass_bus": 0, "pad": -3, "airpad": -4, "keys": -3, "mallet": -2, "pluck": 1,
+              "reese": -0.5, "bass_bus": 0, "pad": -3, "airpad": -4, "keys": -3, "mallet": -3.5, "pluck": -0.5,
               "music_bus": 0, "atmos_bus": 0, "rain": 0, "drops": -4, "dust": -6, "fx": -2, "impact": -5, "hall": 0,
               "echo": -2, "space": -1.5}
         for k, v in db.items():

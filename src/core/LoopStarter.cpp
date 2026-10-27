@@ -347,11 +347,6 @@ int percPitch(char c) {
   }
 }
 
-// Swing for note parts, the same shift the engine gives swung steps.
-Tick swingShift(const Song& song, int step, Tick stepTicks) {
-  return step % 2 == 1 ? static_cast<Tick>(song.swing * static_cast<float>(stepTicks) * 0.5f) : 0;
-}
-
 Drums makeDrums(const Settings& s, const Recipe& r, const Song& song, int bars) {
   Rng rng(partSeed(s, kDrums, 0xD0));
   const Tick step = song.barTicks() / 16;
@@ -384,7 +379,7 @@ Drums makeDrums(const Settings& s, const Recipe& r, const Song& song, int bars) 
       if (pp >= 0 && e >= 0.2) {
         const bool acc = pT[k] >= 'A' && pT[k] <= 'Z';
         const int v = (pp == 63 ? 58 : acc ? 104 : 86) + rng.jitter(8);
-        Note nt(static_cast<Tick>(i) * step + swingShift(song, k, step), step, pp, std::clamp(static_cast<int>(v * velScale), 1, 127));
+        Note nt(static_cast<Tick>(i) * step, step, pp, std::clamp(static_cast<int>(v * velScale), 1, 127));
         d.perc.push_back(nt);
       }
     }
@@ -465,7 +460,7 @@ std::vector<Note> makeBass(const Settings& s, const Recipe& r, const Harmony& h,
       if (k > 0 && e < 0.45 && c != 'A' && rng.chance(0.25 * (0.45 - e) / 0.45)) continue;
       int len = 1;
       while (k + len < 16 && t[static_cast<size_t>(k + len)] == '_') ++len;
-      const Tick at = static_cast<Tick>(b * 16 + k) * step + swingShift(song, k, step);
+      const Tick at = static_cast<Tick>(b * 16 + k) * step;
       const Tick l = len > 1 ? len * step - step / 6 : step * 3 / 4;
       const int v = (k == 0 ? 112 : 98) + rng.jitter(6);
       out.push_back(Note(at, l, pitch, std::clamp(static_cast<int>(v * (0.85 + 0.15 * e)), 1, 127)));
@@ -531,7 +526,7 @@ std::vector<Note> makeLead(const Settings& s, const Recipe& r, const Harmony& h,
         if (k > 0 && e < 0.4 && rng.chance(0.3 * (0.4 - e) / 0.4)) continue;
         const int pitch = seq[static_cast<size_t>(idx++ % static_cast<int>(seq.size()))];
         const int len = lengthAt(k);
-        const Tick at = static_cast<Tick>(b * 16 + k) * step + swingShift(song, k, step);
+        const Tick at = static_cast<Tick>(b * 16 + k) * step;
         out.push_back(Note(at, std::max<Tick>(step / 2, len * step - step / 4), pitch, std::clamp(90 + (k % 4 == 0 ? 14 : 0) + rng.jitter(6), 1, 127)));
       }
     }
@@ -559,7 +554,7 @@ std::vector<Note> makeLead(const Settings& s, const Recipe& r, const Harmony& h,
         if (i > 0 && !last && e < 0.45 && rng.chance(0.35 * (0.45 - e) / 0.45)) continue;
         int len = lengthAt(k);
         if (last) len = std::max(len, 16 - k);
-        const Tick at = static_cast<Tick>(b * 16 + k) * step + swingShift(song, k, step);
+        const Tick at = static_cast<Tick>(b * 16 + k) * step;
         out.push_back(Note(at, std::max<Tick>(step / 2, len * step - step / 6), pitch, std::clamp(96 + (k % 4 == 0 ? 10 : 0) + rng.jitter(7), 1, 127)));
         auto f = std::find(sc.begin(), sc.end(), pitch);
         if (f != sc.end()) si = static_cast<int>(f - sc.begin());
@@ -738,7 +733,7 @@ Song generate(const Settings& in) {
 
   Song song = makeEmptySong();
   song.tempo = effectiveTempo(s);
-  song.swing = r.swing;
+  song.swing = r.swing;  // J-138: the engine swings steps and notes alike, so every part is written straight
   song.info.title = std::string(st.name) + " loop";
   song.info.genre = st.name;
   song.info.comments = "Made with the loop starter: " + describe(s);

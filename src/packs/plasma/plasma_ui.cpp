@@ -450,10 +450,17 @@ void bubble(Ctx& c, ImVec2 anchor, const std::string& s) {
   fg->AddRect(p0, p1, c.P.lineHi, c.s(4));
   fg->AddText(f, fs, ImVec2(p0.x + pad, p0.y + pad * 0.7f), c.P.text, s.c_str());
 }
-// Modulation context menu for parameter k (slots, add, standard menu).
-void modMenu(Ctx& c, int k, bool& openStd) {
+// Context menu for parameter k: reset and type (J-136), modulation slots, add,
+// the standard menu.
+void modMenu(Ctx& c, int k, bool& openStd, bool& openType) {
   ImGui::TextDisabled("%s", paramLongName(k).c_str());
   ImGui::Separator();
+  if (const ParamDesc* d = desc(k)) {
+    double cur = val(c, k);
+    gl::ui::ParamResetMenuItem(c.t.pid(k), *d, cur);
+    if (ImGui::MenuItem(i18n::tr("Type a value..."))) openType = true;
+    ImGui::Separator();
+  }
   auto slots = modSlotsFor(c, k);
   for (int s : slots) {
     ImGui::PushID(s);
@@ -513,12 +520,13 @@ bool knob(Ctx& c, int k, float cx, float cy, float r, const char* label, int fla
     changed = interact(c, k, v, 160.0f, false);
   }
   dropTarget(c, k);
-  bool openStd = false;
+  bool openStd = false, openType = false;
   if (ImGui::BeginPopup("##plmod")) {
-    modMenu(c, k, openStd);
+    modMenu(c, k, openStd, openType);
     ImGui::EndPopup();
   }
   if (openStd) ImGui::OpenPopup("##pmenu");
+  if (openType) ImGui::OpenPopup("##type");
   // face
   const double n = d->toNormalized(v);
   const bool bip = (flags & KnobBipolar) || (d->min < 0 && d->max > 0);
@@ -573,13 +581,14 @@ bool knob(Ctx& c, int k, float cx, float cy, float r, const char* label, int fla
   }
   if (hov)
     c.a.setHint(paramLongName(k) + ": " + paramText(k, v, &c.st.params) +
-                (slots.empty() ? "   (drag \xC2\xB7 drop a source here to modulate \xC2\xB7 right-click: modulation)"
-                               : "   (Alt+drag: modulation amount \xC2\xB7 right-click: modulation)"));
+                (slots.empty() ? "   (drag \xC2\xB7 double-click reset, at default type \xC2\xB7 drop a source here to modulate \xC2\xB7 right-click: reset, modulation)"
+                               : "   (Alt+drag: modulation amount \xC2\xB7 double-click reset, at default type \xC2\xB7 right-click: reset, modulation)"));
   ImGui::PopID();
   return changed;
 }
 
-bool knobFree(Ctx& c, const char* id, float& v, float cx, float cy, float r, const char* label, bool bipolar, const char* valueText) {
+bool knobFree(Ctx& c, const char* id, float& v, float cx, float cy, float r, const char* label, bool bipolar, const char* valueText,
+              const ParamDesc& d) {
   const ImVec2 C = c.p(cx, cy);
   const float R = c.s(r);
   ImGui::PushID(id);
@@ -588,11 +597,32 @@ bool knobFree(Ctx& c, const char* id, float& v, float cx, float cy, float r, con
   const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   bool changed = false;
   const float lo = bipolar ? -1.f : 0.f;
+  // J-136: the shown value (d), its default and the type-in
+  auto toV = [&](double value) { return static_cast<float>(lo + d.toNormalized(value) * (1.0 - lo)); };
+  auto fromV = [&](float n) { return d.fromNormalized((n - lo) / (1.f - lo)); };
+  const double pressed = gl::ui::ValueAtPress(fromV(v));
   if (act && ImGui::GetIO().MouseDelta.y != 0) {
     v = std::clamp(v - ImGui::GetIO().MouseDelta.y / 160.f * (1.f - lo) * (ImGui::GetIO().KeyShift ? 0.15f : 1.f), lo, 1.f);
     changed = true;
   }
-  if (hov && ImGui::IsMouseDoubleClicked(0)) v = bipolar ? 0.f : 0.5f, changed = true;
+  bool wantType = false;
+  ParamDoubleClick dbl = ParamDoubleClick::Type;
+  if (gl::ui::DoubleClicked(d, pressed, &dbl)) {
+    if (dbl == ParamDoubleClick::Reset) v = toV(d.def), changed = true;
+    else wantType = true;
+  }
+  if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##kfmenu");
+  if (ImGui::BeginPopup("##kfmenu")) {
+    ImGui::TextDisabled("%s", d.name.c_str());
+    ImGui::Separator();
+    if (gl::ui::ResetMenuItem(d, fromV(v))) v = toV(d.def), changed = true;
+    if (ImGui::MenuItem(i18n::tr("Type a value..."))) wantType = true;
+    ImGui::EndPopup();
+  }
+  if (wantType) ImGui::OpenPopup("##type");
+  double typed = fromV(v);
+  if (gl::ui::ValueTypePopup(d, &typed)) v = toV(typed), changed = true;
+  if (hov) c.a.setHint(d.name + ": " + d.format(fromV(v)) + "   (" + gl::ui::ParamControlHint() + ")");
   const float n = (v - lo) / (1.f - lo);
   skin::KnobPaint kp;
   kp.rail = c.P.rail, kp.fill = c.P.accent, kp.cap = c.P.capTop, kp.pointer = c.P.pointer;
@@ -1470,14 +1500,21 @@ void presetMenu(Ctx& c) {
 void header(Ctx& c) {
   const Pal& P = c.P;
   panelRect(c, 0, 0, kW, kHeadH, P.frame);
-  // wordmark: accent bar + lower-case name
+  // J-136: the plugin's J-130 wordmark (Tile logo), drawn in form units so it
+  // fits the 68-unit header at any UI scale; the subtitle sits under the name.
   {
-    const ImVec2 a = c.p(14, 22), b = c.p(17, 46);
-    c.dl->AddRectFilled(a, b, P.accent, c.s(1));
-    ImFont* f = c.a.fontBold ? c.a.fontBold : c.a.fontRegular;
-    const float fs = font(c, 25);
-    c.dl->AddText(f, fs, ImVec2(std::round(c.p(24, 0).x), std::round(c.p(0, 34).y - fs * 0.56f)), P.text, "plasma");
-    text(c, 25, 49, "WAVETABLE \xC2\xB7 HYBRID", P.textFaint, 7.0f, true);
+    const float wmH = 30;  // form units: 30 tall, 105 wide, clear of the page tabs at 165
+    const ImVec2 at = c.p(14, 12);
+    const float w = pui::wordmarkAt(c.dl, kType, ImVec2(std::round(at.x), std::round(at.y)), c.s(wmH));
+    if (w <= 0) {  // no wordmark compiled in: the name as text
+      ImFont* f = c.a.fontBold ? c.a.fontBold : c.a.fontRegular;
+      const float fs = font(c, 25);
+      c.dl->AddText(f, fs, ImVec2(std::round(c.p(14, 0).x), std::round(c.p(0, 28).y - fs * 0.56f)), P.text, "Plasma");
+    }
+    text(c, 14 + wmH * 26.0f / 24.0f, 46, "WAVETABLE \xC2\xB7 HYBRID", P.textFaint, 7.0f, true);
+    ImGui::SetCursorScreenPos(at);
+    ImGui::InvisibleButton("##wordmark", c.F.sz(wmH * 84.0f / 24.0f, wmH));
+    if (ImGui::IsItemHovered()) gl::ui::Hint(pluginDisplayName(kType) + "  \xC2\xB7  " + pluginTagline(kType));
   }
   // page tabs
   static const char* const kTabs[PgCount] = {"OSC", "MIX", "FX", "MATRIX", "GLOBAL"};

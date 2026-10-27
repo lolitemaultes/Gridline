@@ -7,6 +7,7 @@
 #include <cmath>
 #include "../../third_party/imgui/imgui.h"
 #include "Look.h"
+#include "LookGeom.h"
 #include "Theme.h"
 
 namespace gl::look {

@@ -32,7 +32,7 @@
 #include "core/Timeline.h"
 #include "core/WavWriter.h"
 #include "core/ControllerScript.h"
-#include "core/Demo.h"
+#include "fixtures/TestSong.h"
 #include "core/Document.h"
 #include "core/Json.h"
 #include "core/MenuOps.h"
@@ -546,7 +546,7 @@ void roundTrip(const Song& s, const char* tag) {
 // Bug: merging pattern clips far apart (or in a short time signature) made a
 // pattern longer than a project file accepts; the saved project did not load.
 void mergedPatternStaysLoadable() {
-  Document d(makeDemoSong());
+  Document d(makeTestSong());
   ObjectId p = d.song().patterns[0].id;
   ObjectId a = d.addClip(p, 0, 0), b = d.addClip(p, 1, static_cast<Tick>(d.song().barTicks()) * 1500);
   ObjectId m = ops::mergeClips(d, {a, b});
@@ -566,7 +566,7 @@ void mergedPatternStaysLoadable() {
 // audio clips and layer references behind; the saved project silently lost
 // them on load, so save -> load was no longer identical.
 void removeChannelDropsReferences() {
-  Document d(makeDemoSong());
+  Document d(makeTestSong());
   ObjectId ch = d.song().channels[0].id, layer = d.song().channels[1].id;
 
   d.editSong("fixture", [&](Song& s) {
@@ -631,7 +631,7 @@ void jsonNumbers() {
          "ParamDesc::clamp: choice indexes from any double");
   expect(k.clamp(std::nan("")) == 0.25 && k.clamp(HUGE_VAL) == 1 && k.clamp(-HUGE_VAL) == -1, "ParamDesc::clamp: NaN -> default");
   // Project with out-of-range numbers: loads (clamped / refused), no UB.
-  Song s = makeDemoSong();
+  Song s = makeTestSong();
   Json pj = songToJson(s);
   for (auto& ch : pj.object["channels"].array) {
     ch.object["plugin"].object["params"].array.assign(3, Json());
@@ -790,7 +790,7 @@ void concurrentAtomicWrites() {
 void j36Regressions() {
   {  // removePattern left the pattern's id in its pattern group: the saved
      // project named a missing pattern and loaded back different.
-    Document d(makeDemoSong());
+    Document d(makeTestSong());
     std::vector<ObjectId> pats;
     for (const auto& p : d.song().patterns) pats.push_back(p.id);
     groupPatterns(d, {pats[0], pats[1]}, "g");
@@ -811,7 +811,7 @@ void j36Regressions() {
     expect(text(d.song()) == before, "undo restores the pattern group");
   }
   {  // removeChannel left its J-31 step loop entries in every pattern.
-    Document d(makeDemoSong());
+    Document d(makeTestSong());
     const ObjectId pat = d.song().patterns[0].id, ch = d.song().channels[0].id;
     setStepLoop(d, pat, {ch}, 6);
     const std::string before = text(d.song());
@@ -876,7 +876,7 @@ void j36Regressions() {
 // (or written by a script, or restored by undo) while it was open vanished at
 // the next chord edit. chord::rebase carries those changes into the base.
 void chordEditorKeepsOutsideEdits() {
-  Document d(makeDemoSong());
+  Document d(makeTestSong());
   const ObjectId pat = d.song().patterns[0].id, ch = d.song().channels[0].id;
   auto notesNow = [&] {
     const Pattern* p = d.song().pattern(pat);
@@ -1007,7 +1007,7 @@ void luaGlueProtected() {
   r = runScript("function apply(s) s:add{pitch = 64} end");
   expect(r.ok && r.notes.size() == 2, "piano roll script: ordinary apply still works");
 
-  Document doc(makeDemoSong());
+  Document doc(makeTestSong());
   SimpleHost host(doc);
   ControllerScript cs;
   std::string err;
@@ -1030,7 +1030,7 @@ void j46FadeResolversAgree() {
   std::mt19937_64 rng(46);
   int bad = 0, xfades = 0;
   for (int round = 0; round < 300; ++round) {
-    Song s = makeDemoSong();
+    Song s = makeTestSong();
     s.playlist.clear();
     const ObjectId ch = s.channels.empty() ? kNoId : s.channels[0].id;
     const int n = 2 + static_cast<int>(rng() % 9);
@@ -1124,7 +1124,7 @@ void j46PocketExactHugeValue() {
 // overflowed start + length in the FLP exporter. Project ticks now load
 // clamped to ±2^42.
 void j46HugeTicksExport() {
-  Song s = makeDemoSong();
+  Song s = makeTestSong();
   std::string t = projectToText(s);
   Json j;
   bool ok = jsonParse(t, j);
@@ -1215,8 +1215,8 @@ int main(int argc, char** argv) {
   }
   gl::test::hermeticTestEnv("qa");
   paramLayout();
-  Song demo = makeDemoSong();
-  roundTrip(demo, "demo song");
+  Song demo = makeTestSong();
+  roundTrip(demo, "test song");
   mergedPatternStaysLoadable();
   removeChannelDropsReferences();
   jsonNumbers();
@@ -1229,7 +1229,7 @@ int main(int argc, char** argv) {
   luaGlueProtected();
   j46Regressions();
   const int edits = std::getenv("GRIDLINE_QA_EDITS") ? std::atoi(std::getenv("GRIDLINE_QA_EDITS")) : 2000;
-  undoStress(demo, "demo song", edits, 1);
+  undoStress(demo, "test song", edits, 1);
   undoStress(Song{}, "empty song", edits / 4, 7);
   for (int i = 1; i < argc; ++i) {
     Song s;

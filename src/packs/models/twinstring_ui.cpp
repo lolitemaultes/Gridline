@@ -117,7 +117,8 @@ void drawTwinString(App& a, const PluginTarget& t, float width) {
   static int shownString = 0;  // damping view: A / B (editor-only)
 
   // ---- top strip
-  skin::text(dl, F.p(16, 20), K.select, "TWIN STRING", F.font(14));
+  if (!pui::titleWordmark(dl, "gl.twinstring", F.p(16, 20), F.font(14)))  // J-136: the wordmark
+    skin::text(dl, F.p(16, 20), K.select, "TWIN STRING", F.font(14));
   {
     char buf[96];
     auto rd = describeParam(a.doc.song(), t.pid(TsS2Ratio));

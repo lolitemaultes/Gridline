@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <filesystem>
 #include "enc_common.h"
-#include "core/Demo.h"
+#include "../fixtures/TestSong.h"
 #include "core/Params.h"
 #include "core/Project.h"
 #include "core/PluginParams.h"
@@ -203,11 +203,11 @@ inline void testCore() {
     }
   }
   {
-    gl::Song s = gl::makeDemoSong();
+    gl::Song s = gl::makeTestSong();
     gl::Song b;
     ExportReport rep;
-    expect(coretest::exportImport(s, b, rep), "demo song: exports and imports back");
-    expect(b.patterns.size() == s.patterns.size() && b.channels.size() == s.channels.size(), "demo song: patterns and channels kept");
+    expect(coretest::exportImport(s, b, rep), "test song: exports and imports back");
+    expect(b.patterns.size() == s.patterns.size() && b.channels.size() == s.channels.size(), "test song: patterns and channels kept");
     size_t na = 0, nb = 0;
     for (const auto& p : s.patterns) {
       for (const auto& [c, v] : p.notes) na += v.size();
@@ -216,8 +216,8 @@ inline void testCore() {
     }
     for (const auto& p : b.patterns)
       for (const auto& [c, v] : p.notes) nb += v.size();
-    if (na != nb) std::printf("  # demo song notes %zu -> %zu\n", na, nb);
-    expect(na == nb, "demo song: every note and step kept (steps as step notes)");
+    if (na != nb) std::printf("  # test song notes %zu -> %zu\n", na, nb);
+    expect(na == nb, "test song: every note and step kept (steps as step notes)");
   }
   // Project JSON keeps the FL origin (export-flp from a saved project).
   {

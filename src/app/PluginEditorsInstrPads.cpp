@@ -609,7 +609,8 @@ void editorFpc(App& a, const PluginTarget& t, float width) {
   iskin::background(k, 0, 0, kFpcW, kFpcH, k.c.bgTop, k.c.bgBottom, 4);
   ImDrawList* dl = k.dl();
   // Title + view (bank) switch.
-  iskin::text(k, 6, 2, 118, 32, "PADS", 28, rgb(0x5B6164), 0, false, true);
+  if (!pui::titleWordmarkIn(k.dl(), "gl.pads", k.at(6, 2), k.at(124, 34), k.px(28), 0, k.c.text))  // J-136: the wordmark
+    iskin::text(k, 6, 2, 118, 32, "PADS", 28, rgb(0x5B6164), 0, false, true);
   // Pad strip.
   iskin::bevel(k, 4, 34, 782, 30, rgb(0x2C3338), k.c.panelLine, 3);
   if (iskin::button(k, "##pprev", 8, 41, 15, 17, "", false)) ui.pad = (pad + kPadsAll - 1) % kPadsAll;

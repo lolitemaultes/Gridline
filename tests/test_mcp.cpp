@@ -24,7 +24,7 @@
 #include <thread>
 #include <vector>
 #include "Check.h"
-#include "core/Demo.h"
+#include "fixtures/TestSong.h"
 #include "core/Document.h"
 #include "core/Mcp.h"
 #include "core/McpTransport.h"
@@ -82,7 +82,7 @@ struct Fixture {
 
   explicit Fixture(const std::string& name, bool init = true) {
     dir = tempDir(name);
-    Song s = makeDemoSong();
+    Song s = makeTestSong();
     const std::string path = (dir / "song.gridline.json").string();
     saveProject(path, s);
     doc.reset(s);
@@ -904,7 +904,7 @@ void httpTests() {
 // ============================================================ CLI stdio ====
 void cliTests() {
   const fs::path dir = tempDir("cli");
-  Song s = makeDemoSong();
+  Song s = makeTestSong();
   const fs::path song = dir / "cli song.gridline.json";
   saveProject(song.string(), s);
   const fs::path in = dir / "in.jsonl", out = dir / "out.jsonl", err = dir / "err.txt";

@@ -3,7 +3,7 @@
 //    caller block size 1…2048, odd sizes included: the engine renders its own
 //    fixed blocks (AudioEngine::setFixedBlock).
 //  * The realtime path (engine fed the host's blocks as they come) is
-//    bit-identical too for the demo song and engine features that used to
+//    bit-identical too for the test song and engine features that used to
 //    depend on block boundaries (note ids, cut groups, mono / porta,
 //    polyphony limits, note processors).
 //  * Every built-in instrument and effect (defaults and factory presets),
@@ -21,7 +21,7 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include "../../src/core/Demo.h"
+#include "../fixtures/TestSong.h"
 #include "../../src/core/PluginInfo.h"
 #include "../../src/core/flp/Flp.h"
 #include "../../src/engine/AudioEngine.h"
@@ -102,29 +102,29 @@ Song window(const Song& s0, int fromBar, int bars) {
 // ------------------------------------------------------------- songs
 
 void testDemoSong() {
-  const Song demo = makeDemoSong();
+  const Song demo = makeTestSong();
   const Tick tail = demo.ppq * 2;
   // Offline: bit-identical for any caller block size (2048 is clamped to the engine maximum).
   const AudioBuffer ref = renderFixed(demo, 512, tail);
-  expect(peakOf(ref) > 0.1, "demo song renders sound");
+  expect(peakOf(ref) > 0.1, "test song renders sound");
   for (int b : {1, 7, 32, 64, 333, 1000, 1024, 2048}) {
     const double d = maxDiff(ref, renderFixed(demo, b, tail));
     if (d > 0) std::printf("# demo offline block %d: max diff %g\n", b, d);
-    expect(d == 0, ("demo song offline render identical at block size " + std::to_string(b)).c_str());
+    expect(d == 0, ("test song offline render identical at block size " + std::to_string(b)).c_str());
   }
   // Realtime path: the engine sees the host's blocks.
   const AudioBuffer dref = renderDirect(demo, 512, tail);
-  expect(maxDiff(ref, dref) == 0, "demo song: realtime path at 512 = offline render");
+  expect(maxDiff(ref, dref) == 0, "test song: realtime path at 512 = offline render");
   for (int b : {37, 64, 333, 1024}) {
     const double d = maxDiff(dref, renderDirect(demo, b, tail));
     if (d > 0) std::printf("# demo realtime block %d: max diff %g\n", b, d);
-    expect(d == 0, ("demo song realtime path identical at block size " + std::to_string(b)).c_str());
+    expect(d == 0, ("test song realtime path identical at block size " + std::to_string(b)).c_str());
   }
 }
 
 // Engine features that used to depend on where block boundaries fall.
 void testEngineFeatures() {
-  Song s = window(makeDemoSong(), 7, 5);  // fill bar, bass and chords
+  Song s = window(makeTestSong(), 7, 5);  // fill bar, bass and chords
   auto chan = [&](const char* name) -> Channel* {
     for (auto& c : s.channels)
       if (c.name == name) return &c;

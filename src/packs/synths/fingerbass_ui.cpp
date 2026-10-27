@@ -36,7 +36,8 @@ void drawFingerBassEditor(App& a, const PluginTarget& t, float width) {
   iskin::Skin k = iskin::begin(width, kW, kH, bassPalette());
   ImGui::PushID("gl.fingerbass");
   iskin::background(k, 0, 0, kW, kH, k.c.bgTop, k.c.bgBottom, 4);
-  iskin::text(k, 12, 6, 200, 18, "FINGER BASS", 12, k.c.text, 0, false, true);
+  if (!pui::titleWordmarkIn(k.dl(), "gl.fingerbass", k.at(12, 6), k.at(12 + 200, 6 + 18), k.px(12), 0, k.c.text))  // J-136: the wordmark
+    iskin::text(k, 12, 6, 200, 18, "FINGER BASS", 12, k.c.text, 0, false, true);
   // Strings + pickup (decoration).
   ImDrawList* dl = ImGui::GetWindowDrawList();
   for (int s = 0; s < 4; ++s) {

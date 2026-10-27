@@ -17,7 +17,7 @@ file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")
 set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
 get_filename_component(src "${DEMO}" DIRECTORY)
-configure_file("${src}/../assets/sounds/classic/startup.wav" "${OUT}/Take.wav" COPYONLY)
+configure_file("${src}/../../assets/sounds/classic/startup.wav" "${OUT}/Take.wav" COPYONLY)
 file(READ "${DEMO}" demo)  # a copy: the demo song is never opened (or saved over) in place
 set(chan "{\"color\": 5219296, \"gain\": 0.8, \"id\": 60, \"mixerTrack\": 0, \"muted\": false, \"name\": \"Take\", \"pan\": 0, \"pitch\": 0, \"plugin\": {\"type\": \"gl.sampler\", \"data\": \"${OUT}/Take.wav\", \"params\": []}}, ")
 set(clips "{\"id\": 70, \"kind\": \"audio\", \"source\": 60, \"track\": 7, \"start\": 384, \"length\": 288, \"pattern\": 0, \"audioStart\": 0.5, \"fadeIn\": 0.05, \"fadeOut\": 0.12, \"fadeInManual\": true, \"fadeOutManual\": true, \"gain\": 0.5, \"pitch\": 150, \"reverse\": true}, ")

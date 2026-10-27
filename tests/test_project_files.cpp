@@ -15,7 +15,7 @@
 #include "Hermetic.h"
 #include "core/AudioBuffer.h"
 #include "core/BrowserIndex.h"
-#include "core/Demo.h"
+#include "fixtures/TestSong.h"
 #include "core/PluginInfo.h"
 #include "core/Project.h"
 #include "core/ProjectFiles.h"
@@ -170,8 +170,8 @@ size_t packageRoundTrip(const Song& song, const std::string& tag, const flp::Pac
 }
 
 void testPackage() {
-  // The demo song plus samples from two folders, two of them named alike.
-  Song s = makeDemoSong();
+  // The test song plus samples from two folders, two of them named alike.
+  Song s = makeTestSong();
   const std::string a = writeTone(scratch + "/src/a/kick.wav", 4000, 0.5f);
   const std::string b = writeTone(scratch + "/src/b/kick.wav", 3000, 0.25f);
   const std::string c = writeTone(scratch + "/src/b/Loop One.wav", 8000, 0.3f);

@@ -557,6 +557,9 @@ struct Song {
   int timeSigNum = 4;
   int timeSigDen = 4;
   float swing = 0.0f;      // 0..1 global swing (SongParam::Swing)
+  // J-138: song swing also moves piano-roll notes (false: steps only, as in projects imported from
+  // .flp files, whose source app swings steps alone).
+  bool swingNotes = true;
   float masterPitch = 0;   // semitones          (SongParam::MasterPitch)
   ObjectId nextId = kFirstObjectId;  // next unused object ID
   std::vector<Channel> channels;     // rack order
@@ -632,7 +635,7 @@ struct Song {
 
   bool operator==(const Song& o) const {
     return info == o.info && ppq == o.ppq && tempo == o.tempo && timeSigNum == o.timeSigNum &&
-           timeSigDen == o.timeSigDen && swing == o.swing && masterPitch == o.masterPitch && nextId == o.nextId &&
+           timeSigDen == o.timeSigDen && swing == o.swing && swingNotes == o.swingNotes && masterPitch == o.masterPitch && nextId == o.nextId &&
            channels == o.channels && patterns == o.patterns && playlist == o.playlist && tracks == o.tracks &&
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
