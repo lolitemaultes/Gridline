@@ -1,24 +1,36 @@
-// Gridline: pitch-synchronous overlap-add for voices and speech (J-140).
+// Gridline: pitch-synchronous voice engine (J-140, rebuilt in J-144).
 //
-// TD-PSOLA (Moulines & Charpentier, 1990) in the stretch engines' time-only
-// domain: the input's pitch period is tracked (YIN on a 4x decimated mix,
-// de Cheveigne & Kawahara 2002), pitch marks one period apart are aligned to
-// the waveform (cross-correlation with the previous period), and the output
-// is built from two-period Hann grains centred on the mark nearest to where
-// the time map points, one period apart. Grain contents are read at the
-// formant factor (band-limited): the caller resamples the result by the pitch
-// ratio, so a formant factor of 1 / pitch gives a pitch shift whose spectral
-// envelope (formants) stays where it was. Unvoiced input (breaths,
-// fricatives) is overlap-added along the time map in 10 ms grains, so noise
-// is neither repeated nor tuned.
+// TD-PSOLA (Moulines & Charpentier, 1990) for single voices and speech, with
+// the pitch changed in the engine itself: grains are cut around each period's
+// excitation and laid out one new period apart, so nothing is resampled
+// afterwards (the top octave survives a pitch drop and the formants stay
+// where they are by construction).
 //
-// Same streaming interface and zero-latency semantics as TdStretch.
-// configure() allocates; everything else is realtime safe.
+// Two streams, crossfaded by the decided voicing (VoiceTrack):
+//   voiced  one grain per output period. Near unison a grain is the classic
+//           two-period Hann window; as the pitch moves it becomes asymmetric
+//           (a short rise before the excitation, a longer decay after), so a
+//           grain carries one excitation and its ringing rather than the tail
+//           of the previous period: the output's harmonics then follow the
+//           spectral envelope instead of keeping a comb at the old pitch.
+//           Pure tones are transposed instead (their grains are resampled).
+//   noise   breaths, fricatives, silence and anything without a pitch:
+//           overlap-add with a waveform-similarity search (WSOLA, Verhelst &
+//           Roelands 1993) that continues the previous grain where it can, so
+//           no constant offset turns into a comb filter; each crossfade is
+//           compensated for the correlation of the two grains it joins (power
+//           kept for noise, amplitude kept for tones and DC).
+// Grains are added whole, ahead of the output (never cut by a block edge).
+//
+// Same streaming interface and aligned (zero-latency) semantics as TdStretch:
+// output frame j plays the input the time map points to. configure()
+// allocates; everything else is realtime safe.
 #pragma once
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <vector>
+#include "VoiceTrack.h"
 
 namespace gl::pitch {
 
@@ -26,18 +38,26 @@ class Psola {
  public:
   void configure(int channels, double sampleRate);
   void reset();
-  // Formant factor: grain contents are read this much faster (1 = unchanged).
-  void setFormantFactor(double f) { formant_ = std::clamp(f, 0.125, 8.0); }
-  int outputSeekLength(float /*rate*/) const { return seek_; }
-  int inputLatency() const { return seek_; }
-  int outputLatency() const { return 0; }
-  int blockSamples() const { return 2 * tMax_; }
+  // pitch: frequency ratio (the engine places grains at the new period);
+  // formant: grain contents are read this much faster (1 keeps the formants).
+  void setShift(double pitch, double formant) {
+    pitch_ = std::clamp(pitch, 1.0 / 16.0, 16.0);
+    formant_ = std::clamp(formant, 0.125, 8.0);
+  }
+  // Input the engine keeps ahead of the frame it plays: the analysis
+  // lookahead plus the output horizon (grains are laid out that far ahead) at
+  // the read rate.
+  int outputSeekLength(float rate) const { return lead_ + static_cast<int>(std::ceil(horizon_ * std::max(0.0f, rate))); }
+  int inputLatency() const { return lead_; }
+  int outputLatency() const { return horizon_; }
+  int blockSamples() const { return kStep; }
 
   template <class In>
   void outputSeek(const In& in, int length) {
     reset();
     push(in, 0, length);
     ana_ = 0;
+    nPrev_ = 0;
   }
   template <class In, class Out>
   void process(const In& in, int inSamples, Out&& out, int outSamples) {
@@ -66,6 +86,9 @@ class Psola {
     process(z, static_cast<int>(std::lround(static_cast<double>(outSamples) * rate)), out, outSamples);
   }
 
+  // Read access for tests and tools.
+  const VoiceTrack& track() const { return track_; }
+
  private:
   static constexpr int kStep = 256;  // output frames per render step
   struct Zeros {
@@ -74,63 +97,57 @@ class Psola {
     };
     Ch operator[](int) const { return {}; }
   };
-  struct Mark {
-    int64_t pos = 0;
-    double period = 0;
-    bool voiced = false;
-    float tonal = 0;  // 1 = a pure tone (no formants to keep)
-    double frac = 0;  // sub-sample offset of the mark
-  };
   template <class In>
   void push(const In& in, int from, int count) {
     if (count <= 0) return;
-    const int skip = count > cap_ ? count - cap_ : 0;
-    for (int c = 0; c < channels_; ++c) {
-      float* rb = ring_[static_cast<size_t>(c)].data();
-      const auto ch = in[c];
-      for (int i = skip; i < count; ++i) rb[static_cast<size_t>((written_ + i) & mask_)] = ch[from + i];
+    for (int i = 0; i < count; ++i) {
+      const auto k = static_cast<size_t>((written_ + i) & mask_);
+      float mix = 0;
+      for (int c = 0; c < channels_; ++c) {
+        const float v = in[c][from + i];
+        ring_[static_cast<size_t>(c)][k] = v;
+        mix += v;
+      }
+      track_.push(channels_ == 2 ? 0.5f * mix : mix);
     }
     written_ += count;
-    analyse();
   }
-  void analyse();
-  bool yinAt(int64_t centre, double& period) const;
-  float monoAt(int64_t i) const;
-  float decAt(int64_t i) const;
-  void addMarks();
-  const Mark* markNear(double pos) const;
-  void addGrain(double centreOut, double centreIn, double halfOut, double f, bool exact);
-  float tonalAt(int64_t pos, double period) const;
+  float at(int c, int64_t i) const {
+    return i < 0 || i >= written_ || i <= written_ - cap_ ? 0.0f : ring_[static_cast<size_t>(c)][static_cast<size_t>(i & mask_)];
+  }
   void render(int m, double rate);
+  void voicedGrain(double s, double a, double rate);
+  void noiseRegion(double rate);
+  double noiseSearch(double want, double cont) const;
+  void addGrain(double s, double c, double lo, double ro, double f);
 
+  VoiceTrack track_;
   int channels_ = 1;
   double sr_ = 44100;
-  int tMin_ = 44, tMax_ = 1103;  // period range (frames): 1000 Hz … 40 Hz
-  int unv_ = 441;                // unvoiced grain half length (10 ms)
-  int yinW_ = 1024;              // YIN window (full-rate frames)
-  int frameHop_ = 256;           // pitch analysis hop
-  int seek_ = 0, cap_ = 0;
-  int64_t mask_ = 0;
+  int tMax_ = 882;
+  int lead_ = 0, horizon_ = 0;
+  int64_t cap_ = 0, mask_ = 0;
   std::vector<float> ring_[2];
-  std::vector<float> dec_;       // 4x decimated mono, ring
-  int64_t decMask_ = 0, decDone_ = 0;
-  std::vector<double> yinD_;     // YIN scratch
-  // Pitch analysis frames (every frameHop_ input frames): period, 0 = unvoiced.
-  std::vector<double> framePeriod_;
-  int64_t frameMask_ = 0, framesDone_ = 0;
-  // Marks (ring).
-  std::vector<Mark> marks_;
-  int64_t markMask_ = 0, marksDone_ = 0;
-  // Overlap-add accumulators (signal, window weight), rings.
-  std::vector<float> acc_[2];
-  std::vector<float> wacc_;
-  int64_t accMask_ = 0;
-  std::vector<float> outBuf_[2];
   int64_t written_ = 0;
-  double ana_ = 0;
+  double ana_ = 0;      // input position heard at output frame outPos_
   int64_t outPos_ = 0;
-  double nextOut_ = 0;  // output position of the next grain centre
-  double formant_ = 1;
+  double pitch_ = 1, formant_ = 1;
+  // Voiced stream: overlap-add accumulator (ring) and the next grain's output position.
+  std::vector<float> accV_[2];
+  int64_t accMask_ = 0;
+  double vNext_ = 0;
+  bool fresh_ = true;  // the next voiced grain starts a run
+  int64_t lastIdx_ = -1;  // the last mark a grain came from
+  std::vector<float> kern_;  // per-grain fractional-delay kernel
+  // Noise stream: output written region by region (ring), grain centres.
+  std::vector<float> accN_[2];
+  int hn_ = 441, search_ = 352;
+  int64_t nRegion_ = 0;  // output frame where the next noise region starts
+  double nPrev_ = 0;     // input centre of the previous noise grain
+  // Voicing crossfade.
+  double gv_ = 0;
+  int ramp_ = 352;
+  std::vector<float> outBuf_[2];
 };
 
 }  // namespace gl::pitch

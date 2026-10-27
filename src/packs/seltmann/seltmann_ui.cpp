@@ -46,14 +46,21 @@ Ed& ed(const PluginTarget& t) {
 ImU32 accent() { return theme::litRole(pui::brandRole(BrandFamily::Sample)); }
 
 ImU32 slotColor(int slot, float alpha) {
-  // Twelve hues spaced around the wheel, tuned for slate panels (letters wrap after L).
-  static const uint32_t kHues[12] = {0xF2A73B, 0x3CC8B4, 0x9C82F5, 0xF2716B, 0x9FD45B, 0x5BAEF2,
-                                     0xE673B8, 0xD9C450, 0x63D6E0, 0xF29150, 0x7C8CF5, 0xC77BEB};
+  // J-152: eight calm hues (muted, tuned to read on the slate and on the light surfaces), ordered so
+  // neighbours sit far apart on the wheel; colour follows the letter (A, I, Q ... share a hue).
+  static const uint32_t kDark[8] = {0xE3A857, 0x4FB8A8, 0x958AE6, 0xE07C72, 0x9CC26A, 0x60A6DE, 0xD47FAE, 0xCDB65E};
+  static const uint32_t kLight[8] = {0xC27F22, 0x23887A, 0x6A5CCB, 0xC4524A, 0x5F8C2E, 0x3479B5, 0xAE4F84, 0x977F22};
   if (slot < 0) return theme::withAlpha(pal().textFaint, alpha);
-  return theme::content(kHues[slot % 12], alpha);
+  return theme::rgb((theme::isDark() ? kDark : kLight)[slot % 8], alpha);
 }
 
 ImU32 regionColor(int region, float alpha) { return slotColor(region, alpha); }
+
+ImU32 regionFace(int region, float amount) {
+  // A quiet tinted face: the panel surface with a share of the region's hue.
+  const auto& P = pal();
+  return theme::mix(theme::isDark() ? P.surface700 : P.surface800, regionColor(region), amount);
+}
 
 int sliceSlot(const Model& m, int slice) {
   for (int k = 0; k < static_cast<int>(m.pattern.slots.size()); ++k)
@@ -96,7 +103,7 @@ const char* keyName(int key, bool minor) {
 }
 
 // ------------------------------------------------------------------ small controls
-ImVec2 panel(ImDrawList* dl, App& a, ImVec2 p0, ImVec2 p1, const char* title, const char* caption) {
+ImVec2 panel(ImDrawList* dl, App& a, ImVec2 p0, ImVec2 p1, const char* title, const char* caption, float strip) {
   // J-149: the Gridline panel (pui::beginPanel): surface, hairline border, and with a
   // title the soft title strip with the accent tick, the mono title and a caption.
   const auto& P = pal();
@@ -107,14 +114,24 @@ ImVec2 panel(ImDrawList* dl, App& a, ImVec2 p0, ImVec2 p1, const char* title, co
     dl->AddRect(p0, p1, theme::mix(P.surface800, P.text, 0.08f), r);
   }
   if (!(title && *title)) return ImVec2(p0.x + 10, p0.y + 10);
-  skin::gradientRect(dl, ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p0.y + 22), theme::mix(P.surface800, P.surface700, 0.75f),
+  skin::gradientRect(dl, ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p0.y + strip), theme::mix(P.surface800, P.surface700, 0.75f),
                      theme::mix(P.surface800, P.surface700, 0.35f), r - 1, ImDrawFlags_RoundCornersTop);
-  dl->AddLine(ImVec2(p0.x + 1, p0.y + 22), ImVec2(p1.x - 1, p0.y + 22), theme::mix(P.surface800, P.text, 0.06f));
-  dl->AddRectFilled(ImVec2(p0.x + 9, p0.y + 7), ImVec2(p0.x + 11, p0.y + 16), accent(), 1);
+  dl->AddLine(ImVec2(p0.x + 1, p0.y + strip), ImVec2(p1.x - 1, p0.y + strip), theme::mix(P.surface800, P.text, 0.06f));
+  const float cy = std::round(p0.y + strip * 0.5f);
+  dl->AddRectFilled(ImVec2(p0.x + 10, cy - 5), ImVec2(p0.x + 12, cy + 4), accent(), 1);
   ImFont* f = a.fontMonoBold ? a.fontMonoBold : a.fontMono;
-  dl->AddText(f, 10.5f, ImVec2(p0.x + 16, p0.y + 5), P.text, title);
-  if (caption && *caption) textR(dl, f, 10.5f, ImVec2(p1.x - 10, p0.y + 5), P.textFaint, caption);
-  return ImVec2(p0.x + 10, p0.y + 30);
+  dl->AddText(f, 10.5f, ImVec2(p0.x + 18, cy - 7), P.text, title);
+  if (caption && *caption) textR(dl, f, 10.5f, ImVec2(p1.x - 12, cy - 7), P.textFaint, caption);
+  return ImVec2(p0.x + 10, p0.y + strip + 8);
+}
+
+float inlineLabel(ImDrawList* dl, App& a, ImVec2 p, float h, const char* text) {
+  const char* s = i18n::tr(text);
+  ImFont* f = a.fontMono;
+  const float fs = theme::kFontLabel - 1;
+  const ImVec2 ts = f->CalcTextSizeA(fs, 1e9f, 0, s);
+  if (dl) dl->AddText(f, fs, ImVec2(std::round(p.x), std::round(p.y + (h - ts.y) * 0.5f)), pal().textFaint, s);
+  return std::round(ts.x + 8);
 }
 
 bool pills(App& a, const char* id, ImVec2 p0, float w, float h, const char* const* labels, int count, int& cur, const char* const* hints,
@@ -693,20 +710,114 @@ void drawEmpty(App& a, const PluginTarget& t, Ed& e, ImVec2 z0, ImVec2 z1) {
     openLoadDialog(a, t, e);
 }
 
-// ------------------------------------------------------------------ top bar
-void drawTopBar(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, bool song) {
+// ------------------------------------------------------------------ header (what it is)
+// J-152: one 36 px row: the kind chip, the file name over its facts, the tempo with the
+// /2 and x2 fix, Load and Edit. Every control is kHeaderCtl tall on the row's centre line.
+constexpr float kHeaderCtl = 28;
+
+void drawBpm(App& a, const PluginTarget& t, Ed& e, ImVec2 f0) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  Analysis& g = e.m.grid;
+  const ImVec2 f1(f0.x + 104, f0.y + kHeaderCtl);
+  skin::insetField(dl, f0, f1, P.field, theme::kRadius);
+  char b[16];
+  std::snprintf(b, sizeof b, "%.2f", g.bpm);
+  ImGui::SetCursorScreenPos(f0);
+  ImGui::InvisibleButton("##sbpm", ImVec2(f1.x - f0.x, f1.y - f0.y));
+  const bool hv = ImGui::IsItemHovered();
+  if (hv) {
+    std::string tip = i18n::tr("The tempo. Double-click to type it; the grid keeps bar 1 where it is.");
+    if (g.nameBpm > 0) tip += std::string("\n") + i18n::tr("The file name's tempo helped.");
+    if (g.loopFit) tip += std::string("\n") + i18n::tr("Fitted to the loop's length (whole bars).");
+    ui::Tooltip(tip.c_str());
+  }
+  if (hv && ImGui::IsMouseDoubleClicked(0)) {
+    e.typingBpm = true;
+    std::snprintf(e.bpmText, sizeof e.bpmText, "%.2f", g.bpm);
+  }
+  if (e.typingBpm) {
+    ImGui::SetCursorScreenPos(ImVec2(f0.x + 4, f0.y + 2));
+    ImGui::SetNextItemWidth(f1.x - f0.x - 8);
+    ImGui::SetKeyboardFocusHere();
+    if (ImGui::InputText("##sbpmtype", e.bpmText, sizeof e.bpmText, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsDecimal)) {
+      const double v = std::atof(e.bpmText);
+      if (v >= 30 && v <= 300 && !g.beats.empty()) {
+        Model m = e.m;
+        gridSetBpm(m.grid, v, m.grid.beats[static_cast<size_t>(std::clamp(m.grid.bar1, 0, static_cast<int>(m.grid.beats.size()) - 1))]);
+        m.grid.loopFit = false;
+        rechopKeepPattern(m, sampleOf(e).get());
+        commit(a, t, e, m, i18n::N_("Set the tempo"));
+      }
+      e.typingBpm = false;
+    }
+    if (ImGui::IsItemDeactivated()) e.typingBpm = false;
+  } else {
+    ImFont* f = a.fontMonoBold ? a.fontMonoBold : a.fontBold;
+    const float fs = 16;
+    dl->AddText(f, fs, ImVec2(f0.x + 9, std::round(f0.y + (kHeaderCtl - fs) * 0.5f) - 1), hv ? P.paper : P.text, b);
+    textR(dl, a.fontMono, theme::kFontLabel - 1, ImVec2(f1.x - 8, f0.y + 9), P.textFaint, "BPM");
+  }
+  // how sure the analysis is: a hairline under the digits
+  const float c = e.m.analysed ? static_cast<float>(std::clamp(g.confidence, 0.0, 1.0)) : 0.0f;
+  dl->AddRectFilled(ImVec2(f0.x + 6, f1.y - 4), ImVec2(f1.x - 6, f1.y - 2), P.surface900, 1);
+  dl->AddRectFilled(ImVec2(f0.x + 6, f1.y - 4), ImVec2(f0.x + 6 + (f1.x - f0.x - 12) * c, f1.y - 2),
+                    c > 0.6f ? P.meterLow : c > 0.3f ? P.meterMid : P.meterHigh, 1);
+  float x = f1.x + 4;
+  if (button("##shalf", ImVec2(x, f0.y), ImVec2(30, kHeaderCtl), "/2", false, i18n::N_("Half the tempo: the analysis heard double time"))) {
+    Model m = e.m;
+    gridHalve(m.grid);
+    rechopKeepPattern(m, sampleOf(e).get());
+    commit(a, t, e, m, i18n::N_("Half tempo"));
+  }
+  x += 34;
+  if (button("##sdbl", ImVec2(x, f0.y), ImVec2(30, kHeaderCtl), "x2", false, i18n::N_("Double the tempo: the analysis heard half time"))) {
+    Model m = e.m;
+    gridDouble(m.grid);
+    rechopKeepPattern(m, sampleOf(e).get());
+    commit(a, t, e, m, i18n::N_("Double tempo"));
+  }
+}
+
+void drawTopBar(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H, bool song) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const Model& m = e.m;
-  // kind chip
+  const float cy = o.y + H * 0.5f, cTop = std::round(cy - kHeaderCtl * 0.5f);
+  // right to left: Edit, Load, (songs) the strip toggle, the tempo
+  float rx = o.x + W;
+  rx -= 84;
+  if (button("##sedit", ImVec2(rx, cTop), ImVec2(84, kHeaderCtl), i18n::N_("Edit"), e.drawer,
+             i18n::N_("Show the advanced controls: the slice inspector, manual cuts, the steps, the beat grid, the sound and the loop list"),
+             static_cast<int>(ui::Icon::Settings)))
+    e.drawer = !e.drawer;
+  rx -= 8 + 96;
+  if (button("##sload", ImVec2(rx, cTop), ImVec2(96, kHeaderCtl), i18n::N_("Load..."), false, i18n::N_("Load a song, a loop or any audio file"),
+             static_cast<int>(ui::Icon::Open)))
+    openLoadDialog(a, t, e);
+  if (song) {
+    rx -= 8 + kHeaderCtl;
+    ImGui::SetCursorScreenPos(ImVec2(rx, cTop));
+    if (ui::ToggleIcon("##sstrip", e.stripHidden ? ui::Icon::EyeOff : ui::Icon::Eye, !e.stripHidden, kHeaderCtl,
+                       e.stripHidden ? i18n::tr("Show the whole song above the waveform") : i18n::tr("Hide the whole-song strip")))
+      e.stripHidden = !e.stripHidden;
+  }
+  rx -= 24;
+  // a hairline between the file and the actions
+  dl->AddLine(ImVec2(rx + 12, cTop + 4), ImVec2(rx + 12, cTop + kHeaderCtl - 4), P.line, 1);
+  const float bpmW = 104 + 4 + 30 + 4 + 30;
+  rx -= bpmW;
+  drawBpm(a, t, e, ImVec2(rx, cTop));
+  const float tempoX = rx;
+  // left: kind chip, then the name over the facts
   float x = o.x;
   {
     const char* k = kindLabel(m.grid.kind);
-    const float tw = a.fontBold->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, k).x;
-    const ImVec2 c0(x, o.y + 10), c1(x + tw + 20, o.y + 32);
-    dl->AddRectFilled(c0, c1, theme::withAlpha(accent(), 0.16f), theme::kRadius);
-    dl->AddRect(c0, c1, theme::withAlpha(accent(), 0.55f), theme::kRadius);
-    textC(dl, a.fontBold, theme::kFontCaption, ImVec2((c0.x + c1.x) * 0.5f, (c0.y + c1.y) * 0.5f), theme::isDark() ? accent() : P.text, k);
+    const float tw = a.fontBold->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, k).x;
+    const ImVec2 c0(x, std::round(cy - 10)), c1(x + std::round(tw) + 16, std::round(cy + 10));
+    dl->AddRectFilled(c0, c1, theme::withAlpha(accent(), 0.14f), theme::kRadius);
+    dl->AddRect(c0, c1, theme::withAlpha(accent(), 0.5f), theme::kRadius);
+    textC(dl, a.fontBold, theme::kFontLabel, ImVec2((c0.x + c1.x) * 0.5f, (c0.y + c1.y) * 0.5f), theme::isDark() ? accent() : P.text, k);
     ImGui::SetCursorScreenPos(c0);
     ImGui::InvisibleButton("##skind", ImVec2(c1.x - c0.x, c1.y - c0.y));
     if (ImGui::IsItemHovered())
@@ -714,10 +825,8 @@ void drawTopBar(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, bool so
                            "one-shots at their transients."));
     x = c1.x + 12;
   }
-  // file name + facts
-  const float rightW = 230;
-  const float nameW = std::max(120.0f, o.x + W - rightW - x - 12);
-  theme::textEllipsis(dl, a.fontBold, theme::kFontBody + 1, ImVec2(x, o.y + 4), nameW, P.text, fs::path(e.path).filename().string().c_str());
+  const float nameW = std::max(120.0f, tempoX - 24 - x);
+  theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(x, std::round(cy - 17)), nameW, P.text, fs::path(e.path).filename().string().c_str());
   {
     std::string facts;
     char b[64];
@@ -735,96 +844,29 @@ void drawTopBar(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, bool so
     std::snprintf(b, sizeof b, "  \xC2\xB7  %d %s", static_cast<int>(m.slices.size()), m.slices.size() == 1 ? i18n::tr("slice") : i18n::tr("slices"));
     facts += b;
     facts += std::string("  \xC2\xB7  ") + chopSummary(m);
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(x, o.y + 24), nameW, P.textDim, facts.c_str());
-  }
-  // right: show the song strip, load, Edit drawer
-  float rx = o.x + W;
-  rx -= 92;
-  if (button("##sedit", ImVec2(rx, o.y + 8), ImVec2(92, 28), i18n::N_("Edit"), e.drawer,
-             i18n::N_("Show the advanced controls: the slice inspector, manual cuts, the steps, the beat grid, the sound and the loop list"),
-             static_cast<int>(ui::Icon::Settings)))
-    e.drawer = !e.drawer;
-  rx -= 102;
-  if (button("##sload", ImVec2(rx, o.y + 8), ImVec2(94, 28), i18n::N_("Load..."), false, i18n::N_("Load a song, a loop or any audio file"),
-             static_cast<int>(ui::Icon::Open)))
-    openLoadDialog(a, t, e);
-  if (song) {
-    rx -= 36;
-    ImGui::SetCursorScreenPos(ImVec2(rx, o.y + 8));
-    if (ui::ToggleIcon("##sstrip", e.stripHidden ? ui::Icon::EyeOff : ui::Icon::Eye, !e.stripHidden, 28,
-                       e.stripHidden ? i18n::tr("Show the whole song above the waveform") : i18n::tr("Hide the whole-song strip")))
-      e.stripHidden = !e.stripHidden;
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(x, std::round(cy + 2)), nameW, P.textDim, facts.c_str());
   }
 }
 
-// ------------------------------------------------------------------ key controls
-void drawControls(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W) {
+// ------------------------------------------------------------------ action bar (what to do)
+// J-152: one row in the order of the work: play it, how it is chopped, then everything that takes
+// it out (drag the loop or the notes, make loop files, send the pattern to the project). Group
+// labels sit left of their control; every control is 28 px on the row's centre line.
+void drawControls(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  Analysis& g = e.m.grid;
+  const float ch = 28, top = std::round(o.y + (H - ch) * 0.5f);
   float x = o.x;
-  // ---- BPM readout with the x2 / /2 fix
-  {
-    const ImVec2 f0(x, o.y + 2), f1(x + 116, o.y + 44);
-    skin::insetField(dl, f0, f1, P.field, theme::kRadius);
-    char b[16];
-    std::snprintf(b, sizeof b, "%.2f", g.bpm);
-    ImGui::SetCursorScreenPos(f0);
-    ImGui::InvisibleButton("##sbpm", ImVec2(f1.x - f0.x, f1.y - f0.y));
-    const bool hv = ImGui::IsItemHovered();
-    if (hv) {
-      std::string tip = i18n::tr("The tempo. Double-click to type it; the grid keeps bar 1 where it is.");
-      if (g.nameBpm > 0) tip += std::string("\n") + i18n::tr("The file name's tempo helped.");
-      if (g.loopFit) tip += std::string("\n") + i18n::tr("Fitted to the loop's length (whole bars).");
-      ui::Tooltip(tip.c_str());
-    }
-    if (hv && ImGui::IsMouseDoubleClicked(0)) {
-      e.typingBpm = true;
-      std::snprintf(e.bpmText, sizeof e.bpmText, "%.2f", g.bpm);
-    }
-    if (e.typingBpm) {
-      ImGui::SetCursorScreenPos(ImVec2(f0.x + 6, f0.y + 9));
-      ImGui::SetNextItemWidth(104);
-      ImGui::SetKeyboardFocusHere();
-      if (ImGui::InputText("##sbpmtype", e.bpmText, sizeof e.bpmText, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsDecimal)) {
-        const double v = std::atof(e.bpmText);
-        if (v >= 30 && v <= 300 && !g.beats.empty()) {
-          Model m = e.m;
-          gridSetBpm(m.grid, v, m.grid.beats[static_cast<size_t>(std::clamp(m.grid.bar1, 0, static_cast<int>(m.grid.beats.size()) - 1))]);
-          m.grid.loopFit = false;
-          rechopKeepPattern(m, sampleOf(e).get());
-          commit(a, t, e, m, i18n::N_("Set the tempo"));
-        }
-        e.typingBpm = false;
-      }
-      if (ImGui::IsItemDeactivated()) e.typingBpm = false;
-    } else {
-      ImFont* f = a.fontMonoBold ? a.fontMonoBold : a.fontBold;
-      dl->AddText(f, 22, ImVec2(f0.x + 10, f0.y + 9), hv ? P.paper : P.text, b);
-      dl->AddText(a.fontMono, theme::kFontLabel - 1, ImVec2(f1.x - 27, f1.y - 15), P.textFaint, "BPM");
-    }
-    const float c = e.m.analysed ? static_cast<float>(std::clamp(g.confidence, 0.0, 1.0)) : 0.0f;
-    dl->AddRectFilled(ImVec2(f0.x + 6, f1.y - 4), ImVec2(f1.x - 6, f1.y - 2), P.surface900, 1);
-    dl->AddRectFilled(ImVec2(f0.x + 6, f1.y - 4), ImVec2(f0.x + 6 + (f1.x - f0.x - 12) * c, f1.y - 2),
-                      c > 0.6f ? P.meterLow : c > 0.3f ? P.meterMid : P.meterHigh, 1);
-    x = f1.x + 6;
-    if (button("##shalf", ImVec2(x, o.y + 2), ImVec2(32, 20), "/2", false, i18n::N_("Half the tempo: the analysis heard double time"))) {
-      Model m = e.m;
-      gridHalve(m.grid);
-      rechopKeepPattern(m, sampleOf(e).get());
-      commit(a, t, e, m, i18n::N_("Half tempo"));
-    }
-    if (button("##sdbl", ImVec2(x, o.y + 24), ImVec2(32, 20), "x2", false, i18n::N_("Double the tempo: the analysis heard half time"))) {
-      Model m = e.m;
-      gridDouble(m.grid);
-      rechopKeepPattern(m, sampleOf(e).get());
-      commit(a, t, e, m, i18n::N_("Double tempo"));
-    }
-    x += 32 + 18;
-  }
+  // ---- play
+  e.playBtn = ImVec2(x + 28, top + ch * 0.5f);
+  if (button("##splay", ImVec2(x, top), ImVec2(56, ch), "", e.pattern.on,
+             e.pattern.on ? i18n::N_("Stop the pattern") : i18n::N_("Play the pattern (or hold a key in the octave below the base note)"),
+             static_cast<int>(e.pattern.on ? ui::Icon::Stop : ui::Icon::Play), !e.pattern.on))
+    togglePattern(a, t, e);
+  x += 56 + 20;
   // ---- chop size
   {
-    groupLabel(dl, a, ImVec2(x, o.y), i18n::N_("CHOP"));
+    x += inlineLabel(dl, a, ImVec2(x, top), ch, i18n::N_("CHOP"));
     static const char* const labels[6] = {i18n::N_("Auto"), i18n::N_("1 bar"), "1/2", "1/4", "1/8", "1/16"};
     static const char* const hints[6] = {i18n::N_("The size that suits the material: breaks on their hits in eighths or sixteenths, loops and songs by beats and bars"),
                                          i18n::N_("One slice per bar"), i18n::N_("Half a bar per slice"), i18n::N_("One beat per slice"),
@@ -836,8 +878,8 @@ void drawControls(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W) {
     else if (m.chop.mode == ChopGrid)
       for (int i = 1; i < 6; ++i)
         if (m.chop.division == divs[i]) cur = i;
-    const float w = 300;
-    if (pills(a, "##schopsize", ImVec2(x, o.y + 16), w, 28, labels, 6, cur, hints, false) && cur >= 0) {
+    const float w = 288;
+    if (pills(a, "##schopsize", ImVec2(x, top), w, ch, labels, 6, cur, hints, false) && cur >= 0) {
       Model nm = e.m;
       nm.chop.autoSize = cur == 0;
       if (cur > 0) {
@@ -847,59 +889,49 @@ void drawControls(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W) {
       }
       commitChop(a, t, e, nm, i18n::N_("Chop size"));
     }
-    if (cur == 0) {
-      char b[80];
-      std::snprintf(b, sizeof b, "%s %s", i18n::tr("auto:"), chopSummary(m));
-      dl->AddText(a.fontMono, theme::kFontLabel - 1, ImVec2(x + 44, o.y), P.textDim, b);
-    }
-    x += w + 18;
+    x += w + 20;
   }
   // ---- tempo mode
   {
-    groupLabel(dl, a, ImVec2(x, o.y), i18n::N_("TEMPO"));
+    x += inlineLabel(dl, a, ImVec2(x, top), ch, i18n::N_("PLAY AT"));
     static const char* const labels[2] = {i18n::N_("Project"), i18n::N_("Original")};
     static const char* const hints[2] = {i18n::N_("Follow the project tempo (time-stretched; Edit > Sound has Resample)"),
                                          i18n::N_("Play at the sample's own tempo")};
     const int sync = static_cast<int>(std::lround(paramOf(a, t, SmSync)));
     int cur = sync == SyncOriginal ? 1 : 0;
-    if (pills(a, "##stempo", ImVec2(x, o.y + 16), 160, 28, labels, 2, cur, hints))
+    if (pills(a, "##stempo", ImVec2(x, top), 160, ch, labels, 2, cur, hints))
       pui::setParamValue(a, t, SmSync, cur == 1 ? SyncOriginal : SyncStretch, false);
   }
-  // ---- right: play, drag handles, make loops, send to project
+  // ---- right: drag handles, make loops, send to project
   float rx = o.x + W;
-  rx -= 130;
-  if (button("##ssend", ImVec2(rx, o.y + 16), ImVec2(130, 28), i18n::N_("Send to project"), false,
+  rx -= 136;
+  if (button("##ssend", ImVec2(rx, top), ImVec2(136, ch), i18n::N_("Send to project"), false,
              i18n::N_("Add a pattern with these steps as notes on this channel and place it in the playlist"), static_cast<int>(ui::Icon::Pattern),
              true))
     sendToProject(a, t, e);
-  rx -= 112;
-  if (button("##smake", ImVec2(rx, o.y + 16), ImVec2(106, 28), i18n::N_("Make loops"), false,
+  rx -= 8 + 112;
+  if (button("##smake", ImVec2(rx, top), ImVec2(112, ch), i18n::N_("Make loops"), false,
              i18n::N_("Render the pattern, the best phrases and the sections as loops at the project tempo into the \"Seltmann loops\" folder"),
              static_cast<int>(ui::Icon::Save)))
     makeLoops(a, t, e);
   if (e.loopJob && !e.loopJob->finished) {
     const float pr = static_cast<float>(e.loopJob->done) / std::max(1, e.loopJob->total.load());
-    dl->AddRectFilled(ImVec2(rx + 4, o.y + 46), ImVec2(rx + 102, o.y + 49), P.surface900, 1.5f);
-    dl->AddRectFilled(ImVec2(rx + 4, o.y + 46), ImVec2(rx + 4 + 98 * pr, o.y + 49), accent(), 1.5f);
+    dl->AddRectFilled(ImVec2(rx + 6, top + ch - 4), ImVec2(rx + 106, top + ch - 2), P.surface900, 1);
+    dl->AddRectFilled(ImVec2(rx + 6, top + ch - 4), ImVec2(rx + 6 + 100 * pr, top + ch - 2), accent(), 1);
   }
   {
     // drag handles: the pattern as audio and as notes
-    const float mw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, "MIDI").x + 30;
-    rx -= std::round(mw) + 6;
-    dragChip(a, t, e, "##smidi", ImVec2(rx, o.y + 16), 28, "MIDI", "midi", e.m.pattern.name + " notes",
+    const float mw = std::round(a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, "MIDI").x + 30);
+    rx -= 12 + mw;
+    dragChip(a, t, e, "##smidi", ImVec2(rx, top), ch, "MIDI", "midi", e.m.pattern.name + " notes",
              i18n::N_("Drag the pattern's notes into the piano roll or the playlist"));
-    const float lw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, "LOOP").x + 30;
-    rx -= std::round(lw) + 6;
-    dragChip(a, t, e, "##sploop", ImVec2(rx, o.y + 16), 28, "LOOP", "pattern", e.m.pattern.name,
+    const float lw = std::round(a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, "LOOP").x + 30);
+    rx -= 6 + lw;
+    dragChip(a, t, e, "##sploop", ImVec2(rx, top), ch, "LOOP", "pattern", e.m.pattern.name,
              i18n::N_("Drag the pattern out as an audio loop at the project tempo (playlist, channel rack, browser)"));
-    groupLabel(dl, a, ImVec2(rx, o.y), i18n::N_("DRAG OUT"));
+    const float dw = inlineLabel(nullptr, a, ImVec2(0, 0), 0, i18n::N_("DRAG OUT"));
+    inlineLabel(dl, a, ImVec2(rx - dw, top), ch, i18n::N_("DRAG OUT"));
   }
-  rx -= 52;
-  e.playBtn = ImVec2(rx + 22, o.y + 22);
-  if (button("##splay", ImVec2(rx, o.y), ImVec2(44, 44), "", e.pattern.on,
-             e.pattern.on ? i18n::N_("Stop the pattern") : i18n::N_("Play the pattern (or hold a key in the octave below the base note)"),
-             static_cast<int>(e.pattern.on ? ui::Icon::Stop : ui::Icon::Play), !e.pattern.on))
-    togglePattern(a, t, e);
 }
 
 // ------------------------------------------------------------------ dev trace
@@ -920,6 +952,8 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
     }
     line += " order \"" + ord + "\"";
   }
+  std::snprintf(b, sizeof b, "\nseltmann: body %.0f %.0f", e.body.x, e.body.y);  // J-152: the measured size
+  line += b;
   if (std::string(state) == "empty") {
     std::snprintf(b, sizeof b, "\nseltmann: zone %.0f %.0f %.0f %.0f", e.zone0.x, e.zone0.y, e.zone1.x, e.zone1.y);
     line += b;
@@ -1127,42 +1161,47 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   const ImVec2 o = ImGui::GetCursorScreenPos();
   const LiveView lv = live(a, t);
   syncPattern(a, t, e, lv);
-  const float heroH = 276, waveH = 150, seqH = 104, gap = 12;
+  // J-152: the body, top to bottom in the order of the work (heights at UI scale 1):
+  //   header 36 (what it is) | waveform 128 + sequence 80 (the hero, one time axis) |
+  //   action bar 32 (play, chop, take it out) | tools 200 (layouts | pads) | Edit drawer 132..236 (per tab, closed by default)
+  const float headH = 36, waveH = 128, seqH = 80, barH = 32, toolsH = 200, gap = 8;
+  const float bodyH = headH + gap + waveH + seqH + gap + barH + gap + toolsH;
   if (!e.hasModel) {
-    // drop zone (empty), progress (analysing) or a message (unreadable)
-    const float H = 44 + gap + waveH + gap + seqH + gap + 46 + gap + heroH;
-    drawEmpty(a, t, e, o, ImVec2(o.x + W, o.y + H));
-    ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + H + 6));
+    // drop zone (empty), progress (analysing) or a message (unreadable): the same height as the editor
+    drawEmpty(a, t, e, o, ImVec2(o.x + W, o.y + bodyH));
+    ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + bodyH + 6));
     ImGui::Dummy(ImVec2(W, 1));
+    e.body = ImVec2(W, bodyH + 6);
     trace(e, e.path.empty() ? "empty" : (e.job && e.job->state == 2) ? "error" : "analysing", lv);
     return true;
   }
   const bool song = e.m.grid.kind == KindSong || barCount(e.m) > 16;
-  drawTopBar(a, t, e, o, W, song);
-  float y = o.y + 44 + gap;
+  drawTopBar(a, t, e, o, W, headH, song);
+  float y = o.y + headH + gap;
   if (song && !e.stripHidden) {
-    drawStrip(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + 30), lv);
-    y += 30 + 6;
+    drawStrip(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + 28), lv);
+    y += 28 + 6;
   }
   drawWave(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + waveH), lv);
-  y += waveH + gap;
-  drawSequence(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + seqH), lv);  // J-149
+  y += waveH;
+  drawSequence(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + seqH), lv);  // J-149, under the waveform (J-152)
   y += seqH + gap;
-  drawControls(a, t, e, ImVec2(o.x, y), W);
-  y += 46 + gap;
-  const float presetsW = std::round(W * 0.585f);
-  drawPresets(a, t, e, ImVec2(o.x, y), ImVec2(o.x + presetsW, y + heroH));
-  drawPads(a, t, e, ImVec2(o.x + presetsW + gap, y), ImVec2(o.x + W, y + heroH), lv);
-  y += heroH;
+  drawControls(a, t, e, ImVec2(o.x, y), W, barH);
+  y += barH + gap;
+  const float leftW = std::round((W - gap) * 0.5f);
+  drawPresets(a, t, e, ImVec2(o.x, y), ImVec2(o.x + leftW, y + toolsH));
+  drawPads(a, t, e, ImVec2(o.x + leftW + gap, y), ImVec2(o.x + W, y + toolsH), lv);
+  y += toolsH;
   if (e.drawer) {
     y += gap;
-    const float drawerH = 262;
+    const float drawerH = drawerHeight(e);
     drawDrawer(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + drawerH), lv);
     y += drawerH;
   }
   drawRegionMenu(a, t, e);
   ImGui::SetCursorScreenPos(ImVec2(o.x, y + 6));
   ImGui::Dummy(ImVec2(W, 1));
+  e.body = ImVec2(W, y + 6 - o.y);
   trace(e, "ready", lv);
   return true;
 }

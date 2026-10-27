@@ -19,6 +19,21 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Fixes: sample playback at high pitch settings stays clean, a clip stretched in realtime stays
   in tune, and the audio editor plays and scrubs cleanly at any speed.
 
+### Voice mode on real voices
+
+- Voice mode rebuilt for real singing and speech. A shifted voice no longer keeps a ringing
+  trace of its old pitch, and an octave down keeps its full brightness (the top octave used to
+  be cut away).
+- Breaths, consonants and noise stretch smoothly: the hollow, phasey colour they had when
+  slowed down is gone.
+- The voice tracker follows vibrato and breathy notes without dropping in and out, and no
+  longer jumps an octave on low voices or takes a voice for a pure tone.
+- Realtime Voice playback (sampler, clips) no longer clicks at high pitch settings, plays a
+  voice unchanged at its original pitch and speed, and needs a fraction of the processing
+  power it did (from under 3 to about 25 times realtime per voice on one core).
+- Formant mode follows the voice's pitch when it measures the formants, so a shifted voice no
+  longer rings at the old pitch there either.
+
 ### New
 
 - Platter, a new instrument in the Gridline Suite: one deck of a DJ setup on a channel. Drop in a
@@ -88,6 +103,14 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   same, every edit is one undo step, and projects saved earlier open and play as before.
 - Seltmann: the editor follows Gridline's look: panel title strips, segmented selectors and the
   control styles, with the controls row lined up on one baseline.
+- Seltmann is a quarter shorter (the editor body went from 674 to 506 px at 100% scale) and
+  reads in the order of the work: a header with the file, its facts and the tempo; the waveform
+  with the sequence right under it on the same time axis; one action bar to play, choose the
+  chop and take the result out; then the layouts and the pads side by side, the pads in two rows
+  of eight. The whole editor now fits a 1280 x 800 screen and a 1440 x 960 one at 125% scale.
+  Region colours are calmer: eight muted hues that follow the letters, quiet tinted pads and
+  steps, and only the playing region lights up in full. The Edit drawer takes only the height
+  its tab needs.
 
 ### Fixed
 

@@ -42,6 +42,20 @@ class Engine {
   pitch::TdStretch td;
   pitch::Psola ps;
   Kind kind = kSpectral;
+  // Formant mode (J-144): the voice's pitch, tracked alongside, tells the
+  // spectral engine how far apart the harmonics are when it measures the
+  // formants (its own guess often lands on a harmonic or an octave off, and
+  // the output then keeps the source's harmonic comb).
+  pitch::VoiceTrack f0;
+  bool trackF0 = false;
+  int nch = 1;
+  template <class In>
+  void feedF0(const In& in, int n) {
+    if (!trackF0) return;
+    for (int i = 0; i < n; ++i) f0.push(nch == 2 ? 0.5f * (in[0][i] + in[1][i]) : in[0][i]);
+    const double p = f0.recentPeriod(static_cast<int>(0.1 * f0.sampleRate()));
+    ss.setFormantBase(p > 0 ? static_cast<float>(1.0 / p) : 0.0f);
+  }
   bool useTd() const { return kind != kSpectral; }
   template <class F>
   decltype(auto) with(F&& f) {
@@ -53,6 +67,7 @@ class Engine {
   }
   void reset() {
     with([](auto& e) { e.reset(); });
+    if (trackF0) f0.reset();
   }
   int outputSeekLength(float r) {
     return with([r](auto& e) { return static_cast<int>(e.outputSeekLength(r)); });
@@ -68,10 +83,13 @@ class Engine {
   }
   template <class In>
   void outputSeek(In&& in, int len) {
+    if (trackF0) f0.reset();
+    feedF0(in, len);
     with([&](auto& e) { e.outputSeek(in, len); });
   }
   template <class In, class Out>
   void process(In&& in, int inN, Out&& out, int outN) {
+    feedF0(in, inN);
     with([&](auto& e) { e.process(in, inN, out, outN); });
   }
   template <class Out>
@@ -94,6 +112,7 @@ Config configOf(Mode m, bool offline) {
 }
 
 void setup(Engine& e, int nch, double sr, Mode m, bool offline, bool light = false) {
+  e.trackF0 = false;
   if (m == Mode::Voice) {
     e.kind = Engine::kPsola;
     e.ps.configure(nch, sr);
@@ -105,6 +124,9 @@ void setup(Engine& e, int nch, double sr, Mode m, bool offline, bool light = fal
     return;
   }
   e.kind = Engine::kSpectral;
+  e.nch = nch;
+  e.trackF0 = m == Mode::Formant;
+  if (e.trackF0) e.f0.configure(sr, 0);
   const Config c = configOf(m, offline);
   e.ss.configure(nch, std::max(64, static_cast<int>(sr * c.block)), std::max(16, static_cast<int>(sr * c.interval)));
 }
@@ -116,14 +138,15 @@ void setup(Engine& e, int nch, double sr, Mode m, bool offline, bool light = fal
 // end where they started (plus the formant control).
 void applyPitch(Engine& e, Mode m, double pitch, double formantSemis) {
   if (e.kind == Engine::kPsola) {
-    e.ps.setFormantFactor(std::pow(2.0, formantSemis / 12.0) / pitch);
+    // Voice changes the pitch itself (grains placed at the new period):
+    // nothing is resampled after it.
+    e.ps.setShift(pitch, std::pow(2.0, formantSemis / 12.0));
     return;
   }
   if (e.kind == Engine::kWsola) return;
   e.ss.setTransposeFactor(1.0f);
   if (m == Mode::Formant) {
     e.ss.setFormantFactor(static_cast<float>(std::pow(2.0, formantSemis / 12.0) / pitch), false);
-    e.ss.setFormantBase(0);
   } else {
     e.ss.setFormantFactor(1.0f, false);
   }
@@ -166,7 +189,7 @@ void plain(const float* const* in, int nch, int64_t n, float* const* out, int64_
            const Progress* pr = nullptr) {
   if (outLen <= 0) return;
   const bool level = keepsFormants(s.mode);  // J-140: formant shifts keep the loudness
-  if (std::fabs(s.pitch - 1.0) < 1e-12) {
+  if (std::fabs(s.pitch - 1.0) < 1e-12 || s.mode == Mode::Voice) {
     stretchOnly(in, nch, n, out, outLen, sr, s, level ? nullptr : pr);
     if (level) {
       pitch::matchLevel(out, nch, outLen, in, n, [&](int64_t q) { return static_cast<double>(q) * static_cast<double>(n) / static_cast<double>(outLen); }, sr);
@@ -598,7 +621,7 @@ void processMapped(const float* const* in, int nch, int64_t n, float* const* out
     return;
   }
   const double pitch = std::clamp(s.pitch, 1.0 / 16.0, 16.0);
-  if (std::fabs(pitch - 1.0) > 1e-12) {
+  if (std::fabs(pitch - 1.0) > 1e-12 && s.mode != Mode::Voice) {
     // As in plain(): stretch only (to pitch × the length), then resample.
     const SincTable& t = sincTable(Quality::Offline);
     const auto mid = static_cast<int64_t>(std::ceil(static_cast<double>(outLen) * pitch)) + t.zeroCrossings + 2;
@@ -621,7 +644,7 @@ void processMapped(const float* const* in, int nch, int64_t n, float* const* out
     if (keepsFormants(s.mode)) pitch::matchLevel(out, nch, outLen, in, n, srcAt, sr);
     return;
   }
-  mappedCore(in, nch, n, out, outLen, sr, s, 1.0, srcAt);
+  mappedCore(in, nch, n, out, outLen, sr, s, s.mode == Mode::Voice ? pitch : 1.0, srcAt);  // Voice: the engine's own pitch
   if (keepsFormants(s.mode)) pitch::matchLevel(out, nch, outLen, in, n, srcAt, sr);
 }
 
@@ -916,6 +939,9 @@ struct Voice::Impl {
   int channels = 2;
   double sampleRate = 44100;
   double maxPitch = 8, maxSpeed = 8;
+  // Voice: the engine changes the pitch itself, mid is the output (no resampler, no attack copy).
+  bool native = false;
+  double midRate(double pitch) const { return native ? 1.0 : pitch; }
   // Engine output (before the pitch resampler): frames [0, filled) of mid,
   // read at fractional position `pos`. Compacted as it is consumed.
   std::vector<float> mid[2];
@@ -1025,7 +1051,7 @@ struct Voice::Impl {
     const int on = pull(rd, ctx, seek, true);
     const float* ip[2] = {in[0].data(), in[1].data()};
     engine.outputSeek(ip, seek);
-    takeAttack(on >= 0 ? on : seek);
+    if (!native) takeAttack(on >= 0 ? on : seek);
     noteOnset(on, seek, perMid);
   }
   // Makes mid hold at least `need` frames.
@@ -1068,7 +1094,10 @@ struct Voice::Impl {
             outMs += v * v;
             outPk = std::max(outPk, std::fabs(v));
           }
-        const double srcPk = b - a > 0.5 ? peakIn(a, b) : 0.0;
+        // Voice moves whole periods: a block can hold a pulse whose source
+        // span holds none, so the source peak is taken over a period around it.
+        const double around = native ? 0.02 * sampleRate : 0.0;
+        const double srcPk = b - a > 0.5 ? peakIn(a - around, b + around) : 0.0;
         level.apply(op, channels, m, srcMs, outMs / (channels * m), outPk > 1e-9 && srcPk > 0 ? srcPk / outPk : 0.0);
       }
       if (atkPos < atkLen) {
@@ -1115,6 +1144,7 @@ void Voice::prepare(int channels, double sampleRate, Mode mode, double maxPitch,
   m.maxPitch = std::max(1.0, maxPitch);
   m.maxSpeed = std::max(1.0, maxSpeed);
   setup(m.engine, m.channels, sampleRate, mode_, false, light);
+  m.native = m.engine.kind == Engine::kPsola;
   applyPitch(m.engine, mode_, 1.0, 0.0);
   const SincTable& t = sincTable(Quality::Realtime);
   // mid: render steps at the top pitch, the resampler's reach, slack for compaction.
@@ -1162,9 +1192,9 @@ void Voice::reset() {
 
 int Voice::lookahead(double speed, double pitch) const {
   pitch = std::max(1e-3, pitch);
-  const double perMid = speed / pitch;
+  const double perMid = speed / impl_->midRate(pitch);
   const SincTable& t = sincTable(Quality::Realtime);
-  const double hw = pitch::reach(pitch, t);
+  const double hw = impl_->native ? 0.0 : pitch::reach(pitch, t);
   return static_cast<int>(std::ceil(impl_->engine.outputSeekLength(static_cast<float>(perMid)) + (hw + Impl::kChunk) * perMid)) + 2;
 }
 
@@ -1173,12 +1203,12 @@ void Voice::start(Reader rd, void* ctx, double speed, double pitch, bool attack)
   reset();
   pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
   speed = std::clamp(speed, 0.0, m.maxSpeed);
-  const double perMid = speed / pitch;
+  const double perMid = speed / m.midRate(pitch);
   const int seek = std::min(m.inCap, m.engine.outputSeekLength(static_cast<float>(std::max(1e-3, perMid))));
   const int on = m.pull(rd, ctx, seek, false);
   const float* ip[2] = {m.in[0].data(), m.in[1].data()};
   m.engine.outputSeek(ip, seek);
-  if (attack) m.takeAttack(on >= 0 ? on : seek);
+  if (attack && !m.native) m.takeAttack(on >= 0 ? on : seek);
   m.noteOnset(on, seek, perMid);
 }
 
@@ -1187,6 +1217,21 @@ void Voice::render(float* const* out, int n, double speed, double pitch, double 
   pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
   speed = std::clamp(speed, 0.0, m.maxSpeed);
   if (keepsFormants(mode_)) applyPitch(m.engine, mode_, pitch, formantSemis);
+  if (m.native) {
+    // The engine's output is the voice's output: copied, never resampled.
+    int done = 0;
+    while (done < n) {
+      const int step = std::min(n - done, m.midCap / 4);
+      const auto p0 = static_cast<int64_t>(m.pos);
+      m.produce(p0 + step, speed, 1.0, rd, ctx);
+      for (int c = 0; c < m.channels; ++c)
+        std::copy(m.mid[c].begin() + static_cast<std::ptrdiff_t>(p0), m.mid[c].begin() + static_cast<std::ptrdiff_t>(p0 + step), out[c] + done);
+      m.pos += step;
+      m.compact(0);
+      done += step;
+    }
+    return;
+  }
   const SincTable& t = sincTable(Quality::Realtime);
   const int hw = pitch::reach(pitch, t);
   int done = 0;

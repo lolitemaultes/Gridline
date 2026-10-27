@@ -7829,7 +7829,7 @@ msgstr ""
 msgid "Removed missing projects from the list"
 msgstr ""
 
-#: src/app/LauncherUi.cpp src/packs/plasma/plasma_browser_ui.cpp
+#: src/app/LauncherUi.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Search"
 msgstr ""
 
@@ -15037,7 +15037,7 @@ msgstr ""
 msgid "Stopped: set the cue here, or hold to preview from it. Playing: back to the cue."
 msgstr ""
 
-#: src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+#: src/packs/platter/platter_deck_ui.cpp
 msgid "TEMPO"
 msgstr ""
 
@@ -15842,6 +15842,10 @@ msgid "Keys from the base note play the slot letters A, B, C..."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "LAYOUTS"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Letters"
 msgstr ""
 
@@ -15986,7 +15990,7 @@ msgid "Saved the layout "
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Search layouts"
+msgid "Search layouts by name or what they do"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -16146,6 +16150,10 @@ msgid "Delete region"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Drag a block to move it. Right-click: split, delete"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Duplicate a step"
 msgstr ""
 
@@ -16191,10 +16199,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Reverse a step"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_seq_ui.cpp
-msgid "Right-click: split, delete"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -16546,6 +16550,10 @@ msgid "Original"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
+msgid "PLAY AT"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
 msgid "Play at the sample's own tempo"
 msgstr ""
 
@@ -16647,10 +16655,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
 msgid "at the hits"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
-msgid "auto:"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp

@@ -1,6 +1,6 @@
-// Gridline — "seltmann" pack: the editor's lower parts. The layout picker (the
-// hero: tabs, search, big cards that show the steps and what the layout does;
-// a click applies it and plays it), the pads (coloured by slot letter, lit
+// Gridline — "seltmann" pack: the editor's lower parts. The layout picker (a
+// tool: tabs and search in its header, cards that show the steps and what the layout does;
+// a click applies it and plays it), the pads (two rows of eight, tinted by region, lit
 // while playing, a drag handle on the selected one) and the Edit drawer with
 // everything advanced: the slice inspector, the chop modes and manual cuts,
 // the step editor and step language, the beat grid tools, the sound and
@@ -83,10 +83,14 @@ void stepChips(ImDrawList* dl, App& a, ImVec2 p0, float w, const Preset& p) {
 void drawPresets(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  panel(dl, a, p0, p1, nullptr);
+  // J-152: the tool header (30 px, shared with the pads) hosts the title, the tabs and the search
+  const float strip = kToolStrip;
+  panel(dl, a, p0, p1, i18n::tr("LAYOUTS"), nullptr, strip);
   e.cards.clear();
-  const float x = p0.x + 14, w = p1.x - p0.x - 28;
-  float y = p0.y + 12;
+  ImFont* tf = a.fontMonoBold ? a.fontMonoBold : a.fontMono;
+  const float titleW = std::round(tf->CalcTextSizeA(10.5f, 1e9f, 0, i18n::tr("LAYOUTS")).x);
+  const float x = p0.x + 18 + titleW + 12, w = p1.x - 6 - x;
+  float y = p0.y + 4;
   // tabs + search
   {
     static const char* const tabs[TabCount] = {i18n::N_("Flip"), i18n::N_("Phrase"), i18n::N_("Breaks"), i18n::N_("Micro"), i18n::N_("Creative"),
@@ -97,18 +101,22 @@ void drawPresets(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
                                                    i18n::N_("Tiny grains in new rhythms and melodies"),
                                                    i18n::N_("Shuffles, reverses, octave jumps and gates"),
                                                    i18n::N_("Your own saved layouts")};
-    const float searchW = std::min(200.0f, w * 0.32f);
-    const float tabsW = w - searchW - 12;
+    const float searchW = std::min(120.0f, w * 0.26f);
+    const float tabsW = w - searchW - 6;
     int cur = e.search[0] ? -1 : e.presetTab;
-    if (pills(a, "##sptab", ImVec2(x, y), tabsW, 30, tabs, TabCount, cur, tabHints) && cur >= 0) {
+    if (pills(a, "##sptab", ImVec2(x, y), tabsW, strip - 8, tabs, TabCount, cur, tabHints) && cur >= 0) {
       e.presetTab = cur;
       e.search[0] = 0;
     }
-    ImGui::SetCursorScreenPos(ImVec2(x + w - searchW, y + 2));
+    ImGui::SetCursorScreenPos(ImVec2(x + w - searchW, y));
     ImGui::SetNextItemWidth(searchW);
-    ImGui::InputTextWithHint("##ssearch", i18n::tr("Search layouts"), e.search, sizeof e.search);
-    y += 44;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, std::max(0.0f, (strip - 8 - ImGui::GetFontSize()) * 0.5f)));
+    ImGui::InputTextWithHint("##ssearch", i18n::tr("Search"), e.search, sizeof e.search);
+    ImGui::PopStyleVar();
+    if (ImGui::IsItemHovered()) ui::Tooltip(i18n::tr("Search layouts by name or what they do"));
+    y = p0.y + strip + 8;
   }
+  const float cx = p0.x + 10, cw = p1.x - p0.x - 20;  // the cards' column
   if (!e.userLoaded) {
     e.user = loadUserPresets(userDir(a));
     e.userLoaded = true;
@@ -120,15 +128,19 @@ void drawPresets(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
   for (const auto& p : e.user)
     if (q.empty() ? e.presetTab == TabMine : lower(p.name).find(q) != std::string::npos) list.push_back(&p);
   const bool mine = q.empty() && e.presetTab == TabMine;
-  const float listH = p1.y - y - (mine ? 48 : 12);
-  ImGui::SetCursorScreenPos(ImVec2(x - 4, y));
-  ImGui::BeginChild("##scards", ImVec2(w + 8, listH), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+  const float saveH = mine ? 36.0f : 0.0f;
+  const float listH = p1.y - 8 - saveH - y;
+  ImGui::SetCursorScreenPos(ImVec2(cx - 4, y));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+  ImGui::BeginChild("##scards", ImVec2(cw + 8, listH), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+  ImGui::PopStyleVar(2);
   ImDrawList* cl = ImGui::GetWindowDrawList();
   const ImVec2 c0 = ImGui::GetCursorScreenPos();
   const float scrollW = ImGui::GetScrollMaxY() > 0 ? 10.0f : 0.0f;
-  const int cols = w >= 560 ? 3 : 2;
-  const float gap = 10, cardH = 78;
-  const float cardW = std::floor((w - scrollW - gap * (cols - 1)) / cols);
+  const int cols = cw >= 480 ? 3 : 2;
+  const float gap = 8, cardH = std::max(64.0f, std::floor((listH - gap) * 0.5f));  // two rows show, more scroll
+  const float cardW = std::floor((cw - scrollW - gap * (cols - 1)) / cols);
   const ImVec2 clipMin = ImGui::GetWindowPos(), clipMax(clipMin.x + ImGui::GetWindowWidth(), clipMin.y + ImGui::GetWindowHeight());
   for (size_t i = 0; i < list.size(); ++i) {
     const Preset& p = *list[i];
@@ -140,19 +152,19 @@ void drawPresets(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
     const bool hv = ImGui::IsItemHovered();
     ImGui::PopID();
     const bool cur = p.name == e.m.preset;
-    const ImU32 bg = cur ? theme::mix(P.surface700, accent(), 0.16f) : hv ? P.surface700 : P.surface900;
+    const ImU32 bg = cur ? theme::mix(P.surface700, accent(), 0.14f) : hv ? P.surface700 : P.surface900;
     skin::raisedFace(cl, q0, q1, bg, theme::kRadiusLg);
-    cl->AddRect(q0, q1, cur ? accent() : hv ? theme::withAlpha(accent(), 0.5f) : P.line, theme::kRadiusLg, 0, cur ? 2.0f : 1.0f);
-    theme::textEllipsis(cl, a.fontBold, theme::kFontBody + 1, ImVec2(q0.x + 12, q0.y + 9), cardW - 50, P.text, p.name.c_str());
+    cl->AddRect(q0, q1, cur ? accent() : hv ? theme::withAlpha(accent(), 0.5f) : P.line, theme::kRadiusLg, 0, cur ? 1.5f : 1.0f);
+    theme::textEllipsis(cl, a.fontBold, theme::kFontBody, ImVec2(q0.x + 10, q0.y + 8), cardW - 44, P.text, p.name.c_str());
     if (cur) {
       // playing marker: three small bars
       for (int k = 0; k < 3; ++k) {
         const float hh = 4.0f + 3.0f * ((k + static_cast<int>(a.now * 6)) % 3);
-        cl->AddRectFilled(ImVec2(q1.x - 30 + k * 6, q0.y + 21 - hh), ImVec2(q1.x - 27 + k * 6, q0.y + 21), accent(), 1);
+        cl->AddRectFilled(ImVec2(q1.x - 26 + k * 6, q0.y + 20 - hh), ImVec2(q1.x - 23 + k * 6, q0.y + 20), accent(), 1);
       }
     }
-    stepChips(cl, a, ImVec2(q0.x + 12, q0.y + 31), cardW - 24, p);
-    theme::textEllipsis(cl, a.fontRegular, theme::kFontCaption, ImVec2(q0.x + 12, q0.y + 56), cardW - 24, P.textDim, i18n::tr(p.hint.c_str()));
+    stepChips(cl, a, ImVec2(q0.x + 10, q0.y + 29), cardW - 20, p);
+    theme::textEllipsis(cl, a.fontRegular, theme::kFontCaption, ImVec2(q0.x + 10, q1.y - 21), cardW - 20, P.textDim, i18n::tr(p.hint.c_str()));
     if (hv) {
       std::string tip = i18n::tr(p.hint.c_str());
       tip += std::string("\n") + presetSummary(p, 32) + "\n" + i18n::tr("Click to use it; it plays at once.");
@@ -167,17 +179,20 @@ void drawPresets(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
     if (cc.y > clipMin.y && cc.y < clipMax.y) e.cards.push_back({p.name, cc});
   }
   const int rows = (static_cast<int>(list.size()) + cols - 1) / cols;
-  ImGui::SetCursorScreenPos(ImVec2(c0.x, c0.y + rows * (cardH + gap)));
+  ImGui::SetCursorScreenPos(ImVec2(c0.x, c0.y + rows * (cardH + gap) - gap - 1));
   ImGui::Dummy(ImVec2(1, 1));
   if (list.empty())
     cl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(c0.x + 6, c0.y + 6), P.textDim,
                 mine ? i18n::tr("Your layouts appear here. Save the current one below.") : i18n::tr("No layout matches"));
   ImGui::EndChild();
   if (mine) {
-    ImGui::SetCursorScreenPos(ImVec2(x, p1.y - 40));
-    ImGui::SetNextItemWidth(w - 108);
+    const float sy = p1.y - 8 - 28;
+    ImGui::SetCursorScreenPos(ImVec2(cx, sy));
+    ImGui::SetNextItemWidth(cw - 104);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, std::max(0.0f, (28 - ImGui::GetFontSize()) * 0.5f)));
     ImGui::InputTextWithHint("##spname", i18n::tr("Name for the current layout"), e.presetName, sizeof e.presetName);
-    if (button("##spsave", ImVec2(x + w - 100, p1.y - 41), ImVec2(100, 28), i18n::N_("Save"), false,
+    ImGui::PopStyleVar();
+    if (button("##spsave", ImVec2(cx + cw - 96, sy), ImVec2(96, 28), i18n::N_("Save"), false,
                i18n::N_("Save the chop settings and the pattern as your own layout"), static_cast<int>(ui::Icon::Save), true) &&
         e.presetName[0]) {
       if (saveUserPreset(userDir(a), e.presetName, e.m, static_cast<float>(paramOf(a, t, SmSwing)), static_cast<int>(std::lround(paramOf(a, t, SmSpeed))))) {
@@ -196,14 +211,17 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
   const int n = e.hasModel ? static_cast<int>(e.m.slices.size()) : 0;
   char cap[48];
   std::snprintf(cap, sizeof cap, "%d %s", n, n == 1 ? i18n::tr("REGION") : i18n::tr("REGIONS"));
-  panel(dl, a, p0, p1, i18n::tr("PADS"), cap);
+  panel(dl, a, p0, p1, i18n::tr("PADS"), cap, kToolStrip);
   if (!e.hasModel) return;
-  const int cols = 4, rows = std::clamp((n + cols - 1) / cols, 2, 4), per = cols * rows;
+  // J-152: two rows of eight (A..H over I..P), sixteen to a page as before
+  const int cols = 8, rows = 2, per = cols * rows;
   const int pages = std::max(1, (n + per - 1) / per);
   e.padPage = std::clamp(e.padPage, 0, pages - 1);
   if (pages > 1) {
+    ImFont* tf = a.fontMonoBold ? a.fontMonoBold : a.fontMono;
+    const float dx = p0.x + 18 + std::round(tf->CalcTextSizeA(10.5f, 1e9f, 0, i18n::tr("PADS")).x) + 16;
     for (int pg = 0; pg < pages && pg < 16; ++pg) {
-      const ImVec2 c(p0.x + 64 + pg * 14.0f, p0.y + 13);
+      const ImVec2 c(dx + pg * 14.0f, std::round(p0.y + kToolStrip * 0.5f));
       ImGui::SetCursorScreenPos(ImVec2(c.x - 6, c.y - 6));
       ImGui::PushID(pg);
       if (ImGui::InvisibleButton("##pg", ImVec2(12, 12))) e.padPage = pg;
@@ -212,8 +230,8 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
       dl->AddCircleFilled(c, pg == e.padPage ? 4.0f : 3.0f, pg == e.padPage ? accent() : P.surface600, 10);
     }
   }
-  const float gx0 = p0.x + 12, gy0 = p0.y + 30, gw = p1.x - p0.x - 24, gh = p1.y - gy0 - 12;
-  const float gap = 8, cw = (gw - gap * (cols - 1)) / cols, ch = (gh - gap * (rows - 1)) / rows;
+  const float gx0 = p0.x + 10, gy0 = p0.y + kToolStrip + 8, gw = p1.x - p0.x - 20, gh = p1.y - 8 - gy0;
+  const float gap = 6, cw = std::floor((gw - gap * (cols - 1)) / cols), ch = std::floor((gh - gap * (rows - 1)) / rows);
   SamplePtr smp = sampleOf(e);
   const int base = baseNote(a, t);
   const bool slotsMap = static_cast<int>(std::lround(paramOf(a, t, SmKeyMap))) == KeySlots;
@@ -259,11 +277,14 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
                     i18n::tr("Click to play. Right-click: split or delete. Drag the grip to take it out as audio."));
       ui::Tooltip(b);
     }
-    const ImU32 face = regionColor(k, playing ? 1.0f : hv ? 0.85f : 0.7f);
+    // J-152: a quiet tinted pad with its hue along the top; it lights up in full while it plays
+    const ImU32 face = playing ? regionColor(k) : regionFace(k, hv ? 0.34f : sel ? 0.28f : 0.2f);
     skin::raisedFace(dl, q0, q1, face, theme::kRadiusLg);
+    if (!playing) dl->AddRectFilled(ImVec2(q0.x + 1, q0.y + 1), ImVec2(q1.x - 1, q0.y + 4), regionColor(k, 0.95f), theme::kRadiusLg, ImDrawFlags_RoundCornersTop);
     if (playing) dl->AddRect(ImVec2(q0.x - 2, q0.y - 2), ImVec2(q1.x + 2, q1.y + 2), theme::withAlpha(P.paper, 0.9f), theme::kRadiusLg + 2, 0, 2.0f);
     else if (sel) dl->AddRect(ImVec2(q0.x - 1.5f, q0.y - 1.5f), ImVec2(q1.x + 1.5f, q1.y + 1.5f), accent(), theme::kRadiusLg + 1, 0, 2.0f);
-    const ImU32 ink = theme::contrastText(regionColor(k));
+    const ImU32 ink = playing ? theme::contrastText(regionColor(k)) : P.text;
+    const ImU32 waveInk = playing ? theme::withAlpha(ink, 0.6f) : regionColor(k, 0.85f);
     if (smp) {
       const float wy0 = q1.y - ch * 0.45f, wy1 = q1.y - 6;
       const float mid = (wy0 + wy1) * 0.5f, half = (wy1 - wy0) * 0.5f;
@@ -277,11 +298,11 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
         for (int64_t f = f0; f < f1 && f < nn; f += step) mx = std::max(mx, std::fabs(smp->left[static_cast<size_t>(f)]));
         const float xx = q0.x + 7 + j * 2.0f;
         const float hh = std::max(0.5f, std::min(1.0f, mx * 1.2f) * half);
-        dl->AddLine(ImVec2(xx, mid - hh), ImVec2(xx, mid + hh), theme::withAlpha(ink, 0.55f), 1.2f);
+        dl->AddLine(ImVec2(xx, mid - hh), ImVec2(xx, mid + hh), waveInk, 1.2f);
       }
     }
-    dl->AddText(a.fontBold, 18, ImVec2(q0.x + 9, q0.y + 6), ink, L.c_str());
-    if (s.reverse) dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q0.x + 13 + 11 * static_cast<float>(L.size()), q0.y + 10), theme::withAlpha(ink, 0.8f), "R");
+    dl->AddText(a.fontBold, 16, ImVec2(q0.x + 8, q0.y + 8), ink, L.c_str());
+    if (s.reverse) dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q0.x + 12 + 10 * static_cast<float>(L.size()), q0.y + 11), theme::withAlpha(ink, 0.8f), "R");
     ImGui::PopID();
   }
   // drag handle on the selected pad: the slice out as audio
@@ -290,7 +311,7 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     if (i >= 0 && i < per) {
       const int r = i / cols, c = i % cols;
       const ImVec2 q0(gx0 + c * (cw + gap), gy0 + r * (ch + gap));
-      const ImVec2 g(q0.x + cw - 12, q0.y + ch * 0.5f - 4);
+      const ImVec2 g(q0.x + cw - 10, q0.y + 16);
       ImGui::SetCursorScreenPos(ImVec2(g.x - 8, g.y - 10));
       ImGui::InvisibleButton("##sgrip", ImVec2(16, 20));
       const bool h = ImGui::IsItemHovered();
@@ -299,7 +320,7 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
       char lab[32];
       std::snprintf(lab, sizeof lab, "region %s", regionName(e.selSlice).c_str());
       dragOut(a, t, e, "slice:" + std::to_string(e.selSlice), lab);
-      grip(dl, g, theme::withAlpha(theme::contrastText(regionColor(e.selSlice)), h ? 1.0f : 0.65f));
+      grip(dl, g, theme::withAlpha(e.selSlice == lv.slice ? theme::contrastText(regionColor(e.selSlice)) : P.text, h ? 1.0f : 0.6f));
     }
   }
 }
@@ -494,12 +515,14 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
       dl->AddRect(q0, q1, theme::withAlpha(P.line, 0.9f), theme::kRadius);
       textC(dl, a.fontBold, 14, ImVec2((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f), P.textFaint, ".");
     } else {
-      const ImU32 fc = slotColor(colorSlot, playing ? 1.0f : hv ? 0.85f : 0.68f);
+      // J-152: the same quiet face as the sequence lane; the playing step lights up
+      const ImU32 fc = playing ? slotColor(colorSlot) : regionFace(colorSlot, hv ? 0.42f : sel ? 0.36f : 0.28f);
       skin::raisedFace(dl, q0, q1, fc, theme::kRadius);
+      if (!playing) dl->AddRectFilled(ImVec2(q0.x + 1, q1.y - 3), ImVec2(q1.x - 1, q1.y - 1), slotColor(colorSlot, 0.95f), 1.0f, ImDrawFlags_RoundCornersBottom);
       if (s.reverse)
         dl->AddRectFilledMultiColor(q0, q1, theme::withAlpha(P.ink, 0.0f), theme::withAlpha(P.ink, 0.25f), theme::withAlpha(P.ink, 0.25f),
                                     theme::withAlpha(P.ink, 0.0f));
-      const ImU32 ink = theme::contrastText(slotColor(colorSlot));
+      const ImU32 ink = playing ? theme::contrastText(slotColor(colorSlot)) : P.text;
       const float cw = q1.x - q0.x;
       char lb[16];
       std::snprintf(lb, sizeof lb, "%s", regionName(k).c_str());
@@ -759,6 +782,20 @@ void drawLoops(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
 }  // namespace
 
 // ------------------------------------------------------------------ Edit drawer
+float drawerHeight(const Ed& e) {
+  // J-152: each tab takes the height it needs (the tabs stay where they are)
+  switch (e.drawerTab) {
+    case DrawSlice: return 200;
+    case DrawChop:
+    case DrawGrid: return 170;
+    case DrawLoops: {
+      const size_t rows = 1 + e.m.grid.loops.size() + e.m.grid.sections.size();
+      return std::clamp(62.0f + static_cast<float>((rows + 1) / 2) * 34.0f, 132.0f, 236.0f);
+    }
+    default: return 236;  // steps, sound
+  }
+}
+
 void drawDrawer(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const LiveView& lv) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -770,9 +807,9 @@ void drawDrawer(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, cons
                                                i18n::N_("Tap the tempo, nudge the grid, meter, bar 1, analyse again"),
                                                i18n::N_("Playback and the envelope, filter and mix"),
                                                i18n::N_("Phrases and sections to drag out as loops")};
-  pills(a, "##sdtab", ImVec2(p0.x + 14, p0.y + 12), 540, 28, tabs, DrawCount, e.drawerTab, hints);
-  textR(dl, a.fontMono, theme::kFontLabel, ImVec2(p1.x - 16, p0.y + 20), P.textFaint, i18n::tr("EDIT"));
-  const ImVec2 c0(p0.x + 16, p0.y + 56), c1(p1.x - 16, p1.y - 14);
+  pills(a, "##sdtab", ImVec2(p0.x + 10, p0.y + 10), 540, 28, tabs, DrawCount, e.drawerTab, hints);
+  textR(dl, a.fontMono, theme::kFontLabel, ImVec2(p1.x - 16, p0.y + 18), P.textFaint, i18n::tr("EDIT"));
+  const ImVec2 c0(p0.x + 16, p0.y + 50), c1(p1.x - 16, p1.y - 12);
   switch (e.drawerTab) {
     case DrawSlice: drawSlice(a, t, e, c0, c1); break;
     case DrawChop: drawChop(a, t, e, c0, c1); break;

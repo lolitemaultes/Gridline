@@ -88,14 +88,19 @@ struct Ed {
   bool menuWant = false;               // open it this frame
   std::vector<ImVec2> seqCentres;      // block centres (scripted input, trace)
   ImVec2 seq0, seq1;                   // the lane
+  ImVec2 body;                         // J-152: the editor body's size (trace: measured heights)
 };
 Ed& ed(const PluginTarget& t);
+
+// J-152: the tool panels' (layouts, pads) header strip: title, tabs / page dots, caption.
+constexpr float kToolStrip = 30;
 
 // ---- colours / text
 ImU32 accent();                       // Sample family accent
 ImU32 slotColor(int slot, float alpha = 1.0f);
 int sliceSlot(const Model& m, int slice);  // first slot letter that plays the slice (-1 none)
 ImU32 regionColor(int region, float alpha = 1.0f);  // J-149: a region's colour (by its letter)
+ImU32 regionFace(int region, float amount);         // J-152: the panel surface tinted with a region's hue
 void textC(ImDrawList* dl, ImFont* f, float size, ImVec2 c, ImU32 col, const char* s);
 void textR(ImDrawList* dl, ImFont* f, float size, ImVec2 rightTop, ImU32 col, const char* s);
 std::string fmtTime(double seconds);
@@ -105,7 +110,10 @@ const char* kindLabel(int kind);      // "Break", "Loop", ... (translatable)
 
 // ---- small controls (UI-only state)
 // Rounded panel with a mono caption; returns the content origin.
-ImVec2 panel(ImDrawList* dl, App& a, ImVec2 p0, ImVec2 p1, const char* title, const char* caption = nullptr);
+// J-152: `strip` = the title strip's height (the tool panels host their tabs in a 30 px strip).
+ImVec2 panel(ImDrawList* dl, App& a, ImVec2 p0, ImVec2 p1, const char* title, const char* caption = nullptr, float strip = 22);
+// J-152: a mono group label left of its control, centred in a row of height h; returns its width plus the gap.
+float inlineLabel(ImDrawList* dl, App& a, ImVec2 p, float h, const char* text);
 // Small mono caption above a control group.
 void groupLabel(ImDrawList* dl, App& a, ImVec2 p, const char* text);
 // Pill selector over an int; returns true when changed. hints may be null.
@@ -162,6 +170,7 @@ void drawChopSettings(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, float w);
 void drawPresets(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1);                     // layout cards
 void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const LiveView& lv);
 void drawDrawer(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const LiveView& lv);   // Edit drawer
+float drawerHeight(const Ed& e);                                                                   // J-152: the open tab's height
 void drawGridTools(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1);                   // drawer: grid tab
 void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const LiveView& lv);  // J-149: the sequence lane
 

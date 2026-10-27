@@ -167,30 +167,41 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
     std::snprintf(cap, sizeof cap, "%s  \xC2\xB7  %d %s  \xC2\xB7  %s %s", natural ? i18n::tr("IN ORDER") : i18n::tr("YOUR ORDER"), ns,
                   ns == 1 ? i18n::tr("STEP") : i18n::tr("STEPS"), bb, std::fabs(bars - 1) < 1e-9 ? i18n::tr("BAR") : i18n::tr("BARS"));
   }
-  panel(dl, a, p0, p1, i18n::tr("SEQUENCE"), cap);
-  // right: reset to the natural order
-  const float btnW = 128;
-  const float lx0 = p0.x + 10, lx1 = p1.x - 10 - btnW - 10;
-  const float ly0 = p0.y + 32, rulerH = 14, ly1 = p1.y - 10 - rulerH;
-  if (button("##sseqreset", ImVec2(p1.x - 10 - btnW, ly0), ImVec2(btnW, 28), i18n::N_("Reset order"), false,
-             natural ? i18n::N_("The sequence already plays every region in order")
-                     : i18n::N_("Play every region once, in order (A B C D ...), each as long as its region"),
-             static_cast<int>(ui::Icon::Loop)) &&
-      !natural) {
-    Model nm = m;
-    nm.preset.clear();
-    naturalPattern(nm);
-    commit(a, t, e, nm, i18n::N_("Reset the order"));
-    e.selStep = -1;
+  // J-152: the lane sits right under the waveform and shares its inner width (in order, A plays
+  // under A). A 24 px strip between the two carries the title, the caption, the hint and Reset.
+  const float stripH = 24;
+  {
+    const float cy = std::round(p0.y + stripH * 0.5f);
+    dl->AddRectFilled(ImVec2(p0.x + 8, cy - 5), ImVec2(p0.x + 10, cy + 4), accent(), 1);
+    ImFont* f = a.fontMonoBold ? a.fontMonoBold : a.fontMono;
+    const char* title = i18n::tr("SEQUENCE");
+    dl->AddText(f, 10.5f, ImVec2(p0.x + 16, cy - 7), P.text, title);
+    const float tw = f->CalcTextSizeA(10.5f, 1e9f, 0, title).x;
+    dl->AddText(a.fontMono, 10.5f, ImVec2(std::round(p0.x + 16 + tw + 12), cy - 7), P.textFaint, cap);
+    const float btnW = 116, btnH = 20;
+    const float bx = p1.x - btnW;
+    if (button("##sseqreset", ImVec2(bx, cy - btnH * 0.5f), ImVec2(btnW, btnH), i18n::N_("Reset order"), false,
+               natural ? i18n::N_("The sequence already plays every region in order")
+                       : i18n::N_("Play every region once, in order (A B C D ...), each as long as its region"),
+               static_cast<int>(ui::Icon::Loop)) &&
+        !natural) {
+      Model nm = m;
+      nm.preset.clear();
+      naturalPattern(nm);
+      commit(a, t, e, nm, i18n::N_("Reset the order"));
+      e.selStep = -1;
+    }
+    textR(dl, a.fontRegular, theme::kFontLabel, ImVec2(bx - 12, cy - 7), P.textFaint,
+          i18n::tr("Drag a block to move it. Right-click: split, delete"));
   }
-  dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(p1.x - 10 - btnW, ly0 + 34), P.textFaint, i18n::tr("Right-click: split, delete"));
   // the well
-  const ImVec2 w0(lx0, ly0), w1(lx1, ly1 + rulerH);
+  const float lx0 = p0.x, lx1 = p1.x, ly0 = p0.y + stripH, rulerH = 13, ly1 = p1.y - rulerH;
+  const ImVec2 w0(lx0, ly0), w1(lx1, p1.y);
   pui::displayFrame(dl, w0, w1);
   e.seq0 = ImVec2(lx0, ly0), e.seq1 = ImVec2(lx1, ly1);
   e.seqCentres.clear();
   if (ns == 0) return;
-  const float bx0 = lx0 + 4, bx1 = lx1 - 4, by0 = ly0 + 4, by1 = ly1 - 1;
+  const float bx0 = lx0 + 8, bx1 = lx1 - 8, by0 = ly0 + 5, by1 = ly1 - 1;
   const float bw = bx1 - bx0;
   auto X = [&](double beat) { return bx0 + static_cast<float>(beat / beats) * bw; };
   // block edges (beats)
@@ -260,20 +271,22 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
     if (hv && e.seqDrag < 0) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     ImGui::PopID();
     // paint
-    const float alpha = dragged ? 0.22f : playing ? 1.0f : hv ? 0.92f : sel ? 0.86f : 0.74f;
+    // J-152: a quiet tinted face with the hue along its foot; only the playing step lights up fully
     if (s.src == kRest || k < 0) {
       dl->AddRect(q0, q1, theme::withAlpha(P.line, 1.0f), theme::kRadius);
     } else {
-      const ImU32 face = regionColor(k, alpha);
-      skin::raisedFace(dl, q0, q1, face, theme::kRadius);
+      const ImU32 face = playing ? regionColor(k) : regionFace(k, hv ? 0.42f : sel ? 0.36f : 0.28f);
+      skin::raisedFace(dl, q0, q1, dragged ? theme::withAlpha(face, 0.3f) : face, theme::kRadius);
+      if (!playing && !dragged)
+        dl->AddRectFilled(ImVec2(q0.x + 1, q1.y - 3), ImVec2(q1.x - 1, q1.y - 1), regionColor(k, 0.95f), 1.0f, ImDrawFlags_RoundCornersBottom);
       if (s.reverse)
         dl->AddRectFilledMultiColor(q0, q1, theme::withAlpha(P.ink, 0.0f), theme::withAlpha(P.ink, 0.28f), theme::withAlpha(P.ink, 0.28f),
                                     theme::withAlpha(P.ink, 0.0f));
-      const ImU32 ink = theme::withAlpha(theme::contrastText(regionColor(k)), dragged ? 0.4f : 1.0f);
+      const ImU32 ink = theme::withAlpha(playing ? theme::contrastText(regionColor(k)) : P.text, dragged ? 0.4f : 1.0f);
       const float cw = q1.x - q0.x;
       const std::string L = regionName(k);
       if (cw >= 11) {
-        const float fs = cw >= 26 ? 16.0f : 12.0f;
+        const float fs = cw >= 26 ? 15.0f : 12.0f;
         textC(dl, a.fontBold, fs, ImVec2((q0.x + q1.x) * 0.5f, q0.y + (q1.y - q0.y) * (cw >= 26 ? 0.42f : 0.5f)), ink, L.c_str());
       }
       if (cw >= 30) {
