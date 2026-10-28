@@ -128,6 +128,11 @@ void traceRect(const char* name, ImVec2 p0, ImVec2 p1);
 // ---- parts
 void drawSetup(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1);
 void drawDrawer(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const LiveView& lv);
+// J-158: how far the editor gives way to a short window, 0 (natural size) .. 1 (most compact):
+// shorter waveform lanes, platter body and pads row (the mixer follows the deck's height). Set
+// before anything is measured or drawn this frame.
+void setSqueeze(float f);
+float squeeze();
 // The waveform panel (both decks' lanes and the phase meter); its height for a layout.
 float wavesHeight(bool two);
 void drawWaves(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, float W, const LiveView* lv);

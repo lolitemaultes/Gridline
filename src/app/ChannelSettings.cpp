@@ -9,6 +9,7 @@
 #include <functional>
 #include <string>
 #include "../core/I18n.h"
+#include "../core/WindowPlacement.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/PluginParams.h"
 #include "../engine/ChannelIns.h"
@@ -449,17 +450,19 @@ void drawChannelSettings(App& a) {
   stripOpened(a, c->id);  // opened (or another channel): the strip starts hidden
   // Wide instrument editors (PluginInfo::editorWidth) widen the window.
   float editorW = info && info->editorWidth > 0 ? info->editorWidth : 600.0f;
-  if (info && info->editorMinWidth > 0)  // J-151: reflowing editors follow a narrower main window
-    editorW = std::clamp(ImGui::GetMainViewport()->WorkSize.x - 96.0f, std::min(info->editorMinWidth, editorW), editorW);
+  if (info && info->editorMinWidth > 0) {  // J-151: reflowing editors follow a narrower main window (J-158: as far as they fit)
+    const ImVec2 area = ui::EditorArea();
+    editorW = place::fitEditor(editorW, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content;
+  }
   editorW = std::floor(editorW);
   const float winW = std::max(624.0f, editorW + 24.0f);
-  ui::NextFloatingWindowSize(winW);
+  const int fitFlags = ui::NextFloatingWindowSize(winW);  // J-158: capped to the work area, the rest scrolls
   {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   }
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
-  bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
+  bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags);
   ui::KeepWindowInViewport();
   ui::MarkDetachable();  // J-114: pops out / docks back like the panels
   if (!vis) {

@@ -60,9 +60,9 @@ inline void readFrameSinc(const Sample& s, double sec, bool reverse, float& l, f
 
 }  // namespace
 
-std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate) {
+std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine) {
   auto v = std::make_shared<ClipVoice>();
-  v->voice.prepare(2, sampleRate, 8.0, 8.0);
+  v->voice.prepare(2, sampleRate, 8.0, 8.0, false, engine);
   return v;
 }
 

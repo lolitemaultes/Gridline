@@ -243,8 +243,13 @@ bool BeginCombo(const char* id, const char* preview, float width);
 // ---- floating windows ----
 // Fixed-width floating editor (instrument / effect windows): the height grows
 // with the content up to the space between the top bar and the status bar,
-// then the window scrolls. Call before Begin().
-void NextFloatingWindowSize(float width);
+// then the window scrolls. J-158: a window wider than that space is capped to
+// it too, and its content scrolls sideways. Call before Begin() and add the
+// returned flags (a horizontal scrollbar when capped) to Begin's.
+int NextFloatingWindowSize(float width);
+// J-158: the room a plugin editor window has in the main window (the work area
+// between the top bar and the status bar, less a kS2 margin all round).
+ImVec2 EditorArea();
 // Call right after Begin(): pulls the window back inside the work area if a
 // resize (of the window or the app) left it partly off screen.
 void KeepWindowInViewport();

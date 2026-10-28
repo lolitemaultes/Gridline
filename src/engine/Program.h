@@ -181,7 +181,8 @@ struct ClipVoice {
   static constexpr int kOut = 1024;
   float out[2][kOut] = {};
 };
-std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate);  // UI thread (allocates)
+// UI thread (allocates). J-157: Rubber Band clips get its realtime engine.
+std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine = stretch::Engine::Stretch);
 
 // An audio clip compiled for playback (arrangement). Plain reads are
 // stateless: the source position follows from the song position, so seeking
@@ -196,6 +197,7 @@ struct ProgAudioClip {
   double secPerTick = 0;            // > 0: tempo-synced, source seconds per song tick
   double pitch = 1;                 // frequency ratio (granular mode)
   bool granular = false;            // pitch independent from speed (the stretch)
+  stretch::Engine engine = stretch::Engine::Stretch;  // J-157: what keeps the pitch (the channel's time mode)
   bool reverse = false;
   float gain = 1;
   double fadeIn = 0, fadeOut = 0;   // seconds of playback time

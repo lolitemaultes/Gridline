@@ -1,7 +1,7 @@
-// Gridline: time stretching and pitch shifting (J-87, J-153). See
-// TimeStretch.h. The spectral engine is Signalsmith Stretch (MIT); the
-// streaming around it, the resampler, the clip renderer and the realtime
-// voice are Gridline's own.
+// Gridline: time stretching and pitch shifting (J-87, J-153, J-157). See
+// TimeStretch.h. The spectral engines are Signalsmith Stretch (MIT) and
+// Rubber Band Library R3 (GPL-2.0-or-later); the streaming around them, the
+// resampler, the clip renderer and the realtime voice are Gridline's own.
 #include "TimeStretch.h"
 #include <algorithm>
 #include <cmath>
@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <rubberband/RubberBandStretcher.h>
 #include <signalsmith-stretch/signalsmith-stretch.h>
 #include "../core/Automation.h"
 
@@ -274,6 +275,123 @@ void stretchPitched(const float* const* in, int nch, int64_t n, float* const* ou
   resampleTo(outLen);
 }
 
+// ------------------------------------------------------------- Rubber Band (J-157)
+
+using RubberBand::RubberBandStretcher;
+
+// Rubber Band reports to cerr unless it has a logger: nothing is reported
+// (its warnings concern extreme ratios, which Gridline clamps; no I/O on the
+// audio thread).
+struct QuietLog final : RubberBandStretcher::Logger {
+  void log(const char*) override {}
+  void log(const char*, double) override {}
+  void log(const char*, double, double) override {}
+};
+std::shared_ptr<RubberBandStretcher::Logger> quietLog() {
+  static const auto l = std::make_shared<QuietLog>();
+  return l;
+}
+// The R3 ("finer") engine with its standard window and the other options the
+// rubberband command line uses with -3 (channels apart, formants shifted).
+constexpr RubberBandStretcher::Options kRbOffline = RubberBandStretcher::OptionProcessOffline | RubberBandStretcher::OptionEngineFiner;
+// Realtime voices bend their pitch: the high-consistency pitch method keeps a
+// bend through 1:1 free of the click the engine's switch of method there makes.
+constexpr RubberBandStretcher::Options kRbRealtime =
+    RubberBandStretcher::OptionProcessRealTime | RubberBandStretcher::OptionEngineFiner | RubberBandStretcher::OptionPitchHighConsistency;
+// Input around an offline render: up to this much before its start (the
+// engine starts on the audio that leads in) and after its end (the last
+// frames are not the engine's flush).
+constexpr double kRbContextSec = 0.25;
+constexpr double kRbMinRate = 1.0 / 32.0;  // input frames per output frame (x32 slower at most)
+
+// Renders frames [0, len) whose frame q plays input position x(q) (as
+// stream()), at frequency ratio `pitch`, with Rubber Band's offline engine.
+// A constant rate is one time ratio; any other map becomes a key frame map
+// (one key frame per 50 ms of output) that the engine follows. Output frame 0
+// is input position x(0): the engine starts `pre` frames earlier on the input
+// that leads in, and those frames are dropped. Frames it does not reach stay
+// as they are (the callers clear `out`).
+void rubberStream(const float* const* in, int nch, int64_t n, float* const* out, int64_t len, double sr, double pitch, const Map& x,
+                  const Progress* pr) {
+  if (len <= 0 || nch <= 0) return;
+  const int64_t blk = std::min<int64_t>(len, std::max<int64_t>(16, static_cast<int64_t>(0.01 * sr)));
+  const double x0 = x(0), xe = std::max(x0, x(len));
+  const double r0 = std::max(kRbMinRate, (x(blk) - x0) / static_cast<double>(blk));
+  const double re = std::max(kRbMinRate, (xe - x(len - blk)) / static_cast<double>(blk));
+  // One rate? (A clip at a fixed speed; a tempo-mapped clip is not.)
+  bool affine = true;
+  for (int k = 1; k < 16 && affine; ++k) {
+    const int64_t q = len * k / 16;
+    affine = std::fabs(x(q) - (x0 + (xe - x0) * static_cast<double>(q) / static_cast<double>(len))) < 0.25;
+  }
+  const double ctx = kRbContextSec * sr;
+  const auto base = static_cast<int64_t>(std::floor(x0 - std::min(std::max(0.0, x0), ctx)));  // first input frame fed
+  const auto inEnd = static_cast<int64_t>(std::ceil(xe + ctx));
+  const int64_t inLen = std::max<int64_t>(1, inEnd - base);
+  const auto pre = static_cast<int64_t>(std::llround((x0 - static_cast<double>(base)) / r0));  // engine frames before frame 0
+  // The whole input at one ratio (affine), or the key frames: x(q) - base
+  // plays at engine frame pre + q; the context after the end at its rate.
+  const double rate = (xe - x0) / static_cast<double>(len);
+  const double total = static_cast<double>(pre + len) + (static_cast<double>(inEnd) - xe) / re;
+  const double ratio = std::clamp(affine ? 1.0 / std::max(kRbMinRate, rate) : total / static_cast<double>(inLen), 1.0 / 32.0, 32.0);
+  RubberBandStretcher rb(static_cast<size_t>(std::lround(sr)), static_cast<size_t>(nch), quietLog(), kRbOffline, ratio, pitch);
+  if (!affine) {
+    std::map<size_t, size_t> keys;
+    // (Much denser key frames, a few ms apart, make the engine drift.)
+    const auto step = std::max<int64_t>(64, static_cast<int64_t>(0.05 * sr));
+    int64_t lastIn = 0, lastOut = 0;
+    for (int64_t q = 0;; q = std::min(len, q + step)) {
+      const int64_t i = static_cast<int64_t>(std::llround(x(q))) - base, o = pre + q;
+      if (i > lastIn && o > lastOut) keys[static_cast<size_t>(i)] = static_cast<size_t>(o), lastIn = i, lastOut = o;
+      if (q >= len) break;
+    }
+    rb.setKeyFrameMap(keys);
+  }
+  constexpr int kChunk = 4096;
+  rb.setMaxProcessSize(kChunk);
+  std::vector<std::vector<float>> buf(static_cast<size_t>(nch), std::vector<float>(kChunk, 0.0f)), got = buf;
+  std::vector<float*> bp(static_cast<size_t>(nch)), gp(static_cast<size_t>(nch));
+  for (int c = 0; c < nch; ++c) bp[static_cast<size_t>(c)] = buf[static_cast<size_t>(c)].data(), gp[static_cast<size_t>(c)] = got[static_cast<size_t>(c)].data();
+  // Input frames [base + at, + m) into buf (silence outside the input).
+  auto fill = [&](int64_t at, int m) {
+    for (int c = 0; c < nch; ++c)
+      for (int i = 0; i < m; ++i) {
+        const int64_t k = base + at + i;
+        buf[static_cast<size_t>(c)][static_cast<size_t>(i)] = k >= 0 && k < n ? in[c][k] : 0.0f;
+      }
+  };
+  // The offline engine studies the whole input before it renders it.
+  for (int64_t at = 0; at < inLen; at += kChunk) {
+    const int m = static_cast<int>(std::min<int64_t>(kChunk, inLen - at));
+    fill(at, m);
+    rb.study(bp.data(), static_cast<size_t>(m), at + m >= inLen);
+  }
+  int64_t made = 0;  // engine frames retrieved (engine frame pre is output frame 0)
+  const int64_t want = pre + len;
+  auto drain = [&] {
+    int av = 0;
+    while (made < want && (av = static_cast<int>(rb.available())) > 0) {
+      const auto k = static_cast<int64_t>(rb.retrieve(gp.data(), static_cast<size_t>(std::min(av, kChunk))));
+      if (k <= 0) break;
+      const int64_t a = std::max(made, pre), b = std::min(made + k, want);
+      for (int c = 0; c < nch; ++c)
+        for (int64_t j = a; j < b; ++j) out[c][j - pre] = got[static_cast<size_t>(c)][static_cast<size_t>(j - made)];
+      made += k;
+      if (b > a && pr && *pr) (*pr)(b - pre);
+    }
+  };
+  // The engine moves its rate toward the key frames once per process call:
+  // a key frame map needs short calls (256 frames or less) to be followed
+  // closely; 4096-frame calls trailed it by up to 90 ms.
+  const int64_t feed = affine ? kChunk : 256;
+  for (int64_t at = 0; at < inLen && made < want; at += feed) {
+    const int m = static_cast<int>(std::min<int64_t>(feed, inLen - at));
+    fill(at, m);
+    rb.process(bp.data(), static_cast<size_t>(m), at + m >= inLen);
+    drain();
+  }
+}
+
 // Resample mode: read at the mapped positions, the cutoff following the local rate.
 void resampleMapped(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, const Map& srcAt) {
   const SincTable& t = sincTable(Quality::Offline);
@@ -290,12 +408,21 @@ void resampleMapped(const float* const* in, int nch, int64_t n, float* const* ou
 
 // ------------------------------------------------------------- modes
 
-const char* modeName(Mode m) { return m == Mode::Resample ? "Resample" : "Stretch"; }
+const char* modeName(Mode m) { return m == Mode::Resample ? "Resample" : m == Mode::RubberBand ? "Rubber Band" : "Stretch"; }
+
+const char* modeHint(Mode m) {
+  switch (m) {
+    case Mode::Resample: return "Resample: pitch and speed change together, like a turntable";
+    case Mode::RubberBand: return "Rubber Band R3: sharper drums and transients, more CPU";
+    default: return "Stretch: Gridline's engine, smooth on sustained sounds";
+  }
+}
 
 Mode modeOf(double v) {
   if (!std::isfinite(v)) return Mode::Resample;
-  const int i = static_cast<int>(std::lround(v));
-  return static_cast<Mode>(std::clamp(i, 0, static_cast<int>(Mode::Count) - 1));
+  const long i = std::lround(std::clamp(v, -1.0, 1e6));
+  if (i <= 0) return Mode::Resample;
+  return i < static_cast<long>(Mode::Count) ? static_cast<Mode>(i) : kStretch;
 }
 
 Mode modeFromFl(int code) {
@@ -326,7 +453,7 @@ int flCodeOf(Mode m) {
     case Mode::Formant: return -2;   // stretch pro
     case Mode::Voice: return 9;      // e2 speech
     case Mode::Beats: return 3;      // slice stretch
-    default: return -1;              // stretch
+    default: return -1;              // stretch (also Rubber Band, which FL does not have)
   }
 }
 
@@ -413,7 +540,11 @@ void process(const float* const* in, int nch, int64_t n, float* const* out, int6
     for (int c = 0; c < nch; ++c) std::copy(in[c], in[c] + n, out[c]);
     return;
   }
-  stretchPitched(in, nch, n, out, outLen, sr, p, [rate](int64_t j) { return static_cast<double>(j) * rate; }, nullptr);
+  const Map at = [rate](int64_t j) { return static_cast<double>(j) * rate; };
+  if (s.mode == Mode::RubberBand)
+    rubberStream(in, nch, n, out, outLen, sr, p, at, nullptr);
+  else
+    stretchPitched(in, nch, n, out, outLen, sr, p, at, nullptr);
 }
 
 void processMapped(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, double sr, const Settings& s,
@@ -425,7 +556,11 @@ void processMapped(const float* const* in, int nch, int64_t n, float* const* out
     resampleMapped(in, nch, n, out, outLen, srcAt);
     return;
   }
-  stretchPitched(in, nch, n, out, outLen, sr, std::clamp(s.pitch, 1.0 / 16.0, 16.0), srcAt, nullptr);
+  const double p = std::clamp(s.pitch, 1.0 / 16.0, 16.0);
+  if (s.mode == Mode::RubberBand)
+    rubberStream(in, nch, n, out, outLen, sr, p, srcAt, nullptr);
+  else
+    stretchPitched(in, nch, n, out, outLen, sr, p, srcAt, nullptr);
 }
 
 // ------------------------------------------------------------- rendered clips
@@ -514,6 +649,9 @@ void renderInto(RenderedClip& rc, const ClipRequest& r) {
   if (r.mode == Mode::Resample) {
     resampleMapped(in, nch, n, out, len, srcAt);
     pr(len);
+  } else if (r.mode == Mode::RubberBand) {
+    rubberStream(in, nch, n, out, len, r.rate, p, srcAt, &pr);
+    pr(len);
   } else {
     stretchPitched(in, nch, n, out, len, r.rate, p, srcAt, &pr);
     pr(len);
@@ -525,7 +663,8 @@ void renderInto(RenderedClip& rc, const ClipRequest& r) {
 std::string keyOf(const ClipRequest& r) {
   char buf[512];
   std::snprintf(buf, sizeof buf, "%p|%zu|%.9f|%.9f|%d|%d|%.12f|%.3f|%lld|%.12f|%.12f|%.6f|%.6f|", static_cast<const void*>(r.sample.get()),
-                r.sample ? r.sample->frames() : 0, r.srcStart, r.srcEnd, r.reverse ? 1 : 0, r.mode == Mode::Resample ? 0 : 1, r.pitch, r.rate,
+                r.sample ? r.sample->frames() : 0, r.srcStart, r.srcEnd, r.reverse ? 1 : 0,
+                r.mode == Mode::Resample ? 0 : r.mode == Mode::RubberBand ? 2 : 1, r.pitch, r.rate,
                 static_cast<long long>(r.frames), r.speed, r.secPerTick, r.startTick, r.startSec);
   return std::string(buf) + (r.sample ? r.sample->path : std::string()) + "|" + (r.map && r.secPerTick > 0 ? r.mapKey : std::string());
 }
@@ -713,6 +852,79 @@ struct Voice::Impl {
   double srcCur = 0;
   double midSrc = 0;
   double midPerOut = 1;  // the pitch being played (engine frames per output frame)
+  // J-157: Rubber Band's realtime engine (Engine::RubberBand). It is fed one
+  // chunk of input (kChunk output frames' worth) whenever its output runs
+  // dry, so the chunks it sees never depend on the callers' blocks; its start
+  // delay is dropped. The pitch glides per chunk (its resampler smooths the
+  // steps).
+  Engine kind = Engine::Stretch;
+  std::unique_ptr<RubberBandStretcher> rb;
+  int rbPad = 0;              // the engine's preferred start pad at pitch 1 (input frames)
+  int64_t rbSkip = 0;         // engine output frames still to drop
+  double rbRatio = 0, rbPitch = 0;
+  std::vector<float> rbDump[2];
+  static constexpr int kRbDump = 1024;
+
+  void rbSet(double speed, double pitch) {
+    const double ratio = 1.0 / std::max(kRbMinRate, speed);
+    if (ratio != rbRatio) rb->setTimeRatio(ratio), rbRatio = ratio;
+    if (pitch != rbPitch) rb->setPitchScale(pitch), rbPitch = pitch;
+  }
+  // Gives the engine k input frames from the reader (none: silence), k <= inCap.
+  void rbFeed(Reader rd, void* ctx, int k) {
+    if (k <= 0) return;
+    float* d[2] = {in[0].data(), in[1].data()};
+    if (rd) {
+      rd(ctx, d, k);
+    } else {
+      std::fill(in[0].begin(), in[0].begin() + k, 0.0f);
+      std::fill(in[1].begin(), in[1].begin() + k, 0.0f);
+    }
+    const float* ip[2] = {in[0].data(), in[1].data()};
+    rb->process(ip, static_cast<size_t>(k), false);
+  }
+  // Drops what the engine has of the frames still to skip.
+  void rbDrop() {
+    while (rbSkip > 0) {
+      const int av = static_cast<int>(rb->available());
+      if (av <= 0) return;
+      float* o[2] = {rbDump[0].data(), rbDump[1].data()};
+      const auto k = static_cast<int64_t>(rb->retrieve(o, static_cast<size_t>(std::min<int64_t>({av, rbSkip, kRbDump}))));
+      if (k <= 0) return;
+      rbSkip -= k;
+    }
+  }
+  // One glide step of `frames` output frames towards `target` (log pitch).
+  double glideBy(double target, int frames) {
+    const double a = 1.0 - std::pow(1.0 - glideCoef, frames);
+    glide[0] += (target - glide[0]) * a, glide[1] += (glide[0] - glide[1]) * a;
+    if (std::fabs(glide[0] - target) < 1e-9 && std::fabs(glide[1] - target) < 1e-9) glide[0] = glide[1] = target;
+    return std::exp(glide[1]);
+  }
+  void rbRender(float* const* out, int n, double speed, double pitch, Reader rd, void* ctx) {
+    const double target = std::log(pitch);
+    if (!glideSet) glide[0] = glide[1] = target, glideSet = true;
+    rbSet(speed, rbPitch > 0 ? rbPitch : pitch);
+    int done = 0;
+    while (done < n) {
+      rbDrop();
+      const int av = rbSkip > 0 ? 0 : static_cast<int>(rb->available());
+      if (av > 0) {
+        float* o[2] = {out[0] + done, channels == 2 ? out[1] + done : nullptr};
+        const auto k = static_cast<int>(rb->retrieve(o, static_cast<size_t>(std::min(av, n - done))));
+        if (k <= 0) break;
+        done += k;
+        continue;
+      }
+      // Dry: the next chunk of input, at the gliding pitch.
+      rbSet(speed, glideBy(target, kChunk));
+      inAcc += std::max(kRbMinRate, speed) * kChunk;
+      const int k = std::clamp(static_cast<int>(std::floor(inAcc)), 0, inCap);
+      inAcc -= k;
+      rbFeed(rd, ctx, k);
+    }
+    for (int c = 0; c < channels; ++c) std::fill(out[c] + done, out[c] + n, 0.0f);  // (never: the engine always delivers)
+  }
 
   void pull(Reader rd, void* ctx, int frames) {
     float* d[2] = {in[0].data(), in[1].data()};
@@ -768,13 +980,44 @@ struct Voice::Impl {
 Voice::Voice() : impl_(std::make_unique<Impl>()) {}
 Voice::~Voice() = default;
 
-void Voice::prepare(int channels, double sampleRate, double maxPitch, double maxSpeed, bool live) {
+Engine Voice::engine() const { return impl_->kind; }
+
+void Voice::prepare(int channels, double sampleRate, double maxPitch, double maxSpeed, bool live, Engine engine) {
   Impl& m = *impl_;
   m.channels = std::clamp(channels, 1, 2);
   m.sampleRate = sampleRate;
   m.glideCoef = 1.0 - std::exp(-1.0 / (Impl::kGlideSec * sampleRate));
   m.maxPitch = std::max(1.0, maxPitch);
   m.maxSpeed = std::max(1.0, maxSpeed);
+  m.kind = engine;
+  if (engine == Engine::RubberBand) {
+    // J-157: the engine and every buffer it fills are made here; the largest
+    // chunk it is given bounds its own buffers (setMaxProcessSize).
+    m.rb = std::make_unique<RubberBandStretcher>(static_cast<size_t>(std::lround(sampleRate)), static_cast<size_t>(m.channels), quietLog(),
+                                                 kRbRealtime, 1.0, 1.0);
+    m.rbPad = static_cast<int>(m.rb->getPreferredStartPad());
+    m.inCap = std::max(1024, static_cast<int>(std::ceil(m.maxSpeed * Impl::kChunk)) + 16);
+    m.rb->setMaxProcessSize(static_cast<size_t>(m.inCap));
+    for (int c = 0; c < 2; ++c) {
+      m.in[c].assign(static_cast<size_t>(m.inCap), 0.0f);
+      m.rbDump[c].assign(Impl::kRbDump, 0.0f);
+      m.mid[c].clear(), m.mid[c].shrink_to_fit();
+    }
+    // Its resampler sizes its buffers for each new pitch ratio the first time
+    // it meets it: the pitches a voice is likely to play are met here.
+    m.rbRatio = m.rbPitch = 0;
+    m.rbSet(1.0, 1.0);
+    m.rbFeed(nullptr, nullptr, m.inCap);
+    for (double p : {1.0 / m.maxPitch, m.maxPitch, 0.5, 2.0, 1.0 / 1.5, 1.5, std::pow(2.0, -1.0 / 12), std::pow(2.0, 1.0 / 12), 1.0}) {
+      m.rbSet(1.0, p);
+      for (int i = 0; i < 4; ++i) m.rbFeed(nullptr, nullptr, m.inCap), m.rbSkip = int64_t{1} << 40, m.rbDrop();
+    }
+    m.rbSkip = 0;
+    prepared_ = true;
+    reset();
+    return;
+  }
+  m.rb.reset();
   configure(m.engine, m.channels, sampleRate, live);
   m.guard.prepare(sampleRate);
   const SincTable& t = sincTable(Quality::Realtime);
@@ -798,6 +1041,13 @@ void Voice::prepare(int channels, double sampleRate, double maxPitch, double max
 
 void Voice::reset() {
   Impl& m = *impl_;
+  if (m.rb) {
+    m.rb->reset();
+    m.rbSkip = 0;
+    m.inAcc = 0;
+    m.glideSet = false;
+    return;
+  }
   m.engine.reset();
   m.guard.reset();
   m.inRead = 0, m.srcCur = 0, m.midSrc = 0;
@@ -808,6 +1058,10 @@ void Voice::reset() {
 }
 
 int Voice::lookahead(double speed, double pitch) const {
+  if (impl_->rb) {  // its pad, its latency and one chunk
+    const double s = std::max(kRbMinRate, speed);
+    return static_cast<int>(std::ceil(impl_->rbPad * std::max(1.0, pitch) + (impl_->rbPad + Impl::kChunk) * s)) + 2;
+  }
   pitch = std::max(1e-3, pitch);
   const double perMid = speed / pitch;
   const SincTable& t = sincTable(Quality::Realtime);
@@ -817,6 +1071,7 @@ int Voice::lookahead(double speed, double pitch) const {
 
 int Voice::prerollFor(double speed) const {
   const Impl& m = *impl_;
+  if (m.rb) return 2 * m.rbPad;  // its window's lead-in (resampled ahead of it at up to an octave up)
   return static_cast<int>(std::ceil(std::clamp(speed, 0.0, m.maxSpeed) * (m.engine.blockSamples() + m.engine.intervalSamples())));
 }
 
@@ -825,6 +1080,25 @@ void Voice::start(Reader rd, void* ctx, double speed, double pitch, int preroll)
   reset();
   pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
   speed = std::clamp(speed, 0.0, m.maxSpeed);
+  if (m.rb) {
+    // The engine wants `pad` input frames ahead of the start point and puts
+    // the start point `delay` output frames in. The pre-roll is that lead-in
+    // (silence where the reader has less); a longer pre-roll moves the start
+    // point later by its extra frames at this speed.
+    m.glide[0] = m.glide[1] = std::log(pitch);
+    m.glideSet = true;
+    m.rbSet(speed, pitch);
+    const int pad = static_cast<int>(m.rb->getPreferredStartPad());
+    preroll = std::max(0, preroll);
+    for (int z = std::max(0, pad - preroll); z > 0; z -= m.inCap) m.rbFeed(nullptr, nullptr, std::min(z, m.inCap));
+    m.rbSkip = static_cast<int64_t>(m.rb->getStartDelay()) +
+               std::llround(static_cast<double>(std::max(0, preroll - pad)) / std::max(kRbMinRate, speed));
+    for (int left = preroll; left > 0; left -= m.inCap) {
+      m.rbFeed(rd, ctx, std::min(left, m.inCap));
+      m.rbDrop();
+    }
+    return;
+  }
   m.glide[0] = m.glide[1] = std::log(pitch);
   m.glideSet = true;
   m.midPerOut = pitch;
@@ -849,6 +1123,10 @@ void Voice::render(float* const* out, int n, double speed, double pitch, Reader 
   Impl& m = *impl_;
   pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
   speed = std::clamp(speed, 0.0, m.maxSpeed);
+  if (m.rb) {
+    m.rbRender(out, n, speed, pitch, rd, ctx);
+    return;
+  }
   const SincTable& t = sincTable(Quality::Realtime);
   const double target = std::log(pitch);
   if (!m.glideSet) m.glide[0] = m.glide[1] = target, m.glideSet = true;

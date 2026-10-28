@@ -34,14 +34,14 @@ int fitClipToTempo(Song& song, ObjectId clip);
 float normalizeClip(Song& song, ObjectId clip, double targetDb = 0.0);
 
 // Realtime stretch: time factor (2 = twice as long); keepPitch selects the
-// pitch-preserving mode of the clip's channel (else pitch follows speed).
-// The clip length follows.
+// pitch-preserving mode of the clip's channel (else pitch follows speed;
+// J-157: a channel on Rubber Band stays on it). The clip length follows.
 bool setClipStretch(Song& song, ObjectId clip, double timeFactor, bool keepPitch);
 // J-87: the same with an explicit time mode of the clip's channel (0 resample,
-// 1 stretch; J-153: any other value is the stretch too).
+// 1 stretch, 7 Rubber Band; J-153: any other value is the stretch too).
 bool setClipStretchMode(Song& song, ObjectId clip, double timeFactor, int mode);
 // Rendered stretch through the audio editor's stretch (mode: 0 stretch, 1
-// tape: pitch follows speed). Writes the result into `dir` on a new channel and points
+// tape: pitch follows speed, 2 Rubber Band). Writes the result into `dir` on a new channel and points
 // the clip at it (stretch reset to 1). Returns the file ("" = failed).
 std::string renderClipStretch(Song& song, ObjectId clip, double timeFactor, double semitones, int mode,
                               const std::string& dir);

@@ -238,6 +238,10 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   const bool sampler = ch.plugin.type == "gl.sampler";
   const double cents = (sampler ? par(pp::SmpPitchShift, 0) : 0.0) + c.pitch;
   const bool stretchMode = sampler && par(pp::SmpStretchMode, 0) >= 0.5;
+  // J-157: Rubber Band or the stretch keeps the pitch (also of tempo-synced clips).
+  const bool rubber = sampler && stretch::modeOf(par(pp::SmpStretchMode, 0)) == stretch::Mode::RubberBand;
+  out.engine = rubber ? stretch::Engine::RubberBand : stretch::Engine::Stretch;
+  const stretch::Mode keepMode = rubber ? stretch::Mode::RubberBand : stretch::kStretch;
   const double timeFactor = std::max(0.01, c.stretch * (sampler ? par(pp::SmpTimeStretch, 1) : 1.0));
   const double ratio = std::pow(2.0, cents / 1200.0);
   out.start = c.start;
@@ -279,8 +283,8 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   if (rctx && out.end > out.start && out.srcEnd > out.srcStart) {
     const double chanSemis = static_cast<double>(ch.pitch) + static_cast<double>(ch.fine) / 100.0 + song.masterPitch;
     const double chanRatio = std::pow(2.0, chanSemis / 12.0);
-    // J-153: every stored stretch mode is the one stretch
-    stretch::Mode mode = sampler && stretch::keepsPitch(stretch::modeOf(par(pp::SmpStretchMode, 0))) ? stretch::kStretch : stretch::Mode::Resample;
+    // J-153: every stored stretch mode is the one stretch (J-157: or Rubber Band)
+    stretch::Mode mode = stretchMode ? keepMode : stretch::Mode::Resample;
     stretch::ClipRequest rq;
     rq.sample = smp;
     rq.srcStart = out.srcStart, rq.srcEnd = out.srcEnd;
@@ -289,7 +293,7 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
     rq.frames = static_cast<int64_t>(std::ceil(out.durSec * rctx->sampleRate)) + 2;
     bool need = false;
     if (out.secPerTick > 0) {  // tempo sync: pitch-independent
-      mode = stretch::kStretch;
+      mode = keepMode;
       rq.map = &map;
       rq.secPerTick = out.secPerTick;
       rq.startTick = static_cast<double>(out.start);
@@ -1093,8 +1097,12 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
 
   // J-153: the realtime stretch for the clips that may need it: while their
   // render is on its way (app builds) or when the channel pitch moves.
+  // J-157: a Rubber Band voice (about 6 MB) only where it can play: while the
+  // clip's render is still on its way, or when the channel pitch moves.
   auto giveVoice = [&](ProgAudioClip& ac, const ProgChannel& pc) {
-    if ((asyncSamples_ && ac.hq) || pc.pitchMoves) ac.rt = makeClipVoice(sampleRate_);
+    const bool rubber = ac.engine == stretch::Engine::RubberBand;
+    if ((asyncSamples_ && ac.hq && !(rubber && ac.hq->ready.load(std::memory_order_acquire))) || pc.pitchMoves)
+      ac.rt = makeClipVoice(sampleRate_, ac.engine);
   };
   for (auto& pc : prog->channels)
     for (auto& ac : pc.audio) giveVoice(ac, pc);

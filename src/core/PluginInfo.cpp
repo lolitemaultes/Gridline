@@ -218,8 +218,9 @@ GL_NOINLINE void addInfo2(std::vector<PluginInfo>& v) {
   p.params[SmpLoopXfade] = lin("Loop crossfade", "%", 0, 0.5, 0);
   p.params[SmpDeclick] = ch("Declick", {"Off", "Out only", "Transient", "Generic", "Smooth"}, 0);
   // J-87 / J-153: 0 = resample (pitch follows speed), 1 = the one stretch (pitch kept). Older projects
-  // stored more stretch modes (2..6): loading clamps them to 1, the same stretch.
-  p.params[SmpStretchMode] = ch("Time mode", {"Resample", "Stretch"}, 0);
+  // stored more stretch modes (2..6): loading turns them into 1, the same stretch. J-157: 7 = Rubber
+  // Band (engine/TimeStretch Mode::RubberBand; the labels follow the stored values).
+  p.params[SmpStretchMode] = ch("Time mode", {"Resample", "Stretch", "Stretch", "Stretch", "Stretch", "Stretch", "Stretch", "Rubber Band"}, 0);
   p.params[SmpPitchShift] = lin("Pitch shift", "ct", -1200, 1200, 0);
   p.params[SmpTimeStretch] = lg("Time stretch", "times", 0.25, 4, 1);
   p.params[SmpEnvDelay] = lin("Env delay", "s", 0, 5, 0);
@@ -1784,6 +1785,11 @@ void normalizePluginState(PluginState& s) {
       s.params[static_cast<size_t>(eqFl(b, EqFlOrder))] = static_cast<float>(ord);
     }
     s.params[static_cast<size_t>(EqModel)] = 1;
+  }
+  if (s.type == "gl.sampler" && s.params.size() > static_cast<size_t>(pp::SmpStretchMode)) {
+    // J-153 / J-157: every older stretch mode (2..6, also out-of-range values) is the stretch; 7 is Rubber Band.
+    float& m = s.params[static_cast<size_t>(pp::SmpStretchMode)];
+    if (m == m && m >= 1.5f && std::lround(m) != 7) m = 1.0f;
   }
   for (size_t i = 0; i < p->params.size(); ++i) s.params[i] = static_cast<float>(p->params[i].clamp(s.params[i]));
 }

@@ -22,6 +22,63 @@ namespace {
 using namespace ed;
 using namespace flsyn;
 
+// J-157: the sampler's time mode as its three choices (Stretch, Rubber Band,
+// Resample; the older stretch modes a project may store show as Stretch), in
+// the look of skin::menuBox. The hint names what each choice is good at.
+void timeModeBox(App& a, const PluginTarget& t, ImVec2 tl, ImVec2 size, const skin::Skin& k, float font) {
+  const ParamId pid = t.pid(SmpStretchMode);
+  const auto val = getParam(a.doc.song(), pid);
+  if (!val) return;
+  const stretch::Mode cur = stretch::choiceOf(stretch::modeOf(*val));
+  constexpr int n = static_cast<int>(std::size(stretch::kChoices));
+  int at = 0;
+  for (int i = 0; i < n; ++i)
+    if (stretch::kChoices[i] == cur) at = i;
+  {
+    ImVec2 p1(tl.x + size.x, tl.y + size.y);
+    skin::placeKitFrame(tl, p1);
+    size = ImVec2(p1.x - tl.x, p1.y - tl.y);
+  }
+  ImGui::PushID("##timemode");
+  ImGui::SetCursorScreenPos(tl);
+  const bool pressed = ImGui::InvisibleButton("##tm", size);
+  const bool hov = ImGui::IsItemHovered();
+  const ImGuiIO& io = ImGui::GetIO();
+  if (hov && io.MouseWheel != 0) {
+    const int sel = std::clamp(at - static_cast<int>(io.MouseWheel), 0, n - 1);
+    if (sel != at) a.doc.setParam(pid, static_cast<double>(stretch::kChoices[sel]), false), at = sel;
+  }
+  const stretch::Mode shown = stretch::kChoices[at];
+  if (hov)
+    a.setHint(std::string(i18n::tr("Time mode")) + ": " + i18n::tr(stretch::modeHint(shown)) + "   " + i18n::tr("(click for the list, wheel steps)"));
+  if (pressed) ImGui::OpenPopup("##tmpop");
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 p1(tl.x + size.x, tl.y + size.y);
+  dl->AddRectFilled(tl, p1, hov ? skin::lighten(k.lcdBg, 0.06f) : k.lcdBg, 2);
+  dl->AddRect(tl, p1, skin::darken(k.panel, 0.6f), 2, 0, 1.0f);
+  const float fs = font > 0 ? font : std::clamp(size.y * 0.62f, 9.0f, 13.0f);
+  const char* label = i18n::tr(stretch::modeName(shown));
+  ImGui::PushFont(a.fontMono, fs);
+  const ImVec2 ts = ui::TextSizeExact(label);
+  const float aw = std::min(size.y * 0.8f, 14.0f);
+  dl->PushClipRect(tl, ImVec2(p1.x - aw, p1.y), true);
+  dl->AddText(ImVec2(std::round(tl.x + 5), std::round((tl.y + p1.y - ts.y) * 0.5f)), k.lcdText, label);
+  dl->PopClipRect();
+  ImGui::PopFont();
+  const ImVec2 ac(p1.x - aw * 0.5f - 2, (tl.y + p1.y) * 0.5f);
+  const float r = std::min(4.0f, size.y * 0.18f);
+  ui::drawIconFit(dl, ui::Icon::Down, ImVec2(ac.x - r, ac.y - r * 0.5f), ImVec2(ac.x + r, ac.y + r * 0.7f), k.textDim);
+  if (ImGui::BeginPopup("##tmpop")) {
+    for (int i = 0; i < n; ++i) {
+      const stretch::Mode m = stretch::kChoices[i];
+      if (ImGui::MenuItem(i18n::tr(stretch::modeName(m)), nullptr, i == at) && i != at) a.doc.setParam(pid, static_cast<double>(m), false);
+      ui::Tooltip(stretch::modeHint(m));
+    }
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+}
+
 // ======================================================================= FM Synth
 const skin::Skin& fmSkin() {
   static const skin::Skin k = [] {
@@ -250,8 +307,8 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
     skin::menuBox(a, t, SmpDeclick, F.p(80, 210), F.sz(132, 18), K, lf(F, 8));
     // TIME STRETCHING
     panelBox(dl, F, 226, 137, 200, 157, K, "TIME STRETCHING");
-    // J-87 / J-153: Resample or Stretch (engine/TimeStretch)
-    skin::menuBox(a, t, SmpStretchMode, F.p(234, 156), F.sz(184, 18), K, lf(F, 8));
+    // J-87 / J-153 / J-157: Stretch, Rubber Band or Resample (engine/TimeStretch)
+    timeModeBox(a, t, F.p(234, 156), F.sz(184, 18), K, lf(F, 8));
     w(SmpPitchShift, 256, 190, "PITCH", skin::WheelBigLine | skin::WheelCentered);
     w(SmpTimeStretch, 352, 190, "TIME");
     // PROCESSING

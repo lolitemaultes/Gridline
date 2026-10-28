@@ -769,6 +769,7 @@ void aboutWindow(App& a) {
     dl->AddLine(lp, ImVec2(lp.x + cw, lp.y), theme::rgb(0x262626));
     ImGui::Dummy(ImVec2(cw, theme::kS3));
     centred(a.fontRegular, theme::kFontCaption, theme::rgb(0x707070), "Dear ImGui (MIT) \xC2\xB7 SDL2 (zlib) \xC2\xB7 RtMidi (MIT) \xC2\xB7 dr_libs (MIT-0)");
+    centred(a.fontRegular, theme::kFontCaption, theme::rgb(0x707070), "Signalsmith Stretch (MIT) \xC2\xB7 Rubber Band Library (GPL-2.0-or-later)");
     centred(a.fontRegular, theme::kFontCaption, theme::rgb(0x707070), "Inter and JetBrains Mono (SIL Open Font License)");
   }
   ImGui::End();

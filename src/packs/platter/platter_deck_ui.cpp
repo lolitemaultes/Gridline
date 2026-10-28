@@ -33,9 +33,13 @@ using theme::pal;
 constexpr float kPi = 3.14159265358979f;
 
 // Waveform panel rows.
-constexpr float kOvH = 22, kWaveH = 84, kPhaseH = 16, kRowGap = 4;
+constexpr float kRowGap = 4;
 // Deck rows.
-constexpr float kPad = 12, kHeadH = 50, kBodyH = 280, kPerfH = 84, kLoopH = 30, kGap = 10;
+constexpr float kHeadH = 50, kLoopH = 30;
+// J-158: the rows that give way when the window is short (setSqueeze): overview and
+// waveform lanes, the platter body, the CUE / PLAY and pads row. Natural .. most compact.
+float gOvH = 22, gWaveH = 84, gPhaseH = 16, gBodyH = 280, gPerfH = 84, gPad = 12, gGap = 10;
+float gSqueeze = 0;
 
 double srcRateOf(const DeckModel& m) { return m.srcRate > 0 ? m.srcRate : 44100.0; }
 
@@ -483,14 +487,17 @@ void drawControls(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2
   const float w = p1.x - p0.x;
   float y = p0.y;
   char id[24];
+  // J-158: a short body (the editor squeezed into a short window) packs the buttons closer
+  const bool tight = p1.y - p0.y < 270;
+  const float syncH = tight ? 36 : 42, keyStep = tight ? 30 : 34, modeH = tight ? 22 : 24, modeStep = tight ? 24 : 28;
   // the sync lock: locked = in time with the project (or the other deck); click to unlock
   {
     const int ks = deckParam(d, DSync);
     const bool sync = on(a, t, ks);
-    const ImVec2 q0(p0.x, y), q1(p1.x, y + 42);
+    const ImVec2 q0(p0.x, y), q1(p1.x, y + syncH);
     std::snprintf(id, sizeof id, "##psync%d", d);
     ImGui::SetCursorScreenPos(q0);
-    const bool clicked = ImGui::InvisibleButton(id, ImVec2(w, 42));
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(w, syncH));
     const bool hv = ImGui::IsItemHovered();
     const bool toDeck = static_cast<int>(std::lround(param(a, t, PSyncTo))) == SyncDeck;
     if (hv)
@@ -501,10 +508,11 @@ void drawControls(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2
     skin::raisedFace(dl, q0, q1, bg, theme::kRadius);
     dl->AddRect(q0, q1, sync ? theme::withAlpha(hot(), 0.6f) : P.line, theme::kRadius);
     const ImU32 fg = sync ? hot() : P.textDim;
-    padlock(dl, ImVec2(q0.x + 18, q0.y + 19), 17, fg, !sync);
-    dl->AddText(a.fontBold, theme::kFontCaption, ImVec2(q0.x + 34, q0.y + 6), sync ? hot() : P.text, i18n::tr("SYNC"));
+    const float sy = std::floor((syncH - 42) * 0.5f);  // the 42 px face's contents, centred in a shorter one
+    padlock(dl, ImVec2(q0.x + 18, q0.y + 19 + sy), 17, fg, !sync);
+    dl->AddText(a.fontBold, theme::kFontCaption, ImVec2(q0.x + 34, q0.y + 6 + sy), sync ? hot() : P.text, i18n::tr("SYNC"));
     const char* sub = !sync ? i18n::tr("own tempo") : lv.following ? (d == 0 ? i18n::tr("to deck B") : i18n::tr("to deck A")) : toDeck ? i18n::tr("lead") : i18n::tr("project");
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontLabel, ImVec2(q0.x + 34, q0.y + 22), w - 38, P.textDim, sub);
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontLabel, ImVec2(q0.x + 34, q0.y + 22 + sy), w - 38, P.textDim, sub);
     if (clicked) pui::setParamValue(a, t, ks, sync ? 0.0 : 1.0, false);
     y = q1.y + 6;
   }
@@ -516,7 +524,7 @@ void drawControls(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2
     if (button(id, ImVec2(p0.x, y), ImVec2(w, 28), i18n::N_("KEY LOCK"), kl, i18n::N_("Keep the track's pitch when its tempo changes (off while you scratch)")))
       flip(a, t, kk);
     look::led(dl, ImVec2(p0.x + 10, y + 14), 2.5f, kl && lv.keylockActive, kl && lv.keylockActive ? 1.0f : 0.0f);
-    y += 34;
+    y += keyStep;
   }
   // modes
   struct Mode {
@@ -531,12 +539,12 @@ void drawControls(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2
   for (int k = 0; k < 3; ++k) {
     const int kp = deckParam(d, kModes[k].param);
     std::snprintf(id, sizeof id, "##pmode%d%d", d, k);
-    if (button(id, ImVec2(p0.x, y), ImVec2(w, 24), kModes[k].label, on(a, t, kp), kModes[k].hint)) flip(a, t, kp);
-    y += 28;
+    if (button(id, ImVec2(p0.x, y), ImVec2(w, modeH), kModes[k].label, on(a, t, kp), kModes[k].hint)) flip(a, t, kp);
+    y += modeStep;
   }
   // the motor (start, brake), then the hand (feel, jog sensitivity)
   const float kh = pui::knobCellHeight(pui::KnobSmall);
-  y = std::max(y + 4, p1.y - 2 * kh);
+  y = std::max(y + (tight ? 2 : 4), p1.y - 2 * kh);
   const float cell = std::floor(w / 2);
   pui::knobAt(a, t, deckParam(d, DStartTime), ImVec2(p0.x, y), i18n::tr("Start"), pui::KnobSmall, cell);
   pui::knobAt(a, t, deckParam(d, DStopTime), ImVec2(p0.x + cell, y), i18n::tr("Brake"), pui::KnobSmall, cell);
@@ -643,7 +651,7 @@ void drawLoops(App& a, const PluginTarget& t, int d, ImVec2 p0, ImVec2 p1, const
 
 }  // namespace
 
-float wavesHeight(bool two) { return two ? 2 * (kOvH + kRowGap + kWaveH) + kPhaseH + 2 * kRowGap : kOvH + kRowGap + kWaveH; }
+float wavesHeight(bool two) { return two ? 2 * (gOvH + kRowGap + gWaveH) + gPhaseH + 2 * kRowGap : gOvH + kRowGap + gWaveH; }
 
 void drawWaves(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, float W, const LiveView* lv) {
   const bool two = e.m.twoDecks();
@@ -651,31 +659,45 @@ void drawWaves(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, float W, const L
   auto lane = [&](int d, bool overviewFirst) {
     const ImVec2 o0(p0.x, y);
     if (!deckReady(e, d)) {
-      drawEmptyLane(a, t, e, d, o0, ImVec2(p0.x + W, y + kOvH + kRowGap + kWaveH));
-      y += kOvH + kRowGap + kWaveH;
+      drawEmptyLane(a, t, e, d, o0, ImVec2(p0.x + W, y + gOvH + kRowGap + gWaveH));
+      y += gOvH + kRowGap + gWaveH;
       return;
     }
     if (overviewFirst) {
-      drawOverview(a, t, e, d, o0, ImVec2(p0.x + W, y + kOvH), lv[d]);
-      y += kOvH + kRowGap;
-      drawWave(a, t, e, d, ImVec2(p0.x, y), ImVec2(p0.x + W, y + kWaveH), lv[d]);
-      y += kWaveH;
+      drawOverview(a, t, e, d, o0, ImVec2(p0.x + W, y + gOvH), lv[d]);
+      y += gOvH + kRowGap;
+      drawWave(a, t, e, d, ImVec2(p0.x, y), ImVec2(p0.x + W, y + gWaveH), lv[d]);
+      y += gWaveH;
     } else {
-      drawWave(a, t, e, d, o0, ImVec2(p0.x + W, y + kWaveH), lv[d]);
-      y += kWaveH + kRowGap;
-      drawOverview(a, t, e, d, ImVec2(p0.x, y), ImVec2(p0.x + W, y + kOvH), lv[d]);
-      y += kOvH;
+      drawWave(a, t, e, d, o0, ImVec2(p0.x + W, y + gWaveH), lv[d]);
+      y += gWaveH + kRowGap;
+      drawOverview(a, t, e, d, ImVec2(p0.x, y), ImVec2(p0.x + W, y + gOvH), lv[d]);
+      y += gOvH;
     }
   };
   lane(0, true);
   if (!two) return;
   y += kRowGap;
-  drawPhase(a, e, ImVec2(p0.x, y), ImVec2(p0.x + W, y + kPhaseH), lv);
-  y += kPhaseH + kRowGap;
+  drawPhase(a, e, ImVec2(p0.x, y), ImVec2(p0.x + W, y + gPhaseH), lv);
+  y += gPhaseH + kRowGap;
   lane(1, false);
 }
 
-float deckPanelHeight() { return kPad + kHeadH + kGap + kBodyH + kGap + kPerfH + kGap + kLoopH + kPad; }
+void setSqueeze(float f) {
+  f = std::clamp(f, 0.0f, 1.0f);
+  gSqueeze = f;
+  auto lerp = [f](float a, float b) { return std::round(a + (b - a) * f); };
+  gOvH = lerp(22, 14);
+  gWaveH = lerp(84, 50);
+  gPhaseH = lerp(16, 12);
+  gPad = lerp(12, 10);
+  gGap = lerp(10, 8);
+  gBodyH = lerp(280, 254);
+  gPerfH = lerp(84, 72);
+}
+float squeeze() { return gSqueeze; }
+
+float deckPanelHeight() { return gPad + kHeadH + gGap + gBodyH + gGap + gPerfH + gGap + kLoopH + gPad; }
 
 void drawDeck(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2 p1, const LiveView& lv, bool mirror) {
   const auto& P = pal();
@@ -684,8 +706,8 @@ void drawDeck(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2 p1,
   const DeckModel& m = e.m.deck[static_cast<size_t>(d)];
   dl->AddRectFilled(p0, p1, P.surface800, theme::kRadiusLg);
   dl->AddRect(p0, p1, P.line, theme::kRadiusLg);
-  const float x0 = p0.x + kPad, x1 = p1.x - kPad, W = x1 - x0;
-  float y = p0.y + kPad;
+  const float x0 = p0.x + gPad, x1 = p1.x - gPad, W = x1 - x0;
+  float y = p0.y + gPad;
   // ---- header: badge, track and facts; time left and BPM
   {
     const ImVec2 b0(x0, y + 4), b1(x0 + 30, y + 34);
@@ -733,35 +755,35 @@ void drawDeck(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2 p1,
       textR(dl, a.fontMono, theme::kFontLabel, ImVec2(rx - 92, y + 26), P.textFaint, i18n::tr("REMAIN"));
     }
     y += kHeadH;
-    dl->AddLine(ImVec2(x0, y + kGap * 0.5f), ImVec2(x1, y + kGap * 0.5f), theme::withAlpha(P.line, 0.7f));
-    y += kGap;
+    dl->AddLine(ImVec2(x0, y + gGap * 0.5f), ImVec2(x1, y + gGap * 0.5f), theme::withAlpha(P.line, 0.7f));
+    y += gGap;
   }
   // ---- body: pitch | platter | controls (mirrored on deck B)
   {
     const float pitchW = 46, ctlW = std::clamp(std::floor(W * 0.27f), 104.0f, 124.0f), g = 10;
     const float platArea = W - pitchW - ctlW - 2 * g;
-    const float R = std::floor(std::min(platArea, kBodyH - 6) * 0.5f) - 8;
+    const float R = std::floor(std::min(platArea, gBodyH - 6) * 0.5f) - 8;
     // group the three and centre them when the deck is wide (one-deck layout)
     const float group = pitchW + g + 2 * (R + 8) + g + ctlW;
     const float gx = x0 + std::max(0.0f, std::floor((W - group) * 0.5f));
     const float px = mirror ? gx + group - pitchW : gx;
     const float cxl = mirror ? gx : gx + group - ctlW;
     const float platX = mirror ? gx + ctlW + g : gx + pitchW + g;
-    drawPitch(a, t, d, ImVec2(px, y), ImVec2(px + pitchW, y + kBodyH));
-    drawPlatter(a, t, e, d, ImVec2(std::round(platX + R + 8), std::round(y + kBodyH * 0.5f)), R, lv);
-    drawControls(a, t, e, d, ImVec2(cxl, y), ImVec2(cxl + ctlW, y + kBodyH), lv);
-    y += kBodyH + kGap;
+    drawPitch(a, t, d, ImVec2(px, y), ImVec2(px + pitchW, y + gBodyH));
+    drawPlatter(a, t, e, d, ImVec2(std::round(platX + R + 8), std::round(y + gBodyH * 0.5f)), R, lv);
+    drawControls(a, t, e, d, ImVec2(cxl, y), ImVec2(cxl + ctlW, y + gBodyH), lv);
+    y += gBodyH + gGap;
   }
   // ---- CUE / PLAY and the hot cue pads
   {
-    const float r = std::min(26.0f, kPerfH * 0.5f - 6);
+    const float r = std::min(26.0f, gPerfH * 0.5f - 6);
     const float bw = 2 * (2 * r + 8);
-    roundButton(a, t, d, d == 0 ? "##pcue0" : "##pcue1", ImVec2(x0 + r + 2, y + kPerfH * 0.5f), r, i18n::tr("CUE"), CtlCue, lv.cueLit, cueColor(),
+    roundButton(a, t, d, d == 0 ? "##pcue0" : "##pcue1", ImVec2(x0 + r + 2, y + gPerfH * 0.5f), r, i18n::tr("CUE"), CtlCue, lv.cueLit, cueColor(),
                 i18n::N_("Stopped: set the cue here, or hold to preview from it. Playing: back to the cue."));
-    roundButton(a, t, d, d == 0 ? "##pplay0" : "##pplay1", ImVec2(x0 + 3 * r + 12, y + kPerfH * 0.5f), r, i18n::tr("PLAY"), CtlPlay, lv.playing,
+    roundButton(a, t, d, d == 0 ? "##pplay0" : "##pplay1", ImVec2(x0 + 3 * r + 12, y + gPerfH * 0.5f), r, i18n::tr("PLAY"), CtlPlay, lv.playing,
                 theme::content(0x7FD45B), i18n::N_("Start or stop the motor (the record spins up and brakes like a turntable)"));
-    drawPads(a, t, e, d, ImVec2(x0 + bw + 8, y), ImVec2(x1, y + kPerfH), lv);
-    y += kPerfH + kGap;
+    drawPads(a, t, e, d, ImVec2(x0 + bw + 8, y), ImVec2(x1, y + gPerfH), lv);
+    y += gPerfH + gGap;
   }
   // ---- loop row
   drawLoops(a, t, d, ImVec2(x0, y), ImVec2(x1, y + kLoopH), lv);

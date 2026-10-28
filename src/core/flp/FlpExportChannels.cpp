@@ -433,7 +433,12 @@ std::vector<ChanField> channelFields(int type, const Channel& target, int ppq) {
   } else if (sampler && type == kAudio) {
     // J-87: FL's stretch methods −2 … 9 (stretch::modeFromFl); the solver keeps
     // the stored method when it already imports as the channel's mode.
-    add(spf(SmpStretchMode), 215, 0, 108, Type::I32, -2, 9);
+    // J-157: FL has no Rubber Band: it goes out as FL's stretch (the closest method).
+    add([](const Channel& c) {
+          const double m = sp(c, SmpStretchMode);
+          return stretch::modeOf(m) == stretch::Mode::RubberBand ? static_cast<double>(stretch::kStretch) : m;
+        },
+        215, 0, 108, Type::I32, -2, 9);
     add(spf(SmpTimeStretch), 215, 0, 104, Type::I32, -20000, 20000);
     add(spf(SmpPitchShift), 215, 0, 100, Type::I32, -1200, 1200);
   } else if (target.plugin.type == "gl.synth" && target.plugin.ins.empty()) {

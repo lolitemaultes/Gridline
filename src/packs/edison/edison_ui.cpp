@@ -687,12 +687,12 @@ void drawWindows(App& a) {
     }
     pump(a, s);
     const std::string title = pluginDisplayName(kType) + "  ·  " + ch->name + "###edison-standalone-" + std::to_string(s.channel);
-    ui::NextFloatingWindowSize(1100 + 24);
+    const int fitFlags = ui::NextFloatingWindowSize(1100 + 24);  // J-158: capped to the work area, the rest scrolls
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.45f), ImGuiCond_Appearing,
                             ImVec2(0.5f, 0.5f));
     bool open = true;
-    if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking)) {
+    if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags)) {
       ui::KeepWindowInViewport();
       drawForm(a, s, 1100, vp->WorkSize.y - 120.0f);
     }

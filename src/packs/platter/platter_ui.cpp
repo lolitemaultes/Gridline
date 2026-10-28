@@ -30,6 +30,7 @@
 #include "../../core/I18n.h"
 #include "../../core/Song.h"
 #include "../../engine/Program.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../PacksUi.h"
 
 namespace gl::packs::platter {
@@ -1072,13 +1073,25 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
       e.demoPlay &= ~(1 << d);
     }
 
-  // width: the window follows the screen in the app (narrower windows reflow), the Suite zooms to fit
-  float W = width;
-  if (!a.embedded) {
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    W = std::clamp(vp->WorkSize.x - 96.0f, 940.0f, width);
+  // width: the channel window gives the width that fits the screen (J-158: down to editorMinWidth,
+  // narrower windows reflow), the Suite zooms to fit
+  const float W = std::floor(std::max(width, 1.0f));
+  // J-158: in a short window the waveforms, the platters and the pads give way (down to the
+  // most compact layout) before the window has to scroll; the Suite zooms instead.
+  {
+    setSqueeze(0);
+    float f = 0;
+    if (!a.embedded) {
+      const float natural = 40 + wavesHeight(two) + 10 + deckPanelHeight() + 6;
+      setSqueeze(1);
+      const float compact = 40 + wavesHeight(two) + 10 + deckPanelHeight() + 6;
+      const ImGuiWindow* win = ImGui::GetCurrentWindow();
+      const float avail = ui::EditorArea().y - ImGui::GetCursorPosY() - win->WindowPadding.y - ImGui::GetStyle().ItemSpacing.y -
+                          (win->ScrollbarX ? ImGui::GetStyle().ScrollbarSize : 0.0f);
+      if (natural > compact) f = std::clamp((natural - avail) / (natural - compact), 0.0f, 1.0f);
+    }
+    setSqueeze(f);
   }
-  W = std::floor(W);
   const ImVec2 o = ImGui::GetCursorScreenPos();
   drawTopBar(a, t, e, o, W, lv);
   float y = o.y + 30 + 10;

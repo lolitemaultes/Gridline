@@ -7,6 +7,7 @@
 // separate LFO dialog (start / end value, range and speed, shape, gate), and
 // the clip's target. Drawn entirely with Gridline's palette.
 #include "../core/I18n.h"
+#include "DialogLayout.h"
 #include "Keys.h"
 #include "AutomationEditor.h"
 #include "SmoothScrollUi.h"
@@ -1380,10 +1381,7 @@ void drawAutomationEditor(App& a) {
     E.preview.reset();
     return;
   }
-  ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowSize(ImVec2(std::min(1120.0f, vp->WorkSize.x - 40), std::min(640.0f, vp->WorkSize.y - 60)), ImGuiCond_Appearing);
-  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSizeConstraints(ImVec2(640, 360), ImVec2(1e5f, 1e5f));
+  ui::PlaceNextDialog(ImVec2(1120, 640), ImGuiCond_Appearing, ImVec2(640, 360));  // J-158: within the work area (it ran under the status bar)
   bool open = true;
   std::string title = "Automation clip \xC2\xB7 " + ac->name + "###autoedit";
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));

@@ -251,4 +251,28 @@ inline Rect cascade(int i, float w, float h, const Rect& area) {
   return fitInside(Rect{area.x + 40.0f + step, area.y + 24.0f + step, w, h}, area);
 }
 
+// J-158: a plugin editor's window in the main window's work area (areaW x areaH). The editor
+// wants `content` px of width; one that reflows goes down to `minContent` px (0: a fixed
+// layout); the window adds `chrome` px around it (padding, the vertical scrollbar). Where there
+// is room the window has its natural width. Otherwise a reflowing editor narrows first, and what
+// still does not fit is capped to the area: the content scrolls sideways (scrollX). The window is
+// never taller than the area (the content scrolls down).
+struct EditorFit {
+  float content = 0;  // width the editor lays itself out at
+  float window = 0;   // the window's width
+  float maxH = 0;     // the window's height at most
+  bool scrollX = false;
+};
+inline EditorFit fitEditor(float content, float minContent, float chrome, float areaW, float areaH) {
+  EditorFit f;
+  areaW = std::max(1.0f, areaW);
+  f.content = std::max(1.0f, content);
+  if (minContent > 0 && f.content + chrome > areaW) f.content = std::max(std::min(minContent, f.content), std::floor(areaW - chrome));
+  const float natural = f.content + chrome;
+  f.window = std::min(natural, areaW);
+  f.scrollX = natural > areaW + 0.5f;
+  f.maxH = std::max(1.0f, areaH);
+  return f;
+}
+
 }  // namespace gl::place

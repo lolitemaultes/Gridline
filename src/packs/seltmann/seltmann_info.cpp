@@ -28,7 +28,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   p.params[SmBaseNote] = lin("Base note", "note", 12, 115, 60);
   p.params[SmKeyMap] = ch("Key map", {"Slices", "Slot letters"}, KeySlices);
   p.params[SmSync] = ch("Tempo sync", {"Original", "Resample", "Stretch"}, SyncStretch);
-  p.params[SmStretchMode] = ch("Stretch mode", {"Auto", "Transient", "Mono"}, 0);
+  p.params[SmStretchMode] = ch("Stretch mode", {"Auto", "Transient", "Mono", "Rubber Band"}, 0);  // J-157: 0..2 the stretch, 3 Rubber Band
   p.params[SmLock] = tog("Lock to song", 1);
   p.params[SmMono] = tog("Monophonic", 0);
   p.params[SmAttack] = lin("Attack", "ms", 0, 500, 0);

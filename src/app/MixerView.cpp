@@ -27,6 +27,7 @@
 #include "../core/MixerLayout.h"
 #include "../core/LevelMeter.h"
 #include "../core/MixerOps.h"
+#include "../core/WindowPlacement.h"
 #include "../core/PluginStandIn.h"
 #include "../core/WheelRoute.h"
 #include "../core/WavWriter.h"
@@ -1653,14 +1654,18 @@ void drawEffectEditor(App& a) {
   std::string title = info->name + "  \u00b7  " + mixerTrackName(s, static_cast<size_t>(s.mixerIndex(t->id))) + "  \u00b7  slot " +
                       std::to_string(k + 1) + "###fxeditor";
   float width = info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f);
+  if (info->editorMinWidth > 0) {  // J-158: reflowing editors narrow to fit the main window first
+    const ImVec2 area = ui::EditorArea();
+    width = std::floor(place::fitEditor(width, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content);
+  }
   bool open = true;
-  ui::NextFloatingWindowSize(width + 24);
+  const int fitFlags = ui::NextFloatingWindowSize(width + 24);  // J-158: capped to the work area, the rest scrolls
   {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   }
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
-  if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking)) {
+  if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags)) {
     ui::KeepWindowInViewport();
     ui::MarkDetachable();  // J-114: pops out / docks back like the panels
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {

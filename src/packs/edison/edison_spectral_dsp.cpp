@@ -162,6 +162,7 @@ const char* stretchName(Stretch s) {
   switch (s) {
     case Stretch::Elastic: return "Stretch";
     case Stretch::Tape: return "Resample";
+    case Stretch::RubberBand: return "Rubber Band";
     default: return "?";
   }
 }
@@ -183,7 +184,7 @@ Audio stretchAudio(const Audio& a, double timeFactor, double semitones, Stretch 
   timeFactor = std::clamp(timeFactor, 0.05, 20.0);
   const int64_t target = static_cast<int64_t>(std::llround(static_cast<double>(a.frames()) * timeFactor));
   stretch::Settings set;
-  set.mode = stretch::kStretch;
+  set.mode = mode == Stretch::RubberBand ? stretch::Mode::RubberBand : stretch::kStretch;
   set.pitch = P;
   const int nch = a.channels == 1 ? 1 : 2;
   o.L.assign(static_cast<size_t>(std::max<int64_t>(0, target)), 0.f);

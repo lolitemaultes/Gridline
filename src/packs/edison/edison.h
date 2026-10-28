@@ -151,9 +151,10 @@ Content resample(const Content& c, double newRate, int quality = 1);
 
 // J-153: Elastic is engine/TimeStretch's one stretch (pitch kept); Tape is
 // varispeed (resampling: pitch follows speed).
-enum class Stretch { Elastic = 0, Tape, Count };
+enum class Stretch { Elastic = 0, Tape, RubberBand, Count };  // J-157: Rubber Band appended
 const char* stretchName(Stretch s);
-// Time factor (2 = twice as long) and pitch shift in semitones. Tape couples them
+// Time factor (2 = twice as long) and pitch shift in semitones (Elastic: Gridline's stretch,
+// RubberBand: Rubber Band R3). Tape couples them
 // (the time factor is ignored: pitch follows speed). quality 0..2 (FFT size).
 Audio stretchAudio(const Audio& a, double timeFactor, double semitones, Stretch mode, int quality = 1);
 Content stretch(const Content& c, Range r, double timeFactor, double semitones, Stretch mode, int quality = 1);

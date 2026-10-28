@@ -8554,6 +8554,18 @@ msgid "Resample"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Resample: pitch and speed change together, like a turntable"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Rubber Band"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Rubber Band R3: sharper drums and transients, more CPU"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Save the note clipboard as a MIDI file"
 msgstr ""
 
@@ -8619,6 +8631,10 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Stretch"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Stretch: Gridline's engine, smooth on sustained sounds"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -10410,11 +10426,19 @@ msgid "Visualization"
 msgstr ""
 
 #: src/app/PluginEditorsFlSynth2.cpp
+msgid "(click for the list, wheel steps)"
+msgstr ""
+
+#: src/app/PluginEditorsFlSynth2.cpp
 msgid "Controller %d"
 msgstr ""
 
 #: src/app/PluginEditorsFlSynth2.cpp
 msgid "Operator 1 is a carrier in every algorithm, so its thru level has no effect"
+msgstr ""
+
+#: src/app/PluginEditorsFlSynth2.cpp
+msgid "Time mode"
 msgstr ""
 
 #: src/app/PluginEditorsInstr.cpp

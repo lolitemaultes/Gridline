@@ -8,6 +8,8 @@
 #include <cstdio>
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
+#include "../../app/Widgets.h"
+#include "../../engine/TimeStretch.h"
 #include "edison_ui.h"
 
 namespace gl::packs::edison {
@@ -124,10 +126,11 @@ void drawToolDialogs(App& a, Session& s) {
       ImGui::SliderFloat(i18n::tr("Time"), &s.tStretch, 0.25f, 4.f, "x %.3f", ImGuiSliderFlags_Logarithmic);
       ImGui::SetNextItemWidth(260);
       ImGui::SliderFloat(i18n::tr("Pitch"), &s.tSemis, -24.f, 24.f, "%.2f semitones");
-      const char* modes[] = {i18n::tr(stretchName(Stretch::Elastic)), i18n::tr(stretchName(Stretch::Tape))};
+      const char* modes[] = {i18n::tr(stretchName(Stretch::Elastic)), i18n::tr(stretchName(Stretch::Tape)), i18n::tr(stretchName(Stretch::RubberBand))};
       s.tMode = std::clamp(s.tMode, 0, static_cast<int>(Stretch::Count) - 1);
       ImGui::SetNextItemWidth(260);
       ImGui::Combo(i18n::tr("Method"), &s.tMode, modes, static_cast<int>(Stretch::Count));
+      ui::Tooltip(stretch::modeHint(s.tMode == 1 ? stretch::Mode::Resample : s.tMode == 2 ? stretch::Mode::RubberBand : stretch::kStretch));
       const char* q[] = {"Fast", "Normal", "Best"};
       ImGui::SetNextItemWidth(260);
       ImGui::Combo(i18n::tr("Quality"), &s.tQuality, q, 3);

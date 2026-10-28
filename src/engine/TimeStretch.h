@@ -24,6 +24,15 @@
 // new note, a seek, a loop); every start is primed so its first output is
 // already settled. The modes earlier versions stored (Auto, Mono, Transient,
 // Formant, Voice, Beats) all play through the one stretch.
+//
+// J-157: Rubber Band (Rubber Band Library R3, GPL-2.0-or-later, third_party/
+// rubberband) is a second way to keep the pitch, chosen per clip or sampler
+// channel: offline renders run it in its offline mode (study, then process,
+// with a key frame map for tempo-mapped clips), realtime voices in its
+// realtime mode (fed fixed chunks, started with pre-roll, its start delay
+// dropped), so both line up with the source like the stretch does. It does
+// its own transient handling and its own pitch shifting; Gridline's guard
+// and resampler are not used on it.
 #pragma once
 #include <atomic>
 #include <cstdint>
@@ -41,17 +50,24 @@ class TempoMap;
 namespace gl::stretch {
 
 // Parameter values are stored in projects (SmpStretchMode): every value but
-// Resample is the stretch. The values are kept so old projects and FL
-// imports load and export unchanged.
-enum class Mode : int { Resample = 0, Auto, Mono, Transient, Formant, Voice, Beats, Count };
+// Resample and RubberBand is the stretch. The values are kept so old projects
+// and FL imports load and export unchanged (J-157 appended RubberBand).
+enum class Mode : int { Resample = 0, Auto, Mono, Transient, Formant, Voice, Beats, RubberBand, Count };
 // The value pickers write for the stretch.
 inline constexpr Mode kStretch = Mode::Auto;
 inline bool keepsPitch(Mode m) { return m != Mode::Resample; }
-// The two choices pickers show, in order: Stretch, Resample.
-inline constexpr Mode kChoices[2] = {kStretch, Mode::Resample};
-// English names, "Resample" or "Stretch" (the UI wraps them in i18n::tr).
+// The engine a mode keeps the pitch with: Gridline's stretch (Signalsmith) or Rubber Band.
+enum class Engine { Stretch, RubberBand };
+inline Engine engineOf(Mode m) { return m == Mode::RubberBand ? Engine::RubberBand : Engine::Stretch; }
+// The three choices pickers show, in order: Stretch, Rubber Band, Resample.
+inline constexpr Mode kChoices[3] = {kStretch, Mode::RubberBand, Mode::Resample};
+// The choice a stored mode shows as (every older stretch mode is Stretch).
+inline Mode choiceOf(Mode m) { return m == Mode::Resample || m == Mode::RubberBand ? m : kStretch; }
+// English names, "Resample", "Stretch" or "Rubber Band", and a one-line hint
+// for each choice (the UI wraps them in i18n::tr).
 const char* modeName(Mode m);
-// SmpStretchMode parameter value → mode (clamped).
+const char* modeHint(Mode m);
+// SmpStretchMode parameter value → mode (negative: Resample; past the last mode: Stretch).
 Mode modeOf(double paramValue);
 
 // FL Studio's stored stretch method (channel parameters 215, offset 108):
@@ -62,8 +78,8 @@ Mode modeFromFl(int code);
 int flCodeOf(Mode m);
 
 struct Settings {
-  Mode mode = kStretch;
-  double pitch = 1.0;  // frequency ratio
+  Mode mode = kStretch;  // Resample, RubberBand or (any other) the stretch
+  double pitch = 1.0;    // frequency ratio
 };
 
 // ---- offline (UI / worker threads) ----
@@ -123,7 +139,7 @@ struct ClipRequest {
   SamplePtr sample;
   double srcStart = 0, srcEnd = 0;  // source window (seconds)
   bool reverse = false;
-  Mode mode = kStretch;
+  Mode mode = kStretch;             // Resample, RubberBand or (any other) the stretch
   double pitch = 1;                 // frequency ratio (stretch)
   double rate = 44100;              // output (engine) sample rate
   int64_t frames = 0;               // output frames
@@ -153,7 +169,9 @@ size_t clipCacheBytes();
 // A streaming pitch / time stretcher: one continuous engine stream from
 // start() on. prepare() allocates (UI thread); start(), render() and reset()
 // are realtime safe (no allocation, no locks). The output does not depend on
-// how render() calls split it.
+// how render() calls split it. J-157: prepare(..., Engine::RubberBand) runs
+// Rubber Band's realtime engine instead (about 6 MB per stereo voice at
+// 44.1 kHz, twice that at 96 kHz).
 class Voice {
  public:
   // Pulls the next `frames` input frames into dst[0], dst[1] (zeros past the
@@ -166,8 +184,10 @@ class Voice {
   Voice& operator=(const Voice&) = delete;
   // maxPitch / maxSpeed bound the buffers (frequency ratio, input frames per output frame).
   // live: the shorter block of live effects (about half the latency).
-  void prepare(int channels, double sampleRate, double maxPitch = 8.0, double maxSpeed = 8.0, bool live = false);
+  void prepare(int channels, double sampleRate, double maxPitch = 8.0, double maxSpeed = 8.0, bool live = false,
+               Engine engine = Engine::Stretch);
   bool prepared() const { return prepared_; }
+  Engine engine() const;
   // Begins a stream (a note, a seek, a loop): speed = input frames per output
   // frame, pitch = frequency ratio. The reader's first `preroll` frames come
   // before the start point (audio that leads into it): the engine runs

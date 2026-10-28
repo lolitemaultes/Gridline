@@ -2,6 +2,7 @@
 #include "LookGeom.h"
 #include "Widgets.h"
 #include "DialogLayout.h"
+#include "../core/WindowPlacement.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -1265,12 +1266,18 @@ bool ColorSwatch(const char* id, uint32_t* rgb, ImVec2 size) {
   return changed;
 }
 
-void NextFloatingWindowSize(float width) {
+ImVec2 EditorArea() {
   ImGuiViewport* vp = ImGui::GetMainViewport();
-  const float maxH = std::max(200.0f, vp->WorkSize.y - theme::kTopBarH - theme::kStatusBarH - 2 * theme::kS2);
+  return ImVec2(std::max(240.0f, vp->WorkSize.x - 2 * theme::kS2),
+                std::max(200.0f, vp->WorkSize.y - theme::kTopBarH - theme::kStatusBarH - 2 * theme::kS2));
+}
+
+int NextFloatingWindowSize(float width) {
+  const ImVec2 area = EditorArea();
   // Room for a vertical scrollbar so a scrolling editor never clips sideways.
-  const float w = width + ImGui::GetStyle().ScrollbarSize;
-  ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w, maxH));
+  const place::EditorFit f = place::fitEditor(width, 0, ImGui::GetStyle().ScrollbarSize, area.x, area.y);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(f.window, 0), ImVec2(f.window, f.maxH));
+  return f.scrollX ? ImGuiWindowFlags_HorizontalScrollbar : 0;
 }
 
 void KeepWindowInViewport() { TrackWindowInViewport(); }  // J-91: clamped before layout (DialogLayout.h)

@@ -67,21 +67,27 @@ void declickItems(App& a, const std::vector<ObjectId>& chans) {
       report(a, ops::setSamplerDeclick(a.doc, chans, k), "Declicking changed", "No sampler channel to change");
 }
 
-// J-87 / J-153: the time modes (engine/TimeStretch::modeName) and the render
-// interpolation name (engine/Render), marked here for the translation catalogue.
-[[maybe_unused]] constexpr const char* kTimeModeText[] = {i18n::N_("Resample"), i18n::N_("Stretch"), i18n::N_("Realtime (band-limited sinc)")};
+// J-87 / J-153 / J-157: the time modes and their hints (engine/TimeStretch::modeName,
+// modeHint) and the render interpolation name (engine/Render), marked here for the
+// translation catalogue.
+[[maybe_unused]] constexpr const char* kTimeModeText[] = {
+    i18n::N_("Resample"), i18n::N_("Stretch"), i18n::N_("Rubber Band"), i18n::N_("Realtime (band-limited sinc)"),
+    i18n::N_("Resample: pitch and speed change together, like a turntable"),
+    i18n::N_("Rubber Band R3: sharper drums and transients, more CPU"),
+    i18n::N_("Stretch: Gridline's engine, smooth on sustained sounds")};
 
 void timeModeItems(App& a) {
   const auto sel = selectedClipsOfKind(a, ClipKind::Audio);
   for (int group = 0; group < 2; ++group) {
     ImGui::SeparatorText(group == 0 ? i18n::tr("Every audio clip") : i18n::tr("Selected audio clips"));
     ImGui::PushID(group);
-    for (const stretch::Mode mode : stretch::kChoices) {  // J-153: Stretch or Resample
+    for (const stretch::Mode mode : stretch::kChoices) {  // J-153 / J-157: Stretch, Rubber Band or Resample
       const int m = static_cast<int>(mode);
       ImGui::PushID(m);
       if (ImGui::MenuItem(i18n::tr(stretch::modeName(mode)), nullptr, false, group == 0 || !sel.empty()))
         report(a, ops::setAudioClipTimeMode(a.doc, group == 0 ? decltype(sel){} : sel, m), "Audio clip channels switched",
                "Nothing to switch");
+      ui::Tooltip(stretch::modeHint(mode));
       ImGui::PopID();
     }
     ImGui::PopID();

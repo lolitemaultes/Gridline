@@ -218,7 +218,12 @@ a window is detached.
   fitting the main window gets its own OS window only if it is a popup / menu / tooltip, or if it
   was opened outside on purpose (centre outside the main window within the frames it takes to
   appear and centre itself: a dialog opened from a detached window). Dragged, released or grown
-  windows stay in the main window.
+  windows stay in the main window. J-158: the filter also guards ImGui's fallback for a window's
+  first frame in a run (`GRIDLINE PATCH (J-158)` in `WindowSelectViewport`): a window restored
+  from `layout.ini` with a size or place saved on a larger main window (a big plugin editor
+  saved while the main window was maximised) used to get an OS window of its own the moment it
+  opened. A window centred with a pivot is judged by where it is being centred, not by the
+  rectangle it had before it was centred.
 - **No ImGui moves of detached windows.** Before and after `NewFrame`, a `g.MovingWindow` whose
   root is detached is dropped (the title bar's id stays active until the release; nothing happens
   then). So a detached window shows no dock targets and never docks by being dragged.

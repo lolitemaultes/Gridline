@@ -635,21 +635,26 @@ class SamplerGen final : public Generator {
   void setClipOnly(bool clipOnly) override { clipOnly_ = clipOnly; }
   void prepareHost(const PluginState& s, double sampleRate) override {
     delete retired_.exchange(nullptr, std::memory_order_acq_rel);
-    const bool keep = stretch::keepsPitch(stretch::modeOf(param(s, pp::SmpStretchMode)));
+    const stretch::Mode mode = stretch::modeOf(param(s, pp::SmpStretchMode));
+    const bool keep = stretch::keepsPitch(mode);
     if (clipOnly_) return;  // playlist clips render offline (engine/TimeStretch); no notes to stretch
     // One stretch voice per note slot (J-153: every slot the same engine).
-    const int count = std::clamp(static_cast<int>(param(s, pp::SmpVoices, 32) + 0.5f), 1, 32);
+    // J-157: Rubber Band voices are large (about 6 MB each): the first
+    // kRubberVoices slots have one, later notes play on the grains.
+    const stretch::Engine engine = stretch::engineOf(mode);
+    const int count = std::min(std::clamp(static_cast<int>(param(s, pp::SmpVoices, 32) + 0.5f), 1, 32),
+                               engine == stretch::Engine::RubberBand ? kRubberVoices : 32);
     if (!keep) return;  // the pool (if any) stays until the stretch needs another one
-    if (uiPool_ && sampleRate == uiRate_ && count == uiCount_) return;
+    if (uiPool_ && sampleRate == uiRate_ && count == uiCount_ && engine == uiEngine_) return;
     auto* pool = new StretchPool;
     pool->rate = sampleRate;
     pool->voices.resize(static_cast<size_t>(count));
     for (auto& v : pool->voices) {
       v = std::make_unique<stretch::Voice>();
-      v->prepare(2, sampleRate, 8.0, 8.0);
+      v->prepare(2, sampleRate, 8.0, 8.0, false, engine);
     }
     delete pending_.exchange(pool, std::memory_order_acq_rel);  // a pool never picked up is dropped
-    uiPool_ = true, uiRate_ = sampleRate, uiCount_ = count;
+    uiPool_ = true, uiRate_ = sampleRate, uiCount_ = count, uiEngine_ = engine;
   }
 
   bool active() const override {
@@ -1121,6 +1126,8 @@ class SamplerGen final : public Generator {
   bool clipOnly_ = false;  // UI thread
   double uiRate_ = 0;
   int uiCount_ = 0;
+  stretch::Engine uiEngine_ = stretch::Engine::Stretch;
+  static constexpr int kRubberVoices = 8;
   struct ReadCtx {
     SamplerGen* g;
     Voice* v;

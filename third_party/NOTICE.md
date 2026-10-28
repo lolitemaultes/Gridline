@@ -10,6 +10,7 @@ where it comes from and whether it was changed.
 | `lua/` | Lua 5.4 | MIT | scripting (one patch, see README.gridline.md) |
 | `rtmidi/` | RtMidi | MIT-style | MIDI devices |
 | `signalsmith-stretch/`, `signalsmith-linear/` | Signalsmith Stretch / Linear | MIT | time stretching, pitch shifting |
+| `rubberband/` | Rubber Band Library 4.0.0 | GPL-2.0-or-later | the Rubber Band time mode (three patches, see README.gridline.md) |
 | `clap/` | CLAP headers | MIT | hosting CLAP plugins, the CLAP build |
 | `vst3/` | VST 3 plug-in interfaces | MIT | hosting VST3 plugins, the VST3 build |
 | `lv2/` | LV2 headers | ISC | hosting LV2 plugins |

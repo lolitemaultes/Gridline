@@ -17541,7 +17541,12 @@ static void ImGui::WindowSelectViewport(ImGuiWindow* window)
     // Fallback: merge in default viewport if z-order matches, otherwise create a new viewport
     if (window->Viewport == NULL)
         if (!UpdateTryMergeWindowIntoHostViewport(window, main_viewport))
-            window->Viewport = AddUpdateViewport(window, window->ID, window->Pos, window->Size, ImGuiViewportFlags_None);
+        {
+            if (g.ViewportLateCreateFilter != NULL && !g.ViewportLateCreateFilter(window)) // GRIDLINE PATCH (J-158): a window that does not fit stays in the main viewport unless the filter says otherwise
+                SetWindowViewport(window, main_viewport);
+            else
+                window->Viewport = AddUpdateViewport(window, window->ID, window->Pos, window->Size, ImGuiViewportFlags_None);
+        }
 
     // Mark window as allowed to protrude outside of its viewport and into the current monitor
     if (!lock_viewport)

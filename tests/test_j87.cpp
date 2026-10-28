@@ -242,11 +242,12 @@ int main() {
   {
     expect(stretch::modeOf(0) == stretch::Mode::Resample && stretch::modeOf(1) == stretch::Mode::Auto &&
                stretch::modeOf(4) == stretch::Mode::Formant && stretch::modeOf(5) == stretch::Mode::Voice &&
-               stretch::modeOf(6) == stretch::Mode::Beats && stretch::modeOf(99) == stretch::Mode::Beats &&
-               stretch::modeOf(-3) == stretch::Mode::Resample && stretch::modeOf(NAN) == stretch::Mode::Resample,
-           "time modes: parameter values clamp to the seven modes");
+               stretch::modeOf(6) == stretch::Mode::Beats && stretch::modeOf(7) == stretch::Mode::RubberBand &&
+               stretch::modeOf(99) == stretch::kStretch && stretch::modeOf(-3) == stretch::Mode::Resample &&
+               stretch::modeOf(NAN) == stretch::Mode::Resample,
+           "time modes: parameter values map to the eight modes (J-157: past the last one, the stretch)");
     bool all = true;
-    for (int m = 0; m < static_cast<int>(stretch::Mode::Count); ++m)
+    for (int m = 0; m < static_cast<int>(stretch::Mode::RubberBand); ++m)  // (J-157: FL has no Rubber Band, checked below)
       all = all && stretch::modeFromFl(stretch::flCodeOf(static_cast<stretch::Mode>(m))) == static_cast<stretch::Mode>(m);
     expect(all, "every mode exports as an FL method that imports back as the same mode");
     expect(stretch::modeFromFl(0) == stretch::Mode::Resample && stretch::modeFromFl(-1) == stretch::Mode::Auto &&
@@ -255,15 +256,26 @@ int main() {
                stretch::modeFromFl(4) == stretch::Mode::Beats && stretch::modeFromFl(7) == stretch::Mode::Transient &&
                stretch::modeFromFl(-2) == stretch::Mode::Formant,
            "FL methods map to the closest mode (stretch / auto → Auto, mono → Mono, speech → Voice, slice → Beats, transient → Transient, pro → Formant)");
-    bool one = std::string(stretch::modeName(stretch::Mode::Resample)) == "Resample";
-    for (int m = 1; m < static_cast<int>(stretch::Mode::Count); ++m)
-      one = one && stretch::keepsPitch(static_cast<stretch::Mode>(m)) && std::string(stretch::modeName(static_cast<stretch::Mode>(m))) == "Stretch";
+    bool one = std::string(stretch::modeName(stretch::Mode::Resample)) == "Resample" &&
+               std::string(stretch::modeName(stretch::Mode::RubberBand)) == "Rubber Band";
+    for (int m = 1; m < static_cast<int>(stretch::Mode::RubberBand); ++m)
+      one = one && stretch::keepsPitch(static_cast<stretch::Mode>(m)) && std::string(stretch::modeName(static_cast<stretch::Mode>(m))) == "Stretch" &&
+            stretch::choiceOf(static_cast<stretch::Mode>(m)) == stretch::kStretch && stretch::engineOf(static_cast<stretch::Mode>(m)) == stretch::Engine::Stretch;
     const ParamDesc& pd = findPlugin("gl.sampler")->params[pp::SmpStretchMode];
-    PluginState old = defaultPluginState("gl.sampler");
+    PluginState old = defaultPluginState("gl.sampler"), rb = old, far = old;
     old.params[pp::SmpStretchMode] = 4;  // an older project's Formant keep
+    rb.params[pp::SmpStretchMode] = 7;   // J-157: Rubber Band
+    far.params[pp::SmpStretchMode] = 12;
     normalizePluginState(old);
-    expect(one && !stretch::keepsPitch(stretch::Mode::Resample) && pd.choices.size() == 2 && old.params[pp::SmpStretchMode] == 1.0f,
-           "J-153: two time modes, Resample and Stretch; every older stretch mode is the stretch and loads as it");
+    normalizePluginState(rb);
+    normalizePluginState(far);
+    expect(one && !stretch::keepsPitch(stretch::Mode::Resample) && stretch::keepsPitch(stretch::Mode::RubberBand) &&
+               stretch::engineOf(stretch::Mode::RubberBand) == stretch::Engine::RubberBand && pd.choices.size() == 8 &&
+               pd.format(7) == "Rubber Band" && old.params[pp::SmpStretchMode] == 1.0f && rb.params[pp::SmpStretchMode] == 7.0f &&
+               far.params[pp::SmpStretchMode] == 1.0f,
+           "J-153 / J-157: three time modes, Resample, Stretch and Rubber Band; every older stretch mode loads as the stretch");
+    expect(stretch::flCodeOf(stretch::Mode::RubberBand) == stretch::flCodeOf(stretch::kStretch),
+           "J-157: Rubber Band goes to FL as its stretch (FL has no Rubber Band)");
   }
 
   // ------------------------------------------------------------ offline engine: pitch accuracy
@@ -726,7 +738,7 @@ int main() {
       sampleCache().clear();
     }
     Song s = makeEmptySong();
-    for (int m = 0; m < 5; ++m) {
+    for (int m : {0, 1, 2, 3, 4, 7}) {  // (J-157: 7 Rubber Band comes back as FL's stretch)
       // An audio clip channel per mode (one clip each)…
       Channel ch;
       ch.id = s.allocateId();
@@ -804,6 +816,24 @@ int main() {
     std::snprintf(name, sizeof name, "FLP round trip: every time mode with its pitch shift and time stretch (%d/%d)%s", matched, total, why.c_str());
     expect(ok && matched == total, name);
     expect(clips, "FLP round trip: audio clip pitch kept");
+
+    // J-157: a Gridline project keeps every time mode as it was saved (Rubber Band too).
+    {
+      const std::string pp_ = (dir / "modes.gridline").string();
+      Song back2;
+      std::string e2;
+      const bool io = saveProject(pp_, s, &e2) && loadProject(pp_, back2, &e2);
+      // (the older stretch modes 2..4 load as the one stretch, 1)
+      bool same = io && back2.channels.size() == s.channels.size();
+      int rubber = 0;
+      for (size_t i = 0; same && i < s.channels.size(); ++i) {
+        if (s.channels[i].plugin.type != "gl.sampler") continue;
+        const float was = s.channels[i].plugin.params[pp::SmpStretchMode], now = back2.channels[i].plugin.params[pp::SmpStretchMode];
+        same = now == static_cast<float>(stretch::choiceOf(stretch::modeOf(was)));
+        rubber += now == 7.0f;
+      }
+      expect(same && rubber == 2, std::string("project round trip: every time mode loads as saved, Rubber Band (7) included (" + e2 + ")").c_str());
+    }
     fs::remove_all(dir, ec);
   }
 

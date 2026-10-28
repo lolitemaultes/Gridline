@@ -9,6 +9,7 @@
 #include "Automation.h"
 #include "NoteTools.h"
 #include "PatternAutomation.h"
+#include "../engine/TimeStretch.h"
 #include "PluginParams.h"
 
 namespace gl::ops {
@@ -150,7 +151,7 @@ ObjectId makeAudioClipUnique(Document& d, ObjectId clip) {
 }
 
 int setAudioClipTimeMode(Document& d, const std::set<ObjectId>& clips, int mode) {
-  mode = mode > 0 ? 1 : 0;  // J-153: Resample or Stretch
+  mode = static_cast<int>(stretch::choiceOf(stretch::modeOf(mode)));  // J-153 / J-157: Resample, Stretch or Rubber Band
   const Song& s = d.song();
   std::set<ObjectId> chans;
   for (const auto& c : s.playlist)
@@ -158,7 +159,7 @@ int setAudioClipTimeMode(Document& d, const std::set<ObjectId>& clips, int mode)
       if (const Channel* ch = s.channel(c.source); ch && isSampler(*ch) && ch->plugin.params[pp::SmpStretchMode] != mode)
         chans.insert(ch->id);
   if (chans.empty()) return 0;
-  d.editSong(mode ? "switch audio clips' time mode" : "switch audio clips to resample", [&](Song& x) {
+  d.editSong(mode == 0 ? "switch audio clips to resample" : mode == static_cast<int>(stretch::Mode::RubberBand) ? "switch audio clips to Rubber Band" : "switch audio clips' time mode", [&](Song& x) {
     for (auto& ch : x.channels)
       if (chans.count(ch.id)) ch.plugin.params[pp::SmpStretchMode] = static_cast<float>(mode);
   });

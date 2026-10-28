@@ -193,6 +193,24 @@ void testSplitAndIni() {
   const Rect high{1500, -190, 400, 300};
   expect(place::keepOsTitleOnMonitor(high, kTwo, 32).y == kRight.y + 32, "placed outside: room for the OS title bar above it");
 }
+
+// J-158: a plugin editor's window in the work area: natural where there is room, a reflowing
+// editor narrows (not below its minimum), the rest is capped and scrolls; never taller.
+void testFitEditor() {
+  using place::fitEditor;
+  const auto f = fitEditor(1120, 0, 38, 1904, 990);
+  expect(f.content == 1120 && f.window == 1158 && !f.scrollX && f.maxH == 990, "room: natural width, no scrolling");
+  const auto g = fitEditor(1120, 0, 38, 944, 510);
+  expect(g.content == 1120 && g.window == 944 && g.scrollX && g.maxH == 510, "fixed layout wider than the area: capped, scrolls sideways");
+  const auto r = fitEditor(1240, 940, 38, 1264, 710);
+  expect(r.content == 1226 && r.window == 1264 && !r.scrollX, "reflowing editor narrows to fit");
+  const auto m = fitEditor(1240, 940, 38, 944, 510);
+  expect(m.content == 940 && m.window == 944 && m.scrollX, "reflowing editor stops at its minimum, then scrolls");
+  const auto e = fitEditor(1240, 940, 38, 1278, 900);
+  expect(e.content == 1240 && e.window == 1278 && !e.scrollX, "exactly fitting: natural");
+  const auto n = fitEditor(600, 900, 38, 400, 300);
+  expect(n.content == 600 && n.window == 400 && n.scrollX, "a minimum above the natural width never widens it");
+}
 }  // namespace
 
 int main() {
@@ -205,5 +223,6 @@ int main() {
   testPopOutPlace();
   testLiveResizeGate();
   testSplitAndIni();
+  testFitEditor();
   return finish();
 }

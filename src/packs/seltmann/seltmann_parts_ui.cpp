@@ -653,13 +653,19 @@ void drawSound(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1) {
   // playback
   groupLabel(dl, a, ImVec2(x, y), i18n::N_("FOLLOW THE PROJECT BY"));
   {
-    static const char* const l[2] = {i18n::N_("Stretch"), i18n::N_("Resample")};
-    static const char* const h[2] = {i18n::N_("Time-stretched: the pitch stays"), i18n::N_("Sped up or slowed down: the pitch follows (vinyl)")};
+    // J-157: Stretch or Rubber Band (time-stretched, SmStretchMode 0 / 3) or Resample.
+    static const char* const l[3] = {i18n::N_("Stretch"), i18n::N_("Rubber Band"), i18n::N_("Resample")};
+    static const char* const h[3] = {i18n::N_("Time-stretched: the pitch stays"), i18n::N_("Rubber Band R3: sharper drums and transients, more CPU"),
+                                     i18n::N_("Sped up or slowed down: the pitch follows (vinyl)")};
     const int sync = static_cast<int>(std::lround(paramOf(a, t, SmSync)));
-    int cur = sync == SyncResample ? 1 : sync == SyncStretch ? 0 : -1;
-    if (pills(a, "##sfollow", ImVec2(x, y + 16), 180, 26, l, 2, cur, h)) pui::setParamValue(a, t, SmSync, cur == 1 ? SyncResample : SyncStretch, false);
+    const bool rubber = std::lround(paramOf(a, t, SmStretchMode)) == 3;
+    int cur = sync == SyncResample ? 2 : sync == SyncStretch ? (rubber ? 1 : 0) : -1;
+    if (pills(a, "##sfollow", ImVec2(x, y + 16), 252, 26, l, 3, cur, h)) {
+      pui::setParamValue(a, t, SmSync, cur == 2 ? SyncResample : SyncStretch, false);
+      if (cur != 2) pui::setParamValue(a, t, SmStretchMode, cur == 1 ? 3 : 0, true);
+    }
   }
-  x += 196;
+  x += 268;
   groupLabel(dl, a, ImVec2(x, y), i18n::N_("KEYS PLAY"));
   {
     static const char* const l[2] = {i18n::N_("Slices"), i18n::N_("Letters")};

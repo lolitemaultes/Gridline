@@ -263,7 +263,15 @@ bool lateCreate(ImGuiWindow* w) {
   if (!w->Appearing && (ap == S.appeared.end() || g.FrameCount - ap->second > 4)) return false;
   if (g.MovingWindow && g.MovingWindow->RootWindowDockTree == w->RootWindowDockTree) return false;
   const ImGuiViewport* m = ImGui::GetMainViewport();
-  const ImVec2 c(w->Pos.x + w->Size.x * 0.5f, w->Pos.y + w->Size.y * 0.5f);
+  // J-158: where it is meant to be. A window centred with a pivot (plugin editors, dialogs) is still
+  // at its old place, or at the raw anchor, on the frame it measures its size: its anchor tells
+  // where it opens. Otherwise the centre of its rectangle, as large as the main window at most (a
+  // window saved larger than the main window is now, its top-left corner inside, opens inside).
+  ImVec2 c;
+  if (w->SetWindowPosVal.x != FLT_MAX && w->SetWindowPosVal.y != FLT_MAX)
+    c = w->SetWindowPosVal;
+  else
+    c = ImVec2(w->Pos.x + std::min(w->Size.x, m->Size.x) * 0.5f, w->Pos.y + std::min(w->Size.y, m->Size.y) * 0.5f);
   return !ImRect(m->Pos, ImVec2(m->Pos.x + m->Size.x, m->Pos.y + m->Size.y)).Contains(c);
 }
 
@@ -742,9 +750,12 @@ void dump(int frame) {
     // "laid": where it was laid out and drawn this frame (J-117: differs from pos when something
     // moved it after it was drawn).
     const ImRect laid = laidOutTitleBar(w);
-    std::printf("  window \"%s\" pos %.1f %.1f size %.1f %.1f viewport %d docked %d laid %.0f %.0f\n", nameOf(w), static_cast<double>(w->Pos.x),
-                static_cast<double>(w->Pos.y), static_cast<double>(w->Size.x), static_cast<double>(w->Size.y), viewportIndex(w->Viewport),
-                w->DockIsActive ? 1 : 0, static_cast<double>(laid.Min.x), static_cast<double>(laid.Min.y));
+    // J-158: "content": the size its content wants (ImGui's ideal content size), "scroll": its scroll range.
+    std::printf("  window \"%s\" pos %.1f %.1f size %.1f %.1f viewport %d docked %d laid %.0f %.0f content %.0f %.0f scroll %.0f %.0f\n", nameOf(w),
+                static_cast<double>(w->Pos.x), static_cast<double>(w->Pos.y), static_cast<double>(w->Size.x), static_cast<double>(w->Size.y),
+                viewportIndex(w->Viewport), w->DockIsActive ? 1 : 0, static_cast<double>(laid.Min.x), static_cast<double>(laid.Min.y),
+                static_cast<double>(w->ContentSizeIdeal.x), static_cast<double>(w->ContentSizeIdeal.y), static_cast<double>(w->ScrollMax.x),
+                static_cast<double>(w->ScrollMax.y));
   }
   std::fflush(stdout);
 }

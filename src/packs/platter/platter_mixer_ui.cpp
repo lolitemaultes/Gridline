@@ -153,7 +153,8 @@ void drawMixer(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
   y += 6 * rowH + 6;
   dl->AddLine(ImVec2(x0 + 2, y - 3.5f), ImVec2(x1 - 2, y - 3.5f), theme::withAlpha(P.line, 0.6f));
   // faders, pre-fader meters, master
-  const float fh = two ? 112 : 150;
+  // J-158: the faders give way as the decks get shorter (setSqueeze: body and pads rows, 38 px at most)
+  const float fh = (two ? 112.0f : 150.0f) - std::round(38.0f * squeeze());
   {
     const float mW = 6;
     // deck A: fader, its meter on the inside

@@ -39,7 +39,7 @@ enum Param {
   SmBaseNote,     // 0..127 first slice key (C3 = 60)
   SmKeyMap,       // choice: Slices / Slot letters
   SmSync,         // choice: Original / Resample / Stretch
-  SmStretchMode,  // choice: Auto / Transient / Mono (J-87; J-153: unused, every value plays the one stretch)
+  SmStretchMode,  // choice: Auto / Transient / Mono / Rubber Band (J-87; J-153: 0..2 play the one stretch; J-157: 3 Rubber Band)
   SmLock,         // toggle: pattern follows the song position
   SmMono,         // toggle: one voice at a time
   SmAttack,       // ms
@@ -373,7 +373,7 @@ struct RenderOpts {
   double sampleRate = 44100;
   double tempo = 120;         // project tempo
   int sync = SyncStretch;
-  int stretchMode = 0;        // 0 Auto, 1 Transient, 2 Mono
+  int stretchMode = 0;        // 0 Auto, 1 Transient, 2 Mono (the stretch), 3 Rubber Band (J-157)
   std::vector<float> params;  // plugin params (empty = defaults)
 };
 // The pattern rendered as a seamless loop of exactly one cycle at the project tempo.

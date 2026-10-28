@@ -207,6 +207,17 @@ set_target_properties(gridline_monocypher PROPERTIES POSITION_INDEPENDENT_CODE O
 add_library(gridline_stbimage STATIC third_party/stb/gridline_stb_image.c)
 target_compile_options(gridline_stbimage PRIVATE ${GL_NOWARN})
 set_target_properties(gridline_stbimage PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# J-157: Rubber Band Library 4.0.0 (GPL-2.0-or-later, vendored unmodified; see
+# third_party/rubberband/README.gridline.md), the Rubber Band stretch choice. Upstream's
+# single-file build: built-in FFT and resampler, no threads, no system libraries (vDSP from
+# Accelerate on macOS).
+add_library(gridline_rubberband STATIC third_party/rubberband/single/RubberBandSingle.cpp)
+target_include_directories(gridline_rubberband SYSTEM PUBLIC third_party/rubberband)
+target_compile_options(gridline_rubberband PRIVATE ${GL_NOWARN})
+set_target_properties(gridline_rubberband PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(APPLE)
+  target_link_libraries(gridline_rubberband PUBLIC "-framework Accelerate")
+endif()
 find_package(Threads REQUIRED)
 if(GRIDLINE_COLLAB)
   file(GLOB GRIDLINE_JUICE_SRC CONFIGURE_DEPENDS third_party/libjuice/src/*.c)
@@ -290,7 +301,7 @@ elseif(UNIX)
 endif()
 target_compile_options(gridline_core PRIVATE ${GL_WARN})
 find_package(Threads REQUIRED)
-target_link_libraries(gridline_core PUBLIC Threads::Threads vst3_pluginterfaces gridline_lua gridline_monocypher gridline_stbimage ${CMAKE_DL_LIBS})
+target_link_libraries(gridline_core PUBLIC Threads::Threads vst3_pluginterfaces gridline_lua gridline_monocypher gridline_stbimage gridline_rubberband ${CMAKE_DL_LIBS})
 if(GRIDLINE_COLLAB)
   target_link_libraries(gridline_core PUBLIC gridline_juice gridline_plum)
   target_compile_definitions(gridline_core PUBLIC GRIDLINE_COLLAB_NET=1)
@@ -1328,6 +1339,15 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j117_rubber -P ${CMAKE_SOURCE_DIR}/tests/j117_rubber.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j117_rubber_app PROPERTIES TIMEOUT 300)
+
+    # J-158: big plugin editors (Platter, Seltmann) fit inside the main window: never popped out
+    # by themselves (also when saved on a larger main window), the main window keeps its size,
+    # capped to the work area with their content scrolling, natural size on big screens.
+    add_test(NAME j158_window_fit_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j158_window_fit -P ${CMAKE_SOURCE_DIR}/tests/j158_window_fit_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j158_window_fit_app PROPERTIES TIMEOUT 300)
 
     # J-118: the clip brush: click a trimmed audio clip, paint copies of it as it is (length,
     # audio start, fades, gain, pitch, reverse); a sample picked in the picker paints at its

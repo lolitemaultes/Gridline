@@ -15,9 +15,16 @@
 //   clips      playback switching between the offline render and the
 //              realtime stretch crossfades;
 //   general    offline renders are deterministic, stereo correlation kept,
-//              a hit on the first frame stays there.
+//              a hit on the first frame stays there;
+//   rubber     J-157: the Rubber Band choice, offline and realtime: exact
+//              length, aligned with the source (envelope cross-correlation
+//              within 1 ms), level kept, no clicks, the same realtime output
+//              for any block size, no allocation, seeks primed with pre-roll,
+//              +-12 semitones in tune, 44.1 / 48 / 96 kHz, tempo maps, clip
+//              playback and sampler notes; CPU cost printed.
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdio>
@@ -170,6 +177,21 @@ std::vector<Sig> offline(const std::vector<Sig>& x, double pitch, double tf, dou
 }
 Sig offline1(const Sig& x, double pitch, double tf, double sr) { return offline({x, x}, pitch, tf, sr)[0]; }
 
+// J-157: the same through Rubber Band.
+std::vector<Sig> offlineRb(const std::vector<Sig>& x, double pitch, double tf, double sr) {
+  stretch::Settings s;
+  s.mode = stretch::Mode::RubberBand, s.pitch = pitch;
+  const auto n = static_cast<int64_t>(x[0].size());
+  const auto outLen = static_cast<int64_t>(std::llround(static_cast<double>(n) * tf));
+  std::vector<Sig> y(x.size(), Sig(static_cast<size_t>(outLen)));
+  std::vector<const float*> in;
+  std::vector<float*> out;
+  for (size_t c = 0; c < x.size(); ++c) in.push_back(x[c].data()), out.push_back(y[c].data());
+  stretch::process(in.data(), static_cast<int>(x.size()), n, out.data(), outLen, sr, s);
+  return y;
+}
+Sig offlineRb1(const Sig& x, double pitch, double tf, double sr) { return offlineRb({x, x}, pitch, tf, sr)[0]; }
+
 std::string writeTmp(const std::string& name, const Sig& l, double sr) {
   AudioBuffer b(2, l.size());
   for (size_t i = 0; i < l.size(); ++i) b.at(0, i) = l[i], b.at(1, i) = l[i];
@@ -179,6 +201,7 @@ std::string writeTmp(const std::string& name, const Sig& l, double sr) {
   return path;
 }
 
+stretch::Mode gSamplerMode = stretch::kStretch;  // the time mode sampler() uses
 // One sampler note (the stretch, time stretch `tf`) over `frames`, in blocks of `block`.
 struct SamplerRun {
   PluginState st;
@@ -188,7 +211,7 @@ Sig sampler(const std::string& path, double tf, size_t frames, double sr, int bl
             int note = 60) {
   PluginState st = defaultPluginState("gl.sampler");
   st.data = path;
-  st.params[pp::SmpStretchMode] = static_cast<float>(stretch::kStretch);
+  st.params[pp::SmpStretchMode] = static_cast<float>(gSamplerMode);
   st.params[pp::SmpTimeStretch] = static_cast<float>(tf);
   st.params[pp::SmpStart] = start;
   st.params[pp::SmpPitchShift] = pitchSemis * 100.f;
@@ -383,9 +406,10 @@ struct Src {
   }
 };
 // A realtime voice over x: `frames` frames at speed / pitch, in blocks of `block`.
-Sig voice(const Sig& x, double speed, double pitch, size_t frames, double sr, int block, long* allocs = nullptr) {
+Sig voice(const Sig& x, double speed, double pitch, size_t frames, double sr, int block, long* allocs = nullptr,
+          stretch::Engine engine = stretch::Engine::Stretch) {
   stretch::Voice v;
-  v.prepare(2, sr, 8.0, 8.0);
+  v.prepare(2, sr, 8.0, 8.0, false, engine);
   Src src{&x};
   Sig L(frames), R(frames);
   CountScope cs;
@@ -399,6 +423,73 @@ Sig voice(const Sig& x, double speed, double pitch, size_t frames, double sr, in
   if (allocs) *allocs = cs.n();
   return L;
 }
+// J-157: the lag (ms) of y's level envelope against x's read on y's time line
+// at 1 / tf (10 ms RMS windows every 0.5 ms, mean removed, the best of +-40 ms
+// by cross-correlation, refined between hops), and the correlation there.
+double envLag(const Sig& x, const Sig& y, double tf, double sr, double* corrOut = nullptr) {
+  const double hop = 0.0005 * sr, half = 0.005 * sr;
+  const size_t frames = std::min(y.size(), static_cast<size_t>(static_cast<double>(x.size()) * tf));
+  const auto count = static_cast<size_t>(static_cast<double>(frames) / hop);
+  auto env = [&](const Sig& s, double scale) {
+    std::vector<double> e(count, 0.0);
+    double mean = 0;
+    for (size_t k = 0; k < count; ++k) {
+      const double c = static_cast<double>(k) * hop / scale, h = half / scale;
+      const auto a = static_cast<size_t>(std::max(0.0, c - h));
+      const auto b = std::min(s.size(), std::max(a + 1, static_cast<size_t>(c + h)));
+      e[k] = rms(s, a, b), mean += e[k];
+    }
+    mean /= static_cast<double>(count);
+    for (double& v : e) v -= mean;
+    return e;
+  };
+  const auto ex = env(x, tf), ey = env(y, 1.0);
+  const int range = static_cast<int>(0.04 * sr / hop);
+  std::vector<double> cs(static_cast<size_t>(2 * range + 1));
+  for (int l = -range; l <= range; ++l) {
+    double s = 0, aa = 0, bb = 0;
+    for (size_t k = static_cast<size_t>(range) + 40; k + static_cast<size_t>(range) + 40 < count; ++k) {
+      const double u = ex[k], v = ey[static_cast<size_t>(static_cast<long>(k) + l)];
+      s += u * v, aa += u * u, bb += v * v;
+    }
+    cs[static_cast<size_t>(l + range)] = s / std::sqrt(aa * bb + 1e-30);
+  }
+  size_t k = 0;
+  for (size_t i = 1; i < cs.size(); ++i)
+    if (cs[i] > cs[k]) k = i;
+  double d = 0;
+  if (k > 0 && k + 1 < cs.size()) {
+    const double den = cs[k - 1] - 2 * cs[k] + cs[k + 1];
+    if (den < 0) d = 0.5 * (cs[k - 1] - cs[k + 1]) / den;
+  }
+  if (corrOut) *corrOut = cs[k];
+  return (static_cast<double>(k) - range + d) * hop / sr * 1000;
+}
+// The frequency (Hz) of the strongest spectral peak of x[a, a + 65536) (parabolic interpolation).
+double peakHz(const Sig& x, size_t a, double sr) {
+  const size_t n = 65536;
+  const auto p = power(x, a, n);
+  size_t k = 1;
+  for (size_t i = 2; i + 1 < p.size(); ++i)
+    if (p[i] > p[k]) k = i;
+  const double l = std::log(p[k - 1] + 1e-30), c = std::log(p[k] + 1e-30), r = std::log(p[k + 1] + 1e-30);
+  const double d = 0.5 * (l - r) / (l - 2 * c + r);
+  return (static_cast<double>(k) + d) * sr / static_cast<double>(n);
+}
+// A 440 Hz tone under a slowly moving level (1.7, 3.1 and 5.3 Hz swells): one
+// partial, so no beating moves with the pitch, and no onsets, so the timing of
+// a stretch shows in the level, not in how it places a hit (R3 moves hits by a
+// millisecond or two on purpose; the CLI does the same).
+Sig swells(double sr, double sec) {
+  Sig x(static_cast<size_t>(sec * sr), 0.f);
+  for (size_t i = 0; i < x.size(); ++i) {
+    const double t = static_cast<double>(i) / sr;
+    const double g = 0.55 + 0.2 * std::sin(2 * kPi * 1.7 * t) + 0.15 * std::sin(2 * kPi * 3.1 * t + 1) + 0.1 * std::sin(2 * kPi * 5.3 * t + 2);
+    x[i] = static_cast<float>(g * 0.4 * std::sin(2 * kPi * 440 * t));
+  }
+  return x;
+}
+
 SamplePtr sampleOf(const Sig& x, double sr) {
   auto s = std::make_shared<Sample>();
   s->sampleRate = sr;
@@ -739,6 +830,306 @@ int main() {
     const double change = std::fabs(corr(y[0], y[1], 0, y[0].size()) - cin);
     std::printf("# stereo correlation %.3f in, change %.3f\n", cin, change);
     expect(change < 0.05, "offline stretch: the stereo correlation stays (within 0.05)");
+  }
+
+  // ============================================================ J-157: Rubber Band
+  {
+    // Length, alignment (envelope lag), level and pitch at each rate, offline and realtime.
+    double worstLagOff = 0, worstLagRt = 0, worstLevel = 0, worstCents = 0, minCorr = 1;
+    bool lengths = true, fin = true;
+    for (double sr : {44100.0, 48000.0, 96000.0}) {
+      const Sig sw = swells(sr, sr > 50000 ? 3.0 : 5.0);
+      for (double tf : {0.75, 1.0, 1.5, 2.0}) {
+        for (double st : {0.0, 12.0, -12.0}) {
+          if (tf != 1.0 && st != 0.0) continue;
+          const double p = std::pow(2.0, st / 12.0);
+          const Sig y = offlineRb1(sw, p, tf, sr);
+          lengths = lengths && y.size() == static_cast<size_t>(std::llround(static_cast<double>(sw.size()) * tf));
+          // (the last 0.3 s holds the stretched sound, not silence: the engine reached the end)
+          lengths = lengths && rms(y, y.size() - static_cast<size_t>(0.3 * sr), y.size()) > 0.02;
+          fin = fin && finite(y);
+          double c = 0;
+          const double lag = envLag(sw, y, tf, sr, &c);
+          minCorr = std::min(minCorr, c);
+          const auto frames = static_cast<size_t>(static_cast<double>(sw.size()) * std::min(tf, 1.0) * 0.9);
+          const Sig r = voice(sw, 1.0 / tf, p, frames, sr, 256, nullptr, stretch::Engine::RubberBand);
+          fin = fin && finite(r);
+          double cr = 0;
+          const double lagRt = envLag(sw, r, tf, sr, &cr);
+          minCorr = std::min(minCorr, cr);
+          const double lv = 20 * std::log10(rms(y, 0, y.size()) / rms(sw, 0, sw.size()));
+          if (std::fabs(lag) > 1 || std::fabs(lagRt) > 1 || std::fabs(lv) > 1.5)
+            std::printf("#   rubber %.0f Hz x%g %+g st: lag offline %.2f ms (corr %.2f), realtime %.2f ms (corr %.2f), level %+.2f dB\n", sr, tf, st, lag, c,
+                        lagRt, cr, lv);
+          worstLagOff = std::max(worstLagOff, std::fabs(lag)), worstLagRt = std::max(worstLagRt, std::fabs(lagRt));
+          worstLevel = std::max(worstLevel, std::fabs(lv));
+        }
+      }
+      // In tune: a 440 Hz tone an octave up and down, offline and realtime.
+      const Sig tone = sine(440, static_cast<size_t>(2.5 * sr), sr, 0.4);
+      for (double st : {-12.0, 12.0}) {
+        const double p = std::pow(2.0, st / 12.0);
+        const Sig y = offlineRb1(tone, p, 1.0, sr);
+        const Sig r = voice(tone, 1.0, p, static_cast<size_t>(2.2 * sr), sr, 256, nullptr, stretch::Engine::RubberBand);
+        for (const Sig* s : {&y, &r}) {
+          const double hz = peakHz(*s, static_cast<size_t>(0.3 * sr), sr);
+          worstCents = std::max(worstCents, std::fabs(1200 * std::log2(hz / (440 * p))));
+        }
+      }
+    }
+    std::printf("# rubber band x0.75 .. x2, +-12 st, 44.1 / 48 / 96 kHz: envelope lag offline %.2f ms, realtime %.2f ms (lowest correlation %.2f); "
+                "level within %.2f dB; pitch within %.2f cents\n",
+                worstLagOff, worstLagRt, minCorr, worstLevel, worstCents);
+    expect(lengths && fin, "rubber band: offline renders have the exact length, filled to the end, at 44.1 / 48 / 96 kHz");
+    expect(worstLagOff <= 1.0 && worstLagRt <= 1.0 && minCorr > 0.8,
+           "rubber band: offline and realtime output line up with the source (envelope cross-correlation lag within 1 ms)");
+    expect(worstLevel < 1.5, "rubber band: the level stays (within 1.5 dB) at x0.75 .. x2 and +-12 st");
+    expect(worstCents < 2.0, "rubber band: an octave up and down in tune (2 cents), offline and realtime");
+
+    // No clicks on steady tones (offline and realtime).
+    const double sr = 44100;
+    Sig bass(static_cast<size_t>(4 * sr));
+    for (size_t i = 0; i < bass.size(); ++i) {
+      double v = 0;
+      for (int k = 1; k <= 8; ++k) v += std::sin(2 * kPi * 55 * k * static_cast<double>(i) / sr + k) / k;
+      bass[i] = static_cast<float>(0.3 * v);
+    }
+    const Sig tone = sine(440, static_cast<size_t>(4 * sr), sr, 0.5);
+    double worstOff = 0, worstRt = 0;
+    for (const Sig* x : {static_cast<const Sig*>(&bass), &tone})
+      for (const auto& [tf, st] : {std::pair<double, double>{0.5, 0}, {0.75, 0}, {1.5, 0}, {2, 0}, {4, 0}, {1, -12}, {1, -5}, {1, 5}, {1, 12}}) {
+        const double p = std::pow(2.0, st / 12.0);
+        const Sig y = offlineRb1(*x, p, tf, sr);
+        const double off = clickRatio(y, static_cast<size_t>(0.5 * sr * tf), static_cast<size_t>(3.5 * sr * tf));
+        const auto frames = static_cast<size_t>(3.5 * sr * std::min(tf, 1.0));
+        const Sig r = voice(*x, 1.0 / tf, p, frames, sr, 256, nullptr, stretch::Engine::RubberBand);
+        const double rt = clickRatio(r, static_cast<size_t>(0.5 * sr), frames);
+        if (off > 3 || rt > 3) std::printf("#   rubber %s x%g %+g st: click ratio offline %.2f, realtime %.2f\n", x == &bass ? "bass" : "tone", tf, st, off, rt);
+        worstOff = std::max(worstOff, off), worstRt = std::max(worstRt, rt);
+      }
+    std::printf("# rubber band steady bass and tone, x0.5 .. x4, -12 .. +12 st: worst click ratio offline %.2f, realtime %.2f\n", worstOff, worstRt);
+    expect(worstOff < 3 && worstRt < 3, "rubber band: steady tones stay smooth (no clicks), offline and realtime");
+
+    // Realtime: no allocation, the same output for any block size, a seek primed with pre-roll.
+    std::vector<double> hs;
+    const Sig bk = bassKick(sr, 3.0, &hs);
+    Sig outs[3];
+    long allocs = 0;
+    for (int pass = 0; pass < 3; ++pass) {
+      stretch::Voice hv;
+      hv.prepare(2, sr, 4.0, 4.0, false, stretch::Engine::RubberBand);
+      Src bs{&bk};
+      const int pre = hv.prerollFor(0.6);
+      bs.pos = static_cast<size_t>(0.5 * sr) - static_cast<size_t>(pre);
+      Sig o(static_cast<size_t>(2.5 * sr)), o2(o.size());
+      CountScope cs;
+      hv.start(&Src::read, &bs, 0.6, 1.1, pre);
+      for (size_t at = 0; at < o.size();) {
+        const int n = static_cast<int>(std::min<size_t>(pass == 0 ? 512 : pass == 1 ? 61 : 16, o.size() - at));
+        float* op[2] = {o.data() + at, o2.data() + at};
+        hv.render(op, n, 0.6, 1.1, &Src::read, &bs);
+        at += static_cast<size_t>(n);
+      }
+      allocs += cs.n();
+      outs[pass] = o;
+    }
+    float vd = 0;
+    for (int pass = 1; pass < 3; ++pass)
+      for (size_t i = 0; i < outs[0].size(); ++i) vd = std::max(vd, std::fabs(outs[0][i] - outs[pass][i]));
+    std::printf("# rubber band realtime: %ld allocations in start + render; largest difference between block sizes 512 / 61 / 16: %g\n", allocs, vd);
+    expect(allocs == 0 && vd < 1e-6f && rms(outs[0], 0, outs[0].size()) > 0.05,
+           "rubber band realtime: start (with pre-roll) and render allocate nothing; the same output for any block size");
+
+    // The seek lines up: a stream started 1 s in (primed) against one started at 0, from 1 s on.
+    {
+      const Sig tn = swells(sr, 4.0);
+      const double speed = 0.8, pitch = std::pow(2.0, 3 / 12.0);
+      const Sig whole = voice(tn, speed, pitch, static_cast<size_t>(3 * sr), sr, 256, nullptr, stretch::Engine::RubberBand);
+      stretch::Voice sv;
+      sv.prepare(2, sr, 8.0, 8.0, false, stretch::Engine::RubberBand);
+      Src s2{&tn};
+      const int pre = sv.prerollFor(speed);
+      const auto startOut = static_cast<size_t>(1.0 * sr);  // output frame 1 s plays source 0.8 s
+      s2.pos = static_cast<size_t>(std::llround(static_cast<double>(startOut) * speed)) - static_cast<size_t>(pre);
+      sv.start(&Src::read, &s2, speed, pitch, pre);
+      Sig seek(static_cast<size_t>(1.5 * sr)), seekR(seek.size());
+      for (size_t at = 0; at < seek.size(); at += 256) {
+        float* op[2] = {seek.data() + at, seekR.data() + at};
+        sv.render(op, static_cast<int>(std::min<size_t>(256, seek.size() - at)), speed, pitch, &Src::read, &s2);
+      }
+      // The seek's level envelope against the unbroken stream's from 1 s, and the source's.
+      const Sig tail(whole.begin() + static_cast<long>(startOut), whole.begin() + static_cast<long>(startOut + seek.size()));
+      const Sig srcPart(tn.begin() + static_cast<long>(std::llround(static_cast<double>(startOut) * speed)), tn.end());
+      double c1 = 0, c2 = 0;
+      const double lag = envLag(tail, seek, 1.0, sr, &c1), lagSrc = envLag(srcPart, seek, 1.0 / speed, sr, &c2);
+      const double r0 = rms(seek, 0, static_cast<size_t>(0.02 * sr)), r1 = rms(tail, 0, static_cast<size_t>(0.02 * sr));
+      std::printf("# rubber band seek at 1 s (pre-roll %d frames): envelope lag %.2f ms against the unbroken stream (corr %.2f), %.2f ms against "
+                  "the source (corr %.2f); first 20 ms level %.3f against %.3f\n",
+                  pre, lag, c1, lagSrc, c2, r0, r1);
+      expect(std::fabs(lag) <= 1.0 && std::fabs(lagSrc) <= 1.0 && c1 > 0.9 && r0 > 0.8 * r1,
+             "rubber band realtime: a seek primed with pre-roll lines up with the unbroken stream (1 ms) at full level from its first frames");
+    }
+
+    // A pitch bend sweeping -7 .. +7 semitones (and speed 0.7 .. 1.3) while it plays: no allocation, smooth.
+    {
+      const Sig tn = sine(330, static_cast<size_t>(6 * sr), sr, 0.4);
+      double crs = 0;
+      for (const auto eng : {stretch::Engine::Stretch, stretch::Engine::RubberBand}) {
+      stretch::Voice bv;
+      bv.prepare(2, sr, 4.0, 4.0, false, eng);
+      Src s3{&tn};
+      Sig o(static_cast<size_t>(3 * sr)), o2(o.size());
+      long al = 0;
+      {
+        CountScope cs;
+        bv.start(&Src::read, &s3, 1.0, 1.0, 0);
+        for (size_t at = 0; at < o.size(); at += 128) {
+          const double u = static_cast<double>(at) / static_cast<double>(o.size());
+          const double semis = 7 * std::sin(2 * kPi * 1.5 * u), speed = 1.0 + 0.3 * std::sin(2 * kPi * u);
+          float* op[2] = {o.data() + at, o2.data() + at};
+          bv.render(op, static_cast<int>(std::min<size_t>(128, o.size() - at)), speed, std::pow(2.0, semis / 12), &Src::read, &s3);
+        }
+        al = cs.n();
+      }
+      const double cr = clickRatio(o, static_cast<size_t>(0.3 * sr), o.size());
+      if (eng == stretch::Engine::Stretch) {
+        crs = cr;
+        if (std::getenv("GL_J157_DUMP")) writeTmp("gl_j157_bend_ss.wav", o, sr);
+        continue;
+      }
+      if (std::getenv("GL_J157_DUMP")) writeTmp("gl_j157_bend_rb.wav", o, sr);
+      std::printf("# rubber band realtime pitch bend +-7 st with speed 0.7 .. 1.3: %ld allocations, click ratio %.2f (the stretch: %.2f)\n", al, cr, crs);
+      expect(al == 0 && finite(o) && cr < 3, "rubber band realtime: bending the pitch and speed while playing allocates nothing and stays smooth");
+      }
+    }
+
+    // A tempo map (rates 1.0 / 1.5 every second): the swells stay where the map puts them.
+    {
+      const Sig x = swells(sr, 12.0);
+      auto srcAt = [sr](int64_t j) {
+        const double t = static_cast<double>(j);
+        const double k = std::floor(t / sr);
+        const auto ki = static_cast<int64_t>(k);
+        return std::floor(k / 2) * 2.5 * sr + (ki % 2 ? sr : 0.0) + (t - k * sr) * (ki % 2 ? 1.5 : 1.0);
+      };
+      const auto outLen = static_cast<int64_t>(static_cast<double>(x.size()) / 1.25) - static_cast<int64_t>(sr);
+      Sig y(static_cast<size_t>(outLen)), y2(y.size());
+      const float* in[2] = {x.data(), x.data()};
+      float* out[2] = {y.data(), y2.data()};
+      stretch::Settings st;
+      st.mode = stretch::Mode::RubberBand;
+      stretch::processMapped(in, 2, static_cast<int64_t>(x.size()), out, outLen, sr, st, srcAt);
+      // The map's reading of the source, plainly: the expected envelope.
+      Sig ref(y.size());
+      for (int64_t j = 0; j < outLen; ++j) ref[static_cast<size_t>(j)] = x[static_cast<size_t>(std::min<double>(srcAt(j), static_cast<double>(x.size() - 1)))];
+      double c = 0;
+      const double lag = envLag(ref, y, 1.0, sr, &c);
+      // Each 2 s stretch on its own (a drift would show as a growing lag).
+      double worstWin = 0, minWinCorr = 1;
+      for (int w = 0; w + 2 <= 8; w += 2) {
+        const auto a = static_cast<long>(w * sr), b = static_cast<long>((w + 2) * sr);
+        const Sig rr(ref.begin() + a, ref.begin() + b), yy(y.begin() + a, y.begin() + b);
+        double cc = 0;
+        worstWin = std::max(worstWin, std::fabs(envLag(rr, yy, 1.0, sr, &cc)));
+        minWinCorr = std::min(minWinCorr, cc);
+      }
+      std::printf("# rubber band tempo steps 1.0 / 1.5: envelope lag %.2f ms against the map (corr %.2f); worst 2 s window %.2f ms (corr %.2f)\n", lag,
+                  c, worstWin, minWinCorr);
+      expect(std::fabs(lag) <= 3.0 && worstWin <= 3.0 && minWinCorr > 0.95,
+             "rubber band: tempo-mapped clips follow the map (envelope lag within 3 ms: the engine eases into each rate change), no drift");
+    }
+
+    // Clip playback: the Rubber Band render and its realtime voice crossfade without a click.
+    {
+      const Sig ct = sine(220, static_cast<size_t>(4 * sr), sr, 0.5);
+      const std::string path = writeTmp("gl_j157_cliptone.wav", ct, sr);
+      SamplePtr smp = sampleCache().get(path);
+      TempoMap map;
+      map.setConstant(120, 96);
+      ProgAudioClip c;
+      c.start = 0, c.end = 192 * 6;
+      c.startSec = 0, c.durSec = map.secondsAt(static_cast<double>(c.end));
+      c.sample = smp, c.srcStart = 0, c.srcEnd = smp->seconds(), c.speed = 0.8, c.granular = true;
+      c.engine = stretch::Engine::RubberBand;
+      stretch::ClipRequest rq;
+      rq.sample = smp, rq.srcEnd = c.srcEnd, rq.mode = stretch::Mode::RubberBand, rq.rate = sr, rq.speed = 0.8;
+      rq.frames = static_cast<int64_t>(std::ceil(c.durSec * sr)) + 2;
+      c.hq = stretch::renderClip(rq, false);
+      c.rt = makeClipVoice(sr, stretch::Engine::RubberBand);
+      const std::vector<ProgAudioClip> clips{c};
+      const int64_t total = static_cast<int64_t>(2.5 * sr), off0 = static_cast<int64_t>(1.0 * sr), off1 = static_cast<int64_t>(1.5 * sr);
+      Sig L(static_cast<size_t>(total), 0.f), R(L.size(), 0.f);
+      long al = 0;
+      for (int64_t at = 0; at < total; at += 512) {
+        const int len = static_cast<int>(std::min<int64_t>(512, total - at));
+        const double semis = at >= off0 && at < off1 ? 0.02 : 0.0;
+        CountScope cs;
+        renderAudioClips(clips, map, sr, 0, at, 0, len, L.data() + at, R.data() + at, semis);
+        al += cs.n();
+      }
+      const double base = maxCurve(L, static_cast<size_t>(0.3 * sr), static_cast<size_t>(0.9 * sr));
+      const double swc = std::max(maxCurve(L, static_cast<size_t>(off0 - 600), static_cast<size_t>(off0 + 2000)),
+                                  maxCurve(L, static_cast<size_t>(off1 - 600), static_cast<size_t>(off1 + 2000)));
+      const double mid = rms(L, static_cast<size_t>(off0 + 0.1 * sr), static_cast<size_t>(off1 - 0.05 * sr));
+      std::printf("# rubber band clip render <-> realtime switch: curvature %.4f against %.4f in steady play; realtime level %.3f\n", swc, base, mid);
+      expect(c.hq && swc < 2.0 * base && mid > 0.3 && al == 0,
+             "rubber band clip playback: switching between its render and its realtime voice crossfades (no click), no allocation");
+    }
+
+    // Sampler notes on Rubber Band: the bass under the kicks keeps its level.
+    {
+      std::vector<double> h2;
+      const Sig x = bassKick(sr, 6.0, &h2);
+      const std::string path = writeTmp("gl_j157_basskick.wav", x, sr);
+      gSamplerMode = stretch::Mode::RubberBand;
+      const Sig sv = sampler(path, 2.0, static_cast<size_t>(11.5 * sr), sr);
+      gSamplerMode = stretch::kStretch;
+      const Dip dd = bassDips(sv, h2, 2.0, sr);
+      std::printf("# rubber band sampler voice x2: bass mean dip %.2f dB, worst %.2f dB, level %.3f\n", dd.mean, dd.worst, rms(sv, 0, sv.size()));
+      expect(finite(sv) && rms(sv, 0, sv.size()) > 0.05 && dd.mean > -3.0, "rubber band sampler voices: notes play, the bass keeps its level through the hits");
+    }
+
+    // CPU: offline and realtime, stereo, 44.1 kHz (a steady mix of bass and tone).
+    {
+      Sig mix(static_cast<size_t>(10 * sr));
+      for (size_t i = 0; i < mix.size(); ++i) mix[i] = 0.5f * bass[i % bass.size()] + 0.3f * tone[i % tone.size()];
+      for (const auto& [tf, st] : {std::pair<double, double>{1.5, 0}, {1.0, 5}}) {
+        const double p = std::pow(2.0, st / 12.0);
+        auto t0 = std::chrono::steady_clock::now();
+        const auto y = offlineRb({mix, mix}, p, tf, sr);
+        const double dOff = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        t0 = std::chrono::steady_clock::now();
+        const auto z = offline({mix, mix}, p, tf, sr);
+        const double dSs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        t0 = std::chrono::steady_clock::now();
+        const auto frames = static_cast<size_t>(8 * sr);
+        const Sig r = voice(mix, 1.0 / tf, p, frames, sr, 256, nullptr, stretch::Engine::RubberBand);
+        const double dRt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        t0 = std::chrono::steady_clock::now();
+        const Sig r2 = voice(mix, 1.0 / tf, p, frames, sr, 256);
+        const double dRt2 = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        const double outSec = static_cast<double>(y[0].size()) / sr;
+        std::printf("# CPU x%g %+g st, stereo 44.1 kHz (times realtime): Rubber Band offline %.1f, realtime %.1f; Stretch offline %.1f, realtime %.1f\n",
+                    tf, st, outSec / dOff, 8.0 / dRt, outSec / dSs, 8.0 / dRt2);
+        (void)z, (void)r, (void)r2;
+      }
+      // A note-on: start() and the first 256 frames (the engine works through its start delay first).
+      stretch::Voice nv;
+      nv.prepare(2, sr, 4.0, 4.0, false, stretch::Engine::RubberBand);
+      double worstMs = 0, sumMs = 0;
+      for (int k = 0; k < 20; ++k) {
+        Src s4{&mix};
+        const auto t0 = std::chrono::steady_clock::now();
+        nv.start(&Src::read, &s4, 1.0, k % 2 ? 1.5 : 0.75, 0);
+        Sig f0(256), f1(256);
+        float* fo[2] = {f0.data(), f1.data()};
+        nv.render(fo, 256, 1.0, k % 2 ? 1.5 : 0.75, &Src::read, &s4);
+        const double ms = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() * 1000;
+        worstMs = std::max(worstMs, ms), sumMs += ms;
+      }
+      std::printf("# rubber band note-on (start + first 256 frames, stereo 44.1 kHz): %.2f ms on average, worst %.2f ms; lookahead at x1 %d frames\n", sumMs / 20,
+                  worstMs, nv.lookahead(1.0, 1.0));
+    }
   }
 
   // ============================================================ the first frame stays put

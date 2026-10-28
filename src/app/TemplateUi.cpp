@@ -325,7 +325,11 @@ void saveTemplateWindow(App& a) {
   ImGui::InputTextMultiline("##tdesc", T.desc, sizeof T.desc, ImVec2(340, 90));
   ui::FocusRing();
   ui::EndSection();
-  ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Saved in %s"), a.templatesDir().c_str());
+  {  // J-158: a long folder is shortened in the middle (it widened the dialog past the main window)
+    char where[1024];
+    std::snprintf(where, sizeof where, i18n::tr("Saved in %s"), a.templatesDir().c_str());
+    ui::PathFit(where, 488, P.textFaint);
+  }
   ui::DialogFooter(96 * 2 + theme::kS2);
   bool cancel = ui::TextButton("Cancel", false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape);
   ImGui::SameLine(0, theme::kS2);

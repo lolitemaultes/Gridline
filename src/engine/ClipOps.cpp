@@ -9,6 +9,7 @@
 #include "../packs/edison/edison.h"
 #include "Render.h"
 #include "Sample.h"
+#include "TimeStretch.h"
 
 namespace fs = std::filesystem;
 
@@ -219,7 +220,12 @@ float normalizeClip(Song& song, ObjectId id, double targetDb) {
 }
 
 bool setClipStretch(Song& song, ObjectId id, double timeFactor, bool keepPitch) {
-  return setClipStretchMode(song, id, timeFactor, keepPitch ? 1 : 0);
+  // J-157: a channel that keeps the pitch keeps its engine (Stretch or Rubber Band).
+  int mode = keepPitch ? 1 : 0;
+  if (const Clip* c = song.clip(id); c && keepPitch)
+    if (const Channel* ch = song.channel(c->source); ch && ch->plugin.type == "gl.sampler")
+      if (stretch::modeOf(par(*ch, pp::SmpStretchMode, 0)) == stretch::Mode::RubberBand) mode = static_cast<int>(stretch::Mode::RubberBand);
+  return setClipStretchMode(song, id, timeFactor, mode);
 }
 
 bool setClipStretchMode(Song& song, ObjectId id, double timeFactor, int mode) {
@@ -228,7 +234,7 @@ bool setClipStretchMode(Song& song, ObjectId id, double timeFactor, int mode) {
   Channel* ch = song.channel(c->source);
   if (!ch) return false;
   if (ch->plugin.type == "gl.sampler" && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode))
-    ch->plugin.params[pp::SmpStretchMode] = mode > 0 ? 1.0f : 0.0f;  // J-153: Resample or Stretch
+    ch->plugin.params[pp::SmpStretchMode] = static_cast<float>(stretch::choiceOf(stretch::modeOf(mode)));  // J-153 / J-157: Resample, Stretch or Rubber Band
   c = song.clip(id);
   c->stretch = std::clamp(timeFactor, 0.0625, 16.0);
   if (Tick n = audioClipNaturalLength(song, *c); n > 0) song.clip(id)->length = n;

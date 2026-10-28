@@ -12,6 +12,11 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   the Pitch Shifter, Platter and the other pitch and time effects all use the same continuous
   stretch. Every picker now offers two choices: Stretch (time and pitch apart) and Resample
   (pitch and speed together, like a turntable).
+- Clips can use Rubber Band for stretching and pitch: a third choice in the time mode pickers
+  (the clip menu and clip properties, the sampler, the audio editor), next to Stretch and
+  Resample. It uses the Rubber Band Library's R3 engine, which keeps drums and transients
+  sharper and costs more CPU, in renders and in realtime playback alike. Projects keep the
+  choice; FL Studio project export writes it as the stretch.
 - Stretched and shifted audio stays smooth from x0.5 to x4 and up to an octave either way:
   far fewer clicks and glitches (the worst realtime case drops from dozens per second to a few),
   no crackle or hop-rate ripple, and bass notes no longer drift or warble near the original
@@ -138,6 +143,19 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- Big plugin windows (Platter, Seltmann, Plasma, Edison and the other wide editors) no longer pop
+  out of Gridline into a separate window by themselves. This happened when a plugin window was
+  last used on a larger Gridline window (for example maximised) and then opened in a smaller one.
+  Plugin windows now always open inside the main window; they leave it only with the pop-out
+  button.
+- A plugin window larger than the space between the top bar and the status bar is now capped to
+  that space and its content scrolls, down and sideways, instead of running past the edge of the
+  main window where part of it could not be reached. With room to spare, windows keep their
+  natural size. Small screens and large interface scales (125 %, 150 %) benefit most.
+- Platter fits short windows better: the waveforms, platters and pads get more compact before the
+  window has to scroll, and it follows a narrow main window more closely.
+- The automation clip editor no longer runs under the status bar on small screens, and the Save as
+  template dialog no longer grows past the main window when the templates folder has a long path.
 - Welcome screen: the menu button on a project tile now opens the tile's menu, in the
   Collaborative view too.
 - The OUT meter in the top bar is now a real master output meter: it shows the master track after
