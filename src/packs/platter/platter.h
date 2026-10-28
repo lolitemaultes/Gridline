@@ -28,16 +28,19 @@
 // it was played on) and a note on the take's key is written into the pattern;
 // that note replays the performance sample for sample.
 #pragma once
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "../../core/Song.h"
 #include "../../core/Types.h"
 #include "../seltmann/seltmann.h"
 
 namespace gl {
 class Generator;
+class Document;
 }
 
 namespace gl::packs::platter {
@@ -70,6 +73,12 @@ enum DeckParam {
   DCount,       // (deck B's block: PDeckB .. PDeckB + DCount - 1)
   // Added after the block (J-154); their ids follow the mixer's, see deckParam.
   DJog = DCount,  // 0.25..2 jog sensitivity: record travel per jog tick (1 = one turn per turn)
+  // J-159: what a recorded performance plays back besides the controls (lanes in the
+  // pattern, see "performances"); the decks never move them themselves.
+  DPos,    // 0..1 record position: a change makes the deck jump there (a seek, a search)
+  DMouse,  // turns -1..1 (wraps): the mouse hand's travel since it grabbed the record
+  DWheel,  // turns -1..1 (wraps): the travel the jog wheel gave the record, summed
+  DNudge,  // wheel ticks -4096..4096 (wraps): rim nudges, summed
   DAll
 };
 // Parameter ids. 0..22 are J-150's single deck (deck A and the mixer values it
@@ -105,11 +114,20 @@ enum Param {
   PXfReverse,   // mixer: crossfader reverse
   PJogA,        // 46 (J-154): deck A jog sensitivity
   PJogB,        // deck B jog sensitivity
+  PPosA,        // 48 (J-159): performance lanes, deck A then deck B for each
+  PPosB,
+  PMouseA,
+  PMouseB,
+  PWheelA,
+  PWheelB,
+  PNudgeA,
+  PNudgeB,
   PCount
 };
 // The parameter id of deck `deck`'s parameter `d`.
 constexpr int deckParam(int deck, int d) {
   if (d == DJog) return deck == 0 ? static_cast<int>(PJogA) : static_cast<int>(PJogB);
+  if (d >= DPos) return static_cast<int>(PPosA) + (d - DPos) * 2 + (deck & 1);
   return deck == 0 ? (d < DXfSide ? d : d == DXfSide ? static_cast<int>(PXfSide) : static_cast<int>(PLoopSize)) : static_cast<int>(PDeckB) + d;
 }
 inline constexpr double kJogSensDefault = 0.8;  // a little less than one turn per turn
@@ -120,6 +138,13 @@ enum PitchRange { Range4 = 0, Range8, Range16, Range50, RangeCount };
 enum XfSide { XfThru = 0, XfA, XfB };
 enum FaderCurve { FcSmooth = 0, FcLinear, FcSharp };
 enum NoteMode { NoteGate = 0, NoteTrigger };
+// DMouse / DWheel range (turns either way). The lanes wrap at the ends (a hand that goes on
+// turning starts again at the other end): a scratch fills a good part of the lane's height.
+inline constexpr double kTravelTurns = 1;
+inline constexpr double kNudgeSpan = 4096;  // DNudge range (wheel ticks either way)
+// The performance parameters (DPos .. DNudge of both decks): played from lanes, never
+// moved by the decks themselves.
+constexpr bool perfParam(int p) { return p >= PPosA && p <= PNudgeB; }
 enum SyncTo { SyncProject = 0, SyncDeck };
 inline constexpr int kLoopSizes = 9;
 double loopBeats(int index);        // 0.125 .. 32
@@ -134,6 +159,51 @@ inline constexpr int kHotKeyFirst = 60;         // notes 60..67 = deck A hot cue
 inline constexpr int kHotKeyFirstB = 72;        // notes 72..79 = deck B hot cues 1..8
 inline constexpr int kTakeKeyFirst = 36;        // notes 36..59 = takes 1..24
 inline constexpr int kTakeKeys = 24;
+// J-159: command keys. A note on one holds a deck's button for as long as it lasts
+// (recorded performances write them): deck A 80..102, deck B 104..126; the hot cue
+// clears on 20..27 (A) and 28..35 (B). Key 68 starts a recorded performance: the decks
+// go back to how they were when it was recorded (the setup keeps that state; the
+// note's mod X / mod Y say which).
+enum CmdKey {
+  KeyPlay = 0,
+  KeyCue,
+  KeyHot1,  // .. KeyHot1 + 7: hot cues (set on an empty pad, else trigger)
+  KeyLoopIn = KeyHot1 + kHotCues,
+  KeyLoopOut,
+  KeyLoopAuto,
+  KeyLoopHalve,
+  KeyLoopDouble,
+  KeyJumpBack,
+  KeyJumpFwd,
+  KeyJumpStart,
+  KeyCensor,
+  KeyBendDown,
+  KeyBendUp,
+  KeyTouch,  // the jog wheel's top is touched
+  KeyMouse,  // the mouse holds the record (its travel: the mouse travel lane)
+  KeyClear1,  // .. KeyClear1 + 7: hot cue clears (their own key range)
+  kCmdKeys = KeyClear1 + kHotCues
+};
+inline constexpr int kCmdKeyFirstA = 80;
+inline constexpr int kCmdKeyFirstB = 104;
+inline constexpr int kClearKeyFirstA = 20;
+inline constexpr int kClearKeyFirstB = 28;
+inline constexpr int kStartKey = 68;
+// MIDI note of command key `index` on deck `deck`.
+int cmdKeyPitch(int deck, int index);
+// Deck (0 / 1) and CmdKey of a note, -1 when it is not a command key.
+int cmdKeyOf(int pitch, int& index);
+// The deck control a command key presses (CtlNone for KeyMouse), and the key of a control (-1 none).
+int cmdKeyControl(int index);
+int controlCmdKey(int control);
+// Name of a Platter key for the piano roll ("A Cue", "B Hot cue 3", "Take 2"; "" for plain keys).
+std::string keyName(int pitch);
+// The id a start note carries in its mod X / mod Y (0..65535) and back.
+inline int startIdOf(int modX, int modY) { return modX + 256 * modY; }
+// A command key note with this mod Y holds a button that was already down when its pass
+// began: on the sample a performance starts its press does nothing (the start state has the
+// button down), only its release acts; anywhere else it presses as usual.
+inline constexpr int kHeldModY = 0;
 inline constexpr int kMaxBindings = 256;
 
 // EQ / fader values of a normalized controller position (EQ: centre = 0 dB, bottom = kill).
@@ -328,14 +398,25 @@ struct DeckModel {
   bool operator==(const DeckModel& o) const;
 };
 enum Layout { LayoutOne = 1, LayoutTwo = 2 };
+// J-159: what a recording pass becomes.
+enum RecordAs { RecAutomation = 0, RecTake };
+// J-159: how the decks were when a performance was recorded (restored by its start note).
+// The values are the runtime's own (opaque here); stored exactly (hex) in the model.
+struct PerfStart {
+  int id = 0;
+  std::vector<double> v;
+  bool operator==(const PerfStart& o) const { return id == o.id && v.size() == o.v.size() && std::equal(v.begin(), v.end(), o.v.begin(), [](double a, double b) { return a == b || (a != a && b != b); }); }
+};
 struct Model {
   std::vector<std::string> files;  // every track the model refers to (decks, takes)
   std::array<DeckModel, kDecks> deck;
   int layout = LayoutTwo;
   bool asked = false;            // the controller question was answered
-  bool armed = true;             // records takes while Gridline records
+  bool armed = true;             // records while Gridline records
+  int recordAs = RecAutomation;  // a performance in the pattern (lanes and command keys), or a take
   Mapping map;
   std::vector<Take> takes;
+  std::vector<PerfStart> starts;  // J-159: recorded performances' start states
   bool operator==(const Model& o) const;
   bool twoDecks() const { return layout != LayoutOne; }
   // The track of a deck ("" = empty).
@@ -408,7 +489,8 @@ struct LiveView {
   double tempo = 0;            // effective BPM
   double beat = 0;             // beat position at pos (the deck's grid)
   int take = -1;               // take key playing (-1 none)
-  bool capturing = false;      // recording a take
+  bool capturing = false;      // recording a take (or a performance)
+  bool replaying = false;      // J-159: a recorded performance drives the decks
   float pre = 0;               // channel level before the fader (peak of the last block)
   float level = 0;             // channel level after fader and crossfader
   bool shift = false;
@@ -416,6 +498,15 @@ struct LiveView {
   uint8_t raw[3] = {0, 0, 0};
 };
 bool liveView(const Generator* g, int deck, LiveView& out);
+// J-159 (tests): what the decks use right now: the running step's parameter values, each
+// deck's read position and speed, the setup's sample clock. Audio thread state: read it
+// between blocks only (never while the engine runs on another thread).
+struct StepState {
+  std::array<float, PCount> p{};
+  double pos[kDecks] = {0, 0}, vel[kDecks] = {0, 0};
+  uint64_t clock = 0;
+};
+bool stepState(const Generator* g, StepState& out);
 inline bool liveView(const Generator* g, LiveView& out) { return liveView(g, 0, out); }
 // The mixer's live values.
 struct MixView {
@@ -462,13 +553,19 @@ struct Cmd {
 bool command(Generator* g, const Cmd& c);
 
 // Recorded material handed from the setup to the editor (UI thread drains it).
+// J-159: a performance capture adds Move events for every parameter (the normalized
+// value the decks used, perf lanes included: value = lane value), Button events (deck,
+// CmdKey, down) and the start state in Snap events (8 values each, in order).
+inline constexpr int kSnapPer = 8;
 struct CaptureEvent {
-  enum Kind : uint8_t { Start = 0, Point, Move, End, Lost } kind = Point;
+  enum Kind : uint8_t { Start = 0, Point, Move, End, Lost, Button, Snap } kind = Point;
   uint8_t streams = 0;    // Start: decks with a track (bit d)
-  uint8_t param = 0;      // Move
-  float value = 0;        // Move
-  uint32_t step = 0;      // Move
+  uint8_t param = 0;      // Move: Param id; Button: CmdKey
+  uint8_t deck = 0;       // Button
+  float value = 0;        // Move (normalized for a performance, plain for a take); Button: 1 down, 0 up
+  uint32_t step = 0;      // Move / Button: the step it acts on; Snap: values [step * kSnapPer, ...)
   TakePoint pt[kDecks];   // Point: both decks; Start: pt[d].pos = start position
+  double snap[kSnapPer] = {};  // Snap: start state values; Start: snap[0] = their count, snap[1] = the start tick (exact)
   int file[kDecks] = {-1, -1};      // Start
   double startRate[kDecks] = {0, 0};  // Start
   float gain[kDecks] = {1, 1};      // Start
@@ -485,5 +582,80 @@ struct TakeBuilder {
   // True when an End completed a take (in `take`).
   bool feed(const CaptureEvent& e);
 };
+
+// ------------------------------------------------------------------ performances (J-159)
+// A pass recorded as pattern data: a start note, notes on the command keys and lanes on
+// the parameters that moved (the performance lanes of both decks included). Times are
+// exact ticks (fractions kept): every event sits where it acts on the step it acted on
+// live, so the replay is the same sample for sample.
+struct PerfNote {
+  double on = 0, off = 0;  // ticks
+  int key = 0;
+  bool held = false;  // down before the pass began (kHeldModY)
+};
+struct PerfPoint {
+  double tick = 0;
+  float value = 0;  // normalized
+};
+struct PerfLane {
+  int param = 0;  // Param id
+  std::vector<PerfPoint> points;
+};
+struct Performance {
+  double startTick = 0;  // where the pass started (song or pattern ticks, exact)
+  double endTick = 0;
+  std::vector<PerfNote> notes;
+  std::vector<PerfLane> lanes;
+  std::vector<double> start;  // the start state (Model::starts entry)
+  const PerfLane* lane(int param) const;
+};
+// Builds performances from the capture events (UI thread). Lanes are lossless: one Hold
+// point wherever the value the decks used changed.
+class PerformanceBuilder {
+ public:
+  bool active = false, lost = false;
+  Performance perf;  // after an End
+  // True when an End completed a performance (in `perf`).
+  bool feed(const CaptureEvent& e);
+  // The pass's start tick (valid while active).
+  double startTick() const { return tick0_; }
+
+ private:
+  double tick0_ = 0, tps_ = 0;  // start tick (exact), ticks per step
+  size_t snapN_ = 0;
+  uint32_t steps_ = 0;
+  std::vector<std::pair<uint32_t, float>> moves_[PCount];
+  struct Btn {
+    uint32_t step;
+    uint8_t deck, key;
+    bool down;
+  };
+  std::vector<Btn> btns_;
+  void build(double endTick);
+};
+
+// The pattern-data form of a performance at pattern tick `origin` (the pass start lands
+// on origin + its fraction): notes on `channel`'s keys and lane points (sub-tick frac).
+// `startId`: the start note's id (Model::starts).
+void performanceNotes(const Performance& perf, double origin, int startId, std::vector<Note>& out);
+std::vector<AutoPoint> performancePoints(const PerfLane& lane, double origin);
+
+// Pattern helpers (UI thread; edits go through the Document, so they are undoable).
+// A pattern holds a Platter performance of `channel`: notes on its command, start or take
+// keys, or a lane on one of its parameters.
+bool holdsPerformance(const Pattern& p, ObjectId channel);
+// The pattern a pass records into: `want` while it holds no performance of `channel`
+// (an empty or unrelated pattern is used as is); else a new pattern "<channel> take N"
+// after it. Pattern mode (`song` false): the new one has the old one's length and its
+// other content (other channels, the channel's own hot key notes), so the loop and the
+// backing play on; song mode: it starts empty.
+ObjectId passPattern(Document& doc, ObjectId want, ObjectId channel, bool song);
+// Song mode: the pattern-tick origin of the clip of `pattern` at song tick `tick`; a clip
+// is placed on the bar (the channel's instrument track or a free track) when none covers it.
+Tick clipOrigin(Document& doc, ObjectId pattern, ObjectId channel, Tick tick, Tick length);
+// Writes `perf` (song or pattern ticks; `origin` = the pattern's tick 0 there) into
+// `pattern`: notes, lanes, and the start state into the channel's model (its id).
+// Song mode: the pattern grows to hold it.
+void writePerformance(Document& doc, ObjectId pattern, ObjectId channel, double origin, const Performance& perf, bool song);
 
 }  // namespace gl::packs::platter

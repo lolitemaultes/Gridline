@@ -202,7 +202,7 @@ void testCatalogue() {
   normalizePluginState(s);
   expect(static_cast<int>(s.params.size()) == pl::PCount, "short parameter lists are completed");
   // parameter ids: deck A keeps J-150's ids, deck B and the new mixer values follow
-  expect(pl::PCount == 48 && pl::PDeckB == 23 && pl::PJogA == 46,
+  expect(pl::PCount == 56 && pl::PPosA == 48 && pl::PDeckB == 23 && pl::PJogA == 46,
          "parameter ids: 23 from the single deck, deck B and the mixer after them, then the jog sensitivities");
   for (int d = 0; d < pl::DCount; ++d) {
     int dd = -1;
@@ -992,7 +992,10 @@ void testTakes(const std::string& path, bool keyLock) {
   std::vector<float> live;
   const int64_t frames = 110000;
   {
-    Deck d = makeDeck(path, 120, [keyLock](PluginState& s, pl::Model&) { s.params[pl::PKeyLock] = keyLock ? 1.f : 0.f; });
+    Deck d = makeDeck(path, 120, [keyLock](PluginState& s, pl::Model& m) {
+      s.params[pl::PKeyLock] = keyLock ? 1.f : 0.f;
+      m.recordAs = pl::RecTake;  // J-159: takes are the second recording kind
+    });
     d.g->prepareHost(d.st, kSr);
     d.ctx.playing = true;
     d.ctx.recording = true;
@@ -1231,7 +1234,8 @@ void testTakesBoth(const std::string& a, const std::string& b, bool keyLock) {
   pl::Take take;
   std::vector<float> live;
   const int64_t frames = 120000;
-  auto setup = [keyLock](PluginState& s, pl::Model&) {
+  auto setup = [keyLock](PluginState& s, pl::Model& m) {
+    m.recordAs = pl::RecTake;
     for (int k = 0; k < pl::kDecks; ++k) s.params[static_cast<size_t>(pl::deckParam(k, pl::DKeyLock))] = keyLock ? 1.f : 0.f;
   };
   {

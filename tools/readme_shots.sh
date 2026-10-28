@@ -73,12 +73,71 @@ for t in eq hall amprack; do
   shot "ed_$t" "" "$SONG" --hide rack --plugin "gl.$t" --preset 2 --size 1440x900 --scale 2 --frames 60
 done
 
-# Release shots (docs/images/release-<version>/): the Theme page with the
-# control styles, the demo song's arrangement and a few Gridline Suite Mini editors.
-printf '40 move 800 600\n45 wheel -5\n55 move 1590 990\n' > "$OUT/theme-scroll.txt"  # down to Controls
-shot rel_theme "" "$SONG" --hide rack --show theme $S --frames 120 --dev-input "$OUT/theme-scroll.txt"
-if want rel_demo; then "$BUILD/gridline" demo "$OUT/demo.gridline.json" >/dev/null; fi
-shot rel_demo "" "$OUT/demo.gridline.json" --hide rack --show playlist --zoom 0.38 $S --frames 120
-for t in minipress miniecho minichime; do
-  shot "rel_$t" "" "$SONG" --hide rack --plugin "gl.$t" --size 1440x900 --scale 2 --frames 60
-done
+# Platter with a track on each deck (the showcase song on A, the demo song's drop on B),
+# both playing, hot cues set.
+if want platter; then
+  "$BUILD/gridline" demo "$OUT/demo.gridline.json" >/dev/null
+  "$BUILD/gridline" render "$SONG" -o "$OUT/Showcase.wav" >/dev/null 2>&1
+  "$BUILD/gridline" render "$OUT/demo.gridline.json" -o "$OUT/Gridline Drop.wav" --scope range:65-96 >/dev/null 2>&1
+fi
+export GRIDLINE_PLATTER_DEMO="$OUT/Showcase.wav" GRIDLINE_PLATTER_DEMO_B="$OUT/Gridline Drop.wav"
+shot platter "GRIDLINE_PLATTER_PROFILE=none GRIDLINE_PLATTER_PLAY=AB GRIDLINE_PLATTER_HOTS=1" "$SONG" --hide rack --plugin gl.platter $S --frames 600
+unset GRIDLINE_PLATTER_DEMO GRIDLINE_PLATTER_DEMO_B
+
+# The welcome screen with a few recent projects (Gridline's own songs and templates, the
+# demo song a favourite) in a config folder of its own.
+WEL="$OUT/welcome"
+if want welcome; then
+  rm -rf "$WEL" && mkdir -p "$WEL/config/gridline" "$WEL/Projects"
+  "$BUILD/gridline" demo "$WEL/Projects/Gridline.gridline.json" >/dev/null
+  cp "$SONG" "$WEL/Projects/Showcase.gridline.json"
+  cp "$G/tests/fixtures/test_song.gridline.json" "$WEL/Projects/First steps.gridline.json"
+  cp "$G/assets/templates/Basics/Beat starter.gridline.json" "$WEL/Projects/Beat starter.gridline.json"
+  cp "$G/assets/templates/Mixing/Mixing desk.gridline.json" "$WEL/Projects/Mixing desk.gridline.json"
+  now=$(date +%s)
+  : > "$WEL/config/gridline/recent.txt"
+  : > "$WEL/config/gridline/recent-times.tsv"
+  age=600
+  for p in Gridline Showcase "First steps" "Beat starter" "Mixing desk"; do
+    printf '%s\n' "$WEL/Projects/$p.gridline.json" >> "$WEL/config/gridline/recent.txt"
+    printf '%s\t%s\n' "$((now - age))" "$WEL/Projects/$p.gridline.json" >> "$WEL/config/gridline/recent-times.tsv"
+    age=$((age * 9))
+  done
+  printf '%s\n' "$WEL/Projects/Gridline.gridline.json" > "$WEL/config/gridline/favourite-projects.txt"
+fi
+export GRIDLINE_CONFIG_HOME="$WEL/config"
+shot welcome "" --show launcher --size 1280x800 --scale 2 --frames 240
+export GRIDLINE_CONFIG_HOME="$OUT/config"
+# The welcome screen's Collaborative view with simulated collaborators.
+shot collabview "" --show launcher-collab-demo $S --frames 240
+
+# The plugin manager over a plugin cache that holds only Gridline's own builds (the
+# in-tree test plugins in VST3, CLAP, VST2 and LV2, Gridline as a plugin, the Gridline
+# Suite), copied into the plug-in folders of the shots' own home folder (macOS layout).
+PLUG="$HOME/Library/Audio/Plug-Ins"
+if want plugins; then
+  rm -rf "$OUT/scan" "$PLUG" && mkdir -p "$OUT/scan" "$PLUG/VST3" "$PLUG/CLAP" "$PLUG/VST" "$PLUG/LV2"
+  for e in "CLAP test-clap/GridlineTest.clap" "VST3 test-vst3/GridlineTest.vst3" "VST test-vst2/GridlineTestVst2.vst" \
+           "LV2 test-lv2/GridlineTest.lv2" "CLAP plugins/Gridline.clap" "VST3 plugins/Gridline.vst3" \
+           "CLAP plugins/Gridline Suite.clap" "VST3 plugins/Gridline Suite.vst3" \
+           "CLAP plugins/Gridline Suite Mini.clap" "VST3 plugins/Gridline Suite Mini.vst3"; do
+    [ -e "$BUILD/${e#* }" ] && cp -R "$BUILD/${e#* }" "$PLUG/${e%% *}/"
+  done
+  n=0
+  for d in "$PLUG"/*/*; do
+    case "$d" in */VST3/*) f=vst3 ;; */CLAP/*) f=clap ;; */VST/*) f=vst2 ;; */LV2/*) f=lv2 ;; esac
+    n=$((n + 1))
+    "$BUILD/gridline" --scan-plugin "$f" "$d" --out "$OUT/scan/$n.json" >/dev/null 2>&1 || true
+  done
+  "$PY" "$G/tools/readme_scan_cache.py" "$OUT/scan" "$OUT/config/gridline/plugin-cache.json"
+fi
+shot plugins "GRIDLINE_HIDE_PLUGINS= GRIDLINE_NO_SUITE_INSTALL=1" "$SONG" --hide rack --show plugins $S --frames 120
+if want plugins; then rm -rf "$OUT/config/gridline/plugin-cache.json" "$PLUG"; fi
+
+# Seltmann with two bars of the showcase song's beat chopped, the sequence lane under the waveform.
+if want seltmann; then
+  "$BUILD/gridline" render "$SONG" -o "$OUT/Beat.wav" --scope pattern:1 --loops 2 --tail cut >/dev/null 2>&1
+fi
+export GRIDLINE_SELTMANN_DEMO="$OUT/Beat.wav"
+shot seltmann "" "$SONG" --hide rack --plugin gl.seltmann $S --frames 400
+unset GRIDLINE_SELTMANN_DEMO

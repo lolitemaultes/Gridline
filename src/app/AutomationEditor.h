@@ -40,6 +40,9 @@ void automationMenuItems(App& a, ParamId pid);
 // into the clip under the playhead, or a new clip; pattern mode: the current
 // pattern's lane). Each gesture becomes one thinned undo step.
 bool& automationRecording();
+// While true, parameter changes are not recorded as automation (an instrument records them
+// its own way, J-159).
+bool& automationRecordHold();
 
 // ---- piano roll: pattern automation lane ------------------------------------------
 // Target shown in the piano roll's lower lane (owner kNoId: note properties).

@@ -463,9 +463,14 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       if (loopTicks > 0 && (n.start >= loopTicks || n.start + rep >= patLen)) break;
       NoteEv e = makeEv(n.start + rep, n.start + rep + n.length, static_cast<float>(n.pitch) + static_cast<float>(n.fine) / 100.0f,
                         static_cast<float>(n.velocity) / 127.0f);
+      if (n.frac != 0.f || n.endFrac != 0.f) {  // J-159: a sub-tick start / end
+        const double t0 = static_cast<double>(n.start + rep) + n.frac;
+        setOn(e, t0);
+        setOff(e, std::max(t0 + 1e-3, static_cast<double>(n.start + rep + n.length) + n.endFrac));
+      }
       if (swing > 0 && stepTicks > 0 && song.swingNotes) {  // J-138: notes swing with the steps (written positions stay straight)
-        const double on = swingWarp(static_cast<double>(e.on), swing, stepTicks, p.stepsPerBar);
-        const double end = swingWarp(static_cast<double>(e.off), swing, stepTicks, p.stepsPerBar);
+        const double on = swingWarp(noteOnTick(e), swing, stepTicks, p.stepsPerBar);
+        const double end = swingWarp(noteOffTick(e), swing, stepTicks, p.stepsPerBar);
         // Truncated: the note ends where its warped end falls. Otherwise it is never shorter than written.
         const double minLen = std::min(1.0, static_cast<double>(n.length));
         setOn(e, on);

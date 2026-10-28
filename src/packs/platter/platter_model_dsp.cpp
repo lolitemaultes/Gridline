@@ -74,7 +74,98 @@ int deckOfParam(int p, int& d) {
     d = DJog;
     return p == PJogA ? 0 : 1;
   }
+  if (perfParam(p)) {
+    d = DPos + (p - PPosA) / 2;
+    return (p - PPosA) % 2;
+  }
   return -1;
+}
+
+// ------------------------------------------------------------------ command keys (J-159)
+int cmdKeyPitch(int deck, int index) {
+  if (index >= KeyClear1) return (deck == 0 ? kClearKeyFirstA : kClearKeyFirstB) + (index - KeyClear1);
+  return (deck == 0 ? kCmdKeyFirstA : kCmdKeyFirstB) + index;
+}
+
+int cmdKeyOf(int pitch, int& index) {
+  for (int d = 0; d < kDecks; ++d) {
+    const int k = pitch - (d == 0 ? kCmdKeyFirstA : kCmdKeyFirstB);
+    if (k >= 0 && k < KeyClear1) {
+      index = k;
+      return d;
+    }
+    const int c = pitch - (d == 0 ? kClearKeyFirstA : kClearKeyFirstB);
+    if (c >= 0 && c < kHotCues) {
+      index = KeyClear1 + c;
+      return d;
+    }
+  }
+  index = -1;
+  return -1;
+}
+
+int cmdKeyControl(int index) {
+  if (index >= KeyHot1 && index < KeyHot1 + kHotCues) return CtlHot1 + (index - KeyHot1);
+  if (index >= KeyClear1 && index < KeyClear1 + kHotCues) return CtlHotClear1 + (index - KeyClear1);
+  switch (index) {
+    case KeyPlay: return CtlPlay;
+    case KeyCue: return CtlCue;
+    case KeyLoopIn: return CtlLoopIn;
+    case KeyLoopOut: return CtlLoopOut;
+    case KeyLoopAuto: return CtlLoopAuto;
+    case KeyLoopHalve: return CtlLoopHalve;
+    case KeyLoopDouble: return CtlLoopDouble;
+    case KeyJumpBack: return CtlJumpBack;
+    case KeyJumpFwd: return CtlJumpFwd;
+    case KeyJumpStart: return CtlJumpStart;
+    case KeyCensor: return CtlCensor;
+    case KeyBendDown: return CtlBendDown;
+    case KeyBendUp: return CtlBendUp;
+    case KeyTouch: return CtlTouch;
+    default: return CtlNone;
+  }
+}
+
+int controlCmdKey(int control) {
+  if (control == CtlNone) return -1;
+  for (int i = 0; i < kCmdKeys; ++i)
+    if (cmdKeyControl(i) == control) return i;
+  return -1;
+}
+
+std::string keyName(int pitch) {
+  char b[48];
+  int idx = -1;
+  const int d = cmdKeyOf(pitch, idx);
+  const char deck = d == 1 ? 'B' : 'A';
+  if (d >= 0) {
+    if (idx >= KeyHot1 && idx < KeyHot1 + kHotCues) {
+      std::snprintf(b, sizeof b, "%c Hot cue %d", deck, idx - KeyHot1 + 1);
+      return b;
+    }
+    if (idx >= KeyClear1) {
+      std::snprintf(b, sizeof b, "%c Clear hot cue %d", deck, idx - KeyClear1 + 1);
+      return b;
+    }
+    static const char* const kNames[KeyClear1] = {"Play", "Cue", "", "", "", "", "", "", "", "", "Loop in", "Loop out", "Auto loop", "Loop / 2",
+                                                  "Loop x 2", "Jump back", "Jump forward", "Back to start", "Reverse", "Bend -", "Bend +",
+                                                  "Wheel touch", "Mouse hand"};
+    std::snprintf(b, sizeof b, "%c %s", deck, kNames[idx]);
+    return b;
+  }
+  if (pitch == kStartKey) return "Performance start";
+  if (pitch >= kTakeKeyFirst && pitch < kTakeKeyFirst + kTakeKeys) {
+    std::snprintf(b, sizeof b, "Take key %d", pitch - kTakeKeyFirst + 1);
+    return b;
+  }
+  for (int k = 0; k < kDecks; ++k) {
+    const int first = k == 0 ? kHotKeyFirst : kHotKeyFirstB;
+    if (pitch >= first && pitch < first + kHotCues) {
+      std::snprintf(b, sizeof b, "%c Hot key %d", k == 0 ? 'A' : 'B', pitch - first + 1);
+      return b;
+    }
+  }
+  return {};
 }
 
 const ControlInfo& controlInfo(int c) {
@@ -921,7 +1012,8 @@ bool DeckModel::operator==(const DeckModel& o) const {
          grid.minor == o.grid.minor && cue == o.cue && hot == o.hot && loopIn == o.loopIn && loopOut == o.loopOut;
 }
 bool Model::operator==(const Model& o) const {
-  return files == o.files && deck == o.deck && layout == o.layout && asked == o.asked && armed == o.armed && map == o.map && takes == o.takes;
+  return files == o.files && deck == o.deck && layout == o.layout && asked == o.asked && armed == o.armed && recordAs == o.recordAs &&
+         map == o.map && takes == o.takes && starts == o.starts;
 }
 std::string Model::trackOf(int d) const {
   if (d < 0 || d >= kDecks) return {};
@@ -1044,6 +1136,7 @@ std::string modelToText(const Model& m) {
   o << "platter 2\n";
   std::snprintf(b, sizeof b, "layout %d\nflags %d %d\n", m.layout, m.asked ? 1 : 0, m.armed ? 1 : 0);
   o << b;
+  if (m.recordAs != RecAutomation) o << "rec take\n";  // J-159 (missing: automation)
   for (const auto& f : m.files) o << "file " << f << "\n";
   for (int d = 0; d < kDecks; ++d) {
     const DeckModel& dm = m.deck[static_cast<size_t>(d)];
@@ -1064,6 +1157,17 @@ std::string modelToText(const Model& m) {
     }
     if (!t.moves.empty()) o << "tmoves " << t.key << " " << t.moves.size() << " " << encodeMoves(t.moves) << "\n";
     o << "tname " << t.key << " " << t.name << "\n";
+  }
+  // J-159: recorded performances' start states (exact: each value's bits in hex)
+  for (const auto& ps : m.starts) {
+    o << "pstart " << ps.id << " " << ps.v.size() << " ";
+    for (double x : ps.v) {
+      uint64_t u = 0;
+      std::memcpy(&u, &x, sizeof u);
+      std::snprintf(b, sizeof b, "%016llx", static_cast<unsigned long long>(u));
+      o << b;
+    }
+    o << "\n";
   }
   return o.str();
 }
@@ -1100,6 +1204,10 @@ bool modelFromText(const std::string& text, Model& m) {
       ls >> a >> r;
       m.asked = a != 0;
       m.armed = r != 0;
+    } else if (key == "rec") {
+      std::string v;
+      ls >> v;
+      m.recordAs = v == "take" ? RecTake : RecAutomation;
     } else if (key == "take") {  // J-150: deck A's stream on the first file
       Take t;
       long long st = 0, len = 0;
@@ -1116,6 +1224,28 @@ bool modelFromText(const std::string& text, Model& m) {
       if (!takeHeaderOk(t) || takeOf(m, t.key)) continue;
       if (!decodePoints(data, x.pts) || x.pts.size() != n) continue;
       m.takes.push_back(std::move(t));
+    } else if (key == "pstart") {  // J-159
+      PerfStart ps;
+      size_t n = 0;
+      std::string hex;
+      ls >> ps.id >> n >> hex;
+      if (n > 4096 || hex.size() != n * 16) continue;
+      ps.v.resize(n);
+      bool ok = true;
+      for (size_t i = 0; i < n && ok; ++i) {
+        uint64_t u = 0;
+        for (size_t c = 0; c < 16; ++c) {
+          const char h = hex[i * 16 + c];
+          const int dgt = h >= '0' && h <= '9' ? h - '0' : h >= 'a' && h <= 'f' ? h - 'a' + 10 : -1;
+          if (dgt < 0) ok = false;
+          u = (u << 4) | static_cast<uint64_t>(dgt < 0 ? 0 : dgt);
+        }
+        std::memcpy(&ps.v[i], &u, sizeof u);
+      }
+      if (ok) {
+        m.starts.erase(std::remove_if(m.starts.begin(), m.starts.end(), [&](const PerfStart& q) { return q.id == ps.id; }), m.starts.end());
+        m.starts.push_back(std::move(ps));
+      }
     } else if (key == "take2") {
       Take t;
       long long st = 0, len = 0;
@@ -1285,8 +1415,13 @@ bool TakeBuilder::feed(const CaptureEvent& e) {
         for (int d = 0; d < kDecks; ++d)
           if (take.s[static_cast<size_t>(d)].on) take.s[static_cast<size_t>(d)].pts.push_back(e.pt[d]);
       return false;
-    case CaptureEvent::Move:
-      if (active) take.moves.push_back(TakeMove{e.step, e.param, e.value});
+    case CaptureEvent::Move:  // (a take keeps the mixer values its streams do not hold)
+      if (active)
+        for (uint8_t p : moveParams())
+          if (p == e.param) take.moves.push_back(TakeMove{e.step, e.param, e.value});
+      return false;
+    case CaptureEvent::Button:
+    case CaptureEvent::Snap:
       return false;
     case CaptureEvent::Lost:  // an end after dropped points: no take
       lost = true;

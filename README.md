@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.7.0-beta.2" src="https://img.shields.io/badge/version-0.7.0--beta.2-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.0-beta.3" src="https://img.shields.io/badge/version-0.7.0--beta.3-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -47,18 +47,22 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks.
 
-**174 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
+**175 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
 
 **Real plugins, real interfaces.** VST3, CLAP, VST2, AU and LV2 instruments and effects open with their own interface, can run sandboxed in a separate process, and are checked by a built-in compatibility sweep. Edits made in a plugin's own interface can be undone too.
 
 **Make music together.** Invite someone with a one-time code and work on the same project live, peer to peer and end-to-end encrypted, with no server and no account. Each collaborator gets a colour, a cursor and a picture.
+
+**A welcome screen.** Gridline opens on your recent projects, each with a sketch of its arrangement, its tempo and its length. Mark favourites, start from a template or the demo song, and see in the Collaborative view who is working on a shared project right now.
 
 </td>
 <td width="50%" valign="top">
 
 **A mixer that keeps time.** Smooth swing for steps and notes alike, plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ. Offline renders are bit-identical whatever the buffer size.
 
-**Recording and editing.** Audio input with latency compensation, takes and comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, MIDI learn on every control.
+**Recording and editing.** Audio input with latency compensation, takes and comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, MIDI learn on every control. Several selected audio clips change together: a level, fade or pitch change moves each of them by the same amount.
+
+**One smooth stretch and pitch engine.** Clips, the sampler, slices, the audio editor, Platter and the pitch and time effects share one continuous engine that sounds the same live and in a render, from half speed to four times and an octave either way. Pick Stretch (time and pitch apart), Resample (like a turntable) or, for clips and the sampler, Rubber Band.
 
 **Your look, your sounds.** Five control styles (Slate, the default, plus Graphite, Hairline, Lumen and Classic), light and dark themes with your own accent and role colours, and sound themes for the interface sounds, all in Settings > Theme.
 
@@ -91,6 +95,14 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 <td><b>Loupe, the audio editor.</b> Waveform and spectral views, markers and regions, time stretch and pitch shift, noise reduction, beat slicing and loudness readouts.</td>
 <td><b>Automation.</b> Points with thirteen curve shapes, tension handles, an LFO tool, a shape library and recording straight from knob moves.</td>
 </tr>
+<tr>
+<td width="50%"><img src="docs/images/welcome.png" alt="The welcome screen with recent projects"></td>
+<td width="50%"><img src="docs/images/seltmann.png" alt="Seltmann with a chopped beat and its sequence lane"></td>
+</tr>
+<tr>
+<td><b>Welcome screen.</b> Recent projects with a sketch of each arrangement, favourites that stay on the list, templates, search and the Collaborative view, by mouse or keyboard. A click on the Gridline logo brings it back.</td>
+<td><b>Seltmann.</b> Drop in any audio: it finds the tempo, chops it into lettered regions and flips it with ready-made layouts. The sequence lane reorders, splits and joins regions, and the result goes out as a loop or a pattern.</td>
+</tr>
 </table>
 
 ### Instruments and effects
@@ -116,6 +128,22 @@ Plasma is Gridline's wavetable hybrid synth: three oscillators that each play a 
 
 Plasma also opens your own Serum 2 presets (`.SerumPreset`) and Serum `.fxp` files and turns them into Plasma sounds, through the same Open path as any preset; anything approximated is listed behind an info mark next to the preset name. Its browser lists the Serum preset folders found on your computer, indexed in the background. Nothing from another product ships with Gridline. See [docs/plugins/plasma.md](docs/plugins/plasma.md).
 
+### Platter
+
+<p align="center">
+  <img src="docs/images/platter.png" alt="Platter with a track on each deck and the mixer between them" width="100%">
+</p>
+
+Platter is a two-deck DJ setup on a channel: deck A and deck B with a mixer between them, or one deck as a layout.
+
+- **Decks.** Drop a track on a deck (from the browser, your desktop or the playlist's clip list) and Platter finds its tempo and beat grid, then plays it in time with the project or with the other deck; the padlock frees it to its own tempo. Each deck has key lock, cue and play, eight hot cues, loops and beat jumps, slip mode, motor start and brake times and a pitch fader, with stacked three-band colour waveforms, beat grids and a phase meter.
+- **Mixer.** Trim, a three-band EQ with kills and a filter per channel, channel faders with meters and a curve, a crossfader with assign, curve, cut and reverse, and the master level. The EQ and master knobs have 0 dB at 12 o'clock, like a DJ mixer, and a track on one deck at the default settings plays at its own level.
+- **Scratching.** The platter follows the scratch mechanics of Mixxx: a jog wheel sets the record's speed from how fast its ticks arrive, a mouse drag follows the hand and a fast release throws the record, touching a playing record catches it and letting go ramps it back up. The Jog and Hand feel knobs set how far and how heavily it moves.
+- **DJ controllers.** Ready mappings for the Pioneer DDJ-200, Hercules DJControl Inpulse 200 and Numark Mixtrack Pro FX drive both decks and the mixer at once, with LEDs that follow each deck; any other controller maps through MIDI learn. Mappings are saved with the project and as presets.
+- **Recorded performances.** While Gridline records, what you play becomes pattern data you can see and edit: every control you move becomes an automation lane, every button press (play, cue, hot cues, loops, beat jumps) a note on a named key in the piano roll, and scratches lanes for the mouse hand, the jog wheel and nudges. Left as recorded, it replays exactly as played, at any buffer size; edit the notes and lanes and the sound follows. A second pass never records over the first: it goes into a new pattern. **Record as: Take** keeps a performance as one note instead. See [docs/plugins/platter-recording.md](docs/plugins/platter-recording.md).
+
+Platter is part of the Gridline Suite too, so it also runs in other DAWs.
+
 ## Work together
 
 <p align="center">
@@ -124,11 +152,16 @@ Plasma also opens your own Serum 2 presets (`.SerumPreset`) and Serum `.fxp` fil
 
 Collaborative projects (a preview) let two or more people work on one project at the same time, on the same network or across the internet. See [docs/collaboration.md](docs/collaboration.md).
 
+<p align="center">
+  <img src="docs/images/collaborative-view.png" alt="The welcome screen's Collaborative view: shared projects, who is working on them, changes waiting" width="100%">
+</p>
+
 - **No server, no account.** Computers connect peer to peer: directly, by hole punching (ICE with STUN), through automatic router port opening (UPnP-IGD, NAT-PMP, PCP), through another collaborator or an optional TURN relay. **Test my connection** reports what your network allows.
 - **Invites** are one-time codes that expire (15 minutes to 24 hours). The invitee pastes the code in File > Join collaborative project... and both sides see the same safety code to compare.
 - **Live:** channels, notes, the playlist, the mixer, automation, Gridline plugin settings and audio files sync in a fraction of a second. Each person keeps their own windows, zoom and transport, and sound stays on each computer; **Follow their playhead** listens along.
 - **Presence:** collaborators appear in the top bar with their picture or initials; their cursors, in their colour, point at the same track, note, step or knob on every screen whatever the layout or zoom, and their changes flash in their colour.
 - **Safe:** end-to-end encrypted (X25519, XChaCha20-Poly1305), every change signed by its author, saved continuously in a crash-safe log. Undo takes back only your own changes; edits made while apart that touch the same thing go to the admin's Sync review.
+- **The Collaborative view** on the welcome screen joins with a code, starts or shares a project and lists every collaborative project on this computer with its members, your role, a Sync review or unsent changes waiting and who is working on it right now. Presence is asked of your collaborators directly, encrypted and only while the view is shown; turn off **Show that I am online to collaborators** to stay out of it.
 - Collaborative projects use Gridline's own plugins only, and everyone needs the same, newest Gridline version.
 
 ## Build
@@ -148,7 +181,7 @@ sudo apt install build-essential cmake pkg-config libsdl2-dev libgl-dev libasoun
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4           # a fixed job count: a bare -j starts every compile at once and can run out of memory
-ctest --test-dir build          # 187 tests
+ctest --test-dir build          # 204 tests
 ./build/gridline-app            # start the app
 ```
 
@@ -186,6 +219,10 @@ build/gridline collab-run --test-connection                 # router type, port 
 
 `src/host/` hosts third-party plugins through one interface, `host::Backend`.
 
+<p align="center">
+  <img src="docs/images/plugin-manager.png" alt="The plugin manager: one row per plugin with its formats, and the details of the selected one" width="100%">
+</p>
+
 | Format | Type id | Where Gridline looks |
 |---|---|---|
 | VST3 | `vst3:<class uid>` | `~/Library/Audio/Plug-Ins/VST3`, `/Library/Audio/Plug-Ins/VST3`; Windows `Common Files\VST3`, `%LOCALAPPDATA%\Programs\Common\VST3`; Linux / BSD `~/.vst3`, `/usr/lib/vst3`, `/usr/local/lib/vst3` |
@@ -194,6 +231,7 @@ build/gridline collab-run --test-connection                 # router type, port 
 | AU (macOS) | `au:<type>/<subtype>/<manufacturer>` | the system component registry |
 | LV2 | `lv2:<plugin URI>` | `~/Library/Audio/Plug-Ins/LV2`, `/Library/Audio/Plug-Ins/LV2`, `~/.lv2`, `/usr/local/lib/lv2`; on Linux `~/.lv2`, `/usr/local/lib/lv2`, `/usr/lib/lv2`; `$LV2_PATH` |
 
+- **The plugin manager** shows each plugin once, with the formats it is installed in, a clean category, a favourite star and a details panel: every format's version and location, scan problems with a retry, the sandbox switch, a category override and Add to project. Choose a preferred format, or one per plugin; the browser and the plugin picker list each plugin in that format.
 - **Opening a plugin** shows its own interface at the size it asks for, with a slim Gridline bar underneath for presets, bypass, sandbox, CPU and latency. The window follows the plugin when it resizes and reopens on the monitor you left it on.
 - **Undo:** an edit gesture in the plugin's own interface, together with the state the plugin reports right after it, is one undo step, and following an undo or redo never clears the redo history.
 - **Scanning** happens in a child process, so a plugin that crashes or hangs is blocked until it changes instead of taking Gridline down.
@@ -269,7 +307,7 @@ Projects can also be saved back to `.flp` with **File, Export, FL Studio project
 - [Collaborative projects](docs/collaboration.md): inviting, joining, connections, offline work, removing someone, privacy.
 - [Windows outside the main window](docs/detachable-windows.md) and [the plugin window's channel strip](docs/plugin-window.md).
 - [The Gridline Suite](docs/gridline-suite.md): Gridline's instruments and effects as plugins for other DAWs, and where they are installed.
-- [Plasma](docs/plugins/plasma.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md) and [the synths pack](docs/plugins/synths.md).
+- [Plasma](docs/plugins/plasma.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md), [the synths pack](docs/plugins/synths.md) and [recording Platter performances](docs/plugins/platter-recording.md).
 - [Lua scripting](docs/scripting.md), [AI assistants (MCP)](docs/mcp.md) and [the update check](docs/updates.md).
 - [CHANGELOG.md](CHANGELOG.md) lists what changed in each version.
 
@@ -294,6 +332,7 @@ Project files are JSON (`"format": "gridline-project"`). Older files are upgrade
 Gridline is free software, released under the GNU General Public License v3.0 (see `LICENSE`).
 Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), Signalsmith Stretch and Signalsmith Linear (MIT, time stretching and pitch shifting), the Rubber Band Library (GPL-2.0-or-later, used under the GPL-3.0; the Rubber Band time mode), CLAP headers (MIT), VST3 plug-in interfaces (MIT), LV2 headers (ISC), dr_libs and stb_vorbis (public domain or MIT-0), nanosvg (zlib), and for collaborative projects libjuice and libplum (MPL-2.0), Monocypher (BSD-2-Clause or CC0), stb_image and stb_image_write (public domain or MIT). See `third_party/NOTICE.md` and each folder under `third_party/`.
 The interface icons in `assets/icons/ui/` use geometry from Lucide (ISC) and Tabler Icons (MIT); see `assets/icons/ui/NOTICE.md`.
+Platter's scratch mechanics follow the approach of [Mixxx](https://github.com/mixxxdj/mixxx) (GPL-2.0-or-later); no Mixxx code is included.
 
 Gridline is an independent project and is not affiliated with or endorsed by Image-Line. "FL Studio" is a trademark of Image-Line Software and is mentioned only to describe file compatibility.
 

@@ -97,6 +97,12 @@ bool loadChannelSample(App& a, ObjectId channel, const std::string& path, const 
 // Plugin window drop zone (whole window): presets of the same plugin, samples
 // for sample-based plugins. Call from the window header.
 void pluginWindowDropTarget(App& a, const PluginTarget& t);
+// J-160: the audio file a drag carries, for editors with sample slots of their own
+// (Platter's decks): a browser or desktop file (the first ready audio file of
+// several), a playlist clip source, a channel rack row that holds a sample. ""
+// when it carries none (`why`, when given: a reason to show, e.g. a recording that
+// is still being written).
+std::string draggedAudioFile(App& a, const ImGuiPayload* pl, std::string* why = nullptr);
 // Runs the action. Returns false (with a notification) when nothing happened.
 bool performDrop(App& a, const std::string& path, browse::DropTarget target, const DropPlace& place);
 // Double-click in the browser / file dropped onto the app window.

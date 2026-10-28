@@ -449,7 +449,9 @@ def main():
             p = os.path.join(shots, src)
             if not os.path.exists(p):
                 continue
-            im = Image.open(p).convert("RGB").crop(box)
+            im = Image.open(p).convert("RGB")
+            if box:
+                im = im.crop(box)
             if im.width > 1600:
                 im = im.resize((1600, round(im.height * 1600 / im.width)), Image.LANCZOS)
             save_png(im, os.path.join(rel, dst))
@@ -480,24 +482,26 @@ VIEWS = [
 ]
 # Plasma's editor from its channel window (a 3200x2200 capture), saved 1600 px wide.
 VIEWS.append(("plasma.png", "plasma.png", (390, 454, 2778, 1942)))
+# Platter (the plugin window), the welcome screen (a 2560x1600 capture) and its
+# Collaborative view, the plugin manager window and Seltmann's editor.
+VIEWS += [
+    ("platter.png", "platter.png", (328, 104, 2856, 1888)),
+    ("welcome.png", "welcome.png", (0, 0, 2560, 1300)),
+    ("collabview.png", "collaborative-view.png", (0, 0, 3200, 1216)),
+    ("plugins.png", "plugin-manager.png", (485, 349, 2715, 1688)),
+    ("seltmann.png", "seltmann.png", (448, 128, 2739, 1490)),
+]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.0-beta.2"
+RELEASE = "0.7.0-beta.3"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.0", "Play it your way",
-                  "Gridline Suite in any DAW, control styles, smooth swing and a new demo song")
-RELEASE_BANNER_OPTS = {"tag": "BETA 2", "label": "PRE-RELEASE"}
-# Gridline Suite Mini editors (2880x1800 captures, the window below its title), one sheet.
-RELEASE_EDITORS = [
-    ("rel_minipress.png", "Press", (970, 296, 1910, 1262)),
-    ("rel_miniecho.png", "Echo", (970, 380, 1910, 1178)),
-    ("rel_minichime.png", "Chime", (970, 432, 1910, 1126)),
-]
-# Views from 3200x2000 captures: the Settings window on its Theme page, the playlist.
-RELEASE_VIEWS = [
-    ("rel_theme.png", "control-styles.png", (746, 470, 2442, 1578)),
-    ("rel_demo.png", "demo-song.png", None),
-]
+RELEASE_BANNER = ("0.7.0", "Take the decks",
+                  "Platter, a welcome screen, one smooth stretch engine and a new plugin manager")
+RELEASE_BANNER_OPTS = {"tag": "BETA 3", "label": "PRE-RELEASE"}
+# Plugin editors on one sheet (none in this release).
+RELEASE_EDITORS = []
+# The README's Platter, welcome screen and plugin manager views.
+RELEASE_VIEWS = [v for v in VIEWS if v[1] in ("platter.png", "welcome.png", "plugin-manager.png")]
 
 if __name__ == "__main__":
     main()

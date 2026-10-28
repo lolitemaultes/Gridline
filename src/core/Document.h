@@ -137,7 +137,8 @@ class Document {
   // Edits between begin/end become one undo step. Groups nest; the outermost
   // label wins. Empty groups record nothing.
   void beginGroup(const std::string& label);
-  void endGroup();
+  // `joinGesture` false: never folded into a pointer gesture's step (a recorded pass, J-159).
+  void endGroup(bool joinGesture = true);
   // Drops the innermost open group: its edits are reverted and nothing is
   // recorded (a script that failed halfway, SC-02).
   void cancelGroup();

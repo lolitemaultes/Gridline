@@ -22,6 +22,7 @@ double ParamDesc::toNormalized(double v) const {
   }
   if (max <= min) return 0.0;
   if (scale == ParamScale::Log && min > 0) return std::log(v / min) / std::log(max / min);
+  if (scale == ParamScale::Detent && def > min && def < max) return v <= def ? 0.5 * (v - min) / (def - min) : 0.5 + 0.5 * (v - def) / (max - def);
   return (v - min) / (max - min);
 }
 
@@ -32,6 +33,7 @@ double ParamDesc::fromNormalized(double n) const {
     return clamp(n * hi);
   }
   if (scale == ParamScale::Log && min > 0) return clamp(min * std::pow(max / min, n));
+  if (scale == ParamScale::Detent && def > min && def < max) return clamp(n <= 0.5 ? min + 2.0 * n * (def - min) : def + (2.0 * n - 1.0) * (max - def));
   return clamp(min + n * (max - min));
 }
 

@@ -20,6 +20,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include "../../app/BrowserUi.h"
 #include "../../app/DevSignal.h"
 #include "../../app/ExternalDragUi.h"
 #include "../../app/Look.h"
@@ -489,33 +490,51 @@ void drawTopBar(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, const L
     capsRow(dl, a, rx, o.y + 2, h - 4, P.textFaint, i18n::tr("KEYS"));
     rx -= 14;
   }
-  // takes: arm, then a chip per take (hold to hear it)
+  // recording: arm, record as automation or take, then a chip per take (hold to hear it)
   const bool capturing = lv[0].capturing || lv[1].capturing;
   {
     const bool armed = m.armed;
     const ImVec2 q0(x, o.y), q1(x + 132, o.y + h);
     ImGui::SetCursorScreenPos(q0);
+    traceRect("arm", q0, q1);
     if (ImGui::InvisibleButton("##parm", ImVec2(q1.x - q0.x, h))) {
       Model nm = m;
       nm.armed = !nm.armed;
-      commit(a, t, e, nm, nm.armed ? i18n::N_("Arm take recording") : i18n::N_("Disarm take recording"));
+      commit(a, t, e, nm, nm.armed ? i18n::N_("Arm deck recording") : i18n::N_("Disarm deck recording"));
     }
     const bool hv = ImGui::IsItemHovered();
     if (hv)
-      ui::Tooltip(i18n::tr("While Gridline records, an armed setup records what you play (both decks, scratches, cuts, cues and the mixer) as a take: "
-                           "a note in the pattern that replays it exactly, with no controller."));
+      ui::Tooltip(i18n::tr("While Gridline records, an armed setup records what you play: both decks, scratches, cuts, cues and the mixer. "
+                           "A pattern that already holds a pass of this setup is kept: the new pass goes into a new pattern."));
     skin::raisedFace(dl, q0, q1, hv ? P.surface700 : P.surface800, theme::kRadius);
     dl->AddRect(q0, q1, P.line, theme::kRadius);
     const bool blink = capturing && std::fmod(ImGui::GetTime(), 1.0) < 0.5;
     const ImU32 lamp = armed ? (blink ? theme::withAlpha(P.danger, 0.35f) : P.danger) : theme::withAlpha(P.textFaint, 0.6f);
     dl->AddCircleFilled(ImVec2(q0.x + 14, o.y + h * 0.5f), 5, lamp, 16);
     dl->AddText(ImGui::GetFont(), theme::kFontCaption, ImVec2(q0.x + 26, captionY(o.y, h)), armed ? P.text : P.textDim,
-                capturing ? i18n::tr("Recording take") : armed ? i18n::tr("Takes armed") : i18n::tr("Takes off"));
+                capturing ? i18n::tr("Recording") : armed ? i18n::tr("Record armed") : i18n::tr("Record off"));
     x = q1.x + 6;
+  }
+  {
+    // J-159: what a pass becomes
+    static const char* const kAs[2] = {i18n::N_("Automation"), i18n::N_("Take")};
+    static const char* const kAsHints[2] = {
+        i18n::N_("A pass becomes pattern data you can see and edit: a start note, a note per button press and a lane per control "
+                 "that moved (scratches included). Played back unedited it is exactly the pass."),
+        i18n::N_("A pass becomes one take: a single note in the pattern that replays it as played, with no controller.")};
+    int cur = m.recordAs == RecTake ? 1 : 0;
+    traceRect("recas", ImVec2(x, o.y + 2), ImVec2(x + 168, o.y + h - 2));
+    if (pills(a, "##precas", ImVec2(x, o.y + 2), 168, h - 4, kAs, 2, cur, kAsHints)) {
+      Model nm = m;
+      nm.recordAs = cur == 1 ? RecTake : RecAutomation;
+      commit(a, t, e, nm, cur == 1 ? i18n::N_("Record deck passes as takes") : i18n::N_("Record deck passes as automation"));
+    }
+    x += 168 + 8;
   }
   if (m.takes.empty()) {
     theme::textEllipsis(dl, ImGui::GetFont(), theme::kFontCaption, ImVec2(x + 4, captionY(o.y, h)), std::max(0.0f, rx - x - 8), P.textFaint,
-                        i18n::tr("No takes yet: record in Gridline and play"));
+                        m.recordAs == RecTake ? i18n::tr("No takes yet: record in Gridline and play")
+                                              : i18n::tr("Passes go into the pattern: open it in the piano roll"));
     return;
   }
   static const char* const kNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -923,17 +942,31 @@ void devJog(const Ed& e, const LiveView* lv) {
   }).detach();
 }
 
+// Dev hook (GRIDLINE_PLATTER_TRACE, J-160): the file on each deck ("platter: tracks A=<file> B=<file>").
+void traceTracks(const Ed& e) {
+  static const bool on = std::getenv("GRIDLINE_PLATTER_TRACE") != nullptr;
+  if (!on) return;
+  static std::string last;
+  const std::string b = "platter: tracks A=" + fs::path(e.m.trackOf(0)).filename().string() + " B=" + fs::path(e.m.trackOf(1)).filename().string();
+  if (b == last) return;
+  last = b;
+  std::printf("%s\n", b.c_str());
+  std::fflush(stdout);
+}
+
 void trace(App& a, const PluginTarget& t, Ed& e, const char* state, const LiveView* lv) {
   static const bool on = std::getenv("GRIDLINE_PLATTER_TRACE") != nullptr;
   devJog(e, lv);
   if (std::string(state) == "ready") devsig::reach("platter-ready");
   if (lv[0].playing || lv[1].playing) devsig::reach("platter-playing");
+  if (lv[0].capturing || lv[1].capturing) devsig::reach("platter-capturing");
   if (!on) return;
   char b[320];
   std::snprintf(b, sizeof b,
-                "platter: state %s layout %d asked %d mapped %zu A[bpm %.2f playing %d speed %.3f] B[bpm %.2f playing %d] xf %.2f takes %zu", state,
+                "platter: state %s layout %d asked %d mapped %zu A[bpm %.2f playing %d speed %.3f] B[bpm %.2f playing %d] xf %.2f takes %zu armed %d as %d capturing %d", state,
                 e.m.layout, e.m.asked ? 1 : 0, e.m.map.bindings.size(), bpmOf(e.m.deck[0]), lv[0].playing ? 1 : 0, lv[0].speed,
-                bpmOf(e.m.deck[1]), lv[1].playing ? 1 : 0, param(a, t, PXfader), e.m.takes.size());
+                bpmOf(e.m.deck[1]), lv[1].playing ? 1 : 0, param(a, t, PXfader), e.m.takes.size(), e.m.armed ? 1 : 0, e.m.recordAs,
+                lv[0].capturing ? 1 : 0);
   if (b != e.lastTrace) {
     std::printf("%s\n", b);
     std::fflush(stdout);
@@ -964,6 +997,8 @@ void devHooks(App& a, const PluginTarget& t, Ed& e, const PluginState*& sp) {
     if (std::string(ask) != "none") m.map = profileMapping(ask, kSideBoth);
   }
   if (const char* l = std::getenv("GRIDLINE_PLATTER_LAYOUT"); l && *l == '1') m.layout = LayoutOne;
+  if (const char* n = std::getenv("GRIDLINE_PLATTER_BARS"); n && *n)  // J-159 checks: the pattern's length
+    a.doc.editPattern(a.curPattern, "demo", [&](Pattern& x) { x.bars = std::clamp(std::atoi(n), 1, 64); });
   if (demo && *demo) loadTrack(m, 0, demo, DeckModel{});
   if (demoB && *demoB) loadTrack(m, 1, demoB, DeckModel{});
   st.data = formatData(m.trackOf(0), m);
@@ -971,29 +1006,53 @@ void devHooks(App& a, const PluginTarget& t, Ed& e, const PluginState*& sp) {
   sp = t.state(a.doc.song());
 }
 
-// A drop of a file on deck B's half of the editor.
-void deckDropTarget(App& a, const PluginTarget& t, int deck, ImVec2 p0, ImVec2 p1) {
-  const ImGuiPayload* pl = ImGui::GetDragDropPayload();
-  if (!pl || !(pl->IsDataType("GL_FILE") || pl->IsDataType("GL_FILES"))) return;
-  ImGui::SetCursorScreenPos(p0);
-  char id[24];
-  std::snprintf(id, sizeof id, "##pdrop%d", deck);
-  ImGui::InvisibleButton(id, ImVec2(p1.x - p0.x, p1.y - p0.y));
-  if (!ImGui::BeginDragDropTarget()) return;
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRect(p0, p1, deckColor(deck), theme::kRadiusLg, 0, 2.5f);
-  if (const ImGuiPayload* x = ImGui::AcceptDragDropPayload("GL_FILE")) {
-    loadOnDeck(a, t, deck, std::string(static_cast<const char*>(x->Data), static_cast<size_t>(x->DataSize)));
-  } else if (const ImGuiPayload* y = ImGui::AcceptDragDropPayload("GL_FILES")) {
-    (void)y;
-    for (const auto& it : xdragui::items())
-      if (!it.path.empty() && !it.pending && !it.dir) {
-        loadOnDeck(a, t, deck, it.path);
-        xdragui::markConsumed();
-        break;
-      }
+// J-160: a deck takes a dragged track anywhere on its lane (waveform and overview) and
+// its panel: browser and desktop files, playlist clip sources, channel rack rows that
+// hold a sample. It loads like the deck's load button (analysis, undo, collaboration).
+// Being smaller than the plugin window's own drop zone (which loads deck A), it wins
+// while the pointer is over it; only the deck under the pointer lights up.
+void deckDropTarget(App& a, const PluginTarget& t, int deck, const ImRect* rects, int n) {
+  for (int i = 0; i < n; ++i) {  // dev hook (GRIDLINE_PLATTER_TRACE): where each deck takes drops
+    char nm[16];
+    std::snprintf(nm, sizeof nm, "drop%c%d", deck == 0 ? 'A' : 'B', i);
+    traceRect(nm, rects[i].Min, rects[i].Max);
   }
-  ImGui::EndDragDropTarget();
+  const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+  if (!pl) return;
+  std::string why;
+  const std::string path = browserui::draggedAudioFile(a, pl, &why);
+  if (path.empty() && why.empty()) return;  // not audio: the window's own drop zone decides
+  for (int i = 0; i < n; ++i) {
+    char id[24];
+    std::snprintf(id, sizeof id, "##pdrop%d.%d", deck, i);
+    if (!ImGui::BeginDragDropTargetCustom(rects[i], ImGui::GetID(id))) continue;
+    if (path.empty()) {
+      ImGui::SetTooltip("%s", why.c_str());
+      a.setHint(why);
+      ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
+    } else if (const ImGuiPayload* x =
+                   ImGui::AcceptDragDropPayload(pl->DataType, ImGuiDragDropFlags_AcceptNoDrawDefaultRect | ImGuiDragDropFlags_AcceptBeforeDelivery)) {
+      if (x->Delivery) {
+        xdragui::markConsumed();
+        loadOnDeck(a, t, deck, path);
+      } else {
+        if (x->Preview) {  // the whole deck: its lane and its panel
+          ImDrawList* fg = ImGui::GetForegroundDrawList();
+          for (int k = 0; k < n; ++k) {
+            fg->AddRectFilled(rects[k].Min, rects[k].Max, deckColor(deck, 0.10f), theme::kRadiusLg);
+            fg->AddRect(rects[k].Min, rects[k].Max, deckColor(deck), theme::kRadiusLg, 0, 2.5f);
+          }
+        }
+        char tip[512];
+        std::snprintf(tip, sizeof tip, deck == 0 ? i18n::tr("Load %s onto deck A") : i18n::tr("Load %s onto deck B"),
+                      fs::path(path).filename().string().c_str());
+        ImGui::SetTooltip("%s", tip);
+        a.setHint(tip);
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+      }
+    }
+    ImGui::EndDragDropTarget();
+  }
 }
 
 }  // namespace
@@ -1108,6 +1167,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     return true;
   }
   drawWaves(a, t, e, ImVec2(o.x, y), W, lv);
+  const float wavesY = y, laneH = wavesHeight(false);  // one deck's lane (the drop targets)
   y += wavesH + gap;
   // decks and the mixer
   if (two) {
@@ -1117,12 +1177,17 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     drawDeck(a, t, e, 0, ImVec2(o.x, y), ImVec2(o.x + deckW, y + mainH), lv[0], false);
     drawMixer(a, t, e, ImVec2(o.x + deckW + gap, y), ImVec2(bx - gap, y + mainH), lv, mv, true);
     drawDeck(a, t, e, 1, ImVec2(bx, y), ImVec2(o.x + W, y + mainH), lv[1], true);
-    deckDropTarget(a, t, 1, ImVec2(bx, y), ImVec2(o.x + W, y + mainH));
+    const ImRect a0[2] = {ImRect(o.x, wavesY, o.x + W, wavesY + laneH), ImRect(o.x, y, o.x + deckW, y + mainH)};
+    const ImRect b0[2] = {ImRect(o.x, wavesY + wavesH - laneH, o.x + W, wavesY + wavesH), ImRect(bx, y, o.x + W, y + mainH)};
+    deckDropTarget(a, t, 0, a0, 2);
+    deckDropTarget(a, t, 1, b0, 2);
   } else {
     const float mixW = 168;
     const float deckW = W - mixW - gap;
     drawDeck(a, t, e, 0, ImVec2(o.x, y), ImVec2(o.x + deckW, y + mainH), lv[0], false);
     drawMixer(a, t, e, ImVec2(o.x + deckW + gap, y), ImVec2(o.x + W, y + mainH), lv, mv, false);
+    const ImRect a0[2] = {ImRect(o.x, wavesY, o.x + W, wavesY + wavesH), ImRect(o.x, y, o.x + deckW, y + mainH)};
+    deckDropTarget(a, t, 0, a0, 2);
   }
   y += mainH;
   if (e.drawer) {
@@ -1135,6 +1200,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   }
   ImGui::SetCursorScreenPos(ImVec2(o.x, y + 6));
   ImGui::Dummy(ImVec2(W, 1));
+  traceTracks(e);
   bool ready = deckReady(e, 0) || deckReady(e, 1);
   for (int d = 0; d < kDecks; ++d)
     if (!e.d[static_cast<size_t>(d)].path.empty() && !deckReady(e, d) && (d == 0 || two)) ready = false;

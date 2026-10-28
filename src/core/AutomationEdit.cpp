@@ -145,7 +145,7 @@ Selection quantize(Points& pts, const Selection& sel, Tick grid) {
   std::vector<Tagged> v;
   for (size_t i = 0; i < pts.size(); ++i) {
     Tagged t{pts[i], inSel(sel, i)};
-    if (t.selected) t.p.pos = std::max<Tick>(0, (t.p.pos + grid / 2) / grid * grid);
+    if (t.selected) t.p.pos = std::max<Tick>(0, (t.p.pos + grid / 2) / grid * grid), t.p.frac = 0;
     v.push_back(t);
   }
   std::stable_sort(v.begin(), v.end(), [](const Tagged& x, const Tagged& y) { return x.p.pos < y.p.pos; });

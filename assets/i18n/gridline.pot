@@ -333,7 +333,7 @@ msgstr ""
 msgid "Recorded files"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp
+#: src/app/AudioRecordUi.cpp src/packs/platter/platter_ui.cpp
 msgid "Recording"
 msgstr ""
 
@@ -1199,6 +1199,10 @@ msgstr ""
 
 #: src/app/BrowserDrop.cpp
 msgid "Nothing here takes these files"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "This file is still on its way: drop it again in a moment"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -10041,7 +10045,7 @@ msgstr ""
 msgid "Automatic crossfades in this project"
 msgstr ""
 
-#: src/app/Playlist.cpp
+#: src/app/Playlist.cpp src/packs/platter/platter_ui.cpp
 msgid "Automation"
 msgstr ""
 
@@ -15030,7 +15034,15 @@ msgid "This channel is on the crossfader's B side"
 msgstr ""
 
 #: src/packs/platter/platter_tick_ui.cpp
+msgid "A deck performance could not be recorded: the pass was too busy for the recorder"
+msgstr ""
+
+#: src/packs/platter/platter_tick_ui.cpp
 msgid "All 24 take keys of this setup are used: delete a take to record another"
+msgstr ""
+
+#: src/packs/platter/platter_tick_ui.cpp
+msgid "Record a deck performance"
 msgstr ""
 
 #: src/packs/platter/platter_tick_ui.cpp
@@ -15058,6 +15070,14 @@ msgid "A hot cue key starts the deck; it keeps playing"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
+msgid "A pass becomes one take: a single note in the pattern that replays it as played, with no controller."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "A pass becomes pattern data you can see and edit: a start note, a note per button press and a lane per control that moved (scratches included). Played back unedited it is exactly the pass."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
 msgid "Analyse the track"
 msgstr ""
 
@@ -15066,7 +15086,7 @@ msgid "Another controller"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
-msgid "Arm take recording"
+msgid "Arm deck recording"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
@@ -15178,7 +15198,7 @@ msgid "Delete take"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
-msgid "Disarm take recording"
+msgid "Disarm deck recording"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
@@ -15294,6 +15314,14 @@ msgid "Light the controller's buttons and pads from the decks"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
+msgid "Load %s onto deck A"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Load %s onto deck B"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
 msgid "Load a preset..."
 msgstr ""
 
@@ -15390,6 +15418,10 @@ msgid "Pads"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
+msgid "Passes go into the pattern: open it in the piano roll"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
 msgid "Pick a controller profile and the layout"
 msgstr ""
 
@@ -15422,7 +15454,19 @@ msgid "Preset name"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
-msgid "Recording take"
+msgid "Record armed"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Record deck passes as automation"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Record deck passes as takes"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Record off"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
@@ -15463,14 +15507,6 @@ msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
 msgid "Take"
-msgstr ""
-
-#: src/packs/platter/platter_ui.cpp
-msgid "Takes armed"
-msgstr ""
-
-#: src/packs/platter/platter_ui.cpp
-msgid "Takes off"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
@@ -15526,7 +15562,7 @@ msgid "Vinyl mode"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
-msgid "While Gridline records, an armed setup records what you play (both decks, scratches, cuts, cues and the mixer) as a take: a note in the pattern that replays it exactly, with no controller."
+msgid "While Gridline records, an armed setup records what you play: both decks, scratches, cuts, cues and the mixer. A pattern that already holds a pass of this setup is kept: the new pass goes into a new pattern."
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp

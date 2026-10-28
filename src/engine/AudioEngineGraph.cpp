@@ -126,7 +126,34 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   float* cR = sc.chR;
   std::memset(cL, 0, sizeof(float) * static_cast<size_t>(n));
   std::memset(cR, 0, sizeof(float) * static_cast<size_t>(n));
-  rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, cL, cR, n);
+  if (tPlaying_ && rt->gen->wantsLanes()) {
+    // J-159: the lanes on this instrument's own parameters (it evaluates them itself)
+    ParamLane lanes[kMaxParamLanes];
+    int nl = 0;
+    auto add = [&](const std::vector<ProgAutoLane>& v, double origin) {
+      for (const ProgAutoLane& a : v)
+        if (a.target.kind == ProgLink::ChanPlugin && a.target.chan == static_cast<int>(ci) && nl < kMaxParamLanes)
+          lanes[nl++] = ParamLane{a.target.param, &a.lane, origin};
+    };
+    if (tMode_ == PlayMode::Song) {
+      add(p->autos, 0);
+    } else if (tMode_ == PlayMode::Pattern) {
+      if (const ProgPattern* pat = p->pattern(tPattern_)) add(pat->autos, 0);
+    } else if (tMode_ == PlayMode::Live) {
+      for (const ProgLiveTrack& lt : p->liveTracks) {
+        const LiveTrack& st = liveTracks_[lt.track];
+        if (st.active == kNoId) continue;
+        const int li = p->liveClipIndex(st.active);
+        if (li >= 0) add(p->liveClips[static_cast<size_t>(li)].autos, static_cast<double>(st.origin));
+      }
+    }
+    ProcessContext ctx = bc_.ctx;
+    ctx.lanes = lanes;
+    ctx.laneCount = nl;
+    rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, ctx, cL, cR, n);
+  } else {
+    rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, cL, cR, n);
+  }
   rt->sounding.store(rt->gen->active(), std::memory_order_relaxed);
   if (livePieceCount_ > 0 && tMode_ == PlayMode::Live) {  // live mode: launched audio clips on this channel
     for (int k = 0; k < livePieceCount_; ++k) {

@@ -1,0 +1,615 @@
+// Gridline — "platter" pack tests (J-159): a Platter pass recorded as automation.
+// A scripted live performance on both decks and the mixer (mouse scratch, jog scratch,
+// a throw, hot cues, cue, loops, beat jumps, a seek, rim nudges, crossfader cuts, EQ
+// kills, pitch moves) is played through the audio engine while Gridline records; the
+// pass becomes pattern data (a start note, notes on the command keys, lanes); the
+// pattern played back, unedited, must give the decks the same values on the same samples
+// and the same audio as the live pass: bit for bit, at 64, 256 and 1024 sample buffers,
+// and with a replay buffer size other than the one recorded with. Also: each control's
+// value stream step by step, pattern and song mode, a second pass into a new pattern
+// (the first untouched), the start states in the model text, and save / load of the
+// sub-tick positions.
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+#include "../Check.h"
+#include "core/AudioBuffer.h"
+#include "core/Document.h"
+#include "core/PatternAutomation.h"
+#include "core/PluginInfo.h"
+#include "core/Project.h"
+#include "core/Song.h"
+#include "core/WavWriter.h"
+#include "core/AutomationEdit.h"
+#include "engine/AudioEngine.h"
+#include "engine/Program.h"
+#include "engine/Sample.h"
+#include "packs/platter/platter.h"
+#include "packs/seltmann/seltmann.h"
+
+using namespace gl;
+namespace pl = gl::packs::platter;
+namespace fs = std::filesystem;
+
+namespace {
+
+constexpr double kSr = 44100;
+constexpr double kPi = 3.14159265358979323846;
+
+fs::path tmpDir() {
+  const fs::path d = fs::temp_directory_path() / "gl_platter_perf_test";
+  std::error_code ec;
+  fs::create_directories(d, ec);
+  return d;
+}
+
+std::string writeTrack(const std::string& name, double seconds, double bpm) {
+  const auto n = static_cast<size_t>(seconds * kSr);
+  AudioBuffer b(2, n);
+  for (size_t i = 0; i < n; ++i)
+    for (int c = 0; c < 2; ++c) {
+      const double t = static_cast<double>(i) / kSr;
+      const double beat = 60.0 / bpm;
+      const double ph = std::fmod(t, beat);
+      double x = 0.25 * std::sin(2 * kPi * 220 * t + c) + 0.12 * std::sin(2 * kPi * 331 * t) + 0.08 * std::sin(2 * kPi * 1250 * t + 0.5 * c);
+      x += 0.4 * std::exp(-ph * 60.0) * std::sin(2 * kPi * 90 * ph);
+      b.data[static_cast<size_t>(c) * n + i] = static_cast<float>(x);
+    }
+  const std::string path = (tmpDir() / name).string();
+  writeWav(path, b, static_cast<int>(kSr), 24);
+  return path;
+}
+
+pl::DeckModel flatDeck(const std::string& path, double bpm) {
+  SamplePtr src = sampleCache().get(path);
+  pl::DeckModel dm = pl::deckModel(*src, gl::packs::seltmann::flatGrid(*src, bpm), true);
+  dm.cue = 0;
+  return dm;
+}
+
+// ------------------------------------------------------------------ the rig
+// A project with one Platter setup (deck A 120 BPM, deck B 100 BPM, DDJ-200 as a whole),
+// armed, recording as automation; an 8 bar pattern (16 s at 120 BPM).
+struct Rig {
+  Document doc{makeEmptySong()};
+  ObjectId ch = kNoId, pat = kNoId;
+  ProgramBuilder builder;
+  std::unique_ptr<AudioEngine> eng;
+  int64_t pos = 0;  // samples since play
+
+  Rig(const std::string& a, const std::string& b, bool keyLock) {
+    doc.setParam(songParam(SongParam::Tempo), 120.0, false);
+    ch = doc.addChannel("Decks", pl::kType);
+    pat = doc.song().patterns[0].id;
+    doc.editPattern(pat, "", [](Pattern& p) { p.bars = 8; });
+    pl::Model m;
+    pl::loadTrack(m, 0, a, flatDeck(a, 120));
+    pl::loadTrack(m, 1, b, flatDeck(b, 100));
+    m.map = pl::profileMapping("ddj200", pl::kSideBoth);
+    m.asked = true;
+    m.armed = true;
+    m.recordAs = pl::RecAutomation;
+    doc.editChannel(ch, "", [&](Channel& c) {
+      c.plugin.data = pl::formatData(a, m);
+      for (int k = 0; k < pl::kDecks; ++k) c.plugin.params[static_cast<size_t>(pl::deckParam(k, pl::DKeyLock))] = keyLock ? 1.f : 0.f;
+    });
+    eng = std::make_unique<AudioEngine>(kSr);
+    rebuild();
+  }
+  void rebuild() { eng->setProgram(builder.build(doc.song())); }
+  Generator* gen() const {
+    auto rt = builder.channelRuntime(ch);
+    return rt ? rt->gen.get() : nullptr;
+  }
+};
+
+// One timed action of the performance: `fn(gen, offset in the block)`.
+struct Act {
+  int64_t at = 0;
+  std::function<void(Generator*, int)> fn;
+};
+
+// The scripted performance (sample times from the start of play).
+std::vector<Act> performance() {
+  std::vector<Act> v;
+  auto midi = [&](int64_t at, uint8_t s, uint8_t d1, uint8_t d2) {
+    v.push_back({at, [=](Generator* g, int o) { g->midi(s, d1, d2, o); }});
+  };
+  auto cmd = [&](int64_t at, uint8_t kind, uint8_t a, double val, int deck) {
+    v.push_back({at, [=](Generator* g, int) {
+                   pl::Cmd c;
+                   c.kind = kind;
+                   c.a = a;
+                   c.v = val;
+                   c.deck = static_cast<uint8_t>(deck);
+                   pl::command(g, c);
+                 }});
+  };
+  auto button = [&](int64_t at, int ctl, int deck, int64_t hold) {
+    cmd(at, pl::CmdButton, static_cast<uint8_t>(ctl), 1, deck);
+    cmd(at + hold, pl::CmdButton, static_cast<uint8_t>(ctl), 0, deck);
+  };
+  // both decks play, the crossfader towards A
+  midi(100, 0x90, 0x0B, 0x7F), midi(600, 0x90, 0x0B, 0x00);
+  midi(300, 0x91, 0x0B, 0x7F), midi(700, 0x91, 0x0B, 0x00);
+  midi(2000, 0xB6, 0x1F, 0x20);
+  // hot cue 1 on A (set)
+  midi(30000, 0x97, 0x00, 0x7F), midi(31000, 0x97, 0x00, 0x00);
+  // EQ kill: A's low
+  midi(40000, 0xB0, 0x0F, 0x00);
+  // jog scratch on A: touch, back and forth, release
+  midi(52000, 0x90, 0x36, 0x7F);
+  for (int k = 0; k < 140; ++k) midi(52300 + k * 300, 0xB0, 0x22, (k / 12) % 2 ? 0x3A : 0x46);
+  midi(96000, 0x90, 0x36, 0x00);
+  // mouse scratch on A, then a throw
+  cmd(100000, pl::CmdHandDown, 0, 0, 0);
+  for (int k = 0; k < 120; ++k) cmd(100256 + k * 256, pl::CmdHandMove, 0, 0.3 * std::sin(k * 0.11), 0);
+  for (int k = 0; k < 12; ++k) cmd(131000 + k * 256, pl::CmdHandMove, 0, 0.3 * std::sin(119 * 0.11) + 0.08 * (k + 1), 0);
+  cmd(134200, pl::CmdHandUp, 0, 0, 0);
+  // hot cue 1 (jump)
+  midi(150000, 0x97, 0x00, 0x7F), midi(151000, 0x97, 0x00, 0x00);
+  // B: cue held, then released
+  midi(160000, 0x91, 0x0C, 0x7F), midi(175000, 0x91, 0x0C, 0x00);
+  midi(176000, 0x91, 0x0B, 0x7F), midi(176500, 0x91, 0x0B, 0x00);
+  // A: loops, beat jumps
+  button(180000, pl::CtlLoopAuto, 0, 400);
+  button(200000, pl::CtlLoopHalve, 0, 400);
+  button(212000, pl::CtlLoopDouble, 0, 400);
+  button(225000, pl::CtlLoopAuto, 0, 400);
+  button(235000, pl::CtlJumpBack, 0, 300);
+  button(245000, pl::CtlJumpFwd, 0, 300);
+  // crossfader cuts
+  for (int k = 0; k < 14; ++k) midi(255000 + k * 1500, 0xB6, 0x1F, k % 2 ? 0x7F : 0x00);
+  // pitch moves on A
+  for (int k = 0; k < 40; ++k) midi(280000 + k * 1000, 0xB0, 0x00, static_cast<uint8_t>(0x40 + static_cast<int>(16 * std::sin(k * 0.2))));
+  // EQ back, B's filter
+  midi(325000, 0xB0, 0x0F, 0x40);
+  midi(326000, 0xB6, 0x18, 0x20), midi(340000, 0xB6, 0x18, 0x40);
+  // a seek on A (the record position lane)
+  cmd(350000, pl::CmdSeek, 0, 50000.0, 0);
+  // rim nudges on B
+  for (int k = 0; k < 20; ++k) midi(360000 + k * 400, 0xB1, 0x21, k < 10 ? 0x43 : 0x3D);
+  std::stable_sort(v.begin(), v.end(), [](const Act& x, const Act& y) { return x.at < y.at; });
+  return v;
+}
+
+constexpr int64_t kPass = 380000;  // samples recorded
+
+// Renders `frames` in blocks of `block`: the actions due in each block; the capture drained
+// into `pb`; the step states after each block into `trace`.
+void play(Rig& r, int64_t frames, int block, const std::vector<Act>* acts, std::vector<float>& L, std::vector<float>& R,
+          pl::PerformanceBuilder* pb = nullptr, bool* done = nullptr, std::vector<pl::StepState>* trace = nullptr) {
+  std::vector<float> bl(static_cast<size_t>(block)), br(static_cast<size_t>(block));
+  std::vector<pl::CaptureEvent> evs(4096);
+  size_t ai = 0;
+  if (acts)
+    while (ai < acts->size() && (*acts)[ai].at < r.pos) ++ai;
+  for (int64_t k = 0; k < frames; k += block) {
+    const int n = static_cast<int>(std::min<int64_t>(block, frames - k));
+    Generator* g = r.gen();
+    if (acts && g)
+      for (; ai < acts->size() && (*acts)[ai].at < r.pos + n; ++ai) (*acts)[ai].fn(g, static_cast<int>((*acts)[ai].at - r.pos));
+    r.eng->process(bl.data(), br.data(), n);
+    L.insert(L.end(), bl.begin(), bl.begin() + n);
+    R.insert(R.end(), br.begin(), br.begin() + n);
+    r.pos += n;
+    if (g && pb)
+      for (int c; (c = pl::drainCapture(g, evs.data(), static_cast<int>(evs.size()))) > 0;)
+        for (int i = 0; i < c; ++i)
+          if (pb->feed(evs[static_cast<size_t>(i)]) && done) *done = true;
+    if (g && trace) {
+      pl::StepState s;
+      pl::stepState(g, s);
+      trace->push_back(s);
+    }
+  }
+}
+
+double maxDiff(const std::vector<float>& a, const std::vector<float>& b, size_t from, size_t to) {
+  double m = 0;
+  for (size_t i = from; i < std::min({to, a.size(), b.size()}); ++i) m = std::max(m, static_cast<double>(std::fabs(a[i] - b[i])));
+  return m;
+}
+double peak(const std::vector<float>& a, size_t from, size_t to) {
+  double m = 0;
+  for (size_t i = from; i < std::min(to, a.size()); ++i) m = std::max(m, static_cast<double>(std::fabs(a[i])));
+  return m;
+}
+std::string dbfs(double x) {
+  char b[32];
+  if (x <= 0) std::snprintf(b, sizeof b, "-inf dBFS (bit-identical)");
+  else std::snprintf(b, sizeof b, "%.1f dBFS", 20 * std::log10(x));
+  return b;
+}
+
+// What the editor does when a pass ends: the controller's last values into the project,
+// the performance into the pass's pattern (song mode: through a clip).
+ObjectId store(Rig& r, const pl::Performance& perf, bool song) {
+  Generator* g = r.gen();
+  pl::Mirror mr;
+  if (g && pl::mirror(g, mr))
+    for (int k = 0; k < pl::PCount; ++k)
+      if (mr.seq[static_cast<size_t>(k)] != 0) r.doc.setParam(channelPluginParam(r.ch, k), mr.value[static_cast<size_t>(k)], false);
+  r.doc.beginGroup("Record a deck performance");
+  const ObjectId target = pl::passPattern(r.doc, r.eng->mode() == PlayMode::Song ? r.pat : r.pat, r.ch, song);
+  const Tick len = static_cast<Tick>(std::ceil(perf.endTick - perf.startTick));
+  const double origin = song ? static_cast<double>(pl::clipOrigin(r.doc, target, r.ch, static_cast<Tick>(std::floor(perf.startTick)), len)) : 0.0;
+  pl::writePerformance(r.doc, target, r.ch, origin, perf, song);
+  r.doc.endGroup();
+  return target;
+}
+
+// ------------------------------------------------------------------ the null test
+struct PassResult {
+  pl::Performance perf;
+  std::vector<float> L, R;
+  std::vector<pl::StepState> trace;
+  bool ok = false;
+};
+
+PassResult livePass(Rig& r, int block, bool song, Tick from, bool trace) {
+  PassResult out;
+  const auto acts = performance();
+  r.eng->setMode(song ? PlayMode::Song : PlayMode::Pattern);
+  r.eng->setPattern(r.pat);
+  r.eng->setPosition(from);
+  r.eng->setRecording(true);
+  r.eng->play();
+  r.pos = 0;
+  pl::PerformanceBuilder pb;
+  bool done = false;
+  play(r, kPass, block, &acts, out.L, out.R, &pb, &done, trace ? &out.trace : nullptr);
+  r.eng->setRecording(false);
+  std::vector<float> tl, tr;
+  play(r, 4096, block, nullptr, tl, tr, &pb, &done);
+  r.eng->stop();
+  out.perf = pb.perf;
+  out.ok = done && !pb.lost;
+  return out;
+}
+
+PassResult replay(Rig& r, int block, Tick from, bool trace) {
+  PassResult out;
+  r.rebuild();
+  // the decks run on while stopped (and drift away from where the pass began)
+  std::vector<float> tl, tr;
+  r.pos = 0;
+  play(r, 5000, block, nullptr, tl, tr);
+  r.eng->setPosition(from);
+  r.eng->play();
+  r.pos = 0;
+  play(r, kPass, block, nullptr, out.L, out.R, nullptr, nullptr, trace ? &out.trace : nullptr);
+  r.eng->stop();
+  out.ok = true;
+  return out;
+}
+
+void testNull(const std::string& a, const std::string& b, int liveBlock, int replayBlock, bool song, bool keyLock) {
+  Rig r(a, b, keyLock);
+  const Tick from = song ? 2 * r.doc.song().barTicks() : 0;
+  if (song) {
+    r.doc.addClip(r.pat, 0, 0);
+    r.rebuild();
+  }
+  const PassResult live = livePass(r, liveBlock, song, from, false);
+  char name[200];
+  std::snprintf(name, sizeof name, "%s, %s, live %d / replay %d%s", song ? "song mode from bar 3" : "pattern mode", keyLock ? "key lock" : "no key lock",
+                liveBlock, replayBlock, "");
+  expect(live.ok, (std::string("a pass is captured as a performance: ") + name).c_str());
+  if (!live.ok) return;
+  expect(peak(live.L, 0, kPass) > 0.05, "the live pass is audible");
+  const ObjectId target = store(r, live.perf, song);
+  const Pattern* p = r.doc.song().pattern(target);
+  size_t notes = 0;
+  std::vector<int> lanes;
+  if (p) {
+    if (auto it = p->notes.find(r.ch); it != p->notes.end()) notes = it->second.size();
+    for (const auto& l : p->automation)
+      if (l.owner == r.ch) lanes.push_back(static_cast<int>(l.index - kChannelPluginBase));
+  }
+  std::printf("# %s: %zu notes, %zu lanes in the pattern\n", name, notes, lanes.size());
+  auto has = [&](int param) { return std::find(lanes.begin(), lanes.end(), param) != lanes.end(); };
+  // start, play A, play B, hot cue (set, jump), cue B, play B, auto loop (twice), halve,
+  // double, jump back, jump forward, the wheel touch, the mouse hand
+  expect(target == r.pat && notes == 15, "the performance is in the (empty) pattern: the start note and a note per button press");
+  expect(has(pl::PXfader) && has(pl::deckParam(0, pl::DEqLow)) && has(pl::deckParam(0, pl::DPitch)) && has(pl::deckParam(1, pl::DFilter)) &&
+             has(pl::deckParam(0, pl::DPos)) && has(pl::deckParam(0, pl::DMouse)) && has(pl::deckParam(0, pl::DWheel)) &&
+             has(pl::deckParam(1, pl::DNudge)) && lanes.size() == 8,
+         "lanes: crossfader, A's low EQ and pitch, B's filter; A's record position, mouse and wheel travel, B's nudge");
+  const PassResult rep = replay(r, replayBlock, from, false);
+  const double dl = maxDiff(live.L, rep.L, 0, kPass), dr = maxDiff(live.R, rep.R, 0, kPass);
+  const double d = std::max(dl, dr);
+  std::printf("# %s: replay vs live, largest difference %s over %lld samples\n", name, dbfs(d).c_str(), static_cast<long long>(kPass));
+  if (d > 0) {
+    size_t first = 0;
+    for (; first < static_cast<size_t>(kPass); ++first)
+      if (live.L[first] != rep.L[first] || live.R[first] != rep.R[first]) break;
+    std::printf("# first different sample %zu\n", first);
+  }
+  expect(d == 0, (std::string("the unedited replay nulls against the live pass (bit-identical): ") + name).c_str());
+  if (song || keyLock || liveBlock != 256 || replayBlock != 256) return;
+  // editing the data changes the sound from the edit on (and nothing before it)
+  const ParamId eq = channelPluginParam(r.ch, pl::deckParam(0, pl::DEqLow));
+  const PatternAutomation* lane = findPatternLane(*r.doc.song().pattern(target), eq.owner, eq.index);
+  expect(lane && lane->points.size() >= 2, "A's low EQ lane is there to edit");
+  if (!lane) return;
+  const std::vector<AutoPoint> orig = lane->points;
+  std::vector<AutoPoint> pts = orig;
+  for (auto& q : pts) q.value = std::max(q.value, 0.5f);  // no kill
+  r.doc.editPattern(target, "", [&](Pattern& x) { setPatternLane(x, eq.owner, eq.index, pts); });
+  const PassResult ed = replay(r, 256, from, false);
+  size_t first = 0;
+  for (; first < static_cast<size_t>(kPass); ++first)
+    if (live.L[first] != ed.L[first] || live.R[first] != ed.R[first]) break;
+  std::printf("# edited EQ lane: the first changed sample is %zu (the kill was at 40000)\n", first);
+  expect(first >= 40000 && first < 40000 + 2 * pl::kStep && maxDiff(live.L, ed.L, 40000, 325000) > 0.01,
+         "an edited lane changes the replay from where the edit is, the same before it");
+  // deleting the mouse hand's note: the scratch is gone
+  r.doc.editPattern(target, "", [&](Pattern& x) {
+    auto& ns = x.notes[r.ch];
+    ns.erase(std::remove_if(ns.begin(), ns.end(), [](const Note& n) { return n.pitch == pl::cmdKeyPitch(0, pl::KeyMouse); }), ns.end());
+    setPatternLane(x, eq.owner, eq.index, orig);
+  });
+  const PassResult nm = replay(r, 256, from, false);
+  {
+    size_t f2 = 0;
+    while (f2 < nm.L.size() && nm.L[f2] == live.L[f2]) ++f2;
+    std::printf("# without the mouse note: %g before, %g during, first change %zu\n", maxDiff(live.L, nm.L, 0, 100000), maxDiff(live.L, nm.L, 100000, 150000), f2);
+  }
+  expect(maxDiff(live.L, nm.L, 0, 99800) == 0 && maxDiff(live.L, nm.L, 100000, 150000) > 0.01,  // (the hand went down on the step after the block the mouse came in)
+         "without the mouse hand's note the mouse scratch is gone (the same until it)");
+}
+
+// Each control's value and both decks, step by step (32 sample blocks: one per step).
+void testStreams(const std::string& a, const std::string& b) {
+  Rig r(a, b, false);
+  const PassResult live = livePass(r, pl::kStep, false, 0, true);
+  expect(live.ok, "streams: a pass is captured");
+  if (!live.ok) return;
+  store(r, live.perf, false);
+  const PassResult rep = replay(r, pl::kStep, 0, true);
+  const size_t n = std::min(live.trace.size(), rep.trace.size());
+  int badParam = -1;
+  size_t badStep = 0;
+  bool posOk = true;
+  size_t moved = 0;
+  std::vector<bool> changed(static_cast<size_t>(pl::PCount), false);
+  for (size_t i = 0; i < n; ++i) {
+    for (int k = 0; k < pl::PCount; ++k) {
+      if (pl::perfParam(k)) continue;
+      const auto kk = static_cast<size_t>(k);
+      if (i > 0 && live.trace[i].p[kk] != live.trace[i - 1].p[kk]) changed[kk] = true;
+      if (live.trace[i].p[kk] != rep.trace[i].p[kk] && badParam < 0) badParam = k, badStep = i;
+    }
+    for (int d = 0; d < pl::kDecks; ++d)
+      if (live.trace[i].pos[d] != rep.trace[i].pos[d] || live.trace[i].vel[d] != rep.trace[i].vel[d]) {
+        if (posOk) std::printf("# deck %d differs first at step %zu: pos %.9f / %.9f, speed %.9f / %.9f\n", d, i, live.trace[i].pos[d],
+                               rep.trace[i].pos[d], live.trace[i].vel[d], rep.trace[i].vel[d]);
+        posOk = false;
+      }
+  }
+  for (bool c : changed) moved += c ? 1 : 0;
+  if (badParam >= 0) std::printf("# parameter %d differs first at step %zu\n", badParam, badStep);
+  std::printf("# streams: %zu steps compared, %zu controls moved\n", n, moved);
+  expect(n >= static_cast<size_t>(kPass / pl::kStep) && moved >= 4, "streams: every step of the pass compared, the moved controls among them");
+  expect(badParam < 0, "streams: every control's value is the same on every step (live and replayed)");
+  expect(posOk, "streams: both decks' read position and speed are the same on every step");
+  expect(maxDiff(live.L, rep.L, 0, kPass) == 0, "streams: the audio is the same");
+}
+
+// A second pass over a pattern that holds a performance goes into a new pattern.
+void testSecondPass(const std::string& a, const std::string& b) {
+  Rig r(a, b, false);
+  PassResult one = livePass(r, 256, false, 0, false);
+  const ObjectId p1 = store(r, one.perf, false);
+  const Pattern before = *r.doc.song().pattern(p1);
+  PassResult two = livePass(r, 256, false, 0, false);
+  expect(one.ok && two.ok, "two passes captured");
+  const size_t undoBefore = r.doc.history().position();
+  const ObjectId p2 = store(r, two.perf, false);
+  const Pattern* q1 = r.doc.song().pattern(p1);
+  const Pattern* q2 = r.doc.song().pattern(p2);
+  expect(p2 != p1 && q1 && q2, "the second pass records into a new pattern");
+  expect(q1 && *q1 == before, "the first pattern is untouched");
+  expect(q2 && q2->name == "Decks take 2" && pl::holdsPerformance(*q2, r.ch), "the new pattern is named after the setup and holds the second pass");
+  expect(r.doc.history().position() == undoBefore + 1, "a pass is one undo step (new pattern included)");
+  r.doc.undo();
+  expect(r.doc.song().pattern(p2) == nullptr && r.doc.song().pattern(p1) && *r.doc.song().pattern(p1) == before,
+         "undo removes the second pass and its pattern");
+  // the start states: one per performance still in the project
+  std::string path;
+  pl::Model m;
+  pl::parseData(r.doc.song().channel(r.ch)->plugin.data, path, m);
+  expect(m.starts.size() == 1, "the setup keeps the start state of the performance in the project");
+  // model text round trip (exact)
+  pl::Model back;
+  std::string p0;
+  expect(pl::parseData(pl::formatData(path, m), p0, back) && back == m && back.starts.size() == 1 && back.starts[0].v == m.starts[0].v,
+         "start states survive the model text exactly");
+  // a project save / load keeps the sub-tick positions
+  const std::string proj = (tmpDir() / "perf.gridline.json").string();
+  std::string err;
+  expect(saveProject(proj, r.doc.song(), &err), "a project with a performance saves");
+  Song t;
+  expect(loadProject(proj, t, &err), "... and loads");
+  const Pattern* lp = t.pattern(p1);
+  bool same = lp && lp->notes == before.notes && lp->automation.size() == before.automation.size();
+  size_t fracs = 0;
+  if (same)
+    for (size_t i = 0; i < before.automation.size(); ++i) {
+      same = same && lp->automation[i].points == before.automation[i].points;
+      for (const auto& q : before.automation[i].points) fracs += q.frac != 0 ? 1 : 0;
+    }
+  for (const auto& [c, ns] : before.notes)
+    for (const auto& nn : ns) fracs += nn.frac != 0 || nn.endFrac != 0 ? 1 : 0;
+  std::printf("# %zu sub-tick positions in the pattern\n", fracs);
+  expect(same && fracs > 0, "save / load: notes and lane points come back with their fractions");
+}
+
+// Loop recording (pattern mode, a 2 bar pattern): every loop pass is a performance of its own,
+// the first in the pattern, the next ones in new patterns (a pass never merges into another);
+// each replays exactly what its loop played live, the one that starts on the wrap included.
+void testLoop(const std::string& a, const std::string& b, int block) {
+  Rig r(a, b, false);
+  r.doc.editPattern(r.pat, "", [](Pattern& p) { p.bars = 2; });
+  r.rebuild();
+  const int64_t loop = 176400;  // 2 bars at 120 BPM
+  const auto acts = performance();
+  r.eng->setMode(PlayMode::Pattern);
+  r.eng->setPattern(r.pat);
+  r.eng->setPosition(0);
+  r.eng->setRecording(true);
+  r.eng->play();
+  r.pos = 0;
+  std::vector<float> L, R;
+  std::vector<pl::Performance> perfs;
+  {
+    std::vector<float> bl(static_cast<size_t>(block)), br(static_cast<size_t>(block));
+    std::vector<pl::CaptureEvent> evs(4096);
+    pl::PerformanceBuilder pb;
+    size_t ai = 0;
+    const int64_t total = 2 * loop + 30000;
+    for (int64_t k = 0; k < total; k += block) {
+      const int n = static_cast<int>(std::min<int64_t>(block, total - k));
+      Generator* g = r.gen();
+      for (; ai < acts.size() && acts[ai].at < r.pos + n; ++ai) acts[ai].fn(g, static_cast<int>(acts[ai].at - r.pos));
+      if (k + n >= total) r.eng->setRecording(false);
+      r.eng->process(bl.data(), br.data(), n);
+      L.insert(L.end(), bl.begin(), bl.begin() + n);
+      R.insert(R.end(), br.begin(), br.begin() + n);
+      r.pos += n;
+      for (int c; (c = pl::drainCapture(g, evs.data(), static_cast<int>(evs.size()))) > 0;)
+        for (int i = 0; i < c; ++i)
+          if (pb.feed(evs[static_cast<size_t>(i)])) perfs.push_back(pb.perf);
+    }
+    std::vector<float> tl(static_cast<size_t>(block)), tr(static_cast<size_t>(block));
+    for (int k = 0; k < 8; ++k) {
+      r.eng->process(tl.data(), tr.data(), block);
+      for (int c; (c = pl::drainCapture(r.gen(), evs.data(), static_cast<int>(evs.size()))) > 0;)
+        for (int i = 0; i < c; ++i)
+          if (pb.feed(evs[static_cast<size_t>(i)])) perfs.push_back(pb.perf);
+    }
+    r.eng->stop();
+  }
+  char name[64];
+  std::snprintf(name, sizeof name, " (%d sample blocks)", block);
+  expect(perfs.size() == 3 && perfs[0].startTick == 0 && perfs[1].startTick == 0 && perfs[2].startTick == 0,
+         (std::string("loop recording: a performance per loop pass, each from the loop start") + name).c_str());
+  if (perfs.size() < 2) return;
+  std::vector<ObjectId> pats;
+  for (const auto& pf : perfs) pats.push_back(store(r, pf, false));
+  expect(pats.size() == 3 && pats[0] == r.pat && pats[1] != pats[0] && pats[2] != pats[1] && pats[2] != pats[0],
+         "loop recording: the first pass in the pattern, each next one in a new pattern");
+  for (size_t k = 0; k < 2; ++k) {
+    r.eng->setPattern(pats[k]);
+    const PassResult rep = replay(r, block == 256 ? 1024 : 256, 0, false);
+    const size_t from = k * static_cast<size_t>(loop);
+    double d = 0;
+    for (size_t i = 0; i < static_cast<size_t>(loop); ++i)
+      d = std::max({d, static_cast<double>(std::fabs(rep.L[i] - L[from + i])), static_cast<double>(std::fabs(rep.R[i] - R[from + i]))});
+    std::printf("# loop pass %zu replayed: largest difference %s\n", k + 1, dbfs(d).c_str());
+    expect(d == 0, (std::string("loop recording: pass ") + std::to_string(k + 1) + " replays its loop bit for bit" + name).c_str());
+  }
+}
+
+// Punch in / out (song mode): the pass runs exactly over the punch range (bars `in` to
+// `in` + 2) and replays it exactly. Bar 2 starts inside a jog scratch, bar 3 is quiet.
+void testPunch(const std::string& a, const std::string& b, int block, int in) {
+  Rig r(a, b, false);
+  r.doc.addClip(r.pat, 0, 0);
+  r.rebuild();
+  const Tick bar = r.doc.song().barTicks();
+  const Tick pin = in * bar, pout = (in + 2) * bar;
+  const size_t s0 = static_cast<size_t>(in) * 88200, len = 2 * 88200;  // (88200 samples a bar at 120 BPM)
+  r.eng->setPunch(static_cast<double>(pin), static_cast<double>(pout));
+  const PassResult live = livePass(r, block, true, 0, false);
+  r.eng->setPunch(0, 0);
+  char name[64];
+  std::snprintf(name, sizeof name, " (bar %d, %d sample blocks)", in + 1, block);
+  expect(live.ok && live.perf.startTick == static_cast<double>(pin) && live.perf.endTick == static_cast<double>(pout),
+         (std::string("punch: the pass runs from the punch in to the punch out, exactly") + name).c_str());
+  if (!live.ok) return;
+  store(r, live.perf, true);
+  const PassResult rep = replay(r, block == 256 ? 1024 : 256, pin, false);
+  double d = 0;
+  size_t first = len;
+  for (size_t i = 0; i < len; ++i) {
+    const double di = std::max(std::fabs(static_cast<double>(rep.L[i] - live.L[s0 + i])), std::fabs(static_cast<double>(rep.R[i] - live.R[s0 + i])));
+    if (di > 0 && first == len) first = i;
+    d = std::max(d, di);
+  }
+  std::printf("# punch%s replayed: largest difference %s (first at %zu)\n", name, dbfs(d).c_str(), first);
+  expect(d == 0 && peak(live.L, s0, s0 + len) > 0.05, (std::string("punch: the punched pass replays bit for bit") + name).c_str());
+}
+
+// Takes still work: recorded as a take, a pass is a take note.
+void testTakeMode(const std::string& a, const std::string& b) {
+  Rig r(a, b, false);
+  r.doc.editChannel(r.ch, "", [](Channel& c) {
+    std::string p;
+    pl::Model m;
+    pl::parseData(c.plugin.data, p, m);
+    m.recordAs = pl::RecTake;
+    c.plugin.data = pl::formatData(p, m);
+  });
+  r.rebuild();
+  const auto acts = performance();
+  r.eng->setMode(PlayMode::Pattern);
+  r.eng->setPattern(r.pat);
+  r.eng->setRecording(true);
+  r.eng->play();
+  r.pos = 0;
+  std::vector<float> L, R;
+  std::vector<pl::CaptureEvent> evs(4096);
+  pl::TakeBuilder tb;
+  pl::PerformanceBuilder pb;
+  bool take = false, perf = false;
+  std::vector<float> bl(256), br(256);
+  for (int64_t k = 0; k < 100000; k += 256) {
+    r.eng->process(bl.data(), br.data(), 256);
+    if (k > 90000) r.eng->setRecording(false);
+    for (int c; (c = pl::drainCapture(r.gen(), evs.data(), static_cast<int>(evs.size()))) > 0;)
+      for (int i = 0; i < c; ++i) {
+        take = tb.feed(evs[static_cast<size_t>(i)]) || take;
+        perf = pb.feed(evs[static_cast<size_t>(i)]) || perf;
+      }
+  }
+  (void)acts;
+  expect(take && !perf && tb.take.steps() > 0, "record as take: the pass is a take (no performance)");
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  const std::string only = argc > 1 ? argv[1] : "";
+  auto want = [&](const char* n) { return only.empty() || only == n; };
+  const std::string a = writeTrack("perf120.wav", 12, 120), b = writeTrack("perf100.wav", 12, 100);
+  if (want("null")) {
+    testNull(a, b, 256, 256, false, false);
+    testNull(a, b, 64, 64, false, false);
+    testNull(a, b, 1024, 1024, false, false);
+    testNull(a, b, 256, 1024, false, false);
+    testNull(a, b, 1024, 64, false, false);
+    testNull(a, b, 64, 256, true, false);
+    testNull(a, b, 256, 256, false, true);
+  }
+  if (want("streams")) testStreams(a, b);
+  if (want("second")) testSecondPass(a, b);
+  if (want("take")) testTakeMode(a, b);
+  if (want("punch")) {
+    for (int in : {1, 2}) {
+      testPunch(a, b, 256, in);
+      testPunch(a, b, 1024, in);
+    }
+  }
+  if (want("loop")) {
+    testLoop(a, b, 256);
+    testLoop(a, b, 1024);
+  }
+  return finish();
+}

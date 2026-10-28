@@ -229,6 +229,13 @@ void drawPianoRoll(App& a) {
   PianoRollState& st = a.piano;
   const Pattern* pat = s.pattern(a.curPattern);
   const Channel* chan = s.channel(a.selChannel);
+  // J-159: an instrument that names its keys (a deck setup's performance keys) shows the names
+  const PluginInfo* chanInfo = chan ? findPlugin(chan->plugin.type) : nullptr;
+  auto keyLabel = [&](int p) -> const std::string* {
+    if (!chanInfo || p < 0 || p >= static_cast<int>(chanInfo->keyNames.size())) return nullptr;
+    const std::string& n = chanInfo->keyNames[static_cast<size_t>(p)];
+    return n.empty() ? nullptr : &n;
+  };
   if (st.selPattern != a.curPattern || st.selChannel != a.selChannel) {
     st.selected.clear();
     st.selPattern = a.curPattern;
@@ -653,7 +660,11 @@ void drawPianoRoll(App& a) {
     if (n.porta) dl->AddCircleFilled(ImVec2(x0 + 4, y + rowH * 0.5f), std::max(1.5f, rowH * 0.14f), theme::contrastText(fill), 8);
     if (x1 - x0 > 28 && rowH >= 11) {
       ImGui::PushFont(a.fontMono, std::min(11.0f, rowH - 3));
-      dl->AddText(ImVec2(x0 + 6, y + (rowH - ImGui::GetFontSize()) * 0.5f), theme::withAlpha(theme::contrastText(fill), 0.85f), noteName(n.pitch).c_str());
+      const std::string* kn = keyLabel(n.pitch);
+      const std::string label = kn ? *kn : noteName(n.pitch);
+      dl->PushClipRect(ImVec2(x0, y), ImVec2(x1 - 2, y + rowH), true);
+      dl->AddText(ImVec2(x0 + 6, y + (rowH - ImGui::GetFontSize()) * 0.5f), theme::withAlpha(theme::contrastText(fill), 0.85f), label.c_str());
+      dl->PopClipRect();
       ImGui::PopFont();
     }
     if (hovered && io.MousePos.x >= x0 && io.MousePos.x < x1 && io.MousePos.y >= y && io.MousePos.y < y + rowH &&
@@ -738,13 +749,31 @@ void drawPianoRoll(App& a) {
         if (!tint && rowH >= 6)  // highlight along the black key's top face
           dl->AddRectFilled(ImVec2(kx0 + 2, y + 1.5f), ImVec2(kx0 + blackW - 3, y + 3), theme::withAlpha(P.paper, 0.14f), 1.0f);
       }
-      if ((p % 12 == 0 || st.keyNames) && rowH >= 9) {
+      if ((p % 12 == 0 || st.keyNames) && rowH >= 9 && !keyLabel(p)) {
         float fs = std::min(theme::kFontLabel, rowH - 1);
         std::string nn = noteName(p);
         ImVec2 ts = a.fontMono->CalcTextSizeA(fs, 1e9f, 0, nn.c_str());
         dl->AddText(a.fontMono, fs, ImVec2(kx1 - ts.x - 5, std::round(y + (rowH - ts.y) * 0.5f)), theme::mix(P.keyWhite, P.ink, 0.6f), nn.c_str());
       }
     }
+    // J-159: named keys are flat name plates over the keyboard (a drum-map look)
+    if (chanInfo && !chanInfo->keyNames.empty())
+      for (int p = 0; p < 128; ++p) {
+        const std::string* kn = keyLabel(p);
+        const float y = yOf(p);
+        if (!kn || y > gridMax.y || y + rowH < gridMin.y) continue;
+        const float lv = lit ? lit->key(p) : 0.0f;
+        ImU32 plate = isBlack(p) ? P.surface800 : P.surface700;
+        if (lv > 0.004f) plate = theme::mix(plate, litCol, 0.9f * lv);
+        else if (g.previewPitch == p || hoverPitch == p) plate = theme::mix(plate, P.accent, 0.35f);
+        dl->AddRectFilled(ImVec2(kx0, y), ImVec2(kx1, y + rowH), plate);
+        dl->AddLine(ImVec2(kx0, std::round(y + rowH)), ImVec2(kx1, std::round(y + rowH)), P.line);
+        if (rowH < 7) continue;
+        const float fs = std::min(theme::kFontLabel, rowH - 1);
+        dl->PushClipRect(ImVec2(kx0, y), ImVec2(kx1 - 3, y + rowH), true);
+        dl->AddText(a.fontMono, fs, ImVec2(kx0 + 4, std::round(y + (rowH - fs) * 0.5f)), P.text, kn->c_str());
+        dl->PopClipRect();
+      }
     dl->AddLine(ImVec2(kx1, gridMin.y), ImVec2(kx1, gridMax.y), P.lineStrong);
     dl->PopClipRect();
   }

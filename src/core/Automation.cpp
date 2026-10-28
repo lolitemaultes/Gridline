@@ -105,14 +105,14 @@ double flAutoShape(const std::vector<AutoPoint>& p, size_t k, double x) {
 
 double pointsValue(const std::vector<AutoPoint>& p, double t, bool fl) {
   if (p.empty()) return 0.0;
-  if (t <= static_cast<double>(p.front().pos)) return p.front().value;
-  if (t >= static_cast<double>(p.back().pos)) return p.back().value;
-  auto it = std::upper_bound(p.begin(), p.end(), t, [](double v, const AutoPoint& q) { return v < static_cast<double>(q.pos); });
+  if (t <= p.front().at()) return p.front().value;
+  if (t >= p.back().at()) return p.back().value;
+  auto it = std::upper_bound(p.begin(), p.end(), t, [](double v, const AutoPoint& q) { return v < q.at(); });
   const AutoPoint& b = *it;
   const AutoPoint& a0 = *(it - 1);
-  double span = static_cast<double>(b.pos - a0.pos);
+  double span = b.at() - a0.at();  // (J-159: points may sit between ticks)
   if (span <= 0) return b.value;
-  double x = (t - static_cast<double>(a0.pos)) / span;
+  double x = (t - a0.at()) / span;
   const double y = fl ? flAutoShape(p, static_cast<size_t>(it - p.begin()), x) : autoShape(b.shape, b.tension, x);
   return a0.value + (b.value - a0.value) * y;
 }

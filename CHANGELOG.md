@@ -3,7 +3,36 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
-## Unreleased
+## 0.7.0-beta.3
+
+This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.
+
+### New since 0.7.0-beta.2
+
+- Platter, a two-deck DJ instrument on a channel: decks A and B with a mixer and crossfader,
+  tempo and beat grid detection, sync, key lock, hot cues, loops and a pitch fader, ready
+  mappings for the Pioneer DDJ-200, Hercules DJControl Inpulse 200 and Numark Mixtrack Pro FX
+  (or your own MIDI learn), and scratching that feels like a record, built on the model Mixxx uses.
+- Platter performances are recorded as pattern data you can see and edit: every control you move
+  becomes an automation lane, every button press (play, cue, hot cues, loops, beat jumps) a note
+  on a named key, and scratches lanes for the mouse hand, the jog wheel and nudges. Unedited, a
+  recording replays exactly as played, at any buffer size. A second pass never records over the
+  first: it goes into a new pattern. Record as: Take keeps the one-note takes.
+- Drag audio onto Platter's deck A or deck B to load it there, and Platter's EQ and master knobs
+  have 0 dB at 12 o'clock, so a mixer set by eye no longer sounds far too quiet.
+- A welcome screen: recent projects as tiles with a sketch of each arrangement, favourites,
+  templates and the demo song, and a Collaborative view that shows who is working on each shared
+  project right now.
+- One smooth stretch and pitch engine for all audio, with far fewer glitches and the same sound
+  live and in renders, and Rubber Band as a third time mode for clips, the sampler and the audio
+  editor.
+- The plugin manager is redesigned: one row per plugin with its formats, clean categories, a
+  preferred format and a details panel; the browser lists each plugin once.
+- Playlist: changes to one of several selected audio clips (level, fades, pitch) apply to all of
+  them by the same amount.
+- Seltmann: a sequence lane to reorder, split and join regions, in a shorter editor.
+- Fixes: big plugin windows stay inside the main window and scroll when they do not fit, the OUT
+  meter in the top bar is a real master output meter, and meters fall more calmly.
 
 ### One smooth stretch and pitch engine for all audio
 
@@ -55,6 +84,26 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   earlier load with the default.
 - Hand feel sets how heavy the record feels: loose is smoother and slower to follow, tight
   follows the hand about twice as fast. The middle setting is Mixxx's own feel.
+
+### Platter performances recorded as automation
+
+- Platter now records what you play as pattern data you can see and edit, instead of only as
+  a take. Every control you move (faders, EQ, filter, pitch, the crossfader) becomes an
+  automation lane, every button press (play, cue, hot cues, loops, beat jumps) becomes a note
+  on a named key in the piano roll, and scratches become lanes for the mouse hand, the jog
+  wheel and rim nudges. A "Performance start" note puts both decks back where they were.
+- Played back without edits, a recorded performance is exactly what you played: the same
+  control values on the same sample and the same audio, at any audio buffer size. Edit the
+  notes and lanes and the sound changes with them.
+- Recording a second pass never records over the first: if the selected pattern already holds
+  a performance, Gridline makes a new pattern (for example "Platter take 2"), selects it and
+  records there (in song mode it is placed where the pass started). Each pass is one undo
+  step.
+- Loop recording makes one performance per loop pass, each in its own pattern, and punch in
+  and out works in song mode.
+- The Platter window has a choice between Automation (the default) and Take. Takes still work,
+  follow the same new pattern rule, and takes recorded earlier keep playing.
+- The piano roll shows the names of an instrument's named keys on its notes and keys.
 
 ### New
 
@@ -154,6 +203,16 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   natural size. Small screens and large interface scales (125 %, 150 %) benefit most.
 - Platter fits short windows better: the waveforms, platters and pads get more compact before the
   window has to scroll, and it follows a narrow main window more closely.
+- Dragging audio onto Platter now loads it on the deck you drop it on: anywhere on deck A or deck
+  B, its waveform or its deck panel. Deck B's waveform used to send the track to deck A. Files from
+  the browser or the desktop and audio clips from the playlist's clip list all work, and only the
+  deck under the pointer lights up while you drag, with its name in the hint.
+- Platter no longer sounds far too quiet when its mixer is set by eye. The EQ and master knobs now
+  have 0 dB at 12 o'clock, like a DJ mixer: turning them to the centre used to cut each EQ band by
+  10 dB and the master by 17 dB, up to 27 dB in all. Turning them right still boosts up to +6 dB,
+  and fully left still kills the band or mutes the master. A track on a deck at the default
+  settings plays at the file's own level, the same as an audio clip; saved projects keep their
+  sound.
 - The automation clip editor no longer runs under the status bar on small screens, and the Save as
   template dialog no longer grows past the main window when the templates folder has a long path.
 - Welcome screen: the menu button on a project tile now opens the tile's menu, in the
@@ -170,11 +229,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 - The "Song sketch" project template (and its Songwriting category).
 
-## 0.7.0-beta.2
-
-This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.
-
-### New since 0.7.0-beta.1
+### New in 0.7.0-beta.2
 
 - The Gridline Suite: Gridline's instruments and effects as VST3, CLAP and Audio Unit plugins
   for other DAWs, plus Gridline Suite Mini, 35 compact effects.

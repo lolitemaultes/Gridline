@@ -39,6 +39,11 @@ class NoteRecorder {
   bool active() const { return active_; }
   bool songMode() const { return song_; }
   ObjectId pattern() const { return pattern_; }  // current take
+  // From now on records into `pattern` (pattern mode: an instrument's pass moved to a new
+  // pattern, J-159). The notes held so far end in the pattern they started in.
+  void retarget(ObjectId pattern) {
+    if (active_ && !song_) pattern_ = pattern;
+  }
   int pass() const { return pass_; }
   int takes() const { return static_cast<int>(takeIds_.size()); }
   int notesRecorded() const { return recorded_; }

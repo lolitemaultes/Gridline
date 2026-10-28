@@ -10,6 +10,10 @@ namespace {
 ParamDesc lin(const std::string& n, const char* u, double mn, double mx, double d) {
   return ParamDesc{n, u, mn, mx, d, ParamKind::Continuous, ParamScale::Linear, {}};
 }
+// J-160: a DJ mixer knob: 0 dB at the centre detent (12 o'clock), cuts below, boosts above.
+ParamDesc det(const std::string& n, const char* u, double mn, double mx, double d) {
+  return ParamDesc{n, u, mn, mx, d, ParamKind::Continuous, ParamScale::Detent, {}};
+}
 ParamDesc tog(const std::string& n, double d) { return ParamDesc{n, "", 0, 1, d, ParamKind::Toggle, ParamScale::Linear, {}}; }
 ParamDesc ch(const std::string& n, std::vector<std::string> c, double d) {
   const double mx = static_cast<double>(c.size() - 1);
@@ -26,9 +30,9 @@ void appendInfos(std::vector<PluginInfo>& v) {
     auto at = [&](int dp) -> ParamDesc& { return p.params[static_cast<size_t>(deckParam(d, dp))]; };
     at(DVolume) = lin(k + "channel fader", "%", 0, 1, 1);
     at(DTrim) = lin(k + "trim", "dB", -12, 12, 0);
-    at(DEqHigh) = lin(k + "EQ high", "dB", kEqKillDb, 6, 0);
-    at(DEqMid) = lin(k + "EQ mid", "dB", kEqKillDb, 6, 0);
-    at(DEqLow) = lin(k + "EQ low", "dB", kEqKillDb, 6, 0);
+    at(DEqHigh) = det(k + "EQ high", "dB", kEqKillDb, 6, 0);
+    at(DEqMid) = det(k + "EQ mid", "dB", kEqKillDb, 6, 0);
+    at(DEqLow) = det(k + "EQ low", "dB", kEqKillDb, 6, 0);
     at(DFilter) = lin(k + "filter", "", -1, 1, 0);
     at(DFilterRes) = lin(k + "filter resonance", "%", 0, 1, 0.25);
     at(DPitch) = lin(k + "pitch fader", "", -1, 1, 0);
@@ -44,18 +48,25 @@ void appendInfos(std::vector<PluginInfo>& v) {
     at(DXfSide) = ch(k + "crossfader side", {"Thru", "A", "B"}, d == 0 ? XfA : XfB);
     at(DLoopSize) = ch(k + "loop size", {"1/8", "1/4", "1/2", "1", "2", "4", "8", "16", "32"}, 5);
     at(DJog) = lin(k + "jog sensitivity", "times", 0.25, 2, kJogSensDefault);
+    // J-159: what a recorded performance plays (lanes in the pattern)
+    at(DPos) = lin(k + "record position", "", 0, 1, 0);
+    at(DMouse) = lin(k + "mouse travel", "turns", -kTravelTurns, kTravelTurns, 0);
+    at(DWheel) = lin(k + "wheel travel", "turns", -kTravelTurns, kTravelTurns, 0);
+    at(DNudge) = lin(k + "nudge", "ticks", -kNudgeSpan, kNudgeSpan, 0);
   }
   p.params[PXfader] = lin("Crossfader", "", 0, 1, 0.5);
   p.params[PXfCurve] = lin("Crossfader curve", "%", 0, 1, 0.5);
   p.params[PFaderCurve] = ch("Fader curve", {"Smooth", "Linear", "Sharp"}, FcSmooth);
   p.params[PNoteMode] = ch("Note mode", {"Gate", "Trigger"}, NoteGate);
   p.params[PSyncTo] = ch("Sync to", {"Project", "Other deck"}, SyncProject);
-  p.params[PMaster] = lin("Master level", "dB", kMasterOffDb, 6, 0);
+  p.params[PMaster] = det("Master level", "dB", kMasterOffDb, 6, 0);
   p.params[PXfCut] = tog("Crossfader cut", 0);
   p.params[PXfReverse] = tog("Crossfader reverse", 0);
   p.editorWidth = 1240;
   p.editorMinWidth = 940;  // reflows in a narrower window
   p.noteFxPanel = false;  // a DJ setup: notes trigger cues and takes, no note processors
+  p.keyNames.resize(128);
+  for (int k = 0; k < 128; ++k) p.keyNames[static_cast<size_t>(k)] = keyName(k);
 
   // Factory set-ups (original).
   const int bXf = deckParam(1, DXfSide);

@@ -62,6 +62,10 @@ struct Note {
   bool porta = false;  // starts at the previous note's pitch and glides to its own (channel porta time)
   bool muted = false;  // J-11: kept in the pattern but not played (mute tool)
   int group = 0;       // J-31: note group (0 = none); grouped notes are selected together
+  // J-159: sub-tick timing (recorded performances keep their exact sample): the note starts
+  // at start + frac (0 <= frac < 1) and ends at start + length + endFrac (-1 < endFrac < 1).
+  // Edits that move or copy notes keep them; 0 for every ordinary note.
+  float frac = 0, endFrac = 0;
 
   // {start, length, pitch, velocity} keeps working everywhere (without
   // missing-initializer warnings for the property fields).
@@ -76,7 +80,7 @@ struct Note {
   bool operator==(const Note& o) const {
     return start == o.start && length == o.length && pitch == o.pitch && velocity == o.velocity && pan == o.pan &&
            fine == o.fine && release == o.release && modX == o.modX && modY == o.modY && color == o.color &&
-           slide == o.slide && porta == o.porta && muted == o.muted && group == o.group;
+           slide == o.slide && porta == o.porta && muted == o.muted && group == o.group && frac == o.frac && endFrac == o.endFrac;
   }
 };
 

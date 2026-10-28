@@ -1204,6 +1204,7 @@ struct Recording {
 };
 std::vector<Recording> recs;
 bool recordOn = false;
+bool recordHold = false;
 bool observerInstalled = false;
 
 void commitRecording(App& a, Recording& r) {
@@ -1276,7 +1277,7 @@ void commitRecording(App& a, Recording& r) {
 }
 
 void onParamSet(App& a, ParamId pid, double value) {
-  if (!recordOn || !a.engine.playing()) return;
+  if (!recordOn || recordHold || !a.engine.playing()) return;
   const Song& s = a.doc.song();
   auto d = describeParam(s, pid);
   if (!d) return;
@@ -1349,6 +1350,7 @@ struct LaneGesture {
 // =================================================================== API ====
 
 bool& automationRecording() { return recordOn; }
+bool& automationRecordHold() { return recordHold; }
 ParamId& pianoAutomationLane() { return laneTarget; }
 
 void openAutomationEditor(App& a, ObjectId automation, ObjectId placement) {

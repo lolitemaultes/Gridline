@@ -488,7 +488,9 @@ bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place, DropFeedb
   const ImGuiPayload* pl = ImGui::AcceptDragDropPayload(type, ImGuiDragDropFlags_AcceptNoDrawDefaultRect | ImGuiDragDropFlags_AcceptBeforeDelivery);
   if (!pl) return false;
   if (!pl->Delivery) {
-    if (!fb || fb->highlight) drawTargetHighlight(rect);
+    // J-160: only the target that takes the drop lights up (a smaller target inside this one,
+    // such as a Platter deck inside its plugin window, wins and draws its own)
+    if (pl->Preview && (!fb || fb->highlight)) drawTargetHighlight(rect);
     if (fb) fb->hovering = true;
     ImGui::SetTooltip("%s", p.label.c_str());
     a.setHint(p.label);
@@ -516,6 +518,39 @@ void pluginWindowDropTarget(App& a, const PluginTarget& t) {
     acceptPluginDrop(a, DropTarget::PluginWindow, place);  // J-97: replace the shown instrument / effect
     ImGui::EndDragDropTarget();
   }
+}
+
+std::string draggedAudioFile(App& a, const ImGuiPayload* pl, std::string* why) {
+  if (!pl) return "";
+  auto audio = [](const std::string& p) { return !p.empty() && browse::kindOf(p) == Kind::Audio; };
+  if (pl->IsDataType("GL_CLIPSRC")) {
+    std::string w;
+    const std::vector<xdrop::Item> it = clipSourceItems(a, pl, w);
+    if (why) *why = w;
+    return !it.empty() && audio(it.front().path) ? it.front().path : std::string();
+  }
+  if (pl->IsDataType("GL_CHANNEL")) {  // a channel rack row: the sample it plays
+    if (!pl->Data || pl->DataSize != static_cast<int>(sizeof(ObjectId))) return "";
+    ObjectId id = kNoId;
+    std::memcpy(&id, pl->Data, sizeof id);
+    const Channel* c = a.doc.song().channel(id);
+    if (!c || c->plugin.type == "gl.platter" || xdrop::sampleSlot(c->plugin.type) == xdrop::SampleSlot::None) return "";
+    const std::string p = c->plugin.data.substr(0, c->plugin.data.find('\n'));
+    std::error_code ec;
+    return audio(p) && fs::is_regular_file(p, ec) ? p : std::string();
+  }
+  if (!pl->IsDataType("GL_FILE") && !pl->IsDataType("GL_ITEM") && !pl->IsDataType("GL_FILES")) return "";
+  bool waiting = false;
+  for (const xdrop::Item& it : payloadItems(pl)) {
+    if (it.dir) continue;
+    if (it.pending || it.path.empty()) {
+      waiting = waiting || xdrop::kindOf(it) == Kind::Audio;
+      continue;
+    }
+    if (audio(it.path)) return it.path;
+  }
+  if (waiting && why) *why = i18n::tr("This file is still on its way: drop it again in a moment");
+  return "";
 }
 
 namespace {
@@ -974,7 +1009,9 @@ bool acceptPluginDrop(App& a, DropTarget target, const DropPlace& place, DropFee
   const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PLUGIN", ImGuiDragDropFlags_AcceptNoDrawDefaultRect | ImGuiDragDropFlags_AcceptBeforeDelivery);
   if (!pl) return false;
   if (!pl->Delivery) {
-    if (!fb || fb->highlight) drawTargetHighlight(rect);
+    // J-160: only the target that takes the drop lights up (a smaller target inside this one,
+    // such as a Platter deck inside its plugin window, wins and draws its own)
+    if (pl->Preview && (!fb || fb->highlight)) drawTargetHighlight(rect);
     if (fb) fb->hovering = true;
     ImGui::SetTooltip("%s", label.c_str());
     a.setHint(label);

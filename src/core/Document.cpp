@@ -172,7 +172,7 @@ void Document::beginGroup(const std::string& label) {
   groups_.push_back(std::make_unique<GroupCommand>(label));
 }
 
-void Document::endGroup() {
+void Document::endGroup(bool joinGesture) {
   if (groups_.empty()) return;
   auto g = std::move(groups_.back());
   groups_.pop_back();
@@ -181,7 +181,7 @@ void Document::endGroup() {
     groups_.back()->add(std::move(g));  // already applied
     return;
   }
-  const bool join = pointerGesture_ && gestureSerial_ != 0 && undo_.canAmend() && undo_.stateSerial() == gestureSerial_;
+  const bool join = joinGesture && pointerGesture_ && gestureSerial_ != 0 && undo_.canAmend() && undo_.stateSerial() == gestureSerial_;
   if (join) {
     undo_.amendTop(std::move(g));
   } else {

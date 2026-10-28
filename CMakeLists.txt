@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(gridline VERSION 0.7.0 LANGUAGES C CXX)
 # Prerelease label: "beta.1" makes this Gridline 0.7.0-beta.1 (published as a GitHub pre-release);
 # empty ("") for a release. The version is set only here (cmake/GridlineVersion.cmake, docs/releasing.md).
-set(GRIDLINE_VERSION_PRE "beta.2")
+set(GRIDLINE_VERSION_PRE "beta.3")
 include(cmake/GridlineVersion.cmake)
 gridline_version_forms(${PROJECT_VERSION} "${GRIDLINE_VERSION_PRE}" GRIDLINE_VERSION)
 
@@ -1389,6 +1389,21 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/platter_flow -P ${CMAKE_SOURCE_DIR}/tests/platter_flow.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(platter_flow PROPERTIES TIMEOUT 300)
+
+    # J-160: audio dragged onto Platter loads on the deck it is dropped on (A or B, lane or panel).
+    add_test(NAME platter_drop
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_platter>
+                     -DOUT=${CMAKE_BINARY_DIR}/platter_drop -P ${CMAKE_SOURCE_DIR}/tests/platter_drop.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(platter_drop PROPERTIES TIMEOUT 300)
+
+    # J-159: deck passes recorded as automation and notes (pattern and song mode, a new pattern
+    # per pass, one undo step each), shown in the piano roll and the playlist.
+    add_test(NAME platter_perf_flow
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_platter>
+                     -DOUT=${CMAKE_BINARY_DIR}/platter_perf_flow -P ${CMAKE_SOURCE_DIR}/tests/platter_perf_flow.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(platter_perf_flow PROPERTIES TIMEOUT 300)
 
     # J-110: Seltmann's pattern Play button follows every Stop (button, Space, panic, Tools menu,
     # MIDI / remote, focus loss) and plays again with one click.

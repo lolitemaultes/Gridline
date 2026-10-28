@@ -1259,6 +1259,8 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   bc_.ctx.tick = blockTick;
   bc_.ctx.playing = tPlaying_;
   bc_.ctx.recording = recOn && tPlaying_ && countInLeft_ <= 0;
+  bc_.ctx.punchIn = punchA_.load(std::memory_order_relaxed);
+  bc_.ctx.punchOut = punchB_.load(std::memory_order_relaxed);
   bc_.ctx.ports = &ports_;
   ports_.beginBlock();
   {

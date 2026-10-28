@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -294,6 +295,8 @@ void noteToJson(const Note& n, Json& jn) {
   if (n.porta) jn.object["porta"] = boolean(true);
   if (n.muted) jn.object["muted"] = boolean(true);
   if (n.group > 0) jn.object["group"] = num(n.group);  // J-31
+  if (n.frac != 0.f) jn.object["frac"] = num(n.frac);  // J-159
+  if (n.endFrac != 0.f) jn.object["endFrac"] = num(n.endFrac);
 }
 
 void noteFromJson(const Json& e, Note& n) {
@@ -307,6 +310,11 @@ void noteFromJson(const Json& e, Note& n) {
   n.porta = flag(e, "porta");
   n.muted = flag(e, "muted");
   n.group = jsonInt<int>(std::clamp(e.num("group", 0), 0.0, 1e9));  // J-31
+  // J-159: sub-tick timing
+  const double fr = e.num("frac", 0), ef = e.num("endFrac", 0);
+  n.frac = std::isfinite(fr) && fr > 0 && fr < 1 ? static_cast<float>(fr) : 0.f;
+  n.endFrac = std::isfinite(ef) && ef > -1 && ef < 1 ? static_cast<float>(ef) : 0.f;
+  n.frac = std::min(n.frac, 0.99999994f);
 }
 // ---- end of channel / note extras
 
@@ -406,11 +414,12 @@ void arrangementToJson(const Song& s, Json& j) {
       if (a.flCurves) ja.object["flCurves"] = boolean(true);  // J-41 (absent: the pre-J-41 curves)
       Json pts = Json::makeArray();
       for (const auto& p : a.points) {
-        Json jp = Json::makeArray();  // [pos, value, tension, shape]
+        Json jp = Json::makeArray();  // [pos, value, tension, shape(, frac)]
         jp.array.push_back(num(static_cast<double>(p.pos)));
         jp.array.push_back(num(p.value));
         jp.array.push_back(num(p.tension));
         jp.array.push_back(num(static_cast<int>(p.shape)));
+        if (p.frac != 0.f) jp.array.push_back(num(p.frac));  // J-159: sub-tick position
         pts.array.push_back(std::move(jp));
       }
       ja.object["points"] = std::move(pts);
@@ -474,11 +483,12 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
 Json pointsToJson(const std::vector<AutoPoint>& pts) {
   Json arr = Json::makeArray();
   for (const auto& p : pts) {
-    Json jp = Json::makeArray();  // [pos, value, tension, shape]
+    Json jp = Json::makeArray();  // [pos, value, tension, shape(, frac)]
     jp.array.push_back(num(static_cast<double>(p.pos)));
     jp.array.push_back(num(p.value));
     jp.array.push_back(num(p.tension));
     jp.array.push_back(num(static_cast<int>(p.shape)));
+    if (p.frac != 0.f) jp.array.push_back(num(p.frac));  // J-159: sub-tick position
     arr.array.push_back(std::move(jp));
   }
   return arr;
@@ -495,9 +505,10 @@ std::vector<AutoPoint> pointsFromJson(const Json* pts) {
     p.value = static_cast<float>(std::clamp(at(1, 0.5), 0.0, 1.0));
     p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
     p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
+    if (const double fr = at(4, 0); fr > 0 && fr < 1) p.frac = std::min(static_cast<float>(fr), 0.99999994f);  // J-159
     out.push_back(p);
   }
-  std::stable_sort(out.begin(), out.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.pos < y.pos; });
+  std::stable_sort(out.begin(), out.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.at() < y.at(); });
   return out;
 }
 
@@ -1239,9 +1250,10 @@ void automationClipFromJson(const Json& ja, AutomationClip& a) {
       p.value = static_cast<float>(std::clamp(at(1, 0.5), 0.0, 1.0));
       p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
       p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
+    if (const double fr = at(4, 0); fr > 0 && fr < 1) p.frac = std::min(static_cast<float>(fr), 0.99999994f);  // J-159
       a.points.push_back(p);
     }
-  std::stable_sort(a.points.begin(), a.points.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.pos < y.pos; });
+  std::stable_sort(a.points.begin(), a.points.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.at() < y.at(); });
 }
 
 bool songFromJson(const Json& src, Song& out, std::string* err) {

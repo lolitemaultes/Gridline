@@ -54,9 +54,11 @@
 #include <cmath>
 #include <complex>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <thread>
+#include "../../core/Automation.h"
 #include "../../engine/TimeStretch.h"
 #include "../../engine/pitch/Kernel.h"
 #include "platter.h"
@@ -80,6 +82,21 @@ float defOf(int i) {
   }();
   return d[static_cast<size_t>(i)];
 }
+// J-159: the parameters' descriptors (first used on the UI thread: the generator's constructor).
+const ParamDesc& descOf(int i) {
+  static const std::vector<ParamDesc> d = [] {
+    std::vector<ParamDesc> x(PCount);
+    if (const PluginInfo* p = findPlugin(kType))
+      for (int k = 0; k < PCount && k < static_cast<int>(p->params.size()); ++k) x[static_cast<size_t>(k)] = p->params[static_cast<size_t>(k)];
+    return x;
+  }();
+  return d[static_cast<size_t>(i)];
+}
+// A value as a lane stores it (normalized float), and the value a lane point gives back
+// (what the engine writes for automation): a recorded performance uses these live, so
+// its lanes give the decks exactly the values they had.
+float normOf(int i, double v) { return static_cast<float>(descOf(i).toNormalized(v)); }
+float valueOfN(int i, double n) { return static_cast<float>(descOf(i).fromNormalized(n)); }
 double dbToGain(double db) { return std::pow(10.0, db / 20.0); }
 double masterGainOf(double db) { return db <= kMasterOffDb + 1e-3 ? 0.0 : dbToGain(db); }
 
@@ -201,6 +218,20 @@ struct Shared {
   std::array<std::atomic<float>, PCount> mirVal{};
   const PlatterAux* aux = nullptr;
   KeyPool* pool = nullptr;
+  // J-159: performances. `strict` while a pass is captured as a performance or lanes are
+  // followed: inputs act on step starts and the decks use canonical values (what a lane
+  // gives back): `p` is set from `raw` (or the lanes) at each step start only.
+  std::array<float, PCount> raw{};
+  bool strict = false;
+  bool replay = false;  // following: the performance lanes (and command keys) drive the decks
+  // Transport tick at a sample (an anchor set where the position jumped, so the same
+  // sample gives the same tick whatever the block sizes).
+  double anchorTick = 0;
+  uint64_t anchorClock = 0;
+  double tickAt(double clk) const { return anchorTick + (clk - static_cast<double>(anchorClock)) * tempo * ppq / (60.0 * sr); }
+  // The decks' lane values this step (follow): has, normalized value
+  std::array<bool, PCount> laneHas{};
+  std::array<double, PCount> laneN{};
 
   double songBeat(double sampleInBlock) const { return (blockTick + sampleInBlock * tempo * ppq / (60.0 * sr)) / static_cast<double>(ppq); }
   // A controller moved parameter p: it wins over the stored value for a moment
@@ -209,7 +240,8 @@ struct Shared {
     const auto k = static_cast<size_t>(i);
     ctlVal[k] = v;
     ctlUntil[k] = clock + static_cast<uint64_t>(sr * 0.25) + 1;
-    p[k] = v;
+    raw[k] = v;
+    if (!strict) p[k] = v;
     mirVal[k].store(v, std::memory_order_relaxed);
     mirSeq[k].fetch_add(1, std::memory_order_release);
   }
@@ -297,7 +329,8 @@ class Deck {
   bool leaderPhase(double sampleInBlock, double& phase) const {
     if (leader_ == kLeadProject) {
       if (!sh_->transport) return false;
-      const double sb = sh_->songBeat(sampleInBlock);
+      // (strict: the tick of this very sample, the same whatever the block sizes)
+      const double sb = sh_->strict ? sh_->tickAt(static_cast<double>(sh_->clock)) / sh_->ppq : sh_->songBeat(sampleInBlock);
       phase = sb - std::floor(sb);
       return true;
     }
@@ -515,6 +548,7 @@ class Deck {
   }
   // Jog ticks (already scaled) for the filter, at their sample time.
   void jogTicks(double ticks) {
+    if (wheelLane_) return;  // (J-159: a wheel travel lane gives the filter its travel)
     const size_t h = tqHead_;
     if (h - tqTail_ >= tq_.size()) return;
     tq_[h % tq_.size()] = Tick{sh_->evAt + sh_->evDelay, ticks * secondsPerTick()};
@@ -529,6 +563,23 @@ class Deck {
       dx += tq_[tqTail_ % tq_.size()].sec;
       moved = true;
       ++tqTail_;
+    }
+    if (sh_->strict) {
+      // J-159: the travel goes through the wheel travel lane's values (summed, wrapping): the
+      // filter takes the difference of two lane values, live and in a replay alike
+      const int k = deckParam(idx_, DWheel);
+      float n = wheelN_;
+      if (wheelLane_) {
+        n = wheelLaneN_;
+      } else if (moved) {
+        wheelRaw_ += dx / kSecondsPerRev;
+        wheelRaw_ = wrapTurns(wheelRaw_);
+        n = normOf(k, wheelRaw_);
+      }
+      const double d = wrapTurns(static_cast<double>(valueOfN(k, n)) - static_cast<double>(valueOfN(k, wheelN_)));
+      wheelN_ = n;
+      dx = d * kSecondsPerRev;
+      moved = d != 0.0;
     }
     // releasing (and the wheel has stopped): the record moved as the motor would move it
     if (jogRelease_ && !moved) dx = releaseTo_ * abDt_;
@@ -572,6 +623,8 @@ class Deck {
     const double p = posGain();
     scr_ = ScrPos;
     posTarget_ = 0;
+    mouseN_ = normOf(deckParam(idx_, DMouse), 0.0);
+    mouseTurns_ = 0;
     // the loop starts settled at the record's speed: the error a P loop needs for it
     pscErr_ = r0 / p;
     posTravel_ = -pscErr_ * unity() * knotLen();
@@ -582,7 +635,20 @@ class Deck {
     glA_ = glB_ = r0, glT0_ = glT1_ = static_cast<double>(sh_->clock);
   }
   void handMove(double turns) {
-    if (scr_ == ScrPos && hand_) posTarget_ = turns * srcRate() * kSecondsPerRev;
+    if (!(scr_ == ScrPos && hand_)) return;
+    if (sh_->strict) {  // (as the mouse travel lane holds it)
+      setMouse(normOf(deckParam(idx_, DMouse), wrapTurns(turns)));
+      return;
+    }
+    posTarget_ = turns * srcRate() * kSecondsPerRev;
+  }
+  // The mouse travel lane's value (normalized, wrapping): the hand's target while it holds the
+  // record is the travel summed from the lane's steps.
+  void setMouse(double n) {
+    const int k = deckParam(idx_, DMouse);
+    mouseTurns_ += wrapTurns(static_cast<double>(valueOfN(k, n)) - static_cast<double>(valueOfN(k, mouseN_)));
+    mouseN_ = static_cast<float>(n);
+    if (scr_ == ScrPos && hand_) posTarget_ = mouseTurns_ * srcRate() * kSecondsPerRev;
   }
   // The mouse lets go: a throw (faster than 2.5x) coasts, anything slower goes back to the motor.
   void handUp() {
@@ -668,6 +734,12 @@ class Deck {
 
   void nudgeTicks(int ticks) {
     if (!loaded()) return;
+    if (sh_->strict) {  // (J-159: the nudge lane sums them)
+      constexpr int span = static_cast<int>(kNudgeSpan);
+      nudgeSum_ += ticks;
+      while (nudgeSum_ >= span) nudgeSum_ -= 2 * span;
+      while (nudgeSum_ < -span) nudgeSum_ += 2 * span;
+    }
     if (motor_ && !hand_) {
       nudge_ = std::clamp(nudge_ + ticks * 0.6 / ticksPerRev(), -0.5, 0.5);
     } else if (!motor_) {
@@ -687,7 +759,7 @@ class Deck {
       case CtlSync:
         if (e.down) {
           toggleCtl(DSync);
-          if (on(DSync) && motor_) {
+          if (!sh_->strict && on(DSync) && motor_) {  // (strict: when the step takes the new value, syncOn)
             motor_ = false;  // re-align the phase now
             startMotor(false);
           }
@@ -817,6 +889,105 @@ class Deck {
     fresh_ = true;
   }
   bool active() const { return rs() && (motor_ || hand_ || scratching() || std::fabs(vel_) > 1e-9 || ghost_.left > 0 || inTake_); }
+
+  // ---------------------------------------------------------------- performances (J-159)
+  // While a pass is captured as a performance (and while one plays back) the decks work
+  // in whole steps: the generator applies queued inputs at the step start in a fixed order
+  // and every value goes through what its lane holds, so a lane replay matches the pass.
+  static double wrapTurns(double x) { return x - 2.0 * kTravelTurns * std::floor((x + kTravelTurns) / (2.0 * kTravelTurns)); }
+  // A seek (editor click, search): the deck goes to the record position lane's value.
+  // Live, the target becomes a lane value (a new one even when the place is the same, so
+  // the lane shows every seek); a replay jumps where the lane changes.
+  void seek(double target) {
+    if (!loaded() || frames() <= 0) return;
+    float n = normOf(deckParam(idx_, DPos), std::clamp(target / frames(), 0.0, 1.0));
+    if (n == posN_) n = std::nextafter(n, n < 0.5f ? 1.0f : 0.0f);
+    posN_ = n;
+    jump(static_cast<double>(valueOfN(deckParam(idx_, DPos), n)) * frames());
+  }
+  void seekLane(double n) {
+    posN_ = static_cast<float>(n);
+    if (loaded()) jump(static_cast<double>(valueOfN(deckParam(idx_, DPos), n)) * frames());
+  }
+  // The lane values a pass starts from (the record position where the record is).
+  void perfReset() {
+    posN_ = loaded() && frames() > 0 ? normOf(deckParam(idx_, DPos), std::clamp((jumpPending_ ? jumpTo_ : pos_) / frames(), 0.0, 1.0)) : 0.f;
+    wheelRaw_ = 0;
+    wheelN_ = normOf(deckParam(idx_, DWheel), 0.0);
+    nudgeSum_ = 0;
+    mouseTurns_ = scr_ == ScrPos && hand_ ? posTarget_ / (srcRate() * kSecondsPerRev) : 0.0;
+    mouseN_ = normOf(deckParam(idx_, DMouse), wrapTurns(mouseTurns_));
+  }
+  float laneOut(int d) const {
+    switch (d) {
+      case DPos: return posN_;
+      case DMouse: return mouseN_;
+      case DWheel: return wheelN_;
+      default: return normOf(deckParam(idx_, DNudge), static_cast<double>(nudgeSum_));
+    }
+  }
+
+  // The deck's state where a pass starts (restored by the performance's start note):
+  // times relative to now; the key lock engine restarts there anyway.
+  template <class F>
+  void snapFields(F&& f) {
+    const double now = static_cast<double>(sh_->clock);
+    double v;
+    f(pos_), f(vel_), f(prevRate_), f(tan_), f(jumpTo_), f(cue_), f(savedIn_), f(savedOut_), f(loopIn_), f(loopOut_), f(pendingIn_), f(slipPos_);
+    for (auto& h : hot_) f(h);
+    f(abX_), f(abV_), f(releaseTo_), f(posTarget_), f(posTravel_), f(pscErr_), f(pscRate_), f(pscLast_), f(pscWait_);
+    v = nextKnot_ - now, f(v), nextKnot_ = v + now;
+    f(glA_), f(glB_);
+    v = glT0_ - now, f(v), glT0_ = v + now;
+    v = glT1_ - now, f(v), glT1_ = v + now;
+    f(thrRate_), f(thrFloor_), f(nudge_), f(bend_);
+    v = static_cast<double>(softUntil_) - now, f(v), softUntil_ = static_cast<uint64_t>(std::max(0.0, v + now));
+    v = static_cast<double>(rimMuteUntil_) - now, f(v), rimMuteUntil_ = static_cast<uint64_t>(std::max(0.0, v + now));
+    auto fb = [&](bool& b) {
+      double x = b ? 1 : 0;
+      f(x);
+      b = x != 0;
+    };
+    auto fi = [&](int& i) {
+      double x = i;
+      f(x);
+      i = static_cast<int>(x);
+    };
+    fb(motor_), fb(hand_), fb(softHand_), fb(censor_), fb(jogRelease_), fb(fresh_), fb(jumpPending_), fb(cuePreview_), fb(playLatched_), fb(loopOn_),
+        fb(slipping_), fb(keyOn_);
+    fi(hotPreview_), fi(noteHot_), fi(searchTicks_), fi(keyCur_), fi(keyGhost_);
+    double sc = scr_;
+    f(sc);
+    scr_ = static_cast<uint8_t>(sc);
+    double lg = lastGain_;
+    f(lg);
+    lastGain_ = static_cast<float>(lg);
+    f(ghost_.pos), f(ghost_.rate);
+    fi(ghost_.left);
+    for (auto& a : eq_.lo)
+      for (auto& q : a) f(q.ic1), f(q.ic2);
+    for (auto& a : eq_.hi)
+      for (auto& q : a) f(q.ic1), f(q.ic2);
+    for (double& g : eqGain_) f(g);
+    for (auto& q : filt_) f(q.ic1), f(q.ic2);
+    f(wet_);
+    double pn = posN_;
+    f(pn);
+    posN_ = static_cast<float>(pn);
+    double mn = mouseN_;
+    f(mn);
+    mouseN_ = static_cast<float>(mn);
+    f(mouseTurns_);
+  }
+  // Restored: the rest of what a step carries (the next one starts fresh where the pass did).
+  void perfRestored() {
+    wheelRaw_ = 0;
+    wheelN_ = normOf(deckParam(idx_, DWheel), 0.0);
+    nudgeSum_ = 0;
+    tqTail_ = tqHead_;
+    keyRestart_ = keyOn_;
+    marksChanged();
+  }
 
   // ---------------------------------------------------------------- takes
   // The deck plays its stream of a take (null: it stays silent for the take).
@@ -1382,6 +1553,15 @@ class Deck {
   bool slipping_ = false;
   double slipPos_ = 0;
 
+  // performances (J-159): the lane values of this deck (live: what the pass records; replay:
+  // what the lanes said last), the wheel lane playing this step
+  float posN_ = 0, mouseN_ = 0.5f, wheelN_ = 0.5f;
+  double mouseTurns_ = 0;  // the mouse hand's travel, summed from the lane's steps
+  double wheelRaw_ = 0;
+  int nudgeSum_ = 0;
+  bool wheelLane_ = false;
+  float wheelLaneN_ = 0.5f;
+
   // takes
   bool inTake_ = false, takeMotor_ = false;
   const TakeStream* stream_ = nullptr;
@@ -1436,6 +1616,19 @@ class Deck {
 };
 
 // ================================================================== the setup (decks + mixer)
+// J-159: an input waiting for the next step start (strict mode; command keys always).
+enum PendKind : uint8_t { PendIn = 0, PendCmd, PendKey, PendNone };
+struct Pend {
+  uint8_t kind = PendIn;
+  InEvent e{};
+  Cmd c{};
+  uint8_t deck = 0, key = 0;
+  bool down = false;
+  bool held = false;  // a held-from-before press (kHeldModY)
+  double at = 0, delay = 0;
+  uint64_t stamp = 0;  // the sample it came on
+};
+
 class PlatterGen final : public Generator {
  public:
   PlatterGen() {
@@ -1447,6 +1640,9 @@ class PlatterGen final : public Generator {
     for (int i = 0; i < PCount; ++i) sh_.p[static_cast<size_t>(i)] = defOf(i), lastState_[static_cast<size_t>(i)] = defOf(i);
     for (int d = 0; d < kDecks; ++d) deck_[static_cast<size_t>(d)].init(d, &sh_, &deck_[static_cast<size_t>(1 - d)]);
     master0_ = master1_ = masterGainOf(defOf(PMaster));
+    (void)descOf(0);  // (J-159: built here, not on the audio thread)
+    lastP_ = sh_.p;
+    sh_.raw = sh_.p;
   }
   ~PlatterGen() override {
     delete sh_.pool;
@@ -1460,6 +1656,7 @@ class PlatterGen final : public Generator {
     for (auto& d : deck_) d.motor_ = false, d.cuePreview_ = false, d.hotPreview_ = -1, d.playLatched_ = false;
   }
   bool rawMidi() const override { return true; }
+  bool wantsLanes() const override { return true; }
 
   // UI thread (Program build): the key lock voices for this sample rate.
   void prepareHost(const PluginState& state, double sampleRate) override {
@@ -1486,6 +1683,7 @@ class PlatterGen final : public Generator {
   void view(int d, LiveView& v) const {
     deck_[static_cast<size_t>(d & 1)].view(v);
     v.rawSeq = rawSeq_.load(std::memory_order_acquire);
+    v.replaying = pubReplay_.load(std::memory_order_relaxed);
     const uint32_t r = raw_.load(std::memory_order_relaxed);
     v.raw[0] = static_cast<uint8_t>(r & 0xFF), v.raw[1] = static_cast<uint8_t>((r >> 8) & 0xFF), v.raw[2] = static_cast<uint8_t>((r >> 16) & 0xFF);
   }
@@ -1496,6 +1694,14 @@ class PlatterGen final : public Generator {
     m.transport = pubTransport_.load(std::memory_order_relaxed);
     m.songBeat = pubSongBeat_.load(std::memory_order_relaxed);
     m.tempo = pubTempo_.load(std::memory_order_relaxed);
+  }
+  void stepOut(StepState& s) const {
+    s.p = sh_.p;
+    for (int k = 0; k < kDecks; ++k) {
+      s.pos[k] = deck_[static_cast<size_t>(k)].pos_;
+      s.vel[k] = deck_[static_cast<size_t>(k)].vel_;
+    }
+    s.clock = sh_.clock;
   }
   void mirrorOut(Mirror& m) const {
     for (int i = 0; i < PCount; ++i) {
@@ -1533,7 +1739,20 @@ class PlatterGen final : public Generator {
         key(k, false);
       }
   }
-  void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps&) override { onNoteOn(id, pitch, velocity); }
+  void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& props) override {
+    if (std::lround(pitch) == kStartKey) {  // J-159: a recorded performance starts (its id in mod X / Y)
+      startPerformance(startIdOf(static_cast<int>(std::lround(props.modX * 256.f)), static_cast<int>(std::lround(props.modY * 256.f))));
+      return;
+    }
+    int ci = -1;
+    if (cmdKeyOf(static_cast<int>(std::lround(pitch)), ci) >= 0 && std::lround(props.modY * 256.f) == kHeldModY) {
+      heldPress_ = true;  // (key() marks the press it queues)
+      onNoteOn(id, pitch, velocity);
+      heldPress_ = false;
+      return;
+    }
+    onNoteOn(id, pitch, velocity);
+  }
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
     const int kind = status & 0xF0;
     noteRaw(status, d1, d2);
@@ -1602,6 +1821,8 @@ class PlatterGen final : public Generator {
     };
     sh_.transport = ctx.playing;
     recording_ = ctx.recording && ctx.playing && !ctx.offline;
+    punch_ = ctx.punchOut > ctx.punchIn;
+    punchIn_ = ctx.punchIn, punchOut_ = ctx.punchOut;
     // aux (model): a new one adopts its cues unless a deck set newer ones
     const auto* nx = dynamic_cast<const PlatterAux*>(aux.custom.get());
     if (nx != sh_.aux) {
@@ -1628,14 +1849,34 @@ class PlatterGen final : public Generator {
         lastState_[k] = v;
         if (sh_.clock >= sh_.ctlUntil[k] || v == sh_.ctlVal[k]) sh_.ctlUntil[k] = 0;  // automation / an edit; or the editor mirrored us
       }
-      sh_.p[k] = sh_.ctlUntil[k] > 0 ? sh_.ctlVal[k] : v;
+      sh_.raw[k] = sh_.ctlUntil[k] > 0 ? sh_.ctlVal[k] : v;
+      if (!sh_.strict) sh_.p[k] = sh_.raw[k];  // (strict: at the next step start)
     }
     // a take plays its own mixer moves
     if (takeOn_)
       for (int i = 0; i < kMoveParams; ++i) {
         const auto p = static_cast<size_t>(moveParams()[static_cast<size_t>(i)]);
-        if (takeHas_[static_cast<size_t>(i)]) sh_.p[p] = takeVal_[static_cast<size_t>(i)];
+        if (!takeHas_[static_cast<size_t>(i)]) continue;
+        sh_.raw[p] = takeVal_[static_cast<size_t>(i)];
+        if (!sh_.strict) sh_.p[p] = takeVal_[static_cast<size_t>(i)];
       }
+    // J-159: the tick of a sample (anchored where the position jumped or wrapped: anywhere the
+    // block's tick is not where the anchor runs on to), the lanes, the loop
+    const double ahead = sh_.tickAt(static_cast<double>(sh_.clock));
+    auto near = [](double x, double y) { return std::fabs(x - y) <= 1e-6 * std::max(1.0, std::fabs(y)); };
+    const bool onTrack = anchorOk_ && near(ahead, ctx.tick);
+    // (the loop wrapped right where the last block ended: render() takes it as a wrap)
+    const bool wrapsNow = anchorOk_ && !ctx.jumped && ctx.looping && ctx.loopEnd > ctx.loopStart && near(ahead, ctx.loopEnd) && near(ctx.tick, ctx.loopStart);
+    if (!wrapsNow && (ctx.jumped || !onTrack || anchorTempo_ != sh_.tempo || anchorPpq_ != sh_.ppq || anchorSr_ != sh_.sr)) {
+      sh_.anchorTick = ctx.tick;
+      sh_.anchorClock = sh_.clock;
+      anchorOk_ = true;
+      anchorTempo_ = sh_.tempo, anchorPpq_ = sh_.ppq, anchorSr_ = sh_.sr;
+    }
+    lanes_ = ctx.playing ? ctx.lanes : nullptr;
+    laneCount_ = lanes_ ? ctx.laneCount : 0;
+    if (!ctx.playing || (ctx.jumped && lastStartAt_ < prevBlockClock_)) perfOn_ = false;
+    prevBlockClock_ = sh_.clock;
     // controller MIDI from the hub (app): the setup's device
     if (hub::tapped()) {
       const uint64_t head = hub::head();
@@ -1661,15 +1902,35 @@ class PlatterGen final : public Generator {
     // capture: begins on the next beat while Gridline records, ends when it stops or the position jumps
     const bool anyLoaded = deck_[0].loaded() || deck_[1].loaded();
     if (capturing_ && (!recording_ || ctx.jumped || !armed())) endCapture();
+    if (ctx.jumped && !capturing_) capStartAt_ = -1;
+    const double spt = sh_.sr * 60.0 / (sh_.tempo * sh_.ppq);  // samples per tick
+    if (capturing_ && punch_ && sh_.blockTick >= punchOut_ - 1e-9) endCapture();  // (punched out)
     if (recording_ && armed() && anyLoaded && !capturing_ && capStartAt_ < 0) {
-      const double spt = sh_.sr * 60.0 / (sh_.tempo * sh_.ppq);  // samples per tick
       const double beat = static_cast<double>(sh_.ppq);
-      const double tb = std::ceil(sh_.blockTick / beat - 1e-9) * beat;
+      const double from = punch_ ? std::max(sh_.blockTick, punchIn_) : sh_.blockTick;  // (punch in: its beat)
+      const double tb = std::ceil(from / beat - 1e-9) * beat;
       const double off = (tb - sh_.blockTick) * spt;
-      capStartAt_ = static_cast<int64_t>(sh_.clock) + static_cast<int64_t>(std::ceil(off - 1e-9));
-      capStartTick_ = tb;
+      if (!(ctx.looping && ctx.loopEnd > ctx.loopStart && tb >= ctx.loopEnd) && !(punch_ && tb >= punchOut_)) {  // (past the loop's end: after the wrap)
+        capStartAt_ = static_cast<int64_t>(sh_.clock) + static_cast<int64_t>(std::ceil(off - 1e-9));
+        capStartTick_ = tb;
+      }
     }
     if (!recording_) capStartAt_ = -1;
+    // J-159: punch out: the pass ends on the sample the punch range ends (as the engine finds it)
+    punchEndAt_ = -1;
+    if (punch_ && (capturing_ || capStartAt_ >= 0) && punchOut_ > sh_.blockTick)
+      punchEndAt_ = static_cast<int64_t>(sh_.clock) + static_cast<int64_t>(std::ceil((punchOut_ - sh_.blockTick) * spt - 1e-9));
+    // J-159: the sample the loop wraps on (as the engine finds it: the first one at or after the
+    // loop's end, counted from where the position last landed): the tick runs on from the loop
+    // start there, a performance pass ends there and the next one starts on the same sample
+    wrapAt_ = -1;
+    if (wrapsNow) {
+      wrapAt_ = static_cast<int64_t>(sh_.clock), wrapStart_ = ctx.loopStart;
+    } else if (ctx.playing && ctx.looping && ctx.loopEnd > ctx.loopStart) {
+      const auto w = static_cast<int64_t>(sh_.anchorClock) + static_cast<int64_t>(std::ceil((ctx.loopEnd - sh_.anchorTick) * spt - 1e-9));
+      if (w >= static_cast<int64_t>(sh_.clock)) wrapAt_ = w, wrapStart_ = ctx.loopStart;
+    }
+    updateStrict();
     // editor commands
     for (size_t t = cmdTail_.load(std::memory_order_relaxed); t != cmdHead_.load(std::memory_order_acquire); ++t) {
       sh_.evAt = arrival(cmdNs_[t % cmds_.size()]);
@@ -1683,6 +1944,36 @@ class PlatterGen final : public Generator {
     blockAcc_ += n;
     int i = 0;
     while (i < n) {
+      if (wrapAt_ >= 0 && static_cast<int64_t>(sh_.clock) >= wrapAt_) {
+        // the loop wraps: a performance pass ends here, exactly, and the next one starts here
+        const bool chain = capturing_ && perfCapture_;
+        if (chain) {
+          cut();
+          endCapture();
+        }
+        sh_.anchorTick = wrapStart_;
+        sh_.anchorClock = sh_.clock;
+        wrapAt_ = -1;
+        punchEndAt_ = -1;
+        const bool inPunch = !punch_ || (wrapStart_ >= punchIn_ - 1e-9 && wrapStart_ < punchOut_);
+        if (chain && inPunch && recording_ && armed() && (deck_[0].loaded() || deck_[1].loaded())) {
+          capStartAt_ = -1;
+          beginCapture();
+          if (punch_)  // (where it punches out after the wrap)
+            punchEndAt_ = static_cast<int64_t>(sh_.clock) +
+                          static_cast<int64_t>(std::ceil((punchOut_ - wrapStart_) * sh_.sr * 60.0 / (sh_.tempo * sh_.ppq) - 1e-9));
+        }
+        updateStrict();
+      }
+      if (punchEndAt_ >= 0 && static_cast<int64_t>(sh_.clock) >= punchEndAt_) {
+        if (capturing_) {
+          cut();  // punched out: the pass ends exactly here
+          endCapture();
+          updateStrict();
+        }
+        capStartAt_ = -1;
+        punchEndAt_ = -1;
+      }
       if (capStartAt_ >= 0 && !capturing_) {
         if (static_cast<int64_t>(sh_.clock) >= capStartAt_) {
           cut();  // the take starts exactly here, on a fresh step
@@ -1693,6 +1984,10 @@ class PlatterGen final : public Generator {
       int run = std::min(n - i, stepLen_ - stepPos_);
       if (capStartAt_ >= 0 && !capturing_ && static_cast<int64_t>(sh_.clock) < capStartAt_)
         run = static_cast<int>(std::min<int64_t>(run, capStartAt_ - static_cast<int64_t>(sh_.clock)));
+      if (wrapAt_ >= 0 && static_cast<int64_t>(sh_.clock) < wrapAt_)
+        run = static_cast<int>(std::min<int64_t>(run, wrapAt_ - static_cast<int64_t>(sh_.clock)));
+      if (punchEndAt_ >= 0 && static_cast<int64_t>(sh_.clock) < punchEndAt_)
+        run = static_cast<int>(std::min<int64_t>(run, punchEndAt_ - static_cast<int64_t>(sh_.clock)));
       runStep(L + i, R + i, run);
       i += run;
     }
@@ -1720,8 +2015,21 @@ class PlatterGen final : public Generator {
     if (takeOn_ && e.control != CtlShift && e.control != CtlNone && controlInfo(e.control).type != TypeAbsolute) stopTake();  // the hand takes over
     switch (e.control) {
       case CtlXfader: sh_.setCtl(PXfader, e.value); break;
-      case CtlMaster: sh_.setCtl(PMaster, static_cast<float>(kMasterOffDb + e.value * (6.0 - kMasterOffDb))); break;
-      default: deck_[static_cast<size_t>(e.deck & 1)].input(e); break;
+      case CtlMaster: {  // J-160: 0 dB at the knob's centre, like the editor's dial
+        const double v = std::clamp(static_cast<double>(e.value), 0.0, 1.0);
+        sh_.setCtl(PMaster, static_cast<float>(v <= 0.5 ? kMasterOffDb * (1.0 - 2.0 * v) : (2.0 * v - 1.0) * 6.0));
+        break;
+      }
+      default:
+        if (sh_.strict && stepInput(e.control)) {  // J-159: acts on the next step start
+          Pend q;
+          q.kind = PendIn;
+          q.e = e;
+          push(q);
+          break;
+        }
+        deck_[static_cast<size_t>(e.deck & 1)].input(e);
+        break;
     }
   }
   void command(const Cmd& c) {
@@ -1734,14 +2042,64 @@ class PlatterGen final : public Generator {
       input(e);
       return;
     }
+    if (sh_.strict) {  // J-159
+      if (c.kind == CmdButton) {
+        InEvent e;
+        e.control = c.a;
+        e.down = c.v != 0;
+        e.deck = static_cast<uint8_t>(c.deck & 1);
+        input(e);
+        return;
+      }
+      if (c.kind == CmdHandDown || c.kind == CmdHandUp || c.kind == CmdHandMove || c.kind == CmdSeek) {
+        Pend q;
+        q.kind = PendCmd;
+        q.c = c;
+        push(q);
+        return;
+      }
+    }
     deck_[static_cast<size_t>(c.deck & 1)].command(c);
+  }
+  // Inputs that wait for the step start in strict mode: buttons, jog and search ticks (the
+  // parameters, the mode toggles and shift act at once: the step start reads them anyway).
+  static bool stepInput(int c) {
+    if (c == CtlNone || c == CtlShift || c == CtlSync || c == CtlKeyLock || c == CtlSlip || c == CtlVinyl || c == CtlQuantize || c == CtlLoaded)
+      return false;
+    return controlInfo(c).type != TypeAbsolute;
+  }
+  void push(Pend q) {
+    if (pendHead_ - pendTail_ >= pend_.size()) return;
+    q.at = sh_.evAt;
+    q.delay = sh_.evDelay;
+    q.stamp = sh_.clock;
+    pend_[pendHead_ % pend_.size()] = q;
+    ++pendHead_;
   }
 
   // Keys: 36..59 takes, 60..67 deck A hot cues, 72..79 deck B hot cues.
   void key(int k, bool down) {
+    // J-159: a command key holds a deck button (from the next step start)
+    int ci = -1;
+    if (const int cd = cmdKeyOf(k, ci); cd >= 0) {
+      if (capturing_) return;  // (the hands play while a pass is recorded)
+      if (down && heldPress_ && lastStartAt_ == sh_.clock && perfOn_) return;  // the start state has it down
+      Pend q;
+      q.kind = PendKey;
+      q.deck = static_cast<uint8_t>(cd);
+      q.key = static_cast<uint8_t>(ci);
+      q.down = down;
+      q.held = down && heldPress_;
+      sh_.evAt = static_cast<double>(sh_.clock);
+      sh_.evDelay = 0;
+      push(q);
+      return;
+    }
+    if (k == kStartKey) return;
     // a note (render() is split at every event) cuts the running step here, so
-    // what it starts lands on its exact sample, whatever the block size
-    if (!capturing_) cut();
+    // what it starts lands on its exact sample, whatever the block size (not while a
+    // pass is captured, nor in strict mode: the steps run on from the pass's start)
+    if (!capturing_ && !sh_.strict) cut();
     for (int d = 0; d < kDecks; ++d) {
       const int first = d == 0 ? kHotKeyFirst : kHotKeyFirstB;
       if (k >= first && k < first + kHotCues) {
@@ -1819,6 +2177,7 @@ class PlatterGen final : public Generator {
           takeHas_[static_cast<size_t>(i)] = true;
           takeVal_[static_cast<size_t>(i)] = m.value;
           sh_.p[m.param] = m.value;
+          sh_.raw[m.param] = m.value;
         }
     }
   }
@@ -1826,6 +2185,8 @@ class PlatterGen final : public Generator {
   void beginCapture() {
     capturing_ = true;
     capStartAt_ = -1;
+    // J-159: a performance (pattern data) or a take, as the setup says
+    perfCapture_ = sh_.aux && sh_.aux->m.recordAs == RecAutomation;
     CaptureEvent e;
     e.kind = CaptureEvent::Start;
     e.tick = capStartTick_;
@@ -1843,9 +2204,42 @@ class PlatterGen final : public Generator {
       k.fresh_ = true;  // the take's first step is straight (its replay starts so)
       if (k.keyOn_) k.keyRestart_ = true;  // the key lock engine starts fresh with the take (replays match)
     }
+    size_t snapN = 0;
+    if (perfCapture_) {
+      // from here the decks work in whole steps; the state they start from is kept (the
+      // start note of the performance restores it)
+      if (!sh_.strict) lastP_ = sh_.p;
+      for (int i = 0; i < PCount; ++i)  // (the controls as the pass's first step uses them)
+        startN_[static_cast<size_t>(i)] = perfParam(i) ? 0.f : normOf(i, sh_.raw[static_cast<size_t>(i)]);
+      startHeld_ = false;
+      following_ = false;
+      sh_.replay = false;
+      sh_.strict = true;
+      for (auto& d : deck_) {
+        d.wheelLane_ = false;
+        d.perfReset();
+      }
+      snapAll([&](double& x) {
+        if (snapN < snapBuf_.size()) snapBuf_[snapN] = x;
+        ++snapN;
+      });
+      e.snap[0] = static_cast<double>(snapN);
+      e.snap[1] = laneTick();
+      capN_.fill(std::numeric_limits<float>::quiet_NaN());
+    }
     pushCapture(e);
     capSteps_ = 0;
     capSamples_ = 0;
+    if (perfCapture_) {
+      for (size_t c = 0; c * kSnapPer < snapN; ++c) {
+        CaptureEvent m;
+        m.kind = CaptureEvent::Snap;
+        m.step = static_cast<uint32_t>(c);
+        for (size_t j = 0; j < static_cast<size_t>(kSnapPer) && c * kSnapPer + j < snapN; ++j) m.snap[j] = snapBuf_[c * kSnapPer + j];
+        pushCapture(m);
+      }
+      return;  // (the values come with the first step)
+    }
     // the mixer's values at the start (step 0), then every change
     const auto& mp = moveParams();
     for (int i = 0; i < kMoveParams; ++i) {
@@ -1863,7 +2257,8 @@ class PlatterGen final : public Generator {
     capturing_ = false;
     CaptureEvent e;
     e.kind = CaptureEvent::End;
-    e.tick = capStartTick_ + static_cast<double>(capSamples_) * sh_.tempo * sh_.ppq / (60.0 * sh_.sr);
+    e.tick = perfCapture_ ? laneTick() : capStartTick_ + static_cast<double>(capSamples_) * sh_.tempo * sh_.ppq / (60.0 * sh_.sr);
+    e.step = static_cast<uint32_t>(capSteps_);
     pushCapture(e);
   }
   void pushCapture(const CaptureEvent& e) {
@@ -1872,12 +2267,13 @@ class PlatterGen final : public Generator {
       capLost_ = true;
       return;
     }
-    if (capLost_ && (e.kind == CaptureEvent::Point || e.kind == CaptureEvent::Move)) return;
+    const bool bulk = e.kind == CaptureEvent::Point || e.kind == CaptureEvent::Move || e.kind == CaptureEvent::Button || e.kind == CaptureEvent::Snap;
+    if (capLost_ && bulk) return;
     CaptureEvent& slot = capture_[h % capture_.size()];
     slot = e;
     if (capLost_ && e.kind == CaptureEvent::End) slot.kind = CaptureEvent::Lost;  // the editor drops a take with holes
     capHead_.store(h + 1, std::memory_order_release);
-    if (e.kind != CaptureEvent::Point && e.kind != CaptureEvent::Move) capLost_ = false;
+    if (!bulk) capLost_ = false;
   }
 
   // ---------------------------------------------------------------- the step
@@ -1893,8 +2289,12 @@ class PlatterGen final : public Generator {
       exact = std::fabs(takeStepOut_ - kStep) < 1e-9 && std::fabs(takeT_ - std::round(takeT_)) < 1e-9;
       applyMoves(std::floor(takeT_ + 1e-9));
     }
-    // capture: mixer values that changed since the last step
-    if (capturing_) {
+    // J-159: strict: the values of this step (lanes or what came in), then the inputs
+    // waiting for it (command keys always wait for a step start)
+    if (sh_.strict) stepValues();
+    runPending();
+    // capture (take): mixer values that changed since the last step
+    if (capturing_ && !perfCapture_) {
       const auto& mp = moveParams();
       for (int i = 0; i < kMoveParams; ++i) {
         const float v = sh_.p[mp[static_cast<size_t>(i)]];
@@ -1932,13 +2332,287 @@ class PlatterGen final : public Generator {
       if (takeT_ >= static_cast<double>(takeSteps_) - 1e-9) stopTake(true);  // the take is over
     }
     if (capturing_) {
-      CaptureEvent e;
-      e.kind = CaptureEvent::Point;
-      for (int d = 0; d < kDecks; ++d) e.pt[d] = deck_[static_cast<size_t>(d)].pt_;
-      pushCapture(e);
+      if (perfCapture_) {
+        // the performance lanes' values after this step (a seek, the mouse, the wheel, nudges)
+        for (int d = 0; d < kDecks; ++d)
+          for (int dp : {static_cast<int>(DPos), static_cast<int>(DMouse), static_cast<int>(DWheel), static_cast<int>(DNudge)}) {
+            const int p = deckParam(d, dp);
+            const float n = deck_[static_cast<size_t>(d)].laneOut(dp);
+            if (n == capN_[static_cast<size_t>(p)]) continue;
+            capN_[static_cast<size_t>(p)] = n;
+            capMove(p, n);
+          }
+      } else {
+        CaptureEvent e;
+        e.kind = CaptureEvent::Point;
+        for (int d = 0; d < kDecks; ++d) e.pt[d] = deck_[static_cast<size_t>(d)].pt_;
+        pushCapture(e);
+      }
       ++capSteps_;
       capSamples_ += static_cast<uint64_t>(len);
     }
+    lastP_ = sh_.p;
+  }
+
+  // ---------------------------------------------------------------- performances (J-159)
+  void capMove(int p, float n) {
+    CaptureEvent m;
+    m.kind = CaptureEvent::Move;
+    m.step = static_cast<uint32_t>(capSteps_);
+    m.param = static_cast<uint8_t>(p);
+    m.value = n;
+    pushCapture(m);
+  }
+  // The transport tick of this sample (the engine splits its blocks where the loop wraps).
+  double laneTick() const { return sh_.tickAt(static_cast<double>(sh_.clock)); }
+  // Strict mode on (a performance captured, lanes followed) or off; off applies what waits.
+  void updateStrict() {
+    const bool wasFollowing = following_;
+    following_ = sh_.transport && !capturing_ && (laneCount_ > 0 || perfOn_);
+    if (following_ && !wasFollowing && !primedByStart_) primed_.fill(false);
+    primedByStart_ = false;
+    sh_.replay = following_;
+    const bool strict = (capturing_ && perfCapture_) || following_;
+    if (strict == sh_.strict) return;
+    if (strict) {
+      sh_.strict = true;
+      return;
+    }
+    sh_.strict = false;
+    sh_.p = sh_.raw;
+    for (auto& d : deck_) d.wheelLane_ = false;
+    for (int guard = 0; pendTail_ != pendHead_ && guard < 64; ++guard) runPending();
+  }
+  // Step start (strict): every parameter's value for this step: its lane while lanes play,
+  // else what came in, as a lane would give it back. A pass records the changes.
+  void stepValues() {
+    sh_.laneHas.fill(false);
+    if (following_ && lanes_) {
+      const double t = laneTick();
+      for (int i = 0; i < laneCount_; ++i) {
+        const ParamLane& l = lanes_[i];
+        if (l.param < 0 || l.param >= PCount || !l.lane) continue;
+        sh_.laneHas[static_cast<size_t>(l.param)] = true;
+        sh_.laneN[static_cast<size_t>(l.param)] = l.lane->valueAt(t - l.origin);
+      }
+    }
+    const bool rec = capturing_ && perfCapture_;
+    for (int i = 0; i < PCount; ++i) {
+      if (perfParam(i)) continue;
+      const auto k = static_cast<size_t>(i);
+      const bool held = startHeld_ && perfOn_ && sh_.raw[k] == startRaw_[k];
+      const double n = sh_.laneHas[k] ? sh_.laneN[k] : held ? static_cast<double>(startN_[k]) : static_cast<double>(normOf(i, sh_.raw[k]));
+      sh_.p[k] = valueOfN(i, n);
+      if (rec) {
+        const auto nf = static_cast<float>(n);
+        if (!(nf == capN_[k])) {
+          capN_[k] = nf;
+          capMove(i, nf);
+        }
+      }
+    }
+    // a deck synced while it plays falls in phase now (what the Sync button did at once)
+    for (int d = 0; d < kDecks; ++d) {
+      const auto sp = static_cast<size_t>(deckParam(d, DSync));
+      Deck& k = deck_[static_cast<size_t>(d)];
+      if (lastP_[sp] < 0.5f && sh_.p[sp] >= 0.5f && k.motor_) {
+        k.motor_ = false;
+        k.startMotor(false);
+      }
+    }
+  }
+  // Is a queued input a button (which deck, which key)?
+  static bool pendKey(const Pend& q, int& d, int& key) {
+    if (q.kind == PendNone) return false;
+    if (q.kind == PendKey) {
+      d = q.deck & 1, key = q.key;
+      return true;
+    }
+    if (q.kind == PendCmd && (q.c.kind == CmdHandDown || q.c.kind == CmdHandUp)) {
+      d = q.c.deck & 1, key = KeyMouse;
+      return true;
+    }
+    if (q.kind == PendIn && q.e.type == TypeButton) {
+      const int k = controlCmdKey(q.e.control);
+      if (k < 0) return false;
+      d = q.e.deck & 1, key = k;
+      return true;
+    }
+    return false;
+  }
+  static bool pendDown(const Pend& q) {
+    if (q.kind == PendKey) return q.down;
+    if (q.kind == PendCmd) return q.c.kind == CmdHandDown;
+    return q.e.down;
+  }
+  // Step start: the inputs that wait for it, in a fixed order (a replay does the same):
+  // buttons by deck and key (a second press or release of one key waits for the next step),
+  // the jog / rim / search ticks, nudges, seeks, the mouse; then the lanes of a replay.
+  void runPending() {
+    const bool rec = capturing_ && perfCapture_;
+    std::array<std::array<bool, kCmdKeys>, kDecks> used{};
+    size_t stop = pendTail_;
+    for (; stop != pendHead_; ++stop) {
+      int d = 0, key = 0;
+      if (!pendKey(pend_[stop % pend_.size()], d, key)) continue;
+      auto& u = used[static_cast<size_t>(d)][static_cast<size_t>(key)];
+      if (u) break;
+      u = true;
+    }
+    const double now = static_cast<double>(sh_.clock);
+    // buttons
+    for (int d = 0; d < kDecks; ++d)
+      for (int key = 0; key < kCmdKeys; ++key) {
+        if (!used[static_cast<size_t>(d)][static_cast<size_t>(key)]) continue;
+        for (size_t t = pendTail_; t != stop; ++t) {
+          const Pend& q = pend_[t % pend_.size()];
+          int qd = 0, qk = 0;
+          if (!pendKey(q, qd, qk) || qd != d || qk != key) continue;
+          const bool down = pendDown(q);
+          Deck& k = deck_[static_cast<size_t>(d)];
+          sh_.evAt = q.at, sh_.evDelay = q.delay;
+          if (key == KeyMouse) {
+            if (down) k.handDown();
+            else k.handUp();
+          } else {
+            InEvent e;
+            e.control = static_cast<uint8_t>(cmdKeyControl(key));
+            e.type = TypeButton;
+            e.down = down;
+            e.deck = static_cast<uint8_t>(d);
+            k.input(e);
+          }
+          if (rec) {
+            CaptureEvent m;
+            m.kind = CaptureEvent::Button;
+            m.step = static_cast<uint32_t>(capSteps_);
+            m.deck = static_cast<uint8_t>(d);
+            m.param = static_cast<uint8_t>(key);
+            m.value = down ? 1.f : 0.f;
+            pushCapture(m);
+          }
+          break;
+        }
+      }
+    // ticks (routed with the state the buttons left), seeks, the mouse
+    std::array<int, kDecks> nudge{}, search{};
+    std::array<bool, kDecks> seekAny{}, mouseAny{};
+    std::array<double, kDecks> seekTo{}, mouseTo{};
+    for (size_t t = pendTail_; t != stop; ++t) {
+      const Pend& q = pend_[t % pend_.size()];
+      int qd = 0, qk = 0;
+      if (pendKey(q, qd, qk) || q.kind == PendNone) continue;
+      if (q.kind == PendIn) {
+        const auto d = static_cast<size_t>(q.e.deck & 1);
+        Deck& k = deck_[d];
+        sh_.evAt = q.at, sh_.evDelay = q.delay;
+        switch (q.e.control) {
+          case CtlJogPlatter:
+            if (k.scr_ == Deck::ScrJog && !k.softHand_ && (k.hand_ || k.jogRelease_)) k.jogTicks(q.e.ticks * k.jogSens());
+            else if (sh_.clock >= k.rimMuteUntil_ || !k.on(DVinyl)) nudge[d] += q.e.ticks;
+            break;
+          case CtlJogRim:
+            if (!k.hand_ && sh_.clock >= k.rimMuteUntil_) nudge[d] += q.e.ticks;
+            break;
+          case CtlJogSearch: search[d] += q.e.ticks; break;
+          default: k.input(q.e); break;
+        }
+      } else if (q.kind == PendCmd) {
+        const auto d = static_cast<size_t>(q.c.deck & 1);
+        if (q.c.kind == CmdSeek) seekAny[d] = true, seekTo[d] = q.c.v;
+        else if (q.c.kind == CmdHandMove) mouseAny[d] = true, mouseTo[d] = q.c.v;
+      }
+    }
+    pendTail_ = stop;
+    sh_.evAt = now, sh_.evDelay = 0;
+    for (int di = 0; di < kDecks; ++di) {
+      const auto d = static_cast<size_t>(di);
+      Deck& k = deck_[d];
+      const bool lanes = following_;
+      const auto pPos = static_cast<size_t>(deckParam(di, DPos)), pMouse = static_cast<size_t>(deckParam(di, DMouse)),
+                 pWheel = static_cast<size_t>(deckParam(di, DWheel)), pNudge = static_cast<size_t>(deckParam(di, DNudge));
+      const bool hPos = lanes && sh_.laneHas[pPos], hMouse = lanes && sh_.laneHas[pMouse], hWheel = lanes && sh_.laneHas[pWheel],
+                 hNudge = lanes && sh_.laneHas[pNudge];
+      if (lanes && !primed_[d]) {  // following from the middle: the lanes' values are where it starts
+        if (hPos) k.posN_ = static_cast<float>(sh_.laneN[pPos]);
+        if (hWheel) k.wheelN_ = static_cast<float>(sh_.laneN[pWheel]);
+        if (hNudge) k.nudgeSum_ = static_cast<int>(std::lround(valueOfN(static_cast<int>(pNudge), sh_.laneN[pNudge])));
+        primed_[d] = true;
+      }
+      // nudges
+      int dn = nudge[d];
+      if (hNudge) {
+        constexpr int span = static_cast<int>(kNudgeSpan);
+        dn = static_cast<int>(std::lround(valueOfN(static_cast<int>(pNudge), sh_.laneN[pNudge]))) - k.nudgeSum_;
+        while (dn >= span) dn -= 2 * span;
+        while (dn < -span) dn += 2 * span;
+      }
+      if (dn != 0) k.nudgeTicks(dn);
+      // seeks and search: where the record goes
+      if (hPos) {
+        const auto n = static_cast<float>(sh_.laneN[pPos]);
+        if (n != k.posN_) k.seekLane(n);
+      } else if (seekAny[d] || search[d] != 0) {
+        double to = seekTo[d];
+        if (search[d] != 0) to = k.pos_ + search[d] * k.srcRate() * 0.2;
+        k.seek(to);
+      }
+      // the mouse
+      if (hMouse) k.setMouse(sh_.laneN[pMouse]);
+      else if (mouseAny[d]) k.handMove(mouseTo[d]);
+      // the wheel (the jog filter takes it in the step)
+      k.wheelLane_ = hWheel;
+      if (hWheel) k.wheelLaneN_ = static_cast<float>(sh_.laneN[pWheel]);
+    }
+  }
+  // A performance's start note: the decks go back to how they were when it was recorded,
+  // on this very sample (a fresh step starts here, as it did then).
+  void startPerformance(int id) {
+    if (capturing_ || !sh_.aux || !sh_.transport) return;
+    cut();
+    while (pendTail_ != pendHead_ && pend_[pendTail_ % pend_.size()].stamp < sh_.clock) ++pendTail_;  // (what came before)
+    for (size_t t = pendTail_; t != pendHead_; ++t)  // (presses the start state already holds)
+      if (pend_[t % pend_.size()].held) pend_[t % pend_.size()].kind = PendNone;
+    const PerfStart* ps = nullptr;
+    for (const auto& st : sh_.aux->m.starts)
+      if (st.id == id) ps = &st;
+    if (takeOn_) stopTake();
+    if (ps && ps->v.size() == snapCount()) {
+      size_t i = 0;
+      snapAll([&](double& x) { x = ps->v[i++]; });
+      for (auto& d : deck_) d.perfRestored();
+      // the controls without a lane keep the values they had in the pass until they change
+      // here (a knob turned, automation elsewhere)
+      startRaw_ = sh_.raw;
+      startHeld_ = true;
+      primed_.fill(true);
+      primedByStart_ = true;
+    }
+    perfOn_ = true;
+    lastStartAt_ = sh_.clock;
+    updateStrict();
+  }
+  // The state a performance starts from: the mixer's ramp, the values the last step used,
+  // both decks.
+  template <class Fn>
+  void snapAll(Fn&& f) {
+    f(master0_), f(master1_);
+    for (auto& x : lastP_) {
+      double v = x;
+      f(v);
+      x = static_cast<float>(v);
+    }
+    for (auto& x : startN_) {
+      double v = x;
+      f(v);
+      x = static_cast<float>(v);
+    }
+    for (auto& d : deck_) d.snapFields(f);
+  }
+  size_t snapCount() {
+    size_t n = 0;
+    snapAll([&](double&) { ++n; });
+    return n;
   }
 
   // A note lands inside a step: the step ends here and the next one starts on this sample.
@@ -1977,6 +2651,7 @@ class PlatterGen final : public Generator {
     pubMasterR_.store(peakR_, std::memory_order_relaxed);
     peakL_ = peakR_ = 0;
     pubTransport_.store(sh_.transport, std::memory_order_relaxed);
+    pubReplay_.store(sh_.replay, std::memory_order_relaxed);
     pubSongBeat_.store(sh_.songBeat(static_cast<double>(sh_.clock - sh_.blockClock)), std::memory_order_relaxed);
     pubTempo_.store(sh_.tempo, std::memory_order_relaxed);
   }
@@ -2003,6 +2678,33 @@ class PlatterGen final : public Generator {
   std::array<bool, kMoveParams> takeHas_{};
   std::array<float, kMoveParams> takeVal_{}, capVal_{};
   bool capturing_ = false, capLost_ = false;
+  // performances (J-159)
+  std::array<Pend, 512> pend_{};
+  size_t pendHead_ = 0, pendTail_ = 0;
+  bool perfCapture_ = false;  // the pass being captured is a performance
+  bool perfOn_ = false;       // a start note played (follow until the position jumps)
+  bool heldPress_ = false;    // the note being handled is a held-from-before press
+  bool following_ = false;
+  std::array<bool, kDecks> primed_{};
+  bool primedByStart_ = false;
+  uint64_t lastStartAt_ = 0, prevBlockClock_ = 0;
+  const ParamLane* lanes_ = nullptr;
+  int laneCount_ = 0;
+  bool anchorOk_ = false;
+  double anchorTempo_ = 0, anchorSr_ = 0;
+  int anchorPpq_ = 0;
+  std::array<float, PCount> lastP_{}, capN_{};
+  // J-159: the controls' values where a performance starts (part of its start state) and the
+  // stored values when its start note played: a control without a lane keeps the first
+  // until the second changes
+  std::array<float, PCount> startN_{}, startRaw_{};
+  bool startHeld_ = false;
+  int64_t wrapAt_ = -1;  // J-159: the sample the loop wraps on (this block), -1 none
+  int64_t punchEndAt_ = -1;  // J-159: the sample recording punches out on (this block), -1 none
+  bool punch_ = false;
+  double punchIn_ = 0, punchOut_ = 0;
+  double wrapStart_ = 0;
+  std::array<double, 512> snapBuf_{};
   int64_t capStartAt_ = -1;
   double capStartTick_ = 0;
   uint64_t capSteps_ = 0, capSamples_ = 0;
@@ -2028,6 +2730,7 @@ class PlatterGen final : public Generator {
   // published
   std::atomic<float> pubMasterL_{0}, pubMasterR_{0};
   std::atomic<bool> pubTransport_{false};
+  std::atomic<bool> pubReplay_{false};
   std::atomic<double> pubSongBeat_{0}, pubTempo_{120};
   std::atomic<uint32_t> raw_{0}, rawSeq_{0};
 };
@@ -2075,6 +2778,13 @@ bool mixView(const Generator* g, MixView& out) {
   const PlatterGen* d = setupOf(g);
   if (!d) return false;
   d->mixOut(out);
+  return true;
+}
+
+bool stepState(const Generator* g, StepState& out) {
+  const PlatterGen* d = setupOf(g);
+  if (!d) return false;
+  d->stepOut(out);
   return true;
 }
 

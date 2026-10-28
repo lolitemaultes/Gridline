@@ -9,7 +9,9 @@
 namespace gl {
 
 enum class ParamKind { Continuous, Toggle, Choice };
-enum class ParamScale { Linear, Log };
+// Detent (J-160): the default sits at the centre of the travel, like a mixer knob's
+// centre detent: min..def over the lower half, def..max over the upper (each linear).
+enum class ParamScale { Linear, Log, Detent };
 
 struct ParamDesc {
   std::string name;
@@ -98,6 +100,9 @@ struct PluginInfo {
   // > 0: the editor reflows down to this width when the main window is narrower
   // than editorWidth (the channel window follows it instead of overflowing).
   float editorMinWidth = 0;
+  // J-159: names of keys whose notes are commands (index = MIDI note; empty or
+  // missing = a plain note). The piano roll labels those rows and notes.
+  std::vector<std::string> keyNames = {};
 };
 inline constexpr int kMaxSendOutputs = 4;
 inline constexpr int kRouteIndexAlways = -2;  // PluginInfo::routeModeParam

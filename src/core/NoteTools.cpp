@@ -243,12 +243,14 @@ void quantizeImpl(std::vector<Note>& notes, NoteSel& sel, const QuantizeOpts& o,
       }
     }
     newStart = std::max<Tick>(0, newStart);
+    if (inWindow && newStart == best) n.frac = 0;  // (J-159: on the line itself, no sub-tick rest)
     const double ds = std::clamp(o.durationStrength, 0.0, 1.0);
     switch (o.duration) {
       case DurationMode::LeaveEnd: n.length = std::max<Tick>(1, end - newStart); break;
       case DurationMode::QuantizeLength: {
         Tick ql = std::max<Tick>(grid, roundTick(static_cast<double>(n.length) / grid) * grid);
         n.length = std::max<Tick>(1, n.length + roundTick((ql - n.length) * ds));
+        n.endFrac = 0;
         break;
       }
       case DurationMode::QuantizeEnd: {
@@ -257,6 +259,7 @@ void quantizeImpl(std::vector<Note>& notes, NoteSel& sel, const QuantizeOpts& o,
         if (te <= newStart) te = newStart + grid;
         Tick ne = end + roundTick((te - end) * ds);
         n.length = std::max<Tick>(1, ne - newStart);
+        n.endFrac = 0;
         break;
       }
       default: break;

@@ -121,8 +121,10 @@ struct AutoPoint {
   float value = 0.5f;    // 0..1 within the clip's range
   float tension = 0.0f;  // -1..1, shapes the segment that ends here
   AutoShape shape = AutoShape::Curve;
+  float frac = 0.0f;     // J-159: 0..1 of a tick after pos (recorded performances keep their sample)
+  double at() const { return static_cast<double>(pos) + static_cast<double>(frac); }
   bool operator==(const AutoPoint& o) const {
-    return pos == o.pos && value == o.value && tension == o.tension && shape == o.shape;
+    return pos == o.pos && value == o.value && tension == o.tension && shape == o.shape && frac == o.frac;
   }
 };
 

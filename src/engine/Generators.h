@@ -12,6 +12,18 @@
 
 namespace gl {
 
+struct AutomationLane;
+
+// J-159: a pattern / arrangement lane on one of the instrument's own parameters, for
+// instruments that evaluate their automation themselves (Generator::wantsLanes): the
+// normalized value at transport tick t is lane->valueAt(t - origin).
+struct ParamLane {
+  int param = 0;
+  const AutomationLane* lane = nullptr;
+  double origin = 0;
+};
+inline constexpr int kMaxParamLanes = 128;
+
 // Notes held on numbered MIDI ports (0..255) during the current block: MIDI Out
 // channels publish the notes they play on their port, effects with a MIDI
 // input (the pitch corrector's MIDI / harmonize modes) read them. Owned by the
@@ -55,9 +67,14 @@ struct ProcessContext {
   bool looping = false;                // playback wraps from loopEnd back to loopStart (ticks)
   double loopStart = 0, loopEnd = 0;
   bool recording = false;
+  double punchIn = 0, punchOut = 0;    // J-159: recording only from punchIn to punchOut (ticks; punchOut <= punchIn: no punch)
   bool offline = false;                // offline render (export), faster than real time
   int interp = 0;                      // offline render: sampler interpolation (RenderInterp; 0 = linear)
   bool jumped = false;                 // the position jumped (play, seek, loop wrap) in this block
+  // J-159: while playing, the lanes on this instrument's parameters (only for instruments
+  // whose wantsLanes() is true; the engine still applies them per control block too).
+  const ParamLane* lanes = nullptr;
+  int laneCount = 0;
 };
 
 // Lock-free ring of outgoing MIDI messages (audio thread → UI thread).
@@ -200,6 +217,9 @@ class Generator {
   // J-150: live MIDI notes reach this instrument as raw messages (onMidi), not
   // as notes (DJ decks decode their controller's notes themselves).
   virtual bool rawMidi() const { return false; }
+  // J-159: the instrument reads its automation lanes itself (ProcessContext::lanes), at
+  // the sample positions it needs (the Platter: every 32-sample step).
+  virtual bool wantsLanes() const { return false; }
   // Processing latency in samples (for plugin delay compensation).
   virtual int latencySamples() const { return 0; }
   // Latency with `state` at `sampleRate` (UI thread, Program build; see
