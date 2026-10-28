@@ -10,6 +10,7 @@
 // are in platter_deck_ui.cpp, the mixer in platter_mixer_ui.cpp.
 #include "platter_ui.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -891,8 +892,39 @@ void traceRect(const char* name, ImVec2 p0, ImVec2 p1) {
 
 namespace {
 
+// Dev hook (GRIDLINE_PLATTER_DEVJOG=<file>, J-155 checks): once a take starts
+// capturing, a thread sends the file's controller MIDI ("<ms> <status> <d1> <d2>"
+// per line, bytes in hex) through the hub at those times, as a driver thread would.
+void devJog(const Ed& e, const LiveView* lv) {
+  static bool started = false;
+  const char* f = std::getenv("GRIDLINE_PLATTER_DEVJOG");
+  if (started || !f || !*f || !(lv[0].capturing || lv[1].capturing)) return;
+  started = true;
+  struct Msg {
+    double ms = 0;
+    unsigned s = 0, a = 0, b = 0;
+  };
+  std::vector<Msg> msgs;
+  if (FILE* fp = std::fopen(f, "r")) {
+    Msg m;
+    while (std::fscanf(fp, "%lf %x %x %x", &m.ms, &m.s, &m.a, &m.b) == 4) msgs.push_back(m);
+    std::fclose(fp);
+  }
+  const uint32_t dev = hub::deviceId(e.m.map.device);
+  std::thread([msgs, dev] {
+    const auto t0 = std::chrono::steady_clock::now();
+    for (const Msg& m : msgs) {
+      std::this_thread::sleep_until(t0 + std::chrono::microseconds(static_cast<int64_t>(m.ms * 1000)));
+      hub::push(dev, static_cast<uint8_t>(m.s), static_cast<uint8_t>(m.a), static_cast<uint8_t>(m.b));
+    }
+    std::printf("platter: devjog sent %zu\n", msgs.size());
+    std::fflush(stdout);
+  }).detach();
+}
+
 void trace(App& a, const PluginTarget& t, Ed& e, const char* state, const LiveView* lv) {
   static const bool on = std::getenv("GRIDLINE_PLATTER_TRACE") != nullptr;
+  devJog(e, lv);
   if (std::string(state) == "ready") devsig::reach("platter-ready");
   if (lv[0].playing || lv[1].playing) devsig::reach("platter-playing");
   if (!on) return;

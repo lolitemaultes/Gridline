@@ -275,7 +275,7 @@ inline void stretchKeepPitch(IrBuf& ir, double ratio) {
   const auto inLen = static_cast<int64_t>(ir.len());
   const auto outLen = static_cast<int64_t>(static_cast<double>(inLen) * ratio);
   stretch::Settings set;
-  set.mode = stretch::Mode::Auto;
+  set.mode = stretch::kStretch;
   for (int p = 0; p < ir.paths; p += 2) {
     const int nch = p + 1 < ir.paths ? 2 : 1;
     std::vector<float> y[2];

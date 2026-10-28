@@ -8,6 +8,7 @@
 #include <ctime>
 #include <filesystem>
 #include <map>
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../collab/Controller.h"
 #include "../collab/ProjectList.h"
 #include "../collab/VersionGate.h"
@@ -54,6 +55,8 @@ struct Model {
   ImVec2 tipSize = ImVec2(300, 200);  // the tooltip's size last frame (placing it inside the window)
   ListRow menu;           // the tile whose menu is open
   bool openMenu = false;
+  bool menuShown = false;          // the menu showed this frame (dev report)
+  std::map<std::string, ImVec4> tileRects;  // project id -> last drawn tile (x0, y0, x1, y1; dev report)
   bool presenceOn = true, probing = false, checking = false, hasTargets = false;
   int live = 0;
   std::string openName;  // the project open here when it is not collaborative ("" = none / collaborative)
@@ -574,10 +577,40 @@ void openMenuFor(const ListRow& r) {
   M().openMenu = true;
 }
 
+// Favourite collaborative projects: their ids, one per line, in the setting "collab.favourites"
+// (the project id stays when its folder moves).
+std::vector<std::string> favouriteIds(const App& a) {
+  std::vector<std::string> out;
+  const std::string s = a.settings.getString("collab.favourites");
+  size_t at = 0;
+  while (at < s.size()) {
+    const size_t nl = s.find('\n', at);
+    const std::string id = s.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+    if (!id.empty()) out.push_back(id);
+    if (nl == std::string::npos) break;
+    at = nl + 1;
+  }
+  return out;
+}
+bool isFavourite(const App& a, const std::string& id) {
+  const auto ids = favouriteIds(a);
+  return !id.empty() && std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+void setFavourite(App& a, const std::string& id, bool on) {
+  if (id.empty()) return;
+  auto ids = favouriteIds(a);
+  ids.erase(std::remove(ids.begin(), ids.end(), id), ids.end());
+  if (on) ids.push_back(id);
+  std::string s;
+  for (const auto& x : ids) s += x + "\n";
+  a.settings.set("collab.favourites", s);
+}
+
 bool drawProject(App& a, int i, const ListRow& r, ImVec2 p, const launcher::Layout& L, bool focused, bool keyNav, const Look& C) {
   const auto& P = theme::pal();
   TileFrame f = beginTile(a, i, p, L, C, focused, keyNav);
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) openMenuFor(r);
+  M().tileRects[r.id] = ImVec4(f.p0.x, f.p0.y, f.p1.x, f.p1.y);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const bool gone = r.state != St::Active || r.removedNotice;
   const float dim = gone ? 0.5f : 1.0f;
@@ -602,9 +635,17 @@ bool drawProject(App& a, int i, const ListRow& r, ImVec2 p, const launcher::Layo
     dl->AddRectFilledMultiColor(ImVec2(f.t0.x, f.t1.y - band), ImVec2(f.t1.x, f.t1.y - band * 0.45f), clear, clear, solid, solid);
     dl->AddRectFilled(ImVec2(f.t0.x, f.t1.y - band * 0.45f), f.t1, solid);
   }
+  // a favourite wears a heart badge in the thumbnail's top-left corner (as on the Recent tiles), the pills follow it
+  const bool fav = isFavourite(a, r.id);
+  const float heartD = 26;
+  if (fav) {
+    const ImVec2 h0(f.t0.x + 8, f.t0.y + 8);
+    dl->AddRectFilled(h0, ImVec2(h0.x + heartD, h0.y + heartD), theme::withAlpha(C.card, 0.92f), heartD * 0.5f);
+    ui::drawIcon(dl, ui::Icon::HeartFilled, ImVec2(h0.x + heartD * 0.5f, h0.y + heartD * 0.5f + 0.5f), 14, C.heart);
+  }
   // pills, top left: live / open here / state
   {
-    float x = f.t0.x + 10;
+    float x = f.t0.x + 10 + (fav ? heartD + 4 : 0.0f);
     const float y = f.t0.y + 10;
     const ImU32 glass = theme::withAlpha(C.card, 0.92f);
     if (!r.workingNow.empty() && !gone) x += pill(a, dl, ImVec2(x, y), tr("LIVE"), glass, C.text, P.led, pulse(a), theme::withAlpha(P.led, 0.45f)) + 6;
@@ -656,17 +697,43 @@ bool drawProject(App& a, int i, const ListRow& r, ImVec2 p, const launcher::Layo
   }
   textAt(dl, a.fontRegular, theme::kFontCaption, ImVec2(sx, nameY + 21), st.col, st.text.c_str(), L.tileW - 28 - (sx - cx));
   endTile(f, C, focused, keyNav, r.openHere ? C.accent : (!r.workingNow.empty() && !gone ? theme::mix(C.line, P.led, 0.55f) : 0));
-  // hover: the menu button, the tooltip
+  // hover: the heart and menu buttons, the tooltip. The buttons stay while pressed: the tile
+  // reports no hover while one of its buttons is the active item, and a button that is not
+  // submitted on the frame the mouse is released never reports the click.
   bool overMenu = false;
-  if (f.hov || (ImGui::IsPopupOpen("##collabTileMenu") && M().menu.id == r.id && M().menu.folder == r.folder)) {
+  const ImGuiID moreId = ImGui::GetID("##more"), favId = ImGui::GetID("##fav"), activeId = ImGui::GetActiveID();
+  const bool menuOpen = ImGui::IsPopupOpen("##collabTileMenu") && M().menu.id == r.id && M().menu.folder == r.folder;
+  if (f.hov || menuOpen || activeId == moreId || activeId == favId) {
     const float bs = 26;
     const ImVec2 m0(f.t1.x - bs - 8, f.t0.y + 8);
     ImGui::SetCursorScreenPos(m0);
     if (ImGui::InvisibleButton("##more", ImVec2(bs, bs))) openMenuFor(r);
-    overMenu = ImGui::IsItemHovered();
-    dl->AddRectFilled(m0, ImVec2(m0.x + bs, m0.y + bs), theme::withAlpha(overMenu ? C.cardHover : C.card, 0.92f), theme::kRadius + 1);
-    ui::drawIcon(dl, ui::Icon::More, ImVec2(m0.x + bs * 0.5f, m0.y + bs * 0.5f), 14, overMenu ? C.text : C.dim);
+    const bool mh = ImGui::IsItemHovered();
+    if (mh) ImGui::SetTooltip("%s", tr("More"));
+    dl->AddRectFilled(m0, ImVec2(m0.x + bs, m0.y + bs), theme::withAlpha(mh ? C.cardHover : C.card, 0.92f), theme::kRadius + 1);
+    ui::drawIcon(dl, ui::Icon::More, ImVec2(m0.x + bs * 0.5f, m0.y + bs * 0.5f), 14, mh ? C.text : C.dim);
+    bool fh = false;
+    if (!fav && !r.id.empty()) {
+      const ImVec2 f0(m0.x - bs - 6, m0.y);
+      ImGui::SetCursorScreenPos(f0);
+      if (ImGui::InvisibleButton("##fav", ImVec2(bs, bs))) setFavourite(a, r.id, true);
+      fh = ImGui::IsItemHovered();
+      if (fh) ImGui::SetTooltip("%s", tr("Add to favourites"));
+      dl->AddRectFilled(f0, ImVec2(f0.x + bs, f0.y + bs), theme::withAlpha(fh ? C.cardHover : C.card, 0.92f), theme::kRadius + 1);
+      ui::drawIcon(dl, fh ? ui::Icon::HeartFilled : ui::Icon::Heart, ImVec2(f0.x + bs * 0.5f, f0.y + bs * 0.5f + 0.5f), 14, fh ? C.heart : C.dim);
+    }
+    overMenu = mh || fh;
     if (overMenu) f.activated = false;
+  }
+  // the heart badge doubles as the "remove from favourites" button
+  if (fav) {
+    ImGui::SetCursorScreenPos(ImVec2(f.t0.x + 8, f.t0.y + 8));
+    if (ImGui::InvisibleButton("##unfav", ImVec2(heartD, heartD))) setFavourite(a, r.id, false);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", tr("Remove from favourites"));
+      overMenu = true;
+      f.activated = false;
+    }
   }
   if (!overMenu && hoveredMember >= 0) projectTooltip(a, r, hoveredMember);  // one member
   else if (!overMenu && f.tip) projectTooltip(a, r, -1);                     // the whole project
@@ -717,13 +784,20 @@ void projectMenu(App& a) {
     ImGui::OpenPopup("##collabTileMenu");
     m.openMenu = false;
   }
+  m.menuShown = false;
   if (!ImGui::BeginPopup("##collabTileMenu")) return;
+  m.menuShown = true;
   const ListRow r = m.menu;
   using A = collabui::ProjectAction;
   const int state = r.state == St::Active ? 0 : r.state == St::Removed ? 1 : r.state == St::Ended ? 2 : 3;
   auto act = [&](A x) { collabui::projectAction(a, x, r.id, r.folder, r.name, state); };
   ImGui::TextDisabled("%s", r.name.c_str());
   ImGui::Separator();
+  if (!r.id.empty()) {
+    const bool fav = isFavourite(a, r.id);
+    if (ImGui::MenuItem(fav ? tr("Remove from favourites") : tr("Add to favourites"), "F")) setFavourite(a, r.id, !fav);
+    ImGui::Separator();
+  }
   if (r.state == St::Active && !r.removedNotice) {
     const bool usable = r.needVersion.empty();
     if (ImGui::MenuItem(r.openHere ? tr("Back to project") : tr("Open"))) act(A::Open);
@@ -845,6 +919,15 @@ void openMenu(int i) {
 
 void menus(App& a) { projectMenu(a); }
 
+void toggleFavourite(App& a, int i) {
+  Model& m = M();
+  if (i < 0 || i >= static_cast<int>(m.entries.size())) return;
+  const Entry& e = m.entries[static_cast<size_t>(i)];
+  if (e.kind != Kind::Project || e.row < 0 || e.row >= static_cast<int>(m.rows.size())) return;
+  const ListRow& r = m.rows[static_cast<size_t>(e.row)];
+  setFavourite(a, r.id, !isFavourite(a, r.id));
+}
+
 int projectCount(App& a) {
   static int count = 0;
   static double at = -100;
@@ -902,7 +985,12 @@ void devReport(App& a) {
     std::printf("collab row name=%s state=%d admin=%d open=%d card=%d pending=%d review=%d need=%s working=%d members=%s status=%s\n", r.name.c_str(),
                 static_cast<int>(r.state), r.admin ? 1 : 0, r.openHere ? 1 : 0, r.hasCard ? 1 : 0, static_cast<int>(r.pending), static_cast<int>(r.review),
                 r.needVersion.c_str(), static_cast<int>(r.workingNow.size()), members.c_str(), statusOf(r, look).text.c_str());
+    const auto rc = m.tileRects.find(r.id);
+    const ImVec4 t = rc != m.tileRects.end() ? rc->second : ImVec4(0, 0, 0, 0);
+    std::printf("collab fav name=%s fav=%d tile=%.0f,%.0f,%.0f,%.0f\n", r.name.c_str(), isFavourite(a, r.id) ? 1 : 0, static_cast<double>(t.x),
+                static_cast<double>(t.y), static_cast<double>(t.z), static_cast<double>(t.w));
   }
+  std::printf("collab menu=%s\n", m.menuShown ? m.menu.name.c_str() : "-");
   std::fflush(stdout);
   (void)a;
 }

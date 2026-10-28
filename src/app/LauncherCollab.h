@@ -20,7 +20,7 @@ namespace gl::launchercollab {
 
 // The launcher's colours, passed in so the tiles match the other views.
 struct Look {
-  ImU32 card, cardHover, thumb, line, lineHover, text, dim, faint, accent, danger, fill, fillHover;
+  ImU32 card, cardHover, thumb, line, lineHover, text, dim, faint, accent, danger, fill, fillHover, heart;
 };
 
 // Per frame while the view shows (before the layout): the list refreshes, presence checks run.
@@ -33,6 +33,8 @@ bool drawItem(App& a, int i, ImVec2 p, const launcher::Rect& r, const launcher::
 void activate(App& a, int i);
 // The tile's menu (keyboard: the Menu key).
 void openMenu(int i);
+// Favourite on / off for project tile `i` (keyboard: F).
+void toggleFavourite(App& a, int i);
 // Popups (after the grid).
 void menus(App& a);
 // Rail count, and how many projects someone is working on right now.

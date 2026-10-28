@@ -1246,18 +1246,17 @@ class PitchFx final : public SpectralFx {
     delete hifiRetired_.exchange(nullptr, std::memory_order_acq_rel);
     Params p{info_, &state};
     if (std::clamp(p.choice(PsEngine), 0, 3) != kPsHifi) return;
-    const stretch::Mode m = p.on(PsPreserve) || std::fabs(p[PsFormant]) > 0.01f ? stretch::Mode::Formant : stretch::Mode::Mono;
     const int delay = Hifi::delayFor(p, sampleRate);
-    if (hifiUi_.mode == m && hifiUi_.rate == sampleRate && hifiUi_.delay == delay) return;
+    if (hifiUi_.rate == sampleRate && hifiUi_.delay == delay) return;
     auto* h = new Hifi;
-    h->mode = m, h->rate = sampleRate, h->delay = delay;
+    h->rate = sampleRate, h->delay = delay;
     h->minPitch = Hifi::floorOf(p);
-    h->voice.prepare(2, sampleRate, m, 1.0 / h->minPitch * 1.01 + 4.0, 1.0);
+    h->voice.prepare(2, sampleRate, 1.0 / h->minPitch * 1.01 + 4.0, 1.0, true);  // live: the shorter block
     h->cap = delay + 65536;
     for (auto& f : h->fifo) f.assign(static_cast<size_t>(h->cap), 0.0f);
     for (auto& d : h->dry) d.assign(static_cast<size_t>(delay + 8192), 0.0f);
     delete hifiPending_.exchange(h, std::memory_order_acq_rel);
-    hifiUi_.mode = m, hifiUi_.rate = sampleRate, hifiUi_.delay = delay;
+    hifiUi_.rate = sampleRate, hifiUi_.delay = delay;
   }
   ~PitchFx() override {
     delete hifiPending_.exchange(nullptr);
@@ -1267,7 +1266,6 @@ class PitchFx final : public SpectralFx {
 
  private:
   struct Hifi {
-    stretch::Mode mode = stretch::Mode::Mono;
     double rate = 0, minPitch = 0.5;
     int delay = 0, cap = 0;
     stretch::Voice voice;
@@ -1280,18 +1278,17 @@ class PitchFx final : public SpectralFx {
       return std::max(0.24, std::pow(2.0, st / 12.0) * 0.5);
     }
     static int delayFor(const Params& p, double sr) {  // UI thread (latency queries, prepareHost)
-      const stretch::Mode m = p.on(PsPreserve) || std::fabs(p[PsFormant]) > 0.01f ? stretch::Mode::Formant : stretch::Mode::Mono;
       const double fl = floorOf(p);
       static std::mutex mu;
-      static std::map<std::tuple<int, double, double>, int> cache;
-      const auto key = std::make_tuple(static_cast<int>(m), sr, fl);
+      static std::map<std::pair<double, double>, int> cache;
+      const auto key = std::make_pair(sr, fl);
       std::lock_guard<std::mutex> lk(mu);
       if (auto it = cache.find(key); it != cache.end()) return it->second;
       stretch::Voice probe;
-      probe.prepare(2, sr, m, 1.0 / fl * 1.01 + 4.0, 1.0);
+      probe.prepare(2, sr, 1.0 / fl * 1.01 + 4.0, 1.0, true);
       return cache[key] = probe.lookahead(1.0, fl) + 64;
     }
-    static int read(void* ctx, float* const* d, int frames, bool) {
+    static void read(void* ctx, float* const* d, int frames) {
       auto* h = static_cast<Hifi*>(ctx);
       for (int k = 0; k < frames; ++k) {
         if (h->r < h->w) {
@@ -1303,11 +1300,9 @@ class PitchFx final : public SpectralFx {
           d[0][k] = d[1][k] = 0.0f;  // never with the delay above
         }
       }
-      return -1;
     }
   };
   struct HifiUi {
-    stretch::Mode mode = stretch::Mode::Resample;
     double rate = 0;
     int delay = -1;
   } hifiUi_;
@@ -1329,7 +1324,6 @@ class PitchFx final : public SpectralFx {
     }
     const double st = p[PsPitch] + p[PsFine] / 100.0;
     const double pitch = std::max(h->minPitch, std::pow(2.0, st / 12.0));
-    const double formant = p[PsFormant];
     const double out = dsp::dbToGain(p[PsOutput]);
     const double mix = std::clamp(static_cast<double>(p[PsMix]), 0.0, 1.0);
     const int dmode = std::clamp(p.choice(PsDelayMode), 0, 3);
@@ -1344,7 +1338,7 @@ class PitchFx final : public SpectralFx {
         h->fifo[0][i] = h->fifo[1][i] = 0.0f;
         ++h->w;
       }
-      h->voice.start(&Hifi::read, h, 1.0, pitch, false);
+      h->voice.start(&Hifi::read, h, 1.0, pitch);
       h->started = true;
     }
     const auto dcap = static_cast<int64_t>(h->dry[0].size());
@@ -1357,7 +1351,7 @@ class PitchFx final : public SpectralFx {
         ++h->w;
       }
       float* o[2] = {hifiOut_[0], hifiOut_[1]};
-      h->voice.render(o, m, 1.0, pitch, formant, &Hifi::read, h);
+      h->voice.render(o, m, 1.0, pitch, &Hifi::read, h);
       for (int k = 0; k < m; ++k) {
         float* io[2] = {L + done + k, R + done + k};
         for (int c = 0; c < 2; ++c) {

@@ -328,7 +328,7 @@ enum PitchParam {
 };
 inline constexpr int kPsClassic = 0, kPsVoice = 1, kPsMusic = 2;
 // J-87: Hi-fi engine (engine/TimeStretch: spectral time stretch + band-limited
-// resampling, formant keep). Gridline's own; exported to FL as Music.
+// resampling, the one stretch engine). Gridline's own; exported to FL as Music.
 inline constexpr int kPsHifi = 3;
 enum PsDelayModes { PsDlyOff = 0, PsDlyPost, PsDlyPre, PsDlyNoShift };
 // FL delay word 1..768 → ms (free) and 1/16 steps (tempo sync).

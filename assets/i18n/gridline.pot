@@ -773,7 +773,7 @@ msgstr ""
 msgid "Add folder..."
 msgstr ""
 
-#: src/app/Browser.cpp src/app/LauncherUi.cpp src/app/PluginManager.cpp src/app/PluginPicker.cpp
+#: src/app/Browser.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/PluginManager.cpp src/app/PluginPicker.cpp
 msgid "Add to favourites"
 msgstr ""
 
@@ -1037,7 +1037,7 @@ msgstr ""
 msgid "Remove from browser"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/LauncherUi.cpp src/app/PluginPicker.cpp
+#: src/app/Browser.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/PluginPicker.cpp
 msgid "Remove from favourites"
 msgstr ""
 
@@ -4297,7 +4297,7 @@ msgstr ""
 msgid "Backwards (time)"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MenuParityUi.cpp
+#: src/app/ContextMenus.cpp
 msgid "Beats"
 msgstr ""
 
@@ -7481,6 +7481,10 @@ msgstr ""
 msgid "Make %s collaborative"
 msgstr ""
 
+#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "More"
+msgstr ""
+
 #: src/app/LauncherCollab.cpp
 msgid "NOT SHARED"
 msgstr ""
@@ -7765,10 +7769,6 @@ msgstr ""
 msgid "May"
 msgstr ""
 
-#: src/app/LauncherUi.cpp
-msgid "More"
-msgstr ""
-
 #: src/app/LauncherUi.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp
 msgid "New project"
 msgstr ""
@@ -7989,7 +7989,7 @@ msgstr ""
 msgid "Drum and bass"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp src/app/PluginManager.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/LoopStarterUi.cpp src/app/PluginManager.cpp
 msgid "Drums"
 msgstr ""
 
@@ -8365,14 +8365,6 @@ msgstr ""
 msgid "Audio clip channels"
 msgstr ""
 
-#: src/app/MenuParityUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp
-msgid "Auto"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Auto (general)"
-msgstr ""
-
 #: src/app/MenuParityUi.cpp
 msgid "Automation clip created in the playlist"
 msgstr ""
@@ -8391,10 +8383,6 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Bars : steps : ticks"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Beats (loops)"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -8446,19 +8434,7 @@ msgid "Delete unused automation clips"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
-msgid "Drum loops and percussion: every hit re-attacked from the original"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Drums and loops: every hit copied as it is, nothing smeared or doubled"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
 msgid "Every audio clip"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Formant keep"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -8498,10 +8474,6 @@ msgid "Minutes : seconds : hundredths"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
-msgid "Mono / vocal"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
 msgid "More macros"
 msgstr ""
 
@@ -8531,18 +8503,6 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Panic: stop all sound"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Pitch and speed change together, like a turntable (band-limited, no aliasing)"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Pitch and time apart, for full mixes, chords and loops; drum hits stay sharp"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Pitch shift that keeps a voice's character (no chipmunk effect)"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -8642,10 +8602,6 @@ msgid "Silences everything at once: every note, delay and reverb tails, previews
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
-msgid "Single voices, vocals, bass and leads: tighter timing"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
 msgid "Song position shows"
 msgstr ""
 
@@ -8661,16 +8617,16 @@ msgstr ""
 msgid "Stopped %s"
 msgstr ""
 
+#: src/app/MenuParityUi.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Stretch"
+msgstr ""
+
 #: src/app/MenuParityUi.cpp
 msgid "Swing mix for selected (type in)..."
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Swing mix for the selected channels (0-100 %)"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Tape (varispeed)"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -8690,31 +8646,11 @@ msgid "Timecode (SMPTE)"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
-msgid "Transient"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Transient (drums)"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
 msgid "Turn events into an automation clip"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Unlock every playlist track"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Vocals, speech and solo instruments: natural pitch shifts with the formants kept, no phasing"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Voice"
-msgstr ""
-
-#: src/app/MenuParityUi.cpp
-msgid "Voice (formants kept)"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -10307,10 +10243,6 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Sources no clip in any arrangement uses (audio: channels that play no pattern either)"
-msgstr ""
-
-#: src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Stretch"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -15805,14 +15737,6 @@ msgstr ""
 msgid "FOLLOW THE PROJECT BY"
 msgstr ""
 
-#: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "For vocals, bass and single lines"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "General stretch for full mixes"
-msgstr ""
-
 #: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Grid"
 msgstr ""
@@ -15827,10 +15751,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "KEYS PLAY"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Keeps drum hits sharp"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -15975,10 +15895,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "STEPS"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
-msgid "STRETCH"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -16287,6 +16203,10 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
 msgid "Analyse again"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Auto"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
@@ -17047,6 +16967,10 @@ msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
 msgid "STRAIGHT"
+msgstr ""
+
+#: src/packs/spacefx/spacefx_ui.cpp
+msgid "STRETCH"
 msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp

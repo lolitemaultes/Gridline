@@ -168,9 +168,25 @@ struct ProgNoteFx {
   bool modded = false;       // a link targets this processor
 };
 
-// An audio clip compiled for playback (arrangement). Rendering is stateless:
-// the source position follows from the song position, so seeking and looping
-// need no voice state.
+// J-153: the realtime stretch of a clip (engine/TimeStretch voice): plays
+// while the clip's render is not ready yet and while the channel pitch moves
+// off the render's pitch. One continuous stream from where playback starts;
+// a jump (seek, loop, new program) restarts it, primed with the audio before.
+struct ClipVoice {
+  stretch::Voice voice;
+  const Sample* src = nullptr;  // reader state (audio thread)
+  bool reverse = false;
+  int64_t cursor = 0, endFrame = 0;  // next source frame (clip direction); silence from endFrame on
+  int64_t next = -(int64_t{1} << 62);  // clip frame the stream plays next
+  static constexpr int kOut = 1024;
+  float out[2][kOut] = {};
+};
+std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate);  // UI thread (allocates)
+
+// An audio clip compiled for playback (arrangement). Plain reads are
+// stateless: the source position follows from the song position, so seeking
+// and looping need no state. The realtime stretch (ClipVoice) restarts itself
+// after a jump.
 struct ProgAudioClip {
   Tick start = 0, end = 0;          // song ticks
   double startSec = 0, durSec = 0;  // song time at the clip start (tempo map), playback length
@@ -178,8 +194,8 @@ struct ProgAudioClip {
   double srcStart = 0, srcEnd = 0;  // source window, seconds
   double speed = 1;                 // source seconds per playback second (not tempo-synced)
   double secPerTick = 0;            // > 0: tempo-synced, source seconds per song tick
-  double pitch = 1;                 // frequency ratio applied inside grains (granular mode)
-  bool granular = false;            // pitch independent from speed (overlapping grains)
+  double pitch = 1;                 // frequency ratio (granular mode)
+  bool granular = false;            // pitch independent from speed (the stretch)
   bool reverse = false;
   float gain = 1;
   double fadeIn = 0, fadeOut = 0;   // seconds of playback time
@@ -190,15 +206,11 @@ struct ProgAudioClip {
   // J-87: the clip's audio rendered once at offline quality (pitch, stretch,
   // tempo sync, resampling) at the program's sample rate: frame j plays j
   // frames after the clip's first sample. Used while ready and while the
-  // channel pitch is still `hqSemis`; the realtime grains cover the rest.
+  // channel pitch is still `hqSemis`; the realtime stretch covers the rest.
   stretch::RenderedClipPtr hq;
   double hqSemis = 0;
-  // J-140: the realtime grains' alignment (audio thread only): the last grain
-  // placed and the source positions (seconds) of it and the one before.
-  mutable int64_t rtGrain = -(int64_t{1} << 62);
-  mutable double rtGrainSrc[2] = {0, 0};
-  mutable double rtGrainRate[2] = {1, 1};  // J-145: their read rates (source s per playback s)
-  // J-145: the share of the render in the output (0 grains ... 1 render) and
+  std::shared_ptr<ClipVoice> rt;  // J-153: the realtime stretch (null: not needed)
+  // J-145: the share of the render in the output (0 realtime ... 1 render) and
   // the frame it applies to next: switches between the two crossfade.
   mutable double rtMix = 0;
   mutable int64_t rtMixAt = -(int64_t{1} << 62);
@@ -219,6 +231,7 @@ struct ProgChannel {
   ChannelAux aux;
   mutable float gainL = 0, gainR = 0;  // target strip gains (taper, pan, mute applied)
   mutable float pitchOffset = 0;       // channel pitch + master pitch (semitones)
+  bool pitchMoves = false;             // J-153: automation / a link moves the channel pitch
   float volume = 0.78f, pan = 0, masterPitch = 0;  // unlinked strip values (masterPitch includes the channel fine tune)
   int pitch = 0;
   bool muted = false;

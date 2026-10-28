@@ -5,69 +5,56 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ## Unreleased
 
-### Pitch and time engine
+### One smooth stretch and pitch engine for all audio
 
-- One shared pitch and time engine behind every pitch or tempo change: audio clips, the
-  sampler and sample editors, the audio editor, browser previews, granular and sample
-  oscillators, and the pitch, delay, scratch and stutter effects. Pitched material no longer
-  folds back as aliasing (high tones an octave up drop from full level to below -80 dB).
-- New time stretch modes: Voice keeps the character of a voice or a bass line while its pitch
-  changes, and Beats keeps drum hits sharp with no pre-echo. Both are offered in the clip,
-  sampler and audio editor menus; projects saved earlier keep the modes they had.
-- Formant-keeping modes now keep their loudness without new clipping: a shifted voice or bass
-  no longer overshoots full scale.
-- Fixes: sample playback at high pitch settings stays clean, a clip stretched in realtime stays
-  in tune, and the audio editor plays and scrubs cleanly at any speed.
+- One smooth stretch and pitch engine for all audio: audio clips (rendered or played in
+  realtime, tempo-synced or following tempo changes), the sampler, slices, the audio editor,
+  the Pitch Shifter, Platter and the other pitch and time effects all use the same continuous
+  stretch. Every picker now offers two choices: Stretch (time and pitch apart) and Resample
+  (pitch and speed together, like a turntable).
+- Stretched and shifted audio stays smooth from x0.5 to x4 and up to an octave either way:
+  far fewer clicks and glitches (the worst realtime case drops from dozens per second to a few),
+  no crackle or hop-rate ripple, and bass notes no longer drift or warble near the original
+  speed.
+- The noise left around steady notes after a stretch or shift is 15 to 20 dB lower, and a bass
+  line under drum hits holds its level instead of dipping.
+- Realtime playback (sampler notes, clips while the channel pitch moves, Platter) sounds the
+  same as a render and is the same for any audio buffer size; pitch changes glide instead of
+  stepping.
+- Pitched material no longer folds back as aliasing (high tones an octave up drop from full
+  level to below -80 dB).
+- Projects saved with the older Auto, Mono, Transient, Formant, Voice or Beats modes open with
+  Stretch.
+- Drum hits keep the silence ahead of them: nothing of a stretched or shifted hit sounds before
+  it (pre-echo below -60 dB at every stretch and shift). Hits stretched far (x4) or shifted
+  down an octave sound a little softer than the original (3 to 4 dB at the very attack).
+- The Pitch Shifter's Hi-fi engine uses a shorter block for live use (latency about 0.24 s,
+  covered by delay compensation) and no longer offers formant keeping.
 
 ### Platter scratching
 
-- Scratching on Platter now follows the hand closely: a baby scratch lags the hand by about
-  4 ms instead of 7 ms and keeps its shape, and reversals are crisp.
-- Jog wheel and mouse moves no longer step or buzz. Each jog tick is placed at the moment it
-  arrived instead of at the start of the audio block, and the record's speed changes smoothly
-  between moves, so slow drags on a coarse jog wheel play as one tone instead of a stutter.
-- A record held still by the hand is silent, with no creep or rumble after a stop.
+- Scratching on Platter is rebuilt on the model Mixxx uses, so it feels like a record with
+  some weight instead of a buzzing follower. A jog wheel sets the record's speed from how fast
+  its ticks arrive, smoothed the way each controller's Mixxx mapping does it (DDJ-200 and
+  Inpulse 200 alike, Mixtrack Pro FX snappier). Strokes come out as clean sweeps with no
+  zipper noise, about 30 ms behind the hand.
+- Mouse scratching works like Mixxx's: drag the record round and it follows smoothly. Let go
+  faster than 2.5x and it is thrown: it coasts and slows down. Let go slower and it goes
+  straight back to the motor's speed.
+- Touching a playing record catches it smoothly and letting go ramps it back up to speed,
+  instead of a hard stop and a jump. At low speeds the level fades the way vinyl does.
+- Jog ticks are placed at the moment they arrived, so slow drags on a coarse jog wheel play as
+  one tone instead of a stutter, and a record held still by the hand is silent.
 - New per-deck Jog knob (next to Hand) sets how far the record moves for each jog tick, from
   0.25x to 2x. The default is 0.8x, a little less sensitive than before. Projects saved
   earlier load with the default.
-- Hand feel now ranges from loose (smoothest on coarse jog wheels) to tight (least lag).
-
-### Cleaner time stretching
-
-- The Auto, Transient and Beats modes now stretch the hits and the tone under them separately:
-  a bass line or chord holds its level through every drum hit instead of dropping out ahead
-  of it (dips of up to 13 dB are now one to two decibels), and hits stay sharp with nothing
-  ahead of them. This applies to clip renders, tempo-synced clips, the sampler and slices.
-- A plucked or struck note in Auto and Transient decays smoothly from its attack: the dip and
-  swell where the attack handed over to the stretched sound are gone.
-- Beats mode keeps low notes and dense chords steady instead of wobbling, square and other
-  stepped waves no longer overshoot when stretched, and hits in tempo-synced clips land where
-  the tempo map puts them through tempo changes.
-- Fewer clicks in realtime stretching: sampler voices no longer restart the whole sound at each
-  hit, held notes no longer ripple at large stretch factors, pitch automation glides instead
-  of stepping, and a stretched note ends with a short fade.
-- Formant-keeping modes no longer click when a loud moment arrives after a quiet one: the level
-  matching eases its gain down ahead of the peak instead of dropping it in one step.
-- Audio clips crossfade smoothly when playback moves between the prepared render and the
-  realtime path (for example while the channel pitch changes), instead of clicking.
-
-### Voice mode on real voices
-
-- Voice mode rebuilt for real singing and speech. A shifted voice no longer keeps a ringing
-  trace of its old pitch, and an octave down keeps its full brightness (the top octave used to
-  be cut away).
-- Breaths, consonants and noise stretch smoothly: the hollow, phasey colour they had when
-  slowed down is gone.
-- The voice tracker follows vibrato and breathy notes without dropping in and out, and no
-  longer jumps an octave on low voices or takes a voice for a pure tone.
-- Realtime Voice playback (sampler, clips) no longer clicks at high pitch settings, plays a
-  voice unchanged at its original pitch and speed, and needs a fraction of the processing
-  power it did (from under 3 to about 25 times realtime per voice on one core).
-- Formant mode follows the voice's pitch when it measures the formants, so a shifted voice no
-  longer rings at the old pitch there either.
+- Hand feel sets how heavy the record feels: loose is smoother and slower to follow, tight
+  follows the hand about twice as fast. The middle setting is Mixxx's own feel.
 
 ### New
 
+- Collaborative projects can be favourites too: the heart on a tile in the welcome screen's
+  Collaborative view (or F, or the tile menu) marks it, and the heart badge takes the mark off.
 - Platter, a new instrument in the Gridline Suite: a whole two-deck DJ setup on a channel, deck
   A and deck B with a mixer between them. Drop a track on each deck and it finds the tempo and
   beat grid and plays in time with the project or with the other deck (the padlock frees it to
@@ -151,7 +138,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
-- Welcome screen: the menu button on a project tile now opens the tile's menu.
+- Welcome screen: the menu button on a project tile now opens the tile's menu, in the
+  Collaborative view too.
 - The OUT meter in the top bar is now a real master output meter: it shows the master track after
   its effects and fader (the same level as the mixer's master meter), on the same dB scale, with a
   steady fall that does not depend on the frame rate, a short peak hold per channel and a clip lamp

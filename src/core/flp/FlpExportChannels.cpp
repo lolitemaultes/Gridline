@@ -717,7 +717,9 @@ void Exporter::writeChannel(int fl) {
           if (sp(ch, SmpStretchMode) >= 0.5) {
             // J-87: keep FL's stored method when it maps to the channel's mode, else the closest one.
             const stretch::Mode m = stretch::modeOf(sp(ch, SmpStretchMode));
-            if (stretch::modeFromFl(static_cast<int32_t>(getU32(e->data, 108))) != m || getU32(e->data, 108) == 0) putI32(e->data, 108, stretch::flCodeOf(m));
+            // J-153: the stored FL method stays while it means the same thing (stretch or resample).
+            const stretch::Mode was = stretch::modeFromFl(static_cast<int32_t>(getU32(e->data, 108)));
+            if (stretch::keepsPitch(was) != stretch::keepsPitch(m) || getU32(e->data, 108) == 0) putI32(e->data, 108, stretch::flCodeOf(m));
             putI32(e->data, 104, static_cast<int32_t>(std::lround(std::log2(std::max(1e-6, sp(ch, SmpTimeStretch))) * 10000.0)));
             putI32(e->data, 100, static_cast<int32_t>(std::lround(sp(ch, SmpPitchShift))));
           } else {

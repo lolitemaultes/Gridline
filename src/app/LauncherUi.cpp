@@ -888,7 +888,7 @@ void draw(App& a) {
   } else {
     buildTiles(a, tiles, items, sections);
   }
-  const launchercollab::Look look{C.card, C.cardHover, C.thumb, C.line, C.lineHover, C.text, C.dim, C.faint, C.accent, C.danger, C.fill, C.fillHover};
+  const launchercollab::Look look{C.card, C.cardHover, C.thumb, C.line, C.lineHover, C.text, C.dim, C.faint, C.accent, C.danger, C.fill, C.fillHover, C.heart};
   for (const Tile& t : tiles)
     if (!t.sketch.empty() && t.sketch != "@current" && t.sketch != "@starter" && !t.missing) st.request(t.sketch);
 
@@ -1171,9 +1171,11 @@ void draw(App& a) {
           if (t.kind != TileKind::New) S.menu = t, S.openMenu = true;
         }
       }
-      // J-148: F toggles the focused project's favourite mark (recent projects only).
-      if (nTiles && S.keyNav && S.view == 0 && io.KeyMods == ImGuiMod_None && ImGui::IsKeyPressed(ImGuiKey_F, false))
-        toggleFavourite(a, tiles[static_cast<size_t>(tileIdx[static_cast<size_t>(S.focus)])]);
+      // J-148: F toggles the focused project's favourite mark (recent and collaborative projects).
+      if (nTiles && S.keyNav && io.KeyMods == ImGuiMod_None && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+        if (S.view == 0) toggleFavourite(a, tiles[static_cast<size_t>(tileIdx[static_cast<size_t>(S.focus)])]);
+        else if (S.view == 2) launchercollab::toggleFavourite(a, tileIdx[static_cast<size_t>(S.focus)]);
+      }
       if (ImGui::IsKeyPressed(ImGuiKey_Tab)) S.view = (S.view + (io.KeyShift ? 2 : 1)) % 3, S.focus = 0;
       if (keys::pressed("file.new")) openTile(a, tileOf(TileKind::New));
       if (keys::pressed("file.open")) a.openDialog();

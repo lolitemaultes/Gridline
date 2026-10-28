@@ -420,7 +420,8 @@ void testFormat(const std::string& suiteId, const FormatRun& fr, const std::stri
     if (!m.instrument && fr.format != "au" && !a.hi->backend()->hasBypass()) problems.push_back(m.type + " has no bypass parameter");
     else ++instantiated;
     // Sound.
-    std::vector<float> out = m.instrument ? renderNote(a, 16384) : renderFx(a, 8192);
+    // (effects: past the longest reported latency, the Pitch Shifter's Hi-fi stretch at about 0.24 s)
+    std::vector<float> out = m.instrument ? renderNote(a, 16384) : renderFx(a, 32768);
     const float p = peak(out);
     if (m.instrument) {
       // A member silent in its default state must be silent in Gridline too.

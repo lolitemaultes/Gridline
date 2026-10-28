@@ -149,10 +149,9 @@ Content applyEnvelope(const Content& c, Range r, const std::vector<std::pair<dou
 Audio resampleAudio(const Audio& a, double newRate, int quality = 1);
 Content resample(const Content& c, double newRate, int quality = 1);
 
-// J-87: Elastic / Transient / Mono / Formant run on engine/TimeStretch (its
-// Auto, Transient, Mono / vocal and Formant keep modes); Tape is varispeed.
-// J-140: Voice (pitch-tracked, formants kept) and Beats (whole hits copied) follow.
-enum class Stretch { Elastic = 0, Transient, Tape, Mono, Formant, Voice, Beats, Count };
+// J-153: Elastic is engine/TimeStretch's one stretch (pitch kept); Tape is
+// varispeed (resampling: pitch follows speed).
+enum class Stretch { Elastic = 0, Tape, Count };
 const char* stretchName(Stretch s);
 // Time factor (2 = twice as long) and pitch shift in semitones. Tape couples them
 // (the time factor is ignored: pitch follows speed). quality 0..2 (FFT size).

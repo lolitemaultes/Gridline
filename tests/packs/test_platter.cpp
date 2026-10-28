@@ -1,7 +1,7 @@
 // Gridline — "platter" pack tests: Platter (gl.platter), the two-deck DJ setup.
 // Controller decoding from synthetic bytes (DDJ-200 one side and the whole
 // controller, Inpulse 200, Mixtrack Pro FX, learn), mappings and models as text
-// and preset files, the platter physics (hand tracking, motor start / brake,
+// and preset files, the platter physics (jog and mouse scratching, motor start / brake,
 // throws), click-free direction changes, band-limited reads at speed, key lock,
 // tempo sync (to the project and deck to deck) and beat phase, the mixer
 // (channels, crossfader assign / curve / cut / reverse, master), block-size
@@ -564,8 +564,8 @@ void testPhysics(const std::string& path) {
   expect(up > 0.3 && up < 0.7, "motor: half speed after half the start time");
   run(d, static_cast<int64_t>(0.2 * kSr), 64);
   expect(std::fabs(view(d).speed - 1.0) < 1e-6, "motor: full speed after the start time");
-  // a rim nudge bends the speed for a moment (rim moves right after a release are the platter coasting: ignored)
-  run(d, static_cast<int64_t>(0.3 * kSr), 64);
+  // a rim nudge bends the speed for a moment (rim moves within 0.9 s of a release are the platter coasting: ignored)
+  run(d, static_cast<int64_t>(0.7 * kSr), 64);
   run(d, 64, 64, [](Deck& dd, int64_t, int) {
     for (int k = 0; k < 8; ++k) dd.g->midi(0xB0, 0x21, 0x44, k);
   });
@@ -612,7 +612,7 @@ void testScratch(const std::string& sinePath) {
   expect(finite(d.L), "scratch: finite");
 }
 
-// ------------------------------------------------------------------ hand tracking (J-154)
+// ------------------------------------------------------------------ scratching (J-154, J-155)
 // The ramp track's left channel is its own position (right: a constant), so the
 // output tells the read position at every sample: p = L / R * kRampScale.
 constexpr double kRampN = 2.0 * kSr, kRampTop = 0.9;
@@ -644,43 +644,42 @@ void jogTicks(Deck& dd, int64_t pos, int n, const std::function<double(double)>&
   }
 }
 
+// The deck's published speed (x normal) after every block of `block` samples.
+std::vector<double> speeds(Deck& d, int64_t frames, int block, const std::function<void(Deck&, int64_t, int)>& ev = nullptr) {
+  std::vector<double> v;
+  for (int64_t k = 0; k < frames; k += block) {
+    run(d, block, block, ev);
+    v.push_back(view(d).speed);
+  }
+  return v;
+}
+double speedAt(const std::vector<double>& v, double sec, int block = 64) {
+  return v[std::min(v.size() - 1, static_cast<size_t>(sec * kSr / block))];
+}
+
 void testHand(const std::string& rampPath) {
   const double fpt = kSr * pl::kSecondsPerRev / 128.0;
-  // 1. a fast back-and-forth (8 Hz, peak 2.5x) moved by the mouse: the record
-  //    follows within a few milliseconds, at full size, and its speed has no steps
+  // 1. jog ticks -> speed (J-155, after Mixxx's alpha-beta jog filter): a touched
+  //    wheel turning steadily at 0.5x is followed smoothly, about 20-35 ms behind
+  //    (the record has some mass), and settles on the wheel's speed
   {
     Deck d = rampDeck(rampPath);
-    run(d, 256, 32, [](Deck& dd, int64_t, int) { cmd(dd, pl::CmdHandDown); });
-    const double A = 2.5 * kSr / (2 * kPi * 8);
-    auto hand = [&](double t) { return A * std::sin(2 * kPi * 8 * t); };
+    run(d, 256, 64, [](Deck& dd, int64_t, int) { dd.g->midi(0x90, 0x36, 0x7F, 0); });
+    long sent = 0;
     const int64_t t0 = d.pos;
-    run(d, static_cast<int64_t>(1.0 * kSr), 32, [&](Deck& dd, int64_t pos, int n) {
-      cmd(dd, pl::CmdHandMove, 0, hand(static_cast<double>(pos + n - t0) / kSr) / (kSr * pl::kSecondsPerRev));
-    });
-    const auto p = rampPos(d, static_cast<size_t>(t0), d.L.size());
-    const double base = 0.5 * kRampN;
-    double best = 1e300;
-    int lag = 0;
-    for (int l = 0; l < static_cast<int>(0.03 * kSr); l += 4) {
-      double e = 0;
-      for (size_t i = static_cast<size_t>(0.2 * kSr); i < p.size(); ++i)
-        if (std::isfinite(p[i])) e += std::pow(p[i] - base - hand(static_cast<double>(static_cast<int64_t>(i) - l) / kSr), 2);
-      if (e < best) best = e, lag = l;
-    }
-    double peak = 0, jump = 0;
-    for (size_t i = static_cast<size_t>(0.2 * kSr); i + 2 < p.size(); ++i) {
-      if (std::isfinite(p[i])) peak = std::max(peak, std::fabs(p[i] - base));
-      if (std::isfinite(p[i]) && std::isfinite(p[i + 1]) && std::isfinite(p[i + 2]))
-        jump = std::max(jump, std::fabs((p[i + 2] - p[i + 1]) - (p[i + 1] - p[i])));
-    }
-    std::printf("# hand (mouse, 8 Hz): lag %.1f ms, size %.3f, largest speed change between samples %.4f\n", lag / kSr * 1000, peak / A, jump);
-    expect(lag / kSr < 0.0055, "hand: the record follows a fast scratch within 5.5 ms");
-    expect(peak / A > 0.93 && peak / A < 1.07, "hand: at full size (no overshoot, no loss)");
-    // (8 Hz at 2.5x changes speed by 0.003 per sample; a step every 32 samples was ~0.1)
-    expect(jump < 0.04, "hand: the speed changes smoothly from sample to sample (no 32-sample steps)");
+    auto hand = [&](double t) { return 0.5 * kSr * std::max(0.0, t - static_cast<double>(t0) / kSr); };
+    const auto v = speeds(d, static_cast<int64_t>(0.3 * kSr), 64, [&](Deck& dd, int64_t pos, int n) { jogTicks(dd, pos, n, hand, sent, fpt); });
+    double top = 0;
+    for (size_t i = static_cast<size_t>(0.15 * kSr / 64); i < v.size(); ++i) top = std::max(top, v[i]);
+    std::printf("# jog 0.5x from rest: %.3f after 10 ms, %.3f after 30 ms, %.3f after 100 ms, %.3f after 300 ms (top %.3f)\n", speedAt(v, 0.01),
+                speedAt(v, 0.03), speedAt(v, 0.1), v.back(), top);
+    // (at 0.5x the first tick comes after 28 ms; Mixxx's filter overshoots a step by about 15%)
+    expect(speedAt(v, 0.01) == 0.0 && speedAt(v, 0.03) > 0.02 && speedAt(v, 0.03) < 0.3, "jog: the speed follows the wheel's tick rate with the filter's lag (some mass)");
+    expect(std::fabs(speedAt(v, 0.1) - 0.5) < 0.08 && std::fabs(v.back() - 0.5) < 0.03 && top < 0.5 * 1.2, "jog: then settles on the wheel's speed");
   }
   // 2. a slow steady drag on a coarse jog (128 ticks a turn, one tick every 37 ms):
-  //    a steady speed, not a stutter; then the hand holds the record: silence
+  //    a continuous speed (the filter rides through the gaps between ticks); then
+  //    the hand holds the record: it comes to rest, then silence
   {
     Deck d = rampDeck(rampPath);
     long sent = 0;
@@ -691,23 +690,23 @@ void testHand(const std::string& rampPath) {
       const double tt = t - static_cast<double>(t0) / kSr;
       return tt <= 0 ? 0.0 : v * kSr * std::min(tt, drag);
     };
-    run(d, static_cast<int64_t>(1.6 * kSr), 64, [&](Deck& dd, int64_t pos, int n) { jogTicks(dd, pos, n, hand, sent, fpt); });
+    run(d, static_cast<int64_t>(1.8 * kSr), 64, [&](Deck& dd, int64_t pos, int n) { jogTicks(dd, pos, n, hand, sent, fpt); });
     const auto p = rampPos(d, static_cast<size_t>(t0), d.L.size());
-    double s = 0, s2 = 0;
+    double s = 0, s2 = 0, lo = 1e9;
     int n = 0;
     const int w = 64;  // speed over 1.5 ms
     for (size_t i = static_cast<size_t>(0.3 * kSr); i + w < static_cast<size_t>(1.1 * kSr); i += w)
       if (std::isfinite(p[i]) && std::isfinite(p[i + w])) {
         const double r = (p[i + w] - p[i]) / w;
-        s += r, s2 += r * r, ++n;
+        s += r, s2 += r * r, ++n, lo = std::min(lo, r);
       }
     const double mean = s / n, sd = std::sqrt(std::max(0.0, s2 / n - mean * mean));
     double still = 0;
-    for (size_t i = static_cast<size_t>((drag + 0.15) * kSr); i < static_cast<size_t>((drag + 0.35) * kSr); ++i)
+    for (size_t i = static_cast<size_t>((drag + 0.35) * kSr); i < static_cast<size_t>((drag + 0.55) * kSr); ++i)
       still = std::max(still, static_cast<double>(std::fabs(d.R[static_cast<size_t>(t0) + i])));
-    std::printf("# coarse jog drag at 0.4x: speed %.3f +- %.3f; held: peak %.1e\n", mean, sd, still);
-    expect(std::fabs(mean - v) < 0.03 && sd < 0.06, "coarse jog: a slow drag plays a steady speed (no tick stutter)");
-    expect(still < 1e-4, "coarse jog: the record held still is silent");
+    std::printf("# coarse jog drag at 0.4x: speed %.3f +- %.3f (lowest %.3f); held: peak %.1e\n", mean, sd, lo, still);
+    expect(std::fabs(mean - v) < 0.02 && sd < 0.1 && lo > 0.15, "coarse jog: a slow drag plays a continuous speed (it never stops between ticks)");
+    expect(still < 1e-6, "coarse jog: the record held still comes to rest: silence");
   }
   // 3. jog sensitivity: the default moves the record 0.8 turns per wheel turn; it scales
   for (float sens : {0.8f, 0.5f, 2.0f}) {
@@ -735,7 +734,8 @@ void testHand(const std::string& rampPath) {
     std::printf("# stopped wheel: 8 ticks move the record %.1f frames (%.3f ticks)\n", moved, moved / fpt);
     expect(std::fabs(moved - 8 * fpt * 0.5 * 0.8) < 0.02 * 8 * fpt, "stopped wheel: 8 ticks move the record 8 x 0.5 x 0.8 ticks (the sensitivity applies)");
   }
-  // 5. the touch stops a playing record where the hand lands, without swinging back
+  // 5. touch and release on a playing record: the hand catches it smoothly (no
+  //    swing back) and holds it silent; the release ramps it back to the motor
   {
     Deck d = rampDeck(rampPath);
     d.st.params[pl::PStartTime] = 0;
@@ -744,15 +744,99 @@ void testHand(const std::string& rampPath) {
     run(d, static_cast<int64_t>(0.2 * kSr), 64);
     const auto t0 = static_cast<size_t>(d.pos);
     run(d, 64, 64, [](Deck& dd, int64_t, int) { dd.g->midi(0x90, 0x36, 0x7F, 0); });
-    run(d, static_cast<int64_t>(0.2 * kSr), 64);
+    const auto caught = speeds(d, static_cast<int64_t>(0.4 * kSr), 64);
     const auto p = rampPos(d, t0, d.L.size());
     double back = 0, top = 0;
     for (size_t i = 1; i < p.size(); ++i)
       if (std::isfinite(p[i])) top = std::max(top, p[i]), back = std::max(back, top - p[i]);
     double still = 0;
-    for (size_t i = static_cast<size_t>(0.1 * kSr); i < p.size(); ++i) still = std::max(still, static_cast<double>(std::fabs(d.R[t0 + i])));
-    std::printf("# touch on a playing record: swings back %.2f frames, then %.1e\n", back, still);
-    expect(back < 0.5 && still < 1e-4, "touch: the record stops where the hand lands (no swing back), then silence");
+    for (size_t i = static_cast<size_t>(0.3 * kSr); i < p.size(); ++i) still = std::max(still, static_cast<double>(std::fabs(d.R[t0 + i])));
+    std::printf("# touch on a playing record: %.3f after 10 ms, %.3f after 50 ms, %.3f after 150 ms; swings back %.2f frames; then %.1e\n",
+                speedAt(caught, 0.01), speedAt(caught, 0.05), speedAt(caught, 0.15), back, still);
+    expect(speedAt(caught, 0.01) > 0.5 && speedAt(caught, 0.05) < 0.5 && std::fabs(speedAt(caught, 0.15)) < 0.1, "touch: a playing record is caught smoothly");
+    expect(back < 0.5 && still < 1e-6, "touch: no swing back, then silence");
+    run(d, 64, 64, [](Deck& dd, int64_t, int) { dd.g->midi(0x90, 0x36, 0x00, 0); });
+    const auto rel = speeds(d, static_cast<int64_t>(0.4 * kSr), 64);
+    double peak = 0;
+    for (double x : rel) peak = std::max(peak, x);
+    std::printf("# release: %.3f after 10 ms, %.3f after 50 ms, %.3f after 400 ms (peak %.3f)\n", speedAt(rel, 0.01), speedAt(rel, 0.05), rel.back(), peak);
+    expect(speedAt(rel, 0.01) > 0.05 && speedAt(rel, 0.01) < 0.9 && std::fabs(rel.back() - 1.0) < 1e-6 && peak < 1.1,
+           "release: the speed ramps back to the motor's (not a jump), then the motor has it");
+    expect(!view(d).touched && view(d).playing, "release: playing again, the hand is off");
+  }
+  // 6. the mouse (J-155, after Mixxx's position loop): a steady drag at 1x is
+  //    taken up smoothly and held; Hand feel tight takes it up quicker
+  double rises[2] = {0, 0};
+  for (int f = 0; f < 2; ++f) {
+    const float feel = f == 0 ? 0.5f : 1.0f;
+    Deck d = rampDeck(rampPath);
+    d.st.params[pl::PFeel] = feel;
+    run(d, 256, 64, [](Deck& dd, int64_t, int) { cmd(dd, pl::CmdHandDown); });
+    const int64_t t0 = d.pos;
+    const auto v = speeds(d, static_cast<int64_t>(0.6 * kSr), 64, [&](Deck& dd, int64_t pos, int) {
+      if ((pos - t0) % 735 < 64) cmd(dd, pl::CmdHandMove, 0, static_cast<double>(pos - t0) / (kSr * pl::kSecondsPerRev));
+    });
+    size_t k = 0;
+    while (k < v.size() && v[k] < 0.9) ++k;
+    double mean = 0, jump = 0;
+    for (size_t i = v.size() / 2; i < v.size(); ++i) mean += v[i];
+    mean /= static_cast<double>(v.size() - v.size() / 2);
+    const auto p = rampPos(d, static_cast<size_t>(t0), d.L.size());
+    // the speed over 8 samples (the ramp's read-back has some sample-to-sample noise), window to window
+    for (size_t i = 0; i + 16 < p.size(); i += 8)
+      if (std::isfinite(p[i]) && std::isfinite(p[i + 8]) && std::isfinite(p[i + 16]))
+        jump = std::max(jump, std::fabs((p[i + 16] - p[i + 8]) - (p[i + 8] - p[i])) / 8);
+    rises[f] = static_cast<double>(k * 64) / kSr * 1000;
+    std::printf("# mouse drag at 1x (hand feel %.1f): 0.9x after %.0f ms, then %.3f; largest speed change in 8 samples %.4f\n", feel, rises[f], mean, jump);
+    expect(std::fabs(mean - 1.0) < 0.06, "mouse: a steady drag plays its speed");
+    expect(jump < 0.04, "mouse: no speed steps from the 60 Hz mouse (the loop's rate changes are ramped)");
+  }
+  expect(rises[0] > 40 && rises[0] < 250 && rises[1] < 0.7 * rises[0], "mouse: the record takes up a drag with the loop's lag; tight hand feel quicker");
+  // 7. a mouse throw (let go above 2.5x) coasts and slows exponentially; a slower
+  //    release stops at once (the motor is off)
+  for (double sp : {4.0, 1.5}) {
+    Deck d = rampDeck(rampPath);
+    d.st.params[pl::PFeel] = 1.0f;  // (tight: the record is near the hand's speed when it lets go)
+    run(d, 256, 64, [](Deck& dd, int64_t, int) { cmd(dd, pl::CmdHandDown); });
+    const int64_t t0 = d.pos;
+    run(d, static_cast<int64_t>(0.25 * kSr), 64, [&](Deck& dd, int64_t pos, int) {
+      if ((pos - t0) % 735 < 64) cmd(dd, pl::CmdHandMove, 0, -sp * static_cast<double>(pos - t0) / (kSr * pl::kSecondsPerRev));
+    });
+    const double at0 = view(d).speed;
+    run(d, 64, 64, [](Deck& dd, int64_t, int) { cmd(dd, pl::CmdHandUp); });
+    const auto v = speeds(d, static_cast<int64_t>(1.0 * kSr), 64);
+    if (sp > 2.5) {
+      // 100x would stop in 1 s: |v(t)| = |v(0)| (0.01 / 100)^t
+      const double want = std::fabs(speedAt(v, 0.1)) * std::pow(1e-4, 0.2);
+      std::printf("# throw at %.2fx: %.3f after 0.1 s, %.3f after 0.3 s (exponential: %.3f), %.4f after 1 s\n", at0, speedAt(v, 0.1), speedAt(v, 0.3), -want, v.back());
+      expect(speedAt(v, 0.1) < -1.0 && std::fabs(std::fabs(speedAt(v, 0.3)) - want) < 0.05 * want + 0.01, "mouse throw: the record coasts and slows exponentially (100x to rest in 1 s)");
+      expect(v.back() == 0.0 && !view(d).touched, "mouse throw: then rests");
+    } else {
+      std::printf("# slow release at %.2fx: %.3f after 10 ms\n", at0, speedAt(v, 0.01));
+      expect(std::fabs(at0) > 1.0 && speedAt(v, 0.01) == 0.0, "mouse: a release under 2.5x stops the record (the motor is off)");
+    }
+  }
+  // 8. the jog filter of each controller (the values Mixxx's mappings use)
+  expect(pl::jogFilterOf("ddj200").alpha == 1.0 / 8 && pl::jogFilterOf("ddj200").beta == 1.0 / 256 && pl::jogFilterOf("inpulse200").alpha == 1.0 / 8 &&
+             pl::jogFilterOf("mixtrackprofx").alpha == 1.0 && pl::jogFilterOf("mixtrackprofx").beta == 1.0 / 32 && pl::jogFilterOf("").beta == 1.0 / 256,
+         "jog filter per controller: DDJ-200 and Inpulse 200 1/8, 1/256; Mixtrack Pro FX 1, 1/32");
+  // 9. scratching is block-size independent (jog ticks on their samples, a release)
+  {
+    std::vector<float> ref;
+    for (int block : {32, 100, 256, 1024}) {
+      Deck d = rampDeck(rampPath);
+      auto ev = [&](Deck& dd, int64_t pos, int n) {
+        auto at = [&](int64_t f, const std::function<void(int)>& fn) {
+          if (f >= pos && f < pos + n) fn(static_cast<int>(f - pos));
+        };
+        at(100, [&](int o) { dd.g->midi(0x90, 0x36, 0x7F, o); });
+        for (int k = 0; k < 60; ++k) at(300 + k * 211, [&](int o) { dd.g->midi(0xB0, 0x22, k < 35 ? 0x42 : 0x3D, o); });
+        at(14000, [&](int o) { dd.g->midi(0x90, 0x36, 0x00, o); });
+      };
+      run(d, 20000, block, ev);
+      if (ref.empty()) ref = d.L;
+      else expect(maxDiff(ref, d.L, 0, ref.size()) == 0.0, "jog scratch: the same audio at any block size");
+    }
   }
 }
 

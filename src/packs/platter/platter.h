@@ -12,8 +12,9 @@
 //             200, Numark Mixtrack Pro FX: both sides at once, or one side on
 //             one deck; generic learn) and the decoder that turns raw MIDI into
 //             deck and mixer controls.
-//   runtime   the decks: platter physics (hand tracking, motor start / brake,
-//             throws, nudges), band-limited reads at any speed and direction,
+//   runtime   the decks: platter physics (scratching after the mechanics of Mixxx:
+//             jog ticks filtered into a speed, the mouse through a position loop;
+//             motor start / brake, throws, nudges), band-limited reads at any speed and direction,
 //             tempo sync through the beat grid (to the project or to the other
 //             deck), cue / hot cues / loops / slip / key lock, the DJ EQ and
 //             filter per channel; the mixer: channel faders, crossfader (curve,
@@ -63,7 +64,7 @@ enum DeckParam {
   DVinyl,       // toggle: the platter top scratches (off: it nudges)
   DStartTime,   // s 0..3 motor spin-up
   DStopTime,    // s 0..3 brake
-  DFeel,        // 0..1 hand tracking: loose .. tight
+  DFeel,        // 0..1 hand feel: loose .. tight (0.5: the scratch filters at their standard speed)
   DXfSide,      // choice: Thru / A / B (crossfader assign)
   DLoopSize,    // choice: 1/8 .. 32 beats (auto loop and beat jump)
   DCount,       // (deck B's block: PDeckB .. PDeckB + DCount - 1)
@@ -218,6 +219,14 @@ const Profile* findProfile(const std::string& id);
 Mapping profileMapping(const std::string& id, int side);
 // Profile id that matches a device name ("" = none).
 std::string profileForDevice(const std::string& deviceName);
+// The jog scratch filter of a profile: alpha / beta of the tick-rate filter per
+// millisecond (the values controller mappings for Mixxx use for these wheels;
+// any other profile gets the Pioneer / Hercules pair).
+struct JogFilter {
+  double alpha = 1.0 / 8;
+  double beta = 1.0 / 256;
+};
+JogFilter jogFilterOf(const std::string& profile);
 // "Note 0x0B ch 1", "CC 0x22 ch 1 relative", "CC 0x13 / 0x33 ch 1" (English, for the binding list).
 std::string bindingText(const Binding& b);
 // A binding learned from one message (absolute CC 7 bit, note, or a relative CC when `relative`).

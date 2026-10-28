@@ -71,27 +71,16 @@ void fadeOut(float* x, int64_t len, int64_t frames, double sampleRate) {
   fadeRange(x + (len - n), n, false, sampleRate);
 }
 
-std::vector<std::vector<float>> stretch(const float* const* in, int nch, int64_t n, int64_t outLen, double pitch, double sampleRate,
-                                        stretch::Mode mode) {
+std::vector<std::vector<float>> stretch(const float* const* in, int nch, int64_t n, int64_t outLen, double pitch, double sampleRate) {
   std::vector<std::vector<float>> out(static_cast<size_t>(std::max(0, nch)), std::vector<float>(static_cast<size_t>(std::max<int64_t>(0, outLen)), 0.0f));
   if (n <= 0 || outLen <= 0 || nch <= 0) return out;
   std::vector<float*> op(static_cast<size_t>(nch));
   for (int c = 0; c < nch; ++c) op[static_cast<size_t>(c)] = out[static_cast<size_t>(c)].data();
   stretch::Settings set;
-  set.mode = mode == stretch::Mode::Resample ? stretch::Mode::Transient : mode;
+  set.mode = stretch::kStretch;
   set.pitch = std::clamp(pitch, 0.125, 8.0);
   stretch::process(in, nch, n, op.data(), outLen, sampleRate, set);
   return out;
-}
-
-stretch::Mode methodMode(int method) {
-  switch (method) {
-    case 2:
-    case 5: return stretch::Mode::Auto;
-    case 6: return stretch::Mode::Mono;
-    case 7: return stretch::Mode::Formant;
-    default: return stretch::Mode::Transient;
-  }
 }
 
 SamplePtr process(const Sample& in, const std::vector<int64_t>& starts0, const std::vector<char>& reverse, const Settings& s,
@@ -147,12 +136,12 @@ SamplePtr process(const Sample& in, const std::vector<int64_t>& starts0, const s
         for (int c = 0; c < nch; ++c) std::copy(chan(*out, c) + starts[k], chan(*out, c) + starts[k] + cp, chan(*res, c) + st2[k]);
         if (s.pitchCents != 0) {
           const float* src[2] = {chan(*res, 0) + st2[k], nch > 1 ? chan(*res, 1) + st2[k] : nullptr};
-          auto v = stretch(src, nch, outLen, outLen, pitch, sr, methodMode(s.method));
+          auto v = stretch(src, nch, outLen, outLen, pitch, sr);
           for (int c = 0; c < nch; ++c) std::copy(v[static_cast<size_t>(c)].begin(), v[static_cast<size_t>(c)].end(), chan(*res, c) + st2[k]);
         }
       } else {
         const float* src[2] = {chan(*out, 0) + starts[k], nch > 1 ? chan(*out, 1) + starts[k] : nullptr};
-        auto v = stretch(src, nch, lens[k], outLen, pitch, sr, methodMode(s.method));
+        auto v = stretch(src, nch, lens[k], outLen, pitch, sr);
         for (int c = 0; c < nch; ++c) std::copy(v[static_cast<size_t>(c)].begin(), v[static_cast<size_t>(c)].end(), chan(*res, c) + st2[k]);
       }
     }

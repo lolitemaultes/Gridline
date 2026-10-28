@@ -616,10 +616,10 @@ class SynthGen final : public Generator {
 // forward or ping-pong looping and loop crossfade, render-time sample
 // processing (normalize, DC, polarity, swap, fades), declick modes, time
 // modes (J-87: Resample reads through a band-limited windowed-sinc kernel;
-// the stretch modes give every voice its own engine/TimeStretch voice, pitch
-// independent of speed; J-140: spectral up to kStretchVoices notes, the light
-// time-domain engine past that; only while a new pool is being swapped in do
-// sounding notes finish on the two-head grain reader), AHDSR with delay/hold,
+// Stretch gives every note slot its own engine/TimeStretch voice, pitch
+// independent of speed (J-153: the one stretch engine, a continuous stream
+// per note); only while a new pool is being swapped in do sounding notes
+// finish on the two-head grain reader), AHDSR with delay/hold,
 // per-voice filter with its own envelope, LFO,
 // pan, glide.
 class SamplerGen final : public Generator {
@@ -635,28 +635,21 @@ class SamplerGen final : public Generator {
   void setClipOnly(bool clipOnly) override { clipOnly_ = clipOnly; }
   void prepareHost(const PluginState& s, double sampleRate) override {
     delete retired_.exchange(nullptr, std::memory_order_acq_rel);
-    const stretch::Mode m = stretch::modeOf(param(s, pp::SmpStretchMode));
+    const bool keep = stretch::keepsPitch(stretch::modeOf(param(s, pp::SmpStretchMode)));
     if (clipOnly_) return;  // playlist clips render offline (engine/TimeStretch); no notes to stretch
-    // J-140: one stretch voice per note slot. Spectral modes give the first
-    // kStretchVoices notes the spectral engine and the rest the light
-    // (time-domain) one; the time-domain modes are light already.
+    // One stretch voice per note slot (J-153: every slot the same engine).
     const int count = std::clamp(static_cast<int>(param(s, pp::SmpVoices, 32) + 0.5f), 1, 32);
-    if (m == stretch::Mode::Resample) {
-      uiMode_ = m;
-      return;  // the pool (if any) stays until a stretch mode needs another one
-    }
-    if (m == uiMode_ && sampleRate == uiRate_ && count == uiCount_) return;
+    if (!keep) return;  // the pool (if any) stays until the stretch needs another one
+    if (uiPool_ && sampleRate == uiRate_ && count == uiCount_) return;
     auto* pool = new StretchPool;
-    pool->mode = m;
     pool->rate = sampleRate;
     pool->voices.resize(static_cast<size_t>(count));
-    for (size_t i = 0; i < pool->voices.size(); ++i) {
-      auto& v = pool->voices[i];
+    for (auto& v : pool->voices) {
       v = std::make_unique<stretch::Voice>();
-      v->prepare(2, sampleRate, m, 8.0, 8.0, i >= static_cast<size_t>(kStretchVoices));
+      v->prepare(2, sampleRate, 8.0, 8.0);
     }
     delete pending_.exchange(pool, std::memory_order_acq_rel);  // a pool never picked up is dropped
-    uiMode_ = m, uiRate_ = sampleRate, uiCount_ = count;
+    uiPool_ = true, uiRate_ = sampleRate, uiCount_ = count;
   }
 
   bool active() const override {
@@ -686,7 +679,6 @@ class SamplerGen final : public Generator {
     int64_t si = 0;
     int sdir = 1;
     bool srcDone = false;
-    size_t nextOn = 0;  // next onset (index into onsets_)
     int64_t tailLeft = 0;
     float sb[2][16] = {};
     int sbPos = 16;
@@ -733,15 +725,7 @@ class SamplerGen final : public Generator {
     swap_ = param(s, SmpSwapStereo) >= 0.5f;
     fadeIn_ = param(s, SmpFadeIn), fadeOutAmt_ = param(s, SmpFadeOut), xfade_ = param(s, SmpLoopXfade);
     declick_ = std::clamp(static_cast<int>(param(s, SmpDeclick) + 0.5f), 0, 4);
-    stretchMode_ = stretch::modeOf(param(s, SmpStretchMode));
-    onsets_ = aux.slices.data();  // J-87: the sample's onsets (prepared with the aux in Auto / Transient)
-    onsetN_ = stretch::usesOnsets(stretchMode_) ? aux.slices.size() : 0;
-    // J-145: and its harmonic part (the hybrid stretch), when prepared for this very sample.
-    harm_ = stretch::usesOnsets(stretchMode_) ? aux.sample(1) : nullptr;
-    if (harm_ && (!sample_ || harm_->frames() != sample_->frames())) harm_ = nullptr;
-    harmL_ = harm_ ? harm_->left.data() : nullptr;
-    harmR_ = harm_ ? harm_->right.data() : nullptr;
-    stretch_ = stretchMode_ != stretch::Mode::Resample;
+    stretch_ = stretch::keepsPitch(stretch::modeOf(param(s, SmpStretchMode)));
     if (StretchPool* p = pending_.load(std::memory_order_acquire)) {  // J-87: a new pool from prepareHost
       if (!active_ || retired_.load(std::memory_order_acquire) == nullptr) {
         pending_.store(nullptr, std::memory_order_release);
@@ -868,15 +852,13 @@ class SamplerGen final : public Generator {
     v.tailLeft = 0;
     v.sbPos = 16;
     const auto slot = static_cast<size_t>(pick - voices_.data());
-    if (stretch_ && active_ && active_->mode == stretchMode_ && active_->rate == sr_ && slot < active_->voices.size()) {
+    if (stretch_ && active_ && active_->rate == sr_ && slot < active_->voices.size()) {
       v.sv = static_cast<int>(slot);
       v.si = static_cast<int64_t>(std::llround(v.pos));
       v.sdir = reverse_ ? -1 : 1;
-      v.nextOn = 0;
-      while (v.nextOn < onsetN_ && onsets_[v.nextOn] <= v.si) ++v.nextOn;
       ReadCtx rc{this, &v};
-      // J-145: the hybrid stretch where the voice can restart at the onsets (forward, no loop).
-      active_->voices[slot]->start(&SamplerGen::readSource, &rc, stretchSpeed(), stretchPitch(v), true, harmL_ != nullptr && !loop_ && v.sdir > 0);
+      // The note's stream starts at its first frame (nothing before it belongs to the note).
+      active_->voices[slot]->start(&SamplerGen::readSource, &rc, stretchSpeed(), stretchPitch(v));
     }
   }
   void onNoteOff(uint32_t id) override {
@@ -903,10 +885,8 @@ class SamplerGen final : public Generator {
 
   // Reads the sample at a fractional frame with the render-time processing applied.
   void read(double p, double& l, double& r) const {
-    readFrom(smpL_, smpR_, p, l, r);  // raw channel pointers, set in configure (J-30: no per-read shared-channel test)
-  }
-  // J-145: the same from other channel data of the sample's length (its harmonic part).
-  void readFrom(const float* sl, const float* sr, double p, double& l, double& r) const {
+    const float* sl = smpL_;  // raw channel pointers, set in configure (J-30: no per-read
+    const float* sr = smpR_;  // shared-channel test)
     double len = static_cast<double>(sample_->left.size());
     p = std::clamp(p, 0.0, len - 2);
     size_t p0 = static_cast<size_t>(p);
@@ -936,15 +916,14 @@ class SamplerGen final : public Generator {
   }
 
   // Read with the loop crossfade applied (forward loops only).
-  void readLooped(double p, double& l, double& r) const { readLoopedFrom(smpL_, smpR_, p, l, r); }
-  void readLoopedFrom(const float* sl, const float* sr, double p, double& l, double& r) const {
-    readFrom(sl, sr, p, l, r);
+  void readLooped(double p, double& l, double& r) const {
+    read(p, l, r);
     if (!loop_ || pingPong_ || xfade_ <= 0) return;
     double ls = loopStart_ * static_cast<double>(sample_->frames() - 1), le = loopEnd_ * static_cast<double>(sample_->frames() - 1);
     double x = xfade_ * (le - ls);
     if (x < 2 || p < le - x || p >= le) return;
     double w = (p - (le - x)) / x, l2, r2;
-    readFrom(sl, sr, p - (le - ls), l2, r2);
+    read(p - (le - ls), l2, r2);
     l = l * (1 - w) + l2 * w;
     r = r * (1 - w) + r2 * w;
   }
@@ -995,7 +974,7 @@ class SamplerGen final : public Generator {
           if (v.sbPos >= 16) {
             float* o[2] = {v.sb[0], v.sb[1]};
             ReadCtx rc{this, &v};
-            active_->voices[static_cast<size_t>(v.sv)]->render(o, 16, stretchSpeed(), stretchPitch(v), 0.0, &SamplerGen::readSource, &rc);
+            active_->voices[static_cast<size_t>(v.sv)]->render(o, 16, stretchSpeed(), stretchPitch(v), &SamplerGen::readSource, &rc);
             v.sbPos = 0;
           }
           l = v.sb[0][v.sbPos];
@@ -1131,22 +1110,15 @@ class SamplerGen final : public Generator {
 
  private:
   // ---- J-87 stretch voices
-  static constexpr int kStretchVoices = 8;  // spectral budget (notes); the rest are light voices
   struct StretchPool {
-    stretch::Mode mode = stretch::Mode::Auto;
     double rate = 0;
     std::vector<std::unique_ptr<stretch::Voice>> voices;
   };
   std::atomic<StretchPool*> pending_{nullptr};  // UI → audio thread
   std::atomic<StretchPool*> retired_{nullptr};  // audio thread → UI (freed by the next prepareHost)
   StretchPool* active_ = nullptr;               // audio thread
-  stretch::Mode uiMode_ = stretch::Mode::Resample, stretchMode_ = stretch::Mode::Resample;
+  bool uiPool_ = false;    // UI thread: a pool was built (for uiRate_ / uiCount_)
   bool clipOnly_ = false;  // UI thread
-  const int64_t* onsets_ = nullptr;
-  size_t onsetN_ = 0;
-  SamplePtr harm_;  // J-145: the sample's harmonic part (hybrid stretch), or null
-  const float* harmL_ = nullptr;
-  const float* harmR_ = nullptr;
   double uiRate_ = 0;
   int uiCount_ = 0;
   struct ReadCtx {
@@ -1162,16 +1134,11 @@ class SamplerGen final : public Generator {
   }
   // Reader for the stretch voice: the region frame by frame, loops (forward,
   // ping-pong), reverse, the render-time processing of read(); silence at the end.
-  // J-145: also the harmonic part (d[2], d[3]) when the sample has one, and
-  // the first onset of the sample (aux.slices) among the frames (onset modes,
-  // no loop, not reversed): the voice restarts its percussive engine there.
-  static int readSource(void* ctx, float* const* d, int frames, bool) {
+  // A loop wraps inside the one stream (the loop crossfade keeps it smooth).
+  static void readSource(void* ctx, float* const* d, int frames) {
     auto* rc = static_cast<ReadCtx*>(ctx);
     SamplerGen& g = *rc->g;
     Voice& v = *rc->v;
-    const bool onsets = g.onsetN_ > 0 && !g.loop_ && v.sdir > 0;
-    const bool harm = g.harmL_ != nullptr && !g.loop_ && v.sdir > 0;  // as in noteOn
-    int hit = -1;
     const double len = static_cast<double>(g.sample_->frames());
     const double lo = g.regionLo(), hi = std::max(lo + 1, g.regionHi());  // keep lo <= hi (start offset at the end)
     const auto ls = static_cast<int64_t>(std::clamp(g.loopStart_ * (len - 1), lo, hi - 1));
@@ -1181,12 +1148,7 @@ class SamplerGen final : public Generator {
     for (int k = 0; k < frames; ++k) {
       if (v.srcDone) {
         d[0][k] = d[1][k] = 0.0f;
-        if (harm) d[2][k] = d[3][k] = 0.0f;
         continue;
-      }
-      if (onsets && v.nextOn < g.onsetN_ && v.si >= g.onsets_[v.nextOn]) {
-        if (hit < 0) hit = k;
-        while (v.nextOn < g.onsetN_ && g.onsets_[v.nextOn] <= v.si) ++v.nextOn;
       }
       if (g.loop_) {
         if (v.sdir > 0 && v.si >= le) {
@@ -1204,22 +1166,15 @@ class SamplerGen final : public Generator {
       if (v.si > ihi || v.si < ilo) {
         v.srcDone = true;
         d[0][k] = d[1][k] = 0.0f;
-        if (harm) d[2][k] = d[3][k] = 0.0f;
         continue;
       }
       double l, r;
       g.readLooped(static_cast<double>(v.si), l, r);
       d[0][k] = static_cast<float>(l);
       d[1][k] = static_cast<float>(r);
-      if (harm) {
-        g.readLoopedFrom(g.harmL_, g.harmR_, static_cast<double>(v.si), l, r);
-        d[2][k] = static_cast<float>(l);
-        d[3][k] = static_cast<float>(r);
-      }
       v.src = static_cast<double>(v.si);
       v.si += v.sdir;
     }
-    return hit;
   }
 
   std::array<Voice, 32> voices_{};

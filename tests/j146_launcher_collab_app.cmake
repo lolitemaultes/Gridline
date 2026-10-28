@@ -6,6 +6,8 @@
 #   2. --show launcher-collab-demo: collaborative projects with simulated collaborators in the
 #      same process (in-memory network) who answer presence probes: every project is listed
 #      with its members, my role, what needs attention and who is working on it now.
+#   3. A project tile's buttons: the hover menu button opens the tile menu; the heart marks the
+#      project a favourite (badge), the badge takes the mark off again.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j146_launcher_collab_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -73,4 +75,48 @@ expectLines(demo "${out}" "collab row name=Glass Choir state=0 admin=0 [^\n]*wor
 expectLines(hidden "${out}" "collab row name=Glass Choir [^\n]*Lee:(unknown|checking|no-answer)[,\n ]")  # Lee keeps presence private
 expectLines(review "${out}" "collab row name=Tape Loops state=0 admin=1 [^\n]*pending=5 review=2 [^\n]*status=2 changes to review")
 expectLines(missing "${out}" "collab row name=Old Sketches state=3 [^\n]*status=Folder not found")
+expectLines(nofav "${out}" "collab fav name=Night Drive fav=0 tile=")
+
+# 3. Night Drive's tile buttons, placed from its rectangle in the report above: the menu button
+# 22 px in from the top right corner, the heart 32 px left of it, the badge 22 px in from the
+# top left corner.
+string(REGEX MATCH "collab fav name=Night Drive fav=0 tile=([0-9]+),([0-9]+),([0-9]+),([0-9]+)" m "${out}")
+if(NOT m)
+  message(FATAL_ERROR "FAIL (3): no tile rectangle for Night Drive:\n${out}")
+endif()
+set(x0 ${CMAKE_MATCH_1})
+set(y0 ${CMAKE_MATCH_2})
+set(x1 ${CMAKE_MATCH_3})
+set(y1 ${CMAKE_MATCH_4})
+math(EXPR cx "(${x0} + ${x1}) / 2")
+math(EXPR cy "(${y0} + ${y1}) / 2")
+math(EXPR mx "${x1} - 22")
+math(EXPR fx "${x1} - 54")
+math(EXPR by "${y0} + 22")
+math(EXPR bx "${x0} + 22")
+math(EXPR gy "${y0} - 10")  # above the tile (the section row): a click there closes the menu
+file(WRITE "${OUT}/c.txt"
+  "880 move ${cx} ${cy}\n884 move ${mx} ${by}\n888 down 0\n890 up 0\n"
+  "896 launcher\n"
+  "898 move ${bx} ${gy}\n899 down 0\n900 up 0\n"
+  "904 move ${cx} ${cy}\n908 move ${fx} ${by}\n912 down 0\n914 up 0\n"
+  "920 launcher\n"
+  "924 move ${cx} ${cy}\n928 move ${bx} ${by}\n932 down 0\n934 up 0\n"
+  "940 launcher\n"
+  "942 quit discard\n")
+execute_process(COMMAND "${APP}" --show launcher-collab-demo --hidden --no-ui-sounds --no-update-check --size 1280x800 --ui-scale 1
+                        --dev-input "${OUT}/c.txt"
+                RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 300)
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "FAIL (3): gridline-app exited with ${rc}:\n${err}")
+endif()
+string(REGEX MATCHALL "collab menu=[^\n]*" menus "${out}")
+string(REGEX MATCHALL "collab fav name=Night Drive fav=[01]" favs "${out}")
+if(NOT menus STREQUAL "collab menu=Night Drive;collab menu=-;collab menu=-")
+  message(FATAL_ERROR "FAIL (3): the menu button: ${menus}\nOutput:\n${out}")
+endif()
+if(NOT favs STREQUAL "collab fav name=Night Drive fav=0;collab fav name=Night Drive fav=1;collab fav name=Night Drive fav=0")
+  message(FATAL_ERROR "FAIL (3): the heart and the badge: ${favs}\nOutput:\n${out}")
+endif()
+message(STATUS "ok - 3: menu button, heart, badge")
 message(STATUS "PASS")

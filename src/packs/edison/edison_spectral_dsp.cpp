@@ -160,13 +160,8 @@ Content resample(const Content& c, double newRate, int quality) {
 // ------------------------------------------------------------------ time stretch / pitch shift
 const char* stretchName(Stretch s) {
   switch (s) {
-    case Stretch::Elastic: return "Auto (general)";
-    case Stretch::Transient: return "Transient (drums)";
-    case Stretch::Tape: return "Tape (varispeed)";
-    case Stretch::Mono: return "Mono / vocal";
-    case Stretch::Formant: return "Formant keep";
-    case Stretch::Voice: return "Voice (formants kept)";
-    case Stretch::Beats: return "Beats (loops)";
+    case Stretch::Elastic: return "Stretch";
+    case Stretch::Tape: return "Resample";
     default: return "?";
   }
 }
@@ -188,12 +183,7 @@ Audio stretchAudio(const Audio& a, double timeFactor, double semitones, Stretch 
   timeFactor = std::clamp(timeFactor, 0.05, 20.0);
   const int64_t target = static_cast<int64_t>(std::llround(static_cast<double>(a.frames()) * timeFactor));
   stretch::Settings set;
-  set.mode = mode == Stretch::Transient ? stretch::Mode::Transient
-             : mode == Stretch::Mono    ? stretch::Mode::Mono
-             : mode == Stretch::Formant ? stretch::Mode::Formant
-             : mode == Stretch::Voice   ? stretch::Mode::Voice
-             : mode == Stretch::Beats   ? stretch::Mode::Beats
-                                        : stretch::Mode::Auto;
+  set.mode = stretch::kStretch;
   set.pitch = P;
   const int nch = a.channels == 1 ? 1 : 2;
   o.L.assign(static_cast<size_t>(std::max<int64_t>(0, target)), 0.f);

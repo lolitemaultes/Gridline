@@ -165,6 +165,7 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
         default: return false;
       }
       if (pl.kind != ProgLink::ChanPitch) pc.stripLinked = true;
+      else pc.pitchMoves = true;
     }
   } else if (mi >= 0) {
     pl.mixer = mi;
@@ -278,7 +279,8 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   if (rctx && out.end > out.start && out.srcEnd > out.srcStart) {
     const double chanSemis = static_cast<double>(ch.pitch) + static_cast<double>(ch.fine) / 100.0 + song.masterPitch;
     const double chanRatio = std::pow(2.0, chanSemis / 12.0);
-    stretch::Mode mode = sampler ? stretch::modeOf(par(pp::SmpStretchMode, 0)) : stretch::Mode::Resample;
+    // J-153: every stored stretch mode is the one stretch
+    stretch::Mode mode = sampler && stretch::keepsPitch(stretch::modeOf(par(pp::SmpStretchMode, 0))) ? stretch::kStretch : stretch::Mode::Resample;
     stretch::ClipRequest rq;
     rq.sample = smp;
     rq.srcStart = out.srcStart, rq.srcEnd = out.srcEnd;
@@ -287,7 +289,7 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
     rq.frames = static_cast<int64_t>(std::ceil(out.durSec * rctx->sampleRate)) + 2;
     bool need = false;
     if (out.secPerTick > 0) {  // tempo sync: pitch-independent
-      if (mode == stretch::Mode::Resample) mode = stretch::Mode::Auto;
+      mode = stretch::kStretch;
       rq.map = &map;
       rq.secPerTick = out.secPerTick;
       rq.startTick = static_cast<double>(out.start);
@@ -305,7 +307,7 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
     } else {  // resample: speed carries the pitch; a channel pitch on top keeps the timing
       rq.speed = out.speed;
       rq.pitch = chanRatio;
-      if (std::fabs(chanRatio - 1.0) > 1e-9) mode = stretch::Mode::Auto;
+      if (std::fabs(chanRatio - 1.0) > 1e-9) mode = stretch::kStretch;
       need = std::fabs(out.speed - 1.0) > 1e-9 || std::fabs(chanRatio - 1.0) > 1e-9;
     }
     rq.mode = mode;
@@ -1088,6 +1090,17 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     std::stable_sort(pc.song.begin(), pc.song.end(), [](const NoteEv& a, const NoteEv& b) { return noteOnTick(a) < noteOnTick(b); });
     std::stable_sort(pc.audio.begin(), pc.audio.end(), [](const ProgAudioClip& a, const ProgAudioClip& b) { return a.start < b.start; });
   }
+
+  // J-153: the realtime stretch for the clips that may need it: while their
+  // render is on its way (app builds) or when the channel pitch moves.
+  auto giveVoice = [&](ProgAudioClip& ac, const ProgChannel& pc) {
+    if ((asyncSamples_ && ac.hq) || pc.pitchMoves) ac.rt = makeClipVoice(sampleRate_);
+  };
+  for (auto& pc : prog->channels)
+    for (auto& ac : pc.audio) giveVoice(ac, pc);
+  for (auto& lc : prog->liveClips)
+    if (lc.audioChannel >= 0 && static_cast<size_t>(lc.audioChannel) < prog->channels.size())
+      for (auto& ac : lc.audio) giveVoice(ac, prog->channels[static_cast<size_t>(lc.audioChannel)]);
 
   compileGraph(*prog);
 

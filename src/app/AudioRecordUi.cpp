@@ -388,14 +388,10 @@ void audioClipMenu(App& a, ObjectId id) {
   if (ImGui::BeginMenu(i18n::tr("Time stretch"))) {
     const Channel* ch = s.channel(clip.source);
     const bool keep = ch && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) && ch->plugin.params[pp::SmpStretchMode] >= 0.5f;
-    // J-87: every time mode (engine/TimeStretch), the current one checked.
-    const int cur = ch && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)
-                        ? static_cast<int>(stretch::modeOf(ch->plugin.params[pp::SmpStretchMode]))
-                        : 0;
-    for (int m = 0; m < static_cast<int>(stretch::Mode::Count); ++m) {
-      if (ImGui::MenuItem(i18n::tr(stretch::modeName(static_cast<stretch::Mode>(m))), nullptr, m == cur))
-        editSongClip(a, "stretch mode", [&](Song& x) { setClipStretchMode(x, id, clip.stretch, m); });
-      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", i18n::tr(stretch::modeHint(static_cast<stretch::Mode>(m))));
+    // J-87 / J-153: Stretch (pitch kept) or Resample, the current one checked.
+    for (const stretch::Mode m : stretch::kChoices) {
+      if (ImGui::MenuItem(i18n::tr(stretch::modeName(m)), nullptr, stretch::keepsPitch(m) == keep))
+        editSongClip(a, "stretch mode", [&](Song& x) { setClipStretchMode(x, id, clip.stretch, static_cast<int>(m)); });
     }
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Half as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 0.5, keep); });
@@ -496,19 +492,15 @@ void drawClipProperties(App& a) {
       ImGui::DragFloat("##pitch", &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
     a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = cents; }, key + 3);
   const bool keep = ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) && ch->plugin.params[pp::SmpStretchMode] >= 0.5f;
-  // J-87: the channel's time mode (engine/TimeStretch).
-  int mode = ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)
-                 ? static_cast<int>(stretch::modeOf(ch->plugin.params[pp::SmpStretchMode]))
-                 : 0;
+  // J-87 / J-153: the channel's time mode: Stretch (pitch kept) or Resample.
   row("Stretch mode");
   ImGui::SetNextItemWidth(200);
-  if (ImGui::BeginCombo("##smode", i18n::tr(stretch::modeName(static_cast<stretch::Mode>(mode))))) {
-    for (int m = 0; m < static_cast<int>(stretch::Mode::Count); ++m) {
-      if (ImGui::Selectable(i18n::tr(stretch::modeName(static_cast<stretch::Mode>(m))), m == mode)) {
-        const int pick = m;
+  if (ImGui::BeginCombo("##smode", i18n::tr(stretch::modeName(keep ? stretch::kStretch : stretch::Mode::Resample)))) {
+    for (const stretch::Mode m : stretch::kChoices) {
+      if (ImGui::Selectable(i18n::tr(stretch::modeName(m)), stretch::keepsPitch(m) == keep)) {
+        const int pick = static_cast<int>(m);
         a.doc.editSong("stretch mode", [&](Song& x) { setClipStretchMode(x, id, c.stretch, pick); });
       }
-      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", i18n::tr(stretch::modeHint(static_cast<stretch::Mode>(m))));
     }
     ImGui::EndCombo();
   }
@@ -543,13 +535,12 @@ void drawClipProperties(App& a) {
   ImGui::DragFloat("##rf", &rFactor, 0.005f, 0.25f, 4.0f, "x %.3f");
   row("Pitch");
   ImGui::DragFloat("##rs", &rSemis, 0.05f, -24.0f, 24.0f, "%+.2f st");
-  // J-140: Voice and Beats render through the shared engine too (Stretch enum 5, 6).
-  const char* algos[] = {"Elastic", "Transient", "Tape", "Voice", "Beats"};
-  static const int kAlgoMode[] = {0, 1, 2, 5, 6};
+  // J-153: the one stretch (pitch kept) or resampling (pitch follows speed).
+  const char* algos[] = {"Stretch", "Resample"};
   static int rSeg = 0;
   row("Algorithm");
-  ui::Segmented("##ralgo", algos, 5, &rSeg, 52);
-  rAlgo = kAlgoMode[std::clamp(rSeg, 0, 4)];
+  ui::Segmented("##ralgo", algos, 2, &rSeg, 72);
+  rAlgo = std::clamp(rSeg, 0, 1);
   ImGui::Dummy(ImVec2(110 - ImGui::GetStyle().ItemSpacing.x, 0));
   ImGui::SameLine();
   if (ui::TextButton("Render", false, 0, "Writes a stretched copy of the audio and points the clip at it")) {

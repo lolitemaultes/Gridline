@@ -16,9 +16,8 @@
 //      (exponential, tension 10; raised cosine at 50 ms or less) of every
 //      slice, in milliseconds.
 // Laws worked out from the reference slicer's behaviour (see analysis notes).
-// J-87: the stretch runs on engine/TimeStretch (Signalsmith Stretch with
-// Gridline's modes); methods 2+ pick the mode (methodMode). The previous
-// stretcher (Gridline's own WSOLA) is gone: its frame-repeating smeared hits.
+// J-87: the stretch runs on engine/TimeStretch. J-153: every method 2+ is the
+// one stretch (the stored values stay for FL import and export).
 #pragma once
 #include <cstdint>
 #include <string>
@@ -55,10 +54,7 @@ void fadeIn(float* x, int64_t len, int64_t frames, double sampleRate);
 void fadeOut(float* x, int64_t len, int64_t frames, double sampleRate);
 // Time-stretch `nch` channels of `n` frames to exactly `outLen` frames with a
 // pitch factor (engine/TimeStretch, start and end aligned).
-std::vector<std::vector<float>> stretch(const float* const* in, int nch, int64_t n, int64_t outLen, double pitch, double sampleRate,
-                                        stretch::Mode mode = stretch::Mode::Transient);
-// Stretch method (2 … 7) → mode: 2 Auto, 3 / 4 Transient, 5 Auto, 6 Mono, 7 Formant.
-stretch::Mode methodMode(int method);
+std::vector<std::vector<float>> stretch(const float* const* in, int nch, int64_t n, int64_t outLen, double pitch, double sampleRate);
 
 // Settings / slices of a gl.slicer state (engine 2) and the cached processed sample.
 Settings settingsOf(const PluginState& st);

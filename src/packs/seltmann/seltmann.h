@@ -39,7 +39,7 @@ enum Param {
   SmBaseNote,     // 0..127 first slice key (C3 = 60)
   SmKeyMap,       // choice: Slices / Slot letters
   SmSync,         // choice: Original / Resample / Stretch
-  SmStretchMode,  // choice: Auto / Transient / Mono (J-87 modes for Stretch)
+  SmStretchMode,  // choice: Auto / Transient / Mono (J-87; J-153: unused, every value plays the one stretch)
   SmLock,         // toggle: pattern follows the song position
   SmMono,         // toggle: one voice at a time
   SmAttack,       // ms

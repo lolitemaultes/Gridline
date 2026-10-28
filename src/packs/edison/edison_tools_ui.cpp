@@ -124,16 +124,15 @@ void drawToolDialogs(App& a, Session& s) {
       ImGui::SliderFloat(i18n::tr("Time"), &s.tStretch, 0.25f, 4.f, "x %.3f", ImGuiSliderFlags_Logarithmic);
       ImGui::SetNextItemWidth(260);
       ImGui::SliderFloat(i18n::tr("Pitch"), &s.tSemis, -24.f, 24.f, "%.2f semitones");
-      const char* modes[] = {i18n::tr(stretchName(Stretch::Elastic)), i18n::tr(stretchName(Stretch::Transient)), i18n::tr(stretchName(Stretch::Tape)),
-                             i18n::tr(stretchName(Stretch::Mono)), i18n::tr(stretchName(Stretch::Formant)), i18n::tr(stretchName(Stretch::Voice)),
-                             i18n::tr(stretchName(Stretch::Beats))};
+      const char* modes[] = {i18n::tr(stretchName(Stretch::Elastic)), i18n::tr(stretchName(Stretch::Tape))};
+      s.tMode = std::clamp(s.tMode, 0, static_cast<int>(Stretch::Count) - 1);
       ImGui::SetNextItemWidth(260);
       ImGui::Combo(i18n::tr("Method"), &s.tMode, modes, static_cast<int>(Stretch::Count));
       const char* q[] = {"Fast", "Normal", "Best"};
       ImGui::SetNextItemWidth(260);
       ImGui::Combo(i18n::tr("Quality"), &s.tQuality, q, 3);
-      const double newLen = s.tMode == 2 ? tr.len() / std::pow(2.0, s.tSemis / 12.0) : tr.len() * static_cast<double>(s.tStretch);
-      ImGui::TextDisabled(i18n::tr("New length %s%s"), timeText(a, s, static_cast<int64_t>(newLen)).c_str(), s.tMode == 2 ? " (tape: pitch sets speed)" : "");
+      const double newLen = s.tMode == 1 ? tr.len() / std::pow(2.0, s.tSemis / 12.0) : tr.len() * static_cast<double>(s.tStretch);
+      ImGui::TextDisabled(i18n::tr("New length %s%s"), timeText(a, s, static_cast<int64_t>(newLen)).c_str(), s.tMode == 1 ? " (resample: pitch sets speed)" : "");
       if (ImGui::SmallButton(i18n::tr("Fit to song bar"))) {
         const double bar = s.rate() * 60.0 / std::max(10.0, a.doc.song().tempo) * a.doc.song().timeSigNum;
         const double bars = std::max(1.0, std::round(tr.len() / bar));
@@ -145,7 +144,7 @@ void drawToolDialogs(App& a, Session& s) {
         const double f = s.tStretch, st = s.tSemis;
         const Stretch m = static_cast<Stretch>(s.tMode);
         const int qq = s.tQuality;
-        runEdit(a, s, s.tMode == 2 ? "Varispeed" : "Time stretch / pitch shift", [tr, f, st, m, qq](const Content& c) { return stretch(c, tr, f, st, m, qq); });
+        runEdit(a, s, s.tMode == 1 ? "Varispeed" : "Time stretch / pitch shift", [tr, f, st, m, qq](const Content& c) { return stretch(c, tr, f, st, m, qq); });
       }
       break;
     }

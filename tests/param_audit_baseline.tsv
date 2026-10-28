@@ -10304,8 +10304,8 @@ gl.phaser	22	Output gain	working	0
 gl.pitch	0	Mode	combination	0	11=0
 gl.pitch	1	Pitch	working	-24	
 gl.pitch	2	Fine	working	100	
-gl.pitch	3	Formant	working	12	
-gl.pitch	4	Keep formants	working	1	
+gl.pitch	3	Formant	combination	-12	11=0
+gl.pitch	4	Keep formants	combination	1	11=0;1=24
 gl.pitch	5	Window	combination	10	11=0;0=0
 gl.pitch	6	Stereo detune	combination	50	11=0
 gl.pitch	7	Delay	combination	500	11=0
@@ -10320,7 +10320,7 @@ gl.pitch	15	Jitter	combination	1	11=2
 gl.pitch	16	Randomize	combination	1	11=2
 gl.pitch	17	Delay mode	working	1	
 gl.pitch	18	Delay tempo sync	combination	1	17=1
-gl.pitch	19	Delay steps	combination	16	17=1;18=1
+gl.pitch	19	Delay steps	combination	16	17=1;1048594=1
 gl.pitch	20	Analysis	combination	1	11=1
 gl.pitch	21	Pitch mode	combination	1	11=1
 gl.pitch	22	Detector	combination	0	11=1
@@ -14043,7 +14043,7 @@ gl.slicer	858	Engine	working	2
 gl.slicer	859	Master level	inert	0	
 gl.slicer	860	Processed pitch	combination	-1200	858=2;24=0;25=0.25
 gl.slicer	861	Processed stretch	combination	-20000	858=2;24=0;860=600
-gl.slicer	862	Stretch method	combination	7	858=2;24=0;860=600
+gl.slicer	862	Stretch method	combination	0	858=2;24=0;861=-20000
 gl.slicer	863	Processed fade in	combination	1000	858=2;24=0;860=600
 gl.slicer	864	Processed fade out	combination	1000	858=2;24=0;25=0.25
 gl.slicer	865	Processed declick	combination	0	858=2;24=0;25=0.25;10=1

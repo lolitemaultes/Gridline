@@ -2,7 +2,6 @@
 #include "SlicexEngine.h"
 #include "Slicing.h"
 #include "SamplePrecompute.h"
-#include "TimeStretch.h"
 #include "../core/PluginInfo.h"
 #include "../core/PluginParams.h"
 #include "Generators.h"
@@ -239,15 +238,6 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
   if (st.type == "gl.sampler" || st.type == "gl.slicer" || st.type == "gl.granular") {
     // Sampler: its precomputed effects (J-23) run here, once, on the UI thread.
     aux.samples.assign(1, st.type == "gl.sampler" ? precomputedSample(st.data, samplePrecomputeFx(st)) : sampleCache().get(st.data));
-    if (st.type == "gl.sampler" && aux.samples[0] && st.params.size() > static_cast<size_t>(SmpStretchMode)) {
-      // J-87: the stretch voices restart at the sample's onsets (Auto: strong ones only).
-      // J-145: the hybrid stretch also needs the sample's harmonic part (samples[1]).
-      const stretch::Mode m = stretch::modeOf(st.params[SmpStretchMode]);
-      if (stretch::usesOnsets(m)) {
-        aux.slices = *stretch::onsetsOf(aux.samples[0], stretch::onsetSensitivity(m));
-        if (SamplePtr h = stretch::harmonicOf(aux.samples[0], stretch::onsetSensitivity(m))) aux.samples.push_back(std::move(h));
-      }
-    }
     if (st.type == "gl.slicer" && aux.samples[0] && st.params.size() > static_cast<size_t>(SlEngine) &&
         st.params[SlEngine] >= SlEngineProcessed - 0.5f) {
       // J-41: processed slices (offline, here on the UI thread); the voices

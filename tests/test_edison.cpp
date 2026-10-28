@@ -323,7 +323,7 @@ int main() {
   }
   {
     Audio a = sine(440, 1.0, 44100, 0.5);
-    for (Stretch m : {Stretch::Elastic, Stretch::Transient}) {
+    for (Stretch m : {Stretch::Elastic}) {
       Audio s = stretchAudio(a, 1.5, 0, m, 1);
       double f = zcFreq(s.L, 44100);
       char name[96];

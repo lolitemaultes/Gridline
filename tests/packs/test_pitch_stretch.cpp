@@ -1,21 +1,21 @@
-// Gridline: J-145 glitch-free time stretching (engine/TimeStretch,
-// engine/pitch/Hpss, engine/pitch/TdStretch, engine/AudioClips, the sampler's
-// stretch voices). Objective checks on synthetic material for each glitch the
-// J-145 assessment found:
+// Gridline: J-153 one smooth stretch for all audio (engine/TimeStretch,
+// engine/AudioClips, the sampler's stretch voices). Objective checks on
+// synthetic material that every transform stays smooth:
 //   hits       a bass under kick drums keeps its level through every hit
-//              (offline renders, tempo-mapped clips, sampler voices), at
-//              44.1 / 48 / 96 kHz, mono and stereo; drums in silence stay
-//              sharp with nothing ahead of the hits; a plucked note's attack
-//              hands over to its decay without a dip; no hit lost or doubled
-//              at 0.25x .. 8x;
+//              (offline renders, sampler voices), at 44.1 / 48 / 96 kHz,
+//              mono and stereo; drums keep every hit (none lost or doubled)
+//              at 0.25x .. 8x; a plucked note decays without a swell;
+//   smooth     steady tones and a bass at 0.5x .. 4x and -12 .. +12 st have
+//              no hop-rate clicks, offline and in realtime;
 //   time maps  tempo-mapped clips keep their hits where the map puts them;
 //   realtime   pitch changes ramp within a render call (no zipper), the
-//              hybrid voice allocates nothing and is the same for any block
-//              size, a note started inside a sample starts at full level,
-//              the stretched tail of a note fades out;
+//              voice allocates nothing and is the same for any block size,
+//              a note started inside a sample starts at full level, the
+//              stretched tail of a note fades out;
 //   clips      playback switching between the offline render and the
-//              realtime grains crossfades;
-//   general    offline renders are deterministic, stereo correlation kept.
+//              realtime stretch crossfades;
+//   general    offline renders are deterministic, stereo correlation kept,
+//              a hit on the first frame stays there.
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -34,7 +34,6 @@
 #include "../../src/engine/Sample.h"
 #include "../../src/engine/Slicing.h"
 #include "../../src/engine/TimeStretch.h"
-#include "../../src/engine/pitch/Level.h"
 #include "../Check.h"
 
 // ---- allocation counter (realtime-safety checks) ----
@@ -157,9 +156,9 @@ Sig sine(double f, size_t n, double sr, double a = 0.5) {
 
 // ------------------------------------------------------------ engines
 
-std::vector<Sig> offline(const std::vector<Sig>& x, stretch::Mode m, double pitch, double tf, double sr) {
+std::vector<Sig> offline(const std::vector<Sig>& x, double pitch, double tf, double sr) {
   stretch::Settings s;
-  s.mode = m, s.pitch = pitch;
+  s.mode = stretch::kStretch, s.pitch = pitch;
   const auto n = static_cast<int64_t>(x[0].size());
   const auto outLen = static_cast<int64_t>(std::llround(static_cast<double>(n) * tf));
   std::vector<Sig> y(x.size(), Sig(static_cast<size_t>(outLen)));
@@ -169,7 +168,7 @@ std::vector<Sig> offline(const std::vector<Sig>& x, stretch::Mode m, double pitc
   stretch::process(in.data(), static_cast<int>(x.size()), n, out.data(), outLen, sr, s);
   return y;
 }
-Sig offline1(const Sig& x, stretch::Mode m, double pitch, double tf, double sr) { return offline({x, x}, m, pitch, tf, sr)[0]; }
+Sig offline1(const Sig& x, double pitch, double tf, double sr) { return offline({x, x}, pitch, tf, sr)[0]; }
 
 std::string writeTmp(const std::string& name, const Sig& l, double sr) {
   AudioBuffer b(2, l.size());
@@ -180,16 +179,16 @@ std::string writeTmp(const std::string& name, const Sig& l, double sr) {
   return path;
 }
 
-// One sampler note (time mode `mode`, time stretch `tf`) over `frames`, in blocks of `block`.
+// One sampler note (the stretch, time stretch `tf`) over `frames`, in blocks of `block`.
 struct SamplerRun {
   PluginState st;
   ChannelAux aux;
 };
-Sig sampler(const std::string& path, stretch::Mode mode, double tf, size_t frames, double sr, int block = 256, float start = 0.f,
-            float pitchSemis = 0.f, int note = 60) {
+Sig sampler(const std::string& path, double tf, size_t frames, double sr, int block = 256, float start = 0.f, float pitchSemis = 0.f,
+            int note = 60) {
   PluginState st = defaultPluginState("gl.sampler");
   st.data = path;
-  st.params[pp::SmpStretchMode] = static_cast<float>(mode);
+  st.params[pp::SmpStretchMode] = static_cast<float>(stretch::kStretch);
   st.params[pp::SmpTimeStretch] = static_cast<float>(tf);
   st.params[pp::SmpStart] = start;
   st.params[pp::SmpPitchShift] = pitchSemis * 100.f;
@@ -326,8 +325,6 @@ double handoverSwell(const Sig& y, const std::vector<double>& at, double tf, dou
   }
   return worst;
 }
-// Onset count of a signal (the engine's own detector).
-size_t onsetCount(const Sig& x, double sr) { return stretch::detectOnsets(x.data(), static_cast<int64_t>(x.size()), sr, 0.5).size(); }
 // Spectrum power (Hann) of x[a, a + n), n a power of two.
 std::vector<double> power(const Sig& x, size_t a, size_t n) {
   std::vector<std::complex<double>> b(n);
@@ -365,27 +362,43 @@ double corr(const Sig& a, const Sig& b, size_t from, size_t to) {
   return ab / std::sqrt(aa * bb + 1e-30);
 }
 
-// A voice reader over a buffer that supplies the harmonic part and the onsets.
-struct HybridSrc {
-  const Sig* x = nullptr;
-  const Sample* h = nullptr;
-  const std::vector<int64_t>* on = nullptr;
-  size_t pos = 0, next = 0;
-  static int read(void* ctx, float* const* d, int n, bool) {
-    auto* s = static_cast<HybridSrc*>(ctx);
-    int hit = -1;
-    for (int i = 0; i < n; ++i, ++s->pos) {
-      if (s->on && s->next < s->on->size() && static_cast<int64_t>(s->pos) >= (*s->on)[s->next]) {
-        if (hit < 0) hit = i;
-        while (s->next < s->on->size() && (*s->on)[s->next] <= static_cast<int64_t>(s->pos)) ++s->next;
-      }
-      const bool in = s->pos < s->x->size();
-      d[0][i] = d[1][i] = in ? (*s->x)[s->pos] : 0.f;
-      if (s->h) d[2][i] = d[3][i] = in ? s->h->left[s->pos] : 0.f;
-    }
-    return hit;
+// Hop-rate clicks: the largest third difference over [a, b) against the
+// 99.9th percentile of it (a clean steady tone stays near 1; a click at a
+// block boundary of the engine stands out).
+double clickRatio(const Sig& x, size_t a, size_t b) {
+  std::vector<double> d;
+  for (size_t i = std::max<size_t>(a, 3); i < std::min(b, x.size()); ++i)
+    d.push_back(std::fabs(static_cast<double>(x[i]) - 3.0 * x[i - 1] + 3.0 * x[i - 2] - x[i - 3]));
+  if (d.size() < 1000) return 0;
+  const double mx = *std::max_element(d.begin(), d.end());
+  std::nth_element(d.begin(), d.begin() + static_cast<long>(d.size() * 999 / 1000), d.end());
+  return mx / (d[d.size() * 999 / 1000] + 1e-12);
+}
+struct Src {
+  const Sig* x;
+  size_t pos = 0;
+  static void read(void* ctx, float* const* d, int n) {
+    auto* s = static_cast<Src*>(ctx);
+    for (int i = 0; i < n; ++i, ++s->pos) d[0][i] = d[1][i] = s->pos < s->x->size() ? (*s->x)[s->pos] : 0.f;
   }
 };
+// A realtime voice over x: `frames` frames at speed / pitch, in blocks of `block`.
+Sig voice(const Sig& x, double speed, double pitch, size_t frames, double sr, int block, long* allocs = nullptr) {
+  stretch::Voice v;
+  v.prepare(2, sr, 8.0, 8.0);
+  Src src{&x};
+  Sig L(frames), R(frames);
+  CountScope cs;
+  v.start(&Src::read, &src, speed, pitch);
+  for (size_t at = 0; at < frames;) {
+    const int n = static_cast<int>(std::min<size_t>(static_cast<size_t>(block), frames - at));
+    float* o[2] = {L.data() + at, R.data() + at};
+    v.render(o, n, speed, pitch, &Src::read, &src);
+    at += static_cast<size_t>(n);
+  }
+  if (allocs) *allocs = cs.n();
+  return L;
+}
 SamplePtr sampleOf(const Sig& x, double sr) {
   auto s = std::make_shared<Sample>();
   s->sampleRate = sr;
@@ -394,138 +407,142 @@ SamplePtr sampleOf(const Sig& x, double sr) {
   return s;
 }
 
-const char* name(stretch::Mode m) { return stretch::modeName(m); }
-
 }  // namespace
 
 int main() {
   char msg[256];
-  const stretch::Mode onsetModes[] = {stretch::Mode::Auto, stretch::Mode::Transient, stretch::Mode::Beats};
 
   // ============================================================ a bass through the hits
   {
-    // J-87 restarted the whole sound at every hit: the bass fell silent ahead
-    // of each kick (Beats: a gap of up to 13 dB) and came back with a click.
-    // What is left: around each hit the harmonic engine plays at the original
-    // speed (the elastic map) and its rate change costs the bass a little
-    // (Rubber Band R3: -0.9 dB here; the source itself -0.4 dB).
+    // One continuous stream: nothing restarts at a hit, so the bass under the
+    // kicks keeps its level (J-87 restarted the sound at every hit; the
+    // J-140 .. J-145 onset paths swapped engines there).
     for (double sr : {44100.0, 48000.0, 96000.0}) {
       std::vector<double> hs;
       const Sig x = bassKick(sr, sr > 50000 ? 3.0 : 6.0, &hs);
       const Dip src = bassDips(x, hs, 1.0, sr);
-      std::printf("# bass under kicks, source %.0f Hz: mean dip %.2f dB, worst %.2f dB\n", sr, src.mean, src.worst);
       double worstMean = 0, worstDip = 0;
-      const char* worstAt = "";
-      for (stretch::Mode m : onsetModes)
-        for (double tf : {0.8, 2.0}) {
-          const Dip d = bassDips(offline1(x, m, 1.0, tf, sr), hs, tf, sr);
-          if (d.mean < worstMean) worstMean = d.mean, worstAt = name(m);
-          worstDip = std::min(worstDip, d.worst);
-        }
-      std::printf("# bass under kicks, offline %.0f Hz: mean dip %.2f dB (%s), worst %.2f dB\n", sr, worstMean, worstAt, worstDip);
-      std::snprintf(msg, sizeof msg, "offline onset modes at %.0f Hz: a bass keeps its level through the hits (x0.8, x2)", sr);
+      for (double tf : {0.8, 2.0}) {
+        const Dip d = bassDips(offline1(x, 1.0, tf, sr), hs, tf, sr);
+        worstMean = std::min(worstMean, d.mean), worstDip = std::min(worstDip, d.worst);
+      }
+      std::printf("# bass under kicks %.0f Hz: source mean dip %.2f dB worst %.2f; offline mean %.2f dB, worst %.2f dB\n", sr, src.mean, src.worst,
+                  worstMean, worstDip);
+      std::snprintf(msg, sizeof msg, "offline stretch at %.0f Hz: a bass keeps its level through the hits (x0.8, x2)", sr);
       expect(worstMean > -2.0 && worstDip > -4.0, msg);
     }
     // One channel, pitched.
     std::vector<double> hs;
     const Sig x = bassKick(44100, 6.0, &hs);
-    const auto y = offline({x}, stretch::Mode::Auto, std::pow(2.0, 3 / 12.0), 2.0, 44100)[0];
+    const auto y = offline({x}, std::pow(2.0, 3 / 12.0), 2.0, 44100)[0];
     const Dip d = bassDips(y, hs, 2.0, 44100);  // (the band holds the moved harmonics too)
     std::printf("# bass under kicks, mono +3 st x2: mean dip %.2f dB, worst %.2f dB\n", d.mean, d.worst);
-    expect(finite(y) && y.size() == x.size() * 2 && d.mean > -2.0 && d.worst > -3.0, "offline Auto, one channel, pitched: the bass keeps its level through the hits");
+    expect(finite(y) && y.size() == x.size() * 2 && d.mean > -2.0 && d.worst > -3.0, "offline stretch, one channel, pitched: the bass keeps its level through the hits");
 
-    // Sampler voices (realtime): the hybrid with the sample's harmonic part.
-    const std::string path = writeTmp("gl_j145_basskick.wav", x, 44100);
-    double worstMean = 0, worstDip = 0;
-    for (stretch::Mode m : onsetModes) {
-      const Sig s = sampler(path, m, 2.0, static_cast<size_t>(11.5 * 44100), 44100);
-      const Dip dd = bassDips(s, hs, 2.0, 44100);
-      std::printf("#   sampler %s: mean dip %.2f dB, worst %.2f dB\n", name(m), dd.mean, dd.worst);
-      worstMean = std::min(worstMean, dd.mean), worstDip = std::min(worstDip, dd.worst);
-    }
-    std::printf("# bass under kicks, sampler voices x2: mean dip %.2f dB, worst %.2f dB\n", worstMean, worstDip);
-    // (Transient takes every kick for a hit, Auto only the strongest: more spans, more rate changes.)
-    expect(worstMean > -2.5 && worstDip > -3.5, "sampler voices (Auto, Transient, Beats): a bass keeps its level through the hits");
+    // Sampler voices (realtime).
+    const std::string path = writeTmp("gl_j153_basskick.wav", x, 44100);
+    const Sig sv = sampler(path, 2.0, static_cast<size_t>(11.5 * 44100), 44100);
+    const Dip dd = bassDips(sv, hs, 2.0, 44100);
+    std::printf("# bass under kicks, sampler voice x2: mean dip %.2f dB, worst %.2f dB\n", dd.mean, dd.worst);
+    expect(dd.mean > -2.0 && dd.worst > -3.5, "sampler voice: a bass keeps its level through the hits");
   }
 
-  // ============================================================ drums: sharp, nothing ahead
+  // ============================================================ drums: every hit, on time
   {
+    // A spectral stretch spreads a hit over its block; the guard removes what
+    // would sound ahead of it in the silence before (pre-echo under -40 dB).
+    // Every hit is there with its energy, centred where the time map puts it
+    // (energy-weighted, the hit's first 60 ms in the source, its spread
+    // +-120 ms in the render). (At x4 a hit in silence loses about 4 dB of its
+    // energy to the spread: a known trait.)
+    auto hitAt = [](const Sig& x, long a, long b, double& centre) {
+      double e = 0, m = 0;
+      for (long i = std::max(0L, a); i < std::min(b, static_cast<long>(x.size())); ++i) {
+        const double v = static_cast<double>(x[static_cast<size_t>(i)]) * x[static_cast<size_t>(i)];
+        e += v, m += v * static_cast<double>(i);
+      }
+      centre = e > 0 ? m / e : 0;
+      return e;
+    };
     for (double sr : {44100.0, 96000.0}) {
       const Sig d = drums(sr, 3.0);
-      double pre = -300, rise = 0;
-      for (stretch::Mode m : onsetModes)
-        for (double tf : {1.25, 2.0}) {
-          std::vector<double> t;
-          for (double h : drumTimes(3.0)) t.push_back(h * tf);
-          const Hits h = hits(offline1(d, m, 1.0, tf, sr), t, sr);
-          pre = std::max(pre, h.preDb), rise = std::max(rise, h.riseMs);
-        }
-      std::printf("# drums offline %.0f Hz: worst pre-echo %.1f dB, rise %.2f ms\n", sr, pre, rise);
-      std::snprintf(msg, sizeof msg, "offline onset modes at %.0f Hz: drum hits stay sharp, nothing ahead of them", sr);
-      expect(pre < -50 && rise < 3.0, msg);
-    }
-    const Sig d = drums(44100, 3.0);
-    const std::string path = writeTmp("gl_j145_drums.wav", d, 44100);
-    double pre = -300, rise = 0;
-    for (stretch::Mode m : onsetModes) {
-      std::vector<double> t;
-      for (double h : drumTimes(3.0)) t.push_back(h * 2.0);
-      const Hits h = hits(sampler(path, m, 2.0, static_cast<size_t>(6 * 44100), 44100), t, 44100);
-      pre = std::max(pre, h.preDb), rise = std::max(rise, h.riseMs);
-    }
-    std::printf("# drums, sampler voices x2: worst pre-echo %.1f dB, rise %.2f ms\n", pre, rise);
-    expect(pre < -50 && rise < 3.0, "sampler voices (Auto, Transient, Beats): drum hits stay sharp, nothing ahead of them");
-    // Extremes: every hit once (none lost, none doubled), exact length, finite.
-    // (Silence ahead, so the first hit is not at the very start at x0.25.)
-    Sig dp(static_cast<size_t>(0.3 * 44100), 0.f);
-    dp.insert(dp.end(), d.begin(), d.end());
-    const size_t want = onsetCount(dp, 44100);
-    bool ok = true;
-    for (stretch::Mode m : onsetModes)
-      for (double tf : {0.25, 4.0, 8.0}) {
-        const Sig y = offline1(dp, m, 1.0, tf, 44100);
-        const size_t got = onsetCount(y, 44100);
-        // At x8 the spectral engine's long decays of a kick's body can swell
-        // back once by about 14 dB, 30 dB under the hit (a known limit of
-        // phase vocoders at large factors): one such regrowth is tolerated.
-        const size_t extra = tf >= 8 && m != stretch::Mode::Beats ? 1 : 0;
-        if (got < want || got > want + extra || !finite(y) || y.size() != static_cast<size_t>(std::llround(static_cast<double>(dp.size()) * tf))) {
-          ok = false;
-          std::printf("# %s x%g: %zu hits of %zu:", name(m), tf, got, want);
-          for (int64_t o : stretch::detectOnsets(y.data(), static_cast<int64_t>(y.size()), 44100, 0.5)) std::printf(" %.3f", static_cast<double>(o) / 44100 / tf);
-          std::printf("\n");
+      double pre = -300, rise = 0, worstLevel = 0, worstMs = 0;
+      bool ok = true;
+      for (double tf : {0.75, 1.25, 2.0}) {
+        const Sig y = offline1(d, 1.0, tf, sr);
+        ok = ok && finite(y) && y.size() == static_cast<size_t>(std::llround(static_cast<double>(d.size()) * tf));
+        std::vector<double> t;
+        for (double h : drumTimes(3.0)) t.push_back(h * tf);
+        const Hits h = hits(y, t, sr);
+        pre = std::max(pre, h.preDb), rise = std::max(rise, h.riseMs);
+        for (double h0 : drumTimes(3.0)) {
+          const auto c = static_cast<long>(h0 * sr), cy = static_cast<long>(h0 * tf * sr);
+          double ms = 0, my = 0;
+          const double es = hitAt(d, c, c + static_cast<long>(0.06 * sr), ms);
+          const double ey = hitAt(y, cy - static_cast<long>(0.12 * sr), cy + static_cast<long>(0.06 * tf * sr + 0.12 * sr), my);
+          // the source hit's centre and energy, stretched with it
+          const double want = static_cast<double>(cy) + (ms - static_cast<double>(c)) * tf;
+          const double gain = 10 * std::log10(ey / (es * tf));
+          if (std::fabs(gain) > 2 || std::fabs(my - want) / sr * 1000 > 6)
+            std::printf("#   x%g hit %.2f s: %+.2f dB, %+.2f ms\n", tf, h0, gain, (my - want) / sr * 1000);
+          worstLevel = std::max(worstLevel, std::fabs(gain));
+          worstMs = std::max(worstMs, std::fabs(my - want) / sr * 1000);
         }
       }
-    std::snprintf(msg, sizeof msg, "onset modes at x0.25, x4, x8: every hit (%zu), none doubled, exact length, finite", want);
-    expect(ok, msg);
+      std::printf("# drums offline %.0f Hz x0.75 .. x2: hit energy within %.2f dB, centred within %.2f ms; pre-echo %.1f dB, rise %.2f ms\n", sr,
+                  worstLevel, worstMs, pre, rise);
+      std::snprintf(msg, sizeof msg, "offline stretch at %.0f Hz: every drum hit keeps its energy (2.5 dB) and its place (10 ms) at x0.75 .. x2, no pre-echo", sr);
+      expect(ok && worstLevel < 2.5 && worstMs < 10.0 && pre < -40.0, msg);
+    }
   }
 
-  // ============================================================ plucks: attack hands over
+  // ============================================================ plucks: no swell after the attack
   {
     std::vector<double> at;
     const Sig p = plucks(44100, 5.0, &at);
-    double worst = 0, worstBeats = 0;
-    for (stretch::Mode m : onsetModes)
-      for (double tf : {1.5, 2.0}) {
-        const double v = handoverSwell(offline1(p, m, 1.0, tf, 44100), at, tf, 44100);
-        std::printf("#   %s x%g: %.2f dB\n", name(m), tf, v);
-        (m == stretch::Mode::Beats ? worstBeats : worst) = std::max(m == stretch::Mode::Beats ? worstBeats : worst, v);
-      }
+    double worst = 0;
+    for (double tf : {1.5, 2.0}) {
+      const double v = handoverSwell(offline1(p, 1.0, tf, 44100), at, tf, 44100);
+      std::printf("#   x%g: %.2f dB\n", tf, v);
+      worst = std::max(worst, v);
+    }
     const double src = handoverSwell(p, at, 1.0, 44100);
-    std::printf("# plucks: largest swell after the attack %.2f dB, Beats %.2f dB (source %.2f dB)\n", worst, worstBeats, src);
-    expect(worst < src + 1.5, "Auto, Transient: a plucked note decays from its attack without a dip and swell (no misaligned attack copy)");
-    // Beats: both parts run on time-domain engines, which line their grains up
-    // each its own way once the speed leaves the original: a note whose body
-    // the hit carries past its span swells by up to 3 dB (known limit).
-    expect(worstBeats < src + 3.5, "Beats: a plucked note's swell after the attack stays within 3.5 dB of the source's");
+    std::printf("# plucks: largest swell after the attack %.2f dB (source %.2f dB)\n", worst, src);
+    expect(worst < src + 1.5, "stretch: a plucked note decays from its attack without a dip and swell");
+  }
+
+  // ============================================================ smooth: no hop-rate clicks
+  {
+    // Steady tones through the engine's blocks: a click where blocks meet
+    // stands far above the tone's own third difference. (A 20 ms hop with 4
+    // blocks overlapping gave a 55 Hz bass 30 .. 50 clicks a second at x2.)
+    const double sr = 44100;
+    Sig bass(static_cast<size_t>(4 * sr));
+    for (size_t i = 0; i < bass.size(); ++i) {
+      double v = 0;
+      for (int k = 1; k <= 8; ++k) v += std::sin(2 * kPi * 55 * k * static_cast<double>(i) / sr + k) / k;
+      bass[i] = static_cast<float>(0.3 * v);
+    }
+    const Sig tone = sine(440, static_cast<size_t>(4 * sr), sr, 0.5);
+    double worstOff = 0, worstRt = 0;
+    for (const Sig* x : {static_cast<const Sig*>(&bass), &tone})
+      for (const auto& [tf, st] : {std::pair<double, double>{0.5, 0}, {0.75, 0}, {1.5, 0}, {2, 0}, {4, 0}, {1, -12}, {1, -5}, {1, -1}, {1, 1}, {1, 5}, {1, 12}}) {
+        const double p = std::pow(2.0, st / 12.0);
+        const Sig y = offline1(*x, p, tf, sr);
+        const double off = clickRatio(y, static_cast<size_t>(0.5 * sr * tf), static_cast<size_t>(3.5 * sr * tf));
+        const auto frames = static_cast<size_t>(3.5 * sr * std::min(tf, 1.0));
+        const Sig r = voice(*x, 1.0 / tf, p, frames, sr, 256);
+        const double rt = clickRatio(r, static_cast<size_t>(0.5 * sr), frames);
+        if (off > 3 || rt > 3) std::printf("#   %s x%g %+g st: click ratio offline %.2f, realtime %.2f\n", x == &bass ? "bass" : "tone", tf, st, off, rt);
+        worstOff = std::max(worstOff, off), worstRt = std::max(worstRt, rt);
+      }
+    std::printf("# steady bass and tone, x0.5 .. x4, -12 .. +12 st: worst click ratio offline %.2f, realtime %.2f\n", worstOff, worstRt);
+    expect(worstOff < 3 && worstRt < 3, "stretch: steady tones stay smooth at x0.5 .. x4 and -12 .. +12 st (no hop-rate clicks), offline and realtime");
   }
 
   // ============================================================ tempo-mapped clips
   {
     // 2 ms bursts every 0.5 s over a 110 Hz bed; the rate alternates 1.0 / 1.5 each second.
-    // (The bursts stand about 20 dB over the bed: Auto takes a jump of 15 dB
-    // for a hit, and one it does not take goes through the harmonic engine,
-    // which places it only within its block.)
     const double sr = 44100;
     Sig x(static_cast<size_t>(30 * sr));
     uint32_t rng = 99;
@@ -547,41 +564,37 @@ int main() {
     };
     const auto outLen = static_cast<int64_t>(static_cast<double>(x.size()) / 1.25);
     double worst = 0;
-    const char* worstMode = "";
-    for (stretch::Mode m : {stretch::Mode::Mono, stretch::Mode::Auto, stretch::Mode::Transient, stretch::Mode::Beats}) {
-      Sig y(static_cast<size_t>(outLen)), y2(y.size());
-      const float* in[2] = {x.data(), x.data()};
-      float* out[2] = {y.data(), y2.data()};
-      stretch::Settings s;
-      s.mode = m;
-      stretch::processMapped(in, 2, static_cast<int64_t>(x.size()), out, outLen, sr, s, srcAt);
-      for (double c : bursts) {
-        int64_t lo = 0, hi = outLen;  // expected output frame of the burst
-        while (lo < hi) {
-          const int64_t mid = (lo + hi) / 2;
-          if (srcAt(mid) < c * sr) lo = mid + 1;
-          else hi = mid;
-        }
-        if (lo < 2000 || lo + 2000 >= outLen) continue;
-        // The burst's energy centre within +-40 ms (high-passed: the bed is low).
-        double best = 0;
-        long bestAt = 0;
-        for (long k = -1764; k < 1764; ++k) {
-          double e = 0;
-          for (long j = 0; j < 44; ++j) {
-            const auto i = static_cast<size_t>(lo + k + j);
-            const double v = y[i] - y[i - 1];
-            e += v * v;
-          }
-          if (e > best) best = e, bestAt = k + 22;
-        }
-        const double err = std::fabs(static_cast<double>(bestAt) - 44) / sr * 1000;  // the burst's centre is 44 frames in
-        if (err > 4) std::printf("# %s burst at %.2f s: %.2f ms\n", name(m), c, err);
-        if (err > worst) worst = err, worstMode = name(m);
+    Sig y(static_cast<size_t>(outLen)), y2(y.size());
+    const float* in[2] = {x.data(), x.data()};
+    float* out[2] = {y.data(), y2.data()};
+    stretch::Settings st;
+    stretch::processMapped(in, 2, static_cast<int64_t>(x.size()), out, outLen, sr, st, srcAt);
+    for (double c : bursts) {
+      int64_t lo = 0, hi = outLen;  // expected output frame of the burst
+      while (lo < hi) {
+        const int64_t mid = (lo + hi) / 2;
+        if (srcAt(mid) < c * sr) lo = mid + 1;
+        else hi = mid;
       }
+      if (lo < 2000 || lo + 2000 >= outLen) continue;
+      // The burst's energy centre within +-40 ms (high-passed: the bed is low).
+      double best = 0;
+      long bestAt = 0;
+      for (long k = -1764; k < 1764; ++k) {
+        double e = 0;
+        for (long j = 0; j < 44; ++j) {
+          const auto i = static_cast<size_t>(lo + k + j);
+          const double v = y[i] - y[i - 1];
+          e += v * v;
+        }
+        if (e > best) best = e, bestAt = k + 22;
+      }
+      const double err = std::fabs(static_cast<double>(bestAt) - 44) / sr * 1000;  // the burst's centre is 44 frames in
+      if (err > 1) std::printf("# burst at %.2f s: %.2f ms\n", c, err);
+      worst = std::max(worst, err);
     }
-    std::printf("# tempo steps 1.0 / 1.5 over 30 s: worst burst offset %.2f ms (%s)\n", worst, worstMode);
-    expect(worst < 4.0, "tempo-mapped clips: every hit within 4 ms of where the map puts it (Mono, Auto, Transient, Beats)");
+    std::printf("# tempo steps 1.0 / 1.5 over 30 s: worst burst offset %.2f ms\n", worst);
+    expect(worst < 1.0, "tempo-mapped clips: every hit within 1 ms of where the map puts it");
   }
 
   // ============================================================ realtime voices
@@ -589,24 +602,15 @@ int main() {
     const double sr = 44100;
     // Pitch automation: a 5 Hz vibrato of +-1 semitone set once per 256-frame call.
     const Sig t = sine(1000, static_cast<size_t>(3 * sr), sr, 0.4);
-    struct Src {
-      const Sig* x;
-      size_t pos = 0;
-      static int read(void* ctx, float* const* d, int n, bool) {
-        auto* s = static_cast<Src*>(ctx);
-        for (int i = 0; i < n; ++i, ++s->pos) d[0][i] = d[1][i] = s->pos < s->x->size() ? (*s->x)[s->pos] : 0.f;
-        return -1;
-      }
-    };
     stretch::Voice v;
-    v.prepare(2, sr, stretch::Mode::Mono, 4.0, 4.0);
+    v.prepare(2, sr, 4.0, 4.0);
     Src src{&t};
     v.start(&Src::read, &src, 1.0, 1.0);
     Sig L(static_cast<size_t>(2 * sr)), R(L.size());
     for (size_t at = 0; at < L.size(); at += 256) {
       const double p = std::pow(2.0, std::sin(2 * kPi * 5 * static_cast<double>(at) / sr) / 12.0);
       float* o[2] = {L.data() + at, R.data() + at};
-      v.render(o, static_cast<int>(std::min<size_t>(256, L.size() - at)), 1.0, p, 0, &Src::read, &src);
+      v.render(o, static_cast<int>(std::min<size_t>(256, L.size() - at)), 1.0, p, &Src::read, &src);
     }
     // Stepped pitch leaves sidebands at the call rate (172 Hz) around the tone.
     const auto pw = power(L, 22050, 32768);
@@ -620,26 +624,24 @@ int main() {
     std::printf("# vibrato set per 256-frame call: sidebands at the call rate %.1f dB\n", sideDb);
     expect(sideDb < -70, "realtime voice: pitch changes ramp within each call (no zipper sidebands at the call rate)");
 
-    // The hybrid voice: no allocation, the same output for any block size.
+    // No allocation, the same output for any block size (a seek primed with pre-roll too).
     std::vector<double> hs;
     const Sig bk = bassKick(sr, 3.0, &hs);
-    SamplePtr smp = sampleOf(bk, sr);
-    SamplePtr hp = stretch::harmonicOf(smp, stretch::onsetSensitivity(stretch::Mode::Auto));
-    auto on = stretch::onsetsOf(smp, stretch::onsetSensitivity(stretch::Mode::Auto));
-    expect(hp && hp->frames() == smp->frames() && !on->empty(), "harmonicOf: the harmonic part of a sample, at its onsets");
     Sig outs[2];
     long allocs = 0;
     for (int pass = 0; pass < 2; ++pass) {
       stretch::Voice hv;
-      hv.prepare(2, sr, stretch::Mode::Auto, 4.0, 4.0);
-      HybridSrc hsrc{&bk, hp.get(), on.get()};
-      Sig o(static_cast<size_t>(4 * sr)), o2(o.size());
+      hv.prepare(2, sr, 4.0, 4.0);
+      Src bs{&bk};
+      const int pre = hv.prerollFor(0.6);
+      bs.pos = static_cast<size_t>(0.5 * sr) - static_cast<size_t>(pre);
+      Sig o(static_cast<size_t>(3 * sr)), o2(o.size());
       CountScope cs;
-      hv.start(&HybridSrc::read, &hsrc, 0.6, 1.1, true, true);
+      hv.start(&Src::read, &bs, 0.6, 1.1, pre);
       for (size_t at = 0; at < o.size();) {
         const int n = static_cast<int>(std::min<size_t>(pass ? 61 : 512, o.size() - at));
         float* op[2] = {o.data() + at, o2.data() + at};
-        hv.render(op, n, 0.6, 1.1, 0, &HybridSrc::read, &hsrc);
+        hv.render(op, n, 0.6, 1.1, &Src::read, &bs);
         at += static_cast<size_t>(n);
       }
       allocs += cs.n();
@@ -648,48 +650,38 @@ int main() {
     float vd = 0;
     for (size_t i = 0; i < outs[0].size(); ++i) vd = std::max(vd, std::fabs(outs[0][i] - outs[1][i]));
     expect(allocs == 0 && vd < 1e-5f && rms(outs[0], 0, outs[0].size()) > 0.05,
-           "hybrid voice: start and render allocate nothing; the same output for any block size");
+           "realtime voice: start (with pre-roll) and render allocate nothing; the same output for any block size");
 
     // A note started inside the sample (a seek) is right from its first block: full level at once.
     const Sig tone = sine(220, static_cast<size_t>(2 * sr), sr, 0.5);
-    const std::string tpath = writeTmp("gl_j145_tone.wav", tone, sr);
-    bool firstOk = true;
-    for (stretch::Mode m : {stretch::Mode::Auto, stretch::Mode::Mono, stretch::Mode::Beats}) {
-      const Sig s = sampler(tpath, m, 1.25, static_cast<size_t>(0.2 * sr), sr, 64, 0.3f);
+    const std::string tpath = writeTmp("gl_j153_tone.wav", tone, sr);
+    {
+      const Sig s = sampler(tpath, 1.25, static_cast<size_t>(0.2 * sr), sr, 64, 0.3f);
       const auto per = static_cast<size_t>(2 * sr / 220);  // two periods
       const double r0 = rms(s, 0, per), r1 = rms(s, static_cast<size_t>(0.05 * sr), static_cast<size_t>(0.05 * sr) + 10 * per);
-      if (!(r0 > 0.7 * r1 && r1 > 0.25)) {
-        firstOk = false;
-        std::printf("# %s started at 30 %%: first 5 ms %.3f, later %.3f; ms:", name(m), r0, r1);
-        for (int k = 0; k < 12; ++k) std::printf(" %.3f", rms(s, k * per / 2, (k + 1) * per / 2));
-        std::printf("\n");
-      }
+      std::printf("# note started at 30 %%: first two periods %.3f, later %.3f\n", r0, r1);
+      expect(r0 > 0.7 * r1 && r1 > 0.25, "sampler voice: a note started inside the sample plays at full level from its first frames");
     }
-    expect(firstOk, "sampler voices: a note started inside the sample plays at full level from its first frames");
 
     // The end of a stretched note fades out (no hard cut while the engine still sounds).
     const Sig shortTone = sine(220, static_cast<size_t>(0.5 * sr), sr, 0.5);
-    const std::string spath = writeTmp("gl_j145_short.wav", shortTone, sr);
-    bool tailOk = true;
-    for (stretch::Mode m : {stretch::Mode::Auto, stretch::Mode::Mono, stretch::Mode::Beats}) {
-      const Sig s = sampler(spath, m, 1.5, static_cast<size_t>(1.5 * sr), sr);
+    const std::string spath = writeTmp("gl_j153_short.wav", shortTone, sr);
+    {
+      const Sig s = sampler(spath, 1.5, static_cast<size_t>(1.5 * sr), sr);
       size_t last = 0;
       for (size_t i = 0; i < s.size(); ++i)
         if (s[i] != 0.f) last = i;
       const double end = rms(s, last > 32 ? last - 32 : 0, last + 1), body = rms(s, static_cast<size_t>(0.2 * sr), static_cast<size_t>(0.4 * sr));
-      if (!(end < 0.05 * body)) {
-        tailOk = false;
-        std::printf("# %s: the last frames %.4f against %.4f\n", name(m), end, body);
-      }
+      std::printf("# stretched note end: last frames %.4f against %.4f\n", end, body);
+      expect(end < 0.05 * body, "sampler voice: a stretched note ends with a fade, not a cut");
     }
-    expect(tailOk, "sampler voices: a stretched note ends with a fade, not a cut");
   }
 
-  // ============================================================ clip playback: render <-> grains
+  // ============================================================ clip playback: render <-> realtime
   {
     const double sr = 44100;
     const Sig tone = sine(220, static_cast<size_t>(4 * sr), sr, 0.5);
-    const std::string path = writeTmp("gl_j145_cliptone.wav", tone, sr);
+    const std::string path = writeTmp("gl_j153_cliptone.wav", tone, sr);
     SamplePtr smp = sampleCache().get(path);
     TempoMap map;
     map.setConstant(120, 96);
@@ -698,76 +690,29 @@ int main() {
     c.startSec = 0, c.durSec = map.secondsAt(static_cast<double>(c.end));
     c.sample = smp, c.srcStart = 0, c.srcEnd = smp->seconds(), c.speed = 0.8, c.granular = true;
     stretch::ClipRequest rq;
-    rq.sample = smp, rq.srcEnd = c.srcEnd, rq.mode = stretch::Mode::Auto, rq.rate = sr, rq.speed = 0.8;
+    rq.sample = smp, rq.srcEnd = c.srcEnd, rq.mode = stretch::kStretch, rq.rate = sr, rq.speed = 0.8;
     rq.frames = static_cast<int64_t>(std::ceil(c.durSec * sr)) + 2;
     c.hq = stretch::renderClip(rq, false);
-    // The channel pitch moves off the render's pitch (0) for 0.5 s and back: grains, then the render again.
+    c.rt = makeClipVoice(sr);
+    // The channel pitch moves off the render's pitch (0) for 0.5 s and back: realtime, then the render again.
     const std::vector<ProgAudioClip> clips{c};  // the engine keeps its clips (and their playback state)
     const int64_t total = static_cast<int64_t>(2.5 * sr), off0 = static_cast<int64_t>(1.0 * sr), off1 = static_cast<int64_t>(1.5 * sr);
     Sig L(static_cast<size_t>(total), 0.f), R(L.size(), 0.f);
+    long allocs = 0;
     for (int64_t at = 0; at < total; at += 512) {
       const int len = static_cast<int>(std::min<int64_t>(512, total - at));
-      const double semis = at >= off0 && at < off1 ? 0.02 : 0.0;  // 2 cents: the same sound, another engine
+      const double semis = at >= off0 && at < off1 ? 0.02 : 0.0;  // 2 cents: the same sound, the other path
+      CountScope cs;
       renderAudioClips(clips, map, sr, 0, at, 0, len, L.data() + at, R.data() + at, semis);
+      allocs += cs.n();
     }
     const double base = maxCurve(L, static_cast<size_t>(0.3 * sr), static_cast<size_t>(0.9 * sr));
     const double sw = std::max(maxCurve(L, static_cast<size_t>(off0 - 600), static_cast<size_t>(off0 + 2000)),
                                maxCurve(L, static_cast<size_t>(off1 - 600), static_cast<size_t>(off1 + 2000)));
-    std::printf("# clip render <-> grains switch: curvature %.4f against %.4f in steady play\n", sw, base);
-    {
-      double mx = 0;
-      size_t at = 0;
-      for (size_t i = static_cast<size_t>(0.9 * sr); i < static_cast<size_t>(2.0 * sr); ++i) {
-        const double v = std::fabs(L[i] - 2 * L[i - 1] + L[i - 2]);
-        if (v > mx) mx = v, at = i;
-      }
-      std::printf("#   worst at %.4f s (switches at %.4f, %.4f):", static_cast<double>(at) / sr, static_cast<double>(off0) / sr, static_cast<double>(off1) / sr);
-      for (size_t i = at - 4; i < at + 4; ++i) std::printf(" %.4f", L[i]);
-      std::printf("\n");
-    }
-    expect(c.hq && sw < 2.0 * base, "clip playback: switching between the render and the realtime grains crossfades (no click)");
-  }
-
-  // ============================================================ level follower: the peak limit ramps
-  {
-    // The follower boosts a quiet block (+12 dB), then a block arrives whose
-    // source peak allows no boost. The gain used to drop to the limit at that
-    // block's first frame (a step: a click); now it ramps, ahead of the frames
-    // that need it, and a lone spike inside a block is held to the room.
-    const double sr = 44100;
-    for (int pass = 0; pass < 2; ++pass) {
-      pitch::LevelFollower f;
-      f.setRate(sr);
-      f.reset();
-      const int m = 256;
-      std::vector<float> g;  // the gain per frame (the input is a constant 0.1)
-      double spikeOut = 0, spikeRoom = 0;
-      for (int b = 0; b < 60; ++b) {
-        float buf[2][m];
-        for (int c = 0; c < 2; ++c) std::fill(buf[c], buf[c] + m, 0.1f);
-        const bool spike = pass == 1 && b == 40;
-        if (spike) buf[0][180] = buf[1][180] = 0.5f;
-        float* y[2] = {buf[0], buf[1]};
-        // pass 0: from block 30 the source peak equals the block's (no room for a boost);
-        // pass 1: room for the boost on the bed, but not on the spike of block 40.
-        const double lim = pass == 0 ? (b < 30 ? 10.0 : 1.0 / 1.4125) : (spike ? 1.0 : 10.0);
-        f.apply(y, 2, m, 0.16, 0.01, lim);
-        if (spike) spikeOut = buf[0][180], spikeRoom = 1.4125 * lim * 0.5;
-        for (int j = 0; j < m; ++j)
-          if (j != 180 || !spike) g.push_back(buf[0][j] / 0.1f);
-      }
-      double step = 0;
-      for (size_t i = 1; i < g.size(); ++i) step = std::max(step, std::fabs(static_cast<double>(g[i]) - g[i - 1]));
-      const double before = g[29 * m + m - 1], after = g.back();
-      std::printf("# level follower pass %d: gain %.2f -> %.2f, largest change per frame %.4f%s\n", pass, before, after, step,
-                  pass ? "" : " (limited from block 30)");
-      if (pass == 0) {
-        expect(before > 3.0 && after < 1.01 && step < 1.05 / 44.1, "level follower: a falling peak limit ramps the gain down (no step), then holds it");
-      } else {
-        std::printf("# level follower spike: %.3f against a room of %.3f\n", spikeOut, spikeRoom);
-        expect(spikeOut <= spikeRoom * 1.001 && step < 1.05 / 44.1, "level follower: a spike inside a block is held to the room, the gain ramping ahead of it");
-      }
-    }
+    const double mid = rms(L, static_cast<size_t>(off0 + 0.1 * sr), static_cast<size_t>(off1 - 0.05 * sr));
+    std::printf("# clip render <-> realtime switch: curvature %.4f against %.4f in steady play; realtime level %.3f\n", sw, base, mid);
+    expect(c.hq && sw < 2.0 * base && mid > 0.3 && allocs == 0,
+           "clip playback: switching between the render and the realtime stretch crossfades (no click), no allocation");
   }
 
   // ============================================================ determinism, stereo
@@ -775,51 +720,39 @@ int main() {
     const double sr = 48000;
     std::vector<double> hs;
     const Sig bk = bassKick(sr, 2.0, &hs);
-    bool same = true;
-    for (stretch::Mode m : onsetModes) {
-      const Sig a = offline1(bk, m, std::pow(2.0, 2 / 12.0), 1.3, sr), b = offline1(bk, m, std::pow(2.0, 2 / 12.0), 1.3, sr);
-      same = same && a == b;
-    }
-    expect(same, "offline onset modes: renders are deterministic (bit-identical)");
+    const Sig a = offline1(bk, std::pow(2.0, 2 / 12.0), 1.3, sr), b = offline1(bk, std::pow(2.0, 2 / 12.0), 1.3, sr);
+    expect(a == b, "offline stretch: renders are deterministic (bit-identical)");
     // Stereo: a centred bass, hats left and right from different noise: the correlation stays.
     Sig l = bk, r = bk;
-    uint32_t a = 5, b = 17;
+    uint32_t ra = 5, rb = 17;
     for (double h = 0.1; h < 1.9; h += 0.125) {
       const auto at = static_cast<size_t>(h * sr);
       for (size_t i = 0; i < static_cast<size_t>(0.05 * sr) && at + i < l.size(); ++i) {
-        a = a * 1664525u + 1013904223u, b = b * 22695477u + 1u;
+        ra = ra * 1664525u + 1013904223u, rb = rb * 22695477u + 1u;
         const double e = 0.3 * std::exp(-static_cast<double>(i) / (0.008 * sr));
-        l[at + i] += static_cast<float>(e * ((static_cast<double>(a >> 8) / 8388608.0) - 1.0));
-        r[at + i] += static_cast<float>(e * ((static_cast<double>(b >> 8) / 8388608.0) - 1.0));
+        l[at + i] += static_cast<float>(e * ((static_cast<double>(ra >> 8) / 8388608.0) - 1.0));
+        r[at + i] += static_cast<float>(e * ((static_cast<double>(rb >> 8) / 8388608.0) - 1.0));
       }
     }
     const double cin = corr(l, r, 0, l.size());
-    double worst = 0;
-    for (stretch::Mode m : onsetModes) {
-      const auto y = offline({l, r}, m, 1.0, 1.6, sr);
-      worst = std::max(worst, std::fabs(corr(y[0], y[1], 0, y[0].size()) - cin));
-    }
-    std::printf("# stereo correlation %.3f in, worst change %.3f\n", cin, worst);
-    expect(worst < 0.05, "offline onset modes: the stereo correlation stays (within 0.05)");
+    const auto y = offline({l, r}, 1.0, 1.6, sr);
+    const double change = std::fabs(corr(y[0], y[1], 0, y[0].size()) - cin);
+    std::printf("# stereo correlation %.3f in, change %.3f\n", cin, change);
+    expect(change < 0.05, "offline stretch: the stereo correlation stays (within 0.05)");
   }
 
-  // ============================================================ the map's ends stay put
-  // A sound that starts on a hit starts on time: the smoothing of the hit
-  // spans' time map must not move its first frame (a smoothed map once read a
-  // clip 20 frames late when a second hit followed 0.11 s later).
+  // ============================================================ the first frame stays put
   {
     const double sr = 44100;
     Sig x(static_cast<size_t>(0.5 * sr), 0.f);
     x[0] = 1.0f, x[4851] = 1.0f;
-    int worst = 0;
-    for (stretch::Mode m : {stretch::Mode::Auto, stretch::Mode::Transient, stretch::Mode::Beats}) {
-      const Sig y = offline1(x, m, 1.0, 2.0, sr);
-      size_t at = 0;
-      while (at < y.size() && std::fabs(y[at]) < 0.5f) ++at;
-      worst = std::max(worst, static_cast<int>(at));
-    }
-    std::printf("# a hit on the first frame starts at frame %d (worst mode)\n", worst);
-    expect(worst <= 2, "offline onset modes: a hit on the first frame stays on the first frame");
+    const Sig y = offline1(x, 1.0, 2.0, sr);
+    size_t at = 0, pk = 0;
+    for (size_t i = 0; i < 2000; ++i)
+      if (std::fabs(y[i]) > std::fabs(y[pk])) pk = i;
+    while (at < y.size() && std::fabs(y[at]) < 0.5f * std::fabs(y[pk])) ++at;
+    std::printf("# a hit on the first frame: its peak at frame %zu (first half-peak frame %zu)\n", pk, at);
+    expect(pk <= 2, "offline stretch: a hit on the first frame stays on the first frame");
   }
 
   return finish();

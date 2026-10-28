@@ -175,6 +175,12 @@ const Profile* findProfile(const std::string& id) {
   return nullptr;
 }
 
+JogFilter jogFilterOf(const std::string& profile) {
+  JogFilter f;  // DDJ-200, Inpulse 200, learned: 1/8 and 1/256 (soft, no ringing)
+  if (profile == "mixtrackprofx") f.alpha = 1.0, f.beta = 1.0 / 32;  // a fine wheel: a plain 32 ms smoothing of its tick rate
+  return f;
+}
+
 namespace {
 
 std::string lower(std::string s) {

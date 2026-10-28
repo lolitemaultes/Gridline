@@ -150,7 +150,7 @@ ObjectId makeAudioClipUnique(Document& d, ObjectId clip) {
 }
 
 int setAudioClipTimeMode(Document& d, const std::set<ObjectId>& clips, int mode) {
-  mode = std::clamp(mode, 0, 4);  // J-87: Resample, Auto, Mono, Transient, Formant
+  mode = mode > 0 ? 1 : 0;  // J-153: Resample or Stretch
   const Song& s = d.song();
   std::set<ObjectId> chans;
   for (const auto& c : s.playlist)

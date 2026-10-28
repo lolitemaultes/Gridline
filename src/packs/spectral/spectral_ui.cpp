@@ -669,7 +669,7 @@ void editorPitch(App& a, const PluginTarget& t, float width) {
   const int engine = std::clamp(static_cast<int>(val(st, PsEngine) + 0.5f), 0, 3);
   const bool classic = engine == kPsClassic, voice = engine == kPsVoice, music = engine == kPsMusic, hifi = engine == kPsHifi;
   const bool spectral = val(st, PsMode) >= 0.5f;
-  const bool formantOn = voice || hifi || (classic && spectral);
+  const bool formantOn = voice || (classic && spectral);  // J-153: Hi-fi keeps the plain stretch (no formant control)
   const skin::Skin& K = music ? pitchMusicSkin() : pitchSkin();
   constexpr float kW = 747, kH = 330;
   skin::Form F = skin::Form::fit(width, kW);
@@ -757,7 +757,6 @@ void editorPitch(App& a, const PluginTarget& t, float width) {
     }
     cap(dl, F, 485, 254, "PITCH ANALYSIS", K.textDim);
   } else if (hifi) {  // J-87: engine/TimeStretch, in tune to the cent; latency compensated
-    chk(a, t, PsPreserve, F, 438, 74, 110, 18, K, "KEEP FORMANTS");
     cap(dl, F, 485, 254, "HI-FI ENGINE", K.textDim);
   } else if (music) {
     WV(a, t, PsDensity, F, 455, 47, 60, K, "DENSITY");

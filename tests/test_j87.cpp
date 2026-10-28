@@ -1,16 +1,16 @@
 // Gridline — J-87: time stretching and pitch shifting (engine/TimeStretch on
 // Signalsmith Stretch, MIT).
-//  * pitch accuracy within ±2 cents: the offline engine (every mode, low and
-//    high notes), playlist audio clips, sampler voices, the audio editor, the
+//  * pitch accuracy within ±2 cents: the offline engine (low and high
+//    notes), playlist audio clips (every stored time mode: J-153 plays them
+//    all through the one stretch), sampler voices, the audio editor, the
 //    Pitch Shifter's Hi-fi engine;
 //  * exact lengths and aligned ends (offline stretch, the editor, slices);
-//  * transients: drum hits stay sharp and are not smeared ahead of
-//    themselves — measurably better than the previous realtime grains;
+//  * the realtime stretch (clips while their render is on its way, sampler
+//    voices) sounds like the offline render;
 //  * no clicks at clip starts / ends, song loops or sampler loops;
 //  * block-size invariance (clip playback, stretch voices, the sampler);
-//  * Formant keep keeps the spectral envelope where plain pitch moves it;
 //  * FL stretch methods ↔ modes, and a Gridline → FLP → Gridline round trip of
-//    every time mode with its pitch and time values;
+//    every time mode (stretch or resample) with its pitch and time values;
 //  * realtime safety: no allocation in clip playback, stretch voices, the
 //    sampler's stretch voices or the Pitch Shifter's Hi-fi engine.
 #include <atomic>
@@ -255,13 +255,21 @@ int main() {
                stretch::modeFromFl(4) == stretch::Mode::Beats && stretch::modeFromFl(7) == stretch::Mode::Transient &&
                stretch::modeFromFl(-2) == stretch::Mode::Formant,
            "FL methods map to the closest mode (stretch / auto → Auto, mono → Mono, speech → Voice, slice → Beats, transient → Transient, pro → Formant)");
+    bool one = std::string(stretch::modeName(stretch::Mode::Resample)) == "Resample";
+    for (int m = 1; m < static_cast<int>(stretch::Mode::Count); ++m)
+      one = one && stretch::keepsPitch(static_cast<stretch::Mode>(m)) && std::string(stretch::modeName(static_cast<stretch::Mode>(m))) == "Stretch";
+    const ParamDesc& pd = findPlugin("gl.sampler")->params[pp::SmpStretchMode];
+    PluginState old = defaultPluginState("gl.sampler");
+    old.params[pp::SmpStretchMode] = 4;  // an older project's Formant keep
+    normalizePluginState(old);
+    expect(one && !stretch::keepsPitch(stretch::Mode::Resample) && pd.choices.size() == 2 && old.params[pp::SmpStretchMode] == 1.0f,
+           "J-153: two time modes, Resample and Stretch; every older stretch mode is the stretch and loads as it");
   }
 
   // ------------------------------------------------------------ offline engine: pitch accuracy
   {
     double worst = 0;
-    for (stretch::Mode m : {stretch::Mode::Auto, stretch::Mode::Mono, stretch::Mode::Transient, stretch::Mode::Formant, stretch::Mode::Voice,
-                            stretch::Mode::Beats})
+    for (stretch::Mode m : {stretch::kStretch})
       for (double f : {110.0, 440.0, 1500.0})
         for (double st : {-12.0, -5.0, -1.0, 1.0, 5.0, 12.0}) {
           std::vector<float> x = tone(f, 2.0), y(x.size());
@@ -274,7 +282,7 @@ int main() {
           worst = std::max(worst, std::fabs(cents(peakHz(y.data(), y.size() / 2 - 16384, f * s.pitch), f * s.pitch)));
         }
     char name[160];
-    std::snprintf(name, sizeof name, "offline engine: pitch within 2 cents in every mode, 110 Hz … 1.5 kHz, ±1 … ±12 st (worst %.3f ct)", worst);
+    std::snprintf(name, sizeof name, "offline engine: pitch within 2 cents, 110 Hz … 1.5 kHz, ±1 … ±12 st (worst %.3f ct)", worst);
     expect(worst < 2.0, name);
   }
 
@@ -290,7 +298,7 @@ int main() {
         const float* in[1] = {x.data()};
         float* out[1] = {y.data()};
         stretch::Settings s;
-        s.mode = stretch::Mode::Transient;
+        s.mode = stretch::kStretch;
         stretch::process(in, 1, n, out, outLen, kSr, s);
         exact = exact && y[static_cast<size_t>(outLen)] == 7.0f;  // nothing written past the length
         if (n >= 44100) {
@@ -305,15 +313,15 @@ int main() {
     packs::edison::Audio a;
     a.rate = kSr, a.channels = 2, a.L = tone(330, 1.3), a.R = a.L;
     bool ed = true;
-    for (int m : {0, 1, 3, 4})
+    for (int m : {0})  // (1 is Tape: the pitch sets the length)
       for (double tf : {0.7, 1.0, 1.6}) {
         packs::edison::Audio b = packs::edison::stretchAudio(a, tf, 3, static_cast<packs::edison::Stretch>(m), 1);
         ed = ed && static_cast<int64_t>(b.L.size()) == std::llround(static_cast<double>(a.L.size()) * tf) && b.R.size() == b.L.size();
       }
-    expect(ed, "audio editor: every method gives the exact length");
+    expect(ed, "audio editor: the stretch gives the exact length");
     const std::vector<float> d = drums(1.0);
     const float* in[1] = {d.data()};
-    auto sl = sliceproc::stretch(in, 1, static_cast<int64_t>(d.size()), 52919, 1.0, kSr, stretch::Mode::Transient);
+    auto sl = sliceproc::stretch(in, 1, static_cast<int64_t>(d.size()), 52919, 1.0, kSr);
     expect(sl[0].size() == 52919, "slicer: exact slice length");
   }
 
@@ -351,14 +359,40 @@ int main() {
            "audio clips: tempo sync stretches to the song tempo, pitch kept, audio to the clip end");
   }
 
-  // ------------------------------------------------------------ transients: better than the realtime grains
+  // ------------------------------------------------------------ the realtime stretch sounds like the render
   {
+    // J-153: while a clip's render is on its way the clip plays through the
+    // same stretch in realtime (no grains): the two match, and a sampler
+    // stretch voice matches it too.
     const double sec = 3.0;
     const std::vector<float> d = drums(sec);
     const std::string path = writeTmp("gl_j87_drums.wav", d);
     SamplePtr smp = sampleCache().get(path);
     TempoMap map;
     map.setConstant(120, 96);
+    // The mean difference (dB) of two signals' 10 ms levels over loud frames
+    // (within 40 dB of the peak): the same hits, the same decays. (Their
+    // waveforms differ: each stream builds its own phases.)
+    auto similar = [](const std::vector<float>& a, const std::vector<float>& b, size_t from, size_t to) {
+      const size_t w = static_cast<size_t>(0.01 * kSr);
+      std::vector<double> ea, eb;
+      for (size_t i = from; i + w <= std::min({to, a.size(), b.size()}); i += w) {
+        ea.push_back(20 * std::log10(rms(a.data() + i, w) + 1e-9));
+        eb.push_back(20 * std::log10(rms(b.data() + i, w) + 1e-9));
+      }
+      // (a steady gain difference, such as a sampler's volume, is taken out)
+      double top = -300, off = 0, sum = 0;
+      int n = 0;
+      for (double v : eb) top = std::max(top, v);
+      for (size_t k = 0; k < ea.size(); ++k)
+        if (eb[k] > top - 40) off += ea[k] - eb[k], ++n;
+      if (!n) return 99.0;
+      off /= n;
+      for (size_t k = 0; k < ea.size(); ++k)
+        if (eb[k] > top - 40) sum += std::fabs(ea[k] - eb[k] - off);
+      return sum / n;
+    };
+    std::vector<float> rendered125;
     for (double f : {1.25, 2.0}) {
       ProgAudioClip c;
       c.start = 0;
@@ -378,21 +412,25 @@ int main() {
         }
         return L;
       };
-      const std::vector<float> legacy = play(c);  // no render: the realtime grains
+      c.rt = makeClipVoice(kSr);
+      const std::vector<float> live = play(c);  // no render yet: the realtime stretch
       stretch::ClipRequest rq;
-      rq.sample = smp, rq.srcStart = c.srcStart, rq.srcEnd = c.srcEnd, rq.mode = stretch::Mode::Auto;
+      rq.sample = smp, rq.srcStart = c.srcStart, rq.srcEnd = c.srcEnd, rq.mode = stretch::kStretch;
       rq.rate = kSr, rq.frames = frames + 2, rq.speed = c.speed;
       c.hq = stretch::renderClip(rq, false);
+      c.rt.reset();
       const std::vector<float> hq = play(c);
+      if (f == 1.25) rendered125 = hq;
+      const double sim = similar(live, hq, static_cast<size_t>(0.1 * kSr), static_cast<size_t>(frames));
       std::vector<double> times;
       for (double t : hitTimes(sec)) times.push_back(t * f);
-      const Hits a = hits(legacy, times), b = hits(hq, times);
+      const Hits a = hits(live, times), b = hits(hq, times);
       char name[200];
-      std::snprintf(name, sizeof name, "drums ×%.2f: pre-echo %.1f → %.1f dB, rise %.2f → %.2f ms (sharper, nothing ahead of the hit)", f, a.preDb,
-                    b.preDb, a.riseMs, b.riseMs);
-      expect(c.hq && b.preDb < -50 && b.preDb < a.preDb - 20 && b.riseMs < 3.0 && b.riseMs < a.riseMs * 0.5, name);
+      std::snprintf(name, sizeof name, "drums ×%.2f: the realtime stretch matches the render (10 ms levels within %.2f dB; pre-echo %.1f / %.1f dB)", f, sim,
+                    a.preDb, b.preDb);
+      expect(c.hq && sim < 1.0 && a.preDb < -40.0 && b.preDb < -40.0, name);
     }
-    // The sampler's realtime stretch voices restart at the onsets: no pre-echo either.
+    // A sampler stretch voice (an older project's Transient mode: the stretch).
     PluginState st = defaultPluginState("gl.sampler");
     st.data = path;
     st.params[pp::SmpStretchMode] = static_cast<float>(stretch::Mode::Transient);
@@ -410,12 +448,10 @@ int main() {
       const int n = static_cast<int>(std::min<size_t>(256, total - i));
       gen->process(st, aux, ctx, L.data() + i, R.data() + i, n);
     }
-    std::vector<double> times;
-    for (double t : hitTimes(sec)) times.push_back(t * 1.25);
-    const Hits h = hits(L, times);
+    const double sim = similar(L, rendered125, static_cast<size_t>(0.1 * kSr), static_cast<size_t>(2.5 * kSr));
     char name[160];
-    std::snprintf(name, sizeof name, "sampler stretch voice ×1.25 (transient): pre-echo %.1f dB, rise %.2f ms", h.preDb, h.riseMs);
-    expect(h.preDb < -50 && h.riseMs < 3.0, name);
+    std::snprintf(name, sizeof name, "sampler stretch voice ×1.25: matches the clip render (10 ms levels within %.2f dB)", sim);
+    expect(sim < 1.0, name);
   }
 
   // ------------------------------------------------------------ sampler voices: pitch, block size, loops
@@ -519,7 +555,7 @@ int main() {
     c.startSec = map.secondsAt(7), c.durSec = map.secondsAt(300) - c.startSec;
     c.sample = smp, c.srcStart = 0, c.srcEnd = smp->seconds(), c.speed = 0.8, c.granular = true;
     stretch::ClipRequest rq;
-    rq.sample = smp, rq.srcEnd = c.srcEnd, rq.mode = stretch::Mode::Auto, rq.rate = kSr, rq.speed = 0.8;
+    rq.sample = smp, rq.srcEnd = c.srcEnd, rq.mode = stretch::kStretch, rq.rate = kSr, rq.speed = 0.8;
     rq.frames = static_cast<int64_t>(std::ceil(c.durSec * kSr)) + 2;
     c.hq = stretch::renderClip(rq, false);
     const int64_t total = static_cast<int64_t>(2 * kSr);
@@ -538,16 +574,15 @@ int main() {
     struct Src {
       std::vector<float> x;
       size_t pos = 0;
-      static int read(void* ctx, float* const* d, int n, bool) {
+      static void read(void* ctx, float* const* d, int n) {
         auto* s = static_cast<Src*>(ctx);
         for (int i = 0; i < n; ++i) d[0][i] = d[1][i] = s->pos < s->x.size() ? s->x[s->pos++] : 0.f;
-        return -1;
       }
     };
     std::vector<float> vo[2];
     for (int pass = 0; pass < 2; ++pass) {
       stretch::Voice v;
-      v.prepare(2, kSr, stretch::Mode::Mono);
+      v.prepare(2, kSr);
       Src src;
       src.x = tone(300, 2.0);
       v.start(&Src::read, &src, 0.9, 1.3);
@@ -555,7 +590,7 @@ int main() {
       for (size_t at = 0; at < L.size();) {
         const int n = static_cast<int>(std::min<size_t>(pass ? 61 : 512, L.size() - at));
         float* o[2] = {L.data() + at, R.data() + at};
-        v.render(o, n, 0.9, 1.3, 0, &Src::read, &src);
+        v.render(o, n, 0.9, 1.3, &Src::read, &src);
         at += static_cast<size_t>(n);
       }
       vo[pass] = L;
@@ -563,41 +598,6 @@ int main() {
     float vd = 0;
     for (size_t i = 0; i < vo[0].size(); ++i) vd = std::max(vd, std::fabs(vo[0][i] - vo[1][i]));
     expect(vd < 1e-5f, "stretch voice: the same output for any render split (positions accumulate in double)");
-  }
-
-  // ------------------------------------------------------------ Formant keep
-  {
-    // A buzzy voice (150 Hz) through one resonance at 800 Hz; 7 semitones up.
-    std::vector<float> x(static_cast<size_t>(2 * kSr));
-    for (size_t i = 0; i < x.size(); ++i) {
-      double v = 0;
-      for (int k = 1; k * 150 < 8000; ++k) v += std::sin(2 * kPi * k * 150 * static_cast<double>(i) / kSr) / (1 + std::pow((k * 150 - 800) / 120.0, 2));
-      x[i] = static_cast<float>(0.2 * v);
-    }
-    auto centroid = [](const std::vector<float>& y) {
-      const size_t N = 32768;
-      std::vector<cd> b(N);
-      for (size_t i = 0; i < N; ++i) b[i] = y[y.size() / 2 - N / 2 + i] * bh(i, N);
-      fft(b);
-      double num = 0, den = 0;
-      for (size_t k = 1; k < N / 2; ++k) num += static_cast<double>(k) * std::norm(b[k]), den += std::norm(b[k]);
-      return num / den * kSr / static_cast<double>(N);
-    };
-    const double c0 = centroid(x);
-    double c[2];
-    for (int k = 0; k < 2; ++k) {
-      std::vector<float> y(x.size());
-      const float* in[1] = {x.data()};
-      float* out[1] = {y.data()};
-      stretch::Settings s;
-      s.mode = k ? stretch::Mode::Formant : stretch::Mode::Auto;
-      s.pitch = std::pow(2.0, 7 / 12.0);
-      stretch::process(in, 1, static_cast<int64_t>(x.size()), out, static_cast<int64_t>(y.size()), kSr, s);
-      c[k] = centroid(y) / c0;
-    }
-    char name[160];
-    std::snprintf(name, sizeof name, "formant keep: the spectral envelope stays (centroid ×%.2f) where plain pitch moves it (×%.2f)", c[1], c[0]);
-    expect(c[0] > 1.3 && c[1] < 1.2, name);
   }
 
   // ------------------------------------------------------------ Pitch Shifter Hi-fi
@@ -619,8 +619,9 @@ int main() {
       allocs += cs.n();
     }
     const double want = 440 * std::pow(2.0, -5 / 12.0);
-    expect(lat > 0 && lat < 0.25 * kSr && std::fabs(cents(peakHz(L.data(), static_cast<size_t>(lat) + 22050, want), want)) < 2.0,
-           "Pitch Shifter Hi-fi: in tune within 2 cents, latency reported for delay compensation");
+    char hname[160];
+    std::snprintf(hname, sizeof hname, "Pitch Shifter Hi-fi: in tune within 2 cents, latency reported for delay compensation (%.0f ms)", lat / kSr * 1000);
+    expect(lat > 0 && lat < 0.25 * kSr && std::fabs(cents(peakHz(L.data(), static_cast<size_t>(lat) + 22050, want), want)) < 2.0, hname);
     expect(allocs == 0, "Pitch Shifter Hi-fi: no allocation while processing");
     // The output is exactly `lat` frames late: a click comes out there.
     auto fx2 = createEffect("gl.pitch");
@@ -656,7 +657,7 @@ int main() {
     ProgAudioClip c;
     c.start = 0, c.end = 192, c.durSec = 1.0, c.sample = smp, c.srcEnd = smp->seconds(), c.speed = 1, c.pitch = 1.5, c.granular = true;
     stretch::ClipRequest rq;
-    rq.sample = smp, rq.srcEnd = c.srcEnd, rq.mode = stretch::Mode::Auto, rq.rate = kSr, rq.frames = 44102, rq.pitch = 1.5;
+    rq.sample = smp, rq.srcEnd = c.srcEnd, rq.mode = stretch::kStretch, rq.rate = kSr, rq.frames = 44102, rq.pitch = 1.5;
     c.hq = stretch::renderClip(rq, false);
     const std::vector<ProgAudioClip> clips{c};
     std::vector<float> L(512), R(512);
@@ -669,14 +670,13 @@ int main() {
     expect(n1 == 0, "clip playback (rendered clip): no allocation");
     struct Src {
       double ph = 0;
-      static int read(void* ctx, float* const* d, int n, bool) {
+      static void read(void* ctx, float* const* d, int n) {
         auto* s = static_cast<Src*>(ctx);
         for (int i = 0; i < n; ++i, s->ph += 0.03) d[0][i] = d[1][i] = static_cast<float>(0.4 * std::sin(s->ph));
-        return -1;
       }
     };
     stretch::Voice v;
-    v.prepare(2, kSr, stretch::Mode::Auto);
+    v.prepare(2, kSr);
     Src src;
     long n2 = 0;
     {
@@ -684,7 +684,7 @@ int main() {
       v.start(&Src::read, &src, 1.0, 0.75);
       for (int k = 0; k < 200; ++k) {
         float* o[2] = {L.data(), R.data()};
-        v.render(o, 512, 1.0 + 0.2 * std::sin(k * 0.1), 0.75 + 0.5 * (k % 3), 0, &Src::read, &src);
+        v.render(o, 512, 1.0 + 0.2 * std::sin(k * 0.1), 0.75 + 0.5 * (k % 3), &Src::read, &src);
       }
       n2 = cs.n();
     }
@@ -783,7 +783,8 @@ int main() {
         }
         const auto& p = got->plugin.params;
         const auto& q = want.plugin.params;
-        const bool mode = p[pp::SmpStretchMode] == q[pp::SmpStretchMode];
+        // J-153: the time mode comes back as the same kind (stretch or resample)
+        const bool mode = stretch::keepsPitch(stretch::modeOf(p[pp::SmpStretchMode])) == stretch::keepsPitch(stretch::modeOf(q[pp::SmpStretchMode]));
         const bool stretchOk = q[pp::SmpStretchMode] == 0 || (std::fabs(p[pp::SmpTimeStretch] - q[pp::SmpTimeStretch]) < 1e-3f &&
                                                               std::fabs(p[pp::SmpPitchShift] - q[pp::SmpPitchShift]) < 0.5f);
         if (mode && stretchOk)

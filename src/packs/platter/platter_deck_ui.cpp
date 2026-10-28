@@ -398,6 +398,7 @@ void drawPlatter(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 c, float R,
   char id[16];
   std::snprintf(id, sizeof id, "##pplat%d", d);
   ImGui::InvisibleButton(id, ImVec2(2 * R, 2 * R));
+  traceRect(d == 0 ? "platterA" : "platterB", ImVec2(c.x - R, c.y - R), ImVec2(c.x + R, c.y + R));
   const ImVec2 mp = ImGui::GetIO().MousePos;
   const float dx = mp.x - c.x, dy = mp.y - c.y;
   const bool inside = dx * dx + dy * dy <= R * R;

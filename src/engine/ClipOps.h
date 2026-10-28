@@ -38,11 +38,10 @@ float normalizeClip(Song& song, ObjectId clip, double targetDb = 0.0);
 // The clip length follows.
 bool setClipStretch(Song& song, ObjectId clip, double timeFactor, bool keepPitch);
 // J-87: the same with an explicit time mode of the clip's channel (0 resample,
-// 1 … 4 the stretch modes, engine/TimeStretch::Mode). keepPitch above keeps a
-// stretch mode the channel already has.
+// 1 stretch; J-153: any other value is the stretch too).
 bool setClipStretchMode(Song& song, ObjectId clip, double timeFactor, int mode);
-// Rendered stretch through the audio editor's stretch (mode: 0 elastic, 1
-// transient, 2 tape, 3 mono, 4 formant, 5 voice, 6 beats). Writes the result into `dir` on a new channel and points
+// Rendered stretch through the audio editor's stretch (mode: 0 stretch, 1
+// tape: pitch follows speed). Writes the result into `dir` on a new channel and points
 // the clip at it (stretch reset to 1). Returns the file ("" = failed).
 std::string renderClipStretch(Song& song, ObjectId clip, double timeFactor, double semitones, int mode,
                               const std::string& dir);

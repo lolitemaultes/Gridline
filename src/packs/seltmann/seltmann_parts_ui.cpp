@@ -660,13 +660,6 @@ void drawSound(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1) {
     if (pills(a, "##sfollow", ImVec2(x, y + 16), 180, 26, l, 2, cur, h)) pui::setParamValue(a, t, SmSync, cur == 1 ? SyncResample : SyncStretch, false);
   }
   x += 196;
-  groupLabel(dl, a, ImVec2(x, y), i18n::N_("STRETCH"));
-  {
-    static const char* const l[3] = {i18n::N_("Auto"), i18n::N_("Drums"), i18n::N_("Mono")};
-    static const char* const h[3] = {i18n::N_("General stretch for full mixes"), i18n::N_("Keeps drum hits sharp"), i18n::N_("For vocals, bass and single lines")};
-    paramPills(a, t, SmStretchMode, ImVec2(x, y + 16), 186, 26, l, 3, h);
-  }
-  x += 202;
   groupLabel(dl, a, ImVec2(x, y), i18n::N_("KEYS PLAY"));
   {
     static const char* const l[2] = {i18n::N_("Slices"), i18n::N_("Letters")};

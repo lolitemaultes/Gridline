@@ -29,3 +29,9 @@ repository does.
 Not vendored, but credited: the layout of Serum 1 `.fxp` / VST2 chunks that Plasma reads
 (`src/packs/plasma/plasma_serum_dsp.cpp`: parameter order, modulation source ids, menu orders)
 follows the format notes of serum2vital (https://github.com/btesser/serum2vital, GPL-3.0).
+
+Not vendored, but credited: Platter's scratch model (`src/packs/platter/platter_dsp.cpp`: the
+jog wheel's speed from an alpha-beta filter on its ticks, with the filter values each controller
+mapping uses; the mouse's position loop with its throw and release; the ramp back to the motor;
+the level curve at low speeds) follows the approach of Mixxx (https://github.com/mixxxdj/mixxx,
+GPL-2.0-or-later). No Mixxx source is included; the code is Gridline's own.

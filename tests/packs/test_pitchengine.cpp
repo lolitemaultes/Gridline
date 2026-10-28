@@ -3,12 +3,12 @@
 // replaced where one existed:
 //   kernel     passband flatness, stopband (aliasing), sweep aliasing, pitch
 //              accuracy, THD+N, exact DC, exact whole-frame delay reads;
-//   modes      Voice (pitch accuracy, formants kept, phasiness), Beats
-//              (transients copied, no pre-echo), loudness, peaks;
+//   stretch    J-153's one stretch: tones clean and in tune, low partials in
+//              tune near unity speed, loudness, peaks;
 //   extremes   +-48 semitones, x0.25 / x4, silence, DC, impulses, tiny
 //              inputs, subnormal input: exact lengths, finite, bounded;
 //   realtime   block-size invariance, no allocation while rendering;
-//   call sites playlist clip grains, audio editor resampling and modes,
+//   call sites playlist clip realtime stretch, audio editor resampling and modes,
 //              live effects (interval, halt, pitch shifter) band-limited.
 #include <algorithm>
 #include <atomic>
@@ -100,14 +100,6 @@ std::vector<float> vowel(double f0, size_t n, double f1 = 700, double b1 = 110) 
       v += amp / std::sqrt(static_cast<double>(k)) * std::cos(2 * kPi * k * f0 * static_cast<double>(i) / kSr);
     }
     y[i] = static_cast<float>(0.25 * v);
-  }
-  return y;
-}
-std::vector<float> clicks(size_t n, double every, std::vector<double>& at) {
-  std::vector<float> y(n, 0.f);
-  for (double t = 0.1; t < static_cast<double>(n) / kSr - 0.1; t += every) {
-    y[static_cast<size_t>(t * kSr)] = 0.9f;
-    at.push_back(t);
   }
   return y;
 }
@@ -232,85 +224,6 @@ Alias aliasing(const std::vector<float>& y, F expected) {
   for (double f : folds) r.foldDb = std::max(r.foldDb, db(f / std::max(ref, 1e-30)));
   return r;
 }
-// Cepstrally smoothed log spectrum (dB) round frame c, and the level-normalised
-// mean distance of two of them over 250 .. 4500 Hz.
-std::vector<double> envelope(const std::vector<float>& x, long c) {
-  const size_t N = 2048;
-  std::vector<cd> b(N);
-  for (size_t i = 0; i < N; ++i) {
-    const long k = c - static_cast<long>(N / 2) + static_cast<long>(i);
-    b[i] = (k >= 0 && k < static_cast<long>(x.size()) ? x[static_cast<size_t>(k)] : 0.0) * (0.5 - 0.5 * std::cos(2 * kPi * static_cast<double>(i) / N));
-  }
-  fft(b);
-  for (auto& v : b) v = std::log(std::abs(v) + 1e-9);
-  fft(b);
-  for (size_t q = 37; q < N - 36; ++q) b[q] = 0;
-  fft(b);
-  std::vector<double> e(N / 2);
-  for (size_t k = 0; k < N / 2; ++k) e[k] = 20 / std::log(10.0) * b[(N - k) % N].real() / N;
-  return e;
-}
-double envDistance(const std::vector<double>& a, const std::vector<double>& b) {
-  const size_t N = 2048, k0 = static_cast<size_t>(250.0 * N / kSr), k1 = static_cast<size_t>(4500.0 * N / kSr);
-  double ma = 0, mb = 0;
-  for (size_t k = k0; k < k1; ++k) ma += a[k], mb += b[k];
-  ma /= static_cast<double>(k1 - k0), mb /= static_cast<double>(k1 - k0);
-  double s = 0;
-  for (size_t k = k0; k < k1; ++k) s += std::fabs((a[k] - ma) - (b[k] - mb));
-  return s / static_cast<double>(k1 - k0);
-}
-// Click smear: share of each click's energy (+-40 ms) within +-1.5 ms of its peak (dB).
-double clickConcentration(const std::vector<float>& x, const std::vector<double>& times) {
-  double s = 0;
-  int n = 0;
-  for (double t : times) {
-    const long c = std::lround(t * kSr), W = static_cast<long>(0.04 * kSr), w = static_cast<long>(0.0015 * kSr);
-    if (c - W < 0 || c + W >= static_cast<long>(x.size())) continue;
-    long pk = c;
-    for (long i = c - W; i < c + W; ++i)
-      if (std::fabs(x[static_cast<size_t>(i)]) > std::fabs(x[static_cast<size_t>(pk)])) pk = i;
-    double all = 0, near = 0;
-    for (long i = c - W; i < c + W; ++i) {
-      const double e = static_cast<double>(x[static_cast<size_t>(i)]) * x[static_cast<size_t>(i)];
-      all += e;
-      if (std::labs(i - pk) <= w) near += e;
-    }
-    if (all < 1e-12) continue;
-    s += db(near / all);
-    ++n;
-  }
-  return n ? s / n : -99;
-}
-// Loudest 1 ms in the 30 .. 3 ms before each click vs the click's own peak (dB).
-double preEcho(const std::vector<float>& x, const std::vector<double>& times) {
-  double s = 0;
-  int n = 0;
-  for (double t : times) {
-    const long c = std::lround(t * kSr);
-    if (c < static_cast<long>(0.04 * kSr) || c + 2000 >= static_cast<long>(x.size())) continue;
-    double pk = 0, pre = 0;
-    for (long i = c - 200; i < c + 2000; ++i) pk = std::max(pk, static_cast<double>(std::fabs(x[static_cast<size_t>(i)])));
-    for (long i = c - static_cast<long>(0.03 * kSr); i < c - static_cast<long>(0.003 * kSr); ++i)
-      pre = std::max(pre, static_cast<double>(std::fabs(x[static_cast<size_t>(i)])));
-    if (pk < 1e-6) continue;
-    s += 20 * std::log10(pre / pk + 1e-9);
-    ++n;
-  }
-  return n ? s / n : 0;
-}
-// Median crest factor (dB) of 20 ms frames: phase coherence of a pulse train.
-double crestDb(const std::vector<float>& x, size_t a, size_t b) {
-  std::vector<double> c;
-  const size_t W = static_cast<size_t>(0.02 * kSr);
-  for (size_t i = a; i + W < std::min(b, x.size()); i += W) {
-    double pk = 0, e = 0;
-    for (size_t j = i; j < i + W; ++j) pk = std::max(pk, static_cast<double>(std::fabs(x[j]))), e += static_cast<double>(x[j]) * x[j];
-    if (e > 1e-9) c.push_back(20 * std::log10(pk / std::sqrt(e / static_cast<double>(W))));
-  }
-  if (c.empty()) return 0;
-  std::sort(c.begin(), c.end());
-  return c[c.size() / 2];
-}
 bool finite(const std::vector<float>& v) {
   for (float x : v)
     if (!std::isfinite(x)) return false;
@@ -367,21 +280,19 @@ std::vector<float> offline(const std::vector<float>& x, stretch::Mode m, double 
 struct Src {
   const std::vector<float>* x = nullptr;
   size_t pos = 0;
-  static int read(void* ctx, float* const* d, int n, bool) {
+  static void read(void* ctx, float* const* d, int n) {
     auto* s = static_cast<Src*>(ctx);
     for (int i = 0; i < n; ++i) {
       const float v = s->pos < s->x->size() ? (*s->x)[s->pos] : 0.f;
       d[0][i] = d[1][i] = v;
       ++s->pos;
     }
-    return -1;
   }
 };
 // Realtime voice: `frames` output frames at speed / pitch in blocks of `block`.
-std::vector<float> realtime(const std::vector<float>& x, stretch::Mode m, double speed, double pitch, size_t frames, int block,
-                            long* allocs = nullptr, bool light = false) {
+std::vector<float> realtime(const std::vector<float>& x, double speed, double pitch, size_t frames, int block, long* allocs = nullptr) {
   stretch::Voice v;
-  v.prepare(2, kSr, m, 4.0, 4.0, light);
+  v.prepare(2, kSr, 4.0, 4.0);
   Src src{&x, 0};
   std::vector<float> L(frames), R(frames);
   CountScope cs;
@@ -389,7 +300,7 @@ std::vector<float> realtime(const std::vector<float>& x, stretch::Mode m, double
   for (size_t at = 0; at < frames;) {
     const int n = static_cast<int>(std::min<size_t>(static_cast<size_t>(block), frames - at));
     float* o[2] = {L.data() + at, R.data() + at};
-    v.render(o, n, speed, pitch, 0, &Src::read, &src);
+    v.render(o, n, speed, pitch, &Src::read, &src);
     at += static_cast<size_t>(n);
   }
   if (allocs) *allocs = cs.n();
@@ -414,6 +325,7 @@ std::vector<float> effect(const PluginState& s, const std::vector<float>& x, int
 }
 
 const char* modeLabel(stretch::Mode m) { return stretch::modeName(m); }
+constexpr stretch::Mode kModes[2] = {stretch::Mode::Resample, stretch::kStretch};
 
 }  // namespace
 
@@ -512,97 +424,71 @@ int main() {
            "sample-rate conversion: exact length, THD+N under -110 dB");
   }
 
-  // ============================================================ modes
+  // ============================================================ the stretch
   {
-    // Voice: pitch accuracy and formants kept on a buzzy vowel, against Mono
-    // (the mode voices used before) and Formant (the spectral formant keeper).
-    const auto v = vowel(150, static_cast<size_t>(2.0 * kSr));
-    const double up = std::pow(2.0, 7 / 12.0);
-    const auto vo = offline(v, stretch::Mode::Voice, up, 1.0);
-    const auto mo = offline(v, stretch::Mode::Mono, up, 1.0);
-    const auto fo = offline(v, stretch::Mode::Formant, up, 1.0);
-    auto fdist = [&](const std::vector<float>& y) {
-      double s = 0;
-      int n = 0;
-      for (long c = 12000; c < static_cast<long>(v.size()) - 12000; c += 4800, ++n) s += envDistance(envelope(v, c), envelope(y, c));
-      return s / n;
-    };
-    const double dV = fdist(vo), dM = fdist(mo), dF = fdist(fo);
-    const double cV = cents(peakHz(vo, 24000, 150 * up), 150 * up);
-    std::printf("# vowel +7 st: formant distance Voice %.2f dB, Formant %.2f dB, Mono %.2f dB; Voice pitch %.2f cents\n", dV, dF, dM, cV);
-    expect(dV < dM - 2.0 && dV < 3.5, "Voice: keeps a vowel's formants (closer to the input than Mono by 2 dB)");
-    expect(std::fabs(cV) < 2.0, "Voice: shifted vowel in tune within 2 cents");
-
-    // Voice on a pure tone and a pulse train: clean, in tune, phase-coherent.
+    // A 220 Hz tone shifted offline: clean and in tune.
     const auto t = sine(220, static_cast<size_t>(2.0 * kSr));
+    double worstTh = -300, worstC = 0;
     for (double st : {-12.0, -5.0, 7.0, 12.0}) {
       const double r = std::pow(2.0, st / 12.0);
-      const auto y = offline(t, stretch::Mode::Voice, r, 1.0);
+      const auto y = offline(t, stretch::kStretch, r, 1.0);
       const double th = thdn(y, 24000, 220 * r), c = cents(peakHz(y, 24000, 220 * r), 220 * r);
-      std::printf("# Voice sine %+g st: THD+N %.1f dB, %.3f cents\n", st, th, c);
-      std::snprintf(msg, sizeof msg, "Voice: a 220 Hz tone at %+g st is clean (THD+N under -95 dB) and in tune (0.1 cent)", st);
-      expect(th < -95 && std::fabs(c) < 0.1, msg);
+      std::printf("# stretch sine %+g st: THD+N %.1f dB, %.3f cents\n", st, th, c);
+      worstTh = std::max(worstTh, th), worstC = std::max(worstC, std::fabs(c));
     }
-    std::vector<float> pulse(static_cast<size_t>(2.0 * kSr));
-    for (size_t i = 0; i < pulse.size(); ++i) {
-      double s = 0;
-      for (int h = 1; h <= 40; ++h) s += std::cos(2 * kPi * h * 110 * static_cast<double>(i) / kSr);
-      pulse[i] = static_cast<float>(0.8 * s / 40);
+    expect(worstTh < -60 && worstC < 0.1, "stretch: a 220 Hz tone at -12 .. +12 st is clean (THD+N under -60 dB) and in tune (0.1 cent)");
+
+    // A 55 Hz bass (8 harmonics) near unity speed and a semitone off: every
+    // partial in tune. (A hop under 30 ms let the engine mistune low partials
+    // here by up to 12 Hz: a rough, noisy bass.)
+    std::vector<float> bass(static_cast<size_t>(4 * kSr));
+    for (size_t i = 0; i < bass.size(); ++i) {
+      double v = 0;
+      for (int k = 1; k <= 8; ++k) v += std::sin(2 * kPi * 55 * k * static_cast<double>(i) / kSr + k) / k;
+      bass[i] = static_cast<float>(0.3 * v);
     }
-    const double crIn = crestDb(pulse, 9600, pulse.size() - 9600);
-    const double crV = crestDb(offline(pulse, stretch::Mode::Voice, std::pow(2.0, 5 / 12.0), 1.0), 9600, pulse.size() - 9600);
-    // J-145: against Mono, the plain spectral engine (Auto now splits off the
-    // pulses' attacks and keeps them coherent, so it is no longer that engine).
-    const double crA = crestDb(offline(pulse, stretch::Mode::Mono, std::pow(2.0, 5 / 12.0), 1.0), 9600, pulse.size() - 9600);
-    std::printf("# pulse crest: input %.1f dB, Voice %.1f dB, Mono %.1f dB\n", crIn, crV, crA);
-    expect(crV > crIn - 3 && crV > crA, "Voice: no phasiness (a pulse train keeps its crest factor, better than the spectral engine)");
+    double worstHz = 0;
+    for (const auto& [pitch, tf] : {std::pair<double, double>{1.0, 0.94}, {1.0, 1.06}, {1.0, 1.5}, {std::pow(2.0, 1 / 12.0), 1.0}, {std::pow(2.0, -1 / 12.0), 1.0}}) {
+      const auto y = offline(bass, stretch::kStretch, pitch, tf);
+      for (int k = 1; k <= 8; ++k) {
+        const double want = 55 * k * pitch;
+        worstHz = std::max(worstHz, std::fabs(peakHz(y, static_cast<size_t>(0.5 * kSr), want) - want));
+      }
+    }
+    std::printf("# 55 Hz bass x0.94 .. x1.5 and +-1 st: partials within %.3f Hz\n", worstHz);
+    expect(worstHz < 0.5, "stretch: a low bass near unity speed keeps every partial in tune (within 0.5 Hz)");
 
-    // Beats: clicks stretched x1.5 stay single clicks with no pre-echo.
-    std::vector<double> at;
-    const auto ck = clicks(static_cast<size_t>(2.0 * kSr), 0.25, at);
-    std::vector<double> at15;
-    for (double a : at) at15.push_back(a * 1.5);
-    const auto bo = offline(ck, stretch::Mode::Beats, 1.0, 1.5);
-    const auto ao = offline(ck, stretch::Mode::Auto, 1.0, 1.5);
-    const double ccB = clickConcentration(bo, at15), ccA = clickConcentration(ao, at15), peB = preEcho(bo, at15);
-    std::printf("# clicks x1.5: concentration Beats %.2f dB, Auto %.2f dB; Beats pre-echo %.1f dB\n", ccB, ccA, peB);
-    expect(ccB > -1.0 && ccB >= ccA - 0.5 && peB < -60, "Beats: clicks copied whole (concentrated, no pre-echo) when stretched");
-
-    // Loudness: x0.5 .. x2 stretches and shifts keep the level of noise and tones.
-    double worst = 0;
+    // Loudness: x0.5 .. x2 stretches keep the level of tones and noise. (Noise
+    // loses up to 2 dB: frames of unrelated phases overlap with less gain
+    // than a steady tone's, a known trait of phase vocoders.)
+    double worst = 0, worstNoise = 0;
     const auto nz = noise(static_cast<size_t>(2 * kSr));
-    for (stretch::Mode m : {stretch::Mode::Voice, stretch::Mode::Beats})
-      for (double tf : {0.5, 0.8, 1.25, 2.0})
-        for (const std::vector<float>* x : {&nz, &t}) {
-          const auto y = offline(*x, m, 1.0, tf);
-          const double g = 20 * std::log10(rms(y, y.size() / 5, y.size() * 4 / 5) / rms(*x, x->size() / 5, x->size() * 4 / 5));
-          worst = std::max(worst, std::fabs(g));
-        }
-    std::printf("# Voice / Beats loudness: worst %.2f dB\n", worst);
-    expect(worst < 1.0, "Voice and Beats: stretching x0.5 .. x2 keeps the level within 1 dB (noise and tones)");
+    for (double tf : {0.5, 0.8, 1.25, 2.0})
+      for (const std::vector<float>* x : {&nz, &t}) {
+        const auto y = offline(*x, stretch::kStretch, 1.0, tf);
+        const double g = 20 * std::log10(rms(y, y.size() / 5, y.size() * 4 / 5) / rms(*x, x->size() / 5, x->size() * 4 / 5));
+        if (std::fabs(g) > 0.5) std::printf("#   %s x%g: %+.2f dB\n", x == &nz ? "noise" : "tone", tf, g);
+        (x == &nz ? worstNoise : worst) = std::max(x == &nz ? worstNoise : worst, std::fabs(g));
+      }
+    std::printf("# stretch loudness: tones %.2f dB, noise %.2f dB\n", worst, worstNoise);
+    expect(worst < 0.5 && worstNoise < 2.0, "stretch: x0.5 .. x2 keeps the level of tones (0.5 dB) and noise (2 dB)");
 
-    // Peaks: a full-scale square (crest factor 1, the lowest there is). The
-    // time-domain modes copy waveforms: only band-limiting overshoot. The
-    // spectral modes re-phase the harmonics, which raises the crest factor
-    // (not the loudness): their level must stay put.
+    // Peaks: a full-scale square (crest factor 1, the lowest there is).
+    // Resample copies the waveform: only band-limiting overshoot. The stretch
+    // re-phases the harmonics, which raises the crest factor (not the
+    // loudness): its level must stay put.
     std::vector<float> sq(static_cast<size_t>(kSr));
     for (size_t i = 0; i < sq.size(); ++i) sq[i] = (i / 50) % 2 ? 1.f : -1.f;
-    double pkTd = 0, pkSp = 0, lvSp = 0;
-    bool fin = true;
-    for (int m = 0; m < static_cast<int>(stretch::Mode::Count); ++m)
+    double pkTd = 0, lvSp = 0;
+    for (stretch::Mode mode : kModes)
       for (double st : {-12.0, 12.0}) {
-        const auto mode = static_cast<stretch::Mode>(m);
         const auto y = offline(sq, mode, std::pow(2.0, st / 12.0), 1.0);
-        if (mode == stretch::Mode::Resample || mode == stretch::Mode::Voice || mode == stretch::Mode::Beats) {
-          pkTd = std::max(pkTd, peakOf(y));
-        } else {
-          pkSp = std::max(pkSp, peakOf(y));
-          lvSp = std::max(lvSp, std::fabs(20 * std::log10(rms(y, y.size() / 5, y.size() * 4 / 5))));
-        }
+        if (mode == stretch::Mode::Resample) pkTd = std::max(pkTd, peakOf(y));
+        else lvSp = std::max(lvSp, std::fabs(20 * std::log10(rms(y, y.size() / 5, y.size() * 4 / 5))));
       }
-    std::printf("# full-scale square +-12 st: time-domain peak %.3f; spectral peak %.3f, level %.2f dB\n", pkTd, pkSp, lvSp);
-    expect(fin && pkTd < 1.4, "Resample, Voice and Beats: a full-scale square peaks only by band-limiting overshoot (under 1.4)");
-    expect(lvSp < 1.5, "spectral modes: a full-scale square keeps its level within 1.5 dB (no boost past its peak)");
+    std::printf("# full-scale square +-12 st: resample peak %.3f; stretch level %.2f dB\n", pkTd, lvSp);
+    expect(pkTd < 1.4, "Resample: a full-scale square peaks only by band-limiting overshoot (under 1.4)");
+    expect(lvSp < 1.5, "stretch: a full-scale square keeps its level within 1.5 dB (no boost past its peak)");
   }
 
   // ============================================================ extremes
@@ -619,8 +505,7 @@ int main() {
     std::vector<float> subn(36000, 0.f);
     for (size_t i = 0; i < 12000; ++i)
       subn[i] = static_cast<float>(0.5 * std::exp(-static_cast<double>(i) / 1500.0) * std::sin(2 * kPi * 440 * static_cast<double>(i) / kSr));
-    for (int mi = 0; mi < static_cast<int>(stretch::Mode::Count); ++mi) {
-      const auto m = static_cast<stretch::Mode>(mi);
+    for (const stretch::Mode m : kModes) {
       for (double st : {-48.0, 0.0, 48.0})
         for (double tf : {0.25, 1.0, 4.0}) {
           const double r = std::pow(2.0, st / 12.0);
@@ -636,7 +521,7 @@ int main() {
             }
           }
         }
-      if (m == stretch::Mode::Voice || m == stretch::Mode::Beats || m == stretch::Mode::Resample)
+      if (m == stretch::Mode::Resample)
         for (double tf : {0.5, 2.0}) {
           const auto y = offline(dc, m, 1.0, tf);
           const double mean = rms(y, y.size() / 4, y.size() * 3 / 4);
@@ -646,51 +531,40 @@ int main() {
           }
         }
     }
-    expect(lengths, "every mode at +-48 st and x0.25 .. x4: exactly the asked length (impulse, silence, 10-frame and decaying inputs)");
-    expect(fin, "every mode at the extremes: finite output, bounded peaks");
-    expect(silent, "every mode: silence in, exact silence out");
-    expect(sub, "every mode: a sound decaying into silence leaves no subnormal values");
-    expect(dcOk, "Voice, Beats and Resample: DC passes at x0.5 and x2 (within 2 %)");
+    expect(lengths, "stretch and resample at +-48 st and x0.25 .. x4: exactly the asked length (impulse, silence, 10-frame and decaying inputs)");
+    expect(fin, "stretch and resample at the extremes: finite output, bounded peaks");
+    expect(silent, "stretch and resample: silence in, exact silence out");
+    expect(sub, "stretch and resample: a sound decaying into silence leaves no subnormal values");
+    expect(dcOk, "Resample: DC passes at x0.5 and x2 (within 2 %)");
   }
 
   // ============================================================ realtime voices
   {
     const auto v = vowel(180, static_cast<size_t>(1.5 * kSr));
-    for (stretch::Mode m : {stretch::Mode::Voice, stretch::Mode::Beats, stretch::Mode::Auto}) {
+    for (const auto& [speed, pitch] : {std::pair<double, double>{0.8, 1.3}, {1.0, 0.5}, {2.0, 1.0}}) {
       long a1 = 0;
-      const auto y1 = realtime(v, m, 0.8, 1.3, 50000, 512, &a1);
-      const auto y2 = realtime(v, m, 0.8, 1.3, 50000, 61);
+      const auto y1 = realtime(v, speed, pitch, 50000, 512, &a1);
+      const auto y2 = realtime(v, speed, pitch, 50000, 61);
       float d = 0;
       for (size_t i = 0; i < y1.size(); ++i) d = std::max(d, std::fabs(y1[i] - y2[i]));
-      std::snprintf(msg, sizeof msg, "realtime %s voice: the same output for any block size (diff %.2g)", modeLabel(m), static_cast<double>(d));
+      std::snprintf(msg, sizeof msg, "realtime voice x%g %+.1f st: the same output for any block size (diff %.2g)", speed, 12 * std::log2(pitch),
+                    static_cast<double>(d));
       expect(d < 1e-5f && rms(y1, 5000, 45000) > 0.01, msg);
-      std::snprintf(msg, sizeof msg, "realtime %s voice: start and render without allocation", modeLabel(m));
+      std::snprintf(msg, sizeof msg, "realtime voice x%g: start and render without allocation", speed);
       expect(a1 == 0, msg);
     }
-    long al = 0;
-    const auto yl = realtime(v, stretch::Mode::Auto, 1.0, 1.5, 40000, 256, &al, true);
-    expect(al == 0 && finite(yl) && rms(yl, 5000, 35000) > 0.01, "light (time-domain) voice: renders without allocation");
-    // Realtime Voice in tune.
+    // Realtime voice in tune and clean.
     const auto t = sine(220, static_cast<size_t>(2 * kSr));
-    const auto yt = realtime(t, stretch::Mode::Voice, 1.0, std::pow(2.0, 7 / 12.0), 80000, 256);
+    const auto yt = realtime(t, 1.0, std::pow(2.0, 7 / 12.0), 80000, 256);
     const double c = cents(peakHz(yt, 20000, 220 * std::pow(2.0, 7 / 12.0)), 220 * std::pow(2.0, 7 / 12.0));
     const double th = thdn(yt, 20000, 220 * std::pow(2.0, 7 / 12.0));
-    std::printf("# realtime Voice +7 st: %.3f cents, THD+N %.1f dB\n", c, th);
-    expect(std::fabs(c) < 0.1 && th < -80, "realtime Voice: a tone in tune within 0.1 cent, THD+N under -80 dB (level follower without ripple)");
-    // A sung /i/ whose first formant sits on the fundamental: an octave up
-    // its harmonics leave the formant and the shift alone is much quieter.
-    // The loudness follower must not raise it into clipping.
-    const auto ii = vowel(248, static_cast<size_t>(1.5 * kSr), 270, 60);
-    const double inPk = peakOf(ii);
-    const auto yr = realtime(ii, stretch::Mode::Voice, 1.0, 2.0, ii.size(), 256);
-    const auto yo = offline(ii, stretch::Mode::Voice, 2.0, 1.0);
-    std::printf("# /i/ an octave up: input peak %.3f, realtime %.3f, offline %.3f\n", inPk, peakOf(yr), peakOf(yo));
-    expect(peakOf(yr) < 1.42 * inPk && peakOf(yo) < 1.42 * inPk, "Voice: the loudness follower never lifts a peak more than 3 dB over the source's");
+    std::printf("# realtime voice +7 st: %.3f cents, THD+N %.1f dB\n", c, th);
+    expect(std::fabs(c) < 0.1 && th < -60, "realtime voice: a tone in tune within 0.1 cent, THD+N under -60 dB");
   }
 
   // ============================================================ call sites
   {
-    // Playlist clip grains (realtime fallback): a bass tone pitched +7 st stays in tune.
+    // Playlist clip realtime stretch (while the render is on its way): a bass tone pitched +7 st stays in tune.
     auto smp = std::make_shared<Sample>();
     smp->sampleRate = kSr;
     {
@@ -708,6 +582,7 @@ int main() {
     ProgAudioClip c;
     c.sample = smp, c.srcStart = 0, c.srcEnd = smp->seconds(), c.speed = 1.0, c.pitch = std::pow(2.0, 7 / 12.0), c.granular = true;
     c.startSec = 0, c.durSec = smp->seconds(), c.start = 0, c.end = static_cast<Tick>(std::ceil(c.durSec * 192));
+    c.rt = makeClipVoice(kSr);
     const std::vector<ProgAudioClip> clips{c};
     std::vector<float> L(static_cast<size_t>(2.5 * kSr)), R(L.size());
     long allocs = 0;
@@ -719,8 +594,8 @@ int main() {
     }
     const double want = 55 * 4 * std::pow(2.0, 7 / 12.0);  // 4th harmonic: finer resolution
     const double cc = cents(peakHz(L, 24000, want), want);
-    std::printf("# clip grains, 55 Hz bass +7 st: %.2f cents (4th harmonic)\n", cc);
-    expect(std::fabs(cc) < 3.0 && allocs == 0, "playlist clip grains: a pitched bass stays in tune (3 cents), no allocation");
+    std::printf("# clip realtime stretch, 55 Hz bass +7 st: %.2f cents (4th harmonic)\n", cc);
+    expect(std::fabs(cc) < 3.0 && allocs == 0, "playlist clip realtime stretch: a pitched bass stays in tune (3 cents), no allocation");
 
     // Audio editor: resampling through the shared kernel, every method gives the exact length.
     ed::Audio a = ed::makeAudio(44100, 1, 44100);
@@ -736,7 +611,7 @@ int main() {
       const int64_t want2 = static_cast<ed::Stretch>(m) == ed::Stretch::Tape ? std::llround(44100 / std::pow(2.0, 3 / 12.0)) : std::llround(44100 * 1.5);
       lens = lens && std::llabs(o.frames() - want2) <= 1 && finite(std::vector<float>(o.L.begin(), o.L.end()));
     }
-    expect(lens, "audio editor stretch: every method (Voice and Beats included) gives the exact length");
+    expect(lens, "audio editor stretch: both methods give the exact length");
 
     // Live effects: an octave up on a 15 kHz tone (30 kHz, above Nyquist) must not fold back.
     const auto hi = sine(15000, static_cast<size_t>(kSr), 0.5);

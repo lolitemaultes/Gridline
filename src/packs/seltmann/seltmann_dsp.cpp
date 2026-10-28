@@ -59,14 +59,6 @@ struct WarpSlot {
   std::vector<std::pair<std::chrono::steady_clock::time_point, std::unique_ptr<Render>>> retired;
 };
 
-stretch::Mode modeOf(int m) {
-  switch (m) {
-    case 1: return stretch::Mode::Transient;
-    case 2: return stretch::Mode::Mono;
-    default: return stretch::Mode::Auto;
-  }
-}
-
 std::unique_ptr<Render> makeRender(const WarpSlot& w, double tempo) {
   if (!w.src || w.b <= w.a || tempo <= 0) return nullptr;
   auto r = std::make_unique<Render>();
@@ -80,7 +72,7 @@ std::unique_ptr<Render> makeRender(const WarpSlot& w, double tempo) {
   const float* in[2] = {w.src->left.data() + w.a, w.src->right.data() + w.a};
   float* out[2] = {r->L.data(), r->R.data()};
   stretch::Settings st;
-  st.mode = modeOf(w.mode);
+  st.mode = stretch::kStretch;  // J-153: one stretch (the stored mode no longer matters)
   st.pitch = 1;
   const Analysis& g = w.grid;
   const double beatA = w.beatA;
@@ -988,7 +980,7 @@ bool renderSpan(const Model& m, SamplePtr src, double b0, double b1, const Rende
     float* out[2] = {l.data(), r.data()};
     const float* inw[2] = {in[0] + w.a, in[1] + w.a};
     stretch::Settings st;
-    st.mode = modeOf(o.stretchMode);
+    st.mode = stretch::kStretch;
     st.pitch = s.sampleRate / o.sampleRate;  // output frames play at the project rate: keep the musical pitch
     const double outBeat = 60.0 / bpm * o.sampleRate;
     stretch::processMapped(inw, 2, w.b - w.a, out, total, s.sampleRate, st, [&](int64_t j) {
