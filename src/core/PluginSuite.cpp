@@ -253,6 +253,11 @@ const std::vector<Member>& members(const std::string& suiteId) {
   return it == t.bySuite.end() ? none : it->second;
 }
 
+const std::vector<Member>& members(const char* suiteId) {
+  const std::string id = suiteId ? suiteId : "";
+  return members(id);
+}
+
 const Member* findMember(const std::string& type) {
   const auto& t = tables();
   auto it = t.byType.find(type);

@@ -268,7 +268,7 @@ align::Scene sceneOf(const Report& r) {
     align::Ctl c;
     c.r = B(r.controls[i]);
     c.clip = i < r.controlClip.size() ? B(r.controlClip[i]) : align::Box{};
-    c.kind = i < r.controlKind.size() ? r.controlKind[i] : align::kOther;
+    c.kind = i < r.controlKind.size() ? r.controlKind[i] : uint8_t{align::kOther};
     c.what = r.controlWhat[i];
     s.ctls.push_back(c);
   }

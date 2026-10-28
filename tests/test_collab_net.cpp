@@ -678,6 +678,8 @@ void testLifecycle() {
   // the whole file lifecycle through the controllers, as the app does it
   auto net = MemFabric::makeNet();
   const std::string root = sim::tmpDir("life");
+  // The documents outlive the controllers: closing a session on teardown saves the document.
+  Document da, db;
   Controller ca(root + "/cfgA"), cb(root + "/cfgB");
   ca.fabricFactory = [net] { return std::make_unique<MemFabric>(net, "Alex"); };
   cb.fabricFactory = [net] { return std::make_unique<MemFabric>(net, "Sam"); };
@@ -686,7 +688,6 @@ void testLifecycle() {
   pb.name = "Sam";
   ca.setProfile(pa);
   cb.setProfile(pb);
-  Document da, db;
   da.reset(makeEmptySong());
   da.addChannel("Kick", "gl.kick");
   std::string err;

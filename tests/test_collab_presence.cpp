@@ -479,6 +479,8 @@ void testListModel() {
 void testJoinCardAndPresence() {
   auto net = MemFabric::makeNet();
   const std::string root = sim::tmpDir("presence_ctl");
+  // The documents outlive the controllers: closing a session on teardown saves the document.
+  Document da, db;
   Controller ca(root + "/cfgA"), cb(root + "/cfgB");
   ca.fabricFactory = [net] { return std::make_unique<MemFabric>(net, "Alex"); };
   cb.fabricFactory = [net] { return std::make_unique<MemFabric>(net, "Sam"); };
@@ -487,7 +489,6 @@ void testJoinCardAndPresence() {
   pb.name = "Sam";
   ca.setProfile(pa);
   cb.setProfile(pb);
-  Document da, db;
   da.reset(makeEmptySong());
   da.addChannel("Kick", "gl.kick");
   std::string err;

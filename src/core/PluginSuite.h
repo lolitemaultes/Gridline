@@ -58,6 +58,9 @@ inline constexpr uint32_t kVst3Uid0 = 0x47524944, kVst3Uid1 = 0x4C494E45, kVst3U
 
 // Members of a suite in catalogue order (empty for an unknown suite).
 const std::vector<Member>& members(const std::string& suiteId);
+// Same, for a literal id (the plugin entries' GRIDLINE_SUITE): no temporary string at the call site,
+// so a reference to the result never looks like it is bound to one.
+const std::vector<Member>& members(const char* suiteId);
 // The member for a type in whatever suite holds it; nullptr when excluded / unknown.
 const Member* findMember(const std::string& type);
 // Lookups by plugin identity (nullptr when none).
