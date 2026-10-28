@@ -176,10 +176,19 @@ int collabMain(int argc, char** argv) {
   uint64_t opsBeforeSession = 0, opsAfterSession = 0;
   double connectedAt = -1, latencyMs = -1;
   uint64_t latencySent = 0;
+  bool latencyPending = false;
   while (secondsSince(t0) < seconds) {
     const double now = secondsSince(t0);
     ctl.frame(now);
     Session* s = ctl.session();
+    // the latency mark goes out on its own, after the frame that sent the host's edits: the time
+    // measured is an edit's trip to the other process, not this computer importing the audio file
+    if (latencyPending) {
+      latencyPending = false;
+      const ObjectId ch0 = doc.song().channels.empty() ? kNoId : doc.song().channels[0].id;
+      latencySent = wallMs();
+      doc.renameChannel(ch0, "lat:" + std::to_string(latencySent));
+    }
     if (!inviteWritten && !inviteId.empty()) {
       const auto* v = ctl.hub()->invite(inviteId);
       if (v && v->status >= Hub::InviteStatus::Ready) {
@@ -208,8 +217,7 @@ int collabMain(int argc, char** argv) {
           const ObjectId smp = doc.addChannel("Loop", "gl.sampler");
           doc.editChannel(smp, "sample", [&](Channel& c) { c.plugin.data = fs::absolute(audio).string(); });
         }
-        latencySent = wallMs();
-        doc.renameChannel(ch0, "lat:" + std::to_string(latencySent));
+        latencyPending = true;
         editedAt = now;
       } else {
         for (int k = 0; k < 4; ++k) doc.addNote(pat, ch0, Note(k * 96 + 24, 24, 72 - k, 70));
