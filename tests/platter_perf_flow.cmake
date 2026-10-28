@@ -27,7 +27,10 @@ set(ENV{GRIDLINE_PLATTER_TRACE} "1")
 set(ENV{GRIDLINE_PLATTER_DEMO} "${OUT}/Deck A 120.wav")
 set(ENV{GRIDLINE_PLATTER_DEMO_B} "${OUT}/Deck B 100.wav")
 set(ENV{GRIDLINE_PLATTER_PROFILE} "ddj200")
-set(ENV{GRIDLINE_PLATTER_BARS} "8")  # one pass = the whole performance (the loop never wraps in it)
+# One pass = the whole performance: the loop must never wrap in it (a wrap ends the pass).
+# The script's waits are wall time and slow software-GL frames add to them (a loaded CI runner
+# went past the 8 bars once used), so the pattern is as long as it can be: 64 bars.
+set(ENV{GRIDLINE_PLATTER_BARS} "64")
 set(ENV{SDL_AUDIODRIVER} "dummy")
 
 # the controller's part (ms, status, data 1, data 2; hex bytes)
