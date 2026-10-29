@@ -591,6 +591,11 @@ void Importer::importTracksAndClips() {
             cl.reverse = (e.u32(o + 72) & 1u) != 0;
           }
           if (auto cc = channelCents_.find(ch->second); cc != channelCents_.end()) cl.pitch += static_cast<float>(cc->second);
+          // J-164: FL resamples the whole pitch (channel pitch shift + clip):
+          // it sets the speed too, so the clip keeps FL's timing here.
+          cl.speedPitch = cl.pitch;
+          if (const Channel* sc = s_.channel(ch->second); sc && sc->plugin.params.size() > static_cast<size_t>(pp::SmpPitchShift))
+            cl.speedPitch += sc->plugin.params[pp::SmpPitchShift];
           ++audioClips;
         } else {
           ++other;

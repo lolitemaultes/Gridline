@@ -55,6 +55,36 @@ struct MidiPortBus {
   }
 };
 
+// J-165: every note that started in the current block, with its sample offset:
+// sequenced and live notes reaching a channel's instrument (after its note
+// processors), audio clip starts (song mode) and notes from the MIDI input.
+// Filled by the engine on the audio thread before the mixer graph runs, so
+// effects (Tideline's note trigger) read it complete. Fixed size; extra hits
+// in one block are dropped.
+struct NoteHitBus {
+  enum Kind : uint8_t { Note = 0, ClipStart, Input };
+  struct Hit {
+    uint32_t channel = 0;  // Channel::id (Input: the channel the note was routed to, 0 = none)
+    int16_t offset = 0;    // sample in the block
+    int16_t port = -1;     // MIDI Out port of the channel (gl.midiout), else -1
+    uint8_t note = 0;      // 0..127 (clip starts: 0)
+    uint8_t kind = Note;
+  };
+  static constexpr int kMax = 512;
+  std::array<Hit, kMax> hits{};
+  int count = 0;
+  void clear() { count = 0; }
+  void add(uint32_t channel, int offset, int note, int port, Kind kind) {
+    if (count >= kMax) return;
+    Hit& h = hits[static_cast<size_t>(count++)];
+    h.channel = channel;
+    h.offset = static_cast<int16_t>(std::clamp(offset, 0, 32767));
+    h.port = static_cast<int16_t>(port);
+    h.note = static_cast<uint8_t>(std::clamp(note, 0, 127));
+    h.kind = kind;
+  }
+};
+
 struct ProcessContext {
   double sampleRate = 44100.0;
   double tempo = 140.0;
@@ -62,6 +92,7 @@ struct ProcessContext {
   double tick = 0;       // song/pattern position at the start of the block
   bool playing = false;  // transport running
   MidiPortBus* ports = nullptr;  // engine's MIDI port notes (null offline / in previews)
+  const NoteHitBus* hits = nullptr;  // J-165: notes started in this block (null outside the engine)
   // Transport details for hosted plugins (time info).
   int tsNum = 4, tsDen = 4;            // time signature
   bool looping = false;                // playback wraps from loopEnd back to loopStart (ticks)

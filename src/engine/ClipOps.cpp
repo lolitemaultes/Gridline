@@ -5,6 +5,7 @@
 #include <cmath>
 #include <filesystem>
 #include "../core/ClipLoop.h"
+#include "../core/ClipRate.h"
 #include "../core/PluginParams.h"
 #include "../packs/edison/edison.h"
 #include "Render.h"
@@ -33,13 +34,11 @@ struct ClipMap {
 
 ClipMap clipMap(const Song& song, const Channel& ch, const Clip& c) {
   ClipMap m;
-  const double cents = par(ch, pp::SmpPitchShift, 0) + c.pitch;
-  const bool keepPitch = par(ch, pp::SmpStretchMode, 0) >= 0.5;
-  const double tf = std::max(0.01, c.stretch * par(ch, pp::SmpTimeStretch, 1));
+  const ClipRate r = clipRate(ch, c);  // J-164: shared with the engine and the waveform
   if (c.syncBpm > 0)
-    m.secPerTick = 60.0 / (c.syncBpm * song.ppq) / tf;
+    m.secPerTick = 60.0 / (c.syncBpm * song.ppq) / r.timeFactor;
   else
-    m.speed = (keepPitch ? 1.0 : std::pow(2.0, cents / 1200.0)) / tf;
+    m.speed = r.speed;
   return m;
 }
 
@@ -93,17 +92,26 @@ double clipSourceAt(const Song& song, const Clip& c, const TempoMap& map, double
   return c.audioStart + (map.secondsAt(tick) - map.secondsAt(static_cast<double>(c.start))) * m.speed;
 }
 
+namespace {
+// Ticks from the clip's start until it has played `span` source seconds.
+Tick ticksForSpan(const Song& song, const Clip& c, double span) {
+  const Channel* ch = song.channel(c.source);
+  if (!ch) return 0;
+  const ClipMap m = clipMap(song, *ch, c);
+  if (m.secPerTick > 0) return std::max<Tick>(1, static_cast<Tick>(std::llround(span / m.secPerTick)));
+  TempoMap map;
+  map.build(song);
+  const double s0 = map.secondsAt(static_cast<double>(c.start));
+  const double end = map.tickAtSeconds(s0 + span / std::max(1e-6, m.speed));
+  return std::max<Tick>(1, static_cast<Tick>(std::llround(end - static_cast<double>(c.start))));
+}
+}  // namespace
+
 Tick audioClipNaturalLength(const Song& song, const Clip& c) {
   SamplePtr smp;
   double a = 0, b = 0;
   if (!sourceWindow(song, c, smp, a, b)) return 0;
-  const ClipMap m = clipMap(song, *song.channel(c.source), c);
-  if (m.secPerTick > 0) return std::max<Tick>(1, static_cast<Tick>(std::llround((b - a) / m.secPerTick)));
-  TempoMap map;
-  map.build(song);
-  const double s0 = map.secondsAt(static_cast<double>(c.start));
-  const double end = map.tickAtSeconds(s0 + (b - a) / std::max(1e-6, m.speed));
-  return std::max<Tick>(1, static_cast<Tick>(std::llround(end - static_cast<double>(c.start))));
+  return ticksForSpan(song, c, b - a);
 }
 
 ObjectId splitClipAt(Song& song, ObjectId id, Tick at) {
@@ -233,11 +241,18 @@ bool setClipStretchMode(Song& song, ObjectId id, double timeFactor, int mode) {
   if (!c || c->kind != ClipKind::Audio || !(timeFactor > 0)) return false;
   Channel* ch = song.channel(c->source);
   if (!ch) return false;
+  // J-164: the clip keeps playing the same stretch of its audio: its length
+  // follows the speed change only (a time mode switch keeps it, "Time" x2
+  // doubles it, a trimmed clip stays trimmed), never snaps to the natural length.
+  TempoMap map;
+  map.build(song);
+  const double span = clipSourceAt(song, *c, map, static_cast<double>(c->start + song.clipLength(*c))) - c->audioStart;
   if (ch->plugin.type == "gl.sampler" && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode))
     ch->plugin.params[pp::SmpStretchMode] = static_cast<float>(stretch::choiceOf(stretch::modeOf(mode)));  // J-153 / J-157: Resample, Stretch or Rubber Band
   c = song.clip(id);
   c->stretch = std::clamp(timeFactor, 0.0625, 16.0);
-  if (Tick n = audioClipNaturalLength(song, *c); n > 0) song.clip(id)->length = n;
+  if (span > 0)
+    if (Tick n = ticksForSpan(song, *c, span); n > 0) song.clip(id)->length = n;
   return true;
 }
 
@@ -266,6 +281,7 @@ std::string renderClipStretch(Song& song, ObjectId id, double timeFactor, double
   c->stretch = 1.0;
   c->syncBpm = 0;
   c->pitch = 0;
+  c->speedPitch = 0;  // J-164
   if (Tick n = audioClipNaturalLength(song, *c); n > 0) song.clip(id)->length = n;
   return path;
 }

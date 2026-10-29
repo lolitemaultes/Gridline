@@ -45,9 +45,26 @@ struct Lr4 {
   }
 };
 
+// J-165: prepared on the UI thread (prepareAux): the note trigger's source channel.
+struct TidelineAux final : AuxData {
+  uint32_t channel = 0;
+};
+
 class Tideline final : public Effect {
  public:
   void setSideIo(const SideIo& io) override { io_ = io; }
+
+  void processAux(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R, int n) override {
+    const auto* ta = dynamic_cast<const TidelineAux*>(aux.custom.get());
+    srcChannel_ = ta ? ta->channel : 0;
+    process(s, ctx, L, R, n);
+  }
+
+  // J-165: the Audio trigger's look-ahead delays the ducked signal.
+  int latencyFor(const PluginState& s, double sampleRate) const override {
+    if (std::clamp(ipar(s, BwTrigger), 0, 2) != TrigAudio) return 0;
+    return lookaheadSamples(par(s, BwLookahead, 0), sampleRate);
+  }
 
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const double sr = ctx.sampleRate > 0 ? ctx.sampleRate : 44100.0;
@@ -84,22 +101,42 @@ class Tideline final : public Effect {
       detPrimed_ = false;
     }
 
-    // ---- triggers that apply to the whole block (MIDI: block start)
-    bool midiHit = false;
-    if (trig == TrigMidi && ctx.ports) {
-      const int port = ipar(s, BwMidiPort, -1), note = ipar(s, BwMidiNote, -1);
-      std::array<uint64_t, 2> held{};
-      for (int q = 0; q < MidiPortBus::kPorts; ++q) {
-        if (port >= 0 ? q != port : !ctx.ports->used[static_cast<size_t>(q)].load(std::memory_order_relaxed)) continue;
-        for (int k = (note >= 0 ? note : 0); k <= (note >= 0 ? note : 127); ++k)
-          if (ctx.ports->get(q, k)) held[static_cast<size_t>(k >> 6)] |= uint64_t{1} << (k & 63);
+    // ---- MIDI / note triggers: the sample offsets in this block where a matching note starts
+    int hitCount = 0;
+    if (trig == TrigMidi) {
+      const int port = ipar(s, BwMidiPort, -1);
+      int lo = ipar(s, BwMidiNote, -1), hi = ipar(s, BwMidiNoteHi, -1);
+      if (lo < 0) lo = 0, hi = 127;  // any note
+      else if (hi < lo) hi = lo;     // one note
+      const int src = std::clamp(ipar(s, BwNoteSrc, SrcPorts), 0, 2);
+      if (ctx.hits) {  // J-165: sample-accurate note starts from the engine
+        for (int k = 0; k < ctx.hits->count; ++k) {
+          const NoteHitBus::Hit& h = ctx.hits->hits[static_cast<size_t>(k)];
+          bool ok = false;
+          if (src == SrcChannel) ok = srcChannel_ != 0 && h.channel == srcChannel_ && h.kind != NoteHitBus::Input;
+          else if (src == SrcInput) ok = h.kind == NoteHitBus::Input;
+          else ok = h.kind == NoteHitBus::Note && h.port >= 0 && (port < 0 || h.port == port);
+          if (ok && h.kind != NoteHitBus::ClipStart) ok = h.note >= lo && h.note <= hi;  // clip starts have no note
+          if (ok) addHit(h.offset, n, hitCount);
+        }
+        midiHeld_ = {};
+      } else if (ctx.ports && src == SrcPorts) {  // outside the engine: notes held on the port bus (block start)
+        std::array<uint64_t, 2> held{};
+        for (int q = 0; q < MidiPortBus::kPorts; ++q) {
+          if (port >= 0 ? q != port : !ctx.ports->used[static_cast<size_t>(q)].load(std::memory_order_relaxed)) continue;
+          for (int k = lo; k <= hi; ++k)
+            if (ctx.ports->get(q, k)) held[static_cast<size_t>(k >> 6)] |= uint64_t{1} << (k & 63);
+        }
+        // a note that was not held in the previous block starts the curve
+        if (((held[0] & ~midiHeld_[0]) | (held[1] & ~midiHeld_[1])) != 0) addHit(0, n, hitCount);
+        midiHeld_ = held;
+      } else {
+        midiHeld_ = {};
       }
-      // a note that was not held in the previous block starts the curve
-      midiHit = ((held[0] & ~midiHeld_[0]) | (held[1] & ~midiHeld_[1])) != 0;
-      midiHeld_ = held;
     } else {
       midiHeld_ = {};
     }
+    int nextHit = 0;
 
     // ---- audio trigger detector setup
     const float* scL = nullptr;
@@ -116,6 +153,13 @@ class Tideline final : public Effect {
         detHi_ = hi;
         detPrimed_ = true;
       }
+    }
+    // J-165: look-ahead (Audio): the ducked signal is delayed, the detector hears the key undelayed.
+    const int look = trig == TrigAudio ? lookaheadSamples(par(s, BwLookahead, 0), sr) : 0;
+    if (look != look_) {
+      look_ = look;
+      ring_.fill(0.f);
+      ringR_.fill(0.f);
     }
     const double thr = std::pow(10.0, std::clamp(static_cast<double>(par(s, BwThreshold, -24)), -60.0, 0.0) / 20.0);
     const double rearm = thr * 0.5;  // -6 dB hysteresis
@@ -139,8 +183,10 @@ class Tideline final : public Effect {
         }
       } else {
         bool hit = false;
-        if (trig == TrigMidi) hit = midiHit && i == 0;
-        else {
+        if (trig == TrigMidi) {
+          while (nextHit < hitCount && hitAt_[static_cast<size_t>(nextHit)] < i) ++nextHit;
+          hit = nextHit < hitCount && hitAt_[static_cast<size_t>(nextHit)] == i;
+        } else {
           const double x = 0.5 * (static_cast<double>(scL[i]) + static_cast<double>(scR[i]));
           const double y = std::fabs(detLp_.process(detHp_.process(x)));
           env_ = y > env_ ? y : y + (env_ - y) * envRel;
@@ -180,6 +226,14 @@ class Tideline final : public Effect {
       gain_ = g1 + (gain_ - g1) * smA;
       const double g = gain_;
       double l = L[i], r = R[i];
+      if (look > 0) {  // the detector above read the key (or this input) before the delay
+        const size_t w = static_cast<size_t>(ringPos_), rd = static_cast<size_t>((ringPos_ - look + kLookaheadRing) % kLookaheadRing);
+        ring_[w] = L[i];
+        ringR_[w] = R[i];
+        l = ring_[rd];
+        r = ringR_[rd];
+        ringPos_ = (ringPos_ + 1) % kLookaheadRing;
+      }
       // Gain on the whole signal, or on one band of an LR4 split (the other band passes).
       // Listen (J-98) solos what is being ducked: the band (Lows / Highs) of the
       // ducked component (both channels, the mid or the side); everything that
@@ -226,6 +280,9 @@ class Tideline final : public Effect {
     flash_ = 0;
     peak_ = 0;
     midiHeld_ = {};
+    ring_.fill(0.f);
+    ringR_.fill(0.f);
+    ringPos_ = 0;
     bandL_.clear();
     bandR_.clear();
     detHp_.clear();
@@ -255,6 +312,24 @@ class Tideline final : public Effect {
   double flash_ = 0;
   float peak_ = 0;
   std::array<uint64_t, 2> midiHeld_{};
+  // J-165: note trigger
+  static constexpr int kMaxHits = 64;
+  std::array<int, kMaxHits> hitAt_{};
+  uint32_t srcChannel_ = 0;
+  // Adds a trigger at sample `at` (kept sorted and unique; extra ones in one block are dropped).
+  void addHit(int at, int n, int& count) {
+    at = std::clamp(at, 0, std::max(0, n - 1));
+    int k = count;
+    while (k > 0 && hitAt_[static_cast<size_t>(k - 1)] > at) --k;
+    if (k > 0 && hitAt_[static_cast<size_t>(k - 1)] == at) return;
+    if (count >= kMaxHits) return;
+    for (int j = count; j > k; --j) hitAt_[static_cast<size_t>(j)] = hitAt_[static_cast<size_t>(j - 1)];
+    hitAt_[static_cast<size_t>(k)] = at;
+    ++count;
+  }
+  // J-165: look-ahead delay of the ducked signal
+  std::array<float, kLookaheadRing> ring_{}, ringR_{};
+  int ringPos_ = 0, look_ = 0;
   Lr4 bandL_, bandR_;
   double bandHz_ = -1, bandSr_ = 0;
   Biquad detHp_, detLp_;
@@ -275,6 +350,12 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
   return nullptr;
 }
 
-bool prepareAux(const PluginState&, ChannelAux&) { return false; }
+bool prepareAux(const PluginState& s, ChannelAux& aux) {
+  if (s.type != "gl.tideline") return false;
+  auto ta = std::make_shared<TidelineAux>();
+  ta->channel = noteSourceChannel(s.data);
+  aux.custom = std::move(ta);
+  return true;
+}
 
 }  // namespace gl::packs::tideline

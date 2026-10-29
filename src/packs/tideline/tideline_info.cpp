@@ -52,6 +52,9 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params[static_cast<size_t>(BwNodeX0 + i)] = lin("Point " + std::to_string(i + 1) + " time", "%", 0, 1, kDefNodeX[i]);
     p.params[static_cast<size_t>(BwNodeY0 + i)] = lin("Point " + std::to_string(i + 1) + " level", "%", 0, 1, kDefNodeY[i]);
   }
+  p.params[BwNoteSrc] = ch("Note source", {"MIDI Out ports", "Channel", "MIDI input"}, SrcPorts);
+  p.params[BwMidiNoteHi] = lin("MIDI note to", "", -1, 127, -1);
+  p.params[BwLookahead] = lin("Look-ahead", "ms", 0, kMaxLookaheadMs, 0);
   p.sideInParam = BwScIn;
   p.midiInput = true;
   p.editorWidth = 720;

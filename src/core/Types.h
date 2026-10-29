@@ -110,6 +110,11 @@ struct Clip {
   float gain = 1.0f;         // linear clip gain
   float pitch = 0.0f;        // cents, added to the channel's pitch shift
   double stretch = 1.0;      // time factor (2 = plays half as fast)
+  // J-164: the cents of the clip's whole pitch (channel pitch shift + `pitch`)
+  // that also set its speed in Resample mode (core/ClipRate.h). Gridline's
+  // own clips keep 0: no pitch edit changes their timing. FL projects: the
+  // pitch at import (FL plays a resampled pitch faster or slower).
+  float speedPitch = 0.0f;
   double syncBpm = 0;        // > 0: follows the song tempo, natural speed at this tempo
   bool reverse = false;
   // Recording takes (J-8): clips recorded in the same loop-recording session
@@ -133,6 +138,7 @@ struct Clip {
     return id == o.id && pattern == o.pattern && track == o.track && start == o.start && length == o.length &&
            kind == o.kind && source == o.source && offset == o.offset && muted == o.muted && audioStart == o.audioStart &&
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
+           speedPitch == o.speedPitch &&
            stretch == o.stretch && syncBpm == o.syncBpm && reverse == o.reverse && takeGroup == o.takeGroup &&
            take == o.take && launched == o.launched && group == o.group && fadeInShape == o.fadeInShape &&
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&

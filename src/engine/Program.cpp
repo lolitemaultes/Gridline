@@ -10,6 +10,7 @@
 #include "../core/Arrangements.h"
 #include "../core/ClipGain.h"
 #include "../core/ClipLoop.h"
+#include "../core/ClipRate.h"
 #include "../core/PatternAutomation.h"
 #include "../core/PluginParams.h"
 #include "Dsp.h"
@@ -236,14 +237,16 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   if (!smp || smp->frames() < 2 || smp->sampleRate <= 0) return false;
   auto par = [&](int k, double d) { return k < static_cast<int>(ch.plugin.params.size()) ? static_cast<double>(ch.plugin.params[static_cast<size_t>(k)]) : d; };
   const bool sampler = ch.plugin.type == "gl.sampler";
-  const double cents = (sampler ? par(pp::SmpPitchShift, 0) : 0.0) + c.pitch;
-  const bool stretchMode = sampler && par(pp::SmpStretchMode, 0) >= 0.5;
+  // J-164: speed and pitch from the mapping the clip operations and the
+  // waveform share (core/ClipRate.h): pitch never changes how the source
+  // spans the clip (an FL clip's speed pitch aside).
+  const ClipRate rate = clipRate(ch, c);
+  const bool stretchMode = !rate.resample;
   // J-157: Rubber Band or the stretch keeps the pitch (also of tempo-synced clips).
   const bool rubber = sampler && stretch::modeOf(par(pp::SmpStretchMode, 0)) == stretch::Mode::RubberBand;
   out.engine = rubber ? stretch::Engine::RubberBand : stretch::Engine::Stretch;
   const stretch::Mode keepMode = rubber ? stretch::Mode::RubberBand : stretch::kStretch;
-  const double timeFactor = std::max(0.01, c.stretch * (sampler ? par(pp::SmpTimeStretch, 1) : 1.0));
-  const double ratio = std::pow(2.0, cents / 1200.0);
+  const double timeFactor = rate.timeFactor;
   out.start = c.start;
   out.end = c.start + song.clipLength(c);
   out.startSec = map.secondsAt(static_cast<double>(out.start));
@@ -267,13 +270,15 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   if (c.syncBpm > 0) {  // follows the tempo: always pitch-independent
     out.secPerTick = 60.0 / (c.syncBpm * song.ppq) / timeFactor;
     out.granular = true;
-    out.pitch = ratio;
+    out.pitch = rate.resample ? rate.pitch * timeFactor : rate.pitch;  // the pitch alone (the tempo fit keeps it)
   } else if (stretchMode) {
-    out.speed = 1.0 / timeFactor;
-    out.pitch = ratio;
-    out.granular = ratio != 1.0 || out.speed != 1.0;
-  } else {  // resample: pitch and speed together
-    out.speed = ratio / timeFactor;
+    out.speed = rate.speed;
+    out.pitch = rate.pitch;
+    out.granular = out.pitch != 1.0 || out.speed != 1.0;
+  } else {  // resample: the stretch resamples; a pitch apart from the speed goes through the stretch
+    out.speed = rate.speed;
+    out.pitch = rate.pitch;
+    out.granular = std::fabs(rate.pitch / rate.speed - 1.0) > 1e-9;
   }
   double played = out.secPerTick > 0 ? static_cast<double>(out.end - out.start) * out.secPerTick : out.durSec * out.speed;
   out.cutEnd = out.srcStart + played < out.srcEnd - 1e-6;
@@ -305,12 +310,13 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
       // At the clip's own tempo, unpitched, it is a plain read.
       need = std::fabs(rq.pitch - 1.0) > 1e-9 || !map.constant() || std::fabs(map.secondsAt(1.0) - map.secondsAt(0.0) - out.secPerTick) > 1e-12;
     } else if (out.granular || mode != stretch::Mode::Resample) {
+      if (mode == stretch::Mode::Resample) mode = stretch::kStretch;  // J-164: resampled, pitched apart from its speed
       rq.speed = out.speed;
       rq.pitch = out.pitch * chanRatio;
       need = std::fabs(rq.pitch - 1.0) > 1e-9 || std::fabs(out.speed - 1.0) > 1e-9;
     } else {  // resample: speed carries the pitch; a channel pitch on top keeps the timing
       rq.speed = out.speed;
-      rq.pitch = chanRatio;
+      rq.pitch = out.speed * chanRatio;  // J-164: the speed's pitch times the channel's, as the realtime path plays it
       if (std::fabs(chanRatio - 1.0) > 1e-9) mode = stretch::kStretch;
       need = std::fabs(out.speed - 1.0) > 1e-9 || std::fabs(chanRatio - 1.0) > 1e-9;
     }
@@ -848,6 +854,11 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pc.layerMode = c.layerMode;
     pc.keyLo = c.keyLo;
     pc.keyHi = c.keyHi;
+    if (c.plugin.type == "gl.midiout")  // J-165: the port its notes go out on (note triggers)
+      pc.midiPort = std::clamp(static_cast<int>(std::lround(c.plugin.params.size() > static_cast<size_t>(pp::MoPort)
+                                                                  ? c.plugin.params[static_cast<size_t>(pp::MoPort)]
+                                                                  : 0.0f)),
+                               0, MidiPortBus::kPorts - 1);
     for (ObjectId k : c.layer) {
       int ki = song.channelIndex(k);
       if (ki >= 0 && k != c.id) pc.layer.push_back(ki);

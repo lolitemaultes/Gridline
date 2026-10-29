@@ -893,6 +893,12 @@ target_link_libraries(gridline_tests_j87 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j87 PRIVATE tests src)
 target_compile_options(gridline_tests_j87 PRIVATE ${GL_WARN})
 add_test(NAME j87 COMMAND gridline_tests_j87 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-164: an audio clip's pitch never changes its length or how its audio fills it.
+add_executable(gridline_tests_j164 tests/test_j164.cpp)
+target_link_libraries(gridline_tests_j164 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j164 PRIVATE tests src)
+target_compile_options(gridline_tests_j164 PRIVATE ${GL_WARN})
+add_test(NAME j164 COMMAND gridline_tests_j164 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-109: Stop releases every sound outside the song; Stop twice (panic) silences tails too.
 add_executable(gridline_tests_j109 tests/test_j109.cpp)
 target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
@@ -1287,6 +1293,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/j98_slider_follow.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j98_slider_follow PROPERTIES TIMEOUT 300)
+
+    # J-165: Tideline's trigger Source list: pick a channel (notes) and a mixer track (audio), undo.
+    add_test(NAME j165_tideline_source
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j165_tideline_source
+                     -P ${CMAKE_SOURCE_DIR}/tests/j165_tideline_source.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j165_tideline_source PROPERTIES TIMEOUT 300)
 
     # J-105: Convolver EQ / IR envelope point editing at 100 / 200 % (SDL drags): click adds one point, no painting, undo per gesture, save + load.
     add_test(NAME j105_conv_points

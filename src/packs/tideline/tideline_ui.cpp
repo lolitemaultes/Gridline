@@ -17,7 +17,10 @@
 #include "../../app/App.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
+#include "../../core/MenuOps.h"
+#include "../../core/NoteTools.h"
 #include "tideline.h"
+#include "tideline_source.h"
 
 namespace gl::packs::tideline {
 
@@ -478,6 +481,152 @@ void caption(ImDrawList* dl, App& a, ImVec2 p, const char* s) {
   dl->AddText(a.fontMono, theme::kFontLabel, p, pal().textFaint, i18n::tr(s));
 }
 
+// ---------------------------------------------------------------- J-165 trigger sources
+
+std::string trackName(const Song& s, ObjectId id) {
+  const int i = s.mixerIndex(id);
+  return i >= 0 ? mixerTrackName(s, static_cast<size_t>(i)) : std::string(i18n::tr("(missing track)"));
+}
+
+// Dev / test hook (--dev-input "pts" / "sdlpt"): the source dropdown ("tideline.source": its
+// rect; point 0 = (what is picked, 0, id): Audio 0 own / 1 sidechain / 2 input route, MIDI
+// 10 ports / 11 channel / 12 input) and its open list ("tideline.sources": one point per
+// entry at its centre, k = the entry's code: a mixer track / channel id, -1 / -2 / -3 for
+// the fixed entries, -1000 - id for the remove entries).
+void devSource(float kind, double id) {
+  const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+  pui::DevPoints d;
+  d.x0 = r0.x, d.y0 = r0.y, d.x1 = r1.x, d.y1 = r1.y;
+  d.pts.push_back({static_cast<double>(kind), 0.0, id});
+  pui::devPointsSet("tideline.source", d);
+}
+struct DevList {
+  pui::DevPoints d;
+  bool any = false;
+  void item(double code) {  // after each Selectable
+    const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+    if (!any) d.x0 = r0.x, d.y0 = r0.y, d.x1 = r1.x, d.y1 = r1.y, any = true;
+    d.x0 = std::min(d.x0, r0.x), d.y0 = std::min(d.y0, r0.y), d.x1 = std::max(d.x1, r1.x), d.y1 = std::max(d.y1, r1.y);
+    d.pts.push_back({static_cast<double>(r0.x + r1.x) * 0.5, static_cast<double>(r0.y + r1.y) * 0.5, code});
+  }
+  void publish() {  // points relative to the list rect (sdlpt "pt i")
+    if (!any) return;
+    const double w = std::max(1.0f, d.x1 - d.x0), h = std::max(1.0f, d.y1 - d.y0);
+    for (auto& p : d.pts) p = {(p[0] - d.x0) / w, (d.y1 - p[1]) / h, p[2]};
+    pui::devPointsSet("tideline.sources", d);
+  }
+};
+
+void listHeading(const char* s) {
+  ImGui::Separator();
+  ImGui::TextDisabled("%s", i18n::tr(s));
+}
+
+// Audio trigger source: own input, a mixer track or a channel (a sidechain route
+// into this track is made for it), or the sidechain routes already there.
+void audioSourcePicker(App& a, const PluginTarget& t, float width) {
+  const Song& s = a.doc.song();
+  const int scIn = static_cast<int>(std::lround(pv(a, t, BwScIn)));
+  const std::vector<ObjectId> keys = sidechainKeys(s, t.owner);
+  std::string preview;
+  float kind = 0;
+  double code = 0;
+  if (scIn > 0) {
+    const ObjectId src = routeSourceTrack(s, t.owner, scIn);
+    preview = src != kNoId ? trackName(s, src) : std::string(i18n::tr("(missing input route)"));
+    kind = 2, code = src;
+  } else if (scIn < 0 && !keys.empty()) {
+    for (size_t k = 0; k < keys.size(); ++k) preview += (k ? " + " : "") + trackName(s, keys[k]);
+    kind = 1, code = keys.size() == 1 ? keys[0] : 0;
+  } else {
+    preview = i18n::tr(scIn < 0 ? "Own input (pick a source)" : "Own input");
+  }
+  ImGui::PushID("bwsrc");
+  const bool open = ui::BeginCombo("##src", preview.c_str(), width);
+  devSource(kind, code);
+  if (ImGui::IsItemHovered() && !open)
+    ui::Tooltip(i18n::tr("What the detector listens to. Pick a mixer track or a channel: Tideline routes it here as a sidechain (shown in the mixer)."));
+  if (open) {
+    DevList dev;
+    if (ImGui::Selectable(i18n::tr("Own input"), scIn == 0)) pui::setParamValue(a, t, BwScIn, 0, false);
+    dev.item(-1);
+    listHeading(i18n::N_("Mixer tracks"));
+    for (size_t i = 1; i < s.mixer.size(); ++i) {
+      const MixerTrack& m = s.mixer[i];
+      if (m.id == t.owner || ops::mixerTrackIsFree(s, m.id)) continue;  // (unused inserts: not listed)
+      const bool keyed = std::find(keys.begin(), keys.end(), m.id) != keys.end();
+      const bool sel = (scIn < 0 && keyed) || (scIn > 0 && routeSourceTrack(s, t.owner, scIn) == m.id);
+      const std::string l = mixerTrackName(s, i) + "##mt" + std::to_string(m.id);
+      if (ImGui::Selectable(l.c_str(), sel)) linkAudioTrack(a.doc, t.owner, t.slot, m.id);
+      dev.item(m.id);
+    }
+    if (!s.channels.empty()) listHeading(i18n::N_("Channels"));
+    for (const Channel& c : s.channels) {
+      const bool direct = channelKeysDirectly(s, c.id, t.owner);
+      std::string l = c.name + (c.audioClip ? std::string("  ") + i18n::tr("(audio clips)") : std::string()) + "   " +
+                      (direct ? trackName(s, channelTrack(s, c.id)) : std::string(i18n::tr("gets its own mixer track")));
+      l += "##ch" + std::to_string(c.id);
+      if (ImGui::Selectable(l.c_str(), false)) linkAudioChannel(a.doc, t.owner, t.slot, c.id);
+      dev.item(c.id);
+    }
+    if (!keys.empty()) {
+      listHeading(i18n::N_("Remove a sidechain route"));
+      for (ObjectId k : keys) {
+        const std::string l = std::string(i18n::tr("Remove")) + " " + trackName(s, k) + "##rm" + std::to_string(k);
+        if (ImGui::Selectable(l.c_str(), false)) unlinkAudioTrack(a.doc, t.owner, k);
+        dev.item(-1000.0 - k);
+      }
+    }
+    dev.publish();
+    ImGui::EndCombo();
+  }
+  ImGui::PopID();
+}
+
+// Note trigger source: MIDI Out ports, the MIDI input, or a project channel.
+void noteSourcePicker(App& a, const PluginTarget& t, const PluginState& st, float width) {
+  const Song& s = a.doc.song();
+  const int src = std::clamp(static_cast<int>(std::lround(pv(a, t, BwNoteSrc))), 0, 2);
+  const int port = static_cast<int>(std::lround(pv(a, t, BwMidiPort)));
+  const ObjectId chId = noteSourceChannel(st.data);
+  const Channel* ch = s.channel(chId);
+  const char* inputName = a.singlePlugin ? i18n::N_("Host MIDI input") : i18n::N_("MIDI input (controllers)");
+  std::string preview;
+  if (src == SrcChannel) preview = ch ? ch->name : std::string(i18n::tr("(missing channel)"));
+  else if (src == SrcInput) preview = i18n::tr(inputName);
+  else if (port < 0) preview = i18n::tr("Any MIDI Out port");
+  else preview = std::string(i18n::tr("MIDI Out port")) + " " + std::to_string(port);
+  ImGui::PushID("bwnsrc");
+  const bool open = ui::BeginCombo("##nsrc", preview.c_str(), width);
+  devSource(10.0f + static_cast<float>(src), src == SrcChannel ? static_cast<double>(chId) : 0.0);
+  if (ImGui::IsItemHovered() && !open)
+    ui::Tooltip(i18n::tr("Which notes start the curve: a channel's notes and audio clip starts, the MIDI input, or MIDI Out channels' ports."));
+  if (open) {
+    DevList dev;
+    if (ImGui::Selectable(i18n::tr("Any MIDI Out port"), src == SrcPorts && port < 0)) setNoteSource(a.doc, t.owner, t.slot, SrcPorts, -1);
+    dev.item(-1);
+    if (ImGui::Selectable(i18n::tr("One MIDI Out port"), src == SrcPorts && port >= 0))
+      setNoteSource(a.doc, t.owner, t.slot, SrcPorts, std::max(0, port));
+    dev.item(-2);
+    if (ImGui::Selectable(i18n::tr(inputName), src == SrcInput)) setNoteSource(a.doc, t.owner, t.slot, SrcInput);
+    dev.item(-3);
+    if (!a.singlePlugin && !s.channels.empty()) {
+      listHeading(i18n::N_("Channels: notes and audio clip starts"));
+      for (const Channel& c : s.channels) {
+        std::string l = c.name + (c.audioClip ? std::string("  ") + i18n::tr("(audio clips)") : std::string());
+        l += "##nc" + std::to_string(c.id);
+        if (ImGui::Selectable(l.c_str(), src == SrcChannel && c.id == chId)) linkNoteChannel(a.doc, t.owner, t.slot, c.id);
+        dev.item(c.id);
+      }
+    }
+    dev.publish();
+    ImGui::EndCombo();
+  }
+  ImGui::PopID();
+}
+
+std::string noteLabel(int n) { return tools::pitchName(std::clamp(n, 0, 127)) + " (" + std::to_string(n) + ")"; }
+
 }  // namespace
 
 bool drawEditor(App& a, const PluginTarget& t, float width) {
@@ -546,7 +695,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   const float kw = pui::knobCellWidth(pui::KnobSmall);
   // Curve panel
   float x = o.x;
-  const float panelH = kh + 40;
+  const float panelH = kh + 40 + 30;  // J-165: room for the trigger source row
   auto panel = [&](float px, float pw, const char* title) {
     dl->AddRectFilled(ImVec2(px, lowY), ImVec2(px + pw, lowY + panelH), P.surface800, theme::kRadiusLg);
     dl->AddRect(ImVec2(px, lowY), ImVec2(px + pw, lowY + panelH), P.line, theme::kRadiusLg);
@@ -573,31 +722,40 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 8, lowY + 56), P.textDim, i18n::tr(hint));
   }
   x += stW + 8;
-  // Trigger panel (contents depend on the mode)
+  // Trigger panel (contents depend on the mode). J-165: a source row under the knobs.
   const float trW = o.x + W - x;
   panel(x, trW, trig == TrigAudio ? i18n::N_("AUDIO TRIGGER") : trig == TrigMidi ? i18n::N_("MIDI TRIGGER") : i18n::N_("TEMPO SYNC"));
+  const float srcY = lowY + 22 + kh + 6;
+  const float srcLabelW = 58;
+  if (trig != TrigTempo) caption(dl, a, ImVec2(x + 10, srcY + 5), i18n::N_("SOURCE"));
   if (trig == TrigAudio) {
     float kx = x + 8;
-    const int ks[4] = {BwThreshold, BwRetrigger, BwDetLow, BwDetHigh};
-    const char* kl[4] = {i18n::N_("Threshold"), i18n::N_("Gap"), i18n::N_("Low cut"), i18n::N_("High cut")};
-    for (int k = 0; k < 4 && kx + kw <= x + trW; ++k, kx += kw) pui::knobAt(a, t, ks[k], ImVec2(kx, lowY + 22), i18n::tr(kl[k]), pui::KnobSmall);
-    if (kx + 100 <= x + trW) {
-      ImGui::SetCursorScreenPos(ImVec2(kx + 4, lowY + 24));
-      pui::stepper(a, t, BwScIn, std::min(96.0f, x + trW - kx - 16), nullptr);
-      const int sc = static_cast<int>(std::lround(pv(a, t, BwScIn)));
-      const char* what = sc < 0 ? i18n::N_("Trigger: track sidechain") : sc == 0 ? i18n::N_("Trigger: own input") : i18n::N_("Trigger: input route");
-      dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(kx + 4, lowY + 54), P.textDim, i18n::tr(what));
-    }
+    const int ks[5] = {BwThreshold, BwRetrigger, BwDetLow, BwDetHigh, BwLookahead};
+    const char* kl[5] = {i18n::N_("Threshold"), i18n::N_("Gap"), i18n::N_("Low cut"), i18n::N_("High cut"), i18n::N_("Look-ahead")};
+    for (int k = 0; k < 5 && kx + kw <= x + trW; ++k, kx += kw) pui::knobAt(a, t, ks[k], ImVec2(kx, lowY + 22), i18n::tr(kl[k]), pui::KnobSmall);
+    ImGui::SetCursorScreenPos(ImVec2(x + srcLabelW, srcY));
+    audioSourcePicker(a, t, x + trW - 10 - (x + srcLabelW));
   } else if (trig == TrigMidi) {
-    pui::knobAt(a, t, BwMidiPort, ImVec2(x + 8, lowY + 22), i18n::tr("Port"), pui::KnobSmall);
-    pui::knobAt(a, t, BwMidiNote, ImVec2(x + 8 + kw, lowY + 22), i18n::tr("Note"), pui::KnobSmall);
-    const int port = static_cast<int>(std::lround(pv(a, t, BwMidiPort))), note = static_cast<int>(std::lround(pv(a, t, BwMidiNote)));
-    char b[96];
-    std::snprintf(b, sizeof b, "%s %s · %s %s", i18n::tr("port"), port < 0 ? i18n::tr("any") : std::to_string(port).c_str(), i18n::tr("note"),
-                  note < 0 ? i18n::tr("any") : std::to_string(note).c_str());
-    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 16 + 2 * kw, lowY + 30), P.textDim, b);
-    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 16 + 2 * kw, lowY + 48), P.textFaint,
-                i18n::tr("Notes from a MIDI Out channel"));
+    const int src = std::clamp(static_cast<int>(std::lround(pv(a, t, BwNoteSrc))), 0, 2);
+    float kx = x + 8;
+    if (src == SrcPorts) {
+      pui::knobAt(a, t, BwMidiPort, ImVec2(kx, lowY + 22), i18n::tr("Port"), pui::KnobSmall);
+      kx += kw;
+    }
+    pui::knobAt(a, t, BwMidiNote, ImVec2(kx, lowY + 22), i18n::tr("Note"), pui::KnobSmall);
+    kx += kw;
+    pui::knobAt(a, t, BwMidiNoteHi, ImVec2(kx, lowY + 22), i18n::tr("To"), pui::KnobSmall);
+    kx += kw;
+    const int lo = static_cast<int>(std::lround(pv(a, t, BwMidiNote))), hi = static_cast<int>(std::lround(pv(a, t, BwMidiNoteHi)));
+    const std::string notes = lo < 0 ? std::string(i18n::tr("Any note")) : hi > lo ? noteLabel(lo) + " - " + noteLabel(hi) : noteLabel(lo);
+    const float tx = kx + 8, tw = x + trW - 10 - tx;
+    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(tx, lowY + 30), P.textDim, theme::fitText(notes.c_str(), tw));
+    const char* how = src == SrcChannel ? i18n::N_("Notes and clip starts, exact")
+                      : src == SrcInput ? i18n::N_("Every note played in")
+                                        : i18n::N_("Notes from MIDI Out channels");
+    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(tx, lowY + 48), P.textFaint, theme::fitText(i18n::tr(how), tw));
+    ImGui::SetCursorScreenPos(ImVec2(x + srcLabelW, srcY));
+    noteSourcePicker(a, t, *sp, x + trW - 10 - (x + srcLabelW));
   } else {
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 10, lowY + 28), P.textDim, i18n::tr("Locked to the song position."));
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 10, lowY + 46), P.textFaint,

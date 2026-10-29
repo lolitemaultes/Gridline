@@ -19,6 +19,7 @@
 #include "../core/Automation.h"
 #include "../core/ClipGain.h"
 #include "../core/ClipMultiEdit.h"
+#include "../core/ClipRate.h"
 #include "ClipHeaderHit.h"
 #include "ClipMultiUi.h"
 #include "../core/Fades.h"
@@ -264,19 +265,15 @@ struct AudioMap {
   double audioStart = 0, start = 0, startSec = 0, syncScale = 0, speed = 1;
   bool sync = false;
   AudioMap(const Song& s, const Channel& ch, const Clip& c, const TempoMap& map) : tm(map) {
-    double tf = std::max(0.01, c.stretch);
-    bool sampler = ch.plugin.type == "gl.sampler" && ch.plugin.params.size() > static_cast<size_t>(pp::SmpTimeStretch);
-    if (sampler) tf *= ch.plugin.params[pp::SmpTimeStretch];
+    const ClipRate r = clipRate(ch, c);  // J-164: the engine's mapping (pitch never moves the waveform)
     audioStart = c.audioStart;
     start = static_cast<double>(c.start);
     sync = c.syncBpm > 0;
     if (sync) {
-      syncScale = 60.0 / (c.syncBpm * s.ppq) / tf;
+      syncScale = 60.0 / (c.syncBpm * s.ppq) / r.timeFactor;
       return;
     }
-    speed = 1.0 / tf;
-    if (sampler && ch.plugin.params[pp::SmpStretchMode] < 0.5f)
-      speed *= std::pow(2.0, (ch.plugin.params[pp::SmpPitchShift] + c.pitch) / 1200.0);
+    speed = r.speed;
     startSec = tm.secondsAt(start);
   }
   double at(double t) const { return sync ? audioStart + (t - start) * syncScale : audioStart + (tm.secondsAt(t) - startSec) * speed; }

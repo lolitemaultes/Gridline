@@ -15280,6 +15280,9 @@ gl.tideline	33	Point 5 level	combination	0	1=16
 gl.tideline	34	Point 6 level	combination	0	1=16
 gl.tideline	35	Point 7 level	combination	0	1=16
 gl.tideline	36	Point 8 level	combination	0	1=16
+gl.tideline	37	Note source	inert	0		MIDI trigger source: ports / channel / MIDI input (needs the engine's notes; covered by test_tideline_sources)
+gl.tideline	38	MIDI note to	inert	0		MIDI trigger note range (needs MIDI input; covered by test_tideline / test_tideline_sources)
+gl.tideline	39	Look-ahead	combination	10	3=1
 gl.seltmann	0	Volume	working	0	
 gl.seltmann	1	Pan	working	1	
 gl.seltmann	2	Base note	working	63.5	

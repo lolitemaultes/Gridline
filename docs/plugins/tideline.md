@@ -5,8 +5,8 @@ time with the song, which gives you the pumping sound of sidechain compression w
 kick into a compressor. You can also trigger it from a kick on another track or from MIDI notes.
 It is in the plugin picker under Dynamics (search for "sidechain", "pump" or "ducking").
 
-Tideline adds no latency, runs per sample (the result doesn't depend on the buffer size) and
-smooths every gain change, so it doesn't click.
+Tideline adds no latency (unless you turn on the Audio trigger's look-ahead), runs per sample (the
+result doesn't depend on the buffer size) and smooths every gain change, so it doesn't click.
 
 ## Main controls
 
@@ -41,15 +41,39 @@ smooths every gain change, so it doesn't click.
 
 - **Tempo** (default) locks the curve to the song position. It stays in sync after jumps and loop
   wraps. When the transport is stopped, the sound passes through.
-- **Audio** starts the curve whenever the detector hears a hit. The detector listens to the
-  **trigger input**: the track's sidechain input (route a kick track to it), the plugin's own
-  input, or a numbered input route. Its controls are:
+- **Audio** starts the curve whenever the detector hears a hit. Pick what it listens to in the
+  **Source** list under the knobs:
+  - a **mixer track** (for example "Kick"): Tideline adds a sidechain route from that track into
+    its own track. The route is an ordinary mixer route, so you see it in the mixer and can remove
+    it there or with **Remove** in the same list.
+  - a **channel**, including an audio clip channel: Tideline uses the channel's mixer track. A
+    channel that plays into the master, or into Tideline's own track, first gets a mixer track
+    of its own (a kick should not be ducked by itself).
+  - **Own input**: the detector hears the sound Tideline is ducking.
+  If the track already sends its audio into Tideline's track, that send is used as it is. Routes
+  follow the tracks, not their numbers, so renaming or reordering tracks keeps them. With no
+  route at all, the detector hears Tideline's own input, and the list says so.
+  The detector's controls are:
   - **Threshold** sets the trigger level.
   - **Gap** is the shortest time between two triggers.
   - **Low cut** and **High cut** set the detector's band. The default is 30 to 200 Hz, which
     finds kicks.
-- **MIDI** starts the curve on every new note from a MIDI Out channel's port. **Port** -1 means
-  any port. **Note** -1 means any note.
+  - **Look-ahead** (0 to 10 ms, default 0) delays the ducked sound so the duck starts right on
+    the hit instead of a moment after it. Gridline's delay compensation keeps the rest of the
+    project in time. At 0, Tideline adds no latency.
+- **MIDI** starts the curve on notes, exactly on their sample. Pick the notes in the **Source**
+  list:
+  - a **channel**: every note it plays (steps, piano roll, pattern clips in the playlist, notes
+    you play live on it, a note processor's output) and every start of its audio clips. Clip
+    starts trigger exactly on the grid with no detection, which is handy for a kick sample placed
+    as audio clips. A muted channel still triggers, so a silent "ghost kick" channel works.
+  - **MIDI input (controllers)**: every note that comes in from your MIDI controller. In the plugin
+    builds (VST3, CLAP, AU) this is the host's MIDI input.
+  - **Any MIDI Out port** or **One MIDI Out port**: notes MIDI Out channels play on a port; the
+    **Port** knob picks the port.
+  The **Note** and **To** knobs filter the notes: Note -1 takes any note, Note alone takes one
+  note, Note and To take the range between them. Audio clip starts always count.
+  The picked channel is stored with the project and follows the channel when you rename or move it.
 - **Loop** (Audio and MIDI only) repeats the curve at the rate until the next trigger. With Loop
   off, each trigger plays the curve once. Drag the **end marker** in the display to choose where
   it stops: the gain holds the curve's value there until the next trigger.

@@ -3429,7 +3429,7 @@ msgstr ""
 msgid "Relays the encrypted connection when both networks block direct connections. Only needed for strict networks"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/app/SuiteUi.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/app/SuiteUi.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Remove"
 msgstr ""
 
@@ -6537,7 +6537,7 @@ msgstr ""
 msgid "Browse"
 msgstr ""
 
-#: src/app/ExportUi.cpp
+#: src/app/ExportUi.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Channels"
 msgstr ""
 
@@ -17017,7 +17017,7 @@ msgstr ""
 msgid "SMOOTH"
 msgstr ""
 
-#: src/packs/spacefx/spacefx_ui.cpp
+#: src/packs/spacefx/spacefx_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "SOURCE"
 msgstr ""
 
@@ -17126,6 +17126,22 @@ msgid "Panel: two DCO"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
+msgid "(audio clips)"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "(missing channel)"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "(missing input route)"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "(missing track)"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
 msgid "AMOUNT"
 msgstr ""
 
@@ -17134,11 +17150,23 @@ msgid "AUDIO TRIGGER"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
+msgid "Any MIDI Out port"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Any note"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
 msgid "BAND"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "Breath"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Channels: notes and audio clip starts"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -17166,6 +17194,10 @@ msgid "Duration"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
+msgid "Every note played in"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
 msgid "Full"
 msgstr ""
 
@@ -17183,6 +17215,10 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "Highs"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Host MIDI input"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -17210,6 +17246,10 @@ msgid "Long"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
+msgid "Look-ahead"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
 msgid "Loop: repeat the curve until the next trigger (off = one shot with an end marker)"
 msgstr ""
 
@@ -17218,11 +17258,23 @@ msgid "Lows"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
+msgid "MIDI Out port"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
 msgid "MIDI TRIGGER"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
+msgid "MIDI input (controllers)"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
 msgid "Mid"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Mixer tracks"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -17234,7 +17286,11 @@ msgid "Move the curve later by 1/16"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
-msgid "Notes from a MIDI Out channel"
+msgid "Notes and clip starts, exact"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Notes from MIDI Out channels"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -17246,7 +17302,19 @@ msgid "Nudge the curve later (fine)"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
+msgid "One MIDI Out port"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
 msgid "One-shot end: the curve holds here until the next trigger"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Own input"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Own input (pick a source)"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -17255,6 +17323,10 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "Pump"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Remove a sidechain route"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -17306,15 +17378,7 @@ msgid "Tight"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
-msgid "Trigger: input route"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "Trigger: own input"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "Trigger: track sidechain"
+msgid "To"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -17322,15 +17386,15 @@ msgid "Trim Fade"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
-msgid "any"
+msgid "What the detector listens to. Pick a mixer track or a channel: Tideline routes it here as a sidechain (shown in the mixer)."
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
-msgid "note"
+msgid "Which notes start the curve: a channel's notes and audio clip starts, the MIDI input, or MIDI Out channels' ports."
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
-msgid "port"
+msgid "gets its own mixer track"
 msgstr ""
 
 #: src/packs/utility/utility_bankeq_ui.cpp

@@ -46,8 +46,32 @@ enum Param {
   BwTension,     // -1..1 bend of the custom curve's segments
   BwNodeX0,      // kNodes x positions (0..1 of the cycle)
   BwNodeY0 = BwNodeX0 + kNodes,  // kNodes levels (0 = silent, 1 = full)
-  BwCount = BwNodeY0 + kNodes
+  // J-165 (appended: older states pad to the defaults, which keep their behaviour)
+  BwNoteSrc = BwNodeY0 + kNodes,  // choice: NoteSource (what the MIDI trigger listens to)
+  BwMidiNoteHi,                   // -1 = only BwMidiNote, else the top of the note range BwMidiNote..this
+  BwLookahead,                    // ms: Audio trigger look-ahead (delays the ducked signal, reported as latency)
+  BwCount
 };
+
+// J-165: sources of the MIDI (note) trigger.
+enum NoteSource {
+  SrcPorts = 0,  // notes MIDI Out channels play on a port (BwMidiPort, -1 = any port): the original behaviour
+  SrcChannel,    // the notes and audio clip starts of one project channel (PluginState::data "channel=<id>")
+  SrcInput       // notes from the MIDI input (controllers; the host's MIDI in plugin builds)
+};
+inline constexpr double kMaxLookaheadMs = 10.0;
+inline constexpr int kLookaheadRing = 4096;  // samples (10 ms up to 384 kHz)
+// Look-ahead in samples for `ms` at `sampleRate` (what latencyFor reports in Audio mode).
+inline int lookaheadSamples(double ms, double sampleRate) {
+  const double v = std::clamp(ms, 0.0, kMaxLookaheadMs) * 0.001 * sampleRate;
+  return std::clamp(static_cast<int>(std::lround(v)), 0, kLookaheadRing - 1);
+}
+
+// J-165: the source channel of the note trigger, kept in PluginState::data as
+// "channel=<id>" (an id, so renaming / reordering channels keeps the link).
+// 0 = none.
+uint32_t noteSourceChannel(const std::string& data);
+std::string withNoteSourceChannel(const std::string& data, uint32_t channel);
 
 inline constexpr int kShapeCount = 16;
 inline constexpr int kShapeCustom = kShapeCount;  // last choice

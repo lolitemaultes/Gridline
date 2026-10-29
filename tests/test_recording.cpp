@@ -385,14 +385,15 @@ void testClipWorkflow() {
   // Normalize.
   float g = normalizeClip(s, id, 0.0);
   expect(std::fabs(g - 4.0f) < 0.01f, "normalize: gain brings the peak to 0 dB");
-  // Stretch: realtime modes change the clip length.
+  // Stretch: realtime modes change the clip length (J-164: by the speed change, so the clip keeps
+  // showing the 2.0 s of audio its 4 beats hold since following the tempo was switched off).
   s.clip(id)->syncBpm = 0;
   expect(setClipStretch(s, id, 2.0, true), "stretch set");
-  expect(std::llabs(s.clip(id)->length - 806) <= 1, "stretch x2 (pitch-preserving): clip twice as long");
+  expect(std::llabs(s.clip(id)->length - 768) <= 1, "stretch x2 (pitch-preserving): clip twice as long");
   const Channel* ch = s.channel(s.clip(id)->source);
   expect(ch && ch->plugin.params[pp::SmpStretchMode] >= 0.5f, "pitch-preserving mode on the clip channel");
   setClipStretch(s, id, 0.5, false);
-  expect(std::llabs(s.clip(id)->length - 202) <= 1, "stretch x0.5 (resample): half as long");
+  expect(std::llabs(s.clip(id)->length - 192) <= 1, "stretch x0.5 (resample): half as long");
   // Rendered stretch (audio editor stretch).
   setClipStretch(s, id, 1.0, false);
   std::string out = renderClipStretch(s, id, 1.5, 0, 0, gDir + "/Rendered");

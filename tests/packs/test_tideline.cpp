@@ -475,6 +475,7 @@ int main() {
       float v;
       int trig;
       int band = 0;
+      int lo = -2;  // J-165: > -2 sets BwMidiNote in both states first (the range's upper end needs one)
     };
     const std::vector<Case> cases = {
         {bw::BwAmount, 0.3f, 0},     {bw::BwShape, 7, 0},         {bw::BwRate, 0, 0},          {bw::BwDuration, 0.8f, 0},
@@ -482,6 +483,7 @@ int main() {
         {bw::BwTrigger, 1, 0},       {bw::BwLoop, 1, 1},          {bw::BwEnd, 0.1f, 1},        {bw::BwThreshold, -1, 1},
         {bw::BwRetrigger, 1500, 1},  {bw::BwDetLow, 1500, 1},     {bw::BwDetHigh, 40, 1},      {bw::BwMidiNote, 50, 2},
         {bw::BwMidiPort, 3, 2},      {bw::BwScIn, 0, 1},
+        {bw::BwNoteSrc, 2, 2},       {bw::BwLookahead, 5, 1},     {bw::BwMidiNoteHi, 40, 2, 0, 30},
         {bw::BwBandFreq, 40, 0, bw::BandLows},
     };
     const long frames = beatFrames(120, 4);
@@ -495,6 +497,7 @@ int main() {
       PluginState a = fresh();
       a.params[bw::BwTrigger] = static_cast<float>(c.trig);
       a.params[bw::BwBand] = static_cast<float>(c.band);
+      if (c.lo > -2) a.params[bw::BwMidiNote] = static_cast<float>(c.lo);
       PluginState b = a;
       b.params[static_cast<size_t>(c.p)] = c.v;
       // tone input so the band / smoothing / stereo changes show
@@ -535,7 +538,7 @@ int main() {
       PluginState a = fresh();
       a.params[bw::BwShape] = bw::kShapeCustom;
       Run base = render(a, 120, beatFrames(120, 2), 256);
-      for (int k = bw::BwTension; k < bw::BwCount; ++k) {
+      for (int k = bw::BwTension; k < bw::BwNodeY0 + bw::kNodes; ++k) {
         PluginState b = a;
         const auto& d = info->params[static_cast<size_t>(k)];
         b.params[static_cast<size_t>(k)] = static_cast<float>(b.params[static_cast<size_t>(k)] > (d.min + d.max) / 2 ? d.min + (d.max - d.min) * 0.1 : d.max - (d.max - d.min) * 0.1);
@@ -546,7 +549,7 @@ int main() {
       }
     }
     expect(bad == 0, "every parameter changes the sound in its mode");
-    expect(cases.size() + static_cast<size_t>(bw::BwCount - bw::BwTension) + 2 >= static_cast<size_t>(bw::BwCount),
+    expect(cases.size() + static_cast<size_t>(bw::BwNodeY0 + bw::kNodes - bw::BwTension) + 2 >= static_cast<size_t>(bw::BwCount),
            "the audit covers every parameter (band listen / split checked below)");
     PluginState a = fresh(), b = fresh();
     a.params[bw::BwBand] = b.params[bw::BwBand] = bw::BandLows;

@@ -489,6 +489,7 @@ void AudioEngine::drainMidi(const Program* p) {
       const uint32_t sn = midiSnap_.load(std::memory_order_relaxed);
       if (sn & 0xFFF) pitch = snapToScaleMask(pitch, static_cast<int>(sn >> 12), static_cast<uint16_t>(sn & 0xFFF));
     }
+    if (kind == 0x90 && m.b > 0) hits_.add(routed(mch), 0, pitch, -1, NoteHitBus::Input);  // J-165: MIDI input notes
     if (kind == 0x90 || kind == 0x80) {  // J-150: instruments that decode notes themselves
       const ProgChannel* rc = chan(routed(mch));
       if (rc && rc->rt->gen && rc->rt->gen->rawMidi()) {
@@ -651,6 +652,7 @@ void AudioEngine::sendOn(const ProgChannel& ch, uint32_t id, float pitch, float 
     else
       ch.rt->gen->noteOn(id, pitch + ch.pitchOffset, velocity, offset);
     ch.rt->keys.on(id, pitch, velocity);  // J-77
+    hits_.add(ch.id, offset, static_cast<int>(std::lround(pitch)), ch.midiPort, NoteHitBus::Note);  // J-165
     return;
   }
   NoteMsg m;
@@ -1028,6 +1030,14 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
       evs = &ch.song;
     else if (pat && ci < pat->perChannel.size())
       evs = &pat->perChannel[ci];
+    if (tMode_ == PlayMode::Song && !ch.audio.empty()) {  // J-165: audio clip starts (note triggers)
+      auto ac = std::lower_bound(ch.audio.begin(), ch.audio.end(), static_cast<Tick>(std::floor(tLo)),
+                                 [](const ProgAudioClip& c, Tick t) { return c.start < t; });
+      for (; ac != ch.audio.end() && static_cast<double>(ac->start) <= tHi; ++ac) {
+        const int64_t s = sampleOf(static_cast<double>(ac->start));
+        if (s >= c0 && s < c1) hits_.add(ch.id, from + static_cast<int>(s - c0), 0, -1, NoteHitBus::ClipStart);
+      }
+    }
     if (!evs || evs->empty()) continue;
     auto it = std::lower_bound(evs->begin(), evs->end(), static_cast<Tick>(std::floor(tLo)),
                                [](const NoteEv& e, Tick t) { return e.on < t; });
@@ -1262,6 +1272,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   bc_.ctx.punchIn = punchA_.load(std::memory_order_relaxed);
   bc_.ctx.punchOut = punchB_.load(std::memory_order_relaxed);
   bc_.ctx.ports = &ports_;
+  bc_.ctx.hits = &hits_;
   ports_.beginBlock();
   {
     const Tick beat = std::max<Tick>(1, p->beatTicks);
@@ -1897,6 +1908,7 @@ void AudioEngine::runNoteFx(const Program* p, int n) {
           else
             g->noteOn(m.id, m.pitch + tc->pitchOffset, m.velocity, off, np);
           tc->rt->keys.on(m.id, m.pitch, m.velocity);  // J-77: the notes the chain plays light up
+          hits_.add(tc->id, off, static_cast<int>(std::lround(m.pitch)), tc->midiPort, NoteHitBus::Note);  // J-165
         }
         else if (m.kind == NoteMsg::Off)
           g->noteOff(m.id, off), tc->rt->keys.off(m.id);
@@ -1967,6 +1979,7 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
     // per control block) is independent of the audio buffer size.
     if (p && p->controlGrid())
       n = std::min(n, kControlBlock - static_cast<int>(absClock_ % kControlBlock));
+    hits_.clear();  // J-165: filled by the commands, MIDI and sequencing below
     drain(p);
     drainMidi(p);
     if (done == 0 && hostNew_) followHost(p);

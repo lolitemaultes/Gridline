@@ -20,6 +20,7 @@
 #include <map>
 #include <set>
 #include "../Fades.h"
+#include "../PluginParams.h"
 #include "FlpExportInternal.h"
 #include "FlpFx.h"
 
@@ -230,6 +231,13 @@ void Exporter::writeArrangements() {
         const double clipSemis = (c.pitch - static_cast<float>(cents == audioCents.end() ? 0 : cents->second)) / 100.0;
         if (std::fabs(clipSemis) > 12.0 + 1e-6) rep.counts["audio clips: clip pitch beyond 12 semitones clamped"]++;
         keepF(60, std::clamp(clipSemis, -12.0, 12.0), 1.0, 1e-6);
+        // J-164: FL resamples the whole pitch (it sets the speed too); a
+        // Gridline clip whose pitch keeps its timing plays at another speed there.
+        if (const Channel* sc = s.channel(c.source); sc && c.syncBpm <= 0 && sc->plugin.type == "gl.sampler" &&
+                                                      sc->plugin.params.size() > static_cast<size_t>(pp::SmpPitchShift) &&
+                                                      sc->plugin.params[pp::SmpStretchMode] < 0.5f &&
+                                                      std::fabs(c.pitch + sc->plugin.params[pp::SmpPitchShift] - c.speedPitch) > 0.5f)
+          rep.counts["audio clips: resampled pitch that keeps the timing plays at another speed in FL"]++;
         if (!(orec && getF32(r, 52) == c.gain)) putF32(r, 52, c.gain);
         if (!(orec && getF64(r, 64) == c.stretch)) putF64(r, 64, c.stretch);
         // PL-13: FL's per-clip reverse ("Reverse clip"): bit 0 of u32 @72; the

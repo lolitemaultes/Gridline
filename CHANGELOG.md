@@ -3,6 +3,33 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
+## Unreleased
+
+### New
+
+- Tideline follows a source you pick in its own window. In Audio mode, choose a mixer track or a
+  channel (also an audio clip channel) from the new Source list: Tideline makes the sidechain
+  route for you, and it shows in the mixer. A channel that plays into the master or into
+  Tideline's own track gets a track of its own first. A new Look-ahead control (up to 10 ms)
+  lets the duck land right on the hit; the project stays in time.
+- Tideline's MIDI mode can follow a channel: every note of its patterns and the playlist, notes
+  you play live on it, and each start of its audio clips, exactly on the sample, with no
+  detection. It can also follow the MIDI input (your controller, or the host's MIDI in plugin
+  builds) or MIDI Out ports as before. A note filter takes one note or a range.
+- Tideline's MIDI triggers are now sample-accurate (they used to fire at the start of the
+  audio block).
+
+### Fixed
+
+- Changing the pitch of an audio clip on the playlist no longer changes how its audio fits the clip. In every time
+  mode the clip keeps its length and its audio still runs from the clip start to exactly the clip end: no silent gap
+  after pitching up, nothing cut off after pitching down. In Resample mode a stretched clip still sounds resampled
+  (twice as long plays an octave lower) and the pitch moves on top of that. Clips in projects made before this fix
+  fill their clip again too. Imported FL Studio projects keep their original timing.
+- Switching an audio clip's time mode no longer resizes the clip, and a trimmed clip stays trimmed when its time
+  factor changes.
+- A resampled, stretched audio clip on a channel with its pitch knob turned now renders at the same pitch it plays at.
+
 ## 0.7.0-beta.3
 
 This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.

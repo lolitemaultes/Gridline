@@ -255,6 +255,7 @@ struct ProgChannel {
   std::vector<int> layer;  // layer children (Program channel indices), for live notes
   int layerMode = 0;
   int keyLo = 0, keyHi = 127;  // J-31: Channel key range (live notes outside it do not play)
+  int midiPort = -1;           // J-165: MIDI Out channels (gl.midiout): their port, else -1
   // Channels listening on this channel's MIDI output port (hosted plugins'
   // MIDI out, see Channel::midiOutPort): Program channel indices.
   std::vector<int> midiTargets;

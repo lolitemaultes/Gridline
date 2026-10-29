@@ -101,6 +101,8 @@ const InertDoc kInert[] = {
     {"gl.splitter", "Send numbering", "send destination numbering (routing)"},
     {"gl.tideline", "MIDI port", "MIDI trigger source port (routing; covered by test_tideline)"},
     {"gl.tideline", "MIDI note", "MIDI trigger note filter (needs MIDI input; covered by test_tideline)"},
+    {"gl.tideline", "Note source", "MIDI trigger source: ports / channel / MIDI input (needs the engine's notes; covered by test_tideline_sources)"},
+    {"gl.tideline", "MIDI note to", "MIDI trigger note range (needs MIDI input; covered by test_tideline / test_tideline_sources)"},
     {"gl.seltmann", "Stretch mode", "engine of the region stretch a worker thread renders after playback asks for a tempo; the audit hears the resampled fallback (covered by test_seltmann)"},
     {"gl.platter", "A quantize", "snaps cue, hot cue and loop presses to the beat (needs a press; covered by test_platter)"},
     {"gl.platter", "A slip", "acts while the platter is held or a loop runs (needs a scratch; covered by test_platter)"},

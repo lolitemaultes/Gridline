@@ -634,6 +634,7 @@ class AudioEngine {
   std::vector<std::vector<float>> scL_, scR_;    // per mixer track sidechain inputs
   std::vector<std::vector<float>> preL_, preR_;  // per mixer track pre-fader signal (tracks with pre-fader sends)
   MidiPortBus ports_;  // notes MIDI Out channels hold per port (read by MIDI-input effects)
+  NoteHitBus hits_;    // J-165: notes / clip starts / MIDI input notes of the current block (note triggers)
   std::vector<float> tmpL_, tmpR_;
   // Per-thread scratch for tasks (index = worker; 0 = audio thread).
   struct Scratch {

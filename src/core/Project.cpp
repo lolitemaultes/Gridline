@@ -349,6 +349,7 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.gain != 1.0f) jc.object["gain"] = num(c.gain);
   if (c.pitch != 0.0f) jc.object["pitch"] = num(c.pitch);
   if (c.stretch != 1.0) jc.object["stretch"] = num(c.stretch);
+  if (c.speedPitch != 0.0f) jc.object["speedPitch"] = num(c.speedPitch);  // J-164
   if (c.syncBpm != 0) jc.object["syncBpm"] = num(c.syncBpm);
   if (c.reverse) jc.object["reverse"] = boolean(true);
   if (c.takeGroup != kNoId) jc.object["takeGroup"] = num(c.takeGroup);
@@ -379,6 +380,7 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.gain = clipgain::clampGain(static_cast<float>(jc.num("gain", 1)));  // J-79: FL's range, up to +36 dB
   c.pitch = static_cast<float>(std::clamp(jc.num("pitch", 0), -4800.0, 4800.0));
   c.stretch = std::clamp(jc.num("stretch", 1), 0.0625, 16.0);
+  c.speedPitch = static_cast<float>(std::clamp(jc.num("speedPitch", 0), -6000.0, 6000.0));  // J-164 (clip + channel pitch shift)
   c.syncBpm = std::clamp(jc.num("syncBpm", 0), 0.0, 1000.0);
   c.reverse = flag(jc, "reverse");
   c.takeGroup = jsonInt<ObjectId>(std::max(0.0, jc.num("takeGroup", 0)));

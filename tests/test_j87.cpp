@@ -352,7 +352,7 @@ int main() {
     char name[160];
     std::snprintf(name, sizeof name, "audio clips: pitch within 2 cents in every stretch mode, ±5 / ±12 st (worst %.3f ct)", worst);
     expect(worst < 2.0, name);
-    // Resample mode: pitch through the band-limited resampler, exact too.
+    // Resample mode: in tune too (J-164: the clip's pitch keeps its timing, through the stretch).
     Song r = clipSong(path, 0);
     r.playlist.push_back(audioClip(r, 0, 192 * 2, 700));
     RenderOptions o;
