@@ -7,6 +7,13 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### New
 
+- Platter passes are recorded as automation clips: in song mode each pass becomes a grouped set
+  of clips in the playlist, one per control you used, named like "Platter A wheel", with the
+  record's position, play, the wheel and its touch, the mouse, loops, reverse and pitch bend as
+  curves you can see and edit. No piano roll notes any more, so a pass plays from wherever
+  playback starts: cut its clips, trim their start or move them and the decks pick the pass up
+  there. Unedited, a pass still replays exactly as played, at any buffer size. Passes recorded
+  as notes earlier keep playing as before.
 - Tideline follows a source you pick in its own window. In Audio mode, choose a mixer track or a
   channel (also an audio clip channel) from the new Source list: Tideline makes the sidechain
   route for you, and it shows in the mixer. A channel that plays into the master or into

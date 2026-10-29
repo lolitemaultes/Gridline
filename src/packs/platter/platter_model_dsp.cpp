@@ -1418,7 +1418,7 @@ bool TakeBuilder::feed(const CaptureEvent& e) {
     case CaptureEvent::Move:  // (a take keeps the mixer values its streams do not hold)
       if (active)
         for (uint8_t p : moveParams())
-          if (p == e.param) take.moves.push_back(TakeMove{e.step, e.param, e.value});
+          if (p == e.param) take.moves.push_back(TakeMove{e.step, e.param, static_cast<float>(e.value)});
       return false;
     case CaptureEvent::Button:
     case CaptureEvent::Snap:

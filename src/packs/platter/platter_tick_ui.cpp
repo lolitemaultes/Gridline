@@ -1,10 +1,9 @@
 // Gridline — "platter" pack: per frame, for every setup in the project (its
 // editor open or not): parameters the controller moved are written into the
 // project (and recorded as automation while Gridline records, unless a pass
-// holds them), cues a deck set itself are saved, recorded passes go into the
-// pattern (J-159: a performance as notes and lanes, or a take in the setup and a
-// note on its key; a pattern that holds one already is kept and a new one is
-// made), the controller's LEDs
+// holds them), cues a deck set itself are saved, recorded passes are written (J-163:
+// automation clips in song mode, the lanes of a new pattern in pattern mode; or a
+// take in the setup and a note on its key), the controller's LEDs
 // follow both decks, and the devices bound to setups are claimed (their notes play no instrument, the app's templates and
 // links leave them alone). UI thread.
 #include <algorithm>
@@ -84,12 +83,31 @@ ObjectId choosePass(App& a, ObjectId channel, bool song) {
   return target;
 }
 
-// Dev hooks (GRIDLINE_PLATTER_TRACE, J-159 checks): a line per recorded pass; with
-// GRIDLINE_PLATTER_PASS_VIEW the piano roll opens on the pass with a lane, or the playlist.
-void devPass(App& a, const Channel& c, ObjectId pattern) {
+// Dev hooks (GRIDLINE_PLATTER_TRACE, J-159 / J-163 checks): a line per recorded pass; with
+// GRIDLINE_PLATTER_PASS_VIEW the piano roll opens on the pass with a lane, the playlist, or
+// ("automation:<parameter>") the automation editor on the pass's clip of that parameter.
+void devPass(App& a, const Channel& c, ObjectId pattern, const PassWritten& w) {
   devsig::reach("platter-pass");
   static const bool trace = std::getenv("GRIDLINE_PLATTER_TRACE") != nullptr;
   const Pattern* p = a.doc.song().pattern(pattern);
+  if (trace && !w.clips.empty()) {  // song mode: the pass's clips
+    const Song& s = a.doc.song();
+    size_t points = 0, fines = 0, grouped = 0;
+    std::string names;
+    for (size_t i = 0; i < w.autos.size(); ++i) {
+      const AutomationClip* ac = s.automation(w.autos[i]);
+      if (!ac) continue;
+      points += ac->points.size();
+      for (const auto& q : ac->points) fines += q.fine != 0 ? 1 : 0;
+      names += (i ? ", " : "") + ac->name;
+    }
+    for (const auto& cl : s.playlist) grouped += cl.group == w.group && w.group != kNoId ? 1 : 0;
+    int perfPatterns = 0;
+    for (const auto& q : s.patterns) perfPatterns += holdsPerformance(q, c.id) ? 1 : 0;
+    std::printf("platter: pass clips %zu grouped %zu track %d points %zu exact %zu patterns-with-pass %d undo %zu [%s]\n", w.clips.size(), grouped,
+                w.firstTrack, points, fines, perfPatterns, a.doc.history().position(), names.c_str());
+    std::fflush(stdout);
+  }
   if (trace && p) {
     size_t notes = 0, lanes = 0, fracs = 0;
     if (auto it = p->notes.find(c.id); it != p->notes.end()) {
@@ -114,8 +132,15 @@ void devPass(App& a, const Channel& c, ObjectId pattern) {
   if (const char* v = std::getenv("GRIDLINE_PLATTER_PASS_VIEW"); v && *v) {  // "piano:<parameter>" or "playlist"
     a.selectChannel(c.id);
     a.showRack = false;  // (the floating rack would cover the view)
-    if (std::string(v).rfind("piano:", 0) == 0) editPatternEvents(a, channelPluginParam(c.id, std::atoi(v + 6)));
-    else a.focusWindow = "Playlist";
+    if (std::string(v).rfind("piano:", 0) == 0) {
+      editPatternEvents(a, channelPluginParam(c.id, std::atoi(v + 6)));
+    } else if (std::string(v).rfind("automation:", 0) == 0) {
+      const auto want = kChannelPluginBase + static_cast<uint32_t>(std::atoi(v + 11));
+      for (const ObjectId id : w.autos)
+        if (const AutomationClip* ac = a.doc.song().automation(id); ac && ac->index == want) openAutomationEditor(a, id);
+    } else {
+      a.focusWindow = "Playlist";
+    }
   }
 }
 
@@ -126,30 +151,25 @@ void closePass(App& a, DeckState& d) {
   d.stopAt = -1;
 }
 
-// A performance pass starts: one undo step from here to its end; its pattern now (in
-// pattern mode the new one plays on from here).
+// A performance pass starts: one undo step from here to its end. Pattern mode: its pattern
+// now (a new one when the selected one holds a pass: it plays on from here); song mode: the
+// pass becomes automation clips where it is played.
 void beginPass(App& a, const Channel& c, DeckState& d) {
   closePass(a, d);
   a.doc.beginGroup(i18n::tr("Record a deck performance"));
   d.group = true;
   d.passSong = a.engine.mode() == PlayMode::Song;
-  d.passPat = choosePass(a, c.id, d.passSong);
+  d.passPat = d.passSong ? kNoId : choosePass(a, c.id, false);
 }
 
-// A performance pass ended: its notes and lanes into the pattern (song mode: through the
-// clip at the place it was played, placed when none is there).
+// A performance pass ended (J-163): its lanes as automation clips (song mode) or as the
+// pattern's lanes (pattern mode).
 void endPass(App& a, const Channel& c, DeckState& d, const Performance& perf) {
-  if (d.group && a.doc.song().pattern(d.passPat)) {
-    double origin = 0;
-    if (d.passSong) {
-      const auto at = static_cast<Tick>(std::floor(perf.startTick));
-      const auto len = std::max<Tick>(1, static_cast<Tick>(std::ceil(perf.endTick - perf.startTick)));
-      origin = static_cast<double>(clipOrigin(a.doc, d.passPat, c.id, at, len));
-    }
-    writePerformance(a.doc, d.passPat, c.id, origin, perf, d.passSong);
+  if (d.group && (d.passSong || a.doc.song().pattern(d.passPat))) {
+    const PassWritten w = writePass(a.doc, c.id, perf, d.passSong ? kNoId : d.passPat);
     const ObjectId pat = d.passPat;
     closePass(a, d);
-    devPass(a, c, pat);
+    devPass(a, c, pat, w);
   }
   closePass(a, d);
 }

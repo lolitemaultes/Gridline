@@ -416,12 +416,13 @@ void arrangementToJson(const Song& s, Json& j) {
       if (a.flCurves) ja.object["flCurves"] = boolean(true);  // J-41 (absent: the pre-J-41 curves)
       Json pts = Json::makeArray();
       for (const auto& p : a.points) {
-        Json jp = Json::makeArray();  // [pos, value, tension, shape(, frac)]
+        Json jp = Json::makeArray();  // [pos, value, tension, shape(, frac(, fine))]
         jp.array.push_back(num(static_cast<double>(p.pos)));
         jp.array.push_back(num(p.value));
         jp.array.push_back(num(p.tension));
         jp.array.push_back(num(static_cast<int>(p.shape)));
-        if (p.frac != 0.f) jp.array.push_back(num(p.frac));  // J-159: sub-tick position
+        if (p.frac != 0.f || p.fine != 0.0) jp.array.push_back(num(p.frac));  // J-159: sub-tick position
+        if (p.fine != 0.0) jp.array.push_back(num(p.fine));                    // J-163: exact value
         pts.array.push_back(std::move(jp));
       }
       ja.object["points"] = std::move(pts);
@@ -485,12 +486,13 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
 Json pointsToJson(const std::vector<AutoPoint>& pts) {
   Json arr = Json::makeArray();
   for (const auto& p : pts) {
-    Json jp = Json::makeArray();  // [pos, value, tension, shape(, frac)]
+    Json jp = Json::makeArray();  // [pos, value, tension, shape(, frac(, fine))]
     jp.array.push_back(num(static_cast<double>(p.pos)));
     jp.array.push_back(num(p.value));
     jp.array.push_back(num(p.tension));
     jp.array.push_back(num(static_cast<int>(p.shape)));
-    if (p.frac != 0.f) jp.array.push_back(num(p.frac));  // J-159: sub-tick position
+    if (p.frac != 0.f || p.fine != 0.0) jp.array.push_back(num(p.frac));  // J-159: sub-tick position
+    if (p.fine != 0.0) jp.array.push_back(num(p.fine));                    // J-163: exact value
     arr.array.push_back(std::move(jp));
   }
   return arr;
@@ -508,6 +510,7 @@ std::vector<AutoPoint> pointsFromJson(const Json* pts) {
     p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
     p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
     if (const double fr = at(4, 0); fr > 0 && fr < 1) p.frac = std::min(static_cast<float>(fr), 0.99999994f);  // J-159
+    if (const double fi = at(5, 0); std::isfinite(fi) && std::fabs(fi) < 1e-6) p.fine = fi;  // J-163
     out.push_back(p);
   }
   std::stable_sort(out.begin(), out.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.at() < y.at(); });
@@ -1253,6 +1256,7 @@ void automationClipFromJson(const Json& ja, AutomationClip& a) {
       p.tension = static_cast<float>(std::clamp(at(2, 0), -1.0, 1.0));
       p.shape = static_cast<AutoShape>(static_cast<int>(std::clamp(at(3, 0), 0.0, static_cast<double>(static_cast<int>(AutoShape::Count) - 1))));
     if (const double fr = at(4, 0); fr > 0 && fr < 1) p.frac = std::min(static_cast<float>(fr), 0.99999994f);  // J-159
+      if (const double fi = at(5, 0); std::isfinite(fi) && std::fabs(fi) < 1e-6) p.fine = fi;  // J-163
       a.points.push_back(p);
     }
   std::stable_sort(a.points.begin(), a.points.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.at() < y.at(); });

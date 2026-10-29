@@ -1,9 +1,11 @@
 # Recording Platter performances
 
 Platter (`gl.platter`) records what you play on its two decks while Gridline records: the
-mixer, both decks, cues, loops, beat jumps and scratches. By default a pass becomes ordinary
-pattern data you can see in the piano roll and the playlist and edit like anything else.
-Played back without edits, it is exactly the pass you played.
+mixer, both decks, cues, loops, beat jumps and scratches. By default a pass becomes plain
+automation, one curve per control you used: the record's position, play, the wheel, the mouse,
+loops and every fader and knob. You see the wheel moving in the playlist, you can cut, trim and
+move the clips, and playback can start anywhere in them. Played back without edits, it is
+exactly the pass you played.
 
 ## Recording a pass
 
@@ -13,75 +15,101 @@ Played back without edits, it is exactly the pass you played.
    **Take**.
 3. Press Gridline's Record and play, in pattern mode or song mode. While Platter captures, its
    button reads **Recording**.
-4. Stop. The pass is written into the pattern as one undo step ("Record a deck performance").
+4. Stop. The pass is written as one undo step ("Record a deck performance").
 
 Where it goes:
 
-- **Pattern mode.** The pass goes into the selected pattern when that pattern is empty. If it
-  already holds a pass of this setup, Gridline makes a new pattern named after the channel
-  (for example "Platter take 2"), selects it and records there. The earlier pattern is never
-  changed: a second pass never merges into the first.
-- **Song mode.** The same rule applies, and a new pattern is placed in the playlist where its
-  pass started.
+- **Song mode.** Each pass becomes a set of automation clips in the playlist, one per control,
+  starting where the pass started, on free tracks next to each other and joined in one clip
+  group (so they select, move and cut together). The clips are named after the channel and the
+  control, for example "Platter A wheel" or "Platter Crossfader", and coloured by deck. A second
+  pass gets clips of its own on new tracks: it never records over the first.
+- **Pattern mode.** The pass goes into the selected pattern as automation lanes when that
+  pattern is empty. If it already holds a pass of this setup, Gridline makes a new pattern
+  named after the channel (for example "Platter take 2"), selects it and records there.
 - **Loop recording.** When the transport loops while you record, every loop pass is a pass of
-  its own: the first one fills the pattern and each next one goes into a new pattern. A pass
-  ends exactly on the sample the loop wraps and the next one starts on that same sample.
+  its own (a new set of clips, or a new pattern). A pass ends exactly on the sample the loop
+  wraps and the next one starts on that same sample.
 - **Punch in and out** (song mode, a time selection in the playlist, "Punch in/out at the time
   selection" on in the Record button's right-click menu): the pass starts on the first beat
   of the selection and ends exactly where the selection ends.
 
 ## What a pass becomes
 
-| You did | In the pattern |
+| You did | Its clip or lane |
 |---|---|
-| Moved a fader, knob or EQ, the crossfader, the pitch fader, the filter | An automation lane on that control (open it in the piano roll's event lane, for example "A EQ low") |
-| Pressed a button (play, cue, hot cues, clearing a hot cue, loops, beat jumps, back to start, reverse, pitch bend) | A note on that button's key, as long as you held it. The piano roll names these keys ("A Play", "B Hot cue 3") |
-| Scratched with the mouse | A note on "A Mouse hand" while you held the record, and the "A mouse travel" lane for where the hand moved it |
-| Scratched or nudged with a jog wheel | The "A wheel travel" lane (the travel the jog gave the record) and "A nudge" for rim nudges; touching the jog top is a note on "A Wheel touch" |
-| Searched or seeked | The "A record position" lane |
-| (always) | A "Performance start" note at the start of the pass |
+| Played the record (anything that moved it) | "A position": where the read head is, on every step, with jumps (cues, hot cues, loops wrapping, beat jumps, seeks) as straight steps |
+| Pressed play or stop | "A play": on or off, with the motor's start and stop |
+| Touched the jog top / turned the jog | "A wheel touch" (on while your hand is on it) and "A wheel" (the wheel's travel, wrapping at one turn) |
+| Held the record with the mouse | "A mouse hand" (on while you held it) and "A mouse travel" |
+| Nudged with the jog rim | "A nudge" |
+| A loop | "A loop" (on or off), "A loop in" and "A loop out" |
+| Reverse, pitch bend | "A reverse", "A pitch bend" |
+| Moved a fader, knob or EQ, the crossfader, the pitch fader, the filter | A clip on that control, for example "A EQ low" |
 
-Deck B has the same lanes and keys with a "B" in front.
+Deck B has the same set with a "B" in front. A pass only writes the clips for what it used, and
+the state ones (play, touch, hand, loop, reverse, bend) also when they were on at the start.
+Nothing goes into the piano roll: there are no notes to keep in place.
 
-The **Performance start** note puts both decks back the way they were when the pass started:
-the tracks' positions, speeds, loops, cues and every control. A control that has no lane in
-the pattern keeps its value from the pass until you turn it (or automation elsewhere moves
-it), so a later pass that ends with different settings does not change this one. Leave the
-note at the front of the pattern. Without it, a replay continues from whatever state the
-decks are in.
+## Playing it from anywhere
 
-The travel lanes (mouse and wheel) wrap: a hand that keeps turning the record past one turn
-starts again at the other edge of the lane, so a scratch fills the lane's height.
+The position, play, touch, hand, loop, reverse and bend clips hold the decks' state, not
+moments in time. While one of a deck's clips plays, that clip drives the deck: start playback
+on the first beat of the pass, in the middle of a scratch or anywhere after it, and the deck is
+put where the pass says, playing or stopped, held or free, looping or not, and goes on from
+there. The same happens when you cut the clips in two, trim their start, move them later or
+copy them elsewhere: wherever they play, the pass plays.
+
+- From the pass's first step the decks come back exactly as they were when it started (the
+  tracks' positions, speeds, loops and every control), and the replay is exact.
+- From anywhere else the deck is picked up on the pass's own step (within a step, about 0.7 ms)
+  with a short crossfade, then plays on from the lanes. On a steady part it matches the pass
+  within a few milliseconds; started inside a scratch, the scratch goes on from the lanes and
+  matches the pass at the latest once the hand lets go.
+- A control without a clip of its own keeps the value it had in the pass until you turn it.
+- Outside the pass's clips the decks are free again: your hands and controller play them.
+- While a pass drives a deck, the deck ignores its own buttons, jog, mouse and seek; the mixer
+  controls without a clip stay yours.
 
 ## Editing
 
-All of it is regular pattern data, so the usual tools work: move or stretch the notes, delete
-a hot cue press, draw over a lane, copy the pattern, put it elsewhere in the playlist.
-Editing changes the sound. For example, drawing a new curve on "A mouse travel" changes the
-scratch, and moving a "B Play" note moves the moment deck B starts.
+All of it is regular automation, so the usual tools work: draw over a curve, move points,
+delete a clip, cut, trim, move and copy clips. Editing changes the sound from the edit on:
 
-Notes and points keep their exact position between grid lines, so an unedited pass lines up
-with the sample it was played on. Quantizing snaps them to the grid as usual.
+- Draw a jump into "A position" and the record jumps there; delete "A mouse hand" and the
+  mouse scratch is gone; flatten "A EQ low" and the kill is gone.
+- When the position curve and the record part ways by more than a few frames (because you
+  edited it), the record goes where the curve says.
+
+Points keep their exact position between grid lines and their exact value, so an unedited pass
+lines up with the sample it was played on. The position clip is zoomed on the record's travel.
 
 ## Exact playback
 
-An unedited pass plays back exactly as it was played: every control has the same value on the
-same sample, and the audio is the same sample for sample. This holds for any audio buffer
-size, including a different one from the one it was recorded with, in pattern and song mode,
-and with key lock on. The positions between grid lines are saved with the project, synced in
-collaboration sessions and kept when you copy or move the data.
+An unedited pass played from its start plays back exactly as it was played: the audio is the
+same sample for sample. This holds for any audio buffer size, including a different one from
+the one it was recorded with, in pattern and song mode, with key lock on, and also after the
+clips are cut in two or moved to another place. The exact values are saved with the project,
+synced in collaboration sessions and kept when you copy or move the clips.
 
 Cases where playback is not the same as the pass:
 
 - The project tempo changed after recording, or tempo automation runs during the pass. The
   pass is stored in beats, so it plays at the new tempo.
-- Playback starts in the middle of a pass, after its Performance start note. The decks are
-  not reset, so they go on from their current state.
+- Playback starts in the middle of a pass: the deck is picked up within a step and a short
+  crossfade, so the first moments differ slightly (see above). Sync's phase lock and key lock
+  start fresh there.
 - A loop drawn in Platter's track view while a pass is recorded. That edit is not part of the
   pass.
 
+## Passes recorded earlier
+
+Passes recorded by earlier versions (notes on the performance keys with a Performance start
+note, in a pattern) keep playing exactly as before. Two of their lanes show new names: the
+record position lane is now "A seek" and the wheel travel lane "A wheel".
+
 ## Takes
 
-With **Take** selected, a pass becomes a single take note that replays it as played, the way
-Platter recorded passes before. Takes follow the same new pattern rule. Takes recorded
-earlier keep playing, whichever of the two is selected.
+With **Take** selected, a pass becomes a single take note that replays it as played. Takes
+follow the same new pattern rule. Takes recorded earlier keep playing, whichever of the two is
+selected.

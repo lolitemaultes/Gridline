@@ -202,8 +202,8 @@ void testCatalogue() {
   normalizePluginState(s);
   expect(static_cast<int>(s.params.size()) == pl::PCount, "short parameter lists are completed");
   // parameter ids: deck A keeps J-150's ids, deck B and the new mixer values follow
-  expect(pl::PCount == 56 && pl::PPosA == 48 && pl::PDeckB == 23 && pl::PJogA == 46,
-         "parameter ids: 23 from the single deck, deck B and the mixer after them, then the jog sensitivities");
+  expect(pl::PCount == 74 && pl::PPosA == 48 && pl::PTrackA == 56 && pl::PBendB == 73 && pl::PDeckB == 23 && pl::PJogA == 46,
+         "parameter ids: 23 from the single deck, deck B and the mixer after them, the jog sensitivities, J-159 and J-163 lanes");
   for (int d = 0; d < pl::DCount; ++d) {
     int dd = -1;
     expect(pl::deckOfParam(pl::deckParam(0, d), dd) == 0 && dd == d, "deck A parameter ids map back");

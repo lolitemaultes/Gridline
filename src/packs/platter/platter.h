@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -79,6 +80,17 @@ enum DeckParam {
   DMouse,  // turns -1..1 (wraps): the mouse hand's travel since it grabbed the record
   DWheel,  // turns -1..1 (wraps): the travel the jog wheel gave the record, summed
   DNudge,  // wheel ticks -4096..4096 (wraps): rim nudges, summed
+  // J-163: a recorded pass as state, so it plays from any point (lanes the decks follow;
+  // they never move them themselves either). Positions: see PosScale.
+  DTrack,    // 0..1 the record position (exact): where the read head is
+  DPlay,     // toggle: the motor runs (a Hold point with tension 1: it started / stopped at once)
+  DTouch,    // toggle: a hand holds the jog wheel's top (scratching with the wheel)
+  DHand,     // toggle: the mouse holds the record
+  DLoop,     // toggle: a loop plays
+  DLoopIn,   // 0..1 the loop's start (PosScale)
+  DLoopOut,  // 0..1 the loop's end (PosScale)
+  DReverse,  // toggle: the record runs backwards (censor)
+  DBend,     // choice: pitch bend down / off / up
   DAll
 };
 // Parameter ids. 0..22 are J-150's single deck (deck A and the mixer values it
@@ -122,8 +134,28 @@ enum Param {
   PWheelB,
   PNudgeA,
   PNudgeB,
+  PTrackA,  // 56 (J-163): the state lanes, deck A then deck B for each
+  PTrackB,
+  PPlayA,
+  PPlayB,
+  PTouchA,
+  PTouchB,
+  PHandA,
+  PHandB,
+  PLoopA,
+  PLoopB,
+  PLoopInA,
+  PLoopInB,
+  PLoopOutA,
+  PLoopOutB,
+  PRevA,
+  PRevB,
+  PBendA,
+  PBendB,
   PCount
 };
+// The parameters J-159 had (the layout of its recorded start states).
+inline constexpr int kLegacyPCount = PTrackA;
 // The parameter id of deck `deck`'s parameter `d`.
 constexpr int deckParam(int deck, int d) {
   if (d == DJog) return deck == 0 ? static_cast<int>(PJogA) : static_cast<int>(PJogB);
@@ -142,9 +174,31 @@ enum NoteMode { NoteGate = 0, NoteTrigger };
 // turning starts again at the other end): a scratch fills a good part of the lane's height.
 inline constexpr double kTravelTurns = 1;
 inline constexpr double kNudgeSpan = 4096;  // DNudge range (wheel ticks either way)
-// The performance parameters (DPos .. DNudge of both decks): played from lanes, never
+// The performance parameters (DPos .. DBend of both decks): played from lanes, never
 // moved by the decks themselves.
-constexpr bool perfParam(int p) { return p >= PPosA && p <= PNudgeB; }
+constexpr bool perfParam(int p) { return p >= PPosA && p <= PBendB; }
+// J-163: the state lanes of a recorded pass (DTrack .. DBend): a deck follows them while one plays.
+constexpr bool stateParam(int p) { return p >= PTrackA && p <= PBendB; }
+enum BendState { BendDown = 0, BendOff, BendUp };
+// J-163: a position lane's scale. 0..1 covers [-margin, size - margin]: the read head's
+// whole reach (a jump may land two seconds off the record), `size` a power of two and
+// `margin` whole frames, so a position on the deck's 1/256 frame grid maps to 0..1 and back
+// exactly (a lane point keeps it with AutoPoint::fine).
+struct PosScale {
+  double frames = 0, margin = 0, size = 1;
+  PosScale() = default;
+  PosScale(double f, double srcRate) : frames(f), margin(std::ceil(2.0 * srcRate) + 1.0) {
+    while (size < frames + 2.0 * margin) size *= 2.0;
+  }
+  double toN(double pos) const { return std::clamp((pos + margin) / size, 0.0, 1.0); }
+  double toPos(double n) const { return n * size - margin; }
+};
+// J-163: a play lane point says the motor started or stopped at once (no spin-up / brake).
+inline constexpr float kInstantTension = 1.0f;
+// J-163: a position lane's first point names its pass's start state (Model::starts) in its
+// tension (unused by the curve: no segment ends at a first point).
+inline float startTagOf(int id) { return static_cast<float>(id) / 1048576.0f; }
+inline int startIdOfTag(float t) { return t > 0 && t < 1 ? static_cast<int>(std::lround(static_cast<double>(t) * 1048576.0)) : 0; }
 enum SyncTo { SyncProject = 0, SyncDeck };
 inline constexpr int kLoopSizes = 9;
 double loopBeats(int index);        // 0.125 .. 32
@@ -504,6 +558,7 @@ bool liveView(const Generator* g, int deck, LiveView& out);
 struct StepState {
   std::array<float, PCount> p{};
   double pos[kDecks] = {0, 0}, vel[kDecks] = {0, 0};
+  bool driven[kDecks] = {false, false};  // J-163: a recorded pass's lanes play the deck
   uint64_t clock = 0;
 };
 bool stepState(const Generator* g, StepState& out);
@@ -562,13 +617,15 @@ struct CaptureEvent {
   uint8_t streams = 0;    // Start: decks with a track (bit d)
   uint8_t param = 0;      // Move: Param id; Button: CmdKey
   uint8_t deck = 0;       // Button
-  float value = 0;        // Move (normalized for a performance, plain for a take); Button: 1 down, 0 up
+  uint8_t flag = 0;       // J-163 Move on a play lane: the motor started / stopped at once
+  double value = 0;       // Move (normalized for a performance, plain for a take); Button: 1 down, 0 up
   uint32_t step = 0;      // Move / Button: the step it acts on; Snap: values [step * kSnapPer, ...)
   TakePoint pt[kDecks];   // Point: both decks; Start: pt[d].pos = start position
   double snap[kSnapPer] = {};  // Snap: start state values; Start: snap[0] = their count, snap[1] = the start tick (exact)
   int file[kDecks] = {-1, -1};      // Start
   double startRate[kDecks] = {0, 0};  // Start
   float gain[kDecks] = {1, 1};      // Start
+  double frames[kDecks] = {0, 0}, srcRate[kDecks] = {0, 0};  // J-163 Start: each deck's track (PosScale)
   double tick = 0;        // Start / End: tick (song or pattern)
   double tempo = 0, sampleRate = 0;
   int ppq = 0;
@@ -583,11 +640,15 @@ struct TakeBuilder {
   bool feed(const CaptureEvent& e);
 };
 
-// ------------------------------------------------------------------ performances (J-159)
-// A pass recorded as pattern data: a start note, notes on the command keys and lanes on
-// the parameters that moved (the performance lanes of both decks included). Times are
-// exact ticks (fractions kept): every event sits where it acts on the step it acted on
-// live, so the replay is the same sample for sample.
+// ------------------------------------------------------------------ performances (J-159, J-163)
+// A pass recorded as automation (J-163): one lane per control the pass used, the decks'
+// state included (position, play, wheel touch, mouse hand, loop, reverse, bend) beside
+// the hand's travel (wheel, mouse) and nudges. Song mode: automation clips placed where
+// the pass was played; pattern mode: pattern automation. Every lane is state: the decks
+// can pick a pass up anywhere. Times are exact ticks (fractions kept) and position values
+// exact (AutoPoint::fine): an unedited replay is the same sample for sample.
+// J-159's form (a start note, notes on the command keys, lanes) is still built and plays
+// back as before (projects recorded with it).
 struct PerfNote {
   double on = 0, off = 0;  // ticks
   int key = 0;
@@ -595,7 +656,9 @@ struct PerfNote {
 };
 struct PerfPoint {
   double tick = 0;
-  float value = 0;  // normalized
+  double value = 0;  // normalized (exact)
+  float tension = 0;
+  AutoShape shape = AutoShape::Hold;
 };
 struct PerfLane {
   int param = 0;  // Param id
@@ -607,7 +670,13 @@ struct Performance {
   std::vector<PerfNote> notes;
   std::vector<PerfLane> lanes;
   std::vector<double> start;  // the start state (Model::starts entry)
+  // J-163: the pass as automation (what a pass writes): every lane, in placing order
+  std::vector<PerfLane> clips;
+  int decks = 0;  // bit d: deck d had a track
+  std::array<PosScale, kDecks> scale{};
+  std::array<double, PCount> first{};  // each parameter's value (normalized) on the first step
   const PerfLane* lane(int param) const;
+  const PerfLane* clip(int param) const;
 };
 // Builds performances from the capture events (UI thread). Lanes are lossless: one Hold
 // point wherever the value the decks used changed.
@@ -624,7 +693,19 @@ class PerformanceBuilder {
   double tick0_ = 0, tps_ = 0;  // start tick (exact), ticks per step
   size_t snapN_ = 0;
   uint32_t steps_ = 0;
-  std::vector<std::pair<uint32_t, float>> moves_[PCount];
+  struct Mv {
+    uint32_t step;
+    double value;
+    uint8_t flag;
+  };
+  std::vector<Mv> moves_[PCount];
+  // J-163: both decks' read head, step by step (where it ends, where it started after a jump)
+  struct Pt {
+    double pos, from;
+    uint8_t flags;
+  };
+  std::vector<Pt> path_[kDecks];
+  double startPos_[kDecks] = {0, 0};
   struct Btn {
     uint32_t step;
     uint8_t deck, key;
@@ -632,6 +713,7 @@ class PerformanceBuilder {
   };
   std::vector<Btn> btns_;
   void build(double endTick);
+  void buildClips(double endTick);
 };
 
 // The pattern-data form of a performance at pattern tick `origin` (the pass start lands
@@ -653,9 +735,27 @@ ObjectId passPattern(Document& doc, ObjectId want, ObjectId channel, bool song);
 // Song mode: the pattern-tick origin of the clip of `pattern` at song tick `tick`; a clip
 // is placed on the bar (the channel's instrument track or a free track) when none covers it.
 Tick clipOrigin(Document& doc, ObjectId pattern, ObjectId channel, Tick tick, Tick length);
-// Writes `perf` (song or pattern ticks; `origin` = the pattern's tick 0 there) into
-// `pattern`: notes, lanes, and the start state into the channel's model (its id).
-// Song mode: the pattern grows to hold it.
+// J-159's form: writes `perf` (song or pattern ticks; `origin` = the pattern's tick 0 there)
+// into `pattern`: notes, lanes, and the start state into the channel's model (its id).
+// Song mode: the pattern grows to hold it. (Passes are written with writePass now; kept for
+// the tests of projects recorded with it.)
 void writePerformance(Document& doc, ObjectId pattern, ObjectId channel, double origin, const Performance& perf, bool song);
+
+// J-163: writes a pass as automation. Song mode (`pattern` kNoId): automation clips placed
+// where the pass was played, on adjacent free playlist tracks, in one clip group; a deck
+// state an earlier pass drives over that time gets a lane too (the earlier one stays as it
+// is). Pattern mode: lanes in `pattern`. The start state goes into the channel's model.
+struct PassWritten {
+  std::vector<ObjectId> clips;  // song mode: the placed clips (in lane order)
+  std::vector<ObjectId> autos;  // their automation clips
+  int firstTrack = -1;
+  ObjectId group = kNoId;
+  int lanes = 0;
+};
+PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, ObjectId pattern);
+// A clip's name: "<channel> <parameter>" ("Platter A wheel").
+std::string laneName(const std::string& channel, int param);
+// The lane point list of a pass lane at tick `origin` (content tick 0).
+std::vector<AutoPoint> passPoints(const PerfLane& lane, double origin, double vmin = 0, double vmax = 1);
 
 }  // namespace gl::packs::platter

@@ -253,6 +253,27 @@ struct Ghost {
   int left = 0;
 };
 
+// J-163: what a recorded pass's state lanes say for one step of a deck (-1: no lane plays).
+struct DriveStep {
+  bool chase = false;  // pick the pass up here: the deck takes the lanes' state at once
+  int play = -1, touch = -1, hand = -1, loop = -1, rev = -1, bend = -1;
+  bool instant = false;  // the play lane: the motor started / stopped at once on this step
+  bool hasIn = false, hasOut = false;
+  double loopIn = 0, loopOut = 0;
+  bool jump = false;  // the position lane jumps on this step (to jumpTo)
+  double jumpTo = 0;
+  bool check = false;  // the position lane plays: lanePos is where it says the record is
+  double lanePos = 0;
+  bool hasPos = false;  // chase: the record's place and speed on this step (exact on a steady run)
+  double pos = 0, vel = 0;
+  // chase in a jog scratch: the hand's last steps (the wheel's travel per step, in seconds of
+  // record, from the speed warmV at the first), so the jog filter goes on as it went
+  static constexpr int kWarm = 2048;  // (1.5 s of steps)
+  int warmN = 0;
+  double warmV = 0;
+  const double* warmDx = nullptr;  // (the setup's own buffer)
+};
+
 class Deck {
  public:
   void init(int index, Shared* s, const Deck* other) {
@@ -378,11 +399,11 @@ class Deck {
       }
     }
     motor_ = true;
-    if (instant) vel_ = baseSpeed();
+    if (instant) vel_ = baseSpeed(), motorSnap_ = true;
   }
   void stopMotor(bool instant) {
     motor_ = false;
-    if (instant) vel_ = 0;
+    if (instant) vel_ = 0, motorSnap_ = true;
   }
 
   void buttonPlay(bool down) {
@@ -453,6 +474,8 @@ class Deck {
       loopOn_ = false;
       return;
     }
+    // (J-163: on the read head's 1/256 frame grid, so a loop lane holds them exactly)
+    a = q256(a), b = q256(b);
     loopIn_ = a, loopOut_ = b, loopOn_ = true;
     if (savedIn_ != a || savedOut_ != b) {
       savedIn_ = a, savedOut_ = b;
@@ -870,11 +893,13 @@ class Deck {
       noteHot_ = i;
       motor_ = true;
       vel_ = baseSpeed();
+      motorSnap_ = true;
     } else if (noteHot_ == i) {
       noteHot_ = -1;
       if (static_cast<int>(std::lround(sh_->p[PNoteMode])) == NoteGate) {
         motor_ = false;
         vel_ = 0;
+        motorSnap_ = true;
       }
     }
   }
@@ -989,6 +1014,113 @@ class Deck {
     marksChanged();
   }
 
+  // ---------------------------------------------------------------- passes as state (J-163)
+  // The scale of this deck's position lanes (its own track).
+  PosScale scale() const { return src_ ? PosScale(static_cast<double>(src_->frames()), src_->sampleRate) : PosScale(); }
+  bool touchOn() const { return scr_ == ScrJog && hand_ && !softHand_; }  // a hand on the wheel's top
+  bool mouseOn() const { return scr_ == ScrPos && hand_; }                 // the mouse holds the record
+  int bendState() const { return bend_ < 0 ? BendDown : bend_ > 0 ? BendUp : BendOff; }
+  // A pass's start state was restored here (the cues stay as they are now).
+  void passRestored() {
+    wheelRaw_ = 0;
+    wheelN_ = normOf(deckParam(idx_, DWheel), 0.0);
+    nudgeSum_ = 0;
+    tqTail_ = tqHead_;
+    keyRestart_ = keyOn_;
+  }
+  // One step of a pass's state lanes, where the hands acted when it was recorded (the step
+  // start, before the travel lanes): the motor, the loop, reverse, bend, the wheel touch, the
+  // mouse hand, then the record's jumps. Everything between them is the deck's own physics,
+  // as it was live, so an unedited pass plays sample for sample.
+  void drive(const DriveStep& s) {
+    if (!loaded()) return;
+    if (s.chase) {
+      chase(s);
+      return;
+    }
+    if (s.play >= 0 && ((s.play > 0) != motor_ || s.instant)) {
+      motor_ = s.play > 0;
+      if (s.instant) vel_ = motor_ ? baseSpeed() : 0.0;
+    }
+    if (s.hasIn) loopIn_ = s.loopIn;
+    if (s.hasOut) loopOut_ = s.loopOut;
+    if (s.loop >= 0) loopOn_ = s.loop > 0;
+    if (s.rev >= 0 && (s.rev > 0) != censor_) {
+      censor_ = s.rev > 0;
+      if (censor_) vel_ = -std::fabs(vel_);
+      else if (motor_) vel_ = std::fabs(vel_);
+    }
+    if (s.bend >= 0) bend_ = s.bend == BendDown ? -0.04 : s.bend == BendUp ? 0.04 : 0.0;
+    if (s.touch >= 0) {
+      if (s.touch > 0 && !touchOn()) jogTouch(false);
+      else if (s.touch == 0 && touchOn()) jogLetGo(true);
+    }
+    if (s.hand >= 0) {
+      if (s.hand > 0 && !mouseOn()) handDown();
+      else if (s.hand == 0 && mouseOn()) handUp();
+    }
+    if (s.jump) {
+      // a loop's wrap: the deck makes it itself in the step (the same place)
+      bool wrap = false;
+      if (loopOn_ && loopOut_ > loopIn_ && !jumpPending_) {
+        const double L = loopOut_ - loopIn_;
+        wrap = s.jumpTo == q256(pos_ - L) || s.jumpTo == q256(pos_ + L);
+      }
+      if (!wrap) jump(s.jumpTo);
+    } else if (s.check && !hand_ && !scratching() && std::fabs((jumpPending_ ? jumpTo_ : pos_) - s.lanePos) > 4.0) {
+      jump(s.lanePos);  // the lane was edited: the record goes where it says
+    }
+  }
+  // Picks a pass up in the middle: the deck takes the lanes' state at once.
+  void chase(const DriveStep& s) {
+    noteHot_ = -1, cuePreview_ = false, hotPreview_ = -1, playLatched_ = false, slipping_ = false;
+    scratchOff();
+    searchTicks_ = 0;
+    if (s.hasIn) loopIn_ = s.loopIn;
+    if (s.hasOut) loopOut_ = s.loopOut;
+    loopOn_ = s.loop > 0 && loopOut_ > loopIn_;
+    censor_ = s.rev > 0;
+    bend_ = s.bend == BendDown ? -0.04 : s.bend == BendUp ? 0.04 : 0.0;
+    nudge_ = 0;
+    if (s.play >= 0) motor_ = s.play > 0;
+    if (s.hasPos) {
+      // (a record that was sounding crossfades to the place; a silent one is put there)
+      if (std::fabs(vel_) > 1e-9 || std::fabs(prevRate_) > 1e-9 || ghost_.left > 0) {
+        jump(s.pos);
+      } else {
+        pos_ = s.pos;
+        jumpPending_ = false;
+      }
+    }
+    // the speed: the lane's own (a hand, a spin-up or a brake), the motor's on a steady run
+    double v = s.hasPos ? s.vel : 0.0;
+    if (s.touch <= 0 && s.hand <= 0 && motor_) {
+      double target = baseSpeed() * (1.0 + bend_);
+      if (censor_) target = -std::fabs(target);
+      if (!s.hasPos || std::fabs(v - target) <= 1e-6 * std::fabs(target) + 1e-9) v = target;
+    }
+    vel_ = prevRate_ = tan_ = v;
+    fresh_ = true;
+    lastGain_ = gq(faderGain());
+    keyRestart_ = keyOn_;
+    if (s.touch > 0 && on(DVinyl)) {
+      jogTouch(false);
+      if (s.warmN > 0 && s.warmDx) {  // (the filter runs over the hand's last steps: its speed and lag as they were)
+        jogCoefs(kStep);
+        abV_ = s.warmV / std::max(1e-9, unity());
+        abX_ = 0;
+        for (int i = 0; i < s.warmN; ++i) {
+          const double dx = s.warmDx[i], px = abX_ + abV_ * abDt_, r = dx - px;
+          abX_ = px + abA_ * r - dx;
+          abV_ += abB_ * r / abDt_;
+        }
+        vel_ = prevRate_ = tan_ = abV_ * unity();  // (the speed this step starts from)
+      }
+    } else if (s.hand > 0) {
+      handDown();
+    }
+  }
+
   // ---------------------------------------------------------------- takes
   // The deck plays its stream of a take (null: it stays silent for the take).
   void startTake(const TakeStream* s, const Sample* src) {
@@ -1096,7 +1228,9 @@ class Deck {
       searchTicks_ = 0;
     }
     // slip: the ghost position keeps time while something holds the record
-    const bool slipNow = !inTake_ && on(DSlip) && (hand_ || scratching() || censor_ || loopOn_ || hotPreview_ >= 0);
+    // (J-163: a deck a pass drives does not slip: the pass's position lane has the slip's return)
+    const bool slipNow = !inTake_ && !driven_ && on(DSlip) && (hand_ || scratching() || censor_ || loopOn_ || hotPreview_ >= 0);
+    if (driven_) slipping_ = false;
     if (slipNow && !slipping_) slipping_ = true, slipPos_ = x0;
     if (!slipNow && slipping_) {
       slipping_ = false;
@@ -1157,8 +1291,9 @@ class Deck {
     } else {
       // ---- live physics
       if (jumpPending_) {
-        start = jumpTo_;
         jumped = std::fabs(jumpTo_ - x0) > 1e-6;
+        // (J-163: on the 1/256 frame grid before the step moves on, as a position lane holds it)
+        start = jumped ? q256(jumpTo_) : jumpTo_;
         jumpPending_ = false;
       }
       if (scratching()) {
@@ -1561,6 +1696,9 @@ class Deck {
   int nudgeSum_ = 0;
   bool wheelLane_ = false;
   float wheelLaneN_ = 0.5f;
+  // J-163: the motor started / stopped at once since the last step (a pass's play lane says so);
+  // a recorded pass's state lanes drive the deck (its own hands are ignored meanwhile)
+  bool motorSnap_ = false, driven_ = false;
 
   // takes
   bool inTake_ = false, takeMotor_ = false;
@@ -1614,6 +1752,50 @@ class Deck {
   std::atomic<float> pubLevel_{0}, pubPre_{0};
   std::atomic<uint32_t> marksSeq_{0};
 };
+
+// ================================================================== pass lanes (J-163)
+// The clip instance of a lane that plays at song tick `t` (nullptr: none covers it).
+const AutomationLane::Instance* coveringAt(const AutomationLane& l, double t) {
+  auto it = std::upper_bound(l.inst.begin(), l.inst.end(), t, [](double v, const AutomationLane::Instance& q) { return v < static_cast<double>(q.start); });
+  if (it == l.inst.begin()) return nullptr;
+  --it;
+  return t < static_cast<double>(it->end) && it->clip ? &*it : nullptr;
+}
+// A clip point's normalized value (through the clip's range, as AutomationLane::valueAt).
+double clipNorm(const AutomationClip& c, double v) { return std::clamp(c.min + v * (c.max - c.min), 0.0, 1.0); }
+// The last point of `c` with lo < tick <= hi whose shape is Hold (after the first point), or null.
+const AutoPoint* holdIn(const AutomationClip& c, double lo, double hi) {
+  const auto& P = c.points;
+  auto it = std::upper_bound(P.begin(), P.end(), hi, [](double v, const AutoPoint& q) { return v < q.at(); });
+  while (it != P.begin()) {
+    --it;
+    if (it->at() <= lo || it == P.begin()) break;
+    if (it->shape == AutoShape::Hold) return &*it;
+  }
+  return nullptr;
+}
+// A pass's position lane on step `k` of its grid (origin g0, tps ticks a step): its points sit on
+// the steps they hold (the first on the pass's start, the others half a step before theirs), so
+// a run between two points counts whole steps: a steady run (the motor's constant travel) is
+// exact. A jump (two points on one step) gives the place after it.
+double passPos(const AutomationClip& c, const PosScale& sc, double g0, double tps, double k) {
+  const auto& P = c.points;
+  auto posOf = [&](const AutoPoint& p) { return sc.toPos(clipNorm(c, p.exact())); };
+  auto stepOf = [&](size_t i) { return i == 0 ? 0.0 : std::round((P[i].at() - g0 + 0.5 * tps) / tps); };
+  auto it = std::upper_bound(P.begin(), P.end(), g0 + k * tps, [](double v, const AutoPoint& q) { return v < q.at(); });
+  const size_t i = it == P.begin() ? 0 : static_cast<size_t>(it - P.begin()) - 1;
+  double p = posOf(P[i]);
+  if (i + 1 < P.size() && P[i + 1].shape != AutoShape::Hold) {
+    const double si = stepOf(i), sj = stepOf(i + 1);
+    if (P[i + 1].shape != AutoShape::Curve || P[i + 1].tension != 0.0f) {
+      // (a curve shaped by hand: the lane's own value where the step's point would sit)
+      if (k > 0) p = sc.toPos(clipNorm(c, automationValue(c, g0 + k * tps - 0.5 * tps)));
+    } else if (sj > si && k > si) {
+      p += (posOf(P[i + 1]) - p) * (std::min(k, sj) - si) / (sj - si);
+    }
+  }
+  return std::round(p * 256.0) / 256.0;
+}
 
 // ================================================================== the setup (decks + mixer)
 // J-159: an input waiting for the next step start (strict mode; command keys always).
@@ -1700,6 +1882,7 @@ class PlatterGen final : public Generator {
     for (int k = 0; k < kDecks; ++k) {
       s.pos[k] = deck_[static_cast<size_t>(k)].pos_;
       s.vel[k] = deck_[static_cast<size_t>(k)].vel_;
+      s.driven[k] = deck_[static_cast<size_t>(k)].driven_;
     }
     s.clock = sh_.clock;
   }
@@ -1875,6 +2058,7 @@ class PlatterGen final : public Generator {
     }
     lanes_ = ctx.playing ? ctx.lanes : nullptr;
     laneCount_ = lanes_ ? ctx.laneCount : 0;
+    if (!ctx.playing || ctx.jumped) driveAt_ = -1;
     if (!ctx.playing || (ctx.jumped && lastStartAt_ < prevBlockClock_)) perfOn_ = false;
     prevBlockClock_ = sh_.clock;
     // controller MIDI from the hub (app): the setup's device
@@ -1930,7 +2114,11 @@ class PlatterGen final : public Generator {
       const auto w = static_cast<int64_t>(sh_.anchorClock) + static_cast<int64_t>(std::ceil((ctx.loopEnd - sh_.anchorTick) * spt - 1e-9));
       if (w >= static_cast<int64_t>(sh_.clock)) wrapAt_ = w, wrapStart_ = ctx.loopStart;
     }
+    const bool wasFollowing = following_;
     updateStrict();
+    // J-163: playback starts (or jumps) while lanes play: a fresh step on this sample, so a pass
+    // that starts here is picked up here
+    if (following_ && (!wasFollowing || ctx.jumped)) cut();
     // editor commands
     for (size_t t = cmdTail_.load(std::memory_order_relaxed); t != cmdHead_.load(std::memory_order_acquire); ++t) {
       sh_.evAt = arrival(cmdNs_[t % cmds_.size()]);
@@ -1954,6 +2142,7 @@ class PlatterGen final : public Generator {
         sh_.anchorTick = wrapStart_;
         sh_.anchorClock = sh_.clock;
         wrapAt_ = -1;
+        if (following_ && !chain) cut();  // (J-163: a pass that starts on the loop start is picked up here)
         punchEndAt_ = -1;
         const bool inPunch = !punch_ || (wrapStart_ >= punchIn_ - 1e-9 && wrapStart_ < punchOut_);
         if (chain && inPunch && recording_ && armed() && (deck_[0].loaded() || deck_[1].loaded())) {
@@ -1980,6 +2169,10 @@ class PlatterGen final : public Generator {
           beginCapture();
         }
       }
+      if (driveAt_ >= 0 && static_cast<int64_t>(sh_.clock) >= driveAt_) {
+        cut();  // J-163: a pass is picked up here, on its own step grid
+        driveAt_ = -1;
+      }
       if (stepPos_ >= stepLen_) computeStep();
       int run = std::min(n - i, stepLen_ - stepPos_);
       if (capStartAt_ >= 0 && !capturing_ && static_cast<int64_t>(sh_.clock) < capStartAt_)
@@ -1988,6 +2181,8 @@ class PlatterGen final : public Generator {
         run = static_cast<int>(std::min<int64_t>(run, wrapAt_ - static_cast<int64_t>(sh_.clock)));
       if (punchEndAt_ >= 0 && static_cast<int64_t>(sh_.clock) < punchEndAt_)
         run = static_cast<int>(std::min<int64_t>(run, punchEndAt_ - static_cast<int64_t>(sh_.clock)));
+      if (driveAt_ >= 0 && static_cast<int64_t>(sh_.clock) < driveAt_)
+        run = static_cast<int>(std::min<int64_t>(run, driveAt_ - static_cast<int64_t>(sh_.clock)));
       runStep(L + i, R + i, run);
       i += run;
     }
@@ -2042,6 +2237,7 @@ class PlatterGen final : public Generator {
       input(e);
       return;
     }
+    if (deck_[static_cast<size_t>(c.deck & 1)].driven_ && c.kind != CmdAbsolute) return;  // J-163: a pass plays it
     if (sh_.strict) {  // J-159
       if (c.kind == CmdButton) {
         InEvent e;
@@ -2103,6 +2299,7 @@ class PlatterGen final : public Generator {
     for (int d = 0; d < kDecks; ++d) {
       const int first = d == 0 ? kHotKeyFirst : kHotKeyFirstB;
       if (k >= first && k < first + kHotCues) {
+        if (deck_[static_cast<size_t>(d)].driven_) return;  // (J-163: a pass plays the deck)
         if (down && takeOn_) stopTake();
         deck_[static_cast<size_t>(d)].hotKey(k - first, down);
         return;
@@ -2200,7 +2397,10 @@ class PlatterGen final : public Generator {
       e.file[d] = k.fileIdx_;
       e.startRate[d] = k.vel_;
       e.pt[d].pos = k.jumpPending_ ? k.jumpTo_ : k.pos_;
+      e.pt[d].from = k.pos_;  // (J-163: the read head itself; a jump waiting is the first step's)
       e.gain[d] = k.lastGain_;
+      e.frames[d] = k.scale().frames;
+      e.srcRate[d] = k.src_ ? k.src_->sampleRate : sh_.sr;
       k.fresh_ = true;  // the take's first step is straight (its replay starts so)
       if (k.keyOn_) k.keyRestart_ = true;  // the key lock engine starts fresh with the take (replays match)
     }
@@ -2226,6 +2426,8 @@ class PlatterGen final : public Generator {
       e.snap[0] = static_cast<double>(snapN);
       e.snap[1] = laneTick();
       capN_.fill(std::numeric_limits<float>::quiet_NaN());
+      capS_.fill(std::numeric_limits<double>::quiet_NaN());
+      for (auto& d : deck_) d.motorSnap_ = false;
     }
     pushCapture(e);
     capSteps_ = 0;
@@ -2291,8 +2493,14 @@ class PlatterGen final : public Generator {
     }
     // J-159: strict: the values of this step (lanes or what came in), then the inputs
     // waiting for it (command keys always wait for a step start)
-    if (sh_.strict) stepValues();
+    if (sh_.strict) {
+      laneScan();
+      driveScan();
+      stepValues();
+    }
     runPending();
+    if (capturing_ && perfCapture_) captureState();  // J-163: the decks' state as the step uses it
+    for (auto& d : deck_) d.motorSnap_ = false;
     // capture (take): mixer values that changed since the last step
     if (capturing_ && !perfCapture_) {
       const auto& mp = moveParams();
@@ -2342,12 +2550,13 @@ class PlatterGen final : public Generator {
             capN_[static_cast<size_t>(p)] = n;
             capMove(p, n);
           }
-      } else {
-        CaptureEvent e;
-        e.kind = CaptureEvent::Point;
-        for (int d = 0; d < kDecks; ++d) e.pt[d] = deck_[static_cast<size_t>(d)].pt_;
-        pushCapture(e);
       }
+      // the read heads' path (a take's points; J-163: a pass's position lanes)
+      CaptureEvent e;
+      e.kind = CaptureEvent::Point;
+      e.step = static_cast<uint32_t>(capSteps_);
+      for (int d = 0; d < kDecks; ++d) e.pt[d] = deck_[static_cast<size_t>(d)].pt_;
+      pushCapture(e);
       ++capSteps_;
       capSamples_ += static_cast<uint64_t>(len);
     }
@@ -2355,13 +2564,244 @@ class PlatterGen final : public Generator {
   }
 
   // ---------------------------------------------------------------- performances (J-159)
-  void capMove(int p, float n) {
+  void capMove(int p, double n, uint8_t flag = 0) {
     CaptureEvent m;
     m.kind = CaptureEvent::Move;
     m.step = static_cast<uint32_t>(capSteps_);
     m.param = static_cast<uint8_t>(p);
     m.value = n;
+    m.flag = flag;
     pushCapture(m);
+  }
+  // J-163: each deck's state after the step's inputs (the state lanes of the pass): what changed,
+  // and the play lane wherever the motor started or stopped at once.
+  void captureState() {
+    for (int d = 0; d < kDecks; ++d) {
+      const Deck& k = deck_[static_cast<size_t>(d)];
+      if (!k.loaded()) continue;
+      const PosScale sc = k.scale();
+      for (int dp = DPlay; dp < DAll; ++dp) {
+        const int p = deckParam(d, dp);
+        double v = 0;
+        switch (dp) {
+          case DPlay: v = k.motor_ ? 1 : 0; break;
+          case DTouch: v = k.touchOn() ? 1 : 0; break;
+          case DHand: v = k.mouseOn() ? 1 : 0; break;
+          case DLoop: v = k.loopOn_ ? 1 : 0; break;
+          case DLoopIn: v = sc.toN(k.loopIn_); break;
+          case DLoopOut: v = sc.toN(k.loopOut_); break;
+          case DReverse: v = k.censor_ ? 1 : 0; break;
+          default: v = normOf(p, k.bendState()); break;
+        }
+        const bool snap = dp == DPlay && k.motorSnap_;
+        if (v == capS_[static_cast<size_t>(p)] && !snap) continue;
+        capS_[static_cast<size_t>(p)] = v;
+        capMove(p, v, snap ? 1 : 0);
+      }
+    }
+  }
+  double ticksPerStep() const { return static_cast<double>(kStep) * sh_.tempo * sh_.ppq / (60.0 * sh_.sr); }
+  // Step start (following): the lanes that play now. The performance lanes (a pass's own:
+  // travel, nudges, state) count only where a clip or pattern holds them; the controls' lanes
+  // hold their values around their clips as automation does.
+  void laneScan() {
+    sh_.laneHas.fill(false);
+    laneClip_.fill(nullptr);
+    if (!following_ || !lanes_) return;
+    const double t = laneTick();
+    for (int i = 0; i < laneCount_; ++i) {
+      const ParamLane& l = lanes_[i];
+      if (l.param < 0 || l.param >= PCount || !l.lane) continue;
+      const auto k = static_cast<size_t>(l.param);
+      if (!perfParam(l.param)) {
+        sh_.laneHas[k] = true;
+        sh_.laneN[k] = l.lane->valueAt(t - l.origin);
+        continue;
+      }
+      const AutomationLane::Instance* in = coveringAt(*l.lane, t - l.origin);
+      if (!in) continue;
+      const AutomationClip& c = *in->clip;
+      if (c.points.empty()) continue;
+      double ct = static_cast<double>(in->offset) + ((t - l.origin) - static_cast<double>(in->start));
+      sh_.laneHas[k] = true;
+      sh_.laneN[k] = clipNorm(c, automationValue(c, ct));
+      if (c.loop > 0 && ct >= static_cast<double>(c.loop)) ct = std::fmod(ct, static_cast<double>(c.loop));
+      laneClip_[k] = &c;
+      laneC_[k] = ct;
+    }
+  }
+  // Step start (following): which decks a pass's state lanes drive. A deck picks a pass up (a
+  // new one, or the place jumped: a cut, a moved clip, playback started in it) on the pass's own
+  // step grid: the render splits there, at most a step from now. On the pass's first step its
+  // start state comes back (exact); anywhere else the deck takes the lanes' state (chase).
+  void driveScan() {
+    chaseNow_.fill(false);
+    const double tps = ticksPerStep(), spt = sh_.sr * 60.0 / (sh_.tempo * sh_.ppq);
+    int want[kDecks] = {0, 0};
+    for (int d = 0; d < kDecks; ++d) {
+      Deck& k = deck_[static_cast<size_t>(d)];
+      PassRef& r = pass_[static_cast<size_t>(d)];
+      int key = -1;
+      for (int dp : {static_cast<int>(DTrack), static_cast<int>(DPlay), static_cast<int>(DTouch), static_cast<int>(DHand), static_cast<int>(DLoop),
+                     static_cast<int>(DReverse), static_cast<int>(DBend), static_cast<int>(DLoopIn), static_cast<int>(DLoopOut)}) {
+        const auto p = static_cast<size_t>(deckParam(d, dp));
+        if (sh_.laneHas[p] && laneClip_[p]) {
+          key = static_cast<int>(p);
+          break;
+        }
+      }
+      if (key < 0 || !k.loaded()) {
+        r.on = false;
+        k.driven_ = false;
+        continue;
+      }
+      const AutomationClip& c = *laneClip_[static_cast<size_t>(key)];
+      const AutoPoint& f = c.points.front();
+      const double ct = laneC_[static_cast<size_t>(key)];
+      if (r.on && r.key == key && r.g0 == f.at() && r.first == f.exact() && r.tag == f.tension && std::fabs(ct - (r.lastC + tps)) < 0.25 * tps) {
+        r.lastC = ct;
+        continue;
+      }
+      // (the pass's grid may fall between two samples here: a step less than a sample ago counts
+      // as now, else the sample after it would never be on it)
+      const double kk = std::max(0.0, std::ceil((ct - f.at()) / tps - 1.0 / kStep - 1e-6));
+      const double off = (f.at() + kk * tps - ct) * spt;
+      const double n = off <= 1e-3 ? 0.0 : std::ceil(off - 1e-3);
+      if (n > 0) {  // (free until the pass.s next step)
+        r.on = false;
+        k.driven_ = false;
+        const int64_t at = static_cast<int64_t>(sh_.clock) + static_cast<int64_t>(n);
+        if (driveAt_ < 0 || at < driveAt_) driveAt_ = at;
+        continue;
+      }
+      r.on = true, r.key = key, r.g0 = f.at(), r.first = f.exact(), r.tag = f.tension, r.lastC = ct;
+      k.driven_ = true;
+      chaseNow_[static_cast<size_t>(d)] = true;
+      primed_[static_cast<size_t>(d)] = false;
+      if (key == deckParam(d, DTrack)) {
+        const int id = startIdOfTag(f.tension);
+        if (kk == 0) want[d] = id;
+        else holdStart(id);  // (the controls the pass did not move keep their values from it)
+      }
+    }
+    // the pass's first step: its start state (both decks it drives at once)
+    for (int d = 0; d < kDecks; ++d) {
+      if (want[d] <= 0) continue;
+      unsigned mask = 0;
+      for (int e = d; e < kDecks; ++e)
+        if (want[e] == want[d]) mask |= 1u << e;
+      const int id = want[d];
+      if (restoreStart(id, mask))
+        for (int e = 0; e < kDecks; ++e)
+          if ((mask >> e) & 1u) chaseNow_[static_cast<size_t>(e)] = false, primed_[static_cast<size_t>(e)] = true;
+      for (int e = d; e < kDecks; ++e)
+        if (want[e] == id) want[e] = 0;
+    }
+  }
+  // A pass's start state for the decks in `mask` (the mixer's part as well); false when the
+  // setup does not have it (or it is from another layout).
+  bool restoreStart(int id, unsigned mask) {
+    if (!sh_.aux) return false;
+    const PerfStart* ps = nullptr;
+    for (const auto& st : sh_.aux->m.starts)
+      if (st.id == id) ps = &st;
+    if (!ps || ps->v.size() != snapCount()) return false;
+    struct MarksKeep {
+      double cue;
+      std::array<double, kHotCues> hot;
+      double in, out;
+    } keep[kDecks];
+    for (int d = 0; d < kDecks; ++d) {
+      const Deck& k = deck_[static_cast<size_t>(d)];
+      keep[d] = MarksKeep{k.cue_, k.hot_, k.savedIn_, k.savedOut_};
+    }
+    const size_t head = 2 + 2 * static_cast<size_t>(kLegacyPCount), per = (ps->v.size() - head) / kDecks;
+    size_t i = 0;
+    snapAll([&](double& x) {
+      const size_t j = i++;
+      if (j < head || ((mask >> ((j - head) / per)) & 1u)) x = ps->v[j];
+    });
+    for (int d = 0; d < kDecks; ++d) {
+      Deck& k = deck_[static_cast<size_t>(d)];
+      k.cue_ = keep[d].cue, k.hot_ = keep[d].hot, k.savedIn_ = keep[d].in, k.savedOut_ = keep[d].out;
+      if ((mask >> d) & 1u) k.passRestored();
+    }
+    // the controls without a lane keep the values they had in the pass until they change here
+    startRaw_ = sh_.raw;
+    startHeld_ = true;
+    return true;
+  }
+  // A pass picked up in the middle: the controls it did not move keep the values they had in
+  // it (its start state holds them) until they change here.
+  void holdStart(int id) {
+    if (!sh_.aux || id <= 0) return;
+    for (const auto& st : sh_.aux->m.starts) {
+      if (st.id != id || st.v.size() != snapCount()) continue;
+      const size_t at = 2 + static_cast<size_t>(kLegacyPCount);  // (master ramp, the last step's values, then these)
+      for (size_t i = 0; i < static_cast<size_t>(kLegacyPCount); ++i) startN_[i] = static_cast<float>(st.v[at + i]);
+      startRaw_ = sh_.raw;
+      startHeld_ = true;
+      return;
+    }
+  }
+  // What deck `d`'s state lanes say for this step (it is driven).
+  DriveStep driveStep(int d) {
+    DriveStep s;
+    s.chase = chaseNow_[static_cast<size_t>(d)];
+    auto st = [&](int dp) {
+      const auto p = static_cast<size_t>(deckParam(d, dp));
+      return sh_.laneHas[p] ? static_cast<int>(std::lround(valueOfN(static_cast<int>(p), sh_.laneN[p]))) : -1;
+    };
+    s.play = st(DPlay), s.touch = st(DTouch), s.hand = st(DHand), s.loop = st(DLoop), s.rev = st(DReverse), s.bend = st(DBend);
+    const Deck& k = deck_[static_cast<size_t>(d)];
+    const PosScale sc = k.scale();
+    const double tps = ticksPerStep();
+    const auto pPlay = static_cast<size_t>(deckParam(d, DPlay)), pIn = static_cast<size_t>(deckParam(d, DLoopIn)),
+               pOut = static_cast<size_t>(deckParam(d, DLoopOut)), pTrack = static_cast<size_t>(deckParam(d, DTrack));
+    if (laneClip_[pPlay]) {
+      const AutoPoint* h = holdIn(*laneClip_[pPlay], laneC_[pPlay] - 0.75 * tps, laneC_[pPlay] + 0.25 * tps);
+      s.instant = h && h->tension == kInstantTension;
+    }
+    if (sh_.laneHas[pIn]) s.hasIn = true, s.loopIn = sc.toPos(sh_.laneN[pIn]);
+    if (sh_.laneHas[pOut]) s.hasOut = true, s.loopOut = sc.toPos(sh_.laneN[pOut]);
+    if (const AutomationClip* c = laneClip_[pTrack]) {
+      const double ct = laneC_[pTrack];
+      const double g0 = c->points.front().at();
+      const double step = std::max(0.0, std::round((ct - g0) / tps));
+      if (s.chase) {
+        s.hasPos = true;
+        s.pos = passPos(*c, sc, g0, tps, step);
+        s.vel = (passPos(*c, sc, g0, tps, step + 1) - s.pos) / kStep;
+        const auto pWheel = static_cast<size_t>(deckParam(d, DWheel)), pTouch = static_cast<size_t>(deckParam(d, DTouch));
+        const AutomationClip *cw = laneClip_[pWheel], *cto = laneClip_[pTouch];
+        if (s.touch > 0 && cw && cto) {
+          // the steps the hand was on the wheel (up to kWarm back, within the clips)
+          const double wt = laneC_[pWheel], tt = laneC_[pTouch];
+          int n = 0;
+          while (n < DriveStep::kWarm && step - n - 1 >= 0) {
+            const double back = (n + 1) * tps;
+            if (wt - back < cw->points.front().at() || tt - back < cto->points.front().at()) break;
+            if (valueOfN(static_cast<int>(pTouch), clipNorm(*cto, automationValue(*cto, tt - back))) < 0.5f) break;
+            ++n;
+          }
+          const auto turns = [&](int j) {  // (the wheel lane j steps back)
+            return static_cast<double>(valueOfN(static_cast<int>(pWheel), static_cast<float>(clipNorm(*cw, automationValue(*cw, wt - j * tps)))));
+          };
+          s.warmN = n;
+          for (int i = 0; i < n; ++i) warmDx_[static_cast<size_t>(i)] = Deck::wrapTurns(turns(n - i) - turns(n - i + 1)) * kSecondsPerRev;
+          s.warmDx = warmDx_.data();
+          const double s0 = step - n;
+          s.warmV = (passPos(*c, sc, g0, tps, s0) - passPos(*c, sc, g0, tps, s0 - 1)) / kStep;
+        }
+      } else if (const AutoPoint* h = holdIn(*c, ct - 0.75 * tps, ct + 0.25 * tps)) {
+        s.jump = true;
+        s.jumpTo = std::round(sc.toPos(clipNorm(*c, h->exact())) * 256.0) / 256.0;
+      } else {
+        s.check = true;
+        s.lanePos = passPos(*c, sc, g0, tps, step);
+      }
+    }
+    return s;
   }
   // The transport tick of this sample (the engine splits its blocks where the loop wraps).
   double laneTick() const { return sh_.tickAt(static_cast<double>(sh_.clock)); }
@@ -2370,6 +2810,11 @@ class PlatterGen final : public Generator {
     const bool wasFollowing = following_;
     following_ = sh_.transport && !capturing_ && (laneCount_ > 0 || perfOn_);
     if (following_ && !wasFollowing && !primedByStart_) primed_.fill(false);
+    if (!following_) {  // (J-163: no pass drives a deck now)
+      for (auto& r : pass_) r.on = false;
+      for (auto& d : deck_) d.driven_ = false;
+      driveAt_ = -1;
+    }
     primedByStart_ = false;
     sh_.replay = following_;
     const bool strict = (capturing_ && perfCapture_) || following_;
@@ -2386,21 +2831,11 @@ class PlatterGen final : public Generator {
   // Step start (strict): every parameter's value for this step: its lane while lanes play,
   // else what came in, as a lane would give it back. A pass records the changes.
   void stepValues() {
-    sh_.laneHas.fill(false);
-    if (following_ && lanes_) {
-      const double t = laneTick();
-      for (int i = 0; i < laneCount_; ++i) {
-        const ParamLane& l = lanes_[i];
-        if (l.param < 0 || l.param >= PCount || !l.lane) continue;
-        sh_.laneHas[static_cast<size_t>(l.param)] = true;
-        sh_.laneN[static_cast<size_t>(l.param)] = l.lane->valueAt(t - l.origin);
-      }
-    }
     const bool rec = capturing_ && perfCapture_;
     for (int i = 0; i < PCount; ++i) {
       if (perfParam(i)) continue;
       const auto k = static_cast<size_t>(i);
-      const bool held = startHeld_ && perfOn_ && sh_.raw[k] == startRaw_[k];
+      const bool held = startHeld_ && (perfOn_ || deck_[0].driven_ || deck_[1].driven_) && sh_.raw[k] == startRaw_[k];
       const double n = sh_.laneHas[k] ? sh_.laneN[k] : held ? static_cast<double>(startN_[k]) : static_cast<double>(normOf(i, sh_.raw[k]));
       sh_.p[k] = valueOfN(i, n);
       if (rec) {
@@ -2470,6 +2905,7 @@ class PlatterGen final : public Generator {
           if (!pendKey(q, qd, qk) || qd != d || qk != key) continue;
           const bool down = pendDown(q);
           Deck& k = deck_[static_cast<size_t>(d)];
+          if (k.driven_) break;  // (J-163: a pass plays the deck)
           sh_.evAt = q.at, sh_.evDelay = q.delay;
           if (key == KeyMouse) {
             if (down) k.handDown();
@@ -2505,6 +2941,7 @@ class PlatterGen final : public Generator {
       if (q.kind == PendIn) {
         const auto d = static_cast<size_t>(q.e.deck & 1);
         Deck& k = deck_[d];
+        if (k.driven_) continue;
         sh_.evAt = q.at, sh_.evDelay = q.delay;
         switch (q.e.control) {
           case CtlJogPlatter:
@@ -2519,6 +2956,7 @@ class PlatterGen final : public Generator {
         }
       } else if (q.kind == PendCmd) {
         const auto d = static_cast<size_t>(q.c.deck & 1);
+        if (deck_[d].driven_) continue;
         if (q.c.kind == CmdSeek) seekAny[d] = true, seekTo[d] = q.c.v;
         else if (q.c.kind == CmdHandMove) mouseAny[d] = true, mouseTo[d] = q.c.v;
       }
@@ -2529,14 +2967,24 @@ class PlatterGen final : public Generator {
       const auto d = static_cast<size_t>(di);
       Deck& k = deck_[d];
       const bool lanes = following_;
+      // J-163: a pass's state lanes: where the hands acted (the travel lanes follow)
+      if (k.driven_) k.drive(driveStep(di));
       const auto pPos = static_cast<size_t>(deckParam(di, DPos)), pMouse = static_cast<size_t>(deckParam(di, DMouse)),
                  pWheel = static_cast<size_t>(deckParam(di, DWheel)), pNudge = static_cast<size_t>(deckParam(di, DNudge));
-      const bool hPos = lanes && sh_.laneHas[pPos], hMouse = lanes && sh_.laneHas[pMouse], hWheel = lanes && sh_.laneHas[pWheel],
+      const bool hPos = lanes && !k.driven_ && sh_.laneHas[pPos], hMouse = lanes && sh_.laneHas[pMouse], hWheel = lanes && sh_.laneHas[pWheel],
                  hNudge = lanes && sh_.laneHas[pNudge];
       if (lanes && !primed_[d]) {  // following from the middle: the lanes' values are where it starts
         if (hPos) k.posN_ = static_cast<float>(sh_.laneN[pPos]);
-        if (hWheel) k.wheelN_ = static_cast<float>(sh_.laneN[pWheel]);
-        if (hNudge) k.nudgeSum_ = static_cast<int>(std::lround(valueOfN(static_cast<int>(pNudge), sh_.laneN[pNudge])));
+        if (hMouse) k.mouseN_ = static_cast<float>(sh_.laneN[pMouse]);
+        // (a pass picked up in the middle: its travel lanes count from the step before, so this
+        // step's wheel turn and nudges are not lost)
+        auto before = [&](size_t p) {
+          const AutomationClip* c = k.driven_ ? laneClip_[p] : nullptr;
+          const double ct = c ? laneC_[p] - ticksPerStep() : 0.0;
+          return c && ct >= c->points.front().at() ? clipNorm(*c, automationValue(*c, ct)) : sh_.laneN[p];
+        };
+        if (hWheel) k.wheelN_ = static_cast<float>(before(pWheel));
+        if (hNudge) k.nudgeSum_ = static_cast<int>(std::lround(valueOfN(static_cast<int>(pNudge), before(pNudge))));
         primed_[d] = true;
       }
       // nudges
@@ -2597,15 +3045,16 @@ class PlatterGen final : public Generator {
   template <class Fn>
   void snapAll(Fn&& f) {
     f(master0_), f(master1_);
-    for (auto& x : lastP_) {
-      double v = x;
+    // (the parameters J-159 had: start states keep their layout; the state lanes are never in them)
+    for (size_t i = 0; i < static_cast<size_t>(kLegacyPCount); ++i) {
+      double v = lastP_[i];
       f(v);
-      x = static_cast<float>(v);
+      lastP_[i] = static_cast<float>(v);
     }
-    for (auto& x : startN_) {
-      double v = x;
+    for (size_t i = 0; i < static_cast<size_t>(kLegacyPCount); ++i) {
+      double v = startN_[i];
       f(v);
-      x = static_cast<float>(v);
+      startN_[i] = static_cast<float>(v);
     }
     for (auto& d : deck_) d.snapFields(f);
   }
@@ -2705,6 +3154,20 @@ class PlatterGen final : public Generator {
   double punchIn_ = 0, punchOut_ = 0;
   double wrapStart_ = 0;
   std::array<double, 512> snapBuf_{};
+  // J-163: the state lanes playing this step (their clip and content tick), each deck's pass
+  std::array<double, PCount> capS_{};
+  std::array<const AutomationClip*, PCount> laneClip_{};
+  std::array<double, PCount> laneC_{};
+  struct PassRef {
+    bool on = false;
+    int key = -1;  // the lane that names the pass (its first point)
+    double g0 = 0, first = 0, lastC = 0;
+    float tag = 0;
+  };
+  std::array<PassRef, kDecks> pass_{};
+  std::array<bool, kDecks> chaseNow_{};
+  std::array<double, DriveStep::kWarm> warmDx_{};  // (a chase in a jog scratch: the hand's last steps)
+  int64_t driveAt_ = -1;  // the sample a pass is picked up on (-1 none)
   int64_t capStartAt_ = -1;
   double capStartTick_ = 0;
   uint64_t capSteps_ = 0, capSamples_ = 0;

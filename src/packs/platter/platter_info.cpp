@@ -48,11 +48,22 @@ void appendInfos(std::vector<PluginInfo>& v) {
     at(DXfSide) = ch(k + "crossfader side", {"Thru", "A", "B"}, d == 0 ? XfA : XfB);
     at(DLoopSize) = ch(k + "loop size", {"1/8", "1/4", "1/2", "1", "2", "4", "8", "16", "32"}, 5);
     at(DJog) = lin(k + "jog sensitivity", "times", 0.25, 2, kJogSensDefault);
-    // J-159: what a recorded performance plays (lanes in the pattern)
-    at(DPos) = lin(k + "record position", "", 0, 1, 0);
+    // J-159: what a recorded pass plays besides the controls (the hand's travel, nudges; the
+    // seek lane of passes recorded before J-163)
+    at(DPos) = lin(k + "seek", "", 0, 1, 0);
     at(DMouse) = lin(k + "mouse travel", "turns", -kTravelTurns, kTravelTurns, 0);
-    at(DWheel) = lin(k + "wheel travel", "turns", -kTravelTurns, kTravelTurns, 0);
+    at(DWheel) = lin(k + "wheel", "turns", -kTravelTurns, kTravelTurns, 0);
     at(DNudge) = lin(k + "nudge", "ticks", -kNudgeSpan, kNudgeSpan, 0);
+    // J-163: a recorded pass's deck state (the deck follows these lanes while they play)
+    at(DTrack) = lin(k + "position", "%", 0, 1, 0);
+    at(DPlay) = tog(k + "play", 0);
+    at(DTouch) = tog(k + "wheel touch", 0);
+    at(DHand) = tog(k + "mouse hand", 0);
+    at(DLoop) = tog(k + "loop", 0);
+    at(DLoopIn) = lin(k + "loop in", "%", 0, 1, 0);
+    at(DLoopOut) = lin(k + "loop out", "%", 0, 1, 0);
+    at(DReverse) = tog(k + "reverse", 0);
+    at(DBend) = ch(k + "pitch bend", {"Down", "Off", "Up"}, BendOff);
   }
   p.params[PXfader] = lin("Crossfader", "", 0, 1, 0.5);
   p.params[PXfCurve] = lin("Crossfader curve", "%", 0, 1, 0.5);

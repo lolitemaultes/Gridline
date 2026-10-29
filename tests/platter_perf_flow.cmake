@@ -1,14 +1,17 @@
-# Gridline — J-159: a Platter pass recorded as automation in the app, driven like a user
+# Gridline — J-159 / J-163: a Platter pass recorded as automation in the app, driven like a user
 # through the dev input hooks (hidden, isolated config, SDL's dummy audio driver).
 #   1. pattern mode: the setup is armed (new setups are), Record, Play; the decks are played from a controller (the
 #      editor's GRIDLINE_PLATTER_DEVJOG hook sends DDJ-200 MIDI: play, crossfader, a hot cue,
 #      an EQ kill, a jog scratch, pitch moves) and the mouse scratches deck A; Stop. The pass is
-#      in the pattern: notes on the performance keys and lanes, sub-tick positions kept, one
+#      in the pattern as automation lanes only (J-163: no notes), sub-tick positions kept, one
 #      undo step. Record a second pass: it goes into a new pattern "<setup> take 2", selected.
 #      The piano roll opens on the second pass with deck A's mouse travel lane
 #      (GRIDLINE_PLATTER_PASS_VIEW): <OUT>/pattern.ppm.
-#   2. song mode: a pass goes into the playlist through a clip: <OUT>/playlist.ppm.
-# Trace lines: "platter: pass pattern ..." (the tick's dev hook), "platter: rect ...".
+#   2. song mode (J-163): a pass goes into the playlist as automation clips, one per control,
+#      grouped, on adjacent tracks: <OUT>/playlist.ppm; the same pass with the automation
+#      editor open on deck A's wheel clip: <OUT>/automation.ppm.
+# Trace lines: "platter: pass pattern ...", "platter: pass clips ..." (the tick's dev hook),
+# "platter: rect ...".
 #   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_test_platter> -DOUT=<dir> -P platter_perf_flow.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -189,18 +192,17 @@ list(GET passes 0 p1)
 list(GET passes 1 p2)
 message(STATUS "${p1}")
 message(STATUS "${p2}")
-check("the first pass is in the selected (empty) pattern: notes, lanes, sub-tick positions"
-      p1 MATCHES "pattern \"Pattern 1\" notes ([4-9]|[1-9][0-9]+) lanes ([3-9]|[1-9][0-9]+) fractions [1-9][0-9]* passes 1 patterns 1 selected 1")
+check("the first pass is in the selected (empty) pattern: lanes, no notes, sub-tick positions"
+      p1 MATCHES "pattern \"Pattern 1\" notes 0 lanes ([3-9]|[1-9][0-9]+) fractions [1-9][0-9]* passes 1 patterns 1 selected 1")
 check("the second pass goes into a new pattern, selected"
-      p2 MATCHES "pattern \"[^\"]+ take 2\" notes ([2-9]|[1-9][0-9]+) lanes ([3-9]|[1-9][0-9]+) fractions [1-9][0-9]* passes 2 patterns 2 selected 1")
+      p2 MATCHES "pattern \"[^\"]+ take 2\" notes 0 lanes ([3-9]|[1-9][0-9]+) fractions [1-9][0-9]* passes 2 patterns 2 selected 1")
 check("the first pass is one undo step" p1 MATCHES "\\| Record a deck performance\\]$")
 string(REGEX MATCHALL "Record a deck performance" steps2 "${p2}")
 list(LENGTH steps2 nsteps2)
 check("the second pass is one undo step too (the new pattern included)" p2 MATCHES "\\| Record a deck performance\\]$")
 check("... and the first pass's step is still the only other one" nsteps2 EQUAL 2)
 
-# ---- 2. song mode: the pass goes into the playlist
-set(ENV{GRIDLINE_PLATTER_PASS_VIEW} "playlist")
+# ---- 2. song mode: the pass goes into the playlist as automation clips
 set(decks_on 0)
 set(f 3)
 set(script "2 waitfor platter-ready 300\n")  # (a new setup is armed)
@@ -222,11 +224,26 @@ string(APPEND script "${pass}${f} plugwin close\n")
 math(EXPR f "${f} + 2")
 string(APPEND script "${f} dump\n")
 math(EXPR frames "${f} + 30")
+set(ENV{GRIDLINE_PLATTER_PASS_VIEW} "playlist")
 run(playlist ${frames} "${script}")
 set(last_out "${playlist_out}")
 check("song mode" playlist_out MATCHES "transport frame [0-9]+: pos [0-9]+ playing 0 seek [0-9]+ mode 1")
-check("the song mode pass is recorded" playlist_out MATCHES "platter: pass pattern \"[^\"]+\" notes ([4-9]|[1-9][0-9]+) lanes")
-check("... through a clip in the playlist" playlist_out MATCHES "clip [0-9]+ kind 0 track [0-9]+ start 0 len [1-9][0-9]+")
-foreach(s pattern playlist)
+string(REGEX MATCH "platter: pass clips ([0-9]+) grouped ([0-9]+) track ([0-9-]+) points ([0-9]+) exact ([0-9]+) patterns-with-pass ([0-9]+)[^\n]*" pc "${playlist_out}")
+message(STATUS "${pc}")
+set(n_clips "${CMAKE_MATCH_1}")
+set(n_grouped "${CMAKE_MATCH_2}")
+set(first_track "${CMAKE_MATCH_3}")
+set(n_patterns "${CMAKE_MATCH_6}")
+check("the song mode pass is recorded as automation clips (wheel, position, play at least)" n_clips GREATER_EQUAL 3)
+check("... all in one clip group" n_grouped EQUAL n_clips)
+check("... on free tracks" first_track GREATER_EQUAL 0)
+check("... no pattern holds the pass (no piano roll)" n_patterns EQUAL 0)
+check("... named after the setup and the control" pc MATCHES "A wheel" AND pc MATCHES "A position")
+check("... as automation clips in the playlist" playlist_out MATCHES "clip [0-9]+ kind 2 track [0-9]+ start [0-9]+ len [1-9][0-9]+")
+set(ENV{GRIDLINE_PLATTER_PASS_VIEW} "automation:52")  # deck A's wheel (PWheelA)
+run(automation ${frames} "${script}")
+set(last_out "${automation_out}")
+check("the automation view's pass is recorded too" automation_out MATCHES "platter: pass clips ([3-9]|[1-9][0-9]+) grouped")
+foreach(s pattern playlist automation)
   check("screenshot ${s}.ppm written" EXISTS "${OUT}/${s}.ppm")
 endforeach()

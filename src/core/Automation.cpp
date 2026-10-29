@@ -105,16 +105,17 @@ double flAutoShape(const std::vector<AutoPoint>& p, size_t k, double x) {
 
 double pointsValue(const std::vector<AutoPoint>& p, double t, bool fl) {
   if (p.empty()) return 0.0;
-  if (t <= p.front().at()) return p.front().value;
-  if (t >= p.back().at()) return p.back().value;
+  if (t <= p.front().at()) return p.front().exact();
+  if (t >= p.back().at()) return p.back().exact();
   auto it = std::upper_bound(p.begin(), p.end(), t, [](double v, const AutoPoint& q) { return v < q.at(); });
   const AutoPoint& b = *it;
   const AutoPoint& a0 = *(it - 1);
   double span = b.at() - a0.at();  // (J-159: points may sit between ticks)
-  if (span <= 0) return b.value;
+  if (span <= 0) return b.exact();
   double x = (t - a0.at()) / span;
   const double y = fl ? flAutoShape(p, static_cast<size_t>(it - p.begin()), x) : autoShape(b.shape, b.tension, x);
-  return a0.value + (b.value - a0.value) * y;
+  const double va = a0.exact(), vb = b.exact();  // (J-163: exact values where a point has them)
+  return va + (vb - va) * y;
 }
 
 double automationValue(const AutomationClip& a, double t) {
