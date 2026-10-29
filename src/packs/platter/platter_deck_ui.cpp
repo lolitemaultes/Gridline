@@ -715,7 +715,9 @@ void drawDeck(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2 p1,
     textC(dl, a.fontBold, 17, ImVec2((b0.x + b1.x) * 0.5f, (b0.y + b1.y) * 0.5f), theme::rgb(0x101114), d == 0 ? "A" : "B");
     const bool wide = W > 400;
     const float readW = wide ? 196.0f : 96.0f;
-    const float tx = b1.x + 10, tw = W - (tx - x0) - readW - 36;
+    // the tempo octave: half / double, for when the analysis heard half or double time
+    const bool tempoKeys = !u.path.empty() && deckReady(e, d) && m.analysed;
+    const float tx = b1.x + 10, tw = W - (tx - x0) - readW - 36 - (tempoKeys ? 60.0f : 0.0f);
     const std::string name = u.path.empty() ? i18n::tr("No track") : fs::path(u.path).stem().string();
     theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(tx, y + 2), tw, u.path.empty() ? P.textDim : P.text, name.c_str());
     std::string facts;
@@ -738,6 +740,21 @@ void drawDeck(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2 p1,
     if (button(id, ImVec2(x1 - readW - 30, y + 6), ImVec2(26, 26), "", false, d == 0 ? i18n::N_("Load a track onto deck A") : i18n::N_("Load a track onto deck B"),
                static_cast<int>(ui::Icon::Open)))
       openLoadDialog(a, t, d);
+    if (tempoKeys) {
+      const float bx = x1 - readW - 30 - 60;
+      std::snprintf(id, sizeof id, "##phalf%d", d);
+      if (button(id, ImVec2(bx, y + 6), ImVec2(26, 26), "/2", false, i18n::N_("Half the tempo: the analysis heard double time"))) {
+        Model nm = e.m;
+        seltmann::gridHalve(nm.deck[static_cast<size_t>(d)].grid);
+        commit(a, t, e, nm, i18n::N_("Half tempo"));
+      }
+      std::snprintf(id, sizeof id, "##pdbl%d", d);
+      if (button(id, ImVec2(bx + 30, y + 6), ImVec2(26, 26), "x2", false, i18n::N_("Double the tempo: the analysis heard half time"))) {
+        Model nm = e.m;
+        seltmann::gridDouble(nm.deck[static_cast<size_t>(d)].grid);
+        commit(a, t, e, nm, i18n::N_("Double tempo"));
+      }
+    }
     // readouts: time left, then the effective BPM with the pitch offset
     const float rx = x1;
     const double bpm = bpmOf(m);

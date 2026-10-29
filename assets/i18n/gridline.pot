@@ -14837,8 +14837,16 @@ msgstr ""
 msgid "CUE"
 msgstr ""
 
+#: src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Double tempo"
+msgstr ""
+
 #: src/packs/platter/platter_deck_ui.cpp
 msgid "Double the loop size (and a running loop)"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Double the tempo: the analysis heard half time"
 msgstr ""
 
 #: src/packs/platter/platter_deck_ui.cpp
@@ -14863,6 +14871,14 @@ msgstr ""
 
 #: src/packs/platter/platter_deck_ui.cpp
 msgid "Finding the tempo and the beats..."
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Half tempo"
+msgstr ""
+
+#: src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Half the tempo: the analysis heard double time"
 msgstr ""
 
 #: src/packs/platter/platter_deck_ui.cpp
@@ -16458,14 +16474,6 @@ msgid "DRAG OUT"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
-msgid "Double tempo"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
-msgid "Double the tempo: the analysis heard half time"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
 msgid "Drag the pattern out as an audio loop at the project tempo (playlist, channel rack, browser)"
 msgstr ""
 
@@ -16551,14 +16559,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
 msgid "Half a bar per slice"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
-msgid "Half tempo"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
-msgid "Half the tempo: the analysis heard double time"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp

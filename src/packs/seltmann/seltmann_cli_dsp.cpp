@@ -5,7 +5,8 @@
 // statistics, and optionally applies every layout and renders it to check for
 // clicks and missing slices. Used to tune the analysis on large sample sets.
 //
-//   gridline seltmann-analyse [--json] [-j N] [--list <file>] [--presets] <files...>
+//   gridline seltmann-analyse [--json] [--beats] [-j N] [--list <file>] [--presets] <files...>
+// (--beats: the JSON also lists the beat times in seconds, for scoring the beat grid)
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -144,6 +145,7 @@ void checkPresets(const Sample& s, const Model& base, PresetCheck& pc) {
 }
 
 bool gNoHints = false;  // --no-hints: the audio alone (no file-name tempo / key)
+bool gBeats = false;    // --beats: the beat times in the JSON line
 
 std::string analyseOne(const std::string& path, bool json, bool presets, bool& ok) {
   ok = false;
@@ -189,6 +191,18 @@ std::string analyseOne(const std::string& path, bool json, bool presets, bool& o
                   st.cv, st.firstRatio, st.minRatio, static_cast<double>(m.regionStart) / s->sampleRate,
                   static_cast<double>(m.regionEnd) / s->sampleRate, regionBars, fileBars, a.loopFit ? 1 : 0, a.key, a.minor ? 1 : 0, h.key,
                   h.minor ? 1 : 0, decodeMs, anaMs, pc.applied, pc.degenerate, pc.missingRefs, pc.renders, pc.clicks, pc.starts, pc.onTransient, a.onsetRate, a.tonality);
+    if (gBeats) {
+      std::string line(b);
+      line.pop_back();  // the closing brace
+      line += ",\"beats\":[";
+      for (size_t i = 0; i < a.beats.size(); ++i) {
+        char v[32];
+        std::snprintf(v, sizeof v, "%s%.4f", i ? "," : "", a.beats[i] / s->sampleRate);
+        line += v;
+      }
+      line += "]}";
+      return line;
+    }
   } else {
     std::snprintf(b, sizeof b, "%7.2f bpm (name %6.2f)  %-7s %2d slices  degenerate %d  first %.2f  cv %.3f  %6.0f ms  %s", a.bpm, h.bpm,
                   kindName(a.kind), st.count, st.degenerate, st.firstRatio, st.cv, anaMs, path.c_str());
@@ -207,6 +221,7 @@ int cliMain(int argc, char** argv) {
     if (a == "--json") json = true;
     else if (a == "--presets") presets = true;
     else if (a == "--no-hints") gNoHints = true;
+    else if (a == "--beats") gBeats = true;
     else if (a == "-j" && i + 1 < argc) jobs = std::max(1, std::atoi(argv[++i]));
     else if (a == "--list" && i + 1 < argc) {
       std::ifstream in(argv[++i]);
@@ -215,7 +230,7 @@ int cliMain(int argc, char** argv) {
     } else files.push_back(a);
   }
   if (files.empty()) {
-    std::fprintf(stderr, "usage: gridline seltmann-analyse [--json] [-j N] [--presets] [--list <file>] <audio files...>\n");
+    std::fprintf(stderr, "usage: gridline seltmann-analyse [--json] [--beats] [-j N] [--presets] [--list <file>] <audio files...>\n");
     return 2;
   }
   std::vector<std::string> out(files.size());

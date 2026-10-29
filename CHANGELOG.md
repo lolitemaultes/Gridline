@@ -37,6 +37,12 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- Platter and Seltmann read drum and bass at its real tempo again. A 174 BPM track used to show about 116 BPM (two
+  thirds of the tempo, with a grid that drifted off the beats) or 87 BPM; the tempo analysis now checks that the beat
+  it picks fits every hit of the groove and recognises the snare backbeat at fast tempos, so drum and bass from 160 to
+  185 BPM, breaks and boom bap read at their own tempo and their beat grids sit on the hits. Half-time grooves may
+  still read at half speed. Platter decks get /2 and x2 buttons next to the load button, like Seltmann's, for when the
+  analysis hears half or double time. Tracks analysed before are analysed again.
 - Changing the pitch of an audio clip on the playlist no longer changes how its audio fits the clip. In every time
   mode the clip keeps its length and its audio still runs from the clip start to exactly the clip end: no silent gap
   after pitching up, nothing cut off after pitching down. In Resample mode a stretched clip still sounds resampled

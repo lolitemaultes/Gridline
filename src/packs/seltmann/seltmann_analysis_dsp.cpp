@@ -39,7 +39,7 @@ constexpr double kPi = 3.14159265358979323846;
 // Chroma peak-to-mean under which a short loop counts as drums (a break), tuned on sample packs.
 constexpr double kDrumTonality = 2.6;
 // Bumped when the analysis changes: older disk-cache entries are not reused.
-constexpr const char* kAnalysisVersion = "seltmann-analysis-2";
+constexpr const char* kAnalysisVersion = "seltmann-analysis-3";
 
 // ------------------------------------------------------------------ FFT
 // In-place iterative radix-2 complex FFT (n a power of two).
@@ -331,6 +331,24 @@ double salience(const std::vector<double>& r, double fps, double bpm) {
   return lagPeak(r, tau) + 0.5 * lagPeak(r, 2 * tau) + 0.25 * lagPeak(r, 0.5 * tau) + 0.25 * lagPeak(r, 4 * tau);
 }
 
+// Metrical fit of a beat period: the share of the ACF's energy (lags from a fifth of a beat
+// up) that sits on the period's 16th-note grid. Every onset of a straight groove lies on that
+// grid at the true beat, so all its ACF peaks do too; at two thirds of the tempo (a 1.5-beat
+// "beat", the usual error on drum & bass: kick to kick across the bar) half of them fall
+// between the grid lines.
+double gridFit(const std::vector<double>& r, double tau) {
+  const double g = tau / 4, sig = std::max(1.2, 0.035 * tau);
+  double on = 0, all = 0;
+  for (size_t lag = static_cast<size_t>(std::max(2.0, 0.2 * tau)); lag < r.size(); ++lag) {
+    const double v = std::max(0.0, r[lag]);
+    const double l = static_cast<double>(lag);
+    const double d = (l - std::round(l / g) * g) / sig;
+    on += v * std::exp(-0.5 * d * d);
+    all += v;
+  }
+  return all > 1e-12 ? on / all : 1.0;
+}
+
 double tempoPrior(double bpm) {
   const double o = std::log2(bpm / 120.0);
   return std::exp(-0.5 * (o / 0.9) * (o / 0.9));
@@ -345,7 +363,7 @@ TempoPick pickTempo(const Tempogram& T, double fps) {
   if (T.global.empty()) return p;
   double best = -1, bestBpm = 120;
   for (double bpm = 50; bpm <= 220; bpm += 0.25) {
-    const double s = salience(T.global, fps, bpm) * tempoPrior(bpm);
+    const double s = salience(T.global, fps, bpm) * tempoPrior(bpm) * gridFit(T.global, fps * 60.0 / bpm);
     if (s > best) best = s, bestBpm = bpm;
   }
   // refine: parabolic peak of the ACF near the period
@@ -365,7 +383,7 @@ TempoPick pickTempo(const Tempogram& T, double fps) {
   }
   while (bestBpm < 60) bestBpm *= 2;
   while (bestBpm > 200) bestBpm /= 2;
-  auto sc = [&](double b) { return b < 30 || b > 400 ? 0.0 : salience(T.global, fps, b) * tempoPrior(b); };
+  auto sc = [&](double b) { return b < 30 || b > 400 ? 0.0 : salience(T.global, fps, b) * tempoPrior(b) * gridFit(T.global, fps * 60.0 / b); };
   const double s0 = sc(bestBpm);
   double rival = 0;
   for (double f : {0.5, 2.0, 2.0 / 3.0, 1.5})
@@ -821,12 +839,28 @@ bool analyse(const Sample& s, Analysis& A, std::atomic<float>* progress, const s
   const double fps = F.rate;
   A.onsetEnv = O;
   A.envRate = fps;
+  // A balanced onset strength for the beat tracker: each band scaled by its own loud hits (98th
+  // percentile) rather than its mean, so a snare counts as much as a kick. Scaled by the mean, a
+  // sparse kick band outweighs everything and syncopated kicks (drum & bass, breaks) pull the
+  // beats onto the off-beats.
+  std::vector<float> Ob(static_cast<size_t>(n), 0.f);
+  for (int b = 0; b < kBands; ++b) {
+    std::vector<float> v = F.band[b];
+    if (v.empty()) continue;
+    const size_t q = v.size() * 98 / 100;
+    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(q), v.end());
+    const double scale = 1.0 / std::max(1e-6, static_cast<double>(v[q]));
+    static const float kTrackWeight[kBands] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.8f, 0.6f, 0.5f};
+    for (int t = 0; t < n; ++t) Ob[static_cast<size_t>(t)] += static_cast<float>(kTrackWeight[b] * F.band[b][static_cast<size_t>(t)] * scale);
+  }
+  detrend(Ob, static_cast<int>(F.rate * 0.2));
   // frame index -> source frame (window centred on t * hop)
   auto toFrame = [&](double t) { return t * F.hop * D; };
 
   // ---- tempo
   Tempogram T = tempogram(O, fps);
   TempoPick tp = pickTempo(T, fps);
+  bool octaveFast = false;  // the octave check found the faster tempo's backbeat
   // Octave choice between a tempo and its double: track beats at the faster one;
   // if its beats alternate strong / weak, the beat is the slower one (hats or
   // off-beats in between), if they are all strong (kick, snare, kick, snare),
@@ -836,24 +870,54 @@ bool analyse(const Sample& s, Analysis& A, std::atomic<float>* progress, const s
     if (fast <= 205 && slow >= 58) {
       const double tauF = fps * 60.0 / fast;
       std::vector<double> perF = localPeriod(T, tauF, n);
-      std::vector<double> bf = trackBeats(O, perF, 100.0);
-      double e[2] = {0, 0};
-      int c[2] = {0, 0};
+      std::vector<double> bf = trackBeats(Ob, perF, 100.0);
+      // onset strength on the even and the odd beats, and (balanced) on each beat of four
+      double e[2] = {0, 0}, e8[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+      int c[2] = {0, 0}, c8[8] = {0, 0, 0, 0, 0, 0, 0, 0};
       for (size_t k = 0; k < bf.size(); ++k) {
         const int i = static_cast<int>(std::lround(bf[k]));
-        double v = 0;
+        double v = 0, w = 0;
         for (int d = -2; d <= 2; ++d)
-          if (i + d >= 0 && i + d < n) v = std::max(v, static_cast<double>(O[static_cast<size_t>(i + d)]));
+          if (i + d >= 0 && i + d < n) {
+            v = std::max(v, static_cast<double>(O[static_cast<size_t>(i + d)]));
+            w = std::max(w, static_cast<double>(Ob[static_cast<size_t>(i + d)]));
+          }
         e[k % 2] += v;
         ++c[k % 2];
+        e8[k % 8] += w;
+        ++c8[k % 8];
       }
       const double m0 = c[0] ? e[0] / c[0] : 0, m1 = c[1] ? e[1] / c[1] : 0;
       const double alt = std::max(m0, m1) / std::max(1e-6, std::min(m0, m1));
+      // A backbeat at the faster tempo makes it the beat even when its beats alternate in
+      // strength: one parity holds two equal hits (the snares on 2 and 4) and the other a hit
+      // and a gap (drum & bass: kick, snare, -, snare). Kick, -, snare, - (8ths between, or a
+      // kick on the "and") is the slower tempo's beat with its off-beats.
+      double q8[8], q[4];
+      for (int k = 0; k < 8; ++k) q8[k] = c8[k] ? e8[k] / c8[k] : 0.0;
+      for (int k = 0; k < 4; ++k) q[k] = 0.5 * (q8[k] + q8[k + 4]);
+      const double qt = std::max(1e-6, *std::max_element(q, q + 4));
+      for (double& v : q) v /= qt;
+      const int par = std::min(q[0], q[2]) >= std::min(q[1], q[3]) ? 0 : 1;  // the steadier parity
+      const double p0 = std::min(q[par], q[par + 2]), p1 = std::max(q[par], q[par + 2]);
+      const int hit = q[1 - par] >= q[3 - par] ? 1 - par : 3 - par;  // the other parity's hit
+      const double r1 = q[hit], r0 = q[(hit + 2) % 4];
+      // the hit comes back every four beats (a kick in every bar of drum & bass), not every eight
+      // (a kick on the "and" of 3 in every bar of a slower groove counted in 8ths)
+      const double steady = std::min(q8[hit], q8[hit + 4]) / std::max(1e-6, std::max(q8[hit], q8[hit + 4]));
+      // (both need a few bars of beats to judge)
+      const bool enough = bf.size() >= 16;
+      const bool backbeat = enough && p0 >= 0.8 * p1 && r1 >= 0.45 && r0 <= 0.3 * p0 && steady >= 0.6;
+      // a hit on every beat of the faster tempo (four on the floor with claps on 2 and 4)
+      const bool everyBeat = enough && *std::min_element(q, q + 4) >= 0.45;
       // below 75 BPM the half tempo needs overwhelming evidence (half-time feels count at the faster tempo)
       const double thr = slow < 75 ? 4.0 : 1.6;
-      const double pick = alt < thr ? fast : slow;
-      const double decisive = std::clamp(std::fabs(std::log(alt / thr)) / std::log(1.6), 0.0, 1.0);
-      if (std::getenv("SELTMANN_DEBUG")) std::fprintf(stderr, "octave: salience %.2f fast %.2f alt %.2f -> %.2f\n", tp.bpm, fast, alt, pick);
+      const double pick = alt < thr || backbeat || everyBeat ? fast : slow;
+      octaveFast = backbeat || everyBeat || alt < 1.3;
+      const double decisive = backbeat || everyBeat ? 1.0 : std::clamp(std::fabs(std::log(alt / thr)) / std::log(1.6), 0.0, 1.0);
+      if (std::getenv("SELTMANN_DEBUG"))
+        std::fprintf(stderr, "octave: salience %.2f fast %.2f alt %.2f beats [%.2f %.2f %.2f %.2f] steady %.2f backbeat %d every %d -> %.2f\n", tp.bpm, fast, alt,
+                     q[0], q[1], q[2], q[3], steady, backbeat ? 1 : 0, everyBeat ? 1 : 0, pick);
       if (std::fabs(pick - tp.bpm) > 1e-6) {
         const double old = tp.bpm;
         tp.bpm = pick;
@@ -881,7 +945,7 @@ bool analyse(const Sample& s, Analysis& A, std::atomic<float>* progress, const s
   std::vector<double> period = localPeriod(T, tau0, n);
 
   // ---- beats
-  std::vector<double> bt = trackBeats(O, period, 100.0);
+  std::vector<double> bt = trackBeats(Ob, period, 100.0);
   stage(0.5f, 0.6f).set(1);
   if (cancel && cancel->load()) return false;
   A.beats.clear();
@@ -986,7 +1050,9 @@ bool analyse(const Sample& s, Analysis& A, std::atomic<float>* progress, const s
         if (nb % 4 != 0) err += 0.006;  // whole bars first
         if (nb < 4) err += 0.01;
         if (s0 > 0) err += 0.004;       // the file start first
-        if (prior <= 0 && (cand < 70 || cand > 180)) err += 0.02;  // the usual tempo range first (breaks at 98, not 196)
+        // the usual tempo range first (breaks at 98, not 196), unless the beat analysis chose
+        // that tempo itself (a 185 BPM loop with a backbeat at 185)
+        if (prior <= 0 && (cand < 70 || cand > 180) && !(cand > 180 && octaveFast && std::fabs(std::log2(cand / bpm)) < std::log2(1.02))) err += 0.02;
         if (err < best.err) best = {err, s0, cand, nb};
       }
     }
