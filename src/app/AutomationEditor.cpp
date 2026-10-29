@@ -73,6 +73,9 @@ enum class Tool { Draw, Select, Erase };
 struct Editor {
   bool open = false;
   ObjectId autoId = kNoId, placement = kNoId;
+  // J-173: a pattern automation clip (pattern != kNoId): the clip of `target` in that pattern.
+  ObjectId pattern = kNoId;
+  ParamId target;
   ae::Selection sel;
   float pxPerTick = 0.3f, scrollX = 0;
   smoothscroll::Axis axX;  // J-67: smooth scrolling / elastic left edge
@@ -125,8 +128,44 @@ const Div kDivs[] = {{"8 bars", 8},    {"4 bars", 4},     {"2 bars", 2},    {"1 
 constexpr int kDivCount = static_cast<int>(sizeof kDivs / sizeof kDivs[0]);
 
 const Clip* placementOf(const Song& s) {
+  if (E.pattern != kNoId) return nullptr;  // J-173: a pattern clip plays in pattern time
   const Clip* c = E.placement != kNoId ? s.clip(E.placement) : nullptr;
   return c && c->kind == ClipKind::Automation && c->source == E.autoId ? c : nullptr;
+}
+
+// J-173: the clip being edited (a playlist automation clip or a pattern's) and its edits.
+const AutomationClip* curClip(const Song& s) {
+  if (E.pattern != kNoId) {
+    const Pattern* p = s.pattern(E.pattern);
+    return p ? findPatternLane(*p, E.target.owner, E.target.index) : nullptr;
+  }
+  return s.automation(E.autoId);
+}
+bool editCur(App& a, const std::string& label, const std::function<void(AutomationClip&)>& fn, uint64_t key = 0) {
+  if (E.pattern != kNoId) {
+    const ParamId t = E.target;
+    return a.doc.editPattern(E.pattern, label, [&](Pattern& p) {
+      if (AutomationClip* c = findPatternLane(p, t.owner, t.index)) fn(*c);
+    }, key);
+  }
+  return a.doc.editAutomation(E.autoId, label, fn, key);
+}
+// Content length the editor shows when there is no placement: the pattern's
+// length (pattern clips), else four bars; at least up to the last point.
+Tick naturalLength(const Song& s, const AutomationClip& ac) {
+  Tick len = 4 * s.barTicks();
+  if (E.pattern != kNoId)
+    if (const Pattern* p = s.pattern(E.pattern)) len = s.patternContentLength(*p);
+  return std::max(len, patternClipEnd(ac));
+}
+// The playhead in content ticks (-1: not playing this clip's time).
+double contentPlayhead(App& a) {
+  const Song& s = a.doc.song();
+  if (E.pattern != kNoId)
+    return a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == E.pattern ? a.engine.position() : -1.0;
+  const Clip* pl = placementOf(s);
+  if (pl && a.engine.mode() == PlayMode::Song) return a.engine.position() - static_cast<double>(pl->start - pl->offset);
+  return -1.0;
 }
 
 // Content range the tools act on: the selection's span (2+ points), else the
@@ -137,12 +176,11 @@ std::pair<Tick, Tick> toolRange(const Song& s, const AutomationClip& ac) {
     if (i1 < static_cast<int>(ac.points.size())) return {ac.points[static_cast<size_t>(i0)].pos, ac.points[static_cast<size_t>(i1)].pos};
   }
   if (const Clip* pl = placementOf(s)) return {pl->offset, pl->offset + s.clipLength(*pl)};
-  Tick end = ac.points.empty() ? 0 : ac.points.back().pos;
-  return {0, std::max(end, 4 * s.barTicks())};
+  return {0, naturalLength(s, ac)};
 }
 
 void editPoints(App& a, const std::string& label, const std::function<void(ae::Points&)>& fn, uint64_t key = 0) {
-  a.doc.editAutomation(E.autoId, label, [&](AutomationClip& c) { fn(c.points); }, key);
+  editCur(a, label, [&](AutomationClip& c) { fn(c.points); }, key);
 }
 
 void refreshShapes(App& a) {
@@ -153,7 +191,7 @@ void refreshShapes(App& a) {
 
 void applyShapeFile(App& a, const PresetEntry& e) {
   const Song& s = a.doc.song();
-  const AutomationClip* ac = s.automation(E.autoId);
+  const AutomationClip* ac = curClip(s);
   AutomationShape sh;
   if (!ac || !loadAutomationShape(e.file, s.ppq, sh)) {
     a.notify("Could not read that shape", true);
@@ -194,9 +232,8 @@ void pasteAt(App& a, Tick at, bool replace) {
 Tick pasteTick(App& a, const AutomationClip& ac) {
   const Song& s = a.doc.song();
   if (!E.sel.empty() && *E.sel.rbegin() < static_cast<int>(ac.points.size())) return ac.points[static_cast<size_t>(*E.sel.rbegin())].pos;
-  const Clip* pl = placementOf(s);
-  double pos = a.engine.position();
-  if (pl && a.engine.mode() == PlayMode::Song) return std::max<Tick>(0, static_cast<Tick>(pos) - pl->start + pl->offset);
+  if (const double ph = contentPlayhead(a); ph >= 0) return std::max<Tick>(0, static_cast<Tick>(ph));
+  (void)s;
   return ac.points.empty() ? 0 : ac.points.back().pos;
 }
 
@@ -210,7 +247,7 @@ void deleteSelection(App& a) {
 // Options menu: selection, clipboard, level tools, LFO, shapes.
 void editorMenu(App& a) {
   const Song& s = a.doc.song();
-  const AutomationClip* ac = s.automation(E.autoId);
+  const AutomationClip* ac = curClip(s);
   if (!ac) return;
   const int n = static_cast<int>(ac->points.size());
   ImGui::TextDisabled("%s", i18n::tr("Points"));
@@ -267,8 +304,7 @@ void editorMenu(App& a) {
   }
   if (ImGui::MenuItem(i18n::tr("Insert point at the playhead"))) {
     Tick at = pasteTick(a, *ac);
-    const Clip* pl = placementOf(s);
-    if (pl && a.engine.mode() == PlayMode::Song) at = std::max<Tick>(0, static_cast<Tick>(a.engine.position()) - pl->start + pl->offset);
+    if (const double ph = contentPlayhead(a); ph >= 0) at = std::max<Tick>(0, static_cast<Tick>(ph));
     AutoPoint np;
     np.pos = at;
     np.value = static_cast<float>(ae::valueAt(ac->points, static_cast<double>(at), ac->flCurves));
@@ -363,11 +399,17 @@ void targetPicker(App& a, const AutomationClip& ac) {
     ImGui::PushID(static_cast<int>(pid.packed() & 0x7FFFFFFF) ^ static_cast<int>(pid.packed() >> 31));
     if (ImGui::Selectable(name.c_str(), pid.owner == ac.owner && pid.index == ac.index)) {
       const std::string oldName = shortTarget(s, {ac.owner, ac.index});
-      a.doc.editAutomation(ac.id, "change automation target", [&](AutomationClip& c) {
-        if (c.name == "Automation" || c.name == oldName) c.name = name;
-        c.owner = pid.owner;
-        c.index = pid.index;
-      });
+      const Pattern* inPat = E.pattern != kNoId ? s.pattern(E.pattern) : nullptr;
+      if (inPat && !(pid == ParamId{ac.owner, ac.index}) && findPatternLane(*inPat, pid.owner, pid.index)) {
+        a.notify("This pattern has an automation clip for that control already", true);  // J-173: one per control
+      } else {
+        editCur(a, "change automation target", [&](AutomationClip& c) {
+          if (c.name == "Automation" || c.name == oldName) c.name = name;
+          c.owner = pid.owner;
+          c.index = pid.index;
+        });
+        if (inPat) E.target = pid;
+      }
       ImGui::CloseCurrentPopup();
     }
     ImGui::PopID();
@@ -425,12 +467,12 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
     ImGui::SetNextItemWidth(w);
     std::string loFmt = fmtEscape("Low  " + fmtParam(s, pid, ac.min));
     if (ImGui::SliderFloat("##lo", &lo, 0.0f, 100.0f, loFmt.c_str()))
-      a.doc.editAutomation(ac.id, "automation range", [&](AutomationClip& c) { c.min = std::clamp(lo / 100.0f, 0.0f, 1.0f); }, 0x41520001);
+      editCur(a, "automation range", [&](AutomationClip& c) { c.min = std::clamp(lo / 100.0f, 0.0f, 1.0f); }, 0x41520001);
     ui::Hint("Parameter value at the bottom of the clip (Ctrl+click to type)");
     ImGui::SetNextItemWidth(w);
     std::string hiFmt = fmtEscape("High  " + fmtParam(s, pid, ac.max));
     if (ImGui::SliderFloat("##hi", &hi, 0.0f, 100.0f, hiFmt.c_str()))
-      a.doc.editAutomation(ac.id, "automation range", [&](AutomationClip& c) { c.max = std::clamp(hi / 100.0f, 0.0f, 1.0f); }, 0x41520001);
+      editCur(a, "automation range", [&](AutomationClip& c) { c.max = std::clamp(hi / 100.0f, 0.0f, 1.0f); }, 0x41520001);
     ui::Hint("Parameter value at the top of the clip (Ctrl+click to type)");
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   }
@@ -452,17 +494,36 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
     bool loop = ac.loop > 0;
     if (ImGui::Checkbox(i18n::tr("Loop the content"), &loop)) {
       Tick len = ac.points.empty() ? s.barTicks() : std::max<Tick>(beat, (ac.points.back().pos + beat - 1) / beat * beat);
-      a.doc.editAutomation(ac.id, "loop automation", [&](AutomationClip& c) { c.loop = loop ? len : 0; });
+      editCur(a, "loop automation", [&](AutomationClip& c) { c.loop = loop ? len : 0; });
     }
     ui::Hint("Repeat the points every loop length when the clip is longer");
     if (ac.loop > 0) {
       int lb = static_cast<int>(std::max<Tick>(1, ac.loop / beat));
       ImGui::SetNextItemWidth(w);
       if (ImGui::DragInt("##loopl", &lb, 0.1f, 1, 1024, "Loop every %d beats"))
-        a.doc.editAutomation(ac.id, "loop length", [&](AutomationClip& c) { c.loop = static_cast<Tick>(lb) * beat; }, 0x41520003);
+        editCur(a, "loop length", [&](AutomationClip& c) { c.loop = static_cast<Tick>(lb) * beat; }, 0x41520003);
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     }
-    if (ImGui::Button(i18n::tr("Select in playlist"), ImVec2(w, 0))) {
+    if (E.pattern != kNoId) {
+      // J-173: a clip inside a pattern: its name, and where it lives.
+      static char nameBuf[96] = "";
+      ImGui::SetNextItemWidth(w);
+      ImGui::InputTextWithHint("##pname", patternAutoName(s, ac).c_str(), nameBuf, sizeof nameBuf);
+      if (ImGui::IsItemDeactivatedAfterEdit()) {
+        const std::string nm = nameBuf;
+        editCur(a, "rename automation clip", [&](AutomationClip& c) { c.name = nm; });
+      } else if (!ImGui::IsItemActive()) {
+        std::snprintf(nameBuf, sizeof nameBuf, "%s", ac.name.c_str());  // follows the clip (undo, other edits)
+      }
+      ui::Hint("Name of the clip (empty: the control's name)");
+      const Pattern* inPat = s.pattern(E.pattern);
+      if (ImGui::Button(i18n::tr("Show the pattern"), ImVec2(w, 0)) && inPat) {
+        a.selectPattern(E.pattern);
+        a.showRack = true;
+        a.focusWindow = "Channel rack";
+      }
+      ui::Hint("Selects the pattern this clip belongs to (its row is in the channel rack)");
+    } else if (ImGui::Button(i18n::tr("Select in playlist"), ImVec2(w, 0))) {
       a.playlist.selected.clear();
       for (const auto& c : s.playlist)
         if (c.kind == ClipKind::Automation && c.source == ac.id) a.playlist.selected.insert(c.id);
@@ -568,7 +629,7 @@ bool lfoKnob(const char* id, double* v, const ParamDesc& d, const char* label, c
 void drawLfoTool(App& a) {
   const auto& P = pal();
   const Song& s = a.doc.song();
-  const AutomationClip* ac = s.automation(E.autoId);
+  const AutomationClip* ac = curClip(s);
   if (!E.lfoOpen || !ac) {
     E.lfoOpen = false;
     return;
@@ -678,7 +739,7 @@ void drawLfoTool(App& a) {
 // Scale levels / thin out: small tool windows with a live preview.
 void drawLevelTools(App& a) {
   const Song& s = a.doc.song();
-  const AutomationClip* ac = s.automation(E.autoId);
+  const AutomationClip* ac = curClip(s);
   if (!ac || (!E.scaleOpen && !E.thinOpen)) return;
   ImGui::SetNextWindowPos(ImVec2(E.winMax.x - 16, E.winMax.y - 16), ImGuiCond_Appearing, ImVec2(1, 1));
   if (!E.toolWasOpen) ImGui::SetNextWindowFocus();
@@ -741,7 +802,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   const ParamId pid{ac.owner, ac.index};
   const Clip* pl = placementOf(s);
   const Tick base = pl ? pl->start - pl->offset : 0;  // song tick of content tick 0
-  const Tick clipLen = pl ? s.clipLength(*pl) : std::max<Tick>(ac.points.empty() ? 0 : ac.points.back().pos, 4 * s.barTicks());
+  const Tick clipLen = pl ? s.clipLength(*pl) : naturalLength(s, ac);
   const Tick vis0 = pl ? pl->start : 0, vis1 = pl ? pl->start + clipLen : clipLen;  // song ticks of the clip region
 
   ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -758,6 +819,10 @@ void drawCanvas(App& a, const AutomationClip& ac) {
 
   if (E.fit) {
     Tick span = std::max<Tick>(vis1 - vis0, s.beatTicks());
+    if (E.pattern != kNoId) {  // J-173: a pattern's clip: up to its last point (whole bars), not a long pattern's whole length
+      const Tick bar = std::max<Tick>(1, s.barTicks());
+      span = std::max<Tick>(s.beatTicks(), std::min(span, (patternClipEnd(ac) + bar - 1) / bar * bar));
+    }
     E.pxPerTick = static_cast<float>(timeline::fitZoom(s, span + span / 4, gridW));  // some context after the clip
     E.scrollX = std::max(0.0f, static_cast<float>(vis0) * E.pxPerTick - gridW / 40);
     E.fit = false;
@@ -908,8 +973,8 @@ void drawCanvas(App& a, const AutomationClip& ac) {
     }
   }
   // Playhead.
-  if ((pl && a.engine.mode() == PlayMode::Song) || (!pl && a.engine.mode() == PlayMode::Pattern && false)) {
-    float x = std::round(xOfSong(a.engine.position()));
+  if (const double ph = contentPlayhead(a); ph >= 0) {  // J-173: pattern clips follow the pattern's playhead
+    float x = std::round(xOfSong(static_cast<double>(base) + ph));
     dl->AddLine(ImVec2(x, gMin.y), ImVec2(x, gMax.y), P.playhead, 1.5f);
   }
   if (E.g == Editor::Box && active) {
@@ -942,8 +1007,8 @@ void drawCanvas(App& a, const AutomationClip& ac) {
         float x = std::round(xOf(l));
         dl->AddTriangleFilled(ImVec2(x - 4, gMin.y - 10), ImVec2(x + 4, gMin.y - 10), ImVec2(x, gMin.y - 3), P.textDim);
       }
-    if (pl && a.engine.mode() == PlayMode::Song) {
-      float x = std::round(xOfSong(a.engine.position()));
+    if (const double ph = contentPlayhead(a); ph >= 0) {
+      float x = std::round(xOfSong(static_cast<double>(base) + ph));
       dl->AddTriangleFilled(ImVec2(x - 5, gMin.y - 9), ImVec2(x + 5, gMin.y - 9), ImVec2(x, gMin.y - 1), P.playhead);
     }
   }
@@ -1028,7 +1093,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
       int idx = 0;
       editPoints(a, "add automation point", [&](ae::Points& p) { idx = ae::addPoint(p, np); }, E.key);
       E.sel = {idx};
-      E.base = a.doc.song().automation(E.autoId)->points;
+      E.base = curClip(a.doc.song())->points;
       E.g = Editor::Move;
       E.anchor = idx;
       E.startTick = np.pos;
@@ -1054,7 +1119,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
         ae::Points out;
         E.moveDelta = target - an.pos;
         ae::movePoints(E.base, E.sel, target - an.pos, dv, out);
-        if (out != a.doc.song().automation(E.autoId)->points) editPoints(a, "move automation points", [&](ae::Points& p) { p = out; }, E.key);
+        if (out != curClip(a.doc.song())->points) editPoints(a, "move automation points", [&](ae::Points& p) { p = out; }, E.key);
         break;
       }
       case Editor::Tension: {
@@ -1216,9 +1281,12 @@ void commitRecording(App& a, Recording& r) {
   if (r.pattern) {
     const Pattern* p = s.pattern(r.patternId);
     if (!p) return;
-    ae::Points lane;
-    if (const PatternAutomation* l = findPatternLane(*p, r.pid.owner, r.pid.index)) lane = l->points;
-    ae::mergeRecorded(lane, r.pts, from, to, tol);
+    ae::Points lane, rec = r.pts;
+    if (const PatternAutomation* l = findPatternLane(*p, r.pid.owner, r.pid.index)) {
+      lane = l->points;
+      for (auto& q : rec) q.value = static_cast<float>(paramToAutomation(*l, q.value));  // J-173: into the clip's range
+    }
+    ae::mergeRecorded(lane, rec, from, to, tol);
     ParamId pid = r.pid;
     a.doc.editPattern(r.patternId, "record automation", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, lane); });
     return;
@@ -1355,8 +1423,10 @@ ParamId& pianoAutomationLane() { return laneTarget; }
 
 void openAutomationEditor(App& a, ObjectId automation, ObjectId placement) {
   (void)a;
-  if (E.autoId != automation) E.sel.clear();
+  if (E.autoId != automation || E.pattern != kNoId) E.sel.clear();
   E.open = true;
+  E.pattern = kNoId;
+  E.target = ParamId{};
   E.autoId = automation;
   E.placement = placement;
   E.fit = true;
@@ -1370,6 +1440,28 @@ void openAutomationEditor(App& a, ObjectId automation, ObjectId placement) {
       }
 }
 
+void openPatternAutomation(App& a, ObjectId pattern, ParamId target) {
+  const Pattern* p = a.doc.song().pattern(pattern);
+  if (!p || !findPatternLane(*p, target.owner, target.index)) return;
+  if (E.pattern != pattern || !(E.target == target)) E.sel.clear();
+  E.open = true;
+  E.autoId = kNoId;
+  E.placement = kNoId;
+  E.pattern = pattern;
+  E.target = target;
+  E.fit = true;
+  E.preview.reset();
+  E.lfoOpen = E.scaleOpen = E.thinOpen = false;
+}
+
+bool automationEditorTarget(ObjectId* automation, ObjectId* pattern, ParamId* target) {
+  if (!E.open) return false;
+  if (automation) *automation = E.autoId;
+  if (pattern) *pattern = E.pattern;
+  if (target) *target = E.target;
+  return true;
+}
+
 void drawAutomationEditor(App& a) {
   recorderTick(a);
   if (!E.open) {
@@ -1377,7 +1469,7 @@ void drawAutomationEditor(App& a) {
     return;
   }
   const Song& s = a.doc.song();
-  const AutomationClip* ac = s.automation(E.autoId);
+  const AutomationClip* ac = curClip(s);
   if (!ac) {
     E.open = false;
     E.preview.reset();
@@ -1385,7 +1477,10 @@ void drawAutomationEditor(App& a) {
   }
   ui::PlaceNextDialog(ImVec2(1120, 640), ImGuiCond_Appearing, ImVec2(640, 360));  // J-158: within the work area (it ran under the status bar)
   bool open = true;
-  std::string title = "Automation clip \xC2\xB7 " + ac->name + "###autoedit";
+  std::string title = "Automation clip \xC2\xB7 " + (E.pattern != kNoId ? patternAutoName(s, *ac) : ac->name);
+  if (E.pattern != kNoId)  // J-173: a pattern's clip
+    if (const Pattern* p = s.pattern(E.pattern)) title += " \xC2\xB7 in " + p->name;
+  title += "###autoedit";
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
   bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse);
   ImGui::PopStyleVar();
@@ -1399,14 +1494,14 @@ void drawAutomationEditor(App& a) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(pal().surface900));
     ImGui::BeginChild("##aeside", ImVec2(sideW, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleColor();
-    if (const AutomationClip* cur = a.doc.song().automation(E.autoId)) sidePanel(a, *cur, sideW);
+    if (const AutomationClip* cur = curClip(a.doc.song())) sidePanel(a, *cur, sideW);
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::SameLine(0, 0);
-    if (const AutomationClip* cur = a.doc.song().automation(E.autoId)) {
+    if (const AutomationClip* cur = curClip(a.doc.song())) {
       drawCanvas(a, *cur);
       if (ImGui::BeginPopup("##aepoint")) {
-        pointMenu(a, *a.doc.song().automation(E.autoId));
+        pointMenu(a, *curClip(a.doc.song()));
         ImGui::EndPopup();
       }
       if (ImGui::BeginPopup("##aemenu")) {
@@ -1417,7 +1512,7 @@ void drawAutomationEditor(App& a) {
         ImGui::OpenPopup("##ptvalue");
         E.typeValue = false;
       }
-      if (const AutomationClip* c2 = a.doc.song().automation(E.autoId)) {
+      if (const AutomationClip* c2 = curClip(a.doc.song())) {
         typeValuePopup(a, *c2);
         shortcuts(a, *c2);
       }
@@ -1490,6 +1585,22 @@ ObjectId createAutomationClip(App& a, ParamId pid) {
   return autoId;
 }
 
+bool createPatternAutomationClip(App& a, ParamId pid, ObjectId pattern) {
+  const Song& s = a.doc.song();
+  if (pattern == kNoId) pattern = a.curPattern;
+  const Pattern* p = s.pattern(pattern);
+  auto d = describeParam(s, pid);
+  auto v = getParam(s, pid);
+  if (!p || !d || !v) return false;
+  if (!findPatternLane(*p, pid.owner, pid.index)) {
+    PatternAutomation c = newPatternClip(s, pid, static_cast<float>(d->toNormalized(*v)), s.patternContentLength(*p));
+    a.doc.editPattern(pattern, "create automation clip in pattern", [&](Pattern& x) { addPatternClip(x, c); });
+    a.notify("Automation clip for " + paramDisplayName(s, pid) + " in " + p->name);
+  }
+  openPatternAutomation(a, pattern, pid);
+  return true;
+}
+
 void editPatternEvents(App& a, ParamId pid) {
   const Song& s = a.doc.song();
   const Pattern* p = s.pattern(a.curPattern);
@@ -1512,16 +1623,42 @@ void editPatternEvents(App& a, ParamId pid) {
 void automationMenuItems(App& a, ParamId pid) {
   const Song& s = a.doc.song();
   if (!describeParam(s, pid)) return;
+  // J-173: a clip in the playlist or inside the current pattern (the pattern first while
+  // pattern mode plays, the arrangement first in song mode).
+  const Pattern* curPat = s.pattern(a.curPattern);
+  const bool hasInPat = curPat && findPatternLane(*curPat, pid.owner, pid.index);
+  const std::string inPat = curPat ? (hasInPat ? std::string(i18n::tr("Edit automation clip in pattern")) + " \"" + curPat->name + "\""
+                                               : std::string(i18n::tr("Create automation clip in pattern")) + " \"" + curPat->name + "\"")
+                                   : std::string();
+  auto patternItem = [&]() {
+    if (!curPat) return;
+    if (ImGui::MenuItem(inPat.c_str())) createPatternAutomationClip(a, pid, curPat->id);
+    ui::Hint("The clip lives in the pattern and plays wherever the pattern plays; it shows on the pattern's playlist clips");
+  };
+  const bool patternFirst = a.engine.mode() == PlayMode::Pattern;
+  if (patternFirst) patternItem();
   if (ImGui::MenuItem(i18n::tr("Create automation clip"))) createAutomationClip(a, pid);
+  ui::Hint("A clip on the playlist, at the song position");
+  if (!patternFirst) patternItem();
   std::vector<const AutomationClip*> mine;
   for (const auto& c : s.automations)
     if (c.owner == pid.owner && c.index == pid.index) mine.push_back(&c);
-  if (mine.size() == 1) {
+  std::vector<const Pattern*> pats;  // other patterns with a clip for this control
+  for (const auto& p : s.patterns)
+    if (findPatternLane(p, pid.owner, pid.index) && p.id != a.curPattern) pats.push_back(&p);
+  if (mine.size() == 1 && pats.empty()) {
     if (ImGui::MenuItem(i18n::tr("Edit automation clip..."))) openAutomationEditor(a, mine[0]->id);
-  } else if (ImGui::BeginMenu(i18n::tr("Edit automation clip"), !mine.empty())) {
+  } else if (ImGui::BeginMenu(i18n::tr("Edit automation clip"), !mine.empty() || !pats.empty())) {
     for (const auto* c : mine) {
       ImGui::PushID(static_cast<int>(c->id));
       if (ImGui::MenuItem(c->name.c_str())) openAutomationEditor(a, c->id);
+      ImGui::PopID();
+    }
+    if (!mine.empty() && !pats.empty()) ImGui::Separator();
+    for (const auto* p : pats) {
+      ImGui::PushID(static_cast<int>(p->id) + 0x40000000);
+      const std::string l = std::string(i18n::tr("In pattern")) + " " + p->name;
+      if (ImGui::MenuItem(l.c_str())) openPatternAutomation(a, p->id, pid);
       ImGui::PopID();
     }
     ImGui::EndMenu();
@@ -1619,7 +1756,7 @@ void patternLaneMenu(App& a, ObjectId pattern, ObjectId channel) {
   for (const auto& l : p->automation) {
     ParamId pid{l.owner, l.index};
     ImGui::PushID(static_cast<int>(pid.packed() & 0x7FFFFFFF));
-    if (ImGui::Selectable(paramDisplayName(s, pid).c_str(), laneTarget == pid)) laneTarget = pid;
+    if (ImGui::Selectable(patternAutoName(s, l).c_str(), laneTarget == pid)) laneTarget = pid;
     ImGui::PopID();
   }
   if (ImGui::BeginMenu(i18n::tr("Add lane for"))) {
@@ -1642,6 +1779,7 @@ void patternLaneMenu(App& a, ObjectId pattern, ObjectId channel) {
     ImGui::EndMenu();
   }
   if (laneTarget.owner != kNoId && findPatternLane(*p, laneTarget.owner, laneTarget.index)) {
+    if (ImGui::MenuItem(i18n::tr("Open in the automation editor"))) openPatternAutomation(a, pattern, laneTarget);  // J-173
     if (ImGui::MenuItem(i18n::tr("Delete this lane"))) {
       ParamId pid = laneTarget;
       a.doc.editPattern(pattern, "delete event lane", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, {}); });
@@ -1660,11 +1798,15 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
   const PatternAutomation* lane = findPatternLane(*p, pid.owner, pid.index);
   ae::Points pts = lane ? lane->points : ae::Points{};
   // Q-10: drawn values glide to edits (display only; the lane already holds them).
+  // J-173: drawn and edited as the parameter moves (the clip's range applied; a new lane: 0..1).
+  const AutomationClip rng = lane ? *lane : patternLane(pid.owner, pid.index, {});
   ae::Points shown = pts;
-  for (auto& q : shown)
+  for (auto& q : shown) {
     q.value = scrollui::glideBar((static_cast<uint64_t>(pattern) << 44) ^ (static_cast<uint64_t>(pid.owner) << 28) ^ (static_cast<uint64_t>(pid.index) << 20) ^
                                      (static_cast<uint64_t>(q.pos) * 0x9E3779B1ull),
-                                 q.value);
+                                 static_cast<float>(automationToParam(rng, q.value)));
+    q.fine = 0.0;
+  }
   auto yOf = [&](double v) { return mx.y - static_cast<float>(v) * (mx.y - mn.y); };
   auto valAt = [&](float y) { return std::clamp(static_cast<double>((mx.y - y) / (mx.y - mn.y)), 0.0, 1.0); };
   ImGuiIO& io = ImGui::GetIO();
@@ -1682,7 +1824,7 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
     float prevY = 0;
     for (float x = std::floor(mn.x); x <= mx.x; x += 1.0f) {
       double t = tickAt(x);
-      float y = yOf(ae::valueAt(shown, t));
+      float y = yOf(ae::valueAt(shown, t, rng.flCurves));
       dl->AddLine(ImVec2(x, y), ImVec2(x, mx.y), theme::withAlpha(col, 0.16f));
       if (x > std::floor(mn.x)) dl->AddLine(ImVec2(x - 1, prevY), ImVec2(x, y), theme::withAlpha(lineCol, 0.9f), 1.3f);
       prevY = y;
@@ -1726,7 +1868,7 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
       double f = t1 > t0 ? std::clamp((static_cast<double>(c) - t0) / (t1 - t0), 0.0, 1.0) : 1.0;
       AutoPoint np;
       np.pos = c;
-      np.value = static_cast<float>(valAt(yA + (yB - yA) * static_cast<float>(f)));
+      np.value = static_cast<float>(paramToAutomation(rng, valAt(yA + (yB - yA) * static_cast<float>(f))));
       np.shape = AutoShape::Hold;
       ae::addPoint(next, np);
     }

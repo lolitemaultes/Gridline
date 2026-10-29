@@ -56,6 +56,12 @@ struct PlaylistGeometry {
     clipheader::Geom g;
   };
   std::vector<ClipHead> clips;
+  // J-173: a point on each pattern automation curve drawn on a pattern clip (the middle of its visible part).
+  struct Curve {
+    unsigned clip, owner, index;
+    float x, y;
+  };
+  std::vector<Curve> curves;
   bool valid = false;
 };
 const PlaylistGeometry& playlistGeometry();

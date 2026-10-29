@@ -34,6 +34,21 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   builds) or MIDI Out ports as before. A note filter takes one note or a range.
 - Tideline's MIDI triggers are now sample-accurate (they used to fire at the start of the
   audio block).
+- Patterns can hold automation clips. A clip in a pattern plays wherever the pattern plays and
+  is edited in the automation editor like any other: points, curve shapes, the LFO tool, a
+  name and a colour. Add one from a control's right-click menu ("Create automation clip in
+  pattern"), from the channel rack's or the pattern's menu, or move or copy a playlist
+  automation clip into the pattern. The pattern's clips in the playlist draw the curves over
+  the notes (the View menu can show notes only or automation only); double-click a curve to
+  edit it. The channel rack lists a pattern's clips as rows below the channels, and the
+  browser lists them under Current project. You no longer have to open the piano roll's event
+  lane to change a pattern's pitch wheel or volume. Clips come along when a pattern is cloned
+  or made unique, and they are saved, synced in collaboration, exported to FL Studio projects
+  and to MIDI (volume and pan). Pattern lanes from older projects open as clips and sound
+  exactly the same.
+- Platter's pattern-mode passes are written as named, coloured automation clips of the pattern
+  ("Platter A wheel"), the same as in song mode, so the wheel shows moving on the pattern's
+  playlist clips. Unedited passes still replay exactly as played.
 
 ### Fixed
 
@@ -43,6 +58,14 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   185 BPM, breaks and boom bap read at their own tempo and their beat grids sit on the hits. Half-time grooves may
   still read at half speed. Platter decks get /2 and x2 buttons next to the load button, like Seltmann's, for when the
   analysis hears half or double time. Tracks analysed before are analysed again.
+- Rubber Band notes and clips no longer cause crackles when they start. Rubber Band has to work through a long
+  stretch of audio before a note's first sound, and Gridline did all of that in the one audio block where the note
+  started, so a chord, or a few clips starting on the same beat, could take several blocks' worth of CPU at once
+  (worst at 96 kHz and small buffers). Notes in patterns and the playlist and audio clips on the playlist now do
+  that work in small pieces during the blocks before they play, and sound exactly as before. Notes played live
+  still start the moment you play them. Two smaller fixes come with it: a few pitches no longer make the audio
+  thread allocate memory the first time they play, and a sampler note now sounds the same whichever note played on
+  its voice before.
 - Changing the pitch of an audio clip on the playlist no longer changes how its audio fits the clip. In every time
   mode the clip keeps its length and its audio still runs from the clip start to exactly the clip end: no silent gap
   after pitching up, nothing cut off after pitching down. In Resample mode a stretched clip still sounds resampled
@@ -61,6 +84,11 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   with its own start, end and name, even when two regions share a start. Kerf's editor shows these regions as they
   play, region starts can be dragged, and markers no longer land one sample early. Exporting the project back to the
   FL Studio format keeps the chops, including keys, starts and ends changed in Gridline.
+- Third-party plugins such as Serum 2 now export to the FL Studio format exactly. A plugin that came from an FL Studio
+  project keeps all of its original plugin host settings, and only its sound settings are updated to what the plugin
+  holds now. A plugin that was missing and played by a stand-in is written back as the original plugin, still as an
+  instrument and with its name, instead of being rebuilt as an effect without one. The command line export and round
+  trip now know which plugins are installed, as the app does.
 
 ## 0.7.0-beta.3
 

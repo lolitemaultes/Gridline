@@ -75,8 +75,12 @@ BQResampler::BQResampler(Parameters parameters, int channels) :
     // Gridline patch (J-157): an often-changing ratio may pick a denominator
     // up to rational_max (96000), more than twice a 44.1 kHz rate: reserve
     // for it here so that no later ratio change allocates (realtime use).
+    // Gridline patch (J-170): the phase table holds one entry per numerator
+    // step, and for a ratio above 1 the numerator reaches rational_max plus
+    // about the ratio (the denominator is capped at rational_max / ratio,
+    // rounded up): the extra 64 cover every ratio up to 63.
     if (m_dynamism == RatioOftenChanging) {
-        phase_reserve = max(phase_reserve, m_qparams.rational_max);
+        phase_reserve = max(phase_reserve, m_qparams.rational_max + 64);
     }
     int buffer_reserve = 1000 * m_channels;
     m_state_a.phase_info.reserve(phase_reserve);

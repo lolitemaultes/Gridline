@@ -639,8 +639,8 @@ class SamplerGen final : public Generator {
     const bool keep = stretch::keepsPitch(mode);
     if (clipOnly_) return;  // playlist clips render offline (engine/TimeStretch); no notes to stretch
     // One stretch voice per note slot (J-153: every slot the same engine).
-    // J-157: Rubber Band voices are large (about 6 MB each): the first
-    // kRubberVoices slots have one, later notes play on the grains.
+    // J-157: Rubber Band voices are large (about 6 MB each): kRubberVoices
+    // of them (J-170: any free one takes a note), further notes play on the grains.
     const stretch::Engine engine = stretch::engineOf(mode);
     const int count = std::min(std::clamp(static_cast<int>(param(s, pp::SmpVoices, 32) + 0.5f), 1, 32),
                                engine == stretch::Engine::RubberBand ? kRubberVoices : 32);
@@ -648,6 +648,7 @@ class SamplerGen final : public Generator {
     if (uiPool_ && sampleRate == uiRate_ && count == uiCount_ && engine == uiEngine_) return;
     auto* pool = new StretchPool;
     pool->rate = sampleRate;
+    pool->engine = engine;
     pool->voices.resize(static_cast<size_t>(count));
     for (auto& v : pool->voices) {
       v = std::make_unique<stretch::Voice>();
@@ -737,6 +738,7 @@ class SamplerGen final : public Generator {
         StretchPool* old = active_;
         active_ = p;
         for (auto& v : voices_) v.sv = -1;  // sounding voices finish on the grains
+        clearAhead();                        // (J-170: streams primed in the old pool)
         if (old) retired_.store(old, std::memory_order_release);
       }
     }
@@ -857,14 +859,49 @@ class SamplerGen final : public Generator {
     v.tailLeft = 0;
     v.sbPos = 16;
     const auto slot = static_cast<size_t>(pick - voices_.data());
-    if (stretch_ && active_ && active_->rate == sr_ && slot < active_->voices.size()) {
+    if (!stretch_ || !active_ || active_->rate != sr_) return;
+    v.si = static_cast<int64_t>(std::llround(v.pos));
+    v.sdir = reverse_ ? -1 : 1;
+    if (active_->engine == stretch::Engine::RubberBand) {
+      // J-170: Rubber Band voices go to any free pool voice; a note announced
+      // ahead takes the stream primed for it (the same stream a start here
+      // would make, its start-up already done).
+      if (Ahead* a = matchAhead(pitch, v)) {
+        Voice& sh = shadow_[static_cast<size_t>(a->pool)];
+        v.sv = a->pool;
+        v.si = sh.si, v.sdir = sh.sdir, v.srcDone = sh.srcDone, v.src = sh.src;
+        a->used = false;
+        return;
+      }
+      const int k = freePoolVoice(true);
+      if (k < 0) return;  // every one plays: the grains
+      v.sv = k;
+    } else if (slot < active_->voices.size()) {
       v.sv = static_cast<int>(slot);
-      v.si = static_cast<int64_t>(std::llround(v.pos));
-      v.sdir = reverse_ ? -1 : 1;
-      ReadCtx rc{this, &v};
-      // The note's stream starts at its first frame (nothing before it belongs to the note).
-      active_->voices[slot]->start(&SamplerGen::readSource, &rc, stretchSpeed(), stretchPitch(v));
+    } else {
+      return;
     }
+    ReadCtx rc{this, &v};
+    // The note's stream starts at its first frame (nothing before it belongs to the note).
+    active_->voices[static_cast<size_t>(v.sv)]->start(&SamplerGen::readSource, &rc, stretchSpeed(), stretchPitch(v));
+  }
+
+  // ---- J-170: notes announced ahead (Rubber Band voices primed before their note)
+  bool wantsNoteLookahead() const override {
+    return stretch_ && active_ && active_->engine == stretch::Engine::RubberBand && active_->rate == sr_ && sample_ &&
+           !(lfoTarget_ == 4 && lfoAmt_ != 0);  // (a pitch LFO moves the start pitch)
+  }
+  void noteAhead(double pitch, int64_t framesAhead) override {
+    if (framesAhead <= 0) return;
+    const uint64_t at = frame_ + static_cast<uint64_t>(framesAhead);
+    Request* freeSlot = nullptr;
+    for (auto& q : requests_) {
+      if (q.used && q.at == at && q.note == pitch) return;  // (announced again every block)
+      if (!q.used && !freeSlot) freeSlot = &q;
+    }
+    for (const auto& a : ahead_)
+      if (a.used && a.at == at && a.note == pitch) return;
+    if (freeSlot) *freeSlot = Request{true, pitch, at};
   }
   void onNoteOff(uint32_t id) override {
     if (oneShot_) return;
@@ -886,6 +923,7 @@ class SamplerGen final : public Generator {
   }
   void onKill() override {
     for (auto& v : voices_) v = Voice{};
+    clearAhead();
   }
 
   // Reads the sample at a fractional frame with the render-time processing applied.
@@ -934,6 +972,11 @@ class SamplerGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    serviceAhead(n);  // J-170
+    renderVoices(L, R, n);
+    frame_ += static_cast<uint64_t>(n);
+  }
+  void renderVoices(float* L, float* R, int n) {
     if (!sample_) return;
     const double base = sample_->sampleRate / sr_;
     const double len = static_cast<double>(sample_->frames());
@@ -1115,10 +1158,136 @@ class SamplerGen final : public Generator {
 
  private:
   // ---- J-87 stretch voices
+  static constexpr int kRubberVoices = 8;  // J-157: Rubber Band voices per sampler (about 6 MB each)
   struct StretchPool {
     double rate = 0;
+    stretch::Engine engine = stretch::Engine::Stretch;
     std::vector<std::unique_ptr<stretch::Voice>> voices;
   };
+  // J-170: a note announced ahead (noteAhead) and, once a pool voice is free
+  // for it, the stream primed for it. The note takes the stream only when
+  // everything its start reads is still the same (ReadSig).
+  struct ReadSig {
+    const Sample* smp = nullptr;
+    double speed = 0, pitch = 0;
+    int64_t si = 0;
+    int sdir = 1;
+    double start = 0, end = 0, loopStart = 0, loopEnd = 0, gain = 0, dcL = 0, dcR = 0, fadeIn = 0, fadeOut = 0, xfade = 0;
+    bool loop = false, pingPong = false, reverse = false, swap = false;
+    bool operator==(const ReadSig& o) const {
+      return smp == o.smp && speed == o.speed && pitch == o.pitch && si == o.si && sdir == o.sdir && start == o.start && end == o.end &&
+             loopStart == o.loopStart && loopEnd == o.loopEnd && gain == o.gain && dcL == o.dcL && dcR == o.dcR && fadeIn == o.fadeIn &&
+             fadeOut == o.fadeOut && xfade == o.xfade && loop == o.loop && pingPong == o.pingPong && reverse == o.reverse && swap == o.swap;
+    }
+  };
+  struct Request {
+    bool used = false;
+    double note = 0;
+    uint64_t at = 0;  // frame_ the note starts on
+  };
+  struct Ahead {
+    bool used = false, ready = false;
+    double note = 0;
+    uint64_t at = 0;
+    int pool = -1;
+    double credit = 0;  // input frames of start-up work this note may do now
+    ReadSig sig;
+  };
+  static constexpr int kRequests = 16;
+  std::array<Request, kRequests> requests_{};
+  std::array<Ahead, kRubberVoices> ahead_{};
+  std::array<Voice, kRubberVoices> shadow_{};  // reader state of each primed stream
+  uint64_t frame_ = 0;                            // frames rendered (audio thread)
+
+  ReadSig readSig(double speed, double pitch, int64_t si, int sdir) const {
+    ReadSig s;
+    s.smp = sample_.get(), s.speed = speed, s.pitch = pitch, s.si = si, s.sdir = sdir;
+    s.start = start_, s.end = end_, s.loopStart = loopStart_, s.loopEnd = loopEnd_, s.gain = gain_, s.dcL = dcL_, s.dcR = dcR_;
+    s.fadeIn = fadeIn_, s.fadeOut = fadeOutAmt_, s.xfade = xfade_;
+    s.loop = loop_, s.pingPong = pingPong_, s.reverse = reverse_, s.swap = swap_;
+    return s;
+  }
+  void clearAhead() {
+    for (auto& q : requests_) q.used = false;
+    for (auto& a : ahead_) a.used = false;
+  }
+  // A pool voice no note plays and no announced note holds; `steal`: else the
+  // one held for the latest note.
+  int freePoolVoice(bool steal) {
+    const int n = static_cast<int>(active_->voices.size());
+    for (int k = 0; k < n; ++k) {
+      bool busy = false;
+      for (const auto& v : voices_) busy = busy || (v.on && v.sv == k);
+      for (const auto& a : ahead_) busy = busy || (a.used && a.pool == k);
+      if (!busy) return k;
+    }
+    if (!steal) return -1;
+    Ahead* last = nullptr;
+    for (auto& a : ahead_)
+      if (a.used && (!last || a.at > last->at)) last = &a;
+    if (!last) return -1;
+    last->used = false;
+    return last->pool;
+  }
+  // The stream primed for a note of `pitch` starting now (voice `v` just set up), if any still fits.
+  Ahead* matchAhead(double pitch, const Voice& v) {
+    const ReadSig now = readSig(stretchSpeed(), stretchPitch(v), v.si, v.sdir);
+    for (auto& a : ahead_) {
+      if (!a.used || a.note != pitch || frame_ + 1 < a.at || frame_ > a.at + 1) continue;
+      if (a.sig == now) return &a;
+      a.used = false;  // its note, but something it read has changed: start afresh
+    }
+    return nullptr;
+  }
+  // Once per render() piece of m frames: announced notes get a free pool
+  // voice and their streams prime, the work spread evenly over the frames
+  // left before the note (done by the piece before it).
+  void serviceAhead(int m) {
+    if (!wantsNoteLookahead()) {
+      clearAhead();
+      return;
+    }
+    for (auto& q : requests_)
+      if (q.used && frame_ >= q.at) q.used = false;  // (too late)
+    for (auto& a : ahead_)
+      if (a.used && frame_ > a.at + 1) a.used = false;  // its note never came
+    const double keepRate = rate_;                      // (the reader sets it)
+    for (auto& q : requests_) {
+      if (!q.used) continue;
+      Ahead* slot = nullptr;
+      for (auto& a : ahead_)
+        if (!a.used && !slot) slot = &a;
+      const int k = slot ? freePoolVoice(false) : -1;
+      if (k < 0) break;  // (later: a voice may free up)
+      q.used = false;
+      Voice& sh = shadow_[static_cast<size_t>(k)];
+      sh.si = static_cast<int64_t>(std::llround(reverse_ ? regionHi() : regionLo()));
+      sh.sdir = reverse_ ? -1 : 1;
+      sh.srcDone = false;
+      sh.src = static_cast<double>(sh.si);
+      const double speed = stretchSpeed(), pitch = stretchPitchAt(q.note, 0.0);
+      *slot = Ahead{true, false, q.note, q.at, k, 0.0, readSig(speed, pitch, sh.si, sh.sdir)};
+      ReadCtx rc{this, &sh};
+      active_->voices[static_cast<size_t>(k)]->startLater(&SamplerGen::readSource, &rc, speed, pitch);
+    }
+    for (auto& a : ahead_) {
+      if (!a.used || a.ready) continue;
+      stretch::Voice& sv = *active_->voices[static_cast<size_t>(a.pool)];
+      const int left = sv.primeLeft(a.sig.speed);
+      if (left <= 0) {
+        a.ready = true;
+        continue;
+      }
+      const int64_t until = static_cast<int64_t>(a.at) - static_cast<int64_t>(frame_);
+      a.credit += until <= 2 * static_cast<int64_t>(m) ? 1e9 : static_cast<double>(left) * m / static_cast<double>(until - m);
+      if (a.credit < std::min(256.0, static_cast<double>(left))) continue;  // (whole engine steps)
+      const int64_t f0 = sv.fedFrames();
+      ReadCtx rc{this, &shadow_[static_cast<size_t>(a.pool)]};
+      a.ready = sv.prime(&SamplerGen::readSource, &rc, a.sig.speed, a.sig.pitch, static_cast<int>(std::min(a.credit, 1e9)));
+      a.credit -= static_cast<double>(sv.fedFrames() - f0);
+    }
+    rate_ = keepRate;
+  }
   std::atomic<StretchPool*> pending_{nullptr};  // UI → audio thread
   std::atomic<StretchPool*> retired_{nullptr};  // audio thread → UI (freed by the next prepareHost)
   StretchPool* active_ = nullptr;               // audio thread
@@ -1127,7 +1296,6 @@ class SamplerGen final : public Generator {
   double uiRate_ = 0;
   int uiCount_ = 0;
   stretch::Engine uiEngine_ = stretch::Engine::Stretch;
-  static constexpr int kRubberVoices = 8;
   struct ReadCtx {
     SamplerGen* g;
     Voice* v;
@@ -1135,9 +1303,10 @@ class SamplerGen final : public Generator {
   // Source frames per output frame (time stretch) and pitch ratio (note,
   // fine tune, pitch shift, pitch LFO; the sample rate is folded in).
   double stretchSpeed() const { return sample_ ? sample_->sampleRate / sr_ / std::max(0.01, timeStretch_) : 1.0; }
-  double stretchPitch(const Voice& v) const {
+  double stretchPitch(const Voice& v) const { return stretchPitchAt(v.note, v.lfo); }
+  double stretchPitchAt(double note, double lfo) const {
     const double base = sample_ ? sample_->sampleRate / sr_ : 1.0;
-    return std::pow(2.0, (v.note - root_ + fine_ / 100.0 + pitchShift_ / 100.0 + (lfoTarget_ == 4 ? v.lfo * 12.0 : 0.0)) / 12.0) * base;
+    return std::pow(2.0, (note - root_ + fine_ / 100.0 + pitchShift_ / 100.0 + (lfoTarget_ == 4 ? lfo * 12.0 : 0.0)) / 12.0) * base;
   }
   // Reader for the stretch voice: the region frame by frame, loops (forward,
   // ping-pong), reverse, the render-time processing of read(); silence at the end.

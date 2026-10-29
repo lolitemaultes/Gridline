@@ -17,6 +17,12 @@
 #include "core/Presets.h"
 #include "core/Project.h"
 #include "core/Song.h"
+#include "core/flp/Flp.h"
+#include "core/flp/FlpEncode.h"
+#include "core/flp/FlpExport.h"
+#include "core/flp/FlpOrigin.h"
+#include "core/flp/FlpWrapper.h"
+#include "core/flp/FlpWriter.h"
 #include "host/Backend.h"
 #include "host/HostedPlugins.h"
 #include "host/PluginScan.h"
@@ -319,6 +325,151 @@ std::string writeFile(const std::string& path, const std::vector<uint8_t>& bytes
   return path;
 }
 
+// ---- J-171: Serum 2 in FL's plugin wrapper (FLP export)
+
+// {u32 id, u64 size, bytes} records after a u32 version.
+std::vector<std::pair<uint32_t, flp::Bytes>> wrapRecords(const flp::Bytes& b) {
+  std::vector<std::pair<uint32_t, flp::Bytes>> out;
+  size_t p = 4;
+  while (p + 12 <= b.size()) {
+    const uint32_t id = flp::getU32(b, p);
+    const size_t n = flp::getU32(b, p + 4);
+    if (n > b.size() - p - 12) break;
+    out.push_back({id, flp::Bytes(b.begin() + static_cast<std::ptrdiff_t>(p + 12), b.begin() + static_cast<std::ptrdiff_t>(p + 12 + n))});
+    p += 12 + n;
+  }
+  return out;
+}
+flp::Bytes wrapBuild(uint32_t version, const std::vector<std::pair<uint32_t, flp::Bytes>>& rs) {
+  flp::ByteWriter w;
+  w.u32(version);
+  for (const auto& [id, d] : rs) w.u32(id), w.u64(d.size()), w.bytes(d.data(), d.size());
+  return w.b;
+}
+flp::Bytes rec53(const flp::Bytes& b) {
+  for (const auto& [id, d] : wrapRecords(b))
+    if (id == 53) return d;
+  return {};
+}
+
+// A wrapper as a recent FL writes it for a VST3 instrument (values chosen
+// here): settings records, kind, a zero VST2 id, the class id, the name and
+// the state with a header record and a parameter table of its own.
+flp::Bytes flStyleWrapper(const PluginState& g) {
+  namespace enc = flp::enc;
+  const enc::Result native = enc::encode(g, "", nullptr, enc::EncodeContext{});
+  flp::Bytes guid;
+  for (const auto& [id, d] : wrapRecords(native.state))
+    if (id == 52) guid = d;
+  std::string comp, ctrl;
+  host::decodeState(g.data, comp, ctrl);
+  flp::ByteWriter header, table;
+  for (uint32_t i = 0; i < 16; ++i) header.u32(i * 7 + 3);
+  table.u32(3), table.u32(11), table.u32(22), table.u32(33);
+  const std::vector<std::pair<uint32_t, flp::Bytes>> st = {
+      {1, header.b}, {3, flp::Bytes(comp.begin(), comp.end())}, {2, flp::Bytes(ctrl.begin(), ctrl.end())}, {4, table.b}};
+  auto bytes = [](std::initializer_list<uint8_t> v) { return flp::Bytes(v); };
+  const std::vector<std::pair<uint32_t, flp::Bytes>> rs = {
+      {1, bytes({0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})},
+      {2, bytes({0, 0xA1, 0, 0, 0, 0x1B, 0, 0, 0, 0x8C, 0x7D, 0x20, 0xA5, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0})},
+      {30, bytes({0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})},
+      {32, flp::Bytes(12, 0)},
+      {50, bytes({8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})},
+      {51, flp::Bytes(4, 0)},
+      {52, guid},
+      {54, bytes({'S', 'e', 'r', 'u', 'm', ' ', '2'})},
+      {53, wrapBuild(1, st)},
+  };
+  return wrapBuild(12, rs);
+}
+
+const flp::Event* wrapperState(const flp::File& f) {
+  for (const auto& e : f.events) {
+    flp::WrapperInfo w;
+    if (e.id == 213 && flp::parseWrapper(e.data, e.size, w)) return &e;
+  }
+  return nullptr;
+}
+
+// Serum 2 (`kSerum2`, state `s2`) exported to FL. `installed`: its class is
+// registered (else it is hidden: missing, opened as Plasma).
+void testFlWrapperExport(const PluginState& s2, const Song& project, bool installed) {
+  namespace enc = flp::enc;
+  const std::string tag = installed ? " (installed)" : " (missing)";
+  const flp::Bytes origin = flStyleWrapper(s2);
+  {
+    flp::PluginMapping m;
+    expect(enc::decodeState("Fruity Wrapper", origin, m, enc::EncodeContext{}) &&
+               (installed ? m.state.type == kSerum2 && m.state.data == s2.data : m.state.type == pl::kType && standin::isStandIn(m.state)),
+           "FL-style Serum 2 wrapper imports" + tag);
+  }
+  // Unchanged: the origin as it was (it used to be reported approximate and
+  // rebuilt from defaults when the plugin opened as its stand-in).
+  const enc::Result same = enc::encode(s2, "Fruity Wrapper", &origin, enc::EncodeContext{});
+  expect(same.quality == enc::Result::Verbatim && same.state == origin, "unchanged Serum 2 wrapper written verbatim" + tag);
+  // A changed patch: only the plugin's own state changes.
+  PluginState changed = s2;
+  {
+    const auto x = xferJson(serum2Body(), "Changed Lead");
+    changed.data = host::encodeState(std::string(x.begin(), x.end()), "ctrl");
+  }
+  const enc::Result r = enc::encode(changed, "Fruity Wrapper", &origin, enc::EncodeContext{});
+  const auto a = wrapRecords(origin), b = wrapRecords(r.state);
+  bool othersKept = a.size() == b.size() && flp::getU32(r.state, 0) == 12;
+  for (size_t i = 0; othersKept && i < a.size(); ++i) othersKept = a[i].first == b[i].first && (a[i].first == 53 || a[i].second == b[i].second);
+  expect(r.quality == enc::Result::Exact && othersKept, "changed Serum 2 patch: the wrapper's other records are kept byte for byte" + tag);
+  {
+    const auto sa = wrapRecords(rec53(origin)), sb = wrapRecords(rec53(r.state));
+    std::string comp, ctrl;
+    host::decodeState(changed.data, comp, ctrl);
+    bool ok = sa.size() == 4 && sb.size() == 4;
+    for (size_t i = 0; ok && i < 4; ++i) {
+      const uint32_t id = sb[i].first;
+      ok = sa[i].first == id && (id == 3   ? sb[i].second == flp::Bytes(comp.begin(), comp.end())
+                                 : id == 2 ? sb[i].second == flp::Bytes(ctrl.begin(), ctrl.end())
+                                           : sb[i].second == sa[i].second);
+    }
+    flp::WrapperInfo w;
+    expect(ok && flp::parseWrapper(r.state.data(), r.state.size(), w) && w.data == changed.data && w.paramIds == std::vector<uint32_t>({11, 22, 33}),
+           "changed Serum 2 patch: new state, the origin's header and parameter table" + tag);
+  }
+  // The project origin of a channel imported while Serum 2 was missing
+  // records Plasma; exported as Serum 2 again it still belongs to that wrapper.
+  {
+    flp::EventList ev;
+    flp::RawEvent n, st, t;
+    n.id = 201;
+    for (char c : std::string("Fruity Wrapper")) n.data.push_back(static_cast<uint8_t>(c)), n.data.push_back(0);
+    n.data.push_back(0), n.data.push_back(0);
+    st.id = 213, st.data = origin;
+    t.id = flp::kGlType;
+    const std::string glt = installed ? kSerum2 : pl::kType;
+    t.data.assign(glt.begin(), glt.end());
+    ev = {n, st, t};
+    expect(flp::originTypeMatches(ev, kSerum2) && !flp::originTypeMatches(ev, "vst3:00000000000000000000000000000001"),
+           "a wrapper origin matches the plugin it wraps" + tag);
+  }
+  // A Gridline project (Serum 2 added in Gridline): exported as Serum 2, an
+  // instrument, with its name and its exact state.
+  {
+    flp::Bytes out;
+    flp::ExportReport rep;
+    flp::ExportOptions opt;
+    flp::File f;
+    std::string err;
+    const bool ok = flp::exportFlp(project, out, rep, opt) && flp::readBytes(out, f, &err);
+    const flp::Event* e = ok ? wrapperState(f) : nullptr;
+    flp::WrapperInfo w;
+    const bool parsed = e && flp::parseWrapper(e->data, e->size, w);
+    expect(parsed && w.format == flp::WrapperInfo::Vst3 && w.savedType() == kSerum2 && w.instrument && w.name == "Serum 2" &&
+               w.data == s2.data && (!installed || w.vendor == "Xfer Records"),
+           "Gridline project: Serum 2 exported as itself, an instrument, with its state" + tag);
+    bool exact = false;
+    for (const auto& p : rep.plugins) exact = exact || (p.glType == kSerum2 && p.quality == "exact");
+    expect(exact, "Gridline project: the Serum 2 export is exact" + tag);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -367,9 +518,11 @@ int main() {
   const Json savedJson = songToJson(opened);
   Song again;
   expect(songFromJson(savedJson, again) && again.channels[0].plugin == opened.channels[0].plugin, "stand-in project saves and reopens");
+  testFlWrapperExport(s2, orig, false);  // J-171
   // ---- installed again: the original comes back, byte for byte
   registerFake(kSerum2, "Serum 2", "Xfer Records", true);
   standin::setHiddenPlugins({"kickstart"});
+  testFlWrapperExport(s2, orig, true);
   Song restored;
   expect(songFromJson(savedJson, restored), "project reopens with the plugin installed");
   {

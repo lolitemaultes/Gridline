@@ -230,13 +230,14 @@ void NoteRecorder::commitAutomation(Document& doc) {
       const Tick t1 = static_cast<Tick>(std::ceil(pts.back().first)) - origin;
       doc.editPattern(pattern_, "record automation", [&](Pattern& p) {
         std::vector<AutoPoint> out;
-        if (const PatternAutomation* lane = findPatternLane(p, pid.owner, pid.index))
+        const PatternAutomation* lane = findPatternLane(p, pid.owner, pid.index);
+        if (lane)
           for (const auto& q : lane->points)
             if (q.pos < t0 || q.pos > t1) out.push_back(q);
         for (const auto& [t, v] : pts) {
           AutoPoint q;
           q.pos = std::max<Tick>(0, static_cast<Tick>(std::llround(t)) - origin);
-          q.value = static_cast<float>(v);
+          q.value = static_cast<float>(lane ? paramToAutomation(*lane, v) : v);  // J-173: into the clip's range
           q.shape = AutoShape::Hold;
           out.push_back(q);
         }

@@ -46,6 +46,7 @@
 #include "TrackModeUi.h"
 #include "ChopUi.h"
 #include "../packs/PacksUi.h"
+#include "PatternAutoUi.h"
 #include "../core/Platform.h"
 
 namespace gl {
@@ -877,6 +878,10 @@ void rackOptionsMenu(App& a) {
   }
   if (ImGui::MenuItem(i18n::tr("Select their mixer tracks"), nullptr, false, any))
     if (const Channel* c = s.channel(sel.front())) a.selMixer = c->mixerTrack, a.showMixer = true;
+  if (s.pattern(a.curPattern) && ImGui::BeginMenu(i18n::tr("Automation clips in this pattern"))) {  // J-173
+    patautoui::listMenu(a, a.curPattern);
+    ImGui::EndMenu();
+  }
   ImGui::SeparatorText(i18n::tr("All channels"));
   if (ImGui::BeginMenu(i18n::tr("Sort by"))) {
     if (ImGui::MenuItem(i18n::tr("Name"))) ops::sortChannels(a.doc, ops::ChannelSort::Name);
@@ -941,6 +946,14 @@ void patternContextMenu(App& a, ObjectId id) {
       if (ImGui::MenuItem(l.c_str())) ops::transposePattern(a.doc, id, st);
     }
     ImGui::EndMenu();
+  }
+  {  // J-173: the pattern's automation clips (an edit replaces the pattern: stop using p then)
+    const uint64_t rev = a.doc.revision();
+    if (ImGui::BeginMenu(i18n::tr("Automation clips"))) {
+      patautoui::listMenu(a, id);
+      ImGui::EndMenu();
+    }
+    if (a.doc.revision() != rev) return;
   }
   if (ImGui::MenuItem(i18n::tr("Split by channel"))) {
     auto ids = ops::splitPatternByChannel(a.doc, id);
@@ -1359,6 +1372,11 @@ void playlistOptionsMenu(App& a) {
     ImGui::MenuItem(i18n::tr("Stretch audio clips when resizing"), keys::label("playlist.stretchResize"), &a.playlist.stretchResize);
     ImGui::MenuItem(i18n::tr("Fade and volume handles on audio clips"), keys::label("playlist.fades"), &a.playlist.showFades);
     ImGui::MenuItem(i18n::tr("Audio clip edits on zero crossings"), keys::label("playlist.zeroCross"), &a.playlist.zeroCross);
+    ImGui::Separator();  // J-173: what pattern clips show
+    ImGui::TextDisabled("%s", i18n::tr("Pattern clips show"));
+    if (ImGui::MenuItem(i18n::tr("Notes and automation"), nullptr, a.playlist.patternPreview == 0)) a.playlist.patternPreview = 0;
+    if (ImGui::MenuItem(i18n::tr("Notes only"), nullptr, a.playlist.patternPreview == 1)) a.playlist.patternPreview = 1;
+    if (ImGui::MenuItem(i18n::tr("Automation only"), nullptr, a.playlist.patternPreview == 2)) a.playlist.patternPreview = 2;
     {  // J-37
       const bool smoothSnap = a.settings.getBool("ui.smoothSnap");
       if (ImGui::MenuItem(i18n::tr("Smooth snapping"), nullptr, smoothSnap)) a.settings.set("ui.smoothSnap", !smoothSnap);

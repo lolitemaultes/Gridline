@@ -48,6 +48,9 @@
 #include "../engine/Chop.h"
 #include "../core/ClipLoop.h"
 #include "../core/ClipSources.h"
+#include "../core/PatternAutoOps.h"
+#include "../core/PatternAutomation.h"
+#include "PatternAutoUi.h"
 
 namespace gl {
 
@@ -132,6 +135,11 @@ void syncEditToggles(App& a) {
     else if (*vals[i] != last[i]) a.settings.set(kKeys[i], *vals[i]);
     last[i] = *vals[i];
   }
+  // J-173: what pattern clips show (notes and automation / notes / automation)
+  static int lastPreview = 0;
+  if (!loaded) st.patternPreview = std::clamp(static_cast<int>(a.settings.getNumber("playlist.patternPreview")), 0, 2);
+  else if (st.patternPreview != lastPreview) a.settings.set("playlist.patternPreview", st.patternPreview);
+  lastPreview = st.patternPreview;
   loaded = true;
 }
 
@@ -178,7 +186,7 @@ struct DrawnClip {
 // and a looping pattern (loop > 0, Q-1) repeats them. Returns the content end
 // (clip ticks) of a pattern that does not loop and ends inside the clip, else -1.
 Tick drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, Tick loop, ImU32 col,
-                     float visX0, float visX1) {
+                     float visX0, float visX1, bool notes = true) {
   const Tick patLen = std::max<Tick>(1, s.patternContentLength(p));
   const float w = b.x - a.x;
   if (w < 6 || clipLen <= 0) return -1;
@@ -190,6 +198,7 @@ Tick drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, 
   auto xAt = [&](Tick t) { return a.x + w * static_cast<float>(t) / static_cast<float>(clipLen); };  // clip ticks
   const Tick stepT = s.ticksPerStep(p);
   for (const ClipPass& ps : loopPasses(offset, clipLen, loop)) {
+    if (!notes) break;  // J-173: automation only (the content end still counts)
     if (xAt(ps.at) > visX1) break;                                          // later passes start right of the view
     if (xAt(ps.at + ps.len) < visX0) continue;                              // this one ends left of it
     const Tick c0 = ps.content, c1 = ps.content + ps.len;                   // content shown by the pass
@@ -222,6 +231,63 @@ Tick drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, 
   }
   if (loop <= 0 && offset + clipLen > patLen) return std::max<Tick>(0, patLen - offset);
   return -1;
+}
+
+// J-173: the automation clips a pattern holds, drawn over its playlist clip's
+// body as they play there (the clip's passes: offset, trim, loop repeats),
+// one value per pixel column. Values are in the clip's own range (0..1 of its
+// height), like playlist automation clips. `mouse` / `hitR`: the curve passing
+// nearest the pointer within hitR px is returned in `hit` (-1: none); `sample`
+// gets a point on each drawn curve (dev geometry).
+struct PatCurveHit {
+  int hit = -1;
+  std::vector<std::pair<int, ImVec2>> sample;  // (clip index, point on its curve)
+};
+ImU32 patternCurveColor(const AutomationClip& c, size_t k, ImU32 body) {
+  return theme::mix(theme::rgb(patautoui::curveRgb(c, k)), theme::contrastText(body), 0.22f);
+}
+void drawPatternCurves(ImDrawList* dl, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, Tick loop, ImU32 body, float visX0,
+                       float visX1, ImVec2 mouse, bool mouseIn, float hitR, PatCurveHit* out) {
+  const float w = b.x - a.x, h = b.y - a.y;
+  if (p.automation.empty() || w < 4 || h < 4 || clipLen <= 0) return;
+  const std::vector<ClipPass> passes = loopPasses(offset, clipLen, loop);
+  const float x0 = std::floor(std::max(a.x, visX0)), x1 = std::min(b.x, visX1);
+  if (x1 <= x0 || passes.empty()) return;
+  const float sx = std::round((x0 + x1) * 0.5f);
+  const ImU32 shadow = IM_COL32(0, 0, 0, 90);
+  float best = hitR;
+  static std::vector<ImVec2> pts;
+  for (size_t k = 0; k < p.automation.size(); ++k) {
+    const AutomationClip& ac = p.automation[k];
+    if (ac.points.empty() || ac.owner == kNoId) continue;
+    const ImU32 col = patternCurveColor(ac, k, body);
+    size_t pi = 0;
+    pts.clear();
+    auto flush = [&]() {
+      if (pts.size() >= 2) {
+        dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), shadow, ImDrawFlags_None, 3.0f);
+        dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), col, ImDrawFlags_None, 1.5f);
+      }
+      pts.clear();
+    };
+    for (float x = x0; x <= x1; x += 1.0f) {
+      const double t = static_cast<double>(x - a.x) / static_cast<double>(w) * static_cast<double>(clipLen);  // clip ticks
+      size_t q = pi;
+      while (q + 1 < passes.size() && t >= static_cast<double>(passes[q + 1].at)) ++q;
+      if (q != pi) {  // a new pass: the curve restarts (a loop point)
+        flush();
+        pi = q;
+      }
+      const ClipPass& ps = passes[pi];
+      const double content = static_cast<double>(ps.content) + (t - static_cast<double>(ps.at));
+      const double v = std::clamp(automationValue(ac, content), 0.0, 1.0);
+      const float y = b.y - 1.0f - static_cast<float>(v) * (h - 2.0f);
+      pts.emplace_back(x + 0.5f, y);
+      if (out && mouseIn && std::fabs(mouse.x - (x + 0.5f)) <= 0.5f && std::fabs(mouse.y - y) < best) best = std::fabs(mouse.y - y), out->hit = static_cast<int>(k);
+      if (out && x == sx) out->sample.push_back({static_cast<int>(k), ImVec2(x + 0.5f, y)});
+    }
+    flush();
+  }
 }
 
 // Q-1: loop glyph (two arrows chasing round a rounded loop), for the title
@@ -600,6 +666,23 @@ void arrangementClipMenu(App& a, ObjectId id) {
         for (const auto& k : s.playlist)
           if (k.kind == ClipKind::Automation && k.source == ac->id) a.playlist.selected.insert(k.id);
       }
+      // J-173: the clip into the current pattern (what this placement plays).
+      if (const Pattern* cp = s.pattern(a.curPattern)) {
+        ImGui::Separator();
+        const std::string mv = std::string(i18n::tr("Move into pattern")) + " \"" + cp->name + "\"";
+        const std::string cpy = std::string(i18n::tr("Copy into pattern")) + " \"" + cp->name + "\"";
+        const ObjectId pid = cp->id;
+        int act = 0;
+        if (ImGui::MenuItem(mv.c_str())) act = 1;
+        ui::Hint("The pattern holds the automation from now on: it plays wherever the pattern plays and shows on its clips");
+        if (ImGui::MenuItem(cpy.c_str())) act = 2;
+        if (act) {
+          const patauto::MoveResult r = patauto::placementIntoPattern(a.doc, id, pid, act == 2);
+          if (r != patauto::MoveResult::Done) a.notify(patauto::moveResultText(r), true);
+          else a.notify(act == 1 ? "Automation moved into the pattern" : "Automation copied into the pattern");
+          return;  // the clip under the menu may be gone
+        }
+      }
     }
   } else {
     // Q-1: the pattern's loop mode (FL: the channel rack's loop button) and the clip's loop start.
@@ -612,6 +695,15 @@ void arrangementClipMenu(App& a, ObjectId id) {
       ui::Hint(i18n::tr("A clip longer than its pattern repeats the pattern (every clip of this pattern)"));
       if (ImGui::MenuItem(i18n::tr("Reset loop start"), nullptr, false, c->offset != 0))
         a.doc.editClip(id, "reset loop start", [](Clip& x) { x.offset = 0; });
+      if (ImGui::BeginMenu(i18n::tr("Automation in this pattern"), !p->automation.empty())) {  // J-173
+        ParamId pick{kNoId, 0};
+        for (const auto& pa : p->automation) {
+          const std::string l = patternAutoName(s, pa) + "##pa" + std::to_string(pa.owner) + "_" + std::to_string(pa.index);
+          if (ImGui::MenuItem(l.c_str())) pick = ParamId{pa.owner, pa.index};
+        }
+        ImGui::EndMenu();
+        if (pick.owner != kNoId) openPatternAutomation(a, pid, pick);
+      }
     }
     ImGui::Separator();
     clipContextMenu(a, id);
@@ -1162,7 +1254,7 @@ void drawPlaylist(App& a) {
     return nTracks ? trackY[static_cast<size_t>(tr) + 1] - trackY[static_cast<size_t>(tr)] : trackH;
   };
   devGeom.x0 = gMin.x - st.scrollX, devGeom.pxPerTick = st.pxPerTick, devGeom.valid = true;
-  devGeom.trackTop.clear(), devGeom.trackH.clear(), devGeom.clips.clear();
+  devGeom.trackTop.clear(), devGeom.trackH.clear(), devGeom.clips.clear(), devGeom.curves.clear();
   for (int i = 0; i < nTracks; ++i) devGeom.trackTop.push_back(yOf(i)), devGeom.trackH.push_back(hOf(i));
   auto tickAt = [&](float x) { return timeline::tickAtPx(x - gMin.x + st.scrollX, st.pxPerTick); };
   auto trackAt = [&](float y) {
@@ -1317,6 +1409,7 @@ void drawPlaylist(App& a) {
     dl->AddRectFilled(ImVec2(std::max(gMin.x, xOf(songLen)), gMin.y), gMax, theme::withAlpha(P.surface950, 0.35f));
   // Clips.
   ObjectId hoverClip = kNoId, hoverMenuGlyph = kNoId;
+  ParamId hoverCurve{kNoId, 0};  // J-173: the pattern automation curve under the pointer on hoverClip
   clipheader::Zone hoverZone = clipheader::Zone::None;  // J-142: where on hoverClip the pointer is
   bool hoverEdge = false, hoverLeftEdge = false, hoverBody = false;
   // Audio clip fade handles (J-8; J-38: tension handles, crossfade partners):
@@ -1640,10 +1733,22 @@ void drawPlaylist(App& a) {
     const ImVec2 b0(a0.x + 3, a0.y + headH + 2), b1(a1.x - 3, a1.y - 3);
     const ImU32 mark = P.dark ? P.paper : theme::mix(base, P.ink, 0.6f);
     bool inside = hovered && io.MousePos.x >= a0.x && io.MousePos.x < a1.x && io.MousePos.y >= a0.y && io.MousePos.y < a1.y && io.MousePos.y >= gMin.y;
+    ParamId curveHit{kNoId, 0};  // J-173
     if (loopGlyph) drawLoopGlyph(dl, ImVec2(std::min(a1.x, gMax.x) - 9, a0.y + headH * 0.5f), std::min(4.0f, headH * 0.32f),
                                  theme::withAlpha(theme::contrastText(headSolid), 0.85f));
     if (c.kind == ClipKind::Pattern) {
-      const Tick contentEnd = drawClipPreview(dl, s, *s.pattern(c.pattern), b0, b1, len, c.offset, loopLen, ink, gMin.x, gMax.x);
+      const Pattern& pat = *s.pattern(c.pattern);
+      const int pv = st.patternPreview;  // J-173: 0 notes and automation, 1 notes, 2 automation
+      const Tick contentEnd = drawClipPreview(dl, s, pat, b0, b1, len, c.offset, loopLen, ink, gMin.x, gMax.x, pv != 2 || pat.automation.empty());
+      if (pv != 1 && !pat.automation.empty() && b1.y - b0.y >= (pv == 2 ? 4.0f : 7.0f)) {
+        PatCurveHit ph;
+        const bool inBody = inside && io.MousePos.y > a0.y + headH;
+        drawPatternCurves(dl, pat, b0, b1, len, c.offset, loopLen, theme::mix(base, P.well, 0.43f), gMin.x, gMax.x, io.MousePos, inBody, 5.0f, &ph);
+        if (ph.hit >= 0) curveHit = ParamId{pat.automation[static_cast<size_t>(ph.hit)].owner, pat.automation[static_cast<size_t>(ph.hit)].index};
+        for (const auto& [k, pt] : ph.sample)
+          devGeom.curves.push_back({static_cast<unsigned>(c.id), static_cast<unsigned>(pat.automation[static_cast<size_t>(k)].owner),
+                                    pat.automation[static_cast<size_t>(k)].index, pt.x, pt.y});
+      }
       const float pxTick = (a1.x - a0.x) / static_cast<float>(std::max<Tick>(1, len));
       if (repeats) {
         // Q-1: repeats are slightly dimmed; each loop point gets a thin
@@ -1759,6 +1864,7 @@ void drawPlaylist(App& a) {
     dl->PopClipRect();
     if (inside) {
       hoverClip = c.id;
+      hoverCurve = curveHit;  // J-173: a pattern automation curve under the pointer (owner kNoId: none)
       hoverZone = zone;  // J-142 (the top clip owns the pointer: a covered clip's arrow does not open)
       hoverMenuGlyph = zone == clipheader::Zone::Menu ? c.id : kNoId;
       float edge = std::min(8.0f, (a1.x - a0.x) * 0.3f);
@@ -2221,7 +2327,12 @@ void drawPlaylist(App& a) {
                         playlistTrackName(s, static_cast<size_t>(trackAt(m.y)));
     if (liveMode && hc && inLiveArea(s, *hc))
       a.setHint(where + "   (live: click to launch on the track's launch grid \xC2\xB7 right-click to stop the track)");
-    else if (hoverAuto)
+    else if (hc && hc->kind == ClipKind::Pattern && hoverCurve.owner != kNoId && hoverBody) {  // J-173
+      const Pattern* hp = s.pattern(hc->pattern);
+      const AutomationClip* hcv = hp ? findPatternLane(*hp, hoverCurve.owner, hoverCurve.index) : nullptr;
+      a.setHint(where + "   " + (hcv ? patternAutoName(s, *hcv) : std::string()) + "   " +
+                i18n::tr("(automation in this pattern \xC2\xB7 double-click: edit it in the automation editor)"));
+    } else if (hoverAuto)
       a.setHint(where + "   (drag a point · drag a ring: curve tension · double-click: add point · right-click a point: delete · double-click the title: editor)");
     else if (hoverMenuGlyph != kNoId)
       a.setHint(where + "   (click: clip menu)");
@@ -2847,7 +2958,9 @@ void drawPlaylist(App& a) {
       cg.point = idx;
     } else if (inGrid && lClick) {
       if (hoverClip != kNoId && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-        if (hc->kind == ClipKind::Pattern) {
+        if (hc->kind == ClipKind::Pattern && hoverCurve.owner != kNoId) {
+          openPatternAutomation(a, hc->pattern, hoverCurve);  // J-173: the curve's clip in the automation editor
+        } else if (hc->kind == ClipKind::Pattern) {
           a.selectPattern(hc->pattern);
           a.showRack = true;
           a.focusWindow = "Channel rack";

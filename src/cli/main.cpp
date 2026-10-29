@@ -259,13 +259,15 @@ int main(int argc, char** argv) {
       for (const auto& q : r.params) bad += q.status == gl::paramaudit::Status::Broken || !q.roundTrip || (q.liveTested && !q.live);
     return bad ? 1 : 0;
   }
-  if (int r = flpToolsMain(argc, argv); r >= 0) return r;  // export-flp, flp-roundtrip, flp-encode-check (FlpTools.cpp)
   if (argc >= 3 && std::string(argv[1]) == "vst3-smoke") gl::vst3::smokeMain(argv[2]);
   if (argc >= 4 && std::string(argv[1]) == "plugin-smoke")
     gl::host::smokeMain(argv[2], argv[3], argc >= 5 && std::string(argv[4]) == "--sandbox");
   // Hosted plugins known from the app's scan cache (projects may use them).
+  // J-171: also for the FL tools, which then import and export installed
+  // plugins (e.g. Serum 2) as the app does instead of as missing ones.
   if (argc >= 2 && std::string(argv[1]) != "scan-plugins")
     gl::host::initHosting(std::filesystem::path(gl::Settings::defaultPath()).parent_path().string());
+  if (int r = flpToolsMain(argc, argv); r >= 0) return r;  // export-flp, flp-roundtrip, flp-encode-check (FlpTools.cpp)
   if (argc >= 2 && std::string(argv[1]) == "plugin-check") return gl::host::pluginCheckMain(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "list-plugins") {
     for (const auto& c : gl::host::hostedClasses()) {

@@ -182,7 +182,9 @@ Exporter::PluginOut Exporter::encodePlugin(const PluginState& p, ObjectId owner,
     }
   const auto host = slot >= 0 ? im.insert.find(owner) : im.insert.end();
   const PluginState q = host != im.insert.end() ? routeIndexed(s, host->second, p) : p;
-  enc::Result r = enc::encode(q, oName, oHasState ? &oState : nullptr, ec);
+  enc::EncodeContext pec = ec;
+  pec.channel = generator;
+  enc::Result r = enc::encode(q, oName, oHasState ? &oState : nullptr, pec);
   // J-81: a mixer slot holds FL effects only; FL reports an instrument there
   // (e.g. Dashboard for a control surface) as an error while loading.
   if (!generator && r.quality != enc::Result::None) {

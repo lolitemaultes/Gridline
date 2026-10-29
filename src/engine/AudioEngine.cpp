@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include "Dsp.h"
 #include "Resample.h"
 #include "pitch/Kernel.h"
@@ -1077,6 +1078,42 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
               sr_ * 60.0 / (clockMap(p).bpmAt(static_cast<double>(b.ev->on)) * p->ppq));  // local tempo (tempo map)
   }
   offsBefore(c1);
+  if (tMode_ == PlayMode::Song || tMode_ == PlayMode::Pattern) announceAhead(p, from, c0, c1, pat);
+}
+
+void AudioEngine::announceAhead(const Program* p, int from, int64_t c0, int64_t c1, const ProgPattern* pat) {
+  const auto ahead = static_cast<int64_t>(std::llround(Generator::kNoteLookaheadSec * sr_));
+  // Up to the loop end in this pass and, when the transport loops (and no
+  // jump is pending), on from the loop start after the wrap. A marker or a
+  // seek can still move playback: notes announced for frames that then play
+  // something else are never started and the instrument lets them go.
+  const int64_t endS = tLoop_ ? sampleAt(p, anchorTick_, transportEnd(p)) : std::numeric_limits<int64_t>::max();
+  const int64_t hi1 = std::min(c1 + ahead, endS);
+  const bool wraps = tLoop_ && !pendJump_ && c1 + ahead > endS && endS >= c1;
+  const double ls = wraps ? loopStart(p) : 0.0;
+  for (size_t ci = 0; ci < p->channels.size(); ++ci) {
+    const ProgChannel& ch = p->channels[ci];
+    ChannelRuntime* rt = ch.rt.get();
+    if (!rt || !rt->gen || !rt->gen->wantsNoteLookahead()) continue;
+    bool chain = false;
+    for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
+    if (chain) continue;  // (note processors change the notes it is given)
+    const std::vector<NoteEv>* evs = tMode_ == PlayMode::Song ? &ch.song : pat && ci < pat->perChannel.size() ? &pat->perChannel[ci] : nullptr;
+    if (!evs || evs->empty()) continue;
+    // Notes starting on samples [lo, hi) counted from `anchor` (clock 0 there), `base` frames ahead of sample 0.
+    auto scan = [&](double anchor, int64_t lo, int64_t hi, int64_t base) {
+      if (hi <= lo) return;
+      const double tLo = tickAt(p, anchor, static_cast<double>(lo - 1)), tHi = tickAt(p, anchor, static_cast<double>(hi)) + 1.0;
+      auto it = std::lower_bound(evs->begin(), evs->end(), static_cast<Tick>(std::floor(tLo)), [](const NoteEv& e, Tick t) { return e.on < t; });
+      for (; it != evs->end() && static_cast<double>(it->on) <= tHi; ++it) {
+        if (it->flags & kNoteSlide) continue;
+        const int64_t s = sampleAt(p, anchor, noteOnTick(*it));
+        if (s >= lo && s < hi) rt->gen->noteAhead(it->pitch + ch.pitchOffset, base + s);
+      }
+    };
+    scan(anchorTick_, c1, hi1, from - c0);
+    if (wraps) scan(ls, 0, c1 + ahead - endS, from + (endS - c0));
+  }
 }
 
 void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {

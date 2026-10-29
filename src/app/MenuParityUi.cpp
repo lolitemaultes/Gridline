@@ -310,12 +310,14 @@ void pianoEditItems(App& a) {
     pianoEdit(a, "delete all notes", [](auto& n, auto& sel) { n.clear(), sel.clear(); });
   const Pattern* p = a.doc.song().pattern(a.curPattern);
   if (ImGui::BeginMenu(i18n::tr("Turn events into an automation clip"), p && !p->automation.empty())) {
+    // (the edit replaces the pattern: the pick is acted on after the loop, J-169)
+    const ObjectId pid = p->id;
+    ParamId pick{kNoId, 0};
     for (const auto& lane : p->automation) {
-      std::string l = paramDisplayName(a.doc.song(), ParamId{lane.owner, lane.index}) + "##lane" +
-                      std::to_string(lane.owner) + "_" + std::to_string(lane.index);
-      if (ImGui::MenuItem(l.c_str()) && ops::laneToAutomationClip(a.doc, p->id, lane.owner, lane.index))
-        a.notify("Automation clip created in the playlist");
+      std::string l = patternAutoName(a.doc.song(), lane) + "##lane" + std::to_string(lane.owner) + "_" + std::to_string(lane.index);
+      if (ImGui::MenuItem(l.c_str())) pick = ParamId{lane.owner, lane.index};
     }
+    if (pick.owner != kNoId && ops::laneToAutomationClip(a.doc, pid, pick.owner, pick.index)) a.notify("Automation clip created in the playlist");
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Save the notes as a MIDI file..."), nullptr, false, ok)) {

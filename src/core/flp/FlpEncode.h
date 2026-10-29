@@ -123,6 +123,9 @@ struct EncodeContext {
   // beside a plugin that plays the channel sample (Granulizer, a custom-wave
   // 3x Osc, …): decodeState presents it to the decoder as the channel does.
   std::string channelSample;
+  // J-171: the instance is a channel's instrument (not a mixer effect). Tells
+  // FL's plugin wrapper the kind of a hosted plugin that is not installed here.
+  bool channel = false;
 };
 
 // FL plugins (by decoder name) that can carry this Gridline state inside FL's

@@ -178,6 +178,12 @@ struct ClipVoice {
   bool reverse = false;
   int64_t cursor = 0, endFrame = 0;  // next source frame (clip direction); silence from endFrame on
   int64_t next = -(int64_t{1} << 62);  // clip frame the stream plays next
+  // J-170: a Rubber Band stream begun ahead of the clip's start (next == 0)
+  // and primed over the blocks before it: the speed, pitch and source frame
+  // it began with, and the start-up work it may do now (input frames).
+  bool primed = false;
+  double primeSpeed = 0, primePitch = 0, credit = 0;
+  int64_t primeCursor = 0;
   static constexpr int kOut = 1024;
   float out[2][kOut] = {};
 };

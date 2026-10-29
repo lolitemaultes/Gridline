@@ -18,6 +18,7 @@
 #include <vector>
 #include "CollabUi.h"
 #include "../core/I18n.h"
+#include "../core/PatternAutomation.h"
 #include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
@@ -611,7 +612,9 @@ void sectionCurrentProject(App& a) {
         ui::Hint("Click: select the mixer track \xC2\xB7 double-click: open the effect");
       }
   }
-  if (treeNode("##cp.auto", "Automation", static_cast<int>(s.automations.size()), in, role::kGraph)) {
+  size_t inPatterns = 0;  // J-173: pattern automation clips are listed too ("in <pattern>")
+  for (const auto& p : s.patterns) inPatterns += p.automation.size();
+  if (treeNode("##cp.auto", "Automation", static_cast<int>(s.automations.size() + inPatterns), in, role::kGraph)) {
     for (const auto& ac : s.automations) {
       bool dbl = false;
       const std::string id = "##ac" + std::to_string(ac.id);
@@ -619,6 +622,19 @@ void sectionCurrentProject(App& a) {
       if (dbl) openAutomationEditor(a, ac.id);
       ui::Hint("Double-click: edit the automation clip");
     }
+    ObjectId openPat = kNoId;
+    ParamId openTgt{};
+    for (const auto& p : s.patterns)
+      for (const auto& ac : p.automation) {
+        bool dbl = false;
+        const std::string id = "##pa" + std::to_string(p.id) + "." + std::to_string(ac.owner) + "." + std::to_string(ac.index);
+        const std::string name = patternAutoName(s, ac), where = std::string(i18n::tr("in")) + " " + p.name;
+        browserRow(id.c_str(), ui::Icon::Draw, name.c_str(), where.c_str(), in + 14, &dbl,
+                   theme::rgb(ac.color == AutomationClip{}.color ? p.color : ac.color));
+        if (dbl) openPat = p.id, openTgt = ParamId{ac.owner, ac.index};
+        ui::Hint("Automation in a pattern \xC2\xB7 double-click: edit it");
+      }
+    if (openPat != kNoId) openPatternAutomation(a, openPat, openTgt);
   }
   // Samples used by the project's channels (preview, drag elsewhere), listed
   // again only when the project changes.

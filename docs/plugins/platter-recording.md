@@ -24,9 +24,14 @@ Where it goes:
   group (so they select, move and cut together). The clips are named after the channel and the
   control, for example "Platter A wheel" or "Platter Crossfader", and coloured by deck. A second
   pass gets clips of its own on new tracks: it never records over the first.
-- **Pattern mode.** The pass goes into the selected pattern as automation lanes when that
-  pattern is empty. If it already holds a pass of this setup, Gridline makes a new pattern
-  named after the channel (for example "Platter take 2"), selects it and records there.
+- **Pattern mode.** The pass goes into the selected pattern as automation clips of the
+  pattern, when that pattern is empty. They have the same names, colours and zoomed position
+  range as song mode's clips ("Platter A wheel", "Platter A position"), and they play wherever
+  the pattern plays. If the pattern already holds a pass of this setup, Gridline makes a new
+  pattern named after the channel (for example "Platter take 2"), selects it and records there.
+  Put the pattern in the playlist and its clips show the curves (the wheel moving) over it;
+  the channel rack lists them as rows below the channels. Click one to edit it (see
+  [automation in a pattern](../automation.md#automation-in-a-pattern)).
 - **Loop recording.** When the transport loops while you record, every loop pass is a pass of
   its own (a new set of clips, or a new pattern). A pass ends exactly on the sample the loop
   wraps and the next one starts on that same sample.
@@ -107,6 +112,12 @@ Cases where playback is not the same as the pass:
 Passes recorded by earlier versions (notes on the performance keys with a Performance start
 note, in a pattern) keep playing exactly as before. Two of their lanes show new names: the
 record position lane is now "A seek" and the wheel travel lane "A wheel".
+
+Pattern-mode passes recorded before patterns held named automation clips keep playing exactly
+as before too: their lanes open as unnamed clips of the pattern (shown by the control's name,
+for example "Platter > A wheel") with the control's whole range and the curves they were
+recorded with. Nothing is converted, so the sound cannot change; rename or recolour them like
+any other clip.
 
 ## Takes
 

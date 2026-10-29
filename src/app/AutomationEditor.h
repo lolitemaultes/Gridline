@@ -18,6 +18,12 @@ void drawAutomationEditor(App& a);
 // Opens the editor on an automation clip. `placement` (a playlist clip of it)
 // puts the view in song time with the target's other clips as ghosts.
 void openAutomationEditor(App& a, ObjectId automation, ObjectId placement = kNoId);
+// J-173: opens the editor on the automation clip of `target` inside a pattern
+// (does nothing when the pattern has none).
+void openPatternAutomation(App& a, ObjectId pattern, ParamId target);
+// What the editor shows (false while closed): a playlist automation clip
+// (`automation`; pattern kNoId) or a pattern's clip (pattern, target).
+bool automationEditorTarget(ObjectId* automation, ObjectId* pattern, ParamId* target);
 // Development (screenshots): 1 = the editor on a demo clip, 2 = with the LFO
 // tool, 3 = a pattern-automation lane in the piano roll (--show autoedit /
 // autolfo / autolane).
@@ -28,6 +34,11 @@ void devAutomationEditor(App& a, int mode);
 // at the playback position (or over the playlist time selection) on a free
 // track, and opens in the editor. Returns the AutomationClip id.
 ObjectId createAutomationClip(App& a, ParamId pid);
+// J-173: new automation clip for a parameter inside a pattern (kNoId: the
+// current one): over the pattern's length at the current value, opened in the
+// editor. A pattern holds one clip per control: an existing one just opens.
+// False when there is no such pattern or parameter.
+bool createPatternAutomationClip(App& a, ParamId pid, ObjectId pattern = kNoId);
 // Shows the parameter's pattern-automation lane of the current pattern in the
 // piano roll (created at the current value when missing).
 void editPatternEvents(App& a, ParamId pid);

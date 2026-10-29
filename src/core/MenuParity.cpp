@@ -289,18 +289,15 @@ ObjectId laneToAutomationClip(Document& d, ObjectId pattern, ObjectId owner, uin
     if (c.kind == ClipKind::Pattern && c.pattern == pattern) places.push_back(c);
   int track = firstEmptyTrack(s);
   if (track < 0) track = static_cast<int>(s.tracks.size()) - 1;
-  AutomationClip ac;
-  ac.flCurves = false;  // from pattern automation: same curves (J-41)
-  ac.name = paramDisplayName(s, ParamId{owner, index});
-  ac.color = p->color;
-  ac.owner = owner;
-  ac.index = index;
-  ac.points = lane->points;
+  // J-173: the pattern's clip as it is (name, colour, range, curves); unnamed
+  // lanes take the target's name, uncoloured ones the pattern's colour.
+  AutomationClip ac = playlistClipFromPattern(s, *lane);
+  if (ac.color == AutomationClip{}.color) ac.color = p->color;
   const Tick patLen = std::max<Tick>(1, s.patternContentLength(*p));
   ObjectId id = kNoId;
   d.editSong("turn events into automation clip", [&](Song& x) {
     ac.id = id = x.allocateId();
-    ac.loop = patLen;  // the events repeat with the pattern
+    if (ac.loop <= 0 || ac.loop > patLen) ac.loop = patLen;  // the events repeat with the pattern
     x.automations.push_back(ac);
     if (places.empty()) {
       Clip k;

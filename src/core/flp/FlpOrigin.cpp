@@ -3,6 +3,7 @@
 #include <cstring>
 #include "../Arrangements.h"
 #include "Flp.h"
+#include "FlpWrapper.h"
 
 namespace gl::flp {
 
@@ -94,6 +95,9 @@ uint64_t fingerprintPattern(const Pattern& p, const Song& s, const IndexMap& m) 
   for (const auto& l : p.automation) {
     h.i(m.owner(l.owner)).i(l.index).i(static_cast<int64_t>(l.points.size()));
     for (const auto& pt : l.points) h.point(pt);
+    // J-173: what a pattern automation clip changes in the events (only when not a plain lane's,
+    // so fingerprints stored before stay valid)
+    if (l.min != 0.0f || l.max != 1.0f || l.loop > 0) h.tag("clip").f(l.min).f(l.max).i(l.loop);
   }
   for (const auto& [ch, v] : p.stepProps) {
     h.i(m.ch(ch)).i(static_cast<int64_t>(v.size()));
@@ -196,6 +200,17 @@ std::string originGlType(const EventList& ev) {
 bool originTypeMatches(const EventList& ev, const std::string& type) {
   const std::string t = originGlType(ev);
   if (t == type) return true;
+  // J-171: a plugin in FL's wrapper that was not installed at import (a
+  // stand-in was recorded, e.g. Plasma for Serum 2) and is exported as the
+  // plugin itself again: the wrapper's own identity is that plugin.
+  if (type.rfind("vst2:", 0) == 0 || type.rfind("vst3:", 0) == 0 || type.rfind("au:", 0) == 0) {
+    const RawEvent* n = findRaw(ev, 201);
+    const RawEvent* st = findRaw(ev, 213);
+    std::string name;
+    for (size_t i = 0; n && i + 1 < n->data.size() && (n->data[i] || n->data[i + 1]); i += 2) name += static_cast<char>(n->data[i]);
+    WrapperInfo w;
+    if (name == "Fruity Wrapper" && st && parseWrapper(st->data.data(), st->data.size(), w) && w.savedType() == type) return true;
+  }
   // J-53: FLEX channels imported before the stand-ins were recorded as the
   // instrument that approximated them (Analog / Keys / FM); they load as
   // "gl.flex" now and keep their origin.

@@ -245,6 +245,19 @@ class Generator {
   // feeds playlist audio clips (no notes in any pattern), so instruments can
   // skip per-note resources (the sampler's stretch voices).
   virtual void setClipOnly(bool clipOnly) { (void)clipOnly; }
+  // J-170: notes due soon in song and pattern playback (never live input).
+  // Audio thread, before process(): while wantsNoteLookahead() is true the
+  // engine announces each sequenced note up to kNoteLookaheadSec ahead, again
+  // every block until it starts, `framesAhead` frames from the start of the
+  // coming process() call, with the pitch noteOn() will be given. Instruments
+  // whose note start is costly (the sampler's Rubber Band voices) prepare the
+  // note over the blocks before it; the note still comes through noteOn().
+  static constexpr double kNoteLookaheadSec = 0.15;
+  virtual bool wantsNoteLookahead() const { return false; }
+  virtual void noteAhead(double pitch, int64_t framesAhead) {
+    (void)pitch;
+    (void)framesAhead;
+  }
   // J-150: live MIDI notes reach this instrument as raw messages (onMidi), not
   // as notes (DJ decks decode their controller's notes themselves).
   virtual bool rawMidi() const { return false; }

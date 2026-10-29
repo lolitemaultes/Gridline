@@ -132,16 +132,38 @@ struct AutoPoint {
   }
 };
 
-// Pattern automation: one parameter's movement stored inside a pattern. It
-// plays whenever the pattern plays (pattern mode, playlist clips, live
-// launches), relative to the pattern start. Point values are the parameter's
-// normalized value (0..1); recorded control changes use AutoShape::Hold.
-struct PatternAutomation {
-  ObjectId owner = kNoId;  // target ParamId (owner, index)
+// An automation curve driving one parameter (ParamId owner + index). Placed on
+// the playlist by Clip{kind = Automation, source = id}; every placement shares
+// the points. Clip value v drives the parameter's normalized value
+// min + v * (max - min). J-173: the same clip also lives inside a pattern
+// (Pattern::automation, see PatternAutomation below).
+struct AutomationClip {
+  ObjectId id = kNoId;
+  std::string name = "Automation";
+  Rgb color = 0x7A8696;
+  ObjectId owner = kNoId;  // target ParamId (kSongId for tempo)
   uint32_t index = 0;
-  std::vector<AutoPoint> points;  // pattern ticks, sorted by pos
-  bool operator==(const PatternAutomation& o) const { return owner == o.owner && index == o.index && points == o.points; }
+  float min = 0.0f, max = 1.0f;
+  std::vector<AutoPoint> points;  // sorted by pos
+  Tick loop = 0;  // J-5: > 0 = the content repeats every `loop` ticks (placements longer than one cycle)
+  // J-41: point shapes follow FL's exact laws (core/FlCurves). Clips of
+  // projects saved before J-41 keep the earlier Gridline curves (false).
+  bool flCurves = true;
+  bool operator==(const AutomationClip& o) const {
+    return id == o.id && name == o.name && color == o.color && owner == o.owner && index == o.index && min == o.min &&
+           max == o.max && points == o.points && loop == o.loop && flCurves == o.flCurves;
+  }
 };
+
+// J-173: pattern automation clips. A pattern holds automation clips of the
+// same kind as the playlist's: they play whenever the pattern plays (pattern
+// mode, playlist clips, live launches), their point positions are pattern
+// ticks from the pattern start. Inside a pattern a clip is identified by its
+// target (at most one clip per target and pattern); `id` stays kNoId, and an
+// empty `name` shows the target's name. Projects saved before J-173 hold
+// plain lanes: they load as unnamed clips with range 0..1 and the earlier
+// Gridline curves (flCurves false), so they play exactly as before.
+using PatternAutomation = AutomationClip;
 
 // Limits of Pattern::bars / stepsPerBar a project file accepts (Project.cpp
 // rejects others). Longer note content still plays: the content length follows the notes.
@@ -173,7 +195,7 @@ struct Pattern {
   int bars = 1;
   std::map<ObjectId, std::vector<uint8_t>> steps;  // channel -> velocities per step (0 = off)
   std::map<ObjectId, std::vector<Note>> notes;     // channel -> piano-roll notes
-  std::vector<PatternAutomation> automation;       // parameter lanes (at most one per target)
+  std::vector<PatternAutomation> automation;       // J-173: automation clips (at most one per target)
   // J-11: per-step parameters (parallel to `steps`; missing / short rows = defaults).
   std::map<ObjectId, std::vector<StepProps>> stepProps;
   // J-31: per-channel loop length in steps (missing / 0 = the pattern length):
@@ -268,28 +290,6 @@ struct LiveSettings {
 };
 
 // --- arrangement: automation clips and song markers ---------------------------
-
-// An automation curve driving one parameter (ParamId owner + index). Placed on
-// the playlist by Clip{kind = Automation, source = id}; every placement shares
-// the points. Clip value v drives the parameter's normalized value
-// min + v * (max - min).
-struct AutomationClip {
-  ObjectId id = kNoId;
-  std::string name = "Automation";
-  Rgb color = 0x7A8696;
-  ObjectId owner = kNoId;  // target ParamId (kSongId for tempo)
-  uint32_t index = 0;
-  float min = 0.0f, max = 1.0f;
-  std::vector<AutoPoint> points;  // sorted by pos
-  Tick loop = 0;  // J-5: > 0 = the content repeats every `loop` ticks (placements longer than one cycle)
-  // J-41: point shapes follow FL's exact laws (core/FlCurves). Clips of
-  // projects saved before J-41 keep the earlier Gridline curves (false).
-  bool flCurves = true;
-  bool operator==(const AutomationClip& o) const {
-    return id == o.id && name == o.name && color == o.color && owner == o.owner && index == o.index && min == o.min &&
-           max == o.max && points == o.points && loop == o.loop && flCurves == o.flCurves;
-  }
-};
 
 // What song playback does when it reaches a marker (J-11). The audio engine
 // runs them at the exact sample (J-85; song mode, realtime playback only).

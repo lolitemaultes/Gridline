@@ -51,6 +51,7 @@ Settings::Settings() {
       {"playlist.stretchResize", b(false)},            // resizing audio clips time-stretches them
       {"playlist.showFades", b(true)},                 // fade + volume handles on audio clips
       {"playlist.zeroCross", b(false)},                // audio clip edits land on zero crossings
+      {"playlist.patternPreview", Json::makeNumber(0)}, // J-173: pattern clips show 0 notes + automation, 1 notes, 2 automation
       {"piano.snapIncomingMidi", b(false)},            // played notes land on the highlighted scale
       {"piano.editableGhosts", b(false)},              // clicking a ghost note edits it in place
       {"piano.followKeyMarkers", b(true)},             // scale highlighting follows key markers

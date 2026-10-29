@@ -21,6 +21,14 @@ double flAutoShape(const std::vector<AutoPoint>& pts, size_t k, double x);
 // Inserts a point keeping the list sorted (after points at the same tick); returns its index.
 int insertAutoPoint(AutomationClip& a, const AutoPoint& p);
 const char* autoShapeName(AutoShape s);
+// J-173: clip value (0..1 inside the clip's range) <-> the parameter's normalized value.
+inline double automationToParam(const AutomationClip& c, double v) { return c.min + v * (c.max - c.min); }
+inline double paramToAutomation(const AutomationClip& c, double n) {
+  const double r = static_cast<double>(c.max) - static_cast<double>(c.min);
+  if (r > -1e-9 && r < 1e-9) return 0.0;
+  const double v = (n - c.min) / r;
+  return v < 0 ? 0.0 : v > 1 ? 1.0 : v;
+}
 
 // The placed clips that drive one parameter. Overlaps are resolved when the
 // lane is built (a later clip cuts off an earlier one), so the instances are

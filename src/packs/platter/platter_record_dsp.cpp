@@ -546,6 +546,34 @@ bool laneDrives(const Song& s, ObjectId channel, int param, Tick a, Tick b) {
 // The colour of a deck's clips (mixer: -1).
 Rgb laneColor(int deck) { return deck == 0 ? 0x4FA3D9 : deck == 1 ? 0xE0913A : 0x8A93A0; }
 
+// A pass lane as an automation clip (song mode: a playlist clip's source; pattern mode,
+// J-173: one of the pass pattern's own clips), its points from <origin> on. A record
+// position lane is zoomed on the record's travel (exact: a power-of-two range on a
+// 1/1024 grid); every other lane spans the whole control.
+AutomationClip passClip(const PerfLane& l, ObjectId channel, const std::string& chName, double origin) {
+  AutomationClip ac;
+  ac.name = laneName(chName, l.param);
+  int dp = -1;
+  ac.color = laneColor(deckOfParam(l.param, dp));
+  ac.owner = channel;
+  ac.index = laneIndex(l.param);
+  double lo = 0, hi = 1;
+  if ((l.param == PTrackA || l.param == PTrackB) && !l.points.empty()) {
+    double nmin = 1, nmax = 0;
+    for (const PerfPoint& q : l.points) nmin = std::min(nmin, q.value), nmax = std::max(nmax, q.value);
+    lo = std::floor(nmin * 1024.0) / 1024.0;
+    double range = 1.0 / 1024.0;
+    while (range < 1.0 && lo + range < nmax + 1.0 / 4096.0) range *= 2.0;
+    if (lo + range > 1.0) lo = std::max(0.0, 1.0 - range);
+    hi = lo + range;
+  }
+  ac.min = static_cast<float>(lo);
+  ac.max = static_cast<float>(hi);
+  ac.points = passPoints(l, origin, lo, hi);
+  ac.flCurves = true;
+  return ac;
+}
+
 }  // namespace
 
 PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, ObjectId pattern) {
@@ -587,8 +615,10 @@ PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, 
   for (auto& l : lanes)  // (the position lanes name the start state)
     if ((l.param == PTrackA || l.param == PTrackB) && !l.points.empty() && id > 0) l.points.front().tension = startTagOf(id);
   if (!song) {
+    // J-173: named, coloured automation clips in the pass's (new) pattern, as a song-mode
+    // pass's playlist clips are (same names, colours, ranges and curves: the same sound)
     doc.editPattern(pattern, "Record a deck performance", [&](Pattern& p) {
-      for (const PerfLane& l : lanes) setPatternLane(p, channel, laneIndex(l.param), passPoints(l, 0.0));
+      for (const PerfLane& l : lanes) addPatternClip(p, passClip(l, channel, chName, 0.0));
     });
     out.lanes = static_cast<int>(lanes.size());
     return out;
@@ -632,27 +662,8 @@ PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, 
     out.group = so.allocateId();
     for (int i = 0; i < count; ++i) {
       const PerfLane& l = lanes[static_cast<size_t>(i)];
-      AutomationClip ac;
+      AutomationClip ac = passClip(l, channel, chName, static_cast<double>(start));
       ac.id = so.allocateId();
-      ac.name = laneName(chName, l.param);
-      int dp = -1;
-      ac.color = laneColor(deckOfParam(l.param, dp));
-      ac.owner = channel;
-      ac.index = laneIndex(l.param);
-      double lo = 0, hi = 1;
-      if ((l.param == PTrackA || l.param == PTrackB) && !l.points.empty()) {
-        // zoomed on the record's travel (exact: a power-of-two range on a 1/1024 grid)
-        double nmin = 1, nmax = 0;
-        for (const PerfPoint& q : l.points) nmin = std::min(nmin, q.value), nmax = std::max(nmax, q.value);
-        lo = std::floor(nmin * 1024.0) / 1024.0;
-        double range = 1.0 / 1024.0;
-        while (range < 1.0 && lo + range < nmax + 1.0 / 4096.0) range *= 2.0;
-        if (lo + range > 1.0) lo = std::max(0.0, 1.0 - range);
-        hi = lo + range;
-      }
-      ac.min = static_cast<float>(lo);
-      ac.max = static_cast<float>(hi);
-      ac.points = passPoints(l, static_cast<double>(start), lo, hi);
       Clip c;
       c.id = so.allocateId();
       c.kind = ClipKind::Automation;

@@ -36,8 +36,10 @@ void forEachTick(S& song, F&& fn) {
   for (auto& m : song.markers) fn(m.pos);
   // pattern automation, parked arrangements, live area
   for (auto& p : song.patterns)
-    for (auto& lane : p.automation)
+    for (auto& lane : p.automation) {
       for (auto& pt : lane.points) fn(pt.pos);
+      fn(lane.loop);  // J-173: pattern automation clips loop too
+    }
   for (size_t i = 0; i < song.arrangements.size(); ++i) {
     if (static_cast<int>(i) == song.currentArrangement) continue;
     auto& a = song.arrangements[i];

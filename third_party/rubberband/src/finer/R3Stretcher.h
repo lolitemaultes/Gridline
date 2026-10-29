@@ -260,6 +260,14 @@ protected:
             for (size_t i = 0; i < nextClassification.size(); ++i) {
                 nextClassification[i] = BinClassifier::Classification::Residual;
             }
+            // Gridline patch (J-170): the last frame's classification and
+            // guidance go too (the guide reads whether the last frame reset
+            // its phases), so that a reset stretcher plays exactly as a new
+            // one does, whatever it played before.
+            for (size_t i = 0; i < classification.size(); ++i) {
+                classification[i] = BinClassifier::Classification::Residual;
+            }
+            guidance = Guide::Guidance();
             inbuf->reset();
             outbuf->reset();
             for (auto &s : scales) {

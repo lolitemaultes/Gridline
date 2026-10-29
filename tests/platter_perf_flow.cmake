@@ -177,7 +177,7 @@ string(APPEND script "${f} recording\n${f} move 5 5\n")
 math(EXPR f "${f} + 2")
 pass_script()
 string(APPEND script "${pass}")
-set(ENV{GRIDLINE_PLATTER_PASS_VIEW} "piano:50")  # deck A's mouse travel (PMouseA)
+set(ENV{GRIDLINE_PLATTER_PASS_VIEW} "rack")  # J-173: the pass pattern's automation clips as rack rows
 pass_script()
 string(APPEND script "${pass}${f} plugwin close\n")
 math(EXPR frames "${f} + 30")
@@ -201,6 +201,13 @@ string(REGEX MATCHALL "Record a deck performance" steps2 "${p2}")
 list(LENGTH steps2 nsteps2)
 check("the second pass is one undo step too (the new pattern included)" p2 MATCHES "\\| Record a deck performance\\]$")
 check("... and the first pass's step is still the only other one" nsteps2 EQUAL 2)
+# J-173: a pattern pass is named automation clips in the pattern, as a song pass's playlist clips are
+string(REGEX MATCHALL "platter: pattern pass clips \\[[^\n]*" pclips "${pattern_out}")
+list(LENGTH pclips npclips)
+check("each pattern pass lists its clips" npclips EQUAL 2)
+list(GET pclips 1 pc2)
+message(STATUS "${pc2}")
+check("... named after the setup and the control" pc2 MATCHES "A position" AND pc2 MATCHES "A play")
 
 # ---- 2. song mode: the pass goes into the playlist as automation clips
 set(decks_on 0)

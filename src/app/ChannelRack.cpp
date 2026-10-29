@@ -26,6 +26,7 @@
 #include "SmoothScrollUi.h"
 #include "Windows.h"
 #include "BrowserUi.h"
+#include "PatternAutoUi.h"
 
 namespace gl {
 
@@ -744,6 +745,16 @@ void drawChannelRack(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
     ImGui::Dummy(ImVec2(rowW, 0));
     ImGui::PopID();
+  }
+  // J-173: the pattern's automation clips as rows below the channels, and a
+  // drop row while an automation clip is dragged from the clip sources.
+  if (pat) {
+    const ObjectId patId = pat->id;
+    patautoui::RackRows rr{rowW, rowH, rowGap, cellH, xLed, nameX, nameW, stepsX, stepsW, scrollX, viewX0, viewX1};
+    if (a.engine.playing() && a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId) rr.playTick = a.engine.position();
+    patautoui::drawRackRows(a, patId, rr);
+    patautoui::rackDropRow(a, patId, rowW, rowH);
+    pat = s.pattern(patId);  // a row's menu may have replaced the pattern
   }
 
   // (The add-channel button lives in the bottom bar, next to the time scroller.)

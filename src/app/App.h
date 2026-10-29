@@ -123,6 +123,7 @@ struct PlaylistState {
   bool pickerFocus = false;              // last click landed in the picker
   bool stretchResize = false;            // Shift+M: resizing audio clips stretches them
   bool showFades = true;                 // Shift+F: fade handles on audio clips
+  int patternPreview = 0;                // J-173: pattern clips show 0 notes and automation, 1 notes, 2 automation
   bool zeroCross = false;                // audio clip edges land on zero crossings
   bool wideHeaders = false;              // track headers: wide / narrow
   Snap lastSnap = Snap::Line;            // snap the magnet restores

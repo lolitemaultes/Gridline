@@ -381,6 +381,10 @@ msgstr ""
 msgid "(drag: draw values on the grid · right-drag: straight line · Alt: free)"
 msgstr ""
 
+#: src/app/AutomationEditor.cpp
+msgid "A clip on the playlist, at the song position"
+msgstr ""
+
 #: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/MidiUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp
 msgid "Accept"
 msgstr ""
@@ -433,6 +437,10 @@ msgstr ""
 msgid "Create automation clip"
 msgstr ""
 
+#: src/app/AutomationEditor.cpp
+msgid "Create automation clip in pattern"
+msgstr ""
+
 #: src/app/AutomationEditor.cpp src/app/MidiUi.cpp
 msgid "Curve"
 msgstr ""
@@ -449,7 +457,7 @@ msgstr ""
 msgid "Cut"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Delete"
 msgstr ""
 
@@ -482,6 +490,10 @@ msgid "Edit automation clip"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
+msgid "Edit automation clip in pattern"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
 msgid "Edit automation clip..."
 msgstr ""
 
@@ -507,6 +519,10 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/PluginEditorsK3.cpp src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_mod_ui.cpp
 msgid "Flip vertically"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "In pattern"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
@@ -542,6 +558,10 @@ msgid "Loop the content"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
+msgid "Name of the clip (empty: the control's name)"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
 msgid "No points"
 msgstr ""
 
@@ -551,6 +571,10 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "No target"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "Open in the automation editor"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
@@ -670,6 +694,10 @@ msgid "Select in playlist"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
+msgid "Selects the pattern this clip belongs to (its row is in the channel rack)"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
 msgid "Sets the clip's first point to the control's current value (the value the song starts with)"
 msgstr ""
 
@@ -679,6 +707,10 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "Shape name"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "Show the pattern"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/tideline/tideline_ui.cpp
@@ -694,11 +726,19 @@ msgid "Start the song at this value"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
+msgid "The clip lives in the pattern and plays wherever the pattern plays; it shows on the pattern's playlist clips"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
 msgid "The parameter this clip drives: click to change (retarget) it"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "Thin out points..."
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "This pattern has an automation clip for that control already"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/TopBar.cpp
@@ -771,6 +811,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Already in the browser: "
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Automation in a pattern · double-click: edit it"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1115,6 +1159,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Try fewer words or filters"
+msgstr ""
+
+#: src/app/Browser.cpp src/app/UpdateUi.cpp src/packs/mini/mini_ui.cpp
+msgid "in"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp src/app/ContextMenus.cpp src/app/MixerView.cpp
@@ -2113,7 +2161,7 @@ msgstr ""
 msgid "Close"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp
 msgid "Colour"
 msgstr ""
 
@@ -3457,7 +3505,7 @@ msgstr ""
 msgid "Rename"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/Playlist.cpp src/packs/edison/edison_wave_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/Playlist.cpp src/packs/edison/edison_wave_ui.cpp
 msgid "Rename..."
 msgstr ""
 
@@ -4282,6 +4330,18 @@ msgid "Automatic crossfades"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Automation clips"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Automation clips in this pattern"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Automation only"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Backwards (time)"
 msgstr ""
 
@@ -4905,7 +4965,7 @@ msgstr ""
 msgid "Minimum"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Menus.cpp
+#: src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp
 msgid "Mixer track"
 msgstr ""
 
@@ -5010,11 +5070,19 @@ msgid "Note properties..."
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Notes and automation"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Notes in the scale"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Notes off the step grid stay in the piano roll"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Notes only"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -5075,6 +5143,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Paste state"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Pattern clips show"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -9801,6 +9873,54 @@ msgstr ""
 msgid "rows"
 msgstr ""
 
+#: src/app/PatternAutoUi.cpp
+msgid "(automation in this pattern · click: edit · right-click: menu)"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp
+msgid "(click: edit in the automation editor)"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp
+msgid "Add automation clip for"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp src/app/Playlist.cpp
+msgid "Automation copied into the pattern"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp
+msgid "Drop here: the automation clip goes into this pattern"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp
+msgid "Edit in the automation editor"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp
+msgid "Move to the playlist"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp
+msgid "Show in the piano roll"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Song"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp
+msgid "The automation is a playlist clip now (one under each clip of the pattern)"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp
+msgid "The clip's points in the piano roll's lower lane (drawn as steps there)"
+msgstr ""
+
+#: src/app/PatternAutoUi.cpp
+msgid "Turns it into a playlist automation clip placed under every clip of this pattern (the song sounds the same)"
+msgstr ""
+
 #: src/app/Performance.cpp src/app/PluginEditorsK3Gb.cpp
 msgid "ENGINE"
 msgstr ""
@@ -9990,6 +10110,10 @@ msgid "(Shift: fine, Alt: no stop at 0 dB, double-click: 0 dB)"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "(automation in this pattern · double-click: edit it in the automation editor)"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "(every selected clip by the same amount)"
 msgstr ""
 
@@ -10034,6 +10158,14 @@ msgid "Automation"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Automation in this pattern"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Automation moved into the pattern"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Back to the defaults: automatic length (a crossfade where the clip overlaps another), smooth curve, no bend"
 msgstr ""
 
@@ -10043,6 +10175,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Clip volume"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Copy into pattern"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -10154,6 +10290,10 @@ msgid "Make unique as sample"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Move into pattern"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Mute clip"
 msgstr ""
 
@@ -10259,6 +10399,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "The copies are unique (new patterns)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "The pattern holds the automation from now on: it plays wherever the pattern plays and shows on its clips"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -12811,10 +12955,6 @@ msgstr ""
 
 #: src/app/UpdateUi.cpp
 msgid "You're up to date (%s)"
-msgstr ""
-
-#: src/app/UpdateUi.cpp src/packs/mini/mini_ui.cpp
-msgid "in"
 msgstr ""
 
 #: src/app/Viewports.cpp
@@ -16703,10 +16843,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Sixteenth notes"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
-msgid "Song"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp

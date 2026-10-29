@@ -23,6 +23,7 @@ namespace gl {
 namespace {
 constexpr double kDeclick = 0.002;     // minimum fade at clip edges, seconds
 constexpr double kSwitchFade = 0.010;  // seconds: render <-> realtime crossfade
+constexpr double kPrimeAhead = 0.15;   // J-170: seconds ahead a clip's Rubber Band stream begins priming
 
 // The realtime stretch's reader: source frames in clip direction (reverse
 // clips read from the end), silence outside the sound and past the window.
@@ -56,6 +57,19 @@ inline void readFrameSinc(const Sample& s, double sec, bool reverse, float& l, f
     return;
   }
   stretch::readSinc2(s.left.data(), s.right.data(), static_cast<int64_t>(s.frames()), f, rate, t, l, r);
+}
+
+// J-170: the stream primed ahead is the one a start at the clip's first
+// frame makes: the same sound, window, direction and speed, and the same
+// source frame within rounding (the source position each block computes for
+// the clip's first frame carries its own rounding, so the frame it floors to
+// can differ by one; tempo-synced clips: the speed within rounding too). A
+// channel pitch that moved since it began priming is glided to (the stream
+// followed it while priming).
+bool primedFits(const ClipVoice& rv, const Sample& s, const ProgAudioClip& c, double speed, double pitch, int64_t cursor0) {
+  return rv.src == &s && rv.reverse == c.reverse && rv.endFrame == static_cast<int64_t>(std::ceil(c.srcEnd * s.sampleRate)) &&
+         std::llabs(rv.primeCursor - cursor0) <= 1 && std::fabs(speed - rv.primeSpeed) <= 1e-9 * std::max(1.0, speed) && rv.primePitch > 0 && pitch > 0 &&
+         std::fabs(std::log(pitch / rv.primePitch)) < std::log(2.0) / 24.0;
 }
 
 }  // namespace
@@ -130,14 +144,19 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
         const double toFrames = s.sampleRate / sr;
         const double speed = secRate * toFrames;
         const double pitch = (c.granular ? c.pitch : c.speed) * chanRatio * toFrames;
-        if (rv->next != m0) {  // a jump (or the first block): a fresh stream, primed
+        bool restart = rv->next != m0;  // a jump (or the first block): a fresh stream, primed
+        const int pre = rv->voice.prerollFor(speed);
+        const int64_t cursor0 = static_cast<int64_t>(std::floor(src0 * s.sampleRate)) - pre;
+        if (!restart && rv->primed)  // J-170: begun ahead; it plays only if it is the stream starting here would make
+          restart = !primedFits(*rv, s, c, speed, pitch, cursor0);
+        if (restart) {
           rv->src = &s;
           rv->reverse = c.reverse;
           rv->endFrame = static_cast<int64_t>(std::ceil(c.srcEnd * s.sampleRate));
-          const int pre = rv->voice.prerollFor(speed);
-          rv->cursor = static_cast<int64_t>(std::floor(src0 * s.sampleRate)) - pre;
+          rv->cursor = cursor0;
           rv->voice.start(&readClip, rv, speed, pitch, pre);
         }
+        rv->primed = false;
         float* o[2] = {rv->out[0], rv->out[1]};
         rv->voice.render(o, n, speed, pitch, &readClip, rv);
         rv->next = m0 + n;
@@ -180,6 +199,48 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
         R[from + i] += r * static_cast<float>(g);
       }
     }
+  }
+
+  // J-170: the realtime Rubber Band stream of a clip starting soon begins
+  // now and does its start-up work (pre-roll, the engine's start delay: 17
+  // engine steps at 44.1 kHz) spread over the blocks before the clip, which
+  // then plays it from its first frame (above) as if it had started there.
+  const auto ahead = static_cast<int64_t>(std::llround(kPrimeAhead * sr));
+  const double tA = map.tickAfterSamples(anchorTick, static_cast<double>(clock + len + ahead), sr);
+  for (const ProgAudioClip& c : clips) {
+    if (static_cast<double>(c.start) > tA + 1.0) break;  // sorted by start
+    ClipVoice* rv = c.rt.get();
+    if (!rv || c.engine != stretch::Engine::RubberBand || !c.sample || (!c.granular && chanRatio == 1.0)) continue;
+    const int64_t first = sampleOf(static_cast<double>(c.start));
+    if (first < len || first >= len + ahead) continue;
+    if (c.hq && std::fabs(pitchSemis - c.hqSemis) < 1e-6 && c.hq->readyFrames.load(std::memory_order_acquire) > 0) continue;  // its render plays
+    const Sample& s = *c.sample;
+    // As the block it starts in will compute them.
+    const double toFrames = s.sampleRate / sr;
+    const double secRate = c.secPerTick > 0 ? std::max(0.0, c.secPerTick * (t1 - t0) * sr / len) : c.speed;
+    const double speed = secRate * toFrames;
+    const double pitch = (c.granular ? c.pitch : c.speed) * chanRatio * toFrames;
+    const double u = sec0 + static_cast<double>(first) / sr - c.startSec;
+    const double tk = t0 + (t1 - t0) * static_cast<double>(first) / static_cast<double>(len);
+    const double src0 = c.secPerTick > 0 ? c.srcStart + (tk - static_cast<double>(c.start)) * c.secPerTick : c.srcStart + u * c.speed;
+    const int pre = rv->voice.prerollFor(speed);
+    const int64_t cursor0 = static_cast<int64_t>(std::floor(src0 * s.sampleRate)) - pre;
+    if (!(rv->primed && rv->next == 0 && primedFits(*rv, s, c, speed, pitch, cursor0))) {
+      rv->src = &s;
+      rv->reverse = c.reverse;
+      rv->endFrame = static_cast<int64_t>(std::ceil(c.srcEnd * s.sampleRate));
+      rv->cursor = cursor0;
+      rv->voice.startLater(&readClip, rv, speed, pitch, pre);
+      rv->primed = true, rv->next = 0;
+      rv->primeSpeed = speed, rv->primePitch = pitch, rv->primeCursor = cursor0, rv->credit = 0;
+    }
+    const int left = rv->voice.primeLeft(speed);
+    if (left <= 0) continue;
+    rv->credit += first <= 2 * static_cast<int64_t>(len) ? 1e9 : static_cast<double>(left) * len / static_cast<double>(first - len);
+    if (rv->credit < std::min(256.0, static_cast<double>(left))) continue;  // (whole engine steps)
+    const int64_t f0 = rv->voice.fedFrames();
+    rv->voice.prime(&readClip, rv, speed, pitch, static_cast<int>(std::min(rv->credit, 1e9)));
+    rv->credit -= static_cast<double>(rv->voice.fedFrames() - f0);
   }
 }
 

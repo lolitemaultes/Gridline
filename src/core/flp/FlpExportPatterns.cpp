@@ -12,6 +12,7 @@
 #include <cmath>
 #include <limits>
 #include "../Params.h"
+#include "../PatternAutomation.h"
 #include "FlpExportInternal.h"
 
 namespace gl::flp::xp {
@@ -221,9 +222,12 @@ void Exporter::writePatternNotes() {
           if (const AutomationClip* a = s.automation(aid); a && a->owner == l.owner && a->index == l.index && !autoNotes.empty()) fromTrigger = true;
         if (fromTrigger) continue;
         uint32_t target = 0;
+        // J-173: the clip as the parameter moves (range applied, loop unrolled over the pattern; FL's
+        // events step, so curved segments are sampled every 1/32 note)
+        const std::vector<AutoPoint> lp = patternClipSteps(l, s.patternContentLength(*p), std::max<Tick>(1, s.ppq / 8));
         // Channel mute (0x07): only pattern events address it (1 = muted).
         if (const int ch = im.ch(l.owner); ch >= 0 && l.index == static_cast<uint32_t>(ChannelParam::Mute)) {
-          for (const auto& pt : l.points) {
+          for (const auto& pt : lp) {
             ev.u32(static_cast<uint32_t>(std::max<Tick>(0, pt.pos)));
             ev.u32((static_cast<uint32_t>(ch) << 16) | 0x07);
             ev.i32(pt.value >= 0.5f ? 1 : 0);
@@ -235,7 +239,7 @@ void Exporter::writePatternNotes() {
           rep.warn("pattern '" + p->name + "': automation of " + paramDisplayName(s, ParamId{l.owner, l.index}) + " has no FL target");
           continue;
         }
-        for (const auto& pt : l.points) {
+        for (const auto& pt : lp) {
           const double fl = flValue(target, pt.value);
           if (!std::isfinite(fl)) continue;
           int32_t raw;

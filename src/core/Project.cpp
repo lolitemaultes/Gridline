@@ -580,6 +580,13 @@ void patternExtrasToJson(const Pattern& p, Json& jp) {
     jl.object["owner"] = num(lane.owner);
     jl.object["index"] = num(lane.index);
     jl.object["points"] = pointsToJson(lane.points);
+    // J-173: pattern automation clips; each key only when it differs from a plain lane's.
+    if (!lane.name.empty()) jl.object["name"] = str(lane.name);
+    if (lane.color != AutomationClip{}.color) jl.object["color"] = num(lane.color);
+    if (lane.min != 0.0f) jl.object["min"] = num(lane.min);
+    if (lane.max != 1.0f) jl.object["max"] = num(lane.max);
+    if (lane.loop > 0) jl.object["loop"] = num(static_cast<double>(lane.loop));
+    if (lane.flCurves) jl.object["flCurves"] = boolean(true);
     arr.array.push_back(std::move(jl));
   }
   jp.object["automation"] = std::move(arr);
@@ -603,6 +610,13 @@ void patternExtrasFromJson(const Json& jp, Pattern& p, const Song& s) {
     lane.owner = jsonInt<ObjectId>(std::max(0.0, jl.num("owner", 0)));
     lane.index = jsonInt<uint32_t>(std::max(0.0, jl.num("index", 0)));
     lane.points = pointsFromJson(jl.find("points"));
+    // J-173: clip fields (absent in projects saved before: an unnamed clip, range 0..1, the earlier curves)
+    lane.name = jl.text("name", "");
+    lane.color = color(jl, lane.color);
+    lane.min = static_cast<float>(std::clamp(jl.num("min", 0), 0.0, 1.0));
+    lane.max = static_cast<float>(std::clamp(jl.num("max", 1), 0.0, 1.0));
+    lane.loop = std::max<Tick>(0, jsonTick(jl.num("loop", 0)));
+    lane.flCurves = flag(jl, "flCurves");
     if (lane.points.empty() || !describeParam(s, {lane.owner, lane.index})) continue;
     bool dup = false;
     for (const auto& l : p.automation) dup = dup || (l.owner == lane.owner && l.index == lane.index);

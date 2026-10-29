@@ -906,6 +906,24 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                     static_cast<unsigned>(c.source), c.audioEnd, c.fadeIn, c.fadeOut, static_cast<double>(c.gain),
                     static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0);
       std::fflush(stdout);
+    } else if (l.cmd == "autoedit") {  // J-173: what the automation editor shows (a playlist clip or a pattern's clip)
+      ObjectId aid = kNoId, pid = kNoId;
+      ParamId tgt{};
+      const bool open = automationEditorTarget(&aid, &pid, &tgt);
+      std::printf("autoedit frame %d: open %d automation %u pattern %u target %u %u\n", frame, open ? 1 : 0, static_cast<unsigned>(aid),
+                  static_cast<unsigned>(pid), static_cast<unsigned>(tgt.owner), static_cast<unsigned>(tgt.index));
+      std::fflush(stdout);
+    } else if (l.cmd == "selpattern") {  // J-173: selpattern <id>: the current pattern
+      app.selectPattern(static_cast<ObjectId>(std::atoi(l.a0.c_str())));
+    } else if (l.cmd == "patauto") {  // J-173: every pattern's automation clips to stdout
+      const Song& s = app.doc.song();
+      std::printf("patauto frame %d: undo %zu\n", frame, app.doc.history().position());
+      for (const auto& p : s.patterns)
+        for (const auto& c : p.automation)
+          std::printf("  pa %u %u %u name \"%s\" points %zu\n", static_cast<unsigned>(p.id), static_cast<unsigned>(c.owner),
+                      static_cast<unsigned>(c.index), c.name.c_str(), c.points.size());
+      std::printf("  automations %zu playlist %zu\n", s.automations.size(), s.playlist.size());
+      std::fflush(stdout);
     } else if (l.cmd == "plgeom") {  // J-118: the playlist's geometry (Windows.h PlaylistGeometry)
       const PlaylistGeometry& g = playlistGeometry();
       std::printf("plgeom frame %d: valid %d x0 %.3f pxPerTick %.6f tabs %.1f %.1f %.1f tabY %.1f\n", frame, g.valid ? 1 : 0,
@@ -920,6 +938,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                     static_cast<double>(c.g.x1), static_cast<double>(c.g.y0), static_cast<double>(c.g.y1), static_cast<double>(c.g.headH),
                     static_cast<double>(c.g.hasMenu ? c.g.menuX0 : 0), static_cast<double>(c.g.hasMenu ? c.g.menuX1 : 0),
                     static_cast<double>(c.g.hasName ? c.g.nameX0 : 0), static_cast<double>(c.g.hasName ? c.g.nameX1 : 0));
+      for (const auto& c : g.curves)  // J-173: pattern automation curves on pattern clips
+        std::printf("  pcurve %u %u %u x %.1f y %.1f\n", c.clip, c.owner, c.index, static_cast<double>(c.x), static_cast<double>(c.y));
       std::fflush(stdout);
     }
   }

@@ -17,6 +17,7 @@
 #include <sstream>
 #include <thread>
 #include "../../engine/ChannelIns.h"
+#include "../PluginStandIn.h"
 #include "../../packs/synths/matrixfm.h"
 #include "../../packs/synths/mfmref.h"
 
@@ -742,6 +743,13 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
   const bool decOk = decodeState(r.flName, t, m, ec);
   // Hosted plugins: the parameters mirror the state (data); compare type and data only.
   const bool hosted = isHostedType(g.type);
+  // J-171: a hosted plugin that is not installed here decodes to its
+  // built-in stand-in (Serum 2 -> Plasma); what FL loads is the plugin the
+  // stand-in keeps, untouched.
+  auto asLoaded = [&](PluginState& st) {
+    if (hosted && st.type != g.type && standin::isStandIn(st)) st = standin::originalState(st);
+  };
+  if (decOk) asLoaded(m.state);
   if (decOk && m.state.type == g.type && (hosted || diffParams(m.state, g).empty()) && sameData(m.state, g) && sameInsForState(m.state.ins, g.ins)) {
     r.state = t;
     r.hasState = !t.empty();
@@ -786,6 +794,7 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
   r.hasState = !b.empty();  // (an encoder may decide FL's defaults are the state: none)
   PluginMapping fm;  // decoded in full (the solver's decodes read the parameters only)
   if (decodeState(r.flName, b, fm, ec)) {
+    asLoaded(fm.state);
     const PluginState& fin = fm.state;
     r.mismatched = fin.type != g.type ? std::vector<int>{-1} : hosted ? std::vector<int>{} : diffParams(fin, g);
     // J-33: channel envelopes / filter (PluginState::ins). J-39: a state that

@@ -15,6 +15,7 @@
 #include "core/ClipSources.h"
 #include "core/Document.h"
 #include "core/MenuParity.h"
+#include "core/PatternAutomation.h"
 #include "core/PluginParams.h"
 #include "core/Project.h"
 #include "core/flp/Flp.h"
@@ -136,7 +137,7 @@ Fixture makeFixture() {
   cl.cc = 7;
   cl.owner = f.drum;
   s.links.push_back(cl);
-  PatternAutomation lane;
+  PatternAutomation lane = patternLane(kNoId, 0, {});
   lane.owner = f.drum;
   lane.index = 0;
   s.patterns[0].automation.push_back(lane);

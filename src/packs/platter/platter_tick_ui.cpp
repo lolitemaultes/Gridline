@@ -17,6 +17,7 @@
 #include "../../app/Midi.h"
 #include "../../app/PluginUI.h"
 #include "../../core/I18n.h"
+#include "../../core/PatternAutomation.h"
 #include "../../core/PluginInfo.h"
 #include "../../core/Song.h"
 #include "../../core/TrackModes.h"
@@ -84,7 +85,8 @@ ObjectId choosePass(App& a, ObjectId channel, bool song) {
 }
 
 // Dev hooks (GRIDLINE_PLATTER_TRACE, J-159 / J-163 checks): a line per recorded pass; with
-// GRIDLINE_PLATTER_PASS_VIEW the piano roll opens on the pass with a lane, the playlist, or
+// GRIDLINE_PLATTER_PASS_VIEW the piano roll opens on the pass with a lane, the playlist, the
+// channel rack ("rack": the pass pattern's automation clips as rows), or
 // ("automation:<parameter>") the automation editor on the pass's clip of that parameter.
 void devPass(App& a, ObjectId ch, ObjectId pattern, const PassWritten& w) {
   devsig::reach("platter-pass");
@@ -127,6 +129,10 @@ void devPass(App& a, ObjectId ch, ObjectId pattern, const PassWritten& w) {
     std::printf("platter: pass pattern \"%s\" notes %zu lanes %zu fractions %zu passes %d patterns %zu selected %d undo %zu [%s]\n", p->name.c_str(),
                 notes, lanes, fracs, perfPatterns, a.doc.song().patterns.size(), a.curPattern == pattern ? 1 : 0, a.doc.history().position(),
                 steps.c_str());
+    std::string clips;  // J-173: the pattern's automation clips, by name
+    for (const auto& l : p->automation)
+      if (l.owner == ch) clips += (clips.empty() ? "" : ", ") + l.name;
+    std::printf("platter: pattern pass clips [%s]\n", clips.c_str());
     std::fflush(stdout);
   }
   if (const char* v = std::getenv("GRIDLINE_PLATTER_PASS_VIEW"); v && *v) {  // "piano:<parameter>" or "playlist"
@@ -134,6 +140,13 @@ void devPass(App& a, ObjectId ch, ObjectId pattern, const PassWritten& w) {
     a.showRack = false;  // (the floating rack would cover the view)
     if (std::string(v).rfind("piano:", 0) == 0) {
       editPatternEvents(a, channelPluginParam(ch, std::atoi(v + 6)));
+    } else if (std::string(v) == "rack") {  // J-173: the pass pattern's clips as channel rack rows
+      a.showRack = true;
+      a.focusWindow = "Channel rack";
+      ImGui::SetWindowSize("Channel rack", ImVec2(1240, 720), ImGuiCond_Always);  // (room for the clip rows)
+    } else if (std::string(v).rfind("pattern:", 0) == 0) {  // J-173: the editor on the pass pattern's clip of a parameter
+      const ParamId want{ch, kChannelPluginBase + static_cast<uint32_t>(std::atoi(v + 8))};
+      if (p && findPatternLane(*p, want.owner, want.index)) openPatternAutomation(a, pattern, want);
     } else if (std::string(v).rfind("automation:", 0) == 0) {
       const auto want = kChannelPluginBase + static_cast<uint32_t>(std::atoi(v + 11));
       for (const ObjectId id : w.autos)

@@ -400,7 +400,7 @@ int main() {
     expect(!removeArrangement(one, 0), "arrangements: the last one stays");
     // PPQ change rescales parked arrangements and pattern automation.
     Song q = doc.song();
-    q.patterns[0].automation.push_back(PatternAutomation{q.channels.empty() ? q.masterId() : q.channels[0].id, 0, {{48, 0.5f, 0, AutoShape::Hold}}});
+    q.patterns[0].automation.push_back(patternLane(q.channels.empty() ? q.masterId() : q.channels[0].id, 0, {{48, 0.5f, 0, AutoShape::Hold}}));
     q.live.areaEnd = 96;
     changePpq(q, 192);
     bool scaled = q.patterns[0].automation[0].points[0].pos == 96 && q.live.areaEnd == 192;
@@ -417,8 +417,8 @@ int main() {
     ch.plugin = defaultPluginState("gl.sampler");
     ch.mixerTrack = s.masterId();
     s.channels.push_back(ch);
-    s.patterns[0].automation.push_back(PatternAutomation{ch.id, static_cast<uint32_t>(ChannelParam::Volume),
-                                                         {{0, 0.25f, 0, AutoShape::Hold}, {96, 0.75f, 0.5f, AutoShape::Curve}}});
+    s.patterns[0].automation.push_back(patternLane(ch.id, static_cast<uint32_t>(ChannelParam::Volume),
+                                                         {{0, 0.25f, 0, AutoShape::Hold}, {96, 0.75f, 0.5f, AutoShape::Curve}}));
     addClip(s, s.patterns[0].id, 1, 0, 384);
     s.tracks[1].follow = FollowMode::Shuffle, s.tracks[1].pad = PadMode::Gate, s.tracks[1].launch = LaunchGrid::Beat;
     s.tracks[1].syncStart = LaunchGrid::FourBeats, s.tracks[0].groupSize = 3, s.tracks[0].folded = true;

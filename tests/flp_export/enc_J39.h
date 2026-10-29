@@ -280,7 +280,7 @@ inline void testExportJ39() {
     Pattern p;
     p.id = s.allocateId();
     p.name = "P";
-    PatternAutomation lane{ac.owner, ac.index, {}};
+    PatternAutomation lane = patternLane(ac.owner, ac.index, {});
     for (Tick st : {Tick(0), Tick(s.ppq * 4)})
       for (AutoPoint q : ac.points) {
         q.pos += st;

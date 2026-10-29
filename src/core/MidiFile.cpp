@@ -366,7 +366,7 @@ struct Collector {
         if (!desc) continue;
         auto curve = patternLaneCurve(lane);
         auto ccAt = [&](double t) {
-          const double v = desc->fromNormalized(automationValue(*curve, t));
+          const double v = desc->fromNormalized(automationToParam(*curve, automationValue(*curve, t)));  // J-173: through the range
           return vol ? static_cast<int>(std::lround(std::clamp(v, 0.0, 1.0) * 127.0))
                      : std::clamp(static_cast<int>(std::lround(v * 64.0 + 64.0)), 0, 127);
         };
@@ -380,10 +380,11 @@ struct Collector {
           tr.ctls.push_back({offset + t - from, cc, v, 0});
         };
         const Tick fine = std::max<Tick>(1, s.ppq / 16);
-        for (size_t k = 0; k < lane.points.size(); ++k) {
-          const AutoPoint& pt = lane.points[k];
+        const std::vector<AutoPoint> pts = patternClipParamPoints(lane, limit);  // J-173: a looping clip unrolled
+        for (size_t k = 0; k < pts.size(); ++k) {
+          const AutoPoint& pt = pts[k];
           if (k > 0 && pt.shape != AutoShape::Hold)  // curved segment: sampled
-            for (Tick t = lane.points[k - 1].pos + fine; t < pt.pos; t += fine) emit(t);
+            for (Tick t = pts[k - 1].pos + fine; t < pt.pos; t += fine) emit(t);
           emit(pt.pos);
         }
       }

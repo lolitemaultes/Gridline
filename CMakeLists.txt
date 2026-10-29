@@ -976,6 +976,12 @@ target_link_libraries(gridline_tests_clip_sources PRIVATE gridline_core)
 target_include_directories(gridline_tests_clip_sources PRIVATE tests src)
 target_compile_options(gridline_tests_clip_sources PRIVATE ${GL_WARN})
 add_test(NAME clip_sources COMMAND gridline_tests_clip_sources WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-173: automation clips inside patterns (model, playback, undo, files, FL / MIDI, collaboration).
+add_executable(gridline_tests_pattern_automation_clips tests/test_pattern_automation_clips.cpp)
+target_link_libraries(gridline_tests_pattern_automation_clips PRIVATE gridline_core)
+target_include_directories(gridline_tests_pattern_automation_clips PRIVATE tests src)
+target_compile_options(gridline_tests_pattern_automation_clips PRIVATE ${GL_WARN})
+add_test(NAME pattern_automation_clips COMMAND gridline_tests_pattern_automation_clips WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-56: playlist track modes (PL-08), MTC / clock receive and chase (MI-02), master chain + loudness (RN-09).
 add_executable(gridline_tests_chop tests/test_chop.cpp)
 target_link_libraries(gridline_tests_chop PRIVATE gridline_core)
@@ -1342,6 +1348,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j97_rack_drop -P ${CMAKE_SOURCE_DIR}/tests/j97_rack_drop.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j97_rack_drop PROPERTIES TIMEOUT 300)
+
+    # J-173: automation clips in a pattern: the curves on the pattern's playlist clips (a
+    # double-click opens one in the editor), the channel rack's clip rows, the view setting.
+    add_test(NAME j173_pattern_auto_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j173_pattern_auto_app -P ${CMAKE_SOURCE_DIR}/tests/j173_pattern_auto_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j173_pattern_auto_app PROPERTIES TIMEOUT 300)
 
     # J-113: detached windows kept across runs and recovered, Space and the typing keyboard from a
     # detached window, focus moving between Gridline's windows keeping held keys, J-97 drops into a

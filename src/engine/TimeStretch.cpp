@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
+#include <limits>
 #include <list>
 #include <map>
 #include <mutex>
@@ -303,6 +304,7 @@ constexpr RubberBandStretcher::Options kRbRealtime =
 // frames are not the engine's flush).
 constexpr double kRbContextSec = 0.25;
 constexpr double kRbMinRate = 1.0 / 32.0;  // input frames per output frame (x32 slower at most)
+std::atomic<int64_t> gRbFed{0};            // J-170: rubberBandFramesFed()
 
 // Renders frames [0, len) whose frame q plays input position x(q) (as
 // stream()), at frequency ratio `pitch`, with Rubber Band's offline engine.
@@ -864,6 +866,10 @@ struct Voice::Impl {
   double rbRatio = 0, rbPitch = 0;
   std::vector<float> rbDump[2];
   static constexpr int kRbDump = 1024;
+  // J-170: pre-roll frames start() has not fed yet (startLater), the frames
+  // fed since the stream began, and what its start-up needs in all (estimate).
+  int rbPreLeft = 0;
+  int64_t rbFed = 0, rbNeed = 0;
 
   void rbSet(double speed, double pitch) {
     const double ratio = 1.0 / std::max(kRbMinRate, speed);
@@ -882,6 +888,30 @@ struct Voice::Impl {
     }
     const float* ip[2] = {in[0].data(), in[1].data()};
     rb->process(ip, static_cast<size_t>(k), false);
+    rbFed += k;
+    if (rd) gRbFed.fetch_add(k, std::memory_order_relaxed);  // (sound only: not the silent start pads)
+  }
+  // J-170: feeds the pre-roll start() would have fed (chunk by chunk, the
+  // same chunks), about `budget` frames of it; returns the budget left.
+  int rbPre(Reader rd, void* ctx, int budget) {
+    while (rbPreLeft > 0 && budget > 0) {
+      const int k = std::min(rbPreLeft, inCap);
+      rbFeed(rd, ctx, k);
+      rbDrop();
+      rbPreLeft -= k;
+      budget -= k;
+    }
+    return budget;
+  }
+  bool rbReady() const { return rbPreLeft == 0 && rbSkip == 0 && rb->available() > 0; }
+  // One step of the dry loop of rbRender(): the next chunk of input, at the gliding pitch.
+  int rbStep(Reader rd, void* ctx, double speed, double target) {
+    rbSet(speed, glideBy(target, kChunk));
+    inAcc += std::max(kRbMinRate, speed) * kChunk;
+    const int k = std::clamp(static_cast<int>(std::floor(inAcc)), 0, inCap);
+    inAcc -= k;
+    rbFeed(rd, ctx, k);
+    return k;
   }
   // Drops what the engine has of the frames still to skip.
   void rbDrop() {
@@ -902,6 +932,7 @@ struct Voice::Impl {
     return std::exp(glide[1]);
   }
   void rbRender(float* const* out, int n, double speed, double pitch, Reader rd, void* ctx) {
+    rbPre(rd, ctx, std::numeric_limits<int>::max());  // J-170: what startLater() left of the pre-roll
     const double target = std::log(pitch);
     if (!glideSet) glide[0] = glide[1] = target, glideSet = true;
     rbSet(speed, rbPitch > 0 ? rbPitch : pitch);
@@ -916,12 +947,7 @@ struct Voice::Impl {
         done += k;
         continue;
       }
-      // Dry: the next chunk of input, at the gliding pitch.
-      rbSet(speed, glideBy(target, kChunk));
-      inAcc += std::max(kRbMinRate, speed) * kChunk;
-      const int k = std::clamp(static_cast<int>(std::floor(inAcc)), 0, inCap);
-      inAcc -= k;
-      rbFeed(rd, ctx, k);
+      rbStep(rd, ctx, speed, target);  // dry: the next chunk of input
     }
     for (int c = 0; c < channels; ++c) std::fill(out[c] + done, out[c] + n, 0.0f);  // (never: the engine always delivers)
   }
@@ -976,6 +1002,8 @@ struct Voice::Impl {
     pos -= static_cast<double>(drop);
   }
 };
+
+int64_t rubberBandFramesFed() { return gRbFed.load(std::memory_order_relaxed); }
 
 Voice::Voice() : impl_(std::make_unique<Impl>()) {}
 Voice::~Voice() = default;
@@ -1044,6 +1072,8 @@ void Voice::reset() {
   if (m.rb) {
     m.rb->reset();
     m.rbSkip = 0;
+    m.rbPreLeft = 0;
+    m.rbFed = m.rbNeed = 0;
     m.inAcc = 0;
     m.glideSet = false;
     return;
@@ -1076,6 +1106,41 @@ int Voice::prerollFor(double speed) const {
 }
 
 void Voice::start(Reader rd, void* ctx, double speed, double pitch, int preroll) {
+  startLater(rd, ctx, speed, pitch, preroll);
+  if (impl_->rb) impl_->rbPre(rd, ctx, std::numeric_limits<int>::max());
+}
+
+bool Voice::prime(Reader rd, void* ctx, double speed, double pitch, int budget) {
+  Impl& m = *impl_;
+  if (!m.rb) return true;
+  pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
+  speed = std::clamp(speed, 0.0, m.maxSpeed);
+  // The pre-roll, then the steps rbRender() takes before its first frame
+  // (the same decisions in the same order, without taking the output).
+  budget = m.rbPre(rd, ctx, std::max(1, budget));
+  if (m.rbPreLeft > 0) return false;
+  const double target = std::log(pitch);
+  if (!m.glideSet) m.glide[0] = m.glide[1] = target, m.glideSet = true;
+  m.rbSet(speed, m.rbPitch > 0 ? m.rbPitch : pitch);
+  for (;;) {
+    m.rbDrop();
+    if (m.rbReady()) return true;
+    if (budget <= 0) return false;
+    budget -= std::max(1, m.rbStep(rd, ctx, speed, target));
+  }
+}
+
+int Voice::primeLeft(double speed) const {
+  const Impl& m = *impl_;
+  if (!m.rb || m.rbReady()) return 0;
+  const double s = std::max(kRbMinRate, std::clamp(speed, 0.0, m.maxSpeed));
+  const int64_t need = m.rbNeed + static_cast<int64_t>(std::ceil(s * Impl::kChunk));
+  return static_cast<int>(std::clamp<int64_t>(need - m.rbFed, 1, int64_t{1} << 30));
+}
+
+int64_t Voice::fedFrames() const { return impl_->rb ? impl_->rbFed : impl_->inRead; }
+
+void Voice::startLater(Reader rd, void* ctx, double speed, double pitch, int preroll) {
   Impl& m = *impl_;
   reset();
   pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
@@ -1084,7 +1149,8 @@ void Voice::start(Reader rd, void* ctx, double speed, double pitch, int preroll)
     // The engine wants `pad` input frames ahead of the start point and puts
     // the start point `delay` output frames in. The pre-roll is that lead-in
     // (silence where the reader has less); a longer pre-roll moves the start
-    // point later by its extra frames at this speed.
+    // point later by its extra frames at this speed. J-170: the pre-roll is
+    // fed by start(), prime() or the first render().
     m.glide[0] = m.glide[1] = std::log(pitch);
     m.glideSet = true;
     m.rbSet(speed, pitch);
@@ -1093,10 +1159,10 @@ void Voice::start(Reader rd, void* ctx, double speed, double pitch, int preroll)
     for (int z = std::max(0, pad - preroll); z > 0; z -= m.inCap) m.rbFeed(nullptr, nullptr, std::min(z, m.inCap));
     m.rbSkip = static_cast<int64_t>(m.rb->getStartDelay()) +
                std::llround(static_cast<double>(std::max(0, preroll - pad)) / std::max(kRbMinRate, speed));
-    for (int left = preroll; left > 0; left -= m.inCap) {
-      m.rbFeed(rd, ctx, std::min(left, m.inCap));
-      m.rbDrop();
-    }
+    m.rbPreLeft = preroll;
+    // Its first frame comes once the engine holds two pads (its window) and
+    // has made the frames to skip.
+    m.rbNeed = 2 * static_cast<int64_t>(pad) + static_cast<int64_t>(std::ceil(static_cast<double>(m.rbSkip) * std::max(kRbMinRate, speed)));
     return;
   }
   m.glide[0] = m.glide[1] = std::log(pitch);

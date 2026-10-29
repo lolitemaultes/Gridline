@@ -393,6 +393,8 @@ class AudioEngine {
   void drain(const Program* p);
   void processBlock(const Program* p, float* L, float* R, int n);
   void dispatch(const Program* p, int from, int to);  // sequenced events for block samples [from, to)
+  // J-170: sequenced notes due after [c0, c1), announced to the instruments that prepare them (Generator::noteAhead).
+  void announceAhead(const Program* p, int from, int64_t c0, int64_t c1, const ProgPattern* pat);
   // Releases every sequenced note; `hard` (stop/pause) also clears latched note processors.
   void releaseAll(const Program* p, int offset, bool hard = false);
   // Note-on/off for a channel: straight to its instrument, or into its note processor chain.

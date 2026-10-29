@@ -61,6 +61,95 @@ inline void testEncWrapper() {
                wi.vendor == "Some Vendor" && wi.data == g.data,
            "Wrapper: a changed state keeps the origin's plugin name and vendor");
   }
+  // J-171: an origin wrapper keeps every record and the framing of its state;
+  // only the plugin's own state is replaced.
+  {
+    auto rec = [](gl::flp::ByteWriter& w, uint32_t id, const Bytes& d) { w.u32(id), w.u64(d.size()), w.bytes(d); };
+    auto recs = [](const Bytes& b) {
+      std::vector<std::pair<uint32_t, Bytes>> v;
+      for (size_t p = 4; p + 12 <= b.size();) {
+        const size_t n = gl::flp::getU32(b, p + 4);
+        if (n > b.size() - p - 12) break;
+        v.push_back({gl::flp::getU32(b, p), Bytes(b.begin() + static_cast<std::ptrdiff_t>(p + 12), b.begin() + static_cast<std::ptrdiff_t>(p + 12 + n))});
+        p += 12 + n;
+      }
+      return v;
+    };
+    auto sameExcept53 = [&](const Bytes& a, const Bytes& b) {
+      const auto x = recs(a), y = recs(b);
+      if (x.size() != y.size() || gl::flp::getU32(a, 0) != gl::flp::getU32(b, 0)) return false;
+      for (size_t i = 0; i < x.size(); ++i)
+        if (x[i].first != y[i].first || (x[i].first != 53 && x[i].second != y[i].second)) return false;
+      return true;
+    };
+    auto state53 = [&](const Bytes& b) {
+      for (const auto& [id, d] : recs(b))
+        if (id == 53) return d;
+      return Bytes{};
+    };
+    const std::string plistA = "<plist>A</plist>", plistB = "<plist>state B, longer</plist>";
+    // AU instrument: u32 word, size, u32 word, class info, trailer.
+    gl::flp::ByteWriter st;
+    st.u32(7), st.u32(static_cast<uint32_t>(plistA.size())), st.u32(9), st.bytes(plistA.data(), plistA.size()), st.u32(0xABCD);
+    gl::flp::ByteWriter w;
+    w.u32(12);
+    rec(w, 1, Bytes(20, 0x11));
+    rec(w, 30, Bytes(16, 0x22));
+    rec(w, 50, Bytes{10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+    rec(w, 51, Bytes(4, 0));
+    rec(w, 52, Bytes{'d', 'c', 'b', 'A', 'u', 'm', 'u', 'a', 'x', 't', 's', 'T', 0, 0, 0, 0});  // Abcd / aumu / Tstx
+    rec(w, 54, Bytes{'T', 'e', 's', 't'});
+    rec(w, 53, st.b);
+    const Bytes origin = w.b;
+    gl::PluginState g;
+    g.type = "au:aumu/Tstx/Abcd";
+    g.data = "au1:" + host::base64Encode(plistA);
+    enc::Result r = enc::encode(g, "Fruity Wrapper", &origin, ctx());
+    expect(r.quality == enc::Result::Verbatim && r.state == origin, "Wrapper: an unchanged AU origin is written verbatim");
+    g.data = "au1:" + host::base64Encode(plistB);
+    r = enc::encode(g, "Fruity Wrapper", &origin, ctx());
+    gl::flp::ByteWriter want;
+    want.u32(7), want.u32(static_cast<uint32_t>(plistB.size())), want.u32(9), want.bytes(plistB.data(), plistB.size()), want.u32(0xABCD);
+    expect(r.quality == enc::Result::Exact && sameExcept53(origin, r.state) && state53(r.state) == want.b,
+           "Wrapper: a changed AU state keeps the origin's records and state framing");
+    // VST2 chunk: reserved bytes and a trailer after the chunk.
+    gl::flp::ByteWriter v;
+    v.i32(-9), v.u8(5), v.i32(-2), v.u32(3), v.u32(0x01020304), v.u32(0x05060708), v.bytes("abc", 3), v.u32(0x77);
+    gl::flp::ByteWriter w2;
+    w2.u32(10);
+    rec(w2, 1, Bytes(20, 0x33));
+    rec(w2, 50, Bytes{4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+    rec(w2, 51, Bytes{0x44, 0x33, 0x22, 0x11});
+    rec(w2, 54, Bytes{'S', 'y', 'n'});
+    rec(w2, 55, Bytes{'/', 'x'});
+    rec(w2, 53, v.b);
+    const Bytes o2 = w2.b;
+    g.type = "vst2:11223344";
+    g.data = "vst2c1:" + host::base64Encode("new chunk");
+    r = enc::encode(g, "Fruity Wrapper", &o2, ctx());
+    gl::flp::ByteWriter want2;
+    want2.i32(-9), want2.u8(5), want2.i32(-2), want2.u32(9), want2.u32(0x01020304), want2.u32(0x05060708), want2.bytes("new chunk", 9), want2.u32(0x77);
+    expect(r.quality == enc::Result::Exact && sameExcept53(o2, r.state) && state53(r.state) == want2.b,
+           "Wrapper: a changed VST2 chunk keeps the origin's records and state framing");
+    // Native instruments that are not installed here: the kind says instrument.
+    auto kind = [&](const Bytes& b) {
+      for (const auto& [id, d] : recs(b))
+        if (id == 50 && d.size() >= 4) return gl::flp::getU32(d, 0);
+      return 99u;
+    };
+    gl::PluginState au;
+    au.type = "au:aumu/Tstx/Abcd";
+    au.data = "au1:" + host::base64Encode(plistA);
+    r = enc::encode(au, "", nullptr, ctx());
+    expect(r.quality == enc::Result::Exact && kind(r.state) == 10, "Wrapper: an AU music device is written as an instrument");
+    gl::PluginState v3;
+    v3.type = "vst3:0123456789ABCDEF0011223344556677";
+    v3.data = host::encodeState("component", "controller");
+    enc::EncodeContext ch = ctx();
+    ch.channel = true;
+    expect(kind(enc::encode(v3, "", nullptr, ch).state) == 8 && kind(enc::encode(v3, "", nullptr, ctx()).state) == 7,
+           "Wrapper: a VST3 plugin on a channel is written as an instrument, in a mixer slot as an effect");
+  }
   if (flInstalled()) {
     // FL's shipped wrapper states are FL's own effects loaded as VST plugins.
     Stats s = corpusRoundTrip("Fruity Wrapper");

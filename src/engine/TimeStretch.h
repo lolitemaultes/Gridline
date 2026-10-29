@@ -171,7 +171,8 @@ size_t clipCacheBytes();
 // are realtime safe (no allocation, no locks). The output does not depend on
 // how render() calls split it. J-157: prepare(..., Engine::RubberBand) runs
 // Rubber Band's realtime engine instead (about 6 MB per stereo voice at
-// 44.1 kHz, twice that at 96 kHz).
+// 44.1 kHz, twice that at 96 kHz). J-170: startLater() and prime() spread
+// its start-up over the blocks before a stream plays (identical output).
 class Voice {
  public:
   // Pulls the next `frames` input frames into dst[0], dst[1] (zeros past the
@@ -194,6 +195,25 @@ class Voice {
   // through them so its first output is already settled, and the first
   // rendered frame is the start point (no latency).
   void start(Reader rd, void* ctx, double speed, double pitch, int preroll = 0);
+  // J-170: begins a stream like start() but leaves its start-up work to
+  // prime() and render(). Rubber Band works through its whole start delay
+  // (half its longest window: 9 engine steps at 44.1 kHz, 17 at 96 kHz)
+  // before a stream's first frame, which made a note-on cost many blocks'
+  // worth of CPU at once; priming does that work in pieces over the blocks
+  // before the stream plays. The engine sees the same calls with the same
+  // input in the same order as after start(), so the output is identical.
+  // The Stretch engine starts at once (its start-up is cheap).
+  void startLater(Reader rd, void* ctx, double speed, double pitch, int preroll = 0);
+  // Does start-up work of the stream begun by startLater(), about `budget`
+  // input frames (at least one engine call while any is left). Returns true
+  // once the stream's first frame is ready (render() then only plays on).
+  // speed / pitch: what render() will be given first.
+  bool prime(Reader rd, void* ctx, double speed, double pitch, int budget);
+  // Input frames of start-up work still to do (an estimate; 0: ready).
+  int primeLeft(double speed) const;
+  // Frames the engine has been given since the stream began (Rubber Band:
+  // its start pad included). Tests: where the start-up work was done.
+  int64_t fedFrames() const;
   // n output frames (any n). Speed and pitch may change between calls; a
   // pitch change glides across the frames (no stepped pitch).
   void render(float* const* out, int n, double speed, double pitch, Reader rd, void* ctx);
@@ -208,5 +228,10 @@ class Voice {
   std::unique_ptr<Impl> impl_;
   bool prepared_ = false;
 };
+
+// J-170 (tests, diagnostics): frames of sound given to Rubber Band's realtime
+// engines so far, by every voice (not the silence voices feed themselves:
+// start pads, the warm-up in prepare()).
+int64_t rubberBandFramesFed();
 
 }  // namespace gl::stretch

@@ -260,6 +260,7 @@ std::vector<ObjectId> stutterPattern(Song& s, const Clip& base, Tick length, con
     l.points.clear();
     for (AutoPoint q : lane.points)
       if (q.pos >= laneOffset && q.pos <= laneOffset + length) q.pos -= laneOffset, l.points.push_back(q);
+    if (laneOffset != 0) l.loop = 0;  // (J-173: a clip's loop counts from the pattern start)
     if (!l.points.empty()) np.automation.push_back(l);
   }
   for (const Step& st : steps) {

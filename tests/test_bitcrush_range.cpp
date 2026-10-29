@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 #include "../src/core/Params.h"
+#include "../src/core/PatternAutomation.h"
 #include "../src/core/PluginInfo.h"
 #include "../src/core/PluginParams.h"
 #include "../src/core/Presets.h"
@@ -423,7 +424,7 @@ void testProjectMigration() {
   ControllerLink l;
   l.owner = rate.owner, l.index = rate.index, l.min = static_cast<float>(oldNorm(1)), l.max = static_cast<float>(oldNorm(16));
   s.links.push_back(l);
-  PatternAutomation lane;
+  PatternAutomation lane = patternLane(kNoId, 0, {});
   lane.owner = rate.owner, lane.index = rate.index;
   for (double ds : {2.0, 5.0, 12.0}) lane.points.push_back({static_cast<Tick>(ds * 96), static_cast<float>(oldNorm(ds)), 0, AutoShape::Hold});
   s.patterns[0].automation.push_back(lane);
@@ -508,7 +509,7 @@ void testLawMigration() {
   ControllerLink l;
   l.owner = bits.owner, l.index = bits.index, l.min = static_cast<float>(oldNorm(4)), l.max = static_cast<float>(oldNorm(16));
   s.links.push_back(l);
-  PatternAutomation lane;
+  PatternAutomation lane = patternLane(kNoId, 0, {});
   lane.owner = bits.owner, lane.index = bits.index;
   for (double b : {3.0, 6.0, 10.0}) lane.points.push_back({static_cast<Tick>(b * 96), static_cast<float>(oldNorm(b)), 0, AutoShape::Hold});
   s.patterns[0].automation.push_back(lane);

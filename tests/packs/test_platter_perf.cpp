@@ -660,6 +660,16 @@ void testPassNull(const std::string& a, const std::string& b, int liveBlock, int
            "clips are named after the setup and the control; the position clip is zoomed on the record's travel");
   } else {
     expect(pattern == r.pat && w.clips.empty(), "pattern mode: the lanes go into the (empty) pattern");
+    // J-173: the pattern's lanes are named, coloured automation clips, as the song mode's are
+    const Pattern* pp = r.doc.song().pattern(pattern);
+    const PatternAutomation* pos = pp ? findPatternLane(*pp, r.ch, kChannelPluginBase + static_cast<uint32_t>(pl::PTrackA)) : nullptr;
+    const PatternAutomation* wheel = pp ? findPatternLane(*pp, r.ch, kChannelPluginBase + static_cast<uint32_t>(pl::deckParam(0, pl::DWheel))) : nullptr;
+    bool named = pp && !pp->automation.empty();
+    if (pp)
+      for (const auto& l : pp->automation) named = named && !l.name.empty() && l.flCurves && l.id == kNoId;
+    expect(named && pos && pos->name == "Decks A position" && wheel && wheel->name == "Decks A wheel" && wheel->color == 0x4FA3D9 &&
+               pos->max - pos->min < 1.0f,
+           "J-173 pattern mode: the pass pattern holds named, coloured clips; the position clip is zoomed on the record's travel");
   }
   const PassResult rep = replay(r, replayBlock, from, false);
   const double d = std::max(maxDiff(live.L, rep.L, 0, kPass), maxDiff(live.R, rep.R, 0, kPass));

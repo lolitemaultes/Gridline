@@ -93,7 +93,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 </tr>
 <tr>
 <td><b>Loupe, the audio editor.</b> Waveform and spectral views, markers and regions, time stretch and pitch shift, noise reduction, beat slicing and loudness readouts.</td>
-<td><b>Automation.</b> Points with thirteen curve shapes, tension handles, an LFO tool, a shape library and recording straight from knob moves.</td>
+<td><b>Automation.</b> Points with thirteen curve shapes, tension handles, an LFO tool, a shape library and recording straight from knob moves. Clips live in the playlist or inside a pattern, where they play wherever the pattern plays and show on its clips next to the notes.</td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/images/welcome.png" alt="The welcome screen with recent projects"></td>
@@ -140,7 +140,7 @@ Platter is a two-deck DJ setup on a channel: deck A and deck B with a mixer betw
 - **Mixer.** Trim, a three-band EQ with kills and a filter per channel, channel faders with meters and a curve, a crossfader with assign, curve, cut and reverse, and the master level. The EQ and master knobs have 0 dB at 12 o'clock, like a DJ mixer, and a track on one deck at the default settings plays at its own level.
 - **Scratching.** The platter follows the scratch mechanics of Mixxx: a jog wheel sets the record's speed from how fast its ticks arrive, a mouse drag follows the hand and a fast release throws the record, touching a playing record catches it and letting go ramps it back up. The Jog and Hand feel knobs set how far and how heavily it moves.
 - **DJ controllers.** Ready mappings for the Pioneer DDJ-200, Hercules DJControl Inpulse 200 and Numark Mixtrack Pro FX drive both decks and the mixer at once, with LEDs that follow each deck; any other controller maps through MIDI learn. Mappings are saved with the project and as presets.
-- **Recorded performances.** While Gridline records, what you play becomes plain automation: in song mode a grouped set of clips, one per control you used (the record's position, play, the wheel and its touch, the mouse, loops, every fader and knob), so you see the wheel moving in the playlist. The clips hold the decks' state, so playback can start anywhere in a pass, and you can cut, trim, move and copy them. Left as recorded, a pass replays exactly as played, at any buffer size; edit a curve and the sound follows. A second pass never records over the first: it gets clips of its own (or a new pattern in pattern mode). **Record as: Take** keeps a performance as one note instead. See [docs/plugins/platter-recording.md](docs/plugins/platter-recording.md).
+- **Recorded performances.** While Gridline records, what you play becomes plain automation: in song mode a grouped set of clips, one per control you used (the record's position, play, the wheel and its touch, the mouse, loops, every fader and knob), so you see the wheel moving in the playlist. The clips hold the decks' state, so playback can start anywhere in a pass, and you can cut, trim, move and copy them. Left as recorded, a pass replays exactly as played, at any buffer size; edit a curve and the sound follows. A second pass never records over the first: it gets clips of its own (or a new pattern in pattern mode, holding the same named clips, which show on the pattern's playlist clips and as channel rack rows). **Record as: Take** keeps a performance as one note instead. See [docs/plugins/platter-recording.md](docs/plugins/platter-recording.md).
 
 Platter is part of the Gridline Suite too, so it also runs in other DAWs.
 
@@ -304,6 +304,7 @@ Projects can also be saved back to `.flp` with **File, Export, FL Studio project
 
 ## Documentation
 
+- [Automation](docs/automation.md): clips in the playlist and inside patterns, where to add, see and edit them.
 - [Collaborative projects](docs/collaboration.md): inviting, joining, connections, offline work, removing someone, privacy.
 - [Windows outside the main window](docs/detachable-windows.md) and [the plugin window's channel strip](docs/plugin-window.md).
 - [The Gridline Suite](docs/gridline-suite.md): Gridline's instruments and effects as plugins for other DAWs, and where they are installed.

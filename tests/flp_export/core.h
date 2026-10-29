@@ -5,6 +5,7 @@
 #include "enc_common.h"
 #include "../fixtures/TestSong.h"
 #include "core/Params.h"
+#include "core/PatternAutomation.h"
 #include "core/Project.h"
 #include "core/PluginParams.h"
 #include "core/flp/FlpExport.h"

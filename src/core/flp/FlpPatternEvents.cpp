@@ -29,7 +29,12 @@ constexpr double kUnknown = std::numeric_limits<double>::quiet_NaN();
 PatternAutomation& laneFor(Pattern& p, ParamId id) {
   for (auto& l : p.automation)
     if (l.owner == id.owner && l.index == id.index) return l;
-  p.automation.push_back(PatternAutomation{id.owner, id.index, {}});
+  PatternAutomation l;  // J-173: an unnamed pattern automation clip with the earlier curves (steps)
+  l.name.clear();
+  l.owner = id.owner;
+  l.index = id.index;
+  l.flCurves = false;
+  p.automation.push_back(std::move(l));
   return p.automation.back();
 }
 
@@ -143,7 +148,11 @@ void importPatternEvents(Context& c) {
         const Tick start = c.tick(e.u32(o));
         size_t before = pat->automation.size();
         PatternAutomation& l = laneFor(*pat, ParamId{a->owner, a->index});
-        lanes += pat->automation.size() > before;
+        if (pat->automation.size() > before) {  // J-173: the clip is named and coloured after the automation channel
+          ++lanes;
+          l.name = a->name;
+          l.color = a->color;
+        }
         for (const auto& p : a->points) {
           AutoPoint q = p;
           q.pos = start + p.pos;

@@ -29,7 +29,7 @@ resamples with its built-in BQResampler and uses its built-in FFT; on macOS it
 uses vDSP from the Accelerate framework, which CMake links there. No other
 library is required, so it builds on every Gridline target.
 
-## Local changes (marked "Gridline patch (J-157)")
+## Local changes (marked "Gridline patch (J-157)" or "(J-170)")
 
 1. `src/common/BQResampler.cpp`, `resampleInterleaved`: after `reset()` the
    resampler starts from silence, as a new one does. Upstream carried the old
@@ -39,10 +39,17 @@ library is required, so it builds on every Gridline target.
    start.
 2. `src/common/BQResampler.cpp`, constructor: an often-changing ratio (the
    realtime engine's pitch) reserves its phase table for the largest
-   denominator it can pick (96000), so a later ratio change never allocates.
+   numerator it can pick (96000 plus the ratio; J-170 added the margin of
+   64, without which a few pitches below 1 still allocated once), so a later
+   ratio change never allocates.
 3. `src/finer/BinClassifier.h`, `reset()`: the lag queue's entries are cleared
    in place instead of freed and allocated again, so `reset()` allocates
    nothing.
+4. `src/finer/R3Stretcher.h`, `ChannelData::reset()` (J-170): the bin
+   classifications and the guidance (its phase reset flags among them) are
+   cleared too, so a reset stretcher plays exactly what a new one plays.
+   Upstream kept them, so a voice's next note depended slightly on what it
+   played before.
 
 Changes 2 and 3 let a prepared realtime voice restart (reset, start pad,
 pre-roll) and bend its pitch and speed on the audio thread without any heap

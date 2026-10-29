@@ -8,10 +8,11 @@
 // bytes} (FlpWrapper.h): 50 plugin kind, 51 VST2 id, 52 VST3 class id / AU
 // component, 53 the plugin's own state, 54 name, 55 path, 56 vendor, plus
 // wrapper settings (1, 2, 30..32) that are kept from the origin state or
-// written with FL's defaults. A hosted plugin is written with its identity
-// (from its registered class when installed, else from the type and the
-// origin state) and the saved state Gridline keeps in PluginState::data, so
-// FL loads the same installed plugin with the same settings. CLAP plugins
+// written with FL's defaults. A hosted plugin imported from FL keeps its
+// origin wrapper record for record with only the plugin's state replaced
+// (J-171); others are written with their identity (from the registered class
+// when installed, else from the type) and the saved state Gridline keeps in
+// PluginState::data, so FL loads the same plugin with the same settings. CLAP plugins
 // have no FL wrapper form: they are not encoded here.
 #include <algorithm>
 #include <cctype>
@@ -20,6 +21,7 @@
 #include <mutex>
 #include "FlpEncode.h"
 #include "../../host/HostedPlugins.h"
+#include "../PluginStandIn.h"
 
 namespace gl::flp::enc {
 
@@ -151,7 +153,6 @@ uint32_t kindOf(Format f, bool instrument) {
     default: return 0;
   }
 }
-bool kindIsInstrument(uint32_t k) { return k == 4 || k == 8 || k == 10; }
 
 // Hosted type the records describe ("" when none), as the decoder reads it.
 std::string typeOfRecords(const std::vector<Rec>& rs) {
@@ -179,14 +180,45 @@ std::string typeOfRecords(const std::vector<Rec>& rs) {
   return {};
 }
 
-// Record 53 for the Gridline state data ("" → no record: FL loads the plugin's defaults).
-bool stateRecord(Format f, const std::string& data, const host::HostedClass* cls, Bytes& out) {
+// Record 53 for the Gridline state data ("" → no record: FL loads the plugin's
+// defaults). `tpl`: the origin's record 53 of the same plugin (or null): its
+// framing (header words, the VST3 header and parameter table, trailers) is
+// kept and only the plugin's own state is replaced (J-171).
+bool stateRecord(Format f, const std::string& data, const host::HostedClass* cls, const Bytes* tpl, Bytes& out) {
   out.clear();
   if (data.empty()) return true;
   std::string bytes;
   if (f == Format::Vst2 && (data.rfind("vst2c1:", 0) == 0 || data.rfind("vst2p1:", 0) == 0)) {
     if (!host::base64Decode(data.substr(7), bytes)) return false;
     const bool chunk = data[4] == 'c';  // "vst2c1:" / "vst2p1:"
+    if (chunk && bytes.empty()) return false;
+    // The origin's layout: i32 -9, u8 version, i32 flag (-2: 8 reserved bytes
+    // follow the size), u32 chunk size (0: u32 count + f32 values), trailer.
+    if (tpl && tpl->size() >= 17 && static_cast<int32_t>(getU32(*tpl, 0)) == -9) {
+      const Bytes& t = *tpl;
+      const size_t start = static_cast<int32_t>(getU32(t, 5)) == -2 ? 21 : 13;
+      const uint32_t size = getU32(t, 9);
+      if (chunk && size > 0 && start + static_cast<size_t>(size) <= t.size()) {
+        Bytes o(t.begin(), t.begin() + static_cast<std::ptrdiff_t>(start));
+        putU32(o, 9, static_cast<uint32_t>(bytes.size()));
+        o.insert(o.end(), bytes.begin(), bytes.end());
+        o.insert(o.end(), t.begin() + static_cast<std::ptrdiff_t>(start + size), t.end());
+        out = o;
+        return true;
+      }
+      if (!chunk && size == 0 && bytes.size() >= 4 && start + 4 <= t.size()) {
+        const size_t was = std::min<size_t>(getU32(t, start), (t.size() - start - 4) / 4);
+        const size_t n = (bytes.size() - 4) / 4;
+        Bytes o(t.begin(), t.begin() + static_cast<std::ptrdiff_t>(start));
+        ByteWriter w;
+        w.u32(static_cast<uint32_t>(n));
+        w.bytes(bytes.data() + 4, n * 4);
+        o.insert(o.end(), w.b.begin(), w.b.end());
+        o.insert(o.end(), t.begin() + static_cast<std::ptrdiff_t>(start + 4 + was * 4), t.end());
+        out = o;
+        return true;
+      }
+    }
     ByteWriter w;
     w.i32(-9);  // VST state marker
     w.u8(5);    // state version
@@ -213,85 +245,116 @@ bool stateRecord(Format f, const std::string& data, const host::HostedClass* cls
   if (f == Format::Vst3 && data.rfind("vst3s1:", 0) == 0) {
     std::string comp, ctrl;
     if (!host::decodeState(data, comp, ctrl)) return false;
-    ByteWriter w;
-    w.u32(1);  // VST3 state version
-    auto rec = [&w](uint32_t id, const void* p, size_t n) {
-      w.u32(id);
-      w.u64(n);
-      w.bytes(p, n);
-    };
-    const Bytes header(64, 0);  // header record (reserved)
-    rec(1, header.data(), header.size());
-    rec(3, comp.data(), comp.size());
-    rec(2, ctrl.data(), ctrl.size());
-    ByteWriter t;  // FL parameter index → ParamID (the class's exposed parameters)
-    const size_t n = cls ? cls->params.size() : 0;
-    t.u32(static_cast<uint32_t>(n));
-    for (size_t k = 0; k < n; ++k) t.u32(cls->params[k].id);
-    rec(4, t.b.data(), t.b.size());
-    out = w.b;
+    // Records 1 (header), 3 (component), 2 (controller), 4 (FL parameter
+    // index → ParamID): the origin's, with the two states replaced.
+    std::vector<Rec> rs;
+    if (tpl && tpl->size() >= 4 && getU32(*tpl, 0) == 1) rs = records(*tpl);
+    if (!findRec(rs, 3) || !findRec(rs, 2)) {
+      rs.clear();
+      rs.push_back({1, Bytes(64, 0)});  // header record (reserved)
+      rs.push_back({3, {}});
+      rs.push_back({2, {}});
+      ByteWriter t;  // the class's exposed parameters
+      const size_t n = cls ? cls->params.size() : 0;
+      t.u32(static_cast<uint32_t>(n));
+      for (size_t k = 0; k < n; ++k) t.u32(cls->params[k].id);
+      rs.push_back({4, t.b});
+    }
+    for (Rec& r : rs) {
+      if (r.id == 3) r.data.assign(comp.begin(), comp.end());
+      else if (r.id == 2) r.data.assign(ctrl.begin(), ctrl.end());
+    }
+    out = build(1, rs);  // u32 1: VST3 state version
     return true;
   }
   if (f == Format::Au && data.rfind("au1:", 0) == 0) {
     if (!host::base64Decode(data.substr(4), bytes)) return false;
     ByteWriter w;
-    w.u32(0);
+    const bool keep = tpl && tpl->size() >= 12 && 12 + static_cast<size_t>(getU32(*tpl, 4)) <= tpl->size();
+    w.u32(keep ? getU32(*tpl, 0) : 0);
     w.u32(static_cast<uint32_t>(bytes.size()));
-    w.u32(0);
+    w.u32(keep ? getU32(*tpl, 8) : 0);
     w.bytes(bytes.data(), bytes.size());
+    if (keep) w.bytes(tpl->data() + 12 + getU32(*tpl, 4), tpl->size() - 12 - getU32(*tpl, 4));
     out = w.b;
     return true;
   }
   return false;  // a state of another format (e.g. CLAP) cannot be carried
 }
 
-// Wrapper state for a hosted plugin. The template's records are kept where
-// they describe the same plugin (name / path / vendor of a plugin that is
-// not installed) and for the wrapper's own settings.
-bool writeHosted(const PluginState& g, Bytes& b) {
+// AU component type codes of instruments ("aumu" music device, "aumi" MIDI processor).
+bool auInstrumentType(const std::string& id) {
+  const std::string t = id.substr(0, id.find('/'));
+  return t == "aumu" || t == "aumi";
+}
+
+// Wrapper state for a hosted plugin. An origin wrapper of the same plugin is
+// kept record for record (its settings, identity records and the framing of
+// its state) with only the plugin's state replaced (J-171); otherwise the
+// identity comes from the installed class, else from the type and what the
+// export knows (a channel holds an instrument).
+bool writeHosted(const PluginState& g, Bytes& b, const EncodeContext& ec) {
   const Format f = formatOf(g.type);
   if (f == Format::None) return false;
   const std::vector<Rec> tpl = records(b);
   const bool sameAsTemplate = typeOfRecords(tpl) == g.type;
   std::shared_ptr<const host::HostedClass> cls = host::hostedClass(g.type);
+  const std::string id = g.type.substr(g.type.find(':') + 1);
+  if (sameAsTemplate) {
+    const Rec* old = findRec(tpl, 53);
+    Bytes st;
+    if (!stateRecord(f, g.data, cls.get(), old ? &old->data : nullptr, st)) return false;
+    std::vector<Rec> rs;
+    for (const Rec& r : tpl) {
+      if (r.id != 53) rs.push_back(r);
+      else if (!g.data.empty()) rs.push_back({53, st});
+    }
+    auto add = [&](uint32_t rid, const std::string& value) {
+      if (!value.empty() && !findRec(rs, rid)) rs.push_back({rid, text(value)});
+    };
+    add(54, cls ? cls->name : std::string());  // (FL writes the name; an old origin may lack it)
+    if (!old && !g.data.empty()) rs.push_back({53, st});
+    b = build(b.size() >= 4 ? std::max<uint32_t>(getU32(b, 0), 1) : kWrapperVersion, rs);
+    return true;
+  }
   bool instrument = false;
   if (cls) instrument = cls->instrument;
-  else if (const Rec* k = findRec(tpl, 50); sameAsTemplate && k && k->data.size() >= 4) instrument = kindIsInstrument(getU32(k->data, 0));
+  else if (f == Format::Au) instrument = auInstrumentType(id);
+  else if (ec.channel) instrument = true;
   else if (const PluginInfo* info = findPlugin(g.type)) instrument = info->kind == PluginKind::Generator;
   std::vector<Rec> rs = settingsOf(tpl);
   rs.push_back(kindRec(kindOf(f, instrument)));
-  const std::string id = g.type.substr(g.type.find(':') + 1);
   if (f == Format::Vst2) {
     uint32_t v = 0;
     if (!hexValue(id, v)) return false;
     ByteWriter w;
     w.u32(v);
     rs.push_back({51, w.b});
-  } else if (f == Format::Vst3) {
-    Bytes guid;
-    if (!vst3Guid(id, guid)) return false;
-    rs.push_back({52, guid});
   } else {
-    // "type/subtype/manufacturer" → u32 manufacturer, type, subtype, 0.
-    const size_t s1 = id.find('/'), s2 = s1 == std::string::npos ? s1 : id.find('/', s1 + 1);
-    uint32_t type = 0, sub = 0, manu = 0;
-    if (s2 == std::string::npos || !fourCC(id.substr(0, s1), type) || !fourCC(id.substr(s1 + 1, s2 - s1 - 1), sub) ||
-        !fourCC(id.substr(s2 + 1), manu))
-      return false;
-    ByteWriter w;
-    w.u32(manu), w.u32(type), w.u32(sub), w.u32(0);
-    rs.push_back({52, w.b});
+    rs.push_back({51, Bytes(4, 0)});  // no VST2 id (FL writes the record as 0)
+    if (f == Format::Vst3) {
+      Bytes guid;
+      if (!vst3Guid(id, guid)) return false;
+      rs.push_back({52, guid});
+    } else {
+      // "type/subtype/manufacturer" → u32 manufacturer, type, subtype, 0.
+      const size_t s1 = id.find('/'), s2 = s1 == std::string::npos ? s1 : id.find('/', s1 + 1);
+      uint32_t type = 0, sub = 0, manu = 0;
+      if (s2 == std::string::npos || !fourCC(id.substr(0, s1), type) || !fourCC(id.substr(s1 + 1, s2 - s1 - 1), sub) ||
+          !fourCC(id.substr(s2 + 1), manu))
+        return false;
+      ByteWriter w;
+      w.u32(manu), w.u32(type), w.u32(sub), w.u32(0);
+      rs.push_back({52, w.b});
+    }
   }
-  // Identity text: the installed class, else the origin's records.
-  auto keep = [&](uint32_t rid, const std::string& value) {
-    if (!value.empty()) rs.push_back({rid, text(value)});
-    else if (const Rec* r = findRec(tpl, rid); sameAsTemplate && r) rs.push_back(*r);
-  };
-  keep(54, cls ? cls->name : std::string());
-  keep(55, cls && cls->format != "au" ? cls->bundle : std::string());
-  keep(56, cls ? cls->vendor : std::string());
+  // Identity text: the installed class, else the name the plugin goes by.
+  const std::string name = cls ? cls->name : standin::pluginNameOf(g.type);
+  if (!name.empty()) rs.push_back({54, text(name)});
+  if (cls && cls->format != "au" && !cls->bundle.empty()) rs.push_back({55, text(cls->bundle)});
+  if (cls && !cls->vendor.empty()) rs.push_back({56, text(cls->vendor)});
   Bytes st;
-  if (!stateRecord(f, g.data, cls.get(), st)) return false;
+  if (!stateRecord(f, g.data, cls.get(), nullptr, st)) return false;
   if (!g.data.empty()) rs.push_back({53, st});
   b = build(b.size() >= 4 ? std::max<uint32_t>(getU32(b, 0), 1) : kWrapperVersion, rs);
   return true;
@@ -309,7 +372,7 @@ Encoder hosted() {
     rs.push_back(kindRec(0));
     return build(kWrapperVersion, rs);  // no identity yet: written by `write`
   };
-  e.write = [](const PluginState& g, Bytes& b, const EncodeContext&) { writeHosted(g, b); };
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& ec) { writeHosted(g, b, ec); };
   return e;
 }
 
