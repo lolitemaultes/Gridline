@@ -33,16 +33,10 @@ void importPatterns(Context& c) {
   for (const auto& [arr, aevs] : c.sec.arrangements)
     for (const auto& e : aevs) {
       if (e.id != 233) continue;
-      for (uint32_t k : {80u, 60u, 32u}) {
-        if (e.size % k) continue;
-        bool ok = true;
-        for (uint32_t o = 0; o + k <= e.size && ok; o += k) ok = e.u16(o + 4) == 0x5000;
-        if (!ok) continue;
-        for (uint32_t o = 0; o + k <= e.size; o += k) {
-          int base = e.u16(o + 4), item = e.u16(o + 6);
-          if (item > base && !all.count(item - base)) all[item - base], ++placedEmpty;
-        }
-        break;
+      const uint32_t k = playlistStride(e);  // J-168: every record size, FL 2026's 88 too
+      for (uint32_t o = 0; k && o + k <= e.size; o += k) {
+        int base = e.u16(o + 4), item = e.u16(o + 6);
+        if (item > base && !all.count(item - base)) all[item - base], ++placedEmpty;
       }
     }
   if (placedEmpty) c.report.counts["empty patterns (placed, not stored)"] = placedEmpty;

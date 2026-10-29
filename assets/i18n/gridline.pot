@@ -13,18 +13,6 @@ msgstr ""
 msgid "Cannot decode"
 msgstr ""
 
-#: src/app/App.cpp
-msgid "Cannot open the FL Studio project"
-msgstr ""
-
-#: src/app/App.cpp
-msgid "Cannot open the zipped project"
-msgstr ""
-
-#: src/app/App.cpp
-msgid "Could not open project"
-msgstr ""
-
 #: src/app/App.cpp src/app/TemplateUi.cpp
 msgid "Could not open template"
 msgstr ""
@@ -75,10 +63,6 @@ msgstr ""
 
 #: src/app/App.cpp
 msgid "Nothing to export: the"
-msgstr ""
-
-#: src/app/App.cpp src/packs/plasma/plasma_ui.cpp
-msgid "Opened"
 msgstr ""
 
 #: src/app/App.cpp
@@ -409,7 +393,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -2125,7 +2109,7 @@ msgstr ""
 msgid "Chords"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp
 msgid "Close"
 msgstr ""
 
@@ -11457,6 +11441,78 @@ msgstr ""
 msgid "The plugin's own programs and preset library"
 msgstr ""
 
+#: src/app/ProjectLoadUi.cpp
+msgid "%d ms"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "%d warning"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "%d warnings"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Building the mixer, automation and arrangement"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Cancel takes effect once this plugin has started"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Converting the FL Studio project"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Could not open the project"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Listing samples and plugins"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Loading sample %s (%d of %d)"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp src/packs/plasma/plasma_ui.cpp
+msgid "Opened"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Opening project"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Reading the project file"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Samples %d of %d, plugins %d of %d"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Show only the warnings"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Show the whole log"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Starting plugin %s (%d of %d)"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Stop opening and go back to the project as it was"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Unpacking the zipped project"
+msgstr ""
+
 #: src/app/SamplerRenderUi.cpp
 msgid "%d notes, %d samples, %.0f s of audio"
 msgstr ""
@@ -13731,6 +13787,66 @@ msgstr ""
 
 #: src/engine/Chop.cpp
 msgid "Triplet stutter"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Cancelled after %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Cannot open the FL Studio project"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Cannot open the zipped project"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Converted the FL Studio project %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Could not open project"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Could not read sample %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Loaded sample %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "No Gridline equivalent yet: %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Opening %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Plugin not available: %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Prepared in %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Read the project file %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Sample not found: %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Started %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Unpacked %s"
 msgstr ""
 
 #: src/packs/creative/creative_ui.cpp

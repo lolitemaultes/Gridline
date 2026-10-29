@@ -244,6 +244,10 @@ set(ENV{GRIDLINE_PLATTER_PASS_VIEW} "automation:52")  # deck A's wheel (PWheelA)
 run(automation ${frames} "${script}")
 set(last_out "${automation_out}")
 check("the automation view's pass is recorded too" automation_out MATCHES "platter: pass clips ([3-9]|[1-9][0-9]+) grouped")
+# J-169: the pass's dev hook ran after the clips were written (a new channel list: it once read
+# the setup through a stale reference and crashed on Linux) and opened deck A's wheel clip
+check("the automation editor opens on deck A's wheel clip of the setup"
+      automation_out MATCHES "platter: pass view automation \"[^\"]* A wheel\" points [1-9][0-9]* channel \"[^\"?]+\"")
 foreach(s pattern playlist automation)
   check("screenshot ${s}.ppm written" EXISTS "${OUT}/${s}.ppm")
 endforeach()

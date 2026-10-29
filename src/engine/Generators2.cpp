@@ -1037,7 +1037,7 @@ class SlicerGen final : public Generator {
     } else if (static_cast<int>(param(s, SlMode) + 0.5f) == SlModeManual && smp) {
       for (int k = 0; k < kMaxSlices; ++k) {
         float m = param(s, slMarker(k), -1);
-        if (m >= 0) starts_[nSlices_++] = static_cast<int64_t>(m * static_cast<double>(smp->frames()));
+        if (m >= 0) starts_[nSlices_++] = std::llround(static_cast<double>(m) * static_cast<double>(smp->frames()));  // J-166: nearest frame
       }
       std::sort(starts_, starts_ + nSlices_);
     } else {

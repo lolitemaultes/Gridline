@@ -197,6 +197,11 @@ void App::playedNoteOff(ObjectId channel, int pitch) {
 }
 
 void App::processMidi() {
+  if (projectLoadBlocking() && midi) {  // J-167: no input reaches the project behind the loading window
+    midi->pollActions();
+    midi->poll();
+    return;
+  }
   engine.setMidiTarget(selChannel);
   const double pos = engine.position();
 

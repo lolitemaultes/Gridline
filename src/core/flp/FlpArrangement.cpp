@@ -3,7 +3,7 @@
 // playlist tracks, time markers.
 //
 // Layouts (observed on the shipped demo projects, see format notes):
-//   233 playlist items, 32/60/80-byte records: u32 position, u16 base (0x5000),
+//   233 playlist items, 32/60/80/88-byte records (see playlistStride in Flp.h): u32 position, u16 base (0x5000),
 //       u16 item (> base: pattern item − base, else rack channel), u32 length,
 //       u16 499 − track, u16 group, u16 ?, u16 flags (0x2000 = muted), …,
 //       @24/@28 start/end offset: i32 ticks for pattern items, f32 for channel
@@ -11,7 +11,8 @@
 //       80-byte records add, for audio clips: f32 fade in (ms) @36, f32 fade-in
 //       tension @40, f32 fade out (ms) @44, f32 fade-out tension @48, f32 gain @52,
 //       u32 fade flags @56, f32 clip pitch (semitones, PL-13) @60, f64 stretch factor @64,
-//       u32 @72 bit 0 clip reverse (PL-13).
+//       u32 @72 bit 0 clip reverse (PL-13). 88-byte records (FL 2026) add 8
+//       bytes after these (zero in every record seen so far; not read).
 //   234 automation points: see FlpAutomation.cpp.
 //   227 automation link: u16 source channel @2, u32 target @8.
 //       Target: 0x40000005 tempo; < 0x2000 << 16: channel (high word) +
@@ -40,19 +41,26 @@
 
 namespace gl::flp {
 
-namespace {
-Rgb flColor(uint32_t v) { return ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF); }
-
-// Playlist item record size by FL version (80 / 60 / 32 bytes).
-uint32_t itemStride(const Event& e) {
-  for (uint32_t k : {80u, 60u, 32u}) {
-    if (e.size % k) continue;
-    bool ok = true;
-    for (uint32_t o = 0; o + k <= e.size && ok; o += k) ok = e.u16(o + 4) == 0x5000;
-    if (ok) return k;
-  }
+uint32_t playlistStride(const Event& e) {
+  auto fits = [&](uint32_t k) {
+    if (k < 32 || k > e.size || e.size % k) return false;
+    for (uint32_t o = 0; o + k <= e.size; o += k)
+      if (e.u16(o + 4) != 0x5000) return false;
+    return true;
+  };
+  for (uint32_t k : kPlaylistStrides)
+    if (fits(k)) return k;
+  for (uint32_t k = 32; k <= std::min<uint32_t>(e.size, 4096); k += 4)
+    if (fits(k)) return k;
   return 0;
 }
+
+bool playlistStrideKnown(uint32_t k) {
+  return std::find(std::begin(kPlaylistStrides), std::end(kPlaylistStrides), k) != std::end(kPlaylistStrides);
+}
+
+namespace {
+Rgb flColor(uint32_t v) { return ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF); }
 
 std::string channelName(const std::vector<Event>& evs, int idx) {
   std::string n;
@@ -518,7 +526,7 @@ void Importer::importTracksAndClips() {
   if (c_.sec.legacyArrangement) {
     trackBase = 198;
     for (const auto& e : evs)
-      if (uint32_t k = e.id == 233 ? itemStride(e) : 0)
+      if (uint32_t k = e.id == 233 ? playlistStride(e) : 0)
         for (uint32_t o = 0; o + k <= e.size; o += k)
           if (e.u16(o + 12) > 198) trackBase = 499;
   }
@@ -527,10 +535,21 @@ void Importer::importTracksAndClips() {
   std::map<int, ObjectId> clipGroups;
   for (const auto& e : evs) {
     if (e.id != 233) continue;
-    uint32_t k = itemStride(e);
-    if (!k) {
-      if (e.size) c_.report.warn("unknown playlist record size");
-      continue;
+    const uint32_t k = playlistStride(e);
+    // J-168: never drop an arrangement silently; say what was lost (or left out).
+    if (!k || !playlistStrideKnown(k)) {
+      if (!e.size) continue;
+      std::string where = "The arrangement";
+      if (const Event* n = find(evs, 241); n && !n->text().empty()) where = "Arrangement \"" + n->text() + "\"";
+      if (!k) {
+        c_.report.warn(where + ": its playlist clips are stored in a layout Gridline cannot read (" + std::to_string(e.size) +
+                       " bytes); it opened without them.");
+        c_.report.counts["arrangements whose clips could not be read"]++;
+        continue;
+      }
+      c_.report.warn(where + ": its playlist clips use a newer layout (" + std::to_string(k) +
+                     " bytes per clip); their position, length, track, offsets" + (k >= 80 ? ", fades and gain" : "") +
+                     " were read, the newer settings were left out.");
     }
     for (uint32_t o = 0; o + k <= e.size; o += k) {
       Clip cl;

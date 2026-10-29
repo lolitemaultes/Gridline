@@ -1,7 +1,8 @@
 // Gridline — FLP export: arrangements (playlist records, markers, tracks)
 // and the mixer (inserts, slots, routing, 225 parameter records) (J-34).
 //
-// Playlist record (233), 80 bytes in FL 25 (see FlpArrangement.cpp):
+// Playlist record (233), 80 bytes in FL 25 (see FlpArrangement.cpp; FL 2026
+// writes 88 and still reads the 80-byte records of the FL 25 files written here):
 //   u32 position, u16 0x5000, u16 item (0x5000 + pattern, else channel),
 //   u32 length, u16 499 − track, u16 group, u16 0x78, u16 flags (0x40, +0x2000
 //   muted), 4 bytes, @24 / @28 start / end offset (i32 ticks for patterns,
@@ -155,15 +156,16 @@ void Exporter::writeArrangements() {
       const uint32_t grp = c.group == kNoId ? 0 : groupNo[c.group];
       const EventList co = origin(originKey("clip", c.id));
       const RawEvent* orec0 = findRaw(co, 233);
-      // Records of older FL versions (32 / 60 bytes) are widened to FL 25's 80.
+      // Records of older FL versions (32 / 60 bytes) are widened to FL 25's 80;
+      // J-168: newer ones (FL 2026's 88) keep FL 25's leading 80 (the file says FL 25).
       RawEvent wide;
       const RawEvent* orec = nullptr;
-      if (orec0 && orec0->data.size() <= 80) {
+      if (orec0) {
         wide.id = 233;
         wide.data = defaultClipRecord();
         // the fields older records share with FL 25's (bytes after @32 meant
         // something else or nothing; the importer only reads them at 80 bytes)
-        const size_t keep = orec0->data.size() == 80 ? 80 : std::min<size_t>(orec0->data.size(), 32);
+        const size_t keep = orec0->data.size() >= 80 ? 80 : std::min<size_t>(orec0->data.size(), 32);
         std::copy(orec0->data.begin(), orec0->data.begin() + static_cast<std::ptrdiff_t>(keep), wide.data.begin());
         orec = &wide;
       }

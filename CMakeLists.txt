@@ -899,6 +899,24 @@ target_link_libraries(gridline_tests_j164 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j164 PRIVATE tests src)
 target_compile_options(gridline_tests_j164 PRIVATE ${GL_WARN})
 add_test(NAME j164 COMMAND gridline_tests_j164 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-168: FLP playlist records of every size; an unknown layout is read or reported, never dropped.
+add_executable(gridline_tests_j168 tests/test_j168.cpp)
+target_link_libraries(gridline_tests_j168 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j168 PRIVATE tests src)
+target_compile_options(gridline_tests_j168 PRIVATE ${GL_WARN})
+add_test(NAME j168 COMMAND gridline_tests_j168 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-167: the project loader's progress / cancel model (reading, samples, plugins, cancel at each phase).
+add_executable(gridline_tests_j167 tests/test_j167.cpp)
+target_link_libraries(gridline_tests_j167 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j167 PRIVATE tests src)
+target_compile_options(gridline_tests_j167 PRIVATE ${GL_WARN})
+add_test(NAME j167_project_load COMMAND gridline_tests_j167 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-166: imported Slicex chops (order, keys, names, ends) play and export exactly in Kerf.
+add_executable(gridline_tests_j166 tests/test_j166.cpp)
+target_link_libraries(gridline_tests_j166 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j166 PRIVATE tests src)
+target_compile_options(gridline_tests_j166 PRIVATE ${GL_WARN})
+add_test(NAME j166_slicex_chops COMMAND gridline_tests_j166 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-109: Stop releases every sound outside the song; Stop twice (panic) silences tails too.
 add_executable(gridline_tests_j109 tests/test_j109.cpp)
 target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
@@ -1300,6 +1318,16 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/j165_tideline_source.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j165_tideline_source PROPERTIES TIMEOUT 300)
+
+    # J-167: opening a slow project through File > Open: the dialog closes at once, frames keep
+    # coming, the loading window shows progress and the log, input is blocked, Esc cancels back to
+    # the open project exactly; a finished load keeps its warnings on a card; a corrupt file says why.
+    add_test(NAME j167_project_load_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DSOUNDS=${CMAKE_SOURCE_DIR}/assets/sounds -DOUT=${CMAKE_BINARY_DIR}/j167_project_load
+                     -P ${CMAKE_SOURCE_DIR}/tests/j167_project_load.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j167_project_load_app PROPERTIES TIMEOUT 300)
 
     # J-105: Convolver EQ / IR envelope point editing at 100 / 200 % (SDL drags): click adds one point, no painting, undo per gesture, save + load.
     add_test(NAME j105_conv_points

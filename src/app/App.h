@@ -25,6 +25,7 @@
 #include "../core/SmoothScroll.h"
 #include "../core/Templates.h"
 #include "../engine/AudioEngine.h"
+#include "../engine/ProjectLoad.h"
 #include "../engine/Sample.h"
 #include "../engine/UiSounds.h"
 #include "Midi.h"
@@ -144,6 +145,7 @@ struct FileDialogState {
   int typeIndex = 0;
   std::function<std::string(const std::string& name, int type)> nameForType;
   std::string confirmOverwrite;  // save: the existing file the next OK replaces
+  std::string devAccept;  // J-167 dev-input "dialogopen": OK with this path once the dialog is up
 };
 
 struct Toast {
@@ -342,11 +344,24 @@ class App {
   // J-52: FL Studio projects (.flp) open as projects: the converted song,
   // shown under the FL file's name (`openedFrom`) with the import report; Save
   // asks where and in which format (never writes over the .flp unasked).
-  // `shownAs` = the file the user opened (the .flp, or the zip it came in).
-  bool openFlpProject(const std::string& flp, const std::string& shownAs);
   // Zipped projects: Gridline zips and FL Studio zipped loop packages are
   // unpacked beside the archive and opened from there.
-  bool openZippedProject(const std::string& zip);
+  // J-167: every project opens through the project loader (openProject).
+  projload::Loader projectLoad;
+  // A project is being read or prepared: the loading window shows (after a short delay) and
+  // blocks every input to the project behind.
+  bool projectLoading() const { return projectLoad.active() || projectLoad.phase() == projload::Phase::Ready; }
+  // The loading window is up (loading, or showing why a project could not open).
+  bool projectLoadBlocking() const { return projectLoading() || projectLoad.phase() == projload::Phase::Failed; }
+  // Runs the current load to its end now (no frames): embedded builds, tools, the launcher dev view.
+  void finishProjectLoad();
+  // Cancel: the open project stays exactly as it was (the launcher comes back if it was up).
+  void cancelProjectLoad();
+  // The failure window's Close.
+  void dismissProjectLoad();
+  // Quit: a running load is cancelled and its reader joined.
+  void shutdownProjectLoad();
+  const std::string& projectLoadName() const { return load_.shownAs; }  // the file being opened
   struct ImportReport {
     std::string source;                   // file name
     std::vector<std::pair<std::string, int>> counts;
@@ -485,6 +500,16 @@ class App {
   recents::List takeRecents();
   void putRecents(recents::List&& l);
   bool openProjectFile(const std::string& path);  // openProject without the launcher hand-over
+  // J-167: the project loader (ProjectLoadUi.cpp).
+  void startProjectLoad(const std::string& path, bool collab);
+  void pollProjectLoad();      // per frame (tick): a slice of work, the swap when ready
+  void completeProjectLoad();  // the prepared project replaces the open one
+  struct LoadContext {
+    std::string shownAs;      // the file the user opened (recent list, window title)
+    bool collab = false;      // a collaborative project (its session opens at the swap)
+    launcher::State homeBefore;  // the launcher as it was (restored on cancel / failure)
+    bool failReported = false;
+  } load_;
   void rememberSketch(const std::string& path);  // J-141: the open song's sketch for the launcher
   double trimSamplesAt_ = -1;     // drop the replaced project's samples from the cache at this time (J-30)
   int64_t lastBackupCheck_ = 0;

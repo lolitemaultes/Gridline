@@ -7,6 +7,15 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### New
 
+- Opening a project no longer freezes Gridline. The open dialog, menu or welcome screen closes
+  right away and a loading window shows the project's name, a progress bar that counts every
+  sample and plugin, what is loading at the moment (which plugin is starting, 3 of 9) and a log
+  of everything loaded with its time, so a slow plugin is easy to spot. Missing samples, plugins
+  that are not installed and stand-ins are listed as warnings and stay on a notification card
+  afterwards. Cancel (or Esc) goes back to the project you had open, exactly as it was. Quick
+  projects open without the window flashing up, and a project that cannot be read says why in
+  the same window. This works the same for Gridline projects, FL Studio projects, zipped
+  projects and collaborative projects.
 - Platter passes are recorded as automation clips: in song mode each pass becomes a grouped set
   of clips in the playlist, one per control you used, named like "Platter A wheel", with the
   record's position, play, the wheel and its touch, the mouse, loops, reverse and pitch bend as
@@ -36,6 +45,16 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Switching an audio clip's time mode no longer resizes the clip, and a trimmed clip stays trimmed when its time
   factor changes.
 - A resampled, stretched audio clip on a channel with its pitch knob turned now renders at the same pitch it plays at.
+- FL Studio projects saved by its 2026 version open with their whole playlist arrangement again: pattern clips and
+  audio clips land on their tracks with their lengths, offsets, fades and gain. Before, the arrangement came in empty.
+  If a project ever stores its playlist in a layout Gridline does not know, the clips are still read wherever the
+  layout allows, and the import report says which arrangement lost what instead of dropping it quietly. Such
+  projects also save back to the FL Studio format with their clips.
+- Slicex channels in imported FL Studio projects now open in Kerf with exactly the chops they were saved with: every
+  region in its saved order, on the key it was assigned (including keys moved away from the usual C5 upwards layout),
+  with its own start, end and name, even when two regions share a start. Kerf's editor shows these regions as they
+  play, region starts can be dragged, and markers no longer land one sample early. Exporting the project back to the
+  FL Studio format keeps the chops, including keys, starts and ends changed in Gridline.
 
 ## 0.7.0-beta.3
 

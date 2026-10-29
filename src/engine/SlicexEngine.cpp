@@ -258,6 +258,8 @@ std::string writeText(const Model& m) {
       std::snprintf(buf, sizeof buf, "reg %lld %lld", static_cast<long long>(r.start), static_cast<long long>(r.length));
       s += buf;
       for (int32_t v : r.rec) s += " " + std::to_string(v);
+      // J-166: key and name (older text ends after the record: automatic key, no name).
+      s += " " + std::to_string(r.key) + " " + hexOrDash(std::vector<uint8_t>(r.name.begin(), r.name.end()));
       s += "\n";
     }
   }
@@ -327,6 +329,13 @@ bool readText(const std::string& text, Model& out) {
       r.start = st, r.length = len;
       for (auto& v : r.rec)
         if (!(l >> v)) return false;
+      int key = -1;
+      std::string nm;
+      if (l >> key) {
+        r.key = key >= 0 && key <= 127 ? key : -1;
+        std::vector<uint8_t> raw;
+        if (l >> nm && unhex(nm, raw)) r.name.assign(raw.begin(), raw.end());
+      }
     }
   }
   for (size_t g = 0; g < out.groups.size(); ++g) {
@@ -395,21 +404,205 @@ std::shared_ptr<const Aux> prepare(const PluginState& s) {
       p.lfo = flart::prepare(ar.lfo, 0.5);
       for (size_t k = 0; k < 4; ++k) p.maps[k] = flart::prepare(ar.maps[k], neutral);
     }
-  // Key map: regions without an explicit key go to base + index (C5 = 60,
-  // lowered by octaves past 65 regions) while that key is still free.
+  a->keyMap = buildKeyMap(a->model, &s);
+  return a;
+}
+
+// ------------------------------------------------------------------ key map
+int explicitKey(const Model& m, const PluginState* s, int deck, int region) {
+  if (deck < 0 || deck > 1 || region < 0 || static_cast<size_t>(region) >= m.decks[static_cast<size_t>(deck)].regions.size()) return -1;
+  int k = m.decks[static_cast<size_t>(deck)].regions[static_cast<size_t>(region)].key;
+  if (s && deck == 0 && region < pp::kMaxSlices) k = static_cast<int>(std::lround(prm(*s, pp::slParam2(region, pp::SliceKey), -1.0f)));
+  return k >= 0 && k <= 127 ? k : -1;
+}
+
+KeyMap buildKeyMap(const Model& m, const PluginState* s) {
+  KeyMap km;
+  const bool sameDeck = m.opt(OSameDeck);
+  // Explicit keys (both decks' regions in each map unless "same deck only").
+  for (int d = 0; d < 2; ++d)
+    for (int src = 0; src < 2; ++src) {
+      if (sameDeck && src != d) continue;
+      const int n = static_cast<int>(m.decks[static_cast<size_t>(src)].regions.size());
+      for (int r = 0; r < n; ++r) {
+        const int k = explicitKey(m, s, src, r);
+        if (k >= 0) km[static_cast<size_t>(d)][static_cast<size_t>(k)].push_back(src * kDeckStride + r);
+      }
+    }
+  // Automatic regions: base + index while that key is still free.
   for (int d = 0; d < 2; ++d) {
-    const auto& regs = a->model.decks[static_cast<size_t>(d)].regions;
-    const int count = static_cast<int>(regs.size());
-    int base = 60;
-    if (count > 65) base = std::max(0, 60 - 12 * ((count - 65 + 11) / 12));
+    const int count = static_cast<int>(m.decks[static_cast<size_t>(d)].regions.size());
+    const int base = count > 65 ? std::max(0, 60 - 12 * ((count - 65 + 11) / 12)) : 60;
     for (int r = 0; r < count; ++r) {
+      if (explicitKey(m, s, d, r) >= 0) continue;
       const int key = base + r;
       if (key < 0 || key > 127) continue;
-      auto& slot = a->keyMap[static_cast<size_t>(d)][static_cast<size_t>(key)];
-      if (slot.empty()) slot.push_back(r);
+      auto& slot = km[static_cast<size_t>(d)][static_cast<size_t>(key)];
+      if (slot.empty()) slot.push_back(d * kDeckStride + r);
     }
   }
-  return a;
+  return km;
+}
+
+int regionKey(const KeyMap& km, int deck, int region) {
+  if (deck < 0 || deck > 1) return -1;
+  const int e = deck * kDeckStride + region;
+  for (int k = 0; k < 128; ++k)
+    for (int v : km[static_cast<size_t>(deck)][static_cast<size_t>(k)])
+      if (v == e) return k;
+  return -1;
+}
+
+// ------------------------------------------------------------- deck audio
+namespace {
+
+uint32_t le32(const uint8_t* p) { return static_cast<uint32_t>(rd32(p)); }
+uint16_t le16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | (p[1] << 8)); }
+void put32(std::vector<uint8_t>& o, uint32_t v) { wr32(o, static_cast<int32_t>(v)); }
+void putId(std::vector<uint8_t>& o, const char* id) { o.insert(o.end(), id, id + 4); }
+
+}  // namespace
+
+WavRegions readWavRegions(const uint8_t* p, size_t n) {
+  WavRegions w;
+  if (!p || n < 12 || std::memcmp(p, "RIFF", 4) != 0 || std::memcmp(p + 8, "WAVE", 4) != 0) return w;
+  w.riff = true;
+  const size_t end = std::min<size_t>(n, static_cast<size_t>(le32(p + 4)) + 8);
+  struct Cue {
+    uint32_t id, pos;
+  };
+  std::vector<Cue> cues;
+  std::vector<std::pair<uint32_t, uint32_t>> lengths;    // cue id → length
+  std::vector<std::pair<uint32_t, std::string>> labels;  // cue id → name
+  std::vector<std::pair<uint32_t, int>> keys;            // cue id → key
+  uint32_t blockAlign = 0, dataSize = 0, factFrames = 0, tag = 0;
+  bool haveData = false;
+  for (size_t q = 12; q + 8 <= end;) {
+    const uint8_t* id = p + q;
+    const uint32_t len = le32(p + q + 4);
+    const size_t body = q + 8, bl = std::min<size_t>(len, end - body);
+    if (std::memcmp(id, "fmt ", 4) == 0 && bl >= 14) {
+      tag = le16(p + body);
+      blockAlign = le16(p + body + 12);
+    } else if (std::memcmp(id, "fact", 4) == 0 && bl >= 4) {
+      factFrames = le32(p + body);
+    } else if (std::memcmp(id, "data", 4) == 0) {
+      dataSize = len;
+      haveData = true;
+    } else if (std::memcmp(id, "cue ", 4) == 0 && bl >= 4) {
+      const uint32_t c = le32(p + body);
+      for (uint32_t k = 0; k < c && k < 100000 && 4 + 24 * static_cast<size_t>(k) + 24 <= bl; ++k) {
+        const uint8_t* e = p + body + 4 + 24 * static_cast<size_t>(k);
+        cues.push_back({le32(e), le32(e + 4)});  // id, position (the field the plugin reads)
+      }
+    } else if (std::memcmp(id, "LIST", 4) == 0 && bl >= 4 && std::memcmp(p + body, "adtl", 4) == 0) {
+      for (size_t r = 4; r + 8 <= bl;) {
+        const uint8_t* sid = p + body + r;
+        const uint32_t sl = le32(sid + 4);
+        const size_t sb = std::min<size_t>(sl, bl - r - 8);
+        if (std::memcmp(sid, "ltxt", 4) == 0 && sb >= 8) lengths.emplace_back(le32(sid + 8), le32(sid + 12));
+        if (std::memcmp(sid, "labl", 4) == 0 && sb >= 4) {
+          std::string nm(reinterpret_cast<const char*>(sid + 12), sb - 4);
+          nm = nm.substr(0, nm.find('\0'));
+          labels.emplace_back(le32(sid + 8), nm);
+        }
+        if (sl > bl - r - 8) break;
+        r += 8 + sl + (sl & 1);
+      }
+    } else if (std::memcmp(id, "tlst", 4) == 0 && bl >= 4) {
+      const uint32_t c = le32(p + body);
+      size_t r = 4;
+      for (uint32_t k = 0; k < c && r + 24 <= bl; ++k) {
+        const uint8_t* e = p + body + r;
+        if (std::memcmp(e, "cue ", 4) == 0 && le32(e + 8) == 1 && e[14] == 0x90 && le32(e + 16) == 0)
+          keys.emplace_back(le32(e + 4) + 1, std::min<int>(e[13], 127));
+        const uint32_t extra = le32(e + 20);
+        if (extra > bl - r - 24) break;
+        r += 24 + extra;
+      }
+    }
+    if (len > end - q - 8) break;
+    q += 8 + len + (len & 1);
+  }
+  const bool linear = tag == 1 || tag == 3 || tag == 0xFFFE;
+  if (haveData && linear && blockAlign > 0) w.frames = dataSize / blockAlign;
+  else if (!linear && factFrames > 0) w.frames = factFrames;
+  for (const Cue& c : cues) {
+    Region r;
+    r.start = c.pos;
+    for (const auto& [cid, l] : lengths)
+      if (cid == c.id && l > 0) r.length = l;
+    for (const auto& [cid, nm] : labels)
+      if (cid == c.id) r.name = nm;
+    for (const auto& [cid, k] : keys)
+      if (cid == c.id) r.key = k;
+    w.regions.push_back(r);
+  }
+  return w;
+}
+
+std::vector<uint8_t> writeWavRegions(const std::vector<uint8_t>& riff, const std::vector<Region>& regions) {
+  if (riff.size() < 12 || std::memcmp(riff.data(), "RIFF", 4) != 0 || std::memcmp(riff.data() + 8, "WAVE", 4) != 0) return riff;
+  std::vector<uint8_t> o(riff.begin(), riff.begin() + 12);
+  const size_t end = std::min<size_t>(riff.size(), static_cast<size_t>(le32(riff.data() + 4)) + 8);
+  // Every chunk but the region chunks, in place.
+  for (size_t q = 12; q + 8 <= end;) {
+    const uint8_t* id = riff.data() + q;
+    const uint32_t len = le32(id + 4);
+    const size_t total = std::min<size_t>(8 + static_cast<size_t>(len) + (len & 1), end - q);
+    const bool region = std::memcmp(id, "cue ", 4) == 0 || std::memcmp(id, "tlst", 4) == 0 ||
+                        (std::memcmp(id, "LIST", 4) == 0 && len >= 4 && q + 12 <= end && std::memcmp(id + 8, "adtl", 4) == 0);
+    if (!region) o.insert(o.end(), id, id + total);
+    if (len > end - q - 8) break;
+    q += 8 + len + (len & 1);
+  }
+  if (!regions.empty()) {
+    // "cue ": id k + 1, position = sample offset = start, chunk "data".
+    putId(o, "cue ");
+    put32(o, static_cast<uint32_t>(4 + 24 * regions.size()));
+    put32(o, static_cast<uint32_t>(regions.size()));
+    for (size_t k = 0; k < regions.size(); ++k) {
+      const uint32_t pos = static_cast<uint32_t>(std::max<int64_t>(0, regions[k].start));
+      put32(o, static_cast<uint32_t>(k + 1)), put32(o, pos), putId(o, "data"), put32(o, 0), put32(o, 0), put32(o, pos);
+    }
+    // "LIST adtl": names and lengths.
+    std::vector<uint8_t> l;
+    putId(l, "adtl");
+    for (size_t k = 0; k < regions.size(); ++k) {
+      const Region& r = regions[k];
+      if (!r.name.empty()) {
+        const uint32_t sl = static_cast<uint32_t>(4 + r.name.size() + 1);
+        putId(l, "labl"), put32(l, sl), put32(l, static_cast<uint32_t>(k + 1));
+        l.insert(l.end(), r.name.begin(), r.name.end());
+        l.push_back(0);
+        if (sl & 1) l.push_back(0);
+      }
+      if (r.length > 0) {
+        putId(l, "ltxt"), put32(l, 20), put32(l, static_cast<uint32_t>(k + 1)), put32(l, static_cast<uint32_t>(r.length));
+        putId(l, "rgn "), put32(l, 0), put32(l, 0);
+      }
+    }
+    putId(o, "LIST");
+    put32(o, static_cast<uint32_t>(l.size()));
+    o.insert(o.end(), l.begin(), l.end());
+    // "tlst": explicit keys.
+    size_t keyed = 0;
+    for (const Region& r : regions) keyed += r.key >= 0 ? 1 : 0;
+    if (keyed > 0) {
+      putId(o, "tlst");
+      put32(o, static_cast<uint32_t>(4 + 24 * keyed));
+      put32(o, static_cast<uint32_t>(keyed));
+      for (size_t k = 0; k < regions.size(); ++k) {
+        if (regions[k].key < 0) continue;
+        putId(o, "cue "), put32(o, static_cast<uint32_t>(k)), put32(o, 1);
+        o.push_back(0xFF), o.push_back(static_cast<uint8_t>(std::min(regions[k].key, 127))), o.push_back(0x90), o.push_back(0);
+        put32(o, 0), put32(o, 0);
+      }
+    }
+  }
+  const uint32_t size = static_cast<uint32_t>(o.size() - 8);
+  for (int i = 0; i < 4; ++i) o[4 + static_cast<size_t>(i)] = static_cast<uint8_t>(size >> (8 * i));
+  return o;
 }
 
 // ------------------------------------------------------------------- engine
@@ -477,7 +670,8 @@ void Engine::noteOn(uint32_t id, double pitch, float velocity, const NoteProps& 
   bool first = true;
   for (int i = 0; i < m; ++i) {
     if (gain[static_cast<size_t>(i)] <= 1e-6) continue;
-    startVoice(deck, layers[static_cast<size_t>(i)], gain[static_cast<size_t>(i)], pitch, velocity, props, id, first);
+    const int e = layers[static_cast<size_t>(i)];  // deck * kDeckStride + region (explicit keys can layer the other deck)
+    startVoice(e / kDeckStride, e % kDeckStride, gain[static_cast<size_t>(i)], pitch, velocity, props, id, first);
     first = false;
   }
 }

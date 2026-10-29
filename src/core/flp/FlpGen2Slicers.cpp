@@ -36,6 +36,7 @@ namespace gl::flp::gen2 {
 namespace {
 
 namespace fs = std::filesystem;
+namespace sx = gl::slicex;
 
 // ------------------------------------------------------------------ paths
 bool exists(const std::string& p) {
@@ -101,61 +102,17 @@ std::string pascal(const Blob& b, size_t at, size_t* next) {
 }
 
 // -------------------------------------------------------------- RIFF/WAVE
+// A RIFF/WAVE file and its length in frames (PCM / float: data size ÷ block
+// size; compressed formats (ADPCM, Vorbis in WAV, …): the "fact" count, else
+// 0 = unknown, decoded later). Regions: sx::readWavRegions.
 struct WavInfo {
   bool ok = false;
-  uint64_t frames = 0;              // from the data chunk (0 = unknown)
-  std::vector<uint32_t> cues;       // cue point sample offsets, ascending
-  std::map<uint32_t, uint32_t> regionLen;  // cue offset → region length ("LIST adtl" ltxt)
+  uint64_t frames = 0;
 };
 
 WavInfo wavInfo(const Blob& b) {
-  WavInfo w;
-  if (b.size() < 12 || b.find("RIFF") != 0 || b.find("WAVE", 8) != 8) return w;
-  size_t end = std::min<size_t>(b.size(), static_cast<size_t>(b.u32(4)) + 8);
-  uint32_t blockAlign = 0, dataSize = 0, factFrames = 0, tag = 0;
-  std::map<uint32_t, uint32_t> cueIds, ltxt;  // cue id → offset, cue id → region length
-  bool haveData = false;
-  for (size_t q = 12; q + 8 <= end;) {
-    uint32_t len = b.u32(q + 4);
-    const uint8_t* id = b.p + q;
-    if (std::memcmp(id, "fmt ", 4) == 0) {
-      tag = b.u16(q + 8);
-      blockAlign = b.u16(q + 8 + 12);
-    } else if (std::memcmp(id, "fact", 4) == 0) {
-      factFrames = b.u32(q + 8);
-    } else if (std::memcmp(id, "data", 4) == 0) {
-      dataSize = len;
-      haveData = true;
-    } else if (std::memcmp(id, "cue ", 4) == 0) {
-      uint32_t n = b.u32(q + 8);
-      for (uint32_t k = 0; k < n && k < 4096 && b.has(q + 12 + 24 * k, 24); ++k) {
-        w.cues.push_back(b.u32(q + 12 + 24 * k + 20));
-        cueIds[b.u32(q + 12 + 24 * k)] = b.u32(q + 12 + 24 * k + 20);
-      }
-    } else if (std::memcmp(id, "LIST", 4) == 0 && b.has(q + 8, 4) && std::memcmp(b.p + q + 8, "adtl", 4) == 0) {
-      // Region lengths: "ltxt" {u32 cue id, u32 sample length, purpose, …}.
-      size_t e = std::min(end, q + 8 + len);
-      for (size_t r = q + 12; r + 8 <= e;) {
-        uint32_t sl = b.u32(r + 4);
-        if (std::memcmp(b.p + r, "ltxt", 4) == 0 && sl >= 8) ltxt[b.u32(r + 8)] = b.u32(r + 12);
-        if (sl > e - r - 8) break;
-        r += 8 + sl + (sl & 1);
-      }
-    }
-    if (len > end - q - 8) break;
-    q += 8 + len + (len & 1);
-  }
-  for (const auto& [cid, length] : ltxt)
-    if (auto it = cueIds.find(cid); it != cueIds.end() && length > 0) w.regionLen[it->second] = length;
-  std::sort(w.cues.begin(), w.cues.end());
-  w.cues.erase(std::unique(w.cues.begin(), w.cues.end()), w.cues.end());
-  // PCM / float: data size ÷ block size; compressed formats (ADPCM, Vorbis in
-  // WAV, …): the "fact" frame count, else unknown (decoded later).
-  bool linear = tag == 1 || tag == 3 || tag == 0xFFFE;
-  if (haveData && linear && blockAlign > 0) w.frames = dataSize / blockAlign;
-  else if (!linear && factFrames > 0) w.frames = factFrames;
-  w.ok = true;
-  return w;
+  const sx::WavRegions r = sx::readWavRegions(b.p, b.size());
+  return WavInfo{r.riff, r.frames};
 }
 
 std::vector<uint8_t> readAll(const std::string& path) {
@@ -245,20 +202,31 @@ bool decodeSlicexClassic(Context& c, const std::vector<Event>& evs, PluginMappin
     w.frames = sampleFrames(path, w);
   }
   m.state.data = path;
-  // Regions: one per cue point, in sample order (the settings block that
-  // follows repeats the count at +0x18C; a sample without cues is one region).
-  if (s.u32(p + 0x18C) != w.cues.size() && !w.cues.empty())
+  // Regions: one per cue point (the settings block that follows repeats the
+  // count at +0x18C; a sample without cues is one region). J-166: read as the
+  // plugin reads them (sx::readWavRegions); the classic engine plays its
+  // markers in time order, so the regions are put in that order with their
+  // lengths and keys.
+  std::vector<sx::Region> regs;
+  if (!riff.empty()) regs = sx::readWavRegions(riff.p, riff.size()).regions;
+  else if (!path.empty()) {
+    std::vector<uint8_t> bytes = readAll(path);
+    regs = sx::readWavRegions(bytes.data(), bytes.size()).regions;
+  }
+  std::stable_sort(regs.begin(), regs.end(), [](const sx::Region& a, const sx::Region& b) { return a.start < b.start; });
+  if (s.u32(p + 0x18C) != regs.size() && !regs.empty())
     c.report.warn("Slicex: region count differs from the sample's cue points");
-  setMarkers(m, w.cues, w.frames);
-  // Region end points ("ltxt" lengths) where a region stops before the next one.
-  if (w.frames > 0)
-    for (size_t k = 0; k < w.cues.size() && k < static_cast<size_t>(kMaxSlices); ++k) {
-      auto it = w.regionLen.find(w.cues[k]);
-      if (it == w.regionLen.end()) continue;
-      const uint64_t endF = static_cast<uint64_t>(w.cues[k]) + it->second;
-      const uint64_t next = k + 1 < w.cues.size() ? w.cues[k + 1] : w.frames;
-      if (endF < next) set(m, slParam2(static_cast<int>(k), SliceEnd), static_cast<double>(endF) / static_cast<double>(w.frames));
-    }
+  std::vector<uint32_t> starts;
+  for (const auto& r : regs) starts.push_back(static_cast<uint32_t>(r.start));
+  setMarkers(m, starts, w.frames);
+  // Region end points ("ltxt" lengths) where a region stops before the next one; keys.
+  for (size_t k = 0; k < regs.size() && k < static_cast<size_t>(kMaxSlices); ++k) {
+    set(m, slParam2(static_cast<int>(k), SliceKey), regs[k].key);
+    if (w.frames == 0 || regs[k].length < 0) continue;
+    const uint64_t endF = static_cast<uint64_t>(regs[k].start + regs[k].length);
+    const uint64_t next = k + 1 < regs.size() ? static_cast<uint64_t>(regs[k + 1].start) : w.frames;
+    if (endF < next) set(m, slParam2(static_cast<int>(k), SliceEnd), static_cast<double>(endF) / static_cast<double>(w.frames));
+  }
   // Master level 0..16000 (12800 = unity), master pitch −1200..1200 cents,
   // modulation X / Y 0..512 (256 = centre).
   int32_t level = s.i32(0x0C), cents = s.i32(0x18);
@@ -307,22 +275,15 @@ bool decodeSlicexClassic(Context& c, const std::vector<Event>& evs, PluginMappin
 // whole into the Slicex region model (engine/SlicexEngine.h) that the
 // slicer's region engine (SlEngine = 1) plays; the per-region gain / pan /
 // pitch / cut group / delay / end and the master knobs are also parameters.
-namespace sx = gl::slicex;
 
-// Regions of a deck from its audio's cue points ("ltxt" lengths); one
-// region over the whole sample when there are none.
-void deckRegions(sx::Deck& d, const WavInfo& w, size_t records) {
-  std::vector<sx::Region> regs;
-  for (size_t k = 0; k < w.cues.size(); ++k) {
-    sx::Region r;
-    r.start = w.cues[k];
-    auto it = w.regionLen.find(w.cues[k]);
-    r.length = it != w.regionLen.end() ? static_cast<int64_t>(it->second) : -1;
-    regs.push_back(r);
-  }
+// J-166: regions of a deck exactly as its audio holds them (sx::readWavRegions:
+// cue list order, cue positions, "ltxt" lengths / "labl" names by cue id,
+// "tlst" keys); one region over the whole sample when there are none. The
+// state's region records follow the same order.
+void deckRegions(sx::Deck& d, const sx::WavRegions& w) {
+  std::vector<sx::Region> regs = w.regions;
   if (regs.empty()) regs.push_back(sx::Region{});
   for (size_t k = 0; k < regs.size() && k < d.regions.size(); ++k) regs[k].rec = d.regions[k].rec;
-  (void)records;
   d.regions = regs;
 }
 
@@ -343,24 +304,30 @@ bool decodeSlicex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
     sx::Deck& dk = md.decks[static_cast<size_t>(d)];
     const std::string raw = textBytes(Blob(reinterpret_cast<const uint8_t*>(dk.rawPath.data()), dk.rawPath.size()), 0, dk.rawPath.size());
     WavInfo w;
+    sx::WavRegions wr;
     std::string file;
     const auto& rf = riff[static_cast<size_t>(d)];
     if (!rf.empty()) {
       w = wavInfo(Blob(rf.data(), rf.size()));
-      if (w.ok && w.frames > 0) file = storeEmbedded(Blob(rf.data(), rf.size()), raw.empty() ? "slicex" : raw);
-      else dk.riff = rf;  // an empty deck: kept inline
+      if (w.ok && w.frames > 0) {
+        file = storeEmbedded(Blob(rf.data(), rf.size()), raw.empty() ? "slicex" : raw);
+        wr = sx::readWavRegions(rf.data(), rf.size());
+      } else {
+        dk.riff = rf;  // an empty deck: kept inline
+      }
     }
     if (file.empty() && !raw.empty() && dk.riff.empty()) {
       file = resolveFl(c, raw);
       std::vector<uint8_t> bytes = readAll(file);
       w = wavInfo(Blob(bytes.data(), bytes.size()));
       w.frames = sampleFrames(file, w);
+      wr = sx::readWavRegions(bytes.data(), bytes.size());
     }
     dk.file = file;
     if (d == 0) path = file, wa = w;
     if (d == 1 && w.frames > 0) exact = false;  // deck B audio: played, layering by note colour not verified
-    deckRegions(dk, w, records[static_cast<size_t>(d)]);
-    if (dk.regions.size() != records[static_cast<size_t>(d)] && !(records[static_cast<size_t>(d)] == 1 && w.cues.empty()))
+    deckRegions(dk, wr);
+    if (dk.regions.size() != records[static_cast<size_t>(d)] && !(records[static_cast<size_t>(d)] == 1 && wr.regions.empty()))
       c.report.warn("Slicex: region count differs from the sample's cue points");
   }
   // Features whose behaviour is not verified: song-time-synced layering,
@@ -404,6 +371,7 @@ bool decodeSlicex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   for (size_t k = 0; k < md.decks[0].regions.size() && k < static_cast<size_t>(kMaxSlices); ++k) {
     const auto& rec = md.decks[0].regions[k].rec;
     const int ik = static_cast<int>(k);
+    set(m, slParam2(ik, SliceKey), md.decks[0].regions[k].key);  // J-166: explicit key (−1 = automatic)
     const double g = sx::regionGain(rec[sx::RVolume]);
     const double db = g > 0 ? 20.0 * std::log10(g) : -24.0;
     if (db > 12.0 || (g > 0 && db < -24.0)) exact = false;

@@ -72,6 +72,7 @@
 #include "ExternalDragUi.h"
 #include "SuiteUi.h"
 #include "LauncherUi.h"
+#include "ProjectLoadUi.h"
 #include "UpdateUi.h"
 #include "../host/net/Http.h"
 
@@ -377,6 +378,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   waitfor <name> <seconds> (J-108: the script and --frames stop counting until the app reports
 //   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s")
 std::string devShotPending;
+bool devLoadHold = true;  // J-167: frames do not count while a project loads ("loadhold off")
 bool devTrace = false;
 ImVec2 devTraceWheel;  // this frame's wheel input (io clears it at the end of the frame)
 struct DevWait {
@@ -807,6 +809,21 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         pointer = to;
         io.AddMousePosEvent(to.x, to.y);
       }
+    } else if (l.cmd == "open") {  // J-167: open <file>: the normal open path (unsaved changes dropped first)
+      app.doc.markSaved();
+      app.openProject(l.args.empty() ? l.a0 : l.args[0]);
+    } else if (l.cmd == "dialogopen") {  // J-167: File > Open, then OK on <file> the frame after the dialog shows
+      app.doc.markSaved();
+      app.openDialog();
+      app.fileDialog.devAccept = l.args.empty() ? l.a0 : l.args[0];
+    } else if (l.cmd == "loadstate") {  // J-167: the project load's phase, counts, log and the open popups to stdout
+      projloadui::devReport(app, frame);
+    } else if (l.cmd == "loadhold") {  // J-167: loadhold on|off: frames count during a load (off) or wait for it (on)
+      devLoadHold = l.a0 != "off";
+    } else if (l.cmd == "loadcancel") {  // J-167: the window's Cancel
+      app.cancelProjectLoad();
+    } else if (l.cmd == "loadfilter") {  // J-167: loadfilter on|off: the log shows only the warnings (the footer's toggle)
+      projloadui::setWarningsOnly(l.a0 != "off");
     } else if (l.cmd == "waitfor") {  // J-108
       // (J-111f: a quoted name may hold spaces, "collab-name:Night Drive")
       const std::string& name = l.args.empty() ? l.a0 : l.args[0];
@@ -1098,14 +1115,14 @@ int main(int argc, char** argv) {
     else
       app.applyStartup(plainLaunch && !app.embedded);
   }
-  {  // Opened with files (file manager, "Open with", the Linux desktop entry's %F): no options,
-     // only paths; the first project among them opens.
-    bool onlyPaths = argc > 1;
-    for (int i = 1; i < argc; ++i) onlyPaths = onlyPaths && argv[i][0] != '-';
-    for (int i = 1; onlyPaths && i < argc; ++i) {
-      std::error_code ec;
-      if (fs::is_regular_file(fs::u8path(argv[i]), ec) && app.openProject(argv[i])) break;
-    }
+  // Opened with files (file manager, "Open with", the Linux desktop entry's %F): no options,
+  // only paths; the first project among them opens (J-167: in the loading window, over the
+  // starting interface).
+  bool onlyPaths = argc > 1;
+  for (int i = 1; i < argc; ++i) onlyPaths = onlyPaths && argv[i][0] != '-';
+  for (int i = 1; onlyPaths && i < argc; ++i) {
+    std::error_code ec;
+    if (fs::is_regular_file(fs::u8path(argv[i]), ec) && app.openProject(argv[i])) break;
   }
 
   // Command line: [project] [--screenshot out.ppm] [--frames N] [--play] [--fx mixer slot] [--chan index]
@@ -1417,11 +1434,14 @@ int main(int argc, char** argv) {
       updateOpts.fakeVersion = argv[++i];
     } else if (arg == "--hidden") {
       // J-78: read before the window is created (see startHidden)
-    } else if (fs::exists(arg)) {
+    } else if (fs::exists(arg) && !onlyPaths) {
+      // Options after the project (--chan, --fx, --edit, --plugin) act on it: it loads now (J-167).
       argProject = app.openProject(arg) || argProject;
+      app.finishProjectLoad();
     }
   }
   if (devLauncher >= 0) {  // J-141: with a project argument, that project stays open behind it
+    app.finishProjectLoad();  // J-167: (opened before the launcher shows over it)
     launcherui::setView(devLauncher);
     if (devLauncherCollabDemo) gl::collabui::startLauncherDemo(app, (std::filesystem::path(app.configDir()) / "launcher-collab-demo").string());
     if (argProject) app.home.showHome(app.now);
@@ -1574,6 +1594,7 @@ int main(int argc, char** argv) {
     xdragui::pump(app);  // J-75: drags from other applications
     if (app.quitRequested) {
       app.quitRequested = false;
+      app.cancelProjectLoad();  // J-167: quitting while a project loads: the load stops, the open project is the one asked about
       app.guardUnsaved([&running]() { running = false; });
     }
     if (app.audioReopen) {
@@ -1806,6 +1827,7 @@ int main(int argc, char** argv) {
       drawDialogs(app);
       browserui::drawPluginPicker(app);
       collabui::draw(app);  // J-111
+      projloadui::draw(app);  // J-167: last, at the root level (it replaces any popup open when a load starts)
     }
     browserui::thumbDraw(app);
     if (!devMenu.empty()) drawDevMenu(app, devMenu);
@@ -1912,7 +1934,8 @@ int main(int argc, char** argv) {
     if (!homeShown) {
       prof::Scope ps("statusbar");
       drawStatusBar(app);
-      handleGlobalShortcuts(app);
+      if (!app.projectLoadBlocking()) handleGlobalShortcuts(app);  // J-167: no shortcut reaches the project behind
+      else pointerGestureFrameEnd(app);
     } else {
       pointerGestureFrameEnd(app);
     }
@@ -1939,7 +1962,9 @@ int main(int argc, char** argv) {
       if (app.engine.pluginPlaybackActive()) devsig::reach("plugin-playback");
       collabui::devFrame(app);  // J-111: collab-connected, collab-joined, collab-synced, ...
     }
-    const bool devHold = devWaitHolds();  // J-108: "waitfor" keeps the script (and --frames) on this frame
+    // J-108: "waitfor" keeps the script (and --frames) on this frame; J-167: so does a project load
+    // (scripts and screenshots see the project loaded; "loadhold off" watches a load frame by frame).
+    const bool devHold = devWaitHolds() || (devLoadHold && app.projectLoading());
     // J-103: a --dev-input session without --screenshot counts its frames too (its script ends it with "quit").
     if (!devInput.empty() && shotPath.empty() && profilePath.empty() && frameNo < INT_MAX && !devHold) ++frameNo;
     if (devTrace) {  // J-67: the scroll positions this frame was drawn with
@@ -2041,7 +2066,7 @@ int main(int argc, char** argv) {
         }
       }
       // Typing keyboard (key events straight from SDL so key-up is never missed).
-      if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && app.typingKeyboard && !io.WantTextInput &&
+      if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && app.typingKeyboard && !io.WantTextInput && !app.projectLoadBlocking() &&
           !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT))) {
         SDL_Keycode k = ev.key.keysym.sym;
         int key = typingKey(k);
@@ -2095,6 +2120,7 @@ int main(int argc, char** argv) {
   j59::shutdownRenderSampler();
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   updui::shutdown();           // J-89: a running installer download is cancelled
+  app.shutdownProjectLoad();   // J-167: a load in progress stops; its reader is joined
   closeAllHostedEditors(app);
   if (frameClock) host::native::frameClockStop();
   if (gDevice) SDL_CloseAudioDevice(gDevice);

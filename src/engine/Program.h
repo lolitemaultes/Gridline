@@ -528,6 +528,23 @@ class ProgramBuilder {
   // Latest output (0..1) of a controller, for editors and meters. 0 when absent.
   float controllerOutput(ObjectId owner, int slot, int output) const;
 
+  // J-167: project loads prepare the plugins one at a time, between interface frames, in a
+  // builder of their own (the playing project keeps this one), then hand them over: the
+  // next build() of that song reuses them (same id and type) instead of creating them.
+  struct PreloadItem {
+    bool effect = false;    // a mixer slot effect, else a channel's instrument
+    ObjectId owner = kNoId;  // channel / mixer track
+    int slot = -1;           // effect slot (effects only)
+    std::string type;        // plugin type
+  };
+  // Every channel instrument and mixer slot effect of `song`, in build order.
+  static std::vector<PreloadItem> preloadItems(const Song& song);
+  // Creates the runtime of one item and restores its state (prepareHost), as build() would.
+  // False when the plugin could not be created (unknown or unavailable type).
+  bool preload(const Song& song, const PreloadItem& item);
+  // Takes over the runtimes `from` prepared (replacing ours with the same id); `from` is left empty.
+  void adoptPreloaded(ProgramBuilder&& from);
+
  private:
   std::map<ObjectId, std::shared_ptr<ChannelRuntime>> channels_;
   std::map<ObjectId, std::shared_ptr<MixerRuntime>> mixers_;

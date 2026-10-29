@@ -49,7 +49,9 @@ struct Group {
 struct Region {
   int64_t start = 0, length = -1;  // frames (length −1: to the next region / end)
   std::array<int32_t, kRegionInts> rec = kRegionDefault;
-  bool operator==(const Region& o) const { return start == o.start && length == o.length && rec == o.rec; }
+  int key = -1;      // J-166: explicit key 0..127 (−1 = automatic: base + index while free)
+  std::string name;  // J-166: the region's label in the deck audio
+  bool operator==(const Region& o) const { return start == o.start && length == o.length && rec == o.rec && key == o.key && name == o.name; }
 };
 struct Deck {
   uint8_t flag = 0;            // 1 = sample referenced by path only
@@ -94,6 +96,38 @@ std::string sampleOf(const std::string& data);
 bool modelOf(const std::string& data, Model& out);  // false: classic data (path only)
 std::string makeData(const Model& m);
 
+// J-166: regions as the deck audio (RIFF/WAVE) stores them: the "cue " list in
+// chunk order (start = cue position), "LIST adtl" labels (names) and "ltxt"
+// lengths (> 0: the region ends there) matched by cue id, and the explicit keys
+// of the "tlst" chunk (one 24-byte entry per keyed region: "cue ", cue index,
+// 1, 0xFF, key, 0x90, …; matched by cue id = index + 1). `frames`: the audio's length when the header gives it
+// (linear PCM / float: data size, compressed: the "fact" count; else 0).
+struct WavRegions {
+  bool riff = false;  // a RIFF/WAVE file
+  uint64_t frames = 0;
+  std::vector<Region> regions;  // empty: the audio has no cue points
+};
+WavRegions readWavRegions(const uint8_t* p, size_t n);
+// The deck audio with its region chunks ("cue ", "LIST adtl", "tlst") rebuilt
+// from `regions` (other chunks kept in place); the input unchanged when it is
+// not a RIFF/WAVE file.
+std::vector<uint8_t> writeWavRegions(const std::vector<uint8_t>& riff, const std::vector<Region>& regions);
+
+// J-166: key map of both decks (Slicex rules): regions with an explicit key go
+// to that key (in both decks' maps unless "layer regions of the same deck only"),
+// then automatic regions go to base + index (C5 = 60, lowered by octaves past
+// 65 regions) while that key is still free in their deck's map. Entries are
+// deck * kDeckStride + region. `keys`: the key of each region (deck A regions
+// below pp::kMaxSlices: the slicer's key parameter, −1 = automatic, else the
+// model's key); null = the model's keys.
+inline constexpr int kDeckStride = 1 << 20;
+using KeyMap = std::array<std::array<std::vector<int>, 128>, 2>;
+KeyMap buildKeyMap(const Model& m, const PluginState* s);
+// The key a region plays on (the first key whose map lists it; −1 = none).
+int regionKey(const KeyMap& km, int deck, int region);
+// The explicit key of a region as it plays (parameter for deck A < 64, else model).
+int explicitKey(const Model& m, const PluginState* s, int deck, int region);
+
 // Laws.
 double masterGain(int32_t v);  // (11^(v/12800) − 1)/10
 double regionGain(int32_t v);  // (3^(v/8000) − 1)/2
@@ -108,8 +142,8 @@ struct Aux final : AuxData {
     std::array<flart::Prepared, 4> maps;
   };
   std::array<std::array<PArt, kTargets>, kGroups> groups;
-  // key → regions of each deck (layers), built from the regions' keys.
-  std::array<std::array<std::vector<int>, 128>, 2> keyMap;
+  // key → regions (deck * kDeckStride + region) of each deck's map (layers).
+  KeyMap keyMap;
 };
 std::shared_ptr<const Aux> prepare(const PluginState& s);
 

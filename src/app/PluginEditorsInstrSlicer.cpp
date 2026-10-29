@@ -100,7 +100,7 @@ std::vector<int64_t> sliceStarts(const PluginState& st, const Sample* smp) {
   if (ed::ival(st, SlMode) == SlModeManual) {
     for (int k = 0; k < kMaxSlices; ++k) {
       float m = ed::val(st, slMarker(k), -1);
-      if (m >= 0) out.push_back(static_cast<int64_t>(m * static_cast<double>(smp->frames())));
+      if (m >= 0) out.push_back(std::llround(static_cast<double>(m) * static_cast<double>(smp->frames())));  // J-166: nearest frame
     }
     std::sort(out.begin(), out.end());
   } else {
@@ -125,6 +125,52 @@ void makeManual(App& a, const PluginTarget& t, const PluginState& st, const std:
   setPluginState(a, t, ns, "edit slices by hand");
 }
 
+// J-166: the region engine (SlEngine 1, loops brought in from project files):
+// the regions exactly as they play: model starts in list order (not sorted),
+// ends (deck A end parameter, else the region length, else the next region /
+// the end of the loop), names and keys (explicit, else automatic).
+struct RegionView {
+  bool on = false;
+  slicex::Model md;
+  slicex::KeyMap km;
+  std::vector<int64_t> starts, ends;
+};
+RegionView regionView(const PluginState& st, const Sample* smp) {
+  RegionView v;
+  const float eng = ed::val(st, SlEngine, 0);
+  if (eng < 0.5f || eng >= SlEngineProcessed - 0.5f || !slicex::modelOf(st.data, v.md)) return v;
+  v.on = true;
+  v.km = slicex::buildKeyMap(v.md, &st);
+  const auto& regs = v.md.decks[0].regions;
+  const int64_t frames = smp ? static_cast<int64_t>(smp->frames()) : 0;
+  for (size_t k = 0; k < regs.size(); ++k) {
+    const int64_t s = regs[k].start;
+    int64_t e = regs[k].length >= 0 ? s + regs[k].length : (k + 1 < regs.size() ? regs[k + 1].start : frames);
+    const float pe = k < static_cast<size_t>(kMaxSlices) ? ed::val(st, slParam2(static_cast<int>(k), SliceEnd), -1) : -1.0f;
+    if (pe >= 0 && frames > 0) e = std::llround(static_cast<double>(pe) * static_cast<double>(frames));
+    v.starts.push_back(s);
+    v.ends.push_back(std::clamp<int64_t>(e, s + 1, std::max<int64_t>(s + 1, frames)));
+  }
+  return v;
+}
+
+// Moves region `r`'s start (region engine): the model's region and, for the
+// first 64 regions, the marker parameter (one undo step).
+void moveRegionStart(App& a, const PluginTarget& t, const PluginState& st, const RegionView& rv, int r, int64_t start, const Sample* smp) {
+  if (!smp || r < 0 || static_cast<size_t>(r) >= rv.md.decks[0].regions.size()) return;
+  slicex::Model md = rv.md;
+  auto& rg = md.decks[0].regions[static_cast<size_t>(r)];
+  const int64_t frames = static_cast<int64_t>(smp->frames());
+  start = std::clamp<int64_t>(start, 0, std::max<int64_t>(0, frames - 1));
+  if (rg.length >= 0) rg.length = std::max<int64_t>(1, rg.start + rg.length - start);  // keep its end
+  rg.start = start;
+  PluginState ns = st;
+  ns.data = slicex::sampleOf(st.data) + "\n" + slicex::writeText(md);
+  if (r < kMaxSlices && ns.params.size() > static_cast<size_t>(slMarker(r)))
+    ns.params[static_cast<size_t>(slMarker(r))] = static_cast<float>(static_cast<double>(start) / static_cast<double>(std::max<int64_t>(1, frames)));
+  setPluginState(a, t, ns, "move region start");
+}
+
 int markerParamAt(const PluginState& st, double pos) {
   for (int m = 0; m < kMaxSlices; ++m)
     if (std::fabs(ed::val(st, slMarker(m), -1) - pos) < 1e-6) return m;
@@ -136,14 +182,31 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   SlicerUi& ui = slicerUi[t.key()];
   const std::string file = slicex::sampleOf(st.data);  // J-41: region-model data starts with the sample
   SamplePtr smp = file.empty() ? nullptr : sampleCache().get(file);
-  const std::vector<int64_t> starts = sliceStarts(st, smp.get());
+  const RegionView rv = regionView(st, smp.get());
+  const std::vector<int64_t> starts = rv.on ? rv.starts : sliceStarts(st, smp.get());
   const int nSl = static_cast<int>(starts.size());
   ui.slice = std::clamp(ui.slice, 0, std::max(0, std::min(nSl, kMaxSlices) - 1));
   const int k = ui.slice;
   const int base = ed::ival(st, SlBaseNote, 60);
   auto sliceKey = [&](int s) {
+    if (rv.on) return slicex::regionKey(rv.km, 0, s);  // −1: no key reaches it
     int kk = ed::ival(st, slParam2(s, SliceKey), -1);
     return kk >= 0 ? kk : base + s;
+  };
+  // Region end (frames) for the shading.
+  auto sliceEnd = [&](int s, double frames) {
+    if (rv.on) return static_cast<double>(rv.ends[static_cast<size_t>(s)]);
+    double s1 = s + 1 < nSl ? static_cast<double>(starts[static_cast<size_t>(s + 1)]) : frames;
+    float e = ed::val(st, slParam2(s, SliceEnd), -1);
+    if (e >= 0) s1 = std::min(s1, static_cast<double>(e) * frames);
+    return s1;
+  };
+  auto keyName = [&](int s) {
+    const int kk = sliceKey(s);
+    return kk >= 0 ? ed::noteName(kk) : std::string("-");
+  };
+  auto regionName = [&](int s) {
+    return rv.on && static_cast<size_t>(s) < rv.md.decks[0].regions.size() ? rv.md.decks[0].regions[static_cast<size_t>(s)].name : std::string();
   };
   iskin::Skin sk = iskin::begin(width, kSxW, kSxH, slicexPalette());
   ImDrawList* dl = sk.dl();
@@ -216,7 +279,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   iskin::bevel(sk, 10, 106, 158, 189, rgb(0x5A6166), rgb(0x4A5156), 3);
   {  // region selector: < Region n · key >
     char r[48];
-    if (nSl > 0) std::snprintf(r, sizeof r, "Region %d  \xC2\xB7  %s", k + 1, ed::noteName(sliceKey(k)).c_str());
+    if (nSl > 0) std::snprintf(r, sizeof r, "Region %d  \xC2\xB7  %s", k + 1, keyName(k).c_str());
     else std::snprintf(r, sizeof r, "(no regions)");
     if (iskin::button(sk, "##rprev", 14, 109, 18, 19, "", false)) ui.slice = std::max(0, k - 1);
     iskin::glyphArrow(dl, sk.at(23, 118.5f), sk.px(5), sk.c.text, 0);
@@ -233,6 +296,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   iskin::text(sk, 14, 134, 60, 10, "KEY", 7.5f, rgb(0x2C3236), 0, false, true);
   iskin::digi(a, t, sk, slParam2(k, SliceKey), 14, 145, 56, 20, [&](double v) {
     int n = static_cast<int>(std::lround(v));
+    if (n < 0 && rv.on) return keyName(k) + "*";  // automatic: the key the region gets
     return n < 0 ? ed::noteName(base + k) + "*" : ed::noteName(n);
   }, 9);
   iskin::text(sk, 90, 134, 70, 10, "CUT GROUP", 7.5f, rgb(0x2C3236), 0, false, true);
@@ -318,7 +382,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       pl.latch.stop();
       pl.key = -1;
     };
-    if (iskin::button(sk, "##play", 38, 299, 31, 30, "", playing, 9) && t.isChannel() && nSl > 0) {
+    if (iskin::button(sk, "##play", 38, 299, 31, 30, "", playing, 9) && t.isChannel() && nSl > 0 && (playing || sliceKey(k) >= 0)) {
       if (playing) {
         stopPlay();
       } else {
@@ -372,14 +436,18 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       int mode;
     };
     const Tool tools[5] = {{"##auto", "AUTO", 427, 0}, {"##ev8", "8", 475, 2}, {"##ev16", "16", 499, 3}, {"##ev32", "32", 523, 4}, {"##hand", "EDIT", 579, -1}};
+    // J-166: region engine: the regions come with the loop (drag a marker to
+    // move a region's start); the slicing tools belong to the classic engine.
+    if (rv.on) iskin::text(sk, 427, 300, 250, 30, "REGIONS FROM THE LOOP", 8.5f, sk.c.textDim, 1, false, true);
     for (const Tool& tl : tools) {
+      if (rv.on) break;
       const bool lit = tl.mode >= 0 ? ed::ival(st, SlMode) == tl.mode : ed::ival(st, SlMode) == SlModeManual;
       if (iskin::button(sk, tl.id, tl.x, 300, tl.mode == 0 || tl.mode < 0 ? 46 : 22, 30, tl.cap, lit, 8.5f)) {
         if (tl.mode >= 0) a.doc.setParam(t.pid(SlMode), tl.mode, false);
         else makeManual(a, t, st, starts, smp.get());
       }
     }
-    if (iskin::button(sk, "##clear", 627, 300, 50, 30, "CLEAR", false, 8.5f) && ed::ival(st, SlMode) == SlModeManual) {
+    if (!rv.on && iskin::button(sk, "##clear", 627, 300, 50, 30, "CLEAR", false, 8.5f) && ed::ival(st, SlMode) == SlModeManual) {
       PluginState ns = st;
       for (int m = 0; m < kMaxSlices; ++m) ns.params[static_cast<size_t>(slMarker(m))] = m == 0 ? 0.f : -1.f;
       setPluginState(a, t, ns, "clear slice markers");
@@ -400,27 +468,34 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     const ImVec2 p0 = sk.at(wx + 2, wy + 14), p1 = sk.at(wx + ww - 2, wy + wh - 2);
     const double frames = smp ? static_cast<double>(smp->frames()) : 1.0;
     auto fx = [&](double f) { return p0.x + static_cast<float>(f / frames) * (p1.x - p0.x); };
-    for (int s = 0; s < nSl; ++s) {  // region shading
+    const float labelPx = std::max(8.0f, sk.px(9));
+    for (int s = 0; s < nSl; ++s) {  // region shading (J-166: region engine: the region's own end)
       double s0 = static_cast<double>(starts[static_cast<size_t>(s)]);
-      double s1 = s + 1 < nSl ? static_cast<double>(starts[static_cast<size_t>(s + 1)]) : frames;
-      float e = ed::val(st, slParam2(s, SliceEnd), -1);
-      if (e >= 0) s1 = std::min(s1, e * frames);
+      double s1 = sliceEnd(s, frames);
       ImU32 c = s == k ? rgb(0x3A2A12) : (s % 2 ? rgb(0x141C24) : rgb(0x101820));
       dl->AddRectFilled(ImVec2(fx(s0), sk.at(0, wy).y), ImVec2(fx(s1), p1.y), c);
-      char lbl[16];
-      std::snprintf(lbl, sizeof lbl, "%d", s + 1);
-      dl->AddText(a.fontMono, std::max(8.0f, sk.px(9)), ImVec2(fx(s0) + 3, sk.at(0, wy + 1).y), s == k ? sk.c.fill : sk.c.textDim, lbl);
+      std::string lbl = std::to_string(s + 1);
+      const std::string nm = regionName(s);
+      // The region's name after its number when it fits before the next marker.
+      if (!nm.empty()) {
+        const std::string full = lbl + " " + nm;
+        const float room = fx(s + 1 < nSl ? std::max(s0, static_cast<double>(starts[static_cast<size_t>(s + 1)])) : frames) - fx(s0) - 6;
+        if (a.fontMono && a.fontMono->CalcTextSizeA(labelPx, FLT_MAX, 0, full.c_str()).x <= room) lbl = full;
+      }
+      dl->AddText(a.fontMono, labelPx, ImVec2(fx(s0) + 3, sk.at(0, wy + 1).y), s == k ? sk.c.fill : sk.c.textDim, lbl.c_str());
     }
     iskin::wave(dl, smp.get(), p0, p1, rgb(0x7FA6C7), 0, 1, theme::withAlpha(IM_COL32_WHITE, 0.08f));
-    const bool manual = ed::ival(st, SlMode) == SlModeManual;
+    const bool manual = ed::ival(st, SlMode) == SlModeManual && !rv.on;
     ImGui::SetCursorScreenPos(sk.at(wx, wy));
     ImGui::InvisibleButton("##wave", ImVec2(sk.px(ww), sk.px(wh)));
     const bool hov = ImGui::IsItemHovered();
     ImVec2 m = ImGui::GetIO().MousePos;
     int hoverMarker = -1;
+    const bool regionDrag = rv.on && ui.drag >= 0 && ImGui::IsItemActive();
     for (int s = 0; s < nSl; ++s) {
       float x = fx(static_cast<double>(starts[static_cast<size_t>(s)]));
-      bool near = hov && std::fabs(m.x - x) < 4 && s > 0;
+      if (regionDrag && s == ui.drag) x = std::clamp(m.x, p0.x, p1.x);  // region engine: the marker follows the mouse
+      bool near = hov && std::fabs(m.x - x) < 4 && (s > 0 || rv.on);
       if (near) hoverMarker = s;
       dl->AddLine(ImVec2(x, sk.at(0, wy).y), ImVec2(x, p1.y), s == k ? sk.c.fill : near ? sk.c.text : rgb(0xF5781B, 0.7f), near ? 2.0f : 1.0f);
       dl->AddTriangleFilled(ImVec2(x, sk.at(0, wy).y), ImVec2(x + sk.px(6), sk.at(0, wy).y), ImVec2(x, sk.at(0, wy + 6).y), rgb(0xF5781B));
@@ -428,14 +503,32 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     if (ImGui::IsItemActivated() && smp) {
       ui.drag = hoverMarker;
       if (ui.drag < 0) {
-        double f = (m.x - p0.x) / (p1.x - p0.x) * frames;
-        int s = 0;
-        while (s + 1 < nSl && static_cast<double>(starts[static_cast<size_t>(s + 1)]) <= f) ++s;
-        ui.slice = s;
-        if (t.isChannel() && nSl > 0) a.engine.noteOn(t.owner, sliceKey(s), 0.9f), a.engine.noteOff(t.owner, sliceKey(s));
-      } else if (!manual) {
+        const double f = (m.x - p0.x) / (p1.x - p0.x) * frames;
+        int s = -1;
+        if (rv.on) {  // regions may overlap or be out of order: the latest start whose region holds the point
+          for (int q = 0; q < nSl; ++q)
+            if (static_cast<double>(starts[static_cast<size_t>(q)]) <= f && f < sliceEnd(q, frames) &&
+                (s < 0 || starts[static_cast<size_t>(q)] >= starts[static_cast<size_t>(s)]))
+              s = q;
+        } else {
+          s = 0;
+          while (s + 1 < nSl && static_cast<double>(starts[static_cast<size_t>(s + 1)]) <= f) ++s;
+        }
+        if (s >= 0) {
+          ui.slice = s;
+          const int key = sliceKey(s);
+          if (t.isChannel() && nSl > 0 && key >= 0) a.engine.noteOn(t.owner, key, 0.9f), a.engine.noteOff(t.owner, key);
+        }
+      } else if (!manual && !rv.on) {
         makeManual(a, t, st, starts, smp.get());
       }
+    }
+    if (rv.on && ui.drag >= 0 && ImGui::IsItemDeactivated() && ui.drag < nSl) {
+      // Released: the dragged region's start moves (one undo step); a click without moving leaves it.
+      const double f = std::clamp((m.x - p0.x) / (p1.x - p0.x), 0.0f, 1.0f) * frames;
+      const int64_t to = std::llround(f);
+      if (std::fabs(fx(static_cast<double>(to)) - fx(static_cast<double>(starts[static_cast<size_t>(ui.drag)]))) >= 2.0f)
+        moveRegionStart(a, t, st, rv, ui.drag, to, smp.get());
     }
     if (ui.drag > 0 && manual && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1) && ui.drag < nSl) {
       int mp = markerParamAt(st, static_cast<double>(starts[static_cast<size_t>(ui.drag)]) / frames);
@@ -453,7 +546,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       ui.drag = -1;
       a.doc.endGesture();
     }
-    if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && smp) {
+    if (hov && !rv.on && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && smp) {
       if (!manual) makeManual(a, t, st, starts, smp.get());
       for (int q = 0; q < kMaxSlices; ++q)
         if (ed::val(st, slMarker(q), -1) < 0 || (!manual && q >= nSl)) {
@@ -482,7 +575,9 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       }
       ImGui::EndDragDropTarget();
     }
-    if (hov)
+    if (hov && rv.on)
+      a.setHint(std::to_string(nSl) + " regions · click: select + play · drag a marker: move the region's start · drop a loop");
+    else if (hov)
       a.setHint(std::to_string(nSl) + " regions · click: select + play · drag a marker · double-click: add marker · right-click a marker: remove · drop a loop");
   }
   // ---- region strip: one block per region with its key.
@@ -494,8 +589,8 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       const float x = 4 + s * bw;
       ImGui::PushID(s);
       char cap[24];
-      std::snprintf(cap, sizeof cap, "%s", ed::noteName(sliceKey(s)).c_str());
-      const bool muted = ed::bval(st, slParam(s, SliceMute));
+      std::snprintf(cap, sizeof cap, "%s", keyName(s).c_str());
+      const bool muted = s < kMaxSlices && ed::bval(st, slParam(s, SliceMute));
       if (iskin::button(sk, "##rg", x + 1, 511, bw - 2, 22, bw > 26 ? cap : "", s == k, 8, muted ? rgb(0x6A3030) : 0)) ui.slice = s;
       char num[32];
       std::snprintf(num, sizeof num, "%d", s + 1);

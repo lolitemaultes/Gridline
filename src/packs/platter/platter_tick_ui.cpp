@@ -86,7 +86,7 @@ ObjectId choosePass(App& a, ObjectId channel, bool song) {
 // Dev hooks (GRIDLINE_PLATTER_TRACE, J-159 / J-163 checks): a line per recorded pass; with
 // GRIDLINE_PLATTER_PASS_VIEW the piano roll opens on the pass with a lane, the playlist, or
 // ("automation:<parameter>") the automation editor on the pass's clip of that parameter.
-void devPass(App& a, const Channel& c, ObjectId pattern, const PassWritten& w) {
+void devPass(App& a, ObjectId ch, ObjectId pattern, const PassWritten& w) {
   devsig::reach("platter-pass");
   static const bool trace = std::getenv("GRIDLINE_PLATTER_TRACE") != nullptr;
   const Pattern* p = a.doc.song().pattern(pattern);
@@ -103,24 +103,24 @@ void devPass(App& a, const Channel& c, ObjectId pattern, const PassWritten& w) {
     }
     for (const auto& cl : s.playlist) grouped += cl.group == w.group && w.group != kNoId ? 1 : 0;
     int perfPatterns = 0;
-    for (const auto& q : s.patterns) perfPatterns += holdsPerformance(q, c.id) ? 1 : 0;
+    for (const auto& q : s.patterns) perfPatterns += holdsPerformance(q, ch) ? 1 : 0;
     std::printf("platter: pass clips %zu grouped %zu track %d points %zu exact %zu patterns-with-pass %d undo %zu [%s]\n", w.clips.size(), grouped,
                 w.firstTrack, points, fines, perfPatterns, a.doc.history().position(), names.c_str());
     std::fflush(stdout);
   }
   if (trace && p) {
     size_t notes = 0, lanes = 0, fracs = 0;
-    if (auto it = p->notes.find(c.id); it != p->notes.end()) {
+    if (auto it = p->notes.find(ch); it != p->notes.end()) {
       notes = it->second.size();
       for (const Note& n : it->second) fracs += n.frac != 0 || n.endFrac != 0 ? 1 : 0;
     }
     for (const auto& l : p->automation)
-      if (l.owner == c.id) {
+      if (l.owner == ch) {
         ++lanes;
         for (const auto& q : l.points) fracs += q.frac != 0 ? 1 : 0;
       }
     int perfPatterns = 0;
-    for (const auto& q : a.doc.song().patterns) perfPatterns += holdsPerformance(q, c.id) ? 1 : 0;
+    for (const auto& q : a.doc.song().patterns) perfPatterns += holdsPerformance(q, ch) ? 1 : 0;
     std::string steps;  // the history's labels up to here
     const auto labels = a.doc.history().labels();
     for (size_t i = 0; i < std::min(labels.size(), a.doc.history().position()); ++i) steps += (i ? " | " : "") + labels[i];
@@ -130,14 +130,22 @@ void devPass(App& a, const Channel& c, ObjectId pattern, const PassWritten& w) {
     std::fflush(stdout);
   }
   if (const char* v = std::getenv("GRIDLINE_PLATTER_PASS_VIEW"); v && *v) {  // "piano:<parameter>" or "playlist"
-    a.selectChannel(c.id);
+    a.selectChannel(ch);
     a.showRack = false;  // (the floating rack would cover the view)
     if (std::string(v).rfind("piano:", 0) == 0) {
-      editPatternEvents(a, channelPluginParam(c.id, std::atoi(v + 6)));
+      editPatternEvents(a, channelPluginParam(ch, std::atoi(v + 6)));
     } else if (std::string(v).rfind("automation:", 0) == 0) {
       const auto want = kChannelPluginBase + static_cast<uint32_t>(std::atoi(v + 11));
       for (const ObjectId id : w.autos)
-        if (const AutomationClip* ac = a.doc.song().automation(id); ac && ac->index == want) openAutomationEditor(a, id);
+        if (const AutomationClip* ac = a.doc.song().automation(id); ac && ac->index == want) {
+          openAutomationEditor(a, id);
+          if (trace) {
+            const Channel* c = a.doc.song().channel(ch);
+            std::printf("platter: pass view automation \"%s\" points %zu channel \"%s\"\n", ac->name.c_str(), ac->points.size(),
+                        c ? c->name.c_str() : "?");
+            std::fflush(stdout);
+          }
+        }
     } else {
       a.focusWindow = "Playlist";
     }
@@ -154,28 +162,28 @@ void closePass(App& a, DeckState& d) {
 // A performance pass starts: one undo step from here to its end. Pattern mode: its pattern
 // now (a new one when the selected one holds a pass: it plays on from here); song mode: the
 // pass becomes automation clips where it is played.
-void beginPass(App& a, const Channel& c, DeckState& d) {
+void beginPass(App& a, ObjectId ch, DeckState& d) {
   closePass(a, d);
   a.doc.beginGroup(i18n::tr("Record a deck performance"));
   d.group = true;
   d.passSong = a.engine.mode() == PlayMode::Song;
-  d.passPat = d.passSong ? kNoId : choosePass(a, c.id, false);
+  d.passPat = d.passSong ? kNoId : choosePass(a, ch, false);
 }
 
 // A performance pass ended (J-163): its lanes as automation clips (song mode) or as the
 // pattern's lanes (pattern mode).
-void endPass(App& a, const Channel& c, DeckState& d, const Performance& perf) {
+void endPass(App& a, ObjectId ch, DeckState& d, const Performance& perf) {
   if (d.group && (d.passSong || a.doc.song().pattern(d.passPat))) {
-    const PassWritten w = writePass(a.doc, c.id, perf, d.passSong ? kNoId : d.passPat);
+    const PassWritten w = writePass(a.doc, ch, perf, d.passSong ? kNoId : d.passPat);
     const ObjectId pat = d.passPat;
     closePass(a, d);
-    devPass(a, c, pat, w);
+    devPass(a, ch, pat, w);
   }
   closePass(a, d);
 }
 
 // A finished take: into the deck, and a note on its key at the place it was played.
-void storeTake(App& a, const Channel& c, DeckState& d, Take take) {
+void storeTake(App& a, ObjectId ch, DeckState& d, Take take) {
   if (!d.hasModel || take.steps() == 0) return;
   const bool song = a.engine.mode() == PlayMode::Song;
   const ObjectId want = a.recorder.active() ? a.recorder.pattern() : a.curPattern;
@@ -185,7 +193,7 @@ void storeTake(App& a, const Channel& c, DeckState& d, Take take) {
   Model m = d.m;
   std::vector<int> used;
   for (const auto& p : a.doc.song().patterns)
-    if (auto it = p.notes.find(c.id); it != p.notes.end())
+    if (auto it = p.notes.find(ch); it != p.notes.end())
       for (const Note& n : it->second)
         if (takeKey(n.pitch)) used.push_back(n.pitch);
   m.takes.erase(std::remove_if(m.takes.begin(), m.takes.end(),
@@ -212,15 +220,15 @@ void storeTake(App& a, const Channel& c, DeckState& d, Take take) {
   const Tick startTick = take.startTick;
   m.takes.push_back(std::move(take));
   a.doc.beginGroup(i18n::tr("Record a deck take"));
-  const ObjectId pattern = choosePass(a, c.id, song);
-  const Tick origin = song ? clipOrigin(a.doc, pattern, c.id, startTick, len) : 0;
+  const ObjectId pattern = choosePass(a, ch, song);
+  const Tick origin = song ? clipOrigin(a.doc, pattern, ch, startTick, len) : 0;
   const Tick start = std::max<Tick>(0, startTick - origin);
   a.doc.editPattern(pattern, i18n::tr("Record a deck take"), [&](Pattern& p) {
-    auto& notes = p.notes[c.id];
+    auto& notes = p.notes[ch];
     notes.push_back(Note(start, len, key, 100));
     std::stable_sort(notes.begin(), notes.end(), [](const Note& x, const Note& y) { return x.start < y.start; });
   });
-  writeModel(a, c.id, d, m, i18n::N_("Record a deck take"));
+  writeModel(a, ch, d, m, i18n::N_("Record a deck take"));
   a.doc.endGroup(false);
 }
 
@@ -268,20 +276,28 @@ void tick(App& a) {
     closePass(a, it->second);
     it = all.erase(it);
   }
-  for (const Channel& c : song.channels) {
-    if (c.plugin.type != kType) continue;
-    auto rt = a.builder.channelRuntime(c.id);
+  // J-169: the setups by id. Every edit below (a controller move, a cue, a pass, a take)
+  // replaces the song's channel list, so no Channel reference or iterator into it may be
+  // held across one: the body works on `id` and looks the channel up again when it needs it.
+  std::vector<ObjectId> setups;
+  for (const Channel& c : song.channels)
+    if (c.plugin.type == kType) setups.push_back(c.id);
+  for (const ObjectId id : setups) {
+    const Channel* cp = song.channel(id);  // (valid until the first edit)
+    if (!cp || cp->plugin.type != kType) continue;
+    auto rt = a.builder.channelRuntime(id);
     if (!rt || !rt->gen) continue;
     Generator* g = rt->gen.get();
-    DeckState& d = all[c.id];
-    if (c.plugin.data != d.data) {
-      d.data = c.plugin.data;
+    DeckState& d = all[id];
+    if (cp->plugin.data != d.data) {
+      d.data = cp->plugin.data;
       Model m;
-      parseData(c.plugin.data, d.path, m);  // (a bare path is a model with deck A's track)
-      d.hasModel = !c.plugin.data.empty();
+      parseData(cp->plugin.data, d.path, m);  // (a bare path is a model with deck A's track)
+      d.hasModel = !cp->plugin.data.empty();
       d.m = std::move(m);
     }
-    const PluginTarget t{c.id, -1};
+    cp = nullptr;
+    const PluginTarget t{id, -1};
     Mirror mr;
     mirror(g, mr);
     Marks mk[kDecks];
@@ -324,7 +340,7 @@ void tick(App& a) {
       dm.hot = mk[k].hot;
       dm.loopIn = mk[k].loopIn;
       dm.loopOut = mk[k].loopOut;
-      if (!(m == d.m)) writeModel(a, c.id, d, m, i18n::N_("Set a cue on the deck"), (0x9A7710ull + ki) ^ c.id);
+      if (!(m == d.m)) writeModel(a, id, d, m, i18n::N_("Set a cue on the deck"), (0x9A7710ull + ki) ^ id);
     }
     // recorded passes: performances (J-159) and takes
     if (d.buf.empty()) d.buf.resize(4096);
@@ -333,14 +349,14 @@ void tick(App& a) {
         const CaptureEvent& e = d.buf[static_cast<size_t>(i)];
         if (e.kind == CaptureEvent::Start) {
           d.perfMode = e.snap[0] > 0;
-          if (d.perfMode) beginPass(a, c, d);
+          if (d.perfMode) beginPass(a, id, d);
         }
         if (!d.perfMode) {
-          if (d.builder.feed(e)) storeTake(a, c, d, d.builder.take);
+          if (d.builder.feed(e)) storeTake(a, id, d, d.builder.take);
           continue;
         }
         if (d.perf.feed(e)) {
-          endPass(a, c, d, d.perf.perf);
+          endPass(a, id, d, d.perf.perf);
         } else if (e.kind == CaptureEvent::End) {
           if (d.perf.lost) a.notify(i18n::tr("A deck performance could not be recorded: the pass was too busy for the recorder"), true);
           closePass(a, d);

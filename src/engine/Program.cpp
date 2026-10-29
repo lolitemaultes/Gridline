@@ -63,6 +63,35 @@ bool hasOutputs(const std::string& type) {
   return p && !p->outputs.empty();
 }
 
+// A new effect runtime of `type` (send buffers for the types that send); nullptr when the
+// effect cannot be created.
+std::shared_ptr<EffectRuntime> newEffectRuntime(const std::string& type) {
+  auto fx = createEffect(type);
+  if (!fx) return nullptr;
+  auto rt = std::make_shared<EffectRuntime>();
+  rt->type = type;
+  rt->fx = std::move(fx);
+  if (type == kMixerSendType || type == kBusSendType) {  // pulled by the destination
+    rt->sendL.assign(kEngineMaxBlock, 0.f);
+    rt->sendR.assign(kEngineMaxBlock, 0.f);
+  }
+  if (const PluginInfo* pi = findPlugin(type); pi && !pi->sendParams.empty())
+    for (size_t k = 0; k < pi->sendParams.size() && k < static_cast<size_t>(kMaxSendOutputs); ++k) {
+      rt->multiL[k].assign(kEngineMaxBlock, 0.f);
+      rt->multiR[k].assign(kEngineMaxBlock, 0.f);
+    }
+  return rt;
+}
+
+// A new channel runtime of `type` (gen is null when the instrument cannot be created).
+std::shared_ptr<ChannelRuntime> newChannelRuntime(const std::string& type) {
+  auto rt = std::make_shared<ChannelRuntime>();
+  rt->type = type;
+  rt->gen = createGenerator(type);
+  if (rt->gen) rt->gen->setMidiOut(&rt->midiOut);
+  return rt;
+}
+
 int paramInt(const PluginState& s, size_t k, int dflt) {
   return k < s.params.size() ? static_cast<int>(std::lround(s.params[k])) : dflt;
 }
@@ -683,19 +712,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
         auto e = effects_.find(key);
         if (e != effects_.end() && e->second->type == es.plugin.type && !(e->second->fx && e->second->fx->stale())) {
           ps.rt = e->second;
-        } else if (auto fx = createEffect(es.plugin.type)) {
-          ps.rt = std::make_shared<EffectRuntime>();
-          ps.rt->type = es.plugin.type;
-          ps.rt->fx = std::move(fx);
-          if (es.plugin.type == kMixerSendType || es.plugin.type == kBusSendType) {  // pulled by the destination
-            ps.rt->sendL.assign(kEngineMaxBlock, 0.f);
-            ps.rt->sendR.assign(kEngineMaxBlock, 0.f);
-          }
-          if (const PluginInfo* pi = findPlugin(es.plugin.type); pi && !pi->sendParams.empty())
-            for (size_t k = 0; k < pi->sendParams.size() && k < static_cast<size_t>(kMaxSendOutputs); ++k) {
-              ps.rt->multiL[k].assign(kEngineMaxBlock, 0.f);
-              ps.rt->multiR[k].assign(kEngineMaxBlock, 0.f);
-            }
+        } else {
+          ps.rt = newEffectRuntime(es.plugin.type);
         }
         if (ps.rt) {
           effects[key] = ps.rt;
@@ -814,10 +832,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (it != channels_.end() && it->second->type == c.plugin.type && !(it->second->gen && it->second->gen->stale())) {
       pc.rt = it->second;
     } else {
-      pc.rt = std::make_shared<ChannelRuntime>();
-      pc.rt->type = c.plugin.type;
-      pc.rt->gen = createGenerator(c.plugin.type);
-      if (pc.rt->gen) pc.rt->gen->setMidiOut(&pc.rt->midiOut);
+      pc.rt = newChannelRuntime(c.plugin.type);
     }
     chans[c.id] = pc.rt;
     pc.plugin = c.plugin;
@@ -1136,6 +1151,61 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   noteFx_ = std::move(noteFx);
   links_ = std::move(linkRts);
   return prog;
+}
+
+std::vector<ProgramBuilder::PreloadItem> ProgramBuilder::preloadItems(const Song& song) {
+  std::vector<PreloadItem> out;
+  for (const auto& m : song.mixer)
+    for (size_t s = 0; s < m.slots.size(); ++s)
+      if (!m.slots[s].plugin.empty()) out.push_back({true, m.id, static_cast<int>(s), m.slots[s].plugin.type});
+  for (const auto& c : song.channels)
+    if (!c.plugin.type.empty()) out.push_back({false, c.id, -1, c.plugin.type});
+  return out;
+}
+
+bool ProgramBuilder::preload(const Song& song, const PreloadItem& item) {
+  // As build(): samples are never waited for here (the loader decodes them meanwhile).
+  std::optional<SampleCache::NonBlocking> nonBlocking;
+  if (asyncSamples_) nonBlocking.emplace();
+  const LiveTargets live = liveTargets(song);
+  if (item.effect) {
+    const MixerTrack* m = song.mixerTrack(item.owner);
+    if (!m || item.slot < 0 || static_cast<size_t>(item.slot) >= m->slots.size()) return false;
+    const EffectSlot& es = m->slots[static_cast<size_t>(item.slot)];
+    if (es.plugin.empty()) return false;
+    std::shared_ptr<EffectRuntime> rt = newEffectRuntime(es.plugin.type);
+    if (!rt) return false;
+    prepareForHost(es.plugin, live, m->id, slotParam(m->id, item.slot, 0).index,
+                   [&](const PluginState& st) { rt->fx->prepareHost(st, sampleRate_); });
+    effects_[{m->id, item.slot}] = std::move(rt);
+    return true;
+  }
+  const Channel* c = song.channel(item.owner);
+  if (!c) return false;
+  std::shared_ptr<ChannelRuntime> rt = newChannelRuntime(c->plugin.type);
+  if (rt->gen && c->plugin.type == "gl.sampler") {  // J-87: as build(), before prepareHost
+    bool clipSource = c->audioClip, notes = false;
+    for (const auto& cl : song.playlist) clipSource = clipSource || (cl.kind == ClipKind::Audio && cl.source == c->id);
+    for (const auto& p : song.patterns) {
+      if (auto n = p.notes.find(c->id); n != p.notes.end() && !n->second.empty()) notes = true;
+      if (auto st = p.steps.find(c->id); st != p.steps.end())
+        for (uint8_t x : st->second) notes = notes || x != 0;
+    }
+    rt->gen->setClipOnly(clipSource && !notes);
+  }
+  if (rt->gen)
+    prepareForHost(c->plugin, live, c->id, channelPluginParam(c->id, 0).index,
+                   [&](const PluginState& st) { rt->gen->prepareHost(st, sampleRate_); });
+  const bool ok = rt->gen != nullptr;
+  channels_[c->id] = std::move(rt);
+  return ok;
+}
+
+void ProgramBuilder::adoptPreloaded(ProgramBuilder&& from) {
+  for (auto& [id, rt] : from.channels_) channels_[id] = std::move(rt);
+  for (auto& [key, rt] : from.effects_) effects_[key] = std::move(rt);
+  from.channels_.clear();
+  from.effects_.clear();
 }
 
 std::shared_ptr<ChannelRuntime> ProgramBuilder::channelRuntime(ObjectId id) const {

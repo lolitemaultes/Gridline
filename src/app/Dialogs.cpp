@@ -100,6 +100,15 @@ void fileDialog(App& a) {
   bool open = ImGui::BeginPopupModal("##filedialog", &keep, ImGuiWindowFlags_NoTitleBar);
   ImGui::PopStyleVar();
   if (!open) return;
+  if (!fd.devAccept.empty() && !ImGui::IsWindowAppearing()) {  // J-167 dev check: as if this file were picked and OK clicked
+    const std::string chosen = std::move(fd.devAccept);
+    fd.devAccept.clear();
+    auto cb = fd.onOk;
+    ImGui::CloseCurrentPopup();
+    if (cb) cb(chosen);
+    ImGui::EndPopup();
+    return;
+  }
   const bool folderMode = fd.exts.size() == 1 && fd.exts[0] == "/";
   dialogTitle(a, fd.title.c_str());
   std::error_code ec;

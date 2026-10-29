@@ -337,7 +337,7 @@ void testSlicer() {
     Bytes cue;
     cue.u32(2);
     cue.u32(1).u32(0).str("data", false).u32(0).u32(0).u32(0);
-    cue.u32(2).u32(0).str("data", false).u32(0).u32(0).u32(500);
+    cue.u32(2).u32(500).str("data", false).u32(0).u32(0).u32(500);  // position (the start Slicex reads) = sample offset
     body.str("cue ", false).u32(static_cast<uint32_t>(cue.size())).raw(cue.b);
     Bytes adtl;
     adtl.str("adtl", false);

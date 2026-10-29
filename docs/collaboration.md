@@ -146,6 +146,9 @@ the project again later, in any of these ways:
   folder itself.
 * **Drag** the folder or its `.gridline.json` file onto the Gridline window.
 
+Like any project, it opens through the loading window (samples and plugins counted as they load,
+Cancel to stay in the project you had open); the session starts once everything is ready.
+
 The Collaboration panel opens and Gridline reconnects to the other members by itself, using the
 addresses and ports remembered from last time: no code is needed. When the others open the project
 too (now or later, in any order), you are connected within a second or two and catch up on each

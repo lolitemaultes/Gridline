@@ -55,6 +55,11 @@ bool active(const App& a);
 // Opening a project file: a collaborative project opens with its session (or
 // asks for an update first). Returns true when it handled the file.
 bool openIfCollab(App& a, const std::string& projectFile, bool* opened = nullptr);
+// J-167: before a project load starts. NotCollab: an ordinary project; Blocked: a collaborative
+// project that cannot open here (an update is needed, no display name yet; the reason is
+// shown); Open: a collaborative project that openIfCollab will open.
+enum class OpenGate { NotCollab, Blocked, Open };
+OpenGate openGate(App& a, const std::string& projectFile);
 // A collaborative project folder (or its .gridline-collab folder, or a file in
 // it): its project file; "" otherwise. File > Open, drops and recent files
 // open a collaborative project through this.

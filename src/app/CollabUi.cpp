@@ -2917,11 +2917,10 @@ std::string projectFileIn(const std::string& path) {
   return Session::projectFileOf(p.string());
 }
 
-bool openIfCollab(App& a, const std::string& projectFile, bool* opened) {
-  if (opened) *opened = false;
-  if (a.embedded) return false;
+OpenGate openGate(App& a, const std::string& projectFile) {
+  if (a.embedded) return OpenGate::NotCollab;
   const std::string folder = Session::folderOfProjectFile(projectFile);
-  if (folder.empty()) return false;
+  if (folder.empty()) return OpenGate::NotCollab;
   // the project needs at least the version that last wrote it, and the newest release
   const std::string minV = Session::minAppVersionOf(folder);
   const GateState& g = updui::gate(a);
@@ -2930,15 +2929,26 @@ bool openIfCollab(App& a, const std::string& projectFile, bool* opened) {
   else if (g.kind == GateState::Kind::UpdateRequired) need = g.latest;
   if (!need.empty()) {
     updui::showRequired(a, fmt1(tr("This is a collaborative project. Update to Gridline %s to open it."), need), need);
-    return true;
+    return OpenGate::Blocked;
   }
-  Controller& c = ctlOf(a);
-  if (!c.profileReady()) {
+  if (!ctlOf(a).profileReady()) {
     a.settingsTab = 11;
     a.showSettings = true;
     a.notify(tr("This is a collaborative project: choose a display name in Settings > Collaboration, then open it again."), true);
-    return true;
+    return OpenGate::Blocked;
   }
+  return OpenGate::Open;
+}
+
+bool openIfCollab(App& a, const std::string& projectFile, bool* opened) {
+  if (opened) *opened = false;
+  switch (openGate(a, projectFile)) {
+    case OpenGate::NotCollab: return false;
+    case OpenGate::Blocked: return true;
+    case OpenGate::Open: break;
+  }
+  const std::string folder = Session::folderOfProjectFile(projectFile);
+  Controller& c = ctlOf(a);
   a.engine.stopToStart();
   a.engine.panic(false);
   c.net = netSettingsFrom(a.settings);

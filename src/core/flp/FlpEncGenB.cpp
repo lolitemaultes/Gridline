@@ -1423,9 +1423,33 @@ bool sxRegionWrite(const PluginState& g, Bytes& b) {
   if (!sx::modelOf(g.data, md)) return false;
   std::array<Bytes, 2> riff;
   for (int d = 0; d < 2; ++d) {
-    const sx::Deck& dk = md.decks[static_cast<size_t>(d)];
+    sx::Deck& dk = md.decks[static_cast<size_t>(d)];
+    // J-166: the regions as they play (model starts / names, the key parameter
+    // and end point of deck A regions); when they differ from the ones the deck
+    // audio carries, its region chunks are rebuilt (a path-only deck is then
+    // embedded so its chops travel with the project).
+    const Bytes audio = !dk.riff.empty() ? dk.riff : (dk.file.empty() ? Bytes{} : readFile(dk.file));
+    const sx::WavRegions have = sx::readWavRegions(audio.data(), audio.size());
+    std::vector<sx::Region> want = dk.regions;
+    for (size_t k = 0; k < want.size(); ++k) {
+      const int ik = static_cast<int>(k);
+      want[k].key = sx::explicitKey(md, &g, d, ik);
+      if (d == 0 && ik < kMaxSlices && have.frames > 0) {
+        const double e = param(g, slParam2(ik, SliceEnd), -1);
+        if (e >= 0) want[k].length = std::max<int64_t>(1, std::llround(e * static_cast<double>(have.frames)) - want[k].start);
+      }
+    }
+    auto same = [](const sx::Region& a, const sx::Region& b) { return a.start == b.start && a.length == b.length && a.key == b.key && a.name == b.name; };
+    bool changed = want.size() != std::max<size_t>(1, have.regions.size());
+    for (size_t k = 0; !changed && k < want.size(); ++k)
+      changed = have.regions.empty() ? !same(want[k], sx::Region{}) : !same(want[k], have.regions[k]);
+    if (have.riff && have.frames > 0 && changed) {
+      riff[static_cast<size_t>(d)] = sx::writeWavRegions(audio, want);
+      dk.flag = 0, dk.embedded = true;
+      continue;
+    }
     if (dk.flag != 0) continue;  // referenced by path
-    riff[static_cast<size_t>(d)] = !dk.riff.empty() ? dk.riff : (dk.file.empty() ? Bytes{} : readFile(dk.file));
+    riff[static_cast<size_t>(d)] = audio;
   }
   md.knobs[2] = static_cast<int32_t>(std::lround(12800.0 * std::log(10.0 * std::max(0.0, static_cast<double>(param(g, SlMaster, 1))) + 1.0) / std::log(11.0)));
   md.knobs[5] = static_cast<int32_t>(std::lround(param(g, SlPitch, 0) * 100.0));

@@ -76,6 +76,16 @@ Sections split(const File& f);
 // Finds the first event with `id` in a list (nullptr if none).
 const Event* find(const std::vector<Event>& evs, uint8_t id);
 
+// J-168: playlist record (233) size. Each record starts u32 position, u16
+// 0x5000, and FL grew it only at its end: 32 bytes up to FL 20.9, 60 in FL
+// 20.99 to 24.1, 80 in FL 24.2 to 25.2, 88 in FL 2026 (26.1: 8 new bytes after
+// FL 25's 80). The known sizes are tried first, then the smallest other size
+// (a multiple of 4, at least 32) every record agrees on: a newer layout, read
+// through its known leading fields. 0: no records, or no consistent layout.
+inline constexpr uint32_t kPlaylistStrides[] = {88, 80, 60, 32};
+uint32_t playlistStride(const Event& e);
+bool playlistStrideKnown(uint32_t k);
+
 struct Report {
   std::vector<std::string> warnings;    // things that could not be imported exactly
   std::map<std::string, int> counts;    // "channels", "notes", "pattern clips", …

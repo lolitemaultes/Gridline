@@ -256,6 +256,7 @@ void App::syncEngine() {
 void App::tick(double t) {
   pollPresetImport();
   now = t;
+  pollProjectLoad();  // J-167: a slice of the project load, the swap once it is ready
   {  // J-48: recording start / stop and a user-started plugin scan finishing
     const bool rec = recordArmed && engine.playing() && !engine.countingIn() && engine.mode() != PlayMode::Live;
     if (rec != wasRecording_) uiSound(rec ? uisound::Event::RecordStart : uisound::Event::RecordStop);
@@ -504,9 +505,9 @@ void App::applyStartup(bool plainLaunch) {
 
 bool App::openProject(const std::string& pathIn) {
   // J-141: whatever opened (a project, or a file imported into the project), the
-  // launcher gives way to it.
+  // launcher gives way to it (J-167: a project once its load has finished).
   const bool ok = openProjectFile(pathIn);
-  if (ok) home.projectOpened(now);
+  if (ok && !projectLoadBlocking()) home.projectOpened(now);
   return ok;
 }
 
@@ -516,108 +517,25 @@ bool App::openProjectFile(const std::string& pathIn) {
   const std::string& path = collabFile.empty() ? pathIn : collabFile;
   // J-52: FL Studio projects and zipped projects open as projects; MIDI and
   // audio files are imported into the open project.
+  bool collab = false;
   switch (openKindOf(path)) {
-    case OpenKind::FlProject: return openFlpProject(path, path);
-    case OpenKind::ZippedProject: return openZippedProject(path);
     case OpenKind::Midi:
     case OpenKind::Audio: return exportui::openAny(*this, path);
+    case OpenKind::FlProject:
+    case OpenKind::ZippedProject: break;
     case OpenKind::GridlineProject:
-    case OpenKind::Unknown: break;
+    case OpenKind::Unknown:
+      // J-111: a collaborative project opens with its session (or asks for an update first)
+      switch (collabui::openGate(*this, path)) {
+        case collabui::OpenGate::NotCollab: break;
+        case collabui::OpenGate::Blocked: return false;
+        case collabui::OpenGate::Open: collab = true; break;
+      }
+      break;
   }
-  // J-111: a collaborative project opens with its session (or asks for an update first)
-  if (bool opened = false; collabui::openIfCollab(*this, path, &opened)) return opened;
-  Song s;
-  std::string err;
-  if (!loadProject(path, s, &err)) {
-    notify("Could not open project: " + err, true);
-    return false;
-  }
-  engine.stopToStart();
-  engine.panic(false);  // (the project is replaced: no fade over the new one)
-  collabui::closeSession(*this);  // J-111
-  doc.reset(std::move(s));
-  trimSamplesAt_ = now + 1.0;  // J-30
-  projectPath = path;
-  projectFormat = SaveFormat::Gridline;
-  openedFrom.clear();
-  addRecent(path);
-  rememberSketch(path);  // J-141
-  curPattern = doc.song().patterns.empty() ? kNoId : doc.song().patterns[0].id;
-  selChannel = doc.song().channels.empty() ? kNoId : doc.song().channels[0].id;
-  selChannels = {selChannel};
-  selMixer = doc.song().masterId();
-  playlist.selected.clear();
-  engine.setMode(doc.song().playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
-  rackReveal.quietSwitch(engine.mode());  // J-77: opening a project does not count as choosing PAT
-  syncEngine();
-  if (const auto lines = standin::summary(doc.song()); !lines.empty()) {  // missing Serum / Kickstart: played by built-ins
-    std::string details;
-    for (const auto& l : lines) details += (details.empty() ? "" : "\n") + l;
-    notify("Opened " + fs::path(path).filename().string() + ": " + lines.front() + (lines.size() > 1 ? " (+" + std::to_string(lines.size() - 1) + ")" : ""),
-           false, details);
-  } else {
-    notify("Opened " + fs::path(path).filename().string());
-  }
-  uiSound(uisound::Event::Open);
-  return true;
-}
-
-bool App::openZippedProject(const std::string& zip) {
-  // Unpacked beside the archive (not a temporary folder): the samples stay
-  // where the opened project points, whatever it is saved as later.
-  std::string proj, err;
-  const fs::path zp(zip);
-  if (!unpackZippedProject(zip, (zp.parent_path() / projectStemOf(zip)).string(), proj, &err)) {
-    notify("Cannot open the zipped project: " + err, true);
-    return false;
-  }
-  bool ok;
-  if (openKindOf(proj) == OpenKind::FlProject) {
-    ok = openFlpProject(proj, zip);
-  } else {
-    ok = openProject(proj);  // a Gridline zip: the unpacked project is the project file
-  }
-  if (ok && !missingFiles(doc.song()).empty()) exportui::openMissingSamples(*this);
-  return ok;
-}
-
-bool App::openFlpProject(const std::string& path, const std::string& shownAs) {
-  Song s;
-  flp::Report rep;
-  std::string err;
-  if (!importFlp(path, s, rep, &err, settings.getString("import.flData"))) {
-    notify("Cannot open the FL Studio project: " + err, true);
-    return false;
-  }
-  engine.stopToStart();
-  engine.panic(false);  // (the project is replaced: no fade over the new one)
-  doc.reset(std::move(s));
-  trimSamplesAt_ = now + 1.0;  // J-30
-  // Not a Gridline file yet: Save asks where and in which format, so the
-  // .flp is never replaced by a different format (or a lossy re-export) unasked.
-  projectPath.clear();
-  projectFormat = SaveFormat::Gridline;
-  openedFrom = shownAs;
-  addRecent(shownAs);
-  rememberSketch(shownAs);  // J-141
-  home.projectOpened(now);
-  curPattern = doc.song().patterns.empty() ? kNoId : doc.song().patterns[0].id;
-  selChannel = doc.song().channels.empty() ? kNoId : doc.song().channels[0].id;
-  selChannels = {selChannel};
-  selMixer = doc.song().masterId();
-  playlist.selected.clear();
-  engine.setMode(doc.song().playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
-  syncEngine();
-  importReport = ImportReport{};
-  importReport.source = fs::path(shownAs).filename().string();
-  for (const auto& [k, v] : rep.counts) importReport.counts.emplace_back(k, v);
-  for (const auto& [k, v] : rep.unmapped) importReport.unmapped.emplace_back(k, v);
-  for (const auto& [k, v] : rep.mapped) importReport.mapped.emplace_back(k, v);
-  importReport.warnings = rep.warnings;
-  showImportReport = true;
-  notify("Opened " + importReport.source);
-  // J-48: opening a project sounds like opening one; warnings or unmapped plugins: the report needs a look.
-  uiSound(importReport.warnings.empty() && importReport.unmapped.empty() ? uisound::Event::Open : uisound::Event::Warning);
+  // J-167: read and prepared by the project loader (ProjectLoadUi.cpp) while the
+  // interface keeps drawing; the open project stays until the new one is ready.
+  startProjectLoad(path, collab);
   return true;
 }
 
