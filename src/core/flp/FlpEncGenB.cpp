@@ -1210,14 +1210,33 @@ constexpr int32_t kSxRegionDefault[17] = {0, 0, 0, 8000, 0, 12800, 128, 128, 0, 
 
 struct SxLayout {
   bool ok = false, external = false;
-  size_t pathEnd = 0, riffAt = 0, riffLen = 0, settings = 0;
+  size_t pathAt = 0, pathEnd = 0, riffAt = 0, riffLen = 0, settings = 0;
 };
+
+// J-176: the path is one length byte, or 0xFF and a u32 length (255+ bytes).
+void putSxPath(Bytes& out, const std::string& s) {
+  if (s.size() < 0xFF) {
+    out.push_back(static_cast<uint8_t>(s.size()));
+  } else {
+    out.push_back(0xFF);
+    for (int i = 0; i < 4; ++i) out.push_back(static_cast<uint8_t>(static_cast<uint32_t>(s.size()) >> (8 * i)));
+  }
+  out.insert(out.end(), s.begin(), s.end());
+}
 
 SxLayout sxLayout(const Bytes& b) {
   SxLayout l;
   if (b.size() < 0x62) return l;
   l.external = b[0x5F] == 1;
-  l.pathEnd = 0x61 + static_cast<size_t>(b[0x60]);
+  l.pathAt = 0x61;
+  size_t plen = b[0x60];
+  if (plen == 0xFF) {
+    if (b.size() < 0x65) return l;
+    plen = getU32(b, 0x61);
+    l.pathAt = 0x65;
+  }
+  if (plen > b.size() - l.pathAt) return l;
+  l.pathEnd = l.pathAt + plen;
   size_t p = l.pathEnd;
   if (!l.external) {
     if (p + 4 > b.size()) return l;
@@ -1354,11 +1373,11 @@ void sxWrite(const PluginState& g, Bytes& b, const EncodeContext& c) {
   if (!l.ok) return;
   PluginMapping m;
   if (!decodeAs("Slicex", b, m, c)) return;
-  const std::string rawPath(b.begin() + 0x61, b.begin() + static_cast<std::ptrdiff_t>(l.pathEnd));
+  const std::string rawPath(b.begin() + static_cast<std::ptrdiff_t>(l.pathAt), b.begin() + static_cast<std::ptrdiff_t>(l.pathEnd));
   auto replaceSample = [&](bool external, const std::string& path, const Bytes& riff) {
     Bytes out(b.begin(), b.begin() + 0x60);
     out[0x5F] = external ? 1 : 0;
-    putPascal(out, path);
+    putSxPath(out, path);
     if (!external) {
       ByteWriter n;
       n.u32(static_cast<uint32_t>(riff.size()));

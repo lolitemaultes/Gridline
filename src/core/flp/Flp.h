@@ -296,6 +296,14 @@ struct ChannelIns {
 ChannelIns decodeChannelIns(const std::vector<Event>& channelEvents);
 // Seconds of an FL channel envelope time knob (100..65536), as the importer reads it.
 double flEnvTime(int32_t v);
+// J-177: a channel's stretch "time" (channel parameters 215 @96, in 1/192
+// beats): the beats its sample is stretched to, 0 when off or not in use.
+inline constexpr double kFlFitTicksPerBeat = 192.0;
+double channelFitBeats(const Event& params);
+// The time factor that stretches `regionFraction` of the sample at `path` to
+// `beats` at the project tempo (2 = twice as long); 0 when the sample is not
+// readable. FL resamples (pitch follows) or stretches by it like its multiplier.
+double channelFitStretch(const Context& c, const std::string& path, double beats, double regionFraction);
 // Maps the instrument page onto a "gl.sampler" state (filter, volume and
 // cutoff envelopes, LFO).
 void applyInsToSampler(const ChannelIns& ins, PluginState& sampler);

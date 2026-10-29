@@ -1937,7 +1937,7 @@ msgstr ""
 msgid "Play on"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChopUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Play region"
 msgstr ""
 
@@ -5761,7 +5761,7 @@ msgstr ""
 msgid "Zoom"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PluginEditorsInstrSlicer.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp
 msgid "Zoom in"
 msgstr ""
 
@@ -5769,7 +5769,7 @@ msgstr ""
 msgid "Zoom on selection"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PluginEditorsInstrSlicer.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp
 msgid "Zoom out"
 msgstr ""
 
@@ -6741,7 +6741,7 @@ msgstr ""
 msgid "Part names"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/LauncherUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ExportUi.cpp src/app/LauncherUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Pattern"
 msgstr ""
 
@@ -8141,7 +8141,7 @@ msgstr ""
 msgid "Replace the current project with this one (undo brings it back)"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp
+#: src/app/LoopStarterUi.cpp src/packs/platter/platter_ui.cpp
 msgid "SONG"
 msgstr ""
 
@@ -10579,6 +10579,50 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrPads.cpp
 msgid "Sustain at this point"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Clear markers"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Detect slices"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Edit markers by hand"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Even slices: 16"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Even slices: 32"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Even slices: 8"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Next region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Previous region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Show region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Show the selected region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Show the whole loop"
 msgstr ""
 
 #: src/app/PluginEditorsK3.cpp
@@ -14665,6 +14709,14 @@ msgstr ""
 msgid "Saved the preset"
 msgstr ""
 
+#: src/packs/plasma/plasma_browser_ui.cpp
+msgid "Search the Serum library"
+msgstr ""
+
+#: src/packs/plasma/plasma_browser_ui.cpp
+msgid "Search this folder"
+msgstr ""
+
 #: src/packs/plasma/plasma_fx_ui.cpp
 msgid "All 24 effect slots are in use"
 msgstr ""
@@ -15442,6 +15494,10 @@ msgid "Clear mapping"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
+msgid "Clips"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
 msgid "Controller..."
 msgstr ""
 
@@ -15690,7 +15746,7 @@ msgid "Pads"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
-msgid "Passes go into the pattern: open it in the piano roll"
+msgid "Passes become automation clips you can edit"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
@@ -15742,6 +15798,14 @@ msgid "Record off"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
+msgid "Record song passes as a pattern"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Record song passes as playlist clips"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
 msgid "Remove every binding (learn from scratch)"
 msgstr ""
 
@@ -15775,6 +15839,14 @@ msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
 msgid "Show every control and the MIDI it answers to, per deck and for the mixer: learn, clear, presets"
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Song mode: a pass becomes one automation clip per control on the playlist, grouped on tracks next to each other."
+msgstr ""
+
+#: src/packs/platter/platter_ui.cpp
+msgid "Song mode: a pass becomes one new pattern holding its automation clips, placed on the playlist where you played it. The curves show on the pattern's clip; double-click one to edit it."
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp

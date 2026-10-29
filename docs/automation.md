@@ -76,5 +76,12 @@ playlist** (one playlist automation clip under every clip of the pattern, soundi
 
 ## Recorded passes
 
-Platter's pattern-mode passes are written as named pattern clips, for example "Platter A
-wheel", coloured by deck (see [plugins/platter-recording.md](plugins/platter-recording.md)).
+Platter's passes are written as named pattern clips, for example "Platter A wheel", coloured by
+deck. In pattern mode they go into the pass's pattern; in song mode each pass gets a new pattern
+holding all its clips, placed once on the playlist where you played it, so the curves show on
+that one clip and a double-click on a curve opens it in the editor. Platter can write song-mode
+passes as separate playlist clips instead (see
+[plugins/platter-recording.md](plugins/platter-recording.md)).
+
+When playback starts inside a pattern clip that holds automation, its clips take effect from
+that point, as they do when the clip is trimmed, moved, cut or copied.

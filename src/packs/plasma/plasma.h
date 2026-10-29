@@ -621,6 +621,31 @@ std::shared_ptr<const LibrarySnapshot> librarySnapshot();
 void librarySaveFolders(const std::string& cacheFile);
 // Blocking scan of preset files below the roots (tests, the background index).
 std::vector<LibraryPreset> scanLibrary(const std::vector<std::string>& roots, const std::atomic<bool>* cancel = nullptr);
+// The library's folders as a tree (pre-order: each folder's sub-folders right
+// below it, siblings in natural name order, roots in `snap.roots` order and
+// listed even without presets). `key` is the browser scope of the folder:
+// "serum:<root>" or "serum:<root>\n<bank path>"; "serum:" is the whole library.
+struct LibraryFolder {
+  std::string label, key;
+  int depth = 0, parent = -1;  // parent: index in the tree (-1 = a root)
+  int count = 0;               // presets in the folder and its sub-folders
+  bool hasChildren = false;
+};
+std::vector<LibraryFolder> libraryFolderTree(const LibrarySnapshot& snap);
+// Indices (into snap.presets) of the presets of a scope: the folder's own and
+// its sub-folders' presets.
+std::vector<int> libraryPresetsIn(const LibrarySnapshot& snap, const std::string& key);
+// The tree rows shown when the folders with open[i] != 0 are expanded.
+std::vector<int> libraryVisibleFolders(const std::vector<LibraryFolder>& tree, const std::vector<char>& open);
+// Preset browser rows: indices of the rows whose name or folder contains every
+// word of `query` (any case), sorted by column 0 name / 1 folder / 2 source
+// (natural order, any case; ties keep the list order) or in list order (-1).
+struct BrowserRow {
+  std::string name, folder, source;
+};
+std::vector<int> browserFilter(const std::vector<BrowserRow>& rows, const std::string& query, int sortColumn, bool descending);
+// Natural, case-insensitive order ("Lead 2" < "lead 10"): <0, 0, >0.
+int naturalCompare(const std::string& a, const std::string& b);
 // Decoders used by the import (exposed for tests).
 bool zstdDecompress(const uint8_t* src, size_t n, std::vector<uint8_t>& out, std::string* err = nullptr);
 bool cborDecode(const uint8_t* src, size_t n, Json& out, std::string* err = nullptr);

@@ -160,7 +160,7 @@ void Importer::run() {
 // FL "audio clip" channels (type 4) → sampler channels whose sample the
 // playlist's audio clips play, through the channel strip and its insert.
 void Importer::importAudioChannels() {
-  int made = 0;
+  int made = 0, fitted = 0, unfitted = 0, clamped = 0;
   for (const auto& [idx, evs] : c_.sec.channels) {
     auto ty = c_.channelTypes.find(idx);
     if (ty == c_.channelTypes.end() || ty->second != 4) continue;
@@ -208,7 +208,20 @@ void Importer::importAudioChannels() {
       set(pp::SmpPitchShift, static_cast<float>(std::clamp(cents, -1200, 1200)));
       // 0 = resample; FL's other methods keep the pitch apart from the speed (J-87: closest Gridline mode).
       set(pp::SmpStretchMode, static_cast<float>(stretch::modeFromFl(mode)));
-      if (mul != 0) set(pp::SmpTimeStretch, static_cast<float>(std::clamp(std::pow(2.0, mul / 10000.0), 0.25, 4.0)));
+      double tf = std::pow(2.0, mul / 10000.0);
+      // J-177: the channel's "time" fits the sample to its beats at the project
+      // tempo, on top of the multiplier: Resample changes the pitch with it, the
+      // other methods keep it (the clips' source windows stay in sample time).
+      if (const double beats = channelFitBeats(*e); beats > 0) {
+        if (const double f = channelFitStretch(c_, ch->plugin.data, beats, 1.0); f > 0) {
+          tf *= f;
+          ++fitted;
+        } else {
+          ++unfitted;
+        }
+      }
+      if (tf < 0.25 || tf > 4.0) ++clamped;
+      if (tf != 1.0) set(pp::SmpTimeStretch, static_cast<float>(std::clamp(tf, 0.25, 4.0)));
     }
     if (const Event* e = find(evs, 70)) set(pp::SmpReverse, (e->value() & 2) ? 1.f : 0.f);
     if (const Event* e = find(evs, 219); e && e->size >= 12 && e->i32(8) != 0) channelCents_[id] = e->i32(8);
@@ -217,6 +230,9 @@ void Importer::importAudioChannels() {
     c_.channelIds[idx] = id;
   }
   if (made) c_.report.counts["audio clip channels"] = made;
+  if (fitted) c_.report.counts["audio clip channels stretched to a time"] = fitted;
+  if (unfitted) c_.report.counts["audio clip channels stretched to a time (sample not found: not stretched)"] = unfitted;
+  if (clamped) c_.report.counts["audio clip channel time stretches beyond x0.25..x4 (clamped)"] = clamped;
 }
 
 // FL automation channels (type 5) → automation clips.

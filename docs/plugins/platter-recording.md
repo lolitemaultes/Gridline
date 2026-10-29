@@ -3,27 +3,37 @@
 Platter (`gl.platter`) records what you play on its two decks while Gridline records: the
 mixer, both decks, cues, loops, beat jumps and scratches. By default a pass becomes plain
 automation, one curve per control you used: the record's position, play, the wheel, the mouse,
-loops and every fader and knob. You see the wheel moving in the playlist, you can cut, trim and
-move the clips, and playback can start anywhere in them. Played back without edits, it is
-exactly the pass you played.
+loops and every fader and knob, kept together in one pattern. You see the wheel moving in the
+playlist, you can cut, trim, move and copy the pass, and playback can start anywhere in it.
+Played back without edits, it is exactly the pass you played.
 
 ## Recording a pass
 
 1. The setup's record button (in the Platter window) shows **Record armed**. A new setup is
    armed; click the button to switch it to **Record off** and back.
 2. Next to it, two buttons pick what a pass becomes: **Automation** (the default) or
-   **Take**.
+   **Take**. With Automation, the **Song** buttons pick what a song-mode pass becomes on the
+   playlist: **Pattern** (the default) or **Clips**.
 3. Press Gridline's Record and play, in pattern mode or song mode. While Platter captures, its
    button reads **Recording**.
 4. Stop. The pass is written as one undo step ("Record a deck performance").
 
 Where it goes:
 
-- **Song mode.** Each pass becomes a set of automation clips in the playlist, one per control,
-  starting where the pass started, on free tracks next to each other and joined in one clip
-  group (so they select, move and cut together). The clips are named after the channel and the
-  control, for example "Platter A wheel" or "Platter Crossfader", and coloured by deck. A second
-  pass gets clips of its own on new tracks: it never records over the first.
+- **Song mode.** Each pass becomes one new pattern named after the channel (for example
+  "Platter take 1") that holds the pass's automation clips, one per control. The pattern is
+  placed once on the playlist, where the pass started and exactly as long as the pass, on the
+  setup's instrument track when it is free there, else on the first free track. The clips are
+  named after the channel and the control, for example "Platter A wheel" or "Platter
+  Crossfader", and coloured by deck. Their curves show on the pattern's playlist clip; double-click
+  one to open it in the automation editor (see
+  [automation in a pattern](../automation.md#automation-in-a-pattern)). Move, trim, cut or copy
+  the clip and the whole pass goes with it. A second pass gets a pattern of its own ("Platter
+  take 2") on its own track: it never records over the first.
+- **Song mode, Clips.** With **Clips** selected, a pass becomes a set of automation clips in the
+  playlist instead, one per control, starting where the pass started, on free tracks next to
+  each other and joined in one clip group (so they select, move and cut together). Use it when
+  you want to move or edit one control's clip on its own in the playlist.
 - **Pattern mode.** The pass goes into the selected pattern as automation clips of the
   pattern, when that pattern is empty. They have the same names, colours and zoomed position
   range as song mode's clips ("Platter A wheel", "Platter A position"), and they play wherever
@@ -33,7 +43,7 @@ Where it goes:
   the channel rack lists them as rows below the channels. Click one to edit it (see
   [automation in a pattern](../automation.md#automation-in-a-pattern)).
 - **Loop recording.** When the transport loops while you record, every loop pass is a pass of
-  its own (a new set of clips, or a new pattern). A pass ends exactly on the sample the loop
+  its own (a new pattern, or a new set of clips). A pass ends exactly on the sample the loop
   wraps and the next one starts on that same sample.
 - **Punch in and out** (song mode, a time selection in the playlist, "Punch in/out at the time
   selection" on in the Record button's right-click menu): the pass starts on the first beat
@@ -112,6 +122,11 @@ Cases where playback is not the same as the pass:
 Passes recorded by earlier versions (notes on the performance keys with a Performance start
 note, in a pattern) keep playing exactly as before. Two of their lanes show new names: the
 record position lane is now "A seek" and the wheel travel lane "A wheel".
+
+Song-mode passes recorded as separate playlist clips (before passes became one pattern, or
+with **Clips** selected) keep playing exactly as before, also in a project that has passes in
+both forms: each pass plays where it is placed, and another pass's clips on the same controls
+do not reach into it.
 
 Pattern-mode passes recorded before patterns held named automation clips keep playing exactly
 as before too: their lanes open as unnamed clips of the pattern (shown by the control's name,

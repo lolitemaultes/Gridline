@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include "../PluginParams.h"
+#include "../../engine/Sample.h"
 #include "../../engine/TimeStretch.h"
 #include "Flp.h"
 
@@ -34,6 +35,27 @@ double envTime(int32_t v) {
 }  // namespace
 
 double flEnvTime(int32_t v) { return envTime(v); }
+
+// J-177: the channel's "time" (215 @96): the sample (its region) is stretched
+// to span this many beats. FL 2026 stores an f32, earlier versions a u32 (as
+// a float those read as denormals, so a value under 2^23 is the integer). The
+// unit is 1/192 of a beat; a nonzero byte @89 keeps the value without using it.
+double channelFitBeats(const Event& params) {
+  if (params.size < 100 || params.u8(89) != 0) return 0;
+  const uint32_t raw = params.u32(96);
+  const double t = raw < 0x00800000u ? static_cast<double>(raw) : static_cast<double>(params.f32(96));
+  return std::isfinite(t) && t > 0 ? t / kFlFitTicksPerBeat : 0;
+}
+
+double channelFitStretch(const Context& c, const std::string& path, double beats, double regionFraction) {
+  if (!(beats > 0) || path.empty() || !(regionFraction > 0)) return 0;
+  const SamplePtr smp = sampleCache().get(path);
+  if (!smp || smp->frames() < 2 || smp->sampleRate <= 0) return 0;
+  const double source = smp->seconds() * std::min(1.0, regionFraction);
+  const double target = beats * 60.0 / std::max(1.0, c.song.tempo);
+  const double f = target / source;
+  return std::isfinite(f) && f > 0 ? f : 0;
+}
 
 ChannelIns decodeChannelIns(const std::vector<Event>& evs) {
   ChannelIns ins;
@@ -183,6 +205,21 @@ void importChannels(Context& c) {
     if (params && params->size >= 112) {
       stretchMul = std::pow(2.0, params->i32(104) / 10000.0);
       stretchMode = params->i32(108);
+      // J-177: the channel's "time" stretches the sample region to its beats (on top of the multiplier).
+      if (type == 0)
+        if (const double beats = channelFitBeats(*params); beats > 0) {
+          double region = 1;
+          if (params->size >= 144) {
+            const double a = params->f64(128), b = params->f64(136);
+            if (std::isfinite(a) && std::isfinite(b) && a >= 0 && b > a && b <= 1) region = b - a;
+          }
+          if (const double f = channelFitStretch(c, sample, beats, region); f > 0) {
+            stretchMul *= f;
+            c.report.counts["sampler channels stretched to a time"]++;
+          } else {
+            c.report.counts["sampler channels stretched to a time (sample not found: not stretched)"]++;
+          }
+        }
       if (type == 0 && stretchMode == 0 && stretchMul != 1) cents -= 1200.0 * std::log2(stretchMul);
     }
     {
@@ -330,8 +367,8 @@ void importChannels(Context& c) {
           setParam(sp, SmpStretchMode, static_cast<float>(stretch::modeFromFl(stretchMode)));
           setParam(sp, SmpTimeStretch, std::clamp(stretchMul, 0.25, 4.0));
           setParam(sp, SmpPitchShift, std::clamp(params->i32(100), -1200, 1200));
+          if (stretchMul < 0.25 || stretchMul > 4.0) c.report.counts["sampler time stretches beyond x0.25..x4 (clamped)"]++;
         }
-        if (params->u32(96) != 0) c.report.counts["sampler stretch-to-time (approximated)"]++;
       }
       ChannelIns ins = decodeChannelIns(evs);
       // FL plays a sampler voice to the end of the sample unless the volume

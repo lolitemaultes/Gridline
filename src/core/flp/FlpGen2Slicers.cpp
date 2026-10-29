@@ -4,7 +4,8 @@
 // own format notes):
 //   Slicex          0x60-byte header (version, knob integers at 4·(1+tag)),
 //                   byte 0x5F = 1 when the sample is referenced by path only,
-//                   Pascal path at 0x60, then (embedded) u32 length + RIFF/WAVE
+//                   Pascal path at 0x60 (J-176: 0xFF + u32 length from 255
+//                   bytes on), then (embedded) u32 length + RIFF/WAVE
 //                   with the slice points in its "cue " chunk; the settings
 //                   block that follows holds the region count at +0x18C.
 //   Fruity Slicer   u32 version, f32 beats, f32 tempo, 5 × i32, Pascal path,
@@ -94,11 +95,14 @@ std::string textBytes(const Blob& b, size_t at, size_t n) {
   return s;
 }
 
-// Length-prefixed (one byte) string.
+// Length-prefixed string: one length byte, or (J-176) 0xFF and a u32 length
+// for strings of 255 bytes or more.
 std::string pascal(const Blob& b, size_t at, size_t* next) {
-  size_t n = b.u8(at);
-  if (next) *next = at + 1 + n;
-  return textBytes(b, at + 1, n);
+  size_t n = b.u8(at), body = at + 1;
+  if (n == 0xFF && b.has(at + 1, 4)) n = b.u32(at + 1), body = at + 5;
+  if (!b.has(body, n)) n = b.size() > body ? b.size() - body : 0;
+  if (next) *next = body + n;
+  return textBytes(b, body, n);
 }
 
 // -------------------------------------------------------------- RIFF/WAVE
@@ -342,7 +346,8 @@ bool decodeSlicex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
           if (pt.value != neutral) exact = false;
       if ((t == sx::TSpeed || t == sx::TStart) && (a.env.on() || a.lfo.on())) exact = false;
     }
-  if (md.decks[0].regions.size() > static_cast<size_t>(kMaxSlices)) exact = false;
+  // J-176: regions past the 64 slice parameters play from their own records
+  // (engine: gain / pan / pitch / cut / delay of the model), so they stay exact.
   m.state.data = path + "\n" + sx::writeText(md);
   set(m, SlEngine, 1);
   // Markers (region starts) for the slicer view, and region end points.

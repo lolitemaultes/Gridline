@@ -2609,17 +2609,36 @@ class PlatterGen final : public Generator {
     laneClip_.fill(nullptr);
     if (!following_ || !lanes_) return;
     const double t = laneTick();
+    // J-179: a parameter can have two lanes (a pass's pattern clips, an older pass's playlist
+    // clips): they play as one lane would. The clip playing now wins (the later started one
+    // where both play), else the one that ended last (it holds its value).
+    std::array<bool, PCount> cov{};
+    std::array<double, PCount> key{};
     for (int i = 0; i < laneCount_; ++i) {
       const ParamLane& l = lanes_[i];
       if (l.param < 0 || l.param >= PCount || !l.lane) continue;
       const auto k = static_cast<size_t>(l.param);
+      const double lt = t - l.origin;
+      const AutomationLane::Instance* in = coveringAt(*l.lane, lt);
+      double rank = -1e300;  // (not covered: the end of the instance before it, if any)
+      if (in) {
+        rank = static_cast<double>(in->start);
+      } else {
+        auto it = std::upper_bound(l.lane->inst.begin(), l.lane->inst.end(), lt,
+                                   [](double v, const AutomationLane::Instance& q) { return v < static_cast<double>(q.start); });
+        if (it != l.lane->inst.begin()) rank = static_cast<double>((it - 1)->end);
+      }
+      if (sh_.laneHas[k] && (cov[k] ? !in || rank < key[k] : in == nullptr && rank < key[k])) continue;
       if (!perfParam(l.param)) {
         sh_.laneHas[k] = true;
-        sh_.laneN[k] = l.lane->valueAt(t - l.origin);
+        sh_.laneN[k] = l.lane->valueAt(lt);
+        cov[k] = in != nullptr;
+        key[k] = rank;
         continue;
       }
-      const AutomationLane::Instance* in = coveringAt(*l.lane, t - l.origin);
       if (!in) continue;
+      cov[k] = true;
+      key[k] = rank;
       const AutomationClip& c = *in->clip;
       if (c.points.empty()) continue;
       double ct = static_cast<double>(in->offset) + ((t - l.origin) - static_cast<double>(in->start));

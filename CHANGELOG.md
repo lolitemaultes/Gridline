@@ -3,6 +3,38 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
+## Unreleased
+
+### Fixed
+
+- FL Studio projects: audio clips whose channel stretches its sample to a set time (a number of
+  beats) now play at that length, so loops and one-shots line up with the beat grid as in FL
+  Studio. Resample channels change the pitch with the stretch, the other modes keep it. Sampler
+  channels with a set time are stretched the same way. Saving back to FL Studio keeps the time.
+- Slicex channels from FL Studio projects now open in Kerf with all their chops when the loop's
+  stored file path is 255 characters or longer (common in projects that moved between computers):
+  every region comes across in place, plays on the same key, and exports back unchanged. Loops
+  with hundreds of regions keep every region, with keys from the bottom of the keyboard up.
+- Plasma's preset library: clicking a folder of the Serum library now shows its presets. The
+  library is a folder tree at any depth (arrows open and close folders, each shows its preset
+  count), a folder lists its own presets and its sub-folders', the search looks inside the selected
+  folder, the column heads sort the list, the tree scrolls without moving the window, and the
+  selected preset stays selected while you search or sort.
+
+### Changed
+
+- A song-mode Platter pass is one new pattern holding all its automation clips ("Platter take
+  1"), placed once on the playlist where you played it and as long as the pass, instead of a
+  stack of separate clips on many tracks. The curves show on that clip, a double-click opens one
+  in the automation editor, and moving, trimming, cutting or copying the clip takes the whole
+  pass along; it still replays exactly and plays from any point. Platter's new Song choice
+  (Pattern or Clips) keeps the separate playlist clips for those who want them, and projects
+  with passes recorded that way play as before.
+- Kerf's window is laid out like a full region slicer: a larger wave view with numbered (and
+  named) region flags, zoom and a scroller across the whole loop; a region list to pick any
+  region; a deck bar with load, slicing and view menus, tool buttons and the loop's details; a
+  view of the selected region; and controls that do nothing for the current engine are dimmed.
+
 ## 0.7.0-beta.4
 
 This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.

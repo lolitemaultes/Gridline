@@ -905,6 +905,12 @@ target_link_libraries(gridline_tests_j168 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j168 PRIVATE tests src)
 target_compile_options(gridline_tests_j168 PRIVATE ${GL_WARN})
 add_test(NAME j168 COMMAND gridline_tests_j168 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-177: FL channel stretch "time": imported clips play on the beat grid, round trip.
+add_executable(gridline_tests_j177 tests/test_j177.cpp)
+target_link_libraries(gridline_tests_j177 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j177 PRIVATE tests src)
+target_compile_options(gridline_tests_j177 PRIVATE ${GL_WARN})
+add_test(NAME j177_flp_clip_time COMMAND gridline_tests_j177 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-167: the project loader's progress / cancel model (reading, samples, plugins, cancel at each phase).
 add_executable(gridline_tests_j167 tests/test_j167.cpp)
 target_link_libraries(gridline_tests_j167 PRIVATE gridline_core)
@@ -917,6 +923,12 @@ target_link_libraries(gridline_tests_j166 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j166 PRIVATE tests src)
 target_compile_options(gridline_tests_j166 PRIVATE ${GL_WARN})
 add_test(NAME j166_slicex_chops COMMAND gridline_tests_j166 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-176: Slicex states with long sample paths (0xFF + u32 length) and hundreds of regions reach Kerf.
+add_executable(gridline_tests_j176 tests/test_j176.cpp)
+target_link_libraries(gridline_tests_j176 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j176 PRIVATE tests src)
+target_compile_options(gridline_tests_j176 PRIVATE ${GL_WARN})
+add_test(NAME j176_slicex_long_path COMMAND gridline_tests_j176 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-109: Stop releases every sound outside the song; Stop twice (panic) silences tails too.
 add_executable(gridline_tests_j109 tests/test_j109.cpp)
 target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
@@ -1324,6 +1336,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/j165_tideline_source.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j165_tideline_source PROPERTIES TIMEOUT 300)
+
+    # J-178: Plasma's preset library: folder clicks (any depth) filter the list, presets select / open.
+    add_test(NAME j178_plasma_library
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j178_plasma_library
+                     -P ${CMAKE_SOURCE_DIR}/tests/j178_plasma_library.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j178_plasma_library PROPERTIES TIMEOUT 300)
 
     # J-167: opening a slow project through File > Open: the dialog closes at once, frames keep
     # coming, the loading window shows progress and the log, input is blocked, Esc cancels back to

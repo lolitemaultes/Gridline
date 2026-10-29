@@ -5,9 +5,10 @@
 // one lane per control it used. Each deck's state is a lane the deck follows wherever it
 // plays: position (the record's place, exact), play (the motor), wheel touch, mouse hand,
 // loop (on, in, out), reverse and pitch bend; beside them the hand's travel (wheel, mouse),
-// nudges and every control that moved (faders, EQ, crossfader ...). Song mode: automation
-// clips where the pass was played, in one clip group; pattern mode: lanes in the pass's
-// pattern. The position lane keeps the read head's path: a point wherever the path bends
+// nudges and every control that moved (faders, EQ, crossfader ...). Song mode (J-179):
+// a new pattern holding the lanes as its automation clips, placed once where the pass was
+// played (or, as the setup chooses, playlist clips in one clip group); pattern mode: clips in
+// the pass's pattern. The position lane keeps the read head's path: a point wherever the path bends
 // (a steady run of the motor is one straight line), a jump as two points on one tick.
 //
 // J-159's form (still built, for projects recorded with it):
@@ -576,7 +577,7 @@ AutomationClip passClip(const PerfLane& l, ObjectId channel, const std::string& 
 
 }  // namespace
 
-PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, ObjectId pattern) {
+PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, ObjectId pattern, bool playlistClips) {
   PassWritten out;
   const Song& s = doc.song();
   const Channel* ch = s.channel(channel);
@@ -639,17 +640,44 @@ PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, 
     }
   }
   if (lanes.empty()) return out;
-  // adjacent playlist tracks free over the pass (plain tracks: not an instrument's or audio's)
   const int count = static_cast<int>(lanes.size());
   auto busy = [&](int t) {
     for (const auto& c : s.playlist)
       if (c.track == t && c.start < start + len && c.start + s.clipLength(c) > start) return true;
     return false;
   };
-  auto usable = [&](int t) {
+  auto usable = [&](int t) {  // (plain tracks: not an instrument's or audio's)
     if (t >= static_cast<int>(s.tracks.size())) return true;  // (added)
     return s.tracks[static_cast<size_t>(t)].mode == TrackMode::Unassigned && !busy(t);
   };
+  // J-179 (the default): one new pattern "<channel> take N" holds the pass's clips (named,
+  // coloured and ranged as the playlist clips below), placed once where the pass was played:
+  // on the setup's instrument track when it is free there, else on the first free plain track.
+  // The clip is as long as the pass; the pattern's bars cover it.
+  if (!playlistClips) {
+    const ObjectId pat = passPattern(doc, kNoId, channel, true);
+    if (pat != kNoId && doc.song().pattern(pat)) {
+      const Tick bar = std::max<Tick>(1, s.barTicks());
+      const Tick bars = std::clamp<Tick>((len + bar - 1) / bar, 1, kMaxPatternBars);
+      doc.editPattern(pat, "Record a deck performance", [&](Pattern& p) {
+        p.bars = static_cast<int>(bars);
+        if (len > bars * bar) p.loop = false;  // (longer than a pattern can be: it plays once, never repeats)
+        for (const PerfLane& l : lanes) addPatternClip(p, passClip(l, channel, chName, static_cast<double>(start)));
+      });
+      int track = trackmodes::instrumentTrackOf(s, channel);
+      if (track >= 0 && busy(track)) track = -1;
+      for (int t = 0; track < 0 && t < kMaxPlaylistTracks; ++t)
+        if (usable(t)) track = t;
+      if (track < 0) track = kMaxPlaylistTracks - 1;
+      const ObjectId clip = doc.addClip(pat, track, start, len);
+      if (clip != kNoId) out.clips.push_back(clip);
+      out.pattern = pat;
+      out.firstTrack = track;
+      out.lanes = count;
+      return out;
+    }
+  }
+  // adjacent playlist tracks free over the pass
   int first = -1;
   for (int t = 0; t + count <= kMaxPlaylistTracks && first < 0; ++t) {
     bool ok = true;

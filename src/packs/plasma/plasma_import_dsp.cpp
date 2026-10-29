@@ -1747,6 +1747,18 @@ std::vector<uint8_t> readFile(const std::string& path, std::string& err) {
 
 std::vector<std::string> serumRootCandidates() {
   std::vector<std::string> c;
+  // dev / tests: GL_PLASMA_SERUM_ROOTS="<folder>;<folder>" replaces the system's folders
+  if (const char* env = std::getenv("GL_PLASMA_SERUM_ROOTS"); env && *env) {
+    const std::string s = env;
+    size_t s0 = 0;
+    while (s0 <= s.size()) {
+      size_t s1 = s.find(';', s0);
+      if (s1 == std::string::npos) s1 = s.size();
+      if (s1 > s0) c.push_back(s.substr(s0, s1 - s0));
+      s0 = s1 + 1;
+    }
+    return c;
+  }
   const char* homeVar = platform::homeEnv();
   const std::string home = homeVar ? homeVar : "";
 #if defined(_WIN32)

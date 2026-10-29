@@ -1013,7 +1013,7 @@ bool DeckModel::operator==(const DeckModel& o) const {
 }
 bool Model::operator==(const Model& o) const {
   return files == o.files && deck == o.deck && layout == o.layout && asked == o.asked && armed == o.armed && recordAs == o.recordAs &&
-         map == o.map && takes == o.takes && starts == o.starts;
+         songClips == o.songClips && map == o.map && takes == o.takes && starts == o.starts;
 }
 std::string Model::trackOf(int d) const {
   if (d < 0 || d >= kDecks) return {};
@@ -1137,6 +1137,7 @@ std::string modelToText(const Model& m) {
   std::snprintf(b, sizeof b, "layout %d\nflags %d %d\n", m.layout, m.asked ? 1 : 0, m.armed ? 1 : 0);
   o << b;
   if (m.recordAs != RecAutomation) o << "rec take\n";  // J-159 (missing: automation)
+  if (m.songClips) o << "songpass clips\n";            // J-179 (missing: one pattern per song-mode pass)
   for (const auto& f : m.files) o << "file " << f << "\n";
   for (int d = 0; d < kDecks; ++d) {
     const DeckModel& dm = m.deck[static_cast<size_t>(d)];
@@ -1208,6 +1209,10 @@ bool modelFromText(const std::string& text, Model& m) {
       std::string v;
       ls >> v;
       m.recordAs = v == "take" ? RecTake : RecAutomation;
+    } else if (key == "songpass") {
+      std::string v;
+      ls >> v;
+      m.songClips = v == "clips";
     } else if (key == "take") {  // J-150: deck A's stream on the first file
       Take t;
       long long st = 0, len = 0;

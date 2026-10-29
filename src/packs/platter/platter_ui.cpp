@@ -531,10 +531,29 @@ void drawTopBar(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, const L
     }
     x += 168 + 8;
   }
+  if (m.recordAs != RecTake) {
+    // J-179: what a song-mode pass becomes on the playlist
+    static const char* const kSong[2] = {i18n::N_("Pattern"), i18n::N_("Clips")};
+    static const char* const kSongHints[2] = {
+        i18n::N_("Song mode: a pass becomes one new pattern holding its automation clips, placed on the playlist where you played it. "
+                 "The curves show on the pattern's clip; double-click one to edit it."),
+        i18n::N_("Song mode: a pass becomes one automation clip per control on the playlist, grouped on tracks next to each other.")};
+    const float lw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, i18n::tr("SONG")).x + 8;
+    capsRow(dl, a, x, o.y + 2, h - 4, P.textFaint, i18n::tr("SONG"));
+    x += lw;
+    int cur = m.songClips ? 1 : 0;
+    traceRect("songas", ImVec2(x, o.y + 2), ImVec2(x + 140, o.y + h - 2));
+    if (pills(a, "##psongas", ImVec2(x, o.y + 2), 140, h - 4, kSong, 2, cur, kSongHints)) {
+      Model nm = m;
+      nm.songClips = cur == 1;
+      commit(a, t, e, nm, cur == 1 ? i18n::N_("Record song passes as playlist clips") : i18n::N_("Record song passes as a pattern"));
+    }
+    x += 140 + 8;
+  }
   if (m.takes.empty()) {
     theme::textEllipsis(dl, ImGui::GetFont(), theme::kFontCaption, ImVec2(x + 4, captionY(o.y, h)), std::max(0.0f, rx - x - 8), P.textFaint,
                         m.recordAs == RecTake ? i18n::tr("No takes yet: record in Gridline and play")
-                                              : i18n::tr("Passes go into the pattern: open it in the piano roll"));
+                                              : i18n::tr("Passes become automation clips you can edit"));
     return;
   }
   static const char* const kNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};

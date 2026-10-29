@@ -137,7 +137,12 @@ bool parseState(const uint8_t* p, size_t n, Model& out, std::array<std::vector<u
     dk.rawPath.clear();
     if (ver > 2 || dk.flag) {
       if (!has(1)) return false;
-      const size_t len = p[at++];
+      size_t len = p[at++];
+      if (len == 0xFF) {  // J-176: long path (255+ bytes): 0xFF, then a u32 length
+        if (!has(4)) return false;
+        len = static_cast<uint32_t>(rd32(p + at));
+        at += 4;
+      }
       if (!has(len)) return false;
       dk.rawPath.assign(reinterpret_cast<const char*>(p + at), len);
       at += len;
@@ -193,9 +198,14 @@ std::vector<uint8_t> writeState(const Model& m, const std::array<std::vector<uin
     const Deck& dk = m.decks[static_cast<size_t>(d)];
     const bool embedded = dk.flag == 0;
     o.push_back(dk.flag);
-    const size_t len = std::min<size_t>(dk.rawPath.size(), 255);
-    o.push_back(static_cast<uint8_t>(len));
-    o.insert(o.end(), dk.rawPath.begin(), dk.rawPath.begin() + static_cast<std::ptrdiff_t>(len));
+    const size_t len = dk.rawPath.size();
+    if (len < 0xFF) {
+      o.push_back(static_cast<uint8_t>(len));
+    } else {  // J-176: long path: 0xFF, then a u32 length
+      o.push_back(0xFF);
+      wr32(o, static_cast<int32_t>(len));
+    }
+    o.insert(o.end(), dk.rawPath.begin(), dk.rawPath.end());
     if (embedded) {
       const auto& r = riff[static_cast<size_t>(d)];
       wr32(o, static_cast<int32_t>(r.size()));

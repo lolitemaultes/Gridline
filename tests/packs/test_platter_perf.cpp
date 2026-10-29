@@ -4,7 +4,9 @@
 // kills, pitch moves) is played through the audio engine while Gridline records.
 // J-163: the pass becomes automation, one lane per control (the decks' state: position,
 // play, wheel touch, mouse hand, loop, ...; the hands' travel; the controls that moved):
-// clips in song mode, the pass pattern's lanes in pattern mode, no notes. Played back
+// song mode (J-179): a new pattern holding the clips, placed once where the pass was played
+// (or, as the setup chooses, grouped playlist clips); pattern mode: the pass pattern's
+// clips; no notes. A project with both forms plays each where it is. Played back
 // unedited it must give the same audio as the live pass, bit for bit, at 64, 256 and 1024
 // sample buffers and across buffer sizes; played from the middle (playback started in it,
 // a trimmed clip) the decks pick it up on the pass's own step grid and match the full
@@ -18,6 +20,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 #include "../Check.h"
@@ -29,6 +32,7 @@
 #include "core/Song.h"
 #include "core/WavWriter.h"
 #include "core/AutomationEdit.h"
+#include "core/MenuOps.h"
 #include "core/NoteTools.h"
 #include "engine/AudioEngine.h"
 #include "engine/Program.h"
@@ -250,7 +254,10 @@ ObjectId store(Rig& r, const pl::Performance& perf, bool song) {
 
 // J-163: what the editor does when a pass ends: the controller's last values into the
 // project, the pass as automation (song mode: clips; pattern mode: the pass pattern's lanes).
-pl::PassWritten storePass(Rig& r, const pl::Performance& perf, bool song, ObjectId* pattern = nullptr) {
+// J-179: song mode writes one pass pattern placed on the playlist (`clips`: the setup's
+// "Playlist clips" choice, J-163's grouped playlist clips). `pattern`: the pattern holding
+// the pass (pattern mode: the pass pattern; song mode: the new pass pattern, kNoId for clips).
+pl::PassWritten storePass(Rig& r, const pl::Performance& perf, bool song, ObjectId* pattern = nullptr, bool clips = false) {
   Generator* g = r.gen();
   pl::Mirror mr;
   if (g && pl::mirror(g, mr))
@@ -258,11 +265,12 @@ pl::PassWritten storePass(Rig& r, const pl::Performance& perf, bool song, Object
       if (mr.seq[static_cast<size_t>(k)] != 0) r.doc.setParam(channelPluginParam(r.ch, k), mr.value[static_cast<size_t>(k)], false);
   r.doc.beginGroup("Record a deck performance");
   const ObjectId target = song ? kNoId : pl::passPattern(r.doc, r.pat, r.ch, false);
-  const pl::PassWritten w = pl::writePass(r.doc, r.ch, perf, target);
+  const pl::PassWritten w = pl::writePass(r.doc, r.ch, perf, target, clips);
   r.doc.endGroup();
-  if (pattern) *pattern = target;
+  if (pattern) *pattern = song ? w.pattern : target;
   return w;
 }
+bool inPass(const pl::PassWritten& w, ObjectId clip) { return std::find(w.clips.begin(), w.clips.end(), clip) != w.clips.end(); }
 
 // The parameters a written pass holds lanes for (clips or the pattern's lanes).
 std::vector<int> passParams(const Rig& r, const pl::PassWritten& w, ObjectId pattern) {
@@ -281,10 +289,11 @@ size_t channelNotes(const Rig& r) {
     if (auto it = p.notes.find(r.ch); it != p.notes.end()) n += it->second.size();
   return n;
 }
-// The pass's clip of `param` (song mode).
+// The pass's clip of `param` (song mode: the pass pattern's, or the playlist's).
 const AutomationClip* passClip(const Rig& r, const pl::PassWritten& w, int param) {
   for (ObjectId id : w.autos)
     if (const AutomationClip* a = r.doc.song().automation(id); a && a->index == kChannelPluginBase + static_cast<uint32_t>(param)) return a;
+  if (const Pattern* p = r.doc.song().pattern(w.pattern)) return findPatternLane(*p, r.ch, kChannelPluginBase + static_cast<uint32_t>(param));
   return nullptr;
 }
 size_t firstDiff(const std::vector<float>& a, const std::vector<float>& b, size_t from, size_t to) {
@@ -680,7 +689,7 @@ void testPunch(const std::string& a, const std::string& b, int block, int in) {
 
 // ------------------------------------------------------------------ J-163: passes as automation
 // The unedited pass, written as automation, replays the live pass bit for bit.
-void testPassNull(const std::string& a, const std::string& b, int liveBlock, int replayBlock, bool song, bool keyLock) {
+void testPassNull(const std::string& a, const std::string& b, int liveBlock, int replayBlock, bool song, bool keyLock, bool clips = false) {
   Rig r(a, b, keyLock);
   const Tick bar = r.doc.song().barTicks();
   const Tick from = song ? 2 * bar : 0;
@@ -690,12 +699,25 @@ void testPassNull(const std::string& a, const std::string& b, int liveBlock, int
   }
   const PassResult live = livePass(r, liveBlock, song, from, false);
   char name[200];
-  std::snprintf(name, sizeof name, "%s, %s, live %d / replay %d", song ? "song mode from bar 3" : "pattern mode", keyLock ? "key lock" : "no key lock",
-                liveBlock, replayBlock);
+  std::snprintf(name, sizeof name, "%s, %s, live %d / replay %d", song ? (clips ? "song mode from bar 3, playlist clips" : "song mode from bar 3")
+                                                                       : "pattern mode",
+                keyLock ? "key lock" : "no key lock", liveBlock, replayBlock);
   expect(live.ok, (std::string("a pass is captured: ") + name).c_str());
   if (!live.ok) return;
   ObjectId pattern = kNoId;
-  const pl::PassWritten w = storePass(r, live.perf, song, &pattern);
+  const pl::PassWritten w = storePass(r, live.perf, song, &pattern, clips);
+  if (song) {
+    // one undo step: undo takes the whole pass away (its pattern, clips and placed clip), redo brings it back
+    const Song with = r.doc.song();
+    r.doc.undo();
+    const Song& s = r.doc.song();
+    bool gone = s.pattern(w.pattern) == nullptr;
+    for (ObjectId id : w.clips) gone = gone && s.clip(id) == nullptr;
+    for (ObjectId id : w.autos) gone = gone && s.automation(id) == nullptr;
+    r.doc.redo();
+    expect(gone && r.doc.song().playlist == with.playlist && r.doc.song().patterns == with.patterns && r.doc.song().automations == with.automations,
+           (std::string("a song pass is one undo step (undo removes all of it, redo restores it): ") + name).c_str());
+  }
   const std::vector<int> params = passParams(r, w, pattern);
   auto has = [&](int deck, int dp) { return std::find(params.begin(), params.end(), pl::deckParam(deck, dp)) != params.end(); };
   auto hasP = [&](int p) { return std::find(params.begin(), params.end(), p) != params.end(); };
@@ -714,7 +736,33 @@ void testPassNull(const std::string& a, const std::string& b, int liveBlock, int
          "state lanes: both decks' position and play; A's wheel touch and travel, mouse hand and travel, loop; B's nudge");
   expect(hasP(pl::PXfader) && has(0, pl::DEqLow) && has(0, pl::DPitch) && has(1, pl::DFilter), "control lanes: crossfader, A's low EQ and pitch, B's filter");
   expect(!has(0, pl::DPos) && !has(1, pl::DTouch) && !has(0, pl::DReverse), "no lane for what the pass did not use (no seek lane: the position holds seeks)");
-  if (song) {
+  if (song && !clips) {
+    // J-179: one new pattern holds the pass's clips; one clip of it on the playlist where the
+    // pass was played, as long as the pass, on a free track (track 0 holds the backing)
+    const Song& s = r.doc.song();
+    const Pattern* pp = s.pattern(w.pattern);
+    const Clip* c = w.clips.size() == 1 ? s.clip(w.clips[0]) : nullptr;
+    const Tick len = static_cast<Tick>(std::ceil(live.perf.endTick - static_cast<double>(from)));
+    size_t placed = 0;
+    for (const auto& x : s.playlist) placed += x.kind == ClipKind::Pattern && x.pattern == w.pattern ? 1 : 0;
+    std::printf("# %s: pass pattern \"%s\", %zu clips, placed on track %d at %lld, %lld ticks (pass %.3f to %.3f)\n", name, pp ? pp->name.c_str() : "?",
+                pp ? pp->automation.size() : 0, c ? c->track : -1, c ? static_cast<long long>(c->start) : -1LL,
+                c ? static_cast<long long>(s.clipLength(*c)) : -1LL, live.perf.startTick, live.perf.endTick);
+    expect(pp && pp->name == "Decks take 1" && w.pattern != r.pat && w.autos.empty() && s.automations.empty(),
+           "song mode: the pass goes into a new pattern \"<setup> take N\" (no playlist automation clips)");
+    expect(c && c->kind == ClipKind::Pattern && c->pattern == w.pattern && c->start == from && s.clipLength(*c) == len && c->track == 1 &&
+               c->offset == 0 && placed == 1 && w.firstTrack == 1,
+           "song mode: one clip of the pass pattern, where the pass was played, as long as the pass, on the first free track");
+    expect(pp && static_cast<Tick>(pp->bars) * bar >= len && static_cast<Tick>(pp->bars - 1) * bar < len, "song mode: the pass pattern's bars cover the pass");
+    const AutomationClip* pos = passClip(r, w, pl::PTrackA);
+    const AutomationClip* wheel = passClip(r, w, pl::deckParam(0, pl::DWheel));
+    bool named = pp && !pp->automation.empty() && static_cast<int>(pp->automation.size()) == w.lanes;
+    if (pp)
+      for (const auto& l : pp->automation) named = named && !l.name.empty() && l.flCurves && l.owner == r.ch;
+    expect(named && pos && pos->name == "Decks A position" && wheel && wheel->name == "Decks A wheel" && wheel->color == 0x4FA3D9 &&
+               pos->max - pos->min < 1.0f && !pos->points.empty() && pos->points.front().pos == 0,
+           "the pass pattern's clips are named and coloured, start on the pattern's first tick; the position clip is zoomed on the record's travel");
+  } else if (song) {
     const Song& s = r.doc.song();
     bool together = w.group != kNoId && !w.clips.empty();
     int t0 = 1 << 30, t1 = -1;
@@ -746,6 +794,22 @@ void testPassNull(const std::string& a, const std::string& b, int liveBlock, int
   const double d = std::max(maxDiff(live.L, rep.L, 0, kPass), maxDiff(live.R, rep.R, 0, kPass));
   std::printf("# %s: replay vs live, largest difference %s (first at %zu)\n", name, dbfs(d).c_str(), firstDiff(live.L, rep.L, 0, kPass));
   expect(d == 0, (std::string("the unedited pass replays the live pass bit for bit: ") + name).c_str());
+  if (song) {
+    // saved and loaded (a project with a pass in either form: J-163's grouped playlist clips
+    // are what earlier projects hold), it plays the same
+    const std::string proj = (tmpDir() / "songpass.gridline.json").string();
+    std::string err;
+    Song loaded;
+    const bool io = saveProject(proj, r.doc.song(), &err) && loadProject(proj, loaded, &err);
+    expect(io, (std::string("a project with a song pass saves and loads: ") + name).c_str());
+    if (io) {
+      r.doc.reset(loaded);
+      const PassResult back = replay(r, replayBlock, from, false);
+      const double db = std::max(maxDiff(live.L, back.L, 0, kPass), maxDiff(live.R, back.R, 0, kPass));
+      std::printf("# %s: saved, loaded and replayed: %s\n", name, dbfs(db).c_str());
+      expect(db == 0, (std::string("saved and loaded, the pass still replays bit for bit: ") + name).c_str());
+    }
+  }
   if (song || keyLock || liveBlock != 256 || replayBlock != 256) return;
   // ---- edits change the sound from where they are (pattern mode)
   auto lanePts = [&](int param) {
@@ -808,8 +872,9 @@ void testPassNull(const std::string& a, const std::string& b, int liveBlock, int
 }
 
 // Played from the middle: playback started inside the pass (a steady part, a scratch), a
-// trimmed clip start, a clip cut in two, the clips moved later (song mode).
-void testPickUp(const std::string& a, const std::string& b) {
+// trimmed clip start, a clip cut in two, the clips moved later, a copy after it (song mode;
+// J-179: the pass pattern's clip, `clips`: J-163's grouped playlist clips).
+void testPickUp(const std::string& a, const std::string& b, bool clips) {
   Rig r(a, b, false);
   const Tick bar = r.doc.song().barTicks();  // (88200 samples)
   const Tick from = 2 * bar;
@@ -819,16 +884,18 @@ void testPickUp(const std::string& a, const std::string& b) {
   const PassResult live = livePass(r, 256, true, from, false);
   expect(live.ok, "pick up: a pass is captured");
   if (!live.ok) return;
-  const pl::PassWritten w = storePass(r, live.perf, true);
+  const pl::PassWritten w = storePass(r, live.perf, true, nullptr, clips);
+  std::printf("# pick up: %s\n", clips ? "the pass as playlist clips" : "the pass as a pattern clip");
+  expect(clips ? w.clips.size() > 1 : w.clips.size() == 1 && w.pattern != kNoId, "pick up: the pass is written in the form asked for");
   const PassResult full = replay(r, 256, from, false);
   expect(maxDiff(live.L, full.L, 0, kPass) == 0, "pick up: the full replay is the live pass");
   const double spt = 88200.0 / static_cast<double>(bar);  // samples per tick
   // Playback from `tick` (inside the pass): the decks pick it up within a step; compared with
   // the full replay from there: the samples until it matches to -96 dBFS for good, and the
   // largest difference after `settle` samples.
-  auto midStart = [&](Tick tick, size_t span, const char* what, size_t settle, double tol) {
+  auto midStart = [&](Tick tick, size_t span, const char* what, size_t settle, double tol, Tick base = -1) {
     const PassResult mid = replay(r, 256, tick, false);
-    const size_t off = static_cast<size_t>(static_cast<double>(tick - from) * spt);
+    const size_t off = static_cast<size_t>(static_cast<double>(tick - (base < 0 ? from : base)) * spt);
     std::vector<float> ref(full.L.begin() + static_cast<long>(off), full.L.end());
     size_t lastBad = 0;
     double after = 0;
@@ -867,7 +934,7 @@ void testPickUp(const std::string& a, const std::string& b) {
     const Tick cutAt = from + 144;
     r.doc.editClips("", [&](std::vector<Clip>& v) {
       for (auto& c : v)
-        if (c.group == w.group) c.offset += cutAt - c.start, c.length -= cutAt - c.start, c.start = cutAt;
+        if (inPass(w, c.id)) c.offset += cutAt - c.start, c.length -= cutAt - c.start, c.start = cutAt;
     });
     const PassResult tr = replay(r, 256, from, false);
     const size_t off = static_cast<size_t>(144 * spt);
@@ -892,13 +959,39 @@ void testPickUp(const std::string& a, const std::string& b) {
   {
     r.doc.editClips("", [&](std::vector<Clip>& v) {
       for (auto& c : v)
-        if (c.group == w.group) c.start += 2 * bar;
+        if (inPass(w, c.id)) c.start += 2 * bar;
     });
     const PassResult mv = replay(r, 256, from + 2 * bar, false);
     const double d = maxDiff(full.L, mv.L, 0, kPass);
     std::printf("# clips moved two bars later: %s against the replay in place\n", dbfs(d).c_str());
     expect(d == 0, "the pass's clips moved later play the same from their new place, bit for bit");
     r.doc.undo();
+  }
+  // a copy after the pass (Duplicate, then moved onto the next bar: the decks keep in time with
+  // the project, so a pass plays the same where it lands on the beat as it was played): played
+  // from its start it is the pass, bit for bit; played from inside it the decks pick it up as
+  // they do in the original
+  {
+    const std::set<ObjectId> sel(w.clips.begin(), w.clips.end());
+    const std::vector<ObjectId> copies = ops::duplicateClips(r.doc, sel);
+    const Clip* c0 = copies.empty() ? nullptr : r.doc.song().clip(copies.front());
+    const Tick at = c0 ? (c0->start + bar - 1) / bar * bar : from;
+    if (c0) {
+      const Tick shift = at - c0->start;
+      const std::set<ObjectId> cs(copies.begin(), copies.end());
+      r.doc.editClips("", [&](std::vector<Clip>& v) {
+        for (auto& c : v)
+          if (cs.count(c.id)) c.start += shift;
+      });
+    }
+    const PassResult dup = replay(r, 256, at, false);
+    const double d = maxDiff(full.L, dup.L, 0, kPass);
+    std::printf("# a copy of the pass at tick %lld: %s against the replay of the original\n", static_cast<long long>(at), dbfs(d).c_str());
+    expect(copies.size() == w.clips.size() && at > from && d == 0, "a copy of the pass's clips plays the pass from its start, bit for bit");
+    const auto res = midStart(at + 144, 28000, "inside the copy (a steady part)", 32 + 128, 0.001, at);
+    expect(res.first <= 2048 && res.second, "playback started inside the copy: the decks pick the pass up as in the original");
+    r.doc.undo();  // (the move, then the copy)
+    if (!copies.empty()) r.doc.undo();
   }
   // outside the pass the decks are free: the hands play them
   {
@@ -915,10 +1008,39 @@ void testPickUp(const std::string& a, const std::string& b) {
   }
 }
 
+// J-179: a project holding both forms (a pass as J-163's playlist clips, from an earlier
+// version or the "Playlist clips" choice, and a pass as a pattern clip): each plays exactly
+// where it is placed, the other one's lanes (on the same controls) do not reach into it.
+void testMixed(const std::string& a, const std::string& b) {
+  Rig r(a, b, false);
+  const Tick bar = r.doc.song().barTicks();
+  const Tick from = 2 * bar, later = from + 8 * bar;
+  r.doc.addClip(r.pat, 0, 0);
+  r.doc.editClips("", [&](std::vector<Clip>& v) { v.back().length = 16 * bar; });
+  r.rebuild();
+  const PassResult live = livePass(r, 256, true, from, false);
+  expect(live.ok, "mixed: a pass is captured");
+  if (!live.ok) return;
+  const pl::PassWritten old = storePass(r, live.perf, true, nullptr, true);
+  r.doc.editClips("", [&](std::vector<Clip>& v) {
+    for (auto& c : v)
+      if (inPass(old, c.id)) c.start += later - from;
+  });
+  const pl::PassWritten now = storePass(r, live.perf, true);
+  expect(old.clips.size() > 1 && old.autos.size() == old.clips.size() && now.clips.size() == 1 && now.pattern != kNoId,
+         "mixed: one pass as playlist clips (moved 8 bars later), the same pass as a pattern clip where it was played");
+  const PassResult a1 = replay(r, 256, from, false);
+  const PassResult a2 = replay(r, 1024, later, false);
+  const double d1 = std::max(maxDiff(live.L, a1.L, 0, kPass), maxDiff(live.R, a1.R, 0, kPass));
+  const double d2 = std::max(maxDiff(live.L, a2.L, 0, kPass), maxDiff(live.R, a2.R, 0, kPass));
+  std::printf("# mixed: the pattern clip's pass %s, the playlist clips' pass %s\n", dbfs(d1).c_str(), dbfs(d2).c_str());
+  expect(d1 == 0, "mixed: the pass pattern's clip replays bit for bit beside the playlist clips of another pass");
+  expect(d2 == 0, "mixed: the playlist clips (J-163's form) replay bit for bit beside a pass pattern");
+}
+
 // A state lane an earlier pass plays over a new pass's time, the new one does not hold: the
 // new pass gets its own (off) lane, so the earlier state does not carry into it.
 void testOverlap(const std::string& a, const std::string& b) {
-  Rig r(a, b, false);
   pl::Performance one;
   one.startTick = 0, one.endTick = 3000, one.decks = 1;
   one.scale[0] = pl::PosScale(44100 * 12, kSr);
@@ -929,12 +1051,27 @@ void testOverlap(const std::string& a, const std::string& b) {
   two.clips.pop_back();
   for (auto& l : two.clips)
     for (auto& q : l.points) q.tick += 1000;
-  const pl::PassWritten w1 = pl::writePass(r.doc, r.ch, one, kNoId);
-  const pl::PassWritten w2 = pl::writePass(r.doc, r.ch, two, kNoId);
-  const AutomationClip* loop2 = passClip(r, w2, pl::deckParam(0, pl::DLoop));
-  expect(w1.clips.size() == 2 && w2.clips.size() == 2 && loop2 && loop2->points.size() == 1 && loop2->points[0].value == 0.0f,
-         "a later pass over an earlier one's loop gets its own loop lane (off)");
-  expect(w2.firstTrack >= w1.firstTrack + 2 && w2.group != w1.group, "the second pass goes on tracks of its own, in a group of its own");
+  for (const bool clips : {true, false}) {
+    Rig q(a, b, false);
+    const pl::PassWritten w1 = pl::writePass(q.doc, q.ch, one, kNoId, clips);
+    const pl::PassWritten w2 = pl::writePass(q.doc, q.ch, two, kNoId, clips);
+    const AutomationClip* loop2 = passClip(q, w2, pl::deckParam(0, pl::DLoop));
+    const char* form = clips ? " (playlist clips)" : " (pattern)";
+    expect(w1.lanes == 2 && w2.lanes == 2 && loop2 && loop2->points.size() == 1 && loop2->points[0].value == 0.0f,
+           (std::string("a later pass over an earlier one's loop gets its own loop lane (off)") + form).c_str());
+    if (clips) {
+      expect(w1.clips.size() == 2 && w2.clips.size() == 2 && w2.firstTrack >= w1.firstTrack + 2 && w2.group != w1.group,
+             "the second pass goes on tracks of its own, in a group of its own (playlist clips)");
+    } else {
+      const Clip* c1 = w1.clips.size() == 1 ? q.doc.song().clip(w1.clips[0]) : nullptr;
+      const Clip* c2 = w2.clips.size() == 1 ? q.doc.song().clip(w2.clips[0]) : nullptr;
+      const Pattern* p1 = q.doc.song().pattern(w1.pattern);
+      const Pattern* p2 = q.doc.song().pattern(w2.pattern);
+      expect(c1 && c2 && p1 && p2 && w1.pattern != w2.pattern && c2->track != c1->track && c2->start == 1000 && q.doc.song().clipLength(*c2) == 1000 &&
+                 p1->name == "Decks take 1" && p2->name == "Decks take 2" && q.doc.song().automations.empty(),
+             "the second pass is a pattern of its own (\"take 2\"), its clip on a track of its own");
+    }
+  }
 }
 
 // Projects from before J-163: a setup's parameter list from J-159 (56 values) gets the
@@ -949,6 +1086,18 @@ void testOldParams() {
     defaults = s.params[static_cast<size_t>(p)] == static_cast<float>(d.def);
   }
   expect(defaults, "a J-159 parameter list is completed with the state lanes' defaults");
+  // J-179: the song pass form is saved in the model (one pattern unless "Playlist clips")
+  {
+    pl::Model m, back;
+    const std::string plain = pl::modelToText(m);
+    m.songClips = true;
+    const std::string withClips = pl::modelToText(m);
+    pl::modelFromText(plain, back);  // (an empty model reads as "no model": the fields still come back)
+    const bool plainOk = !back.songClips;
+    pl::modelFromText(withClips, back);
+    expect(plain.find("songpass") == std::string::npos && plainOk && back.songClips && pl::modelToText(back).find("songpass clips\n") != std::string::npos,
+           "the setup's song pass form: one pattern by default (not written), Playlist clips saved and loaded");
+  }
   pl::PosScale sc(529200, kSr);
   bool exact = true;
   for (double x : {-88201.0, -1.5, 0.0, 1.0 / 256, 12345.67578125, 529199.99609375, 529200.0 + 88200.0})
@@ -1006,13 +1155,18 @@ int main(int argc, char** argv) {
     testPassNull(a, b, 1024, 64, false, false);
     testPassNull(a, b, 64, 256, true, false);
     testPassNull(a, b, 256, 256, true, true);
+    testPassNull(a, b, 256, 1024, true, false, true);  // (the "Playlist clips" choice: J-163's form)
   }
+  if (want("mixed")) testMixed(a, b);
   if (want("legacy")) {
     testLegacy(a, b, 256, 256, false, false);
     testLegacy(a, b, 1024, 64, false, false);
     testLegacy(a, b, 64, 256, true, false);
   }
-  if (want("pickup")) testPickUp(a, b);
+  if (want("pickup")) {
+    testPickUp(a, b, false);
+    testPickUp(a, b, true);
+  }
   if (want("overlap")) testOverlap(a, b);
   if (want("old")) testOldParams();
   if (want("streams")) testStreams(a, b);

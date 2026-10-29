@@ -468,6 +468,7 @@ struct Model {
   bool asked = false;            // the controller question was answered
   bool armed = true;             // records while Gridline records
   int recordAs = RecAutomation;  // a performance in the pattern (lanes and command keys), or a take
+  bool songClips = false;        // J-179: a song-mode pass as playlist clips (default: one pattern)
   Mapping map;
   std::vector<Take> takes;
   std::vector<PerfStart> starts;  // J-159: recorded performances' start states
@@ -643,8 +644,8 @@ struct TakeBuilder {
 // ------------------------------------------------------------------ performances (J-159, J-163)
 // A pass recorded as automation (J-163): one lane per control the pass used, the decks'
 // state included (position, play, wheel touch, mouse hand, loop, reverse, bend) beside
-// the hand's travel (wheel, mouse) and nudges. Song mode: automation clips placed where
-// the pass was played; pattern mode: pattern automation. Every lane is state: the decks
+// the hand's travel (wheel, mouse) and nudges. Song mode: a pattern of automation clips
+// placed where the pass was played (J-179); pattern mode: pattern automation. Every lane is state: the decks
 // can pick a pass up anywhere. Times are exact ticks (fractions kept) and position values
 // exact (AutoPoint::fine): an unedited replay is the same sample for sample.
 // J-159's form (a start note, notes on the command keys, lanes) is still built and plays
@@ -741,18 +742,23 @@ Tick clipOrigin(Document& doc, ObjectId pattern, ObjectId channel, Tick tick, Ti
 // the tests of projects recorded with it.)
 void writePerformance(Document& doc, ObjectId pattern, ObjectId channel, double origin, const Performance& perf, bool song);
 
-// J-163: writes a pass as automation. Song mode (`pattern` kNoId): automation clips placed
-// where the pass was played, on adjacent free playlist tracks, in one clip group; a deck
-// state an earlier pass drives over that time gets a lane too (the earlier one stays as it
-// is). Pattern mode: lanes in `pattern`. The start state goes into the channel's model.
+// J-163: writes a pass as automation. Song mode (`pattern` kNoId), J-179: a new pattern
+// "<channel> take N" holding one automation clip per lane, placed as one pattern clip where
+// the pass was played (as long as the pass; the setup's instrument track or a free track).
+// With `playlistClips` (the setup's "Playlist clips" choice, or when no pattern can be
+// added): automation clips placed where the pass was played, on adjacent free playlist
+// tracks, in one clip group. Either way a deck state an earlier pass drives over that time
+// gets a lane too (the earlier one stays as it is). Pattern mode: clips in `pattern`. The
+// start state goes into the channel's model.
 struct PassWritten {
-  std::vector<ObjectId> clips;  // song mode: the placed clips (in lane order)
-  std::vector<ObjectId> autos;  // their automation clips
+  std::vector<ObjectId> clips;  // song mode: the placed clips (the pattern clip, or one per lane in lane order)
+  std::vector<ObjectId> autos;  // playlist clips: their automation clips
+  ObjectId pattern = kNoId;     // J-179: the pass pattern (song mode)
   int firstTrack = -1;
   ObjectId group = kNoId;
   int lanes = 0;
 };
-PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, ObjectId pattern);
+PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, ObjectId pattern, bool playlistClips = false);
 // A clip's name: "<channel> <parameter>" ("Platter A wheel").
 std::string laneName(const std::string& channel, int param);
 // The lane point list of a pass lane at tick `origin` (content tick 0).
