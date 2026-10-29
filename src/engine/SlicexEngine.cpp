@@ -636,7 +636,7 @@ bool Engine::active() const {
 
 void Engine::noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props) {
   if (!aux_ || !st_) return;
-  const int k = static_cast<int>(std::lround(pitch));
+  const int k = noteKey(pitch, props);  // J-180: the written key; the note's fine pitch tunes the region
   if (k < 0 || k > 127) return;
   const int deck = props.color & 1;
   const auto& layers = aux_->keyMap[static_cast<size_t>(deck)][static_cast<size_t>(k)];
@@ -681,12 +681,12 @@ void Engine::noteOn(uint32_t id, double pitch, float velocity, const NoteProps& 
   for (int i = 0; i < m; ++i) {
     if (gain[static_cast<size_t>(i)] <= 1e-6) continue;
     const int e = layers[static_cast<size_t>(i)];  // deck * kDeckStride + region (explicit keys can layer the other deck)
-    startVoice(e / kDeckStride, e % kDeckStride, gain[static_cast<size_t>(i)], pitch, velocity, props, id, first);
+    startVoice(e / kDeckStride, e % kDeckStride, gain[static_cast<size_t>(i)], pitch - k, velocity, props, id, first);
     first = false;
   }
 }
 
-void Engine::startVoice(int deck, int region, double layerGain, double pitch, float velocity, const NoteProps& props, uint32_t id, bool master) {
+void Engine::startVoice(int deck, int region, double layerGain, double tune, float velocity, const NoteProps& props, uint32_t id, bool master) {
   const Model& md = aux_->model;
   const Deck& dk = md.decks[static_cast<size_t>(deck)];
   if (region < 0 || static_cast<size_t>(region) >= dk.regions.size()) return;
@@ -738,7 +738,7 @@ void Engine::startVoice(int deck, int region, double layerGain, double pitch, fl
   v.startAmt = 2.0 * rec[RStartAmt] / 12800.0;
   v.vx = props.modX - 0.5, v.vy = props.modY - 0.5;
   const double masterPitch = prm(s, pp::SlPitch, 0) * 100.0;
-  v.fine = (pitch - std::lround(pitch)) * 100.0;
+  v.fine = tune * 100.0;  // the note's tuning beyond its key (fine pitch, channel pitch), cents
   v.baseRate = smp->sampleRate / ctx_.sampleRate * std::pow(2.0, (pitchC + masterPitch + v.fine) / 1200.0);
   v.rate = v.baseRate;
   v.delay = static_cast<int64_t>(std::llround(ctx_.sampleRate * delayBeats * 60.0 / std::max(1.0, ctx_.tempo)));

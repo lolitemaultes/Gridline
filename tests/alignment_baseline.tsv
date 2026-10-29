@@ -152,9 +152,6 @@ gl.scratcher	row	6
 gl.send	label	1
 gl.shaper	baseline	9
 gl.shaper	ctl-row	9
-gl.slicer	baseline	1
-gl.slicer	ctl-row	12
-gl.slicer	row	12
 gl.spectramorph	baseline	4
 gl.spectramorph	gap	3
 gl.spectramorph	row	3

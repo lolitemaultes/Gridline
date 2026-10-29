@@ -20,9 +20,26 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   count), a folder lists its own presets and its sub-folders', the search looks inside the selected
   folder, the column heads sort the list, the tree scrolls without moving the window, and the
   selected preset stays selected while you search or sort.
+- Notes with a fine pitch now keep their pitch in Kerf: a note tuned up or down (up to an octave
+  either way) plays the chop of its own key at that pitch, so imported FL Studio projects that pitch
+  Slicex chops this way play as written. Before, the tuning moved the note to another key, so it
+  played a different chop or nothing. The channel and master pitch also tune the chops without changing which chop plays,
+  and the same holds for drum pads and kit pieces. The channel's key range checks the written key.
 
 ### Changed
 
+- Kerf's editor is laid out band by band like a classic region slicer and finished in Gridline's
+  own style. The view beside the filter has tabs: AMP (envelope and a velocity curve), REGION
+  (the selected region's audio) and DETECT (slicing method, the loop with its cuts, sensitivity and
+  gap). The deck bar gains a loop button for region playback, File, Sample, Edit, Tools, Regions,
+  View, Snap, Select and Zoom menus, undo and redo, a button that writes the regions into the
+  current pattern as notes, and a handle to drag the loop out. The wave view draws peaks and RMS in
+  layers, highlights the selected and hovered regions, has a time ruler, zooms smoothly (Shift +
+  wheel scrolls) and, when empty, shows a drop zone that also opens the file picker. Markers can
+  snap to zero crossings or sixteenths. A display selector hides the wave editor or the region
+  panel (or both), a button hides the keyboard, an options menu holds key macros and playback
+  settings, and right-clicking a key assigns the current region to it. The editor now scales down
+  to fit short windows (such as 1280 x 800) instead of being cut off at the bottom.
 - A song-mode Platter pass is one new pattern holding all its automation clips ("Platter take
   1"), placed once on the playlist where you played it and as long as the pass, instead of a
   stack of separate clips on many tracks. The curves show on that clip, a double-click opens one

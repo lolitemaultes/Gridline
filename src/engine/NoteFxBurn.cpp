@@ -47,6 +47,7 @@ std::vector<Note> burnNoteFx(const Song& song, ObjectId channel, const std::vect
     on.kind = NoteMsg::On;
     on.id = id++;
     on.pitch = static_cast<float>(n.pitch + n.fine / 100.0);
+    on.detune = static_cast<float>(n.fine / 100.0);
     on.velocity = std::clamp(n.velocity / 127.0f, 0.0f, 1.0f);
     on.color = static_cast<int16_t>(n.color);
     on.pan = n.pan / static_cast<float>(kNotePanMax);
@@ -81,8 +82,8 @@ std::vector<Note> burnNoteFx(const Song& song, ObjectId channel, const std::vect
     n.start = it->second.start;
     n.length = std::max<Tick>(1, at - n.start);
     const double p = static_cast<double>(m.pitch);
-    n.pitch = std::clamp(static_cast<int>(std::lround(p)), 0, 127);
-    n.fine = std::clamp(static_cast<int>(std::lround((p - std::lround(p)) * 100.0)), -kNoteFineMax, kNoteFineMax);
+    n.pitch = std::clamp(static_cast<int>(std::lround(p - static_cast<double>(m.detune))), 0, 127);  // J-180: the key keeps its fine pitch
+    n.fine = std::clamp(static_cast<int>(std::lround((p - n.pitch) * 100.0)), -kNoteFineMax, kNoteFineMax);
     n.velocity = std::clamp(static_cast<int>(std::lround(m.velocity * 127.0f)), 1, 127);
     n.color = std::clamp(static_cast<int>(m.color), 0, kNoteColors - 1);
     n.pan = std::clamp(static_cast<int>(std::lround(m.pan * kNotePanMax)), -kNotePanMax, kNotePanMax);

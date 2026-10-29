@@ -486,6 +486,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       e.props.release = sp.release == kNoteReleaseDefault ? 0.5f : static_cast<float>(sp.release) / 127.0f;
       e.props.modX = sp.modX == kNoteModCentre ? 0.5f : static_cast<float>(sp.modX) / static_cast<float>(kNoteModMax + 1);
       e.props.modY = sp.modY == kNoteModCentre ? 0.5f : static_cast<float>(sp.modY) / static_cast<float>(kNoteModMax + 1);
+      e.props.detune = static_cast<float>(sp.fine) / 100.0f;  // J-180: the step keeps its key
       out.push_back(e);
     }
   }
@@ -516,6 +517,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       e.props.modX = static_cast<float>(n.modX) / static_cast<float>(kNoteModMax + 1);
       e.props.modY = static_cast<float>(n.modY) / static_cast<float>(kNoteModMax + 1);
       e.props.color = n.color;
+      e.props.detune = static_cast<float>(n.fine) / 100.0f;  // J-180: key-mapped instruments keep the written key
       if (n.release == kNoteReleaseDefault) e.props.release = 0.5f;  // exact neutral values
       if (n.modX == kNoteModCentre) e.props.modX = 0.5f;
       if (n.modY == kNoteModCentre) e.props.modY = 0.5f;
@@ -539,6 +541,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
         e.off += d;
         e.velocity = vel;
         e.pitch += static_cast<float>(c.echo.pitch) * static_cast<float>(k) / 100.0f;
+        e.props.detune += static_cast<float>(c.echo.pitch) * static_cast<float>(k) / 100.0f;  // J-180: echoes keep the key
         float pan = c.echo.pingPong && k % 2 == 0 ? -c.echo.pan : c.echo.pan;
         e.props.pan = std::clamp(e.props.pan + pan, -1.0f, 1.0f);
         e.props.modX = std::clamp(e.props.modX + c.echo.modX * 0.5f * static_cast<float>(k), 0.0f, 1.0f);
@@ -565,8 +568,12 @@ std::vector<NoteEv> compilePatternChannel(const Song& song, const Pattern& p, Ob
   addLayerNotes(song, p, *c, 0, out);
   if (out.size() != own) sortEvents(out);
   if (!c->fullKeyRange()) {  // J-31: the channel's key range (layer splits)
-    const float lo = static_cast<float>(c->keyLo) - 0.5f, hi = static_cast<float>(c->keyHi) + 0.5f;
-    out.erase(std::remove_if(out.begin(), out.end(), [&](const NoteEv& e) { return e.pitch < lo || e.pitch >= hi; }), out.end());
+    out.erase(std::remove_if(out.begin(), out.end(),
+                             [&](const NoteEv& e) {
+                               const int k = noteKey(e.pitch, e.props);  // J-180: the written key (fine pitch apart)
+                               return k < c->keyLo || k > c->keyHi;
+                             }),
+              out.end());
   }
   return out;
 }

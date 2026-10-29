@@ -648,12 +648,16 @@ void AudioEngine::sendOn(const ProgChannel& ch, uint32_t id, float pitch, float 
   bool chain = false;
   for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
   if (!chain) {
-    if (props)
-      ch.rt->gen->noteOn(id, pitch + ch.pitchOffset, velocity, offset, *props);
+    // J-180: the channel / master pitch tunes the note without moving its key (slices, pads).
+    NoteProps np = props ? *props : NoteProps{};
+    np.detune += ch.pitchOffset;
+    if (!np.neutral())
+      ch.rt->gen->noteOn(id, pitch + ch.pitchOffset, velocity, offset, np);
     else
       ch.rt->gen->noteOn(id, pitch + ch.pitchOffset, velocity, offset);
-    ch.rt->keys.on(id, pitch, velocity);  // J-77
-    hits_.add(ch.id, offset, static_cast<int>(std::lround(pitch)), ch.midiPort, NoteHitBus::Note);  // J-165
+    const float key = pitch - (props ? props->detune : 0.0f);  // J-180: the written key lights up
+    ch.rt->keys.on(id, key, velocity);  // J-77
+    hits_.add(ch.id, offset, static_cast<int>(std::lround(key)), ch.midiPort, NoteHitBus::Note);  // J-165
     return;
   }
   NoteMsg m;
@@ -668,6 +672,7 @@ void AudioEngine::sendOn(const ProgChannel& ch, uint32_t id, float pitch, float 
     m.release = props->release;
     m.modX = props->modX;
     m.modY = props->modY;
+    m.detune = props->detune;
   }
   ch.rt->inbox.push(m);
 }
@@ -1940,12 +1945,13 @@ void AudioEngine::runNoteFx(const Program* p, int n) {
           np.modX = m.modX;
           np.modY = m.modY;
           np.color = m.color;
+          np.detune = m.detune + tc->pitchOffset;  // J-180
           if (np.neutral())
             g->noteOn(m.id, m.pitch + tc->pitchOffset, m.velocity, off);
           else
             g->noteOn(m.id, m.pitch + tc->pitchOffset, m.velocity, off, np);
-          tc->rt->keys.on(m.id, m.pitch, m.velocity);  // J-77: the notes the chain plays light up
-          hits_.add(tc->id, off, static_cast<int>(std::lround(m.pitch)), tc->midiPort, NoteHitBus::Note);  // J-165
+          tc->rt->keys.on(m.id, m.pitch - m.detune, m.velocity);  // J-77: the notes the chain plays light up
+          hits_.add(tc->id, off, static_cast<int>(std::lround(m.pitch - m.detune)), tc->midiPort, NoteHitBus::Note);  // J-165
         }
         else if (m.kind == NoteMsg::Off)
           g->noteOff(m.id, off), tc->rt->keys.off(m.id);

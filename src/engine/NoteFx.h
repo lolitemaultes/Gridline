@@ -31,6 +31,9 @@ struct NoteMsg {
   int16_t target = -1;     // -1 = this channel; else a Program channel index
   // Per-note properties (see NoteProps); processors that create notes may leave them neutral.
   float pan = 0, release = 0.5f, modX = 0.5f, modY = 0.5f;
+  // J-180: semitones of `pitch` beyond the note's key (its fine pitch, NoteProps::detune);
+  // processors that set a new pitch reset it.
+  float detune = 0;
 };
 
 // Fixed-capacity event list (stays sorted by offset when sort() is called).

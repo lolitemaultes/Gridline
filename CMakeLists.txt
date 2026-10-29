@@ -929,6 +929,12 @@ target_link_libraries(gridline_tests_j176 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j176 PRIVATE tests src)
 target_compile_options(gridline_tests_j176 PRIVATE ${GL_WARN})
 add_test(NAME j176_slicex_long_path COMMAND gridline_tests_j176 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-180: a note's fine pitch (and channel / master pitch) tunes key-mapped instruments without moving the key.
+add_executable(gridline_tests_j180 tests/test_j180.cpp)
+target_link_libraries(gridline_tests_j180 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j180 PRIVATE tests src)
+target_compile_options(gridline_tests_j180 PRIVATE ${GL_WARN})
+add_test(NAME j180_note_fine_pitch COMMAND gridline_tests_j180 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-109: Stop releases every sound outside the song; Stop twice (panic) silences tails too.
 add_executable(gridline_tests_j109 tests/test_j109.cpp)
 target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
@@ -1486,6 +1492,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j110_play_state -P ${CMAKE_SOURCE_DIR}/tests/j110_play_state.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j110_play_state_app PROPERTIES TIMEOUT 300)
+
+    # J-181: Kerf's editor: drop zone, loading, tabs and display modes respond, fits at 1280 x 800, layout audit clean.
+    add_test(NAME j181_kerf_ui_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j181_kerf_ui -P ${CMAKE_SOURCE_DIR}/tests/j181_kerf_ui.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j181_kerf_ui_app PROPERTIES TIMEOUT 600)
 
     # J-112: Space / the Play button / the remote Play while Seltmann's pattern plays (transport stopped) stop the
     # pattern and leave the transport stopped; the next Play plays the song. Window focused or not.

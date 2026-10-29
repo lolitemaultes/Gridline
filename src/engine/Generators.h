@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <atomic>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include "../core/PluginInfo.h"
@@ -157,8 +158,14 @@ struct NoteProps {
   float modX = 0.5f;     // instrument-defined 0..1 (sampler: filter cutoff), 0.5 = neutral
   float modY = 0.5f;     // instrument-defined 0..1 (sampler: filter resonance), 0.5 = neutral
   int color = 0;         // colour group / MIDI channel 0..15
-  bool neutral() const { return pan == 0 && release == 0.5f && modX == 0.5f && modY == 0.5f && color == 0; }
+  // J-180: semitones of the note-on pitch beyond the note's key: the note's fine pitch plus the
+  // channel / master pitch. Key-mapped instruments (slices, pads, kit pieces) pick what they play
+  // by noteKey() and tune it by the rest, so a fine-pitched note never lands on another key.
+  float detune = 0;
+  bool neutral() const { return pan == 0 && release == 0.5f && modX == 0.5f && modY == 0.5f && color == 0 && detune == 0; }
 };
+// J-180: the key a note was written on (its pitch without the detune).
+inline int noteKey(double pitch, const NoteProps& p) { return static_cast<int>(std::lround(pitch - static_cast<double>(p.detune))); }
 
 // Linear pitch glide helper for voices (slide notes, porta). Advance once per sample.
 struct PitchGlide {

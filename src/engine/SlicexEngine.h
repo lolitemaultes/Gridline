@@ -196,7 +196,7 @@ class Engine {
     int blockPos = 0;
   };
   void control(Voice& v);
-  void startVoice(int deck, int region, double layerGain, double pitch, float velocity, const NoteProps& props, uint32_t id, bool master);
+  void startVoice(int deck, int region, double layerGain, double tune, float velocity, const NoteProps& props, uint32_t id, bool master);
   double articulator(Voice& v, int t, double dt);
   const PluginState* st_ = nullptr;
   const Aux* aux_ = nullptr;

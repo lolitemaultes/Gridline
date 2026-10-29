@@ -681,7 +681,7 @@ msgstr ""
 msgid "Select"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/app/PluginEditorsInstrSlicer.cpp
 msgid "Select a pattern first"
 msgstr ""
 
@@ -1445,7 +1445,7 @@ msgstr ""
 msgid "TRACKING"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Tempo"
 msgstr ""
 
@@ -1953,7 +1953,7 @@ msgstr ""
 msgid "Quarter beat"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/packs/models/spectramorph_ui.cpp
+#: src/app/ChopUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/models/spectramorph_ui.cpp
 msgid "Rate"
 msgstr ""
 
@@ -2349,7 +2349,7 @@ msgstr ""
 msgid "Read the chords the pattern's notes already form (one per chord slot)"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp
 msgid "Redo"
 msgstr ""
 
@@ -3153,7 +3153,7 @@ msgstr ""
 msgid "Left the project"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "Length"
 msgstr ""
 
@@ -6181,7 +6181,7 @@ msgstr ""
 msgid "Scrolling past the start or end of a view stretches a little and springs back"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/LauncherUi.cpp src/app/Menus.cpp
+#: src/app/Dialogs.cpp src/app/LauncherUi.cpp src/app/Menus.cpp src/app/PluginEditorsInstrSlicer.cpp
 msgid "Settings"
 msgstr ""
 
@@ -6593,7 +6593,7 @@ msgstr ""
 msgid "Browse"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/ExportUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Channels"
 msgstr ""
 
@@ -8933,7 +8933,7 @@ msgstr ""
 msgid "MIDI settings..."
 msgstr ""
 
-#: src/app/Menus.cpp
+#: src/app/Menus.cpp src/app/PluginEditorsInstrSlicer.cpp
 msgid "Macros"
 msgstr ""
 
@@ -10582,15 +10582,51 @@ msgid "Sustain at this point"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Add a marker in the selected region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Assign the current region to this key"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Back to its automatic key"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Clear markers"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
-msgid "Detect slices"
+msgid "Clear the markers"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Click: play the key (selects its region) · right-click: assign the region to the key"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Click: play the region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Current region: click for the list, mouse wheel to step"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Drag to scroll the wave view, wheel to zoom"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Edit by hand"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Edit markers by hand"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Edit the cuts by hand"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10602,7 +10638,39 @@ msgid "Even slices: 32"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Even slices: 4"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Even slices: 8"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "First region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Keyboard"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Last region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Load a loop"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Load a loop..."
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Map regions upwards from the base note"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Modulation X (filter cutoff) and Y (resonance): drag"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10610,7 +10678,35 @@ msgid "Next region"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "No loop loaded"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "No loop: drop one on the wave view"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Previous region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Regions written to the piano roll"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Remove the loop"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Reset every region's settings"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Reset this region's settings"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Select the region on this key"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10623,6 +10719,54 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Show the whole loop"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Slice at the hits"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Tempo of the loop at its length in beats (Fit tempo)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "The loop brought its own regions: they play as they are stored"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp src/app/ScriptUi.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp
+msgid "Undo"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Write the regions to the piano roll"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "mono"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "regions · click: select + play · drag a marker · double-click: add marker · right-click a marker: remove · wheel: zoom, Shift+wheel: scroll"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "regions · click: select + play · drag a marker: move the region's start · wheel: zoom, Shift+wheel: scroll · drop a loop"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp src/packs/spacefx/spacefx_ui.cpp
+msgid "stereo"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicerKit.cpp
+msgid "Drop a loop here"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicerKit.cpp
+msgid "Drop a loop here, or click to choose one"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicerKit.cpp
+msgid "or click to load one: WAV, FLAC, MP3, Ogg, WavPack"
 msgstr ""
 
 #: src/app/PluginEditorsK3.cpp
@@ -11923,10 +12067,6 @@ msgstr ""
 
 #: src/app/ScriptUi.cpp
 msgid "Time the last run took"
-msgstr ""
-
-#: src/app/ScriptUi.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp
-msgid "Undo"
 msgstr ""
 
 #: src/app/ScriptUi.cpp
@@ -17427,10 +17567,6 @@ msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
 msgid "latency"
-msgstr ""
-
-#: src/packs/spacefx/spacefx_ui.cpp
-msgid "stereo"
 msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp

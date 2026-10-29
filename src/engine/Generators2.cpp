@@ -122,6 +122,8 @@ class PadsGen final : public Generator {
     int n = static_cast<int>(std::lround(param(*state_, padE(p, PadNote), -1)));
     return n >= 0 ? n : static_cast<int>(std::lround(param(*state_, PadsBaseNote, 60))) + p;
   }
+  // J-180: a pad plays on the note's written key (its fine pitch / the channel pitch never pick another pad).
+  void onNoteOnEx(uint32_t id, double pitch, float vel, const NoteProps& np) override { onNoteOn(id, pitch - np.detune, vel); }
   void onNoteOn(uint32_t id, double pitch, float vel) override {
     int note = static_cast<int>(std::lround(pitch));
     for (int p = 0; p < pp::kPadsAll; ++p)
@@ -1052,8 +1054,10 @@ class SlicerGen final : public Generator {
       return;
     }
     noteModX_ = np.modX - 0.5, noteModY_ = np.modY - 0.5;
+    detune_ = np.detune;
     onNoteOn(id, pitch, vel);
     noteModX_ = noteModY_ = 0;
+    detune_ = 0;
   }
   void onNoteOn(uint32_t id, double pitch, float vel) override {
     using namespace pp;
@@ -1064,7 +1068,7 @@ class SlicerGen final : public Generator {
     SamplePtr smp = aux_ ? aux_->sample() : nullptr;
     if (!smp || nSlices_ == 0) return;
     const PluginState& s = *state_;
-    int note = static_cast<int>(std::lround(pitch));
+    int note = static_cast<int>(std::lround(pitch - detune_));  // J-180: the written key (fine / channel pitch tune the slice)
     int k = -1;
     for (int j = 0; j < nSlices_ && k < 0; ++j)  // regions assigned to a key
       if (static_cast<int>(std::lround(param(s, slParam2(j, SliceKey), -1))) == note) k = j;
@@ -1201,7 +1205,7 @@ class SlicerGen final : public Generator {
   int nSlices_ = 0;
   double sr_ = 44100, pitch_ = 0, speed_ = 1, fadeIn_ = 0, fadeOut_ = 0, cutoff_ = 20000, reso_ = 0, panL_ = 1, panR_ = 1, velAmt_ = 1;
   int base_ = 60, ftype_ = 0, chromatic_ = -1;
-  double modX_ = 0.5, modY_ = 0.5, noteModX_ = 0, noteModY_ = 0;
+  double modX_ = 0.5, modY_ = 0.5, noteModX_ = 0, noteModY_ = 0, detune_ = 0;  // detune_: J-180
   bool reverse_ = false, playToEnd_ = false, hold_ = false, mono_ = false, declick_ = true;
   float vol_ = 0.8f;
   size_t next_ = 0;

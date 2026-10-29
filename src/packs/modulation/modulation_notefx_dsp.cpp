@@ -657,7 +657,7 @@ class LevelScaler final : public NoteFx {
         }
         y = std::clamp(y, lo, hi);
         if (pitch)
-          m.pitch = static_cast<float>(std::clamp(y * 127.0, 0.0, 127.0));
+          m.pitch = static_cast<float>(std::clamp(y * 127.0, 0.0, 127.0)), m.detune = 0;
         else
           m.velocity = static_cast<float>(y);
       }
@@ -680,7 +680,7 @@ class LevelScaler final : public NoteFx {
                        o = prm(s, vsRef(t, VfOffset)), ten = prm(s, vsRef(t, VfTension)), J = prm(s, vsRef(t, VfHumanize));
           if (mul == 1 && o == 0 && ten == 0 && J == 0) continue;
           const double lo = t < 2 ? 0.0 : -1.0, hi = 1.0;
-          const double key = std::nearbyint(m.pitch);
+          const double key = std::nearbyint(m.pitch - m.detune);  // J-180: the written key (fine pitch apart)
           double v = t == 0 ? m.velocity : t == 1 ? m.release : t == 2 ? (m.pitch - key) / 12.0 : t == 3 ? m.pan : t == 4 ? m.modX * 2.0 - 1.0 : m.modY * 2.0 - 1.0;
           const double x = std::clamp((v - lo) / (hi - lo), 0.0, 1.0);
           double r = std::clamp(lo + vsRefCurve(x, c, mul, o, ten) * (hi - lo), lo, hi);
@@ -694,7 +694,7 @@ class LevelScaler final : public NoteFx {
           switch (t) {
             case 0: m.velocity = f; break;
             case 1: m.release = f; break;
-            case 2: m.pitch = static_cast<float>(key + r * 12.0); break;
+            case 2: m.pitch = static_cast<float>(key + r * 12.0), m.detune = static_cast<float>(r * 12.0); break;
             case 3: m.pan = f; break;
             case 4: m.modX = static_cast<float>((r + 1.0) * 0.5); break;
             default: m.modY = static_cast<float>((r + 1.0) * 0.5); break;
@@ -767,7 +767,7 @@ class NoteScriptFx final : public NoteFx {
           dropped_[dropN_++ % kDrop] = m.id;
           continue;
         }
-        if (!p.pitch.empty()) m.pitch = static_cast<float>(std::clamp(p.pitch.eval(v, &rng_), 0.0, 127.0));
+        if (!p.pitch.empty()) m.pitch = static_cast<float>(std::clamp(p.pitch.eval(v, &rng_), 0.0, 127.0)), m.detune = 0;
         if (!p.velocity.empty()) m.velocity = static_cast<float>(std::clamp(p.velocity.eval(v, &rng_), 0.0, 1.0));
       } else if (m.kind == NoteMsg::Off) {
         bool drop = false;

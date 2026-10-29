@@ -199,6 +199,8 @@ class MembraneKitGen final : public Generator {
     v->age = ++clock_;
     v->strike(p, vel, 0.0, sr_, static_cast<uint32_t>(clock_ * 7919u + static_cast<uint64_t>(c)));
   }
+  // J-180: kit pieces play on the note's written key (fine / channel pitch never pick another piece).
+  void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& np) override { onNoteOn(id, pitch - np.detune, velocity); }
   void onNoteOn(uint32_t id, double pitch, float velocity) override {
     const int note = static_cast<int>(std::lround(pitch));
     if (data_)
