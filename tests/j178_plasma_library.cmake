@@ -4,7 +4,8 @@
 #  - a bank folder in the tree: the list shows its presets and its sub-folders', the folder
 #    is selected and opens (its sub-folders appear);
 #  - a sub-folder below it, "All Serum presets", "User presets" (empty) and "Factory";
-#  - a preset row: one click selects it, a double click opens it (factory preset).
+#  - a preset row: one click selects it, a double click opens it (factory preset). The UI clock is
+#    fixed (--fixed-dt 16) so the two clicks 8 frames apart are a double click on any runner speed.
 # The browser reports itself through the dev points "plasma.browser" (pt 0: x = presets
 # listed, v = selected row, k = selected folder: -2 factory, -1 user, -3 all, else its tree
 # index; pt 1: x = presets opened), "plasma.folders" (one point per folder row, k as above)
@@ -63,7 +64,7 @@ set(script "3 waitfor plasma-library-ready 60
 76 pts plasma.browser
 ")
 file(WRITE "${OUT}/script.txt" "${script}")
-execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --plugin gl.plasma --size 1600x1000 --frames 82
+execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --fixed-dt 16 --plugin gl.plasma --size 1600x1000 --frames 82
                         --screenshot "${OUT}/browser.ppm" --dev-input "${OUT}/script.txt"
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
 if(NOT rc EQUAL 0)
