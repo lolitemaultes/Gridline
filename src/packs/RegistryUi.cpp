@@ -25,6 +25,7 @@ int armTransportRecording(App& a, ObjectId track);
 namespace gl::packs::platter {
 void tick(App& a);
 bool claimMidi(App& a, const std::string& device);
+bool recordsWithTransport(App& a);
 }  // namespace gl::packs::platter
 
 #define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack) X(tideline) X(seltmann) X(plasma) X(mini) X(platter)
@@ -45,6 +46,8 @@ void drawWindows(App& a) {
 }
 
 bool claimMidi(App& a, const std::string& device) { return platter::claimMidi(a, device); }
+
+bool recordsWithTransport(App& a) { return platter::recordsWithTransport(a); }
 
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel) { return edison::openAudioEditor(a, path, channel); }
 

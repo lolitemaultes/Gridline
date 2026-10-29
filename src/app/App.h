@@ -292,7 +292,8 @@ class App {
   AudioRecorder audioRec;
   bool audioRecSession = false, audioRecFinishing = false;
   double audioRecStopTime = 0;
-  int audioRecLoopRestore = -1;  // looping to restore after a session (-1 = unchanged)
+  int audioRecLoopRestore = -1;  // looping to restore once nothing records past the song end (-1 = unchanged)
+  bool recRollingPrev = false;   // last frame: the record button armed and the transport rolling (J-175)
   bool audioRecArmedPrev = false;
   ObjectId clipProps = kNoId;    // audio clip properties window
   void processAudioRecording();  // per frame (AudioRecordUi.cpp)

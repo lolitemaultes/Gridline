@@ -45,6 +45,7 @@ struct DeckState {
   bool group = false;       // its undo group is open (the whole pass is one undo step)
   ObjectId passPat = kNoId;  // the pattern it records into
   bool passSong = false;
+  Tick passSongEnd = -1;  // where the song ended as the pass began (dev trace, J-175)
   double stopAt = -1;  // when the transport was seen stopped with the group open
   std::vector<CaptureEvent> buf;
   std::unordered_map<uint32_t, uint8_t> ledSent;  // (status << 8 | num) -> value sent
@@ -88,7 +89,7 @@ ObjectId choosePass(App& a, ObjectId channel, bool song) {
 // GRIDLINE_PLATTER_PASS_VIEW the piano roll opens on the pass with a lane, the playlist, the
 // channel rack ("rack": the pass pattern's automation clips as rows), or
 // ("automation:<parameter>") the automation editor on the pass's clip of that parameter.
-void devPass(App& a, ObjectId ch, ObjectId pattern, const PassWritten& w) {
+void devPass(App& a, ObjectId ch, ObjectId pattern, const PassWritten& w, const Performance& perf, Tick songEnd) {
   devsig::reach("platter-pass");
   static const bool trace = std::getenv("GRIDLINE_PLATTER_TRACE") != nullptr;
   const Pattern* p = a.doc.song().pattern(pattern);
@@ -106,8 +107,10 @@ void devPass(App& a, ObjectId ch, ObjectId pattern, const PassWritten& w) {
     for (const auto& cl : s.playlist) grouped += cl.group == w.group && w.group != kNoId ? 1 : 0;
     int perfPatterns = 0;
     for (const auto& q : s.patterns) perfPatterns += holdsPerformance(q, ch) ? 1 : 0;
-    std::printf("platter: pass clips %zu grouped %zu track %d points %zu exact %zu patterns-with-pass %d undo %zu [%s]\n", w.clips.size(), grouped,
-                w.firstTrack, points, fines, perfPatterns, a.doc.history().position(), names.c_str());
+    // (J-175: the ticks it spans and where the song ended as it began: a pass runs on past the end)
+    std::printf("platter: pass clips %zu grouped %zu track %d points %zu exact %zu patterns-with-pass %d ticks %.0f %.0f song-end %lld undo %zu [%s]\n",
+                w.clips.size(), grouped, w.firstTrack, points, fines, perfPatterns, perf.startTick, perf.endTick,
+                static_cast<long long>(songEnd), a.doc.history().position(), names.c_str());
     std::fflush(stdout);
   }
   if (trace && p) {
@@ -181,6 +184,8 @@ void beginPass(App& a, ObjectId ch, DeckState& d) {
   d.group = true;
   d.passSong = a.engine.mode() == PlayMode::Song;
   d.passPat = d.passSong ? kNoId : choosePass(a, ch, false);
+  const auto& prog = a.engine.program();
+  d.passSongEnd = prog ? prog->songLoopEnd : -1;
 }
 
 // A performance pass ended (J-163): its lanes as automation clips (song mode) or as the
@@ -190,7 +195,7 @@ void endPass(App& a, ObjectId ch, DeckState& d, const Performance& perf) {
     const PassWritten w = writePass(a.doc, ch, perf, d.passSong ? kNoId : d.passPat);
     const ObjectId pat = d.passPat;
     closePass(a, d);
-    devPass(a, ch, pat, w);
+    devPass(a, ch, pat, w, perf, d.passSongEnd);
   }
   closePass(a, d);
 }
@@ -272,6 +277,17 @@ bool claimMidi(App& a, const std::string& device) {
   return hub::claimed(hub::deviceId(device)) || gLearning;
 }
 
+bool recordsWithTransport(App& a) {
+  const Song& song = a.doc.song();
+  for (const auto& [id, d] : decks()) {
+    const Channel* c = song.channel(id);
+    if (!c || c->plugin.type != kType || !d.hasModel || !d.m.armed) continue;
+    for (const DeckModel& dm : d.m.deck)
+      if (dm.file >= 0) return true;
+  }
+  return false;
+}
+
 void tick(App& a) {
   gLearning = learningNow();
   learningNow() = false;
@@ -317,6 +333,9 @@ void tick(App& a) {
     for (int k = 0; k < kDecks; ++k) marks(g, k, mk[k]);
     LiveView lvA;
     liveView(g, 0, lvA);
+    if (lvA.capturing && a.engine.playing() && a.engine.mode() == PlayMode::Song)  // (dev hook, J-175)
+      if (const auto& prog = a.engine.program(); prog && a.engine.position() > static_cast<double>(prog->songLoopEnd))
+        devsig::reach("platter-past-song-end");
     if (d.gen != g) {  // a new setup instance: start from what it has now
       d.gen = g;
       d.mirSeen = mr.seq;

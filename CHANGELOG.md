@@ -52,6 +52,12 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- A Platter performance recorded in song mode is no longer cut into pieces at the song end. On a short or empty
+  song the playlist looped back to the start while you were still playing the decks, and every loop ended the pass
+  and began a new one, so one performance landed as several sets of clips. Recording in song mode without a time
+  selection now plays on past the song end, as audio recording already did, and the whole performance is one pass.
+  With a time selection the selection still loops and punches in and out as before, now also when no audio track is
+  armed.
 - Platter and Seltmann read drum and bass at its real tempo again. A 174 BPM track used to show about 116 BPM (two
   thirds of the tempo, with a grid that drifted off the beats) or 87 BPM; the tempo analysis now checks that the beat
   it picks fits every hit of the groove and recognises the snare backbeat at fast tempos, so drum and bass from 160 to

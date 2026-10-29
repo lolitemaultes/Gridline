@@ -577,6 +577,77 @@ void testLoop(const std::string& a, const std::string& b, int block) {
   }
 }
 
+// J-175: song mode, an empty playlist (the song is one bar long), no time selection. Gridline
+// records on past the song end (the transport does not loop under a recording, as for audio):
+// the whole performance is one pass, from the song start to where it stopped, and replays bit
+// for bit once the song loops again. With the song looping, each wrap would end the pass and
+// start another one (the J-175 failure: a pass split at the song end).
+void testSongEnd(const std::string& a, const std::string& b, int block) {
+  for (const bool looping : {false, true}) {
+    Rig r(a, b, false);
+    const Tick bar = r.doc.song().barTicks();
+    const std::shared_ptr<const Program> prog = r.eng->program();
+    expect(prog && prog->songLoopEnd == bar, "song end: an empty song ends after one bar");
+    const int64_t barS = 88200;  // (a bar at 120 BPM)
+    const auto acts = performance();
+    r.eng->setMode(PlayMode::Song);
+    r.eng->setLooping(looping);  // (what Gridline does while it records in song mode without a selection)
+    r.eng->setPosition(0);
+    r.eng->setRecording(true);
+    r.eng->play();
+    r.pos = 0;
+    std::vector<float> L, R;
+    std::vector<pl::Performance> perfs;
+    bool lost = false;
+    {
+      std::vector<float> bl(static_cast<size_t>(block)), br(static_cast<size_t>(block));
+      std::vector<pl::CaptureEvent> evs(4096);
+      pl::PerformanceBuilder pb;
+      size_t ai = 0;
+      for (int64_t k = 0; k < kPass + 8 * block; k += block) {
+        const int n = static_cast<int>(std::min<int64_t>(block, kPass + 8 * block - k));
+        Generator* g = r.gen();
+        for (; ai < acts.size() && acts[ai].at < r.pos + n; ++ai) acts[ai].fn(g, static_cast<int>(acts[ai].at - r.pos));
+        if (k >= kPass) r.eng->setRecording(false);  // (Stop: the tail drains the pass)
+        r.eng->process(bl.data(), br.data(), n);
+        L.insert(L.end(), bl.begin(), bl.begin() + n);
+        R.insert(R.end(), br.begin(), br.begin() + n);
+        r.pos += n;
+        for (int c; (c = pl::drainCapture(g, evs.data(), static_cast<int>(evs.size()))) > 0;)
+          for (int i = 0; i < c; ++i)
+            if (pb.feed(evs[static_cast<size_t>(i)])) perfs.push_back(pb.perf);
+      }
+      lost = pb.lost;
+      r.eng->stop();
+    }
+    char name[96];
+    std::snprintf(name, sizeof name, " (%d sample blocks)", block);
+    if (looping) {
+      // the cause: a song that loops under the pass splits it at every wrap (a bar each)
+      const size_t want = static_cast<size_t>((kPass + barS - 1) / barS);
+      expect(perfs.size() == want && perfs[0].startTick == 0 && perfs[0].endTick == static_cast<double>(bar),
+             (std::string("song end, looping: the song wraps under the pass, a pass per bar") + name).c_str());
+      continue;
+    }
+    std::printf("# song end%s: %zu pass(es), ticks %.3f to %.3f, the song ends at %lld\n", name, perfs.size(), perfs.empty() ? 0.0 : perfs[0].startTick,
+                perfs.empty() ? 0.0 : perfs[0].endTick, static_cast<long long>(bar));
+    expect(perfs.size() == 1 && !lost, (std::string("song end: song mode records one pass past the song end, not split there") + name).c_str());
+    if (perfs.size() != 1) continue;
+    const pl::Performance& perf = perfs[0];
+    expect(perf.startTick == 0 && perf.endTick > 4.0 * static_cast<double>(bar),
+           (std::string("song end: the pass runs from the song start through the whole performance (4+ bars)") + name).c_str());
+    const pl::PassWritten w = storePass(r, perf, true);
+    expect(!w.clips.empty() && r.doc.song().lengthTicks() > 4 * bar, "song end: the pass's clips reach past the old song end");
+    // played back with the song looping again (it is as long as the pass now)
+    r.eng->setLooping(true);
+    const PassResult rep = replay(r, block == 256 ? 1024 : 256, 0, false);
+    const double d = std::max(maxDiff(L, rep.L, 0, static_cast<size_t>(kPass)), maxDiff(R, rep.R, 0, static_cast<size_t>(kPass)));
+    std::printf("# song end%s replayed: largest difference %s\n", name, dbfs(d).c_str());
+    expect(d == 0 && peak(L, static_cast<size_t>(barS), static_cast<size_t>(kPass)) > 0.05,
+           (std::string("song end: the pass replays bit for bit, past the old song end too") + name).c_str());
+  }
+}
+
 // Punch in / out (song mode): the pass runs exactly over the punch range (bars `in` to
 // `in` + 2) and replays it exactly. Bar 2 starts inside a jog scratch, bar 3 is quiet.
 void testPunch(const std::string& a, const std::string& b, int block, int in) {
@@ -952,6 +1023,10 @@ int main(int argc, char** argv) {
       testPunch(a, b, 256, in);
       testPunch(a, b, 1024, in);
     }
+  }
+  if (want("songend")) {
+    testSongEnd(a, b, 256);
+    testSongEnd(a, b, 1024);
   }
   if (want("loop")) {
     testLoop(a, b, 256);

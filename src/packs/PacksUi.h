@@ -18,6 +18,10 @@ int armAudioEditorRecording(App& a, ObjectId track);
 // J-150: true when a pack takes this device's MIDI for itself (a DJ deck bound to
 // the controller, or learning a control): the app's links and templates skip it.
 bool claimMidi(App& a, const std::string& device);
+// J-175: true when a pack records while the record button is armed and the transport rolls
+// (a deck setup armed with a track on a deck: its performance passes). Song mode without a
+// time selection then plays on past the song end, as for audio recording.
+bool recordsWithTransport(App& a);
 
 }  // namespace gl::packs
 

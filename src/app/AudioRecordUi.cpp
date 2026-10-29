@@ -166,20 +166,38 @@ void App::processAudioRecording() {
 
   const bool rolling = engine.playing() && engine.mode() != PlayMode::Live;
   const bool want = recordArmed && rolling && armedTracks && recAudio;
+  const bool song = engine.mode() == PlayMode::Song;
+  const bool sel = playlist.selEnd > playlist.selStart;
+  // J-175: what records besides armed tracks: a deck setup's performance passes (Platter)
+  const bool packRecords = recordArmed && packs::recordsWithTransport(*this);
+  // Song mode without a time selection: keep recording past the song end. Set while the record
+  // button is armed and something records, before the transport rolls, so the song never wraps
+  // under a recording (J-175: a wrap ends a deck pass there and starts another one); looping
+  // comes back once nothing records any more (stopped, disarmed, another mode).
+  const bool pastEnd = recordArmed && song && !sel && ((armedTracks && recAudio) || packRecords);
+  if (pastEnd && audioRecLoopRestore < 0) {
+    engine.setLooping(false);
+    audioRecLoopRestore = 1;
+  } else if (audioRecLoopRestore >= 0 && !pastEnd && !(song && rolling && (recordArmed || audioRecSession))) {
+    engine.setLooping(audioRecLoopRestore > 0);
+    audioRecLoopRestore = -1;
+  }
+  // Punch in / out at the time selection (song mode), for everything that records: set as
+  // recording starts (J-175: deck passes too, not only audio sessions).
+  auto setPunch = [&] {
+    if (recPunch && sel && song)
+      engine.setPunch(static_cast<double>(playlist.selStart), static_cast<double>(playlist.selEnd));
+    else
+      engine.setPunch(0, 0);
+  };
+  const bool recRolling = recordArmed && rolling;
+  if (recRolling && !recRollingPrev) setPunch();
+  recRollingPrev = recRolling;
   if (want && !audioRecSession) {
     audioRec.begin();
     audioRecSession = true;
     audioRecFinishing = false;
-    const bool sel = playlist.selEnd > playlist.selStart;
-    if (recPunch && sel && engine.mode() == PlayMode::Song)
-      engine.setPunch(static_cast<double>(playlist.selStart), static_cast<double>(playlist.selEnd));
-    else
-      engine.setPunch(0, 0);
-    // Song mode without a time selection: keep recording past the song end.
-    if (engine.mode() == PlayMode::Song && !sel) {
-      engine.setLooping(false);
-      audioRecLoopRestore = 1;
-    }
+    setPunch();
   }
   // Hosted plugins see "recording" whenever the record button is armed and the
   // transport rolls; armed tracks capture while it is set.
@@ -224,9 +242,7 @@ void App::processAudioRecording() {
       doc.editSong("disarm tracks after recording", [](Song& x) {
         for (auto& m : x.mixer) m.armed = false;
       });
-    audioRecSession = audioRecFinishing = false;
-    if (audioRecLoopRestore >= 0) engine.setLooping(audioRecLoopRestore > 0);
-    audioRecLoopRestore = -1;
+    audioRecSession = audioRecFinishing = false;  // (looping comes back on the next frame, above)
   }
 }
 
