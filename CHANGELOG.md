@@ -3,7 +3,29 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
-## Unreleased
+## 0.7.0-beta.4
+
+This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.
+
+### New since 0.7.0-beta.3
+
+- A loading window for projects: a progress bar that counts every sample and plugin, a live log
+  with the time each one took, warnings that stay on a card afterwards, and Cancel to go back to
+  the project you had open. Gridline no longer freezes while a big project opens.
+- Patterns can hold automation clips: they play wherever the pattern plays, are edited like any
+  other automation clip, and show as curves on the pattern's clips in the playlist.
+- Platter passes are recorded as named automation clips (the record's position, the wheel, play,
+  loops and every control you used), in song mode and in pattern mode, so a pass plays from
+  wherever playback starts and can be cut, trimmed and moved.
+- Tideline follows a source you pick in its window: a mixer track or a channel for audio
+  ducking, with the sidechain made for you and up to 10 ms look-ahead, or a channel's notes and
+  clip starts, the MIDI input or MIDI Out ports, all sample-accurate.
+- Platter decks have /2 and x2 buttons, and Platter and Seltmann read drum and bass at its real
+  tempo (174, not 116 or 87).
+- Fixes: changing an audio clip's pitch keeps its length and fill, Rubber Band notes and clips
+  start without crackles, FL Studio 2026 projects import with their whole playlist, Slicex chops
+  arrive in Kerf exactly, plugins such as Serum 2 export to the FL Studio format exactly, and a
+  song-mode Platter pass is no longer split at the song end.
 
 ### New
 
@@ -96,11 +118,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   instrument and with its name, instead of being rebuilt as an effect without one. The command line export and round
   trip now know which plugins are installed, as the app does.
 
-## 0.7.0-beta.3
-
-This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.
-
-### New since 0.7.0-beta.2
+### New in 0.7.0-beta.3
 
 - Platter, a two-deck DJ instrument on a channel: decks A and B with a mixer and crossfader,
   tempo and beat grid detection, sync, key lock, hot cues, loops and a pitch fader, ready

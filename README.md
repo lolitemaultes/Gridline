@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.7.0-beta.3" src="https://img.shields.io/badge/version-0.7.0--beta.3-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.0-beta.4" src="https://img.shields.io/badge/version-0.7.0--beta.4-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -47,7 +47,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks.
 
-**175 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
+**175 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
 
 **Real plugins, real interfaces.** VST3, CLAP, VST2, AU and LV2 instruments and effects open with their own interface, can run sandboxed in a separate process, and are checked by a built-in compatibility sweep. Edits made in a plugin's own interface can be undone too.
 
@@ -60,9 +60,9 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **A mixer that keeps time.** Smooth swing for steps and notes alike, plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ. Offline renders are bit-identical whatever the buffer size.
 
-**Recording and editing.** Audio input with latency compensation, takes and comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, MIDI learn on every control. Several selected audio clips change together: a level, fade or pitch change moves each of them by the same amount.
+**Recording and editing.** Audio input with latency compensation, takes and comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, on the playlist or inside patterns, MIDI learn on every control. Several selected audio clips change together: a level, fade or pitch change moves each of them by the same amount.
 
-**One smooth stretch and pitch engine.** Clips, the sampler, slices, the audio editor, Platter and the pitch and time effects share one continuous engine that sounds the same live and in a render, from half speed to four times and an octave either way. Pick Stretch (time and pitch apart), Resample (like a turntable) or, for clips and the sampler, Rubber Band.
+**One smooth stretch and pitch engine.** Clips, the sampler, slices, the audio editor, Platter and the pitch and time effects share one continuous engine that sounds the same live and in a render, from half speed to four times and an octave either way. Pick Stretch (time and pitch apart), Resample (like a turntable) or, for clips and the sampler, Rubber Band. A clip keeps its length when you change its pitch, and Rubber Band notes and clips do their start-up work ahead of time, so a chord or several clips on one beat start without crackles.
 
 **Your look, your sounds.** Five control styles (Slate, the default, plus Graphite, Hairline, Lumen and Classic), light and dark themes with your own accent and role colours, and sound themes for the interface sounds, all in Settings > Theme.
 
@@ -136,7 +136,7 @@ Plasma also opens your own Serum 2 presets (`.SerumPreset`) and Serum `.fxp` fil
 
 Platter is a two-deck DJ setup on a channel: deck A and deck B with a mixer between them, or one deck as a layout.
 
-- **Decks.** Drop a track on a deck (from the browser, your desktop or the playlist's clip list) and Platter finds its tempo and beat grid, then plays it in time with the project or with the other deck; the padlock frees it to its own tempo. Each deck has key lock, cue and play, eight hot cues, loops and beat jumps, slip mode, motor start and brake times and a pitch fader, with stacked three-band colour waveforms, beat grids and a phase meter.
+- **Decks.** Drop a track on a deck (from the browser, your desktop or the playlist's clip list) and Platter finds its tempo and beat grid, then plays it in time with the project or with the other deck; drum and bass reads at its own tempo, /2 and x2 buttons correct a track heard at half or double time, and the padlock frees it to its own tempo. Each deck has key lock, cue and play, eight hot cues, loops and beat jumps, slip mode, motor start and brake times and a pitch fader, with stacked three-band colour waveforms, beat grids and a phase meter.
 - **Mixer.** Trim, a three-band EQ with kills and a filter per channel, channel faders with meters and a curve, a crossfader with assign, curve, cut and reverse, and the master level. The EQ and master knobs have 0 dB at 12 o'clock, like a DJ mixer, and a track on one deck at the default settings plays at its own level.
 - **Scratching.** The platter follows the scratch mechanics of Mixxx: a jog wheel sets the record's speed from how fast its ticks arrive, a mouse drag follows the hand and a fast release throws the record, touching a playing record catches it and letting go ramps it back up. The Jog and Hand feel knobs set how far and how heavily it moves.
 - **DJ controllers.** Ready mappings for the Pioneer DDJ-200, Hercules DJControl Inpulse 200 and Numark Mixtrack Pro FX drive both decks and the mixer at once, with LEDs that follow each deck; any other controller maps through MIDI learn. Mappings are saved with the project and as presets.
@@ -181,7 +181,7 @@ sudo apt install build-essential cmake pkg-config libsdl2-dev libgl-dev libasoun
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4           # a fixed job count: a bare -j starts every compile at once and can run out of memory
-ctest --test-dir build          # 204 tests
+ctest --test-dir build          # 215 tests
 ./build/gridline-app            # start the app
 ```
 
@@ -294,13 +294,13 @@ build/gridline suite-info gridline                     # members, identifiers an
 
 Gridline opens FL Studio projects (`.flp`), FL Studio zipped loop packages (`.zip`) and presets (`.fst`), so existing work can be brought across. **File, Open** (or drag and drop) opens `.flp` and `.zip` files like any project; saving one asks where to keep it and in which format, so the original is never overwritten unasked:
 
-- channels, patterns, notes, playlist clips, automation, markers and mixer routing are imported;
-- FL Studio's own instruments and effects are mapped to their Gridline equivalents with their settings;
+- channels, patterns, notes, playlist clips, automation, markers and mixer routing are imported, also from projects saved by FL Studio 2026;
+- FL Studio's own instruments and effects are mapped to their Gridline equivalents with their settings; Slicex chops arrive in Kerf exactly, each region on its key, in its order, with its start, end and name;
 - a Serum, Serum 2, Kickstart or Kickstart 2 that is not installed plays through Plasma or Tideline, with the plugin and its settings kept for when it is installed (installed plugins are always hosted as themselves);
 - third-party plugins load as the installed plugin with their saved state, or stay as placeholders until the plugin is installed;
 - **File, Import, FL Studio presets** converts the presets of a local FL Studio installation into Gridline's preset library on your computer.
 
-Projects can also be saved back to `.flp` with **File, Export, FL Studio project** (or **File, Save as**), or as an FL Studio zipped loop package (the `.flp` plus every sample it uses, with relative sample paths) with **File, Export, FL Studio zipped loop package**: unchanged parts are written back exactly as they were imported, and FL Studio's own plugins are saved with their settings. Nothing from FL Studio is bundled with Gridline.
+Projects can also be saved back to `.flp` with **File, Export, FL Studio project** (or **File, Save as**), or as an FL Studio zipped loop package (the `.flp` plus every sample it uses, with relative sample paths) with **File, Export, FL Studio zipped loop package**: unchanged parts are written back exactly as they were imported, FL Studio's own plugins are saved with their settings, and third-party plugins such as Serum 2 keep their original plugin host settings. Nothing from FL Studio is bundled with Gridline.
 
 ## Documentation
 

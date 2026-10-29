@@ -111,7 +111,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Grain Scanner | `gl.grainscan` | Sampler | `42FB5F62` | `ehjo` | 23 | 4 |  |
 | Spline Scratch | `gl.splinescratch` | Sampler | `10B6BE51` | `ng3f` | 8 | 3 |  |
 | Seltmann | `gl.seltmann` | Sampler | `A19C8FCA` | `mtkg` | 21 | 6 |  |
-| Platter | `gl.platter` | Sampler | `74A19BB4` | `q8wc` | 56 | 6 | Takes MIDI from DJ controllers |
+| Platter | `gl.platter` | Sampler | `74A19BB4` | `q8wc` | 74 | 6 | Takes MIDI from DJ controllers |
 | Plasma | `gl.plasma` | Synth | `F95755DE` | `cw2s` | 2192 | 24 |  |
 
 ### Effects
@@ -185,7 +185,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Stereo Matrix | `gl.stereomatrix` | Misc | `07BDDB15` | `f2tc` | 11 | 6 |  |
 | Octa Filter | `gl.octafilter` | Filter | `E5FD1DB3` | `lui5` | 481 | 6 |  |
 | Loupe | `gl.edison` | Misc | `A9077CCC` | `c3t1` | 9 | 5 |  |
-| Tideline | `gl.tideline` | Dynamics | `84DEDC4E` | `wyfy` | 37 | 11 | sidechain, MIDI in |
+| Tideline | `gl.tideline` | Dynamics | `84DEDC4E` | `wyfy` | 40 | 11 | sidechain, MIDI in |
 
 ## Not in the suite
 

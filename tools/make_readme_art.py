@@ -493,15 +493,15 @@ VIEWS += [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.0-beta.3"
+RELEASE = "0.7.0-beta.4"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.0", "Take the decks",
-                  "Platter, a welcome screen, one smooth stretch engine and a new plugin manager")
-RELEASE_BANNER_OPTS = {"tag": "BETA 3", "label": "PRE-RELEASE"}
+RELEASE_BANNER = ("0.7.0", "Keep it moving",
+                  "A loading window, automation in patterns, Platter passes as clips and Tideline sources")
+RELEASE_BANNER_OPTS = {"tag": "BETA 4", "label": "PRE-RELEASE"}
 # Plugin editors on one sheet (none in this release).
 RELEASE_EDITORS = []
-# The README's Platter, welcome screen and plugin manager views.
-RELEASE_VIEWS = [v for v in VIEWS if v[1] in ("platter.png", "welcome.png", "plugin-manager.png")]
+# No release screenshots in this release.
+RELEASE_VIEWS = []
 
 if __name__ == "__main__":
     main()
