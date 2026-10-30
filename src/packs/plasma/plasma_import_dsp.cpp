@@ -809,7 +809,7 @@ int sourceOf(int id) {
   }
 }
 
-enum Conv { Copy, Pct, Pan50, Deg, Bool, EnvT, Porta, Sqrt, Div64, Pct2, LfoRate, PctCube };
+enum Conv { Copy, Pct, Pan50, Deg, Bool, EnvT, Porta, Sqrt, Div64, Pct2, LfoRate, PctCube, Detune };
 double conv(Conv c, double v) {
   switch (c) {
     case Pct: return v / 100.0;
@@ -820,6 +820,10 @@ double conv(Conv c, double v) {
     case EnvT: return envTimeInv(std::max(0.0, v));
     case Porta: return portaTimeInv(std::max(0.0, v));
     case Sqrt: return std::sqrt(std::max(0.0, v));
+    // J-201: the source's unison spread is +-range * stored^1.24 (measured with two voices at key 60,
+    // range 2: stored 0.25 -> +-0.36 st, 0.5 -> +-0.85 st, 1 -> +-2 st; range 12, 0.25 -> +-2.1 st);
+    // Plasma's is +-range * knob^2, so knob = stored^0.62
+    case Detune: return std::pow(std::max(0.0, v), 0.62);
     case Div64: return v / 64.0;
     case PctCube: return std::pow(std::clamp(v / 100.0, 0.0, 1.0), 3.0);  // bus sends: the source's gain is the knob cubed
     case LfoRate: return lfoHzInv(std::clamp(v, 0.0, 100.0), false);  // Hz (free) / the same knob curve (tempo divisions)
@@ -837,7 +841,7 @@ const KeyMap kOscMain[] = {{"kParamEnable", O_Enable, Bool},        {"kParamVolu
                            {"kParamPitch", O_Semi, Copy},           {"kParamFine", O_Fine, Copy},
                            {"kParamCoarsePit", O_Coarse, Copy},     {"kParamPitchRatio", O_Ratio, Copy},
                            {"kParamHzOffset", O_HzOffset, Copy},    {"kParamPitchTrack", O_PitchTrack, Bool},
-                           {"kParamUnison", O_Unison, Copy},        {"kParamDetune", O_UniDetune, Sqrt},
+                           {"kParamUnison", O_Unison, Copy},        {"kParamDetune", O_UniDetune, Detune},
                            {"kParamDetuneWid", O_UniBlend, Pct},    {"kParamUnisonStereo", O_UniWidth, Pct},
                            {"kParamUnisonSpan", O_UniSpan, Pct},    {"kParamUnisonRange", O_UniRange, Copy},
                            {"kParamRandomStart", O_UniRandStart, Pct}, {"kParamUnisonWarp", O_UniWarp1, Pct},
@@ -892,6 +896,12 @@ struct Importer {
   std::map<int, int> fxSlotOf;  // Serum FX instance id (rack * 100 + index) -> Plasma slot
   std::array<int, 3> oscType{};
   std::array<int, 3> oscFrames{{1, 1, 1}};
+  double masterTuneSemis = 0.0;     // main tuning, whole semitones (folded into Transpose)
+  double noisePitchModScale = 0.75;
+  bool builtinNoise = false;          // the noise is a built-in type (its pitch knob is a tone filter)
+  bool geigerNoise = false;           // the knob is a density there: routes to it are dropped
+  static constexpr double kNoiseLevelTrim = 1.0;  // Plasma noise pitch range per unit of the source's knob (matrix amounts)
+  static constexpr double kNoiseDetuneRef = 0.4758218478413068;
   const PluginInfo* info = findPlugin(kType);
 
   Importer(PluginState& s, ImportReport& r) : st(s), rep(r) {}
@@ -1119,10 +1129,12 @@ struct Importer {
 
   // ---------------------------------------------------------------- modules
   void oscillators(const Json& o) {
+    set(tailP(T_UniMix), 1.0);  // the source's unison voice mix (J-201, measured)
     for (int i = 0; i < kOscs; ++i) {
       const Json* osc = o.find("Oscillator" + std::to_string(i));
       if (!osc) continue;
       const Json* pp = plain(osc);
+      set(oscP(i, O_UniDetune), conv(Detune, 0.25));  // the source's default detune (not stored)
       apply(pp, kOscMain, sizeof(kOscMain) / sizeof(kOscMain[0]), oscP(i, 0));
       std::string s;
       int type = OscWavetable;
@@ -1132,10 +1144,15 @@ struct Importer {
       }
       oscType[static_cast<size_t>(i)] = type;
       set(oscP(i, O_Type), type);
+      int pitchMode = 0;
       if (text(pp, "kParamPitchMode", s)) {
         static const char* const pm[] = {"Semitones", "Steps", "Harmonics", "Ratio"};
-        set(oscP(i, O_PitchMode), std::max(0, indexOf(pm, 4, s)));
+        pitchMode = std::max(0, indexOf(pm, 4, s));
+        set(oscP(i, O_PitchMode), pitchMode);
       }
+      // J-201: the source only adds its Hz offset in Ratio mode (measured: a 100 Hz offset moves a
+      // key-36 tone from 65.4 to 165.4 Hz in Ratio mode and leaves it at 65.4 Hz in the other modes).
+      if (pitchMode != 3) set(oscP(i, O_HzOffset), 0.0);
       if (text(pp, "kParamUnisonStack", s)) {
         static const char* const sk[] = {"kNoUnisonStack", "kOctave1", "kOctave2", "kOctave3", "kOctaveFifth1",
                                          "kOctaveFifth2", "kOctaveFifth3", "kCenter12", "kCenter24"};
@@ -1276,18 +1293,41 @@ struct Importer {
       const Json* pp = plain(n);
       double v;
       if (num(pp, "kParamEnable", v)) set(noiseP(N_Enable), v);
-      // same curve as the oscillators; Plasma's noise plays 2 dB lower at equal settings
-      // (also at the default level, 0.25 on the knob, which a preset does not store)
+      // same curve as the oscillators (also at the default level, 0.25 on the knob, which a
+      // preset does not store); kNoiseLevelTrim matches sample noises (J-201: measured with
+      // embedded sines from 30 Hz to 10 kHz, the earlier 1.122 played 2 dB too loud)
       double lv = 0.0625;
       num(pp, "kParamVolume", lv);
-      set(noiseP(N_Level), std::min(1.0, std::sqrt(std::max(0.0, lv)) * 1.122));
+      set(noiseP(N_Level), std::min(1.0, std::sqrt(std::max(0.0, lv)) * kNoiseLevelTrim));
       if (num(pp, "kParamPan", v)) set(noiseP(N_Pan), v / 50.0);
-      if (num(pp, "kParamPitchTrack", v)) set(noiseP(N_PitchTrack), v);
-      if (num(pp, "kParamCoarsePit", v)) set(noiseP(N_Pitch), v);
+      double track = 0;
+      num(pp, "kParamPitchTrack", track);
+      set(noiseP(N_PitchTrack), track);
       const Json* sub = n->find("NoiseOsc3");
       const Json* sp = plain(sub);
-      if (num(sp, "kParamColor", v)) set(noiseP(N_Color), v * 2.0 - 1.0);
-      if (num(sp, "kParamFine", v)) set(noiseP(N_Fine), v);
+      // The noise "pitch" knob (stored as kParamColor, 0..1, 0.5 = the sample's own
+      // rate) is a playback-rate control, measured on the source (J-201): without key
+      // tracking +96 semitones per unit above the centre and 384 below it (the lower
+      // half drops to near-silent rumble); with key tracking a plain 128 semitone
+      // span, with the sample's original rate at MIDI key 72 for the usual
+      // detuneFactor (0.4758...), shifting by 12 log2(detuneFactor / 0.4758...).
+      // Fine is +-1 semitone (+-0.96 untracked).
+      double x = 0.5, fine = 0;
+      num(sp, "kParamColor", x);
+      num(sp, "kParamFine", fine);
+      double semis;
+      if (track >= 0.5) {
+        const double df = sub ? sub->num("detuneFactor", kNoiseDetuneRef) : kNoiseDetuneRef;
+        semis = 12.0 * std::log2(std::max(1e-3, df) / kNoiseDetuneRef) - 12.0 + 128.0 * (x - 0.5);
+        noisePitchModScale = 1.0;
+      } else {
+        semis = (x >= 0.5 ? 96.0 : 384.0) * (x - 0.5);
+        noisePitchModScale = x >= 0.5 ? 0.75 : 3.0;
+      }
+      if (semis < -64.0) note("Noise pitch below -64 semitones: played at -64");
+      set(noiseP(N_Pitch), semis);
+      set(noiseP(N_Fine), fine * (track >= 0.5 ? 1.0 : 0.96));
+      set(noiseP(N_Color), 0.0);
       if (num(sp, "kParamInitialPhase", v)) set(noiseP(N_Phase), v / 100.0);
       if (num(sp, "kParamRandomPhase", v)) set(noiseP(N_RandPhase), v / 100.0);
       if (num(sp, "kParamOneShot", v)) set(noiseP(N_OneShot), v);
@@ -1299,10 +1339,28 @@ struct Importer {
           if (names[k] == nm) return static_cast<int>(k);
         return 1;
       };
-      if (type == "White") set(noiseP(N_Type), byName("White"));
-      else if (type == "Pink") set(noiseP(N_Type), byName("Pink"));
-      else if (type == "Brown") set(noiseP(N_Type), byName("Brown"));
-      else if (type == "Geiger") set(noiseP(N_Type), byName("Geiger"));
+      // J-201: on the built-in noises the same knob is a tone filter instead of a pitch (see Noise
+      // Tone in the engine), and they play quieter than Plasma's generated tables: level trims
+      // measured on held notes at key 60 (white -3.9 dB, pink -2.4 dB, brown -1.4 dB).
+      auto builtin = [&](const char* nm, double trimDb, bool tone) {
+        set(noiseP(N_Type), byName(nm));
+        set(noiseP(N_Pitch), 0.0);
+        set(noiseP(N_Fine), 0.0);
+        set(noiseP(N_PitchTrack), 0.0);
+        if (tone) set(tailP(T_NoiseTone), std::clamp(2.0 * (x - 0.5), -1.0, 1.0));
+        set(noiseP(N_Level), std::min(1.0, std::sqrt(std::max(0.0, lv)) * std::pow(10.0, trimDb / 40.0)));
+        builtinNoise = tone;
+      };
+      if (type == "White") builtin("White", -3.9, true);
+      else if (type == "Pink") builtin("Pink", -2.4, true);
+      else if (type == "Brown") builtin("Brown", -1.4, true);
+      else if (type == "Geiger") {
+        // a different click texture than the source's; level matched on held notes (+10 dB),
+        // its knob (density on the source) is left at the centre
+        builtin("Geiger", 10.0, false);
+        geigerNoise = true;
+        note("Geiger noise: approximated (click texture and density differ)");
+      }
       else if (sub) {
         const std::string rel = sub->text("relativePathToNoiseSample", sub->text("pathToNoiseSample"));
         std::string path;
@@ -1360,17 +1418,10 @@ struct Importer {
       }
       double v;
       if (num(pp, "kParamPad", v) && v >= 0.5) note("Filter pad (clean input) is not modelled");
-      // Drive: the source's filter keeps the driven level (drive 0.5 is about +14 dB);
-      // Plasma's filter evens it out by 1 / sqrt(drive gain): its output level makes up for that.
-      const int type = static_cast<int>(st.params[static_cast<size_t>(filtP(f, F_Type))]);
-      const double drive = st.params[static_cast<size_t>(filtP(f, F_Drive))];
-      if (drive > 1e-4 && type != 83 && type != 94 && type != 95) {
-        const double lev = st.params[static_cast<size_t>(filtP(f, F_Level))];
-        const double want = lev * std::pow(1.0 + 9.0 * drive, 0.25);  // level gain is 4 v^2
-        if (want > 1.0) note("Filter drive above the output level range: quieter than the original");
-        set(filtP(f, F_Level), std::min(1.0, want));
-      }
+      // Drive: the source's filter keeps the driven level (drive 0.5 is about +14 dB): the
+      // Boost drive mode (set below) follows its measured gain and clip law.
     }
+    set(tailP(T_DriveMode), 1.0);
     for (int r = 0; r < kRoutes; ++r) {
       const Json* pp = plain(o.find("RoutingSlot" + std::to_string(r)));
       apply(pp, kRouteMap, sizeof(kRouteMap) / sizeof(kRouteMap[0]), routeP(r, 0));
@@ -1463,7 +1514,14 @@ struct Importer {
     double v;
     std::string s;
     if (num(pp, "kParamMasterVolume", v)) set(G_MasterVol, std::sqrt(std::max(0.0, v)));
-    if (num(pp, "kParamMasterTuning", v)) set(G_MasterTune, v);
+    if (num(pp, "kParamMasterTuning", v)) {
+      // J-201: the source stores its main tuning as 0..1 = -64..+64 semitones (measured against the
+      // hosted source: 0.25 -> -32 st, 0.75 -> +32 st, 1 -> +64 st). Whole semitones go to Transpose.
+      const double semis = 128.0 * (v - 0.5);
+      const double whole = std::round(semis);
+      masterTuneSemis = whole;
+      set(G_MasterTune, std::clamp((semis - whole) * 100.0, -100.0, 100.0));
+    }
     if (num(pp, "kParamVoiceAmp", v)) set(G_Amp, std::sqrt(std::max(0.0, v) / 2.0));
     if (num(pp, "kParamPortamentoTime", v)) set(G_PortaTime, portaTimeInv(v));
     if (num(pp, "kParamPortamentoCurve", v)) set(G_PortaCurve, v / 100.0);
@@ -1479,6 +1537,12 @@ struct Importer {
     if (num(pp, "kParamSwing", v)) set(G_Swing, v / 100.0);
     if (num(pp, "kParamSwingDiv", v)) set(G_SwingDiv, std::clamp(v - 1.0, 0.0, 3.0));
     if (num(pp, "kParamTranspose", v)) set(G_Transpose, v);
+    if (masterTuneSemis != 0.0) {
+      double t = 0;
+      num(pp, "kParamTranspose", t);
+      if (std::fabs(t + masterTuneSemis) > 48.0) note("Main tuning beyond 48 semitones: clamped");
+      set(G_Transpose, std::clamp(t + masterTuneSemis, -48.0, 48.0));
+    }
     if (num(pp, "kParamDirectVol", v)) set(G_DirectVol, std::sqrt(std::max(0.0, v) / 2.0));
     if (num(pp, "kParamFXBus1Vol", v)) set(G_Bus1Vol, std::sqrt(std::max(0.0, v) / 2.0));
     if (num(pp, "kParamFXBus2Vol", v)) set(G_Bus2Vol, std::sqrt(std::max(0.0, v) / 2.0));
@@ -1602,6 +1666,35 @@ struct Importer {
       }
     }
   }
+  // J-201: the source's delay times, measured at 120 BPM. Free: TIME L / R are seconds
+  // (0.075 when not stored). Synced: the stored value picks a straight division, 1/32
+  // note to 4 bars, at these thresholds (1 beat when not stored). LINK uses TIME R for
+  // both sides. Plasma's knobs take the matching control value.
+  void delayTimes(int slot, const Json* pp) {
+    auto raw = [&](const char* k, double d) {
+      const Json* j = pp ? pp->find(k) : nullptr;
+      return j && j->type == Json::Type::Number ? j->number : d;
+    };
+    const bool sync = raw("kParamBeatSync", 1) >= 0.5;
+    const double def = sync ? 0.08 : 0.075;
+    double tl = raw("kParamTimeL", def);
+    const double tr = raw("kParamTimeR", def);
+    if (raw("kParamLink", 0) >= 0.5) tl = tr;
+    auto control = [&](double x) {
+      if (!sync) return std::sqrt(std::max(0.0, (x - 0.001) / 1.999));
+      static const double kEdge[] = {0.006, 0.016, 0.031, 0.0615, 0.105, 0.175, 0.275, 0.415};
+      int k = 0;
+      while (k < 8 && x >= kEdge[k]) ++k;
+      const double beats = 0.0625 * std::exp2(k);  // 1/16 beat .. 16 beats
+      if (beats > 4.0) note("Delay: synced times longer than one bar play one bar long");
+      // Plasma's synced steps: 1/16, 1/8, 1/6, 3/16, 1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 4/3, 3/2, 2, 3, 4 beats
+      static const int kIdx[] = {0, 1, 4, 7, 10, 13, 15, 15, 15};
+      return kIdx[k] / 15.0;
+    };
+    const int qL = fxParamIndex(FxDelay, "kParamTimeL"), qR = fxParamIndex(FxDelay, "kParamTimeR");
+    if (qL >= 0) set(fxP(slot, X_P0 + qL), control(tl));
+    if (qR >= 0) set(fxP(slot, X_P0 + qR), control(tr));
+  }
   void fxValues(int slot, int type, const Json& body) {
     const Json* pp = plain(&body);
     if (pp) {
@@ -1651,6 +1744,7 @@ struct Importer {
         set(fxP(slot, X_P0 + q), fxNorm(type, q, plainV));
       }
     }
+    if (type == FxDelay) delayTimes(slot, pp);
     FxExtra& ex = m.fxExtra[static_cast<size_t>(slot)];
     if (type == FxDistortion) {
       // X-Shaper curves live next to the module ("flex": A, B)
@@ -1731,7 +1825,7 @@ struct Importer {
       return inMap(kOscSub, sizeof(kOscSub) / sizeof(kOscSub[0]), oscP(id, 0));
     }
     if (type == "NoiseOsc") {
-      if (key == "kParamColor") return noiseP(N_Color);
+      if (key == "kParamColor") return noiseP(N_Pitch);  // the source's noise pitch knob
       if (key == "kParamFine") return noiseP(N_Fine);
       if (key == "kParamInitialPhase") return noiseP(N_Phase);
       return -1;
@@ -1815,7 +1909,10 @@ struct Importer {
       const std::string type = slot->text("destModuleTypeString");
       const int id = static_cast<int>(slot->num("destModuleID", 0));
       const std::string key = slot->text("destModuleParamName");
-      const int dest = destParam(type, id, key);
+      int dest = destParam(type, id, key);
+      const bool noiseKnob = dest == noiseP(N_Pitch) && type == "NoiseOsc";
+      if (noiseKnob && builtinNoise) dest = tailP(T_NoiseTone);  // the knob is a tone filter there
+      if (noiseKnob && geigerNoise) dest = -1;
       if (ms < 0 || dest < 0 || !modulatable(dest)) {
         note("Matrix: " + (dest < 0 ? type + " " + key + " is not a Plasma destination" : "a source is not available"));
         ++rep.skipped;
@@ -1826,7 +1923,9 @@ struct Importer {
       double v;
       set(modP(out, M_Source), ms);
       set(modP(out, M_Dest), dest + 1);
-      set(modP(out, M_Amount), num(pp, "kParamAmount", v) ? v / 100.0 : 0.0);
+      double amt = num(pp, "kParamAmount", v) ? v / 100.0 : 0.0;
+      if (noiseKnob && !builtinNoise) amt *= noisePitchModScale;
+      set(modP(out, M_Amount), amt);
       if (num(pp, "kParamBipolar", v)) set(modP(out, M_Bipolar), v);
       if (num(pp, "kParamOut", v)) set(modP(out, M_Out), v / 100.0);
       if (num(pp, "kParamBypass", v)) set(modP(out, M_Bypass), v);
@@ -1889,13 +1988,21 @@ struct Importer {
                                         "PinkyUD", "Converge", "Diverge", "ConvAndDiv", "Played", "Chord", "Rand", "RandNoDup", "RandDrift", "RandOnce"};
         a.shape = std::max(0, indexOf(k, 20, str));
       }
-      if (num(pp, "kParamRate", v)) {
-        a.rate = std::clamp(static_cast<int>(std::lround(v * 15.0)), 0, 15);
-        note("Arp rate: approximated to the nearest division");
-      }
+      // J-201: the rate knob steps through straight divisions, one per ninth of its range around
+      // 1/16 at 0.5 (measured at 120 BPM: 0.34..0.44 -> 1/8, 0.46..0.54 -> 1/16, 0.56..0.66 -> 1/32,
+      // 0.68.. -> 1/64 and faster); "dotted" plays the next faster division dotted (1/16 dotted =
+      // 0.1875 beats). Plasma's straight divisions run 8 bars (0) .. 1/64 (9), 1/16 = 7.
+      double rv = 0.5;
+      num(pp, "kParamRate", rv);
+      double dotted = 0;
+      num(pp, "kParamDotted", dotted);
+      if (a.shape == ArpPattern) dotted = 0;  // measured: a pattern keeps straight steps when dotted is on
+      const int k = static_cast<int>(std::lround(9.0 * (rv - 0.5))) + (dotted >= 0.5 ? 1 : 0);
+      if (7 + k > 9 || 7 + k < 0) note("Arp rate beyond Plasma's divisions: clamped");
+      a.rate = std::clamp(7 + k, 0, 9);
+      a.dot = dotted >= 0.5;
       if (num(pp, "kParamBeatSync", v)) a.bpm = v >= 0.5;
       if (num(pp, "kParamTriplets", v)) a.trip = v >= 0.5;
-      if (num(pp, "kParamDotted", v)) a.dot = v >= 0.5;
       if (num(pp, "kParamTransposeShift", v)) a.shift = static_cast<int>(v);
       if (num(pp, "kParamTransposeRange", v)) a.range = static_cast<int>(v);
       if (num(pp, "kParamThru", v)) a.thru = v >= 0.5;
@@ -1913,6 +2020,10 @@ struct Importer {
       if (num(pp, "kParamVeloDecay", v)) a.veloDecay = static_cast<float>(v);
       if (num(pp, "kParamVeloTarget", v)) a.veloTarget = static_cast<float>(v / 100.0);
       if (num(pp, "kParamWrapRange", v)) a.rangeWrap = static_cast<int>(v);
+      // J-201: pattern rows past the held notes repeat them at the same pitch by default
+      // (measured: rows 1, 2 and 12 over one held key all play that key)
+      a.wrap = 2;
+      if (text(pp, "kParamRangeWrapMode", str)) note("Arp pattern wrap mode " + str + ": rows past the held notes repeat them");
       float end = 0;
       auto ns = clipNotes(ac->find("clip"), end);
       for (const auto& n : ns) a.steps.push_back({n.start, n.len, std::clamp(n.key, 0, 31), n.vel, false, 0});
@@ -1922,9 +2033,16 @@ struct Importer {
     bool clipOn = false;
     if (num(cp, "kParamEnabled", v)) set(G_ClipOn, v), clipOn = v >= 0.5;
     if (num(cp, "kParamMonoClipTrigger", v)) m.clipPoly = v < 0.5;
-    if (const Json* c = o.find("ClipPlayer0"); c)
-      if (const Json* act = c->find("activeClips"); act && act->type == Json::Type::Array && !act->array.empty())
+    if (const Json* c = o.find("ClipPlayer0"); c) {
+      if (const Json* act = c->find("activeClips"); act && act->type == Json::Type::Array && !act->array.empty()) {
         m.clipActive = std::clamp(static_cast<int>(act->array[0].number), 0, kClipSlots - 1);
+      } else if (clipOn) {
+        // J-201: with no active clip the source passes the keys through (measured:
+        // such presets play like the clip player is off), so nothing plays from clips
+        set(G_ClipOn, 0);
+        clipOn = false;
+      }
+    }
     for (int s = 0; s < kClipSlots; ++s) {
       const Json* mc = o.find("MidiClip" + std::to_string(s));
       if (!mc) continue;

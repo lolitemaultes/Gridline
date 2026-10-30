@@ -164,7 +164,9 @@ class Filter {
   void reset();
   // Coefficients for the next samples (call at control rate). hz: cutoff,
   // res / drive / var 0..1, spread: stereo cutoff offset in semitones (L -, R +).
-  void set(int type, double sr, double hz, double res, double drive, double var, double spreadSt);
+  // boost: the drive raises the level (gain up to +24 dB into a soft clip with headroom) instead of
+  // keeping it about even.
+  void set(int type, double sr, double hz, double res, double drive, double var, double spreadSt, bool boost = false);
   void process(float& l, float& r);
   int type() const { return type_; }
   // Display: magnitude response at n frequencies (UI thread; allocates).
@@ -183,6 +185,7 @@ struct FxContext {
   double sr = 48000, tempo = 120, beat = 0;  // beat = song position (quarter notes) at block start
   bool playing = false;
   float sideL = 0, sideR = 0;
+  bool driveBoost = false;  // filter effect: boost drive (Filter Drive Mode)
 };
 class FxUnit;  // one effect slot (any type), plasma_fx_dsp.cpp
 struct FxBank {
@@ -374,7 +377,16 @@ struct SubVoice {
 struct NoiseVoice {
   double pos = 0;
   float lp = 0;
+  float tz[2][2] = {};  // tone filter state (L / R)
   bool done = false;
+  // tone filter (coefficients b0 b1 b2 a1 a2 from the control block), transposed direct form II
+  float tone(int ch, float x, const float* k) {
+    float* z = tz[ch];
+    const float y = k[0] * x + z[0];
+    z[0] = k[1] * x - k[3] * y + z[1];
+    z[1] = k[2] * x - k[4] * y;
+    return y;
+  }
   void start(const NoiseSrc* n, const Sample* file, float phase, float rnd, uint32_t seed);
   void tick(const NoiseSrc* n, const Sample* file, double rate, bool oneShot, float color, float& l, float& r);
 };

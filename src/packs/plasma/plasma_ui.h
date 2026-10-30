@@ -35,9 +35,10 @@ enum Page : int { PgOsc = 0, PgMix, PgFx, PgMatrix, PgGlobal, PgCount };
 // Plasma's palette (resolved for the current theme each frame).
 struct Pal {
   bool dark = true;
-  ImU32 frame, panel, panelHi, panelLo, head, headOn, well, wellHi, grid, gridStrong, line, lineHi;
+  ImU32 frame, panel, panelHi, panelLo, head, headOn, well, wellHi, field, grid, gridStrong, line, lineHi;
   ImU32 text, textDim, textFaint, label, accent, accentDim, accentSoft, mod, modSoft, warn, good, danger;
-  ImU32 capTop, capBot, rail, pointer, keyWhite, keyBlack, keyDown;
+  ImU32 capTop, capBot, rail, pointer, keyWhite, keyBlack, keyDown, boxEdge;
+  ImU32 accentText, modText;  // J-202: the accent / mod colours as text (4.5:1 on the surfaces they sit on)
 };
 const Pal& pal();
 const skin::Skin& skin();
@@ -118,15 +119,35 @@ std::string fs_stem(const std::string& path);
 // Display name of a file reference: an embedded entry shows the name it had in the preset.
 std::string refStem(const Model& m, const std::string& ref);
 
+// J-202: the stereo output meter (header, MIX page)
+void drawMeter(Ctx& c, float x, float y, float w, float h);
+// J-202: a two-way segmented switch; returns true when clicked (flip it).
+bool seg2(Ctx& c, const char* id, float x, float y, float w, float h, const char* a, const char* b, bool second, const char* hint);
 // ---- text
+// J-202 type scale (form px; 8 px is the floor at 100 %):
+//   kCap   captions: group / field / axis labels (bold, label colour)
+//   kLabel control labels under knobs and on buttons (bold)
+//   kValue values: fields, steppers, readouts (mono face, text colour)
+//   kTitle module titles in header strips (bold)
+//   kName  the preset name
+namespace ty {
+constexpr float kCap = 8.0f, kLabel = 8.5f, kValue = 9.0f, kTitle = 9.5f, kName = 10.5f;
+}
 float font(const Ctx& c, float px);  // scaled font size (form px)
+// While one is alive, text is set in the mono face (values).
+struct MonoText {
+  MonoText();
+  ~MonoText();
+  MonoText(const MonoText&) = delete;
+  MonoText& operator=(const MonoText&) = delete;
+};
 void text(const Ctx& c, float x, float y, const char* s, ImU32 col, float px = 9.0f, bool bold = false);
 void textC(const Ctx& c, float cx, float y, const char* s, ImU32 col, float px = 9.0f, bool bold = false);
 void textR(const Ctx& c, float rx, float y, const char* s, ImU32 col, float px = 9.0f, bool bold = false);
 void textMid(const Ctx& c, float x0, float x1, float cy, const char* s, ImU32 col, float px = 9.0f, bool bold = false);
 // J-128: bold text at form x beside a field box (boxY, boxH), on the baseline
 // of the field's own value (9 px bold, centred in the box).
-void labelBeside(const Ctx& c, float x, float boxY, float boxH, const char* s, ImU32 col, float px = 8.5f);
+void labelBeside(const Ctx& c, float x, float boxY, float boxH, const char* s, ImU32 col, float px = 8.5f, bool bold = true);
 float textW(const Ctx& c, const char* s, float px = 9.0f, bool bold = false);  // form units
 
 // ---- surfaces
@@ -178,8 +199,9 @@ bool valueBox(Ctx& c, int k, float x, float y, float w, float h, const char* lab
 bool choiceBox(Ctx& c, int k, float x, float y, float w, float h, bool arrows = false, const char* override = nullptr,
                const std::vector<std::string>* names = nullptr);
 // Free drop-down: shows `shown`, calls items() inside the open popup.
+// `placeholder`: `shown` is an empty-state text (set in the faint tone).
 bool dropField(Ctx& c, const char* id, float x, float y, float w, float h, const char* shown, const std::function<void()>& items,
-               bool arrows = false, int* step = nullptr);
+               bool arrows = false, int* step = nullptr, bool placeholder = false);
 // Integer stepper "value ^v".
 bool stepper(Ctx& c, int k, float x, float y, float w, float h, const char* override = nullptr);
 bool stepperFree(Ctx& c, const char* id, int& v, int lo, int hi, float x, float y, float w, float h, const char* shown = nullptr);

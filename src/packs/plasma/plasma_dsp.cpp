@@ -207,6 +207,19 @@ constexpr int kCtl = 16;             // control period (base-rate samples)
 constexpr int kVoices = kMaxVoices + 8;  // extra slots for voices fading out after a steal
 constexpr int kMaxOs = 4;
 
+// Alternating unison mix (J-201, measured per voice on held notes against the import source):
+// level per channel against a single voice, by blend in 0.1 steps, before the voice-count
+// level. The centre voice fades as the blend rises; the side voices rise from silence and
+// overtake it above about 0.6 blend.
+constexpr float kAltCentre[11] = {1.f, 1.f, 0.977f, 0.955f, 0.912f, 0.861f, 0.804f, 0.733f, 0.646f, 0.550f, 0.447f};
+constexpr float kAltSide[11] = {0.f, 0.11f, 0.234f, 0.385f, 0.572f, 0.794f, 1.023f, 1.245f, 1.413f, 1.496f, 1.479f};
+constexpr float kAltPair = 2.53f;  // an even count's two middle voices (+8 dB over an odd centre)
+float uniTab(const float (&t)[11], float blend) {
+  const float x = std::clamp(blend, 0.f, 1.f) * 10.f;
+  const int i = std::min(9, static_cast<int>(x));
+  return t[i] + (t[i + 1] - t[i]) * (x - static_cast<float>(i));
+}
+
 // 2x decimator (31-tap halfband)
 struct Decim {
   static constexpr int L = 31;
@@ -323,6 +336,8 @@ struct Ctl {
   double nRate = 1;
   bool nOne = false;
   float nColor = 0;
+  bool nTone = false;
+  float nTk[5] = {};  // noise tone filter b0 b1 b2 a1 a2
   int dest[kRoutes] = {};
   float bal2[kRoutes] = {}, b1[kRoutes] = {}, b2[kRoutes] = {};
   bool fOn[kFilters] = {};
@@ -1371,6 +1386,9 @@ class PlasmaGen final : public Generator {
     float pl0, pr0;
     panGains(pan, pl0, pr0);
     float gsum = 0;
+    const bool altMix = V(&n, tailP(T_UniMix)) >= 0.5f;
+    // Alternating: each voice drops 0.25 dB per voice from -6.45 dB; two voices sit at -2 dB
+    const float uniLevel = std::pow(10.f, (-6.45f - 0.25f * static_cast<float>(U)) / 20.f), altTwo = 0.794f;
     for (int u = 0; u < U; ++u) {
       const int ui = (u + rot) % U;
       float t = U == 1 ? 0.f : -1.f + 2.f * static_cast<float>(ui) / static_cast<float>(U - 1);
@@ -1399,6 +1417,29 @@ class PlasmaGen final : public Generator {
       s.inc[u] = hz * std::exp2(semis / 12.0) / srv_;
       s.uw[u] = t;
       const bool center = U == 1 || (U & 1 ? u == U / 2 : (u == U / 2 || u == U / 2 - 1));
+      if (altMix && U > 1) {
+        // Alternating mix: voices below the middle go right, left, right... from the lowest,
+        // voices above it left, right, left... from the highest; an odd count's centre voice
+        // plays in both channels. Width moves the side voices in from hard left/right.
+        const bool mid = (U & 1) && ui == U / 2, pair = !(U & 1) && (ui == U / 2 || ui == U / 2 - 1);
+        const bool upper = 2 * ui > U - 1;
+        const int j = upper ? U - 1 - ui : ui;
+        const bool left = upper ? (j % 2 == 0) : (j % 2 == 1);
+        float g;
+        if (U == 2) g = altTwo;
+        else g = uniLevel * (mid ? uniTab(kAltCentre, blend) : pair ? kAltPair * uniTab(kAltCentre, blend) : uniTab(kAltSide, blend));
+        float l = 1.f, r = 1.f;
+        if (!mid) {
+          const float w = std::min(std::fabs(width), 1.f);
+          const float nearG = 0.398f + 0.602f * std::pow(w, 1.2f), farG = 0.398f * std::pow(1.f - w, 1.25f);
+          const bool toL = width < 0 ? !left : left;
+          l = toL ? nearG : farG;
+          r = toL ? farG : nearG;
+        }
+        s.pl[u] = g * l * pl0;
+        s.pr[u] = g * r * pr0;
+        continue;
+      }
       const float g = center ? 1.f - blend * 0.5f : blend;
       // unison spread: linear balance (the main pan's curve would lift a wide unison)
       const float up = std::clamp(t * width, -1.f, 1.f);
@@ -1407,7 +1448,7 @@ class PlasmaGen final : public Generator {
       s.pr[u] = g * r * pr0;
       gsum += g * g;
     }
-    const float norm = gsum > 0 ? 1.f / std::sqrt(gsum) : 1.f;
+    const float norm = altMix && U > 1 ? 1.f : gsum > 0 ? 1.f / std::sqrt(gsum) : 1.f;
     for (int u = 0; u < U; ++u) s.pl[u] *= norm, s.pr[u] *= norm;
     s.wtPos = V(&n, oscP(o, O_WtPos));
     s.uniWt = V(&n, oscP(o, O_UniWtPos));
@@ -1525,6 +1566,23 @@ class PlasmaGen final : public Generator {
     c.nRate = std::exp2(nPitch / 12.0) * nRoot / srv_;
     c.nOne = V(&n, noiseP(N_OneShot)) >= 0.5f;
     c.nColor = V(&n, noiseP(N_Color));
+    {
+      // J-201 noise tone: a 2-pole Butterworth low-pass (tone < 0) or high-pass (tone > 0); the
+      // corner follows the source's tone knob law: low-pass 2000 Hz * 2^(21.5 (x - 0.3)),
+      // high-pass 430 Hz * 2^(21.5 (x - 0.7)), x = 0.5 + tone / 2 (measured on white noise)
+      const float tone = std::clamp(V(&n, tailP(T_NoiseTone)), -1.f, 1.f);
+      c.nTone = std::fabs(tone) > 1e-4f;
+      if (c.nTone) {
+        const double x = 0.5 + 0.5 * tone;
+        const bool hp = tone > 0;
+        const double fc = hp ? 430.0 * std::exp2(21.5 * (x - 0.7)) : 2000.0 * std::exp2(21.5 * (x - 0.3));
+        const double w = 2.0 * 3.14159265358979323846 * std::clamp(fc, 5.0, 0.45 * srv_) / srv_;
+        const double cw = std::cos(w), al = std::sin(w) / (2.0 * 0.70710678118654752), a0 = 1.0 + al;
+        const double b0 = hp ? (1.0 + cw) * 0.5 : (1.0 - cw) * 0.5, b1 = hp ? -(1.0 + cw) : 1.0 - cw;
+        c.nTk[0] = static_cast<float>(b0 / a0), c.nTk[1] = static_cast<float>(b1 / a0), c.nTk[2] = static_cast<float>(b0 / a0);
+        c.nTk[3] = static_cast<float>(-2.0 * cw / a0), c.nTk[4] = static_cast<float>((1.0 - al) / a0);
+      }
+    }
     // routing
     int* dest = c.dest;
     float* bal2 = c.bal2;
@@ -1551,7 +1609,7 @@ class PlasmaGen final : public Generator {
       const double res = std::clamp(V(&n, filtP(f, F_Res)) + V(&n, filtP(f, F_Y)) * 0.25f, 0.f, 1.f);
       const double spread = (V(&n, filtP(f, F_Stereo)) - 0.5) * 48.0;
       Filter& flt = f == 0 ? *n.f1 : *n.f2;
-      if (fOn[f]) flt.set(type, srv_, hz, res, V(&n, filtP(f, F_Drive)), V(&n, filtP(f, F_Var)), spread);
+      if (fOn[f]) flt.set(type, srv_, hz, res, V(&n, filtP(f, F_Drive)), V(&n, filtP(f, F_Var)), spread, G(tailP(T_DriveMode)) >= 0.5f);
       fMix[f] = V(&n, filtP(f, F_Wet));
       fLev[f] = static_cast<float>(busGain(V(&n, filtP(f, F_Level))));
       if (&n == lead_) live_.cut[f].store(static_cast<float>(hz), std::memory_order_relaxed);
@@ -1581,6 +1639,8 @@ class PlasmaGen final : public Generator {
     const double nRate = c.nRate;
     const bool nOne = c.nOne;
     const float nColor = c.nColor;
+    const bool nTone = c.nTone;
+    const float* nTk = c.nTk;
     const int* dest = c.dest;
     const float* bal2 = c.bal2;
     const float* b1 = c.b1;
@@ -1621,6 +1681,7 @@ class PlasmaGen final : public Generator {
       if (noiseOn) {
         float a, b;
         n.noise.tick(nsrc, nfile, nRate, nOne, nColor, a, b);
+        if (nTone) a = n.noise.tone(0, a, nTk), b = n.noise.tone(1, b, nTk);
         sl[3] = a * lev[3] * pl[3], sr[3] = b * lev[3] * pr[3];
         n.last[3] = (a + b) * 0.5f;
       }
@@ -1837,7 +1898,7 @@ class PlasmaGen final : public Generator {
     }
     // effect racks
     FxContext fc;
-    fc.sr = sr_, fc.tempo = tempo_, fc.beat = beat_, fc.playing = playing_;
+    fc.sr = sr_, fc.tempo = tempo_, fc.beat = beat_, fc.playing = playing_, fc.driveBoost = G(tailP(T_DriveMode)) >= 0.5f;
     float b1v = static_cast<float>(busGain(GV(G_Bus1Vol))), b2v = static_cast<float>(busGain(GV(G_Bus2Vol)));
     runRack(1, bus[4], bus[5], m, fc);
     runRack(2, bus[6], bus[7], m, fc);

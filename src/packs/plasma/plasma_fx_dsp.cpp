@@ -174,6 +174,7 @@ class FxUnit {
   // delay
   Line dl[2];
   Bq2 dbp;
+  Op1 dhp[2];  // the echo filter's low cut (one pole)
   float dfb[2]{};
   // compressor
   Lr4 xo1, xo2;
@@ -223,6 +224,7 @@ class FxUnit {
     for (auto& f : rvDamp) f.z = 0;
     rvLo[0].z = rvLo[1].z = rvHi[0].z = rvHi[1].z = 0;
     lpw[0].z = lpw[1].z = hpw[0].z = hpw[1].z = 0;
+    dhp[0].z = dhp[1].z = 0;
     shState[0] = shState[1] = dsHold[0] = dsHold[1] = 0;
     hb[0] = Hilbert{}, hb[1] = Hilbert{};
     if (filterMem) filterMem->reset();
@@ -508,27 +510,40 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       };
       const double tl = secs(N("kParamTimeL")) * P("kParamOffsetL");
       const double tr = (link ? secs(N("kParamTimeL")) : secs(N("kParamTimeR"))) * P("kParamOffsetR");
-      const float fb = static_cast<float>(P("kParamFeedback") / 100.0);
+      const float fb = static_cast<float>(std::clamp(P("kParamFeedback") / 100.0, 0.0, 1.0));
       const bool hq = N("kParamHQ") >= 0.5;
-      u.dbp.set(5, sr, P("kParamFreq"), P("kParamBW") * 0.5, 0);
+      // J-201: the echo filter is a band around FREQ whose width follows Q (octaves): a one-pole
+      // low cut and a two-pole high cut, unity in the band, so feedback below 100 % always decays
+      // (it peaked at +5 dB before and could run away). Measured on the source with sines
+      // around a 1 kHz centre at widths 1, 3 and 5.
+      const double f0 = P("kParamFreq"), bw = std::max(0.0, P("kParamBW"));
+      u.dbp.set(4, sr, f0 * std::exp2(0.69 + 0.5 * bw), 0.7071, 0);
+      for (auto& h : u.dhp) h.lp(sr, f0 * std::exp2(-(0.69 + 0.75 * bw)));
+      // dry / echo balance of the mix knob (measured: 25 % keeps the full dry signal, 50 % is
+      // -3 dB dry / -6 dB echo, 75 % -12 dB / -2 dB, 100 % echo only)
+      static const float kDry[5] = {1.f, 1.f, 0.707f, 0.25f, 0.f}, kWet[5] = {0.f, 0.141f, 0.5f, 0.79f, 1.f};
+      const float wq = wet * 4.f;
+      const int wi = std::min(3, static_cast<int>(wq));
+      const float wf = wq - static_cast<float>(wi);
+      const float gDry = kDry[wi] + (kDry[wi + 1] - kDry[wi]) * wf, gWet = kWet[wi] + (kWet[wi + 1] - kWet[wi]) * wf;
       const float dL = static_cast<float>(std::min(tl * sr, static_cast<double>(u.dl[0].n - 8)));
       const float dR = static_cast<float>(std::min(tr * sr, static_cast<double>(u.dl[1].n - 8)));
       for (int i = 0; i < n; ++i) {
         const float a = hq ? u.dl[0].tapCubic(dL) : u.dl[0].tap(dL);
         const float b = hq ? u.dl[1].tapCubic(dR) : u.dl[1].tap(dR);
-        const float fa = u.dbp.run(0, a) * 1.6f + a * 0.2f, fbv = u.dbp.run(1, b) * 1.6f + b * 0.2f;
-        if (mode == 1) {  // ping-pong: mono input into L, crossed feedback
+        const float fa = u.dbp.run(0, a - u.dhp[0].run(a)), fbv = u.dbp.run(1, b - u.dhp[1].run(b));
+        if (mode == 1) {  // ping-pong: mono input into L, L's echo into R, R's echo back into L
           u.dl[0].push((L[i] + R[i]) * 0.5f + fbv * fb);
-          u.dl[1].push(fa * fb);
+          u.dl[1].push(fa);
         } else if (mode == 2) {  // tap -> delay: L tap feeds the R delay line
           u.dl[0].push(L[i] + fa * fb * 0.5f);
-          u.dl[1].push(R[i] * 0.5f + a + fbv * fb);
+          u.dl[1].push(R[i] * 0.5f + fa + fbv * fb);
         } else {
           u.dl[0].push(L[i] + fa * fb);
           u.dl[1].push(R[i] + fbv * fb);
         }
-        L[i] = (L[i] + a * wet) * out;
-        R[i] = (R[i] + b * wet) * out;
+        L[i] = (L[i] * gDry + fa * gWet) * out;
+        R[i] = (R[i] * gDry + fbv * gWet) * out;
       }
       break;
     }
@@ -690,7 +705,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const int sub = 32;
       for (int i0 = 0; i0 < n; i0 += sub) {
         const int m = std::min(sub, n - i0);
-        u.filt->set(ft, sr, hz, res, clean ? 0.0 : P("kParamDrive") / 100.0, P("kParamVar") / 100.0, spread);
+        u.filt->set(ft, sr, hz, res, clean ? 0.0 : P("kParamDrive") / 100.0, P("kParamVar") / 100.0, spread, c.driveBoost);
         for (int i = i0; i < i0 + m; ++i) {
           float l = L[i], r = R[i];
           u.filt->process(l, r);

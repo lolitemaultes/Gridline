@@ -33,17 +33,20 @@ void macros(Ctx& c) {
     const float x = x0 + col * cw, y = kBodyY + 2 + row * ch;
     ImGui::PushID(i + 900);
     frameBox(c, x - 1, y - 1, cw + 2, ch + 2, c.P.panelHi);  // a raised tile per macro
-    knob(c, macroP(i), x + 25, y + 22, 14.0f, nullptr, KnobNoLabel);
+    knob(c, macroP(i), x + 25, y + 23, kKr, nullptr, KnobNoLabel);
     char num[4];
     std::snprintf(num, sizeof num, "%d", i + 1);
-    textR(c, x + cw - 8, y + 5, num, c.P.label, 9, true);
-    sourceHandle(c, SrcMacro1 + i, x + cw - 14, y + 31, 6);
+    textR(c, x + cw - 8, y + 6, num, c.P.textDim, ty::kCap, true);
+    sourceHandle(c, SrcMacro1 + i, x + cw - 14, y + 30, 6);
     // name (double-click: rename)
     std::string& nm = c.m.macroName[static_cast<size_t>(i)];
     ImGui::SetCursorScreenPos(c.p(x + 4, y + ch - 16));
     ImGui::InvisibleButton("##nm", c.F.sz(cw - 8, 13));
     const bool hv = ImGui::IsItemHovered();
-    textMid(c, x + 4, x + cw - 4, y + ch - 10, nm.empty() ? (hv ? "rename\xE2\x80\xA6" : "") : nm.c_str(), nm.empty() ? c.P.textFaint : c.P.label, 8, true);
+    // J-202: an unnamed macro (empty or its default "Macro N") reads as a placeholder
+    const bool placeholder = nm.empty() || nm == "Macro " + std::to_string(i + 1);
+    textMid(c, x + 4, x + cw - 4, y + ch - 10, nm.empty() ? (hv ? "Rename\xE2\x80\xA6" : "") : nm.c_str(), placeholder ? c.P.textDim : c.P.text,
+            ty::kCap, !placeholder);
     if (hv && ImGui::IsMouseDoubleClicked(0)) ImGui::OpenPopup("##ren");
     if (hv) c.a.setHint("Macro " + std::to_string(i + 1) + (nm.empty() ? "" : " (" + nm + ")") + ": double-click the name to rename");
     if (ImGui::BeginPopup("##ren")) {
@@ -85,14 +88,16 @@ void envelope(Ctx& c) {
       vline(c, x, gy, gy + gh, c.P.gridStrong);
       char b[12];
       std::snprintf(b, sizeof b, "%ds", s);
-      textR(c, x - 3, gy + gh - 12, b, c.P.textFaint, 7.5f, true);
+      textR(c, x - 3, gy + gh - 13, b, c.P.textDim, ty::kCap, false);
     }
   }
   const double A = envSec(c, e, E_Attack), H = envSec(c, e, E_Hold), D = envSec(c, e, E_Decay), R = envSec(c, e, E_Release);
   const double S = levelGain(val(c, envP(e, E_Sustain))), L0 = val(c, envP(e, E_Start)), L1 = val(c, envP(e, E_End));
   const double cA = (val(c, envP(e, E_CurveA)) - 50) / 50, cD = (val(c, envP(e, E_CurveD)) - 50) / 50, cR = (val(c, envP(e, E_CurveR)) - 50) / 50;
-  auto X = [&](double sec) { return gx + gw * static_cast<float>(std::min(sec / win, 1.0)); };
-  auto Y = [&](double lv) { return gy + gh - 3 - static_cast<float>(lv) * (gh - 6); };
+  // J-202: the curve keeps 6 units clear of the frame so its handles are whole
+  constexpr float kIn = 6;
+  auto X = [&](double sec) { return gx + kIn + (gw - 2 * kIn) * static_cast<float>(std::min(sec / win, 1.0)); };
+  auto Y = [&](double lv) { return gy + gh - kIn - static_cast<float>(lv) * (gh - 2 * kIn); };
   std::vector<ImVec2> pts;
   auto seg = [&](double t0, double t1, double v0, double v1, double cv) {
     const int n = 40;
@@ -150,8 +155,8 @@ void envelope(Ctx& c) {
     if (hot >= 4) dragC0 = valf(c, envP(e, hot == 4 ? E_CurveA : hot == 5 ? E_CurveD : E_CurveR));
   }
   if (act && drag >= 0) {
-    const double sec = std::max(0.0, static_cast<double>((m.x - c.p(gx, 0).x) / c.s(gw)) * win);
-    const double lv = std::clamp(static_cast<double>((c.p(0, gy + gh - 3).y - m.y) / c.s(gh - 6)), 0.0, 1.0);
+    const double sec = std::max(0.0, static_cast<double>((m.x - c.p(gx + kIn, 0).x) / c.s(gw - 2 * kIn)) * win);
+    const double lv = std::clamp(static_cast<double>((c.p(0, gy + gh - kIn).y - m.y) / c.s(gh - 2 * kIn)), 0.0, 1.0);
     const double scale = std::max(1e-6, val(c, G_EnvScale));
     switch (drag) {
       case 0: setv(c, envP(e, E_Attack), envTimeInv(sec / scale), true); break;
@@ -171,48 +176,56 @@ void envelope(Ctx& c) {
   }
   if (ImGui::IsItemDeactivated()) drag = -1, c.a.doc.endGesture();
   if (hov && ImGui::IsMouseDoubleClicked(0) && hot >= 4) setv(c, envP(e, hot == 4 ? E_CurveA : hot == 5 ? E_CurveD : E_CurveR), 50);
+  c.dl->PopClipRect();
   for (const auto& h : hs) {
     const bool lit = h.kind == hot || h.kind == drag;
     if (h.kind < 4) c.dl->AddCircleFilled(c.p(h.x, h.y), c.s(lit ? 4.5f : 3.4f), lit ? c.P.text : c.P.accent);
     else c.dl->AddCircle(c.p(h.x, h.y), c.s(lit ? 3.6f : 2.7f), lit ? c.P.text : theme::withAlpha(c.P.accent, 0.8f), 12, std::max(1.f, c.s(1.1f)));
   }
-  c.dl->PopClipRect();
   if (hov) c.a.setHint("Drag the points (times, sustain) and the rings (curves) \xC2\xB7 double-click a ring: straight");
-  // right column: zoom, fit, more
+  // right column (J-202): one stack of square buttons: zoom in, zoom out, fit, options
   {
-    const float rx = gx + gw + 6;
-    for (int i = 0; i < 2; ++i) {
+    const float rx = gx + gw + 6, bs = 18;
+    const char* tips[3] = {"Zoom in", "Zoom out", "Fit the envelope in the view"};
+    for (int i = 0; i < 3; ++i) {
+      const float by = gy + i * (bs + 4);
       ImGui::PushID(i + 30);
-      ImGui::SetCursorScreenPos(c.p(rx, gy + 4 + i * 96.f));
-      if (ImGui::InvisibleButton("##z", c.F.sz(18, 18))) c.u.envZoom = std::clamp(c.u.envZoom + (i == 0 ? -1 : 1), -3, 3);
-      iconArrow(c.dl, c.p(rx + 9, gy + 13 + i * 96.f), c.s(9), i == 0 ? 2 : 3, ImGui::IsItemHovered() ? c.P.text : c.P.textDim);
-      if (ImGui::IsItemHovered()) c.a.setHint(i == 0 ? "Zoom in" : "Zoom out");
+      ImGui::SetCursorScreenPos(c.p(rx, by));
+      if (ImGui::InvisibleButton("##z", c.F.sz(bs, bs))) {
+        if (i < 2) c.u.envZoom = std::clamp(c.u.envZoom + (i == 0 ? -1 : 1), -3, 3);
+        else {
+          const double tot = std::max(0.05, A + H + D + R);
+          int z = -3;
+          while (z < 3 && 4.0 * std::exp2(z) < tot * 1.1) ++z;
+          c.u.envZoom = z;
+        }
+      }
+      const bool h = ImGui::IsItemHovered();
+      c.dl->AddRectFilled(c.p(rx, by), c.p(rx + bs, by + bs), h ? c.P.headOn : c.P.head, c.s(2));
+      const ImU32 col = h ? c.P.text : c.P.textDim;
+      const ImVec2 q = c.p(rx + bs * 0.5f, by + bs * 0.5f);
+      const float t = std::max(1.2f, c.s(1.4f)), r = c.s(4.5f);
+      if (i < 2) {
+        c.dl->AddLine(ImVec2(q.x - r, q.y), ImVec2(q.x + r, q.y), col, t);
+        if (i == 0) c.dl->AddLine(ImVec2(q.x, q.y - r), ImVec2(q.x, q.y + r), col, t);
+      } else {  // fit: a span between two bars
+        c.dl->AddLine(ImVec2(q.x - r, q.y - r * 0.8f), ImVec2(q.x - r, q.y + r * 0.8f), col, t);
+        c.dl->AddLine(ImVec2(q.x + r, q.y - r * 0.8f), ImVec2(q.x + r, q.y + r * 0.8f), col, t);
+        c.dl->AddLine(ImVec2(q.x - r * 0.6f, q.y), ImVec2(q.x + r * 0.6f, q.y), col, t);
+      }
+      if (h) c.a.setHint(tips[i]);
       ImGui::PopID();
     }
-    ImGui::SetCursorScreenPos(c.p(rx, gy + 54));
-    if (ImGui::InvisibleButton("##fit", c.F.sz(18, 18))) {
-      const double tot = std::max(0.05, A + H + D + R);
-      int z = -3;
-      while (z < 3 && 4.0 * std::exp2(z) < tot * 1.1) ++z;
-      c.u.envZoom = z;
-    }
-    {
-      const ImVec2 q = c.p(rx + 8, gy + 61);
-      const ImU32 col = ImGui::IsItemHovered() ? c.P.text : c.P.textDim;
-      c.dl->AddCircle(q, c.s(4.5f), col, 14, std::max(1.2f, c.s(1.4f)));
-      c.dl->AddLine(ImVec2(q.x + c.s(3.2f), q.y + c.s(3.2f)), ImVec2(q.x + c.s(7), q.y + c.s(7)), col, std::max(1.4f, c.s(1.6f)));
-      if (ImGui::IsItemHovered()) c.a.setHint("Fit the envelope in the view");
-    }
-    moreButton(c, "envmore", rx, gy + 30, {envP(e, E_Start), envP(e, E_End), envP(e, E_LegatoInv), envP(e, E_Steal), G_EnvScale}, {},
+    moreButton(c, "envmore", rx, gy + 3 * (bs + 4), {envP(e, E_Start), envP(e, E_End), envP(e, E_LegatoInv), envP(e, E_Steal), G_EnvScale}, {},
                "Envelope options: start / end level, legato retrigger, voice steal, global time scale");
   }
   // values row
   {
     const int ks[5] = {E_Attack, E_Hold, E_Decay, E_Sustain, E_Release};
-    wellRect(c, gx, kBodyY + 145, gw, 17, 2);
+    MonoText mono;  // J-202: plain readouts over their knobs (no well, no accent)
     for (int i = 0; i < 5; ++i) {
       const std::string s = ptext(c, envP(e, ks[i]));
-      textC(c, kEnvX + 38 + i * 52.f, kBodyY + 148.5f, s.c_str(), c.P.accent, 8.5f, true);
+      textMid(c, kEnvX + 14 + i * 52.f, kEnvX + 62 + i * 52.f, kBodyY + 154, s.c_str(), c.P.textDim, ty::kValue, false);  // values size (8 px mono read too small at 100 %)
     }
   }
   // knobs
@@ -223,13 +236,8 @@ void envelope(Ctx& c) {
   // BPM / MS
   {
     const bool bpm = val(c, envP(e, E_Bpm)) >= 0.5;
-    const float bx = kEnvX + 287, by = kBodyY + 184;
-    wellRect(c, bx, by, 54, 20, 3);
-    ImGui::SetCursorScreenPos(c.p(bx, by));
-    if (ImGui::InvisibleButton("##bpm", c.F.sz(54, 20))) setv(c, envP(e, E_Bpm), bpm ? 0 : 1);
-    text(c, bx + 7, by + 5, "BPM", bpm ? c.P.accent : c.P.textFaint, 8.5f, true);
-    text(c, bx + 32, by + 5, "MS", bpm ? c.P.textFaint : c.P.accent, 8.5f, true);
-    if (ImGui::IsItemHovered()) c.a.setHint("Envelope times in milliseconds or in beats");
+    if (seg2(c, "bpm", kEnvX + 287, kBodyY + 184, 56, 20, "BPM", "MS", !bpm, "Envelope times in beats or in milliseconds"))
+      setv(c, envP(e, E_Bpm), bpm ? 0 : 1);
   }
   ImGui::PopID();
 }
@@ -326,7 +334,7 @@ void lfo(Ctx& c) {
   // left column: type, mode, mono
   {
     const float x = kLfoX + 4;
-    choiceBox(c, lfoP(l, L_Type), x, kBodyY + 12, 100, 18);
+    choiceBox(c, lfoP(l, L_Type), x, kBodyY + 8, 100, 18);
     const char* modes[3] = {"FREE", "RETRIG", "ENVELOPE"};
     const int mode = vali(c, lfoP(l, L_Mode));
     for (int i = 0; i < 3; ++i) {
@@ -335,15 +343,16 @@ void lfo(Ctx& c) {
       ImGui::SetCursorScreenPos(c.p(x, y));
       if (ImGui::InvisibleButton("##m", c.F.sz(100, 24))) setv(c, lfoP(l, L_Mode), i);
       const bool on = mode == i, hv = ImGui::IsItemHovered();
-      if (on || hv) panelRect(c, x, y, 100, 24, on ? c.P.accentSoft : c.P.panelHi, 3);
-      text(c, x + 8, y + 7, modes[i], on ? c.P.accent : c.P.textDim, 8.5f, true);
+      if (on || hv) panelRect(c, x, y, 100, 24, on ? c.P.headOn : c.P.panelHi, 3);
+      if (on) panelRect(c, x, y + 5, 2.5f, 14, c.P.accent, 1);
+      labelBeside(c, x + 10, y, 24, modes[i], on ? c.P.text : c.P.textDim, ty::kLabel);
       // glyphs: loop, retrigger arrow, one-shot bar
       const ImVec2 g = c.p(x + 86, y + 12);
       const ImU32 gc = on ? c.P.accent : c.P.textFaint;
       if (i == 0) c.dl->AddRect(ImVec2(g.x - c.s(6), g.y - c.s(3)), ImVec2(g.x + c.s(6), g.y + c.s(3)), gc, c.s(3), 0, std::max(1.f, c.s(1.2f)));
-      else if (i == 1) {
-        c.dl->PathArcTo(g, c.s(4.5f), -1.2f, 3.6f, 12);
-        c.dl->PathStroke(gc, 0, std::max(1.f, c.s(1.2f)));
+      else if (i == 1) {  // restart: a bar and a play triangle
+        c.dl->AddLine(ImVec2(g.x - c.s(5), g.y - c.s(4)), ImVec2(g.x - c.s(5), g.y + c.s(4)), gc, std::max(1.f, c.s(1.2f)));
+        c.dl->AddTriangleFilled(ImVec2(g.x - c.s(2.5f), g.y - c.s(4)), ImVec2(g.x + c.s(5), g.y), ImVec2(g.x - c.s(2.5f), g.y + c.s(4)), gc);
       } else {
         c.dl->AddLine(ImVec2(g.x - c.s(6), g.y), ImVec2(g.x + c.s(4), g.y), gc, std::max(1.f, c.s(1.2f)));
         c.dl->AddLine(ImVec2(g.x + c.s(6), g.y - c.s(4)), ImVec2(g.x + c.s(6), g.y + c.s(4)), gc, std::max(1.f, c.s(1.2f)));
@@ -352,7 +361,7 @@ void lfo(Ctx& c) {
         c.a.setHint(i == 0 ? "Free: the LFO runs on, shared by every note" : i == 1 ? "Retrig: restarts with each note" : "Envelope: plays once per note (right-click a point: sustain loop)");
       ImGui::PopID();
     }
-    checkBox(c, lfoP(l, L_Mono), x + 4, kBodyY + 150, "MONO", 8.5f);
+    checkBox(c, lfoP(l, L_Mono), x + 4, kBodyY + 149.25f, "MONO", ty::kLabel);  // on the shape row's centre line
   }
   vline(c, kLfoX + 108, kBodyY + 8, kBodyY + 162, c.P.line);
   vline(c, kLfoX + 473, kBodyY + 8, kBodyY + 162, c.P.line);
@@ -366,11 +375,11 @@ void lfo(Ctx& c) {
   int& tool = c.u.lfoTool;
   if (type == LfoLorenz || type == LfoRossler) {
     chaosPreview(c, type, gx, gy, gw, gh);
-    textC(c, gx + gw * 0.5f, gy + 6, type == LfoLorenz ? "Lorenz attractor" : "R\xC3\xB6ssler attractor", c.P.textFaint, 8, true);
+    textC(c, gx + gw * 0.5f, gy + 6, type == LfoLorenz ? "Lorenz attractor" : "R\xC3\xB6ssler attractor", c.P.textDim, 8, true);
   } else if (type == LfoPath) {
     // X / Y path: points move the X and Y outputs; drag to edit, double-click adds / removes
     if (ld.path.empty() && ld.pathX.empty()) {
-      textC(c, gx + gw * 0.5f, gy + gh * 0.5f - 6, "Double-click to add path points", c.P.textFaint, 8.5f, true);
+      textC(c, gx + gw * 0.5f, gy + gh * 0.5f - 6, "Double-click to add path points", c.P.textDim, 8.5f, true);
     }
     Curve& pts = ld.path;
     if (ld.pathX.size() != pts.size()) ld.pathX.resize(pts.size(), 0.5f);
@@ -408,7 +417,7 @@ void lfo(Ctx& c) {
       c.dl->AddCircleFilled(P(i), c.s(static_cast<int>(i) == hot ? 4.5f : 3.4f), static_cast<int>(i) == hot ? c.P.text : c.P.accent);
       char b2[16];
       std::snprintf(b2, sizeof b2, "%d", static_cast<int>(i) + 1);
-      c.dl->AddText(c.a.fontBold, font(c, 7.5f), ImVec2(P(i).x + c.s(5), P(i).y - c.s(11)), c.P.textDim, b2);
+      c.dl->AddText(c.a.fontBold, font(c, ty::kCap), ImVec2(P(i).x + c.s(5), P(i).y - c.s(11)), c.P.textDim, b2);
     }
     if (c.hasLive && c.live.voices > 0) {
       // live X / Y position
@@ -426,7 +435,7 @@ void lfo(Ctx& c) {
       c.dl->AddRectFilled(c.p(x0 + 1, gy + gh - v * gh), c.p(x1 - 1, gy + gh), theme::withAlpha(c.P.accent, 0.25f));
       hline(c, x0, x1, gy + gh - v * gh, c.P.accent);
     }
-    textC(c, gx + gw * 0.5f, gy + 6, "Sample & hold: a new random value each step (grid X)", c.P.textFaint, 8, true);
+    textC(c, gx + gw * 0.5f, gy + 6, "Sample & hold: a new random value each step (grid X)", c.P.textDim, 8, true);
   } else {
     // shape editor (point tool) or cell painting (step / ramp tools)
     Curve view = lfoShapeOf(c, l);
@@ -462,12 +471,12 @@ void lfo(Ctx& c) {
       c.dl->AddCircleFilled(c.p(gx + gw * ph, gy + gh - static_cast<float>(curveAt(view, ph)) * gh), c.s(3.2f), c.P.mod);
     }
     if (ld.loop >= 0 && vali(c, lfoP(l, L_Mode)) == LfoEnvelope && ld.loop < static_cast<int>(view.size()))
-      textR(c, gx + gw - 4, gy + 4, "sustain loop", c.P.warn, 7.5f, true);
+      textR(c, gx + gw - 4, gy + 4, "sustain loop", c.P.warn, ty::kCap, true);
   }
   // right column: options + tools
   {
     const float rx = gx + gw + 9;
-    moreButton(c, "lfomore", rx + 5, gy + 2, {lfoP(l, L_Rate10x), lfoP(l, L_Swing), lfoP(l, L_PhaseSnap), G_LfoScale, G_LfoScaleRate},
+    moreButton(c, "lfomore", rx + 6, kBodyY + 9, {lfoP(l, L_Rate10x), lfoP(l, L_Swing), lfoP(l, L_PhaseSnap), G_LfoScale, G_LfoScaleRate},
                [&] {
                  ImGui::Separator();
                  static Curve clip;
@@ -504,7 +513,7 @@ void lfo(Ctx& c) {
       ImGui::SetCursorScreenPos(c.p(rx, by));
       if (ImGui::InvisibleButton("##tool", c.F.sz(30, 22))) tool = i;
       const bool on = tool == i, hv = ImGui::IsItemHovered();
-      if (on || hv) panelRect(c, rx, by, 30, 22, on ? c.P.accentSoft : c.P.panelHi, 3);
+      if (on || hv) panelRect(c, rx, by, 30, 22, on ? c.P.headOn : c.P.panelHi, 3);
       const ImU32 col = on ? c.P.accent : c.P.textDim;
       const ImVec2 q = c.p(rx + 15, by + 11);
       if (i == 0) c.dl->AddCircleFilled(q, c.s(3.5f), col);
@@ -546,29 +555,28 @@ void lfo(Ctx& c) {
       setv(c, lfoP(l, L_Shape), ((cur - 1 + step + n) % n) + 1);
     }
     choiceBox(c, lfoP(l, L_Dir), gx + 202, y, 70, 18);
-    labelBeside(c, gx + 280, y, 18, "X", c.P.textFaint, 8);
+    labelBeside(c, gx + 280, y, 18, "X", c.P.label, ty::kCap);
     stepper(c, lfoP(l, L_GridX), gx + 290, y, 34, 18);
-    labelBeside(c, gx + 330, y, 18, "Y", c.P.textFaint, 8);
+    labelBeside(c, gx + 330, y, 18, "Y", c.P.label, ty::kCap);
     stepper(c, lfoP(l, L_GridY), gx + 340, y, 34, 18);
   }
   // bottom row: host anchor, rate block, rise / delay / smooth / phase
   {
     const float ky = kBodyY + 194;
-    toggleBtn(c, lfoP(l, L_Anchor), kLfoX + 12, ky - 11, 42, 22, "HOST", 8);
-    const float bx = kLfoX + 64, bw = 240;
-    wellRect(c, bx, ky - 17, bw, 34, 4);
+    // J-202: one row on the knob line: HOST, BPM / HZ, the rate knob with its
+    // value, TRIP / DOT; then the shape knobs.
+    toggleBtn(c, lfoP(l, L_Anchor), kLfoX + 10, ky - 10, 42, 20, "HOST", ty::kCap);
+    const float bx = kLfoX + 64;
     const bool bpm = val(c, lfoP(l, L_Bpm)) >= 0.5;
-    ImGui::SetCursorScreenPos(c.p(bx + 4, ky - 13));  // J-128: the TRIP / DOT row
-    if (ImGui::InvisibleButton("##bpm", c.F.sz(44, 20))) setv(c, lfoP(l, L_Bpm), bpm ? 0 : 1);
-    text(c, bx + 8, ky - 7, "BPM", bpm ? c.P.accent : c.P.textFaint, 8.5f, true);
-    text(c, bx + 32, ky - 7, "HZ", bpm ? c.P.textFaint : c.P.accent, 8.5f, true);
-    if (ImGui::IsItemHovered()) c.a.setHint("Rate in tempo divisions or in Hz");
-    knob(c, lfoP(l, L_Rate), bx + 76, ky - 3, 12.0f, nullptr, KnobNoLabel);
-    cellLabel(c, bx + 76, ky + 20, "RATE");  // J-128: on the RISE / DELAY label line
-    const std::string rv = ptext(c, lfoP(l, L_Rate));
-    textC(c, bx + 128, ky - 7, rv.c_str(), c.P.accent, 9.5f, true);
-    toggleBtn(c, lfoP(l, L_Trip), bx + 160, ky - 13, 36, 20, "TRIP", 7.5f);
-    toggleBtn(c, lfoP(l, L_Dot), bx + 200, ky - 13, 36, 20, "DOT", 7.5f);
+    if (seg2(c, "bpm", bx, ky - 10, 56, 20, "BPM", "HZ", !bpm, "Rate in tempo divisions or in Hz")) setv(c, lfoP(l, L_Bpm), bpm ? 0 : 1);
+    knob(c, lfoP(l, L_Rate), bx + 82, ky, kKr, "RATE");
+    {
+      MonoText mono;
+      const std::string rv = ptext(c, lfoP(l, L_Rate));
+      textMid(c, bx + 100, bx + 160, ky, rv.c_str(), c.P.text, ty::kValue, false);
+    }
+    toggleBtn(c, lfoP(l, L_Trip), bx + 164, ky - 10, 36, 20, "TRIP", ty::kCap);
+    toggleBtn(c, lfoP(l, L_Dot), bx + 204, ky - 10, 36, 20, "DOT", ty::kCap);
     knob(c, lfoP(l, L_Rise), kLfoX + 340, ky, kKr, "RISE");
     knob(c, lfoP(l, L_Delay), kLfoX + 390, ky, kKr, "DELAY");
     knob(c, lfoP(l, L_Smooth), kLfoX + 440, ky, kKr, "SMOOTH");
@@ -599,16 +607,18 @@ void scalars(Ctx& c) {
   const float vy = kBodyY + 150;
   deck(c, kFrame[3][0], vy - 4, kFrame[3][1], kStripY - vy + 4);
   hline(c, kVelX + 4, kVelX + kVelW - 7, vy + 16.5f, c.P.line);
-  text(c, kVelX + 8, vy + 2, "VOICING", c.P.label, 9, true);
+  text(c, kVelX + 8, vy + 3, "VOICING", c.P.label, ty::kCap, true);
   moreButton(c, "voicemore", kVelX + kVelW - 27, vy, {G_Priority, G_SameNote}, {}, "Voice priority and one voice per key");
-  checkBox(c, G_Mono, kVelX + 8, vy + 27, "MONO", 8.5f);  // J-128: on the POLY baseline
-  labelBeside(c, kVelX + 76, vy + 22, 18, "POLY", c.P.label, 8.5f);  // J-128: on the stepper baseline
+  checkBox(c, G_Mono, kVelX + 8, vy + 26.25f, "MONO", ty::kLabel);  // J-128: on the POLY baseline (box centre = stepper centre)
+  labelBeside(c, kVelX + 76, vy + 22, 18, "POLY", c.P.label, ty::kLabel);  // J-128: on the stepper baseline
   stepper(c, G_Poly, kVelX + 102, vy + 22, 40, 18);
-  checkBox(c, G_Legato, kVelX + 8, vy + 52, "LEGATO", 8.5f);
+  checkBox(c, G_Legato, kVelX + 8, vy + 51.25f, "LEGATO", ty::kLabel);
+  // J-202: the voice count is a readout, not a field
   char b[32];
   std::snprintf(b, sizeof b, "%d / %d", c.hasLive ? c.live.voices : 0, vali(c, G_Poly));
-  wellRect(c, kVelX + 76, vy + 47, 66, 18, 2);
-  textMid(c, kVelX + 76, kVelX + 142, vy + 56, b, c.P.accent, 9, true);
+  labelBeside(c, kVelX + 76, vy + 47, 18, "VOICES", c.P.label, ty::kLabel);
+  MonoText mono;
+  textMid(c, kVelX + 108, kVelX + 142, vy + 56, b, c.P.textDim, ty::kValue, false);
 }
 
 }  // namespace

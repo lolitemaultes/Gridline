@@ -18,7 +18,8 @@ namespace {
 
 constexpr float kListX = 0, kListW = 265, kStackX = 270, kTop = 69;
 constexpr float kStackW = kW - kStackX - 6;
-constexpr float kMixW = 66;  // the MIX + meter column at the right of a unit
+constexpr float kMixW = 66;   // the MIX + meter column at the right of a unit
+constexpr float kNameW = 112;  // the name block at the left of a unit (J-202: was 140)
 // The parameter shown in a unit's MIX column (-1: none).
 int mixIndex(int type) {
   const auto& defs = fxParams(type);
@@ -121,7 +122,7 @@ void distDisplay(Ctx& c, int s, float x, float y, float w, float h) {
     Curve& cv = ex.shapeA;
     Curve edit = cv.empty() ? linearCurve() : cv;
     static int sel = -1;
-    if (curveEditor(c, "xs", edit, x + 2, y + 2, w - 4, h - 4, 8, 8, sel, false, c.P.warn)) {
+    if (curveEditor(c, "xs", edit, x + 2, y + 2, w - 4, h - 4, 8, 8, sel, false, c.P.accent)) {
       cv = edit;
       commit(c, "Edit X-Shaper", 6000 + s);
     }
@@ -137,7 +138,7 @@ void distDisplay(Ctx& c, int s, float x, float y, float w, float h) {
     pts.push_back(c.p(x + w * i / 48.f, y + h * 0.5f - yo * h * 0.42f));
   }
   c.dl->PushClipRect(c.p(x, y), c.p(x + w, y + h), true);
-  skin::curveArea(c.dl, pts.data(), static_cast<int>(pts.size()), c.p(0, y + h * 0.5f).y, c.P.warn, std::max(1.5f, c.s(1.6f)), 0.25f);
+  skin::curveArea(c.dl, pts.data(), static_cast<int>(pts.size()), c.p(0, y + h * 0.5f).y, c.P.accent, std::max(1.5f, c.s(1.6f)), 0.2f);
   c.dl->PopClipRect();
 }
 void filterDisplay(Ctx& c, int s, float x, float y, float w, float h) {
@@ -159,7 +160,7 @@ void filterDisplay(Ctx& c, int s, float x, float y, float w, float h) {
     pts[static_cast<size_t>(i)] = c.p(x + w * i / (N - 1), y + h - std::clamp((db + 36.f) / 60.f, 0.f, 1.f) * h);
   }
   c.dl->PushClipRect(c.p(x, y), c.p(x + w, y + h), true);
-  skin::curveArea(c.dl, pts.data(), N, c.p(0, y + h).y, c.P.warn, std::max(1.5f, c.s(1.6f)), 0.2f);
+  skin::curveArea(c.dl, pts.data(), N, c.p(0, y + h).y, c.P.accent, std::max(1.5f, c.s(1.6f)), 0.2f);
   c.dl->PopClipRect();
 }
 
@@ -169,7 +170,7 @@ float moduleHeight(int type) {
   int knobs = 0, small = 0;
   for (const auto& d : defs) (d.kind == 0 ? knobs : small)++;
   if (mixIndex(type) >= 0) --knobs;
-  const float area = kStackW - 150 - (small ? 118 : 0) - ((type == FxDistortion || type == FxFilter) ? 124 : 0) - 40 - kMixW;
+  const float area = kStackW - kNameW - 10 - (small ? 118 : 0) - ((type == FxDistortion || type == FxFilter) ? 124 : 0) - 40 - kMixW;
   const int perRow = std::max(1, static_cast<int>(area / 54));
   const int knobRows = (knobs + perRow - 1) / perRow;
   const int smallRows = (small + 1) / 1;
@@ -187,13 +188,13 @@ void moduleStrip(Ctx& c, const FxNode& n, float x, float y, float w, int bandLab
   if (selected) c.dl->AddRect(c.p(x, y), c.p(x + w, y + h), theme::withAlpha(c.P.accent, 0.6f), c.s(3.5f), 0, std::max(1.f, c.s(1.2f)));
   // name block
   {
-    const float bw = 140;
+    const float bw = kNameW;
     c.dl->AddRectFilled(c.p(x + 1, y + 1), c.p(x + bw, y + h - 1), c.P.panelLo, c.s(3), ImDrawFlags_RoundCornersLeft);
     vline(c, x + bw, y + 1, y + h - 1, c.P.frame);
     led(c, fxP(s, X_On), x + 8, y + 9, 10);
     const std::string nm = upper(fxTypeNames()[static_cast<size_t>(type)]);
-    text(c, x + 24, y + 8, nm.c_str(), on ? c.P.warn : c.P.textFaint, 10.0f, true);
-    if (bandLabelType >= 0) text(c, x + 24, y + 22, bandName(bandLabelType, n.band), c.P.textDim, 8, true);
+    textMid(c, x + 24, x + bw - 4, y + 14, nm.c_str(), on ? c.P.text : c.P.textFaint, ty::kTitle, true);
+    if (bandLabelType >= 0) text(c, x + 24, y + 23, bandName(bandLabelType, n.band), c.P.textDim, ty::kCap, true);
     // up / down / remove
     const char* tips[3] = {"Move up", "Move down", "Remove"};
     for (int i = 0; i < 3; ++i) {
@@ -231,18 +232,18 @@ void moduleStrip(Ctx& c, const FxNode& n, float x, float y, float w, int bandLab
     vline(c, mx, y + 6, y + h - 6, c.P.line);
     if (mixQ >= 0) {
       ImGui::PushID(mixQ + 200);
-      knob(c, fxP(s, X_P0 + mixQ), mx + 28, y + 26, 14.0f, "MIX");
+      knob(c, fxP(s, X_P0 + mixQ), mx + 28, y + 26, 15.0f, "MIX");
       ImGui::PopID();
     }
     const float my0 = y + 8, my1 = y + h - 8, mxx = x + w - 13;
-    c.dl->AddRectFilled(c.p(mxx, my0), c.p(mxx + 5, my1), c.P.well, c.s(1));
+    c.dl->AddRectFilled(c.p(mxx, my0), c.p(mxx + 5, my1), c.P.field, c.s(1));
     c.dl->AddRect(c.p(mxx, my0), c.p(mxx + 5, my1), c.P.line, c.s(1));
     if (c.hasLive) {
       const float lv = std::clamp(c.live.fxMeter[s], 0.f, 1.f);
       c.dl->AddRectFilled(c.p(mxx + 1, my1 - lv * (my1 - my0)), c.p(mxx + 4, my1 - 1), c.P.good, 1);
     }
   }
-  float cx = x + 150;
+  float cx = x + kNameW + 10;
   // display
   if (type == FxDistortion || type == FxFilter) {
     if (type == FxDistortion) distDisplay(c, s, cx, y + 8, 116, h - 16);
@@ -262,7 +263,7 @@ void moduleStrip(Ctx& c, const FxNode& n, float x, float y, float w, int bandLab
       const int k = fxP(s, X_P0 + q);
       ImGui::PushID(q + 100);
       if (d.kind == 1) {
-        toggleBtn(c, k, cx, sy, 110, 18, d.label, 7.5f);
+        toggleBtn(c, k, cx, sy, 110, 18, d.label, ty::kCap);
       } else {
         // choice: the stored value is normalized; show the choice names
         const int cnt = static_cast<int>(d.choices.size());
@@ -295,7 +296,7 @@ void moduleStrip(Ctx& c, const FxNode& n, float x, float y, float w, int bandLab
     }
     if (type == FxConvolve) {
       const std::string& ir = c.m.fxExtra[static_cast<size_t>(s)].ir;
-      if (!ir.empty()) text(c, cx, sy + 2, refStem(c.m, ir).c_str(), c.P.textDim, 7.5f, false);
+      if (!ir.empty()) text(c, cx, sy + 2, refStem(c.m, ir).c_str(), c.P.textDim, ty::kCap, false);
     }
     cx += 118;
   }
@@ -309,12 +310,12 @@ void moduleStrip(Ctx& c, const FxNode& n, float x, float y, float w, int bandLab
       if (d.kind != 0 || q == mixQ) continue;
       const int row = i / perRow, col = i % perRow;
       ImGui::PushID(q + 200);
-      knob(c, fxP(s, X_P0 + q), cx + 27 + col * 54.f, y + 26 + row * 52.f, 14.0f, d.label, (d.min < 0 && d.max > 0) ? KnobBipolar : 0);
+      knob(c, fxP(s, X_P0 + q), cx + 27 + col * 54.f, y + 26 + row * 52.f, 15.0f, d.label, (d.min < 0 && d.max > 0) ? KnobBipolar : 0);
       ImGui::PopID();
       ++i;
     }
   }
-  if (!on) c.dl->AddRectFilled(c.p(x + 141, y + 1), c.p(x + w - 1, y + h - 1), theme::withAlpha(c.P.frame, 0.4f), c.s(3), ImDrawFlags_RoundCornersRight);
+  if (!on) c.dl->AddRectFilled(c.p(x + kNameW + 1, y + 1), c.p(x + w - 1, y + h - 1), theme::withAlpha(c.P.frame, 0.4f), c.s(3), ImDrawFlags_RoundCornersRight);
   // click on the strip selects it
   if (ImGui::IsMouseHoveringRect(c.p(x, y), c.p(x + w, y + h)) && ImGui::IsMouseClicked(0)) c.u.fxSel = s;
   ImGui::PopID();
@@ -341,12 +342,12 @@ void listRow(Ctx& c, const FxNode& n, float y, int depth, int bandType) {
     }
     ImGui::EndDragDropTarget();
   }
-  if (sel || hv) panelRect(c, x, y, w, 20, sel ? c.P.accentSoft : c.P.panelHi, 2);
+  if (sel || hv) panelRect(c, x, y, w, 20, sel ? c.P.headOn : c.P.panelHi, 3);
   const bool on = val(c, fxP(s, X_On)) >= 0.5;
-  c.dl->AddRectFilled(c.p(x + 4, y + 5), c.p(x + 6, y + 15), on ? c.P.warn : c.P.textFaint);
+  c.dl->AddRectFilled(c.p(x + 4, y + 5), c.p(x + 6.5f, y + 15), on ? c.P.accent : c.P.textFaint, c.s(1));
   std::string nm = upper(fxTypeNames()[static_cast<size_t>(type)]);
   if (bandType >= 0) nm = std::string(bandName(bandType, n.band)) + " \xC2\xB7 " + nm;
-  text(c, x + 12, y + 5, nm.c_str(), on ? c.P.text : c.P.textFaint, 8.5f, true);
+  labelBeside(c, x + 13, y, 20, nm.c_str(), on ? c.P.text : c.P.textFaint, ty::kLabel);
   if (hv) c.a.setHint("Drag to reorder \xC2\xB7 click to select");
   // bypass + remove
   ImGui::SetCursorScreenPos(c.p(x + w - 44, y + 1));
@@ -372,7 +373,7 @@ void fxPage(Ctx& c) {
     for (int r = 0; r < 3; ++r) {
       ImGui::PushID(r + 6600);
       const float tx = kListX + 6 + r * 86.f;
-      if (button(c, "rk", tx, kTop + 4, 83, 22, rn[r], r == rack, 9)) c.u.fxRack = r, c.u.fxSel = -1;
+      if (button(c, "rk", tx, kTop + 4, 83, 22, rn[r], r == rack, ty::kLabel)) c.u.fxRack = r, c.u.fxSel = -1;
       // drop a module on a rack tab: move it to the end of that rack
       if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("PLASMA_FX")) {
@@ -389,12 +390,12 @@ void fxPage(Ctx& c) {
       ImGui::PopID();
     }
   }
-  if (button(c, "add", kListX + 6, kTop + 31, 60, 22, "+ FX", false, 9.5f)) ImGui::OpenPopup("##addfx");
+  if (button(c, "add", kListX + 6, kTop + 31, 60, 22, "+ FX", false, ty::kLabel)) ImGui::OpenPopup("##addfx");
   if (ImGui::BeginPopup("##addfx")) {
     addMenu(c, rack, -1, 0);
     ImGui::EndPopup();
   }
-  dropField(c, "rackmenu", kListX + 70, kTop + 31, kListW - 76, 22, c.m.lockFx ? "Effects locked" : "Rack", [&] {
+  dropField(c, "rackmenu", kListX + 70, kTop + 31, kListW - 76, 22, c.m.lockFx ? "Effects locked" : "Rack actions", [&] {
     static std::vector<std::pair<FxNode, std::vector<float>>> clip;
     static std::vector<FxExtra> clipExtra;
     if (ImGui::MenuItem(i18n::tr("Copy this rack"))) {
@@ -467,16 +468,10 @@ void fxPage(Ctx& c) {
           }
     }
     c.dl->PopClipRect();
-    if (y == kTop + 64) textC(c, kListW * 0.5f, y + 20, "No effects \xE2\x80\x94 click + FX", c.P.textFaint, 8.5f, true);
+    if (y == kTop + 64) textC(c, kListW * 0.5f, y + 20, "No effects yet. Add one with + FX.", c.P.textDim, ty::kLabel, false);
   }
   // ---------------- module stack
   {
-    // rails
-    for (int i = 0; i < 2; ++i) {
-      const float rx = i == 0 ? kStackX + 1 : kW - 9;
-      c.dl->AddRectFilled(c.p(rx, kTop + 3), c.p(rx + 5, kLowerY - 5), c.P.frame, c.s(1));
-      for (float y = kTop + 7; y < kLowerY - 8; y += 8) c.dl->AddRectFilled(c.p(rx + 1, y), c.p(rx + 4, y + 4), c.P.panelHi, 1);
-    }
     std::vector<std::pair<FxNode, int>> order;  // node + band label type (-1)
     for (const auto& n : nodes) {
       if (n.rack != rack || n.parent >= 0) continue;
@@ -523,7 +518,7 @@ void fxPage(Ctx& c) {
         for (int bnd = 0; bnd < bandsOf(t); ++bnd) {
           ImGui::PushID(bnd);
           const std::string lab = std::string("+ ") + bandName(t, bnd);
-          if (y + 20 > top && y < top + h && button(c, "addb", kStackX + 34 + bnd * 100.f, y, 94, 20, lab.c_str(), false, 8)) ImGui::OpenPopup("##addband");
+          if (y + 20 > top && y < top + h && button(c, "addb", kStackX + 34 + bnd * 100.f, y, 94, 20, lab.c_str(), false, ty::kCap)) ImGui::OpenPopup("##addband");
           if (ImGui::BeginPopup("##addband")) {
             addMenu(c, rack, n.slot, bnd);
             ImGui::EndPopup();
@@ -536,7 +531,7 @@ void fxPage(Ctx& c) {
     }
     ImGui::PopClipRect();
     c.dl->PopClipRect();
-    if (order.empty()) textC(c, (kStackX + kW) * 0.5f, kTop + 140, "Add an effect with + FX", c.P.textFaint, 9.5f, true);
+    if (order.empty()) textC(c, (kStackX + kW) * 0.5f, kTop + 140, "This rack is empty. Add an effect with + FX.", c.P.textDim, ty::kLabel, false);
     if (total > h) {
       const float th = h * h / total, ty = top + (h - th) * (sc / std::max(1.f, total - h));
       c.dl->AddRectFilled(c.p(kW - 14, ty), c.p(kW - 11, ty + th), c.P.lineHi, c.s(1));

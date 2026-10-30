@@ -56,10 +56,9 @@ void mappingBody(Ctx& c) {
   // swallow clicks on the panel background
   ImGui::SetCursorScreenPos(c.p(kPx, kPy));
   ImGui::InvisibleButton("##mapbg", c.F.sz(kPw, kPh));
-  text(c, kPx + 12, kPy + 10, "OSCILLATOR MAPPING", c.P.text, 9.5f, true);
-  text(c, kPx + 180, kPy + 10.5f, "MAPPING", c.P.textDim, 8, true);
-  if (button(c, "mkey", kPx + 226, kPy + 6, 44, 18, "KEY", !u.mapVel, 8)) u.mapVel = false;
-  if (button(c, "mvel", kPx + 272, kPy + 6, 44, 18, "VEL", u.mapVel, 8)) u.mapVel = true;
+  text(c, kPx + 12, kPy + 10, "OSCILLATOR MAPPING", c.P.text, ty::kTitle, true);
+  labelBeside(c, kPx + 180, kPy + 5, 20, "RANGE", c.P.label, ty::kCap);
+  if (seg2(c, "mkv", kPx + 220, kPy + 5, 96, 20, "KEY", "VELOCITY", u.mapVel, "Edit the key or the velocity range")) u.mapVel = !u.mapVel;
   ImGui::SetCursorScreenPos(c.p(kPx + kPw - 26, kPy + 6));
   if (ImGui::InvisibleButton("##mclose", c.F.sz(20, 20))) u.mapping = false;
   iconClose(c.dl, c.p(kPx + kPw - 16, kPy + 16), c.s(8), ImGui::IsItemHovered() ? c.P.text : c.P.textDim);
@@ -72,12 +71,14 @@ void mappingBody(Ctx& c) {
     if (!u.mapVel) {
       for (int k = 0; k <= 120; k += 12) {
         vline(c, xOf(static_cast<float>(k)), sy + 10, sy + 16, c.P.textFaint);
-        text(c, xOf(static_cast<float>(k)) + 2, sy, noteName(k).c_str(), c.P.textFaint, 7.5f, true);
+        MonoText mono;
+        text(c, xOf(static_cast<float>(k)) + 2, sy, noteName(k).c_str(), c.P.textDim, ty::kCap, false);
       }
     } else {
       for (int v : {1, 32, 64, 96, 127}) {
         vline(c, xOf(static_cast<float>(v)), sy + 10, sy + 16, c.P.textFaint);
-        text(c, xOf(static_cast<float>(v)) + 2, sy, std::to_string(v).c_str(), c.P.textFaint, 7.5f, true);
+        MonoText mono;
+        text(c, xOf(static_cast<float>(v)) + 2, sy, std::to_string(v).c_str(), c.P.textDim, ty::kCap, false);
       }
     }
   }
@@ -87,10 +88,10 @@ void mappingBody(Ctx& c) {
     hline(c, kPx + 8, kPx + kPw - 8, ry - 3, c.P.line);
     const char* nm[] = {"OSC A", "OSC B", "OSC C"};
     const bool on = vali(c, oscP(o, O_Enable)) != 0;
-    text(c, kPx + 12, ry + 6, nm[o], on ? c.P.text : c.P.textFaint, 9.5f, true);
-    checkBox(c, oscP(o, O_MapFold), kPx + 12, ry + 26, "FOLD", 7.5f);
+    text(c, kPx + 12, ry + 6, nm[o], on ? c.P.text : c.P.textFaint, ty::kTitle, true);
+    checkBox(c, oscP(o, O_MapFold), kPx + 12, ry + 26, "FOLD", ty::kCap);
     if (ImGui::IsItemHovered()) c.a.setHint("Fold: keys outside the range move into it by octaves (otherwise they are left out)");
-    checkBox(c, oscP(o, O_MapWarp), kPx + 70, ry + 26, "WARP", 7.5f);
+    checkBox(c, oscP(o, O_MapWarp), kPx + 70, ry + 26, "WARP", ty::kCap);
     if (ImGui::IsItemHovered()) c.a.setHint("Warp: outside its range the oscillator stays silent but still feeds FM / PD / AM / RM warps");
     // range bar
     const int kMin = u.mapVel ? O_VelMin : O_KeyMin, kMax = u.mapVel ? O_VelMax : O_KeyMax;
@@ -105,12 +106,18 @@ void mappingBody(Ctx& c) {
       }
     }
     const float ax = xOf(vmin), axe = xOf(vmax + 1);
-    skin::gradientRect(c.dl, c.p(ax, y0 + 3), c.p(axe, y0 + h - 3), theme::withAlpha(c.P.accent, on ? 0.55f : 0.25f), theme::withAlpha(c.P.accent, on ? 0.3f : 0.12f), c.s(3));
-    c.dl->AddRect(c.p(ax, y0 + 3), c.p(axe, y0 + h - 3), on ? c.P.accent : c.P.accentDim, c.s(3));
+    // J-202: a soft zone with lit end handles; the range reads "from to"
+    c.dl->AddRectFilled(c.p(ax, y0 + 3), c.p(axe, y0 + h - 3), theme::withAlpha(c.P.accent, on ? 0.2f : 0.08f), c.s(3));
+    c.dl->AddRect(c.p(ax, y0 + 3), c.p(axe, y0 + h - 3), theme::withAlpha(c.P.accent, on ? 0.7f : 0.3f), c.s(3));
+    c.dl->AddRectFilled(c.p(ax, y0 + 3), c.p(ax + 3, y0 + h - 3), on ? c.P.accent : c.P.accentDim, c.s(1.5f));
+    c.dl->AddRectFilled(c.p(axe - 3, y0 + 3), c.p(axe, y0 + h - 3), on ? c.P.accent : c.P.accentDim, c.s(1.5f));
     char t[48];
-    if (u.mapVel) std::snprintf(t, sizeof t, "%d - %d", static_cast<int>(vmin), static_cast<int>(vmax));
-    else std::snprintf(t, sizeof t, "%s - %s", noteName(static_cast<int>(vmin)).c_str(), noteName(static_cast<int>(vmax)).c_str());
-    textMid(c, ax, axe, y0 + h * 0.5f, t, c.P.text, 8, true);
+    if (u.mapVel) std::snprintf(t, sizeof t, "%d to %d", static_cast<int>(vmin), static_cast<int>(vmax));
+    else std::snprintf(t, sizeof t, "%s to %s", noteName(static_cast<int>(vmin)).c_str(), noteName(static_cast<int>(vmax)).c_str());
+    {
+      MonoText mono;
+      textMid(c, ax, axe, y0 + h * 0.5f, t, on ? c.P.text : c.P.textDim, ty::kValue, false);
+    }
     // drag: edges move one end, the middle moves the range
     ImGui::SetCursorScreenPos(c.p(bx0, y0));
     ImGui::InvisibleButton("##rng", c.F.sz(bw, h));

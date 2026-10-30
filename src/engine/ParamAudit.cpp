@@ -320,6 +320,7 @@ const InertDoc kInert[] = {
     {"gl.plasma", "C *", "VERIFIED: oscillator C: same code as A (parameter coverage test)"},
     {"gl.plasma", "Sub *", "VERIFIED: acts with the sub on (and routed to a filter for its balance; parameter coverage test)"},
     {"gl.plasma", "Noise *", "VERIFIED: acts with the noise on and a sample / one-shot type (parameter coverage test)"},
+    {"gl.plasma", "Unison Mix", "VERIFIED: acts on any oscillator with two or more unison voices (parameter coverage test)"},
     {"gl.plasma", "Filter *", "VERIFIED: acts with the filter on and a source routed into it (parameter coverage test)"},
     {"gl.plasma", "Env *", "VERIFIED: acts when the envelope is routed through the matrix, with legato / mono / tempo for those switches (parameter coverage test)"},
     {"gl.plasma", "LFO Bus *", "VERIFIED: moves an LFO point that a bus link names (parameter coverage test)"},

@@ -274,7 +274,11 @@ inline constexpr int kBusBase = kMacroBase + kMacros;
 inline constexpr int kRetrigBase = kBusBase + kLfoBusses;
 inline constexpr int kModBase = kRetrigBase + kRetrigs;
 inline constexpr int kFxBase = kModBase + kModSlots * M_Count;
-inline constexpr int kParamCount = kFxBase + kFxSlots * X_Count;
+// Parameters added after the first release go here, at the very end, so older states pad them
+// with their defaults (J-201: noise tone, unison mix, filter drive mode).
+enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_Count };
+inline constexpr int kTailBase = kFxBase + kFxSlots * X_Count;
+inline constexpr int kParamCount = kTailBase + T_Count;
 
 constexpr int oscP(int osc, int p) { return kOscBase + osc * O_Count + p; }
 constexpr int subP(int p) { return kSubBase + p; }
@@ -288,6 +292,7 @@ constexpr int busP(int b) { return kBusBase + b; }
 constexpr int retrigP(int r) { return kRetrigBase + r; }
 constexpr int modP(int s, int p) { return kModBase + s * M_Count + p; }
 constexpr int fxP(int s, int p) { return kFxBase + s * X_Count + p; }
+constexpr int tailP(int p) { return kTailBase + p; }
 
 // ------------------------------------------------------------------ names (plasma_info.cpp)
 const std::vector<std::string>& warpNames();       // every warp mode (menu labels)

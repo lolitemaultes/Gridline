@@ -42,7 +42,7 @@ ParamDesc dataDesc(const char* name, double lo, double hi, double def, const cha
 // A knob bound to a float of the model (described by d); commits one undo step per drag.
 bool dataKnob(Ctx& c, const char* id, float& v, const ParamDesc& d, float cx, float cy, const char* label, const std::string& valueText, int what) {
   float n = static_cast<float>(d.toNormalized(v));
-  if (knobFree(c, id, n, cx, cy, 13.5f, label, false, valueText.c_str(), d)) {
+  if (knobFree(c, id, n, cx, cy, 15.0f, label, false, valueText.c_str(), d)) {
     v = static_cast<float>(d.fromNormalized(std::clamp(n, 0.f, 1.f)));
     commit(c, label, what);
     return true;
@@ -69,7 +69,7 @@ bool dataCheck(Ctx& c, const char* id, bool& v, float x, float y, const char* la
   }
   const ImVec2 a = c.p(x, y + 0.5f), b = c.p(x + 8.5f, y + 9);
   if (v) skin::gradientRect(c.dl, a, b, skin::lighten(c.P.accent, 0.2f), c.P.accent, c.s(2));
-  else c.dl->AddRectFilled(a, b, c.P.well, c.s(2)), c.dl->AddRect(a, b, c.P.lineHi, c.s(2));
+  else c.dl->AddRectFilled(a, b, c.P.field, c.s(2)), c.dl->AddRect(a, b, c.P.boxEdge, c.s(2));
   text(c, x + 13, y, label, v ? c.P.text : c.P.textDim, px, true);
   ImGui::PopID();
   return click;
@@ -124,7 +124,7 @@ void slotRow(Ctx& c, bool clip) {
     std::string l1, l2;
     if (clip) {
       const ClipSlot& cs = c.m.clip[static_cast<size_t>(i)];
-      l1 = cs.name.empty() ? (cs.notes.empty() ? std::string("\xE2\x80\x94") : std::to_string(cs.notes.size()) + " notes") : cs.name;
+      l1 = cs.name.empty() ? (cs.notes.empty() ? std::string("Empty") : std::to_string(cs.notes.size()) + " notes") : cs.name;
       char b[24];
       std::snprintf(b, sizeof b, "%g beats", static_cast<double>(cs.lengthBeats));
       l2 = b;
@@ -136,7 +136,10 @@ void slotRow(Ctx& c, bool clip) {
       l2 = as.bpm ? dn[static_cast<size_t>(std::clamp(as.rate, 0, static_cast<int>(dn.size()) - 1))] : std::to_string(static_cast<int>(as.hz)) + " Hz";
     }
     textMid(c, sx + 2, sx + w - 2, y + 36, l1.c_str(), ed ? c.P.text : c.P.textDim, 8.5f, true);
-    textMid(c, sx + 2, sx + w - 2, y + 51, l2.c_str(), c.P.textFaint, 8, true);
+    {
+      MonoText mono;
+      textMid(c, sx + 2, sx + w - 2, y + 51, l2.c_str(), c.P.textDim, ty::kCap, false);
+    }
     // launch (makes it the playing slot)
     ImGui::SetCursorScreenPos(c.p(sx, y + 64));
     if (ImGui::InvisibleButton("##go", c.F.sz(w - 1, 24))) {
@@ -155,9 +158,9 @@ void slotRow(Ctx& c, bool clip) {
   // MIDI out + trigger octave
   {
     const float x = x1 + 6;
-    text(c, x, y + 40, "NOTE LATCH", c.P.textDim, 8, true);
-    checkBox(c, G_NoteLatch, x + 124, y + 40, "", 8);
-    text(c, x, y + 70, "MIDI OUT", c.P.textDim, 8, true);
+    labelBeside(c, x, y + 35, 18, "NOTE LATCH", c.P.label, ty::kCap);
+    checkBox(c, G_NoteLatch, x + 124, y + 40, "", ty::kCap);
+    labelBeside(c, x, y + 65, 18, "MIDI OUT", c.P.label, ty::kCap);
     choiceBox(c, G_MidiOut, x + 54, y + 65, 84, 18);
   }
 }
@@ -245,8 +248,8 @@ void arpPanel(Ctx& c) {
       }
     });
     divisionDrop(c, "lq", c.m.arpLaunchQuant, x, y0 + 64, 80, 20);
-    textC(c, x + 40, y0 + 90, "LAUNCH QUANT", c.P.textDim, 8, true);
-    if (button(c, "editall", x + 96, y0 + 64, 54, 20, "EDIT ALL", editAll, 7.5f)) c.u.arpEditAll = !c.u.arpEditAll;
+    textC(c, x + 40, y0 + 90, "LAUNCH QUANT", c.P.label, ty::kCap, true);
+    if (button(c, "editall", x + 96, y0 + 64, 54, 20, "EDIT ALL", editAll, ty::kCap)) c.u.arpEditAll = !c.u.arpEditAll;
     if (ImGui::IsItemHovered()) c.a.setHint("Edit all twelve slots at once");
   }
   // PATTERN
@@ -270,14 +273,10 @@ void arpPanel(Ctx& c) {
     }
     // BPM / HZ, rate
     const float ry = y0 + 70;
-    wellRect(c, x, ry - 14, x1 - x, 30, 4);
-    ImGui::SetCursorScreenPos(c.p(x + 4, ry - 10));
-    if (ImGui::InvisibleButton("##bpm", c.F.sz(44, 20))) {
+    if (seg2(c, "bpm", x, ry - 10, 52, 20, "BPM", "HZ", !a.bpm, "Rate in tempo divisions or in Hz")) {
       a.bpm = !a.bpm;
       commit(c, "Arp BPM");
     }
-    text(c, x + 8, ry - 5, "BPM", a.bpm ? c.P.accent : c.P.textFaint, 8.5f, true);
-    text(c, x + 32, ry - 5, "HZ", a.bpm ? c.P.textFaint : c.P.accent, 8.5f, true);
     if (a.bpm) {
       float r = static_cast<float>(a.rate);
       const auto& dn = divisionNames();
@@ -287,25 +286,27 @@ void arpPanel(Ctx& c) {
       ParamDesc rd = dataDesc("Rate", 0, nd, nd - ArpSlot{}.rate);
       rd.kind = ParamKind::Choice;
       for (int i = nd; i >= 0; --i) rd.choices.push_back(dn[static_cast<size_t>(i)]);
-      if (dataKnob(c, "rate", rn, rd, x + 72, ry + 1, "RATE", dn[static_cast<size_t>(std::clamp(a.rate, 0, nd))], 8300)) {
+      if (dataKnob(c, "rate", rn, rd, x + 74, ry, "RATE", dn[static_cast<size_t>(std::clamp(a.rate, 0, nd))], 8300)) {
         a.rate = std::clamp(nd - static_cast<int>(std::lround(rn)), 0, nd);
         commit(c, "Arp rate", 8300);
       }
-      textC(c, x + 116, ry - 5, dn[static_cast<size_t>(std::clamp(a.rate, 0, nd))].c_str(), c.P.accent, 9.5f, true);
+      MonoText mono;
+      textMid(c, x + 92, x + 136, ry, dn[static_cast<size_t>(std::clamp(a.rate, 0, nd))].c_str(), c.P.text, ty::kValue, false);
     } else {
       char b[24];
       std::snprintf(b, sizeof b, "%.2f Hz", static_cast<double>(a.hz));
       float hz = std::max(0.05f, a.hz);  // 0.05 .. 20 Hz on a log travel
-      if (dataKnob(c, "hz", hz, dataDesc("Rate", 0.05, 20.0, ArpSlot{}.hz, "Hz", ParamScale::Log), x + 72, ry + 1, "RATE", b, 8301)) {
+      if (dataKnob(c, "hz", hz, dataDesc("Rate", 0.05, 20.0, ArpSlot{}.hz, "Hz", ParamScale::Log), x + 74, ry, "RATE", b, 8301)) {
         a.hz = hz;
         commit(c, "Arp rate", 8301);
       }
-      textC(c, x + 116, ry - 5, b, c.P.accent, 9.5f, true);
+      MonoText mono;
+      textMid(c, x + 92, x + 136, ry, b, c.P.text, ty::kValue, false);
     }
-    dataToggle(c, "trip", a.trip, x + 140, ry - 10, 28, 20, "T", 9);
-    dataToggle(c, "dot", a.dot, x + 170, ry - 10, 28, 20, "D", 9);
+    dataToggle(c, "trip", a.trip, x + 138, ry - 10, 30, 20, "TRIP", ty::kCap);
+    dataToggle(c, "dot", a.dot, x + 170, ry - 10, 30, 20, "DOT", ty::kCap);
     if (a.shape == ArpPattern) {
-      if (button(c, "editpat", x, y0 + 98, x1 - x, 18, c.u.arpPattern ? "CLOSE PATTERN" : "EDIT PATTERN", c.u.arpPattern, 8)) c.u.arpPattern = !c.u.arpPattern;
+      if (button(c, "editpat", x, y0 + 98, x1 - x, 18, c.u.arpPattern ? "CLOSE PATTERN" : "EDIT PATTERN", c.u.arpPattern, ty::kCap)) c.u.arpPattern = !c.u.arpPattern;
     }
   }
   if (a.shape == ArpPattern && c.u.arpPattern) {
@@ -340,7 +341,7 @@ void arpPanel(Ctx& c) {
           commit(c, "Pattern steps");
         }
     });
-    if (button(c, "clr", px, y0 + 148, 130, 18, "CLEAR", false, 8)) {
+    if (button(c, "clr", px, y0 + 148, 130, 18, "CLEAR", false, ty::kCap)) {
       a.steps.clear();
       commit(c, "Clear pattern");
     }
@@ -362,10 +363,10 @@ void arpPanel(Ctx& c) {
         a.rangeShape = (a.rangeShape + step + 4) % 4;
         commit(c, "Transpose shape");
       }
-      dataStepper(c, "shift", a.shift, -24, 24, x, y0 + 64, 56, 20, (a.shift == 0 ? std::string("oct") : std::to_string(a.shift)).c_str(), "Arp shift");
+      dataStepper(c, "shift", a.shift, -24, 24, x, y0 + 64, 56, 20, (a.shift > 0 ? "+" + std::to_string(a.shift) : std::to_string(a.shift)).c_str(), "Arp shift");
       dataStepper(c, "range", a.range, 0, 8, x + 64, y0 + 64, 56, 20, std::to_string(a.range).c_str(), "Arp range");
-      textC(c, x + 28, y0 + 90, "SHIFT", c.P.textDim, 8, true);
-      textC(c, x + 92, y0 + 90, "RANGE", c.P.textDim, 8, true);
+      textC(c, x + 28, y0 + 90, "SHIFT", c.P.label, ty::kCap, true);
+      textC(c, x + 92, y0 + 90, "RANGE", c.P.label, ty::kCap, true);
       dataStepper(c, "rw", a.rangeWrap, 0, 3, x, y0 + 108, 120, 18, (std::to_string(a.rangeWrap + 1) + (a.rangeWrap ? " cycles / step" : " cycle / step")).c_str(),
                   "Cycles per transpose step");
     }
@@ -373,25 +374,21 @@ void arpPanel(Ctx& c) {
     {
       const float x = kAX + 528, x1 = kAX + 778;
       sectionTitle(c, x, x1, y0, "PLAYBACK");
-      dataToggle(c, "latch", a.latch, x, y0 + 26, 50, 22, "LATCH", 8);
-      dataToggle(c, "thru", a.thru, x, y0 + 74, 50, 22, "THRU", 8);
+      dataToggle(c, "latch", a.latch, x, y0 + 46, 50, 20, "LATCH", ty::kCap);
+      dataToggle(c, "thru", a.thru, x, y0 + 76, 50, 20, "THRU", ty::kCap);
       if (ImGui::IsItemHovered()) c.a.setHint("Thru: the held notes also play");
       char b[24];
       float off = static_cast<float>(a.offset);
       std::snprintf(b, sizeof b, "%d", a.offset);
       if (dataKnob(c, "off", off, dataDesc("Offset", -16, 16, ArpSlot{}.offset), x + 84, y0 + 72, "OFFSET", b, 8320)) a.offset = static_cast<int>(std::lround(off)), commit(c, "Arp offset", 8320);
-      textC(c, x + 84, y0 + 30, b, c.P.accent, 9, true);
       float rep = static_cast<float>(a.repeats);
       std::snprintf(b, sizeof b, "%s", a.repeats <= 0 ? "INF" : std::to_string(a.repeats).c_str());
       if (dataKnob(c, "rep", rep, dataDesc("Repeats", 0, 16, ArpSlot{}.repeats), x + 134, y0 + 72, "REPEATS", b, 8321)) a.repeats = std::max(0, static_cast<int>(std::lround(rep))), commit(c, "Arp repeats", 8321);
-      textC(c, x + 134, y0 + 30, b, c.P.accent, 9, true);
       std::snprintf(b, sizeof b, "%.0f%%", a.gate * 100.0);
       dataKnob(c, "gate", a.gate, dataDesc("Gate", 0.05, 2.0, ArpSlot{}.gate, "%"), x + 184, y0 + 72, "GATE", b, 8322);
-      textC(c, x + 184, y0 + 30, b, c.P.accent, 9, true);
       std::snprintf(b, sizeof b, "%.0f%%", a.chance * 100.0);
       dataKnob(c, "chance", a.chance, dataDesc("Chance", 0, 1, ArpSlot{}.chance, "%"), x + 234, y0 + 72, "CHANCE", b, 8323);
-      textC(c, x + 234, y0 + 30, b, c.P.accent, 9, true);
-      dataCheck(c, "pre", a.chancePre, x + 190, y0 + 106, "CHANCE BEFORE REPEATS", 7.5f);
+      dataCheck(c, "pre", a.chancePre, x + 84, y0 + 112, "CHANCE BEFORE REPEATS", ty::kCap);
     }
     // RETRIGGER
     {
@@ -416,7 +413,7 @@ void arpPanel(Ctx& c) {
       dataKnob(c, "vt", a.veloTarget, dataDesc("Velocity target", 0, 1, ArpSlot{}.veloTarget, "%"), x + 76, y0 + 72, "TARGET", b, 8331);
     }
     // modulation offsets (parameters: the matrix and automation move them)
-    moreButton(c, "arpmod", kW - 28, kSlotY - 22, {G_ArpRate, G_ArpShift, G_ArpRange, G_ArpOffset, G_ArpRepeats, G_ArpGate, G_ArpChance, G_ArpRetrigRate,
+    moreButton(c, "arpmod", kW - 30, y0 + 110, {G_ArpRate, G_ArpShift, G_ArpRange, G_ArpOffset, G_ArpRepeats, G_ArpGate, G_ArpChance, G_ArpRetrigRate,
                                                    G_ArpVeloDecay, G_ArpVeloTarget, G_ArpTranspose, G_ArpWrapTranspose, G_ArpWrapRange, G_ArpWrapPhantom, G_Swing, G_SwingDiv},
                {}, "Arp modulation offsets (also matrix destinations under Global) and swing");
   }
@@ -457,7 +454,7 @@ void clipSettings(Ctx& c, ClipSlot& cs) {
     if (ImGui::InvisibleButton("##showmac", c.F.sz(w, 16))) c.u.clipMacros = !sm;
     const ImVec2 a = c.p(x + 22, y + 1), b = c.p(x + 30.5f, y + 9.5f);
     if (sm) skin::gradientRect(c.dl, a, b, skin::lighten(c.P.accent, 0.2f), c.P.accent, c.s(2));
-    else c.dl->AddRectFilled(a, b, c.P.well, c.s(2)), c.dl->AddRect(a, b, c.P.lineHi, c.s(2));
+    else c.dl->AddRectFilled(a, b, c.P.field, c.s(2)), c.dl->AddRect(a, b, c.P.boxEdge, c.s(2));
     text(c, x + 36, y + 1, "SHOW MACROS", sm ? c.P.text : c.P.textDim, 8.5f, true);
     iconArrow(c.dl, c.p(x + 116, y + 5.5f), c.s(7), 1, c.P.textDim);
   }
@@ -470,9 +467,9 @@ void clipSettings(Ctx& c, ClipSlot& cs) {
       const float mx = x + (i / 4) * cw, my = y + (i % 4) * ch;
       ImGui::PushID(i + 8700);
       frameBox(c, mx, my, cw, ch, c.P.panelHi);
-      knob(c, macroP(i), mx + cw * 0.5f, my + 24, 14.0f, nullptr, KnobNoLabel);
+      knob(c, macroP(i), mx + cw * 0.5f, my + 24, 15.0f, nullptr, KnobNoLabel);
       const std::string& nm = c.m.macroName[static_cast<size_t>(i)];
-      textMid(c, mx + 2, mx + cw - 2, my + ch - 11, nm.empty() ? ("Macro " + std::to_string(i + 1)).c_str() : nm.c_str(), c.P.textDim, 8, true);
+      textMid(c, mx + 2, mx + cw - 2, my + ch - 11, nm.empty() ? ("Macro " + std::to_string(i + 1)).c_str() : nm.c_str(), nm.empty() ? c.P.textDim : c.P.text, ty::kCap, !nm.empty());
       ImGui::PopID();
     }
     return;
@@ -481,7 +478,7 @@ void clipSettings(Ctx& c, ClipSlot& cs) {
   y += 18;
   if (button(c, "mono", x, y, 46, 20, "MONO", !c.m.clipPoly, 8)) c.m.clipPoly = false, commit(c, "Clip trigger mode");
   if (button(c, "poly", x + 48, y, 46, 20, "POLY", c.m.clipPoly, 8)) c.m.clipPoly = true, commit(c, "Clip trigger mode");
-  if (button(c, "eall", x + 100, y, 49, 20, "EDIT ALL", c.u.clipEditAll, 7.5f)) c.u.clipEditAll = !c.u.clipEditAll;
+  if (button(c, "eall", x + 100, y, 49, 20, "EDIT ALL", c.u.clipEditAll, ty::kCap)) c.u.clipEditAll = !c.u.clipEditAll;
   y += 30;
   caption(c, x, x + w, y, "CLIP SETTINGS");
   y += 18;
@@ -543,7 +540,7 @@ void clipSettings(Ctx& c, ClipSlot& cs) {
     });
   }
   y += 24;
-  row("  TIME");
+  row("TIME");
   {
     int sixteenths = static_cast<int>(std::lround(cs.modeTime * 4));
     char b[24];
@@ -562,17 +559,17 @@ void clipSettings(Ctx& c, ClipSlot& cs) {
     if (dataStepper(c, "rate", ri, 0, 4, x + 66, y, w - 66, 20, b, "Clip rate")) cs.rate = rates[ri], commit(c, "Clip rate");
   }
   y += 24;
-  dataCheck(c, "cbpm", cs.bpm, x + 6, y + 4, "BPM", 8);
-  dataToggle(c, "ctrip", cs.trip, x + 66, y, 40, 18, "T", 9);
-  dataToggle(c, "cdot", cs.dot, x + 108, y, 40, 18, "D", 9);
+  dataCheck(c, "cbpm", cs.bpm, x, y + 4, "BPM", ty::kCap);
+  dataToggle(c, "ctrip", cs.trip, x + 66, y, 40, 18, "TRIP", ty::kCap);
+  dataToggle(c, "cdot", cs.dot, x + 108, y, 40, 18, "DOT", ty::kCap);
   y += 28;
   row("LAUNCH");
   divisionDrop(c, "clq", cs.launchQuant, x + 66, y, w - 66, 20);
   y += 28;
-  dataCheck(c, "crt", cs.retrig, x, y, "RETRIG", 8);
-  dataCheck(c, "cvt", cs.veloTrig, x + 72, y, "VELO TRIG", 8);
+  dataCheck(c, "crt", cs.retrig, x, y, "RETRIG", ty::kCap);
+  dataCheck(c, "cvt", cs.veloTrig, x + 72, y, "VELO TRIG", ty::kCap);
   y += 18;
-  dataCheck(c, "cng", cs.noteGate, x, y, "NOTE GATE", 8);
+  dataCheck(c, "cng", cs.noteGate, x, y, "NOTE GATE", ty::kCap);
   y += 22;
   // offsets (parameters, modulatable)
   moreButton(c, "clipmod", x, y, {G_ClipTranspose, G_ClipRate, G_ClipOffset, G_Swing, G_SwingDiv}, [&] {
@@ -581,7 +578,7 @@ void clipSettings(Ctx& c, ClipSlot& cs) {
     float so = cs.startOffset;
     if (ImGui::SliderFloat(i18n::tr("Start offset (beats)"), &so, 0.f, std::max(0.25f, cs.lengthBeats))) cs.startOffset = so, commit(c, "Clip start", 8400);
   }, "Clip offsets (modulatable), swing and start offset");
-  text(c, x + 24, y + 4, "OFFSETS", c.P.textFaint, 7.5f, true);
+  labelBeside(c, x + 24, y, 16, "OFFSETS", c.P.label, ty::kCap);
 }
 
 // RECORD / OVERDUB / EXTEND / quantize (bottom of the left column)
@@ -606,11 +603,11 @@ void clipRecordBlock(Ctx& c) {
                           : "Record played notes into the clip (from the first note; aligned to the bar when the song plays)");
   const float ry = y + 34;
   panelRect(c, x, ry, w, 24, c.P.panel, 4);
-  if (button(c, "ovd", x + 2, ry + 2, 58, 20, "OVERDUB", u.clipOverdub, 7.5f)) u.clipOverdub = !u.clipOverdub;
+  if (button(c, "ovd", x + 2, ry + 2, 58, 20, "OVERDUB", u.clipOverdub, ty::kCap)) u.clipOverdub = !u.clipOverdub;
   if (ImGui::IsItemHovered()) c.a.setHint("Overdub: keep the notes already in the clip (off: the first recorded note clears it)");
-  if (button(c, "ext", x + 62, ry + 2, 46, 20, "EXTEND", u.clipExtend, 7.5f)) u.clipExtend = !u.clipExtend;
+  if (button(c, "ext", x + 62, ry + 2, 46, 20, "EXTEND", u.clipExtend, ty::kCap)) u.clipExtend = !u.clipExtend;
   if (ImGui::IsItemHovered()) c.a.setHint("Extend: the clip grows (by bars) while you record past its end, instead of wrapping");
-  if (button(c, "qnt", x + 110, ry + 2, 37, 20, "", u.clipQuant, 7.5f)) u.clipQuant = !u.clipQuant;
+  if (button(c, "qnt", x + 110, ry + 2, 37, 20, "", u.clipQuant, ty::kCap)) u.clipQuant = !u.clipQuant;
   {
     // quantize glyph: a note snapping onto a grid line
     const ImU32 col = u.clipQuant ? c.P.accent : c.P.textDim;
@@ -770,7 +767,8 @@ void pianoRoll(Ctx& c, ClipSlot& cs) {
       vline(c, bx, kRollY + 4, kRollY + kRulerH, c.P.textDim);
       char t[16];
       std::snprintf(t, sizeof t, "%d.%d", b / 16 + 1, (b / 4) % 4 + 1);
-      text(c, bx + 3, kRollY + 3, t, c.P.textDim, 8, true);
+      MonoText mono;
+      text(c, bx + 3, kRollY + 3, t, c.P.textDim, ty::kCap, false);
     } else {
       vline(c, bx, kRollY + 12, kRollY + kRulerH, c.P.textFaint);
     }
@@ -780,12 +778,23 @@ void pianoRoll(Ctx& c, ClipSlot& cs) {
     const int pc = k % 12;
     const bool black = pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
     const float ky = keyY(k);
-    panelRect(c, kCw + 2, ky, kRollX - kCw - 4, keyH - 0.5f, black ? c.P.keyBlack : c.P.keyWhite);
-    if (pc == 0 || c.u.clipFold) {
-      static const char* const nn[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-      char t[16];
-      std::snprintf(t, sizeof t, "%s%d", nn[pc], k / 12 - 2);
-      text(c, kCw + 4, ky + (keyH - 9) * 0.5f - 0.5f, t, black ? c.P.keyWhite : c.P.keyBlack, 7, true);
+    // J-202: a piano: white ground, short black keys, seams between white keys
+    {
+      const float kx0 = kCw + 2, kx1 = kRollX - 2, bw = (kx1 - kx0) * 0.6f;
+      const ImU32 seam = theme::withAlpha(c.P.keyBlack, 0.35f);
+      panelRect(c, kx0, ky, kx1 - kx0, keyH, c.P.keyWhite);
+      if (black) {
+        c.dl->AddRectFilled(c.p(kx0, ky + 0.5f), c.p(kx0 + bw, ky + keyH - 0.5f), c.P.keyBlack, c.s(1.5f), ImDrawFlags_RoundCornersRight);
+        hline(c, kx0 + bw, kx1, ky + keyH * 0.5f, seam);
+      } else if (pc == 0 || pc == 5) {
+        hline(c, kx0, kx1, ky + keyH - 0.5f, seam);
+      }
+      if (pc == 0 || c.u.clipFold) {
+        static const char* const nn[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+        char t[16];
+        std::snprintf(t, sizeof t, "%s%d", nn[pc], k / 12 - 2);
+        textR(c, kx1 - 3, ky + (keyH - 9) * 0.5f - 0.5f, t, black && c.u.clipFold ? c.P.textFaint : c.P.keyBlack, ty::kCap, true);
+      }
     }
     panelRect(c, x0, ky, x1 - x0, keyH, black ? c.P.panelLo : c.P.panel);
     if (pc == 0) hline(c, x0, x1, ky + keyH - 0.5f, c.P.gridStrong);
@@ -985,7 +994,7 @@ void clipEditor(Ctx& c) {
   }
   slotRow(c, true);
   // close
-  if (button(c, "closeclip", kW - 70, kPageY + 2, 64, 15, "CLOSE", false, 8)) c.u.clip = false;
+  if (button(c, "closeclip", kW - 72, kRollY + 1, 66, kRulerH - 2, "CLOSE", false, ty::kCap)) c.u.clip = false;
 }
 
 }  // namespace gl::packs::plasma::ui

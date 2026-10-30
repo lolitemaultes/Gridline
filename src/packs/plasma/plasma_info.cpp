@@ -653,7 +653,7 @@ std::string paramShortName(int k) {
   else if (k >= kNoiseBase && k < kFiltBase) prefix = "Noise ";
   else if (k >= kRouteBase && k < kEnvBase) prefix = std::string(kRouteNames[(k - kRouteBase) / R_Count]) + " ";
   else if (k >= kModBase && k < kFxBase) prefix = "Mod " + std::to_string((k - kModBase) / M_Count + 1) + " ";
-  else if (k >= kFxBase) prefix = "FX " + std::to_string((k - kFxBase) / X_Count + 1) + " ";
+  else if (k >= kFxBase && k < kTailBase) prefix = "FX " + std::to_string((k - kFxBase) / X_Count + 1) + " ";
   else if (k >= kFiltBase && k < kRouteBase) prefix = "Filter " + std::to_string((k - kFiltBase) / F_Count + 1) + " ";
   else if (k >= kEnvBase && k < kLfoBase) prefix = "Env " + std::to_string((k - kEnvBase) / E_Count + 1) + " ";
   else if (k >= kLfoBase && k < kMacroBase) prefix = "LFO " + std::to_string((k - kLfoBase) / L_Count + 1) + " ";
@@ -669,7 +669,7 @@ bool modulatable(int k) {
     const int p = (k - kModBase) % M_Count;
     return p == M_Amount || p == M_Out;
   }
-  if (k >= kFxBase) {
+  if (k >= kFxBase && k < kTailBase) {
     const int p = (k - kFxBase) % X_Count;
     return p >= X_P0;
   }
@@ -762,7 +762,7 @@ std::string paramText(int k, double v, const std::vector<float>* params) {
       return b;
     }
   }
-  if (k >= kFxBase) {
+  if (k >= kFxBase && k < kTailBase) {
     const int s = (k - kFxBase) / X_Count, p = (k - kFxBase) % X_Count;
     if (p >= X_P0) {
       const int type = static_cast<int>(pv(fxP(s, X_Type), 0));
@@ -971,6 +971,15 @@ void appendInfos(std::vector<PluginInfo>& v) {
   set(noiseP(N_OneShot), tog("Noise One-Shot", 0));
   set(noiseP(N_Type), ch("Noise Type", noiseNames(), 1));
   set(noiseP(N_Color), lin("Noise Color", "%", -1, 1, 0));
+  // tone filter: below 0 a 12 dB/oct low-pass closes, above 0 a 12 dB/oct high-pass opens; 0 = off
+  set(tailP(T_NoiseTone), lin("Noise Tone", "%", -1, 1, 0));
+  // unison voice mix (all oscillators): Even spreads the voices evenly across the stereo field;
+  // Alternating sends them hard left and right in turn (an odd count keeps a centre voice in
+  // both), with its own blend and voice-count level curves. Preset import selects Alternating.
+  set(tailP(T_UniMix), ch("Unison Mix", {"Even", "Alternating"}, 0));
+  // filter drive (both filters and the filter effect): Leveled keeps the level about even as the
+  // drive rises; Boost raises it, up to +24 dB into a soft clip. Preset import selects Boost.
+  set(tailP(T_DriveMode), ch("Filter Drive Mode", {"Leveled", "Boost"}, 0));
 
   // ---- filters
   for (int f = 0; f < kFilters; ++f) {

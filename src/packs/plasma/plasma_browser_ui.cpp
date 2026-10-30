@@ -234,13 +234,13 @@ void presetBrowser(Ctx& c) {
     const float lx = ax + 8;
     char cnt[24] = "";
     if (count >= 0) std::snprintf(cnt, sizeof cnt, "%d", count);
-    const float cw = cnt[0] ? textW(c, cnt, 7.5f) + 6 : 0;
+    const float cw = cnt[0] ? textW(c, cnt, ty::kCap) + 6 : 0;
     // the label is clipped before the count
     const ImVec2 c0 = c.p(lx, y), c1 = c.p(kSideW - 12 - cw, y + kRowH);
     c.dl->PushClipRect(c0, c1, true);
     text(c, lx, y + 5, label.c_str(), on ? c.P.text : (depth ? c.P.textDim : c.P.text), depth ? 8.5f : 9, depth == 0);
     c.dl->PopClipRect();
-    if (cnt[0]) textR(c, kSideW - 12, y + 6.5f, cnt, on ? c.P.textDim : c.P.textFaint, 7.5f);
+    if (cnt[0]) textR(c, kSideW - 12, y + 6.5f, cnt, c.P.textDim, ty::kCap);
     ImGui::PopID();
     return hit;
   };
@@ -297,7 +297,7 @@ void presetBrowser(Ctx& c) {
     }
   };
   if (tree.empty()) {
-    text(c, 16, y + 2, snap->indexing ? "Looking for Serum presets\xE2\x80\xA6" : "No Serum preset folders found", c.P.textFaint, 8, true);
+    text(c, 16, y + 2, snap->indexing ? "Looking for Serum presets\xE2\x80\xA6" : "No Serum preset folders found", c.P.textDim, 8, true);
     y += 18;
     bottomButtons(y);
   } else {
@@ -481,7 +481,7 @@ void presetBrowser(Ctx& c) {
         // each column clipped to its width
         const float cx[3] = {p0.x + c.s(10), p0.x + c.s(lw * 0.55f), p0.x + c.s(lw - 70)};
         const std::string* cols[3] = {&e.name, &e.folder, &e.source};
-        const ImU32 colC[3] = {on ? c.P.text : c.P.textDim, c.P.textFaint, all.entries[ei].kind == 3 ? c.P.mod : c.P.textFaint};
+        const ImU32 colC[3] = {on ? c.P.text : c.P.textDim, c.P.textDim, all.entries[ei].kind == 3 ? c.P.modText : c.P.textDim};
         for (int k = 0; k < 3; ++k) {
           const float x1 = k < 2 ? cx[k + 1] - c.s(8) : p0.x + c.s(lw);
           dl->PushClipRect(ImVec2(cx[k], p0.y), ImVec2(x1, p0.y + rowH), true);
@@ -514,7 +514,7 @@ void presetBrowser(Ctx& c) {
           : u.browserDir == "user"                     ? "No saved presets yet: SAVE AS stores the current sound here"
           : isSerumScope(scope) && snap->indexing      ? "Indexing the Serum library\xE2\x80\xA6"
                                                        : "No presets here",
-          c.P.textFaint, 9, true);
+          c.P.textDim, 9, true);
   if (loadNow && sel >= 0 && sel < static_cast<int>(shown.size())) {
     const size_t ei = static_cast<size_t>(shown[static_cast<size_t>(sel)]);
     if (load(c, all.entries[ei], all.rows[ei].name, infoText)) ++loads;
@@ -534,7 +534,7 @@ void presetBrowser(Ctx& c) {
       if (button(c, "load", x + 10, iy + 64, 80, 22, "OPEN", true, 8.5f) && load(c, all.entries[ei], e.name, infoText)) ++loads;
       if (ImGui::IsItemHovered()) c.a.setHint(all.entries[ei].file.empty() ? std::string("Open this preset") : all.entries[ei].file);
     } else {
-      text(c, x + 10, iy + 30, "Select a preset", c.P.textFaint, 9, true);
+      text(c, x + 10, iy + 30, "Select a preset", c.P.textDim, 9, true);
     }
     if (!infoText.empty()) {
       ImGui::SetCursorScreenPos(c.p(x + 10, iy + 96));
@@ -549,7 +549,7 @@ void presetBrowser(Ctx& c) {
       ImGui::EndChild();
       ImGui::PopStyleColor();
     }
-    textC(c, x + w * 0.5f, kStripY - 22, "Enter / double-click: open \xC2\xB7 Up / Down: audition", c.P.textFaint, 7.5f, true);
+    textC(c, x + w * 0.5f, kStripY - 22, "Enter / double-click: open \xC2\xB7 Up / Down: audition", c.P.textDim, ty::kCap, false);
   }
   // dev / tests: the browser's state (pt 0: x = presets listed, v = selected row, k = selected
   // folder: -2 factory, -1 user, -3 all Serum presets, else its tree index; pt 1: x = presets opened)

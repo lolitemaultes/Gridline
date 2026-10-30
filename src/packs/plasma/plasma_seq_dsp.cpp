@@ -243,7 +243,21 @@ void Arp::run(const ArpSlot& s, const float* off, int n, double sr, double tempo
       sounding_[soundingN_++] = kk;
     };
     if (s.shape == ArpPattern && !s.steps.empty()) {
-      const auto& st = s.steps[static_cast<size_t>((step_ - 1) % static_cast<int>(s.steps.size()))];
+      // J-201: steps sit on a grid of 0.25 pattern time per arp step (the editor's columns, and the
+      // source format's pattern clips: measured, a gap of 0.5 plays as two steps of the rate);
+      // columns without a step are rests. The pattern repeats after patternBeats (at least
+      // the last step).
+      int cols = std::max(1, static_cast<int>(std::lround(s.patternBeats / 0.25f)));
+      for (const auto& q : s.steps) cols = std::max(cols, static_cast<int>(std::lround(q.time / 0.25f)) + 1);
+      const int col = (step_ - 1) % cols;
+      const ArpSlot::Step* hit = nullptr;
+      for (const auto& q : s.steps)
+        if (static_cast<int>(std::lround(q.time / 0.25f)) == col) {
+          hit = &q;
+          break;
+        }
+      if (!hit) continue;  // a rest
+      const auto& st = *hit;
       if (s.stepMode == 3 && !st.accent) continue;  // accents only
       const int row = st.row;
       const int wraps = row >= 0 ? row / count : -((-row + count - 1) / count);
@@ -262,7 +276,8 @@ void Arp::run(const ArpSlot& s, const float* off, int n, double sr, double tempo
         }
       }
       emit(k, std::clamp(st.vel * (st.accent ? 1.25f : 1.f), 0.02f, 1.f));
-      double g = static_cast<double>(st.len) / std::max(1e-3, static_cast<double>(s.patTime)) * gate;
+      // a step's length in steps (0.25 pattern time = one step), times the gate
+      double g = static_cast<double>(st.len) / 0.25 / std::max(1e-3, static_cast<double>(s.patTime)) * gate;
       if (s.stepMode == 1) g = std::max(g, 1.0);      // tie: hold to the next step
       else if (s.stepMode == 2) g *= 0.5;             // short
       gateLeft_ = std::max(0.02, g);

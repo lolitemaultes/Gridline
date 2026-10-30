@@ -554,8 +554,14 @@ void OscVoice::spectralHop(const OscSet& s) {
   specStarted_ = true;
   // place partials into the output bins (L / R), one phase accumulator per unison voice and partial
   const int U = std::clamp(s.unison, 1, 8);
-  const float norm = 0.5f * N * 0.5f * (sp ? 0.6f : 1.f) / std::sqrt(static_cast<float>(U));
-  const float lo = s.sLo * s.srv * 0.5f, hi = std::max(lo + 1.f, s.sHi * static_cast<float>(s.srv) * 0.5f);
+  // J-201: a sample resynthesised here plays 12.5 dB above the same sample in Sample mode, as the
+  // source format's spectral oscillator does (measured on three library samples: +12.2..+12.6 dB);
+  // it was 13.5 dB below it.
+  const float norm = 0.5f * N * 0.5f * (sp ? 0.6f * 18.8f : 1.f) / std::sqrt(static_cast<float>(U));
+  // J-201: the band limits use the filter cutoff scale (0 = 8 Hz .. 1 = 22 kHz, as the import writes
+  // them); a linear fraction of the oversampled Nyquist silenced imported spectral oscillators.
+  const float lo = s.sLo <= 0.f ? 0.f : static_cast<float>(cutoffHz(s.sLo));
+  const float hi = s.sHi >= 1.f ? static_cast<float>(s.srv) : std::max(lo + 1.f, static_cast<float>(cutoffHz(s.sHi)));
   const float cut = s.sCut;
   for (int u = 0; u < U; ++u) {
     const float r = std::exp2(s.det[u] / 12.f);
@@ -755,6 +761,7 @@ void NoiseVoice::start(const NoiseSrc* n, const Sample* file, float phase, float
   pos = std::clamp(static_cast<double>(phase) + rnd * rngUni(s), 0.0, 1.0) * len;
   if (pos >= len) pos = 0;
   lp = 0;
+  tz[0][0] = tz[0][1] = tz[1][0] = tz[1][1] = 0;
   done = false;
 }
 

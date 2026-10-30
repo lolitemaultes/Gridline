@@ -534,7 +534,7 @@ const std::vector<NoiseSrc>& factoryNoises() {
           for (size_t k = 0; k < 40 && i + k < v.size(); ++k) v[i + k] += a * std::exp(-static_cast<float>(k) * 0.15f) * ((k & 1) ? -1.f : 1.f);
         }
     });
-    add("Geiger", false, [](std::vector<float>& v, uint32_t& r) {
+    add("Geiger", true, [](std::vector<float>& v, uint32_t& r) {  // J-201: loops (a held note keeps clicking)
       for (size_t i = 0; i < v.size(); ++i)
         if (rngUni(r) < 0.0004f)
           for (size_t k = 0; k < 120 && i + k < v.size(); ++k) v[i + k] += std::sin(static_cast<float>(k) * 0.9f) * std::exp(-static_cast<float>(k) * 0.05f);

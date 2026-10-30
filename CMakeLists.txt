@@ -1411,6 +1411,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j178_plasma_library PROPERTIES TIMEOUT 300)
 
+    # J-202: every page and view of Plasma's editor renders at 100 % and 150 % (no assert, no
+    # overlapping text in Plasma's own layout check).
+    add_test(NAME j202_plasma_pages
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j202_plasma_pages
+                     -P ${CMAKE_SOURCE_DIR}/tests/j202_plasma_pages.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j202_plasma_pages PROPERTIES TIMEOUT 600)
+
     # J-167: opening a slow project through File > Open: the dialog closes at once, frames keep
     # coming, the loading window shows progress and the log, input is blocked, Esc cancels back to
     # the open project exactly; a finished load keeps its warnings on a card; a corrupt file says why.

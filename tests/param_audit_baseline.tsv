@@ -12585,6 +12585,9 @@ gl.plasma	2188	FX 24 Param 25	verified	0		VERIFIED: an effect slot acts with a m
 gl.plasma	2189	FX 24 Param 26	verified	0		VERIFIED: an effect slot acts with a module type on it; each parameter acts for a module that has it (parameter coverage test)
 gl.plasma	2190	FX 24 Param 27	verified	0		VERIFIED: an effect slot acts with a module type on it; each parameter acts for a module that has it (parameter coverage test)
 gl.plasma	2191	FX 24 Param 28	inert	0		reserved column of the effect slot (no module uses 28 parameters)
+gl.plasma	2192	Noise Tone	combination	-1	11=1;356=1
+gl.plasma	2193	Unison Mix	verified	0		VERIFIED: acts on any oscillator with two or more unison voices (parameter coverage test)
+gl.plasma	2194	Filter Drive Mode	combination	1	367=1
 gl.platter	0	A channel fader	working	0	
 gl.platter	1	A trim	working	12	
 gl.platter	2	A EQ high	working	-26	

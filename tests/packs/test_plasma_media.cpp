@@ -358,7 +358,7 @@ int main() {
     pl::modelFromData(st.data, m);
     auto P = [&](int k) { return st.params[static_cast<size_t>(k)]; };
     // levels on the source's law: stored = knob^2 (osc, noise, main), voice amp stored = knob, gain 2x
-    expect(std::fabs(P(pl::oscP(0, pl::O_Level)) - 0.5f) < 1e-4f && std::fabs(P(pl::noiseP(pl::N_Level)) - 0.7f * 1.122f) < 1e-4f &&
+    expect(std::fabs(P(pl::oscP(0, pl::O_Level)) - 0.5f) < 1e-4f && std::fabs(P(pl::noiseP(pl::N_Level)) - 0.7f) < 1e-4f &&
                std::fabs(P(pl::G_MasterVol) - 0.8f) < 1e-4f && std::fabs(P(pl::G_Amp) - 0.5f) < 1e-4f,
            "levels follow the source's volume law");
     // wavetable: the embedded frames win over the (missing) file, whatever numFrames says

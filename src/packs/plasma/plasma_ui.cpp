@@ -29,101 +29,152 @@ namespace ui {
 namespace fs = std::filesystem;
 
 // ================================================================== palette
+// J-202: Plasma's roles are Gridline's slate roles (Theme.h): cells on the
+// slate surfaces, displays in the dark field colour, Gridline's text tones,
+// the synth family's accent and the modulation role. They follow the dark /
+// light theme and the user's theme tweaks (brightness, contrast).
 namespace {
 ImU32 rgb(uint32_t v, float a = 1.0f) { return theme::rgb(v, a); }
+using theme::mix;
 
-Pal makeDark() {
-  Pal p;
-  p.dark = true;
-  p.frame = rgb(0x08090C);
-  p.panel = rgb(0x181B21);
-  p.panelHi = rgb(0x22262E);
-  p.panelLo = rgb(0x14161B);
-  p.head = rgb(0x282D36);
-  p.headOn = rgb(0x313742);
-  p.well = rgb(0x0C0E12);
-  p.wellHi = rgb(0x11141A);
-  p.grid = rgb(0x1B1F27);
-  p.gridStrong = rgb(0x272C36);
-  p.line = rgb(0x2A2F39);
-  p.lineHi = rgb(0x3A404C);
-  p.text = rgb(0xE4E8EF);
-  p.textDim = rgb(0x99A2B3);
-  p.textFaint = rgb(0x5C6576);
-  p.label = rgb(0xBAC2D0);
-  p.accent = rgb(0xD963F1);
-  p.accentDim = rgb(0x8D4A9E);
-  p.accentSoft = rgb(0xD963F1, 0.16f);
-  p.mod = rgb(0x4ECCFF);
-  p.modSoft = rgb(0x4ECCFF, 0.18f);
-  p.warn = rgb(0xFFB84D);
-  p.good = rgb(0x7AE4A3);
-  p.danger = rgb(0xFF5B53);
-  p.capTop = rgb(0x3A3F4A);
-  p.capBot = rgb(0x23272F);
-  p.rail = rgb(0x0B0D11);
-  p.pointer = rgb(0xF2F4F8);
-  p.keyWhite = rgb(0xD8DDE6);
-  p.keyBlack = rgb(0x1A1D23);
-  p.keyDown = rgb(0xD963F1);
-  return p;
+// J-202: WCAG contrast of text colour `fg` over `bg` (both opaque ImU32).
+float lum(ImU32 c) {
+  auto ch = [](uint32_t v) {
+    const float s = static_cast<float>(v & 0xFF) / 255.0f;
+    return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+  };
+  return 0.2126f * ch(c >> IM_COL32_R_SHIFT) + 0.7152f * ch(c >> IM_COL32_G_SHIFT) + 0.0722f * ch(c >> IM_COL32_B_SHIFT);
 }
-Pal makeLight() {
+float contrast(ImU32 fg, ImU32 bg) {
+  const float a = lum(fg), b = lum(bg);
+  return (std::max(a, b) + 0.05f) / (std::min(a, b) + 0.05f);
+}
+// The lowest contrast of `fg` over the surfaces `bg[0..n)`.
+float worst(ImU32 fg, const ImU32* bg, int n) {
+  float w = 1e9f;
+  for (int i = 0; i < n; ++i) w = std::min(w, contrast(fg, bg[i]));
+  return w;
+}
+// Moves `fg` toward `to` in small steps until it reads at `target`:1 on every surface.
+ImU32 lift(ImU32 fg, ImU32 to, float target, const ImU32* bg, int n) {
+  ImU32 c = fg;
+  for (int i = 1; i <= 20 && worst(c, bg, n) < target; ++i) c = mix(fg, to, static_cast<float>(i) * 0.05f);
+  return c;
+}
+
+Pal makePal(const theme::Palette& T) {
   Pal p;
-  p.dark = false;
-  p.frame = rgb(0xB4BAC5);
-  p.panel = rgb(0xE6E9EE);
-  p.panelHi = rgb(0xF1F3F6);
-  p.panelLo = rgb(0xDADEE5);
-  p.head = rgb(0xD3D8E0);
-  p.headOn = rgb(0xC5CBD6);
-  p.well = rgb(0xF8F9FB);
-  p.wellHi = rgb(0xFFFFFF);
-  p.grid = rgb(0xE6E9EE);
-  p.gridStrong = rgb(0xD3D8E0);
-  p.line = rgb(0xBFC5CF);
-  p.lineHi = rgb(0xA4ABB8);
-  p.text = rgb(0x1B1F27);
-  p.textDim = rgb(0x4F5768);
-  p.textFaint = rgb(0x8C94A3);
-  p.label = rgb(0x363C49);
-  p.accent = rgb(0xA53BC4);
-  p.accentDim = rgb(0xC98ADB);
-  p.accentSoft = rgb(0xA53BC4, 0.14f);
-  p.mod = rgb(0x1689C7);
-  p.modSoft = rgb(0x1689C7, 0.16f);
-  p.warn = rgb(0xC77A12);
-  p.good = rgb(0x2E9E62);
-  p.danger = rgb(0xD23B35);
-  p.capTop = rgb(0xFDFDFE);
-  p.capBot = rgb(0xD5DAE2);
-  p.rail = rgb(0xC3C9D3);
-  p.pointer = rgb(0x262A33);
-  p.keyWhite = rgb(0xFBFCFD);
-  p.keyBlack = rgb(0x2B2F37);
-  p.keyDown = rgb(0xC77DE0);
+  const bool d = T.dark;
+  p.dark = d;
+  p.frame = T.surface900;                                   // the form's ground and the gutters between cells
+  p.panel = T.surface800;                                   // a module cell
+  p.panelHi = mix(T.surface800, T.surface700, 0.4f);        // knob decks, raised tiles
+  p.panelLo = mix(T.surface900, T.surface800, 0.45f);      // recessed strips (lists, slot bodies)
+  p.head = mix(T.surface800, T.surface700, d ? 0.55f : 0.35f);  // module header strip
+  p.headOn = d ? T.surface700 : T.surface600;               // a lit / hovered header
+  p.well = T.well;                                          // displays (graphs, waveforms)
+  p.wellHi = mix(T.well, T.surface900, 0.5f);
+  p.field = T.field;                                        // value fields, drop-downs, steppers
+  p.grid = mix(T.well, T.text, d ? 0.06f : 0.08f);
+  p.gridStrong = mix(T.well, T.text, d ? 0.12f : 0.16f);
+  p.line = T.line;                                          // dividers and field borders
+  p.lineHi = T.lineStrong;
+  p.text = T.text;
+  p.textDim = T.textDim;
+  p.textFaint = T.textFaint;
+  p.label = mix(T.text, T.textDim, 0.45f);
+  // the synth family's role (PluginUI brandRole: Synth), deepened on light surfaces
+  p.accent = d ? rgb(theme::role::kStamp) : rgb(0xA53BC4);
+  p.accentDim = mix(p.accent, T.surface800, 0.45f);
+  p.accentSoft = theme::withAlpha(p.accent, d ? 0.2f : 0.14f);
+  p.mod = d ? rgb(theme::role::kGraph) : rgb(0x1689C7);
+  p.modSoft = theme::withAlpha(p.mod, 0.18f);
+  p.warn = d ? rgb(0xFFB84D) : rgb(0xC77A12);
+  p.good = T.led;
+  p.danger = T.danger;
+  p.capTop = d ? T.surface600 : T.surface800;
+  p.capBot = d ? T.surface700 : T.surface700;
+  p.rail = d ? T.field : T.surface600;
+  p.pointer = d ? mix(T.text, rgb(0xFFFFFF), 0.5f) : T.text;
+  p.keyWhite = T.keyWhite;
+  p.keyBlack = T.keyBlack;
+  p.keyDown = p.accent;
+  p.boxEdge = d ? T.lineStrong : mix(T.lineStrong, T.textDim, 0.5f);  // J-202: unchecked boxes, firmer on light panels
+  // J-202 contrast pass: text that is meant to be read reaches 4.5:1 on every surface it sits on
+  // (frames, cells, decks, strips, headers, wells, fields); disabled text (an off module) 3:1.
+  // Lit controls (headOn) carry text or accent text only. Each role moves toward the text colour.
+  const Pal raw = p;  // the roles before the pass (for the table)
+  {
+    const ImU32 body[] = {p.frame, p.panel, p.panelHi, p.panelLo, p.head, p.well, p.field};
+    const ImU32 lit[] = {p.panel, p.panelHi, p.head, p.headOn, p.field};
+    const int nb = static_cast<int>(sizeof body / sizeof body[0]), nl = static_cast<int>(sizeof lit / sizeof lit[0]);
+    const ImU32 dim0 = p.textDim;
+    p.textDim = lift(p.textDim, p.text, 4.5f, body, nb);
+    p.label = lift(p.label, p.text, 4.5f, body, nb);
+    p.textFaint = lift(p.textFaint, dim0, 3.0f, body, nb);
+    p.accentText = lift(p.accent, p.text, 4.5f, lit, nl);
+    p.modText = lift(p.mod, p.text, 4.5f, body, nb);
+    p.warn = lift(p.warn, p.text, 4.5f, body, nb);  // warnings are text too ("sustain loop")
+  }
+  if (std::getenv("GL_PLASMA_CONTRAST")) {  // J-202: the contrast table (AUDIT.md)
+    const struct {
+      const char* name;
+      ImU32 c;
+    } roles[] = {{"text", p.text},         {"label (was)", raw.label}, {"label", p.label},           {"textDim (was)", raw.textDim},
+                 {"textDim", p.textDim},   {"textFaint (was)", raw.textFaint}, {"textFaint", p.textFaint}, {"accent (as text, was)", p.accent},
+                 {"accentText", p.accentText}, {"mod (as text, was)", p.mod}, {"modText", p.modText},   {"warn (was)", raw.warn},
+                 {"warn", p.warn}};
+    const struct {
+      const char* name;
+      ImU32 c;
+    } bgs[] = {{"frame", p.frame}, {"panel", p.panel}, {"panelHi", p.panelHi}, {"panelLo", p.panelLo}, {"head", p.head}, {"headOn", p.headOn}, {"well", p.well}, {"field", p.field}};
+    std::fprintf(stderr, "PLASMA_CONTRAST %s |", d ? "dark" : "light");
+    for (const auto& b : bgs) std::fprintf(stderr, " %s |", b.name);
+    std::fprintf(stderr, "\n");
+    for (const auto& r : roles) {
+      std::fprintf(stderr, "PLASMA_CONTRAST %s |", r.name);
+      for (const auto& b : bgs) std::fprintf(stderr, " %.2f |", static_cast<double>(contrast(r.c, b.c)));
+      std::fprintf(stderr, "\n");
+    }
+  }
   return p;
 }
 skin::Skin makeSkin(const Pal& p) {
   skin::Skin s;
   s.panel = p.panel, s.panelHi = p.panelHi, s.panelLo = p.panelLo, s.bevel = p.line;
   s.rail = p.rail, s.fill = p.accent, s.fillPressed = p.accent, s.cap = p.capTop, s.handle = p.capTop;
-  s.text = p.text, s.textDim = p.textDim, s.lcdBg = p.well, s.lcdText = p.accent;
+  s.text = p.text, s.textDim = p.textDim, s.lcdBg = p.field, s.lcdText = p.text;
   s.graphBg = p.well, s.graphGrid = p.grid, s.graphGridStrong = p.gridStrong, s.graphText = p.textDim, s.graphCurve = p.accent;
-  s.select = p.accent, s.well = p.panelLo, s.pillBg = p.head, s.pillText = p.textDim, s.valueBg = p.well, s.valueText = p.accent;
+  s.select = p.accent, s.well = p.panelLo, s.pillBg = p.head, s.pillText = p.textDim, s.valueBg = p.field, s.valueText = p.text;
   s.accent2 = p.mod, s.raised = p.panelHi, s.pointer = p.pointer, s.labelBg = p.head;
   return s;
 }
+// The palette of the current theme (rebuilt when the theme or its tweaks change).
+struct PalCache {
+  uint32_t key[6] = {};
+  Pal pal;
+  skin::Skin skin;
+  bool init = false;
+};
+PalCache& palCache() {
+  static PalCache c;
+  const theme::Palette& T = theme::pal();
+  const uint32_t k[6] = {T.surface800, T.field, T.text, T.well, T.led, static_cast<uint32_t>(T.dark)};
+  // J-202: only the app's own palette drives it. Inside Plasma's skin scope theme::pal() is the
+  // palette derived from Plasma's skin, which would rebuild the cache twice per frame (and
+  // derive the roles from themselves); there the cached palette stays.
+  if (!c.init || (!skin::active() && std::memcmp(k, c.key, sizeof k) != 0)) {
+    std::memcpy(c.key, k, sizeof k);
+    c.pal = makePal(T);
+    c.skin = makeSkin(c.pal);
+    c.init = true;
+  }
+  return c;
+}
 }  // namespace
 
-const Pal& pal() {
-  static const Pal d = makeDark(), l = makeLight();
-  return theme::isDark() ? d : l;
-}
-const skin::Skin& skin() {
-  static const skin::Skin d = makeSkin(makeDark()), l = makeSkin(makeLight());
-  return theme::isDark() ? d : l;
-}
+const Pal& pal() { return palCache().pal; }
+const skin::Skin& skin() { return palCache().skin; }
 
 // ================================================================== values
 namespace {
@@ -158,9 +209,14 @@ void commit(Ctx& c, const char* label, int what) {
 std::string ptext(const Ctx& c, int k) { return paramText(k, val(c, k), &c.st.params); }
 
 // ================================================================== text
-float font(const Ctx& c, float px) { return std::max(7.0f, std::round(px * c.F.s * 2.0f) * 0.5f); }
+// J-202: nothing smaller than 8 px (the caption size at 100 %).
+float font(const Ctx& c, float px) { return std::max(8.0f, std::round(px * c.F.s * 2.0f) * 0.5f); }
 namespace {
-ImFont* pick(const Ctx& c, bool bold) { return bold ? (c.a.fontBold ? c.a.fontBold : c.a.fontRegular) : c.a.fontRegular; }
+int gMono = 0;  // MonoText scopes open: values are set in the mono face
+ImFont* pick(const Ctx& c, bool bold) {
+  if (gMono > 0 && c.a.fontMono) return c.a.fontMono;
+  return bold ? (c.a.fontBold ? c.a.fontBold : c.a.fontRegular) : c.a.fontRegular;
+}
 ImVec2 measure(const Ctx& c, const char* s, float px, bool bold) {
   ImFont* f = pick(c, bold);
   if (!f) return ImVec2(0, 0);
@@ -220,6 +276,19 @@ void layoutReport(const Ctx& c) {
   gLayer = 0;
 }
 }  // namespace
+namespace {
+// J-202: the baseline of a field centred on screen y `cy`: the mono value's,
+// so labels, values and names in any face share one line.
+float refBaseline(const Ctx& c, float cy, float px) {
+  ImFont* m = c.a.fontMono ? c.a.fontMono : c.a.fontRegular;
+  const float fs = font(c, px);
+  const float h = m->CalcTextSizeA(fs, 1e9f, 0, "0").y;
+  return std::round(cy - h * 0.5f) + m->GetFontBaked(fs)->Ascent;
+}
+float topFor(const Ctx& c, float baseline, float px, bool bold) { return baseline - pick(c, bold)->GetFontBaked(font(c, px))->Ascent; }
+}  // namespace
+MonoText::MonoText() { ++gMono; }
+MonoText::~MonoText() { --gMono; }
 float textW(const Ctx& c, const char* s, float px, bool bold) { return measure(c, s, px, bold).x / c.F.s; }
 void text(const Ctx& c, float x, float y, const char* s, ImU32 col, float px, bool bold) { put(c, c.p(x, y), s, col, px, bold); }
 void textC(const Ctx& c, float cx, float y, const char* s, ImU32 col, float px, bool bold) {
@@ -232,22 +301,22 @@ void textR(const Ctx& c, float rx, float y, const char* s, ImU32 col, float px, 
   const ImVec2 q = c.p(rx, y);
   put(c, ImVec2(q.x - sz.x, q.y), s, col, px, bold);
 }
-void labelBeside(const Ctx& c, float x, float boxY, float boxH, const char* s, ImU32 col, float px) {
-  ImFont* f = pick(c, true);
-  const float vTop = std::round(c.p(0, boxY + boxH * 0.5f).y - measure(c, "0", 9.0f, true).y * 0.5f);
-  put(c, ImVec2(c.p(x, 0).x, vTop + f->GetFontBaked(font(c, 9.0f))->Ascent - f->GetFontBaked(font(c, px))->Ascent), s, col, px, true);
+void labelBeside(const Ctx& c, float x, float boxY, float boxH, const char* s, ImU32 col, float px, bool bold) {
+  const float base = refBaseline(c, c.p(0, boxY + boxH * 0.5f).y, ty::kValue);
+  put(c, ImVec2(c.p(x, 0).x, topFor(c, base, px, bold)), s, col, px, bold);
 }
 void textMid(const Ctx& c, float x0, float x1, float cy, const char* s, ImU32 col, float px, bool bold) {
   const ImVec2 sz = measure(c, s, px, bold);
   const ImVec2 a = c.p(x0, cy), b = c.p(x1, cy);
   const float w = b.x - a.x;
+  const float top = topFor(c, refBaseline(c, a.y, px), px, bold);  // J-202: on the field's baseline
   if (sz.x > w - 2) {  // clip long names to the field
     c.dl->PushClipRect(ImVec2(a.x + 1, a.y - sz.y), ImVec2(b.x - 1, a.y + sz.y), true);
-    put(c, ImVec2(a.x + 2, a.y - sz.y * 0.5f), s, col, px, bold);
+    put(c, ImVec2(a.x + 2, top), s, col, px, bold);
     c.dl->PopClipRect();
     return;
   }
-  put(c, ImVec2(a.x + (w - sz.x) * 0.5f, a.y - sz.y * 0.5f), s, col, px, bold);
+  put(c, ImVec2(a.x + (w - sz.x) * 0.5f, top), s, col, px, bold);
 }
 
 // ================================================================== surfaces
@@ -257,8 +326,8 @@ void panelRect(const Ctx& c, float x, float y, float w, float h, ImU32 col, floa
 void wellRect(const Ctx& c, float x, float y, float w, float h, float r) {
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
   gl::audit::group(a, b, "well");  // J-128: rows are checked per panel
-  if (look::styled()) return look::hookWell(c.dl, a, b, c.P.well);  // J-129 control style
-  c.dl->AddRectFilled(a, b, c.P.well, c.s(r));
+  if (look::styled()) return look::hookWell(c.dl, a, b, c.P.field);  // J-129 control style
+  c.dl->AddRectFilled(a, b, c.P.field, c.s(r));
   c.dl->AddRect(a, b, c.P.line, c.s(r));
 }
 void hline(const Ctx& c, float x0, float x1, float y, ImU32 col) {
@@ -383,14 +452,13 @@ void iconClose(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
   ::gl::ui::drawIconFit(dl, ::gl::ui::Icon::Close, ImVec2(c.x - e, c.y - e), ImVec2(c.x + e, c.y + e), col);
 }
 void iconSourceMeter(ImDrawList* dl, ImVec2 c, float r, float v, bool bipolar, bool idle, ImU32 track, ImU32 lit) {
+  // J-202: a jack (a soft chip with a centre dot) that reads as something to
+  // grab, not a spinner; the live arc shows only while the source moves.
   constexpr float a0 = 3.14159265f * 0.75f, a1 = 3.14159265f * 2.25f, mid = (a0 + a1) * 0.5f;
-  const float th = std::max(1.0f, r * 0.2f), thLit = std::max(1.5f, r * 0.36f);
-  dl->PathArcTo(c, r, a0, a1, 24);
-  dl->PathStroke(track, 0, th);
-  if (bipolar) {  // the zero mark at the top
-    dl->AddLine(ImVec2(c.x, c.y - r - th), ImVec2(c.x, c.y - r + th * 1.5f), track, th);
-  }
-  if (idle || (!bipolar && v < 0.005f)) return;  // a unipolar source at zero reads as the empty track
+  const float thLit = std::max(1.5f, r * 0.36f);
+  dl->AddCircleFilled(c, r * 0.95f, theme::withAlpha(track, 0.28f), 20);
+  dl->AddCircleFilled(c, std::max(1.5f, r * 0.34f), track, 12);
+  if (idle || (!bipolar && v < 0.005f) || (bipolar && std::fabs(v) < 0.005f)) return;
   const float from = bipolar ? mid : a0;
   const float to = bipolar ? mid + std::clamp(v, -1.f, 1.f) * (a1 - mid) : a0 + std::clamp(v, 0.f, 1.f) * (a1 - a0);
   const float lo = std::min(from, to), hi = std::max(from, to);
@@ -572,7 +640,7 @@ bool knob(Ctx& c, int k, float cx, float cy, float r, const char* label, int fla
   if (!(flags & KnobNoLabel) && label) {
     const bool showVal = act || (flags & KnobValue);
     const std::string vs = showVal ? paramText(k, v, &c.st.params) : std::string(label);
-    fitLabel(c, cx, cy + r + 4.5f, r * 2 + 22, vs.c_str(), showVal ? c.P.accent : (hov ? c.P.text : c.P.label), (flags & KnobSmall) ? 8.0f : 9.0f, true);
+    fitLabel(c, cx, cy + r + 4.5f, r * 2 + 22, vs.c_str(), showVal ? c.P.accentText : (hov ? c.P.text : c.P.label), (flags & KnobSmall) ? 8.0f : 9.0f, true);
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay) || act) {
     std::string s = paramText(k, v, &c.st.params);
@@ -629,7 +697,7 @@ bool knobFree(Ctx& c, const char* id, float& v, float cx, float cy, float r, con
   kp.a0 = kA0, kp.a1 = kA1, kp.an = kA0 + n * (kA1 - kA0), kp.from = bipolar ? (kA0 + kA1) * 0.5f : kA0;
   kp.hot = hov, kp.active = act, kp.railTh = std::max(2.0f, R * 0.17f);
   skin::knobFace(c.dl, C, R, kp);
-  if (label) textC(c, cx, cy + r + 4, act && valueText ? valueText : label, act ? c.P.accent : c.P.textDim, 8.5f, true);
+  if (label) textC(c, cx, cy + r + 4, act && valueText ? valueText : label, act ? c.P.accentText : c.P.textDim, 8.5f, true);
   if ((hov || act) && valueText) bubble(c, ImVec2(C.x, C.y - R - c.s(4)), valueText);
   ImGui::PopID();
   return changed;
@@ -699,8 +767,8 @@ bool led(Ctx& c, int k, float x, float y, float size) {
     c.dl->AddRectFilled(ImVec2(a.x - c.s(1.5f), a.y - c.s(1.5f)), ImVec2(b.x + c.s(1.5f), b.y + c.s(1.5f)), theme::withAlpha(c.P.accent, 0.22f), c.s(3));
     skin::gradientRect(c.dl, a, b, skin::lighten(c.P.accent, 0.25f), c.P.accent, c.s(2));
   } else {
-    c.dl->AddRectFilled(a, b, c.P.well, c.s(2));
-    c.dl->AddRect(a, b, c.P.lineHi, c.s(2));
+    c.dl->AddRectFilled(a, b, c.P.field, c.s(2));
+    c.dl->AddRect(a, b, c.P.boxEdge, c.s(2));
   }
   if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + (on ? ": on (click: off)" : ": off (click: on)"));
   ImGui::PopID();
@@ -710,15 +778,16 @@ bool led(Ctx& c, int k, float x, float y, float size) {
 bool checkBox(Ctx& c, int k, float x, float y, const char* label, float px) {
   ImGui::PushID(k);
   ImGui::PushID("chk");
-  const float w = 13 + textW(c, label, px, true);
+  const bool bold = px < 9.0f;  // J-202: caps captions bold, sentence-case labels regular
+  const float w = 13 + textW(c, label, px, bold);
   ImGui::SetCursorScreenPos(c.p(x, y - 1));
   const bool click = ImGui::InvisibleButton("##c", c.F.sz(w, 11));
   const bool on = val(c, k) >= 0.5;
   if (click) setv(c, k, on ? 0 : 1);
   const ImVec2 a = c.p(x, y + 0.5f), b = c.p(x + 8.5f, y + 9);
   if (on) skin::gradientRect(c.dl, a, b, skin::lighten(c.P.accent, 0.2f), c.P.accent, c.s(2));
-  else c.dl->AddRectFilled(a, b, c.P.well, c.s(2)), c.dl->AddRect(a, b, c.P.lineHi, c.s(2));
-  text(c, x + 13, y, label, on ? c.P.text : c.P.textDim, px, true);
+  else c.dl->AddRectFilled(a, b, c.P.field, c.s(2)), c.dl->AddRect(a, b, c.P.boxEdge, c.s(2));
+  labelBeside(c, x + 13, y - 4.25f, 18, label, on || !bold ? c.P.text : c.P.textDim, px, bold);  // J-202: on the box's centre line
   if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + (on ? ": on" : ": off"));
   ImGui::PopID();
   ImGui::PopID();
@@ -730,14 +799,29 @@ bool button(Ctx& c, const char* id, float x, float y, float w, float h, const ch
   const bool click = ImGui::InvisibleButton("##b", c.F.sz(w, h));
   const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
-  if (on) {
-    c.dl->AddRectFilled(a, b, c.P.accentSoft, c.s(3));
-    c.dl->AddRect(a, b, theme::withAlpha(c.P.accent, 0.7f), c.s(3));
+  if (on) {  // J-202: lit = raised fill, accent label, quiet accent edge
+    c.dl->AddRectFilled(a, b, hov ? skin::lighten(c.P.headOn, 0.04f) : c.P.headOn, c.s(3));
+    c.dl->AddRect(a, b, theme::withAlpha(c.P.accent, 0.45f), c.s(3));
   } else {
     skin::gradientRect(c.dl, a, b, act ? c.P.panelLo : (hov ? c.P.headOn : c.P.panelHi), act ? c.P.panelLo : c.P.head, c.s(3));
     c.dl->AddRect(a, b, hov ? c.P.lineHi : c.P.line, c.s(3));
   }
-  if (label && *label) textMid(c, x, x + w, y + h * 0.5f, label, on ? c.P.accent : (hov ? c.P.text : c.P.textDim), px, true);
+  if (label && *label) textMid(c, x, x + w, y + h * 0.5f, label, on ? c.P.accentText : (hov ? c.P.text : c.P.textDim), px, true);
+  ImGui::PopID();
+  return click;
+}
+bool seg2(Ctx& c, const char* id, float x, float y, float w, float h, const char* a, const char* b, bool second, const char* hint) {
+  ImGui::PushID(id);
+  ImGui::SetCursorScreenPos(c.p(x, y));
+  const bool click = ImGui::InvisibleButton("##s2", c.F.sz(w, h));
+  const bool hov = ImGui::IsItemHovered();
+  c.dl->AddRectFilled(c.p(x, y), c.p(x + w, y + h), c.P.field, c.s(3));
+  c.dl->AddRect(c.p(x, y), c.p(x + w, y + h), hov ? c.P.lineHi : c.P.line, c.s(3));
+  const float hw = w * 0.5f, sx = x + (second ? hw : 0);
+  c.dl->AddRectFilled(c.p(sx + 2, y + 2), c.p(sx + hw - 2, y + h - 2), c.P.headOn, c.s(2));
+  textMid(c, x, x + hw, y + h * 0.5f, a, second ? c.P.textDim : c.P.text, ty::kCap, true);
+  textMid(c, x + hw, x + w, y + h * 0.5f, b, second ? c.P.text : c.P.textDim, ty::kCap, true);
+  if (hov && hint) c.a.setHint(hint);
   ImGui::PopID();
   return click;
 }
@@ -761,19 +845,19 @@ bool valueBox(Ctx& c, int k, float x, float y, float w, float h, const char* lab
   const bool ch = interact(c, k, v, 90.0f, false);
   dropTarget(c, k);
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
-  c.dl->AddRectFilled(a, b, act ? c.P.panelLo : c.P.well, c.s(2));
+  c.dl->AddRectFilled(a, b, act ? c.P.panelLo : c.P.field, c.s(2));
   c.dl->AddRect(a, b, hov || act ? c.P.lineHi : c.P.line, c.s(2));
   float vx0 = x;
   const std::string s = override ? std::string(override) : paramText(k, v, &c.st.params);
   if (label && *label) {
-    // J-128: the label sits on the value's baseline (textMid centres the value)
-    ImFont* f = pick(c, true);
-    const float vTop = std::round(c.p(0, y + h * 0.5f).y - measure(c, s.c_str(), 9.0f, true).y * 0.5f);
-    const float lTop = vTop + f->GetFontBaked(font(c, 9.0f))->Ascent - f->GetFontBaked(font(c, 8.5f))->Ascent;
-    put(c, ImVec2(c.p(x + 4, 0).x, lTop), label, c.P.textDim, 8.5f, true);
+    // J-128 / J-202: the label sits on the value's baseline
+    labelBeside(c, x + 4, y, h, label, c.P.textDim, 8.5f);
     vx0 = x + 6 + textW(c, label, 8.5f, true);
   }
-  textMid(c, vx0, x + w, y + h * 0.5f, s.c_str(), c.P.accent, 9.0f, true);
+  {
+    MonoText mono;
+    textMid(c, vx0, x + w - 2, y + h * 0.5f, s.c_str(), act ? c.P.accentText : c.P.text, ty::kValue, false);
+  }
   if (!modSlotsFor(c, k).empty()) c.dl->AddRectFilled(ImVec2(b.x - c.s(4), a.y + c.s(2)), ImVec2(b.x - c.s(2), b.y - c.s(2)), c.P.mod, 1);
   if (hov) c.a.setHint(paramLongName(k) + ": " + paramText(k, v, &c.st.params) + "   (drag \xC2\xB7 double-click: type \xC2\xB7 right-click: menu)");
   ImGui::PopID();
@@ -782,7 +866,7 @@ bool valueBox(Ctx& c, int k, float x, float y, float w, float h, const char* lab
 }
 
 bool dropField(Ctx& c, const char* id, float x, float y, float w, float h, const char* shown, const std::function<void()>& items, bool arrows,
-               int* step) {
+               int* step, bool placeholder) {
   ImGui::PushID(id);
   const float aw = arrows ? 13.0f : 0.0f;
   const float fw = w - aw * 2;
@@ -790,9 +874,9 @@ bool dropField(Ctx& c, const char* id, float x, float y, float w, float h, const
   const bool click = ImGui::InvisibleButton("##d", c.F.sz(fw, h));
   const bool hov = ImGui::IsItemHovered();
   const ImVec2 a = c.p(x, y), b = c.p(x + fw, y + h);
-  c.dl->AddRectFilled(a, b, hov ? c.P.panelHi : c.P.well, c.s(2));
+  c.dl->AddRectFilled(a, b, hov ? c.P.panelHi : c.P.field, c.s(2));
   c.dl->AddRect(a, b, hov ? c.P.lineHi : c.P.line, c.s(2));
-  textMid(c, x + 2, x + fw - 12, y + h * 0.5f, shown, c.P.accent, 9.0f, true);
+  textMid(c, x + 2, x + fw - 12, y + h * 0.5f, shown, placeholder ? c.P.textDim : c.P.text, ty::kValue, false);
   iconArrow(c.dl, c.p(x + fw - 7, y + h * 0.5f), c.s(6), 3, c.P.textDim);
   if (click) ImGui::OpenPopup("##dd");
   bool changed = false;
@@ -802,14 +886,18 @@ bool dropField(Ctx& c, const char* id, float x, float y, float w, float h, const
     ImGui::EndPopup();
   }
   if (arrows && step) {
+    // J-202: one joined < > pair, 2 units clear of the field
+    const float pw = (w - fw - 2) * 0.5f;
     for (int i = 0; i < 2; ++i) {
-      const float bx = x + fw + aw * i;
+      const float bx = x + fw + 2 + pw * i;
       ImGui::SetCursorScreenPos(c.p(bx, y));
       ImGui::PushID(i);
-      if (ImGui::InvisibleButton("##ar", c.F.sz(aw, h))) *step = i == 0 ? -1 : 1, changed = true;
+      if (ImGui::InvisibleButton("##ar", c.F.sz(pw, h))) *step = i == 0 ? -1 : 1, changed = true;
       const bool ah = ImGui::IsItemHovered();
-      c.dl->AddRectFilled(c.p(bx + 0.5f, y), c.p(bx + aw - 0.5f, y + h), ah ? c.P.headOn : c.P.head, c.s(2));
-      iconArrow(c.dl, c.p(bx + aw * 0.5f, y + h * 0.5f), c.s(6.5f), i == 0 ? 0 : 1, ah ? c.P.text : c.P.textDim);
+      c.dl->AddRectFilled(c.p(bx, y), c.p(bx + pw, y + h), ah ? c.P.headOn : c.P.head, c.s(2),
+                          i == 0 ? ImDrawFlags_RoundCornersLeft : ImDrawFlags_RoundCornersRight);
+      if (i == 1) vline(c, bx, y + 3, y + h - 3, c.P.line);
+      iconArrow(c.dl, c.p(bx + pw * 0.5f, y + h * 0.5f), c.s(6.5f), i == 0 ? 0 : 1, ah ? c.P.text : c.P.textDim);
       ImGui::PopID();
     }
   }
@@ -854,11 +942,14 @@ bool stepperFree(Ctx& c, const char* id, int& v, int lo, int hi, float x, float 
   }
   if (hov && ImGui::GetIO().MouseWheel != 0) v = std::clamp(v + (ImGui::GetIO().MouseWheel > 0 ? 1 : -1), lo, hi), changed = true;
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
-  c.dl->AddRectFilled(a, b, c.P.well, c.s(2));
+  c.dl->AddRectFilled(a, b, c.P.field, c.s(2));
   c.dl->AddRect(a, b, hov || act ? c.P.lineHi : c.P.line, c.s(2));
   char buf[32];
   std::snprintf(buf, sizeof buf, "%d", v);
-  textMid(c, x, x + w - 10, y + h * 0.5f, shown ? shown : buf, c.P.accent, 9.0f, true);
+  {
+    MonoText mono;
+    textMid(c, x, x + w - 10, y + h * 0.5f, shown ? shown : buf, act ? c.P.accentText : c.P.text, ty::kValue, false);
+  }
   for (int i = 0; i < 2; ++i) {
     ImGui::SetCursorScreenPos(c.p(x + w - 10, y + h * 0.5f * i));
     ImGui::PushID(i);
@@ -1107,7 +1198,7 @@ void sourceHandle(Ctx& c, int src, float cx, float cy, float r) {
   }
   bool bip = false;
   const float mv = sourceMeterValue(src, raw, bip);
-  iconSourceMeter(c.dl, C, R, mv, bip, idle, hov ? c.P.textDim : c.P.textFaint, c.P.mod);
+  iconSourceMeter(c.dl, C, R, mv, bip, idle, hov ? c.P.text : c.P.textDim, c.P.mod);
   if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
     ImGui::SetDragDropPayload("PLASMA_SRC", &src, sizeof(int));
     const ImVec2 m = ImGui::GetIO().MousePos;
@@ -1329,7 +1420,7 @@ void previewKey(Ctx& c, int key, bool on) {
 // "Lock effects": a loaded preset keeps the current effects.
 void keepLockedFx(const Ctx& c, PluginState& ns, Model& m) {
   if (!c.m.lockFx) return;
-  for (int k = kFxBase; k < kParamCount && k < static_cast<int>(ns.params.size()) && k < static_cast<int>(c.st.params.size()); ++k)
+  for (int k = kFxBase; k < kTailBase && k < static_cast<int>(ns.params.size()) && k < static_cast<int>(c.st.params.size()); ++k)
     ns.params[static_cast<size_t>(k)] = c.st.params[static_cast<size_t>(k)];
   m.fx = c.m.fx;
   m.fxExtra = c.m.fxExtra;
@@ -1451,9 +1542,9 @@ void openPresetDialog(Ctx& c) {
 bool inputField(Ctx& c, const char* id, float x, float y, float w, float h, char* buf, size_t size, const char* hint, int flags, float px) {
   ImGui::SetCursorScreenPos(c.p(x, y));
   ImGui::PushID(id);
-  ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(c.P.well));
+  ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(c.P.field));
   ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(c.P.text));
-  ImGui::PushStyleColor(ImGuiCol_TextDisabled, theme::vec(c.P.textFaint));
+  ImGui::PushStyleColor(ImGuiCol_TextDisabled, theme::vec(c.P.textDim));
   const float fs = font(c, px);
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(c.s(6), std::max(0.f, (c.s(h) - fs) * 0.5f)));
   ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, c.s(3));
@@ -1468,18 +1559,25 @@ bool inputField(Ctx& c, const char* id, float x, float y, float w, float h, char
 }
 
 // ================================================================== header
-namespace {
+// J-202: one stereo meter (two bars in one well): the header and the MIX page.
 void drawMeter(Ctx& c, float x, float y, float w, float h) {
   wellRect(c, x, y, w, h, 2);
-  const float lv = c.hasLive ? std::clamp(c.live.outL, 0.f, 1.5f) : 0.f;
-  const float db = lv > 1e-5f ? 20.f * std::log10(lv) : -90.f;
-  const float n = std::clamp((db + 48.f) / 51.f, 0.f, 1.f);
-  if (n > 0) {
-    const ImVec2 a = c.p(x + 2, y + h - 2 - n * (h - 4)), b = c.p(x + w - 2, y + h - 2);
-    skin::gradientRect(c.dl, a, b, db > -1.f ? c.P.danger : c.P.good, theme::withAlpha(c.P.good, 0.6f), c.s(1));
+  const float bw = (w - 5) * 0.5f;
+  for (int ch = 0; ch < 2; ++ch) {
+    const float bx = x + 2 + ch * (bw + 1);
+    c.dl->AddRectFilled(c.p(bx, y + 2), c.p(bx + bw, y + h - 2), c.P.grid, c.s(1));
+    const float pk = c.hasLive ? (ch == 0 ? c.live.outL : c.live.outR) : 0.f;
+    const float lv = std::clamp(pk, 0.f, 1.5f);
+    const float db = lv > 1e-5f ? 20.f * std::log10(lv) : -90.f;
+    const float n = std::clamp((db + 48.f) / 51.f, 0.f, 1.f);
+    if (n > 0) {
+      const ImVec2 a = c.p(bx, y + h - 2 - n * (h - 4)), b = c.p(bx + bw, y + h - 2);
+      skin::gradientRect(c.dl, a, b, db > -1.f ? c.P.danger : c.P.good, theme::withAlpha(c.P.good, 0.6f), c.s(1));
+    }
   }
 }
 
+namespace {
 void presetMenu(Ctx& c) {
   const PluginInfo* in = info();
   if (ImGui::MenuItem(i18n::tr("Init"))) applyPreset(c, {}, "", "Init");
@@ -1511,51 +1609,67 @@ void header(Ctx& c) {
       const float fs = font(c, 25);
       c.dl->AddText(f, fs, ImVec2(std::round(c.p(14, 0).x), std::round(c.p(0, 28).y - fs * 0.56f)), P.text, "Plasma");
     }
-    text(c, 14 + wmH * 26.0f / 24.0f, 46, "WAVETABLE \xC2\xB7 HYBRID", P.textFaint, 7.0f, true);
-    ImGui::SetCursorScreenPos(at);
-    ImGui::InvisibleButton("##wordmark", c.F.sz(wmH * 84.0f / 24.0f, wmH));
-    if (ImGui::IsItemHovered()) gl::ui::Hint(pluginDisplayName(kType) + "  \xC2\xB7  " + pluginTagline(kType));
+    text(c, 14 + wmH * 26.0f / 24.0f, 45, "WAVETABLE SYNTH", P.textDim, ty::kCap, true);
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(at, ImVec2(at.x + c.s(wmH * 84.0f / 24.0f), at.y + c.s(wmH))))
+      gl::ui::Hint(pluginDisplayName(kType) + "  \xC2\xB7  " + pluginTagline(kType));
   }
-  // page tabs
+  // page tabs (J-202): one segmented control; no segment is lit while an
+  // overlay (browser, clip, table or mapping editor) covers the page.
   static const char* const kTabs[PgCount] = {"OSC", "MIX", "FX", "MATRIX", "GLOBAL"};
-  for (int i = 0; i < PgCount; ++i) {
-    const float x = 165 + i * 68.0f;
-    ImGui::PushID(i);
-    ImGui::SetCursorScreenPos(c.p(x, 2));
-    if (ImGui::InvisibleButton("##pg", c.F.sz(66, 64))) c.u.page = i, c.u.clip = false, c.u.wtEdit = false;
-    const bool hov = ImGui::IsItemHovered();
-    const bool on = c.u.page == i && !c.u.clip && !c.u.wtEdit;
-    skin::gradientRect(c.dl, c.p(x, 2), c.p(x + 66, 66), on ? P.headOn : (hov ? P.head : P.panelHi), on ? P.panelHi : P.panel, c.s(3));
-    if (on) c.dl->AddRect(c.p(x, 2), c.p(x + 66, 66), P.lineHi, c.s(3));
-    c.dl->AddCircleFilled(c.p(x + 33, 20), c.s(2.6f), on ? P.accent : P.textFaint);
-    if (on) c.dl->AddCircleFilled(c.p(x + 33, 20), c.s(6), theme::withAlpha(P.accent, 0.18f));
-    textC(c, x + 33, 40, kTabs[i], on ? P.text : P.textDim, 10.5f, true);
-    ImGui::PopID();
+  {
+    const float tx = 166, ty0 = 21, tw = 66, th = 26;
+    const bool overlay = c.u.clip || c.u.wtEdit || c.u.browser || c.u.mapping;
+    c.dl->AddRectFilled(c.p(tx, ty0), c.p(tx + tw * PgCount, ty0 + th), P.field, c.s(4));
+    c.dl->AddRect(c.p(tx, ty0), c.p(tx + tw * PgCount, ty0 + th), P.line, c.s(4));
+    for (int i = 0; i < PgCount; ++i) {
+      const float x = tx + i * tw;
+      ImGui::PushID(i);
+      ImGui::SetCursorScreenPos(c.p(x, ty0));
+      if (ImGui::InvisibleButton("##pg", c.F.sz(tw, th)))
+        c.u.page = i, c.u.clip = false, c.u.wtEdit = false, c.u.browser = 0, c.u.mapping = false;
+      const bool hov = ImGui::IsItemHovered();
+      const bool on = c.u.page == i && !overlay;
+      const bool prevOn = i > 0 && c.u.page == i - 1 && !overlay;
+      if (on) {
+        c.dl->AddRectFilled(c.p(x + 2, ty0 + 2), c.p(x + tw - 2, ty0 + th - 2), P.headOn, c.s(3));
+        c.dl->AddRectFilled(c.p(x + 22, ty0 + th - 4.5f), c.p(x + tw - 22, ty0 + th - 3), P.accent, c.s(1));
+      } else if (hov) {
+        c.dl->AddRectFilled(c.p(x + 2, ty0 + 2), c.p(x + tw - 2, ty0 + th - 2), P.panel, c.s(3));
+      } else if (i > 0 && !prevOn) {
+        vline(c, x, ty0 + 8, ty0 + th - 8, P.line);
+      }
+      textMid(c, x, x + tw, ty0 + th * 0.5f - 0.5f, kTabs[i], on || hov ? P.text : P.textDim, ty::kLabel, true);
+      ImGui::PopID();
+    }
   }
   // preset row
-  const float px = 512, pw = 470;
-  panelRect(c, px - 4, 4, pw + 8, 60, P.panelLo, 3);
+  // J-202: two rows centred on the tab strip's line: the preset name with its
+  // browse button and previous / next pair, then author and notes fields.
+  const float px = 520, pw = 456;
   {
-    ImGui::SetCursorScreenPos(c.p(px, 8));
-    if (ImGui::InvisibleButton("##brw", c.F.sz(20, 22))) c.u.browser = c.u.browser ? 0 : 1;
-    if (ImGui::IsItemHovered()) c.a.setHint("Preset browser: Plasma presets and your Serum presets");
-    iconBrowse(c.dl, c.p(px + 10, 19), c.s(11), ImGui::IsItemHovered() || c.u.browser ? P.accent : P.textDim);
+    ImGui::SetCursorScreenPos(c.p(px, 9));
+    if (ImGui::InvisibleButton("##brw", c.F.sz(22, 22))) c.u.browser = c.u.browser ? 0 : 1;
+    const bool bh = ImGui::IsItemHovered();
+    if (bh) c.a.setHint("Preset browser: Plasma presets and your Serum presets");
+    c.dl->AddRectFilled(c.p(px, 9), c.p(px + 22, 31), c.u.browser ? P.accentSoft : (bh ? P.headOn : P.head), c.s(3));
+    iconBrowse(c.dl, c.p(px + 11, 20), c.s(11), bh || c.u.browser ? (c.u.browser ? P.accent : P.text) : P.textDim);
     std::string name = c.m.presetName.empty() ? std::string("Init") : c.m.presetName;
-    ImGui::SetCursorScreenPos(c.p(px + 24, 8));
-    if (ImGui::InvisibleButton("##pn", c.F.sz(pw - 70, 22))) ImGui::OpenPopup("##presets");
+    ImGui::SetCursorScreenPos(c.p(px + 26, 9));
+    if (ImGui::InvisibleButton("##pn", c.F.sz(pw - 74, 22))) ImGui::OpenPopup("##presets");
     const bool hv = ImGui::IsItemHovered();
-    c.dl->AddRectFilled(c.p(px + 24, 8), c.p(px + pw - 46, 30), hv ? P.panelHi : P.well, c.s(2));
-    text(c, px + 31, 13, name.c_str(), P.accent, 10.5f, true);
+    c.dl->AddRectFilled(c.p(px + 26, 9), c.p(px + pw - 48, 31), P.field, c.s(3));
+    c.dl->AddRect(c.p(px + 26, 9), c.p(px + pw - 48, 31), hv ? P.lineHi : P.line, c.s(3));
+    textMid(c, px + 34, px + pw - 82, 20, name.c_str(), P.text, ty::kName, true);
     if (!c.m.openFormat.empty()) {  // opened from a Serum preset / state: its report on hover
-      const float ix = px + pw - 66;
+      const float ix = px + pw - 74;
       const bool approx = !c.m.openNotes.empty() || !c.m.openMissing.empty();
-      ImGui::SetCursorScreenPos(c.p(ix - 7, 12));
+      ImGui::SetCursorScreenPos(c.p(ix - 7, 13));
       ImGui::InvisibleButton("##openinfo", c.F.sz(14, 14));
       const bool ih = ImGui::IsItemHovered();
       const ImU32 col = ih ? P.text : (approx ? P.mod : P.textFaint);
-      c.dl->AddCircle(c.p(ix, 19), c.s(5.5f), col, 16, std::max(1.0f, c.s(1.1f)));
-      c.dl->AddLine(c.p(ix, 18), c.p(ix, 22.5f), col, std::max(1.0f, c.s(1.3f)));
-      c.dl->AddCircleFilled(c.p(ix, 15.8f), c.s(0.9f), col);
+      c.dl->AddCircle(c.p(ix, 20), c.s(5.5f), col, 16, std::max(1.0f, c.s(1.1f)));
+      c.dl->AddLine(c.p(ix, 19), c.p(ix, 23.5f), col, std::max(1.0f, c.s(1.3f)));
+      c.dl->AddCircleFilled(c.p(ix, 16.8f), c.s(0.9f), col);
       if (ih) {
         ImGui::BeginTooltip();
         ImGui::PushTextWrapPos(c.s(420));
@@ -1564,7 +1678,7 @@ void header(Ctx& c) {
         ImGui::EndTooltip();
       }
     }
-    iconArrow(c.dl, c.p(px + pw - 54, 19), c.s(7), 3, P.textDim);
+    iconArrow(c.dl, c.p(px + pw - 58, 20), c.s(7), 3, hv ? P.text : P.textDim);
     if (ImGui::BeginPopup("##presets")) {
       presetMenu(c);
       ImGui::EndPopup();
@@ -1572,9 +1686,9 @@ void header(Ctx& c) {
     // previous / next factory preset
     for (int i = 0; i < 2; ++i) {
       ImGui::PushID(i);
-      const float bx = px + pw - 42 + i * 21.0f;
-      ImGui::SetCursorScreenPos(c.p(bx, 8));
-      if (ImGui::InvisibleButton("##pv", c.F.sz(20, 22))) {
+      const float bx = px + pw - 44 + i * 22.0f;
+      ImGui::SetCursorScreenPos(c.p(bx, 9));
+      if (ImGui::InvisibleButton("##pv", c.F.sz(22, 22))) {
         const PluginInfo* in = info();
         if (in && !in->presets.empty()) {
           int cur = -1;
@@ -1586,57 +1700,66 @@ void header(Ctx& c) {
         }
       }
       const bool h = ImGui::IsItemHovered();
-      c.dl->AddRectFilled(c.p(bx, 8), c.p(bx + 20, 30), h ? P.headOn : P.head, c.s(2));
-      iconArrow(c.dl, c.p(bx + 10, 19), c.s(8), i == 0 ? 0 : 1, h ? P.text : P.textDim);
+      c.dl->AddRectFilled(c.p(bx, 9), c.p(bx + 22, 31), h ? P.headOn : P.head, c.s(3),
+                          i == 0 ? ImDrawFlags_RoundCornersLeft : ImDrawFlags_RoundCornersRight);
+      if (i == 1) vline(c, bx, 13, 27, P.line);
+      iconArrow(c.dl, c.p(bx + 11, 20), c.s(8), i == 0 ? 0 : 1, h ? P.text : P.textDim);
+      if (h) c.a.setHint(i == 0 ? "Previous factory preset" : "Next factory preset");
       ImGui::PopID();
     }
-    // author / description
-    text(c, px + 2, 41, "AUTHOR", P.textFaint, 7.5f, true);
-    text(c, px + 196, 41, "NOTES", P.textFaint, 7.5f, true);
-    auto field = [&](const char* id, float x, float w, std::string& s, const char* label) {
-      ImGui::SetCursorScreenPos(c.p(x, 36));
+    // author / notes: framed fields whose empty text names them
+    auto field = [&](const char* id, float x, float w, std::string& s, const char* label, const char* hint) {
+      ImGui::SetCursorScreenPos(c.p(x, 37));
       ImGui::PushID(id);
-      ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(P.well));
-      ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.textDim));
-      ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(c.s(4), c.s(2)));
-      ImGui::PushFont(c.a.fontRegular, font(c, 9.5f));
+      const float fs = font(c, 9.5f);
+      ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(P.field));
+      ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, theme::vec(P.field));
+      ImGui::PushStyleColor(ImGuiCol_FrameBgActive, theme::vec(P.field));
+      ImGui::PushStyleColor(ImGuiCol_Border, theme::vec(P.line));
+      ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.text));
+      ImGui::PushStyleColor(ImGuiCol_TextDisabled, theme::vec(P.textDim));
+      ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(c.s(7), std::max(0.0f, (c.s(22) - fs) * 0.5f)));
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, c.s(3));
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+      ImGui::PushFont(c.a.fontRegular, fs);
       ImGui::SetNextItemWidth(c.s(w));
       char buf[256];
       std::snprintf(buf, sizeof buf, "%s", s.c_str());
-      if (ImGui::InputText("##f", buf, sizeof buf)) {
+      if (ImGui::InputTextWithHint("##f", hint, buf, sizeof buf)) {
         s = buf;
         commit(c, label, 900 + static_cast<int>(id[0]));
       }
+      if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) {
+        const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+        c.dl->AddRect(r0, r1, P.lineHi, c.s(3));
+      }
       ImGui::PopFont();
-      ImGui::PopStyleVar();
-      ImGui::PopStyleColor(2);
+      ImGui::PopStyleVar(3);
+      ImGui::PopStyleColor(6);
       ImGui::PopID();
     };
-    field("a", px + 38, 150, c.m.author, "Edit author");
-    field("d", px + 224, pw - 228, c.m.description, "Edit notes");
+    field("a", px, 160, c.m.author, "Edit author", "Author");
+    field("d", px + 166, pw - 166, c.m.description, "Edit notes", "Notes");
   }
-  // undo / redo + menu
+  // undo / redo / menu: three icon buttons on the tab strip's line
   {
-    const float x = 990;
-    for (int i = 0; i < 2; ++i) {
+    const float x = 994, y = 21, bw = 26, bh = 26;
+    for (int i = 0; i < 3; ++i) {
+      const float bx = x + i * (bw + 3);
       ImGui::PushID(100 + i);
-      ImGui::SetCursorScreenPos(c.p(x + i * 30.0f, 36));
-      if (ImGui::InvisibleButton("##ur", c.F.sz(28, 26))) (void)(i == 0 ? c.a.doc.undo() : c.a.doc.redo());
+      ImGui::SetCursorScreenPos(c.p(bx, y));
+      const bool clk = ImGui::InvisibleButton("##ur", c.F.sz(bw, bh));
+      if (clk && i == 0) c.a.doc.undo();
+      if (clk && i == 1) c.a.doc.redo();
+      if (clk && i == 2) ImGui::OpenPopup("##mainmenu");
       const bool h = ImGui::IsItemHovered();
-      c.dl->AddRectFilled(c.p(x + i * 30.0f, 36), c.p(x + i * 30.0f + 28, 62), h ? P.headOn : P.head, c.s(3));
-      // The SVG undo / redo in the old arc-and-arrow glyph's ink (a ring of 5.5 with an arrow head above it).
-      const ImVec2 q = c.p(x + i * 30.0f + 14, 49);
-      ::gl::ui::drawIconFit(c.dl, i == 0 ? ::gl::ui::Icon::Undo : ::gl::ui::Icon::Redo, ImVec2(q.x - c.s(6.2f), q.y - c.s(7)),
-                            ImVec2(q.x + c.s(6.2f), q.y + c.s(6.2f)), h ? P.text : P.textDim);
-      if (h) c.a.setHint(i == 0 ? "Undo" : "Redo");
-      ImGui::PopID();
-    }
-    ImGui::SetCursorScreenPos(c.p(x, 6));
-    if (ImGui::InvisibleButton("##menu", c.F.sz(58, 26))) ImGui::OpenPopup("##mainmenu");
-    const bool h = ImGui::IsItemHovered();
-    c.dl->AddRectFilled(c.p(x, 6), c.p(x + 58, 32), h ? P.headOn : P.head, c.s(3));
-    textC(c, x + 29, 13, "MENU", h ? P.text : P.textDim, 9, true);
-    if (ImGui::BeginPopup("##mainmenu")) {
+      c.dl->AddRectFilled(c.p(bx, y), c.p(bx + bw, y + bh), h ? P.headOn : P.head, c.s(3));
+      const ImVec2 q = c.p(bx + bw * 0.5f, y + bh * 0.5f);
+      const ::gl::ui::Icon ic = i == 0 ? ::gl::ui::Icon::Undo : (i == 1 ? ::gl::ui::Icon::Redo : ::gl::ui::Icon::Menu);
+      ::gl::ui::drawIconFit(c.dl, ic, ImVec2(q.x - c.s(6.5f), q.y - c.s(6.5f)), ImVec2(q.x + c.s(6.5f), q.y + c.s(6.5f)),
+                            h ? P.text : P.textDim);
+      if (h) c.a.setHint(i == 0 ? "Undo" : (i == 1 ? "Redo" : "Plasma menu: presets, editors, reset"));
+      if (i == 2 && ImGui::BeginPopup("##mainmenu")) {
       presetMenu(c);
       ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Edit wavetable (Osc A)"))) c.u.wtEdit = true, c.u.wtOsc = 0;
@@ -1654,12 +1777,13 @@ void header(Ctx& c) {
         commit(c, "Remove all effects");
       }
       ImGui::EndPopup();
+      }
+      ImGui::PopID();
     }
   }
-  // main volume + meter
-  knob(c, G_MasterVol, 1110, 26, 15, "MAIN");
-  drawMeter(c, 1142, 8, 7, 54);
-  drawMeter(c, 1152, 8, 7, 54);
+  // main volume + stereo meter, centred on the same line
+  knob(c, G_MasterVol, 1118, 28, 15, "MAIN");
+  drawMeter(c, 1150, 12, 13, 46);
   vline(c, 0, 0, kHeadH, P.line);
   hline(c, 0, kW, kHeadH - 0.5f, P.line);
 }
@@ -1746,7 +1870,13 @@ void keyboard(Ctx& c, float x, float y, float w, float h) {
     const ImVec2 a = c.p(r.x, r.y), b = c.p(r.z, r.w);
     skin::gradientRect(c.dl, ImVec2(a.x + 0.5f, a.y), ImVec2(b.x - 0.5f, b.y), down ? c.P.keyDown : c.P.keyWhite,
                        down ? c.P.keyDown : theme::mix(c.P.keyWhite, c.P.textFaint, 0.18f), c.s(2), ImDrawFlags_RoundCornersBottom);
-    if (k % 12 == 0 && k == 60) textC(c, (r.x + r.z) * 0.5f, r.w - 12, "C3", c.P.textFaint, 7, true);
+    if (k % 12 == 0 && k == 60) textC(c, (r.x + r.z) * 0.5f, r.w - 12, "C3", c.P.textDim, ty::kCap, true);
+  }
+  // J-202: seams between the white keys in their own colour, so they show on light themes too
+  const ImU32 seam = theme::mix(c.P.keyWhite, c.P.keyBlack, 0.35f);
+  for (size_t i = 1; i < rects.size(); ++i) {
+    const ImVec2 a = c.p(rects[i].second.x, rects[i].second.y), b = c.p(rects[i].second.x, rects[i].second.w);
+    c.dl->AddLine(ImVec2(std::round(a.x) + 0.5f, a.y), ImVec2(std::round(b.x) + 0.5f, b.y), seam, 1.0f);
   }
   for (const auto& [k, r] : blacks) {
     const bool down = k == c.u.heldKey;
@@ -1773,35 +1903,24 @@ void strip(Ctx& c) {
   wheel(c, G_ModWheel, 130, y + 10, 18, 66, false);
   stepper(c, G_BendUp, 48, y + 12, 66, 20);
   stepper(c, G_BendDown, 48, y + 38, 66, 20);
-  textC(c, 81, y + 64, "BEND", P.label, 8, true);
+  textC(c, 81, y + 65, "BEND", P.label, ty::kCap, true);
   // CLIP / ARP
   auto block = [&](float x, const char* name, int onParam, bool& open, bool isClip) {
+    // J-202: power + name, then one button that opens the editor (no decorative keys)
     ImGui::PushID(name);
-    // power
-    ImGui::SetCursorScreenPos(c.p(x + 4, y + 7));
+    ImGui::SetCursorScreenPos(c.p(x + 6, y + 9));
     if (ImGui::InvisibleButton("##pw", c.F.sz(18, 18))) setv(c, onParam, val(c, onParam) >= 0.5 ? 0 : 1);
     const bool on = val(c, onParam) >= 0.5;
-    iconPower(c.dl, c.p(x + 13, y + 16), c.s(5), on ? P.accent : P.textDim);
-    // title (opens the editor)
-    ImGui::SetCursorScreenPos(c.p(x + 24, y + 6));
-    if (ImGui::InvisibleButton("##ti", c.F.sz(82, 20))) {
+    const bool ph = ImGui::IsItemHovered();
+    iconPower(c.dl, c.p(x + 15, y + 18), c.s(5), on ? P.accent : (ph ? P.text : P.textDim));
+    if (ph) c.a.setHint(std::string(isClip ? "Clip player" : "Arpeggiator") + (on ? ": on (click: off)" : ": off (click: on)"));
+    text(c, x + 28, y + 12, name, on ? P.text : P.textDim, ty::kTitle, true);
+    textR(c, x + 101, y + 13, on ? "ON" : "OFF", on ? P.accentText : P.textDim, ty::kCap, true);
+    if (button(c, "ed", x + 6, y + 40, 96, 24, open ? "CLOSE EDITOR" : "OPEN EDITOR", open, ty::kCap)) {
       open = !open;
       if (isClip) c.u.wtEdit = false;
     }
-    const bool hv = ImGui::IsItemHovered();
-    c.dl->AddRectFilled(c.p(x + 24, y + 6), c.p(x + 105, y + 26), open ? P.accentSoft : (hv ? P.headOn : P.head), c.s(2));
-    text(c, x + 30, y + 10, name, open ? P.accent : (on ? P.text : P.textDim), 9.5f, true);
-    if (hv) c.a.setHint(std::string(isClip ? "Clip player" : "Arpeggiator") + ": click the name to open its editor, the power button to switch it on");
-    // mini keys
-    for (int i = 0; i < 7; ++i) {
-      const float kx = x + 6 + i * 14.0f;
-      c.dl->AddRectFilled(c.p(kx, y + 32), c.p(kx + 12.5f, y + 76), P.keyWhite, c.s(1.5f));
-    }
-    for (int i : {0, 1, 3, 4, 5}) {
-      const float kx = x + 6 + i * 14.0f + 9;
-      c.dl->AddRectFilled(c.p(kx, y + 32), c.p(kx + 8, y + 56), P.keyBlack, c.s(1));
-    }
-    if (on) c.dl->AddRectFilled(c.p(x + 6, y + 29), c.p(x + 103, y + 31), P.accent, c.s(1));
+    if (ImGui::IsItemHovered()) c.a.setHint(std::string(isClip ? "Clip editor" : "Arpeggiator panel") + (open ? ": close" : ": open"));
     ImGui::PopID();
   };
   block(165, "CLIP", G_ClipOn, c.u.clip, true);
@@ -1809,30 +1928,28 @@ void strip(Ctx& c) {
   // transpose / key / scale / swing
   {
     const float x = 396;
-    text(c, x + 4, y + 10, "TRANSPOSE", P.textDim, 7.5f, true);
+    labelBeside(c, x + 4, y + 6, 18, "TRANSPOSE", P.label, ty::kCap);
     stepper(c, G_Transpose, x + 54, y + 6, 46, 18);
-    text(c, x + 108, y + 10, "KEY", P.textDim, 7.5f, true);
+    labelBeside(c, x + 106, y + 6, 18, "KEY", P.label, ty::kCap);
     choiceBox(c, G_Key, x + 128, y + 6, 48, 18);
-    text(c, x + 184, y + 10, "SCALE", P.textDim, 7.5f, true);
+    labelBeside(c, x + 182, y + 6, 18, "SCALE", P.label, ty::kCap);
     choiceBox(c, G_Scale, x + 214, y + 6, 98, 18);
-    text(c, x + 320, y + 10, "SWING", P.textDim, 7.5f, true);
+    labelBeside(c, x + 318, y + 6, 18, "SWING", P.label, ty::kCap);
     hfader(c, G_Swing, x + 352, y + 8, 62, 14);
     choiceBox(c, G_SwingDiv, x + 418, y + 6, 46, 18);
-    text(c, x + 472, y + 10, "OCTAVE", P.textDim, 7.5f, true);
+    labelBeside(c, x + 470, y + 6, 18, "OCTAVE", P.label, ty::kCap);
     choiceBox(c, G_TrigOctave, x + 506, y + 6, 46, 18);
     if (ImGui::IsItemHovered()) c.a.setHint("Trigger octave: its twelve keys pick the clip / arp slot while playing");
-    if (button(c, "oscmap", x + 556, y + 6, 81, 18, "", c.u.mapping, 7.5f)) c.u.mapping = !c.u.mapping;
+    if (button(c, "oscmap", x + 558, y + 6, 79, 18, "OSC MAPPING", c.u.mapping, ty::kCap)) c.u.mapping = !c.u.mapping;
     if (ImGui::IsItemHovered()) c.a.setHint("Oscillator mapping: the key and velocity range of each oscillator");
-    text(c, x + 562, y + 10, "OSC MAPPING", c.u.mapping ? P.accent : P.textDim, 7.5f, true);
-    iconPencil(c.dl, c.p(x + 628, y + 15), c.s(8), c.u.mapping ? P.accent : P.textDim);
     keyboard(c, x, y + 29, 641, 51);
   }
   // portamento
   {
     const float x = 1046;
-    checkBox(c, G_PortaAlways, x + 6, y + 9, "ALWAYS", 7.5f);
-    checkBox(c, G_PortaScaled, x + 74, y + 9, "SCALED", 7.5f);
-    knob(c, G_PortaTime, x + 34, y + 45, 14, "PORTA");
+    checkBox(c, G_PortaAlways, x + 6, y + 9, "ALWAYS", ty::kCap);
+    checkBox(c, G_PortaScaled, x + 74, y + 9, "SCALED", ty::kCap);
+    knob(c, G_PortaTime, x + 34, y + 45, 15.0f, "PORTA");
     // curve: a small graph that bends with the value
     const float gx = x + 76, gy = y + 28, gw = 50, gh = 32;
     wellRect(c, gx, gy, gw, gh, 2);
@@ -1849,7 +1966,7 @@ void strip(Ctx& c) {
     ImGui::InvisibleButton("##pc", c.F.sz(gw, gh), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     double pv = val(c, G_PortaCurve);
     interact(c, G_PortaCurve, pv, 120, false);
-    cellLabel(c, gx + gw * 0.5f, gy + gh + 3.5f, "CURVE");  // J-128: on the PORTA label line
+    cellLabel(c, gx + gw * 0.5f, gy + gh + 4.5f, "CURVE");  // J-128: on the PORTA label line (knob radius 15)
   }
 }
 

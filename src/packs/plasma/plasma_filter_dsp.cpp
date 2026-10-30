@@ -122,7 +122,7 @@ struct Filter::Ch {
   SvfC s1, s2, s3, f[3];
   OpC op, op2, damp;
   Bq bq;
-  float g = 0, G = 0, k = 0, drv = 1, mix = 0, fb = 0, var = 0, outGain = 1;
+  float g = 0, G = 0, k = 0, drv = 1, head = 0, mix = 0, fb = 0, var = 0, outGain = 1;  // head > 0: boost drive (see set)
   float delay = 100, delay2 = 100;     // samples
   float apA = 0;                        // first-order allpass coefficient
   float apSpread = 0;
@@ -179,7 +179,7 @@ void Filter::reset() {
   ch_[1].clear();
 }
 
-void Filter::set(int type, double sr, double hz, double res, double drive, double var, double spreadSt) {
+void Filter::set(int type, double sr, double hz, double res, double drive, double var, double spreadSt, bool boost) {
   type = std::clamp(type, 0, 106);
   if (type != type_) {
     type_ = type;
@@ -194,6 +194,15 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
     Ch& h = ch_[c];
     const double f = std::clamp(hz * std::pow(2.0, (c == 0 ? -spreadSt : spreadSt) / 12.0), 8.0, sr * 0.49);
     h.drv = static_cast<float>(1.0 + drive * 9.0);
+    h.head = 0;
+    if (boost) {
+      // J-201, measured on the import source with a saw at two input levels: small-signal gain
+      // 24 dB x drive^0.8 (+7.7 / +14 / +19.4 / +24 dB at 25 / 50 / 75 / 100 %), into a soft clip
+      // whose output ceiling sits 8.5 dB above Plasma's leveled one; the Mg and EMS ladders
+      // barely clip, the acid ladder 2.5 dB later, the dirty ladder 5.5 dB earlier.
+      h.drv = static_cast<float>(std::pow(10.0, 1.2 * std::pow(drive, 0.8)));
+      h.head = type == 99 || type == 101 ? 16.f : type == 100 ? 3.5f : type == 102 ? 0.53f : 2.66f;
+    }
     h.var = static_cast<float>(var);
     h.outGain = 1;
     switch (eng) {
@@ -345,7 +354,11 @@ void Filter::process(float& l, float& r) {
     Ch& h = ch_[c];
     float x = *io[c];
     float y = x;
-    if (h.drv > 1.0001f && eng != EngScream && eng != EngLadder) x = fastTanh(x * h.drv) / std::sqrt(h.drv);
+    if (h.head > 0) {
+      if (eng != EngScream && eng != EngLadder) x = h.head * fastTanh(x * h.drv / h.head);
+    } else if (h.drv > 1.0001f && eng != EngScream && eng != EngLadder) {
+      x = fastTanh(x * h.drv) / std::sqrt(h.drv);
+    }
     switch (eng) {
       case EngSvf: {
         float lp, bp, hp, lp2, bp2, hp2;
@@ -429,8 +442,9 @@ void Filter::process(float& l, float& r) {
         }
         const float G4 = G * G * G * G;
         float u = (x * h.drv - h.k * S) / (1.f + h.k * G4);
-        if (t == 102) u = fastTanh(u * 1.6f + 0.15f) - 0.15f;  // dirty: asymmetric
-        else u = fastTanh(u);
+        const float hd = h.head > 0 ? h.head : 1.f;
+        if (t == 102) u = hd * (fastTanh(u / hd * 1.6f + 0.15f) - 0.15f);  // dirty: asymmetric
+        else u = hd * fastTanh(u / hd);
         float in = u, out[4];
         for (int s = 0; s < 4; ++s) {
           const float v = (in - h.lad[s]) * G;
@@ -443,7 +457,7 @@ void Filter::process(float& l, float& r) {
         y = out[p - 1];
         if (t == 101) y = out[3] * 0.6f + out[1] * 0.4f;            // bright: mixes an earlier tap
         y *= 1.f + h.k * 0.5f * h.var;                             // BODY / BASS: resonance gain compensation
-        y /= h.drv > 1 ? std::sqrt(h.drv) : 1.f;
+        if (h.head <= 0) y /= h.drv > 1 ? std::sqrt(h.drv) : 1.f;
         break;
       }
       case EngComb: {

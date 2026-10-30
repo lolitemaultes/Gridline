@@ -29,19 +29,20 @@ std::string routeLabel(const Ctx& c, int r) {
     const double b = val(c, routeP(r, R_Balance));
     return b <= -0.99 ? "F1" : b >= 0.99 ? "F2" : "F1+2";
   }
-  return d == RouteMain ? "M" : d == RouteDirect ? "D" : "\xE2\x80\x94";
+  return d == RouteMain ? "MAIN" : d == RouteDirect ? "DIR" : "OFF";
 }
 void routeButton(Ctx& c, int r, float x, float y, float w) {
   ImGui::PushID(r + 500);
   const std::string lab = routeLabel(c, r);
-  if (button(c, "rt", x, y + 3, w, kHeadHgt - 5, lab.c_str(), false, 8.0f)) ImGui::OpenPopup("##route");
+  if (button(c, "rt", x, y + 3, w, kHeadHgt - 6, lab.c_str(), false, ty::kCap)) ImGui::OpenPopup("##route");
   if (ImGui::IsItemHovered())
-    c.a.setHint("Output: F1 / F2 / F1+2 = into the filters, M = main, D = direct out (click to choose; the mix page has the balance)");
+    c.a.setHint("Output: F1 / F2 / F1+2 = into the filters, MAIN = main out, DIR = direct out (click to choose; the mix page has the balance)");
   const int d = vali(c, routeP(r, R_Dest));
-  if (d == RouteFilter) {  // filter balance bar over the button
-    const double b = (val(c, routeP(r, R_Balance)) + 1.0) * 0.5;
-    const float bx = x + 2 + static_cast<float>(b) * (w - 4 - 6);
-    c.dl->AddRectFilled(c.p(bx, y + 0.5f), c.p(bx + 6, y + 2.5f), c.P.mod);
+  const double bal = val(c, routeP(r, R_Balance));
+  if (d == RouteFilter && bal > -0.99 && bal < 0.99) {  // a split balance: a tick on the button's lower edge (J-202: inside it)
+    const double b = (bal + 1.0) * 0.5;
+    const float bx = x + 3 + static_cast<float>(b) * (w - 6 - 6);
+    c.dl->AddRectFilled(c.p(bx, y + kHeadHgt - 5), c.p(bx + 6, y + kHeadHgt - 4), c.P.mod);
   }
   if (ImGui::BeginPopup("##route")) {
     auto item = [&](const char* name, int dest, double bal) {
@@ -159,17 +160,12 @@ void drawOverview(const Ctx& c, const std::vector<std::pair<float, float>>& ov, 
   for (int i = 0; i < n; ++i) {
     const float px = x + w * (i + 0.5f) / n;
     const ImVec2 a = c.p(px, cy - ov[static_cast<size_t>(i)].second * h * 0.46f), b = c.p(px, cy - ov[static_cast<size_t>(i)].first * h * 0.46f);
-    c.dl->AddLine(a, ImVec2(b.x, std::max(b.y, a.y + 1)), col, std::max(1.0f, c.s(w / n)));
+    c.dl->AddLine(a, ImVec2(b.x, std::max(b.y, a.y + 1)), col, std::max(1.0f, c.s(w / n) * 0.6f));
   }
 }
 
-// The display body of a column (between the header strip and the knob deck).
-void displayWell(const Ctx& c, float x, float y, float w, float h) {
-  const float g = kGutter + 1;
-  const ImVec2 a = c.p(x + g, y), b = c.p(x + w - g, y + h);
-  skin::gradientRect(c.dl, a, b, c.P.wellHi, c.P.well);
-  gridLines(c, x + g, y, w - 2 * g, h, 4, 2, true);
-}
+// J-202: the graph well of a column (only the graph; its fields sit on the cell).
+void displayWell(const Ctx& c, float x, float y, float w, float h) { insetFrame(c, x + 5, y, w - 10, h, 4, 2, true); }
 
 void drawCycle(const Ctx& c, const std::vector<float>& y, float x, float y0, float w, float h, ImU32 col) {
   const int n = std::max(64, static_cast<int>(c.s(w)));
@@ -241,14 +237,14 @@ void unisonPanel(Ctx& c, int o, float x, float y, float w) {
   float ry = y + 22;
   auto pair = [&](int ka, const char* la, int kb, const char* lb, bool choiceA = false, bool choiceB = false) {
     if (choiceA) {
-      text(c, rx, ry + 4, la, c.P.textFaint, 8, true);
+      text(c, rx, ry + 4, la, c.P.textDim, 8, true);
       choiceBox(c, ka, rx + 34, ry, cw - 38, 17);
     } else {
       valueBox(c, ka, rx, ry, cw - 4, 17, la);
     }
     if (kb >= 0) {
       if (choiceB) {
-        text(c, rx + cw + 4, ry + 4, lb, c.P.textFaint, 8, true);
+        text(c, rx + cw + 4, ry + 4, lb, c.P.textDim, 8, true);
         choiceBox(c, kb, rx + cw + 40, ry, cw - 44, 17);
       } else {
         valueBox(c, kb, rx + cw + 4, ry, cw - 4, 17, lb);
@@ -312,43 +308,39 @@ void optionsPanel(Ctx& c, int o, float x, float y, float w, float h) {
 
 // ------------------------------------------------------------------ oscillator column
 void warpBlock(Ctx& c, int o, float x, float y, float w) {
-  // two mode fields (name + < var >), WARP 1 / 2 knobs either side
-  const float half = w / 2;
+  // J-202: per warp a mode field (click: menu, wheel: step) over its variant
+  // field; nothing below the mode while the warp is off.
+  const float half = (w - 4) / 2;
   for (int i = 0; i < 2; ++i) {
     const int km = oscP(o, i == 0 ? O_Warp1Mode : O_Warp2Mode), kv = oscP(o, i == 0 ? O_Warp1Var : O_Warp2Var);
-    const float bx = x + half * i;
+    const float bx = x + (half + 4) * i;
     ImGui::PushID(i + 40);
     const int mode = vali(c, km);
     const auto& names = warpNames();
-    const std::string nm = mode <= 0 || mode >= static_cast<int>(names.size()) ? std::string("OFF") : names[static_cast<size_t>(mode)];
-    panelRect(c, bx + 0.5f, y, half - 1, 34, c.P.well, 2);
+    const bool on = mode > 0 && mode < static_cast<int>(names.size());
+    const std::string nm = on ? names[static_cast<size_t>(mode)] : std::string("Off");
     ImGui::SetCursorScreenPos(c.p(bx, y));
-    if (ImGui::InvisibleButton("##wm", c.F.sz(half - 1, 17))) ImGui::OpenPopup("##warp");
+    if (ImGui::InvisibleButton("##wm", c.F.sz(half, 16))) ImGui::OpenPopup("##warp");
     const bool hv = ImGui::IsItemHovered();
-    if (hv) c.dl->AddRectFilled(c.p(bx + 0.5f, y), c.p(bx + half - 0.5f, y + 17), c.P.panelHi, c.s(2));
-    textMid(c, bx + 2, bx + half - 2, y + 9, nm.c_str(), mode > 0 ? c.P.accent : c.P.textFaint, 8.0f, true);
-    if (hv) c.a.setHint(std::string("Warp ") + (i == 0 ? "1" : "2") + ": " + nm + " (click: choose)");
+    if (hv && ImGui::GetIO().MouseWheel != 0) {
+      const int dir = ImGui::GetIO().MouseWheel > 0 ? -1 : 1;
+      int nmde = mode;
+      for (int q = 0; q < static_cast<int>(names.size()); ++q) {
+        nmde = (nmde + dir + static_cast<int>(names.size())) % static_cast<int>(names.size());
+        if (warpAllowed(vali(c, oscP(o, O_Type)), nmde)) break;
+      }
+      setv(c, km, nmde);
+    }
+    c.dl->AddRectFilled(c.p(bx, y), c.p(bx + half, y + 16), hv ? c.P.panelHi : c.P.field, c.s(2));
+    c.dl->AddRect(c.p(bx, y), c.p(bx + half, y + 16), hv ? c.P.lineHi : c.P.line, c.s(2));
+    textMid(c, bx + 2, bx + half - 10, y + 8, nm.c_str(), on ? c.P.text : c.P.textFaint, ty::kCap, true);
+    iconArrow(c.dl, c.p(bx + half - 6, y + 8), c.s(5.5f), 3, c.P.textDim);
+    if (hv) c.a.setHint(std::string("Warp ") + (i == 0 ? "1" : "2") + ": " + nm + " (click: choose, wheel: step)");
     if (ImGui::BeginPopup("##warp")) {
       warpMenuItems(c, o, i);
       ImGui::EndPopup();
     }
-    // < var >
-    for (int d = 0; d < 2; ++d) {
-      ImGui::PushID(d);
-      const float ax = d == 0 ? bx + 2 : bx + half - 15;
-      ImGui::SetCursorScreenPos(c.p(ax, y + 18));
-      if (ImGui::InvisibleButton("##st", c.F.sz(13, 15))) {
-        int nmde = mode;
-        for (int q = 0; q < static_cast<int>(names.size()); ++q) {
-          nmde = (nmde + (d == 0 ? -1 : 1) + static_cast<int>(names.size())) % static_cast<int>(names.size());
-          if (warpAllowed(vali(c, oscP(o, O_Type)), nmde)) break;
-        }
-        setv(c, km, nmde);
-      }
-      iconArrow(c.dl, c.p(ax + 6.5f, y + 25.5f), c.s(6), d == 0 ? 0 : 1, ImGui::IsItemHovered() ? c.P.text : c.P.textDim);
-      ImGui::PopID();
-    }
-    if (mode > 0) valueBox(c, kv, bx + 17, y + 18, half - 34, 15, "", nullptr);
+    if (on) valueBox(c, kv, bx, y + 19, half, 16, "", nullptr);
     ImGui::PopID();
   }
 }
@@ -360,7 +352,7 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
   // header: power, name, type, route
   moduleFrame(c, x0, kPageY, w, kColH, kHeadB, kOscName[o], oscP(o, O_Enable));
   {
-    const float tx = x0 + 62, tw = w - 62 - 32;
+    const float tx = x0 + 62, tw = w - 62 - 40;
     ImGui::SetCursorScreenPos(c.p(tx, kHeadY));
     if (ImGui::InvisibleButton("##ty", c.F.sz(tw, kHeadHgt))) ImGui::OpenPopup("##otype");
     const bool hv = ImGui::IsItemHovered();
@@ -377,26 +369,38 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
           if (ImGui::MenuItem(d->choices[static_cast<size_t>(i)].c_str(), nullptr, i == type)) setv(c, oscP(o, O_Type), i);
       ImGui::EndPopup();
     }
-    routeButton(c, o, x1 - 31, kHeadY, 26);
+    routeButton(c, o, x1 - 38, kHeadY, 32);
   }
-  // display
-  displayWell(c, x0, kDispY, w, kDispB - kDispY);
+  // display: source row, pitch row, graph well, settings row
+  const float gy = kDispY + 47, gh = kDispB - 25 - gy;
+  const int panel = c.u.oscPanel[o];
+  const bool wtView = panel == 0 && (type == OscWavetable || (type != OscMultisample && (!aux || !aux->osc[static_cast<size_t>(o)].sample)));
+  displayWell(c, x0, gy, w, gh);
   const OscAux* oa = aux ? &aux->osc[static_cast<size_t>(o)] : nullptr;
   const float liveP = c.hasLive && c.live.voices > 0 && c.live.oscOn[o] ? c.live.oscPos[o] : -1.f;
   // source selector row
   {
     std::string nm;
     const auto& d = c.m.osc[static_cast<size_t>(o)];
-    if (type == OscMultisample) nm = d.sfz.empty() ? std::string("\xE2\x80\x94") : refStem(c.m, d.sfz);
+    if (type == OscMultisample) nm = d.sfz.empty() ? std::string("No multisample") : refStem(c.m, d.sfz);
     else if (type != OscWavetable && !d.sample.empty()) nm = refStem(c.m, d.sample);
     else if (!d.table.empty()) nm = d.tableName.empty() ? std::string("Custom") : d.tableName;
     else {
       const int t = vali(c, oscP(o, O_Table));
       const auto& n = factoryTableNames();
-      nm = t >= 1 && t <= static_cast<int>(n.size()) ? n[static_cast<size_t>(t - 1)] : "\xE2\x80\x94";
+      nm = t >= 1 && t <= static_cast<int>(n.size()) ? n[static_cast<size_t>(t - 1)] : "No table";
     }
     int step = 0;
-    dropField(c, "tbl", x0 + 24, kDispY + 3, w - 48, 18, nm.c_str(), [&] { tableMenu(c, o); }, true, &step);
+    dropField(c, "tbl", x0 + 5, kDispY + 4, w - (wtView ? 35 : 10), 18, nm.c_str(), [&] { tableMenu(c, o); }, true, &step);
+    if (wtView) {  // edit the table (J-202: beside the source, off the waveform)
+      const float ex = x1 - 27;
+      ImGui::SetCursorScreenPos(c.p(ex, kDispY + 4));
+      if (ImGui::InvisibleButton("##ed", c.F.sz(22, 18))) c.u.wtEdit = true, c.u.wtOsc = o, c.u.clip = false;
+      const bool eh = ImGui::IsItemHovered();
+      c.dl->AddRectFilled(c.p(ex, kDispY + 4), c.p(ex + 22, kDispY + 22), eh ? c.P.headOn : c.P.head, c.s(2));
+      iconPencil(c.dl, c.p(ex + 11, kDispY + 13), c.s(9), eh ? c.P.text : c.P.textDim);
+      if (eh) c.a.setHint("Edit the wavetable");
+    }
     if (step && type == OscWavetable) {
       const int n = static_cast<int>(factoryTableNames().size());
       const int t = vali(c, oscP(o, O_Table));
@@ -412,10 +416,8 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
     const float bw = (w - 10) / 4;
     const int ks[4] = {O_Octave, O_Semi, O_Fine, O_Coarse};
     const char* ls[4] = {"OCT", "SEM", "FIN", "CRS"};
-    for (int i = 0; i < 4; ++i) valueBox(c, oscP(o, ks[i]), x0 + 5 + bw * i, kDispY + 25, bw - 3, 17, ls[i]);
+    for (int i = 0; i < 4; ++i) valueBox(c, oscP(o, ks[i]), x0 + 5 + bw * i, kDispY + 26, bw - 3, 17, ls[i]);
   }
-  const float gy = kDispY + 46, gh = kDispB - 22 - gy;
-  const int panel = c.u.oscPanel[o];
   if (panel == 1) {
     panelRect(c, x0 + 3, gy, w - 6, gh + 20, theme::withAlpha(c.P.panelLo, 0.96f));
     unisonPanel(c, o, x0, gy, w);
@@ -427,7 +429,7 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
     if (aux) {
       const float pos = liveP >= 0 ? liveP : valf(c, oscP(o, O_WtPos));
       const auto& cy = cycleOf(c, *aux, o, pos);
-      drawCycle(c, cy, x0 + 6, gy + 2, w - 12, gh - 4, val(c, oscP(o, O_Enable)) >= 0.5 ? c.P.accent : c.P.textFaint);
+      drawCycle(c, cy, x0 + 12, gy + 4, w - 24, gh - 8, val(c, oscP(o, O_Enable)) >= 0.5 ? c.P.accent : c.P.textFaint);
       const MipTable* mip = oa && oa->mip ? oa->mip.get() : nullptr;
       if (!mip) {
         const auto& fm = factoryMips();
@@ -439,16 +441,11 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
       std::snprintf(b, sizeof b, "%d / %d", 1 + static_cast<int>(std::lround(pos * (frames - 1))), frames);
       labelBeside(c, x0 + 7, kDispB - 18, 16, b, c.P.textDim, 8);  // J-128: on the PHASE / RAND baseline
     }
-    // edit (pencil)
-    ImGui::SetCursorScreenPos(c.p(x1 - 22, gy + 2));
-    if (ImGui::InvisibleButton("##ed", c.F.sz(16, 16))) c.u.wtEdit = true, c.u.wtOsc = o, c.u.clip = false;
-    iconPencil(c.dl, c.p(x1 - 14, gy + 10), c.s(10), ImGui::IsItemHovered() ? c.P.accent : c.P.textFaint);
-    if (ImGui::IsItemHovered()) c.a.setHint("Edit the wavetable");
   } else if (type == OscMultisample) {
     // key zones of the loaded map
     const auto& zones = oa ? oa->zones : std::vector<Zone>{};
     if (zones.empty()) {
-      textC(c, x0 + w * 0.5f, gy + gh * 0.5f - 6, "Load a multisample (.sfz) from the menu above", c.P.textFaint, 8.5f, true);
+      textC(c, x0 + w * 0.5f, gy + gh * 0.5f - 6, "Load a multisample (.sfz) from the menu above", c.P.textDim, ty::kLabel, false);
     } else {
       for (const auto& z : zones) {
         const float zx0 = x0 + 6 + (w - 12) * z.loKey / 128.f, zx1 = x0 + 6 + (w - 12) * (z.hiKey + 1) / 128.f;
@@ -481,13 +478,13 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
           }
       }
     }
-    drawOverview(c, ov, x0 + 6, gy + 2, w - 12, gh - 4, theme::withAlpha(c.P.accent, type == OscSpectral ? 0.55f : 0.9f));
-    auto mark = [&](float f, ImU32 col) { vline(c, x0 + 6 + (w - 12) * f, gy + 2, gy + gh - 2, col); };
+    drawOverview(c, ov, x0 + 9, gy + 3, w - 18, gh - 6, theme::withAlpha(c.P.accent, type == OscSpectral ? 0.55f : 0.9f));
+    auto mark = [&](float f, ImU32 col) { vline(c, x0 + 9 + (w - 18) * f, gy + 2, gy + gh - 2, col); };
     mark(valf(c, oscP(o, O_Start)), c.P.text);
     mark(valf(c, oscP(o, O_End)), c.P.text);
     if (vali(c, oscP(o, O_LoopMode)) > 0) {
       const float s0 = valf(c, oscP(o, O_LoopStart)), s1 = valf(c, oscP(o, O_LoopEnd));
-      c.dl->AddRectFilled(c.p(x0 + 6 + (w - 12) * s0, gy + 2), c.p(x0 + 6 + (w - 12) * s1, gy + gh - 2), theme::withAlpha(c.P.mod, 0.10f));
+      c.dl->AddRectFilled(c.p(x0 + 9 + (w - 18) * s0, gy + 2), c.p(x0 + 9 + (w - 18) * s1, gy + gh - 2), theme::withAlpha(c.P.mod, 0.10f));
       mark(s0, c.P.mod);
       mark(s1, c.P.mod);
     }
@@ -498,10 +495,9 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
   // bottom row of the display
   {
     const float by = kDispB - 20;
-    hline(c, x0 + 3, x1 - 3, by - 0.5f, c.P.line);
     if (type == OscWavetable || type == OscMultisample) {
       if (type == OscMultisample) {
-        checkBox(c, oscP(o, O_MEnvOn), x0 + 7, by + 5, "ENV", 8);
+        checkBox(c, oscP(o, O_MEnvOn), x0 + 7, by + 5, "ENV", ty::kCap);
         valueBox(c, oscP(o, O_MVelTrack), x0 + 50, by + 2, 92, 16, "VEL TRACK");
       } else {
         valueBox(c, oscP(o, O_Phase), x0 + 70, by + 2, 76, 16, "PHASE");
@@ -529,7 +525,7 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
     ImGui::SetCursorScreenPos(c.p(x, y));
     if (ImGui::InvisibleButton("##gear", c.F.sz(18, 20))) c.u.oscPanel[o] = c.u.oscPanel[o] == 1 ? 0 : 1;
     const bool on = c.u.oscPanel[o] == 1;
-    c.dl->AddRectFilled(c.p(x, y), c.p(x + 18, y + 20), on ? c.P.accentSoft : c.P.well, c.s(2));
+    c.dl->AddRectFilled(c.p(x, y), c.p(x + 18, y + 20), on ? c.P.accentSoft : c.P.field, c.s(2));
     c.dl->AddRect(c.p(x, y), c.p(x + 18, y + 20), c.P.line, c.s(2));
     iconGear(c.dl, c.p(x + 9, y + 10), c.s(6), on || ImGui::IsItemHovered() ? c.P.accent : c.P.textDim);
     if (ImGui::IsItemHovered()) c.a.setHint("Unison settings");
@@ -590,12 +586,9 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
       knob(c, oscP(o, O_UniDetune), x0 + 142, kRow1, kKnobR, "DETUNE");
       knob(c, oscP(o, O_UniBlend), x0 + 187, kRow1, kKnobR, "BLEND");
     }
-    knob(c, oscP(o, O_Warp1), x0 + 25, kRow2, kKnobR, nullptr, KnobNoLabel);
-    knob(c, oscP(o, O_Warp2), x0 + 187, kRow2, kKnobR, nullptr, KnobNoLabel);
-    warpBlock(c, o, x0 + 42, kRow2 - 18, 128);
-    cellLabel(c, x0 + 25, kRow2 + kKnobR + 4.5f, "1", 20);
-    cellLabel(c, x0 + 187, kRow2 + kKnobR + 4.5f, "2", 20);
-    caption(c, x0 + 42, x0 + 170, kRow2 + kKnobR + 4.5f, "WARP");
+    knob(c, oscP(o, O_Warp1), x0 + 25, kRow2, kKnobR, "WARP 1");
+    knob(c, oscP(o, O_Warp2), x0 + 187, kRow2, kKnobR, "WARP 2");
+    warpBlock(c, o, x0 + 48, kRow2 - 17, 116);
   }
   knob(c, oscP(o, O_Pan), x0 + 242, kRow1, kKnobR, "PAN");
   knob(c, oscP(o, O_Level), x0 + 242, kRow2, kKnobR, "LEVEL");
@@ -608,8 +601,7 @@ void subColumn(Ctx& c) {
   const float x0 = kColX[0], x1 = kColX[1], w = x1 - x0;
   ImGui::PushID("sub");
   moduleFrame(c, x0, kPageY, w, kColH, kHeadB, "SUB", subP(S_Enable));
-  routeButton(c, RtSub, x1 - 25, kHeadY, 20);
-  displayWell(c, x0, kDispY, w, kDispB - kDispY);
+  routeButton(c, RtSub, x1 - 34, kHeadY, 29);
   valueBox(c, subP(S_Octave), x0 + 5, kDispY + 4, w - 10, 16, "OCT");
   valueBox(c, subP(S_Coarse), x0 + 5, kDispY + 23, w - 10, 16, "CRS");
   // shapes: 2 x 3 icons
@@ -642,9 +634,9 @@ void subColumn(Ctx& c) {
     if (hv) c.a.setHint(std::string("Sub shape: ") + (i == 0 ? "sine" : i == 1 ? "rounded square" : i == 2 ? "triangle" : i == 3 ? "saw" : i == 4 ? "square" : "pulse"));
     ImGui::PopID();
   }
-  valueBox(c, subP(S_Phase), x0 + 5, kDispB - 38, w - 10, 16, "\xCF\x86");
-  checkBox(c, subP(S_ContPhase), x0 + 6, kDispB - 17, "FREE", 7.5f);
-  checkBox(c, subP(S_PitchTrack), x0 + 42, kDispB - 17, "KEY", 7.5f);
+  valueBox(c, subP(S_Phase), x0 + 5, kDispB - 38, w - 10, 16, "PHS");
+  checkBox(c, subP(S_ContPhase), x0 + 6, kDispB - 16, "FREE", ty::kCap);
+  checkBox(c, subP(S_PitchTrack), x0 + 42, kDispB - 16, "KEY", ty::kCap);
   deck(c, x0, kDispB, w, kLowerY - kDispB);
   knob(c, subP(S_Pan), x0 + 37, kRow1, kKnobR, "PAN");
   knob(c, subP(S_Level), x0 + 37, kRow2, kKnobR, "LEVEL");
@@ -657,14 +649,13 @@ void noiseColumn(Ctx& c, const Aux* aux) {
   const float x0 = kColX[4], x1 = kColX[5], w = x1 - x0;
   ImGui::PushID("noise");
   moduleFrame(c, x0, kPageY, w, kColH, kHeadB, "NOISE", noiseP(N_Enable));
-  routeButton(c, RtNoise, x1 - 25, kHeadY, 20);
-  displayWell(c, x0, kDispY, w, kDispB - kDispY);
+  routeButton(c, RtNoise, x1 - 38, kHeadY, 32);
   const int t = vali(c, noiseP(N_Type));
   const auto& names = noiseNames();
   std::string nm = t >= 0 && t < static_cast<int>(names.size()) ? names[static_cast<size_t>(t)] : "?";
   if (t == 0) nm = c.m.noiseFile.empty() ? std::string("User file\xE2\x80\xA6") : refStem(c.m, c.m.noiseFile);
   int step = 0;
-  dropField(c, "nt", x0 + 5, kDispY + 3, w - 10, 18, nm.c_str(),
+  dropField(c, "nt", x0 + 5, kDispY + 4, w - 10, 18, nm.c_str(),
             [&] {
               for (int i = 1; i < static_cast<int>(names.size()); ++i)
                 if (ImGui::MenuItem(names[static_cast<size_t>(i)].c_str(), nullptr, i == t)) setv(c, noiseP(N_Type), i);
@@ -680,10 +671,11 @@ void noiseColumn(Ctx& c, const Aux* aux) {
             });
   (void)step;
   // toggles: one-shot, key track
-  toggleBtn(c, noiseP(N_OneShot), x0 + 5, kDispY + 25, 45, 15, "1-SHOT", 7.5f);
-  toggleBtn(c, noiseP(N_PitchTrack), x0 + 52, kDispY + 25, 45, 15, "KEY", 7.5f);
+  toggleBtn(c, noiseP(N_OneShot), x0 + 5, kDispY + 26, 45, 17, "1-SHOT", ty::kCap);
+  toggleBtn(c, noiseP(N_PitchTrack), x0 + 52, kDispY + 26, 45, 17, "KEY", ty::kCap);
   // waveform
-  const float gy = kDispY + 44, gh = kDispB - 64 - gy;
+  const float gy = kDispY + 47, gh = kDispB - 86 - gy;
+  displayWell(c, x0, gy, w, gh);
   const float* data = nullptr;
   size_t n = 0;
   const void* id = nullptr;
@@ -693,7 +685,8 @@ void noiseColumn(Ctx& c, const Aux* aux) {
   } else if (aux && aux->noiseFile) {
     data = aux->noiseFile->left.data(), n = aux->noiseFile->frames(), id = aux->noiseFile.get();
   }
-  if (data && n) drawOverview(c, overview(static_cast<const Sample*>(id), data, n, 96), x0 + 6, gy, w - 12, gh, theme::withAlpha(c.P.accent, 0.8f));
+  if (data && n) drawOverview(c, overview(static_cast<const Sample*>(id), data, n, 48), x0 + 9, gy + 3, w - 18, gh - 6, theme::withAlpha(c.P.accent, 0.7f));
+  valueBox(c, tailP(T_NoiseTone), x0 + 5, kDispB - 80, w - 10, 16, "TONE");
   valueBox(c, noiseP(N_Color), x0 + 5, kDispB - 60, w - 10, 16, "COLOR");
   valueBox(c, noiseP(N_Phase), x0 + 5, kDispB - 40, w - 10, 16, "START");
   valueBox(c, noiseP(N_RandPhase), x0 + 5, kDispB - 20, w - 10, 16, "RAND");
@@ -738,29 +731,29 @@ void filterColumn(Ctx& c) {
     if (on) c.dl->AddRectFilled(c.p(tx + 3, kHeadY + 1), c.p(tx + tw - 3, kHeadY + 2.6f), c.P.accent, c.s(1));
     led(c, filtP(f, F_Enable), tx + 6, kHeadY + 5.5f, 9);
     ImGui::SetCursorScreenPos(c.p(tx + 18, kHeadY));
-    if (ImGui::InvisibleButton("##tab", c.F.sz(tw - 42, kHeadHgt))) tab = f;
+    if (ImGui::InvisibleButton("##tab", c.F.sz(tw - 52, kHeadHgt))) tab = f;
     text(c, tx + 20, kHeadY + 5.0f, f == 0 ? "FILTER 1" : "FILTER 2", val(c, filtP(f, F_Enable)) >= 0.5 ? c.P.text : c.P.textFaint, 9, true);
-    routeButton(c, f == 0 ? RtF1 : RtF2, tx + tw - 24, kHeadY, 21);
+    routeButton(c, f == 0 ? RtF1 : RtF2, tx + tw - 33, kHeadY, 30);
     ImGui::PopID();
   }
   hline(c, x0 + kGutter + 1, x1 - kGutter - 1, kHeadY + kHeadHgt - 0.5f, c.P.frame);
   const int f = tab;
   ImGui::PushID(f + 10);
   // type selector
-  displayWell(c, x0, kDispY, w, kDispB - kDispY);
   {
     const int ty = vali(c, filtP(f, F_Type));
     const auto& names = filterNames();
     const std::string nm = ty >= 0 && ty < static_cast<int>(names.size()) ? names[static_cast<size_t>(ty)] : "?";
     int step = 0;
-    dropField(c, "ft", x0 + 5, kDispY + 3, w - 10, 18, nm.c_str(), [&] { filterMenuItems(c, filtP(f, F_Type)); }, true, &step);
+    dropField(c, "ft", x0 + 5, kDispY + 4, w - 10, 18, nm.c_str(), [&] { filterMenuItems(c, filtP(f, F_Type)); }, true, &step);
     if (step) setv(c, filtP(f, F_Type), std::clamp(ty + step, 0, static_cast<int>(names.size()) - 1));
   }
-  valueBox(c, filtP(f, F_X), x1 - 94, kDispY + 25, 43, 14, "X");
-  valueBox(c, filtP(f, F_Y), x1 - 49, kDispY + 25, 44, 14, "Y");
+  valueBox(c, filtP(f, F_X), x0 + 5, kDispY + 26, (w - 13) * 0.5f, 17, "X");
+  valueBox(c, filtP(f, F_Y), x0 + 8 + (w - 13) * 0.5f, kDispY + 26, (w - 13) * 0.5f, 17, "Y");
   // response graph
   {
-    const float gx = x0 + 5, gy = kDispY + 42, gw = w - 10, gh = kDispB - 24 - gy;
+    const float gx = x0 + 6, gy = kDispY + 48, gw = w - 12, gh = kDispB - 27 - gy;
+    displayWell(c, x0, gy - 1, w, gh + 2);
     constexpr int N = 96;
     float hz[N], mag[N];
     for (int i = 0; i < N; ++i) hz[i] = 20.f * std::pow(1000.f, static_cast<float>(i) / (N - 1));
@@ -793,20 +786,19 @@ void filterColumn(Ctx& c) {
   // S A B C N sources + key track
   {
     const float by = kDispB - 20;
-    hline(c, x0 + 3, x1 - 3, by - 0.5f, c.P.line);
     const char* lab[5] = {"S", "A", "B", "C", "N"};
     const int rs[5] = {RtSub, RtA, RtB, RtC, RtNoise};
     const float bw = (w - 10 - 32) / 5;
     for (int i = 0; i < 5; ++i) {
       ImGui::PushID(i + 60);
       const bool on = feeds(c, rs[i], f);
-      if (button(c, "src", x0 + 5 + bw * i, by + 2, bw - 2, 16, lab[i], on, 8.5f)) toggleFeed(c, rs[i], f);
+      if (button(c, "src", x0 + 5 + bw * i, by + 2, bw - 2, 16, lab[i], on, ty::kLabel)) toggleFeed(c, rs[i], f);
       if (ImGui::IsItemHovered())
         c.a.setHint(std::string(lab[i] == std::string("S") ? "Sub" : lab[i] == std::string("N") ? "Noise" : std::string("Osc ") + lab[i]) +
                     (on ? " feeds this filter (click: remove)" : " does not feed this filter (click: add)"));
       ImGui::PopID();
     }
-    toggleBtn(c, filtP(f, F_KeyTrack), x1 - 34, by + 2, 29, 16, "KEY", 7.5f);
+    toggleBtn(c, filtP(f, F_KeyTrack), x1 - 34, by + 2, 29, 16, "KEY", ty::kCap);
   }
   deck(c, x0, kDispB, w, kLowerY - kDispB);
   // knobs

@@ -42,7 +42,8 @@ void levelFader(Ctx& c, int k, float x, float y, float h, int law) {
     hline(c, x + 21, x + 25, ty, c.P.textFaint);
     char b[8];
     std::snprintf(b, sizeof b, "%d", t[i]);
-    text(c, x + 28, ty - 5, b, c.P.textFaint, 7.5f, true);
+    MonoText mono;
+    text(c, x + 28, ty - 5, b, c.P.textDim, ty::kCap, false);
   }
 }
 
@@ -67,11 +68,21 @@ void mixSource(Ctx& c, int col, const char* name, int enable, int r, int level, 
   hline(c, x0 + 8, x0 + w - 8, kMixHeadY + 106, c.P.line);
   const bool toFilter = vali(c, routeP(r, R_Dest)) == RouteFilter && r != RtF1 && r != RtF2;
   if (toFilter) {
-    knob(c, routeP(r, R_Balance), x0 + w * 0.5f, kMixHeadY + 70, 14, nullptr, KnobNoLabel | KnobBipolar);
-    cellLabel(c, x0 + w * 0.5f - 28, kMixHeadY + 78, "1", 12);
-    cellLabel(c, x0 + w * 0.5f + 28, kMixHeadY + 78, "2", 12);
+    knob(c, routeP(r, R_Balance), x0 + w * 0.5f, kMixHeadY + 70, 15.0f, nullptr, KnobNoLabel | KnobBipolar);
+    cellLabel(c, x0 + w * 0.5f - 28, kMixHeadY + 78, "F1", 16);
+    cellLabel(c, x0 + w * 0.5f + 28, kMixHeadY + 78, "F2", 16);
     cellLabel(c, x0 + w * 0.5f, kMixHeadY + 89, "BALANCE", 90);
-  } else if (r == RtF1 || r == RtF2) {
+  } else if (!(r == RtF1 || r == RtF2)) {
+    // J-202: not routed into the filters: the balance stays in its place, unlit
+    // (it applies once the output is set to FILTER), so the rows keep their line.
+    const ImVec2 q = c.p(x0 + w * 0.5f, kMixHeadY + 70);
+    c.dl->AddCircle(q, c.s(15), theme::withAlpha(c.P.line, 0.9f), 32, std::max(1.0f, c.s(1.2f)));
+    c.dl->AddCircleFilled(q, c.s(11), theme::withAlpha(c.P.panelLo, 0.8f), 28);
+    textC(c, x0 + w * 0.5f, kMixHeadY + 89, "BALANCE", c.P.textFaint, ty::kLabel, true);
+    ImGui::SetCursorScreenPos(c.p(x0 + w * 0.5f - 15, kMixHeadY + 55));
+    ImGui::InvisibleButton("##balOff", c.F.sz(30, 30));
+    if (ImGui::IsItemHovered()) c.a.setHint("Filter balance: set the output to FILTER to use it");
+  } else {
     // small response of the filter
     const int f = r == RtF1 ? 0 : 1;
     const float gx = x0 + 8, gy = kMixHeadY + 50, gw = w - 16, gh = 48;
@@ -90,15 +101,15 @@ void mixSource(Ctx& c, int col, const char* name, int enable, int r, int level, 
     c.dl->PopClipRect();
   }
   // bus sends
-  knob(c, routeP(r, R_Bus1), x0 + 30, kMixHeadY + 132, 14, nullptr, KnobNoLabel);
-  knob(c, routeP(r, R_Bus2), x0 + 80, kMixHeadY + 132, 14, nullptr, KnobNoLabel);
+  knob(c, routeP(r, R_Bus1), x0 + 30, kMixHeadY + 132, 15.0f, nullptr, KnobNoLabel);
+  knob(c, routeP(r, R_Bus2), x0 + 80, kMixHeadY + 132, 15.0f, nullptr, KnobNoLabel);
   cellLabel(c, x0 + 30, kMixHeadY + 150.5f, "1", 12);
   cellLabel(c, x0 + 55, kMixHeadY + 150.5f, "BUS", 30);
   cellLabel(c, x0 + 80, kMixHeadY + 150.5f, "2", 12);
   hline(c, x0 + 8, x0 + w - 8, kMixHeadY + 166, c.P.line);
   // pan + level
-  if (pan >= 0) knob(c, pan, x0 + 26, kMixHeadY + 198, 14, "PAN", KnobBipolar);
-  if (r == RtF1 || r == RtF2) knob(c, filtP(r == RtF1 ? 0 : 1, F_Wet), x0 + 26, kMixHeadY + 258, 14, "MIX");
+  if (pan >= 0) knob(c, pan, x0 + 26, kMixHeadY + 198, 15.0f, "PAN", KnobBipolar);
+  if (r == RtF1 || r == RtF2) knob(c, filtP(r == RtF1 ? 0 : 1, F_Wet), x0 + 26, kMixHeadY + 258, 15.0f, "MIX");
   levelFader(c, level, x0 + 56, kMixHeadY + 176, 128, (r == RtF1 || r == RtF2) ? LawBus : LawLevel);
   if (enable >= 0 && val(c, enable) < 0.5)
     c.dl->AddRectFilled(c.p(x0 + kGutter + 1, kMixHeadY + 20), c.p(x0 + w - kGutter - 1, kLowerY - kGutter - 1), theme::withAlpha(c.P.frame, 0.4f), c.s(2.0f),
@@ -113,11 +124,7 @@ void mixBus(Ctx& c, int col, const char* name, int destK, int vol, int law, floa
   if (destK >= 0) choiceBox(c, destK, x0 + 8, kMixHeadY + 26, w - 16, 18);
   // live meter for the main output
   if (vol == G_MasterVol && c.hasLive) {
-    const float lv = std::clamp(std::max(c.live.outL, c.live.outR), 0.f, 1.5f);
-    const float db = lv > 1e-5f ? 20.f * std::log10(lv) : -90.f;
-    const float n = std::clamp((db + 48.f) / 51.f, 0.f, 1.f);
-    wellRect(c, x0 + w * 0.5f - 34, kMixHeadY + 176, 8, 128, 2);
-    if (n > 0) c.dl->AddRectFilled(c.p(x0 + w * 0.5f - 32, kMixHeadY + 302 - n * 124), c.p(x0 + w * 0.5f - 28, kMixHeadY + 302), c.P.good);
+    drawMeter(c, x0 + w * 0.5f - 38, kMixHeadY + 179.5f, 13, 121);  // J-202: the header's stereo meter, on the fader's travel
   }
   levelFader(c, vol, x0 + w * 0.5f - 18, kMixHeadY + 176, 128, law);
   ImGui::PopID();
@@ -137,8 +144,8 @@ void mixPage(Ctx& c) {
   mixBus(c, 9, "MAIN", -1, G_MasterVol, LawMaster);
   {
     // the main column also holds the voice amp (ENV 1 depth) and the tuning
-    knob(c, G_Amp, 9 * kMixColW + 30, kMixHeadY + 62, 14, "AMP");
-    knob(c, G_MasterTune, 9 * kMixColW + 80, kMixHeadY + 62, 14, "TUNE", KnobBipolar);
+    knob(c, G_Amp, 9 * kMixColW + 30, kMixHeadY + 62, 15.0f, "AMP");
+    knob(c, G_MasterTune, 9 * kMixColW + 80, kMixHeadY + 62, 15.0f, "TUNE", KnobBipolar);
   }
   mixBus(c, 10, "DIRECT", -1, G_DirectVol, LawBus, kW - 10 * kMixColW);
 }
@@ -155,7 +162,7 @@ const MxCol kMx[] = {{"", 0, 30},           {"SOURCE", 30, 145},  {"CRV", 175, 3
                      {"OUTPUT", 882, 236},  {"", 1118, 72}};
 
 void curveGlyph(const Ctx& c, float x, float y, float w, float h, double bend, const Curve* cv, ImU32 col) {
-  panelRect(c, x, y, w, h, c.P.well, 2);
+  panelRect(c, x, y, w, h, c.P.field, 2);
   ImVec2 prev;
   for (int i = 0; i <= 16; ++i) {
     const float t = i / 16.f;
@@ -198,11 +205,14 @@ void curvePopup(Ctx& c, int s, bool aux) {
 
 void sourceField(Ctx& c, int k, float x, float y, float w, float h, int slot) {
   const int src = vali(c, k);
-  const std::string nm = src > SrcNone ? sourceLabel(src) : "\xE2\x80\x94";
-  dropField(c, "src", x, y, w, h, nm.c_str(), [&] {
-    int out = -1;
-    if (sourceMenuItems(c, out)) setv(c, k, out < 0 ? 0 : out);
-  });
+  const std::string nm = src > SrcNone ? sourceLabel(src) : "None";
+  dropField(
+      c, "src", x, y, w, h, nm.c_str(),
+      [&] {
+        int out = -1;
+        if (sourceMenuItems(c, out)) setv(c, k, out < 0 ? 0 : out);
+      },
+      false, nullptr, src <= SrcNone);
   // accept a source dragged from a tab / macro
   if (ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("PLASMA_SRC")) {
@@ -224,9 +234,28 @@ void matrixRow(Ctx& c, int s, float y) {
   // slot number + drag grip
   char num[16];
   std::snprintf(num, sizeof num, "%d", s + 1);
-  textC(c, 15, cy - 5, num, c.P.textFaint, 8, true);
+  {
+    MonoText mono;
+    textMid(c, 2, 28, cy, num, used ? c.P.text : c.P.textDim, ty::kValue, false);  // J-202: row numbers at the values size
+  }
   const float fh = 20, fy = cy - fh * 0.5f;
   sourceField(c, modP(s, M_Source), kMx[1].x + 4, fy, kMx[1].w - 8, fh, s);
+  // J-202: an empty slot shows only its source / destination fields; the rest
+  // of the row appears once either is set.
+  if (!used) {
+    {
+      const int d = vali(c, modP(s, M_Dest));
+      dropField(
+          c, "dst", kMx[5].x + 4, fy, kMx[5].w - 8, fh, "None",
+          [&] {
+            int out = -2;
+            if (destMenuItems(c, out)) setv(c, modP(s, M_Dest), out < 0 ? 0 : out + 1);
+          },
+          false, nullptr, d <= 0);
+    }
+    ImGui::PopID();
+    return;
+  }
   // source curve
   {
     ImGui::SetCursorScreenPos(c.p(kMx[2].x + 4, fy));
@@ -245,25 +274,23 @@ void matrixRow(Ctx& c, int s, float y) {
     const bool bip = val(c, modP(s, M_Bipolar)) >= 0.5;
     ImGui::SetCursorScreenPos(c.p(kMx[4].x + 6, fy));
     if (ImGui::InvisibleButton("##pol", c.F.sz(26, fh))) setv(c, modP(s, M_Bipolar), bip ? 0 : 1);
-    const ImVec2 q = c.p(kMx[4].x + 19, cy);
-    const ImU32 col = ImGui::IsItemHovered() ? c.P.text : c.P.mod;
-    if (bip) {
-      c.dl->AddLine(ImVec2(q.x - c.s(7), q.y), ImVec2(q.x + c.s(7), q.y), col, std::max(1.3f, c.s(1.5f)));
-      c.dl->AddLine(ImVec2(q.x, q.y - c.s(6)), ImVec2(q.x, q.y + c.s(6)), col, std::max(1.3f, c.s(1.5f)));
-    } else {
-      c.dl->PathArcTo(q, c.s(6), -2.8f, 0.6f, 14);
-      c.dl->PathStroke(col, 0, std::max(1.3f, c.s(1.5f)));
-    }
+    // J-202: a worded pill (BI / UNI) instead of a glyph
+    const bool ph = ImGui::IsItemHovered();
+    c.dl->AddRectFilled(c.p(kMx[4].x + 6, fy + 2), c.p(kMx[4].x + 32, fy + fh - 2), ph ? c.P.headOn : c.P.head, c.s(3));
+    textMid(c, kMx[4].x + 6, kMx[4].x + 32, cy, bip ? "BI" : "UNI", bip ? c.P.modText : c.P.textDim, ty::kCap, true);
     if (ImGui::IsItemHovered()) c.a.setHint(bip ? "Bipolar: the source swings both ways around the value (click: unipolar)" : "Unipolar (click: bipolar)");
   }
   // destination
   {
     const int d = vali(c, modP(s, M_Dest));
-    const std::string nm = d > 0 ? paramLongName(d - 1) : "\xE2\x80\x94";
-    dropField(c, "dst", kMx[5].x + 4, fy, kMx[5].w - 8, fh, nm.c_str(), [&] {
-      int out = -2;
-      if (destMenuItems(c, out)) setv(c, modP(s, M_Dest), out < 0 ? 0 : out + 1);
-    });
+    const std::string nm = d > 0 ? paramLongName(d - 1) : "None";
+    dropField(
+        c, "dst", kMx[5].x + 4, fy, kMx[5].w - 8, fh, nm.c_str(),
+        [&] {
+          int out = -2;
+          if (destMenuItems(c, out)) setv(c, modP(s, M_Dest), out < 0 ? 0 : out + 1);
+        },
+        false, nullptr, d <= 0);
   }
   // live output
   {
@@ -280,10 +307,9 @@ void matrixRow(Ctx& c, int s, float y) {
     const bool inv = val(c, modP(s, M_AuxInv)) >= 0.5;
     ImGui::SetCursorScreenPos(c.p(kMx[8].x + 6, fy));
     if (ImGui::InvisibleButton("##inv", c.F.sz(24, fh))) setv(c, modP(s, M_AuxInv), inv ? 0 : 1);
-    const ImVec2 q = c.p(kMx[8].x + 18, cy);
-    const ImU32 col = inv ? c.P.mod : (ImGui::IsItemHovered() ? c.P.text : c.P.textDim);
-    iconArrow(c.dl, ImVec2(q.x - c.s(3), q.y - c.s(2)), c.s(7), 2, col);
-    iconArrow(c.dl, ImVec2(q.x + c.s(3), q.y + c.s(2)), c.s(7), 3, col);
+    const bool ih = ImGui::IsItemHovered();
+    c.dl->AddRectFilled(c.p(kMx[8].x + 6, fy + 2), c.p(kMx[8].x + 30, fy + fh - 2), ih ? c.P.headOn : c.P.head, c.s(3));
+    textMid(c, kMx[8].x + 6, kMx[8].x + 30, cy, "INV", inv ? c.P.modText : c.P.textDim, ty::kCap, true);
     if (ImGui::IsItemHovered()) c.a.setHint("Invert the aux source (the aux scales the amount)");
   }
   {
@@ -322,7 +348,7 @@ void matrixPage(Ctx& c) {
   // the table sits in one frame; the column titles form its header strip
   moduleFrame(c, 0, kPageY, kW, y1 - kPageY, kMxHeadY + 27 - kPageY, nullptr, -1, false, c.P.panelLo);
   for (const auto& col : kMx)
-    if (*col.name) textC(c, col.x + col.w * 0.5f, kMxHeadY + 8, col.name, c.P.label, 8.5f, true);
+    if (*col.name) textMid(c, col.x, col.x + col.w, kMxHeadY + 13.5f, col.name, c.P.label, ty::kCap, true);
   for (size_t i = 1; i < std::size(kMx); ++i) vline(c, kMx[i].x, kMxHeadY + 4, kMxHeadY + 23, c.P.line);
   ImGui::SetCursorScreenPos(c.p(4, kMxHeadY + 3));
   if (ImGui::InvisibleButton("##exp", c.F.sz(22, 21))) c.u.mxExpanded = !c.u.mxExpanded;
@@ -385,11 +411,8 @@ void matrixPage(Ctx& c) {
 // ================================================================== GLOBAL
 namespace {
 void sectionBox(Ctx& c, float x, float y, float w, float h, const char* title) { moduleFrame(c, x, y, w, h, 22, title, -1, false); }
-void twoWay(Ctx& c, const char* id, float x, float y, const char* a, const char* b, bool& v) {
-  ImGui::PushID(id);
-  if (button(c, "a", x, y, 76, 18, a, !v, 8)) v = false;
-  if (button(c, "b", x + 80, y, 76, 18, b, v, 8)) v = true;
-  ImGui::PopID();
+void twoWay(Ctx& c, const char* id, float x, float y, const char* a, const char* b, bool& v, const char* hint) {
+  if (seg2(c, id, x, y, 156, 20, a, b, v, hint)) v = !v;
 }
 }  // namespace
 
@@ -400,10 +423,9 @@ void globalPage(Ctx& c) {
     sectionBox(c, x, y, w, h, "EDITOR");
     float ry = y + 30;
     auto row = [&](const char* label, const char* a, const char* b, bool& v, const char* hint) {
-      text(c, x + 14, ry + 4, label, c.P.text, 9, false);
+      labelBeside(c, x + 14, ry, 20, label, c.P.text, 9.0f, false);
       ImGui::PushID(label);
-      twoWay(c, "tw", x + w - 172, ry, a, b, v);
-      if (ImGui::IsItemHovered()) c.a.setHint(hint);
+      twoWay(c, "tw", x + w - 172, ry, a, b, v, hint);
       ImGui::PopID();
       ry += 24;
     };
@@ -411,13 +433,13 @@ void globalPage(Ctx& c) {
     row("Live modulation", "HIDE", "SHOW", c.u.prefLive, "Moving modulation dots and playheads");
     row("Waveform view", "2D", "3D", c.u.wt3d, "Oscillator display: one cycle (2D) or the whole table (3D)");
     ry += 6;
-    text(c, x + 14, ry, "MPE", c.P.label, 9.5f, true);
-    hline(c, x + 44, x + w - 14, ry + 6, c.P.line);
+    text(c, x + 14, ry, "MPE", c.P.label, ty::kCap, true);
+    hline(c, x + 40, x + w - 14, ry + 5.5f, c.P.line);
     ry += 18;
     checkBox(c, G_MpeOn, x + 14, ry, "MPE on", 9);
     ry += 20;
-    text(c, x + 14, ry + 3, "Per-note bend range", c.P.text, 9, false);
-    valueBox(c, G_MpeBend, x + w - 172, ry, 156, 17, "");
+    labelBeside(c, x + 14, ry - 1, 20, "Per-note bend range", c.P.text, 9.0f, false);
+    valueBox(c, G_MpeBend, x + w - 172, ry - 1, 156, 20, "");
     ry += 22;
     checkBox(c, G_MpeYBipolar, x + 14, ry, "Expression Y is bipolar", 9);
     ry += 20;
@@ -430,14 +452,14 @@ void globalPage(Ctx& c) {
       }
       const ImVec2 a = c.p(x + 14, ry + 0.5f), b = c.p(x + 22.5f, ry + 9);
       if (f) skin::gradientRect(c.dl, a, b, skin::lighten(c.P.accent, 0.2f), c.P.accent, c.s(2));
-      else c.dl->AddRectFilled(a, b, c.P.well, c.s(2)), c.dl->AddRect(a, b, c.P.lineHi, c.s(2));
-      text(c, x + 27, ry, label, f ? c.P.text : c.P.textDim, 9, false);
+      else c.dl->AddRectFilled(a, b, c.P.field, c.s(2)), c.dl->AddRect(a, b, c.P.boxEdge, c.s(2));
+      text(c, x + 27, ry, label, c.P.text, 9.0f, false);
       ImGui::PopID();
       ry += 18;
     };
     flag("m1", c.m.mpeBendToX, "Per-note bend also drives expression X");
-    flag("m2", c.m.mpeXYZtoMacros, "Expression X / Y / Z drive macros 1-3");
-    flag("m3", c.m.mpeYZtoMacros, "Expression Y / Z drive macros 1-2");
+    flag("m2", c.m.mpeXYZtoMacros, "Expression X, Y and Z drive macros 1 to 3");
+    flag("m3", c.m.mpeYZtoMacros, "Expression Y and Z drive macros 1 and 2");
     flag("m4", c.m.mpeYtoModWheel, "Expression Y drives the mod wheel");
   }
   // right: voice control, quality, tuning, scaling
@@ -448,31 +470,32 @@ void globalPage(Ctx& c) {
     // oscillators it applies to
     const char* on[5] = {"S", "A", "B", "C", "N"};
     const int ok[5] = {G_VcS, G_VcA, G_VcB, G_VcC, G_VcN};
-    text(c, x + 196, y + 34, "OSC", c.P.textDim, 8.5f, true);
+    labelBeside(c, x + 194, y + 29, 18, "OSC", c.P.label, ty::kCap);
     for (int i = 0; i < 5; ++i) {
       ImGui::PushID(i + 5000);
-      toggleBtn(c, ok[i], x + 222 + i * 30.f, y + 29, 26, 18, on[i], 9);
+      toggleBtn(c, ok[i], x + 222 + i * 30.f, y + 29, 26, 18, on[i], ty::kLabel);
       ImGui::PopID();
     }
-    text(c, x + 14, y + 34, "STEPS", c.P.textDim, 8.5f, true);
+    labelBeside(c, x + 14, y + 29, 18, "STEPS", c.P.label, ty::kCap);
     stepper(c, G_VcSteps, x + 52, y + 29, 44, 18);
-    // random + sequence rows
-    text(c, x + 40, y + 60, "RANDOM", c.P.textDim, 8.5f, true);
-    text(c, x + 128, y + 60, "SEQ", c.P.textDim, 8.5f, true);
+    // random + sequence rows (J-202: each random box carries its name)
+    textMid(c, x + 14, x + 106, y + 66, "RANDOM", c.P.label, ty::kCap, true);
+    textMid(c, x + 112, x + 170, y + 66, "SEQUENCE", c.P.label, ty::kCap, true);
     const char* rows[6] = {"PAN", "DETUNE", "CUTOFF", "ENVS", "MOD 1", "MOD 2"};
     const int rnd[4] = {G_RndPan, G_RndDetune, G_RndCutoff, G_RndEnv};
     const float gx = x + 176, gw = 196, gy = y + 76, rh = 22;
     for (int i = 0; i < 8; ++i) {
       char b[4];
       std::snprintf(b, sizeof b, "%d", i + 1);
-      textC(c, gx + gw * (i + 0.5f) / 8, gy - 14, b, i < vali(c, G_VcSteps) ? c.P.text : c.P.textFaint, 8.5f, true);
+      MonoText mono;
+      textMid(c, gx + gw * i / 8, gx + gw * (i + 1) / 8, gy - 10, b, i < vali(c, G_VcSteps) ? c.P.textDim : c.P.textFaint, ty::kCap, false);
     }
     static int seqRow = 0;
     for (int r = 0; r < 6; ++r) {
       const float ry = gy + r * rh;
-      if (r < 4) valueBox(c, rnd[r], x + 14, ry, 92, rh - 4, "");
+      if (r < 4) valueBox(c, rnd[r], x + 14, ry, 92, rh - 4, rows[r]);
       ImGui::PushID(r + 5100);
-      if (button(c, "row", x + 112, ry, 58, rh - 4, rows[r], seqRow == r, 8)) seqRow = r;
+      if (button(c, "row", x + 112, ry, 58, rh - 4, rows[r], seqRow == r, ty::kCap)) seqRow = r;
       ImGui::PopID();
     }
     // the step grid edits the selected row: bars from the centre (bipolar)
@@ -495,8 +518,8 @@ void globalPage(Ctx& c) {
       const float cx0 = gx + gw * i / 8 + 3, cx1 = gx + gw * (i + 1) / 8 - 3, mid = gy + gh * 0.5f;
       const bool live = i < vali(c, G_VcSteps);
       c.dl->AddRectFilled(c.p(cx0, std::min(mid, mid - v * gh * 0.5f)), c.p(cx1, std::max(mid, mid - v * gh * 0.5f)),
-                          theme::withAlpha(c.P.accent, live ? 0.75f : 0.25f), c.s(1));
-      hline(c, cx0, cx1, mid - v * gh * 0.5f, live ? c.P.good : c.P.textFaint);
+                          theme::withAlpha(c.P.accent, live ? 0.35f : 0.12f), c.s(1));
+      hline(c, cx0, cx1, mid - v * gh * 0.5f, live ? c.P.accent : c.P.textFaint);
     }
     ImGui::SetCursorScreenPos(c.p(gx, gy));
     ImGui::InvisibleButton("##seq", c.F.sz(gw, gh), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
@@ -514,22 +537,23 @@ void globalPage(Ctx& c) {
     // scaling
     const float sy = y + h - 32;
     hline(c, x + 14, x + w - 14, sy - 7.5f, c.P.line);
-    text(c, x + 14, sy + 5, "SCALING", c.P.label, 9, true);
+    labelBeside(c, x + 14, sy, 20, "SCALING", c.P.label, ty::kCap);
     valueBox(c, G_EnvScale, x + 90, sy, 120, 20, "ENVS");
     valueBox(c, G_LfoScale, x + 216, sy, 110, 20, "LFOS");
-    toggleBtn(c, G_LfoScaleRate, x + 330, sy, 42, 20, "RATE", 8);
+    toggleBtn(c, G_LfoScaleRate, x + 330, sy, 42, 20, "RATE", ty::kCap);
   }
   {
     const float x = rx + 396, y = kPageY, w = kW - x;
-    sectionBox(c, x, y, w, 84, "QUALITY");
-    choiceBox(c, G_Quality, x + 14, y + 26, 110, 20);
-    checkBox(c, G_NoSmooth, x + 14, y + 54, "DISABLE SMOOTHING", 8.5f);
+    // J-202: QUALITY and TUNING are one row each; PRESET takes the rest
+    sectionBox(c, x, y, w, 62, "QUALITY");
+    choiceBox(c, G_Quality, x + 14, y + 30, 110, 20);
+    checkBox(c, G_NoSmooth, x + 138, y + 35, "Disable smoothing", 9.0f);
     if (ImGui::IsItemHovered()) c.a.setHint("Gain changes apply at once instead of gliding (sharper, may click)");
-    const float ty = y + 84;
-    sectionBox(c, x, ty, w, 84, "TUNING");
-    valueBox(c, G_ConcertA, x + 14, ty + 26, 120, 20, "A =");
+    const float ty = y + 62;
+    sectionBox(c, x, ty, w, 62, "TUNING");
+    valueBox(c, G_ConcertA, x + 14, ty + 30, 120, 20, "A =");
     const std::string tn = c.m.tuningName.empty() ? std::string("(12-TET)") : c.m.tuningName;
-    dropField(c, "tun", x + 140, ty + 26, w - 154, 20, tn.c_str(), [&] {
+    dropField(c, "tun", x + 140, ty + 30, w - 154, 20, tn.c_str(), [&] {
       if (ImGui::MenuItem(i18n::tr("Load tuning (.tun)...")))
         openFile(c, i18n::tr("Load tuning"), {".tun"}, [](App& a, const PluginTarget& t, const std::string& p) {
           std::ifstream f(p, std::ios::binary);
@@ -546,21 +570,25 @@ void globalPage(Ctx& c) {
         commit(c, "Clear tuning");
       }
     });
-    const float iy = ty + 84;
+    const float iy = ty + 62;
     sectionBox(c, x, iy, w, kLowerY - iy, "PRESET");
     char b[160];
     std::snprintf(b, sizeof b, "%s", c.m.presetName.empty() ? "Init" : c.m.presetName.c_str());
-    text(c, x + 14, iy + 28, b, c.P.accent, 10, true);
+    text(c, x + 14, iy + 30, b, c.P.text, ty::kName, true);
+    if (!c.m.author.empty()) {
+      std::snprintf(b, sizeof b, "by %s", c.m.author.c_str());
+      text(c, x + 14, iy + 47, b, c.P.textDim, 9.0f, false);
+    }
     std::snprintf(b, sizeof b, "%d of %d matrix slots used", [&] {
       int n = 0;
       for (int s = 0; s < kModSlots; ++s) n += vali(c, modP(s, M_Source)) > SrcNone && vali(c, modP(s, M_Dest)) > 0;
       return n;
     }(), kModSlots);
-    text(c, x + 14, iy + 48, b, c.P.textDim, 8.5f, false);
+    text(c, x + 14, iy + 72, b, c.P.textDim, 9.0f, false);
     int fx = 0;
     for (int s = 0; s < kFxSlots; ++s) fx += vali(c, fxP(s, X_Type)) > FxNone;
     std::snprintf(b, sizeof b, "%d effect modules", fx);
-    text(c, x + 14, iy + 64, b, c.P.textDim, 8.5f, false);
+    text(c, x + 14, iy + 90, b, c.P.textDim, 9.0f, false);
   }
 }
 

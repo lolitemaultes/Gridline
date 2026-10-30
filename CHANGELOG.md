@@ -97,6 +97,30 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   the same cuts and the steps follow the new lengths. A click on a region still plays it.
 
 ### Fixed
+- Plasma plays imported Serum 2 presets closer to the original. Every law below was measured
+  against the original synth:
+  - Noise pitch and key tracking now match. The noise pitch knob is a playback rate covering 96
+    semitones above its centre and 384 below. With key tracking on it spans 128 semitones, with the
+    noise's own pitch at key 72 and its stored detune applied. Sample noises are no longer 2 dB too
+    loud.
+  - White, pink and brown noise use the knob as a tone filter, as the original does, and play at
+    its level. Geiger keeps clicking on held notes.
+  - Main tuning covers its full range of plus or minus 64 semitones, where before it moved by less
+    than a cent. The oscillator Hz offset only applies in Ratio mode.
+  - Spectral oscillators no longer go silent when the preset limits their frequency band. They
+    also play at the original's level, 25 dB louder than before.
+  - Arpeggiator rates follow the original's divisions, and dotted rates play the next faster
+    division dotted. Pattern steps keep their timing, so gaps between steps are rests. Pattern rows
+    beyond the held notes repeat those notes instead of jumping octaves.
+  - A clip player with no active clip passes the keys through instead of looping a clip.
+  - The delay effect uses the original's times, mix law, feedback and echo filter. Its ping-pong
+    echoes no longer lose level, and high feedback no longer runs away.
+  - Unison follows the original. Detune spreads the voices as wide as the original does, and the
+    default detune of presets that do not store one is now applied. Voices go hard left and right
+    in turn with the original's blend and voice-count levels: a 3-voice unison at no blend was
+    7 dB too loud, and at full blend its side voices were too quiet.
+  - Filter drive raises the level as the original does, up to 24 dB at full drive, and clips
+    about 8 dB later. Before, driven filters and filter effects played up to 19 dB too quiet.
 - Import from URL: a missing downloader or converter is reported as missing on the BSDs too.
 - Platter picks up very quick jog moves from a controller. A flick out and back in 30 ms now
   reaches about 90% of the hand's travel instead of 54% (in 15 ms: 80% instead of 33%), about
@@ -168,6 +192,29 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   and the same holds for drum pads and kit pieces. The channel's key range checks the written key.
 
 ### Changed
+- Plasma: changes that also affect existing projects:
+  - The noise has a new Tone control: a filter that darkens or brightens the noise. It is off in
+    older projects.
+  - The delay effect's mix, feedback, echo filter and ping-pong now follow the measured laws.
+    Projects that use it sound different: at mid mix the dry signal is lower and the echo louder,
+    feedback is weaker, and ping-pong repeats are louder.
+  - Spectral oscillators play 25 dB louder. Their Low and High band limits now read as
+    frequencies from 8 Hz to 22 kHz, no longer as fractions of the sample rate.
+  - Arpeggiator patterns keep their step timing, so gaps between steps are rests, and a step plays
+    for its full length times the gate.
+  - The Geiger noise loops.
+  - A new Unison Mix setting picks how unison voices share the stereo field: Even (as before) or
+    Alternating, which imported presets use. Existing projects keep Even.
+  - A new Filter Drive Mode setting: Leveled (as before) keeps the level about even as the drive
+    rises; Boost, which imported presets use, raises it. Existing projects keep Leveled.
+- Plasma's editor has a cleaner, calmer look. It now uses Gridline's slate panels and text tones
+  and follows the theme. It has one text scale with nothing below 8 px, values in the mono face, and
+  one knob size. The pages sit in a segmented switch, and graphs sit in their own wells away from
+  their fields. Outputs are named in words (MAIN, DIR, F1+2). Empty matrix rows show only their
+  source and destination, the effects rack uses a single accent, and the clip editor has a real
+  piano keyboard. The CLIP and ARP blocks in the bottom strip open their editors with a button.
+  Every control works as before.
+
 - Tempo display: drag or scroll the whole number to step whole BPM while the decimals stay (96.250 becomes 97.250, 98.250, ...); drag the decimals to fine-tune as before, or scroll them by 0.1 (Shift: 0.01). A short line under the digits shows which part a drag or scroll moves.
 
 - Zooming glides. Wheel notches, the zoom keys and buttons, the zoom tool, zoom to fit, zoom to the

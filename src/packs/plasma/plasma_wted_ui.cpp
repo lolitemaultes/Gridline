@@ -376,7 +376,7 @@ void wtEditor(Ctx& c) {
 
   // ================================================================ left: oscillator + brushes
   frameBox(c, 0, kPageY, kLeftW, kFramesY - kPageY, c.P.panelLo);
-  textC(c, kLeftW * 0.5f, kPageY + 8, "OSC", c.P.label, 9, true);
+  textC(c, kLeftW * 0.5f, kPageY + 8, "OSC", c.P.label, ty::kCap, true);
   for (int i = 0; i < kOscs; ++i) {
     const char* nm[] = {"A", "B", "C"};
     ImGui::PushID(i + 9000);
@@ -387,15 +387,15 @@ void wtEditor(Ctx& c) {
   if (ImGui::IsItemHovered()) c.a.setHint("Back to the oscillator page (the table stays edited)");
   {
     const float by = kWaveY + 8;
-    textC(c, kLeftW * 0.5f, by, "BRUSH", c.P.accent, 9, true);
+    textC(c, kLeftW * 0.5f, by, "BRUSH", c.P.label, ty::kCap, true);
     for (int b = 0; b < BrCount; ++b) {
       const float bx = 14 + (b % 2) * 62, yy = by + 18 + (b / 2) * 34;
       ImGui::PushID(b + 9200);
       ImGui::SetCursorScreenPos(c.p(bx, yy));
       if (ImGui::InvisibleButton("##b", c.F.sz(58, 30))) u.wtBrush = b;
       const bool on = u.wtBrush == b, hv = ImGui::IsItemHovered();
-      panelRect(c, bx, yy, 58, 30, on ? c.P.accentSoft : (hv ? c.P.panelHi : c.P.panel), 3);
-      if (on) c.dl->AddRect(c.p(bx, yy), c.p(bx + 58, yy + 30), c.P.accent, c.s(3));
+      panelRect(c, bx, yy, 58, 30, on ? c.P.headOn : (hv ? c.P.panelHi : c.P.panel), 3);
+      if (on) c.dl->AddRect(c.p(bx, yy), c.p(bx + 58, yy + 30), theme::withAlpha(c.P.accent, 0.45f), c.s(3));
       brushIcon(c, b, bx + 12, yy + 6, 34, 18, on ? c.P.accent : c.P.textDim);
       if (hv) c.a.setHint(std::string("Brush: ") + kBrushName[b] + (b >= BrFlat ? " (fills each grid cell the pointer passes)" : ""));
       ImGui::PopID();
@@ -418,9 +418,12 @@ void wtEditor(Ctx& c) {
       const float v = std::sqrt(std::min(1.f, H.mag(i) / std::max(1.f, peak)));
       if (v > 0.003f)
         skin::gradientRect(c.dl, c.p(bx + 0.5f, my0 + mh - v * mh), c.p(bx + bw - 0.5f, my0 + mh), skin::lighten(c.P.accent, 0.15f), c.P.accentDim, 0);
-      const float pv = H.mag(i) > 1e-4f ? phaseOf(H, i) / 6.2831853f : 0.f;
-      c.dl->AddRectFilled(c.p(bx + 0.5f, py0 + ph - std::max(0.04f, pv) * ph), c.p(bx + bw - 0.5f, py0 + ph),
-                          theme::withAlpha(c.P.textDim, H.mag(i) > 1e-4f ? 0.55f : 0.18f));
+      // J-202: a phase reads as a short mark at its height (no bars: they read as noise)
+      if (H.mag(i) > 1e-4f) {
+        const float pv = phaseOf(H, i) / 6.2831853f;
+        const float yy = py0 + ph - pv * ph;
+        c.dl->AddRectFilled(c.p(bx + 1, yy - 1), c.p(bx + bw - 1, yy + 1), theme::withAlpha(c.P.mod, 0.85f), c.s(0.5f));
+      }
     }
     // magnitudes: drag sets, right-drag clears
     ImGui::SetCursorScreenPos(c.p(x0, my0));
@@ -435,7 +438,8 @@ void wtEditor(Ctx& c) {
     if (ImGui::IsItemHovered()) {
       char b[48];
       std::snprintf(b, sizeof b, "#%d  %.1f dB", hi, 20.0 * std::log10(std::max(1e-6, static_cast<double>(H.mag(hi)))));
-      textR(c, x1 - 6, my0 + 3, b, c.P.textDim, 8, true);
+      MonoText mono;
+      textR(c, x1 - 6, my0 + 3, b, c.P.textDim, ty::kCap, false);
       c.a.setHint("Harmonics: drag to set levels (phases kept) \xC2\xB7 right-drag: remove");
     }
     ImGui::SetCursorScreenPos(c.p(x0, py0));
@@ -448,13 +452,13 @@ void wtEditor(Ctx& c) {
     if (ImGui::IsItemHovered()) c.a.setHint("Phases: drag to set the phase of each harmonic");
     // zoom
     const float zx = x1 + 6;
-    textC(c, zx + 35, kHarmY + 10, "ZOOM", c.P.textDim, 8, true);
+    textC(c, zx + 35, kHarmY + 10, "ZOOM", c.P.label, ty::kCap, true);
     int z = u.wtZoom;
     const std::string zt = std::to_string(32 << z);
     if (stepperFree(c, "zoom", z, 0, 3, zx + 4, kHarmY + 24, 62, 20, zt.c_str())) u.wtZoom = z;
     if (ImGui::IsItemHovered()) c.a.setHint("Harmonics shown");
-    textC(c, zx + 35, kHarmY + 56, "HARMONICS", c.P.textFaint, 7, true);
-    textC(c, kW - 41, kHarmY + kMagH + 22, "PHASE", c.P.textFaint, 7, true);
+    textC(c, zx + 35, kHarmY + 56, "HARMONICS", c.P.label, ty::kCap, true);
+    textC(c, zx + 35, py0 + ph * 0.5f - 5, "PHASE", c.P.label, ty::kCap, true);
   }
 
   // ================================================================ centre: waveform
@@ -585,7 +589,7 @@ void wtEditor(Ctx& c) {
     }
     if (ImGui::IsItemHovered()) c.a.setHint("Save the table as a WAV of 2048-sample frames");
     y += 36;
-    textC(c, x + w * 0.5f, y, "PROCESS", c.P.accent, 9, true);
+    textC(c, x + w * 0.5f, y, "PROCESS", c.P.label, ty::kCap, true);
     y += 16;
     if (button(c, "single", x, y, w, 22, "SINGLE", false, 8)) ImGui::OpenPopup("##wtsingle");
     iconArrow(c.dl, c.p(x + w - 12, y + 11), c.s(7), 3, c.P.textDim);
@@ -663,14 +667,14 @@ void wtEditor(Ctx& c) {
       ImGui::EndPopup();
     }
     y += 36;
-    textC(c, x + w * 0.5f, y, "GRID", c.P.accent, 9, true);
+    textC(c, x + w * 0.5f, y, "GRID", c.P.label, ty::kCap, true);
     y += 14;
     static const int gridSteps[] = {0, 2, 4, 8, 16, 32, 64};
     auto gridBox = [&](const char* id, int& val, float bx, const char* icon) {
       int gi = 0;
       for (int i = 0; i < 7; ++i)
         if (gridSteps[i] == val) gi = i;
-      textC(c, bx + w * 0.25f, y, icon, c.P.textFaint, 7, true);
+      textC(c, bx + w * 0.25f, y, icon, c.P.label, ty::kCap, true);
       if (stepperFree(c, id, gi, 0, 6, bx, y + 12, w * 0.5f - 4, 20, gi ? std::to_string(gridSteps[gi]).c_str() : "Off")) val = gridSteps[gi];
     };
     gridBox("gx", u.wtGrid, x, "X");
@@ -722,10 +726,17 @@ void wtEditor(Ctx& c) {
     for (int i = sc; i < std::min(nf, sc + vis); ++i) {
       const float tx = x0 + 6 + (i - sc) * w;
       const bool sel = i == u.wtFrame;
-      panelRect(c, tx, kFramesY + 4, w - 3, kFramesH - 22, sel ? c.P.accentSoft : c.P.well, 2);
-      if (sel) c.dl->AddRect(c.p(tx, kFramesY + 4), c.p(tx + w - 3, kFramesY + kFramesH - 18), c.P.accent, c.s(2));
+      panelRect(c, tx, kFramesY + 4, w - 3, kFramesH - 22, sel ? c.P.headOn : c.P.well, 2);
+      if (sel) c.dl->AddRect(c.p(tx, kFramesY + 4), c.p(tx + w - 3, kFramesY + kFramesH - 18), theme::withAlpha(c.P.accent, 0.6f), c.s(2));
       wave(c, F[static_cast<size_t>(i)], tx + 2, kFramesY + 6, w - 7, kFramesH - 26, sel ? c.P.accent : c.P.textDim, std::max(1.f, c.s(1.2f)), sel);
-      textC(c, tx + (w - 3) * 0.5f, kFramesY + kFramesH - 14, std::to_string(i + 1).c_str(), sel ? c.P.text : c.P.textFaint, 8, true);
+      MonoText mono;
+      textC(c, tx + (w - 3) * 0.5f, kFramesY + kFramesH - 14, std::to_string(i + 1).c_str(), sel ? c.P.text : c.P.textDim, ty::kCap, false);
+    }
+    if (nf > vis) {  // J-202: a scroll bar shows there are more frames (wheel scrolls)
+      const float tx0 = x0 + 6, tw = vis * w - 3, ty = kFramesY + kFramesH - 4;
+      c.dl->AddRectFilled(c.p(tx0, ty), c.p(tx0 + tw, ty + 2), c.P.grid, c.s(1));
+      const float th = tw * vis / nf, tp = tx0 + (tw - th) * sc / std::max(1, nf - vis);
+      c.dl->AddRectFilled(c.p(tp, ty), c.p(tp + th, ty + 2), c.P.lineHi, c.s(1));
     }
     const float px = x0 + 6 + std::min(nf - sc, vis) * w;
     if (nf < kMaxFrames && sc + vis >= nf && px + 40 < x1) {

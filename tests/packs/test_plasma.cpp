@@ -401,6 +401,21 @@ std::vector<Cand> candsFor(int k) {
   std::vector<Cand> c;
   int grp = 0;
   auto add = [&](std::function<void(Scene&)> f, std::vector<float> extra = {}) { c.push_back({std::move(f), std::move(extra), grp}); };
+  if (k == tailP(T_NoiseTone)) {  // the noise tone filter: a built-in noise, heard
+    add([](Scene& s) { P(s, noiseP(N_Enable), 1), P(s, noiseP(N_Level), 0.8f), P(s, noiseP(N_Type), 1); });
+    return c;
+  }
+  if (k == tailP(T_UniMix)) {  // the unison voice mix: a detuned unison on oscillator A
+    add([](Scene& s) { oscOn(s, 0), P(s, oscP(0, O_Unison), 5), P(s, oscP(0, O_UniDetune), 0.5f); });
+    return c;
+  }
+  if (k == tailP(T_DriveMode)) {  // the filter drive mode: a driven filter 1 on oscillator A
+    add([](Scene& s) {
+      P(s, filtP(0, F_Enable), 1), P(s, filtP(0, F_Freq), 0.5f), P(s, filtP(0, F_Drive), 0.6f);
+      P(s, routeP(RtA, R_Dest), RouteFilter), P(s, routeP(RtA, R_Balance), 0.f);
+    });
+    return c;
+  }
   if (k < G_Count) {
     add([](Scene&) {});
     add([](Scene& s) { P(s, G_ArpOn, 1); });
@@ -645,6 +660,7 @@ bool reserved(const std::string& name) {
 // every one, about three minutes).
 bool representative(int k) {
   using namespace pl;
+  if (k >= kTailBase) return true;
   if (k >= kFxBase) {
     const int sl = (k - kFxBase) / X_Count, p = (k - kFxBase) % X_Count;
     return sl == 0 || sl == kFxSlots - 1 || p <= X_P0;
