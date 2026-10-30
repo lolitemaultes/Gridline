@@ -307,6 +307,7 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
 
   bool sampleTaken = false;   // single-sample targets take the first sample only
   bool rowTaken = false;      // J-97: a channel row is replaced by the first sample / preset only
+  bool pictureTaken = false;  // J-184: Pixel Tone takes the first picture only
   for (size_t i = 0; i < items.size() && i < kinds.size(); ++i) {
     const browse::DropItem& d = kinds[i];
     if (d.kind == Kind::Other || d.kind == Kind::Shape || d.kind == Kind::Score) {
@@ -314,6 +315,10 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
       continue;
     }
     DropAction act = browse::dropAction(d, ctx.target, ctx.targetType, ctx.targetUsesSample);
+    if (d.kind == Kind::Image && act == DropAction::None) {  // J-184: pictures only open in Pixel Tone; elsewhere as before
+      p.unsupported.push_back(i);
+      continue;
+    }
     // On a channel row: Shift (or a second sample / preset) makes new channels instead of replacing.
     const bool replaces = act == DropAction::ReplaceSample || act == DropAction::ReplaceInstrument || act == DropAction::ReplaceFromPreset;
     if (replaces && (mods.shift || rowTaken))
@@ -323,6 +328,10 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
     if (act == DropAction::LoadSample) {
       if (sampleTaken) act = DropAction::None;
       else sampleTaken = true;
+    }
+    if (act == DropAction::LoadPicture) {  // J-184: one picture
+      if (pictureTaken) act = DropAction::None;
+      else pictureTaken = true;
     }
     if (act == DropAction::None) {
       p.skipped.push_back(i);
@@ -415,6 +424,10 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
         break;
       case DropAction::AddBrowserFolder:
         parts.push_back(n == 1 ? fmt(i18n::tr("add the folder %s to the browser"), w.c_str()) : fmt(i18n::tr("add %d folders to the browser"), n));
+        break;
+      case DropAction::LoadPicture:
+        parts.push_back(ctx.targetName.empty() ? fmt(i18n::tr("load %s as the picture"), w.c_str())
+                                               : fmt(i18n::tr("load the picture %s into %s"), w.c_str(), ctx.targetName.c_str()));
         break;
       case DropAction::OpenProject:
       case DropAction::None: break;

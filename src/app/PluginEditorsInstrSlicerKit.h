@@ -1,10 +1,11 @@
 // Gridline — Kerf's own drawing kit (J-181): the pieces of the region-slicer
 // editor that no other editor uses: the layered waveform (peak + RMS from a
 // cached peak pyramid), tab strips, the deck bar's tool and menu buttons, the
-// display-mode glyphs, the empty drop zone and marker snapping.
+// display-mode glyphs and the empty drop zone (J-182: marker snapping is engine/KerfMarks.h).
 // Everything is drawn here as vectors, on the editor's form canvas (iskin::Skin).
 #pragma once
 #include <cstdint>
+#include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
 #include "../engine/Sample.h"
@@ -13,6 +14,7 @@
 
 namespace gl {
 class App;
+struct PluginTarget;
 }
 
 namespace gl::kerf {
@@ -41,7 +43,7 @@ void drawWave(ImDrawList* dl, const Sample* smp, ImVec2 p0, ImVec2 p1, double f0
 // Tab strip across a form rect: `n` equal tabs, the current one lit. Disabled
 // tabs (enabled[i] false) are dimmed and do not react. Returns the clicked tab or -1.
 int tabStrip(App& a, const iskin::Skin& k, const char* id, float x, float y, float w, float h, const char* const* labels, int n, int cur,
-             const bool* enabled, const char* const* hints, ImU32 accent, float size = 7.5f);
+             const bool* enabled, const char* const* hints, ImU32 accent);
 
 // Deck bar button with an icon (and a small caret under it for menus); `lit`
 // 1 fills it (an active tool), 2 lights only its glyph (a view shown). Returns true when clicked.
@@ -55,11 +57,46 @@ void bandGlyph(ImDrawList* dl, ImVec2 p0, ImVec2 p1, int mode, ImU32 on, ImU32 o
 // Empty wave view: a dashed drop zone with a prompt. Returns true when clicked.
 bool dropZone(App& a, const iskin::Skin& k, const char* id, float x, float y, float w, float h, ImU32 accent);
 
-// Marker snapping: 0 off, 1 the nearest zero crossing (within 5 ms), 2 the
-// sixteenth grid of the loop (`beats` long). Frames in, frames out.
-int64_t snapFrame(const Sample* smp, int64_t f, int mode, double beats);
-
 // Dashed line (screen px).
 void dashedLine(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float dash, float gap, float th = 1.0f);
+
+// ---- J-183: text roles, the layout audit and the reference-style controls ----------------
+// Text roles: one size per role (form units), never below kMinTextPx on screen.
+enum class Role { Title, Label, Tab, Value, Eyebrow, Body };
+inline constexpr float kMinTextPx = 8.5f;
+float roleSize(Role r);
+// Text in a form box (align 0 left, 1 centre, 2 right), vertically centred, clipped to the box.
+// Registered with the audit (its ink against its box). Returns the ink width (screen px).
+float text(const iskin::Skin& k, float x, float y, float w, float h, const char* s, Role r, ImU32 col, int align = 0);
+// `s` shortened with "..." to fit `w` form units in role `r`.
+std::string fit(const iskin::Skin& k, const std::string& s, Role r, float w);
+
+// Layout audit of one frame (filled only while it is on, GRIDLINE_KERF_TRACE): every
+// control box with its row, every text run with its box. report() lists overlapping
+// controls, controls of one row that do not share top and height, clipped text and text
+// smaller than kMinTextPx.
+void auditBegin(bool on);
+bool auditOn();
+void auditBox(const char* id, const iskin::Skin& k, float x, float y, float w, float h, int row = -1);
+std::string auditReport();
+
+// Group box (a card) with an optional title at (tx, ty); `light` for the region panel's cards.
+void card(const iskin::Skin& k, float x, float y, float w, float h, bool light);
+// Flat transport glyph (no tile): a ring on hover, orange when lit.
+bool flatButton(App& a, const iskin::Skin& k, const char* id, float x, float y, float w, float h, ui::Icon icon, const char* hint, bool lit);
+// LED toggle with a caption (a free bool; true when clicked).
+bool ledToggle(App& a, const iskin::Skin& k, const char* id, float x, float y, float w, float h, const char* caption, bool on, const char* hint,
+               bool dark = false);
+// Small square switch with an icon (tile), lit when on. True when clicked.
+bool iconSwitch(App& a, const iskin::Skin& k, const char* id, float x, float y, float w, float h, ui::Icon icon, const char* hint, bool on);
+// Segmented selector: n equal cells (text or, when icons[i] != Count, an icon); returns the clicked cell or -1.
+int segmented(App& a, const iskin::Skin& k, const char* id, float x, float y, float w, float h, const char* const* labels, const ui::Icon* icons,
+              int n, int cur, const char* const* hints, bool dark);
+
+// Pad keyboard (two rows: black-key pads over white-key pads). `lit` (128) tints region keys,
+// `mark` is the selected region's key. Plays the clicked key on the channel; returns the clicked
+// note or -1, and the hovered note in *hover.
+int padKeyboard(App& a, const PluginTarget& t, const iskin::Skin& k, float x, float y, float w, float h, int low, int whites, const bool* lit,
+                int mark, int* hover);
 
 }  // namespace gl::kerf

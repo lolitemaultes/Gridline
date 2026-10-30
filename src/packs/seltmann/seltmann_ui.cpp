@@ -951,6 +951,14 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
       if (ord.size() > 160) break;
     }
     line += " order \"" + ord + "\"";
+    // J-185: the slice pitches, the start, the step unit and the first cuts
+    std::string pit;
+    for (size_t k = 0; k < e.m.slices.size(); ++k)
+      if (std::fabs(e.m.slices[k].pitch) >= 0.005f) pit += (pit.empty() ? "" : " ") + regionName(static_cast<int>(k)) + ":" + pitchText(e.m.slices[k].pitch);
+    line += " pitch \"" + pit + "\" start " + regionName(sequenceStartRegion(e.m));
+    std::snprintf(b, sizeof b, " unit %.6g chop %d cuts", e.m.pattern.unitBeats, e.m.chop.mode);
+    line += b;
+    for (size_t k = 1; k < e.m.slices.size() && k < 5; ++k) line += " " + std::to_string(e.m.slices[k].start);
   }
   std::snprintf(b, sizeof b, "\nseltmann: body %.0f %.0f", e.body.x, e.body.y);  // J-152: the measured size
   line += b;
@@ -967,6 +975,25 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
     line += b;
     for (size_t i = 0; i < e.seqCentres.size() && i < 24; ++i) {
       std::snprintf(b, sizeof b, "\nseltmann: seq %zu %.0f %.0f", i, e.seqCentres[i].x, e.seqCentres[i].y);
+      line += b;
+    }
+    // J-185: the START flag, the cut handles (waveform, lane), the pads' pitch readouts, the open region menu
+    std::snprintf(b, sizeof b, "\nseltmann: startflag %.0f %.0f", e.startFlag.x, e.startFlag.y);
+    line += b;
+    for (size_t i = 0; i < e.cutPts.size() && i < 4; ++i) {
+      std::snprintf(b, sizeof b, "\nseltmann: cut %zu %.0f %.0f", i + 1, e.cutPts[i].x, e.cutPts[i].y);
+      line += b;
+    }
+    for (size_t i = 0; i < e.laneCutPts.size() && i < 4; ++i) {
+      std::snprintf(b, sizeof b, "\nseltmann: lanecut %zu %.0f %.0f", i + 1, e.laneCutPts[i].x, e.laneCutPts[i].y);
+      line += b;
+    }
+    for (size_t i = 0; i < e.padChips.size() && i < 4; ++i) {
+      std::snprintf(b, sizeof b, "\nseltmann: padchip %zu %.0f %.0f", i, e.padChips[i].x, e.padChips[i].y);
+      line += b;
+    }
+    for (const auto& [tag, pt] : e.menuPts) {
+      std::snprintf(b, sizeof b, "\nseltmann: menu %s %.0f %.0f", tag.c_str(), pt.x, pt.y);
       line += b;
     }
   }

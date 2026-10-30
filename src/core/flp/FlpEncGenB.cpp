@@ -16,6 +16,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include "../../engine/KerfMarks.h"
 #include "../../engine/SlicexEngine.h"
 #include "../../engine/Sample.h"
 #include "../../engine/Slicing.h"
@@ -694,6 +695,16 @@ FsLayout fsLayout(const Bytes& b) {
   return l;
 }
 
+// J-182: Kerf's editor settings (snap, ruler, grid lines) and the classic
+// engine's region names have no place in FL's states: written as defaults / the path alone.
+void stripKerfEditor(PluginState& g) {
+  if (const PluginInfo* info = findPlugin("gl.slicer"))
+    for (int p : {gl::pp::SlSnap, gl::pp::SlSnapZero, gl::pp::SlRuler, gl::pp::SlGridLines})
+      if (static_cast<size_t>(p) < g.params.size() && static_cast<size_t>(p) < info->params.size())
+        g.params[static_cast<size_t>(p)] = static_cast<float>(info->params[static_cast<size_t>(p)].def);
+  if (gl::kerfmarks::hasNames(g.data)) g.data = gl::kerfmarks::pathOf(g.data);
+}
+
 Encoder fruitySlicer() {
   Encoder e;
   e.flName = "Fruity Slicer";
@@ -701,6 +712,7 @@ Encoder fruitySlicer() {
   e.nativeRank = 0;
   // Classic slicer and the processed engine (2); the region model is Slicex's.
   e.accepts = [](const PluginState& g) { return param(g, gl::pp::SlEngine, 0) < 0.5f || param(g, gl::pp::SlEngine, 0) >= 1.5f; };
+  e.strip = stripKerfEditor;
   e.generator = true;
   e.defaults = [] {
     constexpr uint32_t kVersion = 15;  // the plugin database state's layout
@@ -1506,7 +1518,10 @@ Encoder slicex() {
   e.generator = true;
   // Region-model states (J-41) are written whole, from Gridline values alone.
   e.nativeRank = 0;
-  e.accepts = [](const PluginState& g) { return param(g, gl::pp::SlEngine, 0) >= 0.5f && g.data.find('\n') != std::string::npos; };
+  e.accepts = [](const PluginState& g) {
+    return param(g, gl::pp::SlEngine, 0) >= 0.5f && g.data.find('\n') != std::string::npos && !gl::kerfmarks::hasNames(g.data);
+  };
+  e.strip = stripKerfEditor;
   e.defaults = [] {
     gl::slicex::Model md = gl::slicex::defaultModel();
     return gl::slicex::writeState(md, {emptyWav(), emptyWav()});

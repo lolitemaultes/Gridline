@@ -200,7 +200,15 @@ inline constexpr int SlProcFadeIn = SlProcMethod + 1;
 inline constexpr int SlProcFadeOut = SlProcFadeIn + 1;
 inline constexpr int SlProcDeclick = SlProcFadeOut + 1;
 inline constexpr int SlEngineProcessed = 2;
-inline constexpr int SlCount = SlProcDeclick + 1;
+// J-182: the editor's time and marker settings, kept with the instance: marker
+// snap size (engine/KerfMarks.h Snap), "then the nearest zero crossing", the
+// ruler's unit (seconds / bars:beats) and the beat grid lines. They change no
+// sound; states saved before them open with snap off and a seconds ruler.
+inline constexpr int SlSnap = SlProcDeclick + 1;
+inline constexpr int SlSnapZero = SlSnap + 1;
+inline constexpr int SlRuler = SlSnapZero + 1;
+inline constexpr int SlGridLines = SlRuler + 1;
+inline constexpr int SlCount = SlGridLines + 1;
 // "gl.granular"
 enum Granular {
   GrPosition, GrSpread, GrSize, GrDensity, GrPitchRand, GrStereo, GrAttack, GrRelease, GrFreeze, GrVolume,

@@ -397,7 +397,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -677,7 +677,7 @@ msgstr ""
 msgid "Scale levels: centre, multiplier, offset"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp
 msgid "Select"
 msgstr ""
 
@@ -894,6 +894,10 @@ msgid "Double-click: load on the selected mixer track · drag onto a mixer strip
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Drag onto a Pixel Tone editor or channel to play this picture · double-click: load into the open Pixel Tone"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Edited audio"
 msgstr ""
 
@@ -1006,6 +1010,10 @@ msgid "Packs"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Pictures"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Plugin database"
 msgstr ""
 
@@ -1089,7 +1097,7 @@ msgstr ""
 msgid "Right-click a plugin: Add to favourites"
 msgstr ""
 
-#: src/app/Browser.cpp
+#: src/app/Browser.cpp src/app/PluginEditorsInstrSlicer.cpp
 msgid "Samples"
 msgstr ""
 
@@ -1234,6 +1242,10 @@ msgid "Nothing here takes these files"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "Pictures play in Pixel Tone: drop this one onto a Pixel Tone editor or channel"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "This file is still on its way: drop it again in a moment"
 msgstr ""
 
@@ -1365,7 +1377,7 @@ msgstr ""
 msgid "Notch"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -1393,7 +1405,7 @@ msgstr ""
 msgid "Period"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Pitch"
 msgstr ""
 
@@ -1773,11 +1785,11 @@ msgstr ""
 msgid "Audio: cuts at the attacks; patterns: at the note starts"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+#: src/app/ChopUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Bar"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/app/PluginEditorsInstrSlicer.cpp
 msgid "Beat"
 msgstr ""
 
@@ -3501,11 +3513,11 @@ msgstr ""
 msgid "Removes them for everyone"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/PluginEditorsInstrSlicer.cpp
 msgid "Rename"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/Playlist.cpp src/packs/edison/edison_wave_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/edison/edison_wave_ui.cpp
 msgid "Rename..."
 msgstr ""
 
@@ -4137,7 +4149,7 @@ msgstr ""
 msgid "not with anyone yet"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp
+#: src/app/CollabUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp
 msgid "off"
 msgstr ""
 
@@ -4145,7 +4157,7 @@ msgstr ""
 msgid "offline"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/PluginEditorsK3Gb.cpp
+#: src/app/CollabUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp
 msgid "on"
 msgstr ""
 
@@ -5177,7 +5189,7 @@ msgstr ""
 msgid "Place loop"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/DisplayConfirmUi.cpp src/app/LoopStarterUi.cpp src/app/SoundThemeUi.cpp
+#: src/app/ContextMenus.cpp src/app/DisplayConfirmUi.cpp src/app/LoopStarterUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/SoundThemeUi.cpp
 msgid "Play"
 msgstr ""
 
@@ -10421,7 +10433,7 @@ msgstr ""
 msgid "Type in value"
 msgstr ""
 
-#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/edison/edison_form_ui.cpp
 msgid "Zero crossings"
 msgstr ""
 
@@ -10582,6 +10594,42 @@ msgid "Sustain at this point"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "(click to switch)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "(no regions)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "(unnamed region)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "1/2 bar"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp
+msgid "1/2 beat"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "1/3 beat (triplets)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp
+msgid "1/4 beat"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "1/6 beat (triplets)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "1/8 beat"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Add a marker in the selected region"
 msgstr ""
 
@@ -10594,6 +10642,14 @@ msgid "Back to its automatic key"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Bars:beats:ticks"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Beat grid lines"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Clear markers"
 msgstr ""
 
@@ -10602,11 +10658,15 @@ msgid "Clear the markers"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
-msgid "Click: play the key (selects its region) · right-click: assign the region to the key"
+msgid "Click: name the region (shown on its flag)"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Click: play the region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Click: type the marker's exact position"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10630,6 +10690,10 @@ msgid "Edit the cuts by hand"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Even slices"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Even slices: 16"
 msgstr ""
 
@@ -10646,7 +10710,27 @@ msgid "Even slices: 8"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Every marker is in use (64)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "First region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Fixed at the start"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Half bar"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Hold Alt while dragging: no snapping"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "How a region plays: click to choose"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10662,6 +10746,14 @@ msgid "Load a loop"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Load a loop to see its regions"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Load a loop to see where it is cut"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Load a loop..."
 msgstr ""
 
@@ -10670,7 +10762,27 @@ msgid "Map regions upwards from the base note"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Marker of region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Modulation X (filter cutoff) and Y (resonance): drag"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Move"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Name of region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Name this region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Naming keeps the cuts as hand-set markers"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10686,7 +10798,71 @@ msgid "No loop: drop one on the wave view"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "No regions"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "No snapping"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Not a position in this unit"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Nudge left by one snap step"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Nudge right by one snap step"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Nudge the marker left"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Nudge the marker right"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Play on to the end of the loop (one shot)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Play on to the end of the loop, stop when the key is let go"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Play the region, stop when the key is let go"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Play the whole region (one shot)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Previous region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Region, gated"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Region, one shot"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Regions 1 to 64 can"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Regions of the loop"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10698,11 +10874,39 @@ msgid "Remove the loop"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Remove the marker"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Rename the region..."
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Reset every region's settings"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Reset this region's settings"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Ruler in bars and beats"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Ruler in bars and beats (4/4 over the loop's beats): click for seconds"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Ruler in seconds"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Ruler in seconds: click for bars and beats"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Seconds"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10722,7 +10926,19 @@ msgid "Show the whole loop"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Show the whole region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Slice at the hits"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Snap the marker"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Snap: where moved and added markers land (hold Alt while dragging: no snapping)"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10731,6 +10947,30 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "The loop brought its own regions: they play as they are stored"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Then the nearest zero crossing"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "This region plays with"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "To end, gated"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "To end, one shot"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Type the marker's position..."
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Type the position..."
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp src/app/ScriptUi.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp
@@ -10742,15 +10982,71 @@ msgid "Write the regions to the piano roll"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Zero crossing"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "be edited here."
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp
+msgid "beat"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "cut at the hits"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "cut at the markers"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "e.g. 1.250"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "e.g. 22050"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "e.g. 2:3:048 (bar, beat, tick of 96)"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "even slices"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp src/packs/synths/pixel_ui.cpp
+msgid "from"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "its imported settings."
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "key"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "long"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "mono"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
-msgid "regions · click: select + play · drag a marker · double-click: add marker · right-click a marker: remove · wheel: zoom, Shift+wheel: scroll"
+msgid "regions · click: select + play · drag a marker (Alt: no snap) · double-click: add marker · right-click a marker: remove, a flag: rename, position · arrows: nudge · wheel: zoom"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
-msgid "regions · click: select + play · drag a marker: move the region's start · wheel: zoom, Shift+wheel: scroll · drop a loop"
+msgid "regions · click: select + play · drag a marker: move the region's start (Alt: no snap) · right-click a flag: rename, position · arrows: nudge · wheel: zoom, Shift+wheel: scroll"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "slices"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp src/packs/spacefx/spacefx_ui.cpp
@@ -10763,6 +11059,10 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicerKit.cpp
 msgid "Drop a loop here, or click to choose one"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicerKit.cpp
+msgid "click: play, right-click: assign"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicerKit.cpp
@@ -10791,14 +11091,6 @@ msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "1 semitone up"
-msgstr ""
-
-#: src/app/PluginEditorsK3Gb.cpp
-msgid "1/2 beat"
-msgstr ""
-
-#: src/app/PluginEditorsK3Gb.cpp
-msgid "1/4 beat"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/tideline/tideline_ui.cpp
@@ -11103,10 +11395,6 @@ msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "WITHOUT A SLOT"
-msgstr ""
-
-#: src/app/PluginEditorsK3Gb.cpp
-msgid "beat"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_seq_ui.cpp
@@ -13550,6 +13838,10 @@ msgid "load %s as an impulse response"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
+msgid "load %s as the picture"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
 msgid "load %s as the sample"
 msgstr ""
 
@@ -13559,6 +13851,10 @@ msgstr ""
 
 #: src/core/ExternalDrop.cpp
 msgid "load the effect chain %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "load the picture %s into %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
@@ -16226,7 +16522,7 @@ msgid "Click again for another take."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Click to play. Right-click: split or delete. Drag the grip to take it out as audio."
+msgid "Click to play. Wheel: pitch. Right-click: pitch, start here, split, delete. Drag the grip to take it out as audio."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -16413,10 +16709,6 @@ msgstr ""
 msgid "REGIONS"
 msgstr ""
 
-#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "Region"
-msgstr ""
-
 #: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Remove a step"
 msgstr ""
@@ -16582,15 +16874,15 @@ msgid "at"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "key"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "pattern key"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "slice"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Also: drag the pitch readout on a pad or a region up or down, or turn the wheel over it."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -16602,7 +16894,7 @@ msgid "BARS"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
-msgid "Click to hear it. Drag to move it. Right-click: split or delete the region."
+msgid "Click to hear it. Drag to move it. Right-click: start here, pitch, split or delete the region."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -16610,7 +16902,23 @@ msgid "Delete region"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
-msgid "Drag a block to move it. Right-click: split, delete"
+msgid "Down a semitone"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Down an octave"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Drag a block to move it, an edge to resize. Right-click: more"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Drag to resize both regions (Alt: no snap). Click a block to play it."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Drag up or down: semitones (Shift: finer). Wheel: one semitone. Double-click: back to 0."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -16634,6 +16942,10 @@ msgid "Only this step leaves the sequence; the region stays (use Delete to join 
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Pitch of region"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Play backwards"
 msgstr ""
 
@@ -16650,11 +16962,19 @@ msgid "Reset order"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Reset pitch"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Reset the order"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Reset to A B C D order"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Resize a slice"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -16666,11 +16986,27 @@ msgid "SEQUENCE"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "STARTS AT"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "STEP"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Slice pitch"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Split"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Start here, leave out the steps before"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Start the sequence here"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -16686,11 +17022,35 @@ msgid "The sequence already plays every region in order"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "The sequence already starts here."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "The sequence plays from here on; the steps before move to the end, so the loop keeps its length."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "The sequence plays from here to its end; the steps before are taken out (Undo or Reset order brings them back)."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "This region is not in the sequence."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "This region is too short to split that many times"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Too short for that many parts."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Up a semitone"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Up an octave"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -16715,6 +17075,14 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "region"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "semitones"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "st"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
@@ -17125,10 +17493,6 @@ msgstr ""
 msgid "loops in the \"Seltmann loops\" folder"
 msgstr ""
 
-#: src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "slices"
-msgstr ""
-
 #: src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "8 bars"
 msgstr ""
@@ -17154,7 +17518,7 @@ msgid "Chop mode"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "Click a region to play it. Right-click: split or delete it."
+msgid "Click a region to play it. Wheel: pitch. Drag a cut to resize. Right-click: more."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
@@ -17214,7 +17578,15 @@ msgid "Drag the box or its edges to pick the bars to chop, drag elsewhere for a 
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "Drag to move the cut, right-click to remove it"
+msgid "Drag the flag onto another region to start there (the steps before move to the end). Right-click a region for more."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Drag to move the cut (Alt: no snap), right-click to remove it"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Drag to resize both regions (Alt: no snap). Click a region to play it."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
@@ -17278,10 +17650,6 @@ msgid "More sensitive: more, softer hits become cuts"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "Move a cut"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Move bar 1"
 msgstr ""
 
@@ -17330,6 +17698,10 @@ msgid "The chop appears here once the analysis is done"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "The sequence starts on region"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Thirty-second notes"
 msgstr ""
 
@@ -17339,6 +17711,10 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Zero-crossing cuts"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "is not in the sequence"
 msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
@@ -17583,6 +17959,58 @@ msgstr ""
 
 #: src/packs/synths/dcosynth_ui.cpp
 msgid "Panel: two DCO"
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Back to the built-in picture"
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Built-in picture"
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Colour negative: dark becomes loud, bright becomes quiet"
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Could not load "
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Could not load the picture "
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Drop to load this picture"
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Load a picture: PNG, JPEG, BMP, GIF, TGA, PSD or HDR (or drop one on the picture)"
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Load picture"
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Loaded "
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Loading picture..."
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Play the picture right to left (mirror it)"
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Rows are sine partials (top = high), columns are time: red = left level, green = right level, blue bends the pitch. Drop a picture here to load it"
+msgstr ""
+
+#: src/packs/synths/pixel_ui.cpp
+msgid "Turn the picture upside down (high rows become low)"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp

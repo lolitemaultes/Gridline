@@ -91,6 +91,10 @@ const InertDoc kInert[] = {
     {"gl.spread", "Show input", "editor display"},
     {"gl.spread", "Show output", "editor display"},
     {"gl.vocoder", "Editor curve", "editor display: the curve the mouse edits"},
+    {"gl.slicer", "Marker snap", "editor setting: where moved markers land"},
+    {"gl.slicer", "Snap then zero crossing", "editor setting: where moved markers land"},
+    {"gl.slicer", "Ruler", "editor display: the wave view's time units"},
+    {"gl.slicer", "Beat grid lines", "editor display"},
     {"gl.convolver", "Reported latency", "read-only: the latency the engine reports"},
     // Routing (resolved by the engine graph / MIDI ports; covered by the routing tests).
     {"gl.midiout", "Port", "MIDI output port (routing)"},

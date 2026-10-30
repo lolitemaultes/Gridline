@@ -369,7 +369,7 @@ int c_sample(lua_State* L) {
   const Channel& c = song(L).channels[chIdx(L, 1)];
   const PluginInfo* p = findPlugin(c.plugin.type);
   if (p && p->usesSample && !c.plugin.data.empty())
-    lua_pushstring(L, fs::path(c.plugin.data).filename().string().c_str());  // the name only: no paths for scripts
+    lua_pushstring(L, fs::path(c.plugin.data.substr(0, c.plugin.data.find('\n'))).filename().string().c_str());  // the name only: no paths for scripts
   else
     lua_pushnil(L);
   return 1;

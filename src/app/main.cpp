@@ -335,6 +335,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   move x y · down b · up b · mod ctrl|shift|alt|super 0|1 (super = Cmd: Ctrl + click is a right click on macOS) · wheel dy · key <letter>
 //   audio <wav> <track> <bar> (browser drop path) · dump (playlist clips to stdout)
 //   shot <out.ppm> (J-37: this frame is saved once rendered — frame sequences)
+//   text <characters> (J-182: typed into the focused text field)
 //   key space (J-49) · key escape · key left|right|up|down|enter|delete|tab (J-141), notes (Q-3: piano roll notes to stdout) · transport (J-49: song position / playing / seek position to stdout)
 //   scroll dx dy (J-67: one trackpad-style two-axis scroll event, wheel units)
 //   momentum dx dy frames (J-67: a decaying scroll stream over the next frames, like an OS fling)
@@ -697,6 +698,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                        : l.a0 == "down" ? ImGuiKey_DownArrow : l.a0 == "enter" ? ImGuiKey_Enter : l.a0 == "tab" ? ImGuiKey_Tab : ImGuiKey_Delete;
       io.AddKeyEvent(k, true);
       io.AddKeyEvent(k, false);
+    } else if (l.cmd == "text") {  // J-182: typed characters into the focused text field ("text 2:1:000", quotes group words)
+      std::string typed;
+      for (size_t i = 0; i < l.args.size(); ++i) typed += (i ? " " : "") + l.args[i];
+      io.AddInputCharactersUTF8(typed.c_str());
     } else if (l.cmd == "notes") {  // Q-3: the piano roll's notes (current pattern, selected channel) and selection
       const Song& s = app.doc.song();
       const Pattern* p = s.pattern(app.curPattern);
@@ -815,6 +820,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "dialogopen") {  // J-167: File > Open, then OK on <file> the frame after the dialog shows
       app.doc.markSaved();
       app.openDialog();
+      app.fileDialog.devAccept = l.args.empty() ? l.a0 : l.args[0];
+    } else if (l.cmd == "dialogok") {  // J-184: OK with <file> on the file dialog that is (or next) open, whoever opened it
       app.fileDialog.devAccept = l.args.empty() ? l.a0 : l.args[0];
     } else if (l.cmd == "loadstate") {  // J-167: the project load's phase, counts, log and the open popups to stdout
       projloadui::devReport(app, frame);

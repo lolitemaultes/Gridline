@@ -352,7 +352,7 @@ Json channelJson(const Song& s, size_t i) {
                  {"color", jstr(hexColor(c.color))},
                  {"notes", jnum(static_cast<double>(notes))}});
   if (const PluginInfo* p = findPlugin(c.plugin.type); p && p->usesSample && !c.plugin.data.empty())
-    j.object["sample"] = jstr(fs::path(c.plugin.data).filename().string());
+    j.object["sample"] = jstr(fs::path(c.plugin.data.substr(0, c.plugin.data.find('\n'))).filename().string());  // (first line: the file)
   if (!c.noteFx.empty()) {
     Json fx = Json::makeArray();
     for (const auto& f : c.noteFx) fx.array.push_back(jstr(f.type));

@@ -142,6 +142,8 @@ Kind kindOf(const std::string& path) {
   if (e == ".fst") return Kind::Fst;
   if (e == ".serumpreset" || e == ".fxp") return Kind::Preset;  // Serum presets: opened by Plasma
   if (e == ".fsc") return Kind::Score;
+  if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".jpe" || e == ".bmp" || e == ".gif" || e == ".tga" || e == ".psd" || e == ".hdr")
+    return Kind::Image;  // J-184: pictures Pixel Tone plays
   if (e == ".json") {
     const std::string l = lower(fs::path(path).generic_string());
     if (endsWith(l, ".gridline.json")) return Kind::Project;
@@ -164,6 +166,7 @@ const char* kindName(Kind k) {
     case Kind::Shape: return "shape";
     case Kind::Score: return "score";
     case Kind::Folder: return "folder";
+    case Kind::Image: return "image";
     case Kind::Other: break;
   }
   return "other";
@@ -177,6 +180,8 @@ bool kindFromName(const std::string& name, Kind& out) {
       {"projects", Kind::Project}, {"flp", Kind::Flp},    {"fst", Kind::Fst},       {"preset", Kind::Preset},
       {"presets", Kind::Preset}, {"chain", Kind::Chain},  {"chains", Kind::Chain},  {"shape", Kind::Shape},
       {"automation", Kind::Shape}, {"score", Kind::Score}, {"fsc", Kind::Score},
+      {"image", Kind::Image},   {"images", Kind::Image},  {"picture", Kind::Image}, {"pictures", Kind::Image},
+      {"png", Kind::Image},     {"jpg", Kind::Image},     {"jpeg", Kind::Image},
   };
   auto it = names.find(lower(name));
   if (it == names.end()) return false;
@@ -656,6 +661,8 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
       return target == DropTarget::MixerTrack || target == DropTarget::MixerSlot ? DropAction::ApplyChain : DropAction::None;
     case Kind::Folder:
       return target == DropTarget::Browser || target == DropTarget::Workspace ? DropAction::AddBrowserFolder : DropAction::None;
+    case Kind::Image:  // J-184: a Pixel Tone window or channel row plays the picture
+      return (target == DropTarget::PluginWindow || target == DropTarget::Rack) && targetType == "gl.pixeltone" ? DropAction::LoadPicture : DropAction::None;
     default: break;
   }
   return DropAction::None;
@@ -680,6 +687,7 @@ const char* dropActionLabel(DropAction a) {
     case DropAction::AddBrowserFolder: return "Add folder to the browser";
     case DropAction::ReplaceInstrument: return "Replace with a sampler";
     case DropAction::ReplaceFromPreset: return "Replace instrument from preset";
+    case DropAction::LoadPicture: return "Load picture";
   }
   return "";
 }

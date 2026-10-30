@@ -266,6 +266,7 @@ ui::Icon iconOf(Kind k) {
     case Kind::Chain: return ui::Icon::Mixer;
     case Kind::Preset:
     case Kind::Fst: return ui::Icon::Settings;
+    case Kind::Image: return ui::Icon::Paint;  // J-184: pictures (Pixel Tone)
     default: return ui::Icon::File;
   }
 }
@@ -280,6 +281,7 @@ ImU32 iconColOf(Kind k) {
     case Kind::Chain: return roleCol(role::kSlice, 0.85f);
     case Kind::Preset:
     case Kind::Fst: return roleCol(role::kStamp, 0.85f);
+    case Kind::Image: return roleCol(role::kDraw, 0.85f);
     default: return pal().textFaint;
   }
 }
@@ -362,6 +364,7 @@ void fileRow(App& a, const fs::path& p, float indent) {
       ui::Hint("Double-click: load into the open plugin window (or a new channel / the selected insert) \xC2\xB7 drag onto a plugin window, the rack or a mixer slot");
       break;
     case Kind::Chain: ui::Hint("Double-click: load on the selected mixer track \xC2\xB7 drag onto a mixer strip"); break;
+    case Kind::Image: ui::Hint("Drag onto a Pixel Tone editor or channel to play this picture \xC2\xB7 double-click: load into the open Pixel Tone"); break;
     default: break;
   }
   ImGui::PushID(ps.c_str());
@@ -818,7 +821,7 @@ int searchResults(App& a, const std::string& text) {
       {Kind::Audio, i18n::N_("Samples")}, {Kind::Preset, i18n::N_("Presets")}, {Kind::Fst, i18n::N_("FL Studio presets")},
       {Kind::Chain, i18n::N_("Effect chains")}, {Kind::Midi, i18n::N_("MIDI files")}, {Kind::Score, i18n::N_("Scores")},
       {Kind::Project, i18n::N_("Projects")}, {Kind::Flp, i18n::N_("FL Studio projects")},
-      {Kind::Shape, i18n::N_("Automation shapes")},
+      {Kind::Shape, i18n::N_("Automation shapes")}, {Kind::Image, i18n::N_("Pictures")},
   };
   for (const auto& [kind, title] : groups) {
     int n = 0;

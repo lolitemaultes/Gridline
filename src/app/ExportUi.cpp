@@ -1123,7 +1123,7 @@ bool openAny(App& a, const std::string& path) {
 void exportChannelSample(App& a, ObjectId channel) {
   const Channel* c = a.doc.song().channel(channel);
   if (!c || c->plugin.data.empty()) return;
-  const std::string src = c->plugin.data;
+  const std::string src = c->plugin.data.substr(0, c->plugin.data.find('\n'));  // J-182: the file (first line)
   writeSampleDialog(a, "Export sample as WAV", c->name, [src](const std::string& path, std::string& err) {
     SamplePtr s = loadSample(src, &err);
     if (!s) return false;

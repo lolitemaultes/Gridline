@@ -1,4 +1,5 @@
 #include "SliceProcess.h"
+#include "KerfMarks.h"
 #include "SlicexEngine.h"
 #include "Slicing.h"
 #include "SamplePrecompute.h"
@@ -225,7 +226,7 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
     aux.samples.assign(1, st.data.empty() ? nullptr : sampleCache().get(st.data));
     return true;
   }
-  if (st.type == "gl.slicer" && st.data.find('\n') != std::string::npos) {
+  if (st.type == "gl.slicer" && st.data.find('\n') != std::string::npos && !kerfmarks::hasNames(st.data)) {
     // J-41: Slicex region model ("<deck A file>\n<model>"): both decks' samples.
     auto sx = slicex::prepare(st);
     aux.samples.assign(2, nullptr);
@@ -237,7 +238,8 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
   }
   if (st.type == "gl.sampler" || st.type == "gl.slicer" || st.type == "gl.granular") {
     // Sampler: its precomputed effects (J-23) run here, once, on the UI thread.
-    aux.samples.assign(1, st.type == "gl.sampler" ? precomputedSample(st.data, samplePrecomputeFx(st)) : sampleCache().get(st.data));
+    aux.samples.assign(1, st.type == "gl.sampler"   ? precomputedSample(st.data, samplePrecomputeFx(st))
+                                        : sampleCache().get(st.type == "gl.slicer" ? kerfmarks::pathOf(st.data) : st.data));  // J-182: names after the path
     if (st.type == "gl.slicer" && aux.samples[0] && st.params.size() > static_cast<size_t>(SlEngine) &&
         st.params[SlEngine] >= SlEngineProcessed - 0.5f) {
       // J-41: processed slices (offline, here on the UI thread); the voices

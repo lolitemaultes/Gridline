@@ -385,6 +385,16 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     dl->AddLine(ImVec2(x, mid - rh), ImVec2(x, mid + rh), col, 1.0f);
   }
   dl->AddLine(ImVec2(g0.x, mid), ImVec2(g1.x, mid), theme::withAlpha(P.paper, 0.10f), 1);
+  // J-185: where the START flag sits (the start of the region the sequence starts on; beside the bar-1 flag when they meet)
+  const int startRegion = sequenceStartRegion(m);
+  const double bar1Frame = frameAt(m.grid, m.grid.bar1);
+  const bool bar1Shown = bar1Frame >= ra && bar1Frame <= rb;
+  constexpr float kFlagW = 18;
+  float startX = -1e9f;
+  if (startRegion >= 0 && startRegion < n) {
+    startX = X(static_cast<double>(m.slices[static_cast<size_t>(startRegion)].start));
+    if (bar1Shown && std::fabs(X(bar1Frame) - startX) < kFlagW) startX = X(bar1Frame) + kFlagW;
+  }
   // beat grid + bar numbers
   const int bpb = std::max(1, m.grid.beatsPerBar);
   const double b0 = std::ceil(beatAt(m.grid, ra) - 1e-6), b1 = beatAt(m.grid, rb);
@@ -398,7 +408,7 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     if (bar && b < b1 - 1e-6) {
       char bb[24];
       std::snprintf(bb, sizeof bb, "%lld", (rel - ((rel % bpb) + bpb) % bpb) / bpb + 1);
-      dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 3, p0.y + 3), P.textDim, bb);
+      dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(std::fabs(x - startX) < 4 ? x + kFlagW + 3 : x + 3, p0.y + 3), P.textDim, bb);
     }
     if (beatPx >= 48)
       for (int q = 1; q < 4; ++q) {
@@ -416,6 +426,7 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
   int under = 0;
   for (int q = 0; q < n; ++q)
     if (m.slices[static_cast<size_t>(q)].start <= fm) under = q;
+  if (n > 0) wheelPitch(a, t, e, under);  // J-185: the wheel over a region steps its pitch
   if (ImGui::IsItemActivated()) {
     if (ImGui::GetIO().KeyAlt && editGrid) {
       // nearest bar line
@@ -460,7 +471,7 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     std::snprintf(b, sizeof b, "%s %s  \xC2\xB7  %.3f s", i18n::tr("Region"), regionName(under).c_str(), static_cast<double>(s.end - s.start) / m.srcRate);
     const char* how = editCuts ? i18n::tr("Click: play. Double-click: add a cut. Drag a cut to move it, right-click it to remove it.")
                       : editGrid ? i18n::tr("Click: play. Drag the bar-1 flag to move the grid, Alt+drag a bar line to stretch it.")
-                                 : i18n::tr("Click a region to play it. Right-click: split or delete it.");
+                                 : i18n::tr("Click a region to play it. Wheel: pitch. Drag a cut to resize. Right-click: more.");
     ui::Tooltip((std::string(b) + "\n" + how).c_str());
   }
   // bar 1 flag (drag moves the whole grid)
@@ -490,46 +501,121 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
       }
     }
   }
-  // cut markers (thin lines; handles while editing cuts)
-  for (int q = 1; q < n && !editCuts; ++q) {
-    const float x = std::round(X(static_cast<double>(m.slices[static_cast<size_t>(q)].start))) + 0.5f;
-    dl->AddLine(ImVec2(x, g0.y), ImVec2(x, p1.y - 2), theme::withAlpha(P.paper, 0.35f), 1.0f);
-  }
-  for (int q = 1; q < n && editCuts; ++q) {
+  // cut markers. J-185: every cut is a handle: hover shows it, a drag resizes both neighbours
+  // (the chop's snap, Alt: none; one undo step). While editing cuts (drawer, Chop tab) right-click removes it.
+  e.cutPts.clear();
+  bool overCut = false;
+  for (int q = 1; q < n; ++q) {
     const auto& s = m.slices[static_cast<size_t>(q)];
+    const auto& sp = m.slices[static_cast<size_t>(q - 1)];
     const float x = std::round(X(static_cast<double>(s.start))) + 0.5f;
-    ImGui::PushID(q);
-    ImGui::SetCursorScreenPos(ImVec2(x - 4, p0.y + 2));
-    ImGui::InvisibleButton("##scut", ImVec2(8, p1.y - p0.y - 4));
-    const bool h = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
-    if (h || ac) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    if (h && !ac) ui::Tooltip(i18n::tr("Drag to move the cut, right-click to remove it"));
-    if (ac && ImGui::IsMouseDragging(0, 1)) {
-      Model nm = e.m;
-      moveCut(nm, q, snapFrame(nm, smp.get(), static_cast<int64_t>(fm), nm.chop.snap));
-      commit(a, t, e, nm, i18n::N_("Move a cut"), 0x5E17C000ull + static_cast<uint64_t>(q));
+    // the hit zone stays a few pixels wide so a click on a region still plays it
+    const float wl = x - X(static_cast<double>(sp.start)), wr = X(static_cast<double>(s.end)) - x;
+    const float hw = editCuts ? 4.0f : std::min(4.0f, std::min(wl, wr) * 0.2f);
+    if (hw < 2 && e.cutDrag != q) {
+      dl->AddLine(ImVec2(x, g0.y), ImVec2(x, p1.y - 2), theme::withAlpha(P.paper, 0.35f), 1.0f);
+      continue;
     }
-    if (h && ImGui::IsMouseClicked(1)) {
-      Model nm = e.m;
-      if (removeCut(nm, q)) {
-        commit(a, t, e, nm, i18n::N_("Remove a cut"));
-        e.selSlice = std::min(e.selSlice, static_cast<int>(nm.slices.size()) - 1);
+    ImGui::PushID(q);
+    ImGui::SetCursorScreenPos(ImVec2(x - std::max(2.0f, hw), g0.y - 6));
+    ImGui::InvisibleButton("##scut", ImVec2(2 * std::max(2.0f, hw), p1.y - 2 - (g0.y - 6)));
+    const bool h = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
+    overCut |= h || ac;
+    if (h || ac) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (h && !ac) {
+      const std::string tip = regionName(q - 1) + " | " + regionName(q) + "\n" +
+                              (editCuts ? i18n::tr("Drag to move the cut (Alt: no snap), right-click to remove it")
+                                        : i18n::tr("Drag to resize both regions (Alt: no snap). Click a region to play it."));
+      ui::Tooltip(tip.c_str());
+    }
+    if (ImGui::IsItemActivated()) cutDragBegin(e, q);
+    if (ac && e.cutDrag == q && ImGui::IsMouseDragging(0, 1)) cutDragTo(a, t, e, q, fm);
+    if (ImGui::IsItemDeactivated()) e.cutDrag = -1;
+    if (h && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+      if (editCuts) {
+        Model nm = e.m;
+        if (removeCut(nm, q)) {
+          commit(a, t, e, nm, i18n::N_("Remove a cut"));
+          e.selSlice = std::min(e.selSlice, static_cast<int>(nm.slices.size()) - 1);
+        }
+      } else {
+        e.selSlice = fm < static_cast<double>(s.start) ? q - 1 : q;
+        openRegionMenu(e, e.selSlice, -1);
       }
     }
-    const ImU32 col = h || ac ? P.paper : theme::withAlpha(P.paper, 0.65f);
-    dl->AddLine(ImVec2(x, g0.y - 4), ImVec2(x, p1.y - 2), col, h || ac ? 2.0f : 1.0f);
-    dl->AddTriangleFilled(ImVec2(x - 4.5f, g0.y - 6), ImVec2(x + 4.5f, g0.y - 6), ImVec2(x, g0.y), col);
+    if (editCuts || h || ac) {
+      const ImU32 col = h || ac ? P.paper : theme::withAlpha(P.paper, 0.65f);
+      dl->AddLine(ImVec2(x, g0.y - 4), ImVec2(x, p1.y - 2), col, h || ac ? 2.0f : 1.0f);
+      dl->AddTriangleFilled(ImVec2(x - 4.5f, g0.y - 6), ImVec2(x + 4.5f, g0.y - 6), ImVec2(x, g0.y), col);
+      if (!editCuts) dl->AddTriangleFilled(ImVec2(x - 4.5f, p1.y - 2), ImVec2(x + 4.5f, p1.y - 2), ImVec2(x, p1.y - 8), col);
+    } else {
+      dl->AddLine(ImVec2(x, g0.y), ImVec2(x, p1.y - 2), theme::withAlpha(P.paper, 0.35f), 1.0f);
+    }
+    if (e.cutPts.size() < 8) e.cutPts.push_back(ImVec2(x, (g0.y + g1.y) * 0.5f));
     ImGui::PopID();
-    if (q >= n) break;
+    if (q >= static_cast<int>(e.m.slices.size())) break;  // (a removed cut)
   }
-  // slot letters on wide slices
-  for (int q = 0; q < n; ++q) {
-    const auto& s = m.slices[static_cast<size_t>(q)];
+  // slot letters on wide slices; J-185: the pitch readout above the letter (pitched regions,
+  // and the region under the pointer or selected)
+  const bool overWave = ImGui::IsMouseHoveringRect(p0, p1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+  for (int q = 0; q < n && q < static_cast<int>(e.m.slices.size()); ++q) {
+    const auto& s = e.m.slices[static_cast<size_t>(q)];
     const float x0 = X(static_cast<double>(s.start)), x1 = X(static_cast<double>(s.end));
     const std::string L = regionName(q);
     const float fs = x1 - x0 >= 30 ? 15.0f : 12.0f;
     if (x1 - x0 < (L.size() > 1 ? 24.0f : 16.0f)) continue;
     dl->AddText(a.fontBold, fs, ImVec2(x0 + 5, g1.y - fs - 3), regionColor(q), L.c_str());
+    const bool pitched = std::fabs(s.pitch) >= 0.005f;
+    if (pitched || (overWave && q == under && e.cutDrag < 0 && !overCut) || q == e.pitchDrag) {
+      ImGui::PushID(0x5E185 + q);
+      pitchChip(a, t, e, "##wpitch", ImVec2(std::round(x0 + 5), std::round(g1.y - fs - 3 - 17)), 15, x1 - x0 - 10, q, x1 - x0 >= 64);
+      ImGui::PopID();
+    }
+  }
+  // J-185: the START flag ("the sequence starts here"). Drag it onto another region and the sequence
+  // starts there: the steps before move to the end, the loop keeps its length (one undo step).
+  e.startFlag = ImVec2(-1, -1);
+  if (startRegion >= 0 && startRegion < n) {
+    const float fy0 = p0.y + 2, fy1 = p0.y + 15;
+    ImGui::SetCursorScreenPos(ImVec2(startX, fy0));
+    ImGui::InvisibleButton("##sstart", ImVec2(kFlagW, fy1 - fy0));
+    const bool h = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
+    if (ImGui::IsItemActivated()) e.startDrag = true;
+    int target = startRegion;
+    if (e.startDrag)
+      for (int q = 0; q < n; ++q)
+        if (static_cast<double>(m.slices[static_cast<size_t>(q)].start) <= fm) target = q;
+    if (ImGui::IsItemDeactivated() && e.startDrag) {
+      e.startDrag = false;
+      if (target != startRegion) {
+        const int step = firstStepOf(m, target);
+        if (step > 0) startHereUi(a, t, e, step, true);
+        else if (step < 0) a.notify(std::string(i18n::tr("Region")) + " " + regionName(target) + " " + i18n::tr("is not in the sequence"), true);
+      }
+    }
+    if (h || ac) ImGui::SetMouseCursor(ac ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_Hand);
+    if (h && !ac) {
+      const std::string tip = std::string(i18n::tr("The sequence starts on region")) + " " + regionName(startRegion) + "\n" +
+                              i18n::tr("Drag the flag onto another region to start there (the steps before move to the end). Right-click a region for more.");
+      ui::Tooltip(tip.c_str());
+    }
+    auto flag = [&](float x, float alpha) {
+      const ImVec2 q0(std::round(x), fy0), q1(std::round(x) + kFlagW, fy1);
+      dl->AddRectFilled(q0, q1, theme::withAlpha(P.paper, alpha), 2);
+      const float cx = (q0.x + q1.x) * 0.5f + 1, cy = (q0.y + q1.y) * 0.5f;
+      dl->AddTriangleFilled(ImVec2(cx - 3.5f, cy - 4), ImVec2(cx - 3.5f, cy + 4), ImVec2(cx + 4, cy), theme::withAlpha(P.ink, alpha));
+    };
+    const float lineX = std::round(X(static_cast<double>(m.slices[static_cast<size_t>(startRegion)].start))) + 0.5f;
+    if (std::fabs(lineX - startX) < 2) dl->AddLine(ImVec2(lineX, fy1), ImVec2(lineX, p1.y - 2), theme::withAlpha(P.paper, 0.75f), 1.5f);
+    if (e.startDrag && ac) {
+      const float tx = X(static_cast<double>(m.slices[static_cast<size_t>(target)].start));
+      flag(startX, 0.35f);
+      dl->AddLine(ImVec2(std::round(tx) + 0.5f, fy1), ImVec2(std::round(tx) + 0.5f, p1.y - 2), P.paper, 2.0f);
+      flag(tx, 1.0f);
+    } else {
+      flag(startX, h ? 1.0f : 0.92f);
+    }
+    e.startFlag = ImVec2(startX + kFlagW * 0.5f, (fy0 + fy1) * 0.5f);
   }
   // playhead
   if (lv.srcFrame >= ra && lv.srcFrame <= rb) {

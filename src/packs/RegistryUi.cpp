@@ -22,6 +22,10 @@ void drawWindows(App& a);
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
 int armTransportRecording(App& a, ObjectId track);
 }  // namespace gl::packs::edison
+namespace gl::packs::synths {
+void tickPictureLoads(App& a);                                              // J-184
+bool loadPicture(App& a, const PluginTarget& t, const std::string& path);  // J-184
+}  // namespace gl::packs::synths
 namespace gl::packs::platter {
 void tick(App& a);
 bool claimMidi(App& a, const std::string& device);
@@ -43,7 +47,10 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
 void drawWindows(App& a) {
   edison::drawWindows(a);
   platter::tick(a);  // J-150: decks (controller values, cues, takes, LEDs)
+  synths::tickPictureLoads(a);  // J-184: Pixel Tone pictures decoded in the background
 }
+
+bool loadPicture(App& a, const PluginTarget& t, const std::string& path) { return synths::loadPicture(a, t, path); }
 
 bool claimMidi(App& a, const std::string& device) { return platter::claimMidi(a, device); }
 

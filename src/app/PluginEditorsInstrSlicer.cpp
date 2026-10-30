@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <map>
 #include <tuple>
+#include "../engine/KerfMarks.h"
 #include "../engine/SlicexEngine.h"
 #include "../core/I18n.h"
 #include "../core/PluginBrand.h"
@@ -106,8 +107,17 @@ struct SlicerUi {
   int ampPart = 0;                   // amp view: 0 envelope, 1 velocity
   int display = 0;                   // 0 full, 1 no wave editor, 2 no region panel, 3 compact
   bool keys = true;                  // keyboard band shown
-  int snap = 0;                      // marker snapping: 0 off, 1 zero crossings, 2 sixteenths
   int kbMenuKey = -1;                // key under the keyboard's context menu
+  // J-182: marker editing (snap, ruler and grid are the instance's parameters).
+  int64_t follow = -1;               // a marker just moved: select the region starting there
+  int64_t lastAdd = -1;              // frame of the marker added last (dev trace)
+  int flagMenu = -1;                 // region under the flag menu
+  int edit = -1;                     // region whose name / position the popup edits
+  bool openRename = false, openPos = false;
+  int posUnit = -1;                  // position entry unit (-1: the ruler's)
+  bool posBad = false;               // the typed position was not understood
+  char nameBuf[80] = {};
+  char posBuf[48] = {};
 };
 std::map<uint64_t, SlicerUi> slicerUi;
 
@@ -132,15 +142,21 @@ std::vector<int64_t> sliceStarts(const PluginState& st, const Sample* smp) {
   return out;
 }
 
-// Converts the current slices to manual markers (so they can be edited).
-void makeManual(App& a, const PluginTarget& t, const PluginState& st, const std::vector<int64_t>& starts, const Sample* smp) {
-  if (!smp || ed::ival(st, SlMode) == SlModeManual) return;
+// The state with the current slices as manual markers (so they can be edited):
+// slice k on marker slot k. J-182: names of earlier hand-set markers go (the slots are new).
+PluginState manualState(const PluginState& st, const std::vector<int64_t>& starts, const Sample* smp) {
   PluginState ns = st;
+  if (!smp || ed::ival(st, SlMode) == SlModeManual) return ns;
   ns.params[static_cast<size_t>(SlMode)] = SlModeManual;
   for (int k = 0; k < kMaxSlices; ++k)
     ns.params[static_cast<size_t>(slMarker(k))] =
         k < static_cast<int>(starts.size()) ? static_cast<float>(static_cast<double>(starts[static_cast<size_t>(k)]) / static_cast<double>(smp->frames())) : -1.f;
-  setPluginState(a, t, ns, "edit slices by hand");
+  ns.data = kerfmarks::pathOf(st.data);
+  return ns;
+}
+void makeManual(App& a, const PluginTarget& t, const PluginState& st, const std::vector<int64_t>& starts, const Sample* smp) {
+  if (!smp || ed::ival(st, SlMode) == SlModeManual) return;
+  setPluginState(a, t, manualState(st, starts, smp), "edit slices by hand");
 }
 
 // J-166: the region engine (SlEngine 1, loops brought in from project files):
@@ -211,20 +227,6 @@ void dimArea(const iskin::Skin& sk, float x, float y, float w, float h, uint32_t
   sk.dl()->AddRectFilled(sk.at(x, y), sk.at(x + w, y + h), rgb(under, 0.62f));  // `under`: the colour beneath
 }
 
-// J-181: a raised panel with a soft top light and a hairline (the region panel's columns).
-void panelWell(const iskin::Skin& sk, float x, float y, float w, float h, uint32_t fill, float lift = 0.06f) {
-  ImDrawList* dl = sk.dl();
-  const ImVec2 p = sk.at(x, y), q = sk.at(x + w, y + h);
-  iskin::bevel(sk, x, y, w, h, rgb(fill), lerp(rgb(fill), IM_COL32_BLACK, 0.28f), 4);
-  dl->AddRectFilledMultiColor(ImVec2(p.x + 1, p.y + 1), ImVec2(q.x - 1, p.y + sk.px(14)), theme::withAlpha(IM_COL32_WHITE, lift),
-                              theme::withAlpha(IM_COL32_WHITE, lift), theme::withAlpha(IM_COL32_WHITE, 0), theme::withAlpha(IM_COL32_WHITE, 0));
-}
-
-// Small caption on the light region panel.
-void capDark(const iskin::Skin& sk, float x, float y, float w, float h, const char* s, int align = 0) {
-  iskin::text(sk, x, y, w, h, s, 7.5f, rgb(0x262C31), align, false, true);
-}
-
 // A dark display well (envelope / region / detection view, wave view): gradient ground, inner shadow.
 void darkWell(const iskin::Skin& sk, float x, float y, float w, float h, float round = 3) {
   ImDrawList* dl = sk.dl();
@@ -247,16 +249,6 @@ void faintGrid(ImDrawList* dl, ImVec2 p0, ImVec2 p1, int cols, int rows, float a
   }
 }
 
-// Text in a screen rect clipped to it (mono or regular), vertically centred.
-void clipText(ImDrawList* dl, ImFont* f, float size, ImVec2 p0, ImVec2 p1, ImU32 col, const std::string& s, int align = 0) {
-  const ImVec2 ts = f->CalcTextSizeA(size, FLT_MAX, 0, s.c_str());
-  float x = align == 1 ? (p0.x + p1.x - ts.x) * 0.5f : align == 2 ? p1.x - ts.x : p0.x;
-  x = std::max(x, p0.x);
-  dl->PushClipRect(p0, p1, true);
-  dl->AddText(f, size, ImVec2(std::round(x), std::round((p0.y + p1.y - ts.y) * 0.5f)), col, s.c_str());
-  dl->PopClipRect();
-}
-
 std::string fmtTime(double s) {
   char b[32];
   if (s < 10) std::snprintf(b, sizeof b, "%.3f s", s);
@@ -264,20 +256,22 @@ std::string fmtTime(double s) {
   return b;
 }
 
-// Layout (J-181): the reference form's bands, each drawn on its own form
-// coordinates and placed under the bands shown before it.
-//   master (0..99): sliders 22/46/71/95, X/Y pad 132 + wheels 215, slicing mode
-//     424,9, toggles (345..565 × 33..85) with the options button 343,67, logo
-//     589,12, keyboard button 574,61, display mode selector 604,61;
-//   region panel (99..296): region column (10..168: menu, selector, key/cut
-//     row 157, wheels 46/72 × 185..269, switches 121), filter column (175..331),
-//     view column (338..705: target tabs 107, part tabs 123, view 139..259, row 263);
-//   deck bar (296..362): loop 9, play 38, stop 67, menus 160..368, tools 427..683,
-//     info row 345, view buttons 639..693;
-//   wave view (362..571): flags 362..377, waveform, ruler, scroller (19);
-//   keyboard (571..625): base note 3, keys 27..703.
+// Layout (J-183, on the reference's band order): the bands, each drawn on its own
+// form coordinates and placed under the bands shown before it.
+//   master (0..99): three cards: sliders 22/46/70/94 with icon tiles (8..126), MODULATION
+//     pad 136 + X / Y wheels 220 (130..336), PLAYBACK trigger 424,10 / fit tempo + beats
+//     row 38 / options + mono + declick row 66 (340..562); logo 590,10, keyboard
+//     button 574,62, display mode selector 604,62;
+//   region panel (99..296): REGION card 8..170 (menu, selector 130, key/cut row 156,
+//     AMP / FILTER / PITCH / START rows 184..268), SLICES card 174..334 (mode 130,
+//     FILTER inset 158), view column 338..706 (tabs 106, part row 124, view 142..258, row 264);
+//   deck bar (296..362): row 1 (298, 32 high): loop 8, play 38, stop 68, menus 160..392,
+//     tools 428..708; row 2: captions 333 over values 346, view switches 622..712;
+//   wave view (362..540): overview 362, flags 376, wave 390..504, ruler 504, switch row 517;
+//   keyboard (540..594): base note 4, two rows of pads 30..710.
 enum Band { BMaster, BRegion, BDeck, BWave, BKeys, BCount };
-constexpr float kBandY[BCount] = {0, 99, 296, 362, 571}, kBandH[BCount] = {99, 197, 66, 209, 54};
+constexpr float kBandY[BCount] = {0, 99, 296, 362, 540}, kBandH[BCount] = {99, 197, 66, 178, 54};
+constexpr float kMinScale = 0.86f;  // smallest scale of the form (below it the window scrolls)
 
 void editorSlicex(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
@@ -287,6 +281,14 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   const RegionView rv = regionView(st, smp.get());
   const std::vector<int64_t> starts = rv.on ? rv.starts : sliceStarts(st, smp.get());
   const int nSl = static_cast<int>(starts.size());
+  if (ui.follow >= 0) {  // J-182: a moved marker keeps its region selected (markers may have changed order)
+    for (int s = 0; s < nSl; ++s)
+      if (std::llabs(starts[static_cast<size_t>(s)] - ui.follow) <= 1) {
+        ui.slice = s;
+        break;
+      }
+    ui.follow = -1;
+  }
   // Region engine: every region can be selected (the per-region parameters cover the first 64).
   ui.slice = std::clamp(ui.slice, 0, std::max(0, (rv.on ? nSl : std::min(nSl, kMaxSlices)) - 1));
   const int k = ui.slice;
@@ -323,8 +325,13 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     const int kk = sliceKey(s);
     return kk >= 0 ? ed::noteName(kk) : std::string("-");
   };
+  // J-182: classic engine names belong to hand-set markers (marker slot -> name, kept after the sample path).
+  const std::map<int, std::string> classicNames = manual ? kerfmarks::namesOf(st.data) : std::map<int, std::string>();
   auto regionName = [&](int s) {
-    return rv.on && static_cast<size_t>(s) < rv.md.decks[0].regions.size() ? rv.md.decks[0].regions[static_cast<size_t>(s)].name : std::string();
+    if (rv.on) return static_cast<size_t>(s) < rv.md.decks[0].regions.size() ? rv.md.decks[0].regions[static_cast<size_t>(s)].name : std::string();
+    if (classicNames.empty() || s < 0 || s >= nSl) return std::string();
+    const auto it = classicNames.find(nearestMarkerParam(st, static_cast<double>(starts[static_cast<size_t>(s)]) / frames));
+    return it == classicNames.end() ? std::string() : it->second;
   };
   auto regionLabel = [&](int s) {  // "12  Kick  ·  D5"
     std::string l = std::to_string(s + 1);
@@ -401,17 +408,29 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   auto clearMarkers = [&]() {
     PluginState ns = st;
     for (int m = 0; m < kMaxSlices; ++m) ns.params[static_cast<size_t>(slMarker(m))] = m == 0 ? 0.f : -1.f;
+    ns.data = kerfmarks::pathOf(st.data);  // J-182: their names go with them
     setPluginState(a, t, ns, "clear slice markers");
   };
-  auto addMarkerAt = [&](double frac) {  // classic engine: a manual marker at a position
+  auto addMarkerAt = [&](int64_t frame) {  // classic engine: a manual marker at a frame (one undo step)
     if (!smp) return;
-    if (!manual) makeManual(a, t, st, starts, smp.get());
-    const PluginState* cur = t.state(a.doc.song());
-    for (int q = 0; cur && q < kMaxSlices; ++q)
-      if (ed::val(*cur, slMarker(q), -1) < 0) {
-        a.doc.setParam(t.pid(slMarker(q)), static_cast<float>(frac), false);
-        break;
+    for (int s = 0; s < nSl; ++s)
+      if (std::llabs(starts[static_cast<size_t>(s)] - frame) <= 1) {  // J-182: a marker is there already (snapping lands on it): select it
+        ui.slice = s;
+        return;
       }
+    PluginState ns = manualState(st, starts, smp.get());
+    auto names = kerfmarks::namesOf(ns.data);
+    for (int q = 0; q < kMaxSlices; ++q)
+      if (ns.params[static_cast<size_t>(slMarker(q))] < 0) {
+        ns.params[static_cast<size_t>(slMarker(q))] = static_cast<float>(static_cast<double>(frame) / frames);
+        names.erase(q);  // a free slot keeps no old name
+        ns.data = kerfmarks::withNames(ns.data, names);
+        ui.lastAdd = frame;
+        ui.follow = frame;
+        setPluginState(a, t, ns, "add slice marker");
+        return;
+      }
+    a.notify(i18n::tr("Every marker is in use (64)"), true);
   };
   auto resetKeys = [&]() {  // every region back on its automatic key (base note upwards)
     PluginState ns = st;
@@ -463,17 +482,91 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   const double loopBeats = ed::val(st, SlLoopBeats, 4);
   // Tempo of the loop: at its length in beats (Fit tempo), else the power-of-two
   // beat count that lands between 80 and 160 BPM.
-  double tempoEst = 0;
-  if (smp && smp->seconds() > 0) {
-    double beats = loopBeats;
-    if (!(classic && ed::bval(st, SlFitTempo))) {
-      beats = 1;
-      while (beats * 60.0 / smp->seconds() < 80 && beats < 256) beats *= 2;
+  const double gridBeats = smp ? kerfmarks::loopBeats(smp->seconds(), classic && ed::bval(st, SlFitTempo), loopBeats) : 0.0;
+  const double tempoEst = smp && smp->seconds() > 0 ? gridBeats * 60.0 / smp->seconds() : 0.0;
+  // ---- J-182: the loop's grid (4/4 over its beats), snapping, ruler and positions.
+  const double fpb = smp ? kerfmarks::framesPerBeat(frames, gridBeats) : 0.0;
+  const int snap = std::clamp(ed::ival(st, SlSnap), 0, kerfmarks::SnapCount - 1);
+  const bool snapZero = ed::bval(st, SlSnapZero);
+  const bool barsRuler = ed::ival(st, SlRuler) == kerfmarks::RulerBars;
+  const bool gridShown = ed::bval(st, SlGridLines, true);
+  const int rulerUnit = barsRuler ? kerfmarks::UnitBars : kerfmarks::UnitSeconds;
+  auto posText = [&](double f) { return kerfmarks::formatPosition(f, rulerUnit, rate, fpb); };
+  auto snapped = [&](double f, bool bypass) {
+    return kerfmarks::snapFrame(smp.get(), std::llround(f), bypass ? static_cast<int>(kerfmarks::SnapOff) : snap, snapZero, fpb);
+  };
+  // Markers that can move: every region start (region engine), the cuts after the first (classic).
+  auto canMove = [&](int s) { return smp && s >= 0 && s < nSl && (rv.on || (s > 0 && s < kMaxSlices)); };
+  // Moves region s's start marker to a frame (one undo step) and keeps the region selected.
+  auto moveMarker = [&](int s, int64_t to) {
+    if (!canMove(s)) return;
+    to = std::clamp<int64_t>(to, 0, static_cast<int64_t>(frames) - 1);
+    if (to == starts[static_cast<size_t>(s)]) return;
+    if (rv.on) {
+      moveRegionStart(a, t, st, rv, s, to, smp.get());
+    } else if (manual) {
+      const int mp = nearestMarkerParam(st, static_cast<double>(starts[static_cast<size_t>(s)]) / frames);
+      if (mp < 0) return;
+      a.doc.setParam(t.pid(slMarker(mp)), static_cast<float>(static_cast<double>(to) / frames), false);
+    } else {
+      PluginState ns = manualState(st, starts, smp.get());
+      ns.params[static_cast<size_t>(slMarker(s))] = static_cast<float>(static_cast<double>(to) / frames);
+      setPluginState(a, t, ns, "move slice marker");
     }
-    tempoEst = beats * 60.0 / smp->seconds();
-  }
+    ui.follow = to;
+  };
+  auto nudge = [&](int s, int dir) {
+    if (canMove(s)) moveMarker(s, kerfmarks::nudgeFrame(smp.get(), starts[static_cast<size_t>(s)], dir, snap, snapZero, fpb));
+  };
+  auto canRename = [&](int s) { return smp && s >= 0 && s < nSl && (rv.on || s < kMaxSlices); };
+  auto renameRegion = [&](int s, const std::string& typed) {
+    if (!canRename(s)) return;
+    const std::string nm = kerfmarks::cleanName(typed);
+    if (nm == regionName(s)) return;
+    if (rv.on) {
+      slicex::Model md = rv.md;
+      md.decks[0].regions[static_cast<size_t>(s)].name = nm;
+      PluginState ns = st;
+      ns.data = slicex::sampleOf(st.data) + "\n" + slicex::writeText(md);
+      setPluginState(a, t, ns, "rename region");
+      return;
+    }
+    // Classic: the name belongs to the region's marker (hand-set markers first, one undo step).
+    PluginState ns = manualState(st, starts, smp.get());
+    const int slot = manual ? nearestMarkerParam(ns, static_cast<double>(starts[static_cast<size_t>(s)]) / frames) : s;
+    if (slot < 0) return;
+    auto names = kerfmarks::namesOf(ns.data);
+    if (nm.empty()) names.erase(slot);
+    else names[slot] = nm;
+    ns.data = kerfmarks::withNames(ns.data, names);
+    setPluginState(a, t, ns, "rename region");
+  };
+  auto removeMarker = [&](int s) {  // classic hand-set marker (and its name)
+    if (!manual || !canMove(s)) return;
+    const int mp = nearestMarkerParam(st, static_cast<double>(starts[static_cast<size_t>(s)]) / frames);
+    if (mp < 0) return;
+    PluginState ns = st;
+    ns.params[static_cast<size_t>(slMarker(mp))] = -1.f;
+    auto names = kerfmarks::namesOf(ns.data);
+    names.erase(mp);
+    ns.data = kerfmarks::withNames(ns.data, names);
+    setPluginState(a, t, ns, "remove slice marker");
+  };
+  auto beginRename = [&](int s) {
+    if (!canRename(s)) return;
+    ui.edit = s, ui.openRename = true;
+    std::snprintf(ui.nameBuf, sizeof ui.nameBuf, "%s", regionName(s).c_str());
+  };
+  auto beginPosition = [&](int s) {
+    if (!canMove(s)) return;
+    ui.edit = s, ui.openPos = true, ui.posBad = false;
+    ui.posUnit = -1;
+    std::snprintf(ui.posBuf, sizeof ui.posBuf, "%s", posText(static_cast<double>(starts[static_cast<size_t>(s)])).c_str());
+  };
+  auto setSnap = [&](int m) { a.doc.setParam(t.pid(SlSnap), m, false); };
 
-  // ---- bands shown and the form height; scaled down to fit a short window (J-181).
+  // ---- bands shown and the form height; scaled down to fit a short window (J-181),
+  // never below kMinScale (J-183: under that the channel window scrolls, text stays readable).
   const bool shown[BCount] = {true, ui.display == 0 || ui.display == 1, ui.display == 0 || ui.display == 2, ui.display == 0 || ui.display == 2, ui.keys};
   float placed[BCount] = {}, formH = 0;
   for (int b = 0; b < BCount; ++b) placed[b] = formH, formH += shown[b] ? kBandH[b] : 0;
@@ -481,7 +574,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   if (!browserui::thumbMode()) {
     const float avail = ui::EditorArea().y - ImGui::GetCursorPosY() - ImGui::GetStyle().WindowPadding.y - 2;
     if (formH * width / kSxW > avail && avail > 0) {
-      w = std::max(width * 0.62f, std::floor(avail * kSxW / formH));
+      w = std::max(width * kMinScale, std::floor(avail * kSxW / formH));
       ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x + std::floor((width - w) * 0.5f), ImGui::GetCursorScreenPos().y));
     }
   }
@@ -492,6 +585,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     return s;
   };
   ImDrawList* dl = root.dl();
+  static const bool trace = std::getenv("GRIDLINE_KERF_TRACE") != nullptr;
+  kerf::auditBegin(trace && !browserui::thumbMode());
+  // A control's box for the layout audit: controls with the same top share one row (and its height).
+  auto ctl = [](const iskin::Skin& s, const char* id, float x, float y, float bw, float bh) { kerf::auditBox(id, s, x, y, bw, bh, 9000 + static_cast<int>(y)); };
   // Form ground and the accent strip.
   iskin::background(root, 0, 0, kSxW, formH, rgb(0x1A2633), rgb(0x0F171F), 4);
   {
@@ -499,7 +596,6 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     dl->AddRectFilledMultiColor(p, q, rgb(0xFF8A10), rgb(kOrange), rgb(kOrange), rgb(0xFF8A10));
     dl->AddLine(ImVec2(p.x, q.y), ImVec2(q.x, q.y), IM_COL32(0, 0, 0, 120));
   }
-  static const bool trace = std::getenv("GRIDLINE_KERF_TRACE") != nullptr;
   std::string traceLine;
   auto traceRect = [&](const char* name, ImVec2 p, ImVec2 q) {
     if (!trace) return;
@@ -508,30 +604,71 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
                   static_cast<double>(q.y));
     traceLine += b;
   };
+  using kerf::Role;
+  const ImU32 capLight = rgb(0xA7B0B9), titleLight = rgb(0xC6D0D9), capDarkCol = rgb(0x22282D), titleDarkCol = rgb(0x2B3237);
+  // A field of the wave view's switch row: dark well, the value (or a dim placeholder), a pen glyph when it can be edited.
+  auto field = [&](const iskin::Skin& sk, const char* id, float x, float y, float fw, float fh, const std::string& value, const char* placeholder, bool mono,
+                   bool enabled, const char* hint) {
+    const ImVec2 q0 = sk.at(x, y), q1 = sk.at(x + fw, y + fh);
+    ImGui::SetCursorScreenPos(q0);
+    ImGui::BeginDisabled(!enabled);
+    const bool hit = ImGui::InvisibleButton(id, ImVec2(q1.x - q0.x, q1.y - q0.y));
+    const bool hv = enabled && ImGui::IsItemHovered();
+    ImGui::EndDisabled();
+    iskin::bevel(sk, x, y, fw, fh, hv ? rgb(0x2C353C) : rgb(0x1E252B), hv ? rgb(kOrange, 0.8f) : rgb(0x0F1418), 3);
+    const bool empty = value.empty();
+    const ImU32 tc = !enabled ? rgb(0x5C666E) : empty ? rgb(0x7D8892) : mono ? rgb(0xFFD49A) : sk.c.lcdText;
+    const Role r = empty || !mono ? Role::Body : Role::Value;
+    const std::string shownText = empty ? (*placeholder ? std::string(i18n::tr(placeholder)) : std::string()) : value;
+    kerf::text(sk, x + 6, y, fw - 22, fh, kerf::fit(sk, shownText, r, fw - 22).c_str(), r, tc, 0);
+    if (enabled) ui::drawIconFit(dl, ui::Icon::ToolDraw, sk.at(x + fw - 13, y + fh * 0.5f - 4.5f), sk.at(x + fw - 4, y + fh * 0.5f + 4.5f), hv ? rgb(kOrange) : rgb(0x6F7B85));
+    if (hv) a.setHint(i18n::tr(hint));
+    traceRect(id + 2, q0, q1);
+    ctl(sk, id, x, y, fw, fh);
+    return hit && enabled;
+  };
 
   // ======================================================================= master band
+  // Three cards like the reference: sliders (with icon tiles), MODULATION (pad, X / Y), PLAYBACK
+  // (trigger, fit tempo + beats, options + mono + declick); logo, keyboard switch and display mode.
   {
     const iskin::Skin sk = bandSkin(BMaster);
+    kerf::card(sk, 8, 8, 118, 86, false);
+    kerf::card(sk, 130, 8, 206, 86, false);
+    kerf::card(sk, 340, 8, 222, 86, false);
     struct Sl {
       int param;
       float x;
-      const char* cap;
+      ui::Icon icon;  // Count: the pan glyph
       bool centered, classicOnly;
+      const char* id;
+      const char* tile;
       const char* hint;
     };
-    const Sl sliders[4] = {{rv.on ? SlMaster : SlVolume, 22, "LEVEL", false, false, "Master level"},
-                           {SlFine, 46, "FINE", true, true, "Fine tune (cents)"},
-                           {SlPan, 71, "PAN", true, true, "Master pan"},
-                           {SlPitch, 95, "PITCH", true, false, "Master pitch (semitones)"}};
+    const Sl sliders[4] = {{rv.on ? SlMaster : SlVolume, 22, ui::Icon::SpeakerSmall, false, false, "##slv", "##tlv", "Master level"},
+                           {SlFine, 46, ui::Icon::Detune, true, true, "##sfn", "##tfn", "Fine tune (cents)"},
+                           {SlPan, 70, ui::Icon::Count, true, true, "##spn", "##tpn", "Master pan"},
+                           {SlPitch, 94, ui::Icon::Piano, true, false, "##spt", "##tpt", "Master pitch (semitones)"}};
     for (const Sl& s : sliders) {
-      ImGui::BeginDisabled(rv.on && s.classicOnly);
-      iskin::slider(a, t, sk, s.param, s.x, 7, 20, 73, sk.c.fill, s.centered);
+      const bool off = rv.on && s.classicOnly;
+      ImGui::BeginDisabled(off);
+      iskin::slider(a, t, sk, s.param, s.x, 12, 20, 62, sk.c.fill, s.centered);
       ImGui::EndDisabled();
-      iskin::text(sk, s.x - 6, 82, 32, 10, s.cap, 7.5f, rv.on && s.classicOnly ? rgb(0x56626C) : sk.c.label, 1, false, true);
+      ctl(sk, s.id, s.x, 12, 20, 62);
+      // The tile under the slider names it (the reference's icon tiles; the hint gives the name).
+      const bool hv = ImGui::IsMouseHoveringRect(sk.at(s.x, 78), sk.at(s.x + 20, 92));
+      iskin::bevel(sk, s.x, 78, 20, 14, hv ? rgb(0x323D48) : rgb(0x26313C), rgb(0x0C1217), 2);
+      const ImU32 ic = off ? rgb(0x4E5A64) : hv ? rgb(kOrange) : rgb(0x9AA6B0);
+      const ImVec2 c = sk.at(s.x + 10, 85);
+      if (s.icon == ui::Icon::Count) iskin::glyphPan(dl, c, sk.px(4.5f), ic);
+      else ui::drawIconFit(dl, s.icon, ImVec2(c.x - sk.px(5.5f), c.y - sk.px(5.5f)), ImVec2(c.x + sk.px(5.5f), c.y + sk.px(5.5f)), ic);
+      if (hv) a.setHint(i18n::tr(s.hint));
+      ctl(sk, s.tile, s.x, 78, 20, 14);
     }
-    {  // X/Y modulation pad
-      darkWell(sk, 132, 9, 77, 77, 3);
-      const ImVec2 p0 = sk.at(132, 9), p1 = sk.at(209, 86);
+    {  // X/Y modulation pad and the X / Y wheels
+      kerf::text(sk, 220, 12, 110, 16, "MODULATION", Role::Title, titleLight);
+      darkWell(sk, 136, 14, 74, 74, 3);
+      const ImVec2 p0 = sk.at(136, 14), p1 = sk.at(210, 88);
       faintGrid(dl, p0, p1, 4, 4, 0.06f);
       const float mx = ed::val(st, SlModX, 0.5f), my = ed::val(st, SlModY, 0.5f);
       const ImVec2 c(p0.x + (p1.x - p0.x) * mx, p1.y - (p1.y - p0.y) * my);
@@ -551,36 +688,68 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       }
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
       if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Modulation X (filter cutoff) and Y (resonance): drag"));
-      iskin::wheel(a, t, sk, SlModX, 215, 33, 24, rgb(0x959EA6));
-      iskin::text(sk, 241, 37, 17, 15, "X", 11, rgb(0x959EA6), 0, false, true);
-      iskin::wheel(a, t, sk, SlModY, 215, 62, 24, rgb(0x959EA6));
-      iskin::text(sk, 241, 67, 17, 15, "Y", 11, rgb(0x959EA6), 0, false, true);
+      ctl(sk, "##xy", 136, 14, 74, 74);
+      iskin::wheel(a, t, sk, SlModX, 220, 36, 24, rgb(0x959EA6));
+      ctl(sk, "##modx", 220, 36, 24, 24);
+      kerf::text(sk, 250, 36, 14, 24, "X", Role::Title, rgb(0xB4BEC7));
+      kerf::text(sk, 266, 36, 64, 24, "CUTOFF", Role::Label, capLight);
+      iskin::wheel(a, t, sk, SlModY, 220, 64, 24, rgb(0x959EA6));
+      ctl(sk, "##mody", 220, 64, 24, 24);
+      kerf::text(sk, 250, 64, 14, 24, "Y", Role::Title, rgb(0xB4BEC7));
+      kerf::text(sk, 266, 64, 64, 24, "RES", Role::Label, capLight);
     }
-    // Slicing mode (classic engine); the region engine plays the loop's own regions.
-    iskin::text(sk, 345, 11, 76, 15, "SLICING", 8.5f, sk.c.label, 2, false, true);
-    if (rv.on) {
-      iskin::lcd(sk, 424, 9, 132, 19, "Regions of the loop", sk.c.lcdBg, sk.c.lcdText, 9);
-      if (ImGui::IsMouseHoveringRect(sk.at(424, 9), sk.at(556, 28))) a.setHint(i18n::tr("The loop brought its own regions: they play as they are stored"));
-    } else {
-      iskin::digi(a, t, sk, SlMode, 424, 9, 132, 19, {}, 10);
-    }
-    // Playback toggles: 33 / 51 / 69, options button in front of the last row.
+    // PLAYBACK: how a region plays (one choice over Hold and Play to end), fit to tempo and its beats, options, mono, declick.
+    kerf::text(sk, 346, 12, 74, 16, "PLAYBACK", Role::Title, titleLight);
+    const int trig = (ed::bval(st, SlHold) ? 1 : 0) + (ed::bval(st, SlPlayToEnd) ? 2 : 0);
+    static const char* const trigShort[4] = {i18n::N_("Region, gated"), i18n::N_("Region, one shot"), i18n::N_("To end, gated"), i18n::N_("To end, one shot")};
+    static const char* const trigLong[4] = {i18n::N_("Play the region, stop when the key is let go"), i18n::N_("Play the whole region (one shot)"),
+                                            i18n::N_("Play on to the end of the loop, stop when the key is let go"),
+                                            i18n::N_("Play on to the end of the loop (one shot)")};
     ImGui::BeginDisabled(rv.on);
-    iskin::check(a, t, sk, SlDeclick, 345, 33, 100, 16, "DECLICK", 8.5f);
-    iskin::check(a, t, sk, SlReverse, 477, 33, 85, 16, "REVERSE", 8.5f);
-    iskin::check(a, t, sk, SlMono, 345, 51, 62, 16, "MONO", 8.5f);
-    iskin::check(a, t, sk, SlHold, 411, 51, 62, 16, "HOLD", 8.5f);
-    iskin::check(a, t, sk, SlPlayToEnd, 477, 51, 88, 16, "PLAY TO END", 8.5f);
-    iskin::check(a, t, sk, SlFitTempo, 367, 69, 100, 16, "FIT TEMPO", 8.5f);
-    iskin::digi(a, t, sk, SlLoopBeats, 481, 69, 76, 16, [](double v) {
+    {
+      iskin::lcd(sk, 424, 10, 132, 20, "", sk.c.lcdBg, sk.c.lcdText, 10);
+      const std::string tl = rv.on ? std::string(i18n::tr("Regions of the loop")) : std::string(i18n::tr(trigShort[trig]));
+      kerf::text(sk, 430, 10, 112, 20, kerf::fit(sk, tl, Role::Value, 112).c_str(), Role::Value, sk.c.lcdText, 0);
+      iskin::glyphArrow(dl, sk.at(549, 20), sk.px(3.5f), sk.c.lcdText, 3);
+      ImGui::SetCursorScreenPos(sk.at(424, 10));
+      if (ImGui::InvisibleButton("##trigger", ImVec2(sk.px(132), sk.px(20)))) ImGui::OpenPopup("##ktrigger");
+      if (ImGui::IsItemHovered())
+        a.setHint(rv.on ? i18n::tr("The loop brought its own regions: they play as they are stored") : i18n::tr("How a region plays: click to choose"));
+      ctl(sk, "##trigger", 424, 10, 132, 20);
+      ImGui::SetNextWindowPos(sk.at(424, 30));
+      if (ImGui::BeginPopup("##ktrigger")) {
+        for (int m = 0; m < 4; ++m)
+          if (ImGui::MenuItem(i18n::tr(trigLong[m]), nullptr, trig == m) && trig != m) {
+            PluginState ns = st;  // both switches in one undo step
+            ns.params[static_cast<size_t>(SlHold)] = (m & 1) ? 1.f : 0.f;
+            ns.params[static_cast<size_t>(SlPlayToEnd)] = (m & 2) ? 1.f : 0.f;
+            setPluginState(a, t, ns, "region play mode");
+          }
+        ImGui::EndPopup();
+      }
+    }
+    auto togParam = [&](const char* id, int param, float x, float y, float tw, float th, const char* caption) {
+      const bool on = ed::bval(st, param);
+      const PluginInfo* info = findPlugin("gl.slicer");
+      const std::string hint = info && static_cast<size_t>(param) < info->params.size() ? info->params[static_cast<size_t>(param)].name + ": click to switch" : "";
+      if (kerf::ledToggle(a, sk, id, x, y, tw, th, caption, on, nullptr)) a.doc.setParam(t.pid(param), on ? 0 : 1, false);
+      if (ImGui::IsItemHovered() && !hint.empty()) a.setHint(hint);
+    };
+    togParam("##fittempo", SlFitTempo, 346, 38, 82, 20, "FIT TEMPO");
+    kerf::text(sk, 430, 38, 42, 20, "BEATS", Role::Label, capLight, 2);
+    iskin::digi(a, t, sk, SlLoopBeats, 476, 38, 80, 20, [](double v) {
       char b[24];
       std::snprintf(b, sizeof b, "%.0f beats", v);
       return std::string(b);
-    }, 8.5f);
+    }, 10);
+    ctl(sk, "##beats", 476, 38, 80, 20);
+    togParam("##mono", SlMono, 374, 66, 70, 20, "MONO");
+    togParam("##declick", SlDeclick, 476, 66, 80, 20, "DECLICK");
     ImGui::EndDisabled();
-    if (rv.on) dimArea(sk, 365, 31, 200, 56, 0x15202A);
+    if (rv.on) dimArea(sk, 344, 32, 214, 58, 0x1C2733);
     // Options menu (macros and settings).
-    if (kerf::deckButton(a, sk, "##options", 343, 67, 20, 20, ui::Icon::ChevronDown, "Options: key macros and playback settings")) ImGui::OpenPopup("##kerfoptions");
+    if (kerf::deckButton(a, sk, "##options", 346, 66, 20, 20, ui::Icon::ChevronDown, "Options: key macros and playback settings")) ImGui::OpenPopup("##kerfoptions");
+    ctl(sk, "##options", 346, 66, 20, 20);
     if (ImGui::BeginPopup("##kerfoptions")) {
       ImGui::TextDisabled("%s", i18n::tr("Macros"));
       if (ImGui::MenuItem(i18n::tr("Map regions upwards from the base note"), nullptr, false, classic && nSl > 0)) resetKeys();
@@ -600,16 +769,17 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       tog("Fit the loop to the tempo", SlFitTempo);
       ImGui::EndPopup();
     }
-    if (!pui::titleWordmarkIn(sk.dl(), "gl.slicer", sk.at(589, 12), sk.at(589 + 118, 12 + 40), sk.px(26), 2, sk.c.text))  // J-136: the wordmark
-      iskin::text(sk, 589, 12, 118, 40, pluginTitle("gl.slicer").c_str(), 26, rgb(kOrangeDeep), 2, false, true);
-    // Keyboard toggle and display mode.
-    if (kerf::deckButton(a, sk, "##kbbtn", 574, 61, 25, 30, ui::Icon::Piano, "Show or hide the keyboard", ui.keys ? 2 : 0)) ui.keys = !ui.keys;
+    if (!pui::titleWordmarkIn(sk.dl(), "gl.slicer", sk.at(590, 10), sk.at(706, 54), sk.px(26), 2, sk.c.text))  // J-136: the wordmark
+      iskin::text(sk, 590, 10, 116, 44, pluginTitle("gl.slicer").c_str(), 26, rgb(kOrangeDeep), 2, false, true);
+    // Keyboard switch and display mode.
+    if (kerf::deckButton(a, sk, "##kbbtn", 574, 62, 26, 30, ui::Icon::Piano, "Show or hide the keyboard", ui.keys ? 2 : 0)) ui.keys = !ui.keys;
+    ctl(sk, "##kbbtn", 574, 62, 26, 30);
     {
       const char* hints[4] = {"Display: everything", "Display: no wave editor", "Display: no region panel", "Display: compact (master band only)"};
-      iskin::bevel(sk, 604, 61, 108, 30, rgb(0x0D1318), rgb(0x05080B), 3);
+      iskin::bevel(sk, 604, 62, 108, 30, rgb(0x0D1318), rgb(0x05080B), 3);
       for (int m = 0; m < 4; ++m) {
         const float x = 606 + m * 26.0f;
-        const ImVec2 p = sk.at(x, 63), q = sk.at(x + 24, 89);
+        const ImVec2 p = sk.at(x, 64), q = sk.at(x + 24, 90);
         ImGui::SetCursorScreenPos(p);
         ImGui::PushID(m);
         if (ImGui::InvisibleButton("##disp", ImVec2(q.x - p.x, q.y - p.y))) ui.display = m;
@@ -619,13 +789,17 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         const bool on = ui.display == m;
         if (on) dl->AddRectFilled(p, q, rgb(kOrange, 0.16f), sk.px(2));
         else if (hov) dl->AddRectFilled(p, q, theme::withAlpha(IM_COL32_WHITE, 0.05f), sk.px(2));
-        kerf::bandGlyph(dl, sk.at(x + 6, 67), sk.at(x + 18, 85), m, on ? rgb(kOrange) : hov ? rgb(0xC8D0D7) : rgb(0x7C8892), rgb(0x46515A));
+        kerf::bandGlyph(dl, sk.at(x + 6, 68), sk.at(x + 18, 86), m, on ? rgb(kOrange) : hov ? rgb(0xC8D0D7) : rgb(0x7C8892), rgb(0x46515A));
       }
-      traceRect("display", sk.at(604, 61), sk.at(712, 91));
+      ctl(sk, "##display", 604, 62, 108, 30);
+      traceRect("display", sk.at(604, 62), sk.at(712, 92));
     }
   }
 
   // ======================================================================= region panel
+  // REGION card (menu, title, count; selector; KEY / CUT; AMP, FILTER, PITCH, START rows of
+  // two wheels with the per-region switches beside them), SLICES card (slicing mode, FILTER
+  // inset) and the view column (target tabs, part row, view, knob row).
   if (shown[BRegion]) {
     const iskin::Skin sk = bandSkin(BRegion);
     {
@@ -635,47 +809,51 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       dl->AddLine(p, ImVec2(q.x, p.y), theme::withAlpha(IM_COL32_WHITE, 0.16f));
       dl->AddLine(ImVec2(p.x, q.y - 1), ImVec2(q.x, q.y - 1), IM_COL32(0, 0, 0, 90));
     }
-    // ---- left column: region menu, selector, key / cut, wheels.
-    panelWell(sk, 10, 106, 158, 189, 0x5A6166);
-    if (!smp) {  // nothing loaded: the wordmark and a load button (click anywhere in the column)
-      const ImVec2 p = sk.at(11, 107), q = sk.at(167, 294);
+    // ---- REGION card.
+    kerf::card(sk, 8, 104, 162, 190, true);
+    if (!smp) {  // nothing loaded: the wordmark and a load button
+      const ImVec2 p = sk.at(9, 105), q = sk.at(169, 293);
       dl->AddRectFilledMultiColor(p, q, rgb(0x4C5358), rgb(0x4C5358), rgb(0x40464B), rgb(0x40464B));
-      if (!pui::titleWordmarkIn(dl, "gl.slicer", sk.at(24, 150), sk.at(154, 190), sk.px(30), 1, rgb(0xDCE2E7)))
-        iskin::text(sk, 24, 150, 130, 40, pluginTitle("gl.slicer").c_str(), 26, rgb(0xDCE2E7), 1, false, true);
-      iskin::text(sk, 16, 196, 146, 14, "No loop loaded", 8.5f, rgb(0xB5BDC4), 1, false, false);
+      if (!pui::titleWordmarkIn(dl, "gl.slicer", sk.at(24, 146), sk.at(154, 186), sk.px(30), 1, rgb(0xDCE2E7)))
+        iskin::text(sk, 24, 146, 130, 40, pluginTitle("gl.slicer").c_str(), 26, rgb(0xDCE2E7), 1, false, true);
+      kerf::text(sk, 14, 192, 150, 18, i18n::tr("No loop loaded"), Role::Body, rgb(0xB5BDC4), 1);
       if (kerf::deckButton(a, sk, "##loadbig", 39, 222, 100, 26, ui::Icon::Open, "Load a loop", false, false, i18n::tr("Load a loop"))) loadLoop();
+      ctl(sk, "##loadbig", 39, 222, 100, 26);
       traceRect("loadbig", sk.at(39, 222), sk.at(139, 248));
     } else {
-      if (kerf::deckButton(a, sk, "##rmenu", 13, 110, 18, 19, ui::Icon::Menu, "Region menu")) ImGui::OpenPopup("##regionmenu");
+      if (kerf::deckButton(a, sk, "##rmenu", 12, 108, 18, 18, ui::Icon::Menu, "Region menu")) ImGui::OpenPopup("##regionmenu");
+      ctl(sk, "##rmenu", 12, 108, 18, 18);
       if (ImGui::BeginPopup("##regionmenu")) {
         if (ImGui::MenuItem(i18n::tr("Previous region"), nullptr, false, k > 0)) selectRegion(k - 1);
         if (ImGui::MenuItem(i18n::tr("Next region"), nullptr, false, k + 1 < nSl)) selectRegion(k + 1);
         if (ImGui::MenuItem(i18n::tr("Play region"), nullptr, false, nSl > 0 && sliceKey(k) >= 0)) audition(k);
         if (ImGui::MenuItem(i18n::tr("Show region"), nullptr, false, nSl > 0)) fitRegion(k);
         ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Rename the region..."), nullptr, false, canRename(k))) beginRename(k);
         if (ImGui::MenuItem(i18n::tr("Reset this region's settings"), nullptr, false, classic && nSl > 0 && hasParams)) resetRegion(kp, false);
         if (ImGui::MenuItem(i18n::tr("Back to its automatic key"), nullptr, false, classic && nSl > 0 && hasParams)) a.doc.setParam(t.pid(slParam2(kp, SliceKey)), -1, false);
         ImGui::EndPopup();
       }
-      iskin::text(sk, 36, 110, 128, 19, "REGION", 7.5f, rgb(0x262C31), 0, false, true);
+      kerf::text(sk, 34, 108, 70, 18, "REGION", Role::Title, titleDarkCol);
       {
         char cnt[24];
         std::snprintf(cnt, sizeof cnt, "%d / %d", nSl > 0 ? k + 1 : 0, nSl);
-        iskin::text(sk, 90, 110, 74, 19, cnt, 7.5f, rgb(0x30373C), 2, true, false);
+        kerf::text(sk, 106, 108, 60, 18, cnt, Role::Eyebrow, rgb(0x30373C), 2);
       }
-      const std::string cur = nSl > 0 ? regionLabel(k) : std::string("(no regions)");
-      iskin::lcd(sk, 14, 131, 150, 19, "", sk.c.lcdBg, sk.c.lcdText, 9);
-      clipText(dl, a.fontMono, std::max(8.0f, sk.px(9)), sk.at(19, 131), sk.at(150, 150), sk.c.lcdText, cur);
-      iskin::glyphArrow(dl, sk.at(157, 140.5f), sk.px(3.5f), sk.c.lcdText, 3);
-      ImGui::SetCursorScreenPos(sk.at(14, 131));
-      ImGui::InvisibleButton("##rsel", ImVec2(sk.px(150), sk.px(19)));
+      const std::string cur = nSl > 0 ? regionLabel(k) : std::string(i18n::tr("(no regions)"));
+      iskin::lcd(sk, 12, 130, 154, 20, "", sk.c.lcdBg, sk.c.lcdText, 10);
+      kerf::text(sk, 17, 130, 134, 20, kerf::fit(sk, cur, Role::Value, 134).c_str(), Role::Value, sk.c.lcdText, 0);
+      iskin::glyphArrow(dl, sk.at(158, 140), sk.px(3.5f), sk.c.lcdText, 3);
+      ImGui::SetCursorScreenPos(sk.at(12, 130));
+      ImGui::InvisibleButton("##rsel", ImVec2(sk.px(154), sk.px(20)));
       if (ImGui::IsItemClicked() && nSl > 0) ImGui::OpenPopup("##regionlist");
       if (ImGui::IsItemHovered()) {
         a.setHint(i18n::tr("Current region: click for the list, mouse wheel to step"));
         const float wh = ImGui::GetIO().MouseWheel;
         if (wh != 0 && nSl > 0) selectRegion(k + (wh > 0 ? -1 : 1));
       }
-      ImGui::SetNextWindowPos(sk.at(14, 150));
+      ctl(sk, "##rsel", 12, 130, 154, 20);
+      ImGui::SetNextWindowPos(sk.at(12, 150));
       if (ImGui::BeginPopup("##regionlist")) {
         const float rowH = ImGui::GetTextLineHeightWithSpacing();
         ImGui::BeginChild("##rlist", ImVec2(std::max(sk.px(220), 220.0f), std::min(16, std::max(1, nSl)) * rowH + 4), ImGuiChildFlags_None);
@@ -695,68 +873,97 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         ImGui::EndChild();
         ImGui::EndPopup();
       }
-      // Key and cut group (row 157), region wheels (rows 185 / 213 / 241 / 269), switches beside them.
-      auto rw = [&](int param, float x, float y, const char* cap, bool capLeft) {
-        iskin::wheel(a, t, sk, param, x, y, 23, sk.c.fill);
-        if (capLeft) capDark(sk, 12, y, x - 14, 23, cap, 2);
-        else capDark(sk, x + 25, y, 26, 23, cap, 0);
+      // Rows: label column 12..56, wheels at 58 and 86 (24), switch / value column 114..168; 28 apart.
+      auto rowLabel = [&](float y, float h, const char* s) { kerf::text(sk, 12, y, 44, h, s, Role::Label, capDarkCol, 0); };
+      auto rw = [&](const char* id, int param, float x, float y) {
+        iskin::wheel(a, t, sk, param, x, y, 24, sk.c.fill);
+        ctl(sk, id, x, y, 24, 24);
+      };
+      auto regionToggle = [&](const char* id, int param, float y, const char* caption) {
+        const bool on = ed::bval(st, param);
+        if (kerf::ledToggle(a, sk, id, 116, y, 52, 24, caption, on, nullptr, true)) a.doc.setParam(t.pid(param), on ? 0 : 1, false);
+        if (ImGui::IsItemHovered()) a.setHint(std::string(i18n::tr(caption)) + ": " + (on ? i18n::tr("on") : i18n::tr("off")) + "   " + i18n::tr("(click to switch)"));
       };
       if (hasParams || nSl == 0) {
         ImGui::BeginDisabled(nSl == 0);
-        capDark(sk, 12, 157, 24, 23, "KEY", 2);
-        iskin::digi(a, t, sk, slParam2(kp, SliceKey), 40, 158, 52, 21, [&](double v) {
+        rowLabel(156, 22, "KEY");
+        iskin::digi(a, t, sk, slParam2(kp, SliceKey), 58, 156, 52, 22, [&](double v) {
           int n = static_cast<int>(std::lround(v));
           if (n < 0) return keyName(k) + "*";  // automatic: the key the region gets
           return ed::noteName(n);
-        }, 9);
-        capDark(sk, 96, 157, 23, 23, "CUT", 2);
-        iskin::digi(a, t, sk, slParam2(kp, SliceCut), 121, 158, 27, 21, [](double v) {
+        }, 10);
+        ctl(sk, "##key", 58, 156, 52, 22);
+        kerf::text(sk, 114, 156, 26, 22, "CUT", Role::Label, capDarkCol, 2);
+        iskin::digi(a, t, sk, slParam2(kp, SliceCut), 142, 156, 26, 22, [](double v) {
           int n = static_cast<int>(std::lround(v));
           return n <= 0 ? std::string("-") : std::to_string(n);
-        }, 9);
-        rw(slParam(kp, SlicePan), 46, 185, "PAN", true);
-        rw(slParam(kp, SliceGain), 72, 185, "VOL", false);
-        rw(slParam(kp, SlicePitch), 72, 241, "PITCH", false);
-        rw(slParam2(kp, SliceDelay), 46, 269, "DELAY", true);
-        capDark(sk, 121, 232, 44, 9, "END");
-        iskin::digi(a, t, sk, slParam2(kp, SliceEnd), 121, 243, 44, 18, [](double v) {
+        }, 10);
+        ctl(sk, "##cut", 142, 156, 26, 22);
+        rowLabel(184, 24, "AMP");
+        rw("##rpan", slParam(kp, SlicePan), 58, 184);
+        rw("##rvol", slParam(kp, SliceGain), 86, 184);
+        rowLabel(212, 24, "FILTER");
+        rowLabel(240, 24, "PITCH");
+        rw("##rpitch", slParam(kp, SlicePitch), 86, 240);
+        kerf::text(sk, 114, 240, 26, 24, "END", Role::Label, capDarkCol, 2);
+        iskin::digi(a, t, sk, slParam2(kp, SliceEnd), 142, 240, 26, 24, [](double v) {
           if (v < 0) return std::string("next");
           char b[16];
-          std::snprintf(b, sizeof b, "%.1f%%", v * 100);
+          std::snprintf(b, sizeof b, "%.0f%%", v * 100);
           return std::string(b);
-        }, 8);
+        }, 9.5f);
+        ctl(sk, "##end", 142, 240, 26, 24);
+        rowLabel(268, 24, "START");
+        rw("##rdelay", slParam2(kp, SliceDelay), 58, 268);
         ImGui::EndDisabled();
         ImGui::BeginDisabled(nSl == 0 || rv.on);  // classic engine only
-        rw(slParam(kp, SliceCutoff), 46, 213, "CUT", true);
-        rw(slParam2(kp, SliceReso), 72, 213, "RES", false);
-        rw(slParam(kp, SliceStart), 72, 269, "START", false);
-        iskin::check(a, t, sk, slParam(kp, SliceReverse), 121, 186, 46, 20, "REV", 8);
-        iskin::check(a, t, sk, slParam(kp, SliceMute), 121, 208, 46, 20, "MUTE", 8);
+        rw("##rcut", slParam(kp, SliceCutoff), 58, 212);
+        rw("##rres", slParam2(kp, SliceReso), 86, 212);
+        rw("##rstart", slParam(kp, SliceStart), 86, 268);
+        regionToggle("##rrev", slParam(kp, SliceReverse), 184, "REV");
+        regionToggle("##rmute", slParam(kp, SliceMute), 212, "MUTE");
         ImGui::EndDisabled();
         if (rv.on) {
-          dimArea(sk, 12, 211, 100, 27, 0x5A6166);
-          dimArea(sk, 70, 267, 52, 27, 0x5A6166);
-          dimArea(sk, 119, 184, 48, 46, 0x5A6166);
+          dimArea(sk, 56, 210, 56, 28, 0x5A6166);
+          dimArea(sk, 84, 266, 28, 28, 0x5A6166);
+          dimArea(sk, 114, 182, 56, 56, 0x5A6166);
         }
       } else {  // regions past the 64 slice parameters: their imported settings play as they are
-        iskin::text(sk, 14, 175, 150, 14, "This region plays with", 8, rgb(0x262C31), 1, false, true);
-        iskin::text(sk, 14, 189, 150, 14, "its imported settings.", 8, rgb(0x262C31), 1, false, true);
-        iskin::text(sk, 14, 215, 150, 14, "Regions 1 to 64 can", 8, rgb(0x262C31), 1, false, true);
-        iskin::text(sk, 14, 229, 150, 14, "be edited here.", 8, rgb(0x262C31), 1, false, true);
+        kerf::text(sk, 14, 172, 150, 16, i18n::tr("This region plays with"), Role::Body, capDarkCol, 1);
+        kerf::text(sk, 14, 188, 150, 16, i18n::tr("its imported settings."), Role::Body, capDarkCol, 1);
+        kerf::text(sk, 14, 214, 150, 16, i18n::tr("Regions 1 to 64 can"), Role::Body, capDarkCol, 1);
+        kerf::text(sk, 14, 230, 150, 16, i18n::tr("be edited here."), Role::Body, capDarkCol, 1);
       }
     }
-    // ---- filter column (classic engine): title, type, response, attack / cutoff / resonance.
+    // ---- SLICES card: slicing mode, FILTER inset (type, response, cutoff / resonance).
     {
-      panelWell(sk, 173, 106, 160, 189, 0x5A6166);
+      kerf::card(sk, 174, 104, 160, 190, true);
+      kerf::text(sk, 180, 108, 80, 18, "SLICES", Role::Title, titleDarkCol);
       ImGui::BeginDisabled(rv.on);
-      iskin::bevel(sk, 177, 131, 152, 24, rgb(0x3B4247), rgb(0x2A3035), 3);
-      iskin::text(sk, 177, 131, 152, 24, "FILTER", 10, rgb(0xC9D1D8), 1, false, true);
-      capDark(sk, 180, 160, 60, 18, "TYPE");
-      iskin::digi(a, t, sk, SlFilterType, 244, 160, 84, 18, {}, 9);
-      // Response curve (vector sketch of the chosen type at the cutoff and resonance).
-      darkWell(sk, 180, 183, 148, 44, 3);
       {
-        const ImVec2 p0 = sk.at(182, 185), p1 = sk.at(326, 225);
+        static const ui::Icon icons[6] = {ui::Icon::SliceWave, ui::Icon::Count, ui::Icon::Count, ui::Icon::Count, ui::Icon::Count, ui::Icon::ToolDraw};
+        static const char* const labels[6] = {nullptr, "4", "8", "16", "32", nullptr};
+        static const char* const hints[6] = {"Slice at the hits (transients)", "Four even slices", "Eight even slices", "Sixteen even slices",
+                                             "Thirty-two even slices", "Slice at the markers set by hand"};
+        const int mc = kerf::segmented(a, sk, "##slmode", 178, 130, 152, 20, labels, icons, 6, classic ? ed::ival(st, SlMode) : -1, hints, false);
+        if (mc >= 0) {
+          if (mc == SlModeManual) makeManual(a, t, st, starts, smp.get());
+          if (mc != SlModeManual || !smp) setMode(mc);
+        }
+        traceRect("slmode", sk.at(178, 130), sk.at(330, 150));
+      }
+      iskin::bevel(sk, 178, 158, 152, 132, rgb(0x50575C), rgb(0x3F454A), 3);
+      kerf::text(sk, 184, 160, 70, 18, "FILTER", Role::Title, titleDarkCol);
+      {
+        static const char* const types[4] = {"OFF", "LP", "HP", "BP"};
+        static const char* const typeHints[4] = {"No filter", "Low pass", "High pass", "Band pass"};
+        const int tc = kerf::segmented(a, sk, "##ftype", 184, 180, 140, 20, types, nullptr, 4, ed::ival(st, SlFilterType), typeHints, true);
+        if (tc >= 0) a.doc.setParam(t.pid(SlFilterType), tc, false);
+      }
+      // Response curve (vector sketch of the chosen type at the cutoff and resonance).
+      darkWell(sk, 184, 204, 140, 28, 3);
+      {
+        const ImVec2 p0 = sk.at(186, 206), p1 = sk.at(322, 230);
         faintGrid(dl, p0, p1, 6, 2, 0.05f);
         const int ft = ed::ival(st, SlFilterType);
         const double fc = ed::val(st, SlCutoff, 20000), q = ed::val(st, SlReso, 0);
@@ -778,62 +985,82 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
           dl->AddQuadFilled(ImVec2(pts[i - 1].x, p1.y), pts[i - 1], pts[i], ImVec2(pts[i].x, p1.y), theme::withAlpha(cc, 0.10f));
         dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), cc, 0, std::max(1.2f, sk.px(1.4f)));
       }
-      iskin::wheel(a, t, sk, SlAttack, 191, 236, 36, sk.c.fill2);
-      iskin::wheel(a, t, sk, SlCutoff, 231, 231, 46, sk.c.fill2);
-      iskin::wheel(a, t, sk, SlReso, 281, 236, 36, sk.c.fill2);
+      ctl(sk, "##fresp", 184, 204, 140, 28);
+      iskin::wheel(a, t, sk, SlCutoff, 204, 236, 34, sk.c.fill2);
+      ctl(sk, "##fcut", 204, 236, 34, 34);
+      iskin::wheel(a, t, sk, SlReso, 270, 236, 34, sk.c.fill2);
+      ctl(sk, "##fres", 270, 236, 34, 34);
       ImGui::EndDisabled();
-      capDark(sk, 185, 280, 48, 10, "ATTACK", 1);
-      capDark(sk, 226, 280, 56, 10, "CUTOFF", 1);
-      capDark(sk, 275, 280, 48, 10, "RES", 1);
-      if (rv.on) dimArea(sk, 174, 107, 158, 187, 0x5A6166);
+      kerf::text(sk, 188, 272, 66, 14, "CUTOFF", Role::Label, capDarkCol, 1);
+      kerf::text(sk, 254, 272, 66, 14, "RES", Role::Label, capDarkCol, 1);
+      if (rv.on) dimArea(sk, 175, 128, 158, 165, 0x5A6166);
     }
-    // ---- view column: target tabs, part tabs, the view and its row.
+    // ---- view column: target tabs, part row, the view and its knob row.
     {
-      const float ex = 338, ew = 367;
+      const float ex = 338, ew = 368;
       const ImU32 acc = rgb(kOrange);
       const char* targets[3] = {"AMP", "REGION", "DETECT"};
       const char* targetHints[3] = {"Amp envelope and velocity", "The selected region", "How the loop is sliced"};
       const bool targetOn[3] = {classic, true, classic};
-      const int tc = kerf::tabStrip(a, sk, "##target", ex, 107, ew, 15, targets, 3, ui.tab, targetOn, targetHints, acc);
+      const int tc = kerf::tabStrip(a, sk, "##target", ex, 106, ew, 16, targets, 3, ui.tab, targetOn, targetHints, acc);
       if (tc >= 0) ui.tab = tc;
-      traceRect("tab_amp", sk.at(ex, 107), sk.at(ex + ew / 3, 122));
-      traceRect("tab_region", sk.at(ex + ew / 3, 107), sk.at(ex + ew * 2 / 3, 122));
-      traceRect("tab_detect", sk.at(ex + ew * 2 / 3, 107), sk.at(ex + ew, 122));
-      darkWell(sk, ex, 139, ew, 120, 3);
-      const ImVec2 p0 = sk.at(ex + 5, 145), p1 = sk.at(ex + ew - 5, 253);
+      ctl(sk, "##target", ex, 106, ew, 16);
+      traceRect("tab_amp", sk.at(ex, 106), sk.at(ex + ew / 3, 122));
+      traceRect("tab_region", sk.at(ex + ew / 3, 106), sk.at(ex + ew * 2 / 3, 122));
+      traceRect("tab_detect", sk.at(ex + ew * 2 / 3, 106), sk.at(ex + ew, 122));
+      darkWell(sk, ex, 142, ew, 116, 3);
+      ctl(sk, "##view", ex, 142, ew, 116);
+      const ImVec2 p0 = sk.at(ex + 5, 148), p1 = sk.at(ex + ew - 5, 252);
+      // A knob of the row under the view with its caption to the right.
+      auto knobCell = [&](const char* id, int param, float x, float capW, const char* cap) {
+        iskin::wheel(a, t, sk, param, x, 264, 24, sk.c.fill);
+        ctl(sk, id, x, 264, 24, 24);
+        kerf::text(sk, x + 28, 264, capW, 24, cap, Role::Label, capDarkCol, 0);
+      };
+      auto infoStrip = [&](const std::string& s) {
+        iskin::bevel(sk, ex, 124, ew, 16, rgb(0x262D33), rgb(0x161B20), 2);
+        kerf::text(sk, ex + 6, 124, ew - 12, 16, kerf::fit(sk, s, Role::Body, ew - 12).c_str(), Role::Body, rgb(0xB9C3CC), 0);
+        ctl(sk, "##part", ex, 124, ew, 16);
+      };
       if (ui.tab == 1) {  // ---- the selected region
-        char info[128] = "-";
+        char info[160] = "-";
         if (nSl > 0 && smp) {
           const double s0 = static_cast<double>(starts[static_cast<size_t>(k)]), s1 = sliceEnd(k);
-          std::snprintf(info, sizeof info, "%d of %d  \xC2\xB7  from %s  \xC2\xB7  %s long  \xC2\xB7  key %s", k + 1, nSl, fmtTime(s0 / rate).c_str(),
-                        fmtTime((s1 - s0) / rate).c_str(), keyName(k).c_str());
+          std::snprintf(info, sizeof info, "%s %d / %d  \xC2\xB7  %s %s  \xC2\xB7  %s %s  \xC2\xB7  %s %s", i18n::tr("Region"), k + 1, nSl, i18n::tr("from"),
+                        posText(s0).c_str(), fmtTime((s1 - s0) / rate).c_str(), i18n::tr("long"), i18n::tr("key"), keyName(k).c_str());
         }
-        iskin::bevel(sk, ex, 123, ew, 15, rgb(0x262D33), rgb(0x161B20), 2);
-        iskin::text(sk, ex + 6, 123, ew - 12, 15, info, 8, rgb(0xB9C3CC), 0, true, false);
+        infoStrip(info);
         if (nSl > 0 && smp) {
           const auto [s0, s1] = regionSpan(k);
           kerf::WaveStyle ws;
           ws.peak = rgb(0xF0B060, 0.85f), ws.rms = rgb(0xFFD9A0), ws.edge = rgb(0xFFE2B8, 0.55f), ws.centre = theme::withAlpha(IM_COL32_WHITE, 0.08f);
           faintGrid(dl, p0, p1, 8, 2, 0.04f);
+          dl->PushClipRect(p0, p1, true);  // (a very short region draws its samples past the view)
           kerf::drawWave(dl, smp.get(), p0, p1, s0 * frames, std::max(s0 * frames + 1, s1 * frames), ws);
+          dl->PopClipRect();
           ImGui::SetCursorScreenPos(p0);
           ImGui::InvisibleButton("##rprev", ImVec2(p1.x - p0.x, p1.y - p0.y));
           if (ImGui::IsItemClicked()) audition(k);
           if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Click: play the region"));
         } else {
-          iskin::text(sk, ex, 139, ew, 120, smp ? "No regions" : "Load a loop to see its regions", 9, rgb(0x6E7A85), 1, false, false);
+          kerf::text(sk, ex, 142, ew, 116, smp ? i18n::tr("No regions") : i18n::tr("Load a loop to see its regions"), Role::Body, rgb(0x6E7A85), 1);
         }
-        // Row: step through the regions, the region's name.
-        if (kerf::deckButton(a, sk, "##rpv", ex, 263, 24, 26, ui::Icon::ChevronLeft, "Previous region") && k > 0) selectRegion(k - 1);
-        if (kerf::deckButton(a, sk, "##rnx", ex + 26, 263, 24, 26, ui::Icon::Right, "Next region") && k + 1 < nSl) selectRegion(k + 1);
-        if (kerf::deckButton(a, sk, "##rplay", ex + 52, 263, 24, 26, ui::Icon::Play, "Play the region") && nSl > 0) audition(k);
+        // Row: step through the regions, play it, show it; its name (click: rename, also on the wave's switch row).
+        if (kerf::deckButton(a, sk, "##rpv", ex + 2, 264, 24, 24, ui::Icon::ChevronLeft, "Previous region") && k > 0) selectRegion(k - 1);
+        if (kerf::deckButton(a, sk, "##rnx", ex + 28, 264, 24, 24, ui::Icon::Chevron, "Next region") && k + 1 < nSl) selectRegion(k + 1);
+        if (kerf::deckButton(a, sk, "##rplay", ex + 54, 264, 24, 24, ui::Icon::Play, "Play the region") && nSl > 0) audition(k);
+        if (kerf::deckButton(a, sk, "##rshow", ex + 80, 264, 24, 24, ui::Icon::ScrollTo, "Show the whole region on the wave view") && nSl > 0) fitRegion(k);
+        ctl(sk, "##rpv", ex + 2, 264, 24, 24), ctl(sk, "##rnx", ex + 28, 264, 24, 24), ctl(sk, "##rplay", ex + 54, 264, 24, 24),
+            ctl(sk, "##rshow", ex + 80, 264, 24, 24);
         const std::string nm = nSl > 0 ? regionName(k) : std::string();
-        iskin::text(sk, ex + 84, 263, ew - 88, 26, nm.empty() ? (nSl > 0 ? "(unnamed region)" : "") : nm.c_str(), 9, nm.empty() ? rgb(0xA9B2BA) : sk.c.text, 0, false, true);
-      } else if (ui.tab == 0) {  // ---- amp: envelope or velocity
-        const char* parts[2] = {"ENVELOPE", "VELOCITY"};
+        kerf::text(sk, ex + 112, 264, ew - 116, 24, kerf::fit(sk, nm.empty() ? std::string(nSl > 0 ? i18n::tr("(unnamed region)") : "") : nm, Role::Body, ew - 116).c_str(),
+                   Role::Body, nm.empty() ? rgb(0x30373C) : capDarkCol, 0);
+      } else if (ui.tab == 0) {  // ---- amp: shape or velocity
+        const char* parts[2] = {"SHAPE", "VELOCITY"};
         const char* partHints[2] = {"Attack, release and the fades of every region", "How strongly velocity sets the level"};
-        const int pc = kerf::tabStrip(a, sk, "##amppart", ex, 123, ew, 15, parts, 2, ui.ampPart, nullptr, partHints, acc);
+        const int pc = kerf::tabStrip(a, sk, "##amppart", ex, 124, ew, 16, parts, 2, ui.ampPart, nullptr, partHints, acc);
         if (pc >= 0) ui.ampPart = pc;
+        ctl(sk, "##part", ex, 124, ew, 16);
         auto X = [&](double u) { return p0.x + static_cast<float>(u) * (p1.x - p0.x); };
         auto Y = [&](double v) { return p1.y - static_cast<float>(v) * (p1.y - p0.y); };
         faintGrid(dl, p0, p1, 8, 4, 0.04f);
@@ -857,48 +1084,39 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
             } else {
               v = fo > 0 ? 0.0 : 1.0 - (u - fa - fb) / fr;
             }
-            pts.push_back(ImVec2(X(u), Y(std::clamp(v, 0.0, 1.0) * 0.92)));
+            pts.push_back(ImVec2(X(u), Y(std::clamp(v, 0.0, 1.0) * 0.86)));
           }
           kerf::dashedLine(dl, ImVec2(X(fa), p0.y), ImVec2(X(fa), p1.y), theme::withAlpha(IM_COL32_WHITE, 0.16f), 3, 3);
           kerf::dashedLine(dl, ImVec2(X(fa + fb), p0.y), ImVec2(X(fa + fb), p1.y), theme::withAlpha(IM_COL32_WHITE, 0.16f), 3, 3);
-          iskin::text(sk, ex + 8, 143, 60, 10, "ATTACK", 6.5f, rgb(0x6F7B85), 0, false, true);
-          iskin::text(sk, ex + ew - 68, 143, 60, 10, "RELEASE", 6.5f, rgb(0x6F7B85), 2, false, true);
-          const struct {
-            int p;
-            const char* c;
-          } ws[4] = {{SlRelease, "RELEASE"}, {SlFadeIn, "FADE IN"}, {SlFadeOut, "FADE OUT"}, {SlChromatic, "CHROMATIC"}};
-          for (int i = 0; i < 4; ++i) {
-            iskin::wheel(a, t, sk, ws[i].p, ex + 4 + i * 92, 265, 22, sk.c.fill);
-            capDark(sk, ex + 29 + i * 92, 265, 62, 22, ws[i].c);
-          }
+          kerf::text(sk, ex + 8, 146, 80, 14, "ATTACK", Role::Eyebrow, rgb(0x6F7B85), 0);
+          kerf::text(sk, ex + ew - 88, 146, 80, 14, "RELEASE", Role::Eyebrow, rgb(0x6F7B85), 2);
+          knobCell("##katt", SlAttack, ex + 2, 62, "ATTACK");
+          knobCell("##krel", SlRelease, ex + 94, 62, "RELEASE");
+          knobCell("##kfin", SlFadeIn, ex + 186, 62, "FADE IN");
+          knobCell("##kfout", SlFadeOut, ex + 278, 62, "FADE OUT");
         } else {
           const double amt = ed::val(st, SlVelocity, 1);
           for (int i = 0; i <= 60; ++i) {
             const double u = i / 60.0;
-            pts.push_back(ImVec2(X(u), Y((1.0 - amt + amt * u) * 0.92)));
+            pts.push_back(ImVec2(X(u), Y((1.0 - amt + amt * u) * 0.86)));
           }
-          iskin::text(sk, ex + 8, 240, 120, 10, "SOFT", 6.5f, rgb(0x6F7B85), 0, false, true);
-          iskin::text(sk, ex + ew - 128, 240, 120, 10, "HARD", 6.5f, rgb(0x6F7B85), 2, false, true);
-          iskin::wheel(a, t, sk, SlVelocity, ex + 4, 265, 22, sk.c.fill);
-          capDark(sk, ex + 29, 265, 120, 22, "VELOCITY TO LEVEL");
-          iskin::wheel(a, t, sk, SlVolume, ex + 188, 265, 22, sk.c.fill);
-          capDark(sk, ex + 213, 265, 80, 22, "LEVEL");
+          kerf::text(sk, ex + 8, 236, 80, 14, "SOFT", Role::Eyebrow, rgb(0x6F7B85), 0);
+          kerf::text(sk, ex + ew - 88, 236, 80, 14, "HARD", Role::Eyebrow, rgb(0x6F7B85), 2);
+          knobCell("##kvel", SlVelocity, ex + 2, 62, "VELOCITY");
+          knobCell("##klev", SlVolume, ex + 94, 62, "LEVEL");
+          knobCell("##kchr", SlChromatic, ex + 186, 120, "CHROMATIC");
         }
         for (size_t i = 1; i < pts.size(); ++i) {
           const ImU32 tc0 = rgb(kOrange, 0.20f), tc1 = rgb(kOrange, 0.02f);
           dl->AddRectFilledMultiColor(ImVec2(pts[i - 1].x, std::min(pts[i - 1].y, pts[i].y)), ImVec2(pts[i].x, p1.y), tc0, tc0, tc1, tc1);
         }
         dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), rgb(kOrange), 0, std::max(1.4f, sk.px(1.8f)));
-        traceRect("part_vel", sk.at(ex + ew / 2, 123), sk.at(ex + ew, 138));
-      } else {  // ---- detection: methods, the loop with its cuts, sensitivity / gap
-        const char* modes[6] = {"HITS", "4", "8", "16", "32", "HAND"};
-        const char* modeHints[6] = {"Slice at the hits (transients)", "Four even slices", "Eight even slices", "Sixteen even slices",
-                                    "Thirty-two even slices", "Slice at the markers set by hand"};
-        const int mc = kerf::tabStrip(a, sk, "##detmode", ex, 123, ew, 15, modes, 6, ed::ival(st, SlMode), nullptr, modeHints, acc);
-        if (mc >= 0) {
-          if (mc == SlModeManual) makeManual(a, t, st, starts, smp.get());
-          if (mc != SlModeManual || !smp) setMode(mc);
-        }
+        traceRect("part_vel", sk.at(ex + ew / 2, 124), sk.at(ex + ew, 140));
+      } else {  // ---- detection: the loop with its cuts, sensitivity / gap (the mode is the SLICES card's)
+        char b[96];
+        std::snprintf(b, sizeof b, "%d %s  \xC2\xB7  %.1f BPM  \xC2\xB7  %s", nSl, i18n::tr("slices"), tempoEst,
+                      ed::ival(st, SlMode) == 0 ? i18n::tr("cut at the hits") : manual ? i18n::tr("cut at the markers") : i18n::tr("even slices"));
+        infoStrip(smp ? b : i18n::tr("No loop loaded"));
         if (smp) {
           kerf::WaveStyle ws;
           ws.peak = rgb(0x5D7C99, 0.9f), ws.rms = rgb(0x86A9C8), ws.centre = theme::withAlpha(IM_COL32_WHITE, 0.06f);
@@ -907,28 +1125,27 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
             const float x = std::round(p0.x + static_cast<float>(static_cast<double>(starts[static_cast<size_t>(s)]) / frames) * (p1.x - p0.x)) + 0.5f;
             dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), s == k ? rgb(kOrange) : rgb(kOrangeDeep, 0.6f));
           }
-          char b[48];
-          std::snprintf(b, sizeof b, "%d slices", nSl);
-          iskin::text(sk, ex + ew - 108, 141, 100, 12, b, 7.5f, rgb(0xB9C3CC), 2, true, false);
         } else {
-          iskin::text(sk, ex, 139, ew, 120, "Load a loop to see where it is cut", 9, rgb(0x6E7A85), 1, false, false);
+          kerf::text(sk, ex, 142, ew, 116, i18n::tr("Load a loop to see where it is cut"), Role::Body, rgb(0x6E7A85), 1);
         }
         const bool detect = ed::ival(st, SlMode) == 0;
         ImGui::BeginDisabled(!detect);
-        iskin::wheel(a, t, sk, SlSensitivity, ex + 4, 265, 22, sk.c.fill);
-        iskin::wheel(a, t, sk, SlMinGap, ex + 96, 265, 22, sk.c.fill);
+        knobCell("##ksens", SlSensitivity, ex + 2, 80, "SENSITIVITY");
+        knobCell("##kgap", SlMinGap, ex + 114, 62, "MIN GAP");
         ImGui::EndDisabled();
-        capDark(sk, ex + 29, 265, 62, 22, "SENSITIVITY");
-        capDark(sk, ex + 121, 265, 62, 22, "MIN GAP");
-        if (!detect) dimArea(sk, ex + 2, 263, 184, 26, 0x5F676C);
-        if (kerf::deckButton(a, sk, "##detedit", ex + ew - 120, 263, 120, 26, ui::Icon::ToolDraw, "Edit the cuts by hand on the wave view", manual, false,
+        if (!detect) dimArea(sk, ex, 262, 206, 28, 0x5F676C);
+        if (kerf::deckButton(a, sk, "##detedit", ex + ew - 122, 264, 120, 24, ui::Icon::ToolDraw, "Edit the cuts by hand on the wave view", manual, false,
                              i18n::tr("Edit by hand")))
           makeManual(a, t, st, starts, smp.get());
+        ctl(sk, "##detedit", ex + ew - 122, 264, 120, 24);
       }
     }
   }
 
   // ======================================================================= deck bar
+  // Row 1 (298, 32 high): flat transport; menus File, Sample | Edit, Tools, Regions | View, Snap,
+  // Select, Zoom; tools Undo, Redo, nudge left / right, marker | hand, add, auto, dump | clear, drag.
+  // Row 2: captions over values (rate, channels, tempo, ruler unit, title, length) and view switches.
   if (shown[BDeck]) {
     const iskin::Skin sk = bandSkin(BDeck);
     {
@@ -936,7 +1153,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       iskin::bevel(sk, 0, 296, kSxW, 66, rgb(0x293136), 0, 0);
       dl->AddRectFilledMultiColor(p, q, rgb(0x2E373D), rgb(0x2E373D), rgb(0x232A2F), rgb(0x232A2F));
       dl->AddLine(p, ImVec2(q.x, p.y), theme::withAlpha(IM_COL32_WHITE, 0.07f));
-      dl->AddLine(sk.at(0, 337), sk.at(kSxW, 337), IM_COL32(0, 0, 0, 60));
+      dl->AddLine(sk.at(0, 332), sk.at(kSxW, 332), IM_COL32(0, 0, 0, 60));
     }
     // Transport: loop, play the selected region / stop. J-110: the button follows
     // what sounds: the engine's Stop / panic / focus loss (stop epoch) and the
@@ -949,8 +1166,8 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       pl.latch.stop();
       pl.key = -1;
     };
-    if (kerf::deckButton(a, sk, "##loop", 9, 300, 28, 30, ui::Icon::LoopArrows, "Loop: play the region again each time it ends", pl.loop)) pl.loop = !pl.loop;
-    if (kerf::deckButton(a, sk, "##play", 38, 300, 28, 30, ui::Icon::Play, "Play the selected region / stop", playing) && t.isChannel() && nSl > 0 &&
+    if (kerf::flatButton(a, sk, "##loop", 8, 298, 28, 32, ui::Icon::LoopArrows, "Loop: play the region again each time it ends", pl.loop)) pl.loop = !pl.loop;
+    if (kerf::flatButton(a, sk, "##play", 38, 298, 28, 32, ui::Icon::Play, "Play the selected region / stop", playing) && t.isChannel() && nSl > 0 &&
         (playing || sliceKey(k) >= 0)) {
       if (playing) {
         stopPlay();
@@ -964,7 +1181,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     }
     if (trace) {  // J-110 dev check: the play button's place and state (printed when it changes)
       static std::string last;
-      const ImVec2 pc = sk.at(52, 315);
+      const ImVec2 pc = sk.at(52, 314);
       char b[96];
       std::snprintf(b, sizeof b, "kerf: play %.0f %.0f on %d", static_cast<double>(pc.x), static_cast<double>(pc.y), pl.latch.on && pl.ch == t.owner ? 1 : 0);
       if (last != b) {
@@ -973,9 +1190,15 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         std::fflush(stdout);
       }
     }
-    if (kerf::deckButton(a, sk, "##stop", 67, 300, 28, 30, ui::Icon::Stop, "Stop") && playing && t.isChannel()) stopPlay();
+    if (kerf::flatButton(a, sk, "##stop", 68, 298, 28, 32, ui::Icon::Stop, "Stop", false) && playing && t.isChannel()) stopPlay();
+    // A tool tile of row 1 (24 x 32; `menu`: the small caret under the glyph).
+    auto tile = [&](const char* id, float x, ui::Icon icon, const char* hint, int lit = 0, bool menu = false) {
+      const bool hit = kerf::deckButton(a, sk, id, x, 298, 24, 32, icon, hint, lit, menu);
+      ctl(sk, id, x, 298, 24, 32);
+      return hit;
+    };
     // Menus: file, sample | edit, tools, regions | view, snap, select, zoom.
-    if (kerf::deckButton(a, sk, "##mfile", 160, 298, 24, 34, ui::Icon::Folder, "File", false, true)) ImGui::OpenPopup("##kfile");
+    if (tile("##mfile", 160, ui::Icon::Folder, "File", 0, true)) ImGui::OpenPopup("##kfile");
     if (ImGui::BeginPopup("##kfile")) {
       if (ImGui::MenuItem(i18n::tr("Load a loop..."))) loadLoop();
       if (ImGui::MenuItem(i18n::tr("Remove the loop"), nullptr, false, !file.empty())) {
@@ -985,7 +1208,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       }
       ImGui::EndPopup();
     }
-    if (kerf::deckButton(a, sk, "##msample", 184, 298, 24, 34, ui::Icon::Info, "Sample", false, true)) ImGui::OpenPopup("##ksample");
+    if (tile("##msample", 184, ui::Icon::Info, "Sample", 0, true)) ImGui::OpenPopup("##ksample");
     if (ImGui::BeginPopup("##ksample")) {
       if (smp) {
         ImGui::TextDisabled("%s", fs::path(file).filename().string().c_str());
@@ -998,7 +1221,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       }
       ImGui::EndPopup();
     }
-    if (kerf::deckButton(a, sk, "##medit", 216, 298, 24, 34, ui::Icon::Undo, "Edit", false, true)) ImGui::OpenPopup("##kedit");
+    if (tile("##medit", 216, ui::Icon::Clone, "Edit", 0, true)) ImGui::OpenPopup("##kedit");
     if (ImGui::BeginPopup("##kedit")) {
       if (ImGui::MenuItem(i18n::tr("Undo"))) a.doc.undo();
       if (ImGui::MenuItem(i18n::tr("Redo"))) a.doc.redo();
@@ -1007,14 +1230,14 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       if (ImGui::MenuItem(i18n::tr("Clear the markers"), nullptr, false, manual)) clearMarkers();
       ImGui::EndPopup();
     }
-    if (kerf::deckButton(a, sk, "##mtools", 240, 298, 24, 34, ui::Icon::Settings, "Tools", false, true)) ImGui::OpenPopup("##ktools");
+    if (tile("##mtools", 240, ui::Icon::Settings, "Tools", 0, true)) ImGui::OpenPopup("##ktools");
     if (ImGui::BeginPopup("##ktools")) {
       if (ImGui::MenuItem(i18n::tr("Write the regions to the piano roll"), nullptr, false, nSl > 0 && t.isChannel())) dumpScore();
       if (ImGui::MenuItem(i18n::tr("Map regions upwards from the base note"), nullptr, false, classic && nSl > 0)) resetKeys();
       if (ImGui::MenuItem(i18n::tr("Reset every region's settings"), nullptr, false, classic && nSl > 0)) resetRegion(0, true);
       ImGui::EndPopup();
     }
-    if (kerf::deckButton(a, sk, "##mregions", 264, 298, 24, 34, ui::Icon::ToolSlice, "Regions: slicing", false, true)) ImGui::OpenPopup("##regionsmenu");
+    if (tile("##mregions", 264, ui::Icon::ToolSlice, "Regions: slicing", 0, true)) ImGui::OpenPopup("##regionsmenu");
     if (ImGui::BeginPopup("##regionsmenu")) {
       const int md = ed::ival(st, SlMode);
       if (ImGui::MenuItem(i18n::tr("Slice at the hits"), nullptr, classic && md == 0, classic)) setMode(0);
@@ -1025,28 +1248,53 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Edit markers by hand"), nullptr, manual, classic)) makeManual(a, t, st, starts, smp.get());
       if (ImGui::MenuItem(i18n::tr("Add a marker in the selected region"), nullptr, false, classic && nSl > 0 && smp)) {
-        addMarkerAt((static_cast<double>(starts[static_cast<size_t>(k)]) + sliceEnd(k)) * 0.5 / frames);
+        addMarkerAt(snapped((static_cast<double>(starts[static_cast<size_t>(k)]) + sliceEnd(k)) * 0.5, false));
       }
       if (ImGui::MenuItem(i18n::tr("Clear markers"), nullptr, false, manual)) clearMarkers();
+      ImGui::Separator();
+      // J-182: the selected region's marker: name, exact position, one snap step either way.
+      if (ImGui::MenuItem(i18n::tr("Rename the region..."), nullptr, false, canRename(k))) beginRename(k);
+      if (ImGui::MenuItem(i18n::tr("Type the marker's position..."), nullptr, false, canMove(k))) beginPosition(k);
+      if (ImGui::MenuItem(i18n::tr("Nudge the marker left"), nullptr, false, canMove(k))) nudge(k, -1);
+      if (ImGui::MenuItem(i18n::tr("Nudge the marker right"), nullptr, false, canMove(k))) nudge(k, 1);
       ImGui::EndPopup();
     }
-    if (kerf::deckButton(a, sk, "##mview", 296, 298, 24, 34, ui::Icon::Eye, "View", false, true)) ImGui::OpenPopup("##kview");
+    if (tile("##mview", 296, ui::Icon::Eye, "View", 0, true)) ImGui::OpenPopup("##kview");
     if (ImGui::BeginPopup("##kview")) {
       const char* names[4] = {"Everything", "No wave editor", "No region panel", "Compact"};
       for (int m = 0; m < 4; ++m)
         if (ImGui::MenuItem(i18n::tr(names[m]), nullptr, ui.display == m)) ui.display = m;
       ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Keyboard"), nullptr, ui.keys)) ui.keys = !ui.keys;
+      ImGui::Separator();  // J-182: time units of the ruler, the beat grid
+      if (ImGui::MenuItem(i18n::tr("Ruler in seconds"), nullptr, !barsRuler)) a.doc.setParam(t.pid(SlRuler), kerfmarks::RulerSeconds, false);
+      if (ImGui::MenuItem(i18n::tr("Ruler in bars and beats"), nullptr, barsRuler)) a.doc.setParam(t.pid(SlRuler), kerfmarks::RulerBars, false);
+      if (ImGui::MenuItem(i18n::tr("Beat grid lines"), nullptr, gridShown)) a.doc.setParam(t.pid(SlGridLines), gridShown ? 0 : 1, false);
       ImGui::EndPopup();
     }
-    if (kerf::deckButton(a, sk, "##msnap", 320, 298, 24, 34, ui::Icon::Magnet, "Snap: where dragged markers land", ui.snap != 0 ? 2 : 0, true)) ImGui::OpenPopup("##ksnap");
+    if (tile("##msnap", 320, ui::Icon::Magnet, "Snap: where moved and added markers land", snap != 0 ? 2 : 0, true)) ImGui::OpenPopup("##ksnap");
+    traceRect("snapbtn", sk.at(320, 298), sk.at(344, 330));
     if (ImGui::BeginPopup("##ksnap")) {
-      const char* names[3] = {"No snapping", "Zero crossings", "Sixteenths of the loop"};
-      for (int m = 0; m < 3; ++m)
-        if (ImGui::MenuItem(i18n::tr(names[m]), nullptr, ui.snap == m)) ui.snap = m;
+      // J-182: grid sizes of the loop (4/4 over its beats), zero crossings, and grid then zero crossing.
+      static const char* const names[kerfmarks::SnapCount] = {i18n::N_("No snapping"), i18n::N_("Zero crossings"), i18n::N_("Bar"),
+                                                              i18n::N_("Half bar"), i18n::N_("Beat"), i18n::N_("1/2 beat"),
+                                                              i18n::N_("1/3 beat (triplets)"), i18n::N_("1/4 beat"),
+                                                              i18n::N_("1/6 beat (triplets)"), i18n::N_("1/8 beat")};
+      for (int m = 0; m < kerfmarks::SnapCount; ++m) {
+        if (m == kerfmarks::SnapBar) ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr(names[m]), nullptr, snap == m, m < kerfmarks::SnapBar || fpb > 0)) setSnap(m);
+        char id[16];
+        std::snprintf(id, sizeof id, "snapitem%d", m);
+        traceRect(id, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+      }
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Then the nearest zero crossing"), nullptr, snapZero, kerfmarks::isGrid(snap)))
+        a.doc.setParam(t.pid(SlSnapZero), snapZero ? 0 : 1, false);
+      ImGui::Separator();
+      ImGui::TextDisabled("%s", i18n::tr("Hold Alt while dragging: no snapping"));
       ImGui::EndPopup();
     }
-    if (kerf::deckButton(a, sk, "##mselect", 344, 298, 24, 34, ui::Icon::Select, "Select", false, true)) ImGui::OpenPopup("##kselect");
+    if (tile("##mselect", 344, ui::Icon::Select, "Select", 0, true)) ImGui::OpenPopup("##kselect");
     if (ImGui::BeginPopup("##kselect")) {
       if (ImGui::MenuItem(i18n::tr("First region"), nullptr, false, nSl > 0)) selectRegion(0);
       if (ImGui::MenuItem(i18n::tr("Previous region"), nullptr, false, k > 0)) selectRegion(k - 1);
@@ -1054,7 +1302,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       if (ImGui::MenuItem(i18n::tr("Last region"), nullptr, false, nSl > 0)) selectRegion(nSl - 1);
       ImGui::EndPopup();
     }
-    if (kerf::deckButton(a, sk, "##mzoom", 368, 298, 24, 34, ui::Icon::Zoom, "Zoom", false, true)) ImGui::OpenPopup("##viewmenu");
+    if (tile("##mzoom", 368, ui::Icon::Zoom, "Zoom", 0, true)) ImGui::OpenPopup("##viewmenu");
     if (ImGui::BeginPopup("##viewmenu")) {
       const double mid = (ui.goFrom + ui.goTo) * 0.5;
       if (ImGui::MenuItem(i18n::tr("Zoom in"))) zoom(0.5, mid);
@@ -1063,90 +1311,126 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       if (ImGui::MenuItem(i18n::tr("Show the selected region"), nullptr, false, nSl > 0 && smp)) fitRegion(k);
       ImGui::EndPopup();
     }
-    traceRect("menu_regions", sk.at(264, 298), sk.at(288, 332));
-    // Tools: undo / redo | even slices, by hand | add, detect, write | clear, drag out.
-    if (kerf::deckButton(a, sk, "##undo", 427, 298, 24, 34, ui::Icon::Undo, "Undo")) a.doc.undo();
-    if (kerf::deckButton(a, sk, "##redo", 451, 298, 24, 34, ui::Icon::Redo, "Redo")) a.doc.redo();
-    ImGui::BeginDisabled(rv.on);
-    {
-      const struct {
-        const char* id;
-        const char* cap;
-        float x;
-        int mode;
-        const char* hint;
-      } ev[3] = {{"##ev8", "8", 475, 2, "Eight even slices"}, {"##ev16", "16", 499, 3, "Sixteen even slices"}, {"##ev32", "32", 523, 4, "Thirty-two even slices"}};
-      for (const auto& e : ev)
-        if (kerf::deckButton(a, sk, e.id, e.x, 298, 24, 34, ui::Icon::Slice, e.hint, classic && ed::ival(st, SlMode) == e.mode, false, e.cap)) setMode(e.mode);
-    }
-    if (kerf::deckButton(a, sk, "##hand", 555, 298, 24, 34, ui::Icon::ToolDraw, "Edit the markers by hand (double-click the wave: add, right-click a marker: remove)", manual))
-      makeManual(a, t, st, starts, smp.get());
-    if (kerf::deckButton(a, sk, "##add", 579, 298, 24, 34, ui::Icon::Flag, "Add a marker in the middle of the selected region") && smp && nSl > 0)
-      addMarkerAt((static_cast<double>(starts[static_cast<size_t>(k)]) + sliceEnd(k)) * 0.5 / frames);
-    if (kerf::deckButton(a, sk, "##auto", 603, 298, 24, 34, ui::Icon::SliceWave, "Slice at the hits", classic && ed::ival(st, SlMode) == 0)) setMode(0);
+    traceRect("menu_regions", sk.at(264, 298), sk.at(288, 330));
+    // Tools: undo, redo, the marker one snap step left / right, the marker's name and position.
+    if (tile("##undo", 428, ui::Icon::Undo, "Undo")) a.doc.undo();
+    if (tile("##redo", 452, ui::Icon::Redo, "Redo")) a.doc.redo();
+    ImGui::BeginDisabled(!canMove(k));
+    if (tile("##nudgel", 476, ui::Icon::Left, "Nudge the marker left by one snap step (Left arrow over the wave)")) nudge(k, -1);
+    if (tile("##nudger", 500, ui::Icon::Right, "Nudge the marker right by one snap step (Right arrow over the wave)")) nudge(k, 1);
     ImGui::EndDisabled();
+    ImGui::BeginDisabled(!canRename(k) && !canMove(k));
+    if (tile("##marker", 524, ui::Icon::ListBullets, "The selected region's marker: name, position", 0, true)) ImGui::OpenPopup("##kmarker");
+    ImGui::EndDisabled();
+    if (ImGui::BeginPopup("##kmarker")) {
+      if (nSl > 0) ImGui::TextDisabled("%s", regionLabel(k).c_str());
+      if (ImGui::MenuItem(i18n::tr("Rename the region..."), nullptr, false, canRename(k))) beginRename(k);
+      if (ImGui::MenuItem(i18n::tr("Type the marker's position..."), nullptr, false, canMove(k))) beginPosition(k);
+      if (ImGui::MenuItem(i18n::tr("Snap the marker"), nullptr, false, canMove(k) && snap != kerfmarks::SnapOff))
+        moveMarker(k, snapped(static_cast<double>(starts[static_cast<size_t>(k)]), false));
+      if (ImGui::MenuItem(i18n::tr("Remove the marker"), nullptr, false, manual && canMove(k))) removeMarker(k);
+      ImGui::EndPopup();
+    }
+    // Hand, add, auto (right-click: even slices), dump | clear, drag out.
+    ImGui::BeginDisabled(rv.on);
+    if (tile("##hand", 556, ui::Icon::ToolDraw, "Edit the markers by hand (double-click the wave: add, right-click a marker: remove)", manual))
+      makeManual(a, t, st, starts, smp.get());
+    if (tile("##add", 580, ui::Icon::Flag, "Add a marker in the middle of the selected region") && smp && nSl > 0)
+      addMarkerAt(snapped((static_cast<double>(starts[static_cast<size_t>(k)]) + sliceEnd(k)) * 0.5, false));
+    if (tile("##auto", 604, ui::Icon::SliceWave, "Slice at the hits (right-click: even slices)", classic && ed::ival(st, SlMode) == 0)) setMode(0);
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##kevens");
+    ImGui::EndDisabled();
+    if (ImGui::BeginPopup("##kevens")) {
+      const int md = ed::ival(st, SlMode);
+      for (int m = 1; m <= 4; ++m) {
+        char lb[48];
+        std::snprintf(lb, sizeof lb, "%s: %d", i18n::tr("Even slices"), 2 << m);
+        if (ImGui::MenuItem(lb, nullptr, classic && md == m, classic)) setMode(m);
+      }
+      ImGui::EndPopup();
+    }
     ImGui::BeginDisabled(nSl == 0 || !t.isChannel());
-    if (kerf::deckButton(a, sk, "##dump", 627, 298, 24, 34, ui::Icon::Piano, "Write the regions to the piano roll (current pattern)")) dumpScore();
+    if (tile("##dump", 628, ui::Icon::Piano, "Write the regions to the piano roll (current pattern)")) dumpScore();
     ImGui::EndDisabled();
     ImGui::BeginDisabled(!manual);
-    if (kerf::deckButton(a, sk, "##clear", 659, 298, 24, 34, ui::Icon::Trash, "Clear the markers")) clearMarkers();
+    if (tile("##clear", 660, ui::Icon::Trash, "Clear the markers")) clearMarkers();
     ImGui::EndDisabled();
     ImGui::BeginDisabled(file.empty());
-    kerf::deckButton(a, sk, "##drag", 683, 298, 24, 34, ui::Icon::GripDots, "Drag the loop out (to the playlist, a channel or the browser)");
+    tile("##drag", 684, ui::Icon::GripDots, "Drag the loop out (to the playlist, a channel or the browser)");
     if (!file.empty()) browserui::fileDragSource(file);
     ImGui::EndDisabled();
-    traceRect("dump", sk.at(627, 298), sk.at(651, 332));
-    // Lower row: rate, channels, length, tempo, name, selected region; view buttons.
-    const ImU32 dim = rgb(0x8D99A3), lit = rgb(0xD8DFE5);
-    ImFont* mono = a.fontMono;
-    const float fs = std::max(8.0f, sk.px(8.5f));
+    traceRect("dump", sk.at(628, 298), sk.at(652, 330));
+    // Row 2: a caption over each value, hairlines between the fields.
+    const ImU32 dim = rgb(0x7F8B95), lit = rgb(0xD8DFE5);
+    auto infoField = [&](float x, float fw, const char* caption, const std::string& value, int align, ImU32 col) {
+      kerf::text(sk, x, 333, fw, 12, caption, Role::Eyebrow, dim, align);
+      kerf::text(sk, x, 346, fw, 14, kerf::fit(sk, value, Role::Value, fw).c_str(), Role::Value, col, align);
+    };
+    auto hairline = [&](float x) { dl->AddLine(sk.at(x, 336), sk.at(x, 359), theme::withAlpha(IM_COL32_WHITE, 0.08f)); };
     char info[96];
-    std::snprintf(info, sizeof info, "%s", smp ? (std::to_string(static_cast<int>(rate)) + " Hz").c_str() : "-- Hz");
-    clipText(dl, mono, fs, sk.at(6, 341), sk.at(68, 360), dim, info);
-    clipText(dl, mono, fs, sk.at(70, 341), sk.at(116, 360), dim, smp ? (smp->mono() ? "mono" : "stereo") : "--");
-    clipText(dl, mono, fs, sk.at(118, 341), sk.at(172, 360), dim, smp ? fmtTime(smp->seconds()) : "--");
-    if (smp) std::snprintf(info, sizeof info, "%.1f BPM", tempoEst);
-    else std::snprintf(info, sizeof info, "--");
-    clipText(dl, mono, fs, sk.at(174, 341), sk.at(240, 360), dim, info);
-    if (ImGui::IsMouseHoveringRect(sk.at(174, 341), sk.at(240, 360))) a.setHint(i18n::tr("Tempo of the loop at its length in beats (Fit tempo)"));
-    const std::string nm = smp ? fs::path(file).filename().string() : std::string(i18n::tr("No loop: drop one on the wave view"));
-    clipText(dl, a.fontMonoBold ? a.fontMonoBold : mono, fs, sk.at(244, 341), sk.at(450, 360), smp ? lit : dim, nm);
-    if (nSl > 0 && smp) {
-      const double s0 = static_cast<double>(starts[static_cast<size_t>(k)]) / rate, s1 = sliceEnd(k) / rate;
-      std::snprintf(info, sizeof info, "%d/%d  %.3f to %.3f", k + 1, nSl, s0, s1);
-    } else {
-      std::snprintf(info, sizeof info, "%d regions", nSl);
+    std::snprintf(info, sizeof info, "%d Hz", static_cast<int>(rate));
+    infoField(8, 56, "RATE", smp ? info : "--", 0, lit);
+    hairline(68);
+    infoField(72, 56, "CHANNELS", smp ? (smp->mono() ? "mono" : "stereo") : "--", 0, lit);
+    hairline(132);
+    std::snprintf(info, sizeof info, "%.1f BPM", tempoEst);
+    infoField(136, 62, "TEMPO", smp ? info : "--", 0, lit);
+    if (ImGui::IsMouseHoveringRect(sk.at(136, 333), sk.at(198, 360))) a.setHint(i18n::tr("Tempo of the loop at its length in beats (Fit tempo)"));
+    hairline(202);
+    {  // J-182: the ruler's unit (seconds / bars and beats), also a click on the ruler and the View menu
+      kerf::text(sk, 206, 333, 64, 12, "RULER", Role::Eyebrow, dim, 0);
+      static const char* const units[2] = {"SEC", "BAR"};
+      static const char* const unitHints[2] = {"Ruler and positions in seconds", "Ruler and positions in bars and beats"};
+      const int uc = kerf::segmented(a, sk, "##rulerunit", 206, 345, 64, 15, units, nullptr, 2, barsRuler ? 1 : 0, unitHints, true);
+      if (uc >= 0) a.doc.setParam(t.pid(SlRuler), uc == 1 ? kerfmarks::RulerBars : kerfmarks::RulerSeconds, false);
     }
-    clipText(dl, mono, fs, sk.at(452, 341), sk.at(632, 360), rgb(kOrange, 0.9f), info, 2);
+    hairline(274);
+    const std::string nm = smp ? fs::path(file).filename().string() : std::string(i18n::tr("No loop: drop one on the wave view"));
+    infoField(278, 262, "TITLE", nm, 0, smp ? lit : dim);
+    hairline(544);
+    std::string len = "--";
+    if (nSl > 0 && smp) {
+      const double s0 = static_cast<double>(starts[static_cast<size_t>(k)]), s1 = sliceEnd(k);
+      len = barsRuler ? kerfmarks::barsBeats(s1 - s0, fpb, true) : fmtTime((s1 - s0) / rate);
+    }
+    infoField(548, 68, "LENGTH / SEL", len, 2, rgb(kOrange, 0.95f));
     const double mid = (ui.goFrom + ui.goTo) * 0.5;
-    if (kerf::deckButton(a, sk, "##zout", 639, 339, 18, 21, ui::Icon::Minus, "Zoom out")) zoom(2.0, mid);
-    if (kerf::deckButton(a, sk, "##zin", 657, 339, 18, 21, ui::Icon::Plus, "Zoom in")) zoom(0.5, mid);
-    if (kerf::deckButton(a, sk, "##zall", 675, 339, 18, 21, ui::Icon::Zoom, "Show the whole loop")) setView(0, 1);
-    if (kerf::deckButton(a, sk, "##zreg", 693, 339, 18, 21, ui::Icon::ScrollTo, "Show the selected region") && nSl > 0) fitRegion(k);
+    auto vbtn = [&](const char* id, float x, ui::Icon icon, const char* hint) {
+      const bool hit = kerf::deckButton(a, sk, id, x, 338, 18, 20, icon, hint);
+      ctl(sk, id, x, 338, 18, 20);
+      return hit;
+    };
+    if (vbtn("##zout", 622, ui::Icon::Minus, "Zoom out")) zoom(2.0, mid);
+    if (vbtn("##zin", 640, ui::Icon::Plus, "Zoom in")) zoom(0.5, mid);
+    if (vbtn("##zall", 658, ui::Icon::Zoom, "Show the whole loop")) setView(0, 1);
+    if (vbtn("##zreg", 676, ui::Icon::ScrollTo, "Show the selected region") && nSl > 0) fitRegion(k);
+    if (vbtn("##zplay", 694, ui::Icon::Speaker, "Play the selected region once") && nSl > 0) audition(k);
   }
 
   // ======================================================================= wave view
+  // Overview scroller (362, on top as in the reference), region flags (376), the wave (390..504),
+  // the ruler (504) and the switch row (517: options, hand edit, snap, name, position, view switches).
   if (shown[BWave]) {
     const iskin::Skin sk = bandSkin(BWave);
-    const float wx = 0, wy = 362, ww = kSxW, wh = 209, flagH = 15, rulerH = 11, scrollH = 19;
-    iskin::bevel(sk, wx, wy, ww, wh, rgb(0x0B1014), 0, 0);
+    const float wx = 0, wy = 362, ww = kSxW, scrollH = 14, flagH = 14, waveY = 390, waveB = 504, rulerH = 13, rowY = 517;
+    iskin::bevel(sk, wx, wy, ww, 178, rgb(0x0B1014), 0, 0);
     {
-      const ImVec2 p = sk.at(wx, wy + flagH), q = sk.at(wx + ww, wy + wh - scrollH - rulerH);
+      const ImVec2 p = sk.at(wx, waveY), q = sk.at(wx + ww, waveB);
       dl->AddRectFilledMultiColor(p, q, rgb(0x0F161D), rgb(0x0F161D), rgb(0x0A1015), rgb(0x0A1015));
     }
-    iskin::bevel(sk, wx, wy, ww, flagH, rgb(0x161E26), 0, 0);
-    sk.dl()->AddLine(sk.at(wx, wy + flagH), sk.at(wx + ww, wy + flagH), IM_COL32(0, 0, 0, 140));
-    const ImVec2 top = sk.at(wx + 2, wy), p0 = sk.at(wx + 2, wy + flagH), p1 = sk.at(wx + ww - 2, wy + wh - scrollH - rulerH);
+    iskin::bevel(sk, wx, wy + scrollH, ww, flagH, rgb(0x161E26), 0, 0);
+    sk.dl()->AddLine(sk.at(wx, waveY), sk.at(wx + ww, waveY), IM_COL32(0, 0, 0, 140));
+    const ImVec2 top = sk.at(wx + 2, wy + scrollH), p0 = sk.at(wx + 2, waveY), p1 = sk.at(wx + ww - 2, waveB);
     const double f0 = ui.viewFrom * frames, f1 = ui.viewTo * frames;
     auto fx = [&](double f) { return p0.x + static_cast<float>((f - f0) / std::max(1e-9, f1 - f0)) * (p1.x - p0.x); };
     auto frameAt = [&](float x) { return f0 + std::clamp((x - p0.x) / (p1.x - p0.x), 0.0f, 1.0f) * (f1 - f0); };
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 m = io.MousePos;
     if (!smp) {  // ---- empty: the drop zone
-      if (kerf::dropZone(a, sk, "##drop", 24, wy + flagH + 10, ww - 48, wh - flagH - scrollH - rulerH - 20, rgb(theme::role::kSlice))) loadLoop();
-      traceRect("dropzone", sk.at(24, wy + flagH + 10), sk.at(ww - 24, wy + wh - scrollH - rulerH - 10));
+      if (kerf::dropZone(a, sk, "##drop", 24, waveY + 6, ww - 48, waveB - waveY - 12, rgb(theme::role::kSlice))) loadLoop();
+      traceRect("dropzone", sk.at(24, waveY + 6), sk.at(ww - 24, waveB - 6));
     }
-    const float labelPx = std::max(8.0f, sk.px(8.5f));
+    const float labelPx = std::max(kerf::kMinTextPx, sk.px(10));
     // Dense markers (hundreds of regions at once): drawn faint so the audio shows,
     // and grabbed for moving only once zoomed in far enough.
     int visible = 0;
@@ -1169,6 +1453,11 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       return s;
     };
     const int hovRegion = hovWave && m.y >= p0.y ? regionAt(frameAt(m.x)) : -1;
+    struct FlagRect {
+      float x0, x1;
+      int s;
+    };
+    std::vector<FlagRect> flagRects;  // J-182: the flags as drawn (right-click: the region's menu)
     if (smp) {
       dl->PushClipRect(top, ImVec2(p1.x, p1.y), true);
       faintGrid(dl, p0, p1, 1, 4, 0.035f);
@@ -1187,6 +1476,30 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         }
         if (s == hovRegion && s != k) dl->AddRectFilled(r0, r1, theme::withAlpha(IM_COL32_WHITE, 0.035f));
       }
+      // J-182: the beat grid at the snap size (or beats under a bars:beats ruler): bars over beats over
+      // subdivisions, each level fading out as its lines close up.
+      const double gStep = kerfmarks::isGrid(snap) ? kerfmarks::stepBeats(snap) : (barsRuler ? 1.0 : 0.0);
+      if (gridShown && gStep > 0 && fpb > 0 && f1 > f0) {
+        const double pxPerBeat = static_cast<double>(p1.x - p0.x) / ((f1 - f0) / fpb);
+        auto fade = [](double px) { return static_cast<float>(std::clamp((px - 4.0) / 10.0, 0.0, 1.0)); };
+        const float aBar = 0.24f * fade(pxPerBeat * kerfmarks::kBeatsPerBar), aBeat = 0.13f * fade(pxPerBeat), aSub = 0.075f * fade(pxPerBeat * gStep);
+        double each = gStep;  // the finest level still shown
+        if (each < 1 && aSub <= 0) each = 1;
+        if (each <= 1 && aBeat <= 0) each = kerfmarks::kBeatsPerBar;
+        if (each < kerfmarks::kBeatsPerBar && fade(pxPerBeat * each) <= 0) each = kerfmarks::kBeatsPerBar;
+        if (aBar > 0 || each < kerfmarks::kBeatsPerBar) {
+          const double b0 = f0 / fpb, b1 = f1 / fpb;
+          for (long long i = static_cast<long long>(std::ceil(b0 / each - 1e-9)); static_cast<double>(i) * each <= b1 + 1e-9; ++i) {
+            const double beat = static_cast<double>(i) * each;
+            const bool onBeat = std::fabs(beat - std::round(beat)) < 1e-6;
+            const bool onBar = onBeat && std::llround(beat) % kerfmarks::kBeatsPerBar == 0;
+            const float al = onBar ? aBar : onBeat ? aBeat : aSub;
+            if (al < 0.004f) continue;
+            const float x = std::round(fx(beat * fpb)) + 0.5f;
+            dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), onBar ? rgb(0xBFD6EA, al) : theme::withAlpha(IM_COL32_WHITE, al));
+          }
+        }
+      }
       kerf::WaveStyle ws;
       const ImU32 blue = rgb(theme::role::kSlice);
       ws.peak = lerp(blue, rgb(0x0F161D), 0.28f), ws.rms = lerp(blue, IM_COL32_WHITE, 0.35f), ws.edge = theme::withAlpha(lerp(blue, IM_COL32_WHITE, 0.25f), 0.6f);
@@ -1202,7 +1515,8 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
           dl->PopClipRect();
         }
       }
-      // Flags: tabs with the number (and name) when they fit before the next region's flag.
+      // Flags: an orange handle on the marker with the number and name (number only, or
+      // nothing, when there is no room before the next region's flag).
       for (int s = 0; s < nSl; ++s) {
         const double s0 = static_cast<double>(starts[static_cast<size_t>(s)]);
         if (s0 > f1) continue;
@@ -1216,40 +1530,55 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         const float x = std::round(fx(s0)), room = fx(next) - std::max(x, p0.x) - 4;
         std::string lbl = std::to_string(s + 1);
         const std::string rn = regionName(s);
-        auto fits = [&](const std::string& tx) { return a.fontMono && a.fontMono->CalcTextSizeA(labelPx, FLT_MAX, 0, tx.c_str()).x + sk.px(8) <= room; };
+        auto fits = [&](const std::string& tx) { return a.fontMono && a.fontMono->CalcTextSizeA(labelPx, FLT_MAX, 0, tx.c_str()).x + sk.px(10) <= room; };
         if (!rn.empty() && fits(lbl + " " + rn)) lbl += " " + rn;
         if (!fits(lbl)) lbl.clear();
         const bool sel = s == k, hv = s == hovRegion;
-        const float tw = lbl.empty() ? std::clamp(spacing * 0.35f, 1.0f, sk.px(4))
-                                     : a.fontMono->CalcTextSizeA(labelPx, FLT_MAX, 0, lbl.c_str()).x + sk.px(8);
-        const ImVec2 t0(x, top.y + sk.px(2)), t1(x + tw, p0.y);
+        const float tw = lbl.empty() ? std::clamp(spacing * 0.35f, 1.0f, sk.px(5))
+                                     : a.fontMono->CalcTextSizeA(labelPx, FLT_MAX, 0, lbl.c_str()).x + sk.px(10);
+        const ImVec2 t0(x, top.y + sk.px(1)), t1(x + tw, p0.y);
+        flagRects.push_back({x - 2, std::max(x + tw, x + 3), s});
         const ImU32 fc = sel ? rgb(kOrange) : hv ? rgb(kOrangeDeep, 0.85f) : rgb(kOrangeDeep, lbl.empty() ? std::min(0.8f, markerAlpha * 1.6f) : 0.62f);
-        dl->AddRectFilled(t0, t1, fc, sk.px(2.5f), ImDrawFlags_RoundCornersTopRight);
-        if (!lbl.empty())
-          dl->AddText(a.fontMono, labelPx, ImVec2(x + sk.px(4), top.y + sk.px(2) + (sk.px(flagH - 2) - labelPx) * 0.5f), sel ? rgb(0x1E160A) : rgb(0xF4E6D2), lbl.c_str());
+        dl->AddRectFilled(t0, ImVec2(x + std::min(tw, sk.px(5)), t1.y), fc, sk.px(1.5f), ImDrawFlags_RoundCornersTop);  // the handle
+        if (!lbl.empty()) {
+          dl->AddRectFilled(ImVec2(x + sk.px(5), t0.y), t1, sel ? rgb(kOrange, 0.9f) : rgb(0x2A1D10, 0.85f), sk.px(2), ImDrawFlags_RoundCornersTopRight);
+          dl->AddText(a.fontMono, labelPx, ImVec2(x + sk.px(7), t0.y + (t1.y - t0.y - labelPx) * 0.5f - 0.5f), sel ? rgb(0x1E160A) : rgb(0xF4D2A6), lbl.c_str());
+        }
       }
       dl->PopClipRect();
     }
     ImGui::SetCursorScreenPos(top);
     ImGui::InvisibleButton("##wave", ImVec2(p1.x - top.x, p1.y - top.y));
+    traceRect("wave", p0, p1);
+    ctl(sk, "##wave", 2, wy + scrollH, ww - 4, waveB - wy - scrollH);
     const bool hov = ImGui::IsItemHovered() && smp;
     int hoverMarker = -1;
-    const bool regionDrag = rv.on && ui.drag >= 0 && ImGui::IsItemActive();
-    auto snapped = [&](double f) { return static_cast<double>(kerf::snapFrame(smp.get(), std::llround(f), ui.snap, loopBeats)); };
+    // J-182: a dragged marker is shown where it will land (snapped unless Alt is held) and moves on release (one undo step).
+    const bool dragging = ui.drag >= 0 && ui.drag < nSl && ImGui::IsItemActive();
+    const int64_t dragTo = dragging ? snapped(frameAt(m.x), io.KeyAlt) : -1;
     if (smp) {
       dl->PushClipRect(top, ImVec2(p1.x, p1.y), true);
       for (int s = 0; s < nSl; ++s) {
         float x = std::round(fx(static_cast<double>(starts[static_cast<size_t>(s)]))) + 0.5f;
-        if (regionDrag && s == ui.drag) x = fx(snapped(frameAt(m.x)));
+        if (dragging && s == ui.drag) x = std::round(fx(static_cast<double>(dragTo))) + 0.5f;
         if (x < p0.x - 1 || x > p1.x + 1) continue;
-        const bool near = grabMarkers && hov && std::fabs(m.x - x) < 4 && (s > 0 || rv.on);
+        if (s == 1) traceRect("mk1", ImVec2(x, p0.y), ImVec2(x, p1.y));
+        const bool near = grabMarkers && hov && std::fabs(m.x - x) < 4 && canMove(s);
         if (near) hoverMarker = s;
         if (s != k) dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), near ? rgb(0xFFFFFF, 0.9f) : rgb(kOrangeDeep, markerAlpha), near ? 2.0f : 1.0f);
       }
       if (k < nSl) {  // the selected region's marker on top
         float x = std::round(fx(static_cast<double>(starts[static_cast<size_t>(k)]))) + 0.5f;
-        if (regionDrag && k == ui.drag) x = fx(snapped(frameAt(m.x)));
+        if (dragging && k == ui.drag) x = std::round(fx(static_cast<double>(dragTo))) + 0.5f;
         dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), rgb(kOrange), hoverMarker == k ? 2.0f : 1.4f);
+      }
+      if (dragging) {  // where it lands, in the ruler's unit
+        const float x = std::round(fx(static_cast<double>(dragTo))) + 0.5f;
+        const std::string lt = posText(static_cast<double>(dragTo)) + (io.KeyAlt && snap != kerfmarks::SnapOff ? "  (free)" : "");
+        const ImVec2 ts = a.fontMono->CalcTextSizeA(labelPx, FLT_MAX, 0, lt.c_str());
+        const float bx = std::clamp(x + sk.px(5), p0.x + 2, p1.x - ts.x - sk.px(8));
+        dl->AddRectFilled(ImVec2(bx, p0.y + sk.px(4)), ImVec2(bx + ts.x + sk.px(8), p0.y + sk.px(4) + ts.y + sk.px(4)), IM_COL32(8, 12, 16, 220), sk.px(3));
+        dl->AddText(a.fontMono, labelPx, ImVec2(bx + sk.px(4), p0.y + sk.px(6)), rgb(0xFFD49A), lt.c_str());
       }
       if (hov && hoverMarker < 0 && m.y >= p0.y) dl->AddLine(ImVec2(m.x, p0.y), ImVec2(m.x, p1.y), theme::withAlpha(IM_COL32_WHITE, 0.18f));  // hover cursor
       dl->PopClipRect();
@@ -1274,37 +1603,53 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
           ui.slice = s;
           audition(s);
         }
-      } else if (!manual && !rv.on) {
-        makeManual(a, t, st, starts, smp.get());
       }
     }
-    if (rv.on && ui.drag >= 0 && ImGui::IsItemDeactivated() && ui.drag < nSl) {
-      // Released: the dragged region's start moves (one undo step); a click without moving leaves it.
-      const int64_t to = std::llround(snapped(frameAt(m.x)));
+    if (ui.drag >= 0 && ImGui::IsItemDeactivated() && ui.drag < nSl && smp) {
+      // Released: the marker moves (one undo step; classic slicing becomes hand-set markers); a click without moving selects.
+      const int64_t to = snapped(frameAt(m.x), io.KeyAlt);
       if (std::fabs(fx(static_cast<double>(to)) - fx(static_cast<double>(starts[static_cast<size_t>(ui.drag)]))) >= 2.0f)
-        moveRegionStart(a, t, st, rv, ui.drag, to, smp.get());
+        moveMarker(ui.drag, to);
       else
         ui.slice = ui.drag;
     }
-    if (ui.drag > 0 && manual && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1) && ui.drag < nSl) {
-      const int mp = nearestMarkerParam(st, static_cast<double>(starts[static_cast<size_t>(ui.drag)]) / frames);
-      if (mp >= 0) a.doc.setParam(t.pid(slMarker(mp)), static_cast<float>(snapped(frameAt(m.x)) / frames), true);
+    if (ImGui::IsItemDeactivated()) ui.drag = -1;
+    if (hov && classic && m.y >= p0.y && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addMarkerAt(snapped(frameAt(m.x), io.KeyAlt));
+    if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+      if (m.y < p0.y) {  // a flag: the region's menu
+        for (auto it = flagRects.rbegin(); it != flagRects.rend(); ++it)
+          if (m.x >= it->x0 && m.x < it->x1) {
+            ui.flagMenu = it->s;
+            ImGui::OpenPopup("##kflag");
+            break;
+          }
+      } else if (hoverMarker > 0 && manual) {
+        removeMarker(hoverMarker);
+      }
     }
-    if (ImGui::IsItemDeactivated()) {
-      ui.drag = -1;
-      a.doc.endGesture();
+    if (ImGui::BeginPopup("##kflag")) {
+      const int s = ui.flagMenu;
+      if (s >= 0 && s < nSl) {
+        ImGui::TextDisabled("%s", regionLabel(s).c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Rename..."), nullptr, false, canRename(s))) beginRename(s);
+        if (ImGui::MenuItem(i18n::tr("Type the position..."), nullptr, false, canMove(s))) beginPosition(s);
+        if (ImGui::MenuItem(i18n::tr("Nudge left by one snap step"), nullptr, false, canMove(s))) nudge(s, -1);
+        if (ImGui::MenuItem(i18n::tr("Nudge right by one snap step"), nullptr, false, canMove(s))) nudge(s, 1);
+        if (ImGui::MenuItem(i18n::tr("Snap the marker"), nullptr, false, canMove(s) && snap != kerfmarks::SnapOff))
+          moveMarker(s, snapped(static_cast<double>(starts[static_cast<size_t>(s)]), false));
+        ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Select"), nullptr, s == k)) selectRegion(s);
+        if (ImGui::MenuItem(i18n::tr("Play"), nullptr, false, sliceKey(s) >= 0)) audition(s);
+        if (ImGui::MenuItem(i18n::tr("Show the whole region"))) fitRegion(s);
+        if (ImGui::MenuItem(i18n::tr("Remove the marker"), nullptr, false, manual && canMove(s))) removeMarker(s);
+      }
+      ImGui::EndPopup();
     }
-    if (hov && classic && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-      if (!manual) makeManual(a, t, st, starts, smp.get());
-      for (int q = 0; q < kMaxSlices; ++q)
-        if (ed::val(st, slMarker(q), -1) < 0 || (!manual && q >= nSl)) {
-          a.doc.setParam(t.pid(slMarker(q)), static_cast<float>(snapped(frameAt(m.x)) / frames), false);
-          break;
-        }
-    }
-    if (hoverMarker > 0 && manual && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-      const int mp = nearestMarkerParam(st, static_cast<double>(starts[static_cast<size_t>(hoverMarker)]) / frames);
-      if (mp >= 0) a.doc.setParam(t.pid(slMarker(mp)), -1, false);
+    // Arrow keys over the wave view: the selected region's marker by one snap step.
+    if (hovWave && nSl > 0 && !io.WantTextInput && !ImGui::IsAnyItemActive()) {
+      if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) nudge(k, -1);
+      if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) nudge(k, 1);
     }
     if (ImGui::BeginDragDropTarget()) {
       if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_FILE")) {
@@ -1319,46 +1664,76 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       ImGui::EndDragDropTarget();
     }
     if (hov && rv.on)
-      a.setHint(std::to_string(nSl) + " " + i18n::tr("regions \xC2\xB7 click: select + play \xC2\xB7 drag a marker: move the region's start \xC2\xB7 wheel: zoom, Shift+wheel: scroll \xC2\xB7 drop a loop"));
+      a.setHint(std::to_string(nSl) + " " +
+                i18n::tr("regions \xC2\xB7 click: select + play \xC2\xB7 drag a marker: move the region's start (Alt: no snap) \xC2\xB7 right-click a flag: rename, position \xC2\xB7 "
+                         "arrows: nudge \xC2\xB7 wheel: zoom, Shift+wheel: scroll"));
     else if (hov)
       a.setHint(std::to_string(nSl) + " " +
-                i18n::tr("regions \xC2\xB7 click: select + play \xC2\xB7 drag a marker \xC2\xB7 double-click: add marker \xC2\xB7 right-click a marker: remove \xC2\xB7 wheel: zoom, Shift+wheel: scroll"));
-    // Ruler: time ticks under the waveform.
+                i18n::tr("regions \xC2\xB7 click: select + play \xC2\xB7 drag a marker (Alt: no snap) \xC2\xB7 double-click: add marker \xC2\xB7 right-click a marker: remove, a flag: "
+                         "rename, position \xC2\xB7 arrows: nudge \xC2\xB7 wheel: zoom"));
+    // Ruler: time ticks under the waveform (J-182: seconds or bars:beats; a click switches).
     {
-      const float ry = wy + wh - scrollH - rulerH;
+      const float ry = waveB;
       iskin::bevel(sk, wx, ry, ww, rulerH, rgb(0x121A21), 0, 0);
       dl->AddLine(sk.at(wx, ry), sk.at(wx + ww, ry), theme::withAlpha(IM_COL32_WHITE, 0.06f));
+      const ImVec2 r0 = sk.at(wx + 2, ry), r1 = sk.at(wx + ww - 2, ry + rulerH);
+      traceRect("ruler", r0, r1);
+      ctl(sk, "##ruler", wx + 2, ry, ww - 4, rulerH);
       if (smp) {
-        const double t0 = f0 / rate, t1 = f1 / rate, span = std::max(1e-6, t1 - t0);
-        const double steps[] = {0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60};
-        double step = steps[0];
-        for (double s : steps)
-          if (span / s * sk.px(46) <= (p1.x - p0.x)) {
-            step = s;
-            break;
-          }
-        const float fsz = std::max(8.0f, sk.px(7.5f));
-        const ImVec2 r0 = sk.at(wx + 2, ry), r1 = sk.at(wx + ww - 2, ry + rulerH);
+        const float fsz = std::max(kerf::kMinTextPx, sk.px(10));
+        const double pxPerFrame = static_cast<double>(p1.x - p0.x) / std::max(1e-9, f1 - f0);
         dl->PushClipRect(r0, r1, true);
-        for (double tt = std::ceil(t0 / step) * step; tt <= t1 + 1e-9; tt += step) {
-          const float x = std::round(fx(tt * rate)) + 0.5f;
-          dl->AddLine(ImVec2(x, r0.y), ImVec2(x, r0.y + sk.px(3)), rgb(0x6C7984));
-          char b[24];
-          if (step < 0.01) std::snprintf(b, sizeof b, "%.3f", tt);
-          else if (step < 0.1) std::snprintf(b, sizeof b, "%.2f", tt);
-          else if (step < 1) std::snprintf(b, sizeof b, "%.1f", tt);
-          else std::snprintf(b, sizeof b, "%.0f s", tt);
-          dl->AddText(a.fontMono, fsz, ImVec2(x + sk.px(2), r0.y + (r1.y - r0.y - fsz) * 0.5f + sk.px(1)), rgb(0x76838E), b);
+        auto tick = [&](double f, const char* label, bool major) {
+          const float x = std::round(fx(f)) + 0.5f;
+          dl->AddLine(ImVec2(x, r0.y), ImVec2(x, r0.y + sk.px(major ? 5 : 3)), major ? rgb(0x8A97A2) : rgb(0x5A6670));
+          if (label) dl->AddText(a.fontMono, fsz, ImVec2(x + sk.px(3), r0.y + (r1.y - r0.y - fsz) * 0.5f), major ? rgb(0x9AA7B2) : rgb(0x7E8B96), label);
+        };
+        if (barsRuler && fpb > 0) {  // J-182: bars:beats (4/4 over the loop's beats); ticks between the labels
+          const double pxPerBeat = pxPerFrame * fpb;
+          const double step = kerfmarks::rulerStepBeats(pxPerBeat, sk.px(54));
+          const double minor = step >= kerfmarks::kBeatsPerBar ? (pxPerBeat * kerfmarks::kBeatsPerBar >= sk.px(6) ? kerfmarks::kBeatsPerBar : step)
+                                                               : step / 2;
+          const double b0 = f0 / fpb, b1 = f1 / fpb;
+          for (long long i = static_cast<long long>(std::ceil(b0 / minor - 1e-9)); static_cast<double>(i) * minor <= b1 + 1e-9; ++i) {
+            const double beat = static_cast<double>(i) * minor;
+            const bool labelled = std::fabs(beat / step - std::round(beat / step)) < 1e-6;
+            const bool onBar = std::fabs(beat / kerfmarks::kBeatsPerBar - std::round(beat / kerfmarks::kBeatsPerBar)) < 1e-6;
+            std::string lb;
+            if (labelled) lb = step >= kerfmarks::kBeatsPerBar ? std::to_string(std::llround(beat) / kerfmarks::kBeatsPerBar + 1)
+                               : step >= 1 ? kerfmarks::barsBeats(beat * fpb, fpb, false) : kerfmarks::barsBeats(beat * fpb, fpb, true);
+            tick(beat * fpb, labelled ? lb.c_str() : nullptr, onBar);
+          }
+        } else {
+          const double t0 = f0 / rate, t1 = f1 / rate;
+          const double step = kerfmarks::rulerStepSeconds(pxPerFrame * rate, sk.px(54));
+          for (long long i = static_cast<long long>(std::ceil(t0 / step - 1e-9)); static_cast<double>(i) * step <= t1 + 1e-9; ++i) {
+            const double tt = static_cast<double>(i) * step;
+            char b[24];
+            if (step < 0.01) std::snprintf(b, sizeof b, "%.3f", tt);
+            else if (step < 0.1) std::snprintf(b, sizeof b, "%.2f", tt);
+            else if (step < 1) std::snprintf(b, sizeof b, "%.1f", tt);
+            else std::snprintf(b, sizeof b, "%.0f s", tt);
+            tick(tt * rate, b, false);
+          }
         }
         dl->PopClipRect();
+        // A click on the ruler switches its unit (also in the View menu and the RULER field).
+        ImGui::SetCursorScreenPos(r0);
+        if (ImGui::InvisibleButton("##ruler", ImVec2(r1.x - r0.x, r1.y - r0.y)))
+          a.doc.setParam(t.pid(SlRuler), barsRuler ? kerfmarks::RulerSeconds : kerfmarks::RulerBars, false);
+        if (ImGui::IsItemHovered())
+          a.setHint(barsRuler ? i18n::tr("Ruler in bars and beats (4/4 over the loop's beats): click for seconds")
+                              : i18n::tr("Ruler in seconds: click for bars and beats"));
       }
     }
-    // Time scroller: the whole loop with the visible part; drag to scroll.
+    // Overview scroller on top: the whole loop with the visible part; drag to scroll, arrows step.
     {
-      const float sy = wy + wh - scrollH;
-      iskin::bevel(sk, wx, sy, ww, scrollH, rgb(0x1B232A), 0, 0);
-      dl->AddLine(sk.at(wx, sy), sk.at(wx + ww, sy), IM_COL32(0, 0, 0, 140));
-      const ImVec2 q0 = sk.at(wx + 2, sy + 2), q1 = sk.at(wx + ww - 2, sy + scrollH - 2);
+      iskin::bevel(sk, wx, wy, ww, scrollH, rgb(0x1B232A), 0, 0);
+      dl->AddLine(sk.at(wx, wy + scrollH), sk.at(wx + ww, wy + scrollH), IM_COL32(0, 0, 0, 140));
+      const double wv = ui.goTo - ui.goFrom;
+      if (kerf::flatButton(a, sk, "##ovl", 0, wy, 12, scrollH, ui::Icon::ChevronLeft, "Scroll left", false) && smp) setView(ui.goFrom - wv * 0.25, ui.goTo - wv * 0.25);
+      if (kerf::flatButton(a, sk, "##ovr", ww - 12, wy, 12, scrollH, ui::Icon::Chevron, "Scroll right", false) && smp) setView(ui.goFrom + wv * 0.25, ui.goTo + wv * 0.25);
+      const ImVec2 q0 = sk.at(14, wy + 1), q1 = sk.at(ww - 14, wy + scrollH - 1);
       if (smp) {
         kerf::WaveStyle ws;
         ws.peak = rgb(0x45607A), ws.rms = rgb(0x5E7F9C);
@@ -1375,7 +1750,6 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       ImGui::SetCursorScreenPos(q0);
       ImGui::InvisibleButton("##scroll", ImVec2(q1.x - q0.x, q1.y - q0.y));
       if (ImGui::IsItemActive() && smp) {
-        const double wv = ui.goTo - ui.goFrom;
         const double c = (io.MousePos.x - q0.x) / std::max(1.0f, q1.x - q0.x);
         jumpView(c - wv * 0.5, c + wv * 0.5);
       }
@@ -1383,55 +1757,91 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         a.setHint(i18n::tr("Drag to scroll the wave view, wheel to zoom"));
         if (io.MouseWheel != 0) zoom(io.MouseWheel > 0 ? 0.8 : 1.25, (ui.goFrom + ui.goTo) * 0.5);
       }
+      ctl(sk, "##scroll", 14, wy, ww - 28, scrollH);
+    }
+    // Switch row: options, hand edit | SNAP size, then-zero-crossing | NAME, POS of the selected marker | grid lines, show region.
+    {
+      iskin::bevel(sk, wx, rowY, ww, 540 - rowY, rgb(0x161E26), 0, 0);
+      dl->AddLine(sk.at(wx, rowY), sk.at(wx + ww, rowY), IM_COL32(0, 0, 0, 160));
+      const float ry = rowY + 2, rh = 20;
+      if (kerf::deckButton(a, sk, "##wopts", 4, ry, 22, rh, ui::Icon::ChevronDown, "Wave view options")) ImGui::OpenPopup("##kwopts");
+      ctl(sk, "##wopts", 4, ry, 22, rh);
+      if (ImGui::BeginPopup("##kwopts")) {
+        if (ImGui::MenuItem(i18n::tr("Ruler in seconds"), nullptr, !barsRuler)) a.doc.setParam(t.pid(SlRuler), kerfmarks::RulerSeconds, false);
+        if (ImGui::MenuItem(i18n::tr("Ruler in bars and beats"), nullptr, barsRuler)) a.doc.setParam(t.pid(SlRuler), kerfmarks::RulerBars, false);
+        if (ImGui::MenuItem(i18n::tr("Beat grid lines"), nullptr, gridShown)) a.doc.setParam(t.pid(SlGridLines), gridShown ? 0 : 1, false);
+        ImGui::Separator();
+        const double mid = (ui.goFrom + ui.goTo) * 0.5;
+        if (ImGui::MenuItem(i18n::tr("Zoom in"))) zoom(0.5, mid);
+        if (ImGui::MenuItem(i18n::tr("Zoom out"))) zoom(2.0, mid);
+        if (ImGui::MenuItem(i18n::tr("Show the whole loop"))) setView(0, 1);
+        if (ImGui::MenuItem(i18n::tr("Show the selected region"), nullptr, false, nSl > 0 && smp)) fitRegion(k);
+        ImGui::EndPopup();
+      }
+      ImGui::BeginDisabled(rv.on || !smp);
+      if (kerf::iconSwitch(a, sk, "##whand", 30, ry, 22, rh, ui::Icon::ToolDraw, "Edit the markers by hand", manual)) makeManual(a, t, st, starts, smp.get());
+      ImGui::EndDisabled();
+      kerf::text(sk, 58, ry, 30, rh, "SNAP", Role::Eyebrow, rgb(0x7F8B95), 0);
+      {
+        static const char* const shortNames[kerfmarks::SnapCount] = {i18n::N_("Off"), i18n::N_("Zero crossing"), i18n::N_("Bar"), i18n::N_("1/2 bar"),
+                                                                     i18n::N_("Beat"), "1/2", "1/3", "1/4", "1/6", "1/8"};
+        iskin::lcd(sk, 90, ry, 100, rh, "", rgb(0x262D33), sk.c.lcdText, 10);
+        const std::string sn = std::string(i18n::tr(shortNames[snap])) + (snap >= kerfmarks::SnapBeat + 1 ? " " + std::string(i18n::tr("beat")) : std::string());
+        kerf::text(sk, 95, ry, 82, rh, kerf::fit(sk, sn, Role::Value, 82).c_str(), Role::Value, snap ? rgb(0xFFD49A) : rgb(0xA4AEB7), 0);
+        iskin::glyphArrow(dl, sk.at(183, ry + rh * 0.5f), sk.px(3.2f), rgb(0xA4AEB7), 3);
+        ImGui::SetCursorScreenPos(sk.at(90, ry));
+        if (ImGui::InvisibleButton("##snaplcd", ImVec2(sk.px(100), sk.px(rh)))) ImGui::OpenPopup("##ksnap");
+        if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Snap: where moved and added markers land (hold Alt while dragging: no snapping)"));
+        ctl(sk, "##snaplcd", 90, ry, 100, rh);
+      }
+      ImGui::BeginDisabled(!kerfmarks::isGrid(snap));
+      if (kerf::iconSwitch(a, sk, "##snapzero", 194, ry, 22, rh, ui::Icon::ZeroCross, "Then the nearest zero crossing", snapZero))
+        a.doc.setParam(t.pid(SlSnapZero), snapZero ? 0 : 1, false);
+      ImGui::EndDisabled();
+      kerf::text(sk, 226, ry, 32, rh, "NAME", Role::Eyebrow, rgb(0x7F8B95), 0);
+      if (field(sk, "##namefld", 260, ry, 140, rh, nSl > 0 ? regionName(k) : std::string(), nSl > 0 ? i18n::N_("Name this region") : "", false, canRename(k),
+                i18n::N_("Click: name the region (shown on its flag)")))
+        beginRename(k);
+      kerf::text(sk, 408, ry, 28, rh, "POS", Role::Eyebrow, rgb(0x7F8B95), 0);
+      if (field(sk, "##posfld", 438, ry, 108, rh, canMove(k) ? posText(static_cast<double>(starts[static_cast<size_t>(k)])) : std::string(),
+                nSl > 0 ? i18n::N_("Fixed at the start") : "", true, canMove(k), i18n::N_("Click: type the marker's exact position")))
+        beginPosition(k);
+      if (kerf::iconSwitch(a, sk, "##wgrid", 664, ry, 22, rh, ui::Icon::DisplayBars, "Beat grid lines", gridShown))
+        a.doc.setParam(t.pid(SlGridLines), gridShown ? 0 : 1, false);
+      if (kerf::deckButton(a, sk, "##wshow", 688, ry, 22, rh, ui::Icon::ScrollTo, "Show the selected region") && nSl > 0) fitRegion(k);
+      ctl(sk, "##wshow", 688, ry, 22, rh);
     }
   }
 
   // ======================================================================= keyboard
+  // Base note (left) and two rows of pads like the reference: black-key pads over white-key pads.
   if (shown[BKeys]) {
     const iskin::Skin sk = bandSkin(BKeys);
-    iskin::bevel(sk, 0, 571, kSxW, 54, rgb(0x12191E), 0, 0);
-    sk.dl()->AddLine(sk.at(0, 571), sk.at(kSxW, 571), IM_COL32(0, 0, 0, 160));
+    iskin::bevel(sk, 0, 540, kSxW, 54, rgb(0x12191E), 0, 0);
+    sk.dl()->AddLine(sk.at(0, 540), sk.at(kSxW, 540), IM_COL32(0, 0, 0, 160));
     ImGui::BeginDisabled(rv.on);
-    iskin::digi(a, t, sk, SlBaseNote, 3, 574, 22, 48, [](double v) { return ed::noteName(static_cast<int>(std::lround(v))); }, 7.5f);
+    iskin::digi(a, t, sk, SlBaseNote, 4, 543, 22, 48, [](double v) { return ed::noteName(static_cast<int>(std::lround(v))); }, 9.5f);
     ImGui::EndDisabled();
+    ctl(sk, "##basenote", 4, 543, 22, 48);
     bool litKeys[128] = {};
     for (int s = 0; s < nSl; ++s) {
       int kk = sliceKey(s);
       if (kk >= 0 && kk < 128) litKeys[kk] = true;
     }
-    iskin::KeyColors kc;
-    kc.white = rgb(0xDCE1E5), kc.black = rgb(0x242C32), kc.pressed = rgb(kOrange), kc.mark = rgb(kOrangeDeep), kc.sep = rgb(0x0E1419);
-    // The keyboard starts an octave under the selected region's key (or the base note)
-    // (moved only when that key is out of sight; 35 white keys = 60 keys).
+    // The pads start an octave under the selected region's key (or the base note)
+    // (moved only when that key is out of sight; 35 white pads = 60 keys).
     const int focus = nSl > 0 && sliceKey(k) >= 0 ? sliceKey(k) : base;
     if (ui.kbLow < 0 || focus < ui.kbLow || focus >= ui.kbLow + 60) ui.kbLow = std::clamp((focus / 12) * 12 - 12, 0, 60);
-    const int low = ui.kbLow;
-    const int clicked = iskin::keyboard(a, t, sk, 27, 571, 676, 54, low, 35, kc, sliceKey(k), litKeys);
-    const bool kbHov = ImGui::IsItemHovered();
+    int hoverNote = -1;
+    const int clicked = kerf::padKeyboard(a, t, sk, 30, 543, 680, 48, ui.kbLow, 35, litKeys, sliceKey(k), &hoverNote);
     if (clicked >= 0)
       for (int s = 0; s < nSl; ++s)
         if (sliceKey(s) == clicked) {
           selectRegion(s);
           break;
         }
-    if (kbHov) a.setHint(i18n::tr("Click: play the key (selects its region) \xC2\xB7 right-click: assign the region to the key"));
-    // Right-click: the key under the mouse (same geometry as the keyboard).
-    if (kbHov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-      static const int wOff[7] = {0, 2, 4, 5, 7, 9, 11};
-      static const int bAfter[7] = {1, 1, 0, 1, 1, 1, 0};
-      const ImVec2 p = sk.at(27, 571), q = sk.at(703, 625), mm = ImGui::GetIO().MousePos;
-      const float wwk = (q.x - p.x) / 35.0f, bh = (q.y - p.y) * 0.62f, bw = wwk * 0.62f;
-      int note = -1;
-      for (int i = 0; i < 35 && note < 0; ++i)
-        if (bAfter[i % 7] && i + 1 < 35) {
-          const float bx = p.x + (i + 1) * wwk - bw * 0.5f;
-          if (mm.x >= bx && mm.x < bx + bw && mm.y < p.y + bh) note = low + (i / 7) * 12 + wOff[i % 7] + 1;
-        }
-      if (note < 0) {
-        const int i = std::clamp(static_cast<int>((mm.x - p.x) / wwk), 0, 34);
-        note = low + (i / 7) * 12 + wOff[i % 7];
-      }
-      ui.kbMenuKey = note;
+    if (hoverNote >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+      ui.kbMenuKey = hoverNote;
       ImGui::OpenPopup("##kbmenu");
     }
     if (ImGui::BeginPopup("##kbmenu")) {
@@ -1444,12 +1854,93 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       ImGui::EndPopup();
     }
   }
+  // ======================================================================= J-182: name and position entry
+  if (ui.openRename) ImGui::OpenPopup("##kname"), ui.openRename = false;
+  if (ui.openPos) ImGui::OpenPopup("##kpos"), ui.openPos = false;
+  if (ImGui::BeginPopup("##kname")) {
+    const int s = ui.edit;
+    if (!canRename(s)) {
+      ImGui::CloseCurrentPopup();
+    } else {
+      ImGui::TextDisabled("%s %d", i18n::tr("Name of region"), s + 1);
+      if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+      ImGui::SetNextItemWidth(std::max(220.0f, root.px(240)));
+      const bool enter = ImGui::InputText("##nm", ui.nameBuf, sizeof ui.nameBuf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+      traceRect("nameinput", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+      if (classic && !manual) ImGui::TextDisabled("%s", i18n::tr("Naming keeps the cuts as hand-set markers"));
+      if (enter || ImGui::Button(i18n::tr("Rename"))) {
+        renameRegion(s, ui.nameBuf);
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::SameLine();
+      if (ImGui::Button(i18n::tr("Cancel"))) ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+  if (ImGui::BeginPopup("##kpos")) {
+    const int s = ui.edit;
+    if (!canMove(s)) {
+      ImGui::CloseCurrentPopup();
+    } else {
+      const int unit = ui.posUnit < 0 ? rulerUnit : ui.posUnit;
+      const double cur = static_cast<double>(starts[static_cast<size_t>(s)]);
+      ImGui::TextDisabled("%s %d", i18n::tr("Marker of region"), s + 1);
+      static const char* const units[kerfmarks::UnitCount] = {i18n::N_("Seconds"), i18n::N_("Samples"), i18n::N_("Bars:beats:ticks")};
+      for (int u = 0; u < kerfmarks::UnitCount; ++u) {
+        if (u) ImGui::SameLine();
+        ImGui::BeginDisabled(u == kerfmarks::UnitBars && !(fpb > 0));
+        if (ImGui::RadioButton(i18n::tr(units[u]), unit == u) && unit != u) {
+          ui.posUnit = u, ui.posBad = false;
+          std::snprintf(ui.posBuf, sizeof ui.posBuf, "%s", kerfmarks::formatPosition(cur, u, rate, fpb).c_str());
+        }
+        ImGui::EndDisabled();
+      }
+      if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+      ImGui::SetNextItemWidth(std::max(220.0f, root.px(240)));
+      const bool enter = ImGui::InputText("##pos", ui.posBuf, sizeof ui.posBuf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+      traceRect("posinput", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+      if (ImGui::IsItemEdited()) ui.posBad = false;
+      if (ui.posBad) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s", i18n::tr("Not a position in this unit"));
+      else ImGui::TextDisabled("%s", unit == kerfmarks::UnitBars ? i18n::tr("e.g. 2:3:048 (bar, beat, tick of 96)") : unit == kerfmarks::UnitSamples ? i18n::tr("e.g. 22050") : i18n::tr("e.g. 1.250"));
+      if (enter || ImGui::Button(i18n::tr("Move"))) {
+        double f = 0;
+        if (kerfmarks::parsePosition(ui.posBuf, unit, rate, fpb, f) && f <= frames) {
+          moveMarker(s, std::llround(f));  // exactly there (typed positions are not snapped)
+          ImGui::CloseCurrentPopup();
+        } else {
+          ui.posBad = true;
+        }
+      }
+      ImGui::SameLine();
+      if (ImGui::Button(i18n::tr("Cancel"))) ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+
   if (trace && !traceLine.empty()) {  // J-181 dev check: control places (printed when they change)
     static std::string last;
-    char b[160];
-    std::snprintf(b, sizeof b, " form=%.0f,%.0f,%.0f,%.0f tab=%d display=%d regions=%d snap=%d", static_cast<double>(root.o.x), static_cast<double>(root.o.y),
-                  static_cast<double>(root.at(kSxW, formH).x), static_cast<double>(root.at(kSxW, formH).y), ui.tab, ui.display, nSl, ui.snap);
+    char b[400];
+    const std::string selName = nSl > 0 ? regionName(k) : std::string();
+    long long startSum = 0;  // J-182: the markers as a whole (an undone edit brings the sum back)
+    for (int64_t f : starts) startSum += static_cast<long long>(f);
+    std::snprintf(b, sizeof b,
+                  " form=%.0f,%.0f,%.0f,%.0f tab=%d display=%d regions=%d snap=%d snapzero=%d rulerunit=%d grid=%d fpb=%.3f sel=%d selframe=%lld lastadd=%lld "
+                  "startsum=%lld name=[%s]",
+                  static_cast<double>(root.o.x), static_cast<double>(root.o.y), static_cast<double>(root.at(kSxW, formH).x),
+                  static_cast<double>(root.at(kSxW, formH).y), ui.tab, ui.display, nSl, snap, snapZero ? 1 : 0, barsRuler ? 1 : 0, gridShown ? 1 : 0, fpb, k,
+                  static_cast<long long>(nSl > 0 ? starts[static_cast<size_t>(k)] : -1), static_cast<long long>(ui.lastAdd), startSum, selName.c_str());
     const std::string line = "kerf-ui:" + traceLine + b;
+    if (line != last) {
+      last = line;
+      std::printf("%s\n", line.c_str());
+      std::fflush(stdout);
+    }
+  }
+  if (kerf::auditOn()) {  // J-183 dev check: the layout audit (printed when it changes)
+    static std::string last;
+    char b[96];
+    std::snprintf(b, sizeof b, " scale=%.3f display=%d keys=%d tab=%d ", static_cast<double>(root.s), ui.display, ui.keys ? 1 : 0, ui.tab);
+    const std::string line = kerf::auditReport() + b;
     if (line != last) {
       last = line;
       std::printf("%s\n", line.c_str());

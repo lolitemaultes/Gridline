@@ -597,7 +597,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   {  // decode the channels' samples in parallel before they are prepared one by one (J-25)
     std::vector<std::string> paths;
     for (const auto& c : song.channels)
-      if (!c.plugin.data.empty() && isAudioFile(c.plugin.data)) paths.push_back(c.plugin.data);
+      if (const std::string p = c.plugin.data.substr(0, c.plugin.data.find('\n')); !p.empty() && isAudioFile(p)) paths.push_back(p);  // J-182: first line
     if (asyncSamples_)
       for (const auto& p : paths) sampleCache().request(p);
     else

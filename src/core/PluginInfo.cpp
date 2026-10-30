@@ -608,6 +608,10 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   p.params[SlProcFadeIn] = lin("Processed fade in", "ms", 0, 1000, 0);
   p.params[SlProcFadeOut] = lin("Processed fade out", "ms", 0, 1000, 0);
   p.params[SlProcDeclick] = tog("Processed declick", 1);
+  p.params[SlSnap] = ch("Marker snap", {"Off", "Zero crossings", "Bar", "Half bar", "Beat", "1/2 beat", "1/3 beat", "1/4 beat", "1/6 beat", "1/8 beat"}, 0);
+  p.params[SlSnapZero] = tog("Snap then zero crossing", 0);
+  p.params[SlRuler] = ch("Ruler", {"Seconds", "Bars and beats"}, 0);
+  p.params[SlGridLines] = tog("Beat grid lines", 1);
   p.presets = {{"Transients", {}}, {"Even 16ths, mono", {{SlMode, 3.f}, {SlMono, 1.f}}}, {"Fit to tempo", {{SlFitTempo, 1.f}, {SlMono, 1.f}}},
                {"Lo-fi", {{SlFilterType, 1.f}, {SlCutoff, 3000.f}, {SlPitch, -2.f}}}};
   p.editorWidth = 714;

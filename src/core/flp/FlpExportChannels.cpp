@@ -23,6 +23,7 @@
 #include "../AutomationEdit.h"
 #include "../PluginParams.h"
 #include "../../engine/ChannelIns.h"
+#include "../../engine/KerfMarks.h"
 #include "../../engine/TimeStretch.h"
 #include "FlpExportInternal.h"
 
@@ -759,9 +760,10 @@ void Exporter::writeChannel(int fl) {
   // Plugins that play the channel's sample (Slicex, Granulizer, …): the
   // channel keeps its path (196), the decoders read it from there.
   if (type == kPlugin && !ch.plugin.data.empty() && !findRaw(ce.ev, 196))
-    if (const PluginInfo* info = findPlugin(ch.plugin.type); info && info->usesSample && ch.plugin.data.find('\n') == std::string::npos) {
+    if (const PluginInfo* info = findPlugin(ch.plugin.type); info && info->usesSample &&
+        (ch.plugin.data.find('\n') == std::string::npos || kerfmarks::hasNames(ch.plugin.data))) {  // J-182: Kerf's names follow the path
       auto it = std::find_if(ce.ev.begin(), ce.ev.end(), [](const RawEvent& e) { return e.id == 20; });
-      ce.ev.insert(it == ce.ev.end() ? ce.ev.end() : it + 1, RawEvent{196, utf16z(enc::flPath(ch.plugin.data, ec))});
+      ce.ev.insert(it == ce.ev.end() ? ce.ev.end() : it + 1, RawEvent{196, utf16z(enc::flPath(kerfmarks::pathOf(ch.plugin.data), ec))});
     }
   putPlugin(ce.ev);
   // 3x Osc (v14+): FL plays the channel's own envelopes (218) and filter

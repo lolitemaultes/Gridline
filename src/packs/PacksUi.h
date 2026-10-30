@@ -15,6 +15,11 @@ bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
 // a mixer track to record while the transport plays (one is inserted into the
 // first free slot when the track has none). Returns the slot, -1 = no room.
 int armAudioEditorRecording(App& a, ObjectId track);
+// J-184: loads a picture file into a Pixel Tone (gl.pixeltone) target: decoded
+// on a worker thread, applied on the UI thread as one undo step ("load
+// picture"); a file that is not a picture leaves the state as it was and says
+// why. False when the target is not a Pixel Tone.
+bool loadPicture(App& a, const PluginTarget& t, const std::string& path);
 // J-150: true when a pack takes this device's MIDI for itself (a DJ deck bound to
 // the controller, or learning a control): the app's links and templates skip it.
 bool claimMidi(App& a, const std::string& device);

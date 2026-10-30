@@ -5,6 +5,43 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ## Unreleased
 
+### Added
+
+- Kerf time and marker settings. The ruler under the wave view shows seconds or bars and beats
+  (click it, or use the View menu); bars and beats follow the loop's length in beats. Faint beat grid
+  lines (bars stronger than beats) show the snap size and can be hidden in the View menu. Markers
+  snap to a bar, half bar, beat, 1/2, 1/3, 1/4, 1/6 or 1/8 beat, to zero crossings, or to the grid
+  and then the nearest zero crossing, when dragged, added with a double-click or with the add
+  buttons; hold Alt while dragging to place a marker freely. Regions can be named (right-click a
+  flag, or the name field of the region panel) and the name shows on the flag; a marker's exact
+  position can be typed in seconds, samples or bars:beats:ticks, and the arrow keys over the wave
+  view (or the nudge buttons and menu items) move it one snap step. Snap, ruler, grid and names
+  are saved with the project, and every edit is one undo step.
+- Pixel Tone plays your own pictures. "Load picture..." in its editor opens PNG, JPEG, BMP, GIF
+  (first frame), TGA, PSD and HDR files, and a picture dragged from the desktop or from the
+  browser onto the picture, the plugin window or a Pixel Tone channel in the channel rack loads
+  there (the picture lights up while you hover). Photos are reduced to the "Max rows" height with
+  their proportions kept (at most 1024 columns and 262144 pixels, so large photos stay quick and
+  projects small), transparent parts play as silence, and decoding runs in the background. Each
+  load is one undo step and is saved with the project. The editor shows the file name and sizes,
+  and can reverse, flip, invert or reset the picture. Files that are not pictures are refused with
+  a message and leave the picture as it was. The browser now lists pictures. WebP is not supported.
+- Dev scripts: `dialogok <file>` presses OK with that file on the file dialog that is open.
+- Seltmann: pitch each region right where it is. Every pad and every region in the waveform shows a
+  small pitch readout (pitched ones always, the others under the pointer): drag it up or down for
+  semitones (Shift for finer steps), turn the mouse wheel over a pad or a region, double-click the
+  readout to go back to 0, or right-click for a Pitch menu (a semitone or an octave up or down,
+  reset). Each edit is one undo step and plays at once.
+- Seltmann: start the sequence on any cell. Right-click a sequence block, a pad or a region and pick
+  "Start the sequence here": it plays from that cell on and the cells before move to the end, so
+  the loop keeps its length. "Start here, leave out the steps before" drops them instead. A START
+  flag in the waveform shows where the sequence begins; drag it onto another region to start there.
+  Saved with the project, one undo step, and the pattern sent to the project follows the new order.
+- Seltmann: resize regions directly again. Hover the cut between two regions in the waveform and drag
+  it: both neighbours resize (the chop's snap applies, hold Alt to place it freely) and the cuts are
+  kept by hand. While the sequence plays every region in order, the edges between its blocks drag
+  the same cuts and the steps follow the new lengths. A click on a region still plays it.
+
 ### Fixed
 
 - FL Studio projects: audio clips whose channel stretches its sample to a set time (a number of
@@ -28,6 +65,15 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Changed
 
+- Kerf's editor has a cleaner layout. The top band is split into three cards: the level and
+  tuning sliders, MODULATION (the X / Y pad with its two wheels) and PLAYBACK. In PLAYBACK one
+  menu sets how a region plays (gated or one shot, the region alone or on to the end of the
+  loop), with fit to tempo, beats, mono and declick in two rows under it. The region panel has a
+  REGION card (selector, key and cut, then AMP, FILTER, PITCH and START rows) and a SLICES card
+  (hits, 4, 8, 16, 32 or by hand, and the filter). The deck bar keeps its buttons in one row with
+  captions over the loop's details. The wave view has an overview on top and a row of switches
+  for snapping, the region's name and its position. The keyboard is two rows of pads. Controls
+  sit in even rows, nothing overlaps, and text keeps a readable size at 1280 x 800 and at 150%.
 - Kerf's editor is laid out band by band like a classic region slicer and finished in Gridline's
   own style. The view beside the filter has tabs: AMP (envelope and a velocity curve), REGION
   (the selected region's audio) and DETECT (slicing method, the loop with its cuts, sensitivity and

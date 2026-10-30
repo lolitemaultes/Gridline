@@ -89,6 +89,17 @@ struct Ed {
   std::vector<ImVec2> seqCentres;      // block centres (scripted input, trace)
   ImVec2 seq0, seq1;                   // the lane
   ImVec2 body;                         // J-152: the editor body's size (trace: measured heights)
+  // J-185 slice pitch, the sequence's start flag, direct slice resizing
+  uint32_t gesture = 0;                // counts drags (one undo step each)
+  int pitchDrag = -1;                  // slice whose pitch chip is dragged
+  float pitchFrom = 0, pitchAcc = 0;   // pitch at the press, pointer travel (coarse drags)
+  float wheelAcc = 0;                  // wheel travel not yet turned into pitch steps
+  int cutDrag = -1;                    // cut (slice index) being dragged in the waveform or the lane
+  Model cutBase;                       // the model when the cut drag began
+  bool startDrag = false;              // the START flag is being dragged
+  ImVec2 startFlag{-1, -1};            // its centre (trace)
+  std::vector<std::pair<std::string, ImVec2>> menuPts;  // items of the open region menu (trace)
+  std::vector<ImVec2> cutPts, laneCutPts, padChips;     // cut handles, lane edges, pad pitch chips (trace)
 };
 Ed& ed(const PluginTarget& t);
 
@@ -184,5 +195,26 @@ void openRegionMenu(Ed& e, int region, int step);
 void drawRegionMenu(App& a, const PluginTarget& t, Ed& e);
 // Marks the sequence as edited by hand (re-chops that keep the regions keep it).
 void markEdited(Model& m);
+
+// ---- J-185 slice pitch, the sequence's start, resizing (one undo step each; drags fold)
+// Sets a slice's pitch (semitones). mergeKey folds a drag or a run of wheel steps.
+void slicePitchUi(App& a, const PluginTarget& t, Ed& e, int slice, float semis, uint64_t mergeKey = 0);
+// The mouse wheel over the last item steps the slice's pitch (1 semitone, Shift 0.1) and keeps the wheel from scrolling.
+void wheelPitch(App& a, const PluginTarget& t, Ed& e, int slice);
+// "+3", "-12", "+0.5", "0".
+std::string pitchText(float semis);
+// A small pitch readout of a slice: drag up / down (semitones; Shift fine), wheel, double-click
+// back to 0, right-click the region menu. `units` adds " st" when it fits `maxW`. Returns its width.
+float pitchChip(App& a, const PluginTarget& t, Ed& e, const char* id, ImVec2 p0, float h, float maxW, int slice, bool units);
+// The sequence starts at `step` (keepRest: the steps before move to the end; else they are left out).
+void startHereUi(App& a, const PluginTarget& t, Ed& e, int step, bool keepRest);
+// Cut drags (waveform, lane): begin stores the model; dragging moves cut `cut` (the start of that
+// slice) to `frame` (the chop's snap, Alt: none), both neighbours resize; one undo step per drag.
+void cutDragBegin(Ed& e, int cut);
+void cutDragTo(App& a, const PluginTarget& t, Ed& e, int cut, double frame);
+// Merge key of a drag gesture on an item.
+inline uint64_t gestureKey(uint64_t base, const Ed& e, int item) {
+  return base + (static_cast<uint64_t>(e.gesture & 0xFFFFu) << 16) + static_cast<uint64_t>(item & 0xFFFF);
+}
 
 }  // namespace gl::packs::seltmann::sui

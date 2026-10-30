@@ -204,7 +204,7 @@ add_library(gridline_monocypher STATIC third_party/monocypher/monocypher.c)
 target_include_directories(gridline_monocypher SYSTEM PUBLIC third_party/monocypher)
 target_compile_options(gridline_monocypher PRIVATE ${GL_NOWARN})
 set_target_properties(gridline_monocypher PROPERTIES POSITION_INDEPENDENT_CODE ON)
-add_library(gridline_stbimage STATIC third_party/stb/gridline_stb_image.c)
+add_library(gridline_stbimage STATIC third_party/stb/gridline_stb_image.c third_party/stb/gridline_stb_pictures.c)  # J-184: + Pixel Tone pictures
 target_compile_options(gridline_stbimage PRIVATE ${GL_NOWARN})
 set_target_properties(gridline_stbimage PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # J-157: Rubber Band Library 4.0.0 (GPL-2.0-or-later, vendored unmodified; see
@@ -935,6 +935,12 @@ target_link_libraries(gridline_tests_j180 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j180 PRIVATE tests src)
 target_compile_options(gridline_tests_j180 PRIVATE ${GL_WARN})
 add_test(NAME j180_note_fine_pitch COMMAND gridline_tests_j180 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-182: Kerf's time and marker settings: snap sizes, nudging, bars:beats ruler, names, state round trips.
+add_executable(gridline_tests_j182 tests/test_j182.cpp)
+target_link_libraries(gridline_tests_j182 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j182 PRIVATE tests src)
+target_compile_options(gridline_tests_j182 PRIVATE ${GL_WARN})
+add_test(NAME j182_kerf_time_markers COMMAND gridline_tests_j182 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-109: Stop releases every sound outside the song; Stop twice (panic) silences tails too.
 add_executable(gridline_tests_j109 tests/test_j109.cpp)
 target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
@@ -1463,6 +1469,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(seltmann_flow PROPERTIES TIMEOUT 300)
 
+    # J-185: Seltmann: drag a pad's pitch readout, right-click a block > Start the sequence here (undo), drag a cut to resize.
+    add_test(NAME j185_seltmann_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j185_seltmann -P ${CMAKE_SOURCE_DIR}/tests/j185_seltmann_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j185_seltmann_app PROPERTIES TIMEOUT 300)
+
     # J-151: Platter's two decks: the controller question, both decks playing, the crossfader.
     add_test(NAME platter_flow
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_platter>
@@ -1499,6 +1512,27 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j181_kerf_ui -P ${CMAKE_SOURCE_DIR}/tests/j181_kerf_ui.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j181_kerf_ui_app PROPERTIES TIMEOUT 600)
+
+    # J-182: Kerf's snap, ruler, marker drag / add on the grid, rename and typed position in the real app.
+    add_test(NAME j182_kerf_time_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j182_kerf_time -P ${CMAKE_SOURCE_DIR}/tests/j182_kerf_time.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j182_kerf_time_app PROPERTIES TIMEOUT 600)
+
+    # J-184: Pixel Tone pictures: file dialog + undo, drop on the picture (highlight), rack rows, corrupt file.
+    add_test(NAME j184_pixeltone_pictures_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_pixeltone>
+                     -DOUT=${CMAKE_BINARY_DIR}/j184_pixeltone_pictures -P ${CMAKE_SOURCE_DIR}/tests/j184_pixeltone_pictures.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j184_pixeltone_pictures_app PROPERTIES TIMEOUT 600)
+
+    # J-183: Kerf's layout: no overlapping controls, rows aligned, no clipped or tiny text (1440x960, 1280x800, UI scale 1.5).
+    add_test(NAME j183_kerf_layout_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j183_kerf_layout -P ${CMAKE_SOURCE_DIR}/tests/j183_kerf_layout.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j183_kerf_layout_app PROPERTIES TIMEOUT 900)
 
     # J-112: Space / the Play button / the remote Play while Seltmann's pattern plays (transport stopped) stop the
     # pattern and leave the transport stopped; the next Play plays the song. Window focused or not.

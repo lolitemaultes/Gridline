@@ -18,6 +18,7 @@
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
 #include "../engine/pitch/Kernel.h"
+#include "../packs/PacksUi.h"
 #include "App.h"
 #include "BrowserUi.h"
 #include "CollabUi.h"
@@ -293,6 +294,7 @@ void fileDragSource(const std::string& path, const char* label) {
                         : k == Kind::Midi || k == Kind::Score ? ui::Icon::Piano
                         : k == Kind::Chain ? ui::Icon::Mixer
                         : k == Kind::Project || k == Kind::Flp ? ui::Icon::Song
+                        : k == Kind::Image                     ? ui::Icon::Paint  // J-184
                                                                : ui::Icon::Settings;
   ui::DragPreview(icon, name.c_str(), audio ? theme::rgb(theme::role::kPaint) : 0);
   ImGui::EndDragDropSource();
@@ -771,6 +773,12 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
     case DropAction::AddBrowserFolder:
       addBrowserFolder(a, path);
       return true;
+    case DropAction::LoadPicture: {  // J-184: decoded on a worker, applied as one undo step ("load picture")
+      const PluginTarget t = target == DropTarget::Rack ? PluginTarget{place.channel, -1} : PluginTarget{place.owner, place.pluginSlot};
+      if (!packs::loadPicture(a, t, path)) return false;
+      if (target == DropTarget::Rack) a.selectChannel(place.channel);
+      return true;
+    }
   }
   return false;
 }
@@ -1035,6 +1043,20 @@ void openFile(App& a, const std::string& path) {
     a.notify(d.error.empty() ? "Cannot open " + fs::path(path).filename().string() : d.error, true);
     return;
   }
+  // J-184: pictures go to the open Pixel Tone window.
+  if (d.item.kind == Kind::Image) {
+    DropPlace pw;
+    if (a.fxEditor.first != kNoId && a.fxEditor.second >= 0) pw.owner = a.fxEditor.first, pw.pluginSlot = a.fxEditor.second;
+    else if (a.settingsChannel != kNoId) pw.owner = a.settingsChannel, pw.pluginSlot = -1;
+    if (pw.owner != kNoId && dropActionFor(a, path, DropTarget::PluginWindow, pw) == DropAction::LoadPicture) {
+      performDrop(a, path, DropTarget::PluginWindow, pw);
+      return;
+    }
+    a.notify(std::string(i18n::tr("Pictures play in Pixel Tone: drop this one onto a Pixel Tone editor or channel")) + " (" +
+                 fs::path(path).filename().string() + ")",
+             true);
+    return;
+  }
   // Presets go to the open plugin window when it shows the same plugin.
   if (d.item.kind == Kind::Preset) {
     DropPlace pw;
@@ -1073,8 +1095,11 @@ void openFiles(App& a, const std::vector<xdrop::Item>& items) {
     rest.push_back(it);
   }
   if (rest.size() == 1 && !rest[0].dir) {
-    if (dropItemFor(rest[0]).kind == Kind::Other) a.notify(std::string(i18n::tr("Unsupported file type: ")) + rest[0].name, true);
-    else openFile(a, rest[0].path);
+    const Kind k = dropItemFor(rest[0]).kind;
+    if (k == Kind::Other || k == Kind::Image)  // J-184: a picture let go where nothing takes it: as before
+      a.notify(std::string(i18n::tr("Unsupported file type: ")) + rest[0].name, true);
+    else
+      openFile(a, rest[0].path);
     return;
   }
   performItems(a, rest, DropTarget::Workspace, DropPlace{}, currentMods());

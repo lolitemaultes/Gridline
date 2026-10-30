@@ -232,6 +232,7 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
   }
   const float gx0 = p0.x + 10, gy0 = p0.y + kToolStrip + 8, gw = p1.x - p0.x - 20, gh = p1.y - 8 - gy0;
   const float gap = 6, cw = std::floor((gw - gap * (cols - 1)) / cols), ch = std::floor((gh - gap * (rows - 1)) / rows);
+  e.padChips.clear();
   SamplePtr smp = sampleOf(e);
   const int base = baseNote(a, t);
   const bool slotsMap = static_cast<int>(std::lround(paramOf(a, t, SmKeyMap))) == KeySlots;
@@ -248,8 +249,10 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     const std::string L = regionName(k);
     ImGui::PushID(k);
     ImGui::SetCursorScreenPos(q0);
+    ImGui::SetNextItemAllowOverlap();  // J-185: the pitch readout sits on the pad
     ImGui::InvisibleButton("##pad", ImVec2(cw, ch));
     const bool hv = ImGui::IsItemHovered();
+    wheelPitch(a, t, e, k);  // J-185: the wheel over a pad steps its pitch
     if (ImGui::IsItemActivated()) {
       e.selSlice = k;
       auditionStart(a, t, e, k);
@@ -274,7 +277,7 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
       const int key = slotsMap ? (slot >= 0 ? base + slot : -1) : base + k;
       std::snprintf(b, sizeof b, "%s %s  \xC2\xB7  %s %s  \xC2\xB7  %.3f s\n%s", i18n::tr("Region"), L.c_str(), i18n::tr("key"),
                     key >= 0 && key <= 127 ? noteName(key).c_str() : "-", static_cast<double>(s.end - s.start) / e.m.srcRate,
-                    i18n::tr("Click to play. Right-click: split or delete. Drag the grip to take it out as audio."));
+                    i18n::tr("Click to play. Wheel: pitch. Right-click: pitch, start here, split, delete. Drag the grip to take it out as audio."));
       ui::Tooltip(b);
     }
     // J-152: a quiet tinted pad with its hue along the top; it lights up in full while it plays
@@ -303,6 +306,13 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     }
     dl->AddText(a.fontBold, 16, ImVec2(q0.x + 8, q0.y + 8), ink, L.c_str());
     if (s.reverse) dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q0.x + 12 + 10 * static_cast<float>(L.size()), q0.y + 11), theme::withAlpha(ink, 0.8f), "R");
+    // J-185: the pitch readout (pitched pads, and the pad under the pointer): drag it up or down
+    const float chipY = q0.y + 27, chipH = 14;
+    const bool overPad = ImGui::IsMouseHoveringRect(q0, q1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+    if (chipY + chipH <= q1.y - ch * 0.45f + 1 && (std::fabs(s.pitch) >= 0.005f || overPad || e.pitchDrag == k)) {
+      pitchChip(a, t, e, "##ppitch", ImVec2(q0.x + 7, chipY), chipH, cw - 14, k, true);
+    }
+    if (e.padChips.size() < 16) e.padChips.push_back(ImVec2(q0.x + 15, chipY + chipH * 0.5f));  // (trace: where the readout appears)
     ImGui::PopID();
   }
   // drag handle on the selected pad: the slice out as audio

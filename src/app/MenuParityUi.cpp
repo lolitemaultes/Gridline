@@ -2,6 +2,7 @@
 // Captions are Gridline's own wording; the operations live in
 // core/MenuParity (undoable, tested) and engine/NoteFxBurn.
 #include "../engine/TimeStretch.h"
+#include "../engine/KerfMarks.h"
 #include "../core/I18n.h"
 #include "MenuParityUi.h"
 #include <algorithm>
@@ -268,9 +269,9 @@ void channelItems(App& a, ObjectId channel) {
   {  // the channel's sample in a new channel of a sample-based instrument
     const PluginInfo* pi = findPlugin(c->plugin.type);
     const bool hasSample = pi && pi->usesSample && !c->plugin.data.empty() && c->plugin.data[0] != '{' &&
-                           c->plugin.data.find('\n') == std::string::npos;
+                           (c->plugin.data.find('\n') == std::string::npos || kerfmarks::hasNames(c->plugin.data));  // J-182: Kerf's names
     if (ImGui::BeginMenu(i18n::tr("Open the sample in a new channel"), hasSample)) {
-      const std::string path = c->plugin.data;
+      const std::string path = kerfmarks::pathOf(c->plugin.data);
       for (const char* type : {"gl.sampler", "gl.granular", "gl.slicer"})
         if (const PluginInfo* ti = findPlugin(type); ti && ImGui::MenuItem(ti->name.c_str())) a.addInstrument(type, path);
       ImGui::EndMenu();

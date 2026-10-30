@@ -29,6 +29,7 @@
 #include "../core/Presets.h"
 #include "../core/MixerOps.h"
 #include "../engine/PlaylistTools.h"
+#include "../engine/KerfMarks.h"
 #include "../core/MenuParity.h"
 #include "TrackIcons.h"
 #include "App.h"
@@ -671,8 +672,8 @@ void channelContextMenu(App& a, ObjectId id) {
   {  // J-7: the channel's sample in the audio editor
     const PluginInfo* pi = findPlugin(c->plugin.type);
     const bool hasSample = pi && pi->usesSample && !c->plugin.data.empty() && c->plugin.data[0] != '{' &&
-                           c->plugin.data.find('\n') == std::string::npos;
-    if (ImGui::MenuItem(i18n::tr("Edit sample in Loupe"), nullptr, false, hasSample)) packs::openAudioEditor(a, c->plugin.data, id);
+                           (c->plugin.data.find('\n') == std::string::npos || kerfmarks::hasNames(c->plugin.data));  // J-182: Kerf's names
+    if (ImGui::MenuItem(i18n::tr("Edit sample in Loupe"), nullptr, false, hasSample)) packs::openAudioEditor(a, kerfmarks::pathOf(c->plugin.data), id);
     if (ImGui::MenuItem(i18n::tr("Export sample as WAV..."), nullptr, false, hasSample)) exportui::exportChannelSample(a, id);  // J-20
   }
   if (ImGui::MenuItem(i18n::tr("Select in playlist"))) {

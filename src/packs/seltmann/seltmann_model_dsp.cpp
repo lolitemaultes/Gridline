@@ -761,6 +761,78 @@ void naturalPattern(Model& m) {
   }
 }
 
+// ------------------------------------------------------------------ J-185 start, pitch, resize
+int firstStepOf(const Model& m, int x) {
+  const int n = static_cast<int>(m.slices.size());
+  if (x < 0 || x >= n) return -1;
+  for (int i = 0; i < static_cast<int>(m.pattern.steps.size()); ++i)
+    if (stepSlice(m.pattern, m.pattern.steps[static_cast<size_t>(i)], n) == x) return i;
+  return -1;
+}
+
+int sequenceStartRegion(const Model& m) {
+  const int n = static_cast<int>(m.slices.size());
+  for (const auto& st : m.pattern.steps) {
+    const int k = stepSlice(m.pattern, st, n);
+    if (k >= 0) return k;
+  }
+  return -1;
+}
+
+bool startSequenceAt(Model& m, int step, bool keepRest) {
+  auto& steps = m.pattern.steps;
+  const int ns = static_cast<int>(steps.size());
+  if (step <= 0 || step >= ns) return false;
+  if (keepRest) std::rotate(steps.begin(), steps.begin() + step, steps.end());
+  else steps.erase(steps.begin(), steps.begin() + step);
+  if (m.preset.empty() && m.pattern.name == "Straight") m.pattern.name = kEditedName;
+  return true;
+}
+
+bool setSlicePitch(Model& m, int slice, float semis) {
+  if (slice < 0 || slice >= static_cast<int>(m.slices.size()) || !std::isfinite(semis)) return false;
+  const float v = std::clamp(std::round(semis * 100.0f) / 100.0f, -kSlicePitchRange, kSlicePitchRange);
+  float& p = m.slices[static_cast<size_t>(slice)].pitch;
+  if (v == p) return false;
+  p = v;
+  return true;
+}
+
+bool resizeCut(Model& m, int slice, int64_t frame) {
+  const int n = static_cast<int>(m.slices.size());
+  if (slice <= 0 || slice >= n) return false;
+  const bool natural = isNaturalOrder(m);
+  const int64_t before = m.slices[static_cast<size_t>(slice)].start;
+  const int mode = m.chop.mode;
+  if (!moveCut(m, slice, frame)) return false;
+  if (m.slices[static_cast<size_t>(slice)].start == before) {
+    m.chop.mode = mode;
+    return false;
+  }
+  m.chop.autoSize = false;
+  if (!natural) return true;
+  // every region once, in order: the steps keep following the regions' lengths
+  std::vector<double> beats(static_cast<size_t>(n));
+  for (int k = 0; k < n; ++k) {
+    const auto& sl = m.slices[static_cast<size_t>(k)];
+    beats[static_cast<size_t>(k)] = beatAt(m.grid, static_cast<double>(sl.end)) - beatAt(m.grid, static_cast<double>(sl.start));
+  }
+  double u = std::max(1.0 / 64, m.pattern.unitBeats);
+  auto fits = [&](double unit) {
+    for (double b : beats) {
+      const double q = b / unit;
+      if (std::fabs(q - std::round(q)) > 0.02) return false;
+    }
+    return true;
+  };
+  while (!fits(u) && u / 2 >= 1.0 / 64 - 1e-12) u /= 2;
+  m.pattern.unitBeats = u;
+  for (int i = 0; i < static_cast<int>(m.pattern.steps.size()) && i < n; ++i)
+    m.pattern.steps[static_cast<size_t>(i)].ties = std::max(1, static_cast<int>(std::lround(beats[static_cast<size_t>(i)] / u))) - 1;
+  if (m.preset.empty() && m.pattern.name == "Straight") m.pattern.name = kEditedName;
+  return true;
+}
+
 void straightPattern(Model& m) {
   const int bpb = std::max(1, m.grid.beatsPerBar);
   const int n = static_cast<int>(m.slices.size());

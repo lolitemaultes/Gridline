@@ -14073,6 +14073,10 @@ gl.slicer	862	Stretch method	combination	0	858=2;24=0;861=-20000
 gl.slicer	863	Processed fade in	combination	1000	858=2;24=0;860=600
 gl.slicer	864	Processed fade out	combination	1000	858=2;24=0;25=0.25
 gl.slicer	865	Processed declick	combination	0	858=2;24=0;25=0.25;10=1
+gl.slicer	866	Marker snap	inert	0	
+gl.slicer	867	Snap then zero crossing	inert	0	
+gl.slicer	868	Ruler	inert	0	
+gl.slicer	869	Beat grid lines	inert	0	
 gl.snare	0	Tone	working	0	
 gl.snare	1	Snappy	working	0	
 gl.snare	2	Body decay	working	1	

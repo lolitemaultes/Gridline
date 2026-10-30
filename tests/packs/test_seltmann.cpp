@@ -672,6 +672,125 @@ void testRegions() {
 }
 
 // ------------------------------------------------------------------ instrument
+// ------------------------------------------------------------------ J-185 start here, slice pitch, resizing
+void testStartPitchResize() {
+  seltsynth::Spec sp;
+  sp.bpm = 120;
+  sp.bars = 8;
+  sp.seed = 23;
+  const auto song = seltsynth::make(sp);
+  SamplePtr src = song.sample;
+  sm::Model base;  // A B C D: four one-bar regions, the straight pattern
+  base.srcFrames = static_cast<int64_t>(src->frames());
+  base.srcRate = 44100;
+  base.grid = sm::flatGrid(*src, 120);
+  base.chop.mode = sm::ChopGrid;
+  base.chop.division = sm::Div1Bar;
+  base.chop.zeroCross = false;
+  sm::setRegionBars(base, 1, 4);
+  sm::rechop(base, src.get());
+  sm::straightPattern(base);
+  expect(base.slices.size() == 4 && sm::isNaturalOrder(base), "j185: A B C D to start with");
+  const double beats0 = base.pattern.beats();
+  std::string path;
+
+  // ---- start here
+  expect(sm::sequenceStartRegion(base) == 0 && sm::firstStepOf(base, 2) == 2 && sm::firstStepOf(base, 9) == -1, "j185: start region, first step of a region");
+  for (int at = 1; at < 4; ++at) {
+    sm::Model m = base;
+    expect(sm::startSequenceAt(m, at, true), ("j185: start here (rotate) at step " + std::to_string(at)).c_str());
+    std::vector<int> want;
+    for (int i = 0; i < 4; ++i) want.push_back((at + i) % 4);
+    expect(stepOrder(m) == want && sm::sequenceStartRegion(m) == at, "j185: ... the sequence plays from that cell, the ones before after");
+    expect(std::fabs(m.pattern.beats() - beats0) < 1e-9 && !sm::isNaturalOrder(m) && m.pattern.name == sm::kEditedName,
+           "j185: ... the loop keeps its length and counts as edited");
+    const auto notes = sm::patternNotes(m, 60, 0, 1);
+    expect(notes.size() == 4 && notes[0].key == 60 + at && notes[0].start == 0, "j185: ... the pattern's notes start on that cell's key");
+    sm::Model r;
+    expect(sm::parseData(sm::formatData("/x/a.wav", m), path, r) && stepOrder(r) == want && sm::sequenceStartRegion(r) == at,
+           "j185: ... saved with the project (state text round trip)");
+    // the regions themselves stay
+    expect(m.slices.size() == 4 && m.slices[0].start == base.slices[0].start && tiles(m), "j185: ... the regions stay as they were");
+  }
+  {
+    sm::Model m = base;
+    expect(sm::startSequenceAt(m, 2, true) && sm::startSequenceAt(m, 2, true) && sm::isNaturalOrder(m), "j185: starting at C twice comes back to A");
+    m = base;
+    expect(sm::startSequenceAt(m, 1, false) && stepOrder(m) == std::vector<int>{1, 2, 3} && std::fabs(m.pattern.beats() - beats0 * 0.75) < 1e-9,
+           "j185: start here, leave out the steps before: B C D, three bars");
+    m = base;
+    expect(!sm::startSequenceAt(m, 0, true) && !sm::startSequenceAt(m, 4, true) && !sm::startSequenceAt(m, -1, false) && sm::isNaturalOrder(m),
+           "j185: start here at the first step or outside the sequence changes nothing");
+    // a rotated sequence renders the same cells in the new order: it differs from the original
+    sm::Model rot = base;
+    sm::startSequenceAt(rot, 2, true);
+    expect(renderDiff(base, rot, src) > 0.05, "j185: the rotated sequence sounds from the chosen cell");
+    sm::Model back = rot;
+    sm::startSequenceAt(back, 2, true);
+    expect(std::fabs(renderDiff(base, back, src)) < 1e-9, "j185: rotating all the way round sounds exactly like before");
+  }
+
+  // ---- slice pitch
+  {
+    sm::Model m = base;
+    expect(sm::setSlicePitch(m, 1, 3) && m.slices[1].pitch == 3, "j185: pitch a slice up 3 semitones");
+    expect(!sm::setSlicePitch(m, 1, 3), "j185: ... the same value changes nothing");
+    expect(sm::setSlicePitch(m, 1, 99) && m.slices[1].pitch == sm::kSlicePitchRange, "j185: ... clamped up to +24");
+    expect(sm::setSlicePitch(m, 1, -99) && m.slices[1].pitch == -sm::kSlicePitchRange, "j185: ... and down to -24");
+    expect(sm::setSlicePitch(m, 1, 0.123f) && std::fabs(m.slices[1].pitch - 0.12f) < 1e-6f, "j185: ... fine steps in hundredths");
+    expect(!sm::setSlicePitch(m, 7, 1) && !sm::setSlicePitch(m, -1, 1) && !sm::setSlicePitch(m, 0, std::nanf("")), "j185: ... bad slice / value: no change");
+    sm::setSlicePitch(m, 2, -7.5f);
+    sm::Model r;
+    expect(sm::parseData(sm::formatData("/x/a.wav", m), path, r) && std::fabs(r.slices[1].pitch - 0.12f) < 1e-6f && r.slices[2].pitch == -7.5f,
+           "j185: ... pitches saved with the project");
+    // it sounds: an octave up plays the slice in half the time (Original sync), and the loop changes
+    sm::RenderOpts o;
+    o.sampleRate = 44100;
+    o.tempo = 120;
+    o.sync = sm::SyncOriginal;
+    sm::Model up = base;
+    sm::setSlicePitch(up, 0, 12);
+    std::vector<float> L0, R0, L1, R1;
+    expect(sm::renderSlice(base, src, 0, o, L0, R0) && sm::renderSlice(up, src, 0, o, L1, R1), "j185: render a slice at 0 and +12");
+    const double ratio = static_cast<double>(L1.size()) / std::max<size_t>(1, L0.size());
+    std::printf("# j185 +12 st slice length ratio %.3f\n", ratio);
+    expect(ratio > 0.45 && ratio < 0.56, "j185: ... an octave up plays in half the time");
+    expect(maxStep(L1) > 0.001, "j185: ... and sounds");
+    expect(renderDiff(base, up, src) > 0.05, "j185: a pitched slice changes the pattern's sound");
+  }
+
+  // ---- resizing a slice by its cut
+  {
+    sm::Model m = base;
+    const double bf = sm::beatFrames(m.grid);
+    const int64_t cut2 = m.slices[2].start;
+    expect(sm::resizeCut(m, 2, cut2 - static_cast<int64_t>(std::llround(2 * bf))), "j185: drag the B|C cut half a bar earlier");
+    expect(tiles(m) && m.slices[2].start < cut2 && m.slices[1].end == m.slices[2].start && m.chop.mode == sm::ChopManual, "j185: ... both neighbours resize, cuts by hand");
+    expect(sm::isNaturalOrder(m) && std::fabs(m.pattern.beats() - beats0) < 1e-6 && std::fabs(m.pattern.unitBeats - 2) < 1e-9 &&
+               stepUnits(m) == std::vector<int>{2, 1, 3, 2},
+           "j185: ... the in-order sequence follows the new lengths (unit refined to half bars)");
+    sm::Model r;
+    expect(sm::parseData(sm::formatData("/x/a.wav", m), path, r) && r.slices[2].start == m.slices[2].start && stepUnits(r) == stepUnits(m),
+           "j185: ... saved with the project");
+    // clamped to the minimum length, never past a neighbour
+    sm::Model c = base;
+    expect(sm::resizeCut(c, 1, 0) && tiles(c) && c.slices[0].end > c.slices[0].start && c.slices[1].start > c.regionStart, "j185: a cut dragged past its neighbour stops short");
+    expect(!sm::resizeCut(c, 0, 100) && !sm::resizeCut(c, 4, 100) && !sm::resizeCut(c, 1, c.slices[1].start), "j185: no cut there / no move: nothing changes");
+    // a sequence in its own order keeps its steps
+    sm::Model rot = base;
+    sm::startSequenceAt(rot, 1, true);
+    const auto before = rot.pattern.steps;
+    expect(sm::resizeCut(rot, 3, rot.slices[3].start + static_cast<int64_t>(bf)) && rot.pattern.steps == before, "j185: a reordered sequence keeps its steps on a resize");
+    // a sub-unit move (no snap) refines the unit to keep the timing (down to 1/64 beat)
+    sm::Model f = base;
+    expect(sm::resizeCut(f, 1, f.slices[1].start + static_cast<int64_t>(std::llround(bf * 0.25))) && std::fabs(f.pattern.beats() - beats0) < 1e-6 &&
+               f.pattern.unitBeats <= 0.25 + 1e-12,
+           "j185: a sixteenth move refines the step unit to a sixteenth");
+    // an old short slice line (no pitch edits) still loads
+    expect(sm::modelFromText(sm::modelToText(base), r) && r.slices.size() == 4 && r.slices[0].pitch == 0, "j185: older states load with pitch 0");
+  }
+}
+
 void testInstrument() {
   seltsynth::Spec sp;
   sp.bpm = 120;
@@ -1445,6 +1564,7 @@ int main(int argc, char** argv) {
   if (only.empty() || only == "model") testModel();
   if (only.empty() || only == "patterns") testPatterns();
   if (only.empty() || only == "regions") testRegions();
+  if (only.empty() || only == "j185") testStartPitchResize();
   if (only.empty() || only == "instrument") testInstrument();
   if (only.empty() || only == "renders") testRenders();
   if (only.empty() || only == "long") testLongFile();

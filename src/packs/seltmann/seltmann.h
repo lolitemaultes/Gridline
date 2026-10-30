@@ -309,6 +309,24 @@ bool moveStep(Model& m, int from, int to);
 // The natural sequence again: every region once, in order (lengths follow the regions).
 void naturalPattern(Model& m);
 
+// J-185 the sequence's start, slice pitch and direct slice resizing.
+// The first step that plays region `x` (-1 none).
+int firstStepOf(const Model& m, int x);
+// The region the sequence starts on (the first step's region; -1 none).
+int sequenceStartRegion(const Model& m);
+// The sequence starts at step `step`: keepRest rotates (the steps before move to the
+// end, the cycle keeps its length), else the steps before are left out. False when
+// nothing would change (step 0, out of range).
+bool startSequenceAt(Model& m, int step, bool keepRest);
+inline constexpr float kSlicePitchRange = 24;  // semitones either way
+// Slice pitch (semitones, clamped, 0.01 steps). False when nothing changed.
+bool setSlicePitch(Model& m, int slice, float semis);
+// Moves the cut at the start of `slice` (1..n-1) to `frame` (clamped to the minimum slice
+// length) so both neighbours resize; the chop keeps the cuts by hand. A sequence that
+// played every region once in order keeps doing so with the new lengths (the step
+// unit is refined when the new lengths need it). False when nothing changed.
+bool resizeCut(Model& m, int slice, int64_t frame);
+
 // Grid corrections. All keep the grid sorted and inside the file.
 void gridSetBpm(Analysis& g, double bpm, double anchorFrame);  // straight grid through the anchor
 void gridDouble(Analysis& g);

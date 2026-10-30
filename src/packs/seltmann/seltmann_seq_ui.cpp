@@ -5,7 +5,9 @@
 // right-click a block, a slice in the waveform or a pad to split its region
 // (1/2, 1/3, ... : the first piece keeps the letter, later letters move on) or
 // to delete it (it joins its neighbour, never past the chopped region). Every
-// edit is one undo step through the plugin state.
+// edit is one undo step through the plugin state. J-185: the same menu pitches the
+// region and starts the sequence on a cell; in order, the edges between blocks are
+// the cuts (drag to resize); the pitch readouts on the pads and in the waveform.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -51,6 +53,123 @@ void deleteRegionUi(App& a, const PluginTarget& t, Ed& e, int region) {
   e.selStep = -1;
 }
 
+// ------------------------------------------------------------------ J-185 slice pitch, start here
+void slicePitchUi(App& a, const PluginTarget& t, Ed& e, int slice, float semis, uint64_t mergeKey) {
+  Model nm = e.m;
+  if (!setSlicePitch(nm, slice, semis)) return;
+  commit(a, t, e, nm, i18n::N_("Slice pitch"), mergeKey);
+}
+
+void wheelPitch(App& a, const PluginTarget& t, Ed& e, int slice) {
+  if (!ImGui::IsItemHovered() || slice < 0 || slice >= static_cast<int>(e.m.slices.size())) return;
+  ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+  ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelX);
+  const ImGuiIO& io = ImGui::GetIO();
+  float w = io.MouseWheel;
+  if (w == 0 && io.KeyShift) w = io.MouseWheelH;  // (Shift turns the wheel sideways on some systems)
+  if (w == 0) return;
+  e.wheelAcc += w;
+  const int notches = static_cast<int>(e.wheelAcc);
+  if (notches == 0) return;
+  e.wheelAcc -= static_cast<float>(notches);
+  const float step = io.KeyShift ? 0.1f : 1.0f;
+  slicePitchUi(a, t, e, slice, e.m.slices[static_cast<size_t>(slice)].pitch + step * static_cast<float>(notches),
+               0x5E185A0000000000ull + static_cast<uint64_t>(slice));
+}
+
+std::string pitchText(float v) {
+  if (std::fabs(v) < 0.005f) return "0";
+  char b[16];
+  if (std::fabs(v - std::round(v)) < 0.005f) std::snprintf(b, sizeof b, "%+d", static_cast<int>(std::lround(v)));
+  else if (std::fabs(v * 10 - std::round(v * 10)) < 0.05f) std::snprintf(b, sizeof b, "%+.1f", static_cast<double>(v));
+  else std::snprintf(b, sizeof b, "%+.2f", static_cast<double>(v));
+  return b;
+}
+
+float pitchChip(App& a, const PluginTarget& t, Ed& e, const char* id, ImVec2 p0, float h, float maxW, int slice, bool units) {
+  const auto& P = pal();
+  if (slice < 0 || slice >= static_cast<int>(e.m.slices.size())) return 0;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float v = e.m.slices[static_cast<size_t>(slice)].pitch;
+  const bool zero = std::fabs(v) < 0.005f;
+  const float fs = theme::kFontLabel;
+  std::string s = pitchText(v);
+  auto widthOf = [&](const std::string& x) { return std::ceil(a.fontMono->CalcTextSizeA(fs, 1e9f, 0, x.c_str()).x) + 8; };
+  if (units && widthOf(s + " st") <= maxW) s += " st";
+  const float w = widthOf(s);
+  if (w > maxW) return 0;
+  ImGui::SetCursorScreenPos(p0);
+  ImGui::InvisibleButton(id, ImVec2(w, h));
+  const bool hv = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
+  const ImGuiIO& io = ImGui::GetIO();
+  if (ImGui::IsItemActivated()) {
+    e.pitchDrag = slice;
+    e.pitchFrom = v;
+    e.pitchAcc = 0;
+    ++e.gesture;
+  }
+  if (ac && e.pitchDrag == slice && io.MouseDelta.y != 0) {
+    float nv;
+    if (io.KeyShift) {  // fine: 0.05 semitone per pixel
+      nv = v - io.MouseDelta.y * 0.05f;
+      e.pitchFrom = nv;
+      e.pitchAcc = 0;
+    } else {  // a semitone per 8 px
+      e.pitchAcc -= io.MouseDelta.y;
+      nv = e.pitchFrom + std::round(e.pitchAcc / 8.0f);
+    }
+    slicePitchUi(a, t, e, slice, nv, gestureKey(0x5E18500000000000ull, e, slice));
+  }
+  if (ImGui::IsItemDeactivated()) e.pitchDrag = -1;
+  if (hv && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !zero) slicePitchUi(a, t, e, slice, 0);
+  wheelPitch(a, t, e, slice);
+  if (hv && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    e.selSlice = slice;
+    openRegionMenu(e, slice, -1);
+  }
+  if (hv || ac) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+  if (hv && !ac) {
+    char b[240];
+    std::snprintf(b, sizeof b, "%s %s: %s %s\n%s", i18n::tr("Pitch of region"), regionName(slice).c_str(), pitchText(v).c_str(), i18n::tr("semitones"),
+                  i18n::tr("Drag up or down: semitones (Shift: finer). Wheel: one semitone. Double-click: back to 0."));
+    ui::Tooltip(b);
+  }
+  // paint: quiet at 0, lit when the slice is pitched
+  const ImVec2 q1(p0.x + w, p0.y + h);
+  const ImU32 face = zero ? theme::withAlpha(P.well, hv || ac ? 0.95f : 0.75f) : theme::withAlpha(accent(), hv || ac ? 1.0f : 0.88f);
+  dl->AddRectFilled(p0, q1, face, theme::kRadiusSm);
+  if (hv || ac) dl->AddRect(p0, q1, theme::withAlpha(P.paper, 0.8f), theme::kRadiusSm, 0, 1.0f);
+  const ImU32 ink = zero ? P.textDim : theme::contrastText(accent());
+  textC(dl, a.fontMono, fs, ImVec2((p0.x + q1.x) * 0.5f, (p0.y + q1.y) * 0.5f), ink, s.c_str());
+  return w;
+}
+
+void cutDragBegin(Ed& e, int cut) {
+  e.cutBase = e.m;
+  e.cutDrag = cut;
+  ++e.gesture;
+}
+
+void cutDragTo(App& a, const PluginTarget& t, Ed& e, int cut, double frame) {
+  const Model& base = e.cutBase;
+  const int n = static_cast<int>(base.slices.size());
+  if (e.cutDrag != cut || cut <= 0 || cut >= n || cut >= static_cast<int>(e.m.slices.size())) return;
+  SamplePtr smp = sampleOf(e);
+  auto f = static_cast<int64_t>(std::llround(std::clamp(frame, 0.0, static_cast<double>(std::max<int64_t>(1, base.srcFrames)))));
+  if (!ImGui::GetIO().KeyAlt) f = snapFrame(base, smp.get(), f, base.chop.snap);
+  Model nm = base;
+  if (!resizeCut(nm, cut, f)) nm = base;
+  if (nm.slices[static_cast<size_t>(cut)].start == e.m.slices[static_cast<size_t>(cut)].start && nm.pattern == e.m.pattern) return;
+  commit(a, t, e, nm, i18n::N_("Resize a slice"), gestureKey(0x5E185C0000000000ull, e, cut));
+}
+
+void startHereUi(App& a, const PluginTarget& t, Ed& e, int step, bool keepRest) {
+  Model nm = e.m;
+  if (!startSequenceAt(nm, step, keepRest)) return;
+  commit(a, t, e, nm, keepRest ? i18n::N_("Start the sequence here") : i18n::N_("Start here, leave out the steps before"));
+  e.selStep = 0;
+}
+
 void regionMenuItems(App& a, const PluginTarget& t, Ed& e, int region) {
   const int n = static_cast<int>(e.m.slices.size());
   if (region < 0 || region >= n) return;
@@ -89,11 +208,16 @@ void openRegionMenu(Ed& e, int region, int step) {
 }
 
 void drawRegionMenu(App& a, const PluginTarget& t, Ed& e) {
+  e.menuPts.clear();
   if (e.menuWant) {
     ImGui::OpenPopup("##sregion");
     e.menuWant = false;
   }
   if (!ImGui::BeginPopup("##sregion")) return;
+  auto note = [&](const char* tag) {  // (trace: where the item is, for scripted runs)
+    const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+    e.menuPts.emplace_back(tag, ImVec2((r0.x + r1.x) * 0.5f, (r0.y + r1.y) * 0.5f));
+  };
   const int n = static_cast<int>(e.m.slices.size());
   const int ns = static_cast<int>(e.m.pattern.steps.size());
   const int region = e.menuRegion;
@@ -113,6 +237,47 @@ void drawRegionMenu(App& a, const PluginTarget& t, Ed& e) {
   }
   ImGui::Separator();
   regionMenuItems(a, t, e, region);
+  // J-185: the region's pitch
+  ImGui::Separator();
+  {
+    const float pv = e.m.slices[static_cast<size_t>(region)].pitch;
+    char b[96];
+    std::snprintf(b, sizeof b, "%s   %s %s", i18n::tr("Pitch"), pitchText(pv).c_str(), i18n::tr("st"));
+    if (ImGui::BeginMenu(b)) {
+      struct Item {
+        const char* label;
+        float delta;
+      };
+      const Item items[4] = {{i18n::N_("Up a semitone"), 1}, {i18n::N_("Down a semitone"), -1}, {i18n::N_("Up an octave"), 12}, {i18n::N_("Down an octave"), -12}};
+      for (const auto& it : items) {
+        const float nv = std::clamp(pv + it.delta, -kSlicePitchRange, kSlicePitchRange);
+        if (ImGui::MenuItem(i18n::tr(it.label), nullptr, false, nv != pv)) slicePitchUi(a, t, e, region, nv);
+      }
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Reset pitch"), nullptr, false, std::fabs(pv) >= 0.005f)) slicePitchUi(a, t, e, region, 0);
+      ImGui::EndMenu();
+    }
+    note("pitch");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ImGui::IsPopupOpen(b))
+      ui::Tooltip(i18n::tr("Also: drag the pitch readout on a pad or a region up or down, or turn the wheel over it."));
+  }
+  // J-185: the sequence starts here (from this step; from a pad or the waveform: the region's first step)
+  ImGui::Separator();
+  {
+    const int ns0 = static_cast<int>(e.m.pattern.steps.size());
+    const int from = e.menuStep >= 0 && e.menuStep < ns0 ? e.menuStep : firstStepOf(e.m, region);
+    const bool can = from > 0;
+    if (ImGui::MenuItem(i18n::tr("Start the sequence here"), nullptr, false, can)) startHereUi(a, t, e, from, true);
+    note("start");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+      ui::Tooltip(from < 0   ? i18n::tr("This region is not in the sequence.")
+                  : from == 0 ? i18n::tr("The sequence already starts here.")
+                              : i18n::tr("The sequence plays from here on; the steps before move to the end, so the loop keeps its length."));
+    if (ImGui::MenuItem(i18n::tr("Start here, leave out the steps before"), nullptr, false, can)) startHereUi(a, t, e, from, false);
+    note("startcut");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+      ui::Tooltip(i18n::tr("The sequence plays from here to its end; the steps before are taken out (Undo or Reset order brings them back)."));
+  }
   const int st = e.menuStep;
   if (st >= 0 && st < ns) {
     ImGui::Separator();
@@ -159,13 +324,19 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
   const int bpb = std::max(1, m.grid.beatsPerBar);
   const double beats = std::max(1e-9, m.pattern.beats());
   const bool natural = isNaturalOrder(m);
-  char cap[96];
+  char cap[160];
   {
     const double bars = beats / bpb;
     char bb[24];
     std::snprintf(bb, sizeof bb, std::fabs(bars - std::round(bars)) < 1e-6 ? "%.0f" : "%.2f", bars);
     std::snprintf(cap, sizeof cap, "%s  \xC2\xB7  %d %s  \xC2\xB7  %s %s", natural ? i18n::tr("IN ORDER") : i18n::tr("YOUR ORDER"), ns,
                   ns == 1 ? i18n::tr("STEP") : i18n::tr("STEPS"), bb, std::fabs(bars - 1) < 1e-9 ? i18n::tr("BAR") : i18n::tr("BARS"));
+    // J-185: where the sequence starts when that is not the first region
+    const int sr = sequenceStartRegion(m);
+    if (sr > 0) {
+      const std::string c = cap;
+      std::snprintf(cap, sizeof cap, "%s  \xC2\xB7  %s %s", c.c_str(), i18n::tr("STARTS AT"), regionName(sr).c_str());
+    }
   }
   // J-152: the lane sits right under the waveform and shares its inner width (in order, A plays
   // under A). A 24 px strip between the two carries the title, the caption, the hint and Reset.
@@ -192,7 +363,7 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
       e.selStep = -1;
     }
     textR(dl, a.fontRegular, theme::kFontLabel, ImVec2(bx - 12, cy - 7), P.textFaint,
-          i18n::tr("Drag a block to move it. Right-click: split, delete"));
+          i18n::tr("Drag a block to move it, an edge to resize. Right-click: more"));
   }
   // the well
   const float lx0 = p0.x, lx1 = p1.x, ly0 = p0.y + stripH, rulerH = 13, ly1 = p1.y - rulerH;
@@ -242,6 +413,7 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
     const bool playing = i == lv.step && lv.patternRunning, sel = i == e.selStep, dragged = i == e.seqDrag;
     ImGui::PushID(0x5E0000 + i);
     ImGui::SetCursorScreenPos(q0);
+    ImGui::SetNextItemAllowOverlap();  // J-185: the edges between blocks resize the regions (in order)
     ImGui::InvisibleButton("##blk", ImVec2(q1.x - q0.x, q1.y - q0.y));
     const bool hv = ImGui::IsItemHovered();
     if (ImGui::IsItemActivated()) {
@@ -265,7 +437,7 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
     if (hv && !ImGui::IsItemActive() && e.seqDrag < 0) {
       char b[200];
       std::snprintf(b, sizeof b, "%s %d: %s %s  \xC2\xB7  %.4g %s\n%s", i18n::tr("Step"), i + 1, i18n::tr("region"), k >= 0 ? regionName(k).c_str() : "-",
-                    stepBeats(m.pattern, i), i18n::tr("beats"), i18n::tr("Click to hear it. Drag to move it. Right-click: split or delete the region."));
+                    stepBeats(m.pattern, i), i18n::tr("beats"), i18n::tr("Click to hear it. Drag to move it. Right-click: start here, pitch, split or delete the region."));
       ui::Tooltip(b);
     }
     if (hv && e.seqDrag < 0) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -307,6 +479,45 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
     if (playing && !dragged) dl->AddRect(ImVec2(q0.x - 1, q0.y - 1), ImVec2(q1.x + 1, q1.y + 1), P.paper, theme::kRadius + 1, 0, 2.0f);
     else if (sel && !dragged) dl->AddRect(ImVec2(q0.x - 1, q0.y - 1), ImVec2(q1.x + 1, q1.y + 1), accent(), theme::kRadius + 1, 0, 2.0f);
     e.seqCentres.push_back(ImVec2((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f));
+  }
+  // J-185: in order (every region once), an edge between two blocks is the cut between their
+  // regions: drag it to resize both (snap as in the waveform, Alt: none); one undo step per drag
+  e.laneCutPts.clear();
+  if (natural && e.seqDrag < 0 && ns == nSl) {
+    const double beat0 = beatAt(m.grid, static_cast<double>(m.regionStart));
+    for (int i = 1; i < ns; ++i) {
+      const float x = std::round(edge[static_cast<size_t>(i)]);
+      const float wl = edge[static_cast<size_t>(i)] - edge[static_cast<size_t>(i) - 1], wr = edge[static_cast<size_t>(i) + 1] - edge[static_cast<size_t>(i)];
+      const float hw = std::min(4.0f, std::min(wl, wr) * 0.2f);
+      if (hw < 2 && e.cutDrag != i) continue;
+      ImGui::PushID(0x5E1850 + i);
+      ImGui::SetCursorScreenPos(ImVec2(x - std::max(2.0f, hw), by0));
+      ImGui::InvisibleButton("##lcut", ImVec2(2 * std::max(2.0f, hw), by1 - by0));
+      const bool h = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
+      if (ImGui::IsItemActivated()) cutDragBegin(e, i);
+      if (ac && e.cutDrag == i && ImGui::IsMouseDragging(0, 1)) {
+        const double bb = std::clamp(static_cast<double>((mp.x - bx0) / bw), 0.0, 1.0) * std::max(1e-9, e.cutBase.pattern.beats());
+        cutDragTo(a, t, e, i, frameAt(m.grid, beat0 + bb));
+      }
+      if (ImGui::IsItemDeactivated()) e.cutDrag = -1;
+      if (h && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        e.selStep = i;
+        e.selSlice = i;
+        openRegionMenu(e, i, i);
+      }
+      if (h || ac) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        dl->AddLine(ImVec2(x, by0 - 2), ImVec2(x, by1 + 2), P.paper, 2.0f);
+        dl->AddTriangleFilled(ImVec2(x - 4, by0 - 3), ImVec2(x + 4, by0 - 3), ImVec2(x, by0 + 2), P.paper);
+      }
+      if (h && !ac) {
+        const std::string tip = regionName(i - 1) + " | " + regionName(i) + "\n" +
+                                i18n::tr("Drag to resize both regions (Alt: no snap). Click a block to play it.");
+        ui::Tooltip(tip.c_str());
+      }
+      e.laneCutPts.push_back(ImVec2(x, (by0 + by1) * 0.5f));
+      ImGui::PopID();
+    }
   }
   // drag to a new place: the caret at the nearest edge, the block under the pointer
   if (e.seqDrag >= 0 && e.seqDrag < ns) {
