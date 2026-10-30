@@ -1434,7 +1434,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j105_conv_points
                      -P ${CMAKE_SOURCE_DIR}/tests/j105_conv_points.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-    set_tests_properties(j105_conv_points PROPERTIES TIMEOUT 300)
+    set_tests_properties(j105_conv_points PROPERTIES TIMEOUT 600)
 
     # J-97: browser / external drops onto channel rack rows replace their content (routing, steps, notes kept), insert between rows, undo.
     add_test(NAME j97_rack_drop

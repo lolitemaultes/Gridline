@@ -136,6 +136,14 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     around the centre and up to 32 semitones each way at the ends (before 3 to 6 dB off). This
     voicing comes with the Boost drive mode that
     imports set; Plasma's own projects keep the Leveled mode and sound as before.
+  - More filter types now follow the original in imported presets, each measured from impulse
+    responses: the allpass chain, the eight-comb bank, the pre-delayed comb, the reverb (with its
+    tail decaying as the original's), the three scream types, the five EQ shelves and bell, the
+    filtered 8-stage phasers, the flange-phase type, the DJ mixer (low-pass below the middle of the
+    knob, high-pass above it) and the three formant types (five vowel bands whose positions follow
+    cutoff and VAR as measured). Each of these used to be 4 to 18 dB apart on average and is now
+    within about 0.2 to 1.9 dB. The cubic stereo spread now applies to every filter type, combs and
+    phasers included, as measured on the original.
   - The distortion effect follows the original's curves for every mode and drive, its filter
     (a fade from low-pass through band-pass to high-pass, with the original's resonance), its
     downsample rates, its mix law and the level knob after the mix. Presets that leave the filter

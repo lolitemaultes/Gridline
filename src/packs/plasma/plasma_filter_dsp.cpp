@@ -11,12 +11,17 @@
 
 namespace gl::packs::plasma {
 
+// measured formant tables (plasma_filter_formant_dsp.cpp): 5 x {centre Hz, bandwidth Hz, gain}
+void formantMeasured(int type, double pos, double var, double res, double* out);
+
 namespace {
+// matched reverb memory: eight combs then four allpasses inside the kBuf samples of a channel
+constexpr int kRvComb = Filter::kBuf / 32 * 3, kRvAp = Filter::kBuf / 16;
 enum Engine {
   EngSvf, EngLadder, EngComb, EngFlange, EngPhaser, EngEq, EngRing, EngSnh, EngCombs, EngAllpass, EngRoom, EngScream,
   EngBass, EngFormant, EngReject, EngDistComb, EngDj, EngPz, EngExp,
   // matched voicing (imports, "Boost" drive mode): designs fitted to measured responses
-  EngMSvf, EngMLad, EngMX, EngMPass, EngMRing, EngMDiff, EngMComb, EngMPhaser
+  EngMSvf, EngMLad, EngMX, EngMPass, EngMRing, EngMDiff, EngMComb, EngMPhaser, EngMAllp, EngMCombs, EngMComb2, EngMScream, EngMEq, EngMReverb, EngMDj, EngMForm, EngMBass
 };
 int engineOf(int t) {
   if (t <= 3 || t == 84 || (t >= 99 && t <= 102)) return EngLadder;
@@ -50,8 +55,18 @@ int engineMatched(int t) {
   if (t == 103) return EngMPass;  // the pole-zero type measures as a straight wire at every setting
   if (t == 76) return EngMRing;
   if (t >= 39 && t <= 54) return EngMComb;  // combs and flangers (the same loop, measured mixes)
-  if (t >= 55 && t <= 62) return EngMPhaser;
+  if (t == 69 || t == 70) return EngMComb;   // flange-phase: the HL6 flanger with two allpasses in the loop
+  if (t >= 55 && t <= 68) return EngMPhaser;
   if (t == 98) return EngMDiff;  // diffuser: no dry mix (the source's response stays flat at every VAR)
+  if (t == 81) return EngMAllp;
+  if (t == 80) return EngMCombs;
+  if (t == 82) return EngMReverb;
+  if (t == 97) return EngMDj;
+  if (t == 85) return EngMBass;
+  if (t >= 86 && t <= 88) return EngMForm;
+  if (t == 104) return EngMComb2;
+  if (t == 83 || t == 94 || t == 95) return EngMScream;
+  if (t >= 71 && t <= 75) return EngMEq;
   return engineOf(t);
 }
 double interp(const double* R, const double* K, int n, double r) {
@@ -260,7 +275,10 @@ struct Filter::Ch {
   int stages = 4, poles = 4;
   float rmInc = 0, rmInc2 = 0, snhInc = 0;
   float fGain[3] = {1, 1, 1};
-  int lens[8] = {};
+  int lens[8] = {}, lens2[4] = {};
+  SvfCd fc[5];
+  double fg[5] = {};
+  double mA = 0, mB = 0, mC = 0;  // matched loop filters: high-pass coefficient, low-pass pole, low-pass gain
   // state (cleared by clear())
   SvfS ss1, ss2, ss3, fs[3];
   OpS o1, o2, o3, o4, od, oe[8];
@@ -268,6 +286,8 @@ struct Filter::Ch {
   float lad[4] = {};
   double ls[4] = {};
   float ap[16] = {};
+  double mh[8] = {}, ml[8] = {};  // matched loop filter states
+  SvfSd fz[5];                    // matched formant band-passes
   float fbState = 0;
   float rmPh = 0, rmPh2 = 0, snhPh = 0, snhHold = 0;
   int w = 0;
@@ -283,6 +303,9 @@ struct Filter::Ch {
     for (float& v : lad) v = 0;
     for (double& v : ls) v = 0;
     for (float& v : ap) v = 0;
+    for (double& v : mh) v = 0;
+    for (double& v : ml) v = 0;
+    for (auto& v : fz) v = SvfSd{};
     fbState = rmPh = rmPh2 = snhPh = snhHold = 0;
     w = 0;
     for (int& v : wi) v = 0;
@@ -324,10 +347,11 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
   res = std::clamp(res, 0.0, 1.0);
   drive = std::clamp(drive, 0.0, 1.0);
   var = std::clamp(var, 0.0, 1.0);
-  if (boost && (type <= 3 || eng == EngMSvf || eng == EngMLad)) {
+  if (boost) {
     // J-203b, measured (L - R high-band level of a 12 dB filter at stereo 0 / 25 / 75 / 100 %): the
     // source's spread is cubic in the stereo offset, +-32 semitones at the ends and +-4 at 25 / 75 %
-    // (the voice passes a linear +-24 semitones).
+    // (the voice passes a linear +-24 semitones). J-203e: the same law holds for every type measured
+    // (state-variable, ladder, comb, phaser, scream, EQ, DJ mixer: L / R peak frequencies at 75 / 100 %).
     const double u = std::clamp(spreadSt / 24.0, -1.0, 1.0);
     spreadSt = 32.0 * u * u * u;
   }
@@ -444,7 +468,7 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
         if (type == 104) h.delay2 = static_cast<float>(sr / (f * 1.4983));
         h.fb = static_cast<float>(res * 0.97);
         const double cut = 200.0 * std::pow(100.0, var);  // damping filter in the loop
-        const int ct = type >= 47 && type <= 54 ? type - 8 : type;  // flangers: the comb variant
+        const int ct = type >= 69 ? type - 24 : type >= 47 && type <= 54 ? type - 8 : type;  // flangers: the comb variant
         h.damp.set(sr, (ct == 43 || ct == 44) ? 20 + 4000 * var : cut);
         if (eng == EngDistComb) h.damp.set(sr, (type == 90 || type == 92) ? 300 + 12000 * (1 - var) : 1000 + 3000 * var);
         if (eng == EngMComb) {
@@ -452,6 +476,12 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
           // (white noise 6 dB down and flat at 0 %, teeth +-fb at higher settings)
           h.fb = static_cast<float>(res);
           h.mix = static_cast<float>(type >= 47 ? 1 + res : res * (1 + res));  // flangers: 1 + fb
+          if (type >= 69) {
+            // flange-phase (fitted to the measured curves): the HL6 flanger with the 2-stage phaser's
+            // allpasses (at 0.51 x cutoff) inside the delay path
+            const double w = std::tan(3.14159265358979 * std::clamp(f * 0.51, 8.0, sr * 0.49) / sr);
+            h.apA = static_cast<float>((w - 1) / (w + 1));
+          }
           h.outGain = static_cast<float>(0.5 / (1 + res));
           // loop filters (one-pole) follow the comb pitch: L6 opens from f / 16 to 256 f, H6 closes from
           // f / 128 to 32 f, HL6 widens a band around f (fitted to where the teeth stop)
@@ -474,7 +504,16 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
       case EngMPhaser: {
         // measured: 2 / 4 / 6 / 8 first-order allpasses at half the cutoff (0.51), feedback = resonance,
         // the chain mixed in at 1 + fb, output 0.5 / (1 + fb); VAR has no effect
-        h.stages = 2 * (1 + (type - 55) / 2);
+        h.stages = type >= 61 ? 8 : 2 * (1 + (type - 55) / 2);
+        // L6 / H6 / HL6 (63 .. 68, fitted to the measured curves): one-pole filters on the chain output
+        // (heard in the mix and the feedback); L6 opens from f / 32 to 128 f, H6 closes from f / 64 to
+        // 64 f, HL6 is a band from f / 16 .. f at VAR 0 that has opened fully by about VAR 50 %
+        if (type == 63 || type == 64) h.damp.set(sr, std::min(sr * 0.45, f * std::exp2(12 * var - 5)));
+        else if (type == 65 || type == 66) h.damp.set(sr, std::min(sr * 0.45, f * std::exp2(12 * var - 6)));
+        else if (type == 67 || type == 68) {
+          h.damp.set(sr, std::min(sr * 0.45, f * std::exp2(10 * var)));
+          h.op2.set(sr, f * std::exp2(-4 - 10 * var));
+        }
         const double w = std::tan(3.14159265358979 * std::clamp(f * 0.51, 8.0, sr * 0.49) / sr);
         h.apA = static_cast<float>((w - 1) / (w + 1));
         h.fb = static_cast<float>(res);
@@ -515,6 +554,145 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
         h.op.set(sr, 20 + 20000 * std::pow(1 - var, 2));
         h.s1.set(sr, std::min(sr * 0.45, f * 2), 2.0 * (1.0 - res * 0.95));
         break;
+      case EngMAllp: {
+        // measured (impulse responses): four Schroeder allpasses in series, coefficient 0.989 x resonance,
+        // delays 0.406 / 0.322 / 0.249 / 0.164 of the cutoff period; inside each loop a one-pole
+        // high-pass (157 Hz) and a one-pole low-pass whose pole is VAR at 96 kHz (VAR 100 % = the
+        // delayed path is gone and only -g^4 is left); output wet only
+        static const double kR[4] = {0.406, 0.322, 0.249, 0.164};
+        const double P = sr / f;
+        for (int i = 0; i < 4; ++i) h.lens[i] = std::clamp(static_cast<int>(std::lround(P * kR[i])), 1, kBuf / 4 - 2);
+        h.fb = static_cast<float>(std::min(0.989 * res, 0.999));
+        const double hz = 157.0;
+        h.mA = std::exp(-kPi2 * hz / sr);                    // one-pole high-pass pole
+        h.mB = std::pow(var, 96000.0 / sr);                  // low-pass pole (VAR at 96 kHz)
+        h.mC = 1 - h.mB;
+        break;
+      }
+      case EngMCombs: {
+        // measured: eight feedback combs in parallel, delays 0.812 .. 1.176 of the cutoff period plus one
+        // sample (whole samples at 96 kHz; fitted from 27 to 1300 samples), each
+        // echo at 1 / 4, feedback 0.98 x resonance through a one-pole low-pass whose pole is VAR at 96 kHz
+        // (the source's loop filter also takes away a little low end at high VAR: not modelled)
+        static const double kR[8] = {0.8119, 0.86492, 0.9291, 0.98632, 1.0346, 1.0849, 1.1341, 1.1757};
+        const double P = sr / f + sr / 96000.0;
+        for (int i = 0; i < 8; ++i) {
+          const double L = std::round(std::clamp(P * kR[i], 1.0, kBuf / 8 - 3.0));  // whole samples at 96 kHz
+          h.lens[i] = static_cast<int>(L);
+        }
+        h.fb = static_cast<float>(std::min(0.98 * res, 0.999));
+        h.mB = std::pow(var, 96000.0 / sr);
+        h.mC = 1 - h.mB;
+        break;
+      }
+      case EngMForm: {
+        // measured (impulse responses on an 11 x 11 grid of cutoff knob x VAR, resonance 60 %): five
+        // parallel band-passes at unity peak whose centres and bandwidths follow measured tables
+        const double pos = (12.0 * std::log2(f / 440.0) + 69.0) / 136.9282;
+        double tab[15];
+        formantMeasured(type, pos, var, res, tab);
+        for (int i = 0; i < 5; ++i) {
+          const double hz = std::clamp(tab[3 * i], 20.0, sr * 0.45), k = std::clamp(tab[3 * i + 1] / hz, 0.002, 4.0);
+          h.fc[i].set(sr, hz, k);
+          h.fg[i] = k * tab[3 * i + 2];
+        }
+        break;
+      }
+      case EngMBass: {
+        // measured (impulse responses, single state-variable fits within 0.05 dB): the output is
+        // -(1.035 - VAR / 2) low-pass + VAR / 2 high-pass + (VAR k / 2 + fc / 39000) band-pass, i.e. half
+        // the dry signal comes in with VAR under an inverted low-pass; the section sits at
+        // 847.5 Hz x 2^(9.13 (pos - 0.5)) (2 x cutoff at the middle of the knob)
+        const double pos = (12.0 * std::log2(f / 440.0) + 69.0) / 136.9282;
+        const double fc = std::min(sr * 0.45, 847.5 * std::exp2(9.13 * (pos - 0.5)));
+        static const double R[] = {0, 0.3, 0.6, 0.9, 1.0};
+        static const double K[] = {2.028, 0.522, 0.2403, 0.0522, 0.0031};
+        const double k = interp(R, K, 5, res);
+        h.d1.set(sr, fc, k);
+        h.mA = -1.035 + 0.5 * var;
+        h.mB = 0.5 * var * k + 2.56e-5 * fc;
+        h.mC = 0.5 * var;
+        break;
+      }
+      case EngMDj: {
+        // measured (impulse responses): one knob, a 12 dB state-variable low-pass below the middle (cutoff
+        // 79 Hz x 2^(16.6 pos), gone from about pos 0.43 on) and a high-pass above it (117 Hz x
+        // 2^(14 (pos - 0.55)), up to 5.1 kHz); damping 1.35 at r 0 to 0.057 at r 90; VAR has no effect
+        // (the source leaves a little dry signal under the high-pass above pos 0.85: not modelled)
+        const double pos = (12.0 * std::log2(f / 440.0) + 69.0) / 136.9282;  // the cutoff knob (0 .. 1)
+        static const double R[] = {0, 0.3, 0.6, 0.9, 1.0};
+        static const double K[] = {1.35, 0.52, 0.242, 0.057, 0.01};
+        const bool lp = pos < 0.5001;
+        const double fc = lp ? 79.0 * std::exp2(16.6 * pos) : std::min(5126.0, 117.0 * std::exp2(14.0 * (pos - 0.55)));
+        h.var = lp ? 0.f : 1.f;
+        h.mix = (lp && pos > 0.425) || fc > sr * 0.45 ? 0.f : 1.f;  // 0: the low-pass is gone (a wire)
+        h.d1.set(sr, std::min(fc, sr * 0.45), interp(R, K, 5, res));
+        break;
+      }
+      case EngMReverb: {
+        // measured (impulse responses): the Combs type's eight parallel combs (same delays, echo 1 / 4,
+        // loop low-pass pole = VAR at 96 kHz, feedback 0.99 x resonance) followed by four allpasses in
+        // series, coefficient 0.5, at the Allpasses type's delays (no loop filters); DC gain 2 at r 0
+        const double P = sr / f + sr / 96000.0;
+        static const double kR[8] = {0.8119, 0.86492, 0.9291, 0.98632, 1.0346, 1.0849, 1.1341, 1.1757};
+        for (int i = 0; i < 8; ++i) h.lens[i] = static_cast<int>(std::round(std::clamp(P * kR[i], 1.0, kRvComb - 3.0)));
+        static const double kA[4] = {0.406, 0.322, 0.249, 0.164};
+        for (int i = 0; i < 4; ++i) h.lens2[i] = static_cast<int>(std::round(std::clamp(P * kA[i], 1.0, kRvAp - 3.0)));
+        h.fb = static_cast<float>(std::min(0.99 * res, 0.999));
+        h.mix = 0.5f;
+        h.mB = std::pow(var, 96000.0 / sr);
+        h.mC = 1 - h.mB;
+        break;
+      }
+      case EngMComb2: {
+        // measured: the dry signal plus a feedback comb at the cutoff period (feedback = resonance, echo
+        // mix r (1 + r), output 0.5 / (1 + r)) heard after a pre-delay that VAR sets:
+        // 122.3 ms x 2^(-10.66 VAR) + 0.012 ms (VAR 50 % = 3 ms)
+        const double P = sr / f;
+        const double pre = sr * (0.12232 * std::exp2(-10.66 * var) + 1.2e-5);
+        h.delay = static_cast<float>(std::clamp(P - 1, 1.0, kBuf - 4.0));  // taps count from the last write
+        h.delay2 = static_cast<float>(std::clamp(P + pre - 1, 1.0, kBuf - 4.0));
+        h.fb = static_cast<float>(std::min(res, 0.999));
+        h.mix = static_cast<float>(res * (1 + res));
+        h.outGain = static_cast<float>(0.5 / (1 + res));
+        break;
+      }
+      case EngMScream: {
+        // measured (impulse responses, drive 0 .. 50 %): a state-variable low-pass (Scream, Scream3LP) or
+        // band-pass (Scream3BP) at the cutoff; damping against resonance per family; level -12 / -13.2 dB
+        // (band-pass: 0.2065 x the unnormalised band output); the drive is a clean gain of
+        // 66 d - 23 d^2 dB (+6.6 dB at 10 %, +28 dB at 50 %, +43 dB at 100 %) that stays linear up to
+        // high levels (soft ceiling well above the other types); on the 3-pole types VAR only turns the phase
+        static const double R[] = {0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0};
+        static const double KS[] = {2.03, 0.755, 0.514, 0.354, 0.23, 0.128, 0.041, 0.003};
+        static const double K3[] = {1.94, 0.925, 0.733, 0.605, 0.506, 0.424, 0.354, 0.312};
+        double k = interp(R, type == 83 ? KS : K3, 8, res), fm = 1.0;
+        if (type == 83) {  // Scream: VAR sharpens the resonance and pulls it down (measured to r 90 %)
+          const double rv = res * res * var * var;
+          k = std::max(0.0005, k - 0.2 * rv);
+          fm = (1.0 - 0.02 * res) * (1.0 - 0.13 * rv);
+        }
+        h.d1.set(sr, f * fm, k);
+        h.outGain = static_cast<float>(type == 83 ? 0.252 : type == 94 ? 0.22 : 0.2065);
+        h.drv = static_cast<float>(std::pow(10.0, (66 * drive - 23 * drive * drive) / 20));
+        h.head = 16.f;
+        break;
+      }
+      case EngMEq: {
+        // measured: a state-variable section (12 dB types) or a one-pole (6 dB) at the cutoff; the output
+        // is the input plus (A - 1) x the low-pass / band-pass (unnormalised) / high-pass, where the gain
+        // A = 1 + u^3 below the middle of VAR and 1 + 8 u^3 above it (u = 2 VAR - 1: -inf .. +19.1 dB);
+        // the bell is that literal sum, so a cut at high resonance overshoots into a boost, as measured
+        static const double R[] = {0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0};
+        static const double K[] = {2.014, 0.7574, 0.5209, 0.3624, 0.2401, 0.1391, 0.0523, 0.001};
+        h.d1.set(sr, f, interp(R, K, 8, res));
+        const double u = 2 * var - 1;
+        h.mix = static_cast<float>(u * u * u * (u > 0 ? 8.0 : 1.0));  // A - 1
+        h.mB = std::pow(0.16, 96000.0 / sr);
+        h.mC = 1 - h.mB;
+        h.lk = 1 - std::exp(-kPi2 * f / sr);
+        break;
+      }
       case EngCombs:
       case EngAllpass:
       case EngMDiff:
@@ -597,7 +775,7 @@ void Filter::process(float& l, float& r) {
     float x = *io[c];
     float y = x;
     if (h.head > 0) {
-      if (eng != EngScream && eng != EngLadder && eng != EngMLad) x = h.head * fastTanh(x * h.drv / h.head);
+      if (eng != EngScream && eng != EngLadder && eng != EngMLad && eng != EngMScream) x = h.head * fastTanh(x * h.drv / h.head);
     } else if (h.drv > 1.0001f && eng != EngScream && eng != EngLadder && eng != EngMLad) {
       x = fastTanh(x * h.drv) / std::sqrt(h.drv);
     }
@@ -822,7 +1000,13 @@ void Filter::process(float& l, float& r) {
       case EngComb:
       case EngMComb: {
         float d = h.tapFrac(h.delay);
-        const int ct = t >= 47 && t <= 54 ? t - 8 : t;
+        const int ct = t >= 69 ? t - 24 : t >= 47 && t <= 54 ? t - 8 : t;
+        if (t >= 69)
+          for (int s = 0; s < 2; ++s) {
+            const float o = h.apA * d + h.ap[s];
+            h.ap[s] = d - h.apA * o;
+            d = o;
+          }
         if (ct == 41 || ct == 42) d = h.o1.lp(h.damp, d);
         else if (ct == 43 || ct == 44) d = d - h.o1.lp(h.damp, d);
         else if (ct == 45 || ct == 46) d = h.o2.lp(h.damp, d - h.o1.lp(h.op2, d));
@@ -860,6 +1044,9 @@ void Filter::process(float& l, float& r) {
           h.ap[s] = in - h.apA * o;
           in = o;
         }
+        if (t == 63 || t == 64) in = h.o1.lp(h.damp, in);
+        else if (t == 65 || t == 66) in = in - h.o1.lp(h.damp, in);
+        else if (t == 67 || t == 68) in = h.o2.lp(h.damp, in - h.o1.lp(h.op2, in));
         h.fbState = in;
         y = (x + sg * h.mix * in) * h.outGain;
         break;
@@ -922,6 +1109,118 @@ void Filter::process(float& l, float& r) {
         float lp, bp, hp;
         h.ss1.run(h.s1, v, lp, bp, hp);
         y = (t == 79) ? lp : v * 0.7f + lp * 0.3f;
+        break;
+      }
+      case EngMAllp: {
+        const int seg = kBuf / 4;
+        double v = x;
+        const double g = h.fb;
+        for (int i = 0; i < 4; ++i) {
+          float* b = h.buf + i * seg;
+          double d = b[(h.w - h.lens[i] + seg) % seg];
+          // high-pass (x - lp) then low-pass, both one-pole
+          h.mh[i] = d + h.mA * (h.mh[i] - d);
+          d -= h.mh[i];
+          h.ml[i] = h.mC * d + h.mB * h.ml[i];
+          d = h.ml[i];
+          const double w = v + g * d;
+          b[h.w] = static_cast<float>(w);
+          v = d - g * w;
+        }
+        h.w = (h.w + 1) % (kBuf / 4);
+        y = static_cast<float>(v);
+        break;
+      }
+      case EngMEq: {
+        // the sections hear a softened input (one-pole, pole 0.16 at 96 kHz); the dry path does not, so a
+        // full high-shelf cut leaves the difference, which comes back up toward the top as measured
+        h.ml[0] = h.mC * x + h.mB * h.ml[0];
+        const double xs = h.ml[0];
+        double v;
+        if (t == 71 || t == 74) {
+          // one-pole low-pass of the previous input sample (the low shelf's measured zero)
+          const double lp = h.ml[1];
+          h.ml[1] = h.lk * xs + (1 - h.lk) * lp;
+          v = t == 71 ? lp : xs - lp;
+        } else {
+          double lp, bp, hp;
+          h.ds1.run(h.d1, xs, lp, bp, hp);
+          v = t == 72 ? lp : t == 73 ? bp : hp;
+        }
+        y = static_cast<float>(x + h.mix * v);
+        break;
+      }
+      case EngMScream: {
+        double lp, bp, hp;
+        h.ds1.run(h.d1, static_cast<double>(x) * h.drv, lp, bp, hp);
+        const double v = (t == 95 ? bp : lp) * h.outGain;
+        y = h.head * fastTanh(static_cast<float>(v / h.head));
+        break;
+      }
+      case EngMCombs: {
+        const int seg = kBuf / 8;
+        double acc = 0;
+        for (int i = 0; i < 8; ++i) {
+          float* b = h.buf + i * seg;
+          const double d = b[(h.w - h.lens[i] + seg) % seg];
+          h.ml[i] = h.mC * d + h.mB * h.ml[i];
+          b[h.w] = static_cast<float>(x + h.fb * h.ml[i]);
+          acc += d;
+        }
+        h.w = (h.w + 1) % seg;
+        y = static_cast<float>(0.25 * acc);
+        break;
+      }
+      case EngMForm: {
+        double acc = 0;
+        for (int i = 0; i < 5; ++i) {
+          double lp, bp, hp;
+          h.fz[i].run(h.fc[i], x, lp, bp, hp);
+          acc += h.fg[i] * bp;
+        }
+        y = static_cast<float>(acc);
+        break;
+      }
+      case EngMBass: {
+        double lp, bp, hp;
+        h.ds1.run(h.d1, x, lp, bp, hp);
+        y = static_cast<float>(h.mA * lp + h.mB * bp + h.mC * hp);
+        break;
+      }
+      case EngMDj: {
+        double lp, bp, hp;
+        h.ds1.run(h.d1, x, lp, bp, hp);
+        y = h.mix == 0.f ? x : static_cast<float>(h.var > 0.5f ? hp : lp);
+        break;
+      }
+      case EngMReverb: {
+        double acc = 0;
+        for (int i = 0; i < 8; ++i) {
+          float* b = h.buf + i * kRvComb;
+          const double d = b[(h.w - h.lens[i] + kRvComb) % kRvComb];
+          h.ml[i] = h.mC * d + h.mB * h.ml[i];
+          b[h.w] = static_cast<float>(x + h.fb * h.ml[i]);
+          acc += d;
+        }
+        h.w = (h.w + 1) % kRvComb;
+        double v = 0.25 * acc;
+        const double g = h.mix;
+        const int wa = h.wi[0];
+        for (int i = 0; i < 4; ++i) {
+          float* b = h.buf + 8 * kRvComb + i * kRvAp;
+          const double d = b[(wa - h.lens2[i] + kRvAp) % kRvAp];
+          const double w = v + g * d;
+          b[wa] = static_cast<float>(w);
+          v = d - g * w;
+        }
+        h.wi[0] = (wa + 1) % kRvAp;
+        y = static_cast<float>(v);
+        break;
+      }
+      case EngMComb2: {
+        const float d = h.tapFrac(h.delay), e = h.tapFrac(h.delay2);
+        h.push(x + h.fb * d);
+        y = (x + h.mix * e) * h.outGain;
         break;
       }
       case EngCombs: {

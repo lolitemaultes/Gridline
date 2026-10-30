@@ -171,7 +171,7 @@ class Filter {
   int type() const { return type_; }
   // Display: magnitude response at n frequencies (UI thread; allocates).
   static void responseCurve(int type, double sr, double cutoffHz, double res, double var, const float* hz, float* out, int n);
-  static constexpr int kBuf = 8192;  // per channel (delay-based types)
+  static constexpr int kBuf = 16384;  // per channel (delay-based types; 170 ms at the 96 kHz voice rate)
  private:
   struct Ch;
   int type_ = -1;
