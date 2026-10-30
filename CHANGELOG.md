@@ -52,6 +52,9 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- Smooth snapping no longer trails behind a fast drag: when the pointer crosses cells faster than a
+  glide can land, the drawn clip or note speeds up and stays close to the pointer (about a sixth of a
+  cell behind at one cell per frame, was over a cell); slow single steps glide as before.
 - Smooth snapping can be seen again. Dragged clips, notes, selection edges, automation points and
   cut lines did glide between grid lines, but the glide covered three quarters of each step in the
   first frame and was over in about 50 ms, so it looked like a jump. It now takes about 140 ms to

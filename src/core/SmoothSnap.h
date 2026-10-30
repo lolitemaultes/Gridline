@@ -10,6 +10,7 @@
 // the target changes mid-flight (the next cell is reached from wherever the
 // clip is drawn now). Pure: no UI dependencies, unit tested.
 #pragma once
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -40,6 +41,19 @@ inline double approach(double cur, double target, double dt, double tau = kTau) 
   return target + (cur - target) * std::exp(-dt / tau);
 }
 
+// J-189: the time constant for a value `dist` from its target, where the latest
+// snapped step was `step` long and the steps arrive `interval` seconds apart
+// (`sinceStep` since the latest one). A single step glides with `tau`; when
+// the target runs ahead (a fast drag: steps arrive before the last one has
+// landed) the ease speeds up so the drawn value stays about one step behind
+// instead of trailing by speed x tau, and continuously (no jump).
+inline double catchUpTau(double dist, double step, double interval, double sinceStep, double tau = kTau) {
+  double te = tau;
+  if (step > 0 && dist > step) te = tau * step / dist;
+  if (interval > 0 && sinceStep < 2 * interval) te = std::min(te, std::max(tau * 0.25, 0.5 * interval));
+  return te;
+}
+
 // Drawn positions of keyed objects (clip ids, ...), N values each (e.g.
 // start, end, row, content offset). Only seeded keys animate: everything else
 // is drawn where it logically is, and an empty tracker costs nothing.
@@ -62,7 +76,10 @@ class Tracker {
       it->second.settled = false;
       return;
     }
-    map_[key] = Entry{at, now, false};
+    Entry e;
+    e.pos = e.target = at;
+    e.time = e.stepAt = now;
+    map_[key] = e;
   }
 
   // Drawn position of `key` at time `now`, easing towards `target`.
@@ -76,9 +93,18 @@ class Tracker {
     Entry& e = it->second;
     const double dt = now - e.time;
     e.time = now;
+    if (target != e.target) {  // a new snapped step
+      for (size_t i = 0; i < N; ++i)
+        if (target[i] != e.target[i]) e.step[i] = std::fabs(target[i] - e.target[i]);
+      e.interval = e.stepped ? now - e.stepAt : 0;  // the first step after the seed has no pace yet
+      e.stepped = true;
+      e.stepAt = now;
+      e.target = target;
+    }
     bool settled = true;
     for (size_t i = 0; i < N; ++i) {
-      double v = animate ? approach(e.pos[i], target[i], dt, tau) : target[i];
+      const double te = catchUpTau(std::fabs(target[i] - e.pos[i]), e.step[i], e.interval, now - e.stepAt, tau);
+      double v = animate ? approach(e.pos[i], target[i], dt, te) : target[i];
       if (std::fabs(v - target[i]) <= eps[i]) v = target[i];
       settled = settled && v == target[i];
       e.pos[i] = v;
@@ -98,8 +124,9 @@ class Tracker {
 
  private:
   struct Entry {
-    Vec pos{};
-    double time = 0;
+    Vec pos{}, target{}, step{};  // drawn, latest target, size of the latest step
+    double time = 0, stepAt = 0, interval = 0;  // last follow, latest step, time between the last two steps
+    bool stepped = false;                       // a step was seen since the seed
     bool settled = false;
   };
   std::unordered_map<uint64_t, Entry> map_;
@@ -116,12 +143,19 @@ class Glides {
   double follow(uint64_t key, double target, double now, bool animate, double eps, double tau = kTau) {
     auto it = map_.find(key);
     if (!animate || it == map_.end()) {
-      if (animate) map_[key] = Entry{target, now};
+      if (animate) map_[key] = Entry{target, now, target, 0, now, 0, false};
       else if (it != map_.end()) map_.erase(it);
       return target;
     }
     Entry& e = it->second;
-    double v = approach(e.pos, target, now - e.time, tau);
+    if (target != e.target) {
+      e.step = std::fabs(target - e.target);
+      e.interval = e.stepped ? now - e.stepAt : 0;
+      e.stepped = true;
+      e.stepAt = now;
+      e.target = target;
+    }
+    double v = approach(e.pos, target, now - e.time, catchUpTau(std::fabs(target - e.pos), e.step, e.interval, now - e.stepAt, tau));
     if (std::fabs(v - target) <= eps) v = target;
     e.pos = v;
     e.time = now;
@@ -135,6 +169,8 @@ class Glides {
  private:
   struct Entry {
     double pos = 0, time = 0;
+    double target = 0, step = 0, stepAt = 0, interval = 0;  // J-189: see catchUpTau
+    bool stepped = false;
   };
   std::unordered_map<uint64_t, Entry> map_;
 };

@@ -345,6 +345,29 @@ int main() {
       const double v = tr.follow(1, {1.0}, 1.0 / 60.0, true, eps)[0];
       expect(v > 0.3 && v < 0.6, "smooth snap: the first 60 Hz frame covers 30-60 % of a cell");
     }
+    {  // J-189: a fast drag (a new cell every 60 Hz frame) stays close behind instead of trailing by speed x tau
+      auto meanLag = [&](double tau) {
+        Tracker<1> tr;
+        tr.seed(1, {0.0}, 0.0);
+        double t = 0, sum = 0;
+        int n = 0;
+        for (int k = 1; k <= 30; ++k) {
+          const double v = tr.follow(1, {static_cast<double>(k)}, t += 1.0 / 60, true, eps, tau)[0];
+          if (k > 5) sum += k - v, ++n;
+        }
+        return sum / n;
+      };
+      const double lag = meanLag(smooth::kTau);
+      std::printf("# fast drag: mean lag %.2f cells (a fixed 30 ms ease: %.2f)\n", lag, 1.0 / (1.0 - std::exp(-1.0 / 60 / smooth::kTau)) - 1.0);
+      expect(lag < 0.75, "smooth snap: a fast drag stays within one cell of the pointer's cell");
+      Tracker<1> tr;  // after a fast run, the last step still lands exactly
+      tr.seed(1, {0.0}, 0.0);
+      double t = 0;
+      for (int k = 1; k <= 10; ++k) tr.follow(1, {static_cast<double>(k)}, t += 1.0 / 60, true, eps);
+      double v = 0;
+      for (int k = 0; k < 30; ++k) v = tr.follow(1, {10.0}, t += 1.0 / 60, true, eps)[0];
+      expect(v == 10.0, "smooth snap: a fast drag still lands exactly on its last cell");
+    }
     {  // target changes mid-animation: continuous, monotonic, lands exactly
       Tracker<1> tr;
       tr.seed(1, {0.0}, 0.0);
