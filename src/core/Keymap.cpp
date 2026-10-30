@@ -47,6 +47,7 @@ std::vector<Command> buildCommands() {
       {"file.render", G, N_("Render to audio file"), {ch(K::R, C)}},
       {"file.renderStems", G, N_("Render mixer tracks (stems)"), {ch(K::R, C | S)}},
       {"file.exportMidi", G, N_("Export song as MIDI file"), {ch(K::M, C | S)}},
+      {"file.importUrl", G, N_("Import audio from a link (URL)"), {ch(K::U, C | S)}},  // J-192
       {"file.projectInfo", G, N_("Project info"), {ch(K::F11)}},
       {"file.quit", G, N_("Quit"), {ch(K::Q, C)}},
       // ---- global: edit ----

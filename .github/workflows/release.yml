@@ -91,9 +91,49 @@ jobs:
           name: release-notes
           path: notes.md
 
+  media-tools:
+    # J-192: yt-dlp (its official binary) and ffmpeg (built from the official source: audio only,
+    # LGPL) for Import from URL, checked against the SHA-256 in tools/release/media-tools.json.
+    # The packages carry the folder; the zip (no yt-dlp) is a release file of its own, which
+    # Gridline installs on first use where a package has none (docs/import-url.md).
+    name: Media tools ${{ matrix.target }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: macos-universal, os: macos-15 }
+          - { target: linux-x86_64, os: ubuntu-22.04 }
+          - { target: linux-aarch64, os: ubuntu-22.04-arm }
+          - { target: windows-x64, os: ubuntu-22.04 }
+          - { target: windows-arm64, os: ubuntu-22.04 }
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tools
+        run: |
+          case "${{ matrix.target }}" in
+            macos-*) brew install --quiet nasm || true ;;
+            *) sudo apt-get update -q && sudo apt-get install -y -q nasm zlib1g-dev make xz-utils ;;
+          esac
+          python3 tools/release/fetch-media-tools.py --target "${{ matrix.target }}" --out "media/tools" --work "$RUNNER_TEMP/mt" \
+            --zip "media/Gridline-$VER-media-tools-${{ matrix.target }}.zip"
+          tar -C media -cf "media/tools-${{ matrix.target }}.tar" tools  # keeps the execute bits through the artifact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: media-tools-folder-${{ matrix.target }}
+          path: media/tools-${{ matrix.target }}.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gridline-media-tools-${{ matrix.target }}
+          path: media/Gridline-*-media-tools-*.zip
+
   macos:
     name: macOS universal
-    needs: version
+    needs: [version, media-tools]
     runs-on: macos-15
     timeout-minutes: 90
     env:
@@ -109,11 +149,18 @@ jobs:
           cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap gridline_au gridline_suite_gridline gridline_suite_mini
       - name: Disk image window tools (dmgbuild)
         run: python3 -m venv "$RUNNER_TEMP/dmgvenv" && "$RUNNER_TEMP/dmgvenv/bin/pip" install --quiet dmgbuild==1.6.7
+      - uses: actions/download-artifact@v4
+        with:
+          name: media-tools-folder-macos-universal
+          path: media
       - name: Disk image
         env:
           GRIDLINE_PYTHON: ${{ runner.temp }}/dmgvenv/bin/python
+          GRIDLINE_MEDIA_TOOLS: ${{ github.workspace }}/media/tools
           GRIDLINE_DMG_REQUIRE_LAYOUT: "1"
-        run: bash tools/release/package-macos.sh build "$VER" dist universal
+        run: |
+          tar -C media -xf media/tools-macos-universal.tar
+          bash tools/release/package-macos.sh build "$VER" dist universal
       - name: Check
         run: |
           set -e
@@ -145,6 +192,11 @@ jobs:
           done
           plutil -extract AudioComponents raw "$suite/Gridline Suite Mini.component/Contents/Info.plist"
           "$root/Gridline.app/Contents/MacOS/gridline" suite status
+          # Import from URL's tools (J-192)
+          tools="$root/Gridline.app/Contents/Resources/tools"
+          for t in yt-dlp ffmpeg ffprobe; do lipo -archs "$tools/$t" | grep -q arm64; lipo -archs "$tools/$t" | grep -q x86_64; done
+          "$tools/ffmpeg" -hide_banner -version | head -1
+          test -f "$tools/SOURCES.txt" && test -d "$tools/LICENSES"
           if otool -L "$root/Gridline.app/Contents/MacOS/gridline-app" | grep -q libSDL2; then echo "SDL2 must be built in"; exit 1; fi
           test "$("$root/Gridline.app/Contents/MacOS/gridline-app" --version)" = "Gridline $VER"
           test "$(arch -x86_64 "$root/gridline" --version)" = "Gridline $VER"
@@ -162,7 +214,7 @@ jobs:
 
   windows:
     name: Windows ${{ matrix.arch }}
-    needs: version
+    needs: [version, media-tools]
     runs-on: windows-latest
     timeout-minutes: 120
     strategy:
@@ -189,6 +241,10 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DGRIDLINE_BUNDLED_SDL2=ON \
             -DGRIDLINE_DEV_ASSETS=OFF -DGRIDLINE_GUI_TESTS=OFF $extra
           cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap gridline_suite_gridline gridline_suite_mini
+      - uses: actions/download-artifact@v4
+        with:
+          name: media-tools-folder-windows-${{ matrix.arch }}
+          path: media
       - name: Stage
         run: |
           name="Gridline-$VER-windows-${{ matrix.arch }}"
@@ -209,6 +265,9 @@ jobs:
           cp "build/plugins/Gridline Suite Mini.clap" "$stage/plugins/CLAP/"
           cp -r "build/plugins/Gridline Suite Mini-assets" "$stage/plugins/CLAP/"
           rm -rf "$stage/plugins/VST3/Gridline Suite Mini.vst3/Contents/Resources/assets/sounds/src" "$stage/plugins/CLAP/Gridline Suite Mini-assets/sounds/src"
+          # Import from URL's tools (J-192)
+          tar -C "$stage" -xf "media/tools-windows-${{ matrix.arch }}.tar"
+          test -f "$stage/tools/ffmpeg.exe" && test -f "$stage/tools/yt-dlp.exe"
           sed -e "s/@VERSION@/$VER/g" -e "s/@ARCH@/${{ matrix.arch }}/g" tools/release/README-windows.txt | sed 's/$/\r/' > "$stage/README.txt"
           echo "STAGE=$stage" >> "$GITHUB_ENV"
           echo "NAME=$name" >> "$GITHUB_ENV"
@@ -269,6 +328,8 @@ jobs:
           if (-not (Test-Path "$env:CommonProgramFiles\CLAP\Gridline Suite Mini-assets")) { throw "Gridline Suite Mini CLAP assets not installed" }
           & "$dir\gridline.exe" suite status
           if (-not (Test-Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Gridline\Gridline.lnk")) { throw "no Start menu entry" }
+          if (-not (Test-Path "$dir\tools\ffmpeg.exe")) { throw "Import from URL's ffmpeg not installed" }
+          & "$dir\tools\ffmpeg.exe" -hide_banner -version | Select-Object -First 1
           $p = Start-Process -Wait -PassThru "$dir\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART"
           if ($p.ExitCode -ne 0) { throw "uninstall exit $($p.ExitCode)" }
       - name: Zip
@@ -306,7 +367,7 @@ jobs:
 
   linux:
     name: Linux ${{ matrix.arch }}
-    needs: version
+    needs: [version, media-tools]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -327,11 +388,16 @@ jobs:
         run: |
           sudo sh tools/ci/install-deps.sh apt
           sudo apt-get install -y -q rpm dpkg-dev file desktop-file-utils
+      - uses: actions/download-artifact@v4
+        with:
+          name: media-tools-folder-linux-${{ matrix.arch }}
+          path: media
       - name: Build
         run: |
+          tar -C media -xf "media/tools-linux-${{ matrix.arch }}.tar"  # J-192: Import from URL's tools (share/gridline/tools)
           # Built on the oldest supported Ubuntu (22.04): the binaries run on newer glibc systems.
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DGRIDLINE_DEV_ASSETS=OFF \
-            -DGRIDLINE_INSTALL_PLUGINS=ON -DGRIDLINE_GUI_TESTS=OFF
+            -DGRIDLINE_INSTALL_PLUGINS=ON -DGRIDLINE_GUI_TESTS=OFF "-DGRIDLINE_MEDIA_TOOLS_DIR=$PWD/media/tools"
           cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap gridline_suite_gridline gridline_suite_mini
       - name: Packages (.deb, .rpm, .tar.gz)
         run: |
@@ -388,6 +454,8 @@ jobs:
           test -f "$RUNNER_TEMP/squashfs-root/usr/share/gridline/suite/Gridline Suite Mini.clap"
           test -d "$RUNNER_TEMP/squashfs-root/usr/share/gridline/suite/Gridline Suite Mini.vst3"
           bash tools/ci/smoke.sh "$RUNNER_TEMP/squashfs-root/usr/bin/gridline" "$VER"
+          "$RUNNER_TEMP/squashfs-root/usr/share/gridline/tools/ffmpeg" -hide_banner -version | head -1  # J-192
+          test -x "$RUNNER_TEMP/squashfs-root/usr/share/gridline/tools/yt-dlp"
           xvfb-run -a sh -c "GRIDLINE_CONFIG_HOME=$RUNNER_TEMP/cfg $app --hidden --size 800x600 --screenshot $RUNNER_TEMP/app.ppm --frames 5 --no-ui-sounds"
           test -s "$RUNNER_TEMP/app.ppm"
           deb="$(ls dist/*.deb)"; rpm="$(ls dist/*.rpm)"
@@ -407,6 +475,7 @@ jobs:
           bash tools/ci/smoke.sh /usr/bin/gridline "$VER"
           sudo apt-get remove -y -q gridline
           tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "bin/gridline-app"
+          tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "share/gridline/tools/ffmpeg"
           dpkg-deb -c "$deb" | grep -q "usr/share/metainfo/org.gridline.Gridline.metainfo.xml"
           tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "lib/clap/Gridline Suite.clap"
           tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "lib/clap/Gridline Suite Mini.clap"
@@ -475,7 +544,7 @@ jobs:
 
   release:
     name: Checksums and release
-    needs: [version, macos, windows, linux, bsd]
+    needs: [version, media-tools, macos, windows, linux, bsd]
     runs-on: ubuntu-latest
     env:
       VER: ${{ needs.version.outputs.version }}

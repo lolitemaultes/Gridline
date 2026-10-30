@@ -116,6 +116,11 @@ struct Clip {
   // pitch at import (FL plays a resampled pitch faster or slower).
   float speedPitch = 0.0f;
   double syncBpm = 0;        // > 0: follows the song tempo, natural speed at this tempo
+  // J-193: tempo-locked by the user (a stretch, Fit to tempo or "Follow the
+  // project tempo"): follows the tempo through syncBpm like any synced clip
+  // and, when its channel resamples, its pitch follows its speed (a record
+  // played faster or slower). Synced clips without it keep their pitch.
+  bool tempoLock = false;
   bool reverse = false;
   // Recording takes (J-8): clips recorded in the same loop-recording session
   // share a take group; `take` is the pass number (0 = first). kNoId = none.
@@ -139,7 +144,7 @@ struct Clip {
            kind == o.kind && source == o.source && offset == o.offset && muted == o.muted && audioStart == o.audioStart &&
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
            speedPitch == o.speedPitch &&
-           stretch == o.stretch && syncBpm == o.syncBpm && reverse == o.reverse && takeGroup == o.takeGroup &&
+           stretch == o.stretch && syncBpm == o.syncBpm && tempoLock == o.tempoLock && reverse == o.reverse && takeGroup == o.takeGroup &&
            take == o.take && launched == o.launched && group == o.group && fadeInShape == o.fadeInShape &&
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&
            fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual &&

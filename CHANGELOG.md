@@ -7,6 +7,19 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Added
 
+- Import from URL. File > Import > Import from URL... (Ctrl+Shift+U) brings the audio of a web
+  page into the project: paste a link (a link on the clipboard is filled in already), Fetch shows
+  the title, uploader, length and a playlist's items, and Import downloads the best audio and saves
+  it as a lossless 32-bit float WAV in the project's Imported folder, placed as a clip on a new
+  track at the playhead (one undo step) or only listed in the browser. A range can be kept instead
+  of the whole item, and a playlist imports its first item or chosen items. The popup shows the
+  progress of each step, Cancel stops at once, and errors (sign-in needed, private, copy protected,
+  unsupported, offline) are named plainly. The title, uploader, length and link stay with the file
+  and show in the clip's properties. The release packages carry the downloader (yt-dlp) and the
+  converter (FFmpeg, audio only, LGPL); builds without them set them up the first time, checked
+  against published checksums, and yt-dlp keeps itself up to date at most once a day (Settings >
+  File, can be turned off). Import only media you have the rights to use: Gridline does not sign
+  in to sites or get around copy protection. See docs/import-url.md.
 - Kerf slices on the beat grid. The SLICES card has a beat grid choice next to hits, 4, 8, 16, 32
   and by hand, with a field for the slice size: 1 bar, 1/2 bar, 1/4, 1/8, 1/16, 1/32 or the
   triplets 1/4 T, 1/8 T and 1/16 T (also in the Regions menu). Kerf finds the loop's tempo, its
@@ -63,6 +76,17 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- Audio clips no longer shrink or get cut off when the tempo changes. A clip you stretch (by
+  dragging an edge in stretch mode, typing a Time value or using Fit to tempo) now follows the
+  project tempo: it keeps its bars and plays faster or slower with the tempo, also through tempo
+  automation. With a time mode that keeps the pitch the pitch stays; in Resample mode the pitch
+  follows the speed, like a record. A clip you never stretched keeps the audio it was cut to and
+  plays it at the same speed: its border on the playlist grows or shrinks with the tempo, so no
+  audio is cut off and no silent tail appears (one undo step with the tempo change; clips after it
+  stay where they are). "Follow the project tempo" in the clip menu and in the clip settings turns
+  this on or off for any audio clip; turning it off keeps the clip's current speed. Projects open
+  unchanged, and clips that already followed the tempo keep their pitch as before. FL Studio
+  project export writes a clip that follows the tempo as the stretch it plays at the song tempo.
 - Smooth snapping no longer trails behind a fast drag: when the pointer crosses cells faster than a
   glide can land, the drawn clip or note speeds up and stays close to the pointer (about a sixth of a
   cell behind at one cell per frame, was over a cell); slow single steps glide as before.

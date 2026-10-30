@@ -7,6 +7,13 @@ starts the programs on their own systems, writes `Gridline-<version>-SHA256SUMS`
 GitHub release "Gridline <version>" with the CHANGELOG.md section `## <version>` as its notes.
 "Run workflow" with `dry_run` (the default) builds and checks everything without publishing.
 
+The `media-tools` job first fetches yt-dlp and builds FFmpeg for Import from URL
+(`tools/release/fetch-media-tools.py`, pinned in `tools/release/media-tools.json`); the macOS,
+Windows and Linux packages carry them, and `Gridline-<version>-media-tools-<system>.zip` is a
+release file of its own that Gridline installs on first use where a package has none
+(`docs/import-url.md`). To move to newer versions, change the manifest's versions, URLs and
+SHA-256 values.
+
 ## Where the version is set
 
 Only at the top of `CMakeLists.txt`:

@@ -37,6 +37,7 @@
 #include "J59Ui.h"
 #include "SuiteUi.h"
 #include "UpdateUi.h"
+#include "UrlImportUi.h"
 #include "Widgets.h"
 #include "Windows.h"
 #include "Viewports.h"
@@ -985,6 +986,7 @@ void drawDialogs(App& a) {
   ui::drawDisplayConfirm(a);  // J-77: Keep / Revert for size, theme, language, layout and audio changes
   updui::draw(a);             // J-89: update check (startup / Help), its popup
   suiteui::draw(a);           // J-131: Gridline Suite, first-launch question
+  urlimportui::draw(a);       // J-192: Import from URL
   importReportWindow(a);
   drawPluginManager(a);
   drawRemoteDialog(a);
@@ -1057,6 +1059,7 @@ void handleGlobalShortcuts(App& a) {
   if (pressed("file.open")) a.openDialog();
   if (pressed("file.new")) a.guardUnsaved([&a]() { a.newProject(); });
   if (pressed("file.render")) a.showExport = true;
+  if (pressed("file.importUrl")) urlimportui::open(a);  // J-192
   if (pressed("options.typingKeyboard")) a.typingKeyboard = !a.typingKeyboard;
   if (pressed("options.metronome")) a.metronome = !a.metronome;
   if (!a.typingKeyboard && pressed("transport.songMode"))

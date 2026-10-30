@@ -121,9 +121,10 @@ void Exporter::writeArrangements() {
     // Playlist.
     // J-38: effective audio fades (automatic crossfades are derived, never stored).
     std::vector<ClipFades> fades;
+    TempoMap songMap;  // J-193: tempo-synced clips are written as the stretch they play at the song's tempo
+    songMap.build(s);
     {
-      TempoMap tm;
-      tm.build(s);
+      const TempoMap& tm = songMap;
       if (cur) {
         fades = resolveAllFades(s, tm);
       } else {
@@ -241,11 +242,15 @@ void Exporter::writeArrangements() {
                                                       std::fabs(c.pitch + sc->plugin.params[pp::SmpPitchShift] - c.speedPitch) > 0.5f)
           rep.counts["audio clips: resampled pitch that keeps the timing plays at another speed in FL"]++;
         if (!(orec && getF32(r, 52) == c.gain)) putF32(r, 52, c.gain);
-        if (!(orec && getF64(r, 64) == c.stretch)) putF64(r, 64, c.stretch);
+        // J-193: FL's clip does not follow the tempo here: a synced clip is
+        // written as the stretch it plays at the tempo where it starts.
+        double st = c.stretch;
+        if (c.syncBpm > 0) st = std::clamp(c.stretch * c.syncBpm / std::max(1.0, songMap.bpmAt(static_cast<double>(c.start))), 0.0625, 16.0);
+        if (!(orec && getF64(r, 64) == st)) putF64(r, 64, st);
         // PL-13: FL's per-clip reverse ("Reverse clip"): bit 0 of u32 @72; the
         // source window is stored mirrored, like Clip::audioStart / audioEnd.
         putU32(r, 72, (getU32(r, 72) & ~1u) | (c.reverse ? 1u : 0u));
-        if (c.syncBpm > 0) rep.counts["audio clips: tempo sync not written"]++;
+        if (c.syncBpm > 0) rep.counts["audio clips: tempo sync written as the stretch at the song tempo"]++;
       }
       pl.bytes(r);
     }

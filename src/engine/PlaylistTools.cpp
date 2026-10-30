@@ -147,6 +147,11 @@ std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const
     const Tick len = s.clipLength(c), nl = std::max<Tick>(1, len + d);
     if (c.kind == ClipKind::Audio && stretch && len > 0) c.stretch = std::clamp(c.stretch * static_cast<double>(nl) / static_cast<double>(len), 0.0625, 16.0);
     c.length = nl;
+    if (c.kind == ClipKind::Audio && stretch) {  // J-193: a stretched clip keeps its bars when the tempo changes
+      TempoMap own;
+      if (!tm) own.build(s);
+      lockClipToTempo(s, c, tm ? *tm : own);
+    }
     if (c.kind == ClipKind::Audio && !stretch && tm) {
       const double endSrc = clipSourceAt(s, c, *tm, static_cast<double>(c.start + nl));
       if (c.audioEnd > c.audioStart && endSrc > c.audioEnd + 1e-9) c.audioEnd = 0;  // grown past a cut end
@@ -166,7 +171,8 @@ std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const
 std::set<ObjectId> resamplingChannels(const Song& s, const std::vector<Clip>& clips, const std::set<ObjectId>& sel) {
   std::set<ObjectId> out;
   for (const auto& c : clips) {
-    if (c.kind != ClipKind::Audio || !sel.count(c.id) || c.syncBpm > 0) continue;  // tempo-synced clips already keep the pitch
+    // J-193: a stretch locks every clip to the tempo (a resampling locked clip's pitch would follow its speed): all switch.
+    if (c.kind != ClipKind::Audio || !sel.count(c.id)) continue;
     const Channel* ch = s.channel(c.source);
     if (ch && ch->plugin.type == "gl.sampler" && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) &&
         ch->plugin.params[pp::SmpStretchMode] < 0.5f)
@@ -214,6 +220,7 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
     if (b.kind == ClipKind::Audio) {
       if (stretch) {
         c.stretch = std::clamp(b.stretch * static_cast<double>(len - d) / static_cast<double>(std::max<Tick>(1, len)), 0.0625, 16.0);
+        lockClipToTempo(s, c, tm);  // J-193
       } else {
         double src = std::max(0.0, clipSourceAt(s, b, tm, static_cast<double>(b.start + d)));
         if (zeroCross) src = nearestZeroCrossing(s, b, src);

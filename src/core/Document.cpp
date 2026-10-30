@@ -1,6 +1,7 @@
 #include "Document.h"
 #include <algorithm>
 #include "Arrangements.h"
+#include "../engine/ClipOps.h"
 
 namespace gl {
 
@@ -113,6 +114,46 @@ Rgb paletteColor(size_t i) {
   return pal[i % (sizeof pal / sizeof pal[0])];
 }
 
+// J-193: an edit that changed the tempo, with the audio clips it refitted
+// (clips that do not follow the tempo keep their audio; their length
+// follows). One history step; a tempo drag stays one step (merges like the
+// edit it wraps, the clip changes fold together).
+class TempoRefitCommand final : public Command {
+ public:
+  struct Patch {
+    ObjectId id;
+    Clip before, after;
+  };
+  TempoRefitCommand(CommandPtr inner, std::vector<Patch> patches) : inner_(std::move(inner)), patches_(std::move(patches)) {}
+  void apply(Song& s) override {
+    inner_->apply(s);
+    for (const auto& p : patches_)
+      if (Clip* c = s.clip(p.id)) *c = p.after;
+  }
+  void revert(Song& s) override {
+    for (auto it = patches_.rbegin(); it != patches_.rend(); ++it)
+      if (Clip* c = s.clip(it->id)) *c = it->before;
+    inner_->revert(s);
+  }
+  std::string label() const override { return inner_->label(); }
+  uint64_t mergeKey() const override { return inner_->mergeKey(); }
+  bool mergeWith(const Command& next) override {
+    const auto* n = dynamic_cast<const TempoRefitCommand*>(&next);
+    if (!inner_->mergeWith(n ? *n->inner_ : next)) return false;
+    if (n)
+      for (const auto& p : n->patches_) {
+        auto it = std::find_if(patches_.begin(), patches_.end(), [&](const Patch& q) { return q.id == p.id; });
+        if (it != patches_.end()) it->after = p.after;
+        else patches_.push_back(p);
+      }
+    return true;
+  }
+
+ private:
+  CommandPtr inner_;
+  std::vector<Patch> patches_;
+};
+
 }  // namespace
 
 void Document::reset(Song song) {
@@ -127,19 +168,52 @@ void Document::exec(CommandPtr cmd, bool mayJoin) {
   const bool join = mayJoin && groups_.empty() && pointerGesture_ && gestureSerial_ != 0 && undo_.canAmend() &&
                     undo_.stateSerial() == gestureSerial_;
   if (beforeChange && groups_.empty() && !join && !undo_.wouldMerge(*cmd)) beforeChange();
+  cmd = applyWithTempoRefit(std::move(cmd));  // (applied)
   ++revision_;
+  tempoMapRev_ = revision_;
   if (!groups_.empty()) {
-    cmd->apply(song_);
     groups_.back()->add(std::move(cmd));
     return;
   }
   if (join) {
-    cmd->apply(song_);
     undo_.amendTop(std::move(cmd));
   } else {
-    undo_.push(song_, std::move(cmd));
+    undo_.pushApplied(std::move(cmd));
   }
   if (pointerGesture_ && mayJoin) gestureSerial_ = undo_.stateSerial();
+}
+
+CommandPtr Document::applyWithTempoRefit(CommandPtr cmd) {
+  // Audio clips that play fixed seconds (the only ones a tempo change moves).
+  std::vector<Clip> before;
+  for (const Clip& c : song_.playlist)
+    if (c.kind == ClipKind::Audio && c.syncBpm <= 0) before.push_back(c);
+  if (before.empty()) {  // nothing to refit (the tempo map is rebuilt when needed)
+    cmd->apply(song_);
+    tempoMapOk_ = false;
+    return cmd;
+  }
+  if (!tempoMapOk_ || tempoMapRev_ != revision_) tempoMap_.build(song_);
+  const int ppq = song_.ppq;
+  cmd->apply(song_);
+  TempoMap map;
+  map.build(song_);
+  tempoMapOk_ = true;
+  if (map.signature() == tempoMap_.signature() || song_.ppq != ppq) {  // (a PPQ change keeps every clip's seconds itself)
+    tempoMap_ = map;
+    return cmd;
+  }
+  std::vector<TempoRefitCommand::Patch> patches;
+  {
+    const std::vector<Clip> was = song_.playlist;
+    if (refitClipsToTempo(song_, before, tempoMap_, map) > 0)
+      for (size_t i = 0; i < was.size() && i < song_.playlist.size(); ++i)
+        if (!(was[i] == song_.playlist[i])) patches.push_back({was[i].id, was[i], song_.playlist[i]});
+  }
+  // The refit can move the song's end (the map's extent with tempo automation).
+  if (!patches.empty() && !map.constant()) map.build(song_);
+  tempoMap_ = map;
+  return std::make_unique<TempoRefitCommand>(std::move(cmd), std::move(patches));
 }
 
 void Document::beginPointerGesture() {

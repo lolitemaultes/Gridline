@@ -28,6 +28,7 @@
 #include "FlpExportUi.h"
 #include "Theme.h"
 #include "UpdateUi.h"
+#include "UrlImportUi.h"
 #include "Widgets.h"
 #include "Windows.h"
 #include "Keys.h"
@@ -151,6 +152,8 @@ void menuFile(App& a) {
     if (ImGui::MenuItem(i18n::tr("Audio file as playlist clip...")))
       fileDialog(a, "Import audio clip", false, importAudioTypes()[0].exts, "",
                  [&a](const std::string& p) { exportui::importAudioAsClip(a, p); });
+    if (ImGui::MenuItem(i18n::tr("Import from URL..."), keys::label("file.importUrl"))) urlimportui::open(a);  // J-192
+    ui::Hint("A link to a video or audio page: its best audio as a lossless WAV clip");
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Export"))) {

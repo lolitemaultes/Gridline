@@ -89,6 +89,9 @@ class Process {
     kInheritStderr = 1,    // stderr shared with the parent
     kInheritStdout = 2,
     kInheritStdin = 4,
+    // J-192: the child and everything it starts form one group (POSIX: its own process group;
+    // Windows: a job object); kill() ends the whole tree (a downloader and the converter it runs).
+    kTree = 8,
   };
   Process() = default;
   Process(const Process&) = delete;
@@ -101,6 +104,12 @@ class Process {
   // handles the child receives (POSIX: duplicated to 3, 4, ...; Windows: inheritable handles).
   bool start(const std::string& exe, const std::vector<std::string>& args, unsigned flags = kQuiet,
              const std::vector<std::intptr_t>& inherit = {});
+  // J-192: the next start() sends the child's stdout / stderr to these files (created or
+  // truncated; "" = as the flags say), which the parent may read while the child writes them.
+  void redirectOutput(const std::string& outFile, const std::string& errFile) {
+    outFile_ = outFile;
+    errFile_ = errFile;
+  }
   bool running() const { return started_ && !status_.exited; }
   // Waits up to `seconds` (< 0: forever); true when the child has exited.
   bool wait(double seconds = -1);
@@ -112,6 +121,9 @@ class Process {
   bool started_ = false;
   int pid_ = -1;
   std::intptr_t handle_ = 0;  // Windows process handle
+  std::intptr_t job_ = 0;     // Windows job object (kTree)
+  bool group_ = false;        // POSIX: the child leads its own process group (kTree)
+  std::string outFile_, errFile_;
   ExitStatus status_;
 };
 

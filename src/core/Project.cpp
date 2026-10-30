@@ -351,6 +351,7 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.stretch != 1.0) jc.object["stretch"] = num(c.stretch);
   if (c.speedPitch != 0.0f) jc.object["speedPitch"] = num(c.speedPitch);  // J-164
   if (c.syncBpm != 0) jc.object["syncBpm"] = num(c.syncBpm);
+  if (c.tempoLock) jc.object["tempoLock"] = boolean(true);  // J-193
   if (c.reverse) jc.object["reverse"] = boolean(true);
   if (c.takeGroup != kNoId) jc.object["takeGroup"] = num(c.takeGroup);
   if (c.take != 0) jc.object["take"] = num(c.take);
@@ -382,6 +383,7 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.stretch = std::clamp(jc.num("stretch", 1), 0.0625, 16.0);
   c.speedPitch = static_cast<float>(std::clamp(jc.num("speedPitch", 0), -6000.0, 6000.0));  // J-164 (clip + channel pitch shift)
   c.syncBpm = std::clamp(jc.num("syncBpm", 0), 0.0, 1000.0);
+  c.tempoLock = c.syncBpm > 0 && flag(jc, "tempoLock");  // J-193
   c.reverse = flag(jc, "reverse");
   c.takeGroup = jsonInt<ObjectId>(std::max(0.0, jc.num("takeGroup", 0)));
   c.take = jsonInt<int>(std::clamp(jc.num("take", 0), 0.0, 9999.0));

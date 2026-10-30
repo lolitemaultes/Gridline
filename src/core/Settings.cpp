@@ -29,6 +29,9 @@ Settings::Settings() {
       {"project.defaultPpq", Json::makeNumber(96)},
       {"project.defaultTempo", Json::makeNumber(140)},
       {"import.flData", Json::makeString("")},  // FL Studio factory data folder ("" = detect)
+      {"import.urlAutoUpdate", b(true)},           // J-192: keep yt-dlp current (checked at most once a day, when used)
+      {"import.urlLastUpdateCheck", Json::makeNumber(0)},  // J-192: seconds since 1970 of the last yt-dlp check
+      {"import.urlPlacement", Json::makeNumber(0)},  // J-192: 0 = clip on a new track at the playhead, 1 = browser only
       {"audio.sampleRate", Json::makeNumber(44100)},
       {"audio.bufferFrames", Json::makeNumber(256)},
       {"audio.pdc", b(true)},                  // plugin delay compensation

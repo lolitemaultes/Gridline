@@ -141,7 +141,7 @@ std::string barsBeatsOf(double beats, int bpb, bool ticks) {
   const int64_t beatsIn = floorDiv(allTicks, kTicksPerBeat), tick = allTicks - beatsIn * kTicksPerBeat;
   const int64_t barIdx = floorDiv(beatsIn, bpb);
   const int64_t bar = barIdx + 1, beat = beatsIn - barIdx * bpb + 1;
-  char b[48];
+  char b[72];  // three 64-bit fields worst case (GCC -Wformat-truncation)
   if (ticks) std::snprintf(b, sizeof b, "%lld:%lld:%03lld", static_cast<long long>(bar), static_cast<long long>(beat), static_cast<long long>(tick));
   else std::snprintf(b, sizeof b, "%lld:%lld", static_cast<long long>(bar), static_cast<long long>(beat));
   return b;
@@ -159,7 +159,7 @@ std::string barsBeats(double frame, const Grid& g, bool ticks) {
 
 std::string formatPosition(double frame, int unit, double rate, double fpb) { return formatPosition(frame, unit, rate, straightGrid(fpb)); }
 std::string formatPosition(double frame, int unit, double rate, const Grid& g) {
-  char b[48];
+  char b[72];
   if (unit == UnitSamples) {
     std::snprintf(b, sizeof b, "%lld", static_cast<long long>(std::llround(frame)));
     return b;

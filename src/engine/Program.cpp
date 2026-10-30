@@ -296,7 +296,15 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
     out.tensionIn = c.fadeInTension, out.tensionOut = c.fadeOutTension;
   }
   out.declickIn = c.fadeInDeclick, out.declickOut = c.fadeOutDeclick;  // J-43
-  if (c.syncBpm > 0) {  // follows the tempo: always pitch-independent
+  if (c.syncBpm > 0 && c.tempoLock && rate.resample) {
+    // J-193: locked to the tempo and resampled: the pitch follows the speed
+    // the tempo gives it (a record played faster or slower); `pitch` is the
+    // pitch per unit of speed (the clip's pitch apart from its speed).
+    out.secPerTick = 60.0 / (c.syncBpm * song.ppq) / timeFactor;
+    out.resampleSync = true;
+    out.pitch = rate.pitch / std::max(1e-9, rate.speed);
+    out.granular = std::fabs(out.pitch - 1.0) > 1e-9;
+  } else if (c.syncBpm > 0) {  // follows the tempo: always pitch-independent
     out.secPerTick = 60.0 / (c.syncBpm * song.ppq) / timeFactor;
     out.granular = true;
     out.pitch = rate.resample ? rate.pitch * timeFactor : rate.pitch;  // the pitch alone (the tempo fit keeps it)
@@ -326,7 +334,30 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
     rq.rate = rctx->sampleRate;
     rq.frames = static_cast<int64_t>(std::ceil(out.durSec * rctx->sampleRate)) + 2;
     bool need = false;
-    if (out.secPerTick > 0) {  // tempo sync: pitch-independent
+    if (out.resampleSync) {  // J-193: resampled through the tempo map (pitch follows the speed)
+      rq.map = &map;
+      rq.secPerTick = out.secPerTick;
+      rq.startTick = static_cast<double>(out.start);
+      rq.startSec = out.startSec;
+      char sig[64];
+      std::snprintf(sig, sizeof sig, "%llx", static_cast<unsigned long long>(map.signature()));
+      rq.mapKey = sig;
+      const double extra = out.pitch * chanRatio;  // pitch on top of the speed's
+      const double spd = out.secPerTick * map.bpmAt(static_cast<double>(out.start)) * song.ppq / 60.0;
+      if (std::fabs(extra - 1.0) <= 1e-9) {
+        mode = stretch::Mode::Resample;
+        rq.pitch = 1.0;
+        need = !map.constant() || std::fabs(spd - 1.0) > 1e-9;
+      } else if (map.constant()) {  // a constant speed: resampled, with the pitch on top through the stretch
+        rq.map = nullptr;
+        rq.secPerTick = 0, rq.startTick = 0, rq.startSec = 0;
+        rq.mapKey.clear();
+        mode = stretch::kStretch;
+        rq.speed = spd;
+        rq.pitch = spd * extra;
+        need = true;
+      }  // (a pitch on top of a changing tempo: the realtime path follows it)
+    } else if (out.secPerTick > 0) {  // tempo sync: pitch-independent
       mode = keepMode;
       rq.map = &map;
       rq.secPerTick = out.secPerTick;

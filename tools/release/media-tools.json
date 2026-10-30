@@ -1,0 +1,30 @@
+{
+  "comment": "J-192: the programs Import from URL runs, as the release packages carry them (tools/release/fetch-media-tools.py; docs/import-url.md). Every download is checked against the SHA-256 here. To move to newer versions: change the version, URLs and digests (yt-dlp: its release's SHA2-256SUMS; FFmpeg: sha256 of the tarball from ffmpeg.org; llvm-mingw: the digest GitHub shows for the asset), run the script for one target, then a release dry run.",
+  "yt-dlp": {
+    "version": "2026.10.26",
+    "license": "Unlicense (public domain)",
+    "source": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.26",
+    "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/{asset}",
+    "assets": {
+      "macos-universal": {"name": "yt-dlp_macos", "sha256": "0f922c15ccc0b83eefa1c8bc9104e434318c4bf16e408e1ee93b7745a6efe0aa"},
+      "windows-x64": {"name": "yt-dlp.exe", "sha256": "f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d"},
+      "windows-arm64": {"name": "yt-dlp_arm64.exe", "sha256": "0066dbac3c124028e2dcae2a197fccee33cd91f456313d24f7af89fd54590e98"},
+      "linux-x86_64": {"name": "yt-dlp_linux", "sha256": "767ba9dce7052aa196f8b12652f433d76de128ba168966fa84b6394d5e6c6795"},
+      "linux-aarch64": {"name": "yt-dlp_linux_aarch64", "sha256": "e87e9533e89fe5889abaa21f5114dfe7756d6aa6219b83551add04d48b18e483"}
+    }
+  },
+  "ffmpeg": {
+    "version": "9.0.2",
+    "license": "LGPL-2.1-or-later (built without GPL or nonfree parts)",
+    "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+    "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
+  },
+  "llvm-mingw": {
+    "comment": "the Windows builds of ffmpeg are cross-compiled on Linux with this toolchain",
+    "version": "20261020",
+    "hosts": {
+      "x86_64": {"url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-ubuntu-22.04-x86_64.tar.xz", "sha256": "55064b60b991a1e1e8090b8c2f84e82b22cfe5903d12c159d65064cf5e8ae335"},
+      "aarch64": {"url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-ubuntu-22.04-aarch64.tar.xz", "sha256": "ca16bb0f4f485876496fa46ad8d353c525eba57d0cf9e9e49ec1738fe4810151"}
+    }
+  }
+}

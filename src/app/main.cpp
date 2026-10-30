@@ -74,6 +74,7 @@
 #include "LauncherUi.h"
 #include "ProjectLoadUi.h"
 #include "UpdateUi.h"
+#include "UrlImportUi.h"
 #include "../host/net/Http.h"
 
 namespace fs = std::filesystem;
@@ -833,11 +834,16 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       app.cancelProjectLoad();
     } else if (l.cmd == "loadfilter") {  // J-167: loadfilter on|off: the log shows only the warnings (the footer's toggle)
       projloadui::setWarningsOnly(l.a0 != "off");
+    } else if (l.cmd == "urlimport") {  // J-192: Import from URL (UrlImportUi.h)
+      urlimportui::devCommand(app, l.args);
     } else if (l.cmd == "waitfor") {  // J-108
       // (J-111f: a quoted name may hold spaces, "collab-name:Night Drive")
       const std::string& name = l.args.empty() ? l.a0 : l.args[0];
       const std::string& secs = l.args.size() > 1 ? l.args[1] : l.a1;
       devWait = {name, std::max(0.0, std::strtod(secs.c_str(), nullptr)), SDL_GetPerformanceCounter(), true};
+    } else if (l.cmd == "tempo") {  // J-193: tempo <bpm>: the song tempo, as the tempo display sets it (one undo step)
+      app.doc.setParam(songParam(SongParam::Tempo), std::strtod(l.a0.c_str(), nullptr), false);
+      app.syncEngine();
     } else if (l.cmd == "undo") {
       app.doc.undo();
       app.syncEngine();
@@ -908,12 +914,12 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                   app.doc.history().position());
       for (const auto& c : s.playlist)
         std::printf("  clip %u kind %d track %d start %lld len %lld offset %lld audioStart %.6f muted %d pattern %u group %u sel %d"
-                    " source %u audioEnd %.6f fadeIn %.6f fadeOut %.6f gain %.4f pitch %.2f stretch %.4f reverse %d\n",
+                    " source %u audioEnd %.6f fadeIn %.6f fadeOut %.6f gain %.4f pitch %.2f stretch %.4f reverse %d syncBpm %.4f tempoLock %d\n",
                     static_cast<unsigned>(c.id), static_cast<int>(c.kind), c.track, static_cast<long long>(c.start),
                     static_cast<long long>(s.clipLength(c)), static_cast<long long>(c.offset), c.audioStart, c.muted ? 1 : 0,
                     static_cast<unsigned>(c.pattern), static_cast<unsigned>(c.group), app.playlist.selected.count(c.id) ? 1 : 0,
                     static_cast<unsigned>(c.source), c.audioEnd, c.fadeIn, c.fadeOut, static_cast<double>(c.gain),
-                    static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0);
+                    static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0, c.syncBpm, c.tempoLock ? 1 : 0);
       std::fflush(stdout);
     } else if (l.cmd == "autoedit") {  // J-173: what the automation editor shows (a playlist clip or a pattern's clip)
       ObjectId aid = kNoId, pid = kNoId;
@@ -1593,6 +1599,7 @@ int main(int argc, char** argv) {
     collabui::setOpenUrl(updateOpts.openUrl);  // J-111e: Show in Finder / Files
     updui::start(app, updateOpts);
     suiteui::start(app, updateOpts.automated);  // J-131: Gridline Suite into the plug-in folders
+    urlimportui::start(updateOpts.automated);    // J-192: scripted runs never download the tools
   }
   const bool frameClock = profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
   if (frameClock) SDL_GL_SetSwapInterval(0);
@@ -2149,6 +2156,7 @@ int main(int argc, char** argv) {
   j59::shutdownRenderSampler();
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   updui::shutdown();           // J-89: a running installer download is cancelled
+  urlimportui::shutdown();     // J-192: running downloads / conversions are stopped
   app.shutdownProjectLoad();   // J-167: a load in progress stops; its reader is joined
   closeAllHostedEditors(app);
   if (frameClock) host::native::frameClockStop();

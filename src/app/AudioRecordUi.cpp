@@ -15,6 +15,7 @@
 #include "../engine/ClipOps.h"
 #include "../packs/PacksUi.h"
 #include "Theme.h"
+#include "UrlImportUi.h"
 #include "Widgets.h"
 
 namespace fs = std::filesystem;
@@ -417,7 +418,7 @@ void audioClipMenu(App& a, ObjectId id) {
     if (ImGui::MenuItem(i18n::tr("Half as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 0.5, keep); });
     if (ImGui::MenuItem(i18n::tr("Twice as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 2.0, keep); });
     if (ImGui::MenuItem(i18n::tr("Original length"), nullptr, false, clip.stretch != 1.0))
-      editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, 1.0, keep); });
+      editSongClip(a, "stretch clip", [&](Song& x) { resetClipStretch(x, id); });  // J-193: unstretched: fixed seconds again
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Fit to tempo"))) {
@@ -482,6 +483,7 @@ void drawClipProperties(App& a) {
     ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%s \xC2\xB7 %.0f Hz \xC2\xB7 %.2f s"), fs::path(ch->plugin.data).filename().string().c_str(),
                        smp->sampleRate, smp->seconds());
   ImGui::PopFont();
+  urlimportui::clipSourceInfo(a, ch->plugin.data);  // J-192: imported from a link
   ui::Label("LEVEL");
   float gainDb = c.gain > 0 ? 20.0f * std::log10(c.gain) : -60.0f;
   row("Gain");
@@ -537,12 +539,9 @@ void drawClipProperties(App& a) {
   }
   bool follow = c.syncBpm > 0;
   row("Follow tempo");
-  if (ImGui::Checkbox("##follow", &follow)) {
-    TempoMap tm;
-    tm.build(s);
-    const double bpm = tm.bpmAt(static_cast<double>(c.start));
-    a.doc.editClip(id, "follow tempo", [&](Clip& x) { x.syncBpm = follow ? bpm : 0.0; });
-  }
+  // J-193: on after a stretch: the clip keeps its bars when the tempo changes (Resample: its pitch follows).
+  if (ImGui::Checkbox("##follow", &follow)) a.doc.editSong("follow tempo", [&](Song& x) { setClipFollowsTempo(x, id, follow); });
+  ui::Tooltip("Follow the project tempo: the clip keeps its bars when the tempo changes (on after a stretch). Off: it keeps its audio and its length follows the tempo");
   if (c.syncBpm > 0) {
     ImGui::SameLine(0, theme::kS2);
     ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("at %.2f BPM"), c.syncBpm);

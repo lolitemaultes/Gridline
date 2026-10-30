@@ -206,6 +206,7 @@ struct ProgAudioClip {
   double secPerTick = 0;            // > 0: tempo-synced, source seconds per song tick
   double pitch = 1;                 // frequency ratio (granular mode)
   bool granular = false;            // pitch independent from speed (the stretch)
+  bool resampleSync = false;        // J-193: tempo-locked, resampled: pitch = speed x `pitch`
   stretch::Engine engine = stretch::Engine::Stretch;  // J-157: what keeps the pitch (the channel's time mode)
   bool reverse = false;
   float gain = 1;

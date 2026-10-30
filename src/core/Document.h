@@ -4,6 +4,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include "Automation.h"
 #include "Params.h"
 #include "Song.h"
 #include "Undo.h"
@@ -183,6 +184,10 @@ class Document {
 
  private:
   void exec(CommandPtr cmd, bool mayJoin = true);
+  // J-193: applies `cmd`; when it changed the tempo map, the audio clips that
+  // do not follow the tempo keep their audio (refitClipsToTempo) in the same
+  // command. Returns the (applied) command to record.
+  CommandPtr applyWithTempoRefit(CommandPtr cmd);
   // Records a change of song.modLinks (no-op when equal).
   void setModLinks(std::vector<ModLink> after, const std::string& label);
   Song song_;
@@ -196,6 +201,9 @@ class Document {
   bool pointerGesture_ = false;
   uint64_t gestureSerial_ = 0;  // state serial of the step the current pointer gesture made (0: none yet)
   uint64_t moveSerial_ = 0;
+  TempoMap tempoMap_;  // J-193: the song's tempo map at revision tempoMapRev_ (when tempoMapOk_)
+  uint64_t tempoMapRev_ = 0;
+  bool tempoMapOk_ = false;
 };
 
 }  // namespace gl

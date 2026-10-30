@@ -61,6 +61,28 @@ std::string renderClipsToWav(const Song& song, const std::set<ObjectId>& keep, T
 // placed on the first empty track below; the original clips are muted.
 ObjectId bounceTrack(Song& song, int track, const std::string& dir, double sampleRate);
 
+// J-193: tempo lock. A clip the user stretched keeps its bars when the tempo
+// changes: it follows the tempo (syncBpm, set from its current geometry so
+// locking never changes how it sounds at that moment) and is marked
+// Clip::tempoLock (in Resample mode its pitch then follows its speed).
+// Works on a copy (resize gestures); false when `c` is not a playable audio clip.
+bool lockClipToTempo(const Song& song, Clip& c, const TempoMap& map);
+// "Follow the project tempo" on (lock, as above) or off: the clip keeps its
+// length, its audio and its current speed (the stretch takes over the speed
+// the tempo gave it) and plays fixed seconds again. False when nothing changed.
+bool setClipFollowsTempo(Song& song, ObjectId clip, bool follow);
+// J-193: "Original length": the stretch back to 1 (the clip's audio kept,
+// its length follows); a clip a stretch locked to the tempo plays fixed
+// seconds again (older tempo-synced clips stay synced, as before).
+bool resetClipStretch(Song& song, ObjectId clip);
+// J-193: after a tempo change (`oldMap` -> `newMap`), every audio clip that
+// does not follow the tempo keeps the audio it played (its source start and
+// the cut where it ended: stored exactly in audioEnd) and its start; its
+// length becomes that audio's duration at the new tempo. `before` holds the
+// clips as they were (by id; clips changed since are left alone). Returns
+// the number of clips changed.
+int refitClipsToTempo(Song& song, const std::vector<Clip>& before, const TempoMap& oldMap, const TempoMap& newMap);
+
 // Cleans a name for use in a file name.
 std::string cleanFileName(const std::string& s);
 

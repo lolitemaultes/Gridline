@@ -34,6 +34,7 @@
 #include "ExternalDragUi.h"
 #include "HostedUi.h"
 #include "Theme.h"
+#include "UrlImportUi.h"
 #include "Widgets.h"
 #include "Windows.h"
 #include "../core/Platform.h"
@@ -1121,6 +1122,7 @@ void drawBrowser(App& a) {
       // Same folders the recorder / renders use ("<project>/Recorded", config folder while unsaved).
       folderSection(a, "Recorded", recordedDir(a), role::kDelete, "Nothing recorded yet", true);
       folderSection(a, "Rendered", renderedDir(a), role::kSelect, "Nothing rendered yet", true);
+      folderSection(a, "Imported", urlimportui::importedDir(a), role::kLoop, "Nothing imported from links yet", true);  // J-192
     }
     if (all || tab == TabSounds) {
       folderSection(a, "Sliced audio", browserui::contentDir(a, "Sliced audio"), role::kSlip, "No sliced audio", true);

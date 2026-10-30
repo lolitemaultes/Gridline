@@ -226,6 +226,10 @@ msgid "Fitted to"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
+msgid "Follow the project tempo: the clip keeps its bars when the tempo changes (on after a stretch). Off: it keeps its audio and its length follows the tempo"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp
 msgid "Guess the number of beats and make the clip follow the tempo"
 msgstr ""
 
@@ -277,7 +281,7 @@ msgstr ""
 msgid "No mixer track is armed for audio"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/MidiUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/MidiUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "None"
 msgstr ""
 
@@ -397,7 +401,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -917,6 +921,10 @@ msgstr ""
 msgid "Favourite plugins"
 msgstr ""
 
+#: src/app/Browser.cpp src/app/BrowserDrop.cpp src/app/UrlImportUi.cpp
+msgid "Imported"
+msgstr ""
+
 #: src/app/Browser.cpp
 msgid "Impulses"
 msgstr ""
@@ -987,6 +995,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Not a folder: "
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Nothing imported from links yet"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1203,10 +1215,6 @@ msgstr ""
 
 #: src/app/BrowserDrop.cpp
 msgid "Effects go into mixer slots"
-msgstr ""
-
-#: src/app/BrowserDrop.cpp
-msgid "Imported"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -1753,7 +1761,7 @@ msgstr ""
 msgid "2 beats"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp
 msgid "All"
 msgstr ""
 
@@ -2169,7 +2177,7 @@ msgstr ""
 msgid "Chords"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/ScriptUi.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/ScriptUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp
 msgid "Close"
 msgstr ""
 
@@ -3377,7 +3385,7 @@ msgstr ""
 msgid "Pan"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/UrlImportUi.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
 msgid "Paste"
 msgstr ""
 
@@ -8489,7 +8497,7 @@ msgstr ""
 msgid "Could not create"
 msgstr ""
 
-#: src/app/MenuParityUi.cpp
+#: src/app/MenuParityUi.cpp src/app/UrlImportUi.cpp
 msgid "Could not save"
 msgstr ""
 
@@ -8778,6 +8786,10 @@ msgid "8 playlist tracks"
 msgstr ""
 
 #: src/app/Menus.cpp
+msgid "A link to a video or audio page: its best audio as a lossless WAV clip"
+msgstr ""
+
+#: src/app/Menus.cpp
 msgid "All effect slots of this track are in use"
 msgstr ""
 
@@ -8921,8 +8933,12 @@ msgstr ""
 msgid "Gridline zipped project (.gridline.zip)..."
 msgstr ""
 
-#: src/app/Menus.cpp
+#: src/app/Menus.cpp src/app/UrlImportUi.cpp
 msgid "Import"
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Import from URL..."
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -9433,7 +9449,7 @@ msgstr ""
 msgid "Quantize note starts to the snap"
 msgstr ""
 
-#: src/app/MidiUi.cpp
+#: src/app/MidiUi.cpp src/app/UrlImportUi.cpp
 msgid "Range"
 msgstr ""
 
@@ -10286,7 +10302,7 @@ msgid "Fade out"
 msgstr ""
 
 #: src/app/Playlist.cpp
-msgid "Follow tempo"
+msgid "Follow the project tempo"
 msgstr ""
 
 #: src/app/Playlist.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
@@ -11085,7 +11101,7 @@ msgstr ""
 msgid "finding the beat..."
 msgstr ""
 
-#: src/app/PluginEditorsInstrSlicer.cpp src/packs/synths/pixel_ui.cpp
+#: src/app/PluginEditorsInstrSlicer.cpp src/app/UrlImportUi.cpp src/packs/synths/pixel_ui.cpp
 msgid "from"
 msgstr ""
 
@@ -13505,6 +13521,210 @@ msgstr ""
 msgid "You're up to date (%s)"
 msgstr ""
 
+#: src/app/UrlImportUi.cpp
+msgid "%d of %d chosen"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "A link to a video or audio page (most video and music sites). Its best audio is imported as a lossless WAV."
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "An audio clip on a new playlist track at the playhead, and the file in the browser"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Back"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Browser only"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Checking for a newer yt-dlp..."
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Choose at least one item"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Choose items"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Clip on a new track"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Converting to WAV"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Copy link"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Could not check for a newer yt-dlp: "
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Could not import"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Download and check the newest yt-dlp now"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Downloading the best audio"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Fetch"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "First item"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "IMPORT FROM URL"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Import from URL"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Import only a time range (minutes:seconds)"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Import only media you have the rights to use. Gridline does not sign in to sites or get around copy protection."
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Items"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Keep yt-dlp up to date automatically"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Only part"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Only the file, in the browser's Imported folder"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Paste a link from the clipboard"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Place"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Playlist, %d items"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Read the link: title, length, playlist items"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Reading the link"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "SOURCE"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Saved as 32-bit float WAV at the source's sample rate, in the project's Imported folder."
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Set up now"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Setting up the downloader (once)..."
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Sites change often. At most once a day, when Import from URL is used, Gridline checks yt-dlp's releases on GitHub and installs a newer one after checking its SHA-256 checksum. Nothing else is sent."
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "The clipboard holds no link"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "The downloader could not be set up."
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "The downloader is not available."
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "The end must come after the start"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "The start is past the end of the media"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Times are minutes:seconds, like 1:30"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Update yt-dlp now"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Updated yt-dlp to "
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "end"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "included with Gridline"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "installed by Gridline"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "not set up yet (set up on first use)"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "set by the environment"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "this computer's"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "to"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "yt-dlp is up to date"
+msgstr ""
+
 #: src/app/Viewports.cpp
 msgid "Dock back into Gridline"
 msgstr ""
@@ -14119,6 +14339,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Graph editor (step velocities)"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Import audio from a link (URL)"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -17927,10 +18151,6 @@ msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
 msgid "SMOOTH"
-msgstr ""
-
-#: src/packs/spacefx/spacefx_ui.cpp src/packs/tideline/tideline_ui.cpp
-msgid "SOURCE"
 msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp

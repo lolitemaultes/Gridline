@@ -36,3 +36,20 @@ jog wheel's speed from an alpha-beta filter on its ticks, with the filter values
 mapping uses; the mouse's position loop with its throw and release; the ramp back to the motor;
 the level curve at low speeds) follows the approach of Mixxx (https://github.com/mixxxdj/mixxx,
 GPL-2.0-or-later). No Mixxx source is included; the code is Gridline's own.
+
+## Programs shipped beside Gridline (Import from URL, J-192)
+
+The release packages carry two separate programs that Gridline runs for File > Import > Import
+from URL. They are not linked into Gridline and not kept in this repository: the release workflow
+fetches them (`tools/release/fetch-media-tools.py`, versions and SHA-256 in
+`tools/release/media-tools.json`), and Gridline installs the same files on first use where a
+package has none (`docs/import-url.md`). Each package's `tools` folder holds their licence texts
+(`LICENSES/`) and `SOURCES.txt` with the exact source and build settings.
+
+| Program | Version | Licence | Source |
+|---|---|---|---|
+| yt-dlp | 2026.10.26 (official release binary) | Unlicense (public domain) | https://github.com/yt-dlp/yt-dlp |
+| FFmpeg (`ffmpeg`, `ffprobe`) | 9.0.2, built from the unmodified source, audio only, without GPL or nonfree parts | LGPL-2.1-or-later | https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz |
+
+FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project. Gridline is not
+affiliated with the FFmpeg or yt-dlp projects.

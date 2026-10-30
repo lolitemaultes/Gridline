@@ -209,6 +209,7 @@ int fitClipToTempo(Song& song, ObjectId id) {
   const double tfCh = std::max(0.01, par(*song.channel(c->source), pp::SmpTimeStretch, 1));
   c->stretch = 1.0;
   c->syncBpm = beats * 60.0 / secs;
+  c->tempoLock = true;  // J-193: a fit is a stretch
   c->length = std::max<Tick>(1, static_cast<Tick>(std::llround(beats * song.ppq * tfCh)));
   return beats;
 }
@@ -233,7 +234,120 @@ bool setClipStretch(Song& song, ObjectId id, double timeFactor, bool keepPitch) 
   if (const Clip* c = song.clip(id); c && keepPitch)
     if (const Channel* ch = song.channel(c->source); ch && ch->plugin.type == "gl.sampler")
       if (stretch::modeOf(par(*ch, pp::SmpStretchMode, 0)) == stretch::Mode::RubberBand) mode = static_cast<int>(stretch::Mode::RubberBand);
-  return setClipStretchMode(song, id, timeFactor, mode);
+  if (!setClipStretchMode(song, id, timeFactor, mode)) return false;
+  // J-193: a stretched clip keeps its bars when the tempo changes.
+  TempoMap map;
+  map.build(song);
+  if (Clip* c = song.clip(id)) lockClipToTempo(song, *c, map);
+  return true;
+}
+
+bool lockClipToTempo(const Song& song, Clip& c, const TempoMap& map) {
+  const Channel* ch = song.channel(c.source);
+  if (c.kind != ClipKind::Audio || !ch) return false;
+  if (c.syncBpm > 0) {  // already follows the tempo: only its pitch rule changes
+    c.tempoLock = true;
+    return true;
+  }
+  const Tick len = song.clipLength(c);
+  const double span = clipSourceAt(song, c, map, static_cast<double>(c.start + len)) - c.audioStart;
+  if (len <= 0 || !(span > 0)) return false;
+  // Source seconds per tick as it plays now -> the tempo at which the
+  // clip's stretch plays it (Program.cpp: secPerTick = 60 / (syncBpm * ppq) / timeFactor).
+  const double secPerTick = span / static_cast<double>(len);
+  const double tf = clipRate(*ch, c).timeFactor;
+  const double bpm = 60.0 / (secPerTick * std::max(1, song.ppq) * tf);
+  if (!std::isfinite(bpm) || bpm <= 0) return false;
+  c.syncBpm = std::clamp(bpm, 1e-3, 1000.0);
+  c.tempoLock = true;
+  return true;
+}
+
+bool setClipFollowsTempo(Song& song, ObjectId id, bool follow) {
+  Clip* c = song.clip(id);
+  if (!c || c->kind != ClipKind::Audio) return false;
+  const Channel* ch = song.channel(c->source);
+  if (!ch) return false;
+  TempoMap map;
+  map.build(song);
+  if (follow) {
+    if (c->syncBpm > 0 && c->tempoLock) return false;
+    return lockClipToTempo(song, *c, map);
+  }
+  if (c->syncBpm <= 0) return false;
+  // Off: the speed the tempo gives it now becomes its own (fixed seconds).
+  const Tick len = song.clipLength(*c);
+  const double span = clipSourceAt(song, *c, map, static_cast<double>(c->start + len)) - c->audioStart;
+  const double secs = map.secondsAt(static_cast<double>(c->start + len)) - map.secondsAt(static_cast<double>(c->start));
+  Clip off = *c;
+  off.syncBpm = 0;
+  off.tempoLock = false;
+  if (span > 0 && secs > 0) {
+    const double speed = span / secs;  // source seconds per playback second, wanted
+    const ClipRate r = clipRate(*ch, off);
+    // rate.speed = k / (stretch * channel time); keep everything but the stretch.
+    const double k = r.speed * r.timeFactor;
+    const double tfCh = r.timeFactor / std::max(1e-9, off.stretch);
+    const double want = k / (speed * std::max(1e-9, tfCh));
+    off.stretch = std::clamp(want, 0.0625, 16.0);
+    *c = off;
+    if (std::fabs(off.stretch - want) > 1e-9)  // clamped: the length follows the audio instead
+      if (Tick n = ticksForSpan(song, *c, span); n > 0) song.clip(id)->length = n;
+    return true;
+  }
+  *c = off;
+  return true;
+}
+
+bool resetClipStretch(Song& song, ObjectId id) {
+  Clip* c = song.clip(id);
+  if (!c || c->kind != ClipKind::Audio || !song.channel(c->source)) return false;
+  if (c->syncBpm > 0 && !c->tempoLock) {  // an older synced clip: as before (stays synced)
+    const Channel* ch = song.channel(c->source);
+    return setClipStretchMode(song, id, 1.0, static_cast<int>(std::lround(par(*ch, pp::SmpStretchMode, 0))));
+  }
+  TempoMap map;
+  map.build(song);
+  const double span = clipSourceAt(song, *c, map, static_cast<double>(c->start + song.clipLength(*c))) - c->audioStart;
+  c->syncBpm = 0;
+  c->tempoLock = false;
+  c->stretch = 1.0;
+  if (span > 0)
+    if (Tick n = ticksForSpan(song, *c, span); n > 0) song.clip(id)->length = n;
+  return true;
+}
+
+int refitClipsToTempo(Song& song, const std::vector<Clip>& before, const TempoMap& oldMap, const TempoMap& newMap) {
+  int changed = 0;
+  for (const Clip& b : before) {
+    if (b.kind != ClipKind::Audio || b.syncBpm > 0) continue;
+    Clip* c = song.clip(b.id);
+    if (!c || !(*c == b)) continue;  // gone, or changed by the same edit (already placed for the new tempo)
+    const Channel* ch = song.channel(b.source);
+    SamplePtr smp;
+    double a = 0, end = 0;
+    if (!ch || !sourceWindow(song, b, smp, a, end)) continue;
+    const double speed = clipRate(*ch, b).speed;
+    if (!(speed > 0)) continue;
+    // The audio it played: up to its clip end under the old tempo (within
+    // about a tick of the window's end: all of it; a tail past it: none).
+    const Tick len = song.clipLength(b);
+    const double endTick = static_cast<double>(b.start + len);
+    const double played = clipSourceAt(song, b, oldMap, endTick);
+    const double tickSrc = speed * 60.0 / (oldMap.bpmAt(std::max(0.0, endTick - 0.5)) * std::max(1, song.ppq));
+    double cut = played;
+    if (played >= end - 0.51 * tickSrc) cut = end;
+    if (!(cut > b.audioStart)) continue;
+    Clip n = b;
+    if (cut < end - 1e-9) n.audioEnd = cut;  // the cut stays exactly where it was (no drift over many tempo edits)
+    const double s0 = newMap.secondsAt(static_cast<double>(b.start));
+    const double t1 = newMap.tickAtSeconds(s0 + (cut - b.audioStart) / speed);
+    n.length = std::max<Tick>(1, static_cast<Tick>(std::llround(t1 - static_cast<double>(b.start))));
+    if (n == b) continue;
+    *c = n;
+    ++changed;
+  }
+  return changed;
 }
 
 bool setClipStretchMode(Song& song, ObjectId id, double timeFactor, int mode) {

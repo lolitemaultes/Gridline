@@ -72,6 +72,13 @@ bool primedFits(const ClipVoice& rv, const Sample& s, const ProgAudioClip& c, do
          std::fabs(std::log(pitch / rv.primePitch)) < std::log(2.0) / 24.0;
 }
 
+// The heard pitch (before the channel's) at `secRate` source seconds per
+// playback second. J-193: a resampled tempo-locked clip's follows its speed.
+double pitchOf(const ProgAudioClip& c, double secRate) {
+  if (c.resampleSync) return (c.granular ? c.pitch : 1.0) * secRate;
+  return c.granular ? c.pitch : c.speed;
+}
+
 }  // namespace
 
 std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine) {
@@ -123,6 +130,8 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     const double mixStep = 1.0 / std::max(1.0, kSwitchFade * sr);
     const int64_t first = sampleOf(static_cast<double>(c.start));  // block index of the clip's first sample
     const double readRate = c.speed * s.sampleRate / sr;              // source frames per output frame (plain reads)
+    // J-193: a resampled tempo-locked clip's read rate over this block.
+    const double syncRate = c.resampleSync ? std::max(1e-6, c.secPerTick * (t1 - t0) * s.sampleRate / static_cast<double>(len)) : 1.0;
     const bool plain = !c.granular && chanRatio == 1.0;
     // J-153: the realtime stretch runs over the frames of this block unless
     // the render covers all of them (and the crossfade to it is complete).
@@ -143,7 +152,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
         const double secRate = c.secPerTick > 0 ? std::max(0.0, (src1 - src0) * sr / n) : c.speed;
         const double toFrames = s.sampleRate / sr;
         const double speed = secRate * toFrames;
-        const double pitch = (c.granular ? c.pitch : c.speed) * chanRatio * toFrames;
+        const double pitch = pitchOf(c, secRate) * chanRatio * toFrames;
         bool restart = rv->next != m0;  // a jump (or the first block): a fresh stream, primed
         const int pre = rv->voice.prerollFor(speed);
         const int64_t cursor0 = static_cast<int64_t>(std::floor(src0 * s.sampleRate)) - pre;
@@ -187,7 +196,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
           l = rv->out[0][i - s0], r = rv->out[1][i - s0];
         } else {  // plain read (also the fallback without a realtime stretch: the timing stays)
           const double src = srcAt(u, tickAt(i));
-          if (src < c.srcEnd) readFrameSinc(s, src, c.reverse, l, r, rt, c.secPerTick > 0 ? 1.0 : readRate);
+          if (src < c.srcEnd) readFrameSinc(s, src, c.reverse, l, r, rt, c.resampleSync ? syncRate : c.secPerTick > 0 ? 1.0 : readRate);
         }
         if (mix > 0.0 && mix < 1.0) {  // crossfading (equal gain: both carry the same sound)
           // An S-curve over the linear ramp: no corner where the fade starts or ends.
@@ -219,7 +228,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     const double toFrames = s.sampleRate / sr;
     const double secRate = c.secPerTick > 0 ? std::max(0.0, c.secPerTick * (t1 - t0) * sr / len) : c.speed;
     const double speed = secRate * toFrames;
-    const double pitch = (c.granular ? c.pitch : c.speed) * chanRatio * toFrames;
+    const double pitch = pitchOf(c, secRate) * chanRatio * toFrames;
     const double u = sec0 + static_cast<double>(first) / sr - c.startSec;
     const double tk = t0 + (t1 - t0) * static_cast<double>(first) / static_cast<double>(len);
     const double src0 = c.secPerTick > 0 ? c.srcStart + (tk - static_cast<double>(c.start)) * c.secPerTick : c.srcStart + u * c.speed;

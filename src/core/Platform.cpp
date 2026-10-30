@@ -434,10 +434,15 @@ Process& Process::operator=(Process&& o) noexcept {
     started_ = o.started_;
     pid_ = o.pid_;
     handle_ = o.handle_;
+    job_ = o.job_;
+    group_ = o.group_;
+    outFile_ = std::move(o.outFile_);
+    errFile_ = std::move(o.errFile_);
     status_ = o.status_;
     o.started_ = false;
     o.pid_ = -1;
     o.handle_ = 0;
+    o.job_ = 0;
   }
   return *this;
 }
@@ -445,6 +450,7 @@ Process& Process::operator=(Process&& o) noexcept {
 Process::~Process() {
 #if defined(_WIN32)
   if (handle_) CloseHandle(reinterpret_cast<HANDLE>(handle_));
+  if (job_) CloseHandle(reinterpret_cast<HANDLE>(job_));
 #endif
 }
 
@@ -497,8 +503,17 @@ bool Process::start(const std::string& exe, const std::vector<std::string>& args
     DuplicateHandle(GetCurrentProcess(), nul, GetCurrentProcess(), &dup, 0, TRUE, DUPLICATE_SAME_ACCESS);
     return dup;
   };
-  HANDLE hin = stdHandle(STD_INPUT_HANDLE, kInheritStdin), hout = stdHandle(STD_OUTPUT_HANDLE, kInheritStdout),
-         herr = stdHandle(STD_ERROR_HANDLE, kInheritStderr);
+  // J-192: stdout / stderr into files the parent can read while the child writes.
+  auto toFile = [&](const std::string& path, HANDLE fallback) -> HANDLE {
+    if (path.empty()) return fallback;
+    HANDLE f = CreateFileW(widen(path).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &sa, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return fallback;
+    CloseHandle(fallback);
+    return f;
+  };
+  HANDLE hin = stdHandle(STD_INPUT_HANDLE, kInheritStdin), hout = toFile(outFile_, stdHandle(STD_OUTPUT_HANDLE, kInheritStdout)),
+         herr = toFile(errFile_, stdHandle(STD_ERROR_HANDLE, kInheritStderr));
   std::vector<HANDLE> list = {hin, hout, herr};
   for (auto h : inherit) {
     SetHandleInformation(reinterpret_cast<HANDLE>(h), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
@@ -522,16 +537,39 @@ bool Process::start(const std::string& exe, const std::vector<std::string>& args
   std::wstring wexe = widen(exe);
   for (auto& c : wexe)
     if (c == L'/') c = L'\\';
+  // J-192: kTree starts the child suspended inside a job object, so everything it starts is in the job too.
+  HANDLE job = nullptr;
+  if (flags & kTree) {
+    job = CreateJobObjectW(nullptr, nullptr);
+    if (job) {
+      JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+      li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+      SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof li);
+    }
+  }
   BOOL ok = CreateProcessW(wexe.c_str(), cmd.data(), nullptr, nullptr, TRUE,
-                           CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | (attrOk ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr,
-                           nullptr, &si.StartupInfo, &pi);
+                           CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | (attrOk ? EXTENDED_STARTUPINFO_PRESENT : 0) |
+                               (job ? CREATE_SUSPENDED : 0),
+                           nullptr, nullptr, &si.StartupInfo, &pi);
   if (attrOk) DeleteProcThreadAttributeList(attrs);
   CloseHandle(hin);
   CloseHandle(hout);
   CloseHandle(herr);
   CloseHandle(nul);
-  if (!ok) return false;
+  if (!ok) {
+    if (job) CloseHandle(job);
+    return false;
+  }
+  if (job) {
+    if (!AssignProcessToJobObject(job, pi.hProcess)) {
+      CloseHandle(job);
+      job = nullptr;
+    }
+    ResumeThread(pi.hThread);
+  }
   CloseHandle(pi.hThread);
+  if (job_) CloseHandle(reinterpret_cast<HANDLE>(job_));
+  job_ = reinterpret_cast<std::intptr_t>(job);
   handle_ = reinterpret_cast<std::intptr_t>(pi.hProcess);
   pid_ = static_cast<int>(pi.dwProcessId);
   started_ = true;
@@ -555,6 +593,7 @@ bool Process::wait(double seconds) {
 
 void Process::kill() {
   // Reads only what start() wrote: safe while another thread waits for the child.
+  if (started_ && job_) TerminateJobObject(reinterpret_cast<HANDLE>(job_), 0xC000013Au);  // J-192: the whole tree
   if (started_ && handle_) TerminateProcess(reinterpret_cast<HANDLE>(handle_), 0xC000013Au);
 }
 
@@ -565,16 +604,25 @@ bool Process::start(const std::string& exe, const std::vector<std::string>& args
   posix_spawn_file_actions_t fa;
   posix_spawn_file_actions_init(&fa);
   if (!(flags & kInheritStdin)) posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-  if (!(flags & kInheritStdout)) posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-  if (!(flags & kInheritStderr)) posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+  // J-192: stdout / stderr into files (redirectOutput) the parent reads while the child writes.
+  if (!outFile_.empty()) posix_spawn_file_actions_addopen(&fa, 1, outFile_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  else if (!(flags & kInheritStdout)) posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
+  if (!errFile_.empty()) posix_spawn_file_actions_addopen(&fa, 2, errFile_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  else if (!(flags & kInheritStderr)) posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
   for (size_t i = 0; i < inherit.size(); ++i) posix_spawn_file_actions_adddup2(&fa, static_cast<int>(inherit[i]), 3 + static_cast<int>(i));
   posix_spawnattr_t attr;
   posix_spawnattr_init(&attr);
+  short spawnFlags = 0;
+  if (flags & kTree) {  // J-192: its own process group; kill() signals the group
+    posix_spawnattr_setpgroup(&attr, 0);
+    spawnFlags |= POSIX_SPAWN_SETPGROUP;
+  }
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
   // macOS: only 0-2 and the listed descriptors reach the child.
-  posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+  spawnFlags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
   for (int f = 0; f < 3; ++f) posix_spawn_file_actions_addinherit_np(&fa, f);
 #endif
+  posix_spawnattr_setflags(&attr, spawnFlags);
   std::vector<std::string> copy = args;
   std::vector<char*> argv;
   for (auto& a : copy) argv.push_back(a.data());
@@ -585,6 +633,7 @@ bool Process::start(const std::string& exe, const std::vector<std::string>& args
   posix_spawnattr_destroy(&attr);
   if (rc != 0) return false;
   pid_ = static_cast<int>(pid);
+  group_ = (flags & kTree) != 0;
   started_ = true;
   status_ = {};
   return true;
@@ -621,6 +670,7 @@ bool Process::wait(double seconds) {
 void Process::kill() {
   // Reads only what start() wrote: safe while another thread waits for the child. Callers make
   // sure the child has not been reaped yet (its id could be reused).
+  if (started_ && pid_ > 0 && group_) ::kill(-static_cast<pid_t>(pid_), SIGKILL);  // J-192: the whole group
   if (started_ && pid_ > 0) ::kill(static_cast<pid_t>(pid_), SIGKILL);
 }
 

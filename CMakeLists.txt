@@ -960,6 +960,24 @@ target_include_directories(gridline_tests_j190 PRIVATE tests src)
 target_compile_options(gridline_tests_j190 PRIVATE ${GL_WARN})
 add_test(NAME j190_kerf_beat_grid COMMAND gridline_tests_j190 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(j190_kerf_beat_grid PROPERTIES TIMEOUT 600)
+
+# J-193: stretched clips follow the tempo; unstretched clips keep their audio (their border follows).
+add_executable(gridline_tests_j193 tests/test_j193.cpp)
+target_link_libraries(gridline_tests_j193 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j193 PRIVATE tests src)
+target_compile_options(gridline_tests_j193 PRIVATE ${GL_WARN})
+add_test(NAME j193_tempo_follow COMMAND gridline_tests_j193 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(j193_tempo_follow PROPERTIES TIMEOUT 600)
+# J-192: Import from URL (core/UrlImport.h, core/MediaTools.h) with a fake yt-dlp / ffmpeg: never the network.
+add_executable(gridline_fake_media_tool tests/fake_media_tool.cpp)
+target_compile_options(gridline_fake_media_tool PRIVATE ${GL_WARN})
+add_executable(gridline_tests_urlimport tests/test_urlimport.cpp)
+target_link_libraries(gridline_tests_urlimport PRIVATE gridline_core)
+target_include_directories(gridline_tests_urlimport PRIVATE tests src)
+target_compile_options(gridline_tests_urlimport PRIVATE ${GL_WARN})
+add_dependencies(gridline_tests_urlimport gridline_fake_media_tool)
+add_test(NAME j192_import_url COMMAND gridline_tests_urlimport $<TARGET_FILE:gridline_fake_media_tool> WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(j192_import_url PROPERTIES TIMEOUT 300)
 # J-109: Stop releases every sound outside the song; Stop twice (panic) silences tails too.
 add_executable(gridline_tests_j109 tests/test_j109.cpp)
 target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
@@ -1479,6 +1497,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j187_multi_slip_app PROPERTIES TIMEOUT 300)
 
+    # J-193: a stretch-resized clip keeps its bars on a tempo change; an unstretched one keeps its audio.
+    add_test(NAME j193_tempo_follow_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j193_tempo_follow -P ${CMAKE_SOURCE_DIR}/tests/j193_tempo_follow.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j193_tempo_follow_app PROPERTIES TIMEOUT 300)
+
     # J-188: smooth snapping glides a dragged clip over several frames (off: jumps; the switch applies
     # live, also mid-drag); a Ctrl+wheel notch zooms smoothly with the point under the pointer fixed.
     add_test(NAME j188_smooth_motion_app
@@ -1486,6 +1511,16 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j188_smooth_motion -P ${CMAKE_SOURCE_DIR}/tests/j188_smooth_motion.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j188_smooth_motion_app PROPERTIES TIMEOUT 300)
+
+    # J-192: File > Import > Import from URL with a fake yt-dlp / ffmpeg (no network): open, paste,
+    # fetch, import -> an audio clip on a new track (one undo step), playlist items, errors, the
+    # tools set up on first use (a fake GitHub); screenshots of each state.
+    add_test(NAME j192_import_url_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTOOL=$<TARGET_FILE:gridline_fake_media_tool>
+                     -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j192_import_url -P ${CMAKE_SOURCE_DIR}/tests/j192_import_url.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j192_import_url_app PROPERTIES TIMEOUT 300)
 
     # The plugin window's channel strip (volume, pan, pitch, preview keyboard): hidden by default,
     # the header's eye slides it in and out, the window's size is stable after the slide, the
@@ -1663,6 +1698,16 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   else()
     install(TARGETS gridline-app gridline RUNTIME DESTINATION bin)
     install(DIRECTORY assets/ DESTINATION share/gridline/assets PATTERN "sounds/src" EXCLUDE)  # J-48: sound sources stay in the tree
+  endif()
+  # J-192: the release packages carry yt-dlp and ffmpeg for Import from URL (a folder made by
+  # tools/release/fetch-media-tools.py; empty in normal builds, which install them on first use).
+  set(GRIDLINE_MEDIA_TOOLS_DIR "" CACHE PATH "Folder with yt-dlp and ffmpeg to install beside the programs (release packages)")
+  if(GRIDLINE_MEDIA_TOOLS_DIR)
+    if(WIN32)
+      install(DIRECTORY "${GRIDLINE_MEDIA_TOOLS_DIR}/" DESTINATION tools USE_SOURCE_PERMISSIONS)
+    elseif(NOT APPLE)
+      install(DIRECTORY "${GRIDLINE_MEDIA_TOOLS_DIR}/" DESTINATION share/gridline/tools USE_SOURCE_PERMISSIONS)
+    endif()
   endif()
   if(UNIX AND NOT APPLE)
     install(FILES assets/linux/gridline.desktop DESTINATION share/applications)

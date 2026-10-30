@@ -103,6 +103,8 @@ Source: "{#Stage}\gridline-app.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\gridline.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\README.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
 Source: "{#Stage}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
+; J-192: yt-dlp and ffmpeg for Import from URL (release packages; without them Gridline installs them on first use)
+Source: "{#Stage}\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#Stage}\plugins\VST3\Gridline.vst3\*"; DestDir: "{commoncf64}\VST3\Gridline.vst3"; Tasks: plugins; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Stage}\plugins\CLAP\Gridline.clap"; DestDir: "{commoncf64}\CLAP"; Tasks: plugins; Flags: ignoreversion
 Source: "{#Stage}\plugins\CLAP\Gridline-assets\*"; DestDir: "{commoncf64}\CLAP\Gridline-assets"; Tasks: plugins; Flags: ignoreversion recursesubdirs createallsubdirs

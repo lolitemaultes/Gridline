@@ -43,6 +43,15 @@ for p in "${SUITE_BUNDLES[@]}"; do
   rm -rf "$app/Contents/Resources/Suite/$p/Contents/Resources/assets/sounds/src"
 done
 
+# J-192: yt-dlp and ffmpeg for Import from URL (GRIDLINE_MEDIA_TOOLS: a folder made by
+# tools/release/fetch-media-tools.py --target macos-universal; without it Gridline installs them
+# on first use).
+rm -rf "$app/Contents/Resources/tools"
+if [ -n "${GRIDLINE_MEDIA_TOOLS:-}" ]; then
+  test -x "$GRIDLINE_MEDIA_TOOLS/ffmpeg" -a -x "$GRIDLINE_MEDIA_TOOLS/yt-dlp" || { echo "no ffmpeg / yt-dlp in $GRIDLINE_MEDIA_TOOLS" >&2; exit 1; }
+  ditto "$GRIDLINE_MEDIA_TOOLS" "$app/Contents/Resources/tools"
+fi
+
 for p in Gridline.vst3 Gridline.clap Gridline.component; do
   ditto "$BUILD/plugins/$p" "$ROOT/Plugins/$p"
   rm -rf "$ROOT/Plugins/$p/Contents/Resources/assets/sounds/src"
@@ -53,6 +62,9 @@ ln -s /Applications "$ROOT/Applications"
 
 # Ad hoc signatures (inside out: nested code first).
 codesign --force --sign - --timestamp=none "$app/Contents/MacOS/gridline"
+for t in yt-dlp ffmpeg ffprobe; do
+  if [ -f "$app/Contents/Resources/tools/$t" ]; then codesign --force --sign - --timestamp=none "$app/Contents/Resources/tools/$t"; fi
+done
 for p in "${SUITE_BUNDLES[@]}"; do codesign --force --sign - --timestamp=none "$app/Contents/Resources/Suite/$p"; done
 codesign --force --sign - --timestamp=none "$app"  # no hardened runtime: it would refuse unsigned plugins
 for p in Gridline.vst3 Gridline.clap Gridline.component; do codesign --force --sign - --timestamp=none "$ROOT/Plugins/$p"; done

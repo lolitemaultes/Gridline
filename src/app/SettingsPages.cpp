@@ -17,6 +17,7 @@
 #include "Theme.h"
 #include "SuiteUi.h"
 #include "UpdateUi.h"
+#include "UrlImportUi.h"
 #include "Widgets.h"
 
 namespace gl {
@@ -162,6 +163,7 @@ void fileSettingsPage(App& a, float fieldW) {
   }
   ui::EndSection();
   suiteui::settingsSection(a);  // J-131: Gridline Suite in the plug-in folders
+  urlimportui::settingsSection(a);  // J-192: yt-dlp and ffmpeg for Import from URL
 }
 
 // -------------------------------------------------------------------- Debug ----

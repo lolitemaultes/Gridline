@@ -612,11 +612,10 @@ void arrangementClipMenu(App& a, ObjectId id) {
         ImGui::DragFloat(i18n::tr("Fade out"), &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
       a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 3);
     if (ImGui::MenuItem(i18n::tr("Reverse"), nullptr, c->reverse)) a.doc.editClip(id, "reverse clip", [](Clip& x) { x.reverse = !x.reverse; });
-    if (ImGui::MenuItem(i18n::tr("Follow tempo"), nullptr, c->syncBpm > 0)) {
-      TempoMap tm;
-      tm.build(s);
-      double bpm = tm.bpmAt(static_cast<double>(c->start));
-      a.doc.editClip(id, "follow tempo", [bpm](Clip& x) { x.syncBpm = x.syncBpm > 0 ? 0.0 : bpm; });
+    // J-193: on, the clip keeps its bars when the tempo changes (a stretch turns it on); off, it keeps its audio and seconds.
+    if (ImGui::MenuItem(i18n::tr("Follow the project tempo"), nullptr, c->syncBpm > 0)) {
+      const bool on = !(c->syncBpm > 0);
+      a.doc.editSong("follow tempo", [&](Song& x) { setClipFollowsTempo(x, id, on); });
     }
     if (ImGui::MenuItem(i18n::tr("Channel settings"))) a.settingsChannel = c->source;
     {  // J-28 (operations: J-27)
