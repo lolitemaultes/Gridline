@@ -144,6 +144,22 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     cutoff and VAR as measured). Each of these used to be 4 to 18 dB apart on average and is now
     within about 0.2 to 1.9 dB. The cubic stereo spread now applies to every filter type, combs and
     phasers included, as measured on the original.
+  - Multisample kits play at the original's level, about 9 dB louder than before. Velocity follows
+    the kit's own velocity tracking (half tracking at half velocity: 6 dB down), and each kit's
+    own envelope shapes its notes, with the original's half-second release when the kit names
+    none. Imports use this; Plasma's own projects keep their level (new Multisample Level setting).
+  - Multisample kits that were silent now play: kits whose sample folder is written without a
+    trailing slash, and presets that carry the kit's map but not its audio (the samples are found
+    below the library's multisample folder, also when the kit file has moved).
+  - Filter key tracking centres on the original's key in imported presets: at middle C the cutoff
+    was 28 semitones too low. Filter X and Y are no longer imported, as they have no effect on the
+    original's filters.
+  - Mono presets no longer go silent after a chord. Releasing the keys of a mono chord left the
+    note held, so later notes joined it without starting again.
+  - Imported envelopes keep the original's curve shapes. Curves bend harder towards the ends of
+    the knob (at curve 90 a 0.3 s decay is now about 45 dB down halfway through, as in the original), and settings a
+    preset leaves unset take the original's own defaults (attack curve 60 on the first envelope
+    and 40 on the others, decay and release curves 60, and a 0.5 ms attack on envelopes 2 to 4).
   - The distortion effect follows the original's curves for every mode and drive, its filter
     (a fade from low-pass through band-pass to high-pass, with the original's resonance), its
     downsample rates, its mix law and the level knob after the mix. Presets that leave the filter
@@ -255,6 +271,12 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     presets fill effect values they leave unset with the source's own defaults.
   - A new Filter Drive Mode setting: Leveled (as before) keeps the level about even as the drive
     rises; Boost, which imported presets use, raises it. Existing projects keep Leveled.
+  - Two new settings that imported presets use and existing projects keep off: Filter Key Centre
+    (C4 as before, or G#1) and Multisample Level (Unity as before, or Mapped: the kit's own level,
+    velocity and envelope).
+  - Mono: releasing a key that a later key took over now forgets it, so a mono chord ends when
+    its keys are released.
+  - A new Envelope Curves setting: Gentle (as before) or Steep, which imported presets use.
 - Plasma's editor has a cleaner, calmer look. It now uses Gridline's slate panels and text tones
   and follows the theme. It has one text scale with nothing below 8 px, values in the mono face, and
   one knob size. The pages sit in a segmented switch, and graphs sit in their own wells away from

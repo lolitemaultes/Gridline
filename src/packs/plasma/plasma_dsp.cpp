@@ -266,23 +266,34 @@ struct EnvState {
 };
 struct EnvSet {
   double a, h, d, s, r, ca, cd, cr, start, end;
+  bool steep;  // the source's curve law (T_EnvLaw)
 };
+// Stage curve constant from a curve knob (0..100, 50 = straight). Plasma's own law is k = 8 c (c = -1..1).
+// J-203a, measured on the source (0.3 s attack, decay to zero and release, curves 0..100 in steps of
+// 10, fitted with the same exponential stage shape): k = 9.5 atanh(c) for all three stages (fitted
+// k at curve 60 / 70 / 80 / 90: 2.0 / 4.0 / 6.5 / 10.3; at 40 / 30 / 20 / 10: -2.2 / -4.2 / -6.7 / -10.9;
+// at the ends about +-40 to 50, nearly a step). Its knob default is 60, not Plasma's 66.6.
+inline double stageK(double curve, bool steep) {
+  const double c = (curve - 50) / 50.0;
+  if (!steep) return c * 8.0;
+  return 9.5 * std::atanh(std::clamp(c, -0.9998, 0.9998));
+}
 void envStage(EnvState& e, int stage, const EnvSet& p, double srv) {
   e.stage = stage;
   e.t = 0;
   e.secs = 0;
   e.from = e.level;
-  double time = 0, c = 0;
+  double time = 0, k = 0;
   switch (stage) {
-    case 1: time = p.a, c = (p.ca - 50) / 50.0, e.to = 1; break;
-    case 2: time = p.h, c = 0, e.to = 1; break;
-    case 3: time = p.d, c = (p.cd - 50) / 50.0, e.to = p.s; break;
+    case 1: time = p.a, k = stageK(p.ca, p.steep), e.to = 1; break;
+    case 2: time = p.h, k = 0, e.to = 1; break;
+    case 3: time = p.d, k = stageK(p.cd, p.steep), e.to = p.s; break;
     case 4: e.to = p.s; e.dt = 0; return;
-    case 5: time = p.r, c = (p.cr - 50) / 50.0, e.to = p.end; break;
+    case 5: time = p.r, k = stageK(p.cr, p.steep), e.to = p.end; break;
     default: e.to = 0, e.dt = 0; return;
   }
   e.dt = time <= 1e-5 ? 1.0 : 1.0 / (time * srv);
-  e.k = c * 8.0;
+  e.k = k;
   if (std::fabs(e.k) < 1e-4) {
     e.k = 0;
     e.mul = 1;
@@ -751,7 +762,17 @@ class PlasmaGen final : public Generator {
     }
     if (heldExternal_ > 0) --heldExternal_;
     if (G(G_NoteLatch) >= 0.5f) return;
-    if (!found) return;
+    if (!found) {
+      // J-203a: in mono a held key whose voice was taken over by a later key is still remembered
+      // for the return; its release must forget it, or the last release glides back to it instead of
+      // ending the note (a mono chord then never releases and later notes join a silent legato voice)
+      for (size_t i = 0; i < held_.size(); ++i)
+        if (held_[i].id == id) {
+          held_.erase(held_.begin() + static_cast<std::ptrdiff_t>(i));
+          break;
+        }
+      return;
+    }
     stopNote(id);
   }
   void stopNote(uint32_t id) {
@@ -855,6 +876,7 @@ class PlasmaGen final : public Generator {
     p.s = levelGain(V(n, envP(e, E_Sustain)));
     p.ca = V(n, envP(e, E_CurveA)), p.cd = V(n, envP(e, E_CurveD)), p.cr = V(n, envP(e, E_CurveR));
     p.start = V(n, envP(e, E_Start)), p.end = V(n, envP(e, E_End));
+    p.steep = G(tailP(T_EnvLaw)) >= 0.5f;
     return p;
   }
 
@@ -1510,6 +1532,13 @@ class PlasmaGen final : public Generator {
     s.transients = V(&n, oscP(o, O_STransients)) >= 0.5f;
     s.timbre = V(&n, oscP(o, O_MTimbre));
     s.velTrack = V(&n, oscP(o, O_MVelTrack));
+    s.msLaw = G(tailP(T_MsLaw)) >= 0.5f;
+    s.msOv = s.msLaw && V(&n, oscP(o, O_MEnvOn)) >= 0.5f;
+    if (s.msOv) {
+      s.ovDelay = static_cast<float>(envTime(V(&n, oscP(o, O_MDelay)))), s.ovAttack = static_cast<float>(envTime(V(&n, oscP(o, O_MAttack))));
+      s.ovHold = static_cast<float>(envTime(V(&n, oscP(o, O_MHold)))), s.ovDecay = static_cast<float>(envTime(V(&n, oscP(o, O_MDecay))));
+      s.ovSustain = V(&n, oscP(o, O_MSustain)), s.ovRelease = static_cast<float>(envTime(V(&n, oscP(o, O_MRelease))));
+    }
   }
 
   // ---------------------------------------------------------------- one note, one control period
@@ -1545,7 +1574,7 @@ class PlasmaGen final : public Generator {
     float* pr = c.pr;
     for (int o = 0; o < kOscs; ++o) {
       float g = static_cast<float>(levelGain(V(&n, oscP(o, O_Level))));
-      if (os[o].type == OscMultisample) g *= 1.f - os[o].velTrack + os[o].velTrack * n.vel;
+      if (os[o].type == OscMultisample && !os[o].msLaw) g *= 1.f - os[o].velTrack + os[o].velTrack * n.vel;
       lev[o] = g;
       pl[o] = pr[o] = 1;
     }
@@ -1605,7 +1634,7 @@ class PlasmaGen final : public Generator {
       const int type = static_cast<int>(V(&n, filtP(f, F_Type)));
       double cutN = V(&n, filtP(f, F_Freq)) + V(&n, filtP(f, F_X)) * 0.25f;
       double hz = cutoffHz(std::clamp(cutN, 0.0, 1.0));
-      if (V(&n, filtP(f, F_KeyTrack)) >= 0.5f) hz *= std::exp2((n.pitch - 60.0) / 12.0);
+      if (V(&n, filtP(f, F_KeyTrack)) >= 0.5f) hz *= std::exp2((n.pitch - (G(tailP(T_KeyCentre)) >= 0.5f ? 32.0 : 60.0)) / 12.0);
       hz *= std::exp2((n.rndCut + n.vc.cutoff) * 2.0);
       hz = std::clamp(hz, 8.0, srv_ * 0.48);
       const double res = std::clamp(V(&n, filtP(f, F_Res)) + V(&n, filtP(f, F_Y)) * 0.25f, 0.f, 1.f);
@@ -1676,7 +1705,7 @@ class PlasmaGen final : public Generator {
           continue;
         }
         float g = lev[o];
-        if (menvOn[o] && (os[o].type == OscMultisample || os[o].type == OscSample)) g *= msEnv(n, o, frames);
+        if (menvOn[o] && (os[o].type == OscSample || (os[o].type == OscMultisample && !os[o].msLaw))) g *= msEnv(n, o, frames);
         sl[o] *= g, sr[o] *= g;
         n.last[o] = mono[o];
       }

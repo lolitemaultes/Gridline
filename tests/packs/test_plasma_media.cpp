@@ -221,6 +221,33 @@ float renderPeak(const PluginState& st, int key = 60) {
   }
   return peak;
 }
+// RMS level in dB of each 10 ms window (480 frames): note on at 0, off at offAt.
+std::vector<double> renderWindows(const PluginState& st, float vel, int offAt, int total, int key = 60) {
+  std::vector<double> out;
+  auto g = packs::createGenerator(st.type);
+  if (!g) return out;
+  ChannelAux aux;
+  packs::prepareAux(st, aux);
+  g->prepareHost(st, kSr);
+  ProcessContext ctx;
+  ctx.sampleRate = kSr, ctx.tempo = 120, ctx.ppq = 96;
+  std::vector<float> L(480), R(480);
+  for (int pos = 0; pos < total; pos += 480) {
+    if (pos == 0) g->noteOn(1, key, vel, 0);
+    if (pos == offAt) g->noteOff(1, 0);
+    std::fill(L.begin(), L.end(), 0.f), std::fill(R.begin(), R.end(), 0.f);
+    g->process(st, aux, ctx, L.data(), R.data(), 480);
+    double e = 0;
+    for (size_t i = 0; i < 480; ++i) e += 0.5 * (static_cast<double>(L[i]) * L[i] + static_cast<double>(R[i]) * R[i]);
+    out.push_back(10.0 * std::log10(e / 480.0 + 1e-30));
+  }
+  return out;
+}
+double meanDb(const std::vector<double>& w, size_t a, size_t b) {
+  double e = 0;
+  for (size_t i = a; i < b && i < w.size(); ++i) e += std::pow(10.0, w[i] / 10.0);
+  return 10.0 * std::log10(e / static_cast<double>(b - a) + 1e-30);
+}
 bool readWav(const std::string& path, int& rate, int& channels, size_t& frames) {
   std::ifstream f(fs::u8path(path), std::ios::binary);
   std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -484,6 +511,117 @@ int main() {
     pl::ImportReport cr;
     pl::importSerumBytes(cut, cs, cr, {cache.string()});
     expect(true, "a damaged Serum 1 chunk is handled without a crash");
+  }
+
+  // ---- J-203a: multisample maps the preset only references, and the source's multisample level law
+  {
+    // a library layout: <content>/Multisamples/Kit/{Disk Kit.sfz, Tones/Tone.wav}
+    const fs::path content = cache / "Content";
+    fs::create_directories(content / "Multisamples" / "Kit" / "Tones");
+    const auto tone = sine(96000, 440, 0.5f);  // 2 s of 220 Hz at 48 kHz
+    {
+      pl::Model tmp = pl::defaultModel();
+      const std::string r = pl::addMedia(tmp, "tone", 48000, {tone});
+      fs::copy_file(fs::u8path(pl::mediaFile(tmp, r)), content / "Multisamples" / "Kit" / "Tones" / "Tone.wav", fs::copy_options::overwrite_existing);
+    }
+    // default_path without a trailing slash (the source reads it as a folder)
+    std::ofstream(content / "Multisamples" / "Kit" / "Disk Kit.sfz")
+        << "<control> default_path=Tones\n<region> sample=Tone.wav pitch_keycenter=60 amp_veltrack=50 ampeg_release=0.3\n";
+    const std::string mapText = "<control> default_path=Tones\n<region> sample=Tone.wav pitch_keycenter=60 amp_veltrack=50\n";
+    // ENV1 held flat with a long release, so the map's own envelope shapes the note
+    Json env = obj({{"plainParams", obj({{"kParamAttack", num(0)}, {"kParamSustain", num(1)}, {"kParamRelease", num(4)}})}});
+    auto msOsc = [&](const Json& sub) {
+      return obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamType", str("kOsc_MultiSample")}})}, {"MultiSampleOsc0", sub}});
+    };
+    Json smpOsc = obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamType", str("kOsc_Sample")}})},
+                       {"SampleOsc0", obj({{"embedded_audio", obj({{"data", arr({floats(tone)})}, {"sampleRate", num(48000)}, {"table_name", str("Tone")}})}})}});
+    auto load = [&](const Json& osc0, PluginState& st) {
+      pl::ImportReport rep;
+      return pl::importSerumBytes(container(obj({{"Oscillator0", osc0}, {"Env0", env}}), "Law"), st, rep, {content.string()});
+    };
+    // (a) the map text the preset carries, its samples found below the stored (stale) map folder
+    PluginState ref, disk, one;
+    const bool okRef = load(msOsc(obj({{"sfzPathRelative", str("Kit/Moved Away.sfz")}, {"embedded_sfz", str(mapText)}})), ref);
+    // (b) a map file on disk, read through default_path without a slash
+    const bool okDisk = load(msOsc(obj({{"sfzPathRelative", str("Kit/Disk Kit.sfz")}})), disk);
+    // (c) the same audio in the single-sample oscillator
+    const bool okOne = load(smpOsc, one);
+    expect(okRef && okDisk && okOne, "multisample law presets import");
+    auto P = [](const PluginState& st, int k) { return st.params[static_cast<size_t>(k)]; };
+    expect(P(ref, pl::tailP(pl::T_MsLaw)) == 1.f && P(ref, pl::tailP(pl::T_KeyCentre)) == 1.f,
+           "imports select the source's multisample law and key-tracking centre");
+    const auto wRef = renderWindows(ref, 1.f, 48000, 96000), wDisk = renderWindows(disk, 1.f, 48000, 96000);
+    const double lRef = meanDb(wRef, 20, 90), lDisk = meanDb(wDisk, 20, 90), lOne = meanDb(renderWindows(one, 1.f, 48000, 96000), 20, 90);
+    std::printf("# multisample %.2f dB (map file %.2f dB), sample %.2f dB\n", lRef, lDisk, lOne);
+    // measured on the source (J-203a): the multisample oscillator plays a file 9.06 dB louder than the
+    // sample oscillator plays the same file at the same settings
+    expect(lOne > -60 && std::fabs(lRef - lOne - 9.06) < 0.5, "a referenced map plays (samples below the stored map folder), 9.06 dB over the sample oscillator");
+    expect(std::fabs(lDisk - lRef) < 0.5, "a map file whose default_path has no trailing slash plays");
+    // velocity: dB = amp_veltrack * 40 * log10(velocity) (measured on the source: 35 % at velocity 0.5 -> -4.2 dB);
+    // 50 % at velocity 0.5 -> -6.02 dB
+    const double lHalf = meanDb(renderWindows(ref, 0.5f, 48000, 96000), 20, 90);
+    std::printf("# velocity 0.5: %.2f dB\n", lHalf - lRef);
+    expect(std::fabs(lHalf - lRef + 6.02) < 0.5, "multisample velocity follows amp_veltrack (40 log10 law)");
+    // the map's release (0.5 s when it names none) falls about 80 dB linearly in dB, then cuts (measured);
+    // ENV1's 4 s release barely moves in that time
+    const double atOff = meanDb(wRef, 96, 100), mid = meanDb(wRef, 122, 128), after = meanDb(wRef, 156, 160);
+    const double dmid = meanDb(wDisk, 122, 128);
+    std::printf("# release: %.1f dB at note off, %.1f dB after 0.25 s (map file 0.3 s: %.1f), %.1f dB after 0.56 s\n", atOff, mid, dmid, after);
+    expect(atOff - mid > 30 && atOff - mid < 50 && after < atOff - 90, "multisample release: default 0.5 s, 80 dB linear-in-dB fall, then a cut");
+    expect(atOff - dmid > 55 && atOff - dmid < 75, "the map's ampeg_release sets the release");
+    // Plasma's own law stays as it was for its own projects: unity with the sample oscillator
+    PluginState own = ref;
+    own.params[static_cast<size_t>(pl::tailP(pl::T_MsLaw))] = 0.f;
+    const double lOwn = meanDb(renderWindows(own, 1.f, 48000, 96000), 20, 90);
+    expect(std::fabs(lOwn - lOne) < 0.5, "Plasma's own multisample law is unchanged");
+    // an old state (before these tail parameters) normalises to Plasma's own laws
+    PluginState old = ref;
+    old.params.resize(static_cast<size_t>(pl::tailP(pl::T_KeyCentre)));
+    normalizePluginState(old);
+    expect(old.params.size() == static_cast<size_t>(pl::kParamCount) && P(old, pl::tailP(pl::T_MsLaw)) == 0.f && P(old, pl::tailP(pl::T_KeyCentre)) == 0.f,
+           "old states keep Plasma's own multisample law and key-tracking centre");
+    // filter X / Y are not imported (no measurable effect on the source's filters, J-203b); key tracking is
+    const PluginState def = defaultPluginState(pl::kType);
+    Json filt = obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamX", num(0.9)}, {"kParamY", num(0.9)}, {"kParamKeyTrack", num(1)}})}});
+    PluginState xy;
+    pl::ImportReport xr;
+    pl::importSerumBytes(container(obj({{"Oscillator0", msOsc(obj({{"embedded_sfz", str(mapText)}}))}, {"VoiceFilter0", filt}}), "XY"), xy, xr, {content.string()});
+    expect(P(xy, pl::filtP(0, pl::F_X)) == P(def, pl::filtP(0, pl::F_X)) && P(xy, pl::filtP(0, pl::F_Y)) == P(def, pl::filtP(0, pl::F_Y)) &&
+               P(xy, pl::filtP(0, pl::F_KeyTrack)) == 1.f,
+           "filter X / Y are not imported, key tracking is");
+    // key tracking pivots on key 32 for imports (measured on the source, slope 1): at key 60 the cutoff sits
+    // 28 semitones higher than with Plasma's own key-60 centre, so a low cutoff passes more of the 220 Hz tone
+    xy.params[static_cast<size_t>(pl::filtP(0, pl::F_Freq))] = 0.15f;
+    PluginState c60 = xy;
+    c60.params[static_cast<size_t>(pl::tailP(pl::T_KeyCentre))] = 0.f;
+    const double k32 = meanDb(renderWindows(xy, 1.f, 48000, 96000), 20, 90), k60 = meanDb(renderWindows(c60, 1.f, 48000, 96000), 20, 90);
+    std::printf("# key tracking at key 60: centre 32 %.1f dB, centre 60 %.1f dB\n", k32, k60);
+    expect(k32 > k60 + 3, "imported key tracking pivots on key 32");
+  }
+
+  // ---- J-203a: envelope curves. A preset leaves out values at the source's defaults (curves 60),
+  // and the source bends a stage by 9.5 atanh(c). Measured on the source, 0.3 s decay to zero: the
+  // level halfway through is 0.255 of the start at curve 60 (-11.9 dB) and 0.0041 at curve 90 (-47.7 dB).
+  {
+    auto decayDb = [&](const Json& envPlain) {
+      PluginState st;
+      pl::ImportReport rep;
+      pl::importSerumBytes(container(obj({{"Env0", obj({{"plainParams", envPlain}})}}), "Env"), st, rep, {cache.string()});
+      const auto w = renderWindows(st, 1.f, 40000, 48000);
+      return std::make_pair(st, w.size() > 16 ? w[15] - w[0] : 0.0);  // 0.15-0.16 s against 0-0.01 s
+    };
+    const auto d60 = decayDb(obj({{"kParamDecay", num(0.3)}, {"kParamSustain", num(0)}}));
+    const auto d90 = decayDb(obj({{"kParamDecay", num(0.3)}, {"kParamSustain", num(0)}, {"kParamCurve2", num(90)}}));
+    std::printf("# decay halfway: default curve %.1f dB, curve 90 %.1f dB\n", d60.second, d90.second);
+    expect(d60.first.params[static_cast<size_t>(pl::envP(0, pl::E_CurveD))] == 60.f && d60.first.params[static_cast<size_t>(pl::envP(1, pl::E_CurveA))] == 40.f &&
+               d60.first.params[static_cast<size_t>(pl::tailP(pl::T_EnvLaw))] == 1.f,
+           "absent envelope curves import as the source's defaults, on its curve law");
+    expect(std::fabs(d60.second + 12.1) < 2.0, "default decay curve follows the source");
+    expect(d90.second < -42 && d90.second > -54, "a steep decay curve follows the source");
+    PluginState gentle = d90.first;
+    gentle.params[static_cast<size_t>(pl::tailP(pl::T_EnvLaw))] = 0.f;
+    const auto wg = renderWindows(gentle, 1.f, 40000, 48000);
+    expect(wg.size() > 16 && wg[15] - wg[0] > d90.second + 3, "Plasma's own curve law is gentler (existing projects unchanged)");
   }
 
   std::error_code ec;

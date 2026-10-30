@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -776,7 +777,11 @@ bool parseSfz(const std::string& path, std::vector<Zone>& zones, std::string* er
     if (!o.count("sample") || zones.size() >= 1024) return;
     std::string sp = o["sample"];
     std::replace(sp.begin(), sp.end(), '\\', '/');
-    const std::string full = (sp.size() && sp[0] == '/') ? sp : dir + control["default_path"] + sp;
+    // default_path is often written without its trailing slash (J-203a: the factory drum kits)
+    std::string dp = control["default_path"];
+    std::replace(dp.begin(), dp.end(), '\\', '/');
+    if (!dp.empty() && dp.back() != '/') dp += '/';
+    const std::string full = (sp.size() && (sp[0] == '/' || std::filesystem::u8path(sp).is_absolute())) ? sp : dir + dp + sp;
     Zone z;
     z.s = loadSample(full);
     if (!z.s) return;
@@ -800,6 +805,13 @@ bool parseSfz(const std::string& path, std::vector<Zone>& zones, std::string* er
     z.loopEnd = static_cast<int64_t>(num("loop_end", num("loopend", static_cast<double>(z.s->frames()) - 1)));
     z.start = static_cast<int64_t>(num("offset", 0));
     z.end = static_cast<int64_t>(num("end", -1));
+    z.velTrack = std::clamp(num("amp_veltrack", 100) / 100.0, -1.0, 1.0);
+    z.egDelay = std::max(0.0, num("ampeg_delay", 0));
+    z.egAttack = std::max(0.0, num("ampeg_attack", 0));
+    z.egHold = std::max(0.0, num("ampeg_hold", 0));
+    z.egDecay = std::max(0.0, num("ampeg_decay", 0));
+    z.egSustain = std::clamp(num("ampeg_sustain", 100) / 100.0, 0.0, 1.0);
+    z.egRelease = std::max(0.0, num("ampeg_release", 0.5));
     zones.push_back(z);
   };
   size_t i = 0;

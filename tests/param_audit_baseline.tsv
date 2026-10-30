@@ -10396,7 +10396,7 @@ gl.pixeltone	7	Max rows	working	3
 gl.plasma	0	Main Volume	working	1	
 gl.plasma	1	Main Tuning	working	-100	
 gl.plasma	2	Amp	working	1	
-gl.plasma	3	Porta Time	combination	1	11=1
+gl.plasma	3	Porta Time	combination	1	11=1;12=1
 gl.plasma	4	Porta Curve	working	1	
 gl.plasma	5	Porta Always	combination	1	11=1;46=1
 gl.plasma	6	Porta Scaled	verified	0		VERIFIED: acts with portamento on overlapping notes (parameter coverage test)
@@ -12588,6 +12588,9 @@ gl.plasma	2191	FX 24 Param 28	inert	0		reserved column of the effect slot (no mo
 gl.plasma	2192	Noise Tone	combination	-1	11=1;356=1
 gl.plasma	2193	Unison Mix	verified	0		VERIFIED: acts on any oscillator with two or more unison voices (parameter coverage test)
 gl.plasma	2194	Filter Drive Mode	combination	1	367=1
+gl.plasma	2195	Filter Key Centre	verified	0		VERIFIED: acts on a key-tracked filter away from the centre key (parameter coverage test)
+gl.plasma	2196	Multisample Level	verified	0		VERIFIED: acts on a multisample oscillator (parameter coverage test)
+gl.plasma	2197	Envelope Curves	verified	0		VERIFIED: acts on a curved envelope stage (parameter coverage test)
 gl.platter	0	A channel fader	working	0	
 gl.platter	1	A trim	working	12	
 gl.platter	2	A EQ high	working	-26	

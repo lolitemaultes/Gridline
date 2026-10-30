@@ -872,8 +872,8 @@ const KeyMap kOscSub[] = {{"kParamWarp", O_Warp1, Copy},           {"kParamWarp2
                           {"kParamPhaseLock", O_SPhaseLock, Bool}, {"kParamTransients", O_STransients, Bool}};
 const KeyMap kFiltMap[] = {{"kParamEnable", F_Enable, Bool},  {"kParamFreq", F_Freq, Copy},     {"kParamReso", F_Res, Pct},
                            {"kParamDrive", F_Drive, Pct},     {"kParamVar", F_Var, Pct},        {"kParamStereo", F_Stereo, Pct},
-                           {"kParamWet", F_Wet, Pct},         {"kParamLevelOut", F_Level, Copy}, {"kParamKeyTrack", F_KeyTrack, Bool},
-                           {"kParamX", F_X, Copy},            {"kParamY", F_Y, Copy}};
+                           {"kParamWet", F_Wet, Pct},         {"kParamLevelOut", F_Level, Copy}, {"kParamKeyTrack", F_KeyTrack, Bool}};
+// (the source's filter X / Y have no measurable effect on any of its filter types, J-203b: not mapped)
 const KeyMap kEnvMap[] = {{"kParamAttack", E_Attack, EnvT},   {"kParamHold", E_Hold, EnvT},     {"kParamDecay", E_Decay, EnvT},
                           {"kParamSustain", E_Sustain, Copy}, {"kParamRelease", E_Release, EnvT}, {"kParamCurve1", E_CurveA, Copy},
                           {"kParamCurve2", E_CurveD, Copy},   {"kParamCurve3", E_CurveR, Copy}, {"kParamStart", E_Start, Copy},
@@ -1101,6 +1101,80 @@ struct Importer {
     return addMediaMap(m, rel.empty() ? std::string("Multisample") : baseName(rel), out);
   }
 
+  // embedded_sfz without embedded audio: the source plays the map text the preset carries and finds its
+  // samples relative to where the map sat when the preset was saved (<content>/Multisamples/<sfzPathRelative>),
+  // even when the map file itself has moved since (J-203a: measured, a factory drum kit whose stored map path
+  // is stale plays; without the stored path it is silent). Samples are written as absolute paths.
+  std::string referencedMap(const Json& sub, const std::string& rel) {
+    const std::string sfz = sub.text("embedded_sfz");
+    if (sfz.empty() || !files) return "";
+    std::vector<fs::path> bases;
+    const fs::path relDir = fs::u8path(slashPath(rel)).relative_path().parent_path();
+    for (const auto& d : near) bases.push_back(fs::u8path(d) / "Multisamples" / relDir), bases.push_back(fs::u8path(d) / relDir);
+    for (const auto& r : roots) bases.push_back(fs::u8path(r) / "Multisamples" / relDir);
+    if (const std::string found = resolve(rel, {"Multisamples", "Multisamples/Factory", "Multisamples/User", ""}); !found.empty())
+      bases.push_back(fs::u8path(found).parent_path());
+    std::string dp;
+    if (const size_t p = sfz.find("default_path="); p != std::string::npos) {
+      const size_t e = sfz.find_first_of("<\n\r", p);
+      dp = slashPath(sfz.substr(p + 13, (e == std::string::npos ? sfz.size() : e) - p - 13));
+      if (!dp.empty() && dp.back() != '/') dp += '/';
+    }
+    std::error_code ec;
+    auto find = [&](const std::string& val) -> std::string {
+      const fs::path v = fs::u8path(val);
+      if (v.is_absolute() && fs::is_regular_file(v, ec)) return v.generic_u8string();
+      for (const auto& b : bases)
+        for (const fs::path& c : {b / fs::u8path(dp + val), b / v})
+          if (fs::is_regular_file(c, ec)) return c.lexically_normal().generic_u8string();
+      return byName(baseName(val));
+    };
+    std::string out;
+    size_t i = 0;
+    int found = 0, lost = 0;
+    for (size_t at = sfz.find("sample=", i); at != std::string::npos; at = sfz.find("sample=", i)) {
+      const size_t vs = at + 7;
+      size_t ve = sfz.find_first_of("<\n\r", vs);
+      if (ve == std::string::npos) ve = sfz.size();
+      if (const size_t eq2 = sfz.find('=', vs); eq2 != std::string::npos && eq2 < ve)
+        if (const size_t sp = sfz.rfind(' ', eq2); sp != std::string::npos && sp > vs) ve = sp;
+      const std::string val = slashPath(sfz.substr(vs, ve - vs));
+      const std::string hit = find(val);
+      out += sfz.substr(i, vs - i);
+      if (!hit.empty()) out += hit, ++found;
+      else out += sfz.substr(vs, ve - vs), ++lost, missing(val);
+      i = ve;
+    }
+    out += sfz.substr(i);
+    if (!found) return "";
+    if (lost) note("Multisample: " + std::to_string(lost) + " sample file(s) not found");
+    for (size_t p = out.find("default_path="); p != std::string::npos; p = out.find("default_path=", p)) {
+      const size_t e = out.find_first_of("<\n\r", p);
+      out.erase(p, (e == std::string::npos ? out.size() : e) - p);
+    }
+    return addMediaMap(m, rel.empty() ? std::string("Multisample") : baseName(rel), out);
+  }
+  // a sample file by name below the content folders (one bounded walk, indexed)
+  std::map<std::string, std::string> nameIndex;
+  bool indexed = false;
+  std::string byName(const std::string& name) {
+    if (!indexed) {
+      indexed = true;
+      std::error_code ec;
+      for (const auto& root : roots)
+        for (const char* sub : {"Samples", "Multisamples"}) {
+          int visited = 0;
+          for (auto it = fs::recursive_directory_iterator(fs::u8path(root) / sub, fs::directory_options::skip_permission_denied, ec);
+               it != fs::recursive_directory_iterator() && visited < 60000; it.increment(ec), ++visited) {
+            if (ec) break;
+            if (it->is_regular_file(ec)) nameIndex.emplace(it->path().filename().u8string(), it->path().generic_u8string());
+          }
+        }
+    }
+    auto it = nameIndex.find(name);
+    return it == nameIndex.end() ? std::string() : it->second;
+  }
+
   void missing(const std::string& what) {
     if (std::find(rep.missingFiles.begin(), rep.missingFiles.end(), what) == rep.missingFiles.end()) rep.missingFiles.push_back(what);
   }
@@ -1246,7 +1320,8 @@ struct Importer {
     std::string s;
     if (type == OscMultisample) {
       const std::string rel = sub.text("sfzPathRelative", sub.text("sfzPath"));
-      const std::string emb = files ? embeddedMap(sub, rel) : std::string();
+      std::string emb = files ? embeddedMap(sub, rel) : std::string();
+      if (emb.empty() && files) emb = referencedMap(sub, rel);
       const std::string path = emb.empty() ? resolve(rel, {"Multisamples", "Multisamples/Factory", "Multisamples/User", ""}) : emb;
       if (!path.empty()) d.sfz = path;
       else if (!rel.empty()) missing(rel);
@@ -1422,6 +1497,8 @@ struct Importer {
       // Boost drive mode (set below) follows its measured gain and clip law.
     }
     set(tailP(T_DriveMode), 1.0);
+    set(tailP(T_KeyCentre), 1.0);  // filter key tracking pivots on key 32 (J-203b: measured, slope 1)
+    set(tailP(T_MsLaw), 1.0);      // multisample velocity, envelope and level as the source plays them (J-203a)
     for (int r = 0; r < kRoutes; ++r) {
       const Json* pp = plain(o.find("RoutingSlot" + std::to_string(r)));
       apply(pp, kRouteMap, sizeof(kRouteMap) / sizeof(kRouteMap[0]), routeP(r, 0));
@@ -1433,7 +1510,16 @@ struct Importer {
     }
   }
   void envLfoMacros(const Json& o) {
-    for (int e = 0; e < kEnvs; ++e) apply(plain(o.find("Env" + std::to_string(e))), kEnvMap, sizeof(kEnvMap) / sizeof(kEnvMap[0]), envP(e, 0));
+    // a preset stores only the values that differ from the source's own defaults, which are not
+    // Plasma's (J-203a, read from the hosted source's parameter defaults and checked by a save
+    // round trip): every curve 60, except the attack curve of envelopes 2-4 at 40; their attack is
+    // 0.5 ms (envelope 1: 1 ms). Its curves bend on its own law (T_EnvLaw).
+    set(tailP(T_EnvLaw), 1.0);
+    for (int e = 0; e < kEnvs; ++e) {
+      set(envP(e, E_CurveA), e == 0 ? 60.0 : 40.0), set(envP(e, E_CurveD), 60.0), set(envP(e, E_CurveR), 60.0);
+      if (e > 0) set(envP(e, E_Attack), envTimeInv(0.0005));
+      apply(plain(o.find("Env" + std::to_string(e))), kEnvMap, sizeof(kEnvMap) / sizeof(kEnvMap[0]), envP(e, 0));
+    }
     for (int l = 0; l < kLfos; ++l) {
       const Json* lfo = o.find("LFO" + std::to_string(l));
       if (!lfo) continue;

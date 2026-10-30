@@ -416,6 +416,21 @@ std::vector<Cand> candsFor(int k) {
     });
     return c;
   }
+  if (k == tailP(T_KeyCentre)) {  // the key-tracking centre: a key-tracked filter 1 on oscillator A
+    add([](Scene& s) {
+      oscOn(s, 0), P(s, filtP(0, F_Enable), 1), P(s, filtP(0, F_Freq), 0.3f), P(s, filtP(0, F_KeyTrack), 1);
+      P(s, routeP(RtA, R_Dest), RouteFilter), P(s, routeP(RtA, R_Balance), 0.f);
+    });
+    return c;
+  }
+  if (k == tailP(T_MsLaw)) {  // the multisample level law: a multisample on oscillator A
+    add([](Scene& s) { oscType(s, 0, OscMultisample); });
+    return c;
+  }
+  if (k == tailP(T_EnvLaw)) {  // the envelope curve law: a curved decay to zero on the amp envelope
+    add([](Scene& s) { oscOn(s, 0), P(s, envP(0, E_Sustain), 0.f), P(s, envP(0, E_Decay), envTimeInv(0.2)), P(s, envP(0, E_CurveD), 85.f); });
+    return c;
+  }
   if (k < G_Count) {
     add([](Scene&) {});
     add([](Scene& s) { P(s, G_ArpOn, 1); });
@@ -1444,6 +1459,21 @@ int main(int argc, char** argv) {
     expect(envAtOff > 0.2f && envEarlyRel > 0.02f && envEarlyRel < envAtOff && envMinRel < envAtOff * 0.5f, "envelope meter falls in the release");
     expect(envEnd < 0.01f, "envelope meter rests at zero after the release");
     expect(std::fabs(velHeld - 0.6f) < 0.05f, "velocity meter keeps the last note's velocity");
+  }
+  // ---- J-203a: a mono legato chord released oldest key first ends the note (the keys the voice moved
+  // past are forgotten), so a later key starts a fresh note instead of joining a silent legato voice
+  {
+    PluginState s = base();
+    setP(s, pl::G_Mono, 1), setP(s, pl::G_Legato, 1);
+    setP(s, pl::envP(0, pl::E_Sustain), 0.f), setP(s, pl::envP(0, pl::E_Decay), pl::envTimeInv(0.2));
+    const std::vector<Ev> evs = {{0, true, 1, 60, 0.8f},       {10, true, 2, 64, 0.8f},      {20, true, 3, 67, 0.8f},
+                                 {24000, false, 1, 0, 0},      {24010, false, 2, 0, 0},      {24020, false, 3, 0, 0},
+                                 {48000, true, 4, 72, 0.8f},   {52000, false, 4, 0, 0}};
+    const Out o = render(s, evs, 72000, 256);
+    float later = 0;
+    for (int i = 48000; i < 52000; ++i) later = std::max(later, std::fabs(o.L[static_cast<size_t>(i)]));
+    std::printf("# mono chord, then a new key: peak %.3f\n", static_cast<double>(later));
+    expect(o.finite && later > 0.05f, "a mono chord released oldest key first ends; the next key starts a new note");
   }
   // ---- every parameter acts (the audit's VERIFIED entries)
   cov::run(*info);

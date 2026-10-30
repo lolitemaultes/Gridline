@@ -111,6 +111,10 @@ struct Zone {
   int loopMode = 0;    // 0 none, 1 continuous, 2 sustain
   int64_t loopStart = 0, loopEnd = 0;
   int64_t start = 0, end = -1;
+  // J-203a: the map's velocity tracking (0..1) and amplitude envelope (seconds; sustain 0..1).
+  // Used with the "Mapped" multisample level law; the release default is the source's (measured).
+  double velTrack = 1.0;
+  double egDelay = 0, egAttack = 0, egHold = 0, egDecay = 0, egSustain = 1, egRelease = 0.5;
 };
 bool parseSfz(const std::string& path, std::vector<Zone>& zones, std::string* err);
 
@@ -317,6 +321,9 @@ struct OscSet {
   float sCut = 0, sMix = 1, sLo = 0, sHi = 1;
   bool phaseLock = false, transients = true;
   float timbre = 0, velTrack = 1;
+  bool msLaw = false;   // multisample "Mapped" level law (zone velocity tracking, envelope, gain)
+  bool msOv = false;    // the oscillator's own envelope replaces the zones' (seconds below)
+  float ovDelay = 0, ovAttack = 0, ovHold = 0, ovDecay = 0, ovSustain = 1, ovRelease = 0.5f;
   bool s1 = false;
 };
 class OscVoice {
@@ -350,6 +357,10 @@ class OscVoice {
   int key_ = 60;
   float vel_ = 0.8f;
   int zone_ = -1;
+  // zone amplitude envelope (Mapped law): stage 0 delay .. 4 sustain, 5 release, 6 done
+  int zeStage_ = 0;
+  double zeT_ = 0, zeLev_ = 0, zeMul_ = 1;
+  float zoneEnv(const OscSet& s, const Zone& z);
   // granular
   struct Grain {
     double pos = 0, inc = 0;

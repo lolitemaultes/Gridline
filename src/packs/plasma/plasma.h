@@ -276,7 +276,8 @@ inline constexpr int kModBase = kRetrigBase + kRetrigs;
 inline constexpr int kFxBase = kModBase + kModSlots * M_Count;
 // Parameters added after the first release go here, at the very end, so older states pad them
 // with their defaults (J-201: noise tone, unison mix, filter drive mode).
-enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_Count };
+// J-203a: filter key-track centre, multisample level law.
+enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_KeyCentre, T_MsLaw, T_EnvLaw, T_Count };
 inline constexpr int kTailBase = kFxBase + kFxSlots * X_Count;
 inline constexpr int kParamCount = kTailBase + T_Count;
 

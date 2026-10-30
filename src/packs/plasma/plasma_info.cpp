@@ -980,6 +980,17 @@ void appendInfos(std::vector<PluginInfo>& v) {
   // filter drive (both filters and the filter effect): Leveled keeps the level about even as the
   // drive rises; Boost raises it, up to +24 dB into a soft clip. Preset import selects Boost.
   set(tailP(T_DriveMode), ch("Filter Drive Mode", {"Leveled", "Boost"}, 0));
+  // filter key tracking (both filters): the key at which tracking leaves the cutoff where it is.
+  // Preset import selects G#1 (J-203a/b: measured, the cutoff moves by key - 32 semitones).
+  set(tailP(T_KeyCentre), ch("Filter Key Centre", {"C4", "G#1"}, 0));
+  // multisample level: Plasma plays zones at unity with linear velocity; Mapped follows the map's
+  // velocity tracking (amp_veltrack, squared curve), its amplitude envelope and +9.1 dB of gain.
+  // Preset import selects Mapped (J-203a: measured).
+  set(tailP(T_MsLaw), ch("Multisample Level", {"Unity", "Mapped"}, 0));
+  // envelope curves (all four envelopes): Gentle bends a stage by 8 c (c = curve -1..1); Steep
+  // bends it by 9.5 atanh(c), so the ends of the knob become nearly a step. Preset import selects
+  // Steep (J-203a: measured).
+  set(tailP(T_EnvLaw), ch("Envelope Curves", {"Gentle", "Steep"}, 0));
 
   // ---- filters
   for (int f = 0; f < kFilters; ++f) {

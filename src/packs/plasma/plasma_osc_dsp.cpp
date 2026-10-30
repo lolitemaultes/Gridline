@@ -115,6 +115,7 @@ void OscVoice::start(const OscSet& s, float phase, float randPhase, float randSt
     st += randStart * rngUni(rng_) * len * 0.1 * (u > 0 ? 1 : 0);
     play_[u] = s.reverse ? std::max(0.0, std::clamp(static_cast<double>(s.end), 0.0, 1.0) * len - 1) : st;
   }
+  zeStage_ = 0, zeT_ = 0, zeLev_ = 0, zeMul_ = 1;
   for (auto& g : grains_) g.active = false;
   // spectral
   olaPos_ = 512;
@@ -245,6 +246,55 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
 }
 
 // ------------------------------------------------------------------ sample / multisample
+// J-203a, measured on the source's multisample oscillator (single-region maps, key 60):
+// - it plays 9.07 dB above its sample oscillator with the same file (two files, 9.06 / 9.1 dB);
+// - velocity: gain dB = amp_veltrack * 40 log10(velocity) (vel 0.5: -11.9 dB at 100 %, -6.0 at 50 %,
+//   -4.2 at 35 %, 0 at 0 %); amp_velcurve_N points are not used;
+// - the map's ampeg_* envelope multiplies the voice envelope; the release falls about 80-85 dB over
+//   its time, linear in dB, then cuts (0.5 s and 1 s measured); without ampeg_release it is 0.5 s.
+//   The attack rises linearly in amplitude.
+constexpr float kMsGain = 2.836f;  // +9.06 dB
+constexpr double kEgFloorDb = 80.0;
+float OscVoice::zoneEnv(const OscSet& s, const Zone& z) {
+  const double dt = 1.0 / s.srv;
+  const double tD = s.msOv ? s.ovDelay : z.egDelay, tA = s.msOv ? s.ovAttack : z.egAttack, tH = s.msOv ? s.ovHold : z.egHold;
+  const double tDe = s.msOv ? s.ovDecay : z.egDecay, sus = s.msOv ? s.ovSustain : z.egSustain, tR = s.msOv ? s.ovRelease : z.egRelease;
+  if (released_ && zeStage_ < 5) {
+    zeStage_ = 5, zeT_ = 0;
+    zeMul_ = tR > 1e-4 ? std::pow(10.0, -kEgFloorDb / 20.0 * dt / tR) : 0.0;
+  }
+  switch (zeStage_) {
+    case 0:
+      zeLev_ = 0;
+      if ((zeT_ += dt) >= tD) zeStage_ = 1, zeT_ = 0;
+      if (zeStage_ != 1) break;
+      [[fallthrough]];
+    case 1:
+      zeT_ += dt;
+      zeLev_ = tA > 1e-5 ? std::min(1.0, zeT_ / tA) : 1.0;
+      if (zeT_ >= tA) zeStage_ = 2, zeT_ = 0;
+      break;
+    case 2:
+      zeLev_ = 1;
+      if ((zeT_ += dt) >= tH) {
+        zeStage_ = 3, zeT_ = 0;
+        zeMul_ = tDe > 1e-4 ? std::pow(10.0, -kEgFloorDb / 20.0 * dt / tDe) : 0.0;
+      }
+      break;
+    case 3:
+      zeLev_ *= zeMul_;
+      if (zeLev_ <= sus) zeLev_ = sus, zeStage_ = 4;
+      break;
+    case 4: zeLev_ = sus; break;
+    case 5:
+      zeLev_ *= zeMul_;
+      if ((zeT_ += dt) >= tR) zeLev_ = 0, zeStage_ = 6;
+      break;
+    default: zeLev_ = 0; break;
+  }
+  return static_cast<float>(zeLev_);
+}
+
 void OscVoice::samplePlay(const OscSet& s, float& l, float& r) {
   const Sample* smp = s.src ? s.src->sample.get() : nullptr;
   const Zone* zn = nullptr;
@@ -285,7 +335,15 @@ void OscVoice::samplePlay(const OscSet& s, float& l, float& r) {
   if (loopMode == 4 && released_) loopMode = 0;  // tailed: play out after the release
   const double rootRate = smp->sampleRate / s.srv;
   const double center = zn ? zn->center - zn->tune / 100.0 : 60.0;
-  const float zg = zn ? static_cast<float>(std::pow(10.0, zn->gainDb / 20.0)) : 1.f;
+  float zg = zn ? static_cast<float>(std::pow(10.0, zn->gainDb / 20.0)) : 1.f;
+  if (zn && s.msLaw) {
+    const double v = std::clamp(static_cast<double>(vel_), 1e-4, 1.0);
+    zg *= kMsGain * static_cast<float>(std::pow(v, 2.0 * zn->velTrack)) * zoneEnv(s, *zn);
+    if (zeStage_ == 6) {
+      finished_ = true;
+      return;
+    }
+  }
   bool any = false;
   for (int u = 0; u < s.unison; ++u) {
     if (dirU_[u] == 0) continue;
