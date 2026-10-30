@@ -53,3 +53,11 @@ package has none (`docs/import-url.md`). Each package's `tools` folder holds the
 
 FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project. Gridline is not
 affiliated with the FFmpeg or yt-dlp projects.
+
+Not vendored, but credited: Split stems (`src/engine/stems/`) runs the Hybrid Transformer Demucs
+models (https://github.com/facebookresearch/demucs, code MIT, Copyright (c) Meta Platforms, Inc.
+and affiliates). Gridline's implementation is its own C++ written from the published architecture
+and checked against the reference output; no Demucs source is included. The trained model weights
+are not part of Gridline and are never shipped with it: they are downloaded on request from their
+official address (dl.fbaipublicfiles.com), and the Demucs authors provide them for research use, a
+note Gridline shows before every download (docs/stems.md).

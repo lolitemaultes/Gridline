@@ -26,6 +26,7 @@
 #include "App.h"
 #include "AudioRecordUi.h"
 #include "ExportUi.h"
+#include "StemsUi.h"
 #include "../core/ProjectInterop.h"
 #include "Theme.h"
 #include "MidiUi.h"
@@ -978,6 +979,7 @@ void drawDialogs(App& a) {
   settingsWindow(a);
   infoWindow(a);
   exportui::draw(a);
+  stemsui::draw(a);  // J-191: Split stems
   historyWindow(a);
   aboutWindow(a);
   shortcutsWindow(a);

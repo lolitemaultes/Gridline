@@ -55,6 +55,7 @@ int benchMain(int argc, char** argv);  // Bench.cpp
 int flpToolsMain(int argc, char** argv);  // FlpTools.cpp (-1 = not one of its commands)
 int mcpMain(int argc, char** argv);       // McpCli.cpp (SC-07)
 int collabMain(int argc, char** argv);    // CollabCli.cpp (J-111)
+int stemsCliMain(int argc, char** argv);  // StemsCli.cpp (J-191)
 
 int suiteCliMain(int argc, char** argv);  // SuiteCli.cpp (J-131)
 
@@ -104,6 +105,8 @@ void usage() {
       "  gridline scan-plugins [--force]                scan installed plugins into the app's plugin cache\n"
       "  gridline mcp <project.gridline.json|.flp> [--export-dir DIR] [--read-only]   MCP server for AI assistants on stdio\n"
       "  gridline mcp --attach                          MCP stdio bridge to the running app (docs/mcp.md)\n"
+      "  gridline stems <audio> [--model ID] [--out DIR] [--stems vocals,drums,...]   split a song into stems\n"
+      "  gridline stems --list | --download ID | --import FILE | --remove ID   stem models (docs/stems.md)\n"
       "  gridline seltmann-analyse [--json] <audio...>  Seltmann analysis + automatic chop per file (tempo, kind, slices)\n"
       "  gridline collab-run --folder DIR --name NAME (--new | --create FILE | --join CODEFILE) [--invite-out FILE]\n"
       "                      [--seconds N] [--edits host|guest] [--audio WAV] [--report FILE] [--stun HOST:PORT]\n"
@@ -129,6 +132,7 @@ int main(int argc, char** argv) {
   if (argc >= 2 && std::string(argv[1]) == "bench") return benchMain(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "mcp") return mcpMain(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "collab-run") return collabMain(argc, argv);
+  if (argc >= 2 && std::string(argv[1]) == "stems") return stemsCliMain(argc, argv);  // J-191
   if (argc >= 2 && std::string(argv[1]) == "seltmann-analyse") return gl::packs::seltmann::cliMain(argc, argv);  // J-107
   if (argc >= 2 && (std::string(argv[1]) == "suite-info" || std::string(argv[1]) == "suite")) return suiteCliMain(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "plugin-params") {

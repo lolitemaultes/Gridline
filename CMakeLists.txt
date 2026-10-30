@@ -122,7 +122,7 @@ option(GRIDLINE_GUI_TESTS "Register the tests that open (hidden) application win
 
 # ---- core + engine (no UI dependencies) ----
 # Plugin packs (src/packs/<pack>/): *_info/*_dsp go into the core library, *_ui into the app.
-file(GLOB GRIDLINE_CORE_SRC CONFIGURE_DEPENDS src/core/*.cpp src/core/flp/*.cpp src/engine/*.cpp src/engine/pitch/*.cpp src/packs/Registry.cpp
+file(GLOB GRIDLINE_CORE_SRC CONFIGURE_DEPENDS src/core/*.cpp src/core/flp/*.cpp src/engine/*.cpp src/engine/pitch/*.cpp src/engine/stems/*.cpp src/packs/Registry.cpp
      src/packs/*/*_info.cpp src/packs/*/*_dsp.cpp src/host/*.cpp src/host/*/*.cpp)
 # Plugin hosting on macOS: Audio Units, Cocoa plugin views, sandbox windows (Objective-C++).
 if(APPLE)
@@ -288,7 +288,8 @@ target_include_directories(gridline_core SYSTEM PUBLIC third_party/clap/include)
 target_include_directories(gridline_core SYSTEM PUBLIC third_party/lv2/include)
 if(APPLE)
   target_link_libraries(gridline_core PUBLIC "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreAudioKit"
-                        "-framework AppKit" "-framework Foundation" "-framework Security")
+                        "-framework AppKit" "-framework Foundation" "-framework Security"
+                        "-framework Accelerate")  # J-191: stem splitter matrix products
 elseif(WIN32)
   # Winsock (MCP server), Credential Manager (advapi32), process / memory statistics, windows,
   # WinHTTP (J-89 update check).
@@ -307,7 +308,8 @@ if(GRIDLINE_COLLAB)
   target_compile_definitions(gridline_core PUBLIC GRIDLINE_COLLAB_NET=1)
 endif()
 
-add_executable(gridline src/cli/main.cpp src/cli/Bench.cpp src/cli/FlpTools.cpp src/cli/McpCli.cpp src/cli/CollabCli.cpp src/cli/SuiteCli.cpp)
+add_executable(gridline src/cli/main.cpp src/cli/Bench.cpp src/cli/FlpTools.cpp src/cli/McpCli.cpp src/cli/CollabCli.cpp src/cli/SuiteCli.cpp
+               src/cli/StemsCli.cpp)
 target_link_libraries(gridline PRIVATE gridline_core)
 
 add_executable(gridline_tests tests/test_engine.cpp)
@@ -357,6 +359,16 @@ add_executable(gridline_tests_edison tests/test_edison.cpp)
 target_link_libraries(gridline_tests_edison PRIVATE gridline_core)
 target_compile_options(gridline_tests_edison PRIVATE ${GL_WARN})
 add_test(NAME edison COMMAND gridline_tests_edison WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-191: stem splitter (tiny deterministic model, no real weights)
+add_executable(gridline_tests_stems tests/test_stems.cpp)
+target_link_libraries(gridline_tests_stems PRIVATE gridline_core)
+target_compile_options(gridline_tests_stems PRIVATE ${GL_WARN})
+add_test(NAME stems COMMAND gridline_tests_stems WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME j191_stems_cli
+         COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:gridline> -DTESTBIN=$<TARGET_FILE:gridline_tests_stems>
+                 -DSRC=${CMAKE_SOURCE_DIR} -DOUT=${CMAKE_BINARY_DIR}/j191_stems_cli -P ${CMAKE_SOURCE_DIR}/tests/j191_stems_cli.cmake
+         WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(j191_stems_cli PROPERTIES TIMEOUT 300)
 add_executable(gridline_tests_midi_workflow tests/test_midi_workflow.cpp)
 target_link_libraries(gridline_tests_midi_workflow PRIVATE gridline_core)
 target_compile_options(gridline_tests_midi_workflow PRIVATE ${GL_WARN})
@@ -1497,6 +1509,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j187_multi_slip_app PROPERTIES TIMEOUT 300)
 
+    # J-194: the browser search field's clear button empties the field, also while it is being edited.
+    add_test(NAME j194_browser_search_clear_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j194_browser_search_clear
+                     -P ${CMAKE_SOURCE_DIR}/tests/j194_browser_search_clear.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j194_browser_search_clear_app PROPERTIES TIMEOUT 300)
+
     # J-193: a stretch-resized clip keeps its bars on a tempo change; an unstretched one keeps its audio.
     add_test(NAME j193_tempo_follow_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -1544,6 +1563,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j185_seltmann -P ${CMAKE_SOURCE_DIR}/tests/j185_seltmann_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j185_seltmann_app PROPERTIES TIMEOUT 300)
+
+    # J-191: Split stems from the clip menu (a tiny model): four aligned clips on new tracks, one undo step.
+    add_test(NAME j191_stems_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_tests_stems>
+                     -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j191_stems_app -P ${CMAKE_SOURCE_DIR}/tests/j191_stems_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j191_stems_app PROPERTIES TIMEOUT 400)
 
     # J-151: Platter's two decks: the controller question, both decks playing, the crossfader.
     add_test(NAME platter_flow

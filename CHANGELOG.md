@@ -20,6 +20,18 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   against published checksums, and yt-dlp keeps itself up to date at most once a day (Settings >
   File, can be turned off). Import only media you have the rights to use: Gridline does not sign
   in to sites or get around copy protection. See docs/import-url.md.
+- Split stems. Right-click an audio clip (or open its title menu) and pick Split stems... to
+  separate it into vocals, drums, bass and other; the six-stem model adds guitar and piano. Choose
+  the stems to keep and where they go: new tracks right under the clip, lined up with it and with
+  the clip's settings (one undo step, the original clip muted if you like), or files in the
+  project's Stems folder, which the browser lists. The split runs in the background on this
+  computer with progress, time left and Cancel. Samples in the browser and the audio editor's File
+  menu have Split stems... too. The separation is Gridline's own implementation of the published
+  Hybrid Transformer Demucs models (Standard, High quality, Six stems); a model is downloaded from
+  its official address the first time it is used, after its licence note is shown, and checked
+  against its SHA-256 (Import model file... takes a copy you already have). Nothing is sent
+  anywhere. On the command line: `gridline stems <audio> --model htdemucs --out <dir>`. See
+  docs/stems.md.
 - Kerf slices on the beat grid. The SLICES card has a beat grid choice next to hits, 4, 8, 16, 32
   and by hand, with a field for the slice size: 1 bar, 1/2 bar, 1/4, 1/8, 1/16, 1/32 or the
   triplets 1/4 T, 1/8 T and 1/16 T (also in the Regions menu). Kerf finds the loop's tempo, its
@@ -75,6 +87,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   the same cuts and the steps follow the new lengths. A click on a region still plays it.
 
 ### Fixed
+- The clear button in the browser search field works again: it empties the field (also while you are typing in it) and leaves the cursor in the field.
 
 - Audio clips no longer shrink or get cut off when the tempo changes. A clip you stretch (by
   dragging an edge in stretch mode, typing a Time value or using Fit to tempo) now follows the

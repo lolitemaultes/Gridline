@@ -407,6 +407,8 @@ void drawMenus(App& a, Session& s, const skin::Form& F, ImDrawList* dl) {
         if (ImGui::MenuItem(i18n::tr("Send to playlist as audio clip"), nullptr, false, has && !busy)) sendToPlaylist(a, s);
         if (ImGui::MenuItem(i18n::tr("Send to new sampler channel"), nullptr, false, has && !busy)) sendToSampler(a, s, false);
         if (ImGui::MenuItem(i18n::tr("Send to new slicer channel (markers = slices)"), nullptr, false, has && !busy)) sendToSampler(a, s, true);
+        ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Split stems..."), nullptr, false, has && !busy)) splitStems(a, s);  // J-191
         break;
       case 1:  // Format
         if (ImGui::MenuItem(i18n::tr("Mix to mono"), nullptr, s.cur().a().channels == 1, has && !busy)) runEdit(a, s, "To mono", [](const Content& c) { return toMono(c); });

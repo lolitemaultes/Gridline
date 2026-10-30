@@ -173,6 +173,8 @@ void saveAs(App& a, Session& s, FileFormat f);
 void exportSelection(App& a, Session& s);
 void openFile(App& a, Session& s);
 void sendToPlaylist(App& a, Session& s);
+// J-191: the current version into the Split stems window (files in the Stems folder).
+void splitStems(App& a, Session& s);
 void sendToSampler(App& a, Session& s, bool slicer);
 void detectSlices(App& a, Session& s, double sensitivity);
 void addMarkerAtCursor(App& a, Session& s);

@@ -1,0 +1,186 @@
+# Gridline - J-191: Split stems in the real app (hidden, isolated config and HOME, 1440x900, the
+# playlist shown, a fixed 16 ms frame time, a tiny model of the same family instead of real weights).
+# A copy of the test song gets a sample channel ("Take") and an audio clip (id 70) on track 8:
+#   1. a right-click on the clip's name box opens its menu, which has "Split stems...";
+#   2. the item opens the Split stems window (the test model chosen, four stems ticked);
+#   3. Split: the split runs in the background ("stems-done"), four new clips appear on four new
+#      tracks right under the clip (vocals, drums, bass, other), lined up with it (same start,
+#      length, sample offset), each on its own new channel; the original is muted; clips further
+#      down moved below the new tracks; the stem files are in the project's Stems folder;
+#   4. one undo step: Undo brings the playlist back as it was.
+# Positions come from the playlist's plgeom lines and the window's GRIDLINE_STEMS_TRACE lines.
+#   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_tests_stems> -DDEMO=<song.gridline.json> -DOUT=<dir> -P j191_stems_app.cmake
+cmake_minimum_required(VERSION 3.16)
+file(REMOVE_RECURSE "${OUT}")
+file(MAKE_DIRECTORY "${OUT}")
+execute_process(COMMAND "${TESTBIN}" --write-tiny "${OUT}/tiny.th" RESULT_VARIABLE rc)
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "FAIL: could not write the tiny model (${rc})")
+endif()
+set(ENV{SDL_AUDIODRIVER} "dummy")
+set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
+set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
+set(ENV{GRIDLINE_STEMS_TEST_MODEL} "${OUT}/tiny.th")
+set(ENV{GRIDLINE_STEMS_TRACE} "1")
+set(ENV{GRIDLINE_STEM_MODELS} "${OUT}/models")
+get_filename_component(src "${DEMO}" DIRECTORY)
+configure_file("${src}/../../assets/sounds/classic/startup.wav" "${OUT}/Take.wav" COPYONLY)
+file(READ "${DEMO}" demo)  # a copy: the test song is never opened (or saved over) in place
+set(chan "{\"color\": 5219296, \"gain\": 0.8, \"id\": 60, \"mixerTrack\": 0, \"muted\": false, \"name\": \"Take\", \"pan\": 0, \"pitch\": 0, \"plugin\": {\"type\": \"gl.sampler\", \"data\": \"${OUT}/Take.wav\", \"params\": []}}, ")
+set(clips "{\"id\": 70, \"kind\": \"audio\", \"source\": 60, \"track\": 7, \"start\": 96, \"length\": 1536, \"pattern\": 0, \"gain\": 0.5, \"audioStart\": 0.25}, ")
+string(APPEND clips "{\"id\": 71, \"kind\": \"audio\", \"source\": 60, \"track\": 8, \"start\": 0, \"length\": 768, \"pattern\": 0}, ")
+string(REPLACE "\"channels\": [" "\"channels\": [${chan}" demo "${demo}")
+string(REPLACE "\"playlist\": [" "\"playlist\": [${clips}" demo "${demo}")
+string(REGEX REPLACE "\"nextId\": *[0-9]+" "\"nextId\": 100" demo "${demo}")
+file(WRITE "${OUT}/fixture.gridline.json" "${demo}")
+
+function(run tag frames script)
+  file(REMOVE_RECURSE "${OUT}/cfg_${tag}")
+  file(MAKE_DIRECTORY "${OUT}/cfg_${tag}")
+  set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg_${tag}")
+  set(ENV{HOME} "${OUT}/cfg_${tag}")
+  file(WRITE "${OUT}/${tag}.txt" "${script}")
+  execute_process(COMMAND "${APP}" "${OUT}/fixture.gridline.json" --hidden --no-ui-sounds --fixed-dt 16 --size 1440x900 --show playlist
+                          --frames ${frames} --screenshot "${OUT}/${tag}.ppm" --dev-input "${OUT}/${tag}.txt"
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE o ERROR_VARIABLE err TIMEOUT 240)
+  if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "${tag}: gridline-app failed (${rc}): ${err}\n${o}")
+  endif()
+  file(WRITE "${OUT}/${tag}.out" "${o}")
+  set(out "${o}" PARENT_SCOPE)
+endfunction()
+
+function(fail msg)
+  message(FATAL_ERROR "FAIL: ${msg}\nOutput:\n${out}")
+endfunction()
+function(check msg)
+  if(NOT (${ARGN}))
+    fail("${msg}")
+  endif()
+  message(STATUS "ok - ${msg}")
+endfunction()
+function(int var v)
+  string(REGEX REPLACE "\\..*" "" i "${v}")
+  set(${var} ${i} PARENT_SCOPE)
+endfunction()
+# The last "stems: <what> X Y" line -> <what>_x / <what>_y.
+function(traced what)
+  string(REGEX MATCHALL "stems: ${what} [0-9]+ [0-9]+" lines "${out}")
+  list(LENGTH lines n)
+  if(n EQUAL 0)
+    fail("nothing traced for \"${what}\"")
+  endif()
+  list(GET lines -1 l)
+  string(REGEX MATCH "([0-9]+) ([0-9]+)$" _ "${l}")
+  set(${what}_x ${CMAKE_MATCH_1} PARENT_SCOPE)
+  set(${what}_y ${CMAKE_MATCH_2} PARENT_SCOPE)
+endfunction()
+# The "dump" of <frame> -> clips_<frame>, count_<frame>, undo_<frame>.
+function(dump frame)
+  string(REGEX MATCH "dump frame ${frame}: ([0-9]+) clips, [0-9]+ selected, undo ([0-9]+)\n(  clip [^\n]*\n)*" d "${out}")
+  if(d STREQUAL "")
+    fail("no clip dump at frame ${frame}")
+  endif()
+  set(clips_${frame} "${d}" PARENT_SCOPE)
+  set(count_${frame} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+  set(undo_${frame} "${CMAKE_MATCH_2}" PARENT_SCOPE)
+endfunction()
+function(field var frame id key)
+  string(REGEX MATCH "  clip ${id} kind [^\n]*" line "${clips_${frame}}")
+  string(REGEX MATCH " ${key} ([^ ]+)" _ "${line}")
+  set(${var} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+endfunction()
+
+# ---- where the clip's name box is
+run(geo 14 "8 plgeom\n")
+string(REGEX MATCH "plgeom frame 8:[^\n]*\n(  [^\n]*\n)*" d "${out}")
+string(REGEX MATCH "  clip 70 x ([-0-9.]+) ([-0-9.]+) y ([-0-9.]+) ([-0-9.]+) head ([0-9.]+) menu ([-0-9.]+) ([-0-9.]+) name ([-0-9.]+) ([-0-9.]+)" _ "${d}")
+int(n0 "${CMAKE_MATCH_8}")
+int(n1 "${CMAKE_MATCH_9}")
+int(y0 "${CMAKE_MATCH_3}")
+int(head "${CMAKE_MATCH_5}")
+check("clip 70 is drawn with its name box (${n0}..${n1})" n1 GREATER n0)
+math(EXPR nx "(${n0} + ${n1}) / 2")
+math(EXPR ny "${y0} + ${head} / 2")
+set(openMenu "2 typing off\n10 move ${nx} ${ny}\n11 down 1\n13 up 1\n")
+
+# ---- 1. the clip menu has the item
+run(menu 24 "${openMenu}")
+traced(menu)
+check("a right-click on the clip's name opens its menu with \"Split stems...\" (${menu_x}, ${menu_y})" menu_x GREATER 0)
+file(RENAME "${OUT}/menu.ppm" "${OUT}/1-clip-menu.ppm")
+
+# ---- 2. the window
+set(openWin "${openMenu}20 move ${menu_x} ${menu_y}\n22 down 0\n24 up 0\n")
+run(win 44 "${openWin}")
+traced(split)
+check("\"Split stems...\" opens the window with its Split button (${split_x}, ${split_y})" split_x GREATER 0)
+check("... the test model is offered and ready" out MATCHES "stems: model test ready 1 keep 4")
+file(RENAME "${OUT}/win.ppm" "${OUT}/2-split-window.ppm")
+
+# ---- 3, 4. split, then undo
+run(split 90 "${openWin}36 dump
+40 move ${split_x} ${split_y}
+41 down 0
+43 up 0
+46 waitfor stems-done 180
+50 dump
+56 undo
+60 dump
+")
+check("the split finishes" out MATCHES "waitfor stems-done: reached")
+dump(36)
+dump(50)
+dump(60)
+math(EXPR want "${count_36} + 4")
+check("four new clips (${count_36} -> ${count_50})" count_50 EQUAL want)
+math(EXPR want "${undo_36} + 1")
+check("... in one undo step (${undo_36} -> ${undo_50})" undo_50 EQUAL want)
+field(m 50 70 muted)
+check("the original clip is muted" m EQUAL 1)
+field(t 50 71 track)
+check("the clip below moved under the four new tracks (track ${t})" t EQUAL 12)
+string(REGEX MATCHALL "  clip ([0-9]+) kind [^\n]*" lines50 "${clips_50}")
+set(newIds "")
+foreach(l IN LISTS lines50)
+  string(REGEX MATCH "^  clip ([0-9]+) " _ "${l}")
+  string(REGEX MATCH "  clip ${CMAKE_MATCH_1} kind" seen "${clips_36}")
+  if(seen STREQUAL "")
+    string(REGEX MATCH "^  clip ([0-9]+) " _ "${l}")
+    list(APPEND newIds ${CMAKE_MATCH_1})
+  endif()
+endforeach()
+list(LENGTH newIds nNew)
+check("the new clips are found (${newIds})" nNew EQUAL 4)
+field(start70 50 70 start)
+field(len70 50 70 len)
+field(as70 50 70 audioStart)
+field(src70 50 70 source)
+set(tracks "")
+foreach(id IN LISTS newIds)
+  field(st 50 ${id} start)
+  field(ln 50 ${id} len)
+  field(as 50 ${id} audioStart)
+  field(tr 50 ${id} track)
+  field(sr 50 ${id} source)
+  field(mu 50 ${id} muted)
+  field(sl 50 ${id} sel)
+  check("stem clip ${id} lines up with the clip (start ${st}, len ${ln}, offset ${as})"
+        st EQUAL start70 AND ln EQUAL len70 AND as STREQUAL as70)
+  check("... plays its own new channel, not muted, selected" NOT sr EQUAL src70 AND mu EQUAL 0 AND sl EQUAL 1)
+  list(APPEND tracks ${tr})
+endforeach()
+list(SORT tracks COMPARE NATURAL)
+string(REPLACE ";" " " tracks "${tracks}")
+set(under 0)
+if(tracks STREQUAL "8 9 10 11")
+  set(under 1)
+endif()
+check("... on the four tracks right under the clip (${tracks})" under EQUAL 1)
+file(GLOB stemFiles "${OUT}/Stems/*.wav")
+list(LENGTH stemFiles nFiles)
+check("the four stem files are in the project's Stems folder" nFiles EQUAL 4)
+check("Undo removes the stems and unmutes the clip (${count_60} clips)" count_60 EQUAL count_36)
+field(m 60 70 muted)
+field(t 60 71 track)
+check("... the clip is back as it was (muted ${m}, the clip below on track ${t})" m EQUAL 0 AND t EQUAL 8)

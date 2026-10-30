@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include "../../app/StemsUi.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
 #include "../../core/Params.h"
@@ -433,6 +434,15 @@ std::string currentFile(App& a, Session& s) {
   return s.committed;
 }
 }  // namespace
+
+void splitStems(App& a, Session& s) {
+  std::string path = currentFile(a, s);
+  if (path.empty()) {
+    say(s, s.frames() == 0 ? "Nothing to split" : "Busy");
+    return;
+  }
+  stemsui::openForFile(a, path, displayName(a, s));
+}
 
 void sendToPlaylist(App& a, Session& s) {
   std::string path = currentFile(a, s);

@@ -5,6 +5,7 @@
 #include "AudioRecordUi.h"
 #include "ChopUi.h"
 #include "ClipMultiUi.h"
+#include "StemsUi.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -427,6 +428,7 @@ void audioClipMenu(App& a, ObjectId id) {
     if (beats > 0) a.notify("Fitted to " + std::to_string(beats) + (beats == 1 ? " beat" : " beats") + "; the clip now follows the tempo");
   }
   if (ImGui::MenuItem(i18n::tr("Normalize"))) editSongClip(a, "normalize clip", [&](Song& x) { normalizeClip(x, id, 0.0); });
+  stemsui::clipMenuItem(a, id);  // J-191: vocals / drums / bass / other onto new tracks
   chopui::clipMenu(a, id);  // PL-13: slice at the grid / into parts / at transients, stutter presets
   ImGui::Separator();
   std::set<ObjectId> sel = a.playlist.selected;

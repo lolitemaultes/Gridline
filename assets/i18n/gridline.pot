@@ -401,7 +401,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -994,6 +994,10 @@ msgid "No sliced audio"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "No stems yet"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Not a folder: "
 msgstr ""
 
@@ -1145,6 +1149,10 @@ msgstr ""
 msgid "Sliced audio"
 msgstr ""
 
+#: src/app/Browser.cpp src/app/StemsUi.cpp src/packs/edison/edison_form_ui.cpp
+msgid "Split stems..."
+msgstr ""
+
 #: src/app/Browser.cpp
 msgid "Star"
 msgstr ""
@@ -1159,6 +1167,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Starred files"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Stems"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -2177,7 +2189,7 @@ msgstr ""
 msgid "Chords"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/ScriptUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/ScriptUi.cpp src/app/StemsUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp
 msgid "Close"
 msgstr ""
 
@@ -8057,7 +8069,7 @@ msgstr ""
 msgid "Ambient"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp
+#: src/app/LoopStarterUi.cpp src/app/StemsUi.cpp
 msgid "Bass"
 msgstr ""
 
@@ -8081,7 +8093,7 @@ msgstr ""
 msgid "Drum and bass"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp src/app/PluginManager.cpp
+#: src/app/LoopStarterUi.cpp src/app/PluginManager.cpp src/app/StemsUi.cpp
 msgid "Drums"
 msgstr ""
 
@@ -13017,6 +13029,190 @@ msgstr ""
 msgid "Free and open for everybody"
 msgstr ""
 
+#: src/app/StemsUi.cpp
+msgid "%d stems saved in the Stems folder"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "A model file you already have (offline computers)"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Adds guitar and piano to vocals, drums, bass and other. Piano separation is rough."
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "DOWNLOAD"
+msgstr ""
+
+#: src/app/StemsUi.cpp src/app/UpdateUi.cpp
+msgid "Download"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Downloaded the first time it is used"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Files only, in the Stems folder"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "From Meta's server; nothing else is sent"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Guitar"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "High quality"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Import a stem model file"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Import model file..."
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "MODEL"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Mute the original clip"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "New tracks under the clip, lined up with it"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Not a supported model file"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Other"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Piano"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "RESULT"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Remove the downloaded model"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Right-click to remove the downloaded model"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Runs in the background on this computer"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "STEMS"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Separate vocals, drums, bass and other onto new tracks under the clip"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Six stems"
+msgstr ""
+
+#: src/app/StemsUi.cpp src/packs/seltmann/seltmann_seq_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Split"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Split into %d stems on new tracks"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Split stems"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Splitting into stems failed"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Standard"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Stem model downloaded"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Stem model file installed"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Stem model removed"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "The model could not be removed"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "The model download failed"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "The stem models are Hybrid Transformer Demucs by Meta AI Research. Their code is MIT-licensed; the trained model files are provided by Meta for research use and are not part of Gridline. They are downloaded from Meta's own server (dl.fbaipublicfiles.com) only when you ask, checked against a checksum, and kept on this computer. Check that your use of the results suits your purpose."
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "The stems are saved as WAV files in the Stems folder (Browser, Stems)."
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "This clip has no audio file to split"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Vocals"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Vocals, drums, bass and other with one tuned model per stem. About four times slower."
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "Vocals, drums, bass and other. Good quality, the fastest."
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "about %d min %02d s left"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "about %d s left"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "downloaded"
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "starting..."
+msgstr ""
+
+#: src/app/StemsUi.cpp
+msgid "to download"
+msgstr ""
+
 #: src/app/SuiteUi.cpp
 msgid "Ask again the next time Gridline starts"
 msgstr ""
@@ -13391,10 +13587,6 @@ msgstr ""
 
 #: src/app/UpdateUi.cpp
 msgid "Couldn't check for updates right now. The releases page has every download."
-msgstr ""
-
-#: src/app/UpdateUi.cpp
-msgid "Download"
 msgstr ""
 
 #: src/app/UpdateUi.cpp
@@ -17295,10 +17487,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Slice pitch"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_seq_ui.cpp src/packs/tideline/tideline_ui.cpp
-msgid "Split"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp

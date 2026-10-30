@@ -31,6 +31,7 @@
 #include "AudioRecordUi.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
+#include "StemsUi.h"
 #include "ExternalDragUi.h"
 #include "HostedUi.h"
 #include "Theme.h"
@@ -334,6 +335,7 @@ void fileContextMenu(App& a, const std::string& ps) {
       browserui::performDrop(a, ps, browse::DropTarget::Playlist, pl);
     }
     if (ImGui::MenuItem(i18n::tr("Load as impulse on the selected insert"))) browserui::performDrop(a, ps, browse::DropTarget::MixerTrack, {});
+    if (ImGui::MenuItem(i18n::tr("Split stems..."))) stemsui::openForFile(a, ps);  // J-191
   }
   ImGui::EndPopup();
 }
@@ -1064,14 +1066,24 @@ void drawBrowser(App& a) {
     float w = ImGui::GetContentRegionAvail().x - 26;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(28, ImGui::GetStyle().FramePadding.y));
     ImGui::SetNextItemWidth(w);
+    static bool refocus = false;  // after the clear button: typing goes on in the empty field
+    if (refocus) ImGui::SetKeyboardFocusHere(), refocus = false;
+    ImGui::SetNextItemAllowOverlap();  // the clear button drawn over the field's right end takes its clicks
     ImGui::InputTextWithHint("##filter", i18n::tr("Search  (bpm: key: tag:)"), filterBuf, sizeof filterBuf);
+    const ImGuiID filterId = ImGui::GetItemID();
+    devNoteRect("brsearch");
     ImGui::PopStyleVar();
     ui::FocusRing();
     ui::Hint("Search plugins, presets and files \xC2\xB7 filters: type:audio|midi|preset|project|effect  tag:kick  bpm:120-130  key:Am  len:<2");
     ui::drawIcon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(p.x + 14, p.y + ImGui::GetFrameHeight() * 0.5f), 12, P.textFaint);
     if (filterBuf[0]) {
       ImGui::SetCursorScreenPos(ImVec2(p.x + w - 22, p.y + 2));
-      if (ui::IconButton("clear", ui::Icon::Close, false, 20, "Clear search")) filterBuf[0] = 0;
+      if (ui::IconButton("clear", ui::Icon::Close, false, 20, "Clear search")) {
+        filterBuf[0] = 0;
+        if (ImGui::GetActiveID() == filterId) ImGui::ClearActiveID();  // an active field would write its own copy back
+        refocus = true;
+      }
+      devNoteRect("brclear");
     }
     ImGui::SetCursorScreenPos(ImVec2(p.x + w + 4, p.y));
     if (ui::IconButton("picker", ui::Icon::Plug, browserui::pluginPickerOpen(), ImGui::GetFrameHeight(), "Plugin picker (F8)"))
@@ -1123,6 +1135,7 @@ void drawBrowser(App& a) {
       folderSection(a, "Recorded", recordedDir(a), role::kDelete, "Nothing recorded yet", true);
       folderSection(a, "Rendered", renderedDir(a), role::kSelect, "Nothing rendered yet", true);
       folderSection(a, "Imported", urlimportui::importedDir(a), role::kLoop, "Nothing imported from links yet", true);  // J-192
+      folderSection(a, "Stems", stemsDir(a), role::kGraph, "No stems yet", true);  // J-191
     }
     if (all || tab == TabSounds) {
       folderSection(a, "Sliced audio", browserui::contentDir(a, "Sliced audio"), role::kSlip, "No sliced audio", true);

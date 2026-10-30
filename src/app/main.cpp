@@ -51,6 +51,7 @@
 #include "../packs/PacksUi.h"
 #include "DialogLayout.h"
 #include "ExportUi.h"
+#include "StemsUi.h"
 #include "../core/MidiFile.h"
 #include "App.h"
 #include "CollabUi.h"
@@ -2153,6 +2154,7 @@ int main(int argc, char** argv) {
   // locked the destroyed class registry mutex: "mutex lock failed", abort on quit).
   host::shutdownScan();        // the scanner child is killed; unscanned entries wait for the next start
   exportui::shutdown();        // a running audio export / render to sampler is cancelled and joined
+  stemsui::shutdown();         // J-191: a running stem split / model download likewise
   j59::shutdownRenderSampler();
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   updui::shutdown();           // J-89: a running installer download is cancelled

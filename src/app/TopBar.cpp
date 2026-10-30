@@ -176,7 +176,7 @@ struct DevRect {
   ImVec2 a, b;
   int frame = -1;
 };
-DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}};
+DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}};
 float gMetroMirror = 1.0f;
 void noteRect(const char* name) {  // the last item's rectangle
   for (DevRect& r : gDevRects)
@@ -184,6 +184,7 @@ void noteRect(const char* name) {  // the last item's rectangle
 }
 }  // namespace
 
+void devNoteRect(const char* name) { noteRect(name); }
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1) {
   for (const DevRect& r : gDevRects)
     if (std::strcmp(r.name, name) == 0 && r.frame >= ImGui::GetFrameCount() - 1) {
