@@ -236,6 +236,7 @@ void gemmOwn(Pool& pool, bool transA, bool transB, int M, int N, int K, float al
   });
 }
 
+#if defined(GL_STEMS_HAVE_ACCELERATE)
 namespace {
 bool forceOwn() {
   static const bool own = [] {
@@ -245,6 +246,7 @@ bool forceOwn() {
   return own;
 }
 }  // namespace
+#endif
 
 const char* gemmBackend() {
 #if defined(GL_STEMS_HAVE_ACCELERATE)

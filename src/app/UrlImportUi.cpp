@@ -708,7 +708,7 @@ void drawPreview(App& a) {
         const std::string len = it.duration > 0 ? ul::formatTime(it.duration) : std::string();
         const float lenW = len.empty() ? 0.0f : ImGui::CalcTextSize(len.c_str()).x + theme::kS3;
         ImGui::AlignTextToFramePadding();
-        char num[16];
+        char num[24];
         std::snprintf(num, sizeof num, "%zu.", i + 1);
         ImGui::TextColored(theme::vec(P.textFaint), "%s", num);
         ImGui::SameLine(0, theme::kS1);
