@@ -482,6 +482,8 @@ void drawPianoRoll(App& a) {
   // J-46: clamped before the conversion (the pointer is -FLT_MAX outside the window).
   auto pitchAt = [&](float y) { return 127 - static_cast<int>(std::clamp(std::floor((y - gridMin.y + st.scrollY) / rowH), 0.0f, 127.0f)); };
   // ---- zoom: Ctrl+wheel at the pointer, PgUp/PgDn, Home = fit the pattern ----
+  // J-188: on the logical zoom and scroll; zoomEnd below makes them glide.
+  scrollui::zoomBegin(st.zoomGlide, st.pxPerTick, st.scrollX);
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput) {
     if (keys::pressed("piano.zoomIn")) st.zoomRequest *= 1.5f;
     if (keys::pressed("piano.zoomOut")) st.zoomRequest /= 1.5f;
@@ -504,7 +506,10 @@ void drawPianoRoll(App& a) {
     timeline::zoomAt(s, st.pxPerTick, st.scrollX, st.zoomRequest, anchor);
     st.zoomRequest = 1.0f;
   }
+  const bool wheelZoom = hovered && io.MouseWheel != 0 && io.KeyCtrl;
+  if (wheelZoom) timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gridMin.x);
   st.pxPerTick = static_cast<float>(timeline::clampZoom(s, st.pxPerTick));
+  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, wheelZoom && !smoothscroll::isNotch(io.MouseWheel));
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
   const Tick visGrid = timeline::visibleGrid(s, st.pxPerTick);
   st.effGrid = timeline::snapGrid(s, st.snap, st.pxPerTick, false);
@@ -521,7 +526,7 @@ void drawPianoRoll(App& a) {
   bool notchX = false, notchY = false;
   if (hovered && io.MouseWheel != 0) {
     if (io.KeyCtrl) {
-      timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gridMin.x);
+      // zoomed above (J-188)
     } else if (io.KeyAlt) {
       st.rowHeight = std::clamp(st.rowHeight + io.MouseWheel, 7.0f, 28.0f);
     } else if (io.KeyShift) {
@@ -1037,7 +1042,8 @@ void drawPianoRoll(App& a) {
   if (lClick || rClick) {  // J-37: a new drag starts its own glide
     noteAnim.clear();
     noteAnimT = NoteAnimTarget{patId, chId, {}};
-    if ((g.kind == Gesture::Move || g.kind == Gesture::Resize) && scrollui::smoothSnap()) noteAnim.seed(0, {0, 0, 0}, ImGui::GetTime());
+    // J-188: whatever the setting (no lag while it is off), so switching it on mid-drag applies at once.
+    if (g.kind == Gesture::Move || g.kind == Gesture::Resize) noteAnim.seed(0, {0, 0, 0}, ImGui::GetTime());
   }
   if (active && g.kind != Gesture::None) {
     // Dragging past the left/right edge scrolls the view.

@@ -79,6 +79,7 @@ struct Editor {
   ae::Selection sel;
   float pxPerTick = 0.3f, scrollX = 0;
   smoothscroll::Axis axX;  // J-67: smooth scrolling / elastic left edge
+  smoothzoom::Glide zoomGlide;  // J-188: smooth zooming
   bool fit = true;
   Snap snap = Snap::Line;
   Tool tool = Tool::Draw;
@@ -817,6 +818,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   const float gridW = gMax.x - gMin.x;
   const float y0 = gMin.y + pad, y1 = gMax.y - pad;
 
+  scrollui::zoomBegin(E.zoomGlide, E.pxPerTick, E.scrollX);  // J-188: the zooms below glide (zoomEnd)
   if (E.fit) {
     Tick span = std::max<Tick>(vis1 - vis0, s.beatTicks());
     if (E.pattern != kNoId) {  // J-173: a pattern's clip: up to its last point (whole bars), not a long pattern's whole length
@@ -827,7 +829,10 @@ void drawCanvas(App& a, const AutomationClip& ac) {
     E.scrollX = std::max(0.0f, static_cast<float>(vis0) * E.pxPerTick - gridW / 40);
     E.fit = false;
   }
+  const bool wheelZoom = hovered && io.MouseWheel != 0 && io.KeyCtrl;
+  if (wheelZoom) timeline::zoomAt(s, E.pxPerTick, E.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gMin.x);
   E.pxPerTick = static_cast<float>(timeline::clampZoom(s, E.pxPerTick));
+  scrollui::zoomEnd(E.zoomGlide, E.pxPerTick, E.scrollX, wheelZoom && !smoothscroll::isNotch(io.MouseWheel));
   scrollui::clampOuter(E.axX, E.scrollX, 0.0f, 1e9f);  // J-67: the view's own glide / overscroll is left alone
   auto xOfSong = [&](double t) { return gMin.x + static_cast<float>(t) * E.pxPerTick - E.scrollX; };
   auto xOf = [&](Tick content) { return xOfSong(static_cast<double>(base + content)); };
@@ -841,8 +846,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   float wheelX = 0;
   bool notchX = false;
   if (hovered && io.MouseWheel != 0) {
-    if (io.KeyCtrl) timeline::zoomAt(s, E.pxPerTick, E.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gMin.x);
-    else wheelX -= io.MouseWheel * 80, notchX = smoothscroll::isNotch(io.MouseWheel);
+    if (!io.KeyCtrl) wheelX -= io.MouseWheel * 80, notchX = smoothscroll::isNotch(io.MouseWheel);
   }
   if (hovered && io.MouseWheelH != 0) wheelX -= io.MouseWheelH * 80, notchX = smoothscroll::isNotch(io.MouseWheelH);
   if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) wheelX -= io.MouseDelta.x, notchX = false;

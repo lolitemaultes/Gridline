@@ -7,6 +7,8 @@
 #include <cstring>
 #include <filesystem>
 #include <set>
+#include <string>
+#include <unordered_map>
 #include "CollabUi.h"
 #include "CursorAnchor.h"
 #include "../core/I18n.h"
@@ -27,6 +29,8 @@
 #include "Windows.h"
 #include "BrowserUi.h"
 #include "PatternAutoUi.h"
+#include "PlayLights.h"
+#include "DevSignal.h"
 
 namespace gl {
 
@@ -52,6 +56,49 @@ struct RackDev {
   bool dock = false;
   int playStep = -1;  // J-137 "play<k>": the song-position outline on step k (stills of the play highlight)
 } gRackDev;
+
+// J-186: the play light of each channel row (UI state, per channel; rows not drawn keep theirs).
+struct RackLight {
+  playlight::ChannelLight light;
+  int frame = -1;
+  double time = 0;
+  bool reported = false;  // dev signal "rack-lit:<index>" sent for this lighting
+};
+std::unordered_map<ObjectId, RackLight> gRackLights;
+
+// Updates channel `c`'s light once per frame from the engine's signals; returns its brightness.
+float rackPlayLight(App& a, const Channel& c, size_t index) {
+  RackLight& e = gRackLights[c.id];
+  const int frame = ImGui::GetFrameCount();
+  if (e.frame != frame) {
+    const double now = ImGui::GetTime();
+    if (e.frame != frame - 1) e.light.reprime();  // not drawn last frame (scrolled away, zipped, closed)
+    const float dt = e.frame < 0 ? 0.0f : static_cast<float>(std::clamp(now - e.time, 0.0, 0.25));
+    if (auto rt = a.builder.channelRuntime(c.id))
+      e.light.update(rt->keys.starts(), rt->keys.lastVelocity(), rt->keys.anyHeld(), rt->peak.load(std::memory_order_relaxed), c.muted, dt,
+                     scrollui::animations());
+    else
+      e.light.update(0, 0, false, 0, true, dt);
+    e.frame = frame;
+    e.time = now;
+    if (e.light.lit() && !e.reported) devsig::reach("rack-lit:" + std::to_string(index));  // dev checks (waitfor)
+    e.reported = e.light.lit();
+  }
+  return e.light.alpha();
+}
+
+// The play light: a slim bar recessed into the right end of the name button.
+void drawPlayLight(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level) {
+  const auto& P = pal();
+  const ImU32 socket = P.dark ? theme::mix(P.field, P.ink, 0.35f) : theme::mix(P.surface700, P.ink, 0.18f);
+  dl->AddRectFilled(p0, p1, socket, 1.5f);
+  if (level > 0.003f) {
+    const float l = std::min(1.0f, level);
+    dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(P.hot, 0.22f * l), 3.0f);  // glow
+    dl->AddRectFilled(p0, p1, theme::mix(socket, theme::mix(P.hot, P.paper, 0.25f * l * l), l), 1.5f);
+  }
+  dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.5f : 0.25f), 1.5f);
+}
 
 std::vector<uint8_t> rowOf(const Pattern& p, ObjectId ch) {
   std::vector<uint8_t> row;
@@ -579,7 +626,8 @@ void drawChannelRack(App& a) {
       }
       // J-84: a name cut short by a narrow rack shows in full in a tooltip.
       const float nameFont = theme::kFontCaption + 1;
-      const bool truncated = a.fontRegular->CalcTextSizeA(nameFont, 1e9f, 0, c.name.c_str()).x > nameW - 14;
+      const float nameTextW = nameW - 20;  // J-186: the play light takes the button's right end
+      const bool truncated = a.fontRegular->CalcTextSizeA(nameFont, 1e9f, 0, c.name.c_str()).x > nameTextW;
       if (truncated) {
         ++shown.truncated;
         if (!ImGui::IsPopupOpen("##chmenu")) ui::Tooltip(c.name.c_str());
@@ -604,7 +652,9 @@ void drawChannelRack(App& a) {
       dl->AddLine(ImVec2(np.x + 5, np.y + 0.5f), ImVec2(np.x + nameW - 2, np.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.12f : 0.5f));
       dl->AddRectFilled(np, ImVec2(np.x + 4, np.y + cellH), theme::content(c.color), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
       theme::textEllipsis(dl, a.fontRegular, nameFont, ImVec2(np.x + 10, std::round(np.y + (cellH - 13) * 0.5f) - 1),
-                          nameW - 14, c.muted ? P.textFaint : selected && P.dark ? P.paper : P.text, c.name.c_str());
+                          nameTextW, c.muted ? P.textFaint : selected && P.dark ? P.paper : P.text, c.name.c_str());
+      // J-186: the play light (lit while the channel plays, fading after).
+      drawPlayLight(dl, ImVec2(np.x + nameW - 8, np.y + 4), ImVec2(np.x + nameW - 4, np.y + cellH - 5), rackPlayLight(a, c, ci));
       {  // J-111: a collaborator's change flashes; a sample still arriving shows its progress
         ImU32 fc = 0;
         if (const float fl = collabui::flash(a, "channels/#" + std::to_string(c.id), &fc); fl > 0)
@@ -1047,7 +1097,10 @@ void rackDevDump(App& a, int frame) {
       if (auto it = pat->stepProps.find(c.id); it != pat->stepProps.end())
         for (const auto& p : it->second) pitchSum += p.pitch < 0 ? 60 : p.pitch;
     }
-    std::printf("  channel %zu volume %.4f pan %.4f velsum %d pitchsum %d\n", i, static_cast<double>(c.gain), static_cast<double>(c.pan), velSum, pitchSum);
+    const auto lt = gRackLights.find(c.id);  // J-186: the row's play light as drawn last
+    const float light = lt == gRackLights.end() ? 0.0f : lt->second.light.alpha();
+    std::printf("  channel %zu volume %.4f pan %.4f velsum %d pitchsum %d light %.3f\n", i, static_cast<double>(c.gain), static_cast<double>(c.pan), velSum,
+                pitchSum, static_cast<double>(light));
   }
   std::fflush(stdout);
 }

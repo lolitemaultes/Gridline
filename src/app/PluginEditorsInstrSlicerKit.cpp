@@ -501,7 +501,7 @@ int segmented(App& a, const iskin::Skin& k, const char* id, float x, float y, fl
 }
 
 int padKeyboard(App& a, const PluginTarget& t, const iskin::Skin& k, float x, float y, float w, float h, int low, int whites, const bool* lit, int mark,
-                int* hover) {
+                int* hover, const float* glow) {
   static const int wOff[7] = {0, 2, 4, 5, 7, 9, 11};
   static const int bAfter[7] = {1, 1, 0, 1, 1, 1, 0};
   ImDrawList* dl = k.dl();
@@ -557,9 +557,20 @@ int padKeyboard(App& a, const PluginTarget& t, const iskin::Skin& k, float x, fl
     if (act && note == playing) c = rgb(0xFFE2B0);
     else if (note == hv) c = lerp(c, IM_COL32_WHITE, 0.22f);
     const float r = k.px(2.5f);
+    const float g = glow && note >= 0 && note < 128 ? glow[note] : 0.0f;  // J-186: the region sounds
+    if (g > 0.003f) {  // light spilling around the pad
+      const float e = std::max(2.0f, k.px(3.5f));
+      dl->AddRectFilled(ImVec2(a0.x - e, a0.y - e), ImVec2(a1.x + e, a1.y + e), rgb(0xFFB54A, 0.38f * g), r + e);
+      c = lerp(c, rgb(0xFFF1D2), 0.85f * g);
+    }
     dl->AddRectFilled(ImVec2(a0.x, a0.y + 1), ImVec2(a1.x, a1.y + 1), IM_COL32(0, 0, 0, 90), r);
     dl->AddRectFilled(a0, a1, c, r);
     dl->AddLine(ImVec2(a0.x + r, a0.y + 0.5f), ImVec2(a1.x - r, a0.y + 0.5f), theme::withAlpha(IM_COL32_WHITE, black ? 0.10f : 0.45f));
+    if (g > 0.003f) {
+      const ImU32 hi = theme::withAlpha(IM_COL32_WHITE, 0.30f * g), lo = theme::withAlpha(IM_COL32_WHITE, 0.0f);
+      dl->AddRectFilledMultiColor(ImVec2(a0.x + 1, a0.y + 1), ImVec2(a1.x - 1, a0.y + (a1.y - a0.y) * 0.5f), hi, hi, lo, lo);
+      dl->AddRect(a0, a1, rgb(0xFF9A2A, 0.95f * g), r, 0, std::max(1.5f, k.px(1.6f)));
+    }
   };
   for (int i = 0; i < whites; ++i) {
     ImVec2 a0, a1;

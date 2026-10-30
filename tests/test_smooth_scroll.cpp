@@ -242,16 +242,16 @@ int main() {
     expect(a.output() == 500, "range: a shrinking range clamps the view");
   }
   // ---- smooth motion of snapped drags (gl::smooth::Glides, shared with J-37) ----
-  {  // a snapped step glides quickly and lands exactly on the snapped value
+  {  // a snapped step glides visibly (J-188: ~140 ms) and lands exactly on the snapped value
     gl::smooth::Glides g;
     double t = 0;
     g.follow(1, 0, t, true, 0.5);
     t += 1.0 / 60;
     const double f1 = g.follow(1, 96, t, true, 0.5);
-    expect(f1 > 48 && f1 < 96, "glide: a grid step moves most of the way in the first frame, not all of it");
+    expect(f1 > 0.3 * 96 && f1 < 0.6 * 96, "glide: a grid step moves part of the way in the first frame (visible, not laggy)");
     double v = f1;
-    for (int i = 0; i < 6; ++i) t += 1.0 / 60, v = g.follow(1, 96, t, true, 0.5);
-    expect(v == 96, "glide: lands exactly on the snapped value within ~100 ms");
+    for (int i = 0; i < 11; ++i) t += 1.0 / 60, v = g.follow(1, 96, t, true, 0.5);
+    expect(v == 96, "glide: lands exactly on the snapped value within ~200 ms");
   }
   {  // frame-rate independence
     gl::smooth::Glides a, b;

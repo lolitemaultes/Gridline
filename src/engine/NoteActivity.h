@@ -23,6 +23,9 @@ class NoteActivity {
   // ---- audio thread
   void on(uint32_t id, float pitch, float velocity) {
     off(id);  // a retrigger of the same note id replaces it
+    // J-186: any note start on the channel (the channel rack's play light).
+    lastVel_.store(static_cast<uint8_t>(std::lround(std::fmin(1.f, std::fmax(0.f, velocity)) * 127.f)), std::memory_order_relaxed);
+    starts_.fetch_add(1, std::memory_order_release);
     const int k = keyOf(pitch);
     if (k < 0) return;
     vel_[k].store(static_cast<uint8_t>(std::lround(std::fmin(1.f, std::fmax(0.f, velocity)) * 127.f)), std::memory_order_relaxed);
@@ -68,6 +71,10 @@ class NoteActivity {
   uint64_t bits(int word) const { return bits_[word & 1].load(std::memory_order_relaxed); }
   uint32_t hits(int key) const { return key < 0 || key >= kKeys ? 0u : hits_[key].load(std::memory_order_acquire); }
   float velocity(int key) const { return key < 0 || key >= kKeys ? 0.f : static_cast<float>(vel_[key].load(std::memory_order_relaxed)) / 127.f; }
+  // J-186: note starts on the channel so far (any key, also out of range) and the latest one's velocity.
+  uint32_t starts() const { return starts_.load(std::memory_order_acquire); }
+  float lastVelocity() const { return static_cast<float>(lastVel_.load(std::memory_order_relaxed)) / 127.f; }
+  bool anyHeld() const { return (bits_[0].load(std::memory_order_relaxed) | bits_[1].load(std::memory_order_relaxed)) != 0; }
 
  private:
   struct Slot {
@@ -89,6 +96,8 @@ class NoteActivity {
   std::atomic<uint64_t> bits_[2] = {};
   std::atomic<uint32_t> hits_[kKeys] = {};
   std::atomic<uint8_t> vel_[kKeys] = {};
+  std::atomic<uint32_t> starts_{0};
+  std::atomic<uint8_t> lastVel_{0};
   Slot slots_[kSlots];
   int count_ = 0;
   uint16_t held_[kKeys] = {};

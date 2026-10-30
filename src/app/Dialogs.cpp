@@ -530,7 +530,7 @@ void settingsWindow(App& a) {
       bool anim = st.getBool("ui.animations") && !reduced;
       formLabel("Animations");
       if (ImGui::Checkbox(i18n::tr("Interface animations"), &anim)) st.set("ui.animations", anim);
-      ui::Hint("Decorative motion: the metronome ticking in tempo, key and pad lights fading, gliding drags and scrolling. "
+      ui::Hint("Decorative motion: the metronome ticking in tempo, key and pad lights fading, gliding drags, scrolling and zooming. "
                "Off: everything moves at once, which saves a little CPU");
       ImGui::EndDisabled();
       ImGui::BeginDisabled(reduced || !anim);
@@ -545,6 +545,11 @@ void settingsWindow(App& a) {
       formLabel("");
       if (ImGui::Checkbox(i18n::tr("Elastic edges"), &elastic)) st.set("ui.elasticEdges", elastic);
       ui::Hint("Scrolling past the start or end of a view stretches a little and springs back");
+      bool smoothZoom = st.getBool("ui.smoothZoom") && !reduced;  // J-188
+      formLabel("Zooming");
+      if (ImGui::Checkbox(i18n::tr("Smooth zooming"), &smoothZoom)) st.set("ui.smoothZoom", smoothZoom);
+      ui::Hint("Zoom steps glide in the playlist, piano roll and automation editor, keeping the point under the pointer in place; "
+               "trackpads follow the fingers directly");
       ImGui::EndDisabled();
       if (reduced) {
         ImGui::PushTextWrapPos(0);

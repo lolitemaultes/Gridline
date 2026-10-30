@@ -94,9 +94,10 @@ int segmented(App& a, const iskin::Skin& k, const char* id, float x, float y, fl
               int n, int cur, const char* const* hints, bool dark);
 
 // Pad keyboard (two rows: black-key pads over white-key pads). `lit` (128) tints region keys,
-// `mark` is the selected region's key. Plays the clicked key on the channel; returns the clicked
+// `mark` is the selected region's key, `glow` (128, optional; J-186) lights the pads of the
+// regions sounding now (0..1). Plays the clicked key on the channel; returns the clicked
 // note or -1, and the hovered note in *hover.
 int padKeyboard(App& a, const PluginTarget& t, const iskin::Skin& k, float x, float y, float w, float h, int low, int whites, const bool* lit,
-                int mark, int* hover);
+                int mark, int* hover, const float* glow = nullptr);
 
 }  // namespace gl::kerf

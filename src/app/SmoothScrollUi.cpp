@@ -26,6 +26,7 @@ namespace {
 
 smoothscroll::Params gParams;
 bool gSmoothSnap = true;
+bool gSmoothZoom = true;
 bool gAnimations = true;
 smooth::Glides gGlides;
 
@@ -86,15 +87,39 @@ void configure(const Settings& s) {
   const bool reduced = systemReducedMotion();
   // J-91: Interface animations is the master switch of all of them.
   const motion::Switches m = motion::effective(s.getBool("ui.animations"), s.getBool("ui.smoothSnap"), s.getBool("ui.smoothScroll"),
-                                               s.getBool("ui.elasticEdges"), reduced);
+                                               s.getBool("ui.elasticEdges"), s.getBool("ui.smoothZoom"), reduced);
   gParams.smooth = m.smoothScroll;
   gParams.elastic = m.elastic;
   gSmoothSnap = m.smoothSnap;
+  gSmoothZoom = m.smoothZoom;
   gAnimations = m.animations;
 }
 
 bool smoothSnap() { return gSmoothSnap; }
 bool animations() { return gAnimations; }
+bool smoothZoom() { return gSmoothZoom; }
+
+namespace {
+// Zoom glides by view: the frame each was last drawn (a view that was hidden adopts its zoom at once).
+std::unordered_map<const smoothzoom::Glide*, int> gZoomFrames;
+smoothzoom::Params zoomParams() {
+  smoothzoom::Params p;
+  p.smooth = gSmoothZoom;
+  return p;
+}
+}  // namespace
+
+void zoomBegin(smoothzoom::Glide& g, float& pxPerTick, float& scrollX) {
+  const int frame = ImGui::GetFrameCount();
+  auto it = gZoomFrames.find(&g);
+  const bool continuous = it != gZoomFrames.end() && it->second == frame - 1;
+  gZoomFrames[&g] = frame;
+  g.begin(pxPerTick, scrollX, continuous, zoomParams());
+}
+
+void zoomEnd(smoothzoom::Glide& g, float& pxPerTick, float& scrollX, bool precise) {
+  g.end(pxPerTick, scrollX, ImGui::GetIO().DeltaTime, !precise, zoomParams());
+}
 
 double glide(uint64_t key, double target, bool dragging, double eps) {
   return gGlides.follow(key, target, ImGui::GetTime(), dragging && gSmoothSnap, eps);

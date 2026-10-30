@@ -1,8 +1,8 @@
 // Gridline — smooth snapping (J-37): what an editor *draws* while a snapped
 // drag moves things from grid cell to grid cell. The logical (committed)
 // position still jumps cell by cell; the drawn position follows it with a
-// short exponential ease-out, so a one-cell move glides into place in ~55 ms
-// instead of teleporting, without lagging behind the pointer.
+// short exponential ease-out, so a one-cell move glides into place in ~140 ms
+// instead of teleporting, without lagging far behind the pointer.
 //
 // The ease is the exact solution of dx/dt = (target - x) / tau, so it is
 // frame-rate independent (n frames of dt/n land where one frame of dt does),
@@ -19,9 +19,11 @@
 
 namespace gl::smooth {
 
-// Time constant of the ease. 12 ms: 75 % of a step is covered in the first
-// 60 Hz frame, 1 % is left after ~55 ms (the "settle" time).
-constexpr double kTau = 0.012;
+// Time constant of the ease. 30 ms: ~40 % of a step is covered in the first
+// 60 Hz frame, 1 % is left after ~140 ms (the "settle" time). J-188: J-37's
+// 12 ms covered 75 % in the first frame and was done in three, which read as
+// a jump: the glide was on but could not be seen.
+constexpr double kTau = 0.030;
 // Q-10: event-lane bars (piano roll property lane, pattern automation lane)
 // glide to a new value in ~75 ms (1 % left): quick, but visibly continuous.
 constexpr double kBarTau = 0.016;

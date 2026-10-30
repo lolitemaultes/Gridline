@@ -25,6 +25,10 @@
 #include "PluginEditorsCommon.h"
 #include "PluginEditorsInstrSlicerKit.h"
 #include "RunLatch.h"
+#include "DevSignal.h"
+#include "PlayLights.h"
+#include "SmoothScrollUi.h"
+#include "../engine/RegionActivity.h"
 #include "Widgets.h"
 #include "../core/Platform.h"
 
@@ -120,6 +124,40 @@ struct SlicerUi {
   char posBuf[48] = {};
 };
 std::map<uint64_t, SlicerUi> slicerUi;
+
+// J-186: the sounding regions of each editor instance (lit regions, flags, pads, read positions).
+struct KerfLights {
+  playlight::RegionLights lights;
+  int frame = -1;
+  double time = 0;
+  std::vector<int> reported;  // regions whose "kerf-lit:<region>" dev signal was sent while lit
+};
+std::map<uint64_t, KerfLights> kerfLights;
+const playlight::RegionLights& regionLights(App& a, const PluginTarget& t, int regions) {
+  KerfLights& e = kerfLights[t.key()];
+  const int frame = ImGui::GetFrameCount();
+  if (e.frame == frame) return e.lights;
+  const double now = ImGui::GetTime();
+  const float dt = e.frame < 0 ? 0.0f : static_cast<float>(std::clamp(now - e.time, 0.0, 0.25));
+  if (e.frame != frame - 1) e.lights.primed = false;  // the editor was hidden: no stale flashes
+  e.frame = frame, e.time = now;
+  const RegionActivity* ra = nullptr;
+  if (t.isChannel())
+    if (auto rt = a.builder.channelRuntime(t.owner); rt && rt->gen) ra = rt->gen->regionActivity();
+  if (ra) {
+    e.lights.update(*ra, regions, dt, scrollui::animations());
+  } else {
+    static const RegionActivity idle;
+    e.lights.update(idle, regions, dt, scrollui::animations());
+  }
+  e.reported.resize(static_cast<size_t>(std::max(0, regions)), 0);
+  for (int r = 0; r < regions; ++r) {
+    const bool lit = e.lights.lit(r);
+    if (lit && !e.reported[static_cast<size_t>(r)]) devsig::reach("kerf-lit:" + std::to_string(r + 1));  // dev checks (waitfor; numbered as the flags)
+    e.reported[static_cast<size_t>(r)] = lit;
+  }
+  return e.lights;
+}
 
 // Slice starts (frames) as the engine computes them.
 std::vector<int64_t> sliceStarts(const PluginState& st, const Sample* smp) {
@@ -311,6 +349,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     }
   }
   auto sliceKey = [&](int s) { return s >= 0 && s < nSl ? keyOf[static_cast<size_t>(s)] : -1; };
+  const playlight::RegionLights& play = regionLights(a, t, nSl);  // J-186: the regions sounding now
   const double frames = smp ? static_cast<double>(smp->frames()) : 1.0;
   const double rate = smp && smp->sampleRate > 0 ? smp->sampleRate : 44100.0;
   // Region end (frames) for the shading.
@@ -1475,6 +1514,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
           dl->AddRectFilled(r0, r1, theme::withAlpha(IM_COL32_WHITE, 0.018f));
         }
         if (s == hovRegion && s != k) dl->AddRectFilled(r0, r1, theme::withAlpha(IM_COL32_WHITE, 0.035f));
+        if (const float pl = play.light(s); pl > 0.003f) {  // J-186: sounding: lit from the top, a bright rim
+          dl->AddRectFilledMultiColor(r0, r1, rgb(0xFFD08A, 0.26f * pl), rgb(0xFFD08A, 0.26f * pl), rgb(0xFFD08A, 0.07f * pl), rgb(0xFFD08A, 0.07f * pl));
+          dl->AddLine(ImVec2(r0.x, p0.y + 1.0f), ImVec2(r1.x, p0.y + 1.0f), rgb(0xFFE6BF, 0.95f * pl), 2.0f);
+        }
       }
       // J-182: the beat grid at the snap size (or beats under a bars:beats ruler): bars over beats over
       // subdivisions, each level fading out as its lines close up.
@@ -1515,6 +1558,12 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
           dl->PopClipRect();
         }
       }
+      for (int h = 0; h < play.headCount; ++h) {  // J-186: the read position of each voice, in its region
+        const auto& hd = play.heads[h];
+        if (hd.region >= nSl || static_cast<double>(hd.frame) < f0 || static_cast<double>(hd.frame) > f1) continue;
+        const float x = std::round(fx(static_cast<double>(hd.frame))) + 0.5f, pl = play.light(hd.region);
+        dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), rgb(0xFFF1DA, 0.35f + 0.55f * pl), 1.0f);
+      }
       // Flags: an orange handle on the marker with the number and name (number only, or
       // nothing, when there is no room before the next region's flag).
       for (int s = 0; s < nSl; ++s) {
@@ -1538,11 +1587,19 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
                                      : a.fontMono->CalcTextSizeA(labelPx, FLT_MAX, 0, lbl.c_str()).x + sk.px(10);
         const ImVec2 t0(x, top.y + sk.px(1)), t1(x + tw, p0.y);
         flagRects.push_back({x - 2, std::max(x + tw, x + 3), s});
-        const ImU32 fc = sel ? rgb(kOrange) : hv ? rgb(kOrangeDeep, 0.85f) : rgb(kOrangeDeep, lbl.empty() ? std::min(0.8f, markerAlpha * 1.6f) : 0.62f);
+        const float pl = play.light(s);  // J-186: a sounding region's flag lights up
+        ImU32 fc = sel ? rgb(kOrange) : hv ? rgb(kOrangeDeep, 0.85f) : rgb(kOrangeDeep, lbl.empty() ? std::min(0.8f, markerAlpha * 1.6f) : 0.62f);
+        if (pl > 0.003f) {
+          fc = lerp(fc, rgb(0xFFE6BF), pl);
+          dl->AddRectFilled(ImVec2(x - sk.px(1.5f), t0.y - sk.px(1)), ImVec2(x + std::max(tw, sk.px(5)) + sk.px(1.5f), t1.y), rgb(0xFFB54A, 0.30f * pl), sk.px(3),
+                            ImDrawFlags_RoundCornersTop);  // glow
+        }
         dl->AddRectFilled(t0, ImVec2(x + std::min(tw, sk.px(5)), t1.y), fc, sk.px(1.5f), ImDrawFlags_RoundCornersTop);  // the handle
         if (!lbl.empty()) {
-          dl->AddRectFilled(ImVec2(x + sk.px(5), t0.y), t1, sel ? rgb(kOrange, 0.9f) : rgb(0x2A1D10, 0.85f), sk.px(2), ImDrawFlags_RoundCornersTopRight);
-          dl->AddText(a.fontMono, labelPx, ImVec2(x + sk.px(7), t0.y + (t1.y - t0.y - labelPx) * 0.5f - 0.5f), sel ? rgb(0x1E160A) : rgb(0xF4D2A6), lbl.c_str());
+          const bool bright = sel || pl > 0.5f;
+          dl->AddRectFilled(ImVec2(x + sk.px(5), t0.y), t1, lerp(sel ? rgb(kOrange, 0.9f) : rgb(0x2A1D10, 0.85f), rgb(0xFFC873), pl), sk.px(2),
+                            ImDrawFlags_RoundCornersTopRight);
+          dl->AddText(a.fontMono, labelPx, ImVec2(x + sk.px(7), t0.y + (t1.y - t0.y - labelPx) * 0.5f - 0.5f), bright ? rgb(0x1E160A) : rgb(0xF4D2A6), lbl.c_str());
         }
       }
       dl->PopClipRect();
@@ -1833,7 +1890,12 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     const int focus = nSl > 0 && sliceKey(k) >= 0 ? sliceKey(k) : base;
     if (ui.kbLow < 0 || focus < ui.kbLow || focus >= ui.kbLow + 60) ui.kbLow = std::clamp((focus / 12) * 12 - 12, 0, 60);
     int hoverNote = -1;
-    const int clicked = kerf::padKeyboard(a, t, sk, 30, 543, 680, 48, ui.kbLow, 35, litKeys, sliceKey(k), &hoverNote);
+    float glow[128] = {};  // J-186: the pads of the regions sounding now
+    for (int s = 0; s < nSl; ++s) {
+      const int kk = sliceKey(s);
+      if (kk >= 0 && kk < 128) glow[kk] = std::max(glow[kk], play.light(s));
+    }
+    const int clicked = kerf::padKeyboard(a, t, sk, 30, 543, 680, 48, ui.kbLow, 35, litKeys, sliceKey(k), &hoverNote, glow);
     if (clicked >= 0)
       for (int s = 0; s < nSl; ++s)
         if (sliceKey(s) == clicked) {
@@ -1919,16 +1981,20 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
 
   if (trace && !traceLine.empty()) {  // J-181 dev check: control places (printed when they change)
     static std::string last;
-    char b[400];
+    char b[640];
     const std::string selName = nSl > 0 ? regionName(k) : std::string();
+    std::string litList;  // J-186: the regions lit now (1-based, as numbered on their flags)
+    for (int s = 0; s < nSl; ++s)
+      if (play.lit(s)) litList += (litList.empty() ? "" : ",") + std::to_string(s + 1);
+    if (litList.empty()) litList = "-";
     long long startSum = 0;  // J-182: the markers as a whole (an undone edit brings the sum back)
     for (int64_t f : starts) startSum += static_cast<long long>(f);
     std::snprintf(b, sizeof b,
                   " form=%.0f,%.0f,%.0f,%.0f tab=%d display=%d regions=%d snap=%d snapzero=%d rulerunit=%d grid=%d fpb=%.3f sel=%d selframe=%lld lastadd=%lld "
-                  "startsum=%lld name=[%s]",
+                  "startsum=%lld name=[%s] lit=%s",
                   static_cast<double>(root.o.x), static_cast<double>(root.o.y), static_cast<double>(root.at(kSxW, formH).x),
                   static_cast<double>(root.at(kSxW, formH).y), ui.tab, ui.display, nSl, snap, snapZero ? 1 : 0, barsRuler ? 1 : 0, gridShown ? 1 : 0, fpb, k,
-                  static_cast<long long>(nSl > 0 ? starts[static_cast<size_t>(k)] : -1), static_cast<long long>(ui.lastAdd), startSum, selName.c_str());
+                  static_cast<long long>(nSl > 0 ? starts[static_cast<size_t>(k)] : -1), static_cast<long long>(ui.lastAdd), startSum, selName.c_str(), litList.c_str());
     const std::string line = "kerf-ui:" + traceLine + b;
     if (line != last) {
       last = line;

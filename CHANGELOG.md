@@ -7,6 +7,14 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Added
 
+- Play lights. Every channel rack row has a small light bar at the right end of its name button
+  that lights up when a note starts on the channel (from pattern steps, the piano roll, a MIDI
+  keyboard, the typing keyboard or a preview), stays lit while the channel sounds (audio clips and
+  installed plugins too, following the output level) and fades out smoothly after; muted channels
+  stay dark. Kerf lights the regions that are sounding: the region in the wave view, its flag and
+  its pad on the keyboard light up (several at once when notes overlap), a thin line shows where
+  each voice is reading, and the light fades after the note ends. A region that plays only for a
+  moment still blinks.
 - Kerf time and marker settings. The ruler under the wave view shows seconds or bars and beats
   (click it, or use the View menu); bars and beats follow the loop's length in beats. Faint beat grid
   lines (bars stronger than beats) show the snap size and can be hidden in the View menu. Markers
@@ -44,6 +52,11 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- Smooth snapping can be seen again. Dragged clips, notes, selection edges, automation points and
+  cut lines did glide between grid lines, but the glide covered three quarters of each step in the
+  first frame and was over in about 50 ms, so it looked like a jump. It now takes about 140 ms to
+  settle and still starts moving at once. Switching smooth snapping on in the middle of a drag
+  applies to the next step instead of the next drag.
 - FL Studio projects: audio clips whose channel stretches its sample to a set time (a number of
   beats) now play at that length, so loops and one-shots line up with the beat grid as in FL
   Studio. Resample channels change the pitch with the stretch, the other modes keep it. Sampler
@@ -65,6 +78,16 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Changed
 
+- Zooming glides. Wheel notches, the zoom keys and buttons, the zoom tool, zoom to fit, zoom to the
+  selection and the zoom menus ease the zoom over about a tenth of a second in the playlist, the
+  piano roll and the automation editor, with the point under the pointer (or the zoom's anchor)
+  staying in place on every frame. Quick notches add up and end at exactly the same zoom as before.
+  Zooming with a trackpad still follows the fingers directly. Settings > Interface > Motion has a
+  new "Smooth zooming" switch (on by default; off with Interface animations or when the system asks
+  for reduced motion).
+- Dev scripts: `setting <key> on|off` changes a switch the way the Settings dialog does.
+- The playlist's slip tool works on a selection: dragging inside a selected clip slips the content of
+  every selected clip by the same amount (one undo step); an unselected clip still slips alone.
 - Kerf's editor has a cleaner layout. The top band is split into three cards: the level and
   tuning sliders, MODULATION (the X / Y pad with its two wheels) and PLAYBACK. In PLAYBACK one
   menu sets how a region plays (gated or one shot, the region alone or on to the end of the

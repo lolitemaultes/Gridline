@@ -1263,6 +1263,11 @@ void drawPlaylist(App& a) {
     return std::clamp(static_cast<int>(it - trackY.begin()) - 1, 0, std::max(0, nTracks - 1));
   };
   // ---- zoom: Ctrl+wheel at the pointer, PgUp/PgDn, Home = fit, toolbar buttons ----
+  // J-188: the code below works on the logical zoom and scroll (where the
+  // zooms end up, composing exactly as they always did); zoomEnd turns them
+  // into this frame's drawn view, gliding with the point under the pointer
+  // (or the anchor) held in place.
+  scrollui::zoomBegin(st.zoomGlide, st.pxPerTick, st.scrollX);
   const float gridW = gMax.x - gMin.x;
   const float playX = static_cast<float>(a.engine.position()) * st.pxPerTick - st.scrollX;
   const float keyAnchor = hovered && io.MousePos.x >= gMin.x ? io.MousePos.x - gMin.x
@@ -1298,6 +1303,8 @@ void drawPlaylist(App& a) {
     timeline::zoomAt(s, st.pxPerTick, st.scrollX, st.zoomRequest, keyAnchor);
     st.zoomRequest = 1.0f;
   }
+  const bool wheelZoom = hovered && io.MouseWheel != 0 && io.KeyCtrl;
+  if (wheelZoom) timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gMin.x);
   st.pxPerTick = static_cast<float>(timeline::clampZoom(s, st.pxPerTick));
   // Auto scrolling: page along with the song position while the song plays
   // (not while the user drags or scrolls the view).
@@ -1314,6 +1321,8 @@ void drawPlaylist(App& a) {
       sentB = lb;
     }
   }
+  // A trackpad's Ctrl+scroll follows the fingers 1:1; wheel notches and every other zoom glide.
+  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, wheelZoom && !smoothscroll::isNotch(io.MouseWheel));
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
   const Tick visGrid = timeline::visibleGrid(s, st.pxPerTick);
   const Tick snapG = timeline::snapGrid(s, st.snap, st.pxPerTick, io.KeyAlt);
@@ -1327,7 +1336,7 @@ void drawPlaylist(App& a) {
   bool notchX = false, notchY = false;
   if (hovered && io.MouseWheel != 0) {
     if (io.KeyCtrl) {
-      timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gMin.x);
+      // zoomed above (J-188)
     } else if (io.KeyAlt) {
       st.trackHeight = std::clamp(st.trackHeight + io.MouseWheel * 4, 24.0f, 120.0f);
     } else if (io.KeyShift) {
@@ -1349,6 +1358,7 @@ void drawPlaylist(App& a) {
   }
   scrollui::step(st.axX, st.scrollX, wheelX, notchX, 0.0f, maxScrollX);
   scrollui::step(st.axY, st.scrollY, wheelY, notchY, 0.0f, maxScrollY);
+  devGeom.x0 = gMin.x - st.scrollX, devGeom.pxPerTick = st.pxPerTick;  // J-188: as drawn this frame (zoom and scroll settled)
   if (canchor::collecting()) {  // J-111d: collaborators' pointers in song time and tracks
     const float pxT = std::max(1e-6f, st.pxPerTick);
     canchor::publish(canchor::PlaylistRuler, 0, 0, ImVec2(gMin.x - st.scrollX, origin.y), ImVec2(pxT, rulerH), ImVec2(gMin.x, origin.y),
@@ -3026,12 +3036,14 @@ void drawPlaylist(App& a) {
     }
   }
 
-  if ((lClick || rClick) && gestureAnimates(cg.kind) && cg.kind != ClipGesture::Paint && scrollui::smoothSnap()) {
+  if ((lClick || rClick) && gestureAnimates(cg.kind) && cg.kind != ClipGesture::Paint) {
     // J-37: the clips this drag changes start gliding from where they are drawn.
+    // J-188: tracked whatever the setting (drawn where they are while it is off),
+    // so switching smooth snapping on in the middle of a drag glides at once.
     const Song& ns = a.doc.song();
     const double now = ImGui::GetTime();
     for (const auto& c : ns.playlist)
-      if (cg.kind == ClipGesture::Slip ? c.id == cg.anchor : st.selected.count(c.id) > 0) clipAnim.seed(c.id, clipAnimValues(c, ns.clipLength(c)), now);
+      if (cg.kind == ClipGesture::Slip && !st.selected.count(cg.anchor) ? c.id == cg.anchor : st.selected.count(c.id) > 0) clipAnim.seed(c.id, clipAnimValues(c, ns.clipLength(c)), now);
   }
   if (active && cg.kind != ClipGesture::None) {
     // Dragging past the left/right edge scrolls the view (scrub, time selection, clips).
@@ -3131,9 +3143,8 @@ void drawPlaylist(App& a) {
           cg.anchor = anchorCopy;
           cg.base = a.doc.song().playlist;
           cg.copied = true;
-          if (scrollui::smoothSnap())  // the copies glide from the originals' place
-            for (const auto& c : cg.base)
-              if (st.selected.count(c.id)) clipAnim.seed(c.id, clipAnimValues(c, a.doc.song().clipLength(c)), ImGui::GetTime());
+          for (const auto& c : cg.base)  // the copies glide from the originals' place (with smooth snapping on)
+            if (st.selected.count(c.id)) clipAnim.seed(c.id, clipAnimValues(c, a.doc.song().clipLength(c)), ImGui::GetTime());
           an = baseClip();
           if (!an) break;
         }
@@ -3289,6 +3300,17 @@ void drawPlaylist(App& a) {
         const Clip* an = baseClip();
         if (!an || trackLocked(an->track)) break;
         const Tick d = timeline::snapTick(curTick, snapG, Snap::Line) - timeline::snapTick(cg.startTick, snapG, Snap::Line);
+        if (st.selected.count(an->id) && st.selected.size() > 1) {  // J-187: a selected clip slips every selected clip with it
+          std::vector<Clip> all = cg.base;
+          for (Clip& c : all)
+            if (st.selected.count(c.id) && !trackLocked(c.track)) c = pltools::slipClip(a.doc.song(), tempoMap, c, d, st.zeroCross);
+          if (!(all == a.doc.song().playlist)) {
+            group("slip clip content");
+            applyClips("slip clip content", all);
+            a.setHint(std::to_string(st.selected.size()) + " clips: content offset " + timeline::rulerLabel(s, d, std::max<Tick>(1, s.ppq / 4)));
+          }
+          break;
+        }
         const Clip after = pltools::slipClip(a.doc.song(), tempoMap, *an, d, st.zeroCross);
         if (const Clip* live = s.clip(an->id); live && !(after == *live)) {
           group("slip clip content");

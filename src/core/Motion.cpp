@@ -5,13 +5,18 @@
 
 namespace gl::motion {
 
-Switches effective(bool animations, bool smoothSnap, bool smoothScroll, bool elastic, bool reducedMotion) {
+Switches effective(bool animations, bool smoothSnap, bool smoothScroll, bool elastic, bool smoothZoom, bool reducedMotion) {
   Switches s;
   s.animations = animations && !reducedMotion;
   s.smoothSnap = s.animations && smoothSnap;
   s.smoothScroll = s.animations && smoothScroll;
   s.elastic = s.animations && elastic;
+  s.smoothZoom = s.animations && smoothZoom;
   return s;
+}
+
+Switches effective(bool animations, bool smoothSnap, bool smoothScroll, bool elastic, bool reducedMotion) {
+  return effective(animations, smoothSnap, smoothScroll, elastic, true, reducedMotion);
 }
 
 double metronomeTick(double beats, bool ticking, double anchorBeat) {

@@ -66,6 +66,7 @@ Settings::Settings() {
       {"ui.autoScroll", b(true)},              // editors follow the song position while playing
       {"ui.smoothSnap", b(true)},              // J-37: snapped drags glide from cell to cell (drawing only)
       {"ui.smoothScroll", b(true)},            // J-67: wheel scrolling glides to its step (trackpads stay 1:1)
+      {"ui.smoothZoom", b(true)},              // J-188: zoom steps glide (the point under the pointer stays put; trackpads stay 1:1)
       {"ui.elasticEdges", b(true)},            // J-67: scrolling past an edge stretches a little and springs back
       {"ui.darkTheme", b(true)},
       // J-55: Settings > Theme (app/ThemeSettings.h).

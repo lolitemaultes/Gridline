@@ -23,7 +23,7 @@ set(ENV{SDL_AUDIODRIVER} "dummy")
 
 function(run tag size frames script)
   file(WRITE "${OUT}/${tag}.txt" "${script}")
-  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --plugin gl.slicer --size ${size} --frames ${frames} --screenshot "${OUT}/${tag}.ppm"
+  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --fixed-dt 16 --plugin gl.slicer --size ${size} --frames ${frames} --screenshot "${OUT}/${tag}.ppm"
                           --dev-input "${OUT}/${tag}.txt"
                   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 280)
   if(NOT rc EQUAL 0)

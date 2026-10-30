@@ -392,6 +392,12 @@ target_link_libraries(gridline_tests_smooth_scroll PRIVATE gridline_core)
 target_include_directories(gridline_tests_smooth_scroll PRIVATE tests)
 target_compile_options(gridline_tests_smooth_scroll PRIVATE ${GL_WARN})
 add_test(NAME smooth_scroll COMMAND gridline_tests_smooth_scroll WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# J-188: smooth zooming (zoom glide model, motion switch).
+add_executable(gridline_tests_smooth_zoom tests/test_smooth_zoom.cpp)
+target_link_libraries(gridline_tests_smooth_zoom PRIVATE gridline_core)
+target_include_directories(gridline_tests_smooth_zoom PRIVATE tests)
+target_compile_options(gridline_tests_smooth_zoom PRIVATE ${GL_WARN})
+add_test(NAME smooth_zoom COMMAND gridline_tests_smooth_zoom WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 # J-99: smooth freehand drawing (stroke fill, one-euro filter, edge-preserving pass, undo grouping).
 add_executable(gridline_tests_draw_smooth tests/test_draw_smooth.cpp)
 target_link_libraries(gridline_tests_draw_smooth PRIVATE gridline_core)
@@ -870,6 +876,12 @@ target_link_libraries(gridline_tests_j77 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j77 PRIVATE tests src)
 target_compile_options(gridline_tests_j77 PRIVATE ${GL_WARN})
 add_test(NAME j77 COMMAND gridline_tests_j77 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-186: play lights: channel activity (note starts, held notes, output peak), the rack light model, Kerf's sounding regions.
+add_executable(gridline_tests_j186 tests/test_j186.cpp)
+target_link_libraries(gridline_tests_j186 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j186 PRIVATE tests src)
+target_compile_options(gridline_tests_j186 PRIVATE ${GL_WARN})
+add_test(NAME j186 COMMAND gridline_tests_j186 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-79: topmost-only delete sweeps, the audio clip volume line, zero crossings, stretch mode, toggles.
 add_executable(gridline_tests_j79 tests/test_j79.cpp)
 target_link_libraries(gridline_tests_j79 PRIVATE gridline_core)
@@ -1453,6 +1465,21 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j142_clip_edits_app PROPERTIES TIMEOUT 300)
 
+    # J-187: the slip tool on a selection slips every selected clip (one undo step); alone, only the clip.
+    add_test(NAME j187_multi_slip_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j187_multi_slip -P ${CMAKE_SOURCE_DIR}/tests/j187_multi_slip.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j187_multi_slip_app PROPERTIES TIMEOUT 300)
+
+    # J-188: smooth snapping glides a dragged clip over several frames (off: jumps; the switch applies
+    # live, also mid-drag); a Ctrl+wheel notch zooms smoothly with the point under the pointer fixed.
+    add_test(NAME j188_smooth_motion_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j188_smooth_motion -P ${CMAKE_SOURCE_DIR}/tests/j188_smooth_motion.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j188_smooth_motion_app PROPERTIES TIMEOUT 300)
+
     # The plugin window's channel strip (volume, pan, pitch, preview keyboard): hidden by default,
     # the header's eye slides it in and out, the window's size is stable after the slide, the
     # keyboard and knobs work while shown, and the choice survives a restart.
@@ -1533,6 +1560,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j183_kerf_layout -P ${CMAKE_SOURCE_DIR}/tests/j183_kerf_layout.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j183_kerf_layout_app PROPERTIES TIMEOUT 900)
+
+    # J-186: play lights in the real app: channel rack rows light while their channel plays (steps on two
+    # channels, a silent and a muted row stay dark); Kerf lights the region a note plays.
+    add_test(NAME j186_play_lights_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j186_play_lights -P ${CMAKE_SOURCE_DIR}/tests/j186_play_lights.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j186_play_lights_app PROPERTIES TIMEOUT 600)
 
     # J-112: Space / the Play button / the remote Play while Seltmann's pattern plays (transport stopped) stop the
     # pattern and leave the transport stopped; the next Play plays the song. Window focused or not.

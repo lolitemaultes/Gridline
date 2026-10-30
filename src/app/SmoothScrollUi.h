@@ -10,6 +10,7 @@
 #pragma once
 #include <cstdint>
 #include "../core/SmoothScroll.h"
+#include "../core/SmoothZoom.h"
 
 namespace gl {
 class Settings;
@@ -37,6 +38,15 @@ bool animations();
 // `dragging` (and smooth snapping is enabled), exactly `target` otherwise
 // (pass dragging = false when the grid is off: no lag). `key`: a stable id.
 double glide(uint64_t key, double target, bool dragging, double eps = 1e-3);
+
+// J-188: Settings > Interface > Motion "Smooth zooming" (ui.smoothZoom; off
+// under reduced motion or with Interface animations off).
+bool smoothZoom();
+// A view's zoom code between these two, once a frame (smoothzoom::Glide):
+// zoomBegin hands it the logical zoom and scroll, zoomEnd the drawn ones.
+// `precise`: this frame's zoom came from a trackpad (applied 1:1, at once).
+void zoomBegin(smoothzoom::Glide& g, float& pxPerTick, float& scrollX);
+void zoomEnd(smoothzoom::Glide& g, float& pxPerTick, float& scrollX, bool precise);
 
 // Q-10: drawn height of an event-lane bar (0..1 value): glides to `target`
 // with smooth::kBarTau whenever smooth snapping is on (the stored value has

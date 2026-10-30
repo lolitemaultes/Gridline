@@ -21,6 +21,7 @@
 #include <vector>
 #include "FlArticulator.h"
 #include "Generators.h"
+#include "RegionActivity.h"
 #include "TimeStretch.h"
 
 namespace gl::slicex {
@@ -157,6 +158,8 @@ class Engine {
   void kill();
   void render(float* L, float* R, int n);
   bool active() const;
+  // J-186: where the voices publish the regions they play (deck A; null: nowhere).
+  void setActivity(RegionActivity* a) { act_ = a; }
 
  private:
   struct Biquad {
@@ -209,6 +212,8 @@ class Engine {
   uint64_t rng_ = 0x2545F4914F6CDD1Dull;
   double modX_ = 0.5, modY_ = 0.5;
   size_t next_ = 0;
+  RegionActivity* act_ = nullptr;
+  void publish();
 };
 
 }  // namespace gl::slicex

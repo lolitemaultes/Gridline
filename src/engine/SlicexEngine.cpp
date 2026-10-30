@@ -800,6 +800,7 @@ void Engine::startVoice(int deck, int region, double layerGain, double tune, flo
   }
   v.gl = v.gr = 0;  // declick: ramps up over the first control block
   control(v);
+  if (act_ && deck == 0) act_->started(static_cast<int>(pick - voices_.data()), region);  // J-186
 }
 
 // Articulator value of target t, advanced by `dtBlocks` control blocks.
@@ -960,8 +961,26 @@ void Engine::kill() {
   for (auto& v : voices_) v = Voice{};
 }
 
+// J-186: the deck A regions the voices play, for the editor (after each block).
+void Engine::publish() {
+  if (!act_) return;
+  const int n = std::min(static_cast<int>(voices_.size()), RegionActivity::kSlots);
+  for (int i = 0; i < n; ++i) {
+    const Voice& v = voices_[static_cast<size_t>(i)];
+    if (v.on && v.deck == 0)
+      act_->set(i, v.region, v.delay > 0 ? -1 : static_cast<int64_t>(v.pos), static_cast<float>(std::max(std::fabs(v.gl), std::fabs(v.gr))),
+                v.held && !v.released);
+    else
+      act_->off(i);
+  }
+  for (int i = n; i < RegionActivity::kSlots; ++i) act_->off(i);
+}
+
 void Engine::render(float* L, float* R, int n) {
-  if (!aux_) return;
+  if (!aux_) {
+    publish();
+    return;
+  }
   for (auto& v : voices_) {
     if (!v.on) continue;
     const SamplePtr& smp = deck_[v.deck];
@@ -1009,6 +1028,7 @@ void Engine::render(float* L, float* R, int n) {
       }
     }
   }
+  publish();
 }
 
 }  // namespace gl::slicex

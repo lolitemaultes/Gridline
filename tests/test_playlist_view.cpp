@@ -338,12 +338,12 @@ int main() {
     expect(sameAt100, "smooth snap: frame-rate independent (same drawn value after 33 ms at every rate)");
     expect(noOvershoot, "smooth snap: no overshoot past the target cell");
     const double settle1 = smooth::settleTime();
-    expect(settle1 > 0.040 && settle1 < 0.070, "smooth snap: a one-cell step settles in 40-70 ms");
-    {  // first 60 Hz frame already covers most of the step (snappy, no lag feel)
+    expect(settle1 > 0.100 && settle1 < 0.180, "smooth snap: a one-cell step settles in 100-180 ms (J-188: visible)");
+    {  // J-188: the first 60 Hz frame covers part of the step: visible, still moving at once (no lag feel)
       Tracker<1> tr;
       tr.seed(1, {0.0}, 0.0);
       const double v = tr.follow(1, {1.0}, 1.0 / 60.0, true, eps)[0];
-      expect(v > 0.6 && v < 0.9, "smooth snap: the first 60 Hz frame covers 60-90 % of a cell");
+      expect(v > 0.3 && v < 0.6, "smooth snap: the first 60 Hz frame covers 30-60 % of a cell");
     }
     {  // target changes mid-animation: continuous, monotonic, lands exactly
       Tracker<1> tr;

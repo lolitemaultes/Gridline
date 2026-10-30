@@ -211,6 +211,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
     rt->curR = ch.gainR;
   }
   storeMax(rt->level, pk);
+  rt->peak.store(pk, std::memory_order_relaxed);  // J-186
   rt->tap.write(cL, cR, n);
   if (bc_.profile) rt->cpu.add(nowNs() - t0);
 }

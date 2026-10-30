@@ -177,8 +177,11 @@ endif()
 if(NOT h7 STREQUAL h1 OR NOT flow_out MATCHES "pixel-ui: load-failed Broken\\.png")
   message(FATAL_ERROR "FAIL: the corrupt file was not refused, or it changed the picture:\n${flow_out}")
 endif()
-string(REGEX MATCHALL "pixel-ui:[^\n]*" lines "${flow_out}")
-list(GET lines -1 l)
+# The editor's state right after the refusal (the message is shown for 8 s of real time, so a slow
+# runner may have hidden it again by the last frame).
+string(FIND "${flow_out}" "pixel-ui: load-failed Broken.png" at)
+string(SUBSTRING "${flow_out}" ${at} -1 after)
+string(REGEX MATCH "pixel-ui: load=[^\n]* err=1 [^\n]*" l "${after}")
 if(NOT l MATCHES " err=1 " OR NOT l MATCHES " name=Sunset\\.png" OR NOT l MATCHES " src=160x90 ")
   message(FATAL_ERROR "FAIL: the editor does not show the refused file's message over the kept picture: ${l}")
 endif()

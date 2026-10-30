@@ -12,6 +12,7 @@
 #include "Sample.h"
 
 namespace gl {
+class RegionActivity;  // J-186 (RegionActivity.h)
 
 struct AutomationLane;
 
@@ -215,6 +216,9 @@ class Generator {
   // the editor's running-step display. Read on the UI thread: implementations
   // publish it through an atomic.
   virtual int displayStep() const { return -1; }
+  // J-186: slicing instruments (Kerf) publish which regions their voices play
+  // (RegionActivity.h), for the editor's lit regions; read on the UI thread.
+  virtual const RegionActivity* regionActivity() const { return nullptr; }
   // A raw MIDI channel message for the instrument (controllers, pitch bend,
   // channel / poly pressure from a MIDI keyboard). Only hosted plugins use it.
   void midi(uint8_t status, uint8_t d1, uint8_t d2, int offset) {

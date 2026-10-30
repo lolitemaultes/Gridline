@@ -83,6 +83,9 @@ struct ChannelRuntime {
   Pending pending[kMaxPendingNotes];
   int pendingCount = 0;
   std::atomic<float> level{0};  // recent output peak, for the UI
+  // J-186: the last block's output peak after the strip gains (overwritten every block, so any
+  // number of UI readers; the channel rack's play light follows it).
+  std::atomic<float> peak{0};
   std::atomic<int> lastStep{-1};
   // J-110: the instrument reported a voice sounding after its last block
   // (Generator::active(); editors' own Play buttons follow it).

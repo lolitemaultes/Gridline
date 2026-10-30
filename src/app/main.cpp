@@ -676,7 +676,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     else if (l.cmd == "scroll") io.AddMouseWheelEvent(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
     else if (l.cmd == "momentum") devMomentum = {std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr), std::atoi(l.a2.c_str())};
     else if (l.cmd == "trace") devTrace = l.a0 != "off";
-    else if (l.cmd == "toasts") app.toasts.clear();  // J-78: "toasts clear": no notification cards (control runs)
+    else if (l.cmd == "setting") {  // J-188: "setting <key> on|off": a switch changed as the Settings dialog does (live)
+      if (l.a1 == "on" || l.a1 == "off") app.settings.set(l.a0, l.a1 == "on");
+    } else if (l.cmd == "toasts") app.toasts.clear();  // J-78: "toasts clear": no notification cards (control runs)
     else if (l.cmd == "mod") {
       const bool on = std::atoi(l.a1.c_str()) != 0;
       // (macOS: "ctrl" is the physical Ctrl key, "super" the Cmd key — ImGui swaps them)

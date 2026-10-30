@@ -5898,7 +5898,7 @@ msgid "Debug"
 msgstr ""
 
 #: src/app/Dialogs.cpp
-msgid "Decorative motion: the metronome ticking in tempo, key and pad lights fading, gliding drags and scrolling. Off: everything moves at once, which saves a little CPU"
+msgid "Decorative motion: the metronome ticking in tempo, key and pad lights fading, gliding drags, scrolling and zooming. Off: everything moves at once, which saves a little CPU"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -6214,6 +6214,10 @@ msgid "Smooth scrolling"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Smooth zooming"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Snapped drags (clips, notes, selections, points, cut lines) glide from grid line to grid line"
 msgstr ""
 
@@ -6295,6 +6299,14 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Your name, contact and picture for collaborators, identity and connection"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Zoom steps glide in the playlist, piano roll and automation editor, keeping the point under the pointer in place; trackpads follow the fingers directly"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Zooming"
 msgstr ""
 
 #: src/app/Dialogs.cpp

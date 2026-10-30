@@ -979,6 +979,8 @@ class KeysGen final : public Generator {
 // ============================================================ Slicer
 class SlicerGen final : public Generator {
  public:
+  SlicerGen() { sxe_.setActivity(&ra_); }
+  const RegionActivity* regionActivity() const override { return &ra_; }  // J-186
   bool active() const override {
     if (sx_) return sxe_.active();
     for (const auto& v : voices_)
@@ -1122,6 +1124,7 @@ class SlicerGen final : public Generator {
     }
     v.env.level = 0;
     v.env.gate(true);
+    ra_.started(static_cast<int>(&v - voices_.data()), k);  // J-186
   }
   void onNoteOff(uint32_t id) override {
     if (sx_) {
@@ -1149,7 +1152,10 @@ class SlicerGen final : public Generator {
       return;
     }
     SamplePtr smp = aux_ ? aux_->sample() : nullptr;
-    if (!smp) return;
+    if (!smp) {
+      for (int i = 0; i < RegionActivity::kSlots; ++i) ra_.off(i);
+      return;
+    }
     for (auto& v : voices_) {
       if (!v.on) continue;
       double span = std::max(1.0, v.end - v.start);
@@ -1195,9 +1201,24 @@ class SlicerGen final : public Generator {
         v.fade -= v.fadeStep;
       }
     }
+    publish();
   }
 
  private:
+  // J-186: the slices the voices play, for the editor (processed slices: no read position,
+  // the voices read the processed audio).
+  void publish() {
+    const int n = std::min(static_cast<int>(voices_.size()), RegionActivity::kSlots);
+    for (int i = 0; i < n; ++i) {
+      const Voice& v = voices_[static_cast<size_t>(i)];
+      if (v.on)
+        ra_.set(i, v.slice, proc_ || v.delayLeft > 0 ? -1 : static_cast<int64_t>(v.pos),
+                static_cast<float>(std::clamp(v.env.level * static_cast<double>(v.fade), 0.0, 1.0)), v.held);
+      else
+        ra_.off(i);
+    }
+    for (int i = n; i < RegionActivity::kSlots; ++i) ra_.off(i);
+  }
   std::array<Voice, 16> voices_{};
   const ChannelAux* aux_ = nullptr;
   const PluginState* state_ = nullptr;
@@ -1211,6 +1232,7 @@ class SlicerGen final : public Generator {
   size_t next_ = 0;
   bool sx_ = false, proc_ = false;
   slicex::Engine sxe_;
+  RegionActivity ra_;  // J-186
 };
 
 // ============================================================ Granular

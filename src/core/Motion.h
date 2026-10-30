@@ -15,8 +15,11 @@ struct Switches {
   bool smoothSnap = true;   // J-37 / J-67 gliding drags
   bool smoothScroll = true; // J-67
   bool elastic = true;      // J-67
+  bool smoothZoom = true;   // J-188 gliding zoom
 };
 // What is on, from the settings and the system's reduced-motion preference.
+Switches effective(bool animations, bool smoothSnap, bool smoothScroll, bool elastic, bool smoothZoom, bool reducedMotion);
+// The same with smooth zooming on (as before J-188).
 Switches effective(bool animations, bool smoothSnap, bool smoothScroll, bool elastic, bool reducedMotion);
 
 // The metronome icon's horizontal scale (+1 faces right, -1 mirrored) at song
