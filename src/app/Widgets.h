@@ -41,6 +41,7 @@ enum class Icon {
   Headphones,
   Heart, HeartFilled,  // J-148: favourite projects (welcome screen)
   People,  // J-146: collaborators (the welcome screen's Collaborative view)
+  RouteFree,  // J-195: route a channel to a free mixer track
   Count  // number of icons (not an icon)
 };
 // Q-12: true for the tool family (playlist / piano roll / automation editor strips).
@@ -299,6 +300,8 @@ void StepPad(ImDrawList* dl, ImVec2 a, ImVec2 b, bool on, bool alt, bool hovered
 void StepPlayOutline(ImDrawList* dl, ImVec2 a, ImVec2 b);
 // Number LCD (tempo, song position): mono bold, centred in a sunken field.
 void Lcd(ImDrawList* dl, ImVec2 pos, ImVec2 size, const char* text, bool hovered, bool active);
+// The x of the left edge of character `index` of `text` as Lcd centres it (monospace; index = length: the right end).
+float LcdCharX(ImVec2 pos, ImVec2 size, const char* text, int index);
 
 const uint32_t* contentPalette(int* count);  // colours offered for channels/patterns/clips
 

@@ -56,11 +56,30 @@ std::vector<ObjectId> cloneChannels(Document& d, const std::vector<ObjectId>& ch
 bool removeChannels(Document& d, const std::vector<ObjectId>& channels);
 // Channels without steps or notes in any pattern.
 std::vector<ObjectId> unusedChannels(const Song& s);
-// Insert tracks nothing is routed to: no channels, no effects, no incoming sends, default name.
+// Insert tracks nothing uses yet: no channel output (main or extra), no
+// effects, no incoming sends, no playlist track link, not armed or given an
+// audio input, default name. The master is never free.
 bool mixerTrackIsFree(const Song& s, ObjectId track);
-// Routes each channel to its own free insert track (adding tracks when needed)
-// and names/colours the track after the channel. Returns the tracks used.
-std::vector<ObjectId> routeToFreeMixerTracks(Document& d, const std::vector<ObjectId>& channels);
+// The channel is the only thing playing into its (non-master) insert.
+bool channelOwnsMixerTrack(const Song& s, ObjectId channel);
+// The lowest-numbered free insert (kNoId: none).
+ObjectId freeMixerTrack(const Song& s);
+struct FreeRouteReport {
+  int created = 0;  // inserts added because none was free
+  int kept = 0;     // channels already alone on their own insert (renamed only)
+  int full = 0;     // channels left as they were: no free insert and the maximum reached
+};
+// Routes each channel to its own free insert track (the lowest free one; a
+// new insert when none is free, up to kMaxMixerInserts) and names / colours
+// the track after the channel. `keepOwn`: a channel already alone on its own
+// insert keeps it (the interface's buttons and menus); otherwise every channel
+// moves (callers that need it off its current track). One undo step ("route to
+// free mixer tracks"); none when nothing changes. Returns the tracks used, in
+// channel order.
+std::vector<ObjectId> routeToFreeMixerTracks(Document& d, const std::vector<ObjectId>& channels, FreeRouteReport* report = nullptr,
+                                             bool keepOwn = false);
+// Same for one channel: its track (kNoId: not routed).
+ObjectId routeToFreeMixerTrack(Document& d, ObjectId channel, FreeRouteReport* report = nullptr, bool keepOwn = false);
 // Routes the channels to `track`, or (consecutive) to track, track+1, …
 bool routeChannels(Document& d, const std::vector<ObjectId>& channels, ObjectId track, bool consecutive);
 

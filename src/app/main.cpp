@@ -842,6 +842,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const std::string& name = l.args.empty() ? l.a0 : l.args[0];
       const std::string& secs = l.args.size() > 1 ? l.args[1] : l.a1;
       devWait = {name, std::max(0.0, std::strtod(secs.c_str(), nullptr)), SDL_GetPerformanceCounter(), true};
+    } else if (l.cmd == "tempo" && l.a0.empty()) {  // J-198: the song tempo to stdout
+      std::printf("tempo frame %d: %.3f undo %zu\n", frame, app.doc.song().tempo, app.doc.history().position());
+      std::fflush(stdout);
     } else if (l.cmd == "tempo") {  // J-193: tempo <bpm>: the song tempo, as the tempo display sets it (one undo step)
       app.doc.setParam(songParam(SongParam::Tempo), std::strtod(l.a0.c_str(), nullptr), false);
       app.syncEngine();
@@ -896,6 +899,15 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         std::printf("  channel %u %s type %s data %s mixer %d vol %.3f pan %.3f steps %d notes %zu\n", static_cast<unsigned>(c.id), c.name.c_str(),
                     c.plugin.type.c_str(), std::filesystem::path(c.plugin.data).filename().string().c_str(), s.mixerIndex(c.mixerTrack),
                     static_cast<double>(c.gain), static_cast<double>(c.pan), steps, notes);
+      }
+      std::fflush(stdout);
+    } else if (l.cmd == "routes") {  // J-195: each channel's mixer track (index and name), the mixer size, the selected track
+      const Song& s = app.doc.song();
+      std::printf("routes frame %d: %zu mixer tracks, selected %d, undo %zu \"%s\"\n", frame, s.mixer.size(), s.mixerIndex(app.selMixer),
+                  app.doc.history().position(), app.doc.history().undoLabel().c_str());
+      for (const auto& c : s.channels) {
+        const int mi = std::max(0, s.mixerIndex(c.mixerTrack));
+        std::printf("  route %s -> %d \"%s\"\n", c.name.c_str(), mi, mixerTrackName(s, static_cast<size_t>(mi)).c_str());
       }
       std::fflush(stdout);
     } else if (l.cmd == "windows") {  // J-111h: windows [frames]

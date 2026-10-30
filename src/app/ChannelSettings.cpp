@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <utility>
 #include "../core/I18n.h"
 #include "../core/WindowPlacement.h"
 #include "../../third_party/imgui/imgui.h"
@@ -23,6 +24,7 @@
 #include "../packs/modulation/modulation_ui.h"
 #include "../core/Platform.h"
 #include "ChannelStrip.h"
+#include "ChannelRoute.h"
 #include "Viewports.h"
 #include "SmoothScrollUi.h"
 #include <map>
@@ -71,6 +73,11 @@ static void drawWaveform(App& a, const SamplePtr& smp, ImVec2 size, float startF
 // window shows it, its slide and the content height measured when it was last
 // drawn; dev checks read StripDev.
 namespace {
+
+ObjectId& pendingFreeRoute(const App& a) {  // J-195: per application, the channel to route to a free mixer track next frame
+  static std::map<const App*, ObjectId> m;
+  return m.emplace(&a, kNoId).first->second;
+}
 struct StripDev {
   float frac = 0, shownH = 0, fullH = 0, keyW = 0, belowY = 0;
   bool moving = false, drawn = false, open = false, shown = false;
@@ -435,6 +442,9 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
 
 void drawChannelSettings(App& a) {
   routePluginWindows(a);  // installed plugins open as themselves
+  // J-195: the free-track route asked for last frame (run before the window
+  // takes its pointers into the song, which the route changes).
+  if (const ObjectId r = std::exchange(pendingFreeRoute(a), kNoId); r != kNoId && r == a.settingsChannel) chanroute::routeToFree(a, r);
   stripDev().open = false;
   const Song& s = a.doc.song();
   const Channel* c = a.settingsChannel == kNoId ? nullptr : s.channel(a.settingsChannel);
@@ -512,7 +522,14 @@ void drawChannelSettings(App& a) {
   ImGui::SameLine(0, theme::kS2);
   int mi = std::max(0, s.mixerIndex(c->mixerTrack));
   std::string mlabel = mi == 0 ? "Master" : std::to_string(mi) + "  " + mixerTrackName(s, static_cast<size_t>(mi));
-  if (ui::BeginCombo("##route", ("\xE2\x86\x92 " + mlabel).c_str(), std::max(120.0f, ImGui::GetContentRegionAvail().x - fh - theme::kS2))) {
+  // J-195: room for the free-track button and the strip eye after the list.
+  const bool routeOpen =
+      ui::BeginCombo("##route", ("\xE2\x86\x92 " + mlabel).c_str(), std::max(120.0f, ImGui::GetContentRegionAvail().x - 2 * (fh + theme::kS2)));
+  devNoteRect("chroute");
+  if (routeOpen) {
+    if (chanroute::listItem()) pendingFreeRoute(a) = id;
+    devNoteRect("chroutelist");
+    ImGui::Separator();
     for (size_t i = 0; i < s.mixer.size(); ++i) {
       std::string l = (i == 0 ? std::string("Master") : std::to_string(i) + "  " + mixerTrackName(s, i)) + "##" + std::to_string(i);
       if (ImGui::Selectable(l.c_str(), static_cast<int>(i) == mi)) a.doc.routeChannel(id, s.mixer[i].id);
@@ -520,6 +537,10 @@ void drawChannelSettings(App& a) {
     ImGui::EndCombo();
   }
   ui::Hint("Mixer track this channel plays through");
+  // J-195: route this channel to the next free mixer track (named after it).
+  ImGui::SameLine(0, theme::kS2);
+  if (chanroute::button(a, id, fh)) pendingFreeRoute(a) = id;
+  devNoteRect("chroutefree");
   // The channel strip's show / hide eye (the mixer's eye icon and button).
   ImGui::SameLine(0, theme::kS2);
   StripState& strip = stripState(a);

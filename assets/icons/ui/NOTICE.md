@@ -37,6 +37,7 @@ caret-up, caret-down, caret-left, caret-right (filled).
 - `link-slots`: two open chain halves joined by a bar (Shuttle linked volume slot).
 - `curve-smooth`: a rounded curve through three points (Convolver smooth curve mode).
 - `curve-straight`: straight segments joining three points (Convolver straight curve mode).
+- `route-free`: an arrow running into a mixer strip that holds a plus (route a channel to a free mixer track).
 
 ### Replacing hand-drawn glyphs
 

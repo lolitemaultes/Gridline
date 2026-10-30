@@ -7,6 +7,16 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Added
 
+- Route to a free mixer track, one click. The channel window of every channel (an audio clip, a
+  sampler, a Gridline instrument or an installed plugin) has a new button next to its mixer track
+  list: it routes the channel to the lowest mixer track nothing uses yet (no channel, effect, send,
+  playlist track link, recording arm or input), adds a new track when none is left, names and
+  colours the track after the channel and selects it, all in one undo step. A channel that already
+  has a track of its own keeps it and only renames it. The same action is the first entry of the
+  mixer track list, of the channel rack's mixer track menu, and a button in an installed
+  instrument's own window bar. Free-track routing (Ctrl+L and the rack menus) now also leaves alone
+  tracks used by extra plugin outputs, audio tracks, armed tracks and audio inputs, and says when
+  the mixer is full.
 - Import from URL. File > Import > Import from URL... (Ctrl+Shift+U) brings the audio of a web
   page into the project: paste a link (a link on the clipboard is filled in already), Fetch shows
   the title, uploader, length and a playlist's items, and Import downloads the best audio and saves
@@ -87,6 +97,15 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   the same cuts and the steps follow the new lengths. A click on a region still plays it.
 
 ### Fixed
+- Import from URL: a missing downloader or converter is reported as missing on the BSDs too.
+- Platter picks up very quick jog moves from a controller. A flick out and back in 30 ms now
+  reaches about 90% of the hand's travel instead of 54% (in 15 ms: 80% instead of 33%), about
+  7 ms behind the hand instead of 24 ms, and the record always ends where the hand put it. The
+  smoothing adapts to the hand: quick moves are followed closely, slow drags on a coarse wheel
+  stay as smooth as before, and Hand feel still sets how close it follows. The wheel's touch,
+  its turns and the release now each play on the sample they arrived on, so a touch, a flick
+  and a release in quick succession keep their order. Recorded passes keep the quick moves and
+  play them back exactly.
 - The clear button in the browser search field works again: it empties the field (also while you are typing in it) and leaves the cursor in the field.
 
 - Audio clips no longer shrink or get cut off when the tempo changes. A clip you stretch (by
@@ -128,6 +147,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   and the same holds for drum pads and kit pieces. The channel's key range checks the written key.
 
 ### Changed
+- Tempo display: drag or scroll the whole number to step whole BPM while the decimals stay (96.250 becomes 97.250, 98.250, ...); drag the decimals to fine-tune as before, or scroll them by 0.1 (Shift: 0.01). A short line under the digits shows which part a drag or scroll moves.
 
 - Zooming glides. Wheel notches, the zoom keys and buttons, the zoom tool, zoom to fit, zoom to the
   selection and the zoom menus ease the zoom over about a tenth of a second in the playlist, the

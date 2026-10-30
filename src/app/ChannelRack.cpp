@@ -18,6 +18,7 @@
 #include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
+#include "ChannelRoute.h"
 #include "App.h"
 #include "HostedUi.h"
 #include "ContextMenus.h"
@@ -591,6 +592,8 @@ void drawChannelRack(App& a) {
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##route");
       if (ImGui::BeginPopup("##route")) {
+        if (chanroute::menuItem(keys::label("rack.routeFree"))) chanroute::routeToFree(a, c.id);  // J-195
+        ImGui::Separator();
         for (size_t i = 0; i < s.mixer.size(); ++i) {
           std::string label = (i == 0 ? std::string("Master") : std::to_string(i) + "  " + mixerTrackName(s, i)) + "##" + std::to_string(i);
           if (ImGui::MenuItem(label.c_str(), nullptr, c.mixerTrack == s.mixer[i].id)) a.doc.routeChannel(c.id, s.mixer[i].id);

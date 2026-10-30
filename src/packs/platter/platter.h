@@ -515,6 +515,8 @@ uint64_t head();
 bool read(uint64_t index, uint32_t& device, uint8_t& status, uint8_t& d1, uint8_t& d2, int64_t* ns = nullptr);
 // The steady clock the hub stamps messages with (nanoseconds).
 int64_t nowNs();
+// Tests: a stand-in for that clock (null: the steady clock again).
+void setClock(int64_t (*fn)());
 inline constexpr uint64_t kSize = 4096;
 // Devices bound to a setup (UI thread sets them every frame): their notes do not
 // play the selected instrument and the app's templates and links leave them alone.
@@ -551,6 +553,7 @@ struct LiveView {
   bool shift = false;
   uint32_t rawSeq = 0;         // last raw MIDI message the setup saw (learn)
   uint8_t raw[3] = {0, 0, 0};
+  uint64_t wheelTicks = 0;     // J-197: jog platter ticks the deck has taken (either way, summed)
 };
 bool liveView(const Generator* g, int deck, LiveView& out);
 // J-159 (tests): what the decks use right now: the running step's parameter values, each

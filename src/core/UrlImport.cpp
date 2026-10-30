@@ -454,6 +454,12 @@ RunResult run(const std::vector<std::string>& argv, const std::string& scratchBa
               double stallSeconds, const std::string& watchDir, const std::function<void(const std::string&)>& onLine) {
   RunResult r;
   if (argv.empty()) return r;
+  // A program given by its path must exist: where the process starts by fork + exec (the BSDs), a
+  // missing one would only show as exit code 127 after it "started".
+  if (argv[0].find_first_of("/\\") != std::string::npos) {
+    std::error_code fec;
+    if (!fs::is_regular_file(fs::u8path(argv[0]), fec)) return r;
+  }
   const fs::path outP = fs::u8path(scratchBase + ".out"), errP = fs::u8path(scratchBase + ".err");
   std::error_code ec;
   fs::create_directories(outP.parent_path(), ec);

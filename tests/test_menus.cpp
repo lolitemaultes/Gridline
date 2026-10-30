@@ -181,6 +181,94 @@ void testRouting() {
   expect(ops::trimUnusedMixerTracks(f.d) == static_cast<int>(n0) - 2, "trim keeps used tracks");
 }
 
+// J-195: "Route to a free mixer track" (channel window header button, route
+// lists, rack menus): which inserts count as free, a new insert when none is,
+// the maximum, the track named after the channel, one undo step.
+void testFreeRoute() {
+  Fixture f;
+  // Inserts 1..6 each used in one way; insert 7 is the first genuinely free one.
+  f.d.editSong("setup", [&](Song& s) {
+    if (s.mixer.size() > 10) s.mixer.resize(10);  // master + 9 inserts
+    while (s.mixer.size() < 10) {
+      MixerTrack t;
+      t.id = s.allocateId();
+      t.sends.push_back({s.masterId(), 1.0f, false});
+      s.mixer.push_back(t);
+    }
+    s.mixer[1].name = "Bus";                                  // a custom name
+    s.mixer[2].slots[0].plugin.type = "gl.reverb";            // an effect
+    s.mixer[8].sends.push_back({s.mixer[3].id, 1.0f, false});  // an incoming send
+    s.channel(f.lead)->auxOuts = {s.mixer[4].id};             // another channel's extra output
+    if (s.tracks.empty()) s.tracks.resize(1);
+    s.tracks[0].mode = TrackMode::Audio;  // a playlist audio track's mixer track
+    s.tracks[0].mixer = s.mixer[5].id;
+    s.mixer[6].armed = true;  // armed for recording
+  });
+  f.d.reset(f.d.song());
+  const Song& s = f.d.song();
+  const ObjectId m7 = s.mixer[7].id, m9 = s.mixer[9].id;
+  for (size_t i = 1; i <= 6; ++i) expect(!ops::mixerTrackIsFree(s, s.mixer[i].id), ("insert " + std::to_string(i) + " is in use").c_str());
+  expect(ops::mixerTrackIsFree(s, m7) && ops::mixerTrackIsFree(s, s.mixer[8].id), "inserts 7 and 8 are free (outgoing sends do not count)");
+  expect(!ops::mixerTrackIsFree(s, s.masterId()) && !ops::channelOwnsMixerTrack(s, f.kick), "the master is never free nor owned");
+  expect(ops::freeMixerTrack(s) == m7, "the lowest free insert is 7");
+
+  // Route: insert 7, named and coloured after the channel, one undo step; undo / redo.
+  const Song base = s;
+  const size_t h0 = f.d.history().position();
+  ops::FreeRouteReport rep;
+  expect(ops::routeToFreeMixerTrack(f.d, f.kick, &rep, true) == m7 && s.channel(f.kick)->mixerTrack == m7, "kick routed to insert 7");
+  expect(s.mixerTrack(m7)->name == "Kick" && s.mixerTrack(m7)->color == s.channel(f.kick)->color, "insert 7 named and coloured after the channel");
+  expect(rep.created == 0 && rep.kept == 0 && rep.full == 0 && f.d.history().position() == h0 + 1, "one undo step, no track added");
+  expect(f.d.history().undoLabel() == "route to free mixer tracks", "undo label");
+  const Song routed = s;
+  expect(f.undoesToBaseline(base), "undo restores the routing and the name");
+  expect(f.d.redo() && s == routed, "redo routes again");
+  expect(ops::channelOwnsMixerTrack(s, f.kick), "kick now owns insert 7");
+
+  // Again: the channel keeps its own track (no undo step when nothing changes) ...
+  expect(ops::routeToFreeMixerTrack(f.d, f.kick, &rep, true) == m7 && rep.kept == 1 && f.d.history().position() == h0 + 1, "a second click keeps the track");
+  // ... and after a rename the track takes the new name.
+  f.d.renameChannel(f.kick, "Kick 2");
+  expect(ops::routeToFreeMixerTrack(f.d, f.kick, &rep, true) == m7 && s.mixerTrack(m7)->name == "Kick 2" && rep.kept == 1, "renamed channel: track renamed");
+
+  // An audio clip channel goes to the next free one (8), named after the clip.
+  ObjectId take = f.d.addChannel("Vocal take", "gl.sampler");
+  f.d.editChannel(take, "clip", [](Channel& c) { c.audioClip = true; });
+  expect(ops::routeToFreeMixerTrack(f.d, take, nullptr, true) == s.mixer[8].id && s.mixer[8].name == "Vocal take", "audio clip channel: insert 8, clip name");
+  // Two channels on one insert: neither owns it, the next one moves to a free track.
+  f.d.routeChannel(f.lead, m9);
+  ObjectId pad = f.d.addChannel("Pad", "gl.synth");
+  f.d.routeChannel(pad, m9);
+  expect(!ops::channelOwnsMixerTrack(s, pad), "a shared insert is not owned");
+
+  // None free: a new insert (sending to the master) is added and named.
+  const size_t n0 = s.mixer.size();
+  expect(ops::freeMixerTrack(s) == kNoId, "no free insert left");
+  const ObjectId added = ops::routeToFreeMixerTrack(f.d, pad, &rep, true);
+  expect(added != kNoId && s.mixer.size() == n0 + 1 && s.mixer.back().id == added && rep.created == 1, "a new insert is added");
+  expect(s.mixer.back().name == "Pad" && s.mixer.back().sends.size() == 1 && s.mixer.back().sends[0].to == s.masterId(), "new insert: named, sends to master");
+  expect(f.d.undo() && s.mixer.size() == n0 && s.channel(pad)->mixerTrack == m9, "undo removes the added insert in one step");
+  // Without keepOwn (callers that need the channel off its track) a channel on its own track still moves.
+  const ObjectId moved = ops::routeToFreeMixerTrack(f.d, f.kick, &rep);
+  expect(moved != kNoId && moved != m7 && s.channel(f.kick)->mixerTrack == moved && rep.kept == 0 && rep.created == 1,
+         "keepOwn off: the channel moves to a new track");
+  f.d.undo();
+
+  // At the maximum: nothing changes, no undo step, reported.
+  f.d.editSong("fill", [](Song& x) {
+    while (static_cast<int>(x.mixer.size()) <= kMaxMixerInserts) {
+      MixerTrack t;
+      t.id = x.allocateId();
+      t.name = "Full";
+      x.mixer.push_back(t);
+    }
+  });
+  const Song full = s;
+  const size_t hf = f.d.history().position();
+  expect(ops::routeToFreeMixerTrack(f.d, pad, &rep, true) == kNoId && rep.full == 1 && s == full && f.d.history().position() == hf,
+         "mixer full: nothing routed, no undo step");
+}
+
 void testPlaylist() {
   Fixture f;
   Song base = f.d.song();
@@ -319,6 +407,7 @@ int main() {
   testSplitByChannel();
   testChannels();
   testRouting();
+  testFreeRoute();
   testPlaylist();
   testNoteTools();
   testProgressions();

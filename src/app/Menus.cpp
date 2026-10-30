@@ -20,6 +20,7 @@
 #include "../core/Demo.h"
 #include "../core/MenuOps.h"
 #include "../core/MenuOpsExtra.h"
+#include "ChannelRoute.h"
 #include "App.h"
 #include "EditTools.h"
 #include "AutomationEditor.h"
@@ -482,10 +483,7 @@ void menuTools(App& a) {
   if (ImGui::MenuItem(i18n::tr("AI assistant activity"))) mcpui::showActivity();  // SC-07
   ImGui::SeparatorText(i18n::tr("Macros"));
   if (ImGui::MenuItem(i18n::tr("Stop all sound"), keys::label("tools.stopSound"))) stopSound(a);
-  if (ImGui::MenuItem(i18n::tr("Route channels to free mixer tracks"), keys::label("rack.routeFree"))) {
-    auto t = ops::routeToFreeMixerTracks(a.doc, selectedChannels(a));
-    if (!t.empty()) a.notify("Routed to " + std::to_string(t.size()) + " mixer track(s)");
-  }
+  if (ImGui::MenuItem(i18n::tr("Route channels to free mixer tracks"), keys::label("rack.routeFree"))) chanroute::routeToFree(a, selectedChannels(a));
   if (ImGui::MenuItem(i18n::tr("Route every channel to its own mixer track"))) {
     std::vector<ObjectId> all;
     for (const auto& c : a.doc.song().channels)
@@ -603,10 +601,7 @@ bool menuShortcuts(App& a) {
     if (key("rack.delete")) ops::removeChannels(a.doc, sel);
     if (key("rack.moveUp")) ops::moveChannels(a.doc, sel, -1);
     if (key("rack.moveDown")) ops::moveChannels(a.doc, sel, 1);
-    if (key("rack.routeFree")) {
-      auto t = ops::routeToFreeMixerTracks(a.doc, sel);
-      if (!t.empty()) a.selMixer = t.back();
-    }
+    if (key("rack.routeFree")) chanroute::routeToFree(a, sel);  // J-195: says where they went
     if (key("rack.zip"))
       for (ObjectId c : sel) a.rack.zipped.insert(c);
     if (key("rack.unzipAll")) a.rack.zipped.clear();

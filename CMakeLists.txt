@@ -1516,6 +1516,22 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j194_browser_search_clear_app PROPERTIES TIMEOUT 300)
 
+    # J-198: the tempo display's whole-number and decimal drag zones.
+    add_test(NAME j198_tempo_drag_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j198_tempo_drag
+                     -P ${CMAKE_SOURCE_DIR}/tests/j198_tempo_drag.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j198_tempo_drag_app PROPERTIES TIMEOUT 300)
+
+    # J-195: the channel window's "Route to a free mixer track" button and list item (audio clip
+    # channel, instrument, installed plugin channel): free insert, track named, one undo step.
+    add_test(NAME j195_route_free_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j195_route_free -P ${CMAKE_SOURCE_DIR}/tests/j195_route_free.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j195_route_free_app PROPERTIES TIMEOUT 300)
+
     # J-193: a stretch-resized clip keeps its bars on a tempo change; an unstretched one keeps its audio.
     add_test(NAME j193_tempo_follow_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

@@ -1311,10 +1311,12 @@ void testPluginWindowLayout() {
 
   // Control bar: every item inside the bar, no two items overlap, the
   // essential ones always shown; one row when wide, two when narrow.
-  bool inside = true, apart = true, essential = true, rows = true;
-  for (int width = 40; width <= 2400; width += 7) {
-    const L::BarLayout b = L::layoutBar(width);
+  bool inside = true, apart = true, essential = true, rows = true, routeShown = true;
+  for (int width = 40; width <= 2400; width += 7)
+  for (bool route : {false, true}) {  // J-195: an instrument's bar has the route button too
+    const L::BarLayout b = L::layoutBar(width, route);
     const int bw = std::max(width, L::kMinWindowW);
+    routeShown = routeShown && b.visible[L::kBarRoute] == route && b.rows == L::layoutBar(width).rows;
     const L::Rect bar{0, 0, bw, b.height};
     for (int i = 0; i < L::kBarItemCount; ++i) {
       if (!b.visible[i]) continue;
@@ -1332,6 +1334,10 @@ void testPluginWindowLayout() {
   expect(apart, "control bar: items never overlap (min-width layout and wrapping)");
   expect(essential, "control bar: presets, bypass, sandbox, generic and settings stay usable at small widths");
   expect(rows, "control bar: one row when wide, two rows when narrow");
+  expect(routeShown, "control bar: an instrument's bar always shows the route button, an effect's never; it never adds a row");
+  expect(L::layoutBar(L::oneRowBarWidth(), true).visible[L::kBarCpu] && L::layoutBar(L::oneRowBarWidth(), true).rows == 1 &&
+             L::layoutBar(1190, true).items[L::kBarPreset].w == L::layoutBar(1190).items[L::kBarPreset].w,
+         "control bar: the route button takes the preset box's room only when the row is tight");
   expect(!L::layoutBar(L::kMinWindowW).visible[L::kBarCpu] && L::layoutBar(L::oneRowBarWidth()).visible[L::kBarCpu],
          "control bar: the readout is dropped first when narrow");
 

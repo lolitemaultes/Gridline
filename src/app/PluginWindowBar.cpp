@@ -11,6 +11,7 @@
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
 #include "App.h"
+#include "ChannelRoute.h"
 #include "HostedUi.h"
 #include "HostedUiPages.h"
 #include "Theme.h"
@@ -79,7 +80,7 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
   const float W = static_cast<float>(w.L.w), H = static_cast<float>(w.L.bar.h);
   dl->AddRectFilledMultiColor(ImVec2(o.x, by), ImVec2(o.x + W, by + H), K.top, K.top, K.bottom, K.bottom);
   dl->AddLine(ImVec2(o.x, by + 0.5f), ImVec2(o.x + W, by + 0.5f), K.edge, 1.0f);
-  const lay::BarLayout B = lay::layoutBar(w.L.w);
+  const lay::BarLayout B = lay::layoutBar(w.L.w, t.isChannel());
   auto R = [&](lay::BarItem it, ImVec2& p0, ImVec2& p1) {
     const lay::Rect& r = B.items[it];
     p0 = ImVec2(o.x + static_cast<float>(r.x), by + static_cast<float>(r.y));
@@ -175,6 +176,16 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
     w.action = pluginbar::Action::Sandbox;
   if (toggle(lay::kBarGeneric, "##generic", "GENERIC", false, "Show Gridline's parameter list instead of the plugin's interface"))
     w.action = pluginbar::Action::Generic;
+
+  // J-195: an instrument's channel to a free mixer track (named after it).
+  if (t.isChannel() && B.visible[lay::kBarRoute]) {
+    R(lay::kBarRoute, p0, p1);
+    const bool clicked = barButton("##routefree", B.items[lay::kBarRoute], 0);
+    ui::Hint(chanroute::hint(a, t.owner));
+    boxAt(dl, p0, p1, ImGui::IsItemHovered() ? K.btnHov : K.btn, K.edge);
+    ui::drawIcon(dl, ui::Icon::RouteFree, ImVec2(std::round((p0.x + p1.x) * 0.5f), std::round((p0.y + p1.y) * 0.5f)), 13.0f, K.text);
+    if (clicked) chanroute::routeToFree(a, t.owner);
+  }
 
   // CPU / latency readout.
   if (B.visible[lay::kBarCpu] && hi) {

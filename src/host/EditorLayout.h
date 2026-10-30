@@ -49,6 +49,7 @@ enum BarItem : int {
   kBarBypass,    // plugin on / bypassed
   kBarSandbox,   // run in sandbox
   kBarGeneric,   // generic parameter editor instead of the plugin's interface
+  kBarRoute,     // J-195: route the instrument's channel to a free mixer track (channels only)
   kBarCpu,       // CPU and latency readout (dropped first when narrow)
   kBarSettings,  // unfold the settings panel
   kBarItemCount
@@ -66,9 +67,11 @@ struct BarLayout {
 };
 // Lays the bar out for a window `width` wide (clamped to kMinWindowW): one
 // row when everything fits, otherwise presets + settings on the first row and
-// the switches (and the readout, when it fits) on the second. Item rects are
-// relative to the bar's top-left corner.
-BarLayout layoutBar(int width);
+// the switches (and the readout, when it fits) on the second. The route button
+// takes its room from the preset box on one row (never from the row's width);
+// `route`: the bar has it (an instrument's window, not an effect's). Item rects
+// are relative to the bar's top-left corner.
+BarLayout layoutBar(int width, bool route = false);
 // Narrowest width that keeps the bar on one row.
 int oneRowBarWidth();
 

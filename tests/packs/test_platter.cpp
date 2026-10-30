@@ -840,6 +840,203 @@ void testHand(const std::string& rampPath) {
   }
 }
 
+// ------------------------------------------------------------------ fast moves (J-197)
+// A controller reports its jog every `pollMs` (the ticks since the last report in one
+// message, as DDJ-style wheels do); `hand(t)` is the hand's travel in ticks.
+struct Burst {
+  double peak = 0, peakHand = 0, end = 0, endHand = 0, lagMs = 0;
+  long msgs = 0;
+  std::vector<double> trace;  // the record's travel after every block (frames)
+};
+Burst burst(const std::string& rampPath, const std::function<double(double)>& hand, double dur, double pollMs = 1.0, int block = 32,
+            float feel = 0.5f) {
+  Deck d = rampDeck(rampPath);
+  d.st.params[pl::PFeel] = feel;
+  const double fpt = kSr * pl::kSecondsPerRev / 128.0;
+  run(d, 256, 32, [](Deck& dd, int64_t, int) { dd.g->midi(0x90, 0x36, 0x7F, 0); });
+  run(d, 4096, 32);  // (the touch settles)
+  const double p0 = view(d).pos;
+  const int64_t t0 = d.pos;
+  long sent = 0;
+  Burst b;
+  double nextPoll = 0, tPeak = 0, tPeakHand = 0;
+  const auto frames = static_cast<int64_t>(dur * kSr);
+  for (int64_t k = 0; k < frames; k += block) {
+    const int n = static_cast<int>(std::min<int64_t>(block, frames - k));
+    run(d, n, n, [&](Deck& dd, int64_t pos, int m) {
+      for (int o = 0; o < m; ++o) {
+        const double t = static_cast<double>(pos + o - t0) / kSr;
+        if (t + 1e-12 < nextPoll) continue;
+        nextPoll += pollMs * 1e-3;
+        const long want = static_cast<long>(std::floor(hand(t) + 1e-9));
+        const long dl = std::clamp(want - sent, -63L, 63L);
+        if (dl == 0) continue;
+        dd.g->midi(0xB0, 0x22, static_cast<uint8_t>(0x40 + dl), o);
+        sent += dl;
+        ++b.msgs;
+      }
+    });
+    const double t = static_cast<double>(d.pos - t0) / kSr;
+    const double rec = view(d).pos - p0, hd = std::floor(hand(t) + 1e-9) * fpt;
+    b.trace.push_back(rec);
+    if (std::fabs(rec) > std::fabs(b.peak)) b.peak = rec, tPeak = t;
+    if (std::fabs(hd) > std::fabs(b.peakHand)) b.peakHand = hd, tPeakHand = t;
+    b.end = rec, b.endHand = hd;
+  }
+  b.lagMs = (tPeak - tPeakHand) * 1000;
+  return b;
+}
+// Out `ticks` over `ms` and back over `ms` (a baby scratch), `n` times.
+std::function<double(double)> babyScratch(double ticks, double ms, int n = 1) {
+  return [=](double t) {
+    const double T = ms * 1e-3;
+    const int k = static_cast<int>(t / (2 * T));
+    if (k >= n || t < 0) return 0.0;
+    const double u = t - k * 2 * T;
+    return ticks * (u < T ? u / T : (2 * T - u) / T);
+  };
+}
+
+void testFast(const std::string& rampPath, const std::string& longPath) {
+  struct Case {
+    double ticks, ms;
+    int n;
+    double minPeak;
+  };
+  for (const Case& c : {Case{24, 30, 1, 0.8}, Case{24, 15, 1, 0.7}, Case{12, 20, 1, 0.7}, Case{48, 40, 1, 0.85}, Case{8, 12, 6, 0.7}}) {
+    const Burst b = burst(rampPath, babyScratch(c.ticks, c.ms, c.n), 0.6);
+    std::printf("# fast: %2.0f ticks out and back in 2 x %2.0f ms (x%d, %ld messages): record peak %.0f%% of the hand's (%.0f of %.0f frames), %.1f ms "
+                "behind; ends %.2f frames from the hand\n",
+                c.ticks, c.ms, c.n, b.msgs, 100 * b.peak / b.peakHand, b.peak, b.peakHand, b.lagMs, b.end - b.endHand);
+    expect(b.peak >= c.minPeak * b.peakHand, "fast: a split-second jog move reaches most of the hand's travel");
+    expect(std::fabs(b.end - b.endHand) < 0.5, "fast: the record ends where the hand put it");
+  }
+  // a steady spin stays smooth at any speed (the speed-up never follows single ticks)
+  const double tps = 128.0 / pl::kSecondsPerRev;  // ticks a second at 1x
+  for (double sp : {0.4, 1.0, 3.0, 8.0, 16.0}) {
+    const Burst b = burst(longPath, [&](double t) { return t * sp * tps; }, 0.6);
+    double s = 0, s2 = 0;
+    int n = 0;
+    for (size_t i = static_cast<size_t>(0.35 * kSr / 32); i + 1 < b.trace.size(); ++i) {
+      const double v = (b.trace[i + 1] - b.trace[i]) / 32;
+      s += v, s2 += v * v, ++n;
+    }
+    const double mean = s / n, sd = std::sqrt(std::max(0.0, s2 / n - mean * mean));
+    std::printf("# steady spin at %.1fx: %.3fx, speed wobble %.1f%%\n", sp, mean, 100 * sd / mean);
+    expect(std::fabs(mean - sp) < 0.03 * sp && sd < (sp < 1 ? 0.2 : 0.07) * sp, "fast: a steady spin plays its speed smoothly");
+  }
+  // hand feel: tight follows a flick closer than loose
+  const Burst loose = burst(rampPath, babyScratch(24, 20), 0.4, 1.0, 32, 0.0f), tight = burst(rampPath, babyScratch(24, 20), 0.4, 1.0, 32, 1.0f);
+  std::printf("# 24 ticks in 2 x 20 ms: hand feel loose %.0f%%, tight %.0f%%\n", 100 * loose.peak / loose.peakHand, 100 * tight.peak / tight.peakHand);
+  expect(tight.peak > loose.peak && loose.peak > 0.5 * loose.peakHand, "fast: hand feel still sets how closely the record follows");
+  // the same flicks at any block size (and any controller report rate), sample for sample
+  for (double poll : {1.0, 2.0}) {
+    std::vector<double> ref;
+    double diff = 0;
+    for (int block : {32, 96, 512}) {
+      const Burst b = burst(rampPath, babyScratch(16, 14, 4), 0.25, poll, block);
+      if (block == 32) {
+        ref = b.trace;
+        continue;
+      }
+      const size_t per = static_cast<size_t>(block / 32);
+      for (size_t i = 0; i < b.trace.size() && (i + 1) * per - 1 < ref.size(); ++i) diff = std::max(diff, std::fabs(b.trace[i] - ref[(i + 1) * per - 1]));
+    }
+    expect(!ref.empty() && diff == 0.0, "fast: quick flicks play the same at any block size");
+  }
+}
+
+// ------------------------------------------------------------------ the app's controller path (J-197)
+// Live input comes from the hub (stamped as it arrives) and plays one block later, each
+// message on its own sample: a touch, its ticks and the release keep their order and spacing.
+int64_t gFakeNs = 0;
+int64_t fakeNow() { return gFakeNs; }
+
+struct Msg {
+  int64_t at;  // sample it was sent on
+  uint8_t s, a, b;
+};
+// A touch, a baby scratch of quick flicks, a release, a long random spin with the hand on.
+std::vector<Msg> wheelScript() {
+  std::vector<Msg> m;
+  m.push_back({1000 + 5, 0x90, 0x36, 0x7F});
+  int64_t t = 1600 + 7;
+  long sent = 0;
+  auto hand = babyScratch(20, 18, 5);
+  for (int k = 0; k < 200; ++k, t += 44) {  // (a report every millisecond)
+    const long want = static_cast<long>(std::floor(hand(static_cast<double>(k) * 0.001) + 1e-9));
+    if (want != sent) m.push_back({t, 0xB0, 0x22, static_cast<uint8_t>(0x40 + (want - sent))}), sent = want;
+  }
+  m.push_back({t + 3, 0x90, 0x36, 0x00});
+  t += 4410 + 9;
+  m.push_back({t, 0x90, 0x36, 0x7F});
+  uint32_t r = 12345;
+  for (int k = 0; k < 600; ++k) {
+    t += 44 + (k % 3);
+    r = r * 1664525u + 1013904223u;
+    const int d = static_cast<int>((r >> 16) % 10) - 4;
+    if (d != 0) m.push_back({t, 0xB0, 0x22, static_cast<uint8_t>(0x40 + d)});
+  }
+  return m;
+}
+
+void testHubPath(const std::string& path) {
+  const int B = 256;
+  const auto script = wheelScript();
+  const int64_t frames = script.back().at + static_cast<int64_t>(0.5 * kSr);
+  // reference: the plugin path, each message on the sample it plays on (a block later)
+  Deck ref = rampDeck(path);
+  ref.ctx.offline = false;
+  std::vector<double> refPos;
+  size_t next = 0;
+  for (int64_t c = 0; c < frames; c += B) {
+    run(ref, B, B, [&](Deck& dd, int64_t pos, int n) {
+      for (; next < script.size() && script[next].at + B < pos + n; ++next)
+        dd.g->midi(script[next].s, script[next].a, script[next].b, static_cast<int>(script[next].at + B - pos));
+    });
+    refPos.push_back(view(ref).pos);
+  }
+  // the app's path: the hub, a clock that runs with the samples
+  pl::hub::setTapped(true);
+  pl::hub::setClock(fakeNow);
+  auto ns = [](int64_t sample) { return int64_t{1000000000} + static_cast<int64_t>(std::llround(static_cast<double>(sample) * 1e9 / kSr)); };
+  Deck d = rampDeck(path);
+  d.ctx.offline = false;
+  std::vector<double> hubPos;
+  next = 0;
+  long pushed = 0;
+  for (int64_t c = 0; c < frames; c += B) {
+    for (; next < script.size() && script[next].at < c; ++next) {  // (arrived while the last block played)
+      gFakeNs = ns(script[next].at);
+      pl::hub::push(0, script[next].s, script[next].a, script[next].b);
+      ++pushed;
+    }
+    gFakeNs = ns(c);
+    run(d, B, B);
+    hubPos.push_back(view(d).pos);
+  }
+  pl::hub::setClock(nullptr);
+  pl::hub::setTapped(false);
+  double diff = 0;
+  size_t first = refPos.size();
+  for (size_t i = 0; i < std::min(refPos.size(), hubPos.size()); ++i) {
+    diff = std::max(diff, std::fabs(refPos[i] - hubPos[i]));
+    if (first == refPos.size() && std::fabs(refPos[i] - hubPos[i]) > 1e-6) first = i;
+  }
+  if (first < refPos.size())
+    for (size_t i = first > 4 ? first - 4 : 0; i < first + 3 && i < refPos.size(); ++i)
+      std::printf("# hub path: block %zu (to sample %zu): %.3f vs %.3f\n", i, (i + 1) * B, hubPos[i], refPos[i]);
+  long ticks = 0;
+  for (const Msg& m : script)
+    if (m.s == 0xB0) ticks += static_cast<long>(m.b) - 0x40;
+  const double fpt = kSr * pl::kSecondsPerRev / 128.0;
+  const double net = (hubPos.back() - hubPos.front()) / fpt;  // (the first block: before the touch)
+  std::printf("# hub path: %ld messages, record path vs each on its own sample: largest difference %.2e frames; the record moved %.3f ticks of %ld\n", pushed,
+              diff, net, ticks);
+  expect(diff < 1e-6 && maxDiff(ref.L, d.L, 0, ref.L.size()) < 1e-6, "hub path: every wheel message plays on its own sample, in order (touch, ticks, release)");
+  expect(std::fabs(net - static_cast<double>(ticks)) < 1e-3, "hub path: no tick is lost (the record ends where the hand put it)");
+}
+
 void testResampler(const std::string& highPath) {
   // an 18 kHz tone read at 1.5x would fold to 17.1 kHz: the band-limited read removes it
   Deck d = makeDeck(highPath, 120, [](PluginState& s, pl::Model&) {
@@ -1523,6 +1720,12 @@ int main(int argc, char** argv) {
     const std::string ramp =
         writeTrack("ramp.wav", 2, [](int64_t i, int c) { return c == 0 ? kRampTop * static_cast<double>(i) / kRampN : 0.5; });
     testHand(ramp);
+  }
+  if (want("fast")) {
+    const std::string ramp =
+        writeTrack("ramp.wav", 2, [](int64_t i, int c) { return c == 0 ? kRampTop * static_cast<double>(i) / kRampN : 0.5; });
+    testFast(ramp, music120);
+    testHubPath(music120);
   }
   if (want("resampler")) testResampler(high);
   if (want("keylock")) testKeyLock(sine);

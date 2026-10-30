@@ -41,7 +41,15 @@ uint32_t deviceId(const std::string& name) {
   return h ? h : 1;
 }
 
-int64_t nowNs() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+namespace {
+std::atomic<int64_t (*)()> gClock{nullptr};
+}  // namespace
+
+int64_t nowNs() {
+  if (int64_t (*fn)() = gClock.load(std::memory_order_relaxed)) return fn();
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+void setClock(int64_t (*fn)()) { gClock.store(fn, std::memory_order_relaxed); }
 
 void push(uint32_t device, uint8_t status, uint8_t d1, uint8_t d2) {
   const int64_t t = nowNs();

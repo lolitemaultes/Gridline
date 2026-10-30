@@ -159,6 +159,20 @@ std::vector<Act> performance() {
   for (int k = 0; k < 120; ++k) cmd(100256 + k * 256, pl::CmdHandMove, 0, 0.3 * std::sin(k * 0.11), 0);
   for (int k = 0; k < 12; ++k) cmd(131000 + k * 256, pl::CmdHandMove, 0, 0.3 * std::sin(119 * 0.11) + 0.08 * (k + 1), 0);
   cmd(134200, pl::CmdHandUp, 0, 0, 0);
+  // J-197: quick flicks on A's jog (a report every millisecond, 10 ticks out and back in
+  // 2 x 12 ms, six times; the speed-up of the jog tracker is in the pass and its replay)
+  midi(137000, 0x90, 0x36, 0x7F);
+  {
+    int sent = 0;
+    for (int k = 0; k < 150; ++k) {
+      const double t = k * 0.001, T = 0.012;
+      const int c = static_cast<int>(t / (2 * T));
+      const double u = t - c * 2 * T;
+      const int want = c >= 6 ? 0 : static_cast<int>(std::floor(10 * (u < T ? u / T : (2 * T - u) / T) + 1e-9));
+      if (want != sent) midi(137300 + k * 44, 0xB0, 0x22, static_cast<uint8_t>(0x40 + want - sent)), sent = want;
+    }
+  }
+  midi(144300, 0x90, 0x36, 0x00);
   // hot cue 1 (jump)
   midi(150000, 0x97, 0x00, 0x7F), midi(151000, 0x97, 0x00, 0x00);
   // B: cue held, then released
@@ -373,8 +387,8 @@ void testLegacy(const std::string& a, const std::string& b, int liveBlock, int r
   std::printf("# %s: %zu notes, %zu lanes in the pattern\n", name, notes, lanes.size());
   auto has = [&](int param) { return std::find(lanes.begin(), lanes.end(), param) != lanes.end(); };
   // start, play A, play B, hot cue (set, jump), cue B, play B, auto loop (twice), halve,
-  // double, jump back, jump forward, the wheel touch, the mouse hand
-  expect(target == r.pat && notes == 15, "J-159 data: the start note and a note per button press");
+  // double, jump back, jump forward, the wheel touch (twice), the mouse hand
+  expect(target == r.pat && notes == 16,"J-159 data: the start note and a note per button press");
   expect(has(pl::PXfader) && has(pl::deckParam(0, pl::DEqLow)) && has(pl::deckParam(0, pl::DPitch)) && has(pl::deckParam(1, pl::DFilter)) &&
              has(pl::deckParam(0, pl::DPos)) && has(pl::deckParam(0, pl::DMouse)) && has(pl::deckParam(0, pl::DWheel)) &&
              has(pl::deckParam(1, pl::DNudge)) && lanes.size() == 8,

@@ -1219,6 +1219,20 @@ void Lcd(ImDrawList* dl, ImVec2 p, ImVec2 size, const char* text, bool hovered, 
               P.text, text);
 }
 
+float LcdCharX(ImVec2 p, ImVec2 size, const char* text, int index) {
+  App& a = app();
+  float fs = std::min(theme::kFontLcd, size.y - 8);
+  ImVec2 ts = a.fontMonoBold->CalcTextSizeA(fs, 1e9f, 0, text);
+  const float room = size.x - 12.0f;
+  if (ts.x > room && ts.x > 0) {
+    fs = std::max(9.0f, std::floor(fs * room / ts.x));
+    ts = a.fontMonoBold->CalcTextSizeA(fs, 1e9f, 0, text);
+  }
+  const int n = static_cast<int>(std::strlen(text));
+  const float cw = n > 0 ? ts.x / static_cast<float>(n) : 0.0f;
+  return std::round(p.x + (size.x - ts.x) * 0.5f) + cw * static_cast<float>(std::clamp(index, 0, n));
+}
+
 const uint32_t* contentPalette(int* count) {
   static const uint32_t pal[] = {0x5A8FD8, 0x4FB8B0, 0x6EBF6A, 0xA9C24B, 0xC9A43C, 0xD8775A, 0xE5484D, 0xD85A8F,
                                  0xA56CD8, 0x7A6FE0, 0x8FA0B5, 0x9A9A9A, 0x6B6B6B, 0x50565E, 0xBDBDBD, 0xEDEDED};

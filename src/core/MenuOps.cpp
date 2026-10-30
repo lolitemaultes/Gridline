@@ -384,48 +384,104 @@ std::vector<ObjectId> unusedChannels(const Song& s) {
   return out;
 }
 
-bool mixerTrackIsFree(const Song& s, ObjectId track) {
-  const MixerTrack* t = s.mixerTrack(track);
-  if (!t || track == s.masterId() || !t->name.empty()) return false;
-  for (const auto& c : s.channels)
-    if (c.mixerTrack == track) return false;
-  for (const auto& sl : t->slots)
-    if (!sl.plugin.empty()) return false;
+namespace {
+
+// Something other than `except` plays into the track: a channel's main or
+// extra output, another track's send, or a playlist track linked to it.
+bool trackUsedBy(const Song& s, ObjectId track, ObjectId except) {
+  for (const auto& c : s.channels) {
+    if (c.id == except) continue;
+    if (c.mixerTrack == track) return true;
+    for (ObjectId a : c.auxOuts)
+      if (a == track) return true;
+  }
   for (const auto& m : s.mixer)
     for (const auto& snd : m.sends)
-      if (snd.to == track) return false;
-  return true;
+      if (snd.to == track) return true;
+  // Playlist audio / instrument tracks linked to it (every arrangement); the
+  // instrument track of `except` itself does not count.
+  auto linked = [&](const std::vector<PlaylistTrack>& v) {
+    for (const auto& t : v)
+      if (t.mode != TrackMode::Unassigned && t.mixer == track && !(except != kNoId && t.mode == TrackMode::Instrument && t.channel == except))
+        return true;
+    return false;
+  };
+  if (linked(s.tracks)) return true;
+  for (size_t i = 0; i < s.arrangements.size(); ++i)
+    if (static_cast<int>(i) != s.currentArrangement && linked(s.arrangements[i].tracks)) return true;
+  return false;
 }
 
-std::vector<ObjectId> routeToFreeMixerTracks(Document& d, const std::vector<ObjectId>& channels) {
+// The lowest free insert of `s` (kNoId: none).
+ObjectId firstFreeInsert(const Song& s) {
+  for (size_t i = 1; i < s.mixer.size(); ++i)
+    if (mixerTrackIsFree(s, s.mixer[i].id)) return s.mixer[i].id;
+  return kNoId;
+}
+
+}  // namespace
+
+bool mixerTrackIsFree(const Song& s, ObjectId track) {
+  const MixerTrack* t = s.mixerTrack(track);
+  if (!t || track == s.masterId() || !t->name.empty() || t->armed || t->input >= 0) return false;
+  for (const auto& sl : t->slots)
+    if (!sl.plugin.empty()) return false;
+  return !trackUsedBy(s, track, kNoId);
+}
+
+bool channelOwnsMixerTrack(const Song& s, ObjectId channel) {
+  const Channel* c = s.channel(channel);
+  if (!c || c->mixerTrack == s.masterId() || !s.mixerTrack(c->mixerTrack)) return false;
+  return !trackUsedBy(s, c->mixerTrack, channel);
+}
+
+ObjectId freeMixerTrack(const Song& s) { return firstFreeInsert(s); }
+
+std::vector<ObjectId> routeToFreeMixerTracks(Document& d, const std::vector<ObjectId>& channels, FreeRouteReport* report, bool keepOwn) {
   std::vector<ObjectId> order;
   for (const auto& c : d.song().channels)
     if (std::find(channels.begin(), channels.end(), c.id) != channels.end()) order.push_back(c.id);
-  if (order.empty()) return {};
+  FreeRouteReport rep;
   std::vector<ObjectId> used;
-  d.editSong("route to free mixer tracks", [&](Song& s) {
-    ensureMixer(s, 0);
-    for (ObjectId cid : order) {
-      Channel* c = s.channel(cid);
-      ObjectId target = kNoId;
-      for (size_t i = 1; i < s.mixer.size() && target == kNoId; ++i)
-        if (mixerTrackIsFree(s, s.mixer[i].id)) target = s.mixer[i].id;
-      if (target == kNoId) {
-        if (static_cast<int>(s.mixer.size()) > kMaxMixerInserts) break;
-        MixerTrack t;
-        t.id = s.allocateId();
-        t.sends.push_back({s.masterId(), 1.0f});
-        s.mixer.push_back(t);
-        target = t.id;
+  if (!order.empty())
+    d.editSong("route to free mixer tracks", [&](Song& s) {
+      ensureMixer(s, 0);
+      for (ObjectId cid : order) {
+        Channel* c = s.channel(cid);
+        // keepOwn: a channel alone on its own insert keeps it (nothing to free up):
+        // the track only takes the channel's name and colour.
+        ObjectId target = keepOwn && channelOwnsMixerTrack(s, cid) ? c->mixerTrack : kNoId;
+        if (target != kNoId) {
+          ++rep.kept;
+        } else {
+          target = firstFreeInsert(s);
+          if (target == kNoId) {
+            if (static_cast<int>(s.mixer.size()) > kMaxMixerInserts) {
+              ++rep.full;
+              continue;
+            }
+            MixerTrack t;
+            t.id = s.allocateId();
+            t.sends.push_back({s.masterId(), 1.0f, false});
+            s.mixer.push_back(t);
+            target = t.id;
+            ++rep.created;
+          }
+        }
+        c->mixerTrack = target;
+        MixerTrack* t = s.mixerTrack(target);
+        if (!c->name.empty()) t->name = c->name;
+        t->color = c->color;
+        used.push_back(target);
       }
-      c->mixerTrack = target;
-      MixerTrack* t = s.mixerTrack(target);
-      t->name = c->name;
-      t->color = c->color;
-      used.push_back(target);
-    }
-  });
+    });
+  if (report) *report = rep;
   return used;
+}
+
+ObjectId routeToFreeMixerTrack(Document& d, ObjectId channel, FreeRouteReport* report, bool keepOwn) {
+  const std::vector<ObjectId> t = routeToFreeMixerTracks(d, {channel}, report, keepOwn);
+  return t.empty() ? kNoId : t.front();
 }
 
 bool routeChannels(Document& d, const std::vector<ObjectId>& channels, ObjectId track, bool consecutive) {

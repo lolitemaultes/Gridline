@@ -1673,6 +1673,42 @@ msgstr ""
 msgid "wheel: semitone"
 msgstr ""
 
+#: src/app/ChannelRoute.cpp
+msgid "Already on its own mixer track"
+msgstr ""
+
+#: src/app/ChannelRoute.cpp
+msgid "No free mixer track left: every insert is in use and the mixer has its maximum number of tracks"
+msgstr ""
+
+#: src/app/ChannelRoute.cpp
+msgid "Route to a free mixer track"
+msgstr ""
+
+#: src/app/ChannelRoute.cpp
+msgid "Route to a free mixer track: the next unused one (a new one when none is left), named after this channel"
+msgstr ""
+
+#: src/app/ChannelRoute.cpp
+msgid "Routed to a free mixer track"
+msgstr ""
+
+#: src/app/ChannelRoute.cpp
+msgid "Routed to a new mixer track"
+msgstr ""
+
+#: src/app/ChannelRoute.cpp
+msgid "Routed to free mixer tracks"
+msgstr ""
+
+#: src/app/ChannelRoute.cpp
+msgid "Some channels stayed where they were: the mixer has its maximum number of tracks"
+msgstr ""
+
+#: src/app/ChannelRoute.cpp
+msgid "This channel already has a mixer track of its own: click to name the track after the channel"
+msgstr ""
+
 #: src/app/ChannelSettings.cpp
 msgid "CHANNEL"
 msgstr ""
@@ -5442,10 +5478,6 @@ msgid "Route this track to selected only"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Route to a free mixer track"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
 msgid "Route to mixer track"
 msgstr ""
 
@@ -9123,10 +9155,6 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Route every channel to its own mixer track"
-msgstr ""
-
-#: src/app/Menus.cpp
-msgid "Routed to"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -13458,7 +13486,11 @@ msgid "Stop and return to the set song position; press again to silence everythi
 msgstr ""
 
 #: src/app/TopBar.cpp
-msgid "Tempo (BPM): drag or scroll to change (Shift = fine), double-click to type"
+msgid "Tempo (BPM): drag or scroll the decimals to fine-tune (scroll: 0.1, Shift: 0.01), double-click to type"
+msgstr ""
+
+#: src/app/TopBar.cpp
+msgid "Tempo (BPM): drag or scroll the whole number to step whole BPM (the decimals stay), double-click to type"
 msgstr ""
 
 #: src/app/TopBar.cpp

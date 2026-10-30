@@ -980,6 +980,14 @@ void trace(App& a, const PluginTarget& t, Ed& e, const char* state, const LiveVi
   if (lv[0].playing || lv[1].playing) devsig::reach("platter-playing");
   if (lv[0].capturing || lv[1].capturing) devsig::reach("platter-capturing");
   if (!on) return;
+  {  // J-197: the jog platter ticks each deck took (the dev jog's are all there)
+    static uint64_t lastW[2] = {~uint64_t{0}, ~uint64_t{0}};
+    if (lv[0].wheelTicks != lastW[0] || lv[1].wheelTicks != lastW[1]) {
+      lastW[0] = lv[0].wheelTicks, lastW[1] = lv[1].wheelTicks;
+      std::printf("platter: wheel ticks A %llu B %llu\n", static_cast<unsigned long long>(lastW[0]), static_cast<unsigned long long>(lastW[1]));
+      std::fflush(stdout);
+    }
+  }
   char b[320];
   std::snprintf(b, sizeof b,
                 "platter: state %s layout %d asked %d mapped %zu A[bpm %.2f playing %d speed %.3f] B[bpm %.2f playing %d] xf %.2f takes %zu armed %d as %d capturing %d", state,

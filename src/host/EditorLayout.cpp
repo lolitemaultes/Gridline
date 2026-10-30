@@ -17,6 +17,8 @@ int barItemWidth(BarItem item) {
       return 62;
     case kBarGeneric:
       return 62;
+    case kBarRoute:
+      return 26;
     case kBarCpu:
       return 104;
     case kBarSettings:
@@ -33,12 +35,13 @@ int rowY(int row) { return row * kBarRowH + (kBarRowH - kItemH) / 2; }
 
 int oneRowBarWidth() {
   int w = 2 * kBarPad;
-  for (int i = 0; i < kBarItemCount; ++i) w += barItemWidth(static_cast<BarItem>(i));
+  for (int i = 0; i < kBarItemCount; ++i)
+    if (i != kBarRoute) w += barItemWidth(static_cast<BarItem>(i));  // the route button shares the preset box's room
   // gaps between items, plus a wider separator before the switches and before the readout
-  return w + (kBarItemCount - 1) * kGap + 2 * kGap;
+  return w + (kBarItemCount - 2) * kGap + 2 * kGap;
 }
 
-BarLayout layoutBar(int width) {
+BarLayout layoutBar(int width, bool route) {
   width = std::max(width, kMinWindowW);
   BarLayout L;
   auto put = [&](BarItem it, int x, int row, int w) {
@@ -47,16 +50,20 @@ BarLayout layoutBar(int width) {
   };
   const int one = oneRowBarWidth();
   if (width >= one) {
-    // < preset > | ON SANDBOX GENERIC | ... CPU  [gear]   (preset stretches)
+    // < preset > | ON SANDBOX GENERIC ROUTE | ... CPU  [gear]   (preset stretches)
     const int extra = std::min(width - one, kPresetMaxW - kPresetMinW);
+    const int spare = width - one - extra;  // room left over in the middle
+    const int routeRoom = route ? barItemWidth(kBarRoute) + kGap : 0;
+    const int pw = kPresetMinW + extra - std::max(0, routeRoom - spare);
     int x = kBarPad;
     put(kBarPrev, x, 0, barItemWidth(kBarPrev));
     x += barItemWidth(kBarPrev) + kGap;
-    put(kBarPreset, x, 0, kPresetMinW + extra);
-    x += kPresetMinW + extra + kGap;
+    put(kBarPreset, x, 0, pw);
+    x += pw + kGap;
     put(kBarNext, x, 0, barItemWidth(kBarNext));
     x += barItemWidth(kBarNext) + 2 * kGap;
-    for (BarItem it : {kBarBypass, kBarSandbox, kBarGeneric}) {
+    for (BarItem it : {kBarBypass, kBarSandbox, kBarGeneric, kBarRoute}) {
+      if (it == kBarRoute && !route) continue;
       put(it, x, 0, barItemWidth(it));
       x += barItemWidth(it) + kGap;
     }
@@ -80,10 +87,11 @@ BarLayout layoutBar(int width) {
     put(kBarPreset, x, 0, pw);
     put(kBarNext, x + pw + kGap, 0, barItemWidth(kBarNext));
   }
-  // Row 1: ON SANDBOX GENERIC ... CPU (when it fits).
+  // Row 1: ON SANDBOX GENERIC ROUTE ... CPU (when it fits).
   {
     int x = kBarPad;
-    for (BarItem it : {kBarBypass, kBarSandbox, kBarGeneric}) {
+    for (BarItem it : {kBarBypass, kBarSandbox, kBarGeneric, kBarRoute}) {
+      if (it == kBarRoute && !route) continue;
       put(it, x, 1, barItemWidth(it));
       x += barItemWidth(it) + kGap;
     }

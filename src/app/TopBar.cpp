@@ -58,6 +58,8 @@ const MenuDef kMenus[] = {{i18n::N_("File"), menuFile},     {i18n::N_("Edit"), m
                           {i18n::N_("Help"), menuHelp}};
 
 
+void noteRectAt(const char* name, ImVec2 a, ImVec2 b);  // dev: an "sdlat" target (below)
+
 // Tempo LCD: drag / wheel / double-click to type. Returns true when changed.
 bool tempoLcd(App& a, double* v, float width) {
   ImGui::PushID("tempo");
@@ -66,12 +68,37 @@ bool tempoLcd(App& a, double* v, float width) {
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   bool changed = false;
   ImGuiIO& io = ImGui::GetIO();
-  if (act && io.MouseDelta.y != 0) {
-    *v = std::clamp(*v - io.MouseDelta.y * 0.25 * (io.KeyShift ? 0.1 : 1.0), 10.0, 522.0);
-    changed = true;
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "%.3f", *v);
+  // Two zones split at the decimal point: dragging the whole part steps whole BPM and keeps the
+  // decimals (96.250 -> 97.250); dragging the decimals moves smoothly (0.25 BPM per pixel).
+  const float dotX = ui::LcdCharX(p, ImVec2(width, kBtn), buf, static_cast<int>(std::strcspn(buf, ".")));
+  enum Zone { None, Whole, Fraction };
+  static Zone zone = None;
+  static double startBpm = 0, dragPx = 0;
+  if (ImGui::IsItemActivated()) {
+    zone = io.MouseClickedPos[0].x < dotX ? Whole : Fraction;
+    startBpm = *v, dragPx = 0;
   }
-  if (hov && io.MouseWheel != 0) {
-    *v = std::clamp(*v + io.MouseWheel * (io.KeyShift ? 0.1 : 1.0), 10.0, 522.0);
+  if (!act) zone = None;
+  if (act && io.MouseDelta.y != 0) {
+    if (zone == Whole) {
+      constexpr double kPxPerBpm = 4.0, kFinePxPerBpm = 16.0;  // Shift: slower, still whole steps
+      dragPx -= static_cast<double>(io.MouseDelta.y) / (io.KeyShift ? kFinePxPerBpm : kPxPerBpm);
+      const double steps = std::trunc(dragPx);
+      double to = startBpm + steps;
+      if (to > 522.0) to -= std::ceil(to - 522.0);  // stay in range, keeping the decimals
+      if (to < 10.0) to += std::ceil(10.0 - to);
+      to = std::clamp(to, 10.0, 522.0);
+      if (to != *v) *v = to, changed = true;
+    } else {
+      *v = std::clamp(*v - io.MouseDelta.y * 0.25 * (io.KeyShift ? 0.1 : 1.0), 10.0, 522.0);
+      changed = true;
+    }
+  }
+  if (hov && io.MouseWheel != 0) {  // over the whole number: whole BPM; over the decimals: 0.1 (Shift: 0.01)
+    const double step = io.MousePos.x < dotX ? 1.0 : io.KeyShift ? 0.01 : 0.1;
+    *v = std::clamp(std::round((*v + io.MouseWheel * step) * 1000.0) / 1000.0, 10.0, 522.0);
     changed = true;
   }
   if (hov || act) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
@@ -80,10 +107,21 @@ bool tempoLcd(App& a, double* v, float width) {
     actionLinkMenuItems(a, RemoteAction::TapTempo);
     ImGui::EndPopup();
   }
-  char buf[32];
   std::snprintf(buf, sizeof buf, "%.3f", *v);
-  ui::Lcd(ImGui::GetWindowDrawList(), p, ImVec2(width, kBtn), buf, hov, act);
-  ui::Hint("Tempo (BPM): drag or scroll to change (Shift = fine), double-click to type");
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ui::Lcd(dl, p, ImVec2(width, kBtn), buf, hov, act);
+  noteRectAt("tempoint", p, ImVec2(dotX, p.y + kBtn));
+  noteRectAt("tempofrac", ImVec2(dotX, p.y), ImVec2(p.x + width, p.y + kBtn));
+  const bool overWhole = act ? zone == Whole : io.MousePos.x < dotX;
+  if (hov || act) {  // which digits a drag moves: a short accent bar under them
+    const auto& P = pal();
+    const float x0 = overWhole ? ui::LcdCharX(p, ImVec2(width, kBtn), buf, 0) : dotX;
+    const float x1 = overWhole ? dotX : ui::LcdCharX(p, ImVec2(width, kBtn), buf, static_cast<int>(std::strlen(buf)));
+    const float y = std::round(p.y + kBtn - 4.0f);
+    dl->AddLine(ImVec2(std::round(x0) + 1.0f, y), ImVec2(std::round(x1) - 1.0f, y), theme::withAlpha(P.accent, act ? 0.9f : 0.5f), 1.5f);
+  }
+  if (overWhole) ui::Hint("Tempo (BPM): drag or scroll the whole number to step whole BPM (the decimals stay), double-click to type");
+  else ui::Hint("Tempo (BPM): drag or scroll the decimals to fine-tune (scroll: 0.1, Shift: 0.01), double-click to type");
   ui::Tooltip("Tempo (BPM)");
   if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) ImGui::OpenPopup("##type");
   if (ImGui::BeginPopup("##type")) {
@@ -176,12 +214,13 @@ struct DevRect {
   ImVec2 a, b;
   int frame = -1;
 };
-DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}};
+DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}};
 float gMetroMirror = 1.0f;
-void noteRect(const char* name) {  // the last item's rectangle
+void noteRectAt(const char* name, ImVec2 a, ImVec2 b) {
   for (DevRect& r : gDevRects)
-    if (std::strcmp(r.name, name) == 0) r.a = ImGui::GetItemRectMin(), r.b = ImGui::GetItemRectMax(), r.frame = ImGui::GetFrameCount();
+    if (std::strcmp(r.name, name) == 0) r.a = a, r.b = b, r.frame = ImGui::GetFrameCount();
 }
+void noteRect(const char* name) { noteRectAt(name, ImGui::GetItemRectMin(), ImGui::GetItemRectMax()); }  // the last item's rectangle
 }  // namespace
 
 void devNoteRect(const char* name) { noteRect(name); }

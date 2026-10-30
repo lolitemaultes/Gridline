@@ -32,6 +32,7 @@
 #include "../engine/KerfMarks.h"
 #include "../core/MenuParity.h"
 #include "TrackIcons.h"
+#include "ChannelRoute.h"
 #include "App.h"
 #include "EditTools.h"
 #include "ScriptUi.h"
@@ -721,10 +722,7 @@ void channelContextMenu(App& a, ObjectId id) {
     routeMenuItems(a, [c](ObjectId t) { return c->mixerTrack == t; }, [&a, id](ObjectId t) { a.doc.routeChannel(id, t); });
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Route to a free mixer track"), keys::label("rack.routeFree"))) {
-    auto t = ops::routeToFreeMixerTracks(a.doc, {id});
-    if (!t.empty()) a.selMixer = t[0];
-  }
+  if (chanroute::menuItem(keys::label("rack.routeFree"))) chanroute::routeToFree(a, id);  // J-195
   trackui::channelMenuItems(a, id);  // PL-08: instrument track link
   ImGui::Separator();
   if (p) {
@@ -873,10 +871,7 @@ void rackOptionsMenu(App& a) {
   if (ImGui::MenuItem(i18n::tr("Zip selected"), keys::label("rack.zip"), false, any))
     for (ObjectId c : sel) a.rack.zipped.insert(c);
   if (ImGui::MenuItem(i18n::tr("Unzip all"), keys::label("rack.unzipAll"), false, !a.rack.zipped.empty())) a.rack.zipped.clear();
-  if (ImGui::MenuItem(i18n::tr("Route selected to free mixer tracks"), keys::label("rack.routeFree"), false, any)) {
-    auto t = ops::routeToFreeMixerTracks(a.doc, sel);
-    if (!t.empty()) a.selMixer = t.back();
-  }
+  if (ImGui::MenuItem(i18n::tr("Route selected to free mixer tracks"), keys::label("rack.routeFree"), false, any)) chanroute::routeToFree(a, sel);
   if (ImGui::MenuItem(i18n::tr("Select their mixer tracks"), nullptr, false, any))
     if (const Channel* c = s.channel(sel.front())) a.selMixer = c->mixerTrack, a.showMixer = true;
   if (s.pattern(a.curPattern) && ImGui::BeginMenu(i18n::tr("Automation clips in this pattern"))) {  // J-173
@@ -2189,10 +2184,7 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
       instrumentItems([&a, owner](const std::string& type) { a.doc.setChannelPlugin(owner, type); }, info->type);
       ImGui::EndMenu();
     }
-    if (ImGui::MenuItem(i18n::tr("Route to a free mixer track"), keys::label("rack.routeFree"))) {
-      auto tr = ops::routeToFreeMixerTracks(a.doc, {owner});
-      if (!tr.empty()) a.selMixer = tr[0];
-    }
+    if (chanroute::menuItem(keys::label("rack.routeFree"))) chanroute::routeToFree(a, owner);  // J-195
     if (ImGui::MenuItem(i18n::tr("Clone channel"))) a.selectChannel(a.doc.cloneChannel(owner));
     if (ImGui::MenuItem(i18n::tr("Delete channel"))) a.doc.removeChannel(owner);
   } else {
