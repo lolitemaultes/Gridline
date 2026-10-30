@@ -227,12 +227,23 @@ void App::syncEngine() {
       lastSampleBuild = now;
     }
   }
-  if (doc.revision() == builtRevision_ && builder.sampleRate() == engine.sampleRate() && builder.pdc() == pdc && !builder.latencyChanged() &&
-      !stale && !samplesReady)
+  // J-196: while a pointer gesture edits (a knob, a field or a handle held, a
+  // wheel turn) builds start no clip renders; they start once it is over.
+  const bool editing = doc.inPointerGesture();
+  const bool settled = builder.deferredRenders() && !editing;
+  const bool engineChanged = builder.sampleRate() != engine.sampleRate() || builder.pdc() != pdc || builder.latencyChanged() || stale ||
+                             samplesReady || builder.voicesPending();
+  if (doc.revision() == builtRevision_ && !engineChanged && !settled) return;
+  // J-196: only clip levels changed (a volume or fade drag, on one clip or a
+  // selection): written into the playing program, no build.
+  if (!engineChanged && !settled && doc.clipLevelsOnlySince(builtRevision_) && builder.patchClipLevels(doc.song())) {
+    builtRevision_ = doc.revision();
     return;
+  }
   builder.setSampleRate(engine.sampleRate());
   builder.setPdc(pdc);
   builder.setAsyncSamples(true);
+  builder.setDeferRenders(editing);
   builtSampleGen_ = sampleGen;
   builtRevision_ = doc.revision();
   const Song& s = doc.song();

@@ -164,13 +164,25 @@ void Document::reset(Song song) {
   ++revision_;
 }
 
-void Document::exec(CommandPtr cmd, bool mayJoin) {
+void Document::exec(CommandPtr cmd, bool mayJoin, bool clipLevels) {
   const bool join = mayJoin && groups_.empty() && pointerGesture_ && gestureSerial_ != 0 && undo_.canAmend() &&
                     undo_.stateSerial() == gestureSerial_;
   if (beforeChange && groups_.empty() && !join && !undo_.wouldMerge(*cmd)) beforeChange();
-  cmd = applyWithTempoRefit(std::move(cmd));  // (applied)
-  ++revision_;
-  tempoMapRev_ = revision_;
+  if (clipLevels) {
+    // J-196: clip levels never change the tempo map (no refit; the map stays
+    // valid if it was), and a run of them can be patched into a built program.
+    const bool mapCurrent = tempoMapOk_ && tempoMapRev_ == revision_;
+    cmd->apply(song_);
+    if (levelTail_ != revision_) levelRunStart_ = revision_;
+    ++revision_;
+    levelTail_ = revision_;
+    tempoMapRev_ = revision_;
+    if (!mapCurrent) tempoMapOk_ = false;
+  } else {
+    cmd = applyWithTempoRefit(std::move(cmd));  // (applied)
+    ++revision_;
+    tempoMapRev_ = revision_;
+  }
   if (!groups_.empty()) {
     groups_.back()->add(std::move(cmd));
     return;
@@ -342,7 +354,14 @@ bool Document::editPattern(ObjectId id, const std::string& label, const std::fun
   GL_OBJECT_EDIT(Pattern, getPattern, song_.pattern(id))
 }
 bool Document::editClip(ObjectId id, const std::string& label, const std::function<void(Clip&)>& fn, uint64_t mergeKey) {
-  GL_OBJECT_EDIT(Clip, getClip, song_.clip(id))
+  Clip* obj = song_.clip(id);
+  if (!obj) return false;
+  Clip after = *obj;
+  fn(after);
+  if (after == *obj) return true;
+  const bool levels = clipLevelsOnly(*obj, after);  // J-196
+  exec(std::make_unique<ObjectEdit<Clip>>(label, getClip, id, *obj, std::move(after), mergeKey), true, levels);
+  return true;
 }
 bool Document::editAutomation(ObjectId id, const std::string& label, const std::function<void(AutomationClip&)>& fn,
                               uint64_t mergeKey) {
@@ -817,25 +836,61 @@ bool Document::setClipLength(ObjectId id, Tick length) {
   return editClip(id, "resize clip", [&](Clip& c) { c.length = length; });
 }
 
+bool clipLevelsOnly(const Clip& a, const Clip& b) {
+  Clip x = b;
+  x.gain = a.gain;
+  x.fadeIn = a.fadeIn, x.fadeOut = a.fadeOut;
+  x.fadeInManual = a.fadeInManual, x.fadeOutManual = a.fadeOutManual;
+  x.fadeInShape = a.fadeInShape, x.fadeOutShape = a.fadeOutShape;
+  x.fadeInTension = a.fadeInTension, x.fadeOutTension = a.fadeOutTension;
+  x.fadeInDeclick = a.fadeInDeclick, x.fadeOutDeclick = a.fadeOutDeclick;
+  return x == a;
+}
+
 namespace {
+// The clips an edit of several clips changed (J-196: only those, not two
+// copies of the whole playlist per step; the playlist keeps its order and ids).
 class ClipsEdit final : public Command {
  public:
-  ClipsEdit(std::string label, std::vector<Clip> before, std::vector<Clip> after, uint64_t key)
-      : label_(std::move(label)), before_(std::move(before)), after_(std::move(after)), key_(key) {}
-  void apply(Song& s) override { s.playlist = after_; }
-  void revert(Song& s) override { s.playlist = before_; }
+  struct Change {
+    size_t index;  // position in the playlist (checked against the id)
+    Clip before, after;
+  };
+  ClipsEdit(std::string label, std::vector<Change> changes, uint64_t key)
+      : label_(std::move(label)), changes_(std::move(changes)), key_(key) {}
+  void apply(Song& s) override {
+    for (const Change& c : changes_)
+      if (Clip* k = at(s, c)) *k = c.after;
+  }
+  void revert(Song& s) override {
+    for (auto it = changes_.rbegin(); it != changes_.rend(); ++it)
+      if (Clip* k = at(s, *it)) *k = it->before;
+  }
   std::string label() const override { return label_; }
   uint64_t mergeKey() const override { return key_; }
   bool mergeWith(const Command& next) override {
     auto* n = dynamic_cast<const ClipsEdit*>(&next);
     if (!n) return false;
-    after_ = n->after_;
+    for (size_t k = 0; k < n->changes_.size(); ++k) {
+      const Change& c = n->changes_[k];
+      if (k < changes_.size() && changes_[k].before.id == c.before.id) {  // (a drag: the same clips each frame)
+        changes_[k].after = c.after;
+        continue;
+      }
+      auto it = std::find_if(changes_.begin(), changes_.end(), [&](const Change& q) { return q.before.id == c.before.id; });
+      if (it != changes_.end()) it->after = c.after;
+      else changes_.push_back(c);
+    }
     return true;
   }
 
  private:
+  static Clip* at(Song& s, const Change& c) {
+    if (c.index < s.playlist.size() && s.playlist[c.index].id == c.before.id) return &s.playlist[c.index];
+    return s.clip(c.before.id);
+  }
   std::string label_;
-  std::vector<Clip> before_, after_;
+  std::vector<Change> changes_;
   uint64_t key_;
 };
 }  // namespace
@@ -858,8 +913,15 @@ bool Document::editClips(const std::string& label, const std::function<void(std:
     after[i].start = std::max<Tick>(0, after[i].start);
     after[i].length = std::max<Tick>(0, after[i].length);
   }
-  if (after == song_.playlist) return true;
-  exec(std::make_unique<ClipsEdit>(label, song_.playlist, std::move(after), mergeKey));
+  std::vector<ClipsEdit::Change> changes;
+  bool levels = true;
+  for (size_t i = 0; i < after.size(); ++i)
+    if (!(after[i] == song_.playlist[i])) {
+      levels = levels && clipLevelsOnly(song_.playlist[i], after[i]);  // J-196
+      changes.push_back({i, song_.playlist[i], std::move(after[i])});
+    }
+  if (changes.empty()) return true;
+  exec(std::make_unique<ClipsEdit>(label, std::move(changes), mergeKey), true, levels);
   return true;
 }
 

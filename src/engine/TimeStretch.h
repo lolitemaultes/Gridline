@@ -155,6 +155,10 @@ struct ClipRequest {
 // rendering. async: queued on the background renderer (playback falls back to
 // the realtime voice until ready); otherwise rendered before returning.
 RenderedClipPtr renderClip(const ClipRequest& r, bool async);
+// J-196: the render renderClip would return if one is cached (finished or on
+// its way), else null; never starts one (an edit in progress: the realtime
+// stretch plays until the value settles).
+RenderedClipPtr findRenderedClip(const ClipRequest& r);
 // Blocks until every queued clip render is done (tests, exports).
 void waitForPendingRenders();
 // J-103 app quit: drops queued renders and joins the render thread before main() returns

@@ -113,13 +113,17 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     auto uOf = [&](int64_t i) { return sec0 + static_cast<double>(i) / sr - c.startSec; };
     // Declick only where the clip cuts into the audio (an explicit fade replaces it).
     // J-43: FL's per-edge declicker mode: 2 bypasses it, 1 / 3 always declick.
-    const bool dIn = c.declickIn == 2 ? false : c.declickIn == 1 || c.declickIn == 3 || c.srcStart > 0;
-    const bool dOut = c.declickOut == 2 ? false : c.declickOut == 1 || c.declickOut == 3 || c.cutEnd;
-    const double fin = c.fadeIn > 0 ? c.fadeIn : (dIn ? kDeclick : 0.0);
-    const double fout = c.fadeOut > 0 ? c.fadeOut : (dOut ? kDeclick : 0.0);
+    // J-196: the levels once per block (the UI thread may patch them).
+    const uint8_t declickIn = c.declickIn, declickOut = c.declickOut;
+    const double fadeIn = c.fadeIn, fadeOut = c.fadeOut;
+    const double gain = c.gain;
+    const bool dIn = declickIn == 2 ? false : declickIn == 1 || declickIn == 3 || c.srcStart > 0;
+    const bool dOut = declickOut == 2 ? false : declickOut == 1 || declickOut == 3 || c.cutEnd;
+    const double fin = fadeIn > 0 ? fadeIn : (dIn ? kDeclick : 0.0);
+    const double fout = fadeOut > 0 ? fadeOut : (dOut ? kDeclick : 0.0);
     // J-43: FL's fade law, sampled like FL (n = round(length · rate) steps).
     const FadeLaw lawIn = FadeLaw::make(c.shapeIn, c.tensionIn), lawOut = FadeLaw::make(c.shapeOut, c.tensionOut);
-    const double nIn = fadeSamples(c.fadeIn, sr), nOut = fadeSamples(c.fadeOut, sr);
+    const double nIn = fadeSamples(fadeIn, sr), nOut = fadeSamples(fadeOut, sr);
     // J-87: the offline render, while it applies.
     // (A render in progress publishes its finished start: frames below hqReady.)
     // J-145: a render at another pitch still plays while the realtime stretch fades in.
@@ -153,12 +157,13 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
         const double toFrames = s.sampleRate / sr;
         const double speed = secRate * toFrames;
         const double pitch = pitchOf(c, secRate) * chanRatio * toFrames;
-        bool restart = rv->next != m0;  // a jump (or the first block): a fresh stream, primed
+        bool restart = rv->next != m0 || rv->gen != c.rtGen;  // a jump (or the first block, J-196: a new timing): a fresh stream, primed
         const int pre = rv->voice.prerollFor(speed);
         const int64_t cursor0 = static_cast<int64_t>(std::floor(src0 * s.sampleRate)) - pre;
         if (!restart && rv->primed)  // J-170: begun ahead; it plays only if it is the stream starting here would make
           restart = !primedFits(*rv, s, c, speed, pitch, cursor0);
         if (restart) {
+          rv->gen = c.rtGen;
           rv->src = &s;
           rv->reverse = c.reverse;
           rv->endFrame = static_cast<int64_t>(std::ceil(c.srcEnd * s.sampleRate));
@@ -172,11 +177,11 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
       }
       for (int64_t i = s0; i < s1; ++i) {
         const double u = uOf(i);
-        double g = c.gain;
+        double g = gain;
         // Fades (J-38: curve shape and tension; the 2 ms declick stays linear).
-        if (fin > 0 && u < fin) g *= c.fadeIn > 0 ? lawIn.gain(fadeProgressIn(u * sr, nIn)) : std::max(0.0, u / fin);
+        if (fin > 0 && u < fin) g *= fadeIn > 0 ? lawIn.gain(fadeProgressIn(u * sr, nIn)) : std::max(0.0, u / fin);
         const double rest = c.durSec - u;
-        if (fout > 0 && rest < fout) g *= c.fadeOut > 0 ? lawOut.gain(fadeProgressOut(rest * sr, nOut)) : std::max(0.0, rest / fout);
+        if (fout > 0 && rest < fout) g *= fadeOut > 0 ? lawOut.gain(fadeProgressOut(rest * sr, nOut)) : std::max(0.0, rest / fout);
         if (g <= 0.0) continue;
         float l = 0.f, r = 0.f;
         const int64_t m = i - first;
@@ -234,7 +239,8 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     const double src0 = c.secPerTick > 0 ? c.srcStart + (tk - static_cast<double>(c.start)) * c.secPerTick : c.srcStart + u * c.speed;
     const int pre = rv->voice.prerollFor(speed);
     const int64_t cursor0 = static_cast<int64_t>(std::floor(src0 * s.sampleRate)) - pre;
-    if (!(rv->primed && rv->next == 0 && primedFits(*rv, s, c, speed, pitch, cursor0))) {
+    if (!(rv->primed && rv->next == 0 && rv->gen == c.rtGen && primedFits(*rv, s, c, speed, pitch, cursor0))) {
+      rv->gen = c.rtGen;
       rv->src = &s;
       rv->reverse = c.reverse;
       rv->endFrame = static_cast<int64_t>(std::ceil(c.srcEnd * s.sampleRate));

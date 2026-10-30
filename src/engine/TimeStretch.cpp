@@ -732,6 +732,17 @@ class Renderer {
     return rc;
   }
 
+  RenderedClipPtr find(const ClipRequest& r) {
+    const std::string key = keyOf(r);
+    std::lock_guard<std::mutex> lk(mu_);
+    if (auto it = cache_.find(key); it != cache_.end())
+      if (auto p = it->second.lock()) {
+        touch(key, p);
+        return p;
+      }
+    return nullptr;
+  }
+
   void wait() {
     std::unique_lock<std::mutex> lk(mu_);
     idle_.wait(lk, [this] { return pending_ == 0; });
@@ -816,6 +827,11 @@ RenderedClipPtr renderClip(const ClipRequest& r, bool async) {
   if (!r.sample || r.sample->frames() < 2 || r.frames <= 0 || r.rate <= 0) return nullptr;
   sincTable(Quality::Offline);  // built here, not on the worker's first job under a lock
   return renderer().get(r, async);
+}
+
+RenderedClipPtr findRenderedClip(const ClipRequest& r) {
+  if (!r.sample || r.sample->frames() < 2 || r.frames <= 0 || r.rate <= 0) return nullptr;
+  return renderer().find(r);
 }
 
 void waitForPendingRenders() { renderer().wait(); }

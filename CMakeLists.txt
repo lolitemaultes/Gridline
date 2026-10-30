@@ -905,6 +905,12 @@ target_link_libraries(gridline_tests_clip_multi_edit PRIVATE gridline_core)
 target_include_directories(gridline_tests_clip_multi_edit PRIVATE tests src)
 target_compile_options(gridline_tests_clip_multi_edit PRIVATE ${GL_WARN})
 add_test(NAME clip_multi_edit COMMAND gridline_tests_clip_multi_edit WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-196: clip level drags patch the playing program; pitch drags defer renders and keep voices.
+add_executable(gridline_tests_j196 tests/test_j196.cpp)
+target_link_libraries(gridline_tests_j196 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j196 PRIVATE tests src)
+target_compile_options(gridline_tests_j196 PRIVATE ${GL_WARN})
+add_test(NAME j196 COMMAND gridline_tests_j196 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-85: one-step song loop markers; marker actions in the audio engine (sample-exact).
 add_executable(gridline_tests_j85 tests/test_j85.cpp)
 target_link_libraries(gridline_tests_j85 PRIVATE gridline_core)

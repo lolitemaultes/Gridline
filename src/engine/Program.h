@@ -174,9 +174,13 @@ struct ProgNoteFx {
 // J-153: the realtime stretch of a clip (engine/TimeStretch voice): plays
 // while the clip's render is not ready yet and while the channel pitch moves
 // off the render's pitch. One continuous stream from where playback starts;
-// a jump (seek, loop, new program) restarts it, primed with the audio before.
+// a jump (seek, loop) restarts it, primed with the audio before. J-196: a
+// new program keeps it while the clip plays the same sound (pitch, levels);
+// a changed timing (speed, window, position) gives the clip a new
+// ProgAudioClip::rtGen, which restarts the stream where the clip now is.
 struct ClipVoice {
   stretch::Voice voice;
+  uint32_t gen = 0;  // J-196: the rtGen the stream was started for (audio thread)
   const Sample* src = nullptr;  // reader state (audio thread)
   bool reverse = false;
   int64_t cursor = 0, endFrame = 0;  // next source frame (clip direction); silence from endFrame on
@@ -192,6 +196,29 @@ struct ClipVoice {
 };
 // UI thread (allocates). J-157: Rubber Band clips get its realtime engine.
 std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine = stretch::Engine::Stretch);
+
+// J-196: a value the UI thread may change in a playing Program (relaxed
+// atomic; the audio thread reads it once per block). Copies take the value.
+template <typename T>
+class Relaxed {
+ public:
+  Relaxed(T v = T{}) : v_(v) {}  // NOLINT: implicit, used like a plain T
+  Relaxed(const Relaxed& o) : v_(o.get()) {}
+  Relaxed& operator=(const Relaxed& o) {
+    set(o.get());
+    return *this;
+  }
+  Relaxed& operator=(T v) {
+    set(v);
+    return *this;
+  }
+  operator T() const { return get(); }  // NOLINT
+  T get() const { return v_.load(std::memory_order_relaxed); }
+  void set(T v) { v_.store(v, std::memory_order_relaxed); }
+
+ private:
+  std::atomic<T> v_;
+};
 
 // An audio clip compiled for playback (arrangement). Plain reads are
 // stateless: the source position follows from the song position, so seeking
@@ -209,11 +236,14 @@ struct ProgAudioClip {
   bool resampleSync = false;        // J-193: tempo-locked, resampled: pitch = speed x `pitch`
   stretch::Engine engine = stretch::Engine::Stretch;  // J-157: what keeps the pitch (the channel's time mode)
   bool reverse = false;
-  float gain = 1;
-  double fadeIn = 0, fadeOut = 0;   // seconds of playback time
-  FadeShape shapeIn = FadeShape::Smooth, shapeOut = FadeShape::Smooth;  // J-38: curve shapes
-  float tensionIn = 0, tensionOut = 0;                                  // J-38 / J-43: curve tension (FL unit)
-  uint8_t declickIn = 0, declickOut = 0;                                // J-43: FL edge declicker mode (Clip::fadeInDeclick)
+  ObjectId clip = kNoId;            // J-196: Clip::id
+  // J-196: the clip's levels; the UI thread patches them into the playing
+  // Program while only they change (ProgramBuilder::patchClipLevels).
+  mutable Relaxed<float> gain = 1;
+  mutable Relaxed<double> fadeIn = 0, fadeOut = 0;  // seconds of playback time
+  mutable Relaxed<FadeShape> shapeIn = FadeShape::Smooth, shapeOut = FadeShape::Smooth;  // J-38: curve shapes
+  mutable Relaxed<float> tensionIn = 0, tensionOut = 0;                                  // J-38 / J-43: curve tension (FL unit)
+  mutable Relaxed<uint8_t> declickIn = 0, declickOut = 0;  // J-43: FL edge declicker mode (Clip::fadeInDeclick)
   bool cutEnd = false;              // the clip ends while its audio still plays (declick)
   // J-87: the clip's audio rendered once at offline quality (pitch, stretch,
   // tempo sync, resampling) at the program's sample rate: frame j plays j
@@ -221,7 +251,9 @@ struct ProgAudioClip {
   // channel pitch is still `hqSemis`; the realtime stretch covers the rest.
   stretch::RenderedClipPtr hq;
   double hqSemis = 0;
+  bool hqNeeded = false;            // J-196: the clip wants a render (hq null: deferred or not possible)
   std::shared_ptr<ClipVoice> rt;  // J-153: the realtime stretch (null: not needed)
+  uint32_t rtGen = 0;              // J-196: the timing `rt` plays (a new one restarts its stream)
   // J-145: the share of the render in the output (0 realtime ... 1 render) and
   // the frame it applies to next: switches between the two crossfade.
   mutable double rtMix = 0;
@@ -514,6 +546,27 @@ class ProgramBuilder {
   // build; the caller rebuilds when SampleCache::generation() changes. Off by
   // default (offline renders and tools need every sample).
   void setAsyncSamples(bool on) { asyncSamples_ = on; }
+  // J-196: while an edit goes on (a knob or handle held), builds start no
+  // new clip renders (pitch, stretch): renders already made still play, the
+  // realtime stretch plays the rest. deferredRenders(): the last build left
+  // some out (the caller builds again once the edit is over).
+  void setDeferRenders(bool on) { deferRenders_ = on; }
+  bool deferRenders() const { return deferRenders_; }
+  bool deferredRenders() const { return deferred_; }
+  // J-196: the last build (an edit in progress) left some clips without the
+  // realtime voice they need (a few new ones per build): build again.
+  bool voicesPending() const { return voicesPending_; }
+  // J-196: writes the clip levels of `song` (gains, fades, declick; see
+  // clipLevelsOnly in Document.h) into the Program this builder built last,
+  // while it plays, instead of a build. Only valid when nothing else changed
+  // since that build; false when it cannot (that Program is gone, a clip it
+  // plays is missing): build instead.
+  bool patchClipLevels(const Song& song);
+  // J-196: counters (tests): builds, level patches, clip voices made / kept.
+  uint64_t builds() const { return builds_; }
+  uint64_t patches() const { return patches_; }
+  uint64_t voicesMade() const { return voicesMade_; }
+  uint64_t voicesReused() const { return voicesReused_; }
   // PH-09: parameters the host macros drive (index = macro, owner kNoId = not
   // linked); compiled into Program::macros by the next build.
   void setHostMacros(const std::vector<ParamId>& targets) { macroTargets_ = targets; }
@@ -564,6 +617,24 @@ class ProgramBuilder {
   double sampleRate_ = 44100.0;
   bool pdc_ = true;
   bool asyncSamples_ = false;
+  bool deferRenders_ = false, deferred_ = false, voicesPending_ = false;
+  std::weak_ptr<const Program> last_;
+  uint64_t builds_ = 0, patches_ = 0, voicesMade_ = 0, voicesReused_ = 0;
+  // J-196: the realtime stretch voice of each audio clip (id, live area) and
+  // how it plays, kept from build to build (`same`: the same sound; `inPlace`:
+  // also at the same place in it, else a new `gen` restarts the stream).
+  struct ClipVoiceSlot {
+    std::shared_ptr<ClipVoice> voice;
+    const Sample* sample = nullptr;
+    stretch::Engine engine = stretch::Engine::Stretch;
+    bool reverse = false, resampleSync = false;
+    Tick start = 0;
+    double srcStart = 0, srcEnd = 0, speed = 0, secPerTick = 0;
+    uint32_t gen = 0;
+    bool same(const ClipVoiceSlot& o) const;
+    bool inPlace(const ClipVoiceSlot& o) const;
+  };
+  std::map<std::pair<ObjectId, bool>, ClipVoiceSlot> clipVoices_;
   std::vector<ParamId> macroTargets_;
   ParamId bankTarget_;
   // Plugin delay compensation: computes latencies and fills ProgMixer::inputs

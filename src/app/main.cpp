@@ -934,6 +934,12 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                     static_cast<unsigned>(c.source), c.audioEnd, c.fadeIn, c.fadeOut, static_cast<double>(c.gain),
                     static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0, c.syncBpm, c.tempoLock ? 1 : 0);
       std::fflush(stdout);
+    } else if (l.cmd == "builds") {  // J-196: program builds and clip level patches so far, renders waiting for an edit to end
+      std::printf("builds frame %d: builds %llu patches %llu deferred %d voices made %llu kept %llu\n", frame,
+                  static_cast<unsigned long long>(app.builder.builds()), static_cast<unsigned long long>(app.builder.patches()),
+                  app.builder.deferredRenders() ? 1 : 0, static_cast<unsigned long long>(app.builder.voicesMade()),
+                  static_cast<unsigned long long>(app.builder.voicesReused()));
+      std::fflush(stdout);
     } else if (l.cmd == "autoedit") {  // J-173: what the automation editor shows (a playlist clip or a pattern's clip)
       ObjectId aid = kNoId, pid = kNoId;
       ParamId tgt{};

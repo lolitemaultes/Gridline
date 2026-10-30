@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <functional>
 #include <set>
+#include <unordered_map>
 #include "../core/Arrangements.h"
 #include "../core/ClipGain.h"
 #include "../core/ClipLoop.h"
@@ -258,7 +259,28 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
 struct ClipRenderCtx {
   double sampleRate = 44100;
   bool async = false;  // app builds: rendered in the background (realtime grains until ready)
+  // J-196: an edit in progress (a knob turn): only renders already made are
+  // used; the realtime stretch plays the rest until the edit settles.
+  bool defer = false;
+  bool* deferred = nullptr;  // set when a render was left for later
 };
+
+// J-196: the clip's levels (gain, fades, declick) as compiled; also what
+// ProgramBuilder::patchClipLevels writes into a playing Program.
+void setClipLevels(const ProgAudioClip& out, const Clip& c, const ClipFades* fades) {  // (the levels are mutable)
+  out.gain = clipgain::playGain(c.gain);  // J-79: the bottom of FL's range is silence
+  if (fades) {  // J-38: resolved fades (automatic crossfades, curve shapes, tension)
+    out.fadeIn = fades->in.len, out.fadeOut = fades->out.len;
+    out.shapeIn = fades->in.shape, out.shapeOut = fades->out.shape;
+    out.tensionIn = fades->in.tension, out.tensionOut = fades->out.tension;
+  } else {  // the clip's own fades only (live clips play alone)
+    out.fadeIn = c.fadeIn, out.fadeOut = c.fadeOut;
+    out.shapeIn = c.fadeInShape == 1 ? FadeShape::Single : FadeShape::Smooth;
+    out.shapeOut = c.fadeOutShape == 1 ? FadeShape::Single : FadeShape::Smooth;
+    out.tensionIn = c.fadeInTension, out.tensionOut = c.fadeOutTension;
+  }
+  out.declickIn = c.fadeInDeclick, out.declickOut = c.fadeOutDeclick;  // J-43
+}
 
 bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const TempoMap& map, ProgAudioClip& out,
                       const ClipFades* fades = nullptr, const ClipRenderCtx* rctx = nullptr) {
@@ -284,18 +306,8 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   out.srcStart = std::max(0.0, c.audioStart);
   out.srcEnd = c.audioEnd > out.srcStart ? std::min(c.audioEnd, smp->seconds()) : smp->seconds();
   out.reverse = c.reverse != (sampler && par(pp::SmpReverse, 0) >= 0.5);
-  out.gain = clipgain::playGain(c.gain);  // J-79: the bottom of FL's range is silence
-  if (fades) {  // J-38: resolved fades (automatic crossfades, curve shapes, tension)
-    out.fadeIn = fades->in.len, out.fadeOut = fades->out.len;
-    out.shapeIn = fades->in.shape, out.shapeOut = fades->out.shape;
-    out.tensionIn = fades->in.tension, out.tensionOut = fades->out.tension;
-  } else {  // the clip's own fades only (live clips play alone)
-    out.fadeIn = c.fadeIn, out.fadeOut = c.fadeOut;
-    out.shapeIn = c.fadeInShape == 1 ? FadeShape::Single : FadeShape::Smooth;
-    out.shapeOut = c.fadeOutShape == 1 ? FadeShape::Single : FadeShape::Smooth;
-    out.tensionIn = c.fadeInTension, out.tensionOut = c.fadeOutTension;
-  }
-  out.declickIn = c.fadeInDeclick, out.declickOut = c.fadeOutDeclick;  // J-43
+  out.clip = c.id;
+  setClipLevels(out, c, fades);
   if (c.syncBpm > 0 && c.tempoLock && rate.resample) {
     // J-193: locked to the tempo and resampled: the pitch follows the speed
     // the tempo gives it (a record played faster or slower); `pitch` is the
@@ -381,10 +393,15 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
       need = std::fabs(out.speed - 1.0) > 1e-9 || std::fabs(chanRatio - 1.0) > 1e-9;
     }
     rq.mode = mode;
-    if (need) {
+    if (need && rctx->defer) {  // J-196: no new render while the edit goes on
+      out.hq = stretch::findRenderedClip(rq);
+      if (!out.hq && rctx->deferred) *rctx->deferred = true;
+      out.hqSemis = chanSemis;
+    } else if (need) {
       out.hq = stretch::renderClip(rq, rctx->async);
       out.hqSemis = chanSemis;
     }
+    out.hqNeeded = need;
   }
   return out.end > out.start && out.srcEnd > out.srcStart;
 }
@@ -1072,6 +1089,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     prog->patterns.push_back(std::move(pp));
   }
   const std::vector<ClipFades> clipFades = resolveAllFades(song, prog->tempoMap);  // J-38
+  bool deferred = false;  // J-196: some clip's render waits for the edit to settle
   for (size_t clipIdx = 0; clipIdx < song.playlist.size(); ++clipIdx) {
     const Clip& clip = song.playlist[clipIdx];
     if (clip.track >= 0 && static_cast<size_t>(clip.track) < song.tracks.size() &&
@@ -1081,7 +1099,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (clip.kind == ClipKind::Audio) {  // arrangement: audio clip through its channel
       int ci = song.channelIndex(clip.source);
       ProgAudioClip ac;
-      const ClipRenderCtx rctx{sampleRate_, asyncSamples_};
+      const ClipRenderCtx rctx{sampleRate_, asyncSamples_, deferRenders_, &deferred};
       if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], clip, prog->tempoMap, ac, &clipFades[clipIdx], &rctx))
         prog->channels[static_cast<size_t>(ci)].audio.push_back(std::move(ac));
       continue;
@@ -1132,7 +1150,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       Clip at0 = clip;
       at0.start = 0;
       ProgAudioClip ac;
-      const ClipRenderCtx rctx{sampleRate_, asyncSamples_};
+      const ClipRenderCtx rctx{sampleRate_, asyncSamples_, deferRenders_, &deferred};
       if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], at0, prog->flatMap, ac, nullptr, &rctx)) {
         lc.audioChannel = ci;
         lc.audio.push_back(std::move(ac));
@@ -1168,16 +1186,72 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   // render is on its way (app builds) or when the channel pitch moves.
   // J-157: a Rubber Band voice (about 6 MB) only where it can play: while the
   // clip's render is still on its way, or when the channel pitch moves.
-  auto giveVoice = [&](ProgAudioClip& ac, const ProgChannel& pc) {
+  // J-196: a deferred render (an edit in progress) plays through the realtime
+  // stretch too. A clip keeps its voice from build to build while it plays the
+  // same source (a pitch or level change: the stream goes on, gliding to the
+  // new pitch; a new timing restarts the stream in the same voice): preparing
+  // one costs milliseconds (Rubber Band: about 100 ms and megabytes), and a
+  // new voice would restart the sound every frame of a knob turn.
+  // While an edit goes on, a clip that needs a new voice gets Gridline's own
+  // stretch (its render, started when the edit is over, plays Rubber Band),
+  // at most a few new voices per build (voicesPending(): the caller builds
+  // again for the rest; a clip waiting for one plays its plain read).
+  constexpr int kNewVoicesWhileEditing = 4;
+  int newVoices = 0;
+  bool voicesPending = false;
+  std::map<std::pair<ObjectId, bool>, ClipVoiceSlot> voices;
+  auto giveVoice = [&](ProgAudioClip& ac, const ProgChannel& pc, bool live) {
     const bool rubber = ac.engine == stretch::Engine::RubberBand;
-    if ((asyncSamples_ && ac.hq && !(rubber && ac.hq->ready.load(std::memory_order_acquire))) || pc.pitchMoves)
-      ac.rt = makeClipVoice(sampleRate_, ac.engine);
+    if (!((asyncSamples_ && ac.hq && !(rubber && ac.hq->ready.load(std::memory_order_acquire))) || pc.pitchMoves ||
+          (ac.hqNeeded && !ac.hq)))
+      return;
+    ClipVoiceSlot slot;
+    slot.sample = ac.sample.get();
+    slot.engine = ac.engine;
+    slot.reverse = ac.reverse;
+    slot.start = ac.start;
+    slot.srcStart = ac.srcStart, slot.srcEnd = ac.srcEnd, slot.speed = ac.speed, slot.secPerTick = ac.secPerTick;
+    slot.resampleSync = ac.resampleSync;
+    const auto key = std::make_pair(ac.clip, live);
+    auto old = clipVoices_.find(key);
+    // A preview voice (the stretch standing in for Rubber Band) plays on
+    // until the clip's render is ready, unless the channel pitch moves at run
+    // time (then the clip keeps a voice of its own engine).
+    const bool preview = !pc.pitchMoves && rubber && old != clipVoices_.end() && old->second.engine == stretch::Engine::Stretch;
+    ClipVoiceSlot want = slot;
+    if (preview) want.engine = stretch::Engine::Stretch;
+    if (ac.clip != kNoId && old != clipVoices_.end() && old->second.same(want) && !voices.count(key)) {
+      slot.voice = old->second.voice;
+      slot.engine = want.engine;
+      // A new timing (a time stretch knob, a trim, a move): the stream starts
+      // again where the clip now is (the audio thread restarts it).
+      slot.gen = old->second.gen + (old->second.inPlace(slot) ? 0u : 1u);
+      ++voicesReused_;
+    } else if (deferRenders_ && newVoices >= kNewVoicesWhileEditing) {
+      voicesPending = true;
+      return;
+    } else {
+      if (deferRenders_) slot.engine = stretch::Engine::Stretch, ++newVoices;
+      slot.voice = makeClipVoice(sampleRate_, slot.engine);
+      ++voicesMade_;
+    }
+    ac.rt = slot.voice;
+    ac.rtGen = slot.gen;
+    ac.engine = slot.engine;  // the voice's engine (J-170's priming is Rubber Band's)
+    if (ac.clip != kNoId) voices[key] = std::move(slot);
   };
   for (auto& pc : prog->channels)
-    for (auto& ac : pc.audio) giveVoice(ac, pc);
+    for (auto& ac : pc.audio) giveVoice(ac, pc, false);
   for (auto& lc : prog->liveClips)
     if (lc.audioChannel >= 0 && static_cast<size_t>(lc.audioChannel) < prog->channels.size())
-      for (auto& ac : lc.audio) giveVoice(ac, prog->channels[static_cast<size_t>(lc.audioChannel)]);
+      for (auto& ac : lc.audio) giveVoice(ac, prog->channels[static_cast<size_t>(lc.audioChannel)], true);
+  // While editing, voices a value made unnecessary for now (a pitch crossing
+  // zero) are kept for when it comes back.
+  if (deferRenders_)
+    for (auto& kv : clipVoices_) voices.emplace(kv.first, std::move(kv.second));
+  clipVoices_ = std::move(voices);
+  deferred_ = deferred;
+  voicesPending_ = voicesPending;
 
   compileGraph(*prog);
 
@@ -1188,7 +1262,46 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   effects_ = std::move(effects);
   noteFx_ = std::move(noteFx);
   links_ = std::move(linkRts);
+  last_ = prog;
+  ++builds_;
   return prog;
+}
+
+bool ProgramBuilder::ClipVoiceSlot::same(const ClipVoiceSlot& o) const {
+  return sample == o.sample && engine == o.engine && reverse == o.reverse;
+}
+
+bool ProgramBuilder::ClipVoiceSlot::inPlace(const ClipVoiceSlot& o) const {
+  return start == o.start && srcStart == o.srcStart && srcEnd == o.srcEnd && speed == o.speed && secPerTick == o.secPerTick &&
+         resampleSync == o.resampleSync;
+}
+
+bool ProgramBuilder::patchClipLevels(const Song& song) {
+  const std::shared_ptr<const Program> prog = last_.lock();
+  if (!prog) return false;
+  std::unordered_map<ObjectId, size_t> at;
+  at.reserve(song.playlist.size());
+  for (size_t i = 0; i < song.playlist.size(); ++i) at.emplace(song.playlist[i].id, i);
+  const std::vector<ClipFades> fades = resolveAllFades(song, prog->tempoMap);  // (as build: crossfades follow)
+  auto clipOf = [&](const ProgAudioClip& ac) -> int64_t {
+    auto it = at.find(ac.clip);
+    return it == at.end() ? -1 : static_cast<int64_t>(it->second);
+  };
+  for (const ProgChannel& pc : prog->channels)
+    for (const ProgAudioClip& ac : pc.audio)
+      if (clipOf(ac) < 0) return false;
+  for (const ProgLiveClip& lc : prog->liveClips)
+    for (const ProgAudioClip& ac : lc.audio)
+      if (clipOf(ac) < 0) return false;
+  for (const ProgChannel& pc : prog->channels)
+    for (const ProgAudioClip& ac : pc.audio) {
+      const size_t i = static_cast<size_t>(clipOf(ac));
+      setClipLevels(ac, song.playlist[i], &fades[i]);
+    }
+  for (const ProgLiveClip& lc : prog->liveClips)
+    for (const ProgAudioClip& ac : lc.audio) setClipLevels(ac, song.playlist[static_cast<size_t>(clipOf(ac))], nullptr);
+  ++patches_;
+  return true;
 }
 
 std::vector<ProgramBuilder::PreloadItem> ProgramBuilder::preloadItems(const Song& song) {

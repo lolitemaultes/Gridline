@@ -2,6 +2,7 @@
 #include "ClipMultiEdit.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include "Automation.h"
 #include "ClipGain.h"
 #include "Fades.h"
@@ -146,17 +147,33 @@ Snapshot capture(const Song& s, const std::vector<ObjectId>& ids, Param p, Objec
 
 namespace {
 
-void writeEntry(std::vector<Clip>& clips, const Snapshot& snap, const Entry& e, double v) {
+// J-196: playlist positions by id, built once per edit (an edit of many
+// clips used to scan the whole playlist for each of them).
+class Index {
+ public:
+  explicit Index(std::vector<Clip>& clips) : clips_(clips) {
+    pos_.reserve(clips.size());
+    for (size_t i = 0; i < clips.size(); ++i) pos_.emplace(clips[i].id, i);
+  }
+  Clip* find(ObjectId id) {
+    auto it = pos_.find(id);
+    return it != pos_.end() ? &clips_[it->second] : nullptr;
+  }
+
+ private:
+  std::vector<Clip>& clips_;
+  std::unordered_map<ObjectId, size_t> pos_;
+};
+
+void writeEntry(Index& clips, const Snapshot& snap, const Entry& e, double v) {
   const bool curve = isCurve(snap.param);
-  for (Clip& x : clips)
-    if (x.id == e.id) store(x, snap.param, v);
+  if (Clip* x = clips.find(e.id)) store(*x, snap.param, v);
   if (curve && e.mirror != kNoId) {
     // The tied partner's opposite edge mirrors the bend (FL: the pair keeps its
     // level). That edge is never this parameter, so a selected partner's own
     // entry does not collide with it.
     const float t = -fadeTensionFromUi(static_cast<float>(v));
-    for (Clip& x : clips)
-      if (x.id == e.mirror) (snap.param == Param::FadeInCurve ? x.fadeOutTension : x.fadeInTension) = t;
+    if (Clip* x = clips.find(e.mirror)) (snap.param == Param::FadeInCurve ? x->fadeOutTension : x->fadeInTension) = t;
   }
 }
 
@@ -164,16 +181,18 @@ void writeEntry(std::vector<Clip>& clips, const Snapshot& snap, const Entry& e, 
 
 void applyOffset(std::vector<Clip>& clips, const Snapshot& snap, double delta, double curveDetent) {
   if (!std::isfinite(delta)) return;
+  Index index(clips);
   for (const Entry& e : snap.clips) {
     double v = std::clamp(e.base + delta, e.lo, e.hi);
     if (isCurve(snap.param) && e.id == snap.anchor && std::fabs(v) < curveDetent) v = 0;
-    writeEntry(clips, snap, e, v);
+    writeEntry(index, snap, e, v);
   }
 }
 
 void applyValue(std::vector<Clip>& clips, const Snapshot& snap, double value) {
   if (!std::isfinite(value)) return;
-  for (const Entry& e : snap.clips) writeEntry(clips, snap, e, std::clamp(value, e.lo, e.hi));
+  Index index(clips);
+  for (const Entry& e : snap.clips) writeEntry(index, snap, e, std::clamp(value, e.lo, e.hi));
 }
 
 bool offset(Document& doc, const std::string& label, const Snapshot& snap, double delta, uint64_t mergeKey, double curveDetent) {

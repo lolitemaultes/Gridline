@@ -108,6 +108,18 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   play them back exactly.
 - The clear button in the browser search field works again: it empties the field (also while you are typing in it) and leaves the cursor in the field.
 
+- Dragging the volume or fades of several selected audio clips no longer loads the CPU and makes
+  the interface lag. Volume, fade and fade curve changes now go straight to the playing song
+  instead of preparing the whole song again on every frame of the drag (with 24 stretched clips a
+  frame of the drag took about 50 ms longer before, and 70 ms while playing; now no longer than
+  any other frame).
+- Turning a pitch knob or field of audio clips (the clip's pitch, the channel's pitch, fine tune and
+  time knobs) is smooth again. While you turn it the clips play through the realtime stretch, which
+  follows the knob at once without restarting the sound, and the high quality render of the new
+  pitch starts once you let go. Before, every step of the knob started a new render of every clip
+  (the last one could arrive many seconds late), prepared new playback voices for every clip on
+  each frame (up to a second per frame with Rubber Band) and restarted the sound.
+
 - Audio clips no longer shrink or get cut off when the tempo changes. A clip you stretch (by
   dragging an edge in stretch mode, typing a Time value or using Fit to tempo) now follows the
   project tempo: it keeps its bars and plays faster or slower with the tempo, also through tempo

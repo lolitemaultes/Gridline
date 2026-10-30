@@ -6,6 +6,7 @@
 #      gains the same number of dB (they keep their differences); one undo step; undo restores all;
 #   2. the fade-in handle of clip 70 dragged right: every clip's fade-in grows by the same time
 #      (clip 71 keeps its 0.2 s lead); one undo step;
+#      J-196: both drags patch the clip levels into the playing program instead of building it each frame;
 #   3. clip 72 alone (not selected): its volume drag moves only that clip;
 #   4. right-clicks on a clip's title strip: the name box and the menu arrow open the clip menu
 #      (nothing deleted); the rest of the strip deletes the clip, as does the body; a right-drag
@@ -147,21 +148,25 @@ run(multi 120 "2 typing off
 16 up 0
 18 key p
 20 dump
+21 builds
 22 move ${g70x} ${g70y}
 24 down 0
 26 move ${g70x} ${up1}
 28 move ${g70x} ${up2}
 30 move ${g70x} ${up2}
 32 up 0
+33 builds
 36 dump
 38 undo
 40 dump
+41 builds
 42 move ${fi70x} ${fi70y}
 44 down 0
 46 move ${fiTo1} ${fi70y}
 48 move ${fiTo2} ${fi70y}
 50 move ${fiTo2} ${fi70y}
 52 up 0
+53 builds
 56 dump
 60 key escape
 62 move ${selX0} ${selY0}
@@ -198,6 +203,26 @@ fixed(u70 40 70 gain)
 fixed(u71 40 71 gain)
 fixed(u72 40 72 gain)
 check("undo restores every clip (${u70} ${u71} ${u72})" u70 EQUAL 10000 AND u71 EQUAL 5000 AND u72 EQUAL 20000)
+
+# J-196: the drags change clip levels only: written into the playing program (patches), no program builds.
+function(builds frame)
+  string(REGEX MATCH "builds frame ${frame}: builds ([0-9]+) patches ([0-9]+)" _ "${out}")
+  if(CMAKE_MATCH_1 STREQUAL "")
+    fail("no build counts at frame ${frame}")
+  endif()
+  set(builds_${frame} ${CMAKE_MATCH_1} PARENT_SCOPE)
+  set(patches_${frame} ${CMAKE_MATCH_2} PARENT_SCOPE)
+endfunction()
+foreach(f 21 33 41 53)
+  builds(${f})
+endforeach()
+math(EXPR vb "${builds_33} - ${builds_21}")
+math(EXPR vp "${patches_33} - ${patches_21}")
+math(EXPR fb "${builds_53} - ${builds_41}")
+math(EXPR fp "${patches_53} - ${patches_41}")
+# (A sample decode finishing can still rebuild once.)
+check("the volume drag patched the program (${vp} patches, ${vb} builds)" vp GREATER 0 AND vb LESS_EQUAL 1)
+check("the fade drag patched the program (${fp} patches, ${fb} builds)" fp GREATER 0 AND fb LESS_EQUAL 1)
 
 # 2. fade-in: the same time added to each (clip 71 keeps its 0.2 s lead).
 fixed(f70 56 70 fadeIn)

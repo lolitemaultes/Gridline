@@ -21,6 +21,14 @@ class Document {
   void reset(Song song);
   // Increments on every change of the song (edit, undo, redo, reset).
   uint64_t revision() const { return revision_; }
+  // J-196: true when every change since revision `rev` was a clip level edit
+  // (editClip / editClips that changed only gains, fade lengths, curves or
+  // declick modes of clips: clipLevelsOnly), so a player can patch those
+  // values into what it built at `rev` instead of rebuilding. False after any
+  // other change (undo / redo included) and when nothing changed.
+  bool clipLevelsOnlySince(uint64_t rev) const {
+    return revision_ != rev && revision_ == levelTail_ && rev >= levelRunStart_ && rev <= revision_;
+  }
 
   // --- generic object edits ------------------------------------------------
   // `fn` mutates a copy of the object; the change is recorded with `label`.
@@ -183,7 +191,7 @@ class Document {
   void markSaved() { savedSerial_ = undo_.stateSerial(); }
 
  private:
-  void exec(CommandPtr cmd, bool mayJoin = true);
+  void exec(CommandPtr cmd, bool mayJoin = true, bool clipLevels = false);
   // J-193: applies `cmd`; when it changed the tempo map, the audio clips that
   // do not follow the tempo keep their audio (refitClipsToTempo) in the same
   // command. Returns the (applied) command to record.
@@ -204,6 +212,13 @@ class Document {
   TempoMap tempoMap_;  // J-193: the song's tempo map at revision tempoMapRev_ (when tempoMapOk_)
   uint64_t tempoMapRev_ = 0;
   bool tempoMapOk_ = false;
+  // J-196: the current run of clip level edits: revisions (levelRunStart_, levelTail_].
+  uint64_t levelRunStart_ = 0, levelTail_ = ~uint64_t{0};
 };
+
+// J-196: `a` and `b` differ at most in their levels: gain, fade lengths (and
+// whether they were set by hand), fade shapes, curves and declick modes. Such
+// a change never moves audio in time, changes a render or the tempo map.
+bool clipLevelsOnly(const Clip& a, const Clip& b);
 
 }  // namespace gl
