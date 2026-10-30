@@ -386,6 +386,7 @@ int main() {
     const std::string sfzFile = pl::mediaFile(m, m.osc[2].sfz);
     std::ifstream sf(fs::u8path(sfzFile));
     const std::string sfzText((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+    sf.close();  // Windows cannot delete a file that is still open (the cache is removed below)
     int wavs = 0;
     for (const auto& de : fs::directory_iterator(fs::u8path(pl::mediaCacheDir())))
       if (de.path().extension() == ".wav") ++wavs;
@@ -406,7 +407,10 @@ int main() {
       expect(renderPeak(solo) > 0.005f, "embedded noise plays");
     }
     // a state written by the import loads again on a computer without the cache: entries are re-extracted
-    fs::remove_all(fs::u8path(pl::mediaCacheDir()));
+    std::error_code rmEc;
+    fs::remove_all(fs::u8path(pl::mediaCacheDir()), rmEc);
+    if (rmEc) std::printf("# removing the cache failed: %s\n", rmEc.message().c_str());
+    expect(!rmEc && !fs::exists(fs::u8path(pl::mediaCacheDir())), "the media cache can be removed (no file left open)");
     expect(renderPeak(st) > 0.01f && fs::exists(fs::u8path(pl::mediaCacheDir())), "a saved state re-extracts its media");
     // link probes (files = false) read no audio
     std::vector<std::string> unread = rep.unread;
