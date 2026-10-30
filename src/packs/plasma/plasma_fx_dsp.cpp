@@ -80,6 +80,18 @@ struct Line {  // fractional delay line inside the unit's pool
     const float c1 = 0.5f * (y2 - y0), c2 = y0 - 2.5f * y1 + 2.f * y2 - 0.5f * y3, c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
     return ((c3 * t + c2) * t + c1) * t + y1;
   }
+  // first-order allpass (Thiran) interpolation: flat magnitude, so a recirculating line loses no highs
+  float tapAp(float d, float& y1) const {
+    d = std::clamp(d, 2.f, static_cast<float>(n - 4));
+    const int i = static_cast<int>(d - 0.5f);
+    const float D = d - static_cast<float>(i), a = (1.f - D) / (1.f + D);
+    int j0 = w - i;
+    if (j0 < 0) j0 += n;
+    const int j1 = j0 > 0 ? j0 - 1 : n - 1;
+    const float y = a * b[j0] + b[j1] - a * y1;
+    y1 = y;
+    return y;
+  }
   float tapInt(int d) const {
     d = std::clamp(d, 1, n - 1);
     int a = w - d;
@@ -135,6 +147,51 @@ struct ApD {  // delay allpass (Schroeder)
     return v - g * in;
   }
 };
+// first-order high shelf: gain 1 at DC, G at high frequencies, centred on K = tan(pi fc / sr)
+struct Shelf1 {
+  float b0 = 1, b1 = 0, a1 = 0, z = 0;
+  void set(double K, double G) {
+    const double sg = std::sqrt(std::max(1e-6, G)), a0 = 1 / sg + K;
+    b0 = static_cast<float>((sg + K) / a0), b1 = static_cast<float>((K - sg) / a0), a1 = static_cast<float>((K - 1 / sg) / a0);
+  }
+  float run(float x) {
+    const float y = b0 * x + z;
+    z = b1 * x - a1 * y;
+    return y;
+  }
+};
+// gain plus nine first-order high shelves an octave apart (63 Hz .. 16 kHz): a smooth measured tone
+// curve (J-203f). db[0] is the gain below the first corner, db[k] the step at corner k.
+struct ShelfEq {
+  static constexpr int kN = 9;
+  double g = 1, b0[kN]{}, b1[kN]{}, a1[kN]{}, z[kN][2]{};
+  float last[kN + 1]{};
+  bool valid = false;
+  void set(double sr, const float* db) {
+    if (valid && std::equal(db, db + kN + 1, last)) return;
+    std::copy(db, db + kN + 1, last);
+    valid = true;
+    g = std::pow(10.0, db[0] / 20.0);
+    for (int k = 0; k < kN; ++k) {
+      const double fc = std::min(62.99 * std::exp2(k), sr * 0.45), K = std::tan(3.14159265358979 * fc / sr);
+      const double sg = std::pow(10.0, db[k + 1] / 40.0), a0 = 1 / sg + K;
+      b0[k] = (sg + K) / a0, b1[k] = (K - sg) / a0, a1[k] = (K - 1 / sg) / a0;
+    }
+  }
+  float run(int c, float x) {
+    double y = x * g;
+    for (int k = 0; k < kN; ++k) {
+      const double o = b0[k] * y + z[k][c];
+      z[k][c] = b1[k] * y - a1[k] * o;
+      y = o;
+    }
+    return static_cast<float>(y);
+  }
+  void clear() {
+    for (auto& v : z) v[0] = v[1] = 0;
+  }
+};
+#include "plasma_fx_reverb_tone.inc"
 double lfoBeats(double norm) { return lfoRateDivisionBeats(static_cast<int>(std::lround(std::clamp(norm, 0.0, 1.0) * (lfoRateDivisionCount() - 1)))); }
 float triLfo(double ph) {
   ph -= std::floor(ph);
@@ -199,11 +256,13 @@ class FxUnit {
   // reverb
   Line rv[8], pre[2];
   ApD dif[4][2];
-  Op1 rvDamp[8], rvLs[8], rvLo[2], rvHi[2];
+  Shelf1 rvLs[8], rvHs[8];
+  float rvAp[8]{}, rvG[8]{};
+  ShelfEq rvEq;
   double rvMod = 0;
   float rvSh[2]{};
   // eq / utility
-  Bq2 eq1, eq2, uhp, ulp;
+  Bq2 eq1, eq2, uhp, uhp2, ulp;
   Lr4 ulf;
   // hyper / dimension
   double hyPh[8]{};
@@ -236,13 +295,14 @@ class FxUnit {
     phFb[0] = phFb[1] = 0;
     for (auto& l : dl) l.w = 0;
     dfb[0] = dfb[1] = 0;
-    dbp.clear(), dfl.clear(), eq1.clear(), eq2.clear(), uhp.clear(), ulp.clear();
+    dbp.clear(), dfl.clear(), eq1.clear(), eq2.clear(), uhp.clear(), uhp2.clear(), ulp.clear();
     for (auto& e : env) e[0] = e[1] = 0;
     for (auto& e : mbEnv) e[0] = e[1] = e[2] = 0;
     xo1 = Lr4{}, xo2 = Lr4{}, ulf = Lr4{};
-    for (auto& f : rvDamp) f.z = 0;
     for (auto& f : rvLs) f.z = 0;
-    rvLo[0].z = rvLo[1].z = rvHi[0].z = rvHi[1].z = 0;
+    for (auto& f : rvHs) f.z = 0;
+    for (auto& v : rvAp) v = 0;
+    rvEq.clear();
     lpw[0].z = lpw[1].z = hpw[0].z = hpw[1].z = 0;
     dhp[0].z = dhp[1].z = 0;
     shState[0] = shState[1] = dsHold[0] = dsHold[1] = 0;
@@ -792,16 +852,19 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
             u.xo2.split(ch, rest, mid, hi);
             band[0][ch] = static_cast<float>(lo), band[1][ch] = static_cast<float>(mid), band[2][ch] = static_cast<float>(hi);
           }
-          float yl = 0, yr = 0;
+          float yl = 0, yr = 0, dl = 0, dr = 0;
           for (int b = 0; b < 3; ++b) {
             const float det = std::max(band[b][0] * band[b][0], band[b][1] * band[b][1]);
             const float g = mgain(u.mbEnv[b], u.env[b][0], det, b) * bg[b];
             yl += band[b][0] * g, yr += band[b][1] * g;
+            dl += band[b][0], dr += band[b][1];
             u.gr[b] = g;
           }
           yl *= makeup, yr *= makeup;
-          L[i] = (L[i] + (yl - L[i]) * wet) * out;
-          R[i] = (R[i] + (yr - R[i]) * wet) * out;
+          // J-203f, measured (ratio 1, MIX 50 %): the source stays flat, so the dry part is the bands'
+          // plain sum (the crossovers' phase), not the input, which would cancel around the crossovers
+          L[i] = (dl + (yl - dl) * wet) * out;
+          R[i] = (dr + (yr - dr) * wet) * out;
         }
       }
       break;
@@ -836,16 +899,22 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           static const double fx[] = {0, 25, 40, 50, 60, 75, 90, 100}, fm[] = {1.0, 1.0, 0.97, 0.95, 0.92, 0.77, 0.42, 0.18},
                               fh[] = {1.06, 0.9, 0.66, 0.54, 0.38, 0.28, 0.22, 0.21};
           const double t = tab(xs, ys, 6, sz);
-          rtM = t * tab(fx, fm, 8, fbk), rtHi = t * tab(fx, fh, 8, fbk), rtLo = t * 1.05;
+          // J-203f: low / high octave decay against the mid one per size (noise bursts, Schroeder RT60)
+          static const double rx[] = {0, 35, 70, 100}, rl[] = {1.04, 1.12, 0.98, 1.0}, rh[] = {1.27, 0.77, 0.55, 0.57};
+          rtM = t * tab(fx, fm, 8, fbk), rtHi = t * tab(rx, rh, 4, sz) * tab(fx, fh, 8, fbk) / 0.9, rtLo = t * tab(rx, rl, 4, sz);
           static const double ox[] = {0, 35, 50, 60, 70}, oy[] = {0.0, 0.0, 0.02, 0.045, 0.06};
           preS = gLin(ox, oy, 5, sz);
-          static const double gx[] = {0, 35, 60}, gy[] = {5.4, -4.7, 6.1};
-          width = P("kParamWidth") / 100.0, wetG = dbToGainF(gLin(gx, gy, 3, sz));
+          static const double gx[] = {0, 35, 70, 100}, gy[] = {-5.8, -5.6, -5.3, -4.7};
+          width = P("kParamWidth") / 100.0, wetG = dbToGainF(gLin(gx, gy, 4, sz));
           break;
         }
         case 1: {  // hall: bilinear over size x delay knob (log RT)
           static const double sx[] = {0, 35, 70, 100}, dx[] = {0, 31.25, 100, 250};
-          static const double t[4][4] = {{0.8, 1.89, 4.06, 8.0}, {1.01, 2.64, 8.1, 16.1}, {3.94, 4.13, 9.0, 16.0}, {10.5, 11.8, 14.0, 18.0}};
+          // J-203f: each octave (125 Hz, 1 kHz, 8 kHz) has its own size x delay table, measured with noise bursts:
+          // the delay knob lengthens the lows far more than the highs on small halls
+          static const double tl[4][4] = {{0.35, 2.30, 13.84, 9.20}, {1.12, 3.71, 15.10, 8.34}, {4.0, 4.27, 15.26, 8.22}, {11.25, 11.26, 13.54, 7.70}};
+          static const double tm[4][4] = {{0.51, 1.74, 3.92, 4.88}, {1.25, 2.51, 8.50, 14.16}, {3.94, 4.22, 12.90, 12.13}, {11.01, 11.04, 13.70, 8.99}};
+          static const double th[4][4] = {{0.50, 0.86, 1.15, 1.23}, {1.22, 1.92, 3.47, 4.16}, {4.0, 4.19, 8.58, 12.77}, {11.10, 11.12, 13.30, 12.27}};
           auto idx = [](const double* xs, double x, int& i, double& f) {
             i = 0;
             while (i < 2 && x > xs[i + 1]) ++i;
@@ -854,44 +923,59 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           int i, j;
           double fi, fj;
           idx(sx, sz, i, fi), idx(dx, dk, j, fj);
-          const double l00 = std::log(t[i][j]), l01 = std::log(t[i][j + 1]), l10 = std::log(t[i + 1][j]), l11 = std::log(t[i + 1][j + 1]);
-          rtM = std::exp((l00 * (1 - fj) + l01 * fj) * (1 - fi) + (l10 * (1 - fj) + l11 * fj) * fi);
-          static const double hx[] = {0, 15, 35, 50, 60, 70, 85, 100}, hy[] = {0.9, 1.26, 1.95, 2.61, 3.25, 4.24, 6.48, 11.2};
-          rtHi = std::min(rtM, tab(hx, hy, 8, sz) * std::max(0.5, 1.0 + 0.0085 * (dk - 31.25)));
-          rtLo = rtM * (sz < 60 ? 1.3 : 1.0);
-          width = 0.85, wetG = dbToGainF(6.0 - 0.1 * sz);
+          auto bil = [&](const double (&t)[4][4]) {
+            const double l00 = std::log(t[i][j]), l01 = std::log(t[i][j + 1]), l10 = std::log(t[i + 1][j]), l11 = std::log(t[i + 1][j + 1]);
+            return std::exp((l00 * (1 - fj) + l01 * fj) * (1 - fi) + (l10 * (1 - fj) + l11 * fj) * fi);
+          };
+          rtM = bil(tm), rtLo = bil(tl), rtHi = bil(th);
+          // wet energy of a noise burst against the dry one, per size x delay (dB, J-203f)
+          static const double tg[4][4] = {{5.8, 4.4, 4.1, 5.2}, {2.0, 0.1, -1.4, -0.5}, {-3.9, -4.0, -6.1, -5.2}, {-8.5, -8.5, -8.7, -6.1}};
+          const double gdb = (tg[i][j] * (1 - fj) + tg[i][j + 1] * fj) * (1 - fi) + (tg[i + 1][j] * (1 - fj) + tg[i + 1][j + 1] * fj) * fi;
+          width = 0.85, wetG = dbToGainF(gdb);
           break;
         }
         case 2: {  // vintage
-          static const double xs[] = {0, 15, 35, 50, 70, 85}, ys[] = {0.59, 0.72, 1.18, 1.73, 3.82, 7.15};
+          static const double xs[] = {0, 15, 35, 50, 70, 85, 100}, ys[] = {0.69, 0.9, 1.41, 2.0, 3.66, 7.15, 11.0};
           static const double vx[] = {0, 25, 50, 70, 85, 100}, vy[] = {0.47, 0.46, 1.1, 1.0, 1.36, 2.14};
-          rtM = tab(xs, ys, 6, sz) * tab(vx, vy, 6, P("kParamVintageScale")) * (dk < 15 ? 0.5 + dk / 30.0 : 1.0);
-          rtHi = rtM * 0.63, rtLo = rtM * 1.33;
-          width = 1.3, wetG = dbToGainF(3.1), preS = 0.12;
+          rtM = tab(xs, ys, 7, sz) * tab(vx, vy, 6, P("kParamVintageScale")) * (dk < 15 ? 0.5 + dk / 30.0 : 1.0);
+          static const double rx[] = {0, 35, 70, 100}, rl[] = {0.97, 1.01, 1.13, 0.6}, rh[] = {0.97, 0.59, 0.41, 0.23};
+          rtHi = rtM * tab(rx, rh, 4, sz), rtLo = rtM * tab(rx, rl, 4, sz);
+          static const double gx[] = {0, 35, 70, 100}, gy[] = {3.3, 1.4, -1.2, 2.0};
+          width = 1.3, wetG = dbToGainF(gLin(gx, gy, 4, sz)), preS = 0.12;
           break;
         }
         case 3: {  // abyss
-          static const double xs[] = {0, 15, 35, 50, 70, 85}, ys[] = {1.76, 2.35, 5.66, 8.4, 9.44, 9.74};
+          static const double xs[] = {0, 15, 35, 50, 70, 85, 100}, ys[] = {5.06, 7.0, 10.6, 12.5, 15.3, 14.5, 13.6};
           static const double mx[] = {0, 10, 25, 35, 50, 72, 100}, my[] = {1.4, 1.65, 0.78, 0.78, 0.4, 1.0, 0.07};
           static const double dx[] = {0, 31.25, 60, 150, 250}, dy[] = {1.0, 1.0, 1.17, 2.3, 2.9};
-          rtM = tab(xs, ys, 6, sz) * tab(mx, my, 7, P("kParamMode")) * tab(dx, dy, 5, dk);
-          rtHi = rtM * 0.38, rtLo = rtM * 1.29;
-          width = 0.7, wetG = dbToGainF(1.5 - 0.15 * sz);
+          rtM = tab(xs, ys, 7, sz) * tab(mx, my, 7, P("kParamMode")) * tab(dx, dy, 5, dk);
+          static const double rx[] = {0, 35, 70, 100}, rl[] = {0.75, 1.02, 0.85, 0.54}, rh[] = {0.61, 0.69, 0.72, 0.86};
+          rtHi = rtM * tab(rx, rh, 4, sz), rtLo = rtM * tab(rx, rl, 4, sz);
+          static const double gx[] = {0, 35, 70, 100}, gy[] = {-5.7, -8.25, -8.8, -7.9};
+          width = 0.7, wetG = dbToGainF(gLin(gx, gy, 4, sz));
           break;
         }
         default: {  // space
-          static const double xs[] = {0, 35, 50, 70, 85, 100}, ys[] = {1.06, 0.96, 1.12, 1.58, 1.87, 2.03};
+          static const double xs[] = {0, 35, 50, 70, 85, 100}, ys[] = {0.61, 0.88, 1.12, 1.54, 1.9, 2.29};
           static const double dx[] = {0, 15, 31.25, 60, 150, 250}, dy[] = {0.65, 0.85, 1.0, 1.45, 3.3, 12.0};
           rtM = tab(xs, ys, 6, sz) * tab(dx, dy, 6, dk);
-          rtHi = rtM * 0.8, rtLo = rtM * 1.1;
-          width = 0, wetG = dbToGainF(7.2 - 0.04 * (dk - 31.25));
+          static const double rx[] = {0, 35, 70, 100}, rl[] = {1.02, 1.03, 1.18, 1.0}, rh[] = {0.84, 0.73, 0.75, 0.67};
+          rtHi = rtM * tab(rx, rh, 4, sz), rtLo = rtM * tab(rx, rl, 4, sz);
+          static const double gx[] = {0, 35, 70, 100}, gy[] = {8.4, 7.3, 4.9, 3.8};
+          width = 0, wetG = dbToGainF(gLin(gx, gy, 4, sz) - 0.04 * (dk - 31.25));
           break;
         }
       }
       if (rtype == 0 && N("kParamPreDelayBeatSync") >= 0.5) preS += P("kParamPreDelay") * 60.0 / std::max(20.0, c.tempo);
       const double size = rtype == 0 ? 0.6 + 0.8 * std::clamp(sz / 100.0, 0.0, 1.0) : 0.5;
-      const double lo = 20.0 * std::pow(50.0, P("kParamFreq") / 100.0) * (P("kParamFreq") > 0.5 ? 1 : 0);
-      const double hi = 20000.0 * std::pow(0.04, P("kParamFreqB") / 100.0);
+      // J-203f: the wet tone (white noise through the source, 1/3-octave transfer of a held note at mix 100) as
+      // a shelf curve per type: the curve at the unset cuts plus the LOW CUT and HIGH CUT changes, each
+      // measured along its own knob (plasma_fx_reverb_tone.inc)
+      {
+        float db[ShelfEq::kN + 1];
+        reverbTone(rtype, P("kParamFreq"), P("kParamFreqB"), db);
+        u.rvEq.set(sr, db);
+      }
       const double diffA = 0.7, diffB = 0.7;
       const double spinR = 0.05 + 3.0 * P("kParamSpinRate") / 100.0, spinD = P("kParamSpinDepth") / 100.0 * (rtype == 4 ? 2.5 : 1.0);
       static const double base[5][8] = {
@@ -901,6 +985,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           {0.0897, 0.1013, 0.1201, 0.1327, 0.1499, 0.1621, 0.1777, 0.1913},  // abyss
           {0.0731, 0.0853, 0.0997, 0.1129, 0.1277, 0.1409, 0.1553, 0.1697},  // space
       };
+      const double kRvKLo = std::tan(3.14159265358979 * 300.0 / sr), kRvKHi = std::tan(3.14159265358979 * std::min(3500.0, sr * 0.4) / sr);
       double len[8], g[8], gL[8], gH[8];
       for (int k = 0; k < 8; ++k) {
         len[k] = std::min(base[rtype][k] * size * sr, static_cast<double>(u.rv[k].n - 16));
@@ -908,14 +993,13 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         g[k] = std::pow(10.0, -3.0 * ts / std::max(0.05, rtM));
         gL[k] = std::pow(10.0, -3.0 * ts / std::max(0.05, rtLo));
         gH[k] = std::pow(10.0, -3.0 * ts / std::max(0.05, rtHi));
-        u.rvDamp[k].lp(sr, 2500.0);
-        u.rvLs[k].lp(sr, 250.0);
+        // J-203f: the loop gain per band as a product of shelves (lows below ~300 Hz at gL, highs above ~3.5 kHz
+        // at gH): each band then decays at its own time, which the summed one-poles before could not hold
+        u.rvG[k] = static_cast<float>(gL[k]);
+        u.rvLs[k].set(kRvKLo, g[k] / gL[k]);
+        u.rvHs[k].set(kRvKHi, gH[k] / g[k]);
       }
       const float wetF = static_cast<float>(wet * wetG), dryF = 1.f - wet * wet;
-      for (int ch = 0; ch < 2; ++ch) {
-        u.rvLo[ch].lp(sr, std::max(5.0, lo));
-        u.rvHi[ch].lp(sr, std::max(200.0, hi));
-      }
       const float preD = static_cast<float>(std::clamp(preS * sr, 1.0, static_cast<double>(u.pre[0].n - 8)));
       // early sound: the source's hall speaks at once when small and builds slowly when large; the
       // vintage builds over its first 100 ms or so; the abyss starts loud
@@ -938,9 +1022,9 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         float tap[8];
         for (int k = 0; k < 8; ++k) {
           const double m = spinD * 0.0008 * sr * std::sin(kPi2 * (u.rvMod + k * 0.125));
-          const float x = u.rv[k].tap(static_cast<float>(len[k] + m));
+          const float x = u.rv[k].tapAp(static_cast<float>(len[k] + m), u.rvAp[k]);
           // three-band decay: highs at gH, mids at g, lows at gL
-          tap[k] = static_cast<float>(gH[k] * x + (g[k] - gH[k]) * u.rvDamp[k].run(x) + (gL[k] - g[k]) * u.rvLs[k].run(x));
+          tap[k] = u.rvHs[k].run(u.rvLs[k].run(x * u.rvG[k]));
         }
         // 8x8 Hadamard-style mix
         float h[8];
@@ -953,8 +1037,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
             }
         for (int k = 0; k < 8; ++k) u.rv[k].push(std::clamp(h[k] * 0.35355339f + in[k & 1], -8.f, 8.f));
         float wl = (tap[0] + tap[2] + tap[4] + tap[6]) * 0.35f + in[0] * early, wr = (tap[1] + tap[3] + tap[5] + tap[7]) * 0.35f + in[1] * early;
-        wl = u.rvHi[0].run(wl), wr = u.rvHi[1].run(wr);
-        if (lo > 5.0) wl -= u.rvLo[0].run(wl), wr -= u.rvLo[1].run(wr);
+        wl = u.rvEq.run(0, wl), wr = u.rvEq.run(1, wr);
         const float mid = (wl + wr) * 0.5f, side = (wl - wr) * 0.5f * static_cast<float>(width);
         wl = mid + side, wr = mid - side;
         L[i] = (L[i] * dryF + wl * wetF) * out;
@@ -986,15 +1069,20 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const double res = std::clamp(P("kParamReso") / 100.0 + N("kParamY") * 0.25, 0.0, 1.0);
       const bool clean = N("kParamPad") >= 0.5;
       const double spread = (P("kParamStereo") / 100.0 - 0.5) * 48.0;
+      // J-203f, measured (low-pass at 88 Hz, noise in): MIX follows the distortion's law, dry 1 - wet^2 with
+      // wet sin^2(pi m / 2) (the dry part reads -0.2 / -2.5 / -11.3 dB at 25 / 50 / 75 %)
+      const float fWet = static_cast<float>(std::pow(std::sin(1.5707963267948966 * wet), 2.0)), fDry = 1.f - fWet * fWet;
       const int sub = 32;
       for (int i0 = 0; i0 < n; i0 += sub) {
         const int m = std::min(sub, n - i0);
-        u.filt->set(ft, sr, hz, res, clean ? 0.0 : P("kParamDrive") / 100.0, P("kParamVar") / 100.0, spread, c.driveBoost);
+        // imports (boost): PAD keeps the drive's gain and lifts its clip; Plasma's own CLEAN drops the drive
+        u.filt->set(ft, sr, hz, res, clean && !c.driveBoost ? 0.0 : P("kParamDrive") / 100.0, P("kParamVar") / 100.0, spread,
+                    c.driveBoost, clean);
         for (int i = i0; i < i0 + m; ++i) {
           float l = L[i], r = R[i];
           u.filt->process(l, r);
-          L[i] = (L[i] + (l - L[i]) * wet) * out;
-          R[i] = (R[i] + (r - R[i]) * wet) * out;
+          L[i] = (L[i] * fDry + l * fWet) * out;
+          R[i] = (R[i] * fDry + r * fWet) * out;
         }
       }
       break;
@@ -1156,7 +1244,12 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const bool mono = N("kParamLFMono") >= 0.5;
       u.ulf.set(sr, P("kParamLFXover"));
       const double hpf = P("kParamHPF"), lpf = P("kParamLPF");
+      // J-203f, measured with stereo saws: the low cut is two 2-pole Butterworth sections in a row
+      // (-6 dB at the knob, 24 dB/oct); the high cut stays 2nd order; MIX follows the distortion's
+      // law (wet sin^2(pi m / 2), dry 1 - wet^2: +0.3 dB and -4.7 dB width at 50 % with width 0).
       u.uhp.set(3, sr, std::max(1.0, hpf), 0.707, 0);
+      u.uhp2.set(3, sr, std::max(1.0, hpf), 0.707, 0);
+      const float uWet = static_cast<float>(std::pow(std::sin(1.5707963267948966 * wet), 2.0)), uDry = 1.f - uWet * uWet;
       u.ulp.set(4, sr, lpf, 0.707, 0);
       const float pl = N("kParamPolarityL") >= 0.5 ? -1.f : 1.f, pr = N("kParamPolarityR") >= 0.5 ? -1.f : 1.f;
       const float gl = bal > 0 ? 1 - bal : 1, gr = bal < 0 ? 1 + bal : 1;
@@ -1171,11 +1264,11 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           const float lm = static_cast<float>((lo0 + lo1) * 0.5);
           l = lm + static_cast<float>(hi0), r = lm + static_cast<float>(hi1);
         }
-        if (hpf > 1.5) l = u.uhp.run(0, l), r = u.uhp.run(1, r);
+        if (hpf > 1.5) l = u.uhp2.run(0, u.uhp.run(0, l)), r = u.uhp2.run(1, u.uhp.run(1, r));
         if (lpf < 19900) l = u.ulp.run(0, l), r = u.ulp.run(1, r);
         l *= gl, r *= gr;
-        L[i] = (L[i] + (l - L[i]) * wet) * out;
-        R[i] = (R[i] + (r - R[i]) * wet) * out;
+        L[i] = (L[i] * uDry + l * uWet) * out;
+        R[i] = (R[i] * uDry + r * uWet) * out;
       }
       break;
     }

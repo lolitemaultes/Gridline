@@ -179,6 +179,22 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     and the convolver's wet path has no delay (an empty impulse slot passes the sound unchanged).
   - Hyper with one voice passes the sound untouched, and more voices keep about the same level
     (before, four voices were up to 7 dB too quiet).
+  - The reverb types sound like the original's. Each type has the original's tone (it was up to
+    10 dB too dark above 1 kHz), its low cut and high cut now shape the sound as the original's do
+    (the plate's low cut reaches far higher, the other types' cuts are gentle slopes), and the
+    low, mid and high octaves decay at the original's separate times, measured per size (and on
+    the hall per size and delay setting): a large plate no longer loses its highs early, and a
+    small hall with a long delay rings in the lows as the original does. The wet level follows
+    the original within about 1 dB across sizes (the plate was up to 10 dB too loud at large
+    sizes).
+  - The utility's low cut is as steep as the original's (24 dB per octave instead of 12), and
+    the utility and the filter effect use the original's mix law (a half mix keeps more of the
+    dry sound). A multiband compressor at a part mix no longer cuts deep notches around its
+    crossover points.
+  - Comb and flanger filters ring at the original's pitch at high cutoffs (they were up to 13 %
+    flat near 7 kHz) and keep more of their highs. The filter effect's pad switch keeps the
+    drive's gain and only removes its clipping, as the original's does (it used to switch the
+    drive off, 16 dB too quiet at drive 60).
 - Import from URL: a missing downloader or converter is reported as missing on the BSDs too.
 - Platter picks up very quick jog moves from a controller. A flick out and back in 30 ms now
   reaches about 90% of the hand's travel instead of 54% (in 15 ms: 80% instead of 33%), about

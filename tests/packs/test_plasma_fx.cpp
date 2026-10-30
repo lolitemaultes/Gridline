@@ -314,6 +314,63 @@ int main() {
     expect(std::fabs((m50 - m0) + 2.6) < 0.6, ("wet 50 keeps the dry 2.6 dB down (" + std::to_string(m50 - m0) + ")").c_str());
   }
 
+  // ---- reverb tone and per-octave decay (J-203f). Source: white noise through each type at mix 100,
+  // 1/3-octave transfer of a held note, and Schroeder RT60 per octave after a 1 s noise burst.
+  {
+    auto rv = [&](const char* type, std::initializer_list<std::pair<const char*, Json>> extra) {
+      Json pp = plain({{"kParamEnable", num(1)}, {"kParamWet", num(100)}, {"kParamType", str(type)}});
+      for (const auto& kv : extra) pp.object["plainParams"].object[kv.first] = kv.second;
+      Json fx = arr({obj({{"FXReverb", pp}, {"type", num(pl::FxReverb - 1)}})});
+      expect(import(obj({{"FXRack0", obj({{"FX", fx}})}}), st, rep, cache), "reverb imports");
+    };
+    // white noise burst (1 s) through slot 0, read in one octave around hz: the gain while it plays (dB) and the
+    // tail's fall from 0.2-0.4 s to 1.0-1.2 s after it (dB)
+    auto burst = [&](double hz, double& gain, double& fall) {
+      auto bank = pl::makeFxBank(st, nullptr, kSr);
+      pl::FxContext c;
+      c.sr = kSr;
+      const int on = static_cast<int>(1.0 * kSr), n = static_cast<int>(2.4 * kSr);
+      std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+      uint32_t r = 12345u;
+      for (int i = 0; i < on; ++i) r = r * 1664525u + 1013904223u, L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>((r >> 8) / 8388608.0 - 1.0) * 0.1f;
+      const std::vector<float> in = L;
+      for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxReverb, slot0(st), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, nullptr, 0);
+      auto band = [&](const std::vector<float>& x) {  // RBJ band-pass, one octave (two passes)
+        const double w = 6.283185307179586 * hz / kSr, al = std::sin(w) / (2 * 1.41), a0 = 1 + al;
+        const double b0 = al / a0, a1 = -2 * std::cos(w) / a0, a2 = (1 - al) / a0;
+        std::vector<float> y = x;
+        for (int pass = 0; pass < 2; ++pass) {
+          double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+          for (auto& v : y) {
+            const double o = b0 * v - b0 * x2 - a1 * y1 - a2 * y2;
+            x2 = x1, x1 = v, y2 = y1, y1 = o, v = static_cast<float>(o);
+          }
+        }
+        return y;
+      };
+      const auto bo = band(L), bi = band(in);
+      gain = rmsDb(bo, 0.6, 1.0) - rmsDb(bi, 0.6, 1.0);
+      fall = rmsDb(bo, 1.2, 1.4) - rmsDb(bo, 2.0, 2.2);
+    };
+    double g1, f1, g2, f2;
+    // plate low cut 50: -28.2 dB at 200 Hz, -2.7 dB at 3.2 kHz (25.5 dB apart)
+    rv("kPlate", {{"kParamFreq", num(50)}});
+    burst(200, g1, f1), burst(3200, g2, f2);
+    expect(std::fabs((g2 - g1) - 25.5) < 5.0, ("plate low cut 50: 3.2 kHz over 200 Hz " + std::to_string(g2 - g1) + " dB (source 25.5)").c_str());
+    // hall high cut 100: +1.4 dB at 200 Hz, -16.6 dB at 5 kHz
+    rv("kHall", {{"kParamFreqB", num(100)}});
+    burst(200, g1, f1), burst(5000, g2, f2);
+    expect(std::fabs((g1 - g2) - 18.0) < 5.0, ("hall high cut 100: 200 Hz over 5 kHz " + std::to_string(g1 - g2) + " dB (source 18.0)").c_str());
+    // small hall, delay 100: the 125 Hz octave rings 13.8 s, the 1 kHz one 3.9 s
+    rv("kHall", {{"kParamSize", num(0)}, {"kParamDelay", num(100)}});
+    burst(125, g1, f1), burst(1000, g2, f2);
+    expect(f1 > 0 && f2 / f1 > 2.0, ("small hall with delay 100: the lows decay slower (" + std::to_string(f1) + " vs " + std::to_string(f2) + " dB per 0.8 s)").c_str());
+    // plate size 70: 1 kHz 10.6 s, 8 kHz 5.9 s
+    rv("kPlate", {{"kParamSize", num(70)}});
+    burst(1000, g1, f1), burst(8000, g2, f2);
+    expect(f1 > 0 && f2 / f1 > 1.3 && f2 / f1 < 2.6, ("plate size 70: 8 kHz decays about 1.8 times faster than 1 kHz (" + std::to_string(f2 / f1) + ")").c_str());
+  }
+
   // ---- distortion (J-203d). Source, held sines through each mode: the module halves its output; hard
   // clip has a small-signal gain of 1 + 4 d^3 and clips at the source's full scale (1.657 in Plasma's
   // units); downsample holds 1 + 96 d^2 samples at 48 kHz and keeps the level; mix m gives the wet
@@ -536,6 +593,70 @@ int main() {
       const double g = sineGainDb(st, 261.6);
       expect(uni == 1 ? std::fabs(g) < 0.05 : (g > -3.5 && g < 3), ("hyper unison " + std::to_string(uni) + ": " + std::to_string(g) + " dB").c_str());
     }
+  }
+
+  // ---- utility, filter effect, multiband mix (J-203f). Source: noise and stereo saws through each module, 1/3-octave
+  // transfer against the dry render. The utility's low cut is two 2-pole sections (-6 dB at the knob); the utility
+  // and the filter effect mix as the distortion does (dry 1 - wet^2, wet sin^2(pi m / 2): dry -2.5 dB at 50 %);
+  // a multiband compressor at ratio 1 stays flat at mix 50 (the dry part follows the crossovers' phase).
+  {
+    expect(import(fxBody("FXUtils", pl::FxUtility - 1, {{"kParamEnable", num(1)}, {"kParamHPF", num(100)}}), st, rep, cache), "utility imports");
+    const double h50 = sineGainDb(st, 50), h100 = sineGainDb(st, 100), h400 = sineGainDb(st, 400);
+    expect(std::fabs(h50 + 24.6) < 1.0 && std::fabs(h100 + 6.0) < 0.5 && h400 > -0.2,
+           ("utility low cut 100: " + std::to_string(h50) + " / " + std::to_string(h100) + " / " + std::to_string(h400) + " dB at 50 / 100 / 400 Hz (24 dB per octave)").c_str());
+    expect(import(fxBody("FXUtils", pl::FxUtility - 1, {{"kParamEnable", num(1)}, {"kParamHPF", num(2000)}, {"kParamWet", num(50)}}), st, rep, cache), "utility imports");
+    const double um = sineGainDb(st, 60);
+    expect(std::fabs(um + 2.5) < 0.3, ("utility mix 50, the dry part alone: " + std::to_string(um) + " dB (source -2.5)").c_str());
+    auto filt = [&](std::initializer_list<std::pair<const char*, Json>> extra) {
+      Json pp = plain({{"kParamEnable", num(1)}});
+      for (const auto& kv : extra) pp.object["plainParams"].object[kv.first] = kv.second;
+      Json fx = arr({obj({{"FXFilter", pp}, {"type", num(pl::FxFilter - 1)}})});
+      expect(import(obj({{"FXRack0", obj({{"FX", fx}})}}), st, rep, cache), "filter effect imports");
+    };
+    for (const auto& [m, want] : {std::pair<double, double>{25, -0.2}, {50, -2.5}, {75, -11.3}}) {
+      filt({{"kParamType", str("MgL12")}, {"kParamFreq", num(0.3)}, {"kParamReso", num(0)}, {"kParamWet", num(m)}});
+      const double g = sineGainDb(st, 5000);
+      expect(std::fabs(g - want) < 0.4, ("filter effect mix " + std::to_string(m) + ", the dry part alone: " + std::to_string(g) + " dB (source " + std::to_string(want) + ")").c_str());
+    }
+    // runs slot 0's filter on a sine with the imported drive law (boost), returns the gain (dB)
+    auto boosted = [&](double hz, double amp) {
+      auto bank = pl::makeFxBank(st, nullptr, kSr);
+      pl::FxContext c;
+      c.sr = kSr, c.driveBoost = true;
+      const int n = static_cast<int>(0.5 * kSr);
+      std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+      for (int i = 0; i < n; ++i) L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>(amp * std::sin(6.283185307179586 * hz * i / kSr));
+      for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxFilter, slot0(st), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, nullptr, 0);
+      return rmsDb(L, 0.25, 0.5) - 20 * std::log10(amp / std::sqrt(2.0));
+    };
+    // PAD: drive 60 adds its small-signal gain without clipping (source +16.3 dB over drive 0 with a loud saw)
+    filt({{"kParamType", str("MgL12")}, {"kParamFreq", num(0.5)}, {"kParamReso", num(30)}, {"kParamDrive", num(0)}, {"kParamPad", num(1)}});
+    const double p0 = boosted(100, 0.5);
+    filt({{"kParamType", str("MgL12")}, {"kParamFreq", num(0.5)}, {"kParamReso", num(30)}, {"kParamDrive", num(60)}, {"kParamPad", num(1)}});
+    const double p60 = boosted(100, 0.5);
+    expect(std::fabs(p60 - p0 - 16.3) < 1.0, ("filter PAD, drive 60 over drive 0: " + std::to_string(p60 - p0) + " dB (source +16.3)").c_str());
+    // comb: echoes every 1.0028 periods of the cutoff (source, cutoff 426.6 Hz at 48 kHz: 112.87 samples)
+    filt({{"kParamType", str("CombP")}, {"kParamFreq", num(0.5)}, {"kParamReso", num(90)}});
+    {
+      auto bank = pl::makeFxBank(st, nullptr, kSr);
+      pl::FxContext c;
+      c.sr = kSr, c.driveBoost = true;  // imports run the matched voicing
+      std::vector<float> L(1024, 0.f), R(1024, 0.f);
+      L[0] = R[0] = 1;
+      for (int pos = 0; pos < 1024; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxFilter, slot0(st), L.data() + pos, R.data() + pos, 256, c, nullptr, 0);
+      auto cen = [&](int a, int b) {
+        double s = 0, w = 0;
+        for (int i = a; i < b; ++i) s += L[static_cast<size_t>(i)], w += i * static_cast<double>(L[static_cast<size_t>(i)]);
+        return w / s;
+      };
+      const double e1 = cen(108, 119), e2 = cen(221, 232);
+      expect(std::fabs(e2 - e1 - 112.87) < 0.3, ("comb echo spacing at cutoff 426.6 Hz: " + std::to_string(e2 - e1) + " samples (source 112.87)").c_str());
+    }
+    expect(import(fxBody("FXComp", pl::FxComp - 1, {{"kParamEnable", num(1)}, {"kParamMultiband", num(1)}, {"kParamRatio", num(1)}, {"kParamWet", num(50)}}), st, rep, cache),
+           "multiband imports");
+    double worst = 0;
+    for (double hz : {133.75, 600.0, 2480.8}) worst = std::max(worst, std::fabs(sineGainDb(st, hz)));
+    expect(worst < 0.5, ("multiband ratio 1, mix 50: flat through the crossovers (worst " + std::to_string(worst) + " dB)").c_str());
   }
 
   std::error_code ec;

@@ -318,6 +318,16 @@ struct Filter::Ch {
     const float a = buf[(w - i) & (kBuf - 1)], b = buf[(w - i - 1) & (kBuf - 1)];
     return a + (b - a) * fr;
   }
+  // the same delay read with a 4-point (Catmull-Rom) cubic: keeps more of the top than the linear tap
+  float tapCubic(float d) const {
+    d = std::clamp(d, 1.f, static_cast<float>(kBuf - 3));
+    const int i = static_cast<int>(d);
+    const float t = d - static_cast<float>(i);
+    const float xm = buf[(w - i + 1) & (kBuf - 1)], x0 = buf[(w - i) & (kBuf - 1)], x1 = buf[(w - i - 1) & (kBuf - 1)],
+                x2 = buf[(w - i - 2) & (kBuf - 1)];
+    const float c1 = 0.5f * (x1 - xm), c2 = xm - 2.5f * x0 + 2.f * x1 - 0.5f * x2, c3 = 0.5f * (x2 - xm) + 1.5f * (x0 - x1);
+    return ((c3 * t + c2) * t + c1) * t + x0;
+  }
   void push(float x) {
     w = (w + 1) & (kBuf - 1);
     buf[w] = x;
@@ -336,7 +346,7 @@ void Filter::reset() {
   ch_[1].clear();
 }
 
-void Filter::set(int type, double sr, double hz, double res, double drive, double var, double spreadSt, bool boost) {
+void Filter::set(int type, double sr, double hz, double res, double drive, double var, double spreadSt, bool boost, bool pad) {
   type = std::clamp(type, 0, 106);
   const int eng = boost ? engineMatched(type) : engineOf(type);
   if (type != type_ || eng != ch_[0].eng) {
@@ -368,6 +378,9 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
       // barely clip, the acid ladder 2.5 dB later, the dirty ladder 5.5 dB earlier.
       h.drv = static_cast<float>(std::pow(10.0, 1.2 * std::pow(drive, 0.8)));
       h.head = type == 99 || type == 101 ? 16.f : type == 100 ? 3.5f : type == 102 ? 0.53f : 2.66f;
+      // J-203f, measured on the filter effect (saw, drive 60 / 100 %): with PAD on the level rises by the
+      // drive's small-signal gain alone (+16.4 / +24 dB over drive 0), so the clip moves 24 dB up
+      if (pad) h.head *= 16.f;
     }
     h.var = static_cast<float>(var);
     h.outGain = 1;
@@ -476,6 +489,12 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
           // (white noise 6 dB down and flat at 0 %, teeth +-fb at higher settings)
           h.fb = static_cast<float>(res);
           h.mix = static_cast<float>(type >= 47 ? 1 + res : res * (1 + res));  // flangers: 1 + fb
+          // J-203f, impulse responses of the source's comb (filter effect at 48 kHz, noise in, resonance 90,
+          // cutoffs 59 Hz .. 6.8 kHz): echoes every 1.0028 periods of the cutoff, counted from the
+          // input (the tap reads one sample behind the write, hence the - 1), read with a linear tap at the
+          // host rate (the echoes smear binomially; 88 Hz sits half-way between samples and loses its top)
+          const double kc = 1.0028;
+          h.delay = static_cast<float>(std::max(1.0, sr / f * kc - 1.0));
           if (type >= 69) {
             // flange-phase (fitted to the measured curves): the HL6 flanger with the 2-stage phaser's
             // allpasses (at 0.51 x cutoff) inside the delay path
@@ -999,7 +1018,7 @@ void Filter::process(float& l, float& r) {
       }
       case EngComb:
       case EngMComb: {
-        float d = h.tapFrac(h.delay);
+        float d = eng == EngMComb ? h.tapCubic(h.delay) : h.tapFrac(h.delay);
         const int ct = t >= 69 ? t - 24 : t >= 47 && t <= 54 ? t - 8 : t;
         if (t >= 69)
           for (int s = 0; s < 2; ++s) {

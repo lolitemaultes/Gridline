@@ -170,7 +170,8 @@ class Filter {
   // res / drive / var 0..1, spread: stereo cutoff offset in semitones (L -, R +).
   // boost: the drive raises the level (gain up to +24 dB into a soft clip with headroom) instead of
   // keeping it about even.
-  void set(int type, double sr, double hz, double res, double drive, double var, double spreadSt, bool boost = false);
+  // pad (boost only): the source's PAD switch, the drive's gain without its clipping
+  void set(int type, double sr, double hz, double res, double drive, double var, double spreadSt, bool boost = false, bool pad = false);
   void process(float& l, float& r);
   int type() const { return type_; }
   // Display: magnitude response at n frequencies (UI thread; allocates).
