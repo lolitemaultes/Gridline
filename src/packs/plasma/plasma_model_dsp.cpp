@@ -5,8 +5,14 @@
 // the factory LFO shapes and arpeggiator note orders.
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
 #include "../../core/Json.h"
+#include "../../core/Platform.h"
 #include "plasma.h"
 
 namespace gl::packs::plasma {
@@ -230,7 +236,180 @@ std::vector<float> floatsFrom(const Json* j, size_t maxN, float lo, float hi) {
   }
   return v;
 }
+
+// ------------------------------------------------------------------ embedded media
+constexpr const char kMediaPrefix[] = "media:";
+uint64_t fnv(uint64_t h, const void* p, size_t n) {
+  const auto* b = static_cast<const uint8_t*>(p);
+  for (size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 1099511628211ull;
+  return h;
+}
+std::string hex16(uint64_t h) {
+  char b[24];
+  std::snprintf(b, sizeof b, "%016llx", static_cast<unsigned long long>(h));
+  return b;
+}
+std::string addEntry(Model& m, Media e) {
+  for (const auto& x : m.media)
+    if (x.id == e.id) return kMediaPrefix + e.id;
+  m.media.push_back(std::move(e));
+  return kMediaPrefix + m.media.back().id;
+}
+// 32-bit float WAV (keeps levels above full scale).
+bool writeFloatWav(const std::string& path, const std::vector<std::vector<float>>& ch, int rate) {
+  const uint16_t nc = static_cast<uint16_t>(ch.size());
+  const uint32_t frames = static_cast<uint32_t>(ch.empty() ? 0 : ch[0].size());
+  std::string out;
+  auto u32 = [&](uint32_t v) {
+    for (int i = 0; i < 4; ++i) out += static_cast<char>((v >> (8 * i)) & 0xFF);
+  };
+  auto u16 = [&](uint16_t v) {
+    out += static_cast<char>(v & 0xFF);
+    out += static_cast<char>(v >> 8);
+  };
+  const uint32_t data = frames * nc * 4u;
+  out += "RIFF";
+  u32(36 + data);
+  out += "WAVEfmt ";
+  u32(16), u16(3), u16(nc), u32(static_cast<uint32_t>(rate)), u32(static_cast<uint32_t>(rate) * nc * 4u), u16(static_cast<uint16_t>(nc * 4)), u16(32);
+  out += "data";
+  u32(data);
+  out.reserve(out.size() + data);
+  for (uint32_t i = 0; i < frames; ++i)
+    for (uint16_t c = 0; c < nc; ++c) {
+      uint32_t u;
+      std::memcpy(&u, &ch[c][i], 4);
+      u32(u);
+    }
+  // written under a temporary name, then moved into place (another thread may extract the same entry)
+  const std::string tmp = path + ".tmp";
+  {
+    std::ofstream f(std::filesystem::u8path(tmp), std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    f.write(out.data(), static_cast<std::streamsize>(out.size()));
+    if (!f) return false;
+  }
+  std::error_code ec;
+  std::filesystem::rename(std::filesystem::u8path(tmp), std::filesystem::u8path(path), ec);
+  if (ec) std::filesystem::remove(std::filesystem::u8path(tmp), ec);
+  return !ec;
+}
 }  // namespace
+
+std::string mediaCacheDir() {
+  if (const char* e = std::getenv("GRIDLINE_CACHE_DIR"); e && *e) return std::string(e) + "/plasma-media";
+  if (const std::string c = platform::cacheRoot(); !c.empty()) return c + "/gridline/plasma-media";
+  std::error_code ec;
+  return (std::filesystem::temp_directory_path(ec) / "gridline-plasma-media").string();
+}
+
+bool isMediaRef(const std::string& ref) { return ref.compare(0, sizeof(kMediaPrefix) - 1, kMediaPrefix) == 0; }
+
+const Media* findMedia(const Model& m, const std::string& ref) {
+  if (!isMediaRef(ref)) return nullptr;
+  const std::string id = ref.substr(sizeof(kMediaPrefix) - 1);
+  for (const auto& e : m.media)
+    if (e.id == id) return &e;
+  return nullptr;
+}
+
+std::string addMedia(Model& m, const std::string& name, int rate, const std::vector<std::vector<float>>& channels) {
+  Media e;
+  e.name = name;
+  e.rate = std::clamp(rate, 1000, 384000);
+  e.channels = static_cast<int>(std::clamp<size_t>(channels.size(), 1, 2));
+  e.frames = channels.empty() ? 0 : static_cast<int64_t>(channels[0].size());
+  float peak = 0;
+  for (int c = 0; c < e.channels && c < static_cast<int>(channels.size()); ++c)
+    for (float v : channels[static_cast<size_t>(c)])
+      if (std::isfinite(v)) peak = std::max(peak, std::fabs(v));
+  e.peak = peak > 0 ? peak : 1.f;
+  std::vector<uint8_t> raw;
+  raw.reserve(static_cast<size_t>(e.frames) * static_cast<size_t>(e.channels) * 2);
+  for (int64_t i = 0; i < e.frames; ++i)
+    for (int c = 0; c < e.channels; ++c) {
+      const auto& ch = channels[static_cast<size_t>(std::min<int>(c, static_cast<int>(channels.size()) - 1))];
+      const float x = static_cast<size_t>(i) < ch.size() && std::isfinite(ch[static_cast<size_t>(i)]) ? ch[static_cast<size_t>(i)] / e.peak : 0.f;
+      const int v = static_cast<int>(std::lround(std::clamp(x, -1.f, 1.f) * 32767.f));
+      const uint16_t u = static_cast<uint16_t>(static_cast<int16_t>(v));
+      raw.push_back(static_cast<uint8_t>(u & 0xFF));
+      raw.push_back(static_cast<uint8_t>(u >> 8));
+    }
+  uint64_t h = 1469598103934665603ull;
+  h = fnv(h, raw.data(), raw.size());
+  h = fnv(h, &e.rate, sizeof e.rate);
+  h = fnv(h, &e.channels, sizeof e.channels);
+  h = fnv(h, &e.peak, sizeof e.peak);
+  e.id = hex16(h);
+  e.pcm = b64(raw);
+  return addEntry(m, std::move(e));
+}
+
+std::string addMediaMap(Model& m, const std::string& name, const std::string& sfzText) {
+  Media e;
+  e.name = name;
+  e.channels = 0;
+  e.sfz = sfzText;
+  e.id = hex16(fnv(0x9e3779b97f4a7c15ull, sfzText.data(), sfzText.size()));
+  return addEntry(m, std::move(e));
+}
+
+bool mediaAudio(const Media& e, std::vector<std::vector<float>>& channels) {
+  channels.clear();
+  if (e.channels < 1 || e.channels > 2 || e.frames <= 0) return false;
+  const auto raw = unb64(e.pcm);
+  const size_t nc = static_cast<size_t>(e.channels);
+  const size_t frames = std::min<size_t>(static_cast<size_t>(e.frames), raw.size() / (2 * nc));
+  if (!frames) return false;
+  channels.assign(nc, std::vector<float>(frames));
+  for (size_t i = 0; i < frames; ++i)
+    for (size_t c = 0; c < nc; ++c) {
+      const size_t o = (i * nc + c) * 2;
+      const int16_t v = static_cast<int16_t>(static_cast<uint16_t>(raw[o] | (raw[o + 1] << 8)));
+      channels[c][i] = static_cast<float>(v) / 32767.f * e.peak;
+    }
+  return true;
+}
+
+std::string mediaFile(const Model& m, const std::string& ref) {
+  if (!isMediaRef(ref)) return ref;
+  const Media* e = findMedia(m, ref);
+  if (!e) return "";
+  namespace fs = std::filesystem;
+  static std::recursive_mutex mu;  // a multisample map extracts its members through this function
+  std::lock_guard<std::recursive_mutex> lk(mu);
+  const std::string dir = mediaCacheDir();
+  std::error_code ec;
+  fs::create_directories(fs::u8path(dir), ec);
+  if (e->sfz.empty()) {
+    const std::string path = dir + "/" + e->id + ".wav";
+    if (fs::is_regular_file(fs::u8path(path), ec)) return path;
+    std::vector<std::vector<float>> ch;
+    if (!mediaAudio(*e, ch) || !writeFloatWav(path, ch, e->rate)) return "";
+    return path;
+  }
+  // multisample map: its samples first, then the map with their file names
+  std::string text = e->sfz;
+  for (size_t at = text.find(kMediaPrefix); at != std::string::npos; at = text.find(kMediaPrefix, at)) {
+    const size_t idAt = at + sizeof(kMediaPrefix) - 1;
+    const std::string id = text.substr(idAt, 16);
+    const std::string file = mediaFile(m, kMediaPrefix + id);
+    // the map refers to its samples by file name (they sit next to it)
+    const std::string name = file.empty() ? id + ".missing" : fs::u8path(file).filename().u8string();
+    text.replace(at, sizeof(kMediaPrefix) - 1 + id.size(), name);
+    at += name.size();
+  }
+  const std::string path = dir + "/" + e->id + ".sfz";
+  if (fs::is_regular_file(fs::u8path(path), ec)) return path;
+  const std::string tmp = path + ".tmp";
+  {
+    std::ofstream f(fs::u8path(tmp), std::ios::binary | std::ios::trunc);
+    if (!f) return "";
+    f << text;
+  }
+  fs::rename(fs::u8path(tmp), fs::u8path(path), ec);
+  return ec ? "" : path;
+}
 
 // ------------------------------------------------------------------ model
 Model defaultModel() {
@@ -467,6 +646,33 @@ std::string modelToData(const Model& m) {
   r.object["mpeYWheel"] = boolean(m.mpeYtoModWheel);
   r.object["mpeBendX"] = boolean(m.mpeBendToX);
   r.object["lockFx"] = boolean(m.lockFx);
+  if (!m.media.empty()) {
+    // only what the sound still uses (a replaced sample leaves its entry behind)
+    std::string refs;
+    for (const auto& o : m.osc) refs += o.sample + "\n" + o.sfz + "\n";
+    refs += m.noiseFile + "\n";
+    for (const auto& e : m.fxExtra) refs += e.ir + "\n";
+    for (const auto& e : m.media)
+      if (!e.sfz.empty() && refs.find(kMediaPrefix + e.id) != std::string::npos) refs += e.sfz;
+    Json md = Json::makeArray();
+    for (const auto& e : m.media) {
+      if (refs.find(kMediaPrefix + e.id) == std::string::npos) continue;
+      Json j = Json::makeObject();
+      j.object["id"] = str(e.id);
+      if (!e.name.empty()) j.object["name"] = str(e.name);
+      if (!e.sfz.empty()) {
+        j.object["sfz"] = str(e.sfz);
+      } else {
+        j.object["rate"] = num(e.rate);
+        j.object["channels"] = num(e.channels);
+        j.object["frames"] = num(static_cast<double>(e.frames));
+        j.object["peak"] = num(e.peak);
+        j.object["pcm"] = str(e.pcm);
+      }
+      md.array.push_back(std::move(j));
+    }
+    r.object["media"] = std::move(md);
+  }
   return jsonStringify(r, 0);
 }
 
@@ -697,6 +903,22 @@ bool modelFromData(const std::string& data, Model& m) {
   m.mpeYtoModWheel = getBool(r, "mpeYWheel", false);
   m.mpeBendToX = getBool(r, "mpeBendX", false);
   m.lockFx = getBool(r, "lockFx", false);
+  if (const Json* md = r.find("media"); md && md->is(Json::Type::Array))
+    for (const auto& j : md->array) {
+      if (!j.is(Json::Type::Object) || m.media.size() >= 256) continue;
+      Media e;
+      e.id = j.text("id").substr(0, 16);
+      if (e.id.size() != 16 || e.id.find_first_not_of("0123456789abcdef") != std::string::npos) continue;
+      e.name = j.text("name").substr(0, 512);
+      e.sfz = j.text("sfz");
+      e.rate = std::clamp(jsonInt<int>(j.num("rate", 44100)), 1000, 384000);
+      e.channels = std::clamp(jsonInt<int>(j.num("channels", 1)), 0, 2);
+      e.frames = std::max<int64_t>(0, jsonInt<int64_t>(j.num("frames", 0)));
+      const double pk = j.num("peak", 1);
+      e.peak = std::isfinite(pk) && pk > 0 && pk < 1e6 ? static_cast<float>(pk) : 1.f;
+      e.pcm = j.text("pcm");
+      m.media.push_back(std::move(e));
+    }
   return true;
 }
 

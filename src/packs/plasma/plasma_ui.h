@@ -115,6 +115,8 @@ std::string ptext(const Ctx& c, int k);  // display text of parameter k
 
 // File name without folder and extension.
 std::string fs_stem(const std::string& path);
+// Display name of a file reference: an embedded entry shows the name it had in the preset.
+std::string refStem(const Model& m, const std::string& ref);
 
 // ---- text
 float font(const Ctx& c, float px);  // scaled font size (form px)

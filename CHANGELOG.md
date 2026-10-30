@@ -152,6 +152,15 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   count), a folder lists its own presets and its sub-folders', the search looks inside the selected
   folder, the column heads sort the list, the tree scrolls without moving the window, and the
   selected preset stays selected while you search or sort.
+- Plasma opens Serum 2 and Serum 1 presets with the audio they carry. Wavetables, samples,
+  multisample kits, noises, impulse responses and microtunings stored inside a preset now play
+  instead of a "file not found" stand-in, and they are saved with the project, so it plays the same
+  on a computer without the preset. A table stored in the preset wins over a file of the same name.
+  Files a preset only refers to are also found next to the preset (a pack's own folders). Levels
+  follow the source's volume curve (oscillators, noise, sub, master, amp, direct and bus outputs
+  were too quiet; sends to the effect buses were too loud), the table position spans the whole
+  table, oscillator pans follow the source's
+  pan curve, filter drive keeps its driven level, and a wide unison no longer starts with a click.
 - Notes with a fine pitch now keep their pitch in Kerf: a note tuned up or down (up to an octave
   either way) plays the chop of its own key at that pitch, so imported FL Studio projects that pitch
   Slicex chops this way play as written. Before, the tuning moved the note to another key, so it

@@ -478,6 +478,36 @@ bool decodeSerum1(const uint8_t* p, size_t n, Serum1& out, std::string& err) {
   }
   out.name = cstr(out.state, 0x4972, 32);
   out.author = cstr(out.state, 0x49A0, 48);
+  // Embedded audio: a second zlib stream after the state; the chunk ends with the
+  // length of the first stream (u32 LE). It holds oscillator A's table, then B's
+  // (their byte sizes are stored in the state), then the noise sample: mono float32.
+  if (len >= 8) {
+    const size_t first = static_cast<size_t>(chunk[len - 4]) | static_cast<size_t>(chunk[len - 3]) << 8 |
+                         static_cast<size_t>(chunk[len - 2]) << 16 | static_cast<size_t>(chunk[len - 1]) << 24;
+    std::vector<uint8_t> audio;
+    if (first >= 3 && first + 3 <= len - 4 && (chunk[first] & 0x0F) == 8 &&
+        inflateRaw(chunk + first + 2, len - 4 - first - 2, audio, size_t(96) << 20)) {
+      auto u32 = [&](size_t at) {
+        uint32_t v = 0;
+        if (at + 4 <= out.state.size()) std::memcpy(&v, out.state.data() + at, 4);
+        return static_cast<size_t>(v);
+      };
+      const size_t na = u32(0x4968) / 4, nb = u32(0x496C) / 4, total = audio.size() / 4;
+      auto take = [&](size_t from, size_t count, std::vector<float>& dst) {
+        if (from >= total) return;
+        count = std::min(count, total - from);
+        dst.resize(count);
+        std::memcpy(dst.data(), audio.data() + from * 4, count * 4);
+        for (float& f : dst)
+          if (!std::isfinite(f)) f = 0;
+      };
+      if (na + nb <= total) {
+        take(0, na, out.tableA);
+        take(na, nb, out.tableB);
+        take(na + nb, total - na - nb, out.noise);
+      }
+    }
+  }
   return true;
 }
 
@@ -583,9 +613,19 @@ void serum1Root(const Serum1& s, Json& meta, Json& root, std::vector<std::string
     const std::string wt = cstr(d, o == 0 ? 0x3C08 : 0x3E08, 512);
     Json& sub = module(root, "Oscillator" + std::to_string(o) + "/WTOsc" + std::to_string(o));
     if (!wt.empty()) sub.object["relativePathToWT"] = Json::makeString(fs::path(wt).has_extension() ? wt : wt + ".wav");
+    const std::vector<float>& t = o == 0 ? s.tableA : s.tableB;
+    if (t.size() >= 2048) {
+      sub.object["embeddedWTData"] = floatBlob(t.data(), t.size() / 2048 * 2048);
+      if (!wt.empty()) sub.object["tableDisplayName"] = Json::makeString(fs::path(wt).stem().string());
+    }
   }
   if (const std::string noise = cstr(d, 0x4008, 512); !noise.empty())
     module(root, "Oscillator3/NoiseOsc3").object["relativePathToNoiseSample"] = Json::makeString(noise);
+  if (!s.noise.empty()) {
+    Json ch = Json::makeArray();
+    ch.array.push_back(floatBlob(s.noise.data(), s.noise.size()));
+    module(root, "Oscillator3/NoiseOsc3").object["embeddedNoiseData"] = std::move(ch);
+  }
   for (int k = 0; k < 4; ++k)
     if (std::string m = cstr(d, 0x4A60 + 0x20 * static_cast<size_t>(k), 32); !m.empty()) module(root, "Macro" + std::to_string(k)).object["name"] = Json::makeString(m);
   // ---- LFO shapes and tempo switches
@@ -662,7 +702,6 @@ void serum1Root(const Serum1& s, Json& meta, Json& root, std::vector<std::string
   }
   if (chaos) notes.push_back("Serum 1 Chaos modulation sources are not available: their matrix slots were left out");
   if (unmapped) notes.push_back("Some Serum 1 matrix slots have no Plasma destination and were left out");
-  if (d.size() > 34016 && !modern) notes.push_back("Wavetables embedded in Serum 1 presets are not read: the table file must be installed");
 }
 
 }  // namespace serum
@@ -724,7 +763,7 @@ bool hostedRoot(const PluginState& hosted, Json& meta, Json& root, serum::Serum1
 // Embedded audio is large and unused by link probes.
 void stripEmbedded(Json& j) {
   if (j.type == Json::Type::Object) {
-    for (const char* k : {"embeddedWTData", "embedded_audio", "embedded_sfz"}) j.object.erase(k);
+    for (const char* k : {"embeddedWTData", "embedded_audio", "embedded_sfz", "embeddedNoiseData", "embeddedIR", "tuningData"}) j.object.erase(k);
     for (auto& [k, v] : j.object) stripEmbedded(v);
   } else if (j.type == Json::Type::Array) {
     if (j.array.size() > 4096) return;  // numeric blobs
@@ -819,6 +858,7 @@ bool serumParamLink(const PluginState& hosted, int index, int& plasmaParam, std:
         p->s1state.state.assign(0x4AE0 + 4 * 71, 0);
       }
       stripEmbedded(p->root);
+      p->s1state.tableA.clear(), p->s1state.tableB.clear(), p->s1state.noise.clear();  // probes read no audio
       it = cache.emplace(key, p).first;
     }
     pr = it->second;
@@ -886,13 +926,13 @@ bool isOpenableName(const std::string& fileName) {
 }
 
 bool openPresetBytes(const std::vector<uint8_t>& bytes, const std::string& fileName, PluginState& out, ImportReport& rep,
-                     const std::vector<std::string>& searchRoots) {
+                     const std::vector<std::string>& searchRoots, const std::string& presetDir) {
   rep = ImportReport{};
   const size_t n = bytes.size();
   const bool serum2 = n >= 9 && std::memcmp(bytes.data(), "XferJson", 8) == 0;
   const bool serum1 = n >= 4 && std::memcmp(bytes.data(), "CcnK", 4) == 0;
   if (serum2 || serum1) {
-    const bool ok = importSerumBytes(bytes, out, rep, searchRoots);
+    const bool ok = importSerumBytes(bytes, out, rep, searchRoots, presetDir);
     if (ok && rep.presetName.empty()) rep.presetName = fs::u8path(fileName).stem().string();
     return ok;
   }
@@ -953,7 +993,7 @@ bool openPresetFile(const std::string& path, PluginState& out, ImportReport& rep
       return true;
     }
   }
-  return openPresetBytes(bytes, fs::u8path(path).filename().string(), out, rep, searchRoots);
+  return openPresetBytes(bytes, fs::u8path(path).filename().string(), out, rep, searchRoots, fs::u8path(path).parent_path().u8string());
 }
 
 }  // namespace gl::packs::plasma

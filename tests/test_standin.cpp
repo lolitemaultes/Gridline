@@ -502,7 +502,7 @@ int main() {
   {
     const float lvl = st.params[static_cast<size_t>(pl::oscP(0, pl::O_Level))];
     const float fon = st.params[static_cast<size_t>(pl::filtP(0, pl::F_Enable))];
-    expect(std::fabs(lvl - 0.36f) < 0.01f && fon > 0.5f, "Serum 2 state mapped onto Plasma's parameters");
+    expect(std::fabs(lvl - 0.6f) < 0.01f && fon > 0.5f, "Serum 2 state mapped onto Plasma's parameters");
     const PluginState o = standin::originalState(st);
     expect(o.type == kSerum2 && o.data == s2.data, "the original plugin and its state are kept, untouched");
     expect(standin::describe(st).find("Serum 2 is not installed") != std::string::npos, "stand-in description");
@@ -567,7 +567,7 @@ int main() {
     std::vector<std::string> notes;
     expect(standin::makeStandIn(s1, "", "", out, &notes) && out.type == pl::kType, "Serum 1 state opens as Plasma");
     const float lvl = out.params[static_cast<size_t>(pl::oscP(0, pl::O_Level))];
-    expect(std::fabs(lvl - 0.36f) < 0.01f, "Serum 1 osc A level mapped (0.6 normalized)");
+    expect(std::fabs(lvl - 0.6f) < 0.01f, "Serum 1 osc A level mapped (0.6 normalized)");
     expect(out.params[static_cast<size_t>(pl::filtP(0, pl::F_Enable))] > 0.5f, "Serum 1 filter switch mapped");
     standin::ParamLink l;
     expect(standin::paramLink(standin::Family::Serum1, s1, 45, l) && l.standin == pl::filtP(0, pl::F_Freq), "Serum 1 cutoff links to Plasma's cutoff");

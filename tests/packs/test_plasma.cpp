@@ -1357,7 +1357,7 @@ int main(int argc, char** argv) {
     if (ok) {
       auto P = [&](int k) { return st.params[static_cast<size_t>(k)]; };
       expect(std::lround(P(pl::oscP(0, pl::O_Unison))) == 5 && std::lround(P(pl::oscP(0, pl::O_Octave))) == -1, "osc unison / octave mapped");
-      expect(std::fabs(P(pl::oscP(0, pl::O_Level)) - 0.75f) < 1e-3f && std::lround(P(pl::oscP(0, pl::O_Warp1Mode))) == 1, "osc level / warp mapped");
+      expect(std::fabs(P(pl::oscP(0, pl::O_Level)) - std::sqrt(0.75f)) < 1e-3f && std::lround(P(pl::oscP(0, pl::O_Warp1Mode))) == 1, "osc level / warp mapped");
       expect(P(pl::filtP(0, pl::F_Enable)) > 0.5f && pl::filterNames()[static_cast<size_t>(std::lround(P(pl::filtP(0, pl::F_Type))))] == "Low 24",
              "filter type mapped");
       expect(std::fabs(pl::envTime(P(pl::envP(0, pl::E_Attack))) - 0.05) < 1e-3, "envelope time mapped (seconds)");

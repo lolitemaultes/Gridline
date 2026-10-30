@@ -15,6 +15,16 @@
 
 namespace gl::packs::plasma::serum {
 
+// Embedded audio in a document: a Json string starting with this tag holds
+// float32 values (native byte order), written by the CBOR decoder for the
+// audio arrays (embeddedWTData, embeddedNoiseData, embeddedIR, embedded_audio
+// "data") and by the Serum 1 reader. floatsOf() also reads plain number arrays.
+inline constexpr const char kBlobTag[] = "\x01" "f32:";
+Json floatBlob(const float* p, size_t n);
+bool floatsOf(const Json& j, std::vector<float>& out);
+// Channels of an embedded audio value: an array of channel blobs, or one blob (mono).
+bool channelsOf(const Json& j, std::vector<std::vector<float>>& out);
+
 // "XferJson\0" containers (.SerumPreset files, Serum 2 plugin states).
 bool decodeXferJson(const uint8_t* p, size_t n, Json& meta, Json& root, std::string& err);
 // Serum 1 preset chunk (the zlib data of an .fxp / a VST2 chunk) or a whole
@@ -23,6 +33,9 @@ bool decodeXferJson(const uint8_t* p, size_t n, Json& meta, Json& root, std::str
 struct Serum1 {
   std::vector<float> params;           // 299 VST parameters, normalized
   std::vector<uint8_t> state;          // decompressed state
+  // Audio stored after the state (second zlib stream): oscillator A and B
+  // tables (2048-sample frames) and the noise sample, mono float32.
+  std::vector<float> tableA, tableB, noise;
   std::string name, author;
 };
 bool decodeSerum1(const uint8_t* p, size_t n, Serum1& out, std::string& err);
@@ -40,6 +53,6 @@ const char* warpKey(int i);
 // Runs the importer on a document. files = false: no wavetable / sample
 // lookups and no Model data (automation link probes).
 void runImporter(const Json& meta, const Json& root, PluginState& out, ImportReport& rep, const std::vector<std::string>& roots,
-                 bool files);
+                 bool files, const std::string& presetDir = {});
 
 }  // namespace gl::packs::plasma::serum

@@ -422,6 +422,21 @@ struct ClipSlot {
 };
 struct VoiceStep { float pan = 0, detune = 0, cutoff = 0, env = 0, mod1 = 0, mod2 = 0; };
 
+// Audio a sound carries inside its own data (the wavetables, samples, noises,
+// impulses and multisample maps a Serum preset embeds), so a project keeps
+// working on a computer without the preset. Referenced as "media:<id>" from
+// OscData::sample / sfz, Model::noiseFile and FxExtra::ir; extracted on demand
+// into Gridline's cache folder (mediaFile) and read by the usual file loaders.
+struct Media {
+  std::string id;          // content hash (16 hex digits)
+  std::string name;        // file name it had in the preset
+  int rate = 44100, channels = 1;
+  int64_t frames = 0;
+  float peak = 1;          // pcm holds sample / peak
+  std::string pcm;         // base64: 16-bit little-endian, interleaved
+  std::string sfz;         // multisample map: its sample= values are media references
+};
+
 struct Model {
   std::array<OscData, kOscs> osc;
   std::string noiseFile;                 // user noise sample (N_Type = file)
@@ -449,7 +464,23 @@ struct Model {
   std::vector<std::string> openNotes, openMissing;
   bool mpeXYZtoMacros = false, mpeYZtoMacros = false, mpeYtoModWheel = false, mpeBendToX = false;
   bool lockFx = false;
+  std::vector<Media> media;              // embedded audio (see Media)
 };
+
+// Stores audio in m.media (deduplicated by content); returns its "media:<id>" reference.
+std::string addMedia(Model& m, const std::string& name, int rate, const std::vector<std::vector<float>>& channels);
+// Stores a multisample map whose sample= values are media references.
+std::string addMediaMap(Model& m, const std::string& name, const std::string& sfzText);
+bool isMediaRef(const std::string& ref);
+const Media* findMedia(const Model& m, const std::string& ref);
+// Audio of a media entry (channels of frames).
+bool mediaAudio(const Media& e, std::vector<std::vector<float>>& channels);
+// The file a reference plays from: media entries are written to the cache
+// folder once (named by their id) and that path is returned; other references
+// are returned as they are; "" when a media entry is missing or cannot be written.
+std::string mediaFile(const Model& m, const std::string& ref);
+// Folder of the extracted media ($GRIDLINE_CACHE_DIR/plasma-media when set).
+std::string mediaCacheDir();
 
 Model defaultModel();
 bool modelFromData(const std::string& data, Model& m);   // false: not Plasma data (m = defaults)
@@ -558,15 +589,19 @@ struct ImportReport {
   std::string presetName, author;
   std::vector<std::string> approximated;  // human-readable notes
   std::vector<std::string> missingFiles;
+  std::vector<std::string> unread;        // stored values with no mapping ("Module.kParamKey")
   int mapped = 0, skipped = 0;
 };
 // Reads a Serum 2 (.SerumPreset) or Serum 1 (.fxp) preset; fills a Plasma state.
 // `searchRoots`: folders searched for wavetables / samples / IRs referenced by
-// relative path (the user's own Serum content folders).
+// relative path (the user's own Serum content folders). Audio the preset embeds
+// is kept in the state itself (Model::media); referenced files that are not
+// embedded are also looked for next to the preset (`presetDir` and the folders
+// above it, as packs lay them out).
 bool importSerumPreset(const std::string& path, PluginState& out, ImportReport& rep,
                        const std::vector<std::string>& searchRoots = {});
 bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, ImportReport& rep,
-                      const std::vector<std::string>& searchRoots = {});
+                      const std::vector<std::string>& searchRoots = {}, const std::string& presetDir = {});
 std::vector<std::string> defaultSerumRoots();  // the user's Serum content folders that exist (+ extra folders)
 // Serum 1 / Serum 2 preset folders looked for on this system (macOS, Windows,
 // Linux Wine prefixes), existing or not.
@@ -581,7 +616,7 @@ std::vector<std::string> extraSerumFolders();
 // (the extension only breaks ties). `rep.format` names what was read;
 // Serum presets also keep their report in the Model (openFormat / openNotes).
 bool openPresetBytes(const std::vector<uint8_t>& bytes, const std::string& fileName, PluginState& out, ImportReport& rep,
-                     const std::vector<std::string>& searchRoots = {});
+                     const std::vector<std::string>& searchRoots = {}, const std::string& presetDir = {});
 bool openPresetFile(const std::string& path, PluginState& out, ImportReport& rep, const std::vector<std::string>& searchRoots = {});
 // True when the file name has an extension the open path reads.
 bool isOpenableName(const std::string& fileName);

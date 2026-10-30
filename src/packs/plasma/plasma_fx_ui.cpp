@@ -295,7 +295,7 @@ void moduleStrip(Ctx& c, const FxNode& n, float x, float y, float w, int bandLab
     }
     if (type == FxConvolve) {
       const std::string& ir = c.m.fxExtra[static_cast<size_t>(s)].ir;
-      if (!ir.empty()) text(c, cx, sy + 2, fs_stem(ir).c_str(), c.P.textDim, 7.5f, false);
+      if (!ir.empty()) text(c, cx, sy + 2, refStem(c.m, ir).c_str(), c.P.textDim, 7.5f, false);
     }
     cx += 118;
   }

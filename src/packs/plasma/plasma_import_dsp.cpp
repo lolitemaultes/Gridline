@@ -9,6 +9,7 @@
 // Everything that cannot be reproduced exactly is listed in the report.
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -500,10 +501,62 @@ bool zstdDecompress(const uint8_t* src, size_t n, std::vector<uint8_t>& out, std
 
 // ================================================================== CBOR (RFC 8949) -> Json
 namespace {
+// Audio arrays (embedded wavetables, samples, noises, impulses) are packed as
+// float blobs while decoding: millions of numbers as single Json strings.
+bool packedKey(const std::string& k) {
+  return k == "embeddedWTData" || k == "embeddedIR" || k == "embeddedNoiseData" || k == "data";
+}
 struct CborIn {
   const uint8_t* p;
   size_t n, i = 0;
   int depth = 0;
+  int pack = 0;  // > 0: inside a packed key
+  // A number item at i (integer or float); false (nothing read) when the item is not a number.
+  bool number(double& v) {
+    if (i >= n) throw ZErr{};
+    const uint8_t ib = p[i];
+    const int mt = ib >> 5, ai = ib & 31;
+    if (mt == 0 || mt == 1) {
+      ++i;
+      const uint64_t a = arg(ai);
+      v = mt == 0 ? static_cast<double>(a) : -1.0 - static_cast<double>(a);
+      return true;
+    }
+    if (mt == 7 && ai >= 25 && ai <= 27) {
+      Json j;
+      value(j);
+      v = j.number;
+      return true;
+    }
+    return false;
+  }
+  // Numbers until the end of an array (len items, or indefinite: up to 0xFF) as a float blob;
+  // false (nothing read) when an item is not a number.
+  bool floats(Json& out, bool indef, uint64_t len) {
+    const size_t start = i;
+    std::string b(serum::kBlobTag);
+    b.reserve(b.size() + static_cast<size_t>(std::min<uint64_t>(len, n)) * 4);
+    for (uint64_t k = 0; indef || k < len; ++k) {
+      if (indef) {
+        if (i >= n) throw ZErr{};
+        if (p[i] == 0xFF) {
+          ++i;
+          break;
+        }
+      }
+      double v = 0;
+      if (!number(v)) {
+        i = start;
+        return false;
+      }
+      const float f = static_cast<float>(v);
+      char c[4];
+      std::memcpy(c, &f, 4);
+      b.append(c, 4);
+    }
+    out = Json::makeString(std::move(b));
+    return true;
+  }
   uint8_t byte() {
     if (i >= n) throw ZErr{};
     return p[i++];
@@ -547,6 +600,26 @@ struct CborIn {
         break;
       }
       case 4: {
+        if (pack > 0) {  // a run of numbers becomes a blob; arrays of arrays (channels) recurse
+          const bool indef = ai == 31;
+          const uint64_t len = indef ? 0 : arg(ai);
+          if (!indef && len > n - i) throw ZErr{};
+          const bool nums = i < n && p[i] != 0xFF && (len > 0 || indef) && ((p[i] >> 5) <= 1 || (p[i] >= 0xF9 && p[i] <= 0xFB));
+          if (nums && floats(out, indef, len)) break;  // else (a mixed array): read as usual
+          out = Json::makeArray();
+          for (uint64_t k = 0; indef || k < len; ++k) {
+            if (indef) {
+              if (i >= n) throw ZErr{};
+              if (p[i] == 0xFF) {
+                ++i;
+                break;
+              }
+            }
+            out.array.emplace_back();
+            value(out.array.back());
+          }
+          break;
+        }
         out = Json::makeArray();
         if (ai == 31) {
           for (;;) {
@@ -584,7 +657,11 @@ struct CborIn {
           }
           Json key, v;
           value(key);
+          const bool pk = key.type == Json::Type::String && packedKey(key.str);
+          const int outer = pack;  // only the packed key's own value (and its channel arrays) is packed
+          pack = pk ? 1 : 0;
           value(v);
+          pack = outer;
           std::string ks = key.type == Json::Type::String ? key.str : key.type == Json::Type::Number ? std::to_string(static_cast<long long>(key.number)) : "?";
           out.object[ks] = std::move(v);
         }
@@ -732,7 +809,7 @@ int sourceOf(int id) {
   }
 }
 
-enum Conv { Copy, Pct, Pan50, Deg, Bool, EnvT, Porta, Sqrt, Div64, Pct2, LfoRate };
+enum Conv { Copy, Pct, Pan50, Deg, Bool, EnvT, Porta, Sqrt, Div64, Pct2, LfoRate, PctCube };
 double conv(Conv c, double v) {
   switch (c) {
     case Pct: return v / 100.0;
@@ -744,6 +821,7 @@ double conv(Conv c, double v) {
     case Porta: return portaTimeInv(std::max(0.0, v));
     case Sqrt: return std::sqrt(std::max(0.0, v));
     case Div64: return v / 64.0;
+    case PctCube: return std::pow(std::clamp(v / 100.0, 0.0, 1.0), 3.0);  // bus sends: the source's gain is the knob cubed
     case LfoRate: return lfoHzInv(std::clamp(v, 0.0, 100.0), false);  // Hz (free) / the same knob curve (tempo divisions)
     default: return v;
   }
@@ -754,7 +832,7 @@ struct KeyMap {
   Conv c;
 };
 
-const KeyMap kOscMain[] = {{"kParamEnable", O_Enable, Bool},        {"kParamVolume", O_Level, Copy},
+const KeyMap kOscMain[] = {{"kParamEnable", O_Enable, Bool},        {"kParamVolume", O_Level, Sqrt},
                            {"kParamPan", O_Pan, Pan50},             {"kParamOctave", O_Octave, Copy},
                            {"kParamPitch", O_Semi, Copy},           {"kParamFine", O_Fine, Copy},
                            {"kParamCoarsePit", O_Coarse, Copy},     {"kParamPitchRatio", O_Ratio, Copy},
@@ -801,14 +879,15 @@ const KeyMap kLfoMap[] = {{"kParamRate", L_Rate, LfoRate},        {"kParamSmooth
                           {"kParamTriplets", L_Trip, Bool},   {"kParamGridX", L_GridX, Copy},    {"kParamGridY", L_GridY, Copy},
                           {"kParamMono", L_Mono, Bool},       {"kParamDirection", L_Dir, Copy},  {"kParamRate10x", L_Rate10x, Bool},
                           {"kParamSwing", L_Swing, Bool},     {"kParamPhaseSnap", L_PhaseSnap, Bool}};
-const KeyMap kRouteMap[] = {{"kParamFilterBalance", R_Balance, Pct}, {"kParamFXBus1Level", R_Bus1, Pct}, {"kParamFXBus2Level", R_Bus2, Pct}};
+const KeyMap kRouteMap[] = {{"kParamFilterBalance", R_Balance, Pct}, {"kParamFXBus1Level", R_Bus1, PctCube}, {"kParamFXBus2Level", R_Bus2, PctCube}};
 
 struct Importer {
   PluginState& st;
   ImportReport& rep;
   Model m;
   std::vector<std::string> roots;
-  bool files = true;  // false: no file lookups (automation link probes)
+  std::vector<std::string> near;  // the preset's folder and those above it (direct lookups only)
+  bool files = true;              // false: no file lookups (automation link probes)
   std::set<std::string> notes;
   std::map<int, int> fxSlotOf;  // Serum FX instance id (rack * 100 + index) -> Plasma slot
   std::array<int, 3> oscType{};
@@ -830,29 +909,53 @@ struct Importer {
     const Json* p = mod->find("plainParams");
     return p && p->type == Json::Type::Object ? p : nullptr;
   }
-  static bool num(const Json* pp, const char* key, double& v) {
+  // Values read from the document (coverage: what is left over is reported as unread).
+  std::set<const Json*> used;
+  bool num(const Json* pp, const char* key, double& v) {
     if (!pp) return false;
     const Json* j = pp->find(key);
     if (!j || j->type != Json::Type::Number) return false;
+    used.insert(j);
     v = j->number;
     return true;
   }
-  static bool text(const Json* pp, const char* key, std::string& v) {
+  bool text(const Json* pp, const char* key, std::string& v) {
     if (!pp) return false;
     const Json* j = pp->find(key);
     if (!j || j->type != Json::Type::String) return false;
+    used.insert(j);
     v = j->str;
     return true;
   }
   void apply(const Json* pp, const KeyMap* maps, size_t n, int base) {
     if (!pp) return;
-    std::set<std::string> known;
     for (size_t i = 0; i < n; ++i) {
-      known.insert(maps[i].key);
       double v;
       if (num(pp, maps[i].key, v)) set(base + maps[i].param, conv(maps[i].c, v));
     }
-    (void)known;
+  }
+
+  // Every stored module value the mapping did not read ("Module.kParamKey", digits dropped).
+  void unread(const Json& o, const std::string& mod) {
+    if (o.type != Json::Type::Object) {
+      if (o.type == Json::Type::Array)
+        for (const auto& x : o.array) unread(x, mod);
+      return;
+    }
+    for (const auto& kv : o.object) {
+      if (kv.first == "plainParams" && kv.second.type == Json::Type::Object) {
+        for (const auto& p : kv.second.object)
+          if (!used.count(&p.second)) {
+            const std::string k = mod + "." + p.first;
+            if (std::find(rep.unread.begin(), rep.unread.end(), k) == rep.unread.end()) rep.unread.push_back(k);
+          }
+        continue;
+      }
+      if (kv.second.type != Json::Type::Object && kv.second.type != Json::Type::Array) continue;
+      std::string m = kv.first;
+      while (!m.empty() && std::isdigit(static_cast<unsigned char>(m.back()))) m.pop_back();
+      unread(kv.second, kv.second.type == Json::Type::Object && !m.empty() && m != "FX" ? m : mod);
+    }
   }
 
   // ---------------------------------------------------------------- files
@@ -863,13 +966,25 @@ struct Importer {
     while (!r.empty() && r[0] == '/') r.erase(0, 1);
     std::error_code ec;
     if (fs::path(rel).is_absolute() && fs::exists(rel, ec)) return rel;
+    // next to the preset (a pack's own Tables / Samples folders): direct lookups, no folder walk
+    const fs::path name = fs::u8path(r).filename();
+    for (const auto& d : near) {
+      const fs::path base = fs::u8path(d);
+      if (fs::path p = base / fs::u8path(r); fs::is_regular_file(p, ec)) return p.u8string();
+      for (const char* sub : subdirs)
+        for (const char* dir : {sub, "Wavetables", "Samples", "Noises", "Impulses", "Multisamples"}) {
+          if (!*dir) continue;
+          if (fs::path p = base / dir / fs::u8path(r); fs::is_regular_file(p, ec)) return p.u8string();
+          if (fs::path p = base / dir / name; fs::is_regular_file(p, ec)) return p.u8string();
+        }
+      if (fs::path p = base / name; fs::is_regular_file(p, ec)) return p.u8string();
+    }
     for (const auto& root : roots)
       for (const char* sub : subdirs) {
         fs::path p = fs::path(root) / sub / r;
         if (fs::exists(p, ec)) return p.string();
       }
     // by file name below the sub folders (bounded walk)
-    const std::string name = fs::path(r).filename().string();
     for (const auto& root : roots)
       for (const char* sub : subdirs) {
         fs::path base = fs::path(root) / sub;
@@ -883,6 +998,99 @@ struct Importer {
       }
     return "";
   }
+  // A microtuning the preset carries (tuningData: the bytes of a .tun file).
+  void tuning(const Json& root) {
+    const Json* td = root.find("tuningData");
+    if (!td || td->type != Json::Type::Array || td->array.empty() || td->array.size() > (size_t(1) << 20)) return;
+    std::string text;
+    text.reserve(td->array.size());
+    for (const auto& b : td->array)
+      if (b.type == Json::Type::Number && b.number >= 1 && b.number < 256) text += static_cast<char>(static_cast<unsigned char>(b.number));
+    if (text.find('=') == std::string::npos) return;
+    used.insert(td);
+    m.tuning = text;
+    m.tuningName = root.text("tuningName", "Preset tuning");
+  }
+
+  // ---------------------------------------------------------------- embedded audio
+  // {data: [channels], sampleRate} -> a media reference ("" when there is no audio)
+  std::string embeddedAudio(const Json& ea, const std::string& name) {
+    const Json* data = ea.find("data");
+    std::vector<std::vector<float>> ch;
+    if (!data || !serum::channelsOf(*data, ch) || ch[0].empty()) return "";
+    return addMedia(m, name, static_cast<int>(std::lround(ea.num("sampleRate", 44100))), ch);
+  }
+  static std::string slashPath(std::string p) {
+    std::replace(p.begin(), p.end(), '\\', '/');
+    while (!p.empty() && (p.back() == ' ' || p.back() == '\r' || p.back() == '\t')) p.pop_back();
+    return p;
+  }
+  static std::string baseName(const std::string& p) {
+    const std::string n = slashPath(p);
+    const size_t sl = n.find_last_of('/');
+    return sl == std::string::npos ? n : n.substr(sl + 1);
+  }
+  // embedded_sfz + embedded_audio {"<path>": {data, sampleRate, loopStart, loopEnd}} -> a media map reference
+  std::string embeddedMap(const Json& sub, const std::string& rel) {
+    const Json* ea = sub.find("embedded_audio");
+    if (!ea || ea->type != Json::Type::Object || ea->object.empty()) return "";
+    struct Member {
+      std::string key, ref;
+      double loopStart = 0, loopEnd = 0;
+    };
+    std::vector<Member> members;
+    for (const auto& kv : ea->object) {
+      if (kv.second.type != Json::Type::Object) continue;
+      Member mb;
+      mb.key = kv.first;
+      mb.ref = embeddedAudio(kv.second, baseName(kv.first));
+      mb.loopStart = kv.second.num("loopStart", 0);
+      mb.loopEnd = kv.second.num("loopEnd", 0);
+      if (!mb.ref.empty()) members.push_back(std::move(mb));
+    }
+    if (members.empty()) return "";
+    std::string sfz = sub.text("embedded_sfz");
+    if (sfz.empty())  // samples without a map: each one over the whole keyboard
+      for (const auto& mb : members) sfz += "<region> sample=" + mb.key + "\n";
+    // every sample= value points at its embedded member (parsed like the map reader does:
+    // the value runs to the end of the line or to the next opcode)
+    std::string out;
+    size_t i = 0;
+    for (size_t at = sfz.find("sample=", i); at != std::string::npos; at = sfz.find("sample=", i)) {
+      const size_t vs = at + 7;
+      size_t ve = sfz.find_first_of("<\n\r", vs);
+      if (ve == std::string::npos) ve = sfz.size();
+      if (const size_t eq2 = sfz.find('=', vs); eq2 != std::string::npos && eq2 < ve)
+        if (const size_t sp = sfz.rfind(' ', eq2); sp != std::string::npos && sp > vs) ve = sp;
+      const std::string val = slashPath(sfz.substr(vs, ve - vs));
+      const Member* hit = nullptr;
+      for (const auto& mb : members)
+        if (slashPath(mb.key) == val) hit = &mb;
+      if (!hit)
+        for (const auto& mb : members)
+          if (baseName(mb.key) == baseName(val)) hit = &mb;
+      out += sfz.substr(i, vs - i);
+      if (hit) {
+        out += hit->ref;
+        const size_t eol = sfz.find_first_of("\n\r", vs);
+        const std::string line = sfz.substr(at, (eol == std::string::npos ? sfz.size() : eol) - at);
+        if (hit->loopEnd > hit->loopStart && line.find("loop_") == std::string::npos)
+          out += " loop_start=" + std::to_string(static_cast<int64_t>(hit->loopStart)) + " loop_end=" +
+                 std::to_string(static_cast<int64_t>(hit->loopEnd));
+      } else {
+        out += sfz.substr(vs, ve - vs);
+      }
+      i = ve;
+    }
+    out += sfz.substr(i);
+    // the members sit next to the extracted map: a folder prefix would point elsewhere
+    for (size_t p = out.find("default_path="); p != std::string::npos; p = out.find("default_path=", p)) {
+      const size_t e = out.find_first_of("<\n\r", p);
+      out.erase(p, (e == std::string::npos ? out.size() : e) - p);
+    }
+    return addMediaMap(m, rel.empty() ? std::string("Multisample") : baseName(rel), out);
+  }
+
   void missing(const std::string& what) {
     if (std::find(rep.missingFiles.begin(), rep.missingFiles.end(), what) == rep.missingFiles.end()) rep.missingFiles.push_back(what);
   }
@@ -952,6 +1160,10 @@ struct Importer {
       static const char* const subNames[] = {"WTOsc", "MultiSampleOsc", "SampleOsc", "GranularOsc", "SpectralOsc"};
       const Json* sub = osc->find(subNames[type] + std::to_string(i));
       const Json* sp = plain(sub);
+      for (int k = 0; k < 5; ++k)  // the other source types' settings are not heard
+        if (k != type)
+          if (const Json* other = plain(osc->find(subNames[k] + std::to_string(i))))
+            for (const auto& kv : other->object) used.insert(&kv.second);
       apply(sp, kOscSub, sizeof(kOscSub) / sizeof(kOscSub[0]), oscP(i, 0));
       for (int w = 0; w < 2; ++w) {
         if (text(sp, w == 0 ? "kParamWarpMenu" : "kParamWarpMenu2", s)) {
@@ -980,21 +1192,25 @@ struct Importer {
     const double total = sub.num("numFrames", 2048);
     int frames = std::max(1, static_cast<int>(std::lround(total / kFrameSize)));
     std::string rel = sub.text("relativePathToWT");
-    const Json* emb = sub.find("embeddedWTData");
-    const bool builtIn = rel.empty() && !emb;  // the synth's own start-up table
+    // The table the preset carries is what it plays (its numFrames can be stale);
+    // the referenced file is only looked up when nothing is embedded.
+    std::vector<float> emb;
+    const Json* ej = sub.find("embeddedWTData");
+    const bool hasEmb = ej && serum::floatsOf(*ej, emb) && emb.size() >= static_cast<size_t>(kFrameSize);
+    const bool builtIn = rel.empty() && !ej;  // the synth's own start-up table
     if (builtIn) rel = "S2 Tables/Default Shapes.wav";
-    std::string path = resolve(rel, {"Tables", ""});
-    if (!path.empty()) {
-      d.table = "file:" + path;
-      set(oscP(i, O_Table), 0);
-    } else if (emb && emb->type == Json::Type::Array && emb->array.size() >= static_cast<size_t>(kFrameSize)) {
-      const size_t nf = std::min<size_t>(256, emb->array.size() / kFrameSize);
+    const std::string path = hasEmb ? std::string() : resolve(rel, {"Tables", ""});
+    if (hasEmb) {
+      const size_t nf = std::min<size_t>(256, emb.size() / kFrameSize);
       frames = static_cast<int>(nf);
       d.frames.assign(nf, std::vector<float>(kFrameSize, 0.f));
-      for (size_t f = 0; f < nf; ++f)
-        for (int k = 0; k < kFrameSize; ++k) d.frames[f][static_cast<size_t>(k)] = static_cast<float>(emb->array[f * kFrameSize + static_cast<size_t>(k)].number);
+      for (size_t f = 0; f < nf; ++f) std::copy_n(emb.begin() + static_cast<std::ptrdiff_t>(f * kFrameSize), kFrameSize, d.frames[f].begin());
+      if (emb.size() / kFrameSize > 256) note("Wavetables longer than 256 frames are shortened to 256");
       d.table = "custom";
-      d.tableName = sub.text("tableDisplayName", fs::path(rel).stem().string());
+      d.tableName = sub.text("tableDisplayName", rel.empty() ? std::string("Embedded") : fs::path(rel).stem().string());
+      set(oscP(i, O_Table), 0);
+    } else if (!path.empty()) {
+      d.table = "file:" + path;
       set(oscP(i, O_Table), 0);
     } else if (builtIn) {
       set(oscP(i, O_Table), 1);  // Basic Shapes: saw at the start, like the start-up table
@@ -1006,26 +1222,26 @@ struct Importer {
     }
     oscFrames[static_cast<size_t>(i)] = frames;
     double pos;
-    if (num(sp, "kParamTablePos", pos)) set(oscP(i, O_WtPos), frames > 1 ? (pos - 1.0) / (frames - 1) : 0.0);
+    if (num(sp, "kParamTablePos", pos)) set(oscP(i, O_WtPos), (pos - 1.0) / 255.0);  // 1..256 spans the table, whatever its length
   }
   void sampleSource(int i, int type, const Json& sub, const Json* sp) {
     OscData& d = m.osc[static_cast<size_t>(i)];
     std::string s;
     if (type == OscMultisample) {
       const std::string rel = sub.text("sfzPathRelative", sub.text("sfzPath"));
-      const std::string path = resolve(rel, {"Multisamples", "Multisamples/Factory", "Multisamples/User", ""});
+      const std::string emb = files ? embeddedMap(sub, rel) : std::string();
+      const std::string path = emb.empty() ? resolve(rel, {"Multisamples", "Multisamples/Factory", "Multisamples/User", ""}) : emb;
       if (!path.empty()) d.sfz = path;
-      else {
-        if (!rel.empty()) missing(rel);
-        if (sub.find("embedded_sfz") || sub.find("embedded_audio")) note("Embedded multisample maps are not read: the multisample file must be installed");
-      }
+      else if (!rel.empty()) missing(rel);
       return;
     }
     const std::string rel = sub.text("samplePathRelative", sub.text("samplePath"));
-    const std::string path = resolve(rel, {"Samples", "Samples/Factory", "Samples/Factory Non-Tonal", "Samples/User", ""});
+    std::string path;
+    if (const Json* ea = sub.find("embedded_audio"); ea && files)
+      path = embeddedAudio(*ea, ea->text("table_name", fs::path(rel).filename().string()));
+    if (path.empty()) path = resolve(rel, {"Samples", "Samples/Factory", "Samples/Factory Non-Tonal", "Samples/User", ""});
     if (!path.empty()) d.sample = path;
     else if (!rel.empty()) missing(rel);
-    else if (sub.find("embedded_audio")) note("Embedded sample audio is not read");
     if (type == OscGranular) {
       double v;
       if (num(sp, "kParamDensity", v)) set(oscP(i, O_GDensity), std::log(std::max(1.0, v)) / std::log(200.0));
@@ -1060,7 +1276,11 @@ struct Importer {
       const Json* pp = plain(n);
       double v;
       if (num(pp, "kParamEnable", v)) set(noiseP(N_Enable), v);
-      if (num(pp, "kParamVolume", v)) set(noiseP(N_Level), v);
+      // same curve as the oscillators; Plasma's noise plays 2 dB lower at equal settings
+      // (also at the default level, 0.25 on the knob, which a preset does not store)
+      double lv = 0.0625;
+      num(pp, "kParamVolume", lv);
+      set(noiseP(N_Level), std::min(1.0, std::sqrt(std::max(0.0, lv)) * 1.122));
       if (num(pp, "kParamPan", v)) set(noiseP(N_Pan), v / 50.0);
       if (num(pp, "kParamPitchTrack", v)) set(noiseP(N_PitchTrack), v);
       if (num(pp, "kParamCoarsePit", v)) set(noiseP(N_Pitch), v);
@@ -1085,7 +1305,14 @@ struct Importer {
       else if (type == "Geiger") set(noiseP(N_Type), byName("Geiger"));
       else if (sub) {
         const std::string rel = sub->text("relativePathToNoiseSample", sub->text("pathToNoiseSample"));
-        const std::string path = resolve(rel, {"Samples/Factory Non-Tonal/Noises", "Samples", "Noises", ""});
+        std::string path;
+        if (const Json* e = sub->find("embeddedNoiseData"); e && files) {
+          std::vector<std::vector<float>> ch;
+          // the noise carries no rate of its own: the synth's noises are 44.1 kHz
+          if (serum::channelsOf(*e, ch) && !ch[0].empty())
+            path = addMedia(m, rel.empty() ? std::string("Noise") : fs::path(rel).filename().string(), 44100, ch);
+        }
+        if (path.empty()) path = resolve(rel, {"Samples/Factory Non-Tonal/Noises", "Samples", "Noises", ""});
         if (!path.empty()) {
           m.noiseFile = path;
           set(noiseP(N_Type), 0);
@@ -1096,11 +1323,17 @@ struct Importer {
         }
       }
     }
+    {
+      // same curve as the oscillators; Plasma's sub sine sits 3.6 dB higher at equal settings
+      // (also at the default level, which a preset does not store)
+      double v = 0.75;  // the source's default (stored as knob squared)
+      num(plain(o.find("Oscillator4")), "kParamVolume", v);
+      set(subP(S_Level), std::sqrt(std::max(0.0, v)) * 0.8128);
+    }
     if (const Json* s = o.find("Oscillator4")) {
       const Json* pp = plain(s);
       double v;
       if (num(pp, "kParamEnable", v)) set(subP(S_Enable), v);
-      if (num(pp, "kParamVolume", v)) set(subP(S_Level), v);
       if (num(pp, "kParamPan", v)) set(subP(S_Pan), v / 50.0);
       if (num(pp, "kParamOctave", v)) set(subP(S_Octave), v);
       if (num(pp, "kParamCoarsePit", v)) set(subP(S_Coarse), v);
@@ -1127,6 +1360,16 @@ struct Importer {
       }
       double v;
       if (num(pp, "kParamPad", v) && v >= 0.5) note("Filter pad (clean input) is not modelled");
+      // Drive: the source's filter keeps the driven level (drive 0.5 is about +14 dB);
+      // Plasma's filter evens it out by 1 / sqrt(drive gain): its output level makes up for that.
+      const int type = static_cast<int>(st.params[static_cast<size_t>(filtP(f, F_Type))]);
+      const double drive = st.params[static_cast<size_t>(filtP(f, F_Drive))];
+      if (drive > 1e-4 && type != 83 && type != 94 && type != 95) {
+        const double lev = st.params[static_cast<size_t>(filtP(f, F_Level))];
+        const double want = lev * std::pow(1.0 + 9.0 * drive, 0.25);  // level gain is 4 v^2
+        if (want > 1.0) note("Filter drive above the output level range: quieter than the original");
+        set(filtP(f, F_Level), std::min(1.0, want));
+      }
     }
     for (int r = 0; r < kRoutes; ++r) {
       const Json* pp = plain(o.find("RoutingSlot" + std::to_string(r)));
@@ -1159,8 +1402,12 @@ struct Importer {
       double v;
       for (const char* key : {"kParamRise", "kParamDelay"})
         if (num(pp, key, v)) {
-          // stored in beats: the nearest tempo division of Plasma's rise / delay control
+          // stored in beats: the nearest tempo division of Plasma's rise / delay control (0 = off)
           int best = 0;
+          if (v <= 1e-6) {
+            set(lfoP(l, key[6] == 'R' ? L_Rise : L_Delay), 0.0);
+            continue;
+          }
           double bestErr = 1e9;
           const int cnt = lfoRateDivisionCount();
           for (int i = 1; i <= cnt; ++i) {
@@ -1215,9 +1462,9 @@ struct Importer {
     const Json* pp = plain(o.find("Global0"));
     double v;
     std::string s;
-    if (num(pp, "kParamMasterVolume", v)) set(G_MasterVol, v);
+    if (num(pp, "kParamMasterVolume", v)) set(G_MasterVol, std::sqrt(std::max(0.0, v)));
     if (num(pp, "kParamMasterTuning", v)) set(G_MasterTune, v);
-    if (num(pp, "kParamVoiceAmp", v)) set(G_Amp, v);
+    if (num(pp, "kParamVoiceAmp", v)) set(G_Amp, std::sqrt(std::max(0.0, v) / 2.0));
     if (num(pp, "kParamPortamentoTime", v)) set(G_PortaTime, portaTimeInv(v));
     if (num(pp, "kParamPortamentoCurve", v)) set(G_PortaCurve, v / 100.0);
     if (num(pp, "kParamPortaAlways", v)) set(G_PortaAlways, v);
@@ -1232,9 +1479,9 @@ struct Importer {
     if (num(pp, "kParamSwing", v)) set(G_Swing, v / 100.0);
     if (num(pp, "kParamSwingDiv", v)) set(G_SwingDiv, std::clamp(v - 1.0, 0.0, 3.0));
     if (num(pp, "kParamTranspose", v)) set(G_Transpose, v);
-    if (num(pp, "kParamDirectVol", v)) set(G_DirectVol, std::sqrt(std::max(0.0, v) / 4.0));
-    if (num(pp, "kParamFXBus1Vol", v)) set(G_Bus1Vol, std::sqrt(std::max(0.0, v) / 4.0));
-    if (num(pp, "kParamFXBus2Vol", v)) set(G_Bus2Vol, std::sqrt(std::max(0.0, v) / 4.0));
+    if (num(pp, "kParamDirectVol", v)) set(G_DirectVol, std::sqrt(std::max(0.0, v) / 2.0));
+    if (num(pp, "kParamFXBus1Vol", v)) set(G_Bus1Vol, std::sqrt(std::max(0.0, v) / 2.0));
+    if (num(pp, "kParamFXBus2Vol", v)) set(G_Bus2Vol, std::sqrt(std::max(0.0, v) / 2.0));
     if (num(pp, "kParamFXBus1Dest", v)) set(G_Bus1Dest, v >= 1.5 ? 1 : 0);
     if (num(pp, "kParamFXBus2Dest", v)) set(G_Bus2Dest, v >= 1.5 ? 1 : 0);
     if (num(pp, "kParamOversampling", v)) set(G_Quality, v);
@@ -1361,10 +1608,13 @@ struct Importer {
       for (const auto& kv : pp->object) {
         const std::string& key = kv.first;
         if (key == "kParamEnable") {
-          if (kv.second.type == Json::Type::Number) set(fxP(slot, X_On), kv.second.number >= 0.5 ? 1 : 0);
+          if (kv.second.type == Json::Type::Number) set(fxP(slot, X_On), kv.second.number >= 0.5 ? 1 : 0), used.insert(&kv.second);
           continue;
         }
-        if (key.rfind("kParamModuleCount", 0) == 0) continue;
+        if (key.rfind("kParamModuleCount", 0) == 0) {
+          used.insert(&kv.second);
+          continue;
+        }
         const int q = fxParamIndex(type, key.c_str());
         if (q < 0) {
           note(fxTypeNames()[static_cast<size_t>(type)] + ": " + key + " is not modelled");
@@ -1397,6 +1647,7 @@ struct Importer {
           continue;
         }
         (void)d;
+        used.insert(&kv.second);
         set(fxP(slot, X_P0 + q), fxNorm(type, q, plainV));
       }
     }
@@ -1407,7 +1658,14 @@ struct Importer {
     }
     if (type == FxConvolve) {
       const std::string rel = body.text("relativePathToIR");
-      const std::string path = resolve(rel, {"Impulses", "Impulses/Factory", "Impulses/User", ""});
+      std::string path;
+      if (const Json* e = body.find("embeddedIR"); e && files) {
+        std::vector<std::vector<float>> ch;
+        if (serum::channelsOf(*e, ch) && !ch[0].empty())
+          path = addMedia(m, rel.empty() ? std::string("Impulse") : fs::path(rel).filename().string(),
+                          static_cast<int>(std::lround(body.num("sampleRate", 44100))), ch);
+      }
+      if (path.empty()) path = resolve(rel, {"Impulses", "Impulses/Factory", "Impulses/User", ""});
       const int qi = fxParamIndex(FxConvolve, "kParamIr");
       if (!path.empty()) {
         ex.ir = path;
@@ -1548,7 +1806,11 @@ struct Importer {
         if (src->array.size() > 0) mainId = static_cast<int>(src->array[0].number);
         if (src->array.size() > 1) auxId = static_cast<int>(src->array[1].number);
       }
-      if (mainId == 0) continue;
+      if (mainId == 0) {  // an empty slot: its settings do nothing
+        if (const Json* pp = plain(slot))
+          for (const auto& kv : pp->object) used.insert(&kv.second);
+        continue;
+      }
       const int ms = sourceOf(mainId), as = sourceOf(auxId);
       const std::string type = slot->text("destModuleTypeString");
       const int id = static_cast<int>(slot->num("destModuleID", 0));
@@ -1825,6 +2087,53 @@ int filterKeyCount() { return kFilterKeyCount; }
 const char* filterKey(int i) { return i >= 0 && i < kFilterKeyCount ? kFilterKeys[i] : ""; }
 const char* warpKey(int i) { return i >= 0 && i < 70 ? kWarpKeys[i] : ""; }
 
+Json floatBlob(const float* p, size_t n) {
+  std::string b(kBlobTag);
+  b.append(reinterpret_cast<const char*>(p), n * sizeof(float));
+  return Json::makeString(std::move(b));
+}
+
+bool floatsOf(const Json& j, std::vector<float>& out) {
+  out.clear();
+  const size_t tag = sizeof(kBlobTag) - 1;
+  if (j.type == Json::Type::String) {
+    if (j.str.size() < tag || j.str.compare(0, tag, kBlobTag) != 0) return false;
+    const size_t n = (j.str.size() - tag) / sizeof(float);
+    out.resize(n);
+    if (n) std::memcpy(out.data(), j.str.data() + tag, n * sizeof(float));
+  } else if (j.type == Json::Type::Array) {
+    out.reserve(j.array.size());
+    for (const auto& v : j.array) {
+      if (v.type != Json::Type::Number) {
+        out.clear();
+        return false;
+      }
+      out.push_back(static_cast<float>(v.number));
+    }
+  } else {
+    return false;
+  }
+  for (float& v : out)
+    if (!std::isfinite(v)) v = 0.f;
+  return !out.empty();
+}
+
+bool channelsOf(const Json& j, std::vector<std::vector<float>>& out) {
+  out.clear();
+  std::vector<float> one;
+  if (floatsOf(j, one)) {
+    out.push_back(std::move(one));
+    return true;
+  }
+  if (j.type != Json::Type::Array) return false;
+  for (const auto& c : j.array) {
+    if (out.size() >= 2 || !floatsOf(c, one)) break;
+    out.push_back(std::move(one));
+  }
+  if (out.size() == 2 && out[1].size() != out[0].size()) out[1].resize(out[0].size(), 0.f);
+  return !out.empty();
+}
+
 bool decodeXferJson(const uint8_t* p, size_t n, Json& meta, Json& root, std::string& err) {
   if (n < 17 + 8 || std::memcmp(p, "XferJson", 8) != 0 || p[8] != 0) {
     err = "not a Serum 2 preset";
@@ -1856,7 +2165,8 @@ bool decodeXferJson(const uint8_t* p, size_t n, Json& meta, Json& root, std::str
   return true;
 }
 
-void runImporter(const Json& meta, const Json& root, PluginState& out, ImportReport& rep, const std::vector<std::string>& roots, bool files) {
+void runImporter(const Json& meta, const Json& root, PluginState& out, ImportReport& rep, const std::vector<std::string>& roots, bool files,
+                 const std::string& presetDir) {
   out = defaultPluginState(kType);
   Importer im{out, rep};
   if (!im.info) {
@@ -1867,6 +2177,13 @@ void runImporter(const Json& meta, const Json& root, PluginState& out, ImportRep
   im.m = defaultModel();
   im.files = files;
   im.roots = files ? (roots.empty() ? defaultSerumRoots() : roots) : std::vector<std::string>{};
+  if (files && !presetDir.empty()) {  // the preset's folder and up to three above it (pack layouts)
+    fs::path d = fs::u8path(presetDir);
+    for (int k = 0; k < 4 && !d.empty(); ++k, d = d.parent_path()) {
+      im.near.push_back(d.u8string());
+      if (d == d.root_path() || d.parent_path() == d) break;
+    }
+  }
   rep.presetName = meta.text("presetName", root.text("presetName"));
   rep.author = meta.text("presetAuthor", root.text("presetAuthor"));
   im.m.presetName = rep.presetName;
@@ -1884,6 +2201,8 @@ void runImporter(const Json& meta, const Json& root, PluginState& out, ImportRep
   im.xshaper(root);
   im.matrix(root);
   im.sequencers(root);
+  if (files) im.tuning(root);
+  im.unread(root, "");
   rep.approximated.insert(rep.approximated.end(), im.notes.begin(), im.notes.end());
   std::sort(rep.approximated.begin(), rep.approximated.end());
   rep.approximated.erase(std::unique(rep.approximated.begin(), rep.approximated.end()), rep.approximated.end());
@@ -1896,7 +2215,8 @@ void runImporter(const Json& meta, const Json& root, PluginState& out, ImportRep
 
 }  // namespace serum
 
-bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, ImportReport& rep, const std::vector<std::string>& searchRoots) {
+bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, ImportReport& rep, const std::vector<std::string>& searchRoots,
+                      const std::string& presetDir) {
   rep = ImportReport{};
   const size_t n = bytes.size();
   Json meta, root;
@@ -1918,7 +2238,7 @@ bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, Impor
       return false;
     }
   }
-  serum::runImporter(meta, root, out, rep, searchRoots, true);
+  serum::runImporter(meta, root, out, rep, searchRoots, true, presetDir);
   return rep.ok;
 }
 
@@ -1930,7 +2250,7 @@ bool importSerumPreset(const std::string& path, PluginState& out, ImportReport& 
     rep.error = err;
     return false;
   }
-  const bool ok = importSerumBytes(bytes, out, rep, searchRoots);
+  const bool ok = importSerumBytes(bytes, out, rep, searchRoots, fs::u8path(path).parent_path().u8string());
   if (ok && rep.presetName.empty()) rep.presetName = fs::u8path(path).stem().string();
   return ok;
 }

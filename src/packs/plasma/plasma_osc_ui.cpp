@@ -387,8 +387,8 @@ void oscColumn(Ctx& c, int o, const Aux* aux) {
   {
     std::string nm;
     const auto& d = c.m.osc[static_cast<size_t>(o)];
-    if (type == OscMultisample) nm = d.sfz.empty() ? std::string("\xE2\x80\x94") : fs_stem(d.sfz);
-    else if (type != OscWavetable && !d.sample.empty()) nm = fs_stem(d.sample);
+    if (type == OscMultisample) nm = d.sfz.empty() ? std::string("\xE2\x80\x94") : refStem(c.m, d.sfz);
+    else if (type != OscWavetable && !d.sample.empty()) nm = refStem(c.m, d.sample);
     else if (!d.table.empty()) nm = d.tableName.empty() ? std::string("Custom") : d.tableName;
     else {
       const int t = vali(c, oscP(o, O_Table));
@@ -662,7 +662,7 @@ void noiseColumn(Ctx& c, const Aux* aux) {
   const int t = vali(c, noiseP(N_Type));
   const auto& names = noiseNames();
   std::string nm = t >= 0 && t < static_cast<int>(names.size()) ? names[static_cast<size_t>(t)] : "?";
-  if (t == 0) nm = c.m.noiseFile.empty() ? std::string("User file\xE2\x80\xA6") : fs_stem(c.m.noiseFile);
+  if (t == 0) nm = c.m.noiseFile.empty() ? std::string("User file\xE2\x80\xA6") : refStem(c.m, c.m.noiseFile);
   int step = 0;
   dropField(c, "nt", x0 + 5, kDispY + 3, w - 10, 18, nm.c_str(),
             [&] {
@@ -832,6 +832,11 @@ std::string fs_stem(const std::string& p) {
   std::string n = a == std::string::npos ? p : p.substr(a + 1);
   const size_t d = n.find_last_of('.');
   return d == std::string::npos || d == 0 ? n : n.substr(0, d);
+}
+
+std::string refStem(const Model& m, const std::string& ref) {
+  if (const Media* e = findMedia(m, ref)) return fs_stem(e->name.empty() ? ref : e->name);
+  return fs_stem(ref);
 }
 
 void oscPage(Ctx& c) {

@@ -111,9 +111,9 @@ std::shared_ptr<const Aux> buildAux(const PluginState& state) {
       auto t = loadTableFile(d.table.substr(5));
       if (t) x.mip = buildMip(t);
     }
-    if (!d.sample.empty()) {
-      x.sample = sampleCache().get(d.sample);
-      if (!x.sample) x.sample = loadSample(d.sample);
+    if (const std::string path = mediaFile(m, d.sample); !path.empty()) {
+      x.sample = sampleCache().get(path);
+      if (!x.sample) x.sample = loadSample(path);
       if (x.sample) {
         for (float sl : d.slices) x.slices.push_back(static_cast<double>(sl) * static_cast<double>(x.sample->frames()));
         // spectral analysis (limited to 30 s)
@@ -142,7 +142,7 @@ std::shared_ptr<const Aux> buildAux(const PluginState& state) {
         x.spec = sp;
       }
     }
-    if (!d.sfz.empty()) parseSfz(d.sfz, x.zones, nullptr);
+    if (const std::string path = mediaFile(m, d.sfz); !path.empty()) parseSfz(path, x.zones, nullptr);
     for (int r = 0; r < 4; ++r) {
       const Curve& c = d.remap[static_cast<size_t>(r)];
       if (c.empty()) {
@@ -185,9 +185,10 @@ std::shared_ptr<const Aux> buildAux(const PluginState& state) {
     Curve db = e.shapeB.empty() ? da : e.shapeB;
     sampleCurve(da, a->shapeA[static_cast<size_t>(s)].data(), 257, true);
     sampleCurve(db, a->shapeB[static_cast<size_t>(s)].data(), 257, true);
-    if (!e.ir.empty() && e.ir.rfind("factory:", 0) != 0) a->irFile[static_cast<size_t>(s)] = loadSample(e.ir);
+    if (!e.ir.empty() && e.ir.rfind("factory:", 0) != 0)
+      if (const std::string path = mediaFile(m, e.ir); !path.empty()) a->irFile[static_cast<size_t>(s)] = loadSample(path);
   }
-  if (!m.noiseFile.empty()) a->noiseFile = loadSample(m.noiseFile);
+  if (const std::string path = mediaFile(m, m.noiseFile); !path.empty()) a->noiseFile = loadSample(path);
   if (!m.tuning.empty()) a->tuning = parseTun(m.tuning, a->hasTuning);
   else
     for (int i = 0; i < 128; ++i) a->tuning[static_cast<size_t>(i)] = i;
@@ -384,6 +385,13 @@ class PlasmaGen final : public Generator {
     for (auto& r : retired_) r.store(nullptr);
     pending_.store(nullptr);
     for (auto& l : globalLfo_) l.rng = 0x51ed27u;
+    // free-running phases before the first note ends: unison voices already apart
+    // (all at zero, a wide unison would start as one loud click)
+    for (int o = 0; o < kOscs; ++o)
+      for (int u = 0; u < kMaxUnison; ++u) {
+        const double x = static_cast<double>(u) * 0.6180339887498949 + static_cast<double>(o) * 0.2360679774997897;
+        phaseMem_[o][u] = u == 0 ? 0.0 : x - std::floor(x);
+      }
   }
   ~PlasmaGen() override {
     delete pending_.exchange(nullptr);
@@ -1305,9 +1313,12 @@ class PlasmaGen final : public Generator {
     return s;
   }
   void panGains(float pan, float& l, float& r) const {
-    pan = std::clamp(pan, -1.f, 1.f);
-    l = pan > 0 ? 1.f - pan : 1.f;
-    r = pan < 0 ? 1.f + pan : 1.f;
+    // centre at unity; the near side rises and the far side falls slightly bowed,
+    // so a hard pan is a little louder in total than the centre (+1.4 dB)
+    const float a = std::min(std::fabs(pan), 1.f);
+    const float nearG = std::sqrt(1.f + 1.76f * a), farG = (1.f - a) * (1.f + 0.15f * a);
+    l = pan > 0 ? farG : nearG;
+    r = pan > 0 ? nearG : farG;
   }
   void oscSettings(const Note& n, int o, OscSet& s) const {
     s.on = V(&n, oscP(o, O_Enable)) >= 0.5f;
@@ -1389,8 +1400,9 @@ class PlasmaGen final : public Generator {
       s.uw[u] = t;
       const bool center = U == 1 || (U & 1 ? u == U / 2 : (u == U / 2 || u == U / 2 - 1));
       const float g = center ? 1.f - blend * 0.5f : blend;
-      float l, r;
-      panGains(t * width, l, r);
+      // unison spread: linear balance (the main pan's curve would lift a wide unison)
+      const float up = std::clamp(t * width, -1.f, 1.f);
+      const float l = up > 0 ? 1.f - up : 1.f, r = up < 0 ? 1.f + up : 1.f;
       s.pl[u] = g * l * pl0;
       s.pr[u] = g * r * pr0;
       gsum += g * g;
