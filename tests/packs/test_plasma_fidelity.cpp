@@ -338,7 +338,9 @@ int main() {
     // then about 1.9 dB per repeat out to 2 s)
     expect(finite(y) && rmsDb(y, 3.4, 4.0) < rmsDb(y, 0.1, 0.7) - 20, "80 % feedback decays");
     const double r1 = rmsDb(y, 0.09, 0.13), r2 = rmsDb(y, 0.19, 0.23);
-    expect(std::fabs((r1 - r2) - 3.0) < 1.0, std::string("the second echo 3 dB below the first at 80 % feedback (" + std::to_string(r1 - r2) + ")").c_str());
+    // J-203c: with the echo filter at the source's own unset values (848.5 Hz, 6.75) the source drops
+    // 2.0 dB per repeat from the first echo on (100 ms windows: -38.2, -40.2, -42.1 dB)
+    expect(std::fabs((r1 - r2) - 2.0) < 0.7, std::string("the second echo 2 dB below the first at 80 % feedback (" + std::to_string(r1 - r2) + ")").c_str());
   }
 
   // ---- arpeggiator: rate law, dotted, pattern timing and rows past the held notes

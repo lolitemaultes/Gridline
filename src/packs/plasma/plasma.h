@@ -536,6 +536,9 @@ double fxPlain(int type, int p, double norm);         // stored 0..1 -> plain
 double fxNorm(int type, int p, double plain);         // plain -> stored 0..1
 std::string fxParamText(int type, int p, double norm);
 float fxDefaultNorm(int type, int p);
+// Serum 2's value of effect parameter p when a preset leaves it unset (plain units); false when
+// Plasma's own default stands.
+bool fxSerumDefault(int type, int p, double& plain);
 
 // ------------------------------------------------------------------ live view (editor displays)
 struct LiveView {

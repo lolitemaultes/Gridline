@@ -14,7 +14,9 @@ namespace gl::packs::plasma {
 namespace {
 enum Engine {
   EngSvf, EngLadder, EngComb, EngFlange, EngPhaser, EngEq, EngRing, EngSnh, EngCombs, EngAllpass, EngRoom, EngScream,
-  EngBass, EngFormant, EngReject, EngDistComb, EngDj, EngPz, EngExp
+  EngBass, EngFormant, EngReject, EngDistComb, EngDj, EngPz, EngExp,
+  // matched voicing (imports, "Boost" drive mode): designs fitted to measured responses
+  EngMSvf, EngMLad, EngMX, EngMPass, EngMRing, EngMDiff, EngMComb, EngMPhaser
 };
 int engineOf(int t) {
   if (t <= 3 || t == 84 || (t >= 99 && t <= 102)) return EngLadder;
@@ -38,6 +40,106 @@ int engineOf(int t) {
   return EngExp;
 }
 
+// ---------------------------------------------------------------- matched voicing (J-203b)
+// Laws fitted to white-noise transfer measurements of the import source (1/6-octave bands,
+// cutoffs 88 Hz .. 10 kHz, resonance 0..100 %). Plasma's own designs, not copies.
+int engineMatched(int t) {
+  if (t >= 4 && t <= 38) return EngMSvf;
+  if (t == 84 || (t >= 99 && t <= 102)) return EngMLad;
+  if (t == 89 || t == 96 || t == 105 || t == 106) return EngMX;
+  if (t == 103) return EngMPass;  // the pole-zero type measures as a straight wire at every setting
+  if (t == 76) return EngMRing;
+  if (t >= 39 && t <= 54) return EngMComb;  // combs and flangers (the same loop, measured mixes)
+  if (t >= 55 && t <= 62) return EngMPhaser;
+  if (t == 98) return EngMDiff;  // diffuser: no dry mix (the source's response stays flat at every VAR)
+  return engineOf(t);
+}
+double interp(const double* R, const double* K, int n, double r) {
+  r = std::clamp(r, R[0], R[n - 1]);
+  int i = 0;
+  while (i < n - 2 && r > R[i + 1]) ++i;
+  return K[i] + (K[i + 1] - K[i]) * (r - R[i]) / (R[i + 1] - R[i]);
+}
+// Other state-variable designs (matched): damping against resonance per family.
+//   Exp / ExpBPF (105 / 106): a gentle family, k from 3.2 at 0 % to almost 0 at 100 %
+//   Wsp (96): k from 0.81 to almost 0
+double mxK(int t, double r) {
+  static const double R[] = {0, 0.1, 0.2, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0};
+  static const double E[] = {3.21, 2.51, 2.03, 1.66, 1.25, 0.93, 0.6, 0.28, 0.006};
+  static const double W[] = {0.81, 0.64, 0.535, 0.42, 0.337, 0.24, 0.15, 0.075, 0.003};
+  return interp(R, t == 96 ? W : E, 9, r);
+}
+// Band reject: a low-pass and a high-pass (state-variable, the normal damping) summed, their
+// cutoffs VAR octaves apart around the cutoff (half-gap 0 / 1.4 / 2.7 / 4.0 / 5.0 octaves at
+// VAR 0 / 25 / 50 / 75 / 100 %); at 0 % this is a notch, resonance fills it with two peaks.
+double rejectHalfGap(double v) {
+  static const double V[] = {0, 0.25, 0.5, 0.75, 1.0};
+  static const double A[] = {0, 1.4, 2.69, 4.0, 5.0};
+  return interp(V, A, 5, v);
+}
+// Matched ladders: a 4-pole cascade of equal one-poles (1 / ((1 + s)^4 + k)) or a diode-style
+// coupled ladder (each stage loads the next: 1 / (s^4 + 7 s^3 + 15 s^2 + 10 s + 1 + k)), with the
+// measured feedback amount k against resonance, cutoff scale, level and resonance make-up.
+struct MLadDesc {
+  bool diode;
+  double fcMul;  // effective cutoff / nominal
+  int kTable;    // 0 Mg, 1 A, 2 acid, 3 EMS, 4 dirty
+  bool makeup;   // output x (1 + k): the passband keeps its level as the resonance rises
+  double gainDb;
+};
+const MLadDesc& mlad(int t) {
+  static const MLadDesc mg{false, 1.01, 0, true, -1.95}, za{false, 1.017, 1, false, 0.0},
+      acid{true, 0.87, 2, true, -0.8}, ems{true, 0.87, 3, true, 1.0}, dirty{false, 0.845, 4, false, -1.0};
+  return t == 84 ? za : t == 100 ? acid : t == 101 ? ems : t == 102 ? dirty : mg;
+}
+double mladK(int table, double r) {
+  static const double R[] = {0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0};
+  static const double K[5][11] = {
+      {0, 0.18, 0.38, 0.57, 0.76, 1.15, 1.76, 2.33, 2.97, 3.54, 4.0},          // Mg: 3.95 r
+      {0, 0.24, 0.46, 0.68, 1.0, 1.33, 2.12, 2.65, 3.4, 3.992, 4.6},          // A: about 4.45 r, oscillates at 100 %
+      {0.09, 0.98, 1.83, 2.71, 3.45, 5.2, 7.77, 10.3, 12.8, 16.0, 17.8},       // acid (diode; limit 18.4)
+      {-0.5, 0.43, 1.3, 2.2, 3.28, 5.0, 7.85, 10.2, 12.4, 15.9, 17.7},         // EMS (diode)
+      {0.02, 0.02, 0.03, 0.046, 0.058, 0.19, 0.69, 1.66, 3.25, 5.2, 5.6},      // dirty: oscillates from 90 %
+  };
+  return interp(R, K[std::clamp(table, 0, 4)], 11, r);
+}
+// State-variable damping (k = 1/Q) against resonance: measured table, log-interpolated.
+double svfDamping(double r) {
+  static const double R[] = {0, 0.01, 0.025, 0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45,
+                             0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.975, 0.99, 1.0};
+  static const double K[] = {2.0, 1.387, 1.221, 1.067, 0.961, 0.882, 0.815, 0.754, 0.704, 0.66, 0.58, 0.515, 0.445, 0.395, 0.34,
+                             0.3, 0.255, 0.225, 0.188, 0.16, 0.13, 0.1, 0.074, 0.046, 0.022, 0.0115, 0.0045, 0.0015};
+  constexpr int n = static_cast<int>(sizeof(R) / sizeof(R[0]));
+  r = std::clamp(r, 0.0, 1.0);
+  int i = 0;
+  while (i < n - 2 && r > R[i + 1]) ++i;
+  const double t = (r - R[i]) / (R[i + 1] - R[i]);
+  return std::exp(std::log(K[i]) + (std::log(K[i + 1]) - std::log(K[i])) * t);
+}
+// Matched state-variable family: per type the first section's response, an optional second
+// section (24 dB types: same response with a gentler damping; dual types: another response at
+// a cutoff the VAR knob moves +-5 octaves), or a three-way morph.
+struct MSvfDesc {
+  char a, b, c;  // responses: L low, H high, B band (unnormalised), P peak, N notch, l / h one-pole
+  int form;      // 0 single, 1 single + one-pole (18 dB), 2 doubled (24 dB), 3 dual, 4 morph, 5 doubled morph
+  bool level;    // resonance lowers the level (normal types)
+};
+const MSvfDesc& msvf(int t) {
+  static const MSvfDesc d[] = {
+      {'l', 0, 0, 0, false}, {'L', 0, 0, 0, true},   {'L', 'l', 0, 1, true},  {'L', 0, 0, 2, true},    // 4..7
+      {'h', 0, 0, 0, false}, {'H', 0, 0, 0, true},   {'H', 'h', 0, 1, true},  {'H', 0, 0, 2, true},    // 8..11
+      {'B', 0, 0, 0, true},  {'B', 0, 0, 2, true},   {'P', 0, 0, 0, true},    {'P', 0, 0, 2, true},    // 12..15
+      {'N', 0, 0, 0, false}, {'N', 0, 0, 2, false},                                                     // 16, 17
+      {'l', 'h', 0, 3, false}, {'L', 'H', 0, 3, false}, {'L', 'B', 0, 3, false}, {'L', 'P', 0, 3, false},  // 18..21
+      {'L', 'N', 0, 3, false}, {'H', 'B', 0, 3, false}, {'H', 'P', 0, 3, false}, {'H', 'N', 0, 3, false},  // 22..25
+      {'B', 'P', 0, 3, false}, {'B', 'N', 0, 3, false}, {'P', 'P', 0, 3, false}, {'P', 'N', 0, 3, false},  // 26..29
+      {'N', 'N', 0, 3, false},                                                                          // 30
+      {'L', 'B', 'H', 4, false}, {'L', 'B', 'H', 5, false}, {'L', 'P', 'H', 4, false}, {'L', 'P', 'H', 5, false},  // 31..34
+      {'L', 'N', 'H', 4, false}, {'L', 'N', 'H', 5, false}, {'B', 'P', 'N', 4, false}, {'B', 'P', 'N', 5, false},  // 35..38
+  };
+  return d[std::clamp(t, 4, 38) - 4];
+}
+
 // TPT state-variable stage
 struct SvfC {
   float g = 0, k = 1, a1 = 0, a2 = 0, a3 = 0;
@@ -55,6 +157,30 @@ struct SvfS {
     const float v3 = v0 - ic2;
     const float v1 = c.a1 * ic1 + c.a2 * v3;
     const float v2 = ic2 + c.a2 * ic1 + c.a3 * v3;
+    ic1 = 2 * v1 - ic1;
+    ic2 = 2 * v2 - ic2;
+    bp = v1;
+    lp = v2;
+    hp = v0 - c.k * v1 - v2;
+  }
+};
+// the same stage in double precision (matched designs: high resonance at low cutoffs)
+struct SvfCd {
+  double a1 = 0, a2 = 0, a3 = 0, k = 2;
+  void set(double sr, double hz, double kk) {
+    const double g = std::tan(3.14159265358979 * std::clamp(hz, 5.0, sr * 0.49) / sr);
+    k = kk;
+    a1 = 1.0 / (1.0 + g * (g + k));
+    a2 = g * a1;
+    a3 = g * a2;
+  }
+};
+struct SvfSd {
+  double ic1 = 0, ic2 = 0;
+  void run(const SvfCd& c, double v0, double& lp, double& bp, double& hp) {
+    const double v3 = v0 - ic2;
+    const double v1 = c.a1 * ic1 + c.a2 * v3;
+    const double v2 = ic2 + c.a2 * ic1 + c.a3 * v3;
     ic1 = 2 * v1 - ic1;
     ic2 = 2 * v2 - ic2;
     bp = v1;
@@ -118,9 +244,14 @@ Bq rbj(int kind, double sr, double hz, double q, double db) {  // 0 low shelf, 1
 }  // namespace
 
 struct Filter::Ch {
+  int eng = -1;  // engine in use (set() picks it; a change clears the state)
   // coefficients
   SvfC s1, s2, s3, f[3];
   OpC op, op2, damp;
+  float w1 = 1, w2 = 0, w3 = 0;  // matched morph weights
+  SvfCd d1, d2;
+  SvfSd ds1, ds2;
+  double lg = 0, lk = 0, la2 = 0, la3 = 0, la4 = 0, li2 = 0, li3 = 0, ld1 = 1;  // matched ladder
   Bq bq;
   float g = 0, G = 0, k = 0, drv = 1, head = 0, mix = 0, fb = 0, var = 0, outGain = 1;  // head > 0: boost drive (see set)
   float delay = 100, delay2 = 100;     // samples
@@ -135,6 +266,7 @@ struct Filter::Ch {
   OpS o1, o2, o3, o4, od, oe[8];
   BqS b1, b2;
   float lad[4] = {};
+  double ls[4] = {};
   float ap[16] = {};
   float fbState = 0;
   float rmPh = 0, rmPh2 = 0, snhPh = 0, snhHold = 0;
@@ -143,11 +275,13 @@ struct Filter::Ch {
   float* buf = nullptr;  // kBuf samples
   void clear() {
     ss1 = ss2 = ss3 = SvfS{};
+    ds1 = ds2 = SvfSd{};
     for (auto& v : fs) v = SvfS{};
     o1 = o2 = o3 = o4 = od = OpS{};
     for (auto& v : oe) v = OpS{};
     b1 = b2 = BqS{};
     for (float& v : lad) v = 0;
+    for (double& v : ls) v = 0;
     for (float& v : ap) v = 0;
     fbState = rmPh = rmPh2 = snhPh = snhHold = 0;
     w = 0;
@@ -181,7 +315,8 @@ void Filter::reset() {
 
 void Filter::set(int type, double sr, double hz, double res, double drive, double var, double spreadSt, bool boost) {
   type = std::clamp(type, 0, 106);
-  if (type != type_) {
+  const int eng = boost ? engineMatched(type) : engineOf(type);
+  if (type != type_ || eng != ch_[0].eng) {
     type_ = type;
     reset();
   }
@@ -189,9 +324,16 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
   res = std::clamp(res, 0.0, 1.0);
   drive = std::clamp(drive, 0.0, 1.0);
   var = std::clamp(var, 0.0, 1.0);
-  const int eng = engineOf(type);
+  if (boost && (type <= 3 || eng == EngMSvf || eng == EngMLad)) {
+    // J-203b, measured (L - R high-band level of a 12 dB filter at stereo 0 / 25 / 75 / 100 %): the
+    // source's spread is cubic in the stereo offset, +-32 semitones at the ends and +-4 at 25 / 75 %
+    // (the voice passes a linear +-24 semitones).
+    const double u = std::clamp(spreadSt / 24.0, -1.0, 1.0);
+    spreadSt = 32.0 * u * u * u;
+  }
   for (int c = 0; c < 2; ++c) {
     Ch& h = ch_[c];
+    h.eng = eng;
     const double f = std::clamp(hz * std::pow(2.0, (c == 0 ? -spreadSt : spreadSt) / 12.0), 8.0, sr * 0.49);
     h.drv = static_cast<float>(1.0 + drive * 9.0);
     h.head = 0;
@@ -206,6 +348,77 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
     h.var = static_cast<float>(var);
     h.outGain = 1;
     switch (eng) {
+      case EngMSvf: {
+        const MSvfDesc& d = msvf(type);
+        const double k1 = svfDamping(res);
+        // normal types: the level falls with resonance, g = 1 / (1 + 4.04 r) (-6.9 dB at 30 %, -13.9 dB
+        // at 100 %); VAR gives it back: g + VAR (1 - g) (0 dB at 100 %)
+        if (d.level) {
+          const double g = 1.0 / (1.0 + 4.04 * res);
+          h.outGain = static_cast<float>(g + var * (1.0 - g));
+        }
+        h.d1.set(sr, f, k1);
+        h.op.set(sr, f);
+        if (d.form == 2 || d.form == 5) {
+          // 24 dB: a second section at the cutoff, damping 1 + (k / 2)^2 (2 at 0 %, about 1 above 30 %)
+          h.d2.set(sr, f, 1.0 + 0.25 * k1 * k1);
+        } else if (d.form == 3) {
+          // dual: VAR is the second response's own cutoff, 340 Hz x 2^(10.5 (VAR - 0.5)) (fitted
+          // between 12 % and 100 %; it does not follow the cutoff)
+          const double f2 = std::clamp(340.0 * std::exp2(10.5 * (var - 0.5)) * f / std::max(1.0, hz), 8.0, sr * 0.49);
+          // a notch after another response stays wide (no resonance); every other second response resonates
+          h.d2.set(sr, f2, d.b == 'N' && d.a != 'N' ? 2.0 : k1);
+          h.op2.set(sr, f2);
+        }
+        // morph: A -> B over the first half of VAR, B -> C over the second
+        const float m = static_cast<float>(var);
+        h.w1 = m < 0.5f ? 1 - 2 * m : 0.f;
+        h.w2 = m < 0.5f ? 2 * m : 2 - 2 * m;
+        h.w3 = m < 0.5f ? 0.f : 2 * m - 1;
+        break;
+      }
+      case EngMX: {
+        if (type == 89) {
+          const double k = svfDamping(res), a = std::exp2(rejectHalfGap(var));
+          h.d1.set(sr, std::clamp(f / a, 8.0, sr * 0.49), k);
+          h.d2.set(sr, std::clamp(f * a, 8.0, sr * 0.49), k);
+          break;
+        }
+        const double k = mxK(type, res);
+        const bool wsp = type == 96;
+        h.d1.set(sr, std::clamp(f * (wsp ? 1.01 : 1.18), 8.0, sr * 0.49), k);
+        // weights: low-pass, band-pass, high-pass (VAR crossfades low to high; measured levels)
+        const double gl = std::pow(10.0, (wsp ? -0.75 : -0.7) / 20), gh = std::pow(10.0, (wsp ? -3.45 : -0.85) / 20);
+        h.w1 = type == 106 ? 0.f : static_cast<float>(gl * (1 - var));
+        h.w2 = type == 106 ? static_cast<float>(std::pow(10.0, -0.5 / 20)) : 0.f;
+        h.w3 = type == 106 ? 0.f : static_cast<float>(gh * var);
+        break;
+      }
+      case EngMPass:
+        break;
+      case EngMRing:
+        h.rmInc = static_cast<float>(f / sr);
+        break;
+      case EngMLad: {
+        const MLadDesc& d = mlad(type);
+        // the dirty ladder's cutoff rises toward its nominal value above 75 % resonance
+        const double fm = d.fcMul + (d.kTable == 4 ? 0.12 * std::max(0.0, (res - 0.75) / 0.25) : 0.0);
+        const double g = std::tan(3.14159265358979 * std::clamp(f * fm, 8.0, sr * 0.49) / sr);
+        const double k = mladK(d.kTable, res);
+        h.lg = g;
+        h.lk = k;
+        if (d.diode) {
+          // coupled stages: y4 = a4 y3 + b4, y3 = a3 y2 + b3, y2 = a2 y1 + b2 (b from the states)
+          h.la4 = g / (1 + g);
+          h.li3 = 1 / (1 + 2 * g - g * h.la4);
+          h.la3 = g * h.li3;
+          h.li2 = 1 / (1 + 2 * g - g * h.la3);
+          h.la2 = g * h.li2;
+          h.ld1 = 1 + 2 * g - g * h.la2;
+        }
+        h.outGain = static_cast<float>((d.makeup ? 1 + k : 1.0) * std::pow(10.0, d.gainDb / 20));
+        break;
+      }
       case EngSvf: {
         const double kk = 2.0 * (1.0 - res * 0.985);
         h.s1.set(sr, f, kk);
@@ -225,13 +438,30 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
         break;
       }
       case EngComb:
+      case EngMComb:
       case EngDistComb: {
         h.delay = static_cast<float>(sr / f);
         if (type == 104) h.delay2 = static_cast<float>(sr / (f * 1.4983));
         h.fb = static_cast<float>(res * 0.97);
         const double cut = 200.0 * std::pow(100.0, var);  // damping filter in the loop
-        h.damp.set(sr, (type == 43 || type == 44) ? 20 + 4000 * var : cut);
+        const int ct = type >= 47 && type <= 54 ? type - 8 : type;  // flangers: the comb variant
+        h.damp.set(sr, (ct == 43 || ct == 44) ? 20 + 4000 * var : cut);
         if (eng == EngDistComb) h.damp.set(sr, (type == 90 || type == 92) ? 300 + 12000 * (1 - var) : 1000 + 3000 * var);
+        if (eng == EngMComb) {
+          // measured: feedback = resonance, the echo enters at fb (1 + fb), output 0.5 / (1 + fb)
+          // (white noise 6 dB down and flat at 0 %, teeth +-fb at higher settings)
+          h.fb = static_cast<float>(res);
+          h.mix = static_cast<float>(type >= 47 ? 1 + res : res * (1 + res));  // flangers: 1 + fb
+          h.outGain = static_cast<float>(0.5 / (1 + res));
+          // loop filters (one-pole) follow the comb pitch: L6 opens from f / 16 to 256 f, H6 closes from
+          // f / 128 to 32 f, HL6 widens a band around f (fitted to where the teeth stop)
+          if (ct == 41 || ct == 42) h.damp.set(sr, f * std::exp2(12 * var - 4));
+          else if (ct == 43 || ct == 44) h.damp.set(sr, f * std::exp2(12 * var - 7));
+          else if (ct == 45 || ct == 46) {
+            h.damp.set(sr, f * std::exp2(10 * var));
+            h.op2.set(sr, f * std::exp2(-10 * var));
+          }
+        }
         break;
       }
       case EngFlange: {
@@ -239,6 +469,17 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
         h.delay = static_cast<float>(base * (c == 0 ? 1.0 : 1.0 + var * 0.5));
         h.fb = static_cast<float>(res * 0.95);
         h.damp.set(sr, (type == 51 || type == 52) ? 300 : 3000);
+        break;
+      }
+      case EngMPhaser: {
+        // measured: 2 / 4 / 6 / 8 first-order allpasses at half the cutoff (0.51), feedback = resonance,
+        // the chain mixed in at 1 + fb, output 0.5 / (1 + fb); VAR has no effect
+        h.stages = 2 * (1 + (type - 55) / 2);
+        const double w = std::tan(3.14159265358979 * std::clamp(f * 0.51, 8.0, sr * 0.49) / sr);
+        h.apA = static_cast<float>((w - 1) / (w + 1));
+        h.fb = static_cast<float>(res);
+        h.mix = static_cast<float>(1 + res);
+        h.outGain = static_cast<float>(0.5 / (1 + res));
         break;
       }
       case EngPhaser: {
@@ -276,12 +517,13 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
         break;
       case EngCombs:
       case EngAllpass:
+      case EngMDiff:
       case EngRoom: {
         static const double r[8] = {1.0, 1.31, 1.73, 2.09, 2.47, 2.91, 3.37, 3.83};
         const double base = std::min(static_cast<double>(kBuf / 8 - 4), sr / f);
         for (int i = 0; i < 8; ++i) {
           const double sp = 1.0 + (r[i] - 1.0) * (eng == EngRoom ? (0.5 + var) : (0.2 + var * 1.6));
-          h.lens[i] = std::clamp(static_cast<int>(base * sp * (c ? 1.07 : 1.0)), 2, kBuf / 8 - 2);
+          h.lens[i] = std::clamp(static_cast<int>(base * sp * (c && eng != EngMDiff ? 1.07 : 1.0)), 2, kBuf / 8 - 2);
         }
         h.fb = static_cast<float>(eng == EngRoom ? 0.5 + res * 0.47 : res * 0.9);
         h.damp.set(sr, 1500 + 15000 * (1 - res * 0.5));
@@ -348,18 +590,75 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
 void Filter::process(float& l, float& r) {
   const int t = type_;
   if (t < 0) return;
-  const int eng = engineOf(t);
+  const int eng = ch_[0].eng;
   float* io[2] = {&l, &r};
   for (int c = 0; c < 2; ++c) {
     Ch& h = ch_[c];
     float x = *io[c];
     float y = x;
     if (h.head > 0) {
-      if (eng != EngScream && eng != EngLadder) x = h.head * fastTanh(x * h.drv / h.head);
-    } else if (h.drv > 1.0001f && eng != EngScream && eng != EngLadder) {
+      if (eng != EngScream && eng != EngLadder && eng != EngMLad) x = h.head * fastTanh(x * h.drv / h.head);
+    } else if (h.drv > 1.0001f && eng != EngScream && eng != EngLadder && eng != EngMLad) {
       x = fastTanh(x * h.drv) / std::sqrt(h.drv);
     }
     switch (eng) {
+      case EngMSvf: {
+        const MSvfDesc& d = msvf(t);
+        // one response of a state-variable section (or a one-pole for 'l' / 'h')
+        auto resp = [](char m, double in, double lp, double bp, double hp, double op) {
+          switch (m) {
+            case 'L': return lp;
+            case 'H': return hp;
+            case 'B': return bp;
+            case 'P': return lp + hp + bp;
+            case 'N': return lp + hp;
+            case 'l': return op;
+            case 'h': return in - op;
+            default: return in;
+          }
+        };
+        double lp = 0, bp = 0, hp = 0;
+        double op = 0;
+        if (d.a == 'l' || d.a == 'h') op = h.o1.lp(h.op, x);
+        else h.ds1.run(h.d1, x, lp, bp, hp);
+        switch (d.form) {
+          case 0: y = static_cast<float>(resp(d.a, x, lp, bp, hp, op)); break;
+          case 1: {
+            const float v = static_cast<float>(resp(d.a, x, lp, bp, hp, op));
+            const float o = h.o1.lp(h.op, v);
+            y = d.b == 'l' ? o : v - o;
+            break;
+          }
+          case 2: {
+            const double v = resp(d.a, x, lp, bp, hp, op);
+            double l2, b2, h2;
+            h.ds2.run(h.d2, v, l2, b2, h2);
+            y = static_cast<float>(resp(d.a, v, l2, b2, h2, 0));
+            break;
+          }
+          case 3: {
+            const double v = resp(d.a, x, lp, bp, hp, op);
+            double l2 = 0, b2 = 0, h2 = 0, o2 = 0;
+            if (d.b == 'l' || d.b == 'h') o2 = h.o2.lp(h.op2, static_cast<float>(v));
+            else h.ds2.run(h.d2, v, l2, b2, h2);
+            y = static_cast<float>(resp(d.b, v, l2, b2, h2, o2));
+            break;
+          }
+          default: {
+            const double v = h.w1 * resp(d.a, x, lp, bp, hp, 0) + h.w2 * resp(d.b, x, lp, bp, hp, 0) + h.w3 * resp(d.c, x, lp, bp, hp, 0);
+            if (d.form == 4) {
+              y = static_cast<float>(v);
+            } else {
+              double l2, b2, h2;
+              h.ds2.run(h.d2, v, l2, b2, h2);
+              y = static_cast<float>(h.w1 * resp(d.a, v, l2, b2, h2, 0) + h.w2 * resp(d.b, v, l2, b2, h2, 0) + h.w3 * resp(d.c, v, l2, b2, h2, 0));
+            }
+            break;
+          }
+        }
+        y *= h.outGain;
+        break;
+      }
       case EngSvf: {
         float lp, bp, hp, lp2, bp2, hp2;
         h.ss1.run(h.s1, x, lp, bp, hp);
@@ -432,6 +731,64 @@ void Filter::process(float& l, float& r) {
         }
         break;
       }
+      case EngMX: {
+        double lp, bp, hp;
+        if (t == 89) {
+          double lp2, bp2, hp2;
+          h.ds1.run(h.d1, x, lp, bp, hp);
+          h.ds2.run(h.d2, x, lp2, bp2, hp2);
+          y = static_cast<float>(lp + hp2);
+        } else {
+          h.ds1.run(h.d1, x, lp, bp, hp);
+          y = static_cast<float>(h.w1 * lp + h.w2 * bp + h.w3 * hp);
+        }
+        break;
+      }
+      case EngMPass:
+        y = x;
+        break;
+      case EngMRing: {  // ring modulation by a sine at the cutoff (white noise comes out 3 dB down, flat)
+        h.rmPh += h.rmInc;
+        h.rmPh -= std::floor(h.rmPh);
+        y = x * std::sin(static_cast<float>(kPi2) * h.rmPh);
+        break;
+      }
+      case EngMLad: {
+        const double g = h.lg, k = h.lk, hd = h.head > 0 ? h.head : 1.0;
+        const double xin = static_cast<double>(x) * h.drv;
+        double* st = h.ls;
+        double yo;
+        if (mlad(t).diode) {
+          const double b4 = st[3] / (1 + g);
+          const double b3 = (g * b4 + st[2]) * h.li3;
+          const double b2 = (g * b3 + st[1]) * h.li2;
+          const double A = h.la4 * h.la3 * h.la2, B = h.la4 * (h.la3 * b2 + b3) + b4;
+          double y1 = (g * (xin - k * B) + g * b2 + st[0]) / (h.ld1 + g * k * A);
+          const double u = xin - k * (A * y1 + B);
+          const double us = hd * fastTanh(static_cast<float>(u / hd));
+          y1 = (g * us + g * b2 + st[0]) / h.ld1;
+          const double y2 = h.la2 * y1 + b2, y3 = h.la3 * y2 + b3, y4 = h.la4 * y3 + b4;
+          st[0] = 2 * y1 - st[0];
+          st[1] = 2 * y2 - st[1];
+          st[2] = 2 * y3 - st[2];
+          st[3] = 2 * y4 - st[3];
+          yo = y4;
+        } else {
+          const double G = g / (1 + g);
+          const double S = (G * G * G * st[0] + G * G * st[1] + G * st[2] + st[3]) / (1 + g);
+          const double u = (xin - k * S) / (1 + k * G * G * G * G);
+          double in = hd * fastTanh(static_cast<float>(u / hd));
+          for (int s = 0; s < 4; ++s) {
+            const double v = (in - st[s]) * G;
+            const double o = v + st[s];
+            st[s] = o + v;
+            in = o;
+          }
+          yo = in;
+        }
+        y = static_cast<float>(yo * h.outGain);
+        break;
+      }
       case EngLadder: {
         // ZDF ladder with a saturating input
         const float G = h.G, b = 1.f / (1.f + h.g);
@@ -456,20 +813,24 @@ void Filter::process(float& l, float& r) {
         const int p = std::clamp(h.poles, 1, 4);
         y = out[p - 1];
         if (t == 101) y = out[3] * 0.6f + out[1] * 0.4f;            // bright: mixes an earlier tap
-        y *= 1.f + h.k * 0.5f * h.var;                             // BODY / BASS: resonance gain compensation
+        // BODY: gives back the level the resonance takes; matched (Boost) Mg types: all of it at 100 %
+        // (passband 1 / (1 + k) -> 1 + VAR k, measured), classic: half
+        y *= 1.f + h.k * (h.head > 0 && t <= 3 ? 1.f : 0.5f) * h.var;
         if (h.head <= 0) y /= h.drv > 1 ? std::sqrt(h.drv) : 1.f;
         break;
       }
-      case EngComb: {
+      case EngComb:
+      case EngMComb: {
         float d = h.tapFrac(h.delay);
-        if (t == 41 || t == 42) d = h.o1.lp(h.damp, d);
-        else if (t == 43 || t == 44) d = d - h.o1.lp(h.damp, d);
-        else if (t == 45 || t == 46) d = h.o2.lp(h.damp, d - h.o1.lp(h.op2, d));
+        const int ct = t >= 47 && t <= 54 ? t - 8 : t;
+        if (ct == 41 || ct == 42) d = h.o1.lp(h.damp, d);
+        else if (ct == 43 || ct == 44) d = d - h.o1.lp(h.damp, d);
+        else if (ct == 45 || ct == 46) d = h.o2.lp(h.damp, d - h.o1.lp(h.op2, d));
         const float sgn = (t & 1) ? 1.f : -1.f;  // odd indices are the "+" types
         float in = x + d * h.fb * sgn;
         if (t == 104) in += h.tapFrac(h.delay2) * h.fb * 0.5f;
         h.push(std::clamp(in, -4.f, 4.f));
-        y = (x + d * sgn) * 0.5f;
+        y = eng == EngMComb ? (x + d * sgn * h.mix) * h.outGain : (x + d * sgn) * 0.5f;
         if (t == 104) y = in * 0.6f;
         break;
       }
@@ -489,6 +850,18 @@ void Filter::process(float& l, float& r) {
         const float sgn = (t & 1) ? 1.f : -1.f;
         h.push(std::clamp(x + d * h.fb * sgn, -4.f, 4.f));
         y = (x + d * sgn) * 0.5f;
+        break;
+      }
+      case EngMPhaser: {
+        const float sg = (t & 1) ? 1.f : -1.f;
+        float in = x + h.fbState * h.fb * sg;
+        for (int s = 0; s < h.stages && s < 16; ++s) {
+          const float o = h.apA * in + h.ap[s];
+          h.ap[s] = in - h.apA * o;
+          in = o;
+        }
+        h.fbState = in;
+        y = (x + sg * h.mix * in) * h.outGain;
         break;
       }
       case EngPhaser: {
@@ -566,7 +939,8 @@ void Filter::process(float& l, float& r) {
         y = (x + acc * 0.35f) * 0.6f;
         break;
       }
-      case EngAllpass: {
+      case EngAllpass:
+      case EngMDiff: {
         const int seg = kBuf / 8;
         float v = x;
         const int n = t == 98 ? 6 : 4;
@@ -581,7 +955,7 @@ void Filter::process(float& l, float& r) {
           v = o;
         }
         h.w = (h.w + 1) % (kBuf / 8);
-        y = t == 98 ? x * (1 - h.var) + v * h.var : (x + v) * 0.5f;
+        y = eng == EngMDiff ? v : t == 98 ? x * (1 - h.var) + v * h.var : (x + v) * 0.5f;
         break;
       }
       case EngRoom: {  // 4-line feedback delay network

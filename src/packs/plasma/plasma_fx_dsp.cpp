@@ -32,6 +32,9 @@ void Lr4::split(int c, double x, double& lo, double& hi) {
 
 namespace {
 double dbToGainF(double db) { return std::pow(10.0, db / 20.0); }
+// compressor laws (J-203c, measured): threshold offset against the peak (dB), attack time scale
+constexpr double kCompThrOfs = 8.4, kCompAtkScale = 0.33;
+
 struct Line {  // fractional delay line inside the unit's pool
   float* b = nullptr;
   int n = 1, w = 0;
@@ -183,7 +186,7 @@ class FxUnit {
   // reverb
   Line rv[8], pre[2];
   ApD dif[4][2];
-  Op1 rvDamp[8], rvLo[2], rvHi[2];
+  Op1 rvDamp[8], rvLs[8], rvLo[2], rvHi[2];
   double rvMod = 0;
   float rvSh[2]{};
   // eq / utility
@@ -222,6 +225,7 @@ class FxUnit {
     for (auto& e : env) e[0] = e[1] = 0;
     xo1 = Lr4{}, xo2 = Lr4{}, ulf = Lr4{};
     for (auto& f : rvDamp) f.z = 0;
+    for (auto& f : rvLs) f.z = 0;
     rvLo[0].z = rvLo[1].z = rvHi[0].z = rvHi[1].z = 0;
     lpw[0].z = lpw[1].z = hpw[0].z = hpw[1].z = 0;
     dhp[0].z = dhp[1].z = 0;
@@ -243,8 +247,8 @@ class FxUnit {
     for (auto& l : ml) l.bind(p, s * 60 / 1000 + 8);
     // delay: 2 s per channel
     for (auto& l : dl) l.bind(p, s * 2 + 8);
-    // compressor lookahead 5 ms
-    for (auto& l : look) l.bind(p, s / 200 + 8);
+    // compressor lookahead 6 ms
+    for (auto& l : look) l.bind(p, s / 100 + 8);
     // reverb: 8 lines of up to 0.35 s (size up to 2x shrinks to fit), predelay 0.6 s
     for (auto& l : rv) l.bind(p, s * 35 / 100 + 8);
     for (auto& l : pre) l.bind(p, s * 6 / 10 + 8);
@@ -258,7 +262,7 @@ class FxUnit {
   }
   static size_t poolSize(double sr) {
     const size_t s = static_cast<size_t>(sr);
-    return 4 * (s * 60 / 1000 + 8) + 2 * (s * 2 + 8) + 2 * (s / 200 + 8) + 8 * (s * 35 / 100 + 8) + 2 * (s * 6 / 10 + 8) +
+    return 4 * (s * 60 / 1000 + 8) + 2 * (s * 2 + 8) + 2 * (s / 100 + 8) + 8 * (s * 35 / 100 + 8) + 2 * (s * 6 / 10 + 8) +
            8 * (s / 40 + 8) + 2 * (s * 2 + 8) + 4 * (s * 3 / 100 + 8) + 2 * (s + 8) + 64;
   }
 };
@@ -361,6 +365,49 @@ std::unique_ptr<FxBank> makeFxBank(const PluginState& s, const Aux* aux, double 
     bank->unit[static_cast<size_t>(slot)] = std::move(u);
   }
   return bank;
+}
+
+// J-203c: the values Serum 2 uses for module parameters a preset does not store, measured on the
+// source (a module with the parameter unset renders sample-identical to the module with this value).
+bool fxSerumDefault(int type, int p, double& plain) {
+  struct Def {
+    int type;
+    const char* key;
+    double v;
+  };
+  static const Def kDefs[] = {
+      {FxReverb, "kParamWet", 20},        {FxReverb, "kParamSize", 35},          {FxReverb, "kParamFeedback", 25},
+      {FxReverb, "kParamFreq", 0},        {FxReverb, "kParamFreqB", 35},         {FxReverb, "kParamWidth", 20},
+      {FxReverb, "kParamVintageScale", 70}, {FxReverb, "kParamType", 0},       {FxReverb, "kParamDelay", 31.25},
+      {FxReverb, "kParamMode", 72},
+      {FxDelay, "kParamWet", 30},         {FxDelay, "kParamFreq", 848.528},      {FxDelay, "kParamBW", 6.75},
+      {FxDelay, "kParamFeedback", 40},    {FxDelay, "kParamMode", 0},            {FxDelay, "kParamOffsetL", 1},
+      {FxDelay, "kParamOffsetR", 1},      {FxDelay, "kParamBeatSync", 1},
+      {FxDistortion, "kParamWet", 100},   {FxDistortion, "kParamDrive", 25},     {FxDistortion, "kParamMode", 0},
+      {FxDistortion, "kParamPrePost", 0}, {FxDistortion, "kParamFreq", 0.5},     {FxDistortion, "kParamBW", 1.95},
+      {FxComp, "kParamWet", 100},         {FxComp, "kParamThresh", 0.5},         {FxComp, "kParamRatio", 4},
+      {FxComp, "kParamAttack", 90.091},   {FxComp, "kParamRelease", 90.091},     {FxComp, "kParamMakeup", 1},
+      {FxComp, "kParamMultiband", 0},
+      {FxFilter, "kParamWet", 100},       {FxFilter, "kParamFreq", 0.5},         {FxFilter, "kParamReso", 0},
+      {FxFilter, "kParamDrive", 0},       {FxFilter, "kParamStereo", 50},        {FxFilter, "kParamVar", 0},
+      {FxChorus, "kParamWet", 50},        {FxChorus, "kParamDelay", 5},          {FxChorus, "kParamDelay2", 0},
+      {FxChorus, "kParamDepth", 26.25},   {FxChorus, "kParamFeedback", 9.5},     {FxChorus, "kParamFilt", 1000},
+      {FxPhaser, "kParamWet", 100},       {FxPhaser, "kParamDepth", 50},         {FxPhaser, "kParamFreq", 600},
+      {FxPhaser, "kParamWidth", 180},     {FxPhaser, "kParamNumPoles", 4},       {FxPhaser, "kParamDepth2", 0.5},
+      {FxFlanger, "kParamWet", 100},      {FxFlanger, "kParamDepth", 100},       {FxFlanger, "kParamFeedback", 50},
+      {FxFlanger, "kParamWidth", 180},
+      {FxBode, "kParamWet", 100},         {FxBode, "kParamShift", 0},            {FxBode, "kParamRange", 22.3607},
+      {FxBode, "kParamDelayTime", 0},     {FxBode, "kParamFeedback", 0},
+      {FxUtility, "kParamHPF", 1},        {FxUtility, "kParamLPF", 20000},
+  };
+  const auto& d = fxParams(type);
+  if (p < 0 || p >= static_cast<int>(d.size())) return false;
+  for (const Def& e : kDefs)
+    if (e.type == type && std::strcmp(e.key, d[static_cast<size_t>(p)].key) == 0) {
+      plain = e.v;
+      return true;
+    }
+  return false;
 }
 
 void fxReset(FxUnit& u) { u.clear(); }
@@ -549,32 +596,43 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
     }
     case FxComp: {
       const bool multi = N("kParamMultiband") >= 0.5;
-      const double thrDb = -60.0 * P("kParamThresh");  // higher = lower threshold (0 dB .. -60 dB)
+      // J-203c, measured on the source with a saw at -18.8 dB RMS: the limited level is 60 log10(1 - t)
+      // - 2.1 dB RMS (-26.1 / -38.1 / -62.0 at t = 0.6 / 0.75 / 0.9) and bottoms out near -122 at t = 1.
+      // Against this detector (peak, gain smoothed in dB) that is a threshold of 60 log10(1 - t) + 8.4.
+      // Release time constant = release / 4. Ratios from 100 up act as a limiter that catches at once.
+      // Makeup below 1 does nothing; in limiter mode it adds 5.8 (1 - m^-1.6) dB on top (makeup 1.5 / 2
+      // / 3 / 4 lift the limited level by 6.2 / 9.8 / 14.3 / 17.2 dB). Latency compensation: 6 ms.
+      const double thrDb = 60.0 * std::log10(std::max(0.01, 1.0 - P("kParamThresh"))) + kCompThrOfs;
       const double ratio = P("kParamRatio");
+      const bool limiter = ratio >= 100;
       const double atk = P("kParamAttack") / 1000.0, rel = P("kParamRelease") / 1000.0;
-      const float makeup = static_cast<float>(P("kParamMakeup"));
-      const float aA = static_cast<float>(std::exp(-1.0 / std::max(1.0, atk * sr))), aR = static_cast<float>(std::exp(-1.0 / std::max(1.0, rel * sr)));
+      const double mk = std::max(1.0, P("kParamMakeup"));
+      const float makeup = static_cast<float>(limiter && !multi ? mk * dbToGainF(5.8 * (1.0 - std::pow(mk, -1.6))) : mk);
+      const float aA = limiter ? 0.f : static_cast<float>(std::exp(-1.0 / std::max(1.0, atk * kCompAtkScale * sr))),
+                  aR = static_cast<float>(std::exp(-1.0 / std::max(1.0, rel * 0.25 * sr)));
       const bool look = N("kParamLimiterLatencyComp") >= 0.5;
+      const int lookN = static_cast<int>(std::lround(sr * 0.00598));
+      // e holds the smoothed gain change in dB (<= 0 for reduction, > 0 for upward gain)
       auto gain = [&](float& e, float x, double tdb, double rAbove, double rBelow, double dead) {
-        const float ax = std::fabs(x);
-        e = ax > e ? ax + (e - ax) * aA : ax + (e - ax) * aR;
-        const double db = 20.0 * std::log10(std::max(1e-6f, e));
+        const double db = 20.0 * std::log10(std::max(1e-6f, x));
         double g = 0;
         if (db > tdb) g = (tdb - db) * (1.0 - 1.0 / std::max(1.0, rAbove));
         else if (db < tdb - dead && db > -80) g = (tdb - dead - db) * (1.0 - 1.0 / std::max(1.0, rBelow)) * 0.5;  // upward
-        return static_cast<float>(std::pow(10.0, std::clamp(g, -60.0, 24.0) / 20.0));
+        g = std::clamp(g, -150.0, 24.0);
+        const float tg = static_cast<float>(g);
+        e = tg < e ? tg + (e - tg) * aA : tg + (e - tg) * aR;
+        return static_cast<float>(std::pow(10.0, static_cast<double>(e) / 20.0));
       };
       if (!multi) {
         for (int i = 0; i < n; ++i) {
           const float det = std::max(std::fabs(L[i]), std::fabs(R[i]));
-          const float g = gain(u.env[0][0], det, thrDb, ratio >= 999999 ? 1e9 : ratio, 1, 999);
+          const float g = gain(u.env[0][0], det, thrDb, limiter ? 1e9 : ratio, 1, 999);
           float l = L[i], r = R[i];
           if (look) {
             u.look[0].push(l), u.look[1].push(r);
-            l = u.look[0].tapInt(static_cast<int>(sr / 400)), r = u.look[1].tapInt(static_cast<int>(sr / 400));
+            l = u.look[0].tapInt(lookN), r = u.look[1].tapInt(lookN);
           }
           float yl = l * g * makeup, yr = r * g * makeup;
-          if (ratio >= 999999) yl = std::clamp(yl, -1.f, 1.f), yr = std::clamp(yr, -1.f, 1.f);
           L[i] = (l + (yl - l) * wet) * out;
           R[i] = (r + (yr - r) * wet) * out;
           u.gr[0] = g;
@@ -614,19 +672,93 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       break;
     }
     case FxReverb: {
-      const int rtype = static_cast<int>(P("kParamType"));
-      const double size = 0.25 + 1.75 * P("kParamSize") / 100.0;
-      const bool psync = N("kParamPreDelayBeatSync") >= 0.5;
-      const double preS = psync ? P("kParamPreDelay") * 60.0 / std::max(20.0, c.tempo) : P("kParamDelay") / 1000.0;
-      const double decay = P("kParamFeedback") / 100.0;
-      const double rt60 = (rtype == 3 ? 2.0 : 0.6) * std::pow(rtype == 3 ? 30.0 : 25.0, decay);  // seconds
-      const double damp = P("kParamFreqC") / 100.0;
+      // J-203c: the decay of each type follows tables measured on the source (Schroeder RT60 in the
+      // 125 Hz / 1 kHz / 8 kHz octaves of a held note's tail; wet 100, other values at their defaults).
+      // Which knobs set the decay depends on the type: Plate = size (feedback darkens the tail), Hall =
+      // size and the delay knob, Vintage = size, the A diffusion and the delay knob, Abyss = size and
+      // shape, Space = size and the delay knob. Plate keeps the width knob; Hall, Vintage and Abyss are
+      // wide whatever its value; Space is mono. Only the Plate waits before its tail (32 .. 128 ms with
+      // size). Mix: dry 1 - m^2, wet m (wet 20 / 50: dry -0.2 / -2.6 dB on the source).
+      const int rtype = std::clamp(static_cast<int>(P("kParamType")), 0, 4);
+      const double sz = P("kParamSize"), dk = P("kParamDelay"), fbk = P("kParamFeedback");
+      auto tab = [](const double* xs, const double* ys, int n, double x) {
+        if (x <= xs[0]) return ys[0];
+        for (int i = 1; i < n; ++i)
+          if (x <= xs[i]) return ys[i - 1] * std::pow(ys[i] / ys[i - 1], (x - xs[i - 1]) / (xs[i] - xs[i - 1]));
+        return ys[n - 1];
+      };
+      auto gLin = [](const double* xs, const double* ys, int n, double x) {  // linear in dB
+        if (x <= xs[0]) return ys[0];
+        for (int i = 1; i < n; ++i)
+          if (x <= xs[i]) return ys[i - 1] + (ys[i] - ys[i - 1]) * (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
+        return ys[n - 1];
+      };
+      // wet level: the source keeps a hall's wet energy nearly level as it grows; fitted per type (dB)
+      double rtM = 1, rtLo = 1, rtHi = 1, preS = 0, wetG = 1, width = 1;
+      switch (rtype) {
+        case 0: {  // plate
+          static const double xs[] = {0, 15, 35, 50, 60, 100}, ys[] = {0.43, 0.77, 2.77, 6.96, 10.2, 10.5};
+          static const double fx[] = {0, 25, 40, 50, 60, 75, 90, 100}, fm[] = {1.0, 1.0, 0.97, 0.95, 0.92, 0.77, 0.42, 0.18},
+                              fh[] = {1.06, 0.9, 0.66, 0.54, 0.38, 0.28, 0.22, 0.21};
+          const double t = tab(xs, ys, 6, sz);
+          rtM = t * tab(fx, fm, 8, fbk), rtHi = t * tab(fx, fh, 8, fbk), rtLo = t * 1.05;
+          static const double ox[] = {0, 35, 50, 60, 70}, oy[] = {0.0, 0.0, 0.02, 0.045, 0.06};
+          preS = gLin(ox, oy, 5, sz);
+          static const double gx[] = {0, 35, 60}, gy[] = {5.4, -4.7, 6.1};
+          width = P("kParamWidth") / 100.0, wetG = dbToGainF(gLin(gx, gy, 3, sz));
+          break;
+        }
+        case 1: {  // hall: bilinear over size x delay knob (log RT)
+          static const double sx[] = {0, 35, 70, 100}, dx[] = {0, 31.25, 100, 250};
+          static const double t[4][4] = {{0.8, 1.89, 4.06, 8.0}, {1.01, 2.64, 8.1, 16.1}, {3.94, 4.13, 9.0, 16.0}, {10.5, 11.8, 14.0, 18.0}};
+          auto idx = [](const double* xs, double x, int& i, double& f) {
+            i = 0;
+            while (i < 2 && x > xs[i + 1]) ++i;
+            f = std::clamp((x - xs[i]) / (xs[i + 1] - xs[i]), 0.0, 1.0);
+          };
+          int i, j;
+          double fi, fj;
+          idx(sx, sz, i, fi), idx(dx, dk, j, fj);
+          const double l00 = std::log(t[i][j]), l01 = std::log(t[i][j + 1]), l10 = std::log(t[i + 1][j]), l11 = std::log(t[i + 1][j + 1]);
+          rtM = std::exp((l00 * (1 - fj) + l01 * fj) * (1 - fi) + (l10 * (1 - fj) + l11 * fj) * fi);
+          static const double hx[] = {0, 15, 35, 50, 60, 70, 85, 100}, hy[] = {0.9, 1.26, 1.95, 2.61, 3.25, 4.24, 6.48, 11.2};
+          rtHi = std::min(rtM, tab(hx, hy, 8, sz) * std::max(0.5, 1.0 + 0.0085 * (dk - 31.25)));
+          rtLo = rtM * (sz < 60 ? 1.3 : 1.0);
+          width = 0.85, wetG = dbToGainF(6.0 - 0.1 * sz);
+          break;
+        }
+        case 2: {  // vintage
+          static const double xs[] = {0, 15, 35, 50, 70, 85}, ys[] = {0.59, 0.72, 1.18, 1.73, 3.82, 7.15};
+          static const double vx[] = {0, 25, 50, 70, 85, 100}, vy[] = {0.47, 0.46, 1.1, 1.0, 1.36, 2.14};
+          rtM = tab(xs, ys, 6, sz) * tab(vx, vy, 6, P("kParamVintageScale")) * (dk < 15 ? 0.5 + dk / 30.0 : 1.0);
+          rtHi = rtM * 0.63, rtLo = rtM * 1.33;
+          width = 1.3, wetG = dbToGainF(3.1), preS = 0.12;
+          break;
+        }
+        case 3: {  // abyss
+          static const double xs[] = {0, 15, 35, 50, 70, 85}, ys[] = {1.76, 2.35, 5.66, 8.4, 9.44, 9.74};
+          static const double mx[] = {0, 10, 25, 35, 50, 72, 100}, my[] = {1.4, 1.65, 0.78, 0.78, 0.4, 1.0, 0.07};
+          static const double dx[] = {0, 31.25, 60, 150, 250}, dy[] = {1.0, 1.0, 1.17, 2.3, 2.9};
+          rtM = tab(xs, ys, 6, sz) * tab(mx, my, 7, P("kParamMode")) * tab(dx, dy, 5, dk);
+          rtHi = rtM * 0.38, rtLo = rtM * 1.29;
+          width = 0.7, wetG = dbToGainF(1.5 - 0.15 * sz);
+          break;
+        }
+        default: {  // space
+          static const double xs[] = {0, 35, 50, 70, 85, 100}, ys[] = {1.06, 0.96, 1.12, 1.58, 1.87, 2.03};
+          static const double dx[] = {0, 15, 31.25, 60, 150, 250}, dy[] = {0.65, 0.85, 1.0, 1.45, 3.3, 12.0};
+          rtM = tab(xs, ys, 6, sz) * tab(dx, dy, 6, dk);
+          rtHi = rtM * 0.8, rtLo = rtM * 1.1;
+          width = 0, wetG = dbToGainF(7.2 - 0.04 * (dk - 31.25));
+          break;
+        }
+      }
+      if (rtype == 0 && N("kParamPreDelayBeatSync") >= 0.5) preS += P("kParamPreDelay") * 60.0 / std::max(20.0, c.tempo);
+      const double size = rtype == 0 ? 0.6 + 0.8 * std::clamp(sz / 100.0, 0.0, 1.0) : 0.5;
       const double lo = 20.0 * std::pow(50.0, P("kParamFreq") / 100.0) * (P("kParamFreq") > 0.5 ? 1 : 0);
-      const double hi = 20000.0 * std::pow(0.03, P("kParamFreqB") / 100.0);
-      const float width = static_cast<float>(P("kParamWidth") / 100.0);
-      const double diffA = P("kParamVintageScale") / 100.0, diffB = P("kParamVintageScaleB") / 100.0;
+      const double hi = 20000.0 * std::pow(0.04, P("kParamFreqB") / 100.0);
+      const double diffA = 0.7, diffB = 0.7;
       const double spinR = 0.05 + 3.0 * P("kParamSpinRate") / 100.0, spinD = P("kParamSpinDepth") / 100.0 * (rtype == 4 ? 2.5 : 1.0);
-      const double shape = P("kParamMode") / 100.0;
       static const double base[5][8] = {
           {0.0297, 0.0371, 0.0411, 0.0437, 0.0533, 0.0617, 0.0713, 0.0797},  // plate: dense, short
           {0.0503, 0.0617, 0.0731, 0.0853, 0.0967, 0.1093, 0.1201, 0.1327},  // hall
@@ -634,17 +766,25 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           {0.0897, 0.1013, 0.1201, 0.1327, 0.1499, 0.1621, 0.1777, 0.1913},  // abyss
           {0.0731, 0.0853, 0.0997, 0.1129, 0.1277, 0.1409, 0.1553, 0.1697},  // space
       };
-      double len[8], g[8];
+      double len[8], g[8], gL[8], gH[8];
       for (int k = 0; k < 8; ++k) {
-        len[k] = std::min(base[rtype][k] * size * (1.0 + shape * (k & 1 ? 0.15 : -0.15)) * sr, static_cast<double>(u.rv[k].n - 16));
-        g[k] = std::pow(10.0, -3.0 * (len[k] / sr) / rt60);
-        u.rvDamp[k].lp(sr, 2000.0 + 18000.0 * (1.0 - damp) * (rtype == 2 ? 0.5 : 1.0));
+        len[k] = std::min(base[rtype][k] * size * sr, static_cast<double>(u.rv[k].n - 16));
+        const double ts = len[k] / sr;
+        g[k] = std::pow(10.0, -3.0 * ts / std::max(0.05, rtM));
+        gL[k] = std::pow(10.0, -3.0 * ts / std::max(0.05, rtLo));
+        gH[k] = std::pow(10.0, -3.0 * ts / std::max(0.05, rtHi));
+        u.rvDamp[k].lp(sr, 2500.0);
+        u.rvLs[k].lp(sr, 250.0);
       }
+      const float wetF = static_cast<float>(wet * wetG), dryF = 1.f - wet * wet;
       for (int ch = 0; ch < 2; ++ch) {
         u.rvLo[ch].lp(sr, std::max(5.0, lo));
         u.rvHi[ch].lp(sr, std::max(200.0, hi));
       }
       const float preD = static_cast<float>(std::clamp(preS * sr, 1.0, static_cast<double>(u.pre[0].n - 8)));
+      // early sound: the source's hall speaks at once when small and builds slowly when large; the
+      // vintage builds over its first 100 ms or so; the abyss starts loud
+      const float early = static_cast<float>(rtype == 1 ? 0.3 * (1 - sz / 100) * (1 - sz / 100) : rtype == 3 ? 1.0 : rtype == 4 ? 0.35 : 0.0);
       const double modInc = spinR / sr;
       for (int i = 0; i < n; ++i) {
         u.pre[0].push(L[i]), u.pre[1].push(R[i]);
@@ -663,7 +803,9 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         float tap[8];
         for (int k = 0; k < 8; ++k) {
           const double m = spinD * 0.0008 * sr * std::sin(kPi2 * (u.rvMod + k * 0.125));
-          tap[k] = u.rvDamp[k].run(u.rv[k].tap(static_cast<float>(len[k] + m)));
+          const float x = u.rv[k].tap(static_cast<float>(len[k] + m));
+          // three-band decay: highs at gH, mids at g, lows at gL
+          tap[k] = static_cast<float>(gH[k] * x + (g[k] - gH[k]) * u.rvDamp[k].run(x) + (gL[k] - g[k]) * u.rvLs[k].run(x));
         }
         // 8x8 Hadamard-style mix
         float h[8];
@@ -674,22 +816,29 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
               const float a = h[j], b = h[j + s];
               h[j] = a + b, h[j + s] = a - b;
             }
-        for (int k = 0; k < 8; ++k) u.rv[k].push(std::clamp(h[k] * 0.35355339f * static_cast<float>(g[k]) + in[k & 1], -8.f, 8.f));
-        float wl = (tap[0] + tap[2] + tap[4] + tap[6]) * 0.35f, wr = (tap[1] + tap[3] + tap[5] + tap[7]) * 0.35f;
+        for (int k = 0; k < 8; ++k) u.rv[k].push(std::clamp(h[k] * 0.35355339f + in[k & 1], -8.f, 8.f));
+        float wl = (tap[0] + tap[2] + tap[4] + tap[6]) * 0.35f + in[0] * early, wr = (tap[1] + tap[3] + tap[5] + tap[7]) * 0.35f + in[1] * early;
         wl = u.rvHi[0].run(wl), wr = u.rvHi[1].run(wr);
         if (lo > 5.0) wl -= u.rvLo[0].run(wl), wr -= u.rvLo[1].run(wr);
-        const float mid = (wl + wr) * 0.5f, side = (wl - wr) * 0.5f * width;
+        const float mid = (wl + wr) * 0.5f, side = (wl - wr) * 0.5f * static_cast<float>(width);
         wl = mid + side, wr = mid - side;
-        L[i] = (L[i] * (1 - wet) + wl * wet) * out;
-        R[i] = (R[i] * (1 - wet) + wr * wet) * out;
+        L[i] = (L[i] * dryF + wl * wetF) * out;
+        R[i] = (R[i] * dryF + wr * wetF) * out;
       }
       break;
     }
     case FxEq: {
       static const int k1[3] = {0, 1, 3}, k2[3] = {2, 1, 4};
       const int t1 = std::clamp(static_cast<int>(P("kParamType1")), 0, 2), t2 = std::clamp(static_cast<int>(P("kParamType2")), 0, 2);
-      u.eq1.set(k1[t1], sr, P("kParamFreq1"), 0.3 + P("kParamReso1") / 100.0 * 8.0, P("kParamGain1"));
-      u.eq2.set(k2[t2], sr, P("kParamFreq2"), 0.3 + P("kParamReso2") / 100.0 * 8.0, P("kParamGain2"));
+      // J-203c: Q = 0.1 + 18.9 * (reso / 100)^4 (measured on the source: the low-pass gain at the
+      // cutoff is -20.0 / -17.7 / -4.7 / 8.1 / 17.9 / 25.6 dB at reso 0 / 20 / 40 / 60 / 80 / 100)
+      // The shelves: Q = 0.4 + 1.73 * (reso / 100)^3 (shelf shapes matched at reso 0 / 25 / 50 / 75 / 90 / 100).
+      auto eqQ = [](double reso, bool shelf) {
+        const double r = std::clamp(reso / 100.0, 0.0, 1.0);
+        return shelf ? 0.4 + 1.73 * r * r * r : 0.1 + 18.9 * r * r * r * r;
+      };
+      u.eq1.set(k1[t1], sr, P("kParamFreq1"), eqQ(P("kParamReso1"), t1 == 0), P("kParamGain1"));
+      u.eq2.set(k2[t2], sr, P("kParamFreq2"), eqQ(P("kParamReso2"), t2 == 0), P("kParamGain2"));
       for (int i = 0; i < n; ++i) {
         L[i] = u.eq2.run(0, u.eq1.run(0, L[i])) * out;
         R[i] = u.eq2.run(1, u.eq1.run(1, R[i])) * out;

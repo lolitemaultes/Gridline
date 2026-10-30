@@ -1623,8 +1623,9 @@ struct Importer {
         const int id = static_cast<int>(fx.num("type", -1));
         const int type = id >= 0 && id <= 15 ? id + 1 : FxNone;
         const Json* body = nullptr;
+        bool serum2Body = true;  // Serum 1 states arrive as "FXSerum1" bodies with every value written
         for (const auto& kv : fx.object)
-          if (kv.first.rfind("FX", 0) == 0 && kv.second.type == Json::Type::Object) body = &kv.second;
+          if (kv.first.rfind("FX", 0) == 0 && kv.second.type == Json::Type::Object) body = &kv.second, serum2Body = kv.first != "FXSerum1";
         if (type == FxNone || !body) {
           note("An unknown effect module was left out");
           ++rep.skipped;
@@ -1649,7 +1650,10 @@ struct Importer {
         }
         m.fx.push_back(node);
         set(fxP(slot, X_Type), type);
-        for (int q = 0; q < static_cast<int>(fxParams(type).size()); ++q) set(fxP(slot, X_P0 + q), fxDefaultNorm(type, q));
+        for (int q = 0; q < static_cast<int>(fxParams(type).size()); ++q) {
+          double v = 0;  // J-203c: a Serum 2 module's unset values are Serum's own defaults
+          set(fxP(slot, X_P0 + q), serum2Body && fxSerumDefault(type, q, v) ? static_cast<float>(fxNorm(type, q, v)) : fxDefaultNorm(type, q));
+        }
         fxValues(slot, type, *body);
         if (type >= FxSplitLH) {
           if (node.parent >= 0) note("Nested splitters are flattened");

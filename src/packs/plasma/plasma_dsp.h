@@ -193,6 +193,11 @@ struct FxBank {
   std::array<std::unique_ptr<FxUnit>, kFxSlots> unit;  // null = slot without memory
   ~FxBank();
 };
+// Measurement hook (offline comparison tools only; null in the app): called once per control chunk
+// with the 8 voice buses (main L/R, direct L/R, bus 1 L/R, bus 2 L/R, m samples each) just before
+// the effect racks, so a tool can feed the racks a known signal.
+using FxInputHook = void (*)(float* const* bus, int m);
+extern FxInputHook gFxInputHook;
 // Builds the effect memory for a state (UI thread): slots that have a type.
 std::unique_ptr<FxBank> makeFxBank(const PluginState& s, const Aux* aux, double sr);
 void fxReset(FxUnit& u);

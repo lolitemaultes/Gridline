@@ -87,6 +87,8 @@ std::array<double, 128> parseTun(const std::string& text, bool& ok) {
 }
 }  // namespace
 
+FxInputHook gFxInputHook = nullptr;
+
 std::shared_ptr<const Aux> buildAux(const PluginState& state) {
   (void)pmaps();
   (void)factoryMips();
@@ -1895,6 +1897,10 @@ class PlasmaGen final : public Generator {
           bus[c][i] = decim_[c].push2(a, b);
         }
       }
+    }
+    if (gFxInputHook) {
+      float* const bp[8] = {bus[0], bus[1], bus[2], bus[3], bus[4], bus[5], bus[6], bus[7]};
+      gFxInputHook(bp, m);
     }
     // effect racks
     FxContext fc;

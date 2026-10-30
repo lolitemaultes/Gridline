@@ -121,6 +121,21 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     7 dB too loud, and at full blend its side voices were too quiet.
   - Filter drive raises the level as the original does, up to 24 dB at full drive, and clips
     about 8 dB later. Before, driven filters and filter effects played up to 19 dB too quiet.
+  - The filter types now sound like the original's in imported presets: the low, high, band,
+    peak and notch types at 6 to 24 dB, the dual types and the three-way morph types follow the
+    original's resonance, level and VAR behaviour within 1.5 dB across cutoff, resonance and VAR
+    (before up to 23 dB apart on average), and the classic ladder low-pass types get back all
+    the level the resonance takes at full VAR. The five ladder types (including the diode-style
+    acid and EMS ladders) follow the original's cutoff, resonance, level and drive within about
+    1 dB (before 4 to 18 dB), and the A and dirty ladders self-oscillate at full resonance as the
+    original does. The combs, flangers and phasers follow the original's feedback, mix and level
+    (a comb at no resonance is now a clean level drop instead of a comb, as in the original), as
+    do the gentle and morphing low/high types, the band reject (VAR sets the width of the
+    rejected band), the ring modulator, the pole-zero type (a straight wire, as in the original)
+    and the diffuser (no colouring). The filter stereo spread follows the original too: small
+    around the centre and up to 32 semitones each way at the ends (before 3 to 6 dB off). This
+    voicing comes with the Boost drive mode that
+    imports set; Plasma's own projects keep the Leveled mode and sound as before.
 - Import from URL: a missing downloader or converter is reported as missing on the BSDs too.
 - Platter picks up very quick jog moves from a controller. A flick out and back in 30 ms now
   reaches about 90% of the hand's travel instead of 54% (in 15 ms: 80% instead of 33%), about
@@ -205,6 +220,12 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   - The Geiger noise loops.
   - A new Unison Mix setting picks how unison voices share the stereo field: Even (as before) or
     Alternating, which imported presets use. Existing projects keep Even.
+  - The effects follow more measured laws. The EQ's Q and shelf slopes are new. The compressor's
+    threshold, release, limiter (ratios from 100 up), makeup and latency compensation are new;
+    projects that use it compress less at the same threshold. Each reverb type now has its own
+    decay, tone, width, pre-delay and mix laws: a project with a reverb sounds different (the dry
+    signal stays louder at mid mix, Hall, Vintage and Abyss are always wide, Space is mono). Imported
+    presets fill effect values they leave unset with the source's own defaults.
   - A new Filter Drive Mode setting: Leveled (as before) keeps the level about even as the drive
     rises; Boost, which imported presets use, raises it. Existing projects keep Leveled.
 - Plasma's editor has a cleaner, calmer look. It now uses Gridline's slate panels and text tones
