@@ -1764,6 +1764,9 @@ struct Importer {
                           static_cast<int>(std::lround(body.num("sampleRate", 44100))), ch);
       }
       if (path.empty()) path = resolve(rel, {"Impulses", "Impulses/Factory", "Impulses/User", ""});
+      // J-203d: with no impulse at all the source passes the input unchanged (measured: mix 100 gives the
+      // input to 0.01 dB, in phase), so an empty slot gets a one-sample impulse
+      if (path.empty() && rel.empty() && !body.find("embeddedIR") && files) path = addMedia(m, "Impulse", 48000, {{1.f}});
       const int qi = fxParamIndex(FxConvolve, "kParamIr");
       if (!path.empty()) {
         ex.ir = path;

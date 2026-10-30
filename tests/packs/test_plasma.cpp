@@ -626,6 +626,7 @@ std::vector<Cand> candsFor(int k) {
             if (key == "kParamMultiband") v = 1;
             if (key == "kParamThresh") v = 0.8f;  // -48 dB
             if (key.rfind("kParamDeadband", 0) == 0) v = 0;
+            if (key.rfind("kParamRatioBelow", 0) == 0) v = 1;  // upward on, where the deadbands act
           }
           P(s, fxP(sl, X_P0 + q), v);
         }

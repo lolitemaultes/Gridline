@@ -136,6 +136,25 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     around the centre and up to 32 semitones each way at the ends (before 3 to 6 dB off). This
     voicing comes with the Boost drive mode that
     imports set; Plasma's own projects keep the Leveled mode and sound as before.
+  - The distortion effect follows the original's curves for every mode and drive, its filter
+    (a fade from low-pass through band-pass to high-pass, with the original's resonance), its
+    downsample rates, its mix law and the level knob after the mix. Presets that leave the filter
+    type unset now get the original's low-pass instead of a band-pass.
+  - The multiband compressor follows the original's thresholds, ratios, upward compression,
+    deadbands and band thresholds, catches a note at once as the original does and stops near
+    40 dB of gain change. Before, it was up to 12 dB too loud on the default settings and pushed
+    quiet parts up even with upward compression off.
+  - The frequency shifter puts the down shift on the left and the up shift on the right, as the
+    original does by default, with the original's direction, width and mix laws. Its two shifts
+    are now cleanly apart (before, each side carried both at the same level).
+  - Effects that a preset leaves unset take the original's values: shifter width and direction,
+    phaser feedback, convolver mix and the chorus, phaser and flanger rates.
+  - Chorus, flanger, phaser and convolver share the original's mix law, so half mixes are no
+    longer up to 9 dB too quiet. Flanger and phaser feedback no longer turn negative at low
+    settings, the flanger's shortest delay and the phaser's notch positions follow the original,
+    and the convolver's wet path has no delay (an empty impulse slot passes the sound unchanged).
+  - Hyper with one voice passes the sound untouched, and more voices keep about the same level
+    (before, four voices were up to 7 dB too quiet).
 - Import from URL: a missing downloader or converter is reported as missing on the BSDs too.
 - Platter picks up very quick jog moves from a controller. A flick out and back in 30 ms now
   reaches about 90% of the hand's travel instead of 54% (in 15 ms: 80% instead of 33%), about

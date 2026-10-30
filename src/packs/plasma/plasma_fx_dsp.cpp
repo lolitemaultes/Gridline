@@ -30,10 +30,15 @@ void Lr4::split(int c, double x, double& lo, double& hi) {
   hi = bq(bq(x, hz[0][c], hb0, hb1, hb2), hz[1][c], hb0, hb1, hb2);
 }
 
+float fxDistTable(int mode, float drive, float x);  // plasma_fxdist_dsp.cpp
+
 namespace {
 double dbToGainF(double db) { return std::pow(10.0, db / 20.0); }
 // compressor laws (J-203c, measured): threshold offset against the peak (dB), attack time scale
 constexpr double kCompThrOfs = 8.4, kCompAtkScale = 0.33;
+// multiband detector (J-203d): running-mean time constant (ms) and its reading offset (dB)
+constexpr double kMbRmsMs = 3.0, kMbOfsDb = 9.5;
+constexpr float kHyperGain = 1.6f;  // hyper voices: about unity power when detuned
 
 struct Line {  // fractional delay line inside the unit's pool
   float* b = nullptr;
@@ -136,8 +141,16 @@ float triLfo(double ph) {
   return static_cast<float>(ph < 0.5 ? ph * 4 - 1 : 3 - ph * 4);
 }
 // Hilbert pair (two allpass chains, 90 degrees apart over the audio band)
-struct Hilbert {
-  Ap1 a[4], b[4];
+struct Hilbert {  // two chains of allpasses in z^-2 whose outputs stay 90 degrees apart (about 20 Hz .. 20 kHz)
+  struct Ap2 {
+    float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    float run(float x, float c) {  // y = c (x + y[n-2]) - x[n-2]
+      const float y = c * (x + y2) - x2;
+      x2 = x1, x1 = x, y2 = y1, y1 = y;
+      return y;
+    }
+  };
+  Ap2 a[4], b[4];
   float prevB = 0;
   void run(float x, float& i, float& q) {
     static const float ca[4] = {0.6923878f, 0.9360654f, 0.9882295f, 0.9987488f};
@@ -167,7 +180,7 @@ class FxUnit {
   Filter* filt = nullptr;
   std::unique_ptr<Filter> filterMem;
   float shState[2]{}, dsHold[2]{};
-  double dsPh = 0;
+  double dsPh = 0, dsv[2][2]{};
   Bq2 dfl;
   // modulation effects
   Line ml[4];
@@ -181,7 +194,7 @@ class FxUnit {
   float dfb[2]{};
   // compressor
   Lr4 xo1, xo2;
-  float env[3][2]{}, gr[3]{};
+  float env[3][2]{}, gr[3]{}, mbEnv[3][3]{};
   Line look[2];
   // reverb
   Line rv[8], pre[2];
@@ -207,6 +220,8 @@ class FxUnit {
   std::vector<cpx> fdl[2];      // parts * (kFftN/2 + 1)
   std::vector<cpx> work;
   std::vector<float> inBuf[2], ovl[2], outBuf[2];
+  std::vector<float> irHead[2], hist[2];  // first partition, run directly so the wet path has no latency
+  int hpos = 0;
   int cpos = 0, fdlPos = 0;
   Line cpre[2];
   Op1 cdamp[2];
@@ -223,6 +238,7 @@ class FxUnit {
     dfb[0] = dfb[1] = 0;
     dbp.clear(), dfl.clear(), eq1.clear(), eq2.clear(), uhp.clear(), ulp.clear();
     for (auto& e : env) e[0] = e[1] = 0;
+    for (auto& e : mbEnv) e[0] = e[1] = e[2] = 0;
     xo1 = Lr4{}, xo2 = Lr4{}, ulf = Lr4{};
     for (auto& f : rvDamp) f.z = 0;
     for (auto& f : rvLs) f.z = 0;
@@ -230,11 +246,13 @@ class FxUnit {
     lpw[0].z = lpw[1].z = hpw[0].z = hpw[1].z = 0;
     dhp[0].z = dhp[1].z = 0;
     shState[0] = shState[1] = dsHold[0] = dsHold[1] = 0;
+    dsv[0][0] = dsv[0][1] = dsv[1][0] = dsv[1][1] = 0;
     hb[0] = Hilbert{}, hb[1] = Hilbert{};
     if (filterMem) filterMem->reset();
     for (int c = 0; c < 2; ++c) {
       if (!fdl[c].empty()) std::fill(fdl[c].begin(), fdl[c].end(), cpx(0, 0));
       if (!inBuf[c].empty()) std::fill(inBuf[c].begin(), inBuf[c].end(), 0.f);
+      if (!hist[c].empty()) std::fill(hist[c].begin(), hist[c].end(), 0.f);
       if (!ovl[c].empty()) std::fill(ovl[c].begin(), ovl[c].end(), 0.f);
       if (!outBuf[c].empty()) std::fill(outBuf[c].begin(), outBuf[c].end(), 0.f);
     }
@@ -342,7 +360,10 @@ void buildConv(FxUnit& u, const Aux* aux, int slot, const PluginState& s) {
     u.inBuf[c].assign(FxUnit::kPart, 0.f);
     u.ovl[c].assign(FxUnit::kPart, 0.f);
     u.outBuf[c].assign(FxUnit::kPart, 0.f);
+    u.irHead[c].assign(src.begin(), src.begin() + static_cast<std::ptrdiff_t>(std::min(n, static_cast<size_t>(FxUnit::kPart))));
+    u.hist[c].assign(FxUnit::kPart, 0.f);
   }
+  u.hpos = 0;
   u.convReady = true;
 }
 }  // namespace
@@ -384,10 +405,13 @@ bool fxSerumDefault(int type, int p, double& plain) {
       {FxDelay, "kParamFeedback", 40},    {FxDelay, "kParamMode", 0},            {FxDelay, "kParamOffsetL", 1},
       {FxDelay, "kParamOffsetR", 1},      {FxDelay, "kParamBeatSync", 1},
       {FxDistortion, "kParamWet", 100},   {FxDistortion, "kParamDrive", 25},     {FxDistortion, "kParamMode", 0},
-      {FxDistortion, "kParamPrePost", 0}, {FxDistortion, "kParamFreq", 0.5},     {FxDistortion, "kParamBW", 1.95},
+      {FxDistortion, "kParamPrePost", 0}, {FxDistortion, "kParamFreq", 0.5},     {FxDistortion, "kParamLPHP", 0},     {FxDistortion, "kParamBW", 1.95},
       {FxComp, "kParamWet", 100},         {FxComp, "kParamThresh", 0.5},         {FxComp, "kParamRatio", 4},
       {FxComp, "kParamAttack", 90.091},   {FxComp, "kParamRelease", 90.091},     {FxComp, "kParamMakeup", 1},
-      {FxComp, "kParamMultiband", 0},
+      {FxComp, "kParamMultiband", 0},     {FxComp, "kParamRatio0", 1},           {FxComp, "kParamRatio1", 1},
+      {FxComp, "kParamRatio2", 1},        {FxComp, "kParamRatioBelow0", 1},      {FxComp, "kParamRatioBelow1", 1},
+      {FxComp, "kParamRatioBelow2", 1},   {FxComp, "kParamRatioBelow", 0},       {FxComp, "kParamXoverLow", 133.75},
+      {FxComp, "kParamXoverHi", 2480.8},
       {FxFilter, "kParamWet", 100},       {FxFilter, "kParamFreq", 0.5},         {FxFilter, "kParamReso", 0},
       {FxFilter, "kParamDrive", 0},       {FxFilter, "kParamStereo", 50},        {FxFilter, "kParamVar", 0},
       {FxChorus, "kParamWet", 50},        {FxChorus, "kParamDelay", 5},          {FxChorus, "kParamDelay2", 0},
@@ -397,7 +421,9 @@ bool fxSerumDefault(int type, int p, double& plain) {
       {FxFlanger, "kParamWet", 100},      {FxFlanger, "kParamDepth", 100},       {FxFlanger, "kParamFeedback", 50},
       {FxFlanger, "kParamWidth", 180},
       {FxBode, "kParamWet", 100},         {FxBode, "kParamShift", 0},            {FxBode, "kParamRange", 22.3607},
-      {FxBode, "kParamDelayTime", 0},     {FxBode, "kParamFeedback", 0},
+      {FxBode, "kParamDelayTime", 0},     {FxBode, "kParamFeedback", 0},         {FxBode, "kParamOutputWidth", 100},
+      {FxBode, "kParamOutputMix", 0},     {FxPhaser, "kParamFeedback", 80},      {FxConvolve, "kParamWet", 20},
+      {FxChorus, "kParamRate", 0.078125}, {FxPhaser, "kParamRate", 0.078125},    {FxFlanger, "kParamRate", 0.078125},
       {FxUtility, "kParamHPF", 1},        {FxUtility, "kParamLPF", 20000},
   };
   const auto& d = fxParams(type);
@@ -438,38 +464,68 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
   float peak = 0;
   switch (type) {
     case FxDistortion: {
-      const int mode = static_cast<int>(P("kParamMode"));
-      const float drive = static_cast<float>(P("kParamDrive") / 100.0);
-      const int pp = static_cast<int>(P("kParamPrePost"));
-      const double fhz = cutoffHz(N("kParamFreq"));
-      const double q = P("kParamBW");
-      const double lphp = P("kParamLPHP") / 100.0;
-      const int kind = lphp < 0.33 ? 4 : lphp < 0.67 ? 5 : 3;
-      if (pp) u.dfl.set(kind, sr, fhz, q, 0);
-      const int stages = std::clamp(static_cast<int>(P("kParamNumStages")), 1, 16);
+      // J-203d, measured on the source with held sines and saws (see plasma_fxdist_dsp.cpp for the
+      // shapers): the module halves its output; the filter is a state-variable filter whose TYPE
+      // knob fades low-pass -> band-pass (at 50 %, peak gain = Q) -> high-pass, cutoff on the voice
+      // filter's law, Q = 0.71 e^(0.46 BW) (BW 0.075 / 1.95 / 7.5: Q 0.73 / 1.71 / 23); downsample
+      // holds 1 + 96 d^2 samples at 48 kHz (d = drive 0..1; rates 9.6k / 1.92k / 495 Hz at 20 / 50 /
+      // 100 %) and keeps the level; MIX m: wet sin^2(pi m / 2), dry 1 - wet^2 (dry -0.19 / -2.5 /
+      // -11.3 dB at 25 / 50 / 75 %); the level knob acts after the mix.
+      const int mode = std::clamp(static_cast<int>(std::lround(P("kParamMode"))), 0, 17);
+      const float drive = static_cast<float>(std::clamp(P("kParamDrive") / 100.0, 0.0, 1.0));
+      const int pp = static_cast<int>(std::lround(P("kParamPrePost")));
+      const double fhz = std::clamp(cutoffHz(N("kParamFreq")), 5.0, sr * 0.45);
+      const double q = 0.71 * std::exp(0.46 * std::clamp(P("kParamBW"), 0.0, 10.0));
+      const double t = std::clamp(P("kParamLPHP") / 100.0, 0.0, 1.0);
+      const float wl = static_cast<float>(t <= 0.5 ? 1 - 2 * t : 0), wb = static_cast<float>(t <= 0.5 ? 2 * t : 2 - 2 * t),
+                  wh = static_cast<float>(t <= 0.5 ? 0 : 2 * t - 1);
+      const double g = std::tan(3.14159265358979 * fhz / sr), k = 1.0 / q;
+      const double a1 = 1 / (1 + g * (g + k)), a2 = g * a1, a3 = g * a2;
+      auto svf = [&](int ch, float x) {  // TPT state-variable filter (Zavalishin / Simper form)
+        double& s1 = u.dsv[ch][0];
+        double& s2 = u.dsv[ch][1];
+        const double v3 = x - s2, v1 = a1 * s1 + a2 * v3, v2 = s2 + a2 * s1 + a3 * v3;
+        s1 = 2 * v1 - s1, s2 = 2 * v2 - s2;
+        return static_cast<float>(wl * v2 + wb * v1 + wh * (x - k * v1 - v2));
+      };
       const float* ca = aux ? aux->shapeA[static_cast<size_t>(slot)].data() : nullptr;
       const float* cb = aux ? aux->shapeB[static_cast<size_t>(slot)].data() : nullptr;
-      const double dsStep = 1.0 / (1.0 + drive * 63.0);
+      const double hold = (1.0 + 96.0 * static_cast<double>(drive) * drive) * sr / 48000.0;
+      const double dsStep = 1.0 / std::max(1.0, hold);
+      const float wetG = static_cast<float>(std::pow(std::sin(1.5707963267948966 * wet), 2.0)), dryG = 1.f - wetG * wetG;
+      const float odGain = static_cast<float>(0.68 * std::pow(74.0, static_cast<double>(drive)));
+      constexpr float kFull = 1.657f;  // the source's full scale in Plasma's units (where its clippers sit)
+      auto xcurve = [&](const float* c, float v) {  // X-Shaper: the stored curve over -1..1 of full scale
+        if (!c) return v;
+        const float s = std::clamp((v + 1.f) * 0.5f, 0.f, 1.f) * 256.f;
+        const int j = std::min(255, static_cast<int>(s));
+        return (c[j] + (c[j + 1] - c[j]) * (s - static_cast<float>(j))) * 2.f - 1.f;
+      };
       for (int i = 0; i < n; ++i) {
-        float io[2] = {L[i], R[i]};
-        for (int ch = 0; ch < 2; ++ch) {
-          float x = io[ch];
-          if (pp == 1) x = u.dfl.run(ch, x);
-          if (mode == 8) {  // downsample: sample-and-hold rate reduction
-            if (ch == 0) {
-              u.dsPh += dsStep;
-              if (u.dsPh >= 1) u.dsPh -= 1, u.dsHold[0] = io[0], u.dsHold[1] = io[1];
+        float io[2] = {L[i], R[i]}, x[2] = {L[i], R[i]};
+        if (pp == 1) x[0] = svf(0, x[0]), x[1] = svf(1, x[1]);
+        if (mode == 8) {  // downsample: sample and hold, level kept
+          u.dsPh += dsStep;
+          if (u.dsPh >= 1 || dsStep >= 1) u.dsPh -= std::floor(u.dsPh), u.dsHold[0] = x[0], u.dsHold[1] = x[1];
+          x[0] = u.dsHold[0], x[1] = u.dsHold[1];
+        } else {
+          for (int ch = 0; ch < 2; ++ch) {
+            if (mode == 11 || mode == 12) {  // X-Shaper (drive has no effect on the source)
+              const float v = std::clamp(x[ch] / kFull, -1.f, 1.f);
+              x[ch] = 0.48f * kFull * (mode == 12 && v < 0 ? xcurve(cb ? cb : ca, v) : xcurve(ca, v));
+            } else if (mode == 16) {  // overdrive: gain 0.68 * 74^d (-3.4 .. +34 dB), then a hard knee at 2.18
+              const float v = x[ch] * odGain, a = std::fabs(v);
+              constexpr float kTop = 2.18f, kKnee = 0.3f;
+              const float y = a < kTop - kKnee ? a : a > kTop + kKnee ? kTop : a - (a - kTop + kKnee) * (a - kTop + kKnee) / (4 * kKnee);
+              x[ch] = 0.5f * (v < 0 ? -y : y);
+            } else {
+              x[ch] = fxDistTable(mode, drive, x[ch]);
             }
-            x = u.dsHold[ch];
-          } else {
-            const int reps = (mode == 5 || mode == 6) ? stages : 1;
-            for (int r = 0; r < reps; ++r) x = shapeSample(mode, x, r == 0 ? drive : 0.f, 0, ca, cb, u.shState[ch]);
           }
-          if (pp == 2) x = u.dfl.run(ch, x);
-          io[ch] = io[ch] + (x - io[ch]) * wet;
         }
-        L[i] = io[0] * out;
-        R[i] = io[1] * out;
+        if (pp == 2) x[0] = svf(0, x[0]), x[1] = svf(1, x[1]);
+        L[i] = (io[0] * dryG + x[0] * wetG) * out;
+        R[i] = (io[1] * dryG + x[1] * wetG) * out;
       }
       break;
     }
@@ -482,8 +538,15 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const float depth = static_cast<float>(type == FxChorus ? P("kParamDepth") : P("kParamDepth") / 100.0);
       const float fb = static_cast<float>(P("kParamFeedback") / 100.0);
       const double phOff = (type == FxChorus ? 90.0 : P("kParamWidth")) / 360.0;
+      // J-203d, measured on the source with a held saw and the modulation stopped (depth 0): all three share one
+      // mix law. With v = the mix (chorus) or half the mix (flanger, phaser) and x = 3v^2 - 2v^3, the output is
+      // (1 - x^2) * dry + x * wet: chorus mix 25 / 50 / 75 / 100 gives dry 0.98 / 0.75 / 0.27 / 0 and wet
+      // 0.15 / 0.5 / 0.85 / 1; flanger and phaser at mix 100 give dry 0.75 and wet 0.5, at 50 dry 0.98, wet 0.15
+      const double mv = type == FxChorus ? wet : wet * 0.5, mx = mv * mv * (3 - 2 * mv);
+      const float gDry = static_cast<float>(1 - mx * mx), gWet = static_cast<float>(mx);
       if (type == FxChorus) {
-        const double d1 = P("kParamDelay") * sr / 1000.0, d2 = P("kParamDelay2") * sr / 1000.0, dep = depth * sr / 1000.0;
+        // taps sit 0.122 ms past their delay settings (5.122 ms and 0.122 ms at the unset 5 and 0)
+        const double d1 = (P("kParamDelay") + 0.122) * sr / 1000.0, d2 = (P("kParamDelay2") + 0.122) * sr / 1000.0, dep = depth * sr / 1000.0;
         const double fc = P("kParamFilt");
         const bool hp = P("kParamFiltMode") >= 0.5;
         u.lpw[0].lp(sr, fc), u.lpw[1].lp(sr, fc);
@@ -493,50 +556,59 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           float io[2] = {L[i], R[i]};
           for (int ch = 0; ch < 2; ++ch) {
             const double m1 = 0.5 + 0.5 * triLfo(u.lfoPh + ch * 0.25), m2 = 0.5 + 0.5 * triLfo(u.lfoPh + 0.5 + ch * 0.25);
-            const float a = u.ml[ch].tap(static_cast<float>(d1 + 2 + m1 * dep));
-            const float b = u.ml[ch].tap(static_cast<float>(d2 + 2 + m2 * dep));
+            const float a = u.ml[ch].tap(static_cast<float>(d1 + m1 * dep));
+            const float b = u.ml[ch].tap(static_cast<float>(d2 + m2 * dep));
             float w = (a + b) * 0.5f;
             const float f = u.lpw[ch].run(w);
             w = hp ? w - f : f;
             u.ml[ch].push(io[ch] + w * fb * 0.9f);
-            io[ch] = io[ch] + (w - io[ch]) * wet;
+            io[ch] = io[ch] * gDry + w * gWet;
           }
           L[i] = io[0] * out, R[i] = io[1] * out;
         }
       } else if (type == FxFlanger) {
-        const double base = 0.0005 * sr, dep = 0.0045 * sr * depth;
+        // shortest delay 0.136 ms (first notch 3.7 kHz at depth 0); feedback is positive, 0.98 * the setting
+        // (feedback 50: +4.8 dB at the comb peaks' low end, -8 dB notches)
+        const double base = 0.000136 * sr, dep = 0.0045 * sr * depth;
         for (int i = 0; i < n; ++i) {
           u.lfoPh += inc;
           if (u.lfoPh >= 1) u.lfoPh -= 1;
           float io[2] = {L[i], R[i]};
           for (int ch = 0; ch < 2; ++ch) {
             const double m = 0.5 + 0.5 * triLfo(u.lfoPh + ch * phOff);
-            const float d = u.ml[ch].tap(static_cast<float>(base + m * dep + 1));
-            u.ml[ch].push(std::clamp(io[ch] + d * (fb * 1.9f - 0.95f), -4.f, 4.f));
-            io[ch] = io[ch] + ((io[ch] + d) * 0.5f - io[ch]) * wet;
+            const float d = u.ml[ch].tap(static_cast<float>(base + m * dep));
+            u.ml[ch].push(std::clamp(io[ch] + d * fb * 0.98f, -4.f, 4.f));
+            io[ch] = io[ch] * gDry + d * gWet;
           }
           L[i] = io[0] * out, R[i] = io[1] * out;
         }
       } else {  // phaser
         const double fc = P("kParamFreq");
         const int stages = std::clamp(static_cast<int>(P("kParamNumPoles")) * 2, 2, 32);
-        const double dep2 = N("kParamDepth2");
+        // J-203d, measured with the sweep stopped: 2 * poles first-order allpasses (one notch per pole). With spread
+        // (DEPTH 2) 0 they all sit at 1.882 * FREQ; spread 0.5 lays them out about geometrically, around a centre
+        // and step that depend on the pole count (fits: 2 poles 3.62 * FREQ, 1.253 apart; 4 poles 2.15, 1.278,
+        // FREQ 300 / 600 / 1200 giving 656 / 1292 / 2521 Hz; 6 poles 2.26, 1.140). Feedback is positive, 0.97 * it.
+        const double dep2 = std::clamp(P("kParamDepth2"), 0.0, 1.0) * 2.0;
+        const double np = std::clamp(stages * 0.5, 2.0, 6.0), t4 = np <= 4 ? (np - 2) / 2 : (np - 4) / 2;
+        const double cN = np <= 4 ? 3.62 + (2.153 - 3.62) * t4 : 2.153 + (2.257 - 2.153) * t4;
+        const double sN = np <= 4 ? 1.2526 + (1.278 - 1.2526) * t4 : 1.278 + (1.14 - 1.278) * t4;
+        const double spr = 1.0 + (sN - 1.0) * dep2, ctr = 1.882 * std::pow(cN / 1.882, dep2);
         for (int i = 0; i < n; ++i) {
           u.lfoPh += inc;
           if (u.lfoPh >= 1) u.lfoPh -= 1;
           float io[2] = {L[i], R[i]};
           for (int ch = 0; ch < 2; ++ch) {
             const double m = triLfo(u.lfoPh + ch * phOff);
-            const double f = std::clamp(fc * std::pow(2.0, m * depth * 3.0), 20.0, sr * 0.45);
-            const double w = std::tan(3.14159265358979 * f / sr);
-            const float a = static_cast<float>((w - 1) / (w + 1));
-            float x = io[ch] + u.phFb[ch] * (fb * 1.8f - 0.9f);
-            for (int s = 0; s < stages; ++s) {
-              const float as = static_cast<float>(std::clamp(a + (s & 1 ? 1 : -1) * dep2 * 0.2, -0.995, 0.995));
-              x = u.ph[ch][s].run(x, as);
+            const double f = fc * ctr * std::pow(2.0, m * depth * 3.0);
+            float x = io[ch] + u.phFb[ch] * fb * 0.97f;
+            double fs = f * std::pow(spr, -0.5 * (stages - 1));
+            for (int s = 0; s < stages; ++s, fs *= spr) {
+              const double w = std::tan(3.14159265358979 * std::clamp(fs, 10.0, sr * 0.45) / sr);
+              x = u.ph[ch][s].run(x, static_cast<float>((w - 1) / (w + 1)));
             }
-            u.phFb[ch] = x;
-            io[ch] = io[ch] + ((io[ch] + x) * 0.5f - io[ch]) * wet;
+            u.phFb[ch] = std::clamp(x, -4.f, 4.f);
+            io[ch] = io[ch] * gDry + x * gWet;
           }
           L[i] = io[0] * out, R[i] = io[1] * out;
         }
@@ -638,29 +710,92 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           u.gr[0] = g;
         }
       } else {
+        // J-203d, measured on the source with a held 32.7 Hz sine (deep in the low band; levels are sine RMS
+        // in dB of the source's output, Plasma's units read 9.04 dB higher). Downward threshold T vs t:
+        // -11.8 / -24.9 / -37.2 / -51.7 / -79.4 / -111.5 at 0.25 / 0.4 / 0.5 / 0.6 / 0.75 / 0.9, piecewise
+        // linear in log10(1 - t). Above T the gain falls by r (1 - 1/G) dB per dB (G = global ratio: 1.5 /
+        // 4 / 10 measured as 1.5 / 3.7 / 7.5; r = the band's ratio knob, unset 1, 0.5 halves it, 0 = off),
+        // and the total change saturates near 40 dB (x / (1 + (x/40)^8)^(1/8): t 0.75 / 0.9 at full scale
+        // -39.5 / -40.0). Upward, only when the global BELOW b is above 0: below Tu the gain rises by
+        // b f(rb) dB per dB (b 0.25 / 0.5 / 0.75 / 1: 0.25 / 0.5 / 0.73 / 0.99), f = 2 rb - 1
+        // of the band's BELOW knob rb (unset 1; 0.5 = flat, 0 = expands);
+        // Tu = T - 2.1 - 0.357 D - 0.0306 D^2 (D = deadband: -39.3 / -43.3 / -50.3 at 0 / 7 / 14 with
+        // T -37.2). A band's THRESH u scales both by (2 - u)^0.63 (u 0.5 / 1.5: -48.8 / -24.8). Band gains and
+        // makeup are plain gains; the module has a one-pole low cut near 11 Hz (-0.5 dB at 32.7 Hz) and
+        // its band sum is otherwise flat.
         u.xo1.set(sr, P("kParamXoverLow"));
         u.xo2.set(sr, std::max(P("kParamXoverLow") * 1.5, P("kParamXoverHi")));
-        const double tdb[3] = {thrDb + 20 * std::log10(std::max(0.01, P("kParamThreshUD0") / 100.0)),
-                               thrDb + 20 * std::log10(std::max(0.01, P("kParamThreshUD1") / 100.0)),
-                               thrDb + 20 * std::log10(std::max(0.01, P("kParamThreshUD2") / 100.0))};
-        auto rat = [&](const char* k) { return 1.0 + 19.0 * P(k) * P(k); };
-        const double ra[3] = {rat("kParamRatio0") * (ratio / 4.0), rat("kParamRatio1") * (ratio / 4.0), rat("kParamRatio2") * (ratio / 4.0)};
-        const double rbBase = P("kParamRatioBelow");
-        const double rb[3] = {1 + 9 * P("kParamRatioBelow0") * rbBase * 2, 1 + 9 * P("kParamRatioBelow1") * rbBase * 2, 1 + 9 * P("kParamRatioBelow2") * rbBase * 2};
-        const double dz[3] = {P("kParamDeadband0"), P("kParamDeadband1"), P("kParamDeadband2")};
-        const float bg[3] = {static_cast<float>(dbToGainF(P("kParamGain0"))), static_cast<float>(dbToGainF(P("kParamGain1"))), static_cast<float>(dbToGainF(P("kParamGain2")))};
+        u.dhp[0].lp(sr, 11.4), u.dhp[1].lp(sr, 11.4);
+        const double tk = std::clamp(P("kParamThresh"), 0.0, 1.0);
+        double tRms;
+        {
+          static const double lx[] = {0, -0.1249, -0.2218, -0.3010, -0.3979, -0.6021, -1.0}, ty[] = {5.1, -11.8, -24.9, -37.2, -51.7, -79.4, -111.5};
+          const double lt = std::log10(std::max(1e-4, 1.0 - tk));
+          if (lt <= lx[6]) {
+            tRms = ty[6] + 80.6 * (lt - lx[6]);
+          } else {
+            int j = 1;
+            while (j < 6 && lt < lx[j]) ++j;
+            tRms = ty[j - 1] + (ty[j] - ty[j - 1]) * (lt - lx[j - 1]) / (lx[j] - lx[j - 1]);
+          }
+        }
+        const double slopeG = 1.0 - 1.0 / std::max(1.0, ratio);
+        const double upB = std::clamp(P("kParamRatioBelow"), 0.0, 1.0);
+        static const char* const kUd[3] = {"kParamThreshUD0", "kParamThreshUD1", "kParamThreshUD2"};
+        static const char* const kDz[3] = {"kParamDeadband0", "kParamDeadband1", "kParamDeadband2"};
+        static const char* const kRa[3] = {"kParamRatio0", "kParamRatio1", "kParamRatio2"};
+        static const char* const kRb[3] = {"kParamRatioBelow0", "kParamRatioBelow1", "kParamRatioBelow2"};
+        static const char* const kBg[3] = {"kParamGain0", "kParamGain1", "kParamGain2"};
+        const float aAm = static_cast<float>(std::exp(-1.0 / (0.0005 * sr)));
+        const float aRms = static_cast<float>(std::exp(-1.0 / (kMbRmsMs * 0.001 * sr)));
+        const double kMbOfs = kMbOfsDb;  // source sine RMS dB -> this detector's reading in Plasma's units
+        double mT[3], mTu[3], mS[3], mU[3];
+        float bg[3];
+        for (int b = 0; b < 3; ++b) {
+          const double tb = tRms * std::pow(std::max(0.0, 2.0 - P(kUd[b]) / 100.0), 0.63);
+          const double dz = std::max(0.0, P(kDz[b]));
+          const double r = std::clamp(P(kRa[b]), 0.0, 1.0), rb = std::clamp(P(kRb[b]), 0.0, 1.0);
+          mT[b] = tb + kMbOfs;
+          mTu[b] = tb - 2.1 - 0.357 * dz - 0.0306 * dz * dz + kMbOfs;
+          mS[b] = r * slopeG;
+          mU[b] = upB * (2.0 * rb - 1.0);
+          bg[b] = static_cast<float>(dbToGainF(P(kBg[b])));
+        }
+        // the band level is a short running mean of the power (two one-pole stages, so a held tone reads
+        // its RMS and a note onset is caught within about 10 ms) that falls with the RELEASE time; the
+        // source ignores ATTACK in this mode (10 / 100 / 1000 ms render alike). The gain is lightly smoothed.
+        auto mgain = [&](float* e, float& gs, float pw, int b) {
+          e[0] = pw + (e[0] - pw) * aRms;
+          e[1] = e[0] + (e[1] - e[0]) * aRms;
+          e[2] = e[1] > e[2] ? e[1] : e[1] + (e[2] - e[1]) * aR;
+          const double db = 10.0 * std::log10(std::max(1e-12f, e[2]));
+          double g = 0;
+          if (db > mT[b]) g = (mT[b] - db) * mS[b];
+          if (mU[b] != 0 && db > -110) {  // upward (or expanding), soft knee 6 dB wide around its threshold
+            constexpr double kW = 6;
+            const double over = mTu[b] - db;
+            const double up = over >= kW / 2 ? over : over > -kW / 2 ? (over + kW / 2) * (over + kW / 2) / (2 * kW) : 0;
+            g += up * mU[b];
+          }
+          const double q = g / 40.0, q2 = q * q;
+          g /= std::pow(1.0 + q2 * q2 * q2 * q2, 1.0 / 8.0);  // saturates near +-40 dB
+          const float tg = static_cast<float>(g);
+          gs = tg + (gs - tg) * aAm;
+          return static_cast<float>(std::pow(10.0, static_cast<double>(gs) / 20.0));
+        };
         for (int i = 0; i < n; ++i) {
           float band[3][2];
           for (int ch = 0; ch < 2; ++ch) {
             double lo, rest, mid, hi;
-            u.xo1.split(ch, ch ? R[i] : L[i], lo, rest);
+            const float xin = ch ? R[i] : L[i];
+            u.xo1.split(ch, xin - u.dhp[ch].run(xin), lo, rest);
             u.xo2.split(ch, rest, mid, hi);
             band[0][ch] = static_cast<float>(lo), band[1][ch] = static_cast<float>(mid), band[2][ch] = static_cast<float>(hi);
           }
           float yl = 0, yr = 0;
           for (int b = 0; b < 3; ++b) {
-            const float det = std::max(std::fabs(band[b][0]), std::fabs(band[b][1]));
-            const float g = gain(u.env[b][0], det, tdb[b], ra[b], rb[b], dz[b]) * bg[b];
+            const float det = std::max(band[b][0] * band[b][0], band[b][1] * band[b][1]);
+            const float g = mgain(u.mbEnv[b], u.env[b][0], det, b) * bg[b];
             yl += band[b][0] * g, yr += band[b][1] * g;
             u.gr[b] = g;
           }
@@ -865,7 +1000,9 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       break;
     }
     case FxHyper: {
-      const int voices = 1 + static_cast<int>(P("kParamUnison"));
+      // J-203d, measured on the source: unison 1 passes the input untouched at any mix; more voices keep about
+      // the input's power when detuned (detune 50, unison 2..7: -2.5 .. +2 dB), so voices are scaled by 1/sqrt(n)
+      const int voices = std::max(1, static_cast<int>(P("kParamUnison")));
       const double det = P("kParamDetune") / 100.0;
       const double rate = 0.1 + 6.0 * P("kParamRate") / 100.0;
       const float dimWet = static_cast<float>(P("kParamDimEWet") / 100.0);
@@ -883,15 +1020,21 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           const float s = (v & 1) ? u.ml[1].tap(d) : u.ml[0].tap(d);
           hl += s * (1 - pan), hr += s * pan;
         }
-        const float sc = 1.6f / static_cast<float>(voices);
+        const float sc = kHyperGain / std::sqrt(static_cast<float>(voices));
         hl *= sc, hr *= sc;
-        float l = L[i] + (hl - L[i]) * wet, r = R[i] + (hr - R[i]) * wet;
-        // dimension: short cross-fed delays widen the image
-        u.ml[2].push(l), u.ml[3].push(r);
-        const float dl = u.ml[3].tap(static_cast<float>((0.007 + 0.02 * dimSize) * sr));
-        const float dr = u.ml[2].tap(static_cast<float>((0.011 + 0.025 * dimSize) * sr));
-        l = l + (l - dl * 0.7f - l) * dimWet * 0.6f + dl * dimWet * 0.4f * dimOut;
-        r = r + (r - dr * 0.7f - r) * dimWet * 0.6f + dr * dimWet * 0.4f * dimOut;
+        const float hw = voices > 1 ? wet : 0.f;
+        float l = L[i] + (hl - L[i]) * hw, r = R[i] + (hr - R[i]) * hw;
+        // dimension, measured on the source (held saw, impulse response from the harmonic transfer): the mid
+        // passes untouched and a side is added, 0.465 * mix * (x(t - A) - x(t - B)) on the left and its
+        // negative on the right, with A = 15.0 + 100 * size and B = 20.9 + 16.9 * size ms (size 0 / 50 / 100:
+        // A 15.0 / 65.0 / 115.0, B 20.9 / 29.4 / 37.8 ms). Sine at key 60, size 50: left +4.5, right -4.6 dB.
+        u.dl[0].push((l + r) * 0.5f);
+        if (dimWet > 0) {
+          const float a = u.dl[0].tap(static_cast<float>((0.015025 + 0.1 * dimSize) * sr));
+          const float b = u.dl[0].tap(static_cast<float>((0.020907 + 0.01692 * dimSize) * sr));
+          const float sd = 0.465f * dimWet * dimOut * (a - b);
+          l += sd, r -= sd;
+        }
         L[i] = l * out, R[i] = r * out;
       }
       break;
@@ -920,18 +1063,23 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           if (blurAmt > 0) x = x * (1 - blurAmt) + u.blur[ch][1].run(u.blur[ch][0].run(x, 0.6f, 0.011f * static_cast<float>(sr)), 0.6f, 0.017f * static_cast<float>(sr)) * blurAmt;
           float I, Q;
           u.hb[ch].run(x, I, Q);
-          float up = I * cs - Q * sn, down = I * cs + Q * sn;
+          float up = I * cs + Q * sn, down = I * cs - Q * sn;
           if (swap) std::swap(up, down);
-          const float o = up * (0.5f + 0.5f * mixUD) + down * (0.5f - 0.5f * mixUD);
+          // J-203d, measured on the source with a held sine: the left side carries the down shift and
+          // the right the up shift; DIR m moves the left towards up (m > 0) or the right towards down
+          // (m < 0), so m = 0.5 gives left = half down + half up, right = up
+          const float o = ch == 0 ? (mixUD >= 0 ? down * (1 - mixUD) + up * mixUD : down) : (mixUD >= 0 ? up : up * (1 + mixUD) - down * mixUD);
           u.bd[ch].push(o);
           y[ch] = o;
         }
-        const float mid = (y[0] + y[1]) * 0.5f;
-        float side = (y[0] - y[1]) * 0.5f;
-        side += (y[0] - mid) * width;  // width spreads up / down shifts across the image
+        // WIDTH w: mid + w side (w 0: both sides carry half of each shift; 0.5: 0.75 / 0.25)
+        const float mid = (y[0] + y[1]) * 0.5f, side = (y[0] - y[1]) * 0.5f * width;
         const float yl = mid + side, yr = mid - side;
-        L[i] = (L[i] + (yl - L[i]) * wet) * out;
-        R[i] = (R[i] + (yr - R[i]) * wet) * out;
+        // MIX m crossfades: dry min(1, 2 (1 - m)), wet min(1, 2 m) (source: at 25 % the dry stays at
+        // unity with the shift 6 dB down; at 50 % both at unity)
+        const float wG = std::min(1.f, 2.f * wet), dG = std::min(1.f, 2.f * (1.f - wet));
+        L[i] = (L[i] * dG + yl * wG) * out;
+        R[i] = (R[i] * dG + yr * wG) * out;
       }
       break;
     }
@@ -947,11 +1095,27 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const double tone = P("kParamTone") / 100.0;
       u.ctone.set(tone < 0 ? 2 : 0, sr, tone < 0 ? 3000 : 300, 0.7, -std::fabs(tone) * 12.0);
       const size_t bins = FxUnit::kFftN / 2 + 1;
+      // J-203d, measured with the identity impulse and a held sine: mix 25 / 50 / 75 gives +1.0 / +1.9 / +1.0 dB,
+      // the chorus law: x = 3w^2 - 2w^3, (1 - x^2) * dry + x * wet
+      const double cx = static_cast<double>(wet) * wet * (3 - 2 * static_cast<double>(wet));
+      const float cDry = static_cast<float>(1 - cx * cx), cWet = static_cast<float>(cx);
+      // the source's wet path has no latency (identity impulse: in phase with the input), so the first partition
+      // runs directly and the FFT partitions 1.. use the blocks already complete
+      const bool noPre = pre * sr < 1.0;
+      const float headG = attack > 0 ? 0.f : 1.f;
+      const int hn = static_cast<int>(u.irHead[0].size());
       for (int i = 0; i < n; ++i) {
         u.cpre[0].push(L[i]), u.cpre[1].push(R[i]);
-        u.inBuf[0][static_cast<size_t>(u.cpos)] = u.cpre[0].tap(preD);
-        u.inBuf[1][static_cast<size_t>(u.cpos)] = u.cpre[1].tap(preD);
-        float yl = u.outBuf[0][static_cast<size_t>(u.cpos)], yr = u.outBuf[1][static_cast<size_t>(u.cpos)];
+        const float in0 = noPre ? L[i] : u.cpre[0].tap(preD), in1 = noPre ? R[i] : u.cpre[1].tap(preD);
+        u.inBuf[0][static_cast<size_t>(u.cpos)] = in0;
+        u.inBuf[1][static_cast<size_t>(u.cpos)] = in1;
+        u.hpos = u.hpos + 1 >= FxUnit::kPart ? 0 : u.hpos + 1;
+        u.hist[0][static_cast<size_t>(u.hpos)] = in0, u.hist[1][static_cast<size_t>(u.hpos)] = in1;
+        float h0 = 0, h1 = 0;
+        if (headG > 0)
+          for (int k = 0, j = u.hpos; k < hn; ++k, j = j > 0 ? j - 1 : FxUnit::kPart - 1)
+            h0 += u.irHead[0][static_cast<size_t>(k)] * u.hist[0][static_cast<size_t>(j)], h1 += u.irHead[1][static_cast<size_t>(k)] * u.hist[1][static_cast<size_t>(j)];
+        float yl = u.outBuf[0][static_cast<size_t>(u.cpos)] + h0, yr = u.outBuf[1][static_cast<size_t>(u.cpos)] + h1;
         if (++u.cpos >= FxUnit::kPart) {
           u.cpos = 0;
           u.fdlPos = (u.fdlPos + u.parts - 1) % u.parts;
@@ -961,13 +1125,13 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
             u.cfft.forward(u.work.data());
             std::copy(u.work.begin(), u.work.begin() + static_cast<std::ptrdiff_t>(bins), u.fdl[ch].begin() + static_cast<std::ptrdiff_t>(static_cast<size_t>(u.fdlPos) * bins));
             std::fill(u.work.begin(), u.work.end(), cpx(0, 0));
-            for (int p2 = 0; p2 < u.parts; ++p2) {
+            for (int p2 = 1; p2 < u.parts; ++p2) {
               const double t = static_cast<double>(p2 * FxUnit::kPart) / sr;  // partition time
               float pg = 1;
               if (attack > 0) pg *= static_cast<float>(std::min(1.0, t / std::max(1e-3, attack * 2.0)));
               if (dec < 40) pg *= static_cast<float>(std::exp(-t * 6.9 / std::max(0.05, dec)));
               if (pg < 1e-5f) continue;
-              const cpx* X = u.fdl[ch].data() + static_cast<size_t>((u.fdlPos + p2) % u.parts) * bins;
+              const cpx* X = u.fdl[ch].data() + static_cast<size_t>((u.fdlPos + p2 - 1) % u.parts) * bins;
               const cpx* H = u.irSpec[ch].data() + static_cast<size_t>(p2) * bins;
               for (size_t b = 0; b < bins; ++b) u.work[b] += X[b] * H[b] * pg;
             }
@@ -981,8 +1145,8 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         }
         yl = u.ctone.run(0, u.cdamp[0].run(yl * trim));
         yr = u.ctone.run(1, u.cdamp[1].run(yr * trim));
-        L[i] = (L[i] * (1 - wet) + yl * wet) * out;
-        R[i] = (R[i] * (1 - wet) + yr * wet) * out;
+        L[i] = (L[i] * cDry + yl * cWet) * out;
+        R[i] = (R[i] * cDry + yr * cWet) * out;
       }
       break;
     }
