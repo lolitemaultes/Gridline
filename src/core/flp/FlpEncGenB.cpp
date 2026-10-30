@@ -16,6 +16,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include "../../engine/KerfGrid.h"
 #include "../../engine/KerfMarks.h"
 #include "../../engine/SlicexEngine.h"
 #include "../../engine/Sample.h"
@@ -698,8 +699,20 @@ FsLayout fsLayout(const Bytes& b) {
 // J-182: Kerf's editor settings (snap, ruler, grid lines) and the classic
 // engine's region names have no place in FL's states: written as defaults / the path alone.
 void stripKerfEditor(PluginState& g) {
+  // J-190: slices on the beat grid travel as the markers they are.
+  if (std::lround(param(g, gl::pp::SlMode, 0)) == gl::pp::SlModeGrid && g.params.size() > static_cast<size_t>(gl::pp::slMarker(gl::pp::kMaxSlices - 1))) {
+    const SamplePtr s = sampleCache().get(gl::kerfmarks::pathOf(g.data));
+    const auto r = gl::kerfgrid::resultFor(g, s, true);
+    if (r && s && s->frames() > 0) {
+      for (int k = 0; k < gl::pp::kMaxSlices; ++k)
+        g.params[static_cast<size_t>(gl::pp::slMarker(k))] =
+            k < static_cast<int>(r->cuts.size()) ? static_cast<float>(static_cast<double>(r->cuts[static_cast<size_t>(k)]) / static_cast<double>(s->frames())) : -1.f;
+      g.params[static_cast<size_t>(gl::pp::SlMode)] = static_cast<float>(gl::pp::SlModeManual);
+    }
+  }
   if (const PluginInfo* info = findPlugin("gl.slicer"))
-    for (int p : {gl::pp::SlSnap, gl::pp::SlSnapZero, gl::pp::SlRuler, gl::pp::SlGridLines})
+    for (int p : {gl::pp::SlSnap, gl::pp::SlSnapZero, gl::pp::SlRuler, gl::pp::SlGridLines, gl::pp::SlGridDiv, gl::pp::SlGridMeter, gl::pp::SlGridHits,
+                  gl::pp::SlGridZero, gl::pp::SlGridFollow})
       if (static_cast<size_t>(p) < g.params.size() && static_cast<size_t>(p) < info->params.size())
         g.params[static_cast<size_t>(p)] = static_cast<float>(info->params[static_cast<size_t>(p)].def);
   if (gl::kerfmarks::hasNames(g.data)) g.data = gl::kerfmarks::pathOf(g.data);

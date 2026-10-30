@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <map>
 #include <tuple>
+#include "../engine/KerfGrid.h"
 #include "../engine/KerfMarks.h"
 #include "../engine/SlicexEngine.h"
 #include "../core/I18n.h"
@@ -317,7 +318,11 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   const std::string file = slicex::sampleOf(st.data);  // J-41: region-model data starts with the sample
   SamplePtr smp = file.empty() ? nullptr : sampleCache().get(file);
   const RegionView rv = regionView(st, smp.get());
-  const std::vector<int64_t> starts = rv.on ? rv.starts : sliceStarts(st, smp.get());
+  // J-190: slices on the beat grid (the detected beats; the loop-length grid while the analysis runs).
+  const bool gridMode = !rv.on && ed::ival(st, SlMode) == SlModeGrid;
+  const kerfgrid::ResultPtr kg = smp && gridMode ? kerfgrid::resultFor(st, smp, false) : nullptr;
+  const std::vector<int64_t> starts = rv.on ? rv.starts : gridMode && kg ? kg->cuts : sliceStarts(st, smp.get());
+  if (gridMode && kg && !kg->analysing) devsig::reach("kerf-grid-ready");  // dev checks (waitfor): the analysis is in
   const int nSl = static_cast<int>(starts.size());
   if (ui.follow >= 0) {  // J-182: a moved marker keeps its region selected (markers may have changed order)
     for (int s = 0; s < nSl; ++s)
@@ -444,6 +449,13 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     };
   };
   auto setMode = [&](int mode) { a.doc.setParam(t.pid(SlMode), mode, false); };
+  // J-190: the beat grid's cell (choosing one slices on the grid), meter and options.
+  auto setGridDiv = [&](int div) {
+    PluginState ns = st;
+    ns.params[static_cast<size_t>(SlGridDiv)] = static_cast<float>(div);
+    ns.params[static_cast<size_t>(SlMode)] = static_cast<float>(SlModeGrid);
+    setPluginState(a, t, ns, "slice on the beat grid");
+  };
   auto clearMarkers = [&]() {
     PluginState ns = st;
     for (int m = 0; m < kMaxSlices; ++m) ns.params[static_cast<size_t>(slMarker(m))] = m == 0 ? 0.f : -1.f;
@@ -522,17 +534,21 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   // Tempo of the loop: at its length in beats (Fit tempo), else the power-of-two
   // beat count that lands between 80 and 160 BPM.
   const double gridBeats = smp ? kerfmarks::loopBeats(smp->seconds(), classic && ed::bval(st, SlFitTempo), loopBeats) : 0.0;
-  const double tempoEst = smp && smp->seconds() > 0 ? gridBeats * 60.0 / smp->seconds() : 0.0;
+  // J-190: on the beat grid, the grid it cuts on (detected beats, or the loop-length grid in its meter).
+  const bool detectedGrid = gridMode && kg && kg->source == kerfgrid::SourceDetected;
+  const double tempoEst = gridMode && kg ? kg->bpm : smp && smp->seconds() > 0 ? gridBeats * 60.0 / smp->seconds() : 0.0;
   // ---- J-182: the loop's grid (4/4 over its beats), snapping, ruler and positions.
-  const double fpb = smp ? kerfmarks::framesPerBeat(frames, gridBeats) : 0.0;
+  const kerfmarks::Grid tg = gridMode && kg ? kg->timeGrid() : kerfmarks::straightGrid(smp ? kerfmarks::framesPerBeat(frames, gridBeats) : 0.0);
+  const double fpb = tg.fpb;
+  const int bpb = std::max(1, tg.beatsPerBar);
   const int snap = std::clamp(ed::ival(st, SlSnap), 0, kerfmarks::SnapCount - 1);
   const bool snapZero = ed::bval(st, SlSnapZero);
   const bool barsRuler = ed::ival(st, SlRuler) == kerfmarks::RulerBars;
   const bool gridShown = ed::bval(st, SlGridLines, true);
   const int rulerUnit = barsRuler ? kerfmarks::UnitBars : kerfmarks::UnitSeconds;
-  auto posText = [&](double f) { return kerfmarks::formatPosition(f, rulerUnit, rate, fpb); };
+  auto posText = [&](double f) { return kerfmarks::formatPosition(f, rulerUnit, rate, tg); };
   auto snapped = [&](double f, bool bypass) {
-    return kerfmarks::snapFrame(smp.get(), std::llround(f), bypass ? static_cast<int>(kerfmarks::SnapOff) : snap, snapZero, fpb);
+    return kerfmarks::snapFrame(smp.get(), std::llround(f), bypass ? static_cast<int>(kerfmarks::SnapOff) : snap, snapZero, tg);
   };
   // Markers that can move: every region start (region engine), the cuts after the first (classic).
   auto canMove = [&](int s) { return smp && s >= 0 && s < nSl && (rv.on || (s > 0 && s < kMaxSlices)); };
@@ -555,7 +571,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     ui.follow = to;
   };
   auto nudge = [&](int s, int dir) {
-    if (canMove(s)) moveMarker(s, kerfmarks::nudgeFrame(smp.get(), starts[static_cast<size_t>(s)], dir, snap, snapZero, fpb));
+    if (canMove(s)) moveMarker(s, kerfmarks::nudgeFrame(smp.get(), starts[static_cast<size_t>(s)], dir, snap, snapZero, tg));
   };
   auto canRename = [&](int s) { return smp && s >= 0 && s < nSl && (rv.on || s < kMaxSlices); };
   auto renameRegion = [&](int s, const std::string& typed) {
@@ -644,6 +660,49 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     traceLine += b;
   };
   using kerf::Role;
+  // The detected meter as text ("4/4", "3/4", "6/8"; "" when the grid is not a detected one).
+  auto detectedMeter = [&]() -> std::string {
+    if (!kg || kg->source != kerfgrid::SourceDetected || !kg->grid) return std::string();
+    return kg->compound && kg->beatsPerBar == 2 ? std::string("6/8") : std::to_string(kg->beatsPerBar) + "/4";
+  };
+  // The beat grid menu (the SLICES card's grid field and the Regions menu): cells, meter, options, status.
+  auto gridMenuItems = [&]() {
+    const kerfgrid::Settings gs = kerfgrid::settingsOf(st);
+    ImGui::TextDisabled("%s", i18n::tr("Slice on the beat grid"));
+    for (int d = 0; d < kerfgrid::DivCount; ++d) {
+      if (d == kerfgrid::Div4T) ImGui::Separator();
+      char lb[48];
+      std::snprintf(lb, sizeof lb, "%s##griddiv%d", kerfgrid::divisionName(d), d);
+      if (ImGui::MenuItem(lb, nullptr, gridMode && gs.division == d, classic && smp)) setGridDiv(d);
+      char id[24];
+      std::snprintf(id, sizeof id, "griddiv%d", d);
+      traceRect(id, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    }
+    ImGui::Separator();
+    if (ImGui::BeginMenu(i18n::tr("Meter"), classic)) {
+      for (int m = 0; m < kerfgrid::MeterCount; ++m) {
+        std::string lb = m == kerfgrid::MeterDetected ? std::string(i18n::tr("As detected")) : std::string(kerfgrid::meterName(m));
+        if (m == kerfgrid::MeterDetected && gs.meter == kerfgrid::MeterDetected && !detectedMeter().empty()) lb += " (" + detectedMeter() + ")";
+        lb += "##gridmeter" + std::to_string(m);
+        if (ImGui::MenuItem(lb.c_str(), nullptr, gs.meter == m)) a.doc.setParam(t.pid(SlGridMeter), m, false);
+      }
+      ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem(i18n::tr("Move the cuts onto the nearest hits"), nullptr, gs.hits, classic)) a.doc.setParam(t.pid(SlGridHits), gs.hits ? 0 : 1, false);
+    if (ImGui::MenuItem(i18n::tr("Then the nearest zero crossing"), nullptr, gs.zero, classic)) a.doc.setParam(t.pid(SlGridZero), gs.zero ? 0 : 1, false);
+    if (ImGui::MenuItem(i18n::tr("Follow the detected beats"), nullptr, gs.follow, classic)) a.doc.setParam(t.pid(SlGridFollow), gs.follow ? 0 : 1, false);
+    ImGui::Separator();
+    if (!smp) {
+      ImGui::TextDisabled("%s", i18n::tr("No loop loaded"));
+    } else if (kg && kg->analysing) {
+      ImGui::TextDisabled("%s %.0f%%", i18n::tr("Finding the beat..."), static_cast<double>(kg->progress() * 100.0f));
+    } else if (kg && kg->source == kerfgrid::SourceDetected) {
+      ImGui::TextDisabled("%s: %.1f BPM", i18n::tr("Detected beat"), kg->bpm);
+    } else if (kg) {
+      ImGui::TextDisabled("%s: %.1f BPM", kg->failed ? i18n::tr("No beat found, the loop length") : i18n::tr("The loop length"), kg->bpm);
+    }
+    if (kg && kg->found > kMaxSlices) ImGui::TextDisabled("%s", i18n::tr("Only the first 64 slices are kept"));
+  };
   const ImU32 capLight = rgb(0xA7B0B9), titleLight = rgb(0xC6D0D9), capDarkCol = rgb(0x22282D), titleDarkCol = rgb(0x2B3237);
   // A field of the wave view's switch row: dark well, the value (or a dim placeholder), a pen glyph when it can be edited.
   auto field = [&](const iskin::Skin& sk, const char* id, float x, float y, float fw, float fh, const std::string& value, const char* placeholder, bool mono,
@@ -977,19 +1036,53 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     // ---- SLICES card: slicing mode, FILTER inset (type, response, cutoff / resonance).
     {
       kerf::card(sk, 174, 104, 160, 190, true);
-      kerf::text(sk, 180, 108, 80, 18, "SLICES", Role::Title, titleDarkCol);
+      kerf::text(sk, 180, 108, 62, 18, "SLICES", Role::Title, titleDarkCol);
       ImGui::BeginDisabled(rv.on);
       {
-        static const ui::Icon icons[6] = {ui::Icon::SliceWave, ui::Icon::Count, ui::Icon::Count, ui::Icon::Count, ui::Icon::Count, ui::Icon::ToolDraw};
-        static const char* const labels[6] = {nullptr, "4", "8", "16", "32", nullptr};
-        static const char* const hints[6] = {"Slice at the hits (transients)", "Four even slices", "Eight even slices", "Sixteen even slices",
-                                             "Thirty-two even slices", "Slice at the markers set by hand"};
-        const int mc = kerf::segmented(a, sk, "##slmode", 178, 130, 152, 20, labels, icons, 6, classic ? ed::ival(st, SlMode) : -1, hints, false);
+        // Cells: hits, 4, 8, 16, 32, the beat grid (J-190), by hand. Cell 5 is mode 6 and cell 6 mode 5.
+        static const ui::Icon icons[7] = {ui::Icon::SliceWave, ui::Icon::Count, ui::Icon::Count, ui::Icon::Count, ui::Icon::Count, ui::Icon::Metronome,
+                                          ui::Icon::ToolDraw};
+        static const char* const labels[7] = {nullptr, "4", "8", "16", "32", nullptr, nullptr};
+        static const char* const hints[7] = {"Slice at the hits (transients)", "Four even slices", "Eight even slices", "Sixteen even slices",
+                                             "Thirty-two even slices", "Slice on the beat grid (the size: the field above)",
+                                             "Slice at the markers set by hand"};
+        const int md = ed::ival(st, SlMode);
+        const int cur = !classic ? -1 : md == SlModeGrid ? 5 : md == SlModeManual ? 6 : md;
+        const int mc = kerf::segmented(a, sk, "##slmode", 178, 130, 152, 20, labels, icons, 7, cur, hints, false);
         if (mc >= 0) {
-          if (mc == SlModeManual) makeManual(a, t, st, starts, smp.get());
-          if (mc != SlModeManual || !smp) setMode(mc);
+          const int mode = mc == 5 ? SlModeGrid : mc == 6 ? SlModeManual : mc;
+          if (mode == SlModeManual) makeManual(a, t, st, starts, smp.get());
+          if (mode != SlModeManual || !smp) setMode(mode);
         }
         traceRect("slmode", sk.at(178, 130), sk.at(330, 150));
+        traceRect("slgrid", sk.at(178 + 152.0f * 5 / 7, 130), sk.at(178 + 152.0f * 6 / 7, 150));
+      }
+      {  // J-190: the beat grid's cell and meter (a field on the title row; click: the grid menu)
+        const kerfgrid::Settings gs = kerfgrid::settingsOf(st);
+        const bool on = classic && gridMode;
+        iskin::lcd(sk, 246, 108, 84, 18, "", on ? sk.c.lcdBg : rgb(0x4C5257), on ? sk.c.lcdText : rgb(0x8C949A), 10);
+        const std::string meter = gs.meter != kerfgrid::MeterDetected ? std::string(kerfgrid::meterName(gs.meter)) : detectedMeter();
+        const std::string val = std::string(kerfgrid::divisionName(gs.division)) + (meter.empty() ? "" : "  " + meter);
+        kerf::text(sk, 250, 108, 66, 18, kerf::fit(sk, val, Role::Value, 66).c_str(), Role::Value, on ? sk.c.lcdText : rgb(0x8C949A), 0);
+        iskin::glyphArrow(dl, sk.at(322, 117), sk.px(3.0f), on ? sk.c.lcdText : rgb(0x8C949A), 3);
+        if (on && kg && kg->analysing) {  // busy: a sweep along the field's foot while the beat is found
+          const float ph = static_cast<float>(std::fmod(ImGui::GetTime() * 0.8, 1.0));
+          const ImVec2 f0 = sk.at(248, 124), f1 = sk.at(328, 125.5f);
+          const float w = (f1.x - f0.x) * 0.3f, x0 = f0.x + (f1.x - f0.x - w) * ph;
+          dl->AddRectFilled(ImVec2(x0, f0.y), ImVec2(x0 + w, f1.y), rgb(kOrange, 0.9f));
+        }
+        ImGui::SetCursorScreenPos(sk.at(246, 108));
+        ImGui::InvisibleButton("##gridfield", ImVec2(sk.px(84), sk.px(18)));
+        if (ImGui::IsItemClicked()) ImGui::OpenPopup("##gridmenu");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+          a.setHint(on && kg && kg->analysing ? i18n::tr("Finding the beat of the loop...")
+                                               : i18n::tr("Beat grid: slice size and meter (click to choose)"));
+        ctl(sk, "##gridfield", 246, 108, 84, 18);
+        traceRect("gridfield", sk.at(246, 108), sk.at(330, 126));
+        if (ImGui::BeginPopup("##gridmenu")) {
+          gridMenuItems();
+          ImGui::EndPopup();
+        }
       }
       iskin::bevel(sk, 178, 158, 152, 132, rgb(0x50575C), rgb(0x3F454A), 3);
       kerf::text(sk, 184, 160, 70, 18, "FILTER", Role::Title, titleDarkCol);
@@ -1154,12 +1247,22 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       } else {  // ---- detection: the loop with its cuts, sensitivity / gap (the mode is the SLICES card's)
         char b[96];
         std::snprintf(b, sizeof b, "%d %s  \xC2\xB7  %.1f BPM  \xC2\xB7  %s", nSl, i18n::tr("slices"), tempoEst,
-                      ed::ival(st, SlMode) == 0 ? i18n::tr("cut at the hits") : manual ? i18n::tr("cut at the markers") : i18n::tr("even slices"));
+                      ed::ival(st, SlMode) == 0 ? i18n::tr("cut at the hits") : manual ? i18n::tr("cut at the markers")
+                      : !gridMode                ? i18n::tr("even slices")
+                      : kg && kg->analysing      ? i18n::tr("finding the beat...")
+                      : detectedGrid             ? i18n::tr("on the detected beat")
+                                                 : i18n::tr("on the loop-length grid"));
         infoStrip(smp ? b : i18n::tr("No loop loaded"));
         if (smp) {
           kerf::WaveStyle ws;
           ws.peak = rgb(0x5D7C99, 0.9f), ws.rms = rgb(0x86A9C8), ws.centre = theme::withAlpha(IM_COL32_WHITE, 0.06f);
           kerf::drawWave(dl, smp.get(), p0, p1, 0, frames, ws);
+          if (gridMode && tg.valid()) {  // J-190: the bars of the grid it cuts on
+            for (double bt = std::ceil(tg.beatAt(0) / bpb) * bpb; tg.frameAt(bt) < frames; bt += bpb) {
+              const float x = std::round(p0.x + static_cast<float>(tg.frameAt(bt) / frames) * (p1.x - p0.x)) + 0.5f;
+              dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), rgb(0xBFD6EA, 0.22f));
+            }
+          }
           for (int s = 0; s < nSl; ++s) {
             const float x = std::round(p0.x + static_cast<float>(static_cast<double>(starts[static_cast<size_t>(s)]) / frames) * (p1.x - p0.x)) + 0.5f;
             dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), s == k ? rgb(kOrange) : rgb(kOrangeDeep, 0.6f));
@@ -1284,6 +1387,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       if (ImGui::MenuItem(i18n::tr("Even slices: 8"), nullptr, classic && md == 2, classic)) setMode(2);
       if (ImGui::MenuItem(i18n::tr("Even slices: 16"), nullptr, classic && md == 3, classic)) setMode(3);
       if (ImGui::MenuItem(i18n::tr("Even slices: 32"), nullptr, classic && md == 4, classic)) setMode(4);
+      if (ImGui::BeginMenu(i18n::tr("On the beat grid"), classic)) {  // J-190
+        gridMenuItems();
+        ImGui::EndMenu();
+      }
       ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Edit markers by hand"), nullptr, manual, classic)) makeManual(a, t, st, starts, smp.get());
       if (ImGui::MenuItem(i18n::tr("Add a marker in the selected region"), nullptr, false, classic && nSl > 0 && smp)) {
@@ -1430,7 +1537,9 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     std::string len = "--";
     if (nSl > 0 && smp) {
       const double s0 = static_cast<double>(starts[static_cast<size_t>(k)]), s1 = sliceEnd(k);
-      len = barsRuler ? kerfmarks::barsBeats(s1 - s0, fpb, true) : fmtTime((s1 - s0) / rate);
+      kerfmarks::Grid dur = kerfmarks::straightGrid(fpb);  // a length: in mean beats of the grid
+      dur.beatsPerBar = bpb;
+      len = barsRuler ? kerfmarks::barsBeats(s1 - s0, dur, true) : fmtTime((s1 - s0) / rate);
     }
     infoField(548, 68, "LENGTH / SEL", len, 2, rgb(kOrange, 0.95f));
     const double mid = (ui.goFrom + ui.goTo) * 0.5;
@@ -1521,24 +1630,27 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       }
       // J-182: the beat grid at the snap size (or beats under a bars:beats ruler): bars over beats over
       // subdivisions, each level fading out as its lines close up.
-      const double gStep = kerfmarks::isGrid(snap) ? kerfmarks::stepBeats(snap) : (barsRuler ? 1.0 : 0.0);
+      // J-190: on the beat grid, the lines follow the detected beats (and show its cell when no snap is set).
+      const double gStep = kerfmarks::isGrid(snap) ? kerfmarks::stepBeats(snap, bpb)
+                           : gridMode && kg ? kerfgrid::cellBeats(kerfgrid::settingsOf(st).division, bpb, kg->compound)
+                                            : (barsRuler ? 1.0 : 0.0);
       if (gridShown && gStep > 0 && fpb > 0 && f1 > f0) {
         const double pxPerBeat = static_cast<double>(p1.x - p0.x) / ((f1 - f0) / fpb);
         auto fade = [](double px) { return static_cast<float>(std::clamp((px - 4.0) / 10.0, 0.0, 1.0)); };
-        const float aBar = 0.24f * fade(pxPerBeat * kerfmarks::kBeatsPerBar), aBeat = 0.13f * fade(pxPerBeat), aSub = 0.075f * fade(pxPerBeat * gStep);
+        const float aBar = 0.24f * fade(pxPerBeat * bpb), aBeat = 0.13f * fade(pxPerBeat), aSub = 0.075f * fade(pxPerBeat * gStep);
         double each = gStep;  // the finest level still shown
         if (each < 1 && aSub <= 0) each = 1;
-        if (each <= 1 && aBeat <= 0) each = kerfmarks::kBeatsPerBar;
-        if (each < kerfmarks::kBeatsPerBar && fade(pxPerBeat * each) <= 0) each = kerfmarks::kBeatsPerBar;
-        if (aBar > 0 || each < kerfmarks::kBeatsPerBar) {
-          const double b0 = f0 / fpb, b1 = f1 / fpb;
+        if (each <= 1 && aBeat <= 0) each = bpb;
+        if (each < bpb && fade(pxPerBeat * each) <= 0) each = bpb;
+        if (aBar > 0 || each < bpb) {
+          const double b0 = tg.beatAt(f0), b1 = tg.beatAt(f1);
           for (long long i = static_cast<long long>(std::ceil(b0 / each - 1e-9)); static_cast<double>(i) * each <= b1 + 1e-9; ++i) {
             const double beat = static_cast<double>(i) * each;
             const bool onBeat = std::fabs(beat - std::round(beat)) < 1e-6;
-            const bool onBar = onBeat && std::llround(beat) % kerfmarks::kBeatsPerBar == 0;
+            const bool onBar = onBeat && ((std::llround(beat) % bpb) + bpb) % bpb == 0;
             const float al = onBar ? aBar : onBeat ? aBeat : aSub;
             if (al < 0.004f) continue;
-            const float x = std::round(fx(beat * fpb)) + 0.5f;
+            const float x = std::round(fx(tg.frameAt(beat))) + 0.5f;
             dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), onBar ? rgb(0xBFD6EA, al) : theme::withAlpha(IM_COL32_WHITE, al));
           }
         }
@@ -1745,20 +1857,21 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
           dl->AddLine(ImVec2(x, r0.y), ImVec2(x, r0.y + sk.px(major ? 5 : 3)), major ? rgb(0x8A97A2) : rgb(0x5A6670));
           if (label) dl->AddText(a.fontMono, fsz, ImVec2(x + sk.px(3), r0.y + (r1.y - r0.y - fsz) * 0.5f), major ? rgb(0x9AA7B2) : rgb(0x7E8B96), label);
         };
-        if (barsRuler && fpb > 0) {  // J-182: bars:beats (4/4 over the loop's beats); ticks between the labels
+        if (barsRuler && fpb > 0) {  // J-182: bars:beats (over the loop's beats; J-190: or its detected beats); ticks between the labels
           const double pxPerBeat = pxPerFrame * fpb;
           const double step = kerfmarks::rulerStepBeats(pxPerBeat, sk.px(54));
-          const double minor = step >= kerfmarks::kBeatsPerBar ? (pxPerBeat * kerfmarks::kBeatsPerBar >= sk.px(6) ? kerfmarks::kBeatsPerBar : step)
-                                                               : step / 2;
-          const double b0 = f0 / fpb, b1 = f1 / fpb;
+          // J-190: label steps of a bar or more are whole bars of the meter.
+          const double barStep = step >= kerfmarks::kBeatsPerBar ? std::ceil(step / bpb) * bpb : step;
+          const double minor = barStep >= bpb ? (pxPerBeat * bpb >= sk.px(6) ? static_cast<double>(bpb) : barStep) : step / 2;
+          const double b0 = tg.beatAt(f0), b1 = tg.beatAt(f1);
           for (long long i = static_cast<long long>(std::ceil(b0 / minor - 1e-9)); static_cast<double>(i) * minor <= b1 + 1e-9; ++i) {
             const double beat = static_cast<double>(i) * minor;
-            const bool labelled = std::fabs(beat / step - std::round(beat / step)) < 1e-6;
-            const bool onBar = std::fabs(beat / kerfmarks::kBeatsPerBar - std::round(beat / kerfmarks::kBeatsPerBar)) < 1e-6;
+            const bool labelled = std::fabs(beat / barStep - std::round(beat / barStep)) < 1e-6;
+            const bool onBar = std::fabs(beat / bpb - std::round(beat / bpb)) < 1e-6;
             std::string lb;
-            if (labelled) lb = step >= kerfmarks::kBeatsPerBar ? std::to_string(std::llround(beat) / kerfmarks::kBeatsPerBar + 1)
-                               : step >= 1 ? kerfmarks::barsBeats(beat * fpb, fpb, false) : kerfmarks::barsBeats(beat * fpb, fpb, true);
-            tick(beat * fpb, labelled ? lb.c_str() : nullptr, onBar);
+            if (labelled) lb = barStep >= bpb ? std::to_string(static_cast<long long>(std::floor(beat / bpb + 1e-6)) + 1)
+                               : kerfmarks::barsBeats(tg.frameAt(beat), tg, step < 1);
+            tick(tg.frameAt(beat), labelled ? lb.c_str() : nullptr, onBar);
           }
         } else {
           const double t0 = f0 / rate, t1 = f1 / rate;
@@ -1953,7 +2066,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         ImGui::BeginDisabled(u == kerfmarks::UnitBars && !(fpb > 0));
         if (ImGui::RadioButton(i18n::tr(units[u]), unit == u) && unit != u) {
           ui.posUnit = u, ui.posBad = false;
-          std::snprintf(ui.posBuf, sizeof ui.posBuf, "%s", kerfmarks::formatPosition(cur, u, rate, fpb).c_str());
+          std::snprintf(ui.posBuf, sizeof ui.posBuf, "%s", kerfmarks::formatPosition(cur, u, rate, tg).c_str());
         }
         ImGui::EndDisabled();
       }
@@ -1966,7 +2079,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       else ImGui::TextDisabled("%s", unit == kerfmarks::UnitBars ? i18n::tr("e.g. 2:3:048 (bar, beat, tick of 96)") : unit == kerfmarks::UnitSamples ? i18n::tr("e.g. 22050") : i18n::tr("e.g. 1.250"));
       if (enter || ImGui::Button(i18n::tr("Move"))) {
         double f = 0;
-        if (kerfmarks::parsePosition(ui.posBuf, unit, rate, fpb, f) && f <= frames) {
+        if (kerfmarks::parsePosition(ui.posBuf, unit, rate, tg, f) && f <= frames) {
           moveMarker(s, std::llround(f));  // exactly there (typed positions are not snapped)
           ImGui::CloseCurrentPopup();
         } else {
@@ -1995,7 +2108,13 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
                   static_cast<double>(root.o.x), static_cast<double>(root.o.y), static_cast<double>(root.at(kSxW, formH).x),
                   static_cast<double>(root.at(kSxW, formH).y), ui.tab, ui.display, nSl, snap, snapZero ? 1 : 0, barsRuler ? 1 : 0, gridShown ? 1 : 0, fpb, k,
                   static_cast<long long>(nSl > 0 ? starts[static_cast<size_t>(k)] : -1), static_cast<long long>(ui.lastAdd), startSum, selName.c_str(), litList.c_str());
-    const std::string line = "kerf-ui:" + traceLine + b;
+    // J-190: the beat grid (mode, source 0 detected / 1 loop length, analysing, tempo, meter) and every slice start.
+    char g[160];
+    std::snprintf(g, sizeof g, " slmode=%d gridsrc=%d analysing=%d gridbpm=%.3f gridbpb=%d gridcell=%d starts=", ed::ival(st, SlMode),
+                  kg ? kg->source : -1, kg && kg->analysing ? 1 : 0, kg ? kg->bpm : 0.0, kg ? kg->beatsPerBar : 0, ed::ival(st, SlGridDiv));
+    std::string startList;
+    for (int64_t f : starts) startList += (startList.empty() ? "" : ",") + std::to_string(static_cast<long long>(f));
+    const std::string line = "kerf-ui:" + traceLine + b + g + (startList.empty() ? std::string("-") : startList);
     if (line != last) {
       last = line;
       std::printf("%s\n", line.c_str());

@@ -1,5 +1,6 @@
 // Gridline — Kerf's time and marker settings (see KerfMarks.h).
 #include "KerfMarks.h"
+#include "../packs/seltmann/seltmann.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -31,10 +32,12 @@ std::string trim(const std::string& s) {
 }
 }  // namespace
 
-double stepBeats(int snap) {
+double stepBeats(int snap) { return stepBeats(snap, kBeatsPerBar); }
+double stepBeats(int snap, int bpb) {
+  bpb = std::max(1, bpb);
   switch (snap) {
-    case SnapBar: return kBeatsPerBar;
-    case SnapHalfBar: return kBeatsPerBar / 2.0;
+    case SnapBar: return bpb;
+    case SnapHalfBar: return bpb / 2.0;
     case SnapBeat: return 1.0;
     case SnapHalfBeat: return 0.5;
     case SnapThirdBeat: return 1.0 / 3.0;
@@ -56,6 +59,27 @@ double loopBeats(double seconds, bool fitted, double fittedBeats) {
 
 double framesPerBeat(double frames, double beats) { return frames > 0 && beats > 0 ? frames / beats : 0.0; }
 
+double Grid::beatAt(double frame) const {
+  if (map) return packs::seltmann::beatAt(*map, frame) - map->bar1;
+  return fpb > 0 ? frame / fpb : 0.0;
+}
+double Grid::frameAt(double beat) const {
+  if (map) return packs::seltmann::frameAt(*map, beat + map->bar1);
+  return beat * fpb;
+}
+namespace {
+// Grid line k of a step (beats) and the line position of a frame. A straight grid works in
+// frames per step (as J-182 did: the same rounding), a detected one through its beat map.
+double lineFrame(const Grid& g, double k, double step) { return g.map ? g.frameAt(k * step) : k * (step * g.fpb); }
+double lineOf(const Grid& g, double frame, double step) { return g.map ? g.beatAt(frame) / step : frame / (step * g.fpb); }
+}  // namespace
+
+Grid straightGrid(double fpb) {
+  Grid g;
+  g.fpb = fpb > 0 ? fpb : 0.0;
+  return g;
+}
+
 int64_t nearestZero(const Sample& smp, int64_t f, int64_t reach) {
   const int64_t n = static_cast<int64_t>(smp.frames());
   for (int64_t d = 0; d <= reach; ++d)
@@ -66,29 +90,33 @@ int64_t nearestZero(const Sample& smp, int64_t f, int64_t reach) {
   return f;
 }
 
-int64_t snapFrame(const Sample* smp, int64_t f, int snap, bool thenZero, double fpb) {
+int64_t snapFrame(const Sample* smp, int64_t f, int snap, bool thenZero, double fpb) { return snapFrame(smp, f, snap, thenZero, straightGrid(fpb)); }
+int64_t snapFrame(const Sample* smp, int64_t f, int snap, bool thenZero, const Grid& g) {
   if (!smp || smp->frames() == 0) return f;
   f = clampFrame(smp, f);
   if (snap == SnapOff) return f;
-  if (isGrid(snap) && fpb > 0) {
-    const double step = stepBeats(snap) * fpb;
-    f = clampFrame(smp, std::llround(std::round(static_cast<double>(f) / step) * step));
+  if (isGrid(snap) && g.valid()) {
+    const double step = stepBeats(snap, g.beatsPerBar);
+    f = clampFrame(smp, std::llround(lineFrame(g, std::round(lineOf(g, static_cast<double>(f), step)), step)));
     if (!thenZero) return f;
   }
   return nearestZero(*smp, f, reachOf(*smp, 0.005));
 }
 
 int64_t nudgeFrame(const Sample* smp, int64_t f, int dir, int snap, bool thenZero, double fpb) {
+  return nudgeFrame(smp, f, dir, snap, thenZero, straightGrid(fpb));
+}
+int64_t nudgeFrame(const Sample* smp, int64_t f, int dir, int snap, bool thenZero, const Grid& g) {
   if (!smp || smp->frames() == 0) return f;
   dir = dir < 0 ? -1 : 1;
   f = clampFrame(smp, f);
   const int64_t n = static_cast<int64_t>(smp->frames());
-  if (isGrid(snap) && fpb > 0) {
-    const double step = stepBeats(snap) * fpb;
+  if (isGrid(snap) && g.valid()) {
+    const double step = stepBeats(snap, g.beatsPerBar);
     // The grid line index of f (a frame within half a frame of a line is on it).
-    const double pos = static_cast<double>(f) / step;
-    double line = dir > 0 ? std::floor(pos + 0.5 / step + 1e-9) + 1 : std::ceil(pos - 0.5 / step - 1e-9) - 1;
-    int64_t to = clampFrame(smp, std::llround(line * step));
+    const double pos = lineOf(g, static_cast<double>(f), step), half = 0.5 / (step * g.fpb);
+    double line = dir > 0 ? std::floor(pos + half + 1e-9) + 1 : std::ceil(pos - half - 1e-9) - 1;
+    int64_t to = clampFrame(smp, std::llround(lineFrame(g, line, step)));
     if (thenZero) {
       const int64_t z = nearestZero(*smp, to, reachOf(*smp, 0.005));
       if ((dir > 0 && z > f) || (dir < 0 && z < f)) to = z;
@@ -103,30 +131,48 @@ int64_t nudgeFrame(const Sample* smp, int64_t f, int dir, int snap, bool thenZer
   return clampFrame(smp, f + dir * reachOf(*smp, 0.001));
 }
 
-std::string barsBeats(double frame, double fpb, bool ticks) {
-  if (!(fpb > 0)) fpb = 1;
+namespace {
+// bars:beats[:ticks] of a beat count since bar 1 (floor arithmetic: a pickup is in bar 0).
+std::string barsBeatsOf(double beats, int bpb, bool ticks) {
+  bpb = std::max(1, bpb);
   // Whole ticks first (rounded), so 1.9999 beats shows as the next beat, not :095.
-  const int64_t allTicks = std::llround(std::max(0.0, frame) / fpb * kTicksPerBeat);
-  const int64_t beatsIn = allTicks / kTicksPerBeat, tick = allTicks % kTicksPerBeat;
-  const int64_t bar = beatsIn / kBeatsPerBar + 1, beat = beatsIn % kBeatsPerBar + 1;
+  const int64_t allTicks = std::llround(beats * kTicksPerBeat);
+  auto floorDiv = [](int64_t x, int64_t d) { return x >= 0 ? x / d : -((-x + d - 1) / d); };
+  const int64_t beatsIn = floorDiv(allTicks, kTicksPerBeat), tick = allTicks - beatsIn * kTicksPerBeat;
+  const int64_t barIdx = floorDiv(beatsIn, bpb);
+  const int64_t bar = barIdx + 1, beat = beatsIn - barIdx * bpb + 1;
   char b[48];
   if (ticks) std::snprintf(b, sizeof b, "%lld:%lld:%03lld", static_cast<long long>(bar), static_cast<long long>(beat), static_cast<long long>(tick));
   else std::snprintf(b, sizeof b, "%lld:%lld", static_cast<long long>(bar), static_cast<long long>(beat));
   return b;
 }
+}  // namespace
 
-std::string formatPosition(double frame, int unit, double rate, double fpb) {
+std::string barsBeats(double frame, double fpb, bool ticks) {
+  if (!(fpb > 0)) fpb = 1;
+  return barsBeatsOf(std::max(0.0, frame) / fpb, kBeatsPerBar, ticks);
+}
+std::string barsBeats(double frame, const Grid& g, bool ticks) {
+  if (!g.valid()) return barsBeats(frame, 1.0, ticks);
+  return barsBeatsOf(g.beatAt(frame), g.beatsPerBar, ticks);
+}
+
+std::string formatPosition(double frame, int unit, double rate, double fpb) { return formatPosition(frame, unit, rate, straightGrid(fpb)); }
+std::string formatPosition(double frame, int unit, double rate, const Grid& g) {
   char b[48];
   if (unit == UnitSamples) {
     std::snprintf(b, sizeof b, "%lld", static_cast<long long>(std::llround(frame)));
     return b;
   }
-  if (unit == UnitBars) return barsBeats(frame, fpb, true);
+  if (unit == UnitBars) return barsBeats(frame, g, true);
   std::snprintf(b, sizeof b, "%.3f s", rate > 0 ? frame / rate : 0.0);
   return b;
 }
 
 bool parsePosition(const std::string& text, int unit, double rate, double fpb, double& frame) {
+  return parsePosition(text, unit, rate, straightGrid(fpb), frame);
+}
+bool parsePosition(const std::string& text, int unit, double rate, const Grid& g, double& frame) {
   std::string s = trim(text);
   if (s.empty()) return false;
   if (unit == UnitSeconds) {
@@ -145,7 +191,8 @@ bool parsePosition(const std::string& text, int unit, double rate, double fpb, d
     frame = static_cast<double>(std::strtoll(s.c_str(), nullptr, 10));
     return true;
   }
-  if (!(fpb > 0)) return false;
+  if (!g.valid()) return false;
+  const int bpb = std::max(1, g.beatsPerBar);
   double part[3] = {1, 1, 0};
   int n = 0;
   size_t at = 0;
@@ -161,8 +208,8 @@ bool parsePosition(const std::string& text, int unit, double rate, double fpb, d
     if (last) break;
     at = e + 1;
   }
-  if (part[0] < 1 || part[1] < 1 || part[1] > kBeatsPerBar || part[2] >= kTicksPerBeat) return false;
-  frame = ((part[0] - 1) * kBeatsPerBar + (part[1] - 1) + part[2] / kTicksPerBeat) * fpb;
+  if (part[0] < 1 || part[1] < 1 || part[1] > bpb || part[2] >= kTicksPerBeat) return false;
+  frame = g.frameAt((part[0] - 1) * bpb + (part[1] - 1) + part[2] / kTicksPerBeat);
   return true;
 }
 

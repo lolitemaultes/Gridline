@@ -156,6 +156,9 @@ void forgetAnalysis(const std::string& path);
 void setAnalysisCacheDir(const std::string& dir);
 // Waits for every job (tests, shutdown).
 void waitAnalysisIdle();
+// J-190: changes every time a job finishes (done or failed), so the app can rebuild what
+// was prepared on a provisional grid (Kerf's beat-grid slices).
+uint64_t analysisGeneration();
 // Forgets the finished jobs kept in memory (the disk cache stays).
 void dropAnalysisJobs();
 // Analysis text (same format the model stores) for the disk cache.
@@ -192,8 +195,11 @@ struct Chop {
   bool zeroCross = true;     // move cut points to the nearest zero crossing
   bool autoSize = false;     // the chop size follows the material (resolveAutoChop)
   bool hitSnap = false;      // grid cuts move onto the nearest hit (within a quarter of a cell and 50 ms)
+  double cellBeats = 0;      // J-190: > 0: the grid cell in beats instead of `division` (Kerf's beat grid; not stored)
   bool operator==(const Chop& o) const;
 };
+// The grid cell of a chop in beats: chop.cellBeats when set, else its division in the meter.
+double chopCellBeats(const Chop& c, int beatsPerBar);
 struct Step {
   int src = 0;        // >= 0 slot (0 = A) when slot, else slice index; rests: kRest
   bool slot = true;

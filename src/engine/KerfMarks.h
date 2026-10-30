@@ -7,8 +7,13 @@
 #pragma once
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include "Sample.h"
+
+namespace gl::packs::seltmann {
+struct Analysis;
+}
 
 namespace gl::kerfmarks {
 
@@ -21,9 +26,24 @@ enum Ruler { RulerSeconds, RulerBars, RulerCount };
 // Units of a typed position (seconds, samples, bars:beats:ticks).
 enum Unit { UnitSeconds, UnitSamples, UnitBars, UnitCount };
 
-// Length of one grid step in beats (0: no grid).
+// Length of one grid step in beats (0: no grid); bars of `beatsPerBar` beats.
 double stepBeats(int snap);
+double stepBeats(int snap, int beatsPerBar);
 bool isGrid(int snap);
+
+// J-190: the loop's musical grid. Straight (J-182: beats of `fpb` frames from
+// frame 0, 4/4) or the detected beats of a beat analysis (tempo, downbeat,
+// drift: Kerf's beat-grid slicing, engine/KerfGrid.h), where beat 0 is bar 1's
+// downbeat (a pickup has negative beats).
+struct Grid {
+  double fpb = 0;                    // mean frames per beat (0: no grid)
+  int beatsPerBar = kBeatsPerBar;
+  std::shared_ptr<const packs::seltmann::Analysis> map;  // detected beats (null: straight)
+  bool valid() const { return fpb > 0; }
+  double beatAt(double frame) const;  // beats since bar 1
+  double frameAt(double beat) const;
+};
+Grid straightGrid(double fpb);
 
 // Beats in the loop: the given count when it is fitted to the tempo, else the
 // power-of-two count that puts the loop between 80 and 160 BPM.
@@ -37,17 +57,22 @@ int64_t nearestZero(const Sample& smp, int64_t f, int64_t reachFrames);
 // nearest zero crossing (within 5 ms; SnapZero, or after the grid when
 // `thenZero`), clamped to the sample. Off: f clamped.
 int64_t snapFrame(const Sample* smp, int64_t f, int snap, bool thenZero, double framesPerBeat);
+int64_t snapFrame(const Sample* smp, int64_t f, int snap, bool thenZero, const Grid& g);
 // One snap step from f in direction dir (-1 / +1): the next grid line, the next
 // zero crossing (SnapZero), or 1 ms (no snap); clamped to the sample.
 int64_t nudgeFrame(const Sample* smp, int64_t f, int dir, int snap, bool thenZero, double framesPerBeat);
+int64_t nudgeFrame(const Sample* smp, int64_t f, int dir, int snap, bool thenZero, const Grid& g);
 
 // bars:beats (1-based) of a frame; `ticks` adds :ticks (0..95, three digits).
 std::string barsBeats(double frame, double framesPerBeat, bool ticks);
+std::string barsBeats(double frame, const Grid& g, bool ticks);  // positions before bar 1 count from bar 0
 // A position as text in a unit (seconds "1.250 s", samples "55125", bars "2:1:048").
 std::string formatPosition(double frame, int unit, double rate, double framesPerBeat);
+std::string formatPosition(double frame, int unit, double rate, const Grid& g);
 // Typed text to frames (false: not a position). Seconds accept "1.25" and
 // "1.25 s"; samples a whole count; bars "2", "2:3", "2:3:48" (also with '.').
 bool parsePosition(const std::string& text, int unit, double rate, double framesPerBeat, double& frame);
+bool parsePosition(const std::string& text, int unit, double rate, const Grid& g, double& frame);
 
 // Ruler step in beats so that labels stay `minPx` apart on `pxPerBeat`.
 double rulerStepBeats(double pxPerBeat, double minPx);

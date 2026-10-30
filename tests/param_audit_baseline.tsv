@@ -14077,6 +14077,11 @@ gl.slicer	866	Marker snap	inert	0
 gl.slicer	867	Snap then zero crossing	inert	0	
 gl.slicer	868	Ruler	inert	0	
 gl.slicer	869	Beat grid lines	inert	0	
+gl.slicer	870	Grid slice size	combination	0	0=6
+gl.slicer	871	Grid meter	combination	5	0=6
+gl.slicer	872	Grid cuts on the hits	combination	0	0=6
+gl.slicer	873	Grid cuts on zero crossings	combination	0	0=6
+gl.slicer	874	Grid follows the detected beats	combination	0	15=1;0=6
 gl.snare	0	Tone	working	0	
 gl.snare	1	Snappy	working	0	
 gl.snare	2	Body decay	working	1	

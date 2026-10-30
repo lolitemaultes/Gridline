@@ -17,7 +17,7 @@ bool Slice::operator==(const Slice& o) const {
 }
 bool Chop::operator==(const Chop& o) const {
   return mode == o.mode && division == o.division && sensitivity == o.sensitivity && count == o.count && grainMs == o.grainMs &&
-         snap == o.snap && zeroCross == o.zeroCross && autoSize == o.autoSize && hitSnap == o.hitSnap;
+         snap == o.snap && zeroCross == o.zeroCross && autoSize == o.autoSize && hitSnap == o.hitSnap && cellBeats == o.cellBeats;
 }
 bool Step::operator==(const Step& o) const {
   return src == o.src && slot == o.slot && ties == o.ties && reverse == o.reverse && pitch == o.pitch && gain == o.gain &&
@@ -51,6 +51,7 @@ double divisionBeats(int div, int bpb) {
     default: return bar;
   }
 }
+double chopCellBeats(const Chop& c, int bpb) { return c.cellBeats > 0 ? c.cellBeats : divisionBeats(c.division, bpb); }
 const char* divisionName(int div) {
   static const char* const n[DivCount] = {"8 bars", "4 bars", "2 bars", "1 bar", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64", "1/8 T", "1/16 T"};
   return div >= 0 && div < DivCount ? n[div] : "";
@@ -312,7 +313,7 @@ int64_t minSliceFrames(const Model& m) { return std::max<int64_t>(16, static_cas
 double degenerateLimit(const Model& m) {
   const double beat = beatFrames(m.grid);
   switch (m.chop.mode) {
-    case ChopGrid: return 0.5 * divisionBeats(m.chop.division, m.grid.beatsPerBar) * beat;
+    case ChopGrid: return 0.5 * chopCellBeats(m.chop, m.grid.beatsPerBar) * beat;
     case ChopTransients: return std::max(0.04 * m.srcRate, beat / 16.0);
     case ChopSections: return 0.5 * beat * std::max(1, m.grid.beatsPerBar);
     case ChopEqual: return 0.5 * static_cast<double>(m.regionEnd - m.regionStart) / std::max(1, m.chop.count);
@@ -378,7 +379,7 @@ void rechop(Model& m, const Sample* s) {
   const Analysis& g = m.grid;
   switch (m.chop.mode) {
     case ChopGrid: {
-      const double div = divisionBeats(m.chop.division, g.beatsPerBar);
+      const double div = chopCellBeats(m.chop, g.beatsPerBar);
       const double ba = beatAt(g, static_cast<double>(a)), bb = beatAt(g, static_cast<double>(b));
       // grid lines over the region (and one cell either side)
       std::vector<double> lines;
@@ -838,7 +839,7 @@ void straightPattern(Model& m) {
   const int n = static_cast<int>(m.slices.size());
   m.pattern.name = "Straight";
   if (m.chop.mode == ChopGrid) {
-    m.pattern.unitBeats = divisionBeats(m.chop.division, bpb);
+    m.pattern.unitBeats = chopCellBeats(m.chop, bpb);
   } else {
     // the nearest power-of-two step to the mean slice length (sixteenths .. bars)
     const double beats = std::max(1e-3, regionBars(m) * bpb / std::max(1, n));

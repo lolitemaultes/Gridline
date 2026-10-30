@@ -10646,6 +10646,10 @@ msgid "Add a marker in the selected region"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "As detected"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Assign the current region to this key"
 msgstr ""
 
@@ -10659,6 +10663,10 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Beat grid lines"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Beat grid: slice size and meter (click to choose)"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10683,6 +10691,10 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Current region: click for the list, mouse wheel to step"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Detected beat"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10726,11 +10738,23 @@ msgid "Every marker is in use (64)"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Finding the beat of the loop..."
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Finding the beat..."
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "First region"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Fixed at the start"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Follow the detected beats"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10777,12 +10801,20 @@ msgstr ""
 msgid "Marker of region"
 msgstr ""
 
+#: src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Meter"
+msgstr ""
+
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Modulation X (filter cutoff) and Y (resonance): drag"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Move"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Move the cuts onto the nearest hits"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10799,6 +10831,10 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Next region"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "No beat found, the loop length"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10835,6 +10871,14 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Nudge the marker right"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "On the beat grid"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Only the first 64 slices are kept"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -10946,6 +10990,10 @@ msgid "Slice at the hits"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
+msgid "Slice on the beat grid"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Snap the marker"
 msgstr ""
 
@@ -10959,6 +11007,10 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "The loop brought its own regions: they play as they are stored"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "The loop length"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -11029,6 +11081,10 @@ msgstr ""
 msgid "even slices"
 msgstr ""
 
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "finding the beat..."
+msgstr ""
+
 #: src/app/PluginEditorsInstrSlicer.cpp src/packs/synths/pixel_ui.cpp
 msgid "from"
 msgstr ""
@@ -11047,6 +11103,14 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "mono"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "on the detected beat"
+msgstr ""
+
+#: src/app/PluginEditorsInstrSlicer.cpp
+msgid "on the loop-length grid"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -17339,10 +17403,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
 msgid "Make loops"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
-msgid "Meter"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp

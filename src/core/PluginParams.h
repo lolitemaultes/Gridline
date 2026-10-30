@@ -172,6 +172,7 @@ enum Slicer {
 };
 inline constexpr int kMaxSlices = 64;
 inline constexpr int SlModeManual = 5;  // SlMode choice: slice at the manual markers
+inline constexpr int SlModeGrid = 6;    // J-190: SlMode choice: slice on the loop's beat grid (engine/KerfGrid.h)
 inline constexpr int slMarker(int k) { return SlMarkers + k; }  // position 0..1 of slice k start, -1 = unused
 enum SliceField { SliceGain, SlicePan, SlicePitch, SliceReverse, SliceCutoff, SliceStart, SliceMute, SliceFields };
 inline constexpr int SliceBase = SlMarkers + kMaxSlices;
@@ -208,7 +209,16 @@ inline constexpr int SlSnap = SlProcDeclick + 1;
 inline constexpr int SlSnapZero = SlSnap + 1;
 inline constexpr int SlRuler = SlSnapZero + 1;
 inline constexpr int SlGridLines = SlRuler + 1;
-inline constexpr int SlCount = SlGridLines + 1;
+// J-190: slicing on the beat grid (SlMode SlModeGrid, engine/KerfGrid.h): the cell
+// (KerfGrid Division), the meter (Meter, 0 = as detected), cuts moved onto the
+// nearest hits (on by default), then onto the nearest zero crossing, and whether the grid follows
+// the detected beats (else the loop's length in beats). Old states open with the defaults.
+inline constexpr int SlGridDiv = SlGridLines + 1;
+inline constexpr int SlGridMeter = SlGridDiv + 1;
+inline constexpr int SlGridHits = SlGridMeter + 1;
+inline constexpr int SlGridZero = SlGridHits + 1;
+inline constexpr int SlGridFollow = SlGridZero + 1;
+inline constexpr int SlCount = SlGridFollow + 1;
 // "gl.granular"
 enum Granular {
   GrPosition, GrSpread, GrSize, GrDensity, GrPitchRand, GrStereo, GrAttack, GrRelease, GrFreeze, GrVolume,

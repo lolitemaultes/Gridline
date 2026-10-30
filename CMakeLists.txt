@@ -953,6 +953,13 @@ target_link_libraries(gridline_tests_j182 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j182 PRIVATE tests src)
 target_compile_options(gridline_tests_j182 PRIVATE ${GL_WARN})
 add_test(NAME j182_kerf_time_markers COMMAND gridline_tests_j182 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-190: Kerf slices on the beat grid (synthetic loops: tempos, pickup, drift, 3/4, triplets, fallback, state, FL export).
+add_executable(gridline_tests_j190 tests/test_j190.cpp)
+target_link_libraries(gridline_tests_j190 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j190 PRIVATE tests src)
+target_compile_options(gridline_tests_j190 PRIVATE ${GL_WARN})
+add_test(NAME j190_kerf_beat_grid COMMAND gridline_tests_j190 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(j190_kerf_beat_grid PROPERTIES TIMEOUT 600)
 # J-109: Stop releases every sound outside the song; Stop twice (panic) silences tails too.
 add_executable(gridline_tests_j109 tests/test_j109.cpp)
 target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
@@ -1546,6 +1553,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j182_kerf_time -P ${CMAKE_SOURCE_DIR}/tests/j182_kerf_time.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j182_kerf_time_app PROPERTIES TIMEOUT 600)
+
+    # J-190: Kerf slices on the beat grid: the grid menu, region counts and starts on the detected grid, layout audit.
+    add_test(NAME j190_kerf_grid_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j190_kerf_grid -P ${CMAKE_SOURCE_DIR}/tests/j190_kerf_grid.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j190_kerf_grid_app PROPERTIES TIMEOUT 600)
 
     # J-184: Pixel Tone pictures: file dialog + undo, drop on the picture (highlight), rack rows, corrupt file.
     add_test(NAME j184_pixeltone_pictures_app

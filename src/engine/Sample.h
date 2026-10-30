@@ -181,6 +181,10 @@ class SampleCache {
     NonBlocking(const NonBlocking&) = delete;
     NonBlocking& operator=(const NonBlocking&) = delete;
 
+    // J-190: true on a thread inside a NonBlocking scope (app program builds:
+    // background work is used once it is ready, never waited for).
+    static bool active();
+
    private:
     bool prev_;
   };

@@ -7,6 +7,17 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Added
 
+- Kerf slices on the beat grid. The SLICES card has a beat grid choice next to hits, 4, 8, 16, 32
+  and by hand, with a field for the slice size: 1 bar, 1/2 bar, 1/4, 1/8, 1/16, 1/32 or the
+  triplets 1/4 T, 1/8 T and 1/16 T (also in the Regions menu). Kerf finds the loop's tempo, its
+  first downbeat, its meter and how its timing moves, the same way Seltmann does, so the cuts land
+  on the beats even when the loop starts with a pickup, drifts or is in 3/4. The meter can be set
+  by hand (2/4, 3/4, 4/4, 5/4, 6/8). Cuts move onto the nearest hit and then the nearest zero
+  crossing (both can be turned off), and the grid can follow the loop's length in beats instead
+  (Fit tempo and the beat count) when the detected beat is not wanted. The beat is found in the
+  background and remembered per file; while that runs the field shows a busy line and the loop is
+  cut by its length. The bars and beats ruler, the grid lines and marker snapping follow the same
+  grid. Settings are saved with the project; FL Studio project export writes the cuts as markers.
 - Play lights. Every channel rack row has a small light bar at the right end of its name button
   that lights up when a note starts on the channel (from pattern steps, the piano roll, a MIDI
   keyboard, the typing keyboard or a preview), stays lit while the channel sounds (audio clips and

@@ -1,4 +1,5 @@
 #include "SliceProcess.h"
+#include "KerfGrid.h"
 #include "KerfMarks.h"
 #include "SlicexEngine.h"
 #include "Slicing.h"
@@ -17,7 +18,7 @@ namespace gl {
 std::vector<int64_t> computeSlices(const Sample& s, int mode, double sensitivity, double minGapSeconds) {
   std::vector<int64_t> out{0};
   const int64_t n = static_cast<int64_t>(s.frames());
-  if (n < 64) return out;
+  if (n < 64 || mode > 5) return out;  // J-190: the beat grid (6) is KerfGrid.h's
   if (mode >= 1) {
     int count = 4 << (mode - 1);
     for (int k = 1; k < count; ++k) out.push_back(n * k / count);
@@ -251,7 +252,15 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
       int mode = st.params.size() > SlMode ? static_cast<int>(st.params[SlMode] + 0.5f) : 0;
       double sens = st.params.size() > SlSensitivity ? st.params[SlSensitivity] : 0.5;
       const double gap = st.params.size() > SlMinGap ? st.params[SlMinGap] : 0.06;  // J-92: "Minimum slice gap" was never read
-      aux.slices = computeSlices(*aux.samples[0], mode, sens, gap);
+      if (mode == SlModeGrid) {
+        // J-190: cuts on the beat grid. App builds never wait for the analysis (the
+        // loop-length grid until it is done; its completion rebuilds the program);
+        // offline renders and exports do.
+        auto g = kerfgrid::resultFor(st, aux.samples[0], !SampleCache::NonBlocking::active());
+        aux.slices = g ? g->cuts : std::vector<int64_t>{0};
+      } else {
+        aux.slices = computeSlices(*aux.samples[0], mode, sens, gap);
+      }
     }
     return true;
   }

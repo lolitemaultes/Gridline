@@ -557,7 +557,7 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   using namespace pp;
   PluginInfo p{"gl.slicer", "Kerf", "Sampler", PluginKind::Generator, {}, true, {}};
   p.params.resize(SlCount);
-  p.params[SlMode] = ch("Slicing", {"Transients", "4", "8", "16", "32", "Manual"}, 0);
+  p.params[SlMode] = ch("Slicing", {"Transients", "4", "8", "16", "32", "Manual", "Beat grid"}, 0);
   p.params[SlSensitivity] = lin("Sensitivity", "%", 0, 1, 0.5);
   p.params[SlBaseNote] = lin("Base note", "note", 0, 120, 60);
   p.params[SlPitch] = lin("Pitch", "st", -24, 24, 0);
@@ -612,7 +612,14 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   p.params[SlSnapZero] = tog("Snap then zero crossing", 0);
   p.params[SlRuler] = ch("Ruler", {"Seconds", "Bars and beats"}, 0);
   p.params[SlGridLines] = tog("Beat grid lines", 1);
+  // J-190: slicing on the beat grid (choices: engine/KerfGrid.h Division / Meter).
+  p.params[SlGridDiv] = ch("Grid slice size", {"1 bar", "1/2 bar", "1/4", "1/8", "1/16", "1/32", "1/4 T", "1/8 T", "1/16 T"}, 4);
+  p.params[SlGridMeter] = ch("Grid meter", {"Detected", "2/4", "3/4", "4/4", "5/4", "6/8"}, 0);
+  p.params[SlGridHits] = tog("Grid cuts on the hits", 1);
+  p.params[SlGridZero] = tog("Grid cuts on zero crossings", 1);
+  p.params[SlGridFollow] = tog("Grid follows the detected beats", 1);
   p.presets = {{"Transients", {}}, {"Even 16ths, mono", {{SlMode, 3.f}, {SlMono, 1.f}}}, {"Fit to tempo", {{SlFitTempo, 1.f}, {SlMono, 1.f}}},
+               {"On the beat, 8ths", {{SlMode, static_cast<float>(SlModeGrid)}, {SlGridDiv, 3.f}, {SlMono, 1.f}}},
                {"Lo-fi", {{SlFilterType, 1.f}, {SlCutoff, 3000.f}, {SlPitch, -2.f}}}};
   p.editorWidth = 714;
   v.push_back(p);

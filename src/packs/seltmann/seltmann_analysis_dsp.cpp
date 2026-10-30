@@ -1675,6 +1675,7 @@ Manager& mgr() {
   static Manager m;
   return m;
 }
+std::atomic<uint64_t> gJobsDone{0};  // J-190: analysisGeneration()
 
 std::string cacheKey(const std::string& path) {
   std::error_code ec;
@@ -1763,7 +1764,10 @@ JobPtr requestAnalysis(const std::string& path) {
   auto job = std::make_shared<Job>();
   job->path = path;
   m.jobs[path] = job;
-  m.threads.emplace_back(runJob, job, m.cacheDir);
+  m.threads.emplace_back([job, dir = m.cacheDir] {
+    runJob(job, dir);
+    gJobsDone.fetch_add(1, std::memory_order_acq_rel);
+  });
   return job;
 }
 
@@ -1792,6 +1796,8 @@ void dropAnalysisJobs() {
     else ++it;
   }
 }
+
+uint64_t analysisGeneration() { return gJobsDone.load(std::memory_order_acquire); }
 
 void waitAnalysisIdle() {
   Manager& m = mgr();

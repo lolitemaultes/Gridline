@@ -29,6 +29,7 @@
 #include "../core/Project.h"
 #include "../core/ProjectInterop.h"
 #include "../core/WavWriter.h"
+#include "../engine/KerfGrid.h"
 #include "../engine/Render.h"
 #include "ExportUi.h"
 #include "FlpExportUi.h"
@@ -216,7 +217,8 @@ void App::syncEngine() {
     sampleCache().trim();
     trimSamplesAt_ = -1;
   }
-  const uint64_t sampleGen = sampleCache().generation();
+  // J-190: a finished beat analysis also rebuilds (Kerf's beat-grid slices were provisional).
+  const uint64_t sampleGen = sampleCache().generation() + kerfgrid::analysisGeneration();
   bool samplesReady = false;
   if (sampleGen != builtSampleGen_) {
     static double lastSampleBuild = -1;

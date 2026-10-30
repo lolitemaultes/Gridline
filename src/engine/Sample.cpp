@@ -281,6 +281,7 @@ thread_local bool tNonBlocking = false;  // see SampleCache::NonBlocking
 
 SampleCache::NonBlocking::NonBlocking() : prev_(tNonBlocking) { tNonBlocking = true; }
 SampleCache::NonBlocking::~NonBlocking() { tNonBlocking = prev_; }
+bool SampleCache::NonBlocking::active() { return tNonBlocking; }
 
 SampleCache::~SampleCache() { shutdown(); }
 
