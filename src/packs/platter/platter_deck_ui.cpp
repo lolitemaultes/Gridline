@@ -570,14 +570,33 @@ void drawPads(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2 p1,
     std::snprintf(id, sizeof id, "##phot%d%d", d, k);
     ImGui::SetCursorScreenPos(q0);
     ImGui::InvisibleButton(id, ImVec2(pw, ph), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    const bool hv = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
-    const bool clear = ImGui::GetIO().KeyShift || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
-    if (ImGui::IsItemActivated()) {
-      u.padGlow[k] = 1.0;
-      if (clear && set) press(a, t, d, CtlHotClear1 + k, true), press(a, t, d, CtlHotClear1 + k, false);
-      else if (!clear) press(a, t, d, CtlHot1 + k, true);
+    {
+      char tn[16];
+      std::snprintf(tn, sizeof tn, "hot%c%d", d == 0 ? 'A' : 'B', k + 1);
+      traceRect(tn, q0, q1);
     }
-    if (ImGui::IsItemDeactivated() && !clear) press(a, t, d, CtlHot1 + k, false);
+    const bool hv = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
+    // J-204: what a click does is decided when it goes down (Shift or the right button clears);
+    // a pad that sent a press always sends its release, whatever Shift does meanwhile, and a
+    // clearing click sends none (a release without its press, or a press without its release,
+    // left the deck previewing)
+    bool& held = u.padHeld[k];
+    if (ImGui::IsItemActivated()) {
+      const bool clear = ImGui::GetIO().KeyShift || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+      u.padGlow[k] = 1.0;
+      if (held) press(a, t, d, CtlHot1 + k, false), ++u.padUps;  // (never two presses in a row)
+      held = false;
+      if (clear) {
+        if (set) press(a, t, d, CtlHotClear1 + k, true), press(a, t, d, CtlHotClear1 + k, false);
+      } else {
+        press(a, t, d, CtlHot1 + k, true), ++u.padDowns;
+        held = true;
+      }
+    }
+    if (held && !ImGui::IsItemActive()) {  // released (or the press was taken away: focus, a popup)
+      press(a, t, d, CtlHot1 + k, false), ++u.padUps;
+      held = false;
+    }
     if (hv) ui::Tooltip(set ? i18n::tr("Jump to this hot cue (hold while stopped to preview). Shift+click or right-click clears it.") : i18n::tr("Set a hot cue here"));
     u.padGlow[k] = std::max(0.0, u.padGlow[k] - dt * 3.0);
     const ImU32 hc = hotColor(k);

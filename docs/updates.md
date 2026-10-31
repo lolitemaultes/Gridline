@@ -38,8 +38,13 @@ Downloads for each system:
 |---|---|
 | macOS (Apple silicon and Intel) | `Gridline-<version>-macos-universal.dmg` |
 | Windows x64 / ARM64 | `Gridline-<version>-windows-x64-setup.exe` / `-windows-arm64-setup.exe` |
-| Linux x86_64 / aarch64 | `Gridline-<version>-linux-x86_64.AppImage` / `-linux-aarch64.AppImage` (marked executable) |
+| Debian, Ubuntu and derivatives | `Gridline-<version>-linux-amd64.deb` / `-linux-arm64.deb` |
+| Fedora, RHEL, openSUSE and derivatives | `Gridline-<version>-linux-x86_64.rpm` / `-linux-aarch64.rpm` |
+| Other Linux x86_64 / aarch64 | `Gridline-<version>-linux-x86_64.AppImage` / `-linux-aarch64.AppImage` (marked executable) |
 | FreeBSD, OpenBSD, NetBSD | `Gridline-<version>-<system>-<arch>.tar.gz` |
+
+On Linux the distribution comes from `/etc/os-release` (`ID` and `ID_LIKE`). When a release has no
+package for your distribution and processor, the AppImage is offered.
 
 A download whose SHA-256 checksum does not match the one in `SHA256SUMS` is deleted and reported.
 If a release has no `SHA256SUMS` file, only the release page is offered.

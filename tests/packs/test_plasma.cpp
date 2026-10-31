@@ -443,6 +443,18 @@ std::vector<Cand> candsFor(int k) {
     add([](Scene& s) { oscOn(s, 0), P(s, oscP(0, O_Warp1Mode), 2.f), P(s, oscP(0, O_Warp1), 1.f); });
     return c;
   }
+  if (k == tailP(T_LfoLaw)) {  // the LFO law: a delayed, rising, smoothed LFO 1 on oscillator A
+    add([](Scene& s) {
+      lfoBase(s, 0), observe(s, 0, SrcLfo1), P(s, lfoP(0, L_Delay), 0.3f), P(s, lfoP(0, L_Rise), 0.3f), P(s, lfoP(0, L_Smooth), 0.5f);
+    });
+    return c;
+  }
+  if (k == tailP(T_BusChain)) {  // the bus chain: oscillator A into both buses, bus volumes apart
+    add([](Scene& s) {
+      oscOn(s, 0), P(s, routeP(RtA, R_Bus1), 0.7f), P(s, routeP(RtA, R_Bus2), 0.7f), P(s, G_Bus1Vol, 0.8f), P(s, G_Bus2Vol, 0.2f);
+    });
+    return c;
+  }
   if (k == tailP(T_ModLaw)) {  // the matrix law: a bipolar route from macro 1 (at 0) to oscillator A's level
     add([](Scene& s) {
       oscOn(s, 0), P(s, macroP(0), 0.f), P(s, modP(0, M_Source), static_cast<float>(SrcMacro1)), P(s, modP(0, M_Amount), 0.4f);

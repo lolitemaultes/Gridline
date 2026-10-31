@@ -48,6 +48,8 @@ struct DeckUi {
   double strobe = 0;  // strobe dots' drift (turns): stands still at 1.0x
   double rimTurn = 0; // last platter angle (turns), for the strobe
   double padGlow[kHotCues] = {};
+  bool padHeld[kHotCues] = {};        // J-204: the pad sent a press its release still owes
+  uint32_t padDowns = 0, padUps = 0;  // J-204 (trace): hot cue presses and releases the pads sent
 };
 
 // Per editor (one per setup), UI only.

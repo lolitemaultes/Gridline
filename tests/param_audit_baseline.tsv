@@ -12595,6 +12595,8 @@ gl.plasma	2198	Wavetable Law	verified	0		VERIFIED: acts on a warped wavetable os
 gl.plasma	2199	Matrix Law	verified	0		VERIFIED: acts on a bipolar, curved or chained matrix route (parameter coverage test)
 gl.plasma	2200	Filter 1 Pad	verified	0		VERIFIED: acts on a driven filter 1 on the Boost drive mode (parameter coverage test)
 gl.plasma	2201	Filter 2 Pad	verified	0		VERIFIED: acts on a driven filter 2 on the Boost drive mode (parameter coverage test)
+gl.plasma	2202	LFO Law	verified	0		VERIFIED: acts on a delayed, rising or smoothed LFO (parameter coverage test)
+gl.plasma	2203	Bus Chain	verified	0		VERIFIED: acts on signal sent to both effect buses (parameter coverage test)
 gl.platter	0	A channel fader	working	0	
 gl.platter	1	A trim	working	12	
 gl.platter	2	A EQ high	working	-26	

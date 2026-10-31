@@ -13246,10 +13246,6 @@ msgid "Ask again the next time Gridline starts"
 msgstr ""
 
 #: src/app/SuiteUi.cpp
-msgid "Copies it into your plug-in folders at startup when this Gridline carries a newer version"
-msgstr ""
-
-#: src/app/SuiteUi.cpp
 msgid "Copy the suite into your plug-in folders"
 msgstr ""
 
@@ -13278,6 +13274,10 @@ msgid "Gridline Suite removed from your plug-in folders"
 msgstr ""
 
 #: src/app/SuiteUi.cpp
+msgid "Gridline Suite updated to this version: restart your other music programs to use it"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
 msgid "Gridline Suite: "
 msgstr ""
 
@@ -13294,7 +13294,15 @@ msgid "Install"
 msgstr ""
 
 #: src/app/SuiteUi.cpp
+msgid "Install the Gridline Suite automatically"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
 msgid "Install the Gridline Suite?"
+msgstr ""
+
+#: src/app/SuiteUi.cpp
+msgid "Installed copies always update with Gridline; this also installs the suite where it is missing"
 msgstr ""
 
 #: src/app/SuiteUi.cpp
@@ -13307,10 +13315,6 @@ msgstr ""
 
 #: src/app/SuiteUi.cpp
 msgid "Installed, from another Gridline version"
-msgstr ""
-
-#: src/app/SuiteUi.cpp
-msgid "Keep the Gridline Suite installed and up to date"
 msgstr ""
 
 #: src/app/SuiteUi.cpp src/app/UpdateUi.cpp

@@ -98,6 +98,15 @@ Name: "plugins"; Description: "Install the Gridline VST3 and CLAP plugins for ot
 Name: "assocproject"; Description: "Offer Gridline in ""Open with"" for Gridline projects (.gridline.json)"; GroupDescription: "File types:"; Flags: unchecked
 Name: "assocflp"; Description: "Offer Gridline in ""Open with"" for FL Studio projects (.flp)"; GroupDescription: "File types:"; Flags: unchecked
 
+[InstallDelete]
+; An update replaces the Gridline Suite bundles whole: no file of an older version stays behind.
+Type: filesandordirs; Name: "{commoncf64}\VST3\Gridline Suite.vst3"
+Type: filesandordirs; Name: "{commoncf64}\CLAP\Gridline Suite-assets"
+Type: files; Name: "{commoncf64}\CLAP\Gridline Suite.clap"
+Type: filesandordirs; Name: "{commoncf64}\VST3\Gridline Suite Mini.vst3"
+Type: filesandordirs; Name: "{commoncf64}\CLAP\Gridline Suite Mini-assets"
+Type: files; Name: "{commoncf64}\CLAP\Gridline Suite Mini.clap"
+
 [Files]
 Source: "{#Stage}\gridline-app.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\gridline.exe"; DestDir: "{app}"; Flags: ignoreversion

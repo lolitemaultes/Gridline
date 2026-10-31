@@ -30,7 +30,7 @@ constexpr int kStartupDelayFrames = 60;  // after the update check's moment: nev
 // worker thread; shared with it.
 struct Job {
   std::mutex mu;
-  bool done = false, ok = false, removing = false;
+  bool done = false, ok = false, removing = false, updating = false;
   std::string err;
 };
 
@@ -90,21 +90,23 @@ void startCopy(bool remove) {
 void collect(App& a) {
   State& s = S();
   if (!s.job) return;
-  bool ok = false, removing = false;
+  bool ok = false, removing = false, updating = false;
   std::string err;
   {
     std::lock_guard<std::mutex> lk(s.job->mu);
     if (!s.job->done) return;
     ok = s.job->ok;
     removing = s.job->removing;
+    updating = s.job->updating;
     err = s.job->err;
   }
   s.job.reset();
   refresh();
   if (ok) {
     s.lastOutcome = removing ? tr("Removed from your plug-in folders") : tr("Installed in your plug-in folders");
-    a.notify(removing ? tr("Gridline Suite removed from your plug-in folders")
-                      : tr("Gridline Suite installed: rescan plugins in your other music programs to find it"));
+    a.notify(removing   ? tr("Gridline Suite removed from your plug-in folders")
+             : updating ? tr("Gridline Suite updated to this version: restart your other music programs to use it")
+                        : tr("Gridline Suite installed: rescan plugins in your other music programs to find it"));
   } else {
     s.lastOutcome = err;
     a.notify(std::string(tr("Gridline Suite: ")) + err, true);
@@ -185,12 +187,16 @@ void start(App& a, bool automated) {
   s.automated = automated || std::getenv("GRIDLINE_NO_SUITE_INSTALL") || std::getenv("GRIDLINE_NO_PLUGIN_SCAN");
   if (s.automated) return;
   refresh();
-  const std::string pref = a.settings.getString("suite.install");
-  if (!anyNeedsCopy() || pref == "no") return;
-  if (pref == "yes")
-    startCopy(false);  // keep the copies at this version
-  else
-    s.offerPending = true;
+  switch (suite::startupAction(s.status, a.settings.getString("suite.install"))) {
+    case suite::StartupAction::Copy: {
+      const bool updating = std::any_of(s.status.begin(), s.status.end(), userCopy);
+      startCopy(false);  // the copies follow this version (and a suite new in it joins them)
+      if (s.job) s.job->updating = updating;
+      break;
+    }
+    case suite::StartupAction::Ask: s.offerPending = true; break;
+    case suite::StartupAction::None: break;
+  }
 }
 
 void draw(App& a) {
@@ -242,18 +248,21 @@ void settingsSection(App& a) {
   }
   if (copyable) {
     bool keep = st.getString("suite.install") == "yes";
-    if (ImGui::Checkbox(tr("Keep the Gridline Suite installed and up to date"), &keep)) {
+    if (ImGui::Checkbox(tr("Install the Gridline Suite automatically"), &keep)) {
       st.set("suite.install", keep ? "yes" : "no");
       if (keep) startCopy(false);
     }
-    ui::Hint("Copies it into your plug-in folders at startup when this Gridline carries a newer version");
+    ui::Hint("Installed copies always update with Gridline; this also installs the suite where it is missing");
     if (s.job) {
       ImGui::TextColored(theme::vec(P.textFaint), "%s", tr("Copying..."));
     } else {
       if (anyNeedsCopy() && ui::TextButton(tr("Install"), true, 0, tr("Copy the suite into your plug-in folders"))) startCopy(false);
       if (anyUser) {
         if (anyNeedsCopy()) ImGui::SameLine();
-        if (ui::TextButton(tr("Remove"), false, 0, tr("Delete the copies in your plug-in folders"))) startCopy(true);
+        if (ui::TextButton(tr("Remove"), false, 0, tr("Delete the copies in your plug-in folders"))) {
+          st.set("suite.install", "no");  // removed on purpose: the next start does not copy it back
+          startCopy(true);
+        }
       }
     }
     if (!s.lastOutcome.empty()) ImGui::TextColored(theme::vec(P.textFaint), "%s", s.lastOutcome.c_str());

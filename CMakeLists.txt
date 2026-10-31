@@ -1624,6 +1624,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(platter_perf_flow PROPERTIES TIMEOUT 300)
 
+    # J-204: Platter's hot cue pads tapped as fast as the input allows (playing and stopped,
+    # alternating pads, Shift, right-click, hot cue keys): every tap lands, nothing sticks.
+    add_test(NAME j204_hotcue_taps
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_platter>
+                     -DOUT=${CMAKE_BINARY_DIR}/j204_hotcue_taps -P ${CMAKE_SOURCE_DIR}/tests/j204_hotcue_taps.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j204_hotcue_taps PROPERTIES TIMEOUT 400)
+
     # J-110: Seltmann's pattern Play button follows every Stop (button, Space, panic, Tools menu,
     # MIDI / remote, focus loss) and plays again with one click.
     add_test(NAME j110_play_state_app

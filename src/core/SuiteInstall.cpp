@@ -247,6 +247,17 @@ bool install(const InstallStatus& st, std::string* err) {
   return true;
 }
 
+StartupAction startupAction(const std::vector<InstallStatus>& suites, const std::string& pref) {
+  bool needs = false, copies = false;
+  for (const InstallStatus& st : suites) {
+    needs = needs || st.state == InstallState::NotInstalled || st.state == InstallState::Outdated;
+    copies = copies || st.state == InstallState::Installed || st.state == InstallState::Outdated;
+  }
+  if (!needs) return StartupAction::None;
+  if (copies || pref == "yes") return StartupAction::Copy;
+  return pref == "no" ? StartupAction::None : StartupAction::Ask;
+}
+
 bool remove(const InstallStatus& st, std::string* err) {
   bool ok = true;
   for (const BundleCopy& b : st.bundles) {

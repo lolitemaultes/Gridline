@@ -97,6 +97,22 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   the same cuts and the steps follow the new lengths. A click on a region still plays it.
 
 ### Fixed
+- The update popup on Linux downloads your distribution's own package: the `.deb` on Ubuntu, Debian
+  and their derivatives (Mint, Pop!_OS, elementary and others), the `.rpm` on Fedora, RHEL, Rocky,
+  AlmaLinux and openSUSE. Other distributions, and a processor a release has no package for, still
+  get the AppImage. The distribution is read from `/etc/os-release`.
+- Installing a new Gridline now always brings the Gridline Suite and Gridline Suite Mini to the same
+  version. Copies in your plug-in folders are replaced at the first start, whatever the install
+  answer in Settings, and a suite that is new in this version joins them; the Windows installer
+  replaces the suite bundles whole, so no file of an older version stays behind. Settings, Files,
+  Gridline Suite: "Install the Gridline Suite automatically" now only decides about installing where
+  the suite is missing, and Remove keeps it removed.
+- Platter's hot cue pads take fast taps. A pad held while Shift went down left a stopped deck
+  playing on from the pad until the end of the track. A pad now always sends its release, never
+  a release without its press, and Shift or the right button only clear when the click starts
+  with them. A pad pressed while another one previews takes the preview over, so its release
+  returns there and stops. A pad set right after a jump stores the place the jump went to, and a
+  newly set pad is always saved with the project, even when it was set moments before saving.
 - Plasma plays imported Serum 2 presets closer to the original. Every law below was measured
   against the original synth:
   - Noise pitch and key tracking now match. The noise pitch knob is a playback rate covering 96
@@ -180,6 +196,23 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     (velocity at full amount lifts a centred amp by 9.5 dB, where it used to hit the 12 dB top
     already at half velocity). Route smoothing is no longer imported,
     as it had no audible effect on the original.
+  - Wavetable oscillators in imported presets start at the original's default phase (half a
+    cycle) and a free-running oscillator starts there too. The mirror, quantize and self phase
+    distortion warps follow the original within about 1 dB on the first eight harmonics (quantize
+    at 0.7 was a plain saw before). A multisample is silent on keys and velocities no zone covers,
+    as in the original, where it used to play the nearest zone.
+  - LFOs in imported presets follow the original (new LFO Law setting; Plasma's own projects keep
+    the Classic law). Rise and delay are times, in seconds on a free LFO and in beats on a synced
+    one, and smoothing is a fixed time rather than a share
+    of the LFO's cycle (at 50 % about 12 ms, where a 2 Hz LFO used to lose most of its swing).
+  - An imported clip player that holds a looping clip across the keyboard stays on, as in the
+    original, when the preset names no active clip.
+  - A macro moved by another route passes that on whatever order the routes are in (before, a
+    route into a macro in a later slot never reached the routes reading that macro). Routes to
+    the compressor's gain move it on the original's knob curve (a route at half lifts it by
+    about 19 dB, where it gave 15).
+  - An effect bus whose output is the other bus now feeds that bus, through both bus volumes, as
+    in the original (new Bus Chain setting; before, it went to the main output).
   - The voice filters' pad switch is imported (new Filter 1 Pad and Filter 2 Pad settings): a
     fully driven filter with pad on now plays at the original's level, where it was 3 dB quiet.
   - The distortion effect follows the original's curves for every mode and drive, its filter

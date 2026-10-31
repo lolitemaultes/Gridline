@@ -380,7 +380,7 @@ class Deck {
   }
   void marksChanged() {
     marksDirty_ = true;
-    marksSeq_.fetch_add(1, std::memory_order_release);
+    marksNew_ = true;  // (J-204: told with the block's publish, once the marks it set are out)
   }
 
   // ---------------------------------------------------------------- transport actions
@@ -453,9 +453,18 @@ class Deck {
     if (!loaded() || k < 0 || k >= kHotCues) return;
     auto& h = hot_[static_cast<size_t>(k)];
     if (down) {
+      ++hotTaps_;  // (J-204: the presses the deck acted on, for the editor's trace and the tests)
       if (h < 0) {
-        h = quantized(pos_);
+        // (J-204: where the head goes: a jump this block already asked for counts)
+        h = quantized(jumpPending_ ? jumpTo_ : pos_);
         marksChanged();
+        return;
+      }
+      // J-204: a pad pressed while another one previews takes the preview over (its own
+      // release returns there and stops; the earlier pad's release does nothing)
+      if (hotPreview_ >= 0 && !playLatched_) {
+        jump(h);
+        hotPreview_ = k;
         return;
       }
       const bool wasPlaying = motor_;
@@ -972,6 +981,7 @@ class Deck {
   void hotKey(int i, bool down) {
     if (!loaded()) return;
     if (down) {
+      ++hotTaps_;
       double h = hot_[static_cast<size_t>(i)];
       if (h < 0) {  // not set: bar i after the cue
         const int bpb = std::max(1, model().grid.beatsPerBar);
@@ -1683,6 +1693,11 @@ class Deck {
     pubCue_.store(cue_, std::memory_order_relaxed);
     pubCueLit_.store(cuePreview_ || (!motor_ && loaded() && std::fabs(pos_ - cue_) < srcRate() * 0.01), std::memory_order_relaxed);
     for (int k = 0; k < kHotCues; ++k) pubHot_[static_cast<size_t>(k)].store(hot_[static_cast<size_t>(k)], std::memory_order_relaxed);
+    pubHotTaps_.store(hotTaps_, std::memory_order_relaxed);
+    if (marksNew_) {  // J-204: the editor reads the count, then the marks: they are out by now
+      marksNew_ = false;
+      marksSeq_.fetch_add(1, std::memory_order_release);
+    }
     uint32_t f = 0;
     if (on(DSync)) f |= 1;
     if (on(DKeyLock)) f |= 2;
@@ -1717,6 +1732,7 @@ class Deck {
     v.cue = pubCue_.load(std::memory_order_relaxed);
     v.cueLit = pubCueLit_.load(std::memory_order_relaxed);
     for (int k = 0; k < kHotCues; ++k) v.hot[static_cast<size_t>(k)] = pubHot_[static_cast<size_t>(k)].load(std::memory_order_relaxed);
+    v.hotTaps = pubHotTaps_.load(std::memory_order_relaxed);
     const uint32_t f = pubFlags_.load(std::memory_order_relaxed);
     v.sync = f & 1, v.keylock = f & 2, v.slip = f & 4, v.vinyl = f & 8, v.quantize = f & 16, v.keylockActive = f & 32, v.shift = f & 64;
     v.capturing = f & 128;
@@ -1846,12 +1862,15 @@ class Deck {
   std::atomic<double> pubPos_{0}, pubSpeed_{0}, pubSlipPos_{-1}, pubLoopIn_{-1}, pubLoopOut_{-1}, pubSavedIn_{-1}, pubSavedOut_{-1}, pubCue_{0},
       pubTempo_{0}, pubBeat_{0};
   std::array<std::atomic<double>, kHotCues> pubHot_{};
+  std::atomic<uint32_t> pubHotTaps_{0};
+  uint32_t hotTaps_ = 0;
   std::atomic<uint32_t> pubFlags_{0};
   std::atomic<uint64_t> pubWheel_{0};
   uint64_t wheelTicks_ = 0;  // J-197: the jog platter's ticks taken (a dev trace counts them)
   std::atomic<int> pubTake_{-1};
   std::atomic<float> pubLevel_{0}, pubPre_{0};
   std::atomic<uint32_t> marksSeq_{0};
+  bool marksNew_ = false;  // marks set since the last publish (audio thread)
 };
 
 // ================================================================== pass lanes (J-163)

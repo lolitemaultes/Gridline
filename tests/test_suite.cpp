@@ -24,6 +24,7 @@
 #include "core/PluginInfo.h"
 #include "core/PluginSuite.h"
 #include "core/Project.h"
+#include "core/SuiteInstall.h"
 #include "engine/AudioEngine.h"
 #include "engine/Effects.h"
 #include "engine/Generators.h"
@@ -567,6 +568,28 @@ void testEditors(const std::string& format, const std::vector<std::string>& keys
   }
 }
 
+// What an updated Gridline does at startup with the suites it carries: copies
+// already there always follow it, whatever the install answer.
+void testStartupAction() {
+  using S = suite::InstallState;
+  using A = suite::StartupAction;
+  const auto st = [](S a, S b) {
+    std::vector<suite::InstallStatus> v(2);
+    v[0].state = a;
+    v[1].state = b;
+    return v;
+  };
+  expect(suite::startupAction(st(S::NotInstalled, S::NotInstalled), "") == A::Ask, "suite startup: first start asks");
+  expect(suite::startupAction(st(S::NotInstalled, S::NotInstalled), "no") == A::None, "suite startup: declined stays declined");
+  expect(suite::startupAction(st(S::NotInstalled, S::NotInstalled), "yes") == A::Copy, "suite startup: automatic install installs");
+  expect(suite::startupAction(st(S::Outdated, S::Outdated), "no") == A::Copy, "suite startup: old copies update even when declined");
+  expect(suite::startupAction(st(S::Outdated, S::Installed), "") == A::Copy, "suite startup: old copies update without asking");
+  expect(suite::startupAction(st(S::Installed, S::NotInstalled), "") == A::Copy, "suite startup: a suite new in this version joins the installed one");
+  expect(suite::startupAction(st(S::Installed, S::Installed), "yes") == A::None, "suite startup: current copies stay as they are");
+  expect(suite::startupAction(st(S::SystemInstalled, S::SystemInstalled), "") == A::None, "suite startup: a package's copies need nothing");
+  expect(suite::startupAction(st(S::NotShipped, S::NotShipped), "yes") == A::None, "suite startup: a build tree copies nothing");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -574,6 +597,7 @@ int main(int argc, char** argv) {
   std::setvbuf(stdout, nullptr, _IONBF, 0);  // a crash keeps every line printed so far
   // "--quick": every member is scanned, a few are played (the full run plays all of them in every format).
   const bool quick = argc > 1 && std::strcmp(argv[1], "--quick") == 0;
+  testStartupAction();
   testIdentities("gridline", 100);
   testIdentities("mini", 35);
   testAcrossSuites();

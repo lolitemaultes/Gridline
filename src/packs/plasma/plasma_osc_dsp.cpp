@@ -104,6 +104,9 @@ void OscVoice::start(const OscSet& s, float phase, float randPhase, float randSt
       const int d = (k < zn.loKey ? zn.loKey - k : k > zn.hiKey ? k - zn.hiKey : 0) * 4 + (v < zn.loVel ? zn.loVel - v : v > zn.hiVel ? v - zn.hiVel : 0);
       if (d < bestD) bestD = d, best = static_cast<int>(z);
     }
+    // mapped law (J-203i, measured on kits: keys and velocities no zone covers are silent on the
+    // source, not played by the nearest zone)
+    if (s.msLaw && bestD > 0) best = -1;
     zone_ = best;
     if (best >= 0) smp = s.src->zones[static_cast<size_t>(best)].s.get();
   }
@@ -210,7 +213,23 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
         flip = p >= 1.0 - f;
         break;
       }
-      case 10: p = p + ((p < 0.5 ? p * 2 : 2 - p * 2) - p) * a; mul *= 1 + a; break;
+      case 10:
+        if (s.law) {
+          // Imported law (J-203i, read from single cycles of the source's saw at key 24 and fitted on
+          // H1..H8 within 0.3 dB at 0.25 / 0.5 / 1.0): the cycle reads the whole table backward, then
+          // forward again; the half-cycle around the table's middle takes a share s = 0.05 + 0.9 a of
+          // the time (0.5: a plain palindrome, 0: mostly the first half of the table, mirrored)
+          const double sh = 0.05 + 0.9 * static_cast<double>(a), lo = 1.0 - sh;
+          double t = frac(p + 0.5);
+          if (t >= 0.5) t = 1.0 - t;
+          const double q = t < lo * 0.5 ? 0.5 - t / lo : 1.0 - (t - lo * 0.5) / sh;
+          p = frac(q + 0.5);
+          mul *= std::min(8.0, 1.0 / std::min(sh, lo));
+          break;
+        }
+        p = p + ((p < 0.5 ? p * 2 : 2 - p * 2) - p) * a;
+        mul *= 1 + a;
+        break;
       case 11: if (s.src) p = frac(p + (remapAt(s.src->remap[0], p) - p) * a); mul *= 1 + a * 2; break;
       case 12:
         if (s.src) {
@@ -224,9 +243,15 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
         mul *= 1 + a * 7;
         break;
       case 15: {
-        // Imported law (J-203g, single cycles at key 24 and saw harmonics): 2 steps at 1.0, 3 at 0.75,
-        // about 25 at 0.5 (H12 3.7 dB under the plain saw)
-        const double steps = s.law ? std::round(2.0 + 620.0 * std::pow(1.0 - a, 4.64)) : 2.0 + std::pow(1.0 - a, 3.0) * 1000.0;
+        if (s.law) {
+          // Imported law (J-203i, read from single cycles of the source's saw at key 24 (plateau lengths and levels at
+          // 0.5 .. 0.8): N = 2 + 1219 (1 - a)^5.16 steps, not whole (36 at 0.5, 12 at 0.6, 4.5 at 0.7,
+          // 2.3 at 0.8), rounded from the table start, so the last step of the cycle is a partial one
+          const double steps = 2.0 + 1219.0 * std::pow(1.0 - static_cast<double>(a), 5.16);
+          p = frac(std::round(p * steps) / steps);
+          break;
+        }
+        const double steps = 2.0 + std::pow(1.0 - a, 3.0) * 1000.0;
         p = std::floor(p * steps) / steps;
         break;
       }
@@ -257,6 +282,11 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
           mul *= 1 + a * a * 8;
         } else if (m >= 51 && m <= 56) {
           p = frac(p + a * fm[fmSourceOf(m)] * 0.5 * (0.5 - 0.5 * std::cos(kPi2 * p)));
+          mul *= 1 + a * 3;
+        } else if (m == 57 && s.law) {
+          // Imported law (J-203i, measured on the saw at key 24: the ramp steepens by 1 / (1 - 2 k) and
+          // chatters over 2 k around its jump): the phase moves by k = 0.604 a^2 times the last output
+          p = frac(p + 0.604 * static_cast<double>(a) * a * selfFb_[u]);
           mul *= 1 + a * 3;
         } else if (m == 57) {
           p = frac(p + a * selfFb_[u] * 0.5);

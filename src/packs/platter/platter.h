@@ -554,6 +554,7 @@ struct LiveView {
   uint32_t rawSeq = 0;         // last raw MIDI message the setup saw (learn)
   uint8_t raw[3] = {0, 0, 0};
   uint64_t wheelTicks = 0;     // J-197: jog platter ticks the deck has taken (either way, summed)
+  uint32_t hotTaps = 0;        // J-204: hot cue presses the deck acted on (set or jump)
 };
 bool liveView(const Generator* g, int deck, LiveView& out);
 // J-159 (tests): what the decks use right now: the running step's parameter values, each

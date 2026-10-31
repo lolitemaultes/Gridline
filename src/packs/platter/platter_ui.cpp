@@ -988,6 +988,20 @@ void trace(App& a, const PluginTarget& t, Ed& e, const char* state, const LiveVi
       std::fflush(stdout);
     }
   }
+  {  // J-204: hot cue presses and releases the pads sent, the presses the deck acted on, where it is
+    static std::string lastHot;
+    char hb[200];
+    int setA = 0;
+    for (double h : lv[0].hot) setA += h >= 0 ? 1 : 0;
+    std::snprintf(hb, sizeof hb, "platter: hot A down %u up %u acted %u set %d playing %d pos %.0f h1 %.0f h2 %.0f", e.d[0].padDowns, e.d[0].padUps,
+                  lv[0].hotTaps, setA, lv[0].playing ? 1 : 0, lv[0].playing ? -1.0 : lv[0].pos, lv[0].hot[0], lv[0].hot[1]);
+    devsig::reach("platter-hot-" + std::to_string(lv[0].hotTaps) + (lv[0].playing ? "-playing" : "-stopped"));
+    if (hb != lastHot) {
+      lastHot = hb;
+      std::printf("%s\n", hb);
+      std::fflush(stdout);
+    }
+  }
   char b[320];
   std::snprintf(b, sizeof b,
                 "platter: state %s layout %d asked %d mapped %zu A[bpm %.2f playing %d speed %.3f] B[bpm %.2f playing %d] xf %.2f takes %zu armed %d as %d capturing %d", state,

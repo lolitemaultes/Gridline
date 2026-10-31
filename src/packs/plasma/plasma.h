@@ -277,7 +277,10 @@ inline constexpr int kFxBase = kModBase + kModSlots * M_Count;
 // Parameters added after the first release go here, at the very end, so older states pad them
 // with their defaults (J-201: noise tone, unison mix, filter drive mode).
 // J-203a: filter key-track centre, multisample level law. J-203g: wavetable / warp law.
-enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_KeyCentre, T_MsLaw, T_EnvLaw, T_OscLaw, T_ModLaw, T_Pad1, T_Pad2, T_Count };
+// J-203i: LFO law (rise / delay as times, fixed-time smoothing).
+enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_KeyCentre, T_MsLaw, T_EnvLaw, T_OscLaw, T_ModLaw, T_Pad1, T_Pad2, T_LfoLaw, T_BusChain, T_Count };
+// LFO rise / delay on the imported LFO law: 16 v^2 (seconds on a free LFO, beats on a synced one).
+inline double lfoLawTime(double v) { return 16.0 * v * v; }
 inline constexpr int kTailBase = kFxBase + kFxSlots * X_Count;
 inline constexpr int kParamCount = kTailBase + T_Count;
 

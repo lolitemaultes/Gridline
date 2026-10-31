@@ -1258,6 +1258,9 @@ struct Importer {
           if (const Json* other = plain(osc->find(subNames[k] + std::to_string(i))))
             for (const auto& kv : other->object) used.insert(&kv.second);
       set(oscP(i, O_Smooth), 0.0);  // frame blending is off unless the preset turns it on (J-203g, measured)
+      // a wavetable starts at 180 degrees unless the preset says otherwise (J-203i, measured: single
+      // cycles of the start-up saw move by half a cycle between phase 0 and the default)
+      if (type == OscWavetable) set(oscP(i, O_Phase), 0.5);
       apply(sp, kOscSub, sizeof(kOscSub) / sizeof(kOscSub[0]), oscP(i, 0));
       for (int w = 0; w < 2; ++w) {
         if (text(sp, w == 0 ? "kParamWarpMenu" : "kParamWarpMenu2", s)) {
@@ -1518,6 +1521,7 @@ struct Importer {
     // round trip): every curve 60, except the attack curve of envelopes 2-4 at 40; their attack is
     // 0.5 ms (envelope 1: 1 ms). Its curves bend on its own law (T_EnvLaw).
     set(tailP(T_EnvLaw), 1.0);
+    set(tailP(T_LfoLaw), 1.0);  // LFO rise, delay and smoothing as the source plays them (J-203i)
     for (int e = 0; e < kEnvs; ++e) {
       set(envP(e, E_CurveA), e == 0 ? 60.0 : 40.0), set(envP(e, E_CurveD), 60.0), set(envP(e, E_CurveR), 60.0);
       if (e > 0) set(envP(e, E_Attack), envTimeInv(0.0005));
@@ -1539,23 +1543,23 @@ struct Importer {
         static const char* const k[] = {"Curve", "Path", "Lorenz", "Rossler", "RandomSH"};
         set(lfoP(l, L_Type), std::max(0, indexOf(k, 5, s)));
       }
-      double v;
+      double v, bs = 1;
+      num(pp, "kParamBeatSync", bs);
       for (const char* key : {"kParamRise", "kParamDelay"})
         if (num(pp, key, v)) {
-          // stored in beats: the nearest tempo division of Plasma's rise / delay control (0 = off)
-          int best = 0;
-          if (v <= 1e-6) {
-            set(lfoP(l, key[6] == 'R' ? L_Rise : L_Delay), 0.0);
-            continue;
+          // J-203i (measured on the hosted source): on a free LFO the value is seconds; on a synced
+          // one it snaps to a power-of-two beat count, about 2^round(3.33 (v - 2.1)); the measured
+          // steps (1/8 -> 1/4 beat at 1.32, then 1.65, 1.95, 2.22, 2.55, 2.85, 8 -> 16 at 3.05) are
+          // used where they were measured. Plasma's imported LFO law reads 16 x^2.
+          static const double kStep[] = {1.32, 1.65, 1.95, 2.22, 2.55, 2.85, 3.05};
+          double t = 0;
+          if (v > 1e-6 && bs < 0.5) t = v;
+          else if (v > 1e-6) {
+            int k = 0;
+            while (k < 7 && v >= kStep[k]) ++k;
+            t = k == 0 ? std::min(0.125, std::exp2(std::round(3.33 * (v - 2.1)))) : k == 7 ? std::max(16.0, std::exp2(std::round(3.33 * (v - 2.1)))) : std::exp2(k - 3);
           }
-          double bestErr = 1e9;
-          const int cnt = lfoRateDivisionCount();
-          for (int i = 1; i <= cnt; ++i) {
-            const double b = lfoRateDivisionBeats(cnt - i);
-            const double e2 = std::fabs(std::log(std::max(1e-6, v) / b));
-            if (e2 < bestErr) bestErr = e2, best = i;
-          }
-          set(lfoP(l, key[6] == 'R' ? L_Rise : L_Delay), static_cast<double>(best) / cnt);
+          set(lfoP(l, key[6] == 'R' ? L_Rise : L_Delay), std::clamp(std::sqrt(t / 16.0), 0.0, 1.0));
         }
       if (const Json* cd = lfo->find("curveData")) {
         Curve c = curve(cd);
@@ -1639,6 +1643,11 @@ struct Importer {
     // main rack, 1 is the direct out (skips it), 2 feeds the other bus (no counterpart yet: main, its usual way)
     if (num(pp, "kParamFXBus1Dest", v)) set(G_Bus1Dest, v >= 0.5 && v < 1.5 ? 1 : 0);
     if (num(pp, "kParamFXBus2Dest", v)) set(G_Bus2Dest, v >= 0.5 && v < 1.5 ? 1 : 0);
+    // output 2 = the other bus: Plasma's bus chain (one direction; when both buses name each
+    // other, bus 1 feeds bus 2 and bus 2 goes to the main output)
+    double d1 = 0, d2 = 0;
+    num(pp, "kParamFXBus1Dest", d1), num(pp, "kParamFXBus2Dest", d2);
+    set(tailP(T_BusChain), d1 >= 1.5 ? 1.0 : d2 >= 1.5 ? 2.0 : 0.0);
     if (num(pp, "kParamOversampling", v)) set(G_Quality, v);
     if (num(pp, "kParamS1Compatibility", v)) set(G_S1Mode, v);
     if (num(pp, "kParamGlobalTuning", v)) set(G_ConcertA, v);
@@ -2136,9 +2145,24 @@ struct Importer {
         m.clipActive = std::clamp(static_cast<int>(act->array[0].number), 0, kClipSlots - 1);
       } else if (clipOn) {
         // J-201: with no active clip the source passes the keys through (measured:
-        // such presets play like the clip player is off), so nothing plays from clips
-        set(G_ClipOn, 0);
-        clipOn = false;
+        // such presets play like the clip player is off), so nothing plays from clips.
+        // J-203i: unless the player names a keyboard-span clip in mono span mode that loops: then
+        // the keys play that clip, transposed (measured over the library: with that rule 2 more
+        // presets pass and 3 come within a few dB; the poly, one-shot and static span clips match
+        // far better played through, so they stay off)
+        double sc = -1;
+        std::string mode, pmode;
+        const Json* scp = num(cp, "kParamSpanKeyboardClip", sc) && sc >= 0 && sc < kClipSlots
+                              ? plain(o.find("MidiClip" + std::to_string(static_cast<int>(sc))))
+                              : nullptr;
+        text(scp, "kParamPlaybackMode", pmode);
+        const bool span = scp && text(scp, "kParamSpanKeyboardMode", mode) && mode == "Mono" && pmode != "Static" && pmode != "OneShot";
+        if (span) {
+          m.clipActive = static_cast<int>(sc);
+        } else {
+          set(G_ClipOn, 0);
+          clipOn = false;
+        }
       }
     }
     for (int s = 0; s < kClipSlots; ++s) {

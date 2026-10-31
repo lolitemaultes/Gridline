@@ -53,6 +53,14 @@ InstallStatus installStatus(const std::string& suiteId, const std::string& progr
 bool install(const InstallStatus& st, std::string* err = nullptr);
 // Removes the per-user copies (system-wide copies belong to their package).
 bool remove(const InstallStatus& st, std::string* err = nullptr);
+
+// What the app does at startup with the suites it carries. Once this user has
+// any suite copy in their plug-in folders, every suite this Gridline carries is
+// brought to its version (an updated Gridline replaces the old copies and adds
+// a suite that is new in it), whatever the install answer. Without copies:
+// "yes" installs, "no" does nothing, anything else asks.
+enum class StartupAction { None, Copy, Ask };
+StartupAction startupAction(const std::vector<InstallStatus>& suites, const std::string& pref);
 // The per-user plug-in folders of this system (VST3, CLAP, AU on macOS).
 std::vector<std::pair<std::string, std::string>> userPluginFolders();
 // The version line written into a suite bundle at build time.

@@ -752,6 +752,12 @@ std::string paramText(int k, double v, const std::vector<float>* params) {
       std::snprintf(b, sizeof b, "%.2f Hz", lfoHz(v, pv(lfoP(l, L_Rate10x), 0) >= 0.5));
       return b;
     }
+    if ((p == L_Rise || p == L_Delay) && pv(tailP(T_LfoLaw), 0) >= 0.5) {
+      const double t = lfoLawTime(v);
+      if (t <= 1e-6) return "Off";
+      std::snprintf(b, sizeof b, pv(lfoP(l, L_Bpm), 1) >= 0.5 ? "%.3g beats" : "%.3g s", t);
+      return b;
+    }
     if (p == L_Rise || p == L_Delay) {
       const int i = static_cast<int>(std::lround(v * lfoRateDivisionCount()));
       if (i <= 0) return "Off";
@@ -1007,6 +1013,15 @@ void appendInfos(std::vector<PluginInfo>& v) {
   // source's PAD switch does (J-203f, measured on the filter effect; imports set it per filter)
   set(tailP(T_Pad1), tog("Filter 1 Pad", 0));
   set(tailP(T_Pad2), tog("Filter 2 Pad", 0));
+  // LFO law (all LFOs): Classic takes rise and delay as tempo divisions, fades the rise in
+  // linearly and smooths over a share of the LFO cycle. Imported takes them as times (16 v^2:
+  // seconds on a free LFO, beats on a synced one), fades the rise in linearly and smooths
+  // with a fixed time constant, 3.4 ms / (1 - smooth)^1.8. Preset import selects Imported (J-203i,
+  // measured).
+  set(tailP(T_LfoLaw), ch("LFO Law", {"Classic", "Imported"}, 0));
+  // Bus chain: one effect bus feeds the other's input (after its own rack and volume) instead of
+  // its own output. Preset import selects it for a bus whose output is the other bus.
+  set(tailP(T_BusChain), ch("Bus Chain", {"Off", "Bus 1 into Bus 2", "Bus 2 into Bus 1"}, 0));
 
   // ---- filters
   for (int f = 0; f < kFilters; ++f) {

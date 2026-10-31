@@ -317,6 +317,17 @@ int main() {
     expect(import(body, st, rep, cache) && P(st, pl::G_ClipOn) < 0.5f, "a clip player without an active clip is off");
     body.object["ClipPlayer0"].object["activeClips"] = arr({num(0)});
     expect(import(body, st, rep, cache) && P(st, pl::G_ClipOn) > 0.5f, "a clip player with an active clip stays on");
+    // J-203i: no active clip, but the player names a keyboard-span clip in mono span mode that loops:
+    // the keys play it (measured over the library); poly, one-shot and static span clips play through
+    auto span = [&](const char* mode, const char* playback) {
+      Json mc = obj({{"clip", obj({{"notes", notes}, {"regionEndBeats", num(4)}})}, {"plainParams", obj({{"kParamSpanKeyboardMode", str(mode)}})}});
+      if (playback) mc.object["plainParams"].object["kParamPlaybackMode"] = str(playback);
+      Json b = obj({{"ClipPlayer0", plain({{"kParamEnabled", num(1)}, {"kParamSpanKeyboardClip", num(0)}})}, {"MidiClip0", mc}});
+      return import(b, st, rep, cache) && P(st, pl::G_ClipOn) > 0.5f;
+    };
+    expect(span("Mono", nullptr) && span("Mono", "Pendulum"), "a mono keyboard-span clip plays from the keys");
+    expect(!span("Poly", nullptr) && !span("Mono", "Static") && !span("Mono", "OneShot") && !span("Off", nullptr),
+           "poly, static, one-shot and unspanned clips play the keys through");
   }
 
   // ---- delay: free times in seconds, mix law, unity feedback per 100 %, stable at high feedback
@@ -418,6 +429,120 @@ int main() {
     st.params[static_cast<size_t>(pl::tailP(pl::T_DriveMode))] = 0.f;
     const double leveled = rmsDb(render(st, 60, 0.6, 0.6), 0.2, 0.6);
     expect(finite(render(st, 60, 0.2, 0.2)) && hot - leveled > 6.0, std::string("boost clips 8 dB higher than leveled (" + std::to_string(hot - leveled) + ")").c_str());
+  }
+
+  // ---- LFO law (J-203i, measured on the source with LFO 1 on oscillator A's level, key 60):
+  // free rise / delay are seconds, synced ones snap to power-of-two beats (1 beat at 2.1, 1/4 at
+  // 1.4, 16 at 3.1), the rise is a linear fade, smoothing is a one-pole of
+  // 3.39 ms / (1 - smooth)^1.8 whatever the rate (50 %: 11.8 ms, 90 %: 227 ms)
+  {
+    auto lfoBody = [](double sync, double delay, double rise, double smooth) {
+      return obj({{"Oscillator0", plain({{"kParamEnable", num(1)}, {"kParamVolume", num(0)}})},
+                  {"LFO0", plain({{"kParamBeatSync", num(sync)}, {"kParamRate", num(2)}, {"kParamDelay", num(delay)}, {"kParamRise", num(rise)}, {"kParamSmooth", num(smooth)}})},
+                  {"ModSlot0", obj({{"destModuleTypeString", str("Oscillator")}, {"destModuleID", num(0)}, {"destModuleParamName", str("kParamVolume")},
+                                    {"destModuleParamID", num(1)}, {"source", arr({num(6), num(0)})}, {"plainParams", obj({{"kParamAmount", num(100)}})}})}});
+    };
+    PluginState st;
+    pl::ImportReport rep;
+    auto t16 = [&](int p) { return pl::lfoLawTime(static_cast<double>(P(st, pl::lfoP(0, p)))); };
+    expect(import(lfoBody(0, 0.5, 0.25, 50), st, rep, cache) && P(st, pl::tailP(pl::T_LfoLaw)) > 0.5f, "imports use the LFO law");
+    expect(std::fabs(t16(pl::L_Delay) - 0.5) < 1e-4 && std::fabs(t16(pl::L_Rise) - 0.25) < 1e-4, "free rise and delay import as seconds");
+    expect(import(lfoBody(1, 2.1, 1.4, 0), st, rep, cache) && std::fabs(t16(pl::L_Delay) - 1.0) < 1e-4 && std::fabs(t16(pl::L_Rise) - 0.25) < 1e-4,
+           "synced delay 2.1 is 1 beat, rise 1.4 is 1/4 beat");
+    expect(import(lfoBody(1, 3.1, 2.6, 0), st, rep, cache) && std::fabs(t16(pl::L_Delay) - 16.0) < 1e-3 && std::fabs(t16(pl::L_Rise) - 4.0) < 1e-4,
+           "synced delay 3.1 is 16 beats, rise 2.6 is 4 beats");
+    // a free 0.5 s delay: silent before it (the LFO holds oscillator A's level at 0), sounding after
+    expect(import(lfoBody(0, 0.5, 0, 0), st, rep, cache), "delayed LFO preset imports");
+    const auto d = render(st, 60, 1.0, 1.0);
+    expect(finite(d) && rmsDb(d, 0.6, 0.9) - rmsDb(d, 0.05, 0.4) > 30, "a free 0.5 s delay holds the LFO back for half a second");
+    // a 1 s rise is a linear fade (source, LFO at 180 deg: the 0.40..0.45 s window sits 18.9 dB under
+    // the same LFO point at 1.00..1.05 s; a squared fade gave 13 dB more)
+    {
+      Json body = lfoBody(0, 0, 1, 0);
+      body.object["LFO0"].object["plainParams"].object["kParamPhase"] = num(180);
+      expect(import(body, st, rep, cache), "rising LFO preset imports");
+      const auto r = render(st, 60, 1.2, 1.2);
+      const double drop = rmsDb(r, 1.0, 1.05) - rmsDb(r, 0.40, 0.45);
+      expect(std::fabs(drop - 18.9) < 1.5, std::string("the LFO rise is a linear fade (" + std::to_string(drop) + " dB at 0.4 s)").c_str());
+    }
+    // smoothing is a fixed time: at 50 % a 2 Hz LFO keeps its swing (the classic law smooths over
+    // half a cycle and flattens it)
+    auto swing = [&](const std::vector<float>& x) {
+      double lo = 1e9, hi = -1e9;
+      for (double t = 0.5; t < 1.5; t += 0.02) lo = std::min(lo, rmsDb(x, t, t + 0.02)), hi = std::max(hi, rmsDb(x, t, t + 0.02));
+      return hi - lo;
+    };
+    expect(import(lfoBody(0, 0, 0, 0), st, rep, cache), "plain LFO preset imports");
+    const double s0 = swing(render(st, 60, 1.6, 1.6));
+    expect(import(lfoBody(0, 0, 0, 50), st, rep, cache), "smoothed LFO preset imports");
+    const double s50 = swing(render(st, 60, 1.6, 1.6));
+    st.params[static_cast<size_t>(pl::tailP(pl::T_LfoLaw))] = 0.f;
+    const double s50c = swing(render(st, 60, 1.6, 1.6));
+    expect(s0 > 20 && s0 - s50 < 3, std::string("smooth 50 % keeps a 2 Hz LFO's swing (" + std::to_string(s0) + " / " + std::to_string(s50) + " dB)").c_str());
+    expect(s50 - s50c > 3, std::string("the classic law smooths more (" + std::to_string(s50c) + " dB)").c_str());
+  }
+
+  // ---- a macro moved by another route passes that on whatever the slot order (J-203i, measured on
+  // the source: macro 8 at 100 -> macro 1 by 25 %, macro 1 -> oscillator A level 50 %, level 0.1:
+  // H1 -30.1 dBFS with either slot first, -35.9 without the macro 8 route)
+  {
+    auto chainBody = [](bool readerFirst, double amt) {
+      const Json feeder = obj({{"destModuleTypeString", str("Macro")}, {"destModuleID", num(0)}, {"destModuleParamName", str("kParamValue")}, {"destModuleParamID", num(0)},
+                               {"source", arr({num(32), num(0)})}, {"plainParams", obj({{"kParamAmount", num(amt)}})}});
+      const Json reader = obj({{"destModuleTypeString", str("Oscillator")}, {"destModuleID", num(0)}, {"destModuleParamName", str("kParamVolume")}, {"destModuleParamID", num(1)},
+                               {"source", arr({num(25), num(0)})}, {"plainParams", obj({{"kParamAmount", num(50)}})}});
+      return obj({{"Oscillator0", plain({{"kParamEnable", num(1)}, {"kParamVolume", num(0.1)}})},
+                  {"Macro7", plain({{"kParamValue", num(100)}})},
+                  {"ModSlot0", readerFirst ? reader : feeder},
+                  {"ModSlot1", readerFirst ? feeder : reader}});
+    };
+    PluginState st;
+    pl::ImportReport rep;
+    auto lev = [&](bool readerFirst, double amt) { return import(chainBody(readerFirst, amt), st, rep, cache) ? rmsDb(render(st, 60, 0.6, 0.6), 0.2, 0.5) : 99.0; };
+    const double off = lev(true, 0), fwd = lev(false, 25), rev = lev(true, 25);
+    expect(fwd - off > 4.5 && std::fabs(rev - fwd) < 0.2,
+           std::string("the macro chain lifts the level by the same 5.8 dB in either slot order (" + std::to_string(fwd - off) + " / " + std::to_string(rev - off) + ")").c_str());
+  }
+
+  // ---- compressor makeup under modulation reads the source's knob, gain = 1 + 30.62 knob^2 (J-203i,
+  // measured on the source with the threshold at the top: macro routes of 25 / 50 / 75 % lift the
+  // output by 9.4 / 18.8 / 25.3 dB; a 50 % route equals a static makeup of 8.66)
+  {
+    auto compBody = [](double makeup, double amt) {
+      return obj({{"Oscillator0", plain({{"kParamEnable", num(1)}, {"kParamVolume", num(0.1)}})},
+                  {"FXRack0", obj({{"FX", arr({obj({{"type", num(5)}, {"FXComp", plain({{"kParamEnable", num(1)}, {"kParamThresh", num(1)}, {"kParamMakeup", num(makeup)}})}})})}})},
+                  {"Macro7", plain({{"kParamValue", num(100)}})},
+                  {"ModSlot0", obj({{"destModuleTypeString", str("FXComp")}, {"destModuleID", num(0)}, {"destModuleParamName", str("kParamMakeup")},
+                                    {"destModuleParamID", num(6)}, {"source", arr({num(32), num(0)})}, {"plainParams", obj({{"kParamAmount", num(amt)}})}})}});
+    };
+    PluginState st;
+    pl::ImportReport rep;
+    auto lev = [&](double makeup, double amt) { return import(compBody(makeup, amt), st, rep, cache) ? rmsDb(render(st, 60, 0.6, 0.6), 0.2, 0.5) : 99.0; };
+    const double l0 = lev(1, 0), l25 = lev(1, 25), l50 = lev(1, 50), st50 = lev(8.6551, 0);
+    expect(std::fabs(l25 - l0 - 9.4) < 0.6 && std::fabs(l50 - l0 - 18.8) < 0.6 && std::fabs(l50 - st50) < 0.3,
+           std::string("compressor makeup routes follow 1 + 30.62 knob^2 (" + std::to_string(l25 - l0) + " / " + std::to_string(l50 - l0) + " dB)").c_str());
+  }
+
+  // ---- bus output 2 feeds the other bus (J-203i, measured on the source: oscillator A only into bus 1,
+  // H1 -14.9 dBFS to the main output, -8.9 through bus 2 at full volumes, -14.9 with either
+  // volume at half: both bus volumes apply)
+  {
+    auto busBody = [](double dest, double v1, double v2) {
+      return obj({{"Oscillator0", plain({{"kParamEnable", num(1)}})},
+                  {"RoutingSlot0", plain({{"kParamRoutingDest", str("kRoutingDestNone")}, {"kParamFXBus1Level", num(100)}})},
+                  {"Global0", plain({{"kParamFXBus1Dest", num(dest)}, {"kParamFXBus1Vol", num(v1)}, {"kParamFXBus2Vol", num(v2)}})}});
+    };
+    PluginState st;
+    pl::ImportReport rep;
+    auto lev = [&](double dest, double v1, double v2) { return import(busBody(dest, v1, v2), st, rep, cache) ? rmsDb(render(st, 60, 0.6, 0.6), 0.2, 0.5) : 99.0; };
+    const double mainOut = lev(0, 1, 1), chained = lev(2, 1, 1);
+    expect(std::lround(P(st, pl::tailP(pl::T_BusChain))) == 1, "bus 1 output 2 imports as the bus 1 into bus 2 chain");
+    const double half1 = lev(2, 0.5, 1), half2 = lev(2, 1, 0.5);
+    expect(std::fabs(chained - mainOut - 6.0) < 0.5 && std::fabs(half1 - mainOut) < 0.5 && std::fabs(half2 - mainOut) < 0.5,
+           std::string("the chained bus takes both bus volumes (" + std::to_string(chained - mainOut) + " / " + std::to_string(half1 - mainOut) + " / " +
+                       std::to_string(half2 - mainOut) + " dB)").c_str());
+    expect(import(obj({{"Global0", plain({{"kParamFXBus2Dest", num(2)}})}}), st, rep, cache) && std::lround(P(st, pl::tailP(pl::T_BusChain))) == 2,
+           "bus 2 output 2 imports as the bus 2 into bus 1 chain");
   }
 
   // ---- old states pad the new parameters with their defaults (noise tone off, even unison mix)

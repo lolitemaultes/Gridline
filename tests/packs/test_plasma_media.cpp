@@ -840,6 +840,57 @@ int main() {
     expect(std::fabs(ampDown - full + 6.0) < 0.5 && ampDownOld < ampDown - 20.0, "a matrix route takes the voice amp through zero (classic: clamped silent)");
   }
 
+  // ---- J-203i: more wavetable warps on the imported law, the start phase, unmapped multisample keys.
+  // The same synthetic saw as above; expected balances measured on the source at key 60 (dBFS):
+  // mirror 0.25 H1 -29.1 H2 -23.1; self phase distortion 0.5 H1 -21.0 H2 -74.0 H3 -32.1;
+  // quantize 0.7 H1 -20.9 H4 -41.3 H6 -35.2 (4.5 steps per cycle).
+  {
+    std::vector<float> saw(2048);
+    for (size_t i = 0; i < saw.size(); ++i) {
+      const float p = static_cast<float>(i) / 2048.f;
+      saw[i] = p < 0.5f ? 2.f * p : 2.f * p - 2.f;
+    }
+    auto warped = [&](const char* warp, double amt, int law = -1, PluginState* out = nullptr) {
+      Json wt = obj({{"plainParams", obj({{"kParamWarpMenu", str(warp)}, {"kParamWarp", num(amt)}})}, {"embeddedWTData", floats(saw)}});
+      PluginState st;
+      pl::ImportReport rep;
+      pl::importSerumBytes(container(obj({{"Oscillator0", obj({{"plainParams", obj({{"kParamEnable", num(1)}})}, {"WTOsc0", wt}})}}), "Warp"), st, rep,
+                           {cache.string()});
+      if (law >= 0) st.params[static_cast<size_t>(pl::tailP(pl::T_OscLaw))] = static_cast<float>(law);
+      std::vector<float> L, R;
+      renderLR(st, L, R);
+      if (out) *out = st;
+      std::vector<double> h;
+      for (int k = 1; k <= 6; ++k) h.push_back(harmDb(L, k));
+      return h;
+    };
+    PluginState st;
+    const auto mir = warped("kDLM", 0.25, -1, &st), mirOld = warped("kDLM", 0.25, 0);
+    const auto spd = warped("kSelfPD", 0.5), q = warped("kQuantize", 0.7);
+    std::printf("# mirror 0.25 H2-H1 %.1f (classic %.1f); self PD 0.5 H2-H1 %.1f H3-H1 %.1f; quantize 0.7 H4-H1 %.1f H6-H1 %.1f\n", mir[1] - mir[0],
+                mirOld[1] - mirOld[0], spd[1] - spd[0], spd[2] - spd[0], q[3] - q[0], q[5] - q[0]);
+    expect(std::fabs(mir[1] - mir[0] - 6.0) < 1.5 && std::fabs(mirOld[1] - mirOld[0] - 6.0) > 3.0, "the mirror warp follows the source (classic law unchanged)");
+    expect(spd[1] - spd[0] < -35.0 && std::fabs(spd[2] - spd[0] + 11.1) < 1.5, "self phase distortion follows the source");
+    expect(std::fabs(q[3] - q[0] + 20.4) < 2.0 && std::fabs(q[5] - q[0] + 14.3) < 2.0, "quantize takes partial steps, as on the source");
+    // a wavetable starts at 180 degrees on the source unless the preset sets its phase
+    expect(st.params[static_cast<size_t>(pl::oscP(0, pl::O_Phase))] == 0.5f, "an imported wavetable starts at the source's default phase");
+
+    // a key no zone of the map covers is silent on the source (measured on kits), not played by the nearest zone
+    const fs::path content = cache / "Content";
+    const std::string one = "<control> default_path=Tones\n<region> sample=Tone.wav pitch_keycenter=60 lokey=58 hikey=62\n";
+    Json ms = obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamType", str("kOsc_MultiSample")}})},
+                   {"MultiSampleOsc0", obj({{"sfzPathRelative", str("Kit/One.sfz")}, {"embedded_sfz", str(one)}})}});
+    PluginState mk;
+    pl::ImportReport mr;
+    const bool okMk = pl::importSerumBytes(container(obj({{"Oscillator0", ms}}), "Zones"), mk, mr, {content.string()});
+    const double in = meanDb(renderWindows(mk, 1.f, 24000, 24000, 60), 5, 40), out72 = meanDb(renderWindows(mk, 1.f, 24000, 24000, 72), 5, 40);
+    PluginState mkOld = mk;
+    mkOld.params[static_cast<size_t>(pl::tailP(pl::T_MsLaw))] = 0.f;
+    const double old72 = meanDb(renderWindows(mkOld, 1.f, 24000, 24000, 72), 5, 40);
+    std::printf("# zone 58..62: key 60 %.1f dB, key 72 %.1f dB (own law %.1f dB)\n", in, out72, old72);
+    expect(okMk && in > -40 && out72 < -100 && old72 > -40, "keys outside every zone are silent on the mapped law (own law: nearest zone)");
+  }
+
   std::error_code ec;
   fs::remove_all(cache, ec);
   return finish();

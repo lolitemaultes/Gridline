@@ -9,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <thread>
 #include "Json.h"
 #include "Settings.h"
@@ -199,17 +200,51 @@ Target currentTarget() {
 #else
   t.arch = "unknown";
 #endif
+#if defined(__linux__)
+  std::ifstream f("/etc/os-release", std::ios::binary);
+  if (!f) f.open("/usr/lib/os-release", std::ios::binary);
+  if (f) t.package = linuxPackage(std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()));
+#endif
   return t;
 }
 
-const Asset* pickAsset(const Release& r, const Target& t) {
-  std::string suffix;  // the part after "Gridline-<version>"
-  if (t.os == "macos") suffix = "-macos-universal.dmg";
-  else if (t.os == "windows" && (t.arch == "x86_64" || t.arch == "aarch64"))
-    suffix = std::string("-windows-") + (t.arch == "aarch64" ? "arm64" : "x64") + "-setup.exe";
-  else if (t.os == "linux" && (t.arch == "x86_64" || t.arch == "aarch64")) suffix = "-linux-" + t.arch + ".appimage";
-  else if ((t.os == "freebsd" || t.os == "openbsd" || t.os == "netbsd") && t.arch != "unknown") suffix = "-" + t.os + "-" + t.arch + ".tar.gz";
-  if (suffix.empty()) return nullptr;
+std::string linuxPackage(const std::string& osRelease) {
+  std::vector<std::string> ids;  // ID first, then ID_LIKE's words
+  size_t a = 0;
+  while (a < osRelease.size()) {
+    size_t b = osRelease.find('\n', a);
+    if (b == std::string::npos) b = osRelease.size();
+    std::string line = osRelease.substr(a, b - a);
+    a = b + 1;
+    const bool id = line.rfind("ID=", 0) == 0, like = line.rfind("ID_LIKE=", 0) == 0;
+    if (!id && !like) continue;
+    std::string v = lower(line.substr(line.find('=') + 1));
+    for (char& c : v)
+      if (c == '"' || c == '\'' || c == '\r' || c == '\t') c = ' ';
+    size_t p = 0;
+    while (p < v.size()) {
+      while (p < v.size() && v[p] == ' ') ++p;
+      size_t q = v.find(' ', p);
+      if (q == std::string::npos) q = v.size();
+      if (q > p) ids.insert(id ? ids.begin() : ids.end(), v.substr(p, q - p));
+      p = q;
+    }
+  }
+  static const char* const kDeb[] = {"debian", "ubuntu", "linuxmint", "pop", "elementary", "zorin", "kali", "raspbian", "neon", "deepin", "mx"};
+  static const char* const kRpm[] = {"fedora", "rhel", "centos", "rocky", "almalinux", "ol", "nobara", "ultramarine",
+                                     "suse", "opensuse", "opensuse-leap", "opensuse-tumbleweed", "sles", "mageia", "openmandriva"};
+  for (const std::string& i : ids) {
+    for (const char* d : kDeb)
+      if (i == d) return "deb";
+    for (const char* d : kRpm)
+      if (i == d) return "rpm";
+  }
+  return "";
+}
+
+namespace {
+// The asset named "Gridline-<version><suffix>" (any spelling of the version as a fallback).
+const Asset* assetWithSuffix(const Release& r, std::string suffix) {
   suffix = lower(suffix);
   const std::string v = r.version.valid ? toString(r.version) : std::string();
   const Asset* loose = nullptr;
@@ -220,6 +255,22 @@ const Asset* pickAsset(const Release& r, const Target& t) {
     if (!loose) loose = &a;  // version spelled differently in the file name
   }
   return loose;
+}
+}  // namespace
+
+const Asset* pickAsset(const Release& r, const Target& t) {
+  if (t.os == "macos") return assetWithSuffix(r, "-macos-universal.dmg");
+  if (t.os == "windows" && (t.arch == "x86_64" || t.arch == "aarch64"))
+    return assetWithSuffix(r, std::string("-windows-") + (t.arch == "aarch64" ? "arm64" : "x64") + "-setup.exe");
+  if (t.os == "linux" && (t.arch == "x86_64" || t.arch == "aarch64")) {
+    // The distribution's own package where we ship one for it; the AppImage everywhere else.
+    const Asset* pkg = nullptr;
+    if (t.package == "deb") pkg = assetWithSuffix(r, std::string("-linux-") + (t.arch == "aarch64" ? "arm64" : "amd64") + ".deb");
+    if (t.package == "rpm") pkg = assetWithSuffix(r, "-linux-" + t.arch + ".rpm");
+    return pkg ? pkg : assetWithSuffix(r, "-linux-" + t.arch + ".appimage");
+  }
+  if ((t.os == "freebsd" || t.os == "openbsd" || t.os == "netbsd") && t.arch != "unknown") return assetWithSuffix(r, "-" + t.os + "-" + t.arch + ".tar.gz");
+  return nullptr;
 }
 
 const Asset* checksumAsset(const Release& r) {
@@ -681,7 +732,7 @@ Release fakeRelease(const std::string& version) {
       "<!-- assets are attached below -->\n"
       "<img src=\"https://example.invalid/badge.svg\" alt=\"build\">\n";
   const char* suffixes[] = {"-macos-universal.dmg", "-windows-x64-setup.exe", "-windows-arm64-setup.exe", "-linux-x86_64.AppImage",
-                            "-linux-aarch64.AppImage", "-linux-x86_64.tar.gz", "-freebsd-x86_64.tar.gz", "-openbsd-x86_64.tar.gz",
+                            "-linux-aarch64.AppImage", "-linux-amd64.deb", "-linux-arm64.deb", "-linux-x86_64.rpm", "-linux-aarch64.rpm", "-linux-x86_64.tar.gz", "-freebsd-x86_64.tar.gz", "-openbsd-x86_64.tar.gz",
                             "-netbsd-x86_64.tar.gz"};
   for (const char* s : suffixes) {
     Asset a;

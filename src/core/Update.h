@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gl {
@@ -64,14 +65,23 @@ const Release* pickRelease(const std::vector<Release>& releases, bool beta);
 
 // ---- downloads for this computer ----
 struct Target {
+  Target() = default;
+  Target(std::string o, std::string a, std::string p = {}) : os(std::move(o)), arch(std::move(a)), package(std::move(p)) {}
   std::string os;    // "macos", "windows", "linux", "freebsd", "openbsd", "netbsd"
   std::string arch;  // "x86_64", "aarch64"
+  std::string package;  // Linux: the distribution's package format, "deb" or "rpm"; "" = none of ours
 };
-Target currentTarget();
+Target currentTarget();  // on Linux, `package` comes from /etc/os-release
+// The package format of a Linux distribution from its os-release text (ID and ID_LIKE):
+// "deb" for Debian, Ubuntu and their derivatives, "rpm" for Fedora, RHEL and openSUSE
+// families, "" for the rest (Arch, Gentoo, ...).
+std::string linuxPackage(const std::string& osRelease);
 // The installer / package of `r` for `t` (nullptr: none, offer the release page):
 //   macOS          Gridline-<v>-macos-universal.dmg
 //   Windows        Gridline-<v>-windows-<x64|arm64>-setup.exe
-//   Linux          Gridline-<v>-linux-<x86_64|aarch64>.AppImage
+//   Linux deb      Gridline-<v>-linux-<amd64|arm64>.deb
+//   Linux rpm      Gridline-<v>-linux-<x86_64|aarch64>.rpm
+//   other Linux    Gridline-<v>-linux-<x86_64|aarch64>.AppImage (also when the release has no package)
 //   FreeBSD etc.   Gridline-<v>-<system>-<arch>.tar.gz
 const Asset* pickAsset(const Release& r, const Target& t);
 const Asset* checksumAsset(const Release& r);  // "...SHA256SUMS"

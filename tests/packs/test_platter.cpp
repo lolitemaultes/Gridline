@@ -1183,6 +1183,114 @@ void testCues(const std::string& path) {
   expect(maxStep(d.L, 0, d.L.size()) < 0.2, "jumps and loop wraps crossfade (no clicks)");
 }
 
+
+// ------------------------------------------------------------------ hot cue taps (J-204)
+// Hot cue pads tapped as fast as a hand (or a script) can: every tap lands, nothing sticks.
+// Pads 1 and 2 are set on beats 2 and 6 (quantize), the taps go down and up one block apart
+// or in the same block, alternate pads, overlap, and on a playing deck jump every block.
+void testHotTaps(const std::string& path) {
+  constexpr double h0 = 2 * 22050.0, h1 = 6 * 22050.0;
+  auto setup = [&](bool quantize) {
+    Deck d = makeDeck(path, 120, [quantize](PluginState& s, pl::Model&) {
+      s.params[pl::PSync] = 0;
+      s.params[pl::PStartTime] = 0;
+      s.params[pl::PStopTime] = 0;
+      s.params[pl::PKeyLock] = 0;
+      s.params[pl::PQuantize] = quantize ? 1.f : 0.f;
+    });
+    run(d, 256, 256, [&](Deck& dd, int64_t, int) { cmd(dd, pl::CmdSeek, 0, h0 + 300); });
+    button(d, pl::CtlHot1, true);
+    button(d, pl::CtlHot1, false);
+    run(d, 256, 256, [&](Deck& dd, int64_t, int) { cmd(dd, pl::CmdSeek, 0, h1 - 200); });
+    button(d, pl::CtlHot1 + 1, true);
+    button(d, pl::CtlHot1 + 1, false);
+    run(d, 256, 256);
+    return d;
+  };
+  for (const bool q : {true, false}) {
+    const char* qs = q ? " (quantize)" : " (no quantize)";
+    const double w0 = q ? h0 : h0 + 300, w1 = q ? h1 : h1 - 200;
+    {
+      Deck d = setup(q);
+      expect(std::fabs(view(d).hot[0] - w0) < 1 && std::fabs(view(d).hot[1] - w1) < 1, (std::string("hot taps: two pads set") + qs).c_str());
+      // stopped: down and up one block apart, 24 times on pad 1 (each previews, each returns)
+      int previewed = 0, back = 0;
+      for (int k = 0; k < 24; ++k) {
+        button(d, pl::CtlHot1, true);
+        run(d, 256, 256);
+        if (view(d).playing && view(d).pos > w0 && view(d).pos < w0 + 600) ++previewed;
+        button(d, pl::CtlHot1, false);
+        run(d, 256, 256);
+        if (!view(d).playing && std::fabs(view(d).pos - w0) < 1) ++back;
+      }
+      expect(previewed == 24 && back == 24, (std::string("hot taps, stopped: every tap previews and returns") + qs).c_str());
+      // stopped: down and up in the same block, alternating pads: the deck ends on the last, stopped
+      for (int k = 0; k < 25; ++k) {
+        button(d, pl::CtlHot1 + (k & 1), true);
+        button(d, pl::CtlHot1 + (k & 1), false);
+        run(d, 256, 256);
+      }
+      expect(!view(d).playing && std::fabs(view(d).pos - w0) < 1, (std::string("hot taps, same block: stopped on the last pad") + qs).c_str());
+      // overlapping pads: the newest one previews; its release returns there and stops
+      button(d, pl::CtlHot1, true);
+      run(d, 512, 256);
+      button(d, pl::CtlHot1 + 1, true);
+      run(d, 512, 256);
+      button(d, pl::CtlHot1, false);
+      run(d, 512, 256);
+      expect(view(d).playing && view(d).pos > w1 && view(d).pos < w1 + 1200, (std::string("hot taps, overlap: the newest pad keeps previewing") + qs).c_str());
+      button(d, pl::CtlHot1 + 1, false);
+      run(d, 256, 256);
+      expect(!view(d).playing && std::fabs(view(d).pos - w1) < 1, (std::string("hot taps, overlap: released back on the newest pad, stopped") + qs).c_str());
+      // the same in one block: down 1, down 2, up 1, up 2
+      button(d, pl::CtlHot1, true);
+      button(d, pl::CtlHot1 + 1, true);
+      button(d, pl::CtlHot1, false);
+      button(d, pl::CtlHot1 + 1, false);
+      run(d, 512, 256);
+      expect(!view(d).playing && std::fabs(view(d).pos - w1) < 1, (std::string("hot taps, overlap in one block: stopped on the newest pad") + qs).c_str());
+      // an empty pad set right after a jump (same block) lands where the jump went
+      run(d, 256, 256, [&](Deck& dd, int64_t, int) { cmd(dd, pl::CmdSeek, 0, h1 + 5000); });
+      button(d, pl::CtlHot1, true);
+      button(d, pl::CtlHot1, false);
+      button(d, pl::CtlHot1 + 2, true);
+      button(d, pl::CtlHot1 + 2, false);
+      run(d, 256, 256);
+      expect(std::fabs(view(d).hot[2] - w0) < 1, (std::string("hot taps: a pad set after a jump in the same block takes the jump's place") + qs).c_str());
+      expect(finite(d.L) && finite(d.R), (std::string("hot taps, stopped: finite output") + qs).c_str());
+    }
+    {
+      // playing: a tap every block (64 and 256 frames), alternating pads: each one jumps
+      for (const int block : {64, 256}) {
+        Deck d = setup(q);
+        button(d, pl::CtlPlay, true);
+        button(d, pl::CtlPlay, false);
+        run(d, 4410, block);
+        const size_t from = d.L.size();
+        int landed = 0;
+        for (int k = 0; k < 40; ++k) {
+          const double h = (k & 1) ? w1 : w0;
+          button(d, pl::CtlHot1 + (k & 1), true);
+          run(d, block, block);
+          // (quantize keeps the beat phase: within a beat of the pad)
+          const double p = view(d).pos;
+          if (q ? std::fabs(p - h) < 22050 : (p > h && p < h + 2.0 * block)) ++landed;
+          button(d, pl::CtlHot1 + (k & 1), false);
+          run(d, block, block);
+        }
+        run(d, 2048, block);
+        char b[96];
+        std::snprintf(b, sizeof b, "hot taps, playing (block %d): all 40 taps jump%s", block, qs);
+        expect(landed == 40, b);
+        std::snprintf(b, sizeof b, "hot taps, playing (block %d): still playing%s", block, qs);
+        expect(view(d).playing, b);
+        std::snprintf(b, sizeof b, "hot taps, playing (block %d): every jump crossfades (step %.3f)%s", block, maxStep(d.L, from, d.L.size()), qs);
+        expect(maxStep(d.L, from, d.L.size()) < 0.2 && maxStep(d.R, from, d.R.size()) < 0.2, b);
+      }
+    }
+  }
+}
+
 // ------------------------------------------------------------------ takes
 void testTakes(const std::string& path, bool keyLock) {
   pl::Take take;
@@ -1731,6 +1839,7 @@ int main(int argc, char** argv) {
   if (want("keylock")) testKeyLock(sine);
   if (want("sync")) testSync(music100);
   if (want("cues")) testCues(music120);
+  if (want("hottaps")) testHotTaps(music120);
   if (want("blocks")) testBlockSize(music120);
   if (want("takes")) {
     testTakes(music120, false);

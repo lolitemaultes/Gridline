@@ -632,9 +632,15 @@ class PlasmaGen final : public Generator {
     const float off = nt ? nt->off[d] : goff_[d];
     if (off == 0) return b;
     const PMap& pm = pmaps()[static_cast<size_t>(k)];
-    if (cubeDest_[static_cast<size_t>(d)]) {  // Imported matrix law: the offset lands on the source's knob (value = knob^3)
+    if (cubeDest_[static_cast<size_t>(d)] == 1) {  // Imported matrix law: the offset lands on the source's knob (value = knob^3)
       const float c = std::clamp(std::cbrt(std::max(0.f, toNorm(pm, b))) + off, 0.f, 1.f);
       return fromNorm(pm, c * c * c);
+    }
+    if (cubeDest_[static_cast<size_t>(d)] == 2) {  // compressor makeup on the source's knob: gain = 1 + 30.62 knob^2
+      static const int mk = fxParamIndex(FxComp, "kParamMakeup");
+      const double g = fxPlain(FxComp, mk, static_cast<double>(b));
+      const double c = std::clamp(std::sqrt(std::max(0.0, g - 1.0) / 30.62) + static_cast<double>(off), 0.0, 1.0);
+      return static_cast<float>(fxNorm(FxComp, mk, 1.0 + 30.62 * c * c));
     }
     return fromNorm(pm, toNorm(pm, b) + off);
   }
@@ -660,6 +666,14 @@ class PlasmaGen final : public Generator {
     }
     return false;
   }
+  // the compressor's makeup gain: the source's knob reads 1 + 30.62 knob^2 (fitted and verified
+  // against the hosted plugin's output under modulation)
+  bool squareKnob(int dst) const {
+    if (dst < kFxBase || dst >= kFxBase + kFxSlots * X_Count) return false;
+    const int s = (dst - kFxBase) / X_Count, p = (dst - kFxBase) % X_Count - X_P0;
+    static const int makeup = fxParamIndex(FxComp, "kParamMakeup");
+    return p >= 0 && p == makeup && std::lround(G(fxP(s, X_Type))) == FxComp;
+  }
 
   void buildMatrix() {
     const bool law = modLaw_ = G(tailP(T_ModLaw)) >= 0.5f;
@@ -677,7 +691,7 @@ class PlasmaGen final : public Generator {
         d = destCount_++;
         destOf_[static_cast<size_t>(dst)] = d;
         destParam_[d] = dst;
-        cubeDest_[static_cast<size_t>(d)] = law && cubeKnob(dst);
+        cubeDest_[static_cast<size_t>(d)] = static_cast<uint8_t>(!law ? 0 : cubeKnob(dst) ? 1 : squareKnob(dst) ? 2 : 0);
       }
       Slot& sl = slots_[slotCount_++];
       sl.index = s;
@@ -686,6 +700,23 @@ class PlasmaGen final : public Generator {
       sl.dest = d;
       if ((src >= SrcNoise && src <= SrcSub) || src == SrcFilter1 || src == SrcFilter2) audioSrc_ = true;
     }
+    if (!law) return;
+    // Imported matrix law: a macro passes its modulated value on, whatever the slot order (J-203i:
+    // a route into a macro in a later slot reached the routes that read the macro only on the next
+    // pass, i.e. never, since offsets restart each pass). Routes into macros run first, each
+    // after the routes that move its own source macro (chain depth; cycles stop at 8).
+    auto macroOf = [](int k) { return k >= macroP(0) && k < macroP(0) + kMacros ? k - macroP(0) : -1; };
+    int depth[kMacros] = {};
+    for (int pass = 0; pass < kMacros; ++pass)
+      for (int i = 0; i < slotCount_; ++i) {
+        const int m = macroOf(destParam_[slots_[i].dest]), k = slots_[i].src >= SrcMacro1 && slots_[i].src <= SrcMacro8 ? slots_[i].src - SrcMacro1 : -1;
+        if (m >= 0 && k >= 0 && k != m) depth[m] = std::min(kMacros, std::max(depth[m], depth[k] + 1));
+      }
+    auto key = [&](const Slot& s) {
+      if (macroOf(destParam_[s.dest]) < 0) return 100;
+      return s.src >= SrcMacro1 && s.src <= SrcMacro8 ? depth[s.src - SrcMacro1] : 0;
+    };
+    std::stable_sort(slots_, slots_ + slotCount_, [&](const Slot& a, const Slot& b) { return key(a) < key(b); });
   }
 
   // ---------------------------------------------------------------- notes
@@ -1041,6 +1072,15 @@ class PlasmaGen final : public Generator {
     OscSet s;
     oscSettings(n, o, s);
     const int mode = static_cast<int>(V(&n, oscP(o, O_PhaseMemory)));
+    if (mode > 0 && !memSeeded_[o] && G(tailP(T_OscLaw)) >= 0.5f) {
+      // Imported law (J-203i, measured): a free-running oscillator starts from its initial phase
+      // (the source's first note after a reset begins at the phase knob, 180 degrees by default)
+      for (int u = 0; u < kMaxUnison; ++u) {
+        const double x = phaseMem_[o][u] + static_cast<double>(V(&n, oscP(o, O_Phase)));
+        phaseMem_[o][u] = x - std::floor(x);
+      }
+    }
+    memSeeded_[o] = true;
     n.osc[o].start(s, V(&n, oscP(o, O_Phase)), V(&n, oscP(o, O_RandPhase)), V(&n, oscP(o, O_UniRandStart)), mode,
                    mode > 0 ? phaseMem_[o] : nullptr, rngNext(rng_), n.key, n.vel);
     n.scan[o] = 0;
@@ -1262,8 +1302,11 @@ class PlasmaGen final : public Generator {
     const int type = static_cast<int>(V(n, lfoP(l, L_Type)));
     const int mode = static_cast<int>(V(n, lfoP(l, L_Mode)));
     const double hz = lfoRateHz(n, l);
-    const double delay = divSeconds(V(n, lfoP(l, L_Delay)));
-    const double rise = divSeconds(V(n, lfoP(l, L_Rise)));
+    const bool law = G(tailP(T_LfoLaw)) >= 0.5f;
+    // imported law (J-203i, measured): times, in beats when the LFO is synced
+    const double unit = V(n, lfoP(l, L_Bpm)) >= 0.5f ? 60.0 / tempo_ : 1.0;
+    const double delay = law ? lfoLawTime(V(n, lfoP(l, L_Delay))) * unit : divSeconds(V(n, lfoP(l, L_Delay)));
+    const double rise = law ? lfoLawTime(V(n, lfoP(l, L_Rise))) * unit : divSeconds(V(n, lfoP(l, L_Rise)));
     s.t += dt;
     double y = 0, y2 = 0;
     if (s.t >= delay) {
@@ -1358,7 +1401,8 @@ class PlasmaGen final : public Generator {
     // smooth
     const double sm = V(n, lfoP(l, L_Smooth));
     if (sm > 0) {
-      const double tau = sm * sm * 0.5 / std::max(0.05, hz) + 1e-4;
+      // imported law (J-203i, measured on 25..100 %, independent of rate): a fixed time constant
+      const double tau = law ? 0.00339 / std::pow(std::max(0.025, 1.0 - sm), 1.8) : sm * sm * 0.5 / std::max(0.05, hz) + 1e-4;
       const double c = 1.0 - std::exp(-dt / tau);
       s.sm += (y - s.sm) * c;
       s.smY += (y2 - s.smY) * c;
@@ -1980,13 +2024,28 @@ class PlasmaGen final : public Generator {
     FxContext fc;
     fc.sr = sr_, fc.tempo = tempo_, fc.beat = beat_, fc.playing = playing_, fc.driveBoost = G(tailP(T_DriveMode)) >= 0.5f;
     float b1v = static_cast<float>(busGain(GV(G_Bus1Vol))), b2v = static_cast<float>(busGain(GV(G_Bus2Vol)));
-    runRack(1, bus[4], bus[5], m, fc);
-    runRack(2, bus[6], bus[7], m, fc);
+    // bus chain: one bus feeds the other's input (after its own rack and level) instead of going to
+    // its own output; one direction only, so there is no feedback
+    const int chain = static_cast<int>(std::lround(G(tailP(T_BusChain))));
+    if (chain == 2) {
+      runRack(2, bus[6], bus[7], m, fc);
+      for (int i = 0; i < m; ++i) bus[4][i] += bus[6][i] * b2v, bus[5][i] += bus[7][i] * b2v;
+      runRack(1, bus[4], bus[5], m, fc);
+    } else {
+      runRack(1, bus[4], bus[5], m, fc);
+      if (chain == 1)
+        for (int i = 0; i < m; ++i) bus[6][i] += bus[4][i] * b1v, bus[7][i] += bus[5][i] * b1v;
+      runRack(2, bus[6], bus[7], m, fc);
+    }
     for (int i = 0; i < m; ++i) {
-      if (G(G_Bus1Dest) < 0.5f) bus[0][i] += bus[4][i] * b1v, bus[1][i] += bus[5][i] * b1v;
-      else bus[2][i] += bus[4][i] * b1v, bus[3][i] += bus[5][i] * b1v;
-      if (G(G_Bus2Dest) < 0.5f) bus[0][i] += bus[6][i] * b2v, bus[1][i] += bus[7][i] * b2v;
-      else bus[2][i] += bus[6][i] * b2v, bus[3][i] += bus[7][i] * b2v;
+      if (chain != 1) {
+        const int o = G(G_Bus1Dest) < 0.5f ? 0 : 2;
+        bus[o][i] += bus[4][i] * b1v, bus[o + 1][i] += bus[5][i] * b1v;
+      }
+      if (chain != 2) {
+        const int o = G(G_Bus2Dest) < 0.5f ? 0 : 2;
+        bus[o][i] += bus[6][i] * b2v, bus[o + 1][i] += bus[7][i] * b2v;
+      }
     }
     runRack(0, bus[0], bus[1], m, fc);
     const float dv = static_cast<float>(busGain(GV(G_DirectVol)));
@@ -2137,7 +2196,7 @@ class PlasmaGen final : public Generator {
   std::vector<float> base_;
   std::vector<int> destOf_;
   int destParam_[kModSlots] = {};
-  std::array<bool, kModSlots> cubeDest_ = {};
+  std::array<uint8_t, kModSlots> cubeDest_ = {};  // imported knob law per destination: 0 plain, 1 cube, 2 makeup square
   bool modLaw_ = false;  // T_ModLaw Imported
   Slot slots_[kModSlots];
   int slotCount_ = 0, destCount_ = 0;
@@ -2161,6 +2220,7 @@ class PlasmaGen final : public Generator {
   bool alt_ = false;
   int alt2_ = 0, vcStep_ = -1;
   double phaseMem_[kOscs][kMaxUnison] = {};
+  bool memSeeded_[kOscs] = {};
   double subPhase_ = 0;
   float wheel_ = 0, modWheel_ = 0, pressure_ = 0;
   float chanBend_[16] = {}, chanY_[16] = {}, chanZ_[16] = {};

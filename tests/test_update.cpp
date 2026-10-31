@@ -346,6 +346,35 @@ void prereleases() {
   expect(pick("linux", "x86_64") == "Gridline-0.7.0-beta.1-linux-x86_64.AppImage" &&
              pick("linux", "aarch64") == "Gridline-0.7.0-beta.1-linux-aarch64.AppImage",
          "beta: Linux AppImages");
+  auto pickPkg = [&](const char* arch, const char* pkg) {
+    const Asset* a = pickAsset(real, Target{"linux", arch, pkg});
+    return a ? a->name : std::string("-");
+  };
+  expect(pickPkg("x86_64", "deb") == "Gridline-0.7.0-beta.1-linux-amd64.deb", "beta: Debian and Ubuntu get the .deb");
+  expect(pickPkg("x86_64", "rpm") == "Gridline-0.7.0-beta.1-linux-x86_64.rpm", "beta: Fedora and openSUSE get the .rpm");
+  expect(pickPkg("aarch64", "deb") == "Gridline-0.7.0-beta.1-linux-aarch64.AppImage" &&
+             pickPkg("aarch64", "rpm") == "Gridline-0.7.0-beta.1-linux-aarch64.AppImage",
+         "beta: no package for this processor in the release: the AppImage");
+  expect(pickPkg("x86_64", "") == "Gridline-0.7.0-beta.1-linux-x86_64.AppImage", "beta: other distributions get the AppImage");
+  const Release fk = fakeRelease("0.7.0");
+  const Asset* arm = pickAsset(fk, Target{"linux", "aarch64", "deb"});
+  const Asset* armRpm = pickAsset(fk, Target{"linux", "aarch64", "rpm"});
+  expect(arm && arm->name == "Gridline-0.7.0-linux-arm64.deb" && armRpm && armRpm->name == "Gridline-0.7.0-linux-aarch64.rpm",
+         "ARM packages: arm64 .deb, aarch64 .rpm");
+
+  // The distribution's package format from /etc/os-release.
+  expect(linuxPackage("PRETTY_NAME=\"Ubuntu 24.04 LTS\"\nNAME=\"Ubuntu\"\nID=ubuntu\nID_LIKE=debian\n") == "deb", "os-release: Ubuntu -> deb");
+  expect(linuxPackage("ID=debian\nVERSION_ID=\"12\"\n") == "deb", "os-release: Debian -> deb");
+  expect(linuxPackage("ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n") == "deb", "os-release: Mint -> deb");
+  expect(linuxPackage("ID=some-ubuntu-spin\r\nID_LIKE='ubuntu'\r\n") == "deb", "os-release: an unknown derivative by ID_LIKE, quotes and CRLF");
+  expect(linuxPackage("NAME=\"Fedora Linux\"\nID=fedora\n") == "rpm", "os-release: Fedora -> rpm");
+  expect(linuxPackage("ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n") == "rpm", "os-release: Rocky -> rpm");
+  expect(linuxPackage("ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\n") == "rpm", "os-release: openSUSE -> rpm");
+  expect(linuxPackage("ID=arch\n") == "" && linuxPackage("ID=gentoo\n") == "" && linuxPackage("") == "",
+         "os-release: Arch, Gentoo, unknown -> AppImage");
+  expect(linuxPackage("ID=neon\nID_LIKE=\"ubuntu debian\"\nUBUNTU_CODENAME=noble\n") == "deb" &&
+             linuxPackage("VERSION_ID=40\nID=fedora\nPLATFORM_ID=\"platform:f40\"\n") == "rpm",
+         "os-release: other keys ending in ID are not read");
   expect(pick("freebsd", "x86_64") == "Gridline-0.7.0-beta.1-freebsd-x86_64.tar.gz" &&
              pick("netbsd", "x86_64") == "Gridline-0.7.0-beta.1-netbsd-x86_64.tar.gz",
          "beta: BSD tarballs");
