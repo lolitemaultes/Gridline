@@ -5,7 +5,9 @@
 #      steps in this pattern) stay dark. The rack dump shows each row's light.
 #   2. Kerf: a loop dropped into the editor, a note on region 3's key: the editor reports region 3
 #      lit ("kerf-lit:3" and lit=3 in its trace line); after the note ends it goes dark again.
-# Waits use "waitfor" (frames stop counting until the light is reported), so slow machines pass.
+# Waits use "waitfor" (frames stop counting until the light is reported), so slow machines pass; after the
+# drop the script holds 5 s of real time so the loop is loaded and sliced before the note (a slow runner
+# reached the note while the drop was still loading).
 #   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_test_seltmann> -DOUT=<dir> -P j186_play_lights.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -113,6 +115,7 @@ run(kerf 120 "10 dragenter ${zx} ${zy} \"${OUT}/Break 96.wav\"
 42 dragmove ${zx} ${zy}
 44 dragmove ${zx} ${zy}
 46 drop
+60 waitfor never-reported 5
 70 noteon ${kch} 62
 71 waitfor kerf-lit:3 30
 74 shot \"${OUT}/kerf_lit.ppm\"
