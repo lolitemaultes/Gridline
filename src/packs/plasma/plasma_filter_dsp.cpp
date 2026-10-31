@@ -21,7 +21,9 @@ enum Engine {
   EngSvf, EngLadder, EngComb, EngFlange, EngPhaser, EngEq, EngRing, EngSnh, EngCombs, EngAllpass, EngRoom, EngScream,
   EngBass, EngFormant, EngReject, EngDistComb, EngDj, EngPz, EngExp,
   // matched voicing (imports, "Boost" drive mode): designs fitted to measured responses
-  EngMSvf, EngMLad, EngMX, EngMPass, EngMRing, EngMDiff, EngMComb, EngMPhaser, EngMAllp, EngMCombs, EngMComb2, EngMScream, EngMEq, EngMReverb, EngMDj, EngMForm, EngMBass
+  EngMSvf, EngMLad, EngMX, EngMPass, EngMRing, EngMDiff, EngMComb, EngMPhaser, EngMAllp, EngMCombs, EngMComb2, EngMScream, EngMEq, EngMReverb, EngMDj, EngMForm, EngMBass,
+  // distorting types (J-203k): ring mods, sample and hold, distorted combs, screamer, dirty ladder
+  EngWRing, EngWSnh, EngWDist, EngWScream, EngWDirty
 };
 int engineOf(int t) {
   if (t <= 3 || t == 84 || (t >= 99 && t <= 102)) return EngLadder;
@@ -50,10 +52,14 @@ int engineOf(int t) {
 // cutoffs 88 Hz .. 10 kHz, resonance 0..100 %). Plasma's own designs, not copies.
 int engineMatched(int t) {
   if (t >= 4 && t <= 38) return EngMSvf;
+  if (t == 102) return EngWDirty;
   if (t == 84 || (t >= 99 && t <= 102)) return EngMLad;
   if (t == 89 || t == 96 || t == 105 || t == 106) return EngMX;
   if (t == 103) return EngMPass;  // the pole-zero type measures as a straight wire at every setting
-  if (t == 76) return EngMRing;
+  if (t == 76 || t == 77) return EngWRing;
+  if (t == 78 || t == 79) return EngWSnh;
+  if (t >= 90 && t <= 93) return EngWDist;
+  if (t == 83) return EngWScream;
   if (t >= 39 && t <= 54) return EngMComb;  // combs and flangers (the same loop, measured mixes)
   if (t == 69 || t == 70) return EngMComb;   // flange-phase: the HL6 flanger with two allpasses in the loop
   if (t >= 55 && t <= 68) return EngMPhaser;
@@ -222,6 +228,56 @@ struct OpS {
     return y;
   }
 };
+// Saturating state-variable core (the distorting types, J-203k): a Chamberlin loop run as two half
+// steps per sample, each integrator step limited to +-0.8333 and each state softly bent (y - c y^3),
+// the two half steps averaged [1/4 1/2 1/4]. Fitted and verified against the hosted plugin's output.
+struct SatC {
+  double f = 0.1, q = 2, bend = 0.05;
+  // hz: resonance frequency; qMax: the damping the resonance asks for (capped for stability)
+  void set(double sr, double hz, double qd) {
+    const double w = std::min(0.25, std::clamp(hz, 1.0, sr * 0.49) / (2.0 * sr));  // per half step
+    f = 2.0 * std::sin(3.14159265358979 * w);
+    q = std::clamp(qd, -0.2, 2.0 / f - f / 2);
+    bend = 0.5 * f;
+  }
+};
+struct SatS {
+  double lp = 0, bp = 0;
+  void half(const SatC& c, double x) {
+    lp += std::clamp(c.f * bp, -0.8333, 0.8333);
+    lp = std::clamp(lp, -1.4, 1.4);
+    lp -= c.bend * lp * lp * lp;
+    const double hp = x - lp - c.q * bp;
+    bp += std::clamp(c.f * hp, -0.8333, 0.8333);
+    bp = std::clamp(bp, -1.4, 1.4);
+    bp -= c.bend * bp * bp * bp;
+  }
+  void run(const SatC& c, double x, double& lo, double& bo) {
+    const double l0 = lp, b0 = bp;
+    half(c, x);
+    const double l1 = lp, b1 = bp;
+    half(c, x);
+    lo = 0.25 * (l0 + lp) + 0.5 * l1;
+    bo = 0.25 * (b0 + bp) + 0.5 * b1;
+  }
+};
+// the distorting types' input stage: gain, hard limit at 1.5, cubic soft clip that lands on 1.0 there
+inline double cubicClip(double x) {
+  x = std::clamp(x, -1.5, 1.5);
+  return x - (4.0 / 27.0) * x * x * x;
+}
+// rational tanh (the dirty ladder's stages) and its slope
+inline double ratTanh(double x) {
+  x = std::clamp(x, -3.0, 3.0);
+  const double x2 = x * x;
+  return x * (27 + x2) / (27 + 9 * x2);
+}
+inline double ratTanhD(double x) {
+  if (x <= -3.0 || x >= 3.0) return 0.0;
+  const double x2 = x * x, d = 27 + 9 * x2, e = x2 - 9;
+  return 9 * e * e / (d * d);
+}
+
 // biquad (RBJ) for EQ types
 struct Bq {
   float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
@@ -281,6 +337,10 @@ struct Filter::Ch {
   SvfCd fc[5];
   double fg[5] = {};
   double mA = 0, mB = 0, mC = 0;  // matched loop filters: high-pass coefficient, low-pass pole, low-pass gain
+  // distorting types (J-203k): saturating cores, input gain, loop gain / coefficient, delays, quantiser
+  SatC sc1, sc2;
+  double wg = 1, wa = 0, wG = 0, wL = 1, wfb = 0.2, wop = 0, wdc = 0, wh = 1, wk = 0, wOut = 1;
+  int wD = 1, wD2 = 1;
   // state (cleared by clear())
   SvfS ss1, ss2, ss3, fs[3];
   OpS o1, o2, o3, o4, od, oe[8];
@@ -290,6 +350,9 @@ struct Filter::Ch {
   float ap[16] = {};
   double mh[8] = {}, ml[8] = {};  // matched loop filter states
   SvfSd fz[5];                    // matched formant band-passes
+  SatS sat1, sat2;
+  double wfbS = 0, wdcS = 0, wenv = 0, wlp[4] = {}, wtr[4] = {}, wu = 0;
+  bool wInit = false;
   float fbState = 0;
   float rmPh = 0, rmPh2 = 0, snhPh = 0, snhHold = 0;
   int w = 0;
@@ -309,6 +372,11 @@ struct Filter::Ch {
     for (double& v : ml) v = 0;
     for (auto& v : fz) v = SvfSd{};
     fbState = rmPh = rmPh2 = snhPh = snhHold = 0;
+    sat1 = sat2 = SatS{};
+    wfbS = wdcS = wenv = wu = 0;
+    for (double& v : wlp) v = 0;
+    for (double& v : wtr) v = 0;
+    wInit = false;
     w = 0;
     for (int& v : wi) v = 0;
     std::fill(buf, buf + kBuf, 0.f);
@@ -433,6 +501,78 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
         h.w3 = type == 106 ? 0.f : static_cast<float>(gh * var);
         break;
       }
+      case EngWRing: {
+        // ring modulators: self-oscillating saturating cores at the cutoff (RMT: a second one VAR away,
+        // +-10.7 octaves), the input through the drive stage times their product
+        h.wg = std::pow(1.0 + drive, 4.0);
+        h.drv = 1, h.head = 0;
+        h.sc1.set(sr, f, -0.1);
+        h.sc2.set(sr, std::min(f * std::exp(7.39357 * (2 * var - 1)), 0.15 * sr), -0.1);
+        h.wOut = type == 76 ? 1.42 : 2.0;
+        break;
+      }
+      case EngWSnh: {
+        // sample and hold: a clock at a multiple of the cutoff, resonance quantises the held level
+        h.wg = std::pow(1.0 + drive, 4.0);
+        h.drv = 1, h.head = 0;
+        h.snhInc = static_cast<float>(std::min(1.0, f * 2.0 / sr));
+        const double u = 1 - 0.8333 * res;
+        h.wL = std::exp(15.2492 * u * u);
+        h.wOut = 1.0;
+        break;
+      }
+      case EngWDist: {
+        // distorted combs: two allpass sections on a delay set by VAR inside a clipped, gated loop whose
+        // gain follows the drive, into a saturating low-pass / band-pass at the cutoff
+        const bool one = type <= 91;
+        h.drv = 1, h.head = 0;
+        h.sc1.set(sr, f, 2 - 2 * std::pow(0.15 * res, 0.25));
+        const double fv = 329.3 * std::exp(7.39357 * (var - 0.5));
+        h.wD = std::clamp(static_cast<int>(sr / (2 * fv) + 1.5), 1, std::min(kBuf / 2 - 2, static_cast<int>(0.0185 * sr)));
+        h.wa = one ? 0.99 * res : 1 - 0.99 * res;
+        h.wG = (one ? 0.0625 + 0.3 * drive * drive : 0.25 + 0.75 * drive * drive) * 4.0 / 3.0;
+        h.wdc = 1 - std::exp(-kPi2 * 4.0 / sr);
+        h.wop = std::min(1.0, h.sc1.f);
+        // type 1: the source's loop gives back level as the resonance rises (white noise, VAR 0 / 50 / 100:
+        // +1.1 / +4.4 / +10 dB at resonance 30 / 60 / 90 % over the allpass pair at VAR 0, 3/4 of it at
+        // VAR 50, none at VAR 100): 12.3 r^2 dB x (1 - VAR^2)
+        h.wOut = one ? std::pow(10.0, 12.3 * res * res * (1 - var * var) / 20) : 1.0;
+        break;
+      }
+      case EngWScream: {
+        // screamer: driven input, a feedback loop (VAR, at least 0.2) through the saturating low-pass and
+        // two damped delay lines (0.403 / 0.320 of the cutoff period); self-oscillates when VAR is high
+        h.wg = std::pow(1.0 + drive, 4.0);
+        h.drv = 1, h.head = 0;
+        const double fc = std::min(f, 0.1507 * sr);
+        h.sc1.set(sr, fc, 2 - 2 * std::pow(res, 0.25));
+        const double P = sr / (2 * fc) + 1;
+        h.wD = std::clamp(static_cast<int>(0.40348 * P + 0.5), 1, kBuf / 2 - 2);
+        h.wD2 = std::clamp(static_cast<int>(0.32003 * P + 0.5), 1, kBuf / 2 - 2);
+        h.wfb = std::max(var, 0.2);
+        h.wop = std::min(1.0, h.sc1.f);
+        h.wOut = 0.25;
+        h.wh = 0.22;  // input level into the clipping stages
+        break;
+      }
+      case EngWDirty: {
+        // dirty ladder: four one-poles, a soft clip at each stage input, solved per sample (Newton);
+        // feedback cubic in resonance, VAR raises the stage gain near its top
+        h.wg = std::pow(1.0 + drive, 4.0);
+        h.drv = 1, h.head = 0;
+        const double fm = 0.845 + 0.12 * std::max(0.0, (res - 0.75) / 0.25);
+        const double g = std::tan(3.14159265358979 * std::clamp(f * fm, 8.0, sr * 0.49) / sr);
+        h.wa = g / (1 + g);
+        h.wk = 7.762 * res * res * res;
+        // VAR: each stage's memory is held a little above unity, 1 + 0.55 VAR^16 per 48 kHz sample (white noise
+        // at resonance 0, cutoff 0.5: +1.2 / +5 / +20 dB below the cutoff at VAR 70 / 75 / 80 %, much less at
+        // high cutoffs); once that outruns the stage's own decay (VAR above about 85 % at cutoff 0.5, earlier
+        // at low cutoffs) the source runs off to a DC rail, here the stage states stop at +-2
+        h.wh = 1;
+        h.wL = 1 + 0.55 * std::pow(var, 16.0) * 48000.0 / sr;
+        h.wOut = 0.9;
+        break;
+      }
       case EngMPass:
         break;
       case EngMRing:
@@ -504,10 +644,11 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
             h.apA = static_cast<float>((w - 1) / (w + 1));
           }
           h.outGain = static_cast<float>(0.5 / (1 + res));
-          // loop filters (one-pole) follow the comb pitch: L6 opens from f / 16 to 256 f, H6 closes from
-          // f / 128 to 32 f, HL6 widens a band around f (fitted to where the teeth stop)
-          if (ct == 41 || ct == 42) h.damp.set(sr, f * std::exp2(12 * var - 4));
-          else if (ct == 43 || ct == 44) h.damp.set(sr, f * std::exp2(12 * var - 7));
+          // loop filters (one-pole) follow the comb pitch: L6 opens from f / 16 to 256 f (J-203k: along VAR^1.6,
+          // so VAR 50 sits near f), H6 closes from f / 128 to 128 f (J-203k: the top reaches past 20 kHz at
+          // low cutoffs), HL6 widens a band around f (fitted to where the teeth stop)
+          if (ct == 41 || ct == 42) h.damp.set(sr, f * std::exp2(12 * std::pow(var, 1.6) - 4));
+          else if (ct == 43 || ct == 44) h.damp.set(sr, f * std::exp2(14 * var - 7));
           else if (ct == 45 || ct == 46) {
             h.damp.set(sr, f * std::exp2(10 * var));
             h.op2.set(sr, f * std::exp2(-10 * var));
@@ -941,6 +1082,111 @@ void Filter::process(float& l, float& r) {
           h.ds1.run(h.d1, x, lp, bp, hp);
           y = static_cast<float>(h.w1 * lp + h.w2 * bp + h.w3 * hp);
         }
+        break;
+      }
+      case EngWRing: {
+        if (!h.wInit) h.sat1.bp = h.sat2.bp = 0.01, h.wInit = true;
+        const double xi = cubicClip(x * h.wg);
+        double o1, b1, o2, b2;
+        h.sat1.run(h.sc1, 0.0, o1, b1);
+        double m = o1;
+        if (t == 77) {
+          h.sat2.run(h.sc2, 0.0, o2, b2);
+          m *= o2;
+        }
+        y = static_cast<float>(2 * xi * m * h.wOut);
+        break;
+      }
+      case EngWSnh: {
+        const double xi = cubicClip(x * h.wg);
+        h.snhPh += h.snhInc;
+        if (h.snhPh >= 1) {
+          h.snhPh -= 1;
+          h.snhHold = static_cast<float>(std::floor(xi * h.wL + 0.5) / h.wL);
+        }
+        y = static_cast<float>((t == 79 ? xi - h.snhHold : h.snhHold) * h.wOut);
+        break;
+      }
+      case EngWDist: {
+        constexpr int half = kBuf / 2;
+        double u = std::clamp(static_cast<double>(x) + std::clamp(h.wG * h.wfbS, -1.0, 1.0), -1.0, 1.0);
+        for (int sct = 0; sct < 2; ++sct) {
+          float* line = h.buf + sct * half;
+          int& wi = h.wi[sct];
+          double d = line[(wi - h.wD + half) & (half - 1)];
+          if (t >= 92) {
+            h.wlp[sct] += h.wop * (d - h.wlp[sct]);
+            h.wtr[sct] += 0.01 * (h.wlp[sct] - h.wtr[sct]);
+            d = h.wlp[sct] - h.wtr[sct];
+          }
+          const double wv = u + h.wa * d;
+          line[wi] = static_cast<float>(wv);
+          wi = (wi + 1) & (half - 1);
+          u = d - h.wa * wv;
+        }
+        const double w1 = std::clamp(32 * h.wG * u, -1.0, 1.0);
+        h.wdcS += h.wdc * (w1 - h.wdcS);
+        const double w = w1 - h.wdcS;
+        h.wenv = 0.5 * std::fabs(static_cast<double>(x) + h.wenv);
+        const double gate = h.wenv > 1.585e-5 ? 0.125 : 3785.75 * h.wenv + 0.005;
+        h.wfbS = gate * w;
+        double lo, bo;
+        h.sat1.run(h.sc1, h.wfbS, lo, bo);
+        y = static_cast<float>(std::clamp((t == 90 || t == 92) ? lo : bo, -1.0, 1.0) * h.wOut);
+        break;
+      }
+      case EngWScream: {
+        constexpr int half = kBuf / 2;
+        const double a = cubicClip(x * h.wg * h.wh);
+        const double b = cubicClip((h.wfbS * h.wfb + a) * h.wg);
+        double lo, bo;
+        h.sat1.run(h.sc1, b, lo, bo);
+        double v = cubicClip(lo);
+        const int D[2] = {h.wD, h.wD2};
+        for (int sct = 0; sct < 2; ++sct) {
+          float* line = h.buf + sct * half;
+          int& wi = h.wi[sct];
+          line[wi] = static_cast<float>(v);
+          const double r = line[(wi - D[sct] + half) & (half - 1)];
+          wi = (wi + 1) & (half - 1);
+          h.wlp[sct] += h.wop * (r - h.wlp[sct]);
+          h.wtr[sct] += 0.01 * (h.wlp[sct] - h.wtr[sct]);
+          v = h.wlp[sct] - h.wtr[sct];
+        }
+        h.wfbS = v;
+        y = static_cast<float>(std::clamp(h.wOut * lo, -1.0, 1.0) / h.wh);
+        break;
+      }
+      case EngWDirty: {
+        const double G = h.wa, k = h.wk, hg = h.wh, xin = static_cast<double>(x) * h.wg;
+        double* st = h.ls;
+        for (int s = 0; s < 4; ++s) st[s] = std::clamp(st[s] * h.wL, -2.0, 2.0);
+        double u = h.wu, ys[4];
+        for (int it = 0; it < 5; ++it) {
+          double in = u, dp = 1;
+          for (int s = 0; s < 4; ++s) {
+            const double yo = (hg * ratTanh(in) - st[s]) * G + st[s];
+            dp *= G * hg * ratTanhD(in);
+            ys[s] = yo;
+            in = yo;
+          }
+          const double F = u + k * ys[3] - xin, dF = 1 + k * dp;
+          const double du = F / dF;
+          u -= du;
+          if (std::fabs(du) < 1e-9) break;
+        }
+        {
+          double in = u;
+          for (int s = 0; s < 4; ++s) {
+            const double v = (hg * ratTanh(in) - st[s]) * G;
+            const double yo = v + st[s];
+            st[s] = yo + v;
+            ys[s] = yo;
+            in = yo;
+          }
+        }
+        h.wu = std::isfinite(u) ? u : 0.0;
+        y = static_cast<float>(ys[3] * h.wOut);
         break;
       }
       case EngMPass:

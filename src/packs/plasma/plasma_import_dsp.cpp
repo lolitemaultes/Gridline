@@ -1893,8 +1893,16 @@ struct Importer {
         const Json* fl = list->array[idx].find("flex");
         if (!fl || fl->type != Json::Type::Array) continue;
         FxExtra& ex = m.fxExtra[static_cast<size_t>(it->second)];
-        if (fl->array.size() > 0) ex.shapeA = curve(&fl->array[0]);
-        if (fl->array.size() > 1) ex.shapeB = curve(&fl->array[1]);
+        // the X-Shaper's curves bend the other way from the source's other curves (J-203k, fitted against the
+        // hosted plugin's output with bent curves): flip the tension
+        auto bent = [](Curve cv) {
+          for (CurvePt& q : cv) q.c = -q.c;
+          return cv;
+        };
+        if (fl->array.size() > 0) ex.shapeA = bent(curve(&fl->array[0]));
+        // an empty second curve is the straight line (the drive then fades the first curve back to clean)
+        if (fl->array.size() > 1) ex.shapeB = bent(curve(&fl->array[1]));
+        if (!ex.shapeA.empty() && ex.shapeB.empty()) ex.shapeB = Curve{{0, 0, 0}, {1, 1, 0}};
       }
     }
   }

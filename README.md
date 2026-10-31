@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.7.0-beta.4" src="https://img.shields.io/badge/version-0.7.0--beta.4-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.0" src="https://img.shields.io/badge/version-0.7.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -45,28 +45,34 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 <tr>
 <td width="50%" valign="top">
 
-**Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks.
+**Make music together.** Work on one project live with other people, on the same network or across the internet, peer to peer and end-to-end encrypted, with no server and no account. Invite someone with a one-time code; each collaborator gets a colour, a cursor and a picture, and everyone keeps their own windows, transport and sound. [More below](#work-together).
 
-**175 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (slicer), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
+**The Gridline Suite.** Gridline's own instruments and effects run in any DAW: 118 plugins as VST3, CLAP and, on macOS, Audio Unit, plus Gridline Suite Mini, 35 compact effects. Every download carries both. [More below](#the-gridline-suite).
+
+**Platter and Seltmann.** Platter puts two DJ decks and a mixer on a channel, with scratching that feels like a record, DJ controller mappings and performances recorded as editable automation. Seltmann takes any audio you drop on it, finds the tempo, chops it and flips it with ready-made layouts.
+
+**175 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (a region slicer that cuts on the beat grid), Pixel Tone (plays your own pictures), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
 
 **Real plugins, real interfaces.** VST3, CLAP, VST2, AU and LV2 instruments and effects open with their own interface, can run sandboxed in a separate process, and are checked by a built-in compatibility sweep. Edits made in a plugin's own interface can be undone too.
-
-**Make music together.** Invite someone with a one-time code and work on the same project live, peer to peer and end-to-end encrypted, with no server and no account. Each collaborator gets a colour, a cursor and a picture.
-
-**A welcome screen.** Gridline opens on your recent projects, each with a sketch of its arrangement, its tempo and its length. Mark favourites, start from a template or the demo song, and see in the Collaborative view who is working on a shared project right now. Big projects never freeze the window while they open: a loading window counts every sample and plugin as it loads, logs how long each took, and Cancel takes you back to the project you had open.
 
 </td>
 <td width="50%" valign="top">
 
+**Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks.
+
+**A welcome screen.** Gridline opens on your recent projects, each with a sketch of its arrangement, its tempo and its length. Mark favourites, start from a template or the demo song, and see in the Collaborative view who is working on a shared project right now. Big projects never freeze the window while they open: a loading window counts every sample and plugin as it loads, logs how long each took, and Cancel takes you back to the project you had open.
+
 **A mixer that keeps time.** Smooth swing for steps and notes alike, plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ. Offline renders are bit-identical whatever the buffer size.
 
-**Recording and editing.** Audio input with latency compensation, takes and comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, on the playlist or inside patterns, MIDI learn on every control. Several selected audio clips change together: a level, fade or pitch change moves each of them by the same amount.
+**Recording and editing.** Audio input with latency compensation, takes and comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, on the playlist or inside patterns, MIDI learn on every control. Several selected audio clips change together: a level, fade or pitch change moves each of them by the same amount. Stretched clips follow the project tempo, and clips you never stretched keep their audio when the tempo changes.
+
+**Split stems and Import from URL.** Separate any audio clip into vocals, drums, bass and other (or six stems with guitar and piano) on your own computer, right onto new tracks under the clip ([docs/stems.md](docs/stems.md)). Bring the audio of a web page into the project as a lossless WAV clip ([docs/import-url.md](docs/import-url.md)).
 
 **One smooth stretch and pitch engine.** Clips, the sampler, slices, the audio editor, Platter and the pitch and time effects share one continuous engine that sounds the same live and in a render, from half speed to four times and an octave either way. Pick Stretch (time and pitch apart), Resample (like a turntable) or, for clips and the sampler, Rubber Band. A clip keeps its length when you change its pitch, and Rubber Band notes and clips do their start-up work ahead of time, so a chord or several clips on one beat start without crackles.
 
 **Your look, your sounds.** Five control styles (Slate, the default, plus Graphite, Hairline, Lumen and Classic), light and dark themes with your own accent and role colours, and sound themes for the interface sounds, all in Settings > Theme.
 
-**Windows on every monitor.** Pop the mixer, piano roll, browser or any Gridline plugin editor out into a window of its own and put it on another screen. Detached panels come back where you left them; a plugin window opens inside the main window again until you pop it out.
+**Windows on every monitor.** Pop the mixer, piano roll, browser or any Gridline plugin editor out into a window of its own and put it on another screen. Detached panels come back where you left them; a plugin window opens inside the main window again until you pop it out. Zooming glides and dragged clips and notes glide between grid lines.
 
 **Scripting, templates and AI assistants.** Sandboxed Lua scripts for the piano roll and for hardware controllers, project templates, a background sample browser with tempo and key search, and an optional, off by default MCP server so AI assistants can read and edit a project.
 
@@ -75,6 +81,72 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 </table>
 
 **Demo song.** File > New from template > Demo song (or Help > Load demo song) opens "Gridline", a 4:25 liquid drum & bass track (it also greets a new install on its first launch) at 174 BPM made only with the built-in instruments, effects and automation: no samples. It is a full project to take apart, from the felted wooden mallet lead and the moving reese to the rain bed, the buses, the sidechains and the automation lanes. `gridline demo song.json` writes it to a file; `tools/make_demo_song.py` is the script that composes it.
+
+## Work together
+
+<p align="center">
+  <img src="docs/images/collaboration.png" alt="A collaborative session: the Collaboration panel, a collaborator's cursor and their edits in the playlist" width="100%">
+</p>
+
+Collaborative projects let two or more people work on one project at the same time, on the same network or across the internet. See [docs/collaboration.md](docs/collaboration.md).
+
+<p align="center">
+  <img src="docs/images/collaborative-view.png" alt="The welcome screen's Collaborative view: shared projects, who is working on them, changes waiting" width="100%">
+</p>
+
+- **No server, no account.** Computers connect peer to peer: directly, by hole punching (ICE with STUN), through automatic router port opening (UPnP-IGD, NAT-PMP, PCP), through another collaborator or an optional TURN relay. **Test my connection** reports what your network allows.
+- **Invites** are one-time codes that expire (15 minutes to 24 hours). The invitee pastes the code in File > Join collaborative project... and both sides see the same safety code to compare.
+- **Live:** channels, notes, the playlist, the mixer, automation, Gridline plugin settings and audio files sync in a fraction of a second. Each person keeps their own windows, zoom and transport, and sound stays on each computer; **Follow their playhead** listens along.
+- **Presence:** collaborators appear in the top bar with their picture or initials; their cursors, in their colour, point at the same track, note, step or knob on every screen whatever the layout or zoom, and their changes flash in their colour.
+- **Safe:** end-to-end encrypted (X25519, XChaCha20-Poly1305), every change signed by its author, saved continuously in a crash-safe log. Undo takes back only your own changes; edits made while apart that touch the same thing go to the admin's Sync review.
+- **The Collaborative view** on the welcome screen joins with a code, starts or shares a project and lists every collaborative project on this computer with its members, your role, a Sync review or unsent changes waiting and who is working on it right now. Presence is asked of your collaborators directly, encrypted and only while the view is shown; turn off **Show that I am online to collaborators** to stay out of it.
+- Collaborative projects use Gridline's own plugins only, and everyone in a session needs the same, newest Gridline version.
+
+## The Gridline Suite
+
+Every Gridline download also carries the **Gridline Suite**: 118 of Gridline's own instruments and effects (50 instruments, 68 effects), each as a plugin of its own for any DAW (vendor "Gridline"), in one bundle per format: `Gridline Suite.vst3`, `Gridline Suite.clap` and, on macOS, `Gridline Suite.component`. Gridline Suite Mini, 35 compact effects, ships beside it in the same way (`Gridline Suite Mini.vst3`, `.clap`, `.component`). Each plugin is the same DSP and the same editor as inside Gridline:
+
+- **Parameters:** every parameter of the plugin, named, with its range, steps and value text (`1.20 kHz`, `-6.0 dB`), automatable; effects add **Mix** and **Bypass**.
+- **Instruments** take MIDI; **effects** have a sidechain input where the effect uses one (Compressor, Limiter, Sidechain Ducker, Cipher, Cloister, Tideline, Transient Split, Hit Repeater); effects that play from notes (Cipher, Plumb, Tideline) also take MIDI.
+- **Presets:** the factory presets in the editor's preset menu (and as Audio Unit factory presets).
+- **State** is the plugin's state as Gridline saves it, so a sound moves between Gridline and another host unchanged. Latency is reported to the host.
+- **Editor:** the plugin's own editor from Gridline, resizable (it zooms to the window) and sharp on HiDPI screens.
+
+The installers put the suite where hosts find it: the Windows installer into `Common Files\VST3` and `Common Files\CLAP`, the `.deb` and `.rpm` into `/usr/lib/vst3` and `/usr/lib/clap`. On macOS, with the AppImage and with the `.tar.gz` builds, Gridline asks on first launch whether to copy the suite into your plug-in folders and keeps it up to date (**Settings, Files, Gridline Suite**, or `gridline suite status|install|remove`). The members, their identifiers and the folders per system are in [docs/gridline-suite.md](docs/gridline-suite.md).
+
+```sh
+cmake --build build --target gridline_suite_gridline   # build/plugins/Gridline Suite.{vst3,clap,component}
+build/gridline suite-info gridline                     # members, identifiers and categories
+```
+
+## Platter
+
+<p align="center">
+  <img src="docs/images/platter.png" alt="Platter with a track on each deck and the mixer between them" width="100%">
+</p>
+
+Platter is a two-deck DJ setup on a channel: deck A and deck B with a mixer between them, or one deck as a layout.
+
+- **Decks.** Drop a track on a deck (from the browser, your desktop or the playlist's clip list) and Platter finds its tempo and beat grid, then plays it in time with the project or with the other deck; drum and bass reads at its own tempo, /2 and x2 buttons correct a track heard at half or double time, and the padlock frees it to its own tempo. Each deck has key lock, cue and play, eight hot cues, loops and beat jumps, slip mode, motor start and brake times and a pitch fader, with stacked three-band colour waveforms, beat grids and a phase meter.
+- **Mixer.** Trim, a three-band EQ with kills and a filter per channel, channel faders with meters and a curve, a crossfader with assign, curve, cut and reverse, and the master level. The EQ and master knobs have 0 dB at 12 o'clock, like a DJ mixer, and a track on one deck at the default settings plays at its own level.
+- **Scratching.** The platter follows the scratch mechanics of Mixxx: a jog wheel sets the record's speed from how fast its ticks arrive, a mouse drag follows the hand and a fast release throws the record, touching a playing record catches it and letting go ramps it back up. The Jog and Hand feel knobs set how far and how heavily it moves.
+- **DJ controllers.** Ready mappings for the Pioneer DDJ-200, Hercules DJControl Inpulse 200 and Numark Mixtrack Pro FX drive both decks and the mixer at once, with LEDs that follow each deck; any other controller maps through MIDI learn. Mappings are saved with the project and as presets.
+- **Recorded performances.** While Gridline records, what you play becomes plain automation: one clip per control you used (the record's position, play, the wheel and its touch, the mouse, loops, every fader and knob), kept together in a pattern. In song mode each pass is a new pattern placed once on the playlist where you played it, so you see the wheel moving on that clip; double-click a curve to edit it (or pick Clips to get separate playlist clips). The clips hold the decks' state, so playback can start anywhere in a pass, and you can cut, trim, move and copy it. Left as recorded, a pass replays exactly as played, at any buffer size; edit a curve and the sound follows. A second pass never records over the first: it gets a pattern of its own, and the pass patterns' clips also show as channel rack rows. **Record as: Take** keeps a performance as one note instead. See [docs/plugins/platter-recording.md](docs/plugins/platter-recording.md).
+
+Platter is part of the Gridline Suite too, so it also runs in other DAWs.
+
+## Seltmann
+
+<p align="center">
+  <img src="docs/images/seltmann.png" alt="Seltmann with a chopped beat, its sequence lane, layouts and pads" width="100%">
+</p>
+
+Seltmann is an automatic sample chopper. Drop in any audio (a break, a melodic loop, a whole song, a one-shot or a texture): it works out what the sound is, its tempo and where bar 1 starts, chops it into lettered regions at a size that suits it, and plays as soon as you pick one of 59 layout cards.
+
+- **The sequence lane** reorders, splits and joins regions; drag the cut between two regions right in the waveform to resize both.
+- **Pitch each region where it is**: drag the small readout on a pad or a region, or turn the mouse wheel over it.
+- **Start the sequence on any cell**, and the loop keeps its length.
+- It plays as an instrument in time with the project, and the result drags out as a loop, MIDI or a pattern. See [docs/plugins/seltmann.md](docs/plugins/seltmann.md).
 
 ## A closer look
 
@@ -97,11 +169,11 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 </tr>
 <tr>
 <td width="50%"><img src="docs/images/welcome.png" alt="The welcome screen with recent projects"></td>
-<td width="50%"><img src="docs/images/seltmann.png" alt="Seltmann with a chopped beat and its sequence lane"></td>
+<td width="50%"><img src="docs/images/plugin-picker.png" alt="Plugin picker"></td>
 </tr>
 <tr>
 <td><b>Welcome screen.</b> Recent projects with a sketch of each arrangement, favourites that stay on the list, templates, search and the Collaborative view, by mouse or keyboard. A click on the Gridline logo brings it back.</td>
-<td><b>Seltmann.</b> Drop in any audio: it finds the tempo, chops it into lettered regions and flips it with ready-made layouts. The sequence lane reorders, splits and joins regions, and the result goes out as a loop or a pattern.</td>
+<td><b>Plugin picker.</b> Every instrument and effect with a preview of its editor, by category, with search and favourites.</td>
 </tr>
 </table>
 
@@ -109,11 +181,6 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 <p align="center">
   <img src="docs/images/editors.png" alt="A selection of built-in plugin editors" width="100%">
-</p>
-
-<p align="center">
-  <img src="docs/images/plugin-picker.png" alt="Plugin picker" width="80%"><br>
-  <sub>The plugin picker shows every instrument and effect with a preview of its editor.</sub>
 </p>
 
 An instrument opens in its channel window with the channel strip (volume, pan, pitch and a preview keyboard) tucked away, which leaves the room to the editor; the eye button at the right of the window's header slides it in and out. Every Gridline editor can be popped out into its own window with the button in its title bar.
@@ -126,43 +193,7 @@ An instrument opens in its channel window with the channel strip (volume, pan, p
 
 Plasma is Gridline's wavetable hybrid synth: three oscillators that each play a wavetable, a multisample, a sample, a granular cloud or a spectral resynthesis, with two warp slots each (103 modes, FM, PD, AM and RM between sources among them) and unison up to 16 voices, plus a sub oscillator, a noise layer and two filters with 106 types. Modulation comes from 4 envelopes, 10 drawable LFOs, 8 macros, velocity and note curves and MPE through a 64-slot matrix: drag a source's live meter onto any knob. Three effect racks with up to 24 modules, an arpeggiator, a clip player and a wavetable editor (harmonics, brushes, morphing, formulas, WAV import and export) complete it.
 
-Plasma also opens your own Serum 2 presets (`.SerumPreset`) and Serum `.fxp` files and turns them into Plasma sounds, through the same Open path as any preset; anything approximated is listed behind an info mark next to the preset name. Its browser lists the Serum preset folders found on your computer, indexed in the background. Nothing from another product ships with Gridline. See [docs/plugins/plasma.md](docs/plugins/plasma.md).
-
-### Platter
-
-<p align="center">
-  <img src="docs/images/platter.png" alt="Platter with a track on each deck and the mixer between them" width="100%">
-</p>
-
-Platter is a two-deck DJ setup on a channel: deck A and deck B with a mixer between them, or one deck as a layout.
-
-- **Decks.** Drop a track on a deck (from the browser, your desktop or the playlist's clip list) and Platter finds its tempo and beat grid, then plays it in time with the project or with the other deck; drum and bass reads at its own tempo, /2 and x2 buttons correct a track heard at half or double time, and the padlock frees it to its own tempo. Each deck has key lock, cue and play, eight hot cues, loops and beat jumps, slip mode, motor start and brake times and a pitch fader, with stacked three-band colour waveforms, beat grids and a phase meter.
-- **Mixer.** Trim, a three-band EQ with kills and a filter per channel, channel faders with meters and a curve, a crossfader with assign, curve, cut and reverse, and the master level. The EQ and master knobs have 0 dB at 12 o'clock, like a DJ mixer, and a track on one deck at the default settings plays at its own level.
-- **Scratching.** The platter follows the scratch mechanics of Mixxx: a jog wheel sets the record's speed from how fast its ticks arrive, a mouse drag follows the hand and a fast release throws the record, touching a playing record catches it and letting go ramps it back up. The Jog and Hand feel knobs set how far and how heavily it moves.
-- **DJ controllers.** Ready mappings for the Pioneer DDJ-200, Hercules DJControl Inpulse 200 and Numark Mixtrack Pro FX drive both decks and the mixer at once, with LEDs that follow each deck; any other controller maps through MIDI learn. Mappings are saved with the project and as presets.
-- **Recorded performances.** While Gridline records, what you play becomes plain automation: one clip per control you used (the record's position, play, the wheel and its touch, the mouse, loops, every fader and knob), kept together in a pattern. In song mode each pass is a new pattern placed once on the playlist where you played it, so you see the wheel moving on that clip; double-click a curve to edit it (or pick Clips to get separate playlist clips). The clips hold the decks' state, so playback can start anywhere in a pass, and you can cut, trim, move and copy it. Left as recorded, a pass replays exactly as played, at any buffer size; edit a curve and the sound follows. A second pass never records over the first: it gets a pattern of its own, and the pass patterns' clips also show as channel rack rows. **Record as: Take** keeps a performance as one note instead. See [docs/plugins/platter-recording.md](docs/plugins/platter-recording.md).
-
-Platter is part of the Gridline Suite too, so it also runs in other DAWs.
-
-## Work together
-
-<p align="center">
-  <img src="docs/images/collaboration.png" alt="A collaborative session: the Collaboration panel, a collaborator's cursor and their edits in the playlist" width="100%">
-</p>
-
-Collaborative projects (a preview) let two or more people work on one project at the same time, on the same network or across the internet. See [docs/collaboration.md](docs/collaboration.md).
-
-<p align="center">
-  <img src="docs/images/collaborative-view.png" alt="The welcome screen's Collaborative view: shared projects, who is working on them, changes waiting" width="100%">
-</p>
-
-- **No server, no account.** Computers connect peer to peer: directly, by hole punching (ICE with STUN), through automatic router port opening (UPnP-IGD, NAT-PMP, PCP), through another collaborator or an optional TURN relay. **Test my connection** reports what your network allows.
-- **Invites** are one-time codes that expire (15 minutes to 24 hours). The invitee pastes the code in File > Join collaborative project... and both sides see the same safety code to compare.
-- **Live:** channels, notes, the playlist, the mixer, automation, Gridline plugin settings and audio files sync in a fraction of a second. Each person keeps their own windows, zoom and transport, and sound stays on each computer; **Follow their playhead** listens along.
-- **Presence:** collaborators appear in the top bar with their picture or initials; their cursors, in their colour, point at the same track, note, step or knob on every screen whatever the layout or zoom, and their changes flash in their colour.
-- **Safe:** end-to-end encrypted (X25519, XChaCha20-Poly1305), every change signed by its author, saved continuously in a crash-safe log. Undo takes back only your own changes; edits made while apart that touch the same thing go to the admin's Sync review.
-- **The Collaborative view** on the welcome screen joins with a code, starts or shares a project and lists every collaborative project on this computer with its members, your role, a Sync review or unsent changes waiting and who is working on it right now. Presence is asked of your collaborators directly, encrypted and only while the view is shown; turn off **Show that I am online to collaborators** to stay out of it.
-- Collaborative projects use Gridline's own plugins only, and everyone needs the same, newest Gridline version.
+Plasma also opens your own Serum 2 presets (`.SerumPreset`) and Serum `.fxp` files and turns them into Plasma sounds, through the same Open path as any preset, with the wavetables, samples and other audio they carry; anything approximated is listed behind an info mark next to the preset name. Imported presets sound close to the original, and they get closer with each update. Its browser lists the Serum preset folders found on your computer as a folder tree, indexed in the background. Nothing from another product ships with Gridline. See [docs/plugins/plasma.md](docs/plugins/plasma.md).
 
 ## Build
 
@@ -181,7 +212,7 @@ sudo apt install build-essential cmake pkg-config libsdl2-dev libgl-dev libasoun
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4           # a fixed job count: a bare -j starts every compile at once and can run out of memory
-ctest --test-dir build          # 215 tests
+ctest --test-dir build          # 251 tests
 ./build/gridline-app            # start the app
 ```
 
@@ -273,22 +304,7 @@ cmake --install build --component plugins --prefix /usr    # or install for a pa
 
 The **Host link** panel (a tab beside the browser) shows the transport, MIDI and output settings, the reported latency and the 16 macros. `gridline plugin-check Gridline` runs the compatibility sweep on the built bundles once they are in the plugin cache.
 
-### Gridline Suite
-
-Every Gridline download also carries the **Gridline Suite**: Gridline's own instruments and effects, each as a plugin of its own for any DAW (vendor "Gridline"), in one bundle per format: `Gridline Suite.vst3`, `Gridline Suite.clap` and, on macOS, `Gridline Suite.component`. Gridline Suite Mini, 35 compact effects, ships beside it in the same way (`Gridline Suite Mini.vst3`, `.clap`, `.component`). Each plugin is the same DSP and the same editor as inside Gridline:
-
-- **Parameters:** every parameter of the plugin, named, with its range, steps and value text (`1.20 kHz`, `-6.0 dB`), automatable; effects add **Mix** and **Bypass**.
-- **Instruments** take MIDI; **effects** have a sidechain input where the effect uses one (Compressor, Limiter, Sidechain Ducker, Cipher, Cloister, Tideline, Transient Split, Hit Repeater); effects that play from notes (Cipher, Plumb, Tideline) also take MIDI.
-- **Presets:** the factory presets in the editor's preset menu (and as Audio Unit factory presets).
-- **State** is the plugin's state as Gridline saves it, so a sound moves between Gridline and another host unchanged. Latency is reported to the host.
-- **Editor:** the plugin's own editor from Gridline, resizable (it zooms to the window) and sharp on HiDPI screens.
-
-The installers put the suite where hosts find it: the Windows installer into `Common Files\VST3` and `Common Files\CLAP`, the `.deb` and `.rpm` into `/usr/lib/vst3` and `/usr/lib/clap`. On macOS, with the AppImage and with the `.tar.gz` builds, Gridline asks on first launch whether to copy the suite into your plug-in folders and keeps it up to date (**Settings, Files, Gridline Suite**, or `gridline suite status|install|remove`). The members, their identifiers and the folders per system are in [docs/gridline-suite.md](docs/gridline-suite.md).
-
-```sh
-cmake --build build --target gridline_suite_gridline   # build/plugins/Gridline Suite.{vst3,clap,component}
-build/gridline suite-info gridline                     # members, identifiers and categories
-```
+The same bundles also carry the [Gridline Suite](#the-gridline-suite), each of Gridline's instruments and effects as a plugin of its own.
 
 ## FL Studio project compatibility
 
@@ -304,6 +320,7 @@ Projects can also be saved back to `.flp` with **File, Export, FL Studio project
 
 ## Documentation
 
+- [Split stems](docs/stems.md) and [Import from URL](docs/import-url.md).
 - [Automation](docs/automation.md): clips in the playlist and inside patterns, where to add, see and edit them.
 - [Collaborative projects](docs/collaboration.md): inviting, joining, connections, offline work, removing someone, privacy.
 - [Windows outside the main window](docs/detachable-windows.md) and [the plugin window's channel strip](docs/plugin-window.md).

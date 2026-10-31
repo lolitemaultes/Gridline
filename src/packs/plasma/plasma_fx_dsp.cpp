@@ -43,6 +43,14 @@ constexpr double kMbRmsMs = 3.0, kMbOfsDb = 9.5;
 constexpr int kHyperSide[8] = {0, 0, 1, 2, 3, 5, 5, 7};
 constexpr float kHyperVoice = 0.97f;
 constexpr double kHyperHpHz = 253.0, kHyperHpQ = 0.75;
+// J-203k, measured per voice on the source (detune 10 %, voice delays tracked by cross-correlation every
+// 40 ms, unison 2 .. 7): every voice starts at a fixed sweep phase and runs at its own rate multiple,
+// different on the left and the right (that is where the width at small detune comes from); voices are
+// added in this order as UNISON rises. Phase 0 is the longest delay.
+constexpr double kHyperPh0[2][7] = {{0.051, 0.697, 0.114, 0.356, 0.063, 0.531, 0.199},
+                                    {0.293, 0.528, 0.235, 0.494, 0.580, 0.315, 0.189}};
+constexpr double kHyperRate[2][7] = {{0.94, 1.006, 0.862, 0.695, 1.24, 1.47, 0.58},
+                                     {0.976, 0.874, 1.066, 0.737, 1.40, 1.59, 0.61}};
 
 struct Line {  // fractional delay line inside the unit's pool
   float* b = nullptr;
@@ -564,11 +572,26 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const float wetG = static_cast<float>(std::pow(std::sin(1.5707963267948966 * wet), 2.0)), dryG = 1.f - wetG * wetG;
       const float odGain = static_cast<float>(0.68 * std::pow(74.0, static_cast<double>(drive)));
       constexpr float kFull = 1.657f;  // the source's full scale in Plasma's units (where its clippers sit)
-      auto xcurve = [&](const float* c, float v) {  // X-Shaper: the stored curve over -1..1 of full scale
-        if (!c) return v;
-        const float s = std::clamp((v + 1.f) * 0.5f, 0.f, 1.f) * 256.f;
+      // X-Shaper (J-203k, fitted and verified against the hosted plugin's output with drawn straight and bent
+      // curves at drive 0 / 50 / 100 %): the drive crossfades from the first curve (drive 0) to the second
+      // (drive 100), it is not a gain. The symmetric mode reads the curve over the input's magnitude (0..1 of
+      // full scale) and keeps the sign: the curve C is read at the square root of the magnitude and squared,
+      // y = C(sqrt|x|)^2 (a straight rising line is the identity, a falling one stays quiet near the top); the
+      // asymmetric mode reads it over -1..1.
+      auto look = [](const float* c, float pos) {
+        const float s = std::clamp(pos, 0.f, 1.f) * 256.f;
         const int j = std::min(255, static_cast<int>(s));
-        return (c[j] + (c[j + 1] - c[j]) * (s - static_cast<float>(j))) * 2.f - 1.f;
+        return c[j] + (c[j + 1] - c[j]) * (s - static_cast<float>(j));
+      };
+      auto xcurve = [&](float v, bool asym) {
+        if (!ca) return v;
+        const float* b = cb ? cb : ca;
+        if (asym) {
+          const float pos = (v + 1.f) * 0.5f;
+          return (look(ca, pos) + (look(b, pos) - look(ca, pos)) * drive) * 2.f - 1.f;
+        }
+        const float a = std::sqrt(std::fabs(v)), ya = look(ca, a) * look(ca, a), y = ya + (look(b, a) * look(b, a) - ya) * drive;
+        return v < 0 ? -y : y;
       };
       for (int i = 0; i < n; ++i) {
         float io[2] = {L[i], R[i]}, x[2] = {L[i], R[i]};
@@ -579,9 +602,9 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           x[0] = u.dsHold[0], x[1] = u.dsHold[1];
         } else {
           for (int ch = 0; ch < 2; ++ch) {
-            if (mode == 11 || mode == 12) {  // X-Shaper (drive has no effect on the source)
+            if (mode == 11 || mode == 12) {  // X-Shaper
               const float v = std::clamp(x[ch] / kFull, -1.f, 1.f);
-              x[ch] = 0.48f * kFull * (mode == 12 && v < 0 ? xcurve(cb ? cb : ca, v) : xcurve(ca, v));
+              x[ch] = 0.48f * kFull * xcurve(v, mode == 12);
             } else if (mode == 16) {  // overdrive: gain 0.68 * 74^d (-3.4 .. +34 dB), then a hard knee at 2.18
               const float v = x[ch] * odGain, a = std::fabs(v);
               constexpr float kTop = 2.18f, kKnee = 0.3f;
@@ -637,8 +660,9 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         }
       } else if (type == FxFlanger) {
         // shortest delay 0.136 ms (first notch 3.7 kHz at depth 0); feedback is positive, 0.98 * the setting
-        // (feedback 50: +4.8 dB at the comb peaks' low end, -8 dB notches)
-        const double base = 0.000136 * sr, dep = 0.0045 * sr * depth;
+        // (feedback 50: +4.8 dB at the comb peaks' low end, -8 dB notches). J-203k, delay tracked over a held note
+        // (feedback 0): the sweep spans 3.5 ms at full depth, left and right in opposite phase
+        const double base = 0.000136 * sr, dep = 0.0035 * sr * depth;
         for (int i = 0; i < n; ++i) {
           u.lfoPh += inc;
           if (u.lfoPh >= 1) u.lfoPh -= 1;
@@ -1112,20 +1136,22 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       // - each side carries its own voices (UNISON 1..7: 0 / 1 / 2 / 3 / 5 / 5 / 7 per side), each a plain
       //   delay read with a linear tap at gain 0.97; the voices' sum passes a 2-pole low cut (253 Hz, Q 0.75:
       //   the negative tail after every tap) and is not normalised (unison 4, detune 0: +10 dB near 500 Hz)
-      // - every voice's delay runs a triangle between 1 sample and 10 + 9.6 * DETUNE (%) samples at 48 kHz
-      //   (20 ms at 100 %), at 1e-4 * RATE^2 Hz (rate 10: 100 s per cycle, 40: 6.3 s, 100: 1.0 s; rate 0
-      //   holds the delays), so the voices hold small constant pitch offsets that reverse at the ends;
-      //   voices differ by about +-10 % in speed and start at free-running phases
+      // - every voice's delay runs a triangle between 1 sample and 1 + 0.5 * (0.0004 + 0.0004 * DETUNE (%)) * sr
+      //   (J-203k: 10.6 samples at 48 kHz for detune 0, 20 ms at 100 %), at 1e-4 * RATE^2 Hz (rate 10: 100 s
+      //   per cycle, 40: 6.3 s, 100: 1.0 s; rate 0 holds the delays), so the voices hold small constant pitch
+      //   offsets that reverse at the ends; each voice has its own fixed start phase and rate multiple per
+      //   side (kHyperPh0 / kHyperRate), so the sides differ even at detune 0
       // - MIX m: wet x = 3m^2 - 2m^3 (the chorus law), dry 1 - 5/9 x (0.444 at 100 %); unison 1 passes the
       //   input untouched at any mix
       const int nSide = kHyperSide[std::clamp(static_cast<int>(std::lround(P("kParamUnison"))), 0, 7)];
       const double det = std::clamp(P("kParamDetune"), 0.0, 100.0), rt = std::clamp(P("kParamRate"), 0.0, 100.0);
-      const double k48 = sr / 48000.0, dLo = 1.0 * k48, dHi = (10.0 + 9.6 * det) * k48;
+      const double dLo = 1.0, dHi = 1.0 + 0.5 * (0.0004 + 0.0004 * det) * sr;
       const double fHz = 1e-4 * rt * rt;
       const double mv = std::clamp(static_cast<double>(wet), 0.0, 1.0), mx = mv * mv * (3 - 2 * mv);
       const float gW = nSide > 0 ? static_cast<float>(mx) * kHyperVoice : 0.f, gD = nSide > 0 ? static_cast<float>(1 - mx * 5.0 / 9.0) : 1.f;
-      if (!u.hyInit) {  // spread start phases (the source's are free-running)
-        for (int v = 0; v < 16; ++v) u.hyPh[v] = std::fmod(0.6180339887 * (v + 1) + (v & 1) * 0.29, 1.0);
+      if (!u.hyInit) {
+        for (int ch = 0; ch < 2; ++ch)
+          for (int v = 0; v < 7; ++v) u.hyPh[ch * 8 + v] = kHyperPh0[ch][v];
         u.hyInit = true;
       }
       u.hyHp.set(3, sr, kHyperHpHz, kHyperHpQ, 0);
@@ -1140,9 +1166,9 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           for (int ch = 0; ch < 2; ++ch)
             for (int v = 0; v < nSide; ++v) {
               double& ph = u.hyPh[ch * 8 + v];
-              ph += fHz * (1.0 + 0.1 * std::sin(1.7 * (ch * 8 + v) + 0.4)) / sr;
+              ph += fHz * kHyperRate[ch][v] / sr;
               if (ph >= 1) ph -= 1;
-              const double tri = ph < 0.5 ? ph * 2 : 2 - ph * 2;
+              const double tri = 2 * std::fabs(ph - 0.5);  // 1 at phase 0: the longest delay
               hs[ch] += u.ml[ch].tap(static_cast<float>(dLo + (dHi - dLo) * tri));
             }
           l = L[i] * gD + u.hyHp.run(0, hs[0]) * gW;

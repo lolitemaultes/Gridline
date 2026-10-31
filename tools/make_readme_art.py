@@ -493,11 +493,11 @@ VIEWS += [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.0-beta.4"
+RELEASE = "0.7.0"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.0", "Keep it moving",
-                  "A loading window, automation in patterns, Platter passes as clips and Tideline sources")
-RELEASE_BANNER_OPTS = {"tag": "BETA 4", "label": "PRE-RELEASE"}
+RELEASE_BANNER = ("0.7.0", "Make music together",
+                  "Live collaboration, the Gridline Suite in any DAW, Platter and Seltmann")
+RELEASE_BANNER_OPTS = {}
 # Plugin editors on one sheet (none in this release).
 RELEASE_EDITORS = []
 # No release screenshots in this release.

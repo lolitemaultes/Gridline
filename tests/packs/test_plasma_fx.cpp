@@ -549,6 +549,30 @@ int main() {
     }
   }
 
+  // ---- flanger sweep (J-203k). Source, held saw at key 24, feedback 0, the wet tap's delay tracked by
+  // cross-correlation every 50 ms: left and right sweep in opposite phase between 0.136 ms and 0.136 + 3.5 ms at
+  // full depth (left + right = 181 samples at 48 kHz, 99 at depth 50). Rate 0 holds the sweep at its start.
+  for (double depth : {100.0, 50.0}) {
+    expect(import(fxBody("FXFlanger", pl::FxFlanger - 1, {{"kParamEnable", num(1)}, {"kParamWet", num(100)}, {"kParamDepth", num(depth)}, {"kParamFeedback", num(0)},
+                                                         {"kParamRate", num(0)}}),
+                  st, rep, cache),
+           "flanger preset imports");
+    auto bank = pl::makeFxBank(st, nullptr, kSr);
+    pl::FxContext c;
+    c.sr = kSr;
+    const int n = 512;
+    std::vector<float> L(static_cast<size_t>(n), 0.f), R(static_cast<size_t>(n), 0.f);
+    L[0] = R[0] = 1.f;
+    pl::fxProcess(*bank->unit[0], pl::FxFlanger, slot0(st), L.data(), R.data(), n, c, nullptr, 0);
+    auto centroid = [](const std::vector<float>& x) {  // where the wet tap sits (linear tap: weighted position)
+      double w = 0, m = 0;
+      for (size_t i = 1; i < x.size(); ++i) w += std::fabs(x[i]), m += std::fabs(x[i]) * static_cast<double>(i);
+      return w > 0 ? m / w : -1.0;
+    };
+    const double sum = centroid(L) + centroid(R), want = depth > 75 ? 181.0 : 99.0;
+    expect(std::fabs(sum - want) < 4.0, ("flanger depth " + std::to_string(depth) + ": left + right delay " + std::to_string(sum) + " samples (source " + std::to_string(want) + ")").c_str());
+  }
+
   // ---- convolution: the wet path has no latency (the source's identity impulse comes out in phase, so mix 50
   // sums to +1.94 dB); the direct first partition plus the FFT partitions must equal one plain convolution
   {
@@ -594,6 +618,45 @@ int main() {
     expect(std::fabs(gl - 4.45) < 0.5 && std::fabs(gr + 4.62) < 0.5, ("dimension size 50: left " + std::to_string(gl) + " dB, right " + std::to_string(gr) + " dB (source +4.45 / -4.62)").c_str());
   }
 
+  // ---- X-Shaper (J-203k). Source, held saws through drawn curves: the drive crossfades from the first curve
+  // (drive 0) to the second (drive 100, an empty one is the straight line); the symmetric mode reads the curve
+  // over the input's magnitude as C(sqrt|x|)^2, so a straight rising line passes the input (times the module's
+  // 0.48) and a falling one keeps only the quiet part of the wave.
+  {
+    auto line = [&](double y0, double y1, double bend) {
+      return obj({{"curveVals", arr({num(bend), num(0.5)})}, {"numPoints", num(1)}, {"xVals", arr({num(0), num(1)})}, {"yVals", arr({num(y0), num(y1)})}});
+    };
+    auto xs = [&](double drive, const Json& a, const Json& b) {
+      Json body = fxBody("FXDistortion", pl::FxDistortion - 1, {{"kParamEnable", num(1)}, {"kParamMode", str("kXShaper")}, {"kParamDrive", num(drive)}});
+      body.object["FXRack0"].object["FX"].array[0].object["flex"] = arr({a, b});
+      return import(body, st, rep, cache);
+    };
+    auto gainDb = [&](double amp) {
+      auto bank = pl::makeFxBank(st, nullptr, kSr);
+      auto aux = pl::buildAux(st);
+      pl::FxContext c;
+      c.sr = kSr;
+      const int n = static_cast<int>(0.25 * kSr);
+      std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+      for (int i = 0; i < n; ++i) L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>(amp * std::sin(6.283185307179586 * 300 * i / kSr));
+      const std::vector<float> in = L;
+      for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxDistortion, slot0(st), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, aux.get(), 0);
+      return rmsDb(L, 0.1, 0.25) - rmsDb(in, 0.1, 0.25);
+    };
+    const Json empty = Json::makeObject();
+    expect(xs(0, line(1, 0, 0.5), empty), "x-shaper preset imports");
+    const double straight = gainDb(0.5);
+    std::printf("# x-shaper straight line: %.2f dB\n", straight);
+    expect(std::fabs(straight - 20 * std::log10(0.48)) < 0.3, "x-shaper: a straight rising line passes the input");
+    expect(xs(0, line(0, 1, 0.5), empty), "x-shaper preset imports");
+    const double falling = gainDb(0.5);
+    expect(xs(100, line(0, 1, 0.5), empty), "x-shaper preset imports");
+    const double fallingD100 = gainDb(0.5);
+    std::printf("# x-shaper falling line: %.2f dB at drive 0, %.2f at 100\n", falling, fallingD100);
+    expect(std::fabs(fallingD100 - straight) < 0.3, "x-shaper: drive 100 fades to the second (empty: straight) curve");
+    expect(std::fabs(falling - straight) > 1.0, "x-shaper: drive 0 plays the first curve");
+  }
+
   // ---- hyper (J-203h). Source, deterministic white noise through the module, impulse responses per 21 ms window:
   // unison 1 passes the input untouched; the dry part is 1 - 5/9 x (0.444 at mix 100; 0.721 at mix 50, x = 0.5);
   // each side carries 0 / 1 / 2 / 3 / 5 / 5 / 7 voices (unison 1..7) at gain 0.97 whose sum passes a 2-pole low cut
@@ -626,6 +689,20 @@ int main() {
       expect(std::fabs(ir.first[0] - dry) < 0.01, ("hyper mix " + std::to_string(mix) + ": dry tap " + std::to_string(ir.first[0]) + " (source " + std::to_string(dry) + ")").c_str());
       expect(std::fabs(sum - dry) < 0.01, ("hyper wet path has no DC (IR sum " + std::to_string(sum) + ")").c_str());
       expect(early > 0.4 * (mix > 75 ? 1.0 : 0.5) && peak > 0.2, ("hyper detune 0: the voice sits within 11 samples (" + std::to_string(early) + ")").c_str());
+    }
+    // J-203k: each voice starts at its own fixed sweep phase, different on the two sides (source, unison 2,
+    // detune 0, rate 0, voice delays found by cross-correlation: left about 9.5, right about 4.9 samples at 48 kHz)
+    {
+      expect(hyper(2, 0, 0, 100), "hyper preset imports");
+      const auto ir = runIr(64);
+      int atL = 1, atR = 1;
+      for (int i = 1; i < 20; ++i) {
+        if (ir.first[static_cast<size_t>(i)] > ir.first[static_cast<size_t>(atL)]) atL = i;
+        if (ir.second[static_cast<size_t>(i)] > ir.second[static_cast<size_t>(atR)]) atR = i;
+      }
+      const double k = kSr / 48000.0;
+      expect(std::fabs(atL - 9.5 * k) <= 1.0 * k + 0.5 && std::fabs(atR - 4.9 * k) <= 1.0 * k + 0.5,
+             ("hyper start delays per side: " + std::to_string(atL) + " / " + std::to_string(atR) + " samples").c_str());
     }
     expect(hyper(4, 25, 40, 100), "hyper preset imports");
     {

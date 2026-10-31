@@ -3,9 +3,65 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
-## Unreleased
+## 0.7.0
 
-### Added
+Released 2026-10-31. Everything that changed since 0.6.1, including the four 0.7.0 betas. Projects
+from 0.6.1 and from every 0.7.0 beta open as they are.
+
+### Highlights
+
+- **Make music together.** Collaborative projects let two or more people work on one project
+  live, on the same network or across the internet, peer to peer and end-to-end encrypted, with
+  no server and no account. Invite someone with a one-time code; channels, notes, the playlist,
+  the mixer, automation, Gridline plugin settings and audio files sync in a fraction of a second,
+  while everyone keeps their own windows and transport and sound stays on each computer.
+  Collaborators' cursors and changes show in their colour, undo takes back only your own changes,
+  work done while apart comes together through a Sync review, and the welcome screen's
+  Collaborative view shows who is working on each shared project right now. See
+  docs/collaboration.md.
+- **The Gridline Suite.** Gridline's own instruments and effects run in any DAW: 118 plugins as
+  VST3, CLAP and, on macOS, Audio Unit, each with the same sound and the same editor as inside
+  Gridline, named and automatable parameters, the factory presets and a sidechain input where the
+  effect uses one. Gridline Suite Mini adds 35 compact single-purpose effects. Every download
+  carries both, and a new Gridline brings the installed copies to its own version. See
+  docs/gridline-suite.md.
+- **Platter.** Two DJ decks and a mixer on a channel: tempo and beat grid detection, sync, key
+  lock, hot cues, loops, slip mode and a pitch fader, scratching that feels like a record, ready
+  mappings for three DJ controllers (or your own MIDI learn), and performances recorded as
+  automation clips that you can see, edit and play from anywhere.
+- **Seltmann.** Drop in any audio and it finds the tempo, chops it into lettered regions and
+  flips it with ready-made layouts. The sequence lane reorders, splits and joins regions, each
+  region can be pitched right where it is, the sequence can start on any cell, and the result
+  goes out as a loop or a pattern.
+- **Plasma**, a wavetable hybrid synth with three oscillators, two filters, a 64-slot modulation
+  matrix and three effect racks, in a calmer editor. It also opens your own Serum 2 and Serum
+  presets (`.SerumPreset`, `.fxp`) as Plasma sounds, with the audio they carry.
+- **Split stems** separates an audio clip or a file into vocals, drums, bass and other (or six
+  stems with guitar and piano), on your computer, onto new tracks lined up with the clip.
+- **Import from URL** brings the audio of a web page into the project as a lossless WAV clip; the
+  packages carry the programs it needs.
+- **Kerf**, the slicer, is laid out like a full region slicer, slices on the beat grid and has
+  time, marker and region name settings. **Pixel Tone** plays your own pictures.
+- **Audio clips follow the tempo**, a **welcome screen**, a **loading window** for big projects,
+  **automation clips inside patterns**, **one smooth stretch and pitch engine** with Rubber Band
+  as a third time mode, **smooth zooming and snapping**, **windows on every monitor**, **five
+  control styles** and **sound themes**, one undo step per gesture in every plugin editor, a new
+  plugin manager and a new demo song.
+- **FL Studio projects** open with their whole arrangement, also from its 2026 version, with
+  Slicex chops arriving in Kerf exactly and channel stretch times kept.
+
+### Known limits
+
+- Imported presets from other synths sound close but not always identical; this improves in
+  updates.
+- Collaborative projects use Gridline's own plugins only, and everyone in a session needs the
+  same Gridline version.
+- Half-time grooves may still read at half speed in Platter and Seltmann; the /2 and x2 buttons
+  put them right.
+- Notes played live on a Rubber Band instrument start the moment you play them, so their start-up
+  work is not spread out ahead.
+
+### Added since 0.7.0-beta.4
 
 - Route to a free mixer track, one click. The channel window of every channel (an audio clip, a
   sampler, a Gridline instrument or an installed plugin) has a new button next to its mixer track
@@ -96,7 +152,112 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   kept by hand. While the sequence plays every region in order, the edges between its blocks drag
   the same cuts and the steps follow the new lengths. A click on a region still plays it.
 
-### Fixed
+### Changed since 0.7.0-beta.4
+
+- Plasma: changes that also affect existing projects:
+  - Hyper follows the original's voices: 1, 2, 3, 5, 5 and 7 voices per side for unison 2 to 7,
+    each a short swept delay of 1 to 10 samples plus about 10 per detune percent, summed through a
+    low cut at 253 Hz; the dry part falls to 4/9 at full mix. Its sweep is slow at low rates (100
+    s per cycle at rate 10, 1 s at 100). Projects that use Hyper sound different.
+  - Hyper's voices each start at their own point of the sweep and run at their own speed, with
+    different values on the left and the right, so a stereo spread is there even at zero detune.
+  - The distorting filter types follow the original: the ring mods (an oscillator at the cutoff,
+    and for the second type a second one set by VAR), the sample and hold types (a new value at
+    twice the cutoff, resonance coarsens the steps), the first distorted comb type (its delay set
+    by VAR, resonance gives back level), the screamer's feedback loop and the dirty ladder's VAR,
+    which now lifts the lows below the cutoff. Projects that use these types sound different.
+  - The X-Shaper follows the original: its curve shapes the input's size (the sign is kept), and
+    the drive fades from the first curve to the second (a straight line when an imported preset
+    has none) instead of doing nothing. Imported curves bend the way the original's do. Projects
+    with a drawn X-Shaper curve sound different.
+  - The flanger sweeps over 3.5 ms at full depth (before: 4.5 ms). The comb and flanger filter
+    types with a low cut or high cut in the loop follow the original at mid VAR settings and keep
+    their top end in check at high VAR.
+  - The phaser sweeps upward from its resting notches, linearly in frequency, as far as 14 kHz at
+    full depth (before: three octaves each way). The vintage reverb's tail ends at 16 kHz.
+  - Imported presets: the Mg ladder filters keep their resonance under drive (the input clips
+    before the resonance loop), and a bus output set to the direct out now skips the main effects.
+  - The noise has a new Tone control: a filter that darkens or brightens the noise. It is off in
+    older projects.
+  - The delay effect's mix, feedback, echo filter and ping-pong now follow the original's laws.
+    Projects that use it sound different: at mid mix the dry signal is lower and the echo louder,
+    feedback is weaker, and ping-pong repeats are louder.
+  - Spectral oscillators play 25 dB louder. Their Low and High band limits now read as
+    frequencies from 8 Hz to 22 kHz, no longer as fractions of the sample rate.
+  - Arpeggiator patterns keep their step timing, so gaps between steps are rests, and a step plays
+    for its full length times the gate.
+  - The Geiger noise loops.
+  - A new Unison Mix setting picks how unison voices share the stereo field: Even (as before) or
+    Alternating, which imported presets use. Existing projects keep Even.
+  - The effects follow more of the original's laws. The EQ's Q and shelf slopes are new. The compressor's
+    threshold, release, limiter (ratios from 100 up), makeup and latency compensation are new;
+    projects that use it compress less at the same threshold. Each reverb type now has its own
+    decay, tone, width, pre-delay and mix laws: a project with a reverb sounds different (the dry
+    signal stays louder at mid mix, Hall, Vintage and Abyss are always wide, Space is mono). Imported
+    presets fill effect values they leave unset with the source's own defaults.
+  - A new Filter Drive Mode setting: Leveled (as before) keeps the level about even as the drive
+    rises; Boost, which imported presets use, raises it. Existing projects keep Leveled.
+  - Two new settings that imported presets use and existing projects keep off: Filter Key Centre
+    (C4 as before, or G#1) and Multisample Level (Unity as before, or Mapped: the kit's own level,
+    velocity and envelope).
+  - Mono: releasing a key that a later key took over now forgets it, so a mono chord ends when
+    its keys are released.
+  - A new Envelope Curves setting: Gentle (as before) or Steep, which imported presets use.
+- Plasma's editor has a cleaner, calmer look. It now uses Gridline's slate panels and text tones
+  and follows the theme. It has one text scale with nothing below 8 px, values in the mono face, and
+  one knob size. The pages sit in a segmented switch, and graphs sit in their own wells away from
+  their fields. Outputs are named in words (MAIN, DIR, F1+2). Empty matrix rows show only their
+  source and destination, the effects rack uses a single accent, and the clip editor has a real
+  piano keyboard. The CLIP and ARP blocks in the bottom strip open their editors with a button.
+  Every control works as before.
+- Tempo display: drag or scroll the whole number to step whole BPM while the decimals stay
+  (96.250 becomes 97.250, 98.250, ...); drag the decimals to fine-tune as before, or scroll them
+  by 0.1 (Shift: 0.01). A short line under the digits shows which part a drag or scroll moves.
+- Zooming glides. Wheel notches, the zoom keys and buttons, the zoom tool, zoom to fit, zoom to the
+  selection and the zoom menus ease the zoom over about a tenth of a second in the playlist, the
+  piano roll and the automation editor, with the point under the pointer (or the zoom's anchor)
+  staying in place on every frame. Quick notches add up and end at exactly the same zoom as before.
+  Zooming with a trackpad still follows the fingers directly. Settings > Interface > Motion has a
+  new "Smooth zooming" switch (on by default; off with Interface animations or when the system asks
+  for reduced motion).
+- Dev scripts: `setting <key> on|off` changes a switch the way the Settings dialog does.
+- The playlist's slip tool works on a selection: dragging inside a selected clip slips the content of
+  every selected clip by the same amount (one undo step); an unselected clip still slips alone.
+- Kerf's editor has a cleaner layout. The top band is split into three cards: the level and
+  tuning sliders, MODULATION (the X / Y pad with its two wheels) and PLAYBACK. In PLAYBACK one
+  menu sets how a region plays (gated or one shot, the region alone or on to the end of the
+  loop), with fit to tempo, beats, mono and declick in two rows under it. The region panel has a
+  REGION card (selector, key and cut, then AMP, FILTER, PITCH and START rows) and a SLICES card
+  (hits, 4, 8, 16, 32 or by hand, and the filter). The deck bar keeps its buttons in one row with
+  captions over the loop's details. The wave view has an overview on top and a row of switches
+  for snapping, the region's name and its position. The keyboard is two rows of pads. Controls
+  sit in even rows, nothing overlaps, and text keeps a readable size at 1280 x 800 and at 150%.
+- Kerf's editor is laid out band by band like a classic region slicer and finished in Gridline's
+  own style. The view beside the filter has tabs: AMP (envelope and a velocity curve), REGION
+  (the selected region's audio) and DETECT (slicing method, the loop with its cuts, sensitivity and
+  gap). The deck bar gains a loop button for region playback, File, Sample, Edit, Tools, Regions,
+  View, Snap, Select and Zoom menus, undo and redo, a button that writes the regions into the
+  current pattern as notes, and a handle to drag the loop out. The wave view draws peaks and RMS in
+  layers, highlights the selected and hovered regions, has a time ruler, zooms smoothly (Shift +
+  wheel scrolls) and, when empty, shows a drop zone that also opens the file picker. Markers can
+  snap to zero crossings or sixteenths. A display selector hides the wave editor or the region
+  panel (or both), a button hides the keyboard, an options menu holds key macros and playback
+  settings, and right-clicking a key assigns the current region to it. The editor now scales down
+  to fit short windows (such as 1280 x 800) instead of being cut off at the bottom.
+- A song-mode Platter pass is one new pattern holding all its automation clips ("Platter take
+  1"), placed once on the playlist where you played it and as long as the pass, instead of a
+  stack of separate clips on many tracks. The curves show on that clip, a double-click opens one
+  in the automation editor, and moving, trimming, cutting or copying the clip takes the whole
+  pass along; it still replays exactly and plays from any point. Platter's new Song choice
+  (Pattern or Clips) keeps the separate playlist clips for those who want them, and projects
+  with passes recorded that way play as before.
+- Kerf's window is laid out like a full region slicer: a larger wave view with numbered (and
+  named) region flags, zoom and a scroller across the whole loop; a region list to pick any
+  region; a deck bar with load, slicing and view menus, tool buttons and the loop's details; a
+  view of the selected region; and controls that do nothing for the current engine are dimmed.
+
+### Fixed since 0.7.0-beta.4
+
 - The update popup on Linux downloads your distribution's own package: the `.deb` on Ubuntu, Debian
   and their derivatives (Mint, Pop!_OS, elementary and others), the `.rpm` on Fedora, RHEL, Rocky,
   AlmaLinux and openSUSE. Other distributions, and a processor a release has no package for, still
@@ -113,8 +274,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   with them. A pad pressed while another one previews takes the preview over, so its release
   returns there and stops. A pad set right after a jump stores the place the jump went to, and a
   newly set pad is always saved with the project, even when it was set moments before saving.
-- Plasma plays imported Serum 2 presets closer to the original. Every law below was measured
-  against the original synth:
+- Plasma plays imported Serum 2 presets closer to the original:
   - Noise pitch and key tracking now match. The noise pitch knob is a playback rate covering 96
     semitones above its centre and 384 below. With key tracking on it spans 128 semitones, with the
     noise's own pitch at key 72 and its stored detune applied. Sample noises are no longer 2 dB too
@@ -139,11 +299,11 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     about 8 dB later. Before, driven filters and filter effects played up to 19 dB too quiet.
   - The filter types now sound like the original's in imported presets: the low, high, band,
     peak and notch types at 6 to 24 dB, the dual types and the three-way morph types follow the
-    original's resonance, level and VAR behaviour within 1.5 dB across cutoff, resonance and VAR
+    original's resonance, level and VAR behaviour across cutoff, resonance and VAR
     (before up to 23 dB apart on average), and the classic ladder low-pass types get back all
     the level the resonance takes at full VAR. The five ladder types (including the diode-style
-    acid and EMS ladders) follow the original's cutoff, resonance, level and drive within about
-    1 dB (before 4 to 18 dB), and the A and dirty ladders self-oscillate at full resonance as the
+    acid and EMS ladders) follow the original's cutoff, resonance, level and drive closely
+    (before 4 to 18 dB apart), and the A and dirty ladders self-oscillate at full resonance as the
     original does. The combs, flangers and phasers follow the original's feedback, mix and level
     (a comb at no resonance is now a clean level drop instead of a comb, as in the original), as
     do the gentle and morphing low/high types, the band reject (VAR sets the width of the
@@ -152,14 +312,14 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     around the centre and up to 32 semitones each way at the ends (before 3 to 6 dB off). This
     voicing comes with the Boost drive mode that
     imports set; Plasma's own projects keep the Leveled mode and sound as before.
-  - More filter types now follow the original in imported presets, each measured from impulse
-    responses: the allpass chain, the eight-comb bank, the pre-delayed comb, the reverb (with its
+  - More filter types now follow the original in imported presets: the allpass chain, the eight-comb bank,
+    the pre-delayed comb, the reverb (with its
     tail decaying as the original's), the three scream types, the five EQ shelves and bell, the
     filtered 8-stage phasers, the flange-phase type, the DJ mixer (low-pass below the middle of the
     knob, high-pass above it) and the three formant types (five vowel bands whose positions follow
-    cutoff and VAR as measured). Each of these used to be 4 to 18 dB apart on average and is now
-    within about 0.2 to 1.9 dB. The cubic stereo spread now applies to every filter type, combs and
-    phasers included, as measured on the original.
+    cutoff and VAR as in the original). Each of these used to be 4 to 18 dB apart on average. The
+    cubic stereo spread now applies to every filter type, combs and phasers included, as in the
+    original.
   - Multisample kits play at the original's level, about 9 dB louder than before. Velocity follows
     the kit's own velocity tracking (half tracking at half velocity: 6 dB down), and each kit's
     own envelope shapes its notes, with the original's half-second release when the kit names
@@ -182,8 +342,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     to frame unless the table file asks for blended frames, as in the original. FM from another
     oscillator is a fixed deviation in Hz at any pitch, as in the original, and phase distortion
     has the original's depth. Sync, bend, asymmetry, flip, quantize, even/odd and the low-pass
-    and high-pass warps follow the original's curves within about 1 dB on the first twelve
-    harmonics, and the tube and soft saturation warps are as gentle as the original's (at half
+    and high-pass warps follow the original's curves, and the tube and soft saturation warps
+    are as gentle as the original's (at half
     way the tube warp was 4 dB too hot). Ring and amplitude modulation have the original's depth
     (their sidebands were 6 to 12 dB too quiet), and FM and phase distortion from the sub
     oscillator are as deep as the original's.
@@ -198,7 +358,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     as it had no audible effect on the original.
   - Wavetable oscillators in imported presets start at the original's default phase (half a
     cycle) and a free-running oscillator starts there too. The mirror, quantize and self phase
-    distortion warps follow the original within about 1 dB on the first eight harmonics (quantize
+    distortion warps follow the original (quantize
     at 0.7 was a plain saw before). A multisample is silent on keys and velocities no zone covers,
     as in the original, where it used to play the nearest zone.
   - LFOs in imported presets follow the original (new LFO Law setting; Plasma's own projects keep
@@ -237,10 +397,10 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   - The reverb types sound like the original's. Each type has the original's tone (it was up to
     10 dB too dark above 1 kHz), its low cut and high cut now shape the sound as the original's do
     (the plate's low cut reaches far higher, the other types' cuts are gentle slopes), and the
-    low, mid and high octaves decay at the original's separate times, measured per size (and on
+    low, mid and high octaves decay at the original's separate times, per size (and on
     the hall per size and delay setting): a large plate no longer loses its highs early, and a
     small hall with a long delay rings in the lows as the original does. The wet level follows
-    the original within about 1 dB across sizes (the plate was up to 10 dB too loud at large
+    the original across sizes (the plate was up to 10 dB too loud at large
     sizes).
   - The utility's low cut is as steep as the original's (24 dB per octave instead of 12), and
     the utility and the filter effect use the original's mix law (a half mix keeps more of the
@@ -259,8 +419,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   its turns and the release now each play on the sample they arrived on, so a touch, a flick
   and a release in quick succession keep their order. Recorded passes keep the quick moves and
   play them back exactly.
-- The clear button in the browser search field works again: it empties the field (also while you are typing in it) and leaves the cursor in the field.
-
+- The clear button in the browser search field works again: it empties the field (also while you
+  are typing in it) and leaves the cursor in the field.
 - Dragging the volume or fades of several selected audio clips no longer loads the CPU and makes
   the interface lag. Volume, fade and fade curve changes now go straight to the playing song
   instead of preparing the whole song again on every frame of the drag (with 24 stretched clips a
@@ -272,7 +432,6 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   pitch starts once you let go. Before, every step of the knob started a new render of every clip
   (the last one could arrive many seconds late), prepared new playback voices for every clip on
   each frame (up to a second per frame with Rubber Band) and restarted the sound.
-
 - Audio clips no longer shrink or get cut off when the tempo changes. A clip you stretch (by
   dragging an edge in stretch mode, typing a Time value or using Fit to tempo) now follows the
   project tempo: it keeps its bars and plays faster or slower with the tempo, also through tempo
@@ -320,120 +479,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   played a different chop or nothing. The channel and master pitch also tune the chops without changing which chop plays,
   and the same holds for drum pads and kit pieces. The channel's key range checks the written key.
 
-### Changed
-- Plasma: changes that also affect existing projects:
-  - Hyper follows the original's voices: 1, 2, 3, 5, 5 and 7 voices per side for unison 2 to 7,
-    each a short swept delay of 1 to 10 samples plus about 10 per detune percent, summed through a
-    low cut at 253 Hz; the dry part falls to 4/9 at full mix. Its sweep is slow at low rates (100
-    s per cycle at rate 10, 1 s at 100). Projects that use Hyper sound different.
-  - The phaser sweeps upward from its resting notches, linearly in frequency, as far as 14 kHz at
-    full depth (before: three octaves each way). The vintage reverb's tail ends at 16 kHz.
-  - Imported presets: the Mg ladder filters keep their resonance under drive (the input clips
-    before the resonance loop), and a bus output set to the direct out now skips the main effects.
-  - The noise has a new Tone control: a filter that darkens or brightens the noise. It is off in
-    older projects.
-  - The delay effect's mix, feedback, echo filter and ping-pong now follow the measured laws.
-    Projects that use it sound different: at mid mix the dry signal is lower and the echo louder,
-    feedback is weaker, and ping-pong repeats are louder.
-  - Spectral oscillators play 25 dB louder. Their Low and High band limits now read as
-    frequencies from 8 Hz to 22 kHz, no longer as fractions of the sample rate.
-  - Arpeggiator patterns keep their step timing, so gaps between steps are rests, and a step plays
-    for its full length times the gate.
-  - The Geiger noise loops.
-  - A new Unison Mix setting picks how unison voices share the stereo field: Even (as before) or
-    Alternating, which imported presets use. Existing projects keep Even.
-  - The effects follow more measured laws. The EQ's Q and shelf slopes are new. The compressor's
-    threshold, release, limiter (ratios from 100 up), makeup and latency compensation are new;
-    projects that use it compress less at the same threshold. Each reverb type now has its own
-    decay, tone, width, pre-delay and mix laws: a project with a reverb sounds different (the dry
-    signal stays louder at mid mix, Hall, Vintage and Abyss are always wide, Space is mono). Imported
-    presets fill effect values they leave unset with the source's own defaults.
-  - A new Filter Drive Mode setting: Leveled (as before) keeps the level about even as the drive
-    rises; Boost, which imported presets use, raises it. Existing projects keep Leveled.
-  - Two new settings that imported presets use and existing projects keep off: Filter Key Centre
-    (C4 as before, or G#1) and Multisample Level (Unity as before, or Mapped: the kit's own level,
-    velocity and envelope).
-  - Mono: releasing a key that a later key took over now forgets it, so a mono chord ends when
-    its keys are released.
-  - A new Envelope Curves setting: Gentle (as before) or Steep, which imported presets use.
-- Plasma's editor has a cleaner, calmer look. It now uses Gridline's slate panels and text tones
-  and follows the theme. It has one text scale with nothing below 8 px, values in the mono face, and
-  one knob size. The pages sit in a segmented switch, and graphs sit in their own wells away from
-  their fields. Outputs are named in words (MAIN, DIR, F1+2). Empty matrix rows show only their
-  source and destination, the effects rack uses a single accent, and the clip editor has a real
-  piano keyboard. The CLIP and ARP blocks in the bottom strip open their editors with a button.
-  Every control works as before.
-
-- Tempo display: drag or scroll the whole number to step whole BPM while the decimals stay (96.250 becomes 97.250, 98.250, ...); drag the decimals to fine-tune as before, or scroll them by 0.1 (Shift: 0.01). A short line under the digits shows which part a drag or scroll moves.
-
-- Zooming glides. Wheel notches, the zoom keys and buttons, the zoom tool, zoom to fit, zoom to the
-  selection and the zoom menus ease the zoom over about a tenth of a second in the playlist, the
-  piano roll and the automation editor, with the point under the pointer (or the zoom's anchor)
-  staying in place on every frame. Quick notches add up and end at exactly the same zoom as before.
-  Zooming with a trackpad still follows the fingers directly. Settings > Interface > Motion has a
-  new "Smooth zooming" switch (on by default; off with Interface animations or when the system asks
-  for reduced motion).
-- Dev scripts: `setting <key> on|off` changes a switch the way the Settings dialog does.
-- The playlist's slip tool works on a selection: dragging inside a selected clip slips the content of
-  every selected clip by the same amount (one undo step); an unselected clip still slips alone.
-- Kerf's editor has a cleaner layout. The top band is split into three cards: the level and
-  tuning sliders, MODULATION (the X / Y pad with its two wheels) and PLAYBACK. In PLAYBACK one
-  menu sets how a region plays (gated or one shot, the region alone or on to the end of the
-  loop), with fit to tempo, beats, mono and declick in two rows under it. The region panel has a
-  REGION card (selector, key and cut, then AMP, FILTER, PITCH and START rows) and a SLICES card
-  (hits, 4, 8, 16, 32 or by hand, and the filter). The deck bar keeps its buttons in one row with
-  captions over the loop's details. The wave view has an overview on top and a row of switches
-  for snapping, the region's name and its position. The keyboard is two rows of pads. Controls
-  sit in even rows, nothing overlaps, and text keeps a readable size at 1280 x 800 and at 150%.
-- Kerf's editor is laid out band by band like a classic region slicer and finished in Gridline's
-  own style. The view beside the filter has tabs: AMP (envelope and a velocity curve), REGION
-  (the selected region's audio) and DETECT (slicing method, the loop with its cuts, sensitivity and
-  gap). The deck bar gains a loop button for region playback, File, Sample, Edit, Tools, Regions,
-  View, Snap, Select and Zoom menus, undo and redo, a button that writes the regions into the
-  current pattern as notes, and a handle to drag the loop out. The wave view draws peaks and RMS in
-  layers, highlights the selected and hovered regions, has a time ruler, zooms smoothly (Shift +
-  wheel scrolls) and, when empty, shows a drop zone that also opens the file picker. Markers can
-  snap to zero crossings or sixteenths. A display selector hides the wave editor or the region
-  panel (or both), a button hides the keyboard, an options menu holds key macros and playback
-  settings, and right-clicking a key assigns the current region to it. The editor now scales down
-  to fit short windows (such as 1280 x 800) instead of being cut off at the bottom.
-- A song-mode Platter pass is one new pattern holding all its automation clips ("Platter take
-  1"), placed once on the playlist where you played it and as long as the pass, instead of a
-  stack of separate clips on many tracks. The curves show on that clip, a double-click opens one
-  in the automation editor, and moving, trimming, cutting or copying the clip takes the whole
-  pass along; it still replays exactly and plays from any point. Platter's new Song choice
-  (Pattern or Clips) keeps the separate playlist clips for those who want them, and projects
-  with passes recorded that way play as before.
-- Kerf's window is laid out like a full region slicer: a larger wave view with numbered (and
-  named) region flags, zoom and a scroller across the whole loop; a region list to pick any
-  region; a deck bar with load, slicing and view menus, tool buttons and the loop's details; a
-  view of the selected region; and controls that do nothing for the current engine are dimmed.
-
-## 0.7.0-beta.4
-
-This is a beta version: Gridline offers it only to people who tick Include beta versions in the update settings.
-
-### New since 0.7.0-beta.3
-
-- A loading window for projects: a progress bar that counts every sample and plugin, a live log
-  with the time each one took, warnings that stay on a card afterwards, and Cancel to go back to
-  the project you had open. Gridline no longer freezes while a big project opens.
-- Patterns can hold automation clips: they play wherever the pattern plays, are edited like any
-  other automation clip, and show as curves on the pattern's clips in the playlist.
-- Platter passes are recorded as named automation clips (the record's position, the wheel, play,
-  loops and every control you used), in song mode and in pattern mode, so a pass plays from
-  wherever playback starts and can be cut, trimmed and moved.
-- Tideline follows a source you pick in its window: a mixer track or a channel for audio
-  ducking, with the sidechain made for you and up to 10 ms look-ahead, or a channel's notes and
-  clip starts, the MIDI input or MIDI Out ports, all sample-accurate.
-- Platter decks have /2 and x2 buttons, and Platter and Seltmann read drum and bass at its real
-  tempo (174, not 116 or 87).
-- Fixes: changing an audio clip's pitch keeps its length and fill, Rubber Band notes and clips
-  start without crackles, FL Studio 2026 projects import with their whole playlist, Slicex chops
-  arrive in Kerf exactly, plugins such as Serum 2 export to the FL Studio format exactly, and a
-  song-mode Platter pass is no longer split at the song end.
-
-### New
+### Added in 0.7.0-beta.4
 
 - Opening a project no longer freezes Gridline. The open dialog, menu or welcome screen closes
   right away and a loading window shows the project's name, a progress bar that counts every
@@ -478,7 +524,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   ("Platter A wheel"), the same as in song mode, so the wheel shows moving on the pattern's
   playlist clips. Unedited passes still replay exactly as played.
 
-### Fixed
+### Fixed in 0.7.0-beta.4
 
 - A Platter performance recorded in song mode is no longer cut into pieces at the song end. On a short or empty
   song the playlist looped back to the start while you were still playing the decks, and every loop ended the pass
@@ -524,7 +570,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   instrument and with its name, instead of being rebuilt as an effect without one. The command line export and round
   trip now know which plugins are installed, as the app does.
 
-### New in 0.7.0-beta.3
+### 0.7.0-beta.3 in short
 
 - Platter, a two-deck DJ instrument on a channel: decks A and B with a mixer and crossfader,
   tempo and beat grid detection, sync, key lock, hot cues, loops and a pitch fader, ready
@@ -622,7 +668,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   follow the same new pattern rule, and takes recorded earlier keep playing.
 - The piano roll shows the names of an instrument's named keys on its notes and keys.
 
-### New
+### Added in 0.7.0-beta.3
 
 - Collaborative projects can be favourites too: the heart on a tile in the welcome screen's
   Collaborative view (or F, or the tile menu) marks it, and the heart badge takes the mark off.
@@ -665,7 +711,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   computer shows as not reachable, never as offline. The collaboration settings are right there
   too, with a new Show that I am online to collaborators option.
 
-### Changed
+### Changed in 0.7.0-beta.3
 
 - The plugin manager is redesigned. Each plugin is one row with the formats it is installed in
   (VST3, CLAP, AU, VST2, LV2) shown as tags, a clean category (Synth, Drums, Reverb, Analyzer and
@@ -707,7 +753,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   steps, and only the playing region lights up in full. The Edit drawer takes only the height
   its tab needs.
 
-### Fixed
+### Fixed in 0.7.0-beta.3
 
 - Big plugin windows (Platter, Seltmann, Plasma, Edison and the other wide editors) no longer pop
   out of Gridline into a separate window by themselves. This happened when a plugin window was
@@ -742,11 +788,11 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
 - Meters no longer show a lit peak marker at the bottom of the scale in silence; the mixer meters
   fall a little more calmly and hold each channel's peak on its own.
 
-### Removed
+### Removed in 0.7.0-beta.3
 
 - The "Song sketch" project template (and its Songwriting category).
 
-### New in 0.7.0-beta.2
+### 0.7.0-beta.2 in short
 
 - The Gridline Suite: Gridline's instruments and effects as VST3, CLAP and Audio Unit plugins
   for other DAWs, plus Gridline Suite Mini, 35 compact effects.
@@ -1079,7 +1125,7 @@ This is a beta version: Gridline offers it only to people who tick Include beta 
   edge or outline in the middle. The two fade curves are drawn as faint lines. A selected clip
   still shows where it starts and ends. Only the drawing changed; the crossfade sounds as before.
 
-### New: collaborative projects (preview)
+### New: collaborative projects
 
 - Work on one project together, live, on the same network or across the internet, peer to peer:
   no server and no account. Each person keeps their own windows and transport; channels, notes,
